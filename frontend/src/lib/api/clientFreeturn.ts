@@ -30,11 +30,11 @@ import {
 	type ProxySeedView
 } from './proxyInstances';
 
-/** Очистка связанных AWG-туннелей — прежняя форма ответа ручки. */
-export interface ProxyLinkedClearResult {
+/** Ответ удаления инстанса: что снесено вместе с ним. */
+export interface ProxyDeleteResult {
+	ok?: boolean;
 	deletedTunnels?: string[];
 	tunnelErrors?: string[];
-	message?: string;
 }
 
 export class FreeturnClient extends SubscriptionsClient {
@@ -136,29 +136,17 @@ export class FreeturnClient extends SubscriptionsClient {
 		});
 	}
 
-	protected async proxyDelete(kind: ProxyKind, id: string): Promise<void> {
-		await this.request(instancePath(kind, id), { method: 'DELETE' });
-	}
-
 	/**
-	 * Снос AWG-туннелей, связанных с клиентским инстансом. Отказ ручки не
-	 * роняет удаление инстанса, а уезжает в `tunnelErrors`: в старом мире
-	 * удаление сносило и связи, и инстанс, и об ошибках туннелей отчитывалось
-	 * списком — молча потерять их нельзя, но и запирать удаление из-за них
-	 * пользователь не просил.
+	 * Удаление инстанса. Связанные AWG-туннели уносит САМ бэкенд, в этом же
+	 * запросе, и отчитывается о них в теле ответа.
+	 *
+	 * Прежде инвариант «клиент уходит вместе со своими туннелями» держал фронт
+	 * двумя вызовами подряд (clear-linked, затем delete). Держался он плохо:
+	 * удаление мимо панели оставляло карточку туннеля навсегда, а на нашем
+	 * собственном пути отказ ручки clear ловился и удаление шло дальше.
 	 */
-	protected async proxyClearLinkedTunnels(
-		kind: ProxyKind,
-		id: string
-	): Promise<ProxyLinkedClearResult> {
-		try {
-			return await this.request<ProxyLinkedClearResult>(
-				instancePath(kind, id, '/linked-tunnels/clear'),
-				{ method: 'POST' }
-			);
-		} catch (e) {
-			return { tunnelErrors: [e instanceof Error ? e.message : String(e)] };
-		}
+	protected async proxyDelete(kind: ProxyKind, id: string): Promise<ProxyDeleteResult> {
+		return this.request<ProxyDeleteResult>(instancePath(kind, id), { method: 'DELETE' });
 	}
 
 	// #endregion
@@ -203,19 +191,10 @@ export class FreeturnClient extends SubscriptionsClient {
 		return { id: view.id, name: view.name, config: toFreeTurnServerConfig(view) };
 	}
 
-	/**
-	 * Удаление клиента: связанные AWG-туннели сносит своя ручка, удаление
-	 * инстанса их не трогает. Порядок «сначала связи, потом инстанс» —
-	 * уборщик ищет туннели по id ЖИВОЙ записи.
-	 */
+	/** Удаление клиента: связанные AWG-туннели уносит бэкенд тем же запросом. */
 	async deleteFreeTurnClient(id: string): Promise<FreeTurnDeleteClientResult> {
-		const cleared = await this.proxyClearLinkedTunnels('freeturn-client', id);
-		await this.proxyDelete('freeturn-client', id);
-		return {
-			message: cleared.message,
-			deletedTunnels: cleared.deletedTunnels,
-			tunnelErrors: cleared.tunnelErrors
-		};
+		const res = await this.proxyDelete('freeturn-client', id);
+		return { deletedTunnels: res.deletedTunnels, tunnelErrors: res.tunnelErrors };
 	}
 
 	async deleteFreeTurnServer(id: string): Promise<void> {

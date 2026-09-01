@@ -33,7 +33,7 @@ func TestImportRejectsBadHeaderProtectionKey(t *testing.T) {
 	s, tunnels, _ := serviceForCreate(t, &createOp{})
 
 	// 31 байт вместо 32 — pubKeyToHex ниже по течению молча вернёт "".
-	_, err := s.Import(context.Background(), awg31Conf("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZQ==", 12), "t", "kernel")
+	_, err := s.Import(context.Background(), awg31Conf("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZQ==", 12), "t", "kernel", ImportLink{})
 	if err == nil {
 		t.Fatal("импорт с битым HeaderProtectionKey обязан провалиться")
 	}
@@ -48,7 +48,7 @@ func TestImportRejectsBadHeaderProtectionKey(t *testing.T) {
 func TestImportRejectsShortPaddingWithHeaderProtection(t *testing.T) {
 	s, _, _ := serviceForCreate(t, &createOp{})
 
-	_, err := s.Import(context.Background(), awg31Conf("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", 11), "t", "kernel")
+	_, err := s.Import(context.Background(), awg31Conf("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", 11), "t", "kernel", ImportLink{})
 	if err == nil {
 		t.Fatal("импорт с S1 < 12 при заданном HeaderProtectionKey обязан провалиться")
 	}
@@ -57,7 +57,34 @@ func TestImportRejectsShortPaddingWithHeaderProtection(t *testing.T) {
 func TestImportAcceptsValidAWG31Conf(t *testing.T) {
 	s, _, _ := serviceForCreate(t, &createOp{})
 
-	if _, err := s.Import(context.Background(), awg31Conf("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", 12), "t", "kernel"); err != nil {
+	if _, err := s.Import(context.Background(), awg31Conf("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", 12), "t", "kernel", ImportLink{}); err != nil {
 		t.Fatalf("валидный AWG 3.1 .conf обязан импортироваться: %v", err)
+	}
+}
+
+// PF21: связь прокси-подсистемы обязана лежать в записи СРАЗУ после Import —
+// значит она уехала в тот же store.Create, что и сам туннель. Дописанная
+// вторым шагом, она оставляла окно, в котором туннель уже создан, а уборка
+// связанных его не видит: такой сироты не снять уже ничем, кроме ручного
+// удаления карточки.
+func TestImportWritesOwnershipLinkWithTheRecord(t *testing.T) {
+	s, _, _ := serviceForCreate(t, &createOp{})
+
+	res, err := s.Import(context.Background(), awg31Conf("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", 12), "t", "kernel",
+		ImportLink{WdttClientID: "  default  "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.store.Get(res.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Подрезка входа здесь же: связь ищут строгим сравнением
+	// (`proxyTunnelLinkedTo`), и " default " не совпал бы с "default".
+	if stored.WdttClientID != "default" {
+		t.Fatalf("связь не легла в запись: %q", stored.WdttClientID)
+	}
+	if stored.FreeTurnClientID != "" {
+		t.Fatalf("чужая связь проставлена: %q", stored.FreeTurnClientID)
 	}
 }

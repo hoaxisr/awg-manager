@@ -43,6 +43,30 @@ var AllKinds = []Kind{
 	KindFreeTurnServer,
 }
 
+// IsClient — клиентская ли роль. У клиента бывают связанные AWG-туннели, у
+// сервера их не бывает по построению: сервер — вход, туннеля на него не заводят.
+//
+// Владелец перечня ОДИН на всех. Прежде он был списан дважды —
+// `wdttlink.isClientKind` и список ролей в `proxyLinkedCleaners` проводки, — и
+// новая клиентская роль, забытая во второй копии, дала бы молчаливое «убирать
+// нечего» вместо уборки: ни ошибки, ни падения, только осиротевшая карточка
+// туннеля навсегда.
+func (k Kind) IsClient() bool {
+	return k == KindWdttClient || k == KindFreeTurnClient
+}
+
+// ClientKinds — клиентские роли перечнем, для тех, кому нужен обход, а не
+// проверка. Производная от AllKinds и IsClient: третьей копии списка нет.
+func ClientKinds() []Kind {
+	out := make([]Kind, 0, len(AllKinds))
+	for _, k := range AllKinds {
+		if k.IsClient() {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // ServerUser — абонент wdtt-сервера. Источник правды ЗДЕСЬ (посеян из
 // ServerConfig.Clients старого wdtt.json — блокер B5 ревью); passwords.json
 // в ConfigDir — производная, её собирает proxyapp/wdttusers перед стартом.

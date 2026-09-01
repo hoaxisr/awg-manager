@@ -178,7 +178,6 @@ export interface FreeTurnCaptchaOverview {
 }
 
 export interface FreeTurnDeleteClientResult {
-	message?: string;
 	deletedTunnels?: string[];
 	tunnelErrors?: string[];
 }

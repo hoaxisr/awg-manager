@@ -4,7 +4,7 @@ import { notifications } from '$lib/stores/notifications';
 
 /**
  * TS-03 просит имена туннелей, а бэкенд отдаёт строку «Имя (id): ошибка»
- * (`fmt.Sprintf("%s (%s): %v", …)`, `internal/api/wdtt_linked.go:95`) —
+ * (`fmt.Sprintf("%s (%s): %v", …)`, `cmd/awg-manager/wiring_proxyrt.go`, proxyLinkedCleaner) —
  * отрезаем хвост с id и текстом ошибки. Строка без этого хвоста (сбой чтения
  * хранилища) остаётся как есть.
  *
@@ -28,4 +28,19 @@ export function reportDeletedTunnels(deleted?: string[], errors?: string[]): voi
 	if (errors?.length) {
 		notifications.error(`Не удалось удалить туннели: ${tunnelErrorNames(errors).join(', ')}`);
 	}
+}
+
+/**
+ * Отчёт об уборке из ОТКАЗА удаления (PF23). Бэкенд кладёт его в тот же
+ * конверт, в поле `data`, а клиент отдаёт всё тело ошибки в `err.body` —
+ * поэтому читать его можно без своей формы ответа.
+ *
+ * Зачем вообще: удаление многошаговое, и падение второго шага не отменяет
+ * первый. Туннели уже сняты, инстанс остался — сказать только «не удалось»
+ * значит оставить человека с исчезнувшей карточкой туннеля и без объяснения.
+ */
+export function reportDeletedTunnelsFromError(e: unknown): void {
+	const body = (e as { body?: { data?: { deletedTunnels?: string[]; tunnelErrors?: string[] } } })
+		?.body;
+	reportDeletedTunnels(body?.data?.deletedTunnels, body?.data?.tunnelErrors);
 }

@@ -40,6 +40,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
 
 // Проводка прокси-рантайма: аллокаторы номеров и портов, посев, менеджер,
@@ -397,7 +398,7 @@ func readTail(path string, maxBytes int64, lines int) string {
 
 // ── связанные AWG-туннели ────────────────────────────────────────
 
-// proxyLinkedCleaner — wdttlink.LinkedCleaner для ОДНОЙ роли: поле связи у
+// proxyLinkedCleaner — api.LinkedTunnelCleaner для ОДНОЙ роли: поле связи у
 // подсистем разное, и один уборщик на обе выбрать его не может.
 type proxyLinkedCleaner struct {
 	store   *storage.AWGTunnelStore
@@ -425,8 +426,10 @@ func (c proxyLinkedCleaner) DeleteLinked(ctx context.Context, clientID string) (
 			continue
 		}
 		// Зеркальная запись raw-клиента — проекция ЖИВОГО инстанса, чьи связи
-		// сейчас снимают (уборщика зовёт только ручка clear по существующей
-		// записи). Снести её здесь значило бы соврать: ближайшее объявление
+		// сейчас снимают. Уборщика зовёт ОДИН путь — удаление инстанса, — и
+		// зовёт по ЕЩЁ СУЩЕСТВУЮЩЕЙ записи: связи снимаются ДО того, как
+		// запись исчезнет (api/proxy_instances.go, remove).
+		// Снести её здесь значило бы соврать: ближайшее объявление
 		// создаст запись заново, но с дефолтами, и настройки карточки пропадут
 		// молча (амендмент F2). Уносит запись удаление инстанса — через
 		// зеркало.
@@ -479,11 +482,12 @@ func proxyTunnelLinkedTo(tun storage.AWGTunnel, field api.LinkedField, clientID 
 // перепутать было негде.
 func proxyLinkedCleaners(store *storage.AWGTunnelStore, svc api.TunnelService,
 	traffic *traffic.History, pub proxyrt.Publisher,
-) map[instancestore.Kind]wdttlink.LinkedCleaner {
-	out := map[instancestore.Kind]wdttlink.LinkedCleaner{}
-	for _, kind := range []instancestore.Kind{
-		instancestore.KindWdttClient, instancestore.KindFreeTurnClient,
-	} {
+) map[instancestore.Kind]api.LinkedTunnelCleaner {
+	out := map[instancestore.Kind]api.LinkedTunnelCleaner{}
+	// Перечень — из канонического источника (instancestore.ClientKinds), а не
+	// свой: новая клиентская роль, забытая здесь, осталась бы без уборщика
+	// молча.
+	for _, kind := range instancestore.ClientKinds() {
 		out[kind] = proxyLinkedCleaner{store: store, svc: svc,
 			field: proxyLinkedField(kind), traffic: traffic, pub: pub}
 	}
@@ -522,10 +526,10 @@ func (t proxyTunnelImporter) Delete(ctx context.Context, tunnelID string) error 
 	return t.svc.Delete(ctx, tunnelID)
 }
 
-func (t proxyTunnelImporter) Import(ctx context.Context, conf, name string) (string, string, error) {
+func (t proxyTunnelImporter) Import(ctx context.Context, conf, name, clientID string) (string, string, error) {
 	// Бэкенд пустой — тот же аргумент, что у старой ручки: его выбирает сама
-	// служба по прошивке.
-	res, err := t.svc.Import(ctx, conf, name, "")
+	// служба по прошивке. Связь едет в ту же запись (см. TunnelImporter.Import).
+	res, err := t.svc.Import(ctx, conf, name, "", service.ImportLink{WdttClientID: clientID})
 	if err != nil {
 		return "", "", err
 	}
@@ -784,7 +788,7 @@ func (r *proxyAdoptedRole) Resources(intent proxyrt.Intent, cfg any, obs proxyrt
 	if intent == proxyrt.IntentEnabled {
 		if err := r.gate.ensure(); err != nil {
 			return []proxyrt.Resource{proxyBlocked{id: proxyUsersResource,
-				reason: fmt.Errorf("абоненты сервера не усыновлены: %w", err)}}
+				reason: fmt.Errorf("цикл абонентов сервера не пройден: %w", err)}}
 		}
 	}
 	return r.inner.Resources(intent, cfg, obs)
@@ -929,13 +933,17 @@ func (a *app) wireProxyrt() {
 	logTail := proxyLogTail(mgr.Records)
 	snapshots := wdttlink.Snapshots(links.snapshot)
 
+	// Уборщик связанных туннелей — один на систему; потребитель у него теперь
+	// тоже один: путь удаления инстанса. Ручка linked-tunnels/clear снесена
+	// вместе со своим единственным вызывающим на фронте (PF24).
+	linkedCleaners := proxyLinkedCleaners(a.awgStore, a.proxyTunnels(), a.trafficHistory, a.eventBus)
+
 	linkHandler := wdttlink.NewHandler(wdttlink.Deps{
 		Records:   records,
 		Mutator:   mutator,
 		Snapshots: snapshots,
 		Tunnels: proxyTunnelImporter{store: a.awgStore, svc: a.proxyTunnels(),
 			traffic: a.trafficHistory, pub: a.eventBus},
-		Cleaners: proxyLinkedCleaners(a.awgStore, a.proxyTunnels(), a.trafficHistory, a.eventBus),
 		Builders: map[instancestore.Kind]wdttlink.LinkBuilder{
 			instancestore.KindWdttServer: wdttlink.NewBuilder(wdttlink.BuilderDeps{
 				Vetting:    wdttusers.Vetting{},
@@ -963,6 +971,7 @@ func (a *app) wireProxyrt() {
 		Log:              logTail,
 		BinaryInfo:       installSvc.Binary,
 		OpkgTunSupported: opkgTunSupported,
+		Cleaners:         linkedCleaners,
 	})
 
 	a.srv.SetProxyRtSurface(server.ProxyRtSurface{
@@ -973,7 +982,6 @@ func (a *app) wireProxyrt() {
 			allowlist: allowlist.Serve,
 			link:      linkHandler.Link,
 			ensureWG:  linkHandler.EnsureWGTunnel,
-			clear:     linkHandler.ClearLinkedTunnels,
 			refresh:   subs.Serve,
 		}.handler(),
 		ListenMoves:        instances.AckListenMoves,
@@ -1227,7 +1235,6 @@ type proxyrtDispatch struct {
 	allowlist func(w http.ResponseWriter, r *http.Request, key string, sub []string)
 	link      func(w http.ResponseWriter, r *http.Request, key string)
 	ensureWG  func(w http.ResponseWriter, r *http.Request, key string)
-	clear     func(w http.ResponseWriter, r *http.Request, key string)
 	refresh   func(w http.ResponseWriter, r *http.Request, key string)
 }
 
@@ -1257,10 +1264,9 @@ func (d proxyrtDispatch) handler() http.HandlerFunc {
 		case "ensure-wg-tunnel":
 			d.ensureWG(w, r, key)
 		case "linked-tunnels":
-			if sub == "clear" {
-				d.clear(w, r, key)
-				return
-			}
+			// Своей ручки у связей больше нет: снимает их путь удаления
+			// инстанса (PF24). Путь остаётся ради честного 404 на старый
+			// адрес, а не «эндпоинт молча делает что-то другое».
 			d.instances(w, r)
 		case "subscription":
 			if sub == "refresh" {

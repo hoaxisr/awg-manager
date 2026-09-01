@@ -18,9 +18,13 @@ import (
 type importStubSvc struct {
 	stubTunnelSvc
 	imported *service.TunnelWithStatus
+	// link — связь, с которой хендлер позвал Import: она обязана уехать в
+	// СОЗДАНИЕ записи, а не дописываться после (PF21).
+	link service.ImportLink
 }
 
-func (s *importStubSvc) Import(context.Context, string, string, string) (*service.TunnelWithStatus, error) {
+func (s *importStubSvc) Import(_ context.Context, _, _, _ string, link service.ImportLink) (*service.TunnelWithStatus, error) {
+	s.link = link
 	return s.imported, nil
 }
 
@@ -62,5 +66,24 @@ func TestImportConf_WarnsWhenPostImportDefaultsFail(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("журнал = %v, want Warn о провале дозаписи пост-импортных дефолтов", spy.entries)
+	}
+}
+
+// PF21: связь клиента прокси уезжает в САМ Import, а не дозаписью после него.
+// Дозапись у этой ручки не роняет ответ (профиль F48, тест выше) — значит
+// связь, оставленная во втором шаге, терялась бы МОЛЧА, и туннель становился
+// сиротой, невидимой для уборки связанных.
+func TestImportConf_LinkTravelsWithCreate(t *testing.T) {
+	store := storage.NewAWGTunnelStore(t.TempDir())
+	svc := &importStubSvc{imported: &service.TunnelWithStatus{ID: "awg9", Name: "imported"}}
+	h := NewImportHandler(svc, store, &appLogSpy{})
+
+	body, _ := json.Marshal(map[string]string{
+		"content": "[Interface]", "name": "imported", "wdttClientId": "default"})
+	req := httptest.NewRequest(http.MethodPost, "/api/tunnels/import", bytes.NewReader(body))
+	h.ImportConf(httptest.NewRecorder(), req)
+
+	if svc.link.WdttClientID != "default" {
+		t.Fatalf("связь не доехала до Import: %+v", svc.link)
 	}
 }

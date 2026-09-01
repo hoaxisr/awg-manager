@@ -155,14 +155,20 @@ func (s *Service) serverRecord(key string) (instancestore.Record, roles.WdttServ
 // счётчики трафика, max_devices, device_ids, ports — принадлежит
 // форку и обязано пережить запись. Наивная пересборка из Record.Users обнулила
 // бы всё это разом.
+//
+// ИСКЛЮЧЕНИЕ из «переживает запись» — админские учётные данные форка:
+// `main_password` перезаписывается пустым, `admin_id` и `bot_token` не
+// переносятся вовсе (их нет даже в нашей структуре, и разбор их отбрасывает).
+// Это не упущение слияния: у этих полей нет ни писателя, ни читателя в нашем
+// мире — админ-путь форка (телеграм-бот и его admin-API) мы не заводим, полей
+// под них в конфиге нет, а флагов `-password`/`-admin`/`-bot-token` серверу не
+// передаём (roles.WdttServerArgs). Сам форк на старте перезаписывает эти три
+// поля значениями флагов (его initDB) и тут же сохраняет файл — то есть чужие
+// значения не пережили бы и первого запуска даже без нашего стирания; наша
+// запись просто не делает вид, что владеет ими. В старом мире те же три поля
+// писались из НАШЕГО конфига (wdtt/passwords_json.go до 62e5a7708), то есть
+// не переносились и тогда. Пин — TestMaterialize_StripsForkAdminCredentials.
 func (s *Service) Materialize(rec instancestore.Record) error {
-	return s.materialize(rec)
-}
-
-// materialize — тот же путь с ЭФФЕКТИВНЫМ главным паролем: у добавления
-// пришедший формой пароль ещё не сохранён в запись, а предикат пригодности
-// сверяется именно с ним.
-func (s *Service) materialize(rec instancestore.Record) error {
 	cfg, err := rec.WdttServerConfig()
 	if err != nil {
 		return err
@@ -193,8 +199,9 @@ func (s *Service) materialize(rec instancestore.Record) error {
 
 // ── путь старта (Г-2) ────────────────────────────────────────────
 
-// SyncOnStart — цикл абонентов на пути старта, два ОБЯЗАТЕЛЬНЫХ шага:
-// усыновить чужие записи → переписать файл. Зовёт фабрика процесса (задача 14).
+// SyncOnStart — цикл абонентов на пути старта, ТРИ обязательных шага:
+// усыновить чужие записи → переписать файл → проверить, что подключаться есть
+// кому. Зовёт фабрика процесса (задача 14).
 func (s *Service) SyncOnStart(ctx context.Context, key string) error {
 	unlock := s.lock(key)
 	defer unlock()
@@ -212,8 +219,28 @@ func (s *Service) SyncOnStart(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	// (2) Файл — последним, по итоговому составу.
-	return s.Materialize(rec)
+	// (2) Файл — по итоговому составу.
+	if err := s.Materialize(rec); err != nil {
+		return err
+	}
+	// (3) Гейт: без единого РАБОЧЕГО абонента passwords.json уезжает пустым, и
+	// форк падает при старте на условии `serverWrapKeys.Count() == 0` (его
+	// код — в форке; у нас это условие пересказано докстрокой
+	// roles.WdttServerConfig.Validate).
+	// Отказ здесь превращает смерть демона в честную причину на карточке:
+	// gate вызывающего (proxyAdoptedRole) объявляет ресурс blocked, процесс не
+	// стартует вовсе. Тот же инвариант со стороны удаления держит
+	// refuseLastUsable — но свежий сервер, у которого абонентов не было
+	// НИКОГДА, ему не встречается: на путях UI его прикрывал только фронт
+	// (гейт SH-91), а запрос мимо нашей панели уходил в падение.
+	//
+	// Порядок «материализовать, потом отказать» осознан: файл обязан
+	// соответствовать составу и в отказном случае — иначе на диске пережил бы
+	// отказ пароль, которого в записи уже нет.
+	if len(UsableUsers(rec.Users)) == 0 {
+		return errors.New("сервер не запускается без единого рабочего абонента: заведите абонента")
+	}
+	return nil
 }
 
 // mutateUsers — ЕДИНСТВЕННЫЙ способ поправить состав абонентов.
@@ -349,13 +376,10 @@ func (s *Service) Add(ctx context.Context, key, password, comment, vkHash string
 
 	unlock := s.lock(key)
 	defer unlock()
-	return s.addLocked(ctx, key, password, comment, vkHash)
-}
 
-// addLocked — цикл добавления под уже взятым замком: усыновить → проверить →
-// изменить запись → переписать файл → сигнал. Своего захвата здесь нет:
-// замок берёт Add, и повторный был бы взаимоблокировкой.
-func (s *Service) addLocked(ctx context.Context, key, password, comment, vkHash string) (UsersStatus, error) {
+	// Дальше — цикл добавления под замком: усыновить → проверить → изменить
+	// запись → переписать файл → сигнал. Запись перечитывается ПОД замком:
+	// снимок, взятый до захвата, разошёлся бы с актуальным составом.
 	_, cfg, err := s.serverRecord(key)
 	if err != nil {
 		return UsersStatus{}, err
@@ -383,7 +407,7 @@ func (s *Service) addLocked(ctx context.Context, key, password, comment, vkHash 
 	if rec, err = s.reread(key); err != nil {
 		return UsersStatus{}, err
 	}
-	if err := s.materialize(rec); err != nil {
+	if err := s.Materialize(rec); err != nil {
 		// Частичный успех: абонент уже в записи (строкой выше) и оттуда никуда
 		// не денется — старт сервера перепишет файл сам.
 		return UsersStatus{}, fmt.Errorf("%w: %w", ErrFileNotWritten, err)
@@ -684,7 +708,7 @@ func userPasswordFree(users []instancestore.ServerUser, password string) error {
 // останется, а до неё они были. Обе величины считает UsableUsers: собственный
 // отбор здесь разошёлся бы с тем, что уезжает в passwords.json.
 //
-// Если рабочих не было и до операции (единственный абонент просрочен), она
+// Если рабочих не было и до операции (единственный абонент непригоден), она
 // разрешена: запрещать выход из уже сломанного состояния бессмысленно.
 // Проверка живёт здесь, а не только в UI: инвариант обязан держаться и для
 // запросов мимо нашего фронта.

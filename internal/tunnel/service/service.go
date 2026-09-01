@@ -65,7 +65,13 @@ type Service interface {
 
 	// Import parses a WireGuard .conf file and creates a tunnel.
 	// backend selects the tunnel backend: "nativewg" or "kernel" (default).
-	Import(ctx context.Context, confContent, name, backend string) (*TunnelWithStatus, error)
+	//
+	// link — поля владения прокси-подсистемы. Едут в ЗАПИСЬ, а не дописываются
+	// вторым шагом: вызывающий, создававший туннель импортом и проставлявший
+	// связь отдельным Update, оставлял окно, в котором туннель уже есть, а
+	// связи нет. Такой туннель не видит уборка связанных, и осиротевшую
+	// карточку снять автоматически уже нечем. Нулевое значение — связи нет.
+	Import(ctx context.Context, confContent, name, backend string, link ImportLink) (*TunnelWithStatus, error)
 
 	// ReplaceConfig replaces a tunnel's Interface and Peer from a new .conf,
 	// preserving all metadata (ID, Backend, NWGIndex, routing, PingCheck, etc.).
@@ -106,6 +112,20 @@ type Service interface {
 	// that occasionally persisted NDMS logical labels (e.g. "ISP") instead
 	// of kernel names. Called once at startup.
 	HealStaleActiveWAN()
+}
+
+// ImportLink — поля владения прокси-подсистем, которые обязаны появиться
+// ВМЕСТЕ с записью туннеля.
+//
+// Отдельный тип, а не два строковых параметра: связей две, они
+// взаимоисключающие по смыслу (туннель принадлежит одной подсистеме), и
+// перепутанные местами литералы не дали бы ни ошибки, ни отказа — только
+// пустой список связанных туннелей и вечное молчание уборки.
+type ImportLink struct {
+	// WdttClientID — storage.AWGTunnel.WdttClientID.
+	WdttClientID string
+	// FreeTurnClientID — storage.AWGTunnel.FreeTurnClientID.
+	FreeTurnClientID string
 }
 
 // TunnelWithStatus combines stored tunnel data with live status.

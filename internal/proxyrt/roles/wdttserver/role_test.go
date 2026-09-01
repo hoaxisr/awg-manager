@@ -161,6 +161,21 @@ func ids(res []proxyrt.Resource) []proxyrt.ResourceID {
 	return out
 }
 
+// PF7: обе NDMS-половины сервера держат ОДИН MTU. Пин на решение, а не на
+// проводку: сами вызовы видны в Resources (ifaceWG/ifaceRaw и addrWG/addrRaw
+// получают те же константы), а спорным был именно выбор ЧИСЛА — у raw-половины
+// стояло 1300 без предка в старом мире, где её MTU не задавал никто.
+// Расхождение половин допустимо только с цифрой из замера на железе.
+func TestServerHalvesShareMTU(t *testing.T) {
+	if wgMTU != rawMTU {
+		t.Fatalf("половины разошлись по MTU: wg=%d raw=%d — расхождение допустимо "+
+			"только по результату замера, а не по памяти", wgMTU, rawMTU)
+	}
+	if wgMTU != 1280 {
+		t.Fatalf("MTU половин = %d, ждали 1280 (паритет с wdttOpkgMTU старого мира)", wgMTU)
+	}
+}
+
 func TestServerChainOrder(t *testing.T) {
 	role, _, _, _ := newRole(t)
 	got := ids(role.Resources(proxyrt.IntentEnabled, srvCfg(), proxyrt.NewObservations()))

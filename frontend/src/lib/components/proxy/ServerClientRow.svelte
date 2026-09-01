@@ -72,18 +72,16 @@
 	</div>
 
 	<div class="row-actions">
-		{#if actions.link !== 'hidden'}
-			<button
-				type="button"
-				class="row-action"
-				disabled={busy || actions.link === 'blocked'}
-				aria-label="Ссылка"
-				title="Ссылка абоненту"
-				onclick={() => onlink(user)}
-			>
-				<Link2 size={14} />
-			</button>
-		{/if}
+		<button
+			type="button"
+			class="row-action"
+			disabled={busy}
+			aria-label="Ссылка"
+			title="Ссылка абоненту"
+			onclick={() => onlink(user)}
+		>
+			<Link2 size={14} />
+		</button>
 		{#if actions.reissue}
 			<button
 				type="button"

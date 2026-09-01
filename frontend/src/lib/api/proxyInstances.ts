@@ -14,7 +14,7 @@
 //   POST   /wdtt/clients                    → POST /proxyrt/instances        (kind=wdtt-client)
 //   PUT    /wdtt/clients/{id}               → PATCH /proxyrt/instances/wdtt-client:{id}
 //   PATCH  /wdtt/clients/{id}               → PATCH /proxyrt/instances/wdtt-client:{id}   (name)
-//   DELETE /wdtt/clients/{id}               → POST …/linked-tunnels/clear + DELETE /proxyrt/instances/wdtt-client:{id}
+//   DELETE /wdtt/clients/{id}               → DELETE /proxyrt/instances/wdtt-client:{id} (связи снимает бэкенд)
 //   POST   /wdtt/clients/{id}/start|stop    → PATCH /proxyrt/instances/wdtt-client:{id}   ({enabled})
 //   POST   /wdtt/clients/{id}/ensure-wg-tunnel → POST /proxyrt/instances/wdtt-client:{id}/ensure-wg-tunnel
 //   POST   /wdtt/clients/{id}/ensure-raw-tunnel → УДАЛЕНА (зеркальную запись ведёт движок)
@@ -126,8 +126,9 @@ export interface ProxySeedView {
    */
   skipped?: ProxySkippedSourceView[];
   /**
-   * Инстансы, которым посев сменил listen-адрес, разводя конфликт за порт:
-   * дефолт у обеих подсистем был один и тот же. Молчать об этом нельзя — у
+   * Инстансы, которым СМЕНИЛИ listen-адрес, разводя конфликт за порт.
+   * Источников четыре: посев (дефолт у обеих подсистем был один и тот же),
+   * боот (порт отняла чужая запись), создание и правка инстанса. Молчать об этом нельзя — у
    * человека снаружи мог быть настроен клиент на прежний порт.
    */
   movedListen?: ProxyListenMoveView[];
@@ -139,7 +140,7 @@ export interface ProxySkippedSourceView {
   reason?: string;
 }
 
-/** Один переезд listen-адреса, сделанный посевом. */
+/** Один переезд listen-адреса (посев, боот, создание или правка). */
 export interface ProxyListenMoveView {
   instance: string;
   name?: string;

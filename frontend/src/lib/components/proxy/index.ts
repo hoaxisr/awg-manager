@@ -26,7 +26,11 @@ export { default as ProxyDetailPane } from './ProxyDetailPane.svelte';
 export { default as SubscriptionSection } from './SubscriptionSection.svelte';
 export { default as WizardSteps } from './WizardSteps.svelte';
 export { binaryStripItems } from './binaries';
-export { reportDeletedTunnels, tunnelErrorNames } from './deleteNotice';
+export {
+	reportDeletedTunnels,
+	reportDeletedTunnelsFromError,
+	tunnelErrorNames
+} from './deleteNotice';
 export { seedGateWarning, seedListenMoveNotice } from './seedGate';
 export { exitInstance, normalizeExitConfigs, saveExitInstance } from './exitConfig';
 export { exitConfigSetupComplete, exitStep1Ready, exitStep2Ready } from './exitWizard';

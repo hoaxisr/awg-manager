@@ -769,7 +769,7 @@ func (s *ServiceImpl) SetDefaultRoute(ctx context.Context, tunnelID string, enab
 }
 
 // Import parses a WireGuard .conf file and creates a tunnel.
-func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend string) (*TunnelWithStatus, error) {
+func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend string, link ImportLink) (*TunnelWithStatus, error) {
 	// Parse config
 	parsed, err := config.Parse(confContent)
 	if err != nil {
@@ -796,6 +796,13 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 		backend = "kernel" // default for backwards compat
 	}
 	parsed.Backend = backend
+
+	// Связь — ДО обеих веток создания: она обязана лечь в запись тем же
+	// Create, что и сам туннель. Дописанная вторым шагом, она оставляла окно
+	// «туннель есть, связи нет», а такой туннель для уборки связанных
+	// невидим.
+	parsed.WdttClientID = strings.TrimSpace(link.WdttClientID)
+	parsed.FreeTurnClientID = strings.TrimSpace(link.FreeTurnClientID)
 
 	if backend == "nativewg" {
 		return s.importNativeWG(ctx, parsed)

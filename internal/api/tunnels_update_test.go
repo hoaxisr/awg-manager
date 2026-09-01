@@ -336,7 +336,7 @@ func (s *stubTunnelSvc) GetState(_ context.Context, tunnelID string) tunnel.Stat
 }
 func (s *stubTunnelSvc) SetEnabled(context.Context, string, bool) error      { return nil }
 func (s *stubTunnelSvc) SetDefaultRoute(context.Context, string, bool) error { return nil }
-func (s *stubTunnelSvc) Import(context.Context, string, string, string) (*service.TunnelWithStatus, error) {
+func (s *stubTunnelSvc) Import(context.Context, string, string, string, service.ImportLink) (*service.TunnelWithStatus, error) {
 	return nil, fmt.Errorf("stub")
 }
 func (s *stubTunnelSvc) ReplaceConfig(context.Context, string, string, string) error {

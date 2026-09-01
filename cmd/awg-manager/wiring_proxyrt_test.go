@@ -712,7 +712,6 @@ func TestProxyInstancesDispatcherRoutesSubpaths(t *testing.T) {
 		},
 		link:     func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "link:"+key) },
 		ensureWG: func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "ensure:"+key) },
-		clear:    func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "clear:"+key) },
 		refresh:  func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "refresh:"+key) },
 	}.handler()
 
@@ -728,7 +727,9 @@ func TestProxyInstancesDispatcherRoutesSubpaths(t *testing.T) {
 		{"/api/proxyrt/instances/freeturn-server:d/allowlist/abc", "allowlist:freeturn-server:d"},
 		{"/api/proxyrt/instances/wdtt-server:d/link", "link:wdtt-server:d"},
 		{"/api/proxyrt/instances/wdtt-client:de/ensure-wg-tunnel", "ensure:wdtt-client:de"},
-		{"/api/proxyrt/instances/wdtt-client:de/linked-tunnels/clear", "clear:wdtt-client:de"},
+		// Своей ручки у связей нет (PF24): путь ведёт в общий обработчик
+		// инстансов, то есть в честный отказ, а не в тихое «сделали что-то».
+		{"/api/proxyrt/instances/wdtt-client:de/linked-tunnels/clear", "instances"},
 		{"/api/proxyrt/instances/wdtt-client:de/subscription/refresh", "refresh:wdtt-client:de"},
 		{"/api/proxyrt/instances/wdtt-client:de/неведомое", "instances"},
 	}
@@ -1128,9 +1129,10 @@ func TestProxyLinkedCleanersDeleteOwnFieldOnly(t *testing.T) {
 }
 
 // Амендмент F2: зеркальная запись — проекция ЖИВОГО инстанса (уборщика зовёт
-// только ручка clear по существующей записи). Снести её значит соврать: зеркало
-// пересоздаст её на ближайшем объявлении, но уже с дефолтами. Она и не кандидат
-// этой операции — снять её пользователь не может, поэтому ошибки быть не должно
+// путь удаления инстанса, и зовёт по ЕЩЁ существующей записи). Снести её
+// значит соврать: зеркало пересоздаст её на ближайшем объявлении, но уже с
+// дефолтами. Она и не кандидат этой операции — снять её пользователь не
+// может, поэтому ошибки быть не должно
 // тоже. Обе половины в одном прогоне: настоящий связанный туннель обязан
 // сноситься по-прежнему — иначе «починкой» был бы уборщик, не убирающий ничего.
 func TestProxyLinkedCleanerSkipsMirrorRecord(t *testing.T) {
@@ -1202,7 +1204,15 @@ func TestProxyFactoryWdttServerBlockedUntilUsersAdopted(t *testing.T) {
 	if len(result.States) != 1 || result.States[0].ID != proxyUsersResource {
 		t.Fatalf("состояние прогона: %+v", result.States)
 	}
-	if !strings.Contains(result.States[0].Error, "абоненты сервера не усыновлены") {
+	// Обёртка называет ступень нейтрально: цикл абонентов — это усыновление,
+	// материализация И гейт «есть кому подключаться» (PF18), и прежний текст
+	// «не усыновлены» врал бы на двух отказах из трёх.
+	if !strings.Contains(result.States[0].Error, "цикл абонентов сервера не пройден") {
+		t.Fatalf("ступень не названа: %+v", result.States[0])
+	}
+	// Главное — ПРИЧИНА, а не префикс: без неё пользователь видит «что-то
+	// пошло не так» и чинить ему нечего.
+	if !strings.Contains(result.States[0].Error, "инстанс не найден") {
 		t.Fatalf("причина не доехала до пользователя: %+v", result.States[0])
 	}
 }

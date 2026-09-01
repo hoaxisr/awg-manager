@@ -1040,6 +1040,17 @@ const api_ProxyConfigResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_ProxyDeleteData: v.GenericSchema = v.looseObject({
+	deletedTunnels: v.optional(v.nullable(v.array(v.string()))),
+	ok: v.optional(v.nullable(v.boolean())),
+	tunnelErrors: v.optional(v.nullable(v.array(v.string()))),
+});
+
+const api_ProxyDeleteResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_ProxyDeleteData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_ProxyInstanceResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_DeviceProxyInstanceData))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -2871,17 +2882,6 @@ const subscription_RefreshResult: v.GenericSchema = v.looseObject({
 	payload: v.optional(v.nullable(v.lazy(() => wdttlink_ImportPayload))),
 });
 
-const wdttlink_ClearLinkedResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => wdttlink_ClearLinkedResult))),
-	success: v.optional(v.nullable(v.boolean())),
-});
-
-const wdttlink_ClearLinkedResult: v.GenericSchema = v.looseObject({
-	deletedTunnels: v.optional(v.nullable(v.array(v.string()))),
-	message: v.optional(v.nullable(v.string())),
-	tunnelErrors: v.optional(v.nullable(v.array(v.string()))),
-});
-
 const wdttlink_DecodeResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => wdttlink_LinkDecodeResult))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -2983,7 +2983,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"DELETE /managed-servers/{id}": v.lazy(() => api_ServersAllResponse),
 	"DELETE /managed-servers/{id}/peers/{pubkey}": v.lazy(() => api_ServersAllResponse),
 	"DELETE /proxy/instance": v.lazy(() => api_APIEnvelope),
-	"DELETE /proxyrt/instances/{key}": v.lazy(() => api_OkResponse),
+	"DELETE /proxyrt/instances/{key}": v.lazy(() => api_ProxyDeleteResponse),
 	"DELETE /proxyrt/instances/{key}/users": v.lazy(() => wdttusers_UsersStatusResponse),
 	"DELETE /proxyrt/instances/{key}/users/{password}": v.lazy(() => wdttusers_UsersStatusResponse),
 	"DELETE /proxyrt/seed/listen-moves": v.lazy(() => api_OkResponse),
@@ -3245,7 +3245,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /proxyrt/instances/{key}/apply": v.lazy(() => api_OkResponse),
 	"POST /proxyrt/instances/{key}/ensure-wg-tunnel": v.lazy(() => wdttlink_EnsureWGResponse),
 	"POST /proxyrt/instances/{key}/link": v.lazy(() => wdttlink_LinkResponse),
-	"POST /proxyrt/instances/{key}/linked-tunnels/clear": v.lazy(() => wdttlink_ClearLinkedResponse),
 	"POST /proxyrt/instances/{key}/subscription/refresh": v.lazy(() => subscription_RefreshResponse),
 	"POST /proxyrt/instances/{key}/users": v.lazy(() => wdttusers_UsersStatusResponse),
 	"POST /proxyrt/wdtt/link/decode": v.lazy(() => wdttlink_DecodeResponse),

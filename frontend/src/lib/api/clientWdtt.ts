@@ -22,7 +22,6 @@ import {
 } from './proxyInstances';
 
 export type WdttDeleteClientResult = {
-	message?: string;
 	deletedTunnels?: string[];
 	tunnelErrors?: string[];
 };
@@ -78,19 +77,10 @@ export class WdttClient extends FreeturnClient {
 		return { id: view.id, name: view.name, config: toWdttClientConfig(view) };
 	}
 
-	/**
-	 * Удаление клиента: связанные AWG-туннели сносит своя ручка, удаление
-	 * инстанса их не трогает. Порядок «сначала связи, потом инстанс» —
-	 * уборщик ищет туннели по id ЖИВОЙ записи.
-	 */
+	/** Удаление клиента: связанные AWG-туннели уносит бэкенд тем же запросом. */
 	async deleteWdttClient(id: string): Promise<WdttDeleteClientResult> {
-		const cleared = await this.proxyClearLinkedTunnels('wdtt-client', id);
-		await this.proxyDelete('wdtt-client', id);
-		return {
-			message: cleared.message,
-			deletedTunnels: cleared.deletedTunnels,
-			tunnelErrors: cleared.tunnelErrors
-		};
+		const res = await this.proxyDelete('wdtt-client', id);
+		return { deletedTunnels: res.deletedTunnels, tunnelErrors: res.tunnelErrors };
 	}
 
 	async renameWdttClient(id: string, name: string): Promise<void> {

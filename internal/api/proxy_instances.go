@@ -91,9 +91,10 @@ type ProxyRtSeedView struct {
 	// инстансы не перенесены. Признак отдельный от Error: только по имени
 	// файла интерфейс может сказать, ЧЬИ инстансы потеряны.
 	Skipped []ProxyRtSkippedSourceView `json:"skipped,omitempty"`
-	// MovedListen — инстансы, которым посев сменил listen-адрес, разводя
-	// конфликт за порт. Молчать нельзя: снаружи мог быть настроен клиент на
-	// прежний порт.
+	// MovedListen — инстансы, которым СМЕНИЛИ listen-адрес, разводя конфликт
+	// за порт. Источников ЧЕТЫРЕ: посев, боот, создание и правка инстанса.
+	// Молчать нельзя:
+	// снаружи мог быть настроен клиент на прежний порт.
 	MovedListen []ProxyRtListenMoveView `json:"movedListen,omitempty"`
 }
 
@@ -103,7 +104,8 @@ type ProxyRtSkippedSourceView struct {
 	Reason string `json:"reason,omitempty" example:"invalid character 'н'"`
 }
 
-// ProxyRtListenMoveView — один переезд listen-адреса, сделанный посевом.
+// ProxyRtListenMoveView — один переезд listen-адреса (посев, боот, создание
+// или правка).
 type ProxyRtListenMoveView struct {
 	Instance string `json:"instance" example:"freeturn-client:default"`
 	Name     string `json:"name,omitempty" example:"Клиент"`
@@ -240,6 +242,28 @@ type ProxyInstancesDeps struct {
 	// означает «гейта нет»: до проводки поверхность не имеет права запрещать
 	// то, чего не умеет проверить.
 	OpkgTunSupported func() bool
+	// Cleaners — уборщики связанных AWG-туннелей ПО РОЛИ. Карта содержит
+	// только клиентские роли: у сервера связанных туннелей не бывает, и
+	// отсутствие ключа — штатный «убирать нечего», а не дефект проводки.
+	//
+	// Живёт здесь, потому что инвариант «клиент уходит вместе со своими
+	// туннелями» обязан держаться на КАЖДОМ пути удаления. Пока его держал
+	// фронт двумя вызовами подряд (своя ручка очистки, затем удаление),
+	// удаление мимо панели оставляло карточку туннеля навсегда: уборка ищет
+	// туннели по id инстанса, а инстанса уже нет. Отдельной ручки очистки
+	// больше нет — этот путь единственный.
+	Cleaners map[instancestore.Kind]LinkedTunnelCleaner
+}
+
+// LinkedTunnelCleaner — снос AWG-туннелей, связанных с ОДНИМ клиентским
+// инстансом. Узкий консюмерский срез: пакет api не тянет proxyapp ради одного
+// метода, прод-реализацию подставляет проводка.
+type LinkedTunnelCleaner interface {
+	// DeleteLinked сносит туннели, связанные с clientID (это Record.ID, а не
+	// Key). Живая запись инстанса ему не нужна — он сканирует хранилище
+	// туннелей, — поэтому звать его можно и после захвата записи, до её
+	// удаления.
+	DeleteLinked(ctx context.Context, clientID string) (deleted []string, errs []string)
 }
 
 // ProxyInstancesHandler обслуживает /api/proxyrt/instances*.
@@ -496,32 +520,83 @@ func (h *ProxyInstancesHandler) patch(w http.ResponseWriter, r *http.Request, ke
 	h.respondRecord(w, key)
 }
 
+// ProxyDeleteData — тело ответа удаления инстанса: что снесено вместе с ним.
+type ProxyDeleteData struct {
+	Ok bool `json:"ok" example:"true"`
+	// DeletedTunnels — id связанных AWG-туннелей, снятых вместе с инстансом.
+	DeletedTunnels []string `json:"deletedTunnels,omitempty"`
+	// TunnelErrors — туннели, которые снять не удалось. Удаление инстанса они
+	// НЕ отменяют (решение прежнее: запирать удаление из-за них пользователь
+	// не просил), но и молча теряться не имеют права — иначе рассинхрон
+	// «инстанса нет, карточка есть» остаётся необъяснённым.
+	TunnelErrors []string `json:"tunnelErrors,omitempty"`
+}
+
+// ProxyDeleteErrorEnvelope — отказ удаления, который всё же снял связанные
+// туннели: `data` заполнена тем, что успело удалиться до отказа.
+type ProxyDeleteErrorEnvelope struct {
+	Error   bool            `json:"error" example:"true"`
+	Message string          `json:"message"`
+	Code    string          `json:"code"`
+	Data    ProxyDeleteData `json:"data"`
+}
+
+// ProxyDeleteResponse — конверт удаления инстанса.
+type ProxyDeleteResponse struct {
+	Success bool            `json:"success" example:"true"`
+	Data    ProxyDeleteData `json:"data"`
+}
+
 // remove — DELETE /api/proxyrt/instances/{key}
 //
-//	@Summary		Удалить прокси-инстанс
-//	@Description	Порядок сноса (teardown → ожидание → запись → уборка) держит менеджер.
+//	@Summary		Удалить прокси-инстанс вместе со связанными AWG-туннелями
+//	@Description	Порядок сноса самого инстанса (teardown → ожидание → запись → уборка) держит менеджер.
+//	@Description	Связанные AWG-туннели снимает сам handler, ДО удаления записи, и отчитывается
+//	@Description	о них в теле ответа. Отказ уборки туннелей удаление инстанса не отменяет.
 //	@Tags			proxyrt
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			key	path		string	true	"Ключ инстанса (роль:id)"
-//	@Success		200	{object}	OkResponse
+//	@Success		200	{object}	ProxyDeleteResponse
 //	@Failure		404	{object}	APIErrorEnvelope
-//	@Failure		422	{object}	APIErrorEnvelope
+//	@Failure		422	{object}	ProxyDeleteErrorEnvelope
 //	@Failure		503	{object}	APIErrorEnvelope
 //	@Router			/proxyrt/instances/{key} [delete]
 func (h *ProxyInstancesHandler) remove(w http.ResponseWriter, r *http.Request, key string) {
 	if !h.requireSeeded(w) {
 		return
 	}
-	if _, ok := h.recordByKey(key); !ok {
+	rec, ok := h.recordByKey(key)
+	if !ok {
 		h.notFound(w, key)
 		return
 	}
-	if err := h.deps.Manager.Delete(r.Context(), key); err != nil {
-		h.fail(w, err)
+	// Связи снимаются ДО удаления записи, и порядок здесь несущий: уборщик
+	// намеренно пропускает зеркальную запись raw-клиента как проекцию ЖИВОГО
+	// инстанса (её уносит DropMirror внутри Manager.Delete). После удаления
+	// записи это рассуждение перестало бы быть верным.
+	var deleted, tunnelErrors []string
+	if c := h.deps.Cleaners[rec.Kind]; c != nil {
+		deleted, tunnelErrors = c.DeleteLinked(r.Context(), rec.ID)
+	} else if rec.Kind.IsClient() {
+		// Отсутствие уборщика у КЛИЕНТСКОЙ роли — дефект проводки, а не
+		// «убирать нечего»: молча удалив инстанс, мы оставили бы его туннель
+		// сиротой навсегда и отчитались успехом: отказ громче тишины.
+		response.InternalError(w, "очистка связанных туннелей роли "+
+			string(rec.Kind)+" не подключена")
 		return
 	}
-	response.Success(w, OkData{Ok: true})
+	if err := h.deps.Manager.Delete(r.Context(), key); err != nil {
+		// Отказ ПОСЛЕ уборки: туннели уже сняты, инстанс остался. Молчать об
+		// этом нельзя — пользователь увидел бы «не удалилось» и исчезнувшую
+		// карточку туннеля, и объяснить расхождение ему было бы нечем.
+		// Повтор безопасен: уборщик идемпотентен, на второй попытке он найдёт
+		// ноль связанных туннелей.
+		h.failWithDeleted(w, err, deleted, tunnelErrors)
+		return
+	}
+	response.Success(w, ProxyDeleteData{Ok: true,
+		DeletedTunnels: deleted, TunnelErrors: tunnelErrors})
 }
 
 // AckListenMoves — DELETE /api/proxyrt/seed/listen-moves
@@ -599,12 +674,30 @@ func (h *ProxyInstancesHandler) notFound(w http.ResponseWriter, key string) {
 // остальное, что вернул менеджер, — это отказ ДО записи на диск, и ведущая его
 // причина — отвергнутое объявление выходов (требование 15).
 func (h *ProxyInstancesHandler) fail(w http.ResponseWriter, err error) {
+	status, msg, code := failStatus(err)
+	response.ErrorWithStatus(w, status, msg, code)
+}
+
+// failStatus — классификация ошибки мутации: статус, текст, код. Вынесена,
+// чтобы отказ с отчётом (failWithDeleted) не завёл вторую классификацию.
+func failStatus(err error) (int, string, string) {
 	var ge *proxyGateError
 	if errors.As(err, &ge) {
-		response.ErrorWithStatus(w, http.StatusUnprocessableEntity, ge.msg, ge.code)
-		return
+		return http.StatusUnprocessableEntity, ge.msg, ge.code
 	}
-	response.ErrorWithStatus(w, http.StatusUnprocessableEntity, err.Error(), proxyCodeDeclareFailed)
+	return http.StatusUnprocessableEntity, err.Error(), proxyCodeDeclareFailed
+}
+
+// failWithDeleted — тот же отказ, что и fail, но с отчётом о снятых туннелях.
+// Классификация статуса и кода ОДНА на оба пути (общий failStatus), иначе
+// «удаление отказало» отвечало бы разными кодами в зависимости от того,
+// успела ли уборка.
+func (h *ProxyInstancesHandler) failWithDeleted(w http.ResponseWriter, err error,
+	deleted, tunnelErrors []string,
+) {
+	status, msg, code := failStatus(err)
+	response.ErrorWithData(w, status, msg, code,
+		ProxyDeleteData{Ok: false, DeletedTunnels: deleted, TunnelErrors: tunnelErrors})
 }
 
 func (h *ProxyInstancesHandler) recordByKey(key string) (instancestore.Record, bool) {

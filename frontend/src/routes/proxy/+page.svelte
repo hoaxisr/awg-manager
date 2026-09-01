@@ -16,6 +16,7 @@
 		normalizeShareConfigs,
 		renameProxyInstance,
 		reportDeletedTunnels,
+		reportDeletedTunnelsFromError,
 		rowKey,
 		rowKeyFromInstanceKey,
 		seedGateWarning,
@@ -241,6 +242,9 @@
 			deleteTarget = null;
 			await Promise.all([loadConfigs(), loadStatuses()]);
 		} catch (e) {
+			// Отказ мог прийти ПОСЛЕ уборки связей: о снятых туннелях говорим
+			// и здесь, иначе карточка исчезнет без объяснения (PF23).
+			reportDeletedTunnelsFromError(e);
 			notifications.error(errText(e));
 		} finally {
 			deleting = false;

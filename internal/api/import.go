@@ -8,6 +8,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
 
 // ImportHandler handles config import operations.
@@ -109,17 +110,24 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tunnel, err := h.svc.Import(r.Context(), req.Content, req.Name, req.Backend)
+	tunnel, err := h.svc.Import(r.Context(), req.Content, req.Name, req.Backend, service.ImportLink{
+		WdttClientID:     req.WdttClientID,
+		FreeTurnClientID: req.FreeTurnClientID,
+	})
 	if err != nil {
 		h.log.Warn("import", req.Name, "Failed to import tunnel: "+err.Error())
 		response.Error(w, err.Error(), "IMPORT_FAILED")
 		return
 	}
 
-	// Post-import defaults: PingCheck + optional freeturn link tag.
-	// Отказ записи НЕ отменяет импорт (туннель уже заведён, и IMPORT_FAILED
-	// спровоцировал бы повторный импорт дубликатом), но и не глотается —
-	// профиль F48, а не F47.
+	// Post-import defaults: PingCheck. Отказ записи НЕ отменяет импорт (туннель
+	// уже заведён, и IMPORT_FAILED спровоцировал бы повторный импорт
+	// дубликатом), но и не глотается — профиль F48, а не F47.
+	//
+	// Связей здесь БОЛЬШЕ НЕТ: они уехали в сам Create через service.ImportLink.
+	// Разница принципиальная — умолчание, не доехавшее до записи, читается как
+	// «пользователь его не включал», а не доехавшая связь делает туннель
+	// сиротой, которого не видит уборка связанных.
 	if err := h.store.Update(tunnel.ID, func(stored *storage.AWGTunnel) error {
 		changed := false
 		if h.pingCheck != nil && stored.PingCheck == nil {
@@ -134,14 +142,6 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 				Timeout:       5,
 				Restart:       true,
 			}
-			changed = true
-		}
-		if id := strings.TrimSpace(req.FreeTurnClientID); id != "" {
-			stored.FreeTurnClientID = id
-			changed = true
-		}
-		if id := strings.TrimSpace(req.WdttClientID); id != "" {
-			stored.WdttClientID = id
 			changed = true
 		}
 		if !changed {

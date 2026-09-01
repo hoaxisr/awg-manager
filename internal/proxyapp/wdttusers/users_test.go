@@ -2,6 +2,7 @@ package wdttusers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
@@ -380,6 +382,34 @@ func TestSyncOnStart_MaterializesAfterMutations(t *testing.T) {
 	doc := st.file(t)
 	if doc.Passwords["client1"].Label != "Иван" {
 		t.Fatalf("файл не переписан: %#v", doc.Passwords)
+	}
+}
+
+// PF18: сервер без единого РАБОЧЕГО абонента не должен стартовать — форк
+// падает в log.Fatalf на пустом passwords.json. Гейт на путях UI держал только
+// фронт (SH-91), запрос мимо панели уходил в падение демона.
+func TestSyncOnStart_RefusesServerWithoutUsableClients(t *testing.T) {
+	st := newStand(t, baseCfg()) // абонентов нет вовсе
+	err := st.svc.SyncOnStart(context.Background(), testKey)
+	if err == nil {
+		t.Fatal("сервер без абонентов принят молча — форк упадёт в log.Fatalf")
+	}
+	if !strings.Contains(err.Error(), "рабочего абонента") {
+		t.Fatalf("причина отказа не названа: %v", err)
+	}
+	// Файл обязан быть переписан ДО отказа: иначе на диске остались бы пароли,
+	// которых в записи уже нет.
+	if got := st.file(t).Passwords; len(got) != 0 {
+		t.Fatalf("passwords.json не приведён к пустому составу: %#v", got)
+	}
+}
+
+// Абонент с пустым паролем в passwords.json не попадает, значит стартовать
+// по-прежнему не с чем: гейт обязан считать РАБОЧИХ, а не все записи.
+func TestSyncOnStart_RefusesWhenNoClientIsUsable(t *testing.T) {
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "   ", Comment: "пустой"})
+	if err := st.svc.SyncOnStart(context.Background(), testKey); err == nil {
+		t.Fatal("сервер с одними непригодными абонентами принят молча")
 	}
 }
 
@@ -850,5 +880,112 @@ func TestAddWithoutOwnerPassword(t *testing.T) {
 	}
 	if len(got.Users) != 1 || got.Users[0].Password != "client1" {
 		t.Fatalf("состав абонентов: %+v", got.Users)
+	}
+}
+
+// Ревью ветки: отказ гейта (PF18) стоит ПОСЛЕ материализации, а путь старта
+// повторяется каждые 30 с, пока инстанс заблокирован. Безусловная запись
+// точила бы флеш роутера вечно на неизменном составе.
+func TestSyncOnStart_RepeatDoesNotRewriteUnchangedFiles(t *testing.T) {
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1", Comment: "Иван"})
+	if err := st.svc.SyncOnStart(context.Background(), testKey); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(st.dir, "passwords.json")
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Метка времени файловой системы слишком груба для соседних вызовов —
+	// сравниваем по ней ПОСЛЕ явного сдвига в прошлое: перезапись вернёт
+	// свежее время, пропуск оставит сдвинутое.
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.svc.SyncOnStart(context.Background(), testKey); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(old) {
+		t.Fatalf("файл переписан на неизменном составе: было %v, стало %v",
+			before.ModTime(), after.ModTime())
+	}
+}
+
+// Изменился состав — файл обязан обновиться: пропуск по совпадению не должен
+// превратиться в «не пишем никогда». Пинится путь Add (та же материализация,
+// что и на старте) — именно он меняет состав после первого SyncOnStart.
+func TestMaterializeRewritesWhenUsersChanged(t *testing.T) {
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1"})
+	if err := st.svc.SyncOnStart(context.Background(), testKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.svc.Add(context.Background(), testKey, "client2", "Второй", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.file(t).Passwords["client2"]; !ok {
+		t.Fatalf("новый абонент не доехал до файла: %#v", st.file(t).Passwords)
+	}
+}
+
+// PF26: админские учётные данные форка не переживают материализацию — это
+// исключение из слияния и его цель, а не упущение. Раньше поведение было
+// молчаливым: докстрока обещала «всё чужое переживает запись», а три поля
+// стирались, и ни один тест этого не держал.
+func TestMaterialize_StripsForkAdminCredentials(t *testing.T) {
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1"})
+	// Сырой файл: admin_id и bot_token в нашей структуре не объявлены вовсе,
+	// через writePasswordsFixture их не записать.
+	raw := `{
+  "main_password": "секрет-владельца",
+  "admin_id": "123456",
+  "bot_token": "111:AAA",
+  "passwords": {"client1": {"label": "старое", "down_bytes": 42, "device_ids": ["d1"]}},
+  "devices": {"d1": {"ip": "10.66.0.7"}}
+}`
+	if err := os.MkdirAll(st.dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(passwordsJSONPath(st.dir), []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.svc.Materialize(st.rec(t)); err != nil {
+		t.Fatal(err)
+	}
+
+	var got map[string]any
+	data, err := os.ReadFile(passwordsJSONPath(st.dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["main_password"] != "" {
+		t.Errorf("главный пароль форка пережил запись: %v", got["main_password"])
+	}
+	for _, k := range []string{"admin_id", "bot_token"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("%s пережил запись: чужой админ-доступ сохранён", k)
+		}
+	}
+	// Вторая половина: НЕадминские чужие данные обязаны пережить — иначе
+	// «починкой» была бы наивная пересборка, которую слияние и не допускает.
+	// Устройство привязано к абоненту через device_ids: несвязанное снесла бы
+	// штатная прополка сирот (dropOrphanPasswordsDevices), и тест поймал бы
+	// не то.
+	devices, _ := got["devices"].(map[string]any)
+	if _, ok := devices["d1"]; !ok {
+		t.Errorf("привязка устройства снесена вместе с админскими полями: %v", got["devices"])
+	}
+	pw, _ := got["passwords"].(map[string]any)
+	entry, _ := pw["client1"].(map[string]any)
+	if entry == nil || entry["down_bytes"] == nil {
+		t.Errorf("счётчики трафика форка не пережили запись: %v", pw)
 	}
 }

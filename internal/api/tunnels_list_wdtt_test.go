@@ -42,7 +42,7 @@ func (s *listSvcStub) GetState(context.Context, string) tunnel.StateInfo {
 }
 func (s *listSvcStub) SetEnabled(context.Context, string, bool) error      { return nil }
 func (s *listSvcStub) SetDefaultRoute(context.Context, string, bool) error { return nil }
-func (s *listSvcStub) Import(context.Context, string, string, string) (*service.TunnelWithStatus, error) {
+func (s *listSvcStub) Import(context.Context, string, string, string, service.ImportLink) (*service.TunnelWithStatus, error) {
 	return nil, nil
 }
 func (s *listSvcStub) ReplaceConfig(context.Context, string, string, string) error { return nil }

@@ -139,10 +139,11 @@ type SeedInfo struct {
 	// вот сказать пользователю, ЧЬИ инстансы не перенеслись, можно только по
 	// имени файла.
 	Skipped []instancestore.SkippedSource
-	// MovedListen — инстансы, которым посев сменил listen-адрес, разводя
-	// конфликт за порт (амендмент G3). Признак живёт рядом со Skipped и по той
-	// же причине: снаружи мог быть настроен клиент на прежний порт, и узнать о
-	// переезде человек обязан.
+	// MovedListen — инстансы, которым СМЕНИЛИ listen-адрес, разводя
+	// конфликт за порт. Источников ЧЕТЫРЕ: посев (у подсистем совпадал
+	// дефолтный порт), боот (порт отняла чужая запись), создание и правка
+	// инстанса. Наружу — ради журнала и признака в поверхности статуса:
+	// снаружи мог быть настроен клиент на прежний порт.
 	MovedListen []instancestore.ListenMove
 }
 
@@ -400,6 +401,21 @@ func (m *Manager) Boot(ctx context.Context) error {
 	return nil
 }
 
+// listenMoveIfRejected — переезд, если аллокатор ОТВЕРГ намерение по listen.
+// Пусто, когда намерения не было (создание без порта, серверная роль) или
+// когда аллокатор отдал желаемое как есть.
+//
+// Один предикат на всех писателей `MovedListen`: копий было три (боот,
+// создание, правка), и забытая четвёртая — как раз тот дефект, из-за которого
+// правка молчала о переезде. Правило «переезд = отвергнутое намерение», а не
+// «значение изменилось»: осознанную смену порта плашка объявляла бы занятостью.
+func listenMoveIfRejected(key, name, want, got string) []instancestore.ListenMove {
+	if want == "" || got == want {
+		return nil
+	}
+	return []instancestore.ListenMove{{Instance: key, Name: name, From: want, To: got}}
+}
+
 // dropMove — переезды без записи об инстансе key.
 func dropMove(moves []instancestore.ListenMove, key string) []instancestore.ListenMove {
 	out := moves[:0]
@@ -418,15 +434,20 @@ func dropMove(moves []instancestore.ListenMove, key string) []instancestore.List
 // Признание стирает их с диска: без него плашка висела вечно, потому что
 // посев не повторяется и переписать свою отметку некому.
 func (m *Manager) AckListenMoves() error {
-	if _, err := m.mutateStore(func(state *instancestore.State) error {
+	// Диск и снимок в памяти — ОДНОЙ критической секцией. Двумя подряд между
+	// ними успевала вклиниться правка, двигающая порт: она записывала свежий
+	// переезд и на диск, и в кэш, а второй шаг признания стирал кэш вместе с
+	// ним — плашка про новый переезд не показалась бы до перезапуска демона.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st, err := m.mutateStoreLocked(func(state *instancestore.State) error {
 		state.MovedListen = nil
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
-	m.mu.Lock()
-	m.moved = nil
-	m.mu.Unlock()
+	m.moved = st.MovedListen
 	return nil
 }
 
@@ -568,9 +589,15 @@ func (m *Manager) reconcileBootListen(list *[]instancestore.Record) []instancest
 		if next == *cur {
 			continue
 		}
-		moves = append(moves, instancestore.ListenMove{
-			Instance: key, Name: recs[i].Name, From: *cur, To: next})
+		// ЗАПИСЬ и УВЕДОМЛЕНИЕ — разные решения, и путать их нельзя. Порт
+		// персистится всегда, когда аллокатор дал другое значение: на бооте
+		// сюда попадает и запись с ПУСТЫМ listen (посев копирует его из
+		// старого конфига вербатим), а без записи она осталась бы пустой, и
+		// ресурс listen валил бы инстанс на каждом бооте.
 		want[key] = next
+		// Уведомляют только об отвергнутом намерении: выдача порта на пустом
+		// месте переездом не является — сообщать человеку не о чем.
+		moves = append(moves, listenMoveIfRejected(key, recs[i].Name, *cur, next)...)
 	}
 	if len(want) == 0 {
 		return nil
@@ -597,7 +624,7 @@ func (m *Manager) reconcileBootListen(list *[]instancestore.Record) []instancest
 	return moves
 }
 
-// mutateStore — общий каркас мутаций: кандидат → объявление → запись.
+// Каркас мутаций стора: кандидат → объявление → запись.
 // Порядок «объявление до записи» — требование 15: отказ реестра отклоняет
 // операцию, пока диск не тронут. КОМПЕНСАЦИИ при отказе ДИСКА после
 // успешного объявления НЕТ (снята по ревью как излишество): остаточное
@@ -610,12 +637,11 @@ func errNotBooted(seedErr string) error {
 	return fmt.Errorf("прокси-подсистема не загружена (посев не прошёл: %s) — мутации отклоняются: ведомость была бы неполной", seedErr)
 }
 
-func (m *Manager) mutateStore(mutate func(*instancestore.State) error) (instancestore.State, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.mutateStoreLocked(mutate)
-}
-
+// mutateStoreLocked зовётся ПОД `m.mu` и своего захвата не делает: у каждого писателя
+// снимок в памяти (`m.moved`) обновляется ТОЙ ЖЕ секцией, что и диск, иначе
+// чужая параллельная правка теряется из кэша до перезапуска демона.
+// Обёртка «сама возьму лок» была здесь же и умерла вместе с последним
+// вызывающим — Delete переехал на эту форму.
 func (m *Manager) mutateStoreLocked(mutate func(*instancestore.State) error) (instancestore.State, error) {
 	if !m.booted {
 		return instancestore.State{}, errNotBooted(m.seedErr)
@@ -649,6 +675,15 @@ func (m *Manager) Create(ctx context.Context, rec instancestore.Record) error {
 	if err := control.ValidateInstance(rec.ID); err != nil {
 		return err
 	}
+	// Намерение по listen — ДО аллокатора, как на пути правки: переезд это
+	// когда аллокатор ОТВЕРГ желаемый порт. У создания без явного listen
+	// намерение пусто, и переезда не будет; но поле принимается и прямым
+	// API-запросом, а молчать о подмене заданного порта нельзя ровно так же,
+	// как на бооте и на правке — канал уведомления один на все пути.
+	wantListen := ""
+	if p := instancestore.ClientListen(&rec); p != nil {
+		wantListen = *p
+	}
 	m.mu.Lock()
 	allocated, err := m.ensurePins(&rec)
 	m.mu.Unlock()
@@ -656,10 +691,23 @@ func (m *Manager) Create(ctx context.Context, rec instancestore.Record) error {
 		m.deps.ReleasePins(allocated...)
 		return err
 	}
-	st, err := m.mutateStore(func(state *instancestore.State) error {
+	var moved []instancestore.ListenMove
+	if p := instancestore.ClientListen(&rec); p != nil {
+		moved = listenMoveIfRejected(rec.Key(), rec.Name, wantListen, *p)
+	}
+	// Диск и снимок в памяти — ОДНОЙ секцией, по той же причине, что и в
+	// AckListenMoves: между двумя подряд успевает вклиниться чужая правка, и
+	// её переезд выпал бы из кэша, оставшись только на диске.
+	m.mu.Lock()
+	st, err := m.mutateStoreLocked(func(state *instancestore.State) error {
 		state.Records = append(state.Records, rec)
+		state.MovedListen = append(state.MovedListen, moved...)
 		return nil
 	})
+	if err == nil && len(moved) > 0 {
+		m.moved = st.MovedListen
+	}
+	m.mu.Unlock()
 	if err != nil {
 		// Н6: запись не легла — свежие пины отдаются, иначе held течёт до
 		// рестарта и индексы «заняты» несуществующим инстансом.
@@ -749,14 +797,36 @@ func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (
 	if err := mutate(&cand); err != nil {
 		return nil, err
 	}
+	// НАМЕРЕНИЕ по listen снимается ПОСЛЕ мутатора и ДО ensurePins: переезд —
+	// это когда аллокатор ОТВЕРГ желаемый порт, а не когда порт поменяли
+	// намеренно. Сравнение с прежним значением (первая редакция) объявляло бы
+	// переездом и осознанную смену порта через API, и плашка врала бы
+	// пользователю «порт был занят».
+	wantListen := ""
+	if p := instancestore.ClientListen(&cand); p != nil {
+		wantListen = *p
+	}
 	if allocated, err = m.ensurePins(&cand); err != nil { // Щ1: wg→raw и пустой listen
 		return allocated, err
+	}
+	// PF16: канал уведомления о переезде ОДИН на все пути. Боот пишет свои
+	// переезды в MovedListen (reconcileBootListen), правка молчала — при том
+	// что снаружи мог быть настроен клиент на прежний адрес, и молчание здесь
+	// стоит ровно столько же, сколько молчание там.
+	//
+	// Пустое намерение пропускается: у создания порта ещё нет, «переезд с
+	// ничего» — не переезд. Роли без своего listen (серверные) отсеивает сам
+	// ClientListen, возвращая nil.
+	var moved []instancestore.ListenMove
+	if p := instancestore.ClientListen(&cand); p != nil {
+		moved = listenMoveIfRejected(key, cand.Name, wantListen, *p)
 	}
 
 	st, err := m.mutateStoreLocked(func(state *instancestore.State) error {
 		for i := range state.Records {
 			if state.Records[i].Key() == key {
 				state.Records[i] = cand
+				state.MovedListen = append(state.MovedListen, moved...)
 				return nil
 			}
 		}
@@ -766,6 +836,9 @@ func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (
 	})
 	if err != nil {
 		return allocated, err
+	}
+	if len(moved) > 0 {
+		m.moved = st.MovedListen
 	}
 
 	// Выход, которого больше нет (смена режима raw→wg): ведомость его уже не
@@ -864,7 +937,11 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 	// не из lastRec: живого инстанса могло не быть вовсе (запись на диске без
 	// воркера), а имена интерфейсов нужны уборке ниже в обоих случаях.
 	var removed instancestore.Record
-	st, err := m.mutateStore(func(state *instancestore.State) error {
+	// Диск и снимок в памяти — ОДНОЙ секцией (как AckListenMoves и Create):
+	// двумя подряд между ними успевала вклиниться чужая правка, и её свежий
+	// переезд затирался бы нашим устаревшим снимком.
+	m.mu.Lock()
+	st, err := m.mutateStoreLocked(func(state *instancestore.State) error {
 		out := state.Records[:0]
 		found := false
 		for _, r := range state.Records {
@@ -885,6 +962,12 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 		state.MovedListen = dropMove(state.MovedListen, key)
 		return nil
 	})
+	if err == nil {
+		// Кэш переездов — В ТОЙ ЖЕ секции, что и диск: SeedInfo читает его, а
+		// на отказе транзакции менять его нечем.
+		m.moved = st.MovedListen
+	}
+	m.mu.Unlock()
 	if err != nil {
 		if ok { // воскрешение (замечание 6): запись осталась — инстанс обязан жить
 			m.mu.Lock()
@@ -899,12 +982,6 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 		}
 		return err
 	}
-
-	// Кэш переездов идёт следом за диском: SeedInfo читает его, и без этой
-	// строки плашка про удалённый инстанс дожила бы до перезапуска демона.
-	m.mu.Lock()
-	m.moved = st.MovedListen
-	m.mu.Unlock()
 
 	// Зеркальная запись — адресно, а не ведомостью: Sweep реестра заперт
 	// гейтом посева, гейт монотонен, и запись пережила бы удаление инстанса

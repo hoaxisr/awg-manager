@@ -2703,6 +2703,46 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.ProxyDeleteData:
+    properties:
+      deletedTunnels:
+        description: DeletedTunnels — id связанных AWG-туннелей, снятых вместе с инстансом.
+        items:
+          type: string
+        type: array
+      ok:
+        example: true
+        type: boolean
+      tunnelErrors:
+        description: |-
+          TunnelErrors — туннели, которые снять не удалось. Удаление инстанса они
+          НЕ отменяют (решение прежнее: запирать удаление из-за них пользователь
+          не просил), но и молча теряться не имеют права — иначе рассинхрон
+          «инстанса нет, карточка есть» остаётся необъяснённым.
+        items:
+          type: string
+        type: array
+    type: object
+  api.ProxyDeleteErrorEnvelope:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/api.ProxyDeleteData'
+      error:
+        example: true
+        type: boolean
+      message:
+        type: string
+    type: object
+  api.ProxyDeleteResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.ProxyDeleteData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.ProxyInstanceResponse:
     properties:
       data:
@@ -2892,9 +2932,10 @@ definitions:
         type: string
       movedListen:
         description: |-
-          MovedListen — инстансы, которым посев сменил listen-адрес, разводя
-          конфликт за порт. Молчать нельзя: снаружи мог быть настроен клиент на
-          прежний порт.
+          MovedListen — инстансы, которым СМЕНИЛИ listen-адрес, разводя конфликт
+          за порт. Источников ЧЕТЫРЕ: посев, боот, создание и правка инстанса.
+          Молчать нельзя:
+          снаружи мог быть настроен клиент на прежний порт.
         items:
           $ref: '#/definitions/api.ProxyRtListenMoveView'
         type: array
@@ -7682,28 +7723,6 @@ definitions:
       payload:
         $ref: '#/definitions/wdttlink.ImportPayload'
     type: object
-  wdttlink.ClearLinkedResponse:
-    properties:
-      data:
-        $ref: '#/definitions/wdttlink.ClearLinkedResult'
-      success:
-        example: true
-        type: boolean
-    type: object
-  wdttlink.ClearLinkedResult:
-    properties:
-      deletedTunnels:
-        items:
-          type: string
-        type: array
-      message:
-        example: linked AWG tunnels cleared
-        type: string
-      tunnelErrors:
-        items:
-          type: string
-        type: array
-    type: object
   wdttlink.DecodeResponse:
     properties:
       data:
@@ -11701,7 +11720,10 @@ paths:
       - proxyrt
   /proxyrt/instances/{key}:
     delete:
-      description: Порядок сноса (teardown → ожидание → запись → уборка) держит менеджер.
+      description: |-
+        Порядок сноса самого инстанса (teardown → ожидание → запись → уборка) держит менеджер.
+        Связанные AWG-туннели снимает сам handler, ДО удаления записи, и отчитывается
+        о них в теле ответа. Отказ уборки туннелей удаление инстанса не отменяет.
       parameters:
       - description: Ключ инстанса (роль:id)
         in: path
@@ -11714,7 +11736,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.OkResponse'
+            $ref: '#/definitions/api.ProxyDeleteResponse'
         "404":
           description: Not Found
           schema:
@@ -11722,14 +11744,14 @@ paths:
         "422":
           description: Unprocessable Entity
           schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
+            $ref: '#/definitions/api.ProxyDeleteErrorEnvelope'
         "503":
           description: Service Unavailable
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
-      summary: Удалить прокси-инстанс
+      summary: Удалить прокси-инстанс вместе со связанными AWG-туннелями
       tags:
       - proxyrt
     get:
@@ -11897,34 +11919,6 @@ paths:
       security:
       - CookieAuth: []
       summary: Выдать ссылку абоненту серверного инстанса
-      tags:
-      - proxyrt
-  /proxyrt/instances/{key}/linked-tunnels/clear:
-    post:
-      parameters:
-      - description: Ключ инстанса (роль:id)
-        in: path
-        name: key
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/wdttlink.ClearLinkedResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Снять AWG-туннели, связанные с клиентским инстансом
       tags:
       - proxyrt
   /proxyrt/instances/{key}/subscription/refresh:
