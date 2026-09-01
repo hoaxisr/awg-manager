@@ -156,13 +156,6 @@ func (s *Service) serverRecord(key string) (instancestore.Record, roles.WdttServ
 // форку и обязано пережить запись. Наивная пересборка из Record.Users обнулила
 // бы всё это разом.
 func (s *Service) Materialize(rec instancestore.Record) error {
-	return s.materialize(rec)
-}
-
-// materialize — тот же путь с ЭФФЕКТИВНЫМ главным паролем: у добавления
-// пришедший формой пароль ещё не сохранён в запись, а предикат пригодности
-// сверяется именно с ним.
-func (s *Service) materialize(rec instancestore.Record) error {
 	cfg, err := rec.WdttServerConfig()
 	if err != nil {
 		return err
@@ -401,7 +394,7 @@ func (s *Service) Add(ctx context.Context, key, password, comment, vkHash string
 	if rec, err = s.reread(key); err != nil {
 		return UsersStatus{}, err
 	}
-	if err := s.materialize(rec); err != nil {
+	if err := s.Materialize(rec); err != nil {
 		// Частичный успех: абонент уже в записи (строкой выше) и оттуда никуда
 		// не денется — старт сервера перепишет файл сам.
 		return UsersStatus{}, fmt.Errorf("%w: %w", ErrFileNotWritten, err)
@@ -702,7 +695,7 @@ func userPasswordFree(users []instancestore.ServerUser, password string) error {
 // останется, а до неё они были. Обе величины считает UsableUsers: собственный
 // отбор здесь разошёлся бы с тем, что уезжает в passwords.json.
 //
-// Если рабочих не было и до операции (единственный абонент просрочен), она
+// Если рабочих не было и до операции (единственный абонент непригоден), она
 // разрешена: запрещать выход из уже сломанного состояния бессмысленно.
 // Проверка живёт здесь, а не только в UI: инвариант обязан держаться и для
 // запросов мимо нашего фронта.
