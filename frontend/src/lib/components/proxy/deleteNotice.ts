@@ -29,3 +29,18 @@ export function reportDeletedTunnels(deleted?: string[], errors?: string[]): voi
 		notifications.error(`Не удалось удалить туннели: ${tunnelErrorNames(errors).join(', ')}`);
 	}
 }
+
+/**
+ * Отчёт об уборке из ОТКАЗА удаления (PF23). Бэкенд кладёт его в тот же
+ * конверт, в поле `data`, а клиент отдаёт всё тело ошибки в `err.body` —
+ * поэтому читать его можно без своей формы ответа.
+ *
+ * Зачем вообще: удаление многошаговое, и падение второго шага не отменяет
+ * первый. Туннели уже сняты, инстанс остался — сказать только «не удалось»
+ * значит оставить человека с исчезнувшей карточкой туннеля и без объяснения.
+ */
+export function reportDeletedTunnelsFromError(e: unknown): void {
+	const body = (e as { body?: { data?: { deletedTunnels?: string[]; tunnelErrors?: string[] } } })
+		?.body;
+	reportDeletedTunnels(body?.data?.deletedTunnels, body?.data?.tunnelErrors);
+}

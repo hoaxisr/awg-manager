@@ -39,26 +39,6 @@ type Mutator interface {
 // снимщик, что у ручек инстансов. Второй результат — «снимка нет».
 type Snapshots func(key string) (awgmproto.State, bool)
 
-// LinkedCleaner — снос AWG-туннелей, связанных с ОДНИМ клиентом.
-//
-// Потребитель держит КАРТУ уборщиков по роли, а не одиночную реализацию: поле
-// связи у подсистем разное (storage.AWGTunnel.WdttClientID против
-// FreeTurnClientID), и один уборщик на обе роли физически не может выбрать
-// поле — clientID роли не несёт.
-type LinkedCleaner interface {
-	// DeleteLinked сносит туннели, связанные с clientID (это Record.ID, а НЕ
-	// Key: на id ссылается поле связи туннеля).
-	//
-	// Две обязанности прод-обёртки, которые типом не выражаются и потому
-	// названы здесь: (1) снять историю трафика каждого снесённого туннеля;
-	// (2) опубликовать список туннелей в шину событий, иначе снос для фронта
-	// не случится. Третья — быть ГРОМКОЙ: при неподключённом хранилище
-	// причина обязана уехать в errs. Старый deleteLinkedAwgTunnels отвечал в
-	// этом случае «удалено ноль», и очистка выглядела успешной, ничего не
-	// сделав.
-	DeleteLinked(ctx context.Context, clientID string) (deleted []string, errs []string)
-}
-
 // TunnelImporter — узкий срез туннельной подсистемы, нужный ensure-wg.
 // Прод-обёртку (поверх storage.AWGTunnelStore и tunnel/service) строит
 // проводка.
@@ -78,7 +58,7 @@ type TunnelImporter interface {
 	// Import создаёт туннель СРАЗУ связанным: clientID уезжает в ту же запись,
 	// что и сам туннель. Отдельного «дописать связь» здесь нет намеренно —
 	// оно оставляло окно, в котором туннель уже создан, а связи ещё нет, и
-	// такой туннель невидим для уборки связанных (`LinkedCleaner`).
+	// такой туннель невидим для уборки связанных (api.LinkedTunnelCleaner).
 	Import(ctx context.Context, conf, name, clientID string) (tunnelID, tunnelName string, err error)
 	Start(ctx context.Context, tunnelID string) error
 	// ForgetTraffic снимает историю трафика удалённого туннеля: id
@@ -95,8 +75,6 @@ type Deps struct {
 	Mutator   Mutator
 	Snapshots Snapshots
 	Tunnels   TunnelImporter
-	// Cleaners — уборщики связанных туннелей ПО РОЛИ (см. LinkedCleaner).
-	Cleaners map[instancestore.Kind]LinkedCleaner
 	// Builders — диспетчер ручки ссылки по роли записи; собирает проводка
 	// (wdtt-server — Builder этого пакета, freeturn-server — свой пакет).
 	Builders map[instancestore.Kind]LinkBuilder
@@ -155,19 +133,6 @@ type LinkResult struct {
 type LinkResponse struct {
 	Success bool       `json:"success" example:"true"`
 	Data    LinkResult `json:"data"`
-}
-
-// ClearLinkedResult — тело очистки связей.
-type ClearLinkedResult struct {
-	DeletedTunnels []string `json:"deletedTunnels"`
-	TunnelErrors   []string `json:"tunnelErrors"`
-	Message        string   `json:"message" example:"linked AWG tunnels cleared"`
-}
-
-// ClearLinkedResponse — конверт очистки связей.
-type ClearLinkedResponse struct {
-	Success bool              `json:"success" example:"true"`
-	Data    ClearLinkedResult `json:"data"`
 }
 
 // EnsureWGResponse — конверт подготовки связанного WG-туннеля.
@@ -347,52 +312,6 @@ func (h *Handler) Link(w http.ResponseWriter, r *http.Request, key string) {
 }
 
 // ── очистка связей ───────────────────────────────────────────────
-
-// ClearLinkedTunnels — POST /api/proxyrt/instances/{key}/linked-tunnels/clear.
-// Форма ответа прежняя (api/wdtt_linked_clear.go:26-30).
-//
-//	@Summary	Снять AWG-туннели, связанные с клиентским инстансом
-//	@Tags		proxyrt
-//	@Produce	json
-//	@Security	CookieAuth
-//	@Param		key	path		string	true	"Ключ инстанса (роль:id)"
-//	@Success	200	{object}	ClearLinkedResponse
-//	@Failure	400	{object}	api.APIErrorEnvelope
-//	@Failure	404	{object}	api.APIErrorEnvelope
-//	@Router		/proxyrt/instances/{key}/linked-tunnels/clear [post]
-func (h *Handler) ClearLinkedTunnels(w http.ResponseWriter, r *http.Request, key string) {
-	if r.Method != http.MethodPost {
-		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
-		return
-	}
-	rec, ok := h.record(w, key)
-	if !ok {
-		return
-	}
-	// Роль записи сверяется ОБЯЗАТЕЛЬНО. Связь туннеля — id инстанса, а он
-	// уникален только ВНУТРИ роли: «default» есть у всех четырёх (докстрока
-	// instancestore.Record.Key). Без гейта запрос к СЕРВЕРУ default сносил бы
-	// туннели КЛИЕНТА default. В старом мире роль задавал сам путь
-	// (/wdtt/clients/{id}/…), здесь её задаёт только ключ.
-	if !rec.Kind.IsClient() {
-		response.Error(w, "инстанс "+key+": связанные AWG-туннели есть только у клиентов, роль "+
-			string(rec.Kind)+" их не заводит", "BAD_REQUEST")
-		return
-	}
-	cleaner := h.deps.Cleaners[rec.Kind]
-	if cleaner == nil {
-		// Молчаливое «удалено ноль» здесь — худший исход: пользователь считал
-		// бы связи снятыми.
-		response.InternalError(w, "очистка связанных туннелей роли "+string(rec.Kind)+" не подключена")
-		return
-	}
-	deleted, errs := cleaner.DeleteLinked(r.Context(), rec.ID)
-	response.Success(w, map[string]any{
-		"deletedTunnels": deleted,
-		"tunnelErrors":   errs,
-		"message":        "linked AWG tunnels cleared",
-	})
-}
 
 // ── ensure-wg ────────────────────────────────────────────────────
 

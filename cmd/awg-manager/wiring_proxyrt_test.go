@@ -712,7 +712,6 @@ func TestProxyInstancesDispatcherRoutesSubpaths(t *testing.T) {
 		},
 		link:     func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "link:"+key) },
 		ensureWG: func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "ensure:"+key) },
-		clear:    func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "clear:"+key) },
 		refresh:  func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "refresh:"+key) },
 	}.handler()
 
@@ -728,7 +727,9 @@ func TestProxyInstancesDispatcherRoutesSubpaths(t *testing.T) {
 		{"/api/proxyrt/instances/freeturn-server:d/allowlist/abc", "allowlist:freeturn-server:d"},
 		{"/api/proxyrt/instances/wdtt-server:d/link", "link:wdtt-server:d"},
 		{"/api/proxyrt/instances/wdtt-client:de/ensure-wg-tunnel", "ensure:wdtt-client:de"},
-		{"/api/proxyrt/instances/wdtt-client:de/linked-tunnels/clear", "clear:wdtt-client:de"},
+		// Своей ручки у связей нет (PF24): путь ведёт в общий обработчик
+		// инстансов, то есть в честный отказ, а не в тихое «сделали что-то».
+		{"/api/proxyrt/instances/wdtt-client:de/linked-tunnels/clear", "instances"},
 		{"/api/proxyrt/instances/wdtt-client:de/subscription/refresh", "refresh:wdtt-client:de"},
 		{"/api/proxyrt/instances/wdtt-client:de/неведомое", "instances"},
 	}

@@ -2882,17 +2882,6 @@ const subscription_RefreshResult: v.GenericSchema = v.looseObject({
 	payload: v.optional(v.nullable(v.lazy(() => wdttlink_ImportPayload))),
 });
 
-const wdttlink_ClearLinkedResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => wdttlink_ClearLinkedResult))),
-	success: v.optional(v.nullable(v.boolean())),
-});
-
-const wdttlink_ClearLinkedResult: v.GenericSchema = v.looseObject({
-	deletedTunnels: v.optional(v.nullable(v.array(v.string()))),
-	message: v.optional(v.nullable(v.string())),
-	tunnelErrors: v.optional(v.nullable(v.array(v.string()))),
-});
-
 const wdttlink_DecodeResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => wdttlink_LinkDecodeResult))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -3256,7 +3245,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /proxyrt/instances/{key}/apply": v.lazy(() => api_OkResponse),
 	"POST /proxyrt/instances/{key}/ensure-wg-tunnel": v.lazy(() => wdttlink_EnsureWGResponse),
 	"POST /proxyrt/instances/{key}/link": v.lazy(() => wdttlink_LinkResponse),
-	"POST /proxyrt/instances/{key}/linked-tunnels/clear": v.lazy(() => wdttlink_ClearLinkedResponse),
 	"POST /proxyrt/instances/{key}/subscription/refresh": v.lazy(() => subscription_RefreshResponse),
 	"POST /proxyrt/instances/{key}/users": v.lazy(() => wdttusers_UsersStatusResponse),
 	"POST /proxyrt/wdtt/link/decode": v.lazy(() => wdttlink_DecodeResponse),

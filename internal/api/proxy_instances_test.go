@@ -984,6 +984,44 @@ func TestProxyInstancesDelete_TunnelErrorsDoNotBlock(t *testing.T) {
 	}
 }
 
+// PF23: отказ ПОСЛЕ уборки обязан рассказать, что уже снято. Иначе
+// пользователь видит «не удалилось» и исчезнувшую карточку туннеля, и
+// объяснить расхождение ему нечем.
+func TestProxyInstancesDelete_FailureStillReportsDeletedTunnels(t *testing.T) {
+	mgr := &fakeProxyManager{
+		records:   []instancestore.Record{fullClientRecord()},
+		seed:      manager.SeedInfo{Booted: true, Certified: true},
+		deleteErr: errors.New("реестр отверг ведомость"),
+	}
+	cleaner := &fakeLinkedCleaner{deleted: []string{"awg10"}, mgr: mgr}
+	h := newProxyHandlerWithCleaners(t, mgr, fakeProxyStates{},
+		map[instancestore.Kind]LinkedTunnelCleaner{instancestore.KindWdttClient: cleaner})
+
+	rr := doProxy(t, h, http.MethodDelete, "/api/proxyrt/instances/wdtt-client:nl", "")
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("код = %d, ждали 422: %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Error   bool            `json:"error"`
+		Code    string          `json:"code"`
+		Message string          `json:"message"`
+		Data    ProxyDeleteData `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	// Форма отказа прежняя — конверт тот же, добавилось только data.
+	if !body.Error || body.Code != "PROXY_DECLARE_FAILED" || !strings.Contains(body.Message, "реестр отверг") {
+		t.Fatalf("конверт отказа изменился: %+v", body)
+	}
+	if !reflect.DeepEqual(body.Data.DeletedTunnels, []string{"awg10"}) {
+		t.Fatalf("снятые туннели не названы в отказе: %+v", body.Data)
+	}
+	if body.Data.Ok {
+		t.Fatalf("отказ отмечен как успех: %+v", body.Data)
+	}
+}
+
 func TestProxyInstancesApply(t *testing.T) {
 	mgr := &fakeProxyManager{
 		records: []instancestore.Record{fullServerRecord()},

@@ -531,6 +531,15 @@ type ProxyDeleteData struct {
 	TunnelErrors []string `json:"tunnelErrors,omitempty"`
 }
 
+// ProxyDeleteErrorEnvelope — отказ удаления, который всё же снял связанные
+// туннели: `data` заполнена тем, что успело удалиться до отказа.
+type ProxyDeleteErrorEnvelope struct {
+	Error   bool            `json:"error" example:"true"`
+	Message string          `json:"message"`
+	Code    string          `json:"code"`
+	Data    ProxyDeleteData `json:"data"`
+}
+
 // ProxyDeleteResponse — конверт удаления инстанса.
 type ProxyDeleteResponse struct {
 	Success bool            `json:"success" example:"true"`
@@ -549,7 +558,7 @@ type ProxyDeleteResponse struct {
 //	@Param			key	path		string	true	"Ключ инстанса (роль:id)"
 //	@Success		200	{object}	ProxyDeleteResponse
 //	@Failure		404	{object}	APIErrorEnvelope
-//	@Failure		422	{object}	APIErrorEnvelope
+//	@Failure		422	{object}	ProxyDeleteErrorEnvelope
 //	@Failure		503	{object}	APIErrorEnvelope
 //	@Router			/proxyrt/instances/{key} [delete]
 func (h *ProxyInstancesHandler) remove(w http.ResponseWriter, r *http.Request, key string) {
@@ -578,7 +587,12 @@ func (h *ProxyInstancesHandler) remove(w http.ResponseWriter, r *http.Request, k
 		return
 	}
 	if err := h.deps.Manager.Delete(r.Context(), key); err != nil {
-		h.fail(w, err)
+		// Отказ ПОСЛЕ уборки: туннели уже сняты, инстанс остался. Молчать об
+		// этом нельзя — пользователь увидел бы «не удалилось» и исчезнувшую
+		// карточку туннеля, и объяснить расхождение ему было бы нечем.
+		// Повтор безопасен: уборщик идемпотентен, на второй попытке он найдёт
+		// ноль связанных туннелей.
+		h.failWithDeleted(w, err, deleted, tunnelErrors)
 		return
 	}
 	response.Success(w, ProxyDeleteData{Ok: true,
@@ -660,12 +674,30 @@ func (h *ProxyInstancesHandler) notFound(w http.ResponseWriter, key string) {
 // остальное, что вернул менеджер, — это отказ ДО записи на диск, и ведущая его
 // причина — отвергнутое объявление выходов (требование 15).
 func (h *ProxyInstancesHandler) fail(w http.ResponseWriter, err error) {
+	status, msg, code := failStatus(err)
+	response.ErrorWithStatus(w, status, msg, code)
+}
+
+// failStatus — классификация ошибки мутации: статус, текст, код. Вынесена,
+// чтобы отказ с отчётом (failWithDeleted) не завёл вторую классификацию.
+func failStatus(err error) (int, string, string) {
 	var ge *proxyGateError
 	if errors.As(err, &ge) {
-		response.ErrorWithStatus(w, http.StatusUnprocessableEntity, ge.msg, ge.code)
-		return
+		return http.StatusUnprocessableEntity, ge.msg, ge.code
 	}
-	response.ErrorWithStatus(w, http.StatusUnprocessableEntity, err.Error(), proxyCodeDeclareFailed)
+	return http.StatusUnprocessableEntity, err.Error(), proxyCodeDeclareFailed
+}
+
+// failWithDeleted — тот же отказ, что и fail, но с отчётом о снятых туннелях.
+// Классификация статуса и кода ОДНА на оба пути (общий failStatus), иначе
+// «удаление отказало» отвечало бы разными кодами в зависимости от того,
+// успела ли уборка.
+func (h *ProxyInstancesHandler) failWithDeleted(w http.ResponseWriter, err error,
+	deleted, tunnelErrors []string,
+) {
+	status, msg, code := failStatus(err)
+	response.ErrorWithData(w, status, msg, code,
+		ProxyDeleteData{Ok: false, DeletedTunnels: deleted, TunnelErrors: tunnelErrors})
 }
 
 func (h *ProxyInstancesHandler) recordByKey(key string) (instancestore.Record, bool) {

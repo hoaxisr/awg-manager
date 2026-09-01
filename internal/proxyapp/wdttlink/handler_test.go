@@ -34,44 +34,6 @@ type updateCall struct {
 }
 
 // fakeMutator прогоняет мутатор по хранимой записи и сохраняет результат
-// целиком: тест сверяет СОСТАВ аргумента, а не факт вызова.
-type fakeMutator struct {
-	src     *fakeSource
-	created []instancestore.Record
-	updates []updateCall
-}
-
-func (f *fakeMutator) Create(_ context.Context, rec instancestore.Record) error {
-	f.created = append(f.created, rec)
-	if f.src != nil {
-		f.src.recs[rec.Key()] = rec
-	}
-	return nil
-}
-
-func (f *fakeMutator) Update(_ context.Context, key string, mutate func(*instancestore.Record) error) error {
-	rec, ok := f.src.recs[key]
-	if !ok {
-		return fmt.Errorf("инстанс %s не найден", key)
-	}
-	if err := mutate(&rec); err != nil {
-		return err
-	}
-	f.src.recs[key] = rec
-	f.updates = append(f.updates, updateCall{Key: key, Rec: rec})
-	return nil
-}
-
-type fakeCleaner struct {
-	gotClientIDs []string
-	deleted      []string
-	errs         []string
-}
-
-func (f *fakeCleaner) DeleteLinked(_ context.Context, clientID string) ([]string, []string) {
-	f.gotClientIDs = append(f.gotClientIDs, clientID)
-	return f.deleted, f.errs
-}
 
 type importCall struct{ Conf, Name, ClientID string }
 
@@ -216,6 +178,34 @@ func serverRecordNoHashes(cfg roles.WdttServerConfig, users ...instancestore.Ser
 	}
 }
 
+// целиком: тест сверяет СОСТАВ аргумента, а не факт вызова.
+type fakeMutator struct {
+	src     *fakeSource
+	created []instancestore.Record
+	updates []updateCall
+}
+
+func (f *fakeMutator) Create(_ context.Context, rec instancestore.Record) error {
+	f.created = append(f.created, rec)
+	if f.src != nil {
+		f.src.recs[rec.Key()] = rec
+	}
+	return nil
+}
+
+func (f *fakeMutator) Update(_ context.Context, key string, mutate func(*instancestore.Record) error) error {
+	rec, ok := f.src.recs[key]
+	if !ok {
+		return fmt.Errorf("инстанс %s не найден", key)
+	}
+	if err := mutate(&rec); err != nil {
+		return err
+	}
+	f.src.recs[key] = rec
+	f.updates = append(f.updates, updateCall{Key: key, Rec: rec})
+	return nil
+}
+
 func clientRecord(cfg roles.WdttClientConfig) instancestore.Record {
 	return instancestore.Record{
 		ID: "default", Kind: instancestore.KindWdttClient, Name: "Германия",
@@ -223,14 +213,13 @@ func clientRecord(cfg roles.WdttClientConfig) instancestore.Record {
 	}
 }
 
-func newTestHandler(t *testing.T, recs ...instancestore.Record) (*Handler, *fakeSource, *fakeMutator, *fakeCleaner, *fakeTunnels) {
+func newTestHandler(t *testing.T, recs ...instancestore.Record) (*Handler, *fakeSource, *fakeMutator, *fakeTunnels) {
 	t.Helper()
 	src := &fakeSource{recs: map[string]instancestore.Record{}}
 	for _, r := range recs {
 		src.recs[r.Key()] = r
 	}
 	mut := &fakeMutator{src: src}
-	cleaner := &fakeCleaner{}
 	tunnels := &fakeTunnels{}
 	b := NewBuilder(BuilderDeps{
 		Vetting: fakeVetting{},
@@ -241,10 +230,9 @@ func newTestHandler(t *testing.T, recs ...instancestore.Record) (*Handler, *fake
 	})
 	h := NewHandler(Deps{
 		Records: src, Mutator: mut, Tunnels: tunnels,
-		Cleaners: map[instancestore.Kind]LinkedCleaner{instancestore.KindWdttClient: cleaner},
 		Builders: map[instancestore.Kind]LinkBuilder{instancestore.KindWdttServer: b},
 	})
-	return h, src, mut, cleaner, tunnels
+	return h, src, mut, tunnels
 }
 
 // ── (а) §11: режим ссылки ────────────────────────────────────────
@@ -270,7 +258,7 @@ func TestLink_ModeDecidesPort(t *testing.T) {
 				Listen: "0.0.0.0:56002", DirectListen: "0.0.0.0:56004",
 				WgPort: 56001, RelayMode: tc.relayMode,
 			}, user)
-			h, _, _, _, _ := newTestHandler(t, rec)
+			h, _, _, _ := newTestHandler(t, rec)
 			rr := httptest.NewRecorder()
 			body := fmt.Sprintf(`{"peer":"1.2.3.4","password":"abonent","mode":%q}`, tc.mode)
 			h.Link(rr, post(t, body), rec.Key())
@@ -310,7 +298,7 @@ func TestLink_PersistsPeerInPlace(t *testing.T) {
 	rec.Sub = "https://sub.example/x"
 	rec.StatsLog = "disk"
 	rec.LinkVKHashes = "hh"
-	h, _, mut, _, _ := newTestHandler(t, rec)
+	h, _, mut, _ := newTestHandler(t, rec)
 
 	rr := httptest.NewRecorder()
 	h.Link(rr, post(t, `{"peer":"198.51.100.9","password":"abonent"}`), rec.Key())
@@ -335,7 +323,7 @@ func TestLink_PeerFallbacks(t *testing.T) {
 	t.Run("адрес из записи", func(t *testing.T) {
 		rec := serverRecord(base, user)
 		rec.LinkPeer = "wan.example:56002"
-		h, _, _, _, _ := newTestHandler(t, rec)
+		h, _, _, _ := newTestHandler(t, rec)
 		rr := httptest.NewRecorder()
 		h.Link(rr, post(t, `{"password":"abonent"}`), rec.Key())
 		data, msg, code := decodeEnvelope(t, rr)
@@ -349,7 +337,7 @@ func TestLink_PeerFallbacks(t *testing.T) {
 
 	t.Run("внешний IP, когда адреса нет нигде", func(t *testing.T) {
 		rec := serverRecord(base, user)
-		h, _, _, _, _ := newTestHandler(t, rec)
+		h, _, _, _ := newTestHandler(t, rec)
 		rr := httptest.NewRecorder()
 		h.Link(rr, post(t, `{"password":"abonent"}`), rec.Key())
 		data, msg, code := decodeEnvelope(t, rr)
@@ -387,7 +375,7 @@ func TestLink_PasswordRejections(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := serverRecord(base, tc.users...)
-			h, _, _, _, _ := newTestHandler(t, rec)
+			h, _, _, _ := newTestHandler(t, rec)
 			rr := httptest.NewRecorder()
 			h.Link(rr, post(t, tc.body), rec.Key())
 			_, msg, code := decodeEnvelope(t, rr)
@@ -410,7 +398,7 @@ func TestLink_ServerWithoutOwnerPassword(t *testing.T) {
 		instancestore.ServerUser{Password: "abonent"},
 	)
 	rec.LinkPeer = "198.51.100.9"
-	h, _, _, _, _ := newTestHandler(t, rec)
+	h, _, _, _ := newTestHandler(t, rec)
 	rr := httptest.NewRecorder()
 	h.Link(rr, post(t, `{"password":"abonent"}`), rec.Key())
 	data, msg, code := decodeEnvelope(t, rr)
@@ -424,7 +412,7 @@ func TestLink_ServerWithoutOwnerPassword(t *testing.T) {
 }
 
 func TestLink_UnknownInstance(t *testing.T) {
-	h, _, _, _, _ := newTestHandler(t)
+	h, _, _, _ := newTestHandler(t)
 	rr := httptest.NewRecorder()
 	h.Link(rr, post(t, `{}`), "wdtt-server:default")
 	_, msg, code := decodeEnvelope(t, rr)
@@ -436,7 +424,7 @@ func TestLink_UnknownInstance(t *testing.T) {
 // ── (б) импорт создаёт запись ────────────────────────────────────
 
 func TestImport_CreatesRecord(t *testing.T) {
-	h, _, mut, _, _ := newTestHandler(t)
+	h, _, mut, _ := newTestHandler(t)
 	rr := httptest.NewRecorder()
 	link := "qwdtt://config?name=WL+RUS&peer=203.0.113.1:56000&hashes=h1,h2&workers=18&port=9100&pass=pwd&mode=raw&deviceId=dev1&sub=https://sub.example/w.json"
 	h.Import(rr, post(t, `{"link":`+jsonString(link)+`}`))
@@ -480,7 +468,7 @@ func TestImport_CreatesRecord(t *testing.T) {
 func TestImport_FreeIDWhenDefaultTaken(t *testing.T) {
 	taken := clientRecord(roles.WdttClientConfig{Mode: ConnModeWG, Listen: "127.0.0.1:9000",
 		Peer: "1.1.1.1:56000", VKHashes: "h"})
-	h, _, mut, _, _ := newTestHandler(t, taken)
+	h, _, mut, _ := newTestHandler(t, taken)
 	rr := httptest.NewRecorder()
 	h.Import(rr, post(t, `{"link":"qwdtt://config?peer=10.0.0.1&pass=x&hashes=h"}`))
 	if _, msg, code := decodeEnvelope(t, rr); code != "" {
@@ -492,7 +480,7 @@ func TestImport_FreeIDWhenDefaultTaken(t *testing.T) {
 }
 
 func TestImport_BadLink(t *testing.T) {
-	h, _, mut, _, _ := newTestHandler(t)
+	h, _, mut, _ := newTestHandler(t)
 	rr := httptest.NewRecorder()
 	h.Import(rr, post(t, `{"link":"не ссылка"}`))
 	_, msg, code := decodeEnvelope(t, rr)
@@ -505,7 +493,7 @@ func TestImport_BadLink(t *testing.T) {
 }
 
 func TestDecode_ReturnsProfile(t *testing.T) {
-	h, _, _, _, _ := newTestHandler(t)
+	h, _, _, _ := newTestHandler(t)
 	rr := httptest.NewRecorder()
 	h.Decode(rr, post(t, `{"link":"wdtt://1.2.3.4:56000:56001:9000:secret:hash1#MyServer"}`))
 	data, msg, code := decodeEnvelope(t, rr)
@@ -521,34 +509,6 @@ func TestDecode_ReturnsProfile(t *testing.T) {
 	}
 }
 
-// ── (в) очистка связей ───────────────────────────────────────────
-
-func TestClearLinkedTunnels_Form(t *testing.T) {
-	rec := clientRecord(roles.WdttClientConfig{Mode: ConnModeWG, Listen: "127.0.0.1:9000",
-		Peer: "1.1.1.1:56000", VKHashes: "h"})
-	h, _, _, cleaner, _ := newTestHandler(t, rec)
-	cleaner.deleted = []string{"t1", "t2"}
-	cleaner.errs = []string{"Германия wdtt (t3): занят"}
-
-	rr := httptest.NewRecorder()
-	h.ClearLinkedTunnels(rr, post(t, ``), rec.Key())
-	data, msg, code := decodeEnvelope(t, rr)
-	if code != "" {
-		t.Fatalf("отказ %s: %s", code, msg)
-	}
-	if !reflect.DeepEqual(cleaner.gotClientIDs, []string{"default"}) {
-		t.Fatalf("уборщик позван с %v (ждали id инстанса, не ключ)", cleaner.gotClientIDs)
-	}
-	want := map[string]any{
-		"deletedTunnels": []any{"t1", "t2"},
-		"tunnelErrors":   []any{"Германия wdtt (t3): занят"},
-		"message":        "linked AWG tunnels cleared",
-	}
-	if !reflect.DeepEqual(data, want) {
-		t.Fatalf("тело ответа:\n%+v\nхотели:\n%+v", data, want)
-	}
-}
-
 // ── (г) ensure-wg ────────────────────────────────────────────────
 
 const wgConf = "[Interface]\nPrivateKey = priv\nAddress = 10.66.0.5/32\n\n[Peer]\nPublicKey = srvkey=\nEndpoint = 1.2.3.4:56001\nAllowedIPs = 0.0.0.0/0\n"
@@ -560,7 +520,7 @@ func wgClient() instancestore.Record {
 
 func TestEnsureWG_NoSnapshotIs409(t *testing.T) {
 	rec := wgClient()
-	h, _, _, _, tunnels := newTestHandler(t, rec)
+	h, _, _, tunnels := newTestHandler(t, rec)
 	rr := httptest.NewRecorder()
 	h.EnsureWGTunnel(rr, post(t, ``), rec.Key())
 	_, msg, code := decodeEnvelope(t, rr)
@@ -578,7 +538,7 @@ func TestEnsureWG_NoSnapshotIs409(t *testing.T) {
 
 func TestEnsureWG_EmptyConfigInSnapshotIs409(t *testing.T) {
 	rec := wgClient()
-	h, _, _, _, tunnels := newTestHandler(t, rec)
+	h, _, _, tunnels := newTestHandler(t, rec)
 	h.deps.Snapshots = func(string) (awgmproto.State, bool) {
 		return awgmproto.State{PID: 42, WG: &awgmproto.WGState{Config: "   "}}, true
 	}
@@ -594,7 +554,7 @@ func TestEnsureWG_EmptyConfigInSnapshotIs409(t *testing.T) {
 
 func TestEnsureWG_ImportsWithPatchedEndpoint(t *testing.T) {
 	rec := wgClient()
-	h, _, _, _, tunnels := newTestHandler(t, rec)
+	h, _, _, tunnels := newTestHandler(t, rec)
 	h.deps.Snapshots = func(key string) (awgmproto.State, bool) {
 		if key != rec.Key() {
 			return awgmproto.State{}, false
@@ -645,7 +605,7 @@ func TestEnsureWG_ImportsWithPatchedEndpoint(t *testing.T) {
 
 func TestEnsureWG_AdoptsMatchingTunnel(t *testing.T) {
 	rec := wgClient()
-	h, _, _, _, tunnels := newTestHandler(t, rec)
+	h, _, _, tunnels := newTestHandler(t, rec)
 	h.deps.Snapshots = func(string) (awgmproto.State, bool) {
 		return awgmproto.State{PID: 0, WG: &awgmproto.WGState{Config: wgConf}}, true
 	}
@@ -683,7 +643,7 @@ func TestEnsureWG_AdoptsMatchingTunnel(t *testing.T) {
 
 func TestEnsureWG_DropsStaleLinkedTunnel(t *testing.T) {
 	rec := wgClient()
-	h, _, _, _, tunnels := newTestHandler(t, rec)
+	h, _, _, tunnels := newTestHandler(t, rec)
 	h.deps.Snapshots = func(string) (awgmproto.State, bool) {
 		return awgmproto.State{PID: 7, WG: &awgmproto.WGState{Config: wgConf}}, true
 	}
@@ -711,7 +671,7 @@ func TestEnsureWG_RawModeIsNoop(t *testing.T) {
 	rec := clientRecord(roles.WdttClientConfig{Mode: ConnModeRaw, Listen: "127.0.0.1:9100",
 		Peer: "1.1.1.1:56000", VKHashes: "h",
 		NdmsIface: "OpkgTun17", RawIface: "opkgtun17"})
-	h, _, _, _, tunnels := newTestHandler(t, rec)
+	h, _, _, tunnels := newTestHandler(t, rec)
 	h.deps.Snapshots = func(string) (awgmproto.State, bool) {
 		return awgmproto.State{PID: 7, WG: &awgmproto.WGState{Config: wgConf}}, true
 	}
@@ -732,14 +692,13 @@ func TestEnsureWG_RawModeIsNoop(t *testing.T) {
 
 func TestHandlers_RejectNonPost(t *testing.T) {
 	rec := wgClient()
-	h, _, _, _, _ := newTestHandler(t, rec)
+	h, _, _, _ := newTestHandler(t, rec)
 	get := func() *http.Request { return httptest.NewRequest(http.MethodGet, "/api/proxyrt/x", nil) }
 	for name, call := range map[string]func(*httptest.ResponseRecorder){
 		"decode": func(rr *httptest.ResponseRecorder) { h.Decode(rr, get()) },
 		"import": func(rr *httptest.ResponseRecorder) { h.Import(rr, get()) },
 		"link":   func(rr *httptest.ResponseRecorder) { h.Link(rr, get(), rec.Key()) },
 		"ensure": func(rr *httptest.ResponseRecorder) { h.EnsureWGTunnel(rr, get(), rec.Key()) },
-		"clear":  func(rr *httptest.ResponseRecorder) { h.ClearLinkedTunnels(rr, get(), rec.Key()) },
 	} {
 		rr := httptest.NewRecorder()
 		call(rr)
@@ -757,60 +716,12 @@ func jsonString(s string) string {
 // ── фикс-раунд 1 ─────────────────────────────────────────────────
 
 // C1: id уникален только внутри роли, «default» есть у всех четырёх. Запрос к
-// СЕРВЕРУ не имеет права снести туннели КЛИЕНТА с тем же id.
-func TestClearLinkedTunnels_RejectsNonClientKind(t *testing.T) {
-	server := serverRecord(roles.WdttServerConfig{Listen: "0.0.0.0:56002",
-		RelayMode: ConnModeWG})
-	client := clientRecord(roles.WdttClientConfig{Mode: ConnModeWG, Listen: "127.0.0.1:9000",
-		Peer: "1.1.1.1:56000", VKHashes: "h"})
-	h, _, _, cleaner, _ := newTestHandler(t, server, client)
-
-	rr := httptest.NewRecorder()
-	h.ClearLinkedTunnels(rr, post(t, ``), server.Key())
-	_, msg, code := decodeEnvelope(t, rr)
-	if code != "BAD_REQUEST" {
-		t.Fatalf("код=%q сообщение=%q", code, msg)
-	}
-	if !strings.Contains(msg, "только у клиентов") {
-		t.Fatalf("причина отказа невнятна: %q", msg)
-	}
-	if len(cleaner.gotClientIDs) != 0 {
-		t.Fatalf("уборщик позван на серверном ключе: %v", cleaner.gotClientIDs)
-	}
-}
-
-// C1: поле связи у подсистем разное, поэтому уборщик выбирается ПО РОЛИ.
-func TestClearLinkedTunnels_CleanerPickedByKind(t *testing.T) {
-	wdttClient := clientRecord(roles.WdttClientConfig{Mode: ConnModeWG, Listen: "127.0.0.1:9000",
-		Peer: "1.1.1.1:56000", VKHashes: "h"})
-	ftClient := instancestore.Record{ID: "default", Kind: instancestore.KindFreeTurnClient,
-		Name: "FT", FreeTurnClient: &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9001", Peer: "1.1.1.1:1"}}
-	h, _, _, wdttCleaner, _ := newTestHandler(t, wdttClient, ftClient)
-	ftCleaner := &fakeCleaner{deleted: []string{"ft-1"}}
-	h.deps.Cleaners[instancestore.KindFreeTurnClient] = ftCleaner
-
-	rr := httptest.NewRecorder()
-	h.ClearLinkedTunnels(rr, post(t, ``), ftClient.Key())
-	data, msg, code := decodeEnvelope(t, rr)
-	if code != "" {
-		t.Fatalf("отказ %s: %s", code, msg)
-	}
-	if !reflect.DeepEqual(ftCleaner.gotClientIDs, []string{"default"}) {
-		t.Fatalf("freeturn-уборщик позван с %v", ftCleaner.gotClientIDs)
-	}
-	if len(wdttCleaner.gotClientIDs) != 0 {
-		t.Fatalf("позван чужой уборщик: %v", wdttCleaner.gotClientIDs)
-	}
-	if !reflect.DeepEqual(data["deletedTunnels"], []any{"ft-1"}) {
-		t.Fatalf("ответ от чужого уборщика: %v", data)
-	}
-}
 
 // I2: штатный повтор (автоэффект открытой страницы) не имеет права
 // пересоздавать туннель — иначе на каждом тике теряются id и история трафика.
 func TestEnsureWG_SamePeerKeyIsIdempotent(t *testing.T) {
 	rec := wgClient()
-	h, _, _, _, tunnels := newTestHandler(t, rec)
+	h, _, _, tunnels := newTestHandler(t, rec)
 	h.deps.Snapshots = func(string) (awgmproto.State, bool) {
 		return awgmproto.State{PID: 0, WG: &awgmproto.WGState{Config: wgConf}}, true
 	}
@@ -846,7 +757,7 @@ func TestEnsureWG_SamePeerKeyIsIdempotent(t *testing.T) {
 // I3: обязанности, которые в старом мире жили побочными эффектами хендлера.
 func TestEnsureWG_ForgetsTrafficAndPublishes(t *testing.T) {
 	rec := wgClient()
-	h, _, _, _, tunnels := newTestHandler(t, rec)
+	h, _, _, tunnels := newTestHandler(t, rec)
 	h.deps.Snapshots = func(string) (awgmproto.State, bool) {
 		return awgmproto.State{PID: 7, WG: &awgmproto.WGState{Config: wgConf}}, true
 	}
@@ -876,7 +787,7 @@ func TestFailClosed_MissingWiring(t *testing.T) {
 		RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
 
 	t.Run("нет проверки абонентов", func(t *testing.T) {
-		h, _, _, _, _ := newTestHandler(t, server)
+		h, _, _, _ := newTestHandler(t, server)
 		h.deps.Builders[instancestore.KindWdttServer] = NewBuilder(BuilderDeps{})
 		rr := httptest.NewRecorder()
 		h.Link(rr, post(t, `{"peer":"1.2.3.4","password":"abonent"}`), server.Key())
@@ -887,23 +798,12 @@ func TestFailClosed_MissingWiring(t *testing.T) {
 	})
 
 	t.Run("нет сборщика для роли", func(t *testing.T) {
-		h, _, _, _, _ := newTestHandler(t, client)
+		h, _, _, _ := newTestHandler(t, client)
 		rr := httptest.NewRecorder()
 		h.Link(rr, post(t, `{}`), client.Key())
 		_, msg, code := decodeEnvelope(t, rr)
 		if code != "BAD_REQUEST" || !strings.Contains(msg, "wdtt-client") {
 			t.Fatalf("код=%q сообщение=%q", code, msg)
-		}
-	})
-
-	t.Run("нет уборщика для роли", func(t *testing.T) {
-		h, _, _, _, _ := newTestHandler(t, client)
-		h.deps.Cleaners = nil
-		rr := httptest.NewRecorder()
-		h.ClearLinkedTunnels(rr, post(t, ``), client.Key())
-		_, msg, _ := decodeEnvelope(t, rr)
-		if rr.Code != http.StatusInternalServerError || !strings.Contains(msg, "не подключена") {
-			t.Fatalf("status=%d сообщение=%q", rr.Code, msg)
 		}
 	})
 
@@ -935,7 +835,7 @@ func TestLink_SamePeerNotRewritten(t *testing.T) {
 	rec := serverRecord(roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001,
 		RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
 	rec.LinkPeer = "1.2.3.4:56002"
-	h, _, mut, _, _ := newTestHandler(t, rec)
+	h, _, mut, _ := newTestHandler(t, rec)
 
 	rr := httptest.NewRecorder()
 	h.Link(rr, post(t, `{"peer":"1.2.3.4:56002","password":"abonent"}`), rec.Key())
@@ -952,7 +852,7 @@ func TestLink_HashesFromRecord(t *testing.T) {
 	rec := serverRecord(roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001,
 		RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
 	rec.LinkVKHashes = "hash1,hash2"
-	h, _, _, _, _ := newTestHandler(t, rec)
+	h, _, _, _ := newTestHandler(t, rec)
 
 	rr := httptest.NewRecorder()
 	h.Link(rr, post(t, `{"peer":"1.2.3.4","password":"abonent"}`), rec.Key())
@@ -973,7 +873,7 @@ func TestLink_HashesFromRecord(t *testing.T) {
 // Режим импортируемого профиля нормализуется: пустой connMode — это wg, а не
 // пустая строка (её конфиг роли отвергает валидацией).
 func TestImport_NormalizesEmptyMode(t *testing.T) {
-	h, _, mut, _, _ := newTestHandler(t)
+	h, _, mut, _ := newTestHandler(t)
 	rr := httptest.NewRecorder()
 	h.Import(rr, post(t, `{"link":"qwdtt://config?peer=10.0.0.1&pass=x&hashes=h"}`))
 	if _, msg, code := decodeEnvelope(t, rr); code != "" {
@@ -990,7 +890,7 @@ func TestImport_NormalizesEmptyMode(t *testing.T) {
 func TestLink_NoVKHashesRefused(t *testing.T) {
 	rec := serverRecordNoHashes(roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001,
 		RelayMode: ConnModeWG}, instancestore.ServerUser{Password: "abonent"})
-	h, _, _, _, _ := newTestHandler(t, rec)
+	h, _, _, _ := newTestHandler(t, rec)
 
 	rr := httptest.NewRecorder()
 	h.Link(rr, post(t, `{"peer":"1.2.3.4:56002","password":"abonent"}`), rec.Key())
@@ -1014,7 +914,7 @@ func TestLink_NoVKHashesRefused(t *testing.T) {
 // снесённый туннель до ручной перезагрузки страницы.
 func TestEnsureWG_PublishesAfterPartialWorkOnFailure(t *testing.T) {
 	rec := wgClient()
-	h, _, _, _, tunnels := newTestHandler(t, rec)
+	h, _, _, tunnels := newTestHandler(t, rec)
 	h.deps.Snapshots = func(string) (awgmproto.State, bool) {
 		return awgmproto.State{PID: 42, WG: &awgmproto.WGState{Config: wgConf}}, true
 	}

@@ -2723,6 +2723,18 @@ definitions:
           type: string
         type: array
     type: object
+  api.ProxyDeleteErrorEnvelope:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/api.ProxyDeleteData'
+      error:
+        example: true
+        type: boolean
+      message:
+        type: string
+    type: object
   api.ProxyDeleteResponse:
     properties:
       data:
@@ -7711,28 +7723,6 @@ definitions:
       payload:
         $ref: '#/definitions/wdttlink.ImportPayload'
     type: object
-  wdttlink.ClearLinkedResponse:
-    properties:
-      data:
-        $ref: '#/definitions/wdttlink.ClearLinkedResult'
-      success:
-        example: true
-        type: boolean
-    type: object
-  wdttlink.ClearLinkedResult:
-    properties:
-      deletedTunnels:
-        items:
-          type: string
-        type: array
-      message:
-        example: linked AWG tunnels cleared
-        type: string
-      tunnelErrors:
-        items:
-          type: string
-        type: array
-    type: object
   wdttlink.DecodeResponse:
     properties:
       data:
@@ -11754,7 +11744,7 @@ paths:
         "422":
           description: Unprocessable Entity
           schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
+            $ref: '#/definitions/api.ProxyDeleteErrorEnvelope'
         "503":
           description: Service Unavailable
           schema:
@@ -11929,34 +11919,6 @@ paths:
       security:
       - CookieAuth: []
       summary: Выдать ссылку абоненту серверного инстанса
-      tags:
-      - proxyrt
-  /proxyrt/instances/{key}/linked-tunnels/clear:
-    post:
-      parameters:
-      - description: Ключ инстанса (роль:id)
-        in: path
-        name: key
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/wdttlink.ClearLinkedResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Снять AWG-туннели, связанные с клиентским инстансом
       tags:
       - proxyrt
   /proxyrt/instances/{key}/subscription/refresh:

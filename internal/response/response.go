@@ -115,6 +115,27 @@ func ErrorWithStatus(w http.ResponseWriter, status int, message, code string) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// ErrorWithData — отказ, который обязан рассказать, что УЖЕ сделано.
+//
+// Конверт у успеха и отказа один (APIResponse), поле Data в нём было всегда и
+// у отказов просто опускалось — поэтому форма прежних ошибок не меняется, а
+// клиент кладёт всё тело в err.body и читает его без правок.
+//
+// Нужно там, где операция многошаговая и падение середины не отменяет
+// сделанного: сказать «не удалось» и умолчать о необратимой части — значит
+// оставить пользователя с расхождением, которое он объяснить не сможет.
+func ErrorWithData(w http.ResponseWriter, status int, message, code string, data any) {
+	resp := APIResponse{
+		Error:   true,
+		Message: message,
+		Code:    code,
+		Data:    data,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(resp)
+}
+
 // MustNotNil ensures a slice is not nil (returns empty slice if nil).
 func MustNotNil[T any](slice []T) []T {
 	if slice == nil {
