@@ -39,9 +39,6 @@ export function counterLabel(users: WdttPanelUserEntry[]): string {
 }
 
 export interface RowActions {
-	/** Ссылка: доступна, заблокирована с причиной или её нет вовсе. */
-	link: 'yes' | 'blocked' | 'hidden';
-	linkHint: string;
 	/** «Перевыпустить» — у любого абонента: исключений больше нет. */
 	reissue: boolean;
 	remove: 'yes' | 'blocked';
@@ -54,8 +51,6 @@ export function rowActions(user: WdttPanelUserEntry, users: WdttPanelUserEntry[]
 	// та же вторая линия, что у бэкенда (`refuseLastUsableServerClient`).
 	const lastUsable = isUsable(user) && usableCount(users) === 1;
 	return {
-		link: 'yes',
-		linkHint: '',
 		// Перевыпуск доступен и рабочему: смена скомпрометированного пароля —
 		// обычная нужда, а не только починка просрочки. Прежде кнопку давала
 		// одна ветка `isExpired`, и живому абоненту ключ было не сменить —

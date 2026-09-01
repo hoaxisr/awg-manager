@@ -194,7 +194,8 @@ func (s *Service) materialize(rec instancestore.Record) error {
 // ── путь старта (Г-2) ────────────────────────────────────────────
 
 // SyncOnStart — цикл абонентов на пути старта, два ОБЯЗАТЕЛЬНЫХ шага:
-// усыновить чужие записи → переписать файл. Зовёт фабрика процесса (задача 14).
+// усыновить чужие записи → переписать файл, и гейт «есть кому подключаться»
+// третьим. Зовёт фабрика процесса (задача 14).
 func (s *Service) SyncOnStart(ctx context.Context, key string) error {
 	unlock := s.lock(key)
 	defer unlock()
@@ -212,8 +213,26 @@ func (s *Service) SyncOnStart(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	// (2) Файл — последним, по итоговому составу.
-	return s.Materialize(rec)
+	// (2) Файл — по итоговому составу.
+	if err := s.Materialize(rec); err != nil {
+		return err
+	}
+	// (3) Гейт: без единого РАБОЧЕГО абонента passwords.json уезжает пустым, и
+	// форк падает в log.Fatalf (`serverWrapKeys.Count() == 0`, roles/config.go:241).
+	// Отказ здесь превращает смерть демона в честную причину на карточке:
+	// gate вызывающего (proxyAdoptedRole) объявляет ресурс blocked, процесс не
+	// стартует вовсе. Тот же инвариант со стороны удаления держит
+	// refuseLastUsable — но свежий сервер, у которого абонентов не было
+	// НИКОГДА, ему не встречается: на путях UI его прикрывал только фронт
+	// (гейт SH-91), а запрос мимо нашей панели уходил в падение.
+	//
+	// Порядок «материализовать, потом отказать» осознан: файл обязан
+	// соответствовать составу и в отказном случае — иначе на диске пережил бы
+	// отказ пароль, которого в записи уже нет.
+	if len(UsableUsers(rec.Users)) == 0 {
+		return errors.New("сервер не запускается без единого рабочего абонента: заведите абонента")
+	}
+	return nil
 }
 
 // mutateUsers — ЕДИНСТВЕННЫЙ способ поправить состав абонентов.
@@ -349,13 +368,10 @@ func (s *Service) Add(ctx context.Context, key, password, comment, vkHash string
 
 	unlock := s.lock(key)
 	defer unlock()
-	return s.addLocked(ctx, key, password, comment, vkHash)
-}
 
-// addLocked — цикл добавления под уже взятым замком: усыновить → проверить →
-// изменить запись → переписать файл → сигнал. Своего захвата здесь нет:
-// замок берёт Add, и повторный был бы взаимоблокировкой.
-func (s *Service) addLocked(ctx context.Context, key, password, comment, vkHash string) (UsersStatus, error) {
+	// Дальше — цикл добавления под замком: усыновить → проверить → изменить
+	// запись → переписать файл → сигнал. Запись перечитывается ПОД замком:
+	// снимок, взятый до захвата, разошёлся бы с актуальным составом.
 	_, cfg, err := s.serverRecord(key)
 	if err != nil {
 		return UsersStatus{}, err

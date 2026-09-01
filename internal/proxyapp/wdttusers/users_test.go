@@ -383,6 +383,34 @@ func TestSyncOnStart_MaterializesAfterMutations(t *testing.T) {
 	}
 }
 
+// PF18: сервер без единого РАБОЧЕГО абонента не должен стартовать — форк
+// падает в log.Fatalf на пустом passwords.json. Гейт на путях UI держал только
+// фронт (SH-91), запрос мимо панели уходил в падение демона.
+func TestSyncOnStart_RefusesServerWithoutUsableClients(t *testing.T) {
+	st := newStand(t, baseCfg()) // абонентов нет вовсе
+	err := st.svc.SyncOnStart(context.Background(), testKey)
+	if err == nil {
+		t.Fatal("сервер без абонентов принят молча — форк упадёт в log.Fatalf")
+	}
+	if !strings.Contains(err.Error(), "рабочего абонента") {
+		t.Fatalf("причина отказа не названа: %v", err)
+	}
+	// Файл обязан быть переписан ДО отказа: иначе на диске остались бы пароли,
+	// которых в записи уже нет.
+	if got := st.file(t).Passwords; len(got) != 0 {
+		t.Fatalf("passwords.json не приведён к пустому составу: %#v", got)
+	}
+}
+
+// Абонент с пустым паролем в passwords.json не попадает, значит стартовать
+// по-прежнему не с чем: гейт обязан считать РАБОЧИХ, а не все записи.
+func TestSyncOnStart_RefusesWhenNoClientIsUsable(t *testing.T) {
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "   ", Comment: "пустой"})
+	if err := st.svc.SyncOnStart(context.Background(), testKey); err == nil {
+		t.Fatal("сервер с одними непригодными абонентами принят молча")
+	}
+}
+
 func TestSyncOnStart_UnknownInstance(t *testing.T) {
 	st := newStand(t, baseCfg())
 	if err := st.svc.SyncOnStart(context.Background(), "wdtt-server:нет-такого"); err == nil {
