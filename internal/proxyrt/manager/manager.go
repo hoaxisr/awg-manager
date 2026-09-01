@@ -420,15 +420,20 @@ func dropMove(moves []instancestore.ListenMove, key string) []instancestore.List
 // Признание стирает их с диска: без него плашка висела вечно, потому что
 // посев не повторяется и переписать свою отметку некому.
 func (m *Manager) AckListenMoves() error {
-	if _, err := m.mutateStore(func(state *instancestore.State) error {
+	// Диск и снимок в памяти — ОДНОЙ критической секцией. Двумя подряд между
+	// ними успевала вклиниться правка, двигающая порт: она записывала свежий
+	// переезд и на диск, и в кэш, а второй шаг признания стирал кэш вместе с
+	// ним — плашка про новый переезд не показалась бы до перезапуска демона.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st, err := m.mutateStoreLocked(func(state *instancestore.State) error {
 		state.MovedListen = nil
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
-	m.mu.Lock()
-	m.moved = nil
-	m.mu.Unlock()
+	m.moved = st.MovedListen
 	return nil
 }
 
@@ -651,6 +656,15 @@ func (m *Manager) Create(ctx context.Context, rec instancestore.Record) error {
 	if err := control.ValidateInstance(rec.ID); err != nil {
 		return err
 	}
+	// Намерение по listen — ДО аллокатора, как на пути правки: переезд это
+	// когда аллокатор ОТВЕРГ желаемый порт. У создания без явного listen
+	// намерение пусто, и переезда не будет; но поле принимается и прямым
+	// API-запросом, а молчать о подмене заданного порта нельзя ровно так же,
+	// как на бооте и на правке — канал уведомления один на все пути.
+	wantListen := ""
+	if p := instancestore.ClientListen(&rec); p != nil {
+		wantListen = *p
+	}
 	m.mu.Lock()
 	allocated, err := m.ensurePins(&rec)
 	m.mu.Unlock()
@@ -658,10 +672,24 @@ func (m *Manager) Create(ctx context.Context, rec instancestore.Record) error {
 		m.deps.ReleasePins(allocated...)
 		return err
 	}
-	st, err := m.mutateStore(func(state *instancestore.State) error {
+	var moved []instancestore.ListenMove
+	if p := instancestore.ClientListen(&rec); p != nil && wantListen != "" && *p != wantListen {
+		moved = append(moved, instancestore.ListenMove{
+			Instance: rec.Key(), Name: rec.Name, From: wantListen, To: *p})
+	}
+	// Диск и снимок в памяти — ОДНОЙ секцией, по той же причине, что и в
+	// AckListenMoves: между двумя подряд успевает вклиниться чужая правка, и
+	// её переезд выпал бы из кэша, оставшись только на диске.
+	m.mu.Lock()
+	st, err := m.mutateStoreLocked(func(state *instancestore.State) error {
 		state.Records = append(state.Records, rec)
+		state.MovedListen = append(state.MovedListen, moved...)
 		return nil
 	})
+	if err == nil && len(moved) > 0 {
+		m.moved = st.MovedListen
+	}
+	m.mu.Unlock()
 	if err != nil {
 		// Н6: запись не легла — свежие пины отдаются, иначе held течёт до
 		// рестарта и индексы «заняты» несуществующим инстансом.

@@ -1541,3 +1541,54 @@ func TestUpdateDeliberateListenChangeIsNotAMove(t *testing.T) {
 		}
 	}
 }
+
+// Ревью 2: канал уведомления о переезде обязан быть один на ВСЕ пути, включая
+// создание. listen на создании принимает и прямой API-запрос, и подмена
+// заданного порта молчала бы, хотя снаружи клиент мог быть настроен на него.
+func TestCreateRecordsListenMove(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e)
+	boot(t, e)
+	e.listenTaken = map[string]string{"127.0.0.1:9000": "127.0.0.1:9042"}
+
+	rec := rawRec("de", "OpkgTun18", "opkgtun18") // listen 127.0.0.1:9000
+	if err := e.m.Create(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := e.st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.MovedListen) != 1 {
+		t.Fatalf("подмена заданного порта на создании молчит: %+v", st.MovedListen)
+	}
+	mv := st.MovedListen[0]
+	if mv.From != "127.0.0.1:9000" || mv.To != "127.0.0.1:9042" {
+		t.Fatalf("переезд назван неверно: %+v", mv)
+	}
+	if got := e.m.SeedInfo().MovedListen; len(got) != 1 {
+		t.Fatalf("снимок в памяти не обновлён: %+v", got)
+	}
+}
+
+// Создание БЕЗ заданного listen переездом не считается: желаемого порта не
+// было, значит аллокатор ничего не отвергал.
+func TestCreateWithoutListenIsQuiet(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e)
+	boot(t, e)
+
+	rec := rawRec("de", "OpkgTun18", "opkgtun18")
+	rec.WdttClient.Listen = ""
+	if err := e.m.Create(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	st, err := e.st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.MovedListen) != 0 {
+		t.Fatalf("выдача порта на пустом месте объявлена переездом: %+v", st.MovedListen)
+	}
+}

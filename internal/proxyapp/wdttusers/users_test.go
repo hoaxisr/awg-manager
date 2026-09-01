@@ -916,8 +916,9 @@ func TestSyncOnStart_RepeatDoesNotRewriteUnchangedFiles(t *testing.T) {
 }
 
 // Изменился состав — файл обязан обновиться: пропуск по совпадению не должен
-// превратиться в «не пишем никогда».
-func TestSyncOnStart_RewritesWhenUsersChanged(t *testing.T) {
+// превратиться в «не пишем никогда». Пинится путь Add (та же материализация,
+// что и на старте) — именно он меняет состав после первого SyncOnStart.
+func TestMaterializeRewritesWhenUsersChanged(t *testing.T) {
 	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1"})
 	if err := st.svc.SyncOnStart(context.Background(), testKey); err != nil {
 		t.Fatal(err)
