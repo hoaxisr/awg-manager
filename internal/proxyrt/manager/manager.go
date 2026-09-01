@@ -586,12 +586,18 @@ func (m *Manager) reconcileBootListen(list *[]instancestore.Record) []instancest
 				"инстанс %s: порт %s оставлен как есть — %v", key, *cur, err))
 			continue
 		}
-		mv := listenMoveIfRejected(key, recs[i].Name, *cur, next)
-		if mv == nil {
+		if next == *cur {
 			continue
 		}
-		moves = append(moves, mv...)
+		// ЗАПИСЬ и УВЕДОМЛЕНИЕ — разные решения, и путать их нельзя. Порт
+		// персистится всегда, когда аллокатор дал другое значение: на бооте
+		// сюда попадает и запись с ПУСТЫМ listen (посев копирует его из
+		// старого конфига вербатим), а без записи она осталась бы пустой, и
+		// ресурс listen валил бы инстанс на каждом бооте.
 		want[key] = next
+		// Уведомляют только об отвергнутом намерении: выдача порта на пустом
+		// месте переездом не является — сообщать человеку не о чем.
+		moves = append(moves, listenMoveIfRejected(key, recs[i].Name, *cur, next)...)
 	}
 	if len(want) == 0 {
 		return nil
@@ -618,7 +624,7 @@ func (m *Manager) reconcileBootListen(list *[]instancestore.Record) []instancest
 	return moves
 }
 
-// mutateStore — общий каркас мутаций: кандидат → объявление → запись.
+// Каркас мутаций стора: кандидат → объявление → запись.
 // Порядок «объявление до записи» — требование 15: отказ реестра отклоняет
 // операцию, пока диск не тронут. КОМПЕНСАЦИИ при отказе ДИСКА после
 // успешного объявления НЕТ (снята по ревью как излишество): остаточное
@@ -631,12 +637,11 @@ func errNotBooted(seedErr string) error {
 	return fmt.Errorf("прокси-подсистема не загружена (посев не прошёл: %s) — мутации отклоняются: ведомость была бы неполной", seedErr)
 }
 
-func (m *Manager) mutateStore(mutate func(*instancestore.State) error) (instancestore.State, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.mutateStoreLocked(mutate)
-}
-
+// mutateStoreLocked зовётся ПОД `m.mu` и своего захвата не делает: у каждого писателя
+// снимок в памяти (`m.moved`) обновляется ТОЙ ЖЕ секцией, что и диск, иначе
+// чужая параллельная правка теряется из кэша до перезапуска демона.
+// Обёртка «сама возьму лок» была здесь же и умерла вместе с последним
+// вызывающим — Delete переехал на эту форму.
 func (m *Manager) mutateStoreLocked(mutate func(*instancestore.State) error) (instancestore.State, error) {
 	if !m.booted {
 		return instancestore.State{}, errNotBooted(m.seedErr)

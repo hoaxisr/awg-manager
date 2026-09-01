@@ -1592,3 +1592,38 @@ func TestCreateWithoutListenIsQuiet(t *testing.T) {
 		t.Fatalf("выдача порта на пустом месте объявлена переездом: %+v", st.MovedListen)
 	}
 }
+
+// Ревью 4: на бооте ЗАПИСЬ выделенного порта и УВЕДОМЛЕНИЕ о переезде —
+// разные решения. Запись с пустым listen (посев копирует его из старого
+// конфига вербатим) обязана получить порт и сохранить его: без этого ресурс
+// listen валит инстанс на каждом бооте. Уведомлять при этом не о чем —
+// выдача порта на пустом месте переездом не является.
+func TestBootFillsEmptyListenWithoutAnnouncingMove(t *testing.T) {
+	e := newEnv(t)
+	rec := rawRec("de", "OpkgTun18", "opkgtun18")
+	rec.WdttClient.Listen = ""
+	seedState(t, e, rec)
+	boot(t, e)
+
+	st, err := e.st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range st.Records {
+		p := instancestore.ClientListen(&r)
+		if p == nil || *p == "" {
+			t.Fatalf("пустой listen не вылечен на бооте: %+v", r)
+		}
+	}
+	if len(st.MovedListen) != 0 {
+		t.Fatalf("выдача порта на пустом месте объявлена переездом: %+v", st.MovedListen)
+	}
+	// Воркер обязан подняться уже с выданным портом, а не с пустым.
+	built, ok := e.factoryRecs["wdtt-client:de"]
+	if !ok {
+		t.Fatal("инстанс не создан")
+	}
+	if got := *instancestore.ClientListen(&built); got == "" {
+		t.Fatal("воркер собран с пустым listen")
+	}
+}

@@ -152,16 +152,24 @@ func (f *fakeTunnels) ForgetTraffic(id string) { f.forgotten = append(f.forgotte
 
 func (f *fakeTunnels) PublishList(context.Context) { f.published++ }
 
-// fakeVetting — предикат пригодности абонента: та же семантика, что у
-// перенесённого passwords_json.go (задача 9 даёт прод-реализацию).
+// fakeVetting — предикат пригодности абонента. Копия правила здесь ВЫНУЖДЕННАЯ:
+// взять прод-`wdttusers.Vetting` нельзя, там цикл импортов — `wdttusers`
+// зависит от этого пакета ради `RecordSource`/`Mutator` (users.go:77,80).
+//
+// Поэтому копия обязана повторять контракт ЦЕЛИКОМ, включая трим пароля в
+// результате: `linkPasswordFor` сравнивает без трима, опираясь на «пароль из
+// UsableUsers уже подрезан». Прежняя редакция трим не делала — не стреляло
+// только потому, что тесты берут чистые пароли.
 type fakeVetting struct{}
 
 func (fakeVetting) UsableUsers(users []instancestore.ServerUser) []instancestore.ServerUser {
 	var out []instancestore.ServerUser
 	for _, u := range users {
-		if strings.TrimSpace(u.Password) != "" {
-			out = append(out, u)
+		u.Password = strings.TrimSpace(u.Password)
+		if u.Password == "" {
+			continue
 		}
+		out = append(out, u)
 	}
 	return out
 }
@@ -358,8 +366,8 @@ func TestLink_PeerFallbacks(t *testing.T) {
 func TestLink_PasswordRejections(t *testing.T) {
 	base := roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001,
 		RelayMode: ConnModeWG}
-	// Пустой пароль — единственная непригодность, кроме главного: срока
-	// действия у абонента нет, назначить его нечем.
+	// Пустой пароль — ЕДИНСТВЕННАЯ непригодность: срока действия у абонента
+	// нет, главного пароля сервера в модели тоже нет.
 	empty := instancestore.ServerUser{Password: ""}
 	good := instancestore.ServerUser{Password: "abonent"}
 

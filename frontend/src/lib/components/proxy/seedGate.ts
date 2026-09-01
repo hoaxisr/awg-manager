@@ -56,9 +56,8 @@ export function seedGateWarning(seed: ProxySeedView | null | undefined): string 
  * `movedListen` пишут четыре разных пути — посев (у подсистем совпадал
  * дефолтный порт), боот (порт отняла чужая запись AWG), создание и правка
  * инстанса, — а прежний текст объяснял их все посевом, то есть врал для всех,
- * кроме первого. Причина у
- * всех трёх одна и та же с точки зрения читателя: порт оказался занят, и
- * инстанс уехал.
+ * кроме первого. Причина у всех четырёх одна и та же с точки зрения читателя:
+ * порт оказался занят, и инстанс уехал.
  */
 export function seedListenMoveNotice(seed: ProxySeedView | null | undefined): string {
 	const moved = seed?.movedListen ?? [];
