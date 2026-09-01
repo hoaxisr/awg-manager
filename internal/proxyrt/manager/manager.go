@@ -746,17 +746,38 @@ func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (
 	if declaresExit(cand) {
 		prevExitOwner = cand.ID
 	}
+	// Прежний listen — ДО мутатора и ДО ensurePins: аллокатор молча меняет
+	// негодный порт (занятый чужой записью либо вне пула), и без снимка
+	// сказать о переезде было бы нечем.
+	prevListen := ""
+	if p := instancestore.ClientListen(&cand); p != nil {
+		prevListen = *p
+	}
 	if err := mutate(&cand); err != nil {
 		return nil, err
 	}
 	if allocated, err = m.ensurePins(&cand); err != nil { // Щ1: wg→raw и пустой listen
 		return allocated, err
 	}
+	// PF16: канал уведомления о переезде ОДИН на все пути. Боот пишет свои
+	// переезды в MovedListen (reconcileBootListen), правка молчала — при том
+	// что снаружи мог быть настроен клиент на прежний адрес, и молчание здесь
+	// стоит ровно столько же, сколько молчание там.
+	//
+	// Пустой prevListen пропускается намеренно: у создания прежнего порта нет,
+	// «переезд с ничего» — не переезд. Роли без своего listen (серверные)
+	// отсеивает сам ClientListen, возвращая nil.
+	var moved []instancestore.ListenMove
+	if p := instancestore.ClientListen(&cand); p != nil && prevListen != "" && *p != prevListen {
+		moved = append(moved, instancestore.ListenMove{
+			Instance: key, Name: cand.Name, From: prevListen, To: *p})
+	}
 
 	st, err := m.mutateStoreLocked(func(state *instancestore.State) error {
 		for i := range state.Records {
 			if state.Records[i].Key() == key {
 				state.Records[i] = cand
+				state.MovedListen = append(state.MovedListen, moved...)
 				return nil
 			}
 		}
@@ -766,6 +787,9 @@ func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (
 	})
 	if err != nil {
 		return allocated, err
+	}
+	if len(moved) > 0 {
+		m.moved = st.MovedListen
 	}
 
 	// Выход, которого больше нет (смена режима raw→wg): ведомость его уже не

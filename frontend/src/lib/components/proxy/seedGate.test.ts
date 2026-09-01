@@ -75,6 +75,18 @@ describe('seedListenMoveNotice: переезд listen-порта обязан б
 		expect(text).toContain('127.0.0.1:9002');
 	});
 
+	// PF14: тем же каналом приходят переезды боота и правки инстанса, а не
+	// только посева. Объяснение «при переносе настроек» для них ложно.
+	it('не объясняет переезд посевом', () => {
+		const text = seedListenMoveNotice({
+			seeded: true,
+			certified: true,
+			movedListen: [{ instance: 'wdtt-server:s', from: '0.0.0.0:56000', to: '0.0.0.0:56004' }],
+		});
+		expect(text).not.toContain('переносе настроек');
+		expect(text).not.toContain('подсистем');
+	});
+
 	it('без имени называет инстанс ключом — безымянного тоже надо опознать', () => {
 		const text = seedListenMoveNotice({
 			seeded: true,
