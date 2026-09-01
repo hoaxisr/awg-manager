@@ -140,11 +140,10 @@ type SeedInfo struct {
 	// имени файла.
 	Skipped []instancestore.SkippedSource
 	// MovedListen — инстансы, которым СМЕНИЛИ listen-адрес, разводя
-	// конфликт за порт. Источников ТРИ: посев (у подсистем совпадал дефолтный
-	// порт), боот (порт отняла чужая запись) и правка инстанса — не только
-	// посев, как говорила прежняя редакция этой строки. Наружу — ради журнала
-	// и признака в поверхности статуса: снаружи мог быть настроен клиент на
-	// прежний порт.
+	// конфликт за порт. Источников ЧЕТЫРЕ: посев (у подсистем совпадал
+	// дефолтный порт), боот (порт отняла чужая запись), создание и правка
+	// инстанса. Наружу — ради журнала и признака в поверхности статуса:
+	// снаружи мог быть настроен клиент на прежний порт.
 	MovedListen []instancestore.ListenMove
 }
 
@@ -402,6 +401,21 @@ func (m *Manager) Boot(ctx context.Context) error {
 	return nil
 }
 
+// listenMoveIfRejected — переезд, если аллокатор ОТВЕРГ намерение по listen.
+// Пусто, когда намерения не было (создание без порта, серверная роль) или
+// когда аллокатор отдал желаемое как есть.
+//
+// Один предикат на всех писателей `MovedListen`: копий было три (боот,
+// создание, правка), и забытая четвёртая — как раз тот дефект, из-за которого
+// правка молчала о переезде. Правило «переезд = отвергнутое намерение», а не
+// «значение изменилось»: осознанную смену порта плашка объявляла бы занятостью.
+func listenMoveIfRejected(key, name, want, got string) []instancestore.ListenMove {
+	if want == "" || got == want {
+		return nil
+	}
+	return []instancestore.ListenMove{{Instance: key, Name: name, From: want, To: got}}
+}
+
 // dropMove — переезды без записи об инстансе key.
 func dropMove(moves []instancestore.ListenMove, key string) []instancestore.ListenMove {
 	out := moves[:0]
@@ -572,11 +586,11 @@ func (m *Manager) reconcileBootListen(list *[]instancestore.Record) []instancest
 				"инстанс %s: порт %s оставлен как есть — %v", key, *cur, err))
 			continue
 		}
-		if next == *cur {
+		mv := listenMoveIfRejected(key, recs[i].Name, *cur, next)
+		if mv == nil {
 			continue
 		}
-		moves = append(moves, instancestore.ListenMove{
-			Instance: key, Name: recs[i].Name, From: *cur, To: next})
+		moves = append(moves, mv...)
 		want[key] = next
 	}
 	if len(want) == 0 {
@@ -673,9 +687,8 @@ func (m *Manager) Create(ctx context.Context, rec instancestore.Record) error {
 		return err
 	}
 	var moved []instancestore.ListenMove
-	if p := instancestore.ClientListen(&rec); p != nil && wantListen != "" && *p != wantListen {
-		moved = append(moved, instancestore.ListenMove{
-			Instance: rec.Key(), Name: rec.Name, From: wantListen, To: *p})
+	if p := instancestore.ClientListen(&rec); p != nil {
+		moved = listenMoveIfRejected(rec.Key(), rec.Name, wantListen, *p)
 	}
 	// Диск и снимок в памяти — ОДНОЙ секцией, по той же причине, что и в
 	// AckListenMoves: между двумя подряд успевает вклиниться чужая правка, и
@@ -800,9 +813,8 @@ func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (
 	// ничего» — не переезд. Роли без своего listen (серверные) отсеивает сам
 	// ClientListen, возвращая nil.
 	var moved []instancestore.ListenMove
-	if p := instancestore.ClientListen(&cand); p != nil && wantListen != "" && *p != wantListen {
-		moved = append(moved, instancestore.ListenMove{
-			Instance: key, Name: cand.Name, From: wantListen, To: *p})
+	if p := instancestore.ClientListen(&cand); p != nil {
+		moved = listenMoveIfRejected(key, cand.Name, wantListen, *p)
 	}
 
 	st, err := m.mutateStoreLocked(func(state *instancestore.State) error {
@@ -920,7 +932,11 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 	// не из lastRec: живого инстанса могло не быть вовсе (запись на диске без
 	// воркера), а имена интерфейсов нужны уборке ниже в обоих случаях.
 	var removed instancestore.Record
-	st, err := m.mutateStore(func(state *instancestore.State) error {
+	// Диск и снимок в памяти — ОДНОЙ секцией (как AckListenMoves и Create):
+	// двумя подряд между ними успевала вклиниться чужая правка, и её свежий
+	// переезд затирался бы нашим устаревшим снимком.
+	m.mu.Lock()
+	st, err := m.mutateStoreLocked(func(state *instancestore.State) error {
 		out := state.Records[:0]
 		found := false
 		for _, r := range state.Records {
@@ -941,6 +957,12 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 		state.MovedListen = dropMove(state.MovedListen, key)
 		return nil
 	})
+	if err == nil {
+		// Кэш переездов — В ТОЙ ЖЕ секции, что и диск: SeedInfo читает его, а
+		// на отказе транзакции менять его нечем.
+		m.moved = st.MovedListen
+	}
+	m.mu.Unlock()
 	if err != nil {
 		if ok { // воскрешение (замечание 6): запись осталась — инстанс обязан жить
 			m.mu.Lock()
@@ -955,12 +977,6 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 		}
 		return err
 	}
-
-	// Кэш переездов идёт следом за диском: SeedInfo читает его, и без этой
-	// строки плашка про удалённый инстанс дожила бы до перезапуска демона.
-	m.mu.Lock()
-	m.moved = st.MovedListen
-	m.mu.Unlock()
 
 	// Зеркальная запись — адресно, а не ведомостью: Sweep реестра заперт
 	// гейтом посева, гейт монотонен, и запись пережила бы удаление инстанса

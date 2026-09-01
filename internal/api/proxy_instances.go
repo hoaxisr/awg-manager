@@ -92,7 +92,8 @@ type ProxyRtSeedView struct {
 	// файла интерфейс может сказать, ЧЬИ инстансы потеряны.
 	Skipped []ProxyRtSkippedSourceView `json:"skipped,omitempty"`
 	// MovedListen — инстансы, которым СМЕНИЛИ listen-адрес, разводя конфликт
-	// за порт. Источников три: посев, боот и правка инстанса. Молчать нельзя:
+	// за порт. Источников ЧЕТЫРЕ: посев, боот, создание и правка инстанса.
+	// Молчать нельзя:
 	// снаружи мог быть настроен клиент на прежний порт.
 	MovedListen []ProxyRtListenMoveView `json:"movedListen,omitempty"`
 }
@@ -103,7 +104,8 @@ type ProxyRtSkippedSourceView struct {
 	Reason string `json:"reason,omitempty" example:"invalid character 'н'"`
 }
 
-// ProxyRtListenMoveView — один переезд listen-адреса (посев, боот или правка).
+// ProxyRtListenMoveView — один переезд listen-адреса (посев, боот, создание
+// или правка).
 type ProxyRtListenMoveView struct {
 	Instance string `json:"instance" example:"freeturn-client:default"`
 	Name     string `json:"name,omitempty" example:"Клиент"`
