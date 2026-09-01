@@ -155,6 +155,16 @@ func (s *Service) serverRecord(key string) (instancestore.Record, roles.WdttServ
 // счётчики трафика, max_devices, device_ids, ports — принадлежит
 // форку и обязано пережить запись. Наивная пересборка из Record.Users обнулила
 // бы всё это разом.
+//
+// ИСКЛЮЧЕНИЕ из «переживает запись» — админские учётные данные форка:
+// `main_password` перезаписывается пустым, `admin_id` и `bot_token` не
+// переносятся вовсе (их нет даже в нашей структуре, и разбор их отбрасывает).
+// Это не упущение слияния, а его цель: админ-путь форка — телеграм-бот и его
+// admin-API — у нас не заведён, полей под эти значения в конфиге нет, а
+// оставить их в файле значило бы сохранить чужой доступ, которого мы не
+// выдавали. В старом мире те же три поля писались из НАШЕГО конфига
+// (wdtt/passwords_json.go до 62e5a7708), то есть тоже не переносились.
+// Пин — TestMaterialize_StripsForkAdminCredentials.
 func (s *Service) Materialize(rec instancestore.Record) error {
 	cfg, err := rec.WdttServerConfig()
 	if err != nil {

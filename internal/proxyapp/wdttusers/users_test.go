@@ -2,6 +2,7 @@ package wdttusers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -928,5 +929,63 @@ func TestMaterializeRewritesWhenUsersChanged(t *testing.T) {
 	}
 	if _, ok := st.file(t).Passwords["client2"]; !ok {
 		t.Fatalf("новый абонент не доехал до файла: %#v", st.file(t).Passwords)
+	}
+}
+
+// PF26: админские учётные данные форка не переживают материализацию — это
+// исключение из слияния и его цель, а не упущение. Раньше поведение было
+// молчаливым: докстрока обещала «всё чужое переживает запись», а три поля
+// стирались, и ни один тест этого не держал.
+func TestMaterialize_StripsForkAdminCredentials(t *testing.T) {
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1"})
+	// Сырой файл: admin_id и bot_token в нашей структуре не объявлены вовсе,
+	// через writePasswordsFixture их не записать.
+	raw := `{
+  "main_password": "секрет-владельца",
+  "admin_id": "123456",
+  "bot_token": "111:AAA",
+  "passwords": {"client1": {"label": "старое", "down_bytes": 42, "device_ids": ["d1"]}},
+  "devices": {"d1": {"ip": "10.66.0.7"}}
+}`
+	if err := os.MkdirAll(st.dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(passwordsJSONPath(st.dir), []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.svc.Materialize(st.rec(t)); err != nil {
+		t.Fatal(err)
+	}
+
+	var got map[string]any
+	data, err := os.ReadFile(passwordsJSONPath(st.dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["main_password"] != "" {
+		t.Errorf("главный пароль форка пережил запись: %v", got["main_password"])
+	}
+	for _, k := range []string{"admin_id", "bot_token"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("%s пережил запись: чужой админ-доступ сохранён", k)
+		}
+	}
+	// Вторая половина: НЕадминские чужие данные обязаны пережить — иначе
+	// «починкой» была бы наивная пересборка, которую слияние и не допускает.
+	// Устройство привязано к абоненту через device_ids: несвязанное снесла бы
+	// штатная прополка сирот (dropOrphanPasswordsDevices), и тест поймал бы
+	// не то.
+	devices, _ := got["devices"].(map[string]any)
+	if _, ok := devices["d1"]; !ok {
+		t.Errorf("привязка устройства снесена вместе с админскими полями: %v", got["devices"])
+	}
+	pw, _ := got["passwords"].(map[string]any)
+	entry, _ := pw["client1"].(map[string]any)
+	if entry == nil || entry["down_bytes"] == nil {
+		t.Errorf("счётчики трафика форка не пережили запись: %v", pw)
 	}
 }
