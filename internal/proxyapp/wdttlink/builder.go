@@ -53,16 +53,6 @@ type LinkError struct {
 
 func (e *LinkError) Error() string { return e.Msg }
 
-// UnusableReason — почему wdtt-server не примет пароль абонента. Значения —
-// вербатим строки старого wdtt.ServerClientReason (passwords_json.go:189-196),
-// чтобы прод-реализация переводила их без карты соответствий.
-type UnusableReason string
-
-const (
-	ReasonUsable        UnusableReason = ""
-	ReasonEmptyPassword UnusableReason = "empty_password"
-)
-
 // UserVetting — предикат пригодности абонента сервера. Прод-реализация живёт
 // там же, где перенесённый passwords_json.go (proxyapp/wdttusers): предикат
 // ОДИН на всех потребителей — по нему абоненты уезжают в passwords.json, по
@@ -71,7 +61,6 @@ const (
 // бы без единой жалобы и молча не подключилась.
 type UserVetting interface {
 	UsableUsers(users []instancestore.ServerUser) []instancestore.ServerUser
-	UnusableReason(u instancestore.ServerUser) UnusableReason
 }
 
 // BuilderDeps — зависимости сборщика ссылок wdtt-сервера.
@@ -195,10 +184,8 @@ func (b *Builder) persistPeer(ctx context.Context, rec instancestore.Record, pee
 	})
 }
 
-// linkPasswordFor выбирает пароль ссылки. Главный пароль сервера — ключ
-// администрирования (X-Admin-Password у admin-API форка), в ссылку он не
-// попадает ни при каких условиях, поэтому пароль обязан принадлежать списку
-// абонентов сервера.
+// linkPasswordFor выбирает пароль ссылки: он обязан принадлежать списку
+// РАБОЧИХ абонентов сервера.
 //
 // Членство считается по UserVetting — ровно по тому предикату, по которому
 // абоненты уезжают в passwords.json и по которому сервер собирает wrap-ключи.
@@ -226,32 +213,12 @@ func (b *Builder) linkPasswordFor(req LinkRequest, rec instancestore.Record) (st
 		}
 	}
 
-	// Пароль не рабочий. Причину спрашиваем у классификатора — того же, на
-	// котором построен предикат, а не выводим её исключением: набор условий
-	// пригодности живёт в одном месте и может пополниться.
-	known := false
-	target := instancestore.ServerUser{Password: pass}
-	for _, u := range rec.Users {
-		if strings.TrimSpace(u.Password) == pass {
-			target, known = u, true
-			break
-		}
-	}
-	return "", errors.New(linkRejectMessage(b.deps.Vetting.UnusableReason(target), known))
-}
-
-// linkRejectMessage переводит причину непригодности в текст отказа.
-// «Пароля нет в списке» — первая ветка: чужой пароль и пароль известного
-// абонента, ставшего непригодным, — разные беды, и текст у них разный.
-// (Прежняя редакция объясняла порядок веток главным паролем сервера; его
-// в системе нет, и такой ветки в функции тоже.)
-func linkRejectMessage(reason UnusableReason, knownClient bool) string {
-	switch {
-	case !knownClient:
-		return "пароль не принадлежит ни одному абоненту сервера"
-	default:
-		// Причина, которой у текстов ещё нет: новое условие пригодности.
-		// Общий отказ честнее уверенного, но выдуманного объяснения.
-		return "абонент непригоден для ссылки: заведите нового абонента"
-	}
+	// Дальше причина ровно одна: такого пароля у сервера нет. «Известен, но
+	// непригоден» здесь недостижимо — пустой пароль отсечён выше, а всякий
+	// НЕпустой пароль абоненta делает его рабочим, и цикл по usable вернул бы
+	// его строкой раньше. Прежде тут стоял классификатор причин с веткой под
+	// этот случай: он обслуживал просрочку и главный пароль сервера, и вместе
+	// с ними умер. Появится второе условие пригодности — вернётся вместе с ним
+	// и в его форме, а не в угаданной.
+	return "", errors.New("пароль не принадлежит ни одному абоненту сервера")
 }

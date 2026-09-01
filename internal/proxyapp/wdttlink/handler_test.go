@@ -156,17 +156,10 @@ func (f *fakeTunnels) PublishList(context.Context) { f.published++ }
 // перенесённого passwords_json.go (задача 9 даёт прод-реализацию).
 type fakeVetting struct{}
 
-func (fakeVetting) UnusableReason(u instancestore.ServerUser) UnusableReason {
-	if strings.TrimSpace(u.Password) == "" {
-		return ReasonEmptyPassword
-	}
-	return ReasonUsable
-}
-
-func (v fakeVetting) UsableUsers(users []instancestore.ServerUser) []instancestore.ServerUser {
+func (fakeVetting) UsableUsers(users []instancestore.ServerUser) []instancestore.ServerUser {
 	var out []instancestore.ServerUser
 	for _, u := range users {
-		if v.UnusableReason(u) == ReasonUsable {
+		if strings.TrimSpace(u.Password) != "" {
 			out = append(out, u)
 		}
 	}

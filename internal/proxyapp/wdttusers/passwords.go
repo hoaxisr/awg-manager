@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 )
 
@@ -172,10 +171,16 @@ func reserveGatewayIPInDevices(devices map[string]any) map[string]any {
 	return devices
 }
 
-// UsableUsers — абоненты, которых wdtt-server примет. Условие спрашивается у
-// UnusableReason и здесь НЕ перечисляется: прежняя редакция называла три
-// («непустой, не равный главному, не просроченный»), из которых сегодня живо
-// одно, и перечень в двух местах разошёлся ровно так, как и должен был.
+// UsableUsers — абоненты, которых wdtt-server примет. Условие сегодня ровно
+// одно — непустой пароль, и живёт оно ЗДЕСЬ, единственной строкой: новое
+// условие пригодности добавляется сюда и только сюда.
+//
+// Прежде условие спрашивали у отдельного классификатора причин
+// (`UnusableReason` → `wdttlink.UnusableReason`), а тот обслуживал ровно одну
+// ветку текста, которая стала недостижимой вместе с исчезновением срока
+// действия и главного пароля сервера. Конвейер снесён; вернётся вместе со
+// вторым условием и в его форме.
+//
 // Экспортирована намеренно: тем же предикатом обязан пользоваться сборщик
 // ссылок (wdttlink.UserVetting).
 //
@@ -193,37 +198,16 @@ func reserveGatewayIPInDevices(devices map[string]any) map[string]any {
 //
 // Пароль в результате уже подрезан: трим — здесь, и внутри конвейера больше
 // нигде, иначе ключ файла и ключ сравнения однажды разойдутся.
-//
-// Своих условий у предиката НЕТ: отбор целиком делает UnusableReason. Так
-// причина отказа и сам отбор не могут разойтись — историческое расхождение
-// давало пользователю уверенный, но неверный текст причины у абонента,
-// непригодного по другой.
 func UsableUsers(users []instancestore.ServerUser) []instancestore.ServerUser {
 	out := make([]instancestore.ServerUser, 0, len(users))
 	for _, u := range users {
-		if UnusableReason(u) != wdttlink.ReasonUsable {
+		u.Password = strings.TrimSpace(u.Password)
+		if u.Password == "" {
 			continue
 		}
-		u.Password = strings.TrimSpace(u.Password)
 		out = append(out, u)
 	}
 	return out
-}
-
-// UnusableReason называет ПРИЧИНУ непригодности — ту же, по которой абонент не
-// попадает в passwords.json. Потребители причины (тексты отказов сборщика
-// ссылок) обязаны спрашивать её, а не выводить причину исключением.
-//
-// Условие сегодня ровно одно — пустой пароль. Срок действия и деактивацию
-// назначал только админ-путь форка, которого у нас нет; главный пароль
-// сервера снят как ненужный (он не участвовал ни в WRAP-ключах, ни в
-// аутентификации абонента — только в admin-API форка). Новое условие
-// пригодности добавляется ЗДЕСЬ, и только здесь.
-func UnusableReason(u instancestore.ServerUser) wdttlink.UnusableReason {
-	if strings.TrimSpace(u.Password) == "" {
-		return wdttlink.ReasonEmptyPassword
-	}
-	return wdttlink.ReasonUsable
 }
 
 // Vetting — реализация wdttlink.UserVetting: предикат ОДИН на всех
@@ -232,10 +216,6 @@ type Vetting struct{}
 
 func (Vetting) UsableUsers(users []instancestore.ServerUser) []instancestore.ServerUser {
 	return UsableUsers(users)
-}
-
-func (Vetting) UnusableReason(u instancestore.ServerUser) wdttlink.UnusableReason {
-	return UnusableReason(u)
 }
 
 // dropOrphanPasswordsDevices удаляет устройства, на которые не ссылается ни один

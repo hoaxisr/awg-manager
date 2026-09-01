@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 )
 
@@ -200,46 +199,37 @@ func writePasswordsFixture(t *testing.T, dir string, doc passwordsJSON) {
 	}
 }
 
-// TestUsableUsers_FollowsReasonClassifier сторожит связь предиката и
-// классификатора: отбор обязан идти ТОЛЬКО через UnusableReason.
-func TestUsableUsers_FollowsReasonClassifier(t *testing.T) {
+// Условие пригодности ровно одно и живёт в самом предикате: непустой пароль.
+// Классификатор причин снесён (PF27) — он обслуживал недостижимую ветку текста
+// и умер вместе со сроком действия и главным паролем сервера.
+func TestUsableUsers_KeepsOnlyNonEmptyAndTrims(t *testing.T) {
 	users := []instancestore.ServerUser{
 		{Password: "abonent1"},
 		{Password: "  spaced  "},
 		{Password: "   "},
 	}
 
-	inUsable := map[string]bool{}
-	for _, u := range UsableUsers(users) {
-		inUsable[u.Password] = true
+	got := UsableUsers(users)
+	if len(got) != 2 {
+		t.Fatalf("отобрано %d абонентов, ждали 2: %#v", len(got), got)
 	}
-	for _, u := range users {
-		want := UnusableReason(u) == wdttlink.ReasonUsable
-		if got := inUsable[strings.TrimSpace(u.Password)]; got != want {
-			t.Fatalf("абонент %q: предикат = %v, классификатор = %v (%q) — отбор идёт мимо классификатора",
-				u.Password, got, want, UnusableReason(u))
+	// Трим — ЗДЕСЬ и больше нигде в конвейере: иначе ключ файла и ключ
+	// сравнения однажды разойдутся.
+	if got[1].Password != "spaced" {
+		t.Fatalf("пароль не подрезан: %q", got[1].Password)
+	}
+	for _, u := range got {
+		if strings.TrimSpace(u.Password) == "" {
+			t.Fatalf("пустой пароль признан рабочим: %#v", u)
 		}
 	}
 }
 
-func TestUnusableReason_NamesEachCondition(t *testing.T) {
-	cases := []struct {
-		name string
-		user instancestore.ServerUser
-		want wdttlink.UnusableReason
-	}{
-		{"рабочий", instancestore.ServerUser{Password: "abonent1"}, wdttlink.ReasonUsable},
-		{"пустой пароль", instancestore.ServerUser{Password: "   "}, wdttlink.ReasonEmptyPassword},
-	}
-	for _, tc := range cases {
-		if got := UnusableReason(tc.user); got != tc.want {
-			t.Fatalf("%s: причина = %q, ожидалась %q", tc.name, got, tc.want)
-		}
-	}
+func TestVettingIsTheSamePredicate(t *testing.T) {
 	// Vetting обязана быть тем же предикатом, а не своей копией.
 	var v Vetting
-	if got := v.UnusableReason(instancestore.ServerUser{Password: "   "}); got != wdttlink.ReasonEmptyPassword {
-		t.Fatalf("Vetting.UnusableReason = %q", got)
+	if got := v.UsableUsers([]instancestore.ServerUser{{Password: "   "}}); len(got) != 0 {
+		t.Fatalf("Vetting пропустила пустой пароль: %#v", got)
 	}
 	if got := v.UsableUsers([]instancestore.ServerUser{{Password: " forever "}}); len(got) != 1 || got[0].Password != "forever" {
 		t.Fatalf("Vetting.UsableUsers = %#v", got)
