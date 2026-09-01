@@ -75,7 +75,11 @@ type TunnelImporter interface {
 	// тем временем.
 	Update(tunnelID string, mut func(*storage.AWGTunnel) error) error
 	Delete(ctx context.Context, tunnelID string) error
-	Import(ctx context.Context, conf, name string) (tunnelID, tunnelName string, err error)
+	// Import создаёт туннель СРАЗУ связанным: clientID уезжает в ту же запись,
+	// что и сам туннель. Отдельного «дописать связь» здесь нет намеренно —
+	// оно оставляло окно, в котором туннель уже создан, а связи ещё нет, и
+	// такой туннель невидим для уборки связанных (`LinkedCleaner`).
+	Import(ctx context.Context, conf, name, clientID string) (tunnelID, tunnelName string, err error)
 	Start(ctx context.Context, tunnelID string) error
 	// ForgetTraffic снимает историю трафика удалённого туннеля: id
 	// переиспользуется, и чужая история подмешалась бы к новому туннелю.
@@ -462,9 +466,22 @@ func (h *Handler) EnsureWGTunnel(w http.ResponseWriter, r *http.Request, key str
 	wantName := TunnelNameFromClient(rec.Name)
 	wantEndpoint := fmt.Sprintf("127.0.0.1:%d", port)
 	running := haveSnap && snap.PID > 0
-	// mutated — было ли что менять: публикация списка нужна ровно тогда,
-	// когда фронту есть что перечитать.
+	// mutated — было ли что менять: публикация списка нужна ровно тогда, когда
+	// фронту есть что перечитать.
+	//
+	// Публикует ОДИН defer, а не каждый путь по месту (PF22). Ручка мутирует
+	// в нескольких шагах (снос устаревших туннелей, правка совпавшего, импорт,
+	// старт), и после любого из них дальше стоит ранний возврат по отказу
+	// СЛЕДУЮЩЕГО шага. Публикация по месту жила только на успешных путях,
+	// поэтому частично удавшаяся работа уезжала на диск, но не доезжала до
+	// фронта: список показывал удалённое (а в одном случае — не показывал
+	// созданное) до ручной перезагрузки страницы.
 	mutated := false
+	defer func() {
+		if mutated {
+			h.deps.Tunnels.PublishList(r.Context())
+		}
+	}()
 
 	tunnels, err := h.deps.Tunnels.List()
 	if err != nil {
@@ -534,9 +551,6 @@ func (h *Handler) EnsureWGTunnel(w http.ResponseWriter, r *http.Request, key str
 			_ = h.deps.Tunnels.Start(r.Context(), match.ID)
 			mutated = true
 		}
-		if mutated {
-			h.deps.Tunnels.PublishList(r.Context())
-		}
 		response.Success(w, EnsureWGTunnelResponse{
 			Created:    false,
 			TunnelID:   match.ID,
@@ -546,22 +560,15 @@ func (h *Handler) EnsureWGTunnel(w http.ResponseWriter, r *http.Request, key str
 		return
 	}
 
-	tunnelID, tunnelName, err := h.deps.Tunnels.Import(r.Context(), patched, wantName)
+	tunnelID, tunnelName, err := h.deps.Tunnels.Import(r.Context(), patched, wantName, rec.ID)
 	if err != nil {
 		response.Error(w, err.Error(), "WDTT_WG_IMPORT_FAILED")
 		return
 	}
-	if err := h.deps.Tunnels.Update(tunnelID, func(stored *storage.AWGTunnel) error {
-		stored.WdttClientID = rec.ID
-		return nil
-	}); err != nil {
-		response.InternalError(w, err.Error())
-		return
-	}
+	mutated = true // туннель создан — фронту есть что перечитать в любом случае
 	if running {
 		_ = h.deps.Tunnels.Start(r.Context(), tunnelID)
 	}
-	h.deps.Tunnels.PublishList(r.Context())
 	response.Success(w, EnsureWGTunnelResponse{
 		Created:    true,
 		TunnelID:   tunnelID,

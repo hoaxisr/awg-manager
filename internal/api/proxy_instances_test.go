@@ -204,9 +204,35 @@ func fullClientRecord() instancestore.Record {
 
 func newProxyHandler(t *testing.T, mgr *fakeProxyManager, states fakeProxyStates) *ProxyInstancesHandler {
 	t.Helper()
+	return newProxyHandlerWithCleaners(t, mgr, states, nil)
+}
+
+// fakeLinkedCleaner — уборщик связанных туннелей. Запоминает не только вызов,
+// но и СОСТОЯНИЕ удаления инстанса в момент вызова: связи обязаны сниматься по
+// ещё существующей записи, и порядок здесь несущий, а не косметический.
+type fakeLinkedCleaner struct {
+	calls         []string
+	deletedAtCall []int
+	deleted       []string
+	errs          []string
+	mgr           *fakeProxyManager
+}
+
+func (c *fakeLinkedCleaner) DeleteLinked(_ context.Context, clientID string) ([]string, []string) {
+	c.calls = append(c.calls, clientID)
+	if c.mgr != nil {
+		c.deletedAtCall = append(c.deletedAtCall, len(c.mgr.deleted))
+	}
+	return c.deleted, c.errs
+}
+
+func newProxyHandlerWithCleaners(t *testing.T, mgr *fakeProxyManager, states fakeProxyStates,
+	cleaners map[instancestore.Kind]LinkedTunnelCleaner) *ProxyInstancesHandler {
+	t.Helper()
 	return NewProxyInstancesHandler(ProxyInstancesDeps{
-		Manager: mgr,
-		States:  states,
+		Manager:  mgr,
+		States:   states,
+		Cleaners: cleaners,
 		Snapshot: func(key string) (awgmproto.State, bool) {
 			if key != "wdtt-server:default" {
 				return awgmproto.State{}, false
@@ -848,6 +874,93 @@ func TestProxyInstancesDelete_Failed(t *testing.T) {
 	}
 	if code, msg := decodeProxyErr(t, rr); code != "PROXY_DECLARE_FAILED" || !strings.Contains(msg, "реестр отверг") {
 		t.Fatalf("ошибка = %q / %q", code, msg)
+	}
+}
+
+// PF20: удаление клиентского инстанса уносит его связанные AWG-туннели, и
+// держит это БЭКЕНД. Пока инвариант жил на фронте двумя вызовами подряд,
+// удаление мимо панели оставляло карточку туннеля навсегда: уборка ищет
+// туннели по id инстанса, а инстанса уже нет.
+func TestProxyInstancesDelete_ClearsLinkedTunnels(t *testing.T) {
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{fullClientRecord()},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	cleaner := &fakeLinkedCleaner{deleted: []string{"awg10"}, mgr: mgr}
+	h := newProxyHandlerWithCleaners(t, mgr, fakeProxyStates{},
+		map[instancestore.Kind]LinkedTunnelCleaner{instancestore.KindWdttClient: cleaner})
+
+	rr := doProxy(t, h, http.MethodDelete, "/api/proxyrt/instances/wdtt-client:nl", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("код = %d: %s", rr.Code, rr.Body.String())
+	}
+	// Уборщик зовётся по id ЗАПИСИ, а не по ключу: на id ссылается поле связи.
+	if !reflect.DeepEqual(cleaner.calls, []string{"nl"}) {
+		t.Fatalf("уборщик позван %v, ждали [nl]", cleaner.calls)
+	}
+	// Порядок несущий: связи снимаются ПО ЕЩЁ ЖИВОЙ записи — на этом стоит
+	// пропуск зеркальной записи raw-клиента внутри уборщика.
+	if len(cleaner.deletedAtCall) != 1 || cleaner.deletedAtCall[0] != 0 {
+		t.Fatalf("уборщик позван ПОСЛЕ удаления записи: %v", cleaner.deletedAtCall)
+	}
+	var body struct {
+		Data ProxyDeleteData `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(body.Data.DeletedTunnels, []string{"awg10"}) {
+		t.Fatalf("снесённые туннели не названы в ответе: %+v", body.Data)
+	}
+}
+
+// У серверных ролей связанных туннелей не бывает: ключа в карте нет, и это
+// штатное «убирать нечего», а не дефект проводки.
+func TestProxyInstancesDelete_ServerHasNoLinkedTunnels(t *testing.T) {
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{fullServerRecord()},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	cleaner := &fakeLinkedCleaner{mgr: mgr}
+	h := newProxyHandlerWithCleaners(t, mgr, fakeProxyStates{},
+		map[instancestore.Kind]LinkedTunnelCleaner{instancestore.KindWdttClient: cleaner})
+
+	rr := doProxy(t, h, http.MethodDelete, "/api/proxyrt/instances/wdtt-server:default", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("код = %d: %s", rr.Code, rr.Body.String())
+	}
+	if len(cleaner.calls) != 0 {
+		t.Fatalf("уборщик позван для сервера: %v", cleaner.calls)
+	}
+}
+
+// Отказ уборки НЕ отменяет удаление инстанса (решение прежнее — запирать
+// удаление из-за туннелей пользователь не просил), но и молча не теряется:
+// иначе рассинхрон «инстанса нет, карточка есть» остался бы необъяснённым.
+func TestProxyInstancesDelete_TunnelErrorsDoNotBlock(t *testing.T) {
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{fullClientRecord()},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	cleaner := &fakeLinkedCleaner{errs: []string{"awg10: занят"}, mgr: mgr}
+	h := newProxyHandlerWithCleaners(t, mgr, fakeProxyStates{},
+		map[instancestore.Kind]LinkedTunnelCleaner{instancestore.KindWdttClient: cleaner})
+
+	rr := doProxy(t, h, http.MethodDelete, "/api/proxyrt/instances/wdtt-client:nl", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("код = %d: %s", rr.Code, rr.Body.String())
+	}
+	if !reflect.DeepEqual(mgr.deleted, []string{"wdtt-client:nl"}) {
+		t.Fatalf("инстанс не удалён из-за отказа уборки: %v", mgr.deleted)
+	}
+	var body struct {
+		Data ProxyDeleteData `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(body.Data.TunnelErrors, []string{"awg10: занят"}) {
+		t.Fatalf("ошибки уборки потеряны: %+v", body.Data)
 	}
 }
 

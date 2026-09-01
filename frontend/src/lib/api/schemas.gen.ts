@@ -1040,6 +1040,17 @@ const api_ProxyConfigResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_ProxyDeleteData: v.GenericSchema = v.looseObject({
+	deletedTunnels: v.optional(v.nullable(v.array(v.string()))),
+	ok: v.optional(v.nullable(v.boolean())),
+	tunnelErrors: v.optional(v.nullable(v.array(v.string()))),
+});
+
+const api_ProxyDeleteResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_ProxyDeleteData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_ProxyInstanceResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_DeviceProxyInstanceData))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -2983,7 +2994,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"DELETE /managed-servers/{id}": v.lazy(() => api_ServersAllResponse),
 	"DELETE /managed-servers/{id}/peers/{pubkey}": v.lazy(() => api_ServersAllResponse),
 	"DELETE /proxy/instance": v.lazy(() => api_APIEnvelope),
-	"DELETE /proxyrt/instances/{key}": v.lazy(() => api_OkResponse),
+	"DELETE /proxyrt/instances/{key}": v.lazy(() => api_ProxyDeleteResponse),
 	"DELETE /proxyrt/instances/{key}/users": v.lazy(() => wdttusers_UsersStatusResponse),
 	"DELETE /proxyrt/instances/{key}/users/{password}": v.lazy(() => wdttusers_UsersStatusResponse),
 	"DELETE /proxyrt/seed/listen-moves": v.lazy(() => api_OkResponse),

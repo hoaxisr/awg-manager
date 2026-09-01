@@ -14,7 +14,7 @@
 //   POST   /wdtt/clients                    → POST /proxyrt/instances        (kind=wdtt-client)
 //   PUT    /wdtt/clients/{id}               → PATCH /proxyrt/instances/wdtt-client:{id}
 //   PATCH  /wdtt/clients/{id}               → PATCH /proxyrt/instances/wdtt-client:{id}   (name)
-//   DELETE /wdtt/clients/{id}               → POST …/linked-tunnels/clear + DELETE /proxyrt/instances/wdtt-client:{id}
+//   DELETE /wdtt/clients/{id}               → DELETE /proxyrt/instances/wdtt-client:{id} (связи снимает бэкенд)
 //   POST   /wdtt/clients/{id}/start|stop    → PATCH /proxyrt/instances/wdtt-client:{id}   ({enabled})
 //   POST   /wdtt/clients/{id}/ensure-wg-tunnel → POST /proxyrt/instances/wdtt-client:{id}/ensure-wg-tunnel
 //   POST   /wdtt/clients/{id}/ensure-raw-tunnel → УДАЛЕНА (зеркальную запись ведёт движок)

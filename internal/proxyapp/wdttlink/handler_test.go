@@ -73,11 +73,12 @@ func (f *fakeCleaner) DeleteLinked(_ context.Context, clientID string) ([]string
 	return f.deleted, f.errs
 }
 
-type importCall struct{ Conf, Name string }
+type importCall struct{ Conf, Name, ClientID string }
 
 type fakeTunnels struct {
 	tunnels   []storage.AWGTunnel
 	imports   []importCall
+	importErr error
 	started   []string
 	deleted   []string
 	saved     []storage.AWGTunnel
@@ -125,14 +126,20 @@ func (f *fakeTunnels) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-func (f *fakeTunnels) Import(_ context.Context, conf, name string) (string, string, error) {
-	f.imports = append(f.imports, importCall{Conf: conf, Name: name})
+func (f *fakeTunnels) Import(_ context.Context, conf, name, clientID string) (string, string, error) {
+	f.imports = append(f.imports, importCall{Conf: conf, Name: name, ClientID: clientID})
+	if f.importErr != nil {
+		return "", "", f.importErr
+	}
 	id := f.nextID
 	if id == "" {
 		id = "t-new"
 	}
+	// Связь ложится ТЕМ ЖЕ созданием, что и запись, — как в проде
+	// (service.Import → store.Create).
 	f.tunnels = append(f.tunnels, storage.AWGTunnel{ID: id, Name: name,
-		Peer: storage.AWGPeer{PublicKey: ExtractPeerPublicKey(conf)}})
+		WdttClientID: clientID,
+		Peer:         storage.AWGPeer{PublicKey: ExtractPeerPublicKey(conf)}})
 	return id, name, nil
 }
 
@@ -614,8 +621,15 @@ func TestEnsureWG_ImportsWithPatchedEndpoint(t *testing.T) {
 	if strings.Contains(got.Conf, "1.2.3.4:56001") {
 		t.Fatalf("остался внешний endpoint: %q", got.Conf)
 	}
-	if len(tunnels.saved) != 1 || tunnels.saved[0].WdttClientID != "default" {
-		t.Fatalf("связь не записана: %+v", tunnels.saved)
+	// PF21: связь уезжает в СОЗДАНИЕ записи, а не дописывается вторым шагом.
+	// Второй шаг оставлял окно «туннель есть, связи нет», в котором туннель
+	// невидим для уборки связанных, — и окно это было не теоретическим:
+	// отказывал он на таймауте того же лока хранилища.
+	if got.ClientID != "default" {
+		t.Fatalf("связь не уехала в импорт: %+v", got)
+	}
+	if len(tunnels.saved) != 0 {
+		t.Fatalf("связь дописана вторым шагом — окно сироты вернулось: %+v", tunnels.saved)
 	}
 	if !reflect.DeepEqual(tunnels.started, []string{"wg-1"}) {
 		t.Fatalf("живой клиент — туннель обязан подняться: %v", tunnels.started)
@@ -990,5 +1004,35 @@ func TestLink_NoVKHashesRefused(t *testing.T) {
 	h.Link(rr, post(t, `{"peer":"1.2.3.4:56002","password":"abonent","vkHashes":["own-hash"]}`), rec.Key())
 	if _, msg, code := decodeEnvelope(t, rr); code != "" {
 		t.Fatalf("отказ при хешах из запроса: %s (%s)", code, msg)
+	}
+}
+
+// PF22: ранний возврат по отказу НЕ теряет событие о том, что уже сделано.
+// Сценарий: устаревший туннель с чужим ключом пира снесён, а следующий шаг
+// (импорт нового) отказал. Список на фронте без публикации показывал бы
+// снесённый туннель до ручной перезагрузки страницы.
+func TestEnsureWG_PublishesAfterPartialWorkOnFailure(t *testing.T) {
+	rec := wgClient()
+	h, _, _, _, tunnels := newTestHandler(t, rec)
+	h.deps.Snapshots = func(string) (awgmproto.State, bool) {
+		return awgmproto.State{PID: 42, WG: &awgmproto.WGState{Config: wgConf}}, true
+	}
+	// Связанный туннель с ЧУЖИМ ключом пира — его ручка обязана снести.
+	tunnels.tunnels = []storage.AWGTunnel{{
+		ID: "old-1", Name: "старый", WdttClientID: "default",
+		Peer: storage.AWGPeer{PublicKey: "ZZZZc7ZBk0dGrLLDFrCG7WHYzZ8SS5xBWMzOJ9CkNFo="}}}
+	tunnels.importErr = errors.New("импорт отказал")
+
+	rr := httptest.NewRecorder()
+	h.EnsureWGTunnel(rr, post(t, ``), rec.Key())
+
+	if _, _, code := decodeEnvelope(t, rr); code != "WDTT_WG_IMPORT_FAILED" {
+		t.Fatalf("ждали отказ импорта, код %q", code)
+	}
+	if len(tunnels.deleted) == 0 {
+		t.Fatal("устаревший туннель не снесён — сценарий не воспроизведён")
+	}
+	if tunnels.published == 0 {
+		t.Fatal("снос состоялся, а событие потеряно: фронт покажет снесённый туннель до перезагрузки")
 	}
 }

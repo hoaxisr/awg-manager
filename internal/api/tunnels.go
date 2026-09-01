@@ -42,8 +42,9 @@ type TunnelService interface {
 	SetEnabled(ctx context.Context, tunnelID string, enabled bool) error
 	SetDefaultRoute(ctx context.Context, tunnelID string, enabled bool) error
 
-	// Import
-	Import(ctx context.Context, confContent, name, backend string) (*service.TunnelWithStatus, error)
+	// Import. Поля владения прокси-подсистем едут ПАРАМЕТРОМ, а не дописываются
+	// после: см. service.ImportLink.
+	Import(ctx context.Context, confContent, name, backend string, link service.ImportLink) (*service.TunnelWithStatus, error)
 
 	// ReplaceConfig replaces a tunnel's config from a new .conf file.
 	ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string) error

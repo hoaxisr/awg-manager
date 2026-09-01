@@ -775,15 +775,14 @@ describe('адреса новой поверхности', () => {
 		});
 	});
 
-	it('удаление клиента сперва снимает связи, потом сносит инстанс', async () => {
-		const calls = stubFetch((url) =>
-			url.endsWith('/linked-tunnels/clear')
-				? { deletedTunnels: ['t1'], tunnelErrors: [], message: 'linked AWG tunnels cleared' }
-				: { ok: true }
-		);
+	// PF20: инвариант «клиент уходит вместе со своими туннелями» держит
+	// БЭКЕНД. Пара вызовов с фронта держала его плохо: удаление мимо панели
+	// оставляло карточку туннеля навсегда, а здесь отказ ручки clear ловился
+	// и удаление шло дальше.
+	it('удаление клиента — ОДИН запрос, связи снимает бэкенд', async () => {
+		const calls = stubFetch(() => ({ ok: true, deletedTunnels: ['t1'], tunnelErrors: [] }));
 		const res = await api.deleteWdttClient('nl');
 		expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-			'POST /api/proxyrt/instances/wdtt-client%3Anl/linked-tunnels/clear',
 			'DELETE /api/proxyrt/instances/wdtt-client%3Anl'
 		]);
 		expect(res.deletedTunnels).toEqual(['t1']);

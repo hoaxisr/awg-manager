@@ -40,6 +40,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
 
 // Проводка прокси-рантайма: аллокаторы номеров и портов, посев, менеджер,
@@ -425,8 +426,10 @@ func (c proxyLinkedCleaner) DeleteLinked(ctx context.Context, clientID string) (
 			continue
 		}
 		// Зеркальная запись raw-клиента — проекция ЖИВОГО инстанса, чьи связи
-		// сейчас снимают (уборщика зовёт только ручка clear по существующей
-		// записи). Снести её здесь значило бы соврать: ближайшее объявление
+		// сейчас снимают. Уборщика зовут ДВА пути — ручка clear и удаление
+		// инстанса, — и оба по ЕЩЁ СУЩЕСТВУЮЩЕЙ записи: удаление снимает связи
+		// ДО того, как запись исчезнет (api/proxy_instances.go, remove).
+		// Снести её здесь значило бы соврать: ближайшее объявление
 		// создаст запись заново, но с дефолтами, и настройки карточки пропадут
 		// молча (амендмент F2). Уносит запись удаление инстанса — через
 		// зеркало.
@@ -452,6 +455,19 @@ func (c proxyLinkedCleaner) DeleteLinked(ctx context.Context, clientID string) (
 		proxyPublishTunnels(c.pub, "proxy-linked-tunnel-delete")
 	}
 	return deleted, errs
+}
+
+// proxyAPICleaners — та же карта уборщиков под узким интерфейсом пакета api.
+// Перекладка нужна из-за типов: `wdttlink.LinkedCleaner` и
+// `api.LinkedTunnelCleaner` описывают ОДИН метод, но принадлежат разным
+// пакетам, и api не должен импортировать proxyapp ради одной сигнатуры.
+// Значения те же самые — набор правил снятия связи в системе один.
+func proxyAPICleaners(src map[instancestore.Kind]wdttlink.LinkedCleaner) map[instancestore.Kind]api.LinkedTunnelCleaner {
+	out := make(map[instancestore.Kind]api.LinkedTunnelCleaner, len(src))
+	for kind, c := range src {
+		out[kind] = c
+	}
+	return out
 }
 
 // proxyLinkedField — поле связи AWG-туннеля для роли клиента (амендмент B).
@@ -522,10 +538,10 @@ func (t proxyTunnelImporter) Delete(ctx context.Context, tunnelID string) error 
 	return t.svc.Delete(ctx, tunnelID)
 }
 
-func (t proxyTunnelImporter) Import(ctx context.Context, conf, name string) (string, string, error) {
+func (t proxyTunnelImporter) Import(ctx context.Context, conf, name, clientID string) (string, string, error) {
 	// Бэкенд пустой — тот же аргумент, что у старой ручки: его выбирает сама
-	// служба по прошивке.
-	res, err := t.svc.Import(ctx, conf, name, "")
+	// служба по прошивке. Связь едет в ту же запись (см. TunnelImporter.Import).
+	res, err := t.svc.Import(ctx, conf, name, "", service.ImportLink{WdttClientID: clientID})
 	if err != nil {
 		return "", "", err
 	}
@@ -929,13 +945,18 @@ func (a *app) wireProxyrt() {
 	logTail := proxyLogTail(mgr.Records)
 	snapshots := wdttlink.Snapshots(links.snapshot)
 
+	// Уборщики связанных туннелей — ОДИН набор на двоих потребителей: ручку
+	// linked-tunnels/clear и путь удаления инстанса. Две сборки означали бы
+	// два набора правил снятия связи, расходящихся молча.
+	linkedCleaners := proxyLinkedCleaners(a.awgStore, a.proxyTunnels(), a.trafficHistory, a.eventBus)
+
 	linkHandler := wdttlink.NewHandler(wdttlink.Deps{
 		Records:   records,
 		Mutator:   mutator,
 		Snapshots: snapshots,
 		Tunnels: proxyTunnelImporter{store: a.awgStore, svc: a.proxyTunnels(),
 			traffic: a.trafficHistory, pub: a.eventBus},
-		Cleaners: proxyLinkedCleaners(a.awgStore, a.proxyTunnels(), a.trafficHistory, a.eventBus),
+		Cleaners: linkedCleaners,
 		Builders: map[instancestore.Kind]wdttlink.LinkBuilder{
 			instancestore.KindWdttServer: wdttlink.NewBuilder(wdttlink.BuilderDeps{
 				Vetting:    wdttusers.Vetting{},
@@ -963,6 +984,7 @@ func (a *app) wireProxyrt() {
 		Log:              logTail,
 		BinaryInfo:       installSvc.Binary,
 		OpkgTunSupported: opkgTunSupported,
+		Cleaners:         proxyAPICleaners(linkedCleaners),
 	})
 
 	a.srv.SetProxyRtSurface(server.ProxyRtSurface{
