@@ -41,6 +41,13 @@ func redirectServerStatsLog(cfgDir, instanceID, mode string) error {
 		}
 		target = filepath.Join("/tmp", fmt.Sprintf("awg-wdtt-server-%s.log", id))
 	}
+	// Уже указывает куда надо — не трогаем. Перекладка симлинка идёт тем же
+	// повторяющимся путём старта, что и passwords.json (см. syncPasswordsJSON):
+	// безусловные Remove+Symlink точили бы флеш каждые 30 с у заблокированного
+	// инстанса.
+	if cur, err := os.Readlink(logPath); err == nil && cur == target {
+		return nil
+	}
 	_ = os.Remove(logPath)
 	return os.Symlink(target, logPath)
 }

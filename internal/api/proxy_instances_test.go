@@ -914,6 +914,26 @@ func TestProxyInstancesDelete_ClearsLinkedTunnels(t *testing.T) {
 	}
 }
 
+// Ревью ветки: отсутствие уборщика у КЛИЕНТСКОЙ роли — дефект проводки, а не
+// «убирать нечего». Молчаливый успех тут — худший исход: инстанс удалён,
+// туннель осиротел навсегда, и никто об этом не узнал.
+func TestProxyInstancesDelete_MissingCleanerForClientIsLoud(t *testing.T) {
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{fullClientRecord()},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	h := newProxyHandlerWithCleaners(t, mgr, fakeProxyStates{},
+		map[instancestore.Kind]LinkedTunnelCleaner{}) // уборщиков нет вовсе
+
+	rr := doProxy(t, h, http.MethodDelete, "/api/proxyrt/instances/wdtt-client:nl", "")
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("код = %d, ждали 500: %s", rr.Code, rr.Body.String())
+	}
+	if len(mgr.deleted) != 0 {
+		t.Fatalf("инстанс удалён без уборки связей: %v", mgr.deleted)
+	}
+}
+
 // У серверных ролей связанных туннелей не бывает: ключа в карте нет, и это
 // штатное «убирать нечего», а не дефект проводки.
 func TestProxyInstancesDelete_ServerHasNoLinkedTunnels(t *testing.T) {

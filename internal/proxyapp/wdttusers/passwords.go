@@ -10,6 +10,7 @@
 package wdttusers
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -309,5 +310,14 @@ func syncPasswordsJSON(configDir string, users []instancestore.ServerUser) (bool
 	if err != nil {
 		return sanitized, err
 	}
-	return sanitized, os.WriteFile(passwordsJSONPath(dir), data, 0600)
+	path := passwordsJSONPath(dir)
+	// Запись ТОЛЬКО при отличии. Хранилище роутера — флеш, а материализацию
+	// зовут в цикле: путь старта повторяется каждые 30 с, пока инстанс
+	// заблокирован (RecheckAfter гейта усыновления), и байт-в-байт та же
+	// запись стачивала бы флеш вечно. Тот же принцип, что у ErrNoChange в
+	// хранилище записей: «менять нечего — файл не трогаем».
+	if cur, rerr := os.ReadFile(path); rerr == nil && bytes.Equal(cur, data) {
+		return sanitized, nil
+	}
+	return sanitized, os.WriteFile(path, data, 0600)
 }

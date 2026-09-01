@@ -374,7 +374,7 @@ func (h *Handler) ClearLinkedTunnels(w http.ResponseWriter, r *http.Request, key
 	// instancestore.Record.Key). Без гейта запрос к СЕРВЕРУ default сносил бы
 	// туннели КЛИЕНТА default. В старом мире роль задавал сам путь
 	// (/wdtt/clients/{id}/…), здесь её задаёт только ключ.
-	if !isClientKind(rec.Kind) {
+	if !rec.Kind.IsClient() {
 		response.Error(w, "инстанс "+key+": связанные AWG-туннели есть только у клиентов, роль "+
 			string(rec.Kind)+" их не заводит", "BAD_REQUEST")
 		return
@@ -578,13 +578,6 @@ func (h *Handler) EnsureWGTunnel(w http.ResponseWriter, r *http.Request, key str
 }
 
 // ── общее ────────────────────────────────────────────────────────
-
-// isClientKind — у кого бывают связанные AWG-туннели: только у клиентов
-// (поля связи storage.AWGTunnel.WdttClientID и FreeTurnClientID). Сервер —
-// вход, туннеля на него не заводится.
-func isClientKind(k instancestore.Kind) bool {
-	return k == instancestore.KindWdttClient || k == instancestore.KindFreeTurnClient
-}
 
 func (h *Handler) record(w http.ResponseWriter, key string) (instancestore.Record, bool) {
 	if h.deps.Records == nil {

@@ -91,9 +91,9 @@ type ProxyRtSeedView struct {
 	// инстансы не перенесены. Признак отдельный от Error: только по имени
 	// файла интерфейс может сказать, ЧЬИ инстансы потеряны.
 	Skipped []ProxyRtSkippedSourceView `json:"skipped,omitempty"`
-	// MovedListen — инстансы, которым посев сменил listen-адрес, разводя
-	// конфликт за порт. Молчать нельзя: снаружи мог быть настроен клиент на
-	// прежний порт.
+	// MovedListen — инстансы, которым СМЕНИЛИ listen-адрес, разводя конфликт
+	// за порт. Источников три: посев, боот и правка инстанса. Молчать нельзя:
+	// снаружи мог быть настроен клиент на прежний порт.
 	MovedListen []ProxyRtListenMoveView `json:"movedListen,omitempty"`
 }
 
@@ -103,7 +103,7 @@ type ProxyRtSkippedSourceView struct {
 	Reason string `json:"reason,omitempty" example:"invalid character 'н'"`
 }
 
-// ProxyRtListenMoveView — один переезд listen-адреса, сделанный посевом.
+// ProxyRtListenMoveView — один переезд listen-адреса (посев, боот или правка).
 type ProxyRtListenMoveView struct {
 	Instance string `json:"instance" example:"freeturn-client:default"`
 	Name     string `json:"name,omitempty" example:"Клиент"`
@@ -566,6 +566,14 @@ func (h *ProxyInstancesHandler) remove(w http.ResponseWriter, r *http.Request, k
 	var deleted, tunnelErrors []string
 	if c := h.deps.Cleaners[rec.Kind]; c != nil {
 		deleted, tunnelErrors = c.DeleteLinked(r.Context(), rec.ID)
+	} else if rec.Kind.IsClient() {
+		// Отсутствие уборщика у КЛИЕНТСКОЙ роли — дефект проводки, а не
+		// «убирать нечего»: молча удалив инстанс, мы оставили бы его туннель
+		// сиротой навсегда и отчитались успехом. Тот же выбор, что у ручки
+		// linked-tunnels/clear (wdttlink/handler.go): отказ громче тишины.
+		response.InternalError(w, "очистка связанных туннелей роли "+
+			string(rec.Kind)+" не подключена")
+		return
 	}
 	if err := h.deps.Manager.Delete(r.Context(), key); err != nil {
 		h.fail(w, err)

@@ -139,10 +139,12 @@ type SeedInfo struct {
 	// вот сказать пользователю, ЧЬИ инстансы не перенеслись, можно только по
 	// имени файла.
 	Skipped []instancestore.SkippedSource
-	// MovedListen — инстансы, которым посев сменил listen-адрес, разводя
-	// конфликт за порт (амендмент G3). Признак живёт рядом со Skipped и по той
-	// же причине: снаружи мог быть настроен клиент на прежний порт, и узнать о
-	// переезде человек обязан.
+	// MovedListen — инстансы, которым СМЕНИЛИ listen-адрес, разводя
+	// конфликт за порт. Источников ТРИ: посев (у подсистем совпадал дефолтный
+	// порт), боот (порт отняла чужая запись) и правка инстанса — не только
+	// посев, как говорила прежняя редакция этой строки. Наружу — ради журнала
+	// и признака в поверхности статуса: снаружи мог быть настроен клиент на
+	// прежний порт.
 	MovedListen []instancestore.ListenMove
 }
 
@@ -746,15 +748,17 @@ func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (
 	if declaresExit(cand) {
 		prevExitOwner = cand.ID
 	}
-	// Прежний listen — ДО мутатора и ДО ensurePins: аллокатор молча меняет
-	// негодный порт (занятый чужой записью либо вне пула), и без снимка
-	// сказать о переезде было бы нечем.
-	prevListen := ""
-	if p := instancestore.ClientListen(&cand); p != nil {
-		prevListen = *p
-	}
 	if err := mutate(&cand); err != nil {
 		return nil, err
+	}
+	// НАМЕРЕНИЕ по listen снимается ПОСЛЕ мутатора и ДО ensurePins: переезд —
+	// это когда аллокатор ОТВЕРГ желаемый порт, а не когда порт поменяли
+	// намеренно. Сравнение с прежним значением (первая редакция) объявляло бы
+	// переездом и осознанную смену порта через API, и плашка врала бы
+	// пользователю «порт был занят».
+	wantListen := ""
+	if p := instancestore.ClientListen(&cand); p != nil {
+		wantListen = *p
 	}
 	if allocated, err = m.ensurePins(&cand); err != nil { // Щ1: wg→raw и пустой listen
 		return allocated, err
@@ -764,13 +768,13 @@ func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (
 	// что снаружи мог быть настроен клиент на прежний адрес, и молчание здесь
 	// стоит ровно столько же, сколько молчание там.
 	//
-	// Пустой prevListen пропускается намеренно: у создания прежнего порта нет,
-	// «переезд с ничего» — не переезд. Роли без своего listen (серверные)
-	// отсеивает сам ClientListen, возвращая nil.
+	// Пустое намерение пропускается: у создания порта ещё нет, «переезд с
+	// ничего» — не переезд. Роли без своего listen (серверные) отсеивает сам
+	// ClientListen, возвращая nil.
 	var moved []instancestore.ListenMove
-	if p := instancestore.ClientListen(&cand); p != nil && prevListen != "" && *p != prevListen {
+	if p := instancestore.ClientListen(&cand); p != nil && wantListen != "" && *p != wantListen {
 		moved = append(moved, instancestore.ListenMove{
-			Instance: key, Name: cand.Name, From: prevListen, To: *p})
+			Instance: key, Name: cand.Name, From: wantListen, To: *p})
 	}
 
 	st, err := m.mutateStoreLocked(func(state *instancestore.State) error {

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
@@ -878,5 +879,53 @@ func TestAddWithoutOwnerPassword(t *testing.T) {
 	}
 	if len(got.Users) != 1 || got.Users[0].Password != "client1" {
 		t.Fatalf("состав абонентов: %+v", got.Users)
+	}
+}
+
+// Ревью ветки: отказ гейта (PF18) стоит ПОСЛЕ материализации, а путь старта
+// повторяется каждые 30 с, пока инстанс заблокирован. Безусловная запись
+// точила бы флеш роутера вечно на неизменном составе.
+func TestSyncOnStart_RepeatDoesNotRewriteUnchangedFiles(t *testing.T) {
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1", Comment: "Иван"})
+	if err := st.svc.SyncOnStart(context.Background(), testKey); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(st.dir, "passwords.json")
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Метка времени файловой системы слишком груба для соседних вызовов —
+	// сравниваем по ней ПОСЛЕ явного сдвига в прошлое: перезапись вернёт
+	// свежее время, пропуск оставит сдвинутое.
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.svc.SyncOnStart(context.Background(), testKey); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(old) {
+		t.Fatalf("файл переписан на неизменном составе: было %v, стало %v",
+			before.ModTime(), after.ModTime())
+	}
+}
+
+// Изменился состав — файл обязан обновиться: пропуск по совпадению не должен
+// превратиться в «не пишем никогда».
+func TestSyncOnStart_RewritesWhenUsersChanged(t *testing.T) {
+	st := newStand(t, baseCfg(), instancestore.ServerUser{Password: "client1"})
+	if err := st.svc.SyncOnStart(context.Background(), testKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.svc.Add(context.Background(), testKey, "client2", "Второй", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.file(t).Passwords["client2"]; !ok {
+		t.Fatalf("новый абонент не доехал до файла: %#v", st.file(t).Passwords)
 	}
 }

@@ -22,7 +22,6 @@ import {
 } from './proxyInstances';
 
 export type WdttDeleteClientResult = {
-	message?: string;
 	deletedTunnels?: string[];
 	tunnelErrors?: string[];
 };

@@ -497,9 +497,10 @@ func proxyLinkedCleaners(store *storage.AWGTunnelStore, svc api.TunnelService,
 	traffic *traffic.History, pub proxyrt.Publisher,
 ) map[instancestore.Kind]wdttlink.LinkedCleaner {
 	out := map[instancestore.Kind]wdttlink.LinkedCleaner{}
-	for _, kind := range []instancestore.Kind{
-		instancestore.KindWdttClient, instancestore.KindFreeTurnClient,
-	} {
+	// Перечень — из канонического источника (instancestore.ClientKinds), а не
+	// свой: новая клиентская роль, забытая здесь, осталась бы без уборщика
+	// молча.
+	for _, kind := range instancestore.ClientKinds() {
 		out[kind] = proxyLinkedCleaner{store: store, svc: svc,
 			field: proxyLinkedField(kind), traffic: traffic, pub: pub}
 	}
@@ -800,7 +801,7 @@ func (r *proxyAdoptedRole) Resources(intent proxyrt.Intent, cfg any, obs proxyrt
 	if intent == proxyrt.IntentEnabled {
 		if err := r.gate.ensure(); err != nil {
 			return []proxyrt.Resource{proxyBlocked{id: proxyUsersResource,
-				reason: fmt.Errorf("абоненты сервера не усыновлены: %w", err)}}
+				reason: fmt.Errorf("цикл абонентов сервера не пройден: %w", err)}}
 		}
 	}
 	return r.inner.Resources(intent, cfg, obs)

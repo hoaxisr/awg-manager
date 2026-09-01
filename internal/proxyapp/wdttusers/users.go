@@ -218,7 +218,9 @@ func (s *Service) SyncOnStart(ctx context.Context, key string) error {
 		return err
 	}
 	// (3) Гейт: без единого РАБОЧЕГО абонента passwords.json уезжает пустым, и
-	// форк падает в log.Fatalf (`serverWrapKeys.Count() == 0`, roles/config.go:241).
+	// форк падает при старте на условии `serverWrapKeys.Count() == 0` (его
+	// код — в форке; у нас это условие пересказано докстрокой
+	// roles.WdttServerConfig.Validate).
 	// Отказ здесь превращает смерть демона в честную причину на карточке:
 	// gate вызывающего (proxyAdoptedRole) объявляет ресурс blocked, процесс не
 	// стартует вовсе. Тот же инвариант со стороны удаления держит

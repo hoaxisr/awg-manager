@@ -1202,7 +1202,15 @@ func TestProxyFactoryWdttServerBlockedUntilUsersAdopted(t *testing.T) {
 	if len(result.States) != 1 || result.States[0].ID != proxyUsersResource {
 		t.Fatalf("состояние прогона: %+v", result.States)
 	}
-	if !strings.Contains(result.States[0].Error, "абоненты сервера не усыновлены") {
+	// Обёртка называет ступень нейтрально: цикл абонентов — это усыновление,
+	// материализация И гейт «есть кому подключаться» (PF18), и прежний текст
+	// «не усыновлены» врал бы на двух отказах из трёх.
+	if !strings.Contains(result.States[0].Error, "цикл абонентов сервера не пройден") {
+		t.Fatalf("ступень не названа: %+v", result.States[0])
+	}
+	// Главное — ПРИЧИНА, а не префикс: без неё пользователь видит «что-то
+	// пошло не так» и чинить ему нечего.
+	if !strings.Contains(result.States[0].Error, "инстанс не найден") {
 		t.Fatalf("причина не доехала до пользователя: %+v", result.States[0])
 	}
 }

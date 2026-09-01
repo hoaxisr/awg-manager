@@ -928,65 +928,6 @@ func TestDeleteSweepsSurvivorsNDMSNames(t *testing.T) {
 // посеве ведомость строится из скана минус имена удаляемого.
 //
 // OpkgTun20 в скане — интерфейс НЕПЕРЕЕХАВШЕГО инстанса: в записях store его
-// PF16: переезд listen-порта на пути Update виден тем же каналом, что и на
-// бооте. Прежде боот писал MovedListen, а правка меняла порт молча — при том
-// что снаружи так же мог быть настроен клиент на прежний адрес.
-func TestUpdateRecordsListenMove(t *testing.T) {
-	e := newEnv(t)
-	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18")) // listen 127.0.0.1:9000
-	boot(t, e)
-	// Занятость появляется ПОСЛЕ боота: иначе порт переехал бы уже там.
-	e.listenTaken = map[string]string{"127.0.0.1:9000": "127.0.0.1:9042"}
-
-	if err := e.m.Update(context.Background(), "wdtt-client:de", func(r *instancestore.Record) error {
-		r.Name = "Другое"
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	st, err := e.st.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(st.MovedListen) != 1 {
-		t.Fatalf("переезд правки не записан: %+v", st.MovedListen)
-	}
-	mv := st.MovedListen[0]
-	if mv.Instance != "wdtt-client:de" || mv.From != "127.0.0.1:9000" || mv.To != "127.0.0.1:9042" {
-		t.Fatalf("переезд назван неверно: %+v", mv)
-	}
-	if mv.Name != "Другое" {
-		t.Fatalf("имя инстанса взято не из правки: %+v", mv)
-	}
-	// Плашка читает снимок в памяти, а не диск: без синхронизации переезд
-	// появился бы только после перезапуска демона.
-	if got := e.m.SeedInfo().MovedListen; len(got) != 1 || got[0].To != "127.0.0.1:9042" {
-		t.Fatalf("снимок в памяти не обновлён: %+v", got)
-	}
-}
-
-// Правка, не сдвинувшая порт, молчит: иначе плашка всплывала бы на каждом
-// сохранении карточки.
-func TestUpdateWithoutListenMoveIsQuiet(t *testing.T) {
-	e := newEnv(t)
-	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
-	boot(t, e)
-	if err := e.m.Update(context.Background(), "wdtt-client:de", func(r *instancestore.Record) error {
-		r.Name = "Другое"
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	st, err := e.st.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(st.MovedListen) != 0 {
-		t.Fatalf("переезда не было, а запись есть: %+v", st.MovedListen)
-	}
-}
-
 // нет и быть не может, и он же различает обе половины теста.
 func TestDeleteSweepLedgerFollowsCertification(t *testing.T) {
 	setup := func(t *testing.T, certified bool) *env {
@@ -1510,5 +1451,93 @@ func TestAckListenMovesClearsDiskAndCache(t *testing.T) {
 	}
 	if got := e.m.SeedInfo().MovedListen; len(got) != 0 {
 		t.Errorf("в кэше менеджера остались переезды: %+v", got)
+	}
+}
+
+// PF16: переезд listen-порта на пути Update виден тем же каналом, что и на
+// бооте. Прежде боот писал MovedListen, а правка меняла порт молча — при том
+// что снаружи так же мог быть настроен клиент на прежний адрес.
+func TestUpdateRecordsListenMove(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18")) // listen 127.0.0.1:9000
+	boot(t, e)
+	// Занятость появляется ПОСЛЕ боота: иначе порт переехал бы уже там.
+	e.listenTaken = map[string]string{"127.0.0.1:9000": "127.0.0.1:9042"}
+
+	if err := e.m.Update(context.Background(), "wdtt-client:de", func(r *instancestore.Record) error {
+		r.Name = "Другое"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := e.st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.MovedListen) != 1 {
+		t.Fatalf("переезд правки не записан: %+v", st.MovedListen)
+	}
+	mv := st.MovedListen[0]
+	if mv.Instance != "wdtt-client:de" || mv.From != "127.0.0.1:9000" || mv.To != "127.0.0.1:9042" {
+		t.Fatalf("переезд назван неверно: %+v", mv)
+	}
+	if mv.Name != "Другое" {
+		t.Fatalf("имя инстанса взято не из правки: %+v", mv)
+	}
+	// Плашка читает снимок в памяти, а не диск: без синхронизации переезд
+	// появился бы только после перезапуска демона.
+	if got := e.m.SeedInfo().MovedListen; len(got) != 1 || got[0].To != "127.0.0.1:9042" {
+		t.Fatalf("снимок в памяти не обновлён: %+v", got)
+	}
+}
+
+// Правка, не сдвинувшая порт, молчит: иначе плашка всплывала бы на каждом
+// сохранении карточки.
+func TestUpdateWithoutListenMoveIsQuiet(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	boot(t, e)
+	if err := e.m.Update(context.Background(), "wdtt-client:de", func(r *instancestore.Record) error {
+		r.Name = "Другое"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := e.st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.MovedListen) != 0 {
+		t.Fatalf("переезда не было, а запись есть: %+v", st.MovedListen)
+	}
+}
+
+// Ревью ветки: осознанная смена порта через API — НЕ переезд. Переездом
+// считается только отказ аллокатора дать желаемое; иначе плашка «порт был
+// занят другой записью» врала бы тому, кто порт сам и поменял.
+func TestUpdateDeliberateListenChangeIsNotAMove(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18")) // listen 127.0.0.1:9000
+	boot(t, e)
+
+	if err := e.m.Update(context.Background(), "wdtt-client:de", func(r *instancestore.Record) error {
+		r.WdttClient.Listen = "127.0.0.1:9500" // свободный порт, аллокатор отдаст как есть
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := e.st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.MovedListen) != 0 {
+		t.Fatalf("осознанная смена порта объявлена переездом: %+v", st.MovedListen)
+	}
+	for _, r := range st.Records {
+		if p := instancestore.ClientListen(&r); p != nil && *p != "127.0.0.1:9500" {
+			t.Fatalf("порт не сохранён: %s", *p)
+		}
 	}
 }
