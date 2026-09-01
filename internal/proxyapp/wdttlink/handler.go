@@ -313,8 +313,9 @@ func (h *Handler) Link(w http.ResponseWriter, r *http.Request, key string) {
 
 // ── ensure-wg ────────────────────────────────────────────────────
 
-// EnsureWGTunnelResponse — тело ответа ensure-wg, форма прежняя
-// (api/wdtt_wg.go:13-18): фронт читает эти четыре поля.
+// EnsureWGTunnelResponse — тело ответа ensure-wg, форма прежняя (перенесена
+// из api/wdtt_wg.go, снесённого вместе со старым миром): фронт читает эти
+// четыре поля.
 type EnsureWGTunnelResponse struct {
 	Created    bool   `json:"created"`
 	TunnelID   string `json:"tunnelId,omitempty"`
