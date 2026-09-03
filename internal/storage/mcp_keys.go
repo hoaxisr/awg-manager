@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // McpKeyPrefix marks MCP bearer keys so a leaked value is recognisable.
@@ -42,6 +43,9 @@ type McpKey struct {
 }
 
 type mcpKeysFileV1 struct {
+	// Version is reserved for a future on-disk format change. It is
+	// written on every save but intentionally not validated on read
+	// today — there is only one format so far.
 	Version int      `json:"version"`
 	Keys    []McpKey `json:"keys"`
 }
@@ -117,7 +121,7 @@ func (s *McpKeyStore) Create(name string) (McpKey, string, error) {
 	if name == "" {
 		return McpKey{}, "", fmt.Errorf("key name is required")
 	}
-	if len(name) > mcpKeyNameMaxLen {
+	if utf8.RuneCountInString(name) > mcpKeyNameMaxLen {
 		return McpKey{}, "", fmt.Errorf("key name longer than %d characters", mcpKeyNameMaxLen)
 	}
 	var secret [32]byte
@@ -151,8 +155,13 @@ func (s *McpKeyStore) Revoke(id string) error {
 	defer s.mu.Unlock()
 	for i, k := range s.keys {
 		if k.ID == id {
+			before := s.keys
 			s.keys = append(s.keys[:i:i], s.keys[i+1:]...)
-			return s.saveLocked()
+			if err := s.saveLocked(); err != nil {
+				s.keys = before
+				return err
+			}
+			return nil
 		}
 	}
 	return ErrMcpKeyNotFound

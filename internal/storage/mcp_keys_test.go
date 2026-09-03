@@ -89,7 +89,93 @@ func TestMcpKeyStore_CreateRejectsBadName(t *testing.T) {
 		t.Fatal("empty name accepted")
 	}
 	if _, _, err := s.Create(strings.Repeat("x", 65)); err == nil {
-		t.Fatal("64+ char name accepted")
+		t.Fatal("65 ASCII char name accepted")
+	}
+	if _, _, err := s.Create(strings.Repeat("x", 64)); err != nil {
+		t.Fatalf("64 ASCII char name rejected: %v", err)
+	}
+	// Name length must be measured in runes, not bytes: each "я" is two
+	// UTF-8 bytes, so a byte-based check would wrongly reject a 64-rune
+	// Cyrillic name (128 bytes) and wrongly accept some multi-byte names
+	// short of the character limit.
+	if _, _, err := s.Create(strings.Repeat("я", 64)); err != nil {
+		t.Fatalf("64 Cyrillic char name rejected: %v", err)
+	}
+	if _, _, err := s.Create(strings.Repeat("я", 65)); err == nil {
+		t.Fatal("65 Cyrillic char name accepted")
+	}
+}
+
+func TestMcpKeyStore_PlaintextNeverPersisted(t *testing.T) {
+	s := newKeyStore(t)
+	key, plain, err := s.Create("laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(s.dataDir, "mcp_keys.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), plain) {
+		t.Fatal("plaintext key persisted to disk")
+	}
+	if key.Hash == plain {
+		t.Fatal("stored hash equals plaintext")
+	}
+}
+
+func TestMcpKeyStore_CreateRollsBackOnSaveFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permission bits")
+	}
+	dataDir := t.TempDir()
+	s := NewMcpKeyStore(dataDir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dataDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dataDir, 0o700) })
+
+	_, plain, err := s.Create("laptop")
+	if err == nil {
+		t.Fatal("Create succeeded despite unwritable data dir")
+	}
+	if list := s.List(); len(list) != 0 {
+		t.Fatalf("phantom key left in memory: %+v", list)
+	}
+	if _, ok := s.Verify(plain); ok {
+		t.Fatal("phantom key verifies after failed Create")
+	}
+}
+
+func TestMcpKeyStore_RevokeRollsBackOnSaveFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permission bits")
+	}
+	dataDir := t.TempDir()
+	s := NewMcpKeyStore(dataDir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	key, plain, err := s.Create("laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dataDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dataDir, 0o700) })
+
+	if err := s.Revoke(key.ID); err == nil {
+		t.Fatal("Revoke succeeded despite unwritable data dir")
+	}
+	if list := s.List(); len(list) != 1 {
+		t.Fatalf("key lost from memory after failed Revoke: %+v", list)
+	}
+	if _, ok := s.Verify(plain); !ok {
+		t.Fatal("key stopped verifying after failed Revoke")
 	}
 }
 
