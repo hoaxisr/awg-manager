@@ -375,3 +375,122 @@ func TestMcpKeyStore_TouchDoesNotHoldTheLockAcrossTheWrite(t *testing.T) {
 		t.Fatal("Touch did not persist LastUsedAt")
 	}
 }
+
+// touchRacesWith запускает Touch, замирает в хуке (mu уже отпущен, файл ещё
+// не записан), пока идёт мутация mutate, и возвращает список ключей,
+// перечитанный С ДИСКА после того, как обе операции завершились.
+//
+// Хук — единственный способ проверить порядок детерминированно: гонка
+// «снимок Touch устарел, но всё равно лёг поверх» иначе ловится только
+// таймингом.
+func touchRacesWith(t *testing.T, s *McpKeyStore, touchID string, mutate func()) []McpKey {
+	t.Helper()
+	mutateDone := make(chan struct{})
+	s.afterTouchUnlock = func() {
+		go func() {
+			defer close(mutateDone)
+			mutate()
+		}()
+		// Дать мутатору время дойти до записи. С правильным порядком блокировок
+		// он упрётся в fileMu и не пройдёт дальше, пока Touch не запишет;
+		// со сломанным — успеет записать свой список, и снимок Touch затрёт его.
+		select {
+		case <-mutateDone:
+		case <-time.After(time.Second):
+		}
+	}
+	s.Touch(touchID)
+	<-mutateDone
+	s.afterTouchUnlock = nil
+
+	reloaded := NewMcpKeyStore(s.dataDir)
+	if err := reloaded.Load(); err != nil {
+		t.Fatal(err)
+	}
+	return reloaded.List()
+}
+
+// TestMcpKeyStore_TouchDoesNotResurrectRevokedKey — Touch пишет уже без mu,
+// поэтому его снимок обязан быть упорядочен относительно мутаций через
+// fileMu. Иначе Revoke успешно отзывает ключ и возвращает успех, а устаревший
+// снимок Touch кладёт отозванный ключ обратно в файл — после перезапуска он
+// снова рабочий.
+func TestMcpKeyStore_TouchDoesNotResurrectRevokedKey(t *testing.T) {
+	s := newKeyStore(t)
+	keep, _, err := s.Create("keep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doomed, doomedPlain, err := s.Create("doomed")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var revokeErr error
+	onDisk := touchRacesWith(t, s, keep.ID, func() { revokeErr = s.Revoke(doomed.ID) })
+	if revokeErr != nil {
+		t.Fatalf("Revoke = %v", revokeErr)
+	}
+
+	for _, k := range onDisk {
+		if k.ID == doomed.ID {
+			t.Fatalf("Revoke returned success but the key is back in the file: %+v", onDisk)
+		}
+	}
+	if len(onDisk) != 1 || onDisk[0].ID != keep.ID {
+		t.Fatalf("on-disk keys = %+v, want only %q", onDisk, keep.ID)
+	}
+	if onDisk[0].LastUsedAt.IsZero() {
+		t.Fatal("the touched key's LastUsedAt did not reach the file")
+	}
+
+	// И живое состояние тоже: отозванный ключ не должен пройти проверку
+	// после перезагрузки хранилища с диска.
+	reloaded := NewMcpKeyStore(s.dataDir)
+	if err := reloaded.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reloaded.Verify(doomedPlain); ok {
+		t.Fatal("a revoked key verifies again after a restart")
+	}
+}
+
+// TestMcpKeyStore_TouchDoesNotEraseNewKey — зеркальный случай: Create выдал
+// пользователю plaintext и вернул успех, а устаревший снимок Touch стёр
+// новый ключ с диска.
+func TestMcpKeyStore_TouchDoesNotEraseNewKey(t *testing.T) {
+	s := newKeyStore(t)
+	old, _, err := s.Create("old")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var fresh McpKey
+	var freshPlain string
+	var createErr error
+	onDisk := touchRacesWith(t, s, old.ID, func() { fresh, freshPlain, createErr = s.Create("fresh") })
+	if createErr != nil {
+		t.Fatalf("Create = %v", createErr)
+	}
+
+	found := false
+	for _, k := range onDisk {
+		if k.ID == fresh.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Create handed out a key that is missing from the file: %+v", onDisk)
+	}
+	if len(onDisk) != 2 {
+		t.Fatalf("on-disk keys = %+v, want both", onDisk)
+	}
+
+	reloaded := NewMcpKeyStore(s.dataDir)
+	if err := reloaded.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reloaded.Verify(freshPlain); !ok {
+		t.Fatal("a freshly issued key does not verify after a restart")
+	}
+}

@@ -75,11 +75,20 @@ type McpKeyStore struct {
 	// Verify keeps working against the empty list — failing closed is the
 	// right direction for authentication.
 	loadErr error
-	// fileMu serialises the actual file rewrite. It is taken INSIDE mu by
-	// the mutators and alone by Touch, which snapshots under mu and then
-	// writes without it, so a once-a-minute fsync never blocks Verify.
+	// fileMu serialises the file rewrite AND orders it against the snapshot
+	// it was taken from. Lock order is always mu → fileMu: every writer
+	// acquires fileMu while still holding mu, so a snapshot can never be
+	// overtaken by a newer one and then written on top of it. Touch is the
+	// only caller that releases mu before writing (that is the whole point
+	// — an fsync must not block Verify), which is exactly why it must take
+	// fileMu BEFORE letting mu go.
 	fileMu sync.Mutex
 	now    func() time.Time
+	// afterTouchUnlock, when non-nil, runs inside Touch after mu is released
+	// and before the write, with fileMu held. Test hook only; nil in
+	// production. It exists so the mu/fileMu ordering can be exercised
+	// deterministically instead of by timing.
+	afterTouchUnlock func()
 }
 
 // NewMcpKeyStore creates a store rooted at dataDir. Call Load before use.
@@ -124,15 +133,21 @@ func (s *McpKeyStore) writableLocked() error {
 	return nil
 }
 
-// persist writes snapshot to disk. Callers must NOT hold mu for longer than
-// they need: the fsync inside AtomicWritePerm is the slow part.
+// persist writes snapshot to disk, taking fileMu itself.
 func (s *McpKeyStore) persist(snapshot []McpKey) error {
+	s.fileMu.Lock()
+	defer s.fileMu.Unlock()
+	return s.persistFileLocked(snapshot)
+}
+
+// persistFileLocked writes snapshot to disk. The caller must already hold
+// fileMu — that lock is what keeps a write ordered against the snapshot it
+// came from, so it may not be acquired here.
+func (s *McpKeyStore) persistFileLocked(snapshot []McpKey) error {
 	data, err := json.MarshalIndent(mcpKeysFileV1{Version: 1, Keys: snapshot}, "", "  ")
 	if err != nil {
 		return err
 	}
-	s.fileMu.Lock()
-	defer s.fileMu.Unlock()
 	// Keep the previous good file as .bak (hardlink: no data copy, the old
 	// inode survives the rename below) — the same cheap insurance
 	// settings.json takes against a bad flash write.
@@ -261,6 +276,16 @@ func (s *McpKeyStore) Verify(plaintext string) (McpKey, bool) {
 // write would block Verify — i.e. every concurrent MCP request — for the
 // duration of a flash write. Two touches racing means last-writer-wins on
 // a LastUsedAt field, which is not worth a lock for.
+//
+// fileMu is acquired BEFORE mu is released, and released only after the
+// write. Dropping both and taking fileMu later would serialise the writes
+// but not order them against the snapshots: a Revoke that ran in the gap
+// would persist its own list and return success, and this older snapshot
+// would then put the revoked key straight back into the file (and,
+// symmetrically, erase a key Create had just handed out). Holding fileMu
+// across the gap makes any such mutator block until this write has landed,
+// so it can only ever persist a state that already includes it. Verify
+// takes mu.RLock only and is untouched throughout.
 func (s *McpKeyStore) Touch(id string) {
 	now := s.now().UTC()
 	s.mu.Lock()
@@ -283,9 +308,16 @@ func (s *McpKeyStore) Touch(id string) {
 		snapshot = append([]McpKey(nil), s.keys...)
 		break
 	}
-	s.mu.Unlock()
 	if snapshot == nil {
+		s.mu.Unlock()
 		return
 	}
-	_ = s.persist(snapshot) // best effort: a failed touch must not break the request
+	hook := s.afterTouchUnlock // read under mu so -race sees no unguarded access
+	s.fileMu.Lock()            // ordering: taken while mu is still held (mu → fileMu)
+	s.mu.Unlock()
+	defer s.fileMu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	_ = s.persistFileLocked(snapshot) // best effort: a failed touch must not break the request
 }
