@@ -168,28 +168,30 @@
 				{:else if keys.length === 0}
 					<span class="setting-description">Ключей пока нет — без ключа подключиться нельзя.</span>
 				{:else}
-					<table class="w-full text-sm">
-						<thead>
-							<tr class="setting-description text-left">
-								<th class="font-normal">Название</th>
-								<th class="font-normal">Создан</th>
-								<th class="font-normal">Использован</th>
-								<th></th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each keys as k (k.id)}
-								<tr>
-									<td class="py-1">{k.name}</td>
-									<td class="py-1">{formatDate(k.createdAt)}</td>
-									<td class="py-1">{formatDate(k.lastUsedAt)}</td>
-									<td class="py-1 text-right">
-										<Button variant="danger" size="sm" onclick={() => (revokeTarget = k)} disabled={saving}>Отозвать</Button>
-									</td>
+					<div class="mcp-keys-table-wrap">
+						<table class="mcp-keys-table w-full text-sm">
+							<thead>
+								<tr class="setting-description text-left">
+									<th class="font-normal">Название</th>
+									<th class="font-normal">Создан</th>
+									<th class="font-normal">Использован</th>
+									<th></th>
 								</tr>
-							{/each}
-						</tbody>
-					</table>
+							</thead>
+							<tbody>
+								{#each keys as k (k.id)}
+									<tr>
+										<td>{k.name}</td>
+										<td>{formatDate(k.createdAt)}</td>
+										<td>{formatDate(k.lastUsedAt)}</td>
+										<td class="text-right">
+											<Button variant="danger" size="sm" onclick={() => (revokeTarget = k)} disabled={saving}>Отозвать</Button>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
 				{/if}
 			</div>
 		{/if}
@@ -308,5 +310,34 @@
 	.mcp-copy-btn:hover {
 		color: var(--text-primary, var(--color-text-primary));
 		background: var(--bg-hover, var(--color-bg-hover));
+	}
+
+	/* The keys table's row spacing (py-1) was silently defeated: app.css has an
+	   unlayered `*, *::before, *::after { margin: 0; padding: 0; }` reset, and
+	   unlayered rules always beat @layer-utilities rules like Tailwind's `.py-1`
+	   in the cascade regardless of specificity — so every td/th had 0 padding
+	   and adjacent rows' "Отозвать" buttons touched edge to edge. Scoped
+	   component <style> isn't layered either, so setting padding here (equal
+	   footing, higher specificity than `*`) actually sticks.
+	   min-width plus the wrapper's overflow-x keeps the four columns from being
+	   squeezed onto tiny cards (~400px) — the row scrolls horizontally inside
+	   the card instead of overlapping or bleeding past its edge. */
+	.mcp-keys-table-wrap {
+		overflow-x: auto;
+		/* Without this, the wrap (a flex item of .setting-row) takes its
+		   content's min-content width instead of shrinking to the row, so the
+		   scrollable table bleeds past the card edge instead of scrolling. */
+		min-width: 0;
+		width: 100%;
+	}
+
+	.mcp-keys-table {
+		min-width: 28rem;
+		border-collapse: collapse;
+	}
+
+	.mcp-keys-table th,
+	.mcp-keys-table td {
+		padding: 0.25rem 0;
 	}
 </style>
