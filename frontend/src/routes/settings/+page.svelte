@@ -25,6 +25,7 @@
 		ExperimentalSettingsCard,
 		PukhososPatrol,
 		SettingsSectionLabel,
+		McpCard,
 	} from "$lib/components/settings";
 	import HappKeysModal from "$lib/components/subscriptions/HappKeysModal.svelte";
 	import { setSettings as setGlobalSettings } from "$lib/stores/settings";
@@ -39,6 +40,8 @@
 		SystemInfo,
 		Settings,
 		UpdateInfo,
+		McpKey,
+		McpKeyCreated,
 	} from "$lib/types";
 	import { proxyInstallStatus, type ProxySubsystem } from "$lib/stores/proxyInstall";
 	import {
@@ -392,6 +395,7 @@ onMount(() => {
 			settings = appSettings;
 			setGlobalSettings(appSettings);
 			scrollToSettingsHashTarget();
+			if (appSettings.mcpEnabled) void loadMcpKeys();
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : "Не удалось загрузить настройки");
 		} finally {
@@ -478,6 +482,47 @@ $effect(() => {
 		} finally {
 			saving = false;
 		}
+	}
+
+	let mcpKeys = $state<McpKey[]>([]);
+	let mcpKeysLoading = $state(false);
+
+	async function loadMcpKeys() {
+		mcpKeysLoading = true;
+		try {
+			mcpKeys = await api.getMcpKeys();
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : "Не удалось загрузить ключи MCP");
+		} finally {
+			mcpKeysLoading = false;
+		}
+	}
+
+	async function toggleMcp(enabled: boolean) {
+		if (!settings) return;
+		saving = true;
+		try {
+			settings = await api.updateSettings({ ...settings, mcpEnabled: enabled });
+			setGlobalSettings(settings);
+			notifications.success(enabled ? "MCP-сервер включён" : "MCP-сервер выключен");
+			if (enabled) await loadMcpKeys();
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : "Ошибка сохранения настроек");
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function createMcpKey(name: string): Promise<McpKeyCreated> {
+		const created = await api.createMcpKey(name);
+		await loadMcpKeys();
+		return created;
+	}
+
+	async function revokeMcpKey(id: string) {
+		await api.revokeMcpKey(id);
+		notifications.success("Ключ отозван");
+		await loadMcpKeys();
 	}
 
 	async function generateApiKey() {
@@ -1157,6 +1202,17 @@ $effect(() => {
 					{/if}
 					</div>
 				</div>
+
+				<McpCard
+					enabled={settings.mcpEnabled ?? false}
+					{saving}
+					keys={mcpKeys}
+					keysLoading={mcpKeysLoading}
+					{origin}
+					ontoggle={toggleMcp}
+					oncreate={createMcpKey}
+					onrevoke={revokeMcpKey}
+				/>
 
 				{#if $experimentalSettingsUnlocked}
 					<ExperimentalSettingsCard />
