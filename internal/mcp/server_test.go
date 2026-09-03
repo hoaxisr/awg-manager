@@ -74,9 +74,16 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 			t.Errorf("tool %s has no output schema", tool.Name)
 		}
 	}
-	// Task 5 registers only the system tool group; Task 6 adds the other 18
-	// tools and expands this list to the full 23-tool catalogue.
-	want := []string{"get_system_status", "get_logs", "test_connectivity", "get_monitoring_matrix", "run_pingcheck"}
+	// Full 23-tool catalogue across all five register* groups.
+	want := []string{
+		"get_system_status", "get_logs", "test_connectivity", "get_monitoring_matrix", "run_pingcheck",
+		"list_tunnels", "get_tunnel", "control_tunnel", "create_tunnel", "replace_tunnel_config", "export_tunnel_config",
+		"list_dns_routes", "add_dns_route", "remove_dns_route",
+		"list_static_routes", "add_static_route", "remove_static_route",
+		"list_client_routes", "set_client_route",
+		"list_access_policies", "list_devices",
+		"list_managed_servers", "control_singbox",
+	}
 	for _, n := range want {
 		if byName[n] == nil {
 			t.Errorf("missing tool %s", n)
@@ -90,6 +97,12 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 	}
 	if a := byName["run_pingcheck"].Annotations; a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint {
 		t.Error("run_pingcheck must be a non-destructive write")
+	}
+	if !byName["list_tunnels"].Annotations.ReadOnlyHint {
+		t.Error("list_tunnels must be read-only")
+	}
+	if a := byName["control_tunnel"].Annotations; a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint {
+		t.Error("control_tunnel must be a non-destructive write")
 	}
 }
 
