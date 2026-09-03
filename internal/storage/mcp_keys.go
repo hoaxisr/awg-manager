@@ -32,6 +32,12 @@ const (
 // ErrMcpKeyNotFound is returned by Revoke for an unknown id.
 var ErrMcpKeyNotFound = errors.New("mcp key not found")
 
+// ErrMcpKeyInvalidName is wrapped into Create's error when the name fails
+// validation, so callers can distinguish a bad request (400) from an
+// infrastructure failure — a crypto/rand read or a persistence error — that
+// must surface as 500 instead.
+var ErrMcpKeyInvalidName = errors.New("invalid mcp key name")
+
 // McpKey is one named bearer key for the /mcp endpoint. Only the SHA-256
 // of the plaintext is stored; the plaintext is shown once at creation.
 type McpKey struct {
@@ -119,10 +125,10 @@ func hashMcpKey(plaintext string) string {
 func (s *McpKeyStore) Create(name string) (McpKey, string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return McpKey{}, "", fmt.Errorf("key name is required")
+		return McpKey{}, "", fmt.Errorf("%w: key name is required", ErrMcpKeyInvalidName)
 	}
 	if utf8.RuneCountInString(name) > mcpKeyNameMaxLen {
-		return McpKey{}, "", fmt.Errorf("key name longer than %d characters", mcpKeyNameMaxLen)
+		return McpKey{}, "", fmt.Errorf("%w: key name longer than %d characters", ErrMcpKeyInvalidName, mcpKeyNameMaxLen)
 	}
 	var secret [32]byte
 	if _, err := rand.Read(secret[:]); err != nil {

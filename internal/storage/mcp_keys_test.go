@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,6 +104,41 @@ func TestMcpKeyStore_CreateRejectsBadName(t *testing.T) {
 	}
 	if _, _, err := s.Create(strings.Repeat("я", 65)); err == nil {
 		t.Fatal("65 Cyrillic char name accepted")
+	}
+}
+
+func TestMcpKeyStore_CreateBadNameWrapsSentinel(t *testing.T) {
+	s := newKeyStore(t)
+	_, _, err := s.Create("   ")
+	if err == nil || !errors.Is(err, ErrMcpKeyInvalidName) {
+		t.Fatalf("empty name error does not wrap ErrMcpKeyInvalidName: %v", err)
+	}
+	_, _, err = s.Create(strings.Repeat("x", 65))
+	if err == nil || !errors.Is(err, ErrMcpKeyInvalidName) {
+		t.Fatalf("too-long name error does not wrap ErrMcpKeyInvalidName: %v", err)
+	}
+}
+
+func TestMcpKeyStore_CreateSaveFailureDoesNotWrapInvalidName(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permission bits")
+	}
+	dataDir := t.TempDir()
+	s := NewMcpKeyStore(dataDir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dataDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dataDir, 0o700) })
+
+	_, _, err := s.Create("laptop")
+	if err == nil {
+		t.Fatal("Create succeeded despite unwritable data dir")
+	}
+	if errors.Is(err, ErrMcpKeyInvalidName) {
+		t.Fatalf("save failure wrongly wraps ErrMcpKeyInvalidName: %v", err)
 	}
 }
 

@@ -129,7 +129,11 @@ func (h *McpKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	key, plaintext, err := h.store.Create(req.Name)
 	if err != nil {
-		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "MCP_KEY_INVALID_NAME")
+		if errors.Is(err, storage.ErrMcpKeyInvalidName) {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "MCP_KEY_INVALID_NAME")
+			return
+		}
+		response.ErrorWithStatus(w, http.StatusInternalServerError, "failed to create key", "MCP_KEY_CREATE_ERROR")
 		return
 	}
 	h.log.Info("key-create", key.Name, "MCP key created")
@@ -149,6 +153,7 @@ func (h *McpKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		404		{object}	APIErrorEnvelope
 //	@Failure		405		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/mcp/keys/revoke [post]
 func (h *McpKeysHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[McpKeyRevokeRequest](w, r, http.MethodPost)
@@ -164,7 +169,7 @@ func (h *McpKeysHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 			response.ErrorWithStatus(w, http.StatusNotFound, "key not found", "MCP_KEY_NOT_FOUND")
 			return
 		}
-		response.Error(w, err.Error(), "MCP_KEY_REVOKE_ERROR")
+		response.ErrorWithStatus(w, http.StatusInternalServerError, "failed to revoke key", "MCP_KEY_REVOKE_ERROR")
 		return
 	}
 	h.log.Info("key-revoke", req.ID, "MCP key revoked")
