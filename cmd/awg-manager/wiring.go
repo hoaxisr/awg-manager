@@ -80,6 +80,7 @@ type app struct {
 
 	// storage / settings / logging
 	settingsStore *storage.SettingsStore
+	mcpKeys       *storage.McpKeyStore
 	settings      *storage.Settings
 	awgStore      *storage.AWGTunnelStore
 

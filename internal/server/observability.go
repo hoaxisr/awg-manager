@@ -35,7 +35,8 @@ func skipSlowRequestLog(path string) bool {
 		return true
 	}
 	switch path {
-	case "/api/events",
+	case "/mcp",
+		"/api/events",
 		"/api/diagnostics/stream",
 		"/api/singbox/subscriptions/get-stream",
 		"/api/terminal/ws",

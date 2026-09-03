@@ -134,6 +134,7 @@ type Server struct {
 	singboxConfigPreviewFn     func() (string, error)
 	dnsCheckService            *dnscheck.Service
 	authMiddleware             *auth.Middleware
+	mcpKeys                    *storage.McpKeyStore
 	httpServer                 *http.Server
 
 	// listen владеет всеми HTTP-листенерами (по адресам из ListenSpec +
@@ -217,6 +218,10 @@ type Deps struct {
 	MonitoringService    *monitoring.Service
 	SingboxSubMembers    func() []diagnostics.SingboxSubMember
 	SingboxConfigPreview func() (string, error)
+
+	// McpKeys holds the MCP API keys. Nil disables the /mcp endpoint and
+	// its key-management routes entirely (they are never registered).
+	McpKeys *storage.McpKeyStore
 }
 
 // authLoggerAdapter narrows ScopedLogger to the AuthLogger interface
@@ -278,6 +283,7 @@ func New(cfg Config, deps Deps) *Server {
 		singboxSubMembersFn:    deps.SingboxSubMembers,
 		singboxConfigPreviewFn: deps.SingboxConfigPreview,
 		authMiddleware:         auth.NewMiddleware(deps.Sessions, deps.Settings, &authLoggerAdapter{log: appLog}),
+		mcpKeys:                deps.McpKeys,
 		instanceID:             id,
 	}
 }
@@ -664,6 +670,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.wireCrossHandlers(mux, h)
 	s.registerSingboxRoutes(mux, h)
 	s.registerProxyRtRoutes(mux, h)
+	s.registerMcpRoutes(mux, h)
 	s.registerStaticRoutes(mux, h)
 }
 

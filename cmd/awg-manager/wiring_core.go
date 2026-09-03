@@ -48,6 +48,17 @@ func (a *app) setupCore() {
 	}
 	applyGoMemoryLimits(a.settings.DisableMemorySaving)
 
+	// MCP API keys — loaded next to settings: the /mcp mount needs both the
+	// McpEnabled toggle and the key store at route-registration time.
+	// A load failure is not fatal: MCP is an optional side channel, and
+	// bricking a router's VPN daemon over its key file would be worse than
+	// serving with no keys (every /mcp request then fails auth, which is the
+	// safe direction). Load already self-heals a corrupt file by quarantine.
+	a.mcpKeys = storage.NewMcpKeyStore(a.dataDir)
+	if err := a.mcpKeys.Load(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load MCP keys (MCP will accept no key): %v\n", err)
+	}
+
 	a.awgStore = storage.NewAWGTunnelStore(
 		filepath.Join(a.dataDir, "tunnels"),
 	)

@@ -382,6 +382,12 @@ func (h *SystemHandler) Info(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	response.Success(w, h.InfoData())
+}
+
+// InfoData builds the /system/info payload. Exported for the MCP
+// localdeps adapter, which reuses it verbatim.
+func (h *SystemHandler) InfoData() map[string]interface{} {
 	// Get current settings
 	var disableMemorySaving bool
 	if h.settingsStore != nil {
@@ -429,9 +435,7 @@ func (h *SystemHandler) Info(w http.ResponseWriter, r *http.Request) {
 	// Router LAN IP (from br0 interface)
 	routerIP := netif.FirstIPv4(storage.DefaultInterface)
 
-	info := h.buildSystemInfo(disableMemorySaving, gcMemLimit, gogc, kernelModuleExists, kernelModuleLoaded, kernelModuleModel, kernelModuleVersion, kernelModuleLoadedVersion, isAarch64, activeBackendType, routerIP)
-
-	response.Success(w, info)
+	return h.buildSystemInfo(disableMemorySaving, gcMemLimit, gogc, kernelModuleExists, kernelModuleLoaded, kernelModuleModel, kernelModuleVersion, kernelModuleLoadedVersion, isAarch64, activeBackendType, routerIP)
 }
 
 func (h *SystemHandler) buildSystemInfo(disableMemorySaving bool, gcMemLimit, gogc string, kernelModuleExists, kernelModuleLoaded bool, kernelModuleModel, kernelModuleVersion, kernelModuleLoadedVersion string, isAarch64 bool, activeBackendType, routerIP string) map[string]interface{} {
