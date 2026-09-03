@@ -64,8 +64,9 @@ export interface SingboxRouterSettings {
 	qosClasses?: SingboxQosClass[];
 	/**
 	 * Место хранения кэша sing-box (cache.db) (issue #842).
-	 * 'flash' (default) — на флеш-памяти (/opt/etc/awg-manager/singbox/cache.db).
+	 * 'flash' — на флеш-памяти (/opt/etc/awg-manager/singbox/cache.db).
 	 * 'tmp' — в оперативной памяти (/tmp/singbox-cache.db, tmpfs/RAM) для защиты Flash.
+	 * Отсутствует — не задано: путь из 00-base.json как есть (см. Status.cacheDbPath).
 	 */
 	cacheFileLocation?: 'flash' | 'tmp';
 }
@@ -165,6 +166,8 @@ export interface SingboxRouterStatus {
 	fakeipDns?: string;
 	/** Адрес tun-шлюза (хост /30, e.g. «172.18.0.1») в режиме fakeip-tun. */
 	fakeipTunAddr?: string;
+	/** Эффективный путь cache.db: по cacheFileLocation, при пустой настройке — из 00-base.json. */
+	cacheDbPath?: string;
 	/**
 	 * Kernel-имя tun-интерфейса режима policy-tun (e.g. "opkgtun0"). Пусто вне
 	 * policy-tun и при выключенном движке.

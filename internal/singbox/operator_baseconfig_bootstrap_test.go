@@ -46,7 +46,7 @@ func TestFreshBaseConfig_BootstrapServer(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			base := freshBaseConfig("info", c.bootstrap, 0)
+			base := freshBaseConfig("info", c.bootstrap, 0, defaultCacheDBPath)
 			if got := bootstrapServerOf(t, base); got != c.want {
 				t.Errorf("dns-bootstrap.server = %q, want %q", got, c.want)
 			}
@@ -431,7 +431,7 @@ func TestReconcileConfigSteps_IdempotentWithBootstrapDNS(t *testing.T) {
 	})
 
 	run := func() {
-		for _, s := range reconcileConfigSteps(dir, configDir, "info", "8.8.8.8", 0, nil) {
+		for _, s := range reconcileConfigSteps(dir, configDir, "info", "8.8.8.8", 0, "", nil) {
 			s.run()
 		}
 	}
@@ -546,7 +546,7 @@ func TestReconcileConfigSteps_HealsMissingBootstrapEntry(t *testing.T) {
 		map[string]any{"type": "udp", "tag": "dns-custom", "server": "192.168.0.1"},
 	})
 
-	for _, s := range reconcileConfigSteps(dir, configDir, "info", "", 0, nil) {
+	for _, s := range reconcileConfigSteps(dir, configDir, "info", "", 0, "", nil) {
 		s.run()
 	}
 

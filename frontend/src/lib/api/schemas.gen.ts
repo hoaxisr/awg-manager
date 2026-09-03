@@ -1776,6 +1776,7 @@ const api_SingboxRouterSettingsResponse: v.GenericSchema = v.looseObject({
 
 const api_SingboxRouterStatusData: v.GenericSchema = v.looseObject({
 	active: v.optional(v.nullable(v.boolean())),
+	cacheDbPath: v.optional(v.nullable(v.string())),
 	crashCount: v.optional(v.nullable(v.number())),
 	deviceCount: v.optional(v.nullable(v.number())),
 	deviceMode: v.optional(v.nullable(v.string())),

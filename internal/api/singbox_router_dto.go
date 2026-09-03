@@ -39,6 +39,9 @@ type SingboxRouterStatusData struct {
 	FakeIPIface            string `json:"fakeipIface,omitempty" example:"opkgtun0"`
 	FakeIPDns              string `json:"fakeipDns,omitempty" example:"172.18.0.2"`
 	FakeIPTunAddr          string `json:"fakeipTunAddr,omitempty" example:"172.18.0.1"`
+	// CacheDBPath — эффективный путь cache.db: по cacheFileLocation, при пустой
+	// настройке — из 00-base.json (рукописный путь сохраняется).
+	CacheDBPath string `json:"cacheDbPath,omitempty" example:"/opt/etc/awg-manager/singbox/cache.db"`
 	// PolicyTunIface / PolicyTunNDMSName — kernel- и NDMS-имена policy-tun
 	// интерфейса. Заполнены при Enabled+Provisioned (ДО того как режим стал
 	// active): по NDMS-имени пользователь разрешает интерфейс в политике
@@ -137,9 +140,10 @@ type SingboxRouterSettingsData struct {
 	// source-preserve (см. GET /singbox/router/policy-tun/nat-preview).
 	// Обнуляется бэкендом при policyTunSourcePreserve=false.
 	PolicyTunNATSegments []string `json:"policyTunNatSegments,omitempty" example:"Home"`
-	// CacheFileLocation sets where sing-box stores cache.db ("flash" or "tmp").
-	// "flash" (default) saves to /opt/etc/awg-manager/singbox/cache.db.
-	// "tmp" saves to RAM tmpfs (/tmp/singbox-cache.db) to eliminate flash wear.
+	// CacheFileLocation — место хранения cache.db sing-box: "flash" —
+	// /opt/etc/awg-manager/singbox/cache.db, "tmp" — /tmp/singbox-cache.db в RAM,
+	// записи кэша перестают изнашивать флеш, но кэш не переживает перезагрузку.
+	// Пусто — не задано: путь из 00-base.json как есть (см. cacheDbPath в статусе).
 	CacheFileLocation string `json:"cacheFileLocation,omitempty" example:"flash" enums:"flash,tmp"`
 }
 

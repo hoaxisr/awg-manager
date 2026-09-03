@@ -40,6 +40,9 @@
 
   let open = $derived($drawerOpen);
   let s = $derived($status);
+  // Эффективный путь cache.db: при незаданной настройке это может быть
+  // рукописный путь из 00-base.json, который селектор выразить не может.
+  let cacheDbNow = $derived(s?.cacheDbPath ? ` Сейчас: ${s.cacheDbPath}` : '');
   let cfg = $derived($storeSettings);
   let isExpert = $derived($mode === 'expert');
 
@@ -223,6 +226,11 @@
     wanAutoOverride = override;
     if (patch) void applyPatch(patch);
   }
+  function onCacheLocationChange(e: Event) {
+    const v = (e.currentTarget as HTMLSelectElement).value;
+    if (v === 'flash' || v === 'tmp') void applyPatch({ cacheFileLocation: v });
+  }
+
   function onWanInterfaceChange(e: Event) {
     const action = planSelectWanInterface((e.currentTarget as HTMLSelectElement).value);
     if (!action) return;
@@ -371,6 +379,33 @@
       </section>
     {/if}
 
+    <!-- Кэш sing-box (issue #842): единственное место настройки, вне expert-гейта —
+         износ флеша касается любого режима с fakeip. -->
+    {#if cfg}
+      <section class="sec">
+        <div class="sec-cap">Кэш sing-box</div>
+        <div class="field">
+          <label class="lbl" for="ed-cache-location">Хранилище cache.db</label>
+          <select
+            id="ed-cache-location"
+            class="inp"
+            value={cfg.cacheFileLocation ?? ''}
+            onchange={onCacheLocationChange}
+          >
+            <!-- Пустое значение — «настройка не задана, путь из 00-base.json»;
+                 показываем, пока оно есть, иначе выбрать «Флеш» было бы нечем.
+                 Повторный выбор пустого отсекает onCacheLocationChange. -->
+            {#if !cfg.cacheFileLocation}
+              <option value="">Не задано — как в 00-base.json</option>
+            {/if}
+            <option value="flash">Флеш роутера (/opt)</option>
+            <option value="tmp">Оперативная память (/tmp)</option>
+          </select>
+        </div>
+        <p class="hint">В RAM записи FakeIP-карты и Clash не изнашивают флеш, но кэш не переживает перезагрузку. Выбор перезаписывает путь cache_file в 00-base.json, включая заданный вручную.{cacheDbNow}</p>
+      </section>
+    {/if}
+
     {#if isExpert && cfg}
       <!-- Источник трафика (deviceMode/policy) — только TPROXY: в policy-tun
            захват задаётся привязкой интерфейса к политике доступа NDMS. -->
@@ -429,21 +464,6 @@
           </div>
         </div>
         <p class="hint">Как долго sing-box держит UDP-сессии активными. Увеличьте если игры или другие UDP-приложения обрываются каждые несколько минут.</p>
-        <div class="field">
-          <label class="lbl" for="ed-cache-location">Место хранения кэша (cache.db)</label>
-          <div class="udp-timeout-row">
-            <select
-              id="ed-cache-location"
-              class="inp"
-              value={cfg.cacheFileLocation ?? 'flash'}
-              onchange={(e) => void applyPatch({ cacheFileLocation: ((e.currentTarget as HTMLSelectElement).value as 'flash' | 'tmp') })}
-            >
-              <option value="flash">Диск роутера (Flash /opt) — по умолчанию</option>
-              <option value="tmp">Оперативная память (RAM /tmp) — защита Flash</option>
-            </select>
-          </div>
-        </div>
-        <p class="hint">Хранение в RAM (/tmp) защищает флеш-память роутера от постоянных записей cache.db. Кэш сбрасывается при перезагрузке.</p>
       </section>
 
       <!-- QoS-маршрутизация (DSCP): onPatch возвращает Promise — карточка

@@ -32,7 +32,7 @@ func TestClashPort_ReachesBaseConfig(t *testing.T) {
 
 	t.Run("fresh base uses configured port", func(t *testing.T) {
 		configDir := filepath.Join(t.TempDir(), "config.d")
-		ensureBaseConfig(configDir, "info", "", 9500)
+		ensureBaseConfig(configDir, "info", "", 9500, "")
 		if got := readController(t, filepath.Join(configDir, "00-base.json")); got != "127.0.0.1:9500" {
 			t.Errorf("want 127.0.0.1:9500, got %q", got)
 		}
@@ -40,7 +40,7 @@ func TestClashPort_ReachesBaseConfig(t *testing.T) {
 
 	t.Run("port 0 falls back to default", func(t *testing.T) {
 		configDir := filepath.Join(t.TempDir(), "config.d")
-		ensureBaseConfig(configDir, "info", "", 0)
+		ensureBaseConfig(configDir, "info", "", 0, "")
 		if got := readController(t, filepath.Join(configDir, "00-base.json")); got != ClashAddr(DefaultClashPort) {
 			t.Errorf("want default, got %q", got)
 		}
@@ -56,7 +56,7 @@ func TestClashPort_ReachesBaseConfig(t *testing.T) {
 		if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 			t.Fatal(err)
 		}
-		ensureBaseConfig(configDir, "info", "", 9500)
+		ensureBaseConfig(configDir, "info", "", 9500, "")
 		if got := readController(t, basePath); got != "127.0.0.1:9500" {
 			t.Errorf("want 127.0.0.1:9500, got %q", got)
 		}

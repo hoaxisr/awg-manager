@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/configmerge"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // defaultCacheDBPath is the absolute path for sing-box's experimental.cache_file.
@@ -22,23 +24,36 @@ import (
 // override defaultDir to redirect this too.
 var defaultCacheDBPath = filepath.Join(defaultDir, "cache.db")
 
-// DefaultCacheDBPath exports the sing-box experimental.cache_file path so the
-// fakeip-tun router wiring (cmd/awg-manager) can pin its store_fakeip cache to
-// the same writable file without importing the unexported var. Keeps the router
-// package decoupled from the operator's path layout (it just receives a string).
-func DefaultCacheDBPath() string { return defaultCacheDBPath }
+// tempCacheDBPath — cache.db в RAM (tmpfs): бережёт NAND-флеш роутера от
+// постоянных записей sing-box в кэш (fakeip-карта, выбор outbound в Clash,
+// rule-set) (issue #842).
+// Переменная, как defaultCacheDBPath: тесты перенаправляют её в t.TempDir().
+var tempCacheDBPath = "/tmp/singbox-cache.db"
 
-// TempCacheDBPath is the RAM tmpfs path (/tmp/singbox-cache.db) used to protect NAND flash storage (issue #842).
-const TempCacheDBPath = "/tmp/singbox-cache.db"
+// legacyCacheFilePath — путь из старых доков sing-box; лежит на read-only
+// монтировании Entware, записи кэша молча падают. Заведомо негодный, а не
+// осознанная правка пользователя.
+const legacyCacheFilePath = "/opt/etc/sing-box/cache.db"
 
-// ResolveCacheDBPath returns the absolute path for cache.db based on location setting.
-// "tmp" -> TempCacheDBPath ("/tmp/singbox-cache.db")
-// "flash" / "" -> DefaultCacheDBPath() (/opt/etc/awg-manager/singbox/cache.db)
-func ResolveCacheDBPath(location string) string {
-	if location == "tmp" {
-		return TempCacheDBPath
+// cacheDBPathFor — эффективный путь cache.db (issue #842). Настройка задана
+// (flash | tmp) — путём владеет она. Настройка пуста — путём владеет
+// пользователь: абсолютный путь из base (рукописный, до появления настройки
+// его правили прямо в 00-base.json) остаётся, а заведомо негодный —
+// относительный (sing-box резолвит от CWD, под службой Entware это "/"),
+// legacy или отсутствующий — заменяется дефолтом на флеше. Единственный
+// источник пути для базы, overlay 21-fakeip.json (через Operator.CacheDBPath)
+// и статуса, поэтому рукописный путь действует во всех режимах.
+func cacheDBPathFor(location string, base map[string]any) string {
+	switch location {
+	case storage.CacheFileLocationTmp:
+		return tempCacheDBPath
+	case storage.CacheFileLocationFlash:
+		return defaultCacheDBPath
 	}
-	return DefaultCacheDBPath()
+	if p := currentCacheFilePath(base); filepath.IsAbs(p) && p != legacyCacheFilePath {
+		return p
+	}
+	return defaultCacheDBPath
 }
 
 // ensureBaseConfig writes a minimal 00-base.json if config.d is
@@ -46,14 +61,14 @@ func ResolveCacheDBPath(location string) string {
 // any tunnels are added. Also surgically self-heals an older base config
 // that hard-coded the wrong Clash API port (9090 instead of ours), which
 // silently broke our LogForwarder / DelayChecker on existing installs.
-func ensureBaseConfig(configDir, desiredLogLevel, desiredBootstrapDNS string, desiredClashPort int, loggers ...*slog.Logger) {
+func ensureBaseConfig(configDir, desiredLogLevel, desiredBootstrapDNS string, desiredClashPort int, desiredCacheLocation string, loggers ...*slog.Logger) {
 	log := firstLogger(loggers)
 	basePath := filepath.Join(configDir, "00-base.json")
 	if _, err := os.Stat(basePath); err == nil {
 		patchBaseClashPort(basePath, desiredClashPort, log)
 		patchBaseLogLevel(basePath, desiredLogLevel, log)
 		patchBaseDirectOutbound(basePath, log)
-		patchBaseCacheFilePath(basePath, log)
+		patchBaseCacheFilePath(basePath, desiredCacheLocation, log)
 		patchBaseBootstrapDNS(basePath, desiredBootstrapDNS, log)
 		return
 	}
@@ -62,7 +77,7 @@ func ensureBaseConfig(configDir, desiredLogLevel, desiredBootstrapDNS string, de
 			"step", stepEnsureBaseConfig, "path", configDir, "err", err)
 		return
 	}
-	writeSlotJSON(stepEnsureBaseConfig, basePath, freshBaseConfig(desiredLogLevel, desiredBootstrapDNS, desiredClashPort), log)
+	writeSlotJSON(stepEnsureBaseConfig, basePath, freshBaseConfig(desiredLogLevel, desiredBootstrapDNS, desiredClashPort, cacheDBPathFor(desiredCacheLocation, nil)), log)
 }
 
 func logConfigPatchInfo(log *slog.Logger, msg string, args ...any) {
@@ -113,11 +128,13 @@ type reconcileStep struct {
 // MigrateLegacyConfigDir в config.go). Внутри набора ограничений порядка нет:
 // шаги попарно коммутируют по конечному состоянию (закреплено
 // TestReconcileConfigSteps_CommuteReversed).
-func reconcileConfigSteps(dir, configPath, desiredLogLevel, desiredBootstrapDNS string, desiredClashPort int, log *slog.Logger) []reconcileStep {
+func reconcileConfigSteps(dir, configPath, desiredLogLevel, desiredBootstrapDNS string, desiredClashPort int, desiredCacheLocation string, log *slog.Logger) []reconcileStep {
 	base := filepath.Join(configPath, "00-base.json")
 	tunnels := filepath.Join(configPath, "10-tunnels.json")
 	return []reconcileStep{
-		{stepEnsureBaseConfig, func() { ensureBaseConfig(configPath, desiredLogLevel, desiredBootstrapDNS, desiredClashPort, log) }},
+		{stepEnsureBaseConfig, func() {
+			ensureBaseConfig(configPath, desiredLogLevel, desiredBootstrapDNS, desiredClashPort, desiredCacheLocation, log)
+		}},
 		{stepMigrateLegacyTunnels, func() { ensureLegacyConfigMigrated(dir, log) }},
 		{stepStripBaseOwnedBlocks, func() { patchTunnelsSlotStripBaseOwnedBlocks(tunnels, log) }},
 		// Компат-фиксы нужны каждому продюсеру outbound'ов: 10-tunnels пишет
@@ -888,76 +905,81 @@ func stripStrayDirectPlaceholder(configDir string, loggers ...*slog.Logger) {
 	}
 }
 
-// legacyCacheFilePath is the hardcoded path some older sing-box docs/configs
-// suggested. It lives under a read-only Entware mount so cache writes
-// silently fail. We treat it as a known-bad migration target, not as a
-// legitimate user customization.
-const legacyCacheFilePath = "/opt/etc/sing-box/cache.db"
-
-// patchBaseCacheFilePath ensures experimental.cache_file is present with a
-// writable path. Three cases:
-//
-//  1. Block missing entirely — add it with enabled:true + defaultCacheDBPath.
-//     Older installs predating our cache_file work didn't include the block;
-//     adding it post-hoc gives them the same on-disk benefits as fresh installs.
-//
-//  2. Relative path ("cache.db") — sing-box resolves against CWD which is "/"
-//     when the manager runs as a service on Entware. Replace with absolute.
-//
-//  3. Legacy absolute path /opt/etc/sing-box/cache.db — known-bad value from
-//     older docs / pre-2.x installer drafts. Read-only on Entware. Replace
-//     with defaultCacheDBPath.
-//
-// Any OTHER user-set absolute path is left untouched (legitimate
-// customization).
-func patchBaseCacheFilePath(basePath string, loggers ...*slog.Logger) {
-	patchBaseCacheFileTo(basePath, defaultCacheDBPath, loggers...)
+// reconcileCacheFile приводит experimental.cache_file в 00-base.json к пути
+// по cacheDBPathFor. Общий мутатор стартового примирения
+// (patchBaseCacheFilePath) и живого применения (ApplyCacheFileLocation);
+// хвост правки — лог и снос устаревшего кэша — у них тоже общий
+// (finishCacheFileChange). Отсутствующие блоки experimental/cache_file
+// достраиваем. Возвращает эффективный путь и признак «base изменена».
+func reconcileCacheFile(base map[string]any, location string) (want string, changed bool) {
+	want = cacheDBPathFor(location, base)
+	exp, _ := base["experimental"].(map[string]any)
+	if exp == nil {
+		exp = map[string]any{}
+		base["experimental"] = exp
+	}
+	cf, _ := exp["cache_file"].(map[string]any)
+	if cf == nil {
+		exp["cache_file"] = map[string]any{"enabled": true, "path": want}
+		return want, true
+	}
+	if cf["path"] == want {
+		return want, false
+	}
+	cf["path"] = want
+	return want, true
 }
 
-// patchBaseCacheFileTo ensures experimental.cache_file in 00-base.json is configured
-// to point to desiredPath (issue #842).
-func patchBaseCacheFileTo(basePath string, desiredPath string, loggers ...*slog.Logger) {
-	log := firstLogger(loggers)
-	if desiredPath == "" {
-		desiredPath = defaultCacheDBPath
+// finishCacheFileChange — хвост состоявшейся правки пути: лог со старым и
+// новым путём (иначе рукописный путь исчез бы молча) и снос кэша по
+// покинутому пути, если он один из наших двух — иначе откат поднял бы
+// протухшую fakeip-карту. Рукописный путь при переезде не трогаем: файл не
+// наш (сброс кэша при смене пула — другая история, там путь эффективный).
+// Открытый файл sing-box доживает до reload, снос его не рвёт.
+func finishCacheFileChange(log *slog.Logger, basePath, was, want string) {
+	logConfigPatchInfo(log, "singbox base config reconciled",
+		"patch", stepPatchBaseCacheFile,
+		"path", basePath,
+		"oldCachePath", loggedCachePath(was),
+		"newCachePath", want,
+	)
+	if was != defaultCacheDBPath && was != tempCacheDBPath {
+		return
 	}
+	switch err := os.Remove(was); {
+	case err == nil:
+		logConfigPatchInfo(log, "singbox stale cache.db removed", "patch", stepPatchBaseCacheFile, "cachePath", was)
+	case !os.IsNotExist(err):
+		logConfigPatchWarn(log, "singbox stale cache.db not removed", "patch", stepPatchBaseCacheFile, "cachePath", was, "err", err)
+	}
+}
+
+// currentCacheFilePath — путь cache_file из base как есть; "" если блока нет.
+func currentCacheFilePath(base map[string]any) string {
+	exp, _ := base["experimental"].(map[string]any)
+	cf, _ := exp["cache_file"].(map[string]any)
+	path, _ := cf["path"].(string)
+	return path
+}
+
+// loggedCachePath — старый путь для лога: пустой значит «блока не было», а
+// не «путь был пуст».
+func loggedCachePath(was string) string { return cmp.Or(was, "<none>") }
+
+// patchBaseCacheFilePath — стартовый шаг примирения cache_file (см.
+// reconcileCacheFile, finishCacheFileChange).
+func patchBaseCacheFilePath(basePath, location string, loggers ...*slog.Logger) {
+	log := firstLogger(loggers)
 	m, ok := readSlotJSON(stepPatchBaseCacheFile, basePath, log)
 	if !ok {
 		return
 	}
-	exp, ok := m["experimental"].(map[string]any)
-	if !ok {
-		// experimental block missing entirely — out of scope for cache_file
-		// patcher. Other patches (clash_port etc.) handle their own gaps.
+	was := currentCacheFilePath(m)
+	want, changed := reconcileCacheFile(m, location)
+	if !changed || !writeSlotJSON(stepPatchBaseCacheFile, basePath, m, log) {
 		return
 	}
-
-	cf, ok := exp["cache_file"].(map[string]any)
-	if !ok {
-		// Case 1: block missing — add it.
-		exp["cache_file"] = map[string]any{
-			"enabled": true,
-			"path":    desiredPath,
-		}
-		writeSlotJSON(stepPatchBaseCacheFile, basePath, m, log)
-		return
-	}
-
-	path, _ := cf["path"].(string)
-	switch {
-	case path == desiredPath:
-		return
-	case path == "" || !strings.HasPrefix(path, "/") || path == legacyCacheFilePath || path == defaultCacheDBPath || path == TempCacheDBPath:
-		cf["path"] = desiredPath
-	default:
-		// Any other absolute path — legitimate user customization, unless explicitly switching to tmp
-		if desiredPath == TempCacheDBPath {
-			cf["path"] = desiredPath
-		} else {
-			return
-		}
-	}
-	writeSlotJSON(stepPatchBaseCacheFile, basePath, m, log)
+	finishCacheFileChange(log, basePath, was, want)
 }
 
 // patchTunnelsSlotStripBaseOwnedBlocks self-heals 10-tunnels.json files polluted
@@ -1089,14 +1111,10 @@ const defaultBootstrapDNS = "1.1.1.1"
 // freshBaseConfig returns the canonical base sing-box config. Single source
 // of truth for ensureBaseConfig (initial write + self-heal path). Empty
 // bootstrapDNS falls back to defaultBootstrapDNS.
-func freshBaseConfig(logLevel, bootstrapDNS string, clashPort int, cachePath ...string) map[string]any {
+func freshBaseConfig(logLevel, bootstrapDNS string, clashPort int, cachePath string) map[string]any {
 	bootstrapDNS = sanitizeBootstrapDNS(bootstrapDNS)
 	if bootstrapDNS == "" {
 		bootstrapDNS = defaultBootstrapDNS
-	}
-	desiredCachePath := defaultCacheDBPath
-	if len(cachePath) > 0 && cachePath[0] != "" {
-		desiredCachePath = cachePath[0]
 	}
 	return map[string]any{
 		"log": map[string]any{"level": normalizeSingboxLogLevel(logLevel), "timestamp": true},
@@ -1110,7 +1128,7 @@ func freshBaseConfig(logLevel, bootstrapDNS string, clashPort int, cachePath ...
 			// caused FATAL on user installs.
 			"cache_file": map[string]any{
 				"enabled": true,
-				"path":    desiredCachePath,
+				"path":    cachePath,
 			},
 		},
 		"dns": map[string]any{
@@ -1187,13 +1205,27 @@ func (o *Operator) desiredClashPort() int {
 	return o.clashPort()
 }
 
-// desiredCachePath returns the desired cache.db path from settings ("flash" or "tmp");
-// falls back to defaultCacheDBPath.
-func (o *Operator) desiredCachePath() string {
+// desiredCacheLocation — настройка места хранения cache.db (issue #842);
+// "" — не задана.
+func (o *Operator) desiredCacheLocation() string {
 	if o.cacheFileLocation == nil {
-		return defaultCacheDBPath
+		return ""
 	}
-	return ResolveCacheDBPath(o.cacheFileLocation())
+	return o.cacheFileLocation()
+}
+
+// CacheDBPath — эффективный путь cache.db (см. cacheDBPathFor). Роутер берёт
+// его для overlay 21-fakeip.json и статуса: overlay перекрывает базу в merge,
+// и второй источник пути разводил бы режимы. База читается только при пустой
+// настройке и с nil-логгером (метка шага при нём инертна): битый 00-base.json
+// — не событие этого чтения, о нём говорят шаги примирения и валидатор.
+func (o *Operator) CacheDBPath() string {
+	location := o.desiredCacheLocation()
+	var base map[string]any
+	if location == "" {
+		base, _ = readSlotJSON(stepPatchBaseCacheFile, filepath.Join(o.configPath, "00-base.json"), nil)
+	}
+	return cacheDBPathFor(location, base)
 }
 
 // ApplyClashPort приводит experimental.clash_api.external_controller в
@@ -1235,37 +1267,24 @@ func (o *Operator) ApplyBootstrapDNS(server string) error {
 	})
 }
 
-// ApplyCacheFileLocation sets the experimental.cache_file.path in 00-base.json according to location ("flash" or "tmp") (issue #842).
+// ApplyCacheFileLocation приводит experimental.cache_file.path в 00-base.json
+// к месту хранения из настройки (flash | tmp, issue #842). Применяется через
+// reload оркестратора: при tun это Stop+Start, без tun — SIGHUP, который в
+// форке тоже Close + пересоздание, так что соединения рвутся в любом режиме.
+// Хвост правки общий со стартовым шагом (finishCacheFileChange).
 func (o *Operator) ApplyCacheFileLocation(location string) error {
-	desiredPath := ResolveCacheDBPath(location)
-	return o.mutateBase(func(base map[string]any) bool {
-		return reconcileCacheFilePath(base, desiredPath)
+	was, want, changed := "", "", false
+	err := o.mutateBase(func(base map[string]any) bool {
+		was = currentCacheFilePath(base)
+		want, changed = reconcileCacheFile(base, location)
+		return changed
 	})
-}
-
-func reconcileCacheFilePath(base map[string]any, desiredPath string) bool {
-	if desiredPath == "" {
-		desiredPath = defaultCacheDBPath
+	// Хвост только по факту правки: без config.d оркестратор выходит до
+	// мутатора, а при совпадении путей мутатор говорит «менять нечего».
+	if err == nil && changed {
+		finishCacheFileChange(o.log, filepath.Join(o.configPath, "00-base.json"), was, want)
 	}
-	exp, ok := base["experimental"].(map[string]any)
-	if !ok {
-		exp = map[string]any{}
-		base["experimental"] = exp
-	}
-	cf, ok := exp["cache_file"].(map[string]any)
-	if !ok {
-		exp["cache_file"] = map[string]any{
-			"enabled": true,
-			"path":    desiredPath,
-		}
-		return true
-	}
-	curPath, _ := cf["path"].(string)
-	if curPath == desiredPath {
-		return false
-	}
-	cf["path"] = desiredPath
-	return true
+	return err
 }
 
 // mutateBase — общий транспорт правки 00-base.json: прочитать, дать мутатору
@@ -1277,10 +1296,11 @@ func reconcileCacheFilePath(base map[string]any, desiredPath string) bool {
 // — параллельная правка другого скаляра терялась (дефект F41).
 //
 // Оркестратор обязателен: в проде SetOrch вызывается до старта HTTP
-// (wiring_singbox.go), «раннего бута» без него не существует — все три
-// вызывающих (ApplyLogLevel/ApplyClashPort/ApplyBootstrapDNS) достижимы
-// только через HTTP-хуки (server_routes.go). Тесты поднимают оркестратор
-// сами (см. newOrchedOperator).
+// (wiring_singbox.go), «раннего бута» без него не существует — все четыре
+// вызывающих достижимы только из HTTP: ApplyLogLevel/ApplyClashPort/
+// ApplyBootstrapDNS через хуки server_routes.go, ApplyCacheFileLocation —
+// через router.Deps из UpdateSettings (wiring_server.go). Тесты поднимают
+// оркестратор сами (см. newOrchedOperator).
 func (o *Operator) mutateBase(mutate func(map[string]any) bool) error {
 	if o.orch == nil {
 		return fmt.Errorf("mutate base config: orchestrator not wired")
@@ -1288,7 +1308,7 @@ func (o *Operator) mutateBase(mutate func(map[string]any) bool) error {
 	// Кандидат на восстановление считается ДО взятия лока оркестратора:
 	// desired* ходят в SettingsStore, а под чужим локом блокирующей работе
 	// делать нечего. Нужен он только в ветке «файла нет».
-	fresh := freshBaseConfig(o.desiredSingboxLogLevel(), o.desiredBootstrapDNS(), o.desiredClashPort(), o.desiredCachePath())
+	fresh := freshBaseConfig(o.desiredSingboxLogLevel(), o.desiredBootstrapDNS(), o.desiredClashPort(), cacheDBPathFor(o.desiredCacheLocation(), nil))
 	return o.orch.Mutate(orchestrator.SlotBase, func(data []byte, exists bool) ([]byte, error) {
 		var base map[string]any
 		restored := false

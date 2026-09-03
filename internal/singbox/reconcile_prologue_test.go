@@ -21,7 +21,7 @@ func TestPatchers_WarnOnBrokenFile_SilentOnMissing(t *testing.T) {
 		{"patch-base-clash-port", func(p string, l *slog.Logger) { patchBaseClashPort(p, 0, l) }},
 		{"patch-base-log-level", func(p string, l *slog.Logger) { patchBaseLogLevel(p, "info", l) }},
 		{"patch-base-direct-outbound", func(p string, l *slog.Logger) { patchBaseDirectOutbound(p, l) }},
-		{"patch-base-cache-file", func(p string, l *slog.Logger) { patchBaseCacheFilePath(p, l) }},
+		{"patch-base-cache-file", func(p string, l *slog.Logger) { patchBaseCacheFilePath(p, "", l) }},
 		{"strip-base-owned-blocks", func(p string, l *slog.Logger) { patchTunnelsSlotStripBaseOwnedBlocks(p, l) }},
 		{"remove-route-final", func(p string, l *slog.Logger) { removeFinalFromBase(p, l) }},
 		{"remove-dns-final", func(p string, l *slog.Logger) { removeDNSFinalFromBase(p, l) }},

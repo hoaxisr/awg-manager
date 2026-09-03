@@ -322,7 +322,9 @@ type OperatorDeps struct {
 	// Issue #788, ADR 0001.
 	ClashPort func() int
 	// CacheFileLocation returns the desired cache.db location from settings
-	// ("flash" or "tmp") (issue #842). Optional; empty means default flash storage.
+	// ("flash" or "tmp") (issue #842). Optional; empty means "not configured":
+	// an absolute path in 00-base.json stays, a relative or legacy one is
+	// replaced by the flash default (see cacheDBPathFor).
 	CacheFileLocation func() string
 	// Bus is the event bus for publishing resource changes (SSE). Optional:
 	// every call site guards on nil (Bus.Publish itself would panic).
@@ -365,18 +367,13 @@ func NewOperator(d OperatorDeps) *Operator {
 	if d.CacheFileLocation != nil {
 		desiredCacheLocation = d.CacheFileLocation()
 	}
-	desiredCachePath := ResolveCacheDBPath(desiredCacheLocation)
 
 	configPath := filepath.Join(dir, "config.d")
 	pidPath := filepath.Join(dir, "sing-box.pid")
 
-	for _, s := range reconcileConfigSteps(dir, configPath, desiredSingboxLogLevel, desiredBootstrapDNS, desiredClashPort, log) {
+	for _, s := range reconcileConfigSteps(dir, configPath, desiredSingboxLogLevel, desiredBootstrapDNS, desiredClashPort, desiredCacheLocation, log) {
 		s.run()
 	}
-
-	// Apply desired cache.db path to 00-base.json (issue #842)
-	basePath := filepath.Join(configPath, "00-base.json")
-	patchBaseCacheFileTo(basePath, desiredCachePath, log)
 
 	op := &Operator{
 		log:               log,

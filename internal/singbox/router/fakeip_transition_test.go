@@ -55,7 +55,7 @@ func newTransitionHarness(t *testing.T) *transitionHarness {
 	svc.deps.StaticRoutes = &recStaticRoutes{log: log}
 	svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{}}
 	svc.deps.FakeIPTun = DefaultFakeIPTunParams()
-	svc.deps.FakeIPTun.CachePath = filepath.Join(dir, "cache.db")
+	svc.deps.CacheDBPath = func() string { return filepath.Join(dir, "cache.db") }
 
 	// policy-tun deps (общий с fakeip OpkgTun/индексы + парковка дефолта).
 	svc.deps.DefaultRoute = &recDefaultRoute{log: log}

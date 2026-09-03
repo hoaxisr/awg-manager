@@ -104,11 +104,9 @@ type FakeIPTunParams struct {
 	// (resolveFakeIPParams).
 	RealServer string
 	// CachePath is the sing-box experimental.cache_file path (store_fakeip).
-	// Not a spec-default — wired by cmd/awg-manager from singbox.DefaultCacheDBPath
-	// so the router stays decoupled from the operator's path layout.
+	// Not a Deps input: fakeIPParamsWithCache fills it from Deps.CacheDBPath
+	// (the operator's effective path, issue #842) on the way to the overlay spec.
 	CachePath string
-	// TempCachePath is the RAM tmpfs path (/tmp/singbox-cache.db) used when CacheFileLocation == "tmp" (issue #842).
-	TempCachePath string
 }
 
 // DefaultFakeIPTunParams returns the spec-default fakeip-tun provisioning knobs
@@ -116,14 +114,13 @@ type FakeIPTunParams struct {
 // Single source of truth for the wiring site in cmd/awg-manager and tests.
 func DefaultFakeIPTunParams() FakeIPTunParams {
 	return FakeIPTunParams{
-		Inet4Range:    "198.18.0.0/15",
-		Inet6Range:    "fc00::/18",
-		TunAddr4:      "172.18.0.1/30",
-		TunAddr6:      "fdfe:dcba:9876::1/126",
-		MTU:           1500,
-		RealServer:    "1.1.1.1", // default upstream; user-overridable via FakeIPRealServer
-		TempCachePath: "/tmp/singbox-cache.db",
-		// CachePath left empty — wired by main.go from singbox.DefaultCacheDBPath.
+		Inet4Range: "198.18.0.0/15",
+		Inet6Range: "fc00::/18",
+		TunAddr4:   "172.18.0.1/30",
+		TunAddr6:   "fdfe:dcba:9876::1/126",
+		MTU:        1500,
+		RealServer: "1.1.1.1", // default upstream; user-overridable via FakeIPRealServer
+		// CachePath left empty — fakeIPParamsWithCache takes Deps.CacheDBPath.
 	}
 }
 
@@ -131,6 +128,18 @@ func DefaultFakeIPTunParams() FakeIPTunParams {
 // живых настроек, а не из снимка времени сборки зависимостей.
 func (s *ServiceImpl) resolveFakeIPParams(sr storage.SingboxRouterSettings) FakeIPTunParams {
 	return resolveFakeIPParamsWith(s.deps.FakeIPTun, sr, s.bootstrapDNS())
+}
+
+// fakeIPParamsWithCache — параметры для overlay и спеки: плюс эффективный
+// путь cache.db у оператора (issue #842). Отдельно от resolveFakeIPParams,
+// который зовётся с тика планировщика ради адресов и пулов и не должен
+// ради них читать 00-base.json с флеша.
+func (s *ServiceImpl) fakeIPParamsWithCache(sr storage.SingboxRouterSettings) FakeIPTunParams {
+	p := s.resolveFakeIPParams(sr)
+	if s.deps.CacheDBPath != nil {
+		p.CachePath = s.deps.CacheDBPath()
+	}
+	return p
 }
 
 // bootstrapDNS читает общий адрес bootstrap-резолвера; пусто, когда стор не
@@ -170,9 +179,6 @@ func resolveFakeIPParamsWith(base FakeIPTunParams, sr storage.SingboxRouterSetti
 	}
 	if sr.FakeIPRealServer != "" {
 		p.RealServer = sr.FakeIPRealServer
-	}
-	if sr.CacheFileLocation == "tmp" && base.TempCachePath != "" {
-		p.CachePath = base.TempCachePath
 	}
 	return p
 }

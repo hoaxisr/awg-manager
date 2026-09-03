@@ -61,8 +61,6 @@
 		onRestart: () => void | Promise<void>;
 		/** Блокирует тумблер, пока переключение в полёте (управляется страницей). */
 		toggleBusy?: boolean;
-		/** Место хранения кэша sing-box ('flash' или 'tmp') (issue #842). */
-		cacheFileLocation?: 'flash' | 'tmp';
 	}
 
 	let {
@@ -79,7 +77,6 @@
 		onToggleEngine,
 		onRestart,
 		toggleBusy = false,
-		cacheFileLocation = 'flash',
 	}: Props = $props();
 
 	let restarting = $state(false);
@@ -156,16 +153,6 @@
 	function handleWan(v: string): void {
 		if (v === '') void save({ wanAutoDetect: true, wanInterface: '' });
 		else void save({ wanAutoDetect: false, wanInterface: v });
-	}
-
-	const cacheLocationOptions: DropdownOption<'flash' | 'tmp'>[] = [
-		{ value: 'flash', label: 'Flash /opt (диск)' },
-		{ value: 'tmp', label: 'RAM /tmp (память)' },
-	];
-
-	function handleCacheLocation(val: string): void {
-		const loc = val === 'tmp' ? 'tmp' : 'flash';
-		void save({ cacheFileLocation: loc });
 	}
 
 	function handleSniffer(next: boolean): void {
@@ -291,21 +278,6 @@
 					loading={saving}
 					onchange={handleSniffer}
 				/>
-			</span>
-		</div>
-
-		<!-- Хранилище кэша (issue #842). -->
-		<div class="erow">
-			<span class="k">Хранилище кэша</span>
-			<span class="val ctl">
-				<Dropdown
-					value={cacheFileLocation}
-					options={cacheLocationOptions}
-					disabled={saving}
-					fullWidth
-					onchange={handleCacheLocation}
-				/>
-				<span class="ctl-hint">RAM (/tmp) снижает износ Flash-памяти роутера при частых DNS/FakeIP записях.</span>
 			</span>
 		</div>
 

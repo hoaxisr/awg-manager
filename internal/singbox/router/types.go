@@ -44,6 +44,10 @@ type Status struct {
 	// FakeIPTunAddr is the fakeip-tun gateway address (the tun /30 host, e.g.
 	// "172.18.0.1"); "" when not in fakeip-tun mode. Read-only, for display.
 	FakeIPTunAddr string `json:"fakeipTunAddr,omitempty"`
+	// CacheDBPath — эффективный путь cache.db (issue #842): по настройке, а при
+	// пустой — из 00-base.json. Показывает рукописный путь, который селектор
+	// «flash | tmp» выразить не может. "" без шва Deps.CacheDBPath.
+	CacheDBPath string `json:"cacheDbPath,omitempty"`
 	// PolicyTunIface / PolicyTunNDMSName — kernel- и NDMS-имена policy-tun
 	// интерфейса ("opkgtun0" / "OpkgTun0"). Заполняются при Enabled+Provisioned,
 	// ДО того как режим стал active: имя OpkgTun нужно пользователю, чтобы

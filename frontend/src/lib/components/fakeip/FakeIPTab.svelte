@@ -180,7 +180,6 @@
 				fakeipIface={$status?.fakeipIface}
 				fakeipDns={$status?.fakeipDns}
 				toggleBusy={switchBusy}
-				cacheFileLocation={$settings?.cacheFileLocation ?? 'flash'}
 				onToggleEngine={handleToggleEngine}
 				onRestart={handleRestart}
 			/>

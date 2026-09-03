@@ -72,27 +72,18 @@ func TestNewServiceWiresFakeIPProvisioningSeam(t *testing.T) {
 	}
 }
 
-func TestResolveFakeIPParams_CacheFileLocation(t *testing.T) {
-	base := DefaultFakeIPTunParams()
-	base.CachePath = "/opt/etc/awg-manager/singbox/cache.db"
-	base.TempCachePath = "/tmp/singbox-cache.db"
-
-	// Default / empty -> base CachePath preserved
-	pDefault := resolveFakeIPParamsWith(base, storage.SingboxRouterSettings{}, "")
-	if pDefault.CachePath != "/opt/etc/awg-manager/singbox/cache.db" {
-		t.Errorf("expected default cache path, got %q", pDefault.CachePath)
+// resolveFakeIPParams зовётся с тика планировщика ради адресов и пулов —
+// эффективный путь cache.db (чтение 00-base.json с флеша) берёт только
+// fakeIPParamsWithCache, на пути к overlay.
+func TestResolveFakeIPParams_DoesNotReadCacheDBPath(t *testing.T) {
+	svc := newTestService(t, Deps{FakeIPTun: DefaultFakeIPTunParams()})
+	calls := 0
+	svc.deps.CacheDBPath = func() string { calls++; return "/x/cache.db" }
+	sr := storage.SingboxRouterSettings{}
+	if got := svc.resolveFakeIPParams(sr).CachePath; got != "" || calls != 0 {
+		t.Errorf("resolveFakeIPParams: CachePath=%q, calls=%d — читает путь кэша с тика", got, calls)
 	}
-
-	// flash -> base CachePath preserved
-	pFlash := resolveFakeIPParamsWith(base, storage.SingboxRouterSettings{CacheFileLocation: "flash"}, "")
-	if pFlash.CachePath != "/opt/etc/awg-manager/singbox/cache.db" {
-		t.Errorf("expected flash cache path, got %q", pFlash.CachePath)
-	}
-
-	// tmp -> TempCachePath used
-	pTmp := resolveFakeIPParamsWith(base, storage.SingboxRouterSettings{CacheFileLocation: "tmp"}, "")
-	if pTmp.CachePath != "/tmp/singbox-cache.db" {
-		t.Errorf("expected tmp cache path, got %q", pTmp.CachePath)
+	if got := svc.fakeIPParamsWithCache(sr).CachePath; got != "/x/cache.db" || calls != 1 {
+		t.Errorf("fakeIPParamsWithCache: CachePath=%q, calls=%d", got, calls)
 	}
 }
-

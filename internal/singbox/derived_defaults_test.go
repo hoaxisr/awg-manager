@@ -27,7 +27,7 @@ func TestMergedScalars_SlotWinsOverDefaults(t *testing.T) {
 				},
 				"route": map[string]any{"default_domain_resolver": map[string]any{"server": "real"}},
 			})
-			for _, s := range reconcileConfigSteps(dir, configDir, "info", "", 0, nil) {
+			for _, s := range reconcileConfigSteps(dir, configDir, "info", "", 0, "", nil) {
 				s.run()
 			}
 			m := mergedMap(t, configDir)
@@ -47,7 +47,7 @@ func TestMergedScalars_SlotWinsOverDefaults(t *testing.T) {
 func TestMergedScalars_DefaultsApplyWithoutOwner(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, "config.d")
-	for _, s := range reconcileConfigSteps(dir, configDir, "info", "", 0, nil) {
+	for _, s := range reconcileConfigSteps(dir, configDir, "info", "", 0, "", nil) {
 		s.run()
 	}
 	m := mergedMap(t, configDir)
@@ -168,7 +168,7 @@ func TestReconcileDerivedDefaults_Idempotent(t *testing.T) {
 // Свежая установка не должна нести оба скаляра в базе: там они лежали бы в
 // ВЫИГРЫВАЮЩЕЙ позиции merge и затеняли бы выбор режимного слота.
 func TestFreshBaseConfig_OmitsDerivedScalars(t *testing.T) {
-	base := freshBaseConfig("info", "", 0)
+	base := freshBaseConfig("info", "", 0, defaultCacheDBPath)
 	dns, _ := base["dns"].(map[string]any)
 	if _, has := dns["strategy"]; has {
 		t.Errorf("свежая база не должна нести dns.strategy: %v", dns)
