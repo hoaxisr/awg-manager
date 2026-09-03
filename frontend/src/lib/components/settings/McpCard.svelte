@@ -5,7 +5,7 @@
   поэтому тестируется без моков api.
 -->
 <script lang="ts">
-	import { Button, ConfirmModal, Modal, Toggle } from '$lib/components/ui';
+	import { Badge, Button, ConfirmModal, Modal, Toggle } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { notifications } from '$lib/stores/notifications';
@@ -139,9 +139,12 @@
 		<SettingsSectionLabel label="MCP-сервер" icon={Plug} tone="indigo" header />
 		<div class="setting-row toggle-inline-row">
 			<div class="flex flex-col gap-1">
-				<span class="font-medium">Доступ для ИИ-агентов (MCP)</span>
+				<span class="flex items-center gap-2">
+					<span class="font-medium">Доступ для ИИ-агентов (MCP)</span>
+					<Badge variant="accent" size="sm" uppercase>Beta</Badge>
+				</span>
 				<span class="setting-description">
-					Эндпоинт Model Context Protocol для Claude Code, Cursor и других агентов. Доступ только по ключу, даже если авторизация веб-интерфейса выключена.
+					Эндпоинт Model Context Protocol для Claude Code, Cursor и других агентов. Доступ только по ключу, даже если авторизация веб-интерфейса выключена. Набор инструментов и API ещё могут меняться.
 				</span>
 			</div>
 			<Toggle checked={enabled} onchange={ontoggle} disabled={saving} ariaLabel="MCP-сервер" />

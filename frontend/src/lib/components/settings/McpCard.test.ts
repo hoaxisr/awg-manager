@@ -27,6 +27,17 @@ describe('McpCard', () => {
 		expect(screen.getByText('laptop')).toBeTruthy();
 	});
 
+	// Метка «Beta» должна быть видна независимо от состояния тумблера — это
+	// статус фичи, а не подсказка про включённое состояние.
+	it('метка Beta видна и при выключенном, и при включённом MCP', () => {
+		const { unmount } = render(McpCard, { ...base, enabled: false, keys });
+		expect(screen.getByText('Beta')).toBeTruthy();
+		unmount();
+
+		render(McpCard, { ...base, enabled: true, keys });
+		expect(screen.getByText('Beta')).toBeTruthy();
+	});
+
 	it('создание ключа показывает plaintext один раз и вызывает oncreate', async () => {
 		render(McpCard, { ...base, enabled: true, keys: [] });
 		await fireEvent.click(screen.getByText('Создать ключ'));
