@@ -74,10 +74,13 @@ func (f *Fake) SystemStatus(context.Context) (mcpsrv.SystemStatus, error) {
 	if f.Err != nil {
 		return mcpsrv.SystemStatus{}, f.Err
 	}
+	f.mu.Lock()
+	singbox := f.Singbox
+	f.mu.Unlock()
 	return mcpsrv.SystemStatus{
 		Version: "dev", InstanceID: "mcptest", BootPhase: "ready", AnyWANUp: true,
 		WAN:     []mcpsrv.WANInterface{{Name: "ISP", Up: true, Label: "Provider", Priority: 1}},
-		Singbox: f.Singbox, AuthEnabled: false, RouterIP: "192.168.1.1",
+		Singbox: singbox, AuthEnabled: false, RouterIP: "192.168.1.1",
 		Info: map[string]any{"model": "KN-1011 (mock)", "firmware": "4.3.1"},
 	}, nil
 }
@@ -114,7 +117,9 @@ func (f *Fake) GetTunnel(_ context.Context, id string) (mcpsrv.TunnelDetail, err
 	if err != nil {
 		return mcpsrv.TunnelDetail{}, err
 	}
-	return *t, nil
+	out := *t
+	out.AllowedIPs = append([]string(nil), t.AllowedIPs...)
+	return out, nil
 }
 
 func (f *Fake) ControlTunnel(_ context.Context, id, action string) error {
@@ -318,6 +323,8 @@ func (f *Fake) ListAccessPolicies(context.Context) ([]mcpsrv.AccessPolicy, error
 	if f.Err != nil {
 		return nil, f.Err
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return append([]mcpsrv.AccessPolicy(nil), f.Policies...), nil
 }
 
@@ -325,8 +332,13 @@ func (f *Fake) ListDevices(context.Context) ([]mcpsrv.Device, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return append([]mcpsrv.Device(nil), f.Devices...), nil
 }
+
+// logLevelRank orders levels for LogsQuery.Level minimum-level filtering.
+var logLevelRank = map[string]int{"debug": 0, "info": 1, "warn": 2, "error": 3}
 
 func (f *Fake) GetLogs(_ context.Context, q mcpsrv.LogsQuery) ([]mcpsrv.LogEntry, int, error) {
 	if f.Err != nil {
@@ -336,6 +348,9 @@ func (f *Fake) GetLogs(_ context.Context, q mcpsrv.LogsQuery) ([]mcpsrv.LogEntry
 	if lines <= 0 {
 		lines = 100
 	}
+	// q.Bucket (app|singbox) is deliberately not differentiated here: the
+	// fake has a single canned log stream, so every bucket sees it all.
+	minRank, filterByLevel := logLevelRank[strings.ToLower(q.Level)]
 	var matched []mcpsrv.LogEntry
 	for _, e := range f.Logs {
 		if q.Contains != "" && !strings.Contains(strings.ToLower(e.Message), strings.ToLower(q.Contains)) {
@@ -349,6 +364,11 @@ func (f *Fake) GetLogs(_ context.Context, q mcpsrv.LogsQuery) ([]mcpsrv.LogEntry
 				}
 			}
 			if !ok {
+				continue
+			}
+		}
+		if filterByLevel {
+			if rank, ok := logLevelRank[strings.ToLower(e.Level)]; !ok || rank < minRank {
 				continue
 			}
 		}

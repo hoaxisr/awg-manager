@@ -2,6 +2,7 @@ package mcptest
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	mcpsrv "github.com/hoaxisr/awg-manager/internal/mcp"
@@ -58,4 +59,58 @@ func TestFake_ImplementsDepsAndMutates(t *testing.T) {
 	if len(f.OpenAPISpec()) == 0 {
 		t.Fatal("empty openapi spec")
 	}
+}
+
+func TestFake_GetLogs_MinimumLevelFiltering(t *testing.T) {
+	f := New()
+	ctx := context.Background()
+
+	entries, total, err := f.GetLogs(ctx, mcpsrv.LogsQuery{Level: "warn", Lines: 500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 {
+		t.Fatalf("total = %d, want 2 (warn + error only)", total)
+	}
+	for _, e := range entries {
+		if e.Level == "info" {
+			t.Fatalf("GetLogs(level=warn) leaked an info entry: %+v", e)
+		}
+	}
+	if len(entries) != 2 {
+		t.Fatalf("entries = %d, want 2", len(entries))
+	}
+}
+
+// TestFake_ConcurrentSystemStatusAndControlSingbox exercises SystemStatus and
+// ControlSingbox from many goroutines at once. It exists to be run with
+// -race: it demonstrates (rather than merely asserts) that Fake's Singbox
+// field is safe under concurrent reads and writes, which is a realistic
+// scenario since cmd/mcp-dev serves one Fake to a live MCP client.
+func TestFake_ConcurrentSystemStatusAndControlSingbox(t *testing.T) {
+	f := New()
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	const iterations = 50
+	wg.Add(2 * iterations)
+	for i := 0; i < iterations; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := f.SystemStatus(ctx); err != nil {
+				t.Error(err)
+			}
+		}()
+		go func(i int) {
+			defer wg.Done()
+			action := "start"
+			if i%2 == 0 {
+				action = "stop"
+			}
+			if _, err := f.ControlSingbox(ctx, action); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
 }
