@@ -959,6 +959,16 @@ func (s *SettingsStore) IsEntwareAuthEnabled() bool {
 	return settings.EntwareAuthEnabled
 }
 
+// IsMcpEnabled reports whether the MCP endpoint is switched on. Read on
+// every /mcp request, so it uses the cheap Get() path like IsAuthEnabled.
+func (s *SettingsStore) IsMcpEnabled() bool {
+	settings, err := s.Get()
+	if err != nil {
+		return false
+	}
+	return settings.McpEnabled
+}
+
 // GetApiKey returns the configured API key, or empty string if none.
 // Used by the auth middleware to accept `Authorization: Bearer <key>` as
 // an alternative to a session cookie. On error returns empty (no key

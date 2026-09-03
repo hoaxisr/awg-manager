@@ -26,7 +26,12 @@ type Settings struct {
 	// (/opt/etc/shadow) verified locally, without the NDMS /auth call
 	// that generates router-side notifications. When the local check
 	// fails for any reason, login falls back to the Keenetic path.
-	EntwareAuthEnabled   bool              `json:"entwareAuthEnabled"`
+	EntwareAuthEnabled bool `json:"entwareAuthEnabled"`
+	// McpEnabled turns on the Model Context Protocol endpoint at /mcp.
+	// Off by default; /mcp answers 404 while disabled. Access requires an
+	// MCP key from McpKeyStore regardless of AuthEnabled. Keys live in
+	// mcp_keys.json, not here, so hashes never leave via /settings/get.
+	McpEnabled           bool              `json:"mcpEnabled"`
 	Server               ServerSettings    `json:"server"`
 	PingCheck            PingCheckSettings `json:"pingCheck"`
 	Logging              LoggingSettings   `json:"logging"`

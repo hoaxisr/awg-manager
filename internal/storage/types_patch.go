@@ -19,6 +19,7 @@ type SettingsPatch struct {
 	ApiKey                      *string                `json:"apiKey,omitempty"`
 	SessionTtlHours             *int                   `json:"sessionTtlHours,omitempty"`
 	EntwareAuthEnabled          *bool                  `json:"entwareAuthEnabled,omitempty"`
+	McpEnabled                  *bool                  `json:"mcpEnabled,omitempty"`
 	Server                      *ServerSettings        `json:"server,omitempty"`
 	PingCheck                   *PingCheckSettings     `json:"pingCheck,omitempty"`
 	Logging                     *LoggingSettingsPatch  `json:"logging,omitempty"`
