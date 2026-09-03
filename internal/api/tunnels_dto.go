@@ -39,6 +39,7 @@ type TunnelListItemDTO struct {
 	PingCheck                 TunnelPingCheckStatus `json:"pingCheck"`
 	WdttClientID              string                `json:"wdttClientId,omitempty" example:"default"`
 	FreeTurnClientID          string                `json:"freeTurnClientId,omitempty" example:"default"`
+	ToggleLocked              bool                  `json:"toggleLocked,omitempty" example:"false"`
 }
 
 // TunnelListResponse is the envelope for GET /tunnels/list.
@@ -166,6 +167,18 @@ type TunnelDeleteResultData struct {
 type TunnelDeleteResponse struct {
 	Success bool                   `json:"success" example:"true"`
 	Data    TunnelDeleteResultData `json:"data"`
+}
+
+// TunnelToggleLockResultData is the data payload for TunnelToggleLockResponse.
+type TunnelToggleLockResultData struct {
+	ID           string `json:"id" example:"tun_abc123"`
+	ToggleLocked bool   `json:"toggleLocked" example:"true"`
+}
+
+// TunnelToggleLockResponse is the envelope for POST /tunnels/toggle-lock.
+type TunnelToggleLockResponse struct {
+	Success bool                       `json:"success" example:"true"`
+	Data    TunnelToggleLockResultData `json:"data"`
 }
 
 // TunnelReferencedDetails describes where a tunnel is still referenced

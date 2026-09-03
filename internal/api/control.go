@@ -222,6 +222,12 @@ func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
 		return
 	}
+	if h.store != nil {
+		if stored, _ := h.store.Get(id); stored != nil && stored.ToggleLocked {
+			response.ErrorWithStatus(w, http.StatusForbidden, "tunnel toggle is locked", "TUNNEL_LOCKED")
+			return
+		}
+	}
 	if h.controlWdttRaw(w, r, id, false) {
 		return
 	}
@@ -392,6 +398,12 @@ func (h *ControlHandler) ToggleEnabled(w http.ResponseWriter, r *http.Request) {
 	if !isValidTunnelID(id) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
 		return
+	}
+	if h.store != nil {
+		if stored, _ := h.store.Get(id); stored != nil && stored.ToggleLocked {
+			response.ErrorWithStatus(w, http.StatusForbidden, "tunnel toggle is locked", "TUNNEL_LOCKED")
+			return
+		}
 	}
 
 	// Get current state and toggle

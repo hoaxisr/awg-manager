@@ -2411,6 +2411,7 @@ const api_TunnelListItemDTO: v.GenericSchema = v.looseObject({
 	rxBytes: v.optional(v.nullable(v.number())),
 	startedAt: v.optional(v.nullable(v.string())),
 	status: v.optional(v.nullable(v.string())),
+	toggleLocked: v.optional(v.nullable(v.boolean())),
 	txBytes: v.optional(v.nullable(v.number())),
 	type: v.optional(v.nullable(v.string())),
 	wdttClientId: v.optional(v.nullable(v.string())),
@@ -2450,6 +2451,16 @@ const api_TunnelStateInfoDTO: v.GenericSchema = v.looseObject({
 	rxBytes: v.optional(v.nullable(v.number())),
 	state: v.optional(v.nullable(v.number())),
 	txBytes: v.optional(v.nullable(v.number())),
+});
+
+const api_TunnelToggleLockResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_TunnelToggleLockResultData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_TunnelToggleLockResultData: v.GenericSchema = v.looseObject({
+	id: v.optional(v.nullable(v.string())),
+	toggleLocked: v.optional(v.nullable(v.boolean())),
 });
 
 const api_TunnelTrafficData: v.GenericSchema = v.looseObject({
@@ -3407,6 +3418,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /tunnels/pingcheck": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/pingcheck/remove": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/replace": v.lazy(() => api_APIEnvelope),
+	"POST /tunnels/toggle-lock": v.lazy(() => api_TunnelToggleLockResponse),
 	"POST /tunnels/update": v.lazy(() => api_APIEnvelope),
 	"PUT /hydraroute/config/update": v.lazy(() => api_HydraRouteConfigResponse),
 	"PUT /managed-servers/{id}": v.lazy(() => api_ServersAllResponse),

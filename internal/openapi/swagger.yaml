@@ -6534,6 +6534,9 @@ definitions:
         - disabled
         example: connected
         type: string
+      toggleLocked:
+        example: false
+        type: boolean
       txBytes:
         example: 5242880
         type: integer
@@ -6656,6 +6659,23 @@ definitions:
       txBytes:
         example: 5242880
         type: integer
+    type: object
+  api.TunnelToggleLockResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.TunnelToggleLockResultData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.TunnelToggleLockResultData:
+    properties:
+      id:
+        example: tun_abc123
+        type: string
+      toggleLocked:
+        example: true
+        type: boolean
     type: object
   api.TunnelTrafficData:
     properties:
@@ -19971,6 +19991,35 @@ paths:
       security:
       - CookieAuth: []
       summary: Replace tunnel from conf
+      tags:
+      - tunnels
+  /tunnels/toggle-lock:
+    post:
+      description: Переключает блокировку тумблера туннеля от случайного выключения
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.TunnelToggleLockResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Toggle tunnel lock
       tags:
       - tunnels
   /tunnels/traffic:

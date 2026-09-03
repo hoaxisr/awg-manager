@@ -133,6 +133,8 @@ export interface TunnelListItem {
 		failCount: number;
 		failThreshold: number;
 	};
+	/** При true тумблер вкл/выкл заблокирован замком (#818). */
+	toggleLocked?: boolean;
 }
 
 export interface DeleteResult {

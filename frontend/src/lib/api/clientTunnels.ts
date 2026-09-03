@@ -189,6 +189,13 @@ export class TunnelsClient extends CoreClient {
 		});
 	}
 
+	/** Переключает блокировку тумблера туннеля (#818). */
+	async toggleLock(id: string): Promise<{ id: string; toggleLocked: boolean }> {
+		return this.request(`/tunnels/toggle-lock?id=${encodeURIComponent(id)}`, {
+			method: 'POST'
+		});
+	}
+
 	// #endregion
 
 

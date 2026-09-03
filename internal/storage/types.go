@@ -476,6 +476,7 @@ type AWGTunnel struct {
 	Name               string                   `json:"name"`
 	Type               string                   `json:"type,omitempty"` // "awg"
 	Enabled            bool                     `json:"enabled"`
+	ToggleLocked       bool                     `json:"toggleLocked,omitempty"`       // Блокировка тумблера включения/выключения (#818)
 	DefaultRoute       bool                     `json:"defaultRoute"`                 // Create NDMS default route (ip route default OpkgTunX)
 	DefaultRouteSet    bool                     `json:"defaultRouteSet,omitempty"`    // Migration sentinel: false = field never saved, default to true
 	ISPInterface       string                   `json:"ispInterface,omitempty"`       // Override ISP interface for endpoint route (empty = auto-detect)

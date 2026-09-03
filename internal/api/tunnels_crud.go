@@ -593,6 +593,52 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, resp)
 }
 
+// ToggleLock переключает блокировку тумблера туннеля (#818).
+//
+//	@Summary		Toggle tunnel lock
+//	@Description	Переключает блокировку тумблера туннеля от случайного выключения
+//	@Tags			tunnels
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	query	string	true	"Tunnel id"
+//	@Success		200	{object}	TunnelToggleLockResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/tunnels/toggle-lock [post]
+func (h *TunnelsHandler) ToggleLock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	id, ok := requireQueryID(w, r)
+	if !ok {
+		return
+	}
+	if !isValidTunnelID(id) {
+		response.Error(w, "invalid tunnel ID", "INVALID_ID")
+		return
+	}
+	stored, err := h.store.Get(id)
+	if err != nil || stored == nil {
+		response.Error(w, "tunnel not found", "NOT_FOUND")
+		return
+	}
+	var newLocked bool
+	if err := h.store.Update(id, func(t *storage.AWGTunnel) error {
+		t.ToggleLocked = !t.ToggleLocked
+		newLocked = t.ToggleLocked
+		return nil
+	}); err != nil {
+		response.Error(w, err.Error(), "UPDATE_FAILED")
+		return
+	}
+	h.publishTunnelList(r.Context())
+	response.JSON(w, map[string]interface{}{
+		"id":           id,
+		"toggleLocked": newLocked,
+	})
+}
+
 // Delete deletes a tunnel.
 //
 //	@Summary		Delete tunnel
