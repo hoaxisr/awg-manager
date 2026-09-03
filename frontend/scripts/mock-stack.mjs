@@ -1,8 +1,13 @@
-// Launches the full mock stack: Prism (8080) + mock-proxy (8081) + Vite dev (5173).
+// Launches the full mock stack: Prism (8080) + mock-proxy (8081) + Vite dev (5173)
+// + an optional mcp-dev server (8090) so an MCP client can connect to the mock data.
 // Vite is configured to proxy /api/* → http://127.0.0.1:8081 with prefix strip.
-// Ctrl+C terminates all three children.
+// Ctrl+C terminates all children.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+
+function hasGo() {
+	return spawnSync('go', ['version'], { stdio: 'ignore' }).status === 0;
+}
 
 const children = [];
 
@@ -42,5 +47,16 @@ setTimeout(() => {
 			VITE_API_TARGET: 'http://127.0.0.1:8081',
 			VITE_API_STRIP_PREFIX: '1',
 		});
+
+		// MCP dev server (Go) so Claude Code / Cursor can connect to the
+		// mock stack: http://127.0.0.1:8090/mcp. Skipped without a Go
+		// toolchain or with MOCK_MCP=0.
+		if (process.env.MOCK_MCP !== '0' && hasGo()) {
+			start('mcp-dev', 'go', ['run', '../cmd/mcp-dev', '--listen', '127.0.0.1:8090'], {
+				MCP_DEV_KEY: process.env.MOCK_MCP_KEY ?? '',
+			});
+		} else {
+			console.log('[mcp-dev] skipped (MOCK_MCP=0 or `go` not found on PATH)');
+		}
 	}, 800);
 }, 1500);
