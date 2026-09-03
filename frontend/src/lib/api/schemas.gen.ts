@@ -840,6 +840,43 @@ const api_ManagedServersListResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_McpKeyCreatedData: v.GenericSchema = v.looseObject({
+	createdAt: v.optional(v.nullable(v.string())),
+	id: v.optional(v.nullable(v.string())),
+	key: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+});
+
+const api_McpKeyCreatedResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_McpKeyCreatedData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_McpKeyDTO: v.GenericSchema = v.looseObject({
+	createdAt: v.optional(v.nullable(v.string())),
+	id: v.optional(v.nullable(v.string())),
+	lastUsedAt: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+});
+
+const api_McpKeyRevokedData: v.GenericSchema = v.looseObject({
+	revoked: v.optional(v.nullable(v.boolean())),
+});
+
+const api_McpKeyRevokedResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_McpKeyRevokedData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_McpKeysListData: v.GenericSchema = v.looseObject({
+	keys: v.optional(v.nullable(v.array(v.lazy(() => api_McpKeyDTO)))),
+});
+
+const api_McpKeysListResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_McpKeysListData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_MonitoringCellDTO: v.GenericSchema = v.looseObject({
 	activeForRestart: v.optional(v.nullable(v.boolean())),
 	isSelf: v.optional(v.nullable(v.boolean())),
@@ -1315,6 +1352,7 @@ const api_SettingsData: v.GenericSchema = v.looseObject({
 	entwareAuthEnabled: v.optional(v.nullable(v.boolean())),
 	geoFile: v.optional(v.nullable(v.lazy(() => api_GeoFileSettingsDTO))),
 	logging: v.optional(v.nullable(v.lazy(() => api_LoggingSettingsDTO))),
+	mcpEnabled: v.optional(v.nullable(v.boolean())),
 	monitoringExcludedTunnels: v.optional(v.nullable(v.array(v.string()))),
 	pingCheck: v.optional(v.nullable(v.lazy(() => api_PingCheckSettingsDTO))),
 	schemaVersion: v.optional(v.nullable(v.number())),
@@ -3029,6 +3067,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /managed-servers/suggest-address": v.lazy(() => api_SuggestAddressResponse),
 	"GET /managed/drift": v.lazy(() => api_ManagedServerDriftEnvelope),
 	"GET /managed/export": v.lazy(() => api_ManagedServerExportEnvelope),
+	"GET /mcp/keys": v.lazy(() => api_McpKeysListResponse),
 	"GET /monitoring/matrix": v.lazy(() => api_MonitoringSnapshotResponse),
 	"GET /ndms/save-status": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_SaveStatusDTO))),
@@ -3231,6 +3270,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /managed-servers/{id}/restart": v.lazy(() => api_APIEnvelope),
 	"POST /managed/import": v.lazy(() => api_ManagedServerImportEnvelope),
 	"POST /managed/restore-drift": v.lazy(() => api_ManagedServerImportEnvelope),
+	"POST /mcp/keys/create": v.lazy(() => api_McpKeyCreatedResponse),
+	"POST /mcp/keys/revoke": v.lazy(() => api_McpKeyRevokedResponse),
 	"POST /pingcheck/check-now": v.lazy(() => api_APIEnvelope),
 	"POST /pingcheck/logs/clear": v.lazy(() => api_APIEnvelope),
 	"POST /proxy/apply": v.lazy(() => api_APIEnvelope),
