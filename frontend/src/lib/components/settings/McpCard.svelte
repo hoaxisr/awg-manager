@@ -140,11 +140,11 @@
 				</button>
 			</div>
 
-			<div class="setting-row flex-col items-stretch gap-3">
-				<div class="flex items-center justify-between">
-					<span class="font-medium">Ключи доступа</span>
-					<Button variant="secondary" size="md" onclick={openCreate} disabled={saving}>Создать ключ</Button>
-				</div>
+			<div class="setting-row toggle-inline-row">
+				<span class="font-medium">Ключи доступа</span>
+				<Button variant="secondary" size="md" onclick={openCreate} disabled={saving}>Создать ключ</Button>
+			</div>
+			<div class="setting-row">
 				{#if keysLoading}
 					<span class="setting-description">Загрузка…</span>
 				{:else if keys.length === 0}
