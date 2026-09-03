@@ -73,26 +73,44 @@ func KeyMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
 				_, _ = w.Write([]byte(`{"error":true,"message":"too many failed attempts","code":"THROTTLED"}`))
 				return
 			}
-			defer cfg.Throttle.Done(ip)
 		}
-		token := bearerToken(r)
-		key, ok := KeyInfo{}, false
-		if token != "" && cfg.Verify != nil {
-			key, ok = cfg.Verify(token)
-		}
-		if !ok {
+
+		// The in-flight throttle slot reserved by Begin above is a
+		// concurrency reservation, not an audit marker: it must be released
+		// as soon as the authentication decision is known, not held for the
+		// lifetime of the (potentially long) downstream MCP tool call.
+		// Otherwise a handful of concurrent tool calls from one client IP
+		// (e.g. behind the KeenDNS reverse proxy, where many remote clients
+		// share one observed IP) would exhaust the burst budget and lock out
+		// unrelated, perfectly-authenticated traffic. The decision runs in a
+		// closure so `defer cfg.Throttle.Done(ip)` releases the slot on every
+		// exit path, including a panic during Verify.
+		var key KeyInfo
+		var ok bool
+		func() {
 			if cfg.Throttle != nil {
-				cfg.Throttle.Fail(ip)
+				defer cfg.Throttle.Done(ip)
 			}
-			logf("MCP: rejected %s %s from %s (invalid or missing key)", r.Method, r.URL.Path, ip)
+			token, wellFormed := bearerToken(r)
+			if wellFormed && cfg.Verify != nil {
+				key, ok = cfg.Verify(token)
+			}
+			if cfg.Throttle != nil {
+				if ok {
+					cfg.Throttle.Success(ip)
+				} else {
+					cfg.Throttle.Fail(ip)
+				}
+			}
+		}()
+
+		if !ok {
+			logf("MCP: rejected %s %q from %s (invalid or missing key)", r.Method, r.URL.Path, ip)
 			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer resource_metadata="%s/.well-known/oauth-protected-resource"`, externalOrigin(r)))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":true,"message":"unauthorized","code":"AUTH_REQUIRED"}`))
 			return
-		}
-		if cfg.Throttle != nil {
-			cfg.Throttle.Success(ip)
 		}
 		if cfg.Touch != nil {
 			cfg.Touch(key.ID)
@@ -101,13 +119,28 @@ func KeyMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
 	})
 }
 
-func bearerToken(r *http.Request) string {
-	const prefix = "Bearer "
-	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, prefix) {
-		return ""
+// bearerToken extracts the token from a single, well-formed "Bearer <token>"
+// Authorization header. The scheme is matched case-insensitively per RFC
+// 7235; the token itself is returned verbatim (case-sensitive). Anything
+// ambiguous — no header, more than one Authorization header (two proxies
+// disagreeing about which value wins is exactly the kind of thing to reject
+// outright), wrong scheme, or an empty/whitespace-only token — reports
+// wellFormed=false so the caller never calls Verify with garbage.
+func bearerToken(r *http.Request) (token string, wellFormed bool) {
+	values := r.Header.Values("Authorization")
+	if len(values) != 1 {
+		return "", false
 	}
-	return strings.TrimSpace(h[len(prefix):])
+	const prefix = "Bearer "
+	h := values[0]
+	if len(h) < len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
+		return "", false
+	}
+	token = strings.TrimSpace(h[len(prefix):])
+	if token == "" {
+		return "", false
+	}
+	return token, true
 }
 
 func clientIP(r *http.Request) string {
