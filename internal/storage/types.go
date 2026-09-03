@@ -283,6 +283,10 @@ type SingboxRouterSettings struct {
 	// PolicyTunNATSegments — выбранные пользователем сегменты для source-preserve
 	// (редактируемый предпоказ в UI). Пусто при выключенной опции.
 	PolicyTunNATSegments []string `json:"policyTunNatSegments,omitempty"`
+	// CacheFileLocation задаёт место хранения временного кэша sing-box (cache.db) (issue #842).
+	// "flash" / "" (default) — на диске (/opt/etc/awg-manager/singbox/cache.db).
+	// "tmp" — в оперативной памяти (/tmp/singbox-cache.db, tmpfs/RAM) для защиты флеш-памяти роутера.
+	CacheFileLocation string `json:"cacheFileLocation,omitempty"`
 }
 
 // SingboxQoSClass is one DSCP-based QoS traffic class routed to a dedicated

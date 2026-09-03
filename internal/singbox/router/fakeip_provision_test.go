@@ -3,6 +3,8 @@ package router
 import (
 	"context"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // fakeOpkgTunProvisioner / fakeStaticRouteProvider / fakeOpkgTunIndexLister are
@@ -69,3 +71,28 @@ func TestNewServiceWiresFakeIPProvisioningSeam(t *testing.T) {
 		t.Errorf("FakeIPTun mismatch: got %+v, want %+v", svc.deps.FakeIPTun, params)
 	}
 }
+
+func TestResolveFakeIPParams_CacheFileLocation(t *testing.T) {
+	base := DefaultFakeIPTunParams()
+	base.CachePath = "/opt/etc/awg-manager/singbox/cache.db"
+	base.TempCachePath = "/tmp/singbox-cache.db"
+
+	// Default / empty -> base CachePath preserved
+	pDefault := resolveFakeIPParamsWith(base, storage.SingboxRouterSettings{}, "")
+	if pDefault.CachePath != "/opt/etc/awg-manager/singbox/cache.db" {
+		t.Errorf("expected default cache path, got %q", pDefault.CachePath)
+	}
+
+	// flash -> base CachePath preserved
+	pFlash := resolveFakeIPParamsWith(base, storage.SingboxRouterSettings{CacheFileLocation: "flash"}, "")
+	if pFlash.CachePath != "/opt/etc/awg-manager/singbox/cache.db" {
+		t.Errorf("expected flash cache path, got %q", pFlash.CachePath)
+	}
+
+	// tmp -> TempCachePath used
+	pTmp := resolveFakeIPParamsWith(base, storage.SingboxRouterSettings{CacheFileLocation: "tmp"}, "")
+	if pTmp.CachePath != "/tmp/singbox-cache.db" {
+		t.Errorf("expected tmp cache path, got %q", pTmp.CachePath)
+	}
+}
+

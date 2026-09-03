@@ -429,6 +429,21 @@
           </div>
         </div>
         <p class="hint">Как долго sing-box держит UDP-сессии активными. Увеличьте если игры или другие UDP-приложения обрываются каждые несколько минут.</p>
+        <div class="field">
+          <label class="lbl" for="ed-cache-location">Место хранения кэша (cache.db)</label>
+          <div class="udp-timeout-row">
+            <select
+              id="ed-cache-location"
+              class="inp"
+              value={cfg.cacheFileLocation ?? 'flash'}
+              onchange={(e) => void applyPatch({ cacheFileLocation: ((e.currentTarget as HTMLSelectElement).value as 'flash' | 'tmp') })}
+            >
+              <option value="flash">Диск роутера (Flash /opt) — по умолчанию</option>
+              <option value="tmp">Оперативная память (RAM /tmp) — защита Flash</option>
+            </select>
+          </div>
+        </div>
+        <p class="hint">Хранение в RAM (/tmp) защищает флеш-память роутера от постоянных записей cache.db. Кэш сбрасывается при перезагрузке.</p>
       </section>
 
       <!-- QoS-маршрутизация (DSCP): onPatch возвращает Promise — карточка

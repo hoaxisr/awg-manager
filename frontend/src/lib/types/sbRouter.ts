@@ -62,6 +62,12 @@ export interface SingboxRouterSettings {
 	 * wire → absent on legacy/mock payloads (treat undefined as []).
 	 */
 	qosClasses?: SingboxQosClass[];
+	/**
+	 * Место хранения кэша sing-box (cache.db) (issue #842).
+	 * 'flash' (default) — на флеш-памяти (/opt/etc/awg-manager/singbox/cache.db).
+	 * 'tmp' — в оперативной памяти (/tmp/singbox-cache.db, tmpfs/RAM) для защиты Flash.
+	 */
+	cacheFileLocation?: 'flash' | 'tmp';
 }
 
 /** One QoS/DSCP routing class (SingboxRouterSettings.qosClasses entry). */

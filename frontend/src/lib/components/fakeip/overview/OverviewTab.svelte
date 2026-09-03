@@ -35,6 +35,7 @@
 		fakeipIface?: string;
 		fakeipDns?: string;
 		toggleBusy: boolean;
+		cacheFileLocation?: 'flash' | 'tmp';
 		onToggleEngine: (turnOn: boolean) => void;
 		onRestart: () => void;
 	}
@@ -52,6 +53,7 @@
 		fakeipIface,
 		fakeipDns,
 		toggleBusy,
+		cacheFileLocation,
 		onToggleEngine,
 		onRestart,
 	}: Props = $props();
@@ -107,6 +109,7 @@
 		{fakeipIface}
 		{fakeipDns}
 		{toggleBusy}
+		{cacheFileLocation}
 		{onToggleEngine}
 		{onRestart}
 	/>

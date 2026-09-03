@@ -333,8 +333,15 @@ func (a *app) setupRouter() {
 		FakeIPTun: func() router.FakeIPTunParams {
 			p := router.DefaultFakeIPTunParams()
 			p.CachePath = singbox.DefaultCacheDBPath()
+			p.TempCachePath = singbox.TempCacheDBPath
 			return p
 		}(),
+		ApplyCacheFileLocation: func(location string) error {
+			if a.singboxOp == nil {
+				return nil
+			}
+			return a.singboxOp.ApplyCacheFileLocation(location)
+		},
 		// Синхронный мост «роутер → device-proxy»: после перепарковки слотов
 		// маршрутизации (Enable/Disable/смена режима) слот 30 перегенерируется
 		// ДО ближайшего reload — селекторы device-proxy деградируют ссылки на

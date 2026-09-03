@@ -308,6 +308,8 @@ type Deps struct {
 	// router is enabled. When nil (tests), persistConfig falls back
 	// to the legacy in-place write at routerConfigPath().
 	Orch *orchestrator.Orchestrator
+	// ApplyCacheFileLocation applies cache.db location change to 00-base.json (issue #842).
+	ApplyCacheFileLocation func(location string) error
 	// Bus receives resource:invalidated events for the staging/draft
 	// flow (SaveDraft, ApplyDraft, DiscardDraft). Optional — when nil,
 	// staging event emission is silently skipped.

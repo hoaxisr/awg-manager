@@ -107,6 +107,8 @@ type FakeIPTunParams struct {
 	// Not a spec-default — wired by cmd/awg-manager from singbox.DefaultCacheDBPath
 	// so the router stays decoupled from the operator's path layout.
 	CachePath string
+	// TempCachePath is the RAM tmpfs path (/tmp/singbox-cache.db) used when CacheFileLocation == "tmp" (issue #842).
+	TempCachePath string
 }
 
 // DefaultFakeIPTunParams returns the spec-default fakeip-tun provisioning knobs
@@ -114,12 +116,13 @@ type FakeIPTunParams struct {
 // Single source of truth for the wiring site in cmd/awg-manager and tests.
 func DefaultFakeIPTunParams() FakeIPTunParams {
 	return FakeIPTunParams{
-		Inet4Range: "198.18.0.0/15",
-		Inet6Range: "fc00::/18",
-		TunAddr4:   "172.18.0.1/30",
-		TunAddr6:   "fdfe:dcba:9876::1/126",
-		MTU:        1500,
-		RealServer: "1.1.1.1", // default upstream; user-overridable via FakeIPRealServer
+		Inet4Range:    "198.18.0.0/15",
+		Inet6Range:    "fc00::/18",
+		TunAddr4:      "172.18.0.1/30",
+		TunAddr6:      "fdfe:dcba:9876::1/126",
+		MTU:           1500,
+		RealServer:    "1.1.1.1", // default upstream; user-overridable via FakeIPRealServer
+		TempCachePath: "/tmp/singbox-cache.db",
 		// CachePath left empty — wired by main.go from singbox.DefaultCacheDBPath.
 	}
 }
@@ -167,6 +170,9 @@ func resolveFakeIPParamsWith(base FakeIPTunParams, sr storage.SingboxRouterSetti
 	}
 	if sr.FakeIPRealServer != "" {
 		p.RealServer = sr.FakeIPRealServer
+	}
+	if sr.CacheFileLocation == "tmp" && base.TempCachePath != "" {
+		p.CachePath = base.TempCachePath
 	}
 	return p
 }

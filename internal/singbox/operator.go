@@ -133,8 +133,10 @@ type Operator struct {
 	// ApplyLogLevel (из аргумента), поэтому пересоздать базу умел лишь он, а
 	// mutateBase на пропавшем файле молча выходил.
 	singboxLogLevel func() string
-	configPath      string
-	pidPath         string
+	// cacheFileLocation — живой доступ к Settings.SingboxRouter.CacheFileLocation (issue #842).
+	cacheFileLocation func() string
+	configPath        string
+	pidPath           string
 
 	proc      *Process
 	validator *Validator
@@ -319,6 +321,9 @@ type OperatorDeps struct {
 	// (Settings.SingboxClashPort). Optional; 0 means DefaultClashPort.
 	// Issue #788, ADR 0001.
 	ClashPort func() int
+	// CacheFileLocation returns the desired cache.db location from settings
+	// ("flash" or "tmp") (issue #842). Optional; empty means default flash storage.
+	CacheFileLocation func() string
 	// Bus is the event bus for publishing resource changes (SSE). Optional:
 	// every call site guards on nil (Bus.Publish itself would panic).
 	Bus *events.Bus
@@ -356,6 +361,12 @@ func NewOperator(d OperatorDeps) *Operator {
 		desiredClashPort = d.ClashPort()
 	}
 
+	desiredCacheLocation := ""
+	if d.CacheFileLocation != nil {
+		desiredCacheLocation = d.CacheFileLocation()
+	}
+	desiredCachePath := ResolveCacheDBPath(desiredCacheLocation)
+
 	configPath := filepath.Join(dir, "config.d")
 	pidPath := filepath.Join(dir, "sing-box.pid")
 
@@ -363,11 +374,16 @@ func NewOperator(d OperatorDeps) *Operator {
 		s.run()
 	}
 
+	// Apply desired cache.db path to 00-base.json (issue #842)
+	basePath := filepath.Join(configPath, "00-base.json")
+	patchBaseCacheFileTo(basePath, desiredCachePath, log)
+
 	op := &Operator{
 		log:               log,
 		bootstrapDNS:      d.BootstrapDNS,
 		clashPort:         d.ClashPort,
 		singboxLogLevel:   d.SingboxLogLevel,
+		cacheFileLocation: d.CacheFileLocation,
 		dir:               dir,
 		binary:            binary,
 		configPath:        configPath,

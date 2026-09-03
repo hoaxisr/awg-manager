@@ -1749,6 +1749,7 @@ const api_SingboxRouterSettingsData: v.GenericSchema = v.looseObject({
 	bypassExtraSubnets: v.optional(v.nullable(v.string())),
 	bypassGeoipTags: v.optional(v.nullable(v.array(v.string()))),
 	bypassPresets: v.optional(v.nullable(v.array(v.string()))),
+	cacheFileLocation: v.optional(v.nullable(v.string())),
 	deviceMode: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	fakeipMtu: v.optional(v.nullable(v.number())),

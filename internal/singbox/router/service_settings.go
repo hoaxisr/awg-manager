@@ -116,6 +116,11 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 	if err := s.reapplyFakeIPOverlay(ctx, settings); err != nil {
 		return err
 	}
+	if s.deps.ApplyCacheFileLocation != nil {
+		if err := s.deps.ApplyCacheFileLocation(normalized.CacheFileLocation); err != nil {
+			s.appLog.Warn("apply-cache-location", "", "apply cache.db location failed: "+err.Error())
+		}
+	}
 	// Пресет keendns применяем здесь, а не только внутри Reconcile: тот
 	// пропускает тик целиком, если transitionMu занят сменой режима, и
 	// снятие пресета молча не доехало бы. Повторный вызов из Reconcile —
@@ -236,6 +241,12 @@ func NormalizeSingboxRouterSettings(sr storage.SingboxRouterSettings) (storage.S
 		return sr, err
 	}
 	sr.QoSClasses = normalizeQoSClasses(sr.QoSClasses)
+	switch sr.CacheFileLocation {
+	case "", "flash", "tmp":
+		// valid
+	default:
+		return sr, fmt.Errorf("cacheFileLocation: invalid value %q (must be \"flash\" or \"tmp\")", sr.CacheFileLocation)
+	}
 	return sr, nil
 }
 

@@ -54,9 +54,10 @@ func buildSingboxCore(d singboxCoreDeps) singboxCore {
 		Queries:         d.queries,
 		Commands:        d.commands,
 		AppLogger:       d.appLog,
-		SingboxLogLevel: d.settings.GetSingboxLogLevel,
-		BootstrapDNS:    d.settings.GetSingboxBootstrapDNS,
-		ClashPort:       d.settings.GetSingboxClashPort,
+		SingboxLogLevel:   d.settings.GetSingboxLogLevel,
+		BootstrapDNS:      d.settings.GetSingboxBootstrapDNS,
+		ClashPort:         d.settings.GetSingboxClashPort,
+		CacheFileLocation: d.settings.GetSingboxCacheFileLocation,
 		// Seed the sticky-stop flag from disk so the watchdog respects
 		// a user-pressed Stop across awgm restarts. SetManuallyStopped
 		// writes the new intent back through a single-field updater so

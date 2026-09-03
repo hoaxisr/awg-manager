@@ -137,6 +137,10 @@ type SingboxRouterSettingsData struct {
 	// source-preserve (см. GET /singbox/router/policy-tun/nat-preview).
 	// Обнуляется бэкендом при policyTunSourcePreserve=false.
 	PolicyTunNATSegments []string `json:"policyTunNatSegments,omitempty" example:"Home"`
+	// CacheFileLocation sets where sing-box stores cache.db ("flash" or "tmp").
+	// "flash" (default) saves to /opt/etc/awg-manager/singbox/cache.db.
+	// "tmp" saves to RAM tmpfs (/tmp/singbox-cache.db) to eliminate flash wear.
+	CacheFileLocation string `json:"cacheFileLocation,omitempty" example:"flash" enums:"flash,tmp"`
 }
 
 // SingboxRouterQoSClassDTO mirrors storage.SingboxQoSClass — one DSCP-based

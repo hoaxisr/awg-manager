@@ -4927,6 +4927,16 @@ definitions:
         items:
           type: string
         type: array
+      cacheFileLocation:
+        description: |-
+          CacheFileLocation sets where sing-box stores cache.db ("flash" or "tmp").
+          "flash" (default) saves to /opt/etc/awg-manager/singbox/cache.db.
+          "tmp" saves to RAM tmpfs (/tmp/singbox-cache.db) to eliminate flash wear.
+        enum:
+        - flash
+        - tmp
+        example: flash
+        type: string
       deviceMode:
         enum:
         - policy
