@@ -45,4 +45,28 @@ describe('McpCard', () => {
 		await fireEvent.click(within(screen.getByRole('dialog')).getByText('Отозвать'));
 		await waitFor(() => expect(base.onrevoke).toHaveBeenCalledWith('k1'));
 	});
+
+	it('отзыв: если onrevoke отклоняется, диалог всё равно закрывается и не зависает в busy', async () => {
+		const onrevoke = vi.fn(async () => {
+			throw new Error('boom');
+		});
+		render(McpCard, { ...base, enabled: true, keys, onrevoke });
+		await fireEvent.click(screen.getByText('Отозвать'));
+		const dialog = screen.getByRole('dialog');
+		await fireEvent.click(within(dialog).getByText('Отозвать'));
+		await waitFor(() => expect(onrevoke).toHaveBeenCalledWith('k1'));
+		// The confirm dialog must close even on failure — a hung dialog on a
+		// destructive action leaves the user unable to tell what happened.
+		await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+	});
+
+	it('показанный один раз ключ можно скопировать явной кнопкой', async () => {
+		render(McpCard, { ...base, enabled: true, keys: [] });
+		await fireEvent.click(screen.getByText('Создать ключ'));
+		const dialog = screen.getByRole('dialog');
+		await fireEvent.input(within(dialog).getByPlaceholderText('Например, laptop'), { target: { value: 'phone' } });
+		await fireEvent.click(within(dialog).getByText('Создать'));
+		await waitFor(() => expect(screen.getByText('awgm_secret')).toBeTruthy());
+		expect(within(dialog).getByLabelText('Скопировать ключ')).toBeTruthy();
+	});
 });

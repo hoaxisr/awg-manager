@@ -8,7 +8,8 @@
 	import { Button, ConfirmModal, Modal, Toggle } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { copyToClipboard } from '$lib/utils/clipboard';
-	import { Plug } from 'lucide-svelte';
+	import { notifications } from '$lib/stores/notifications';
+	import { Copy, Plug } from 'lucide-svelte';
 	import type { McpKey, McpKeyCreated } from '$lib/types';
 
 	interface Props {
@@ -64,9 +65,23 @@
 		revoking = true;
 		try {
 			await onrevoke(revokeTarget.id);
-			revokeTarget = null;
+		} catch {
+			// The parent (settings page) surfaces the error via a notification.
+			// The card must not leave the confirm dialog stuck open regardless
+			// of whether a future/other caller rethrows — a hung dialog on a
+			// destructive action is worse than a dialog that closes and lets
+			// the toast explain what happened.
 		} finally {
 			revoking = false;
+			revokeTarget = null;
+		}
+	}
+
+	async function copyKey(text: string) {
+		if (await copyToClipboard(text)) {
+			notifications.success('Ключ скопирован в буфер обмена');
+		} else {
+			notifications.error('Не удалось скопировать ключ');
 		}
 	}
 
@@ -170,9 +185,20 @@
 	{:else}
 		<div class="flex flex-col gap-3">
 			<p class="setting-description">Ключ показывается только сейчас. Скопируйте его в конфигурацию клиента.</p>
-			<button type="button" class="api-key-input text-left break-all" onclick={() => created && copyToClipboard(created.key)} title="Скопировать">
-				{created.key}
-			</button>
+			<div class="mcp-key-row">
+				<button type="button" class="api-key-input text-left break-all" onclick={() => created && copyKey(created.key)} title="Скопировать">
+					{created.key}
+				</button>
+				<button
+					type="button"
+					class="mcp-copy-btn"
+					onclick={() => created && copyKey(created.key)}
+					aria-label="Скопировать ключ"
+					title="Скопировать ключ"
+				>
+					<Copy size={16} />
+				</button>
+			</div>
 			<details>
 				<summary class="cursor-pointer">Claude Code (CLI)</summary>
 				<pre class="text-xs whitespace-pre-wrap break-all">{claudeSnippet}</pre>
@@ -224,5 +250,35 @@
 		border-radius: var(--radius-sm, 6px);
 		color: var(--text-primary, var(--color-text-primary));
 		cursor: pointer;
+	}
+
+	.mcp-key-row {
+		display: flex;
+		align-items: stretch;
+		gap: 0.375rem;
+	}
+
+	.mcp-key-row .api-key-input {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.mcp-copy-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		width: 2.25rem;
+		background: var(--color-settings-control-bg, var(--bg-secondary));
+		border: 1px solid var(--border, var(--color-border));
+		border-radius: var(--radius-sm, 6px);
+		color: var(--text-secondary, var(--color-text-secondary));
+		cursor: pointer;
+		transition: color 0.15s ease, background 0.15s ease;
+	}
+
+	.mcp-copy-btn:hover {
+		color: var(--text-primary, var(--color-text-primary));
+		background: var(--bg-hover, var(--color-bg-hover));
 	}
 </style>

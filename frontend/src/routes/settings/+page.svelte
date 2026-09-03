@@ -520,9 +520,13 @@ $effect(() => {
 	}
 
 	async function revokeMcpKey(id: string) {
-		await api.revokeMcpKey(id);
-		notifications.success("Ключ отозван");
-		await loadMcpKeys();
+		try {
+			await api.revokeMcpKey(id);
+			notifications.success("Ключ отозван");
+			await loadMcpKeys();
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : "Не удалось отозвать ключ");
+		}
 	}
 
 	async function generateApiKey() {
