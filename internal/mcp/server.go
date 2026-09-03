@@ -19,7 +19,8 @@ func NewServer(deps Deps, version string) *mcp.Server {
 		Version: version,
 	}, &mcp.ServerOptions{
 		Instructions: "Tools manage AmneziaWG/WireGuard tunnels and routing on a Keenetic router via awg-manager. " +
-			"Tunnel ids come from list_tunnels. Writes are reversible; destructive operations (delete tunnel, backup restore, system update) are not exposed.",
+			"Tunnel ids come from list_tunnels. Writes are reversible except remove_dns_route and remove_static_route, which delete a routing list permanently — MCP cannot restore it. " +
+			"Other destructive operations (delete tunnel, backup restore, system update) are not exposed.",
 	})
 	registerSystemTools(s, deps)
 	registerTunnelTools(s, deps)
@@ -62,6 +63,13 @@ func readOnly(title string) *mcp.ToolAnnotations {
 // safeWrite annotates a reversible mutation.
 func safeWrite(title string, idempotent bool) *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{Title: title, ReadOnlyHint: false, IdempotentHint: idempotent, DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(false)}
+}
+
+// destructiveWrite annotates a mutation that destroys data the tools
+// cannot recreate. Hosts use DestructiveHint to decide whether to ask the
+// user before running the tool.
+func destructiveWrite(title string, idempotent bool) *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{Title: title, ReadOnlyHint: false, IdempotentHint: idempotent, DestructiveHint: boolPtr(true), OpenWorldHint: boolPtr(false)}
 }
 
 // empty is the input type for tools without arguments.

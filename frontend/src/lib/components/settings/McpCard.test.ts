@@ -69,4 +69,21 @@ describe('McpCard', () => {
 		await waitFor(() => expect(screen.getByText('awgm_secret')).toBeTruthy());
 		expect(within(dialog).getByLabelText('Скопировать ключ')).toBeTruthy();
 	});
+
+	it('закрытие окна стирает показанный plaintext, а не откладывает до следующего создания', async () => {
+		render(McpCard, { ...base, enabled: true, keys: [] });
+		await fireEvent.click(screen.getByText('Создать ключ'));
+		const dialog = screen.getByRole('dialog');
+		await fireEvent.input(within(dialog).getByPlaceholderText('Например, laptop'), { target: { value: 'phone' } });
+		await fireEvent.click(within(dialog).getByText('Создать'));
+		await waitFor(() => expect(screen.getByText('awgm_secret')).toBeTruthy());
+
+		await fireEvent.click(within(dialog).getByText('Готово'));
+		await waitFor(() => expect(screen.queryByText('awgm_secret')).toBeNull());
+
+		// Повторное открытие начинается с формы имени, а не с прежнего ключа.
+		await fireEvent.click(screen.getByText('Создать ключ'));
+		expect(within(screen.getByRole('dialog')).getByPlaceholderText('Например, laptop')).toBeTruthy();
+		expect(screen.queryByText('awgm_secret')).toBeNull();
+	});
 });

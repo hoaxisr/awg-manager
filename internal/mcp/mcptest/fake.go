@@ -220,19 +220,19 @@ func (f *Fake) AddDNSRoute(_ context.Context, in mcpsrv.DNSRouteInput) (mcpsrv.D
 	return r, nil
 }
 
-func (f *Fake) RemoveDNSRoute(_ context.Context, id string) error {
+func (f *Fake) RemoveDNSRoute(_ context.Context, id string) (mcpsrv.DNSRoute, error) {
 	if f.Err != nil {
-		return f.Err
+		return mcpsrv.DNSRoute{}, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for i, r := range f.DNSRoutes {
 		if r.ID == id {
 			f.DNSRoutes = append(f.DNSRoutes[:i], f.DNSRoutes[i+1:]...)
-			return nil
+			return r, nil
 		}
 	}
-	return fmt.Errorf("dns route %q not found", id)
+	return mcpsrv.DNSRoute{}, fmt.Errorf("dns route %q not found", id)
 }
 
 func (f *Fake) ListStaticRoutes(context.Context) ([]mcpsrv.StaticRoute, error) {
@@ -259,19 +259,19 @@ func (f *Fake) AddStaticRoute(_ context.Context, in mcpsrv.StaticRouteInput) (mc
 	return r, nil
 }
 
-func (f *Fake) RemoveStaticRoute(_ context.Context, id string) error {
+func (f *Fake) RemoveStaticRoute(_ context.Context, id string) (mcpsrv.StaticRoute, error) {
 	if f.Err != nil {
-		return f.Err
+		return mcpsrv.StaticRoute{}, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for i, r := range f.StaticRoutes {
 		if r.ID == id {
 			f.StaticRoutes = append(f.StaticRoutes[:i], f.StaticRoutes[i+1:]...)
-			return nil
+			return r, nil
 		}
 	}
-	return fmt.Errorf("static route %q not found", id)
+	return mcpsrv.StaticRoute{}, fmt.Errorf("static route %q not found", id)
 }
 
 func (f *Fake) ListClientRoutes(context.Context) ([]mcpsrv.ClientRoute, error) {

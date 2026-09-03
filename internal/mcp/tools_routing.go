@@ -13,9 +13,22 @@ type routeIDIn struct {
 	RouteID string `json:"routeId" jsonschema:"route id from the corresponding list_* tool"`
 }
 
-type removedOut struct {
-	RouteID string `json:"routeId"`
-	Removed bool   `json:"removed"`
+// removedDNSOut carries the deleted list back to the caller: the deletion
+// is permanent and add_dns_route cannot recreate it (it takes only
+// name/domains/tunnelId, so subnets, excludes, backend, subscriptions and
+// multi-target routes are lost). The record is the only thing an agent can
+// show the user afterwards.
+type removedDNSOut struct {
+	RouteID string   `json:"routeId"`
+	Removed bool     `json:"removed"`
+	Route   DNSRoute `json:"route" jsonschema:"the deleted list as it was — MCP cannot restore it"`
+}
+
+// removedStaticOut is removedDNSOut for static routing lists.
+type removedStaticOut struct {
+	RouteID string      `json:"routeId"`
+	Removed bool        `json:"removed"`
+	Route   StaticRoute `json:"route" jsonschema:"the deleted list as it was — MCP cannot restore it"`
 }
 
 type dnsRoutesOut struct {
@@ -100,17 +113,20 @@ func registerRoutingTools(s *mcp.Server, d Deps) {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "remove_dns_route",
-		Description: "Delete a domain routing list by id.",
-		Annotations: safeWrite("Remove DNS route", true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in routeIDIn) (*mcp.CallToolResult, removedOut, error) {
+		Name: "remove_dns_route",
+		Description: "Delete a domain routing list by id. DESTRUCTIVE: the list is deleted permanently and cannot be restored through MCP — " +
+			"add_dns_route only takes name/domains/tunnelId, so subnets, excludes, backend, subscriptions and extra route targets are lost for good. " +
+			"Confirm with the user first; the deleted record is returned so you can show what was destroyed.",
+		Annotations: destructiveWrite("Remove DNS route", true),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in routeIDIn) (*mcp.CallToolResult, removedDNSOut, error) {
 		if in.RouteID == "" {
-			return nil, removedOut{}, fmt.Errorf("routeId is required")
+			return nil, removedDNSOut{}, fmt.Errorf("routeId is required")
 		}
-		if err := d.RemoveDNSRoute(ctx, in.RouteID); err != nil {
-			return nil, removedOut{}, err
+		deleted, err := d.RemoveDNSRoute(ctx, in.RouteID)
+		if err != nil {
+			return nil, removedDNSOut{}, err
 		}
-		return nil, removedOut{RouteID: in.RouteID, Removed: true}, nil
+		return nil, removedDNSOut{RouteID: in.RouteID, Removed: true, Route: deleted}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -144,17 +160,19 @@ func registerRoutingTools(s *mcp.Server, d Deps) {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "remove_static_route",
-		Description: "Delete a static routing list by id.",
-		Annotations: safeWrite("Remove static route", true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in routeIDIn) (*mcp.CallToolResult, removedOut, error) {
+		Name: "remove_static_route",
+		Description: "Delete a static routing list by id. DESTRUCTIVE: the list and every subnet in it are deleted permanently and cannot be restored through MCP. " +
+			"Confirm with the user first; the deleted record is returned so you can show what was destroyed.",
+		Annotations: destructiveWrite("Remove static route", true),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in routeIDIn) (*mcp.CallToolResult, removedStaticOut, error) {
 		if in.RouteID == "" {
-			return nil, removedOut{}, fmt.Errorf("routeId is required")
+			return nil, removedStaticOut{}, fmt.Errorf("routeId is required")
 		}
-		if err := d.RemoveStaticRoute(ctx, in.RouteID); err != nil {
-			return nil, removedOut{}, err
+		deleted, err := d.RemoveStaticRoute(ctx, in.RouteID)
+		if err != nil {
+			return nil, removedStaticOut{}, err
 		}
-		return nil, removedOut{RouteID: in.RouteID, Removed: true}, nil
+		return nil, removedStaticOut{RouteID: in.RouteID, Removed: true, Route: deleted}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{

@@ -21,12 +21,21 @@ type controlIn struct {
 	Action   string `json:"action" jsonschema:"start|stop|restart|enable|disable|set_default_route|unset_default_route"`
 }
 
+// controlOut reports the action's outcome. The action itself either
+// succeeded or the tool returned an error; State/Enabled describe the
+// tunnel AFTERWARDS and come from a separate read that can fail on its
+// own. StateKnown says whether that read succeeded — when it is false,
+// State is "unknown" and Enabled carries no information.
 type controlOut struct {
-	TunnelID string `json:"tunnelId"`
-	Action   string `json:"action"`
-	State    string `json:"state" jsonschema:"tunnel state after the action"`
-	Enabled  bool   `json:"enabled"`
+	TunnelID   string `json:"tunnelId"`
+	Action     string `json:"action"`
+	State      string `json:"state" jsonschema:"tunnel state after the action; \"unknown\" when stateKnown is false"`
+	Enabled    bool   `json:"enabled" jsonschema:"autostart flag after the action; meaningless when stateKnown is false"`
+	StateKnown bool   `json:"stateKnown" jsonschema:"false means the action succeeded but reading the tunnel back failed — do not report state or enabled to the user"`
 }
+
+// stateUnknown is the State value used when the post-action read failed.
+const stateUnknown = "unknown"
 
 type createIn struct {
 	Name   string `json:"name" jsonschema:"display name for the new tunnel"`
@@ -102,9 +111,16 @@ func registerTunnelTools(s *mcp.Server, d Deps) {
 		}
 		det, err := d.GetTunnel(ctx, in.TunnelID)
 		if err != nil {
-			return nil, controlOut{TunnelID: in.TunnelID, Action: in.Action}, nil // action succeeded; state read is best-effort
+			// The action succeeded — reporting IsError would be a lie in the
+			// other direction. But the zero value of State/Enabled reads as
+			// "stopped and disabled", so say "unknown" out loud, in the
+			// structured output AND in a text block the model cannot miss.
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{
+				Text: fmt.Sprintf("Action %q on tunnel %q succeeded, but reading the tunnel back failed: %v. "+
+					"The resulting state is UNKNOWN — do not tell the user the tunnel is stopped or disabled; call get_tunnel again.", in.Action, in.TunnelID, err),
+			}}}, controlOut{TunnelID: in.TunnelID, Action: in.Action, State: stateUnknown}, nil
 		}
-		return nil, controlOut{TunnelID: in.TunnelID, Action: in.Action, State: det.State, Enabled: det.Enabled}, nil
+		return nil, controlOut{TunnelID: in.TunnelID, Action: in.Action, State: det.State, Enabled: det.Enabled, StateKnown: true}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{

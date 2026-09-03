@@ -1136,7 +1136,7 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// всеми пользователями за реверс-прокси KeenDNS, и общий инстанс дал бы
 	// перекрёстную блокировку веб-входа и MCP.
 	throttle := auth.NewLoginThrottle()
-	mux.Handle("/mcp", mcp.KeyMiddleware(mcp.AuthConfig{
+	mcpHandler := mcp.KeyMiddleware(mcp.AuthConfig{
 		Enabled: s.settings.IsMcpEnabled,
 		Verify: func(tok string) (mcp.KeyInfo, bool) {
 			k, ok := s.mcpKeys.Verify(tok)
@@ -1145,7 +1145,12 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 		Touch:    s.mcpKeys.Touch,
 		Throttle: throttle,
 		Log:      func(f string, a ...any) { mcpLog.Warn("auth", "", fmt.Sprintf(f, a...)) },
-	}, mcp.NewHTTPHandler(mcpServer)))
+	}, mcp.NewHTTPHandler(mcpServer))
+	mux.Handle("/mcp", mcpHandler)
+	// Без этого «/mcp/» (и любой подпуть) проваливается в catch-all SPA и
+	// отдаёт HTML без авторизации вместо честного 401/404: клиент, который
+	// нормализовал URL со слэшем, получал бы страницу вместо ответа MCP.
+	mux.Handle("/mcp/", mcpHandler)
 
 	keysHandler := api.NewMcpKeysHandler(s.mcpKeys, appLog)
 	mux.HandleFunc("/api/mcp/keys", h.guarded(keysHandler.List))

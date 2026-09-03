@@ -39,8 +39,12 @@ func TestFake_ImplementsDepsAndMutates(t *testing.T) {
 	if len(routes) != 2 {
 		t.Fatalf("ListDNSRoutes len = %d, want 2", len(routes))
 	}
-	if err := f.RemoveDNSRoute(ctx, r.ID); err != nil {
+	deleted, err := f.RemoveDNSRoute(ctx, r.ID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if deleted.ID != r.ID || deleted.Name != "yt" {
+		t.Fatalf("RemoveDNSRoute returned %+v, want the deleted record", deleted)
 	}
 
 	cr, err := f.SetClientRoute(ctx, mcpsrv.ClientRouteInput{ClientIP: "192.168.1.50", TunnelID: "tn-1"})

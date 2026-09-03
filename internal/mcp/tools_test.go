@@ -1,7 +1,17 @@
 package mcp_test
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	mcpsrv "github.com/hoaxisr/awg-manager/internal/mcp"
+	"github.com/hoaxisr/awg-manager/internal/mcp/mcptest"
 )
 
 func TestTools_TunnelsRoundTrip(t *testing.T) {
@@ -49,6 +59,45 @@ func TestTools_TunnelsRoundTrip(t *testing.T) {
 	}
 }
 
+// blindDeps applies actions normally but cannot read a tunnel back.
+type blindDeps struct{ *mcptest.Fake }
+
+func (blindDeps) GetTunnel(context.Context, string) (mcpsrv.TunnelDetail, error) {
+	return mcpsrv.TunnelDetail{}, fmt.Errorf("store is locked")
+}
+
+// TestTools_ControlTunnelUnknownStateIsNotFabricated — a successful action
+// followed by a failed read-back must not look like "stopped and
+// disabled": that is how an agent ends up telling the user a tunnel it
+// just enabled is off.
+func TestTools_ControlTunnelUnknownStateIsNotFabricated(t *testing.T) {
+	srv := mcpsrv.NewServer(blindDeps{mcptest.New()}, "test")
+	ts := httptest.NewServer(mcpsrv.NewHTTPHandler(srv))
+	t.Cleanup(ts.Close)
+	client := sdk.NewClient(&sdk.Implementation{Name: "test-client", Version: "0"}, nil)
+	s, err := client.Connect(context.Background(), &sdk.StreamableClientTransport{
+		Endpoint: ts.URL + "/mcp", HTTPClient: &http.Client{}, DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	res, out := callTool(t, s, "control_tunnel", map[string]any{"tunnelId": "tn-2", "action": "enable"})
+	if res.IsError {
+		t.Fatalf("the action succeeded; only the read-back failed — must not be a tool error: %s", toolText(res))
+	}
+	if out["stateKnown"] != false {
+		t.Fatalf("stateKnown = %v, want false", out["stateKnown"])
+	}
+	if out["state"] != "unknown" {
+		t.Fatalf("state = %v, want %q — a zero state reads as a real \"stopped\"", out["state"], "unknown")
+	}
+	if txt := toolText(res); !strings.Contains(strings.ToLower(txt), "unknown") {
+		t.Fatalf("the model needs the reason in a text block, got %q", txt)
+	}
+}
+
 func TestTools_Routing(t *testing.T) {
 	s, _ := newTestSession(t)
 
@@ -61,8 +110,15 @@ func TestTools_Routing(t *testing.T) {
 	if len(out["routes"].([]any)) != 2 {
 		t.Fatalf("routes = %v", out["routes"])
 	}
-	if res, _ = callTool(t, s, "remove_dns_route", map[string]any{"routeId": id}); res.IsError {
+	// The deletion is permanent, so remove_* must hand back what it
+	// destroyed — an agent has nothing else left to show the user.
+	res, out = callTool(t, s, "remove_dns_route", map[string]any{"routeId": id})
+	if res.IsError {
 		t.Fatal(toolText(res))
+	}
+	gone, _ := out["route"].(map[string]any)
+	if gone == nil || gone["id"] != id || gone["name"] != "GH" {
+		t.Fatalf("remove_dns_route must return the deleted record, got %v", out)
 	}
 	if res, _ = callTool(t, s, "remove_dns_route", map[string]any{"routeId": id}); !res.IsError {
 		t.Fatal("second remove must fail")
@@ -72,8 +128,14 @@ func TestTools_Routing(t *testing.T) {
 	if res.IsError {
 		t.Fatal(toolText(res))
 	}
-	if res, _ = callTool(t, s, "remove_static_route", map[string]any{"routeId": out["id"]}); res.IsError {
+	srID := out["id"]
+	res, out = callTool(t, s, "remove_static_route", map[string]any{"routeId": srID})
+	if res.IsError {
 		t.Fatal(toolText(res))
+	}
+	gone, _ = out["route"].(map[string]any)
+	if gone == nil || gone["id"] != srID || gone["name"] != "Lab" {
+		t.Fatalf("remove_static_route must return the deleted record, got %v", out)
 	}
 	res, _ = callTool(t, s, "add_static_route", map[string]any{"name": "Bad", "subnets": []string{"not-a-cidr"}, "tunnelId": "tn-1"})
 	if !res.IsError {

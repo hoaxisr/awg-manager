@@ -6,6 +6,8 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
+	"github.com/hoaxisr/awg-manager/internal/dnsroute"
+	"github.com/hoaxisr/awg-manager/internal/events"
 	mcpsrv "github.com/hoaxisr/awg-manager/internal/mcp"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -77,6 +79,90 @@ func (f *fakeClientRoutes) Delete(_ context.Context, id string) error {
 	return errNotFound(id)
 }
 
+// recBus records the invalidation hints a mutation publishes. The daemon
+// publishes these in its HTTP handlers, so localdeps has to mirror them or
+// an open web UI keeps showing pre-MCP data.
+type recBus struct{ pub []events.Resource }
+
+func (b *recBus) PublishInvalidated(res events.Resource, _ string) { b.pub = append(b.pub, res) }
+
+func (b *recBus) has(res events.Resource) bool {
+	for _, r := range b.pub {
+		if r == res {
+			return true
+		}
+	}
+	return false
+}
+
+type fakeDNSRoutes struct {
+	api.DNSRouteService
+	lists   []dnsroute.DomainList
+	created dnsroute.DomainList
+	enabled map[string]bool
+	deleted []string
+}
+
+func (f *fakeDNSRoutes) Create(_ context.Context, l dnsroute.DomainList) (*dnsroute.DomainList, error) {
+	f.created = l
+	l.ID = "dl-new"
+	// Mirrors dnsroute.ServiceImpl.Create: Enabled is hard-set and Domains
+	// is recomputed from ManualDomains, whatever the payload said.
+	l.Enabled = true
+	l.Domains = append([]string(nil), l.ManualDomains...)
+	f.lists = append(f.lists, l)
+	return &l, nil
+}
+
+func (f *fakeDNSRoutes) Get(_ context.Context, id string) (*dnsroute.DomainList, error) {
+	for i := range f.lists {
+		if f.lists[i].ID == id {
+			return &f.lists[i], nil
+		}
+	}
+	return nil, errNotFound(id)
+}
+
+func (f *fakeDNSRoutes) SetEnabled(_ context.Context, id string, v bool) error {
+	f.enabled[id] = v
+	return nil
+}
+
+func (f *fakeDNSRoutes) Delete(_ context.Context, id string) error {
+	for i := range f.lists {
+		if f.lists[i].ID == id {
+			f.lists = append(f.lists[:i], f.lists[i+1:]...)
+			f.deleted = append(f.deleted, id)
+			return nil
+		}
+	}
+	return errNotFound(id)
+}
+
+type fakeStaticRoutes struct {
+	api.StaticRouteService
+	lists []storage.StaticRouteList
+}
+
+func (f *fakeStaticRoutes) Get(id string) (*storage.StaticRouteList, error) {
+	for i := range f.lists {
+		if f.lists[i].ID == id {
+			return &f.lists[i], nil
+		}
+	}
+	return nil, errNotFound(id)
+}
+
+func (f *fakeStaticRoutes) Delete(_ context.Context, id string) error {
+	for i := range f.lists {
+		if f.lists[i].ID == id {
+			f.lists = append(f.lists[:i], f.lists[i+1:]...)
+			return nil
+		}
+	}
+	return errNotFound(id)
+}
+
 func newLocal(t *testing.T) (*Local, *fakeTunnels, *fakeOrch, *fakeClientRoutes) {
 	t.Helper()
 	dir := t.TempDir()
@@ -98,6 +184,177 @@ func newLocal(t *testing.T) (*Local, *fakeTunnels, *fakeOrch, *fakeClientRoutes)
 	fc := &fakeClientRoutes{}
 	l := New(Config{Tunnels: ft, TunnelStore: store, Orch: fo, ClientRoutes: fc})
 	return l, ft, fo, fc
+}
+
+// harness is newLocal plus the routing fakes and a recording bus, for the
+// tests that assert on published invalidation hints.
+type harness struct {
+	l      *Local
+	tun    *fakeTunnels
+	orch   *fakeOrch
+	client *fakeClientRoutes
+	dns    *fakeDNSRoutes
+	static *fakeStaticRoutes
+	bus    *recBus
+}
+
+func newHarness(t *testing.T) *harness {
+	t.Helper()
+	l, ft, fo, fc := newLocal(t)
+	h := &harness{
+		tun: ft, orch: fo, client: fc,
+		dns:    &fakeDNSRoutes{enabled: map[string]bool{}},
+		static: &fakeStaticRoutes{lists: []storage.StaticRouteList{{ID: "sr-1", Name: "Office", TunnelID: "tn-1", Subnets: []string{"10.20.0.0/16"}, Enabled: true}}},
+		bus:    &recBus{},
+	}
+	cfg := l.c
+	cfg.DNSRoutes, cfg.StaticRoutes, cfg.Bus = h.dns, h.static, h.bus
+	h.l = New(cfg)
+	return h
+}
+
+// TestLocal_MutationsPublishInvalidation — записи через MCP идут мимо HTTP-
+// обработчиков, которые и публикуют подсказки инвалидации. Без зеркалирования
+// открытая вкладка веб-интерфейса показывает состояние до правки.
+func TestLocal_MutationsPublishInvalidation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("dns route create and delete", func(t *testing.T) {
+		h := newHarness(t)
+		if _, err := h.l.AddDNSRoute(ctx, mcpsrv.DNSRouteInput{Name: "GH", Domains: []string{"github.com"}, TunnelID: "tn-1"}); err != nil {
+			t.Fatal(err)
+		}
+		if !h.bus.has(events.ResourceRoutingDnsRoutes) {
+			t.Fatalf("create published %v", h.bus.pub)
+		}
+		h.bus.pub = nil
+		gone, err := h.l.RemoveDNSRoute(ctx, "dl-new")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gone.ID != "dl-new" || gone.Name != "GH" {
+			t.Fatalf("RemoveDNSRoute must return the deleted record, got %+v", gone)
+		}
+		if !h.bus.has(events.ResourceRoutingDnsRoutes) {
+			t.Fatalf("delete published %v", h.bus.pub)
+		}
+	})
+
+	t.Run("static route delete", func(t *testing.T) {
+		h := newHarness(t)
+		gone, err := h.l.RemoveStaticRoute(ctx, "sr-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gone.ID != "sr-1" || gone.Name != "Office" || len(gone.Subnets) != 1 {
+			t.Fatalf("RemoveStaticRoute must return the deleted record, got %+v", gone)
+		}
+		if !h.bus.has(events.ResourceRoutingStaticRoutes) {
+			t.Fatalf("published %v", h.bus.pub)
+		}
+	})
+
+	t.Run("client route upsert and delete", func(t *testing.T) {
+		h := newHarness(t)
+		if _, err := h.l.SetClientRoute(ctx, mcpsrv.ClientRouteInput{ClientIP: "192.168.1.9", TunnelID: "tn-1"}); err != nil {
+			t.Fatal(err)
+		}
+		if !h.bus.has(events.ResourceRoutingClientRoutes) {
+			t.Fatalf("create published %v", h.bus.pub)
+		}
+		h.bus.pub = nil
+		if _, err := h.l.SetClientRoute(ctx, mcpsrv.ClientRouteInput{ClientIP: "192.168.1.9"}); err != nil {
+			t.Fatal(err)
+		}
+		if !h.bus.has(events.ResourceRoutingClientRoutes) {
+			t.Fatalf("delete published %v", h.bus.pub)
+		}
+	})
+
+	t.Run("enable and default route", func(t *testing.T) {
+		for _, action := range []string{mcpsrv.ActionDisable, mcpsrv.ActionSetDefaultRoute} {
+			h := newHarness(t)
+			if err := h.l.ControlTunnel(ctx, "tn-1", action); err != nil {
+				t.Fatal(err)
+			}
+			if !h.bus.has(events.ResourceTunnels) || !h.bus.has(events.ResourceRoutingTunnels) {
+				t.Fatalf("%s published %v", action, h.bus.pub)
+			}
+		}
+	})
+
+	// Старт/стоп/рестарт публикует сам оркестратор — второй раз отсюда
+	// была бы лишняя инвалидация на каждое действие.
+	t.Run("start stop restart stay silent", func(t *testing.T) {
+		h := newHarness(t)
+		for _, a := range []string{mcpsrv.ActionStart, mcpsrv.ActionStop, mcpsrv.ActionRestart} {
+			if err := h.l.ControlTunnel(ctx, "tn-1", a); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if len(h.bus.pub) != 0 {
+			t.Fatalf("orchestrator already publishes these; localdeps published %v", h.bus.pub)
+		}
+	})
+
+	// Bus опционален: половина сборок демона поднимается без него.
+	t.Run("nil bus is not a crash", func(t *testing.T) {
+		h := newHarness(t)
+		cfg := h.l.c
+		cfg.Bus = nil
+		if err := New(cfg).ControlTunnel(ctx, "tn-1", mcpsrv.ActionDisable); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// TestLocal_AddDNSRouteInputMapping — dnsroute.Create жёстко ставит
+// Enabled=true и пересчитывает Domains из ManualDomains, поэтому enabled:false
+// надо доводить вторым вызовом, а Domains не передавать вовсе (иначе один и
+// тот же слайс лежал бы в двух полях одной структуры).
+func TestLocal_AddDNSRouteInputMapping(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+
+	if _, err := h.l.AddDNSRoute(ctx, mcpsrv.DNSRouteInput{Name: "GH", Domains: []string{"github.com"}, TunnelID: "tn-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if h.dns.created.Domains != nil {
+		t.Errorf("Domains must not be sent (it is derived from ManualDomains), got %v", h.dns.created.Domains)
+	}
+	if len(h.dns.created.ManualDomains) != 1 || h.dns.created.ManualDomains[0] != "github.com" {
+		t.Errorf("ManualDomains = %v", h.dns.created.ManualDomains)
+	}
+
+	off := false
+	got, err := h.l.AddDNSRoute(ctx, mcpsrv.DNSRouteInput{Name: "Off", Domains: []string{"example.com"}, TunnelID: "tn-1", Enabled: &off})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := h.dns.enabled["dl-new"]; !ok || v {
+		t.Errorf("enabled:false must reach the service as a SetEnabled(false), got %v/%v", v, ok)
+	}
+	if got.Enabled {
+		t.Error("the returned list must not claim to be enabled")
+	}
+}
+
+// TestLocal_SetClientRoutePreservesEnabled — перенаправление устройства на
+// другой туннель не должно молча включать маршрут, который пользователь
+// сам выключил.
+func TestLocal_SetClientRoutePreservesEnabled(t *testing.T) {
+	h := newHarness(t)
+	h.client.routes = []clientroute.ClientRoute{{ID: "cr-1", ClientIP: "192.168.1.9", TunnelID: "tn-1", Fallback: "bypass", Enabled: false}}
+	got, err := h.l.SetClientRoute(context.Background(), mcpsrv.ClientRouteInput{ClientIP: "192.168.1.9", TunnelID: "tn-1", Fallback: "drop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Enabled {
+		t.Fatalf("update must keep Enabled=false, got %+v", got)
+	}
+	if got.Fallback != "drop" {
+		t.Fatalf("fallback = %q", got.Fallback)
+	}
 }
 
 func TestLocal_ListTunnelsMapsStateAndEndpoint(t *testing.T) {

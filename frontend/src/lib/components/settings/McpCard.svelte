@@ -43,6 +43,16 @@
 		createOpen = true;
 	}
 
+	// Закрытие обязано стирать сам ключ: плейнтекст показывается один раз, и
+	// держать его в состоянии компонента после закрытия окна незачем — до
+	// следующего openCreate() он оставался бы в памяти вкладки.
+	function closeCreate() {
+		createOpen = false;
+		created = null;
+		nameDraft = '';
+		createError = null;
+	}
+
 	async function submitCreate() {
 		const name = nameDraft.trim();
 		if (!name) {
@@ -168,7 +178,7 @@
 	</div>
 </div>
 
-<Modal open={createOpen} title={created ? 'Ключ создан' : 'Новый ключ MCP'} size="md" onclose={() => (createOpen = false)}>
+<Modal open={createOpen} title={created ? 'Ключ создан' : 'Новый ключ MCP'} size="md" onclose={() => closeCreate()}>
 	{#if !created}
 		<div class="flex flex-col gap-2">
 			<label class="setting-description" for="mcp-key-name">Название (для кого этот ключ)</label>
@@ -215,10 +225,10 @@
 	{/if}
 	{#snippet actions()}
 		{#if !created}
-			<Button variant="secondary" size="md" onclick={() => (createOpen = false)}>Отмена</Button>
+			<Button variant="secondary" size="md" onclick={() => closeCreate()}>Отмена</Button>
 			<Button variant="primary" size="md" onclick={submitCreate} disabled={creating}>Создать</Button>
 		{:else}
-			<Button variant="primary" size="md" onclick={() => (createOpen = false)}>Готово</Button>
+			<Button variant="primary" size="md" onclick={() => closeCreate()}>Готово</Button>
 		{/if}
 	{/snippet}
 </Modal>

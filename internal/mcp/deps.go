@@ -18,11 +18,15 @@ type Deps interface {
 
 	ListDNSRoutes(ctx context.Context) ([]DNSRoute, error)
 	AddDNSRoute(ctx context.Context, in DNSRouteInput) (DNSRoute, error)
-	RemoveDNSRoute(ctx context.Context, id string) error
+	// RemoveDNSRoute deletes the list and returns it as it was; the
+	// deletion is permanent, so the record is the only thing left to show
+	// the user. See tools_routing.go removedDNSOut.
+	RemoveDNSRoute(ctx context.Context, id string) (DNSRoute, error)
 
 	ListStaticRoutes(ctx context.Context) ([]StaticRoute, error)
 	AddStaticRoute(ctx context.Context, in StaticRouteInput) (StaticRoute, error)
-	RemoveStaticRoute(ctx context.Context, id string) error
+	// RemoveStaticRoute deletes the list and returns it as it was.
+	RemoveStaticRoute(ctx context.Context, id string) (StaticRoute, error)
 
 	ListClientRoutes(ctx context.Context) ([]ClientRoute, error)
 	SetClientRoute(ctx context.Context, in ClientRouteInput) (*ClientRoute, error) // nil when removed

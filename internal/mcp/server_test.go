@@ -104,6 +104,14 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 	if a := byName["control_tunnel"].Annotations; a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint {
 		t.Error("control_tunnel must be a non-destructive write")
 	}
+	// Deleting a routing list is permanent and MCP cannot recreate it, so
+	// the host must get the chance to ask the user first.
+	for _, n := range []string{"remove_dns_route", "remove_static_route"} {
+		a := byName[n].Annotations
+		if a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint {
+			t.Errorf("%s must be annotated destructive", n)
+		}
+	}
 }
 
 func TestServer_GetSystemStatus(t *testing.T) {

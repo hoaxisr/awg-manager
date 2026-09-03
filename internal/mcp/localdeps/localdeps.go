@@ -92,6 +92,26 @@ var _ mcpsrv.Deps = (*Local)(nil)
 
 func errUnavailable(what string) error { return fmt.Errorf("%s is not available on this router", what) }
 
+// publish mirrors the resource:invalidated hints the REST handlers emit,
+// so an open web UI refetches after an MCP mutation instead of showing
+// stale data until a manual refresh. Bus is optional (see ControlSingbox).
+func (l *Local) publish(res events.Resource, reason string) {
+	if l.c.Bus == nil {
+		return
+	}
+	l.c.Bus.PublishInvalidated(res, reason)
+}
+
+// publishTunnelList mirrors api.TunnelsHandler.publishTunnelList: any
+// change to the managed-tunnel list or to a tunnel's enabled/default-route
+// flags invalidates both the tunnel snapshot and the routing catalog.
+// Start/stop/restart go through the orchestrator, which publishes these
+// itself — do not call this for them.
+func (l *Local) publishTunnelList(reason string) {
+	l.publish(events.ResourceTunnels, reason)
+	l.publish(events.ResourceRoutingTunnels, reason)
+}
+
 // ---- system ---------------------------------------------------------------
 
 func (l *Local) SystemStatus(ctx context.Context) (mcpsrv.SystemStatus, error) {
@@ -280,14 +300,21 @@ func (l *Local) ControlTunnel(ctx context.Context, id, action string) error {
 			mcpsrv.ActionStart: orchestrator.EventStart, mcpsrv.ActionStop: orchestrator.EventStop, mcpsrv.ActionRestart: orchestrator.EventRestart,
 		}[action]
 		return l.c.Orch.HandleEvent(ctx, orchestrator.Event{Type: typ, Tunnel: id})
-	case mcpsrv.ActionEnable:
-		return l.c.Tunnels.SetEnabled(ctx, id, true)
-	case mcpsrv.ActionDisable:
-		return l.c.Tunnels.SetEnabled(ctx, id, false)
-	case mcpsrv.ActionSetDefaultRoute:
-		return l.c.Tunnels.SetDefaultRoute(ctx, id, true)
-	case mcpsrv.ActionUnsetDefaultRoute:
-		return l.c.Tunnels.SetDefaultRoute(ctx, id, false)
+	case mcpsrv.ActionEnable, mcpsrv.ActionDisable:
+		// api.ControlHandler.ToggleEnabled publishes the tunnel list plus
+		// routing.tunnels ("state-changed") after SetEnabled.
+		if err := l.c.Tunnels.SetEnabled(ctx, id, action == mcpsrv.ActionEnable); err != nil {
+			return err
+		}
+		l.publishTunnelList("mcp-set-enabled")
+		return nil
+	case mcpsrv.ActionSetDefaultRoute, mcpsrv.ActionUnsetDefaultRoute:
+		// Same pair as api.ControlHandler.ToggleDefaultRoute.
+		if err := l.c.Tunnels.SetDefaultRoute(ctx, id, action == mcpsrv.ActionSetDefaultRoute); err != nil {
+			return err
+		}
+		l.publishTunnelList("mcp-set-default-route")
+		return nil
 	}
 	return fmt.Errorf("unknown action %q", action)
 }
@@ -303,6 +330,7 @@ func (l *Local) ImportTunnel(ctx context.Context, name, cfg string) (mcpsrv.Tunn
 	if t == nil {
 		return mcpsrv.TunnelSummary{}, fmt.Errorf("tunnel import returned no tunnel")
 	}
+	l.publishTunnelList("mcp-import")
 	return summary(*t, l.endpointOf(t.ID)), nil
 }
 
@@ -313,7 +341,11 @@ func (l *Local) ReplaceTunnelConfig(ctx context.Context, id, cfg, newName string
 	if err := l.rejectRaw(id); err != nil {
 		return err
 	}
-	return l.c.Tunnels.ReplaceConfig(ctx, id, cfg, newName)
+	if err := l.c.Tunnels.ReplaceConfig(ctx, id, cfg, newName); err != nil {
+		return err
+	}
+	l.publishTunnelList("mcp-replace-config")
+	return nil
 }
 
 func (l *Local) ExportTunnelConfig(_ context.Context, id string) (string, error) {
@@ -348,21 +380,55 @@ func (l *Local) AddDNSRoute(ctx context.Context, in mcpsrv.DNSRouteInput) (mcpsr
 		return mcpsrv.DNSRoute{}, errUnavailable("dns routes")
 	}
 	enabled := in.Enabled == nil || *in.Enabled
+	// Only ManualDomains is passed: dnsroute.Create recomputes Domains (and
+	// Subnets) from it, and handing the same backing array to both fields
+	// would alias one slice across two fields of the same struct.
 	created, err := l.c.DNSRoutes.Create(ctx, dnsroute.DomainList{
-		Name: in.Name, Domains: in.Domains, ManualDomains: in.Domains, Enabled: enabled,
+		Name: in.Name, ManualDomains: in.Domains,
 		Routes: []dnsroute.RouteTarget{{TunnelID: in.TunnelID}},
 	})
 	if err != nil {
 		return mcpsrv.DNSRoute{}, err
 	}
+	if created == nil {
+		return mcpsrv.DNSRoute{}, fmt.Errorf("dns route create returned no list")
+	}
+	// dnsroute.Create hard-sets Enabled=true regardless of the payload, so
+	// enabled:false has to be applied as a follow-up toggle. (staticroute's
+	// Create honours the flag; that path needs no second call.)
+	if !enabled {
+		if err := l.c.DNSRoutes.SetEnabled(ctx, created.ID, false); err != nil {
+			l.publish(events.ResourceRoutingDnsRoutes, "mcp-create")
+			return mcpsrv.DNSRoute{}, fmt.Errorf("list %q created but could not be disabled: %w", created.ID, err)
+		}
+		created.Enabled = false
+	}
+	l.publish(events.ResourceRoutingDnsRoutes, "mcp-create")
 	return convert[mcpsrv.DNSRoute](created)
 }
 
-func (l *Local) RemoveDNSRoute(ctx context.Context, id string) error {
+func (l *Local) RemoveDNSRoute(ctx context.Context, id string) (mcpsrv.DNSRoute, error) {
 	if l.c.DNSRoutes == nil {
-		return errUnavailable("dns routes")
+		return mcpsrv.DNSRoute{}, errUnavailable("dns routes")
 	}
-	return l.c.DNSRoutes.Delete(ctx, id)
+	// Read the record before destroying it: the tool returns it so the
+	// agent can show the user what it deleted.
+	existing, err := l.c.DNSRoutes.Get(ctx, id)
+	if err != nil {
+		return mcpsrv.DNSRoute{}, err
+	}
+	if existing == nil {
+		return mcpsrv.DNSRoute{}, fmt.Errorf("dns route %q not found", id)
+	}
+	out, err := convert[mcpsrv.DNSRoute](existing)
+	if err != nil {
+		return mcpsrv.DNSRoute{}, err
+	}
+	if err := l.c.DNSRoutes.Delete(ctx, id); err != nil {
+		return mcpsrv.DNSRoute{}, err
+	}
+	l.publish(events.ResourceRoutingDnsRoutes, "mcp-delete")
+	return out, nil
 }
 
 func (l *Local) ListStaticRoutes(context.Context) ([]mcpsrv.StaticRoute, error) {
@@ -385,14 +451,31 @@ func (l *Local) AddStaticRoute(ctx context.Context, in mcpsrv.StaticRouteInput) 
 	if err != nil {
 		return mcpsrv.StaticRoute{}, err
 	}
+	l.publish(events.ResourceRoutingStaticRoutes, "mcp-create")
 	return convert[mcpsrv.StaticRoute](created)
 }
 
-func (l *Local) RemoveStaticRoute(ctx context.Context, id string) error {
+func (l *Local) RemoveStaticRoute(ctx context.Context, id string) (mcpsrv.StaticRoute, error) {
 	if l.c.StaticRoutes == nil {
-		return errUnavailable("static routes")
+		return mcpsrv.StaticRoute{}, errUnavailable("static routes")
 	}
-	return l.c.StaticRoutes.Delete(ctx, id)
+	// Read before destroying — same contract as RemoveDNSRoute.
+	existing, err := l.c.StaticRoutes.Get(id)
+	if err != nil {
+		return mcpsrv.StaticRoute{}, err
+	}
+	if existing == nil {
+		return mcpsrv.StaticRoute{}, fmt.Errorf("static route %q not found", id)
+	}
+	out, err := convert[mcpsrv.StaticRoute](existing)
+	if err != nil {
+		return mcpsrv.StaticRoute{}, err
+	}
+	if err := l.c.StaticRoutes.Delete(ctx, id); err != nil {
+		return mcpsrv.StaticRoute{}, err
+	}
+	l.publish(events.ResourceRoutingStaticRoutes, "mcp-delete")
+	return out, nil
 }
 
 func (l *Local) ListClientRoutes(context.Context) ([]mcpsrv.ClientRoute, error) {
@@ -425,6 +508,7 @@ func (l *Local) SetClientRoute(ctx context.Context, in mcpsrv.ClientRouteInput) 
 			if err := l.c.ClientRoutes.Delete(ctx, existing.ID); err != nil {
 				return nil, err
 			}
+			l.publish(events.ResourceRoutingClientRoutes, "mcp-delete")
 		}
 		return nil, nil
 	}
@@ -432,10 +516,15 @@ func (l *Local) SetClientRoute(ctx context.Context, in mcpsrv.ClientRouteInput) 
 	if fallback == "" {
 		fallback = "bypass"
 	}
+	// A new route starts enabled; re-pointing an existing one keeps the
+	// user's own enabled flag — silently re-enabling a route someone
+	// deliberately disabled is a change they did not ask for.
 	route := clientroute.ClientRoute{ClientIP: in.ClientIP, TunnelID: in.TunnelID, Fallback: fallback, Enabled: true}
 	var saved *clientroute.ClientRoute
+	reason := "mcp-create"
 	if existing != nil {
-		route.ID, route.ClientHostname = existing.ID, existing.ClientHostname
+		route.ID, route.ClientHostname, route.Enabled = existing.ID, existing.ClientHostname, existing.Enabled
+		reason = "mcp-update"
 		saved, err = l.c.ClientRoutes.Update(ctx, route)
 	} else {
 		saved, err = l.c.ClientRoutes.Create(ctx, route)
@@ -443,6 +532,7 @@ func (l *Local) SetClientRoute(ctx context.Context, in mcpsrv.ClientRouteInput) 
 	if err != nil {
 		return nil, err
 	}
+	l.publish(events.ResourceRoutingClientRoutes, reason)
 	out, err := convert[mcpsrv.ClientRoute](saved)
 	if err != nil {
 		return nil, err

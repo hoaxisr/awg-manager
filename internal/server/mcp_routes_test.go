@@ -121,6 +121,27 @@ func TestMcpEndpoint_UnauthorizedWithoutValidKey(t *testing.T) {
 	}
 }
 
+// «/mcp/» со слэшем обязан попадать в тот же middleware. Иначе запрос
+// проваливается в catch-all SPA и клиент получает 200 с HTML вместо 401 —
+// то есть неавторизованную страницу там, где ожидался отказ.
+func TestMcpEndpoint_TrailingSlashIsGuarded(t *testing.T) {
+	mux := http.NewServeMux()
+	s, _ := newMcpServer(t, true)
+	s.registerMcpRoutes(mux, mcpRouteHandlers())
+
+	for _, path := range []string{"/mcp/", "/mcp/anything"} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}"))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s: code = %d, want 401", path, rec.Code)
+		}
+		if ct := rec.Header().Get("Content-Type"); strings.Contains(ct, "text/html") {
+			t.Errorf("%s: ответ HTML (%q) — запрос ушёл в SPA", path, ct)
+		}
+	}
+}
+
 func TestSkipSlowRequestLogCoversMcp(t *testing.T) {
 	if !skipSlowRequestLog("/mcp") {
 		t.Fatal("/mcp must be exempt from the slow-request log")
