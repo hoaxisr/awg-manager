@@ -40,6 +40,9 @@
 
   let open = $derived($drawerOpen);
   let s = $derived($status);
+  // Эффективный путь cache.db: при незаданной настройке это может быть
+  // рукописный путь из 00-base.json, который селектор выразить не может.
+  let cacheDbNow = $derived(s?.cacheDbPath ? ` Сейчас: ${s.cacheDbPath}` : '');
   let cfg = $derived($storeSettings);
   let isExpert = $derived($mode === 'expert');
 
@@ -223,6 +226,11 @@
     wanAutoOverride = override;
     if (patch) void applyPatch(patch);
   }
+  function onCacheLocationChange(e: Event) {
+    const v = (e.currentTarget as HTMLSelectElement).value;
+    if (v === 'flash' || v === 'tmp') void applyPatch({ cacheFileLocation: v });
+  }
+
   function onWanInterfaceChange(e: Event) {
     const action = planSelectWanInterface((e.currentTarget as HTMLSelectElement).value);
     if (!action) return;
@@ -368,6 +376,33 @@
         <div class="sec-cap">Источник трафика</div>
         <p class="hint">{sourceSummary}</p>
         <Button variant="ghost" size="sm" onclick={goToSourceSettings}>Настроить источник →</Button>
+      </section>
+    {/if}
+
+    <!-- Кэш sing-box (issue #842): единственное место настройки, вне expert-гейта —
+         износ флеша касается любого режима с fakeip. -->
+    {#if cfg}
+      <section class="sec">
+        <div class="sec-cap">Кэш sing-box</div>
+        <div class="field">
+          <label class="lbl" for="ed-cache-location">Хранилище cache.db</label>
+          <select
+            id="ed-cache-location"
+            class="inp"
+            value={cfg.cacheFileLocation ?? ''}
+            onchange={onCacheLocationChange}
+          >
+            <!-- Пустое значение — «настройка не задана, путь из 00-base.json»;
+                 показываем, пока оно есть, иначе выбрать «Флеш» было бы нечем.
+                 Повторный выбор пустого отсекает onCacheLocationChange. -->
+            {#if !cfg.cacheFileLocation}
+              <option value="">Не задано — как в 00-base.json</option>
+            {/if}
+            <option value="flash">Флеш роутера (/opt)</option>
+            <option value="tmp">Оперативная память (/tmp)</option>
+          </select>
+        </div>
+        <p class="hint">В RAM записи FakeIP-карты и Clash не изнашивают флеш, но кэш не переживает перезагрузку. Выбор перезаписывает путь cache_file в 00-base.json, включая заданный вручную.{cacheDbNow}</p>
       </section>
     {/if}
 

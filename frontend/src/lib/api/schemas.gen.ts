@@ -1749,6 +1749,7 @@ const api_SingboxRouterSettingsData: v.GenericSchema = v.looseObject({
 	bypassExtraSubnets: v.optional(v.nullable(v.string())),
 	bypassGeoipTags: v.optional(v.nullable(v.array(v.string()))),
 	bypassPresets: v.optional(v.nullable(v.array(v.string()))),
+	cacheFileLocation: v.optional(v.nullable(v.string())),
 	deviceMode: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	fakeipMtu: v.optional(v.nullable(v.number())),
@@ -1775,6 +1776,7 @@ const api_SingboxRouterSettingsResponse: v.GenericSchema = v.looseObject({
 
 const api_SingboxRouterStatusData: v.GenericSchema = v.looseObject({
 	active: v.optional(v.nullable(v.boolean())),
+	cacheDbPath: v.optional(v.nullable(v.string())),
 	crashCount: v.optional(v.nullable(v.number())),
 	deviceCount: v.optional(v.nullable(v.number())),
 	deviceMode: v.optional(v.nullable(v.string())),

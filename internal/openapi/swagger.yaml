@@ -4927,6 +4927,17 @@ definitions:
         items:
           type: string
         type: array
+      cacheFileLocation:
+        description: |-
+          CacheFileLocation — место хранения cache.db sing-box: "flash" —
+          /opt/etc/awg-manager/singbox/cache.db, "tmp" — /tmp/singbox-cache.db в RAM,
+          записи кэша перестают изнашивать флеш, но кэш не переживает перезагрузку.
+          Пусто — не задано: путь из 00-base.json как есть (см. cacheDbPath в статусе).
+        enum:
+        - flash
+        - tmp
+        example: flash
+        type: string
       deviceMode:
         enum:
         - policy
@@ -5054,6 +5065,12 @@ definitions:
       active:
         example: true
         type: boolean
+      cacheDbPath:
+        description: |-
+          CacheDBPath — эффективный путь cache.db: по cacheFileLocation, при пустой
+          настройке — из 00-base.json (рукописный путь сохраняется).
+        example: /opt/etc/awg-manager/singbox/cache.db
+        type: string
       crashCount:
         description: 'CrashCount — падения sing-box за последние 10 минут (issue #456).'
         example: 2

@@ -294,7 +294,7 @@ func TestEnsureLegacyConfigMigrated_DanglingDNSDohRuleValidates(t *testing.T) {
 	// config.d уже существует к моменту миграции — как в реальном буте,
 	// где ensureBaseConfig (шаг раньше в reconcileConfigSteps) успевает
 	// создать 00-base.json первым.
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 
 	writeLegacyConfig(t, filepath.Join(dir, "config.json"), map[string]any{
 		"dns": map[string]any{

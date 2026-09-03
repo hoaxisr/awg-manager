@@ -217,7 +217,7 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	svc.deps.StaticRoutes = routes
 	svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{}}
 	svc.deps.FakeIPTun = DefaultFakeIPTunParams()
-	svc.deps.FakeIPTun.CachePath = filepath.Join(dir, "cache.db")
+	svc.deps.CacheDBPath = func() string { return filepath.Join(dir, "cache.db") }
 
 	// fakeip readiness probes → ready; flush records into the log.
 	stubTunReadyProbe(t, func(string) bool { return true })
@@ -1766,5 +1766,45 @@ func TestEnableFakeIPTun_RollbackOnSlotRouterFlipFailure(t *testing.T) {
 	}
 	if !h.log.has("Delete:OpkgTun0") {
 		t.Errorf("откат обязан снести интерфейс: %v", h.log.calls)
+	}
+}
+
+// PUT с cacheFileLocation=tmp в том же вызове дёргает шов применения к
+// 00-base.json и через reapplyFakeIPOverlay переводит overlay 21-fakeip.json на
+// эффективный путь оператора (issue #842). Живой индекс засеян, чтобы Reconcile в хвосте
+// UpdateSettings не перепровиженил overlay сам и не замаскировал пропуск reapply.
+func TestUpdateSettings_CacheFileLocationReachesOverlayAndBase(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	ctx := context.Background()
+	if err := h.svc.Enable(ctx); err != nil {
+		t.Fatalf("Enable(fakeip): %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{h.loadFakeIP(t).Index: true}}
+	h.svc.deps.CacheDBPath = func() string { return "/tmp/test-cache.db" }
+	applied, calls := "", 0
+	h.svc.deps.ApplyCacheFileLocation = func(location string) error { applied = location; calls++; return nil }
+
+	sr, err := h.svc.GetSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetSettings: %v", err)
+	}
+	sr.CacheFileLocation = "tmp"
+	if err := h.svc.UpdateSettings(ctx, sr); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+
+	if applied != "tmp" || calls != 1 {
+		t.Errorf("ApplyCacheFileLocation получил %q (%d вызовов), want \"tmp\" один раз", applied, calls)
+	}
+	data, err := os.ReadFile(filepath.Join(h.dir, "21-fakeip.json"))
+	if err != nil {
+		t.Fatalf("read 21-fakeip.json: %v", err)
+	}
+	var cfg RouterConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal 21-fakeip.json: %v", err)
+	}
+	if cfg.Experimental == nil || cfg.Experimental.CacheFile == nil || cfg.Experimental.CacheFile.Path != "/tmp/test-cache.db" {
+		t.Errorf("overlay cache_file.path не переехал в RAM: %s", data)
 	}
 }

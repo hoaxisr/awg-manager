@@ -21,7 +21,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
 	"github.com/hoaxisr/awg-manager/internal/server"
-	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
 	singboxcfg "github.com/hoaxisr/awg-manager/internal/singbox/configmerge"
 	"github.com/hoaxisr/awg-manager/internal/singbox/dnsrewrite"
@@ -329,12 +328,10 @@ func (a *app) setupRouter() {
 		RunningConfig: a.ndmsQueries.RunningConfig,
 		NATState:      &routerNATStateAdapter{nat: a.ndmsQueries.NAT, static: a.ndmsQueries.StaticNAT},
 		// *RouteStore satisfies DefaultGatewayResolver directly.
-		DefaultGateway: a.ndmsQueries.Routes,
-		FakeIPTun: func() router.FakeIPTunParams {
-			p := router.DefaultFakeIPTunParams()
-			p.CachePath = singbox.DefaultCacheDBPath()
-			return p
-		}(),
+		DefaultGateway:         a.ndmsQueries.Routes,
+		FakeIPTun:              router.DefaultFakeIPTunParams(),
+		CacheDBPath:            a.singboxOp.CacheDBPath,
+		ApplyCacheFileLocation: a.singboxOp.ApplyCacheFileLocation,
 		// Синхронный мост «роутер → device-proxy»: после перепарковки слотов
 		// маршрутизации (Enable/Disable/смена режима) слот 30 перегенерируется
 		// ДО ближайшего reload — селекторы device-proxy деградируют ссылки на

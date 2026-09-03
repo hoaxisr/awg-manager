@@ -171,7 +171,7 @@ func runReconcile(t *testing.T, dir string, reversed bool) {
 	if err := MigrateLegacyConfigDir(dir); err != nil {
 		t.Fatalf("MigrateLegacyConfigDir: %v", err)
 	}
-	steps := reconcileConfigSteps(dir, filepath.Join(dir, "config.d"), "info", "", 0, nil)
+	steps := reconcileConfigSteps(dir, filepath.Join(dir, "config.d"), "info", "", 0, "", nil)
 	if reversed {
 		for i, j := 0, len(steps)-1; i < j; i, j = i+1, j-1 {
 			steps[i], steps[j] = steps[j], steps[i]
@@ -325,7 +325,7 @@ func TestReconcileConfigSteps_EachStepIdempotent(t *testing.T) {
 		},
 		stepMigrateLegacyTunnels: func(t *testing.T) string { // legacy без config.d/10-tunnels
 			dir := t.TempDir()
-			writeFixtureJSON(t, filepath.Join(dir, "config.d", "00-base.json"), freshBaseConfig("info", "", 0))
+			writeFixtureJSON(t, filepath.Join(dir, "config.d", "00-base.json"), freshBaseConfig("info", "", 0, defaultCacheDBPath))
 			writeFixtureJSON(t, filepath.Join(dir, "config.json"), map[string]any{
 				"outbounds": []any{map[string]any{"type": "naive", "tag": "nv1", "server": "s", "server_port": 443}},
 				"route":     map[string]any{"rules": []any{}},
@@ -402,7 +402,7 @@ func TestReconcileConfigSteps_EachStepIdempotent(t *testing.T) {
 		},
 	}
 
-	for _, s := range reconcileConfigSteps("", "", "info", "", 0, nil) {
+	for _, s := range reconcileConfigSteps("", "", "info", "", 0, "", nil) {
 		mk, ok := fixtures[s.name]
 		if !ok {
 			t.Fatalf("шаг %q без фикстуры идемпотентности — дополните таблицу", s.name)
@@ -424,7 +424,7 @@ func TestReconcileConfigSteps_EachStepIdempotent(t *testing.T) {
 
 func findReconcileStep(t *testing.T, dir, name string) reconcileStep {
 	t.Helper()
-	for _, s := range reconcileConfigSteps(dir, filepath.Join(dir, "config.d"), "info", "", 0, nil) {
+	for _, s := range reconcileConfigSteps(dir, filepath.Join(dir, "config.d"), "info", "", 0, "", nil) {
 		if s.name == name {
 			return s
 		}
