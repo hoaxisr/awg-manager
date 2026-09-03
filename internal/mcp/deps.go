@@ -13,7 +13,11 @@ type Deps interface {
 	GetTunnel(ctx context.Context, id string) (TunnelDetail, error)
 	ControlTunnel(ctx context.Context, id, action string) error
 	ImportTunnel(ctx context.Context, name, config string) (TunnelSummary, error)
-	ReplaceTunnelConfig(ctx context.Context, id, config, newName string) error
+	// ReplaceTunnelConfig swaps a tunnel's .conf. A RUNNING tunnel is
+	// stopped and started around the swap (a kernel tunnel does not pick up
+	// a new Address/DNS/MTU otherwise), so the returned warnings carry both
+	// a failed restart and any address conflicts the new config introduces.
+	ReplaceTunnelConfig(ctx context.Context, id, config, newName string) (warnings []string, err error)
 	ExportTunnelConfig(ctx context.Context, id string) (string, error)
 
 	ListDNSRoutes(ctx context.Context) ([]DNSRoute, error)

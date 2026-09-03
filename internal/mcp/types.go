@@ -94,11 +94,15 @@ type DNSRoute struct {
 	Backend       string        `json:"backend,omitempty"`
 }
 
+// DNSRouteInput has no `enabled` field on purpose: dnsroute.Create always
+// creates the list enabled and pushes the routing into NDMS immediately, so
+// honouring enabled:false would mean going live and then tearing it down a
+// moment later — and leaving the list ENABLED if that second call failed.
+// A list created through MCP is always enabled; disable it from the web UI.
 type DNSRouteInput struct {
 	Name     string   `json:"name" jsonschema:"human-readable list name"`
-	Domains  []string `json:"domains" jsonschema:"domains to route (suffix match), e.g. [\"youtube.com\"]"`
+	Domains  []string `json:"domains" jsonschema:"domains to route (suffix match), e.g. [\"youtube.com\"]; geosite:/geoip: tags and CIDR subnets are also accepted"`
 	TunnelID string   `json:"tunnelId" jsonschema:"target tunnel id from list_tunnels"`
-	Enabled  *bool    `json:"enabled,omitempty" jsonschema:"default true"`
 }
 
 type StaticRoute struct {

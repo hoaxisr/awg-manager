@@ -184,3 +184,135 @@ func TestTools_SingboxAndServers(t *testing.T) {
 		t.Fatalf("servers = %v", out["servers"])
 	}
 }
+
+// TestTools_SetClientRouteCanonicalisesIP — Deps сравнивает IP с уже
+// нормализованным сохранённым значением, поэтому наружу должен уходить
+// только канонический вид. Иначе " 192.168.1.10" и "::ffff:192.168.1.10"
+// не находили бы существующий маршрут: инструмент отвечал бы
+// {removed:true}, ничего не удалив, либо падал бы на «already has a route»
+// вместо обновления.
+func TestTools_SetClientRouteCanonicalisesIP(t *testing.T) {
+	for _, spelling := range []string{" 192.168.1.10", "::ffff:192.168.1.10"} {
+		s, fake := newTestSession(t)
+		res, out := callTool(t, s, "set_client_route", map[string]any{"clientIp": "192.168.1.10", "tunnelId": "tn-1", "fallback": "drop"})
+		if res.IsError {
+			t.Fatal(toolText(res))
+		}
+		created, _ := out["route"].(map[string]any)
+		if created == nil || created["clientIp"] != "192.168.1.10" {
+			t.Fatalf("create: %v", out)
+		}
+
+		res, out = callTool(t, s, "set_client_route", map[string]any{"clientIp": spelling, "tunnelId": "tn-2"})
+		if res.IsError {
+			t.Fatalf("%q: %s", spelling, toolText(res))
+		}
+		updated, _ := out["route"].(map[string]any)
+		if updated == nil || updated["id"] != created["id"] {
+			t.Fatalf("%q: must update the SAME route, got %v (created %v)", spelling, out, created)
+		}
+		if len(fake.ClientRoutes) != 1 {
+			t.Fatalf("%q: duplicate route created: %+v", spelling, fake.ClientRoutes)
+		}
+
+		// And the removal must find it too.
+		_, out = callTool(t, s, "set_client_route", map[string]any{"clientIp": spelling, "tunnelId": ""})
+		if out["removed"] != true {
+			t.Fatalf("%q: remove = %v", spelling, out)
+		}
+		if len(fake.ClientRoutes) != 0 {
+			t.Fatalf("%q: reported removed but the route is still there: %+v", spelling, fake.ClientRoutes)
+		}
+	}
+}
+
+// TestTools_SetClientRouteKeepsDropFallback — обновление без fallback не
+// имеет права сбросить kill-switch «drop» на «bypass»: устройство тогда
+// потечёт в WAN, как только туннель упадёт.
+func TestTools_SetClientRouteKeepsDropFallback(t *testing.T) {
+	s, _ := newTestSession(t)
+	if res, _ := callTool(t, s, "set_client_route", map[string]any{"clientIp": "192.168.1.10", "tunnelId": "tn-1", "fallback": "drop"}); res.IsError {
+		t.Fatal(toolText(res))
+	}
+	res, out := callTool(t, s, "set_client_route", map[string]any{"clientIp": "192.168.1.10", "tunnelId": "tn-2"})
+	if res.IsError {
+		t.Fatal(toolText(res))
+	}
+	route, _ := out["route"].(map[string]any)
+	if route == nil || route["fallback"] != "drop" {
+		t.Fatalf("re-pointing without fallback reset the kill-switch: %v", out)
+	}
+	// A brand-new route still defaults to bypass.
+	_, out = callTool(t, s, "set_client_route", map[string]any{"clientIp": "192.168.1.30", "tunnelId": "tn-1"})
+	route, _ = out["route"].(map[string]any)
+	if route == nil || route["fallback"] != "bypass" {
+		t.Fatalf("a new route must default to bypass: %v", out)
+	}
+}
+
+// TestTools_AddDNSRouteAcceptsGeositeAndCIDR — грамматика доменов
+// принадлежит сервису dnsroute, который принимает geosite:/geoip:-теги и
+// CIDR; второй, более строгой грамматики в слое инструментов быть не должно.
+func TestTools_AddDNSRouteAcceptsGeositeAndCIDR(t *testing.T) {
+	s, _ := newTestSession(t)
+	for _, entry := range []string{"geosite:GOOGLE", "geoip:RU", "5.8.0.0/21"} {
+		res, _ := callTool(t, s, "add_dns_route", map[string]any{"name": entry, "domains": []string{entry}, "tunnelId": "tn-1"})
+		if res.IsError {
+			t.Fatalf("%q rejected: %s", entry, toolText(res))
+		}
+	}
+	res, _ := callTool(t, s, "add_dns_route", map[string]any{"name": "Blank", "domains": []string{"   "}, "tunnelId": "tn-1"})
+	if !res.IsError {
+		t.Fatal("a blank domain must still be rejected")
+	}
+}
+
+// TestTools_GetLogsLevelIsStrictAndCaseInsensitive — level это СТРОГИЙ
+// минимум: «error» не должен приносить info-строки. Регистр не важен,
+// незнакомый уровень — ошибка, а не молча другой фильтр.
+func TestTools_GetLogsLevelIsStrictAndCaseInsensitive(t *testing.T) {
+	s, _ := newTestSession(t)
+	for _, level := range []string{"error", "ERROR", "Error"} {
+		res, out := callTool(t, s, "get_logs", map[string]any{"level": level})
+		if res.IsError {
+			t.Fatalf("%q: %s", level, toolText(res))
+		}
+		entries, _ := out["entries"].([]any)
+		if len(entries) != 1 {
+			t.Fatalf("%q: entries = %v, want only the error line", level, entries)
+		}
+		e := entries[0].(map[string]any)
+		if e["level"] != "error" {
+			t.Fatalf("%q: got a %v line", level, e["level"])
+		}
+	}
+	if res, _ := callTool(t, s, "get_logs", map[string]any{"level": "critical"}); !res.IsError {
+		t.Fatal("an unknown level must be an error, not a silently different filter")
+	}
+}
+
+// TestTools_CreateTunnelReportsDisabled — service.Import жёстко ставит
+// Enabled=false, и описание инструмента обязано этому соответствовать.
+func TestTools_CreateTunnelReportsDisabled(t *testing.T) {
+	s, _ := newTestSession(t)
+	conf := "[Interface]\nPrivateKey = k\nAddress = 10.7.0.2/32\n\n[Peer]\nPublicKey = p\nEndpoint = e:51820\n"
+	res, out := callTool(t, s, "create_tunnel", map[string]any{"name": "New", "config": conf})
+	if res.IsError {
+		t.Fatal(toolText(res))
+	}
+	if out["enabled"] != false || out["state"] != "stopped" {
+		t.Fatalf("a created tunnel is disabled and stopped, got %v", out)
+	}
+	tools, err := s.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools.Tools {
+		if tool.Name != "create_tunnel" {
+			continue
+		}
+		if !strings.Contains(tool.Description, "DISABLED") || strings.Contains(tool.Description, "created enabled") {
+			t.Fatalf("create_tunnel description still claims the tunnel is enabled: %q", tool.Description)
+		}
+	}
+}

@@ -143,7 +143,38 @@ func TestMcpEndpoint_TrailingSlashIsGuarded(t *testing.T) {
 }
 
 func TestSkipSlowRequestLogCoversMcp(t *testing.T) {
-	if !skipSlowRequestLog("/mcp") {
-		t.Fatal("/mcp must be exempt from the slow-request log")
+	// Both mounts, and everything under the trailing-slash one: a client
+	// that normalises the URL would otherwise have every long-lived
+	// Streamable-HTTP stream logged as a slow request.
+	for _, path := range []string{"/mcp", "/mcp/", "/mcp/anything"} {
+		if !skipSlowRequestLog(path) {
+			t.Errorf("%s must be exempt from the slow-request log", path)
+		}
+	}
+	if skipSlowRequestLog("/mcpsomething") {
+		t.Error("/mcpsomething is not the MCP mount and must not be exempt")
+	}
+}
+
+// TestOAuthProtectedResourceMetadataIs404 — этот URL называет сам заголовок
+// WWW-Authenticate у 401. OAuth в v1 намеренно не поддерживается, значит
+// путь обязан отвечать честным JSON-404, а не проваливаться в catch-all SPA
+// с 200 text/html, по которому клиент не отличит страницу от метаданных.
+func TestOAuthProtectedResourceMetadataIs404(t *testing.T) {
+	mux := http.NewServeMux()
+	s, _ := newMcpServer(t, true)
+	s.registerMcpRoutes(mux, mcpRouteHandlers())
+
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("Content-Type = %q, want JSON", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "NOT_FOUND") {
+		t.Fatalf("body = %q", rec.Body.String())
 	}
 }

@@ -13,10 +13,21 @@ import (
 )
 
 type fakeThrottle struct {
-	mu       sync.Mutex
-	fails    int
-	blocked  bool
-	inFlight int
+	mu        sync.Mutex
+	fails     int
+	begins    int
+	successes int
+	dones     int
+	blocked   bool
+	inFlight  int
+}
+
+// calls returns every accounting counter at once, for tests that assert the
+// throttle was not touched at all.
+func (f *fakeThrottle) calls() (begins, dones, fails, successes int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.begins, f.dones, f.fails, f.successes
 }
 
 // setBlocked flips the blocked flag under the lock — Begin reads it under
@@ -30,6 +41,7 @@ func (f *fakeThrottle) setBlocked(v bool) {
 func (f *fakeThrottle) Begin(string) (time.Duration, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.begins++
 	if f.blocked {
 		return 30 * time.Second, true
 	}
@@ -39,9 +51,14 @@ func (f *fakeThrottle) Begin(string) (time.Duration, bool) {
 func (f *fakeThrottle) Done(string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.dones++
 	f.inFlight--
 }
-func (f *fakeThrottle) Success(string) {}
+func (f *fakeThrottle) Success(string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.successes++
+}
 func (f *fakeThrottle) Fail(string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -81,14 +98,60 @@ func newAuthed(enabled bool, thr *fakeThrottle) (http.Handler, *int) {
 }
 
 func do(h http.Handler, auth string) *httptest.ResponseRecorder {
+	return doFrom(h, auth, "192.168.1.5:5555")
+}
+
+func doFrom(h http.Handler, auth, remoteAddr string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "http://router.local/mcp", strings.NewReader("{}"))
-	req.RemoteAddr = "192.168.1.5:5555"
+	req.RemoteAddr = remoteAddr
 	if auth != "" {
 		req.Header.Set("Authorization", auth)
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
+}
+
+// TestKeyMiddleware_LoopbackSkipsThrottle — за реверс-прокси KeenDNS все
+// удалённые клиенты видны как 127.0.0.1. Счёт попыток по такому «IP» не
+// защищал бы, а давал бы рычаг DoS: пятью мусорными ключами любой удалённый
+// клиент заблокировал бы остальных на 30 секунд. Поэтому для loopback
+// throttle не трогается вообще — ни Begin, ни Fail, ни Success, ни Done.
+func TestKeyMiddleware_LoopbackSkipsThrottle(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:40001", "127.0.0.5:40002", "[::1]:40003"} {
+		thr := &fakeThrottle{}
+		thr.setBlocked(true) // even an already-blocked throttle must not matter
+		h, _ := newAuthed(true, thr)
+		for i := 0; i < 5; i++ {
+			if rec := doFrom(h, "Bearer awgm_bad", addr); rec.Code != http.StatusUnauthorized {
+				t.Fatalf("%s: status = %d, want 401 (never 429)", addr, rec.Code)
+			}
+		}
+		if rec := doFrom(h, "Bearer awgm_good", addr); rec.Code != http.StatusOK {
+			t.Fatalf("%s: a valid key after bad ones = %d, want 200", addr, rec.Code)
+		}
+		if b, d, f, s := thr.calls(); b+d+f+s != 0 {
+			t.Fatalf("%s: throttle touched (begins=%d dones=%d fails=%d successes=%d)", addr, b, d, f, s)
+		}
+	}
+}
+
+// TestKeyMiddleware_LanClientStillThrottled — прямой клиент из локальной
+// сети идентифицируется по IP, и для него ограничение остаётся.
+func TestKeyMiddleware_LanClientStillThrottled(t *testing.T) {
+	thr := &fakeThrottle{}
+	h, _ := newAuthed(true, thr)
+	if rec := doFrom(h, "Bearer awgm_bad", "192.168.1.50:5555"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if b, d, f, _ := thr.calls(); b != 1 || d != 1 || f != 1 {
+		t.Fatalf("LAN client: begins=%d dones=%d fails=%d, want 1/1/1", b, d, f)
+	}
+	thr.setBlocked(true)
+	rec := doFrom(h, "Bearer awgm_good", "192.168.1.50:5555")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("blocked LAN client: status = %d, want 429", rec.Code)
+	}
 }
 
 func TestKeyMiddleware_Matrix(t *testing.T) {

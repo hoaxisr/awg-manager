@@ -161,27 +161,31 @@ func (f *Fake) ImportTunnel(_ context.Context, name, config string) (mcpsrv.Tunn
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	id := f.nextID("tn")
-	t := mcpsrv.TunnelDetail{TunnelSummary: mcpsrv.TunnelSummary{ID: id, Name: name, Backend: "nativewg", Enabled: true, State: "stopped"}}
+	// Enabled:false mirrors service.Import, which hard-sets it regardless of
+	// the payload — an imported tunnel is created disabled and stopped.
+	t := mcpsrv.TunnelDetail{TunnelSummary: mcpsrv.TunnelSummary{ID: id, Name: name, Backend: "nativewg", Enabled: false, State: "stopped"}}
 	f.Tunnels = append(f.Tunnels, t)
 	f.Configs[id] = config
 	return t.TunnelSummary, nil
 }
 
-func (f *Fake) ReplaceTunnelConfig(_ context.Context, id, config, newName string) error {
+func (f *Fake) ReplaceTunnelConfig(_ context.Context, id, config, newName string) ([]string, error) {
 	if f.Err != nil {
-		return f.Err
+		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	t, err := f.findTunnel(id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if newName != "" {
 		t.Name = newName
 	}
 	f.Configs[id] = config
-	return nil
+	// A running tunnel is restarted around the replace (see localdeps); the
+	// fake has nothing to conflict with, so it reports no warnings.
+	return nil, nil
 }
 
 func (f *Fake) ExportTunnelConfig(_ context.Context, id string) (string, error) {
@@ -214,8 +218,8 @@ func (f *Fake) AddDNSRoute(_ context.Context, in mcpsrv.DNSRouteInput) (mcpsrv.D
 	if _, err := f.findTunnel(in.TunnelID); err != nil {
 		return mcpsrv.DNSRoute{}, err
 	}
-	enabled := in.Enabled == nil || *in.Enabled
-	r := mcpsrv.DNSRoute{ID: f.nextID("dl"), Name: in.Name, Enabled: enabled, Domains: in.Domains, Routes: []mcpsrv.RouteTarget{{TunnelID: in.TunnelID}}}
+	// Always enabled — same as dnsroute.Create; MCP has no enabled input.
+	r := mcpsrv.DNSRoute{ID: f.nextID("dl"), Name: in.Name, Enabled: true, Domains: in.Domains, Routes: []mcpsrv.RouteTarget{{TunnelID: in.TunnelID}}}
 	f.DNSRoutes = append(f.DNSRoutes, r)
 	return r, nil
 }
@@ -306,11 +310,18 @@ func (f *Fake) SetClientRoute(_ context.Context, in mcpsrv.ClientRouteInput) (*m
 	}
 	fallback := in.Fallback
 	if fallback == "" {
-		fallback = "bypass"
+		// Same rule as localdeps: default to bypass only on CREATE, so an
+		// update that omits fallback cannot reset a `drop` kill-switch.
+		if idx >= 0 {
+			fallback = f.ClientRoutes[idx].Fallback
+		} else {
+			fallback = "bypass"
+		}
 	}
 	r := mcpsrv.ClientRoute{ClientIP: in.ClientIP, TunnelID: in.TunnelID, Fallback: fallback, Enabled: true}
 	if idx >= 0 {
 		r.ID = f.ClientRoutes[idx].ID
+		r.ClientHostname, r.Enabled = f.ClientRoutes[idx].ClientHostname, f.ClientRoutes[idx].Enabled
 		f.ClientRoutes[idx] = r
 	} else {
 		r.ID = f.nextID("cr")
@@ -338,7 +349,8 @@ func (f *Fake) ListDevices(context.Context) ([]mcpsrv.Device, error) {
 }
 
 // logLevelRank orders levels for LogsQuery.Level minimum-level filtering.
-var logLevelRank = map[string]int{"debug": 0, "info": 1, "warn": 2, "error": 3}
+// Shared with localdeps so both implementations agree exactly.
+var logLevelRank = mcpsrv.LogLevelRank
 
 func (f *Fake) GetLogs(_ context.Context, q mcpsrv.LogsQuery) ([]mcpsrv.LogEntry, int, error) {
 	if f.Err != nil {

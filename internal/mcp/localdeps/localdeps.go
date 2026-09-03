@@ -25,6 +25,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	awgtesting "github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
@@ -151,14 +152,23 @@ func (l *Local) GetLogs(_ context.Context, q mcpsrv.LogsQuery) ([]mcpsrv.LogEntr
 	if l.c.Logs == nil {
 		return nil, 0, errUnavailable("logging")
 	}
+	minRank, filterByLevel := mcpsrv.LogLevelRank[q.Level]
+	clientSide := q.Contains != "" || filterByLevel
 	fetch := q.Lines
-	if q.Contains != "" {
-		fetch = 2000 // filter client-side, then cap
+	if clientSide {
+		fetch = 2000 // filter here, then cap
 	}
-	entries, total := l.c.Logs.GetLogsMulti(logging.Bucket(q.Bucket), q.Groups, nil, q.Level, time.Time{}, fetch, 0)
+	// The level is filtered HERE, not by GetLogsMulti: that path uses
+	// logging.IsVisible, where warn/error are always visible and an unknown
+	// level collapses to priority 0, so `level: "error"` would still return
+	// info lines. Passing "" means "no level constraint" to the buffer.
+	entries, total := l.c.Logs.GetLogsMulti(logging.Bucket(q.Bucket), q.Groups, nil, "", time.Time{}, fetch, 0)
+	// GetLogsMulti returns entries NEWEST-first (logbuf.Buffer.FilterPage
+	// walks the ring from the end). get_logs promises "newest last", and the
+	// tail-slice below must keep the NEWEST matches — so reverse first.
 	out := make([]mcpsrv.LogEntry, 0, len(entries))
-	for _, e := range entries {
-		m, err := convert[map[string]any](e)
+	for i := len(entries) - 1; i >= 0; i-- {
+		m, err := convert[map[string]any](entries[i])
 		if err != nil {
 			return nil, 0, err
 		}
@@ -166,12 +176,20 @@ func (l *Local) GetLogs(_ context.Context, q mcpsrv.LogsQuery) ([]mcpsrv.LogEntr
 		if q.Contains != "" && !strings.Contains(strings.ToLower(msg), strings.ToLower(q.Contains)) {
 			continue
 		}
+		level := asString(m["level"])
+		if filterByLevel {
+			// An entry whose level is not one of debug|info|warn|error (e.g.
+			// logging's "full") is dropped — same rule as mcptest.Fake.
+			if rank, ok := mcpsrv.LogLevelRank[strings.ToLower(level)]; !ok || rank < minRank {
+				continue
+			}
+		}
 		out = append(out, mcpsrv.LogEntry{
-			Timestamp: asString(m["timestamp"]), Level: asString(m["level"]), Group: asString(m["group"]),
+			Timestamp: asString(m["timestamp"]), Level: level, Group: asString(m["group"]),
 			Subgroup: asString(m["subgroup"]), Action: asString(m["action"]), Target: asString(m["target"]), Message: msg,
 		})
 	}
-	if q.Contains != "" {
+	if clientSide {
 		total = len(out)
 		if len(out) > q.Lines {
 			out = out[len(out)-q.Lines:]
@@ -330,22 +348,67 @@ func (l *Local) ImportTunnel(ctx context.Context, name, cfg string) (mcpsrv.Tunn
 	if t == nil {
 		return mcpsrv.TunnelSummary{}, fmt.Errorf("tunnel import returned no tunnel")
 	}
+	// Post-import PingCheck defaults, exactly as api.ImportHandler.ImportConf
+	// writes them (internal/api/import.go) — without this an MCP-created
+	// tunnel would carry no PingCheck record at all and monitoring would
+	// treat it differently from a tunnel imported through the web UI. As
+	// there, a failed write does NOT undo the import: the tunnel exists, and
+	// a missing default reads as "the user never enabled it".
+	if l.c.PingCheck != nil && l.c.TunnelStore != nil {
+		_ = l.c.TunnelStore.Update(t.ID, func(stored *storage.AWGTunnel) error {
+			if stored.PingCheck != nil {
+				return storage.ErrNoChange
+			}
+			stored.PingCheck = &storage.TunnelPingCheck{
+				Enabled:       false,
+				Method:        "icmp",
+				Target:        "8.8.8.8",
+				Interval:      45,
+				DeadInterval:  120,
+				FailThreshold: 3,
+				MinSuccess:    1,
+				Timeout:       5,
+				Restart:       true,
+			}
+			return nil
+		})
+	}
 	l.publishTunnelList("mcp-import")
 	return summary(*t, l.endpointOf(t.ID)), nil
 }
 
-func (l *Local) ReplaceTunnelConfig(ctx context.Context, id, cfg, newName string) error {
+// ReplaceTunnelConfig mirrors api.TunnelsHandler.ReplaceConfig
+// (internal/api/tunnels_crud.go): stop a RUNNING tunnel, replace, start it
+// again, and report CheckAddressConflicts warnings. Calling ReplaceConfig
+// alone only reaches `wg setconf`, so a changed Address/DNS/MTU would never
+// take effect on a running kernel tunnel.
+func (l *Local) ReplaceTunnelConfig(ctx context.Context, id, cfg, newName string) ([]string, error) {
 	if l.c.Tunnels == nil {
-		return errUnavailable("tunnels")
+		return nil, errUnavailable("tunnels")
 	}
 	if err := l.rejectRaw(id); err != nil {
-		return err
+		return nil, err
+	}
+	wasRunning := l.c.Tunnels.GetState(ctx, id).State == tunnel.StateRunning
+	if wasRunning {
+		if err := l.c.Tunnels.Stop(ctx, id); err != nil {
+			return nil, fmt.Errorf("failed to stop tunnel before config replace: %w", err)
+		}
 	}
 	if err := l.c.Tunnels.ReplaceConfig(ctx, id, cfg, newName); err != nil {
-		return err
+		return nil, err
+	}
+	var warnings []string
+	if wasRunning {
+		if err := l.c.Tunnels.Start(ctx, id); err != nil {
+			warnings = append(warnings, "tunnel config replaced but failed to restart: "+err.Error())
+		}
 	}
 	l.publishTunnelList("mcp-replace-config")
-	return nil
+	if conflicts := l.c.Tunnels.CheckAddressConflicts(ctx, id); len(conflicts) > 0 {
+		warnings = append(warnings, conflicts...)
+	}
+	return warnings, nil
 }
 
 func (l *Local) ExportTunnelConfig(_ context.Context, id string) (string, error) {
@@ -379,7 +442,6 @@ func (l *Local) AddDNSRoute(ctx context.Context, in mcpsrv.DNSRouteInput) (mcpsr
 	if l.c.DNSRoutes == nil {
 		return mcpsrv.DNSRoute{}, errUnavailable("dns routes")
 	}
-	enabled := in.Enabled == nil || *in.Enabled
 	// Only ManualDomains is passed: dnsroute.Create recomputes Domains (and
 	// Subnets) from it, and handing the same backing array to both fields
 	// would alias one slice across two fields of the same struct.
@@ -393,16 +455,10 @@ func (l *Local) AddDNSRoute(ctx context.Context, in mcpsrv.DNSRouteInput) (mcpsr
 	if created == nil {
 		return mcpsrv.DNSRoute{}, fmt.Errorf("dns route create returned no list")
 	}
-	// dnsroute.Create hard-sets Enabled=true regardless of the payload, so
-	// enabled:false has to be applied as a follow-up toggle. (staticroute's
-	// Create honours the flag; that path needs no second call.)
-	if !enabled {
-		if err := l.c.DNSRoutes.SetEnabled(ctx, created.ID, false); err != nil {
-			l.publish(events.ResourceRoutingDnsRoutes, "mcp-create")
-			return mcpsrv.DNSRoute{}, fmt.Errorf("list %q created but could not be disabled: %w", created.ID, err)
-		}
-		created.Enabled = false
-	}
+	// dnsroute.Create hard-sets Enabled=true and pushes routing into NDMS
+	// immediately, so the list is live from here on — MCP offers no
+	// enabled:false (see mcp.DNSRouteInput). staticroute.Create honours its
+	// own Enabled flag, which is why add_static_route still has one.
 	l.publish(events.ResourceRoutingDnsRoutes, "mcp-create")
 	return convert[mcpsrv.DNSRoute](created)
 }
@@ -514,7 +570,15 @@ func (l *Local) SetClientRoute(ctx context.Context, in mcpsrv.ClientRouteInput) 
 	}
 	fallback := in.Fallback
 	if fallback == "" {
-		fallback = "bypass"
+		// Only a CREATE defaults to bypass. On an update an omitted fallback
+		// means "leave it alone": rebuilding it from the input would reset a
+		// deliberate `drop` kill-switch to bypass, and the device would then
+		// leak to the WAN whenever its tunnel is down.
+		if existing != nil {
+			fallback = existing.Fallback
+		} else {
+			fallback = "bypass"
+		}
 	}
 	// A new route starts enabled; re-pointing an existing one keeps the
 	// user's own enabled flag — silently re-enabling a route someone

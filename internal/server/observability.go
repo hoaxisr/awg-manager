@@ -34,9 +34,14 @@ func skipSlowRequestLog(path string) bool {
 	if strings.HasPrefix(path, "/debug/pprof") {
 		return true
 	}
+	// "/mcp" AND everything under it: the endpoint is mounted at both "/mcp"
+	// and "/mcp/", and a client that normalises the trailing slash would
+	// otherwise have every long-lived Streamable-HTTP stream logged as slow.
+	if path == "/mcp" || strings.HasPrefix(path, "/mcp/") {
+		return true
+	}
 	switch path {
-	case "/mcp",
-		"/api/events",
+	case "/api/events",
 		"/api/diagnostics/stream",
 		"/api/singbox/subscriptions/get-stream",
 		"/api/terminal/ws",

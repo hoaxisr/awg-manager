@@ -2,14 +2,20 @@ package localdeps
 
 import (
 	"context"
+	"fmt"
+	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	mcpsrv "github.com/hoaxisr/awg-manager/internal/mcp"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
@@ -308,15 +314,18 @@ func TestLocal_MutationsPublishInvalidation(t *testing.T) {
 	})
 }
 
-// TestLocal_AddDNSRouteInputMapping — dnsroute.Create жёстко ставит
-// Enabled=true и пересчитывает Domains из ManualDomains, поэтому enabled:false
-// надо доводить вторым вызовом, а Domains не передавать вовсе (иначе один и
-// тот же слайс лежал бы в двух полях одной структуры).
+// TestLocal_AddDNSRouteInputMapping — dnsroute.Create пересчитывает Domains
+// из ManualDomains, поэтому Domains не передаётся вовсе (иначе один и тот же
+// слайс лежал бы в двух полях одной структуры). Плюс: MCP НЕ отключает
+// созданный список вторым вызовом — Create уже поднял маршрутизацию в NDMS,
+// и SetEnabled(false) сразу после этого либо лишний, либо (при ошибке)
+// оставляет список включённым вопреки запросу.
 func TestLocal_AddDNSRouteInputMapping(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
 
-	if _, err := h.l.AddDNSRoute(ctx, mcpsrv.DNSRouteInput{Name: "GH", Domains: []string{"github.com"}, TunnelID: "tn-1"}); err != nil {
+	got, err := h.l.AddDNSRoute(ctx, mcpsrv.DNSRouteInput{Name: "GH", Domains: []string{"github.com"}, TunnelID: "tn-1"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if h.dns.created.Domains != nil {
@@ -325,17 +334,11 @@ func TestLocal_AddDNSRouteInputMapping(t *testing.T) {
 	if len(h.dns.created.ManualDomains) != 1 || h.dns.created.ManualDomains[0] != "github.com" {
 		t.Errorf("ManualDomains = %v", h.dns.created.ManualDomains)
 	}
-
-	off := false
-	got, err := h.l.AddDNSRoute(ctx, mcpsrv.DNSRouteInput{Name: "Off", Domains: []string{"example.com"}, TunnelID: "tn-1", Enabled: &off})
-	if err != nil {
-		t.Fatal(err)
+	if !got.Enabled {
+		t.Error("a list created through MCP is always enabled")
 	}
-	if v, ok := h.dns.enabled["dl-new"]; !ok || v {
-		t.Errorf("enabled:false must reach the service as a SetEnabled(false), got %v/%v", v, ok)
-	}
-	if got.Enabled {
-		t.Error("the returned list must not claim to be enabled")
+	if len(h.dns.enabled) != 0 {
+		t.Errorf("no SetEnabled follow-up may be issued, got %v", h.dns.enabled)
 	}
 }
 
@@ -414,3 +417,340 @@ type notFound string
 
 func (e notFound) Error() string  { return string(e) + " not found" }
 func errNotFound(id string) error { return notFound(id) }
+
+// ---- F2: kill-switch ------------------------------------------------------
+
+// TestLocal_SetClientRoutePreservesDropFallback — обновление без fallback
+// не должно сбрасывать выставленный «drop» на дефолт «bypass»: устройство
+// тогда потечёт в WAN, как только туннель упадёт. Дефолт применяется только
+// при СОЗДАНИИ.
+func TestLocal_SetClientRoutePreservesDropFallback(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.client.routes = []clientroute.ClientRoute{{ID: "cr-1", ClientIP: "192.168.1.9", TunnelID: "tn-1", Fallback: "drop", Enabled: true}}
+
+	got, err := h.l.SetClientRoute(ctx, mcpsrv.ClientRouteInput{ClientIP: "192.168.1.9", TunnelID: "tn-raw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Fallback != "drop" {
+		t.Fatalf("an update without fallback reset the kill-switch: %+v", got)
+	}
+	if h.client.routes[0].Fallback != "drop" {
+		t.Fatalf("stored fallback = %q", h.client.routes[0].Fallback)
+	}
+
+	// An explicit change is still honoured…
+	if got, err = h.l.SetClientRoute(ctx, mcpsrv.ClientRouteInput{ClientIP: "192.168.1.9", TunnelID: "tn-1", Fallback: "bypass"}); err != nil {
+		t.Fatal(err)
+	}
+	if got.Fallback != "bypass" {
+		t.Fatalf("explicit fallback ignored: %+v", got)
+	}
+	// …and a brand-new route still defaults to bypass.
+	if got, err = h.l.SetClientRoute(ctx, mcpsrv.ClientRouteInput{ClientIP: "192.168.1.77", TunnelID: "tn-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if got.Fallback != "bypass" {
+		t.Fatalf("a new route must default to bypass: %+v", got)
+	}
+}
+
+// ---- F4/F10: logs ---------------------------------------------------------
+
+// fakeLogs returns entries NEWEST-first, exactly like
+// logging.Service.GetLogsMulti (logbuf.Buffer.FilterPage walks the ring
+// from the end).
+type fakeLogs struct {
+	entries  []logging.LogEntry
+	gotLevel string
+	gotLimit int
+}
+
+func (f *fakeLogs) GetLogsMulti(_ logging.Bucket, groups, _ []string, level string, _ time.Time, limit, _ int) ([]logging.LogEntry, int) {
+	f.gotLevel, f.gotLimit = level, limit
+	var matched []logging.LogEntry
+	for i := len(f.entries) - 1; i >= 0; i-- { // newest first
+		e := f.entries[i]
+		if len(groups) > 0 {
+			ok := false
+			for _, g := range groups {
+				if g == e.Group {
+					ok = true
+				}
+			}
+			if !ok {
+				continue
+			}
+		}
+		matched = append(matched, e)
+	}
+	total := len(matched)
+	if limit > 0 && len(matched) > limit {
+		matched = matched[:limit]
+	}
+	return matched, total
+}
+
+func logSeq(levels ...string) *fakeLogs {
+	f := &fakeLogs{}
+	base := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	for i, lv := range levels {
+		f.entries = append(f.entries, logging.LogEntry{
+			Timestamp: base.Add(time.Duration(i) * time.Minute),
+			Level:     lv,
+			Group:     logging.GroupTunnel,
+			Message:   fmt.Sprintf("m%d", i),
+		})
+	}
+	return f
+}
+
+func messages(entries []mcpsrv.LogEntry) []string {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Message)
+	}
+	return out
+}
+
+// TestLocal_GetLogsOldestFirstAndKeepsNewest — GetLogsMulti отдаёт записи
+// НОВЕЙШИМИ ВПЕРЁД, а get_logs обещает «newest last». Если не развернуть,
+// хвостовой срез при фильтре contains оставит САМЫЕ СТАРЫЕ совпадения —
+// именно та недавняя ошибка, ради которой агент и полез в логи, не вернётся.
+func TestLocal_GetLogsOldestFirstAndKeepsNewest(t *testing.T) {
+	ctx := context.Background()
+	fl := logSeq("info", "info", "info", "info", "info")
+	l := New(Config{Logs: fl})
+
+	got, total, err := l.GetLogs(ctx, mcpsrv.LogsQuery{Lines: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"m0", "m1", "m2", "m3", "m4"}; !reflect.DeepEqual(messages(got), want) {
+		t.Fatalf("order = %v, want oldest-first %v", messages(got), want)
+	}
+	if total != 5 {
+		t.Fatalf("total = %d", total)
+	}
+
+	// With a filter the cap must keep the NEWEST matches.
+	got, _, err = l.GetLogs(ctx, mcpsrv.LogsQuery{Lines: 2, Contains: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"m3", "m4"}; !reflect.DeepEqual(messages(got), want) {
+		t.Fatalf("filtered tail = %v, want the newest %v", messages(got), want)
+	}
+}
+
+// TestLocal_GetLogsLevelIsStrict — localdeps фильтрует уровень сам:
+// logging.IsVisible считает warn/error всегда видимыми и схлопывает
+// незнакомый уровень в приоритет 0, так что level:"error" приносил бы и
+// info-строки. Семантика обязана совпадать с mcptest.Fake.
+func TestLocal_GetLogsLevelIsStrict(t *testing.T) {
+	ctx := context.Background()
+	fl := logSeq("debug", "info", "warn", "error", "full")
+	l := New(Config{Logs: fl})
+
+	got, total, err := l.GetLogs(ctx, mcpsrv.LogsQuery{Lines: 100, Level: "error"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"m3"}; !reflect.DeepEqual(messages(got), want) {
+		t.Fatalf("level=error → %v, want only %v", messages(got), want)
+	}
+	if total != 1 {
+		t.Fatalf("total = %d, want 1", total)
+	}
+	if fl.gotLevel != "" {
+		t.Fatalf("the level must NOT be delegated to GetLogsMulti (IsVisible semantics), got %q", fl.gotLevel)
+	}
+
+	got, _, err = l.GetLogs(ctx, mcpsrv.LogsQuery{Lines: 100, Level: "warn"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"m2", "m3"}; !reflect.DeepEqual(messages(got), want) {
+		t.Fatalf("level=warn → %v, want %v", messages(got), want)
+	}
+
+	// An entry whose level is outside debug|info|warn|error is dropped —
+	// same rule as the fake.
+	got, _, err = l.GetLogs(ctx, mcpsrv.LogsQuery{Lines: 100, Level: "debug"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"m0", "m1", "m2", "m3"}; !reflect.DeepEqual(messages(got), want) {
+		t.Fatalf("level=debug → %v, want %v", messages(got), want)
+	}
+}
+
+// ---- F5/F7: replace and import mirror the HTTP handlers -------------------
+
+// lifecycleTunnels records the stop/replace/start sequence and the address
+// conflicts the handler surfaces as warnings.
+type lifecycleTunnels struct {
+	fakeTunnels
+	calls       []string
+	state       tunnel.State
+	stopErr     error
+	startErr    error
+	replaceErr  error
+	conflicts   []string
+	imported    *service.TunnelWithStatus
+	importedCfg string
+}
+
+func (f *lifecycleTunnels) GetState(_ context.Context, _ string) tunnel.StateInfo {
+	return tunnel.StateInfo{State: f.state}
+}
+func (f *lifecycleTunnels) Stop(context.Context, string) error {
+	f.calls = append(f.calls, "stop")
+	return f.stopErr
+}
+func (f *lifecycleTunnels) Start(context.Context, string) error {
+	f.calls = append(f.calls, "start")
+	return f.startErr
+}
+func (f *lifecycleTunnels) ReplaceConfig(_ context.Context, _, cfg, _ string) error {
+	f.calls = append(f.calls, "replace")
+	f.importedCfg = cfg
+	return f.replaceErr
+}
+func (f *lifecycleTunnels) CheckAddressConflicts(context.Context, string) []string {
+	return f.conflicts
+}
+func (f *lifecycleTunnels) Import(_ context.Context, cfg, name, _ string, _ service.ImportLink) (*service.TunnelWithStatus, error) {
+	f.importedCfg = cfg
+	if f.imported != nil {
+		return f.imported, nil
+	}
+	return &service.TunnelWithStatus{ID: "tn-1", Name: name, Backend: "nativewg", Enabled: false, State: tunnel.StateStopped}, nil
+}
+
+func newLifecycle(t *testing.T, state tunnel.State) (*Local, *lifecycleTunnels, *storage.AWGTunnelStore) {
+	t.Helper()
+	l, _, _, _ := newLocal(t)
+	ft := &lifecycleTunnels{state: state}
+	cfg := l.c
+	cfg.Tunnels = ft
+	return New(cfg), ft, l.c.TunnelStore
+}
+
+// TestLocal_ReplaceTunnelConfigStopsAndStarts зеркалит
+// api.TunnelsHandler.ReplaceConfig (internal/api/tunnels_crud.go): один
+// `wg setconf` не подхватывает изменившийся Address/DNS/MTU на работающем
+// туннеле, поэтому работающий останавливают и поднимают заново.
+func TestLocal_ReplaceTunnelConfigStopsAndStarts(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("running tunnel is restarted", func(t *testing.T) {
+		l, ft, _ := newLifecycle(t, tunnel.StateRunning)
+		ft.conflicts = []string{"address 10.8.0.2/32 conflicts with Wireguard0"}
+		warnings, err := l.ReplaceTunnelConfig(ctx, "tn-1", "cfg", "New")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"stop", "replace", "start"}; !reflect.DeepEqual(ft.calls, want) {
+			t.Fatalf("calls = %v, want %v", ft.calls, want)
+		}
+		if !reflect.DeepEqual(warnings, ft.conflicts) {
+			t.Fatalf("warnings = %v, want the address conflicts %v", warnings, ft.conflicts)
+		}
+	})
+
+	t.Run("stopped tunnel is not started", func(t *testing.T) {
+		l, ft, _ := newLifecycle(t, tunnel.StateStopped)
+		warnings, err := l.ReplaceTunnelConfig(ctx, "tn-1", "cfg", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"replace"}; !reflect.DeepEqual(ft.calls, want) {
+			t.Fatalf("calls = %v, want %v", ft.calls, want)
+		}
+		if len(warnings) != 0 {
+			t.Fatalf("warnings = %v", warnings)
+		}
+	})
+
+	t.Run("a failed stop leaves the config alone", func(t *testing.T) {
+		l, ft, _ := newLifecycle(t, tunnel.StateRunning)
+		ft.stopErr = fmt.Errorf("operation in progress")
+		if _, err := l.ReplaceTunnelConfig(ctx, "tn-1", "cfg", ""); err == nil {
+			t.Fatal("a failed stop must abort the replace")
+		}
+		if want := []string{"stop"}; !reflect.DeepEqual(ft.calls, want) {
+			t.Fatalf("calls = %v, want %v", ft.calls, want)
+		}
+	})
+
+	t.Run("a failed restart is a warning, not an error", func(t *testing.T) {
+		l, ft, _ := newLifecycle(t, tunnel.StateRunning)
+		ft.startErr = fmt.Errorf("boom")
+		warnings, err := l.ReplaceTunnelConfig(ctx, "tn-1", "cfg", "")
+		if err != nil {
+			t.Fatalf("the replace itself succeeded: %v", err)
+		}
+		if len(warnings) != 1 || !strings.Contains(warnings[0], "failed to restart") {
+			t.Fatalf("warnings = %v", warnings)
+		}
+	})
+}
+
+type fakePingCheck struct {
+	api.PingCheckService
+	statuses []pingcheck.TunnelStatus
+}
+
+func (f *fakePingCheck) CheckAllNow()                        {}
+func (f *fakePingCheck) GetStatus() []pingcheck.TunnelStatus { return f.statuses }
+
+// TestLocal_ImportTunnelWritesPingCheckDefaults зеркалит
+// api.ImportHandler.ImportConf (internal/api/import.go): без этих умолчаний
+// созданный через MCP туннель вообще не имеет записи PingCheck и мониторинг
+// обращается с ним иначе, чем с импортированным из веб-интерфейса.
+func TestLocal_ImportTunnelWritesPingCheckDefaults(t *testing.T) {
+	ctx := context.Background()
+	l, _, store := newLifecycle(t, tunnel.StateStopped)
+	cfg := l.c
+	cfg.PingCheck = &fakePingCheck{}
+	cfg.Bus = &recBus{}
+	l = New(cfg)
+
+	got, err := l.ImportTunnel(ctx, "New", "[Interface]\n[Peer]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Enabled {
+		t.Fatal("service.Import hard-sets Enabled=false; the summary must say so")
+	}
+	stored, err := store.Get("tn-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.PingCheck == nil {
+		t.Fatal("post-import PingCheck defaults were not written")
+	}
+	pc := stored.PingCheck
+	if pc.Enabled || pc.Method != "icmp" || pc.Target != "8.8.8.8" || pc.Interval != 45 ||
+		pc.DeadInterval != 120 || pc.FailThreshold != 3 || pc.MinSuccess != 1 || pc.Timeout != 5 || !pc.Restart {
+		t.Fatalf("defaults differ from the REST import handler: %+v", pc)
+	}
+}
+
+// Без сервиса PingCheck умолчания не пишутся — ровно как в обработчике,
+// где запись стоит под `h.pingCheck != nil`.
+func TestLocal_ImportTunnelSkipsPingCheckDefaultsWithoutService(t *testing.T) {
+	l, _, store := newLifecycle(t, tunnel.StateStopped)
+	if _, err := l.ImportTunnel(context.Background(), "New", "[Interface]\n[Peer]\n"); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := store.Get("tn-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.PingCheck != nil {
+		t.Fatalf("PingCheck written without the service: %+v", stored.PingCheck)
+	}
+}

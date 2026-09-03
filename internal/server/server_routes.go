@@ -1152,6 +1152,17 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// нормализовал URL со слэшем, получал бы страницу вместо ответа MCP.
 	mux.Handle("/mcp/", mcpHandler)
 
+	// The 401 above advertises this URL in WWW-Authenticate. OAuth resource
+	// metadata is deliberately NOT served in v1 (bearer keys only), so the
+	// path must answer an honest JSON 404 instead of falling through to the
+	// catch-all SPA, which would hand a client 200 text/html and no way to
+	// tell that the document is not the metadata it asked for.
+	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":true,"message":"OAuth is not supported; use a bearer MCP key","code":"NOT_FOUND"}`))
+	})
+
 	keysHandler := api.NewMcpKeysHandler(s.mcpKeys, appLog)
 	mux.HandleFunc("/api/mcp/keys", h.guarded(keysHandler.List))
 	mux.HandleFunc("/api/mcp/keys/create", h.guarded(keysHandler.Create))

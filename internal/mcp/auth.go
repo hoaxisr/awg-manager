@@ -33,7 +33,8 @@ type AuthConfig struct {
 	Verify func(token string) (KeyInfo, bool)
 	// Touch records key usage (optional).
 	Touch func(id string)
-	// Throttle limits failed attempts per client IP (optional).
+	// Throttle limits failed attempts per client IP (optional). It is
+	// bypassed for loopback callers — see KeyMiddleware.
 	Throttle Throttle
 	// Log receives one line per rejected request (optional).
 	Log func(format string, args ...any)
@@ -65,8 +66,20 @@ func KeyMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
 			return
 		}
 		ip := clientIP(r)
-		if cfg.Throttle != nil {
-			if retry, blocked := cfg.Throttle.Begin(ip); blocked {
+		// The per-IP throttle only has meaning for DIRECT clients. Behind the
+		// KeenDNS reverse proxy every remote client is observed as 127.0.0.1,
+		// so accounting there would be a remote DoS lever, not a defence:
+		// anyone could send a handful of bad keys and 429 every other remote
+		// user, repeatably (and each legitimate call would reset the
+		// attacker's counter via Success). What actually protects the
+		// endpoint from the internet is the 256-bit key. So: throttled on the
+		// LAN, not throttled through the proxy.
+		throttle := cfg.Throttle
+		if isLoopback(ip) {
+			throttle = nil
+		}
+		if throttle != nil {
+			if retry, blocked := throttle.Begin(ip); blocked {
 				w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusTooManyRequests)
@@ -79,27 +92,26 @@ func KeyMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
 		// concurrency reservation, not an audit marker: it must be released
 		// as soon as the authentication decision is known, not held for the
 		// lifetime of the (potentially long) downstream MCP tool call.
-		// Otherwise a handful of concurrent tool calls from one client IP
-		// (e.g. behind the KeenDNS reverse proxy, where many remote clients
-		// share one observed IP) would exhaust the burst budget and lock out
-		// unrelated, perfectly-authenticated traffic. The decision runs in a
-		// closure so `defer cfg.Throttle.Done(ip)` releases the slot on every
-		// exit path, including a panic during Verify.
+		// Otherwise a handful of concurrent tool calls from one LAN client
+		// would exhaust the burst budget and lock out unrelated,
+		// perfectly-authenticated traffic. The decision runs in a closure so
+		// `defer throttle.Done(ip)` releases the slot on every exit path,
+		// including a panic during Verify.
 		var key KeyInfo
 		var ok bool
 		func() {
-			if cfg.Throttle != nil {
-				defer cfg.Throttle.Done(ip)
+			if throttle != nil {
+				defer throttle.Done(ip)
 			}
 			token, wellFormed := bearerToken(r)
 			if wellFormed && cfg.Verify != nil {
 				key, ok = cfg.Verify(token)
 			}
-			if cfg.Throttle != nil {
+			if throttle != nil {
 				if ok {
-					cfg.Throttle.Success(ip)
+					throttle.Success(ip)
 				} else {
-					cfg.Throttle.Fail(ip)
+					throttle.Fail(ip)
 				}
 			}
 		}()
@@ -149,6 +161,13 @@ func clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// isLoopback reports whether ip is 127.0.0.0/8 or ::1 — i.e. the router's
+// own reverse proxy rather than an identifiable client.
+func isLoopback(ip string) bool {
+	parsed := net.ParseIP(strings.TrimSpace(ip))
+	return parsed != nil && parsed.IsLoopback()
 }
 
 // externalOrigin reconstructs scheme://host as the client sees it. The

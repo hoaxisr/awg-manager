@@ -56,6 +56,10 @@ type mcpKeysFileV1 struct {
 	Keys    []McpKey `json:"keys"`
 }
 
+// ErrMcpKeyStoreReadOnly is wrapped into every write error raised while the
+// store is in read-only mode after a failed Load. See McpKeyStore.loadErr.
+var ErrMcpKeyStoreReadOnly = errors.New("mcp key store unavailable")
+
 // McpKeyStore persists MCP keys in <dataDir>/mcp_keys.json (mode 0600).
 // It is separate from settings.json so hashes never travel with
 // /settings/get responses; the data-dir backup still includes it.
@@ -63,7 +67,19 @@ type McpKeyStore struct {
 	dataDir string
 	mu      sync.RWMutex
 	keys    []McpKey
-	now     func() time.Time
+	// loadErr, when non-nil, means the last Load could not read an existing
+	// file (EIO, a permissions change, a short read on flash) and the
+	// in-memory list is therefore NOT the file's contents. Every write is
+	// refused while it is set: saving an empty (or partial) list would
+	// rename it over the real file and silently revoke every issued key.
+	// Verify keeps working against the empty list — failing closed is the
+	// right direction for authentication.
+	loadErr error
+	// fileMu serialises the actual file rewrite. It is taken INSIDE mu by
+	// the mutators and alone by Touch, which snapshots under mu and then
+	// writes without it, so a once-a-minute fsync never blocks Verify.
+	fileMu sync.Mutex
+	now    func() time.Time
 }
 
 // NewMcpKeyStore creates a store rooted at dataDir. Call Load before use.
@@ -73,34 +89,66 @@ func NewMcpKeyStore(dataDir string) *McpKeyStore {
 
 func (s *McpKeyStore) path() string { return filepath.Join(s.dataDir, mcpKeysFile) }
 
-// Load reads the file; a missing file means no keys.
+// Load reads the file; a missing file means no keys. Any OTHER read failure
+// leaves the store read-only (see loadErr) instead of pretending the router
+// has no keys.
 func (s *McpKeyStore) Load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	data, err := os.ReadFile(s.path())
 	if err != nil {
 		if os.IsNotExist(err) {
-			s.keys = nil
+			s.keys, s.loadErr = nil, nil
 			return nil
 		}
+		s.keys, s.loadErr = nil, err
 		return err
 	}
 	var f mcpKeysFileV1
 	if err := json.Unmarshal(data, &f); err != nil {
+		// A corrupt file is quarantined and genuinely leaves no keys, so
+		// the store stays writable — unlike an unreadable one.
 		QuarantineCorrupt(s.path(), err)
-		s.keys = nil
+		s.keys, s.loadErr = nil, nil
 		return nil
 	}
-	s.keys = f.Keys
+	s.keys, s.loadErr = f.Keys, nil
 	return nil
 }
 
-func (s *McpKeyStore) saveLocked() error {
-	data, err := json.MarshalIndent(mcpKeysFileV1{Version: 1, Keys: s.keys}, "", "  ")
+// writableLocked reports why a write must be refused, or nil.
+func (s *McpKeyStore) writableLocked() error {
+	if s.loadErr != nil {
+		return fmt.Errorf("%w: refusing to write after load failure: %v", ErrMcpKeyStoreReadOnly, s.loadErr)
+	}
+	return nil
+}
+
+// persist writes snapshot to disk. Callers must NOT hold mu for longer than
+// they need: the fsync inside AtomicWritePerm is the slow part.
+func (s *McpKeyStore) persist(snapshot []McpKey) error {
+	data, err := json.MarshalIndent(mcpKeysFileV1{Version: 1, Keys: snapshot}, "", "  ")
 	if err != nil {
 		return err
 	}
+	s.fileMu.Lock()
+	defer s.fileMu.Unlock()
+	// Keep the previous good file as .bak (hardlink: no data copy, the old
+	// inode survives the rename below) — the same cheap insurance
+	// settings.json takes against a bad flash write.
+	if _, statErr := os.Stat(s.path()); statErr == nil {
+		bak := s.path() + ".bak"
+		_ = os.Remove(bak)
+		_ = os.Link(s.path(), bak)
+	}
 	return AtomicWritePerm(s.path(), data, 0o600)
+}
+
+func (s *McpKeyStore) saveLocked() error {
+	if err := s.writableLocked(); err != nil {
+		return err
+	}
+	return s.persist(append([]McpKey(nil), s.keys...))
 }
 
 // List returns keys sorted by creation time with Hash blanked.
@@ -123,6 +171,12 @@ func hashMcpKey(plaintext string) string {
 
 // Create mints a new key. The returned plaintext is never stored.
 func (s *McpKeyStore) Create(name string) (McpKey, string, error) {
+	s.mu.RLock()
+	roErr := s.writableLocked()
+	s.mu.RUnlock()
+	if roErr != nil {
+		return McpKey{}, "", roErr
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return McpKey{}, "", fmt.Errorf("%w: key name is required", ErrMcpKeyInvalidName)
@@ -159,6 +213,12 @@ func (s *McpKeyStore) Create(name string) (McpKey, string, error) {
 func (s *McpKeyStore) Revoke(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Checked before the lookup: with the file unreadable the in-memory list
+	// is empty, and "key not found" would be a misleading answer to
+	// "revoke this key" — the key may well still be in the file.
+	if err := s.writableLocked(); err != nil {
+		return err
+	}
 	for i, k := range s.keys {
 		if k.ID == id {
 			before := s.keys
@@ -195,19 +255,37 @@ func (s *McpKeyStore) Verify(plaintext string) (McpKey, bool) {
 }
 
 // Touch records use of a key, persisting at most once per mcpTouchInterval.
+//
+// The timestamp is applied and the key list snapshotted under the write
+// lock; the fsync'd rewrite then runs WITHOUT it. Holding mu across the
+// write would block Verify — i.e. every concurrent MCP request — for the
+// duration of a flash write. Two touches racing means last-writer-wins on
+// a LastUsedAt field, which is not worth a lock for.
 func (s *McpKeyStore) Touch(id string) {
 	now := s.now().UTC()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	if s.loadErr != nil {
+		// Read-only after a failed Load (see loadErr): persisting the empty
+		// in-memory list here would wipe the file just like Create would.
+		s.mu.Unlock()
+		return
+	}
+	var snapshot []McpKey
 	for i := range s.keys {
 		if s.keys[i].ID != id {
 			continue
 		}
 		if !s.keys[i].LastUsedAt.IsZero() && now.Sub(s.keys[i].LastUsedAt) < mcpTouchInterval {
+			s.mu.Unlock()
 			return
 		}
 		s.keys[i].LastUsedAt = now
-		_ = s.saveLocked() // best effort: a failed touch must not break the request
+		snapshot = append([]McpKey(nil), s.keys...)
+		break
+	}
+	s.mu.Unlock()
+	if snapshot == nil {
 		return
 	}
+	_ = s.persist(snapshot) // best effort: a failed touch must not break the request
 }

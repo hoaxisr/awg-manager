@@ -118,3 +118,68 @@ func TestFake_ConcurrentSystemStatusAndControlSingbox(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestFake_SetClientRoutePreservesFallbackAndEnabled — фейк обязан вести
+// себя как localdeps: обновление без fallback не сбрасывает «drop», а
+// собственный флаг Enabled пользователя не включается молча обратно.
+func TestFake_SetClientRoutePreservesFallbackAndEnabled(t *testing.T) {
+	f := New()
+	ctx := context.Background()
+	created, err := f.SetClientRoute(ctx, mcpsrv.ClientRouteInput{ClientIP: "192.168.1.10", TunnelID: "tn-1", Fallback: "drop"})
+	if err != nil || created == nil {
+		t.Fatalf("create: %v %+v", err, created)
+	}
+	f.ClientRoutes[0].Enabled = false
+	f.ClientRoutes[0].ClientHostname = "laptop"
+
+	got, err := f.SetClientRoute(ctx, mcpsrv.ClientRouteInput{ClientIP: "192.168.1.10", TunnelID: "tn-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Fallback != "drop" {
+		t.Fatalf("an update without fallback reset the kill-switch: %+v", got)
+	}
+	if got.Enabled {
+		t.Fatalf("the user's enabled flag was flipped back on: %+v", got)
+	}
+	if got.ClientHostname != "laptop" {
+		t.Fatalf("hostname lost on update: %+v", got)
+	}
+	if len(f.ClientRoutes) != 1 {
+		t.Fatalf("duplicate route: %+v", f.ClientRoutes)
+	}
+
+	// A new route still defaults to bypass.
+	fresh, err := f.SetClientRoute(ctx, mcpsrv.ClientRouteInput{ClientIP: "192.168.1.99", TunnelID: "tn-1"})
+	if err != nil || fresh.Fallback != "bypass" {
+		t.Fatalf("new route: %v %+v", err, fresh)
+	}
+}
+
+// TestFake_ImportTunnelIsDisabled — service.Import жёстко ставит
+// Enabled=false; фейк обязан отвечать так же, иначе тесты не поймают
+// расхождение описания инструмента с реальностью.
+func TestFake_ImportTunnelIsDisabled(t *testing.T) {
+	f := New()
+	got, err := f.ImportTunnel(context.Background(), "New", "[Interface]\n[Peer]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Enabled || got.State != "stopped" {
+		t.Fatalf("an imported tunnel is disabled and stopped, got %+v", got)
+	}
+}
+
+// TestFake_AddDNSRouteIsAlwaysEnabled — dnsroute.Create поднимает
+// маршрутизацию сразу и не умеет создавать выключенный список; входа
+// enabled у MCP больше нет.
+func TestFake_AddDNSRouteIsAlwaysEnabled(t *testing.T) {
+	f := New()
+	got, err := f.AddDNSRoute(context.Background(), mcpsrv.DNSRouteInput{Name: "GH", Domains: []string{"github.com"}, TunnelID: "tn-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Enabled {
+		t.Fatalf("a list created through MCP is always enabled, got %+v", got)
+	}
+}

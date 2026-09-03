@@ -70,6 +70,31 @@ describe('McpCard', () => {
 		expect(within(dialog).getByLabelText('Скопировать ключ')).toBeTruthy();
 	});
 
+	// Claude Desktop на Windows и Cursor режут каждый элемент args по
+	// пробелам: "Authorization:Bearer <ключ>" одним элементом приехало бы
+	// как два аргумента, токен потерялся бы, и пользователю сказали бы, что
+	// только что вставленный ключ неверный. Заголовок передаётся через env.
+	it('сниппет mcp-remote не содержит аргументов с пробелами, ключ уходит через env', async () => {
+		render(McpCard, { ...base, enabled: true, keys: [] });
+		await fireEvent.click(screen.getByText('Создать ключ'));
+		const dialog = screen.getByRole('dialog');
+		await fireEvent.input(within(dialog).getByPlaceholderText('Например, laptop'), { target: { value: 'phone' } });
+		await fireEvent.click(within(dialog).getByText('Создать'));
+		await waitFor(() => expect(screen.getByText('awgm_secret')).toBeTruthy());
+
+		const summary = within(dialog).getByText('Claude Desktop (mcp-remote)');
+		const pre = summary.parentElement?.querySelector('pre');
+		expect(pre).toBeTruthy();
+		const config = JSON.parse(pre!.textContent ?? '');
+		const entry = config.mcpServers['awg-manager'];
+		for (const arg of entry.args) {
+			expect(typeof arg).toBe('string');
+			expect(arg).not.toContain(' ');
+		}
+		expect(entry.args).toContain('Authorization:${AUTH_HEADER}');
+		expect(entry.env.AUTH_HEADER).toBe('Bearer awgm_secret');
+	});
+
 	it('закрытие окна стирает показанный plaintext, а не откладывает до следующего создания', async () => {
 		render(McpCard, { ...base, enabled: true, keys: [] });
 		await fireEvent.click(screen.getByText('Создать ключ'));

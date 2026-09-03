@@ -3,9 +3,17 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// LogLevelRank orders LogsQuery.Level for the STRICT minimum-level filter
+// every Deps implementation must apply: an entry is kept only when its own
+// level ranks at or above the requested one, and an entry whose level is
+// not in this table is dropped. It deliberately does not reuse
+// logging.IsVisible, which treats warn/error as always visible.
+var LogLevelRank = map[string]int{"debug": 0, "info": 1, "warn": 2, "error": 3}
 
 type logsOut struct {
 	Total   int        `json:"total" jsonschema:"entries matching the filter before the line cap"`
@@ -42,6 +50,16 @@ func registerSystemTools(s *mcp.Server, d Deps) {
 		}
 		if q.Bucket != "app" && q.Bucket != "singbox" {
 			return nil, logsOut{}, fmt.Errorf("bucket must be app or singbox")
+		}
+		// Normalised here so every Deps implementation gets the same
+		// lower-case, validated value: level is a STRICT minimum, and an
+		// unrecognised one must be an error rather than a silently
+		// different filter.
+		if q.Level != "" {
+			q.Level = strings.ToLower(strings.TrimSpace(q.Level))
+			if _, ok := LogLevelRank[q.Level]; !ok {
+				return nil, logsOut{}, fmt.Errorf("level must be one of debug|info|warn|error")
+			}
 		}
 		entries, total, err := d.GetLogs(ctx, q)
 		if entries == nil {

@@ -109,9 +109,27 @@
 			? JSON.stringify({ mcpServers: { 'awg-manager': { type: 'http', url: endpoint, headers: { Authorization: `Bearer ${created.key}` } } } }, null, 2)
 			: '',
 	);
+	// The header value goes through an env var, not straight into args:
+	// Claude Desktop on Windows and Cursor split every args element on
+	// spaces, so "Authorization:Bearer <key>" would arrive as two arguments
+	// and the token would be lost (401 on every reconnect, with the user
+	// told their freshly pasted key is invalid). This is the form
+	// mcp-remote's own README prescribes for exactly that reason.
 	const remoteSnippet = $derived(
 		created
-			? JSON.stringify({ mcpServers: { 'awg-manager': { command: 'npx', args: ['-y', 'mcp-remote', endpoint, '--header', `Authorization:Bearer ${created.key}`] } } }, null, 2)
+			? JSON.stringify(
+					{
+						mcpServers: {
+							'awg-manager': {
+								command: 'npx',
+								args: ['-y', 'mcp-remote', endpoint, '--header', 'Authorization:${AUTH_HEADER}'],
+								env: { AUTH_HEADER: `Bearer ${created.key}` },
+							},
+						},
+					},
+					null,
+					2,
+				)
 			: '',
 	);
 </script>

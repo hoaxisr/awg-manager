@@ -49,8 +49,9 @@ type replaceIn struct {
 }
 
 type replaceOut struct {
-	TunnelID string `json:"tunnelId"`
-	Replaced bool   `json:"replaced"`
+	TunnelID string   `json:"tunnelId"`
+	Replaced bool     `json:"replaced"`
+	Warnings []string `json:"warnings,omitempty" jsonschema:"non-fatal problems: the tunnel failed to start again after the replace, or its new address conflicts with another interface — show these to the user"`
 }
 
 type exportOut struct {
@@ -125,7 +126,7 @@ func registerTunnelTools(s *mcp.Server, d Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "create_tunnel",
-		Description: "Create a tunnel from a .conf text (WireGuard or AmneziaWG). The tunnel is created enabled but not started; use control_tunnel to start it.",
+		Description: "Create a tunnel from a .conf text (WireGuard or AmneziaWG). The tunnel is created DISABLED and stopped: use control_tunnel with \"enable\" (autostart) and then \"start\" to bring it up.",
 		Annotations: safeWrite("Create tunnel", false),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in createIn) (*mcp.CallToolResult, TunnelSummary, error) {
 		if strings.TrimSpace(in.Name) == "" {
@@ -139,8 +140,9 @@ func registerTunnelTools(s *mcp.Server, d Deps) {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "replace_tunnel_config",
-		Description: "Replace a tunnel's configuration with new .conf text (e.g. new keys or endpoint) and optionally rename it. Restart the tunnel afterwards with control_tunnel.",
+		Name: "replace_tunnel_config",
+		Description: "Replace a tunnel's configuration with new .conf text (e.g. new keys or endpoint) and optionally rename it. " +
+			"A running tunnel is stopped and started again automatically, so no manual restart is needed; check the returned warnings.",
 		Annotations: safeWrite("Replace tunnel config", true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in replaceIn) (*mcp.CallToolResult, replaceOut, error) {
 		if in.TunnelID == "" {
@@ -149,10 +151,11 @@ func registerTunnelTools(s *mcp.Server, d Deps) {
 		if err := requireConf(in.Config); err != nil {
 			return nil, replaceOut{}, err
 		}
-		if err := d.ReplaceTunnelConfig(ctx, in.TunnelID, in.Config, in.Name); err != nil {
+		warnings, err := d.ReplaceTunnelConfig(ctx, in.TunnelID, in.Config, in.Name)
+		if err != nil {
 			return nil, replaceOut{}, err
 		}
-		return nil, replaceOut{TunnelID: in.TunnelID, Replaced: true}, nil
+		return nil, replaceOut{TunnelID: in.TunnelID, Replaced: true, Warnings: warnings}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{

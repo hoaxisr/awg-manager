@@ -56,13 +56,17 @@ type devicesOut struct {
 	Devices []Device `json:"devices"`
 }
 
+// validateDomains checks only that the list is non-empty and every entry
+// is non-blank. The grammar itself belongs to the dnsroute service, which
+// accepts plain domains, bare labels, CIDR subnets and geosite:/geoip:
+// tags — a second, stricter grammar here would reject entries the service
+// is happy with (and would drift from it on the next change).
 func validateDomains(domains []string) error {
 	if len(domains) == 0 {
 		return fmt.Errorf("domains must not be empty")
 	}
 	for _, dom := range domains {
-		dom = strings.TrimSpace(dom)
-		if dom == "" || strings.ContainsAny(dom, " /:") {
+		if strings.TrimSpace(dom) == "" {
 			return fmt.Errorf("invalid domain %q", dom)
 		}
 	}
@@ -96,7 +100,7 @@ func registerRoutingTools(s *mcp.Server, d Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "add_dns_route",
-		Description: "Create a domain routing list that sends the given domains (and subdomains) through a tunnel.",
+		Description: "Create a domain routing list that sends the given domains (and subdomains) through a tunnel. The list is created enabled and takes effect immediately.",
 		Annotations: safeWrite("Add DNS route", false),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in DNSRouteInput) (*mcp.CallToolResult, DNSRoute, error) {
 		if strings.TrimSpace(in.Name) == "" {
@@ -196,6 +200,12 @@ func registerRoutingTools(s *mcp.Server, d Deps) {
 		if ip == nil || ip.To4() == nil {
 			return nil, clientRouteOut{}, fmt.Errorf("clientIp %q is not a valid IPv4 address", in.ClientIP)
 		}
+		// Deps compares this value against the stored, already-canonical IP,
+		// so only the canonical spelling may cross the boundary: forwarding
+		// " 192.168.1.10" or "::ffff:192.168.1.10" verbatim would miss the
+		// existing route and report a delete that never happened (or fail
+		// with "already has a route" instead of updating).
+		in.ClientIP = ip.To4().String()
 		if in.Fallback != "" && in.Fallback != "drop" && in.Fallback != "bypass" {
 			return nil, clientRouteOut{}, fmt.Errorf("fallback must be drop or bypass")
 		}

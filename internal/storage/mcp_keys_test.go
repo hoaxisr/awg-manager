@@ -243,3 +243,135 @@ func TestMcpKeyStore_LoadMissingFileIsEmpty(t *testing.T) {
 		t.Fatal("expected no keys")
 	}
 }
+
+// TestMcpKeyStore_UnreadableFileMakesStoreReadOnly — провал чтения (не
+// «файла нет») означает, что список в памяти НЕ равен файлу. Любая запись
+// после этого переименовала бы усечённый список поверх настоящего и молча
+// отозвала все выданные ключи, поэтому хранилище уходит в read-only.
+func TestMcpKeyStore_UnreadableFileMakesStoreReadOnly(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permission bits")
+	}
+	dataDir := t.TempDir()
+	seed := NewMcpKeyStore(dataDir)
+	if err := seed.Load(); err != nil {
+		t.Fatal(err)
+	}
+	key, plain, err := seed.Create("laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dataDir, "mcp_keys.json")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(path, 0o600) })
+
+	s := NewMcpKeyStore(dataDir)
+	loadErr := s.Load()
+	if loadErr == nil {
+		t.Fatal("Load of an unreadable file returned nil")
+	}
+
+	_, _, err = s.Create("phone")
+	if !errors.Is(err, ErrMcpKeyStoreReadOnly) {
+		t.Fatalf("Create = %v, want ErrMcpKeyStoreReadOnly", err)
+	}
+	if !strings.Contains(err.Error(), "refusing to write after load failure") {
+		t.Fatalf("Create error does not name the cause: %v", err)
+	}
+	if err := s.Revoke(key.ID); !errors.Is(err, ErrMcpKeyStoreReadOnly) {
+		t.Fatalf("Revoke = %v, want ErrMcpKeyStoreReadOnly", err)
+	}
+	s.Touch(key.ID) // must not write either
+
+	// Fail-closed for auth is correct and stays.
+	if _, ok := s.Verify(plain); ok {
+		t.Fatal("Verify must fail closed while the store could not be read")
+	}
+
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("the key file was rewritten while read-only:\nbefore=%s\nafter=%s", before, after)
+	}
+}
+
+// TestMcpKeyStore_SaveKeepsBackup — перед каждой перезаписью рядом остаётся
+// .bak с прежним содержимым: дешёвая страховка на флеше роутера.
+func TestMcpKeyStore_SaveKeepsBackup(t *testing.T) {
+	dataDir := t.TempDir()
+	s := NewMcpKeyStore(dataDir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Create("first"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dataDir, "mcp_keys.json")
+	afterFirst, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + ".bak"); !os.IsNotExist(err) {
+		t.Fatalf("no .bak expected before the second write: %v", err)
+	}
+	if _, _, err := s.Create("second"); err != nil {
+		t.Fatal(err)
+	}
+	bak, err := os.ReadFile(path + ".bak")
+	if err != nil {
+		t.Fatalf("no .bak after an overwrite: %v", err)
+	}
+	if string(bak) != string(afterFirst) {
+		t.Fatalf(".bak does not hold the previous contents:\nwant=%s\ngot=%s", afterFirst, bak)
+	}
+	if !strings.Contains(string(bak), "first") || strings.Contains(string(bak), "second") {
+		t.Fatalf(".bak = %s", bak)
+	}
+}
+
+// TestMcpKeyStore_TouchDoesNotHoldTheLockAcrossTheWrite — Touch снимает
+// снимок под локом и пишет уже без него, иначе fsync на флеше блокировал бы
+// Verify для всех параллельных запросов.
+func TestMcpKeyStore_TouchDoesNotHoldTheLockAcrossTheWrite(t *testing.T) {
+	s := newKeyStore(t)
+	key, plain, err := s.Create("k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			if _, ok := s.Verify(plain); !ok {
+				t.Error("Verify failed during Touch")
+				return
+			}
+		}
+	}()
+	for i := 0; i < 50; i++ {
+		s.now = func() time.Time { return time.Now().Add(time.Duration(i) * time.Hour) }
+		s.Touch(key.ID)
+	}
+	<-done
+	if s.List()[0].LastUsedAt.IsZero() {
+		t.Fatal("Touch did not record LastUsedAt")
+	}
+	reloaded := NewMcpKeyStore(s.dataDir)
+	if err := reloaded.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.List()[0].LastUsedAt.IsZero() {
+		t.Fatal("Touch did not persist LastUsedAt")
+	}
+}
