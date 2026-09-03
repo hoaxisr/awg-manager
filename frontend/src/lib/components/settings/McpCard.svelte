@@ -95,6 +95,14 @@
 		}
 	}
 
+	async function copyEndpoint() {
+		if (await copyToClipboard(endpoint)) {
+			notifications.success('Адрес скопирован в буфер обмена');
+		} else {
+			notifications.error('Не удалось скопировать адрес');
+		}
+	}
+
 	function formatDate(iso?: string): string {
 		if (!iso) return '—';
 		const d = new Date(iso);
@@ -156,9 +164,18 @@
 					<span class="font-medium">Адрес эндпоинта</span>
 					<span class="setting-description">Через KeenDNS используйте https://&lt;ваш-домен&gt;/mcp.</span>
 				</div>
-				<button type="button" class="api-key-input text-left" onclick={() => copyToClipboard(endpoint)} title="Скопировать">
-					{endpoint}
-				</button>
+				<div class="mcp-key-row">
+					<code class="mcp-code-value">{endpoint}</code>
+					<button
+						type="button"
+						class="mcp-copy-btn"
+						onclick={copyEndpoint}
+						aria-label="Скопировать адрес эндпоинта"
+						title="Скопировать адрес эндпоинта"
+					>
+						<Copy size={16} />
+					</button>
+				</div>
 			</div>
 
 			<div class="setting-row toggle-inline-row">
@@ -219,9 +236,7 @@
 		<div class="flex flex-col gap-3">
 			<p class="setting-description">Ключ показывается только сейчас. Скопируйте его в конфигурацию клиента.</p>
 			<div class="mcp-key-row">
-				<button type="button" class="api-key-input text-left break-all" onclick={() => created && copyKey(created.key)} title="Скопировать">
-					{created.key}
-				</button>
+				<code class="mcp-code-value">{created.key}</code>
 				<button
 					type="button"
 					class="mcp-copy-btn"
@@ -269,7 +284,9 @@
 <style>
 	/* .api-key-input is scoped per-component in Svelte — the visual treatment
 	   from the settings page (monospace, bordered, full-width) is repeated
-	   here rather than shared, since it's only otherwise defined in +page.svelte. */
+	   here rather than shared, since it's only otherwise defined in +page.svelte.
+	   Only the editable name input below uses this now — read-only values use
+	   .mcp-code-value instead, which deliberately looks nothing like a field. */
 	.api-key-input {
 		display: block;
 		width: 100%;
@@ -282,7 +299,26 @@
 		border: 1px solid var(--border, var(--color-border));
 		border-radius: var(--radius-sm, 6px);
 		color: var(--text-primary, var(--color-text-primary));
-		cursor: pointer;
+	}
+
+	/* Read-only display for a value the user needs to copy manually (endpoint,
+	   one-time key): no border/field affordance, so it doesn't look editable,
+	   and user-select: all so a single click selects the whole value as a
+	   fallback when the copy button's clipboard call fails — the important
+	   case on a plain-HTTP router LAN address, which isn't a secure context. */
+	.mcp-code-value {
+		display: block;
+		flex: 1;
+		min-width: 0;
+		padding: 0.5rem 0.625rem;
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		line-height: 1.35;
+		word-break: break-all;
+		background: var(--color-settings-control-bg, var(--bg-secondary));
+		border-radius: var(--radius-sm, 6px);
+		color: var(--text-primary, var(--color-text-primary));
+		user-select: all;
 	}
 
 	.mcp-key-row {
@@ -291,7 +327,10 @@
 		gap: 0.375rem;
 	}
 
-	.mcp-key-row .api-key-input {
+	/* Inside .setting-row (a space-between row shared with the label), the row
+	   must claim the remaining width itself — .mcp-code-value's own flex:1 only
+	   applies once it already has a sized flex container to grow inside. */
+	.setting-row .mcp-key-row {
 		flex: 1;
 		min-width: 0;
 	}
