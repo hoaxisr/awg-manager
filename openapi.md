@@ -103,6 +103,8 @@ VITE_API_STRIP_PREFIX=1
 - Persistent `usageLevel` между `/settings/get` и `/settings/update`.
 - Симуляция ошибки `/singbox/install` по флагу.
 - Фейковые `singbox`-логи в `/logs` (8 записей, 6 подгрупп, разные уровни).
+- Stateful `mcpEnabled` между `/settings/get` и `/settings/update`.
+- Stateful MCP-ключи: `GET /mcp/keys`, `POST /mcp/keys/create`, `POST /mcp/keys/revoke` (плейнтекст `awgm_mock_…` возвращается только при создании, дальше — только id/name/даты).
 
 Запуск рядом с Prism:
 
