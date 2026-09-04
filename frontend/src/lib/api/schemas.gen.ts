@@ -2402,6 +2402,7 @@ const api_TunnelListItemDTO: v.GenericSchema = v.looseObject({
 	ispInterface: v.optional(v.nullable(v.string())),
 	ispInterfaceLabel: v.optional(v.nullable(v.string())),
 	lastHandshake: v.optional(v.nullable(v.string())),
+	locked: v.optional(v.nullable(v.boolean())),
 	mtu: v.optional(v.nullable(v.number())),
 	name: v.optional(v.nullable(v.string())),
 	ndmsName: v.optional(v.nullable(v.string())),
@@ -2411,7 +2412,6 @@ const api_TunnelListItemDTO: v.GenericSchema = v.looseObject({
 	rxBytes: v.optional(v.nullable(v.number())),
 	startedAt: v.optional(v.nullable(v.string())),
 	status: v.optional(v.nullable(v.string())),
-	toggleLocked: v.optional(v.nullable(v.boolean())),
 	txBytes: v.optional(v.nullable(v.number())),
 	type: v.optional(v.nullable(v.string())),
 	wdttClientId: v.optional(v.nullable(v.string())),
@@ -2420,6 +2420,16 @@ const api_TunnelListItemDTO: v.GenericSchema = v.looseObject({
 const api_TunnelListResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.array(v.lazy(() => api_TunnelListItemDTO)))),
 	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_TunnelLockResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_TunnelLockResultData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_TunnelLockResultData: v.GenericSchema = v.looseObject({
+	id: v.optional(v.nullable(v.string())),
+	locked: v.optional(v.nullable(v.boolean())),
 });
 
 const api_TunnelPingCheckStatus: v.GenericSchema = v.looseObject({
@@ -2451,16 +2461,6 @@ const api_TunnelStateInfoDTO: v.GenericSchema = v.looseObject({
 	rxBytes: v.optional(v.nullable(v.number())),
 	state: v.optional(v.nullable(v.number())),
 	txBytes: v.optional(v.nullable(v.number())),
-});
-
-const api_TunnelToggleLockResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_TunnelToggleLockResultData))),
-	success: v.optional(v.nullable(v.boolean())),
-});
-
-const api_TunnelToggleLockResultData: v.GenericSchema = v.looseObject({
-	id: v.optional(v.nullable(v.string())),
-	toggleLocked: v.optional(v.nullable(v.boolean())),
 });
 
 const api_TunnelTrafficData: v.GenericSchema = v.looseObject({
@@ -3415,10 +3415,10 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /terminal/stop": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/create": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/delete": v.lazy(() => api_TunnelDeleteResponse),
+	"POST /tunnels/lock": v.lazy(() => api_TunnelLockResponse),
 	"POST /tunnels/pingcheck": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/pingcheck/remove": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/replace": v.lazy(() => api_APIEnvelope),
-	"POST /tunnels/toggle-lock": v.lazy(() => api_TunnelToggleLockResponse),
 	"POST /tunnels/update": v.lazy(() => api_APIEnvelope),
 	"PUT /hydraroute/config/update": v.lazy(() => api_HydraRouteConfigResponse),
 	"PUT /managed-servers/{id}": v.lazy(() => api_ServersAllResponse),

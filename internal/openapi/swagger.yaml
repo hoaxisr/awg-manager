@@ -6503,6 +6503,9 @@ definitions:
       lastHandshake:
         example: "2024-01-15T10:30:00Z"
         type: string
+      locked:
+        example: false
+        type: boolean
       mtu:
         example: 1420
         type: integer
@@ -6534,9 +6537,6 @@ definitions:
         - disabled
         example: connected
         type: string
-      toggleLocked:
-        example: false
-        type: boolean
       txBytes:
         example: 5242880
         type: integer
@@ -6557,6 +6557,23 @@ definitions:
           $ref: '#/definitions/api.TunnelListItemDTO'
         type: array
       success:
+        example: true
+        type: boolean
+    type: object
+  api.TunnelLockResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.TunnelLockResultData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.TunnelLockResultData:
+    properties:
+      id:
+        example: tun_abc123
+        type: string
+      locked:
         example: true
         type: boolean
     type: object
@@ -6659,23 +6676,6 @@ definitions:
       txBytes:
         example: 5242880
         type: integer
-    type: object
-  api.TunnelToggleLockResponse:
-    properties:
-      data:
-        $ref: '#/definitions/api.TunnelToggleLockResultData'
-      success:
-        example: true
-        type: boolean
-    type: object
-  api.TunnelToggleLockResultData:
-    properties:
-      id:
-        example: tun_abc123
-        type: string
-      toggleLocked:
-        example: true
-        type: boolean
     type: object
   api.TunnelTrafficData:
     properties:
@@ -19874,6 +19874,41 @@ paths:
       summary: List tunnels
       tags:
       - tunnels
+  /tunnels/lock:
+    post:
+      description: 'Включает или снимает защиту туннеля от изменений: у защищённого
+        туннеля Stop, ToggleEnabled, Update и Delete отвечают 403.'
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      - description: Включить (true) или снять (false) защиту
+        in: query
+        name: locked
+        required: true
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.TunnelLockResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Set tunnel lock
+      tags:
+      - tunnels
   /tunnels/pingcheck:
     get:
       parameters:
@@ -19991,35 +20026,6 @@ paths:
       security:
       - CookieAuth: []
       summary: Replace tunnel from conf
-      tags:
-      - tunnels
-  /tunnels/toggle-lock:
-    post:
-      description: Переключает блокировку тумблера туннеля от случайного выключения
-      parameters:
-      - description: Tunnel id
-        in: query
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.TunnelToggleLockResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Toggle tunnel lock
       tags:
       - tunnels
   /tunnels/traffic:

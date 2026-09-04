@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -369,6 +370,13 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Защита (#818) отвергает правку до всякого побочного действия: и до
+	// ветки зеркальной записи, которая пишет сама, и до svc.Update.
+	if existing.Locked {
+		response.ErrorWithStatus(w, http.StatusForbidden, tunnelLockedMessage, "TUNNEL_LOCKED")
+		return
+	}
+
 	if existing.Backend == backendWdttRaw {
 		if req.Name != "" && req.Name != existing.Name {
 			// Имя зеркальной записи — производная конфига инстанса: зеркало
@@ -593,19 +601,24 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, resp)
 }
 
-// ToggleLock переключает блокировку тумблера туннеля (#818).
+// tunnelLockedMessage — текст 403 у всех четырёх защищённых операций (#818).
+// Один на всех, чтобы пользователь везде читал одну и ту же подсказку.
+const tunnelLockedMessage = "туннель защищён от изменений — снимите защиту на карточке"
+
+// SetLock включает и снимает защиту туннеля от изменений (#818).
 //
-//	@Summary		Toggle tunnel lock
-//	@Description	Переключает блокировку тумблера туннеля от случайного выключения
+//	@Summary		Set tunnel lock
+//	@Description	Включает или снимает защиту туннеля от изменений: у защищённого туннеля Stop, ToggleEnabled, Update и Delete отвечают 403.
 //	@Tags			tunnels
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			id	query	string	true	"Tunnel id"
-//	@Success		200	{object}	TunnelToggleLockResponse
+//	@Param			id		query	string	true	"Tunnel id"
+//	@Param			locked	query	bool	true	"Включить (true) или снять (false) защиту"
+//	@Success		200	{object}	TunnelLockResponse
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
-//	@Router			/tunnels/toggle-lock [post]
-func (h *TunnelsHandler) ToggleLock(w http.ResponseWriter, r *http.Request) {
+//	@Router			/tunnels/lock [post]
+func (h *TunnelsHandler) SetLock(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
 		return
@@ -618,25 +631,32 @@ func (h *TunnelsHandler) ToggleLock(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
 		return
 	}
-	stored, err := h.store.Get(id)
-	if err != nil || stored == nil {
-		response.Error(w, "tunnel not found", "NOT_FOUND")
+	// Желаемое состояние приходит явно, а не переключением: две вкладки,
+	// нажавшие замок одновременно, придут к одному и тому же результату,
+	// а не к взаимной отмене.
+	locked, err := strconv.ParseBool(r.URL.Query().Get("locked"))
+	if err != nil {
+		response.Error(w, "параметр locked должен быть true или false", "INVALID_LOCKED")
 		return
 	}
-	var newLocked bool
+	// Повторный запрос того же значения не переписывает файл: ErrNoChange
+	// гасит запись внутри Update, ответ остаётся успешным.
 	if err := h.store.Update(id, func(t *storage.AWGTunnel) error {
-		t.ToggleLocked = !t.ToggleLocked
-		newLocked = t.ToggleLocked
+		if t.Locked == locked {
+			return storage.ErrNoChange
+		}
+		t.Locked = locked
 		return nil
 	}); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			response.Error(w, "tunnel not found", "NOT_FOUND")
+			return
+		}
 		response.Error(w, err.Error(), "UPDATE_FAILED")
 		return
 	}
 	h.publishTunnelList(r.Context())
-	response.JSON(w, map[string]interface{}{
-		"id":           id,
-		"toggleLocked": newLocked,
-	})
+	response.Success(w, TunnelLockResultData{ID: id, Locked: locked})
 }
 
 // Delete deletes a tunnel.
@@ -667,6 +687,12 @@ func (h *TunnelsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isValidTunnelID(id) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
+		return
+	}
+
+	// Защита (#818) отвергает удаление до всякого побочного действия.
+	if stored, err := h.store.Get(id); err == nil && stored != nil && stored.Locked {
+		response.ErrorWithStatus(w, http.StatusForbidden, tunnelLockedMessage, "TUNNEL_LOCKED")
 		return
 	}
 
