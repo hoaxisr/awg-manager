@@ -48,6 +48,7 @@ type (
 	}
 	LogReader interface {
 		GetLogsMulti(bucket logging.Bucket, groups, subgroups []string, level string, since time.Time, limit, offset int) ([]logging.LogEntry, int)
+		Stats(bucket logging.Bucket) logging.BufferStats
 	}
 	ConnectivityTester interface {
 		CheckConnectivity(ctx context.Context, tunnelID string) (*awgtesting.ConnectivityResult, error)
@@ -166,42 +167,42 @@ func (l *Local) GetLogs(_ context.Context, q mcpsrv.LogsQuery) ([]mcpsrv.LogEntr
 	if l.c.Logs == nil {
 		return nil, 0, errUnavailable("logging")
 	}
+	bucket := logging.Bucket(q.Bucket)
 	minRank, filterByLevel := mcpsrv.LogLevelRank[q.Level]
 	clientSide := q.Contains != "" || filterByLevel
 	fetch := q.Lines
 	if clientSide {
-		fetch = 2000 // filter here, then cap
+		// Filter here, then cap: scan the whole ring, whatever size the
+		// user configured, so "total" is honest and the newest matches
+		// are never cut off by an arbitrary constant.
+		fetch = l.c.Logs.Stats(bucket).Capacity
+		if fetch <= 0 {
+			fetch = logging.DefaultCapacity(bucket)
+		}
 	}
 	// The level is filtered HERE, not by GetLogsMulti: that path uses
 	// logging.IsVisible, where warn/error are always visible and an unknown
 	// level collapses to priority 0, so `level: "error"` would still return
 	// info lines. Passing "" means "no level constraint" to the buffer.
-	entries, total := l.c.Logs.GetLogsMulti(logging.Bucket(q.Bucket), q.Groups, nil, "", time.Time{}, fetch, 0)
+	entries, total := l.c.Logs.GetLogsMulti(bucket, q.Groups, nil, "", time.Time{}, fetch, 0)
+	contains := strings.ToLower(q.Contains)
 	// GetLogsMulti returns entries NEWEST-first (logbuf.Buffer.FilterPage
 	// walks the ring from the end). get_logs promises "newest last", and the
 	// tail-slice below must keep the NEWEST matches — so reverse first.
 	out := make([]mcpsrv.LogEntry, 0, len(entries))
 	for i := len(entries) - 1; i >= 0; i-- {
-		m, err := convert[map[string]any](entries[i])
-		if err != nil {
-			return nil, 0, err
-		}
-		msg := asString(m["message"])
-		if q.Contains != "" && !strings.Contains(strings.ToLower(msg), strings.ToLower(q.Contains)) {
+		e := &entries[i]
+		if contains != "" && !strings.Contains(strings.ToLower(e.Message), contains) {
 			continue
 		}
-		level := asString(m["level"])
 		if filterByLevel {
 			// An entry whose level is not one of debug|info|warn|error (e.g.
 			// logging's "full") is dropped — same rule as mcptest.Fake.
-			if rank, ok := mcpsrv.LogLevelRank[strings.ToLower(level)]; !ok || rank < minRank {
+			if rank, ok := mcpsrv.LogLevelRank[strings.ToLower(e.Level)]; !ok || rank < minRank {
 				continue
 			}
 		}
-		out = append(out, mcpsrv.LogEntry{
-			Timestamp: asString(m["timestamp"]), Level: level, Group: asString(m["group"]),
-			Subgroup: asString(m["subgroup"]), Action: asString(m["action"]), Target: asString(m["target"]), Message: msg,
-		})
+		out = append(out, logEntry(e, !q.Raw))
 	}
 	if clientSide {
 		total = len(out)
@@ -210,6 +211,31 @@ func (l *Local) GetLogs(_ context.Context, q mcpsrv.LogsQuery) ([]mcpsrv.LogEntr
 		}
 	}
 	return out, total, nil
+}
+
+// logEntry maps one buffer entry field by field — the same mapping as
+// api.logEntryDTO, including the default masking of IPs and domains: the
+// text goes to a third-party model, so the REST default applies here too.
+func logEntry(e *logging.LogEntry, sanitize bool) mcpsrv.LogEntry {
+	target, message := e.Target, e.Message
+	if sanitize {
+		target = logging.SanitizeLogText(target)
+		message = logging.SanitizeLogText(message)
+	}
+	out := mcpsrv.LogEntry{
+		Timestamp: e.Timestamp.UTC().Format(time.RFC3339Nano),
+		Level:     e.Level,
+		Group:     e.Group,
+		Subgroup:  e.Subgroup,
+		Action:    e.Action,
+		Target:    target,
+		Message:   message,
+		Repeats:   e.Repeats,
+	}
+	if e.LastSeen != nil {
+		out.LastSeen = e.LastSeen.UTC().Format(time.RFC3339Nano)
+	}
+	return out
 }
 
 func (l *Local) TestConnectivity(ctx context.Context, id string) (mcpsrv.ConnectivityResult, error) {

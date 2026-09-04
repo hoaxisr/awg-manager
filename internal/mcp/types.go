@@ -159,6 +159,7 @@ type LogsQuery struct {
 	Level    string   `json:"level,omitempty" jsonschema:"minimum level: debug|info|warn|error"`
 	Lines    int      `json:"lines,omitempty" jsonschema:"1..500, default 100"`
 	Contains string   `json:"contains,omitempty" jsonschema:"case-insensitive substring filter on message"`
+	Raw      bool     `json:"raw,omitempty" jsonschema:"true returns IPs and domains unmasked; by default they are partially redacted, as in the web UI"`
 }
 
 type LogEntry struct {
@@ -169,6 +170,10 @@ type LogEntry struct {
 	Action    string `json:"action,omitempty"`
 	Target    string `json:"target,omitempty"`
 	Message   string `json:"message"`
+	// Repeats > 1 means the buffer collapsed identical consecutive lines
+	// into this one; LastSeen is when the latest of them arrived.
+	Repeats  int    `json:"repeats,omitempty"`
+	LastSeen string `json:"lastSeen,omitempty"`
 }
 
 type ConnectivityResult struct {

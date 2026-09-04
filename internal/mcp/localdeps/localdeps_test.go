@@ -483,6 +483,11 @@ type fakeLogs struct {
 	entries  []logging.LogEntry
 	gotLevel string
 	gotLimit int
+	capacity int // 0 → localdeps falls back to logging.DefaultBufferCapacity
+}
+
+func (f *fakeLogs) Stats(bucket logging.Bucket) logging.BufferStats {
+	return logging.BufferStats{Bucket: bucket, Capacity: f.capacity}
 }
 
 func (f *fakeLogs) GetLogsMulti(_ logging.Bucket, groups, _ []string, level string, _ time.Time, limit, _ int) ([]logging.LogEntry, int) {
@@ -530,6 +535,53 @@ func messages(entries []mcpsrv.LogEntry) []string {
 		out = append(out, e.Message)
 	}
 	return out
+}
+
+// TestLocal_GetLogsMasksAndMapsDirectly — зеркало api.logEntryDTO: IP и
+// домены по умолчанию маскируются (текст уходит сторонней модели), raw
+// отдаёт как есть; repeats/lastSeen доходят до вывода, а не теряются;
+// при фильтре на стороне localdeps читается весь буфер по его ёмкости,
+// а не константа.
+func TestLocal_GetLogsMasksAndMapsDirectly(t *testing.T) {
+	ctx := context.Background()
+	last := time.Date(2026, 9, 4, 10, 0, 5, 0, time.UTC)
+	fl := &fakeLogs{capacity: 777, entries: []logging.LogEntry{{
+		Timestamp: time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC), Level: "warn", Group: "tunnel", Subgroup: "awg",
+		Action: "start", Target: "vpn.example.net:51820", Message: "handshake with 203.0.113.7 failed", Repeats: 3, LastSeen: &last,
+	}}}
+	l := New(Config{Logs: fl})
+
+	got, _, err := l.GetLogs(ctx, mcpsrv.LogsQuery{Bucket: "app", Lines: 10, Level: "warn"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fl.gotLimit != 777 {
+		t.Fatalf("client-side filter fetched %d entries, want the buffer capacity 777", fl.gotLimit)
+	}
+	if len(got) != 1 {
+		t.Fatalf("entries = %d, want 1", len(got))
+	}
+	e := got[0]
+	if strings.Contains(e.Message, "203.0.113.7") || strings.Contains(e.Target, "vpn.example.net") {
+		t.Fatalf("default output must mask hosts: target=%q message=%q", e.Target, e.Message)
+	}
+	if e.Repeats != 3 || e.LastSeen != "2026-09-04T10:00:05Z" {
+		t.Fatalf("repeats/lastSeen not carried: %+v", e)
+	}
+	if e.Timestamp != "2026-09-04T10:00:00Z" || e.Group != "tunnel" || e.Subgroup != "awg" || e.Action != "start" || e.Level != "warn" {
+		t.Fatalf("field mapping differs from the REST DTO: %+v", e)
+	}
+
+	raw, _, err := l.GetLogs(ctx, mcpsrv.LogsQuery{Bucket: "app", Lines: 10, Raw: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw[0].Message != "handshake with 203.0.113.7 failed" || raw[0].Target != "vpn.example.net:51820" {
+		t.Fatalf("raw=true must not mask: %+v", raw[0])
+	}
+	if fl.gotLimit != 10 {
+		t.Fatalf("without a client-side filter the buffer should page by Lines, fetched %d", fl.gotLimit)
+	}
 }
 
 // TestLocal_GetLogsOldestFirstAndKeepsNewest — GetLogsMulti отдаёт записи

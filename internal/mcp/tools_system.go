@@ -35,8 +35,9 @@ func registerSystemTools(s *mcp.Server, d Deps) {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "get_logs",
-		Description: "Read recent awg-manager (bucket=app) or sing-box (bucket=singbox) log entries, newest last. Filter by group, minimum level and message substring. At most 500 lines.",
+		Name: "get_logs",
+		Description: "Read recent awg-manager (bucket=app) or sing-box (bucket=singbox) log entries, newest last. Filter by group, minimum level and message substring. At most 500 lines. " +
+			"IPs and domains in messages are partially masked unless raw=true; repeats>1 marks a line the buffer collapsed.",
 		Annotations: readOnly("Logs"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, q LogsQuery) (*mcp.CallToolResult, logsOut, error) {
 		if q.Lines <= 0 {
