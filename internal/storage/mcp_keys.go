@@ -123,6 +123,12 @@ func (s *McpKeyStore) Load() error {
 	data, err := os.ReadFile(s.path())
 	if err != nil {
 		if os.IsNotExist(err) {
+			// No main file but a backup: the rewrite after a quarantine did
+			// not land (ENOSPC, power loss). Starting empty and writable
+			// here would let the next Create overwrite the only good copy.
+			if _, bakErr := os.Stat(s.backupPath()); bakErr == nil {
+				return s.restoreLocked(errors.New("main file missing"))
+			}
 			s.keys, s.loadErr = nil, nil
 			return nil
 		}
@@ -149,22 +155,26 @@ func (s *McpKeyStore) Load() error {
 		// makes. Without this every issued key would be gone while a good
 		// copy sat next to the file.
 		QuarantineCorrupt(s.path(), err)
-		keys, restored := s.restoreFromBackup(err)
-		s.keys, s.loadErr = keys, nil
-		if !restored {
-			return nil
-		}
-		// The main file is gone (renamed to .corrupt); write the restored
-		// list back now, or the next boot would start empty again. A failed
-		// write leaves the store read-only with the restored keys still
-		// honoured by Verify — the safe side.
-		if err := s.saveLocked(); err != nil {
-			s.loadErr = err
-			return err
-		}
-		return nil
+		return s.restoreLocked(err)
 	}
 	s.keys, s.loadErr = f.Keys, nil
+	return nil
+}
+
+// restoreLocked replaces the (absent or quarantined) main file with the
+// backup. A failed rewrite leaves the store read-only with the restored
+// keys still honoured by Verify — the safe side; the next boot lands in
+// the missing-main branch above and tries again.
+func (s *McpKeyStore) restoreLocked(cause error) error {
+	keys, restored := s.restoreFromBackup(cause)
+	s.keys, s.loadErr = keys, nil
+	if !restored {
+		return nil
+	}
+	if err := s.saveLocked(); err != nil {
+		s.loadErr = err
+		return err
+	}
 	return nil
 }
 
@@ -185,8 +195,7 @@ func decodeMcpKeysFile(data []byte) (mcpKeysFileV1, error) {
 // for parseErr. It reports the outcome to the app journal either way: the
 // user must know whether their keys survived.
 func (s *McpKeyStore) restoreFromBackup(parseErr error) ([]McpKey, bool) {
-	bak := s.path() + ".bak"
-	data, err := os.ReadFile(bak)
+	data, err := os.ReadFile(s.backupPath())
 	if err != nil {
 		recordNotice("quarantine", mcpKeysFile, fmt.Sprintf(
 			"Файл %s повреждён (%v), резервной копии нет: все ключи MCP потеряны, создайте их заново.", mcpKeysFile, parseErr))
@@ -199,7 +208,7 @@ func (s *McpKeyStore) restoreFromBackup(parseErr error) ([]McpKey, bool) {
 		return nil, false
 	}
 	recordNotice("backup-restore", mcpKeysFile, fmt.Sprintf(
-		"Файл %s был повреждён (%v) и ВОССТАНОВЛЕН из резервной копии (%d ключей). Ключ, созданный последним, мог не сохраниться.", mcpKeysFile, parseErr, len(f.Keys)))
+		"Файл %s был повреждён (%v) и ВОССТАНОВЛЕН из резервной копии (%d ключей).", mcpKeysFile, parseErr, len(f.Keys)))
 	return f.Keys, true
 }
 
@@ -235,31 +244,46 @@ func validateKeyName(name string) (string, error) {
 	return name, nil
 }
 
-// persist writes snapshot to disk, taking fileMu itself.
+// persist writes snapshot to disk, taking fileMu itself. Used by the
+// membership mutations (Create/Revoke), so the backup is refreshed too.
 func (s *McpKeyStore) persist(snapshot []McpKey) error {
 	s.fileMu.Lock()
 	defer s.fileMu.Unlock()
-	return s.persistFileLocked(snapshot)
+	return s.persistFileLocked(snapshot, true)
 }
 
 // persistFileLocked writes snapshot to disk. The caller must already hold
 // fileMu — that lock is what keeps a write ordered against the snapshot it
 // came from, so it may not be acquired here.
-func (s *McpKeyStore) persistFileLocked(snapshot []McpKey) error {
+//
+// withBackup also writes the same bytes to .bak as a SEPARATE file (not a
+// hardlink: a corrupted inode would take both copies with it). The backup
+// is therefore the current membership, not the previous one — restoring
+// it after a torn main file can never bring back a key the admin already
+// revoked. It is refreshed only on Create/Revoke: Touch changes nothing
+// but LastUsedAt, and doubling the hourly flash write for that would be
+// waste.
+func (s *McpKeyStore) persistFileLocked(snapshot []McpKey, withBackup bool) error {
 	data, err := json.MarshalIndent(mcpKeysFileV1{Version: mcpKeysFileVersion, Keys: snapshot}, "", "  ")
 	if err != nil {
 		return err
 	}
-	// Keep the previous good file as .bak (hardlink: no data copy, the old
-	// inode survives the rename below) — the same cheap insurance
-	// settings.json takes against a bad flash write.
-	if _, statErr := os.Stat(s.path()); statErr == nil {
-		bak := s.path() + ".bak"
-		_ = os.Remove(bak)
-		_ = os.Link(s.path(), bak)
+	if err := AtomicWritePerm(s.path(), data, 0o600); err != nil {
+		return err
 	}
-	return AtomicWritePerm(s.path(), data, 0o600)
+	if !withBackup {
+		return nil
+	}
+	// The main file is already safe; a failed backup write must not turn a
+	// successful Create/Revoke into an error the handler reports as 500.
+	if err := AtomicWritePerm(s.backupPath(), data, 0o600); err != nil {
+		recordNotice("write-failed", mcpKeysFile+".bak", fmt.Sprintf(
+			"Не удалось записать резервную копию %s (%v): после сбоя основного файла ключи восстановить будет неоткуда.", mcpKeysFile, err))
+	}
+	return nil
 }
+
+func (s *McpKeyStore) backupPath() string { return s.path() + ".bak" }
 
 func (s *McpKeyStore) saveLocked() error {
 	if err := s.writableLocked(); err != nil {
@@ -426,7 +450,7 @@ func (s *McpKeyStore) Touch(id string) {
 	// already decided in memory — but it must not vanish either. A USB
 	// stick that went read-only shows up here first, and the throttle
 	// above keeps this to one notice per key per mcpTouchInterval.
-	if err := s.persistFileLocked(snapshot); err != nil {
+	if err := s.persistFileLocked(snapshot, false); err != nil {
 		recordNotice("write-failed", mcpKeysFile, fmt.Sprintf(
 			"Не удалось записать %s (%v): время последнего использования ключей не сохраняется; создание и отзыв ключей, скорее всего, тоже не сработают.", mcpKeysFile, err))
 	}

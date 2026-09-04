@@ -276,8 +276,9 @@ func TestMcpKeyStore_CorruptFileRestoresFromBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := seed.Create("phone"); err != nil {
-		t.Fatal(err) // second save: .bak now holds the one-key file
+	phone, phonePlain, err := seed.Create("phone")
+	if err != nil {
+		t.Fatal(err)
 	}
 	path := filepath.Join(dataDir, mcpKeysFile)
 	if err := os.WriteFile(path, []byte(`{"version":1,"keys":[{"id":"x"`), 0o600); err != nil {
@@ -291,8 +292,11 @@ func TestMcpKeyStore_CorruptFileRestoresFromBackup(t *testing.T) {
 	if _, ok := s.Verify(firstPlain); !ok {
 		t.Fatal("key from the backup is not honoured after restore")
 	}
-	if got := s.List(); len(got) != 1 || got[0].ID != first.ID {
-		t.Fatalf("restored list = %+v, want just %q", got, first.ID)
+	if _, ok := s.Verify(phonePlain); !ok {
+		t.Fatal("the backup is the current membership: the second key must survive too")
+	}
+	if got := s.List(); len(got) != 2 || got[0].ID != first.ID || got[1].ID != phone.ID {
+		t.Fatalf("restored list = %+v, want both keys in creation order", got)
 	}
 	if _, err := os.Stat(path + ".corrupt"); err != nil {
 		t.Fatal("corrupt file was not quarantined")
@@ -454,37 +458,101 @@ func TestMcpKeyStore_UnreadableFileMakesStoreReadOnly(t *testing.T) {
 	}
 }
 
-// TestMcpKeyStore_SaveKeepsBackup — перед каждой перезаписью рядом остаётся
-// .bak с прежним содержимым: дешёвая страховка на флеше роутера.
-func TestMcpKeyStore_SaveKeepsBackup(t *testing.T) {
+// TestMcpKeyStore_BackupIsTheCurrentMembership — .bak после Create/Revoke
+// равен основному файлу (отдельный inode, не hardlink): восстановление
+// не может вернуть отозванный ключ. Touch копию не трогает.
+func TestMcpKeyStore_BackupIsTheCurrentMembership(t *testing.T) {
 	dataDir := t.TempDir()
-	s := NewMcpKeyStore(dataDir)
-	if err := s.Load(); err != nil {
-		t.Fatal(err)
-	}
+	s := newKeyStoreIn(t, dataDir)
+	path := filepath.Join(dataDir, mcpKeysFile)
+	bak := path + ".bak"
+
 	if _, _, err := s.Create("first"); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dataDir, "mcp_keys.json")
-	afterFirst, err := os.ReadFile(path)
+	second, _, err := s.Create("second")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(path + ".bak"); !os.IsNotExist(err) {
-		t.Fatalf("no .bak expected before the second write: %v", err)
-	}
-	if _, _, err := s.Create("second"); err != nil {
+	if err := s.Revoke(second.ID); err != nil {
 		t.Fatal(err)
 	}
-	bak, err := os.ReadFile(path + ".bak")
+	main, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("no .bak after an overwrite: %v", err)
+		t.Fatal(err)
 	}
-	if string(bak) != string(afterFirst) {
-		t.Fatalf(".bak does not hold the previous contents:\nwant=%s\ngot=%s", afterFirst, bak)
+	got, err := os.ReadFile(bak)
+	if err != nil {
+		t.Fatalf("no .bak after a save: %v", err)
 	}
-	if !strings.Contains(string(bak), "first") || strings.Contains(string(bak), "second") {
-		t.Fatalf(".bak = %s", bak)
+	if string(got) != string(main) || strings.Contains(string(got), "second") {
+		t.Fatalf(".bak must equal the file after the revoke:\nmain=%s\nbak=%s", main, got)
+	}
+	mi, _ := os.Stat(path)
+	bi, _ := os.Stat(bak)
+	if os.SameFile(mi, bi) {
+		t.Fatal(".bak is a hardlink: a corrupted inode would take both copies")
+	}
+
+	// Touch rewrites the main file only.
+	s.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	s.Touch(s.List()[0].ID)
+	afterTouch, _ := os.ReadFile(bak)
+	if string(afterTouch) != string(got) {
+		t.Fatal("Touch must not rewrite the backup")
+	}
+}
+
+// TestMcpKeyStore_RestoreDoesNotResurrectRevokedKey — сценарий утечки:
+// ключ отозван, затем основной файл порван; после восстановления из .bak
+// отозванный ключ обязан остаться отозванным.
+func TestMcpKeyStore_RestoreDoesNotResurrectRevokedKey(t *testing.T) {
+	dataDir := t.TempDir()
+	seed := newKeyStoreIn(t, dataDir)
+	_, keepPlain, err := seed.Create("keep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaked, leakedPlain, err := seed.Create("leaked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Revoke(leaked.ID); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dataDir, mcpKeysFile)
+	if err := os.WriteFile(path, []byte(`{"version":1,"keys":[{"id":"x"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := newKeyStoreIn(t, dataDir)
+	if _, ok := s.Verify(leakedPlain); ok {
+		t.Fatal("restore brought a revoked key back")
+	}
+	if _, ok := s.Verify(keepPlain); !ok {
+		t.Fatal("restore lost the key that was never revoked")
+	}
+}
+
+// TestMcpKeyStore_MissingMainWithBackupRestores — перезапись после
+// карантина не долетела (ENOSPC, питание): основного файла нет, .bak есть.
+// Пустой и записываемый старт затёр бы единственную хорошую копию.
+func TestMcpKeyStore_MissingMainWithBackupRestores(t *testing.T) {
+	dataDir := t.TempDir()
+	seed := newKeyStoreIn(t, dataDir)
+	_, plain, err := seed.Create("laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dataDir, mcpKeysFile)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	s := newKeyStoreIn(t, dataDir)
+	if _, ok := s.Verify(plain); !ok {
+		t.Fatal("key from the backup is not honoured when the main file is missing")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("main file was not written back: %v", err)
 	}
 }
 
