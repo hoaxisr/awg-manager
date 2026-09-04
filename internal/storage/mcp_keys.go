@@ -24,9 +24,11 @@ const McpKeyPrefix = "awgm_"
 const (
 	mcpKeysFile      = "mcp_keys.json"
 	mcpKeyNameMaxLen = 64
-	// mcpTouchInterval bounds how often LastUsedAt is persisted per key —
-	// every tool call would otherwise rewrite flash.
-	mcpTouchInterval = time.Minute
+	// mcpTouchInterval bounds how often LastUsedAt is persisted per key.
+	// Every tool call would otherwise rewrite flash, and even once a minute
+	// is a full mcp_keys.json + .bak rewrite per active key — too much for
+	// a router's NAND for a field that only says "last seen around then".
+	mcpTouchInterval = time.Hour
 )
 
 // ErrMcpKeyNotFound is returned by Revoke for an unknown id.
@@ -48,13 +50,19 @@ type McpKey struct {
 	LastUsedAt time.Time `json:"lastUsedAt,omitzero"`
 }
 
+const mcpKeysFileVersion = 1
+
 type mcpKeysFileV1 struct {
-	// Version is reserved for a future on-disk format change. It is
-	// written on every save but intentionally not validated on read
-	// today — there is only one format so far.
+	// Version is the on-disk format. 0 (absent) and 1 are the current
+	// format; anything newer is refused on read — see Load.
 	Version int      `json:"version"`
 	Keys    []McpKey `json:"keys"`
 }
+
+// ErrMcpKeysFileVersion is the loadErr set when the file was written by a
+// newer build. It is not corruption, so the file is neither quarantined nor
+// overwritten: the store goes read-only until the binary is upgraded.
+var ErrMcpKeysFileVersion = errors.New("mcp keys file written by a newer version")
 
 // ErrMcpKeyStoreReadOnly is wrapped into every write error raised while the
 // store is in read-only mode after a failed Load. See McpKeyStore.loadErr.
@@ -121,6 +129,15 @@ func (s *McpKeyStore) Load() error {
 		s.keys, s.loadErr = nil, nil
 		return nil
 	}
+	if f.Version > mcpKeysFileVersion {
+		// A downgrade after a format change: the keys may not decode
+		// faithfully, and saving them back would destroy fields the newer
+		// format relies on. Same read-only treatment as an unreadable file
+		// — Verify fails closed, every write is refused.
+		err := fmt.Errorf("%w: file version %d, this build reads %d", ErrMcpKeysFileVersion, f.Version, mcpKeysFileVersion)
+		s.keys, s.loadErr = nil, err
+		return err
+	}
 	s.keys, s.loadErr = f.Keys, nil
 	return nil
 }
@@ -144,7 +161,7 @@ func (s *McpKeyStore) persist(snapshot []McpKey) error {
 // fileMu — that lock is what keeps a write ordered against the snapshot it
 // came from, so it may not be acquired here.
 func (s *McpKeyStore) persistFileLocked(snapshot []McpKey) error {
-	data, err := json.MarshalIndent(mcpKeysFileV1{Version: 1, Keys: snapshot}, "", "  ")
+	data, err := json.MarshalIndent(mcpKeysFileV1{Version: mcpKeysFileVersion, Keys: snapshot}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -270,6 +287,8 @@ func (s *McpKeyStore) Verify(plaintext string) (McpKey, bool) {
 }
 
 // Touch records use of a key, persisting at most once per mcpTouchInterval.
+// LastUsedAt is therefore coarse on purpose: it answers "is this key still
+// in use", not "when was the last call".
 //
 // The timestamp is applied and the key list snapshotted under the write
 // lock; the fsync'd rewrite then runs WITHOUT it. Holding mu across the

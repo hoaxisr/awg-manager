@@ -225,15 +225,49 @@ func TestMcpKeyStore_TouchThrottled(t *testing.T) {
 	if !first.Equal(now) {
 		t.Fatalf("LastUsedAt = %v, want %v", first, now)
 	}
-	now = now.Add(30 * time.Second)
+	now = now.Add(30 * time.Minute)
 	s.Touch(key.ID)
 	if !s.List()[0].LastUsedAt.Equal(first) {
-		t.Fatal("Touch within a minute rewrote LastUsedAt")
+		t.Fatal("Touch within an hour rewrote LastUsedAt")
 	}
-	now = now.Add(31 * time.Second)
+	now = now.Add(31 * time.Minute)
 	s.Touch(key.ID)
 	if !s.List()[0].LastUsedAt.Equal(now) {
-		t.Fatal("Touch after a minute did not update LastUsedAt")
+		t.Fatal("Touch after an hour did not update LastUsedAt")
+	}
+}
+
+// TestMcpKeyStore_NewerFileVersionIsReadOnly — файл от более новой сборки
+// не порча (карантин не нужен) и не пустота: ключи могут декодироваться
+// неполно, а обратная запись стёрла бы поля нового формата. Хранилище
+// уходит в read-only, файл остаётся как был.
+func TestMcpKeyStore_NewerFileVersionIsReadOnly(t *testing.T) {
+	dataDir := t.TempDir()
+	raw := []byte(`{"version":2,"keys":[{"id":"abc","name":"laptop","hash":"00","createdAt":"2026-09-01T00:00:00Z"}]}`)
+	if err := os.WriteFile(filepath.Join(dataDir, mcpKeysFile), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewMcpKeyStore(dataDir)
+	err := s.Load()
+	if !errors.Is(err, ErrMcpKeysFileVersion) {
+		t.Fatalf("Load = %v, want ErrMcpKeysFileVersion", err)
+	}
+	if _, _, err := s.Create("x"); !errors.Is(err, ErrMcpKeyStoreReadOnly) {
+		t.Fatalf("Create = %v, want ErrMcpKeyStoreReadOnly", err)
+	}
+	if err := s.Revoke("abc"); !errors.Is(err, ErrMcpKeyStoreReadOnly) {
+		t.Fatalf("Revoke = %v, want ErrMcpKeyStoreReadOnly", err)
+	}
+	s.Touch("abc")
+	got, err := os.ReadFile(filepath.Join(dataDir, mcpKeysFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(raw) {
+		t.Fatalf("file rewritten by a build that cannot read it:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, mcpKeysFile+".corrupt")); err == nil {
+		t.Fatal("a newer-format file must not be quarantined as corrupt")
 	}
 }
 
