@@ -1081,6 +1081,10 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.bus != nil {
 		bus = s.bus
 	}
+	var pingSnapshot func()
+	if h.pingCheckHandler != nil {
+		pingSnapshot = h.pingCheckHandler.PublishSnapshot
+	}
 
 	local := localdeps.New(localdeps.Config{
 		Version:        s.config.Version,
@@ -1103,6 +1107,9 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 		Singbox:        singboxOp,
 		SystemInfo:     h.systemHandler.InfoData,
 		Bus:            bus,
+
+		PingCheckSnapshot: pingSnapshot,
+		Log:               mcpLog,
 	})
 	mcpServer := mcp.NewServer(local, s.config.Version)
 	// Один info-лог на вызов инструмента: имя инструмента + имя ключа
@@ -1157,9 +1164,17 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// path must answer an honest JSON 404 instead of falling through to the
 	// catch-all SPA, which would hand a client 200 text/html and no way to
 	// tell that the document is not the metadata it asked for.
+	//
+	// With MCP switched off the body is the same anonymous "not found" the
+	// /mcp mount returns: the hint about bearer keys would otherwise reveal
+	// that an MCP endpoint exists on a router whose owner turned it off.
 	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
+		if !s.settings.IsMcpEnabled() {
+			_, _ = w.Write([]byte(`{"error":true,"message":"not found","code":"NOT_FOUND"}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"error":true,"message":"OAuth is not supported; use a bearer MCP key","code":"NOT_FOUND"}`))
 	})
 

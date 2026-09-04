@@ -632,7 +632,7 @@ func (f *lifecycleTunnels) Import(_ context.Context, cfg, name, _ string, _ serv
 func newLifecycle(t *testing.T, state tunnel.State) (*Local, *lifecycleTunnels, *storage.AWGTunnelStore) {
 	t.Helper()
 	l, _, _, _ := newLocal(t)
-	ft := &lifecycleTunnels{state: state}
+	ft := &lifecycleTunnels{state: state, fakeTunnels: fakeTunnels{enabled: map[string]bool{}, defRoute: map[string]bool{}}}
 	cfg := l.c
 	cfg.Tunnels = ft
 	return New(cfg), ft, l.c.TunnelStore
@@ -736,6 +736,46 @@ func TestLocal_ImportTunnelWritesPingCheckDefaults(t *testing.T) {
 	if pc.Enabled || pc.Method != "icmp" || pc.Target != "8.8.8.8" || pc.Interval != 45 ||
 		pc.DeadInterval != 120 || pc.FailThreshold != 3 || pc.MinSuccess != 1 || pc.Timeout != 5 || !pc.Restart {
 		t.Fatalf("defaults differ from the REST import handler: %+v", pc)
+	}
+}
+
+// TestLocal_TunnelListChangesRefreshPingCheckSnapshot — зеркало
+// api.TunnelsHandler.publishTunnelList: после create_tunnel /
+// replace_tunnel_config / enable снимок мониторинга перепубликуется, иначе
+// созданный через MCP туннель не виден на странице мониторинга до
+// постороннего обновления. Start/stop идут через оркестратор и снимок не
+// трогают — как и в REST.
+func TestLocal_TunnelListChangesRefreshPingCheckSnapshot(t *testing.T) {
+	ctx := context.Background()
+	l, _, _ := newLifecycle(t, tunnel.StateStopped)
+	cfg := l.c
+	snapshots := 0
+	cfg.PingCheckSnapshot = func() { snapshots++ }
+	l = New(cfg)
+
+	if _, err := l.ImportTunnel(ctx, "New", "[Interface]\n[Peer]\n"); err != nil {
+		t.Fatal(err)
+	}
+	if snapshots != 1 {
+		t.Fatalf("after import: snapshots = %d, want 1", snapshots)
+	}
+	if _, err := l.ReplaceTunnelConfig(ctx, "tn-1", "[Interface]\n[Peer]\n", ""); err != nil {
+		t.Fatal(err)
+	}
+	if snapshots != 2 {
+		t.Fatalf("after replace: snapshots = %d, want 2", snapshots)
+	}
+	if err := l.ControlTunnel(ctx, "tn-1", mcpsrv.ActionEnable); err != nil {
+		t.Fatal(err)
+	}
+	if snapshots != 3 {
+		t.Fatalf("after enable: snapshots = %d, want 3", snapshots)
+	}
+	if err := l.ControlTunnel(ctx, "tn-1", mcpsrv.ActionStart); err != nil {
+		t.Fatal(err)
+	}
+	if snapshots != 3 {
+		t.Fatalf("start must leave the snapshot to the orchestrator: snapshots = %d", snapshots)
 	}
 }
 

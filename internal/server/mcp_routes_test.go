@@ -177,4 +177,30 @@ func TestOAuthProtectedResourceMetadataIs404(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "NOT_FOUND") {
 		t.Fatalf("body = %q", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), "bearer MCP key") {
+		t.Fatalf("with MCP enabled the 404 should say why OAuth is absent: %q", rec.Body.String())
+	}
+}
+
+// TestOAuthProtectedResourceMetadataHidesHintWhenMcpDisabled — при
+// выключенном MCP ответ неотличим от 404 самого /mcp: подсказка про
+// bearer-ключ выдала бы, что на роутере есть выключенный MCP-эндпоинт.
+func TestOAuthProtectedResourceMetadataHidesHintWhenMcpDisabled(t *testing.T) {
+	mux := http.NewServeMux()
+	s, _ := newMcpServer(t, false)
+	s.registerMcpRoutes(mux, mcpRouteHandlers())
+
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("code = %d, want 404", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "OAuth") || strings.Contains(body, "MCP") {
+		t.Fatalf("404 with MCP disabled leaks the endpoint: %q", body)
+	}
+	if !strings.Contains(body, `"message":"not found"`) {
+		t.Fatalf("body = %q, want the anonymous not-found", body)
+	}
 }

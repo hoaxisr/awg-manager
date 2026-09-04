@@ -268,17 +268,7 @@ func (h *TunnelsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Дефолты пингчека — ДО вызова: запись сохраняет сервис, и всё, что
 	// должно попасть на диск, обязано быть проставлено раньше.
 	if req.PingCheck == nil && h.pingCheck != nil {
-		req.PingCheck = &storage.TunnelPingCheck{
-			Enabled:       false,
-			Method:        "icmp",
-			Target:        "8.8.8.8",
-			Interval:      45,
-			DeadInterval:  120,
-			FailThreshold: 3,
-			MinSuccess:    1,
-			Timeout:       5,
-			Restart:       true,
-		}
+		req.PingCheck = storage.DefaultTunnelPingCheck()
 	}
 
 	// Ресурс в NDMS, запись и конфиг создаёт сервис одной операцией — вместе

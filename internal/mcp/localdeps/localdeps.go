@@ -80,6 +80,14 @@ type Config struct {
 	Singbox      SingboxOperator
 	SystemInfo   func() map[string]interface{}
 	Bus          Publisher
+	// PingCheckSnapshot rebroadcasts the monitoring snapshot after the
+	// tunnel list changes (api.TunnelsHandler.SetPingCheckSnapshot). Without
+	// it a tunnel created through MCP is invisible to the monitoring page
+	// until something else triggers a refresh.
+	PingCheckSnapshot func()
+	// Log receives warnings that must not fail the call (a lost post-import
+	// default, for instance). Nil is a no-op.
+	Log *logging.ScopedLogger
 }
 
 // Local is the production Deps.
@@ -105,12 +113,16 @@ func (l *Local) publish(res events.Resource, reason string) {
 
 // publishTunnelList mirrors api.TunnelsHandler.publishTunnelList: any
 // change to the managed-tunnel list or to a tunnel's enabled/default-route
-// flags invalidates both the tunnel snapshot and the routing catalog.
-// Start/stop/restart go through the orchestrator, which publishes these
-// itself — do not call this for them.
+// flags invalidates both the tunnel snapshot and the routing catalog, and
+// refreshes the pingcheck snapshot so monitoring sees the new/changed
+// tunnel. Start/stop/restart go through the orchestrator, which publishes
+// these itself — do not call this for them.
 func (l *Local) publishTunnelList(reason string) {
 	l.publish(events.ResourceTunnels, reason)
 	l.publish(events.ResourceRoutingTunnels, reason)
+	if l.c.PingCheckSnapshot != nil {
+		l.c.PingCheckSnapshot()
+	}
 }
 
 // ---- system ---------------------------------------------------------------
@@ -353,25 +365,19 @@ func (l *Local) ImportTunnel(ctx context.Context, name, cfg string) (mcpsrv.Tunn
 	// tunnel would carry no PingCheck record at all and monitoring would
 	// treat it differently from a tunnel imported through the web UI. As
 	// there, a failed write does NOT undo the import: the tunnel exists, and
-	// a missing default reads as "the user never enabled it".
+	// a missing default reads as "the user never enabled it" — but it is
+	// logged, not swallowed, exactly as the web import path does.
 	if l.c.PingCheck != nil && l.c.TunnelStore != nil {
-		_ = l.c.TunnelStore.Update(t.ID, func(stored *storage.AWGTunnel) error {
+		err := l.c.TunnelStore.Update(t.ID, func(stored *storage.AWGTunnel) error {
 			if stored.PingCheck != nil {
 				return storage.ErrNoChange
 			}
-			stored.PingCheck = &storage.TunnelPingCheck{
-				Enabled:       false,
-				Method:        "icmp",
-				Target:        "8.8.8.8",
-				Interval:      45,
-				DeadInterval:  120,
-				FailThreshold: 3,
-				MinSuccess:    1,
-				Timeout:       5,
-				Restart:       true,
-			}
+			stored.PingCheck = storage.DefaultTunnelPingCheck()
 			return nil
 		})
+		if err != nil {
+			l.c.Log.Warn("import", t.Name, "persist post-import defaults: "+err.Error())
+		}
 	}
 	l.publishTunnelList("mcp-import")
 	return summary(*t, l.endpointOf(t.ID)), nil

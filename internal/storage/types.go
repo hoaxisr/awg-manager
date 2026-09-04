@@ -515,6 +515,25 @@ type TunnelPingCheck struct {
 	Restart       bool   `json:"restart"`        // restart tunnel on dead (nativewg)
 }
 
+// DefaultTunnelPingCheck returns the PingCheck record every freshly created
+// or imported tunnel starts with: monitoring is opt-in (Enabled=false), but
+// the record exists so the UI and the MCP tools see the same shape for a
+// tunnel regardless of how it was added. Single source for the web create
+// path, the web import path and the MCP import path.
+func DefaultTunnelPingCheck() *TunnelPingCheck {
+	return &TunnelPingCheck{
+		Enabled:       false,
+		Method:        "icmp",
+		Target:        "8.8.8.8",
+		Interval:      45,
+		DeadInterval:  120,
+		FailThreshold: 3,
+		MinSuccess:    1,
+		Timeout:       5,
+		Restart:       true,
+	}
+}
+
 // AWGObfuscation groups all AmneziaWG obfuscation parameters into a
 // dedicated value type. Comparable via `==`, which lets diff helpers
 // stay future-proof: when a new obfuscation field appears, every
