@@ -233,3 +233,41 @@ func TestEnumerate_DedupBySystemAlsoManaged(t *testing.T) {
 		t.Errorf("expected managed entry to win dedup, got %+v", got[0])
 	}
 }
+
+// DNS туннеля доезжает до записи готовым IP: берётся первый пригодный
+// адрес списка, не-IP и пустой список дают "" (подставится fallback).
+func TestEnumerate_ResolverFromTunnelDNS(t *testing.T) {
+	root := makeIfacePresent(t, "t2s0", "t2s1", "t2s2", "t2s3")
+	s := &ServiceImpl{
+		deps: Deps{
+			AWGTunnels: &fakeAWGStore{tunnels: []AWGTunnelInfo{
+				{ID: "tunA", BackendIface: "t2s0", DNS: "10.8.0.1, 1.0.0.1"},
+				{ID: "tunB", BackendIface: "t2s1", DNS: ""},
+				{ID: "tunC", BackendIface: "t2s2", DNS: "dns.example.com"},
+				{ID: "tunD", BackendIface: "t2s3", DNS: "example.com, 9.9.9.9"},
+			}},
+			SystemTunnels: &fakeSystemStore{tunnels: []SystemTunnelInfo{
+				{ID: "Wireguard0", InterfaceName: "nwg0"},
+			}},
+		},
+		sysClassNet: root,
+	}
+	got, err := s.enumerate(context.Background())
+	if err != nil {
+		t.Fatalf("enumerate: %v", err)
+	}
+	want := map[string]string{
+		"awg-tunA": "10.8.0.1",
+		"awg-tunB": "",
+		"awg-tunC": "",
+		"awg-tunD": "9.9.9.9",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("want %d entries, got %d (%+v)", len(want), len(got), got)
+	}
+	for _, e := range got {
+		if e.Resolver != want[e.Tag] {
+			t.Errorf("%s: Resolver = %q, want %q", e.Tag, e.Resolver, want[e.Tag])
+		}
+	}
+}
