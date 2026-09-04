@@ -396,6 +396,17 @@ func (s *McpKeyStore) Verify(plaintext string) (McpKey, bool) {
 	return *found, true
 }
 
+// touchDueLocked reports whether id exists and its LastUsedAt is older
+// than mcpTouchInterval. Caller holds mu (either mode).
+func (s *McpKeyStore) touchDueLocked(id string, now time.Time) bool {
+	for i := range s.keys {
+		if s.keys[i].ID == id {
+			return s.keys[i].LastUsedAt.IsZero() || now.Sub(s.keys[i].LastUsedAt) >= mcpTouchInterval
+		}
+	}
+	return false
+}
+
 // Touch records use of a key, persisting at most once per mcpTouchInterval.
 // LastUsedAt is therefore coarse on purpose: it answers "is this key still
 // in use", not "when was the last call".
@@ -417,29 +428,29 @@ func (s *McpKeyStore) Verify(plaintext string) (McpKey, bool) {
 // takes mu.RLock only and is untouched throughout.
 func (s *McpKeyStore) Touch(id string) {
 	now := s.now().UTC()
+	// Fast path under the read lock: all but one request per key per hour
+	// end here, and taking the write lock for them would serialise every
+	// concurrent Verify behind each other's Touch for nothing.
+	s.mu.RLock()
+	due := s.writableLocked() == nil && s.touchDueLocked(id, now)
+	s.mu.RUnlock()
+	if !due {
+		return
+	}
 	s.mu.Lock()
-	if s.writableLocked() != nil {
-		// Read-only (failed or missing Load): persisting the in-memory list
-		// here would wipe the file just like Create would.
+	if s.writableLocked() != nil || !s.touchDueLocked(id, now) {
+		// Lost the race to another Touch of the same key, or the store
+		// went read-only in between. Nothing to do.
 		s.mu.Unlock()
 		return
 	}
 	var snapshot []McpKey
 	for i := range s.keys {
-		if s.keys[i].ID != id {
-			continue
+		if s.keys[i].ID == id {
+			s.keys[i].LastUsedAt = now
+			snapshot = append([]McpKey(nil), s.keys...)
+			break
 		}
-		if !s.keys[i].LastUsedAt.IsZero() && now.Sub(s.keys[i].LastUsedAt) < mcpTouchInterval {
-			s.mu.Unlock()
-			return
-		}
-		s.keys[i].LastUsedAt = now
-		snapshot = append([]McpKey(nil), s.keys...)
-		break
-	}
-	if snapshot == nil {
-		s.mu.Unlock()
-		return
 	}
 	hook := s.afterTouchUnlock // read under mu so -race sees no unguarded access
 	s.fileMu.Lock()            // ordering: taken while mu is still held (mu → fileMu)
