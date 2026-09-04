@@ -119,27 +119,80 @@ func (s *McpKeyStore) Load() error {
 			return nil
 		}
 		s.keys, s.loadErr = nil, err
+		recordNotice("read-only", mcpKeysFile, fmt.Sprintf(
+			"Файл %s не читается (%v): MCP не принимает ключи, а создание и отзыв ключей отключены, пока файл не станет доступен.", mcpKeysFile, err))
 		return err
 	}
-	var f mcpKeysFileV1
-	if err := json.Unmarshal(data, &f); err != nil {
-		// A corrupt file is quarantined and genuinely leaves no keys, so
-		// the store stays writable — unlike an unreadable one.
+	f, err := decodeMcpKeysFile(data)
+	if err != nil {
+		if errors.Is(err, ErrMcpKeysFileVersion) {
+			// A downgrade after a format change: the keys may not decode
+			// faithfully, and saving them back would destroy fields the
+			// newer format relies on. Same read-only treatment as an
+			// unreadable file — Verify fails closed, every write is refused.
+			s.keys, s.loadErr = nil, err
+			recordNotice("read-only", mcpKeysFile, fmt.Sprintf(
+				"Файл %s записан более новой версией awg-manager (%v): MCP не принимает ключи, создание и отзыв отключены до обновления.", mcpKeysFile, err))
+			return err
+		}
+		// A corrupt main file (typically a torn write after power loss) is
+		// quarantined, and the previous good copy that persistFileLocked
+		// keeps as .bak takes its place — the same recovery settings.json
+		// makes. Without this every issued key would be gone while a good
+		// copy sat next to the file.
 		QuarantineCorrupt(s.path(), err)
-		s.keys, s.loadErr = nil, nil
+		keys, restored := s.restoreFromBackup(err)
+		s.keys, s.loadErr = keys, nil
+		if !restored {
+			return nil
+		}
+		// The main file is gone (renamed to .corrupt); write the restored
+		// list back now, or the next boot would start empty again. A failed
+		// write leaves the store read-only with the restored keys still
+		// honoured by Verify — the safe side.
+		if err := s.saveLocked(); err != nil {
+			s.loadErr = err
+			return err
+		}
 		return nil
-	}
-	if f.Version > mcpKeysFileVersion {
-		// A downgrade after a format change: the keys may not decode
-		// faithfully, and saving them back would destroy fields the newer
-		// format relies on. Same read-only treatment as an unreadable file
-		// — Verify fails closed, every write is refused.
-		err := fmt.Errorf("%w: file version %d, this build reads %d", ErrMcpKeysFileVersion, f.Version, mcpKeysFileVersion)
-		s.keys, s.loadErr = nil, err
-		return err
 	}
 	s.keys, s.loadErr = f.Keys, nil
 	return nil
+}
+
+// decodeMcpKeysFile parses one on-disk file. A newer format is an error
+// wrapping ErrMcpKeysFileVersion so Load can tell it from corruption.
+func decodeMcpKeysFile(data []byte) (mcpKeysFileV1, error) {
+	var f mcpKeysFileV1
+	if err := json.Unmarshal(data, &f); err != nil {
+		return f, err
+	}
+	if f.Version > mcpKeysFileVersion {
+		return f, fmt.Errorf("%w: file version %d, this build reads %d", ErrMcpKeysFileVersion, f.Version, mcpKeysFileVersion)
+	}
+	return f, nil
+}
+
+// restoreFromBackup reads <file>.bak after the main file was quarantined
+// for parseErr. It reports the outcome to the app journal either way: the
+// user must know whether their keys survived.
+func (s *McpKeyStore) restoreFromBackup(parseErr error) ([]McpKey, bool) {
+	bak := s.path() + ".bak"
+	data, err := os.ReadFile(bak)
+	if err != nil {
+		recordNotice("quarantine", mcpKeysFile, fmt.Sprintf(
+			"Файл %s повреждён (%v), резервной копии нет: все ключи MCP потеряны, создайте их заново.", mcpKeysFile, parseErr))
+		return nil, false
+	}
+	f, err := decodeMcpKeysFile(data)
+	if err != nil {
+		recordNotice("quarantine", mcpKeysFile, fmt.Sprintf(
+			"Файл %s повреждён (%v), резервная копия тоже не читается (%v): все ключи MCP потеряны, создайте их заново.", mcpKeysFile, parseErr, err))
+		return nil, false
+	}
+	recordNotice("backup-restore", mcpKeysFile, fmt.Sprintf(
+		"Файл %s был повреждён (%v) и ВОССТАНОВЛЕН из резервной копии (%d ключей). Ключ, созданный последним, мог не сохраниться.", mcpKeysFile, parseErr, len(f.Keys)))
+	return f.Keys, true
 }
 
 // writableLocked reports why a write must be refused, or nil.
@@ -338,5 +391,12 @@ func (s *McpKeyStore) Touch(id string) {
 	if hook != nil {
 		hook()
 	}
-	_ = s.persistFileLocked(snapshot) // best effort: a failed touch must not break the request
+	// Best effort: a failed touch must not break the request — auth is
+	// already decided in memory — but it must not vanish either. A USB
+	// stick that went read-only shows up here first, and the throttle
+	// above keeps this to one notice per key per mcpTouchInterval.
+	if err := s.persistFileLocked(snapshot); err != nil {
+		recordNotice("write-failed", mcpKeysFile, fmt.Sprintf(
+			"Не удалось записать %s (%v): время последнего использования ключей не сохраняется; создание и отзыв ключей, скорее всего, тоже не сработают.", mcpKeysFile, err))
+	}
 }

@@ -271,6 +271,74 @@ func TestMcpKeyStore_NewerFileVersionIsReadOnly(t *testing.T) {
 	}
 }
 
+// TestMcpKeyStore_CorruptFileRestoresFromBackup — оборванная запись после
+// отключения питания: основной файл в карантин, ключи берутся из .bak,
+// который persistFileLocked держит рядом, и тут же записываются обратно —
+// иначе следующая загрузка снова стартовала бы с пустого списка.
+func TestMcpKeyStore_CorruptFileRestoresFromBackup(t *testing.T) {
+	dataDir := t.TempDir()
+	seed := NewMcpKeyStore(dataDir)
+	if err := seed.Load(); err != nil {
+		t.Fatal(err)
+	}
+	first, firstPlain, err := seed.Create("laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := seed.Create("phone"); err != nil {
+		t.Fatal(err) // second save: .bak now holds the one-key file
+	}
+	path := filepath.Join(dataDir, mcpKeysFile)
+	if err := os.WriteFile(path, []byte(`{"version":1,"keys":[{"id":"x"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewMcpKeyStore(dataDir)
+	if err := s.Load(); err != nil {
+		t.Fatalf("Load after corruption = %v, want restore", err)
+	}
+	if _, ok := s.Verify(firstPlain); !ok {
+		t.Fatal("key from the backup is not honoured after restore")
+	}
+	if got := s.List(); len(got) != 1 || got[0].ID != first.ID {
+		t.Fatalf("restored list = %+v, want just %q", got, first.ID)
+	}
+	if _, err := os.Stat(path + ".corrupt"); err != nil {
+		t.Fatal("corrupt file was not quarantined")
+	}
+	// The restored list is on disk again: a second boot sees it.
+	again := NewMcpKeyStore(dataDir)
+	if err := again.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := again.Verify(firstPlain); !ok {
+		t.Fatal("restore was not persisted; next boot would start empty")
+	}
+	// And the store is writable — the on-disk state is known again.
+	if _, _, err := again.Create("tablet"); err != nil {
+		t.Fatalf("Create after restore = %v", err)
+	}
+}
+
+// Без .bak (первая запись ещё не сделала копию) порча честно даёт пустой
+// список — как раньше, но хранилище остаётся записываемым.
+func TestMcpKeyStore_CorruptFileWithoutBackupIsEmptyAndWritable(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDir, mcpKeysFile), []byte(`{`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewMcpKeyStore(dataDir)
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.List()) != 0 {
+		t.Fatal("expected no keys")
+	}
+	if _, _, err := s.Create("x"); err != nil {
+		t.Fatalf("Create = %v", err)
+	}
+}
+
 func TestMcpKeyStore_LoadMissingFileIsEmpty(t *testing.T) {
 	s := newKeyStore(t)
 	if len(s.List()) != 0 {
