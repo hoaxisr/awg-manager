@@ -8,6 +8,7 @@
 	import { Badge, Button, ConfirmModal, Modal, Toggle } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { copyToClipboard } from '$lib/utils/clipboard';
+	import { formatDate } from '$lib/utils/format';
 	import { notifications } from '$lib/stores/notifications';
 	import { Copy, Plug } from 'lucide-svelte';
 	import type { McpKey, McpKeyCreated } from '$lib/types';
@@ -103,10 +104,9 @@
 		}
 	}
 
-	function formatDate(iso?: string): string {
-		if (!iso) return '—';
-		const d = new Date(iso);
-		return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+	// lastUsedAt is absent until the key's first call; createdAt is always set.
+	function keyDate(iso?: string): string {
+		return iso ? formatDate(iso) : '—';
 	}
 
 	const claudeSnippet = $derived(
@@ -202,8 +202,8 @@
 								{#each keys as k (k.id)}
 									<tr>
 										<td>{k.name}</td>
-										<td>{formatDate(k.createdAt)}</td>
-										<td>{formatDate(k.lastUsedAt)}</td>
+										<td>{keyDate(k.createdAt)}</td>
+										<td>{keyDate(k.lastUsedAt)}</td>
 										<td class="text-right">
 											<Button variant="danger" size="sm" onclick={() => (revokeTarget = k)} disabled={saving}>Отозвать</Button>
 										</td>
@@ -282,24 +282,9 @@
 />
 
 <style>
-	/* .api-key-input is scoped per-component in Svelte — the visual treatment
-	   from the settings page (monospace, bordered, full-width) is repeated
-	   here rather than shared, since it's only otherwise defined in +page.svelte.
-	   Only the editable name input below uses this now — read-only values use
-	   .mcp-code-value instead, which deliberately looks nothing like a field. */
-	.api-key-input {
-		display: block;
-		width: 100%;
-		padding: 0.5rem 0.625rem;
-		font-family: var(--font-mono);
-		font-size: 0.8125rem;
-		line-height: 1.35;
-		word-break: break-all;
-		background: var(--color-settings-control-bg, var(--bg-secondary));
-		border: 1px solid var(--border, var(--color-border));
-		border-radius: var(--radius-sm, 6px);
-		color: var(--text-primary, var(--color-text-primary));
-	}
+	/* The name input uses the shared .api-key-input from app.css. Read-only
+	   values use .mcp-code-value instead, which deliberately looks nothing
+	   like a field. */
 
 	/* Read-only display for a value the user needs to copy manually (endpoint,
 	   one-time key): no border/field affordance, so it doesn't look editable,

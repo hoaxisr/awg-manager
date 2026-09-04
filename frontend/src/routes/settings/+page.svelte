@@ -1505,8 +1505,7 @@ $effect(() => {
 		min-width: 0;
 	}
 
-	.settings-text-input,
-	.api-key-input {
+	.settings-text-input {
 		width: 100%;
 		max-width: none;
 	}

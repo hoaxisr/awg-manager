@@ -734,6 +734,17 @@ label {
 	gap: var(--settings-gap);
 }
 
+/* Shared text field for API/MCP keys (settings page + MCP card): monospace,
+ * full width, wraps a long token. `input.` beats `.setting-row input` above. */
+input.api-key-input {
+	width: 100%;
+	max-width: none;
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 0.8125rem;
+	word-break: break-all;
+	background: var(--color-settings-control-bg, var(--bg-secondary));
+}
+
 /* Settings — controls on inset cards use highlight layer */
 .settings-layout .btn.variant-secondary {
 	background: var(--color-settings-control-bg);
