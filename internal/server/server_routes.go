@@ -1032,6 +1032,12 @@ func (s *Server) registerProxyRtRoutes(mux *http.ServeMux, h *routeHandlers) {
 	}
 }
 
+// mcpToolTimeout — потолок одного вызова инструмента. Самые долгие —
+// test_connectivity (HTTP-проба через туннель) и запуск/остановка
+// туннеля через оркестратор; обоим хватает с запасом, а хост MCP всё
+// равно сдаётся раньше.
+const mcpToolTimeout = 60 * time.Second
+
 // registerMcpRoutes монтирует MCP-эндпоинт /mcp (ключевая авторизация,
 // независимая от AuthEnabled) и управление ключами /api/mcp/keys*.
 //
@@ -1112,6 +1118,11 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 		Log:               mcpLog,
 	})
 	mcpServer := mcp.NewServer(local, s.config.Version)
+	// Каждый вызов инструмента ограничен по времени и отменяется при
+	// остановке демона (см. mcp.CallDeadline). Контекст создаётся здесь,
+	// а не в конструкторе Server: до регистрации маршрутов MCP нет.
+	s.mcpCalls, s.mcpCallsCancel = context.WithCancel(context.Background())
+	mcpServer.AddReceivingMiddleware(mcp.CallDeadline(mcpToolTimeout, s.mcpCalls))
 	// Один info-лог на вызов инструмента: имя инструмента + имя ключа
 	// (никогда сам ключ), длительность и исход — спека §8.
 	mcpServer.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {

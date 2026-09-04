@@ -135,7 +135,11 @@ type Server struct {
 	dnsCheckService            *dnscheck.Service
 	authMiddleware             *auth.Middleware
 	mcpKeys                    *storage.McpKeyStore
-	httpServer                 *http.Server
+	// mcpCalls is cancelled by Shutdown so in-flight MCP tool calls stop
+	// instead of holding httpServer.Shutdown for their full grace period.
+	mcpCalls       context.Context
+	mcpCallsCancel context.CancelFunc
+	httpServer     *http.Server
 
 	// listen владеет всеми HTTP-листенерами (по адресам из ListenSpec +
 	// безусловный loopback) и confirm-окном живой смены адреса. См. listen.go.
@@ -599,6 +603,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.exposureGuardStop != nil {
 		s.exposureGuardStop()
 		s.exposureGuardStop = nil
+	}
+
+	if s.mcpCallsCancel != nil {
+		s.mcpCallsCancel()
 	}
 
 	if s.pprofServer != nil {

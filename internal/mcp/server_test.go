@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -18,7 +19,13 @@ import (
 func newTestSession(t *testing.T) (*sdk.ClientSession, *mcptest.Fake) {
 	t.Helper()
 	fake := mcptest.New()
-	srv := mcpsrv.NewServer(fake, "test")
+	return connect(t, mcpsrv.NewServer(fake, "test")), fake
+}
+
+// connect mounts srv over the real Streamable HTTP transport and returns
+// a connected client session.
+func connect(t *testing.T, srv *sdk.Server) *sdk.ClientSession {
+	t.Helper()
 	ts := httptest.NewServer(mcpsrv.NewHTTPHandler(srv))
 	t.Cleanup(ts.Close)
 	client := sdk.NewClient(&sdk.Implementation{Name: "test-client", Version: "0"}, nil)
@@ -31,7 +38,7 @@ func newTestSession(t *testing.T) (*sdk.ClientSession, *mcptest.Fake) {
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(func() { _ = session.Close() })
-	return session, fake
+	return session
 }
 
 // callTool invokes a tool and decodes StructuredContent into a map.
@@ -145,5 +152,73 @@ func TestServer_OpenAPIResource(t *testing.T) {
 	}
 	if len(res.Contents) != 1 || res.Contents[0].Text != string(fake.Spec) || res.Contents[0].MIMEType != "application/yaml" {
 		t.Fatalf("contents = %+v", res.Contents)
+	}
+}
+
+// blockingCalls is a receiving middleware that makes every tools/call hang
+// until its context is done, standing in for a dependency that never
+// answers (a probe against a dead endpoint).
+func blockingCalls(next sdk.MethodHandler) sdk.MethodHandler {
+	return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
+		if method != "tools/call" {
+			return next(ctx, method, req)
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+}
+
+// TestCallDeadline_BoundsHangingTool — a tool whose dependency never
+// returns is cut off at the deadline instead of running until the
+// dependency gives up on its own.
+func TestCallDeadline_BoundsHangingTool(t *testing.T) {
+	srv := mcpsrv.NewServer(mcptest.New(), "test")
+	srv.AddReceivingMiddleware(mcpsrv.CallDeadline(100*time.Millisecond, context.Background()), blockingCalls)
+	s := connect(t, srv)
+
+	start := time.Now()
+	_, err := s.CallTool(context.Background(), &sdk.CallToolParams{Name: "list_tunnels"})
+	if err == nil {
+		t.Fatal("expected the deadline to surface as an error")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("call took %v; the deadline did not fire", elapsed)
+	}
+}
+
+// TestCallDeadline_ShutdownCancelsInFlightCalls — daemon shutdown must not
+// wait on tool calls nobody will read.
+func TestCallDeadline_ShutdownCancelsInFlightCalls(t *testing.T) {
+	shutdown, stop := context.WithCancel(context.Background())
+	srv := mcpsrv.NewServer(mcptest.New(), "test")
+	srv.AddReceivingMiddleware(mcpsrv.CallDeadline(time.Minute, shutdown), blockingCalls)
+	s := connect(t, srv)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.CallTool(context.Background(), &sdk.CallToolParams{Name: "list_tunnels"})
+		done <- err
+	}()
+	time.Sleep(50 * time.Millisecond) // let the call reach the blocker
+	stop()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("cancelled call must not report success")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not cancel the in-flight call")
+	}
+}
+
+// TestCallDeadline_LeavesOtherMethodsAlone — list/initialize traffic is
+// in-memory and carries no deadline; the blocker below would otherwise
+// hang tools/list too.
+func TestCallDeadline_LeavesOtherMethodsAlone(t *testing.T) {
+	srv := mcpsrv.NewServer(mcptest.New(), "test")
+	srv.AddReceivingMiddleware(mcpsrv.CallDeadline(100*time.Millisecond, context.Background()), blockingCalls)
+	s := connect(t, srv)
+	if _, err := s.ListTools(context.Background(), nil); err != nil {
+		t.Fatal(err)
 	}
 }
