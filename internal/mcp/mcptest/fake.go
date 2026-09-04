@@ -45,7 +45,7 @@ func New() *Fake {
 			"tn-1": "[Interface]\nPrivateKey = REDACTED\nAddress = 10.8.0.2/32\n\n[Peer]\nPublicKey = xyz=\nEndpoint = vpn.example.net:51820\nAllowedIPs = 0.0.0.0/0\n",
 			"tn-2": "[Interface]\nPrivateKey = REDACTED\nAddress = 10.9.0.2/32\n\n[Peer]\nPublicKey = abc=\nEndpoint = de.example.net:443\nAllowedIPs = 0.0.0.0/0\n",
 		},
-		DNSRoutes:    []mcpsrv.DNSRoute{{ID: "dl-1", Name: "Video", Enabled: true, Domains: []string{"youtube.com", "googlevideo.com"}, Routes: []mcpsrv.RouteTarget{{TunnelID: "tn-1"}}}},
+		DNSRoutes:    []mcpsrv.DNSRoute{{ID: "dl-1", Name: "Video", Enabled: true, Domains: []string{"youtube.com", "googlevideo.com"}, DomainCount: 2, ManualDomains: []string{"youtube.com", "googlevideo.com"}, Routes: []mcpsrv.RouteTarget{{TunnelID: "tn-1"}}}},
 		StaticRoutes: []mcpsrv.StaticRoute{{ID: "sr-1", Name: "Office", TunnelID: "tn-1", Subnets: []string{"10.20.0.0/16"}, Enabled: true}},
 		Policies:     []mcpsrv.AccessPolicy{{Name: "Policy0", Description: "Amsterdam only", Interfaces: []string{"Wireguard0"}, DeviceCount: 1, IsStandard: true}},
 		Devices: []mcpsrv.Device{
@@ -219,7 +219,7 @@ func (f *Fake) AddDNSRoute(_ context.Context, in mcpsrv.DNSRouteInput) (mcpsrv.D
 		return mcpsrv.DNSRoute{}, err
 	}
 	// Always enabled — same as dnsroute.Create; MCP has no enabled input.
-	r := mcpsrv.DNSRoute{ID: f.nextID("dl"), Name: in.Name, Enabled: true, Domains: in.Domains, Routes: []mcpsrv.RouteTarget{{TunnelID: in.TunnelID}}}
+	r := mcpsrv.DNSRoute{ID: f.nextID("dl"), Name: in.Name, Enabled: true, Domains: in.Domains, DomainCount: len(in.Domains), ManualDomains: in.Domains, Routes: []mcpsrv.RouteTarget{{TunnelID: in.TunnelID}}}
 	f.DNSRoutes = append(f.DNSRoutes, r)
 	return r, nil
 }

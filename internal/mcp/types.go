@@ -83,11 +83,22 @@ type RouteTarget struct {
 	Fallback  string `json:"fallback,omitempty"`
 }
 
+// MaxDomainsInOutput caps DNSRoute.Domains. A subscription-backed list
+// expands to tens of thousands of domains; shipping them all into a model
+// context on every list_dns_routes call is useless to the model and costs
+// the router several copies of the list per call. ManualDomains — the
+// user's own entries, and what add_dns_route needs to recreate a list —
+// is never capped.
+const MaxDomainsInOutput = 50
+
 type DNSRoute struct {
-	ID            string        `json:"id"`
-	Name          string        `json:"name"`
-	Enabled       bool          `json:"enabled"`
-	Domains       []string      `json:"domains"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+	// Domains is the expanded list (manual + subscriptions), truncated to
+	// MaxDomainsInOutput entries; DomainCount is the real size.
+	Domains       []string      `json:"domains" jsonschema:"expanded domains, at most the first 50; see domainCount for the full size"`
+	DomainCount   int           `json:"domainCount"`
 	ManualDomains []string      `json:"manualDomains,omitempty"`
 	Subnets       []string      `json:"subnets,omitempty"`
 	Routes        []RouteTarget `json:"routes"`

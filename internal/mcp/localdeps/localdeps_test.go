@@ -124,6 +124,10 @@ func (f *fakeDNSRoutes) Create(_ context.Context, l dnsroute.DomainList) (*dnsro
 	return &l, nil
 }
 
+func (f *fakeDNSRoutes) List(context.Context) ([]dnsroute.DomainList, error) {
+	return append([]dnsroute.DomainList(nil), f.lists...), nil
+}
+
 func (f *fakeDNSRoutes) Get(_ context.Context, id string) (*dnsroute.DomainList, error) {
 	for i := range f.lists {
 		if f.lists[i].ID == id {
@@ -330,6 +334,49 @@ func TestLocal_MutationsPublishInvalidation(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+}
+
+// TestLocal_ListDNSRoutesCapsExpandedDomains — список по подписке
+// разворачивается в десятки тысяч доменов; в вывод идут первые
+// MaxDomainsInOutput плюс честный domainCount, а ManualDomains (то, что
+// нужно add_dns_route для пересоздания) — целиком.
+func TestLocal_ListDNSRoutesCapsExpandedDomains(t *testing.T) {
+	h := newHarness(t)
+	big := make([]string, 0, 3*mcpsrv.MaxDomainsInOutput)
+	for i := range cap(big) {
+		big = append(big, fmt.Sprintf("d%d.example", i))
+	}
+	h.dns.lists = []dnsroute.DomainList{{
+		ID: "dl-big", Name: "Geo", Enabled: true, Domains: big, ManualDomains: []string{"my.example"},
+		Subnets: []string{"10.0.0.0/8"}, Backend: "ndms",
+		Routes:        []dnsroute.RouteTarget{{Interface: "nwg0", TunnelID: "tn-1", Fallback: "bypass"}},
+		Subscriptions: []dnsroute.Subscription{{URL: "https://example.invalid/list"}},
+	}}
+	got, err := h.l.ListDNSRoutes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("routes = %d", len(got))
+	}
+	r := got[0]
+	if len(r.Domains) != mcpsrv.MaxDomainsInOutput || r.DomainCount != len(big) {
+		t.Fatalf("domains=%d count=%d, want %d/%d", len(r.Domains), r.DomainCount, mcpsrv.MaxDomainsInOutput, len(big))
+	}
+	if r.Domains[0] != "d0.example" {
+		t.Fatalf("cap must keep the head of the list, got %q first", r.Domains[0])
+	}
+	if len(r.ManualDomains) != 1 || r.ManualDomains[0] != "my.example" {
+		t.Fatalf("manual domains must not be capped: %v", r.ManualDomains)
+	}
+	want := mcpsrv.RouteTarget{Interface: "nwg0", TunnelID: "tn-1", Fallback: "bypass"}
+	if r.ID != "dl-big" || r.Name != "Geo" || !r.Enabled || r.Backend != "ndms" || len(r.Subnets) != 1 || len(r.Routes) != 1 || r.Routes[0] != want {
+		t.Fatalf("field mapping: %+v", r)
+	}
+	// Truncating the output must not touch the service's slice.
+	if len(h.dns.lists[0].Domains) != len(big) {
+		t.Fatal("the source list was truncated")
+	}
 }
 
 // TestLocal_AddDNSRouteInputMapping — dnsroute.Create пересчитывает Domains

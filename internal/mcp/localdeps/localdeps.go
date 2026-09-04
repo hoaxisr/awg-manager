@@ -500,7 +500,38 @@ func (l *Local) ListDNSRoutes(ctx context.Context) ([]mcpsrv.DNSRoute, error) {
 	if err != nil {
 		return nil, err
 	}
-	return convert[[]mcpsrv.DNSRoute](list)
+	out := make([]mcpsrv.DNSRoute, 0, len(list))
+	for i := range list {
+		out = append(out, dnsRoute(&list[i]))
+	}
+	return out, nil
+}
+
+// dnsRoute maps a domain list field by field. Everything the editor
+// keeps for round-tripping (raw texts, subscriptions, dedupe reports,
+// icon) stays behind; Domains is capped, see mcp.MaxDomainsInOutput.
+func dnsRoute(dl *dnsroute.DomainList) mcpsrv.DNSRoute {
+	out := mcpsrv.DNSRoute{
+		ID:            dl.ID,
+		Name:          dl.Name,
+		Enabled:       dl.Enabled,
+		DomainCount:   len(dl.Domains),
+		Domains:       dl.Domains,
+		ManualDomains: dl.ManualDomains,
+		Subnets:       dl.Subnets,
+		Backend:       dl.Backend,
+		Routes:        make([]mcpsrv.RouteTarget, 0, len(dl.Routes)),
+	}
+	if len(out.Domains) > mcpsrv.MaxDomainsInOutput {
+		out.Domains = out.Domains[:mcpsrv.MaxDomainsInOutput:mcpsrv.MaxDomainsInOutput]
+	}
+	if out.Domains == nil {
+		out.Domains = []string{}
+	}
+	for _, r := range dl.Routes {
+		out.Routes = append(out.Routes, mcpsrv.RouteTarget{Interface: r.Interface, TunnelID: r.TunnelID, Fallback: r.Fallback})
+	}
+	return out
 }
 
 func (l *Local) AddDNSRoute(ctx context.Context, in mcpsrv.DNSRouteInput) (mcpsrv.DNSRoute, error) {
@@ -525,7 +556,7 @@ func (l *Local) AddDNSRoute(ctx context.Context, in mcpsrv.DNSRouteInput) (mcpsr
 	// enabled:false (see mcp.DNSRouteInput). staticroute.Create honours its
 	// own Enabled flag, which is why add_static_route still has one.
 	l.publish(events.ResourceRoutingDnsRoutes, "mcp-create")
-	return convert[mcpsrv.DNSRoute](created)
+	return dnsRoute(created), nil
 }
 
 func (l *Local) RemoveDNSRoute(ctx context.Context, id string) (mcpsrv.DNSRoute, error) {
@@ -541,10 +572,7 @@ func (l *Local) RemoveDNSRoute(ctx context.Context, id string) (mcpsrv.DNSRoute,
 	if existing == nil {
 		return mcpsrv.DNSRoute{}, fmt.Errorf("dns route %q not found", id)
 	}
-	out, err := convert[mcpsrv.DNSRoute](existing)
-	if err != nil {
-		return mcpsrv.DNSRoute{}, err
-	}
+	out := dnsRoute(existing)
 	if err := l.c.DNSRoutes.Delete(ctx, id); err != nil {
 		return mcpsrv.DNSRoute{}, err
 	}
