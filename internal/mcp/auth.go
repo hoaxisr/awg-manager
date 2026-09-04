@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/clientip"
 )
 
 // loopbackRejectLogInterval bounds how often an unauthenticated request
@@ -94,7 +96,7 @@ func KeyMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
 			_, _ = w.Write([]byte(`{"error":true,"message":"not found","code":"NOT_FOUND"}`))
 			return
 		}
-		ip := clientIP(r)
+		ip := clientip.FromRequest(r)
 		// The per-IP throttle only has meaning for DIRECT clients. Behind the
 		// KeenDNS reverse proxy every remote client is observed as 127.0.0.1,
 		// so accounting there would be a remote DoS lever, not a defence:
@@ -185,14 +187,6 @@ func bearerToken(r *http.Request) (token string, wellFormed bool) {
 		return "", false
 	}
 	return token, true
-}
-
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
 
 // isLoopback reports whether ip is 127.0.0.0/8 or ::1 — i.e. the router's
