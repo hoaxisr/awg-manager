@@ -7,8 +7,16 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
+
+// loopbackRejectLogInterval bounds how often an unauthenticated request
+// from the reverse proxy (every remote client looks like 127.0.0.1) is
+// written to the journal. The LAN throttle does not apply there, so a
+// scanner at line rate would otherwise fill the log ring with one line
+// per request and bury everything else.
+const loopbackRejectLogInterval = time.Minute
 
 // KeyInfo identifies the MCP key that authenticated a request.
 type KeyInfo struct {
@@ -58,6 +66,27 @@ func KeyMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
+	// Sampling state for rejections from loopback: last log time and how
+	// many were dropped since. Atomics: this closure runs on every request.
+	var lastLoopbackReject atomic.Int64 // unix nanos
+	var suppressedLoopback atomic.Int64
+	logReject := func(r *http.Request, ip string) {
+		if !isLoopback(ip) {
+			logf("MCP: rejected %s %q from %s (invalid or missing key)", r.Method, r.URL.Path, ip)
+			return
+		}
+		now := time.Now().UnixNano()
+		last := lastLoopbackReject.Load()
+		if now-last < int64(loopbackRejectLogInterval) || !lastLoopbackReject.CompareAndSwap(last, now) {
+			suppressedLoopback.Add(1)
+			return
+		}
+		if n := suppressedLoopback.Swap(0); n > 0 {
+			logf("MCP: rejected %s %q from %s (invalid or missing key; %d more rejections via the proxy suppressed in the last %s)", r.Method, r.URL.Path, ip, n, loopbackRejectLogInterval)
+			return
+		}
+		logf("MCP: rejected %s %q from %s (invalid or missing key)", r.Method, r.URL.Path, ip)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if cfg.Enabled == nil || !cfg.Enabled() {
 			w.Header().Set("Content-Type", "application/json")
@@ -80,6 +109,7 @@ func KeyMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
 		}
 		if throttle != nil {
 			if retry, blocked := throttle.Begin(ip); blocked {
+				logf("MCP: throttled %s %q from %s (retry in %s)", r.Method, r.URL.Path, ip, retry.Round(time.Second))
 				w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusTooManyRequests)
@@ -110,14 +140,16 @@ func KeyMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
 			if throttle != nil {
 				if ok {
 					throttle.Success(ip)
-				} else {
-					throttle.Fail(ip)
+				} else if throttle.Fail(ip) {
+					// The moment the block arms is the brute-force signal;
+					// the same single line the web login writes.
+					logf("MCP: %s blocked after repeated failed keys (anti-bruteforce)", ip)
 				}
 			}
 		}()
 
 		if !ok {
-			logf("MCP: rejected %s %q from %s (invalid or missing key)", r.Method, r.URL.Path, ip)
+			logReject(r, ip)
 			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer resource_metadata="%s/.well-known/oauth-protected-resource"`, externalOrigin(r)))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)

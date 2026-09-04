@@ -2,6 +2,7 @@ package mcp_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,7 @@ type fakeThrottle struct {
 	dones     int
 	blocked   bool
 	inFlight  int
+	blockAt   int // Fail reports nowBlocked=true on exactly this failure (0: never)
 }
 
 // calls returns every accounting counter at once, for tests that assert the
@@ -63,7 +65,9 @@ func (f *fakeThrottle) Fail(string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.fails++
-	return false
+	// Mirror auth.LoginThrottle: report the transition once, when the
+	// failure count crosses the threshold.
+	return f.fails == f.blockAt
 }
 
 func (f *fakeThrottle) inFlightNow() int {
@@ -314,6 +318,75 @@ func TestKeyMiddleware_Throttle(t *testing.T) {
 	rec := do(h, "Bearer awgm_good")
 	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
 		t.Fatalf("blocked: status = %d, Retry-After = %q", rec.Code, rec.Header().Get("Retry-After"))
+	}
+}
+
+// withLog wraps newAuthed with a capturing Log.
+func withLog(thr *fakeThrottle) (http.Handler, *[]string) {
+	var lines []string
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	cfg := mcpsrv.AuthConfig{
+		Enabled: func() bool { return true },
+		Verify: func(tok string) (mcpsrv.KeyInfo, bool) {
+			return mcpsrv.KeyInfo{ID: "k1", Name: "laptop"}, tok == "awgm_good"
+		},
+		Log: func(f string, a ...any) { lines = append(lines, fmt.Sprintf(f, a...)) },
+	}
+	if thr != nil {
+		cfg.Throttle = thr
+	}
+	return mcpsrv.KeyMiddleware(cfg, next), &lines
+}
+
+func countContaining(lines []string, sub string) int {
+	n := 0
+	for _, l := range lines {
+		if strings.Contains(l, sub) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestKeyMiddleware_LogsBlockTransitionAndThrottledRequests — момент
+// срабатывания анти-брутфорса и каждый 429 попадают в журнал, как у
+// web-логина; иначе админ видит пять «rejected» и затем тишину, пока
+// клиент со старым ключом получает 429 полминуты.
+func TestKeyMiddleware_LogsBlockTransitionAndThrottledRequests(t *testing.T) {
+	thr := &fakeThrottle{blockAt: 3}
+	h, lines := withLog(thr)
+	for i := 0; i < 3; i++ {
+		do(h, "Bearer awgm_bad")
+	}
+	if n := countContaining(*lines, "blocked after repeated failed keys"); n != 1 {
+		t.Fatalf("block transition logged %d times, want exactly once:\n%s", n, strings.Join(*lines, "\n"))
+	}
+	thr.setBlocked(true)
+	if rec := do(h, "Bearer awgm_good"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", rec.Code)
+	}
+	if n := countContaining(*lines, "throttled"); n != 1 {
+		t.Fatalf("429 logged %d times, want 1:\n%s", n, strings.Join(*lines, "\n"))
+	}
+}
+
+// TestKeyMiddleware_SamplesRejectionsFromLoopback — за прокси throttle не
+// действует, и сканер писал бы по строке на запрос в кольцо журнала.
+// Из loopback логируется первая, остальные в течение минуты считаются;
+// прямой LAN-клиент по-прежнему логируется каждый раз.
+func TestKeyMiddleware_SamplesRejectionsFromLoopback(t *testing.T) {
+	h, lines := withLog(nil)
+	for i := 0; i < 50; i++ {
+		doFrom(h, "Bearer awgm_bad", "127.0.0.1:40001")
+	}
+	if n := countContaining(*lines, "rejected"); n != 1 {
+		t.Fatalf("loopback rejections logged %d times in one minute, want 1", n)
+	}
+	for i := 0; i < 3; i++ {
+		doFrom(h, "Bearer awgm_bad", "192.168.1.9:5555")
+	}
+	if n := countContaining(*lines, "from 192.168.1.9"); n != 3 {
+		t.Fatalf("LAN rejections logged %d times, want every one", n)
 	}
 }
 
