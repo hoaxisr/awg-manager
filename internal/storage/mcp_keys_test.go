@@ -619,11 +619,14 @@ func touchRacesWith(t *testing.T, s *McpKeyStore, touchID string, mutate func())
 		// Дать мутатору время дойти до записи. С правильным порядком блокировок
 		// он упрётся в fileMu и не пройдёт дальше, пока Touch не запишет;
 		// со сломанным — успеет записать свой список, и снимок Touch затрёт его.
-		// 200 ms is plenty for an fsync'd write on CI; with the right lock
-		// order the mutator never completes here and the full wait is paid.
+		// With the right lock order the mutator never completes here and
+		// the full wait is paid, so this cannot be a failure. It must be
+		// generous instead: under -race on a loaded runner a mutator that
+		// WOULD slip through (broken order) needs time to reach its write,
+		// or the test passes for the wrong reason.
 		select {
 		case <-mutateDone:
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(time.Second):
 		}
 	}
 	s.Touch(touchID)
