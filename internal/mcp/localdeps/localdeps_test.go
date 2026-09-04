@@ -948,6 +948,49 @@ func TestLocal_TunnelListChangesRefreshPingCheckSnapshot(t *testing.T) {
 	}
 }
 
+type journalLine struct{ level, group, subgroup, action, target string }
+
+// recJournal records AppLog calls so tests can assert what an admin sees
+// on the logs page after an MCP mutation.
+type recJournal struct{ lines []journalLine }
+
+func (j *recJournal) AppLog(level logging.Level, group, subgroup, action, target, _ string) {
+	j.lines = append(j.lines, journalLine{string(level), group, subgroup, action, target})
+}
+
+// TestLocal_MutationsAreJournaledLikeREST — каждое действие через MCP
+// оставляет след в журнале под той же группой/подгруппой, что и его
+// REST-обработчик: страница логов с фильтром «tunnel» или «routing» иначе
+// не показывала бы, что туннель остановил агент.
+func TestLocal_MutationsAreJournaledLikeREST(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	j := &recJournal{}
+	cfg := h.l.c
+	cfg.AppLog = j
+	l := New(cfg)
+
+	if err := l.ControlTunnel(ctx, "tn-1", mcpsrv.ActionStop); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.AddDNSRoute(ctx, mcpsrv.DNSRouteInput{Name: "GH", Domains: []string{"github.com"}, TunnelID: "tn-1"}); err != nil {
+		t.Fatal(err)
+	}
+	h.orch.err = errors.New("boom")
+	if err := l.ControlTunnel(ctx, "tn-1", mcpsrv.ActionRestart); err == nil {
+		t.Fatal("expected restart to fail")
+	}
+
+	want := []journalLine{
+		{"info", logging.GroupTunnel, logging.SubLifecycle, "stop", "tn-1"},
+		{"info", logging.GroupRouting, logging.SubDnsRoute, "create", "GH"},
+		{"warn", logging.GroupTunnel, logging.SubLifecycle, "restart", "tn-1"},
+	}
+	if !reflect.DeepEqual(j.lines, want) {
+		t.Fatalf("journal =\n%+v\nwant\n%+v", j.lines, want)
+	}
+}
+
 // TestLocal_ControlTunnelMirrorsRESTLifecycleEdges — две ветки
 // api.ControlHandler, без которых агент получает ложный отказ или
 // туннель, который «выключили», сам поднимается после перезагрузки.

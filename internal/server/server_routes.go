@@ -1115,7 +1115,7 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 		Bus:            bus,
 
 		PingCheckSnapshot: pingSnapshot,
-		Log:               mcpLog,
+		AppLog:            appLog,
 	})
 	mcpServer := mcp.NewServer(local, s.config.Version)
 	// Каждый вызов инструмента ограничен по времени и отменяется при

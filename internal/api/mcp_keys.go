@@ -133,6 +133,10 @@ func (h *McpKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "MCP_KEY_INVALID_NAME")
 			return
 		}
+		// The client gets a fixed message; the cause (a read-only store
+		// after a failed load, an unwritable flash) goes to the journal,
+		// where the admin will look for it.
+		h.log.Error("key-create", req.Name, "Failed to create MCP key: "+err.Error())
 		response.ErrorWithStatus(w, http.StatusInternalServerError, "failed to create key", "MCP_KEY_CREATE_ERROR")
 		return
 	}
@@ -169,6 +173,7 @@ func (h *McpKeysHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 			response.ErrorWithStatus(w, http.StatusNotFound, "key not found", "MCP_KEY_NOT_FOUND")
 			return
 		}
+		h.log.Error("key-revoke", req.ID, "Failed to revoke MCP key: "+err.Error())
 		response.ErrorWithStatus(w, http.StatusInternalServerError, "failed to revoke key", "MCP_KEY_REVOKE_ERROR")
 		return
 	}

@@ -88,9 +88,12 @@ type Config struct {
 	// it a tunnel created through MCP is invisible to the monitoring page
 	// until something else triggers a refresh.
 	PingCheckSnapshot func()
-	// Log receives warnings that must not fail the call (a lost post-import
-	// default, for instance). Nil is a no-op.
-	Log *logging.ScopedLogger
+	// AppLog is the application journal. Every mutation is logged under
+	// the same group/subgroup the REST handler for that action uses, so
+	// the logs page filtered by "tunnel" or "routing" shows MCP-driven
+	// changes next to web-driven ones. Nil is a no-op; put a typed nil in
+	// here and it is not (see registerMcpRoutes).
+	AppLog logging.AppLogger
 }
 
 // Local is the production Deps.
@@ -99,11 +102,28 @@ type Local struct {
 	// pingSweep is set while a background CheckAllNow runs, so an agent
 	// calling run_pingcheck in a loop cannot stack sweeps.
 	pingSweep atomic.Bool
+
+	// Journal loggers scoped like their REST counterparts (api.ControlHandler,
+	// api.DNSRouteHandler, ...). Messages end in "(MCP)" so the source is
+	// visible in a group-filtered view; the per-call line under system/mcp
+	// carries the key name.
+	tunnelLog *logging.ScopedLogger
+	dnsLog    *logging.ScopedLogger
+	staticLog *logging.ScopedLogger
+	clientLog *logging.ScopedLogger
 }
 
 // New wires a Local. It does not validate cfg: nil fields are checked per
 // call so a partially wired daemon (e.g. sing-box absent) still serves.
-func New(cfg Config) *Local { return &Local{c: cfg} }
+func New(cfg Config) *Local {
+	return &Local{
+		c:         cfg,
+		tunnelLog: logging.NewScopedLogger(cfg.AppLog, logging.GroupTunnel, logging.SubLifecycle),
+		dnsLog:    logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubDnsRoute),
+		staticLog: logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubStaticRoute),
+		clientLog: logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubClientRoute),
+	}
+}
 
 var _ mcpsrv.Deps = (*Local)(nil)
 
@@ -380,15 +400,19 @@ func (l *Local) ControlTunnel(ctx context.Context, id, action string) error {
 		// api.ControlHandler.ToggleEnabled publishes the tunnel list plus
 		// routing.tunnels ("state-changed") after SetEnabled.
 		if err := l.c.Tunnels.SetEnabled(ctx, id, action == mcpsrv.ActionEnable); err != nil {
+			l.tunnelLog.Warn(action, id, "Failed to "+action+" tunnel (MCP): "+err.Error())
 			return err
 		}
+		l.tunnelLog.Info(action, id, "Tunnel "+action+"d (MCP)")
 		l.publishTunnelList("mcp-set-enabled")
 		return nil
 	case mcpsrv.ActionSetDefaultRoute, mcpsrv.ActionUnsetDefaultRoute:
 		// Same pair as api.ControlHandler.ToggleDefaultRoute.
 		if err := l.c.Tunnels.SetDefaultRoute(ctx, id, action == mcpsrv.ActionSetDefaultRoute); err != nil {
+			l.tunnelLog.Warn(action, id, "Failed to change default route (MCP): "+err.Error())
 			return err
 		}
+		l.tunnelLog.Info(action, id, "Default route changed: "+action+" (MCP)")
 		l.publishTunnelList("mcp-set-default-route")
 		return nil
 	}
@@ -423,11 +447,13 @@ func (l *Local) lifecycle(ctx context.Context, id, action string) error {
 	if err != nil {
 		if action == mcpsrv.ActionStop && !errors.Is(err, tunnel.ErrOperationInProgress) {
 			if serr := l.c.Tunnels.SetEnabled(ctx, id, false); serr != nil {
-				l.c.Log.Warn("stop", id, "record enabled=false after failed stop: "+serr.Error())
+				l.tunnelLog.Warn("stop", id, "record enabled=false after failed stop (MCP): "+serr.Error())
 			}
 		}
+		l.tunnelLog.Warn(action, id, "Failed to "+action+" tunnel (MCP): "+err.Error())
 		return err
 	}
+	l.tunnelLog.Info(action, id, "Tunnel "+action+" (MCP)")
 	l.publishTunnelList("mcp-" + action)
 	return nil
 }
@@ -438,6 +464,7 @@ func (l *Local) ImportTunnel(ctx context.Context, name, cfg string) (mcpsrv.Tunn
 	}
 	t, err := l.c.Tunnels.Import(ctx, cfg, name, "", service.ImportLink{})
 	if err != nil {
+		l.tunnelLog.Warn("import", name, "Failed to import tunnel (MCP): "+err.Error())
 		return mcpsrv.TunnelSummary{}, nil, err
 	}
 	if t == nil {
@@ -459,9 +486,10 @@ func (l *Local) ImportTunnel(ctx context.Context, name, cfg string) (mcpsrv.Tunn
 			return nil
 		})
 		if err != nil {
-			l.c.Log.Warn("import", t.Name, "persist post-import defaults: "+err.Error())
+			l.tunnelLog.Warn("import", t.Name, "persist post-import defaults: "+err.Error())
 		}
 	}
+	l.tunnelLog.Info("import", t.Name, "Tunnel imported (MCP)")
 	l.publishTunnelList("mcp-import")
 	// Same as api.ImportHandler.ImportConf: conflicts are attached, not
 	// fatal — the tunnel exists either way.
@@ -487,11 +515,14 @@ func (l *Local) ReplaceTunnelConfig(ctx context.Context, id, cfg, newName string
 		}
 	}
 	if err := l.c.Tunnels.ReplaceConfig(ctx, id, cfg, newName); err != nil {
+		l.tunnelLog.Warn("replace-config", id, "Failed to replace tunnel config (MCP): "+err.Error())
 		return nil, err
 	}
+	l.tunnelLog.Info("replace-config", id, "Tunnel config replaced (MCP)")
 	var warnings []string
 	if wasRunning {
 		if err := l.c.Tunnels.Start(ctx, id); err != nil {
+			l.tunnelLog.Warn("start", id, "Failed to start tunnel after config replace (MCP): "+err.Error())
 			warnings = append(warnings, "tunnel config replaced but failed to restart: "+err.Error())
 		}
 	}
@@ -572,11 +603,13 @@ func (l *Local) AddDNSRoute(ctx context.Context, in mcpsrv.DNSRouteInput) (mcpsr
 		Routes: []dnsroute.RouteTarget{{TunnelID: in.TunnelID}},
 	})
 	if err != nil {
+		l.dnsLog.Warn("create", in.Name, "Failed to create DNS route list (MCP): "+err.Error())
 		return mcpsrv.DNSRoute{}, err
 	}
 	if created == nil {
 		return mcpsrv.DNSRoute{}, fmt.Errorf("dns route create returned no list")
 	}
+	l.dnsLog.Info("create", created.Name, "DNS route list created (MCP)")
 	// dnsroute.Create hard-sets Enabled=true and pushes routing into NDMS
 	// immediately, so the list is live from here on — MCP offers no
 	// enabled:false (see mcp.DNSRouteInput). staticroute.Create honours its
@@ -600,8 +633,10 @@ func (l *Local) RemoveDNSRoute(ctx context.Context, id string) (mcpsrv.DNSRoute,
 	}
 	out := dnsRoute(existing)
 	if err := l.c.DNSRoutes.Delete(ctx, id); err != nil {
+		l.dnsLog.Warn("delete", existing.Name, "Failed to delete DNS route list (MCP): "+err.Error())
 		return mcpsrv.DNSRoute{}, err
 	}
+	l.dnsLog.Info("delete", existing.Name, "DNS route list deleted (MCP)")
 	l.publish(events.ResourceRoutingDnsRoutes, "mcp-delete")
 	return out, nil
 }
@@ -624,8 +659,10 @@ func (l *Local) AddStaticRoute(ctx context.Context, in mcpsrv.StaticRouteInput) 
 	enabled := in.Enabled == nil || *in.Enabled
 	created, err := l.c.StaticRoutes.Create(ctx, storage.StaticRouteList{Name: in.Name, TunnelID: in.TunnelID, Subnets: in.Subnets, Enabled: enabled})
 	if err != nil {
+		l.staticLog.Warn("create", in.Name, "Failed to create static route list (MCP): "+err.Error())
 		return mcpsrv.StaticRoute{}, err
 	}
+	l.staticLog.Info("create", in.Name, "Static route list created (MCP)")
 	l.publish(events.ResourceRoutingStaticRoutes, "mcp-create")
 	return convert[mcpsrv.StaticRoute](created)
 }
@@ -647,8 +684,10 @@ func (l *Local) RemoveStaticRoute(ctx context.Context, id string) (mcpsrv.Static
 		return mcpsrv.StaticRoute{}, err
 	}
 	if err := l.c.StaticRoutes.Delete(ctx, id); err != nil {
+		l.staticLog.Warn("delete", existing.Name, "Failed to delete static route list (MCP): "+err.Error())
 		return mcpsrv.StaticRoute{}, err
 	}
+	l.staticLog.Info("delete", existing.Name, "Static route list deleted (MCP)")
 	l.publish(events.ResourceRoutingStaticRoutes, "mcp-delete")
 	return out, nil
 }
@@ -681,8 +720,10 @@ func (l *Local) SetClientRoute(ctx context.Context, in mcpsrv.ClientRouteInput) 
 	if in.TunnelID == "" {
 		if existing != nil {
 			if err := l.c.ClientRoutes.Delete(ctx, existing.ID); err != nil {
+				l.clientLog.Warn("delete", in.ClientIP, "Failed to delete client route (MCP): "+err.Error())
 				return nil, err
 			}
+			l.clientLog.Info("delete", in.ClientIP, "Client route deleted (MCP)")
 			l.publish(events.ResourceRoutingClientRoutes, "mcp-delete")
 		}
 		return nil, nil
@@ -713,8 +754,10 @@ func (l *Local) SetClientRoute(ctx context.Context, in mcpsrv.ClientRouteInput) 
 		saved, err = l.c.ClientRoutes.Create(ctx, route)
 	}
 	if err != nil {
+		l.clientLog.Warn(reason[len("mcp-"):], in.ClientIP, "Failed to save client route (MCP): "+err.Error())
 		return nil, err
 	}
+	l.clientLog.Info(reason[len("mcp-"):], in.ClientIP, "Client route → "+in.TunnelID+" (MCP)")
 	l.publish(events.ResourceRoutingClientRoutes, reason)
 	out, err := convert[mcpsrv.ClientRoute](saved)
 	if err != nil {
