@@ -12,7 +12,11 @@ type Deps interface {
 	ListTunnels(ctx context.Context) ([]TunnelSummary, error)
 	GetTunnel(ctx context.Context, id string) (TunnelDetail, error)
 	ControlTunnel(ctx context.Context, id, action string) error
-	ImportTunnel(ctx context.Context, name, config string) (TunnelSummary, error)
+	// ImportTunnel creates a tunnel from .conf text. warnings carries
+	// address conflicts with other interfaces (non-fatal, as in the REST
+	// import): the tunnel exists but may not route until the user resolves
+	// them, and the model must not enable it as if all were well.
+	ImportTunnel(ctx context.Context, name, config string) (created TunnelSummary, warnings []string, err error)
 	// ReplaceTunnelConfig swaps a tunnel's .conf. A RUNNING tunnel is
 	// stopped and started around the swap (a kernel tunnel does not pick up
 	// a new Address/DNS/MTU otherwise), so the returned warnings carry both

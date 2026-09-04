@@ -161,7 +161,7 @@ func TestFake_SetClientRoutePreservesFallbackAndEnabled(t *testing.T) {
 // расхождение описания инструмента с реальностью.
 func TestFake_ImportTunnelIsDisabled(t *testing.T) {
 	f := New()
-	got, err := f.ImportTunnel(context.Background(), "New", "[Interface]\n[Peer]\n")
+	got, _, err := f.ImportTunnel(context.Background(), "New", "[Interface]\n[Peer]\n")
 	if err != nil {
 		t.Fatal(err)
 	}

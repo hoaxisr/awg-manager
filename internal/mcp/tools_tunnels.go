@@ -44,6 +44,11 @@ type createIn struct {
 	Config string `json:"config" jsonschema:"full WireGuard/AmneziaWG .conf text with [Interface] and [Peer] sections"`
 }
 
+type createOut struct {
+	TunnelSummary
+	Warnings []string `json:"warnings,omitempty" jsonschema:"non-fatal problems: the tunnel's address conflicts with another interface — show these to the user before enabling it"`
+}
+
 type replaceIn struct {
 	TunnelID string `json:"tunnelId"`
 	Config   string `json:"config" jsonschema:"new .conf text; replaces keys, addresses and peer"`
@@ -142,17 +147,20 @@ func registerTunnelTools(s *mcp.Server, d Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "create_tunnel",
-		Description: "Create a tunnel from a .conf text (WireGuard or AmneziaWG). The tunnel is created DISABLED and stopped: use control_tunnel with \"enable\" (autostart) and then \"start\" to bring it up.",
+		Description: "Create a tunnel from a .conf text (WireGuard or AmneziaWG). The tunnel is created DISABLED and stopped: use control_tunnel with \"enable\" (autostart) and then \"start\" to bring it up. Check the returned warnings first.",
 		Annotations: safeWrite("Create tunnel", false),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in createIn) (*mcp.CallToolResult, TunnelSummary, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in createIn) (*mcp.CallToolResult, createOut, error) {
 		if strings.TrimSpace(in.Name) == "" {
-			return nil, TunnelSummary{}, fmt.Errorf("name is required")
+			return nil, createOut{}, fmt.Errorf("name is required")
 		}
 		if err := requireConf(in.Config); err != nil {
-			return nil, TunnelSummary{}, err
+			return nil, createOut{}, err
 		}
-		out, err := d.ImportTunnel(ctx, in.Name, in.Config)
-		return nil, out, err
+		created, warnings, err := d.ImportTunnel(ctx, in.Name, in.Config)
+		if err != nil {
+			return nil, createOut{}, err
+		}
+		return nil, createOut{TunnelSummary: created, Warnings: warnings}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{

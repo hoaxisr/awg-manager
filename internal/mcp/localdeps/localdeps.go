@@ -432,16 +432,16 @@ func (l *Local) lifecycle(ctx context.Context, id, action string) error {
 	return nil
 }
 
-func (l *Local) ImportTunnel(ctx context.Context, name, cfg string) (mcpsrv.TunnelSummary, error) {
+func (l *Local) ImportTunnel(ctx context.Context, name, cfg string) (mcpsrv.TunnelSummary, []string, error) {
 	if l.c.Tunnels == nil {
-		return mcpsrv.TunnelSummary{}, errUnavailable("tunnels")
+		return mcpsrv.TunnelSummary{}, nil, errUnavailable("tunnels")
 	}
 	t, err := l.c.Tunnels.Import(ctx, cfg, name, "", service.ImportLink{})
 	if err != nil {
-		return mcpsrv.TunnelSummary{}, err
+		return mcpsrv.TunnelSummary{}, nil, err
 	}
 	if t == nil {
-		return mcpsrv.TunnelSummary{}, fmt.Errorf("tunnel import returned no tunnel")
+		return mcpsrv.TunnelSummary{}, nil, fmt.Errorf("tunnel import returned no tunnel")
 	}
 	// Post-import PingCheck defaults, exactly as api.ImportHandler.ImportConf
 	// writes them (internal/api/import.go) — without this an MCP-created
@@ -463,7 +463,9 @@ func (l *Local) ImportTunnel(ctx context.Context, name, cfg string) (mcpsrv.Tunn
 		}
 	}
 	l.publishTunnelList("mcp-import")
-	return summary(*t, l.endpointOf(t.ID)), nil
+	// Same as api.ImportHandler.ImportConf: conflicts are attached, not
+	// fatal — the tunnel exists either way.
+	return summary(*t, l.endpointOf(t.ID)), l.c.Tunnels.CheckAddressConflicts(ctx, t.ID), nil
 }
 
 // ReplaceTunnelConfig mirrors api.TunnelsHandler.ReplaceConfig

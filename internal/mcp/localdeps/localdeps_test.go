@@ -887,7 +887,7 @@ func TestLocal_ImportTunnelWritesPingCheckDefaults(t *testing.T) {
 	cfg.Bus = &recBus{}
 	l = New(cfg)
 
-	got, err := l.ImportTunnel(ctx, "New", "[Interface]\n[Peer]\n")
+	got, _, err := l.ImportTunnel(ctx, "New", "[Interface]\n[Peer]\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -922,7 +922,7 @@ func TestLocal_TunnelListChangesRefreshPingCheckSnapshot(t *testing.T) {
 	cfg.PingCheckSnapshot = func() { snapshots++ }
 	l = New(cfg)
 
-	if _, err := l.ImportTunnel(ctx, "New", "[Interface]\n[Peer]\n"); err != nil {
+	if _, _, err := l.ImportTunnel(ctx, "New", "[Interface]\n[Peer]\n"); err != nil {
 		t.Fatal(err)
 	}
 	if snapshots != 1 {
@@ -990,11 +990,29 @@ func TestLocal_ControlTunnelMirrorsRESTLifecycleEdges(t *testing.T) {
 	})
 }
 
+// TestLocal_ImportTunnelReportsAddressConflicts — api.ImportHandler
+// прикладывает CheckAddressConflicts к ответу; без этого агент включит
+// туннель, чей Address совпадает с Wireguard0, со слов модели.
+func TestLocal_ImportTunnelReportsAddressConflicts(t *testing.T) {
+	l, ft, _ := newLifecycle(t, tunnel.StateStopped)
+	ft.conflicts = []string{"address 10.8.0.2/32 conflicts with Wireguard0"}
+	got, warnings, err := l.ImportTunnel(context.Background(), "New", "[Interface]\n[Peer]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "tn-1" {
+		t.Fatalf("created = %+v", got)
+	}
+	if len(warnings) != 1 || warnings[0] != ft.conflicts[0] {
+		t.Fatalf("warnings = %v, want the conflict from the service", warnings)
+	}
+}
+
 // Без сервиса PingCheck умолчания не пишутся — ровно как в обработчике,
 // где запись стоит под `h.pingCheck != nil`.
 func TestLocal_ImportTunnelSkipsPingCheckDefaultsWithoutService(t *testing.T) {
 	l, _, store := newLifecycle(t, tunnel.StateStopped)
-	if _, err := l.ImportTunnel(context.Background(), "New", "[Interface]\n[Peer]\n"); err != nil {
+	if _, _, err := l.ImportTunnel(context.Background(), "New", "[Interface]\n[Peer]\n"); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := store.Get("tn-1")

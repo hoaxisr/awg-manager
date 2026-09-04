@@ -151,12 +151,12 @@ func (f *Fake) ControlTunnel(_ context.Context, id, action string) error {
 	return nil
 }
 
-func (f *Fake) ImportTunnel(_ context.Context, name, config string) (mcpsrv.TunnelSummary, error) {
+func (f *Fake) ImportTunnel(_ context.Context, name, config string) (mcpsrv.TunnelSummary, []string, error) {
 	if f.Err != nil {
-		return mcpsrv.TunnelSummary{}, f.Err
+		return mcpsrv.TunnelSummary{}, nil, f.Err
 	}
 	if !strings.Contains(config, "[Interface]") || !strings.Contains(config, "[Peer]") {
-		return mcpsrv.TunnelSummary{}, fmt.Errorf("config must contain [Interface] and [Peer] sections")
+		return mcpsrv.TunnelSummary{}, nil, fmt.Errorf("config must contain [Interface] and [Peer] sections")
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -166,7 +166,7 @@ func (f *Fake) ImportTunnel(_ context.Context, name, config string) (mcpsrv.Tunn
 	t := mcpsrv.TunnelDetail{TunnelSummary: mcpsrv.TunnelSummary{ID: id, Name: name, Backend: "nativewg", Enabled: false, State: "stopped"}}
 	f.Tunnels = append(f.Tunnels, t)
 	f.Configs[id] = config
-	return t.TunnelSummary, nil
+	return t.TunnelSummary, nil, nil
 }
 
 func (f *Fake) ReplaceTunnelConfig(_ context.Context, id, config, newName string) ([]string, error) {
