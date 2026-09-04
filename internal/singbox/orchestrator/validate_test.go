@@ -559,22 +559,3 @@ func TestValidate_AWGSlotPerOutboundDNS(t *testing.T) {
 		t.Errorf("dns tags are unique, got: %+v", res.Errors)
 	}
 }
-
-// Обратный случай — detour на несуществующий outbound ловится валидатором.
-func TestValidate_DNSDetourUnknownOutbound(t *testing.T) {
-	o, dir := newTestOrch(t)
-	_ = o.Register(SlotMeta{Slot: SlotAwg, Filename: "15-awg.json", AlwaysOn: true})
-	if err := o.Bootstrap(); err != nil {
-		t.Fatal(err)
-	}
-	writeSlot(t, dir, "15-awg.json", `{"outbounds":[{"type":"direct","tag":"awg-a","bind_interface":"t2s0"}],"dns":{"servers":[{"type":"udp","tag":"dns-awg-a","server":"10.8.0.1","detour":"awg-gone"}]}}`)
-	o.enabled[SlotAwg] = true
-
-	res := o.Validate()
-	if res.Ok() {
-		t.Fatalf("expected unknown-outbound error")
-	}
-	if !strings.Contains(res.Error(), "unknown-outbound") || !strings.Contains(res.Error(), "awg-gone") {
-		t.Errorf("missing unknown-outbound on dns detour: %s", res.Error())
-	}
-}

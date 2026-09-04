@@ -234,10 +234,10 @@ func TestEnumerate_DedupBySystemAlsoManaged(t *testing.T) {
 	}
 }
 
-// DNS туннеля доезжает до записи готовым IP: берётся первый пригодный
-// адрес списка, не-IP и пустой список дают "" (подставится fallback).
+// DNS туннеля доезжает до записи готовым IP: берётся первый IPv4
+// списка, не-IP и пустой список дают "" (подставится fallback).
 func TestEnumerate_ResolverFromTunnelDNS(t *testing.T) {
-	root := makeIfacePresent(t, "t2s0", "t2s1", "t2s2", "t2s3")
+	root := makeIfacePresent(t, "t2s0", "t2s1", "t2s2", "t2s3", "Wireguard0")
 	s := &ServiceImpl{
 		deps: Deps{
 			AWGTunnels: &fakeAWGStore{tunnels: []AWGTunnelInfo{
@@ -247,7 +247,7 @@ func TestEnumerate_ResolverFromTunnelDNS(t *testing.T) {
 				{ID: "tunD", BackendIface: "t2s3", DNS: "example.com, 9.9.9.9"},
 			}},
 			SystemTunnels: &fakeSystemStore{tunnels: []SystemTunnelInfo{
-				{ID: "Wireguard0", InterfaceName: "nwg0"},
+				{ID: "Wireguard0", InterfaceName: "Wireguard0"},
 			}},
 		},
 		sysClassNet: root,
@@ -256,11 +256,13 @@ func TestEnumerate_ResolverFromTunnelDNS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enumerate: %v", err)
 	}
+	// Системный туннель DNS не несёт — у его записи Resolver пуст.
 	want := map[string]string{
-		"awg-tunA": "10.8.0.1",
-		"awg-tunB": "",
-		"awg-tunC": "",
-		"awg-tunD": "9.9.9.9",
+		"awg-tunA":           "10.8.0.1",
+		"awg-tunB":           "",
+		"awg-tunC":           "",
+		"awg-tunD":           "9.9.9.9",
+		"awg-sys-Wireguard0": "",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("want %d entries, got %d (%+v)", len(want), len(got), got)
@@ -269,5 +271,28 @@ func TestEnumerate_ResolverFromTunnelDNS(t *testing.T) {
 		if e.Resolver != want[e.Tag] {
 			t.Errorf("%s: Resolver = %q, want %q", e.Tag, e.Resolver, want[e.Tag])
 		}
+	}
+}
+
+// Из списка DNS для sing-box берётся первый IPv4; IPv6 идёт в дело
+// только когда IPv4 в списке нет вовсе.
+func TestFirstIP_PrefersIPv4(t *testing.T) {
+	tests := []struct {
+		name string
+		dns  string
+		want string
+	}{
+		{"v6 перед v4", "2606:4700::1111, 1.1.1.1", "1.1.1.1"},
+		{"только v6", "2606:4700::1111, 2001:4860:4860::8888", "2606:4700::1111"},
+		{"мусор перед v4", "dns.example.com, , 9.9.9.9", "9.9.9.9"},
+		{"пусто", "", ""},
+		{"без IP", "dns.example.com", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := firstIP(tt.dns); got != tt.want {
+				t.Errorf("firstIP(%q) = %q, want %q", tt.dns, got, tt.want)
+			}
+		})
 	}
 }

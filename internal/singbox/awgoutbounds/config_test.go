@@ -2,7 +2,6 @@
 package awgoutbounds
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -128,17 +127,26 @@ func TestMarshalEntries_DomainResolverAndDNSServers(t *testing.T) {
 	}
 }
 
+// Пустой слот всё равно объявляет обе секции пустыми массивами (не null),
+// иначе sing-box не сольёт config.d.
 func TestMarshalEntries_EmptyKeepsDNSSection(t *testing.T) {
 	raw, err := marshalEntries(nil)
 	if err != nil {
 		t.Fatalf("marshalEntries: %v", err)
 	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, raw); err != nil {
-		t.Fatalf("compact: %v", err)
+	var got struct {
+		Outbounds *[]map[string]any `json:"outbounds"`
+		DNS       *struct {
+			Servers *[]map[string]any `json:"servers"`
+		} `json:"dns"`
 	}
-	const want = `{"outbounds":[],"dns":{"servers":[]}}`
-	if compact.String() != want {
-		t.Errorf("empty payload = %s, want %s", compact.String(), want)
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Outbounds == nil || len(*got.Outbounds) != 0 {
+		t.Errorf("outbounds must be an empty array, got %v: %s", got.Outbounds, raw)
+	}
+	if got.DNS == nil || got.DNS.Servers == nil || len(*got.DNS.Servers) != 0 {
+		t.Errorf("dns.servers must be an empty array: %s", raw)
 	}
 }

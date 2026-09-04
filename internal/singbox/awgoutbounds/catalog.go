@@ -144,18 +144,28 @@ func (s *ServiceImpl) enumerate(ctx context.Context) ([]AWGEntry, error) {
 	return out, nil
 }
 
-// firstIP возвращает первый пригодный IP из списка DNS туннеля
-// ("10.8.0.1, 1.0.0.1"). Не-IP (имя хоста, мусор) пропускаются: адрес
-// уезжает в поле server DNS-сервера sing-box, где нужен именно IP.
-// Пусто, если ничего не подошло.
+// firstIP возвращает адрес DNS-сервера для outbound'а из списка DNS
+// туннеля ("10.8.0.1, 1.0.0.1"). Сначала ищется первый IPv4 и только
+// при его отсутствии берётся первый IPv6: у роутера IPv6 в туннеле
+// чаще всего нет вовсе, а адрес уезжает в поле server DNS-сервера
+// sing-box. Не-IP (имя хоста, мусор) пропускаются — там нужен именно
+// IP. Пусто, если ничего не подошло.
 func firstIP(dns string) string {
+	var firstV6 string
 	for _, part := range strings.Split(dns, ",") {
 		part = strings.TrimSpace(part)
-		if net.ParseIP(part) != nil {
+		ip := net.ParseIP(part)
+		if ip == nil {
+			continue
+		}
+		if ip.To4() != nil {
 			return part
 		}
+		if firstV6 == "" {
+			firstV6 = part
+		}
 	}
-	return ""
+	return firstV6
 }
 
 // ifaceExists checks /sys/class/net/<name>. Override `sysClassNet`
