@@ -383,8 +383,10 @@ func TestMcpKeyStore_NameValidationRunsBeforeReadOnlyCheck(t *testing.T) {
 			t.Errorf("Create(%q) = %v, want ErrMcpKeyInvalidName", bad, err)
 		}
 	}
-	if _, _, err := loaded.Create("Ноутбук Андрея — дом"); err != nil {
-		t.Fatalf("printable non-ASCII name rejected: %v", err)
+	for _, ok := range []string{"Ноутбук Андрея — дом", "MacBook\u00a0Pro", "wide\u3000space"} {
+		if _, _, err := loaded.Create(ok); err != nil {
+			t.Errorf("Create(%q) rejected: %v", ok, err)
+		}
 	}
 }
 

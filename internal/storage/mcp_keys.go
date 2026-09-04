@@ -227,7 +227,9 @@ func (s *McpKeyStore) writableLocked() error {
 // any store-state check so a bad request is a 400 even when the store is
 // read-only. Control characters are rejected: the name is echoed into
 // every MCP call's journal line, and a newline inside it would forge
-// extra entries in a plain-text export.
+// extra entries in a plain-text export. Only controls — unicode.IsPrint
+// would also refuse every space but U+0020, and "MacBook<NBSP>Pro" is a
+// name people paste.
 func validateKeyName(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -237,7 +239,7 @@ func validateKeyName(name string) (string, error) {
 		return "", fmt.Errorf("%w: key name longer than %d characters", ErrMcpKeyInvalidName, mcpKeyNameMaxLen)
 	}
 	for _, r := range name {
-		if !unicode.IsPrint(r) {
+		if unicode.IsControl(r) {
 			return "", fmt.Errorf("%w: key name contains a control character", ErrMcpKeyInvalidName)
 		}
 	}
