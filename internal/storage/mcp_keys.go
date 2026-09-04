@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -92,6 +93,12 @@ type McpKeyStore struct {
 	// fileMu BEFORE letting mu go.
 	fileMu sync.Mutex
 	now    func() time.Time
+	// loaded is set by Load. A store that was never loaded has an empty
+	// in-memory list that says nothing about the file, so every write is
+	// refused exactly as after a failed load: saving would rename a
+	// one-key list over the real file. Turns a wiring mistake into an
+	// error instead of silent key loss.
+	loaded bool
 	// afterTouchUnlock, when non-nil, runs inside Touch after mu is released
 	// and before the write, with fileMu held. Test hook only; nil in
 	// production. It exists so the mu/fileMu ordering can be exercised
@@ -112,6 +119,7 @@ func (s *McpKeyStore) path() string { return filepath.Join(s.dataDir, mcpKeysFil
 func (s *McpKeyStore) Load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.loaded = true
 	data, err := os.ReadFile(s.path())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -197,10 +205,34 @@ func (s *McpKeyStore) restoreFromBackup(parseErr error) ([]McpKey, bool) {
 
 // writableLocked reports why a write must be refused, or nil.
 func (s *McpKeyStore) writableLocked() error {
+	if !s.loaded {
+		return fmt.Errorf("%w: Load was never called", ErrMcpKeyStoreReadOnly)
+	}
 	if s.loadErr != nil {
 		return fmt.Errorf("%w: refusing to write after load failure: %v", ErrMcpKeyStoreReadOnly, s.loadErr)
 	}
 	return nil
+}
+
+// validateKeyName normalises and checks a key name. Validation runs before
+// any store-state check so a bad request is a 400 even when the store is
+// read-only. Control characters are rejected: the name is echoed into
+// every MCP call's journal line, and a newline inside it would forge
+// extra entries in a plain-text export.
+func validateKeyName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("%w: key name is required", ErrMcpKeyInvalidName)
+	}
+	if utf8.RuneCountInString(name) > mcpKeyNameMaxLen {
+		return "", fmt.Errorf("%w: key name longer than %d characters", ErrMcpKeyInvalidName, mcpKeyNameMaxLen)
+	}
+	for _, r := range name {
+		if !unicode.IsPrint(r) {
+			return "", fmt.Errorf("%w: key name contains a control character", ErrMcpKeyInvalidName)
+		}
+	}
+	return name, nil
 }
 
 // persist writes snapshot to disk, taking fileMu itself.
@@ -256,18 +288,17 @@ func hashMcpKey(plaintext string) string {
 
 // Create mints a new key. The returned plaintext is never stored.
 func (s *McpKeyStore) Create(name string) (McpKey, string, error) {
+	name, err := validateKeyName(name)
+	if err != nil {
+		return McpKey{}, "", err
+	}
+	// Checked up front so a read-only store answers before any entropy is
+	// spent; saveLocked below is the gate that actually matters.
 	s.mu.RLock()
 	roErr := s.writableLocked()
 	s.mu.RUnlock()
 	if roErr != nil {
 		return McpKey{}, "", roErr
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return McpKey{}, "", fmt.Errorf("%w: key name is required", ErrMcpKeyInvalidName)
-	}
-	if utf8.RuneCountInString(name) > mcpKeyNameMaxLen {
-		return McpKey{}, "", fmt.Errorf("%w: key name longer than %d characters", ErrMcpKeyInvalidName, mcpKeyNameMaxLen)
 	}
 	var secret [32]byte
 	if _, err := rand.Read(secret[:]); err != nil {
@@ -361,9 +392,9 @@ func (s *McpKeyStore) Verify(plaintext string) (McpKey, bool) {
 func (s *McpKeyStore) Touch(id string) {
 	now := s.now().UTC()
 	s.mu.Lock()
-	if s.loadErr != nil {
-		// Read-only after a failed Load (see loadErr): persisting the empty
-		// in-memory list here would wipe the file just like Create would.
+	if s.writableLocked() != nil {
+		// Read-only (failed or missing Load): persisting the in-memory list
+		// here would wipe the file just like Create would.
 		s.mu.Unlock()
 		return
 	}

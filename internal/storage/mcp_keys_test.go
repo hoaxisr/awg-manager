@@ -11,7 +11,12 @@ import (
 
 func newKeyStore(t *testing.T) *McpKeyStore {
 	t.Helper()
-	s := NewMcpKeyStore(t.TempDir())
+	return newKeyStoreIn(t, t.TempDir())
+}
+
+func newKeyStoreIn(t *testing.T, dataDir string) *McpKeyStore {
+	t.Helper()
+	s := NewMcpKeyStore(dataDir)
 	if err := s.Load(); err != nil {
 		t.Fatal(err)
 	}
@@ -336,6 +341,60 @@ func TestMcpKeyStore_CorruptFileWithoutBackupIsEmptyAndWritable(t *testing.T) {
 	}
 	if _, _, err := s.Create("x"); err != nil {
 		t.Fatalf("Create = %v", err)
+	}
+}
+
+// TestMcpKeyStore_UnloadedStoreRefusesWrites — конструктор без Load: список
+// в памяти ничего не говорит о файле, запись переименовала бы однострочный
+// список поверх настоящего. Verify при этом работает (и честно не находит).
+func TestMcpKeyStore_UnloadedStoreRefusesWrites(t *testing.T) {
+	dataDir := t.TempDir()
+	seed := newKeyStoreIn(t, dataDir)
+	key, plain, err := seed.Create("laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(dataDir, mcpKeysFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewMcpKeyStore(dataDir) // no Load
+	if _, _, err := s.Create("phone"); !errors.Is(err, ErrMcpKeyStoreReadOnly) {
+		t.Fatalf("Create on an unloaded store = %v, want ErrMcpKeyStoreReadOnly", err)
+	}
+	if err := s.Revoke(key.ID); !errors.Is(err, ErrMcpKeyStoreReadOnly) {
+		t.Fatalf("Revoke on an unloaded store = %v, want ErrMcpKeyStoreReadOnly", err)
+	}
+	s.Touch(key.ID)
+	if _, ok := s.Verify(plain); ok {
+		t.Fatal("an unloaded store must not verify anything")
+	}
+	after, err := os.ReadFile(filepath.Join(dataDir, mcpKeysFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("the key file was rewritten by an unloaded store:\n%s", after)
+	}
+}
+
+// TestMcpKeyStore_NameValidationRunsBeforeReadOnlyCheck — плохое имя
+// остаётся 400 даже на read-only хранилище; управляющие символы в имени
+// (оно уходит в каждую строку журнала) отклоняются.
+func TestMcpKeyStore_NameValidationRunsBeforeReadOnlyCheck(t *testing.T) {
+	s := NewMcpKeyStore(t.TempDir()) // unloaded → read-only
+	if _, _, err := s.Create("   "); !errors.Is(err, ErrMcpKeyInvalidName) {
+		t.Fatalf("blank name on a read-only store = %v, want ErrMcpKeyInvalidName", err)
+	}
+	loaded := newKeyStore(t)
+	for _, bad := range []string{"lap\ntop", "lap\ttop", "lap\x00top", "\x1b[31mred"} {
+		if _, _, err := loaded.Create(bad); !errors.Is(err, ErrMcpKeyInvalidName) {
+			t.Errorf("Create(%q) = %v, want ErrMcpKeyInvalidName", bad, err)
+		}
+	}
+	if _, _, err := loaded.Create("Ноутбук Андрея — дом"); err != nil {
+		t.Fatalf("printable non-ASCII name rejected: %v", err)
 	}
 }
 
