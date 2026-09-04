@@ -2,6 +2,7 @@ package localdeps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -48,11 +49,14 @@ func (f *fakeTunnels) SetDefaultRoute(_ context.Context, id string, v bool) erro
 	return nil
 }
 
-type fakeOrch struct{ events []orchestrator.Event }
+type fakeOrch struct {
+	events []orchestrator.Event
+	err    error // returned from every HandleEvent when set
+}
 
 func (f *fakeOrch) HandleEvent(_ context.Context, e orchestrator.Event) error {
 	f.events = append(f.events, e)
-	return nil
+	return f.err
 }
 
 type fakeClientRoutes struct {
@@ -289,17 +293,31 @@ func TestLocal_MutationsPublishInvalidation(t *testing.T) {
 		}
 	})
 
-	// Старт/стоп/рестарт публикует сам оркестратор — второй раз отсюда
-	// была бы лишняя инвалидация на каждое действие.
-	t.Run("start stop restart stay silent", func(t *testing.T) {
-		h := newHarness(t)
+	// Старт/стоп/рестарт: оркестратор публикует только tunnels, а REST
+	// (api.ControlHandler.Start/Stop/Restart) сверх того дёргает
+	// publishTunnelList + publishRoutingTunnels — иначе выпадающий список
+	// туннелей на странице маршрутизации остаётся устаревшим.
+	t.Run("start stop restart publish like REST", func(t *testing.T) {
 		for _, a := range []string{mcpsrv.ActionStart, mcpsrv.ActionStop, mcpsrv.ActionRestart} {
+			h := newHarness(t)
 			if err := h.l.ControlTunnel(ctx, "tn-1", a); err != nil {
 				t.Fatal(err)
 			}
+			want := []events.Resource{events.ResourceTunnels, events.ResourceRoutingTunnels}
+			if !reflect.DeepEqual(h.bus.pub, want) {
+				t.Fatalf("%s published %v, want %v", a, h.bus.pub, want)
+			}
+		}
+	})
+
+	t.Run("failed action publishes nothing", func(t *testing.T) {
+		h := newHarness(t)
+		h.orch.err = errors.New("boom")
+		if err := h.l.ControlTunnel(ctx, "tn-1", mcpsrv.ActionRestart); err == nil {
+			t.Fatal("expected the orchestrator error")
 		}
 		if len(h.bus.pub) != 0 {
-			t.Fatalf("orchestrator already publishes these; localdeps published %v", h.bus.pub)
+			t.Fatalf("published on failure: %v", h.bus.pub)
 		}
 	})
 
@@ -774,9 +792,51 @@ func TestLocal_TunnelListChangesRefreshPingCheckSnapshot(t *testing.T) {
 	if err := l.ControlTunnel(ctx, "tn-1", mcpsrv.ActionStart); err != nil {
 		t.Fatal(err)
 	}
-	if snapshots != 3 {
-		t.Fatalf("start must leave the snapshot to the orchestrator: snapshots = %d", snapshots)
+	if snapshots != 4 {
+		t.Fatalf("after start: snapshots = %d, want 4 (REST Start refreshes it too)", snapshots)
 	}
+}
+
+// TestLocal_ControlTunnelMirrorsRESTLifecycleEdges — две ветки
+// api.ControlHandler, без которых агент получает ложный отказ или
+// туннель, который «выключили», сам поднимается после перезагрузки.
+func TestLocal_ControlTunnelMirrorsRESTLifecycleEdges(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("start on a running tunnel is success", func(t *testing.T) {
+		h := newHarness(t)
+		h.orch.err = tunnel.ErrAlreadyRunning
+		if err := h.l.ControlTunnel(ctx, "tn-1", mcpsrv.ActionStart); err != nil {
+			t.Fatalf("ErrAlreadyRunning must read as fulfilled intent, got %v", err)
+		}
+		if len(h.bus.pub) == 0 {
+			t.Fatal("a fulfilled start still publishes")
+		}
+	})
+
+	t.Run("failed stop records enabled=false", func(t *testing.T) {
+		h := newHarness(t)
+		h.orch.err = errors.New("wg down failed")
+		h.tun.enabled["tn-1"] = true
+		if err := h.l.ControlTunnel(ctx, "tn-1", mcpsrv.ActionStop); err == nil {
+			t.Fatal("expected the stop error to propagate")
+		}
+		if v, ok := h.tun.enabled["tn-1"]; !ok || v {
+			t.Fatalf("enabled after failed stop = %v/%v, want false (REST syncs the OFF intent)", v, ok)
+		}
+	})
+
+	t.Run("busy stop leaves enabled alone", func(t *testing.T) {
+		h := newHarness(t)
+		h.orch.err = tunnel.ErrOperationInProgress
+		h.tun.enabled["tn-1"] = true
+		if err := h.l.ControlTunnel(ctx, "tn-1", mcpsrv.ActionStop); !errors.Is(err, tunnel.ErrOperationInProgress) {
+			t.Fatalf("err = %v", err)
+		}
+		if !h.tun.enabled["tn-1"] {
+			t.Fatal("nothing was attempted; enabled must not flip")
+		}
+	})
 }
 
 // Без сервиса PingCheck умолчания не пишутся — ровно как в обработчике,

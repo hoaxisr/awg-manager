@@ -5,6 +5,7 @@ package localdeps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -111,12 +112,13 @@ func (l *Local) publish(res events.Resource, reason string) {
 	l.c.Bus.PublishInvalidated(res, reason)
 }
 
-// publishTunnelList mirrors api.TunnelsHandler.publishTunnelList: any
-// change to the managed-tunnel list or to a tunnel's enabled/default-route
-// flags invalidates both the tunnel snapshot and the routing catalog, and
-// refreshes the pingcheck snapshot so monitoring sees the new/changed
-// tunnel. Start/stop/restart go through the orchestrator, which publishes
-// these itself — do not call this for them.
+// publishTunnelList mirrors api.TunnelsHandler.publishTunnelList plus
+// ControlHandler.publishRoutingTunnels: any change to the managed-tunnel
+// list, to a tunnel's enabled/default-route flags OR to its running state
+// invalidates both the tunnel snapshot and the routing catalog, and
+// refreshes the pingcheck snapshot so monitoring sees the change. The
+// orchestrator publishes only the tunnels resource on start/stop; the
+// REST handlers call this on top of that, and so does ControlTunnel.
 func (l *Local) publishTunnelList(reason string) {
 	l.publish(events.ResourceTunnels, reason)
 	l.publish(events.ResourceRoutingTunnels, reason)
@@ -323,13 +325,7 @@ func (l *Local) ControlTunnel(ctx context.Context, id, action string) error {
 	}
 	switch action {
 	case mcpsrv.ActionStart, mcpsrv.ActionStop, mcpsrv.ActionRestart:
-		if l.c.Orch == nil {
-			return errUnavailable("tunnel orchestrator")
-		}
-		typ := map[string]orchestrator.EventType{
-			mcpsrv.ActionStart: orchestrator.EventStart, mcpsrv.ActionStop: orchestrator.EventStop, mcpsrv.ActionRestart: orchestrator.EventRestart,
-		}[action]
-		return l.c.Orch.HandleEvent(ctx, orchestrator.Event{Type: typ, Tunnel: id})
+		return l.lifecycle(ctx, id, action)
 	case mcpsrv.ActionEnable, mcpsrv.ActionDisable:
 		// api.ControlHandler.ToggleEnabled publishes the tunnel list plus
 		// routing.tunnels ("state-changed") after SetEnabled.
@@ -347,6 +343,43 @@ func (l *Local) ControlTunnel(ctx context.Context, id, action string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown action %q", action)
+}
+
+// lifecycle mirrors api.ControlHandler.Start/Stop/Restart around the
+// orchestrator call, divergence by divergence:
+//   - start on a running tunnel is success — the user's intent is met;
+//   - a failed stop still records Enabled=false (unless nothing was
+//     attempted because another operation holds the tunnel): the intent
+//     is OFF, and without this the tunnel would come back on next boot;
+//   - success publishes the tunnel list and the routing catalog, which
+//     the orchestrator does not do on its own.
+func (l *Local) lifecycle(ctx context.Context, id, action string) error {
+	if l.c.Orch == nil {
+		return errUnavailable("tunnel orchestrator")
+	}
+	var typ orchestrator.EventType
+	switch action {
+	case mcpsrv.ActionStart:
+		typ = orchestrator.EventStart
+	case mcpsrv.ActionStop:
+		typ = orchestrator.EventStop
+	default:
+		typ = orchestrator.EventRestart
+	}
+	err := l.c.Orch.HandleEvent(ctx, orchestrator.Event{Type: typ, Tunnel: id})
+	if action == mcpsrv.ActionStart && errors.Is(err, tunnel.ErrAlreadyRunning) {
+		err = nil
+	}
+	if err != nil {
+		if action == mcpsrv.ActionStop && !errors.Is(err, tunnel.ErrOperationInProgress) {
+			if serr := l.c.Tunnels.SetEnabled(ctx, id, false); serr != nil {
+				l.c.Log.Warn("stop", id, "record enabled=false after failed stop: "+serr.Error())
+			}
+		}
+		return err
+	}
+	l.publishTunnelList("mcp-" + action)
+	return nil
 }
 
 func (l *Local) ImportTunnel(ctx context.Context, name, cfg string) (mcpsrv.TunnelSummary, error) {
