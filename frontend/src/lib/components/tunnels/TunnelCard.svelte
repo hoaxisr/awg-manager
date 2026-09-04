@@ -8,6 +8,7 @@
 	import { TunnelListActions } from '$lib/components/ui';
 	import TunnelPingButton from '$lib/components/tunnels/TunnelPingButton.svelte';
 	import TunnelTitleRow from '$lib/components/tunnels/TunnelTitleRow.svelte';
+	import TunnelLockGlyph from './TunnelLockGlyph.svelte';
 	import { awgLedToStatusDot } from '$lib/utils/statusDot';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { api } from '$lib/api/client';
@@ -36,6 +37,7 @@
 		onToggleOnOff?: () => void;
 		ondelete?: () => void;
 		ondetail?: (id: string) => void;
+		onLockClick?: () => void;
 		autoConnectivityNonce?: number;
 		autoConnectivityDelayMs?: number;
 	}
@@ -48,26 +50,16 @@
 		onToggleOnOff,
 		ondelete,
 		ondetail,
+		onLockClick,
 		autoConnectivityNonce = 0,
 		autoConnectivityDelayMs = 0,
 	}: Props = $props();
 
 	// ─── Toggle / status logic ─────────────────────────────────────
 	let isOn = $derived(['running', 'starting', 'broken'].includes(tunnel.status));
-	let toggleDisabled = $derived(toggleLoading || tunnel.hasAddressConflict === true || !!tunnel.toggleLocked);
-
-	let lockLoading = $state(false);
-	async function handleToggleLock(): Promise<void> {
-		if (lockLoading) return;
-		lockLoading = true;
-		try {
-			await api.toggleLock(tunnel.id);
-		} catch {
-			// Игнорируем ошибку — список обновится по SSE
-		} finally {
-			lockLoading = false;
-		}
-	}
+	let locked = $derived(!!tunnel.locked);
+	let toggleDisabled = $derived(toggleLoading || tunnel.hasAddressConflict === true || locked);
+	const lockedTitle = 'Туннель защищён от изменений';
 
 	let statusHint = $derived.by(() => {
 		switch (tunnel.status) {
@@ -317,29 +309,9 @@
 			<div class="dense-toolbar" title={statusHint || undefined}>
 				<!-- row 1: toggle -->
 				<div class="dense-toolbar-top">
-					<button
-						type="button"
-						class="tunnel-lock-btn tunnel-lock-btn--compact"
-						class:tunnel-lock-btn--locked={tunnel.toggleLocked}
-						disabled={lockLoading}
-						title={tunnel.toggleLocked ? 'Тумблер заблокирован — нажмите для разблокировки' : 'Заблокировать тумблер вкл/выкл'}
-						aria-label={tunnel.toggleLocked ? 'Разблокировать тумблер' : 'Заблокировать тумблер'}
-						onclick={handleToggleLock}
-					>
-						{#if lockLoading}
-							<span class="tunnel-lock-btn__spinner"></span>
-						{:else if tunnel.toggleLocked}
-							<svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-								<path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/>
-							</svg>
-						{:else}
-							<svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-								<path d="M10 2a5 5 0 00-5 5v2a2 2 0 00-2 2v5a2 2 0 002 2h10a2 2 0 002-2v-5a2 2 0 00-2-2H7V7a3 3 0 015.905-.75 1 1 0 001.937-.5A5.002 5.002 0 0010 2z"/>
-							</svg>
-						{/if}
-					</button>
+					<TunnelLockGlyph {locked} size="sm" onclick={() => onLockClick?.()} />
 					<span
-						title={tunnel.toggleLocked ? 'Тумблер заблокирован' : (tunnel.hasAddressConflict ? 'Конфликт адресов — другой туннель с таким же IP уже запущен' : undefined)}
+						title={locked ? lockedTitle : (tunnel.hasAddressConflict ? 'Конфликт адресов — другой туннель с таким же IP уже запущен' : undefined)}
 					>
 						<Toggle
 							checked={isOn}
@@ -406,29 +378,9 @@
 
 				<div class="head-right">
 					<div class="led-toggle">
-						<button
-							type="button"
-							class="tunnel-lock-btn"
-							class:tunnel-lock-btn--locked={tunnel.toggleLocked}
-							disabled={lockLoading}
-							title={tunnel.toggleLocked ? 'Тумблер заблокирован — нажмите для разблокировки' : 'Заблокировать тумблер вкл/выкл'}
-							aria-label={tunnel.toggleLocked ? 'Разблокировать тумблер' : 'Заблокировать тумблер'}
-							onclick={handleToggleLock}
-						>
-							{#if lockLoading}
-								<span class="tunnel-lock-btn__spinner"></span>
-							{:else if tunnel.toggleLocked}
-								<svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-									<path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/>
-								</svg>
-							{:else}
-								<svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-									<path d="M10 2a5 5 0 00-5 5v2a2 2 0 00-2 2v5a2 2 0 002 2h10a2 2 0 002-2v-5a2 2 0 00-2-2H7V7a3 3 0 015.905-.75 1 1 0 001.937-.5A5.002 5.002 0 0010 2z"/>
-								</svg>
-							{/if}
-						</button>
+						<TunnelLockGlyph {locked} onclick={() => onLockClick?.()} />
 						<span
-							title={tunnel.toggleLocked ? 'Тумблер заблокирован' : (tunnel.hasAddressConflict ? 'Конфликт адресов — другой туннель с таким же IP уже запущен' : undefined)}
+							title={locked ? lockedTitle : (tunnel.hasAddressConflict ? 'Конфликт адресов — другой туннель с таким же IP уже запущен' : undefined)}
 						>
 							<Toggle
 								checked={isOn}
@@ -616,9 +568,12 @@
 			<TunnelListActions
 				variant="labeled"
 				editHref="/tunnels/{tunnel.id}"
+				editDisabled={locked}
+				editTitle={locked ? lockedTitle : 'Изменить'}
 				onTest={() => (diagnosticsOpen = true)}
 				onDelete={() => ondelete?.()}
-				deleteDisabled={deleteLoading}
+				deleteDisabled={deleteLoading || locked}
+				deleteTitle={locked ? lockedTitle : 'Удалить'}
 				deleting={deleteLoading}
 			/>
 		</div>
@@ -1199,50 +1154,4 @@
 		padding: 0 12px 4px;
 	}
 
-	/* ─── Lock button (#818) ─────────────────────────────────────── */
-	.tunnel-lock-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		padding: 3px 6px;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm, 6px);
-		background: transparent;
-		color: var(--color-text-muted);
-		cursor: pointer;
-		transition: all var(--t-fast, 0.15s) ease;
-		line-height: 1;
-	}
-	.tunnel-lock-btn--compact {
-		padding: 2px 4px;
-	}
-	.tunnel-lock-btn:hover:not(:disabled) {
-		color: var(--color-text);
-		border-color: var(--color-border-strong, var(--color-border));
-		background: var(--color-bg-secondary, rgba(255, 255, 255, 0.04));
-	}
-	.tunnel-lock-btn--locked {
-		color: var(--color-warning, #d97706);
-		border-color: var(--color-warning-border, #fbbf24);
-		background: var(--color-warning-bg, rgba(217, 119, 6, 0.08));
-	}
-	.tunnel-lock-btn--locked:hover:not(:disabled) {
-		color: var(--color-warning, #d97706);
-		border-color: var(--color-warning, #d97706);
-		background: var(--color-warning-bg, rgba(217, 119, 6, 0.14));
-	}
-	.tunnel-lock-btn:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
-	.tunnel-lock-btn__spinner {
-		display: inline-block;
-		width: 10px;
-		height: 10px;
-		border: 1.5px solid currentColor;
-		border-top-color: transparent;
-		border-radius: 50%;
-		animation: lock-spin 0.7s linear infinite;
-	}
-	@keyframes lock-spin { to { transform: rotate(360deg); } }
 </style>

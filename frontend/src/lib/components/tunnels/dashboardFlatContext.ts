@@ -57,5 +57,6 @@ export interface DashboardFlatContext {
 	openSingboxDetail(tag: string): void;
 	openWizard(preselect: 'choose' | 'single' | 'inline' | 'url'): void;
 	requestDelete(id: string): void;
+	handleLockClick(id: string): void;
 	requestSubscriptionDelete(id: string): void;
 }

@@ -27,6 +27,7 @@ export interface TunnelPageModalsContext {
 	adoptLoading: boolean;
 	readonly adoptingInterface: string;
 	deleteConfirmId: string | null;
+	unlockConfirmId: string | null;
 	referencedDetails: TunnelReferencedError | null;
 	referencedTunnelName: string;
 	createModalOpen: boolean;
@@ -43,6 +44,7 @@ export interface TunnelPageModalsContext {
 	// --- обработчики страницы ---
 	handleAdopt: (data: { content: string; name: string }) => Promise<void>;
 	handleDelete: (id: string) => Promise<void>;
+	confirmUnlock: () => Promise<void>;
 	confirmSubscriptionDelete: () => Promise<void>;
 	closeDetail: () => void;
 	closeSingboxDetail: () => void;
