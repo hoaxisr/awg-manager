@@ -238,7 +238,7 @@ type ManagedServer struct {
 // check, and Triggered says whether this call started a new one (false
 // when one was already in flight).
 type PingCheckRun struct {
-	Triggered bool              `json:"triggered" jsonschema:"true if this call started a new check; false if one was already running"`
+	Triggered bool              `json:"triggered" jsonschema:"true if this call started a new check; false if monitoring is disabled, a check is already running, or one started less than ~10 s ago"`
 	Tunnels   []PingCheckStatus `json:"tunnels" jsonschema:"status as of the last COMPLETED check — call again in ~10 s for the result of the one just triggered"`
 }
 

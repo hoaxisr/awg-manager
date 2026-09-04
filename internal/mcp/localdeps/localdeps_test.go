@@ -820,7 +820,10 @@ type fakePingCheck struct {
 	statuses []pingcheck.TunnelStatus
 	started  chan struct{} // receives once per CheckAllNow (optional)
 	release  chan struct{} // CheckAllNow blocks until it is closed (optional)
+	disabled bool          // IsEnabled reports the inverse (zero value: enabled)
 }
+
+func (f *fakePingCheck) IsEnabled() bool { return !f.disabled }
 
 func (f *fakePingCheck) CheckAllNow() {
 	if f.started != nil {
@@ -840,6 +843,7 @@ func TestLocal_RunPingCheckDoesNotBlockOnTheSweep(t *testing.T) {
 	ctx := context.Background()
 	pc := &fakePingCheck{started: make(chan struct{}, 1), release: make(chan struct{})}
 	l := New(Config{PingCheck: pc})
+	l.sweepMinInterval = 0 // the in-flight guard is under test here, not the spacing
 
 	first, err := l.RunPingCheck(ctx)
 	if err != nil {
@@ -873,6 +877,42 @@ func TestLocal_RunPingCheckDoesNotBlockOnTheSweep(t *testing.T) {
 		t.Fatal("after the sweep finished a new one must be allowed")
 	}
 	<-pc.started // release is closed, so the third sweep ends on its own
+}
+
+// TestLocal_RunPingCheckIsHonestAboutTriggering — при выключенном
+// мониторинге проверять нечего (monitors пусты), и triggered:true заставил
+// бы модель ждать результат вечно; подряд идущие вызовы не запускают
+// проверку чаще sweepMinInterval.
+func TestLocal_RunPingCheckIsHonestAboutTriggering(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("disabled monitoring never triggers", func(t *testing.T) {
+		pc := &fakePingCheck{disabled: true, started: make(chan struct{}, 1)}
+		l := New(Config{PingCheck: pc})
+		run, err := l.RunPingCheck(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run.Triggered {
+			t.Fatal("triggered with monitoring off")
+		}
+		select {
+		case <-pc.started:
+			t.Fatal("a sweep started with monitoring off")
+		case <-time.After(50 * time.Millisecond):
+		}
+	})
+
+	t.Run("back-to-back calls are spaced", func(t *testing.T) {
+		pc := &fakePingCheck{started: make(chan struct{}, 2)}
+		l := New(Config{PingCheck: pc}) // default 10 s spacing
+		first, _ := l.RunPingCheck(ctx)
+		<-pc.started // the first sweep has finished by the time this returns
+		second, _ := l.RunPingCheck(ctx)
+		if !first.Triggered || second.Triggered {
+			t.Fatalf("triggered = %v, %v; want true then false within the spacing interval", first.Triggered, second.Triggered)
+		}
+	})
 }
 
 // TestLocal_ImportTunnelWritesPingCheckDefaults зеркалит

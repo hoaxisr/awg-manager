@@ -100,8 +100,13 @@ type Config struct {
 type Local struct {
 	c Config
 	// pingSweep is set while a background CheckAllNow runs, so an agent
-	// calling run_pingcheck in a loop cannot stack sweeps.
-	pingSweep atomic.Bool
+	// calling run_pingcheck in a loop cannot stack sweeps; lastSweep (a
+	// monotonic offset from epoch) and sweepMinInterval keep it from
+	// running them back to back either — each sweep probes every tunnel.
+	pingSweep        atomic.Bool
+	lastSweep        atomic.Int64
+	epoch            time.Time
+	sweepMinInterval time.Duration
 
 	// Journal loggers scoped like their REST counterparts (api.ControlHandler,
 	// api.DNSRouteHandler, ...). Messages end in "(MCP)" so the source is
@@ -117,17 +122,24 @@ type Local struct {
 // call so a partially wired daemon (e.g. sing-box absent) still serves.
 func New(cfg Config) *Local {
 	return &Local{
-		c:         cfg,
-		tunnelLog: logging.NewScopedLogger(cfg.AppLog, logging.GroupTunnel, logging.SubLifecycle),
-		dnsLog:    logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubDnsRoute),
-		staticLog: logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubStaticRoute),
-		clientLog: logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubClientRoute),
+		c:                cfg,
+		epoch:            time.Now(),
+		sweepMinInterval: defaultSweepMinInterval,
+		tunnelLog:        logging.NewScopedLogger(cfg.AppLog, logging.GroupTunnel, logging.SubLifecycle),
+		dnsLog:           logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubDnsRoute),
+		staticLog:        logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubStaticRoute),
+		clientLog:        logging.NewScopedLogger(cfg.AppLog, logging.GroupRouting, logging.SubClientRoute),
 	}
 }
 
 var _ mcpsrv.Deps = (*Local)(nil)
 
 func errUnavailable(what string) error { return fmt.Errorf("%s is not available on this router", what) }
+
+// defaultSweepMinInterval bounds how often run_pingcheck may start a new
+// sweep. A sweep is tunnels × probe timeout of NDMS work; the tool
+// description already tells the model to wait about this long.
+const defaultSweepMinInterval = 10 * time.Second
 
 // publish mirrors the resource:invalidated hints the REST handlers emit,
 // so an open web UI refetches after an MCP mutation instead of showing
@@ -306,19 +318,17 @@ func (l *Local) MonitoringMatrix(context.Context) (mcpsrv.MonitoringMatrix, erro
 // but not in blocking on it: CheckAllNow probes every monitored tunnel
 // synchronously with the service's own context, so a call would hold the
 // MCP request for tunnels × probe-timeout with no way to honour ctx. The
-// sweep runs in a goroutine the pingcheck service already guards with its
-// own running flag; one sweep at a time (pingSweep) keeps a looping agent
-// from stacking them.
+// sweep runs in a goroutine; the pingcheck service's own context ends it
+// on shutdown. Triggered is false when monitoring is switched off (there
+// is nothing to sweep, and the model would poll forever for a result),
+// while a sweep is in flight, and inside sweepMinInterval of the last one.
 func (l *Local) RunPingCheck(context.Context) (mcpsrv.PingCheckRun, error) {
 	if l.c.PingCheck == nil {
 		return mcpsrv.PingCheckRun{}, errUnavailable("ping check")
 	}
-	run := mcpsrv.PingCheckRun{Triggered: l.pingSweep.CompareAndSwap(false, true)}
-	if run.Triggered {
-		go func() {
-			defer l.pingSweep.Store(false)
-			l.c.PingCheck.CheckAllNow()
-		}()
+	var run mcpsrv.PingCheckRun
+	if l.c.PingCheck.IsEnabled() {
+		run.Triggered = l.startSweep()
 	}
 	for _, s := range l.c.PingCheck.GetStatus() {
 		run.Tunnels = append(run.Tunnels, mcpsrv.PingCheckStatus{
@@ -327,6 +337,24 @@ func (l *Local) RunPingCheck(context.Context) (mcpsrv.PingCheckRun, error) {
 		})
 	}
 	return run, nil
+}
+
+// startSweep begins a background CheckAllNow unless one is running or the
+// last one started less than sweepMinInterval ago.
+func (l *Local) startSweep() bool {
+	now := time.Since(l.epoch).Nanoseconds()
+	if last := l.lastSweep.Load(); last != 0 && now-last < l.sweepMinInterval.Nanoseconds() {
+		return false
+	}
+	if !l.pingSweep.CompareAndSwap(false, true) {
+		return false
+	}
+	l.lastSweep.Store(now)
+	go func() {
+		defer l.pingSweep.Store(false)
+		l.c.PingCheck.CheckAllNow()
+	}()
+	return true
 }
 
 // ---- tunnels --------------------------------------------------------------
