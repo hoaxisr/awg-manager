@@ -230,7 +230,10 @@ func (s *AWGTunnelStore) saveLocked(tunnel *AWGTunnel) error {
 	// Remove trailing newline added by Encode
 	data := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 
-	path := filepath.Join(s.dir, tunnel.ID+".json")
+	path, err := s.tunnelPath(tunnel.ID)
+	if err != nil {
+		return err
+	}
 	if err := AtomicWrite(path, data); err != nil {
 		return fmt.Errorf("write tunnel file: %w", err)
 	}
@@ -296,6 +299,9 @@ func (s *AWGTunnelStore) Create(tunnel *AWGTunnel) error {
 	if tunnel.ID == "" {
 		return fmt.Errorf("create tunnel: empty ID")
 	}
+	if _, err := s.tunnelPath(tunnel.ID); err != nil {
+		return fmt.Errorf("create tunnel: %w", err)
+	}
 
 	lk, err := lock.WaitLockDir(s.lockName, s.lockDir, s.timeout)
 	if err != nil {
@@ -312,7 +318,8 @@ func (s *AWGTunnelStore) Create(tunnel *AWGTunnel) error {
 
 // Delete removes tunnel file.
 func (s *AWGTunnelStore) Delete(id string) error {
-	if _, err := s.tunnelPath(id); err != nil {
+	path, err := s.tunnelPath(id)
+	if err != nil {
 		return err
 	}
 	lk, err := lock.WaitLockDir(s.lockName, s.lockDir, s.timeout)
@@ -321,7 +328,6 @@ func (s *AWGTunnelStore) Delete(id string) error {
 	}
 	defer lk.Unlock()
 
-	path := filepath.Join(s.dir, id+".json")
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("tunnel not found: %s", id)
