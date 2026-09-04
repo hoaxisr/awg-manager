@@ -71,6 +71,7 @@ func (a *awgStoreAdapter) List(ctx context.Context) ([]awgoutbounds.AWGTunnelInf
 			ID:           t.ID,
 			Name:         t.Name,
 			BackendIface: awgKernelIface(&t),
+			DNS:          t.Interface.DNS,
 		})
 	}
 	return out, nil

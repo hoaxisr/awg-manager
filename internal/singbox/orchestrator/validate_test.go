@@ -539,3 +539,23 @@ func TestValidateDefaultDomainResolverStringForm_Unknown(t *testing.T) {
 		t.Fatalf("bare-string resolver to unknown server must fail unknown-dns-server, got: %v", res.Error())
 	}
 }
+
+// Слот awg в форме #846 (per-outbound domain_resolver + свой dns-сервер
+// с detour на этот же outbound) проходит валидацию целиком.
+func TestValidate_AWGSlotPerOutboundDNS(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotAwg, Filename: "15-awg.json", AlwaysOn: true})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "15-awg.json", `{"outbounds":[{"type":"direct","tag":"awg-a","bind_interface":"t2s0","domain_resolver":{"server":"dns-awg-a"}},{"type":"direct","tag":"awg-sys-b","bind_interface":"nwg0","domain_resolver":{"server":"dns-awg-sys-b"}}],"dns":{"servers":[{"type":"udp","tag":"dns-awg-a","server":"10.8.0.1","detour":"awg-a"},{"type":"udp","tag":"dns-awg-sys-b","server":"1.1.1.1","detour":"awg-sys-b"}]}}`)
+	o.enabled[SlotAwg] = true
+
+	res := o.Validate()
+	if !res.Ok() {
+		t.Errorf("expected ok, got: %v", res.Error())
+	}
+	if findValidationWarning(res, "duplicate-dns") != nil {
+		t.Errorf("dns tags are unique, got: %+v", res.Errors)
+	}
+}

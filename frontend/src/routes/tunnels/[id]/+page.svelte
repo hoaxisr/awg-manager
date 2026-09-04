@@ -419,7 +419,7 @@
 						<div class="flex flex-col gap-1.5" style="margin-top:12px">
 							<label class="field-label" for="dns">DNS</label>
 							<input type="text" id="dns" class="field-input" bind:value={$form.dns} placeholder="1.1.1.1, 8.8.8.8" />
-							<p class="field-hint">DNS-серверы через запятую. Применяются на роутере при старте туннеля.</p>
+							<p class="field-hint">DNS-серверы через запятую. Применяются на роутере при старте туннеля. Первый IPv4 из списка sing-box использует для доменов, направленных в этот туннель, и запрос идёт через сам туннель; если поле пустое — 1.1.1.1 (для split-туннеля адрес должен входить в AllowedIPs).</p>
 						</div>
 					</section>
 

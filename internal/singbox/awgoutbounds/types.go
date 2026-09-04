@@ -20,14 +20,17 @@ type TagInfo struct {
 }
 
 // AWGEntry is the internal representation produced by enumerate().
-// Same shape as TagInfo today; kept separate so internal evolution
-// (e.g. adding state info, runtime hints) doesn't leak through the
-// public API surface.
+// Kept separate from TagInfo so internal evolution (e.g. adding state
+// info, runtime hints) doesn't leak through the public API surface.
 type AWGEntry struct {
 	Tag   string
 	Label string
 	Kind  string
 	Iface string
+	// Resolver — готовый IP DNS-сервера туннеля; пусто = сервера нет
+	// (системные NDMS-туннели DNS не несут), выше по коду подставляется
+	// fallbackResolver.
+	Resolver string
 }
 
 // Deps groups the external collaborators Service needs.

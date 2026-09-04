@@ -80,3 +80,73 @@ func TestSaveFile_OverwriteAtomic(t *testing.T) {
 		t.Errorf("expected file to be replaced, got %d outbounds", len(got.Outbounds))
 	}
 }
+
+// Каждый outbound обязан резолвить домен через свой DNS-сервер, а тот —
+// ходить detour'ом через сам туннель (#846).
+func TestMarshalEntries_DomainResolverAndDNSServers(t *testing.T) {
+	raw, err := marshalEntries([]AWGEntry{
+		{Tag: "awg-tunA", Kind: "managed", Iface: "t2s0", Resolver: "10.8.0.1"},
+		{Tag: "awg-sys-Wireguard0", Kind: "system", Iface: "nwg0"},
+	})
+	if err != nil {
+		t.Fatalf("marshalEntries: %v", err)
+	}
+	var got struct {
+		Outbounds []map[string]any `json:"outbounds"`
+		DNS       struct {
+			Servers []map[string]any `json:"servers"`
+		} `json:"dns"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.Outbounds) != 2 || len(got.DNS.Servers) != 2 {
+		t.Fatalf("want 2 outbounds and 2 dns servers, got %d/%d: %s", len(got.Outbounds), len(got.DNS.Servers), raw)
+	}
+
+	resolver, ok := got.Outbounds[0]["domain_resolver"].(map[string]any)
+	if !ok {
+		t.Fatalf("outbound 0 has no domain_resolver object: %+v", got.Outbounds[0])
+	}
+	if resolver["server"] != "dns-awg-tunA" {
+		t.Errorf("domain_resolver.server = %v, want dns-awg-tunA", resolver["server"])
+	}
+
+	// Туннель со своим DNS: первый его адрес, detour на собственный outbound.
+	s0 := got.DNS.Servers[0]
+	if s0["type"] != "udp" || s0["tag"] != "dns-awg-tunA" || s0["server"] != "10.8.0.1" || s0["detour"] != "awg-tunA" {
+		t.Errorf("dns server 0 wrong: %+v", s0)
+	}
+	// Туннель без DNS (системный): fallback-адрес, detour всё равно свой.
+	s1 := got.DNS.Servers[1]
+	if s1["server"] != "1.1.1.1" {
+		t.Errorf("dns server 1 server = %v, want fallback 1.1.1.1", s1["server"])
+	}
+	if s1["tag"] != "dns-awg-sys-Wireguard0" || s1["detour"] != "awg-sys-Wireguard0" {
+		t.Errorf("dns server 1 wrong: %+v", s1)
+	}
+}
+
+// Пустой слот всё равно объявляет обе секции пустыми массивами (не null),
+// иначе sing-box не сольёт config.d.
+func TestMarshalEntries_EmptyKeepsDNSSection(t *testing.T) {
+	raw, err := marshalEntries(nil)
+	if err != nil {
+		t.Fatalf("marshalEntries: %v", err)
+	}
+	var got struct {
+		Outbounds *[]map[string]any `json:"outbounds"`
+		DNS       *struct {
+			Servers *[]map[string]any `json:"servers"`
+		} `json:"dns"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Outbounds == nil || len(*got.Outbounds) != 0 {
+		t.Errorf("outbounds must be an empty array, got %v: %s", got.Outbounds, raw)
+	}
+	if got.DNS == nil || got.DNS.Servers == nil || len(*got.DNS.Servers) != 0 {
+		t.Errorf("dns.servers must be an empty array: %s", raw)
+	}
+}
