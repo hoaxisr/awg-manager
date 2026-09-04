@@ -105,8 +105,10 @@
 	}
 
 	// lastUsedAt is absent until the key's first call; createdAt is always set.
+	// The shared formatter renders an unparsable value as "Invalid Date", so
+	// guard here: a dash is what the table shows for "unknown".
 	function keyDate(iso?: string): string {
-		return iso ? formatDate(iso) : '—';
+		return iso && !Number.isNaN(Date.parse(iso)) ? formatDate(iso) : '—';
 	}
 
 	const claudeSnippet = $derived(
