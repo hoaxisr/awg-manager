@@ -131,7 +131,8 @@ func errUnavailable(what string) error { return fmt.Errorf("%s is not available 
 
 // publish mirrors the resource:invalidated hints the REST handlers emit,
 // so an open web UI refetches after an MCP mutation instead of showing
-// stale data until a manual refresh. Bus is optional (see ControlSingbox).
+// stale data until a manual refresh. Bus is optional: half the daemon's
+// test wirings come up without one.
 func (l *Local) publish(res events.Resource, reason string) {
 	if l.c.Bus == nil {
 		return
@@ -282,7 +283,23 @@ func (l *Local) MonitoringMatrix(context.Context) (mcpsrv.MonitoringMatrix, erro
 	if l.c.Monitoring == nil {
 		return mcpsrv.MonitoringMatrix{}, errUnavailable("monitoring")
 	}
-	return convert[mcpsrv.MonitoringMatrix](l.c.Monitoring.Snapshot())
+	snap := l.c.Monitoring.Snapshot()
+	out := mcpsrv.MonitoringMatrix{
+		Targets:   make([]mcpsrv.MonitoringTarget, 0, len(snap.Targets)),
+		Tunnels:   make([]mcpsrv.MonitoringTunnel, 0, len(snap.Tunnels)),
+		Cells:     make([]mcpsrv.MonitoringCell, 0, len(snap.Cells)),
+		UpdatedAt: snap.UpdatedAt,
+	}
+	for _, t := range snap.Targets {
+		out.Targets = append(out.Targets, mcpsrv.MonitoringTarget{ID: t.ID, Host: t.Host, Name: t.Name})
+	}
+	for _, t := range snap.Tunnels {
+		out.Tunnels = append(out.Tunnels, mcpsrv.MonitoringTunnel{ID: t.ID, Name: t.Name})
+	}
+	for _, c := range snap.Cells {
+		out.Cells = append(out.Cells, mcpsrv.MonitoringCell{TargetID: c.TargetID, TunnelID: c.TunnelID, OK: c.OK, LatencyMs: c.LatencyMs, TS: c.TS})
+	}
+	return out, nil
 }
 
 // RunPingCheck mirrors api.PingCheckHandler.CheckNow in what it kicks off,
@@ -303,11 +320,12 @@ func (l *Local) RunPingCheck(context.Context) (mcpsrv.PingCheckRun, error) {
 			l.c.PingCheck.CheckAllNow()
 		}()
 	}
-	statuses, err := convert[[]mcpsrv.PingCheckStatus](l.c.PingCheck.GetStatus())
-	if err != nil {
-		return mcpsrv.PingCheckRun{}, err
+	for _, s := range l.c.PingCheck.GetStatus() {
+		run.Tunnels = append(run.Tunnels, mcpsrv.PingCheckStatus{
+			TunnelID: s.TunnelID, TunnelName: s.TunnelName, Enabled: s.Enabled,
+			Status: s.Status, Method: s.Method, LastLatency: s.LastLatency,
+		})
 	}
-	run.Tunnels = statuses
 	return run, nil
 }
 
@@ -372,9 +390,8 @@ func (l *Local) GetTunnel(ctx context.Context, id string) (mcpsrv.TunnelDetail, 
 		d.Address = st.Interface.Address
 	}
 	if l.c.Traffic != nil {
-		if s, err := convert[mcpsrv.TrafficStats](l.c.Traffic.Stats(id, time.Hour)); err == nil {
-			d.Traffic1h = s
-		}
+		// Same fields, same order: a struct conversion, no allocation.
+		d.Traffic1h = mcpsrv.TrafficStats(l.c.Traffic.Stats(id, time.Hour))
 	}
 	return d, nil
 }
@@ -541,9 +558,6 @@ func (l *Local) ExportTunnelConfig(_ context.Context, id string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	if st == nil {
-		return "", fmt.Errorf("tunnel %q not found", id)
-	}
 	return config.GenerateForExport(st), nil
 }
 
@@ -649,7 +663,16 @@ func (l *Local) ListStaticRoutes(context.Context) ([]mcpsrv.StaticRoute, error) 
 	if err != nil {
 		return nil, err
 	}
-	return convert[[]mcpsrv.StaticRoute](list)
+	out := make([]mcpsrv.StaticRoute, 0, len(list))
+	for i := range list {
+		out = append(out, staticRoute(&list[i]))
+	}
+	return out, nil
+}
+
+// staticRoute maps a stored list to the tool shape (no icon, no timestamps).
+func staticRoute(rl *storage.StaticRouteList) mcpsrv.StaticRoute {
+	return mcpsrv.StaticRoute{ID: rl.ID, Name: rl.Name, TunnelID: rl.TunnelID, Subnets: rl.Subnets, Fallback: rl.Fallback, Enabled: rl.Enabled}
 }
 
 func (l *Local) AddStaticRoute(ctx context.Context, in mcpsrv.StaticRouteInput) (mcpsrv.StaticRoute, error) {
@@ -664,7 +687,10 @@ func (l *Local) AddStaticRoute(ctx context.Context, in mcpsrv.StaticRouteInput) 
 	}
 	l.staticLog.Info("create", in.Name, "Static route list created (MCP)")
 	l.publish(events.ResourceRoutingStaticRoutes, "mcp-create")
-	return convert[mcpsrv.StaticRoute](created)
+	if created == nil {
+		return mcpsrv.StaticRoute{}, fmt.Errorf("static route create returned no list")
+	}
+	return staticRoute(created), nil
 }
 
 func (l *Local) RemoveStaticRoute(ctx context.Context, id string) (mcpsrv.StaticRoute, error) {
@@ -679,10 +705,7 @@ func (l *Local) RemoveStaticRoute(ctx context.Context, id string) (mcpsrv.Static
 	if existing == nil {
 		return mcpsrv.StaticRoute{}, fmt.Errorf("static route %q not found", id)
 	}
-	out, err := convert[mcpsrv.StaticRoute](existing)
-	if err != nil {
-		return mcpsrv.StaticRoute{}, err
-	}
+	out := staticRoute(existing)
 	if err := l.c.StaticRoutes.Delete(ctx, id); err != nil {
 		l.staticLog.Warn("delete", existing.Name, "Failed to delete static route list (MCP): "+err.Error())
 		return mcpsrv.StaticRoute{}, err
@@ -700,7 +723,11 @@ func (l *Local) ListClientRoutes(context.Context) ([]mcpsrv.ClientRoute, error) 
 	if err != nil {
 		return nil, err
 	}
-	return convert[[]mcpsrv.ClientRoute](list)
+	out := make([]mcpsrv.ClientRoute, 0, len(list))
+	for _, r := range list {
+		out = append(out, mcpsrv.ClientRoute(r))
+	}
+	return out, nil
 }
 
 func (l *Local) SetClientRoute(ctx context.Context, in mcpsrv.ClientRouteInput) (*mcpsrv.ClientRoute, error) {
@@ -759,10 +786,10 @@ func (l *Local) SetClientRoute(ctx context.Context, in mcpsrv.ClientRouteInput) 
 	}
 	l.clientLog.Info(reason[len("mcp-"):], in.ClientIP, "Client route → "+in.TunnelID+" (MCP)")
 	l.publish(events.ResourceRoutingClientRoutes, reason)
-	out, err := convert[mcpsrv.ClientRoute](saved)
-	if err != nil {
-		return nil, err
+	if saved == nil {
+		return nil, fmt.Errorf("client route save returned no route")
 	}
+	out := mcpsrv.ClientRoute(*saved)
 	return &out, nil
 }
 
@@ -800,7 +827,11 @@ func (l *Local) ListDevices(ctx context.Context) ([]mcpsrv.Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	return convert[[]mcpsrv.Device](list)
+	out := make([]mcpsrv.Device, 0, len(list))
+	for _, d := range list {
+		out = append(out, mcpsrv.Device{MAC: d.MAC, IP: d.IP, Name: d.Name, Hostname: d.Hostname, Active: d.Active, Policy: d.Policy})
+	}
+	return out, nil
 }
 
 // ---- servers / sing-box ---------------------------------------------------
@@ -827,9 +858,7 @@ func (l *Local) ControlSingbox(ctx context.Context, action string) (mcpsrv.Singb
 	if err := l.c.Singbox.Control(ctx, action); err != nil {
 		return mcpsrv.SingboxStatus{}, err
 	}
-	if l.c.Bus != nil {
-		l.c.Bus.PublishInvalidated(events.ResourceSingboxStatus, "mcp-control")
-	}
+	l.publish(events.ResourceSingboxStatus, "mcp-control")
 	return singboxStatus(l.c.Singbox.GetStatus(ctx)), nil
 }
 
