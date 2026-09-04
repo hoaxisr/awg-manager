@@ -141,6 +141,10 @@ func errUnavailable(what string) error { return fmt.Errorf("%s is not available 
 // description already tells the model to wait about this long.
 const defaultSweepMinInterval = 10 * time.Second
 
+// maxLogScan bounds how many ring entries a filtered get_logs copies out of
+// the buffer per call, whatever ring size the user configured.
+const maxLogScan = 5000
+
 // publish mirrors the resource:invalidated hints the REST handlers emit,
 // so an open web UI refetches after an MCP mutation instead of showing
 // stale data until a manual refresh. Bus is optional: half the daemon's
@@ -211,12 +215,17 @@ func (l *Local) GetLogs(_ context.Context, q mcpsrv.LogsQuery) ([]mcpsrv.LogEntr
 	clientSide := q.Contains != "" || filterByLevel
 	fetch := q.Lines
 	if clientSide {
-		// Filter here, then cap: scan the whole ring, whatever size the
-		// user configured, so "total" is honest and the newest matches
-		// are never cut off by an arbitrary constant.
+		// Filter here, then cap. The scan covers the ring up to
+		// maxLogScan: a user may raise the ring to tens of thousands of
+		// entries, and copying all of them per call on a router with a
+		// few dozen MB of RAM is not worth an exact "total" — the value is
+		// documented as "matches within the newest maxLogScan".
 		fetch = l.c.Logs.Stats(bucket).Capacity
 		if fetch <= 0 {
 			fetch = logging.DefaultCapacity(bucket)
+		}
+		if fetch > maxLogScan {
+			fetch = maxLogScan
 		}
 	}
 	// The level is filtered HERE, not by GetLogsMulti: that path uses
@@ -228,7 +237,9 @@ func (l *Local) GetLogs(_ context.Context, q mcpsrv.LogsQuery) ([]mcpsrv.LogEntr
 	// GetLogsMulti returns entries NEWEST-first (logbuf.Buffer.FilterPage
 	// walks the ring from the end). get_logs promises "newest last", and the
 	// tail-slice below must keep the NEWEST matches — so reverse first.
-	out := make([]mcpsrv.LogEntry, 0, len(entries))
+	// Matching keeps pointers only; mapping (and the regex-heavy masking)
+	// runs on the entries actually returned, not on every match.
+	matched := make([]*logging.LogEntry, 0, len(entries))
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := &entries[i]
 		if contains != "" && !strings.Contains(strings.ToLower(e.Message), contains) {
@@ -241,13 +252,17 @@ func (l *Local) GetLogs(_ context.Context, q mcpsrv.LogsQuery) ([]mcpsrv.LogEntr
 				continue
 			}
 		}
-		out = append(out, logEntry(e, !q.Raw))
+		matched = append(matched, e)
 	}
 	if clientSide {
-		total = len(out)
-		if len(out) > q.Lines {
-			out = out[len(out)-q.Lines:]
+		total = len(matched)
+		if len(matched) > q.Lines {
+			matched = matched[len(matched)-q.Lines:]
 		}
+	}
+	out := make([]mcpsrv.LogEntry, 0, len(matched))
+	for _, e := range matched {
+		out = append(out, logEntry(e, !q.Raw))
 	}
 	return out, total, nil
 }

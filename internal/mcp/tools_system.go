@@ -16,7 +16,7 @@ import (
 var LogLevelRank = map[string]int{"debug": 0, "info": 1, "warn": 2, "error": 3}
 
 type logsOut struct {
-	Total   int        `json:"total" jsonschema:"entries matching the filter before the line cap"`
+	Total   int        `json:"total" jsonschema:"entries matching the filter before the line cap (within the newest 5000 buffer entries)"`
 	Entries []LogEntry `json:"entries"`
 }
 

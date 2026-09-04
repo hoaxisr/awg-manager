@@ -629,6 +629,15 @@ func TestLocal_GetLogsMasksAndMapsDirectly(t *testing.T) {
 	if fl.gotLimit != 10 {
 		t.Fatalf("without a client-side filter the buffer should page by Lines, fetched %d", fl.gotLimit)
 	}
+
+	// A user-enlarged ring is not copied whole: the scan stops at maxLogScan.
+	fl.capacity = 50000
+	if _, _, err := l.GetLogs(ctx, mcpsrv.LogsQuery{Bucket: "app", Lines: 10, Level: "warn"}); err != nil {
+		t.Fatal(err)
+	}
+	if fl.gotLimit != maxLogScan {
+		t.Fatalf("scan of a 50000-entry ring fetched %d, want the %d cap", fl.gotLimit, maxLogScan)
+	}
 }
 
 // TestLocal_GetLogsOldestFirstAndKeepsNewest — GetLogsMulti отдаёт записи
