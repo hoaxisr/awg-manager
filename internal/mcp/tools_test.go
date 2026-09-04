@@ -70,6 +70,41 @@ func (blindDeps) GetTunnel(context.Context, string) (mcpsrv.TunnelDetail, error)
 // followed by a failed read-back must not look like "stopped and
 // disabled": that is how an agent ends up telling the user a tunnel it
 // just enabled is off.
+// TestTools_TunnelIDIsValidatedBeforeDeps — every tool that takes a
+// tunnelId refuses a malformed one before Deps sees it. The store joins
+// the id into a file path, so "../settings" must never get that far.
+func TestTools_TunnelIDIsValidatedBeforeDeps(t *testing.T) {
+	s, fake := newTestSession(t)
+	calls := map[string]map[string]any{
+		"get_tunnel":            {"tunnelId": "../settings"},
+		"export_tunnel_config":  {"tunnelId": "../settings"},
+		"test_connectivity":     {"tunnelId": "../settings"},
+		"control_tunnel":        {"tunnelId": "../settings", "action": "enable"},
+		"replace_tunnel_config": {"tunnelId": "../settings", "config": "[Interface]\n[Peer]\n"},
+		"add_dns_route":         {"name": "x", "domains": []string{"example.com"}, "tunnelId": "../settings"},
+		"add_static_route":      {"name": "x", "subnets": []string{"10.0.0.0/8"}, "tunnelId": "../settings"},
+		"set_client_route":      {"clientIp": "192.168.1.10", "tunnelId": "../settings"},
+	}
+	for name, args := range calls {
+		res, _ := callTool(t, s, name, args)
+		if !res.IsError {
+			t.Errorf("%s accepted a traversal id", name)
+			continue
+		}
+		if txt := toolText(res); !strings.Contains(txt, "not a valid tunnel id") {
+			t.Errorf("%s: error does not name the cause: %s", name, txt)
+		}
+	}
+	// Nothing reached Deps: the fake's route tables are as New() left them.
+	ctx := context.Background()
+	dns, _ := fake.ListDNSRoutes(ctx)
+	static, _ := fake.ListStaticRoutes(ctx)
+	clients, _ := fake.ListClientRoutes(ctx)
+	if len(dns) != 1 || len(static) != 1 || len(clients) != 0 {
+		t.Fatalf("Deps was reached with a malformed id: dns=%d static=%d clients=%d", len(dns), len(static), len(clients))
+	}
+}
+
 func TestTools_ControlTunnelUnknownStateIsNotFabricated(t *testing.T) {
 	srv := mcpsrv.NewServer(blindDeps{mcptest.New()}, "test")
 	ts := httptest.NewServer(mcpsrv.NewHTTPHandler(srv))

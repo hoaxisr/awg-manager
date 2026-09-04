@@ -15,6 +15,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/lock"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnelid"
 )
 
 // ErrNotFound — записи туннеля нет. Им оборачивается отсутствие файла в Get,
@@ -159,9 +160,24 @@ func (s *AWGTunnelStore) ListStrict() ([]AWGTunnel, error) {
 	return tunnels, nil
 }
 
+// tunnelPath maps an id to its file. Malformed ids (anything with a
+// separator or a dot, see tunnelid) are refused here rather than trusted
+// from the caller: the REST layer validates, but the MCP layer and any
+// future caller must not be able to read <dataDir>/settings.json through
+// "../settings". A refused id reads as "no such tunnel".
+func (s *AWGTunnelStore) tunnelPath(id string) (string, error) {
+	if !tunnelid.Valid(id) {
+		return "", fmt.Errorf("%w: %q is not a valid tunnel id", ErrNotFound, id)
+	}
+	return filepath.Join(s.dir, id+".json"), nil
+}
+
 // Get returns a single tunnel by ID.
 func (s *AWGTunnelStore) Get(id string) (*AWGTunnel, error) {
-	path := filepath.Join(s.dir, id+".json")
+	path, err := s.tunnelPath(id)
+	if err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -246,6 +262,9 @@ func (s *AWGTunnelStore) saveLocked(tunnel *AWGTunnel) error {
 // Затирать запись целиком (*t = снимок) запрещено — это ровно тот дефект,
 // ради которого транзакция и заведена.
 func (s *AWGTunnelStore) Update(id string, mut func(*AWGTunnel) error) error {
+	if _, err := s.tunnelPath(id); err != nil {
+		return err
+	}
 	lk, err := lock.WaitLockDir(s.lockName, s.lockDir, s.timeout)
 	if err != nil {
 		return fmt.Errorf("acquire lock: %w", err)
@@ -293,6 +312,9 @@ func (s *AWGTunnelStore) Create(tunnel *AWGTunnel) error {
 
 // Delete removes tunnel file.
 func (s *AWGTunnelStore) Delete(id string) error {
+	if _, err := s.tunnelPath(id); err != nil {
+		return err
+	}
 	lk, err := lock.WaitLockDir(s.lockName, s.lockDir, s.timeout)
 	if err != nil {
 		return fmt.Errorf("acquire lock: %w", err)
@@ -316,8 +338,11 @@ func (s *AWGTunnelStore) Delete(id string) error {
 
 // Exists checks if tunnel exists.
 func (s *AWGTunnelStore) Exists(id string) bool {
-	path := filepath.Join(s.dir, id+".json")
-	_, err := os.Stat(path)
+	path, err := s.tunnelPath(id)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
 	return err == nil
 }
 

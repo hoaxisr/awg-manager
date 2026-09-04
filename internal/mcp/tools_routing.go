@@ -106,8 +106,8 @@ func registerRoutingTools(s *mcp.Server, d Deps) {
 		if strings.TrimSpace(in.Name) == "" {
 			return nil, DNSRoute{}, fmt.Errorf("name is required")
 		}
-		if in.TunnelID == "" {
-			return nil, DNSRoute{}, fmt.Errorf("tunnelId is required")
+		if err := requireTunnelID(in.TunnelID); err != nil {
+			return nil, DNSRoute{}, err
 		}
 		if err := validateDomains(in.Domains); err != nil {
 			return nil, DNSRoute{}, err
@@ -153,8 +153,8 @@ func registerRoutingTools(s *mcp.Server, d Deps) {
 		if strings.TrimSpace(in.Name) == "" {
 			return nil, StaticRoute{}, fmt.Errorf("name is required")
 		}
-		if in.TunnelID == "" {
-			return nil, StaticRoute{}, fmt.Errorf("tunnelId is required")
+		if err := requireTunnelID(in.TunnelID); err != nil {
+			return nil, StaticRoute{}, err
 		}
 		if err := validateCIDRs(in.Subnets); err != nil {
 			return nil, StaticRoute{}, err
@@ -208,6 +208,12 @@ func registerRoutingTools(s *mcp.Server, d Deps) {
 		in.ClientIP = ip.To4().String()
 		if in.Fallback != "" && in.Fallback != "drop" && in.Fallback != "bypass" {
 			return nil, clientRouteOut{}, fmt.Errorf("fallback must be drop or bypass")
+		}
+		// Empty means "remove the route"; anything else must be a real id.
+		if in.TunnelID != "" {
+			if err := requireTunnelID(in.TunnelID); err != nil {
+				return nil, clientRouteOut{}, err
+			}
 		}
 		route, err := d.SetClientRoute(ctx, in)
 		if err != nil {

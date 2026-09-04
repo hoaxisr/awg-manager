@@ -76,8 +76,8 @@ func registerSystemTools(s *mcp.Server, d Deps) {
 		Description: "Probe internet reachability through a tunnel (HTTP 204 check). Takes a few seconds.",
 		Annotations: readOnly("Connectivity test"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in connIn) (*mcp.CallToolResult, ConnectivityResult, error) {
-		if in.TunnelID == "" {
-			return nil, ConnectivityResult{}, fmt.Errorf("tunnelId is required")
+		if err := requireTunnelID(in.TunnelID); err != nil {
+			return nil, ConnectivityResult{}, err
 		}
 		out, err := d.TestConnectivity(ctx, in.TunnelID)
 		return nil, out, err

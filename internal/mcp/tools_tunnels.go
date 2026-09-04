@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/hoaxisr/awg-manager/internal/tunnelid"
 )
 
 type tunnelIDIn struct {
@@ -64,6 +66,20 @@ var validActions = map[string]bool{
 	ActionSetDefaultRoute: true, ActionUnsetDefaultRoute: true,
 }
 
+// requireTunnelID rejects anything that is not a well-formed id BEFORE it
+// reaches Deps. The REST handlers do the same on every call; without it
+// the MCP path would hand "../settings" to a store that joins the id into
+// a file path.
+func requireTunnelID(id string) error {
+	if id == "" {
+		return fmt.Errorf("tunnelId is required")
+	}
+	if !tunnelid.Valid(id) {
+		return fmt.Errorf("tunnelId %q is not a valid tunnel id (use an id from list_tunnels)", id)
+	}
+	return nil
+}
+
 func requireConf(config string) error {
 	if !strings.Contains(config, "[Interface]") || !strings.Contains(config, "[Peer]") {
 		return fmt.Errorf("config must contain [Interface] and [Peer] sections")
@@ -89,8 +105,8 @@ func registerTunnelTools(s *mcp.Server, d Deps) {
 		Description: "Details of one tunnel including addresses, allowed IPs, process state and traffic over the last hour.",
 		Annotations: readOnly("Get tunnel"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in tunnelIDIn) (*mcp.CallToolResult, TunnelDetail, error) {
-		if in.TunnelID == "" {
-			return nil, TunnelDetail{}, fmt.Errorf("tunnelId is required")
+		if err := requireTunnelID(in.TunnelID); err != nil {
+			return nil, TunnelDetail{}, err
 		}
 		out, err := d.GetTunnel(ctx, in.TunnelID)
 		return nil, out, err
@@ -101,8 +117,8 @@ func registerTunnelTools(s *mcp.Server, d Deps) {
 		Description: "Start, stop or restart a tunnel; enable/disable it (autostart); or make it the default route (set_default_route/unset_default_route). Reversible.",
 		Annotations: safeWrite("Control tunnel", true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in controlIn) (*mcp.CallToolResult, controlOut, error) {
-		if in.TunnelID == "" {
-			return nil, controlOut{}, fmt.Errorf("tunnelId is required")
+		if err := requireTunnelID(in.TunnelID); err != nil {
+			return nil, controlOut{}, err
 		}
 		if !validActions[in.Action] {
 			return nil, controlOut{}, fmt.Errorf("action %q is not one of start|stop|restart|enable|disable|set_default_route|unset_default_route", in.Action)
@@ -145,8 +161,8 @@ func registerTunnelTools(s *mcp.Server, d Deps) {
 			"A running tunnel is stopped and started again automatically, so no manual restart is needed; check the returned warnings.",
 		Annotations: safeWrite("Replace tunnel config", true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in replaceIn) (*mcp.CallToolResult, replaceOut, error) {
-		if in.TunnelID == "" {
-			return nil, replaceOut{}, fmt.Errorf("tunnelId is required")
+		if err := requireTunnelID(in.TunnelID); err != nil {
+			return nil, replaceOut{}, err
 		}
 		if err := requireConf(in.Config); err != nil {
 			return nil, replaceOut{}, err
@@ -163,8 +179,8 @@ func registerTunnelTools(s *mcp.Server, d Deps) {
 		Description: "Export a tunnel as .conf text. WARNING: includes the private key — only use when the user asks for the config.",
 		Annotations: readOnly("Export tunnel config"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in tunnelIDIn) (*mcp.CallToolResult, exportOut, error) {
-		if in.TunnelID == "" {
-			return nil, exportOut{}, fmt.Errorf("tunnelId is required")
+		if err := requireTunnelID(in.TunnelID); err != nil {
+			return nil, exportOut{}, err
 		}
 		cfg, err := d.ExportTunnelConfig(ctx, in.TunnelID)
 		return nil, exportOut{TunnelID: in.TunnelID, Config: cfg}, err
