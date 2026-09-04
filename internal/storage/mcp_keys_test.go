@@ -14,6 +14,22 @@ func newKeyStore(t *testing.T) *McpKeyStore {
 	return newKeyStoreIn(t, t.TempDir())
 }
 
+// blockWrites makes every persist fail regardless of uid: the store's
+// directory is re-pointed under a regular file, so AtomicWritePerm's
+// MkdirAll fails with ENOTDIR. Permission bits would not do — the local
+// Docker test run is root, which ignores them, and these tests were
+// silently skipped there.
+func blockWrites(t *testing.T, s *McpKeyStore) {
+	t.Helper()
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.dataDir = filepath.Join(blocker, "sub")
+	s.mu.Unlock()
+}
+
 func newKeyStoreIn(t *testing.T, dataDir string) *McpKeyStore {
 	t.Helper()
 	s := NewMcpKeyStore(dataDir)
@@ -125,18 +141,8 @@ func TestMcpKeyStore_CreateBadNameWrapsSentinel(t *testing.T) {
 }
 
 func TestMcpKeyStore_CreateSaveFailureDoesNotWrapInvalidName(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory permission bits")
-	}
-	dataDir := t.TempDir()
-	s := NewMcpKeyStore(dataDir)
-	if err := s.Load(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(dataDir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(dataDir, 0o700) })
+	s := newKeyStore(t)
+	blockWrites(t, s)
 
 	_, _, err := s.Create("laptop")
 	if err == nil {
@@ -166,18 +172,8 @@ func TestMcpKeyStore_PlaintextNeverPersisted(t *testing.T) {
 }
 
 func TestMcpKeyStore_CreateRollsBackOnSaveFailure(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory permission bits")
-	}
-	dataDir := t.TempDir()
-	s := NewMcpKeyStore(dataDir)
-	if err := s.Load(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(dataDir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(dataDir, 0o700) })
+	s := newKeyStore(t)
+	blockWrites(t, s)
 
 	_, plain, err := s.Create("laptop")
 	if err == nil {
@@ -192,22 +188,12 @@ func TestMcpKeyStore_CreateRollsBackOnSaveFailure(t *testing.T) {
 }
 
 func TestMcpKeyStore_RevokeRollsBackOnSaveFailure(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory permission bits")
-	}
-	dataDir := t.TempDir()
-	s := NewMcpKeyStore(dataDir)
-	if err := s.Load(); err != nil {
-		t.Fatal(err)
-	}
+	s := newKeyStore(t)
 	key, plain, err := s.Create("laptop")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dataDir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(dataDir, 0o700) })
+	blockWrites(t, s)
 
 	if err := s.Revoke(key.ID); err == nil {
 		t.Fatal("Revoke succeeded despite unwritable data dir")
@@ -410,14 +396,8 @@ func TestMcpKeyStore_LoadMissingFileIsEmpty(t *testing.T) {
 // после этого переименовала бы усечённый список поверх настоящего и молча
 // отозвала все выданные ключи, поэтому хранилище уходит в read-only.
 func TestMcpKeyStore_UnreadableFileMakesStoreReadOnly(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores file permission bits")
-	}
 	dataDir := t.TempDir()
-	seed := NewMcpKeyStore(dataDir)
-	if err := seed.Load(); err != nil {
-		t.Fatal(err)
-	}
+	seed := newKeyStoreIn(t, dataDir)
 	key, plain, err := seed.Create("laptop")
 	if err != nil {
 		t.Fatal(err)
@@ -427,10 +407,17 @@ func TestMcpKeyStore_UnreadableFileMakesStoreReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(path, 0o000); err != nil {
+	// An unreadable file that is NOT "missing": a symlink loop fails with
+	// ELOOP for every uid (chmod 0 would be ignored by root, i.e. by the
+	// local Docker test run). The real file is kept aside to prove that
+	// nothing overwrote the path meanwhile.
+	aside := path + ".aside"
+	if err := os.Rename(path, aside); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(path, 0o600) })
+	if err := os.Symlink("mcp_keys.json", path); err != nil {
+		t.Fatal(err)
+	}
 
 	s := NewMcpKeyStore(dataDir)
 	loadErr := s.Load()
@@ -455,15 +442,15 @@ func TestMcpKeyStore_UnreadableFileMakesStoreReadOnly(t *testing.T) {
 		t.Fatal("Verify must fail closed while the store could not be read")
 	}
 
-	if err := os.Chmod(path, 0o600); err != nil {
-		t.Fatal(err)
+	if fi, err := os.Lstat(path); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the unreadable path was replaced while read-only: %v %v", fi, err)
 	}
-	after, err := os.ReadFile(path)
+	after, err := os.ReadFile(aside)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(after) != string(before) {
-		t.Fatalf("the key file was rewritten while read-only:\nbefore=%s\nafter=%s", before, after)
+		t.Fatalf("the real key file changed while read-only:\nbefore=%s\nafter=%s", before, after)
 	}
 }
 
@@ -510,28 +497,35 @@ func TestMcpKeyStore_TouchDoesNotHoldTheLockAcrossTheWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for i := 0; i < 200; i++ {
-			if _, ok := s.Verify(plain); !ok {
+	// The hook runs at the exact point between "mu released" and "file
+	// written". If Touch still held mu here, Verify (RLock) would block
+	// until the hook — and the write — finished, and the timeout below
+	// would fire. A background Verify racing a full Touch cannot tell the
+	// two apart: it would merely wait and then succeed.
+	verified := make(chan bool, 1)
+	s.afterTouchUnlock = func() {
+		go func() { _, ok := s.Verify(plain); verified <- ok }()
+		select {
+		case ok := <-verified:
+			if !ok {
 				t.Error("Verify failed during Touch")
-				return
 			}
+			verified <- ok // hand the result back to the main goroutine
+		case <-time.After(2 * time.Second):
+			t.Error("Verify blocked while Touch was writing: mu is held across the write")
 		}
-	}()
-	for i := 0; i < 50; i++ {
-		s.now = func() time.Time { return time.Now().Add(time.Duration(i) * time.Hour) }
-		s.Touch(key.ID)
 	}
-	<-done
+	s.Touch(key.ID)
+	s.afterTouchUnlock = nil
+	select {
+	case <-verified:
+	default:
+		t.Fatal("the hook never ran")
+	}
 	if s.List()[0].LastUsedAt.IsZero() {
 		t.Fatal("Touch did not record LastUsedAt")
 	}
-	reloaded := NewMcpKeyStore(s.dataDir)
-	if err := reloaded.Load(); err != nil {
-		t.Fatal(err)
-	}
+	reloaded := newKeyStoreIn(t, s.dataDir)
 	if reloaded.List()[0].LastUsedAt.IsZero() {
 		t.Fatal("Touch did not persist LastUsedAt")
 	}
@@ -555,9 +549,11 @@ func touchRacesWith(t *testing.T, s *McpKeyStore, touchID string, mutate func())
 		// Дать мутатору время дойти до записи. С правильным порядком блокировок
 		// он упрётся в fileMu и не пройдёт дальше, пока Touch не запишет;
 		// со сломанным — успеет записать свой список, и снимок Touch затрёт его.
+		// 200 ms is plenty for an fsync'd write on CI; with the right lock
+		// order the mutator never completes here and the full wait is paid.
 		select {
 		case <-mutateDone:
-		case <-time.After(time.Second):
+		case <-time.After(200 * time.Millisecond):
 		}
 	}
 	s.Touch(touchID)

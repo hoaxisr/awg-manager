@@ -100,6 +100,10 @@ func TestMcpKeys_Validation(t *testing.T) {
 // since the not-found check happens before the failing save.
 func TestMcpKeys_StorageErrorsSurfaceAs500(t *testing.T) {
 	if os.Geteuid() == 0 {
+		// The handler cannot reach the store's directory to break writes
+		// any other way, so this one runs only on non-root CI (GitHub
+		// Actions); the local Docker run skips it. The store-level
+		// rollback tests in internal/storage do run as root.
 		t.Skip("root ignores directory permission bits")
 	}
 	dataDir := t.TempDir()
