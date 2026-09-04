@@ -46,7 +46,9 @@ type AuthConfig struct {
 	// Throttle limits failed attempts per client IP (optional). It is
 	// bypassed for loopback callers — see KeyMiddleware.
 	Throttle Throttle
-	// Log receives one line per rejected request (optional).
+	// Log receives the auth journal: rejected requests (sampled for the
+	// reverse proxy, see loopbackRejectLogInterval), throttle activation
+	// and 429s. Optional.
 	Log func(format string, args ...any)
 }
 
@@ -68,26 +70,33 @@ func KeyMiddleware(cfg AuthConfig, next http.Handler) http.Handler {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	// Sampling state for rejections from loopback: last log time and how
-	// many were dropped since. Atomics: this closure runs on every request.
-	var lastLoopbackReject atomic.Int64 // unix nanos
-	var suppressedLoopback atomic.Int64
+	// Sampling state for rejections from loopback. Times are monotonic
+	// offsets from epoch (time.Since), not wall-clock nanos: a router with
+	// no RTC gets its clock stepped backwards by NTP after boot, and a
+	// wall-clock "last logged" in the future would silence the journal
+	// until wall time caught up. Atomics: this closure runs on every request.
+	epoch := time.Now()
+	var lastLoopbackReject atomic.Int64 // monotonic nanos since epoch; 0 = never
+	var suppressedLoopback atomic.Int64 // rejections not logged since lastLoopbackReject
 	logReject := func(r *http.Request, ip string) {
+		msg := fmt.Sprintf("MCP: rejected %s %q from %s (invalid or missing key)", r.Method, r.URL.Path, ip)
 		if !isLoopback(ip) {
-			logf("MCP: rejected %s %q from %s (invalid or missing key)", r.Method, r.URL.Path, ip)
+			logf("%s", msg)
 			return
 		}
-		now := time.Now().UnixNano()
+		now := time.Since(epoch).Nanoseconds()
 		last := lastLoopbackReject.Load()
-		if now-last < int64(loopbackRejectLogInterval) || !lastLoopbackReject.CompareAndSwap(last, now) {
+		if last != 0 && now-last < int64(loopbackRejectLogInterval) || !lastLoopbackReject.CompareAndSwap(last, now) {
 			suppressedLoopback.Add(1)
 			return
 		}
+		// A burst that stops is summarised by the NEXT logged rejection,
+		// however much later — hence "since", not "in the last minute".
 		if n := suppressedLoopback.Swap(0); n > 0 {
-			logf("MCP: rejected %s %q from %s (invalid or missing key; %d more rejections via the proxy suppressed in the last %s)", r.Method, r.URL.Path, ip, n, loopbackRejectLogInterval)
+			logf("%s; %d more rejections via the proxy not logged since %s ago", msg, n, time.Duration(now-last).Round(time.Second))
 			return
 		}
-		logf("MCP: rejected %s %q from %s (invalid or missing key)", r.Method, r.URL.Path, ip)
+		logf("%s", msg)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if cfg.Enabled == nil || !cfg.Enabled() {

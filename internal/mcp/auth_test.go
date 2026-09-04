@@ -388,6 +388,13 @@ func TestKeyMiddleware_SamplesRejectionsFromLoopback(t *testing.T) {
 	if n := countContaining(*lines, "from 192.168.1.9"); n != 3 {
 		t.Fatalf("LAN rejections logged %d times, want every one", n)
 	}
+	// The suppressed count is reported by the next logged loopback
+	// rejection, with an honest "since": never "in the last minute".
+	for _, l := range *lines {
+		if strings.Contains(l, "not logged since") {
+			t.Fatalf("summary appeared before the interval elapsed: %s", l)
+		}
+	}
 }
 
 func TestKeyMiddleware_ForwardedProtoInMetadataURL(t *testing.T) {
