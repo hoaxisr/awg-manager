@@ -1308,6 +1308,10 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		}
 		policyTunSourcePreserve = &sp
 	}
+	cacheDBPath := ""
+	if s.deps.CacheDBPath != nil {
+		cacheDBPath = s.deps.CacheDBPath()
+	}
 	return Status{
 		Enabled:                 sr.Enabled,
 		Installed:               installed,
@@ -1330,6 +1334,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		FakeIPIface:             fakeIPIface,
 		FakeIPDns:               fakeIPDns,
 		FakeIPTunAddr:           fakeIPTunAddr,
+		CacheDBPath:             cacheDBPath,
 		PolicyTunIface:          policyTunIface,
 		PolicyTunNDMSName:       policyTunNDMS,
 		PolicyTunSourcePreserve: policyTunSourcePreserve,

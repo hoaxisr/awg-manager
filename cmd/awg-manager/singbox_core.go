@@ -49,14 +49,15 @@ type singboxCore struct {
 func buildSingboxCore(d singboxCoreDeps) singboxCore {
 	// Sing-box integration
 	op := singbox.NewOperator(singbox.OperatorDeps{
-		Log:             slog.Default().With("component", "singbox"),
-		Dir:             d.dir,
-		Queries:         d.queries,
-		Commands:        d.commands,
-		AppLogger:       d.appLog,
-		SingboxLogLevel: d.settings.GetSingboxLogLevel,
-		BootstrapDNS:    d.settings.GetSingboxBootstrapDNS,
-		ClashPort:       d.settings.GetSingboxClashPort,
+		Log:               slog.Default().With("component", "singbox"),
+		Dir:               d.dir,
+		Queries:           d.queries,
+		Commands:          d.commands,
+		AppLogger:         d.appLog,
+		SingboxLogLevel:   d.settings.GetSingboxLogLevel,
+		BootstrapDNS:      d.settings.GetSingboxBootstrapDNS,
+		ClashPort:         d.settings.GetSingboxClashPort,
+		CacheFileLocation: d.settings.GetSingboxCacheFileLocation,
 		// Seed the sticky-stop flag from disk so the watchdog respects
 		// a user-pressed Stop across awgm restarts. SetManuallyStopped
 		// writes the new intent back through a single-field updater so

@@ -39,10 +39,11 @@ var fakeIPAddrFlush = func(ctx context.Context, iface string) error {
 // persisted index) and rolls back ALL partial work in reverse on any failure so
 // no orphaned iface / stale persist is left behind.
 func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Settings, sr storage.SingboxRouterSettings) (err error) {
-	// resolveFakeIPParams overlays user-editable settings (pool4/6, MTU) from sr
-	// onto the wired static defaults. Single source of truth — shared with the
-	// fakeip config overlay (ensureFakeIPOverlayFromState).
-	p := s.resolveFakeIPParams(sr)
+	// fakeIPParamsWithCache overlays user-editable settings (pool4/6, MTU) from
+	// sr onto the wired static defaults plus the effective cache.db path. Single
+	// source of truth — shared with the fakeip config overlay
+	// (ensureFakeIPOverlayFromState).
+	p := s.fakeIPParamsWithCache(sr)
 
 	// Fail-fast nil-guard: production wires every fakeip dep, but a degraded /
 	// mis-wired build would otherwise nil-panic mid-provision. Refuse loudly

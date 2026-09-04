@@ -171,7 +171,7 @@ func TestOperator_GetStatus_PopulatesInstallStateAndBytes(t *testing.T) {
 func TestEnsureBaseConfig_FullSkeleton(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, "config.d")
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 
 	raw, err := os.ReadFile(filepath.Join(configDir, "00-base.json"))
 	if err != nil {
@@ -235,9 +235,9 @@ func TestEnsureBaseConfig_Idempotent(t *testing.T) {
 	}
 	// First call applies surgical heals (e.g. route.default_domain_resolver
 	// for sing-box 1.13+). Second call must be a no-op — same bytes.
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 	first, _ := os.ReadFile(basePath)
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 	second, _ := os.ReadFile(basePath)
 	if string(first) != string(second) {
 		t.Errorf("ensureBaseConfig not idempotent: first=%s second=%s", first, second)
@@ -259,7 +259,7 @@ func TestEnsureBaseConfig_PatchesStaleClashPort(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -299,7 +299,7 @@ func TestEnsureBaseConfig_MissingClashApiBlockRestored(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -337,7 +337,7 @@ func TestEnsureBaseConfig_PatchesStaleLogLevel(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -360,7 +360,7 @@ func TestEnsureBaseConfig_DefaultDesiredLevelOverridesDebug(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
@@ -372,7 +372,7 @@ func TestEnsureBaseConfig_DefaultDesiredLevelOverridesDebug(t *testing.T) {
 func TestEnsureBaseConfigWithLogLevel_UsesDesiredLevel(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, "config.d")
-	ensureBaseConfig(configDir, "warn", "", 0)
+	ensureBaseConfig(configDir, "warn", "", 0, "")
 
 	raw, err := os.ReadFile(filepath.Join(configDir, "00-base.json"))
 	if err != nil {
@@ -506,7 +506,7 @@ func TestEnsureBaseConfig_PatchesMissingDomainResolver(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -539,7 +539,7 @@ func TestEnsureBaseConfig_RespectsExistingDomainResolver(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
@@ -560,7 +560,7 @@ func TestEnsureBaseConfig_MaterialisesMissingRouteBlock(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -594,7 +594,7 @@ func TestEnsureBaseConfig_MigratesIpv4OnlyStrategy(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -617,7 +617,7 @@ func TestEnsureBaseConfig_KeepsNonLegacyStrategy(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(cfg), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
@@ -721,7 +721,7 @@ func TestClassifyProcessLine(t *testing.T) {
 }
 
 func TestFreshBaseConfig_CacheFilePathIsAbsolute(t *testing.T) {
-	cfg := freshBaseConfig("info", "", 0)
+	cfg := freshBaseConfig("info", "", 0, defaultCacheDBPath)
 	exp := cfg["experimental"].(map[string]any)
 	cf := exp["cache_file"].(map[string]any)
 	if cf["enabled"] != true {
@@ -731,128 +731,6 @@ func TestFreshBaseConfig_CacheFilePathIsAbsolute(t *testing.T) {
 	want := defaultCacheDBPath
 	if got != want {
 		t.Errorf("cache_file.path=%q want %q", got, want)
-	}
-}
-
-func TestEnsureBaseConfig_PatchesRelativeCachePath(t *testing.T) {
-	dir := t.TempDir()
-	configDir := filepath.Join(dir, "config.d")
-	_ = os.MkdirAll(configDir, 0755)
-	stale := `{"log":{"level":"debug"},"experimental":{"clash_api":{"external_controller":"127.0.0.1:9099"},"cache_file":{"enabled":true,"path":"cache.db"}}}`
-	basePath := filepath.Join(configDir, "00-base.json")
-	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
-		t.Fatal(err)
-	}
-	ensureBaseConfig(configDir, "info", "", 0)
-	raw, _ := os.ReadFile(basePath)
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	exp := m["experimental"].(map[string]any)
-	cf := exp["cache_file"].(map[string]any)
-	if cf["path"] != defaultCacheDBPath {
-		t.Errorf("expected %s, got %v", defaultCacheDBPath, cf["path"])
-	}
-	if m["log"].(map[string]any)["level"] != "info" {
-		t.Errorf("log.level want info, got %v", m["log"])
-	}
-}
-
-func TestEnsureBaseConfig_LeavesAbsoluteCachePathUntouched(t *testing.T) {
-	dir := t.TempDir()
-	configDir := filepath.Join(dir, "config.d")
-	_ = os.MkdirAll(configDir, 0755)
-	custom := `{"experimental":{"clash_api":{"external_controller":"127.0.0.1:9099"},"cache_file":{"enabled":true,"path":"/custom/path/cache.db"}}}`
-	basePath := filepath.Join(configDir, "00-base.json")
-	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
-		t.Fatal(err)
-	}
-	ensureBaseConfig(configDir, "info", "", 0)
-	raw, _ := os.ReadFile(basePath)
-	var m map[string]any
-	json.Unmarshal(raw, &m)
-	exp := m["experimental"].(map[string]any)
-	cf := exp["cache_file"].(map[string]any)
-	if cf["path"] != "/custom/path/cache.db" {
-		t.Errorf("user-customized path overwritten: %v", cf["path"])
-	}
-}
-
-func TestPatchBaseCacheFilePath_AddsMissingBlock(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "00-base.json")
-	// experimental exists but no cache_file
-	stale := `{"experimental":{"clash_api":{"external_controller":"127.0.0.1:9099"}}}`
-	if err := os.WriteFile(p, []byte(stale), 0644); err != nil {
-		t.Fatal(err)
-	}
-	patchBaseCacheFilePath(p)
-	raw, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatal(err)
-	}
-	exp := m["experimental"].(map[string]any)
-	cf, ok := exp["cache_file"].(map[string]any)
-	if !ok {
-		t.Fatal("cache_file block not added")
-	}
-	if cf["enabled"] != true {
-		t.Errorf("enabled=%v want true", cf["enabled"])
-	}
-	if got := cf["path"]; got != defaultCacheDBPath {
-		t.Errorf("path=%q want %q", got, defaultCacheDBPath)
-	}
-}
-
-func TestPatchBaseCacheFilePath_MigratesLegacyAbsolute(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "00-base.json")
-	stale := `{"experimental":{"cache_file":{"enabled":true,"path":"/opt/etc/sing-box/cache.db"}}}`
-	if err := os.WriteFile(p, []byte(stale), 0644); err != nil {
-		t.Fatal(err)
-	}
-	patchBaseCacheFilePath(p)
-	raw, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatal(err)
-	}
-	exp := m["experimental"].(map[string]any)
-	cf := exp["cache_file"].(map[string]any)
-	if got := cf["path"]; got != defaultCacheDBPath {
-		t.Errorf("path=%q want %q (legacy should be replaced)", got, defaultCacheDBPath)
-	}
-}
-
-func TestPatchBaseCacheFilePath_PreservesUserCustomPath(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "00-base.json")
-	custom := "/srv/sing-box/my-cache.db"
-	stale := `{"experimental":{"cache_file":{"enabled":true,"path":"` + custom + `"}}}`
-	if err := os.WriteFile(p, []byte(stale), 0644); err != nil {
-		t.Fatal(err)
-	}
-	patchBaseCacheFilePath(p)
-	raw, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatal(err)
-	}
-	exp := m["experimental"].(map[string]any)
-	cf := exp["cache_file"].(map[string]any)
-	if got := cf["path"]; got != custom {
-		t.Errorf("path=%q want %q (custom path should be preserved)", got, custom)
 	}
 }
 
@@ -1206,7 +1084,7 @@ func TestEnsureBaseConfig_PatchesMissingDirectOutbound(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(stale), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -1233,7 +1111,7 @@ func TestEnsureBaseConfig_PreservesExistingDirectOutbound(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 	raw, _ := os.ReadFile(basePath)
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
@@ -1258,7 +1136,7 @@ func TestEnsureBaseConfig_PrependsDirectWhenMissing(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte(custom), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 	raw, err := os.ReadFile(basePath)
 	if err != nil {
 		t.Fatal(err)
@@ -1300,7 +1178,7 @@ func TestEnsureBaseConfig_MovesExistingDirectToFirstOutbound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ensureBaseConfig(configDir, "info", "", 0)
+	ensureBaseConfig(configDir, "info", "", 0, "")
 
 	raw, err := os.ReadFile(basePath)
 	if err != nil {
@@ -1945,7 +1823,7 @@ func TestRemoveFinalFromBase_MalformedJSON_NoOp(t *testing.T) {
 // --- freshBaseConfig DNS (#445) ---
 
 func TestFreshBaseConfig_OmitsDNSFinal_KeepsStrategy(t *testing.T) {
-	cfg := freshBaseConfig("info", "", 0)
+	cfg := freshBaseConfig("info", "", 0, defaultCacheDBPath)
 	dns, ok := cfg["dns"].(map[string]any)
 	if !ok {
 		t.Fatalf("dns block missing/wrong type: %v", cfg["dns"])

@@ -308,6 +308,16 @@ type Deps struct {
 	// router is enabled. When nil (tests), persistConfig falls back
 	// to the legacy in-place write at routerConfigPath().
 	Orch *orchestrator.Orchestrator
+	// ApplyCacheFileLocation доводит место хранения cache.db до 00-base.json
+	// (issue #842). Optional — nil пропускается. Шов живёт здесь, а не среди
+	// SettingsHandler.SetApply* как у соседних base-настроек, потому что поле
+	// лежит в SingboxRouterSettings и применяется тем же PUT, что и overlay.
+	ApplyCacheFileLocation func(location string) error
+	// CacheDBPath — эффективный путь cache.db у оператора (Operator.CacheDBPath):
+	// один источник для overlay 21-fakeip.json и статуса, чтобы рукописный путь
+	// в 00-base.json действовал и в fakeip-tun. Optional — при nil overlay
+	// получает пустой путь, а статус его не показывает.
+	CacheDBPath func() string
 	// Bus receives resource:invalidated events for the staging/draft
 	// flow (SaveDraft, ApplyDraft, DiscardDraft). Optional — when nil,
 	// staging event emission is silently skipped.

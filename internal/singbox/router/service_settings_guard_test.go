@@ -89,3 +89,24 @@ func TestUpdateSettings_RejectedDuringTransition(t *testing.T) {
 		t.Fatal("настройки сохранены поверх живого перехода")
 	}
 }
+
+// 4) Отказ применения места хранения cache.db к 00-base.json не персистит
+// настройку: иначе стор говорил бы «tmp», пока база на флеше (issue #842).
+func TestUpdateSettings_CacheLocationApplyFailureSavesNothing(t *testing.T) {
+	h := newTransitionHarness(t)
+	ctx := context.Background()
+	h.seedState(t, stateOff, false)
+	h.svc.deps.ApplyCacheFileLocation = func(string) error { return errors.New("injected") }
+
+	sr := storage.SingboxRouterSettings{WANAutoDetect: true, CacheFileLocation: "tmp"}
+	if err := h.svc.UpdateSettings(ctx, sr); err == nil {
+		t.Fatal("UpdateSettings: ожидалась ошибка применения")
+	}
+	saved, err := h.store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if saved.SingboxRouter.CacheFileLocation != "" {
+		t.Fatalf("настройка сохранена при отказе применения: %q", saved.SingboxRouter.CacheFileLocation)
+	}
+}

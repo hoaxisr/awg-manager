@@ -71,6 +71,19 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 				ipsetOK = bypassset.IsIPSetAvailable()
 			}
 		}
+		// Место хранения cache.db живёт в 00-base.json — применяем через
+		// оператор ДО персиста и ДО overlay (issue #842): при отказе стор не
+		// говорит «tmp», пока база на флеше, а overlay ниже берёт у оператора
+		// уже эффективный путь. На КАЖДОМ PUT, без гейта по прежнему значению:
+		// применение без правки не пишет и не взводит reload, зато любой PUT
+		// долечивает базу, разъехавшуюся с настройкой (отказ персиста ниже
+		// после успешного применения, гонка с Enable), а не только бут.
+		// Обратное окно остаётся до этого следующего PUT или бута.
+		if s.deps.ApplyCacheFileLocation != nil {
+			if err := s.deps.ApplyCacheFileLocation(normalized.CacheFileLocation); err != nil {
+				return nil, err
+			}
+		}
 		if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
 			// Переход «пусто → непусто» требует живого ipset-бинаря. Только на
 			// переходе: при уже выбранных тегах и сломанном ipset прочие правки
@@ -236,6 +249,12 @@ func NormalizeSingboxRouterSettings(sr storage.SingboxRouterSettings) (storage.S
 		return sr, err
 	}
 	sr.QoSClasses = normalizeQoSClasses(sr.QoSClasses)
+	switch sr.CacheFileLocation {
+	case "", storage.CacheFileLocationFlash, storage.CacheFileLocationTmp:
+		// valid
+	default:
+		return sr, fmt.Errorf("cacheFileLocation: invalid value %q (must be \"flash\" or \"tmp\")", sr.CacheFileLocation)
+	}
 	return sr, nil
 }
 

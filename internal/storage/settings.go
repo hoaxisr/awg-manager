@@ -1073,6 +1073,18 @@ func (s *SettingsStore) GetSingboxClashPort() int {
 	return settings.SingboxClashPort
 }
 
+// GetSingboxCacheFileLocation returns the configured cache.db location
+// ("flash" or "tmp"). Empty means "not configured": an absolute path in
+// 00-base.json stays, a relative or legacy one is replaced by the flash
+// default (see singbox.cacheDBPathFor).
+func (s *SettingsStore) GetSingboxCacheFileLocation() string {
+	settings, err := s.Get()
+	if err != nil {
+		return ""
+	}
+	return settings.SingboxRouter.CacheFileLocation
+}
+
 // GetLoggingMaxAge returns the max age for log entries in hours.
 func (s *SettingsStore) GetLoggingMaxAge() int {
 	settings, err := s.Get()
