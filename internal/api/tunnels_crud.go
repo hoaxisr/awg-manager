@@ -343,6 +343,7 @@ func (h *TunnelsHandler) checkExplicitIDFree(ctx context.Context, tunnelID, back
 //	@Param			id	query	string	true	"Tunnel id"
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		403	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/tunnels/update [post]
 func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -601,7 +602,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, resp)
 }
 
-// tunnelLockedMessage — текст 403 у всех четырёх защищённых операций (#818).
+// tunnelLockedMessage — текст 403 у всех пяти защищённых операций (#818).
 // Один на всех, чтобы пользователь везде читал одну и ту же подсказку.
 const tunnelLockedMessage = "туннель защищён от изменений — снимите защиту на карточке"
 
@@ -672,6 +673,7 @@ func (h *TunnelsHandler) SetLock(w http.ResponseWriter, r *http.Request) {
 //	@Param			id	query	string	true	"Tunnel id"
 //	@Success		200	{object}	TunnelDeleteResponse
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		403	{object}	APIErrorEnvelope
 //	@Failure		409	{object}	TunnelReferencedResponse
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/tunnels/delete [post]
@@ -885,6 +887,7 @@ func (h *TunnelsHandler) ExportAll(w http.ResponseWriter, r *http.Request) {
 //	@Param			id	query	string	true	"Tunnel id"
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		403	{object}	APIErrorEnvelope
 //	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/tunnels/replace [post]
@@ -915,8 +918,16 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check tunnel exists
-	if _, err := h.store.Get(id); err != nil {
+	stored, err := h.store.Get(id)
+	if err != nil {
 		response.ErrorWithStatus(w, http.StatusNotFound, "tunnel not found", "NOT_FOUND")
+		return
+	}
+
+	// Защита (#818) отвергает замену конфига до всякого побочного действия:
+	// и до svc.Stop, и до самой записи конфига.
+	if stored.Locked {
+		response.ErrorWithStatus(w, http.StatusForbidden, tunnelLockedMessage, "TUNNEL_LOCKED")
 		return
 	}
 

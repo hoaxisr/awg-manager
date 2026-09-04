@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
 // lockPost зовёт SetLock и возвращает записанный ответ.
@@ -234,5 +235,29 @@ func TestTunnelDeleteRefusesLockedTunnel(t *testing.T) {
 	}
 	if _, err := store.Get("awg1"); err != nil {
 		t.Fatalf("запись удалена: %v", err)
+	}
+}
+
+func TestTunnelReplaceConfRefusesLockedTunnel(t *testing.T) {
+	stub := &stubTunnelSvc{}
+	stopped := false
+	stub.stopFn = func(context.Context, string) error { stopped = true; return nil }
+	stub.stateFn = func(string) tunnel.StateInfo { return tunnel.StateInfo{State: tunnel.StateRunning} }
+	h, store := newTunnelsUpdateHarness(t, stub)
+	seedTunnel(t, store, &storage.AWGTunnel{ID: "awg1", Name: "t1", Enabled: true, Locked: true})
+
+	rec := httptest.NewRecorder()
+	h.ReplaceConf(rec, httptest.NewRequest(http.MethodPost, "/tunnels/replace?id=awg1",
+		strings.NewReader(`{"content":"[Interface]\n","name":"другой"}`)))
+
+	assertLockedRefusal(t, rec)
+	if stopped {
+		t.Fatal("svc.Stop вызван для защищённого туннеля")
+	}
+	if stub.replaceCalls != 0 {
+		t.Fatalf("svc.ReplaceConfig вызван %d раз(а)", stub.replaceCalls)
+	}
+	if saved, err := store.Get("awg1"); err != nil || saved.Name != "t1" {
+		t.Fatalf("запись изменена: %+v (err=%v)", saved, err)
 	}
 }
