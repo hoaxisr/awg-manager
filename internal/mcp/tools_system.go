@@ -20,10 +20,6 @@ type logsOut struct {
 	Entries []LogEntry `json:"entries"`
 }
 
-type pingCheckOut struct {
-	Tunnels []PingCheckStatus `json:"tunnels"`
-}
-
 func registerSystemTools(s *mcp.Server, d Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_system_status",
@@ -94,14 +90,15 @@ func registerSystemTools(s *mcp.Server, d Deps) {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "run_pingcheck",
-		Description: "Trigger an immediate ping-check of all monitored tunnels and return their current ping-check status.",
+		Name: "run_pingcheck",
+		Description: "Trigger a ping-check of all monitored tunnels in the background and return the status as of the LAST completed check. " +
+			"The check takes up to ~10 s: call get_monitoring_matrix or run_pingcheck again afterwards for fresh results.",
 		Annotations: safeWrite("Run ping check now", true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, pingCheckOut, error) {
-		st, err := d.RunPingCheck(ctx)
-		if st == nil {
-			st = []PingCheckStatus{}
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, PingCheckRun, error) {
+		run, err := d.RunPingCheck(ctx)
+		if run.Tunnels == nil {
+			run.Tunnels = []PingCheckStatus{}
 		}
-		return nil, pingCheckOut{Tunnels: st}, err
+		return nil, run, err
 	})
 }

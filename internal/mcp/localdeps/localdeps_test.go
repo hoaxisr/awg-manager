@@ -818,10 +818,62 @@ func TestLocal_ReplaceTunnelConfigStopsAndStarts(t *testing.T) {
 type fakePingCheck struct {
 	api.PingCheckService
 	statuses []pingcheck.TunnelStatus
+	started  chan struct{} // receives once per CheckAllNow (optional)
+	release  chan struct{} // CheckAllNow blocks until it is closed (optional)
 }
 
-func (f *fakePingCheck) CheckAllNow()                        {}
+func (f *fakePingCheck) CheckAllNow() {
+	if f.started != nil {
+		f.started <- struct{}{}
+	}
+	if f.release != nil {
+		<-f.release
+	}
+}
 func (f *fakePingCheck) GetStatus() []pingcheck.TunnelStatus { return f.statuses }
+
+// TestLocal_RunPingCheckDoesNotBlockOnTheSweep — CheckAllNow пробует все
+// туннели синхронно и без контекста запроса; вызов возвращается сразу со
+// статусом последней завершённой проверки, а повторный вызов во время
+// идущей проверки не запускает вторую.
+func TestLocal_RunPingCheckDoesNotBlockOnTheSweep(t *testing.T) {
+	ctx := context.Background()
+	pc := &fakePingCheck{started: make(chan struct{}, 1), release: make(chan struct{})}
+	l := New(Config{PingCheck: pc})
+
+	first, err := l.RunPingCheck(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Triggered {
+		t.Fatal("first call must start a sweep")
+	}
+	select {
+	case <-pc.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("sweep did not start in the background")
+	}
+	second, err := l.RunPingCheck(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Triggered {
+		t.Fatal("a sweep is in flight; the second call must not stack another")
+	}
+	close(pc.release)
+	deadline := time.Now().Add(2 * time.Second)
+	for l.pingSweep.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	third, err := l.RunPingCheck(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !third.Triggered {
+		t.Fatal("after the sweep finished a new one must be allowed")
+	}
+	<-pc.started // release is closed, so the third sweep ends on its own
+}
 
 // TestLocal_ImportTunnelWritesPingCheckDefaults зеркалит
 // api.ImportHandler.ImportConf (internal/api/import.go): без этих умолчаний

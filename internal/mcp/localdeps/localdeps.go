@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
@@ -93,7 +94,12 @@ type Config struct {
 }
 
 // Local is the production Deps.
-type Local struct{ c Config }
+type Local struct {
+	c Config
+	// pingSweep is set while a background CheckAllNow runs, so an agent
+	// calling run_pingcheck in a loop cannot stack sweeps.
+	pingSweep atomic.Bool
+}
 
 // New wires a Local. It does not validate cfg: nil fields are checked per
 // call so a partially wired daemon (e.g. sing-box absent) still serves.
@@ -259,12 +265,30 @@ func (l *Local) MonitoringMatrix(context.Context) (mcpsrv.MonitoringMatrix, erro
 	return convert[mcpsrv.MonitoringMatrix](l.c.Monitoring.Snapshot())
 }
 
-func (l *Local) RunPingCheck(context.Context) ([]mcpsrv.PingCheckStatus, error) {
+// RunPingCheck mirrors api.PingCheckHandler.CheckNow in what it kicks off,
+// but not in blocking on it: CheckAllNow probes every monitored tunnel
+// synchronously with the service's own context, so a call would hold the
+// MCP request for tunnels × probe-timeout with no way to honour ctx. The
+// sweep runs in a goroutine the pingcheck service already guards with its
+// own running flag; one sweep at a time (pingSweep) keeps a looping agent
+// from stacking them.
+func (l *Local) RunPingCheck(context.Context) (mcpsrv.PingCheckRun, error) {
 	if l.c.PingCheck == nil {
-		return nil, errUnavailable("ping check")
+		return mcpsrv.PingCheckRun{}, errUnavailable("ping check")
 	}
-	l.c.PingCheck.CheckAllNow()
-	return convert[[]mcpsrv.PingCheckStatus](l.c.PingCheck.GetStatus())
+	run := mcpsrv.PingCheckRun{Triggered: l.pingSweep.CompareAndSwap(false, true)}
+	if run.Triggered {
+		go func() {
+			defer l.pingSweep.Store(false)
+			l.c.PingCheck.CheckAllNow()
+		}()
+	}
+	statuses, err := convert[[]mcpsrv.PingCheckStatus](l.c.PingCheck.GetStatus())
+	if err != nil {
+		return mcpsrv.PingCheckRun{}, err
+	}
+	run.Tunnels = statuses
+	return run, nil
 }
 
 // ---- tunnels --------------------------------------------------------------

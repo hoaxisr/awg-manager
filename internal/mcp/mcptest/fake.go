@@ -431,19 +431,19 @@ func (f *Fake) MonitoringMatrix(context.Context) (mcpsrv.MonitoringMatrix, error
 	return m, nil
 }
 
-func (f *Fake) RunPingCheck(context.Context) ([]mcpsrv.PingCheckStatus, error) {
+func (f *Fake) RunPingCheck(context.Context) (mcpsrv.PingCheckRun, error) {
 	if f.Err != nil {
-		return nil, f.Err
+		return mcpsrv.PingCheckRun{}, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var out []mcpsrv.PingCheckStatus
+	out := mcpsrv.PingCheckRun{Triggered: true}
 	for _, t := range f.Tunnels {
 		st := "stopped"
 		if t.State == "running" {
 			st = "alive"
 		}
-		out = append(out, mcpsrv.PingCheckStatus{TunnelID: t.ID, TunnelName: t.Name, Enabled: t.Enabled, Status: st, Method: "http", LastLatency: 30})
+		out.Tunnels = append(out.Tunnels, mcpsrv.PingCheckStatus{TunnelID: t.ID, TunnelName: t.Name, Enabled: t.Enabled, Status: st, Method: "http", LastLatency: 30})
 	}
 	return out, nil
 }

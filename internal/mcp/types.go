@@ -231,6 +231,17 @@ type ManagedServer struct {
 	PeerCount     int    `json:"peerCount"`
 }
 
+// PingCheckRun is what run_pingcheck returns. The sweep itself runs in
+// the background — on a router with several tunnels and a 5 s probe
+// timeout a synchronous sweep would hold the call for half a minute with
+// no way to cancel it — so Tunnels is the status as of the LAST completed
+// check, and Triggered says whether this call started a new one (false
+// when one was already in flight).
+type PingCheckRun struct {
+	Triggered bool              `json:"triggered" jsonschema:"true if this call started a new check; false if one was already running"`
+	Tunnels   []PingCheckStatus `json:"tunnels" jsonschema:"status as of the last COMPLETED check — call again in ~10 s for the result of the one just triggered"`
+}
+
 type PingCheckStatus struct {
 	TunnelID    string `json:"tunnelId"`
 	TunnelName  string `json:"tunnelName"`

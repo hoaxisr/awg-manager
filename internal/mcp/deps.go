@@ -41,7 +41,9 @@ type Deps interface {
 	GetLogs(ctx context.Context, q LogsQuery) ([]LogEntry, int, error) // entries, total matched
 	TestConnectivity(ctx context.Context, tunnelID string) (ConnectivityResult, error)
 	MonitoringMatrix(ctx context.Context) (MonitoringMatrix, error)
-	RunPingCheck(ctx context.Context) ([]PingCheckStatus, error)
+	// RunPingCheck starts a check of every monitored tunnel without
+	// waiting for it and returns the last completed statuses.
+	RunPingCheck(ctx context.Context) (PingCheckRun, error)
 
 	ListManagedServers(ctx context.Context) ([]ManagedServer, error)
 	ControlSingbox(ctx context.Context, action string) (SingboxStatus, error)
