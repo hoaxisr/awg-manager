@@ -516,18 +516,11 @@ type natPolicyLANApplier interface {
 	ApplyLANSegmentsToInterface(ctx context.Context, iface, addr, mask string, segments []string) error
 }
 
-// permitACLSetter — срез InterfaceCommands: разрешающий ACL на интерфейсе.
-type permitACLSetter interface {
-	SetPermitAllACL(ctx context.Context, name string) error
-}
-
-// proxyAccessApplier — wdttserver.AccessApplier. Логика — прежний
-// wdttAccessAdapter (router_adapters.go:407+), сведённая к четырём методам
-// интерфейса; возвращённый ApplyNATModeToInterface WAN уходит в Detail
-// ресурса ndms_access.
+// proxyAccessApplier — wdttserver.AccessApplier: режим NAT, hotspot policy,
+// LAN-ACL. Возвращённый ApplyNATModeToInterface WAN уходит в Detail ресурса
+// ndms_access.
 type proxyAccessApplier struct {
-	svc    natPolicyLANApplier
-	ifaces permitACLSetter
+	svc natPolicyLANApplier
 }
 
 func (a proxyAccessApplier) ApplyNATModeToInterface(ctx context.Context, iface, mode string, prevWANs []string) ([]string, error) {
@@ -549,13 +542,6 @@ func (a proxyAccessApplier) ApplyLANSegmentsToInterface(ctx context.Context, ifa
 		return fmt.Errorf("managed service not available")
 	}
 	return a.svc.ApplyLANSegmentsToInterface(ctx, iface, addr, mask, segments)
-}
-
-func (a proxyAccessApplier) EnsureInterfaceFirewallPermit(ctx context.Context, iface string) error {
-	if a.ifaces == nil {
-		return nil
-	}
-	return a.ifaces.SetPermitAllACL(ctx, iface)
 }
 
 var _ wdttserver.AccessApplier = proxyAccessApplier{}

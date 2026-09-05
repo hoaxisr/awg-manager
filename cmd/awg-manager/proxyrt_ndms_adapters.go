@@ -8,7 +8,6 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
-	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/ndmsres"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
@@ -140,13 +139,6 @@ func proxyKernelWAN(ifaces systemNameResolver) func(ctx context.Context, ndmsNam
 			return "", fmt.Errorf("kernel-имя для %s неизвестно", ndmsName)
 		}
 		return sys, nil
-	}
-}
-
-// proxyPolicyMark — fwmark политики (raw-половина сервера при policy != none).
-func proxyPolicyMark(marks *query.PolicyMarkStore) func(ctx context.Context, policy string) (string, error) {
-	return func(ctx context.Context, policy string) (string, error) {
-		return marks.Get(ctx, policy)
 	}
 }
 

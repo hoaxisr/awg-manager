@@ -11,8 +11,10 @@ import (
 )
 
 // ruleRecheck — подстраховочная сверка: правила вычищает reconcile sing-box и
-// перезапись таблиц движком ndm. Период — паритет natReconcileInterval (15 с)
-// старого NAT-ресинка. Это ЕДИНСТВЕННЫЙ волатильный класс ресурсов (спека §3).
+// перезапись таблиц движком ndm. Это ЕДИНСТВЕННЫЙ волатильный класс ресурсов
+// (спека §3). Период задаёт компромисс «сколько правило лежит стёртым» против
+// «сколько exec'ов на тик»; 15 с взяты у прежнего NAT-ресинка и замером не
+// подтверждены — менять только по измерению на железе.
 const ruleRecheck = 15 * time.Second
 
 // RuleSet — ресурс «набор групп правил приведён». Общий для nat_rules и
@@ -41,6 +43,22 @@ type RuleSet struct {
 	// enableForward — включение ip_forward вместе с правилами; nil — не нужно.
 	// Прод: запись "1" в /proc/sys/net/ipv4/ip_forward.
 	enableForward func() error
+	// adopt — области усыновления, НЕ зависящие от текущего желаемого.
+	// Владение принадлежит метке: что мы когда-то поставили со своей меткой,
+	// то обязаны и снести — даже когда сейчас не хотим там ничего. Без этого
+	// «нечего хотеть» читается как «нечего убирать»: у выключенного инстанса
+	// и у режима без маскарада помеченных правил в желаемом нет, область
+	// сканирования пуста, и правило прошлого запуска демона живёт дальше.
+	adopt []adoptScope
+}
+
+// adoptScope — где искать чужие правила с нашей меткой.
+type adoptScope struct{ table, chain, tag string }
+
+// AdoptMarked объявляет постоянную область усыновления. Зовётся при сборке
+// роли, по одному разу на (table, chain, метка).
+func (r *RuleSet) AdoptMarked(table, chain, tag string) {
+	r.adopt = append(r.adopt, adoptScope{table: table, chain: chain, tag: tag})
 }
 
 func NewRuleSet(id proxyrt.ResourceID, ipt IPT, enableForward func() error) *RuleSet {
@@ -92,7 +110,7 @@ func (r *RuleSet) Observe(ctx context.Context) (proxyrt.Observation, error) {
 	r.last = groups
 	missing := 0
 	for _, g := range groups {
-		all, _ := g.present(ctx, r.ipt)
+		all := g.present(ctx, r.ipt)
 		if !all {
 			missing++
 		}
@@ -121,30 +139,41 @@ func (r *RuleSet) Observe(ctx context.Context) (proxyrt.Observation, error) {
 	}, nil
 }
 
-// markedComments — метки и их (table, chain) из ТЕКУЩЕГО желаемого: где мы
-// ставим помеченные правила, там и усыновляем чужие той же метки.
+// markedOrphans — помеченные правила, живые в ядре сверх текущего желаемого.
+// Область поиска — объединение постоянных областей (AdoptMarked) и тех, где
+// помеченные правила есть в текущем желаемом.
 func (r *RuleSet) markedOrphans(ctx context.Context, current map[string]bool) ([]Rule, error) {
 	seen := map[string]bool{}
 	var orphans []Rule
+	scan := func(table, chain, tag string) error {
+		if tag == "" {
+			return nil
+		}
+		scope := table + "|" + chain + "|" + tag
+		if seen[scope] {
+			return nil
+		}
+		seen[scope] = true
+		live, err := listMarked(ctx, r.ipt, table, chain, tag)
+		if err != nil {
+			return err
+		}
+		for _, l := range live {
+			if !current[l.Key()] {
+				orphans = append(orphans, l)
+			}
+		}
+		return nil
+	}
+	for _, a := range r.adopt {
+		if err := scan(a.table, a.chain, a.tag); err != nil {
+			return nil, err
+		}
+	}
 	for _, g := range r.last {
 		for _, rule := range g.Rules {
-			tag := rule.CommentTag()
-			if tag == "" {
-				continue
-			}
-			scope := rule.table() + "|" + rule.Chain + "|" + tag
-			if seen[scope] {
-				continue
-			}
-			seen[scope] = true
-			live, err := listMarked(ctx, r.ipt, rule.table(), rule.Chain, tag)
-			if err != nil {
+			if err := scan(rule.table(), rule.Chain, rule.CommentTag()); err != nil {
 				return nil, err
-			}
-			for _, l := range live {
-				if !current[l.Key()] {
-					orphans = append(orphans, l)
-				}
 			}
 		}
 	}
@@ -217,8 +246,10 @@ func (r *RuleSet) Apply(ctx context.Context, s proxyrt.Step) error {
 	}
 }
 
-// sweepPasses — потолок проходов сноса ОДНОГО правила за шаг; паритет пяти
-// проходов старого NAT-ресинка (entware_nat_linux.go:316).
+// sweepPasses — потолок проходов сноса ОДНОГО правила за шаг. Смысл числа —
+// ограничить цикл: копий правила бывает больше одной, а `iptables -D` снимает
+// по одной за вызов. Пять — с запасом над реально виденными дублями (их
+// единицы), точной величины за числом нет.
 const sweepPasses = 5
 
 // deleteAll сносит ВСЕ копии правила. `iptables -D` снимает ровно одну, а
@@ -325,7 +356,9 @@ func (m *MSSClamp) Apply(ctx context.Context, s proxyrt.Step) error {
 			return err
 		}
 	}
-	// Дубли jump снимаются до трёх раз — паритет setupEntwareMSSClamp.
+	// Дубли jump снимаются до трёх раз: `-D` снимает по одному, а вторая
+	// копия появляется от повторной вставки хука. Три — с запасом, точной
+	// величины за числом нет.
 	for i := 0; i < 3; i++ {
 		_ = m.ipt.Run(ctx, m.jump().DeleteArgs()...)
 	}
