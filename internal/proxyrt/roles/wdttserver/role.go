@@ -228,6 +228,18 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 		// трафик — RELATED,ESTABLISHED первым правилом FORWARD (стенд
 		// 2026-09-05).
 		r.fwd.SetDesired(nil)
+		// Легаси прежней версии: FORWARD ACCEPT raw-половины стоял раньше ACL
+		// и security-level; снимаем адресно, иначе живёт до перезаписи таблиц
+		// ndm. Разность желаемых его не даёт (за этот запуск демона в
+		// желаемом его не было), усыновления-по-метке ему не досталось —
+		// правило метки не несёт, — а стартовая уборка щадит объявленные
+		// интерфейсы. Форма — ровно та, что ставила прежняя версия.
+		if c.RawIface != "" {
+			r.fwd.Doom(
+				netres.Rule{Chain: "FORWARD", Pos: 1, Spec: []string{"-i", c.RawIface, "-j", "ACCEPT"}},
+				netres.Rule{Chain: "FORWARD", Pos: 1, Spec: []string{"-o", c.RawIface, "-j", "ACCEPT"}},
+			)
+		}
 		r.mss.SetDesired([]string{rawPeerCIDR})
 		r.hook.SetDesired(r.hookGroups(c))
 		r.input.SetDesired(inputPorts(c))
@@ -287,7 +299,7 @@ func (r *Role) addrDesired(enabled bool, ndmsName, kernel, addr, mask string, mt
 // ИНВАРИАНТ: режим NAT управляет ровно одним — подменой адреса источника.
 // Пользователь выбирает, как пакеты абонента выглядят на дальней стороне, а
 // не «насколько сервер работает». Поэтому перехват :53, метка политики,
-// FORWARD, MSS и netfilter-хук от режима не зависят: ни одно из них не про
+// MSS и netfilter-хук от режима не зависят: ни одно из них не про
 // адрес источника. none — «без подмены», и режим осмыслен сам по себе: адрес
 // абонента виден в LAN, вход sing-box работает (перехват в PREROUTING идёт до
 // всякого NAT).

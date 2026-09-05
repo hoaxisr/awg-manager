@@ -632,6 +632,33 @@ func TestServerNoForwardAcceptForRawHalf(t *testing.T) {
 	}
 }
 
+// Правило ПРЕЖНЕЙ версии на живом роутере снимается адресно. Апгрейд не
+// перезаписывает таблицы: `-i opkgtun19 -j ACCEPT` метки не несёт (усыновление
+// по метке слепо), в желаемом этого запуска его не было (разность желаемых
+// пуста), стартовая уборка щадит объявленные интерфейсы — значит без
+// именного сноса оно живёт до перезаписи таблиц движком ndm, а всё это время
+// raw-абонент видит весь LAN мимо ACL.
+//
+// Модель ЗАСЕЯНА обеими формами: пин на факт в таблице, а не на вызов.
+func TestServerSweepsLegacyForwardAcceptOfPreviousVersion(t *testing.T) {
+	const in, out = "-i opkgtun19 -j ACCEPT", "-o opkgtun19 -j ACCEPT"
+	p := newServerParts(t)
+	p.ipt.chains["filter/FORWARD"] = []string{in, out, "-i br0 -j ACCEPT"}
+
+	res := byID(p.role.Resources(proxyrt.IntentEnabled, srvCfg(), proxyrt.NewObservations()))
+	drive(t, res[roles.RForwardRules])
+
+	for _, gone := range []string{in, out} {
+		if slices.Contains(p.ipt.rules("filter", "FORWARD"), gone) {
+			t.Errorf("остаток прежней версии %q не снят: %v", gone, p.ipt.rules("filter", "FORWARD"))
+		}
+	}
+	// Чужое правило в той же цепочке — не наше дело.
+	if !slices.Contains(p.ipt.rules("filter", "FORWARD"), "-i br0 -j ACCEPT") {
+		t.Errorf("снесено чужое правило: %v", p.ipt.rules("filter", "FORWARD"))
+	}
+}
+
 func TestServerResourcesDeclareWithoutTouchingRouter(t *testing.T) {
 	// G1: Resources — чистая декларация. Приведение живёт в Apply ресурсов;
 	// ни NDMS, ни iptables, ни firewall, ни доступ с ingress-ссылками за

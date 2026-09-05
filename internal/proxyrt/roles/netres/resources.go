@@ -75,6 +75,18 @@ func (r *RuleSet) SetDesired(provider GroupProvider) {
 	r.provider = provider
 }
 
+// Doom кладёт правила в ведомость на снос БЕЗ желаемого: форму, которую мы
+// больше не ставим, но обязаны убрать. Разность желаемых её не даст (в
+// желаемом её не было ни разу за этот запуск), усыновление-по-метке не
+// увидит (метки правило не несёт) — остаётся назвать её адресно. Снос идёт
+// тем же sweep: «правила нет» — это успех, поэтому повторный Doom
+// безопасен.
+func (r *RuleSet) Doom(rules ...Rule) {
+	for _, rule := range rules {
+		r.doomed[rule.Key()] = rule
+	}
+}
+
 func (r *RuleSet) ID() proxyrt.ResourceID { return r.id }
 
 func (r *RuleSet) Observe(ctx context.Context) (proxyrt.Observation, error) {

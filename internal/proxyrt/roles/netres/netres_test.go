@@ -272,6 +272,47 @@ func TestMasqInternetOnlyWithoutWANRefuses(t *testing.T) {
 	}
 }
 
+// Doom — снос правила, которого в желаемом не было НИ РАЗУ: форма прежней
+// версии демона, метки не несущая. Ни разность желаемых, ни усыновление-по-
+// метке её не находят, поэтому единственный путь — назвать её адресно.
+func TestRuleSetDoomRemovesRuleWithoutDesired(t *testing.T) {
+	const in, out = "-i opkgtun19 -j ACCEPT", "-o opkgtun19 -j ACCEPT"
+	ipt := newFakeIPT()
+	ipt.chains["filter/FORWARD"] = []string{in, out, "-i br0 -j ACCEPT"}
+	rs := NewRuleSet("forward_rules", ipt, nil)
+	// Желаемого нет вовсе — снос обязан идти от одной лишь ведомости.
+	for _, r := range forwardGroups([]string{"opkgtun19"})[0].Rules {
+		rs.Doom(r)
+	}
+
+	driveRS(t, rs)
+
+	if ipt.has("filter/FORWARD", in) || ipt.has("filter/FORWARD", out) {
+		t.Fatalf("правила прежней версии не сняты: %v", ipt.chains["filter/FORWARD"])
+	}
+	if !ipt.has("filter/FORWARD", "-i br0 -j ACCEPT") {
+		t.Fatalf("снесено чужое правило: %v", ipt.chains["filter/FORWARD"])
+	}
+	// Снятое уходит из ведомости: иначе RecheckAfter держал бы ресурс
+	// волатильным вечно, а sweep ходил бы в iptables каждый проход.
+	if len(rs.doomed) != 0 {
+		t.Fatalf("ведомость не опустела: %v", rs.doomed)
+	}
+
+	// Второй Doom тех же правил, которых в таблице уже нет: «правила нет» —
+	// это успех, а не отказ, и шагов такой прогон не даёт.
+	for _, r := range forwardGroups([]string{"opkgtun19"})[0].Rules {
+		rs.Doom(r)
+	}
+	obs, err := rs.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps := rs.Plan(obs); len(steps) != 0 {
+		t.Fatalf("снос отсутствующего правила породил шаги: %v", steps)
+	}
+}
+
 func TestRuleSetSweepsOnDesiredChange(t *testing.T) {
 	// C2: смена желаемого НЕ в пустое обязана сносить прежние формы.
 	cases := []struct {
