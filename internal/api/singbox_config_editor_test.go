@@ -19,7 +19,7 @@ import (
 func newEditorHandler(t *testing.T) (*SingboxConfigEditorHandler, *orchestrator.Orchestrator, string) {
 	t.Helper()
 	dir := t.TempDir()
-	o := orchestrator.New(dir, nil)
+	o := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	for _, meta := range orchestrator.KnownSlots() {
 		if meta.Slot == orchestrator.SlotRouter || meta.Slot == orchestrator.SlotUser {
 			if err := o.Register(meta); err != nil {

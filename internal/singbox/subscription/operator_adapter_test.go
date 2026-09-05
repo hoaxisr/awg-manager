@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -18,7 +20,7 @@ import (
 // subscriptions that prefix info banners before valid share-links.
 func TestOperatorAdapter_AddOutbound_SkipsInvalidUUIDBeforeValid(t *testing.T) {
 	dir := t.TempDir()
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +96,7 @@ func TestOperatorAdapter_AddOutbound_ServiceLinksThenValidShareLinks(t *testing.
 	}
 
 	dir := t.TempDir()
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +123,7 @@ func TestOperatorAdapter_AddOutbound_ServiceLinksThenValidShareLinks(t *testing.
 // честной атрибуцией вместо непрозрачного «could not isolate outbound».
 func TestOperatorAdapter_Flush_UserSlotCollisionFailsFast(t *testing.T) {
 	dir := t.TempDir()
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	for _, meta := range orchestrator.KnownSlots() {
 		if meta.Slot == orchestrator.SlotUser {
 			if err := orch.Register(meta); err != nil {
@@ -164,5 +166,87 @@ func TestOperatorAdapter_Flush_UserSlotCollisionFailsFast(t *testing.T) {
 	if !strings.Contains(msg, "90-user.json") || !strings.Contains(msg, `"my-proxy"`) ||
 		!strings.Contains(msg, "редакторе конфигурации") {
 		t.Errorf("error must honestly attribute the user-slot conflict: %s", msg)
+	}
+}
+
+type recProxies struct{ removed []int }
+
+func (r *recProxies) NextFreeIndex(context.Context, map[int]bool) (int, error) { return 0, nil }
+func (r *recProxies) EnsureProxy(context.Context, int, int, string) error      { return nil }
+func (r *recProxies) RemoveProxy(_ context.Context, idx int) error {
+	r.removed = append(r.removed, idx)
+	return nil
+}
+
+func newAdapterForRemoveTests(t *testing.T, pm ProxyRegistrar) *OperatorAdapter {
+	t.Helper()
+	dir := t.TempDir()
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	if err := orch.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	return NewOperatorAdapter(orch, pm, nil)
+}
+
+// RemoveInbound снимает ровно один inbound по тегу; чужие остаются, отсутствующий
+// тег — no-op без ошибки.
+func TestOperatorAdapter_RemoveInbound_ByTagOnly(t *testing.T) {
+	a := newAdapterForRemoveTests(t, nil)
+	for _, in := range []struct {
+		tag  string
+		port int
+	}{{"sub-in-a", 11003}, {"sub-in-b", 11004}} {
+		if err := a.AddInbound(in.tag, []byte(fmt.Sprintf(`{"type":"mixed","listen":"127.0.0.1","listen_port":%d}`, in.port))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.RemoveInbound("sub-in-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.RemoveInbound("sub-in-zzz"); err != nil {
+		t.Fatalf("отсутствующий тег — no-op: %v", err)
+	}
+	if len(a.cfg.Inbounds) != 1 || a.cfg.Inbounds[0].(map[string]any)["tag"] != "sub-in-b" {
+		t.Fatalf("inbounds = %v, want только sub-in-b", a.cfg.Inbounds)
+	}
+}
+
+// RemoveRouteRule снимает правило по ПАРЕ (inbound, outbound): совпадение по одному
+// полю не считается.
+func TestOperatorAdapter_RemoveRouteRule_MatchesPair(t *testing.T) {
+	a := newAdapterForRemoveTests(t, nil)
+	for _, r := range []string{
+		`{"inbound":"sub-in-a","outbound":"sel-1"}`,
+		`{"inbound":"sub-in-a","outbound":"sel-2"}`,
+		`{"inbound":"sub-in-b","outbound":"sel-1"}`,
+	} {
+		if err := a.AddRouteRule([]byte(r)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.RemoveRouteRule("sub-in-a", "sel-1"); err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for _, v := range a.routeRules() {
+		r := v.(map[string]any)
+		left = append(left, r["inbound"].(string)+"→"+r["outbound"].(string))
+	}
+	want := []string{"sub-in-a→sel-2", "sub-in-b→sel-1"}
+	if !reflect.DeepEqual(left, want) {
+		t.Fatalf("rules = %v, want %v", left, want)
+	}
+}
+
+func TestOperatorAdapter_RemoveProxy_DelegatesOrErrorsWithoutRegistrar(t *testing.T) {
+	if err := newAdapterForRemoveTests(t, nil).RemoveProxy(context.Background(), 5); err == nil {
+		t.Fatal("без ProxyRegistrar обязана быть ошибка")
+	}
+	pm := &recProxies{}
+	if err := newAdapterForRemoveTests(t, pm).RemoveProxy(context.Background(), 5); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(pm.removed, []int{5}) {
+		t.Fatalf("removed = %v, want [5]", pm.removed)
 	}
 }

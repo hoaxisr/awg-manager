@@ -180,3 +180,20 @@ func TestNetfilterHookScript_BlackholeFailClosed(t *testing.T) {
 		t.Error("hook missing pidof if/else (alive vs dead) structure")
 	}
 }
+
+// Повторный InstallBlackhole без netfilter-flap задублировал бы джамп: старый
+// снимается до restore.
+func TestInstallBlackhole_ScrubsStaleJumpBeforeRestore(t *testing.T) {
+	fe := newFakeExec()
+	it := newFakeIPTables(fe)
+	it.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) {
+		return "-P PREROUTING ACCEPT\n-N AWGM-BLACKHOLE\n-A PREROUTING -m conntrack ! --ctstate INVALID -j AWGM-BLACKHOLE\n", nil
+	}
+	if err := it.InstallBlackhole(context.Background(), RestoreInputSpec{PolicyMark: "0xff"}); err != nil {
+		t.Fatalf("InstallBlackhole: %v", err)
+	}
+	want := []string{"-t", "mangle", "-D", "PREROUTING", "-m", "conntrack", "!", "--ctstate", "INVALID", "-j", "AWGM-BLACKHOLE"}
+	if !containsArgv(iptablesCallsBeforeFirstRestore(fe.calls), want) {
+		t.Fatalf("старый джамп на AWGM-BLACKHOLE не снят до restore: %v", fe.calls)
+	}
+}

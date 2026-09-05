@@ -325,7 +325,7 @@ func TestEnsureLegacyConfigMigrated_DanglingDNSDohRuleValidates(t *testing.T) {
 	ensureLegacyConfigMigrated(dir)
 
 	proc := NewProcess("", configDir, filepath.Join(dir, "singbox.pid"))
-	orch := singboxorch.New(configDir, proc)
+	orch := singboxorch.NewWithAppliedPath(configDir, proc, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	for _, meta := range singboxorch.KnownSlots() {
 		switch meta.Slot {
 		case singboxorch.SlotBase, singboxorch.SlotTunnels:

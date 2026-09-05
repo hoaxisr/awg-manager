@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +22,20 @@ func (p *holdProbeProc) record(s string) {
 	p.mu.Lock()
 	p.calls = append(p.calls, s)
 	p.mu.Unlock()
+}
+
+// countKind считает обращения одного вида: «движок тронули» после выхода из
+// транзакции обязано быть именно reload, а не побочный Stop самого Disable.
+func (p *holdProbeProc) countKind(kind string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, c := range p.calls {
+		if c == kind {
+			n++
+		}
+	}
+	return n
 }
 
 func (p *holdProbeProc) count() int {
@@ -45,7 +60,7 @@ func (p *holdProbeProc) Reload() error          { p.record("reload"); return nil
 func TestDisable_HoldsForeignReloadsUntilDone(t *testing.T) {
 	dir := t.TempDir()
 	proc := &holdProbeProc{}
-	orch := orchestrator.New(dir, proc)
+	orch := orchestrator.NewWithAppliedPath(dir, proc, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	for _, m := range []orchestrator.SlotMeta{
 		{Slot: orchestrator.SlotRouter, Filename: "20-router.json"},
 		{Slot: orchestrator.SlotSubscriptions, Filename: "30-subscriptions.json"},
@@ -104,5 +119,20 @@ func TestDisable_HoldsForeignReloadsUntilDone(t *testing.T) {
 	}
 	if midTransaction != 0 {
 		t.Errorf("посреди транзакции движок трогать нельзя, обращений %d (%v)", midTransaction, proc.calls)
+	}
+
+	// RT6: hold обязан быть ОТПУЩЕН, и отложенная чужая запись — доехать.
+	// Проверялась только первая половина контракта, поэтому мутация «взять
+	// hold и не вернуть» (`s.deps.Orch.HoldReloads()` без вызова функции
+	// снятия) проходила зелёной. Её цена — застрявший счётчик holds: глохнет
+	// debounce-путь (правка чужого продюсера лишь взводит pendingReload), и
+	// до перезапуска демона hold не отпустить. Прямой ReloadNow идёт мимо
+	// счётчика и работает — глухота именно debounce, а не «любого reload».
+	deadline := time.Now().Add(3 * time.Second)
+	for proc.countKind("reload") == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if proc.countKind("reload") == 0 {
+		t.Fatalf("отложенный reload не состоялся после транзакции — hold не отпущен (%v)", proc.calls)
 	}
 }

@@ -3,6 +3,8 @@ package clientroute
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -550,5 +552,99 @@ func TestOnTunnelDelete_CleansEverything(t *testing.T) {
 	}
 	if _, ok := store.tables["tun2"]; !ok {
 		t.Error("tun2 table should remain allocated")
+	}
+}
+
+// Update со сменой туннеля переносит правило: старая таблица — RemoveClientRule +
+// cleanup (маршрут был единственным), новая — Setup + Add.
+func TestUpdate_TunnelChangeMovesRule(t *testing.T) {
+	store := newMockStore()
+	op := &mockOperator{}
+	store.routes = []ClientRoute{
+		{ID: "cr-u1", ClientIP: "192.168.1.20", TunnelID: "tun1", Fallback: "drop", Enabled: true},
+	}
+	store.tables["tun1"] = 400
+	svc := newTestService(store, op,
+		map[string]string{"tun1": "awg0", "tun2": "awg1"},
+		map[string]bool{"tun1": true, "tun2": true})
+
+	got, err := svc.Update(context.Background(), ClientRoute{ID: "cr-u1", ClientIP: "10.9.9.9", TunnelID: "tun2", Fallback: "bypass", Enabled: true})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got.ClientIP != "192.168.1.20" {
+		t.Fatalf("IP менять нельзя: %q", got.ClientIP)
+	}
+	if len(op.removeCalls) != 1 || op.removeCalls[0].ip != "192.168.1.20" || op.removeCalls[0].table != 400 {
+		t.Fatalf("старое правило: %+v", op.removeCalls)
+	}
+	if len(op.cleanupCalls) != 1 || op.cleanupCalls[0] != 400 {
+		t.Fatalf("старая таблица не снята: %v", op.cleanupCalls)
+	}
+	if len(op.setupCalls) != 1 || op.setupCalls[0].iface != "awg1" {
+		t.Fatalf("новая таблица: %+v", op.setupCalls)
+	}
+	if len(op.addCalls) != 1 || op.addCalls[0].ip != "192.168.1.20" || op.addCalls[0].table != op.setupCalls[0].table {
+		t.Fatalf("новое правило: %+v", op.addCalls)
+	}
+	if store.Get("cr-u1").TunnelID != "tun2" || store.Get("cr-u1").Fallback != "bypass" {
+		t.Fatalf("store: %+v", store.Get("cr-u1"))
+	}
+}
+
+func TestUpdate_RejectsBadFallbackAndUnknownTunnel(t *testing.T) {
+	store := newMockStore()
+	store.routes = []ClientRoute{{ID: "cr-u2", ClientIP: "192.168.1.21", TunnelID: "tun1", Fallback: "drop"}}
+	svc := newTestService(store, &mockOperator{}, nil, map[string]bool{"tun1": true})
+	if _, err := svc.Update(context.Background(), ClientRoute{ID: "cr-u2", TunnelID: "tun1", Fallback: "teleport"}); err == nil {
+		t.Fatal("fallback вне {drop,bypass} обязан отвергаться")
+	}
+	if _, err := svc.Update(context.Background(), ClientRoute{ID: "cr-u2", TunnelID: "ghost", Fallback: "drop"}); err == nil {
+		t.Fatal("несуществующий туннель обязан отвергаться")
+	}
+	if _, err := svc.Update(context.Background(), ClientRoute{ID: "cr-none", TunnelID: "tun1", Fallback: "drop"}); err == nil {
+		t.Fatal("неизвестный ID обязан отвергаться")
+	}
+}
+
+// Reconcile применяет только ВКЛЮЧЁННЫЕ маршруты запущенных туннелей; выключенный
+// и чужой (не запущенный) туннель не трогаются.
+func TestReconcile_AppliesEnabledRoutesOfRunningTunnels(t *testing.T) {
+	store := newMockStore()
+	op := &mockOperator{}
+	store.routes = []ClientRoute{
+		{ID: "cr-r1", ClientIP: "192.168.1.30", TunnelID: "tun1", Fallback: "drop", Enabled: true},
+		{ID: "cr-r2", ClientIP: "192.168.1.31", TunnelID: "tun1", Fallback: "drop", Enabled: false},
+		{ID: "cr-r3", ClientIP: "192.168.1.32", TunnelID: "tun9", Fallback: "drop", Enabled: true},
+	}
+	svc := newTestService(store, op, nil, nil)
+
+	if err := svc.Reconcile(context.Background(), map[string]string{"tun1": "awg0"}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(op.setupCalls) != 1 || op.setupCalls[0].iface != "awg0" {
+		t.Fatalf("setup: %+v", op.setupCalls)
+	}
+	if len(op.addCalls) != 1 || op.addCalls[0].ip != "192.168.1.30" || op.addCalls[0].table != op.setupCalls[0].table {
+		t.Fatalf("правила: %+v", op.addCalls)
+	}
+}
+
+func TestCleanupAll_TearsDownEveryTableAndStorage(t *testing.T) {
+	store := newMockStore()
+	op := &mockOperator{}
+	store.routes = []ClientRoute{{ID: "cr-c1", ClientIP: "192.168.1.40", TunnelID: "tun1", Fallback: "drop", Enabled: true}}
+	store.tables = map[string]int{"tun1": 401, "tun2": 407}
+	svc := newTestService(store, op, nil, nil)
+
+	if err := svc.CleanupAll(context.Background()); err != nil {
+		t.Fatalf("CleanupAll: %v", err)
+	}
+	sort.Ints(op.cleanupCalls)
+	if !reflect.DeepEqual(op.cleanupCalls, []int{401, 407}) {
+		t.Fatalf("cleanup tables = %v, want [401 407]", op.cleanupCalls)
+	}
+	if len(store.routes) != 0 || len(store.tables) != 0 {
+		t.Fatalf("storage обязан быть очищен: %+v %+v", store.routes, store.tables)
 	}
 }

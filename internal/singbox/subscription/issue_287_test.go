@@ -92,7 +92,7 @@ func TestIssue287_ConcurrentCreate_DistinctListenPorts(t *testing.T) {
 // listen_port already taken by a different tag.
 func TestIssue287_AddInbound_RejectsDuplicateListenPort(t *testing.T) {
 	dir := t.TempDir()
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}

@@ -36,7 +36,7 @@ func slotOutboundByTag(t *testing.T, dir, tag string) map[string]any {
 // умолчанию, и при disable_sni && !insecure туннель мёртв.
 func TestSubscriptionSlot_Hysteria2GetsChromeParrotFix(t *testing.T) {
 	dir := t.TempDir()
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestSubscriptionSlot_Hysteria2GetsChromeParrotFix(t *testing.T) {
 // мёртв (тот же фикс, что Config.Save даёт туннелям из UI).
 func TestSubscriptionSlot_NaiveGetsUDPOverTCPFix(t *testing.T) {
 	dir := t.TempDir()
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestSubscriptionSlot_NaiveGetsUDPOverTCPFix(t *testing.T) {
 // UpdateOutbound — второй вход в слот; фикс обязан работать и там.
 func TestSubscriptionSlot_UpdateOutboundGetsCompatFix(t *testing.T) {
 	dir := t.TempDir()
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}

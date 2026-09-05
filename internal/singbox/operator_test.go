@@ -460,7 +460,7 @@ func TestOperatorApplyLogLevel_BrokenBaseJSONReturnsError(t *testing.T) {
 func TestOperatorApplyLogLevel_UsesOrchestratorSlotBase(t *testing.T) {
 	dir := t.TempDir()
 	op := NewOperator(OperatorDeps{Dir: dir})
-	orch := singboxorch.New(op.ConfigDir(), op.Process())
+	orch := singboxorch.NewWithAppliedPath(op.ConfigDir(), op.Process(), filepath.Join(t.TempDir(), "singbox-applied.json"))
 	for _, meta := range singboxorch.KnownSlots() {
 		if meta.Slot == singboxorch.SlotBase {
 			if err := orch.Register(meta); err != nil {
@@ -1607,9 +1607,8 @@ func newOperatorForTest(t *testing.T, opts ...operatorOpt) *Operator {
 }
 
 // TestNextFreeListenPortSlot covers the NDMS-free slot allocator used by
-// AddTunnels when the NDMS Proxy toggle is off. Full AddTunnels integration
-// requires a live sing-box binary (preflight + startAndWait fork/exec) — out
-// of scope for a unit test; manual scenarios (Task 23, S2) cover that path.
+// AddTunnels when the NDMS Proxy toggle is off. Сам AddTunnels пинуется юнитом —
+// см. TestAddTunnels_RejectsDuplicateOfExistingTunnel.
 func TestNextFreeListenPortSlot(t *testing.T) {
 	tests := []struct {
 		name     string

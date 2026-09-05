@@ -516,6 +516,7 @@ func TestPolicyTunReap_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
 // Удаление пакета: чужой интерфейс на нашем индексе не сносится и дефолт с него
 // не снимается — `opkg remove` не имеет права разбирать посторонний туннель.
 func TestReleasePolicyTunForRemoval_SparesForeignInterface(t *testing.T) {
+	stubLinkAbsent(t)
 	for _, tc := range foreignTeardownCases(policyTunDescription, "OpkgTun1") {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun})
@@ -595,12 +596,12 @@ func TestFakeipWithConfig_SparesForeignInterfaceCIDRRoutes(t *testing.T) {
 // запись владения СНИМАЕТСЯ (удерживать чужой индекс бессмысленно: наш
 // интерфейс мёртв, а permit пользователя NDMS уже стёрла — стенд 2026-08-18).
 func TestPolicyTunDisable_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
-	// hold мутирует интерфейс (down/clear) и потому гейтится его наличием:
-	// NDMS создаёт интерфейс по любой мутации имени, а delete за ним не идёт.
-	stubOrphanNetdev(t, true)
 	for _, tc := range foreignTeardownCases(policyTunDescription, "OpkgTun0") {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newPolicyTunEnableHarness(t, "")
+			// hold мутирует интерфейс (down/clear) и потому гейтится его наличием:
+			// NDMS создаёт интерфейс по любой мутации имени, а delete за ним не идёт.
+			stubOrphanNetdev(t, true)
 			provisionPolicyTunForDisable(t, h)
 			h.svc.deps.OpkgTunScan = tc.scan
 
@@ -714,5 +715,42 @@ func TestPolicyTunEnable_PersistsBeforeCreate(t *testing.T) {
 	}
 	if probe.atCreate.Mode != storage.OpkgTunModePolicyTun || !probe.atCreate.Provisioned || probe.atCreate.Index != 0 {
 		t.Errorf("запись в момент Create = %+v, want policy-tun provisioned index 0", probe.atCreate)
+	}
+}
+
+// Хелпер отдаёт КОПИЮ записи, а не живой указатель кэша. Довод — на стороне
+// чтения: `Load`/`Get` возвращают объект, который параллельно маршалят
+// читатели без нашего лока, и любая правка возвращённого по месту (а её делают
+// и reconcile, и setPolicyPayload) была бы записью в чужой объект под
+// маршалом. Copy-on-write в `SetOpkgTunState` этого НЕ заменяет: тот изолирует
+// объект ПИСАТЕЛЯ.
+//
+// Пин ДЕТЕРМИНИРОВАННЫЙ и потому пришёл на смену двум тестам-гонкам
+// (`policytun_nat_race_test.go`, снесены): те ловили ту же мутацию только под
+// `-race`, стоили 30 реконсиляций на 8 читателей каждый и молчали про второй
+// регресс, ради которого их писали. Проверено ревью: без этого теста мутация
+// «вернуть сам указатель» проходила зелёной во всём пакете.
+func TestOpkgTunOwned_ReturnsCopy(t *testing.T) {
+	live := &storage.OpkgTunState{
+		Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 7,
+		PolicyTun: &storage.OpkgTunPolicyData{
+			NATSegments: []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: "full"}},
+		},
+	}
+	settings := &storage.Settings{OpkgTun: live}
+
+	got, ok := opkgTunOwned(settings, statePolicyTun)
+	if !ok {
+		t.Fatal("policy-tun запись обязана опознаться")
+	}
+	if got == live {
+		t.Fatal("отдан ЖИВОЙ указатель кэша: правка по месту пойдёт в объект под маршалом")
+	}
+
+	// Правка полученного не имеет права доехать до кэша.
+	got.Index = 99
+	got.Provisioned = false
+	if live.Index != 7 || !live.Provisioned {
+		t.Fatalf("правка копии доехала до записи стора: %+v", live)
 	}
 }
