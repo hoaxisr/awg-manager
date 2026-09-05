@@ -40,6 +40,13 @@ type RuleSet struct {
 	// full→internet-only, WAN, интерфейса или RelayMode обязана сносить
 	// прежние формы — иначе класс H1 (PR #697) и утечка правил 2.17.0.
 	doomed map[string]Rule
+	// reaped — ключи doomed-правил, снос которых ДОВЕДЁН до конца. Защёлка
+	// для Doom: он зовётся из декларации роли каждый проход, а снятое правило
+	// прежней версии обратно не появляется. Без защёлки ведомость воскресала
+	// бы вечно, и Observe держал бы по `iptables -C` на правило каждый тик —
+	// exec-churn на роутере (PR #734). Разности желаемых защёлка не касается:
+	// правило, ушедшее ИЗ желаемого, попадает в doomed обычным путём.
+	reaped map[string]bool
 	// enableForward — включение ip_forward вместе с правилами; nil — не нужно.
 	// Прод: запись "1" в /proc/sys/net/ipv4/ip_forward.
 	enableForward func() error
@@ -63,7 +70,7 @@ func (r *RuleSet) AdoptMarked(table, chain, tag string) {
 
 func NewRuleSet(id proxyrt.ResourceID, ipt IPT, enableForward func() error) *RuleSet {
 	return &RuleSet{id: id, ipt: ipt, provider: StaticGroups(nil),
-		doomed: map[string]Rule{}, enableForward: enableForward}
+		doomed: map[string]Rule{}, reaped: map[string]bool{}, enableForward: enableForward}
 }
 
 // SetDesired: провайдер, дающий пустой набор, означает «правил быть не
@@ -78,11 +85,15 @@ func (r *RuleSet) SetDesired(provider GroupProvider) {
 // Doom кладёт правила в ведомость на снос БЕЗ желаемого: форму, которую мы
 // больше не ставим, но обязаны убрать. Разность желаемых её не даст (в
 // желаемом её не было ни разу за этот запуск), усыновление-по-метке не
-// увидит (метки правило не несёт) — остаётся назвать её адресно. Снос идёт
-// тем же sweep: «правила нет» — это успех, поэтому повторный Doom
-// безопасен.
+// увидит (метки правило не несёт) — остаётся назвать её адресно.
+//
+// Уже снесённое правило Doom НЕ воскрешает: зовут его из декларации роли, то
+// есть каждый проход, а снос доводится один раз.
 func (r *RuleSet) Doom(rules ...Rule) {
 	for _, rule := range rules {
+		if r.reaped[rule.Key()] {
+			continue
+		}
 		r.doomed[rule.Key()] = rule
 	}
 }
@@ -230,6 +241,7 @@ func (r *RuleSet) Apply(ctx context.Context, s proxyrt.Step) error {
 			}
 			if gone {
 				delete(r.doomed, key)
+				r.reaped[key] = true
 			}
 		}
 		if firstErr != nil {

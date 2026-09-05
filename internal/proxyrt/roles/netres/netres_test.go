@@ -20,6 +20,9 @@ type fakeIPT struct {
 	// кавыченная зафиксирована в этом же репозитории
 	// (internal/singbox/router/iptables.go:1328 и тест рядом с ним).
 	quoteComment bool
+	// calls — счётчик обращений к iptables: тесты, где важна ЦЕНА прохода
+	// (лишний exec на роутере — дефект, а не мелочь), считают их.
+	calls int
 }
 
 func newFakeIPT() *fakeIPT {
@@ -41,6 +44,7 @@ type iptTransient struct{}
 func (iptTransient) Error() string { return "iptables: resource temporarily unavailable" }
 
 func (f *fakeIPT) Run(_ context.Context, args ...string) error {
+	f.calls++
 	table := "filter"
 	if len(args) >= 2 && args[0] == "-t" {
 		table, args = args[1], args[2:]
@@ -105,6 +109,7 @@ func (f *fakeIPT) Run(_ context.Context, args ...string) error {
 }
 
 func (f *fakeIPT) Output(_ context.Context, args ...string) (string, error) {
+	f.calls++
 	// Понимает только `-t T -S CHAIN` — ровно то, что зовёт listMarked.
 	if len(args) != 4 || args[0] != "-t" || args[2] != "-S" {
 		return "", iptNotFound{}
@@ -299,17 +304,30 @@ func TestRuleSetDoomRemovesRuleWithoutDesired(t *testing.T) {
 		t.Fatalf("ведомость не опустела: %v", rs.doomed)
 	}
 
-	// Второй Doom тех же правил, которых в таблице уже нет: «правила нет» —
-	// это успех, а не отказ, и шагов такой прогон не даёт.
+	// Doom зовут из декларации роли, то есть КАЖДЫЙ проход. Снятое правило он
+	// воскрешать не имеет права: иначе ведомость никогда не пустеет, Observe
+	// держит по `iptables -C` на правило каждый тик, а ресурс остаётся
+	// волатильным (RecheckAfter 15 с) навсегда — тот самый exec-churn на
+	// роутере, который уже был дефектом (PR #734).
 	for _, r := range forwardGroups([]string{"opkgtun19"})[0].Rules {
 		rs.Doom(r)
 	}
+	if len(rs.doomed) != 0 {
+		t.Errorf("снятое правило воскрешено: %v", rs.doomed)
+	}
+	before := ipt.calls
 	obs, err := rs.Observe(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
+	if ipt.calls != before {
+		t.Errorf("проход после сноса ходит в iptables: %d вызовов", ipt.calls-before)
+	}
 	if steps := rs.Plan(obs); len(steps) != 0 {
 		t.Fatalf("снос отсутствующего правила породил шаги: %v", steps)
+	}
+	if d := rs.RecheckAfter(); d != 0 {
+		t.Errorf("ресурс остался волатильным: RecheckAfter=%v", d)
 	}
 }
 
