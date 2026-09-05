@@ -2,7 +2,8 @@
 
 :root {
 	/* List column widths — fixed px, no clamp */
-	--tunnel-list-col-toggle: 36px;
+	/* Замок защиты (#818) стоит слева от тумблера в той же колонке. */
+	--tunnel-list-col-toggle: 60px;
 	--tunnel-list-col-delay: 82px;
 	--tunnel-list-col-name: 140px;
 	--tunnel-list-col-name-max: 100px;
@@ -24,7 +25,7 @@
 	--tunnel-list-col-ping: 78px;
 	--tunnel-list-col-actions: 92px;
 
-	--tunnel-list-min-width: 740px;
+	--tunnel-list-min-width: 764px;
 	--tunnel-list-row-padding: 0.75rem;
 	--tunnel-list-col-gap: 8px;
 	--tunnel-list-head-min-height: 2rem;
@@ -1321,9 +1322,9 @@ button.tunnel-list-traffic-cell:focus-visible {
 /* Responsive AWG list */
 @media (max-width: 1280px) {
 	.awg-list-table:not(.singbox-tunnel-table):not(.singbox-sub-table) {
-		--tunnel-list-min-width: 760px;
+		--tunnel-list-min-width: 784px;
 		--awg-list-columns:
-			34px
+			58px
 			minmax(180px, 1fr)
 			minmax(140px, 0.78fr)
 			minmax(132px, 0.72fr)
@@ -1334,9 +1335,9 @@ button.tunnel-list-traffic-cell:focus-visible {
 
 @media (max-width: 1120px) {
 	.awg-list-table:not(.singbox-tunnel-table):not(.singbox-sub-table) {
-		--tunnel-list-min-width: 720px;
+		--tunnel-list-min-width: 744px;
 		--awg-list-columns:
-			32px
+			56px
 			minmax(168px, 0.95fr)
 			minmax(128px, 0.72fr)
 			minmax(122px, 0.68fr)
@@ -1358,7 +1359,7 @@ button.tunnel-list-traffic-cell:focus-visible {
 
 html[data-layout-compact='true'] .awg-list-table:not(.singbox-tunnel-table):not(.singbox-sub-table) {
 	--tunnel-list-min-width: 0px;
-	--tunnel-list-col-toggle: 28px;
+	--tunnel-list-col-toggle: 52px;
 	--awg-list-columns:
 		var(--tunnel-list-col-toggle)
 		minmax(150px, 1fr)

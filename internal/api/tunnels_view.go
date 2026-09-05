@@ -225,6 +225,8 @@ type tunnelItem struct {
 	// список помечает туннели, принадлежащие прокси-выходу, и без второго
 	// поля метки не было бы ровно у половины из них.
 	FreeTurnClientID string `json:"freeTurnClientId,omitempty"`
+	// Locked — при true туннель защищён от изменений (#818).
+	Locked bool `json:"locked,omitempty"`
 }
 
 // listItems builds the tunnel list items for API response and SSE snapshots.
@@ -373,6 +375,9 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 		}
 		if stored != nil && stored.ConnectivityCheck != nil {
 			item.ConnectivityCheck = stored.ConnectivityCheck
+		}
+		if stored != nil && stored.Locked {
+			item.Locked = true
 		}
 		items = append(items, item)
 	}

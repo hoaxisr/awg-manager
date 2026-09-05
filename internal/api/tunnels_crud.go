@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -342,6 +343,7 @@ func (h *TunnelsHandler) checkExplicitIDFree(ctx context.Context, tunnelID, back
 //	@Param			id	query	string	true	"Tunnel id"
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		403	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/tunnels/update [post]
 func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -366,6 +368,13 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	existing, err := h.store.Get(id)
 	if err != nil {
 		response.Error(w, "tunnel not found", "NOT_FOUND")
+		return
+	}
+
+	// Защита (#818) отвергает правку до всякого побочного действия: и до
+	// ветки зеркальной записи, которая пишет сама, и до svc.Update.
+	if existing.Locked {
+		response.ErrorWithStatus(w, http.StatusForbidden, tunnelLockedMessage, "TUNNEL_LOCKED")
 		return
 	}
 
@@ -593,6 +602,64 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, resp)
 }
 
+// tunnelLockedMessage — текст 403 у всех пяти защищённых операций (#818).
+// Один на всех, чтобы пользователь везде читал одну и ту же подсказку.
+const tunnelLockedMessage = "туннель защищён от изменений — снимите защиту на карточке"
+
+// SetLock включает и снимает защиту туннеля от изменений (#818).
+//
+//	@Summary		Set tunnel lock
+//	@Description	Включает или снимает защиту туннеля от изменений: у защищённого туннеля Stop, ToggleEnabled, Update и Delete отвечают 403.
+//	@Tags			tunnels
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		query	string	true	"Tunnel id"
+//	@Param			locked	query	bool	true	"Включить (true) или снять (false) защиту"
+//	@Success		200	{object}	TunnelLockResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		500	{object}	APIErrorEnvelope
+//	@Router			/tunnels/lock [post]
+func (h *TunnelsHandler) SetLock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.MethodNotAllowed(w)
+		return
+	}
+	id, ok := requireQueryID(w, r)
+	if !ok {
+		return
+	}
+	if !isValidTunnelID(id) {
+		response.Error(w, "invalid tunnel ID", "INVALID_ID")
+		return
+	}
+	// Желаемое состояние приходит явно, а не переключением: две вкладки,
+	// нажавшие замок одновременно, придут к одному и тому же результату,
+	// а не к взаимной отмене.
+	locked, err := strconv.ParseBool(r.URL.Query().Get("locked"))
+	if err != nil {
+		response.Error(w, "параметр locked должен быть true или false", "INVALID_LOCKED")
+		return
+	}
+	// Повторный запрос того же значения не переписывает файл: ErrNoChange
+	// гасит запись внутри Update, ответ остаётся успешным.
+	if err := h.store.Update(id, func(t *storage.AWGTunnel) error {
+		if t.Locked == locked {
+			return storage.ErrNoChange
+		}
+		t.Locked = locked
+		return nil
+	}); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			response.Error(w, "tunnel not found", "NOT_FOUND")
+			return
+		}
+		response.Error(w, err.Error(), "UPDATE_FAILED")
+		return
+	}
+	h.publishTunnelList(r.Context())
+	response.Success(w, TunnelLockResultData{ID: id, Locked: locked})
+}
+
 // Delete deletes a tunnel.
 //
 //	@Summary		Delete tunnel
@@ -606,6 +673,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 //	@Param			id	query	string	true	"Tunnel id"
 //	@Success		200	{object}	TunnelDeleteResponse
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		403	{object}	APIErrorEnvelope
 //	@Failure		409	{object}	TunnelReferencedResponse
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/tunnels/delete [post]
@@ -621,6 +689,12 @@ func (h *TunnelsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isValidTunnelID(id) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
+		return
+	}
+
+	// Защита (#818) отвергает удаление до всякого побочного действия.
+	if stored, err := h.store.Get(id); err == nil && stored != nil && stored.Locked {
+		response.ErrorWithStatus(w, http.StatusForbidden, tunnelLockedMessage, "TUNNEL_LOCKED")
 		return
 	}
 
@@ -813,6 +887,7 @@ func (h *TunnelsHandler) ExportAll(w http.ResponseWriter, r *http.Request) {
 //	@Param			id	query	string	true	"Tunnel id"
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		403	{object}	APIErrorEnvelope
 //	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/tunnels/replace [post]
@@ -843,8 +918,16 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check tunnel exists
-	if _, err := h.store.Get(id); err != nil {
+	stored, err := h.store.Get(id)
+	if err != nil {
 		response.ErrorWithStatus(w, http.StatusNotFound, "tunnel not found", "NOT_FOUND")
+		return
+	}
+
+	// Защита (#818) отвергает замену конфига до всякого побочного действия:
+	// и до svc.Stop, и до самой записи конфига.
+	if stored.Locked {
+		response.ErrorWithStatus(w, http.StatusForbidden, tunnelLockedMessage, "TUNNEL_LOCKED")
 		return
 	}
 

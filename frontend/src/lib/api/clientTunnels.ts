@@ -189,6 +189,13 @@ export class TunnelsClient extends CoreClient {
 		});
 	}
 
+	/** Включает или снимает защиту туннеля от изменений (#818). */
+	async setTunnelLock(id: string, locked: boolean): Promise<{ id: string; locked: boolean }> {
+		return this.request(`/tunnels/lock?id=${encodeURIComponent(id)}&locked=${locked}`, {
+			method: 'POST'
+		});
+	}
+
 	// #endregion
 
 

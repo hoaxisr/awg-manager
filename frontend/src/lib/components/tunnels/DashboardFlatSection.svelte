@@ -49,6 +49,7 @@
 			onToggleOnOff={() => ctx.handleToggleOnOff(item.tunnel.id)}
 			ondelete={() => ctx.requestDelete(item.tunnel.id)}
 			ondetail={(id) => ctx.openDetail(id)}
+			onLockClick={() => ctx.handleLockClick(item.tunnel.id)}
 		/>
 	{:else if item.kind === 'awg-system'}
 		<SystemTunnelCard

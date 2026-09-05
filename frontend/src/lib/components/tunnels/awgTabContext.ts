@@ -79,6 +79,7 @@ export interface AwgTabContext {
 	openConnectivitySettings(tunnel: TunnelListItem): void;
 	openDetail(id: string): void;
 	requestDelete(id: string): void;
+	handleLockClick(id: string): void;
 	markAsServer(id: string): Promise<void>;
 	handleToggleOnOff(id: string): Promise<void>;
 	checkPing(id: string): Promise<void>;

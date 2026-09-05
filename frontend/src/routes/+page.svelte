@@ -202,6 +202,7 @@
 	let connectivitySettingsTunnel = $state<TunnelListItem | null>(null);
 	let deleteLoading = $state<Record<string, boolean>>({});
 	let deleteConfirmId = $state<string | null>(null);
+	let unlockConfirmId = $state<string | null>(null);
 	let referencedDetails = $state<import('$lib/types').TunnelReferencedError | null>(null);
 	let referencedTunnelName = $state<string>('');
 
@@ -354,6 +355,25 @@
 		deleteConfirmId = id;
 	}
 
+	// Замок на карточке (#818). Включение — сразу, снятие — через подтверждение:
+	// защита затем и ставится, чтобы её нельзя было снять случайным кликом.
+	function handleLockClick(id: string) {
+		if (awgList.find((t) => t.id === id)?.locked) {
+			unlockConfirmId = id;
+			return;
+		}
+		void setLock(id, true);
+	}
+
+	async function setLock(id: string, locked: boolean) {
+		try {
+			await api.setTunnelLock(id, locked);
+			notifications.success(locked ? 'Защита включена' : 'Защита снята');
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Не удалось изменить защиту');
+		}
+	}
+
 	async function handleDelete(id: string) {
 		deleteConfirmId = null;
 		deleteLoading = { ...deleteLoading, [id]: true };
@@ -378,6 +398,12 @@
 			const { [id]: _, ...rest } = deleteLoading;
 			deleteLoading = rest;
 		}
+	}
+
+	async function confirmUnlock() {
+		const id = unlockConfirmId;
+		unlockConfirmId = null;
+		if (id) await setLock(id, false);
 	}
 
 	// Polling-store subscriptions for sing-box status + tunnels list.
@@ -1563,7 +1589,7 @@
 		set selectedBackend(v) { selectedBackend = v; },
 		get fileInput() { return fileInput; },
 		set fileInput(v) { fileInput = v; },
-		endpointHost, endpointPort, endpointVisible, toggleEndpointVisible, externalStatusLabel, externalStatusVariant, systemStatusLabel, systemStatusVariant, isManagedTunnelOn, managedRouteMeta, showManagedPing, latestRate, sparklineSeries, handleAdoptClick, handleAwgSortChange, handleDragLeave, handleDragOver, handleDrop, handleFileSelect, openAwgDiagnostics, openConnectivitySettings, openDetail, requestDelete, markAsServer, handleToggleOnOff, checkPing, handleExportAll,
+		endpointHost, endpointPort, endpointVisible, toggleEndpointVisible, externalStatusLabel, externalStatusVariant, systemStatusLabel, systemStatusVariant, isManagedTunnelOn, managedRouteMeta, showManagedPing, latestRate, sparklineSeries, handleAdoptClick, handleAwgSortChange, handleDragLeave, handleDragOver, handleDrop, handleFileSelect, openAwgDiagnostics, openConnectivitySettings, openDetail, requestDelete, handleLockClick, markAsServer, handleToggleOnOff, checkPing, handleExportAll,
 	};
 
 	// Live-контекст flat-дашборда (см. dashboardFlatContext.ts).
@@ -1601,7 +1627,7 @@
 		set dashboardTagFilter(v) { dashboardTagFilter = v; },
 		get flatGridEl() { return flatGridEl; },
 		set flatGridEl(v) { flatGridEl = v; },
-		handleAdoptClick, handleExportAll, handleGripKeydown, handleGripPointerDown, handleToggleOnOff, markAsServer, openAwg3Import, openAwgDiagnostics, openDetail, openSingboxDetail, openWizard, requestDelete, requestSubscriptionDelete,
+		handleAdoptClick, handleExportAll, handleGripKeydown, handleGripPointerDown, handleToggleOnOff, markAsServer, openAwg3Import, openAwgDiagnostics, openDetail, openSingboxDetail, openWizard, requestDelete, handleLockClick, requestSubscriptionDelete,
 	};
 
 	// Live-контекст модалок страницы (см. tunnelPageModalsContext.ts).
@@ -1622,6 +1648,8 @@
 		get adoptingInterface() { return adoptingInterface; },
 		get deleteConfirmId() { return deleteConfirmId; },
 		set deleteConfirmId(v) { deleteConfirmId = v; },
+		get unlockConfirmId() { return unlockConfirmId; },
+		set unlockConfirmId(v) { unlockConfirmId = v; },
 		get referencedDetails() { return referencedDetails; },
 		set referencedDetails(v) { referencedDetails = v; },
 		get referencedTunnelName() { return referencedTunnelName; },
@@ -1640,7 +1668,7 @@
 		get connectivitySettingsTunnel() { return connectivitySettingsTunnel; },
 		get connectivitySettingsOpen() { return connectivitySettingsOpen; },
 		set connectivitySettingsOpen(v) { connectivitySettingsOpen = v; },
-		handleAdopt, handleDelete, confirmSubscriptionDelete, closeDetail, closeSingboxDetail, closeAwgDiagnostics, closeConnectivitySettings,
+		handleAdopt, handleDelete, confirmUnlock, confirmSubscriptionDelete, closeDetail, closeSingboxDetail, closeAwgDiagnostics, closeConnectivitySettings,
 	};
 </script>
 

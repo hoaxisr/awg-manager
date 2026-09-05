@@ -8,6 +8,7 @@
 	import { TunnelListActions } from '$lib/components/ui';
 	import TunnelPingButton from '$lib/components/tunnels/TunnelPingButton.svelte';
 	import TunnelTitleRow from '$lib/components/tunnels/TunnelTitleRow.svelte';
+	import TunnelLockGlyph from './TunnelLockGlyph.svelte';
 	import { awgLedToStatusDot } from '$lib/utils/statusDot';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { api } from '$lib/api/client';
@@ -36,6 +37,7 @@
 		onToggleOnOff?: () => void;
 		ondelete?: () => void;
 		ondetail?: (id: string) => void;
+		onLockClick?: () => void;
 		autoConnectivityNonce?: number;
 		autoConnectivityDelayMs?: number;
 	}
@@ -48,13 +50,16 @@
 		onToggleOnOff,
 		ondelete,
 		ondetail,
+		onLockClick,
 		autoConnectivityNonce = 0,
 		autoConnectivityDelayMs = 0,
 	}: Props = $props();
 
 	// ─── Toggle / status logic ─────────────────────────────────────
 	let isOn = $derived(['running', 'starting', 'broken'].includes(tunnel.status));
-	let toggleDisabled = $derived(toggleLoading || tunnel.hasAddressConflict === true);
+	let locked = $derived(!!tunnel.locked);
+	let toggleDisabled = $derived(toggleLoading || tunnel.hasAddressConflict === true || locked);
+	const lockedTitle = 'Туннель защищён от изменений';
 
 	let statusHint = $derived.by(() => {
 		switch (tunnel.status) {
@@ -304,19 +309,20 @@
 			<div class="dense-toolbar" title={statusHint || undefined}>
 				<!-- row 1: toggle -->
 				<div class="dense-toolbar-top">
-				<span
-					title={tunnel.hasAddressConflict ? 'Конфликт адресов — другой туннель с таким же IP уже запущен' : undefined}
-				>
-					<Toggle
-						checked={isOn}
-						onchange={() => onToggleOnOff?.()}
-						loading={toggleLoading}
-						disabled={toggleDisabled}
-						size="sm"
-						variant="flip"
-						tint={toggleTint}
-					/>
-				</span>
+					<TunnelLockGlyph {locked} size="sm" onclick={() => onLockClick?.()} />
+					<span
+						title={locked ? lockedTitle : (tunnel.hasAddressConflict ? 'Конфликт адресов — другой туннель с таким же IP уже запущен' : undefined)}
+					>
+						<Toggle
+							checked={isOn}
+							onchange={() => onToggleOnOff?.()}
+							loading={toggleLoading}
+							disabled={toggleDisabled}
+							size="sm"
+							variant="flip"
+							tint={toggleTint}
+						/>
+					</span>
 				</div>
 			<!-- row 2: ping + gear (only when running) -->
 			{#if showConnectivityRow}
@@ -372,8 +378,9 @@
 
 				<div class="head-right">
 					<div class="led-toggle">
+						<TunnelLockGlyph {locked} onclick={() => onLockClick?.()} />
 						<span
-							title={tunnel.hasAddressConflict ? 'Конфликт адресов — другой туннель с таким же IP уже запущен' : undefined}
+							title={locked ? lockedTitle : (tunnel.hasAddressConflict ? 'Конфликт адресов — другой туннель с таким же IP уже запущен' : undefined)}
 						>
 							<Toggle
 								checked={isOn}
@@ -561,9 +568,12 @@
 			<TunnelListActions
 				variant="labeled"
 				editHref="/tunnels/{tunnel.id}"
+				editDisabled={locked}
+				editTitle={locked ? lockedTitle : 'Изменить'}
 				onTest={() => (diagnosticsOpen = true)}
 				onDelete={() => ondelete?.()}
-				deleteDisabled={deleteLoading}
+				deleteDisabled={deleteLoading || locked}
+				deleteTitle={locked ? lockedTitle : 'Удалить'}
 				deleting={deleteLoading}
 			/>
 		</div>

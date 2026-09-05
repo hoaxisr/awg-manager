@@ -133,6 +133,8 @@ export interface TunnelListItem {
 		failCount: number;
 		failThreshold: number;
 	};
+	/** При true туннель защищён от изменений: выключить, изменить и удалить нельзя (#818). */
+	locked?: boolean;
 }
 
 export interface DeleteResult {
