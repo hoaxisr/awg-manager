@@ -3,6 +3,7 @@ package dnscheck
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/netif"
@@ -106,24 +107,53 @@ func TestCreateIPHost_InvalidatesCacheOnSuccess(t *testing.T) {
 	}
 }
 
+// stubFirstIPv4 подменяет шов над чтением адреса br0 на время теста.
+func stubFirstIPv4(t *testing.T, fn func(string) string) {
+	t.Helper()
+	old := firstIPv4
+	firstIPv4 = fn
+	t.Cleanup(func() { firstIPv4 = old })
+}
+
+// Дефолт шва — netif.FirstIPv4: иначе адрес роутера в записи ip host перестал
+// бы браться у интерфейса.
+func TestFirstIPv4Default_IsNetifFirstIPv4(t *testing.T) {
+	if reflect.ValueOf(firstIPv4).Pointer() != reflect.ValueOf(netif.FirstIPv4).Pointer() {
+		t.Fatal("firstIPv4 по умолчанию обязан быть netif.FirstIPv4")
+	}
+}
+
 // Regression for the router-log spam: when the entry already matches, we
 // must NOT issue a create POST — that's what triggered NDMS to log
 // 'Core::Configurator: not found: "ip/host/awgm-dnscheck.test"'.
 func TestEnsureIPHost_SkipsPostWhenAlreadyCorrect(t *testing.T) {
-	routerIP := netif.FirstIPv4("br0")
-	if routerIP == "" {
-		t.Skip("no br0 IP on this test host")
-	}
+	stubFirstIPv4(t, func(iface string) string {
+		if iface != "br0" {
+			t.Fatalf("адрес читали у %q, а запись строится по br0", iface)
+		}
+		return "192.168.7.1"
+	})
 	fake := &fakeNDMS{}
-	ip := &fakeIPHost{entries: map[string]string{probeDomain: routerIP}}
+	ip := &fakeIPHost{entries: map[string]string{probeDomain: "192.168.7.1"}}
 	svc := &Service{ndms: fake, ipHost: ip}
-	addr, ok := svc.lookupIPHost(context.Background(), probeDomain)
-	if !ok || addr != routerIP {
-		t.Fatalf("precondition: lookup must find %s, got (%q,%v)", routerIP, addr, ok)
-	}
-	// With matching record in place, EnsureIPHost should early-return
-	// without any POST.
+
+	svc.EnsureIPHost(context.Background())
+
 	if len(fake.postedPayloads) != 0 {
-		t.Errorf("expected no POST, got %d", len(fake.postedPayloads))
+		t.Fatalf("совпадающая запись — POST'а быть не должно, got %d", len(fake.postedPayloads))
+	}
+}
+
+// Контроль к предыдущему: расхождение адреса обязано вылиться ровно в один POST.
+func TestEnsureIPHost_PostsWhenAddressDiffers(t *testing.T) {
+	stubFirstIPv4(t, func(string) string { return "192.168.7.1" })
+	fake := &fakeNDMS{}
+	ip := &fakeIPHost{entries: map[string]string{probeDomain: "192.168.7.2"}}
+	svc := &Service{ndms: fake, ipHost: ip}
+
+	svc.EnsureIPHost(context.Background())
+
+	if len(fake.postedPayloads) != 1 {
+		t.Fatalf("устаревшая запись — ожидали ровно 1 POST, got %d", len(fake.postedPayloads))
 	}
 }

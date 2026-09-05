@@ -1,9 +1,28 @@
 package netutil
 
 import (
+	"errors"
 	"net"
+	"reflect"
+	"strings"
 	"testing"
 )
+
+// stubLookupIP подменяет шов над резолвером на время теста.
+func stubLookupIP(t *testing.T, fn func(string) ([]net.IP, error)) {
+	t.Helper()
+	old := lookupIP
+	lookupIP = fn
+	t.Cleanup(func() { lookupIP = old })
+}
+
+// Дефолт шва — net.LookupIP: иначе резолв endpoint'ов в проде стал бы
+// возвращать пустоту молча.
+func TestLookupIPDefault_IsNetLookupIP(t *testing.T) {
+	if reflect.ValueOf(lookupIP).Pointer() != reflect.ValueOf(net.LookupIP).Pointer() {
+		t.Fatal("lookupIP по умолчанию обязан быть net.LookupIP")
+	}
+}
 
 // --- preferIPv4 (internal) ---
 
@@ -70,13 +89,33 @@ func TestResolveHost_IPv6(t *testing.T) {
 	}
 }
 
-func TestResolveHost_Localhost(t *testing.T) {
-	ip, err := ResolveHost("localhost")
+// Двустековое имя обязано отдать IPv4: выбор адреса — наше правило, а не
+// порядок ответа резолвера.
+func TestResolveHost_Hostname_ViaSeam(t *testing.T) {
+	stubLookupIP(t, func(host string) ([]net.IP, error) {
+		if host != "vpn.example" {
+			t.Fatalf("резолву отдали %q", host)
+		}
+		return []net.IP{net.ParseIP("2001:db8::1"), net.ParseIP("198.51.100.4")}, nil
+	})
+	ip, err := ResolveHost("vpn.example")
 	if err != nil {
-		t.Skipf("offline: %v", err)
+		t.Fatal(err)
 	}
-	if ip == "" {
-		t.Error("empty result")
+	if ip != "198.51.100.4" {
+		t.Errorf("got %s, want 198.51.100.4", ip)
+	}
+}
+
+// Отказ резолвера доезжает до вызывающего с именем в тексте.
+func TestResolveHost_Hostname_ResolverError(t *testing.T) {
+	stubLookupIP(t, func(string) ([]net.IP, error) { return nil, errors.New("SERVFAIL") })
+	_, err := ResolveHost("vpn.example")
+	if err == nil {
+		t.Fatal("ожидали ошибку резолва")
+	}
+	if !strings.Contains(err.Error(), "resolve vpn.example:") {
+		t.Errorf("текст ошибки %q не называет имя", err)
 	}
 }
 
@@ -110,12 +149,15 @@ func TestResolveEndpoint_IPv6(t *testing.T) {
 }
 
 func TestResolveEndpoint_Hostname(t *testing.T) {
-	ip, port, err := ResolveEndpoint("localhost:51820")
+	stubLookupIP(t, func(string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("2001:db8::1"), net.ParseIP("198.51.100.4")}, nil
+	})
+	ip, port, err := ResolveEndpoint("vpn.example:51820")
 	if err != nil {
-		t.Skipf("offline: %v", err)
+		t.Fatal(err)
 	}
-	if ip == "" || port != 51820 {
-		t.Errorf("got %s:%d", ip, port)
+	if ip != "198.51.100.4" || port != 51820 {
+		t.Errorf("got %s:%d, want 198.51.100.4:51820", ip, port)
 	}
 }
 
@@ -149,13 +191,19 @@ func TestResolveEndpoint_PortOverflow(t *testing.T) {
 
 // --- LookupAllIPs ---
 
-func TestLookupAllIPs_Localhost(t *testing.T) {
-	ips, err := LookupAllIPs("localhost")
+// LookupAllIPs — диагностическая ручка: отдаёт ВСЕ записи в порядке ответа,
+// без правила preferIPv4.
+func TestLookupAllIPs_Hostname_ViaSeam(t *testing.T) {
+	stubLookupIP(t, func(string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("2001:db8::1"), net.ParseIP("198.51.100.4")}, nil
+	})
+	ips, err := LookupAllIPs("vpn.example")
 	if err != nil {
-		t.Skipf("offline: %v", err)
+		t.Fatal(err)
 	}
-	if len(ips) == 0 {
-		t.Error("expected at least one IP")
+	want := []string{"2001:db8::1", "198.51.100.4"}
+	if !reflect.DeepEqual(ips, want) {
+		t.Errorf("got %v, want %v", ips, want)
 	}
 }
 
@@ -199,11 +247,14 @@ func TestResolveEndpointIP_IPv6Literal(t *testing.T) {
 }
 
 func TestResolveEndpointIP_Hostname(t *testing.T) {
-	ip, err := ResolveEndpointIP("localhost:51820")
+	stubLookupIP(t, func(string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("198.51.100.4")}, nil
+	})
+	ip, err := ResolveEndpointIP("vpn.example:51820")
 	if err != nil {
-		t.Skipf("offline: %v", err)
+		t.Fatal(err)
 	}
-	if ip == "" {
-		t.Error("empty result")
+	if ip != "198.51.100.4" {
+		t.Errorf("got %s, want 198.51.100.4", ip)
 	}
 }
