@@ -29,6 +29,7 @@ type Tunnel struct {
 	IfaceName       string `json:"ifaceName"`
 	PingcheckTarget string `json:"pingcheckTarget"` // empty when restart pingcheck disabled
 	SelfTarget      string `json:"selfTarget"`      // host the connectivity-check probes; empty when method=disabled/handshake
+	SelfURL         string `json:"-"`               // full connectivity-check URL probed for method=http (SelfTarget is its host); empty for ping
 	SelfMethod      string `json:"selfMethod"`      // "http", "ping", "handshake", "disabled"
 
 	// Source identifies which lister produced this tunnel: "awg",
