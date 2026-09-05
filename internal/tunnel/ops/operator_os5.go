@@ -211,7 +211,7 @@ func (o *OperatorOS5Impl) Create(ctx context.Context, cfg tunnel.Config) error {
 }
 
 // ColdStart creates a tunnel from scratch or recreates from wrong type (tun → amneziawg).
-// Full sequence: OpkgTun → NDMS config → ip link del + ip link add amneziawg →
+// Full sequence: OpkgTun → ip link del + ip link add amneziawg → NDMS config →
 // ip addr add → wg setconf → ip link set up → InterfaceUp → routes → firewall → Save.
 // Used for: BootReady, NotCreated, Broken.
 func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) error {
@@ -236,7 +236,28 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 		o.logInfo("start", cfg.ID, "Created OpkgTun in NDMS")
 	}
 
-	// === Phase 2: NDMS config ===
+	// === Phase 2: kernel device (ip link add type amneziawg) ===
+	// Устройство — ДО NDMS-конфига: на записи OpkgTun без kernel-устройства
+	// (NDMS state: error — после ip link del, rmmod, отката неудачного старта)
+	// роутер отвергает ip address как `system failed [0xcffd0217]`, а откат
+	// сносил устройство снова — туннель не стартовал никогда (стенд 5.01,
+	// 2026-09-05; трекер F97). Когда устройство появляется, запись сама
+	// возвращается из error в down и принимает адрес.
+	if err := o.backend.Start(ctx, names.IfaceName); err != nil {
+		o.rollbackStart(ctx, cfg.ID, names, justCreated)
+		return tunnel.NewOpError("start", cfg.ID, "backend", err)
+	}
+
+	// Wait for interface to appear in /sys/class/net
+	if err := o.backend.WaitReady(ctx, names.IfaceName, interfaceReadyTimeout); err != nil {
+		o.rollbackStart(ctx, cfg.ID, names, justCreated)
+		return tunnel.NewOpError("start", cfg.ID, "backend", fmt.Errorf("wait ready: %w", err))
+	}
+
+	o.logInfo("start", cfg.ID, "Backend started (kernel)")
+	o.appLog.Info("start", cfg.ID, "Интерфейс создан (kernel)")
+
+	// === Phase 3: NDMS config ===
 	// Always re-apply address/MTU — after ip link del + ip link add, NDMS
 	// does not re-apply stored config to the new kernel interface.
 	// SetAddress via RCI triggers NDMS to do "ip addr add" on the interface.
@@ -275,21 +296,6 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 			o.appliedDNSMu.Unlock()
 		}
 	}
-
-	// === Phase 3: Start backend (ip link add type amneziawg) ===
-	if err := o.backend.Start(ctx, names.IfaceName); err != nil {
-		o.rollbackStart(ctx, cfg.ID, names, justCreated)
-		return tunnel.NewOpError("start", cfg.ID, "backend", err)
-	}
-
-	// Wait for interface to appear in /sys/class/net
-	if err := o.backend.WaitReady(ctx, names.IfaceName, interfaceReadyTimeout); err != nil {
-		o.rollbackStart(ctx, cfg.ID, names, justCreated)
-		return tunnel.NewOpError("start", cfg.ID, "backend", fmt.Errorf("wait ready: %w", err))
-	}
-
-	o.logInfo("start", cfg.ID, "Backend started (kernel)")
-	o.appLog.Info("start", cfg.ID, "Интерфейс создан (kernel)")
 
 	// === Phase 4: Interface config + WireGuard configuration ===
 	mtu := cfg.MTU

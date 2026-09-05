@@ -23,8 +23,18 @@ import (
 func newOS5Lifecycle(t *testing.T) (*OperatorOS5Impl, *recordingPoster, *ipRunRecorder) {
 	t.Helper()
 	poster := &recordingPoster{}
+	o, rec := newOS5LifecycleOn(t, poster, ndmsquery.NewFakeGetter(), &MockBackend{}, false)
+	return o, poster, rec
+}
+
+// newOS5LifecycleOn — та же сборка с подставными постером, снимком NDMS и
+// бэкендом; withQueries=true отдаёт оператору queries, и opkgTunExists
+// отвечает по снимку getter'а (`/show/interface/`).
+func newOS5LifecycleOn(t *testing.T, poster ndmscommand.Poster, getter *ndmsquery.FakeGetter,
+	backend *MockBackend, withQueries bool) (*OperatorOS5Impl, *ipRunRecorder) {
+	t.Helper()
 	queries := ndmsquery.NewQueries(ndmsquery.Deps{
-		Getter: ndmsquery.NewFakeGetter(),
+		Getter: getter,
 		Logger: ndmsquery.NopLogger(),
 		IsOS5:  func() bool { return true },
 	})
@@ -34,10 +44,56 @@ func newOS5Lifecycle(t *testing.T) (*OperatorOS5Impl, *recordingPoster, *ipRunRe
 		Save:    ndmscommand.NewSaveCoordinator(poster, nil, time.Hour, time.Hour, 0, queries.RunningConfig),
 		IsOS5:   func() bool { return true },
 	})
-	o := NewOperatorOS5(nil, cmds, &MockWGClient{}, &MockBackend{}, &MockFirewall{})
+	var q *ndmsquery.Queries
+	if withQueries {
+		q = queries
+	}
+	o := NewOperatorOS5(q, cmds, &MockWGClient{}, backend, &MockFirewall{})
 	rec := &ipRunRecorder{}
 	o.ipRun = rec.run
-	return o, poster, rec
+	return o, rec
+}
+
+// deviceGatedPoster — RCI-постер с поведением роутера 5.01 (стенд, 2026-09-05):
+// `ip address` на записи OpkgTun, за которой нет kernel-устройства, отвергается
+// `system failed [0xcffd0217]`; устройство появляется только от backend.Start.
+type deviceGatedPoster struct {
+	recordingPoster
+	backend *MockBackend
+}
+
+func (p *deviceGatedPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	p.payloads = append(p.payloads, payload)
+	js, _ := json.Marshal(payload)
+	if strings.Contains(string(js), `"ip":{"address":{"address":`) && !p.backend.running {
+		return json.RawMessage(`[{"interface":{"OpkgTun10":{"ip":{"address":{"status":[{"status":"error",` +
+			`"code":"268239383","ident":"Network::Interface::Ip","critical":"yes",` +
+			`"message":"\"OpkgTun10\": system failed [0xcffd0217]."}]}}}}}]`), nil
+	}
+	return json.RawMessage(`[{"status":[{"status":"ok"}]}]`), nil
+}
+
+// Запись OpkgTun есть, kernel-устройства нет (NDMS `state: error` — так
+// остаётся после `ip link del`, rmmod или отката неудачного старта). Устройство
+// создаёт backend.Start, поэтому адрес ставится ПОСЛЕ него: с адресом до
+// бэкенда старт падал на `[0xcffd0217]`, а откат сносил устройство снова —
+// туннель не стартовал никогда (трекер F97).
+func TestColdStart_ExistingRecordWithoutDevice_BackendBeforeAddress(t *testing.T) {
+	backend := &MockBackend{}
+	poster := &deviceGatedPoster{backend: backend}
+	getter := ndmsquery.NewFakeGetter()
+	getter.SetJSON("/show/interface/", `{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","state":"error","link":"down"}}`)
+	o, _ := newOS5LifecycleOn(t, poster, getter, backend, true)
+
+	if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err != nil {
+		t.Fatalf("ColdStart на записи без устройства: %v", err)
+	}
+	if len(backend.StartCalls) != 1 || backend.StartCalls[0] != "opkgtun10" {
+		t.Fatalf("backend.Start: %v", backend.StartCalls)
+	}
+	if !hasPayload(poster.payloads, `{"interface":{"OpkgTun10":{"ip":{"address":{"address":"10.9.7.2","mask":"255.255.255.192"}}}}}`) {
+		t.Fatalf("адрес не поставлен:\n%v", poster.payloads)
+	}
 }
 
 // hasPayload — RCI-payload сравнивается СЕРИАЛИЗОВАННЫМ литералом: ключи map
