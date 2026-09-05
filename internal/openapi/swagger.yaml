@@ -2143,6 +2143,16 @@ definitions:
       endpoint:
         example: 203.0.113.42:51821
         type: string
+      foreignAcls:
+        description: |-
+          ForeignACLs — чужие списки `ip access-group … in` на интерфейсе сервера
+          (кроме нашего AWGM_<iface>), в порядке привязки. Список, привязанный
+          раньше нашего и разрешающий шире, срабатывает до выбора сегментов.
+        example:
+        - GUEST_ACL
+        items:
+          type: string
+        type: array
       interfaceName:
         example: Wireguard1
         type: string

@@ -30,18 +30,22 @@ type ManagedPeerDTO struct {
 
 // ManagedServerDTO mirrors frontend ManagedServer.
 type ManagedServerDTO struct {
-	InterfaceName string           `json:"interfaceName" example:"Wireguard1"`
-	Address       string           `json:"address" example:"10.10.0.1"`
-	Mask          string           `json:"mask" example:"255.255.255.0"`
-	ListenPort    int              `json:"listenPort" example:"51821"`
-	Endpoint      string           `json:"endpoint,omitempty" example:"203.0.113.42:51821"`
-	DNS           string           `json:"dns,omitempty" example:"8.8.8.8"`
-	MTU           int              `json:"mtu,omitempty" example:"1420"`
-	NatEnabled    bool             `json:"natEnabled,omitempty" example:"true"`
-	NATMode       string           `json:"natMode,omitempty" example:"internet-only"`
-	LANSegments   []string         `json:"lanSegments,omitempty" example:"Home"`
-	Policy        string           `json:"policy" example:"default"`
-	Peers         []ManagedPeerDTO `json:"peers"`
+	InterfaceName string   `json:"interfaceName" example:"Wireguard1"`
+	Address       string   `json:"address" example:"10.10.0.1"`
+	Mask          string   `json:"mask" example:"255.255.255.0"`
+	ListenPort    int      `json:"listenPort" example:"51821"`
+	Endpoint      string   `json:"endpoint,omitempty" example:"203.0.113.42:51821"`
+	DNS           string   `json:"dns,omitempty" example:"8.8.8.8"`
+	MTU           int      `json:"mtu,omitempty" example:"1420"`
+	NatEnabled    bool     `json:"natEnabled,omitempty" example:"true"`
+	NATMode       string   `json:"natMode,omitempty" example:"internet-only"`
+	LANSegments   []string `json:"lanSegments,omitempty" example:"Home"`
+	// ForeignACLs — чужие списки `ip access-group … in` на интерфейсе сервера
+	// (кроме нашего AWGM_<iface>), в порядке привязки. Список, привязанный
+	// раньше нашего и разрешающий шире, срабатывает до выбора сегментов.
+	ForeignAcls []string         `json:"foreignAcls,omitempty" example:"GUEST_ACL"`
+	Policy      string           `json:"policy" example:"default"`
+	Peers       []ManagedPeerDTO `json:"peers"`
 }
 
 // ManagedServerResponse is the envelope for GET /managed-server.

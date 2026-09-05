@@ -786,6 +786,7 @@ const api_ManagedServerDTO: v.GenericSchema = v.looseObject({
 	address: v.optional(v.nullable(v.string())),
 	dns: v.optional(v.nullable(v.string())),
 	endpoint: v.optional(v.nullable(v.string())),
+	foreignAcls: v.optional(v.nullable(v.array(v.string()))),
 	interfaceName: v.optional(v.nullable(v.string())),
 	lanSegments: v.optional(v.nullable(v.array(v.string()))),
 	listenPort: v.optional(v.nullable(v.number())),
