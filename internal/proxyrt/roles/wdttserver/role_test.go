@@ -185,8 +185,11 @@ func TestServerChainOrder(t *testing.T) {
 		"tun_handoff:wg", "tun_handoff:raw",
 		"ndms_address:wg", "ndms_admin_state:wg",
 		"ndms_address:raw", "ndms_admin_state:raw",
-		"ndms_access", "nat_rules", "forward_rules", "mss_clamp",
-		"netfilter_hook", "ingress_refs", "input_port", "permit_absent",
+		// netfilter_hook ДО forward_rules: снос легаси FORWARD должен идти
+		// после перезаписи файла хука, иначе прогон старого хука вернёт
+		// правило уже после его латча в reaped.
+		"ndms_access", "nat_rules", "netfilter_hook", "forward_rules",
+		"mss_clamp", "ingress_refs", "input_port", "permit_absent",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("состав: %v", got)
@@ -375,8 +378,8 @@ func TestServerDisabledLedger(t *testing.T) {
 		"ndms_interface:wg", "ndms_interface:raw", "process",
 		"ndms_address:wg", "ndms_admin_state:wg",
 		"ndms_address:raw", "ndms_admin_state:raw",
-		"ndms_access", "nat_rules", "forward_rules", "mss_clamp",
-		"netfilter_hook", "ingress_refs", "input_port", "permit_absent",
+		"ndms_access", "nat_rules", "netfilter_hook", "forward_rules",
+		"mss_clamp", "ingress_refs", "input_port", "permit_absent",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("disabled-состав: %v, ожидали %v", got, want)
@@ -656,6 +659,65 @@ func TestServerSweepsLegacyForwardAcceptOfPreviousVersion(t *testing.T) {
 	// Чужое правило в той же цепочке — не наше дело.
 	if !slices.Contains(p.ipt.rules("filter", "FORWARD"), "-i br0 -j ACCEPT") {
 		t.Errorf("снесено чужое правило: %v", p.ipt.rules("filter", "FORWARD"))
+	}
+}
+
+// Порядок ведомости: файл хука переписывается ДО сноса легаси-правила.
+// Сценарий, который иначе теряется: на диске лежит хук ПРЕЖНЕЙ версии, он и
+// возвращает `-I FORWARD 1 -i opkgtun19 -j ACCEPT`, а движок ndm дёргает
+// netfilter.d по событиям, которые порождает тот же проход (создание
+// OpkgTun, адрес, admin up — всё выше по ведомости). Снеси легаси раньше
+// перезаписи файла — и прогон старого хука вернёт правило уже после того,
+// как ключ попал в reaped: Doom его больше не поднимет, и остаток доживёт до
+// рестарта демона.
+//
+// Модель: после КАЖДОГО ресурса «стреляет» ndm — прогоняется тот файл хука,
+// что лежит на диске в этот момент. Ресурсы доводятся в порядке ведомости,
+// поэтому пин красный ровно тогда, когда forward_rules объявлен раньше
+// netfilter_hook.
+func TestServerHookRewrittenBeforeLegacySweep(t *testing.T) {
+	const in, out = "-i opkgtun19 -j ACCEPT", "-o opkgtun19 -j ACCEPT"
+	p := newServerParts(t)
+	// Хук прежней версии: в нём те самые две строки FORWARD.
+	oldHook := "#!/bin/sh\ncase \"$table\" in\nfilter)\n" +
+		"  run -C FORWARD " + in + " || run -I FORWARD 1 " + in + "\n" +
+		"  run -C FORWARD " + out + " || run -I FORWARD 1 " + out + "\n;;\nesac\n"
+	if err := os.WriteFile(p.hookPath, []byte(oldHook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p.ipt.chains["filter/FORWARD"] = []string{in, out}
+
+	// ndm дёрнул netfilter.d: правила ставит тот файл, что лежит на диске.
+	fire := func() {
+		body, err := os.ReadFile(p.hookPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, rule := range []string{in, out} {
+			if strings.Contains(string(body), "-I FORWARD 1 "+rule) &&
+				!slices.Contains(p.ipt.rules("filter", "FORWARD"), rule) {
+				p.ipt.chains["filter/FORWARD"] = append(
+					[]string{rule}, p.ipt.chains["filter/FORWARD"]...)
+			}
+		}
+	}
+
+	netfilter := map[proxyrt.ResourceID]bool{
+		roles.RNatRules: true, roles.RForwardRules: true, roles.RNetfilterHook: true,
+	}
+	for _, res := range p.role.Resources(proxyrt.IntentEnabled, srvCfg(), proxyrt.NewObservations()) {
+		if !netfilter[res.ID()] {
+			continue
+		}
+		drive(t, res)
+		fire()
+	}
+
+	for _, gone := range []string{in, out} {
+		if slices.Contains(p.ipt.rules("filter", "FORWARD"), gone) {
+			t.Errorf("хук прежней версии вернул %q после сноса: %v",
+				gone, p.ipt.rules("filter", "FORWARD"))
+		}
 	}
 }
 

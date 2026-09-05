@@ -234,6 +234,8 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 		// желаемом его не было), усыновления-по-метке ему не досталось —
 		// правило метки не несёт, — а стартовая уборка щадит объявленные
 		// интерфейсы. Форма — ровно та, что ставила прежняя версия.
+		// Pos не участвует ни в Key, ни в формах -C/-D; оставлен как форма
+		// прежней версии — правило именно так и вставлялось.
 		if c.RawIface != "" {
 			r.fwd.Doom(
 				netres.Rule{Chain: "FORWARD", Pos: 1, Spec: []string{"-i", c.RawIface, "-j", "ACCEPT"}},
@@ -266,7 +268,15 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	if enabled && c.ExposeToPolicies {
 		res = append(res, r.exit)
 	}
-	res = append(res, r.access, r.nat, r.fwd, r.mss, r.hook, r.ingress, r.input)
+	// netfilter_hook — ПЕРЕД forward_rules: хук прежней версии, лежащий на
+	// диске, сам возвращает `-I FORWARD 1 -i opkgtunN -j ACCEPT`, а движок ndm
+	// дёргает netfilter.d по событиям, которые порождает этот же проход
+	// (создание OpkgTun, адрес, admin up — всё выше по списку). Снеси легаси
+	// раньше перезаписи файла — и прогон старого хука вернёт правило уже
+	// после того, как ключ попал в `reaped`, то есть навсегда до рестарта
+	// демона. Обратной зависимости нет: хук наблюдает свой файл и тем же
+	// провайдером, что nat_rules, и о forward_rules/mss_clamp ничего не знает.
+	res = append(res, r.access, r.nat, r.hook, r.fwd, r.mss, r.ingress, r.input)
 	// permit_absent — В ХВОСТЕ: миграционный ресурс не гейтит правила. Первый
 	// unknown/failed в цепочке блокирует всё ниже (proxyrt/plan.go:11-15), а
 	// Observe здесь тянет running-config роутера — выше по списку
