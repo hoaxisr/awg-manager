@@ -679,6 +679,10 @@ func (o *Orchestrator) executePersistStopped(action Action) error {
 	return nil
 }
 
+// listInterfaces — шов над net.Interfaces: тесты подставляют пустой список,
+// иначе проверка конфликта адресов читает интерфейсы хоста разработчика.
+var listInterfaces = net.Interfaces
+
 // checkSystemAddressConflict checks if ipv4 or ipv6 is already assigned to any
 // system network interface. excludeIfaceNames are excluded from the check.
 func checkSystemAddressConflict(ipv4, ipv6 string, excludeIfaceNames []string) error {
@@ -691,7 +695,7 @@ func checkSystemAddressConflict(ipv4, ipv6 string, excludeIfaceNames []string) e
 		excludeSet[name] = struct{}{}
 	}
 
-	ifaces, err := net.Interfaces()
+	ifaces, err := listInterfaces()
 	if err != nil {
 		return nil // can't check — don't block start
 	}

@@ -24,11 +24,18 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
+// nativeWGStateReader — срез nwg.OperatorNativeWG для чтения состояния:
+// service-тестам не собрать настоящий оператор без роутера.
+type nativeWGStateReader interface {
+	GetState(ctx context.Context, stored *storage.AWGTunnel) tunnel.StateInfo
+}
+
 // ServiceImpl is the concrete implementation of Service.
 type ServiceImpl struct {
 	store          *storage.AWGTunnelStore
 	state          state.Manager         // state detection for kernel tunnels only
 	nwgOperator    *nwg.OperatorNativeWG // NativeWG backend (nil if unavailable)
+	nwgState       nativeWGStateReader   // шов чтения состояния nativewg (nil, если оператора нет)
 	legacyOperator ops.Operator          // Kernel backend (OS5/OS4)
 	appLog         *logging.ScopedLogger // UI-visible logging
 
@@ -105,6 +112,11 @@ func New(
 		legacyOperator: legacyOp,
 		appLog:         logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubLifecycle),
 		wan:            wanModel,
+	}
+	// Присваивать только при живом операторе: nil-указатель в интерфейсе
+	// даёт non-nil интерфейс, и проверка `!= nil` перестала бы работать.
+	if nwgOp != nil {
+		svc.nwgState = nwgOp
 	}
 	svc.stateCache = cache.NewKeyedStore[string, tunnel.StateInfo](
 		stateCacheTTL, nil, "tunnel state", svc.fetchRawStateByID)
