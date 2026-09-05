@@ -204,6 +204,23 @@ func TestMasqFullForm(t *testing.T) {
 	}
 }
 
+// Инвариант режима: none — «без подмены адреса источника», значит правил
+// маскарада не существует. Пин на самом ПОСТРОИТЕЛЕ, а не на вызывающем: без
+// своей ветки none попадал в `default` и получал полную форму, то есть ровно
+// то, что режим запрещает. Сегодня это ловил только гейт в роли — то есть
+// безопасность построителя держалась на дисциплине единственного
+// вызывающего.
+func TestMasqNoneGivesNoRules(t *testing.T) {
+	plans := []MasqPlan{{Iface: "opkgtun19", CIDR: "10.70.0.0/16"}}
+	if got := MasqGroups(plans, "none", ""); len(got) != 0 {
+		t.Fatalf("none обязан дать пустой набор, а не %v", got)
+	}
+	// И с разрешённым WAN тоже: наличие выхода не делает подмену законной.
+	if got := MasqGroups(plans, "none", "eth3"); len(got) != 0 {
+		t.Fatalf("none с WAN обязан дать пустой набор, а не %v", got)
+	}
+}
+
 func TestMasqInternetOnlyPinsWAN(t *testing.T) {
 	// internet-only без разрешённого WAN деградировал в full-форму молча
 	// (H1, PR #697) — здесь это ошибка построителя.
@@ -312,6 +329,47 @@ func TestRuleSetSweepsOnDesiredChange(t *testing.T) {
 	}
 }
 
+// Владение принадлежит МЕТКЕ, а не текущему желаемому: правило прошлого
+// запуска демона обязано быть снесено и тогда, когда сейчас мы не хотим в
+// этой цепочке ничего. Прежде область усыновления выводилась только из
+// желаемого, поэтому «нечего хотеть» читалось как «нечего убирать» — и
+// маскарад переживал и выключение NAT, и выключение инстанса.
+//
+// Два случая, оба недостижимы для разности прогонов (last/doomed пусты после
+// рестарта): пустое желаемое (инстанс выключен) и желаемое без помеченных
+// правил (режим none — только DNS и метка политики).
+func TestRuleSetAdoptsStaleMarkedWithoutMarkedDesired(t *testing.T) {
+	const stale = "-s 10.70.0.0/16 ! -o opkgtun19 -m comment --comment AWGM_WDTT -j MASQUERADE"
+	for _, tc := range []struct {
+		name    string
+		desired []Group
+	}{
+		{"инстанс выключен: желаемого нет вовсе", nil},
+		{"режим none: желаемое есть, помеченного в нём нет", DNSGroups([]DNSHijack{
+			{Iface: "opkgtun19", Gateway: "10.70.0.1"},
+		})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ipt := newFakeIPT()
+			ipt.chains["nat/POSTROUTING"] = []string{
+				stale,
+				"-s 192.168.1.0/24 -j MASQUERADE", // чужое, без метки
+			}
+			rs := NewRuleSet("nat_rules", ipt, nil) // свежий = рестарт демона
+			rs.AdoptMarked("nat", "POSTROUTING", Comment)
+			rs.SetDesired(StaticGroups(tc.desired))
+			driveRS(t, rs)
+
+			if ipt.has("nat/POSTROUTING", stale) {
+				t.Fatalf("маскарад прошлого запуска пережил рестарт: %v", ipt.chains["nat/POSTROUTING"])
+			}
+			if !ipt.has("nat/POSTROUTING", "-s 192.168.1.0/24 -j MASQUERADE") {
+				t.Fatal("чужое правило без метки снесено — усыновление вышло за владение")
+			}
+		})
+	}
+}
+
 func TestRuleSetAdoptsStaleMarkedAfterDaemonRestart(t *testing.T) {
 	// I-1: разность прогонов — память процесса. Правило прежней формы,
 	// поставленное ПРЕЖНИМ запуском демона (конфиг сменился, пока демон
@@ -370,42 +428,6 @@ func TestRuleSetSweepKeepsRuleOnFailedDelete(t *testing.T) {
 	driveRS(t, rs)
 	if ipt.has("filter/FORWARD", "-i opkgtun19 -j ACCEPT") {
 		t.Fatal("правило потеряно из ведомости после неудачного сноса")
-	}
-}
-
-func TestPolicyMarkPairAllOrNone(t *testing.T) {
-	// Пара CONNMARK+MARK: частичное состояние пересобирается ЦЕЛИКОМ —
-	// одиночная довставка инвертирует порядок (F3, PR #697, a0066f9b).
-	//
-	// Оба частичных состояния обязаны проверяться. Фикстура плана оставляла
-	// живым только CONNMARK, а это половина, на которой инверсия НЕ видна:
-	// довставка MARK на позицию 1 даёт правильный порядок сама собой, и
-	// мутант «убрать пересборку» выживает. Инверсию обнажает зеркальный
-	// случай — уцелел MARK, довставляется CONNMARK на позицию 1.
-	const (
-		markRule     = "-i opkgtun19 -j MARK --set-xmark 0xffffd00/0xffffffff"
-		connmarkRule = "-i opkgtun19 -j CONNMARK --save-mark --nfmask 0xffffffff --ctmask 0xffffffff"
-	)
-	for _, c := range []struct {
-		name     string
-		survivor string
-	}{
-		{name: "уцелел CONNMARK", survivor: connmarkRule},
-		{name: "уцелел MARK", survivor: markRule},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			ipt := newFakeIPT()
-			// Половина пары уже стоит.
-			ipt.chains["mangle/PREROUTING"] = []string{c.survivor}
-			rs := NewRuleSet("nat_rules", ipt, nil)
-			rs.SetDesired(StaticGroups([]Group{PolicyMarkGroup("opkgtun19", "0xffffd00")}))
-			driveRS(t, rs)
-
-			got := ipt.chains["mangle/PREROUTING"]
-			if len(got) != 2 || got[0] != markRule || got[1] != connmarkRule {
-				t.Fatalf("итоговый порядок обязан быть MARK, CONNMARK: %v", got)
-			}
-		})
 	}
 }
 
@@ -472,7 +494,10 @@ func TestHookScriptCoversEveryTable(t *testing.T) {
 	// и ветки, которой нет, он не заметит.
 	groups := append(ForwardGroups([]string{"opkgtun19"}),
 		MasqGroups([]MasqPlan{{Iface: "opkgtun19", CIDR: "10.70.0.0/16"}}, "full", "")...)
-	groups = append(groups, PolicyMarkGroup("opkgtun19", "0xffffd00"))
+	groups = append(groups, Group{Guard: "opkgtun19", Rules: []Rule{
+		{Table: "mangle", Chain: "PREROUTING", Pos: 1,
+			Spec: []string{"-i", "opkgtun19", "-j", "MARK", "--set-xmark", "0xffffd00/0xffffffff"}},
+	}})
 	script := HookScript(groups)
 
 	for _, c := range []struct{ table, rule string }{
@@ -486,22 +511,6 @@ func TestHookScriptCoversEveryTable(t *testing.T) {
 		if !strings.Contains(script, c.rule) {
 			t.Fatalf("правила таблицы %s не доехали в хук:\n%s", c.table, script)
 		}
-	}
-}
-
-func TestHookAllOrNoneInsertsInReverseOrder(t *testing.T) {
-	// F3 (PR #697): итоговый порядок в цепочке — MARK, затем CONNMARK. Обе
-	// вставки идут на позицию 1, поэтому вставляться они обязаны в ОБРАТНОМ
-	// порядке декларации: CONNMARK первым. Инверсия цикла даёт save-mark,
-	// пишущий ноль, — и хук чинил бы это на каждой перезаписи таблиц.
-	script := HookScript([]Group{PolicyMarkGroup("opkgtun19", "0xffffd00")})
-	connmark := strings.Index(script, `run -t mangle -I PREROUTING 1 -i "opkgtun19" -j CONNMARK`)
-	mark := strings.Index(script, `run -t mangle -I PREROUTING 1 -i "opkgtun19" -j MARK`)
-	if connmark < 0 || mark < 0 {
-		t.Fatalf("вставки пары не найдены (%d, %d):\n%s", connmark, mark, script)
-	}
-	if connmark > mark {
-		t.Fatalf("CONNMARK обязан вставляться первым — иначе в цепочке он окажется выше MARK:\n%s", script)
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -105,11 +107,6 @@ func (a *nilAccess) ApplyLANSegmentsToInterface(_ context.Context, iface, addr, 
 	return nil
 }
 
-func (a *nilAccess) EnsureInterfaceFirewallPermit(_ context.Context, iface string) error {
-	a.applied = append(a.applied, "permit:"+iface)
-	return nil
-}
-
 type nilIngress struct{ calls int }
 
 func (n *nilIngress) EnsureWdttServerIngressRefs(context.Context, string, string) error {
@@ -144,7 +141,6 @@ func newRoleCmds(t *testing.T) (*Role, *nilAccess, *nilIngress, memQuery, *count
 		EnableForward: func() error { return nil },
 		IfaceExists:   func(string) bool { return true },
 		KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
-		PolicyMark:    func(_ context.Context, p string) (string, error) { return "0xffffd00", nil },
 		Access:        acc, Ingress: ing, Now: time.Now,
 	})
 	if err != nil {
@@ -161,18 +157,21 @@ func ids(res []proxyrt.Resource) []proxyrt.ResourceID {
 	return out
 }
 
-// PF7: обе NDMS-половины сервера держат ОДИН MTU. Пин на решение, а не на
-// проводку: сами вызовы видны в Resources (ifaceWG/ifaceRaw и addrWG/addrRaw
-// получают те же константы), а спорным был именно выбор ЧИСЛА — у raw-половины
-// стояло 1300 без предка в старом мире, где её MTU не задавал никто.
+// PF7: обе NDMS-половины сервера держат ОДИН MTU. Инвариант: сервер один, и
+// абонент не должен получать разный MTU в зависимости от того, каким портом
+// подключился, — выбор половины это деталь связи, а не свойство канала.
 // Расхождение половин допустимо только с цифрой из замера на железе.
+//
+// Второй ассерт (число 1280) — сторож «не менять молча», а НЕ обоснование:
+// у самого значения замера нет, оно унаследовано константой. Записано в
+// docs/TRACKER.md как отдельный вопрос.
 func TestServerHalvesShareMTU(t *testing.T) {
 	if wgMTU != rawMTU {
 		t.Fatalf("половины разошлись по MTU: wg=%d raw=%d — расхождение допустимо "+
 			"только по результату замера, а не по памяти", wgMTU, rawMTU)
 	}
 	if wgMTU != 1280 {
-		t.Fatalf("MTU половин = %d, ждали 1280 (паритет с wdttOpkgMTU старого мира)", wgMTU)
+		t.Fatalf("MTU половин = %d, ждали 1280 — менять только по замеру, а не по памяти", wgMTU)
 	}
 }
 
@@ -187,7 +186,7 @@ func TestServerChainOrder(t *testing.T) {
 		"ndms_address:wg", "ndms_admin_state:wg",
 		"ndms_address:raw", "ndms_admin_state:raw",
 		"ndms_access", "nat_rules", "forward_rules", "mss_clamp",
-		"netfilter_hook", "ingress_refs", "input_port",
+		"netfilter_hook", "ingress_refs", "input_port", "permit_absent",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("состав: %v", got)
@@ -257,11 +256,38 @@ func TestServerNatGroupsFollowMode(t *testing.T) {
 		t.Fatalf("full: группы обязаны собраться: %v %v", groups, err)
 	}
 
+	// none — «без подмены адреса источника», а не «сервер закрыт»: уходит
+	// ТОЛЬКО маскарад, перехват :53 остаётся. Прежде здесь стояло
+	// `len(groups) != 0`, и этот ассерт закреплял ранний return, из-за
+	// которого у none пропадал и перехват. Метки политики в этом наборе нет
+	// намеренно: принадлежность половин политике объявляет NDMS
+	// (ndms_access), см. TestSeam_NDMSAccessAppliesAllSteps. Ожидания —
+	// рукописные строки, чтобы не считаться тем же кодом, что и результат.
 	cfg.NatMode = "none"
+	cfg.Policy = "hotspot"
 	groups, err = role.natGroups(cfg)(context.Background())
-	if err != nil || len(groups) != 0 {
-		t.Fatalf("none: правил быть не должно: %v %v", groups, err)
+	if err != nil {
+		t.Fatalf("none: %v", err)
 	}
+	got := map[string]bool{}
+	for _, g := range groups {
+		for _, ru := range g.Rules {
+			got[ru.Table+"/"+ru.Chain+" "+strings.Join(ru.Spec, " ")] = true
+			if strings.Contains(strings.Join(ru.Spec, " "), "MASQUERADE") {
+				t.Errorf("none: маскарад остался: %v", ru.Spec)
+			}
+		}
+	}
+	for _, want := range []string{
+		"nat/PREROUTING -i opkgtun19 -p udp --dport 53 -j DNAT --to-destination 10.70.0.1:53",
+		"nat/PREROUTING -i opkgtun17 -p udp --dport 53 -j DNAT --to-destination 10.66.0.1:53",
+		"/INPUT -i opkgtun19 -p udp --dport 53 -j ACCEPT",
+	} {
+		if !got[want] {
+			t.Errorf("none: пропало правило %q, собрано:\n%v", want, keys(got))
+		}
+	}
+	cfg.Policy = "none"
 
 	cfg.NatMode = "internet-only"
 	cfg.NatStaticWAN = ""
@@ -331,24 +357,33 @@ func TestServerDisabledDoesNotTouchNDMSAccess(t *testing.T) {
 	}
 }
 
+// RT31: состав disabled-ведомости пиннится ЦЕЛИКОМ, как у клиента
+// (TestRawDisabledLedgerIsExhaustive).
+//
+// Прежняя редакция искала подмножество нужных id и про ЛИШНИЕ ничего не
+// говорила: безусловный append tun-ресурсов в выключенном состоянии проходил
+// зелёным. Заодно поправлена докстрока — она называла уходящим `policy_exit`,
+// а уходят на самом деле обе половины `tun_handoff` (в этом конфиге
+// `policy_exit` не объявляется вовсе: тумблер `ExposeToPolicies` выключен).
+//
+// Netfilter- и access-ресурсы из списка НЕ уходят: правила снимаются
+// переходом желаемого (провайдер пустых групп), а не пропажей ресурса.
 func TestServerDisabledLedger(t *testing.T) {
 	role, _, _, _ := newRole(t)
 	got := ids(role.Resources(proxyrt.IntentDisabled, srvCfg(), proxyrt.NewObservations()))
-	// Та же ведомость минус netfilter/access-хвост с пустым желаемым нельзя:
-	// правила снимаются ПЕРЕХОДОМ желаемого (провайдер пустых групп), поэтому
-	// netfilter-ресурсы ОСТАЮТСЯ в списке; уходит только policy_exit.
-	need := map[proxyrt.ResourceID]bool{
-		"process": false, "ndms_address:wg": false, "ndms_admin_state:wg": false,
-		"nat_rules": false, "netfilter_hook": false, "input_port": false,
+	want := []proxyrt.ResourceID{
+		"ndms_interface:wg", "ndms_interface:raw", "process",
+		"ndms_address:wg", "ndms_admin_state:wg",
+		"ndms_address:raw", "ndms_admin_state:raw",
+		"ndms_access", "nat_rules", "forward_rules", "mss_clamp",
+		"netfilter_hook", "ingress_refs", "input_port", "permit_absent",
 	}
-	for _, id := range got {
-		if _, ok := need[id]; ok {
-			need[id] = true
-		}
+	if len(got) != len(want) {
+		t.Fatalf("disabled-состав: %v, ожидали %v", got, want)
 	}
-	for id, seen := range need {
-		if !seen {
-			t.Fatalf("disabled-ведомость потеряла %s: %v", id, got)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("disabled-порядок: %v, ожидали %v", got, want)
 		}
 	}
 }
@@ -491,7 +526,6 @@ func newServerParts(t *testing.T) serverParts {
 		EnableForward: func() error { return nil },
 		IfaceExists:   func(string) bool { return true },
 		KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
-		PolicyMark:    func(_ context.Context, p string) (string, error) { return "0xffffd00", nil },
 		Access:        p.acc, Ingress: p.ing, Now: time.Now,
 	})
 	if err != nil {
@@ -638,7 +672,6 @@ func TestNewPanicsOnNilAccessOrIngress(t *testing.T) {
 			EnableForward: func() error { return nil },
 			IfaceExists:   func(string) bool { return true },
 			KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
-			PolicyMark:    func(_ context.Context, p string) (string, error) { return "0xffffd00", nil },
 			Access:        &nilAccess{}, Ingress: &nilIngress{}, Now: time.Now,
 		}
 	}
@@ -682,7 +715,6 @@ func TestResetStartBackoffReachesProcess(t *testing.T) {
 		EnableForward: func() error { return nil },
 		IfaceExists:   func(string) bool { return true },
 		KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
-		PolicyMark:    func(_ context.Context, p string) (string, error) { return "0xffffd00", nil },
 		Access:        &nilAccess{}, Ingress: &nilIngress{}, Now: time.Now,
 	})
 	if err != nil {
@@ -715,5 +747,127 @@ func TestResetStartBackoffReachesProcess(t *testing.T) {
 	r.ResetStartBackoff()
 	if got := proc.RecheckAfter(); got != 0 {
 		t.Fatalf("сброс роли не дошёл до процесса, пауза %v", got)
+	}
+}
+
+func keys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Проводка того же решения: при none роль обязана ПОСТАВИТЬ перехват :53 и
+// написать netfilter-хук — до правки хук снимался вместе с маскарадом, и
+// FORWARD после перезаписи таблиц ndm восстанавливала только реконсиляция
+// (шаг 15 с).
+func TestServerNatModeNoneKeepsDNSAndHook(t *testing.T) {
+	p := newServerParts(t)
+	cfg := srvCfg()
+	cfg.NatMode, cfg.Policy = "none", "hotspot"
+
+	res := byID(p.role.Resources(proxyrt.IntentEnabled, cfg, proxyrt.NewObservations()))
+	for _, id := range []proxyrt.ResourceID{roles.RNatRules, roles.RForwardRules, roles.RNetfilterHook} {
+		drive(t, res[id])
+	}
+
+	for _, r := range p.ipt.rules("nat", "POSTROUTING") {
+		if strings.Contains(r, "MASQUERADE") {
+			t.Errorf("режим none, а маскарад поставлен: %q", r)
+		}
+	}
+	if !hasRule(p.ipt.rules("nat", "PREROUTING"),
+		"-i opkgtun17 -p udp --dport 53 -j DNAT --to-destination 10.66.0.1:53") {
+		t.Errorf("перехват :53 не поставлен: %v", p.ipt.rules("nat", "PREROUTING"))
+	}
+	body, err := os.ReadFile(p.hookPath)
+	if err != nil {
+		t.Fatalf("хук не написан: %v", err)
+	}
+	if !strings.Contains(string(body), `-i "opkgtun17" -p udp --dport 53 -j DNAT --to-destination 10.66.0.1:53`) {
+		t.Errorf("хук не несёт перехват :53:\n%s", body)
+	}
+	// FORWARD в хуке не пинил никто (дыра нашлась ревью): без него перезапись
+	// таблиц ndm оставляет форвардинг сервера до ближайшей реконсиляции.
+	for _, want := range []string{`-i "opkgtun19" -j ACCEPT`, `-o "opkgtun19" -j ACCEPT`} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("хук не несёт FORWARD %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(string(body), "MASQUERADE") {
+		t.Errorf("хук несёт маскарад при none:\n%s", body)
+	}
+}
+
+// Проводка того же владения: постоянная область усыновления объявляется в
+// сборке роли, и без неё маскарад прошлого запуска демона переживает и режим
+// none, и выключенный инстанс. Пин на РОЛИ, а не только на RuleSet: тест
+// netres зовёт AdoptMarked сам, поэтому выпил вызова из New остался бы
+// зелёным — ровно та форма дыры, что тут ловится чаще всего.
+func TestServerAdoptsStaleMasqueradeWithoutMarkedDesired(t *testing.T) {
+	const stale = "-s 10.70.0.0/16 ! -o opkgtun19 -m comment --comment AWGM_WDTT -j MASQUERADE"
+	for _, tc := range []struct {
+		name   string
+		intent proxyrt.Intent
+		mode   string
+	}{
+		{"режим none", proxyrt.IntentEnabled, "none"},
+		{"инстанс выключен", proxyrt.IntentDisabled, "full"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newServerParts(t)
+			// Ядро после рестарта демона: правило прошлой жизни на месте.
+			p.ipt.chains["nat/POSTROUTING"] = []string{
+				stale,
+				"-s 192.168.1.0/24 -j MASQUERADE", // чужое, без метки
+			}
+			cfg := srvCfg()
+			cfg.NatMode = tc.mode
+			res := byID(p.role.Resources(tc.intent, cfg, proxyrt.NewObservations()))
+			drive(t, res[roles.RNatRules])
+
+			for _, r := range p.ipt.chains["nat/POSTROUTING"] {
+				if strings.Contains(r, "AWGM_WDTT") {
+					t.Fatalf("маскарад прошлого запуска пережил: %v", p.ipt.chains["nat/POSTROUTING"])
+				}
+			}
+			if !slices.Contains(p.ipt.chains["nat/POSTROUTING"], "-s 192.168.1.0/24 -j MASQUERADE") {
+				t.Fatalf("чужое правило снесено: %v", p.ipt.chains["nat/POSTROUTING"])
+			}
+		})
+	}
+}
+
+// Отпечаток желаемого обязан покрывать имя ВТОРОЙ половины: политика теперь
+// применяется к обеим, и смена одного лишь rawIface (переезд половины на
+// другой OpkgTun) без этого не вызвала бы повторного применения — половина
+// осталась бы вне политики молча. Ревью показало, что поле в отпечатке ничем
+// не защищено.
+func TestNDMSAccessFingerprintCoversRawHalf(t *testing.T) {
+	acc := &nilAccess{}
+	a := NewNDMSAccess(roles.RNdmsAccess, acc)
+	a.SetDesired("OpkgTun17", "OpkgTun19", "full", nil, "P1",
+		wgGatewayAddr, wgGatewayMask, nil, true)
+	drive(t, a)
+	before := len(acc.applied)
+
+	// Меняется ТОЛЬКО имя raw-половины.
+	a.SetDesired("OpkgTun17", "OpkgTun21", "full", nil, "P1",
+		wgGatewayAddr, wgGatewayMask, nil, true)
+	obs, err := a.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps := a.Plan(obs); len(steps) == 0 {
+		t.Fatal("смена имени raw-половины не породила шага: отпечаток её не видит")
+	}
+	drive(t, a)
+	if len(acc.applied) == before {
+		t.Fatal("после смены raw-половины доступ не переприменён")
+	}
+	if want := "policy:OpkgTun21:P1"; !slices.Contains(acc.applied, want) {
+		t.Fatalf("политика не доведена до новой raw-половины: %v", acc.applied)
 	}
 }

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 )
@@ -221,5 +222,34 @@ func TestSessionStore_CleanupUsesLiveTTL(t *testing.T) {
 	store.mu.RUnlock()
 	if ok {
 		t.Fatal("session survived cleanup after TTL shortened below idle time")
+	}
+}
+
+// Токен — криптослучайный, полной длины и уникальный: два входа дают два
+// разных токена. Мутант «константный токен» проходил все тесты стора — они
+// создавали по одной сессии и сравнивали её с самой собой.
+func TestSessionStore_TokensAreRandomAndDistinct(t *testing.T) {
+	store := NewSessionStore(nil)
+	t.Cleanup(store.Stop)
+
+	a, err := store.Create("admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := store.Create("admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b {
+		t.Fatal("два входа дали один токен")
+	}
+	if len(a) != tokenLength*2 {
+		t.Fatalf("длина токена %d, ждали %d hex-символов", len(a), tokenLength*2)
+	}
+	if strings.Trim(a, "0") == "" {
+		t.Fatal("токен из нулей — генератор не случаен")
+	}
+	if store.Get(a) == nil || store.Get(b) == nil {
+		t.Fatal("обе сессии обязаны жить независимо")
 	}
 }

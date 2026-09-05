@@ -17,6 +17,9 @@ import (
 // Медленный NDMS на загрузке молча выключал бы политики и на 5.x до
 // перезапуска демона. В тесте ndmsinfo пуст, то есть проверка идёт ровно в
 // том состоянии, в котором ручки пропадали.
+//
+// Гард здесь подставлен identity: тест про регистрацию секции, а не про
+// авторизацию. Гард проверяет route_guard_test.go.
 func TestPolicyRoutesRegisteredRegardlessOfFirmware(t *testing.T) {
 	mux := http.NewServeMux()
 	s := &Server{}
