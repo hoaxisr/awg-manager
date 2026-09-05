@@ -66,9 +66,6 @@ type Config struct {
 	// PprofStandaloneAddr, if non-empty, starts an additional listener that
 	// serves only Go's /debug/pprof/* endpoints (recommended: 127.0.0.1:6060).
 	PprofStandaloneAddr string
-	// PprofOnMain mounts the same endpoints on the primary HTTP mux (reachable on
-	// every listen addr — LAN and loopback). Use sparingly when the API is exposed.
-	PprofOnMain bool
 	// SlowRequestThreshold, if positive, logs requests whose handler runs longer than
 	// this duration to stderr (via slog); long-lived SSE/WebSocket routes are skipped.
 	SlowRequestThreshold time.Duration
@@ -530,9 +527,6 @@ func (s *Server) Start() error {
 	}
 
 	mux := http.NewServeMux()
-	if s.config.PprofOnMain {
-		registerPprofRoutes(mux)
-	}
 	s.registerRoutes(mux)
 
 	// Фоновая проверка «не открыты ли мы наружу без пароля» — гвард

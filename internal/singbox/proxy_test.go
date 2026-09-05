@@ -1,6 +1,11 @@
 package singbox
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+)
 
 // proxyIsOurs decides whether an NDMS ProxyN belongs to awg-manager's sing-box
 // management, so disable/orphan-cleanup removes it. Subscription composites are
@@ -55,5 +60,27 @@ func TestNativeProxyKernelNames(t *testing.T) {
 		if !want[k] {
 			t.Errorf("unexpected native proxy %q in %v", k, got)
 		}
+	}
+}
+
+// NextFreeIndex обязан считать занятыми ЧУЖИЕ ProxyN (пользовательский Proxy0 —
+// не наш) и переданные reserved; иначе перезапись пользовательского прокси.
+func TestProxyManager_NextFreeIndex_SkipsForeignProxyAndReserved(t *testing.T) {
+	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/interface/", `{
+		"Proxy0":{"id":"Proxy0","type":"Proxy","description":"user's own"},
+		"Proxy1":{"id":"Proxy1","type":"Proxy","description":"awgm"},
+		"Bridge0":{"id":"Bridge0","type":"Bridge"},
+		"ProxyX":{"id":"ProxyX","type":"Proxy"}
+	}`)
+	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
+	pm := NewProxyManager(q, nil)
+
+	idx, err := pm.NextFreeIndex(context.Background(), map[int]bool{2: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idx != 3 {
+		t.Fatalf("NextFreeIndex = %d, want 3 (0,1 заняты NDMS, 2 — reserved)", idx)
 	}
 }

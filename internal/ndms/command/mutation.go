@@ -11,8 +11,8 @@ import (
 // HTTP 200 и на отказ тоже, пряча его во вложенном status[]: транспортная
 // проверка такой ответ пропускает, поэтому проваленный шаг рапортовал бы об
 // успехе, а падало бы через шаг-другой и с чужой формулировкой (issue #768).
-// Найдя любой status:"error", вызов возвращает ошибку и НЕ просит save и НЕ
-// инвалидирует кэши.
+// Найдя status:"error" или получив транспортную ошибку, вызов возвращает
+// ошибку; save и инвалидация идут в ОБОИХ случаях — см. postMutationCheckedTolerant.
 //
 // Формы ответов сняты с живого роутера (KeeneticOS 5.01): повторные
 // create/set/up/down отвечают message, ошибку даёт настоящий отказ. Список
@@ -42,17 +42,18 @@ func postMutationCheckedTolerant(
 	invalidators ...func(),
 ) error {
 	resp, err := poster.Post(ctx, payload)
-	if err != nil {
-		return fmt.Errorf("%s: %w", opDesc, err)
-	}
-	// Инвалидация и сохранение идут и по пути отказа: NDMS применяет пакетный
-	// payload поэлементно, поэтому отвергнутый элемент не отменяет уже
-	// применённые. Пропустить их значило бы оставить применённую половину вне
-	// startup-config (теряется на перезагрузке) и считать следующий diff по
-	// протухшему кэшу.
+	// Инвалидация и сохранение идут и по путям отказа. status:"error": NDMS
+	// применяет пакетный payload поэлементно, отвергнутый элемент не отменяет
+	// уже применённые. Транспортная ошибка (таймаут, обрыв): RCI мог применить
+	// payload, а ответ — не доехать; допущение «таймаут = ничего не применено»
+	// неверно, и применённое иначе не попало бы в startup-config. Лишний save
+	// на сбое коалесцируется SaveCoordinator (debounce/maxWait).
 	save.Request()
 	for _, inv := range invalidators {
 		inv()
+	}
+	if err != nil {
+		return fmt.Errorf("%s: %w", opDesc, err)
 	}
 	if msgs := ndmsStatusErrors(resp); len(msgs) > 0 && !allTolerated(msgs, tolerate) {
 		return fmt.Errorf("%s: router reported error: %s", opDesc, strings.Join(msgs, "; "))

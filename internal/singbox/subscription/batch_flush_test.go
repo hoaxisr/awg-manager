@@ -30,7 +30,7 @@ func validVlessJSON(server string) []byte {
 // was O(N^2) sing-box checks — 15 min + pinned CPU for a 199-server sub.
 func TestOperatorAdapter_BatchesValidationToOneFlush(t *testing.T) {
 	dir := t.TempDir()
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestOperatorAdapter_BatchesValidationToOneFlush(t *testing.T) {
 // operation would commit.
 func TestOperatorAdapter_RollbackRestoresCommitted(t *testing.T) {
 	dir := t.TempDir()
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestOperatorAdapter_RollbackRestoresCommitted(t *testing.T) {
 // just-deleted config, making the last subscription undeletable.
 func TestOperatorAdapter_CommitEmptySlotOnDelete(t *testing.T) {
 	dir := t.TempDir()
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func (offsetValidator) Validate(_ context.Context, dir string) error {
 // the index to (slot, local index); flush must drop exactly the bad one.
 func TestFlush_DropsOutboundByMergedInitializeIndex(t *testing.T) {
 	dir := t.TempDir()
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}

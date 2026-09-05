@@ -44,6 +44,48 @@ func TestConfig_AddTunnel_RoundTrip(t *testing.T) {
 	}
 }
 
+// mixed-inbound туннеля слушает ТОЛЬКО loopback: это локальный прокси для
+// ProxyN роутера, а не сервис для LAN. Мутант "0.0.0.0" проходил все
+// конфиг-тесты — форма inbound'а литералом не пиновалась.
+func TestConfig_AddTunnel_InboundListensOnLoopbackOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	c := NewConfig()
+	ob := json.RawMessage(`{"type":"vless","tag":"Germany","server":"de.tld","server_port":443,"uuid":"u"}`)
+	if err := c.AddTunnelWithListenPort("Germany", "vless", "de.tld", 443, 0, ob); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Inbounds []map[string]any `json:"inbounds"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, ib := range doc.Inbounds {
+		if ib["tag"] != "Germany-in" {
+			continue
+		}
+		found = true
+		if ib["type"] != "mixed" {
+			t.Errorf("type = %v, ждали mixed", ib["type"])
+		}
+		if ib["listen"] != "127.0.0.1" {
+			t.Errorf("listen = %v, ждали 127.0.0.1 — прокси туннеля открыт наружу", ib["listen"])
+		}
+	}
+	if !found {
+		t.Fatalf("inbound Germany-in не найден: %s", raw)
+	}
+}
+
 func TestConfig_AddTunnel_TagConflict(t *testing.T) {
 	c := NewConfig()
 	ob := json.RawMessage(`{"type":"vless","tag":"X"}`)

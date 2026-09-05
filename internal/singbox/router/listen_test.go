@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -56,16 +58,49 @@ func TestLocalPortInState_WrongPort(t *testing.T) {
 // fakeip-tun readiness probes
 // ---------------------------------------------------------------------------
 
-func TestTunInterfaceReady_NonexistentIface(t *testing.T) {
-	// A name that cannot exist under /sys/class/net → read error → not ready.
-	if tunInterfaceReady("opkgtun-nonexistent-xyz") {
-		t.Error("nonexistent tun iface must report not-ready")
+func stubSysClassNet(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	old := sysClassNetDir
+	sysClassNetDir = dir
+	t.Cleanup(func() { sysClassNetDir = old })
+	return dir
+}
+
+func writeCarrier(t *testing.T, root, iface, value string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, iface), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, iface, "carrier"), []byte(value), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestTunInterfaceReady_EmptyIface(t *testing.T) {
+// carrier=1 — единственное «готов»; 0, отсутствие файла и пустое имя — «не готов».
+// Раньше оба теста не доходили до сравнения с "1": `return false` был зелёным.
+func TestTunInterfaceReady_CarrierDecides(t *testing.T) {
+	root := stubSysClassNet(t)
+	writeCarrier(t, root, "opkgtun3", "1\n")
+	writeCarrier(t, root, "opkgtun4", "0\n")
+
+	if !tunInterfaceReady("opkgtun3") {
+		t.Error("carrier=1 → ready")
+	}
+	if tunInterfaceReady("opkgtun4") {
+		t.Error("carrier=0 → not ready")
+	}
+	if tunInterfaceReady("opkgtun5") {
+		t.Error("нет устройства → not ready")
+	}
 	if tunInterfaceReady("") {
-		t.Error("empty iface name must report not-ready")
+		t.Error("пустое имя → not ready")
+	}
+}
+
+func TestSysClassNetDirDefault(t *testing.T) {
+	if sysClassNetDir != "/sys/class/net" {
+		t.Fatalf("дефолт шва = %q", sysClassNetDir)
 	}
 }
 

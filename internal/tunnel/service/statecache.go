@@ -47,8 +47,8 @@ func (s *ServiceImpl) fetchRawStateByID(ctx context.Context, tunnelID string) (t
 	if stored.Backend == "wdtt-raw" {
 		return wdttRawKernelState(stored), nil
 	}
-	if s.nwgOperator != nil && s.isNativeWG(stored) {
-		return s.nwgOperator.GetState(fctx, stored), nil
+	if s.nwgState != nil && s.isNativeWG(stored) {
+		return s.nwgState.GetState(fctx, stored), nil
 	}
 	return s.state.GetState(fctx, stored.ID), nil
 }

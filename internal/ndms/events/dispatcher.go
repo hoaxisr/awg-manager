@@ -172,7 +172,7 @@ func (d *Dispatcher) apply(ctx context.Context, e Event) {
 		case EventIfLayerChanged:
 			d.queries.Interfaces.OnLayerChanged(e.ID, e.Layer, e.Level)
 		case EventIfIPChanged:
-			d.queries.Interfaces.OnIPChanged(e.ID, e.Address, e.Up, e.Connected)
+			d.queries.Interfaces.OnIPChanged(e.ID, e.Address)
 		}
 	}
 

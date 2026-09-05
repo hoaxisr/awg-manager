@@ -29,6 +29,10 @@ func TestDeviceProxyHandler_GetConfig_Default(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("code = %d body = %s", rr.Code, rr.Body)
 	}
+	data := decodeJSONBody(t, rr)["data"].(map[string]any)
+	if data["enabled"] != false || data["listenAll"] != true || data["port"] != float64(1099) {
+		t.Fatalf("wrong defaults: %#v", data)
+	}
 }
 
 func TestDeviceProxyHandler_GetConfig_MethodNotAllowed(t *testing.T) {
@@ -65,6 +69,10 @@ func TestDeviceProxyHandler_GetRuntime_Default(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("code = %d body = %s", rr.Code, rr.Body)
 	}
+	data := decodeJSONBody(t, rr)["data"].(map[string]any)
+	if data["alive"] != false || data["defaultTag"] != "" {
+		t.Fatalf("wrong defaults: %#v", data)
+	}
 }
 
 func TestDeviceProxyHandler_SelectRuntime_MethodNotAllowed(t *testing.T) {
@@ -88,6 +96,14 @@ func TestDeviceProxyHandler_ListOutbounds_Default(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("code = %d body = %s", rr.Code, rr.Body)
+	}
+	data := decodeJSONBody(t, rr)["data"].([]any)
+	if len(data) != 1 {
+		t.Fatalf("want 1 default outbound, got %#v", data)
+	}
+	first := data[0].(map[string]any)
+	if first["tag"] != "direct" || first["kind"] != "direct" {
+		t.Fatalf("wrong default outbound: %#v", first)
 	}
 }
 

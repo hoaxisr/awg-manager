@@ -161,6 +161,15 @@ func (c *Client) DetachTun(ctx context.Context) error {
 // do шлёт запрос и ждёт ответа с тем же id. Ответ с чужим id игнорируется
 // читателем, поэтому здесь достаточно своего канала.
 func (c *Client) do(ctx context.Context, req awgmproto.Request, fd int) (awgmproto.Response, error) {
+	// Входная проверка держит контракт «истёкший ctx → отказ» ПОСТРОЕНИЕМ:
+	// без неё исход зависел бы от select'а между готовым ответом и ctx.Done().
+	// Второе, что она даёт: запрос сдавшегося вызывающего не уходит на провод
+	// (для CmdAttachTun — attach не проходил, если ctx истёк ДО входа сюда;
+	// истечение между этой проверкой и send по-прежнему оставляет
+	// двусмысленность, её снимает Link.State перечитыванием).
+	if err := ctx.Err(); err != nil {
+		return awgmproto.Response{}, err
+	}
 	c.mu.Lock()
 	if c.err != nil {
 		err := c.err

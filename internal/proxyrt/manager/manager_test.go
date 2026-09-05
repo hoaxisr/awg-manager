@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -77,6 +78,7 @@ func (f *fakeSweeper) Sweep(_ context.Context, declared map[string]bool) ([]stri
 func (f *fakeSweeper) count() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.calls) }
 
 type fakeInstance struct {
+	postRefuses      bool // воркер остановлен: Post отдаёт false
 	mu               sync.Mutex
 	started, stopped bool
 	posts            []proxyrt.EventKind
@@ -101,7 +103,10 @@ func (f *fakeInstance) Post(k proxyrt.EventKind) bool {
 	defer f.mu.Unlock()
 	f.posts = append(f.posts, k)
 	f.calls = append(f.calls, "post:"+string(k))
-	return true
+	// Вердикт настраиваемый: у прод-воркера он false, когда воркер уже
+	// остановлен, и менеджер обязан этот отказ ПРОНЕСТИ, а не подменить
+	// своим «нашёл — значит ок» (RT50).
+	return !f.postRefuses
 }
 
 func (f *fakeInstance) ResetStartBackoff() {
@@ -190,6 +195,7 @@ type env struct {
 	factoryRecs map[string]instancestore.Record
 	released    [][]string
 	allocN      int
+	allocKeys   []string
 }
 
 func newEnv(t *testing.T) *env {
@@ -235,12 +241,16 @@ func newEnv(t *testing.T) *env {
 			e.postSeedNDMS = append(e.postSeedNDMS, declaredNDMS)
 			return nil
 		},
-		AllocIndex: func(_ string, pinned int, havePin bool) (int, error) {
+		AllocIndex: func(key string, pinned int, havePin bool) (int, error) {
 			if havePin {
 				return pinned, nil
 			}
 			e.allocN++
-			return 30, nil
+			// Ключ запоминаем, а индексы выдаём РАЗНЫЕ: у сервера две
+			// половины, и общий индекс на обе — тот самый дефект, который
+			// константа 30 скрывала бы от любого теста.
+			e.allocKeys = append(e.allocKeys, key)
+			return 30 + e.allocN - 1, nil
 		},
 		AllocListen: func(_ string, _ instancestore.Kind, _, current string) (string, error) {
 			if next, taken := e.listenTaken[current]; taken {
@@ -764,9 +774,16 @@ func TestPostAllReachesEveryInstance(t *testing.T) {
 	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"), ftRec("ft"))
 	boot(t, e)
 	e.m.PostAll(proxyrt.EventWANUp)
+	// Именно WANUp, а не «хоть что-нибудь»: boot кладёт свой будильник
+	// РАНЬШЕ, поэтому ассерт `len(posts) != 0` был истинным и с пустым телом
+	// PostAll — мутация «ничего не рассылать» проходила зелёной.
 	for k, fi := range e.instances {
-		if len(fi.posts) == 0 {
-			t.Fatalf("%s не получил будильник", k)
+		fi.mu.Lock()
+		got := slices.Contains(fi.posts, proxyrt.EventWANUp)
+		posts := slices.Clone(fi.posts)
+		fi.mu.Unlock()
+		if !got {
+			t.Fatalf("%s не получил WANUp: %v", k, posts)
 		}
 	}
 }
@@ -1625,5 +1642,158 @@ func TestBootFillsEmptyListenWithoutAnnouncingMove(t *testing.T) {
 	}
 	if got := *instancestore.ClientListen(&built); got == "" {
 		t.Fatal("воркер собран с пустым listen")
+	}
+}
+
+// RT4: намерение воркера читается из ЖИВОЙ записи, и Enabled отображается в
+// него прямо, а не наоборот.
+//
+// `Live.Intent` — единственный источник намерения для всего рантайма проксей:
+// по нему роль решает, поднимать процесс или снимать. Инверсия отображения
+// («выключенные бегут, включённые гаснут») проходила по всему дереву тестов
+// незамеченной — проверено мутацией.
+//
+// Вторая половина пина — про СВЕЖЕСТЬ: замыкание обязано читать запись в
+// момент вопроса, а не снимок времени сборки инстанса (докстрока Factory).
+func TestLiveIntentFollowsEnabledAndStaysFresh(t *testing.T) {
+	rec := rawRec("de", "OpkgTun18", "opkgtun18")
+	rec.Enabled = true
+	live := newLive(rec)
+
+	if got := live.Intent(); got != proxyrt.IntentEnabled {
+		t.Fatalf("включённая запись даёт намерение %v, ждали IntentEnabled", got)
+	}
+
+	off := rec
+	off.Enabled = false
+	live.rec.Store(&off)
+	if got := live.Intent(); got != proxyrt.IntentDisabled {
+		t.Fatalf("после выключения намерение %v, ждали IntentDisabled", got)
+	}
+	// И обратно: снимок времени сборки дал бы здесь застрявшее значение.
+	live.rec.Store(&rec)
+	if got := live.Intent(); got != proxyrt.IntentEnabled {
+		t.Fatalf("намерение не следует за записью: %v", got)
+	}
+}
+
+// RT5: адресное событие доходит ДО инстанса, а не теряется в менеджере.
+//
+// Через `Manager.Post` идут, в частности, события смерти процесса от связи:
+// потерянные, они означают, что упавший инстанс никто не поднимет. Мутация
+// «всегда возвращать false, никому не доставляя» была зелёной.
+func TestManagerPostReachesInstance(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	boot(t, e)
+
+	fi := e.instances["wdtt-client:de"]
+	fi.mu.Lock()
+	before := len(fi.posts)
+	fi.mu.Unlock()
+
+	if ok := e.m.Post("wdtt-client:de", proxyrt.EventProcessDied); !ok {
+		t.Fatal("доставка живому инстансу обязана подтверждаться")
+	}
+	fi.mu.Lock()
+	got := slices.Clone(fi.posts[before:])
+	fi.mu.Unlock()
+	if len(got) != 1 || got[0] != proxyrt.EventProcessDied {
+		t.Fatalf("инстанс получил %v, ждали ровно [EventProcessDied]", got)
+	}
+
+	// Неизвестный ключ — честное «не доставлено», а не молчаливое «ок».
+	if ok := e.m.Post("wdtt-client:нет-такого", proxyrt.EventProcessDied); ok {
+		t.Fatal("доставка несуществующему инстансу не может быть успешной")
+	}
+}
+
+// RT22: Records — единственный источник списка инстансов для API (карточки
+// прокси, деталь связи, статус captcha). Мутация «всегда пустой срез»
+// проходила зелёной: список никто не проверял, а его пропажа в UI выглядит
+// как «инстансы удалились сами».
+//
+// Ключи сверяем составом, а не длиной: срез правильной длины из одного и того
+// же инстанса — ровно тот дефект, который длина не различает.
+func TestRecordsListsEveryLiveInstance(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"), ftRec("ft"))
+	boot(t, e)
+
+	got := map[string]instancestore.Kind{}
+	for _, r := range e.m.Records() {
+		got[r.ID] = r.Kind
+	}
+	if len(got) != 2 || got["de"] != instancestore.KindWdttClient || got["ft"] != instancestore.KindFreeTurnClient {
+		t.Fatalf("ведомость собрана не из живых инстансов: %+v", got)
+	}
+}
+
+// RT23: сервер, созданный БЕЗ пинов, обязан получить обе половины.
+//
+// В тестах пакета серверы приходили только с готовыми именами интерфейсов,
+// поэтому выпил raw-ветки `ensurePins` проходил зелёным — а без него
+// создание сервера с пустыми полями упирается в невнятный отказ
+// `validateState` вместо выделения интерфейса.
+func TestEnsurePins_ServerAllocatesBothHalves(t *testing.T) {
+	e := newEnv(t)
+	boot(t, e)
+	if err := e.m.Create(context.Background(), instancestore.Record{
+		ID: "srv", Kind: instancestore.KindWdttServer, Name: "S", Enabled: true,
+		WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000", ConfigDir: t.TempDir()},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var saved *roles.WdttServerConfig
+	for _, r := range e.m.Records() {
+		if r.ID == "srv" {
+			saved = r.WdttServer
+		}
+	}
+	if saved == nil {
+		t.Fatal("сервер не заведён")
+	}
+	if saved.NdmsIface == "" || saved.WgIface == "" {
+		t.Fatalf("wg-половина без интерфейса: %+v", saved)
+	}
+	if saved.RawNdmsIface == "" || saved.RawIface == "" {
+		t.Fatalf("raw-половина без интерфейса: %+v", saved)
+	}
+	if saved.NdmsIface == saved.RawNdmsIface {
+		t.Fatalf("половины делят один интерфейс %q", saved.NdmsIface)
+	}
+	if !slices.Contains(e.allocKeys, "wdtt-server:srv/wg") || !slices.Contains(e.allocKeys, "wdtt-server:srv/raw") {
+		t.Fatalf("пины выделены не на обе половины: %v", e.allocKeys)
+	}
+}
+
+// RT50: Manager.Post обязан вернуть вердикт ИНСТАНСА, а не факт «нашёл ключ».
+// По этому bool ручка apply (api/proxy_instances.go) отличает живой инстанс от
+// мёртвого и отвечает 404 вместо молчаливого «ок». У остановленного воркера
+// прод-Post отдаёт false — значит менеджеру нельзя подменять его на true.
+// RT5 пинует доставку и отказ на неизвестном ключе, но не вердикт: мутант
+// «доставить и вернуть true безусловно» его переживал.
+func TestManagerPostCarriesInstanceVerdict(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	boot(t, e)
+
+	fi := e.instances["wdtt-client:de"]
+	fi.mu.Lock()
+	fi.postRefuses = true
+	before := len(fi.posts)
+	fi.mu.Unlock()
+
+	if ok := e.m.Post("wdtt-client:de", proxyrt.EventIntentChanged); ok {
+		t.Error("отказ инстанса подменён успехом: ручка ответит «ок» мёртвому инстансу")
+	}
+	// И доставка при этом всё равно состоялась — отказ приходит ОТ инстанса,
+	// а не от того, что менеджер решил не отправлять.
+	fi.mu.Lock()
+	got := slices.Clone(fi.posts[before:])
+	fi.mu.Unlock()
+	if len(got) != 1 || got[0] != proxyrt.EventIntentChanged {
+		t.Fatalf("инстанс получил %v, ждали ровно [EventIntentChanged]", got)
 	}
 }

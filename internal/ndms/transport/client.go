@@ -208,11 +208,14 @@ func (c *Client) GetRaw(ctx context.Context, path string) ([]byte, error) {
 // bypassBatch сообщает, что путь нельзя гонять через batch-POST: его
 // NDMS-ответ в batch-форме не совпадает по shape с direct GET, и
 // unwrapKeys не могут это восстановить.
+//
+// `/show/interface/<name>/summary` здесь БЫЛ и снят: сводку никто не берёт
+// сырым GET'ом — FetchSummary ходит командой show interface через батчер
+// (query/interfaces.go), а ветка не могла сработать с 26079ef4b (FetchSummary
+// переведён на POST). Понадобится снова сырой путь — вернуть вместе с
+// вызывающим.
 func bypassBatch(path string) bool {
 	if strings.HasPrefix(path, "/show/rc/interface/") {
-		return true
-	}
-	if strings.HasPrefix(path, "/show/interface/") && strings.HasSuffix(path, "/summary") {
 		return true
 	}
 	return false

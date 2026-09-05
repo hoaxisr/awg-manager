@@ -109,7 +109,7 @@ func (s *Sandbox) ResolveWrite(requested string) (abs string, err error) {
 		return "", err
 	}
 	if root.ReadOnly {
-		return "", fmt.Errorf("read-only root: %s", root.Path)
+		return "", fmt.Errorf("%w: read-only root %s", ErrPathDenied, root.Path)
 	}
 	return abs, nil
 }

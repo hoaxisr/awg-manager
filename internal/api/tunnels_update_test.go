@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -276,13 +277,26 @@ func TestMergePeerWhitelist_EmptyPSKKeepsExisting(t *testing.T) {
 // stubTunnelSvc — минимальный TunnelService для тестов Update-хэндлера.
 // Get возвращает ошибку: BuildTunnelResponse тогда отдаёт UPDATE_FAILED,
 // но это ПОСЛЕ записи в стор — ассерты идут по стору, код ответа не важен.
+// toggleCall — зафиксированный аргумент вызова SetEnabled/SetDefaultRoute:
+// id туннеля и значение, с которым его позвали.
+type toggleCall struct {
+	id string
+	v  bool
+}
+
 type stubTunnelSvc struct {
 	updateFn func(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error
 	deleteFn func(ctx context.Context, tunnelID string) error
 	stopFn   func(ctx context.Context, tunnelID string) error
 	stateFn  func(tunnelID string) tunnel.StateInfo
+	getFn    func(ctx context.Context, id string) (*service.TunnelWithStatus, error)
 
 	replaceCalls int
+
+	setEnabledCalls      []toggleCall
+	setDefaultRouteCalls []toggleCall
+	setEnabledErr        error
+	setDefaultRouteErr   error
 
 	// createdCfg — конфиг, с которым хендлер позвал Create: по нему видно,
 	// что уехало в NDMS.
@@ -294,7 +308,10 @@ type stubTunnelSvc struct {
 }
 
 func (s *stubTunnelSvc) List(context.Context) ([]service.TunnelWithStatus, error) { return nil, nil }
-func (s *stubTunnelSvc) Get(context.Context, string) (*service.TunnelWithStatus, error) {
+func (s *stubTunnelSvc) Get(ctx context.Context, id string) (*service.TunnelWithStatus, error) {
+	if s.getFn != nil {
+		return s.getFn(ctx, id)
+	}
 	return nil, fmt.Errorf("stub")
 }
 func (s *stubTunnelSvc) Create(_ context.Context, stored *storage.AWGTunnel) error {
@@ -334,8 +351,14 @@ func (s *stubTunnelSvc) GetState(_ context.Context, tunnelID string) tunnel.Stat
 	}
 	return tunnel.StateInfo{}
 }
-func (s *stubTunnelSvc) SetEnabled(context.Context, string, bool) error      { return nil }
-func (s *stubTunnelSvc) SetDefaultRoute(context.Context, string, bool) error { return nil }
+func (s *stubTunnelSvc) SetEnabled(_ context.Context, id string, v bool) error {
+	s.setEnabledCalls = append(s.setEnabledCalls, toggleCall{id, v})
+	return s.setEnabledErr
+}
+func (s *stubTunnelSvc) SetDefaultRoute(_ context.Context, id string, v bool) error {
+	s.setDefaultRouteCalls = append(s.setDefaultRouteCalls, toggleCall{id, v})
+	return s.setDefaultRouteErr
+}
 func (s *stubTunnelSvc) Import(context.Context, string, string, string, service.ImportLink) (*service.TunnelWithStatus, error) {
 	return nil, fmt.Errorf("stub")
 }
@@ -353,6 +376,81 @@ func newTunnelsUpdateHarness(t *testing.T, stub *stubTunnelSvc) (*TunnelsHandler
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
 	// nil AppLogger безопасен — см. комментарий в settings_test.go.
 	return NewTunnelsHandler(stub, store, nil), store
+}
+
+// RT12: частичный PATCH не имеет права выключить туннель.
+//
+// Фронт шлёт `Partial<AWGTunnel>` — тело без ключа `enabled`. В Go его
+// отсутствие неотличимо от `false`, поэтому присваивание `t.Enabled =
+// req.Enabled` в applyTunnelUpdate выключало бы туннель на КАЖДОМ
+// переименовании. Инвентарь полей такое не ловит по построению: он краснеет
+// на УДАЛЕНИИ присваивания, а здесь беда в его ПОЯВЛЕНИИ.
+func TestTunnelUpdate_PartialPatchKeepsEnabled(t *testing.T) {
+	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
+	if err := store.Create(&storage.AWGTunnel{
+		ID: "awg10", Name: "прежнее", Enabled: true,
+		Interface: storage.AWGInterface{Address: "10.0.0.2/32"},
+		Peer:      storage.AWGPeer{Endpoint: "1.2.3.4:51820"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Тело без ключа enabled — ровно то, что шлёт карточка при переименовании.
+	h.Update(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost,
+		"/tunnels/update?id=awg10", strings.NewReader(`{"name":"новое"}`)))
+
+	saved, err := store.Get("awg10")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !saved.Enabled {
+		t.Fatal("частичный PATCH выключил туннель: ключа enabled в теле не было")
+	}
+	if saved.Name != "новое" {
+		t.Fatalf("имя не сохранено: %q", saved.Name)
+	}
+}
+
+// RT1: fail-closed на пути правки. Инвариант из CLAUDE.md и комментария в
+// tunnels_crud.go: если служба не смогла применить правку к ЖИВОМУ
+// интерфейсу, на диск её класть нельзя — иначе запись разойдётся с тем, что
+// реально работает на роутере, и разойдётся МОЛЧА.
+//
+// У Create такой пин есть (`TestCreate_HandlerDoesNotPersistOnServiceError`),
+// у Update не было: мутация «проглотить отказ и персистить всегда» оставляла
+// весь пакет зелёным.
+func TestTunnelUpdate_DoesNotPersistOnServiceError(t *testing.T) {
+	stub := &stubTunnelSvc{updateFn: func(context.Context, *storage.AWGTunnel, *storage.AWGTunnel) error {
+		return errors.New("RCI отказал")
+	}}
+	h, store := newTunnelsUpdateHarness(t, stub)
+	if err := store.Create(&storage.AWGTunnel{
+		ID: "awg10", Name: "прежнее", Enabled: true,
+		Interface: storage.AWGInterface{Address: "10.0.0.2/32"},
+		Peer:      storage.AWGPeer{Endpoint: "1.2.3.4:51820"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	h.Update(rr, httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
+		strings.NewReader(`{"name":"новое"}`)))
+
+	if rr.Code == http.StatusOK {
+		t.Fatalf("отказ службы обязан быть отказом ручки, код %d", rr.Code)
+	}
+	if body := rr.Body.String(); !strings.Contains(body, "RCI отказал") {
+		t.Errorf("причина отказа не дошла до клиента: %s", body)
+	}
+	// Главное: диск не тронут. Иначе запись говорит «новое», а на роутере
+	// живёт «прежнее», и узнать об этом неоткуда.
+	saved, err := store.Get("awg10")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if saved.Name != "прежнее" {
+		t.Fatalf("правка сохранена вопреки отказу службы: имя %q", saved.Name)
+	}
 }
 
 func TestTunnelUpdate_PreservesStartedAt(t *testing.T) {

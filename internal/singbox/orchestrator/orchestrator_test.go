@@ -13,9 +13,31 @@ import (
 
 func newTestOrch(t *testing.T) (*Orchestrator, string) {
 	t.Helper()
+	old := appliedStatePath
+	appliedStatePath = filepath.Join(t.TempDir(), "singbox-applied.json")
+	t.Cleanup(func() { appliedStatePath = old })
 	dir := t.TempDir()
 	o := New(dir, nil) // nil ProcessController — Save/SetEnabled don't use it
 	return o, dir
+}
+
+// Дефолт шва: New берёт package-var appliedStatePath (в проде — /var/run/...),
+// иначе adopt после рестарта демона перестаёт работать молча. Пин доказывает
+// «New читает package-var», а не сам прод-путь: переменная здесь перенаправлена
+// в TempDir, чтобы тест не читал /var/run хоста.
+func TestNew_UsesDefaultAppliedStatePath(t *testing.T) {
+	old := appliedStatePath
+	appliedStatePath = filepath.Join(t.TempDir(), "singbox-applied.json")
+	t.Cleanup(func() { appliedStatePath = old })
+
+	o := New(t.TempDir(), nil)
+	if o.appliedPath != appliedStatePath {
+		t.Fatalf("appliedPath = %q, want package default %q", o.appliedPath, appliedStatePath)
+	}
+	o2 := NewWithAppliedPath(t.TempDir(), nil, "/nonexistent/x.json")
+	if o2.appliedPath != "/nonexistent/x.json" {
+		t.Fatalf("NewWithAppliedPath ignored its argument: %q", o2.appliedPath)
+	}
 }
 
 // newFakeOrch constructs an Orchestrator wired to a fakeProc, first

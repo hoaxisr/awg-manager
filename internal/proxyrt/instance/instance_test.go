@@ -177,17 +177,22 @@ func TestSummarize(t *testing.T) {
 			{ID: "process", Status: proxyrt.StatusOK},
 			{ID: "ndms_address", Status: proxyrt.StatusFailed, Error: "rci отказал"},
 			{ID: "ndms_admin_state", Status: proxyrt.StatusBlocked},
+			{ID: "nat_rules", Status: proxyrt.StatusUnknown, Error: "провайдер не ответил"},
 		},
 		Passes: 2,
 	}
+	// RT26: строка сверяется ЦЕЛИКОМ, а не по подстрокам. Поиск «проход» и
+	// «failed» не различал ни числа (`Passes=0` проходил зелёным), ни состав
+	// отказавших — а сводка и есть то единственное, что о прогоне остаётся в
+	// журнале. Blocked в список отказов НЕ входит намеренно: заблокированный
+	// ресурс ждёт чужого шага, это не отказ. Unknown — входит: наблюдение не
+	// состоялось, и молчать об этом нельзя (ветка нашлась ревью — без
+	// Unknown в фикстуре её выпил из условия был зелёным).
 	line := Summarize(res, proxyrt.PhaseFailed)
-	for _, want := range []string{"failed", "ndms_address", "rci отказал", "проход"} {
-		if !strings.Contains(line, want) {
-			t.Fatalf("в сводке нет %q: %s", want, line)
-		}
-	}
-	if strings.Count(line, "\n") != 0 {
-		t.Fatal("сводка — одна строка")
+	want := "фаза failed, проходов 2, шагов 1; ndms_address: failed (rci отказал); " +
+		"nat_rules: unknown (провайдер не ответил)"
+	if line != want {
+		t.Fatalf("сводка:\n%s\nждали:\n%s", line, want)
 	}
 }
 
@@ -285,4 +290,58 @@ func TestResetStartBackoffOnRoleWithoutProcess(t *testing.T) {
 		Journal: &memJournal{},
 	})
 	inst.ResetStartBackoff()
+}
+
+// RT24: прогон обязан опубликовать состояние в StateStore.
+//
+// Удаление `States.Update` из onState проходило зелёным, а его цена двойная:
+// статус в API слепнет (карточка инстанса показывает прочерк навсегда), и
+// `WaitDisabled` при Delete висит полный таймаут — он ждёт публикации фазы,
+// которой уже никто не делает.
+func TestOnState_PublishesToStateStore(t *testing.T) {
+	states := proxyrt.NewStateStore(nil, nil)
+	inst := New(Config{ID: "i1", Role: &recordRole{},
+		Cfg:     func() any { return nil },
+		Intent:  func() proxyrt.Intent { return proxyrt.IntentEnabled },
+		States:  states,
+		Journal: &memJournal{},
+	})
+	ctx, cancel := contextWithCancel()
+	defer cancel()
+	inst.Start(ctx)
+	inst.Post(proxyrt.EventBoot)
+	defer inst.Stop()
+
+	waitFor(t, func() bool { _, ok := states.Get("i1"); return ok })
+}
+
+// RT25: тяжесть записи в журнале следует фазе.
+//
+// Безусловный Info проходил зелёным: в журнале различали только число строк,
+// не их вид. Отказавший прогон, записанный как Info, теряется среди штатных —
+// а это ровно та строка, ради которой в журнал и смотрят.
+func TestOnState_SeverityFollowsPhase(t *testing.T) {
+	for _, tc := range []struct {
+		phase  proxyrt.Phase
+		prefix string
+	}{
+		{proxyrt.PhaseSettled, "I:"},
+		{proxyrt.PhaseFailed, "W:"},
+		{proxyrt.PhaseStuck, "W:"},
+	} {
+		j := &memJournal{}
+		inst := New(Config{ID: "i1", Role: &recordRole{},
+			Cfg:     func() any { return nil },
+			Intent:  func() proxyrt.Intent { return proxyrt.IntentEnabled },
+			States:  proxyrt.NewStateStore(nil, nil),
+			Journal: j,
+		})
+		inst.onState(proxyrt.Result{}, tc.phase)
+		j.mu.Lock()
+		lines := append([]string(nil), j.lines...)
+		j.mu.Unlock()
+		if len(lines) != 1 || !strings.HasPrefix(lines[0], tc.prefix) {
+			t.Fatalf("фаза %s: ждали строку %s…, получили %v", tc.phase, tc.prefix, lines)
+		}
+	}
 }

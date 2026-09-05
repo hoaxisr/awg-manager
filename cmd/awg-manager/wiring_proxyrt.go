@@ -18,7 +18,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
-	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/captcha"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/ftlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/install"
@@ -1166,10 +1165,8 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 				EnableForward: proxyEnableForward,
 				IfaceExists:   proxyIfaceExists,
 				KernelWAN:     proxyKernelWAN(a.ndmsQueries.Interfaces),
-				PolicyMark:    proxyPolicyMark(ndmsquery.NewPolicyMarkStore(a.ndmsTransportClient, nil)),
-				Access: proxyAccessApplier{svc: a.managedService,
-					ifaces: a.ndmsCommands.Interfaces},
-				Ingress: proxyIngressEnsurer{settings: a.settingsStore, router: a.routerSvc},
+				Access:        proxyAccessApplier{svc: a.managedService},
+				Ingress:       proxyIngressEnsurer{settings: a.settingsStore, router: a.routerSvc},
 			})
 			if err != nil {
 				return nil, err

@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -23,15 +24,22 @@ const (
 	httpTimeout  = 10 * time.Second
 )
 
+// Швы для тестов: адрес LAN-моста и порт HTTP роутера — хостовые запросы.
+var (
+	lanIPv4        = netif.FirstIPv4
+	routerHTTPPort = getHTTPPort
+)
+
 // KeeneticClient handles authentication against Keenetic router.
 type KeeneticClient struct {
-	routerAddr     string
-	routerAddrOnce sync.Once
-	httpClient     *http.Client
+	routerAddr string
+	mu         sync.Mutex
+	httpClient *http.Client
 }
 
 // NewKeeneticClient creates a new Keenetic auth client.
-// Router address (IP + port) is resolved lazily on first Authenticate call
+// Router address (IP + port) is resolved lazily on Authenticate and cached only
+// once the LAN address and HTTP port were actually read (see resolveAddr),
 // to avoid a race with NDMS at boot — getHTTPPort queries RCI which may
 // not be ready when the daemon starts.
 func NewKeeneticClient() *KeeneticClient {
@@ -45,27 +53,42 @@ func NewKeeneticClient() *KeeneticClient {
 	}
 }
 
-// resolveAddr detects router IP (br0) and HTTP port (RCI) once.
-func (c *KeeneticClient) resolveAddr() {
-	c.routerAddrOnce.Do(func() {
-		ip := netif.FirstIPv4("br0")
-		if ip == "" {
-			ip = "192.168.1.1"
+// resolveAddr returns the router address to use. The result is cached only when
+// both the LAN address and the HTTP port were actually read: on early boot RCI
+// may not be ready yet, and a guessed "192.168.1.1:80" must not stick until restart.
+// Host lookups run outside the mutex so concurrent logins do not queue behind a 5 s RCI timeout.
+func (c *KeeneticClient) resolveAddr() string {
+	c.mu.Lock()
+	cached := c.routerAddr
+	c.mu.Unlock()
+	if cached != "" {
+		return cached
+	}
+	ip := lanIPv4("br0")
+	port, portOK := routerHTTPPort()
+	resolved := ip != "" && portOK
+	if ip == "" {
+		ip = "192.168.1.1"
+	}
+	addr := ip
+	if port != 0 && port != 80 {
+		addr = fmt.Sprintf("%s:%d", ip, port)
+	}
+	if resolved {
+		c.mu.Lock()
+		if c.routerAddr == "" {
+			c.routerAddr = addr
 		}
-
-		port := getHTTPPort()
-
-		if port != 0 && port != 80 {
-			c.routerAddr = fmt.Sprintf("%s:%d", ip, port)
-		} else {
-			c.routerAddr = ip
-		}
-	})
+		c.mu.Unlock()
+	}
+	return addr
 }
 
-// getHTTPPort returns router HTTP port from NDMS RCI API.
-func getHTTPPort() int {
+// getHTTPPort returns router HTTP port from NDMS RCI API. ok is false when the
+// running-config could not be read at all (the port is then a default guess).
+func getHTTPPort() (port int, ok bool) {
 	client := transport.New(transport.NewSemaphore(1))
+	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -74,33 +97,33 @@ func getHTTPPort() int {
 		Message []string `json:"message"`
 	}
 	if err := client.Get(ctx, "/show/running-config", &result); err != nil {
-		return 80
+		return 80, false
 	}
 
 	for _, line := range result.Message {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "ip http port ") {
-			var port int
-			if _, err := fmt.Sscanf(line, "ip http port %d", &port); err == nil {
-				return port
+			var p int
+			if _, err := fmt.Sscanf(line, "ip http port %d", &p); err == nil {
+				return p, true
 			}
 		}
 	}
 
-	return 80
+	return 80, true
 }
 
 // Authenticate verifies credentials against Keenetic router.
 // Returns nil on success, error on failure.
 func (c *KeeneticClient) Authenticate(ctx context.Context, login, password string) error {
-	c.resolveAddr()
-	authURL := fmt.Sprintf("http://%s%s", c.routerAddr, authEndpoint)
+	addr := c.resolveAddr()
+	authURL := fmt.Sprintf("http://%s%s", addr, authEndpoint)
 
 	// Step 1: GET /auth to get challenge, realm and cookies
 	challenge, realm, cookies, err := c.getChallenge(ctx, authURL)
 	if err != nil {
 		// If we get 200 on GET, auth is disabled or already authenticated
-		if err == errAuthDisabled {
+		if errors.Is(err, errAuthDisabled) {
 			return nil
 		}
 		return fmt.Errorf("get challenge from %s: %w", authURL, err)

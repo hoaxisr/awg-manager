@@ -238,6 +238,10 @@ func IsTProxyTargetAvailable(ctx context.Context) bool {
 	return ok
 }
 
+// tproxyTargetProbe — шов над пробой iptables: тесты подменяют, прод зовёт
+// IsTProxyTargetAvailable.
+var tproxyTargetProbe = IsTProxyTargetAvailable
+
 // EnsureXtDscpModule best-effort loads xt_dscp so the QoS `-m dscp` dispatch
 // rules can be accepted at iptables-restore COMMIT time. Same soft-fail
 // contract as EnsureCommentModule: an absent .ko (possibly built-in kernel
@@ -1330,7 +1334,10 @@ func refreshNetfilterHookIfPresent() {
 	_ = writeNetfilterHook(true)
 }
 
-func (it *IPTables) Uninstall(ctx context.Context) error {
+// Uninstall is best-effort by design (F79): every step is idempotent
+// teardown whose "nothing to remove" is indistinguishable from failure
+// without parsing iptables stderr; callers get no error.
+func (it *IPTables) Uninstall(ctx context.Context) {
 	if it.cleanupHook != nil {
 		it.cleanupHook()
 	}
@@ -1348,7 +1355,6 @@ func (it *IPTables) Uninstall(ctx context.Context) error {
 	// would leave the rest. Loop until ENOENT, capped defensively.
 	it.drainFwmarkRules(ctx)
 	_ = it.runIP(ctx, "route", "flush", "table", fmt.Sprintf("%d", RoutingTable))
-	return nil
 }
 
 func (it *IPTables) removeSourceHooks(ctx context.Context) {
@@ -1377,11 +1383,14 @@ func (it *IPTables) removeSourceHooks(ctx context.Context) {
 // XKeen's removal logic — robust to rule ordering and matcher changes
 // as long as the `-m comment --comment <tag>` survives serialisation.
 func (it *IPTables) removeCommentTaggedRulesFromTable(ctx context.Context, table, chain, tag string) {
-	result, err := sysexec.Run(ctx, sysiptables.Binary, "-w", "-t", table, "-S", chain)
-	if err != nil || result == nil {
+	// Разбор идёт через ШОВ роли (runIPTablesOut), а не прямым sysexec: иначе
+	// снос невидим тесту, и его выпил остаётся зелёным. "-w" добавляет сам
+	// sysiptables.RunOutput.
+	out, err := it.runIPTablesOut(ctx, "-t", table, "-S", chain)
+	if err != nil {
 		return
 	}
-	for _, line := range strings.Split(result.Stdout, "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		if !strings.Contains(line, `--comment "`+tag+`"`) && !strings.Contains(line, `--comment `+tag) {
 			continue
 		}
@@ -1389,22 +1398,21 @@ func (it *IPTables) removeCommentTaggedRulesFromTable(ctx context.Context, table
 			continue
 		}
 		delLine := "-D " + strings.TrimPrefix(line, "-A ")
-		args := append([]string{"-w", "-t", table}, strings.Fields(delLine)...)
-		_, _ = sysexec.Run(ctx, sysiptables.Binary, args...)
+		args := append([]string{"-t", table}, strings.Fields(delLine)...)
+		_ = it.runIPTables(ctx, args...)
 	}
 }
 
 func (it *IPTables) removeSourceHooksFromTable(ctx context.Context, table, chain string) {
-	result, err := sysexec.Run(ctx, sysiptables.Binary, "-w", "-t", table, "-S", "PREROUTING")
-	if err != nil || result == nil {
+	out, err := it.runIPTablesOut(ctx, "-t", table, "-S", "PREROUTING")
+	if err != nil {
 		return
 	}
-	// Match both `-j chain` (old jump syntax pre-fastnat-fix) and
-	// `-g chain` (current goto syntax) so upgrading installs scrub
-	// stale jumps from previous versions before we re-append the new one.
+	// Install рендерит `-j` (:519, :521); `-g` принимается на случай ручных
+	// правок и старых версий — пином не покрыт.
 	jumpJ := "-j " + chain
 	gotoG := "-g " + chain
-	for _, line := range strings.Split(result.Stdout, "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		if !strings.Contains(line, jumpJ) && !strings.Contains(line, gotoG) {
 			continue
 		}

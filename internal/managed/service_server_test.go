@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -1593,5 +1594,43 @@ func TestUpdate_MTUAbsent_NoInterfaceMTUPost(t *testing.T) {
 	poster.mu.Unlock()
 	if _, found := findInterfaceMTUPost(posts, ifaceName); found {
 		t.Errorf("ip.mtu must not be posted when req.MTU is nil; posts=%v", posts)
+	}
+}
+
+type recAppLog struct{ entries []string }
+
+func (r *recAppLog) AppLog(level logging.Level, _, _, action, target, message string) {
+	r.entries = append(r.entries, string(level)+"|"+action+"|"+target+"|"+message)
+}
+
+// Деградация static-NAT до одного WAN раньше была видна только в slog; теперь — в
+// журнале приложения (/logs), обе ветки: running-config не читается и `ip global` нет.
+func TestNatStaticTargets_DegradationIsInAppLog(t *testing.T) {
+	cases := []struct {
+		name    string
+		rc      func(*query.FakeGetter)
+		wantMsg string
+	}{
+		{"running-config недоступен", func(fg *query.FakeGetter) {}, // без SetJSON → ошибка чтения
+			"running-config недоступен ("},
+		{"нет ip global", func(fg *query.FakeGetter) {
+			fg.SetJSON("/show/running-config", `{"message":["interface Bridge0","    ip address 192.168.1.1","!"]}`)
+		}, "в running-config нет ни одного `ip global`: static NAT только на WAN по умолчанию"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fg := query.NewFakeGetter()
+			tc.rc(fg)
+			spy := &recAppLog{}
+			q := &query.Queries{RunningConfig: query.NewRunningConfigStore(fg, query.NopLogger())}
+			svc := New(&fakePoster{}, nil, q, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), spy)
+			_, err := svc.natStaticTargets(context.Background())
+			if err == nil {
+				t.Fatal("без Routes-провайдера фолбэк обязан отказать — тут проверяем только журнал")
+			}
+			if len(spy.entries) != 1 || !strings.HasPrefix(spy.entries[0], "warn|nat|internet-only|"+tc.wantMsg) {
+				t.Fatalf("журнал = %v", spy.entries)
+			}
+		})
 	}
 }

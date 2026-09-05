@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"net"
 	"net/http/httptest"
 	"testing"
@@ -29,5 +32,15 @@ func TestLookupDNSServerTLSReturnsIPAndPins(t *testing.T) {
 	}
 	if result.Certificates[0].CertificatePublicKeySHA256 != result.CertificatePublicKeySHA256[0] {
 		t.Fatalf("certificate pin not reflected in pin list: %#v", result)
+	}
+
+	der, err := x509.MarshalPKIXPublicKey(server.Certificate().PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(der)
+	want := base64.StdEncoding.EncodeToString(sum[:])
+	if result.CertificatePublicKeySHA256[0] != want {
+		t.Fatalf("pin mismatch: got %q want %q", result.CertificatePublicKeySHA256[0], want)
 	}
 }

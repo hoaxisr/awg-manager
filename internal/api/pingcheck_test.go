@@ -12,9 +12,10 @@ import (
 
 // mockPingCheckService implements PingCheckService for testing.
 type mockPingCheckService struct {
-	enabled bool
-	status  []pingcheck.TunnelStatus
-	logs    []pingcheck.LogEntry
+	enabled       bool
+	status        []pingcheck.TunnelStatus
+	logs          []pingcheck.LogEntry
+	checkNowCalls int
 }
 
 func (m *mockPingCheckService) GetStatus() []pingcheck.TunnelStatus {
@@ -37,7 +38,7 @@ func (m *mockPingCheckService) GetTunnelLogs(tunnelID string) []pingcheck.LogEnt
 
 func (m *mockPingCheckService) ClearLogs() { m.logs = nil }
 
-func (m *mockPingCheckService) CheckAllNow() {}
+func (m *mockPingCheckService) CheckAllNow() { m.checkNowCalls++ }
 
 func (m *mockPingCheckService) IsEnabled() bool {
 	return m.enabled
@@ -180,6 +181,9 @@ func TestPingCheckHandler_CheckNow_AlwaysAllowed(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("Status code = %d, want %d (check-now always allowed)", rec.Code, http.StatusOK)
 	}
+	if svc.checkNowCalls != 1 {
+		t.Fatalf("checkNowCalls = %d, want 1", svc.checkNowCalls)
+	}
 }
 
 func TestPingCheckHandler_CheckNow_Enabled(t *testing.T) {
@@ -193,6 +197,9 @@ func TestPingCheckHandler_CheckNow_Enabled(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("Status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if svc.checkNowCalls != 1 {
+		t.Fatalf("checkNowCalls = %d, want 1", svc.checkNowCalls)
 	}
 }
 

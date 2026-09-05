@@ -808,10 +808,10 @@ func TestInterfaceStore_OnLayerChanged_UnknownInterfaceIgnored(t *testing.T) {
 
 func TestInterfaceStore_OnIPChanged_PatchesAddressOnly(t *testing.T) {
 	// OnIPChanged must NOT touch State or Connected — those are owned
-	// by the ctrl layer. The hook payload's `up`/`connected` flags are
-	// not always populated by the NDMS event-script forwarder, and a
-	// spurious "down"/"no" overwrite of an actually-running interface
-	// blocks the state matrix.
+	// by the ctrl layer. Состояние линка сюда больше и не приходит:
+	// параметры up/connected сняты, потому что форвардер событий NDMS
+	// заполняет их не всегда, а ложные "down"/"no" затирали живой
+	// интерфейс и блокировали матрицу состояний.
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleIfaceList)
 	s := NewInterfaceStore(fg, NopLogger())
@@ -823,9 +823,8 @@ func TestInterfaceStore_OnIPChanged_PatchesAddressOnly(t *testing.T) {
 	preState := pre.State
 	preConnected := pre.Connected
 
-	// Hook with up=false, connected=false (default zero values when
-	// the forwarder doesn't fill them) MUST NOT corrupt State/Connected.
-	s.OnIPChanged("Wireguard0", "192.168.5.5", false, false)
+	// Событие смены адреса не имеет права тронуть State/Connected.
+	s.OnIPChanged("Wireguard0", "192.168.5.5")
 	got, _ := s.Get(context.Background(), "Wireguard0")
 	if got == nil {
 		t.Fatalf("expected Wireguard0 still present")
@@ -883,7 +882,7 @@ func TestInterfaceStore_Concurrent_ReadWrite(t *testing.T) {
 					return
 				default:
 					s.OnLayerChanged("Wireguard0", "link", "up")
-					s.OnIPChanged("Wireguard0", "10.0.0.2", true, true)
+					s.OnIPChanged("Wireguard0", "10.0.0.2")
 				}
 			}
 		}()

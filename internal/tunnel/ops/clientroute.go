@@ -20,17 +20,17 @@ import (
 // networking operations, not NDMS-managed ones, so the concrete
 // operator type (kernel amneziawg vs NDMS OpkgTun) is irrelevant at
 // this layer. The only per-operator variability is how `ip` is run:
-// OS5 uses a mockable ipRunFunc, OS4 uses exec.Run directly. Both plug
-// into the `run` field below.
+// both OS4 and OS5 give clientRouteOps a closure over their own ipRun
+// field — mockable in tests, defaulting to exec.Run in production.
 type clientRouteOps struct {
 	run     ipRunFunc
 	logWarn func(action, target, msg string)
 }
 
 // newClientRouteOps constructs a clientRouteOps with the given `ip`
-// runner and warn-logger. Both must be non-nil — callers pass the
-// operator's ipRun field (OS5) or a thin adapter over exec.Run (OS4),
-// and the operator's logWarn method value.
+// runner and warn-logger. Both must be non-nil — callers pass a closure
+// over the operator's own ipRun field (OS4 and OS5 alike) and the
+// operator's logWarn method value.
 func newClientRouteOps(run ipRunFunc, logWarn func(string, string, string)) *clientRouteOps {
 	return &clientRouteOps{run: run, logWarn: logWarn}
 }

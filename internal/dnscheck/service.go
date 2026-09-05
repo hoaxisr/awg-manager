@@ -84,6 +84,10 @@ func NewService(
 	}
 }
 
+// firstIPv4 — шов над чтением адреса интерфейса: тесты подменяют, прод зовёт
+// netif.FirstIPv4.
+var firstIPv4 = netif.FirstIPv4
+
 // EnsureIPHost creates a permanent ip host entry for the probe domain.
 // Called once at startup. The entry maps awgm-dnscheck.test to the router's
 // br0 IP so clients can verify their DNS goes through the router.
@@ -93,7 +97,7 @@ func NewService(
 // 'Core::Configurator: not found: "ip/host/awgm-dnscheck.test"' because
 // it resolved the leaf path before creating.
 func (s *Service) EnsureIPHost(ctx context.Context) {
-	routerIP := netif.FirstIPv4("br0")
+	routerIP := firstIPv4("br0")
 	if routerIP == "" {
 		s.appLog.Warn("ensure-ip-host", probeDomain, "br0 has no IPv4, skipping")
 		return

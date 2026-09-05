@@ -1,6 +1,7 @@
 package singbox
 
 import (
+	"context"
 	"sync"
 	"testing"
 
@@ -71,4 +72,21 @@ func TestWatchdog_PublishIfFlipped_NilPublisherSafe(t *testing.T) {
 	w.publishIfFlipped(true)
 	w.publishIfFlipped(false)
 	w.publishIfFlipped(true)
+}
+
+// Единственный авто-рестарт упавшего sing-box живёт в tick → Reconcile; до сих пор
+// пиновался только publishIfFlipped, и `w.op.Reconcile(ctx)` → nil был зелёным.
+func TestWatchdog_Tick_ReconcilesWhenProcessDown(t *testing.T) {
+	op := newTestOperator(t, nil)
+	op.activeWorkFn = func() bool { return true } // иначе Reconcile вышел бы рано — туннелей в конфиге нет
+	waitStarts, _ := seedStartSeam(op)
+
+	w := NewWatchdog(op, nil, nil)
+	w.swept.Store(true) // орфан-свип ходит по /proc — не наш предмет и не хост-тест
+
+	w.tick(context.Background())
+
+	if *waitStarts != 1 {
+		t.Fatalf("startAndWait через Reconcile = %d, want 1: watchdog не поднял упавший sing-box", *waitStarts)
+	}
 }

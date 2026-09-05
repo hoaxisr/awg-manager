@@ -159,9 +159,13 @@ func (r *recStaticRoutes) RemoveStaticRoute(_ context.Context, route StaticRoute
 
 type recIndices struct {
 	live map[int]bool
+	err  error
 }
 
 func (r *recIndices) LiveOpkgTunIndices(context.Context) (map[int]bool, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
 	return r.live, nil
 }
 
@@ -184,6 +188,7 @@ type fakeIPEnableHarness struct {
 func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	t.Helper()
 	svc, dir := newOrchedTestService(t)
+	stubLinkAbsent(t)
 
 	// RoutingMode=fakeip-tun in settings.
 	store := svc.deps.Settings
@@ -222,6 +227,8 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	// fakeip readiness probes → ready; flush records into the log.
 	stubTunReadyProbe(t, func(string) bool { return true })
 	stubFakeIPDNSProbe(t, func(context.Context, string, netip.Prefix) bool { return true })
+	// Pool-route presence read is host-only (/proc/net/route); default absent.
+	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return false })
 	old := fakeIPAddrFlush
 	fakeIPAddrFlush = func(_ context.Context, iface string) error {
 		log.add("Flush:" + iface)
@@ -1044,6 +1051,15 @@ func provisionForDisable(t *testing.T, h *fakeIPEnableHarness) {
 	h.log.calls = nil
 }
 
+// stubLinkAbsent — умолчание обвязок: ТОЛЬКО шов присутствия netdev, без
+// подмены удаления. Без него `ip link show dev opkgtunN` уходит на ХОСТ.
+func stubLinkAbsent(t *testing.T) {
+	t.Helper()
+	old := fakeIPLinkPresent
+	fakeIPLinkPresent = func(context.Context, string) bool { return false }
+	t.Cleanup(func() { fakeIPLinkPresent = old })
+}
+
 // stubOrphanNetdev overrides the orphan-netdev seams (PE-E). present controls
 // whether the kernel netdev is reported as lingering after DeleteOpkgTun; the
 // returned getter reports how many times fakeIPLinkDelete was called.
@@ -1742,7 +1758,7 @@ func TestEnableFakeIPTun_RefreshesAWGOutbounds(t *testing.T) {
 func TestEnableFakeIPTun_RollbackOnSlotRouterFlipFailure(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 
-	orch := orchestrator.New(h.dir, nil)
+	orch := orchestrator.NewWithAppliedPath(h.dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Register(orchestrator.SlotMeta{
 		Slot:     orchestrator.SlotFakeIP,
 		Filename: "21-fakeip.json",

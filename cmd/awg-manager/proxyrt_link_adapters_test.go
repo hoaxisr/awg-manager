@@ -738,17 +738,9 @@ func (f *fakeNATAccess) ApplyLANSegmentsToInterface(_ context.Context, iface, ad
 	return nil
 }
 
-type fakePermit struct{ ifaces []string }
-
-func (f *fakePermit) SetPermitAllACL(_ context.Context, name string) error {
-	f.ifaces = append(f.ifaces, name)
-	return nil
-}
-
 func TestProxyAccessApplierPassesArgsAndWAN(t *testing.T) {
 	svc := &fakeNATAccess{wans: []string{"ISP2", "ISP3"}}
-	permit := &fakePermit{}
-	a := proxyAccessApplier{svc: svc, ifaces: permit}
+	a := proxyAccessApplier{svc: svc}
 
 	wans, err := a.ApplyNATModeToInterface(context.Background(), "OpkgTun17", "internet-only", []string{"ISP1"})
 	if err != nil {
@@ -776,13 +768,6 @@ func TestProxyAccessApplierPassesArgsAndWAN(t *testing.T) {
 	}
 	if len(svc.lan) != 1 || svc.lan[0] != "OpkgTun17|10.66.0.1|255.255.0.0|Home" {
 		t.Fatalf("аргументы LAN: %v", svc.lan)
-	}
-
-	if err := a.EnsureInterfaceFirewallPermit(context.Background(), "OpkgTun17"); err != nil {
-		t.Fatal(err)
-	}
-	if len(permit.ifaces) != 1 || permit.ifaces[0] != "OpkgTun17" {
-		t.Fatalf("аргументы permit: %v", permit.ifaces)
 	}
 }
 

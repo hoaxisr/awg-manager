@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -537,4 +538,53 @@ func TestOperator_ConfigDeclaresClashAPI(t *testing.T) {
 			t.Fatalf("want true (conservative) on merge/parse error")
 		}
 	})
+}
+
+// Ручной Stop закрывает эпизод падений. Раньше тест звал restartBackoff.Reset()
+// руками «как Control» — симуляция; Reset внутри Control не пиновался.
+func TestOperator_Control_ResetsRestartBackoff(t *testing.T) {
+	op := newTestOperator(t, func(bool) error { return nil })
+	seedStartSeam(op)
+	ctx := context.Background()
+	for i := 0; i < restartFreeBudget+1; i++ {
+		op.autoRestartIfCrashed(ctx, false)
+	}
+	if op.restartBackoff.SuppressedUntil(time.Now()).IsZero() {
+		t.Fatal("фикстура: бюджет исчерпан, пауза обязана быть активна")
+	}
+
+	if err := op.Control(ctx, "stop"); err != nil {
+		t.Fatalf("Control stop: %v", err)
+	}
+	if until := op.restartBackoff.SuppressedUntil(time.Now()); !until.IsZero() {
+		t.Fatalf("после ручного Stop пауза авто-рестарта обязана сняться, until=%v", until)
+	}
+
+	// Control("start") при уже работающем процессе: Reset идёт ДО раннего выхода
+	// «already running» — без fork/exec sing-box (стартовый путь не трогается;
+	// install-гейт форкает только fakeBinary из TempDir). Работающий процесс
+	// изображаем своим pid; matchBinaryFn не выставляется — в newTestOperator
+	// Process.binary пуст, и matchesBinary принимает любой pid.
+	//
+	// Control("stop") взвёл manuallyStopped, а autoRestartIfCrashed при нём
+	// выходит первой же строкой и бюджет не жжёт — снимаем флаг, иначе вторая
+	// половина теста проверяла бы уже снятую паузу.
+	if err := op.setManualStop(false); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < restartFreeBudget+1; i++ {
+		op.autoRestartIfCrashed(ctx, false)
+	}
+	if op.restartBackoff.SuppressedUntil(time.Now()).IsZero() {
+		t.Fatal("фикстура: бюджет исчерпан повторно, пауза обязана быть активна")
+	}
+	if err := os.WriteFile(op.pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := op.Control(ctx, "start"); err != nil {
+		t.Fatalf("Control start: %v", err)
+	}
+	if until := op.restartBackoff.SuppressedUntil(time.Now()); !until.IsZero() {
+		t.Fatalf("после ручного Start пауза авто-рестарта обязана сняться, until=%v", until)
+	}
 }

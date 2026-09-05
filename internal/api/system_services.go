@@ -64,11 +64,12 @@ func (h *SystemToolsHandler) ServicesAction(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	out, err := h.services.RunAction(req.Script, req.Action)
-	h.emitEvent(req.Action, req.Script, out)
 	if err != nil {
+		h.emitFailure(req.Action, req.Script, err.Error())
 		response.Success(w, SystemServiceActionData{Output: out, OK: false, Error: err.Error()})
 		return
 	}
+	h.emitEvent(req.Action, req.Script, out)
 	response.Success(w, SystemServiceActionData{Output: out, OK: true})
 }
 

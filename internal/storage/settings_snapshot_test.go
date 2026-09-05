@@ -54,3 +54,68 @@ func TestSnapshot_IndependentCopy(t *testing.T) {
 		t.Fatal("снапшот разделяет map'ы с кэшем")
 	}
 }
+
+// RT19: узкий мутатор публикует НОВУЮ запись, а живую не трогает.
+//
+// Это и есть настоящая защита от «concurrent map read and map write», из-за
+// которой в api появились Snapshot-вызовы: раз розданный указатель неизменен,
+// маршалить его безопасно. Пин детерминированный — не зависит от того, поймал
+// ли race-детектор окно: мутация «писать в живую map на месте» делает его
+// красным и без `-race`.
+//
+// Тесты `internal/api/settings_race_test.go` (снесённые вместе с переносом
+// инварианта сюда) эту защиту уже не пиновали ничем: подмена `Snapshot()` на `Get()` в handler'е
+// проходила зелёной даже под `-race` — гонки там больше нет по построению.
+func TestSetServerPeerSecret_PublishesCopyNotInPlace(t *testing.T) {
+	s := newLoadedStore(t)
+	if err := s.SetServerPeerSecret("Wireguard0", "pk1", ServerPeerSecret{PrivateKey: "a"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	handed, err := s.Get() // ровно то, что держит handler, пока маршалит ответ
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	before := len(handed.ServerPeerSecrets["Wireguard0"])
+
+	if err := s.SetServerPeerSecret("Wireguard0", "pk2", ServerPeerSecret{PrivateKey: "b"}); err != nil {
+		t.Fatalf("вторая запись: %v", err)
+	}
+	if got := len(handed.ServerPeerSecrets["Wireguard0"]); got != before {
+		t.Fatalf("розданный кэш изменили на месте: было %d записей, стало %d", before, got)
+	}
+	fresh, err := s.Get()
+	if err != nil {
+		t.Fatalf("Get после записи: %v", err)
+	}
+	if _, ok := fresh.ServerPeerSecrets["Wireguard0"]["pk2"]; !ok {
+		t.Fatal("новая запись не опубликована: свежий Get её не видит")
+	}
+}
+
+// Вторая половина того же инварианта: узкий мутатор ApiKey тоже публикует
+// НОВУЮ запись, а не правит розданную. Найдено ревью: перенос инварианта был
+// сделан только для ServerPeerSecret, и мутация «писать ApiKey на месте»
+// проходила зелёной во всём наборе, включая `-race`.
+func TestSetApiKey_PublishesCopyNotInPlace(t *testing.T) {
+	s := newLoadedStore(t)
+	if err := s.SetApiKey("первый"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	handed, err := s.Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if err := s.SetApiKey("второй"); err != nil {
+		t.Fatalf("вторая запись: %v", err)
+	}
+	if handed.ApiKey != "первый" {
+		t.Fatalf("розданный кэш изменили на месте: ApiKey стал %q", handed.ApiKey)
+	}
+	fresh, err := s.Get()
+	if err != nil {
+		t.Fatalf("Get после записи: %v", err)
+	}
+	if fresh.ApiKey != "второй" {
+		t.Fatalf("новый ключ не опубликован: %q", fresh.ApiKey)
+	}
+}

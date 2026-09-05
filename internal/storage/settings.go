@@ -78,17 +78,21 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		// Quarantine it and fall back to the backup kept by saveUnlocked so
 		// a single bad file does not leave the daemon permanently down.
 		quarantine := s.path + ".corrupt"
-		_ = os.Rename(s.path, quarantine)
+		renamed := os.Rename(s.path, quarantine) == nil
+		where := "quarantined to " + quarantine
+		if !renamed {
+			where = "corrupt file left in place (rename to " + quarantine + " failed)"
+		}
 		bak, bakErr := os.ReadFile(s.path + ".bak")
 		if bakErr != nil {
-			return nil, fmt.Errorf("parse %s (quarantined to %s, no usable backup): %w", s.path, quarantine, err)
+			return nil, fmt.Errorf("parse %s (%s, no usable backup): %w", s.path, where, err)
 		}
 		settings = Settings{}
 		if bakErr := json.Unmarshal(bak, &settings); bakErr != nil {
-			return nil, fmt.Errorf("parse %s (quarantined to %s, backup also corrupt: %v): %w", s.path, quarantine, bakErr, err)
+			return nil, fmt.Errorf("parse %s (%s, backup also corrupt: %v): %w", s.path, where, bakErr, err)
 		}
-		fmt.Fprintf(os.Stderr, "settings: %s was corrupt (%v), quarantined to %s, restored from backup\n", s.path, err, quarantine)
-		recordNotice("backup-restore", s.path, fmt.Sprintf("settings file corrupt (%v), quarantined to %s, RESTORED FROM BACKUP — recent settings changes may be lost", err, quarantine))
+		fmt.Fprintf(os.Stderr, "settings: %s was corrupt (%v), %s, restored from backup\n", s.path, err, where)
+		recordNotice("backup-restore", s.path, fmt.Sprintf("settings file corrupt (%v), %s, RESTORED FROM BACKUP — recent settings changes may be lost", err, where))
 		restoredFromBackup = true
 	}
 

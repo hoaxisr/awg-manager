@@ -24,6 +24,7 @@ func newReconcileInstalledService(t *testing.T, sb *fakeSingbox) *ServiceImpl {
 	// circuit on IsRunning before the probe; the up-but-unbound case overrides
 	// this stub to return false.
 	stubListeningProbe(t, func() bool { return true })
+	stubNoLANBridges(t)
 	ipt := newStubIPTables(func(_ context.Context, _ string) error { return nil })
 	return &ServiceImpl{
 		deps: Deps{
@@ -729,6 +730,13 @@ func stubLANBridges(t *testing.T, fn func(context.Context, string) ([]LANBridgeD
 	old := discoverLANBridges
 	discoverLANBridges = fn
 	t.Cleanup(func() { discoverLANBridges = old })
+}
+
+// stubNoLANBridges — умолчание обвязок: «хотспот-мостов нет». Без него сборка
+// спека читает дамп iptables ХОСТА, и результат теста зависит от машины.
+func stubNoLANBridges(t *testing.T) {
+	t.Helper()
+	stubLANBridges(t, func(context.Context, string) ([]LANBridgeDNSRedir, error) { return nil, nil })
 }
 
 // КРАСНЫЙ: обнаруженный LAN-мост обязан доехать до правил. Направление

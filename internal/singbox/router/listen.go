@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -113,6 +114,9 @@ const fakeIPDNSConfirmTimeout = 3 * time.Second
 // Overridable in tests.
 var tunReadyProbe = tunInterfaceReady
 
+// sysClassNetDir — корень sysfs сетевых устройств; шов для тестов tunInterfaceReady.
+var sysClassNetDir = "/sys/class/net"
+
 // tunInterfaceReady reports whether the tun iface has carrier (sing-box
 // attached). Reads /sys/class/net/<iface>/carrier; a read error or "0" → not
 // ready. A bare tun device with no attached endpoint reports carrier 0 (or the
@@ -122,7 +126,7 @@ func tunInterfaceReady(iface string) bool {
 	if iface == "" {
 		return false
 	}
-	data, err := os.ReadFile("/sys/class/net/" + iface + "/carrier")
+	data, err := os.ReadFile(filepath.Join(sysClassNetDir, iface, "carrier"))
 	if err != nil {
 		return false
 	}

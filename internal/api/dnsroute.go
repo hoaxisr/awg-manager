@@ -449,6 +449,7 @@ func (h *DNSRouteHandler) BulkBackend(w http.ResponseWriter, r *http.Request) {
 	for _, id := range req.ListIDs {
 		list, err := h.svc.Get(r.Context(), id)
 		if err != nil {
+			h.log.Warn("bulk-backend", id, "Failed to load list: "+err.Error())
 			continue
 		}
 		list.Backend = req.Backend
@@ -458,9 +459,11 @@ func (h *DNSRouteHandler) BulkBackend(w http.ResponseWriter, r *http.Request) {
 		}
 		changed++
 	}
-	if changed > 0 {
-		h.log.Info("bulk-backend", req.Backend, fmt.Sprintf("bulk backend change: %d lists → %s", changed, req.Backend))
+	if changed == 0 {
+		response.Error(w, "no lists were changed", "BULK_BACKEND_FAILED")
+		return
 	}
+	h.log.Info("bulk-backend", req.Backend, fmt.Sprintf("bulk backend change: %d lists → %s", changed, req.Backend))
 
 	fresh, err := h.svc.List(r.Context())
 	if err != nil {

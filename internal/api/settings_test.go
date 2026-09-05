@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -592,5 +593,65 @@ func TestUpdate_MutatorDerivationFailureReportsFieldCode(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "INVALID_USAGE_LEVEL") {
 		t.Fatalf("ожидался код поля INVALID_USAGE_LEVEL, body=%s", rec.Body.String())
+	}
+}
+
+func TestSettingsHandler_UpdatePublishesInvalidation(t *testing.T) {
+	h, _ := newSettingsHandlerForTest(t)
+	p := newBusProbe(t)
+	h.SetEventBus(p.bus())
+	rr := perform(h.Update, http.MethodPost, "/settings", `{"usageLevel":"expert"}`)
+	if rr.Code != 200 {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if got, want := p.invalidated(), []string{"settings/updated"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("публикации = %v, want %v", got, want)
+	}
+	// Отказ разбора — публикаций нет.
+	p2 := newBusProbe(t)
+	h2, _ := newSettingsHandlerForTest(t)
+	h2.SetEventBus(p2.bus())
+	if rr := perform(h2.Update, http.MethodPost, "/settings", `{`); rr.Code == 200 {
+		t.Fatal("битый JSON обязан отвергаться")
+	}
+	if got := p2.invalidated(); len(got) != 0 {
+		t.Fatalf("на отказе публикаций быть не должно: %v", got)
+	}
+}
+
+// Ротация: ключ в теле ответа = ключ в сторе ≠ прежнему; UUID v4; публикация api-key-rotated.
+func TestSettingsHandler_RegenerateApiKey_RotatesAndPersists(t *testing.T) {
+	h, store := newSettingsHandlerForTest(t)
+	if err := store.SetApiKey("old-key-0000"); err != nil {
+		t.Fatal(err)
+	}
+	p := newBusProbe(t)
+	h.SetEventBus(p.bus())
+
+	rr := perform(h.RegenerateApiKey, http.MethodPost, "/settings/regenerate-api-key", "")
+	if rr.Code != 200 {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	data, _ := decodeJSONBody(t, rr)["data"].(map[string]any)
+	got, _ := data["apiKey"].(string)
+	snap, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == "" || got == "old-key-0000" || got != snap.ApiKey {
+		t.Fatalf("ключ: тело=%q стор=%q (старый old-key-0000)", got, snap.ApiKey)
+	}
+	if len(got) != 36 || got[14] != '4' {
+		t.Fatalf("ожидался UUID v4, got %q", got)
+	}
+	if got, want := p.invalidated(), []string{"settings/api-key-rotated"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("публикации = %v, want %v", got, want)
+	}
+	rr = perform(h.RegenerateApiKey, http.MethodGet, "/settings/regenerate-api-key", "")
+	if rr.Code != 405 {
+		t.Fatalf("GET → 405, got %d", rr.Code)
+	}
+	if got := p.invalidated(); len(got) != 0 {
+		t.Fatalf("на 405 публикаций быть не должно: %v", got)
 	}
 }

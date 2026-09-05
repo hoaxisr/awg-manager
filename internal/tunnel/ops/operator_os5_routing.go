@@ -133,7 +133,7 @@ func (o *OperatorOS5Impl) CleanupEndpointRoute(ctx context.Context, tunnelID str
 	}
 
 	// Remove kernel route + NDMS route (NDMS caches kernel routes but doesn't track their removal)
-	o.delKernelHostRoute(ctx, endpointIP)
+	_ = o.delKernelHostRoute(ctx, endpointIP)
 	_ = o.commands.Routes.RemoveHostRoute(ctx, endpointIP)
 	o.logInfo("cleanup_route", tunnelID, "Removed kernel endpoint route to "+endpointIP)
 	o.appLog.Info("stop", tunnelID, "Маршрут до endpoint "+endpointIP+" удалён")
@@ -228,7 +228,7 @@ func isIPv6LinkLocal(ip string) bool {
 }
 
 // delKernelHostRoute removes a host route.
-func (o *OperatorOS5Impl) delKernelHostRoute(ctx context.Context, endpointIP string) {
+func (o *OperatorOS5Impl) delKernelHostRoute(ctx context.Context, endpointIP string) error {
 	prefix := "/32"
 	family := []string{}
 	if isIPv6(endpointIP) {
@@ -237,7 +237,8 @@ func (o *OperatorOS5Impl) delKernelHostRoute(ctx context.Context, endpointIP str
 	}
 	args := append([]string{}, family...)
 	args = append(args, "route", "del", endpointIP+prefix)
-	o.ipRun(ctx, "/opt/sbin/ip", args...)
+	_, err := o.ipRun(ctx, "/opt/sbin/ip", args...)
+	return err
 }
 
 // resolveKernelRouteTarget determines how the kernel currently routes to dstIP.

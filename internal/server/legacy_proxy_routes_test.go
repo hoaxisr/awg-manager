@@ -11,6 +11,9 @@ import (
 // internal/wdtt и internal/freeturn, которые сносит следующая задача: фронт на
 // неё уже не ходит, а конфиги старого мира после посева — производные, и
 // запись через них разошлась бы с proxy-instances.json.
+//
+// Гард здесь подставлен identity: тест про регистрацию секции, а не про
+// авторизацию. Гард проверяет route_guard_test.go.
 func TestLegacyProxyRoutesAreGone(t *testing.T) {
 	mux := http.NewServeMux()
 	s := &Server{}
@@ -77,7 +80,8 @@ func TestLegacyProxyRoutesAreGone(t *testing.T) {
 }
 
 // Новая поверхность регистрируется целиком — иначе снятие старой оставило бы
-// фронт без входа вовсе.
+// фронт без входа вовсе. Гард здесь подставлен identity — его проверяет
+// route_guard_test.go.
 func TestProxyRtSurfaceRegisteredWhole(t *testing.T) {
 	mux := http.NewServeMux()
 	stub := func(http.ResponseWriter, *http.Request) {}

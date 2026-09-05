@@ -68,7 +68,6 @@ type app struct {
 	dataDir     string
 	forceBoot   bool
 	pprofListen string
-	pprofOnMain bool
 	slowReqMS   int
 
 	// process state

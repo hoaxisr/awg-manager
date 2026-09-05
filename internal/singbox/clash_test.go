@@ -119,3 +119,75 @@ func TestClashClient_DelayTestHonorsContext(t *testing.T) {
 		t.Fatal("проба не оборвалась по отмене контекста")
 	}
 }
+
+func clashServer(t *testing.T, h http.HandlerFunc) *ClashClient {
+	t.Helper()
+	ts := httptest.NewServer(h)
+	t.Cleanup(ts.Close)
+	return NewClashClient(strings.TrimPrefix(ts.URL, "http://"))
+}
+
+func TestClashClient_IsHealthy(t *testing.T) {
+	ok := clashServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/version" {
+			t.Errorf("path: %s", r.URL.Path)
+		}
+		w.WriteHeader(200)
+	})
+	if !ok.IsHealthy() {
+		t.Error("200 на /version → healthy")
+	}
+	bad := clashServer(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) })
+	if bad.IsHealthy() {
+		t.Error("500 → not healthy")
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) }))
+	addr := strings.TrimPrefix(ts.URL, "http://")
+	ts.Close()
+	down := NewClashClient(addr)
+	if down.IsHealthy() {
+		t.Error("недоступный порт → not healthy")
+	}
+}
+
+func TestClashClient_SetSelector(t *testing.T) {
+	var gotMethod, gotPath, gotBody, gotCT string
+	c := clashServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// EscapedPath: пин экранирования тега — URL.Path у net/http всегда декодирован.
+		gotMethod, gotPath, gotCT = r.Method, r.URL.EscapedPath(), r.Header.Get("Content-Type")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(204)
+	})
+	if err := c.SetSelector("sel 1", "member-2"); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != "PUT" || gotPath != "/proxies/sel%201" || gotBody != `{"name":"member-2"}` || gotCT != "application/json" {
+		t.Fatalf("PUT %s %s %q ct=%q", gotMethod, gotPath, gotBody, gotCT)
+	}
+	bad := clashServer(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) })
+	if err := bad.SetSelector("sel-1", "m"); err == nil || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("500 → ошибка с кодом, got %v", err)
+	}
+}
+
+func TestClashClient_SelectorActive(t *testing.T) {
+	c := clashServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/proxies/sel-1" {
+			t.Errorf("%s %s", r.Method, r.URL.Path)
+		}
+		w.Write([]byte(`{"name":"sel-1","type":"Selector","now":"member-2"}`))
+	})
+	now, err := c.SelectorActive("sel-1")
+	if err != nil || now != "member-2" {
+		t.Fatalf("now=%q err=%v", now, err)
+	}
+	absent := clashServer(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(404) })
+	if now, err := absent.SelectorActive("sel-9"); err != nil || now != "" {
+		t.Fatalf("404 → (\"\", nil), got %q %v", now, err)
+	}
+	bad := clashServer(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(503) })
+	if _, err := bad.SelectorActive("sel-1"); err == nil {
+		t.Fatal("503 → ошибка")
+	}
+}

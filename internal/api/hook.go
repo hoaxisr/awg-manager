@@ -156,9 +156,10 @@ func (h *HookHandler) HandleNDMS(w http.ResponseWriter, r *http.Request) {
 		Layer:      r.PostForm.Get("layer"),
 		Level:      r.PostForm.Get("level"),
 		Address:    r.PostForm.Get("address"),
-		Up:         r.PostForm.Get("up") == "1" || r.PostForm.Get("up") == "true",
-		Connected:  r.PostForm.Get("connected") == "1" || r.PostForm.Get("connected") == "true",
 	}
+	// up/connected форвардер тоже присылает, и мы их НЕ разбираем: состояние
+	// линка берётся из iflayerchanged, а этим полям доверять нельзя
+	// (InterfaceStore.OnIPChanged). Лишние поля формы безвредны.
 
 	switch event.Type {
 	case events.EventIfLayerChanged, events.EventIfCreated,

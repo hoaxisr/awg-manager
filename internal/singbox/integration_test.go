@@ -205,7 +205,7 @@ func newIntegrationEnv(t *testing.T) *integrationEnv {
 	dir := t.TempDir()
 
 	proc := &integrationProc{running: true} // already running so ApplyStaging triggers Reload not Start
-	orch := orchestrator.New(dir, proc)
+	orch := orchestrator.NewWithAppliedPath(dir, proc, filepath.Join(t.TempDir(), "singbox-applied.json"))
 
 	if err := orch.Register(orchestrator.SlotMeta{
 		Slot:     orchestrator.SlotBase,

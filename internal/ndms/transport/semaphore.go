@@ -33,7 +33,12 @@ func (s *Semaphore) Acquire(ctx context.Context) error {
 // semAcquireBackstop bounds a deadline-less wait for an RCI slot. Callers
 // passing context.Background() (boot paths, background loops) must not queue
 // forever behind a wedged request.
-const semAcquireBackstop = 60 * time.Second
+//
+// Переменная, а не константа, ровно по одной причине: иначе страховку нельзя
+// проверить — тест не станет ждать минуту, и её снятие остаётся зелёным. Тот
+// же приём, что у путей хуков netfilter. Менять в проде некому: писатель
+// один — тест.
+var semAcquireBackstop = 60 * time.Second
 
 // acquireWithBackstop is Acquire with semAcquireBackstop applied ONLY when
 // ctx carries no deadline of its own — explicitly-set deadlines (shorter or

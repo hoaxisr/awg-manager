@@ -68,11 +68,9 @@ type Deps struct {
 	IfaceExists func(name string) bool
 	// KernelWAN — NDMS-имя WAN → kernel-имя (для internet-only MASQUERADE).
 	KernelWAN func(ctx context.Context, ndmsName string) (string, error)
-	// PolicyMark — fwmark политики для raw-половины (policy != none).
-	PolicyMark func(ctx context.Context, policy string) (string, error)
-	Access     AccessApplier
-	Ingress    IngressEnsurer
-	Now        func() time.Time
+	Access    AccessApplier
+	Ingress   IngressEnsurer
+	Now       func() time.Time
 }
 
 // Role — реализация proxyrt.Role для сервера. Ресурсы долгоживущие:
@@ -83,23 +81,24 @@ type Deps struct {
 type Role struct {
 	deps Deps
 
-	ifaceWG  *ndmsres.Iface
-	ifaceRaw *ndmsres.Iface
-	proc     *procres.Proc
-	tunWG    *procres.TunHandoff
-	tunRaw   *procres.TunHandoff
-	addrWG   *ndmsres.Address
-	adminWG  *ndmsres.AdminState
-	addrRaw  *ndmsres.Address
-	adminRaw *ndmsres.AdminState
-	exit     *ndmsres.PolicyExit
-	access   *NDMSAccess
-	nat      *netres.RuleSet
-	fwd      *netres.RuleSet
-	mss      *netres.MSSClamp
-	hook     *netres.Hook
-	ingress  *IngressRefs
-	input    *netres.InputPort
+	ifaceWG      *ndmsres.Iface
+	ifaceRaw     *ndmsres.Iface
+	proc         *procres.Proc
+	tunWG        *procres.TunHandoff
+	tunRaw       *procres.TunHandoff
+	addrWG       *ndmsres.Address
+	adminWG      *ndmsres.AdminState
+	addrRaw      *ndmsres.Address
+	adminRaw     *ndmsres.AdminState
+	exit         *ndmsres.PolicyExit
+	access       *NDMSAccess
+	permitAbsent *ndmsres.PermitAbsent
+	nat          *netres.RuleSet
+	fwd          *netres.RuleSet
+	mss          *netres.MSSClamp
+	hook         *netres.Hook
+	ingress      *IngressRefs
+	input        *netres.InputPort
 }
 
 func New(d Deps) (*Role, error) {
@@ -142,7 +141,17 @@ func New(d Deps) (*Role, error) {
 	r.adminRaw = ndmsres.NewAdminState(roles.Sub(roles.RAdminState, "raw"), d.Cmds, d.Query)
 	r.exit = ndmsres.NewPolicyExit(roles.RPolicyExit, d.Cmds, d.Query)
 	r.access = NewNDMSAccess(roles.RNdmsAccess, d.Access)
+	r.permitAbsent = ndmsres.NewPermitAbsent(roles.RPermitAbsent, d.Cmds, d.Query)
 	r.nat = netres.NewRuleSet(roles.RNatRules, d.IPT, nil)
+	// Маскарад — единственное наше помеченное правило, и ставится он не во
+	// всех режимах. Владение им принадлежит метке, а не текущему желаемому:
+	// без постоянной области усыновления правило, поставленное прошлым
+	// запуском демона в режиме full, переживало бы и none, и выключение
+	// инстанса — там помеченного желаемого нет вовсе.
+	// Область одна на метку, метка одна на роутер: второй инстанс сервера
+	// отбивает гейт PROXY_KIND_SINGLETON (api/proxy_instances.go), иначе
+	// выключенный сносил бы маскарад живого.
+	r.nat.AdoptMarked("nat", "POSTROUTING", netres.Comment)
 	r.fwd = netres.NewRuleSet(roles.RForwardRules, d.IPT, d.EnableForward)
 	r.mss = netres.NewMSSClamp(roles.RMssClamp, d.IPT)
 	r.hook = netres.NewHook(roles.RNetfilterHook, netres.HookPath, d.RunHook)
@@ -191,8 +200,22 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	r.exit.SetDesired(ndmsres.PolicyExitDesired{Name: c.NdmsIface,
 		SecurityLevel: "public", IPGlobal: true, PermitAllACL: true,
 		DefaultCandidacy: false}) // сервер — вход, кандидатуры нет
-	r.access.SetDesired(c.NdmsIface, c.NatMode, c.StaticNATList(), c.Policy,
+	r.access.SetDesired(c.NdmsIface, c.RawNdmsIface, c.NatMode, c.StaticNATList(), c.Policy,
 		wgGatewayAddr, wgGatewayMask, c.LanSegments, enabled)
+	// permit-all на половинах сервера быть не должно: стенд 2026-09-02 —
+	// он обнуляет выбор LAN-сегментов. Исключение — WG-половина при
+	// ExposeToPolicies: там разрешение ставит policy_exit по замыслу.
+	//
+	// Гейт исключения ЗЕРКАЛИТ гейт объявления policy_exit ниже
+	// (`enabled && c.ExposeToPolicies`), а не только тумблер: у выключенного
+	// инстанса policy_exit в ведомости нет вовсе, и без зеркала остаток на
+	// WG-половине не мигрировал бы никогда. При включении permit вернёт
+	// policy_exit — снятие у выключенного ничего не ломает.
+	absent := []string{c.RawNdmsIface}
+	if !(enabled && c.ExposeToPolicies) {
+		absent = append(absent, c.NdmsIface)
+	}
+	r.permitAbsent.SetDesired(absent)
 
 	if enabled {
 		r.nat.SetDesired(r.natGroups(c))
@@ -223,7 +246,17 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	if enabled && c.ExposeToPolicies {
 		res = append(res, r.exit)
 	}
-	return append(res, r.access, r.nat, r.fwd, r.mss, r.hook, r.ingress, r.input)
+	res = append(res, r.access, r.nat, r.fwd, r.mss, r.hook, r.ingress, r.input)
+	// permit_absent — В ХВОСТЕ: миграционный ресурс не гейтит правила. Первый
+	// unknown/failed в цепочке блокирует всё ниже (proxyrt/plan.go:11-15), а
+	// Observe здесь тянет running-config роутера — выше по списку
+	// недоступность RCI или упорный отказ снятия ACL оставляли бы
+	// NAT/forward/hook/порты вне управления. Предпосылкой он ни для кого не
+	// является. Плата: отказ выше по цепочке откладывает миграцию до
+	// следующего прохода; отказ самой миграции (RCI running-config недоступен
+	// / ACL не снимается) — статус инстанса waiting/failed, а не правила
+	// firewall.
+	return append(res, r.permitAbsent)
 }
 
 // addrDesired: адрес ставится только когда kernel-интерфейс от процесса жив —
@@ -240,32 +273,49 @@ func (r *Role) addrDesired(enabled bool, ndmsName, kernel, addr, mask string, mt
 	}}
 }
 
-// natGroups — MASQUERADE + DNS-перехват + policy-mark; провайдер, потому что
-// internet-only требует разрешить kernel-имя WAN в момент наблюдения.
+// natGroups — MASQUERADE + DNS-перехват (без policy-mark); провайдер, потому
+// что internet-only требует разрешить kernel-имя WAN в момент наблюдения.
+//
+// ИНВАРИАНТ: режим NAT управляет ровно одним — подменой адреса источника.
+// Пользователь выбирает, как пакеты абонента выглядят на дальней стороне, а
+// не «насколько сервер работает». Поэтому перехват :53, метка политики,
+// FORWARD, MSS и netfilter-хук от режима не зависят: ни одно из них не про
+// адрес источника. none — «без подмены», и режим осмыслен сам по себе: адрес
+// абонента виден в LAN, вход sing-box работает (перехват в PREROUTING идёт до
+// всякого NAT).
+//
+// Прежде здесь стоял ранний return на весь провайдер, и вместе с маскарадом у
+// none пропадали перехват :53, метка raw-половины и хук — то есть режим
+// молча значил «сервер наполовину выключен». Решение владельца 2026-09-02.
+//
+// Гейт по режиму стоит ЗДЕСЬ, хотя MasqGroups с некоторых пор отвергает none и
+// сам: дублирование намеренное — вызывающий не обязан знать, насколько
+// аккуратен построитель, а построитель не обязан догадываться о намерении
+// вызывающего.
 func (r *Role) natGroups(c roles.WdttServerConfig) netres.GroupProvider {
 	return func(ctx context.Context) ([]netres.Group, error) {
-		if c.NatMode == "none" {
-			return nil, nil
-		}
-		wanDev := ""
-		if c.NatMode == "internet-only" {
-			wans := c.StaticNATList()
-			if len(wans) == 0 {
-				return nil, fmt.Errorf("internet-only: WAN не выбран (natStaticWANs пуст)")
+		var groups []netres.Group
+		if c.NatMode != "none" {
+			wanDev := ""
+			if c.NatMode == "internet-only" {
+				wans := c.StaticNATList()
+				if len(wans) == 0 {
+					return nil, fmt.Errorf("internet-only: WAN не выбран (natStaticWANs пуст)")
+				}
+				// Своя MASQUERADE-цепочка на raw-половине умеет ровно один
+				// выходной интерфейс, поэтому здесь берётся первый. Список
+				// целиком нужен NDMS static-NAT (SetDesired выше): там правило
+				// ставится на КАЖДЫЙ ip global. Расхождение осознанное —
+				// MasqGroups под несколько выходов не рассчитан.
+				dev, err := r.deps.KernelWAN(ctx, wans[0])
+				if err != nil || dev == "" {
+					return nil, fmt.Errorf("internet-only: WAN %q не разрешён: %v", wans[0], err)
+				}
+				wanDev = dev
 			}
-			// Своя MASQUERADE-цепочка на raw-половине умеет ровно один
-			// выходной интерфейс, поэтому здесь берётся первый. Список целиком
-			// нужен NDMS static-NAT (SetDesired выше): там правило ставится на
-			// КАЖДЫЙ ip global. Расхождение осознанное — MasqGroups под
-			// несколько выходов не рассчитан.
-			dev, err := r.deps.KernelWAN(ctx, wans[0])
-			if err != nil || dev == "" {
-				return nil, fmt.Errorf("internet-only: WAN %q не разрешён: %v", wans[0], err)
-			}
-			wanDev = dev
+			groups = netres.MasqGroups(
+				[]netres.MasqPlan{{Iface: c.RawIface, CIDR: rawPeerCIDR}}, c.NatMode, wanDev)
 		}
-		groups := netres.MasqGroups(
-			[]netres.MasqPlan{{Iface: c.RawIface, CIDR: rawPeerCIDR}}, c.NatMode, wanDev)
 		// DNS-перехват — на ОБЕИХ половинах и независимо от режима связи:
 		// половины сервера работают одновременно (argv отдаёт и -listen, и
 		// -listen-raw), абонент вправе прийти по любой, и режим — лишь выбор
@@ -281,20 +331,19 @@ func (r *Role) natGroups(c roles.WdttServerConfig) netres.GroupProvider {
 			{Iface: c.RawIface, Gateway: rawGatewayAddr},
 			{Iface: c.WgIface, Gateway: wgGatewayAddr},
 		})...)
-		if c.Policy != "" && c.Policy != "none" {
-			mark, err := r.deps.PolicyMark(ctx, c.Policy)
-			if err != nil {
-				return nil, fmt.Errorf("policy mark %s: %w", c.Policy, err)
-			}
-			if mark != "" {
-				groups = append(groups, netres.PolicyMarkGroup(c.RawIface, mark))
-			}
-		}
+		// Метки политики здесь нет намеренно: принадлежность обеих половин
+		// политике объявляется NDMS (ресурс ndms_access), а он на привязку
+		// ставит ту же пару MARK + CONNMARK --save-mark на `-i opkgtunN`
+		// (проверено на стенде 2026-09-02). Своя рукописная пара была вторым
+		// механизмом для одного замысла — и проигрывала: наша вставка идёт
+		// `-I PREROUTING 1`, а цепочка NDMS подключена ниже и перезаписывала
+		// метку.
 		return groups, nil
 	}
 }
 
-// hookGroups — хук несёт ТЕ ЖЕ правила: FORWARD + NAT/DNS/mark.
+// hookGroups — хук несёт ТЕ ЖЕ правила: FORWARD + DNS (метку политики даёт
+// NDMS через ndms_access, см. access.go).
 func (r *Role) hookGroups(c roles.WdttServerConfig) netres.GroupProvider {
 	nat := r.natGroups(c)
 	return func(ctx context.Context) ([]netres.Group, error) {

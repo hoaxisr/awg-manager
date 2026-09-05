@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -25,12 +26,16 @@ func HasPostRestoreMarker(dataDir string) bool {
 }
 
 // ConsumePostRestoreMarker removes the marker if present and reports whether it existed.
+// A failed removal is reported on stderr but still counts as "existed": the next
+// start will cold-boot again, which is the safe direction.
 func ConsumePostRestoreMarker(dataDir string) bool {
 	path := postRestoreMarkerPath(dataDir)
 	if _, err := os.Stat(path); err != nil {
 		return false
 	}
-	_ = os.Remove(path)
+	if err := os.Remove(path); err != nil {
+		fmt.Fprintf(os.Stderr, "backup: post-restore marker %s not removed: %v (next start cold-boots again)\n", path, err)
+	}
 	return true
 }
 

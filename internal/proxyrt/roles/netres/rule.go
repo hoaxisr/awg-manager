@@ -147,47 +147,32 @@ func hookQuoteIfaces(line string) string {
 }
 
 // Group — группа правил с общим guard-интерфейсом.
-//
-// AllOrNone: пара CONNMARK+MARK ставится только целиком — довставка половины
-// при частичном состоянии инвертирует итоговый порядок в цепочке (F3,
-// PR #697, чинил a0066f9b). Порядок Rules в группе = итоговый порядок в
-// цепочке; вставка на позицию 1 идёт в ОБРАТНОМ порядке декларации.
 type Group struct {
-	Guard     string // имя интерфейса; пусто — без guard
-	AllOrNone bool
-	Rules     []Rule
+	Guard string // имя интерфейса; пусто — без guard
+	Rules []Rule
 }
 
 // present — все ли правила группы стоят.
-func (g Group) present(ctx context.Context, ipt IPT) (all bool, any bool) {
+func (g Group) present(ctx context.Context, ipt IPT) (all bool) {
 	all = true
 	for _, r := range g.Rules {
-		if ipt.Run(ctx, r.CheckArgs()...) == nil {
-			any = true
-		} else {
+		if ipt.Run(ctx, r.CheckArgs()...) != nil {
 			all = false
 		}
 	}
-	return all, any
+	return all
 }
 
 // ensure приводит группу.
 func (g Group) ensure(ctx context.Context, ipt IPT) error {
-	all, any := g.present(ctx, ipt)
-	if all {
+	if g.present(ctx, ipt) {
 		return nil
-	}
-	if g.AllOrNone && any {
-		// Пересборка целиком: частичная довставка инвертирует порядок.
-		for _, r := range g.Rules {
-			_ = ipt.Run(ctx, r.DeleteArgs()...)
-		}
 	}
 	// Вставка на позицию 1 — в обратном порядке декларации, чтобы итоговый
 	// порядок в цепочке совпал с порядком Rules.
 	for i := len(g.Rules) - 1; i >= 0; i-- {
 		r := g.Rules[i]
-		if !g.AllOrNone && ipt.Run(ctx, r.CheckArgs()...) == nil {
+		if ipt.Run(ctx, r.CheckArgs()...) == nil {
 			continue
 		}
 		if err := ipt.Run(ctx, r.InsertArgs()...); err != nil {

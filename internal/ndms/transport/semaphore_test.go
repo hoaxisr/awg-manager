@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -63,4 +64,63 @@ func TestSemaphore_AcquireRespectsContextCancel(t *testing.T) {
 		t.Errorf("Acquire ctx err: want DeadlineExceeded, got %v", err)
 	}
 	sem.Release()
+}
+
+// withBackstop подменяет страховку на время теста: с прод-значением 60 с
+// проверить её нечем.
+func withBackstop(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := semAcquireBackstop
+	semAcquireBackstop = d
+	t.Cleanup(func() { semAcquireBackstop = prev })
+}
+
+// Ожидание слота без собственного дедлайна ОБЯЗАНО кончиться: boot-пути и
+// фоновые циклы зовут транспорт с context.Background(), и без страховки они
+// встают в очередь за подвисшим запросом навсегда. Мутация «звать голый
+// Acquire» держала тест зелёным — ждать минуту он не станет, — поэтому
+// константа стала переменной.
+func TestSemaphore_BackstopBoundsDeadlinelessWait(t *testing.T) {
+	withBackstop(t, 30*time.Millisecond)
+	s := NewSemaphore(1)
+	if err := s.Acquire(context.Background()); err != nil { // занимаем единственный слот
+		t.Fatalf("seed acquire: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.acquireWithBackstop(context.Background()) }()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("ждали DeadlineExceeded от страховки, получили %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ожидание слота без дедлайна не кончилось: страховки нет")
+	}
+}
+
+// Свой дедлайн вызывающего уважается КАК ЕСТЬ — страховка его не подменяет.
+// Иначе запрос с осознанно длинным ожиданием обрывался бы на шестидесятой
+// секунде, а тест на этом ничего бы не заметил: обе формы отдают
+// DeadlineExceeded, различает их только момент.
+func TestSemaphore_BackstopDoesNotShortenOwnDeadline(t *testing.T) {
+	withBackstop(t, 20*time.Millisecond)
+	s := NewSemaphore(1)
+	if err := s.Acquire(context.Background()); err != nil {
+		t.Fatalf("seed acquire: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := s.acquireWithBackstop(ctx)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ждали DeadlineExceeded, получили %v", err)
+	}
+	if elapsed < 150*time.Millisecond {
+		t.Errorf("ожидание оборвано через %v — страховка подменила дедлайн вызывающего", elapsed)
+	}
 }

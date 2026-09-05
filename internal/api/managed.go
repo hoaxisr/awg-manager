@@ -823,6 +823,10 @@ func (h *ManagedServerHandler) SetEnabled(w http.ResponseWriter, r *http.Request
 	h.writeServersSnapshot(w, r)
 }
 
+// managedRestartDelay — пауза перед рестартом, чтобы HTTP-ответ успел уйти с роутера
+// до опускания интерфейса; шов для тестов.
+var managedRestartDelay = 300 * time.Millisecond
+
 // Restart accepts a restart/start command for one managed server.
 // POST /api/managed-servers/{id}/restart
 //
@@ -856,9 +860,15 @@ func (h *ManagedServerHandler) Restart(w http.ResponseWriter, r *http.Request, i
 		// Give the HTTP response a small window to leave the router before the
 		// interface is brought down. This keeps same-server restart from being
 		// cancelled by the browser connection disappearing mid-request.
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(managedRestartDelay)
 
 		if err := h.svc.RestartOrStart(ctx, id); err != nil {
+			if h.servers != nil {
+				h.servers.log.Warn("restart", id, "restart failed: "+err.Error())
+			}
+			// Карточка перерисуется свежим (не изменившимся) состоянием вместо
+			// вечного «перезапускается».
+			h.publishServerUpdated()
 			return
 		}
 

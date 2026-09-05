@@ -183,6 +183,40 @@ func TestAnonymize_PublicIPsInStructuredTunnelSettings(t *testing.T) {
 	}
 }
 
+// Endpoint сервера из .conf туннеля — публичный адрес пользователя-провайдера,
+// он обязан уйти под алиас ENDPOINT-N, ключ пира — под PUBKEY-N. Мутант
+// «registerEndpoint не регистрирует» проходил: тесты проверяли публичные IP в
+// DNS/ping/route, а поле Endpoint конфига — нет.
+func TestAnonymize_TunnelEndpointAndPeerKeyAliased(t *testing.T) {
+	const endpointIP = "203.0.113.7"
+	const peerKey = "u9F1nT0m2Y5x8Q4v7W3k6L1p0R9s2D5f8G1h4J7K0M="
+	report := Report{
+		Tunnels: []TunnelInfo{{
+			ConfigFile: "[Interface]\nPrivateKey = [REDACTED]\nAddress = 10.8.0.2/32\n\n" +
+				"[Peer]\nPublicKey = " + peerKey + "\nEndpoint = " + endpointIP + ":51820\nAllowedIPs = 0.0.0.0/0\n",
+		}},
+	}
+
+	anonymize(&report)
+
+	out := report.Tunnels[0].ConfigFile
+	if strings.Contains(out, endpointIP) {
+		t.Fatalf("endpoint IP остался в конфиге:\n%s", out)
+	}
+	if !strings.Contains(out, "Endpoint = ENDPOINT-1:51820") {
+		t.Fatalf("endpoint не под алиасом ENDPOINT-1:\n%s", out)
+	}
+	if strings.Contains(out, peerKey) {
+		t.Fatalf("ключ пира остался в конфиге:\n%s", out)
+	}
+	if !strings.Contains(out, "PublicKey = PUBKEY-1") {
+		t.Fatalf("ключ пира не под алиасом PUBKEY-1:\n%s", out)
+	}
+	if !strings.Contains(out, "Address = 10.8.0.2/32") {
+		t.Fatalf("приватный адрес интерфейса обязан сохраниться:\n%s", out)
+	}
+}
+
 func TestAnonymize_HostnamesInJournalWarnings(t *testing.T) {
 	report := Report{
 		JournalWarnings: &JournalWarningsInfo{

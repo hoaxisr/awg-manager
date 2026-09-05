@@ -150,6 +150,7 @@ func TestSyncKeenDNSPreset_InfoCached(t *testing.T) {
 // Адрес KeenDNS приходит с роутера, а не из настроек: его появление обязано
 // переустановить правила, иначе обход доедет только по ручному Enable (#729).
 func TestReconcileInstalled_KeenDNSCIDRChangeReinstalls(t *testing.T) {
+	stubNoLANBridges(t)
 	restoreCalls := 0
 	ipt := newStubIPTables(func(_ context.Context, _ string) error {
 		restoreCalls++

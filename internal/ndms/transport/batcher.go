@@ -35,9 +35,8 @@ type Batcher struct {
 	// useFastPath: если включён, single-unique-path flush'и идут через
 	// direct GET (cli.getRawDirect), не batch POST. POST в реальном NDMS
 	// значимо дороже GET — выгода батчинга проявляется только когда
-	// есть multi-path coalesce. Default false: production включает
-	// через EnableFastPath() после конструкции; тесты не вызывают
-	// чтобы их mock-handlers (POST-only) продолжали работать.
+	// есть multi-path coalesce. Default false: включается проводкой при
+	// старте; в тестах — batcher_fastpath_test.go.
 	useFastPath bool
 
 	// Lifecycle
@@ -70,9 +69,7 @@ func (b *Batcher) SetAppLogger(log *logging.ScopedLogger) {
 }
 
 // EnableFastPath включает direct-GET для single-unique-path flush'ей.
-// Вызывается из production transport.New() после конструкции. Tests
-// его не вызывают, чтобы остаться на POST batch (mock handlers только
-// POST поддерживают).
+// Включается проводкой при старте; в тестах — batcher_fastpath_test.go.
 func (b *Batcher) EnableFastPath() {
 	b.useFastPath = true
 }

@@ -73,6 +73,36 @@ func TestRequireAuth_ValidBearer_NoCookie_Passes(t *testing.T) {
 	}
 }
 
+// Bearer — замена куки ТОЛЬКО при совпадении с настроенным ключом. Мутант
+// «любой непустой токен» проходил: пинов было два — верный ключ и пустой
+// настроенный, — а неверный ключ при настроенном не проверял никто.
+func TestRequireAuth_WrongBearer_Rejected(t *testing.T) {
+	sessions := NewSessionStore(nil)
+	t.Cleanup(sessions.Stop)
+
+	m := NewMiddleware(sessions, fakeAuthChecker{enabled: true, apiKey: "secret"}, &fakeAuthLogger{})
+	nextCalled := false
+	h := m.RequireAuthFunc(func(w http.ResponseWriter, r *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("Authorization", "Bearer secre")
+	rr := httptest.NewRecorder()
+	h(rr, req)
+
+	if nextCalled {
+		t.Fatal("хендлер вызван с неверным Bearer")
+	}
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+	if !strings.Contains(rr.Body.String(), `"AUTH_REQUIRED"`) {
+		t.Fatalf("тело: %s", rr.Body.String())
+	}
+}
+
 func TestRequireAuth_EmptyConfiguredAPIKey_RejectsBearer(t *testing.T) {
 	sessions := NewSessionStore(nil)
 	t.Cleanup(sessions.Stop)
