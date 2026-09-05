@@ -42,6 +42,21 @@ func (h *SystemToolsHandler) emitEvent(action, subject, details string) {
 	}
 }
 
+// emitFailure mirrors emitEvent for a failed action: Warn in the app log and the
+// same SSE topic with ok:"false", so the journal never says "done" for a failure.
+func (h *SystemToolsHandler) emitFailure(action, subject, errText string) {
+	h.log.Warn(action, subject, errText)
+	if h.bus != nil {
+		h.bus.Publish("system:tool-action", map[string]string{
+			"type":    "system_tool_action",
+			"action":  action,
+			"subject": subject,
+			"ok":      "false",
+			"error":   errText,
+		})
+	}
+}
+
 // NewSystemToolsHandler creates the handler.
 func NewSystemToolsHandler(settings *storage.SettingsStore, log logging.AppLogger) *SystemToolsHandler {
 	return &SystemToolsHandler{

@@ -78,7 +78,11 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 		// применение без правки не пишет и не взводит reload, зато любой PUT
 		// долечивает базу, разъехавшуюся с настройкой (отказ персиста ниже
 		// после успешного применения, гонка с Enable), а не только бут.
-		// Обратное окно остаётся до этого следующего PUT или бута.
+		// Отказ персиста ниже откатывает применение к прежнему месту.
+		prevLoc := ""
+		if cur, err := s.deps.Settings.Get(); err == nil {
+			prevLoc = cur.SingboxRouter.CacheFileLocation
+		}
 		if s.deps.ApplyCacheFileLocation != nil {
 			if err := s.deps.ApplyCacheFileLocation(normalized.CacheFileLocation); err != nil {
 				return nil, err
@@ -112,6 +116,14 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 			cur.SingboxRouter = normalized
 			return nil
 		}); err != nil {
+			// Персист не прошёл, а база уже переписана — вернуть её к прежнему
+			// месту, иначе стор и 00-base.json расходятся до следующего PUT/бута.
+			// Снесённый при переезде cache.db откат не воскрешает (это кэш).
+			if s.deps.ApplyCacheFileLocation != nil {
+				if err := s.deps.ApplyCacheFileLocation(prevLoc); err != nil {
+					s.appLog.Warn("settings", "cache-location", "откат места cache.db к "+prevLoc+" не удался: "+err.Error())
+				}
+			}
 			return nil, err
 		}
 		return s.deps.Settings.Get()

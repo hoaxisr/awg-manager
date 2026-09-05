@@ -473,8 +473,12 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 		}
 	}
 	if endpointIP != "" {
-		o.delKernelHostRoute(ctx, endpointIP)
-		_ = o.commands.Routes.RemoveHostRoute(ctx, endpointIP)
+		if err := o.delKernelHostRoute(ctx, endpointIP); err != nil {
+			o.logWarn("delete", stored.ID, "ip route del "+endpointIP+": "+err.Error())
+		}
+		if err := o.commands.Routes.RemoveHostRoute(ctx, endpointIP); err != nil {
+			o.logWarn("delete", stored.ID, "RemoveHostRoute: "+err.Error())
+		}
 	}
 
 	// 2. Remove NDMS interface — cleans everything:

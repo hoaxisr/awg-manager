@@ -283,6 +283,23 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 					parentTag: ob.Tag, kind: "default", idx: i, refTag: ob.Default,
 				})
 			}
+			if ob.DomainResolver != nil && ob.DomainResolver.Server != "" {
+				rs.dnsTagRefs = append(rs.dnsTagRefs, dnsTagRefSection{
+					refTag: ob.DomainResolver.Server,
+					where:  fmt.Sprintf("outbounds[%d].domain_resolver.server", i),
+				})
+			}
+		}
+		// Endpoints делят с outbounds и структуру, и пространство тегов (:520),
+		// значит их domain_resolver обязан резолвиться так же — иначе опечатка
+		// в теге DNS-сервера прошла бы валидацию молча.
+		for i, ep := range c.Endpoints {
+			if ep.DomainResolver != nil && ep.DomainResolver.Server != "" {
+				rs.dnsTagRefs = append(rs.dnsTagRefs, dnsTagRefSection{
+					refTag: ep.DomainResolver.Server,
+					where:  fmt.Sprintf("endpoints[%d].domain_resolver.server", i),
+				})
+			}
 		}
 		for i, ds := range c.DNS.Servers {
 			if ds.Detour != "" {
@@ -526,9 +543,10 @@ type inboundJSON struct {
 }
 
 type outboundJSON struct {
-	Tag       string   `json:"tag"`
-	Outbounds []string `json:"outbounds,omitempty"`
-	Default   string   `json:"default,omitempty"`
+	Tag            string              `json:"tag"`
+	Outbounds      []string            `json:"outbounds,omitempty"`
+	Default        string              `json:"default,omitempty"`
+	DomainResolver *domainResolverJSON `json:"domain_resolver,omitempty"`
 }
 
 type routeJSON struct {

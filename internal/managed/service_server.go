@@ -244,6 +244,10 @@ func (s *Service) natStaticTargets(ctx context.Context) ([]string, error) {
 		exits, err := s.queries.RunningConfig.GlobalEgressInterfaces(ctx)
 		if err != nil {
 			s.log.Warn("static-NAT цели деградировали до одного WAN: running-config недоступен", "error", err)
+			s.appLog.Warn("nat", "internet-only", "running-config недоступен ("+err.Error()+"): static NAT только на WAN по умолчанию")
+		}
+		if err == nil && len(exits) == 0 {
+			s.appLog.Warn("nat", "internet-only", "в running-config нет ни одного `ip global`: static NAT только на WAN по умолчанию")
 		}
 		if err == nil && len(exits) > 0 {
 			return exits, nil

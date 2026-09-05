@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -76,7 +77,7 @@ func (s *ServiceImpl) DatRuleSetFile(ctx context.Context, kind string, tags []st
 	if err != nil {
 		return "", err
 	}
-	if token == "" || token != wantToken {
+	if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(wantToken)) != 1 {
 		return "", ErrDatRuleSetForbidden
 	}
 	if s.deps.GeoData == nil {

@@ -107,6 +107,13 @@ func (h *ServersHandler) Subtree(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// genKeyPair и genPSK — швы генерации ключей пира: подменяются в тестах,
+// чтобы путь добавления пира не звал /opt/sbin/awg на хосте.
+var (
+	genKeyPair = managed.GenerateKeyPair
+	genPSK     = managed.GeneratePresharedKey
+)
+
 func validateWireguardPubkey(pubkey string) bool {
 	return len(pubkey) == 44 && strings.HasSuffix(pubkey, "=")
 }
@@ -168,12 +175,16 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 
-	privKey, pubKey, err := managed.GenerateKeyPair(r.Context())
+	privKey, pubKey, err := genKeyPair(r.Context())
 	if err != nil {
 		response.Error(w, err.Error(), "KEYGEN_FAILED")
 		return
 	}
-	psk, err := managed.GeneratePresharedKey(r.Context())
+	if !isValidWGKey(pubKey) {
+		response.Error(w, "generated public key is malformed", "KEYGEN_FAILED")
+		return
+	}
+	psk, err := genPSK(r.Context())
 	if err != nil {
 		response.Error(w, err.Error(), "KEYGEN_FAILED")
 		return
@@ -200,7 +211,9 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 	if err := h.commands.Wireguard.AddPeer(r.Context(), name, pubKey, psk, strings.TrimSpace(req.Description), ip.String(), true); err != nil {
-		_ = h.settings.DeleteServerPeerSecret(name, pubKey)
+		if derr := h.settings.DeleteServerPeerSecret(name, pubKey); derr != nil {
+			h.log.Warn("add-peer", name, "rollback of stranded secret failed: "+derr.Error())
+		}
 		response.Error(w, err.Error(), "ADD_PEER_FAILED")
 		return
 	}
@@ -322,7 +335,9 @@ func (h *ServersHandler) DeleteServerPeer(w http.ResponseWriter, r *http.Request
 		response.Error(w, err.Error(), "DELETE_PEER_FAILED")
 		return
 	}
-	_ = h.settings.DeleteServerPeerSecret(name, pubkey)
+	if err := h.settings.DeleteServerPeerSecret(name, pubkey); err != nil {
+		h.log.Warn("delete-peer", name, "peer removed from router but its secret stayed in store: "+err.Error())
+	}
 	h.bus.PublishInvalidated(events.ResourceServers, "server-peer-deleted")
 	h.writeAll(w, r)
 }

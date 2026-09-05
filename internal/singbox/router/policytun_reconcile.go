@@ -510,10 +510,12 @@ func (s *ServiceImpl) reconcilePolicyTunQoS(ctx context.Context, sr storage.Sing
 	}
 
 	if want == nil {
-		if err := s.deps.IPTables.Uninstall(ctx); err != nil {
-			s.appLog.Warn("policy-tun-reconcile", "qos", "iptables uninstall: "+err.Error())
-			return
-		}
+		s.deps.IPTables.Uninstall(ctx)
+		// Тот же выход из режима, что и в policy-tun-Disable, — и тот же снос
+		// набора: ресурс сносит тот, кто перестал в нём нуждаться, в КАЖДОМ
+		// пути выхода. Порядок обязателен: после Uninstall, иначе «set is in
+		// use».
+		s.teardownBypassSet(ctx)
 		s.mu.Lock()
 		s.appliedSpec = nil
 		// Uninstall снимает и blackhole прежнего режима — снимок обнуляем.

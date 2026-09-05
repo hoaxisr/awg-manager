@@ -54,6 +54,16 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	// повторял бы Disable вечно. Раньше «не провижинен при живом слоте» было
 	// экзотикой, теперь Provisioned=false — штатное состояние выключенного
 	// режима (интерфейс удержан).
+	//
+	// ОСОЗНАННОЕ ИСКЛЮЧЕНИЕ из «снос одинаков во всех выходах»: сноса набора
+	// AWGM-BYPASS здесь нет. Этот ранний выход срабатывает ОДИН раз — при
+	// активном, но не провижиненном слоте: он паркует слот, и reconcile при
+	// !Enabled больше сюда не заходит (гейт !provisioned && !slotActive в
+	// policytun_reconcile.go). Остаточный случай (Enable упал до
+	// Provisioned=true при живом наборе от прежнего tproxy) закрывает не
+	// Enable — там сноса нет ни в одном режиме, — а первый тик
+	// reconcilePolicyTunQoS с want == nil при netfilterStateKnown=false: он
+	// зовёт teardownBypassSet. Записано в docs/TRACKER.md.
 	if st == nil || !st.Provisioned {
 		if s.deps.Orch != nil && s.routerSlotEnabled() {
 			if err := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, false); err != nil {
@@ -142,9 +152,24 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	// тогда, когда классы QoS только что удалили из настроек (тогда enable их
 	// уже не ставил, но живые цепочки с прошлого раза никуда не делись).
 	if s.deps.IPTables != nil {
-		if err := s.deps.IPTables.Uninstall(ctx); err != nil {
-			s.appLog.Warn("policy-tun-disable", iface, "iptables uninstall: "+err.Error())
-		}
+		s.deps.IPTables.Uninstall(ctx)
+		// Снос ресурса живёт в том же выходе из режима, что и его создание, и
+		// одинаков во всех выходах. Набор AWGM-BYPASS создаёт tproxy-путь, но
+		// выйти из режима можно и здесь, а в policy-tun набор не нужен вовсе
+		// (bypassSetWanted при этом режиме — false).
+		//
+		// Как сирота возникает: наполнение набора асинхронное и идёт до
+		// десятка минут; runBypassPopulate делает swap+save и лишь ПОТОМ
+		// проверяет, нужен ли набор ещё, снося его сам. Краш демона между
+		// сохранением дампа и этой самопроверкой оставляет набор и дамп при
+		// уже переключённом режиме. Хук `50-awgm-tproxy.sh` раз установленный
+		// не удаляется никогда, а блок `ipset create && restore < дамп` в нём
+		// гейтится только НАЛИЧИЕМ дампа, — поэтому сирота воскресала на
+		// каждой перезагрузке.
+		//
+		// Только ПОСЛЕ Uninstall: пока в ядре есть правило `--match-set`,
+		// ipset отвечает «set is in use».
+		s.teardownBypassSet(ctx)
 		// Симметрично tproxy-Disable: снесли — забыли. Иначе выключенный режим
 		// оставлял бы за собой снимок применённого спека, а netfilterStateKnown
 		// сообщал бы следующему тику, что установленное состояние известно.
