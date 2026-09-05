@@ -416,6 +416,11 @@
 			<div class="setting-copy">
 				<span class="setting-title">Доступ в LAN</span>
 				<span class="setting-description">Сегменты LAN, доступные клиентам этого сервера.</span>
+				{#if server.foreignAcls?.length}
+					<span class="setting-description setting-description-warning">
+						К интерфейсу привязан посторонний список доступа ({server.foreignAcls.join(', ')}). Он срабатывает раньше выбора сегментов и может открыть клиентам больше, чем выбрано — проверьте его в настройках роутера.
+					</span>
+				{/if}
 			</div>
 			<div class="setting-control">
 				<ChipMultiSelect values={server.lanSegments ?? []} options={lanSegmentOptions} onchange={handleSetLANSegments} disabled={settingLAN} />

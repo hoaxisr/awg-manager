@@ -28,6 +28,8 @@
 		 * запускался, остановлен либо процесс усыновлён.
 		 */
 		exposeApplied?: boolean;
+		/** Посторонний ACL, привязанный к интерфейсу сервера в обход выбора сегментов. */
+		foreignAcls?: string[];
 		saving?: boolean;
 		/** Общий замок мутаций сервера: одна операция за раз. */
 		busy?: boolean;
@@ -50,6 +52,7 @@
 		ftServer = $bindable(),
 		lanOptions,
 		exposeApplied,
+		foreignAcls,
 		saving = false,
 		busy = false,
 		onnat,
@@ -165,6 +168,11 @@
 					disabled={busy}
 					onchange={onlan}
 				/>
+				{#if foreignAcls?.length}
+					<p class="save-block">
+						К интерфейсу привязан посторонний список доступа ({foreignAcls.join(', ')}). Он срабатывает раньше выбора сегментов и может открыть клиентам больше, чем выбрано — проверьте его в настройках роутера.
+					</p>
+				{/if}
 			</FormRow>
 
 			<!-- Политика доступа (SH-50) — общий с «Серверами» контрол: список

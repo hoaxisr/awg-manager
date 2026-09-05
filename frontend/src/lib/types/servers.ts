@@ -75,6 +75,7 @@ export interface ManagedServer {
 	natEnabled?: boolean;
 	natMode?: 'full' | 'internet-only' | 'none';
 	lanSegments?: string[];
+	foreignAcls?: string[];
 	policy: string;
 	peers: ManagedPeer[];
 }

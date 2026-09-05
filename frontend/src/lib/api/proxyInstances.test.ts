@@ -226,6 +226,24 @@ describe('toWdttStatus: блок процесса и install-блок', () => {
 		expect(st.rawIface).toBe('opkgtun19');
 	});
 
+	it('посторонний ACL читается из ресурса ndms_access', () => {
+		const withForeignAcl = {
+			...wdttServerView,
+			state: {
+				intent: 'up',
+				phase: 'applied',
+				resources: [{ id: 'ndms_access', status: 'ok', attrs: { 'foreign-acl': 'OpkgTun17:GUEST_ACL' } }]
+			}
+		};
+		const st = toWdttStatus({ seed: list.seed, instances: [withForeignAcl] }, install, now).servers[0].status;
+		expect(st.foreignAcls).toEqual(['OpkgTun17:GUEST_ACL']);
+	});
+
+	it('без ресурса ndms_access или без attrs постороннего ACL нет', () => {
+		const st = toWdttStatus(list, install, now).servers[0].status;
+		expect(st.foreignAcls).toBeUndefined();
+	});
+
 	it('install-блок целиком приезжает из статуса установки', () => {
 		const st = toWdttStatus(list, install, now);
 		expect({
