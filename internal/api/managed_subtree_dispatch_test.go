@@ -137,6 +137,10 @@ func (s *recManagedSvc) SetASCParams(_ context.Context, id string, _ json.RawMes
 
 func (s *recManagedSvc) InvalidateCache(id string) { s.record("InvalidateCache:" + id) }
 
+func (s *recManagedSvc) ForeignAccessGroups(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
 var _ managed.ManagedServerService = (*recManagedSvc)(nil)
 
 func boolText(v bool) string {

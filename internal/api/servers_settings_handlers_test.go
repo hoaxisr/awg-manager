@@ -20,7 +20,7 @@ func postServerSetting(t *testing.T, fn func(http.ResponseWriter, *http.Request,
 // Endpoint из тела уходит в мету интерфейса (её читает генератор клиентского
 // .conf) и объявляется подписчикам.
 func TestServersHandler_SetEndpoint_StoresHostAndPublishes(t *testing.T) {
-	h, store, _, p := newServersNATHarness(t)
+	h, store, _, p, _ := newServersNATHarness(t)
 
 	rr := postServerSetting(t, h.SetEndpoint, "endpoint", `{"endpoint":"vpn.example.org"}`)
 	if rr.Code != 200 {
@@ -38,7 +38,7 @@ func TestServersHandler_SetEndpoint_StoresHostAndPublishes(t *testing.T) {
 // Невалидный host отвергается до записи: иначе в .conf клиента уехала бы
 // строка Endpoint, по которой никто не подключится.
 func TestServersHandler_SetEndpoint_RejectsBadHost(t *testing.T) {
-	h, store, _, p := newServersNATHarness(t)
+	h, store, _, p, _ := newServersNATHarness(t)
 
 	rr := postServerSetting(t, h.SetEndpoint, "endpoint", `{"endpoint":"not a host"}`)
 	if rr.Code != 400 {
@@ -55,7 +55,7 @@ func TestServersHandler_SetEndpoint_RejectsBadHost(t *testing.T) {
 // Политика, совпадающая с текущей (в фикстуре у Wireguard0 её нет → "none"),
 // отдаёт снимок без похода в NDMS и без публикации.
 func TestServersHandler_SetPolicy_NoChangeSkipsRCIAndPublish(t *testing.T) {
-	h, _, poster, p := newServersNATHarness(t)
+	h, _, poster, p, _ := newServersNATHarness(t)
 
 	rr := postServerSetting(t, h.SetPolicy, "policy", `{"policy":"none"}`)
 	if rr.Code != 200 {
@@ -69,7 +69,7 @@ func TestServersHandler_SetPolicy_NoChangeSkipsRCIAndPublish(t *testing.T) {
 // Смена политики идёт через managedSvc, и на его отказе (в фикстуре списка
 // политик нет — Policy0 неизвестна) ни RCI, ни публикации.
 func TestServersHandler_SetPolicy_ChangeFailureIsNotPublished(t *testing.T) {
-	h, _, poster, p := newServersNATHarness(t)
+	h, _, poster, p, _ := newServersNATHarness(t)
 
 	rr := postServerSetting(t, h.SetPolicy, "policy", `{"policy":"Policy0"}`)
 	if got := decodeJSONBody(t, rr)["code"]; got != "POLICY_FAILED" {

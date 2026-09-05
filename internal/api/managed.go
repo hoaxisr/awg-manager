@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -182,19 +183,23 @@ func isValidWGKey(key string) bool {
 
 // managedServerResponse is a safe DTO that strips private keys from peers.
 type managedServerResponse struct {
-	InterfaceName string              `json:"interfaceName"`
-	Description   string              `json:"description,omitempty"`
-	Address       string              `json:"address"`
-	Mask          string              `json:"mask"`
-	ListenPort    int                 `json:"listenPort"`
-	Endpoint      string              `json:"endpoint,omitempty"`
-	DNS           string              `json:"dns,omitempty"`
-	MTU           int                 `json:"mtu,omitempty"`
-	NATEnabled    bool                `json:"natEnabled"`
-	NATMode       string              `json:"natMode,omitempty"`
-	LANSegments   []string            `json:"lanSegments,omitempty"`
-	Policy        string              `json:"policy"`
-	Peers         []managedPeerPublic `json:"peers"`
+	InterfaceName string   `json:"interfaceName"`
+	Description   string   `json:"description,omitempty"`
+	Address       string   `json:"address"`
+	Mask          string   `json:"mask"`
+	ListenPort    int      `json:"listenPort"`
+	Endpoint      string   `json:"endpoint,omitempty"`
+	DNS           string   `json:"dns,omitempty"`
+	MTU           int      `json:"mtu,omitempty"`
+	NATEnabled    bool     `json:"natEnabled"`
+	NATMode       string   `json:"natMode,omitempty"`
+	LANSegments   []string `json:"lanSegments,omitempty"`
+	// ForeignACLs — чужие списки `ip access-group … in` на интерфейсе сервера
+	// (кроме нашего AWGM_<iface>), в порядке привязки. Список, привязанный
+	// раньше нашего и разрешающий шире, срабатывает до выбора сегментов.
+	ForeignACLs []string            `json:"foreignAcls,omitempty"`
+	Policy      string              `json:"policy"`
+	Peers       []managedPeerPublic `json:"peers"`
 }
 
 // managedPeerPublic is a peer DTO without private/preshared keys.
@@ -207,7 +212,7 @@ type managedPeerPublic struct {
 }
 
 // toManagedServerResponse converts storage model to a safe response DTO.
-func toManagedServerResponse(s *storage.ManagedServer) *managedServerResponse {
+func toManagedServerResponse(s *storage.ManagedServer, foreign []string) *managedServerResponse {
 	peers := make([]managedPeerPublic, len(s.Peers))
 	for i, p := range s.Peers {
 		peers[i] = managedPeerPublic{
@@ -230,6 +235,7 @@ func toManagedServerResponse(s *storage.ManagedServer) *managedServerResponse {
 		NATEnabled:    s.NATEnabled,
 		NATMode:       s.NATMode,
 		LANSegments:   s.LANSegments,
+		ForeignACLs:   foreign,
 		Policy:        s.Policy,
 		Peers:         peers,
 	}
@@ -270,14 +276,30 @@ func NewManagedServerHandler(svc managed.ManagedServerService) *ManagedServerHan
 	return &ManagedServerHandler{svc: svc}
 }
 
+// foreignACLsFor — чужие привязки для карточки: без нашего AWGM_ (уже вычтен
+// службой) и без _WEBADMIN_<iface> — его снимает strip при ближайшем применении
+// или буте, показывать как «посторонний» нечего (ruling по ревью С2, паритет с H7).
+// Ошибка чтения running-config → nil: карточка без предупреждения, не без сервера.
+func (h *ManagedServerHandler) foreignACLsFor(ctx context.Context, iface string) []string {
+	names, err := h.svc.ForeignAccessGroups(ctx, iface)
+	if err != nil {
+		return nil
+	}
+	names = slices.DeleteFunc(names, func(n string) bool { return n == "_WEBADMIN_"+iface })
+	if len(names) == 0 {
+		return nil
+	}
+	return names
+}
+
 // getManagedList builds the list of managed server DTOs for the composite
 // servers snapshot. Always returns a non-nil slice so callers can json-marshal
 // it as `[]` rather than `null`.
-func (h *ManagedServerHandler) getManagedList() []*managedServerResponse {
+func (h *ManagedServerHandler) getManagedList(ctx context.Context) []*managedServerResponse {
 	servers := h.svc.List()
 	out := make([]*managedServerResponse, 0, len(servers))
 	for i := range servers {
-		out = append(out, toManagedServerResponse(&servers[i]))
+		out = append(out, toManagedServerResponse(&servers[i], h.foreignACLsFor(ctx, servers[i].InterfaceName)))
 	}
 	return out
 }
@@ -521,7 +543,7 @@ func (h *ManagedServerHandler) List(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
-	response.Success(w, h.getManagedList())
+	response.Success(w, h.getManagedList(r.Context()))
 }
 
 // SuggestAddress returns a free private /24 for the create-server UI.
@@ -572,7 +594,7 @@ func (h *ManagedServerHandler) Get(w http.ResponseWriter, r *http.Request, id st
 		response.Error(w, err.Error(), "NOT_FOUND")
 		return
 	}
-	response.Success(w, toManagedServerResponse(server))
+	response.Success(w, toManagedServerResponse(server, h.foreignACLsFor(r.Context(), server.InterfaceName)))
 }
 
 // Stats returns runtime statistics for one managed server's peers.
@@ -627,7 +649,7 @@ func (h *ManagedServerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.svc.InvalidateCache(server.InterfaceName)
-	response.Success(w, toManagedServerResponse(server))
+	response.Success(w, toManagedServerResponse(server, nil))
 	h.publishServerUpdated()
 }
 
