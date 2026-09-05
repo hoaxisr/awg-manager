@@ -289,6 +289,38 @@ func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 			whyMustPublish: "та же причина шага, другой адрес",
 		},
 		{
+			// Статус — самое видимое, что есть у ресурса, и попольное
+			// сравнение обязано его нести: без ветки Status «ok» и «failed»
+			// при том же тексте наблюдения фронт не различит.
+			name: "сменился Status ресурса", intent: IntentEnabled, res: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "a", Status: StatusOK, Detail: "готово"}},
+			}, phase: PhaseWaiting,
+			secondIntent: IntentEnabled, secondPhase: PhaseWaiting,
+			secondRes: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "a", Status: StatusDrift, Detail: "готово"}},
+			},
+			whyMustPublish: "тот же текст наблюдения, другой статус",
+		},
+		{
+			// Ресурс подменился на другой при совпавшем статусе: длины равны,
+			// и без ветки ID подмена прошла бы молча. Это не выдумка ради
+			// ветки — состав ресурсов роли зависит от конфига (у сервера
+			// половины появляются и исчезают), и на позиции i вправо
+			// приезжает уже другой ресурс.
+			name: "сменился ID ресурса", intent: IntentEnabled, res: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "ndms_access", Status: StatusOK}},
+			}, phase: PhaseWaiting,
+			secondIntent: IntentEnabled, secondPhase: PhaseWaiting,
+			secondRes: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "permit_absent", Status: StatusOK}},
+			},
+			whyMustPublish: "тот же статус, другой ресурс на той же позиции",
+		},
+		{
 			// ResourceState сличается ПОПОЛЬНО (в нём карта Attrs, и `==` по
 			// структуре не компилируется). Подслучай держит Detail: поле,
 			// забытое в перечислении, молча потеряет текст наблюдения.

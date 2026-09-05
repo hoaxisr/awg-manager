@@ -2,6 +2,7 @@ package wdttserver
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -61,6 +62,8 @@ type recAccess struct {
 	lan    []string
 	// foreign — чужие привязки ACL по интерфейсу, какими их видит роутер.
 	foreign map[string][]string
+	// foreignErr — отказ чтения по конкретному интерфейсу.
+	foreignErr map[string]error
 }
 
 func (a *recAccess) ApplyNATModeToInterface(_ context.Context, iface, mode string, prevWANs []string) ([]string, error) {
@@ -81,6 +84,9 @@ func (a *recAccess) ApplyLANSegmentsToInterface(_ context.Context, iface, addr, 
 }
 
 func (a *recAccess) ForeignAccessGroups(_ context.Context, iface string) ([]string, error) {
+	if err := a.foreignErr[iface]; err != nil {
+		return nil, err
+	}
 	return a.foreign[iface], nil
 }
 
@@ -496,15 +502,36 @@ func TestSeam_PermitAllResidueRemovedWhileDisabledAndExposed(t *testing.T) {
 // по дороге через план.
 func TestSeam_NDMSAccessReportsForeignACL(t *testing.T) {
 	p := newSeamParts(t)
-	p.acc.foreign = map[string][]string{"OpkgTun17": {"GUEST_ACL", "_WEBADMIN_OpkgTun17"}}
+	// Обе половины несут своё: сервер один, и чужой список на raw-половине
+	// открывает абоненту ровно тот же LAN.
+	p.acc.foreign = map[string][]string{
+		"OpkgTun17": {"GUEST_ACL", "_WEBADMIN_OpkgTun17"},
+		"OpkgTun19": {"OTHER_ACL"},
+	}
 	res := roletest.Converge(t, p.role, seamCfg(), proxyrt.IntentEnabled)
-	got := ""
+	if got := foreignACL(res); got != "OpkgTun17:GUEST_ACL,OpkgTun19:OTHER_ACL" {
+		t.Fatalf("foreign-acl = %q, ждали OpkgTun17:GUEST_ACL,OpkgTun19:OTHER_ACL (_WEBADMIN_ отфильтрован)\n%v", got, res.States)
+	}
+}
+
+// Отказ чтения по одной половине не роняет наблюдение ресурса: чужие привязки
+// — сведения для показа, и потерять из-за них весь прогон нельзя. Половина, по
+// которой не ответили, просто не попадает в ключ.
+func TestSeam_NDMSAccessSurvivesForeignACLReadError(t *testing.T) {
+	p := newSeamParts(t)
+	p.acc.foreign = map[string][]string{"OpkgTun19": {"OTHER_ACL"}}
+	p.acc.foreignErr = map[string]error{"OpkgTun17": errors.New("RCI недоступен")}
+	res := roletest.Converge(t, p.role, seamCfg(), proxyrt.IntentEnabled)
+	if got := foreignACL(res); got != "OpkgTun19:OTHER_ACL" {
+		t.Fatalf("foreign-acl = %q, ждали OpkgTun19:OTHER_ACL\n%v", got, res.States)
+	}
+}
+
+func foreignACL(res proxyrt.Result) string {
 	for _, st := range res.States {
 		if st.ID == roles.RNdmsAccess {
-			got = st.Attrs["foreign-acl"]
+			return st.Attrs["foreign-acl"]
 		}
 	}
-	if got != "OpkgTun17:GUEST_ACL" {
-		t.Fatalf("foreign-acl = %q, ждали OpkgTun17:GUEST_ACL (_WEBADMIN_ отфильтрован)\n%v", got, res.States)
-	}
+	return ""
 }
