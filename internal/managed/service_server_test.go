@@ -903,67 +903,87 @@ func newLANSegmentsTestService(t *testing.T) (*Service, *storage.SettingsStore, 
 	return svc, store, poster
 }
 
+// withRunningConfig подменяет стор running-config фикстурой из строк (форма
+// стенда: тело блока с отступом 4 пробела). Без него stateAwareGetter отвечает
+// на /show/running-config ошибкой — путь «running-config недоступен».
+func withRunningConfig(svc *Service, lines ...string) {
+	fg := query.NewFakeGetter()
+	b, _ := json.Marshal(map[string]any{"message": lines})
+	fg.SetJSON("/show/running-config", string(b))
+	svc.queries.RunningConfig = query.NewRunningConfigStore(fg, query.NopLogger())
+}
+
+// seedServer — managed-сервер 10.66.66.1/24 на iface (как в RebuildOrder).
+func seedServer(t *testing.T, store *storage.SettingsStore, iface string) {
+	t.Helper()
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: iface, Address: "10.66.66.1", Mask: "255.255.255.0", ListenPort: 51820,
+	}); err != nil {
+		t.Fatalf("seed %s: %v", iface, err)
+	}
+}
+
+func resetPosts(p *recordingPoster) {
+	p.mu.Lock()
+	p.posts = nil
+	p.mu.Unlock()
+}
+
+// parseStrings — parse-строки RCI в порядке отправки.
+func parseStrings(p *recordingPoster) []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []string
+	for _, m := range p.posts {
+		if s, ok := m["parse"].(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // TestSetLANSegments_RebuildOrder verifies that SetLANSegments posts the four
 // parse commands in the required order and persists LANSegments in storage.
 // Empty-list variant verifies only unbind+remove are sent (no permit/bind).
+// Подслучаи с остатком `_WEBADMIN_` пинят снятие чужого permit-all первым.
 func TestSetLANSegments_RebuildOrder(t *testing.T) {
 	const ifaceName = "Wireguard0"
+	acl := "AWGM_" + ifaceName
+
+	assertParses := func(t *testing.T, got, want []string) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("expected %d parse commands, got %d: %v", len(want), len(got), got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("parse[%d]: got %q, want %q", i, got[i], want[i])
+			}
+		}
+	}
 
 	t.Run("non-empty segments", func(t *testing.T) {
 		svc, store, poster := newLANSegmentsTestService(t)
 		ctx := context.Background()
-
-		if err := store.AddManagedServer(storage.ManagedServer{
-			InterfaceName: ifaceName,
-			Address:       "10.66.66.1",
-			Mask:          "255.255.255.0",
-			ListenPort:    51820,
-		}); err != nil {
-			t.Fatalf("seed server: %v", err)
-		}
-
-		poster.mu.Lock()
-		poster.posts = nil
-		poster.mu.Unlock()
+		withRunningConfig(svc, "interface Wireguard0", "    security-level private", "!")
+		seedServer(t, store, ifaceName)
+		resetPosts(poster)
 
 		if err := svc.SetLANSegments(ctx, ifaceName, []string{"Home"}); err != nil {
 			t.Fatalf("SetLANSegments: %v", err)
 		}
 
-		// Collect parse strings in order.
-		poster.mu.Lock()
-		posts := make([]map[string]interface{}, len(poster.posts))
-		copy(posts, poster.posts)
-		poster.mu.Unlock()
-
-		var parseStrings []string
-		for _, p := range posts {
-			if s, ok := p["parse"].(string); ok {
-				parseStrings = append(parseStrings, s)
-			}
-		}
-
-		acl := "AWGM_" + ifaceName
 		// Expected order:
 		// 1. no interface <iface> ip access-group <acl> in
 		// 2. no access-list <acl>
 		// 3. access-list <acl> permit ip <peerSub> <peerMask> <segSub> <segMask>
 		// 4. interface <iface> ip access-group <acl> in
-		wantParses := []string{
+		assertParses(t, parseStrings(poster), []string{
 			fmt.Sprintf("no interface %s ip access-group %s in", ifaceName, acl),
 			"no access-list " + acl,
 			fmt.Sprintf("access-list %s permit ip 10.66.66.0 255.255.255.0 10.10.10.0 255.255.255.0", acl),
 			fmt.Sprintf("interface %s ip access-group %s in", ifaceName, acl),
-		}
-
-		if len(parseStrings) != len(wantParses) {
-			t.Fatalf("expected %d parse commands, got %d: %v", len(wantParses), len(parseStrings), parseStrings)
-		}
-		for i, want := range wantParses {
-			if parseStrings[i] != want {
-				t.Errorf("parse[%d]: got %q, want %q", i, parseStrings[i], want)
-			}
-		}
+		})
 
 		// Storage must be updated.
 		saved, ok := store.GetManagedServerByID(ifaceName)
@@ -975,53 +995,46 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 		}
 	})
 
+	t.Run("foreign permit-all is stripped first", func(t *testing.T) {
+		svc, store, poster := newLANSegmentsTestService(t)
+		withRunningConfig(svc,
+			"interface Wireguard0",
+			"    security-level private",
+			"    ip access-group _WEBADMIN_Wireguard0 in",
+			"!",
+		)
+		seedServer(t, store, ifaceName)
+		resetPosts(poster)
+
+		if err := svc.SetLANSegments(context.Background(), ifaceName, []string{"Home"}); err != nil {
+			t.Fatalf("SetLANSegments: %v", err)
+		}
+
+		assertParses(t, parseStrings(poster), []string{
+			"no interface Wireguard0 ip access-group _WEBADMIN_Wireguard0 in",
+			"no access-list _WEBADMIN_Wireguard0",
+			fmt.Sprintf("no interface %s ip access-group %s in", ifaceName, acl),
+			"no access-list " + acl,
+			fmt.Sprintf("access-list %s permit ip 10.66.66.0 255.255.255.0 10.10.10.0 255.255.255.0", acl),
+			fmt.Sprintf("interface %s ip access-group %s in", ifaceName, acl),
+		})
+	})
+
 	t.Run("empty segments unbinds and removes only", func(t *testing.T) {
 		svc, store, poster := newLANSegmentsTestService(t)
 		ctx := context.Background()
-
-		if err := store.AddManagedServer(storage.ManagedServer{
-			InterfaceName: ifaceName,
-			Address:       "10.66.66.1",
-			Mask:          "255.255.255.0",
-			ListenPort:    51820,
-		}); err != nil {
-			t.Fatalf("seed server: %v", err)
-		}
-
-		poster.mu.Lock()
-		poster.posts = nil
-		poster.mu.Unlock()
+		withRunningConfig(svc, "interface Wireguard0", "    security-level private")
+		seedServer(t, store, ifaceName)
+		resetPosts(poster)
 
 		if err := svc.SetLANSegments(ctx, ifaceName, []string{}); err != nil {
 			t.Fatalf("SetLANSegments(empty): %v", err)
 		}
 
-		poster.mu.Lock()
-		posts := make([]map[string]interface{}, len(poster.posts))
-		copy(posts, poster.posts)
-		poster.mu.Unlock()
-
-		var parseStrings []string
-		for _, p := range posts {
-			if s, ok := p["parse"].(string); ok {
-				parseStrings = append(parseStrings, s)
-			}
-		}
-
-		acl := "AWGM_" + ifaceName
-		wantParses := []string{
+		assertParses(t, parseStrings(poster), []string{
 			fmt.Sprintf("no interface %s ip access-group %s in", ifaceName, acl),
 			"no access-list " + acl,
-		}
-
-		if len(parseStrings) != len(wantParses) {
-			t.Fatalf("expected %d parse commands, got %d: %v", len(wantParses), len(parseStrings), parseStrings)
-		}
-		for i, want := range wantParses {
-			if parseStrings[i] != want {
-				t.Errorf("parse[%d]: got %q, want %q", i, parseStrings[i], want)
-			}
-		}
+		})
 
 		saved, ok := store.GetManagedServerByID(ifaceName)
 		if !ok {
@@ -1030,6 +1043,28 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 		if len(saved.LANSegments) != 0 {
 			t.Errorf("storage LANSegments: got %v, want empty", saved.LANSegments)
 		}
+	})
+
+	t.Run("empty segments still strips foreign permit-all", func(t *testing.T) {
+		svc, store, poster := newLANSegmentsTestService(t)
+		withRunningConfig(svc,
+			"interface Wireguard0",
+			"    ip access-group _WEBADMIN_Wireguard0 in",
+			"!",
+		)
+		seedServer(t, store, ifaceName)
+		resetPosts(poster)
+
+		if err := svc.SetLANSegments(context.Background(), ifaceName, []string{}); err != nil {
+			t.Fatalf("SetLANSegments(empty): %v", err)
+		}
+
+		assertParses(t, parseStrings(poster), []string{
+			"no interface Wireguard0 ip access-group _WEBADMIN_Wireguard0 in",
+			"no access-list _WEBADMIN_Wireguard0",
+			fmt.Sprintf("no interface %s ip access-group %s in", ifaceName, acl),
+			"no access-list " + acl,
+		})
 	})
 }
 
@@ -1311,6 +1346,22 @@ func TestSetLANSegments_InvalidSegment_DoesNotDestroyACL(t *testing.T) {
 	if len(saved.LANSegments) != 1 || saved.LANSegments[0] != "Home" {
 		t.Errorf("storage LANSegments changed: %v", saved.LANSegments)
 	}
+
+	// Пин места strip: он идёт ПОСЛЕ preflight, поэтому чужой permit-all на
+	// невалидном запросе остаётся на месте — роутер не тронут вообще.
+	t.Run("с остатком _WEBADMIN_ и сегментом Ghost", func(t *testing.T) {
+		svc, store, poster := newLANSegmentsTestService(t)
+		withRunningConfig(svc, "interface Wireguard0", "    ip access-group _WEBADMIN_Wireguard0 in", "!")
+		seedServer(t, store, ifaceName)
+		resetPosts(poster)
+
+		if err := svc.SetLANSegments(context.Background(), ifaceName, []string{"Ghost"}); err == nil {
+			t.Fatalf("expected error for unknown segment")
+		}
+		if got := parseStrings(poster); len(got) != 0 {
+			t.Errorf("роутер тронут на невалидном запросе: %v", got)
+		}
+	})
 }
 
 // hasStaticNATPost reports whether any RCI POST touches ip.static (set or remove).

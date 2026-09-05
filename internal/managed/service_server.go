@@ -683,7 +683,9 @@ func resolveLANSegmentsPlan(addr, mask string, segments []string, bridges []quer
 // applyLANSegmentsRaw applies LAN-forward ACL rules to an interface without
 // touching storage. Builds the full plan FIRST (no RCI); only after a valid
 // plan does it destroy and rebuild, so a bad request never tears down working
-// access. Empty segments = teardown (unbind+remove best-effort, errors logged only).
+// access. После валидного плана и перед нашим unbind — снятие чужого permit-all
+// `_WEBADMIN_` (stripForeignPermitAll).
+// Empty segments = teardown (unbind+remove best-effort, errors logged only).
 func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask string, segments []string) error {
 	acl := "AWGM_" + iface
 	commandsWired := s.commands != nil && s.commands.Interfaces != nil
@@ -693,6 +695,9 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 		// литералы Service / деградация) — прежнее поведение сохраняем.
 		if !commandsWired {
 			return nil
+		}
+		if err := s.stripForeignPermitAll(ctx, iface); err != nil {
+			s.appLog.Warn("lan-acl", iface, "permit-all не проверен/не снят: "+err.Error())
 		}
 		if err := s.commands.Interfaces.ACLUnbind(ctx, iface, acl); err != nil {
 			s.log.Debug("unbind ACL (teardown)", "error", err, "iface", iface)
@@ -718,6 +723,10 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 	plan, err := resolveLANSegmentsPlan(addr, mask, segments, bridges)
 	if err != nil {
 		return err // старый ACL не тронут
+	}
+
+	if err := s.stripForeignPermitAll(ctx, iface); err != nil {
+		s.appLog.Warn("lan-acl", iface, "permit-all не проверен/не снят: "+err.Error())
 	}
 
 	// Apply — destroy → rebuild. unbind/remove best-effort (ACL может ещё не
