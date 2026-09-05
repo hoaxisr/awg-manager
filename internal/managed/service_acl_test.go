@@ -43,3 +43,30 @@ func TestForeignAccessGroups_ExcludesOurs(t *testing.T) {
 		t.Fatalf("got %v want %v", got, want)
 	}
 }
+
+// Sweep снимает остаток ТОЛЬКО там, где он есть: два сервера, остаток у одного →
+// ровно две команды и обе про него; чистый роутер → ноль RCI.
+func TestSweepForeignPermitAll_OnlyWherePresent(t *testing.T) {
+	svc, store, poster := newLANSegmentsTestService(t)
+	seedServer(t, store, "Wireguard0")
+	seedServer(t, store, "Wireguard1") // стор проверяет только уникальность имени интерфейса
+	withRunningConfig(svc,
+		"interface Wireguard0", "    security-level private", "!",
+		"interface Wireguard1", "    ip access-group _WEBADMIN_Wireguard1 in", "!",
+	)
+	resetPosts(poster)
+	svc.SweepForeignPermitAll(context.Background())
+	want := []string{
+		"no interface Wireguard1 ip access-group _WEBADMIN_Wireguard1 in",
+		"no access-list _WEBADMIN_Wireguard1",
+	}
+	if got := parseStrings(poster); !slices.Equal(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	withRunningConfig(svc, "interface Wireguard0", "!", "interface Wireguard1", "!")
+	resetPosts(poster)
+	svc.SweepForeignPermitAll(context.Background())
+	if got := parseStrings(poster); len(got) != 0 {
+		t.Fatalf("чистый роутер: RCI не должно быть, got %v", got)
+	}
+}

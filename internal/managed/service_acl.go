@@ -45,3 +45,18 @@ func (s *Service) stripForeignPermitAll(ctx context.Context, iface string) error
 	s.appLog.Info("lan-acl", iface, "снят permit-all _WEBADMIN_"+iface+": он открывал клиентам весь LAN мимо выбора сегментов")
 	return nil
 }
+
+// SweepForeignPermitAll — бут-проход по всем managed-серверам: снять остаток
+// permit-all `_WEBADMIN_<iface>`, если он есть. Чтение из кэша running-config
+// (прогрет на старте), запись и RCI — только при наличии остатка: на чистом
+// роутере проход ничего не пишет (износ флеша — память проекта).
+func (s *Service) SweepForeignPermitAll(ctx context.Context) {
+	if s.commands == nil || s.commands.Interfaces == nil {
+		return
+	}
+	for _, srv := range s.List() {
+		if err := s.stripForeignPermitAll(ctx, srv.InterfaceName); err != nil {
+			s.appLog.Warn("lan-acl", srv.InterfaceName, "бут-проверка permit-all: "+err.Error())
+		}
+	}
+}
