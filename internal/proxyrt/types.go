@@ -80,13 +80,20 @@ type Step struct {
 // «ресурса нет»: иначе слепое наблюдение породит create.
 //
 // Exists и Attrs — данные для самого ресурса и его роли: по ним Plan решает
-// «создать или поправить». Движок их не смотрит, он читает только Known и
-// Detail.
+// «создать или поправить». Движок их не смотрит, он читает только Known,
+// Detail и Public.
 type Observation struct {
 	Known  bool
 	Exists bool
 	Detail string
-	Attrs  map[string]string
+	// Attrs — СЛУЖЕБНЫЕ атрибуты наблюдения: их читают роль и Plan. В
+	// состояние ресурса они не попадают. Так и задумано: сюда попадают
+	// величины вроде uptime_s, меняющиеся каждый прогон, и публикация
+	// состояния по ним шла бы на каждый будильник.
+	Attrs map[string]string
+	// Public — атрибуты, которые роль хочет показать пользователю: копируются
+	// в ResourceState и уходят в API. Движок их не читает.
+	Public map[string]string
 }
 
 // ResourceState — то, что видит пользователь и API по каждому ресурсу.
@@ -96,7 +103,8 @@ type ResourceState struct {
 	Detail string
 	Error  string
 	// Attrs — наблюдение ресурса для показа пользователю (ndms_access:
-	// foreign-acl); копия Observation.Attrs, движок не читает.
+	// foreign-acl); копия Observation.Public, движок не читает. Служебные
+	// Observation.Attrs сюда НЕ копируются.
 	Attrs map[string]string
 }
 

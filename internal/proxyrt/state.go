@@ -116,7 +116,13 @@ func (s *StateStore) List() []InstanceState {
 // защиту, которой нет.
 func clone(st InstanceState) InstanceState {
 	if st.Resources != nil {
-		st.Resources = append([]ResourceState(nil), st.Resources...)
+		res := append([]ResourceState(nil), st.Resources...)
+		for i := range res {
+			if res[i].Attrs != nil {
+				res[i].Attrs = maps.Clone(res[i].Attrs)
+			}
+		}
+		st.Resources = res
 	}
 	if st.LastPlan != nil {
 		steps := append([]Step(nil), st.LastPlan...)

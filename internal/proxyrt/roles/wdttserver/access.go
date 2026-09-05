@@ -98,7 +98,7 @@ func (a *NDMSAccess) Observe(ctx context.Context) (proxyrt.Observation, error) {
 	// срабатывают ДО security-level и способны обнулить выбор сегментов, а
 	// ставит их не панель. На готовность ресурса не влияют, ошибка чтения —
 	// без ключа, а не отказ наблюдения.
-	var attrs map[string]string
+	var public map[string]string
 	var foreign []string
 	for _, iface := range []string{a.iface, a.rawIface} {
 		if iface == "" {
@@ -115,10 +115,10 @@ func (a *NDMSAccess) Observe(ctx context.Context) (proxyrt.Observation, error) {
 		}
 	}
 	if len(foreign) > 0 {
-		attrs = map[string]string{"foreign-acl": strings.Join(foreign, ",")}
+		public = map[string]string{"foreign-acl": strings.Join(foreign, ",")}
 	}
 	return proxyrt.Observation{Known: true, Exists: a.applied == a.fingerprint(),
-		Detail: a.detail, Attrs: attrs}, nil
+		Detail: a.detail, Public: public}, nil
 }
 
 func (a *NDMSAccess) Plan(obs proxyrt.Observation) []proxyrt.Step {
