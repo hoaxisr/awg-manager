@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -453,14 +455,76 @@ func TestIPTablesInstallSequence(t *testing.T) {
 	}
 }
 
+// Uninstall обязан снять ИМЕННО набор: цепочки обеих таблиц и — главное —
+// PREROUTING-джампы на них, причём джампы ПЕРЕД `-X`: на живом iptables
+// удаление цепочки, на которую ещё есть ссылка, отказывает, и после Uninstall
+// осталась бы пустая цепочка с джампом в неё. Прежде тут стоял ассерт
+// «вызовов >= 3», и выпил removeSourceHooks оставался зелёным. Разбор
+// `iptables -S` до правки шёл мимо шва (прямым sysexec), поэтому снос был
+// тесту вообще не виден.
 func TestIPTablesUninstallSequence(t *testing.T) {
 	fe := &fakeExec{err: nil}
 	it := newFakeIPTables(fe)
-	if err := it.Uninstall(context.Background()); err != nil {
-		t.Fatal(err)
+	// Второй рендеримый джамп (emitPreroutingJump, :519-521): PolicyMark-форма
+	// с `-m connmark`, не только MatchAll. Скраб идёт по substring-матчу
+	// `-j chain`, ему условие перед `-j` безразлично — но фикстура прежде
+	// моделировала только MatchAll-форму, и это никогда не проверялось.
+	it.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) {
+		return jumpsPresentDump() +
+			"-A PREROUTING -m connmark --mark 0xffffaaa -m conntrack ! --ctstate INVALID -j " + ChainName + "\n", nil
 	}
-	if len(fe.calls) < 3 {
-		t.Errorf("expected >=3 calls, got %d", len(fe.calls))
+	it.Uninstall(context.Background())
+	var iptCalls []string
+	for _, c := range fe.calls {
+		if c.kind == "iptables" {
+			iptCalls = append(iptCalls, strings.Join(c.args, " "))
+		}
+	}
+	for _, want := range []string{
+		"-t mangle -F " + ChainName,
+		"-t mangle -X " + ChainName,
+		"-t nat -F " + RedirectChain,
+		"-t nat -X " + RedirectChain,
+		// Джампы из PREROUTING — по дампу jumpsPresentDump.
+		"-t mangle -D PREROUTING -m conntrack ! --ctstate INVALID -j " + ChainName,
+		"-t nat -D PREROUTING -m conntrack ! --ctstate INVALID -j " + RedirectChain,
+		// PolicyMark-форма джампа — тот же chain, другое условие перед -j.
+		"-t mangle -D PREROUTING -m connmark --mark 0xffffaaa -m conntrack ! --ctstate INVALID -j " + ChainName,
+	} {
+		if !slices.Contains(iptCalls, want) {
+			t.Errorf("Uninstall не сделал %q, сделано:\n%s", want, strings.Join(iptCalls, "\n"))
+		}
+	}
+	// Порядок: джамп снимается ДО удаления цепочки, иначе `-X` откажет.
+	for _, pair := range [][2]string{
+		{"-t mangle -D PREROUTING -m conntrack ! --ctstate INVALID -j " + ChainName,
+			"-t mangle -X " + ChainName},
+		{"-t nat -D PREROUTING -m conntrack ! --ctstate INVALID -j " + RedirectChain,
+			"-t nat -X " + RedirectChain},
+	} {
+		if slices.Index(iptCalls, pair[0]) > slices.Index(iptCalls, pair[1]) {
+			t.Errorf("%q сделано ПОСЛЕ %q — на живом iptables -X откажет", pair[0], pair[1])
+		}
+	}
+
+	// Маршрутная половина: слив fwmark-правил и таблицы 700.
+	var ipCalls []string
+	for _, c := range fe.calls {
+		if c.kind == "ip" {
+			ipCalls = append(ipCalls, strings.Join(c.args, " "))
+		}
+	}
+	drained, flushed := false, false
+	for _, c := range ipCalls {
+		if strings.HasPrefix(c, "rule del fwmark") {
+			drained = true
+		}
+		if strings.HasPrefix(c, "route flush table") {
+			flushed = true
+		}
+	}
+	if !drained || !flushed {
+		t.Errorf("Uninstall не слил fwmark-правила/таблицу: %v", ipCalls)
 	}
 	// Uninstall must not touch AWGM-DNS-OFFLOAD (it's gone).
 	for _, c := range fe.calls {
@@ -632,14 +696,7 @@ func TestInstall_IdempotentOnFileExists(t *testing.T) {
 	// in Install() catch "File exists" and silently swallow the error so a
 	// re-Install on already-installed routes/rules is a no-op.
 	rec := newFakeExec()
-	it := &IPTables{
-		restoreNoflush: rec.restoreNoflush,
-		runIPTables:    rec.runIPTables,
-		runIP:          rec.runIP,
-		persistRules:   func(_, _, _ string) error { return nil },
-		persistHook:    func(bool) error { return nil },
-		cleanupHook:    func() {},
-	}
+	it := newFakeIPTables(rec)
 	if err := it.Install(context.Background(), RestoreInputSpec{PolicyMark: "0xff"}); err != nil {
 		t.Fatalf("first Install: %v", err)
 	}
@@ -2091,13 +2148,37 @@ func TestPolicyTunDNSHookScriptShellValid(t *testing.T) {
 	}
 }
 
+// Хук рендерится детерминированно (иначе writePolicyTunDNSHook переписывал бы
+// файл на каждом вызове — износ флеша) и содержит правило на КАЖДЫЙ селектор
+// спека. Порядок групп (марки / интерфейсы) контрактом НЕ является: все
+// правила — один и тот же DNAT на TunDNS, приоритет между ними ничего не
+// меняет; пин порядка ронял бы легитимную перестановку.
 func TestPolicyTunDNSHookScriptStableAcrossCalls(t *testing.T) {
 	spec := FakeIPIngressSpec{
 		TunIface: "opkgtun0", TunDNS: "172.18.0.2", Tag: PolicyTunDNSTag,
-		Marks: []string{"0xffffaab", "0xffffaac"},
+		Marks: []string{"0xffffaab", "0xffffaac"}, Ifaces: []string{"opkgtun17", "opkgtun19"},
 	}
-	if policyTunDNSHookScript(spec) != policyTunDNSHookScript(spec) {
+	script := policyTunDNSHookScript(spec)
+	if script != policyTunDNSHookScript(spec) {
 		t.Error("рендер не детерминирован")
+	}
+	want := []string{
+		"-m connmark --mark 0xffffaab -p udp",
+		"-m connmark --mark 0xffffaab -p tcp",
+		"-m connmark --mark 0xffffaac -p udp",
+		"-m connmark --mark 0xffffaac -p tcp",
+		"-i opkgtun17 -p udp",
+		"-i opkgtun17 -p tcp",
+		"-i opkgtun19 -p udp",
+		"-i opkgtun19 -p tcp",
+	}
+	for _, w := range want {
+		if !strings.Contains(script, w) {
+			t.Errorf("в хуке нет правила %q:\n%s", w, script)
+		}
+	}
+	if got := strings.Count(script, "--to-destination 172.18.0.2:53"); got != len(want) {
+		t.Errorf("DNAT-правил %d, ожидали %d (по одному на селектор):\n%s", got, len(want), script)
 	}
 }
 
@@ -2343,5 +2424,156 @@ func TestProbeAll_InstalledNeedsBothTables(t *testing.T) {
 				t.Error("jumps не может быть true при installed=false")
 			}
 		})
+	}
+}
+
+// RT14: Install обязан упасть на ЛЮБОЙ ошибке `ip rule/route add`, кроме
+// «File exists».
+//
+// Обратную половину гарда (прощение повторной установки) пинует
+// TestInstall_IdempotentOnFileExists, а эту — никто: замена обоих условий на
+// безусловное глотание проходила по всему пакету зелёной. Цена дыры
+// асимметрична идемпотентности: без fwmark-правила помеченный трафик не
+// попадает в нашу таблицу, перехват мёртв целиком — а Install отчитался
+// успехом, и Reconcile считает движок установленным.
+func TestInstall_NonFileExistsErrorFailsInstall(t *testing.T) {
+	// Отказ ровно на одной команде: иначе непонятно, какой из двух гардов
+	// проверен, и мутация одного из них осталась бы зелёной.
+	for _, tc := range []struct{ name, verb string }{
+		{"правило fwmark", "rule"},
+		{"локальный маршрут", "route"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			it := newFakeIPTables(newFakeExec())
+			it.runIP = func(_ context.Context, args ...string) error {
+				if len(args) >= 2 && args[1] == "del" {
+					return errENOENT // оборвать цикл слива
+				}
+				if len(args) >= 2 && args[0] == tc.verb && args[1] == "add" {
+					return errors.New("exit status 2 (exit 2, stderr: RTNETLINK answers: Operation not permitted)")
+				}
+				return nil
+			}
+			err := it.Install(context.Background(), RestoreInputSpec{PolicyMark: "0xff"})
+			if err == nil {
+				t.Fatal("Install отчитался успехом: перехват мёртв, а движок считается установленным")
+			}
+			if !strings.Contains(err.Error(), "Operation not permitted") {
+				t.Fatalf("причина отказа потеряна: %v", err)
+			}
+		})
+	}
+}
+
+// Снос правил, помеченных комментарием (AWGM-DNS-RESCUE, AWGM-INGRESS и
+// легаси AWGM-DNS-NOPOLICY), не пиновался ничем: дефолтный дамп фейка
+// помеченных правил не содержит, и выпил любого из трёх вызовов
+// removeCommentTaggedRulesFromTable оставался зелёным. Накопление здесь
+// реально: правила вставляются `-I PREROUTING 1` на каждом Install, а порт
+// ndnproxy NDMS может переназначить — старое правило увело бы DNS в никуда.
+func TestUninstallScrubsCommentTaggedRules(t *testing.T) {
+	fe := &fakeExec{}
+	it := newFakeIPTables(fe)
+	it.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) {
+		return jumpsPresentDump() +
+			"-A PREROUTING -i br0 -p udp --dport 53 -m comment --comment " + DNSRescueTag +
+			" -j REDIRECT --to-ports 41100\n" +
+			"-A PREROUTING -i opkgtun0 -m comment --comment " + IngressTag +
+			" -j MARK --set-xmark 0xffffaab/0xffffffff\n" +
+			"-A PREROUTING -m comment --comment " + DNSNoPolicyTag + " -j RETURN\n", nil
+	}
+	it.Uninstall(context.Background())
+	var calls []string
+	for _, c := range fe.calls {
+		if c.kind == "iptables" {
+			calls = append(calls, strings.Join(c.args, " "))
+		}
+	}
+	for _, want := range []string{
+		"-t nat -D PREROUTING -i br0 -p udp --dport 53 -m comment --comment " + DNSRescueTag +
+			" -j REDIRECT --to-ports 41100",
+		"-t mangle -D PREROUTING -i opkgtun0 -m comment --comment " + IngressTag +
+			" -j MARK --set-xmark 0xffffaab/0xffffffff",
+		"-t mangle -D PREROUTING -m comment --comment " + DNSNoPolicyTag + " -j RETURN",
+	} {
+		if !slices.Contains(calls, want) {
+			t.Errorf("помеченное правило не снято: %q\nсделано:\n%s", want, strings.Join(calls, "\n"))
+		}
+	}
+}
+
+// iptablesCallsBeforeFirstRestore — argv всех вызовов iptables до первого
+// iptables-restore: именно там обязан жить скраб старых джампов.
+func iptablesCallsBeforeFirstRestore(calls []fakeCall) [][]string {
+	var out [][]string
+	for _, c := range calls {
+		if c.kind == "restore" {
+			break
+		}
+		if c.kind == "iptables" {
+			out = append(out, c.args)
+		}
+	}
+	return out
+}
+
+func containsArgv(list [][]string, want []string) bool {
+	for _, c := range list {
+		if reflect.DeepEqual(c, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// Install без предварительного скраба стакует дубль джампа на каждый Enable
+// (restore --noflush + -I PREROUTING 1). Дамп фейка изображает уже
+// установленный движок — оба джампа обязаны быть сняты ДО restore.
+func TestInstall_ScrubsExistingJumpsBeforeRestore(t *testing.T) {
+	fe := newFakeExec()
+	it := newFakeIPTables(fe)
+	if err := it.Install(context.Background(), RestoreInputSpec{PolicyMark: "0xffffaaa"}); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"-t", "mangle", "-D", "PREROUTING", "-m", "conntrack", "!", "--ctstate", "INVALID", "-j", "AWGM-TPROXY"},
+		{"-t", "nat", "-D", "PREROUTING", "-m", "conntrack", "!", "--ctstate", "INVALID", "-j", "AWGM-REDIRECT"},
+	}
+	got := iptablesCallsBeforeFirstRestore(fe.calls)
+	for _, w := range want {
+		if !containsArgv(got, w) {
+			t.Errorf("до restore нет скраба %v; было: %v", w, got)
+		}
+	}
+}
+
+// policy-tun (DSCPOnly): файл правил blackhole прежнего режима сносится, иначе хук
+// воскрешает fail-closed DROP на каждом netfilter-flap. tproxy-режим файл не трогает.
+func TestInstall_DSCPOnlyDropsBlackholeRulesFile(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		dscpOnly bool
+		want     int
+	}{{"policy-tun", true, 1}, {"tproxy", false, 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			fe := newFakeExec()
+			it := newFakeIPTables(fe)
+			cleanups := 0
+			it.cleanupBlackhole = func() { cleanups++ }
+			if err := it.Install(context.Background(), RestoreInputSpec{PolicyMark: "0xffffaaa", DSCPOnly: tc.dscpOnly}); err != nil {
+				t.Fatal(err)
+			}
+			if cleanups != tc.want {
+				t.Fatalf("cleanupBlackhole вызван %d раз, want %d", cleanups, tc.want)
+			}
+		})
+	}
+}
+
+// Дефолт шва — реальная проба: иначе и проверка перед запуском, и статус
+// молча сообщали бы «TPROXY доступен» на любом ядре.
+func TestTProxyTargetProbeDefault_IsRealProbe(t *testing.T) {
+	if reflect.ValueOf(tproxyTargetProbe).Pointer() != reflect.ValueOf(IsTProxyTargetAvailable).Pointer() {
+		t.Fatal("tproxyTargetProbe по умолчанию обязан быть IsTProxyTargetAvailable")
 	}
 }

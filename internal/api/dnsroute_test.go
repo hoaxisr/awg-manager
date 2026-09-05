@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -339,6 +340,21 @@ func TestDNSRouteHandlerContracts(t *testing.T) {
 			t.Fatal(rr.Body.String())
 		}
 
+		// Все элементы упали → отказ и ноль публикаций: раньше ручка отвечала 200 со
+		// свежим списком и слала bulk-backend, как будто что-то поменялось.
+		pZero := newBusProbe(t)
+		hZero := NewDNSRouteHandler(&fakeDNSRouteService{
+			getFn: func(context.Context, string) (*dnsroute.DomainList, error) { return nil, errors.New("x") },
+		}, nil)
+		hZero.SetEventBus(pZero.bus())
+		rr = perform(hZero.BulkBackend, http.MethodPost, "/dns-routes/bulk-backend", `{"listIDs":["a","b"],"backend":"hydraroute"}`)
+		if rr.Code != http.StatusBadRequest || decodeJSONBody(t, rr)["code"] != "BULK_BACKEND_FAILED" {
+			t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+		}
+		if inv := pZero.invalidated(); len(inv) != 0 {
+			t.Fatalf("публикации при нуле переехавших: %v", inv)
+		}
+
 		if rr := perform(h.Refresh, http.MethodGet, "/dns-routes/refresh", ""); rr.Code != http.StatusMethodNotAllowed {
 			t.Fatalf("code=%d", rr.Code)
 		}
@@ -364,4 +380,67 @@ func TestDNSRouteHandlerContracts(t *testing.T) {
 			t.Fatal(rr.Body.String())
 		}
 	})
+}
+
+// Каждая мутирующая ручка DNS-маршрутов на успехе публикует ровно одну
+// инвалидацию dns-routes со своим reason; на отказе службы — ничего.
+// До этого пина шина в api-тестах не читалась ни разу: снятый publish был зелёным.
+// Все Delete/Refresh/BulkBackend — POST (гарды в dnsroute.go:268, :489, :432).
+func TestDNSRouteHandler_MutationsPublishInvalidation(t *testing.T) {
+	const res = "routing.dnsRoutes"
+	boom := errors.New("boom")
+	cases := []struct {
+		name   string
+		call   func(h *DNSRouteHandler) http.HandlerFunc
+		method string
+		target string
+		body   string
+		reason string
+		fail   *fakeDNSRouteService // фейк, роняющий службу
+	}{
+		{"Create", func(h *DNSRouteHandler) http.HandlerFunc { return h.Create }, "POST", "/dns-routes/create", `{"name":"Work","manualDomains":["corp.local"],"enabled":true}`, "create",
+			&fakeDNSRouteService{createFn: func(context.Context, dnsroute.DomainList) (*dnsroute.DomainList, error) { return nil, boom }}},
+		{"Update", func(h *DNSRouteHandler) http.HandlerFunc { return h.Update }, "POST", "/dns-routes/update?id=dns1", `{"name":"Work2"}`, "update",
+			&fakeDNSRouteService{updateFn: func(context.Context, dnsroute.DomainList) (*dnsroute.DomainList, error) { return nil, boom }}},
+		{"Delete", func(h *DNSRouteHandler) http.HandlerFunc { return h.Delete }, "POST", "/dns-routes/delete?id=dns1", "", "delete",
+			&fakeDNSRouteService{deleteFn: func(context.Context, string) error { return boom }}},
+		{"DeleteBatch", func(h *DNSRouteHandler) http.HandlerFunc { return h.DeleteBatch }, "POST", "/dns-routes/delete-batch", `{"ids":["dns1","dns2"]}`, "delete-batch",
+			&fakeDNSRouteService{deleteBatchFn: func(context.Context, []string) (int, error) { return 0, boom }}},
+		{"CreateBatch", func(h *DNSRouteHandler) http.HandlerFunc { return h.CreateBatch }, "POST", "/dns-routes/create-batch", `[{"name":"A"},{"name":"B"}]`, "create-batch",
+			&fakeDNSRouteService{createBatchFn: func(context.Context, []dnsroute.DomainList) ([]*dnsroute.DomainList, error) { return nil, boom }}},
+		{"SetEnabled", func(h *DNSRouteHandler) http.HandlerFunc { return h.SetEnabled }, "POST", "/dns-routes/enabled?id=dns1", `{"enabled":false}`, "set-enabled",
+			&fakeDNSRouteService{setEnabledFn: func(context.Context, string, bool) error { return boom }}},
+		{"Refresh", func(h *DNSRouteHandler) http.HandlerFunc { return h.Refresh }, "POST", "/dns-routes/refresh?id=dns1", "", "refresh-subscriptions",
+			&fakeDNSRouteService{refreshSubscriptionsFn: func(context.Context, string) error { return boom }}},
+		// BulkBackend: отказ отдельного Get/Update по элементу — `continue` (200 +
+		// публикация, пока переехал хотя бы один); ноль переехавших — 400
+		// BULK_BACKEND_FAILED без публикации; отказ List — DNS_ROUTE_LIST_ERROR.
+		{"BulkBackend", func(h *DNSRouteHandler) http.HandlerFunc { return h.BulkBackend }, "POST", "/dns-routes/bulk-backend", `{"listIDs":["dns1"],"backend":"hydraroute"}`, "bulk-backend",
+			&fakeDNSRouteService{listFn: func(context.Context) ([]dnsroute.DomainList, error) { return nil, boom }}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newBusProbe(t)
+			h := NewDNSRouteHandler(&fakeDNSRouteService{}, nil)
+			h.SetEventBus(p.bus())
+			rr := perform(tc.call(h), tc.method, tc.target, tc.body)
+			if rr.Code != 200 {
+				t.Fatalf("успех ожидался, code=%d body=%s", rr.Code, rr.Body.String())
+			}
+			if got, want := p.invalidated(), []string{res + "/" + tc.reason}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("публикации на успехе = %v, want %v", got, want)
+			}
+
+			pf := newBusProbe(t)
+			hf := NewDNSRouteHandler(tc.fail, nil)
+			hf.SetEventBus(pf.bus())
+			rr = perform(tc.call(hf), tc.method, tc.target, tc.body)
+			if rr.Code == 200 {
+				t.Fatalf("отказ службы обязан быть не-200: %s", rr.Body.String())
+			}
+			if got := pf.invalidated(); len(got) != 0 {
+				t.Fatalf("на отказе публикаций быть не должно: %v", got)
+			}
+		})
+	}
 }

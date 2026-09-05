@@ -37,6 +37,7 @@ func (f *fakePoster) Post(ctx context.Context, payload any) (json.RawMessage, er
 type fakePolicyGetter struct {
 	body []byte
 	err  error
+	raws int
 }
 
 func (f *fakePolicyGetter) Get(ctx context.Context, path string, out any) error {
@@ -44,6 +45,7 @@ func (f *fakePolicyGetter) Get(ctx context.Context, path string, out any) error 
 }
 
 func (f *fakePolicyGetter) GetRaw(ctx context.Context, path string) ([]byte, error) {
+	f.raws++
 	if f.err != nil {
 		return nil, f.err
 	}
