@@ -149,3 +149,29 @@ func TestStateCache_BusEventInvalidates(t *testing.T) {
 	}
 	t.Fatalf("manager calls = %d, want >= 2 после tunnel:state", mgr.calls.Load())
 }
+
+type fakeNWGState struct{ info tunnel.StateInfo }
+
+func (f fakeNWGState) GetState(context.Context, *storage.AWGTunnel) tunnel.StateInfo { return f.info }
+
+// Состояние nativewg-туннеля читается у nativewg-оператора, а не по
+// kernel-матрице чужого имени: иначе карточка врёт. Мутант «ветка снята» был
+// зелёным — шва не было.
+func TestFetchRawStateByID_NativeWGUsesNativeReader(t *testing.T) {
+	mgr := &countingState{}
+	s := newCacheTestService(t, mgr, 2*time.Second)
+	s.nwgState = fakeNWGState{info: tunnel.StateInfo{State: tunnel.StateStopped, BackendType: "nativewg"}}
+	if err := s.store.Create(&storage.AWGTunnel{ID: "awg0", Name: "n", Backend: "nativewg", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := s.fetchRawStateByID(context.Background(), "awg0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.State != tunnel.StateStopped || info.BackendType != "nativewg" {
+		t.Fatalf("state=%v backend=%q — ответ не от nativewg-оператора", info.State, info.BackendType)
+	}
+	if got := mgr.calls.Load(); got != 0 {
+		t.Fatalf("kernel-матрица опрошена %d раз для nativewg", got)
+	}
+}

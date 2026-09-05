@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -97,13 +98,15 @@ func TestExecuteColdStartKernel_ConcurrentUserEditSurvives(t *testing.T) {
 	tunnel.ConfDir = confDir
 	t.Cleanup(func() { tunnel.ConfDir = oldConfDir })
 
+	prevIfaces := listInterfaces
+	listInterfaces = func() ([]net.Interface, error) { return nil, nil }
+	t.Cleanup(func() { listInterfaces = prevIfaces })
+
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
 	if err := store.Create(&storage.AWGTunnel{
 		ID: "awg10", Name: "старое имя", Backend: "kernel",
 		ISPInterface: "eth3",
-		// Адрес заведомо не занят ни одним интерфейсом машины —
-		// checkSystemAddressConflict не должен сорвать пуск.
-		Interface: storage.AWGInterface{Address: "10.253.254.2", DNS: "1.1.1.1"},
+		Interface:    storage.AWGInterface{Address: "10.253.254.2", DNS: "1.1.1.1"},
 		// IP-литерал: резолв endpoint не ходит в DNS.
 		Peer: storage.AWGPeer{Endpoint: "203.0.113.7:51820"},
 	}); err != nil {
@@ -160,15 +163,22 @@ func TestExecuteColdStartKernel_ConcurrentUserEditSurvives(t *testing.T) {
 type fakeKernelOp struct {
 	entered chan struct{}
 	release chan struct{}
+
+	// coldStartErr/deleteErr — отказ соответствующего шага; stops — счётчик Stop.
+	coldStartErr error
+	deleteErr    error
+	stops        int
 }
 
 func (f *fakeKernelOp) Create(context.Context, tunnel.Config) error { return nil }
 func (f *fakeKernelOp) ColdStart(context.Context, tunnel.Config) error {
 	park(f.entered, f.release)
-	return nil
+	return f.coldStartErr
 }
-func (f *fakeKernelOp) Stop(context.Context, string) error                      { return nil }
-func (f *fakeKernelOp) Delete(context.Context, *storage.AWGTunnel) error        { return nil }
+func (f *fakeKernelOp) Stop(context.Context, string) error { f.stops++; return nil }
+func (f *fakeKernelOp) Delete(context.Context, *storage.AWGTunnel) error {
+	return f.deleteErr
+}
 func (f *fakeKernelOp) Reconcile(context.Context, tunnel.Config) error          { return nil }
 func (f *fakeKernelOp) Suspend(context.Context, string) error                   { return nil }
 func (f *fakeKernelOp) Resume(context.Context, string) error                    { return nil }

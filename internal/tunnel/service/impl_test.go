@@ -7,6 +7,8 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
 // === Mock implementations ===
@@ -579,3 +581,30 @@ func TestApplyDiffKernel_AggregatesErrors(t *testing.T) {
 type errStub string
 
 func (e errStub) Error() string { return string(e) }
+
+// TestNew_NativeWGStateWiring пинует шов присваивания svc.nwgState (RT76):
+// New гардирует typed-nil явной проверкой `nwgOp != nil` — без гарда
+// *nwg.OperatorNativeWG(nil), упакованный в интерфейс nativeWGStateReader,
+// дал бы non-nil интерфейс, и последующий код читал бы состояние через
+// nil-указатель.
+func TestNew_NativeWGStateWiring(t *testing.T) {
+	store := &storage.AWGTunnelStore{}
+	legacyOp := &MockOperator{}
+	stateMgr := NewMockStateManager()
+	wanModel := wan.NewModel()
+
+	t.Run("nil operator", func(t *testing.T) {
+		var nwgOp *nwg.OperatorNativeWG
+		svc := New(store, nwgOp, legacyOp, stateMgr, wanModel, nil)
+		if svc.nwgState != nil {
+			t.Error("nwgState должен остаться nil при nil-операторе")
+		}
+	})
+
+	t.Run("live operator", func(t *testing.T) {
+		svc := New(store, &nwg.OperatorNativeWG{}, legacyOp, stateMgr, wanModel, nil)
+		if svc.nwgState == nil {
+			t.Error("nwgState должен быть установлен при живом операторе")
+		}
+	})
+}
