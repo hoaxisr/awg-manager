@@ -1119,6 +1119,7 @@ const api_ProxyRtListenMoveView: v.GenericSchema = v.looseObject({
 });
 
 const api_ProxyRtResourceView: v.GenericSchema = v.looseObject({
+	attrs: v.optional(v.nullable(v.record(v.string(), v.string()))),
 	detail: v.optional(v.nullable(v.string())),
 	error: v.optional(v.nullable(v.string())),
 	id: v.optional(v.nullable(v.string())),

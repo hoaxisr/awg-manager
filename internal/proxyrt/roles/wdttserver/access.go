@@ -24,6 +24,10 @@ type AccessApplier interface {
 	ApplyNATModeToInterface(ctx context.Context, iface, mode string, prevWANs []string) ([]string, error)
 	ApplyPolicyToInterface(ctx context.Context, iface, policy string) error
 	ApplyLANSegmentsToInterface(ctx context.Context, iface, addr, mask string, segments []string) error
+	// ForeignAccessGroups — чужие списки, привязанные к интерфейсу строками
+	// `ip access-group … in`: наблюдение для показа пользователю, ничего не
+	// меняет.
+	ForeignAccessGroups(ctx context.Context, iface string) ([]string, error)
 }
 
 // NDMSAccess — ресурс-защёлка ndms_access. Честно: наблюдения фактического
@@ -86,12 +90,35 @@ func (a *NDMSAccess) fingerprint() string {
 
 func (a *NDMSAccess) ID() proxyrt.ResourceID { return a.id }
 
-func (a *NDMSAccess) Observe(context.Context) (proxyrt.Observation, error) {
+func (a *NDMSAccess) Observe(ctx context.Context) (proxyrt.Observation, error) {
 	if !a.active {
 		return proxyrt.Observation{Known: true, Exists: true, Detail: "выключен — не доводится"}, nil
 	}
+	// Чужие привязки ACL обеих половин — наблюдение для показа: они
+	// срабатывают ДО security-level и способны обнулить выбор сегментов, а
+	// ставит их не панель. На готовность ресурса не влияют, ошибка чтения —
+	// без ключа, а не отказ наблюдения.
+	var attrs map[string]string
+	var foreign []string
+	for _, iface := range []string{a.iface, a.rawIface} {
+		if iface == "" {
+			continue
+		}
+		names, err := a.access.ForeignAccessGroups(ctx, iface)
+		if err != nil {
+			continue
+		}
+		for _, n := range names {
+			if n != "_WEBADMIN_"+iface { // этот снимает permit_absent — не «чужой»
+				foreign = append(foreign, iface+":"+n)
+			}
+		}
+	}
+	if len(foreign) > 0 {
+		attrs = map[string]string{"foreign-acl": strings.Join(foreign, ",")}
+	}
 	return proxyrt.Observation{Known: true, Exists: a.applied == a.fingerprint(),
-		Detail: a.detail}, nil
+		Detail: a.detail, Attrs: attrs}, nil
 }
 
 func (a *NDMSAccess) Plan(obs proxyrt.Observation) []proxyrt.Step {

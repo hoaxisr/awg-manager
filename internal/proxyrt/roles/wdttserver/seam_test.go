@@ -59,6 +59,8 @@ type recAccess struct {
 	nat    []string
 	policy []string
 	lan    []string
+	// foreign — чужие привязки ACL по интерфейсу, какими их видит роутер.
+	foreign map[string][]string
 }
 
 func (a *recAccess) ApplyNATModeToInterface(_ context.Context, iface, mode string, prevWANs []string) ([]string, error) {
@@ -76,6 +78,10 @@ func (a *recAccess) ApplyLANSegmentsToInterface(_ context.Context, iface, addr, 
 	}
 	a.lan = append(a.lan, rec)
 	return nil
+}
+
+func (a *recAccess) ForeignAccessGroups(_ context.Context, iface string) ([]string, error) {
+	return a.foreign[iface], nil
 }
 
 type recIngress struct{ calls []string }
@@ -476,5 +482,29 @@ func TestSeam_PermitAllResidueRemovedWhileDisabledAndExposed(t *testing.T) {
 		if p.ndms.ExitOf(name).PermitAll {
 			t.Errorf("permit-all остался на %s у выключенного инстанса с тумблером", name)
 		}
+	}
+}
+
+// ── H7 ──────────────────────────────────────────────────────────
+
+// Чужие привязки ACL доезжают до состояния ресурса ndms_access — того самого,
+// что читает API, — а `_WEBADMIN_<iface>` в них не попадает: его снимает
+// ресурс permit_absent, и «чужим» он не является.
+//
+// Проверяется результат Converge, а не поле ресурса: именно из res.States
+// состояние уходит наружу, и пин по внутренностям пропустил бы потерю Attrs
+// по дороге через план.
+func TestSeam_NDMSAccessReportsForeignACL(t *testing.T) {
+	p := newSeamParts(t)
+	p.acc.foreign = map[string][]string{"OpkgTun17": {"GUEST_ACL", "_WEBADMIN_OpkgTun17"}}
+	res := roletest.Converge(t, p.role, seamCfg(), proxyrt.IntentEnabled)
+	got := ""
+	for _, st := range res.States {
+		if st.ID == roles.RNdmsAccess {
+			got = st.Attrs["foreign-acl"]
+		}
+	}
+	if got != "OpkgTun17:GUEST_ACL" {
+		t.Fatalf("foreign-acl = %q, ждали OpkgTun17:GUEST_ACL (_WEBADMIN_ отфильтрован)\n%v", got, res.States)
 	}
 }

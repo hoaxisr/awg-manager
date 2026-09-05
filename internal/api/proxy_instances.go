@@ -120,6 +120,9 @@ type ProxyRtResourceView struct {
 	Status string `json:"status" example:"ok"`
 	Detail string `json:"detail,omitempty"`
 	Error  string `json:"error,omitempty"`
+	// Attrs — наблюдение ресурса для показа: у ndms_access ключ foreign-acl
+	// перечисляет чужие привязки `ip access-group … in` обеих половин.
+	Attrs map[string]string `json:"attrs,omitempty"`
 }
 
 // ProxyRtStepView — шаг последнего плана.
@@ -1052,6 +1055,7 @@ func proxyStateView(st *proxyrt.InstanceState) *ProxyRtStateView {
 	for _, r := range st.Resources {
 		out.Resources = append(out.Resources, ProxyRtResourceView{
 			ID: string(r.ID), Status: string(r.Status), Detail: r.Detail, Error: r.Error,
+			Attrs: r.Attrs,
 		})
 	}
 	for _, s := range st.LastPlan {

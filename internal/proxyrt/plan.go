@@ -52,11 +52,11 @@ func Plan(res []Resource, obs Observations) ([]Step, []ResourceState) {
 
 		st := r.Plan(rec.obs)
 		if len(st) == 0 {
-			states = append(states, ResourceState{ID: id, Status: StatusOK, Detail: rec.obs.Detail})
+			states = append(states, ResourceState{ID: id, Status: StatusOK, Detail: rec.obs.Detail, Attrs: rec.obs.Attrs})
 			continue
 		}
 		steps = append(steps, st...)
-		states = append(states, ResourceState{ID: id, Status: StatusDrift, Detail: rec.obs.Detail})
+		states = append(states, ResourceState{ID: id, Status: StatusDrift, Detail: rec.obs.Detail, Attrs: rec.obs.Attrs})
 	}
 	return steps, states
 }

@@ -514,6 +514,7 @@ type natPolicyLANApplier interface {
 	ApplyNATModeToInterface(ctx context.Context, iface, mode string, prevWANs []string) ([]string, error)
 	ApplyPolicyToInterface(ctx context.Context, iface, policy string) error
 	ApplyLANSegmentsToInterface(ctx context.Context, iface, addr, mask string, segments []string) error
+	ForeignAccessGroups(ctx context.Context, iface string) ([]string, error)
 }
 
 // proxyAccessApplier — wdttserver.AccessApplier: режим NAT, hotspot policy,
@@ -542,6 +543,13 @@ func (a proxyAccessApplier) ApplyLANSegmentsToInterface(ctx context.Context, ifa
 		return fmt.Errorf("managed service not available")
 	}
 	return a.svc.ApplyLANSegmentsToInterface(ctx, iface, addr, mask, segments)
+}
+
+func (a proxyAccessApplier) ForeignAccessGroups(ctx context.Context, iface string) ([]string, error) {
+	if a.svc == nil {
+		return nil, fmt.Errorf("managed service not available")
+	}
+	return a.svc.ForeignAccessGroups(ctx, iface)
 }
 
 var _ wdttserver.AccessApplier = proxyAccessApplier{}

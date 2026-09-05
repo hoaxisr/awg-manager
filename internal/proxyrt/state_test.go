@@ -279,9 +279,9 @@ func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 			whyMustPublish: "та же причина шага, другой адрес",
 		},
 		{
-			// Detail сравнивается только потому, что ResourceState сличается
-			// целой структурой. Подслучай держит это свойство: попольное
-			// сравнение без Detail молча потеряет текст наблюдения.
+			// ResourceState сличается ПОПОЛЬНО (в нём карта Attrs, и `==` по
+			// структуре не компилируется). Подслучай держит Detail: поле,
+			// забытое в перечислении, молча потеряет текст наблюдения.
 			name: "сменился Detail ресурса", intent: IntentEnabled, res: Result{
 				Steps:  base.Steps,
 				States: []ResourceState{{ID: "a", Status: StatusOK, Detail: "oper up"}},
@@ -292,6 +292,21 @@ func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 				States: []ResourceState{{ID: "a", Status: StatusOK, Detail: "oper down"}},
 			},
 			whyMustPublish: "тот же статус, другой текст наблюдения",
+		},
+		{
+			// Attrs — карта, и сравнивать её нужно maps.Equal: `x.Attrs !=
+			// y.Attrs` не компилируется, а пропуск поля прячет от пользователя
+			// смену чужих привязок ACL (ndms_access: foreign-acl).
+			name: "сменился Attrs ресурса", intent: IntentEnabled, res: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "a", Status: StatusOK, Attrs: map[string]string{"foreign-acl": "OpkgTun17:GUEST_ACL"}}},
+			}, phase: PhaseWaiting,
+			secondIntent: IntentEnabled, secondPhase: PhaseWaiting,
+			secondRes: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "a", Status: StatusOK, Attrs: map[string]string{"foreign-acl": "OpkgTun17:OTHER_ACL"}}},
+			},
+			whyMustPublish: "тот же статус, другие чужие привязки ACL",
 		},
 		{
 			// Список ресурсов вырос. Сравнение идёт циклом по ПРЕДЫДУЩЕМУ

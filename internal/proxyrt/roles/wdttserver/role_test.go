@@ -107,6 +107,10 @@ func (a *nilAccess) ApplyLANSegmentsToInterface(_ context.Context, iface, addr, 
 	return nil
 }
 
+func (a *nilAccess) ForeignAccessGroups(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
 type nilIngress struct{ calls int }
 
 func (n *nilIngress) EnsureWdttServerIngressRefs(context.Context, string, string) error {

@@ -95,6 +95,9 @@ type ResourceState struct {
 	Status Status
 	Detail string
 	Error  string
+	// Attrs — наблюдение ресурса для показа пользователю (ndms_access:
+	// foreign-acl); копия Observation.Attrs, движок не читает.
+	Attrs map[string]string
 }
 
 // InstanceState — состояние инстанса наружу.

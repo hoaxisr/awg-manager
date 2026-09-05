@@ -1,6 +1,7 @@
 package proxyrt
 
 import (
+	"maps"
 	"sort"
 	"sync"
 	"time"
@@ -135,8 +136,8 @@ func clone(st InstanceState) InstanceState {
 }
 
 // sameState сравнивает всё, кроме отметки времени: она меняется каждый прогон
-// и сама по себе поводом для публикации не является. Step содержит карту и
-// потому несравним через ==, поэтому идём по полям.
+// и сама по себе поводом для публикации не является. Step и ResourceState
+// содержат карту и потому несравнимы через ==, поэтому идём по полям.
 //
 // Причина шага сравнивается отдельно от StepKey: ключ намеренно кодирует только
 // Resource/Op/Args — этого хватает на вопрос «этот шаг уже применяли», но здесь
@@ -150,7 +151,11 @@ func sameState(a, b InstanceState) bool {
 		return false
 	}
 	for i := range a.Resources {
-		if a.Resources[i] != b.Resources[i] {
+		x, y := a.Resources[i], b.Resources[i]
+		if x.ID != y.ID || x.Status != y.Status || x.Detail != y.Detail || x.Error != y.Error {
+			return false
+		}
+		if !maps.Equal(x.Attrs, y.Attrs) {
 			return false
 		}
 	}

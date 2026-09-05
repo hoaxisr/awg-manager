@@ -2921,6 +2921,13 @@ definitions:
     type: object
   api.ProxyRtResourceView:
     properties:
+      attrs:
+        additionalProperties:
+          type: string
+        description: |-
+          Attrs — наблюдение ресурса для показа: у ndms_access ключ foreign-acl
+          перечисляет чужие привязки `ip access-group … in` обеих половин.
+        type: object
       detail:
         type: string
       error:
