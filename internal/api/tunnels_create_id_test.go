@@ -48,20 +48,22 @@ func TestCreate_ExplicitIDRejectedWhenIndexTaken(t *testing.T) {
 }
 
 func TestCreate_ExplicitIDAcceptedWhenIndexFree(t *testing.T) {
-	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
+	stub := &stubTunnelSvc{}
+	h, _ := newTunnelsUpdateHarness(t, stub)
 	h.SetOpkgTunOccupancy(func(context.Context) (map[int]bool, error) {
 		return map[int]bool{12: true}, nil
 	})
 
 	rec := postCreate(t, h, createBody("awg13"))
 
-	// Проверяем ровно то, что нас касается: свободный номер не отвергнут
-	// проверкой занятости. Дальнейшее создание делает сервис, здесь он
-	// подменён стабом.
-	if rec.Code == http.StatusConflict {
-		t.Fatalf("свободный номер не должен отвергаться: %s", rec.Body.String())
+	// Код ответа не пинуем: stubTunnelSvc.Get отдаёт ошибку, и BuildTunnelResponse даёт
+	// CREATE_FAILED уже ПОСЛЕ передачи записи сервису. Предмет — сама запись.
+	if strings.Contains(rec.Body.String(), "INDEX_TAKEN") {
+		t.Fatalf("свободный номер отвергнут проверкой занятости: %s", rec.Body.String())
 	}
-	_ = store
+	if stub.createdRecord == nil || stub.createdRecord.ID != "awg13" {
+		t.Fatalf("сервису ушла запись %+v, want ID awg13", stub.createdRecord)
+	}
 }
 
 // Клиентский идентификатор без цифр всё равно получает номер интерфейса —

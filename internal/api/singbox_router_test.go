@@ -51,6 +51,12 @@ type mockRouterSvc struct {
 	// natPreview / natPreviewErr feed the policy-tun source-preserve preview.
 	natPreview    []router.NATSegmentInfo
 	natPreviewErr error
+	// applyCalls / discardCalls count invocations of ApplyStaging /
+	// DiscardStaging so handlers can be asserted to actually call the service.
+	applyCalls   int
+	discardCalls int
+	// policies backs ListPolicies for composition assertions.
+	policies []router.PolicyInfo
 }
 
 func (m *mockRouterSvc) Reconcile(ctx context.Context) error { return nil }
@@ -146,7 +152,7 @@ func (m *mockRouterSvc) ApplyPreset(ctx context.Context, presetID, outboundTag s
 }
 func (m *mockRouterSvc) ListPresets() ([]router.Preset, error) { return nil, nil }
 func (m *mockRouterSvc) ListPolicies(ctx context.Context) ([]router.PolicyInfo, error) {
-	return []router.PolicyInfo{}, nil
+	return m.policies, nil
 }
 func (m *mockRouterSvc) CreatePolicy(ctx context.Context, description string) (router.PolicyInfo, error) {
 	return router.PolicyInfo{Name: "Policy0", Description: description}, nil
@@ -219,10 +225,12 @@ func (m *mockRouterSvc) StagingStatus(_ context.Context) router.StagingStatus {
 }
 
 func (m *mockRouterSvc) ApplyStaging(_ context.Context) (orchestrator.ValidationResult, error) {
+	m.applyCalls++
 	return m.applyRes, m.applyErr
 }
 
 func (m *mockRouterSvc) DiscardStaging(_ context.Context) error {
+	m.discardCalls++
 	return m.discardErr
 }
 
@@ -408,12 +416,24 @@ func TestRouterBindDevice_DelegatesToService(t *testing.T) {
 }
 
 func TestRouterListPolicies_Returns200(t *testing.T) {
-	h := newMockRouterHandler(&mockRouterSvc{})
+	svc := &mockRouterSvc{policies: []router.PolicyInfo{{Name: "Policy0"}, {Name: "Policy7"}}}
+	h := newMockRouterHandler(svc)
 	req := httptest.NewRequest(http.MethodGet, "/api/singbox/router/policies", nil)
 	rr := httptest.NewRecorder()
 	h.PoliciesCollection(rr, req)
 	if rr.Code != http.StatusOK {
-		t.Errorf("want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+		t.Fatalf("want 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		Data []struct {
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Data) != 2 || got.Data[0].Name != "Policy0" || got.Data[1].Name != "Policy7" {
+		t.Fatalf("wrong data: %#v", got.Data)
 	}
 }
 
@@ -480,11 +500,12 @@ func TestGetStaging_WithDraft(t *testing.T) {
 func TestPostStagingApply_200(t *testing.T) {
 	svc := &mockRouterSvc{}
 	h := newMockRouterHandler(svc)
-	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/staging/apply", nil)
-	rr := httptest.NewRecorder()
-	h.PostStagingApply(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Errorf("status: %d body=%s", rr.Code, rr.Body)
+	rr := perform(h.PostStagingApply, http.MethodPost, "/api/singbox/router/staging/apply", "")
+	if rr.Code != 200 || svc.applyCalls != 1 {
+		t.Fatalf("code=%d applyCalls=%d body=%s", rr.Code, svc.applyCalls, rr.Body)
+	}
+	if decodeJSONBody(t, rr)["data"].(map[string]any)["ok"] != true {
+		t.Fatalf("тело: %s", rr.Body)
 	}
 }
 
@@ -548,11 +569,17 @@ func TestPostStagingApply_422OnSbCheck(t *testing.T) {
 func TestPostStagingDiscard_200(t *testing.T) {
 	svc := &mockRouterSvc{}
 	h := newMockRouterHandler(svc)
-	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/staging/discard", nil)
-	rr := httptest.NewRecorder()
-	h.PostStagingDiscard(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Errorf("status: %d body=%s", rr.Code, rr.Body)
+	rr := perform(h.PostStagingDiscard, http.MethodPost, "/api/singbox/router/staging/discard", "")
+	if rr.Code != 200 || svc.discardCalls != 1 {
+		t.Fatalf("code=%d discardCalls=%d body=%s", rr.Code, svc.discardCalls, rr.Body)
+	}
+}
+
+func TestPostStagingDiscard_500OnServiceError(t *testing.T) {
+	svc := &mockRouterSvc{discardErr: errors.New("io")}
+	rr := perform(newMockRouterHandler(svc).PostStagingDiscard, http.MethodPost, "/api/singbox/router/staging/discard", "")
+	if rr.Code != 500 {
+		t.Fatalf("отказ службы → 500, got %d", rr.Code)
 	}
 }
 
@@ -592,7 +619,7 @@ func TestPostStagingDiscard_405OnWrongMethod(t *testing.T) {
 func newTestRouterHandlerReal(t *testing.T) (*SingboxRouterHandler, string) {
 	t.Helper()
 	dir := t.TempDir()
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouter, Filename: "20-router.json"}); err != nil {
 		t.Fatal(err)
 	}

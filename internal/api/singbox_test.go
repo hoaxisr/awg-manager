@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox"
+	"github.com/hoaxisr/awg-manager/internal/storage"
+	nettesting "github.com/hoaxisr/awg-manager/internal/testing"
 )
 
 func TestSingboxHandler_StatusSmoke(t *testing.T) {
@@ -190,33 +192,42 @@ func TestSingboxHandler_CheckIP_OperatorNotWired(t *testing.T) {
 	}
 }
 
-func TestSingboxHandler_CheckConnectivity_IfaceOverride_DoesNotRequireOperator(t *testing.T) {
-	h := NewSingboxHandler(nil, nil, nil, nil)
-	req := httptest.NewRequest(http.MethodGet, "/api/singbox/tunnels/test/connectivity?iface=t2s1", nil)
-	w := httptest.NewRecorder()
-	h.CheckConnectivity(w, req)
-
-	body := w.Body.String()
-	if strings.Contains(body, "operator not wired") {
-		t.Fatalf("iface override should bypass operator lookup, got body: %s", body)
+func TestSingboxHandler_CheckIP_IfaceOverride_UsesIfaceWithoutOperator(t *testing.T) {
+	old := checkIPByInterface
+	t.Cleanup(func() { checkIPByInterface = old })
+	var gotIface, gotService string
+	checkIPByInterface = func(_ context.Context, iface, service string) (*nettesting.IPResult, error) {
+		gotIface, gotService = iface, service
+		return &nettesting.IPResult{}, nil
 	}
-	if w.Code == http.StatusInternalServerError {
-		t.Fatalf("expected non-500 for iface override connectivity path, got %d body=%s", w.Code, body)
+	h := NewSingboxHandler(nil, nil, nil, nil)
+	rr := perform(h.CheckIP, http.MethodGet, "/api/singbox/tunnels/test/ip?iface=t2s1&service=https://example.invalid/ip", "")
+	if rr.Code != 200 || gotIface != "t2s1" || gotService != "https://example.invalid/ip" {
+		t.Fatalf("code=%d iface=%q service=%q body=%s", rr.Code, gotIface, gotService, rr.Body.String())
 	}
 }
 
-func TestSingboxHandler_CheckIP_IfaceOverride_DoesNotRequireOperator(t *testing.T) {
-	h := NewSingboxHandler(nil, nil, nil, nil)
-	req := httptest.NewRequest(http.MethodGet, "/api/singbox/tunnels/test/ip?iface=t2s1", nil)
-	w := httptest.NewRecorder()
-	h.CheckIP(w, req)
-
-	body := w.Body.String()
-	if strings.Contains(body, "operator not wired") {
-		t.Fatalf("iface override should bypass operator lookup, got body: %s", body)
+func TestSingboxHandler_CheckConnectivity_IfaceOverride_UsesIfaceWithoutOperator(t *testing.T) {
+	old := checkConnectivityByInterfaceURL
+	t.Cleanup(func() { checkConnectivityByInterfaceURL = old })
+	var gotIface, gotURL string
+	checkConnectivityByInterfaceURL = func(_ context.Context, iface, url string) *nettesting.ConnectivityResult {
+		gotIface, gotURL = iface, url
+		return &nettesting.ConnectivityResult{}
 	}
-	if w.Code == http.StatusInternalServerError {
-		t.Fatalf("expected non-500 for iface override IP path, got %d body=%s", w.Code, body)
+	h := NewSingboxHandler(nil, nil, nil, nil)
+	rr := perform(h.CheckConnectivity, http.MethodGet, "/api/singbox/tunnels/test/connectivity?iface=t2s1", "")
+	if rr.Code != 200 || gotIface != "t2s1" || gotURL != storage.DefaultConnectivityCheckURL {
+		t.Fatalf("code=%d iface=%q url=%q body=%s", rr.Code, gotIface, gotURL, rr.Body.String())
+	}
+}
+
+func TestSingboxNetworkProbeSeams_DefaultToTestingPackage(t *testing.T) {
+	if reflect.ValueOf(checkIPByInterface).Pointer() != reflect.ValueOf(nettesting.CheckIPByInterface).Pointer() {
+		t.Fatal("checkIPByInterface по умолчанию обязан быть testing.CheckIPByInterface")
+	}
+	if reflect.ValueOf(checkConnectivityByInterfaceURL).Pointer() != reflect.ValueOf(nettesting.CheckConnectivityByInterfaceURL).Pointer() {
+		t.Fatal("checkConnectivityByInterfaceURL по умолчанию обязан быть testing.CheckConnectivityByInterfaceURL")
 	}
 }
 
