@@ -58,6 +58,15 @@ func isNetlinkFileExists(msg string) bool {
 	return strings.Contains(strings.ToLower(msg), "file exists")
 }
 
+// isACLNotBound — ответ NDMS на unbind/remove списка, которого уже нет:
+// `argument parse error` (стенд 5.01, 2026-09-05: непривязанный, несуществующий
+// список, несуществующий интерфейс, повторный unbind). Применять ТОЛЬКО к
+// снятию permit-all: наша форма команды фиксирована, других «argument»-ошибок
+// у неё нет; на прочих командах эта фраза означала бы настоящую опечатку.
+func isACLNotBound(msg string) bool {
+	return strings.Contains(strings.ToLower(msg), "argument parse error")
+}
+
 // IsMissingInterfaceError сообщает, что роутер отказал из-за отсутствия
 // интерфейса или сегмента. Экспортирован для вызывающих, которым такой отказ
 // означает «нечего делать»: восстановление NAT на сегменте, удалённом
