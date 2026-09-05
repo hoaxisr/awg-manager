@@ -42,16 +42,25 @@ type NDMSAccess struct {
 	// ставит ровно такую же (стенд 2026-09-02: MARK + CONNMARK --save-mark на
 	// `-i opkgtunN`) — одна реализация вместо двух.
 	//
-	// Режим NAT и LAN-ACL остаются только на первой половине — расхождение
-	// это, а не решение данной правки: абонент raw-порта в LAN ограничен
-	// одним security-level. Записано в docs/TRACKER.md отдельным пунктом.
+	// LAN-ACL применяется к ОБЕИМ половинам, каждой со своей peer-сетью:
+	// выбор сегментов — свойство сервера, а не порта, которым подключился
+	// абонент. Прежде список стоял только на первой половине, и raw-абонент
+	// был ограничен одним security-level.
+	//
+	// Режим NAT остаётся на первой половине: raw-абонентам SNAT делает своя
+	// группа MASQUERADE по peer-сети (netres.MasqGroups, role.go), а не
+	// NDMS-режим интерфейса.
 	rawIface string
 	mode     string
 	prevWANs []string
 	policy   string
 	addr     string
 	mask     string
-	lan      []string
+	// rawAddr, rawMask — шлюз и маска raw-половины: адрес её peer-сети, от
+	// которого строится ACL второй половины.
+	rawAddr string
+	rawMask string
+	lan     []string
 	// active=false (disabled) — «не трогать»: старый код звал
 	// applyServerAccess только на старте; доводка NAT/policy/LAN по
 	// интерфейсу выключенного сервера — тот же класс create-on-reference
@@ -65,13 +74,14 @@ func NewNDMSAccess(id proxyrt.ResourceID, access AccessApplier) *NDMSAccess {
 	return &NDMSAccess{id: id, access: access}
 }
 
-func (a *NDMSAccess) SetDesired(iface, rawIface, mode string, prevWANs []string, policy, addr, mask string, lan []string, active bool) {
-	a.iface, a.rawIface, a.mode, a.prevWANs, a.policy, a.addr, a.mask, a.lan, a.active =
-		iface, rawIface, mode, prevWANs, policy, addr, mask, lan, active
+func (a *NDMSAccess) SetDesired(iface, rawIface, mode string, prevWANs []string, policy, addr, mask, rawAddr, rawMask string, lan []string, active bool) {
+	a.iface, a.rawIface, a.mode, a.prevWANs, a.policy = iface, rawIface, mode, prevWANs, policy
+	a.addr, a.mask, a.rawAddr, a.rawMask, a.lan, a.active = addr, mask, rawAddr, rawMask, lan, active
 }
 
 func (a *NDMSAccess) fingerprint() string {
-	return strings.Join(append([]string{a.iface, a.rawIface, a.mode, a.policy, a.addr, a.mask}, a.lan...), "|")
+	return strings.Join(append([]string{a.iface, a.rawIface, a.mode, a.policy,
+		a.addr, a.mask, a.rawAddr, a.rawMask}, a.lan...), "|")
 }
 
 func (a *NDMSAccess) ID() proxyrt.ResourceID { return a.id }
@@ -109,8 +119,16 @@ func (a *NDMSAccess) Apply(ctx context.Context, s proxyrt.Step) error {
 			return fmt.Errorf("policy %s на %s: %w", a.policy, iface, err)
 		}
 	}
+	// LAN-ACL — на ОБЕ половины, каждой со своей peer-сетью: выбранные
+	// сегменты и есть весь доступ абонента в LAN, независимо от того, каким
+	// портом он подключился.
 	if err := a.access.ApplyLANSegmentsToInterface(ctx, a.iface, a.addr, a.mask, a.lan); err != nil {
 		return fmt.Errorf("LAN ACL: %w", err)
+	}
+	if a.rawIface != "" {
+		if err := a.access.ApplyLANSegmentsToInterface(ctx, a.rawIface, a.rawAddr, a.rawMask, a.lan); err != nil {
+			return fmt.Errorf("LAN ACL (raw): %w", err)
+		}
 	}
 	a.applied = a.fingerprint()
 	a.detail = "применено; WAN=" + strings.Join(wans, ",")

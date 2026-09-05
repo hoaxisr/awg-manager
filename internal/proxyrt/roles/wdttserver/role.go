@@ -201,7 +201,7 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 		SecurityLevel: "public", IPGlobal: true, PermitAllACL: true,
 		DefaultCandidacy: false}) // сервер — вход, кандидатуры нет
 	r.access.SetDesired(c.NdmsIface, c.RawNdmsIface, c.NatMode, c.StaticNATList(), c.Policy,
-		wgGatewayAddr, wgGatewayMask, c.LanSegments, enabled)
+		wgGatewayAddr, wgGatewayMask, rawGatewayAddr, rawGatewayMask, c.LanSegments, enabled)
 	// permit-all на половинах сервера быть не должно: стенд 2026-09-02 —
 	// он обнуляет выбор LAN-сегментов. Исключение — WG-половина при
 	// ExposeToPolicies: там разрешение ставит policy_exit по замыслу.
@@ -219,7 +219,15 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 
 	if enabled {
 		r.nat.SetDesired(r.natGroups(c))
-		r.fwd.SetDesired(netres.StaticGroups(netres.ForwardGroups([]string{c.RawIface})))
+		// FORWARD-правил у роли нет и во включённом состоянии: безусловный
+		// ACCEPT по `-i`/`-o` raw-половины стоял ПЕРЕД `_NDM_ACL_IN` и
+		// security-level и открывал raw-абоненту весь LAN мимо выбранных
+		// сегментов (решение владельца 2026-09-05). Доступ решают
+		// security-level половины и LAN-ACL обеих половин (access.go);
+		// интернет raw-абонентам даёт сам NDMS (`_NDM_SL_PRIVATE`), обратный
+		// трафик — RELATED,ESTABLISHED первым правилом FORWARD (стенд
+		// 2026-09-05).
+		r.fwd.SetDesired(nil)
 		r.mss.SetDesired([]string{rawPeerCIDR})
 		r.hook.SetDesired(r.hookGroups(c))
 		r.input.SetDesired(inputPorts(c))
@@ -342,8 +350,9 @@ func (r *Role) natGroups(c roles.WdttServerConfig) netres.GroupProvider {
 	}
 }
 
-// hookGroups — хук несёт ТЕ ЖЕ правила: FORWARD + DNS (метку политики даёт
-// NDMS через ndms_access, см. access.go).
+// hookGroups — хук несёт ТЕ ЖЕ правила, что и ресурсы: MASQUERADE + DNS
+// (метку политики даёт NDMS через ndms_access, см. access.go; FORWARD accept
+// снят — доступ raw-абонента в LAN решают security-level и LAN-ACL).
 func (r *Role) hookGroups(c roles.WdttServerConfig) netres.GroupProvider {
 	nat := r.natGroups(c)
 	return func(ctx context.Context) ([]netres.Group, error) {
@@ -354,7 +363,7 @@ func (r *Role) hookGroups(c roles.WdttServerConfig) netres.GroupProvider {
 		if len(groups) == 0 {
 			return nil, nil
 		}
-		return append(netres.ForwardGroups([]string{c.RawIface}), groups...), nil
+		return groups, nil
 	}
 }
 

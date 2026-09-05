@@ -19,21 +19,6 @@ const MSSChain = "awgm_wdtt_mangle"
 // HookPath — путь netfilter.d-хука (старый, усыновляется).
 const HookPath = "/opt/etc/ndm/netfilter.d/61-awgm-wdtt-forward.sh"
 
-// ForwardGroups — FORWARD accept по -i и -o для каждого интерфейса.
-func ForwardGroups(ifaces []string) []Group {
-	var out []Group
-	for _, iface := range ifaces {
-		if iface == "" {
-			continue
-		}
-		out = append(out, Group{Guard: iface, Rules: []Rule{
-			{Chain: "FORWARD", Pos: 1, Spec: []string{"-i", iface, "-j", "ACCEPT"}},
-			{Chain: "FORWARD", Pos: 1, Spec: []string{"-o", iface, "-j", "ACCEPT"}},
-		}})
-	}
-	return out
-}
-
 // MasqPlan — kernel-iface + CIDR клиентов (паритет entwareNATPlan).
 type MasqPlan struct {
 	Iface string
