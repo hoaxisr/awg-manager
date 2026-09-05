@@ -82,23 +82,46 @@ func TestWdttServerArgsDNSIsRouterRegardlessOfRelayMode(t *testing.T) {
 	}
 }
 
+// Строка запуска сверяется ЦЕЛИКОМ, а не тремя флагами. Причина не в
+// аккуратности: argv — это отпечаток конфигурации процесса
+// (`Proc.SetDesired` → `awgmproto.ConfigHash(forkArgs)`), по которому движок
+// решает, надо ли перезапускать. Потерянный флаг означает сразу две беды:
+// процесс работает без настройки, и его отпечаток молча совпадает с чужим.
+// Прежняя редакция смотрела три подстроки из семнадцати аргументов —
+// удаление `-transport` и `-mode` проходило зелёным.
+//
+// Ожидание — рукописная строка, а не рендер тем же построителем.
 func TestFreeTurnArgs(t *testing.T) {
 	cl := FreeTurnClientConfig{
-		Listen: "127.0.0.1:9001", Peer: "relay.example:3478", Streams: 2,
-		Transport: "udp", Mode: "turn", ObfProfile: "none",
+		Listen: "127.0.0.1:9001", Peer: "relay.example:3478", Provider: "prov",
+		Links: "l1,l2", Streams: 2, Transport: "udp", Mode: "turn", Bond: true,
+		ObfProfile: "xor", ObfKey: "k", StreamsPerCred: 3, Platform: "mobile",
+		DNSMode: "doh", DNSServers: "1.1.1.1", ClientID: "cid",
+		Sub: "https://sub", Debug: true,
 	}
-	got := strings.Join(FreeTurnClientArgs(cl), " ")
-	for _, want := range []string{"-listen 127.0.0.1:9001", "-peer relay.example:3478", "-n 2"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("клиент: нет %q в %q", want, got)
-		}
+	wantClient := "-listen 127.0.0.1:9001 -peer relay.example:3478 -provider prov " +
+		"-links l1,l2 -n 2 -transport udp -mode turn -bond -obf-profile xor -obf-key k " +
+		"-streams-per-cred 3 -platform mobile -dns-mode doh -dns-servers 1.1.1.1 " +
+		"-client-id cid -sub https://sub -debug"
+	if got := strings.Join(FreeTurnClientArgs(cl), " "); got != wantClient {
+		t.Fatalf("argv клиента:\n%s\nждали:\n%s", got, wantClient)
 	}
-	srv := FreeTurnServerConfig{Listen: "0.0.0.0:3478", Mode: "udp", ClientsFile: "/opt/etc/ft/clients"}
-	gs := strings.Join(FreeTurnServerArgs(srv), " ")
-	for _, want := range []string{"-listen 0.0.0.0:3478", "-mode udp", "-clients-file /opt/etc/ft/clients"} {
-		if !strings.Contains(gs, want) {
-			t.Fatalf("сервер: нет %q в %q", want, gs)
-		}
+
+	// -platform уезжает ТОЛЬКО для mobile: у desktop его нет вовсе, и это не
+	// косметика — лишний флаг сдвинул бы отпечаток всем настольным клиентам.
+	cl.Platform = "desktop"
+	if got := strings.Join(FreeTurnClientArgs(cl), " "); strings.Contains(got, "-platform") {
+		t.Errorf("desktop не должен получать -platform: %q", got)
+	}
+
+	srv := FreeTurnServerConfig{
+		Listen: "0.0.0.0:3478", Connect: "up:1", Mode: "udp",
+		ObfProfile: "xor", ObfKey: "k", ClientsFile: "/opt/etc/ft/clients", Debug: true,
+	}
+	wantServer := "-listen 0.0.0.0:3478 -connect up:1 -mode udp -obf-profile xor " +
+		"-obf-key k -clients-file /opt/etc/ft/clients -debug"
+	if got := strings.Join(FreeTurnServerArgs(srv), " "); got != wantServer {
+		t.Fatalf("argv сервера:\n%s\nждали:\n%s", got, wantServer)
 	}
 }
 

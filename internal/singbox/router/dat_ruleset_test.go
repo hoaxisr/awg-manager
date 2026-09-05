@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -319,5 +320,87 @@ func TestDatRuleSetFile_CompilesMultipleTagsAsOneRuleSet(t *testing.T) {
 	}
 	if got := strings.Join(expander.calls, ","); got != "GOOGLE,YOUTUBE,GOOGLE,YOUTUBE" {
 		t.Fatalf("ExpandGeoTag calls = %q", got)
+	}
+}
+
+// Обновлённый .dat обязан ПЕРЕСОБРАТЬ скомпилированный набор. Кэш-ключ несёт
+// размер и время источника (`datRuleSetSourceMeta`), но ни один тест их не
+// проверял: обнуление обоих полей проходило зелёным, а на роутере это значит,
+// что после обновления geosite.dat пользователь до смены formatVersion живёт
+// со старыми правилами.
+//
+// Два случая — по одному на каждое поле ключа: у обновлённого файла может
+// совпасть размер (правки одной длины), и тогда отличает только mtime.
+func TestDatRuleSetFile_RecompilesWhenSourceChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		rewrite func(t *testing.T, path string)
+	}{
+		{"размер другой, время то же", func(t *testing.T, path string) {
+			st, err := os.Stat(path)
+			if err != nil {
+				t.Fatalf("stat source: %v", err)
+			}
+			if err := os.WriteFile(path, []byte("dat-updated-longer"), 0644); err != nil {
+				t.Fatalf("rewrite source: %v", err)
+			}
+			// Время возвращаем прежнее: иначе случай не изолирует размер и
+			// зелёным остаётся выпил ЛЮБОГО из двух полей ключа.
+			if err := os.Chtimes(path, st.ModTime(), st.ModTime()); err != nil {
+				t.Fatalf("chtimes: %v", err)
+			}
+		}},
+		{"размер тот же, время новее", func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte("DAT"), 0644); err != nil { // те же 3 байта
+				t.Fatalf("rewrite source: %v", err)
+			}
+			later := time.Now().Add(2 * time.Second)
+			if err := os.Chtimes(path, later, later); err != nil {
+				t.Fatalf("chtimes: %v", err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			source := filepath.Join(dir, "geosite.dat")
+			if err := os.WriteFile(source, []byte("dat"), 0644); err != nil {
+				t.Fatalf("write source: %v", err)
+			}
+			svc := &ServiceImpl{deps: Deps{
+				Settings: newTestSettingsStore(t, storage.SingboxRouterSettings{}),
+				Singbox:  &fakeSingbox{dir: filepath.Join(dir, "config.d"), binary: "sing-box"},
+				GeoData:  fakeGeoExpander{lines: []string{".example.com"}, path: source},
+			}}
+			u, err := svc.DatRuleSetURL(context.Background(), "geosite", []string{"EXAMPLE"})
+			if err != nil {
+				t.Fatalf("DatRuleSetURL: %v", err)
+			}
+			token := u[strings.LastIndex(u, "token=")+len("token="):]
+
+			compileCalls := 0
+			withFakeRuleSetCompiler(t, func(_ string, args []string) (string, string, error) {
+				compileCalls++
+				if err := os.WriteFile(args[3], []byte("compiled"), 0644); err != nil {
+					t.Fatalf("write compiled: %v", err)
+				}
+				return "", "", nil
+			})
+
+			if _, err := svc.DatRuleSetFile(context.Background(), "geosite", []string{"EXAMPLE"}, token); err != nil {
+				t.Fatalf("первая сборка: %v", err)
+			}
+			if compileCalls != 1 {
+				t.Fatalf("первая сборка: компиляций %d, ждали 1", compileCalls)
+			}
+
+			tc.rewrite(t, source)
+
+			if _, err := svc.DatRuleSetFile(context.Background(), "geosite", []string{"EXAMPLE"}, token); err != nil {
+				t.Fatalf("после обновления источника: %v", err)
+			}
+			if compileCalls != 2 {
+				t.Errorf("источник обновился, а набор взят из кэша: компиляций %d, ждали 2", compileCalls)
+			}
+		})
 	}
 }

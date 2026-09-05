@@ -2,6 +2,7 @@ package dnsroute
 
 import (
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -113,8 +114,11 @@ func TestFailoverManager_ReconcileNotCalledOnRecoverNonFailed(t *testing.T) {
 
 func TestFailoverManager_ListenPingCheckEvents(t *testing.T) {
 	bus := events.NewBus()
-	reconcileCalls := 0
-	fm := NewFailoverManager(func() error { reconcileCalls++; return nil })
+	// Счётчик атомарный: колбэк зовёт FailoverManager из своей горутины, а
+	// читает его тест. Обычный int здесь — гонка данных; спасал только
+	// happens-before через последующий захват замка менеджера.
+	var reconcileCalls atomic.Int32
+	fm := NewFailoverManager(func() error { reconcileCalls.Add(1); return nil })
 	fm.StartListener(bus)
 	defer fm.StopListener()
 
@@ -131,8 +135,8 @@ func TestFailoverManager_ListenPingCheckEvents(t *testing.T) {
 	if !fm.IsFailed("tun1") {
 		t.Error("expected tun1 to be failed after fail event")
 	}
-	if reconcileCalls != 1 {
-		t.Errorf("expected 1 reconcile call, got %d", reconcileCalls)
+	if got := reconcileCalls.Load(); got != 1 {
+		t.Errorf("expected 1 reconcile call, got %d", got)
 	}
 
 	// Publish pass event (recovery)
@@ -146,15 +150,18 @@ func TestFailoverManager_ListenPingCheckEvents(t *testing.T) {
 	if fm.IsFailed("tun1") {
 		t.Error("expected tun1 to be recovered after pass event")
 	}
-	if reconcileCalls != 2 {
-		t.Errorf("expected 2 reconcile calls, got %d", reconcileCalls)
+	if got := reconcileCalls.Load(); got != 2 {
+		t.Errorf("expected 2 reconcile calls, got %d", got)
 	}
 }
 
 func TestFailoverManager_IgnoresNonFailPassEvents(t *testing.T) {
 	bus := events.NewBus()
-	reconcileCalls := 0
-	fm := NewFailoverManager(func() error { reconcileCalls++; return nil })
+	// Счётчик атомарный: колбэк зовёт FailoverManager из своей горутины, а
+	// читает его тест. Обычный int здесь — гонка данных; спасал только
+	// happens-before через последующий захват замка менеджера.
+	var reconcileCalls atomic.Int32
+	fm := NewFailoverManager(func() error { reconcileCalls.Add(1); return nil })
 	fm.StartListener(bus)
 	defer fm.StopListener()
 
@@ -169,8 +176,8 @@ func TestFailoverManager_IgnoresNonFailPassEvents(t *testing.T) {
 	if fm.IsFailed("tun1") {
 		t.Error("should not be failed from 'check' event")
 	}
-	if reconcileCalls != 0 {
-		t.Errorf("expected no reconcile calls, got %d", reconcileCalls)
+	if got := reconcileCalls.Load(); got != 0 {
+		t.Errorf("expected no reconcile calls, got %d", got)
 	}
 }
 

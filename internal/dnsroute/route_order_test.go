@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,13 +38,39 @@ type fakeGroup struct {
 
 // fakeRouter — минимальная модель NDMS: упорядоченная таблица dns-proxy
 // route + object-group fqdn.
+// fakeRouter под замком: POST прилетает из горутины координатора сохранения
+// (SaveCoordinator.fire), а читает состав сам тест — без синхронизации это
+// гонка данных, падающая под -race независимо от таймингов.
 type fakeRouter struct {
+	mu     sync.Mutex
 	routes []fakeRoute
 	groups map[string]*fakeGroup
 	seq    int
 	// snapshots — состав таблицы после каждого POST. По ним видно окно: если
 	// между POST-ами группа осталась без строк, снос и запись разъехались.
 	snapshots [][]fakeRoute
+}
+
+// waitQuiet ждёт, пока число POST-ов перестанет расти, и возвращает его.
+// Нужен там, где тест меряет «сколько POST-ов сделал следующий шаг»: до него
+// в очереди может лежать отложенный save от предыдущего.
+func waitQuiet(t *testing.T, r *fakeRouter) int {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	last := r.snapshotCount()
+	stable := time.Now()
+	for time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+		if n := r.snapshotCount(); n != last {
+			last, stable = n, time.Now()
+			continue
+		}
+		if time.Since(stable) > 60*time.Millisecond {
+			return last
+		}
+	}
+	t.Fatalf("POST-ы не утихли: %d", last)
+	return last
 }
 
 func newFakeRouter() *fakeRouter {
@@ -53,6 +80,8 @@ func newFakeRouter() *fakeRouter {
 func (r *fakeRouter) Get(context.Context, string, any) error { return nil }
 
 func (r *fakeRouter) GetRaw(_ context.Context, path string) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	switch path {
 	case "/show/sc/dns-proxy/route":
 		arr := make([]map[string]any, 0, len(r.routes))
@@ -86,6 +115,8 @@ func (r *fakeRouter) GetRaw(_ context.Context, path string) ([]byte, error) {
 }
 
 func (r *fakeRouter) Post(_ context.Context, payload any) (json.RawMessage, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	p, _ := payload.(map[string]any)
 	if dp, ok := p["dns-proxy"].(map[string]any); ok {
 		switch route := dp["route"].(type) {
@@ -182,6 +213,8 @@ func (r *fakeRouter) deleteRoute(group, iface string) {
 // ifaceOrder возвращает порядок интерфейсов для группы — то, что видно в
 // running-config и по чему NDMS выбирает туннель.
 func (r *fakeRouter) ifaceOrder(groupPrefix string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var out []string
 	for _, rt := range r.routes {
 		if strings.HasPrefix(rt.group, groupPrefix) {
@@ -193,8 +226,18 @@ func (r *fakeRouter) ifaceOrder(groupPrefix string) []string {
 
 // assertNoWindow проверяет, что группа ни в одном промежутке между POST-ами
 // не осталась без маршрутов после того, как они там появились.
+// snapshotCount — число POST-ов, снятое ПОД локом. Голое `len(r.snapshots)`
+// из теста — гонка: POST прилетает из горутины координатора сохранения.
+func (r *fakeRouter) snapshotCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.snapshots)
+}
+
 func (r *fakeRouter) assertNoWindow(t *testing.T, groupPrefix string) {
 	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	seen := false
 	for i, snap := range r.snapshots {
 		n := 0
@@ -312,12 +355,15 @@ func TestIssue801_RouteOrderReachesRouter(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		before := len(r.snapshots)
+		// Отложенный save-POST от Create прилетает по debounce и тоже добавляет
+		// снимок. Дожидаемся тишины ДО замера, иначе ассерт краснеет ложно —
+		// на чужом POST-е, а не на работе Reconcile.
+		before := waitQuiet(t, r)
 		if err := svc.Reconcile(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if len(r.snapshots) != before {
-			t.Errorf("холостой reconcile сделал %d POST-ов", len(r.snapshots)-before)
+		if got := r.snapshotCount(); got != before {
+			t.Errorf("холостой reconcile сделал %d POST-ов", got-before)
 		}
 	})
 }

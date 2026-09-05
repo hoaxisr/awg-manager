@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -49,9 +50,12 @@ func TestClashState_LatencyForOutbound_HappyPath(t *testing.T) {
 }
 
 func TestClashState_CacheHit(t *testing.T) {
-	calls := 0
+	// Счётчик атомарный: инкремент делает горутина обработчика httptest, а
+	// читает его тест. Обычный int здесь — гонка данных; сегодня она не
+	// вылетает под -race только потому, что запросы синхронные.
+	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		calls.Add(1)
 		w.Header().Set("content-type", "application/json")
 		_, _ = w.Write([]byte(`{"proxies":{"v":{"history":[{"delay":50}]}}}`))
 	}))
@@ -63,15 +67,15 @@ func TestClashState_CacheHit(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		_, _ = cs.LatencyForOutbound(context.Background(), "v")
 	}
-	if calls != 1 {
-		t.Errorf("expected 1 upstream call within TTL, got %d", calls)
+	if got := calls.Load(); got != 1 {
+		t.Errorf("expected 1 upstream call within TTL, got %d", got)
 	}
 }
 
 func TestClashState_CacheExpiry(t *testing.T) {
-	calls := 0
+	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		calls.Add(1)
 		w.Header().Set("content-type", "application/json")
 		_, _ = w.Write([]byte(`{"proxies":{"v":{"history":[{"delay":50}]}}}`))
 	}))
@@ -83,8 +87,8 @@ func TestClashState_CacheExpiry(t *testing.T) {
 	_, _ = cs.LatencyForOutbound(context.Background(), "v")
 	time.Sleep(10 * time.Millisecond)
 	_, _ = cs.LatencyForOutbound(context.Background(), "v")
-	if calls != 2 {
-		t.Errorf("expected 2 upstream calls after TTL expiry, got %d", calls)
+	if got := calls.Load(); got != 2 {
+		t.Errorf("expected 2 upstream calls after TTL expiry, got %d", got)
 	}
 }
 

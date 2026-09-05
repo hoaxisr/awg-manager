@@ -158,6 +158,18 @@ func TestEnsureCarriesReadinessOnly(t *testing.T) {
 	if got, _ := r.Lookup("wdttraw-de"); !got.Ready {
 		t.Fatal("объявление погасило готовность на неизменившихся именах")
 	}
+
+	// RT27: готовность едет и ВНИЗ. Пиновали только подъём, поэтому мутация
+	// `rec.ready = true` вместо `rec.ready = info.Ready` проходила зелёной —
+	// а её цена в том, что лёгший выход навсегда числится живым, и каталог
+	// маршрутизации продолжает разрешать в него имена.
+	if err := r.Ensure(linkres.ExitInfo{ID: "wdttraw-de", NDMSName: "OpkgTun18",
+		KernelIface: "opkgtun18", Ready: false}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := r.Lookup("wdttraw-de"); got.Ready {
+		t.Fatal("лёгший выход остался Ready: маршруты продолжат уходить в мёртвый интерфейс")
+	}
 }
 
 func TestRenamedExitLosesReadinessUntilObserved(t *testing.T) {
@@ -430,6 +442,10 @@ func TestRegistrySatisfiesPort(t *testing.T) {
 	var _ linkres.ExitRegistry = r
 }
 
+// Ассертов у теста нет намеренно: его проверка — race-детектор, поэтому он
+// значим только в job `race` (CI гоняет его отдельно от обычного `test`).
+// Проверено мутацией: снятие `mu.RLock` в Lookup даёт DATA RACE под `-race` и
+// проходит зелёным без него.
 func TestConcurrentLookupAndDeclare(t *testing.T) {
 	r, _ := seededReg(&fakeMirror{})
 	_ = r.SetDeclared([]ExitDecl{decl("wdttraw-de", "OpkgTun18", "opkgtun18")})
