@@ -22,8 +22,8 @@ func TestApplyLANSegments_RunningConfigUnavailable_WarnsAndProceeds(t *testing.T
 	if err := svc.SetLANSegments(context.Background(), "Wireguard0", []string{"Home"}); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(parseStrings(poster)); n != 4 {
-		t.Fatalf("команд %d, ждали 4", n)
+	if n := len(parseStrings(poster)); n != 5 {
+		t.Fatalf("команд %d, ждали 5", n)
 	}
 	// SetLANSegments после применения пишет свой Info — две записи.
 	if len(spy.entries) != 2 ||
@@ -97,6 +97,7 @@ func TestApplyLANSegmentsToInterface_DoesNotStripForeignPermitAll(t *testing.T) 
 		"no access-list AWGM_Wireguard0",
 		"access-list AWGM_Wireguard0 permit ip 10.66.66.0 255.255.255.0 10.10.10.0 255.255.255.0",
 		"interface Wireguard0 ip access-group AWGM_Wireguard0 in",
+		"access-list AWGM_Wireguard0 auto-delete",
 	}
 	got := parseStrings(poster)
 	if !slices.Equal(got, want) {
