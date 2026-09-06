@@ -1,8 +1,8 @@
 // Command mcp-dev serves the awg-manager MCP tool set on a developer
 // machine from in-memory fake data (internal/mcp/mcptest). It exists so
 // an MCP client (Claude Code, Cursor) can be pointed at the mock stack;
-// it is never packaged into the IPK. See docs/superpowers/specs/
-// 2026-09-02-mcp-server-design.md §6.
+// it is never packaged into the IPK. Started as the fourth child of
+// `npm run dev:mock:proxy` (frontend/scripts/mock-stack.mjs).
 package main
 
 import (
