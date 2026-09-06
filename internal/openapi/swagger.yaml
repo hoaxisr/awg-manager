@@ -6661,6 +6661,9 @@ definitions:
       tunnelName:
         example: My VPN
         type: string
+      tunnelRunning:
+        example: true
+        type: boolean
     type: object
   api.TunnelReferencedDetails:
     properties:

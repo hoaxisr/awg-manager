@@ -30,6 +30,7 @@ type TunnelPingStatusDTO struct {
 	FailCount     int    `json:"failCount" example:"0"`
 	FailThreshold int    `json:"failThreshold" example:"3"`
 	RestartCount  int    `json:"restartCount" example:"0"`
+	TunnelRunning bool   `json:"tunnelRunning" example:"true"`
 }
 
 // PingCheckStatusData mirrors frontend PingCheckStatus.
