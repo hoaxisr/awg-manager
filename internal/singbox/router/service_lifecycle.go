@@ -915,14 +915,7 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string, 
 			break
 		}
 	}
-	ruleOK := false
-	for _, r := range cfg.Route.Rules {
-		if isSystemUDPTimeoutRule(r) {
-			ruleOK = r.UDPTimeout == effective
-			break
-		}
-	}
-	if inboundOK && ruleOK {
+	if inboundOK && systemUDPTimeoutRuleOK(cfg.Route.Rules, effective) {
 		return nil
 	}
 	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, udpTimeout, udpNATMax)
@@ -943,7 +936,10 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string, 
 // every tick would race that decision instead of healing drift.
 //
 // Steady-state guard BEFORE persisting, mirroring healTProxyInbound: skip the
-// marshal/write when both carriers already match.
+// marshal/write only when BOTH carriers already match — the inbound's fields
+// AND the system route-options rule (systemUDPTimeoutRuleOK). Checking the
+// inbound alone would leave a missing/stale rule unhealed forever once the
+// inbound fields happen to already be correct (fix round 1, review finding).
 func (s *ServiceImpl) healTunUDPSettings(ctx context.Context, slot orchestrator.Slot, sr storage.SingboxRouterSettings) {
 	var (
 		cfg *RouterConfig
@@ -981,7 +977,8 @@ func (s *ServiceImpl) healTunUDPSettings(ctx context.Context, slot orchestrator.
 
 	effective := resolveUDPTimeout(sr.UDPTimeout)
 	in := &cfg.Inbounds[idx]
-	if in.UDPTimeout == effective && in.UDPNATMax == sr.UDPNATMax {
+	inboundOK := in.UDPTimeout == effective && in.UDPNATMax == sr.UDPNATMax
+	if inboundOK && systemUDPTimeoutRuleOK(cfg.Route.Rules, effective) {
 		return
 	}
 	in.UDPTimeout = effective
@@ -997,6 +994,22 @@ func (s *ServiceImpl) healTunUDPSettings(ctx context.Context, slot orchestrator.
 	if err != nil {
 		s.appLog.Warn("heal-tun-udp", "", err.Error())
 	}
+}
+
+// systemUDPTimeoutRuleOK reports whether rules already contain the system
+// route-options rule (see RouterConfig.EnsureUDPTimeoutRule) with
+// udp_timeout == effective. Shared by healTProxyInbound and
+// healTunUDPSettings so a missing/stale rule counts as drift the same way
+// in both — the rule is a SEPARATE carrier from the inbound's udp_timeout
+// field, and a guard that checks only the inbound would no-op forever while
+// the rule stays missing.
+func systemUDPTimeoutRuleOK(rules []Rule, effective string) bool {
+	for _, r := range rules {
+		if isSystemUDPTimeoutRule(r) {
+			return r.UDPTimeout == effective
+		}
+	}
+	return false
 }
 
 // heal1140SlotMigration re-persists the applied config of the given slot

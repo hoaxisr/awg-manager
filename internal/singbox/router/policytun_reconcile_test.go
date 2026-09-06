@@ -693,6 +693,62 @@ func TestReconcilePolicyTun_HealsUDPSettings(t *testing.T) {
 	}
 }
 
+// F114 fix round 1: guard в healTunUDPSettings обязан ловить не только
+// расхождение полей tun-in, но и пропавшее/устаревшее route-options
+// правило — иначе при уже верных полях инбаунда heal no-op'ится навсегда,
+// хотя правило снято. Инбаунд не трогаем (sr не меняем — дефолт "5m0s"),
+// вырезаем ТОЛЬКО правило.
+func TestReconcilePolicyTun_HealsMissingUDPTimeoutRule(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	cfg, err := h.svc.loadAppliedRouterConfig()
+	if err != nil {
+		t.Fatalf("loadAppliedRouterConfig: %v", err)
+	}
+	cfg.EnsureUDPTimeoutRule("") // снимает правило, ничего не добавляя
+	if err := h.svc.persistConfigDirect(context.Background(), cfg); err != nil {
+		t.Fatalf("persistConfigDirect: %v", err)
+	}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+
+	after, err := h.svc.loadAppliedRouterConfig()
+	if err != nil {
+		t.Fatalf("loadAppliedRouterConfig (после): %v", err)
+	}
+	ruleOK := false
+	for _, r := range after.Route.Rules {
+		if isSystemUDPTimeoutRule(r) {
+			ruleOK = r.UDPTimeout == "5m0s"
+		}
+	}
+	if !ruleOK {
+		t.Error("route-options правило udp_timeout не восстановлено")
+	}
+
+	activePath := filepath.Join(h.dir, "20-router.json")
+	before, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun (второй тик): %v", err)
+	}
+	afterStat, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat after: %v", err)
+	}
+	if !afterStat.ModTime().Equal(before.ModTime()) {
+		t.Errorf("второй тик без изменений переписал слот (before=%v after=%v)", before.ModTime(), afterStat.ModTime())
+	}
+}
+
 // Permit пропал (или не встал при включении: отказ RCI повторное включение не
 // ретраит — оно no-op'ится по гарду provisioned+live) → drift-heal доставляет его.
 func TestReconcilePolicyTun_PermitsWhenMissing(t *testing.T) {

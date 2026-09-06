@@ -732,3 +732,69 @@ func TestReconcileFakeIPTun_HealsUDPSettings(t *testing.T) {
 		t.Errorf("второй тик без изменений переписал слот (before=%v after=%v)", before.ModTime(), after.ModTime())
 	}
 }
+
+// F114 fix round 1: guard в healTunUDPSettings обязан ловить не только
+// расхождение полей tun-in, но и пропавшее/устаревшее route-options
+// правило — иначе при уже верных полях инбаунда heal no-op'ится навсегда,
+// хотя правило снято. Инбаунд не трогаем (sr не меняем — дефолт "5m0s"),
+// вырезаем ТОЛЬКО правило.
+func TestReconcileFakeIPTun_HealsMissingUDPTimeoutRule(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	provisionForDisable(t, h)
+
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+
+	activePath := filepath.Join(h.dir, "21-fakeip.json")
+	raw, err := os.ReadFile(activePath)
+	if err != nil {
+		t.Fatalf("read active: %v", err)
+	}
+	cfg, err := parseRouterConfigBytes(raw)
+	if err != nil {
+		t.Fatalf("parse active: %v", err)
+	}
+	cfg.EnsureUDPTimeoutRule("") // снимает правило, ничего не добавляя
+	if err := h.svc.persistFakeIPConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("persistFakeIPConfig: %v", err)
+	}
+
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+
+	raw, err = os.ReadFile(activePath)
+	if err != nil {
+		t.Fatalf("read active (после): %v", err)
+	}
+	after, err := parseRouterConfigBytes(raw)
+	if err != nil {
+		t.Fatalf("parse active (после): %v", err)
+	}
+	ruleOK := false
+	for _, r := range after.Route.Rules {
+		if isSystemUDPTimeoutRule(r) {
+			ruleOK = r.UDPTimeout == "5m0s"
+		}
+	}
+	if !ruleOK {
+		t.Error("route-options правило udp_timeout не восстановлено")
+	}
+
+	before, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun (2nd tick): %v", err)
+	}
+	afterStat, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat after: %v", err)
+	}
+	if !afterStat.ModTime().Equal(before.ModTime()) {
+		t.Errorf("второй тик без изменений переписал слот (before=%v after=%v)", before.ModTime(), afterStat.ModTime())
+	}
+}
