@@ -530,6 +530,32 @@ func TestInstall_DownloadsPinnedAssets(t *testing.T) {
 	}
 }
 
+// F98: хук Installed зовётся ТОЛЬКО из ServeInstall, никогда из Install.
+// Install дёргает proxyEnsureBinaries (cmd/awg-manager/proxyrt_binaries.go)
+// из-под bootMu во время Boot — вызови Install хук там, и нудж поставил бы
+// в очередь на bootMu ещё один Boot прямо из уже идущего Boot.
+func TestInstall_DoesNotCallInstalledHook(t *testing.T) {
+	clientBody, serverBody := []byte("c"), []byte("s")
+	dl := &fakeDownloader{payload: map[string][]byte{"https://x/c": clientBody, "https://x/s": serverBody}}
+	var got []Subsystem
+	s := newTestService(t, Deps{Downloader: dl, Installed: func(name Subsystem) { got = append(got, name) }})
+	sub := s.subs[SubsystemWdtt]
+	setSpecs(s, SubsystemWdtt, ArchSpecs{
+		Client: BinarySpec{Version: "1.0.0", URL: "https://x/c", SHA256: sha256Hex(clientBody), Size: int64(len(clientBody))},
+		Server: BinarySpec{Version: "1.0.0", URL: "https://x/s", SHA256: sha256Hex(serverBody), Size: int64(len(serverBody))},
+	})
+
+	if err := s.Install(context.Background(), "wdtt"); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !binaryPresent(sub.clientBin) || !binaryPresent(sub.serverBin) {
+		t.Fatal("бинари не активированы")
+	}
+	if len(got) != 0 {
+		t.Fatalf("Install не должен звать Installed: %v", got)
+	}
+}
+
 // На арке без серверного пина сервер НЕ качается: URL пустой, и загрузка
 // упала бы на ровном месте.
 func TestInstall_WdttClientOnlyArchSkipsServer(t *testing.T) {
