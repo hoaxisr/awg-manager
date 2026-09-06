@@ -580,3 +580,63 @@ func foreignACL(res proxyrt.Result) string {
 	}
 	return ""
 }
+
+// ── X2: откат тумблера ──────────────────────────────────────────
+
+// Снятый ExposeToPolicies возвращает WG-половину из политик ЦЕЛИКОМ: уходит и
+// permit-all, и `ip global`, и уровень падает в private. Стенд 2026-09-06: до
+// этого `ip global` оставался навсегда — policy_exit аддитивен и из ведомости
+// уходит вместе с тумблером, снимать было некому.
+func TestSeam_ExposeRevertClearsIPGlobal(t *testing.T) {
+	p := newSeamParts(t)
+	cfg := seamCfg()
+	cfg.ExposeToPolicies = true
+	roletest.Converge(t, p.role, cfg, proxyrt.IntentEnabled)
+	if !p.ndms.ExitOf("OpkgTun17").IPGlobal {
+		t.Fatal("с тумблером ip global не взведён — откатывать нечего")
+	}
+
+	cfg.ExposeToPolicies = false
+	roletest.Converge(t, p.role, cfg, proxyrt.IntentEnabled)
+
+	got := p.ndms.ExitOf("OpkgTun17")
+	if got.IPGlobal {
+		t.Error("ip global остался на WG-половине после снятия тумблера")
+	}
+	if got.PermitAll {
+		t.Error("permit-all остался на WG-половине после снятия тумблера")
+	}
+	if f, _ := p.ndms.Snapshot("OpkgTun17"); f.SecurityLevel != "private" {
+		t.Errorf("WG-половина: security-level %q, ждали private", f.SecurityLevel)
+	}
+	// Raw-половина ни в одном режиме не выход: её признаки обязаны остаться
+	// пустыми — иначе снятие тумблера трогает не ту половину.
+	if f, _ := p.ndms.Snapshot("OpkgTun19"); f.SecurityLevel != "private" {
+		t.Errorf("raw-половина: security-level %q, ждали private", f.SecurityLevel)
+	}
+	if got := p.ndms.ExitOf("OpkgTun19"); got != (roletest.ExitFlags{}) {
+		t.Errorf("raw-половина несёт признаки выхода: %+v", got)
+	}
+}
+
+// Выключение инстанса с ВКЛЮЧЁННЫМ тумблером `ip global` не снимает: стенд
+// 2026-09-06 — permit интерфейса в `ip policy` переживает `no ip global`, но
+// повторный `ip global` при включении сбрасывает его в deny, и цикл выкл/вкл
+// стирал бы раскладку пользователя по политикам. permit-all при этом снимается
+// по прежнему зеркальному гейту (TestSeam_PermitAllResidueRemovedWhileDisabledAndExposed).
+func TestSeam_DisabledExposedKeepsIPGlobal(t *testing.T) {
+	p := newSeamParts(t)
+	cfg := seamCfg()
+	cfg.ExposeToPolicies = true
+	roletest.Converge(t, p.role, cfg, proxyrt.IntentEnabled)
+	if !p.ndms.ExitOf("OpkgTun17").IPGlobal {
+		t.Fatal("с тумблером ip global не взведён — проверять нечего")
+	}
+
+	roletest.Converge(t, p.role, cfg, proxyrt.IntentDisabled)
+
+	if !p.ndms.ExitOf("OpkgTun17").IPGlobal {
+		t.Error("выключение инстанса сняло ip global: при включении повторный " +
+			"ip global сбросит permit пользователя в политиках в deny")
+	}
+}
