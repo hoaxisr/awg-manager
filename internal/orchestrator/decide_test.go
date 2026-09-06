@@ -1054,47 +1054,6 @@ func TestDecide_Restart_StopOrder(t *testing.T) {
 	}
 }
 
-// === PingCheck failure tests ===
-
-func TestDecide_PingCheckFailed_KernelLinkToggle(t *testing.T) {
-	s := newState()
-	s.tunnels["awg0"] = &tunnelState{
-		ID: "awg0", Backend: "kernel", Running: true,
-	}
-
-	actions := decide(Event{Type: EventPingCheckFailed, Tunnel: "awg0"}, &s)
-
-	if !hasAction(actions, ActionLinkToggle) {
-		t.Error("kernel tunnel ping failure should produce ActionLinkToggle")
-	}
-}
-
-func TestDecide_PingCheckFailed_NativeWGIgnored(t *testing.T) {
-	s := newState()
-	s.tunnels["awg0"] = &tunnelState{
-		ID: "awg0", Backend: "nativewg", Running: true, NWGIndex: 0,
-	}
-
-	actions := decide(Event{Type: EventPingCheckFailed, Tunnel: "awg0"}, &s)
-
-	if len(actions) != 0 {
-		t.Errorf("NativeWG ping failure handled by NDMS, should produce no actions, got %d", len(actions))
-	}
-}
-
-func TestDecide_PingCheckFailed_NotRunning(t *testing.T) {
-	s := newState()
-	s.tunnels["awg0"] = &tunnelState{
-		ID: "awg0", Backend: "kernel", Running: false,
-	}
-
-	actions := decide(Event{Type: EventPingCheckFailed, Tunnel: "awg0"}, &s)
-
-	if len(actions) != 0 {
-		t.Errorf("not running tunnel should produce no actions, got %d", len(actions))
-	}
-}
-
 // === WAN binding tests ===
 
 func TestDecide_WANDown_OnlySuspendsBoundTunnels(t *testing.T) {

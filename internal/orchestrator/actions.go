@@ -12,7 +12,6 @@ const (
 	ActionSuspendProxy
 	ActionRestoreKmod
 	ActionRestoreEndpointTracking
-	ActionLinkToggle
 	ActionReconcileKernel
 	ActionSuspendKernel
 	ActionResumeKernel
