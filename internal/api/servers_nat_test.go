@@ -60,7 +60,7 @@ func (p *natPoster) snapshot() []string {
 // newServersNATHarness — ServersHandler над фейковым NDMS: один встроенный WG-сервер
 // Wireguard0 (description = built-in, чтобы listServers его показал) и два глобальных
 // выхода в running-config (цели static NAT для internet-only).
-func newServersNATHarness(t *testing.T) (*ServersHandler, *storage.SettingsStore, *natPoster, *busProbe) {
+func newServersNATHarness(t *testing.T) (*ServersHandler, *storage.SettingsStore, *natPoster, *busProbe, *managed.Service) {
 	t.Helper()
 	fg := query.NewFakeGetter()
 	// БЕЗ поля "system-name"/"interface-name": при непустом SystemName ResolveSystemName
@@ -69,7 +69,7 @@ func newServersNATHarness(t *testing.T) (*ServersHandler, *storage.SettingsStore
 	fg.SetJSON("/show/interface/", `{
 		"Wireguard0":{"id":"Wireguard0","type":"Wireguard","description":"Wireguard VPN Server","state":"up","link":"up","address":"10.9.0.1","mask":"255.255.255.0"}
 	}`)
-	fg.SetJSON("/show/running-config", `{"message":["interface PPPoE0","    ip global 32767","!","interface Wireguard2","    ip global 32000","!"]}`)
+	fg.SetJSON("/show/running-config", `{"message":["interface PPPoE0","    ip global 32767","!","interface Wireguard2","    ip global 32000","!","interface Wireguard1","    ip access-group AWGM_Wireguard1 in","    ip access-group GUEST_ACL in","    ip access-group _WEBADMIN_Wireguard1 in","!"]}`)
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	poster := &natPoster{}
 
@@ -92,7 +92,7 @@ func newServersNATHarness(t *testing.T) (*ServersHandler, *storage.SettingsStore
 	}))
 	p := newBusProbe(t)
 	h.SetEventBus(p.bus())
-	return h, store, poster, p
+	return h, store, poster, p, svc
 }
 
 func postNAT(t *testing.T, h *ServersHandler, body string) *httptest.ResponseRecorder {
@@ -106,7 +106,7 @@ func postNAT(t *testing.T, h *ServersHandler, body string) *httptest.ResponseRec
 
 // internet-only пишет список выходов, на которых поставлен static NAT; full/none — очищают его.
 func TestServersHandler_SetNAT_InternetOnlyStoresStaticWANs(t *testing.T) {
-	h, store, poster, p := newServersNATHarness(t)
+	h, store, poster, p, _ := newServersNATHarness(t)
 
 	rr := postNAT(t, h, `{"mode":"internet-only"}`)
 	if rr.Code != 200 {
@@ -142,7 +142,7 @@ func TestServersHandler_SetNAT_InternetOnlyStoresStaticWANs(t *testing.T) {
 }
 
 func TestServersHandler_SetNAT_RejectsBadModeWithoutRCI(t *testing.T) {
-	h, _, poster, p := newServersNATHarness(t)
+	h, _, poster, p, _ := newServersNATHarness(t)
 	rr := postNAT(t, h, `{"mode":"sideways"}`)
 	pub := p.invalidated()
 	if rr.Code != 400 || len(poster.snapshot()) != 0 || len(pub) != 0 {

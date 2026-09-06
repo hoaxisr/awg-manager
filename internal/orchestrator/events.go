@@ -9,17 +9,16 @@ import (
 type EventType int
 
 const (
-	EventBoot            EventType = iota // Router boot — start all enabled
-	EventReconnect                        // Daemon restart — restore state
-	EventStart                            // User clicks Start
-	EventStop                             // User clicks Stop
-	EventRestart                          // User clicks Restart
-	EventDelete                           // User deletes tunnel
-	EventWANUp                            // WAN interface came up
-	EventWANDown                          // WAN interface went down
-	EventNDMSHook                         // NDMS iflayerchanged.d hook
-	EventPingCheckFailed                  // Connectivity loss detected
-	EventQuiesce                          // Stop running tunnels without disabling (backup/restore)
+	EventBoot      EventType = iota // Router boot — start all enabled
+	EventReconnect                  // Daemon restart — restore state
+	EventStart                      // User clicks Start
+	EventStop                       // User clicks Stop
+	EventRestart                    // User clicks Restart
+	EventDelete                     // User deletes tunnel
+	EventWANUp                      // WAN interface came up
+	EventWANDown                    // WAN interface went down
+	EventNDMSHook                   // NDMS iflayerchanged.d hook
+	EventQuiesce                    // Stop running tunnels without disabling (backup/restore)
 
 	// eventTypeCount — сентинель для теста полноты String(). Держать
 	// последним: новое событие, добавленное после него, останется
@@ -67,8 +66,6 @@ func (t EventType) String() string {
 		return "wan-down"
 	case EventNDMSHook:
 		return "ndms-hook"
-	case EventPingCheckFailed:
-		return "pingcheck-failed"
 	case EventQuiesce:
 		return "quiesce"
 	}

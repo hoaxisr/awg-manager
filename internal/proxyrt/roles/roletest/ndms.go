@@ -114,6 +114,10 @@ func (n *NDMS) SetIPGlobal(_ context.Context, name string) error {
 	return n.flag(name, func(e *ExitFlags) { e.IPGlobal = true })
 }
 
+func (n *NDMS) ClearIPGlobal(_ context.Context, name string) error {
+	return n.flag(name, func(e *ExitFlags) { e.IPGlobal = false })
+}
+
 func (n *NDMS) SetPermitAllACL(_ context.Context, name string) error {
 	return n.flag(name, func(e *ExitFlags) { e.PermitAll = true })
 }

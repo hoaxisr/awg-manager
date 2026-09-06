@@ -25,6 +25,7 @@ const (
 	ResourceSaveStatus     Resource = "saveStatus"
 	ResourceAwg3           Resource = "awg3"
 	ResourceProxyInstances Resource = "proxyrt.instances"
+	ResourceMcpKeys        Resource = "mcpKeys"
 
 	ResourceSingboxStatus        Resource = "singbox.status"
 	ResourceSingboxTunnels       Resource = "singbox.tunnels"
@@ -56,6 +57,7 @@ var AllResources = []Resource{
 	ResourceSaveStatus,
 	ResourceAwg3,
 	ResourceProxyInstances,
+	ResourceMcpKeys,
 	ResourceSingboxStatus,
 	ResourceSingboxTunnels,
 	ResourceSingboxRouterStaging,

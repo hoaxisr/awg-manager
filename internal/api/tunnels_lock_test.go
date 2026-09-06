@@ -12,6 +12,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
 
 // lockPost зовёт SetLock и возвращает записанный ответ.
@@ -173,8 +174,8 @@ func controlWithLockedTunnel(t *testing.T, en ProxyInstanceEnabler) *ControlHand
 		WdttClientID: "nl",
 		Locked:       true,
 	})
-	h := NewControlHandler(&stubTunnelSvc{}, nil)
-	h.SetProxyControl(store, en)
+	h := NewControlHandler(&stubTunnelSvc{}, store, nil)
+	h.SetProxyControl(en)
 	return h
 }
 
@@ -198,6 +199,43 @@ func TestControlToggleEnabledRefusesLockedTunnel(t *testing.T) {
 	h.ToggleEnabled(rec, httptest.NewRequest(http.MethodPost, "/api/control/toggle-enabled?id=wdttraw-nl", nil))
 
 	assertLockedRefusal(t, rec)
+}
+
+func TestControlToggleDefaultRouteRefusesLockedTunnel(t *testing.T) {
+	h := controlWithLockedTunnel(t, &spyProxyEnabler{})
+	// Без getFn stubTunnelSvc.Get отвечает ошибкой, и SetDefaultRoute не
+	// дошло бы даже при снятом гарде — проверка счётчика была бы беззубой.
+	stub := h.svc.(*stubTunnelSvc)
+	stub.getFn = func(_ context.Context, id string) (*service.TunnelWithStatus, error) {
+		return &service.TunnelWithStatus{ID: id, Name: "NL"}, nil
+	}
+	rec := httptest.NewRecorder()
+	h.ToggleDefaultRoute(rec, httptest.NewRequest(http.MethodPost, "/api/control/toggle-default-route?id=wdttraw-nl", nil))
+	assertLockedRefusal(t, rec)
+	// гард стоит ДО побочного действия
+	if n := len(stub.setDefaultRouteCalls); n != 0 {
+		t.Fatalf("SetDefaultRoute вызван %d раз при 403", n)
+	}
+}
+
+// Гард замка не зависит от проводки прокси: store — параметр конструктора,
+// «забыли SetProxyControl» не превращает 403 в 200. Красный без гарда у Stop
+// приходит ПАНИКОЙ на nil-оркестраторе (control.go → orchestrator.HandleEvent),
+// как у controlWithRawTunnel (control_wdtt_raw_test.go:29-32) — это ожидаемо.
+func TestControlHandlerLockGuardsDoNotDependOnProxyWiring(t *testing.T) {
+	stub := &stubTunnelSvc{}
+	_, store := newTunnelsUpdateHarness(t, stub)
+	seedTunnel(t, store, &storage.AWGTunnel{ID: "awg7", Name: "t7", Enabled: true, Locked: true}) // обычная (не зеркальная) запись
+	h := NewControlHandler(stub, store, nil)                                                      // без SetProxyControl
+	for name, call := range map[string]func(http.ResponseWriter, *http.Request){
+		"Stop": h.Stop, "ToggleEnabled": h.ToggleEnabled, "ToggleDefaultRoute": h.ToggleDefaultRoute,
+	} {
+		rec := httptest.NewRecorder()
+		call(rec, httptest.NewRequest(http.MethodPost, "/api/control/x?id=awg7", nil))
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s: код %d, ждали 403", name, rec.Code)
+		}
+	}
 }
 
 func TestTunnelUpdateRefusesLockedTunnel(t *testing.T) {
@@ -259,5 +297,40 @@ func TestTunnelReplaceConfRefusesLockedTunnel(t *testing.T) {
 	}
 	if saved, err := store.Get("awg1"); err != nil || saved.Name != "t1" {
 		t.Fatalf("запись изменена: %+v (err=%v)", saved, err)
+	}
+}
+
+// ── замок на зеркальной записи wdtt-raw (F95) ────────────────────
+
+// Замок на зеркальной записи отвергается так же, как её удаление: галка,
+// которая ничего не держит, хуже отсутствующей.
+func TestSetLock_WdttRawRefusedWhileInstanceAlive(t *testing.T) {
+	h, store := rawDeleteEnv(t, "de")
+	rec := lockPost(t, h, "id=wdttraw-de&locked=true")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("код %d, ожидали 409 (тело %s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "WDTT_RAW_OWNED") {
+		t.Fatalf("ожидали код WDTT_RAW_OWNED, тело %s", rec.Body.String())
+	}
+	if saved, err := store.Get("wdttraw-de"); err != nil || saved.Locked {
+		t.Fatalf("запись всё-таки замкнута: %+v (err=%v)", saved, err)
+	}
+}
+
+// Снятие замка с зеркала не отвергается: иначе запись, защищённая до этой
+// правки, не разомкнётся ничем — гарды #818 держат Stop/Update/Delete, а
+// глиф на карточке зеркала скрыт.
+func TestSetLock_WdttRawUnlockAllowed(t *testing.T) {
+	h, store := rawDeleteEnv(t, "de")
+	if err := store.Update("wdttraw-de", func(x *storage.AWGTunnel) error { x.Locked = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	rec := lockPost(t, h, "id=wdttraw-de&locked=false")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, ожидали 200 (тело %s)", rec.Code, rec.Body.String())
+	}
+	if saved, err := store.Get("wdttraw-de"); err != nil || saved.Locked {
+		t.Fatalf("замок не снят: %+v (err=%v)", saved, err)
 	}
 }

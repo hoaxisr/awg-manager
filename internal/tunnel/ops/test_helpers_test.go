@@ -137,3 +137,7 @@ type recAppLog struct{ entries []string }
 func (r *recAppLog) AppLog(level logging.Level, _, _, action, target, message string) {
 	r.entries = append(r.entries, string(level)+"|"+action+"|"+target+"|"+message)
 }
+
+func (m *MockWGClient) LatestHandshake(_ context.Context, _ string) (time.Time, error) {
+	return time.Time{}, nil
+}

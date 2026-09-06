@@ -66,6 +66,14 @@ export function isManagedTunnelOn(tunnel: TunnelListItem): boolean {
 	return ['running', 'starting', 'broken'].includes(tunnel.status);
 }
 
+// Замок на зеркальной записи wdtt-raw ничего не держит: инстансом
+// распоряжается прокси-рантайм, ручка /api/tunnels/lock отвечает 409 на
+// постановку. Уже защищённое зеркало (записи до этой правки) глиф сохраняет —
+// иначе замок не снять ни из UI, ни с карточки.
+export function tunnelLockAvailable(t: TunnelListItem): boolean {
+	return t.backend !== 'wdtt-raw' || !!t.locked;
+}
+
 export function managedRouteMeta(tunnel: TunnelListItem): string {
 	const iface = tunnel.resolvedIspInterface || tunnel.ispInterface || '';
 	const label = tunnel.resolvedIspInterfaceLabel || tunnel.ispInterfaceLabel || '';

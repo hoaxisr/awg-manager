@@ -95,6 +95,14 @@ func (f *fakeRouter) SetIPGlobal(_ context.Context, name string) error {
 	return nil
 }
 
+func (f *fakeRouter) ClearIPGlobal(_ context.Context, name string) error {
+	if err := f.cmd("clear-ip-global"); err != nil {
+		return err
+	}
+	f.global[name] = false
+	return nil
+}
+
 func (f *fakeRouter) SetAddress(_ context.Context, name, addr, mask string) error {
 	if err := f.cmd("set-address"); err != nil {
 		return err

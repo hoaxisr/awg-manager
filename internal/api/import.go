@@ -131,17 +131,7 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 	if err := h.store.Update(tunnel.ID, func(stored *storage.AWGTunnel) error {
 		changed := false
 		if h.pingCheck != nil && stored.PingCheck == nil {
-			stored.PingCheck = &storage.TunnelPingCheck{
-				Enabled:       false,
-				Method:        "icmp",
-				Target:        "8.8.8.8",
-				Interval:      45,
-				DeadInterval:  120,
-				FailThreshold: 3,
-				MinSuccess:    1,
-				Timeout:       5,
-				Restart:       true,
-			}
+			stored.PingCheck = storage.DefaultTunnelPingCheck()
 			changed = true
 		}
 		if !changed {

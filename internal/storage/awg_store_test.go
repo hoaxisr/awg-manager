@@ -358,3 +358,38 @@ func TestNextAvailableIDBackendFallbacks(t *testing.T) {
 		t.Fatalf("nextAvailableID(OS4, nativewg) = %q, want awgm1", got)
 	}
 }
+
+// TestAWGTunnelStoreRefusesMalformedIDs — id подставляется в путь файла,
+// поэтому хранилище само не пускает «../settings» ни в одном методе, а не
+// доверяет вызывающему: REST валидирует, MCP и будущие вызовы — не факт.
+func TestAWGTunnelStoreRefusesMalformedIDs(t *testing.T) {
+	store, dataDir := newTestAWGStore(t)
+	// A neighbour file the traversal would otherwise reach.
+	secret := filepath.Join(filepath.Dir(dataDir), "settings.json")
+	if err := os.WriteFile(secret, []byte(`{"id":"x","name":"leak"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"../settings", "awg/1", "awg.json", "1abc", "a b"} {
+		if _, err := store.Get(id); err == nil {
+			t.Errorf("Get(%q) succeeded", id)
+		}
+		if store.Exists(id) {
+			t.Errorf("Exists(%q) = true", id)
+		}
+		if err := store.Update(id, func(*AWGTunnel) error { return nil }); err == nil {
+			t.Errorf("Update(%q) succeeded", id)
+		}
+		if err := store.Delete(id); err == nil {
+			t.Errorf("Delete(%q) succeeded", id)
+		}
+		if err := store.Create(&AWGTunnel{ID: id, Name: "x"}); err == nil {
+			t.Errorf("Create(%q) succeeded", id)
+		}
+	}
+	if _, err := os.Stat(secret); err != nil {
+		t.Fatalf("the neighbour file was touched: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "..", "settings.json.json")); err == nil {
+		t.Fatal("Create wrote outside the tunnel directory")
+	}
+}

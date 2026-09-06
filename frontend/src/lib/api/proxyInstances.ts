@@ -91,6 +91,7 @@ export interface ProxyResourceView {
   status: string;
   detail?: string;
   error?: string;
+  attrs?: Record<string, string>;
 }
 
 /** Шаг последнего плана реконсиляции. */
@@ -462,6 +463,14 @@ function toProcessStatus(
   };
 }
 
+/** Посторонний ACL на интерфейсе сервера (`ndms_access` ресурс движка). */
+function foreignAclsOf(v: ProxyInstanceView): string[] | undefined {
+  const raw = v.state?.resources?.find((r) => r.id === "ndms_access")?.attrs?.[
+    "foreign-acl"
+  ];
+  return raw ? raw.split(",") : undefined;
+}
+
 function toWdttProcessStatus(
   v: ProxyInstanceView,
   nowMs: number,
@@ -475,6 +484,7 @@ function toWdttProcessStatus(
     rawIface: str(c, "rawIface"),
     ndmsIface: str(c, "ndmsIface"),
     rawNdmsIface: str(c, "rawNdmsIface"),
+    foreignAcls: foreignAclsOf(v),
   };
 }
 

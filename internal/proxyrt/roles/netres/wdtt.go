@@ -8,9 +8,11 @@ package netres
 // server_raw_policy_linux.go), — довод про установленную базу, не про то,
 // что старый код был прав.
 
-// Comment — метка владения общих правил (nat/POSTROUTING). FORWARD accept и
-// цепочка awgm_wdtt_mangle меток не несут: правило адресовано НАШЕМУ
-// интерфейсу, имя интерфейса и есть признак владения (памятка проекта).
+// Comment — метка владения общих правил (nat/POSTROUTING). Цепочка
+// awgm_wdtt_mangle метки не несёт: правило адресовано НАШЕМУ интерфейсу, имя
+// интерфейса и есть признак владения (памятка проекта). Так же был устроен и
+// снятый FORWARD accept raw-половины — потому его остаток и снимается
+// адресно (RuleSet.Doom), а не усыновлением по метке.
 const Comment = "AWGM_WDTT"
 
 // MSSChain — своя цепочка clamp-правил.
@@ -18,21 +20,6 @@ const MSSChain = "awgm_wdtt_mangle"
 
 // HookPath — путь netfilter.d-хука (старый, усыновляется).
 const HookPath = "/opt/etc/ndm/netfilter.d/61-awgm-wdtt-forward.sh"
-
-// ForwardGroups — FORWARD accept по -i и -o для каждого интерфейса.
-func ForwardGroups(ifaces []string) []Group {
-	var out []Group
-	for _, iface := range ifaces {
-		if iface == "" {
-			continue
-		}
-		out = append(out, Group{Guard: iface, Rules: []Rule{
-			{Chain: "FORWARD", Pos: 1, Spec: []string{"-i", iface, "-j", "ACCEPT"}},
-			{Chain: "FORWARD", Pos: 1, Spec: []string{"-o", iface, "-j", "ACCEPT"}},
-		}})
-	}
-	return out
-}
 
 // MasqPlan — kernel-iface + CIDR клиентов (паритет entwareNATPlan).
 type MasqPlan struct {

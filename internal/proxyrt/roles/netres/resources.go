@@ -40,9 +40,19 @@ type RuleSet struct {
 	// full→internet-only, WAN, интерфейса или RelayMode обязана сносить
 	// прежние формы — иначе класс H1 (PR #697) и утечка правил 2.17.0.
 	doomed map[string]Rule
-	// enableForward — включение ip_forward вместе с правилами; nil — не нужно.
-	// Прод: запись "1" в /proc/sys/net/ipv4/ip_forward.
-	enableForward func() error
+	// reaped — ключи doomed-правил, снос которых ДОВЕДЁН до конца. Защёлка
+	// для Doom: он зовётся из декларации роли каждый проход, а снятое правило
+	// прежней версии обратно не появляется. Без защёлки ведомость воскресала
+	// бы вечно, и Observe держал бы по `iptables -C` на правило каждый тик —
+	// exec-churn на роутере (PR #734).
+	//
+	// Множество общее по пространству ключей (Rule.Key), но консультирует его
+	// ТОЛЬКО Doom. Поэтому правило, ушедшее из желаемого и сметённое, а потом
+	// снова ставшее желаемым и снова ушедшее, не застревает: путь разности
+	// желаемых кладёт его в doomed сам, минуя латч. Плата — обратная: Doom
+	// формы, СОВПАВШЕЙ с однажды сметённой, становится no-op до конца жизни
+	// процесса.
+	reaped map[string]bool
 	// adopt — области усыновления, НЕ зависящие от текущего желаемого.
 	// Владение принадлежит метке: что мы когда-то поставили со своей меткой,
 	// то обязаны и снести — даже когда сейчас не хотим там ничего. Без этого
@@ -61,9 +71,9 @@ func (r *RuleSet) AdoptMarked(table, chain, tag string) {
 	r.adopt = append(r.adopt, adoptScope{table: table, chain: chain, tag: tag})
 }
 
-func NewRuleSet(id proxyrt.ResourceID, ipt IPT, enableForward func() error) *RuleSet {
+func NewRuleSet(id proxyrt.ResourceID, ipt IPT) *RuleSet {
 	return &RuleSet{id: id, ipt: ipt, provider: StaticGroups(nil),
-		doomed: map[string]Rule{}, enableForward: enableForward}
+		doomed: map[string]Rule{}, reaped: map[string]bool{}}
 }
 
 // SetDesired: провайдер, дающий пустой набор, означает «правил быть не
@@ -73,6 +83,22 @@ func (r *RuleSet) SetDesired(provider GroupProvider) {
 		provider = StaticGroups(nil)
 	}
 	r.provider = provider
+}
+
+// Doom кладёт правила в ведомость на снос БЕЗ желаемого: форму, которую мы
+// больше не ставим, но обязаны убрать. Разность желаемых её не даст (в
+// желаемом её не было ни разу за этот запуск), усыновление-по-метке не
+// увидит (метки правило не несёт) — остаётся назвать её адресно.
+//
+// Уже снесённое правило Doom НЕ воскрешает: зовут его из декларации роли, то
+// есть каждый проход, а снос доводится один раз.
+func (r *RuleSet) Doom(rules ...Rule) {
+	for _, rule := range rules {
+		if r.reaped[rule.Key()] {
+			continue
+		}
+		r.doomed[rule.Key()] = rule
+	}
 }
 
 func (r *RuleSet) ID() proxyrt.ResourceID { return r.id }
@@ -196,11 +222,6 @@ func (r *RuleSet) Plan(obs proxyrt.Observation) []proxyrt.Step {
 func (r *RuleSet) Apply(ctx context.Context, s proxyrt.Step) error {
 	switch s.Op {
 	case "ensure":
-		if r.enableForward != nil {
-			if err := r.enableForward(); err != nil {
-				return err
-			}
-		}
 		for _, g := range r.last {
 			if err := g.ensure(ctx, r.ipt); err != nil {
 				return err
@@ -218,6 +239,7 @@ func (r *RuleSet) Apply(ctx context.Context, s proxyrt.Step) error {
 			}
 			if gone {
 				delete(r.doomed, key)
+				r.reaped[key] = true
 			}
 		}
 		if firstErr != nil {

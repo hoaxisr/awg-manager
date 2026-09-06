@@ -353,6 +353,8 @@ func TestProxyInstancesList_RecordStateAndProcess(t *testing.T) {
 			Resources: []proxyrt.ResourceState{
 				{ID: "process", Status: proxyrt.StatusOK, Detail: "pid 4321"},
 				{ID: "ndms_iface", Status: proxyrt.StatusDrift, Detail: "нет", Error: "занят"},
+				{ID: "ndms_access", Status: proxyrt.StatusOK,
+					Attrs: map[string]string{"foreign-acl": "OpkgTun17:GUEST_ACL"}},
 			},
 			LastPlan: []proxyrt.Step{
 				{Resource: "ndms_iface", Op: "create", Args: map[string]string{"name": "OpkgTun18"}, Reason: "нет интерфейса"},
@@ -387,6 +389,7 @@ func TestProxyInstancesList_RecordStateAndProcess(t *testing.T) {
 		Resources: []ProxyRtResourceView{
 			{ID: "process", Status: "ok", Detail: "pid 4321"},
 			{ID: "ndms_iface", Status: "drift", Detail: "нет", Error: "занят"},
+			{ID: "ndms_access", Status: "ok", Attrs: map[string]string{"foreign-acl": "OpkgTun17:GUEST_ACL"}},
 		},
 		LastPlan: []ProxyRtStepView{
 			{Resource: "ndms_iface", Op: "create", Args: map[string]string{"name": "OpkgTun18"}, Reason: "нет интерфейса"},
@@ -395,6 +398,11 @@ func TestProxyInstancesList_RecordStateAndProcess(t *testing.T) {
 	}
 	if !reflect.DeepEqual(*got.State, wantState) {
 		t.Fatalf("state = %+v,\nждали %+v", *got.State, wantState)
+	}
+	// Имя ключа в JSON пинится литералом: DeepEqual идёт по РАЗОБРАННОЙ
+	// структуре и переживёт любой тег, лишь бы он совпал на обеих сторонах.
+	if !strings.Contains(rr.Body.String(), `"attrs":{"foreign-acl":"OpkgTun17:GUEST_ACL"}`) {
+		t.Fatalf("чужие привязки не ушли в JSON: %s", rr.Body.String())
 	}
 
 	clients := 3

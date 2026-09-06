@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=amneziawg
-PKG_VERSION:=3.1.20260812
+PKG_VERSION:=3.1.20260906
 
 PKG_SOURCE_URL:=https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git
 PKG_SOURCE_VERSION:=v$(PKG_VERSION)
@@ -45,8 +45,11 @@ include $(INCLUDE_DIR)/package-defaults.mk
 # Used by Build/Compile/Default
 MAKE_PATH:=src
 
+# Upstream tags after v3.1.20260812 do not bump src/version.h, so the module
+# would report an older version than the tag it was built from. Kbuild honours
+# WIREGUARD_VERSION from the command line and overrides the header.
 define Build/Compile
-	+$(MAKE) $(KERNEL_MAKEOPTS) M="$(PKG_BUILD_DIR)/src" modules
+	+$(MAKE) $(KERNEL_MAKEOPTS) M="$(PKG_BUILD_DIR)/src" WIREGUARD_VERSION="$(PKG_VERSION)" modules
 endef
 
 define Package/amneziawg/install

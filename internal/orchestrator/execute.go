@@ -46,9 +46,6 @@ func (o *Orchestrator) executeOne(ctx context.Context, action Action) error {
 		return o.executeRestoreKmod(ctx, action)
 	case ActionRestoreEndpointTracking:
 		return o.executeRestoreEndpointTracking(ctx)
-	case ActionLinkToggle:
-		// Placeholder: pingcheck calls ip link down/up directly.
-		return nil
 	case ActionReconcileKernel:
 		return o.executeReconcileKernel(ctx, action)
 	case ActionSuspendKernel:

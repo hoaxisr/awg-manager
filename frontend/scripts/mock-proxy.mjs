@@ -84,13 +84,21 @@ const DEFAULT_MOCK_STATE = Object.freeze({
 	downloadRouteTag: 'direct',
 	updateChannel: 'stable',
 	updateCheckEnabled: true,
+	mcpEnabled: false,
 });
 
 const MOCK_CAPABILITY_GROUPS = Object.freeze([
 	{
 		id: 'core',
 		label: 'Settings, updates, downloads',
-		endpoints: ['GET /settings/get', 'POST /settings/update', 'GET /download/outbounds'],
+		endpoints: [
+			'GET /settings/get',
+			'POST /settings/update',
+			'GET /download/outbounds',
+			'GET /mcp/keys',
+			'POST /mcp/keys/create',
+			'POST /mcp/keys/revoke',
+		],
 	},
 	{
 		id: 'observability',
@@ -144,6 +152,11 @@ let singboxLogLevel = DEFAULT_MOCK_STATE.singboxLogLevel;
 let downloadRouteTag = DEFAULT_MOCK_STATE.downloadRouteTag;
 let updateChannel = DEFAULT_MOCK_STATE.updateChannel;
 let updateCheckEnabled = DEFAULT_MOCK_STATE.updateCheckEnabled;
+let mcpEnabled = DEFAULT_MOCK_STATE.mcpEnabled;
+// MCP keys are pure proxy state (Prism has no memory); plaintext is returned
+// once by create, exactly like the real backend.
+let mockMcpKeys = [];
+let mockMcpKeySeq = 0;
 
 // Service-download fault injection: every "download via route" endpoint
 // (geo.dat, AWGM update, DNSRoute lists, Amnezia Premium, sing-box binary,
@@ -167,6 +180,8 @@ function getRuntimeState() {
 		downloadRouteTag,
 		updateChannel,
 		updateCheckEnabled,
+		mcpEnabled,
+		mcpKeys: mockMcpKeys.length,
 		singboxInstallShouldFail,
 		singboxRunning,
 		downloadFaultsEnabled,
@@ -183,6 +198,9 @@ function resetRuntimeControls() {
 	downloadRouteTag = DEFAULT_MOCK_STATE.downloadRouteTag;
 	updateChannel = DEFAULT_MOCK_STATE.updateChannel;
 	updateCheckEnabled = DEFAULT_MOCK_STATE.updateCheckEnabled;
+	mcpEnabled = DEFAULT_MOCK_STATE.mcpEnabled;
+	mockMcpKeys = [];
+	mockMcpKeySeq = 0;
 	singboxInstallShouldFail = process.env.MOCK_SINGBOX_INSTALL_FAIL === '1';
 	singboxRunning = process.env.MOCK_SINGBOX_DOWN !== '1';
 	downloadFaultsEnabled = process.env.MOCK_DOWNLOAD_FAULTS !== '0';
@@ -5028,6 +5046,50 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	if (req.method === 'GET' && path === '/mcp/keys') {
+		sendData(res, { keys: mockMcpKeys.map(({ id, name, createdAt, lastUsedAt }) => ({ id, name, createdAt, ...(lastUsedAt ? { lastUsedAt } : {}) })) });
+		return;
+	}
+	if (req.method === 'POST' && path === '/mcp/keys/create') {
+		const text = await readRequestText(req);
+		let name = '';
+		try {
+			name = String(JSON.parse(text || '{}').name ?? '').trim();
+		} catch {
+			sendInvalidRequest(res, 'invalid JSON');
+			return;
+		}
+		if (!name || name.length > 64) {
+			sendBackendError(res, 'key name is required (1..64 chars)', 'MCP_KEY_INVALID_NAME', 400);
+			return;
+		}
+		mockMcpKeySeq += 1;
+		const key = { id: `mockkey-${mockMcpKeySeq}`, name, createdAt: new Date().toISOString(), lastUsedAt: '' };
+		mockMcpKeys.push(key);
+		console.log(`[mock-proxy] MCP key created: ${name}`);
+		sendData(res, { id: key.id, name: key.name, createdAt: key.createdAt, key: `awgm_mock_${mockMcpKeySeq}_${Math.random().toString(36).slice(2, 12)}` });
+		return;
+	}
+	if (req.method === 'POST' && path === '/mcp/keys/revoke') {
+		const text = await readRequestText(req);
+		let id = '';
+		try {
+			id = String(JSON.parse(text || '{}').id ?? '');
+		} catch {
+			sendInvalidRequest(res, 'invalid JSON');
+			return;
+		}
+		const idx = mockMcpKeys.findIndex((k) => k.id === id);
+		if (idx < 0) {
+			sendBackendError(res, 'key not found', 'MCP_KEY_NOT_FOUND', 404);
+			return;
+		}
+		mockMcpKeys.splice(idx, 1);
+		console.log(`[mock-proxy] MCP key revoked: ${id}`);
+		sendData(res, { revoked: true });
+		return;
+	}
+
 	if (req.method === 'GET' && path === '/settings/get') {
 		fetchJSON('/settings/get').then(({ status, body }) => {
 			if (body && typeof body === 'object' && body.data) {
@@ -5045,6 +5107,7 @@ const server = http.createServer(async (req, res) => {
 				}
 				body.data.updates.channel = updateChannel;
 				body.data.updates.checkEnabled = updateCheckEnabled;
+				body.data.mcpEnabled = mcpEnabled;
 			}
 			send(res, status, body);
 		});
@@ -5180,6 +5243,9 @@ const server = http.createServer(async (req, res) => {
 						updateCheckEnabled = payload.updates.checkEnabled;
 					}
 				}
+				if (typeof payload.mcpEnabled === 'boolean') {
+					mcpEnabled = payload.mcpEnabled;
+				}
 				const { status, body } = await fetchJSON('/settings/get');
 				if (body && typeof body === 'object' && body.data) {
 					body.data.usageLevel = usageLevel;
@@ -5196,10 +5262,11 @@ const server = http.createServer(async (req, res) => {
 					}
 					body.data.updates.channel = updateChannel;
 					body.data.updates.checkEnabled = updateCheckEnabled;
+					body.data.mcpEnabled = mcpEnabled;
 				}
 				send(res, status, body);
 				console.log(
-					`[mock-proxy] usageLevel → ${usageLevel}, singboxLogLevel → ${singboxLogLevel}, downloadRouteTag → ${downloadRouteTag}, updateChannel → ${updateChannel}`,
+					`[mock-proxy] usageLevel → ${usageLevel}, singboxLogLevel → ${singboxLogLevel}, downloadRouteTag → ${downloadRouteTag}, updateChannel → ${updateChannel}, mcpEnabled → ${mcpEnabled}`,
 				);
 			} catch (e) {
 				send(res, 500, { success: false, error: String(e) });

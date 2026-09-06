@@ -194,6 +194,33 @@ func TestRemovePermitAllACL_Sequence(t *testing.T) {
 	}
 }
 
+// «Привязки нет» (argument parse error — стенд 2026-09-05) — не отказ: обе
+// команды уходят, RemovePermitAllACL возвращает nil. Раньше это был отказ,
+// и wdtt лечил его перепроверкой, а managed падал бы на 5.00 (#828).
+func TestRemovePermitAllACL_ToleratesNotBound(t *testing.T) {
+	// aclBodyPoster отдаёт очередь тел; nestedACLError — готовый строитель
+	// status:"error" (acl_test.go:34-36; ident ndmsStatusErrors не смотрит).
+	cmds, poster := newACLTestCommands(
+		nestedACLError("argument parse error."),
+		nestedACLError("argument parse error."),
+	)
+	if err := cmds.RemovePermitAllACL(context.Background(), "OpkgTun0"); err != nil {
+		t.Fatalf("«нет привязки» обязано прощаться: %v", err)
+	}
+	if len(poster.parses) != 2 {
+		t.Fatalf("обе команды обязаны уйти: %v", poster.parses)
+	}
+}
+
+// Любая другая status-ошибка всплывает как раньше.
+func TestRemovePermitAllACL_OtherErrorSurfaces(t *testing.T) {
+	cmds, _ := newACLTestCommands(nestedACLError("access list is in use"))
+	err := cmds.RemovePermitAllACL(context.Background(), "OpkgTun0")
+	if err == nil || !strings.Contains(err.Error(), "router reported error: access list is in use") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 // Прошивки до 5.01 не знают v6-ACL: NDMS отвечает «no such command:
 // access-list» / «no such command: access-group» (issue #828, лог репортёра с
 // KeeneticOS 5.00.C.11.0-0). Разрешать там нечего — механизма нет, — поэтому

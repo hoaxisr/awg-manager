@@ -147,6 +147,7 @@
 	// `undefined` — не знает и он (сервер не запускался, остановлен, процесс
 	// усыновлён); тогда расхождения не показываем (SH-56 молчит).
 	const exposeApplied = $derived(wdttStatus?.appliedExposeToPolicies);
+	const foreignAcls = $derived(wdttStatus?.foreignAcls);
 
 	// Каталог пиров общий со «Сетью»: стор один, второго запроса не будет.
 	// Отдельным эффектом, а не в onMount: асинхронный onMount отписку не вернёт.
@@ -381,6 +382,7 @@
 		bind:ftServer={ftDraft}
 		{lanOptions}
 		{exposeApplied}
+		{foreignAcls}
 		{saving}
 		busy={mutating}
 		onnat={setNat}

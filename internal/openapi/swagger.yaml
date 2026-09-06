@@ -2143,6 +2143,16 @@ definitions:
       endpoint:
         example: 203.0.113.42:51821
         type: string
+      foreignAcls:
+        description: |-
+          ForeignACLs — чужие списки `ip access-group … in` на интерфейсе сервера
+          (кроме нашего AWGM_<iface>), в порядке привязки. Список, привязанный
+          раньше нашего и разрешающий шире, срабатывает до выбора сегментов.
+        example:
+        - GUEST_ACL
+        items:
+          type: string
+        type: array
       interfaceName:
         example: Wireguard1
         type: string
@@ -2263,6 +2273,82 @@ definitions:
         items:
           $ref: '#/definitions/api.ManagedServerDTO'
         type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.McpKeyCreateRequest:
+    properties:
+      name:
+        example: laptop
+        type: string
+    type: object
+  api.McpKeyCreatedData:
+    properties:
+      createdAt:
+        type: string
+      id:
+        example: 3f9c1a2b4d5e6f70
+        type: string
+      key:
+        example: awgm_Q3VyaW91cz8gVGhpcyBpcyBqdXN0IGFuIGV4YW1wbGU
+        type: string
+      name:
+        example: laptop
+        type: string
+    type: object
+  api.McpKeyCreatedResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.McpKeyCreatedData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.McpKeyDTO:
+    properties:
+      createdAt:
+        type: string
+      id:
+        example: 3f9c1a2b4d5e6f70
+        type: string
+      lastUsedAt:
+        type: string
+      name:
+        example: laptop
+        type: string
+    type: object
+  api.McpKeyRevokeRequest:
+    properties:
+      id:
+        example: 3f9c1a2b4d5e6f70
+        type: string
+    type: object
+  api.McpKeyRevokedData:
+    properties:
+      revoked:
+        example: true
+        type: boolean
+    type: object
+  api.McpKeyRevokedResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.McpKeyRevokedData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.McpKeysListData:
+    properties:
+      keys:
+        items:
+          $ref: '#/definitions/api.McpKeyDTO'
+        type: array
+    type: object
+  api.McpKeysListResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.McpKeysListData'
       success:
         example: true
         type: boolean
@@ -2911,6 +2997,13 @@ definitions:
     type: object
   api.ProxyRtResourceView:
     properties:
+      attrs:
+        additionalProperties:
+          type: string
+        description: |-
+          Attrs — наблюдение ресурса для показа: у ndms_access ключ foreign-acl
+          перечисляет чужие привязки `ip access-group … in` обеих половин.
+        type: object
       detail:
         type: string
       error:
@@ -3535,6 +3628,12 @@ definitions:
         $ref: '#/definitions/api.GeoFileSettingsDTO'
       logging:
         $ref: '#/definitions/api.LoggingSettingsDTO'
+      mcpEnabled:
+        description: |-
+          McpEnabled turns on the Model Context Protocol endpoint at /mcp.
+          Off by default; keys are managed via /mcp/keys*.
+        example: false
+        type: boolean
       monitoringExcludedTunnels:
         example:
         - tn-1
@@ -6664,6 +6763,9 @@ definitions:
       tunnelName:
         example: My VPN
         type: string
+      tunnelRunning:
+        example: true
+        type: boolean
     type: object
   api.TunnelReferencedDetails:
     properties:
@@ -9025,6 +9127,10 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
@@ -10998,6 +11104,103 @@ paths:
       summary: Restore drifted managed servers
       tags:
       - managed
+  /mcp/keys:
+    get:
+      description: Names and timestamps of the bearer keys accepted by the /mcp endpoint.
+        Hashes and plaintexts are never returned.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.McpKeysListResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List MCP keys
+      tags:
+      - mcp
+  /mcp/keys/create:
+    post:
+      consumes:
+      - application/json
+      description: Generates a new `awgm_…` bearer key for the /mcp endpoint. The
+        plaintext is returned only in this response; store it in the MCP client configuration.
+      parameters:
+      - description: Key name (1..64 chars)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.McpKeyCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.McpKeyCreatedResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Create MCP key
+      tags:
+      - mcp
+  /mcp/keys/revoke:
+    post:
+      consumes:
+      - application/json
+      description: Deletes a key; clients using it are rejected on their next request.
+      parameters:
+      - description: Key id
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.McpKeyRevokeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.McpKeyRevokedResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Revoke MCP key
+      tags:
+      - mcp
   /monitoring/matrix:
     get:
       description: Returns the latest cross-tunnel × cross-target latency/loss matrix
@@ -19925,8 +20128,11 @@ paths:
       - tunnels
   /tunnels/lock:
     post:
-      description: 'Включает или снимает защиту туннеля от изменений: у защищённого
-        туннеля Stop, ToggleEnabled, Update и Delete отвечают 403.'
+      description: |-
+        Включает или снимает защиту туннеля от изменений: у защищённого туннеля Stop, ToggleEnabled,
+        ToggleDefaultRoute, Update, Delete и Replace отвечают 403. Постановка замка на зеркальную запись
+        wdtt-raw отвергается 409 (WDTT_RAW_OWNED, WDTT_RAW_OWNER_UNKNOWN) — замок ставится на инстансе;
+        снятие проходит.
       parameters:
       - description: Tunnel id
         in: query
@@ -19947,6 +20153,10 @@ paths:
             $ref: '#/definitions/api.TunnelLockResponse'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "500":

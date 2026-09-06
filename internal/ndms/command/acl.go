@@ -163,14 +163,27 @@ func (c *InterfaceCommands) RemovePermitAllACLv6(ctx context.Context, name strin
 	return removeErr
 }
 
-// RemovePermitAllACL снимает привязку и удаляет `_WEBADMIN_<name>`.
-// Best-effort по замыслу: интерфейс может быть уже удалён, а auto-delete —
-// уже каскадировать список; ошибки возвращаются вызывающему для лога,
-// teardown они не фатальны.
+// RemovePermitAllACL снимает permit-all `_WEBADMIN_<name>` с интерфейса и
+// удаляет список. Идемпотентно: «привязки/списка уже нет» (argument parse
+// error — стенд 2026-09-05) не ошибка; прочие отказы всплывают. auto-delete
+// мог снести список сразу после unbind — remove это тоже терпит (симметрия
+// на практике мёртвая: стенд показал, что `no access-list` после
+// auto-delete отвечает «access list removed», не ошибкой).
 func (c *InterfaceCommands) RemovePermitAllACL(ctx context.Context, name string) error {
 	acl := "_WEBADMIN_" + name
-	unbindErr := c.ACLUnbind(ctx, name, acl)
-	removeErr := c.ACLRemove(ctx, acl)
+	unbindErr := postMutationCheckedTolerant(ctx, c.poster, c.save,
+		map[string]any{"parse": fmt.Sprintf("no interface %s ip access-group %s in", name, acl)},
+		"acl unbind "+acl,
+		isACLNotBound,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll,
+	)
+	removeErr := postMutationCheckedTolerant(ctx, c.poster, c.save,
+		map[string]any{"parse": "no access-list " + acl},
+		"acl remove "+acl,
+		isACLNotBound,
+		c.queries.RunningConfig.InvalidateAll,
+	)
 	if unbindErr != nil {
 		return unbindErr
 	}

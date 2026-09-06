@@ -181,7 +181,7 @@ func (a *app) startBootSequence() {
 			// Best-effort, idempotent migrations — must NOT block tunnel start.
 			// tunnelService cleanup below is fast and stays inline.
 			var bgDone sync.WaitGroup
-			bgDone.Add(2)
+			bgDone.Add(3)
 			go func() {
 				defer bgDone.Done()
 				// Back-fill ManagedServer.PrivateKey for entries created before
@@ -197,6 +197,13 @@ func (a *app) startBootSequence() {
 				// firmware rejects multiple peers sharing 0.0.0.0/0. Gated by a
 				// persisted flag; best-effort, retries next boot if NDMS is down.
 				a.managedService.MigratePeerAllowIPs(a.shutdownCtx)
+			}()
+			go func() {
+				defer bgDone.Done()
+				// Остаток permit-all веб-морды обнуляет выбор сегментов:
+				// безусловный ACCEPT срабатывает до нашего AWGM_-списка.
+				// Снимаем только если есть — на чистом роутере ни записи, ни RCI.
+				a.managedService.SweepForeignPermitAll(a.shutdownCtx)
 			}()
 
 			// Migrate legacy NDMS ID values to kernel names (one-time after model is populated).
@@ -233,7 +240,8 @@ func (a *app) startBootSequence() {
 			// RCI, и на холодном старте первая попытка (горутина проводки)
 			// вполне могла упасть fail-closed. Эндпоинты связанных туннелей
 			// чинит ресурс linked_endpoint роли, отдельный проход не нужен.
-			a.proxyRuntimeNudge("cold-boot", proxyrt.EventBoot)
+			// Горутиной: бут прокси может ждать загрузки бинарей (F98).
+			go a.proxyRuntimeNudge("cold-boot", proxyrt.EventBoot)
 
 			// Wait for background migrations to finish (non-critical but
 			// we track them so they don't leak on shutdown).
@@ -262,13 +270,15 @@ func (a *app) startBootSequence() {
 		// allow-ips. Flag-gated, best-effort. Without this the migration
 		// would only fire on a cold router boot (isBoot branch above).
 		a.managedService.MigratePeerAllowIPs(context.Background())
+		// Остаток permit-all веб-морды обнуляет выбор сегментов; снимаем только если есть.
+		a.managedService.SweepForeignPermitAll(context.Background())
 
 		if backup.ConsumePostRestoreMarker(a.dataDir) {
 			a.bootLog.Info("startup", "",
 				"Post-restore boot: syncing linked endpoints and cold-starting from archive")
 			a.orch.LoadState(context.Background())
 			a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventBoot})
-			a.proxyRuntimeNudge("post-restore", proxyrt.EventBoot)
+			go a.proxyRuntimeNudge("post-restore", proxyrt.EventBoot)
 			return
 		}
 
@@ -279,7 +289,7 @@ func (a *app) startBootSequence() {
 		a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventReconnect})
 		// Как на cold-boot: посев мог не состояться, если RCI ещё не отвечал
 		// сразу после opkg upgrade.
-		a.proxyRuntimeNudge("daemon-restart", proxyrt.EventBoot)
+		go a.proxyRuntimeNudge("daemon-restart", proxyrt.EventBoot)
 	}
 
 }

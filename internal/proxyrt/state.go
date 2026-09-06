@@ -1,6 +1,7 @@
 package proxyrt
 
 import (
+	"maps"
 	"sort"
 	"sync"
 	"time"
@@ -45,10 +46,10 @@ func NewStateStore(pub Publisher, now func() time.Time) *StateStore {
 //
 // Переданные слайсы хранилище кладёт к себе как есть, копии на входе не делает:
 // на mipsel копия каждого прогона не окупается. Поэтому требование к
-// вызывающему: ни шаги и состояния ресурсов, ни КАРТЫ Step.Args после возврата
-// не менять. Роль, переиспользующая одну карту аргументов между проходами,
-// испортит хранимое состояние, оно совпадёт со следующим прогоном, и публикация
-// подавится молча.
+// вызывающему: ни шаги и состояния ресурсов, ни КАРТЫ Step.Args и
+// ResourceState.Attrs после возврата не менять. Роль, переиспользующая одну
+// карту аргументов между проходами, испортит хранимое состояние, оно совпадёт
+// со следующим прогоном, и публикация подавится молча.
 //
 // Порядок публикаций строгий: события уходят на шину в том же порядке, в каком
 // состояния легли в хранилище. Это держится на pubMu, который берётся первым и
@@ -115,7 +116,13 @@ func (s *StateStore) List() []InstanceState {
 // защиту, которой нет.
 func clone(st InstanceState) InstanceState {
 	if st.Resources != nil {
-		st.Resources = append([]ResourceState(nil), st.Resources...)
+		res := append([]ResourceState(nil), st.Resources...)
+		for i := range res {
+			if res[i].Attrs != nil {
+				res[i].Attrs = maps.Clone(res[i].Attrs)
+			}
+		}
+		st.Resources = res
 	}
 	if st.LastPlan != nil {
 		steps := append([]Step(nil), st.LastPlan...)
@@ -135,8 +142,8 @@ func clone(st InstanceState) InstanceState {
 }
 
 // sameState сравнивает всё, кроме отметки времени: она меняется каждый прогон
-// и сама по себе поводом для публикации не является. Step содержит карту и
-// потому несравним через ==, поэтому идём по полям.
+// и сама по себе поводом для публикации не является. Step и ResourceState
+// содержат карту и потому несравнимы через ==, поэтому идём по полям.
 //
 // Причина шага сравнивается отдельно от StepKey: ключ намеренно кодирует только
 // Resource/Op/Args — этого хватает на вопрос «этот шаг уже применяли», но здесь
@@ -150,7 +157,11 @@ func sameState(a, b InstanceState) bool {
 		return false
 	}
 	for i := range a.Resources {
-		if a.Resources[i] != b.Resources[i] {
+		x, y := a.Resources[i], b.Resources[i]
+		if x.ID != y.ID || x.Status != y.Status || x.Detail != y.Detail || x.Error != y.Error {
+			return false
+		}
+		if !maps.Equal(x.Attrs, y.Attrs) {
 			return false
 		}
 	}

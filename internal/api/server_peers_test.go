@@ -88,7 +88,7 @@ func TestServerPeerSeams_DefaultToProduction(t *testing.T) {
 // Успешное добавление: сгенерированные ключи уходят и в payload NDMS, и в
 // стор секретов, публикация ровно одна.
 func TestServersHandler_AddServerPeer_StoresSecretAndPublishes(t *testing.T) {
-	h, store, poster, p := newServersNATHarness(t)
+	h, store, poster, p, _ := newServersNATHarness(t)
 	stubPeerKeygen(t)
 
 	rr := postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32"}`)
@@ -128,7 +128,7 @@ func TestServersHandler_AddServerPeer_StoresSecretAndPublishes(t *testing.T) {
 // приватный ключ принятого пира терялся бы навсегда) и снят после отказа
 // (иначе в сторе копился бы мусор под ключами, которых на роутере нет).
 func TestServersHandler_AddServerPeer_RollsBackSecretOnNDMSRefusal(t *testing.T) {
-	h, store, poster, p := newServersNATHarness(t)
+	h, store, poster, p, _ := newServersNATHarness(t)
 	stubPeerKeygen(t)
 
 	secretVisibleDuringRCI := false
@@ -157,7 +157,7 @@ func TestServersHandler_AddServerPeer_RollsBackSecretOnNDMSRefusal(t *testing.T)
 
 // Отказ генерации ключей: ни RCI, ни секрета, ни публикации.
 func TestServersHandler_AddServerPeer_KeygenFailureStopsBeforeRCI(t *testing.T) {
-	h, store, poster, p := newServersNATHarness(t)
+	h, store, poster, p, _ := newServersNATHarness(t)
 	stubPeerKeygen(t)
 	genKeyPair = func(context.Context) (string, string, error) {
 		return "", "", errors.New("awg genkey: boom")
@@ -178,7 +178,7 @@ func TestServersHandler_AddServerPeer_KeygenFailureStopsBeforeRCI(t *testing.T) 
 // Тот же исход у второго генератора: PSK — отдельный вызов со своей веткой
 // ошибки, и её снятие уводило бы пира на роутер с пустым preshared-key.
 func TestServersHandler_AddServerPeer_PSKFailureStopsBeforeRCI(t *testing.T) {
-	h, store, poster, p := newServersNATHarness(t)
+	h, store, poster, p, _ := newServersNATHarness(t)
 	stubPeerKeygen(t)
 	genPSK = func(context.Context) (string, error) {
 		return "", errors.New("awg genpsk: boom")
@@ -208,7 +208,7 @@ func TestPeerFixturePubKey_IsValidWGKey(t *testing.T) {
 // Шов keygen отдал битый ключ (укороченный base64) — пир НЕ уходит в NDMS и секрет не
 // сохраняется: раньше такой ключ доезжал до роутера и стора без проверки.
 func TestServersHandler_AddServerPeer_RejectsMalformedGeneratedKey(t *testing.T) {
-	h, store, poster, p := newServersNATHarness(t)
+	h, store, poster, p, _ := newServersNATHarness(t)
 	stubPeerKeygen(t)
 	oldPair := genKeyPair
 	genKeyPair = func(context.Context) (string, string, error) {

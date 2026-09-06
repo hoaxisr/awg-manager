@@ -61,6 +61,7 @@ const (
 	SubBoot           = "boot"
 	SubWan            = "wan"
 	SubAuth           = "auth"
+	SubMcp            = "mcp"
 	SubSettings       = "settings"
 	SubUpdate         = "update"
 	SubCleanup        = "cleanup"
@@ -123,7 +124,7 @@ var KnownSubgroups = map[string][]string{
 		SubHTTP, SubManaged,
 	},
 	GroupSystem: {
-		SubBoot, SubAuth, SubSettings, SubUpdate, SubWan, SubSystemTunnel,
+		SubBoot, SubAuth, SubMcp, SubSettings, SubUpdate, SubWan, SubSystemTunnel,
 		SubCleanup, SubDnsCheck, SubConnections, SubTraffic, SubDiagnostics,
 		SubProfiling, SubRCI, SubNDMS, SubStorage, SubMonitoring,
 	},

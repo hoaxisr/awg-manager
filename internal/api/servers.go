@@ -357,7 +357,7 @@ func (h *ServersHandler) writeAll(w http.ResponseWriter, r *http.Request) {
 	managedList := []*managedServerResponse{}
 	managedStats := map[string]*managed.ManagedServerStats{}
 	if h.managed != nil {
-		managedList = h.managed.getManagedList()
+		managedList = h.managed.getManagedList(ctx)
 		managedStats = h.managed.getManagedStatsMap(ctx)
 	}
 	payload := map[string]any{

@@ -5,8 +5,10 @@
 ```
 awg-manager/
 ├── cmd/awg-manager/       # точка входа бекенда, docs.go (swag директивы)
+├── cmd/mcp-dev/           # dev-only MCP-сервер на фейковых данных (mock stack)
 ├── internal/
 │   ├── api/               # HTTP-хендлеры — здесь живут OpenAPI аннотации
+│   ├── mcp/               # MCP-сервер: инструменты, localdeps, mcptest
 │   ├── openapi/           # embed.go + swagger.yaml (АВТОГЕНЕРАТ — не редактировать руками)
 │   └── ...                # остальная бизнес-логика
 ├── frontend/
@@ -116,6 +118,10 @@ cd frontend && VITE_API_TARGET=http://127.0.0.1:8081 npm run dev:mock
 ```
 
 Подробнее — в [`openapi.md`](./openapi.md#6-stateful-mock-proxy-state-aware-overrides).
+
+### MCP в mock-режиме
+
+`npm run dev:mock:proxy` дополнительно поднимает `go run ../cmd/mcp-dev` на `http://127.0.0.1:8090/mcp` (нужен Go; отключить — `MOCK_MCP=0`). Подключение: `claude mcp add --transport http awgm-dev http://127.0.0.1:8090/mcp`. Данные — фейковые (`internal/mcp/mcptest`), карточка ключей в UI работает через `mock-proxy.mjs` и с dev-сервером не связана.
 
 ## Процесс работы над фичей
 
