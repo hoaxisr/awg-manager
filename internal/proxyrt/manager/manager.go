@@ -6,6 +6,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -84,6 +85,11 @@ func (l *Live) Intent() proxyrt.Intent {
 // инстанса обязаны читать live, не менеджер.
 type Factory func(rec instancestore.Record, live *Live) (RunningInstance, error)
 
+// ErrBinariesPending — бут отложен воротами F98: бинари подсистемы не совпали
+// с пином сборки, а загрузка не удалась. Старое поколение не тронуто, воркеры
+// не собраны; повтор — забота проводки (proxyBinariesRetry).
+var ErrBinariesPending = errors.New("бинари прокси ещё не загружены")
+
 // Deps — все зависимости, конструктором (G4).
 type Deps struct {
 	Store    *instancestore.Store
@@ -97,6 +103,12 @@ type Deps struct {
 	// записей — на КАЖДОМ бооте; добивание старого поколения и уборка
 	// наследия — только при res.SeededNow.
 	PostSeed func(ctx context.Context, res instancestore.SeedResult, declaredNDMS map[string]bool) error
+	// EnsureBinaries — ворота бута (F98): ДО PostSeed убедиться, что бинари
+	// подсистем с включёнными записями совпадают с пином, при необходимости
+	// скачать. progress — текст для SeedInfo.Err на время загрузки. Ошибка,
+	// обёрнутая ErrBinariesPending, откладывает бут: старое поколение живёт,
+	// PostSeed и сборка воркеров не выполняются. nil — шаг пропущен.
+	EnsureBinaries func(ctx context.Context, records []instancestore.Record, progress func(msg string)) error
 	// Выделение пинов — обязанность писателя конфига (план 3), то есть НАША
 	// (Щ1): без этого создание raw-клиента и сервера через API невозможно.
 	AllocIndex func(owner string, pinned int, havePin bool) (int, error)
@@ -269,6 +281,23 @@ func (m *Manager) Boot(ctx context.Context) error {
 		return err
 	}
 	list := res.State.Records
+	// Ворота F98 стоят ДО всего, что трогает старое поколение или ресурсы:
+	// добивание, legacyCleanup, аллокация listen, сборка воркеров. Загрузка
+	// идёт маршрутом роутера — через живой прокси старого поколения, если он
+	// и есть выход. Класс отказа — тот же, что у отказа посева (амендмент D).
+	if m.deps.EnsureBinaries != nil {
+		progress := func(msg string) {
+			m.mu.Lock()
+			m.booted = false
+			m.seedErr = msg
+			m.mu.Unlock()
+		}
+		if err := m.deps.EnsureBinaries(ctx, list, progress); err != nil {
+			m.deps.Journal.Warn("boot", "proxy", "бинари прокси: "+err.Error())
+			progress(err.Error())
+			return err
+		}
+	}
 	// Занятый listen на бооте — не приговор. Посев разводит претендентов на
 	// один порт ТОЛЬКО между записями (resolveListenConflicts), а занятость
 	// шире: в неё входят и localhost-endpoint'ы AWG-туннелей. Такой конфликт
