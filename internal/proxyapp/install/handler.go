@@ -90,6 +90,9 @@ func (s *Service) ServeInstall(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), installErrorCode(sub.name))
 		return
 	}
+	if s.deps.Installed != nil {
+		s.deps.Installed(sub.name)
+	}
 	response.Success(w, map[string]string{"message": installedMessage(sub.name)})
 }
 

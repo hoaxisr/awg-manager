@@ -47,7 +47,7 @@ func TestKinds_ProxyLinkedFieldClassified(t *testing.T) {
 }
 
 // TestKinds_ProxySubsystemClassified — подсистема бинарей роли. Пустая строка
-// означает, что инстанс не удержит свои бинари от удаления (wiring_proxyrt.go:858).
+// означает, что инстанс не удержит свои бинари от удаления (install.SubsystemOf).
 func TestKinds_ProxySubsystemClassified(t *testing.T) {
 	want := map[instancestore.Kind]install.Subsystem{
 		instancestore.KindWdttClient:     install.SubsystemWdtt,
@@ -58,12 +58,12 @@ func TestKinds_ProxySubsystemClassified(t *testing.T) {
 	for _, k := range instancestore.AllKinds {
 		exp, ok := want[k]
 		if !ok {
-			t.Errorf("роль %s не классифицирована: чьи бинари она держит? см. proxySubsystemOf", k)
+			t.Errorf("роль %s не классифицирована: чьи бинари она держит? см. install.SubsystemOf", k)
 			continue
 		}
-		got := proxySubsystemOf(k)
+		got := install.SubsystemOf(k)
 		if got == "" {
-			t.Errorf("%s: proxySubsystemOf вернул пусто — бинари роли не будут удержаны от удаления", k)
+			t.Errorf("%s: install.SubsystemOf вернул пусто — бинари роли не будут удержаны от удаления", k)
 			continue
 		}
 		if got != exp {

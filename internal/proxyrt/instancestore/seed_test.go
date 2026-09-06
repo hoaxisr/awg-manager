@@ -776,7 +776,10 @@ func TestSeedMarksCleanupPendingAndPersistsLegacyIfaces(t *testing.T) {
 	if err := os.MkdirAll(e.deps.RuntimeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-server-s.pid"), "321")
+	// Номер заведомо мёртвый (выше pid_max): отпечаток снимается по реальному
+	// /proc, и живой на хосте номер дал бы StartTime != 0 — так тест падал на
+	// CI-раннере, где PID 321 был занят.
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-server-s.pid"), "999999999")
 	first, err := Seed(context.Background(), e.st, e.deps)
 	if err != nil {
 		t.Fatal(err)
@@ -794,7 +797,7 @@ func TestSeedMarksCleanupPendingAndPersistsLegacyIfaces(t *testing.T) {
 	if !reflect.DeepEqual(st.LegacyKernelIfaces, []string{"wdtt0", "wdttraw0"}) {
 		t.Fatalf("прежние kernel-имена не сохранены: %v", st.LegacyKernelIfaces)
 	}
-	if !reflect.DeepEqual(st.OldGenProcs, []OldGenProc{{PID: 321}}) {
+	if !reflect.DeepEqual(st.OldGenProcs, []OldGenProc{{PID: 999999999}}) {
 		t.Fatalf("процессы старого поколения не сохранены: %+v", st.OldGenProcs)
 	}
 
@@ -814,7 +817,7 @@ func TestSeedMarksCleanupPendingAndPersistsLegacyIfaces(t *testing.T) {
 	if !reflect.DeepEqual(second.LegacyKernelIfaces, []string{"wdtt0", "wdttraw0"}) {
 		t.Fatalf("список имён не доехал до повтора: %v", second.LegacyKernelIfaces)
 	}
-	if !reflect.DeepEqual(second.OldGenProcs, []OldGenProc{{PID: 321}}) {
+	if !reflect.DeepEqual(second.OldGenProcs, []OldGenProc{{PID: 999999999}}) {
 		t.Fatalf("список процессов пересобран с диска: %+v", second.OldGenProcs)
 	}
 }

@@ -18,10 +18,16 @@ type fakeProber struct {
 	calls   atomic.Int64
 	latency int
 	ok      bool
+
+	mu    sync.Mutex
+	hosts []string
 }
 
-func (f *fakeProber) Probe(_ context.Context, _, _ string, _ time.Duration) (int, bool) {
+func (f *fakeProber) Probe(_ context.Context, host, _ string, _ time.Duration) (int, bool) {
 	f.calls.Add(1)
+	f.mu.Lock()
+	f.hosts = append(f.hosts, host)
+	f.mu.Unlock()
 	return f.latency, f.ok
 }
 
@@ -178,6 +184,40 @@ func TestScheduler_RunOnce_ExcludesConfiguredTunnels(t *testing.T) {
 		if c.TunnelID == "tn-B" {
 			t.Fatalf("excluded tunnel tn-B must not appear in cells, got %+v", c)
 		}
+	}
+}
+
+// HTTP-метод: зонд получает настроенный URL проверки связи целиком, а не
+// зашитый gstatic:443 — иначе индикатор карточки и кнопка «Тест» проверяют
+// разные вещи и спорят друг с другом.
+func TestScheduler_RunOnce_SelfTargetFromConnectivityCheckURL(t *testing.T) {
+	prober := &fakeProber{ok: true, latency: 12}
+	hist := NewHistory()
+	settingsStore := storage.NewSettingsStore(t.TempDir())
+	if err := settingsStore.Update(func(cur *storage.Settings) error {
+		cur.ConnectivityCheckURL = "http://cp.cloudflare.com/generate_204"
+		return nil
+	}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	sched := NewScheduler(SchedulerDeps{
+		TunnelLister:  &fakeLister{tunnels: []traffic.RunningTunnel{{ID: "tn-A", IfaceName: "wg0"}}},
+		SettingsStore: settingsStore,
+		Prober:        prober,
+	}, hist)
+
+	sched.RunOnce(context.Background())
+
+	snap := sched.LatestSnapshot()
+	if len(snap.Targets) != 1 || snap.Targets[0].Host != "cp.cloudflare.com" {
+		t.Fatalf("expected self target host from settings URL, got %+v", snap.Targets)
+	}
+	prober.mu.Lock()
+	hosts := append([]string(nil), prober.hosts...)
+	prober.mu.Unlock()
+	if len(hosts) != 1 || hosts[0] != "http://cp.cloudflare.com/generate_204" {
+		t.Fatalf("expected probe of the configured URL, got %v", hosts)
 	}
 }
 

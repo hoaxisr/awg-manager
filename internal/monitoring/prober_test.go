@@ -3,64 +3,46 @@ package monitoring
 import (
 	"context"
 	"errors"
-	"net"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/icmpprobe"
 )
 
-// TCPProber: ok=true + positive latency on successful connect, ok=false on
-// refused/unreachable. No interface binding in tests (empty ifaceName).
-func TestTCPProber_ConnectSuccess(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			conn.Close()
-		}
-	}()
+// HTTPProber: ok=true + positive latency on 2xx/3xx, ok=false on 5xx and on
+// a dead endpoint. No interface binding in tests (empty ifaceName).
+func TestHTTPProber_Probe(t *testing.T) {
+	code := atomic.Int32{}
+	code.Store(http.StatusNoContent)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(int(code.Load()))
+	}))
+	defer srv.Close()
 
-	_, port, err := net.SplitHostPort(ln.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	p := &TCPProber{port: port}
-	ms, ok := p.Probe(context.Background(), "127.0.0.1", "", 5*time.Second)
+	p := NewHTTPProber()
+	ms, ok := p.Probe(context.Background(), srv.URL+"/generate_204", "", 5*time.Second)
 	if !ok {
-		t.Fatal("Probe() ok = false, want true for listening port")
+		t.Fatal("Probe() ok = false, want true for 204")
 	}
 	if ms < 1 {
 		t.Errorf("latency = %d, want >= 1", ms)
 	}
-}
 
-func TestTCPProber_ConnectRefused(t *testing.T) {
-	// Grab a free port and close the listener so the connect is refused.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	code.Store(http.StatusInternalServerError)
+	if _, ok := p.Probe(context.Background(), srv.URL+"/generate_204", "", 5*time.Second); ok {
+		t.Error("Probe() ok = true, want false for 500")
 	}
-	_, port, err := net.SplitHostPort(ln.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	ln.Close()
 
-	p := &TCPProber{port: port}
-	if _, ok := p.Probe(context.Background(), "127.0.0.1", "", 2*time.Second); ok {
-		t.Fatal("Probe() ok = true, want false for closed port")
+	dead := srv.URL
+	srv.Close()
+	if _, ok := p.Probe(context.Background(), dead+"/generate_204", "", 2*time.Second); ok {
+		t.Error("Probe() ok = true, want false for closed server")
 	}
 }
 
-// ICMPProber maps icmpprobe results to (latency, ok).
 func TestICMPProber_Probe(t *testing.T) {
 	cases := []struct {
 		name   string
