@@ -3,6 +3,7 @@ package router
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -314,10 +315,10 @@ func (c *RouterConfig) rulesReferencingRuleSets(tags []string) ruleSetRefIndices
 // in destinationIPCIDRItems (fork route/rule/rule_default.go:154), so it is
 // OR-ed with the addresses, not AND-ed against them.
 //
-// Narrowing matchers (port, network, protocol, inbound, source_ip_cidr) keep
-// their AND meaning: they move into a sibling branch of an outer
-// `logical(and)`. Action/outbound stay on the outer rule — nested branches
-// carry matchers only.
+// Narrowing matchers (port, network, protocol, inbound, source_ip_cidr,
+// source_mac_address) keep their AND meaning: they move into a sibling
+// branch of an outer `logical(and)`. Action/outbound stay on the outer
+// rule — nested branches carry matchers only.
 //
 // Idempotent: an already-logical rule is returned untouched.
 func normalizeAddressOrRule(r Rule) Rule {
@@ -343,16 +344,18 @@ func normalizeAddressOrRule(r Rule) Rule {
 	}}
 
 	narrowing := Rule{
-		SourceIPCIDR: r.SourceIPCIDR,
-		Port:         r.Port,
-		Protocol:     r.Protocol,
-		Inbound:      r.Inbound,
-		Network:      r.Network,
+		SourceIPCIDR:     r.SourceIPCIDR,
+		SourceMACAddress: r.SourceMACAddress,
+		Port:             r.Port,
+		Protocol:         r.Protocol,
+		Inbound:          r.Inbound,
+		Network:          r.Network,
 	}
 
 	out := r
 	out.RuleSet, out.Domain, out.DomainSuffix, out.IPCIDR = nil, nil, nil, nil
 	out.SourceIPCIDR, out.Port, out.Protocol, out.Inbound = nil, nil, "", nil
+	out.SourceMACAddress = nil
 	out.Network, out.IPIsPrivate = "", nil
 	out.Type, out.Mode = "logical", "or"
 	out.Rules = addressOr.Rules
@@ -777,6 +780,14 @@ func (c *RouterConfig) renameOutboundReferences(oldTag, newTag string) {
 		if c.Route.RuleSet[i].DownloadDetour == oldTag {
 			c.Route.RuleSet[i].DownloadDetour = newTag
 		}
+		if hc := c.Route.RuleSet[i].HTTPClient; hc != nil && hc.Detour == oldTag {
+			hc.Detour = newTag
+		}
+	}
+	for i := range c.HTTPClients {
+		if c.HTTPClients[i].Detour == oldTag {
+			c.HTTPClients[i].Detour = newTag
+		}
 	}
 }
 
@@ -807,6 +818,14 @@ func (c *RouterConfig) removeOutboundReferences(tag string) {
 	for i := range c.Route.RuleSet {
 		if c.Route.RuleSet[i].DownloadDetour == tag {
 			c.Route.RuleSet[i].DownloadDetour = ""
+		}
+		if hc := c.Route.RuleSet[i].HTTPClient; hc != nil && hc.Detour == tag {
+			hc.Detour = ""
+		}
+	}
+	for i := range c.HTTPClients {
+		if c.HTTPClients[i].Detour == tag {
+			c.HTTPClients[i].Detour = ""
 		}
 	}
 }
@@ -840,6 +859,14 @@ func (c *RouterConfig) outboundReferences(tag string) []string {
 		if rs.DownloadDetour == tag {
 			refs = append(refs, fmt.Sprintf("route.rule_set[%d=%q].download_detour", i, rs.Tag))
 		}
+		if rs.HTTPClient != nil && rs.HTTPClient.Detour == tag {
+			refs = append(refs, fmt.Sprintf("route.rule_set[%d=%q].http_client.detour", i, rs.Tag))
+		}
+	}
+	for i, hc := range c.HTTPClients {
+		if hc.Detour == tag {
+			refs = append(refs, fmt.Sprintf("http_clients[%d=%q].detour", i, hc.Tag))
+		}
 	}
 	return refs
 }
@@ -848,8 +875,9 @@ func (c *RouterConfig) outboundReferences(tag string) []string {
 // route.rules[...] entries — those are reported separately as rule
 // indices by rulesReferencingOutbound (for UI deeplinking). Covers
 // route.final, composite members, composite default, dns.servers detour,
-// and rule_set download_detour — all the locations validateLocked flags
-// as unknown-outbound but that rulesReferencingOutbound does not see.
+// rule_set download_detour / http_client.detour, and top-level
+// http_clients[].detour — all the locations validateLocked flags as
+// unknown-outbound but that rulesReferencingOutbound does not see.
 func (c *RouterConfig) outboundReferencesExcludingRules(tag string) []string {
 	all := c.outboundReferences(tag)
 	out := make([]string, 0, len(all))
@@ -993,7 +1021,7 @@ func isProxyIface(name string) bool {
 // rule survive force-delete as an unconditional catch-all.
 func (r Rule) hasAnyMatcher() bool {
 	return len(r.Domain) > 0 || len(r.DomainSuffix) > 0 || len(r.IPCIDR) > 0 ||
-		len(r.SourceIPCIDR) > 0 ||
+		len(r.SourceIPCIDR) > 0 || len(r.SourceMACAddress) > 0 ||
 		len(r.Port) > 0 || len(r.RuleSet) > 0 || r.Protocol != "" || len(r.Rules) > 0 ||
 		(r.IPIsPrivate != nil && *r.IPIsPrivate) || len(r.Inbound) > 0 || r.Network != ""
 }
@@ -1101,6 +1129,11 @@ func validateRule(r Rule) error {
 	for _, cidr := range r.SourceIPCIDR {
 		if err := validateCIDROrAddr("source_ip_cidr", cidr); err != nil {
 			return err
+		}
+	}
+	for _, mac := range r.SourceMACAddress {
+		if _, err := net.ParseMAC(mac); err != nil {
+			return fmt.Errorf("source_mac_address %q: %w", mac, err)
 		}
 	}
 	for _, p := range r.Port {

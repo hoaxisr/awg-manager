@@ -34,6 +34,7 @@ func loopSafeProxyRule(r Rule) bool {
 	return isProxyRoute(r) &&
 		r.Type == "" && r.Mode == "" && len(r.Rules) == 0 &&
 		len(r.DomainSuffix) == 0 && len(r.Domain) == 0 && len(r.SourceIPCIDR) == 0 &&
+		len(r.SourceMACAddress) == 0 &&
 		len(r.Port) == 0 && r.Protocol == "" && r.IPIsPrivate == nil &&
 		len(r.Inbound) == 0 && r.Network == "" && r.UDPTimeout == "" &&
 		r.AwgmManaged == ""

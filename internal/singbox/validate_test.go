@@ -4,6 +4,8 @@ package singbox
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -68,5 +70,32 @@ func TestValidator_TimesOutOnHungCheck(t *testing.T) {
 		// Сторожевой таймер: без таймаута в Validate мы бы висели навсегда,
 		// поэтому мутант «убрать ограничение» падает здесь, а не вешает пакет.
 		t.Fatal("Validate не вернулся — ограничения по времени нет")
+	}
+}
+
+// F116: OOM killer убивает `sing-box check` сигналом, и до фикса ошибка
+// выглядела как обычный provал конфига ("exit status N") — непонятно было,
+// что дело не в конфиге, а в памяти. Бинарь подменён реальным скриптом (как
+// в operator_test.go, TestOperator_GetStatus_UpdateAvailableWhenSameVersionSHADiffers),
+// а не фейковым exec-швом: нужен настоящий *exec.ExitError с сигналом в
+// ProcessState, который фейковый seam не воспроизвёл бы.
+func TestValidator_KilledBySignal(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	body := []byte("#!/bin/sh\nkill -SEGV $$\n")
+	if err := os.WriteFile(binary, body, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	v := NewValidator(binary)
+	err := v.Validate(dir)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "прерван сигналом") {
+		t.Errorf("ошибка не про сигнал: %v", err)
+	}
+	if !strings.Contains(err.Error(), "MemAvailable") {
+		t.Errorf("ошибка не упоминает MemAvailable: %v", err)
 	}
 }

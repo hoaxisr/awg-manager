@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/configmerge"
@@ -54,6 +55,9 @@ func TestMergedScalars_DefaultsApplyWithoutOwner(t *testing.T) {
 	dns, _ := m["dns"].(map[string]any)
 	if dns["strategy"] != baseDefaultDNSStrategy {
 		t.Errorf("dns.strategy = %v, want %s из 99-defaults", dns["strategy"], baseDefaultDNSStrategy)
+	}
+	if dns["optimistic"] != true {
+		t.Errorf("dns.optimistic = %v, want true из 99-defaults", dns["optimistic"])
 	}
 	route, _ := m["route"].(map[string]any)
 	// Наш configmerge сохраняет объектную форму как есть; sing-box сворачивает
@@ -242,5 +246,41 @@ func TestStripOurDerivedDefaults_NormalisesForeignStringResolver(t *testing.T) {
 	}
 	if res["server"] != "custom" {
 		t.Errorf("значение потеряно: %v", res)
+	}
+}
+
+// derivedDefaultsSlot несёт скаляры мимо строгого DTO — прямиком в JSON. Без
+// сверки со схемой форк-сборки (#806) переименование или удаление ключа
+// апстримом (например, dns.optimistic) молча ушло бы в конфиг, который
+// sing-box отвергает при загрузке.
+func TestDerivedDefaultsSlot_KeysMatchSchema(t *testing.T) {
+	raw, err := os.ReadFile("vlink/testdata/singbox-schema.json")
+	if err != nil {
+		t.Fatalf("read schema: %v (run scripts/regen-singbox-schema.sh)", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse schema: %v", err)
+	}
+	defs, _ := doc["$defs"].(map[string]any)
+	props, _ := doc["properties"].(map[string]any)
+
+	resolve := func(node map[string]any) map[string]any {
+		ref, _ := node["$ref"].(string)
+		name := strings.TrimPrefix(ref, "#/$defs/")
+		resolved, _ := defs[name].(map[string]any)
+		return resolved
+	}
+
+	want := derivedDefaultsSlot()
+	for _, section := range []string{"dns", "route"} {
+		root, _ := props[section].(map[string]any)
+		schemaProps, _ := resolve(root)["properties"].(map[string]any)
+		wantKeys, _ := want[section].(map[string]any)
+		for key := range wantKeys {
+			if _, ok := schemaProps[key]; !ok {
+				t.Errorf("%s.%s отсутствует в схеме sing-box", section, key)
+			}
+		}
 	}
 }

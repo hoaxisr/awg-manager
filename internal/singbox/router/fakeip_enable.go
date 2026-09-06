@@ -285,6 +285,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		RealServer: p.RealServer,
 		Stack:      sr.FakeIPStack,
 		UDPTimeout: sr.UDPTimeout,
+		UDPNATMax:  sr.UDPNATMax,
 	}
 	ensureFakeIPOverlay(fcfg, spec)
 

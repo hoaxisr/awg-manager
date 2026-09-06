@@ -142,7 +142,7 @@ func TestEnsureQoSInbounds_AddsCanonicalPairs(t *testing.T) {
 	classes := activeQoSClasses([]storage.SingboxQoSClass{
 		{DSCP: 46, Outbound: "vpn", Enabled: true},
 	})
-	got, changed := ensureQoSInbounds(base, classes, "10m0s")
+	got, changed := ensureQoSInbounds(base, classes, "10m0s", 0)
 	if !changed {
 		t.Fatal("expected changed=true when adding class inbounds")
 	}
@@ -176,7 +176,7 @@ func TestEnsureQoSInbounds_RemovesStaleAndConverges(t *testing.T) {
 	classes := activeQoSClasses([]storage.SingboxQoSClass{
 		{DSCP: 46, Outbound: "vpn", Enabled: true},
 	})
-	got, changed := ensureQoSInbounds(in, classes, "")
+	got, changed := ensureQoSInbounds(in, classes, "", 0)
 	if !changed {
 		t.Fatal("expected changed=true")
 	}
@@ -193,7 +193,7 @@ func TestEnsureQoSInbounds_RemovesStaleAndConverges(t *testing.T) {
 	}
 
 	// Second pass over the converged result: no change.
-	again, changed2 := ensureQoSInbounds(got, classes, "")
+	again, changed2 := ensureQoSInbounds(got, classes, "", 0)
 	if changed2 {
 		t.Errorf("expected idempotent second pass, got change: %+v", again)
 	}
@@ -205,7 +205,7 @@ func TestEnsureQoSInbounds_NoClasses_RemovesAll(t *testing.T) {
 		{Type: "tproxy", Tag: "tproxy-qos-46"},
 		{Type: "redirect", Tag: "redirect-qos-46"},
 	}
-	got, changed := ensureQoSInbounds(in, nil, "")
+	got, changed := ensureQoSInbounds(in, nil, "", 0)
 	if !changed {
 		t.Fatal("expected changed=true when removing stale qos inbounds")
 	}
@@ -214,10 +214,10 @@ func TestEnsureQoSInbounds_NoClasses_RemovesAll(t *testing.T) {
 	}
 
 	// Empty in, no classes → no phantom change.
-	if _, changed := ensureQoSInbounds(nil, nil, ""); changed {
+	if _, changed := ensureQoSInbounds(nil, nil, "", 0); changed {
 		t.Error("nil inbounds + no classes must not report change")
 	}
-	if _, changed := ensureQoSInbounds([]Inbound{}, nil, ""); changed {
+	if _, changed := ensureQoSInbounds([]Inbound{}, nil, "", 0); changed {
 		t.Error("empty inbounds + no classes must not report change")
 	}
 }

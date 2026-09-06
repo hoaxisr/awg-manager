@@ -85,12 +85,30 @@ func (s *ServiceImpl) computeIssues(cfg *RouterConfig) []Issue {
 		}
 	}
 	for _, rs := range cfg.Route.RuleSet {
-		if rs.DownloadDetour != "" && !isKnownOutboundRef(rs.DownloadDetour, outboundTags) {
+		// download_detour — хранимая форма; HTTPClient.Detour — то же поле в
+		// материализованном слоте (sing-box 1.14, applyHTTPClients). cfg сюда
+		// приходит через loadRouterConfig без restoreHTTPClients, так что
+		// материализованный слот несёт только второе.
+		detour := rs.DownloadDetour
+		if detour == "" && rs.HTTPClient != nil {
+			detour = rs.HTTPClient.Detour
+		}
+		if detour != "" && !isKnownOutboundRef(detour, outboundTags) {
 			issues = append(issues, Issue{
 				Severity: "warning",
 				Kind:     "orphan-outbound",
-				Tag:      rs.DownloadDetour,
-				Message:  fmt.Sprintf("rule_set %q использует несуществующий download_detour %q", rs.Tag, rs.DownloadDetour),
+				Tag:      detour,
+				Message:  fmt.Sprintf("rule_set %q использует несуществующий download_detour %q", rs.Tag, detour),
+			})
+		}
+	}
+	for _, hc := range cfg.HTTPClients {
+		if hc.Detour != "" && !isKnownOutboundRef(hc.Detour, outboundTags) {
+			issues = append(issues, Issue{
+				Severity: "warning",
+				Kind:     "orphan-outbound",
+				Tag:      hc.Detour,
+				Message:  fmt.Sprintf("http_clients %q использует несуществующий detour %q", hc.Tag, hc.Detour),
 			})
 		}
 	}

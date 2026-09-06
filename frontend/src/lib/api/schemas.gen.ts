@@ -1448,6 +1448,7 @@ const api_SingboxDNSClientTLSOptionsDTO: v.GenericSchema = v.looseObject({
 const api_SingboxDNSGlobalsData: v.GenericSchema = v.looseObject({
 	final: v.optional(v.nullable(v.string())),
 	strategy: v.optional(v.nullable(v.string())),
+	timeout: v.optional(v.nullable(v.string())),
 });
 
 const api_SingboxDNSGlobalsResponse: v.GenericSchema = v.looseObject({
@@ -1760,6 +1761,7 @@ const api_SingboxRouterRuleDTO: v.GenericSchema = v.looseObject({
 	protocol: v.optional(v.nullable(v.string())),
 	rule_set: v.optional(v.nullable(v.array(v.string()))),
 	source_ip_cidr: v.optional(v.nullable(v.array(v.string()))),
+	source_mac_address: v.optional(v.nullable(v.array(v.string()))),
 });
 
 const api_SingboxRouterRuleSetDTO: v.GenericSchema = v.looseObject({
@@ -1804,6 +1806,7 @@ const api_SingboxRouterSettingsData: v.GenericSchema = v.looseObject({
 	qosClasses: v.optional(v.nullable(v.array(v.lazy(() => api_SingboxRouterQoSClassDTO)))),
 	routingMode: v.optional(v.nullable(v.string())),
 	snifferEnabled: v.optional(v.nullable(v.boolean())),
+	udpNatMax: v.optional(v.nullable(v.number())),
 	udpTimeout: v.optional(v.nullable(v.string())),
 	wanAutoDetect: v.optional(v.nullable(v.boolean())),
 	wanInterface: v.optional(v.nullable(v.string())),

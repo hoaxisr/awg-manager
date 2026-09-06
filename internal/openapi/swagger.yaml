@@ -3872,6 +3872,11 @@ definitions:
       strategy:
         example: prefer_ipv4
         type: string
+      timeout:
+        description: Timeout is the per-query DNS timeout (Go duration, sing-box 1.14).
+          Empty = engine default (10s).
+        example: 5s
+        type: string
     type: object
   api.SingboxDNSGlobalsResponse:
     properties:
@@ -4885,6 +4890,14 @@ definitions:
         items:
           type: string
         type: array
+      source_mac_address:
+        description: SourceMACAddress matches the LAN device MAC (sing-box 1.14, kernel
+          neighbor table).
+        example:
+        - aa:bb:cc:dd:ee:ff
+        items:
+          type: string
+        type: array
     type: object
   api.SingboxRouterRuleDeleteRequest:
     properties:
@@ -5128,6 +5141,13 @@ definitions:
       snifferEnabled:
         example: true
         type: boolean
+      udpNatMax:
+        description: |-
+          UDPNATMax caps UDP NAT sessions on the tproxy-in / tun-in / QoS inbounds
+          (sing-box 1.14, LRU eviction). 0 = engine default (4096-16384 by memory).
+          Range: 0..65536.
+        example: 4096
+        type: integer
       udpTimeout:
         description: |-
           UDPTimeout sets the UDP session timeout for the tproxy-in / fakeip tun-in
@@ -13763,8 +13783,8 @@ paths:
       - singbox
   /singbox/fakeip/config/dns/globals:
     get:
-      description: Returns the global DNS settings (final, strategy) for the fakeip-tun
-        slot.
+      description: Returns the global DNS settings (final, strategy, timeout) for
+        the fakeip-tun slot.
       produces:
       - application/json
       responses:
@@ -13788,10 +13808,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Persists the global DNS settings (final, strategy) for the fakeip-tun
-        slot.
+      description: Persists the global DNS settings (final, strategy, timeout) for
+        the fakeip-tun slot.
       parameters:
-      - description: final + strategy
+      - description: final + strategy + timeout
         in: body
         name: body
         required: true
@@ -13824,10 +13844,10 @@ paths:
     put:
       consumes:
       - application/json
-      description: Persists the global DNS settings (final, strategy) for the fakeip-tun
-        slot.
+      description: Persists the global DNS settings (final, strategy, timeout) for
+        the fakeip-tun slot.
       parameters:
-      - description: final + strategy
+      - description: final + strategy + timeout
         in: body
         name: body
         required: true
@@ -14958,8 +14978,8 @@ paths:
       - singbox-router
   /singbox/router/dns/globals:
     get:
-      description: 'Returns the global DNS settings: `final` (default server tag)
-        and `strategy` (ipv4_only / prefer_ipv4 / etc.).'
+      description: 'Returns the global DNS settings: `final` (default server tag),
+        `strategy` (ipv4_only / prefer_ipv4 / etc.) and `timeout` (per-query DNS timeout).'
       produces:
       - application/json
       responses:
@@ -14983,10 +15003,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'Persists the global DNS settings: `final` (default server tag)
-        and `strategy` (ipv4_only / prefer_ipv4 / etc.).'
+      description: 'Persists the global DNS settings: `final` (default server tag),
+        `strategy` (ipv4_only / prefer_ipv4 / etc.) and `timeout` (per-query DNS timeout).'
       parameters:
-      - description: final + strategy
+      - description: final + strategy + timeout
         in: body
         name: body
         required: true
@@ -15019,10 +15039,10 @@ paths:
     put:
       consumes:
       - application/json
-      description: 'Persists the global DNS settings: `final` (default server tag)
-        and `strategy` (ipv4_only / prefer_ipv4 / etc.).'
+      description: 'Persists the global DNS settings: `final` (default server tag),
+        `strategy` (ipv4_only / prefer_ipv4 / etc.) and `timeout` (per-query DNS timeout).'
       parameters:
-      - description: final + strategy
+      - description: final + strategy + timeout
         in: body
         name: body
         required: true

@@ -13,7 +13,7 @@ import (
 // primary IP интерфейса (96a61c77).
 func TestEnsureTProxyInbound_ListenSplit(t *testing.T) {
 	t.Run("creates canonical listens", func(t *testing.T) {
-		out := ensureTProxyInbound(nil, "")
+		out := ensureTProxyInbound(nil, "", 0)
 		for _, in := range out {
 			switch in.Tag {
 			case "tproxy-in":
@@ -37,7 +37,7 @@ func TestEnsureTProxyInbound_ListenSplit(t *testing.T) {
 		svc, dir := newOrchedTestService(t)
 
 		cfg := NewEmptyConfig()
-		cfg.Inbounds = ensureTProxyInbound(nil, "")
+		cfg.Inbounds = ensureTProxyInbound(nil, "", 0)
 		for i := range cfg.Inbounds {
 			if cfg.Inbounds[i].Tag == "tproxy-in" {
 				cfg.Inbounds[i].Listen = "0.0.0.0" // как писали версии до фикса
@@ -51,7 +51,7 @@ func TestEnsureTProxyInbound_ListenSplit(t *testing.T) {
 			t.Fatalf("bootstrap: %v", err)
 		}
 
-		if err := svc.healTProxyInbound(context.Background(), ""); err != nil {
+		if err := svc.healTProxyInbound(context.Background(), "", 0); err != nil {
 			t.Fatalf("healTProxyInbound: %v", err)
 		}
 
@@ -70,7 +70,7 @@ func TestEnsureTProxyInbound_ListenSplit(t *testing.T) {
 		out := ensureTProxyInbound([]Inbound{
 			{Type: "tproxy", Tag: "tproxy-in", Listen: "0.0.0.0", ListenPort: TPROXYPort, Network: "udp"},
 			{Type: "redirect", Tag: "redirect-in", Listen: "127.0.0.1", ListenPort: RedirectPort},
-		}, "")
+		}, "", 0)
 		for _, in := range out {
 			switch in.Tag {
 			case "tproxy-in":

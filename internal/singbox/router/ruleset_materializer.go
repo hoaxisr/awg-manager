@@ -133,7 +133,121 @@ func (m ruleSetMaterializer) materializeConfig(cfg *RouterConfig) (*RouterConfig
 		m.rewriteRuleSetRefs(&out, rs.Tag, local.Tag)
 		out.Route.RuleSet = append(out.Route.RuleSet, local)
 	}
+	applyHTTPClients(&out)
 	return &out, nil
+}
+
+// ruleSetHTTPClientTag — тег общего HTTP-клиента загрузки наборов.
+const ruleSetHTTPClientTag = "rs-download"
+
+// ruleSetDirectClientPrefix — префикс тега клиента без detour, которым
+// заменяется detour на пустой direct-outbound (см. isEmptyDirectTag). Тег
+// несёт исходное имя outbound'а (ruleSetDirectClientTag), чтобы обратная
+// проекция вернула ровно его.
+const ruleSetDirectClientPrefix = "rs-direct:"
+
+func ruleSetDirectClientTag(outbound string) string {
+	return ruleSetDirectClientPrefix + outbound
+}
+
+// isEmptyDirectTag сообщает, ссылается ли tag на direct-outbound без
+// dial-настроек: базовый неявный "direct" или объявленный в cfg.Outbounds
+// direct с пустыми BindInterface и DomainResolver. Detour на такой outbound
+// sing-box 1.14 отвергает при старте отдельно от "check" (форк,
+// common/dialer/detour.go): "detour to an empty direct outbound makes no
+// sense". Любой другой тег (туннели, подписки, composite outbound'ы) —
+// не пустой, даже если не найден в cfg.Outbounds.
+func isEmptyDirectTag(cfg *RouterConfig, tag string) bool {
+	if tag == "direct" {
+		return true
+	}
+	for _, o := range cfg.Outbounds {
+		if o.Tag == tag {
+			return o.Type == "direct" && o.BindInterface == "" && o.DomainResolver == nil
+		}
+	}
+	return false
+}
+
+// applyHTTPClients переводит хранимую форму в форму sing-box 1.14:
+// download_detour → http_client{detour}, плюс общий клиент rs-download с
+// detour на route.final — так раньше вёл себя неявный клиент «через дефолтный
+// outbound» (deprecated, удаление в 1.16). Явно выразить «через дефолтный
+// outbound» в 1.14 нельзя: поле DefaultOutbound у клиента помечено json:"-".
+//
+// Detour на пустой direct-outbound (isEmptyDirectTag) sing-box запрещает —
+// "detour to an empty direct outbound makes no sense", а клиент вовсе без
+// detour эквивалентен такому выходу (системный диалер = прямой выход,
+// common/dialer/dialer.go). Поэтому выбор пользователя не подменяется:
+// пустой direct выражается через ОТСУТСТВИЕ detour, а не через другой
+// outbound (решение владельца 2026-09-06). Для rs-download это просто пустой
+// Detour; для rule_set с DownloadDetour на пустой direct — отдельный клиент
+// без detour, на который набор ссылается СТРОКОЙ (http_client:"rs-direct:X"),
+// чтобы восстановление знало исходный X.
+func applyHTTPClients(cfg *RouterConfig) {
+	finalDetour := cfg.Route.Final
+	if finalDetour == "" || isEmptyDirectTag(cfg, finalDetour) {
+		finalDetour = ""
+	}
+	cfg.HTTPClients = []HTTPClient{{Tag: ruleSetHTTPClientTag, Detour: finalDetour}}
+	cfg.Route.DefaultHTTPClient = ruleSetHTTPClientTag
+
+	directClientSeen := make(map[string]struct{})
+	for i := range cfg.Route.RuleSet {
+		rs := &cfg.Route.RuleSet[i]
+		if rs.DownloadDetour == "" {
+			// Уже материализован (повторный materializeConfig без restore
+			// между вызовами, F115) — cfg.HTTPClients выше пересобран с
+			// нуля, а rs.HTTPClient.Ref на rule_set'е, не прошедшем через
+			// expandManagedToInline (не inline/managed-local), уцелел от
+			// прошлого прохода. Без этого восстановления ссылка повисает:
+			// клиента, на который она указывает, в свежем http_clients нет.
+			if rs.HTTPClient != nil && strings.HasPrefix(rs.HTTPClient.Ref, ruleSetDirectClientPrefix) {
+				if _, ok := directClientSeen[rs.HTTPClient.Ref]; !ok {
+					directClientSeen[rs.HTTPClient.Ref] = struct{}{}
+					cfg.HTTPClients = append(cfg.HTTPClients, HTTPClient{Tag: rs.HTTPClient.Ref})
+				}
+			}
+			continue
+		}
+		x := rs.DownloadDetour
+		if isEmptyDirectTag(cfg, x) {
+			ref := ruleSetDirectClientTag(x)
+			rs.HTTPClient = &RuleSetHTTPClient{Ref: ref}
+			if _, ok := directClientSeen[ref]; !ok {
+				directClientSeen[ref] = struct{}{}
+				cfg.HTTPClients = append(cfg.HTTPClients, HTTPClient{Tag: ref})
+			}
+		} else {
+			rs.HTTPClient = &RuleSetHTTPClient{Detour: x}
+		}
+		rs.DownloadDetour = ""
+	}
+}
+
+// restoreHTTPClients — обратная проекция для читателей слота.
+func restoreHTTPClients(cfg *RouterConfig) {
+	cfg.HTTPClients = nil
+	cfg.Route.DefaultHTTPClient = ""
+	for i := range cfg.Route.RuleSet {
+		rs := &cfg.Route.RuleSet[i]
+		if rs.HTTPClient == nil {
+			continue
+		}
+		if rs.HTTPClient.Ref != "" {
+			if x, ok := strings.CutPrefix(rs.HTTPClient.Ref, ruleSetDirectClientPrefix); ok && rs.DownloadDetour == "" {
+				rs.DownloadDetour = x
+			}
+			rs.HTTPClient = nil
+			continue
+		}
+		// Если в слоте есть оба поля (ручная правка), побеждает уже
+		// выставленный DownloadDetour — намеренно.
+		if rs.DownloadDetour == "" {
+			rs.DownloadDetour = rs.HTTPClient.Detour
+		}
+		rs.HTTPClient = nil
+	}
 }
 
 func (m ruleSetMaterializer) expandManagedToInline(cfg *RouterConfig) *RouterConfig {
@@ -194,6 +308,7 @@ func (m ruleSetMaterializer) restoreConfig(cfg *RouterConfig) *RouterConfig {
 	// no longer contains managed local entries (they were projected to inline).
 	m.rewritePersistedSRSRefsToInline(cfg, &out)
 	m.rewriteSRSSuffixRuleSetRefs(&out)
+	restoreHTTPClients(&out)
 	return &out
 }
 
@@ -305,6 +420,17 @@ func (m ruleSetMaterializer) materializeRuleSet(rs RuleSet) (RuleSet, error) {
 	dir := filepath.Join(m.configDir, "rule-sets", "inline")
 	jsonPath := filepath.Join(dir, base+".json")
 	srsPath := filepath.Join(dir, base+".srs")
+
+	// F110: reconcile персистит конфиг на каждый тик, даже когда правила
+	// набора не менялись — без этой проверки каждый тик форкал бы `sing-box
+	// rule-set compile` и переименовывал свежие .json/.srs поверх уже
+	// актуальных. sourceJSON уже несёт inlineRuleSetSourceVersion
+	// (buildInlineRuleSetSource пишет его в поле version), поэтому байт-в-байт
+	// сравнение с уже лежащим .json ловит и бамп версии формата — .json от
+	// прежней версии не совпадёт с пересобранным.
+	if existing, err := os.ReadFile(jsonPath); err == nil && bytes.Equal(existing, sourceJSON) && regularFileExists(srsPath) {
+		return managedLocalRuleSet(inlineSRSTag(rs.Tag), srsPath), nil
+	}
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return RuleSet{}, fmt.Errorf("mkdir inline rule-set dir: %w", err)

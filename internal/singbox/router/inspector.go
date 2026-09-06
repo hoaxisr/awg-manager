@@ -109,8 +109,8 @@ type inspectEnv struct {
 //     application protocol and the listener tag cannot be supplied by a
 //     manual probe, so a rule requiring them stays a no-match (the same
 //     conservative line the port matcher takes without an input port).
-//   - SourceIPCIDR: skipped (irrelevant for this inspector — there is no
-//     "source IP" in a manual probe).
+//   - SourceIPCIDR, SourceMACAddress: skipped (irrelevant for this
+//     inspector — there is no "source IP"/"source MAC" in a manual probe).
 //   - logical rules (`type:"logical"`) recurse: every branch is evaluated
 //     and the results combined by Mode ("and" / "or").
 //
@@ -331,6 +331,9 @@ func evaluateDefaultRule(input InspectInput, parsedIP net.IP, rule Rule, env *in
 	// Record it as N/A but neither match nor block.
 	if len(rule.SourceIPCIDR) > 0 {
 		out.Conditions = append(out.Conditions, fmt.Sprintf("source_ip_cidr: %s (пропущено — нет источника)", strings.Join(rule.SourceIPCIDR, ", ")))
+	}
+	if len(rule.SourceMACAddress) > 0 {
+		out.Conditions = append(out.Conditions, fmt.Sprintf("source_mac_address: %s (пропущено — нет источника)", strings.Join(rule.SourceMACAddress, ", ")))
 	}
 
 	// Track each matcher's outcome. Groups are ANDed between themselves;

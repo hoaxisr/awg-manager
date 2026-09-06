@@ -395,7 +395,7 @@ func (h *SingboxFakeIPConfigHandler) MoveDNSRule(w http.ResponseWriter, r *http.
 // GetDNSGlobals returns the global DNS final/strategy fields (fakeip-tun slot).
 //
 //	@Summary		Get fakeip-config DNS globals
-//	@Description	Returns the global DNS settings (final, strategy) for the fakeip-tun slot.
+//	@Description	Returns the global DNS settings (final, strategy, timeout) for the fakeip-tun slot.
 //	@Tags			singbox-fakeip
 //	@Produce		json
 //	@Security		CookieAuth
@@ -408,23 +408,23 @@ func (h *SingboxFakeIPConfigHandler) GetDNSGlobals(w http.ResponseWriter, r *htt
 		response.MethodNotAllowed(w)
 		return
 	}
-	final, strategy, err := h.svc.FakeIPGetDNSGlobals(r.Context())
+	final, strategy, timeout, err := h.svc.FakeIPGetDNSGlobals(r.Context())
 	if err != nil {
 		response.InternalError(w, err.Error())
 		return
 	}
-	response.Success(w, map[string]string{"final": final, "strategy": strategy})
+	response.Success(w, map[string]string{"final": final, "strategy": strategy, "timeout": timeout})
 }
 
-// PutDNSGlobals persists global DNS final/strategy fields (fakeip-tun slot).
+// PutDNSGlobals persists global DNS final/strategy/timeout fields (fakeip-tun slot).
 //
 //	@Summary		Update fakeip-config DNS globals
-//	@Description	Persists the global DNS settings (final, strategy) for the fakeip-tun slot.
+//	@Description	Persists the global DNS settings (final, strategy, timeout) for the fakeip-tun slot.
 //	@Tags			singbox-fakeip
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		SingboxDNSGlobalsData	true	"final + strategy"
+//	@Param			body	body		SingboxDNSGlobalsData	true	"final + strategy + timeout"
 //	@Success		200		{object}	OkResponse
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		405		{object}	APIErrorEnvelope
@@ -441,12 +441,12 @@ func (h *SingboxFakeIPConfigHandler) PutDNSGlobals(w http.ResponseWriter, r *htt
 		response.BadRequest(w, err.Error())
 		return
 	}
-	if err := h.svc.FakeIPSetDNSGlobals(r.Context(), body.Final, body.Strategy); err != nil {
+	if err := h.svc.FakeIPSetDNSGlobals(r.Context(), body.Final, body.Strategy, body.Timeout); err != nil {
 		h.handleErr(w, "request", err)
 		return
 	}
 	h.log.Info("fakeip-dns-globals", body.Final,
-		"fakeip DNS globals updated (final: "+body.Final+", strategy: "+body.Strategy+")")
+		"fakeip DNS globals updated (final: "+body.Final+", strategy: "+body.Strategy+", timeout: "+body.Timeout+")")
 	response.Success(w, map[string]bool{"ok": true})
 }
 

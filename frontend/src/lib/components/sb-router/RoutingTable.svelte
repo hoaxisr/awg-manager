@@ -84,6 +84,9 @@
     if (r.source_ip_cidr?.length) {
       parts.push(`src: ${r.source_ip_cidr[0]}${r.source_ip_cidr.length > 1 ? ` +${r.source_ip_cidr.length - 1}` : ''}`);
     }
+    if (r.source_mac_address?.length) {
+      parts.push(`mac: ${r.source_mac_address[0]}${r.source_mac_address.length > 1 ? ` +${r.source_mac_address.length - 1}` : ''}`);
+    }
     if (r.port?.length) {
       parts.push(`port: ${r.port.join(',')}`);
     }

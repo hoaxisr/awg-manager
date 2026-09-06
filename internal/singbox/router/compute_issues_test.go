@@ -258,3 +258,57 @@ func TestComputeIssues_DetectsOutboundAndRuleSetRefs(t *testing.T) {
 		}
 	}
 }
+
+// R2: loadRouterConfig hands computeIssues the raw MATERIALIZED slot (no
+// restoreHTTPClients projection) — a rule_set written by applyHTTPClients
+// carries the detour in HTTPClient.Detour with DownloadDetour empty, and the
+// top-level http_clients entries carry their own detour. Both must still be
+// checked for dangling references, or the orphan-detour warning silently
+// stops firing the moment a slot is migrated to the sing-box 1.14 form.
+func TestComputeIssues_DetectsMaterializedHTTPClientDetour(t *testing.T) {
+	svc := &ServiceImpl{deps: Deps{}}
+	cfg := &RouterConfig{
+		HTTPClients: []HTTPClient{{Tag: "rs-download", Detour: "ghost-http-client"}},
+		Route: Route{
+			Final: "direct",
+			RuleSet: []RuleSet{
+				{Tag: "known", HTTPClient: &RuleSetHTTPClient{Detour: "ghost"}},
+			},
+		},
+	}
+	got := svc.computeIssues(cfg)
+	want := map[string]bool{"ghost": false, "ghost-http-client": false}
+	for _, issue := range got {
+		if _, ok := want[issue.Tag]; ok {
+			want[issue.Tag] = true
+		}
+	}
+	for tag, seen := range want {
+		if !seen {
+			t.Errorf("missing issue for %q in %#v", tag, got)
+		}
+	}
+}
+
+// Строковая ссылка http_client (materialize'ится для detour на пустой
+// direct — applyHTTPClients) не detour: у неё пустой RuleSetHTTPClient.Detour,
+// так что orphan-проверка её не видит — и не должна: сам факт "клиент без
+// detour" не может быть orphan'ом.
+func TestComputeIssues_HTTPClientStringRefNotOrphan(t *testing.T) {
+	svc := &ServiceImpl{deps: Deps{}}
+	cfg := &RouterConfig{
+		HTTPClients: []HTTPClient{{Tag: "rs-download"}, {Tag: "rs-direct:direct"}},
+		Route: Route{
+			Final: "direct",
+			RuleSet: []RuleSet{
+				{Tag: "known", HTTPClient: &RuleSetHTTPClient{Ref: "rs-direct:direct"}},
+			},
+		},
+	}
+	got := svc.computeIssues(cfg)
+	for _, issue := range got {
+		if issue.Kind == "orphan-outbound" {
+			t.Errorf("unexpected orphan-outbound issue: %+v", issue)
+		}
+	}
+}

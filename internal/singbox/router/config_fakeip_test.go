@@ -14,13 +14,14 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
-// TestEnsureFakeIPOverlay_StackAndGSO covers the stack + GSO safety matrix on
-// the LIVE overlay path: empty Stack defaults to "gvisor" and emits NO gso flag
-// (nil), while "system" REQUIRES an explicit gso:false — the system stack with
-// GSO panics sing-tun on this router's 4.9 kernel. The explicit false must also
-// survive JSON marshaling (omitempty on a plain bool would drop it and sing-box
-// would apply its own non-false default).
-func TestEnsureFakeIPOverlay_StackAndGSO(t *testing.T) {
+// TestEnsureFakeIPOverlay_StackNoGSOOrEIN covers the stack value on the LIVE
+// overlay path (empty defaults to "gvisor") and asserts the marshaled tun
+// inbound never carries `gso` or `endpoint_independent_nat`: sing-box ≥1.13
+// removed `gso` (true is a fatal error at startup, false is silently ignored;
+// the GSO engine now decides on its own, only for flow-outbounds we don't
+// have), and `endpoint_independent_nat` was removed in 1.14 in favor of
+// `udp_mapping`/`udp_filtering` defaulting to endpoint_independent already.
+func TestEnsureFakeIPOverlay_StackNoGSOOrEIN(t *testing.T) {
 	base := FakeIPTunSpec{
 		Iface: "opkgtun10", TunAddr4: "172.18.0.1/30", MTU: 1500,
 		Inet4Range: "10.128.0.0/10", CachePath: "/c.db", RealServer: "1.1.1.1",
@@ -29,11 +30,10 @@ func TestEnsureFakeIPOverlay_StackAndGSO(t *testing.T) {
 		name    string
 		stack   string
 		wantStk string
-		wantGSO *bool // nil = field omitted
 	}{
-		{"empty defaults to gvisor, no gso", "", "gvisor", nil},
-		{"gvisor emits no gso", "gvisor", "gvisor", nil},
-		{"system forces gso false", "system", "system", boolPtr(false)},
+		{"empty defaults to gvisor", "", "gvisor"},
+		{"gvisor stays gvisor", "gvisor", "gvisor"},
+		{"system stays system", "system", "system"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -45,27 +45,17 @@ func TestEnsureFakeIPOverlay_StackAndGSO(t *testing.T) {
 			if in.Stack != tc.wantStk {
 				t.Errorf("Stack = %q, want %q", in.Stack, tc.wantStk)
 			}
-			switch {
-			case tc.wantGSO == nil && in.GSO != nil:
-				t.Errorf("GSO = %v, want nil (omitted)", *in.GSO)
-			case tc.wantGSO != nil && in.GSO == nil:
-				t.Errorf("GSO = nil, want %v", *tc.wantGSO)
-			case tc.wantGSO != nil && *in.GSO != *tc.wantGSO:
-				t.Errorf("GSO = %v, want %v", *in.GSO, *tc.wantGSO)
+			raw, err := json.Marshal(in)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if strings.Contains(string(raw), `"gso"`) {
+				t.Errorf("marshaled tun inbound must not carry gso, got: %s", raw)
+			}
+			if strings.Contains(string(raw), `"endpoint_independent_nat"`) {
+				t.Errorf("marshaled tun inbound must not carry endpoint_independent_nat, got: %s", raw)
 			}
 		})
-	}
-
-	spec := base
-	spec.Stack = "system"
-	cfg := NewEmptyConfig()
-	ensureFakeIPOverlay(cfg, spec)
-	raw, err := json.Marshal(findInbound(cfg, "tun-in"))
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if !strings.Contains(string(raw), `"gso":false`) {
-		t.Errorf(`marshaled tun inbound must carry "gso":false, got: %s`, raw)
 	}
 }
 
@@ -85,6 +75,20 @@ func TestEnsureFakeIPOverlay_OmitV6(t *testing.T) {
 	for _, sv := range cfg.DNS.Servers {
 		if sv.Type == "fakeip" && sv.Inet6Range != "" {
 			t.Errorf("inet6_range should be empty: %q", sv.Inet6Range)
+		}
+	}
+}
+
+// store_dns (sing-box 1.14) на fakeip-слоте следует тому же правилу, что и
+// база: только для cache.db в tmp (owner decision 2026-09-06).
+func TestEnsureFakeIPOverlay_StoreDNSFollowsCachePath(t *testing.T) {
+	for path, want := range map[string]bool{"/tmp/singbox-cache.db": true, "/opt/etc/awg-manager/singbox/cache.db": false} {
+		cfg := &RouterConfig{}
+		spec := FakeIPTunSpec{Iface: "opkgtun1", TunAddr4: "172.18.1.1/30", MTU: 1500,
+			Inet4Range: "198.18.0.0/15", CachePath: path, RealServer: "1.1.1.1"}
+		ensureFakeIPOverlay(cfg, spec)
+		if cfg.Experimental.CacheFile.StoreDNS != want {
+			t.Errorf("%s: store_dns = %v, want %v", path, cfg.Experimental.CacheFile.StoreDNS, want)
 		}
 	}
 }

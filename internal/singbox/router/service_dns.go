@@ -60,16 +60,16 @@ func (s *ServiceImpl) MoveDNSRule(ctx context.Context, from, to int) error {
 	return s.withConfig(ctx, "dns-rules", func(c *RouterConfig) error { return c.MoveDNSRule(from, to) })
 }
 
-func (s *ServiceImpl) GetDNSGlobals(ctx context.Context) (string, string, error) {
+func (s *ServiceImpl) GetDNSGlobals(ctx context.Context) (string, string, string, error) {
 	cfg, err := s.loadRouterConfig()
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return cfg.DNS.Final, cfg.DNS.Strategy, nil
+	return cfg.DNS.Final, cfg.DNS.Strategy, cfg.DNS.Timeout, nil
 }
 
-func (s *ServiceImpl) SetDNSGlobals(ctx context.Context, final, strategy string) error {
-	return s.withConfig(ctx, "dns-globals", func(c *RouterConfig) error { return c.SetDNSGlobals(final, strategy) })
+func (s *ServiceImpl) SetDNSGlobals(ctx context.Context, final, strategy, timeout string) error {
+	return s.withConfig(ctx, "dns-globals", func(c *RouterConfig) error { return c.SetDNSGlobals(final, strategy, timeout) })
 }
 
 // GetDNSChainPreset возвращает состояние DNS-пресета (Mode "" = выключен).

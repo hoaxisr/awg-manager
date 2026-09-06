@@ -1,6 +1,6 @@
 // #730: под выбором режима захвата новичку должен быть блок и в policy-tun, и в TPROXY.
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, fireEvent } from '@testing-library/svelte';
 import type { SingboxRouterSettings, SingboxRouterStatus } from '$lib/types';
 
 const { status, settings, empty, uiMode } = await vi.hoisted(async () => {
@@ -36,8 +36,16 @@ vi.mock('$lib/api/client', () => ({
 	api: new Proxy({}, { get: () => vi.fn().mockResolvedValue([]) }),
 }));
 
+vi.mock('./settingsActions', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('./settingsActions')>();
+	return { ...actual, mergeAndSaveSettings: vi.fn() };
+});
+
 import { openDrawer } from './drawerStore';
+import { mergeAndSaveSettings } from './settingsActions';
 import StatusDrawer from './StatusDrawer.svelte';
+
+const patchSpy = mergeAndSaveSettings as unknown as ReturnType<typeof vi.fn>;
 
 describe('#730 простой режим: инфо под выбором режима захвата', () => {
 	beforeEach(() => {
@@ -63,5 +71,23 @@ describe('#730 простой режим: инфо под выбором реж�
 		render(StatusDrawer);
 		expect(screen.queryByText(/Источник трафика/)).not.toBeNull();
 		expect(screen.queryByText(/Настроить источник/)).not.toBeNull();
+	});
+});
+
+describe('Анализ трафика: потолок UDP-NAT', () => {
+	beforeEach(() => {
+		patchSpy.mockClear();
+		uiMode.set('expert');
+		settings.set({ routingMode: 'tproxy', deviceMode: 'policy', policyName: 'p1' });
+		openDrawer();
+	});
+
+	it('меняет потолок UDP-NAT через applyPatch({ udpNatMax })', async () => {
+		render(StatusDrawer);
+		const select = screen.getByLabelText('Потолок UDP-сессий');
+		await fireEvent.change(select, { target: { value: '4096' } });
+		expect(patchSpy).toHaveBeenCalledWith({ udpNatMax: 4096 });
+		await fireEvent.change(select, { target: { value: '' } });
+		expect(patchSpy).toHaveBeenCalledWith({ udpNatMax: undefined });
 	});
 });

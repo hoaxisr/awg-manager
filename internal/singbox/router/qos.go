@@ -136,13 +136,13 @@ func qosIPTablesSpecs(classes []qosClass) []QoSClassSpec {
 // 127.0.0.1 (TPROXY --on-ip; wildcard bind self-loops UDP, issue #689),
 // redirect on 0.0.0.0 (REDIRECT rewrites the packet destination to the
 // LAN-bridge IP, a loopback listener would RST) — UDP-only tproxy with
-// udp_fragment + the same effective UDP timeout as tproxy-in, TCP redirect
-// with tcp_fast_open. Rebuild instead
+// udp_fragment + the same effective udp_timeout and udp_nat_max as
+// tproxy-in, TCP redirect with tcp_fast_open. Rebuild instead
 // of patch-in-place: the whole spec is derived, so "drop all qos inbounds,
 // append the canonical list" is the simplest convergent form. Returns the
 // new slice and whether anything changed (callers on the reconcile path skip
 // the persist+reload when false).
-func ensureQoSInbounds(in []Inbound, classes []qosClass, udpTimeout string) ([]Inbound, bool) {
+func ensureQoSInbounds(in []Inbound, classes []qosClass, udpTimeout string, udpNATMax int) ([]Inbound, bool) {
 	if len(in) == 0 && len(classes) == 0 {
 		return in, false // nil-vs-empty guard: no phantom "changed" on a bare config
 	}
@@ -163,6 +163,7 @@ func ensureQoSInbounds(in []Inbound, classes []qosClass, udpTimeout string) ([]I
 			Network:     "udp",
 			UDPFragment: true,
 			UDPTimeout:  effective,
+			UDPNATMax:   udpNATMax,
 		}, Inbound{
 			Type:        "redirect",
 			Tag:         qosRedirectTag(c.DSCP),

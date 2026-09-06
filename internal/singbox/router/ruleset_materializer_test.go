@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func withFakeRuleSetCompiler(t *testing.T, fn func(binary string, args []string) (string, string, error)) {
@@ -93,8 +94,9 @@ func TestInlineRuleSetMaterializer_CompilesLocalBinary(t *testing.T) {
 	if again.Path != got.Path {
 		t.Fatalf("stable path changed: %q -> %q", got.Path, again.Path)
 	}
-	if calls != 2 {
-		t.Fatalf("expected compile on each save (overwrite), got %d", calls)
+	// F110: rs не менялся — второй вызов не обязан перекомпилировать.
+	if calls != 1 {
+		t.Fatalf("expected no recompile for an unchanged rule_set, got %d calls", calls)
 	}
 }
 
@@ -459,5 +461,246 @@ func TestMaterializeConfig_RewritesNestedRuleRefs(t *testing.T) {
 	nested = restored.Route.Rules[0].Rules[0].RuleSet
 	if len(nested) != 1 || nested[0] != "geo-telegram" {
 		t.Fatalf("restored nested ref must be the inline tag, got %v", nested)
+	}
+}
+
+// sing-box 1.14: download_detour и неявный HTTP-клиент deprecated (удаление в
+// 1.16). Хранимая форма — download_detour; в слот уходит http_client{detour}
+// плюс общий клиент rs-download с detour на route.final. Без final — прямой
+// выход (решение владельца 2026-09-06).
+func findRuleSetByTag(rs []RuleSet, tag string) RuleSet {
+	for _, r := range rs {
+		if r.Tag == tag {
+			return r
+		}
+	}
+	return RuleSet{}
+}
+
+func TestMaterializeConfig_HTTPClients(t *testing.T) {
+	dir := t.TempDir()
+	m := ruleSetMaterializer{configDir: dir, binary: "/opt/bin/sing-box"}
+	cfg := &RouterConfig{
+		Route: Route{
+			Final: "direct",
+			RuleSet: []RuleSet{
+				{Tag: "geo-direct", Type: "remote", URL: "https://x/geo.srs", DownloadDetour: "direct"},
+				{Tag: "geo-vpn", Type: "remote", URL: "https://x/vpn.srs", DownloadDetour: "vpn"},
+				{Tag: "plain", Type: "remote", URL: "https://x/plain.srs"},
+			},
+		},
+	}
+	out, err := m.materializeConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// (a) final:"direct" (пустой) — rs-download без detour.
+	if len(out.HTTPClients) == 0 || out.HTTPClients[0].Tag != ruleSetHTTPClientTag || out.HTTPClients[0].Detour != "" {
+		t.Fatalf("rs-download = %+v, want no detour (final is empty direct)", out.HTTPClients)
+	}
+	if out.Route.DefaultHTTPClient != ruleSetHTTPClientTag {
+		t.Errorf("default_http_client = %q", out.Route.DefaultHTTPClient)
+	}
+
+	// (c) download_detour на пустой direct → строковая ссылка + отдельный клиент без detour.
+	geoDirect := findRuleSetByTag(out.Route.RuleSet, "geo-direct")
+	if geoDirect.DownloadDetour != "" || geoDirect.HTTPClient == nil ||
+		geoDirect.HTTPClient.Ref != "rs-direct:direct" || geoDirect.HTTPClient.Detour != "" {
+		t.Fatalf("geo-direct: download_detour=%q http_client=%+v, want ref rs-direct:direct",
+			geoDirect.DownloadDetour, geoDirect.HTTPClient)
+	}
+	var directClient *HTTPClient
+	for i := range out.HTTPClients {
+		if out.HTTPClients[i].Tag == "rs-direct:direct" {
+			directClient = &out.HTTPClients[i]
+		}
+	}
+	if directClient == nil {
+		t.Fatalf("http_clients missing rs-direct:direct: %+v", out.HTTPClients)
+	}
+	if directClient.Detour != "" {
+		t.Errorf("rs-direct:direct has detour %q, want none", directClient.Detour)
+	}
+
+	// (d) download_detour на непустой outbound — как раньше, объект {detour}.
+	geoVPN := findRuleSetByTag(out.Route.RuleSet, "geo-vpn")
+	if geoVPN.DownloadDetour != "" || geoVPN.HTTPClient == nil ||
+		geoVPN.HTTPClient.Detour != "vpn" || geoVPN.HTTPClient.Ref != "" {
+		t.Fatalf("geo-vpn: download_detour=%q http_client=%+v, want http_client{detour:vpn}",
+			geoVPN.DownloadDetour, geoVPN.HTTPClient)
+	}
+
+	if findRuleSetByTag(out.Route.RuleSet, "plain").HTTPClient != nil {
+		t.Errorf("plain must have no http_client")
+	}
+
+	// (f) сериализованная строковая ссылка — буквально строка в JSON, не объект.
+	raw, err := json.Marshal(out.Route.RuleSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"http_client":"rs-direct:direct"`) {
+		t.Errorf("materialized JSON missing string http_client ref: %s", raw)
+	}
+	if strings.Contains(string(raw), `"detour":"direct"`) {
+		t.Errorf("must not detour to empty direct outbound: %s", raw)
+	}
+
+	// Исходный конфиг не тронут: материализация — проекция, не мутация.
+	if cfg.HTTPClients != nil || cfg.Route.RuleSet[0].DownloadDetour != "direct" {
+		t.Errorf("source config mutated: %+v", cfg)
+	}
+
+	// (b) непустой final — общий клиент получает detour.
+	cfg.Route.Final = "vpn"
+	out, err = m.materializeConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.HTTPClients[0].Detour != "vpn" {
+		t.Errorf("final=vpn: detour = %q, want vpn", out.HTTPClients[0].Detour)
+	}
+
+	// (e) обратная проекция восстанавливает download_detour для обеих форм
+	// и убирает материализованных клиентов.
+	back := m.restoreConfig(out)
+	if back.HTTPClients != nil || back.Route.DefaultHTTPClient != "" {
+		t.Errorf("restore left http_clients: %+v / %q", back.HTTPClients, back.Route.DefaultHTTPClient)
+	}
+	if rs := findRuleSetByTag(back.Route.RuleSet, "geo-direct"); rs.HTTPClient != nil || rs.DownloadDetour != "direct" {
+		t.Errorf("restore geo-direct: %+v", rs)
+	}
+	if rs := findRuleSetByTag(back.Route.RuleSet, "geo-vpn"); rs.HTTPClient != nil || rs.DownloadDetour != "vpn" {
+		t.Errorf("restore geo-vpn: %+v", rs)
+	}
+}
+
+// F115(b): materializeConfig→restoreConfig→materializeConfig обязан давать
+// байт-в-байт одинаковый результат, и повторный materializeConfig БЕЗ
+// restore между вызовами не должен оставлять http_client-ссылку на
+// исчезнувший http_clients-клиент — applyHTTPClients пересобирает
+// cfg.HTTPClients с нуля на каждом вызове, и старый rs.HTTPClient.Ref
+// (rs-direct:X), уцелевший от первого прохода на не-inline rule_set'е
+// (DownloadDetour уже пуст), рисковал повиснуть.
+func TestMaterializeConfig_HTTPClients_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	withFakeRuleSetCompiler(t, func(binary string, args []string) (string, string, error) {
+		writeCompiledOutput(t, args, "compiled")
+		return "", "", nil
+	})
+	m := ruleSetMaterializer{configDir: dir, binary: "/opt/bin/sing-box"}
+
+	cfg := &RouterConfig{
+		Route: Route{
+			Final: "direct",
+			RuleSet: []RuleSet{
+				{Tag: "geo-direct", Type: "remote", URL: "https://x/geo.srs", DownloadDetour: "direct"},
+				{Tag: "geo-inline", Type: "inline", Rules: []map[string]any{{"domain_suffix": []any{"t.me"}}}},
+			},
+		},
+	}
+
+	first, err := m.materializeConfig(cfg)
+	if err != nil {
+		t.Fatalf("materializeConfig (1): %v", err)
+	}
+	firstJSON, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restored := m.restoreConfig(first)
+	second, err := m.materializeConfig(restored)
+	if err != nil {
+		t.Fatalf("materializeConfig (после restore): %v", err)
+	}
+	secondJSON, err := json.Marshal(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstJSON) != string(secondJSON) {
+		t.Errorf("materialize→restore→materialize не идемпотентен:\n1: %s\n2: %s", firstJSON, secondJSON)
+	}
+
+	// Двойная материализация БЕЗ restore между вызовами.
+	twice, err := m.materializeConfig(first)
+	if err != nil {
+		t.Fatalf("materializeConfig(materializeConfig(cfg)): %v", err)
+	}
+	geoDirect := findRuleSetByTag(twice.Route.RuleSet, "geo-direct")
+	if geoDirect.HTTPClient == nil || geoDirect.HTTPClient.Ref != "rs-direct:direct" {
+		t.Fatalf("geo-direct http_client после двойной материализации = %+v", geoDirect.HTTPClient)
+	}
+	found := false
+	for _, hc := range twice.HTTPClients {
+		if hc.Tag == geoDirect.HTTPClient.Ref {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("http_clients не содержит %q, на который ссылается geo-direct — висячая ссылка: %+v",
+			geoDirect.HTTPClient.Ref, twice.HTTPClients)
+	}
+}
+
+// F110: reconcile персистит конфиг на каждый тик (30 с), даже когда правила
+// inline-набора не менялись — без guard'а это форкало бы `sing-box rule-set
+// compile` и переименовывало свежий .json/.srs поверх уже актуальных
+// артефактов на КАЖДОМ тике вечно.
+func TestMaterializeConfig_SkipsRecompileWhenRuleSetUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	compileCalls := 0
+	withFakeRuleSetCompiler(t, func(binary string, args []string) (string, string, error) {
+		compileCalls++
+		writeCompiledOutput(t, args, "compiled")
+		return "", "", nil
+	})
+	m := ruleSetMaterializer{configDir: dir, binary: "/opt/bin/sing-box"}
+
+	cfg := &RouterConfig{
+		Route: Route{
+			RuleSet: []RuleSet{{
+				Tag:   "geo-telegram",
+				Type:  "inline",
+				Rules: []map[string]any{{"domain_suffix": []any{"t.me"}}},
+			}},
+		},
+	}
+
+	if _, err := m.materializeConfig(cfg); err != nil {
+		t.Fatalf("materializeConfig (1): %v", err)
+	}
+	if compileCalls != 1 {
+		t.Fatalf("compileCalls после первой материализации = %d, want 1", compileCalls)
+	}
+	srsPath := filepath.Join(dir, "rule-sets", "inline", "geo-telegram.srs")
+	before, err := os.Stat(srsPath)
+	if err != nil {
+		t.Fatalf("stat srs: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	if _, err := m.materializeConfig(cfg); err != nil {
+		t.Fatalf("materializeConfig (2, без изменений): %v", err)
+	}
+	if compileCalls != 1 {
+		t.Errorf("compileCalls после неизменённой второй материализации = %d, want 1 (без перекомпиляции)", compileCalls)
+	}
+	after, err := os.Stat(srsPath)
+	if err != nil {
+		t.Fatalf("stat srs after: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("неизменённая материализация тронула mtime .srs (before=%v after=%v)", before.ModTime(), after.ModTime())
+	}
+
+	// Изменение правила → компиляция снова.
+	cfg.Route.RuleSet[0].Rules = []map[string]any{{"domain_suffix": []any{"other.example"}}}
+	if _, err := m.materializeConfig(cfg); err != nil {
+		t.Fatalf("materializeConfig (3, изменено): %v", err)
+	}
+	if compileCalls != 2 {
+		t.Errorf("compileCalls после изменённой материализации = %d, want 2", compileCalls)
 	}
 }
