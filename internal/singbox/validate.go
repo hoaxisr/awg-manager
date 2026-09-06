@@ -3,8 +3,12 @@ package singbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"strings"
+	"syscall"
 	"time"
 )
 
@@ -62,7 +66,45 @@ func (v *Validator) Validate(configDir string) error {
 		if ctx.Err() != nil {
 			return fmt.Errorf("sing-box check не уложился в %s: %s", timeout, string(out))
 		}
+		// OOM killer убивает check сигналом (обычно SIGKILL/SIGSEGV) до того,
+		// как он успеет напечатать FATAL-диагностику конфига — без этой
+		// проверки такой сбой неотличим от обычной ошибки конфигурации
+		// (exit status N), и человек чинит не то.
+		if sig, ok := signalFromExecError(err); ok {
+			return fmt.Errorf(
+				"sing-box check прерван сигналом %s (вероятно, не хватило памяти: MemAvailable %s) — конфигурация не проверена",
+				sig, readMemAvailable(),
+			)
+		}
 		return fmt.Errorf("sing-box check failed: %s: %w", string(out), err)
 	}
 	return nil
+}
+
+// signalFromExecError сообщает, был ли процесс убит сигналом, и каким.
+func signalFromExecError(err error) (string, bool) {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ProcessState == nil {
+		return "", false
+	}
+	ws, ok := exitErr.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok || !ws.Signaled() {
+		return "", false
+	}
+	return ws.Signal().String(), true
+}
+
+// readMemAvailable читает MemAvailable из /proc/meminfo (только Linux).
+// "неизвестно" при ошибке чтения или отсутствии строки.
+func readMemAvailable() string {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return "неизвестно"
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if rest, ok := strings.CutPrefix(line, "MemAvailable:"); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return "неизвестно"
 }
