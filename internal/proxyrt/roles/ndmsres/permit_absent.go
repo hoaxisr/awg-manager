@@ -43,8 +43,8 @@ import (
 //
 // Отсутствующий интерфейс — не шаг и не отказ (create-on-reference).
 //
-// Exists здесь означает «желаемое достигнуто — permit-all нет», а не «объект
-// существует», как у соседних ресурсов.
+// Exists здесь означает «желаемое достигнуто — ни permit-all, ни ip global
+// нет», а не «объект существует», как у соседних ресурсов.
 type PermitAbsent struct {
 	id     proxyrt.ResourceID
 	cmds   Commands
