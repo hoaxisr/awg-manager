@@ -316,6 +316,12 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 
 	s.healPolicyTunNDMS(ctx, sr, iface, ndmsName)
 
+	// Разовая миграция слота на форму sing-box 1.14 (см. reconcileInstalled):
+	// policy-tun пишет в тот же 20-router.json, что и tproxy, но идёт своим
+	// путём реконсиляции и не проходит через heal-цепочку tproxy-ветки —
+	// без отдельного вызова здесь слот навсегда остался бы на старой форме.
+	s.heal1140SlotMigration(ctx)
+
 	// Ingress-заворот: и drift-heal после сброса firewall NDMS, и применение
 	// смены состава ingress-интерфейсов (UpdateSettings завершается Reconcile'ом).
 	// Реап, идущий в Reconcile первым, наш заворот в этом режиме не трогает —

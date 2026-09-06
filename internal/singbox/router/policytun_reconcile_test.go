@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -557,6 +558,77 @@ func TestReconcilePolicyTun_NoReprovisionWhenInboundPresent(t *testing.T) {
 	}
 	if h.log.has("SetAddress:OpkgTun0:172.18.0.1:255.255.255.252") {
 		t.Errorf("здоровое состояние переустанавливать нельзя: %v", h.log.calls)
+	}
+}
+
+// policy-tun пишет тот же 20-router.json, что и tproxy, но идёт своим путём
+// реконсиляции (reconcilePolicyTun, а не reconcileInstalled) — без отдельного
+// вызова heal1140SlotMigration здесь слот, поднятый до миграции на sing-box
+// 1.14, остался бы на старой форме до первой ручной правки маршрутизации.
+// Мирроит TestHeal1140SlotMigration_RewritesLegacySlot (router-slot ветка).
+func TestReconcilePolicyTun_Heal1140SlotMigration(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	legacy := `{
+		"inbounds": [{
+			"type": "tun", "tag": "tun-in", "interface_name": "OpkgTun0",
+			"address": ["172.18.0.1/30"], "mtu": 1400, "stack": "gvisor",
+			"udp_timeout": "5m0s", "auto_route": false, "auto_redirect": false,
+			"strict_route": false, "gso": false, "endpoint_independent_nat": false
+		}],
+		"outbounds": [{"type": "direct", "tag": "direct"}],
+		"route": {
+			"rule_set": [{
+				"tag": "geosite-x", "type": "remote", "format": "binary",
+				"url": "https://example.com/x.srs", "update_interval": "24h",
+				"download_detour": "direct"
+			}],
+			"rules": [{"action": "route", "rule_set": ["geosite-x"], "outbound": "direct"}],
+			"final": "direct"
+		}
+	}`
+	activePath := filepath.Join(h.dir, "20-router.json")
+	if err := os.WriteFile(activePath, []byte(legacy), 0644); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+
+	raw, err := os.ReadFile(activePath)
+	if err != nil {
+		t.Fatalf("read active: %v", err)
+	}
+	for _, want := range []string{`"http_clients"`, `"http_client"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("migrated slot missing %s: %s", want, raw)
+		}
+	}
+	for _, gone := range []string{"download_detour", "gso", "endpoint_independent_nat"} {
+		if strings.Contains(string(raw), gone) {
+			t.Errorf("migrated slot still has legacy key %q: %s", gone, raw)
+		}
+	}
+
+	before, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun (второй тик): %v", err)
+	}
+
+	after, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat after: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("второй тик переписал уже мигрированный слот (before=%v after=%v)", before.ModTime(), after.ModTime())
 	}
 }
 

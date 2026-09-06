@@ -934,7 +934,9 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string, 
 // the sing-box 1.14 migration (download_detour, gso, endpoint_independent_nat)
 // without needing a version marker: persistConfigDirect no-ops when the
 // materialized bytes already match what is on disk. Best-effort — a load or
-// persist failure here must not abort the rest of reconcileInstalled.
+// persist failure here must not abort the rest of the caller's reconcile.
+// Shared by reconcileInstalled (tproxy) and reconcilePolicyTun — both target
+// the same 20-router.json slot.
 func (s *ServiceImpl) heal1140SlotMigration(ctx context.Context) {
 	cfg, err := s.loadAppliedRouterConfig()
 	if err != nil {
@@ -1695,6 +1697,8 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// без этого шага слот годами остаётся в устаревшей форме. persistConfigDirect
 	// сравнивает байты с активным файлом, поэтому в устоявшемся состоянии
 	// (слот уже переписан) это бесплатно: чтение и маршалинг без записи и SIGHUP.
+	// Тот же вызов есть в reconcilePolicyTun — policy-tun пишет тот же слот
+	// своим путём реконсиляции.
 	s.heal1140SlotMigration(ctx)
 
 	// After a daemon restart or upgrade the old awg-manager process died
