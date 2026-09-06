@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import SingboxSettingsModal from './SingboxSettingsModal.svelte';
 	import {
 		Button,
@@ -9,7 +10,8 @@
 		type ChipOption,
 		type SegmentedOption,
 	} from '$lib/components/ui';
-	import type { SingboxRouterRule, SingboxRouterRuleSet } from '$lib/types';
+	import { api } from '$lib/api/client';
+	import type { PolicyDevice, SingboxRouterRule, SingboxRouterRuleSet } from '$lib/types';
 	import { flattenRouterRule } from '$lib/utils/routerRuleShape';
 	import type { OutboundGroup } from './outboundOptions';
 
@@ -67,6 +69,37 @@
 	let sourceIpCidrStr = $state((flat(rule)?.source_ip_cidr ?? []).join('\n'));
 	// svelte-ignore state_referenced_locally
 	let sourceMacStr = $state((flat(rule)?.source_mac_address ?? []).join('\n'));
+
+	// Пикер устройств LAN для поля «MAC устройства»: список грузится один раз
+	// при открытии модала (без опроса); родители модала не держат общий стор
+	// устройств, поэтому запрос делает сам модал. Ошибку загрузки не показываем —
+	// пикер просто не появляется, textarea продолжает работать вручную.
+	let pickerDevices = $state<PolicyDevice[]>([]);
+	let pickerValue = $state('');
+	onMount(() => {
+		api.listPolicyDevices()
+			.then((list) => (pickerDevices = list))
+			.catch(() => {});
+	});
+	const pickerAddedMacs = $derived(new Set(parseLines(sourceMacStr).map((s) => s.toLowerCase())));
+	const pickerOptions = $derived<DropdownOption[]>(
+		[...pickerDevices]
+			.sort((a, b) => Number(b.active) - Number(a.active))
+			.map((d) => {
+				const label = `${d.name || d.hostname || d.ip} · ${d.mac}`;
+				return {
+					value: d.mac,
+					label: pickerAddedMacs.has(d.mac.toLowerCase()) ? `${label} (уже добавлен)` : label,
+				};
+			}),
+	);
+	function pickDevice(mac: string): void {
+		const normalized = mac.toLowerCase();
+		if (!pickerAddedMacs.has(normalized)) {
+			sourceMacStr = sourceMacStr ? `${sourceMacStr}\n${normalized}` : normalized;
+		}
+		pickerValue = '';
+	}
 	// svelte-ignore state_referenced_locally
 	let ruleSetTags = $state<string[]>(flat(rule)?.rule_set ?? initialRuleSetTags ?? []);
 	const ruleSetOptions = $derived<ChipOption[]>(
@@ -338,6 +371,15 @@
 				</div>
 				<textarea bind:value={sourceMacStr} rows="3" placeholder="aa:bb:cc:dd:ee:ff"></textarea>
 				<div class="hint">По одному MAC в строке. Устройство определяется по таблице соседей роутера; для устройств за другим роутером не работает.</div>
+				{#if pickerOptions.length}
+					<Dropdown
+						value={pickerValue}
+						options={pickerOptions}
+						placeholder="Добавить устройство…"
+						onchange={pickDevice}
+						fullWidth
+					/>
+				{/if}
 			</label>
 
 			<div class="field">
