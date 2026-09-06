@@ -743,3 +743,51 @@ func TestStatus_BinariesPresent(t *testing.T) {
 		}
 	})
 }
+
+// ── Stale / SubsystemOf (F98) ───────────────────────────────────────
+
+func TestStale(t *testing.T) {
+	s := newTestService(t, Deps{})
+	wd := s.subs[SubsystemWdtt]
+	setSpecs(s, SubsystemWdtt, ArchSpecs{
+		Client: BinarySpec{URL: "https://x/c", SHA256: writeBin(t, wd.clientBin, "client-pinned")},
+		Server: BinarySpec{URL: "https://x/s", SHA256: writeBin(t, wd.serverBin, "server-pinned")},
+	})
+	s.subs[SubsystemFreeTurn].specs = nil // арка без пина
+
+	on := instancestore.Record{ID: "a", Kind: instancestore.KindWdttClient, Enabled: true}
+	off := instancestore.Record{ID: "b", Kind: instancestore.KindWdttServer}
+	ft := instancestore.Record{ID: "c", Kind: instancestore.KindFreeTurnClient, Enabled: true}
+
+	if got := s.Stale([]instancestore.Record{on, ft}); len(got) != 0 {
+		t.Fatalf("бинари совпали с пином, арка без пина у freeturn — ждать нечего: %v", got)
+	}
+	writeBin(t, wd.clientBin, "client-old-and-longer") // на диске не пин
+	if got := s.Stale([]instancestore.Record{on}); len(got) != 1 || got[0] != SubsystemWdtt {
+		t.Fatalf("включённая запись + расхождение с пином: %v", got)
+	}
+	if got := s.Stale([]instancestore.Record{off}); len(got) != 0 {
+		t.Fatalf("только выключенные записи бут не держат: %v", got)
+	}
+	if got := s.Stale([]instancestore.Record{ft}); len(got) != 0 {
+		t.Fatalf("арка без пина не stale: %v", got)
+	}
+	if got := s.Stale(nil); len(got) != 0 {
+		t.Fatalf("без записей: %v", got)
+	}
+}
+
+func TestSubsystemOf(t *testing.T) {
+	want := map[instancestore.Kind]Subsystem{
+		instancestore.KindWdttClient: SubsystemWdtt, instancestore.KindWdttServer: SubsystemWdtt,
+		instancestore.KindFreeTurnClient: SubsystemFreeTurn, instancestore.KindFreeTurnServer: SubsystemFreeTurn,
+	}
+	for _, k := range instancestore.AllKinds {
+		if got := SubsystemOf(k); got != want[k] || got == "" {
+			t.Errorf("%s: %q, ждали %q", k, got, want[k])
+		}
+	}
+	if got := SubsystemOf(instancestore.Kind("неведомый")); got != "" {
+		t.Errorf("неизвестный kind: %q", got)
+	}
+}
