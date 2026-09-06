@@ -50,14 +50,23 @@ fi
 # файлом-списком, но сам файл переживает удаление пакета — снимаем оба.
 rm -f /opt/etc/ndm/netfilter.d/51-awgm-tunnel-fw.sh /opt/etc/awg-manager/tunnel-fw.list
 
+# Остальные наши хуки (#854): 50-awgm-tproxy.sh код не удаляет никогда (после
+# снятия файла правил он no-op), 61/62 снимает только живая фича. Все они
+# именуются NN-awgm-*.sh — подметаем разом.
+rm -f /opt/etc/ndm/netfilter.d/*-awgm-*.sh
+
+# Каталоги лока и старого PID, логи и недокачанный IPK на накопителе (#854).
+rm -rf /opt/var/lock/awg-manager /opt/var/run/awg-manager
+rm -f /opt/tmp/awg-manager-upgrade.log /opt/tmp/awg-manager-stderr.log /opt/tmp/awg-manager_*.ipk
+
 echo ""
 echo "=============================================="
 echo "  awg-manager has been removed."
 echo ""
-echo "  Settings file preserved at:"
-echo "    /opt/etc/awg-manager/settings.json"
+echo "  Settings and data preserved at:"
+echo "    /opt/etc/awg-manager"
 echo ""
-echo "  To remove all remaining data:"
-echo "    rm -rf /opt/etc/awg-manager"
+echo "  Full removal (data, repo file):"
+echo "    https://hoaxisr.github.io/awg-manager-docs/install/#полное-удаление"
 echo "=============================================="
 echo ""
