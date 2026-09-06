@@ -437,6 +437,73 @@ func TestWaitForSingbox_ReturnsWhenRunning(t *testing.T) {
 	}
 }
 
+// heal1140SlotMigration repairs a pre-1.14 slot — download_detour and the
+// removed gso/endpoint_independent_nat keys — by re-persisting the applied
+// config unchanged. This is I3: existing installs never touch 20-router.json
+// again once routing is configured, so without this heal they stay on the
+// deprecated form indefinitely.
+func TestHeal1140SlotMigration_RewritesLegacySlot(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+	activePath := filepath.Join(dir, "20-router.json")
+
+	legacy := `{
+		"inbounds": [{
+			"type": "tproxy", "tag": "tproxy-in", "listen": "127.0.0.1",
+			"listen_port": 51271, "network": "udp", "udp_timeout": "5m0s",
+			"udp_fragment": true, "gso": false, "endpoint_independent_nat": false
+		}],
+		"outbounds": [{"type": "direct", "tag": "direct"}],
+		"route": {
+			"rule_set": [{
+				"tag": "geosite-x", "type": "remote", "format": "binary",
+				"url": "https://example.com/x.srs", "update_interval": "24h",
+				"download_detour": "direct"
+			}],
+			"rules": [{"action": "route", "rule_set": ["geosite-x"], "outbound": "direct"}],
+			"final": "direct"
+		}
+	}`
+	if err := os.WriteFile(activePath, []byte(legacy), 0644); err != nil {
+		t.Fatalf("seed active: %v", err)
+	}
+	if err := svc.deps.Orch.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+
+	svc.heal1140SlotMigration(context.Background())
+
+	raw, err := os.ReadFile(activePath)
+	if err != nil {
+		t.Fatalf("read active: %v", err)
+	}
+	for _, want := range []string{`"http_clients"`, `"http_client"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("migrated slot missing %s: %s", want, raw)
+		}
+	}
+	for _, gone := range []string{"download_detour", "gso", "endpoint_independent_nat"} {
+		if strings.Contains(string(raw), gone) {
+			t.Errorf("migrated slot still has legacy key %q: %s", gone, raw)
+		}
+	}
+
+	before, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	svc.heal1140SlotMigration(context.Background())
+
+	after, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat after: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("second call rewrote already-migrated slot (before=%v after=%v)", before.ModTime(), after.ModTime())
+	}
+}
+
 func TestWaitForSingbox_TimesOutWhenNeverRunning(t *testing.T) {
 	svc, _ := newOrchedTestService(t)
 	// Default fakeSingbox.IsRunning returns (false, 0) — perfect for this case.

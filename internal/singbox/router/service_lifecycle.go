@@ -929,6 +929,23 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string, 
 	return s.persistConfigDirect(ctx, cfg)
 }
 
+// heal1140SlotMigration re-persists the applied router config unchanged, so
+// materializeConfig's byte-for-byte round trip repairs a slot written before
+// the sing-box 1.14 migration (download_detour, gso, endpoint_independent_nat)
+// without needing a version marker: persistConfigDirect no-ops when the
+// materialized bytes already match what is on disk. Best-effort — a load or
+// persist failure here must not abort the rest of reconcileInstalled.
+func (s *ServiceImpl) heal1140SlotMigration(ctx context.Context) {
+	cfg, err := s.loadAppliedRouterConfig()
+	if err != nil {
+		s.appLog.Warn("heal-1140-slot", "", err.Error())
+		return
+	}
+	if err := s.persistConfigDirect(ctx, cfg); err != nil {
+		s.appLog.Warn("heal-1140-slot", "", err.Error())
+	}
+}
+
 // ensureTProxyInbound enforces the SKeen-style split: tproxy-in
 // handles UDP only, redirect-in handles TCP. TPROXY for TCP relies on
 // `-m socket --transparent` to deliver established-connection packets
@@ -1671,6 +1688,14 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 			s.appLog.Warn("qos-dscp", "", fmt.Sprintf("sing-box not ready after QoS config heal: %v — installing anyway", err))
 		}
 	}
+	// Разовая миграция слота на форму sing-box 1.14: download_detour →
+	// http_client (см. applyHTTPClients), снятие удалённых полей gso и
+	// endpoint_independent_nat. Установки, обновившиеся с более старой
+	// версии, не переписывают 20-router.json до первой правки маршрутизации —
+	// без этого шага слот годами остаётся в устаревшей форме. persistConfigDirect
+	// сравнивает байты с активным файлом, поэтому в устоявшемся состоянии
+	// (слот уже переписан) это бесплатно: чтение и маршалинг без записи и SIGHUP.
+	s.heal1140SlotMigration(ctx)
 
 	// After a daemon restart or upgrade the old awg-manager process died
 	// with no chance to run Uninstall, so stale AWGM chains, ip rules
