@@ -421,6 +421,17 @@ func (m ruleSetMaterializer) materializeRuleSet(rs RuleSet) (RuleSet, error) {
 	jsonPath := filepath.Join(dir, base+".json")
 	srsPath := filepath.Join(dir, base+".srs")
 
+	// F110: reconcile персистит конфиг на каждый тик, даже когда правила
+	// набора не менялись — без этой проверки каждый тик форкал бы `sing-box
+	// rule-set compile` и переименовывал свежие .json/.srs поверх уже
+	// актуальных. sourceJSON уже несёт inlineRuleSetSourceVersion
+	// (buildInlineRuleSetSource пишет его в поле version), поэтому байт-в-байт
+	// сравнение с уже лежащим .json ловит и бамп версии формата — .json от
+	// прежней версии не совпадёт с пересобранным.
+	if existing, err := os.ReadFile(jsonPath); err == nil && bytes.Equal(existing, sourceJSON) && regularFileExists(srsPath) {
+		return managedLocalRuleSet(inlineSRSTag(rs.Tag), srsPath), nil
+	}
+
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return RuleSet{}, fmt.Errorf("mkdir inline rule-set dir: %w", err)
 	}

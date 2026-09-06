@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func withFakeRuleSetCompiler(t *testing.T, fn func(binary string, args []string) (string, string, error)) {
@@ -93,8 +94,9 @@ func TestInlineRuleSetMaterializer_CompilesLocalBinary(t *testing.T) {
 	if again.Path != got.Path {
 		t.Fatalf("stable path changed: %q -> %q", got.Path, again.Path)
 	}
-	if calls != 2 {
-		t.Fatalf("expected compile on each save (overwrite), got %d", calls)
+	// F110: rs не менялся — второй вызов не обязан перекомпилировать.
+	if calls != 1 {
+		t.Fatalf("expected no recompile for an unchanged rule_set, got %d calls", calls)
 	}
 }
 
@@ -639,5 +641,66 @@ func TestMaterializeConfig_HTTPClients_Idempotent(t *testing.T) {
 	if !found {
 		t.Errorf("http_clients не содержит %q, на который ссылается geo-direct — висячая ссылка: %+v",
 			geoDirect.HTTPClient.Ref, twice.HTTPClients)
+	}
+}
+
+// F110: reconcile персистит конфиг на каждый тик (30 с), даже когда правила
+// inline-набора не менялись — без guard'а это форкало бы `sing-box rule-set
+// compile` и переименовывало свежий .json/.srs поверх уже актуальных
+// артефактов на КАЖДОМ тике вечно.
+func TestMaterializeConfig_SkipsRecompileWhenRuleSetUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	compileCalls := 0
+	withFakeRuleSetCompiler(t, func(binary string, args []string) (string, string, error) {
+		compileCalls++
+		writeCompiledOutput(t, args, "compiled")
+		return "", "", nil
+	})
+	m := ruleSetMaterializer{configDir: dir, binary: "/opt/bin/sing-box"}
+
+	cfg := &RouterConfig{
+		Route: Route{
+			RuleSet: []RuleSet{{
+				Tag:   "geo-telegram",
+				Type:  "inline",
+				Rules: []map[string]any{{"domain_suffix": []any{"t.me"}}},
+			}},
+		},
+	}
+
+	if _, err := m.materializeConfig(cfg); err != nil {
+		t.Fatalf("materializeConfig (1): %v", err)
+	}
+	if compileCalls != 1 {
+		t.Fatalf("compileCalls после первой материализации = %d, want 1", compileCalls)
+	}
+	srsPath := filepath.Join(dir, "rule-sets", "inline", "geo-telegram.srs")
+	before, err := os.Stat(srsPath)
+	if err != nil {
+		t.Fatalf("stat srs: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	if _, err := m.materializeConfig(cfg); err != nil {
+		t.Fatalf("materializeConfig (2, без изменений): %v", err)
+	}
+	if compileCalls != 1 {
+		t.Errorf("compileCalls после неизменённой второй материализации = %d, want 1 (без перекомпиляции)", compileCalls)
+	}
+	after, err := os.Stat(srsPath)
+	if err != nil {
+		t.Fatalf("stat srs after: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("неизменённая материализация тронула mtime .srs (before=%v after=%v)", before.ModTime(), after.ModTime())
+	}
+
+	// Изменение правила → компиляция снова.
+	cfg.Route.RuleSet[0].Rules = []map[string]any{{"domain_suffix": []any{"other.example"}}}
+	if _, err := m.materializeConfig(cfg); err != nil {
+		t.Fatalf("materializeConfig (3, изменено): %v", err)
+	}
+	if compileCalls != 2 {
+		t.Errorf("compileCalls после изменённой материализации = %d, want 2", compileCalls)
 	}
 }
