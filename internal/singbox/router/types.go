@@ -395,6 +395,9 @@ type DNS struct {
 	Rules    []DNSRule   `json:"rules,omitempty"`
 	Final    string      `json:"final,omitempty"`
 	Strategy string      `json:"strategy,omitempty"`
+	// Timeout — таймаут DNS-запроса (sing-box 1.14, Go duration). Пусто = 10s
+	// движка. Перекрывается timeout у DNS-правила и domain_resolver.
+	Timeout string `json:"timeout,omitempty"`
 }
 
 type CacheFile struct {

@@ -1408,6 +1408,7 @@ const api_SingboxDNSClientTLSOptionsDTO: v.GenericSchema = v.looseObject({
 const api_SingboxDNSGlobalsData: v.GenericSchema = v.looseObject({
 	final: v.optional(v.nullable(v.string())),
 	strategy: v.optional(v.nullable(v.string())),
+	timeout: v.optional(v.nullable(v.string())),
 });
 
 const api_SingboxDNSGlobalsResponse: v.GenericSchema = v.looseObject({

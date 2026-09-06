@@ -83,6 +83,8 @@ type SingboxDNSRulesListResponse struct {
 type SingboxDNSGlobalsData struct {
 	Final    string `json:"final" example:"cloudflare"`
 	Strategy string `json:"strategy" example:"prefer_ipv4"`
+	// Timeout is the per-query DNS timeout (Go duration, sing-box 1.14). Empty = engine default (10s).
+	Timeout string `json:"timeout,omitempty" example:"5s"`
 }
 
 // SingboxDNSGlobalsResponse is the envelope for
@@ -468,7 +470,7 @@ func (h *SingboxRouterHandler) MoveDNSRule(w http.ResponseWriter, r *http.Reques
 // GetDNSGlobals returns the global DNS final/strategy fields.
 //
 //	@Summary		Get singbox-router DNS globals
-//	@Description	Returns the global DNS settings: `final` (default server tag) and `strategy` (ipv4_only / prefer_ipv4 / etc.).
+//	@Description	Returns the global DNS settings: `final` (default server tag), `strategy` (ipv4_only / prefer_ipv4 / etc.) and `timeout` (per-query DNS timeout).
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
@@ -481,23 +483,23 @@ func (h *SingboxRouterHandler) GetDNSGlobals(w http.ResponseWriter, r *http.Requ
 		response.MethodNotAllowed(w)
 		return
 	}
-	final, strategy, err := h.svc.GetDNSGlobals(r.Context())
+	final, strategy, timeout, err := h.svc.GetDNSGlobals(r.Context())
 	if err != nil {
 		response.InternalError(w, err.Error())
 		return
 	}
-	response.Success(w, map[string]string{"final": final, "strategy": strategy})
+	response.Success(w, map[string]string{"final": final, "strategy": strategy, "timeout": timeout})
 }
 
-// PutDNSGlobals persists global DNS final/strategy fields.
+// PutDNSGlobals persists global DNS final/strategy/timeout fields.
 //
 //	@Summary		Update singbox-router DNS globals
-//	@Description	Persists the global DNS settings: `final` (default server tag) and `strategy` (ipv4_only / prefer_ipv4 / etc.).
+//	@Description	Persists the global DNS settings: `final` (default server tag), `strategy` (ipv4_only / prefer_ipv4 / etc.) and `timeout` (per-query DNS timeout).
 //	@Tags			singbox-router
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		SingboxDNSGlobalsData	true	"final + strategy"
+//	@Param			body	body		SingboxDNSGlobalsData	true	"final + strategy + timeout"
 //	@Success		200		{object}	OkResponse
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		405		{object}	APIErrorEnvelope
@@ -514,7 +516,7 @@ func (h *SingboxRouterHandler) PutDNSGlobals(w http.ResponseWriter, r *http.Requ
 		response.BadRequest(w, err.Error())
 		return
 	}
-	if err := h.svc.SetDNSGlobals(r.Context(), body.Final, body.Strategy); err != nil {
+	if err := h.svc.SetDNSGlobals(r.Context(), body.Final, body.Strategy, body.Timeout); err != nil {
 		h.handleErr(w, "request", err)
 		return
 	}

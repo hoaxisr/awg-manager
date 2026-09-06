@@ -3773,6 +3773,11 @@ definitions:
       strategy:
         example: prefer_ipv4
         type: string
+      timeout:
+        description: Timeout is the per-query DNS timeout (Go duration, sing-box 1.14).
+          Empty = engine default (10s).
+        example: 5s
+        type: string
     type: object
   api.SingboxDNSGlobalsResponse:
     properties:
@@ -13566,8 +13571,8 @@ paths:
       - singbox
   /singbox/fakeip/config/dns/globals:
     get:
-      description: Returns the global DNS settings (final, strategy) for the fakeip-tun
-        slot.
+      description: Returns the global DNS settings (final, strategy, timeout) for
+        the fakeip-tun slot.
       produces:
       - application/json
       responses:
@@ -13591,10 +13596,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Persists the global DNS settings (final, strategy) for the fakeip-tun
-        slot.
+      description: Persists the global DNS settings (final, strategy, timeout) for
+        the fakeip-tun slot.
       parameters:
-      - description: final + strategy
+      - description: final + strategy + timeout
         in: body
         name: body
         required: true
@@ -13627,10 +13632,10 @@ paths:
     put:
       consumes:
       - application/json
-      description: Persists the global DNS settings (final, strategy) for the fakeip-tun
-        slot.
+      description: Persists the global DNS settings (final, strategy, timeout) for
+        the fakeip-tun slot.
       parameters:
-      - description: final + strategy
+      - description: final + strategy + timeout
         in: body
         name: body
         required: true
@@ -14761,8 +14766,8 @@ paths:
       - singbox-router
   /singbox/router/dns/globals:
     get:
-      description: 'Returns the global DNS settings: `final` (default server tag)
-        and `strategy` (ipv4_only / prefer_ipv4 / etc.).'
+      description: 'Returns the global DNS settings: `final` (default server tag),
+        `strategy` (ipv4_only / prefer_ipv4 / etc.) and `timeout` (per-query DNS timeout).'
       produces:
       - application/json
       responses:
@@ -14786,10 +14791,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'Persists the global DNS settings: `final` (default server tag)
-        and `strategy` (ipv4_only / prefer_ipv4 / etc.).'
+      description: 'Persists the global DNS settings: `final` (default server tag),
+        `strategy` (ipv4_only / prefer_ipv4 / etc.) and `timeout` (per-query DNS timeout).'
       parameters:
-      - description: final + strategy
+      - description: final + strategy + timeout
         in: body
         name: body
         required: true
@@ -14822,10 +14827,10 @@ paths:
     put:
       consumes:
       - application/json
-      description: 'Persists the global DNS settings: `final` (default server tag)
-        and `strategy` (ipv4_only / prefer_ipv4 / etc.).'
+      description: 'Persists the global DNS settings: `final` (default server tag),
+        `strategy` (ipv4_only / prefer_ipv4 / etc.) and `timeout` (per-query DNS timeout).'
       parameters:
-      - description: final + strategy
+      - description: final + strategy + timeout
         in: body
         name: body
         required: true
