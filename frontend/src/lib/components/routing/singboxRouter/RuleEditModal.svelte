@@ -66,6 +66,8 @@
 	// svelte-ignore state_referenced_locally
 	let sourceIpCidrStr = $state((flat(rule)?.source_ip_cidr ?? []).join('\n'));
 	// svelte-ignore state_referenced_locally
+	let sourceMacStr = $state((flat(rule)?.source_mac_address ?? []).join('\n'));
+	// svelte-ignore state_referenced_locally
 	let ruleSetTags = $state<string[]>(flat(rule)?.rule_set ?? initialRuleSetTags ?? []);
 	const ruleSetOptions = $derived<ChipOption[]>(
 		availableRuleSets.map((rs) => ({
@@ -109,6 +111,7 @@
 	let initialDomainSuffixStr = $state('');
 	let initialIpCidrStr = $state('');
 	let initialSourceIpCidrStr = $state('');
+	let initialSourceMacStr = $state('');
 	let initialRuleSetTagsSnapshot = $state<string[]>([]);
 	let initialPortStr = $state('');
 	let initialNetwork: NetworkFilter = $state('');
@@ -122,6 +125,7 @@
 			initialDomainSuffixStr = (src.domain_suffix ?? []).join('\n');
 			initialIpCidrStr = (src.ip_cidr ?? []).join('\n');
 			initialSourceIpCidrStr = (src.source_ip_cidr ?? []).join('\n');
+			initialSourceMacStr = (src.source_mac_address ?? []).join('\n');
 			initialRuleSetTagsSnapshot = [...(src.rule_set ?? [])];
 			initialPortStr = (src.port ?? []).join(', ');
 			initialNetwork = src.network === 'tcp' || src.network === 'udp' ? src.network : '';
@@ -131,6 +135,7 @@
 			initialDomainSuffixStr = '';
 			initialIpCidrStr = '';
 			initialSourceIpCidrStr = '';
+			initialSourceMacStr = '';
 			initialRuleSetTagsSnapshot = [...(initialRuleSetTags ?? [])];
 			initialPortStr = '';
 			initialNetwork = '';
@@ -144,6 +149,7 @@
 			domainSuffixStr !== initialDomainSuffixStr ||
 			ipCidrStr !== initialIpCidrStr ||
 			sourceIpCidrStr !== initialSourceIpCidrStr ||
+			sourceMacStr !== initialSourceMacStr ||
 			[...ruleSetTags].join(',') !== [...initialRuleSetTagsSnapshot].join(',') ||
 			portStr !== initialPortStr ||
 			network !== initialNetwork ||
@@ -179,6 +185,7 @@
 	const domainsCount = $derived(parseLines(domainSuffixStr).length);
 	const ipsCount = $derived(parseLines(ipCidrStr).length);
 	const sourceIPsCount = $derived(parseLines(sourceIpCidrStr).length);
+	const sourceMacCount = $derived(parseLines(sourceMacStr).length);
 
 	async function save(): Promise<void> {
 		busy = true;
@@ -187,6 +194,7 @@
 			const domain_suffix = parseLines(domainSuffixStr);
 			const ip_cidr = parseLines(ipCidrStr);
 			const source_ip_cidr = parseLines(sourceIpCidrStr);
+			const source_mac_address = parseLines(sourceMacStr).map((s) => s.toLowerCase());
 			const rule_set = ruleSetTags;
 			const port = portStr
 				.split(',')
@@ -197,6 +205,7 @@
 				domain_suffix.length > 0 ||
 				ip_cidr.length > 0 ||
 				source_ip_cidr.length > 0 ||
+				source_mac_address.length > 0 ||
 				rule_set.length > 0 ||
 				port.length > 0;
 			if (!hasMatcher) {
@@ -238,6 +247,7 @@
 					domain_suffix: domain_suffix.length ? domain_suffix : undefined,
 					ip_cidr: ip_cidr.length ? ip_cidr : undefined,
 					source_ip_cidr: source_ip_cidr.length ? source_ip_cidr : undefined,
+					source_mac_address: source_mac_address.length ? source_mac_address : undefined,
 					rule_set: rule_set.length ? rule_set : undefined,
 					port: port.length ? port : undefined,
 					network: network || undefined,
@@ -317,6 +327,17 @@
 					{/if}
 				</div>
 				<textarea bind:value={sourceIpCidrStr} rows="6" placeholder="192.168.1.50"></textarea>
+			</label>
+
+			<label class="field">
+				<div class="field-head">
+					<span class="lbl">MAC устройства</span>
+					{#if sourceMacCount > 0}
+						<span class="count-chip">{sourceMacCount}</span>
+					{/if}
+				</div>
+				<textarea bind:value={sourceMacStr} rows="3" placeholder="aa:bb:cc:dd:ee:ff"></textarea>
+				<div class="hint">По одному MAC в строке. Устройство определяется по таблице соседей роутера; для устройств за другим роутером не работает.</div>
 			</label>
 
 			<div class="field">

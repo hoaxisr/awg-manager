@@ -48,6 +48,26 @@ describe('flattenRouterRule', () => {
 		});
 	});
 
+	it('сужающая ветка с source_mac_address сворачивается в плоское правило', () => {
+		const rule: SingboxRouterRule = {
+			type: 'logical',
+			mode: 'and',
+			rules: [
+				{ source_mac_address: ['aa:bb:cc:dd:ee:ff'] },
+				{ type: 'logical', mode: 'or', rules: [{ rule_set: ['geosite-x'] }, { ip_cidr: ['1.2.3.0/24'] }] },
+			],
+			action: 'route',
+			outbound: 'vpn',
+		};
+		expect(flattenRouterRule(rule)).toEqual({
+			source_mac_address: ['aa:bb:cc:dd:ee:ff'],
+			rule_set: ['geosite-x'],
+			ip_cidr: ['1.2.3.0/24'],
+			action: 'route',
+			outbound: 'vpn',
+		});
+	});
+
 	it('переносит ip_is_private из адресной ветки', () => {
 		const rule: SingboxRouterRule = {
 			type: 'logical',

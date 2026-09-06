@@ -271,6 +271,8 @@ export interface SingboxRouterRule {
 	domain_suffix?: string[];
 	ip_cidr?: string[];
 	source_ip_cidr?: string[];
+	// MAC LAN-устройства (sing-box 1.14). Сужающий матчер, как source_ip_cidr.
+	source_mac_address?: string[];
 	port?: number[];
 	rule_set?: string[];
 	inbound?: string[];

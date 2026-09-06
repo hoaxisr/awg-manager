@@ -129,4 +129,22 @@ describe('RuleEditModal', () => {
 		expect(saved.rule_set).toEqual(['geosite-discord']);
 		expect(saved.type).toBeUndefined();
 	});
+
+	it('вводит MAC устройства и сохраняет его в нижнем регистре', async () => {
+		const onSave = vi.fn();
+		const rule: SingboxRouterRule = {
+			domain_suffix: ['example.com'],
+			action: 'route',
+			outbound: 'vpn',
+		};
+		render(RuleEditModal, { props: { ...baseProps, rule, onSave } });
+
+		const macField = screen.getByPlaceholderText('aa:bb:cc:dd:ee:ff');
+		await fireEvent.input(macField, { target: { value: 'AA:BB:CC:DD:EE:FF' } });
+
+		await fireEvent.click(screen.getByText('Сохранить'));
+
+		const saved = onSave.mock.calls[0][0] as SingboxRouterRule;
+		expect(saved.source_mac_address).toEqual(['aa:bb:cc:dd:ee:ff']);
+	});
 });

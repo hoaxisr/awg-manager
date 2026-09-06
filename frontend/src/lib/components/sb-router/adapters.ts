@@ -233,6 +233,9 @@ export function extractMatcherChips(
   for (const c of rule.source_ip_cidr ?? []) {
     chips.push({ kind: 'src', label: c, mono: true });
   }
+  for (const m of rule.source_mac_address ?? []) {
+    chips.push({ kind: 'src', label: m, mono: true });
+  }
   for (const p of rule.port ?? []) {
     chips.push({ kind: 'port', label: String(p), mono: true });
   }
