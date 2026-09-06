@@ -1041,6 +1041,13 @@ func applyTunnelUpdate(t *storage.AWGTunnel, req *storage.AWGTunnel) {
 	case req.ISPInterface != "":
 		t.ISPInterface, t.ISPInterfaceLabel = req.ISPInterface, req.ISPInterfaceLabel
 	}
+	// Обфускатор: только пользовательские поля и только у туннеля, который
+	// уже обфусцирован (Q26: обычный туннель в обфусцированный не превращается;
+	// Flavor и LocalPort — не пользовательские).
+	if req.Obfuscator != nil && t.Obfuscator != nil {
+		merged := mergedObfuscator(*t.Obfuscator, *req.Obfuscator)
+		t.Obfuscator = &merged
+	}
 	if req.PingCheck != nil {
 		t.PingCheck = req.PingCheck
 	}
@@ -1073,6 +1080,23 @@ func mergedInterface(base, req storage.AWGInterface) storage.AWGInterface {
 	// AWG obfuscation block (issue #131): editable in the full edit form,
 	// so req is the source of truth — including explicit clears (i1 -> "").
 	base.AWGObfuscation = req.AWGObfuscation
+	return base
+}
+
+// mergedObfuscator накладывает пользовательские поля req на base; Flavor и
+// LocalPort остаются от base. Пустой Target = «не прислали».
+func mergedObfuscator(base, req storage.Obfuscator) storage.Obfuscator {
+	if req.Target == "" {
+		return base
+	}
+	base.Target = req.Target
+	if req.Key != "" {
+		base.Key = req.Key
+	}
+	base.Masking = req.Masking
+	base.MaxDummy = req.MaxDummy
+	base.IdleTimeout = req.IdleTimeout
+	base.ObfuscateBytes = req.ObfuscateBytes
 	return base
 }
 

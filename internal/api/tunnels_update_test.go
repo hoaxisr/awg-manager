@@ -801,6 +801,7 @@ func TestTunnelUpdate_FieldInventoryComplete(t *testing.T) {
 		"DefaultRouteSet":   true,
 		"ISPInterface":      true,
 		"ISPInterfaceLabel": true,
+		"Obfuscator":        true,
 	}
 	// Неправимые через этот handler: владелец поля — другая подсистема
 	// (оркестратор, wdttlink/import, зеркало WDTT) либо оно неизменяемо.

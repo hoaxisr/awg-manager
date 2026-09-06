@@ -512,6 +512,7 @@ type AWGTunnel struct {
 	Peer               AWGPeer                  `json:"peer"`
 	PingCheck          *TunnelPingCheck         `json:"pingCheck,omitempty"`
 	ConnectivityCheck  *ConnectivityCheckConfig `json:"connectivityCheck,omitempty"`
+	Obfuscator         *Obfuscator              `json:"obfuscator,omitempty"` // wg-obfuscator (Phobos/ClusterM); nil = обычный туннель
 }
 
 // TunnelPingCheck contains per-tunnel ping check configuration.
@@ -607,6 +608,27 @@ type AWGPeer struct {
 	Endpoint            string    `json:"endpoint"`
 	AllowedIPs          []string  `json:"allowedIPs"`
 	PersistentKeepalive Keepalive `json:"persistentKeepalive"`
+}
+
+// Разновидности релея wg-obfuscator. Неизменяемы после создания туннеля:
+// бинари по проводу не взаимозаменяемы, смена = новый туннель.
+const (
+	ObfuscatorFlavorPhobos   = "phobos"   // форк Ground-Zerro/Phobos (база upstream 1.4 + MEDIA/obfuscate-bytes)
+	ObfuscatorFlavorClusterM = "clusterm" // upstream ClusterM/wg-obfuscator
+)
+
+// Obfuscator — параметры userspace-релея wg-obfuscator, через который идёт
+// nativewg-туннель: WireGuard шлёт в 127.0.0.1:LocalPort, релей — в Target.
+// Peer.Endpoint у такого туннеля всегда loopback; реальный сервер — Target.
+type Obfuscator struct {
+	Flavor         string `json:"flavor"`                   // ObfuscatorFlavor*; через API не правится
+	Target         string `json:"target"`                   // host:port сервера (реальный эндпоинт)
+	Key            string `json:"key"`                      // XOR-ключ, одинаков с сервером
+	Masking        string `json:"masking"`                  // STUN | MEDIA | AUTO | NONE (MEDIA только phobos)
+	MaxDummy       int    `json:"maxDummy"`                 // 0..1024 байт паддинга
+	IdleTimeout    int    `json:"idleTimeout,omitempty"`    // секунды; 0 = дефолт бинаря
+	ObfuscateBytes int    `json:"obfuscateBytes,omitempty"` // только phobos; 0 = весь пакет
+	LocalPort      int    `json:"localPort"`                // loopback-порт релея из нашего пула; через API не правится
 }
 
 // Keepalive — значение PersistentKeepalive в секундах. В AWG 3.0 оно стало
