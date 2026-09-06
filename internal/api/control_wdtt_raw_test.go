@@ -41,8 +41,8 @@ func controlWithRawTunnel(t *testing.T, en ProxyInstanceEnabler) *ControlHandler
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h := NewControlHandler(nil, nil)
-	h.SetProxyControl(store, en)
+	h := NewControlHandler(nil, store, nil)
+	h.SetProxyControl(en)
 	return h
 }
 

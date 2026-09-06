@@ -19,9 +19,9 @@ func newToggleHarness(t *testing.T, cur *service.TunnelWithStatus) (*ControlHand
 		return cur, nil
 	}}
 	p := newBusProbe(t)
-	th, _ := newTunnelsUpdateHarness(t, stub)
+	th, store := newTunnelsUpdateHarness(t, stub)
 	th.SetEventBus(p.bus())
-	h := NewControlHandler(stub, nil)
+	h := NewControlHandler(stub, store, nil)
 	h.SetTunnelsHandler(th)
 	h.SetEventBus(p.bus())
 	return h, stub, p

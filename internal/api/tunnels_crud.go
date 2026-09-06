@@ -602,7 +602,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, resp)
 }
 
-// tunnelLockedMessage — текст 403 у всех пяти защищённых операций (#818).
+// tunnelLockedMessage — текст 403 у всех шести защищённых операций (#818).
 // Один на всех, чтобы пользователь везде читал одну и ту же подсказку.
 const tunnelLockedMessage = "туннель защищён от изменений — снимите защиту на карточке"
 

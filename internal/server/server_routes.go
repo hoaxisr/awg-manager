@@ -79,7 +79,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.tunnelsHandler.SetTrafficHistory(s.trafficHistory)
 	h.tunnelsHandler.SetOrchestrator(s.orch)
 	h.tunnelsHandler.SetProxyRecords(s.proxyRecords)
-	h.controlHandler = api.NewControlHandler(s.tunnelService, h.appLog)
+	h.controlHandler = api.NewControlHandler(s.tunnelService, s.tunnels, h.appLog)
 	h.controlHandler.SetPingCheckService(s.pingCheckService)
 	h.controlHandler.SetOrchestrator(s.orch)
 	h.controlHandler.SetTunnelsHandler(h.tunnelsHandler)
@@ -184,7 +184,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 
 	h.eventsHandler = api.NewEventsHandler(s.bus, s.instanceID)
 
-	h.controlHandler.SetProxyControl(s.tunnels, s.proxyRuntime)
+	h.controlHandler.SetProxyControl(s.proxyRuntime)
 
 	h.proxyListenerHandler = api.NewProxyListenerHandler(s.proxyRecords)
 
