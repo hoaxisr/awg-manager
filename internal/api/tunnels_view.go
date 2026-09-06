@@ -405,8 +405,13 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			PingCheck:                 pcInfo,
 			WdttClientID:              wdttClientID,
 			FreeTurnClientID:          freeTurnClientID,
-			StatusDetails:             t.StateInfo.Details,
 			Obfuscator:                obfItem(stored),
+		}
+		if item.Obfuscator != nil {
+			// Только у обфусцированных: причины оттуда пишет nwg/obfuscated.go
+			// по-русски и для пользователя, а у остальных бэкендов Details —
+			// внутренняя английская строка классификатора состояния.
+			item.StatusDetails = t.StateInfo.Details
 		}
 		if stored != nil && stored.ConnectivityCheck != nil {
 			item.ConnectivityCheck = stored.ConnectivityCheck

@@ -119,14 +119,29 @@ func (h *SystemTunnelsHandler) listSystemTunnels(ctx context.Context) ([]ndms.Sy
 	if visible == nil {
 		visible = []ndms.SystemWireguardTunnel{}
 	}
-	markExternal(visible, obfuscator.DetectForeign())
+	markExternal(visible, obfuscator.DetectForeign)
 	return visible, nil
 }
 
 // markExternal помечает системные туннели чужой установки Phobos. Условие
 // двойное (Q16): и префикс description от их установщика, и след самой
 // установки — переименованный чужой интерфейс бейджа не даёт.
-func markExternal(list []ndms.SystemWireguardTunnel, f obfuscator.Foreign) {
+//
+// detect зовётся ТОЛЬКО когда префикс есть хоть у одного туннеля: поиск следа
+// установки читает /proc/*/cmdline по всем процессам, а список системных
+// туннелей главная опрашивает каждые 5 секунд.
+func markExternal(list []ndms.SystemWireguardTunnel, detect func() obfuscator.Foreign) {
+	found := false
+	for i := range list {
+		if obfuscator.ExternalKind(list[i].Description) != "" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return
+	}
+	f := detect()
 	if !f.InitScript && !f.ProcessAlive {
 		return
 	}

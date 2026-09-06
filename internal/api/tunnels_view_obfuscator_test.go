@@ -74,6 +74,33 @@ func TestTunnelList_ObfuscatorItem(t *testing.T) {
 	}
 }
 
+// Details у kernel-туннелей заполняет классификатор состояния английскими
+// строками для журнала («Tunnel is running (RX…)»); в контракт списка они
+// уехать не должны — statusDetails только у обфусцированных.
+func TestTunnelList_StatusDetailsOnlyForObfuscated(t *testing.T) {
+	svc := &obfViewSvc{stubTunnelSvc: &stubTunnelSvc{}}
+	svc.item = service.TunnelWithStatus{
+		ID: "awg10", Name: "plain", State: tunnel.StateRunning,
+		StateInfo: tunnel.StateInfo{State: tunnel.StateRunning, Details: "Tunnel is running"},
+	}
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	if err := store.Create(&storage.AWGTunnel{
+		ID: "awg10", Name: "plain",
+		Interface: storage.AWGInterface{Address: "10.0.0.2/32", MTU: 1420},
+		Peer:      storage.AWGPeer{Endpoint: "1.2.3.4:51820"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	h := NewTunnelsHandler(svc, store, nil)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/tunnels/list", nil))
+	if strings.Contains(rec.Body.String(), "statusDetails") {
+		t.Fatalf("внутренние Details утекли в список: %s", rec.Body.String())
+	}
+}
+
 // Карточке ключ нужен: без него вкладка «Обфускатор» не может его показать
 // и править (mergedObfuscator пустой ключ не затирает).
 func TestTunnelGet_ObfuscatorWithKey(t *testing.T) {

@@ -117,7 +117,7 @@ func runCleanup(dataDir string) {
 		BinaryFor: func(_ context.Context, flavor string) (string, error) {
 			return filepath.Join(obfuscator.BinDir, obfuscator.BinaryName(flavor)), nil
 		},
-		Log: logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps),
+		Log: logging.NewScopedLogger(loggingService, logging.GroupTunnel, logging.SubOps),
 	}))
 	tunnelService := service.New(awgStore, nwgOp, operator, stateMgr, wan.NewModel(), nil)
 
