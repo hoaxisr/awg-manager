@@ -5,7 +5,7 @@
   поэтому тестируется без моков api.
 -->
 <script lang="ts">
-	import { Badge, Button, ConfirmModal, Modal, Toggle } from '$lib/components/ui';
+	import { Badge, Button, ConfirmModal, IconButton, Modal, Toggle } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { formatDate } from '$lib/utils/format';
@@ -161,15 +161,9 @@
 				</div>
 				<div class="mcp-key-row">
 					<code class="mcp-code-value">{endpoint}</code>
-					<button
-						type="button"
-						class="mcp-copy-btn"
-						onclick={copyEndpoint}
-						aria-label="Скопировать адрес эндпоинта"
-						title="Скопировать адрес эндпоинта"
-					>
+					<IconButton size="md" ariaLabel="Скопировать адрес эндпоинта" title="Скопировать адрес эндпоинта" onclick={copyEndpoint}>
 						<Copy size={16} />
-					</button>
+					</IconButton>
 				</div>
 			</div>
 
@@ -232,15 +226,9 @@
 			<p class="setting-description">Ключ показывается только сейчас. Скопируйте его в конфигурацию клиента.</p>
 			<div class="mcp-key-row">
 				<code class="mcp-code-value">{created.key}</code>
-				<button
-					type="button"
-					class="mcp-copy-btn"
-					onclick={() => created && copyKey(created.key)}
-					aria-label="Скопировать ключ"
-					title="Скопировать ключ"
-				>
+				<IconButton size="md" ariaLabel="Скопировать ключ" title="Скопировать ключ" onclick={() => created && copyKey(created.key)}>
 					<Copy size={16} />
-				</button>
+				</IconButton>
 			</div>
 			<details>
 				<summary class="cursor-pointer">Claude Code (CLI)</summary>
@@ -303,7 +291,7 @@
 
 	.mcp-key-row {
 		display: flex;
-		align-items: stretch;
+		align-items: center;
 		gap: 0.375rem;
 	}
 
@@ -313,25 +301,6 @@
 	.setting-row .mcp-key-row {
 		flex: 1;
 		min-width: 0;
-	}
-
-	.mcp-copy-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-		width: 2.25rem;
-		background: var(--color-settings-control-bg, var(--bg-secondary));
-		border: 1px solid var(--border, var(--color-border));
-		border-radius: var(--radius-sm, 6px);
-		color: var(--text-secondary, var(--color-text-secondary));
-		cursor: pointer;
-		transition: color 0.15s ease, background 0.15s ease;
-	}
-
-	.mcp-copy-btn:hover {
-		color: var(--text-primary, var(--color-text-primary));
-		background: var(--bg-hover, var(--color-bg-hover));
 	}
 
 	/* The keys table's row spacing (py-1) was silently defeated: app.css has an
