@@ -58,7 +58,7 @@ func (r *Runner) Start(ctx context.Context, tunnelID string, o *storage.Obfuscat
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	want := RenderConf(o)
-	if cur, err := os.ReadFile(ConfPath(tunnelID)); err == nil && string(cur) == want && r.aliveLocked(tunnelID) {
+	if cur, err := os.ReadFile(ConfPath(tunnelID)); err == nil && string(cur) == want && r.alive(tunnelID) {
 		return nil
 	}
 	_ = r.stopLocked(tunnelID)
@@ -89,11 +89,11 @@ func (r *Runner) Start(ctx context.Context, tunnelID string, o *storage.Obfuscat
 		return fmt.Errorf("запуск %s: %w", filepath.Base(bin), err)
 	}
 	_ = errF.Close()
+	go func() { _ = cmd.Wait() }() // не оставлять зомби; выход виден по Alive
 	if err := os.WriteFile(pidPath(tunnelID), []byte(strconv.Itoa(cmd.Process.Pid)), 0o644); err != nil {
 		_ = childproc.KillGroup(cmd.Process.Pid)
 		return err
 	}
-	go func() { _ = cmd.Wait() }() // не оставлять зомби; выход виден по Alive
 	r.startTailLocked(tunnelID, false)
 	r.deps.Log.Info("obfuscator", tunnelID, fmt.Sprintf("%s запущен, 127.0.0.1:%d -> %s (%s)", o.Flavor, o.LocalPort, o.Target, o.Masking))
 	return nil
@@ -127,13 +127,13 @@ func (r *Runner) stopLocked(tunnelID string) error {
 	return nil
 }
 
-func (r *Runner) Alive(tunnelID string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.aliveLocked(tunnelID)
-}
+// Alive намеренно без r.mu: разделяемого состояния раннера он не трогает —
+// только pidfile, kill(0) и matchFn (ставится один раз при создании). Под
+// локом он ждал бы до 3 с грейса Stop/AdoptAll по ЧУЖОМУ туннелю, а его
+// зовёт опрос состояния.
+func (r *Runner) Alive(tunnelID string) bool { return r.alive(tunnelID) }
 
-func (r *Runner) aliveLocked(tunnelID string) bool {
+func (r *Runner) alive(tunnelID string) bool {
 	pid, ok := readPID(tunnelID)
 	return ok && childproc.IsAlive(pid) && r.matchFn(pid)
 }
@@ -143,6 +143,7 @@ func (r *Runner) pid(tunnelID string) int { p, _ := readPID(tunnelID); return p 
 // AdoptAll после рестарта демона: pidfile живого нашего процесса — усыновить,
 // если keep(id) (туннель существует и включён), иначе погасить как сироту;
 // мёртвые/чужие pidfile'ы — убрать. Возвращает усыновлённые tunnelID.
+// keep зовётся ПОД r.mu: методы Runner из него звать нельзя — дедлок.
 func (r *Runner) AdoptAll(keep func(tunnelID string) bool) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -150,8 +151,10 @@ func (r *Runner) AdoptAll(keep func(tunnelID string) bool) []string {
 	var adopted []string
 	for _, p := range matches {
 		id := strings.TrimSuffix(filepath.Base(p), ".pid")
-		if !r.aliveLocked(id) {
-			_ = os.Remove(p)
+		if !r.alive(id) {
+			// Через stopLocked, а не os.Remove: у мёртвого процесса мог
+			// остаться хвост stderr — иначе горутина висит вечно.
+			_ = r.stopLocked(id)
 			continue
 		}
 		if !keep(id) {

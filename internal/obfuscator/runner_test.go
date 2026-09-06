@@ -2,6 +2,7 @@ package obfuscator
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/childproc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -147,6 +149,44 @@ func TestRunner_AdoptAll(t *testing.T) {
 	r2.AdoptAll(func(string) bool { return true })
 	if _, err := os.Stat(filepath.Join(RunDir, "awg22.pid")); !os.IsNotExist(err) {
 		t.Fatal("stale pidfile kept")
+	}
+}
+
+func TestRunner_StartRefusesBusyPort(t *testing.T) {
+	r, _ := newTestRunner(t)
+	o := obf()
+	c, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: o.LocalPort})
+	if err != nil {
+		t.Skip("cannot bind loopback in this sandbox")
+	}
+	defer c.Close()
+	err = r.Start(context.Background(), "awg20", o)
+	if err == nil || !strings.Contains(err.Error(), "занят") {
+		t.Fatalf("err = %v", err)
+	}
+	if r.Alive("awg20") {
+		t.Fatal("процесс поднят на занятом порту")
+	}
+}
+
+// Мёртвый pidfile уносит с собой хвост stderr: иначе горутина умершего
+// процесса остаётся навсегда на живом раннере.
+func TestRunner_AdoptAllDropsTailOfDeadProcess(t *testing.T) {
+	r, _ := newTestRunner(t)
+	if err := r.Start(context.Background(), "awg20", obf()); err != nil {
+		t.Fatal(err)
+	}
+	pid := r.pid("awg20")
+	_ = childproc.KillGroup(pid)
+	for deadline := time.Now().Add(3 * time.Second); r.Alive("awg20") && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if r.Alive("awg20") {
+		t.Fatal("процесс не умер")
+	}
+	r.AdoptAll(func(string) bool { return true })
+	if _, ok := r.tails["awg20"]; ok {
+		t.Fatal("хвост мёртвого процесса не погашен")
 	}
 }
 
