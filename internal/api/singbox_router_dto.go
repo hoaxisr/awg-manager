@@ -127,6 +127,7 @@ type SingboxRouterSettingsData struct {
 	UDPTimeout string `json:"udpTimeout,omitempty" example:"10m0s"`
 	// UDPNATMax caps UDP NAT sessions on the tproxy-in / tun-in / QoS inbounds
 	// (sing-box 1.14, LRU eviction). 0 = engine default (4096-16384 by memory).
+	// Range: 0..65536.
 	UDPNATMax int `json:"udpNatMax,omitempty" example:"4096"`
 	// QoSClasses lists DSCP-based QoS traffic classes routed to dedicated
 	// outbounds. At most 8 classes; DSCP must be 0-63 and unique across

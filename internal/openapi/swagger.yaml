@@ -5046,6 +5046,7 @@ definitions:
         description: |-
           UDPNATMax caps UDP NAT sessions on the tproxy-in / tun-in / QoS inbounds
           (sing-box 1.14, LRU eviction). 0 = engine default (4096-16384 by memory).
+          Range: 0..65536.
         example: 4096
         type: integer
       udpTimeout:

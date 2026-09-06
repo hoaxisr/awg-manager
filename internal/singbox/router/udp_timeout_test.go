@@ -144,7 +144,7 @@ func TestUDPNATMax_AppliedToEveryEngineInbound(t *testing.T) {
 
 func TestNormalizeSettings_UDPNATMax(t *testing.T) {
 	base := storage.SingboxRouterSettings{WANAutoDetect: true}
-	for _, v := range []int{0, 2048, 16384} {
+	for _, v := range []int{0, 2048, 16384, 65536} {
 		base.UDPNATMax = v
 		if _, err := NormalizeSingboxRouterSettings(base); err != nil {
 			t.Errorf("%d: %v", v, err)
@@ -153,5 +153,9 @@ func TestNormalizeSettings_UDPNATMax(t *testing.T) {
 	base.UDPNATMax = -1
 	if _, err := NormalizeSingboxRouterSettings(base); err == nil {
 		t.Error("negative must be rejected")
+	}
+	base.UDPNATMax = 65537
+	if _, err := NormalizeSingboxRouterSettings(base); err == nil {
+		t.Error("above 65536 must be rejected")
 	}
 }
