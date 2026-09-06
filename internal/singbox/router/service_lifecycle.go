@@ -931,13 +931,14 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string, 
 	return s.persistConfigDirect(ctx, cfg)
 }
 
-// heal1140SlotMigration re-persists the applied router config unchanged, so
-// materializeConfig's byte-for-byte round trip repairs a slot written before
-// the sing-box 1.14 migration (download_detour, gso, endpoint_independent_nat)
-// without needing a version marker. Best-effort — a load or persist failure
-// here must not abort the rest of the caller's reconcile. Shared by
-// reconcileInstalled (tproxy) and reconcilePolicyTun — both target the same
-// 20-router.json slot.
+// heal1140SlotMigration re-persists the applied config of the given slot
+// unchanged, so materializeConfig's byte-for-byte round trip repairs a slot
+// written before the sing-box 1.14 migration (download_detour, gso,
+// endpoint_independent_nat) without needing a version marker. Best-effort — a
+// load or persist failure here must not abort the rest of the caller's
+// reconcile. Three call sites, two slots: reconcileInstalled (tproxy) and
+// reconcilePolicyTun target SlotRouter (20-router.json); reconcileFakeIPTun
+// targets SlotFakeIP (21-fakeip.json).
 //
 // Steady state is ONE file read and a JSON unmarshal into a two-field shadow
 // struct, not a load+persist: persistSlotDirect's byte-compare guard runs
@@ -953,9 +954,18 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string, 
 // by loadAppliedRouterConfig/restoreConfig instead: restoreConfig clears
 // DefaultHTTPClient as part of projecting back to the stored form, so that
 // signal is invisible past the raw bytes.
-func (s *ServiceImpl) heal1140SlotMigration(ctx context.Context) {
+//
+// Load/persist are per-slot: SlotRouter goes through loadAppliedRouterConfig
+// + persistConfigDirect. SlotFakeIP deliberately does NOT use loadFakeIPConfig
+// (it wraps Orch.LoadEffective, which prefers pending/ over active/) — this
+// runs from reconcile self-heal, an enforcement path that LoadApplied's own
+// doc comment says must never act on a draft the user has not applied yet.
+// So SlotFakeIP reads Orch.LoadApplied directly (mirrors the existing
+// active/disabled-only read in referencedRuleSetArtifactBases) and persists
+// via persistFakeIPConfig.
+func (s *ServiceImpl) heal1140SlotMigration(ctx context.Context, slot orchestrator.Slot) {
 	if s.deps.Orch != nil {
-		activePath, err := s.deps.Orch.ActivePath(orchestrator.SlotRouter)
+		activePath, err := s.deps.Orch.ActivePath(slot)
 		if err != nil {
 			s.appLog.Warn("heal-1140-slot", "", err.Error())
 			return
@@ -984,12 +994,35 @@ func (s *ServiceImpl) heal1140SlotMigration(ctx context.Context) {
 			return
 		}
 	}
-	cfg, err := s.loadAppliedRouterConfig()
+
+	var (
+		cfg *RouterConfig
+		err error
+	)
+	switch slot {
+	case orchestrator.SlotFakeIP:
+		var data []byte
+		if s.deps.Orch != nil {
+			data, err = s.deps.Orch.LoadApplied(orchestrator.SlotFakeIP)
+		}
+		if err == nil {
+			cfg, err = parseRouterConfigBytes(data)
+		}
+	default:
+		cfg, err = s.loadAppliedRouterConfig()
+	}
 	if err != nil {
 		s.appLog.Warn("heal-1140-slot", "", err.Error())
 		return
 	}
-	if err := s.persistConfigDirect(ctx, cfg); err != nil {
+
+	switch slot {
+	case orchestrator.SlotFakeIP:
+		err = s.persistFakeIPConfig(ctx, cfg)
+	default:
+		err = s.persistConfigDirect(ctx, cfg)
+	}
+	if err != nil {
 		s.appLog.Warn("heal-1140-slot", "", err.Error())
 	}
 }
@@ -1745,7 +1778,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// (слот уже переписан) это бесплатно: чтение и маршалинг без записи и SIGHUP.
 	// Тот же вызов есть в reconcilePolicyTun — policy-tun пишет тот же слот
 	// своим путём реконсиляции.
-	s.heal1140SlotMigration(ctx)
+	s.heal1140SlotMigration(ctx, orchestrator.SlotRouter)
 
 	// After a daemon restart or upgrade the old awg-manager process died
 	// with no chance to run Uninstall, so stale AWGM chains, ip rules

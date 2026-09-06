@@ -320,7 +320,7 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	// policy-tun пишет в тот же 20-router.json, что и tproxy, но идёт своим
 	// путём реконсиляции и не проходит через heal-цепочку tproxy-ветки —
 	// без отдельного вызова здесь слот навсегда остался бы на старой форме.
-	s.heal1140SlotMigration(ctx)
+	s.heal1140SlotMigration(ctx, orchestrator.SlotRouter)
 
 	// Ingress-заворот: и drift-heal после сброса firewall NDMS, и применение
 	// смены состава ingress-интерфейсов (UpdateSettings завершается Reconcile'ом).

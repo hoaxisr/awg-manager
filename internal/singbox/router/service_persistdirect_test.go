@@ -506,7 +506,7 @@ func TestHeal1140SlotMigration_RewritesLegacySlot(t *testing.T) {
 		t.Fatalf("bootstrap: %v", err)
 	}
 
-	svc.heal1140SlotMigration(context.Background())
+	svc.heal1140SlotMigration(context.Background(), orchestrator.SlotRouter)
 
 	raw, err := os.ReadFile(activePath)
 	if err != nil {
@@ -536,7 +536,7 @@ func TestHeal1140SlotMigration_RewritesLegacySlot(t *testing.T) {
 	}
 	time.Sleep(10 * time.Millisecond)
 
-	svc.heal1140SlotMigration(context.Background())
+	svc.heal1140SlotMigration(context.Background(), orchestrator.SlotRouter)
 
 	after, err := os.Stat(activePath)
 	if err != nil {
@@ -574,7 +574,7 @@ func TestHeal1140SlotMigration_NoopWhenSlotParked(t *testing.T) {
 		t.Fatalf("precondition: active file must not exist, stat err = %v", err)
 	}
 
-	svc.heal1140SlotMigration(context.Background())
+	svc.heal1140SlotMigration(context.Background(), orchestrator.SlotRouter)
 
 	if _, err := os.Stat(activePath); !os.IsNotExist(err) {
 		t.Errorf("parked slot must stay absent, got stat err = %v", err)
