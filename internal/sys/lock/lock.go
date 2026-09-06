@@ -13,7 +13,10 @@ import (
 )
 
 const (
-	LockDir  = "/opt/var/lock/awg-manager"
+	// LockDir lives on the /var/run tmpfs: a lock must not survive a reboot
+	// anyway, and the mkdir+pid+rmdir per store write used to hit the
+	// Entware flash on every tunnel record update (#854).
+	LockDir  = "/var/run/awg-manager/lock"
 	StaleAge = 5 * time.Minute
 )
 

@@ -26,6 +26,10 @@ rm -f /opt/var/log/awg-wan-hook.log
 rm -f /opt/etc/init.d/S80awg-manager
 rm -rf /opt/lib/modules/awg_proxy
 rm -rf /opt/share/www/awg-manager
+# Замок и лог stderr переехали на tmpfs, PID — раньше; старые места на
+# накопителе (#854). Демон на этот момент остановлен prerm'ом.
+rm -rf /opt/var/lock/awg-manager /opt/var/run/awg-manager
+rm -f /opt/tmp/awg-manager-upgrade.log /opt/tmp/awg-manager-stderr.log
 
 # Start awg-manager
 START_OK=1
