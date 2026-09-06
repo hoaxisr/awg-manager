@@ -261,21 +261,13 @@ type Inbound struct {
 	TCPFastOpen bool `json:"tcp_fast_open,omitempty"`
 	RoutingMark int  `json:"routing_mark,omitempty"`
 	// tun inbound (fakeip-tun mode)
-	InterfaceName          string   `json:"interface_name,omitempty"`
-	Address                []string `json:"address,omitempty"`
-	MTU                    int      `json:"mtu,omitempty"`
-	AutoRoute              *bool    `json:"auto_route,omitempty"`
-	AutoRedirect           *bool    `json:"auto_redirect,omitempty"`
-	StrictRoute            *bool    `json:"strict_route,omitempty"`
-	Stack                  string   `json:"stack,omitempty"`
-	EndpointIndependentNAT *bool    `json:"endpoint_independent_nat,omitempty"`
-	// GSO controls sing-tun's generic-segmentation-offload on the tun device.
-	// Pointer + omitempty so it's emitted ONLY when explicitly set: the gvisor
-	// stack leaves it nil (omitted), while the system stack MUST set it false —
-	// on this router's kernel (4.9) system+GSO panics sing-tun under load, and
-	// system+gso:false is the only stable system-stack combo (PoC-proven
-	// 2026-06-13; the project's sing-box alpha accepts "gso": false on tun).
-	GSO *bool `json:"gso,omitempty"`
+	InterfaceName string   `json:"interface_name,omitempty"`
+	Address       []string `json:"address,omitempty"`
+	MTU           int      `json:"mtu,omitempty"`
+	AutoRoute     *bool    `json:"auto_route,omitempty"`
+	AutoRedirect  *bool    `json:"auto_redirect,omitempty"`
+	StrictRoute   *bool    `json:"strict_route,omitempty"`
+	Stack         string   `json:"stack,omitempty"`
 }
 
 type Route struct {

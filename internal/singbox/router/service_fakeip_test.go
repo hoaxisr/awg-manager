@@ -514,7 +514,8 @@ func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
 	}
 
 	// The persisted fakeip sing-box config (21-fakeip.json) reflects
-	// stack=system + gso:false + the overridden pools.
+	// stack=system + the overridden pools. gso and endpoint_independent_nat
+	// are gone from sing-box ≥1.13/1.14 respectively and must not be persisted.
 	data, err := os.ReadFile(filepath.Join(h.dir, "21-fakeip.json"))
 	if err != nil {
 		t.Fatalf("read persisted fakeip config: %v", err)
@@ -530,14 +531,14 @@ func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
 	if in.Stack != "system" {
 		t.Errorf("persisted Stack = %q, want system", in.Stack)
 	}
-	if in.GSO == nil || *in.GSO != false {
-		t.Errorf("persisted GSO = %v, want false for system stack", in.GSO)
-	}
 	if in.MTU != 1280 {
 		t.Errorf("persisted MTU = %d, want 1280", in.MTU)
 	}
-	if !strings.Contains(string(data), `"gso": false`) {
-		t.Errorf("persisted fakeip config must carry \"gso\": false: %s", data)
+	if strings.Contains(string(data), `"gso"`) {
+		t.Errorf("persisted fakeip config must not carry gso: %s", data)
+	}
+	if strings.Contains(string(data), `"endpoint_independent_nat"`) {
+		t.Errorf("persisted fakeip config must not carry endpoint_independent_nat: %s", data)
 	}
 	// Find the fakeip DNS server (by type) for pool range assertions.
 	var fakeipSrv *DNSServer

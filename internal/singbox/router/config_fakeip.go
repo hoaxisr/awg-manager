@@ -21,9 +21,7 @@ type FakeIPTunSpec struct {
 	CachePath  string //
 	RealServer string // real upstream resolver, e.g. "1.1.1.1"
 	// Stack selects the sing-tun stack: "gvisor" (default; empty → gvisor) or
-	// "system". When "system" the builder forces gso:false on the tun inbound —
-	// the only stable system-stack combo on this router's kernel (4.9), where the
-	// system stack with GSO panics sing-tun under load (PoC-proven 2026-06-13).
+	// "system".
 	Stack string
 	// UDPTimeout is the UDP-NAT expiration for the tun inbound (Go duration
 	// string). Empty → DefaultUDPTimeout via resolveUDPTimeout. Without it
@@ -36,10 +34,10 @@ type FakeIPTunSpec struct {
 }
 
 // boolPtr returns a pointer to v. The tun inbound's auto_route / auto_redirect /
-// strict_route / endpoint_independent_nat fields are *bool so that an explicit
-// false survives JSON marshaling (omitempty on a plain bool would drop it, and
-// sing-box would then apply its own non-false defaults — e.g. auto_route true,
-// which is exactly what fakeip-tun must NOT enable because NDMS owns routing).
+// strict_route fields are *bool so that an explicit false survives JSON
+// marshaling (omitempty on a plain bool would drop it, and sing-box would then
+// apply its own non-false defaults — e.g. auto_route true, which is exactly
+// what fakeip-tun must NOT enable because NDMS owns routing).
 func boolPtr(v bool) *bool { return &v }
 
 // ensureFakeIPOverlay injects/normalizes the ENGINE-LOCKED bits of fakeip-tun
@@ -70,22 +68,24 @@ func ensureFakeIPOverlay(cfg *RouterConfig, spec FakeIPTunSpec) {
 		stack = "gvisor"
 	}
 	udpTimeout := resolveUDPTimeout(spec.UDPTimeout)
+	// gso и endpoint_independent_nat здесь больше не выставляются: sing-box
+	// ≥1.13 удалил `gso` (true — фатальная ошибка при старте, false молча
+	// игнорируется; GSO движок теперь включает сам, и только при
+	// flow-outbound'ах вида wireguard/tailscale/bridge с TCP, которых у наших
+	// слотов нет), а `endpoint_independent_nat` удалён в 1.14 — по умолчанию
+	// `udp_mapping`/`udp_filtering` уже endpoint_independent.
 	in := Inbound{
-		Type:                   "tun",
-		Tag:                    "tun-in",
-		InterfaceName:          spec.Iface,
-		Address:                addrs,
-		MTU:                    spec.MTU,
-		AutoRoute:              boolPtr(false),
-		AutoRedirect:           boolPtr(false),
-		StrictRoute:            boolPtr(false),
-		Stack:                  stack,
-		EndpointIndependentNAT: boolPtr(false),
-		UDPTimeout:             udpTimeout,
-		UDPNATMax:              spec.UDPNATMax,
-	}
-	if stack == "system" {
-		in.GSO = boolPtr(false)
+		Type:          "tun",
+		Tag:           "tun-in",
+		InterfaceName: spec.Iface,
+		Address:       addrs,
+		MTU:           spec.MTU,
+		AutoRoute:     boolPtr(false),
+		AutoRedirect:  boolPtr(false),
+		StrictRoute:   boolPtr(false),
+		Stack:         stack,
+		UDPTimeout:    udpTimeout,
+		UDPNATMax:     spec.UDPNATMax,
 	}
 	upsertInbound(cfg, in)
 
