@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -442,11 +443,40 @@ func TestWaitForSingbox_ReturnsWhenRunning(t *testing.T) {
 // config unchanged. This is I3: existing installs never touch 20-router.json
 // again once routing is configured, so without this heal they stay on the
 // deprecated form indefinitely.
+//
+// The fixture also carries a managed-local (already-compiled) inline rule
+// set, seeded exactly as materializeRuleSet would have left it on disk —
+// R1: materializeConfig recompiles EVERY inline rule set (forks `sing-box
+// rule-set compile`, renames a fresh .json/.srs into place) on every full
+// materialize+persist, so the migration heal must fork/rewrite it on the
+// first (migrating) call only, never again once the slot carries
+// default_http_client.
 func TestHeal1140SlotMigration_RewritesLegacySlot(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
 	activePath := filepath.Join(dir, "20-router.json")
 
-	legacy := `{
+	inlineDir := filepath.Join(dir, "rule-sets", "inline")
+	if err := os.MkdirAll(inlineDir, 0755); err != nil {
+		t.Fatalf("mkdir inline dir: %v", err)
+	}
+	srsPath := filepath.Join(inlineDir, "geosite-inline.srs")
+	sourcePath := filepath.Join(inlineDir, "geosite-inline.json")
+	if err := os.WriteFile(sourcePath, []byte(`{"version":5,"rules":[{"domain_suffix":["example.com"]}]}`), 0644); err != nil {
+		t.Fatalf("seed inline source: %v", err)
+	}
+	if err := os.WriteFile(srsPath, []byte("compiled-v0"), 0644); err != nil {
+		t.Fatalf("seed inline srs: %v", err)
+	}
+
+	compileCalls := 0
+	withFakeRuleSetCompiler(t, func(binary string, args []string) (string, string, error) {
+		compileCalls++
+		writeCompiledOutput(t, args, "compiled-v1")
+		return "", "", nil
+	})
+	svc.deps.Singbox.(*fakeSingbox).binary = "/opt/bin/sing-box"
+
+	legacy := fmt.Sprintf(`{
 		"inbounds": [{
 			"type": "tproxy", "tag": "tproxy-in", "listen": "127.0.0.1",
 			"listen_port": 51271, "network": "udp", "udp_timeout": "5m0s",
@@ -454,15 +484,21 @@ func TestHeal1140SlotMigration_RewritesLegacySlot(t *testing.T) {
 		}],
 		"outbounds": [{"type": "direct", "tag": "direct"}],
 		"route": {
-			"rule_set": [{
-				"tag": "geosite-x", "type": "remote", "format": "binary",
-				"url": "https://example.com/x.srs", "update_interval": "24h",
-				"download_detour": "direct"
-			}],
+			"rule_set": [
+				{
+					"tag": "geosite-x", "type": "remote", "format": "binary",
+					"url": "https://example.com/x.srs", "update_interval": "24h",
+					"download_detour": "direct"
+				},
+				{
+					"tag": "geosite-inline-srs", "type": "local", "format": "binary",
+					"path": %q
+				}
+			],
 			"rules": [{"action": "route", "rule_set": ["geosite-x"], "outbound": "direct"}],
 			"final": "direct"
 		}
-	}`
+	}`, srsPath)
 	if err := os.WriteFile(activePath, []byte(legacy), 0644); err != nil {
 		t.Fatalf("seed active: %v", err)
 	}
@@ -486,10 +522,17 @@ func TestHeal1140SlotMigration_RewritesLegacySlot(t *testing.T) {
 			t.Errorf("migrated slot still has legacy key %q: %s", gone, raw)
 		}
 	}
+	if compileCalls != 1 {
+		t.Fatalf("first (migrating) call must recompile the inline rule set exactly once, got %d", compileCalls)
+	}
 
 	before, err := os.Stat(activePath)
 	if err != nil {
 		t.Fatalf("stat: %v", err)
+	}
+	srsBefore, err := os.Stat(srsPath)
+	if err != nil {
+		t.Fatalf("stat srs: %v", err)
 	}
 	time.Sleep(10 * time.Millisecond)
 
@@ -501,6 +544,40 @@ func TestHeal1140SlotMigration_RewritesLegacySlot(t *testing.T) {
 	}
 	if !after.ModTime().Equal(before.ModTime()) {
 		t.Errorf("second call rewrote already-migrated slot (before=%v after=%v)", before.ModTime(), after.ModTime())
+	}
+	srsAfter, err := os.Stat(srsPath)
+	if err != nil {
+		t.Fatalf("stat srs after: %v", err)
+	}
+	if !srsAfter.ModTime().Equal(srsBefore.ModTime()) {
+		t.Errorf("second call recompiled the inline rule set — R1 regression (before=%v after=%v)", srsBefore.ModTime(), srsAfter.ModTime())
+	}
+	if compileCalls != 1 {
+		t.Errorf("second call forked sing-box rule-set compile again — R1 regression, total calls = %d", compileCalls)
+	}
+}
+
+// A parked slot (no active 20-router.json — router disabled, or a dead
+// engine that never wrote one) must be a pure no-op: no read error logged,
+// nothing written. This also covers the "parked slot with a dead engine"
+// case the byte-read gate handles for free (os.IsNotExist).
+func TestHeal1140SlotMigration_NoopWhenSlotParked(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+	activePath := filepath.Join(dir, "20-router.json")
+	if err := svc.deps.Orch.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if err := svc.deps.Orch.SetEnabledSilent(orchestrator.SlotRouter, false); err != nil {
+		t.Fatalf("park slot: %v", err)
+	}
+	if _, err := os.Stat(activePath); !os.IsNotExist(err) {
+		t.Fatalf("precondition: active file must not exist, stat err = %v", err)
+	}
+
+	svc.heal1140SlotMigration(context.Background())
+
+	if _, err := os.Stat(activePath); !os.IsNotExist(err) {
+		t.Errorf("parked slot must stay absent, got stat err = %v", err)
 	}
 }
 

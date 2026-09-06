@@ -2,9 +2,11 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -932,12 +934,56 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string, 
 // heal1140SlotMigration re-persists the applied router config unchanged, so
 // materializeConfig's byte-for-byte round trip repairs a slot written before
 // the sing-box 1.14 migration (download_detour, gso, endpoint_independent_nat)
-// without needing a version marker: persistConfigDirect no-ops when the
-// materialized bytes already match what is on disk. Best-effort — a load or
-// persist failure here must not abort the rest of the caller's reconcile.
-// Shared by reconcileInstalled (tproxy) and reconcilePolicyTun — both target
-// the same 20-router.json slot.
+// without needing a version marker. Best-effort — a load or persist failure
+// here must not abort the rest of the caller's reconcile. Shared by
+// reconcileInstalled (tproxy) and reconcilePolicyTun — both target the same
+// 20-router.json slot.
+//
+// Steady state is ONE file read and a JSON unmarshal into a two-field shadow
+// struct, not a load+persist: persistSlotDirect's byte-compare guard runs
+// AFTER materializeConfig, and materializeRuleSet has no unchanged-guard of
+// its own — every inline rule set would fork `sing-box rule-set compile` and
+// rename a fresh .json/.srs into config.d/rule-sets/inline/ on EVERY
+// reconcile tick (30s) forever, even though the byte-compare then finds the
+// slot unchanged and skips the write+SIGHUP. Materialization (and the
+// persist that follows it) runs only the first tick after upgrade, while the
+// slot has no route.default_http_client yet — applyHTTPClients sets that
+// field on every materialize, so its presence in the ALREADY MATERIALIZED
+// on-disk bytes is the migration marker. Cannot gate on the config returned
+// by loadAppliedRouterConfig/restoreConfig instead: restoreConfig clears
+// DefaultHTTPClient as part of projecting back to the stored form, so that
+// signal is invisible past the raw bytes.
 func (s *ServiceImpl) heal1140SlotMigration(ctx context.Context) {
+	if s.deps.Orch != nil {
+		activePath, err := s.deps.Orch.ActivePath(orchestrator.SlotRouter)
+		if err != nil {
+			s.appLog.Warn("heal-1140-slot", "", err.Error())
+			return
+		}
+		raw, err := os.ReadFile(activePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// Слот запаркован (или движок мёртв и его ещё не поднимали) —
+				// мигрировать нечего.
+				return
+			}
+			s.appLog.Warn("heal-1140-slot", "", err.Error())
+			return
+		}
+		var shadow struct {
+			Route struct {
+				DefaultHTTPClient string `json:"default_http_client"`
+			} `json:"route"`
+		}
+		if err := json.Unmarshal(raw, &shadow); err != nil {
+			s.appLog.Warn("heal-1140-slot", "", err.Error())
+			return
+		}
+		if shadow.Route.DefaultHTTPClient != "" {
+			// Уже в форме 1.14 — материализация и запись не нужны.
+			return
+		}
+	}
 	cfg, err := s.loadAppliedRouterConfig()
 	if err != nil {
 		s.appLog.Warn("heal-1140-slot", "", err.Error())
