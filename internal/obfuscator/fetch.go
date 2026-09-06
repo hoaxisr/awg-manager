@@ -2,7 +2,6 @@ package obfuscator
 
 import (
 	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/tls"
@@ -105,23 +104,15 @@ func extractClientConf(r io.Reader) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("пакет не gzip: %w", err)
 	}
-	// Разжимаем целиком (в пределах лимита) до разбора tar: иначе gzip-бомба
-	// с мусорным содержимым уронит tar раньше, чем сработает cappedReader.
-	data, err := io.ReadAll(&cappedReader{r: gz, left: MaxPackageBytes})
-	if err != nil {
-		if errors.Is(err, errPackageTooBig) {
-			return "", err
-		}
-		return "", fmt.Errorf("пакет: %w", err)
-	}
-	tr := tar.NewReader(bytes.NewReader(data))
+	cr := &cappedReader{r: gz, left: MaxPackageBytes}
+	tr := tar.NewReader(cr)
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			return "", errors.New("в пакете нет клиентского .conf")
 		}
 		if err != nil {
-			return "", fmt.Errorf("пакет: %w", err)
+			return "", tarReadErr(cr, err)
 		}
 		base := path.Base(h.Name)
 		if h.Typeflag != tar.TypeReg || !strings.HasSuffix(base, ".conf") || strings.Contains(base, "obfuscator") {
@@ -129,8 +120,23 @@ func extractClientConf(r io.Reader) (string, error) {
 		}
 		b, err := io.ReadAll(io.LimitReader(tr, 64<<10))
 		if err != nil {
-			return "", err
+			return "", tarReadErr(cr, err)
 		}
 		return string(b), nil
 	}
+}
+
+// tarReadErr: ошибка при разборе tar/gzip через cr. Мусорные или битые
+// данные могут уронить tar (invalid header и т.п.) раньше, чем cappedReader
+// исчерпает лимит на текущем блоке — докачиваем остаток через cr, чтобы
+// понять, было ли дело в размере разжатого потока, и в этом случае вернуть
+// именно ошибку «слишком большой», а не непонятную ошибку tar.
+func tarReadErr(cr *cappedReader, err error) error {
+	if errors.Is(err, errPackageTooBig) {
+		return err
+	}
+	if _, derr := io.Copy(io.Discard, cr); errors.Is(derr, errPackageTooBig) {
+		return errPackageTooBig
+	}
+	return fmt.Errorf("пакет: %w", err)
 }
