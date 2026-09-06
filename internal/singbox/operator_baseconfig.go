@@ -14,6 +14,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/configmerge"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -157,7 +158,10 @@ func reconcileConfigSteps(dir, configPath, desiredLogLevel, desiredBootstrapDNS 
 // перекрывается любым слотом выше по first-file-wins.
 func derivedDefaultsSlot() map[string]any {
 	return map[string]any{
-		"dns": map[string]any{"strategy": baseDefaultDNSStrategy},
+		// optimistic (sing-box 1.14): протухший ответ отдаётся сразу, обновление
+		// в фоне (окно 3 суток по умолчанию). Здесь, а не в базе, чтобы
+		// 90-user.json мог перебить по first-file-wins.
+		"dns": map[string]any{"strategy": baseDefaultDNSStrategy, "optimistic": true},
 		// Резолвер — ОБЪЕКТОМ, а не строкой, хотя оба варианта sing-box
 		// принимает: режимные слоты пишут его как {"server": …}, а слить
 		// объект со строкой merge не умеет — «cannot merge json object into
@@ -918,15 +922,26 @@ func reconcileCacheFile(base map[string]any, location string) (want string, chan
 		exp = map[string]any{}
 		base["experimental"] = exp
 	}
+	storeDNS := router.StoreDNSForCachePath(want)
 	cf, _ := exp["cache_file"].(map[string]any)
 	if cf == nil {
-		exp["cache_file"] = map[string]any{"enabled": true, "path": want}
+		cf = map[string]any{"enabled": true, "path": want}
+		if storeDNS {
+			cf["store_dns"] = true
+		}
+		exp["cache_file"] = cf
 		return want, true
 	}
-	if cf["path"] == want {
+	_, hasStoreDNS := cf["store_dns"]
+	if cf["path"] == want && hasStoreDNS == storeDNS {
 		return want, false
 	}
 	cf["path"] = want
+	if storeDNS {
+		cf["store_dns"] = true
+	} else {
+		delete(cf, "store_dns")
+	}
 	return want, true
 }
 
@@ -944,6 +959,11 @@ func finishCacheFileChange(log *slog.Logger, basePath, was, want string) {
 		"newCachePath", want,
 	)
 	if was != defaultCacheDBPath && was != tempCacheDBPath {
+		return
+	}
+	if was == want {
+		// путь не менялся — файл живой, сносить нечего (changed мог стать
+		// true из-за store_dns, а не переезда).
 		return
 	}
 	switch err := os.Remove(was); {

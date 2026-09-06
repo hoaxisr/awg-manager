@@ -105,6 +105,7 @@ func ensureFakeIPOverlay(cfg *RouterConfig, spec FakeIPTunSpec) {
 	cfg.Experimental = &Experimental{CacheFile: &CacheFile{
 		Enabled:     true,
 		StoreFakeIP: true,
+		StoreDNS:    StoreDNSForCachePath(spec.CachePath),
 		Path:        spec.CachePath,
 	}}
 

@@ -89,6 +89,20 @@ func TestEnsureFakeIPOverlay_OmitV6(t *testing.T) {
 	}
 }
 
+// store_dns (sing-box 1.14) на fakeip-слоте следует тому же правилу, что и
+// база: только для cache.db в tmp (owner decision 2026-09-06).
+func TestEnsureFakeIPOverlay_StoreDNSFollowsCachePath(t *testing.T) {
+	for path, want := range map[string]bool{"/tmp/singbox-cache.db": true, "/opt/etc/awg-manager/singbox/cache.db": false} {
+		cfg := &RouterConfig{}
+		spec := FakeIPTunSpec{Iface: "opkgtun1", TunAddr4: "172.18.1.1/30", MTU: 1500,
+			Inet4Range: "198.18.0.0/15", CachePath: path, RealServer: "1.1.1.1"}
+		ensureFakeIPOverlay(cfg, spec)
+		if cfg.Experimental.CacheFile.StoreDNS != want {
+			t.Errorf("%s: store_dns = %v, want %v", path, cfg.Experimental.CacheFile.StoreDNS, want)
+		}
+	}
+}
+
 // --- C(a): outbound.domain_resolver guard ---
 
 func TestApplyOutboundDomainResolver_HostnameGetsResolver(t *testing.T) {

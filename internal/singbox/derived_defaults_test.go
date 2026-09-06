@@ -55,6 +55,9 @@ func TestMergedScalars_DefaultsApplyWithoutOwner(t *testing.T) {
 	if dns["strategy"] != baseDefaultDNSStrategy {
 		t.Errorf("dns.strategy = %v, want %s из 99-defaults", dns["strategy"], baseDefaultDNSStrategy)
 	}
+	if dns["optimistic"] != true {
+		t.Errorf("dns.optimistic = %v, want true из 99-defaults", dns["optimistic"])
+	}
 	route, _ := m["route"].(map[string]any)
 	// Наш configmerge сохраняет объектную форму как есть; sing-box сворачивает
 	// её в строку — обе означают один сервер (стенд-проверено).

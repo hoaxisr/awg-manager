@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -94,7 +95,10 @@ func TestCacheDBPathFor_AndReconcile(t *testing.T) {
 				t.Errorf("cacheDBPathFor = %q, want %q", got, c.want)
 			}
 			base := baseWithCachePath(c.has, c.path)
-			wantChanged := !c.has || c.path != c.want
+			// baseWithCachePath никогда не ставит store_dns, поэтому даже при
+			// неизменном пути под /tmp реконсиляция обязана его добавить
+			// (store_dns, sing-box 1.14) — это тоже правка base.
+			wantChanged := !c.has || c.path != c.want || router.StoreDNSForCachePath(c.want)
 			want, changed := reconcileCacheFile(base, c.location)
 			if changed != wantChanged || want != c.want {
 				t.Errorf("reconcile = (%q, %v), want (%q, %v)", want, changed, c.want, wantChanged)
@@ -148,6 +152,31 @@ func TestPatchBaseCacheFilePath_WritesAndLogs(t *testing.T) {
 	patchBaseCacheFilePath(p, storage.CacheFileLocationTmp, log)
 	if !strings.Contains(buf.String(), "oldCachePath=<none>") {
 		t.Errorf("отсутствующий блок не назван в логе: %s", buf.String())
+	}
+}
+
+// Апгрейд существующей tmp-установки: путь уже верный, добавляется только
+// store_dns — changed=true по этой причине, но живой cache.db на месте
+// сносить нельзя (регрессия: finishCacheFileChange сносил его без проверки
+// was == want).
+func TestPatchBaseCacheFilePath_StoreDNSAddedKeepsLiveFile(t *testing.T) {
+	dir := t.TempDir()
+	_, tmpDB := redirectCacheDBPaths(t, dir)
+	if err := os.WriteFile(tmpDB, []byte("live"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "00-base.json")
+	writeFixtureJSON(t, p, baseWithCachePath(true, tmpDB))
+
+	patchBaseCacheFilePath(p, storage.CacheFileLocationTmp, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+
+	base := readBaseFixture(t, p)
+	cf := base["experimental"].(map[string]any)["cache_file"].(map[string]any)
+	if cf["store_dns"] != true {
+		t.Errorf("store_dns = %v, want true", cf["store_dns"])
+	}
+	if _, err := os.Stat(tmpDB); err != nil {
+		t.Errorf("живой cache.db снесён при неизменном пути: %v", err)
 	}
 }
 
@@ -315,5 +344,26 @@ func TestNewOperator_CacheFileLocationTmp(t *testing.T) {
 
 	if got := cachePathOf(t, readBaseFixture(t, basePath)); got != tempCacheDBPath {
 		t.Errorf("path = %q, want %q", got, tempCacheDBPath)
+	}
+}
+
+// store_dns (sing-box 1.14) — DNS-кэш в cache.db. Только при cache.db в tmp:
+// на флеше это лишний износ ради секунд после перезапуска (решение владельца
+// 2026-09-06).
+func TestReconcileCacheFile_StoreDNSOnlyInTmp(t *testing.T) {
+	base := map[string]any{}
+	reconcileCacheFile(base, storage.CacheFileLocationTmp)
+	cf := base["experimental"].(map[string]any)["cache_file"].(map[string]any)
+	if cf["store_dns"] != true {
+		t.Errorf("tmp: store_dns = %v, want true", cf["store_dns"])
+	}
+	if _, changed := reconcileCacheFile(base, storage.CacheFileLocationTmp); changed {
+		t.Error("second reconcile must be a no-op")
+	}
+	if _, changed := reconcileCacheFile(base, storage.CacheFileLocationFlash); !changed {
+		t.Error("switch to flash must report change")
+	}
+	if _, has := cf["store_dns"]; has {
+		t.Errorf("flash: store_dns must be absent, got %v", cf["store_dns"])
 	}
 }
