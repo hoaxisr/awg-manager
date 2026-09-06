@@ -26,7 +26,12 @@ type Settings struct {
 	// (/opt/etc/shadow) verified locally, without the NDMS /auth call
 	// that generates router-side notifications. When the local check
 	// fails for any reason, login falls back to the Keenetic path.
-	EntwareAuthEnabled   bool              `json:"entwareAuthEnabled"`
+	EntwareAuthEnabled bool `json:"entwareAuthEnabled"`
+	// McpEnabled turns on the Model Context Protocol endpoint at /mcp.
+	// Off by default; /mcp answers 404 while disabled. Access requires an
+	// MCP key from McpKeyStore regardless of AuthEnabled. Keys live in
+	// mcp_keys.json, not here, so hashes never leave via /settings/get.
+	McpEnabled           bool              `json:"mcpEnabled"`
 	Server               ServerSettings    `json:"server"`
 	PingCheck            PingCheckSettings `json:"pingCheck"`
 	Logging              LoggingSettings   `json:"logging"`
@@ -521,6 +526,25 @@ type TunnelPingCheck struct {
 	Timeout       int    `json:"timeout"`        // check timeout seconds (nativewg, default 5)
 	Port          int    `json:"port,omitempty"` // port for connect/tls modes
 	Restart       bool   `json:"restart"`        // restart tunnel on dead (nativewg)
+}
+
+// DefaultTunnelPingCheck returns the PingCheck record every freshly created
+// or imported tunnel starts with: monitoring is opt-in (Enabled=false), but
+// the record exists so the UI and the MCP tools see the same shape for a
+// tunnel regardless of how it was added. Single source for the web create
+// path, the web import path and the MCP import path.
+func DefaultTunnelPingCheck() *TunnelPingCheck {
+	return &TunnelPingCheck{
+		Enabled:       false,
+		Method:        "icmp",
+		Target:        "8.8.8.8",
+		Interval:      45,
+		DeadInterval:  120,
+		FailThreshold: 3,
+		MinSuccess:    1,
+		Timeout:       5,
+		Restart:       true,
+	}
 }
 
 // AWGObfuscation groups all AmneziaWG obfuscation parameters into a

@@ -214,6 +214,7 @@ func newGuardServer(t *testing.T) (*Server, *auth.SessionStore) {
 		instanceID:                 "test",
 		settings:                   settings,
 		tunnels:                    storage.NewAWGTunnelStore(filepath.Join(dir, "tunnels")),
+		mcpKeys:                    storage.NewMcpKeyStore(dir),
 		sessions:                   sessions,
 		authMiddleware:             auth.NewMiddleware(sessions, testAuthChecker{}, nil),
 		bus:                        events.NewBus(),

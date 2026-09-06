@@ -20,6 +20,8 @@ import type {
 	IpsetUsage,
 	LoginResult,
 	LogsResponse,
+	McpKey,
+	McpKeyCreated,
 	MonitoringSnapshot,
 	RouterInterface,
 	ServerListenChangeResult,
@@ -297,6 +299,26 @@ export class SystemClient extends TunnelsClient {
 
 	async regenerateApiKey(): Promise<Settings> {
 		return this.request('/settings/regenerate-api-key', { method: 'POST' });
+	}
+
+	// #endregion
+
+
+	// ─────────────────────────────────────────────
+	// #region MCP keys
+	// ─────────────────────────────────────────────
+
+	async getMcpKeys(): Promise<McpKey[]> {
+		const data = await this.request<{ keys: McpKey[] }>('/mcp/keys');
+		return data.keys ?? [];
+	}
+
+	async createMcpKey(name: string): Promise<McpKeyCreated> {
+		return this.request('/mcp/keys/create', { method: 'POST', body: JSON.stringify({ name }) });
+	}
+
+	async revokeMcpKey(id: string): Promise<void> {
+		await this.request('/mcp/keys/revoke', { method: 'POST', body: JSON.stringify({ id }) });
 	}
 
 	// #endregion

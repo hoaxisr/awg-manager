@@ -2277,6 +2277,82 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.McpKeyCreateRequest:
+    properties:
+      name:
+        example: laptop
+        type: string
+    type: object
+  api.McpKeyCreatedData:
+    properties:
+      createdAt:
+        type: string
+      id:
+        example: 3f9c1a2b4d5e6f70
+        type: string
+      key:
+        example: awgm_Q3VyaW91cz8gVGhpcyBpcyBqdXN0IGFuIGV4YW1wbGU
+        type: string
+      name:
+        example: laptop
+        type: string
+    type: object
+  api.McpKeyCreatedResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.McpKeyCreatedData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.McpKeyDTO:
+    properties:
+      createdAt:
+        type: string
+      id:
+        example: 3f9c1a2b4d5e6f70
+        type: string
+      lastUsedAt:
+        type: string
+      name:
+        example: laptop
+        type: string
+    type: object
+  api.McpKeyRevokeRequest:
+    properties:
+      id:
+        example: 3f9c1a2b4d5e6f70
+        type: string
+    type: object
+  api.McpKeyRevokedData:
+    properties:
+      revoked:
+        example: true
+        type: boolean
+    type: object
+  api.McpKeyRevokedResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.McpKeyRevokedData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.McpKeysListData:
+    properties:
+      keys:
+        items:
+          $ref: '#/definitions/api.McpKeyDTO'
+        type: array
+    type: object
+  api.McpKeysListResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.McpKeysListData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.MonitoringCellDTO:
     properties:
       activeForRestart:
@@ -3552,6 +3628,12 @@ definitions:
         $ref: '#/definitions/api.GeoFileSettingsDTO'
       logging:
         $ref: '#/definitions/api.LoggingSettingsDTO'
+      mcpEnabled:
+        description: |-
+          McpEnabled turns on the Model Context Protocol endpoint at /mcp.
+          Off by default; keys are managed via /mcp/keys*.
+        example: false
+        type: boolean
       monitoringExcludedTunnels:
         example:
         - tn-1
@@ -11002,6 +11084,103 @@ paths:
       summary: Restore drifted managed servers
       tags:
       - managed
+  /mcp/keys:
+    get:
+      description: Names and timestamps of the bearer keys accepted by the /mcp endpoint.
+        Hashes and plaintexts are never returned.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.McpKeysListResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List MCP keys
+      tags:
+      - mcp
+  /mcp/keys/create:
+    post:
+      consumes:
+      - application/json
+      description: Generates a new `awgm_…` bearer key for the /mcp endpoint. The
+        plaintext is returned only in this response; store it in the MCP client configuration.
+      parameters:
+      - description: Key name (1..64 chars)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.McpKeyCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.McpKeyCreatedResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Create MCP key
+      tags:
+      - mcp
+  /mcp/keys/revoke:
+    post:
+      consumes:
+      - application/json
+      description: Deletes a key; clients using it are rejected on their next request.
+      parameters:
+      - description: Key id
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.McpKeyRevokeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.McpKeyRevokedResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Revoke MCP key
+      tags:
+      - mcp
   /monitoring/matrix:
     get:
       description: Returns the latest cross-tunnel × cross-target latency/loss matrix

@@ -1,8 +1,6 @@
 package api
 
-import (
-	"regexp"
-)
+import "github.com/hoaxisr/awg-manager/internal/tunnelid"
 
 // TunnelPingCheckStatus is the ping-check status embedded in TunnelListItem.
 type TunnelPingCheckStatus struct {
@@ -199,11 +197,9 @@ type TunnelReferencedResponse struct {
 	Details TunnelReferencedDetails `json:"details"`
 }
 
-// validTunnelID matches safe tunnel identifiers: starts with a letter,
-// followed by up to 31 alphanumeric characters, hyphens, or underscores.
-var validTunnelID = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,31}$`)
-
-// isValidTunnelID reports whether id is a safe tunnel identifier.
+// isValidTunnelID reports whether id is a safe tunnel identifier. The
+// rule itself lives in internal/tunnelid so the MCP layer and the store
+// enforce the same one.
 func isValidTunnelID(id string) bool {
-	return validTunnelID.MatchString(id)
+	return tunnelid.Valid(id)
 }

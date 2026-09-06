@@ -273,6 +273,11 @@ export interface Settings {
 	 * UI treats absence as false.
 	 */
 	entwareAuthEnabled?: boolean;
+	/**
+	 * MCP-эндпоинт /mcp включён. По умолчанию выключен; ключи доступа
+	 * управляются через /mcp/keys*. Optional — legacy backends omit it.
+	 */
+	mcpEnabled?: boolean;
 	apiKey?: string;
 	server: ServerSettings;
 	pingCheck: PingCheckSettings;
@@ -410,6 +415,19 @@ export interface DnsProxy {
 
 export interface DnsProxyInfo {
 	proxies: DnsProxy[];
+}
+
+/** Ключ доступа к MCP-эндпоинту (без секрета). */
+export interface McpKey {
+	id: string;
+	name: string;
+	createdAt: string;
+	lastUsedAt?: string;
+}
+
+/** Ответ создания ключа: `key` — plaintext, показывается один раз. */
+export interface McpKeyCreated extends McpKey {
+	key: string;
 }
 
 // #endregion

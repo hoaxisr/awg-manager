@@ -1,8 +1,44 @@
-// Launches the full mock stack: Prism (8080) + mock-proxy (8081) + Vite dev (5173).
+// Launches the full mock stack: Prism (8080) + mock-proxy (8081) + Vite dev (5173)
+// + an optional mcp-dev server (8090) so an MCP client can connect to the mock data.
 // Vite is configured to proxy /api/* → http://127.0.0.1:8081 with prefix strip.
-// Ctrl+C terminates all three children.
+// Ctrl+C terminates all children.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+function hasGo() {
+	return spawnSync('go', ['version'], { stdio: 'ignore' }).status === 0;
+}
+
+let mcpTempDir = null;
+
+// `go run` does NOT forward SIGTERM to the program it compiled: killing it
+// leaves mcp-dev holding :8090, and the next start's port conflict then
+// takes the whole stack down. Build once, synchronously, and run the binary
+// directly — clean signals and a faster restart.
+function buildMcpDev() {
+	mcpTempDir = mkdtempSync(join(tmpdir(), 'awgm-mcp-dev-'));
+	const bin = join(mcpTempDir, 'mcp-dev');
+	const res = spawnSync('go', ['build', '-o', bin, '../cmd/mcp-dev'], { stdio: ['ignore', 'inherit', 'inherit'] });
+	if (res.status !== 0) {
+		console.log('[mcp-dev] skipped (go build failed)');
+		cleanupMcpDev();
+		return null;
+	}
+	return bin;
+}
+
+function cleanupMcpDev() {
+	if (!mcpTempDir) return;
+	try {
+		rmSync(mcpTempDir, { recursive: true, force: true });
+	} catch {
+		// best effort: a leftover temp dir is harmless
+	}
+	mcpTempDir = null;
+}
 
 const children = [];
 
@@ -23,7 +59,10 @@ function shutdown() {
 	for (const { child } of children) {
 		if (!child.killed) child.kill('SIGTERM');
 	}
-	setTimeout(() => process.exit(0), 200);
+	setTimeout(() => {
+		cleanupMcpDev();
+		process.exit(0);
+	}, 200);
 }
 
 process.on('SIGINT', shutdown);
@@ -42,5 +81,19 @@ setTimeout(() => {
 			VITE_API_TARGET: 'http://127.0.0.1:8081',
 			VITE_API_STRIP_PREFIX: '1',
 		});
+
+		// MCP dev server (Go) so Claude Code / Cursor can connect to the
+		// mock stack: http://127.0.0.1:8090/mcp. Skipped without a Go
+		// toolchain or with MOCK_MCP=0.
+		if (process.env.MOCK_MCP !== '0' && hasGo()) {
+			const bin = buildMcpDev();
+			if (bin) {
+				start('mcp-dev', bin, ['--listen', '127.0.0.1:8090'], {
+					MCP_DEV_KEY: process.env.MOCK_MCP_KEY ?? '',
+				});
+			}
+		} else {
+			console.log('[mcp-dev] skipped (MOCK_MCP=0 or `go` not found on PATH)');
+		}
 	}, 800);
 }, 1500);

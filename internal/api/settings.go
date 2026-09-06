@@ -105,7 +105,10 @@ type SettingsData struct {
 	SessionTtlHours int `json:"sessionTtlHours" example:"24" minimum:"1" maximum:"720"`
 	// EntwareAuthEnabled allows login with Entware system credentials
 	// (/opt/etc/shadow) verified locally, without the NDMS /auth call.
-	EntwareAuthEnabled        bool                 `json:"entwareAuthEnabled" example:"false"`
+	EntwareAuthEnabled bool `json:"entwareAuthEnabled" example:"false"`
+	// McpEnabled turns on the Model Context Protocol endpoint at /mcp.
+	// Off by default; keys are managed via /mcp/keys*.
+	McpEnabled                bool                 `json:"mcpEnabled" example:"false"`
 	Server                    ServerSettingsDTO    `json:"server"`
 	PingCheck                 PingCheckSettingsDTO `json:"pingCheck"`
 	Logging                   LoggingSettingsDTO   `json:"logging"`
@@ -497,6 +500,13 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			h.log.Info("auth", "", "Entware authentication enabled")
 		} else {
 			h.log.Info("auth", "", "Entware authentication disabled")
+		}
+	}
+	if oldSettings.McpEnabled != want.McpEnabled {
+		if want.McpEnabled {
+			h.log.Warn("mcp", "", "MCP endpoint enabled")
+		} else {
+			h.log.Info("mcp", "", "MCP endpoint disabled")
 		}
 	}
 	if oldSettings.SessionTtlHours != want.SessionTtlHours {

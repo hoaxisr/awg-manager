@@ -131,7 +131,12 @@ type Server struct {
 	singboxConfigPreviewFn     func() (string, error)
 	dnsCheckService            *dnscheck.Service
 	authMiddleware             *auth.Middleware
-	httpServer                 *http.Server
+	mcpKeys                    *storage.McpKeyStore
+	// mcpCalls is cancelled by Shutdown so in-flight MCP tool calls stop
+	// instead of holding httpServer.Shutdown for their full grace period.
+	mcpCalls       context.Context
+	mcpCallsCancel context.CancelFunc
+	httpServer     *http.Server
 
 	// listen владеет всеми HTTP-листенерами (по адресам из ListenSpec +
 	// безусловный loopback) и confirm-окном живой смены адреса. См. listen.go.
@@ -214,6 +219,10 @@ type Deps struct {
 	MonitoringService    *monitoring.Service
 	SingboxSubMembers    func() []diagnostics.SingboxSubMember
 	SingboxConfigPreview func() (string, error)
+
+	// McpKeys holds the MCP API keys. Nil disables the /mcp endpoint and
+	// its key-management routes entirely (they are never registered).
+	McpKeys *storage.McpKeyStore
 }
 
 // authLoggerAdapter narrows ScopedLogger to the AuthLogger interface
@@ -275,6 +284,7 @@ func New(cfg Config, deps Deps) *Server {
 		singboxSubMembersFn:    deps.SingboxSubMembers,
 		singboxConfigPreviewFn: deps.SingboxConfigPreview,
 		authMiddleware:         auth.NewMiddleware(deps.Sessions, deps.Settings, &authLoggerAdapter{log: appLog}),
+		mcpKeys:                deps.McpKeys,
 		instanceID:             id,
 	}
 }
@@ -589,6 +599,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.exposureGuardStop = nil
 	}
 
+	if s.mcpCallsCancel != nil {
+		s.mcpCallsCancel()
+	}
+
 	if s.pprofServer != nil {
 		shutdownCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		_ = s.pprofServer.Shutdown(shutdownCtx)
@@ -658,6 +672,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.wireCrossHandlers(mux, h)
 	s.registerSingboxRoutes(mux, h)
 	s.registerProxyRtRoutes(mux, h)
+	s.registerMcpRoutes(mux, h)
 	s.registerStaticRoutes(mux, h)
 }
 
