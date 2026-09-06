@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
@@ -59,6 +62,22 @@ type ImportConfRequest struct {
 	Backend          string `json:"backend"` // "nativewg" | "kernel" (default: "kernel")
 	FreeTurnClientID string `json:"freeTurnClientId,omitempty"`
 	WdttClientID     string `json:"wdttClientId,omitempty"`
+	// InstallURL — ссылка установки Phobos (…/api/install/<token>): роутер сам
+	// качает package.tar.gz и берёт из него .conf. TLS панели не проверяется.
+	InstallURL string `json:"installUrl,omitempty"`
+	// Obfuscator — параметры релея руками (ClusterM). Несовместимо с [instance] в Content.
+	Obfuscator *ObfuscatorImportRequest `json:"obfuscator,omitempty"`
+}
+
+// ObfuscatorImportRequest — пользовательские поля релея при ручном вводе.
+type ObfuscatorImportRequest struct {
+	Flavor         string `json:"flavor"` // "phobos" | "clusterm" (пусто = clusterm)
+	Target         string `json:"target"`
+	Key            string `json:"key"`
+	Masking        string `json:"masking"`
+	MaxDummy       int    `json:"maxDummy"`
+	IdleTimeout    int    `json:"idleTimeout,omitempty"`
+	ObfuscateBytes int    `json:"obfuscateBytes,omitempty"`
 }
 
 // ImportConf imports a WireGuard/AmneziaWG config file.
@@ -79,8 +98,14 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Content == "" {
+	if req.Content == "" && req.InstallURL == "" {
 		response.Error(w, "missing config content", "MISSING_CONTENT")
+		return
+	}
+
+	obf, obfWarnings, err := h.resolveObfuscatorImport(r.Context(), &req)
+	if err != nil {
+		response.Error(w, err.Error(), obfImportErrCode(err))
 		return
 	}
 
@@ -113,6 +138,7 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 	tunnel, err := h.svc.Import(r.Context(), req.Content, req.Name, req.Backend, service.ImportLink{
 		WdttClientID:     req.WdttClientID,
 		FreeTurnClientID: req.FreeTurnClientID,
+		Obfuscator:       obf,
 	})
 	if err != nil {
 		h.log.Warn("import", req.Name, "Failed to import tunnel: "+err.Error())
@@ -154,10 +180,81 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "IMPORT_FAILED")
 		return
 	}
-	if warnings := h.svc.CheckAddressConflicts(r.Context(), tunnel.ID); len(warnings) > 0 {
+	if warnings := append(obfWarnings, h.svc.CheckAddressConflicts(r.Context(), tunnel.ID)...); len(warnings) > 0 {
 		resp["warnings"] = warnings
 	}
 	response.Success(w, resp)
+}
+
+// obfImportError — отказ разбора параметров релея с кодом для фронта.
+type obfImportError struct{ code, msg string }
+
+func (e *obfImportError) Error() string { return e.msg }
+
+func obfImportErrCode(err error) string {
+	var oe *obfImportError
+	if errors.As(err, &oe) {
+		return oe.code
+	}
+	return "IMPORT_FAILED"
+}
+
+// resolveObfuscatorImport приводит запрос к (Content без обёрток, параметры релея):
+// install-ссылка → phobos:// → `= none` → [instance] (phobos) | ручные поля (clusterm).
+// Саму секцию [instance] из контента срезает Import — здесь она только читается.
+func (h *ImportHandler) resolveObfuscatorImport(ctx context.Context, req *ImportConfRequest) (*storage.Obfuscator, []string, error) {
+	if req.InstallURL != "" {
+		conf, err := obfuscator.FetchPhobosConf(ctx, req.InstallURL)
+		if err != nil {
+			return nil, nil, &obfImportError{"INSTALL_LINK_FAILED", err.Error()}
+		}
+		req.Content = conf
+	}
+	if obfuscator.IsPhobosLink(req.Content) {
+		conf, name, err := obfuscator.DecodePhobosLink(req.Content)
+		if err != nil {
+			return nil, nil, &obfImportError{"PHOBOS_LINK_INVALID", err.Error()}
+		}
+		req.Content = conf
+		if req.Name == "" {
+			req.Name = name
+		}
+	}
+	// `= none` дописывает только производитель phobos://-ссылки; обычный .conf
+	// с панели этого не содержит. Сервис нормализацию не делает (Task 8).
+	req.Content = obfuscator.NormalizeNoneValues(req.Content)
+	inst, unknown, present, err := obfuscator.ParseInstance(req.Content)
+	if err != nil {
+		return nil, nil, &obfImportError{"OBFUSCATOR_INVALID", err.Error()}
+	}
+	var o *storage.Obfuscator
+	switch {
+	case present && req.Obfuscator != nil:
+		return nil, nil, &obfImportError{"OBFUSCATOR_CONFLICT", "конфиг уже содержит [instance] — это конфиг Phobos, импортируйте его во вкладке Phobos"}
+	case present:
+		o = inst
+		if len(unknown) > 0 {
+			h.log.Warn("import", req.Name, "[instance]: неизвестные ключи пропущены: "+strings.Join(unknown, ", "))
+		}
+	case req.Obfuscator != nil:
+		m := req.Obfuscator
+		flavor := m.Flavor
+		if flavor == "" {
+			flavor = storage.ObfuscatorFlavorClusterM
+		}
+		o = &storage.Obfuscator{Flavor: flavor, Target: m.Target, Key: m.Key, Masking: strings.ToUpper(m.Masking),
+			MaxDummy: m.MaxDummy, IdleTimeout: m.IdleTimeout, ObfuscateBytes: m.ObfuscateBytes}
+	default:
+		return nil, nil, nil
+	}
+	if err := obfuscator.Validate(o); err != nil {
+		return nil, nil, &obfImportError{"OBFUSCATOR_INVALID", err.Error()}
+	}
+	var warnings []string
+	if w := obfuscator.DetectForeign().Warning(); w != "" {
+		warnings = append(warnings, w)
+	}
+	return o, warnings, nil
 }
 
 func findLinkedTunnelID(store *storage.AWGTunnelStore, freeTurnClientID, wdttClientID string) string {

@@ -21,10 +21,14 @@ type importStubSvc struct {
 	// link — связь, с которой хендлер позвал Import: она обязана уехать в
 	// СОЗДАНИЕ записи, а не дописываться после (PF21).
 	link service.ImportLink
+	// content/name — то, что хендлер отдал сервису: по ним видно, каким
+	// конфиг доехал до разбора (декодированная ссылка, снятые `= none`).
+	content string
+	name    string
 }
 
-func (s *importStubSvc) Import(_ context.Context, _, _, _ string, link service.ImportLink) (*service.TunnelWithStatus, error) {
-	s.link = link
+func (s *importStubSvc) Import(_ context.Context, content, name, _ string, link service.ImportLink) (*service.TunnelWithStatus, error) {
+	s.link, s.content, s.name = link, content, name
 	return s.imported, nil
 }
 

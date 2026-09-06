@@ -1848,8 +1848,18 @@ definitions:
         type: string
       freeTurnClientId:
         type: string
+      installUrl:
+        description: |-
+          InstallURL — ссылка установки Phobos (…/api/install/<token>): роутер сам
+          качает package.tar.gz и берёт из него .conf. TLS панели не проверяется.
+        type: string
       name:
         type: string
+      obfuscator:
+        allOf:
+        - $ref: '#/definitions/api.ObfuscatorImportRequest'
+        description: Obfuscator — параметры релея руками (ClusterM). Несовместимо
+          с [instance] в Content.
       wdttClientId:
         type: string
     type: object
@@ -2482,6 +2492,24 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.ObfuscatorImportRequest:
+    properties:
+      flavor:
+        description: '"phobos" | "clusterm" (пусто = clusterm)'
+        type: string
+      idleTimeout:
+        type: integer
+      key:
+        type: string
+      masking:
+        type: string
+      maxDummy:
+        type: integer
+      obfuscateBytes:
+        type: integer
+      target:
+        type: string
     type: object
   api.OkData:
     properties:
