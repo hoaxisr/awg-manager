@@ -563,6 +563,8 @@ export interface SingboxRouterDNSRule {
 export interface SingboxRouterDNSGlobals {
 	final: string;
 	strategy: SingboxRouterDNSStrategy;
+	// Таймаут DNS-запроса (Go duration, sing-box 1.14). '' = 10s движка.
+	timeout?: string;
 }
 
 /** Режим DNS-пресета: '' — выключен. */

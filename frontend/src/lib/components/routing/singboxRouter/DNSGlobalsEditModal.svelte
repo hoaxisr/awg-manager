@@ -7,11 +7,16 @@
 		servers: SingboxRouterDNSServer[];
 		final: string;
 		strategy: SingboxRouterDNSStrategy;
+		timeout?: string;
 		onClose: () => void;
-		onSave: (globals: { final: string; strategy: SingboxRouterDNSStrategy }) => Promise<void> | void;
+		onSave: (globals: {
+			final: string;
+			strategy: SingboxRouterDNSStrategy;
+			timeout: string;
+		}) => Promise<void> | void;
 	}
 
-	let { servers, final, strategy, onClose, onSave }: Props = $props();
+	let { servers, final, strategy, timeout = '', onClose, onSave }: Props = $props();
 
 	const STRATEGY_OPTIONS: DropdownOption<SingboxRouterDNSStrategy>[] = [
 		{ value: '', label: '— default —' },
@@ -19,6 +24,15 @@
 		{ value: 'ipv6_only', label: 'ipv6_only' },
 		{ value: 'prefer_ipv4', label: 'prefer_ipv4' },
 		{ value: 'prefer_ipv6', label: 'prefer_ipv6' },
+	];
+
+	const TIMEOUT_OPTIONS: DropdownOption[] = [
+		{ value: '', label: '— по умолчанию (10 с) —' },
+		{ value: '3s', label: '3 с' },
+		{ value: '5s', label: '5 с' },
+		{ value: '10s', label: '10 с' },
+		{ value: '15s', label: '15 с' },
+		{ value: '30s', label: '30 с' },
 	];
 
 	const finalOptions = $derived<DropdownOption[]>([
@@ -30,18 +44,25 @@
 	let draftFinal = $state(final);
 	// svelte-ignore state_referenced_locally
 	let draftStrategy = $state<SingboxRouterDNSStrategy>(strategy);
+	// svelte-ignore state_referenced_locally
+	let draftTimeout = $state(timeout);
 
 	let initialFinal = $state('');
 	let initialStrategy = $state<SingboxRouterDNSStrategy>('');
+	let initialTimeout = $state('');
 
 	$effect(() => {
 		initialFinal = final;
 		initialStrategy = strategy;
+		initialTimeout = timeout;
 		draftFinal = final;
 		draftStrategy = strategy;
+		draftTimeout = timeout;
 	});
 
-	const isDirty = $derived(draftFinal !== initialFinal || draftStrategy !== initialStrategy);
+	const isDirty = $derived(
+		draftFinal !== initialFinal || draftStrategy !== initialStrategy || draftTimeout !== initialTimeout
+	);
 
 	let busy = $state(false);
 	let error = $state('');
@@ -51,7 +72,7 @@
 		busy = true;
 		error = '';
 		try {
-			await onSave({ final: draftFinal, strategy: draftStrategy });
+			await onSave({ final: draftFinal, strategy: draftStrategy, timeout: draftTimeout });
 		} catch (e) {
 			error = (e as Error).message;
 		} finally {
@@ -87,6 +108,15 @@
 			<div class="lbl">Стратегия</div>
 			<Dropdown bind:value={draftStrategy} options={STRATEGY_OPTIONS} fullWidth />
 			<div class="hint">Для роутера без IPv6 обычно prefer_ipv4 или ipv4_only.</div>
+		</label>
+
+		<label class="field">
+			<div class="lbl">Таймаут запроса</div>
+			<Dropdown bind:value={draftTimeout} options={TIMEOUT_OPTIONS} fullWidth />
+			<div class="hint">
+				Сколько ждать ответ одного DNS-сервера. Короче — быстрее переход к
+				следующему в цепочке, но чаще ложные отказы на медленном канале.
+			</div>
 		</label>
 
 		{#if error}<div class="error">{error}</div>{/if}
