@@ -23,9 +23,12 @@ import (
 // (RecheckAfter() == 0), а кэш running-config живёт до 60 мин
 // (internal/ndms/query/runningconfig.go:13). Сбрасывают его наши записи в NDMS
 // (postMutationChecked → RunningConfig.InvalidateAll, internal/ndms/command/*)
-// и хук ndm `iflayerchanged` с layer=conf (internal/ndms/events/dispatcher.go:197-203),
-// то есть чужая правка тоже способна освежить кэш — но даёт ли ndm это событие
-// на привязку `ip access-group` руками, не проверено.
+// и хук ndm `iflayerchanged` с layer=conf (internal/ndms/events/dispatcher.go:197-203);
+// на ручную привязку `ip access-group` ndm этого события НЕ даёт (стенд 5.01,
+// 2026-09-06): галка живёт до нашей ближайшей записи, рестарта или TTL кэша.
+// Свой InvalidateAll ресурсу не даём — проход периодический, GET на каждый
+// проход не нужен; у встроенного сервера strip идёт по действию пользователя
+// и кэш сбрасывает (internal/managed/service_acl.go).
 // Там, где permit-all — часть замысла (policy_exit при ExposeToPolicies),
 // роль этот интерфейс сюда не включает.
 //

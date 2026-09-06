@@ -53,9 +53,9 @@ func (s *Service) stripForeignPermitAll(ctx context.Context, iface string) error
 }
 
 // SweepForeignPermitAll — бут-проход по всем managed-серверам: снять остаток
-// permit-all `_WEBADMIN_<iface>`, если он есть. Чтение из кэша running-config
-// (прогрет на старте), запись и RCI — только при наличии остатка: на чистом
-// роутере проход ничего не пишет (износ флеша — память проекта).
+// permit-all `_WEBADMIN_<iface>`, если он есть. Один GET running-config на
+// сервер (strip сбрасывает кэш), запись и RCI — только при наличии остатка: на
+// чистом роутере проход ничего не пишет (износ флеша — память проекта).
 func (s *Service) SweepForeignPermitAll(ctx context.Context) {
 	if s.commands == nil || s.commands.Interfaces == nil {
 		return
