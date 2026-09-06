@@ -151,7 +151,7 @@ func TestStartObfuscated_RunnerRouteEndpointUp(t *testing.T) {
 		t.Fatal("runner not started")
 	}
 	posts := n.joined()
-	for _, want := range []string{`"host":"203.0.113.5"`, `"interface":"ISP0"`, `127.0.0.1:39000`, `"PUB"`} {
+	for _, want := range []string{`"host":"203.0.113.5"`, `"interface":"ISP0"`, `"comment":"awgm-obfuscator awg20"`, `127.0.0.1:39000`, `"PUB"`} {
 		if !strings.Contains(posts, want) {
 			t.Errorf("missing %q in RCI posts:\n%s", want, posts)
 		}
@@ -174,6 +174,99 @@ func TestStartObfuscated_HostRouteViaDefaultGateway(t *testing.T) {
 	}
 	if !strings.Contains(n.joined(), `"interface":"ISP0"`) {
 		t.Fatalf("host route must go via default gateway ISP0:\n%s", n.joined())
+	}
+}
+
+// Туннель, ставший обфусцированным на ходу, мог оставить запись endpoint-стража:
+// в режиме viaNDMS она переписала бы loopback-endpoint реальным адресом сервера.
+func TestStartObfuscated_DropsEndpointGuardEntry(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+	st := obfStored()
+	op.guardRegister(st.ID, guardEntry{
+		iface: "nwg3", pubkey: "PUB", endpoint: "203.0.113.5:51824",
+		spec: "vpn.example.com:51824", name: "Wireguard3", viaNDMS: true,
+	})
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	if op.guardHas(st.ID) {
+		t.Fatal("запись стража должна быть снята на обфусцированном пути")
+	}
+}
+
+// WAN совпал с собственным интерфейсом туннеля — маршрут был бы петлёй.
+// Start не валится, но причина обязана доехать до пользователя через Details.
+func TestStartObfuscated_RouteLoopRefused_ShowsInDetails(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+	st := obfStored()
+	st.ISPInterface = "Wireguard3" // == NewNWGNames(st.NWGIndex).NDMSName
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatalf("Start не должен валиться из-за маршрута: %v", err)
+	}
+	if strings.Contains(n.joined(), `"route"`) {
+		t.Fatalf("маршрут через сам туннель ставить нельзя:\n%s", n.joined())
+	}
+
+	info := tunnel.StateInfo{State: tunnel.StateRunning}
+	op.overlayObfuscatorState(st, &info)
+	if info.State != tunnel.StateRunning {
+		t.Fatalf("состояние менять не надо: %+v", info)
+	}
+	if !strings.HasPrefix(info.Details, obfRouteDetailsPrefix) || !strings.Contains(info.Details, "Wireguard3") {
+		t.Fatalf("Details не объясняет отсутствие маршрута: %q", info.Details)
+	}
+}
+
+// Успешный маршрут стирает прежнюю причину: перезапуск после почившего WAN
+// не должен вечно показывать старую жалобу.
+func TestStartObfuscated_SuccessfulRouteClearsDetails(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+	st := obfStored()
+	st.ISPInterface = "Wireguard3"
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+
+	st.ISPInterface = "ISP0"
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	info := tunnel.StateInfo{State: tunnel.StateRunning}
+	op.overlayObfuscatorState(st, &info)
+	if info.Details != "" {
+		t.Fatalf("причина должна быть снята: %q", info.Details)
+	}
+}
+
+// После рестарта демона trackedIP пуст, а в записи лежит прежний IP target'а:
+// маршрут под ним обязан быть снят, иначе останется сиротой навсегда.
+func TestStartObfuscated_RemovesStaleTargetRoute(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+	st := obfStored()
+	st.ResolvedEndpointIP = "198.51.100.1"
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(n.joined(), `"host":"198.51.100.1","no":true`) {
+		t.Fatalf("прежний host-route не снят:\n%s", n.joined())
+	}
+	if !strings.Contains(n.joined(), `"host":"203.0.113.5"`) {
+		t.Fatalf("новый host-route не поставлен:\n%s", n.joined())
 	}
 }
 

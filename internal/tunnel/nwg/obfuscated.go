@@ -14,6 +14,10 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
+// obfRouteDetailsPrefix — начало StateInfo.Details, когда релей жив, а host-route
+// до target поставить не удалось: без него трафик релея уходит в сам туннель.
+const obfRouteDetailsPrefix = "маршрут до сервера не поставлен: "
+
 // ObfuscatorRunner — процесс wg-obfuscator на туннель (internal/obfuscator.Runner).
 type ObfuscatorRunner interface {
 	Start(ctx context.Context, tunnelID string, o *storage.Obfuscator) error
@@ -36,17 +40,22 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 		return fmt.Errorf("обфускатор не подключён")
 	}
 	names := NewNWGNames(stored.NWGIndex)
+	// Реестр endpoint-стража доводим до определённого состояния, как и
+	// соседние start-пути: оставшаяся запись переписала бы loopback-endpoint
+	// реальным адресом сервера.
+	o.guardUnregister(stored.ID)
 	if err := o.obf.Start(ctx, stored.ID, stored.Obfuscator); err != nil {
 		return err
 	}
+	// Адрес прежнего маршрута берём ДО резолва: успешный резолв кладёт новый
+	// IP в trackedIP, и разницу уже было бы не увидеть.
+	prevIP := o.obfRouteIP(stored)
 	targetIP, err := o.resolveTarget(stored)
 	if err != nil {
 		_ = o.obf.Stop(stored.ID)
 		return err
 	}
-	if err := o.addObfHostRoute(ctx, stored, targetIP); err != nil {
-		o.appLog.Warn("start", names.NDMSName, "host-route до "+targetIP+": "+err.Error())
-	}
+	o.moveObfHostRoute(ctx, stored, prevIP, targetIP)
 	if err := o.SyncAddressMTU(ctx, stored); err != nil {
 		o.appLog.Warn("sync-address-mtu", names.NDMSName, "on start: "+err.Error())
 	}
@@ -77,6 +86,7 @@ func (o *OperatorNativeWG) stopObfuscated(ctx context.Context, stored *storage.A
 	if o.obf != nil {
 		_ = o.obf.Stop(stored.ID)
 	}
+	o.clearObfRouteErr(stored.ID)
 	if ip := o.obfRouteIP(stored); ip != "" {
 		if err := o.commands.Routes.RemoveHostRoute(ctx, ip); err != nil {
 			o.appLog.Warn("stop", stored.ID, "снять host-route "+ip+": "+err.Error())
@@ -92,29 +102,74 @@ func (o *OperatorNativeWG) SyncObfuscator(ctx context.Context, stored *storage.A
 	if o.obf == nil || stored.Obfuscator == nil {
 		return "", nil
 	}
+	prevIP := o.obfRouteIP(stored)
 	targetIP, err := o.resolveTarget(stored)
 	if err != nil {
 		return "", err
 	}
-	if prev := stored.ResolvedEndpointIP; prev != "" && prev != targetIP {
-		_ = o.commands.Routes.RemoveHostRoute(ctx, prev)
-	}
-	if err := o.addObfHostRoute(ctx, stored, targetIP); err != nil {
-		o.appLog.Warn("sync-obfuscator", stored.ID, "host-route: "+err.Error())
-	}
+	o.moveObfHostRoute(ctx, stored, prevIP, targetIP)
 	return targetIP, o.obf.Start(ctx, stored.ID, stored.Obfuscator)
 }
 
+// moveObfHostRoute переставляет host-route с прежнего адреса target'а на новый.
+// Отказ маршрута Start не валит (на WAN-up туннель всё равно перезапустится),
+// но остаётся в реестре причин и доезжает до пользователя через Details.
+func (o *OperatorNativeWG) moveObfHostRoute(ctx context.Context, stored *storage.AWGTunnel, prevIP, targetIP string) {
+	if prevIP != "" && prevIP != targetIP {
+		if err := o.commands.Routes.RemoveHostRoute(ctx, prevIP); err != nil {
+			o.appLog.Warn("obfuscator", stored.ID, "снять прежний host-route "+prevIP+": "+err.Error())
+		}
+	}
+	if err := o.addObfHostRoute(ctx, stored, targetIP); err != nil {
+		o.appLog.Warn("obfuscator", stored.ID, "host-route до "+targetIP+": "+err.Error())
+		o.setObfRouteErr(stored.ID, err.Error())
+		return
+	}
+	o.clearObfRouteErr(stored.ID)
+}
+
+func (o *OperatorNativeWG) setObfRouteErr(tunnelID, msg string) {
+	o.obfRouteMu.Lock()
+	defer o.obfRouteMu.Unlock()
+	if o.obfRouteErr == nil {
+		o.obfRouteErr = make(map[string]string)
+	}
+	o.obfRouteErr[tunnelID] = msg
+}
+
+func (o *OperatorNativeWG) clearObfRouteErr(tunnelID string) {
+	o.obfRouteMu.Lock()
+	defer o.obfRouteMu.Unlock()
+	delete(o.obfRouteErr, tunnelID)
+}
+
+func (o *OperatorNativeWG) obfRouteErrFor(tunnelID string) string {
+	o.obfRouteMu.Lock()
+	defer o.obfRouteMu.Unlock()
+	return o.obfRouteErr[tunnelID]
+}
+
 // overlayObfuscatorState: WG-интерфейс стоит, релея нет → Broken + причина.
+// Релей жив, но host-route до target не встал → состояние прежнее, причина в Details.
 func (o *OperatorNativeWG) overlayObfuscatorState(stored *storage.AWGTunnel, info *tunnel.StateInfo) {
 	if stored.Obfuscator == nil || o.obf == nil {
 		return
 	}
 	switch info.State {
 	case tunnel.StateRunning, tunnel.StateStarting, tunnel.StateBroken:
-		if !o.obf.Alive(stored.ID) {
-			info.State = tunnel.StateBroken
-			info.Details = obfuscator.DetailsNotRunning
+	default:
+		return // Stopped/NotCreated — релей к состоянию отношения не имеет
+	}
+	if !o.obf.Alive(stored.ID) {
+		info.State = tunnel.StateBroken
+		info.Details = obfuscator.DetailsNotRunning
+		return
+	}
+	// Релей жив, но host-route до сервера не встал — трафик релея уходит в
+	// сам туннель. Состояние не меняем (RCI знает лучше), причину показываем.
+	if info.State != tunnel.StateBroken {
+		if msg := o.obfRouteErrFor(stored.ID); msg != "" {
+			info.Details = obfRouteDetailsPrefix + msg
 		}
 	}
 }
@@ -144,8 +199,8 @@ func (o *OperatorNativeWG) resolveTarget(stored *storage.AWGTunnel) (string, err
 	return ip, nil
 }
 
-// addObfHostRoute: ip route <target> 255.255.255.255 <WAN> auto — запись NDMS,
-// переживает пересчёт таблицы. WAN: ISPInterface туннеля → peer.via из RCI (WAN,
+// addObfHostRoute: host-форма ip route — {host, interface, auto, comment} — запись
+// NDMS, переживает пересчёт таблицы. WAN: ISPInterface туннеля → peer.via из RCI (WAN,
 // которым NDMS реально ведёт пира) → текущий дефолтный шлюз. Отказ только если
 // это наш собственный WireguardN (дефолт через себя = петля).
 func (o *OperatorNativeWG) addObfHostRoute(ctx context.Context, stored *storage.AWGTunnel, ip string) error {

@@ -90,6 +90,13 @@ type OperatorNativeWG struct {
 	// obf — релей wg-obfuscator для туннелей с stored.Obfuscator != nil
 	// (obfuscated.go). nil на путях, где обфускация не заведена.
 	obf ObfuscatorRunner
+
+	// obfRouteErr — причина, по которой host-route до target НЕ стоит, по ID
+	// туннеля. Start из-за маршрута не валится (на WAN-up оркестратор всё
+	// равно перезапустит туннель, а отказ дал бы ложный broken), но состояние
+	// обязано это показывать: без маршрута трафик релея уходит в сам туннель.
+	obfRouteMu  sync.Mutex
+	obfRouteErr map[string]string
 }
 
 // NewOperator creates a new NativeWG operator.
