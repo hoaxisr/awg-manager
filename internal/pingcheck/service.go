@@ -61,6 +61,9 @@ type tunnelMonitor struct {
 	lastResult    *CheckResult
 	stopCh        chan struct{}
 	wg            sync.WaitGroup
+	// tickMu сериализует sensorTick между циклом монитора и check-now:
+	// два параллельных лечения на одном интерфейсе недопустимы.
+	tickMu sync.Mutex
 }
 
 // checkConfig holds resolved check configuration for a tunnel.
@@ -220,11 +223,18 @@ func (s *Service) GetStatus() []TunnelStatus {
 		monitoredIDs[tunnelID] = true
 		config := s.getCheckConfig(tunnelID)
 
+		// Как nwgCardStatus: лежащий интерфейс — «stopped», но не во время
+		// лечения (failCount на пороге — окно down/up ещё идёт).
+		running := ifaceUp(s.resolveIfaceName(tunnelID))
 		status := "disabled"
 		if config != nil {
-			if m.restartCount > 0 && (m.lastResult == nil || !m.lastResult.Success) {
+			switch {
+			case (m.restartCount > 0 && (m.lastResult == nil || !m.lastResult.Success)) ||
+				m.failCount >= config.FailThreshold:
 				status = "recovering"
-			} else {
+			case !running:
+				status = "stopped"
+			default:
 				status = "alive"
 			}
 		}
@@ -265,7 +275,7 @@ func (s *Service) GetStatus() []TunnelStatus {
 			FailCount:     m.failCount,
 			FailThreshold: failThreshold,
 			RestartCount:  m.restartCount,
-			TunnelRunning: ifaceUp(s.resolveIfaceName(tunnelID)),
+			TunnelRunning: running,
 		})
 	}
 
@@ -369,6 +379,33 @@ func (s *Service) CheckAllNow() {
 	}
 }
 
+// checkNowAsync запускает внеочередную проверку kernel-монитора, не блокируя
+// вызывающего: sensorTick на пороге уходит в лечение (ждёт рукопожатие до
+// 30 с, затем backoff до maxBackoff), и HTTP-хендлер check-now висел бы всё
+// это время. Занятый монитор (тик или лечение в процессе) пропускается —
+// второе лечение на том же интерфейсе недопустимо. Окно гонки со
+// StopMonitoring: закрытый stopCh мгновенно выводит waitHandshake и backoff.
+func (s *Service) checkNowAsync(m *tunnelMonitor, config *checkConfig) {
+	s.mu.RLock()
+	stopCh := m.stopCh
+	s.mu.RUnlock()
+	if stopCh == nil {
+		return
+	}
+	go func() {
+		if !m.tickMu.TryLock() {
+			return
+		}
+		defer m.tickMu.Unlock()
+		select {
+		case <-stopCh:
+			return
+		default:
+		}
+		s.sensorTick(m, config)
+	}()
+}
+
 // IsEnabled returns whether ping check is globally enabled.
 func (s *Service) IsEnabled() bool {
 	settings, err := s.settings.Get()
@@ -468,7 +505,7 @@ func (s *Service) connectivityCheckURL() string {
 // performCheckAndUpdate performs a single check and updates monitor state.
 // Used by CheckAllNow for immediate checks.
 func (s *Service) performCheckAndUpdate(m *tunnelMonitor, config *checkConfig) {
-	s.sensorTick(m, config)
+	s.checkNowAsync(m, config)
 }
 
 // resolveIfaceName returns the kernel interface name for a tunnel,

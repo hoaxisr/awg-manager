@@ -38,7 +38,7 @@ func (s *Service) runMonitorLoop(m *tunnelMonitor) {
 
 	// Run the first check immediately after monitor start.
 	// This avoids waiting up to one full interval after enabling monitoring.
-	s.sensorTick(m, config)
+	s.lockedTick(m, config)
 
 	interval := time.Duration(config.Interval) * time.Second
 	ticker := time.NewTicker(interval)
@@ -52,7 +52,7 @@ func (s *Service) runMonitorLoop(m *tunnelMonitor) {
 				return
 			}
 			m.failThreshold = config.FailThreshold
-			s.sensorTick(m, config)
+			s.lockedTick(m, config)
 
 		case <-m.stopCh:
 			return
@@ -60,6 +60,14 @@ func (s *Service) runMonitorLoop(m *tunnelMonitor) {
 			return
 		}
 	}
+}
+
+// lockedTick — sensorTick под tickMu монитора (цикл монитора; check-now
+// берёт тот же замок через TryLock).
+func (s *Service) lockedTick(m *tunnelMonitor, config *checkConfig) {
+	m.tickMu.Lock()
+	defer m.tickMu.Unlock()
+	s.sensorTick(m, config)
 }
 
 // sensorTick performs one check cycle.

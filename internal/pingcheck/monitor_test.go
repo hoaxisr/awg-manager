@@ -483,3 +483,33 @@ func fastHandshakePoll(t *testing.T) {
 	handshakePollFreq = 10 * time.Millisecond
 	t.Cleanup(func() { handshakePollFreq = old })
 }
+
+// check-now не блокирует вызывающего и не запускает второй тик поверх идущего
+// (лечение/backoff держат tickMu): занятый монитор пропускается.
+func TestCheckAllNow_SkipsBusyMonitorAndReturnsAtOnce(t *testing.T) {
+	orig := httpprobe.Client
+	t.Cleanup(func() { httpprobe.Client = orig })
+	httpprobe.Client = okDoer{}
+	s, m, _, _ := newKernelSensorService(t)
+	m.stopCh = make(chan struct{})
+	s.monitors = map[string]*tunnelMonitor{"awg7": m}
+	s.running = true
+
+	m.tickMu.Lock() // тик «в процессе»
+	done := make(chan struct{})
+	go func() { s.CheckAllNow(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("CheckAllNow обязан вернуться сразу, а не ждать занятый монитор")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if !m.lastCheck.IsZero() {
+		t.Fatal("занятый монитор не должен получить второй тик")
+	}
+	m.tickMu.Unlock()
+
+	s.CheckAllNow()
+	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return !m.lastCheck.IsZero() },
+		"свободный монитор обязан выполнить проверку по check-now")
+}

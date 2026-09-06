@@ -148,6 +148,10 @@ func TestGetStatus_KernelTunnelRunningFollowsIfaceUp(t *testing.T) {
 		if len(got) != 1 || got[0].TunnelRunning != up {
 			t.Fatalf("up=%v: статус %+v", up, got)
 		}
+		wantStatus := map[bool]string{true: "alive", false: "stopped"}[up]
+		if got[0].Status != wantStatus {
+			t.Fatalf("up=%v: status = %q, want %q (как nwgCardStatus при !bound)", up, got[0].Status, wantStatus)
+		}
 		if asked != "opkgtun3" {
 			t.Fatalf("спросили интерфейс %q, ожидали opkgtun3", asked)
 		}
@@ -161,5 +165,27 @@ func TestIfaceUpDefault(t *testing.T) {
 	}
 	if ifaceUp("no-such-iface-855") {
 		t.Fatal("несуществующий интерфейс не может быть UP")
+	}
+}
+
+// Лежащий интерфейс во время лечения (failCount на пороге) — «recovering», не «stopped»:
+// окно down/up наше собственное.
+func TestGetStatus_KernelHealingWindowIsRecovering(t *testing.T) {
+	store := newTunnelStore(t)
+	if err := store.Create(&storage.AWGTunnel{
+		ID: "awg3", Name: "Kernel",
+		PingCheck: &storage.TunnelPingCheck{Enabled: true, Method: "http", Interval: 30, FailThreshold: 3},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{
+		tunnels:  store,
+		monitors: map[string]*tunnelMonitor{"awg3": {tunnelID: "awg3", tunnelName: "Kernel", failCount: 3}},
+	}
+	old := ifaceUp
+	t.Cleanup(func() { ifaceUp = old })
+	ifaceUp = func(string) bool { return false }
+	if got := s.GetStatus(); len(got) != 1 || got[0].Status != "recovering" {
+		t.Fatalf("статус %+v, ожидали recovering", got)
 	}
 }
