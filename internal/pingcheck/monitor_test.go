@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/dnsroute"
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/httpprobe"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
@@ -374,4 +376,39 @@ func TestSensorTick_SkipsEndpointReapplyWhenLinkDownFailed(t *testing.T) {
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("после отказа down:\n got %v\nwant %v", calls, want)
 	}
+}
+
+// #855: провал до порога → link toggle без рукопожатия → проверка снова
+// успешна. Туннель обязан выйти из failedSet dnsroute-фейловера.
+func TestSensorTick_SuccessAfterFailedToggleRecoversFailover(t *testing.T) {
+	orig := httpprobe.Client
+	t.Cleanup(func() { httpprobe.Client = orig })
+	s, m, config, _ := newKernelSensorService(t)
+	bus := events.NewBus()
+	s.bus = bus
+	fm := dnsroute.NewFailoverManager(nil)
+	fm.StartListener(bus)
+	t.Cleanup(fm.StopListener)
+
+	httpprobe.Client = alwaysFailDoer{}
+	for i := 0; i < 3; i++ {
+		s.sensorTick(m, config)
+	}
+	waitFor(t, func() bool { return fm.IsFailed("awg7") }, "после порога туннель должен попасть в failedSet")
+
+	httpprobe.Client = okDoer{}
+	s.sensorTick(m, config)
+	waitFor(t, func() bool { return !fm.IsFailed("awg7") }, "успешная проверка после неудачного toggle обязана вывести туннель из failedSet")
+}
+
+func waitFor(t *testing.T, cond func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal(msg)
 }

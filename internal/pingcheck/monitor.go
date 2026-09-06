@@ -80,6 +80,18 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 		m.restartCount = 0
 		s.mu.Unlock()
 
+		// Публикуем на каждом успехе, как NWG-монитор: dnsroute-фейловер
+		// снимает туннель с failedSet только по «pass», а toggle отдаёт «pass»
+		// лишь при рукопожатии в своём окне. Поднялся позже — иначе списки
+		// висят на backup до рестарта демона (#855). Подсказку инвалидации
+		// не шлём: состояние карточки не менялось.
+		if s.bus != nil {
+			s.bus.Publish("pingcheck:state", events.PingCheckStateEvent{
+				TunnelID: m.tunnelID,
+				Status:   "pass",
+			})
+		}
+
 		s.addLogEntry(LogEntry{
 			Timestamp:  now,
 			TunnelID:   m.tunnelID,
