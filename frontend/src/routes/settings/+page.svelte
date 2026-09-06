@@ -7,6 +7,8 @@
 	import { notifications } from "$lib/stores/notifications";
 	import { singboxStatus } from "$lib/stores/singbox";
 	import { hydrarouteStatus } from "$lib/stores/hydraroute";
+	import { mcpKeys } from "$lib/stores/mcpKeys";
+	import type { PollingState } from "$lib/stores/polling";
 	import { PageContainer, PageHeader, LoadingSpinner } from "$lib/components/layout";
 	import { Toggle, Modal, Button, ConfirmModal, SegmentedControl } from "$lib/components/ui";
 	import {
@@ -395,7 +397,6 @@ onMount(() => {
 			settings = appSettings;
 			setGlobalSettings(appSettings);
 			scrollToSettingsHashTarget();
-			if (appSettings.mcpEnabled) void loadMcpKeys();
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : "Не удалось загрузить настройки");
 		} finally {
@@ -484,19 +485,21 @@ $effect(() => {
 		}
 	}
 
-	let mcpKeys = $state<McpKey[]>([]);
-	let mcpKeysLoading = $state(false);
-
-	async function loadMcpKeys() {
-		mcpKeysLoading = true;
-		try {
-			mcpKeys = await api.getMcpKeys();
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : "Не удалось загрузить ключи MCP");
-		} finally {
-			mcpKeysLoading = false;
+	// Ключи запрашиваются только пока MCP включён; SSE «mcpKeys» обновляет
+	// список через стор, поэтому после create/revoke руками ничего не грузим.
+	let mcpKeysState = $state<PollingState<McpKey[]> | null>(null);
+	$effect(() => {
+		if (!settings?.mcpEnabled) {
+			mcpKeysState = null;
+			return;
 		}
-	}
+		return mcpKeys.subscribe((s) => {
+			if (s.status === "error" && mcpKeysState?.status !== "error") {
+				notifications.error(s.error ?? "Не удалось загрузить ключи MCP");
+			}
+			mcpKeysState = s;
+		});
+	});
 
 	async function toggleMcp(enabled: boolean) {
 		if (!settings) return;
@@ -505,7 +508,6 @@ $effect(() => {
 			settings = await api.updateSettings({ ...settings, mcpEnabled: enabled });
 			setGlobalSettings(settings);
 			notifications.success(enabled ? "MCP-сервер включён" : "MCP-сервер выключен");
-			if (enabled) await loadMcpKeys();
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : "Ошибка сохранения настроек");
 		} finally {
@@ -515,7 +517,7 @@ $effect(() => {
 
 	async function createMcpKey(name: string): Promise<McpKeyCreated> {
 		const created = await api.createMcpKey(name);
-		await loadMcpKeys();
+		await mcpKeys.refetch();
 		return created;
 	}
 
@@ -523,7 +525,7 @@ $effect(() => {
 		try {
 			await api.revokeMcpKey(id);
 			notifications.success("Ключ отозван");
-			await loadMcpKeys();
+			await mcpKeys.refetch();
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : "Не удалось отозвать ключ");
 		}
@@ -1210,8 +1212,8 @@ $effect(() => {
 				<McpCard
 					enabled={settings.mcpEnabled ?? false}
 					{saving}
-					keys={mcpKeys}
-					keysLoading={mcpKeysLoading}
+					keys={mcpKeysState?.data ?? []}
+					keysLoading={mcpKeysState?.status === "loading"}
 					{origin}
 					ontoggle={toggleMcp}
 					oncreate={createMcpKey}

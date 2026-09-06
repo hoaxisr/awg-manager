@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -69,7 +70,11 @@ type McpKeyRevokedResponse struct {
 type McpKeysHandler struct {
 	store *storage.McpKeyStore
 	log   *logging.ScopedLogger
+	bus   *events.Bus
 }
+
+// SetEventBus wires the SSE bus; nil is fine (tests).
+func (h *McpKeysHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
 // NewMcpKeysHandler creates the handler. appLogger may be nil in tests.
 func NewMcpKeysHandler(store *storage.McpKeyStore, appLogger logging.AppLogger) *McpKeysHandler {
@@ -141,6 +146,7 @@ func (h *McpKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info("key-create", key.Name, "MCP key created")
+	h.bus.PublishInvalidated(events.ResourceMcpKeys, "created")
 	response.Success(w, McpKeyCreatedData{ID: key.ID, Name: key.Name, CreatedAt: key.CreatedAt, Key: plaintext})
 }
 
@@ -178,5 +184,6 @@ func (h *McpKeysHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info("key-revoke", req.ID, "MCP key revoked")
+	h.bus.PublishInvalidated(events.ResourceMcpKeys, "revoked")
 	response.Success(w, McpKeyRevokedData{Revoked: true})
 }

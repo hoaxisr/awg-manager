@@ -32,6 +32,7 @@ export type ResourceKey =
 	| 'singbox.router.staging'      // emitted by emitStagingEvent — triggers loadStaging()
 	| 'singbox.router.rules'        // emitted by emitRulesEvent — triggers loadRulesSnapshot()
 	| 'proxyrt.instances'             // ResourceProxyInstances — состав инстансов прокси
+	| 'mcpKeys'                     // ResourceMcpKeys — ключи MCP-сервера
 	| 'bypass-set';                 // публикуется после наполнения AWGM-BYPASS (storeBypassSetOutcome)
 
 /**

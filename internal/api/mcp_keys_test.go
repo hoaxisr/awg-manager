@@ -7,7 +7,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -167,4 +169,42 @@ func TestMcpKeys_StorageErrorsSurfaceAs500(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("revoke unknown id under unwritable dir: %d %s", rec.Code, rec.Body.String())
 	}
+}
+
+// TestMcpKeys_MutationsPublishInvalidation — вторая вкладка узнаёт о новом
+// или отозванном ключе по SSE, а не при следующем заходе на страницу.
+func TestMcpKeys_MutationsPublishInvalidation(t *testing.T) {
+	h, _ := newMcpKeysHandler(t)
+	bus := events.NewBus()
+	h.SetEventBus(bus)
+	_, ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	next := func(want string) {
+		t.Helper()
+		select {
+		case ev := <-ch:
+			data, _ := ev.Data.(events.ResourceInvalidatedEvent)
+			if ev.Type != events.EventResourceInvalidated || data.Resource != events.ResourceMcpKeys || data.Reason != want {
+				t.Fatalf("event = %+v, want %s/%s", ev, events.ResourceMcpKeys, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("no %q event", want)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/mcp/keys/create", strings.NewReader(`{"name":"laptop"}`)))
+	if rec.Code != 200 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	next("created")
+	id, _ := decode(t, rec)["data"].(map[string]any)["id"].(string)
+
+	rec = httptest.NewRecorder()
+	h.Revoke(rec, httptest.NewRequest(http.MethodPost, "/api/mcp/keys/revoke", strings.NewReader(`{"id":"`+id+`"}`)))
+	if rec.Code != 200 {
+		t.Fatalf("revoke: %d %s", rec.Code, rec.Body.String())
+	}
+	next("revoked")
 }

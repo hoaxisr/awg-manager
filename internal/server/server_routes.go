@@ -1191,6 +1191,7 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 	})
 
 	keysHandler := api.NewMcpKeysHandler(s.mcpKeys, appLog)
+	keysHandler.SetEventBus(s.bus)
 	mux.HandleFunc("/api/mcp/keys", h.guarded(keysHandler.List))
 	mux.HandleFunc("/api/mcp/keys/create", h.guarded(keysHandler.Create))
 	mux.HandleFunc("/api/mcp/keys/revoke", h.guarded(keysHandler.Revoke))
