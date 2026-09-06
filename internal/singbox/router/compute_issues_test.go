@@ -289,3 +289,26 @@ func TestComputeIssues_DetectsMaterializedHTTPClientDetour(t *testing.T) {
 		}
 	}
 }
+
+// Строковая ссылка http_client (materialize'ится для detour на пустой
+// direct — applyHTTPClients) не detour: у неё пустой RuleSetHTTPClient.Detour,
+// так что orphan-проверка её не видит — и не должна: сам факт "клиент без
+// detour" не может быть orphan'ом.
+func TestComputeIssues_HTTPClientStringRefNotOrphan(t *testing.T) {
+	svc := &ServiceImpl{deps: Deps{}}
+	cfg := &RouterConfig{
+		HTTPClients: []HTTPClient{{Tag: "rs-download"}, {Tag: "rs-direct:direct"}},
+		Route: Route{
+			Final: "direct",
+			RuleSet: []RuleSet{
+				{Tag: "known", HTTPClient: &RuleSetHTTPClient{Ref: "rs-direct:direct"}},
+			},
+		},
+	}
+	got := svc.computeIssues(cfg)
+	for _, issue := range got {
+		if issue.Kind == "orphan-outbound" {
+			t.Errorf("unexpected orphan-outbound issue: %+v", issue)
+		}
+	}
+}

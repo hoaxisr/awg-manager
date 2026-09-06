@@ -192,8 +192,40 @@ func (r *Rule) UnmarshalJSON(data []byte) error {
 // RuleSetHTTPClient — http_client remote-набора в форме sing-box 1.14
 // (замена deprecated download_detour). Только в материализованном слоте:
 // restoreHTTPClients возвращает DownloadDetour, API/UI его не видят.
+//
+// sing-box допускает http_client в двух формах: объект {"detour":"X"} и
+// строковая ссылка на тег из http_clients. Ref хранит вторую форму — её
+// применяет applyHTTPClients, когда X — пустой direct (detour на такой
+// outbound sing-box отвергает при старте): вместо объекта пишется ссылка
+// на клиент без detour. Detour и Ref взаимоисключающи.
 type RuleSetHTTPClient struct {
 	Detour string `json:"detour,omitempty"`
+	Ref    string `json:"-"`
+}
+
+func (c RuleSetHTTPClient) MarshalJSON() ([]byte, error) {
+	if c.Ref != "" {
+		return json.Marshal(c.Ref)
+	}
+	return json.Marshal(struct {
+		Detour string `json:"detour,omitempty"`
+	}{c.Detour})
+}
+
+func (c *RuleSetHTTPClient) UnmarshalJSON(data []byte) error {
+	var ref string
+	if err := json.Unmarshal(data, &ref); err == nil {
+		*c = RuleSetHTTPClient{Ref: ref}
+		return nil
+	}
+	var obj struct {
+		Detour string `json:"detour,omitempty"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return err
+	}
+	*c = RuleSetHTTPClient{Detour: obj.Detour}
+	return nil
 }
 
 // HTTPClient — запись верхнеуровневого http_clients (sing-box 1.14). Один

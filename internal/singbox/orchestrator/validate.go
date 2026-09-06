@@ -13,7 +13,7 @@ import (
 // References (when set) names what was referenced.
 type ValidationError struct {
 	Slot Slot
-	Kind string // "duplicate-outbound" / "duplicate-inbound" / "duplicate-dns" / "unknown-outbound" / "unknown-rule-set" / "unknown-dns-server" / "dns-final-conflict" / "route-final-conflict"
+	Kind string // "duplicate-outbound" / "duplicate-inbound" / "duplicate-dns" / "unknown-outbound" / "unknown-rule-set" / "unknown-dns-server" / "unknown-http-client" / "dns-final-conflict" / "route-final-conflict"
 	// Severity is "" (error, blocks reload) or SeverityWarning (advisory,
 	// does not block). Defaults to error so existing entries keep blocking.
 	Severity string
@@ -265,16 +265,42 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 		if c.Route.DefaultDomainResolver != nil && c.Route.DefaultDomainResolver.Server != "" {
 			rs.dnsTagRefs = append(rs.dnsTagRefs, dnsTagRefSection{refTag: c.Route.DefaultDomainResolver.Server, where: "route.default_domain_resolver.server"})
 		}
+		httpClientTags := make(map[string]bool, len(c.HTTPClients))
+		for _, hc := range c.HTTPClients {
+			if hc.Tag != "" {
+				httpClientTags[hc.Tag] = true
+			}
+		}
 		for i, ruleSet := range c.Route.RuleSet {
 			if ruleSet.DownloadDetour != "" {
 				rs.sels = append(rs.sels, selSection{
 					parentTag: ruleSet.Tag, kind: "download_detour", idx: i, refTag: ruleSet.DownloadDetour,
 				})
 			}
-			if ruleSet.HTTPClient != nil && ruleSet.HTTPClient.Detour != "" {
-				rs.sels = append(rs.sels, selSection{
-					parentTag: ruleSet.Tag, kind: "http_client", idx: i, refTag: ruleSet.HTTPClient.Detour,
-				})
+			if len(ruleSet.HTTPClient) > 0 {
+				var ref string
+				if err := json.Unmarshal(ruleSet.HTTPClient, &ref); err == nil {
+					// Строковая ссылка на тег из http_clients — она же
+					// materialize'ится для detour на пустой direct.
+					if ref != "" && !httpClientTags[ref] {
+						errs = append(errs, ValidationError{
+							Slot:    os.slot,
+							Kind:    "unknown-http-client",
+							Tag:     ref,
+							InRule:  fmt.Sprintf("route.rule_set[%d=%q].http_client", i, ruleSet.Tag),
+							Message: "no http_clients entry declares this tag",
+						})
+					}
+				} else {
+					var obj struct {
+						Detour string `json:"detour,omitempty"`
+					}
+					if err := json.Unmarshal(ruleSet.HTTPClient, &obj); err == nil && obj.Detour != "" {
+						rs.sels = append(rs.sels, selSection{
+							parentTag: ruleSet.Tag, kind: "http_client", idx: i, refTag: obj.Detour,
+						})
+					}
+				}
 			}
 		}
 		for i, hc := range c.HTTPClients {
@@ -603,12 +629,15 @@ type ruleJSON struct {
 	Rules    []ruleJSON `json:"rules,omitempty"`
 }
 
+// ruleSetJSON.HTTPClient держит http_client как json.RawMessage: sing-box
+// 1.14 допускает и объект {"detour":"X"}, и строковую ссылку на тег из
+// http_clients (materialize'ится для detour на пустой direct-outbound —
+// applyHTTPClients). Строгая форма *struct{Detour} падала бы на строке и
+// проваливала бы весь json.Unmarshal слота.
 type ruleSetJSON struct {
-	Tag            string `json:"tag"`
-	DownloadDetour string `json:"download_detour,omitempty"`
-	HTTPClient     *struct {
-		Detour string `json:"detour,omitempty"`
-	} `json:"http_client,omitempty"`
+	Tag            string          `json:"tag"`
+	DownloadDetour string          `json:"download_detour,omitempty"`
+	HTTPClient     json.RawMessage `json:"http_client,omitempty"`
 }
 
 type httpClientJSON struct {

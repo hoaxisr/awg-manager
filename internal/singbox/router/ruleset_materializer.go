@@ -140,21 +140,75 @@ func (m ruleSetMaterializer) materializeConfig(cfg *RouterConfig) (*RouterConfig
 // ruleSetHTTPClientTag — тег общего HTTP-клиента загрузки наборов.
 const ruleSetHTTPClientTag = "rs-download"
 
+// ruleSetDirectClientPrefix — префикс тега клиента без detour, которым
+// заменяется detour на пустой direct-outbound (см. isEmptyDirectTag). Тег
+// несёт исходное имя outbound'а (ruleSetDirectClientTag), чтобы обратная
+// проекция вернула ровно его.
+const ruleSetDirectClientPrefix = "rs-direct:"
+
+func ruleSetDirectClientTag(outbound string) string {
+	return ruleSetDirectClientPrefix + outbound
+}
+
+// isEmptyDirectTag сообщает, ссылается ли tag на direct-outbound без
+// dial-настроек: базовый неявный "direct" или объявленный в cfg.Outbounds
+// direct с пустыми BindInterface и DomainResolver. Detour на такой outbound
+// sing-box 1.14 отвергает при старте отдельно от "check" (форк,
+// common/dialer/detour.go): "detour to an empty direct outbound makes no
+// sense". Любой другой тег (туннели, подписки, composite outbound'ы) —
+// не пустой, даже если не найден в cfg.Outbounds.
+func isEmptyDirectTag(cfg *RouterConfig, tag string) bool {
+	if tag == "direct" {
+		return true
+	}
+	for _, o := range cfg.Outbounds {
+		if o.Tag == tag {
+			return o.Type == "direct" && o.BindInterface == "" && o.DomainResolver == nil
+		}
+	}
+	return false
+}
+
 // applyHTTPClients переводит хранимую форму в форму sing-box 1.14:
 // download_detour → http_client{detour}, плюс общий клиент rs-download с
 // detour на route.final — так раньше вёл себя неявный клиент «через дефолтный
-// outbound» (deprecated, удаление в 1.16). Без final detour пуст = прямой
-// выход (решение владельца 2026-09-06). Явно выразить «через дефолтный
+// outbound» (deprecated, удаление в 1.16). Явно выразить «через дефолтный
 // outbound» в 1.14 нельзя: поле DefaultOutbound у клиента помечено json:"-".
+//
+// Detour на пустой direct-outbound (isEmptyDirectTag) sing-box запрещает —
+// "detour to an empty direct outbound makes no sense", а клиент вовсе без
+// detour эквивалентен такому выходу (системный диалер = прямой выход,
+// common/dialer/dialer.go). Поэтому выбор пользователя не подменяется:
+// пустой direct выражается через ОТСУТСТВИЕ detour, а не через другой
+// outbound (решение владельца 2026-09-06). Для rs-download это просто пустой
+// Detour; для rule_set с DownloadDetour на пустой direct — отдельный клиент
+// без detour, на который набор ссылается СТРОКОЙ (http_client:"rs-direct:X"),
+// чтобы восстановление знало исходный X.
 func applyHTTPClients(cfg *RouterConfig) {
-	cfg.HTTPClients = []HTTPClient{{Tag: ruleSetHTTPClientTag, Detour: cfg.Route.Final}}
+	finalDetour := cfg.Route.Final
+	if finalDetour == "" || isEmptyDirectTag(cfg, finalDetour) {
+		finalDetour = ""
+	}
+	cfg.HTTPClients = []HTTPClient{{Tag: ruleSetHTTPClientTag, Detour: finalDetour}}
 	cfg.Route.DefaultHTTPClient = ruleSetHTTPClientTag
+
+	directClientSeen := make(map[string]struct{})
 	for i := range cfg.Route.RuleSet {
 		rs := &cfg.Route.RuleSet[i]
 		if rs.DownloadDetour == "" {
 			continue
 		}
-		rs.HTTPClient = &RuleSetHTTPClient{Detour: rs.DownloadDetour}
+		x := rs.DownloadDetour
+		if isEmptyDirectTag(cfg, x) {
+			ref := ruleSetDirectClientTag(x)
+			rs.HTTPClient = &RuleSetHTTPClient{Ref: ref}
+			if _, ok := directClientSeen[ref]; !ok {
+				directClientSeen[ref] = struct{}{}
+				cfg.HTTPClients = append(cfg.HTTPClients, HTTPClient{Tag: ref})
+			}
+		} else {
+			rs.HTTPClient = &RuleSetHTTPClient{Detour: x}
+		}
 		rs.DownloadDetour = ""
 	}
 }
@@ -166,6 +220,13 @@ func restoreHTTPClients(cfg *RouterConfig) {
 	for i := range cfg.Route.RuleSet {
 		rs := &cfg.Route.RuleSet[i]
 		if rs.HTTPClient == nil {
+			continue
+		}
+		if rs.HTTPClient.Ref != "" {
+			if x, ok := strings.CutPrefix(rs.HTTPClient.Ref, ruleSetDirectClientPrefix); ok && rs.DownloadDetour == "" {
+				rs.DownloadDetour = x
+			}
+			rs.HTTPClient = nil
 			continue
 		}
 		// Если в слоте есть оба поля (ручная правка), побеждает уже

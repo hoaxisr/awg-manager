@@ -223,6 +223,42 @@ func TestValidate_HTTPClientDetourDangling(t *testing.T) {
 	}
 }
 
+// Строковая форма http_client (sing-box 1.14: ссылка на тег из http_clients,
+// materialize'ится для detour на пустой direct — см. applyHTTPClients) не
+// умещается в старый шадоу-объект {Detour} и должна разбираться отдельно.
+func TestValidate_HTTPClientStringRef(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "20-router.json", `{
+		"http_clients":[{"tag":"rs-download"},{"tag":"rs-direct:direct"}],
+		"route":{"rule_set":[{"tag":"geo","type":"remote","http_client":"rs-direct:direct"}]}
+	}`)
+	o.enabled[SlotRouter] = true
+	res := o.Validate()
+	if !res.Ok() {
+		t.Errorf("string ref to existing http_clients entry must pass, got: %v", res.Error())
+	}
+}
+
+func TestValidate_HTTPClientStringRefDangling(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "20-router.json", `{
+		"route":{"rule_set":[{"tag":"geo","type":"remote","http_client":"rs-direct:ghost"}]}
+	}`)
+	o.enabled[SlotRouter] = true
+	res := o.Validate()
+	if !strings.Contains(res.Error(), "rs-direct:ghost") || !strings.Contains(res.Error(), `route.rule_set[0="geo"].http_client`) {
+		t.Errorf("missing dangling http_client ref error: %s", res.Error())
+	}
+}
+
 func TestValidateUnknownRuleSetRefs(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})

@@ -466,14 +466,24 @@ func TestMaterializeConfig_RewritesNestedRuleRefs(t *testing.T) {
 // 1.16). Хранимая форма — download_detour; в слот уходит http_client{detour}
 // плюс общий клиент rs-download с detour на route.final. Без final — прямой
 // выход (решение владельца 2026-09-06).
+func findRuleSetByTag(rs []RuleSet, tag string) RuleSet {
+	for _, r := range rs {
+		if r.Tag == tag {
+			return r
+		}
+	}
+	return RuleSet{}
+}
+
 func TestMaterializeConfig_HTTPClients(t *testing.T) {
 	dir := t.TempDir()
 	m := ruleSetMaterializer{configDir: dir, binary: "/opt/bin/sing-box"}
 	cfg := &RouterConfig{
 		Route: Route{
-			Final: "vpn",
+			Final: "direct",
 			RuleSet: []RuleSet{
-				{Tag: "geo", Type: "remote", URL: "https://x/geo.srs", DownloadDetour: "direct"},
+				{Tag: "geo-direct", Type: "remote", URL: "https://x/geo.srs", DownloadDetour: "direct"},
+				{Tag: "geo-vpn", Type: "remote", URL: "https://x/vpn.srs", DownloadDetour: "vpn"},
 				{Tag: "plain", Type: "remote", URL: "https://x/plain.srs"},
 			},
 		},
@@ -482,37 +492,84 @@ func TestMaterializeConfig_HTTPClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out.HTTPClients) != 1 || out.HTTPClients[0].Tag != "rs-download" || out.HTTPClients[0].Detour != "vpn" {
-		t.Fatalf("http_clients = %+v, want [{rs-download vpn}]", out.HTTPClients)
+
+	// (a) final:"direct" (пустой) — rs-download без detour.
+	if len(out.HTTPClients) == 0 || out.HTTPClients[0].Tag != ruleSetHTTPClientTag || out.HTTPClients[0].Detour != "" {
+		t.Fatalf("rs-download = %+v, want no detour (final is empty direct)", out.HTTPClients)
 	}
-	if out.Route.DefaultHTTPClient != "rs-download" {
+	if out.Route.DefaultHTTPClient != ruleSetHTTPClientTag {
 		t.Errorf("default_http_client = %q", out.Route.DefaultHTTPClient)
 	}
-	geo := out.Route.RuleSet[0]
-	if geo.DownloadDetour != "" || geo.HTTPClient == nil || geo.HTTPClient.Detour != "direct" {
-		t.Errorf("geo: download_detour=%q http_client=%+v, want http_client{direct}", geo.DownloadDetour, geo.HTTPClient)
+
+	// (c) download_detour на пустой direct → строковая ссылка + отдельный клиент без detour.
+	geoDirect := findRuleSetByTag(out.Route.RuleSet, "geo-direct")
+	if geoDirect.DownloadDetour != "" || geoDirect.HTTPClient == nil ||
+		geoDirect.HTTPClient.Ref != "rs-direct:direct" || geoDirect.HTTPClient.Detour != "" {
+		t.Fatalf("geo-direct: download_detour=%q http_client=%+v, want ref rs-direct:direct",
+			geoDirect.DownloadDetour, geoDirect.HTTPClient)
 	}
-	if out.Route.RuleSet[1].HTTPClient != nil {
-		t.Errorf("plain must have no http_client: %+v", out.Route.RuleSet[1].HTTPClient)
+	var directClient *HTTPClient
+	for i := range out.HTTPClients {
+		if out.HTTPClients[i].Tag == "rs-direct:direct" {
+			directClient = &out.HTTPClients[i]
+		}
 	}
+	if directClient == nil {
+		t.Fatalf("http_clients missing rs-direct:direct: %+v", out.HTTPClients)
+	}
+	if directClient.Detour != "" {
+		t.Errorf("rs-direct:direct has detour %q, want none", directClient.Detour)
+	}
+
+	// (d) download_detour на непустой outbound — как раньше, объект {detour}.
+	geoVPN := findRuleSetByTag(out.Route.RuleSet, "geo-vpn")
+	if geoVPN.DownloadDetour != "" || geoVPN.HTTPClient == nil ||
+		geoVPN.HTTPClient.Detour != "vpn" || geoVPN.HTTPClient.Ref != "" {
+		t.Fatalf("geo-vpn: download_detour=%q http_client=%+v, want http_client{detour:vpn}",
+			geoVPN.DownloadDetour, geoVPN.HTTPClient)
+	}
+
+	if findRuleSetByTag(out.Route.RuleSet, "plain").HTTPClient != nil {
+		t.Errorf("plain must have no http_client")
+	}
+
+	// (f) сериализованная строковая ссылка — буквально строка в JSON, не объект.
+	raw, err := json.Marshal(out.Route.RuleSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"http_client":"rs-direct:direct"`) {
+		t.Errorf("materialized JSON missing string http_client ref: %s", raw)
+	}
+	if strings.Contains(string(raw), `"detour":"direct"`) {
+		t.Errorf("must not detour to empty direct outbound: %s", raw)
+	}
+
 	// Исходный конфиг не тронут: материализация — проекция, не мутация.
 	if cfg.HTTPClients != nil || cfg.Route.RuleSet[0].DownloadDetour != "direct" {
 		t.Errorf("source config mutated: %+v", cfg)
 	}
 
-	// Без final клиент без detour — прямой выход.
-	cfg.Route.Final = ""
-	out, _ = m.materializeConfig(cfg)
-	if out.HTTPClients[0].Detour != "" {
-		t.Errorf("no final: detour = %q, want empty", out.HTTPClients[0].Detour)
+	// (b) непустой final — общий клиент получает detour.
+	cfg.Route.Final = "vpn"
+	out, err = m.materializeConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.HTTPClients[0].Detour != "vpn" {
+		t.Errorf("final=vpn: detour = %q, want vpn", out.HTTPClients[0].Detour)
 	}
 
-	// Обратная проекция восстанавливает хранимую форму.
+	// (e) обратная проекция восстанавливает download_detour для обеих форм
+	// и убирает материализованных клиентов.
 	back := m.restoreConfig(out)
 	if back.HTTPClients != nil || back.Route.DefaultHTTPClient != "" {
 		t.Errorf("restore left http_clients: %+v / %q", back.HTTPClients, back.Route.DefaultHTTPClient)
 	}
-	if rs := back.Route.RuleSet[0]; rs.HTTPClient != nil || rs.DownloadDetour != "direct" {
-		t.Errorf("restore: %+v", rs)
+	if rs := findRuleSetByTag(back.Route.RuleSet, "geo-direct"); rs.HTTPClient != nil || rs.DownloadDetour != "direct" {
+		t.Errorf("restore geo-direct: %+v", rs)
+	}
+	if rs := findRuleSetByTag(back.Route.RuleSet, "geo-vpn"); rs.HTTPClient != nil || rs.DownloadDetour != "vpn" {
+		t.Errorf("restore geo-vpn: %+v", rs)
 	}
 }

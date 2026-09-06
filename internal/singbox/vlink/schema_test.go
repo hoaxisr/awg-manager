@@ -212,8 +212,11 @@ func TestMaterializedRouterConfigMatchesSchema(t *testing.T) {
 				AutoRoute: new(bool), AutoRedirect: new(bool), StrictRoute: new(bool), Stack: "gvisor",
 				UDPTimeout: "5m0s", UDPNATMax: 4096},
 		},
-		Outbounds:   []router.Outbound{{Type: "direct", Tag: "direct"}},
-		HTTPClients: []router.HTTPClient{{Tag: "rs-download", Detour: "direct"}},
+		Outbounds: []router.Outbound{{Type: "direct", Tag: "direct"}},
+		HTTPClients: []router.HTTPClient{
+			{Tag: "rs-download", Detour: "direct"},
+			{Tag: "rs-direct:direct"},
+		},
 		DNS: router.DNS{
 			Servers:  []router.DNSServer{{Tag: "real", Type: "udp", Server: "1.1.1.1"}},
 			Final:    "real",
@@ -221,8 +224,12 @@ func TestMaterializedRouterConfigMatchesSchema(t *testing.T) {
 			Timeout:  "5s",
 		},
 		Route: router.Route{
-			RuleSet: []router.RuleSet{{Tag: "geo", Type: "remote", Format: "binary", URL: "https://x/geo.srs",
-				UpdateInterval: "24h", HTTPClient: &router.RuleSetHTTPClient{Detour: "direct"}}},
+			RuleSet: []router.RuleSet{
+				{Tag: "geo", Type: "remote", Format: "binary", URL: "https://x/geo.srs",
+					UpdateInterval: "24h", HTTPClient: &router.RuleSetHTTPClient{Detour: "direct"}},
+				{Tag: "geo-direct", Type: "remote", Format: "binary", URL: "https://x/geo-direct.srs",
+					UpdateInterval: "24h", HTTPClient: &router.RuleSetHTTPClient{Ref: "rs-direct:direct"}},
+			},
 			Rules: []router.Rule{{SourceMACAddress: []string{"aa:bb:cc:dd:ee:ff"}, SourceIPCIDR: []string{"192.168.1.0/24"},
 				RuleSet: []string{"geo"}, Action: "route", Outbound: "direct"}},
 			Final:                 "direct",
