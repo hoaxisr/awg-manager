@@ -140,6 +140,12 @@ type ndmsProxyToggler interface {
 
 var errTunnelNoInterface = errors.New("tunnel has no kernel interface")
 
+// Швы над сетевыми пробами: тесты подменяют, прод — функции пакета testing.
+var (
+	checkIPByInterface              = testing.CheckIPByInterface
+	checkConnectivityByInterfaceURL = testing.CheckConnectivityByInterfaceURL
+)
+
 // NewSingboxHandler creates a new singbox handler.
 func NewSingboxHandler(op *singbox.Operator, bus *events.Bus, dc *singbox.DelayChecker, ts *testing.Service, appLogger ...logging.AppLogger) *SingboxHandler {
 	var lg logging.AppLogger
@@ -833,7 +839,7 @@ func (h *SingboxHandler) CheckConnectivity(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	result := testing.CheckConnectivityByInterfaceURL(r.Context(), iface, h.connectivityCheckURL())
+	result := checkConnectivityByInterfaceURL(r.Context(), iface, h.connectivityCheckURL())
 	response.Success(w, result)
 }
 
@@ -896,7 +902,7 @@ func (h *SingboxHandler) CheckIP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	service := r.URL.Query().Get("service")
-	result, err := testing.CheckIPByInterface(r.Context(), iface, service)
+	result, err := checkIPByInterface(r.Context(), iface, service)
 	if err != nil {
 		response.Error(w, err.Error(), "IP_CHECK_FAILED")
 		return

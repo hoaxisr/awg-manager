@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,7 +22,7 @@ func newTestFakeIPConfigHandler(t *testing.T) *SingboxFakeIPConfigHandler {
 	t.Helper()
 	dir := t.TempDir()
 
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouter, Filename: "20-router.json"}); err != nil {
 		t.Fatal(err)
 	}
@@ -165,11 +166,8 @@ func TestFakeIPConfigHandler_LockedFieldDelete_Returns4xx(t *testing.T) {
 	rr := httptest.NewRecorder()
 	fh.DeleteDNSServer(rr, req)
 
-	if rr.Code == http.StatusInternalServerError {
-		t.Errorf("DeleteDNSServer locked field: got 500 (want 4xx); body: %s", rr.Body.String())
-	}
-	if rr.Code < 400 || rr.Code >= 500 {
-		t.Errorf("DeleteDNSServer locked field: want 4xx, got %d; body: %s", rr.Code, rr.Body.String())
+	if rr.Code != 400 || decodeJSONBody(t, rr)["code"] != "FAKEIP_LOCKED_FIELD" {
+		t.Fatalf("DeleteDNSServer locked field: want 400 FAKEIP_LOCKED_FIELD, got %d; body: %s", rr.Code, rr.Body.String())
 	}
 }
 

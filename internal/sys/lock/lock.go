@@ -13,7 +13,10 @@ import (
 )
 
 const (
-	LockDir  = "/opt/var/lock/awg-manager"
+	// LockDir lives on the /var/run tmpfs: a lock must not survive a reboot
+	// anyway, and the mkdir+pid+rmdir per store write used to hit the
+	// Entware flash on every tunnel record update (#854).
+	LockDir  = "/var/run/awg-manager/lock"
 	StaleAge = 5 * time.Minute
 )
 
@@ -59,8 +62,12 @@ func (l *Lock) TryLock() error {
 	return nil
 }
 
-// Unlock releases the lock.
+// Unlock releases the lock. A lock directory that now belongs to another process
+// (our stale entry was swept and re-taken) is left alone.
 func (l *Lock) Unlock() error {
+	if pid, ok := l.ownerPID(); ok && pid != os.Getpid() {
+		return nil
+	}
 	err := os.RemoveAll(l.path)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("release lock: %w", err)
@@ -68,38 +75,42 @@ func (l *Lock) Unlock() error {
 	return nil
 }
 
+// ownerPID reads the pid file; ok is false when it is missing or unparsable.
+func (l *Lock) ownerPID() (int, bool) {
+	data, err := os.ReadFile(filepath.Join(l.path, "pid"))
+	if err != nil {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	return pid, err == nil
+}
+
+// cleanStale removes a lock whose owner is gone. The PID check comes first: a
+// live owner keeps the lock however long it has held it (the store contract is a
+// timeout for the waiter, not a takeover). Age is the fallback only for a torn
+// acquire (directory without a pid file); an unparsable pid file is swept at once.
 func (l *Lock) cleanStale() {
 	info, err := os.Stat(l.path)
 	if err != nil {
 		return
 	}
-
-	if time.Since(info.ModTime()) > StaleAge {
-		os.RemoveAll(l.path)
-		return
-	}
-
 	pidFile := filepath.Join(l.path, "pid")
 	data, err := os.ReadFile(pidFile)
 	if err != nil {
+		if time.Since(info.ModTime()) > StaleAge {
+			os.RemoveAll(l.path)
+		}
 		return
 	}
-
 	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil {
 		os.RemoveAll(l.path)
 		return
 	}
-
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		os.RemoveAll(l.path)
+	if proc, err := os.FindProcess(pid); err == nil && proc.Signal(syscall.Signal(0)) == nil {
 		return
 	}
-
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		os.RemoveAll(l.path)
-	}
+	os.RemoveAll(l.path)
 }
 
 // WaitLockDir is like WaitLock but uses a custom lock directory.

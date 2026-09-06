@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -86,8 +87,11 @@ func (q proxyNDMSQuery) HasIPGlobal(ctx context.Context, name string) (bool, err
 }
 
 func (q proxyNDMSQuery) HasPermitAllACL(ctx context.Context, name string) (bool, error) {
-	want := "ip access-group _WEBADMIN_" + name + " in"
-	return q.rcHasInterfaceLine(ctx, name, func(l string) bool { return l == want })
+	lines, err := q.rc.Lines(ctx)
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(query.InterfaceAccessGroupsOf(lines, name), "_WEBADMIN_"+name), nil
 }
 
 func (q proxyNDMSQuery) HasDefaultRoute(ctx context.Context, name string) (bool, error) {
@@ -140,13 +144,6 @@ func proxyKernelWAN(ifaces systemNameResolver) func(ctx context.Context, ndmsNam
 			return "", fmt.Errorf("kernel-имя для %s неизвестно", ndmsName)
 		}
 		return sys, nil
-	}
-}
-
-// proxyPolicyMark — fwmark политики (raw-половина сервера при policy != none).
-func proxyPolicyMark(marks *query.PolicyMarkStore) func(ctx context.Context, policy string) (string, error) {
-	return func(ctx context.Context, policy string) (string, error) {
-		return marks.Get(ctx, policy)
 	}
 }
 

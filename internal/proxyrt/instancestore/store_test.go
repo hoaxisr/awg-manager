@@ -672,8 +672,9 @@ func TestServerDefaultsRelayAndNatMode(t *testing.T) {
 	}
 	st, _ := New(s.dir).Load()
 	c, _ := st.Records[0].WdttServerConfig()
-	// natMode: дефолт "full" — паритет со старым миром (wdtt.normalizeNatMode);
-	// подробности и регресс миграции — в TestNatModeDefaultIsFullParity.
+	// natMode: дефолт "full" — «не выбирал» значит рабочая раздача;
+	// подробности — в TestNatModeDefaultIsFull, регресс миграции —
+	// в seed_test.go:TestSeedServerWithoutNatModeGetsFull.
 	if c.RelayMode != "wg" || c.NatMode != "full" || c.Listen != "0.0.0.0:57002" {
 		t.Fatalf("дефолты сервера: %+v", c)
 	}
@@ -749,12 +750,15 @@ func TestReplaceRejectsTwoConfigsInOneRecord(t *testing.T) {
 	}
 }
 
-// TestNatModeDefaultIsFullParity — ПАРИТЕТ со старым миром: wdtt-сервер без
-// выбранного режима NAT натит полностью (wdtt.normalizeNatMode,
-// access.go:30-37). Дефолт "none" здесь означал бы раздачу без интернета:
-// мастер создаёт сервер без конфига, получает уже заполненное поле и
-// сохраняет его обратно, а фронтовый дефолт до пустого значения не доходит.
-func TestNatModeDefaultIsFullParity(t *testing.T) {
+// Пустое значение означает «пользователь не выбирал», и трактовать его надо
+// как рабочую раздачу. Режим NAT управляет подменой адреса источника: при
+// "none" абоненты остаются со своими 10.70/16, которые провайдер обратно не
+// маршрутизирует, — раздача без интернета. Мастер создаёт сервер без конфига,
+// получает уже заполненное поле и сохраняет его обратно, поэтому фронтовый
+// дефолт до пустого значения не доходит и решать обязан бэкенд.
+//
+// (Старый мир трактовал пустое так же — это совпадение выводов, а не довод.)
+func TestNatModeDefaultIsFull(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		in   string

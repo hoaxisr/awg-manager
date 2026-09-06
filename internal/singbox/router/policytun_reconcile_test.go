@@ -295,6 +295,26 @@ func TestReconcilePolicyTun_ReaddsMissingDefaultRoute(t *testing.T) {
 	}
 }
 
+// Позитив к предыдущему тесту: v6-дефолт ПРОПАЛ (wantV6 — пул FakeIPPool6 задан
+// обвязкой) → переустанавливается. Раньше проверялся только негатив, и
+// `if wantV6 && !v6` → `if false` оставался зелёным.
+func TestReconcilePolicyTun_ReaddsMissingIPv6DefaultRoute(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	rc := &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ip policy Policy0", "    permit global OpkgTun0",
+	}}
+	h.svc.deps.RunningConfig = rc
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if !h.log.has("SetIPv6DefaultRoute:OpkgTun0") {
+		t.Errorf("пропавший v6-дефолт обязан быть переустановлен: %v", h.log.calls)
+	}
+}
+
 // Диспатч: в policy-tun Reconcile уходит в свой арм (а не в installed-switch
 // tproxy, который при отсутствующих цепочках гнал бы Enable каждый тик), и реап,
 // идущий первым, ingress-заворот не сносит.
@@ -1355,4 +1375,61 @@ func TestReconcilePolicyTun_QoSSpecModeFlagChanged_Reinstalls(t *testing.T) {
 	if installs != 1 {
 		t.Fatalf("спек, отличающийся режимным флагом, обязан переустанавливаться: installs = %d, want 1", installs)
 	}
+}
+
+// One-shot ассерт permit-ACL гейтится успехом пробы живости интерфейса: если
+// проба упала, интерфейса может не быть вовсе, и permit-список уехал бы в
+// конфиг роутера осиротевшим — снять его потом нечем.
+func TestReconcilePolicyTun_SkipsPermitACLWhenProbeFailed(t *testing.T) {
+	rcLines := []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ip policy Policy0", "    permit global OpkgTun0",
+	}
+	t.Run("проба упала — ACL не ставится", func(t *testing.T) {
+		h := newPolicyTunEnableHarness(t, "")
+		sr := provisionPolicyTunForReconcile(t, h)
+		h.svc.deps.RunningConfig = &fakeRunningConfig{lines: rcLines}
+		h.svc.deps.OpkgTunIndices = &recIndices{err: errors.New("probe")}
+		h.svc.policyTunACLAsserted = false
+
+		if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+			t.Fatalf("reconcilePolicyTun: %v", err)
+		}
+		if h.log.has("SetPermitACL:OpkgTun0") {
+			t.Errorf("permit-ACL поставлен при упавшей пробе: %v", h.log.calls)
+		}
+		if h.svc.policyTunACLAsserted {
+			t.Error("флаг one-shot взведён без успешной постановки ACL")
+		}
+		// v6-близнец гейта — своя строка кода и свой флаг: обвязка задаёт
+		// FakeIPPool6, значит TunAddr6 непуст и по адресу разрешать есть что.
+		if h.log.has("SetPermitACLv6:OpkgTun0") {
+			t.Errorf("v6-permit-ACL поставлен при упавшей пробе: %v", h.log.calls)
+		}
+		if h.svc.policyTunACLv6Asserted {
+			t.Error("v6-флаг one-shot взведён без успешной постановки ACL")
+		}
+	})
+	t.Run("проба прошла — ACL ставится", func(t *testing.T) {
+		h := newPolicyTunEnableHarness(t, "")
+		sr := provisionPolicyTunForReconcile(t, h)
+		h.svc.deps.RunningConfig = &fakeRunningConfig{lines: rcLines}
+		h.svc.policyTunACLAsserted = false
+
+		if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+			t.Fatalf("reconcilePolicyTun: %v", err)
+		}
+		if !h.log.has("SetPermitACL:OpkgTun0") {
+			t.Errorf("permit-ACL не поставлен при здоровой пробе: %v", h.log.calls)
+		}
+		if !h.svc.policyTunACLAsserted {
+			t.Error("флаг one-shot не взведён после успешной постановки ACL")
+		}
+		if !h.log.has("SetPermitACLv6:OpkgTun0") {
+			t.Errorf("v6-permit-ACL не поставлен при здоровой пробе: %v", h.log.calls)
+		}
+		if !h.svc.policyTunACLv6Asserted {
+			t.Error("v6-флаг one-shot не взведён после успешной постановки ACL")
+		}
+	})
 }

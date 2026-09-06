@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -57,5 +58,37 @@ func TestOpkgEmptyListsAreArrays(t *testing.T) {
 				t.Errorf("тело ответа = %s, ожидалось %s", got, c.want)
 			}
 		})
+	}
+}
+
+// Валидация имён пакетов стоит ДО запуска бинаря: без неё "-force" уехал бы
+// в argv opkg как флаг. Хендлер поднят на скрипте из TempDir — если гард
+// пропадёт, тест упрётся в подставной opkg, а не в настоящий.
+func TestOpkgRemove_RejectsFlagLikeName(t *testing.T) {
+	h := newOpkgHandler(t, "#!/bin/sh\nexit 0\n")
+
+	rec := postJSON(t, h.OpkgRemove, "/system/opkg/remove",
+		map[string]any{"packages": []string{"-force"}})
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("код=%d, ожидался 400 (тело=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "invalid package name") {
+		t.Fatalf("отказ не от валидации имени: %s", rec.Body.String())
+	}
+}
+
+// Пустой список — отказ, а не `opkg remove` без аргументов.
+func TestOpkgRemove_RejectsEmptyList(t *testing.T) {
+	h := newOpkgHandler(t, "#!/bin/sh\nexit 0\n")
+
+	rec := postJSON(t, h.OpkgRemove, "/system/opkg/remove",
+		map[string]any{"packages": []string{}})
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("код=%d, ожидался 400 (тело=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "no packages specified") {
+		t.Fatalf("отказ не от пустого списка: %s", rec.Body.String())
 	}
 }

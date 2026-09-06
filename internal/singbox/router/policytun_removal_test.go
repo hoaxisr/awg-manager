@@ -15,6 +15,7 @@ import (
 // нулевой индекс в JSON отсутствует вовсе — именно поэтому снятие делается в
 // Go, а не парсингом файла шеллом (на прошивке нет jq).
 func TestReleasePolicyTunForRemoval_RemovesHeldInterface(t *testing.T) {
+	stubLinkAbsent(t)
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun})
 	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 0}); err != nil {
 		t.Fatalf("SetOpkgTunState: %v", err)
@@ -46,6 +47,7 @@ func TestReleasePolicyTunForRemoval_RemovesHeldInterface(t *testing.T) {
 // `opkg remove` при включённом source-preserve оставил бы сегменты на
 // static-NAT навсегда.
 func TestReleasePolicyTunForRemoval_RestoresSegmentNATFirst(t *testing.T) {
+	stubLinkAbsent(t)
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{RoutingMode: statePolicyTun})
 	if err := store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 1, PolicyTun: &storage.OpkgTunPolicyData{NATSegments: []storage.PolicyTunNATSegment{{Name: "Home", PriorMode: "dynamic"}}}}); err != nil {
 		t.Fatalf("SetOpkgTunState: %v", err)

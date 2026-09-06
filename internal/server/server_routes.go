@@ -84,7 +84,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.tunnelsHandler.SetTrafficHistory(s.trafficHistory)
 	h.tunnelsHandler.SetOrchestrator(s.orch)
 	h.tunnelsHandler.SetProxyRecords(s.proxyRecords)
-	h.controlHandler = api.NewControlHandler(s.tunnelService, h.appLog)
+	h.controlHandler = api.NewControlHandler(s.tunnelService, s.tunnels, h.appLog)
 	h.controlHandler.SetPingCheckService(s.pingCheckService)
 	h.controlHandler.SetOrchestrator(s.orch)
 	h.controlHandler.SetTunnelsHandler(h.tunnelsHandler)
@@ -189,7 +189,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 
 	h.eventsHandler = api.NewEventsHandler(s.bus, s.instanceID)
 
-	h.controlHandler.SetProxyControl(s.tunnels, s.proxyRuntime)
+	h.controlHandler.SetProxyControl(s.proxyRuntime)
 
 	h.proxyListenerHandler = api.NewProxyListenerHandler(s.proxyRecords)
 
@@ -261,6 +261,7 @@ func (s *Server) registerTunnelRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/tunnels/create", h.guarded(h.tunnelsHandler.Create))
 	mux.HandleFunc("/api/tunnels/update", h.guarded(h.tunnelsHandler.Update))
 	mux.HandleFunc("/api/tunnels/delete", h.guarded(h.tunnelsHandler.Delete))
+	mux.HandleFunc("/api/tunnels/lock", h.guarded(h.tunnelsHandler.SetLock))
 	mux.HandleFunc("/api/tunnels/export", h.guarded(h.tunnelsHandler.Export))
 	mux.HandleFunc("/api/tunnels/export-all", h.guarded(h.tunnelsHandler.ExportAll))
 	mux.HandleFunc("/api/tunnels/replace", h.guarded(h.tunnelsHandler.ReplaceConf))
@@ -567,7 +568,7 @@ func (s *Server) registerServerRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// Managed WireGuard Servers (protected + boot guarded). The new
 	// route table is id-keyed: see ManagedServerHandler.Subtree for the
 	// full sub-path dispatch (peers, conf, asc, etc).
-	h.managedHandler = api.NewManagedServerHandler(s.managedService)
+	h.managedHandler = api.NewManagedServerHandler(s.managedService, h.appLog)
 	h.managedHandler.SetServersHandler(h.serverHandler)
 	h.serverHandler.SetManagedHandler(h.managedHandler)
 	if s.managedServiceImpl != nil {

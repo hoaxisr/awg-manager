@@ -98,6 +98,10 @@ type Deps struct {
 	//
 	// Отказ чтения — не ноль: без ответа гейт закрывается.
 	InstanceCount func(Subsystem) (int, error)
+	// Installed — успешная РУЧНАЯ установка (ServeInstall). Проводка нуджит
+	// бут прокси-рантайма, чтобы ожидание бинарей (F98) снялось без таймера.
+	// Из Install не зовётся: Install работает внутри Boot под bootMu.
+	Installed func(Subsystem)
 }
 
 // subsys — состояние одной подсистемы: где её бинари, какой у неё пин и не
@@ -221,6 +225,40 @@ func (s *Service) PinnedSHA256(kind instancestore.Kind) string {
 		return sub.specs.Server.SHA256
 	}
 	return sub.specs.Client.SHA256
+}
+
+// SubsystemOf — подсистема, чьи бинари держит роль. Пусто для неизвестного
+// kind: вызывающие обязаны считать это отказом классификации, а не «ничьё».
+func SubsystemOf(kind instancestore.Kind) Subsystem {
+	switch kind {
+	case instancestore.KindWdttClient, instancestore.KindWdttServer:
+		return SubsystemWdtt
+	case instancestore.KindFreeTurnClient, instancestore.KindFreeTurnServer:
+		return SubsystemFreeTurn
+	}
+	return ""
+}
+
+// Stale — подсистемы, которым на буте нужна загрузка (F98): есть включённая
+// запись, для архитектуры есть пин и бинари на диске не совпали с SHA пина.
+// Арка без пина не stale — скачать нечего, гейт назовёт причину сам.
+// Выключенные записи бут не держат: пока никто не хочет работать, ждать
+// нечего. Порядок детерминирован.
+func (s *Service) Stale(records []instancestore.Record) []Subsystem {
+	want := map[Subsystem]bool{}
+	for _, rec := range records {
+		if rec.Enabled {
+			want[SubsystemOf(rec.Kind)] = true
+		}
+	}
+	var out []Subsystem
+	for _, name := range []Subsystem{SubsystemWdtt, SubsystemFreeTurn} {
+		sub := s.subs[name]
+		if want[name] && sub.specs != nil && !sub.binariesMatchSpecs() {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // Status — install-статус подсистемы.

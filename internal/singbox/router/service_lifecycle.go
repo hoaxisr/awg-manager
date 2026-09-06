@@ -59,7 +59,7 @@ func (s *ServiceImpl) prepareNetfilter(ctx context.Context) error {
 		return err
 	}
 
-	if !IsTProxyTargetAvailable(ctx) {
+	if !tproxyTargetProbe(ctx) {
 		return fmt.Errorf("iptables TPROXY target unavailable — kernel module loaded but iptables extension missing")
 	}
 
@@ -443,10 +443,10 @@ func (s *ServiceImpl) healDetachedTun(iface, scope string, slot orchestrator.Slo
 	if !slices.Contains(healDetachedTunAttempts[:], s.tunDownStrikes) {
 		return
 	}
-	// Гейт памяти — тот же, что у оркестратора: Stop+Start параллельно с чужой
-	// валидацией (`sing-box check` держит merged-конфиг в памяти) на mipsel
-	// уходит в OOM. Не взяли — откатываем такт, чтобы попытка не сгорела
-	// впустую, и лечим следующим.
+	// Гейт памяти heavyop: Stop+Start tun'а не должен идти параллельно с Reload
+	// оркестратора (reload.go держит heavyop → o.mu). Оркестраторский `sing-box
+	// check` под этим гейтом НЕ ходит (F85, замер на стенде OOM не показал —
+	// принято); гейт здесь — про Reload, не про check.
 	if !heavyop.Default.TryLock() {
 		s.tunDownStrikes--
 		return
@@ -1318,7 +1318,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		Active:                  active,
 		NetfilterAvailable:      IsNetfilterAvailable(),
 		NetfilterComponentName:  "Модули ядра подсистемы сетевой фильтрации",
-		TProxyTargetAvailable:   IsTProxyTargetAvailable(ctx),
+		TProxyTargetAvailable:   tproxyTargetProbe(ctx),
 		XtDscpAvailable:         xtDscpAvailable,
 		PolicyName:              sr.PolicyName,
 		PolicyMark:              policyMark,
@@ -1382,9 +1382,7 @@ func (s *ServiceImpl) Disable(ctx context.Context) error {
 		return s.disablePolicyTun(ctx, dispatchSettings)
 	}
 
-	if err := s.deps.IPTables.Uninstall(ctx); err != nil {
-		s.appLog.Warn("uninstall", "", err.Error())
-	}
+	s.deps.IPTables.Uninstall(ctx)
 	// Только ПОСЛЕ Uninstall: пока правило `--match-set` в ядре, ipset
 	// откажется сносить набор («set is in use»). Безусловно, а не по
 	// currentBypassGeoIPTags: после рестарта демона поле пустое, а набор и

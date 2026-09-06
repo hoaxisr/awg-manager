@@ -18,7 +18,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
-	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/captcha"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/ftlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/install"
@@ -558,18 +557,6 @@ func (t proxyTunnelImporter) PublishList(context.Context) {
 // нечем; ссылка проставляется сразу после manager.New и до первого Boot.
 type proxyManagerRef struct{ mgr *manager.Manager }
 
-// proxySubsystemOf — подсистема роли. Нужна гейту удаления бинарей: снимать
-// их можно, только если инстансов ЭТОЙ подсистемы не осталось.
-func proxySubsystemOf(kind instancestore.Kind) install.Subsystem {
-	switch kind {
-	case instancestore.KindWdttClient, instancestore.KindWdttServer:
-		return install.SubsystemWdtt
-	case instancestore.KindFreeTurnClient, instancestore.KindFreeTurnServer:
-		return install.SubsystemFreeTurn
-	}
-	return ""
-}
-
 // proxyRecords — wdttlink.RecordSource поверх менеджера.
 type proxyRecords struct{ ref *proxyManagerRef }
 
@@ -629,12 +616,6 @@ func proxyIfaceExists(name string) bool {
 	}
 	_, err := os.Stat(filepath.Join("/sys/class/net", name))
 	return err == nil
-}
-
-// proxyEnableForward — включение маршрутизации вместе с правилами сервера
-// (паритет старого entware-пути).
-func proxyEnableForward() error {
-	return os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o644)
 }
 
 // proxyRunHook — прогон netfilter.d-хука по одной таблице сразу после записи:
@@ -888,12 +869,15 @@ func (a *app) wireProxyrt() {
 			}
 			n := 0
 			for _, rec := range st.Records {
-				if proxySubsystemOf(rec.Kind) == name {
+				if install.SubsystemOf(rec.Kind) == name {
 					n++
 				}
 			}
 			return n, nil
 		},
+		// F98: ручная установка снимает ожидание бута. Горутиной: Boot
+		// сериализован bootMu и может тянуться, а ответ UI ждать не должен.
+		Installed: func(install.Subsystem) { go a.proxyRuntimeNudge("install", proxyrt.EventBoot) },
 	})
 
 	records := proxyRecords{ref: ref}
@@ -918,10 +902,11 @@ func (a *app) wireProxyrt() {
 		PostSeed: proxyPostSeed(a.exitMirror, proxyIPT{}, cmds, a.ndmsQueries.Interfaces,
 			proxyKillBinaries(installSvc),
 			func() error { return instancestore.ClearCleanupPending(store) }),
-		AllocIndex:   allocIndex,
-		AllocListen:  allocListen,
-		ReleasePins:  proxyReleasePins(a.shutdownCtx, opkgAlloc, portAlloc, book, journal),
-		WaitDisabled: proxyWaitDisabled(states),
+		EnsureBinaries: proxyEnsureBinaries(installSvc, journal),
+		AllocIndex:     allocIndex,
+		AllocListen:    allocListen,
+		ReleasePins:    proxyReleasePins(a.shutdownCtx, opkgAlloc, portAlloc, book, journal),
+		WaitDisabled:   proxyWaitDisabled(states),
 		RecordsChanged: func(reason string) {
 			a.eventBus.PublishInvalidated(events.ResourceProxyInstances, reason)
 		},
@@ -1007,11 +992,7 @@ func (a *app) wireProxyrt() {
 	// Ретрай зовут фазы боота и хуки wan-up через proxyRuntimeNudge; Boot
 	// идемпотентен — живые инстансы не пересоздаются — и сериализован сам с
 	// собой (manager.bootMu).
-	go func() {
-		if err := mgr.Boot(a.shutdownCtx); err != nil {
-			journal.Warn("boot", "proxy", "прокси-рантайм не поднялся: "+err.Error())
-		}
-	}()
+	go a.proxyRuntimeNudge("wiring", proxyrt.EventBoot)
 }
 
 // proxyRuntime — срез менеджера, нужный ретраю боота. Шов ради теста: иначе
@@ -1049,6 +1030,12 @@ func (a *app) proxyRuntimeNudge(reason string, kind proxyrt.EventKind) {
 		return
 	}
 	bootedNow, err := proxyNudge(a.shutdownCtx, a.proxyMgr, kind)
+	// F98: без бинарей по пину бут отложен, старое поколение живо —
+	// повторяем с backoff; WAN-up-нудж и ручная установка ускоряют.
+	armBinariesRetry(&a.binariesRetryOnce, err, func() {
+		go proxyBinariesRetry(a.shutdownCtx, a.proxyMgr, proxyBinariesRetryDelays, proxyWait,
+			func(reason string) { a.proxyRuntimeNudge(reason, proxyrt.EventBoot) })
+	})
 	if a.bootLog == nil {
 		return
 	}
@@ -1158,18 +1145,15 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 				Instance: rec.ID, Binary: binary,
 				PinnedSHA256: installSvc.PinnedSHA256(rec.Kind),
 				Link:         link, Runner: runner, Gate: gate,
-				Cmds:          proxyNDMSCommands{InterfaceCommands: a.ndmsCommands.Interfaces, routes: a.ndmsCommands.Routes},
-				Query:         proxyNDMSQuery{ifaces: a.ndmsQueries.Interfaces, rc: a.ndmsQueries.RunningConfig},
-				IPT:           proxyIPT{},
-				FW:            book.forInstance(key),
-				RunHook:       proxyRunHook,
-				EnableForward: proxyEnableForward,
-				IfaceExists:   proxyIfaceExists,
-				KernelWAN:     proxyKernelWAN(a.ndmsQueries.Interfaces),
-				PolicyMark:    proxyPolicyMark(ndmsquery.NewPolicyMarkStore(a.ndmsTransportClient, nil)),
-				Access: proxyAccessApplier{svc: a.managedService,
-					ifaces: a.ndmsCommands.Interfaces},
-				Ingress: proxyIngressEnsurer{settings: a.settingsStore, router: a.routerSvc},
+				Cmds:        proxyNDMSCommands{InterfaceCommands: a.ndmsCommands.Interfaces, routes: a.ndmsCommands.Routes},
+				Query:       proxyNDMSQuery{ifaces: a.ndmsQueries.Interfaces, rc: a.ndmsQueries.RunningConfig},
+				IPT:         proxyIPT{},
+				FW:          book.forInstance(key),
+				RunHook:     proxyRunHook,
+				IfaceExists: proxyIfaceExists,
+				KernelWAN:   proxyKernelWAN(a.ndmsQueries.Interfaces),
+				Access:      proxyAccessApplier{svc: a.managedService},
+				Ingress:     proxyIngressEnsurer{settings: a.settingsStore, router: a.routerSvc},
 			})
 			if err != nil {
 				return nil, err

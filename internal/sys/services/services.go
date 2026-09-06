@@ -317,8 +317,12 @@ func (sc *Scanner) DeleteScript(script string) error {
 	}
 	full := filepath.Join(dir, base)
 
-	// Try to stop service before deleting
-	_, _ = sc.RunAction(full, "stop")
+	// Stop the service before deleting — only if it is enabled (S-prefix): a
+	// disabled K-script is not supposed to be running, and executing an arbitrary
+	// file just because it is being deleted is not what "delete" means.
+	if strings.HasPrefix(base, "S") {
+		_, _ = sc.RunAction(full, "stop")
+	}
 
 	return os.Remove(full)
 }

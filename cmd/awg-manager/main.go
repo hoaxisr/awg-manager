@@ -21,7 +21,6 @@ func main() {
 	serviceAction := flag.String("service", "", "Service management (start|stop|restart|status)")
 	forceBoot := flag.Bool("force-boot", false, "Simulate boot mode (for testing boot path on running router)")
 	pprofListen := flag.String("pprof-listen", "", "Dedicated TCP address for Go /debug/pprof only (recommended: 127.0.0.1:6060); empty disables standalone pprof")
-	pprofOnMain := flag.Bool("pprof-on-main", false, "Also mount /debug/pprof/* on the main HTTP server (LAN/loopback listeners)")
 	slowReqMS := flag.Int("slow-request-ms", 0, "Log HTTP handlers slower than this (ms) to stderr via slog (0 disables); long-lived SSE/WS routes are excluded")
 	flag.Parse()
 
@@ -56,7 +55,6 @@ func main() {
 		dataDir:     *dataDir,
 		forceBoot:   *forceBoot,
 		pprofListen: strings.TrimSpace(*pprofListen),
-		pprofOnMain: *pprofOnMain,
 		slowReqMS:   *slowReqMS,
 	}
 	// Deferred cleanups collected by the setup phases run when the HTTP

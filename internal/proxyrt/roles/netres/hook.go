@@ -49,23 +49,8 @@ func HookScript(groups []Group) string {
 			if g.Guard != "" {
 				fmt.Fprintf(&b, "if has_if %q; then\n", g.Guard)
 			}
-			if g.AllOrNone {
-				// Пара ставится только когда отсутствуют ОБА правила:
-				// довставка половины инвертирует порядок (F3). Частичное
-				// состояние чинит Go-reconcile за ruleRecheck.
-				var checks []string
-				for _, r := range rules {
-					checks = append(checks, "! run "+hookQuoteIfaces(strings.Join(r.CheckArgs(), " ")))
-				}
-				fmt.Fprintf(&b, "  if %s; then\n", strings.Join(checks, " && "))
-				for i := len(rules) - 1; i >= 0; i-- {
-					fmt.Fprintf(&b, "    run %s\n", hookQuoteIfaces(strings.Join(rules[i].InsertArgs(), " ")))
-				}
-				b.WriteString("  fi\n")
-			} else {
-				for _, r := range rules {
-					fmt.Fprintf(&b, "  %s\n", r.HookLine())
-				}
+			for _, r := range rules {
+				fmt.Fprintf(&b, "  %s\n", r.HookLine())
 			}
 			if g.Guard != "" {
 				b.WriteString("fi\n")

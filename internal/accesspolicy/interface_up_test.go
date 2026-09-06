@@ -2,7 +2,13 @@ package accesspolicy
 
 import (
 	"context"
+	"encoding/json"
+	"reflect"
 	"testing"
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 // fakeLifecycle records Start/Stop calls by tunnel ID.
@@ -73,26 +79,48 @@ func TestSetInterfaceUp_ManagedTunnel_Down_RoutesToLifecycleStop(t *testing.T) {
 	}
 }
 
-// A non-managed NDMS interface (system interface in a policy) must NOT touch
-// the lifecycle — it falls through to the raw flip. We can't exercise the raw
-// flip without a poster, so we assert the lifecycle was left untouched (the
-// resolver returns ok=false). interfaces stays nil; the raw branch would be
-// reached only after the managed check returns false, which we don't drive
-// here to avoid the nil poster — the assertion is purely "lifecycle not used".
-func TestSetInterfaceUp_NonManaged_DoesNotUseLifecycle(t *testing.T) {
-	lc := &fakeLifecycle{}
-	s := &ServiceImpl{
-		lifecycle:      lc,
-		tunnelResolver: &fakeResolver{m: map[string]string{}}, // nothing managed
-	}
+type recPoster struct{ posts []string }
 
-	// Will panic on the nil raw interfaces if it reaches the flip — that's
-	// acceptable for this assertion's intent; guard with recover to keep the
-	// test focused on "lifecycle not invoked".
-	defer func() { _ = recover() }()
-	_ = s.SetInterfaceUp(context.Background(), "GigabitEthernet1", true)
+func (p *recPoster) Post(_ context.Context, payload any) (json.RawMessage, error) {
+	b, _ := json.Marshal(payload)
+	p.posts = append(p.posts, string(b))
+	return json.RawMessage(`{}`), nil
+}
 
-	if len(lc.started) != 0 || len(lc.stopped) != 0 {
-		t.Errorf("lifecycle used for non-managed iface: started=%v stopped=%v", lc.started, lc.stopped)
+func newRawFlipService(t *testing.T) (*ServiceImpl, *recPoster) {
+	t.Helper()
+	poster := &recPoster{}
+	// time.Hour: Request() ставит AfterFunc-таймер, и 500 мс под -race допишут save-POST в
+	// posts гонкой с чтением в тесте (форма ops/operator_os5_lifecycle_test.go:31).
+	sc := command.NewSaveCoordinator(poster, nil, time.Hour, time.Hour, 0, nil)
+	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	return &ServiceImpl{
+		interfaces:     command.NewInterfaceCommands(poster, sc, q, nil),
+		lifecycle:      &fakeLifecycle{},
+		tunnelResolver: &fakeResolver{m: map[string]string{}}, // ничего не managed
+	}, poster
+}
+
+// Не-managed интерфейс: lifecycle не трогается, в NDMS уходит сырой флип up/down.
+// Прежний тест глушил nil-панику recover'ом и до ассертов не доходил.
+func TestSetInterfaceUp_NonManaged_RawFlipWithoutLifecycle(t *testing.T) {
+	for _, tc := range []struct {
+		up   bool
+		want string
+	}{
+		{true, `{"interface":{"GigabitEthernet1":{"up":true}}}`},
+		{false, `{"interface":{"GigabitEthernet1":{"up":false}}}`},
+	} {
+		s, poster := newRawFlipService(t)
+		if err := s.SetInterfaceUp(context.Background(), "GigabitEthernet1", tc.up); err != nil {
+			t.Fatalf("up=%v: %v", tc.up, err)
+		}
+		lc := s.lifecycle.(*fakeLifecycle)
+		if len(lc.started) != 0 || len(lc.stopped) != 0 {
+			t.Fatalf("lifecycle тронут: %v %v", lc.started, lc.stopped)
+		}
+		if !reflect.DeepEqual(poster.posts, []string{tc.want}) {
+			t.Fatalf("RCI = %v, want [%s]", poster.posts, tc.want)
+		}
 	}
 }

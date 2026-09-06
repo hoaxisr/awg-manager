@@ -115,3 +115,47 @@ func TestBus_DoubleUnsubscribe(t *testing.T) {
 	// Should not panic
 	unsub()
 }
+
+// Data едет ЗНАЧЕНИЕМ, а не указателем: SSE-слой раздаёт одно и то же событие
+// всем подписчикам, и указатель на общую структуру дал бы им общий мутируемый
+// объект. Улика — type assertion на значение (на указателе не сойдётся).
+func TestBus_PublishInvalidatedCarriesValue(t *testing.T) {
+	bus := NewBus()
+	_, ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	bus.PublishInvalidated(ResourceTunnels, "tunnel-toggled")
+
+	select {
+	case event := <-ch:
+		if event.Type != EventResourceInvalidated {
+			t.Fatalf("тип события: %q, want %q", event.Type, EventResourceInvalidated)
+		}
+		data, ok := event.Data.(ResourceInvalidatedEvent)
+		if !ok {
+			t.Fatalf("Data не значение ResourceInvalidatedEvent: %T", event.Data)
+		}
+		if data.Resource != ResourceTunnels || data.Reason != "tunnel-toggled" {
+			t.Fatalf("payload не тот: %+v", data)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("событие не доехало")
+	}
+}
+
+// unsub закрывает канал: SSE-handler читает его в range и без закрытия висел
+// бы на мёртвой подписке до конца жизни процесса.
+func TestBus_UnsubscribeClosesChannel(t *testing.T) {
+	bus := NewBus()
+	_, ch, unsub := bus.Subscribe()
+	unsub()
+
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatal("канал отдал значение вместо закрытия")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("канал не закрыт после unsub")
+	}
+}

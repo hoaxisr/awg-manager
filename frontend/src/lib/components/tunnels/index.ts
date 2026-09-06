@@ -7,6 +7,7 @@ export { default as DefaultRouteBadge } from './DefaultRouteBadge.svelte';
 export { default as TunnelCard } from './TunnelCard.svelte';
 export { default as TunnelCardSkeleton } from './TunnelCardSkeleton.svelte';
 export { default as TunnelDelaySparkBars } from './TunnelDelaySparkBars.svelte';
+export { default as TunnelLockGlyph } from './TunnelLockGlyph.svelte';
 export { default as TunnelListEndpointLine } from './TunnelListEndpointLine.svelte';
 export { default as TunnelListTrafficCell } from './TunnelListTrafficCell.svelte';
 export { default as TunnelMetaText } from './TunnelMetaText.svelte';

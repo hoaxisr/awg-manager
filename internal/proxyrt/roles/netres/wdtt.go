@@ -1,12 +1,18 @@
 package netres
 
-// Построители групп WDTT-сервера. Формы — побайтово из старого кода
-// (entware_nat_linux.go, server_raw_policy_linux.go): движок усыновляет
-// живые правила, а не плодит вторые копии рядом.
+// Построители групп WDTT-сервера. Форма правила — часть контракта, а не
+// стиль: движок сверяет живое правило со своим по строке и усыновляет его,
+// поэтому любое расхождение с тем, что УЖЕ стоит на роутерах пользователей,
+// даёт вторую копию рядом вместо усыновления. Отсюда побайтовое совпадение
+// со строками, которые ставил прежний код (entware_nat_linux.go,
+// server_raw_policy_linux.go), — довод про установленную базу, не про то,
+// что старый код был прав.
 
-// Comment — метка владения общих правил (nat/POSTROUTING). FORWARD accept и
-// цепочка awgm_wdtt_mangle меток не несут: правило адресовано НАШЕМУ
-// интерфейсу, имя интерфейса и есть признак владения (памятка проекта).
+// Comment — метка владения общих правил (nat/POSTROUTING). Цепочка
+// awgm_wdtt_mangle метки не несёт: правило адресовано НАШЕМУ интерфейсу, имя
+// интерфейса и есть признак владения (памятка проекта). Так же был устроен и
+// снятый FORWARD accept raw-половины — потому его остаток и снимается
+// адресно (RuleSet.Doom), а не усыновлением по метке.
 const Comment = "AWGM_WDTT"
 
 // MSSChain — своя цепочка clamp-правил.
@@ -15,28 +21,13 @@ const MSSChain = "awgm_wdtt_mangle"
 // HookPath — путь netfilter.d-хука (старый, усыновляется).
 const HookPath = "/opt/etc/ndm/netfilter.d/61-awgm-wdtt-forward.sh"
 
-// ForwardGroups — FORWARD accept по -i и -o для каждого интерфейса.
-func ForwardGroups(ifaces []string) []Group {
-	var out []Group
-	for _, iface := range ifaces {
-		if iface == "" {
-			continue
-		}
-		out = append(out, Group{Guard: iface, Rules: []Rule{
-			{Chain: "FORWARD", Pos: 1, Spec: []string{"-i", iface, "-j", "ACCEPT"}},
-			{Chain: "FORWARD", Pos: 1, Spec: []string{"-o", iface, "-j", "ACCEPT"}},
-		}})
-	}
-	return out
-}
-
 // MasqPlan — kernel-iface + CIDR клиентов (паритет entwareNATPlan).
 type MasqPlan struct {
 	Iface string
 	CIDR  string
 }
 
-// MasqGroups — SNAT. full: `-s CIDR ! -o iface` (NAT на любом egress:
+// MasqGroups — SNAT. none: правил нет вовсе. full: `-s CIDR ! -o iface` (NAT на любом egress:
 // fwmark-таблицы шлют клиентов в разные интерфейсы, PR #697 F8);
 // internet-only: жёсткий `-o staticWANDev`. Пустой staticWANDev при
 // internet-only — дефект вызывающего (молчаливая деградация в full-форму
@@ -49,6 +40,12 @@ func MasqGroups(plans []MasqPlan, mode, staticWANDev string) []Group {
 	for _, p := range plans {
 		var spec []string
 		switch {
+		case mode == "none":
+			// Режим значит «без подмены адреса источника» — маскарада нет по
+			// определению. Своя ветка обязательна: без неё none попадал в
+			// default и получал ПОЛНУЮ форму, то есть ровно то, что режим
+			// запрещает.
+			return nil
 		case mode == "internet-only" && staticWANDev != "":
 			spec = []string{"-s", p.CIDR, "-o", staticWANDev,
 				"-m", "comment", "--comment", Comment, "-j", "MASQUERADE"}
@@ -87,18 +84,6 @@ func DNSGroups(specs []DNSHijack) []Group {
 		out = append(out, g)
 	}
 	return out
-}
-
-// PolicyMarkGroup — пара mangle-правил raw-политики. Итоговый порядок в
-// цепочке: MARK (поз.1), CONNMARK (поз.2) — иначе save-mark пишет ноль (F3).
-func PolicyMarkGroup(iface, mark string) Group {
-	return Group{Guard: iface, AllOrNone: true, Rules: []Rule{
-		{Table: "mangle", Chain: "PREROUTING", Pos: 1,
-			Spec: []string{"-i", iface, "-j", "MARK", "--set-xmark", mark + "/0xffffffff"}},
-		{Table: "mangle", Chain: "PREROUTING", Pos: 1,
-			Spec: []string{"-i", iface, "-j", "CONNMARK", "--save-mark",
-				"--nfmask", "0xffffffff", "--ctmask", "0xffffffff"}},
-	}}
 }
 
 // MSSRules — clamp в СВОЕЙ цепочке (append, без позиций).

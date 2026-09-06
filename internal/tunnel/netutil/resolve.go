@@ -6,6 +6,9 @@ import (
 	"strconv"
 )
 
+// lookupIP — шов над резолвером: тесты подменяют, прод зовёт net.LookupIP.
+var lookupIP = net.LookupIP
+
 // preferIPv4 picks the first IPv4 address from a list.
 // Falls back to the first address (IPv6) if no IPv4 found.
 // Returns nil for empty input.
@@ -37,7 +40,7 @@ func ResolveHost(host string) (string, error) {
 		return ip.String(), nil
 	}
 
-	addrs, err := net.LookupIP(host)
+	addrs, err := lookupIP(host)
 	if err != nil {
 		return "", fmt.Errorf("resolve %s: %w", host, err)
 	}
@@ -84,7 +87,7 @@ func LookupAllIPs(host string) ([]string, error) {
 		return []string{ip.String()}, nil
 	}
 
-	addrs, err := net.LookupIP(host)
+	addrs, err := lookupIP(host)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", host, err)
 	}

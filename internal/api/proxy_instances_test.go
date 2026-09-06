@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,6 +39,16 @@ type proxyEnabledCall struct {
 // Update. Иначе тест «PATCH будит воркер» проверял бы факт вызова, а не то,
 // что после него инстанс действительно разбужен.
 type fakeProxyManager struct {
+	// mu зеркалит m.mu настоящего менеджера: manager.update держит его на ВСЁ
+	// время мутатора (manager.go:770), а прочие методы берут тот же
+	// нереентерабельный замок. ПРАВИЛО ФОРМЫ: каждый метод интерфейса
+	// ProxyManager, берущий m.mu в проде, обязан иметь пробу notInMutator
+	// здесь — фейк не строже прода, а его зеркало. Значит вызов любого из них
+	// ИЗ-ПОД мутатора — гарантированный дедлок всей поверхности в проде. Фейк
+	// без замка такой код пропускал бы зелёным, что и случилось с гейтом
+	// единственности.
+	mu sync.Mutex
+
 	records []instancestore.Record
 	seed    manager.SeedInfo
 
@@ -55,13 +66,28 @@ type fakeProxyManager struct {
 	posts   []proxyPostCall
 }
 
+// notInMutator — проба того же замка. Под мутатором Update он уже взят, и
+// TryLock не проходит: в проде на этом месте встал бы m.mu.
+func (f *fakeProxyManager) notInMutator(method string) {
+	if !f.mu.TryLock() {
+		panic("fakeProxyManager." + method +
+			": вызов из-под мутатора Update — в проде дедлок на m.mu")
+	}
+	f.mu.Unlock()
+}
+
 func (f *fakeProxyManager) Records() []instancestore.Record {
+	f.notInMutator("Records")
 	return append([]instancestore.Record(nil), f.records...)
 }
 
-func (f *fakeProxyManager) SeedInfo() manager.SeedInfo { return f.seed }
+func (f *fakeProxyManager) SeedInfo() manager.SeedInfo {
+	f.notInMutator("SeedInfo")
+	return f.seed
+}
 
 func (f *fakeProxyManager) AckListenMoves() error {
+	f.notInMutator("AckListenMoves")
 	if f.ackErr != nil {
 		return f.ackErr
 	}
@@ -71,6 +97,7 @@ func (f *fakeProxyManager) AckListenMoves() error {
 }
 
 func (f *fakeProxyManager) Create(_ context.Context, rec instancestore.Record) error {
+	f.notInMutator("Create")
 	if f.createErr != nil {
 		return f.createErr
 	}
@@ -83,6 +110,11 @@ func (f *fakeProxyManager) Update(_ context.Context, key string, mutate func(*in
 	if f.updateErr != nil {
 		return f.updateErr
 	}
+	// Замок держится на всё время мутатора — как m.mu в manager.update.
+	if !f.mu.TryLock() {
+		panic("fakeProxyManager.Update: вложенный вызов из-под мутатора — в проде дедлок на m.mu")
+	}
+	defer f.mu.Unlock()
 	for i := range f.records {
 		if f.records[i].Key() != key {
 			continue
@@ -99,7 +131,11 @@ func (f *fakeProxyManager) Update(_ context.Context, key string, mutate func(*in
 	return fmt.Errorf("инстанс %s не найден", key)
 }
 
+// SetEnabled замок НЕ держит: настоящий тоже не держит — он делегирует Update
+// (manager.go:897), а тот берёт m.mu сам. Проба здесь ровно поэтому разовая:
+// удержание до конца повесило бы вложенный Update уже в самом фейке.
 func (f *fakeProxyManager) SetEnabled(ctx context.Context, key string, on bool) error {
+	f.notInMutator("SetEnabled")
 	f.enabled = append(f.enabled, proxyEnabledCall{Key: key, On: on})
 	return f.Update(ctx, key, func(r *instancestore.Record) error {
 		r.Enabled = on
@@ -108,6 +144,7 @@ func (f *fakeProxyManager) SetEnabled(ctx context.Context, key string, on bool) 
 }
 
 func (f *fakeProxyManager) Delete(_ context.Context, key string) error {
+	f.notInMutator("Delete")
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
@@ -123,6 +160,7 @@ func (f *fakeProxyManager) Delete(_ context.Context, key string) error {
 }
 
 func (f *fakeProxyManager) Post(key string, k proxyrt.EventKind) bool {
+	f.notInMutator("Post")
 	f.posts = append(f.posts, proxyPostCall{Key: key, Kind: k})
 	return f.postOK
 }
@@ -315,6 +353,8 @@ func TestProxyInstancesList_RecordStateAndProcess(t *testing.T) {
 			Resources: []proxyrt.ResourceState{
 				{ID: "process", Status: proxyrt.StatusOK, Detail: "pid 4321"},
 				{ID: "ndms_iface", Status: proxyrt.StatusDrift, Detail: "нет", Error: "занят"},
+				{ID: "ndms_access", Status: proxyrt.StatusOK,
+					Attrs: map[string]string{"foreign-acl": "OpkgTun17:GUEST_ACL"}},
 			},
 			LastPlan: []proxyrt.Step{
 				{Resource: "ndms_iface", Op: "create", Args: map[string]string{"name": "OpkgTun18"}, Reason: "нет интерфейса"},
@@ -349,6 +389,7 @@ func TestProxyInstancesList_RecordStateAndProcess(t *testing.T) {
 		Resources: []ProxyRtResourceView{
 			{ID: "process", Status: "ok", Detail: "pid 4321"},
 			{ID: "ndms_iface", Status: "drift", Detail: "нет", Error: "занят"},
+			{ID: "ndms_access", Status: "ok", Attrs: map[string]string{"foreign-acl": "OpkgTun17:GUEST_ACL"}},
 		},
 		LastPlan: []ProxyRtStepView{
 			{Resource: "ndms_iface", Op: "create", Args: map[string]string{"name": "OpkgTun18"}, Reason: "нет интерфейса"},
@@ -357,6 +398,11 @@ func TestProxyInstancesList_RecordStateAndProcess(t *testing.T) {
 	}
 	if !reflect.DeepEqual(*got.State, wantState) {
 		t.Fatalf("state = %+v,\nждали %+v", *got.State, wantState)
+	}
+	// Имя ключа в JSON пинится литералом: DeepEqual идёт по РАЗОБРАННОЙ
+	// структуре и переживёт любой тег, лишь бы он совпал на обеих сторонах.
+	if !strings.Contains(rr.Body.String(), `"attrs":{"foreign-acl":"OpkgTun17:GUEST_ACL"}`) {
+		t.Fatalf("чужие привязки не ушли в JSON: %s", rr.Body.String())
 	}
 
 	clients := 3
@@ -674,6 +720,42 @@ func TestProxyInstancesCreate_WgClientPassesOpkgGate(t *testing.T) {
 		`{"id":"nl","kind":"wdtt-client","name":"c","config":{"connMode":"wg"}}`)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("код = %d, ждали 200: wg-клиент OpkgTun не требует", rr.Code)
+	}
+}
+
+// Сервер один на роутер: обе половины делят адреса шлюзов и метку правил
+// AWGM_WDTT, и второй инстанс (даже выключенный) через усыновление по метке
+// сносил бы маскарад первого. Второй POST вида wdtt-server отбивается гейтом.
+func TestProxyInstancesCreate_SecondServerRejected(t *testing.T) {
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{fullServerRecord()},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	h := newProxyHandler(t, mgr, fakeProxyStates{})
+	rr := doProxy(t, h, http.MethodPost, "/api/proxyrt/instances",
+		`{"kind":"wdtt-server","name":"второй","config":{}}`)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("код = %d, ждали 422: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"PROXY_KIND_SINGLETON"`) {
+		t.Fatalf("код отказа не про единственность: %s", rr.Body.String())
+	}
+	if n := len(mgr.Records()); n != 1 {
+		t.Fatalf("записей %d, вторая не должна была лечь", n)
+	}
+}
+
+// PATCH существующего сервера гейт единственности не задевает.
+func TestProxyInstancesPatch_ExistingServerPassesSingletonGate(t *testing.T) {
+	rec := fullServerRecord()
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{rec},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	h := newProxyHandler(t, mgr, fakeProxyStates{})
+	rr := doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/"+rec.Key(), `{"name":"переименован"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("код = %d, ждали 200: %s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -1555,5 +1637,29 @@ func TestProxyInstancesPatch_SingularStaticWANReplacesList(t *testing.T) {
 	got := mgr.mutated[len(mgr.mutated)-1].WdttServer
 	if list := got.StaticNATList(); len(list) != 1 || list[0] != "ISP3" {
 		t.Fatalf("выбор WAN не вступил в силу: StaticNATList=%v (NatStaticWANs=%v)", list, got.NatStaticWANs)
+	}
+}
+
+// Каждый метод интерфейса ProxyManager, кроме самого Update, обязан стоять в списке
+// probed — и иметь пробу notInMutator в фейке (правило формы в докстроке fakeProxyManager).
+// Новый метод интерфейса без записи здесь роняет тест; запись без пробы — ревью.
+func TestFakeProxyManager_EveryMethodProbed(t *testing.T) {
+	probed := map[string]bool{
+		"Records": true, "SeedInfo": true, "AckListenMoves": true, "Create": true,
+		"SetEnabled": true, "Delete": true, "Post": true,
+	}
+	typ := reflect.TypeOf((*ProxyManager)(nil)).Elem()
+	for i := 0; i < typ.NumMethod(); i++ {
+		name := typ.Method(i).Name
+		if name == "Update" {
+			continue
+		}
+		if !probed[name] {
+			t.Errorf("метод %s интерфейса ProxyManager без пробы notInMutator в fakeProxyManager", name)
+		}
+		delete(probed, name)
+	}
+	for name := range probed {
+		t.Errorf("в списке probed лишний метод %s — его нет в интерфейсе", name)
 	}
 }

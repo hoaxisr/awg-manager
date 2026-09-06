@@ -50,10 +50,11 @@ type ProxyInstanceEnabler interface {
 }
 
 // NewControlHandler creates a new control handler.
-func NewControlHandler(svc TunnelService, appLogger logging.AppLogger) *ControlHandler {
+func NewControlHandler(svc TunnelService, store *storage.AWGTunnelStore, appLogger logging.AppLogger) *ControlHandler {
 	return &ControlHandler{
-		svc: svc,
-		log: logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubLifecycle),
+		svc:   svc,
+		store: store,
+		log:   logging.NewScopedLogger(appLogger, logging.GroupTunnel, logging.SubLifecycle),
 	}
 }
 
@@ -75,20 +76,17 @@ func (h *ControlHandler) SetTunnelsHandler(th *TunnelsHandler) {
 // SetEventBus sets the event bus for SSE publishing.
 func (h *ControlHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
-// SetProxyControl wires the tunnel store and the proxy-runtime intent switch
-// so the wdtt-raw mirror record's card toggles its instance, not the kernel
-// lifecycle of a tunnel that has no kernel lifecycle.
-func (h *ControlHandler) SetProxyControl(store *storage.AWGTunnelStore, en ProxyInstanceEnabler) {
-	h.store = store
-	h.proxyEnabler = en
-}
+// SetProxyControl wires the proxy-runtime intent switch so the wdtt-raw mirror
+// record's card toggles its instance, not the kernel lifecycle of a tunnel that
+// has no kernel lifecycle (store приходит конструктором).
+func (h *ControlHandler) SetProxyControl(en ProxyInstanceEnabler) { h.proxyEnabler = en }
 
 // controlWdttRaw — старт/стоп зеркальной записи wdtt-raw. Это НЕ kernel-туннель:
 // его поднимает и опускает воркер прокси-рантайма по намерению записи, поэтому
 // кнопка карточки переключает намерение инстанса, а не зовёт оркестратор (его
 // путь для такой записи означал бы побочные эффекты kernel-жизненного цикла).
 func (h *ControlHandler) controlWdttRaw(w http.ResponseWriter, r *http.Request, id string, start bool) bool {
-	if h.store == nil || h.proxyEnabler == nil {
+	if h.proxyEnabler == nil {
 		return false
 	}
 	stored, err := h.store.Get(id)
@@ -205,6 +203,7 @@ func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
 //	@Param			id	query	string	true	"Tunnel id"
 //	@Success		200	{object}	TunnelControlResponse
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		403	{object}	APIErrorEnvelope
 //	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/control/stop [post]
@@ -220,6 +219,10 @@ func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isValidTunnelID(id) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
+		return
+	}
+	if stored, _ := h.store.Get(id); stored != nil && stored.Locked {
+		response.ErrorWithStatus(w, http.StatusForbidden, tunnelLockedMessage, "TUNNEL_LOCKED")
 		return
 	}
 	if h.controlWdttRaw(w, r, id, false) {
@@ -377,6 +380,7 @@ func (h *ControlHandler) RestartAll(w http.ResponseWriter, r *http.Request) {
 //	@Param			id	query	string	true	"Tunnel id"
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		403	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/control/toggle-enabled [post]
 func (h *ControlHandler) ToggleEnabled(w http.ResponseWriter, r *http.Request) {
@@ -391,6 +395,10 @@ func (h *ControlHandler) ToggleEnabled(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isValidTunnelID(id) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
+		return
+	}
+	if stored, _ := h.store.Get(id); stored != nil && stored.Locked {
+		response.ErrorWithStatus(w, http.StatusForbidden, tunnelLockedMessage, "TUNNEL_LOCKED")
 		return
 	}
 
@@ -434,6 +442,7 @@ func (h *ControlHandler) ToggleEnabled(w http.ResponseWriter, r *http.Request) {
 //	@Param			id	query	string	true	"Tunnel id"
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		403	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/control/toggle-default-route [post]
 func (h *ControlHandler) ToggleDefaultRoute(w http.ResponseWriter, r *http.Request) {
@@ -448,6 +457,10 @@ func (h *ControlHandler) ToggleDefaultRoute(w http.ResponseWriter, r *http.Reque
 	}
 	if !isValidTunnelID(id) {
 		response.Error(w, "invalid tunnel ID", "INVALID_ID")
+		return
+	}
+	if stored, _ := h.store.Get(id); stored != nil && stored.Locked {
+		response.ErrorWithStatus(w, http.StatusForbidden, tunnelLockedMessage, "TUNNEL_LOCKED")
 		return
 	}
 

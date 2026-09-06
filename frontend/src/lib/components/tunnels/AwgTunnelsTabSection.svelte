@@ -4,7 +4,7 @@
 	// состоянию страницы на ctx.* — единый проп-контекст с live-геттерами
 	// (см. awgTabContext.ts). Сторы сортировки — прямым импортом.
 	import { StatStrip, Stat, LayoutViewToggle, Button, Badge, TableSortHeader, StatusDot, TrafficSparkline, StoreStatusBadge, Toggle } from '$lib/components/ui';
-	import { TunnelCard, ExternalTunnelCard, SystemTunnelCard, TunnelToolbarViewRow, AdoptTunnelDialog } from '$lib/components/tunnels';
+	import { TunnelCard, ExternalTunnelCard, SystemTunnelCard, TunnelToolbarViewRow, AdoptTunnelDialog, TunnelLockGlyph } from '$lib/components/tunnels';
 	import { EmptyState } from '$lib/components/layout';
 	import { awgTunnelTableSort } from '$lib/stores/tunnelTableSort';
 	import { formatBitRate, formatBytes } from '$lib/utils/format';
@@ -15,6 +15,7 @@
 	import TunnelTitleRow from '$lib/components/tunnels/TunnelTitleRow.svelte';
 	import TunnelMetaText from '$lib/components/tunnels/TunnelMetaText.svelte';
 	import TunnelListTrafficCell from '$lib/components/tunnels/TunnelListTrafficCell.svelte';
+	import { tunnelLockAvailable } from '$lib/components/tunnels/tunnelPageSelectors';
 	import { formatRelativeTime, formatDuration } from '$lib/utils/format';
 	import { type AwgTunnelSortKey } from '$lib/stores/tunnelTableSort';
 	import { goto } from '$app/navigation';
@@ -274,14 +275,22 @@
 			{@const showConnectivityRow = awgShowConnectivityRow(tunnel.status)}
 				<div class="awg-list-row">
 				<div class="awg-list-cell awg-list-cell-toggle">
-					<Toggle
-						checked={ctx.isManagedTunnelOn(tunnel)}
-						size="sm"
-						variant="flip"
-						tint={awgToggleTint(tunnel, connectivity)}
-						disabled={(ctx.toggleLoading[tunnel.id] ?? false) || tunnel.hasAddressConflict === true}
-						onchange={() => ctx.handleToggleOnOff(tunnel.id)}
-					/>
+					{#if tunnelLockAvailable(tunnel)}
+						<TunnelLockGlyph
+							locked={!!tunnel.locked}
+							onclick={() => ctx.handleLockClick(tunnel.id)}
+						/>
+					{/if}
+					<span title={tunnel.locked ? 'Туннель защищён от изменений' : undefined}>
+						<Toggle
+							checked={ctx.isManagedTunnelOn(tunnel)}
+							size="sm"
+							variant="flip"
+							tint={awgToggleTint(tunnel, connectivity)}
+							disabled={(ctx.toggleLoading[tunnel.id] ?? false) || tunnel.hasAddressConflict === true || !!tunnel.locked}
+							onchange={() => ctx.handleToggleOnOff(tunnel.id)}
+						/>
+					</span>
 				</div>
 					<div class="awg-list-cell awg-list-cell-name">
 						<div class="tunnel-list-name-stack">
@@ -401,11 +410,13 @@
 					<div class="awg-list-cell awg-list-cell-actions tunnel-list-cell--actions">
 						<TunnelListActions
 							editHref="/tunnels/{tunnel.id}"
-							editTitle="Изменить туннель «{tunnel.name}»"
+							editDisabled={!!tunnel.locked}
+							editTitle={tunnel.locked ? 'Туннель защищён от изменений' : `Изменить туннель «${tunnel.name}»`}
 							onTest={() => ctx.openAwgDiagnostics(tunnel.id, tunnel.name)}
 							testTitle="Тест туннеля «{tunnel.name}»"
 							onDelete={() => ctx.requestDelete(tunnel.id)}
-							deleteTitle="Удалить туннель «{tunnel.name}»"
+							deleteDisabled={!!tunnel.locked}
+							deleteTitle={tunnel.locked ? 'Туннель защищён от изменений' : `Удалить туннель «${tunnel.name}»`}
 							deleting={ctx.deleteLoading[tunnel.id] ?? false}
 						/>
 					</div>
@@ -659,6 +670,7 @@
 					onToggleOnOff={() => ctx.handleToggleOnOff(tunnel.id)}
 					ondelete={() => ctx.requestDelete(tunnel.id)}
 					ondetail={(id) => ctx.openDetail(id)}
+					onLockClick={() => ctx.handleLockClick(tunnel.id)}
 				/>
 			{/each}
 			{#each ctx.sortedFilteredSystemList as tunnel (tunnel.id)}

@@ -28,7 +28,10 @@ const (
 	legacyPidFile = "/opt/var/run/awg-manager.pid"
 	// serviceStderrLog captures the daemon's stderr under --service start:
 	// panic traces and early-boot warnings that predate the app logger.
-	serviceStderrLog = "/opt/tmp/awg-manager-stderr.log"
+	// Lives on the /var/run tmpfs like the PID file: it is read while the
+	// router is up (a dead daemon is diagnosed without a reboot), and it
+	// must not cost a flash write on every start (#854).
+	serviceStderrLog = "/var/run/awg-manager/stderr.log"
 )
 
 // runService handles --service flag: start/stop/restart/status.
@@ -63,7 +66,7 @@ func serviceStart(dataDir string) {
 
 	// Ensure directories. /var/run is system tmpfs and always exists,
 	// but MkdirAll is idempotent so harmless to call.
-	os.MkdirAll("/var/run", 0755)
+	os.MkdirAll(filepath.Dir(serviceStderrLog), 0755)
 	os.MkdirAll("/opt/var/log", 0755)
 	os.MkdirAll(dataDir, 0755)
 

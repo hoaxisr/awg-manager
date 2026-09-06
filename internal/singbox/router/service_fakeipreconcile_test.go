@@ -556,8 +556,8 @@ func TestReconcileFakeIPTun_PoolV6HealsWhenV4Present(t *testing.T) {
 // F22: после рестарта демона в fakeip-режиме могли выжить чужие AWGM-цепочки
 // прежнего tproxy-режима — они заворачивают policy-трафик в порт без
 // слушателя, и не лечит их никто: fakeip своего netfilter не ставит, а
-// провал Uninstall внутри Disable молча проглатывается (Uninstall всегда
-// возвращает nil, F79). Первый тик реконсиляции обязан свипнуть один раз,
+// Uninstall best-effort и ошибки не возвращает (F79), поэтому провал шага
+// внутри Disable не наблюдаем. Первый тик реконсиляции обязан свипнуть один раз,
 // второй — молчать.
 func TestReconcileFakeIPTun_FirstTickSweepsForeignNetfilter(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -354,5 +355,72 @@ func TestReconcile_SkipsOrphanLists(t *testing.T) {
 		if bytes.Contains(raw, []byte("10.0.0.0")) {
 			t.Errorf("orphan subnet 10.0.0.0/8 must not be installed, saw %s", string(raw))
 		}
+	}
+}
+
+// routePayloads — JSON тех POST'ов, что несут ключ "ip" (координатор save шлёт
+// свои — их отсеиваем).
+func routePayloads(t *testing.T, poster *fakePoster) []string {
+	t.Helper()
+	var out []string
+	for _, p := range poster.Payloads() {
+		m, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, has := m["ip"]; !has {
+			continue
+		}
+		b, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, string(b))
+	}
+	return out
+}
+
+// Delete включённого списка снимает маршруты через NDMS формой `no`, а не ставит
+// их заново (мутация RemoveStaticRoute→AddStaticRoute была зелёной: Delete не
+// исполнялся ни одним тестом).
+func TestDelete_EnabledListRemovesRoutesViaNDMS(t *testing.T) {
+	store := newTestStore(t, []storage.StaticRouteList{
+		{ID: "srl7", TunnelID: "awg10", Subnets: []string{"10.20.0.0/16"}, Enabled: true},
+	})
+	routes, poster := newTestRouteCommands()
+	svc := &ServiceImpl{
+		store:   store,
+		routes:  routes,
+		catalog: &mockCatalog{ifaces: map[string]string{"awg10": "OpkgTun10"}},
+	}
+
+	if err := svc.Delete(context.Background(), "srl7"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	want := []string{`{"ip":{"route":{"interface":"OpkgTun10","mask":"255.255.0.0","network":"10.20.0.0","no":true}}}`}
+	if got := routePayloads(t, poster); !reflect.DeepEqual(got, want) {
+		t.Fatalf("RCI:\n got %v\nwant %v", got, want)
+	}
+	if _, err := store.GetRouteList("srl7"); err == nil {
+		t.Fatal("список обязан быть удалён из хранилища")
+	}
+}
+
+// Выключенный список маршрутов на роутере не имеет — Delete в NDMS не ходит.
+func TestDelete_DisabledListTouchesNoRoutes(t *testing.T) {
+	store := newTestStore(t, []storage.StaticRouteList{
+		{ID: "srl8", TunnelID: "awg10", Subnets: []string{"10.30.0.0/16"}, Enabled: false},
+	})
+	routes, poster := newTestRouteCommands()
+	svc := &ServiceImpl{
+		store:   store,
+		routes:  routes,
+		catalog: &mockCatalog{ifaces: map[string]string{"awg10": "OpkgTun10"}},
+	}
+	if err := svc.Delete(context.Background(), "srl8"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if got := routePayloads(t, poster); len(got) != 0 {
+		t.Fatalf("выключенный список: RCI не ждём, got %v", got)
 	}
 }

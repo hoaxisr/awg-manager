@@ -260,7 +260,7 @@ func (h *SystemTunnelsHandler) CheckConnectivity(w http.ResponseWriter, r *http.
 		return
 	}
 	h.appLog.Debug("connectivity-check", name, fmt.Sprintf("Starting connectivity check for system tunnel %s", name))
-	result := testing.CheckConnectivityByInterfaceURL(r.Context(), tunnel.InterfaceName, h.connectivityCheckURL())
+	result := checkConnectivityByInterfaceURL(r.Context(), tunnel.InterfaceName, h.connectivityCheckURL())
 	latency := ""
 	if result.Latency != nil {
 		latency = fmt.Sprintf(", latency=%dms", *result.Latency)
@@ -306,7 +306,7 @@ func (h *SystemTunnelsHandler) CheckIP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	service := r.URL.Query().Get("service")
-	result, err := testing.CheckIPByInterface(r.Context(), tunnel.InterfaceName, service)
+	result, err := checkIPByInterface(r.Context(), tunnel.InterfaceName, service)
 	if err != nil {
 		response.Error(w, err.Error(), "IP_CHECK_FAILED")
 		return

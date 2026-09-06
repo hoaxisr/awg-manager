@@ -786,6 +786,7 @@ const api_ManagedServerDTO: v.GenericSchema = v.looseObject({
 	address: v.optional(v.nullable(v.string())),
 	dns: v.optional(v.nullable(v.string())),
 	endpoint: v.optional(v.nullable(v.string())),
+	foreignAcls: v.optional(v.nullable(v.array(v.string()))),
 	interfaceName: v.optional(v.nullable(v.string())),
 	lanSegments: v.optional(v.nullable(v.array(v.string()))),
 	listenPort: v.optional(v.nullable(v.number())),
@@ -1155,6 +1156,7 @@ const api_ProxyRtListenMoveView: v.GenericSchema = v.looseObject({
 });
 
 const api_ProxyRtResourceView: v.GenericSchema = v.looseObject({
+	attrs: v.optional(v.nullable(v.record(v.string(), v.string()))),
 	detail: v.optional(v.nullable(v.string())),
 	error: v.optional(v.nullable(v.string())),
 	id: v.optional(v.nullable(v.string())),
@@ -2442,6 +2444,7 @@ const api_TunnelListItemDTO: v.GenericSchema = v.looseObject({
 	ispInterface: v.optional(v.nullable(v.string())),
 	ispInterfaceLabel: v.optional(v.nullable(v.string())),
 	lastHandshake: v.optional(v.nullable(v.string())),
+	locked: v.optional(v.nullable(v.boolean())),
 	mtu: v.optional(v.nullable(v.number())),
 	name: v.optional(v.nullable(v.string())),
 	ndmsName: v.optional(v.nullable(v.string())),
@@ -2459,6 +2462,16 @@ const api_TunnelListItemDTO: v.GenericSchema = v.looseObject({
 const api_TunnelListResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.array(v.lazy(() => api_TunnelListItemDTO)))),
 	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_TunnelLockResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_TunnelLockResultData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_TunnelLockResultData: v.GenericSchema = v.looseObject({
+	id: v.optional(v.nullable(v.string())),
+	locked: v.optional(v.nullable(v.boolean())),
 });
 
 const api_TunnelPingCheckStatus: v.GenericSchema = v.looseObject({
@@ -3447,6 +3460,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /terminal/stop": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/create": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/delete": v.lazy(() => api_TunnelDeleteResponse),
+	"POST /tunnels/lock": v.lazy(() => api_TunnelLockResponse),
 	"POST /tunnels/pingcheck": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/pingcheck/remove": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/replace": v.lazy(() => api_APIEnvelope),

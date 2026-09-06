@@ -76,7 +76,6 @@ func (a *app) setupServer() {
 			Version:              version,
 			FrontendFS:           frontendFS,
 			PprofStandaloneAddr:  strings.TrimSpace(a.pprofListen),
-			PprofOnMain:          a.pprofOnMain,
 			SlowRequestThreshold: slowHTTPThreshold,
 		},
 		server.Deps{

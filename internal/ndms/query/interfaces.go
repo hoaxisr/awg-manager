@@ -759,12 +759,14 @@ func (s *InterfaceStore) OnLayerChanged(id, layer, level string) {
 }
 
 // OnIPChanged handles ifipchanged NDMS events. Patches address only.
-// State is owned by the ctrl layer (see OnLayerChanged); Connected is
-// also a derived signal we don't trust from this hook payload alone
-// because the NDMS event-script forwarder doesn't always populate up/
-// connected fields, leading to spurious "down" / "no" overwrites of
-// genuinely running interfaces.
-func (s *InterfaceStore) OnIPChanged(id, address string, _, _ bool) {
+//
+// Состояние линка сюда не приходит СОЗНАТЕЛЬНО: оно принадлежит ctrl-слою
+// (OnLayerChanged), а поля up/connected из этого хука недостоверны —
+// форвардер событий NDMS заполняет их не всегда, и доверие к ним затирало
+// живые интерфейсы ложными "down"/"no". Раньше они принимались параметрами и
+// выбрасывались внутри; параметр, который никто не читает, приглашает начать
+// его читать, поэтому их здесь нет вовсе.
+func (s *InterfaceStore) OnIPChanged(id, address string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	iface, ok := s.byID[id]

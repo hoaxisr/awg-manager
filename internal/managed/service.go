@@ -66,6 +66,10 @@ type ManagedServerService interface {
 	// frontend re-fetch) sees fresh NDMS state instead of cached
 	// pre-mutation values.
 	InvalidateCache(id string)
+
+	// ForeignAccessGroups returns access-group names bound to the interface
+	// via `ip access-group … in`, excluding our own AWGM_<iface>.
+	ForeignAccessGroups(ctx context.Context, iface string) ([]string, error)
 }
 
 // rciPoster is the minimal POST surface managed needs from the NDMS transport.

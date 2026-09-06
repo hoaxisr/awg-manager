@@ -544,9 +544,12 @@ func TestEnsureFakeIPOverlay_FakeIPRuleRestrictedToAAAA(t *testing.T) {
 // settings seeded with FakeIPState{Provisioned:true,Index:0}.
 func newFakeIPTestService(t *testing.T) (*ServiceImpl, string) {
 	t.Helper()
+	stubTProxyProbe(t, func(context.Context) bool { return true })
+	stubXtDscpProbe(t, false, false)
+	stubEnsureKernelModule(t)
 	dir := t.TempDir()
 
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Register(orchestrator.SlotMeta{
 		Slot:     orchestrator.SlotRouter,
 		Filename: "20-router.json",

@@ -118,6 +118,8 @@ func newPolicyTunEnableHarness(t *testing.T, failAt string) *policyTunEnableHarn
 
 	// Carrier readiness → ready; the addr flush records into the same log.
 	stubTunReadyProbe(t, func(string) bool { return true })
+	// Orphan-netdev presence read is host-only (`ip link show`); default absent.
+	stubLinkAbsent(t)
 	old := fakeIPAddrFlush
 	fakeIPAddrFlush = func(_ context.Context, iface string) error {
 		log.add("Flush:" + iface)

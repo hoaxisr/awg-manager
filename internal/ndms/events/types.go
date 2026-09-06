@@ -21,6 +21,4 @@ type Event struct {
 	Layer      string // "conf" | "link" | "ipv4" | "ipv6" | "ctrl" (layerchanged only)
 	Level      string // "running" | "disabled" | ... (layerchanged only)
 	Address    string // IPv4 address (ipchanged only)
-	Up         bool   // interface up flag (ipchanged; optional)
-	Connected  bool   // interface connected flag (ipchanged; optional)
 }

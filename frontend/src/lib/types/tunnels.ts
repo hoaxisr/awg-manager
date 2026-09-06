@@ -121,7 +121,7 @@ export interface TunnelListItem {
 	awgVersion?: 'wg' | 'awg1.0' | 'awg1.5' | 'awg2.0' | 'awg3' | 'awg3.1';
 	mtu?: number;
 	startedAt?: string;
-	backend?: 'nativewg' | 'kernel';
+	backend?: 'nativewg' | 'kernel' | 'wdtt-raw';
 	connectivityCheck?: ConnectivityCheckConfig;
 	/** id WDTT-клиента, для которого создан туннель (пусто у прочих). */
 	wdttClientId?: string;
@@ -133,6 +133,8 @@ export interface TunnelListItem {
 		failCount: number;
 		failThreshold: number;
 	};
+	/** При true туннель защищён от изменений: выключить, изменить и удалить нельзя (#818). */
+	locked?: boolean;
 }
 
 export interface DeleteResult {

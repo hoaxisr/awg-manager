@@ -850,3 +850,28 @@ func TestSetOpkgTunState_CopyOnWrite(t *testing.T) {
 		t.Fatalf("cache = %+v, want Index=1 Provisioned=false (мутация вызывающего доехала до кэша)", got.OpkgTun)
 	}
 }
+
+// API-ключ читается тем же полем, которым записан: разъезд Get/Set здесь —
+// это молча неработающая авторизация по ключу (запрос падает в проверку
+// сессии, будто ключа нет вовсе).
+func TestSettingsStore_ApiKeyRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSettingsStore(dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := store.SetApiKey("k-77"); err != nil {
+		t.Fatalf("SetApiKey: %v", err)
+	}
+	if got := store.GetApiKey(); got != "k-77" {
+		t.Fatalf("GetApiKey = %q, want %q", got, "k-77")
+	}
+	// Ленивый Load: свежий стор над тем же каталогом читает ключ с диска.
+	if got := NewSettingsStore(dir).GetApiKey(); got != "k-77" {
+		t.Fatalf("GetApiKey свежего стора = %q, want %q", got, "k-77")
+	}
+	// Пустой каталог — пустой ключ, а не паника на незагруженном сторе.
+	if got := NewSettingsStore(t.TempDir()).GetApiKey(); got != "" {
+		t.Fatalf("GetApiKey без настроек = %q, want пусто", got)
+	}
+}

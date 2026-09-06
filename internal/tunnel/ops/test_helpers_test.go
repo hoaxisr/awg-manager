@@ -2,9 +2,11 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
@@ -113,12 +115,25 @@ func mockIPRun(_ context.Context, _ string, _ ...string) (*exec.Result, error) {
 	return &exec.Result{}, nil
 }
 
-// ipRunRecorder records ip command calls for assertion.
+// ipRunRecorder records ip command calls for assertion; calls whose argv contains
+// failOn (non-empty) fail with a fixed RTNETLINK error.
 type ipRunRecorder struct {
-	Calls []string
+	Calls  []string
+	failOn string
 }
 
 func (r *ipRunRecorder) run(_ context.Context, name string, args ...string) (*exec.Result, error) {
-	r.Calls = append(r.Calls, name+" "+strings.Join(args, " "))
+	call := name + " " + strings.Join(args, " ")
+	r.Calls = append(r.Calls, call)
+	if r.failOn != "" && strings.Contains(call, r.failOn) {
+		return &exec.Result{}, errors.New("ip: RTNETLINK answers: No such process")
+	}
 	return &exec.Result{}, nil
+}
+
+// recAppLog — фейк logging.AppLogger: level|action|target|message.
+type recAppLog struct{ entries []string }
+
+func (r *recAppLog) AppLog(level logging.Level, _, _, action, target, message string) {
+	r.entries = append(r.entries, string(level)+"|"+action+"|"+target+"|"+message)
 }

@@ -126,6 +126,8 @@ export interface WdttProcessStatus {
 	 * сокет — процесс либо отвечает по нему, либо не наш. Поле всегда пусто.
 	 */
 	orphanedPid?: boolean;
+	/** Посторонний ACL (`iface:name`), привязанный к интерфейсу сервера в обход выбора сегментов. */
+	foreignAcls?: string[];
 }
 
 export interface WdttInstanceStatus {

@@ -78,6 +78,7 @@ func newTransitionHarness(t *testing.T) *transitionHarness {
 	stubListeningProbe(t, func() bool { return true })
 	stubTunReadyProbe(t, func(string) bool { return true })
 	stubFakeIPDNSProbe(t, func(context.Context, string, netip.Prefix) bool { return true })
+	stubLinkAbsent(t)
 	oldFlush := fakeIPAddrFlush
 	fakeIPAddrFlush = func(context.Context, string) error { return nil }
 	t.Cleanup(func() { fakeIPAddrFlush = oldFlush })

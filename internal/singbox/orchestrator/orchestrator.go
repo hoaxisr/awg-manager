@@ -147,10 +147,16 @@ func (o *Orchestrator) log(level, msg string) {
 // /opt/etc/sing-box/config.d). It does NOT touch disk — call Bootstrap
 // after construction to scan/migrate existing files.
 func New(configDir string, proc ProcessController) *Orchestrator {
+	return NewWithAppliedPath(configDir, proc, appliedStatePath)
+}
+
+// NewWithAppliedPath — New с явным путём applied-state breadcrumb'а. Тесты
+// других пакетов передают файл в t.TempDir(); прод идёт через New.
+func NewWithAppliedPath(configDir string, proc ProcessController, appliedPath string) *Orchestrator {
 	o := &Orchestrator{
 		configDir:   configDir,
 		proc:        proc,
-		appliedPath: appliedStatePath,
+		appliedPath: appliedPath,
 		slots:       make(map[Slot]SlotMeta),
 		enabled:     make(map[Slot]bool),
 	}

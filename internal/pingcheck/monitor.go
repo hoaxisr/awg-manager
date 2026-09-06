@@ -15,6 +15,14 @@ const (
 	maxBackoff        = 30 * time.Minute
 )
 
+// runCmd — шов над exec.Run для команд лечения (`ip link set`, `awg set`); в
+// тестах подменяется рекордером, в проде — exec.Run.
+var runCmd = exec.Run
+
+// resolveEndpoint — шов над DNS-резолвом endpoint'а перед лечением; тесты
+// подменяют, прод зовёт tryResolveEndpoint.
+var resolveEndpoint = tryResolveEndpoint
+
 // runMonitorLoop runs the simple health sensor loop for a kernel tunnel.
 func (s *Service) runMonitorLoop(m *tunnelMonitor) {
 	defer m.wg.Done()
@@ -145,13 +153,13 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 	// 1. Re-resolve DNS endpoint before link down (while DNS may still work)
 	var newEndpoint string
 	if stored != nil {
-		newEndpoint = tryResolveEndpoint(stored.Peer.Endpoint)
+		newEndpoint = resolveEndpoint(stored.Peer.Endpoint)
 	}
 
 	// 2. Link down — NDMS switches to fallback immediately
 	//    conf: running preserved (user intent intact), link: pending
 	linkDown := true
-	if _, err := exec.Run(s.ctx, "/opt/sbin/ip", "link", "set", ifaceName, "down"); err != nil {
+	if _, err := runCmd(s.ctx, "/opt/sbin/ip", "link", "set", ifaceName, "down"); err != nil {
 		s.logWarn(m.tunnelID, "ip link set down failed: "+err.Error())
 		linkDown = false
 	}
@@ -161,13 +169,13 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 	//    `awg set` panics the kernel when the interface is gone, and this path
 	//    runs exactly when connectivity is lost (prebuilt/kmod/README.md).
 	if linkDown && newEndpoint != "" && stored != nil {
-		exec.Run(s.ctx, "/opt/sbin/awg", "set", ifaceName,
+		runCmd(s.ctx, "/opt/sbin/awg", "set", ifaceName,
 			"peer", stored.Peer.PublicKey,
 			"endpoint", newEndpoint)
 	}
 
 	// 4. Link up — WireGuard re-initiates handshake
-	if _, err := exec.Run(s.ctx, "/opt/sbin/ip", "link", "set", ifaceName, "up"); err != nil {
+	if _, err := runCmd(s.ctx, "/opt/sbin/ip", "link", "set", ifaceName, "up"); err != nil {
 		s.logWarn(m.tunnelID, "ip link set up failed: "+err.Error())
 	}
 

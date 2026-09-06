@@ -92,8 +92,15 @@ func (h *DiagnosticsHandler) Status(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, h.runner.Status())
 }
 
+// dateCommandOutput — шов над форком `date`: тесты подменяют, прод зовёт
+// системную утилиту. Форк остаётся: libc-`date` применяет DST-хвост /etc/TZ,
+// а фолбэк time.Now() идёт по FixedZone без DST — это разные ответы.
+var dateCommandOutput = func() ([]byte, error) {
+	return exec.Command("date", "+%Y-%m-%d_%H-%M-%S").Output()
+}
+
 func diagnosticsFilenameTimestamp() string {
-	out, err := exec.Command("date", "+%Y-%m-%d_%H-%M-%S").Output()
+	out, err := dateCommandOutput()
 	if err == nil {
 		ts := strings.TrimSpace(string(out))
 		if ts != "" {

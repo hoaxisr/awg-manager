@@ -25,6 +25,10 @@ const (
 	RNetfilterHook    proxyrt.ResourceID = "netfilter_hook"
 	RIngressRefs      proxyrt.ResourceID = "ingress_refs"
 	RNdmsAccess       proxyrt.ResourceID = "ndms_access"
+	// RPermitAbsent — «половина не экспонирована»: нет permit-all ACL (миграция
+	// остатка прошлых версий и защита от чужой галки в веб-морде, стенд
+	// 2026-09-02) и нет `ip global` при снятом тумблере (стенд 2026-09-06).
+	RPermitAbsent proxyrt.ResourceID = "permit_absent"
 )
 
 // Sub различает два одноимённых ресурса одной декларации: у wdtt-сервера две

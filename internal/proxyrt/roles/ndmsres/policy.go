@@ -83,9 +83,9 @@ func (r *PolicyExit) Plan(obs proxyrt.Observation) []proxyrt.Step {
 		add("set-security-level", "уровень не "+r.d.SecurityLevel)
 	}
 	if r.d.IPGlobal && obs.Attrs["ip_global"] != "true" {
-		// Обратной команды нет: снятый ip global убирается только
-		// пересозданием интерфейса (ndms_iface.go:340-346) — поэтому
-		// желаемое здесь только аддитивно.
+		// Желаемое здесь аддитивно: снятие `ip global` у неэкспонированной
+		// половины — забота permit_absent (обратная команда есть: стенд
+		// 5.01, 2026-09-06 — `interface X no ip global`).
 		add("ip-global", "не uplink: без ip global не попадает в политики/HydraRoute")
 	}
 	if r.d.PermitAllACL && obs.Attrs["acl"] != "true" {

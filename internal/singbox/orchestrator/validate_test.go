@@ -539,3 +539,72 @@ func TestValidateDefaultDomainResolverStringForm_Unknown(t *testing.T) {
 		t.Fatalf("bare-string resolver to unknown server must fail unknown-dns-server, got: %v", res.Error())
 	}
 }
+
+// Слот awg в форме #846 (per-outbound domain_resolver + свой dns-сервер
+// с detour на этот же outbound) проходит валидацию целиком.
+func TestValidate_AWGSlotPerOutboundDNS(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotAwg, Filename: "15-awg.json", AlwaysOn: true})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "15-awg.json", `{"outbounds":[{"type":"direct","tag":"awg-a","bind_interface":"t2s0","domain_resolver":{"server":"dns-awg-a"}},{"type":"direct","tag":"awg-sys-b","bind_interface":"nwg0","domain_resolver":{"server":"dns-awg-sys-b"}}],"dns":{"servers":[{"type":"udp","tag":"dns-awg-a","server":"10.8.0.1","detour":"awg-a"},{"type":"udp","tag":"dns-awg-sys-b","server":"1.1.1.1","detour":"awg-sys-b"}]}}`)
+	o.enabled[SlotAwg] = true
+
+	res := o.Validate()
+	if !res.Ok() {
+		t.Errorf("expected ok, got: %v", res.Error())
+	}
+	if findValidationWarning(res, "duplicate-dns") != nil {
+		t.Errorf("dns tags are unique, got: %+v", res.Errors)
+	}
+}
+
+// Опечатка в domain_resolver.server AWG-outbound'а раньше проходила валидацию молча и
+// валила sing-box на загрузке; теперь — unknown-dns-server с адресом поля.
+func TestValidate_AWGSlotOutboundDomainResolverUnknown(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotAwg, Filename: "15-awg.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "15-awg.json", `{
+	  "outbounds":[{"type":"direct","tag":"awg-a","bind_interface":"awgm0","domain_resolver":{"server":"dns-awg-typo"}}],
+	  "dns":{"servers":[{"type":"udp","tag":"dns-awg-a","server":"10.8.0.1","detour":"awg-a"}]}
+	}`)
+	o.enabled[SlotAwg] = true
+	res := o.Validate()
+	if res.Ok() {
+		t.Fatal("опечатка в domain_resolver.server прошла валидацию")
+	}
+	for _, want := range []string{"unknown-dns-server", "dns-awg-typo", "outbounds[0].domain_resolver.server"} {
+		if !strings.Contains(res.Error(), want) {
+			t.Errorf("в ошибке нет %q: %s", want, res.Error())
+		}
+	}
+}
+
+// Тот же контроль для endpoints: их domain_resolver парсер читает (endpoints
+// делят пространство тегов с outbounds), поэтому опечатка в теге DNS-сервера
+// обязана падать так же, как у outbound.
+func TestValidate_EndpointDomainResolverUnknown(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotAwg3, Filename: "16-awg3.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "16-awg3.json", `{
+	  "endpoints":[{"type":"awg","tag":"awg3-a","domain_resolver":{"server":"dns-typo"}}],
+	  "dns":{"servers":[{"type":"udp","tag":"dns-awg3-a","server":"10.8.0.1","detour":"awg3-a"}]}
+	}`)
+	o.enabled[SlotAwg3] = true
+	res := o.Validate()
+	if res.Ok() {
+		t.Fatal("опечатка в domain_resolver.server у endpoint прошла валидацию")
+	}
+	for _, want := range []string{"unknown-dns-server", "dns-typo", "endpoints[0].domain_resolver.server"} {
+		if !strings.Contains(res.Error(), want) {
+			t.Errorf("в ошибке нет %q: %s", want, res.Error())
+		}
+	}
+}

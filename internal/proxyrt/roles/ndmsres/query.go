@@ -14,6 +14,8 @@ type Commands interface {
 	SetDescription(ctx context.Context, name, description string) error
 	SetSecurityLevel(ctx context.Context, name, level string) error
 	SetIPGlobal(ctx context.Context, name string) error
+	// ClearIPGlobal снимает `ip global` (обратная команда есть: стенд 2026-09-06).
+	ClearIPGlobal(ctx context.Context, name string) error
 	SetAddress(ctx context.Context, name, address, mask string) error
 	ClearAddress(ctx context.Context, name string) error
 	SetMTU(ctx context.Context, name string, mtu int) error

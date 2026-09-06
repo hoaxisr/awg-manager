@@ -176,6 +176,36 @@ func TestServeInstall_Success(t *testing.T) {
 	}
 }
 
+// F98: ручная установка из UI снимает ожидание бута без таймера — хук зовётся
+// после успеха и только после него.
+func TestServeInstall_CallsInstalledHook(t *testing.T) {
+	clientBody, serverBody := []byte("c"), []byte("s")
+	dl := &fakeDownloader{payload: map[string][]byte{"https://x/c": clientBody, "https://x/s": serverBody}}
+	var got []Subsystem
+	s := newTestService(t, Deps{Downloader: dl, Installed: func(name Subsystem) { got = append(got, name) }})
+	setSpecs(s, SubsystemWdtt, ArchSpecs{
+		Client: BinarySpec{Version: "1.0.0", URL: "https://x/c", SHA256: sha256Hex(clientBody), Size: 1},
+		Server: BinarySpec{Version: "1.0.0", URL: "https://x/s", SHA256: sha256Hex(serverBody), Size: 1},
+	})
+	rec := httptest.NewRecorder()
+	s.ServeInstall(rec, httptest.NewRequest(http.MethodPost, "/api/proxyrt/install", strings.NewReader(`{"subsystem":"wdtt"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(got) != 1 || got[0] != SubsystemWdtt {
+		t.Fatalf("хук после успеха: %v", got)
+	}
+
+	setSpecs(s, SubsystemFreeTurn, ArchSpecs{
+		Client: BinarySpec{Version: "1.0.0", URL: "https://x/missing", SHA256: sha256Hex(clientBody), Size: 1},
+	})
+	rec = httptest.NewRecorder()
+	s.ServeInstall(rec, httptest.NewRequest(http.MethodPost, "/api/proxyrt/install", strings.NewReader(`{"subsystem":"freeturn"}`)))
+	if rec.Code == http.StatusOK || len(got) != 1 {
+		t.Fatalf("на отказе хук не зовётся: код %d, got=%v", rec.Code, got)
+	}
+}
+
 func TestServeInstall_Rejections(t *testing.T) {
 	t.Run("чужой метод", func(t *testing.T) {
 		s := newTestService(t, Deps{})

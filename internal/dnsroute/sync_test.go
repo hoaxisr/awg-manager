@@ -2,6 +2,7 @@ package dnsroute
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -774,6 +775,32 @@ func TestComputeDiff(t *testing.T) {
 		}
 		if diff.routeDisables[0].Index != "i0" || diff.routeDisables[1].Index != "i1" {
 			t.Errorf("toggles = %+v", diff.routeDisables)
+		}
+	})
+
+	// Группа ЖИВА в target (в groupDeletes не попадает), но целевых маршрутов у неё
+	// нет — маршруты роутера на неё осиротели и обязаны сноситься второй ветвью
+	// computeDiff. Десять прежних подтестов через неё не проходили.
+	t.Run("orphan routes of surviving group", func(t *testing.T) {
+		current := currentState{
+			groups: map[string]currentGroupData{
+				"test_p1": {includes: []string{"a.com"}},
+			},
+			routes: []currentRoute{{group: "test_p1", iface: "OpkgTun0"}, {group: "test_p1", iface: "OpkgTun2"}},
+		}
+		target := targetState{
+			groups: []targetGroup{{name: "test_p1", includes: []string{"a.com"}}},
+		}
+		diff := computeDiff(current, target)
+		if len(diff.groupDeletes) != 0 {
+			t.Fatalf("группа жива в target, groupDeletes = %v", diff.groupDeletes)
+		}
+		want := []rciRouteDelete{
+			{Group: "test_p1", Iface: "OpkgTun0", No: true},
+			{Group: "test_p1", Iface: "OpkgTun2", No: true},
+		}
+		if !reflect.DeepEqual(diff.routeDeletes, want) {
+			t.Fatalf("routeDeletes = %+v, want %+v", diff.routeDeletes, want)
 		}
 	})
 }

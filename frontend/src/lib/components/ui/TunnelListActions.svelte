@@ -11,6 +11,8 @@
 		onTest?: () => void;
 		onDelete?: () => void;
 		testDisabled?: boolean;
+		/** Защита туннеля (#818): ссылка «Изменить» гасится и теряет href. */
+		editDisabled?: boolean;
 		deleteDisabled?: boolean;
 		deleting?: boolean;
 		testTitle?: string;
@@ -27,6 +29,7 @@
 		onTest,
 		onDelete,
 		testDisabled = false,
+		editDisabled = false,
 		deleteDisabled = false,
 		deleting = false,
 		testTitle = 'Тест',
@@ -39,7 +42,14 @@
 </script>
 
 <div class="tunnel-list-actions" class:tunnel-list-actions--labeled={isLabeled}>
-	{#if editHref}
+	{#if editDisabled && (editHref || onEdit)}
+		<!-- Ссылку нельзя «выключить» атрибутом: без href она перестаёт быть
+		     переходом, и кнопка-заглушка даёт тот же вид, что disabled-кнопки рядом. -->
+		<button type="button" class="tunnel-list-actions__btn" disabled title={editTitle} aria-label={editTitle}>
+			<SquarePen size={14} aria-hidden="true" />
+			{#if isLabeled}{editLabel}{/if}
+		</button>
+	{:else if editHref}
 		<a class="tunnel-list-actions__btn" href={editHref} title={editTitle} aria-label={editTitle}>
 			<SquarePen size={14} aria-hidden="true" />
 			{#if isLabeled}{editLabel}{/if}

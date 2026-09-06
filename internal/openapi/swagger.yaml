@@ -2143,6 +2143,16 @@ definitions:
       endpoint:
         example: 203.0.113.42:51821
         type: string
+      foreignAcls:
+        description: |-
+          ForeignACLs — чужие списки `ip access-group … in` на интерфейсе сервера
+          (кроме нашего AWGM_<iface>), в порядке привязки. Список, привязанный
+          раньше нашего и разрешающий шире, срабатывает до выбора сегментов.
+        example:
+        - GUEST_ACL
+        items:
+          type: string
+        type: array
       interfaceName:
         example: Wireguard1
         type: string
@@ -2987,6 +2997,13 @@ definitions:
     type: object
   api.ProxyRtResourceView:
     properties:
+      attrs:
+        additionalProperties:
+          type: string
+        description: |-
+          Attrs — наблюдение ресурса для показа: у ndms_access ключ foreign-acl
+          перечисляет чужие привязки `ip access-group … in` обеих половин.
+        type: object
       detail:
         type: string
       error:
@@ -6602,6 +6619,9 @@ definitions:
       lastHandshake:
         example: "2024-01-15T10:30:00Z"
         type: string
+      locked:
+        example: false
+        type: boolean
       mtu:
         example: 1420
         type: integer
@@ -6653,6 +6673,23 @@ definitions:
           $ref: '#/definitions/api.TunnelListItemDTO'
         type: array
       success:
+        example: true
+        type: boolean
+    type: object
+  api.TunnelLockResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.TunnelLockResultData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.TunnelLockResultData:
+    properties:
+      id:
+        example: tun_abc123
+        type: string
+      locked:
         example: true
         type: boolean
     type: object
@@ -9031,6 +9068,10 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "409":
           description: Conflict
           schema:
@@ -9063,6 +9104,10 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
@@ -9089,6 +9134,10 @@ paths:
             $ref: '#/definitions/api.APIEnvelope'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
@@ -19937,6 +19986,10 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "409":
           description: Conflict
           schema:
@@ -20050,6 +20103,48 @@ paths:
       summary: List tunnels
       tags:
       - tunnels
+  /tunnels/lock:
+    post:
+      description: |-
+        Включает или снимает защиту туннеля от изменений: у защищённого туннеля Stop, ToggleEnabled,
+        ToggleDefaultRoute, Update, Delete и Replace отвечают 403. Постановка замка на зеркальную запись
+        wdtt-raw отвергается 409 (WDTT_RAW_OWNED, WDTT_RAW_OWNER_UNKNOWN) — замок ставится на инстансе;
+        снятие проходит.
+      parameters:
+      - description: Tunnel id
+        in: query
+        name: id
+        required: true
+        type: string
+      - description: Включить (true) или снять (false) защиту
+        in: query
+        name: locked
+        required: true
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.TunnelLockResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Set tunnel lock
+      tags:
+      - tunnels
   /tunnels/pingcheck:
     get:
       parameters:
@@ -20156,6 +20251,10 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "409":
           description: Conflict
           schema:
@@ -20221,6 +20320,10 @@ paths:
             $ref: '#/definitions/api.APIEnvelope'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "500":

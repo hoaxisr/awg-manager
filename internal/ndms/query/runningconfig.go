@@ -69,6 +69,44 @@ func (s *RunningConfigStore) GlobalEgressInterfaces(ctx context.Context) ([]stri
 	return out, nil
 }
 
+// InterfaceAccessGroupsOf — имена списков, привязанных к интерфейсу строками
+// `ip access-group <name> in` внутри блока `interface <iface>`, в порядке
+// появления — это порядок привязки и порядок джампов в _NDM_ACL_IN (стенд
+// 5.01, 2026-09-05). Форма `no ip access-group …` не совпадает по построению:
+// сравнение идёт с начала строки после TrimSpace. Разбор по готовым строкам —
+// для вызывающих без стора (адаптеры cmd).
+func InterfaceAccessGroupsOf(lines []string, iface string) []string {
+	out := []string{}
+	in := false
+	for _, raw := range lines {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		if raw == trimmed { // без отступа — заголовок блока или его конец
+			in = trimmed == "interface "+iface
+			continue
+		}
+		if !in {
+			continue
+		}
+		f := strings.Fields(trimmed)
+		if len(f) == 4 && f[0] == "ip" && f[1] == "access-group" && f[3] == "in" {
+			out = append(out, f[2])
+		}
+	}
+	return out
+}
+
+// InterfaceAccessGroups — то же по кэшированному running-config.
+func (s *RunningConfigStore) InterfaceAccessGroups(ctx context.Context, iface string) ([]string, error) {
+	lines, err := s.Lines(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return InterfaceAccessGroupsOf(lines, iface), nil
+}
+
 type rcResp struct {
 	Message []string `json:"message"`
 }

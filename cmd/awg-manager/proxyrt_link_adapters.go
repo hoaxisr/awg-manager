@@ -514,20 +514,14 @@ type natPolicyLANApplier interface {
 	ApplyNATModeToInterface(ctx context.Context, iface, mode string, prevWANs []string) ([]string, error)
 	ApplyPolicyToInterface(ctx context.Context, iface, policy string) error
 	ApplyLANSegmentsToInterface(ctx context.Context, iface, addr, mask string, segments []string) error
+	ForeignAccessGroups(ctx context.Context, iface string) ([]string, error)
 }
 
-// permitACLSetter — срез InterfaceCommands: разрешающий ACL на интерфейсе.
-type permitACLSetter interface {
-	SetPermitAllACL(ctx context.Context, name string) error
-}
-
-// proxyAccessApplier — wdttserver.AccessApplier. Логика — прежний
-// wdttAccessAdapter (router_adapters.go:407+), сведённая к четырём методам
-// интерфейса; возвращённый ApplyNATModeToInterface WAN уходит в Detail
-// ресурса ndms_access.
+// proxyAccessApplier — wdttserver.AccessApplier: режим NAT, hotspot policy,
+// LAN-ACL. Возвращённый ApplyNATModeToInterface WAN уходит в Detail ресурса
+// ndms_access.
 type proxyAccessApplier struct {
-	svc    natPolicyLANApplier
-	ifaces permitACLSetter
+	svc natPolicyLANApplier
 }
 
 func (a proxyAccessApplier) ApplyNATModeToInterface(ctx context.Context, iface, mode string, prevWANs []string) ([]string, error) {
@@ -551,11 +545,11 @@ func (a proxyAccessApplier) ApplyLANSegmentsToInterface(ctx context.Context, ifa
 	return a.svc.ApplyLANSegmentsToInterface(ctx, iface, addr, mask, segments)
 }
 
-func (a proxyAccessApplier) EnsureInterfaceFirewallPermit(ctx context.Context, iface string) error {
-	if a.ifaces == nil {
-		return nil
+func (a proxyAccessApplier) ForeignAccessGroups(ctx context.Context, iface string) ([]string, error) {
+	if a.svc == nil {
+		return nil, fmt.Errorf("managed service not available")
 	}
-	return a.ifaces.SetPermitAllACL(ctx, iface)
+	return a.svc.ForeignAccessGroups(ctx, iface)
 }
 
 var _ wdttserver.AccessApplier = proxyAccessApplier{}
@@ -821,9 +815,9 @@ func legacyCleanup(ctx context.Context, ipt netres.IPT, cmds opkgTunDeleter,
 	// Помеченные метками формы снимаются БЕЗУСЛОВНО, живой сервер тут ни при
 	// чём: усыновить помеченное правило некому. netres.RuleSet.markedOrphans
 	// заводит область поиска только по правилам своего желаемого с непустой
-	// меткой, а новый FORWARD строится БЕЗ метки (netres/wdtt.go:26-27) — то
-	// есть помеченный FORWARD не снял бы ни он, ни уборка. Помеченный
-	// MASQUERADE живой сервер пересоберёт первым же прогоном: уборка
+	// меткой, а FORWARD accept роль больше не строит вовсе (и прежний строился
+	// БЕЗ метки) — то есть помеченный FORWARD не снял бы ни он, ни уборка.
+	// Помеченный MASQUERADE живой сервер пересоберёт первым же прогоном: уборка
 	// одноразовая и идёт ДО старта инстансов, окно — секунды, установившиеся
 	// потоки NAT от снятия правила не рвутся.
 	//

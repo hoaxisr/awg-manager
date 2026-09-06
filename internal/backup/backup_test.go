@@ -217,3 +217,81 @@ func archiveHasEntry(t *testing.T, archive []byte, name string) bool {
 		}
 	}
 }
+
+// PeekManifest — то, чем UI подписывает «что вы собираетесь восстановить»:
+// тип и версия формата плюс версия приложения, снявшего бэкап. Пустой ответ
+// показал бы пользователю чужой архив как свой.
+func TestPeekManifest_ReadsExportedHeader(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDir, "settings.json"), []byte(`{"version":32}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := Export(dataDir, "9.9.9-fixture", &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	m, err := PeekManifest(buf.Bytes())
+	if err != nil {
+		t.Fatalf("PeekManifest: %v", err)
+	}
+	// Литералы, а не прод-константы: манифест — формат файла, который читают
+	// прошлые и будущие сборки, и переименование константы обязано быть
+	// осознанным изменением формата, а не молча зелёным тестом.
+	if m.Type != "awg-manager-full-backup" {
+		t.Errorf("Type = %q, want %q", m.Type, "awg-manager-full-backup")
+	}
+	if m.Version != 1 {
+		t.Errorf("Version = %d, want %d", m.Version, 1)
+	}
+	if m.AppVersion != "9.9.9-fixture" {
+		t.Errorf("AppVersion = %q, want %q", m.AppVersion, "9.9.9-fixture")
+	}
+}
+
+// Архив без манифеста — чужой tar.gz, а не наш бэкап: отказ обязан быть
+// внятным, а не «пустым манифестом с нулевыми полями».
+func TestPeekManifest_RejectsArchiveWithoutManifest(t *testing.T) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := PeekManifest(buf.Bytes()); err == nil || !strings.Contains(err.Error(), "manifest not found") {
+		t.Fatalf("err = %v, want manifest not found", err)
+	}
+}
+
+// Маркер post-restore — one-shot: он переводит следующий старт в холодную
+// загрузку с восстановленного диска. Не снятый маркер загонял бы демон в
+// холодный старт на каждом запуске навсегда.
+func TestPostRestoreMarker_ConsumedOnce(t *testing.T) {
+	dir := t.TempDir()
+	if HasPostRestoreMarker(dir) {
+		t.Fatal("маркер есть на чистом каталоге")
+	}
+	if err := WritePostRestoreMarker(dir); err != nil {
+		t.Fatalf("WritePostRestoreMarker: %v", err)
+	}
+	if !HasPostRestoreMarker(dir) {
+		t.Fatal("маркер не виден после записи")
+	}
+	if !ConsumePostRestoreMarker(dir) {
+		t.Fatal("первый Consume не увидел маркер")
+	}
+	path := filepath.Join(dir, "run", PostRestoreMarkerName)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("файл маркера остался на диске: err=%v", err)
+	}
+	if ConsumePostRestoreMarker(dir) {
+		t.Fatal("второй Consume отдал true — маркер не одноразовый")
+	}
+	if HasPostRestoreMarker(dir) {
+		t.Fatal("маркер виден после Consume")
+	}
+}

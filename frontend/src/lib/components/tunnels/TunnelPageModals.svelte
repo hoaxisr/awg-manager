@@ -4,7 +4,7 @@
 	// импорт внешнего интерфейса, настройки connectivity. Состояние страницы
 	// приходит live-контекстом (ctx), стили — глобальные (app.css).
 	import { AdoptTunnelDialog, TunnelReferencedModal, ConnectivitySettingsModal } from '$lib/components/tunnels';
-	import { Modal, TrafficChartModal, Button } from '$lib/components/ui';
+	import { Modal, TrafficChartModal, Button, ConfirmModal } from '$lib/components/ui';
 	import TunnelDiagnosticsModal from '$lib/components/testing/TunnelDiagnosticsModal.svelte';
 	import AddTunnelWizard from '$lib/components/subscriptions/AddTunnelWizard.svelte';
 	import { resolveSubscriptionMemberTag } from '$lib/utils/subscriptionMember';
@@ -36,6 +36,19 @@
 			<Button variant="danger" size="md" onclick={() => ctx.handleDelete(ctx.deleteConfirmId!)}>Удалить</Button>
 		{/snippet}
 	</Modal>
+{/if}
+
+{#if ctx.unlockConfirmId}
+	{@const tunnelName = ctx.awgList.find(t => t.id === ctx.unlockConfirmId)?.name ?? ctx.unlockConfirmId}
+	<ConfirmModal
+		open={true}
+		variant="primary"
+		title="Туннель защищён от изменений"
+		message="Снять защиту с туннеля «{tunnelName}»? После этого его можно выключить, изменить и удалить."
+		confirmLabel="Снять защиту"
+		onConfirm={ctx.confirmUnlock}
+		onClose={() => ctx.unlockConfirmId = null}
+	/>
 {/if}
 
 <TunnelReferencedModal

@@ -164,9 +164,12 @@ func (s *Service) DeletePeer(ctx context.Context, id, pubkey string) error {
 	peerName := server.Peers[idx].Description
 	iface := server.InterfaceName
 
-	// Remove via RCI
+	// Remove via RCI — fail-closed: a peer that stayed on the router while the
+	// card says "revoked" keeps the client connected. No tolerance for "already
+	// gone" (owner decision 2026-09-05): the NDMS reply form for that case has
+	// not been captured on a live router yet.
 	if err := s.rciRemovePeer(ctx, iface, pubkey); err != nil {
-		s.log.Warn("failed to remove peer via RCI", "error", err)
+		return fmt.Errorf("remove peer via RCI: %w", err)
 	}
 
 	// Remove from storage

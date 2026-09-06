@@ -9,13 +9,25 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 )
 
-// AccessApplier — срез wdtt.AccessManager (access.go:13-21): NDMS NAT-режим,
-// hotspot policy, LAN-ACL, firewall permit. Прод-реализация существует.
+// AccessApplier — NDMS-настройки доступа сервера: режим NAT, hotspot policy,
+// LAN-ACL.
+//
+// Разрешающего ACL здесь больше нет. Стенд 2026-09-02 (5.01, OpkgTun10):
+// привязанный список — это permit-исключения, срабатывающие ДО security-level,
+// а permit-all даёт безусловный ACCEPT всему входящему с интерфейса. То есть
+// он обнулял и выбор LAN-сегментов, и isolate-private. Инвариант: доступ
+// абонента в LAN определяется выбранными сегментами и ничем больше. Там, где
+// разрешение — часть замысла (публичный выход, ExposeToPolicies), его ставит
+// ресурс policy_exit. Снятие остатка `_WEBADMIN_<iface>` прошлых версий —
+// ресурс `permit_absent` (`ndmsres.PermitAbsent`).
 type AccessApplier interface {
 	ApplyNATModeToInterface(ctx context.Context, iface, mode string, prevWANs []string) ([]string, error)
 	ApplyPolicyToInterface(ctx context.Context, iface, policy string) error
 	ApplyLANSegmentsToInterface(ctx context.Context, iface, addr, mask string, segments []string) error
-	EnsureInterfaceFirewallPermit(ctx context.Context, iface string) error
+	// ForeignAccessGroups — чужие списки, привязанные к интерфейсу строками
+	// `ip access-group … in`: наблюдение для показа пользователю, ничего не
+	// меняет.
+	ForeignAccessGroups(ctx context.Context, iface string) ([]string, error)
 }
 
 // NDMSAccess — ресурс-защёлка ndms_access. Честно: наблюдения фактического
@@ -24,15 +36,35 @@ type AccessApplier interface {
 // набор при смене отпечатка желаемого. Возвращённый ApplyNATModeToInterface
 // WAN уходит в Detail — подхват в конфиг (NatStaticWAN) решает план 5 (В4).
 type NDMSAccess struct {
-	id       proxyrt.ResourceID
-	access   AccessApplier
-	iface    string
+	id     proxyrt.ResourceID
+	access AccessApplier
+	iface  string
+	// rawIface — NDMS-имя ВТОРОЙ половины сервера. Политика применяется к
+	// обеим: сервер один, и абонент не должен маршрутизироваться по-разному в
+	// зависимости от того, каким портом подключился. Прежде вторая половина
+	// метилась своей парой mangle-правил, хотя NDMS на привязку политики
+	// ставит ровно такую же (стенд 2026-09-02: MARK + CONNMARK --save-mark на
+	// `-i opkgtunN`) — одна реализация вместо двух.
+	//
+	// LAN-ACL применяется к ОБЕИМ половинам, каждой со своей peer-сетью:
+	// выбор сегментов — свойство сервера, а не порта, которым подключился
+	// абонент. Прежде список стоял только на первой половине, и raw-абонент
+	// был ограничен одним security-level.
+	//
+	// Режим NAT остаётся на первой половине: raw-абонентам SNAT делает своя
+	// группа MASQUERADE по peer-сети (netres.MasqGroups, role.go), а не
+	// NDMS-режим интерфейса.
+	rawIface string
 	mode     string
 	prevWANs []string
 	policy   string
 	addr     string
 	mask     string
-	lan      []string
+	// rawAddr, rawMask — шлюз и маска raw-половины: адрес её peer-сети, от
+	// которого строится ACL второй половины.
+	rawAddr string
+	rawMask string
+	lan     []string
 	// active=false (disabled) — «не трогать»: старый код звал
 	// applyServerAccess только на старте; доводка NAT/policy/LAN по
 	// интерфейсу выключенного сервера — тот же класс create-on-reference
@@ -46,23 +78,47 @@ func NewNDMSAccess(id proxyrt.ResourceID, access AccessApplier) *NDMSAccess {
 	return &NDMSAccess{id: id, access: access}
 }
 
-func (a *NDMSAccess) SetDesired(iface, mode string, prevWANs []string, policy, addr, mask string, lan []string, active bool) {
-	a.iface, a.mode, a.prevWANs, a.policy, a.addr, a.mask, a.lan, a.active =
-		iface, mode, prevWANs, policy, addr, mask, lan, active
+func (a *NDMSAccess) SetDesired(iface, rawIface, mode string, prevWANs []string, policy, addr, mask, rawAddr, rawMask string, lan []string, active bool) {
+	a.iface, a.rawIface, a.mode, a.prevWANs, a.policy = iface, rawIface, mode, prevWANs, policy
+	a.addr, a.mask, a.rawAddr, a.rawMask, a.lan, a.active = addr, mask, rawAddr, rawMask, lan, active
 }
 
 func (a *NDMSAccess) fingerprint() string {
-	return strings.Join(append([]string{a.iface, a.mode, a.policy, a.addr, a.mask}, a.lan...), "|")
+	return strings.Join(append([]string{a.iface, a.rawIface, a.mode, a.policy,
+		a.addr, a.mask, a.rawAddr, a.rawMask}, a.lan...), "|")
 }
 
 func (a *NDMSAccess) ID() proxyrt.ResourceID { return a.id }
 
-func (a *NDMSAccess) Observe(context.Context) (proxyrt.Observation, error) {
+func (a *NDMSAccess) Observe(ctx context.Context) (proxyrt.Observation, error) {
 	if !a.active {
 		return proxyrt.Observation{Known: true, Exists: true, Detail: "выключен — не доводится"}, nil
 	}
+	// Чужие привязки ACL обеих половин — наблюдение для показа: они
+	// срабатывают ДО security-level и способны обнулить выбор сегментов, а
+	// ставит их не панель. На готовность ресурса не влияют, ошибка чтения —
+	// без ключа, а не отказ наблюдения.
+	var public map[string]string
+	var foreign []string
+	for _, iface := range []string{a.iface, a.rawIface} {
+		if iface == "" {
+			continue
+		}
+		names, err := a.access.ForeignAccessGroups(ctx, iface)
+		if err != nil {
+			continue
+		}
+		for _, n := range names {
+			if n != "_WEBADMIN_"+iface { // этот снимает permit_absent — не «чужой»
+				foreign = append(foreign, iface+":"+n)
+			}
+		}
+	}
+	if len(foreign) > 0 {
+		public = map[string]string{"foreign-acl": strings.Join(foreign, ",")}
+	}
 	return proxyrt.Observation{Known: true, Exists: a.applied == a.fingerprint(),
-		Detail: a.detail}, nil
+		Detail: a.detail, Public: public}, nil
 }
 
 func (a *NDMSAccess) Plan(obs proxyrt.Observation) []proxyrt.Step {
@@ -81,15 +137,24 @@ func (a *NDMSAccess) Apply(ctx context.Context, s proxyrt.Step) error {
 	if err != nil {
 		return fmt.Errorf("NDMS NAT %s: %w", a.mode, err)
 	}
-	if err := a.access.ApplyPolicyToInterface(ctx, a.iface, a.policy); err != nil {
-		return fmt.Errorf("policy %s: %w", a.policy, err)
+	// Политика — на ОБЕ половины: одна принадлежность на один сервер.
+	for _, iface := range []string{a.iface, a.rawIface} {
+		if iface == "" {
+			continue
+		}
+		if err := a.access.ApplyPolicyToInterface(ctx, iface, a.policy); err != nil {
+			return fmt.Errorf("policy %s на %s: %w", a.policy, iface, err)
+		}
 	}
+	// LAN-ACL — на ОБЕ половины, каждой со своей peer-сетью: выбранные
+	// сегменты и есть весь доступ абонента в LAN, независимо от того, каким
+	// портом он подключился.
 	if err := a.access.ApplyLANSegmentsToInterface(ctx, a.iface, a.addr, a.mask, a.lan); err != nil {
 		return fmt.Errorf("LAN ACL: %w", err)
 	}
-	if a.mode != "none" {
-		if err := a.access.EnsureInterfaceFirewallPermit(ctx, a.iface); err != nil {
-			return fmt.Errorf("firewall permit: %w", err)
+	if a.rawIface != "" {
+		if err := a.access.ApplyLANSegmentsToInterface(ctx, a.rawIface, a.rawAddr, a.rawMask, a.lan); err != nil {
+			return fmt.Errorf("LAN ACL (raw): %w", err)
 		}
 	}
 	a.applied = a.fingerprint()

@@ -31,14 +31,15 @@ const proxyrtInstancesPath = "/api/proxyrt/instances"
 const proxyrtListenMovesPath = "/api/proxyrt/seed/listen-moves"
 
 // Коды ошибок поверхности. PROXY_NOT_SEEDED и PROXY_DECLARE_FAILED предписаны
-// планом (требования 15 и 17); остальные два заведены здесь под два гейта
-// создания, у которых своя причина отказа и свой текст для пользователя.
+// планом (требования 15 и 17); остальные заведены здесь под гейты создания, у
+// каждого из которых своя причина отказа и свой текст для пользователя.
 const (
 	proxyCodeNotSeeded       = "PROXY_NOT_SEEDED"
 	proxyCodeDeclareFailed   = "PROXY_DECLARE_FAILED"
 	proxyCodeNotFound        = "NOT_FOUND"
 	proxyCodeConfigInvalid   = "PROXY_CONFIG_INVALID"
 	proxyCodeOpkgUnsupported = "PROXY_OPKGTUN_UNSUPPORTED"
+	proxyCodeKindSingleton   = "PROXY_KIND_SINGLETON"
 )
 
 // ProxyManager — узкий срез *manager.Manager, нужный поверхности.
@@ -119,6 +120,9 @@ type ProxyRtResourceView struct {
 	Status string `json:"status" example:"ok"`
 	Detail string `json:"detail,omitempty"`
 	Error  string `json:"error,omitempty"`
+	// Attrs — наблюдение ресурса для показа: у ndms_access ключ foreign-acl
+	// перечисляет чужие привязки `ip access-group … in` обеих половин.
+	Attrs map[string]string `json:"attrs,omitempty"`
 }
 
 // ProxyRtStepView — шаг последнего плана.
@@ -430,6 +434,12 @@ func (h *ProxyInstancesHandler) create(w http.ResponseWriter, r *http.Request) {
 		rec.ID = h.freeID(rec.Kind)
 	}
 	if err := h.gateCheck(rec); err != nil {
+		h.fail(w, err)
+		return
+	}
+	// Единственность — только здесь: гейт читает менеджера, а на пути PATCH
+	// та же проверка ушла бы под m.mu внутрь мутатора (см. singletonGate).
+	if err := h.singletonGate(rec); err != nil {
 		h.fail(w, err)
 		return
 	}
@@ -765,7 +775,38 @@ func (h *ProxyInstancesHandler) opkgTunSupported() bool {
 	return h.deps.OpkgTunSupported()
 }
 
-// gateCheck — два отказа, которые обязаны случиться ДО записи.
+// singletonGate — сервер один на роутер: адреса обеих половин константы, а
+// маскарад усыновляется по метке AWGM_WDTT постоянной областью
+// (wdttserver/role.go), поэтому второй инстанс, даже выключенный, сносил бы
+// правило живого на каждом своём прогоне.
+//
+// Живёт ОТДЕЛЬНО от gateCheck и зовётся ТОЛЬКО с пути POST, потому что читает
+// h.deps.Manager.Records(). gateCheck прогоняется изнутри мутатора
+// Manager.Update, а тот держит m.mu на всё время мутатора (manager.go:769-798)
+// — Records() берёт тот же нереентерабельный замок, и гейт внутри мутатора
+// вешал бы менеджер целиком, а с ним всю поверхность API.
+//
+// PATCH проверка и не нужна по построению: тело правки не содержит ни kind, ни
+// id, так что PATCH не может ни превратить чужую роль в сервер, ни развести
+// два сервера из одного. Сравнение с other.ID оставлено на случай POST с явным
+// id уже существующей записи — сама себе дублем она не считается.
+func (h *ProxyInstancesHandler) singletonGate(rec instancestore.Record) error {
+	if rec.Kind != instancestore.KindWdttServer {
+		return nil
+	}
+	for _, other := range h.deps.Manager.Records() {
+		if other.Kind == instancestore.KindWdttServer && other.ID != rec.ID {
+			return &proxyGateError{code: proxyCodeKindSingleton,
+				msg: fmt.Sprintf("wdtt-сервер уже заведён (%s): второй не нужен — обе половины делят адреса и метку правил", other.Key())}
+		}
+	}
+	return nil
+}
+
+// gateCheck — два отказа по СОДЕРЖИМОМУ записи, которые обязаны случиться ДО
+// её записи. Считается и на POST, и внутри мутатора PATCH, поэтому смотрит
+// только на саму запись: любое чтение менеджера отсюда — дедлок (см.
+// singletonGate).
 func (h *ProxyInstancesHandler) gateCheck(rec instancestore.Record) error {
 	if rec.Kind == instancestore.KindWdttServer && rec.WdttServer != nil {
 		c := rec.WdttServer
@@ -1014,6 +1055,7 @@ func proxyStateView(st *proxyrt.InstanceState) *ProxyRtStateView {
 	for _, r := range st.Resources {
 		out.Resources = append(out.Resources, ProxyRtResourceView{
 			ID: string(r.ID), Status: string(r.Status), Detail: r.Detail, Error: r.Error,
+			Attrs: r.Attrs,
 		})
 	}
 	for _, s := range st.LastPlan {

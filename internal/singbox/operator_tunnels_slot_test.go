@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -37,8 +39,15 @@ func newOrchedOperator(t *testing.T) (*Operator, string) {
 // возвращаемое хелпером-обёрткой.
 func newOrchedOperatorWithDeps(t *testing.T, deps OperatorDeps) *Operator {
 	t.Helper()
+	// Пустой Binary = дефолтный ХОСТ-путь /opt/sbin/sing-box, а ApplyConfig и
+	// AddTunnels зовут singboxFeaturesCached → на машине, где бинарь есть, это
+	// exec чужого бинаря и запись сайдкара /opt/sbin/sing-box.meta.json рядом с
+	// ним. Фейк из TempDir держит пробу внутри теста.
+	if deps.Binary == "" {
+		deps.Binary = fakeBinary(t, deps.Dir)
+	}
 	op := NewOperator(deps)
-	orch := singboxorch.New(op.ConfigDir(), op.Process())
+	orch := singboxorch.NewWithAppliedPath(op.ConfigDir(), op.Process(), filepath.Join(t.TempDir(), "singbox-applied.json"))
 	for _, meta := range singboxorch.KnownSlots() {
 		switch meta.Slot {
 		case singboxorch.SlotBase, singboxorch.SlotTunnels, singboxorch.SlotRouter:
@@ -235,5 +244,72 @@ func TestApplyConfig_OwnBreakageStillBlocks(t *testing.T) {
 	}
 	if err := op.ApplyConfig(context.Background(), cfg); err == nil {
 		t.Fatal("ApplyConfig прошёл, хотя merge сломан НАШЕЙ записью")
+	}
+}
+
+// Двойной POST (nginx proxy_next_upstream, две вкладки) не должен родить второй
+// туннель на тот же сервер: дедуп по (type, server, port, secret). Комментарий про
+// «нужен живой sing-box» устарел — обвязки достаточно.
+func TestAddTunnels_RejectsDuplicateOfExistingTunnel(t *testing.T) {
+	op, _ := newOrchedOperator(t)
+	op.proxyMgr = &fakeProxies{}
+	ctx := context.Background()
+
+	cfg := NewConfig()
+	existing := json.RawMessage(`{"type":"vless","server":"h.example","server_port":443,"uuid":"3a3b1c2e-9999-4321-aaaa-1234567890ab"}`)
+	if err := cfg.AddTunnelWithListenPort("A", "vless", "h.example", 443, 0, existing); err != nil {
+		t.Fatal(err)
+	}
+	if err := op.ApplyConfig(ctx, cfg); err != nil {
+		t.Fatalf("ApplyConfig (seed): %v", err)
+	}
+
+	added, errs, err := op.AddTunnels(ctx,
+		"vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@h.example:443?security=tls&sni=h#A2")
+	if err != nil {
+		t.Fatalf("AddTunnels: %v", err)
+	}
+	if len(added) != 0 {
+		t.Fatalf("дубль добавлен: %+v", added)
+	}
+	// Пин держится на тексте ошибки, а не на len(added)==0: без дедупа
+	// AddTunnels падает раньше на "listen_port 1080 already in use" —
+	// fakeProxies.NextFreeIndex всегда отдаёт 0.
+	if len(errs) != 1 || !strings.Contains(errs[0].Err.Error(), `duplicate of existing tunnel "A"`) {
+		t.Fatalf("ожидался BatchError о дубле, got %+v", errs)
+	}
+	got, err := op.loadOrInitConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(got.Tunnels()); n != 1 {
+		t.Fatalf("в конфиге %d туннелей, want 1", n)
+	}
+}
+
+// RemoveTunnel обязан снять ProxyN ИМЕННО удаляемого туннеля — индекс выводится
+// из listen_port, и сдвиг на единицу снёс бы чужой интерфейс молча.
+func TestRemoveTunnel_RemovesProxyOfThatTunnelOnly(t *testing.T) {
+	op, _ := newOrchedOperator(t)
+	proxies := &fakeProxies{}
+	op.proxyMgr = proxies
+	ctx := context.Background()
+
+	cfg := NewConfig()
+	if err := cfg.AddTunnelWithListenPort("A", "vless", "a.example", 443, 1083, json.RawMessage(`{"type":"vless","tag":"A"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.AddTunnelWithListenPort("B", "vless", "b.example", 443, 1089, json.RawMessage(`{"type":"vless","tag":"B"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := op.ApplyConfig(ctx, cfg); err != nil {
+		t.Fatalf("ApplyConfig: %v", err)
+	}
+
+	if err := op.RemoveTunnel(ctx, "B"); err != nil {
+		t.Fatalf("RemoveTunnel: %v", err)
+	}
+	if !reflect.DeepEqual(proxies.removed, []int{9}) {
+		t.Fatalf("RemoveProxy indexes = %v, want [9] (listen_port 1089 → Proxy9)", proxies.removed)
 	}
 }

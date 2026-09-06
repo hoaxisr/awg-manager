@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -52,8 +53,8 @@ func provisionPolicyTunForDisable(t *testing.T, h *policyTunEnableHarness) {
 func TestPolicyTunDisable_TeardownOrder(t *testing.T) {
 	// hold мутирует интерфейс (down/clear) и потому гейтится его наличием:
 	// NDMS создаёт интерфейс по любой мутации имени, а delete за ним не идёт.
-	stubOrphanNetdev(t, true)
 	h := newPolicyTunEnableHarness(t, "")
+	stubOrphanNetdev(t, true)
 	provisionPolicyTunForDisable(t, h)
 
 	// Uninstall is recorded through the cleanupHook seam (the first thing
@@ -112,8 +113,8 @@ func TestPolicyTunDisable_TeardownOrder(t *testing.T) {
 func TestPolicyTunDisable_HoldsInterfaceAndIndex(t *testing.T) {
 	// hold мутирует интерфейс (down/clear) и потому гейтится его наличием:
 	// NDMS создаёт интерфейс по любой мутации имени, а delete за ним не идёт.
-	stubOrphanNetdev(t, true)
 	h := newPolicyTunEnableHarness(t, "")
+	stubOrphanNetdev(t, true)
 	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
 		t.Fatalf("SetOpkgTunState: %v", err)
 	}
@@ -147,8 +148,8 @@ func TestPolicyTunDisable_HoldsInterfaceAndIndex(t *testing.T) {
 func TestPolicyTunDisable_HoldsInterfaceAtIndexZero(t *testing.T) {
 	// hold мутирует интерфейс (down/clear) и потому гейтится его наличием:
 	// NDMS создаёт интерфейс по любой мутации имени, а delete за ним не идёт.
-	stubOrphanNetdev(t, true)
 	h := newPolicyTunEnableHarness(t, "")
+	stubOrphanNetdev(t, true)
 	provisionPolicyTunForDisable(t, h)
 
 	if err := h.svc.Disable(context.Background()); err != nil {
@@ -199,8 +200,8 @@ func TestPolicyTunDisable_IPv6ClearFailureIsNotFailure(t *testing.T) {
 func TestPolicyTunDisable_AddressClearFailureKeepsProvisioned(t *testing.T) {
 	// hold мутирует интерфейс (down/clear) и потому гейтится его наличием:
 	// NDMS создаёт интерфейс по любой мутации имени, а delete за ним не идёт.
-	stubOrphanNetdev(t, true)
 	h := newPolicyTunEnableHarness(t, "")
+	stubOrphanNetdev(t, true)
 	provisionPolicyTunForDisable(t, h)
 	h.opkg.failAt = "ClearAddress"
 
@@ -634,5 +635,78 @@ func TestPolicyTunDisable_HoldSkipsMutationsWhenIfaceGone(t *testing.T) {
 		if h.log.has(call) {
 			t.Errorf("%s на отсутствующем интерфейсе создал бы пустышку: %v", call, h.log.calls)
 		}
+	}
+}
+
+// Инвариант: снос ресурса живёт в том же выходе из режима, что и создание, и
+// одинаков во ВСЕХ выходах. Набор AWGM-BYPASS создаёт tproxy-путь, но выйти
+// из режима можно и через policy-tun — прерванный переход
+// tproxy→policy-tun оставляет набор в ядре и дамп на диске. Хук
+// `50-awgm-tproxy.sh` восстанавливает набор из дампа БЕЗУСЛОВНО (блок ipset в
+// шаблоне не гейтится классами), поэтому неснесённая сирота воскресала на
+// КАЖДОЙ перезагрузке, а не жила «до неё».
+//
+// Близнец TestDisable_TearsDownBypassSetWithoutTagSnapshot для tproxy-ветки.
+func TestDisablePolicyTun_TearsDownBypassSet(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	ipt := newStubIPTables(func(context.Context, string) error { return nil })
+	seq := &orderLog{}
+	ipt.runIP = func(_ context.Context, args ...string) error {
+		seq.mark(strings.Join(args, " "))
+		return nil
+	}
+	h.svc.deps.IPTables = ipt
+	h.svc.deps.WANIPCollector = &fakeWANIPCollector{ips: []string{"203.0.113.1/32"}}
+	h.svc.deps.NetfilterPreflight = func(context.Context) error { return nil }
+	h.svc.deps.XtDscpProbe = func(context.Context) bool { return true }
+	provisionPolicyTunForDisable(t, h)
+
+	// Ровно состояние после рестарта демона: набор и дамп есть, снимка тегов
+	// в памяти нет — снос обязан быть безусловным, а не по снимку.
+	h.svc.currentBypassGeoIPTags = nil
+	h.svc.teardownBypassSetFn = func(context.Context) { seq.mark("teardown") }
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable(policy-tun): %v", err)
+	}
+	seq.requireTeardownAfterUninstall(t)
+}
+
+// orderLog — порядок вызовов вокруг сноса набора. Порядок здесь несущий: пока
+// в ядре живо правило `--match-set`, ipset отвечает «set is in use», поэтому
+// снос обязан идти ПОСЛЕ Uninstall. Признак конца Uninstall — его последний
+// шаг, слив таблицы маршрутов.
+type orderLog struct {
+	mu   sync.Mutex
+	seen []string
+}
+
+func (o *orderLog) mark(s string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.seen = append(o.seen, s)
+}
+
+func (o *orderLog) requireTeardownAfterUninstall(t *testing.T) {
+	t.Helper()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	teardown, flush := -1, -1
+	for i, s := range o.seen {
+		switch {
+		case s == "teardown":
+			teardown = i
+		case strings.HasPrefix(s, "route flush table"):
+			flush = i
+		}
+	}
+	if teardown < 0 {
+		t.Fatalf("набор не снесён на выходе: хук воскресит его на первой перезагрузке (%v)", o.seen)
+	}
+	if flush < 0 {
+		t.Fatalf("Uninstall не дошёл до слива таблицы — тест смотрит не туда (%v)", o.seen)
+	}
+	if teardown < flush {
+		t.Errorf("снос набора ДО конца Uninstall: ipset ответит «set is in use» (%v)", o.seen)
 	}
 }

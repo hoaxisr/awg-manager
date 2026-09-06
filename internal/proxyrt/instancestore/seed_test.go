@@ -776,7 +776,10 @@ func TestSeedMarksCleanupPendingAndPersistsLegacyIfaces(t *testing.T) {
 	if err := os.MkdirAll(e.deps.RuntimeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-server-s.pid"), "321")
+	// Номер заведомо мёртвый (выше pid_max): отпечаток снимается по реальному
+	// /proc, и живой на хосте номер дал бы StartTime != 0 — так тест падал на
+	// CI-раннере, где PID 321 был занят.
+	writeFile(t, filepath.Join(e.deps.RuntimeDir, "wdtt-server-s.pid"), "999999999")
 	first, err := Seed(context.Background(), e.st, e.deps)
 	if err != nil {
 		t.Fatal(err)
@@ -794,7 +797,7 @@ func TestSeedMarksCleanupPendingAndPersistsLegacyIfaces(t *testing.T) {
 	if !reflect.DeepEqual(st.LegacyKernelIfaces, []string{"wdtt0", "wdttraw0"}) {
 		t.Fatalf("прежние kernel-имена не сохранены: %v", st.LegacyKernelIfaces)
 	}
-	if !reflect.DeepEqual(st.OldGenProcs, []OldGenProc{{PID: 321}}) {
+	if !reflect.DeepEqual(st.OldGenProcs, []OldGenProc{{PID: 999999999}}) {
 		t.Fatalf("процессы старого поколения не сохранены: %+v", st.OldGenProcs)
 	}
 
@@ -814,7 +817,7 @@ func TestSeedMarksCleanupPendingAndPersistsLegacyIfaces(t *testing.T) {
 	if !reflect.DeepEqual(second.LegacyKernelIfaces, []string{"wdtt0", "wdttraw0"}) {
 		t.Fatalf("список имён не доехал до повтора: %v", second.LegacyKernelIfaces)
 	}
-	if !reflect.DeepEqual(second.OldGenProcs, []OldGenProc{{PID: 321}}) {
+	if !reflect.DeepEqual(second.OldGenProcs, []OldGenProc{{PID: 999999999}}) {
 		t.Fatalf("список процессов пересобран с диска: %+v", second.OldGenProcs)
 	}
 }
@@ -1377,11 +1380,12 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 	assertEveryFieldCarried(t, "PolicyPermit", permits)
 }
 
-// TestSeedServerWithoutNatModeGetsFull — РЕГРЕСС МИГРАЦИИ. У пользователя,
-// который режим NAT никогда не трогал, поле старого конфига пустое, а старый
-// мир трактовал пустое как full (wdtt.normalizeNatMode, access.go:30-37).
-// Дефолт "none" на посеве снял бы NAT с РАБОТАВШЕЙ раздачи после обновления:
-// абоненты подключаются, интернета нет.
+// РЕГРЕСС МИГРАЦИИ. Инвариант: обновление не имеет права менять поведение
+// уже работающей у пользователя раздачи — он её не трогал и об изменении не
+// узнает, пока абоненты не потеряют интернет. У того, кто режим NAT никогда
+// не выбирал, поле старого конфига пустое, и на его роутере СЕЙЧАС работает
+// полный NAT; посев обязан это сохранить. Ссылка на старый мир здесь — про
+// установленную базу (что реально крутится у людей), а не про правильность.
 //
 // Проверка отдельная от нормализации на записи (store_test.go) сознательно:
 // посев переносит NatMode как есть (seed.go:412), и ломается этот путь
@@ -1406,7 +1410,7 @@ func TestSeedServerWithoutNatModeGetsFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.NatMode != "full" {
-		t.Fatalf("natMode после посева = %q, ждали full (паритет со старым миром)", cfg.NatMode)
+		t.Fatalf("natMode после посева = %q, ждали full — обновление не меняет поведение работающей раздачи", cfg.NatMode)
 	}
 }
 

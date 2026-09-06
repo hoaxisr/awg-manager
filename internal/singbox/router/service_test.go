@@ -221,9 +221,71 @@ func newTestSingbox(t *testing.T) *fakeSingbox {
 }
 
 // newTestService creates a *ServiceImpl with the given Deps. Singbox is left
-// nil because Enable error-path tests exit before touching it.
-func newTestService(_ *testing.T, deps Deps) *ServiceImpl {
+// nil because Enable error-path tests exit before touching it. Also stubs
+// fakeIPLinkPresent via stubLinkAbsent: without it, `ip link show` (the
+// orphan-netdev presence read) hits the real /opt/sbin/ip on the host.
+func newTestService(t *testing.T, deps Deps) *ServiceImpl {
+	t.Helper()
+	stubLinkAbsent(t)
+	stubTProxyProbe(t, func(context.Context) bool { return true })
+	// Диагностика xt_dscp в GetStatus иначе форкает `iptables -m dscp -h`;
+	// (false, false) — тот же вердикт, что тесты видели от хоста без iptables.
+	stubXtDscpProbe(t, false, false)
+	stubEnsureKernelModule(t)
 	return &ServiceImpl{deps: deps}
+}
+
+// stubEnsureKernelModule overrides the ensureKernelModuleFn seam for the test
+// duration so module preloads (EnsureTProxyModule / EnsureCommentModule /
+// EnsureXtDscpModule и весь набор EnsureRouterNetfilterModules) не читают
+// хостовый /proc/modules и не форкают insmod: вердикт зависел бы от того, что
+// загружено на машине прогона. Успех — тот же исход, что даёт роутер со
+// встроенными в ядро модулями.
+func stubEnsureKernelModule(t *testing.T) {
+	t.Helper()
+	old := ensureKernelModuleFn
+	ensureKernelModuleFn = func(context.Context, string) error { return nil }
+	t.Cleanup(func() { ensureKernelModuleFn = old })
+}
+
+// stubTProxyProbe overrides the tproxyTargetProbe seam for the test duration
+// so the preflight/GetStatus availability read doesn't exec the real
+// `iptables -j TPROXY --help` on the host.
+func stubTProxyProbe(t *testing.T, fn func(context.Context) bool) {
+	t.Helper()
+	old := tproxyTargetProbe
+	tproxyTargetProbe = fn
+	t.Cleanup(func() { tproxyTargetProbe = old })
+}
+
+// Проверка netfilter перед включением — fail-closed: цель TPROXY в iptables
+// недоступна → Enable
+// отказывает и НИ ОДНОЙ таблицы не устанавливает. Без гейта перехват уехал бы
+// в restore и упал бы на COMMIT, оставив половину таблиц применённой.
+func TestEnable_RefusesWhenTProxyTargetUnavailable(t *testing.T) {
+	svc, _ := newOrchedTestService(t)
+	stubTProxyProbe(t, func(context.Context) bool { return false })
+	restoreCalls := 0
+	svc.deps.IPTables = newStubIPTables(func(context.Context, string) error {
+		restoreCalls++
+		return nil
+	})
+	svc.deps.Policies = &fakeAccessPolicyProvider{mark: "0xffffaaa"}
+	svc.deps.WANIPCollector = &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}}
+	svc.deps.Settings = newTestSettingsStore(t, storage.SingboxRouterSettings{
+		PolicyName: "Policy0", WANAutoDetect: true,
+	})
+
+	err := svc.Enable(context.Background())
+	if err == nil {
+		t.Fatal("недоступная цель TPROXY обязана валить Enable")
+	}
+	if !strings.Contains(err.Error(), "iptables TPROXY target unavailable") {
+		t.Fatalf("err = %v, want отказ по недоступной цели TPROXY", err)
+	}
+	if restoreCalls != 0 {
+		t.Fatalf("на отказе проверки правила не ставятся: restoreCalls = %d, want 0", restoreCalls)
+	}
 }
 
 // stubListeningProbe overrides the singboxListeningProbe seam for the test
@@ -424,7 +486,7 @@ func TestSetRouteFinal_AllowsSubscriptionCompositeTag(t *testing.T) {
 
 func TestRenameExternalOutboundTag_UpdatesActiveAndPending(t *testing.T) {
 	dir := t.TempDir()
-	orch := orchestrator.New(dir, &fakeSingbox{dir: dir})
+	orch := orchestrator.NewWithAppliedPath(dir, &fakeSingbox{dir: dir}, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouter, Filename: "20-router.json"}); err != nil {
 		t.Fatalf("Register router slot: %v", err)
 	}
@@ -472,6 +534,7 @@ func TestRenameExternalOutboundTag_UpdatesActiveAndPending(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReconcile_PolicyMarkChanged_Reinstalls(t *testing.T) {
+	stubNoLANBridges(t)
 	restoreCalls := 0
 	ipt := newStubIPTables(func(_ context.Context, _ string) error {
 		restoreCalls++
@@ -608,11 +671,10 @@ func TestReconcile_PolicyDeleted_Disables(t *testing.T) {
 	if err := svc.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	// Disable calls Uninstall then saves settings with Enabled=false.
-	// Verify at least one iptables call happened (the -D PREROUTING loop in Uninstall).
-	if len(fe.calls) == 0 {
-		t.Error("expected iptables calls from Uninstall, got none")
-	}
+	// Fail-safe Disable обязан СНЯТЬ перехват, а не только перевернуть флаг:
+	// ассерт «вызовов не ноль» удовлетворяли пробы IsInstalled, и выброшенный
+	// из Disable Uninstall оставался зелёным. Проверяется состав.
+	requireUninstalled(t, fe)
 	// Verify settings were persisted with Enabled=false.
 	all, err := settingsStore.Load()
 	if err != nil {
@@ -672,9 +734,7 @@ func TestReconcile_SkipsWhileTransitionInFlight(t *testing.T) {
 	if err := svc.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile after lock release: %v", err)
 	}
-	if len(fe.calls) == 0 {
-		t.Error("expected iptables calls from Uninstall after lock release, got none")
-	}
+	requireUninstalled(t, fe)
 	all, err = settingsStore.Load()
 	if err != nil {
 		t.Fatalf("Load after proceeding Reconcile: %v", err)
@@ -685,6 +745,7 @@ func TestReconcile_SkipsWhileTransitionInFlight(t *testing.T) {
 }
 
 func TestReconcile_WANIPsChanged_Reinstalls(t *testing.T) {
+	stubNoLANBridges(t)
 	restoreCalls := 0
 	ipt := newStubIPTables(func(_ context.Context, _ string) error {
 		restoreCalls++
@@ -720,6 +781,7 @@ func TestReconcile_WANIPsChanged_Reinstalls(t *testing.T) {
 }
 
 func TestReconcile_WANIPsSame_NoOp(t *testing.T) {
+	stubNoLANBridges(t)
 	restoreCalls := 0
 	ipt := newStubIPTables(func(_ context.Context, _ string) error {
 		restoreCalls++
@@ -759,6 +821,7 @@ func TestReconcile_WANIPsSame_NoOp(t *testing.T) {
 // changed, but PREROUTING has no jump into our chains — reconcileInstalled
 // must force a reinstall to restore interception.
 func TestReconcile_JumpsMissing_Reinstalls(t *testing.T) {
+	stubNoLANBridges(t)
 	restoreCalls := 0
 	ipt := &IPTables{
 		restoreNoflush: func(_ context.Context, _ string) error { restoreCalls++; return nil },
@@ -809,6 +872,7 @@ func TestReconcile_JumpsMissing_Reinstalls(t *testing.T) {
 // Transient probe error must NOT be treated as "jumps missing": a flaky `-S`
 // read during an NDMS reload must not trigger a needless reinstall.
 func TestReconcile_ProbeError_NoReinstall(t *testing.T) {
+	stubNoLANBridges(t)
 	restoreCalls := 0
 	ipt := &IPTables{
 		restoreNoflush: func(_ context.Context, _ string) error { restoreCalls++; return nil },
@@ -847,6 +911,7 @@ func TestReconcile_ProbeError_NoReinstall(t *testing.T) {
 }
 
 func TestReconcile_DeviceModeChanged_ReinstallsImmediately(t *testing.T) {
+	stubNoLANBridges(t)
 	tests := []struct {
 		name             string
 		mark             string
@@ -982,6 +1047,7 @@ func TestReconcile_DisabledPartialInstall_CleansUp(t *testing.T) {
 // and WAN IPs have not changed. This is the core fix for the "stale chains
 // after upgrade" symptom.
 func TestReconcile_StateUnknown_ForcesInitialReinstall(t *testing.T) {
+	stubNoLANBridges(t)
 	restoreCalls := 0
 	preflightCalls := 0
 	ipt := newStubIPTables(func(_ context.Context, _ string) error {
@@ -1086,9 +1152,12 @@ type EventPublisher interface {
 // tests can inspect files.
 func newOrchedTestService(t *testing.T) (*ServiceImpl, string) {
 	t.Helper()
+	stubTProxyProbe(t, func(context.Context) bool { return true })
+	stubXtDscpProbe(t, false, false)
+	stubEnsureKernelModule(t)
 	dir := t.TempDir()
 
-	orch := orchestrator.New(dir, nil)
+	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
 	if err := orch.Register(orchestrator.SlotMeta{
 		Slot:     orchestrator.SlotRouter,
 		Filename: "20-router.json",
@@ -1164,19 +1233,40 @@ func TestApplyStaging_DelegatesAndEmitsEvent(t *testing.T) {
 	// Register SlotBase so the orchestrator has a "direct" outbound in
 	// scope for cross-slot validation.
 	_ = svc.deps.Orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotBase, Filename: "00-base.json", AlwaysOn: true})
+	// Во второй исход ведёт СВОЙ outbound: правка черновика обязана отличаться
+	// от дефолта NewEmptyConfig (там final уже "direct").
 	_ = os.WriteFile(filepath.Join(dir, "00-base.json"),
-		[]byte(`{"outbounds":[{"tag":"direct","type":"direct"}]}`), 0644)
-	// Stage a router config whose route.final references "direct" (always known).
+		[]byte(`{"outbounds":[{"tag":"direct","type":"direct"},{"tag":"через-черновик","type":"direct"}]}`), 0644)
+	// Иначе ассерт «применённый конфиг несёт правку» проходил и когда
+	// применения не было вовсе — нашло ревью.
 	cfg := NewEmptyConfig()
-	cfg.Route.Final = "direct"
+	cfg.Route.Final = "через-черновик"
 	if err := svc.persistConfig(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	bus.Reset()
 
+	if !svc.StagingStatus(context.Background()).HasDraft {
+		t.Fatal("предусловие: черновик обязан существовать до применения")
+	}
+
 	res, err := svc.ApplyStaging(context.Background())
 	if err != nil || !res.Ok() {
 		t.Fatalf("ApplyStaging: err=%v res=%s", err, res.Error())
+	}
+	// «Delegates» в имени было единственным следом делегирования: события
+	// публикуются рядом с вызовом, поэтому выброшенный Orch.ApplyDraft
+	// оставлял тест зелёным. Проверяется РЕЗУЛЬТАТ: черновика больше нет, а
+	// применённый конфиг несёт то, что в нём было.
+	if svc.StagingStatus(context.Background()).HasDraft {
+		t.Error("черновик не применён: он всё ещё висит после ApplyStaging")
+	}
+	applied, err := svc.loadAppliedRouterConfig()
+	if err != nil {
+		t.Fatalf("loadAppliedRouterConfig: %v", err)
+	}
+	if applied.Route.Final != "через-черновик" {
+		t.Errorf("применённый конфиг не содержит правки черновика: final=%q", applied.Route.Final)
 	}
 	if !bus.HasEvent("singbox.router.staging") {
 		t.Errorf("staging event not published; got: %v", bus.Events())
@@ -1191,8 +1281,16 @@ func TestDiscardStaging_DelegatesAndEmitsEvent(t *testing.T) {
 	bus := svc.deps.Bus.(*mockBus)
 	_ = svc.deps.Orch.SaveDraft(orchestrator.SlotRouter, []byte(`{}`))
 	bus.Reset()
+	if !svc.StagingStatus(context.Background()).HasDraft {
+		t.Fatal("предусловие: черновик обязан существовать до отмены")
+	}
 	if err := svc.DiscardStaging(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	// Тот же класс: без проверки результата выброшенный Orch.DiscardDraft
+	// оставался зелёным — события публикуются независимо от него.
+	if svc.StagingStatus(context.Background()).HasDraft {
+		t.Error("черновик не отменён: он всё ещё висит после DiscardStaging")
 	}
 	if !bus.HasEvent("singbox.router.staging") {
 		t.Errorf("staging event not published")
@@ -1861,6 +1959,7 @@ func TestDiscardStaging_RecompilesInlineSRSForActiveAfterStagedDelete(t *testing
 }
 
 func TestReconcile_BypassPresetsChanged_Reinstalls(t *testing.T) {
+	stubNoLANBridges(t)
 	restoreCalls := 0
 	ipt := newStubIPTables(func(_ context.Context, _ string) error {
 		restoreCalls++
@@ -1897,6 +1996,7 @@ func TestReconcile_BypassPresetsChanged_Reinstalls(t *testing.T) {
 }
 
 func TestReconcile_BypassPresetsSame_NoOp(t *testing.T) {
+	stubNoLANBridges(t)
 	restoreCalls := 0
 	ipt := newStubIPTables(func(_ context.Context, _ string) error {
 		restoreCalls++
@@ -1994,6 +2094,7 @@ func TestNormalizeSingboxRouterSettings_IngressRefs(t *testing.T) {
 }
 
 func TestReconcile_IngressChangeTriggersInstall(t *testing.T) {
+	stubNoLANBridges(t)
 	restoreCalls := 0
 	var lastRestoreInput string
 	ipt := newStubIPTables(func(_ context.Context, input string) error {
@@ -2098,6 +2199,7 @@ func newAppliedSpecReconcileService(t *testing.T, applied *RestoreInputSpec) (*S
 		return nil
 	})
 	stubListeningProbe(t, func() bool { return true })
+	stubNoLANBridges(t)
 	svc := &ServiceImpl{
 		deps: Deps{
 			Policies:           &fakeAccessPolicyProvider{mark: "0xffffaaa"},
@@ -2114,9 +2216,9 @@ func newAppliedSpecReconcileService(t *testing.T, applied *RestoreInputSpec) (*S
 
 // Страховка: смена набора LAN-мостов (NDMS переконфигурировал hotspot, порт
 // ndnproxy переехал) обязана переустанавливать правила — от неё зависят
-// REDIRECT-правила DNS-RESCUE. Направление «было — стало пусто»:
-// Шов discoverLANBridges здесь не подменяется: настоящая DiscoverLANBridges
-// в тестовом окружении не находит хотспот-цепочку и отдаёт пусто.
+// REDIRECT-правила DNS-RESCUE.
+// Шов discoverLANBridges → пусто: направление «было — стало пусто» (обвязка
+// newAppliedSpecReconcileService ставит пусто через stubNoLANBridges).
 func TestReconcileInstalled_LANBridgesChangeReinstalls(t *testing.T) {
 	svc, restoreCalls, _ := newAppliedSpecReconcileService(t, &RestoreInputSpec{
 		PolicyMark: "0xffffaaa",
@@ -2214,5 +2316,41 @@ func TestReconcileInstalled_PresetTableChangeReinstalls(t *testing.T) {
 	}
 	if *restoreCalls != 1 {
 		t.Errorf("повторный тик без изменений: restoreCalls = %d, want 1", *restoreCalls)
+	}
+}
+
+// requireUninstalled — перехват действительно снят: обе наши цепочки очищены и
+// удалены, таблица маршрутов слита. Ассерт на СОСТАВ, а не на количество:
+// счётчику вызовов хватало проб IsInstalled, и выпил Uninstall из Disable
+// проходил зелёным (RT40).
+func requireUninstalled(t *testing.T, fe *fakeExec) {
+	t.Helper()
+	var ipt, ip []string
+	for _, c := range fe.calls {
+		switch c.kind {
+		case "iptables":
+			ipt = append(ipt, strings.Join(c.args, " "))
+		case "ip":
+			ip = append(ip, strings.Join(c.args, " "))
+		}
+	}
+	for _, want := range []string{
+		"-t mangle -F " + ChainName,
+		"-t mangle -X " + ChainName,
+		"-t nat -F " + RedirectChain,
+		"-t nat -X " + RedirectChain,
+	} {
+		if !slices.Contains(ipt, want) {
+			t.Errorf("перехват не снят: нет %q, сделано:\n%s", want, strings.Join(ipt, "\n"))
+		}
+	}
+	flushed := false
+	for _, c := range ip {
+		if strings.HasPrefix(c, "route flush table") {
+			flushed = true
+		}
+	}
+	if !flushed {
+		t.Errorf("таблица маршрутов не слита: %v", ip)
 	}
 }

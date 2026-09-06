@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 )
@@ -46,7 +47,8 @@ func (m *Middleware) RequireAuthFunc(next http.HandlerFunc) http.HandlerFunc {
 		// substitute. Empty configured key disables this path entirely.
 		if m.authChecker != nil {
 			if configured := m.authChecker.GetApiKey(); configured != "" {
-				if presented := bearerToken(r); presented != "" && presented == configured {
+				if presented := bearerToken(r); presented != "" &&
+					subtle.ConstantTimeCompare([]byte(presented), []byte(configured)) == 1 {
 					next(w, r)
 					return
 				}

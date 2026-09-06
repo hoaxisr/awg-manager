@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ManagedServer } from '$lib/types';
-	import { Modal, FormToggle, Button } from '$lib/components/ui';
+	import { Modal, FormToggle, Button, FieldHint } from '$lib/components/ui';
+	import { routerDnsHint } from './routerDnsHint';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 
@@ -95,7 +96,7 @@
 			<input type="text" id="amp-dns" class="input" bind:value={dns} placeholder="1.1.1.1, 8.8.8.8" disabled={useRouterDNS} />
 			{#if routerIP}
 				<div class="toggle-row">
-					<span class="toggle-label">DNS роутера ({routerIP})</span>
+					<span class="toggle-label">DNS роутера ({routerIP})<FieldHint text={routerDnsHint} ariaLabel="Подсказка: DNS роутера" /></span>
 					<FormToggle bind:checked={useRouterDNS} onchange={(val) => { dns = val ? routerIP : ''; }} size="sm" />
 				</div>
 			{/if}
@@ -157,6 +158,9 @@
 	}
 
 	.toggle-label {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
 		font-size: 0.75rem;
 		color: var(--text-secondary);
 	}

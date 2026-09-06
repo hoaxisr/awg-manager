@@ -368,7 +368,7 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 	}
 	sv.NATStaticWANs = wans
 	sv.NATStaticWAN = ""
-	if err := s.applyLANSegmentsRaw(ctx, target, sv.Address, sv.Mask, sv.LANSegments); err != nil {
+	if err := s.applyLANSegmentsRaw(ctx, target, sv.Address, sv.Mask, sv.LANSegments, true); err != nil {
 		return true, fmt.Errorf("set LAN segments: %w", err)
 	}
 	if err := s.applyPolicy(ctx, target, sv.Policy); err != nil {
