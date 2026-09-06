@@ -530,6 +530,32 @@ func TestInstall_DownloadsPinnedAssets(t *testing.T) {
 	}
 }
 
+// F98: хук Installed зовётся ТОЛЬКО из ServeInstall, никогда из Install.
+// Install дёргает proxyEnsureBinaries (cmd/awg-manager/proxyrt_binaries.go)
+// из-под bootMu во время Boot — вызови Install хук там, и нудж поставил бы
+// в очередь на bootMu ещё один Boot прямо из уже идущего Boot.
+func TestInstall_DoesNotCallInstalledHook(t *testing.T) {
+	clientBody, serverBody := []byte("c"), []byte("s")
+	dl := &fakeDownloader{payload: map[string][]byte{"https://x/c": clientBody, "https://x/s": serverBody}}
+	var got []Subsystem
+	s := newTestService(t, Deps{Downloader: dl, Installed: func(name Subsystem) { got = append(got, name) }})
+	sub := s.subs[SubsystemWdtt]
+	setSpecs(s, SubsystemWdtt, ArchSpecs{
+		Client: BinarySpec{Version: "1.0.0", URL: "https://x/c", SHA256: sha256Hex(clientBody), Size: int64(len(clientBody))},
+		Server: BinarySpec{Version: "1.0.0", URL: "https://x/s", SHA256: sha256Hex(serverBody), Size: int64(len(serverBody))},
+	})
+
+	if err := s.Install(context.Background(), "wdtt"); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if !binaryPresent(sub.clientBin) || !binaryPresent(sub.serverBin) {
+		t.Fatal("бинари не активированы")
+	}
+	if len(got) != 0 {
+		t.Fatalf("Install не должен звать Installed: %v", got)
+	}
+}
+
 // На арке без серверного пина сервер НЕ качается: URL пустой, и загрузка
 // упала бы на ровном месте.
 func TestInstall_WdttClientOnlyArchSkipsServer(t *testing.T) {
@@ -742,4 +768,52 @@ func TestStatus_BinariesPresent(t *testing.T) {
 			t.Error("без клиентского бинаря подсистема не установлена")
 		}
 	})
+}
+
+// ── Stale / SubsystemOf (F98) ───────────────────────────────────────
+
+func TestStale(t *testing.T) {
+	s := newTestService(t, Deps{})
+	wd := s.subs[SubsystemWdtt]
+	setSpecs(s, SubsystemWdtt, ArchSpecs{
+		Client: BinarySpec{URL: "https://x/c", SHA256: writeBin(t, wd.clientBin, "client-pinned")},
+		Server: BinarySpec{URL: "https://x/s", SHA256: writeBin(t, wd.serverBin, "server-pinned")},
+	})
+	s.subs[SubsystemFreeTurn].specs = nil // арка без пина
+
+	on := instancestore.Record{ID: "a", Kind: instancestore.KindWdttClient, Enabled: true}
+	off := instancestore.Record{ID: "b", Kind: instancestore.KindWdttServer}
+	ft := instancestore.Record{ID: "c", Kind: instancestore.KindFreeTurnClient, Enabled: true}
+
+	if got := s.Stale([]instancestore.Record{on, ft}); len(got) != 0 {
+		t.Fatalf("бинари совпали с пином, арка без пина у freeturn — ждать нечего: %v", got)
+	}
+	writeBin(t, wd.clientBin, "client-old-and-longer") // на диске не пин
+	if got := s.Stale([]instancestore.Record{on}); len(got) != 1 || got[0] != SubsystemWdtt {
+		t.Fatalf("включённая запись + расхождение с пином: %v", got)
+	}
+	if got := s.Stale([]instancestore.Record{off}); len(got) != 0 {
+		t.Fatalf("только выключенные записи бут не держат: %v", got)
+	}
+	if got := s.Stale([]instancestore.Record{ft}); len(got) != 0 {
+		t.Fatalf("арка без пина не stale: %v", got)
+	}
+	if got := s.Stale(nil); len(got) != 0 {
+		t.Fatalf("без записей: %v", got)
+	}
+}
+
+func TestSubsystemOf(t *testing.T) {
+	want := map[instancestore.Kind]Subsystem{
+		instancestore.KindWdttClient: SubsystemWdtt, instancestore.KindWdttServer: SubsystemWdtt,
+		instancestore.KindFreeTurnClient: SubsystemFreeTurn, instancestore.KindFreeTurnServer: SubsystemFreeTurn,
+	}
+	for _, k := range instancestore.AllKinds {
+		if got := SubsystemOf(k); got != want[k] || got == "" {
+			t.Errorf("%s: %q, ждали %q", k, got, want[k])
+		}
+	}
+	if got := SubsystemOf(instancestore.Kind("неведомый")); got != "" {
+		t.Errorf("неизвестный kind: %q", got)
+	}
 }

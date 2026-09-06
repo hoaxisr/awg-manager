@@ -557,18 +557,6 @@ func (t proxyTunnelImporter) PublishList(context.Context) {
 // нечем; ссылка проставляется сразу после manager.New и до первого Boot.
 type proxyManagerRef struct{ mgr *manager.Manager }
 
-// proxySubsystemOf — подсистема роли. Нужна гейту удаления бинарей: снимать
-// их можно, только если инстансов ЭТОЙ подсистемы не осталось.
-func proxySubsystemOf(kind instancestore.Kind) install.Subsystem {
-	switch kind {
-	case instancestore.KindWdttClient, instancestore.KindWdttServer:
-		return install.SubsystemWdtt
-	case instancestore.KindFreeTurnClient, instancestore.KindFreeTurnServer:
-		return install.SubsystemFreeTurn
-	}
-	return ""
-}
-
 // proxyRecords — wdttlink.RecordSource поверх менеджера.
 type proxyRecords struct{ ref *proxyManagerRef }
 
@@ -887,12 +875,15 @@ func (a *app) wireProxyrt() {
 			}
 			n := 0
 			for _, rec := range st.Records {
-				if proxySubsystemOf(rec.Kind) == name {
+				if install.SubsystemOf(rec.Kind) == name {
 					n++
 				}
 			}
 			return n, nil
 		},
+		// F98: ручная установка снимает ожидание бута. Горутиной: Boot
+		// сериализован bootMu и может тянуться, а ответ UI ждать не должен.
+		Installed: func(install.Subsystem) { go a.proxyRuntimeNudge("install", proxyrt.EventBoot) },
 	})
 
 	records := proxyRecords{ref: ref}
@@ -917,10 +908,11 @@ func (a *app) wireProxyrt() {
 		PostSeed: proxyPostSeed(a.exitMirror, proxyIPT{}, cmds, a.ndmsQueries.Interfaces,
 			proxyKillBinaries(installSvc),
 			func() error { return instancestore.ClearCleanupPending(store) }),
-		AllocIndex:   allocIndex,
-		AllocListen:  allocListen,
-		ReleasePins:  proxyReleasePins(a.shutdownCtx, opkgAlloc, portAlloc, book, journal),
-		WaitDisabled: proxyWaitDisabled(states),
+		EnsureBinaries: proxyEnsureBinaries(installSvc, journal),
+		AllocIndex:     allocIndex,
+		AllocListen:    allocListen,
+		ReleasePins:    proxyReleasePins(a.shutdownCtx, opkgAlloc, portAlloc, book, journal),
+		WaitDisabled:   proxyWaitDisabled(states),
 		RecordsChanged: func(reason string) {
 			a.eventBus.PublishInvalidated(events.ResourceProxyInstances, reason)
 		},
@@ -1006,11 +998,7 @@ func (a *app) wireProxyrt() {
 	// Ретрай зовут фазы боота и хуки wan-up через proxyRuntimeNudge; Boot
 	// идемпотентен — живые инстансы не пересоздаются — и сериализован сам с
 	// собой (manager.bootMu).
-	go func() {
-		if err := mgr.Boot(a.shutdownCtx); err != nil {
-			journal.Warn("boot", "proxy", "прокси-рантайм не поднялся: "+err.Error())
-		}
-	}()
+	go a.proxyRuntimeNudge("wiring", proxyrt.EventBoot)
 }
 
 // proxyRuntime — срез менеджера, нужный ретраю боота. Шов ради теста: иначе
@@ -1048,6 +1036,12 @@ func (a *app) proxyRuntimeNudge(reason string, kind proxyrt.EventKind) {
 		return
 	}
 	bootedNow, err := proxyNudge(a.shutdownCtx, a.proxyMgr, kind)
+	// F98: без бинарей по пину бут отложен, старое поколение живо —
+	// повторяем с backoff; WAN-up-нудж и ручная установка ускоряют.
+	armBinariesRetry(&a.binariesRetryOnce, err, func() {
+		go proxyBinariesRetry(a.shutdownCtx, a.proxyMgr, proxyBinariesRetryDelays, proxyWait,
+			func(reason string) { a.proxyRuntimeNudge(reason, proxyrt.EventBoot) })
+	})
 	if a.bootLog == nil {
 		return
 	}

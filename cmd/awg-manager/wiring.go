@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sync"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
@@ -176,6 +177,11 @@ type app struct {
 	// сериализацию записи по разным замкам.
 	proxyStore *instancestore.Store
 	proxyMgr   *manager.Manager
+
+	// binariesRetryOnce — цикл повтора бута после ErrBinariesPending (F98)
+	// заводится один раз на процесс: нуджей много (проводка, фазы бута,
+	// WAN-хук), а ждущий загрузки цикл нужен один.
+	binariesRetryOnce sync.Once
 
 	// HTTP
 	srv *server.Server

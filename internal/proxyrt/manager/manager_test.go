@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"slices"
@@ -196,6 +197,10 @@ type env struct {
 	released    [][]string
 	allocN      int
 	allocKeys   []string
+
+	ensureErr   error                  // отказ ворот бута (F98)
+	ensureRecs  []instancestore.Record // список, дошедший до ворот
+	ensureCalls int
 }
 
 func newEnv(t *testing.T) *env {
@@ -239,6 +244,15 @@ func newEnv(t *testing.T) *env {
 		PostSeed: func(_ context.Context, res instancestore.SeedResult, declaredNDMS map[string]bool) error {
 			e.postSeed = append(e.postSeed, [2]bool{res.SeededNow, true})
 			e.postSeedNDMS = append(e.postSeedNDMS, declaredNDMS)
+			return nil
+		},
+		EnsureBinaries: func(_ context.Context, recs []instancestore.Record, progress func(string)) error {
+			e.ensureCalls++
+			e.ensureRecs = recs
+			if e.ensureErr != nil {
+				progress("идёт загрузка")
+				return e.ensureErr
+			}
 			return nil
 		},
 		AllocIndex: func(key string, pinned int, havePin bool) (int, error) {
@@ -1795,5 +1809,63 @@ func TestManagerPostCarriesInstanceVerdict(t *testing.T) {
 	fi.mu.Unlock()
 	if len(got) != 1 || got[0] != proxyrt.EventIntentChanged {
 		t.Fatalf("инстанс получил %v, ждали ровно [EventIntentChanged]", got)
+	}
+}
+
+// F98: пока бинари не совпали с пином, старое поколение живёт — PostSeed
+// (добивание, legacyCleanup) и сборка воркеров не выполняются, а причина
+// видна в SeedInfo. Следующий Boot после появления бинарей проходит целиком.
+func TestBootBinariesPendingKeepsOldGenerationAlive(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	e.ensureErr = fmt.Errorf("%w: wdtt: зеркало недоступно", ErrBinariesPending)
+	// Ворота стоят ДО reconcileBootListen: занятый порт не должен двигать
+	// запись, пока бут отложен (ревью В5).
+	e.listenTaken = map[string]string{"127.0.0.1:9000": "127.0.0.1:9007"}
+
+	err := e.m.Boot(context.Background())
+	if !errors.Is(err, ErrBinariesPending) {
+		t.Fatalf("бут обязан вернуть ErrBinariesPending: %v", err)
+	}
+	if len(e.postSeed) != 0 {
+		t.Fatal("PostSeed вызван без бинарей — старое поколение добито")
+	}
+	if len(e.instances) != 0 || len(e.reg.calls) != 0 {
+		t.Fatalf("воркеры/реестр тронуты без бинарей: %d/%v", len(e.instances), e.reg.calls)
+	}
+	if info := e.m.SeedInfo(); info.Booted || !strings.Contains(info.Err, "зеркало недоступно") {
+		t.Fatalf("ожидание бинарей обязано быть видно: %+v", info)
+	}
+	if len(e.ensureRecs) != 1 || e.ensureRecs[0].ID != "de" {
+		t.Fatalf("ворота получили не тот список: %+v", e.ensureRecs)
+	}
+	if info := e.m.SeedInfo(); len(info.MovedListen) != 0 {
+		t.Fatalf("listen переехал до появления бинарей: %+v", info.MovedListen)
+	}
+	if st, err := e.st.Load(); err != nil || st.Records[0].WdttClient.Listen != "127.0.0.1:9000" {
+		t.Fatalf("запись на диске тронута в ожидании бинарей: %v %+v", err, st.Records)
+	}
+
+	e.ensureErr = nil
+	boot(t, e)
+	if len(e.postSeed) != 1 || len(e.instances) != 1 {
+		t.Fatalf("после появления бинарей бут обязан пройти целиком: postSeed=%d inst=%d", len(e.postSeed), len(e.instances))
+	}
+	if info := e.m.SeedInfo(); !info.Booted || info.Err != "" {
+		t.Fatalf("после успешного бута ошибка обязана быть снята: %+v", info)
+	}
+	if e.ensureCalls != 2 {
+		t.Fatalf("ворота зовутся на каждом бооте: %d", e.ensureCalls)
+	}
+}
+
+// nil-хук — прежнее поведение (тесты без проводки).
+func TestBootWithoutBinariesHookBootsAsBefore(t *testing.T) {
+	e := newEnv(t)
+	e.m.deps.EnsureBinaries = nil
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	boot(t, e)
+	if len(e.instances) != 1 {
+		t.Fatal("без хука бут обязан идти как раньше")
 	}
 }
