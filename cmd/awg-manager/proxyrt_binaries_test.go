@@ -93,6 +93,20 @@ func TestArmBinariesRetry(t *testing.T) {
 	}
 }
 
+// proxyWait — единственное место цикла с настоящими часами: подтесты ниже
+// подсовывают фейковый wait, и тело, выродившееся в `return true`, оставило бы
+// их зелёными, а в проде превратило бы backoff в busy-loop.
+func TestProxyWait(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if proxyWait(ctx, time.Hour) {
+		t.Fatal("отменённый контекст обязан прервать ожидание, не досиживая час")
+	}
+	if !proxyWait(context.Background(), time.Millisecond) {
+		t.Fatal("истёкший интервал — ожидание состоялось")
+	}
+}
+
 func TestProxyBinariesRetry(t *testing.T) {
 	t.Run("backoff по таблице, последний интервал повторяется, стоп по Booted", func(t *testing.T) {
 		rt := &fakeProxyRuntime{}
