@@ -126,6 +126,9 @@ type ImportLink struct {
 	WdttClientID string
 	// FreeTurnClientID — storage.AWGTunnel.FreeTurnClientID.
 	FreeTurnClientID string
+	// Obfuscator — туннель через wg-obfuscator (Phobos/ClusterM). LocalPort
+	// выбирает Import; бэкенд принудительно nativewg.
+	Obfuscator *storage.Obfuscator
 }
 
 // TunnelWithStatus combines stored tunnel data with live status.

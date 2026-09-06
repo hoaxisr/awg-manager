@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -491,6 +492,10 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "INVALID_AWG3")
 		return
 	}
+	if err := obfuscator.Validate(merged.Obfuscator); err != nil {
+		response.Error(w, err.Error(), "INVALID_OBFUSCATOR")
+		return
+	}
 
 	// Validate endpoint resolves (only if changed)
 	if merged.Peer.Endpoint != existing.Peer.Endpoint {
@@ -832,6 +837,9 @@ func (h *TunnelsHandler) Export(w http.ResponseWriter, r *http.Request) {
 	}
 
 	content := config.GenerateForExport(stored)
+	if stored.Obfuscator != nil {
+		content += "\n" + obfuscator.RenderInstance(stored.Obfuscator)
+	}
 	filename := stored.Name + ".conf"
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")

@@ -13,6 +13,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/cache"
+	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
@@ -474,7 +475,12 @@ func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.
 	} else {
 		stateInfo = s.state.GetState(ctx, tunnelID)
 	}
-	if stateInfo.State != tunnel.StateRunning {
+	// Упавший релей даёт Broken, и именно тогда правка его параметров обязана
+	// его перезапустить — иначе туннель с исправленным ключом так и остался бы
+	// лежать до ручного рестарта (Q21).
+	obfBroken := newStored.Obfuscator != nil && stateInfo.State == tunnel.StateBroken &&
+		stateInfo.Details == obfuscator.DetailsNotRunning
+	if stateInfo.State != tunnel.StateRunning && !obfBroken {
 		s.logInfo("update", tunnelID, "Tunnel updated (not running, runtime sync skipped)")
 		return nil
 	}
@@ -626,15 +632,35 @@ func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *st
 		}
 	}
 
+	if !obfuscator.Equal(oldStored.Obfuscator, newStored.Obfuscator) {
+		ip, err := s.nwgOperator.SyncObfuscator(ctx, newStored)
+		if ip != "" {
+			// Персистим адрес target'а ДАЖЕ на ошибке Start: host-route уже
+			// переставлен, и без записи после рестарта демона снимать старый
+			// маршрут будет не по чему. Handler персистит ResolvedEndpointIP
+			// только если сервис его выставил (tunnels_crud.go:525-527).
+			newStored.ResolvedEndpointIP = ip
+		}
+		if err != nil {
+			s.logWarn("update", tunnelID, "Failed to sync obfuscator: "+err.Error())
+			errs = append(errs, fmt.Errorf("sync obfuscator: %w", err))
+		}
+	}
+
 	// Rebuild the kmod proxy slot when fields that shape it change. Without
 	// this, the slot keeps pre-Update keys/obfuscation silently, and the
 	// next daemon-restart's RestoreTunnel adopts the stale slot — handshake
 	// fails forever with no log line beyond "adopt-tunnel". SyncKmodSlot
 	// is a no-op on ASC-native firmware (no kmod slot exists).
-	if kmodShapingChanged(oldStored, newStored) {
-		if err := s.nwgOperator.SyncKmodSlot(ctx, newStored); err != nil {
-			s.logWarn("update", tunnelID, "Failed to sync kmod slot: "+err.Error())
-			errs = append(errs, fmt.Errorf("sync kmod slot: %w", err))
+	//
+	// У обфусцированного туннеля kmod-слота нет по построению: пир смотрит на
+	// loopback, и слот увёл бы WG в awg_proxy мимо релея.
+	if newStored.Obfuscator == nil {
+		if kmodShapingChanged(oldStored, newStored) {
+			if err := s.nwgOperator.SyncKmodSlot(ctx, newStored); err != nil {
+				s.logWarn("update", tunnelID, "Failed to sync kmod slot: "+err.Error())
+				errs = append(errs, fmt.Errorf("sync kmod slot: %w", err))
+			}
 		}
 	}
 
@@ -782,6 +808,10 @@ func (s *ServiceImpl) SetDefaultRoute(ctx context.Context, tunnelID string, enab
 
 // Import parses a WireGuard .conf file and creates a tunnel.
 func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend string, link ImportLink) (*TunnelWithStatus, error) {
+	// Секция [instance] — не WireGuard: parsePeerField принял бы её ключи за
+	// поля пира. Параметры релея приезжают отдельно, в link.Obfuscator.
+	confContent = obfuscator.StripInstance(confContent)
+
 	// Parse config
 	parsed, err := config.Parse(confContent)
 	if err != nil {
@@ -816,6 +846,13 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	parsed.WdttClientID = strings.TrimSpace(link.WdttClientID)
 	parsed.FreeTurnClientID = strings.TrimSpace(link.FreeTurnClientID)
 
+	if link.Obfuscator != nil {
+		if err := prepareObfuscatorImport(parsed, link.Obfuscator, s.obfuscatorPortTaken); err != nil {
+			return nil, err
+		}
+		backend = parsed.Backend
+	}
+
 	if backend == "nativewg" {
 		return s.importNativeWG(ctx, parsed)
 	}
@@ -842,6 +879,42 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	// Legacy tunnel:created publish removed (Task 14 sweep); import
 	// handler emits resource:invalidated via publishTunnelList.
 	return s.Get(ctx, tunnelID)
+}
+
+// prepareObfuscatorImport — обфусцированный туннель: валидация, loopback-порт
+// из пула, Peer.Endpoint = 127.0.0.1:<port>, бэкенд принудительно nativewg (Q10).
+// Чистая функция: сервисный harness без nwg-оператора её не поднимет, поэтому
+// она и тестируется отдельно.
+func prepareObfuscatorImport(parsed *storage.AWGTunnel, o *storage.Obfuscator, taken func(int) bool) error {
+	if err := obfuscator.Validate(o); err != nil {
+		return err
+	}
+	port, err := obfuscator.PickLocalPort(taken)
+	if err != nil {
+		return err
+	}
+	cp := *o
+	cp.LocalPort = port
+	parsed.Obfuscator = &cp
+	parsed.Peer.Endpoint = fmt.Sprintf("127.0.0.1:%d", port)
+	parsed.ResolvedEndpointIP = ""
+	parsed.Backend = "nativewg"
+	return nil
+}
+
+// obfuscatorPortTaken — порт занят другим туннелем (снимок стора; окончательно
+// занятость проверяет bind-проба в PickLocalPort).
+func (s *ServiceImpl) obfuscatorPortTaken(port int) bool {
+	list, err := s.store.List()
+	if err != nil {
+		return false
+	}
+	for _, t := range list {
+		if t.Obfuscator != nil && t.Obfuscator.LocalPort == port {
+			return true
+		}
+	}
+	return false
 }
 
 // importNativeWG creates a tunnel using the NativeWG backend.
@@ -904,9 +977,36 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 		return tunnel.ErrNotFound
 	}
 
+	// Секция [instance] читается ДО Strip: дальше config.Parse видит чистый
+	// .conf, а её ключи не уезжают в поля пира.
+	var inst *storage.Obfuscator
+	var instPresent bool
+	if stored.Obfuscator != nil {
+		var err error
+		if inst, _, instPresent, err = obfuscator.ParseInstance(confContent); err != nil {
+			return err
+		}
+	}
+	confContent = obfuscator.StripInstance(confContent)
+
 	parsed, err := config.Parse(confContent)
 	if err != nil {
 		return fmt.Errorf("parse conf: %w", err)
+	}
+
+	// Обфусцированный туннель: endpoint остаётся loopback, [instance] из
+	// нового файла обновляет пользовательские поля (Flavor/LocalPort — прежние).
+	if stored.Obfuscator != nil {
+		parsed.Peer.Endpoint = stored.Peer.Endpoint
+		o := *stored.Obfuscator
+		if instPresent {
+			o.Target, o.Key, o.Masking, o.MaxDummy, o.IdleTimeout, o.ObfuscateBytes =
+				inst.Target, inst.Key, inst.Masking, inst.MaxDummy, inst.IdleTimeout, inst.ObfuscateBytes
+			if err := obfuscator.Validate(&o); err != nil {
+				return err
+			}
+		}
+		parsed.Obfuscator = &o
 	}
 
 	wasNativeRunning := false
@@ -938,14 +1038,20 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 	// Replace Interface + Peer entirely
 	stored.Interface = parsed.Interface
 	stored.Peer = parsed.Peer
+	stored.Obfuscator = parsed.Obfuscator
 
 	// Optionally update name
 	if newName != "" {
 		stored.Name = newName
 	}
 
-	// Clear runtime state (will be re-populated on next start)
-	stored.ResolvedEndpointIP = ""
+	// Clear runtime state (will be re-populated on next start). У
+	// обфусцированного туннеля ResolvedEndpointIP — адрес target'а релея, а не
+	// пира (пир на loopback): обнулить его здесь значит потерять адрес, по
+	// которому снимается прежний host-route. Его переставит SyncObfuscator ниже.
+	if stored.Obfuscator == nil {
+		stored.ResolvedEndpointIP = ""
+	}
 	stored.ActiveWAN = ""
 	stored.StartedAt = ""
 
@@ -961,6 +1067,7 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 		if newName != "" {
 			t.Name = newName
 		}
+		t.Obfuscator = stored.Obfuscator
 		t.ResolvedEndpointIP = stored.ResolvedEndpointIP
 		t.ActiveWAN = stored.ActiveWAN
 		t.StartedAt = stored.StartedAt
@@ -1018,6 +1125,24 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 		if wasNativeRunning {
 			if err := s.nwgOperator.Start(ctx, stored); err != nil {
 				s.logWarn("replace-config", tunnelID, "Start after peer sync failed: "+err.Error())
+			}
+		}
+		// Релей у работающего (или упавшего — он тоже в wasNativeRunning)
+		// туннеля поднимается под новые параметры, а его ответ — адрес
+		// target'а: без записи в стор после рестарта демона снимать прежний
+		// host-route будет не по чему.
+		if stored.Obfuscator != nil && wasNativeRunning {
+			ip, err := s.nwgOperator.SyncObfuscator(ctx, stored)
+			if err != nil {
+				s.logWarn("replace-config", tunnelID, "SyncObfuscator failed: "+err.Error())
+			}
+			if ip != "" && ip != stored.ResolvedEndpointIP {
+				if err := s.store.Update(tunnelID, func(t *storage.AWGTunnel) error {
+					t.ResolvedEndpointIP = ip
+					return nil
+				}); err != nil {
+					s.logWarn("replace-config", tunnelID, "Failed to save target IP: "+err.Error())
+				}
 			}
 		}
 	}
