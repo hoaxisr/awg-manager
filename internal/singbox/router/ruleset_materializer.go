@@ -168,6 +168,8 @@ func restoreHTTPClients(cfg *RouterConfig) {
 		if rs.HTTPClient == nil {
 			continue
 		}
+		// Если в слоте есть оба поля (ручная правка), побеждает уже
+		// выставленный DownloadDetour — намеренно.
 		if rs.DownloadDetour == "" {
 			rs.DownloadDetour = rs.HTTPClient.Detour
 		}

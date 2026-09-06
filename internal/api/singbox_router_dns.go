@@ -520,7 +520,7 @@ func (h *SingboxRouterHandler) PutDNSGlobals(w http.ResponseWriter, r *http.Requ
 		h.handleErr(w, "request", err)
 		return
 	}
-	h.log.Info("dns-globals", body.Final, "DNS globals updated (final: "+body.Final+", strategy: "+body.Strategy+")")
+	h.log.Info("dns-globals", body.Final, "DNS globals updated (final: "+body.Final+", strategy: "+body.Strategy+", timeout: "+body.Timeout+")")
 	response.Success(w, map[string]bool{"ok": true})
 }
 

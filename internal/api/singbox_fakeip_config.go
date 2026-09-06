@@ -446,7 +446,7 @@ func (h *SingboxFakeIPConfigHandler) PutDNSGlobals(w http.ResponseWriter, r *htt
 		return
 	}
 	h.log.Info("fakeip-dns-globals", body.Final,
-		"fakeip DNS globals updated (final: "+body.Final+", strategy: "+body.Strategy+")")
+		"fakeip DNS globals updated (final: "+body.Final+", strategy: "+body.Strategy+", timeout: "+body.Timeout+")")
 	response.Success(w, map[string]bool{"ok": true})
 }
 

@@ -366,4 +366,15 @@ func TestReconcileCacheFile_StoreDNSOnlyInTmp(t *testing.T) {
 	if _, has := cf["store_dns"]; has {
 		t.Errorf("flash: store_dns must be absent, got %v", cf["store_dns"])
 	}
+
+	// Ручная правка store_dns=false под tmp-путём — значение, а не только
+	// присутствие ключа, должно расходиться с желаемым и требовать правки.
+	reconcileCacheFile(base, storage.CacheFileLocationTmp)
+	cf["store_dns"] = false
+	if _, changed := reconcileCacheFile(base, storage.CacheFileLocationTmp); !changed {
+		t.Error("hand-written store_dns=false under tmp must be corrected")
+	}
+	if cf["store_dns"] != true {
+		t.Errorf("tmp: store_dns = %v, want true", cf["store_dns"])
+	}
 }

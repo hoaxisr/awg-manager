@@ -975,6 +975,9 @@ func resolveUDPTimeout(configured string) string {
 	return DefaultUDPTimeout
 }
 
+// ensureTProxyInbound converges tproxy-in/redirect-in to the canonical shapes
+// described above, applying the effective udp_timeout and udp_nat_max on
+// every call (the user may have changed either since the last sync).
 func ensureTProxyInbound(in []Inbound, udpTimeout string, udpNATMax int) []Inbound {
 	effective := resolveUDPTimeout(udpTimeout)
 	hasTProxy := false

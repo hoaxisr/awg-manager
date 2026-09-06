@@ -932,8 +932,8 @@ func reconcileCacheFile(base map[string]any, location string) (want string, chan
 		exp["cache_file"] = cf
 		return want, true
 	}
-	_, hasStoreDNS := cf["store_dns"]
-	if cf["path"] == want && hasStoreDNS == storeDNS {
+	sd, _ := cf["store_dns"].(bool)
+	if cf["path"] == want && sd == storeDNS {
 		return want, false
 	}
 	cf["path"] = want
