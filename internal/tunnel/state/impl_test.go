@@ -406,3 +406,7 @@ func TestNew_LinkUpAndDeviceExistsDefaultsSet(t *testing.T) {
 		t.Error("deviceExists должен быть установлен дефолтом (sysfsDeviceExists)")
 	}
 }
+
+func (m *MockWGClient) LatestHandshake(_ context.Context, _ string) (time.Time, error) {
+	return time.Time{}, nil
+}

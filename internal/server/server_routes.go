@@ -2,16 +2,21 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
+	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/connections"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/mcp"
+	"github.com/hoaxisr/awg-manager/internal/mcp/localdeps"
 	"github.com/hoaxisr/awg-manager/internal/openapi"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	sysports "github.com/hoaxisr/awg-manager/internal/sys/ports"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
@@ -1026,6 +1031,170 @@ func (s *Server) registerProxyRtRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.proxyRt.Uninstall != nil {
 		mux.HandleFunc("/api/proxyrt/install/uninstall", h.guarded(s.proxyRt.Uninstall))
 	}
+}
+
+// mcpToolTimeout — потолок одного вызова инструмента. Самые долгие —
+// test_connectivity (HTTP-проба через туннель) и запуск/остановка
+// туннеля через оркестратор; обоим хватает с запасом, а хост MCP всё
+// равно сдаётся раньше.
+const mcpToolTimeout = 60 * time.Second
+
+// registerMcpRoutes монтирует MCP-эндпоинт /mcp (ключевая авторизация,
+// независимая от AuthEnabled) и управление ключами /api/mcp/keys*.
+//
+// Ряд полей localdeps.Config — интерфейсы, а сервисы демона хранятся
+// указателями на конкретные типы. Нулевой указатель, положенный в
+// интерфейс, даёт НЕнулевой интерфейс, и проверки `l.c.X != nil` внутри
+// localdeps пропустили бы его до вызова. Поэтому каждый опциональный
+// сервис кладётся через явную проверку — интерфейс остаётся нулевым.
+func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
+	if s.mcpKeys == nil {
+		return
+	}
+	// h.appLog is a *logging.Service: a nil pointer put into the AppLogger
+	// interface would be non-nil, and ScopedLogger's own nil-guard would
+	// not fire. Same typed-nil hazard as the localdeps fields below.
+	var appLog logging.AppLogger
+	if h.appLog != nil {
+		appLog = h.appLog
+	}
+	mcpLog := logging.NewScopedLogger(appLog, logging.GroupSystem, logging.SubMcp)
+
+	var orch localdeps.Orchestrator
+	if s.orch != nil {
+		orch = s.orch
+	}
+	var trafficStats localdeps.TrafficStats
+	if s.trafficHistory != nil {
+		trafficStats = s.trafficHistory
+	}
+	var logs localdeps.LogReader
+	if s.loggingService != nil {
+		logs = s.loggingService
+	}
+	var connTester localdeps.ConnectivityTester
+	if s.testingService != nil {
+		connTester = s.testingService
+	}
+	var mon localdeps.MonitoringSnapshotter
+	if s.monitoringService != nil {
+		mon = s.monitoringService
+	}
+	var singboxOp localdeps.SingboxOperator
+	if s.singboxOp != nil {
+		singboxOp = s.singboxOp
+	}
+	var bus localdeps.Publisher
+	if s.bus != nil {
+		bus = s.bus
+	}
+	var pingSnapshot func()
+	if h.pingCheckHandler != nil {
+		pingSnapshot = h.pingCheckHandler.PublishSnapshot
+	}
+
+	local := localdeps.New(localdeps.Config{
+		Version:        s.config.Version,
+		InstanceID:     s.instanceID,
+		BootInProgress: s.bootStatusFn,
+		AuthEnabled:    s.settings.IsAuthEnabled,
+		Tunnels:        s.tunnelService,
+		TunnelStore:    s.tunnels,
+		Orch:           orch,
+		Traffic:        trafficStats,
+		DNSRoutes:      s.dnsRouteService,
+		StaticRoutes:   s.staticRouteService,
+		ClientRoutes:   s.clientRouteService,
+		Policies:       s.accessPolicyService,
+		Logs:           logs,
+		Testing:        connTester,
+		Monitoring:     mon,
+		PingCheck:      s.pingCheckService,
+		ListServers:    h.serverHandler.ListServers,
+		Singbox:        singboxOp,
+		SystemInfo:     h.systemHandler.InfoData,
+		Bus:            bus,
+
+		PingCheckSnapshot: pingSnapshot,
+		AppLog:            appLog,
+	})
+	mcpServer := mcp.NewServer(local, s.config.Version)
+	// Каждый вызов инструмента ограничен по времени и отменяется при
+	// остановке демона (см. mcp.CallDeadline). Контекст создаётся здесь,
+	// а не в конструкторе Server: до регистрации маршрутов MCP нет.
+	s.mcpCalls, s.mcpCallsCancel = context.WithCancel(context.Background())
+	mcpServer.AddReceivingMiddleware(mcp.CallDeadline(mcpToolTimeout, s.mcpCalls))
+	// Один info-лог на вызов инструмента: имя инструмента + имя ключа
+	// (никогда сам ключ), длительность и исход — спека §8.
+	mcpServer.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
+		return func(ctx context.Context, method string, req sdk.Request) (sdk.Result, error) {
+			if method != "tools/call" {
+				return next(ctx, method, req)
+			}
+			toolName := ""
+			if p, ok := req.GetParams().(*sdk.CallToolParamsRaw); ok && p != nil {
+				toolName = p.Name
+			}
+			keyName := "-"
+			if k, ok := mcp.KeyFromContext(ctx); ok {
+				keyName = k.Name
+			}
+			start := time.Now()
+			res, err := next(ctx, method, req)
+			outcome := "ok"
+			if err != nil {
+				outcome = "error"
+			} else if r, ok := res.(*sdk.CallToolResult); ok && r.IsError {
+				outcome = "tool-error"
+			}
+			mcpLog.Info("call", toolName, fmt.Sprintf("key=%s %s %dms", keyName, outcome, time.Since(start).Milliseconds()))
+			return res, err
+		}
+	})
+	// Собственный throttle: web-login throttle делит ключ (IP клиента) со
+	// всеми пользователями за реверс-прокси KeenDNS, и общий инстанс дал бы
+	// перекрёстную блокировку веб-входа и MCP.
+	throttle := auth.NewLoginThrottle()
+	mcpHandler := mcp.KeyMiddleware(mcp.AuthConfig{
+		Enabled: s.settings.IsMcpEnabled,
+		Verify: func(tok string) (mcp.KeyInfo, bool) {
+			k, ok := s.mcpKeys.Verify(tok)
+			return mcp.KeyInfo{ID: k.ID, Name: k.Name}, ok
+		},
+		Touch:    s.mcpKeys.Touch,
+		Throttle: throttle,
+		Log:      func(f string, a ...any) { mcpLog.Warn("auth", "", fmt.Sprintf(f, a...)) },
+	}, mcp.NewHTTPHandler(mcpServer))
+	mux.Handle("/mcp", mcpHandler)
+	// Без этого «/mcp/» (и любой подпуть) проваливается в catch-all SPA и
+	// отдаёт HTML без авторизации вместо честного 401/404: клиент, который
+	// нормализовал URL со слэшем, получал бы страницу вместо ответа MCP.
+	mux.Handle("/mcp/", mcpHandler)
+
+	// The 401 above advertises this URL in WWW-Authenticate. OAuth resource
+	// metadata is deliberately NOT served in v1 (bearer keys only), so the
+	// path must answer an honest JSON 404 instead of falling through to the
+	// catch-all SPA, which would hand a client 200 text/html and no way to
+	// tell that the document is not the metadata it asked for.
+	//
+	// With MCP switched off the body is the same anonymous "not found" the
+	// /mcp mount returns: the hint about bearer keys would otherwise reveal
+	// that an MCP endpoint exists on a router whose owner turned it off.
+	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		if !s.settings.IsMcpEnabled() {
+			_, _ = w.Write([]byte(`{"error":true,"message":"not found","code":"NOT_FOUND"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"error":true,"message":"OAuth is not supported; use a bearer MCP key","code":"NOT_FOUND"}`))
+	})
+
+	keysHandler := api.NewMcpKeysHandler(s.mcpKeys, appLog)
+	keysHandler.SetEventBus(s.bus)
+	mux.HandleFunc("/api/mcp/keys", h.guarded(keysHandler.List))
+	mux.HandleFunc("/api/mcp/keys/create", h.guarded(keysHandler.Create))
+	mux.HandleFunc("/api/mcp/keys/revoke", h.guarded(keysHandler.Revoke))
 }
 
 // registerStaticRoutes — preset catalog and the SPA static handler (must stay last).

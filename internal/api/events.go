@@ -32,10 +32,12 @@ func NewEventsHandler(bus *events.Bus, instanceID string) *EventsHandler {
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/events [get]
 //
-// The stream carries only incremental/push-only events (traffic,
-// connectivity, logs, ping-check logs, sing-box delay/traffic, geo
-// download progress, DNS-route failover notifications, and the generic
-// resource:invalidated hint). All cold-tier state is fetched via REST
+// The stream forwards EVERY bus event unfiltered — push-only ones
+// (traffic, connectivity, logs, ping-check logs, sing-box delay/traffic,
+// geo download progress, DNS-route failover notifications, the generic
+// resource:invalidated hint) and the internal dual-publish ones
+// (tunnel:state, tunnel:deleted, pingcheck:state), which the frontend
+// simply does not subscribe to. All cold-tier state is fetched via REST
 // by the frontend polling stores; the initial "connected" marker lets
 // the client confirm the stream is open before any push event arrives.
 func (h *EventsHandler) Stream(w http.ResponseWriter, r *http.Request) {

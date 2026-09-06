@@ -113,6 +113,7 @@ func (a *app) setupServer() {
 			ClashProxy:          a.clashProxy,
 			SingboxConnsHandler: a.singboxConnsHandler,
 			MonitoringService:   a.monitoringService,
+			McpKeys:             a.mcpKeys,
 			SingboxSubMembers: func() []diagnostics.SingboxSubMember {
 				subs := a.subSvc.List()
 				out := make([]diagnostics.SingboxSubMember, 0, len(subs)*2)

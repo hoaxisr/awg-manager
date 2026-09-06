@@ -2,11 +2,13 @@ package managed
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 // Running-config недоступен → сегменты всё равно применяются (4 прежние команды),
@@ -20,8 +22,8 @@ func TestApplyLANSegments_RunningConfigUnavailable_WarnsAndProceeds(t *testing.T
 	if err := svc.SetLANSegments(context.Background(), "Wireguard0", []string{"Home"}); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(parseStrings(poster)); n != 4 {
-		t.Fatalf("команд %d, ждали 4", n)
+	if n := len(parseStrings(poster)); n != 5 {
+		t.Fatalf("команд %d, ждали 5", n)
 	}
 	// SetLANSegments после применения пишет свой Info — две записи.
 	if len(spy.entries) != 2 ||
@@ -95,6 +97,7 @@ func TestApplyLANSegmentsToInterface_DoesNotStripForeignPermitAll(t *testing.T) 
 		"no access-list AWGM_Wireguard0",
 		"access-list AWGM_Wireguard0 permit ip 10.66.66.0 255.255.255.0 10.10.10.0 255.255.255.0",
 		"interface Wireguard0 ip access-group AWGM_Wireguard0 in",
+		"access-list AWGM_Wireguard0 auto-delete",
 	}
 	got := parseStrings(poster)
 	if !slices.Equal(got, want) {
@@ -120,5 +123,45 @@ func TestForeignAccessGroups_NoStore_ErrorsWithoutRCI(t *testing.T) {
 	}
 	if got := parseStrings(poster); len(got) != 0 {
 		t.Fatalf("RCI не должно быть, got %v", got)
+	}
+}
+
+// Пин «мутация наоборот» (стенд 2026-09-06): галка веб-морды привязывает
+// _WEBADMIN_<iface>, но хук ndm на ACL-bind в наш кэш не приходит. Кэш
+// прогрет ДО привязки; без InvalidateAll в stripForeignPermitAll первое
+// применение сегментов читает старый (чистый) блок и остаток не видит.
+func TestStripForeignPermitAll_InvalidatesRunningConfigCache(t *testing.T) {
+	svc, store, poster := newLANSegmentsTestService(t)
+	seedServer(t, store, "Wireguard0")
+
+	fg := query.NewFakeGetter()
+	cleanBlock, _ := json.Marshal(map[string]any{"message": []string{
+		"interface Wireguard0", "    security-level private", "!",
+	}})
+	fg.SetJSON("/show/running-config", string(cleanBlock))
+	svc.queries.RunningConfig = query.NewRunningConfigStore(fg, query.NopLogger())
+
+	// Прогрев кэша чистым блоком — TTL 60 мин, без InvalidateAll второй Get
+	// на этот путь не пойдёт.
+	if _, err := svc.queries.RunningConfig.Lines(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Галка веб-морды привязала permit-all на роутере; ndm-хук в наш кэш не
+	// пришёл — меняем ответ FakeGetter «мимо» сервиса, как изменился бы
+	// running-config за спиной кэша.
+	dirtyBlock, _ := json.Marshal(map[string]any{"message": []string{
+		"interface Wireguard0", "    security-level private",
+		"    ip access-group _WEBADMIN_Wireguard0 in", "!",
+	}})
+	fg.SetJSON("/show/running-config", string(dirtyBlock))
+
+	resetPosts(poster)
+	if err := svc.SetLANSegments(context.Background(), "Wireguard0", []string{"Home"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "no interface Wireguard0 ip access-group _WEBADMIN_Wireguard0 in"
+	if got := parseStrings(poster); !slices.Contains(got, want) {
+		t.Fatalf("остаток permit-all не снят (кэш не сброшен?): %v", got)
 	}
 }

@@ -41,6 +41,10 @@ func NewLogBuffer(bucket Bucket) *LogBuffer {
 	}
 }
 
+// DefaultCapacity is the ring size used when settings carry no override
+// for bucket — the value Stats(bucket).Capacity reports on a fresh box.
+func DefaultCapacity(bucket Bucket) int { return defaultMaxEntriesFor(bucket) }
+
 func defaultMaxEntriesFor(bucket Bucket) int {
 	if bucket == BucketSingbox {
 		return defaultSBMaxEntries

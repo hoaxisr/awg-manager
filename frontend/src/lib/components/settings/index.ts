@@ -13,3 +13,4 @@ export { default as ExperimentalSettingsCard } from './ExperimentalSettingsCard.
 export { default as PukhososPatrol } from './PukhososPatrol.svelte';
 export { default as HttpServerCard } from './HttpServerCard.svelte';
 export { default as BackupRestoreCard } from './BackupRestoreCard.svelte';
+export { default as McpCard } from './McpCard.svelte';

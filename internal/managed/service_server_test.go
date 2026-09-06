@@ -942,7 +942,7 @@ func parseStrings(p *recordingPoster) []string {
 	return out
 }
 
-// TestSetLANSegments_RebuildOrder verifies that SetLANSegments posts the four
+// TestSetLANSegments_RebuildOrder verifies that SetLANSegments posts the five
 // parse commands in the required order and persists LANSegments in storage.
 // Empty-list variant verifies only unbind+remove are sent (no permit/bind).
 // Подслучаи с остатком `_WEBADMIN_` пинят снятие чужого permit-all первым.
@@ -978,11 +978,13 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 		// 2. no access-list <acl>
 		// 3. access-list <acl> permit ip <peerSub> <peerMask> <segSub> <segMask>
 		// 4. interface <iface> ip access-group <acl> in
+		// 5. access-list <acl> auto-delete
 		assertParses(t, parseStrings(poster), []string{
 			fmt.Sprintf("no interface %s ip access-group %s in", ifaceName, acl),
 			"no access-list " + acl,
 			fmt.Sprintf("access-list %s permit ip 10.66.66.0 255.255.255.0 10.10.10.0 255.255.255.0", acl),
 			fmt.Sprintf("interface %s ip access-group %s in", ifaceName, acl),
+			fmt.Sprintf("access-list %s auto-delete", acl),
 		})
 
 		// Storage must be updated.
@@ -1028,6 +1030,7 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 			"no access-list " + acl,
 			fmt.Sprintf("access-list %s permit ip 10.66.66.0 255.255.255.0 10.10.10.0 255.255.255.0", acl),
 			fmt.Sprintf("interface %s ip access-group %s in", ifaceName, acl),
+			fmt.Sprintf("access-list %s auto-delete", acl),
 		})
 	})
 

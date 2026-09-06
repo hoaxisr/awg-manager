@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/auth"
+	"github.com/hoaxisr/awg-manager/internal/clientip"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -110,7 +110,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientIP := requestClientIP(r)
+	clientIP := clientip.FromRequest(r)
 	// Begin atomically checks the block AND reserves an in-flight slot so
 	// concurrent requests from one IP cannot each slip past the failure limit
 	// before any of them records a Fail (check-then-increment race). The slot
@@ -252,18 +252,6 @@ func (h *AuthHandler) registerFailure(clientIP string) {
 	if h.failureDelay > 0 {
 		time.Sleep(h.failureDelay)
 	}
-}
-
-// requestClientIP extracts the client IP from RemoteAddr. The daemon
-// serves the LAN directly (no trusted reverse proxy in front), so
-// X-Forwarded-For is deliberately ignored — honoring it would let a
-// client spoof its way around the login throttle.
-func requestClientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
 
 // Logout clears the session cookie and invalidates the server-side session.
