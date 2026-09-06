@@ -49,7 +49,10 @@ func decideBoot(state *State) []Action {
 			actions = appendPostStartActions(actions, t)
 
 		case "nativewg":
-			if !state.supportsASC || t.ViaProxy {
+			if t.Obfuscated {
+				actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+				actions = appendPostStartActions(actions, t)
+			} else if !state.supportsASC || t.ViaProxy {
 				// Reconcile-to-desired instead of unconditional Stop+Start:
 				// the executor skips the disruptive restart when the tunnel
 				// is already running WITH a handshake, and still re-attaches
@@ -93,7 +96,10 @@ func decideReconnect(state *State) []Action {
 				// Re-apply NDMS config, firewall, routing around the running process.
 				actions = append(actions, Action{Type: ActionReconcileKernel, Tunnel: t.ID})
 			case "nativewg":
-				if state.supportsASC && !t.ViaProxy {
+				if t.Obfuscated {
+					actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+					actions = appendPostStartActions(actions, t)
+				} else if state.supportsASC && !t.ViaProxy {
 					// KeenOS 5+ ASC mode has no kmod proxy to restore. A running
 					// NativeWG interface may still need a full resync after awgm
 					// restart/update so ASC bindings, routes and persistence are
@@ -287,6 +293,13 @@ func decideWANUp(event Event, state *State) []Action {
 			}
 
 		case "nativewg":
+			if t.Obfuscated {
+				// Полный Start переставит host-route на новый WAN — ASC-ветка
+				// ниже делает continue, но NDMS наш host-route не двигает.
+				actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
+				actions = appendPostStartActions(actions, t)
+				continue
+			}
 			if state.supportsASC && !t.ViaProxy {
 				continue // NDMS handles failover natively via ASC on >= 5.01.A.3
 			}
@@ -327,6 +340,11 @@ func decideWANDown(event Event, state *State) []Action {
 			actions = append(actions, Action{Type: ActionSuspendKernel, Tunnel: t.ID})
 
 		case "nativewg":
+			if t.Obfuscated {
+				// Слота нет (нечего SuspendProxy) и Stop не нужен: WAN упал —
+				// host-route мёртв вместе с ним, поднимется на WAN-up.
+				continue
+			}
 			if state.supportsASC && !t.ViaProxy {
 				continue // ASC handles failover natively
 			}

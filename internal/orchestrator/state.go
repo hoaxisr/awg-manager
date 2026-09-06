@@ -33,6 +33,11 @@ type tunnelState struct {
 	// падении WAN: NDMS сам умеет только свою половину, про слот он не знает.
 	ViaProxy bool
 
+	// Obfuscated: nativewg-туннель через wg-obfuscator. Ни ASC, ни kmod:
+	// после ребута/рестарта демона всегда полный StartNativeWG (релей,
+	// host-route, endpoint) — Reconcile/RestoreKmod для него бессмысленны.
+	Obfuscated bool
+
 	// quiescentUntil: while now < this, a conf=disabled edge for this tunnel
 	// is treated as transient NDMS settling (do not stop). Set on (re)start.
 	quiescentUntil time.Time
@@ -123,7 +128,8 @@ func tunnelStateFromStored(t *storage.AWGTunnel) *tunnelState {
 		ISPInterface:  t.ISPInterface,
 		ActiveWAN:     t.ActiveWAN,
 		EndpointMayV6: nwg.EndpointMayResolveIPv6(t.Peer.Endpoint),
-		ViaProxy:      t.Backend == "nativewg" && nwg.UsesProxyPath(&t.Interface),
+		Obfuscated:    t.Backend == "nativewg" && t.Obfuscator != nil,
+		ViaProxy:      t.Backend == "nativewg" && t.Obfuscator == nil && nwg.UsesProxyPath(&t.Interface),
 	}
 }
 

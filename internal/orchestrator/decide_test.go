@@ -1179,6 +1179,55 @@ func TestDecide_WANDown_FailoverOnlyForAffectedTunnels(t *testing.T) {
 	}
 }
 
+func TestDecide_Boot_ObfuscatedNativeWG_AlwaysFullStart(t *testing.T) {
+	for _, asc := range []bool{true, false} {
+		for _, running := range []bool{true, false} {
+			s := newState()
+			s.supportsASC = asc
+			s.tunnels["awg20"] = &tunnelState{ID: "awg20", Backend: "nativewg", Enabled: true, NWGIndex: 3, Obfuscated: true, Running: running}
+			actions := decide(Event{Type: EventBoot}, &s)
+			if n := len(filterActions(actions, ActionStartNativeWG)); n != 1 {
+				t.Errorf("asc=%v running=%v: StartNativeWG=%d, want 1", asc, running, n)
+			}
+			for _, bad := range []ActionType{ActionReconcileNativeWG, ActionRestoreKmod, ActionSuspendProxy, ActionStopNativeWG} {
+				if len(filterActions(actions, bad)) != 0 {
+					t.Errorf("asc=%v running=%v: unexpected %v", asc, running, bad)
+				}
+			}
+		}
+	}
+}
+
+func TestDecide_ReconnectAndWAN_Obfuscated(t *testing.T) {
+	for _, asc := range []bool{true, false} {
+		s := newState()
+		s.supportsASC = asc
+		s.tunnels["awg20"] = &tunnelState{ID: "awg20", Backend: "nativewg", Enabled: true, NWGIndex: 3, Obfuscated: true, Running: true, ActiveWAN: "ppp0"}
+
+		re := decide(Event{Type: EventReconnect}, &s)
+		if len(filterActions(re, ActionStartNativeWG)) != 1 || len(filterActions(re, ActionRestoreKmod)) != 0 {
+			t.Errorf("asc=%v reconnect: %v", asc, re)
+		}
+		up := decide(Event{Type: EventWANUp, WANIface: "ppp0"}, &s)
+		if len(filterActions(up, ActionStartNativeWG)) != 1 {
+			t.Errorf("asc=%v wan-up must re-Start (host-route): %v", asc, up)
+		}
+		down := decide(Event{Type: EventWANDown, WANIface: "ppp0"}, &s)
+		if len(filterActions(down, ActionSuspendProxy)) != 0 || len(filterActions(down, ActionStopNativeWG)) != 0 {
+			t.Errorf("asc=%v wan-down must not touch obfuscated tunnel: %v", asc, down)
+		}
+	}
+}
+
+func TestTunnelStateFromStored_Obfuscated(t *testing.T) {
+	ts := tunnelStateFromStored(&storage.AWGTunnel{ID: "awg20", Backend: "nativewg",
+		Peer: storage.AWGPeer{Endpoint: "127.0.0.1:39000"},
+		Obfuscator: &storage.Obfuscator{Flavor: "phobos", LocalPort: 39000}})
+	if !ts.Obfuscated || ts.ViaProxy || ts.EndpointMayV6 {
+		t.Fatalf("%+v", ts)
+	}
+}
+
 // === Test helpers ===
 
 func filterActions(actions []Action, typ ActionType) []Action {
