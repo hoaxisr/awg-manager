@@ -91,6 +91,7 @@ export function formatTime(timestamp: string): string {
  */
 export function formatDate(timestamp: string): string {
     const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return '—';
     return date.toLocaleDateString('ru-RU', {
         day: '2-digit',
         month: '2-digit',

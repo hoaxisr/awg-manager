@@ -104,13 +104,6 @@
 		}
 	}
 
-	// lastUsedAt is absent until the key's first call; createdAt is always set.
-	// The shared formatter renders an unparsable value as "Invalid Date", so
-	// guard here: a dash is what the table shows for "unknown".
-	function keyDate(iso?: string): string {
-		return iso && !Number.isNaN(Date.parse(iso)) ? formatDate(iso) : '—';
-	}
-
 	const claudeSnippet = $derived(
 		created ? `claude mcp add --transport http awg-manager ${endpoint} --header "Authorization: Bearer ${created.key}"` : '',
 	);
@@ -204,8 +197,8 @@
 								{#each keys as k (k.id)}
 									<tr>
 										<td>{k.name}</td>
-										<td>{keyDate(k.createdAt)}</td>
-										<td>{keyDate(k.lastUsedAt)}</td>
+										<td>{formatDate(k.createdAt)}</td>
+										<td>{k.lastUsedAt ? formatDate(k.lastUsedAt) : '—'}</td>
 										<td class="text-right">
 											<Button variant="danger" size="sm" onclick={() => (revokeTarget = k)} disabled={saving}>Отозвать</Button>
 										</td>
