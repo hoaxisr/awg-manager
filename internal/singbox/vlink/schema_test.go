@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/installer"
+	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 )
 
 // The schema is generated from the fork we pin, by scripts/regen-singbox-schema.sh.
@@ -175,5 +176,57 @@ func TestParsedOutboundsMatchSchema(t *testing.T) {
 			}
 			doc.checkKeys(t, "outbound", itemsNode, ob)
 		})
+	}
+}
+
+// Материализованная форма router/fakeip-слота обязана состоять из ключей,
+// которые объявляет вшитый sing-box. Раньше проверялись только outbounds, и
+// пропажа download_detour из схемы 1.14 прошла незамеченной.
+func TestMaterializedRouterConfigMatchesSchema(t *testing.T) {
+	doc, root := loadSchema(t)
+	rootProps, _ := root["properties"].(map[string]any)
+
+	sample := router.RouterConfig{
+		Inbounds: []router.Inbound{
+			{Type: "tproxy", Tag: "tproxy-in", Listen: "127.0.0.1", ListenPort: 51281, Network: "udp",
+				UDPFragment: true, UDPTimeout: "5m0s", UDPNATMax: 4096},
+			{Type: "tun", Tag: "tun-in", InterfaceName: "opkgtun0", Address: []string{"172.18.0.1/30"}, MTU: 1500,
+				AutoRoute: new(bool), AutoRedirect: new(bool), StrictRoute: new(bool), Stack: "gvisor",
+				UDPTimeout: "5m0s", UDPNATMax: 4096},
+		},
+		Outbounds:   []router.Outbound{{Type: "direct", Tag: "direct"}},
+		HTTPClients: []router.HTTPClient{{Tag: "rs-download", Detour: "direct"}},
+		DNS: router.DNS{
+			Servers:  []router.DNSServer{{Tag: "real", Type: "udp", Server: "1.1.1.1"}},
+			Final:    "real",
+			Strategy: "prefer_ipv4",
+			Timeout:  "5s",
+		},
+		Route: router.Route{
+			RuleSet: []router.RuleSet{{Tag: "geo", Type: "remote", Format: "binary", URL: "https://x/geo.srs",
+				UpdateInterval: "24h", HTTPClient: &router.RuleSetHTTPClient{Detour: "direct"}}},
+			Rules: []router.Rule{{SourceMACAddress: []string{"aa:bb:cc:dd:ee:ff"}, SourceIPCIDR: []string{"192.168.1.0/24"},
+				RuleSet: []string{"geo"}, Action: "route", Outbound: "direct"}},
+			Final:                 "direct",
+			DefaultHTTPClient:     "rs-download",
+			DefaultDomainResolver: &router.DomainResolver{Server: "real"},
+		},
+		Experimental: &router.Experimental{CacheFile: &router.CacheFile{Enabled: true, StoreFakeIP: true, StoreDNS: true, Path: "/tmp/c.db"}},
+	}
+	raw, err := json.Marshal(sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range cfg {
+		node, ok := rootProps[key].(map[string]any)
+		if !ok {
+			t.Errorf("top-level key %q is not in the sing-box schema", key)
+			continue
+		}
+		doc.checkKeys(t, key, node, value)
 	}
 }
