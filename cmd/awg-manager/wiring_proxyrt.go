@@ -881,6 +881,9 @@ func (a *app) wireProxyrt() {
 			}
 			return n, nil
 		},
+		// F98: ручная установка снимает ожидание бута. Горутиной: Boot
+		// сериализован bootMu и может тянуться, а ответ UI ждать не должен.
+		Installed: func(install.Subsystem) { go a.proxyRuntimeNudge("install", proxyrt.EventBoot) },
 	})
 
 	records := proxyRecords{ref: ref}

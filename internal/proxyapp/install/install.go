@@ -98,6 +98,10 @@ type Deps struct {
 	//
 	// Отказ чтения — не ноль: без ответа гейт закрывается.
 	InstanceCount func(Subsystem) (int, error)
+	// Installed — успешная РУЧНАЯ установка (ServeInstall). Проводка нуджит
+	// бут прокси-рантайма, чтобы ожидание бинарей (F98) снялось без таймера.
+	// Из Install не зовётся: Install работает внутри Boot под bootMu.
+	Installed func(Subsystem)
 }
 
 // subsys — состояние одной подсистемы: где её бинари, какой у неё пин и не
