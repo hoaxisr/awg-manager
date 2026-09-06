@@ -107,3 +107,18 @@ func TestApplyLANSegmentsToInterface_DoesNotStripForeignPermitAll(t *testing.T) 
 	}
 }
 
+// Без стора running-config ForeignAccessGroups отказывает и в RCI не ходит:
+// молчаливое «чужих нет» скрыло бы и остаток `_WEBADMIN_`, и чужой список в
+// карточке сервера.
+func TestForeignAccessGroups_NoStore_ErrorsWithoutRCI(t *testing.T) {
+	svc, _, poster := newLANSegmentsTestService(t)
+	svc.queries = nil
+	resetPosts(poster)
+	_, err := svc.ForeignAccessGroups(context.Background(), "Wireguard0")
+	if err == nil || err.Error() != "running-config store not wired" {
+		t.Fatalf("err = %v, ждали «running-config store not wired»", err)
+	}
+	if got := parseStrings(poster); len(got) != 0 {
+		t.Fatalf("RCI не должно быть, got %v", got)
+	}
+}

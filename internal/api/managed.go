@@ -43,7 +43,7 @@ type ManagedServerDTO struct {
 	// ForeignACLs — чужие списки `ip access-group … in` на интерфейсе сервера
 	// (кроме нашего AWGM_<iface>), в порядке привязки. Список, привязанный
 	// раньше нашего и разрешающий шире, срабатывает до выбора сегментов.
-	ForeignAcls []string         `json:"foreignAcls,omitempty" example:"GUEST_ACL"`
+	ForeignACLs []string         `json:"foreignAcls,omitempty" example:"GUEST_ACL"`
 	Policy      string           `json:"policy" example:"default"`
 	Peers       []ManagedPeerDTO `json:"peers"`
 }

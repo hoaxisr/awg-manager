@@ -169,9 +169,9 @@
 					onchange={onlan}
 				/>
 				{#if foreignAcls?.length}
-					<p class="save-block">
+					<span class="save-block">
 						К интерфейсу привязан посторонний список доступа ({foreignAcls.join(', ')}). Он срабатывает раньше выбора сегментов и может открыть клиентам больше, чем выбрано — проверьте его в настройках роутера.
-					</p>
+					</span>
 				{/if}
 			</FormRow>
 

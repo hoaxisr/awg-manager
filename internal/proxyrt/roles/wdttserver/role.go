@@ -229,7 +229,8 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 		// security-level и открывал raw-абоненту весь LAN мимо выбранных
 		// сегментов (решение владельца 2026-09-05). Доступ решают
 		// security-level половины и LAN-ACL обеих половин (access.go);
-		// интернет raw-абонентам даёт сам NDMS (`_NDM_SL_PRIVATE`), обратный
+		// интернет raw-абонентам даёт сам NDMS (`_NDM_SL_PRIVATE` — при
+		// security-level private; raw-половина всегда private, Б2), обратный
 		// трафик — RELATED,ESTABLISHED первым правилом FORWARD (стенд
 		// 2026-09-05).
 		r.fwd.SetDesired(nil)

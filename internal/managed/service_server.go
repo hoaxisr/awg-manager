@@ -684,7 +684,8 @@ func resolveLANSegmentsPlan(addr, mask string, segments []string, bridges []quer
 // touching storage. Builds the full plan FIRST (no RCI); only after a valid
 // plan does it destroy and rebuild, so a bad request never tears down working
 // access. После валидного плана и перед нашим unbind — снятие чужого permit-all
-// `_WEBADMIN_` (stripForeignPermitAll).
+// `_WEBADMIN_` (stripForeignPermitAll); в teardown-ветке — первым действием
+// после проверки `commandsWired`.
 // Empty segments = teardown (unbind+remove best-effort, errors logged only).
 //
 // stripForeign — снимать ли чужой `_WEBADMIN_`. Это свойство ВСТРОЕННОГО

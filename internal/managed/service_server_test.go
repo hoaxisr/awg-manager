@@ -997,6 +997,8 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 
 	t.Run("foreign permit-all is stripped first", func(t *testing.T) {
 		svc, store, poster := newLANSegmentsTestService(t)
+		spy := &recAppLog{}
+		svc.appLog = logging.NewScopedLogger(spy, logging.GroupServer, logging.SubManaged)
 		withRunningConfig(svc,
 			"interface Wireguard0",
 			"    security-level private",
@@ -1008,6 +1010,15 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 
 		if err := svc.SetLANSegments(context.Background(), ifaceName, []string{"Home"}); err != nil {
 			t.Fatalf("SetLANSegments: %v", err)
+		}
+
+		// Текст Info — часть пина: по нему администратор узнаёт, ЧТО и почему
+		// снято с его интерфейса; ложная запись (снятие не нашего остатка)
+		// была бы дезинформацией.
+		want := "info|lan-acl|Wireguard0|снят permit-all _WEBADMIN_Wireguard0: " +
+			"он открывал клиентам весь LAN мимо выбора сегментов"
+		if len(spy.entries) == 0 || spy.entries[0] != want {
+			t.Fatalf("журнал = %v, первая запись должна быть %q", spy.entries, want)
 		}
 
 		assertParses(t, parseStrings(poster), []string{
@@ -1023,7 +1034,7 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 	t.Run("empty segments unbinds and removes only", func(t *testing.T) {
 		svc, store, poster := newLANSegmentsTestService(t)
 		ctx := context.Background()
-		withRunningConfig(svc, "interface Wireguard0", "    security-level private")
+		withRunningConfig(svc, "interface Wireguard0", "    security-level private", "!")
 		seedServer(t, store, ifaceName)
 		resetPosts(poster)
 
