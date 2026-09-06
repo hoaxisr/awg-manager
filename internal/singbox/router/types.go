@@ -243,15 +243,18 @@ type CompositeOutboundView struct {
 }
 
 type Inbound struct {
-	Type        string `json:"type"`
-	Tag         string `json:"tag"`
-	Listen      string `json:"listen,omitempty"`
-	ListenPort  int    `json:"listen_port,omitempty"`
-	Network     string `json:"network,omitempty"`
-	UDPTimeout  string `json:"udp_timeout,omitempty"`
-	UDPFragment bool   `json:"udp_fragment,omitempty"`
-	TCPFastOpen bool   `json:"tcp_fast_open,omitempty"`
-	RoutingMark int    `json:"routing_mark,omitempty"`
+	Type       string `json:"type"`
+	Tag        string `json:"tag"`
+	Listen     string `json:"listen,omitempty"`
+	ListenPort int    `json:"listen_port,omitempty"`
+	Network    string `json:"network,omitempty"`
+	UDPTimeout string `json:"udp_timeout,omitempty"`
+	// UDPNATMax — потолок UDP-NAT-сессий inbound'а (sing-box 1.14, LRU). 0 =
+	// авто (4096-16384 по памяти) и ключ не пишется.
+	UDPNATMax   int  `json:"udp_nat_max,omitempty"`
+	UDPFragment bool `json:"udp_fragment,omitempty"`
+	TCPFastOpen bool `json:"tcp_fast_open,omitempty"`
+	RoutingMark int  `json:"routing_mark,omitempty"`
 	// tun inbound (fakeip-tun mode)
 	InterfaceName          string   `json:"interface_name,omitempty"`
 	Address                []string `json:"address,omitempty"`

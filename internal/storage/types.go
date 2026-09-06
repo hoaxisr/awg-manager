@@ -267,6 +267,9 @@ type SingboxRouterSettings struct {
 	// умолчанию (DefaultUDPTimeout, 5m). Увеличение помогает играм и другим
 	// UDP-приложениям, которые могут молчать дольше и терять сессию.
 	UDPTimeout string `json:"udpTimeout,omitempty"`
+	// UDPNATMax — потолок UDP-NAT-сессий для tproxy-in / tun-in / QoS-inbound'ов
+	// (sing-box 1.14). 0 = движок выбирает сам по объёму памяти.
+	UDPNATMax int `json:"udpNatMax,omitempty"`
 	// QoSClasses lists DSCP-based QoS traffic classes (issue #371). Each
 	// enabled class gets its own iptables `-m dscp` dispatch (mangle TPROXY +
 	// nat REDIRECT), a dedicated pair of sing-box inbounds and a managed route

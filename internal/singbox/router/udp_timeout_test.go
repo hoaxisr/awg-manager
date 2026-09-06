@@ -1,6 +1,12 @@
 package router
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
+)
 
 // fakeip tun-in must carry udp_timeout so a user-configured value overrides
 // sing-box's built-in 5-minute UDP-NAT default (the "exactly 5 minutes" drop).
@@ -100,5 +106,52 @@ func TestEnsureUDPTimeoutRule(t *testing.T) {
 		if isSystemUDPTimeoutRule(r) {
 			t.Fatal("empty effective must remove the route-options rule")
 		}
+	}
+}
+
+// udp_nat_max (sing-box 1.14) — потолок UDP-NAT-сессий, LRU-вытеснение. 0 =
+// sing-box сам выбирает 4096-16384 по объёму памяти; ключ тогда не пишется.
+func TestUDPNATMax_AppliedToEveryEngineInbound(t *testing.T) {
+	in := ensureTProxyInbound(nil, "", 4096)
+	for _, i := range in {
+		if i.Type == "tproxy" && i.UDPNATMax != 4096 {
+			t.Errorf("tproxy %s: udp_nat_max = %d", i.Tag, i.UDPNATMax)
+		}
+		if i.Type == "redirect" && i.UDPNATMax != 0 {
+			t.Errorf("redirect %s must not carry udp_nat_max", i.Tag)
+		}
+	}
+	in, _ = ensureQoSInbounds(nil, []qosClass{{DSCP: 46, TProxyPort: 51281, RedirectPort: 51301}}, "", 2048)
+	if in[0].UDPNATMax != 2048 || in[1].UDPNATMax != 0 {
+		t.Errorf("qos: %+v", in)
+	}
+	tun := ensurePolicyTunInbound(nil, PolicyTunInboundSpec{Iface: "opkgtun0", TunAddr4: "172.18.0.1/30", MTU: 1500, UDPNATMax: 8192})
+	if tun[0].UDPNATMax != 8192 {
+		t.Errorf("policy-tun: %+v", tun[0])
+	}
+	cfg := &RouterConfig{}
+	ensureFakeIPOverlay(cfg, FakeIPTunSpec{Iface: "opkgtun1", TunAddr4: "172.18.1.1/30", MTU: 1500,
+		Inet4Range: "198.18.0.0/15", CachePath: "/tmp/c.db", RealServer: "1.1.1.1", UDPNATMax: 16384})
+	if cfg.Inbounds[0].UDPNATMax != 16384 {
+		t.Errorf("fakeip: %+v", cfg.Inbounds[0])
+	}
+	// 0 → ключ отсутствует в JSON.
+	raw, _ := json.Marshal(ensureTProxyInbound(nil, "", 0)[0])
+	if strings.Contains(string(raw), "udp_nat_max") {
+		t.Errorf("zero must be omitted: %s", raw)
+	}
+}
+
+func TestNormalizeSettings_UDPNATMax(t *testing.T) {
+	base := storage.SingboxRouterSettings{WANAutoDetect: true}
+	for _, v := range []int{0, 2048, 16384} {
+		base.UDPNATMax = v
+		if _, err := NormalizeSingboxRouterSettings(base); err != nil {
+			t.Errorf("%d: %v", v, err)
+		}
+	}
+	base.UDPNATMax = -1
+	if _, err := NormalizeSingboxRouterSettings(base); err == nil {
+		t.Error("negative must be rejected")
 	}
 }

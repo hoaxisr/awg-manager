@@ -156,7 +156,7 @@ func TestHealTProxyInbound_AppliesChangedUDPTimeout(t *testing.T) {
 	// Seed active config with a tproxy-in AND the route-options rule at the
 	// default (5m0s) timeout.
 	cfg := NewEmptyConfig()
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "")
+	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "", 0)
 	cfg.EnsureUDPTimeoutRule(resolveUDPTimeout(""))
 	seed, _ := json.MarshalIndent(cfg, "", "  ")
 	activePath := filepath.Join(dir, "20-router.json")
@@ -167,7 +167,7 @@ func TestHealTProxyInbound_AppliesChangedUDPTimeout(t *testing.T) {
 		t.Fatalf("bootstrap: %v", err)
 	}
 
-	if err := svc.healTProxyInbound(context.Background(), "1h0m0s"); err != nil {
+	if err := svc.healTProxyInbound(context.Background(), "1h0m0s", 0); err != nil {
 		t.Fatalf("healTProxyInbound: %v", err)
 	}
 
@@ -205,6 +205,90 @@ func TestHealTProxyInbound_AppliesChangedUDPTimeout(t *testing.T) {
 	}
 }
 
+// udp_nat_max drift alone (settings changed, udp_timeout/listen untouched)
+// must also reach the live tproxy-in through this same self-heal path —
+// UpdateSettings → Reconcile → healTProxyInbound is the only re-apply on an
+// already-running engine (Enable, which calls ensureTProxyInbound
+// unconditionally, only runs on an explicit toggle).
+func TestHealTProxyInbound_AppliesChangedUDPNATMax(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+
+	// udp_timeout and listen already match; udp_nat_max is stale at 0.
+	cfg := NewEmptyConfig()
+	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "1h0m0s", 0)
+	cfg.EnsureUDPTimeoutRule("1h0m0s")
+	seed, _ := json.MarshalIndent(cfg, "", "  ")
+	activePath := filepath.Join(dir, "20-router.json")
+	if err := os.WriteFile(activePath, seed, 0644); err != nil {
+		t.Fatalf("seed active: %v", err)
+	}
+	if err := svc.deps.Orch.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+
+	if err := svc.healTProxyInbound(context.Background(), "1h0m0s", 4096); err != nil {
+		t.Fatalf("healTProxyInbound: %v", err)
+	}
+
+	raw, err := os.ReadFile(activePath)
+	if err != nil {
+		t.Fatalf("read active: %v", err)
+	}
+	var got RouterConfig
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var found bool
+	for _, in := range got.Inbounds {
+		if in.Tag == "tproxy-in" {
+			found = true
+			if in.UDPNATMax != 4096 {
+				t.Errorf("udp_nat_max not applied: want 4096, got %d", in.UDPNATMax)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("tproxy-in inbound missing after heal")
+	}
+}
+
+// The steady-state guard must not rewrite when udp_nat_max already matches
+// (no spurious SIGHUP every reconcile tick) — mirrors
+// TestHealTProxyInbound_NoOpWhenTimeoutMatches for the new carrier.
+func TestHealTProxyInbound_NoOpWhenUDPNATMaxMatches(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+
+	cfg := NewEmptyConfig()
+	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "1h0m0s", 4096)
+	cfg.EnsureUDPTimeoutRule("1h0m0s")
+	seed, _ := json.MarshalIndent(cfg, "", "  ")
+	activePath := filepath.Join(dir, "20-router.json")
+	if err := os.WriteFile(activePath, seed, 0644); err != nil {
+		t.Fatalf("seed active: %v", err)
+	}
+	if err := svc.deps.Orch.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+
+	before, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	if err := svc.healTProxyInbound(context.Background(), "1h0m0s", 4096); err != nil {
+		t.Fatalf("healTProxyInbound: %v", err)
+	}
+
+	after, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat after: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("active rewritten despite matching udp_nat_max (before=%v after=%v)", before.ModTime(), after.ModTime())
+	}
+}
+
 // Heal must judge and rewrite the APPLIED config, never the user's staged
 // pending draft: loadRouterConfig reads pending-first, so healing from it
 // would materialize an unvalidated draft into active/ (bypassing ApplyDraft)
@@ -215,7 +299,7 @@ func TestHealTProxyInbound_IgnoresPendingDraft(t *testing.T) {
 	// Active: drifted timeout (heal must rewrite it). Pending: a user draft
 	// with a marker rule that must NOT leak into active.
 	active := NewEmptyConfig()
-	active.Inbounds = ensureTProxyInbound(active.Inbounds, "")
+	active.Inbounds = ensureTProxyInbound(active.Inbounds, "", 0)
 	active.EnsureUDPTimeoutRule(resolveUDPTimeout(""))
 	seed, _ := json.MarshalIndent(active, "", "  ")
 	activePath := filepath.Join(dir, "20-router.json")
@@ -223,7 +307,7 @@ func TestHealTProxyInbound_IgnoresPendingDraft(t *testing.T) {
 		t.Fatalf("seed active: %v", err)
 	}
 	draft := NewEmptyConfig()
-	draft.Inbounds = ensureTProxyInbound(draft.Inbounds, "")
+	draft.Inbounds = ensureTProxyInbound(draft.Inbounds, "", 0)
 	draft.EnsureUDPTimeoutRule(resolveUDPTimeout(""))
 	draft.Route.Rules = append(draft.Route.Rules, Rule{Action: "route", Outbound: "draft-marker", Domain: []string{"draft.example"}})
 	draftBytes, _ := json.MarshalIndent(draft, "", "  ")
@@ -237,7 +321,7 @@ func TestHealTProxyInbound_IgnoresPendingDraft(t *testing.T) {
 		t.Fatalf("bootstrap: %v", err)
 	}
 
-	if err := svc.healTProxyInbound(context.Background(), "1h0m0s"); err != nil {
+	if err := svc.healTProxyInbound(context.Background(), "1h0m0s", 0); err != nil {
 		t.Fatalf("healTProxyInbound: %v", err)
 	}
 
@@ -267,7 +351,7 @@ func TestHealTProxyInbound_HealsRuleWhenOnlyRuleDrifted(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
 
 	cfg := NewEmptyConfig()
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "1h0m0s")
+	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "1h0m0s", 0)
 	// Rule deliberately absent — the drifted-carrier case.
 	seed, _ := json.MarshalIndent(cfg, "", "  ")
 	activePath := filepath.Join(dir, "20-router.json")
@@ -278,7 +362,7 @@ func TestHealTProxyInbound_HealsRuleWhenOnlyRuleDrifted(t *testing.T) {
 		t.Fatalf("bootstrap: %v", err)
 	}
 
-	if err := svc.healTProxyInbound(context.Background(), "1h0m0s"); err != nil {
+	if err := svc.healTProxyInbound(context.Background(), "1h0m0s", 0); err != nil {
 		t.Fatalf("healTProxyInbound: %v", err)
 	}
 
@@ -301,7 +385,7 @@ func TestHealTProxyInbound_NoOpWhenTimeoutMatches(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
 
 	cfg := NewEmptyConfig()
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "1h0m0s")
+	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, "1h0m0s", 0)
 	cfg.EnsureUDPTimeoutRule("1h0m0s")
 	seed, _ := json.MarshalIndent(cfg, "", "  ")
 	activePath := filepath.Join(dir, "20-router.json")
@@ -318,7 +402,7 @@ func TestHealTProxyInbound_NoOpWhenTimeoutMatches(t *testing.T) {
 	}
 	time.Sleep(10 * time.Millisecond)
 
-	if err := svc.healTProxyInbound(context.Background(), "1h0m0s"); err != nil {
+	if err := svc.healTProxyInbound(context.Background(), "1h0m0s", 0); err != nil {
 		t.Fatalf("healTProxyInbound: %v", err)
 	}
 

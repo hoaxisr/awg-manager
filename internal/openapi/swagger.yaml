@@ -5029,6 +5029,12 @@ definitions:
       snifferEnabled:
         example: true
         type: boolean
+      udpNatMax:
+        description: |-
+          UDPNATMax caps UDP NAT sessions on the tproxy-in / tun-in / QoS inbounds
+          (sing-box 1.14, LRU eviction). 0 = engine default (4096-16384 by memory).
+        example: 4096
+        type: integer
       udpTimeout:
         description: |-
           UDPTimeout sets the UDP session timeout for the tproxy-in / fakeip tun-in

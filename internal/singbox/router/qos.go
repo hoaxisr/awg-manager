@@ -142,7 +142,7 @@ func qosIPTablesSpecs(classes []qosClass) []QoSClassSpec {
 // append the canonical list" is the simplest convergent form. Returns the
 // new slice and whether anything changed (callers on the reconcile path skip
 // the persist+reload when false).
-func ensureQoSInbounds(in []Inbound, classes []qosClass, udpTimeout string) ([]Inbound, bool) {
+func ensureQoSInbounds(in []Inbound, classes []qosClass, udpTimeout string, udpNATMax int) ([]Inbound, bool) {
 	if len(in) == 0 && len(classes) == 0 {
 		return in, false // nil-vs-empty guard: no phantom "changed" on a bare config
 	}
@@ -163,6 +163,7 @@ func ensureQoSInbounds(in []Inbound, classes []qosClass, udpTimeout string) ([]I
 			Network:     "udp",
 			UDPFragment: true,
 			UDPTimeout:  effective,
+			UDPNATMax:   udpNATMax,
 		}, Inbound{
 			Type:        "redirect",
 			Tag:         qosRedirectTag(c.DSCP),

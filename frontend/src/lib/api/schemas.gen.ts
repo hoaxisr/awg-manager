@@ -1764,6 +1764,7 @@ const api_SingboxRouterSettingsData: v.GenericSchema = v.looseObject({
 	qosClasses: v.optional(v.nullable(v.array(v.lazy(() => api_SingboxRouterQoSClassDTO)))),
 	routingMode: v.optional(v.nullable(v.string())),
 	snifferEnabled: v.optional(v.nullable(v.boolean())),
+	udpNatMax: v.optional(v.nullable(v.number())),
 	udpTimeout: v.optional(v.nullable(v.string())),
 	wanAutoDetect: v.optional(v.nullable(v.boolean())),
 	wanInterface: v.optional(v.nullable(v.string())),

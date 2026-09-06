@@ -10,6 +10,7 @@ type PolicyTunInboundSpec struct {
 	MTU        int    //
 	Stack      string // "gvisor" (default; empty → gvisor) or "system"
 	UDPTimeout string // empty → DefaultUDPTimeout via resolveUDPTimeout
+	UDPNATMax  int    // 0 → sing-box сам выбирает (авто, ключ не пишется)
 }
 
 // ensurePolicyTunInbound replaces the tproxy/redirect inbound pair of slot 20
@@ -60,6 +61,7 @@ func ensurePolicyTunInbound(in []Inbound, spec PolicyTunInboundSpec) []Inbound {
 		Stack:                  stack,
 		EndpointIndependentNAT: boolPtr(false),
 		UDPTimeout:             resolveUDPTimeout(spec.UDPTimeout),
+		UDPNATMax:              spec.UDPNATMax,
 	}
 	if stack == "system" {
 		tun.GSO = boolPtr(false)

@@ -708,7 +708,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	if err != nil {
 		return err
 	}
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, sr.UDPTimeout)
+	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, sr.UDPTimeout, sr.UDPNATMax)
 	cfg.Outbounds = stripAutoManagedDirect(cfg.Outbounds)
 	cfg.EnsureSystemRules(sr.SnifferEnabled)
 	// Neutralize sing-box's short per-protocol UDP timeouts (QUIC/DTLS 30s,
@@ -723,7 +723,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// own slot (18-qos-routes.json) and are synced after the config write
 	// below — see qos_routes.go for why they must not live in 20-router.json.
 	qosClasses := activeQoSClasses(sr.QoSClasses)
-	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout)
+	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout, sr.UDPNATMax)
 	// Settings was already loaded above; revalidate here in case the
 	// store is corrupted or hand-edited around a schema migration. We
 	// fail Enable rather than apply a half-broken config — the user
@@ -889,7 +889,7 @@ func filterTProxyInbound(in []Inbound) []Inbound {
 // Reconcile lands here). The rule used to be regenerated only by Enable, so
 // a changed timeout stayed stale in the config until the engine was toggled
 // off/on (#554). Idempotent.
-func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string) error {
+func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string, udpNATMax int) error {
 	// APPLIED config, not the effective (pending-first) view: heal writes to
 	// active/, so reading a user's staged draft here would materialize the
 	// draft into the live config BYPASSING ApplyDraft validation (and leave
@@ -907,7 +907,9 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string) 
 	inboundOK := false
 	for _, in := range cfg.Inbounds {
 		if in.Tag == "tproxy-in" {
-			inboundOK = in.UDPTimeout == effective && in.Listen == tproxyListen
+			// UDPNATMax тоже в guard'е: смена только udpNatMax в настройках должна
+			// доехать до живого движка через этот же путь, без Disable/Enable.
+			inboundOK = in.UDPTimeout == effective && in.Listen == tproxyListen && in.UDPNATMax == udpNATMax
 			break
 		}
 	}
@@ -921,7 +923,7 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string) 
 	if inboundOK && ruleOK {
 		return nil
 	}
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, udpTimeout)
+	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, udpTimeout, udpNATMax)
 	cfg.EnsureUDPTimeoutRule(effective)
 	// System self-heal — direct write, no staging UI.
 	return s.persistConfigDirect(ctx, cfg)
@@ -973,7 +975,7 @@ func resolveUDPTimeout(configured string) string {
 	return DefaultUDPTimeout
 }
 
-func ensureTProxyInbound(in []Inbound, udpTimeout string) []Inbound {
+func ensureTProxyInbound(in []Inbound, udpTimeout string, udpNATMax int) []Inbound {
 	effective := resolveUDPTimeout(udpTimeout)
 	hasTProxy := false
 	hasRedirect := false
@@ -992,6 +994,7 @@ func ensureTProxyInbound(in []Inbound, udpTimeout string) []Inbound {
 			}
 			// Always apply the effective timeout — user may have changed it.
 			in[i].UDPTimeout = effective
+			in[i].UDPNATMax = udpNATMax
 			// tcp_fast_open is meaningless on a UDP-only inbound.
 			if in[i].TCPFastOpen {
 				in[i].TCPFastOpen = false
@@ -1023,6 +1026,7 @@ func ensureTProxyInbound(in []Inbound, udpTimeout string) []Inbound {
 			Network:     "udp",
 			UDPFragment: true,
 			UDPTimeout:  effective,
+			UDPNATMax:   udpNATMax,
 		}}, out...)
 	}
 	if !hasRedirect {
@@ -1641,7 +1645,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// healTProxyInbound: a previous Install rollback or upgrade hop may have
 	// left 20-router.json without the tproxy-in inbound — re-add it
 	// idempotently so sing-box keeps listening on TPROXYPort.
-	if err := s.healTProxyInbound(ctx, sr.UDPTimeout); err != nil {
+	if err := s.healTProxyInbound(ctx, sr.UDPTimeout, sr.UDPNATMax); err != nil {
 		s.appLog.Warn("heal-tproxy", "", err.Error())
 	}
 	// healQoSConfig: per-class inbound pairs (20-router.json) + managed route
