@@ -253,6 +253,14 @@
     { value: '1h0m0s', label: '1 час' },
     { value: '3h0m0s', label: '3 часа' },
   ];
+
+  const UDP_NAT_MAX_OPTIONS = [
+    { value: '', label: 'Авто (по памяти)' },
+    { value: '2048', label: '2048' },
+    { value: '4096', label: '4096' },
+    { value: '8192', label: '8192' },
+    { value: '16384', label: '16384' },
+  ];
 </script>
 
 <SideDrawer {open} onClose={closeDrawer} title="Движок sing-box" width={420}>
@@ -464,6 +472,25 @@
           </div>
         </div>
         <p class="hint">Как долго sing-box держит UDP-сессии активными. Увеличьте если игры или другие UDP-приложения обрываются каждые несколько минут.</p>
+        <div class="field">
+          <label class="lbl" for="ed-udp-nat-max">Потолок UDP-сессий</label>
+          <div class="udp-timeout-row">
+            <select
+              id="ed-udp-nat-max"
+              class="inp"
+              value={cfg.udpNatMax ? String(cfg.udpNatMax) : ''}
+              onchange={(e) => {
+                const v = (e.currentTarget as HTMLSelectElement).value;
+                void applyPatch({ udpNatMax: v ? Number(v) : undefined });
+              }}
+            >
+              {#each UDP_NAT_MAX_OPTIONS as opt (opt.value)}
+                <option value={opt.value}>{opt.label}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+        <p class="hint">Сколько UDP-сессий движок держит одновременно; при переполнении вытесняется самая старая. Уменьшите на роутере с малой памятью, если sing-box растёт под UDP-нагрузкой.</p>
       </section>
 
       <!-- QoS-маршрутизация (DSCP): onPatch возвращает Promise — карточка

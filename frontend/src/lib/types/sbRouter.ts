@@ -44,6 +44,8 @@ export interface SingboxRouterSettings {
 	// UDP session timeout for tproxy-in. Go duration string (e.g. "3m0s", "10m0s").
 	// Empty = backend default (3m0s). Increase to fix dropped sessions in games.
 	udpTimeout?: string;
+	// Потолок UDP-NAT-сессий (sing-box 1.14). 0/undefined = движок выбирает сам.
+	udpNatMax?: number;
 	/**
 	 * policy-tun: перевести выбранные сегменты на static-NAT, чтобы sing-box
 	 * видел реальные адреса клиентов вместо адреса tun-шлюза. Требует непустого
