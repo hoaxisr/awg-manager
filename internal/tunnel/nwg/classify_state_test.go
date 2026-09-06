@@ -101,3 +101,13 @@ func TestClassifyNWGStateASCBrokenAfterTimeout(t *testing.T) {
 		t.Fatalf("без времени подъёма: ожидался Starting, получен %v", got)
 	}
 }
+
+func TestClassifyNWGState_ObfuscatorAliveCountsAsSlot(t *testing.T) {
+	// Прошивка без ASC: peer offline + loopback-endpoint = Starting, если на порту
+	// «наш» слушатель — kmod-слот или живой релей (предикат собирает GetState).
+	rci := NWGState{ConfLayer: "running", PeerOnline: false, PeerRemoteAddr: "127.0.0.1", PeerRemotePort: 39000}
+	relay := func(p int) bool { return p == 39000 }
+	if got := classifyNWGState(rci, false, relay, time.Now()); got != tunnel.StateStarting {
+		t.Fatalf("got %v want starting", got)
+	}
+}

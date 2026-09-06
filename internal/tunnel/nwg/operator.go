@@ -24,6 +24,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/payloads"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
+	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -85,6 +86,10 @@ type OperatorNativeWG struct {
 	// proxy-пути: пересборка слота обязана идти по актуальным ключам и
 	// параметрам обфускации, а не по снимку времён регистрации (#702).
 	tunnelLookup func(tunnelID string) (*storage.AWGTunnel, error)
+
+	// obf — релей wg-obfuscator для туннелей с stored.Obfuscator != nil
+	// (obfuscated.go). nil на путях, где обфускация не заведена.
+	obf ObfuscatorRunner
 }
 
 // NewOperator creates a new NativeWG operator.
@@ -347,6 +352,12 @@ func ascCoversConfig(iface *storage.AWGInterface, supportsASC, ascKnowsAWG3 bool
 // On older firmware: awg_proxy.ko creates a local UDP proxy, peer endpoint is
 // set to 127.0.0.1:proxy_port, and the proxy forwards obfuscated traffic.
 func (o *OperatorNativeWG) Start(ctx context.Context, stored *storage.AWGTunnel) error {
+	// Обфускацию делает userspace-релей, WireGuard под ним обычный — гейт
+	// по AWG-параметрам к этому пути не относится.
+	if stored.Obfuscator != nil {
+		return o.startObfuscated(ctx, stored)
+	}
+
 	// Block plain WireGuard configs — user must add AWG obfuscation params first
 	if !config.IsAWGObfuscated(&stored.Interface) {
 		return tunnel.ErrNotObfuscated
@@ -643,6 +654,10 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 	_ = o.kmod.RemoveTunnel(stored.ID)
 	o.guardUnregister(stored.ID)
 
+	if stored.Obfuscator != nil {
+		o.stopObfuscated(ctx, stored)
+	}
+
 	o.appLog.Info("stop", names.NDMSName, "tunnel stopped")
 	return nil
 }
@@ -655,6 +670,11 @@ func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel
 	// по той же причине, что и в Stop.
 	_ = o.kmod.RemoveTunnel(stored.ID)
 	o.guardUnregister(stored.ID)
+
+	if stored.Obfuscator != nil {
+		o.stopObfuscated(ctx, stored)
+		obfuscator.RemoveConf(stored.ID)
+	}
 
 	// 2. Remove ping-check profile (before interface deletion)
 	if stored.PingCheck != nil && stored.PingCheck.Enabled {
@@ -797,7 +817,8 @@ func (o *OperatorNativeWG) GetState(ctx context.Context, stored *storage.AWGTunn
 	//   running & peer offline & ASC & stalled        -> Broken
 	//   running & peer offline (coherent / ASC young) -> Starting
 	//   disabled                                       -> Stopped
-	info.State = classifyNWGState(rciState, o.useASC(&stored.Interface), o.hasProxySlot, time.Now())
+	info.State = classifyNWGState(rciState, o.useASC(&stored.Interface), o.obfSlotPredicate(stored), time.Now())
+	o.overlayObfuscatorState(stored, &info)
 
 	return info
 }
@@ -911,6 +932,9 @@ func (o *OperatorNativeWG) EnsureKmodLoaded() error {
 // the NDMS peer endpoint to use the proxy address (127.0.0.1:listen_port).
 // Called at boot for enabled tunnels that are already running in NDMS.
 func (o *OperatorNativeWG) RestoreKmodTunnel(ctx context.Context, stored *storage.AWGTunnel) error {
+	if stored.Obfuscator != nil {
+		return nil // релей вместо kmod-слота; слот на loopback увёл бы WG в awg_proxy
+	}
 	bindIface := o.ResolveActiveWAN(ctx, stored)
 
 	// Resolve with retry + cached IP fallback — boot DNS on the router may be
@@ -955,6 +979,9 @@ func (o *OperatorNativeWG) RestoreKmodTunnel(ctx context.Context, stored *storag
 //
 // No-op on ASC-native firmware (no kmod slot exists).
 func (o *OperatorNativeWG) SyncKmodSlot(ctx context.Context, stored *storage.AWGTunnel) error {
+	if stored.Obfuscator != nil {
+		return nil // релей вместо kmod-слота; слот на loopback увёл бы WG в awg_proxy
+	}
 	if o.useASC(&stored.Interface) {
 		return nil
 	}
