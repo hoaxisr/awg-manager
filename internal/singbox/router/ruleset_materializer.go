@@ -133,7 +133,46 @@ func (m ruleSetMaterializer) materializeConfig(cfg *RouterConfig) (*RouterConfig
 		m.rewriteRuleSetRefs(&out, rs.Tag, local.Tag)
 		out.Route.RuleSet = append(out.Route.RuleSet, local)
 	}
+	applyHTTPClients(&out)
 	return &out, nil
+}
+
+// ruleSetHTTPClientTag — тег общего HTTP-клиента загрузки наборов.
+const ruleSetHTTPClientTag = "rs-download"
+
+// applyHTTPClients переводит хранимую форму в форму sing-box 1.14:
+// download_detour → http_client{detour}, плюс общий клиент rs-download с
+// detour на route.final — так раньше вёл себя неявный клиент «через дефолтный
+// outbound» (deprecated, удаление в 1.16). Без final detour пуст = прямой
+// выход (решение владельца 2026-09-06). Явно выразить «через дефолтный
+// outbound» в 1.14 нельзя: поле DefaultOutbound у клиента помечено json:"-".
+func applyHTTPClients(cfg *RouterConfig) {
+	cfg.HTTPClients = []HTTPClient{{Tag: ruleSetHTTPClientTag, Detour: cfg.Route.Final}}
+	cfg.Route.DefaultHTTPClient = ruleSetHTTPClientTag
+	for i := range cfg.Route.RuleSet {
+		rs := &cfg.Route.RuleSet[i]
+		if rs.DownloadDetour == "" {
+			continue
+		}
+		rs.HTTPClient = &RuleSetHTTPClient{Detour: rs.DownloadDetour}
+		rs.DownloadDetour = ""
+	}
+}
+
+// restoreHTTPClients — обратная проекция для читателей слота.
+func restoreHTTPClients(cfg *RouterConfig) {
+	cfg.HTTPClients = nil
+	cfg.Route.DefaultHTTPClient = ""
+	for i := range cfg.Route.RuleSet {
+		rs := &cfg.Route.RuleSet[i]
+		if rs.HTTPClient == nil {
+			continue
+		}
+		if rs.DownloadDetour == "" {
+			rs.DownloadDetour = rs.HTTPClient.Detour
+		}
+		rs.HTTPClient = nil
+	}
 }
 
 func (m ruleSetMaterializer) expandManagedToInline(cfg *RouterConfig) *RouterConfig {
@@ -194,6 +233,7 @@ func (m ruleSetMaterializer) restoreConfig(cfg *RouterConfig) *RouterConfig {
 	// no longer contains managed local entries (they were projected to inline).
 	m.rewritePersistedSRSRefsToInline(cfg, &out)
 	m.rewriteSRSSuffixRuleSetRefs(&out)
+	restoreHTTPClients(&out)
 	return &out
 }
 

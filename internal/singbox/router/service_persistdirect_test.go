@@ -26,10 +26,14 @@ import (
 func TestPersistConfigDirect_NoOpWhenActiveMatches(t *testing.T) {
 	svc, dir := newOrchedTestService(t)
 
-	// Active file pre-exists with what marshalling NewEmptyConfig would
-	// produce — Bootstrap below sees it and marks the slot enabled.
+	// Active file pre-exists with what materializing+marshalling NewEmptyConfig
+	// would produce — Bootstrap below sees it and marks the slot enabled.
 	cfg := NewEmptyConfig()
-	bytesNow, err := json.MarshalIndent(cfg, "", "  ")
+	materialized, err := svc.ruleSetMaterializer().materializeConfig(cfg)
+	if err != nil {
+		t.Fatalf("materializeConfig: %v", err)
+	}
+	bytesNow, err := json.MarshalIndent(materialized, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -89,7 +93,11 @@ func TestPersistConfigDirect_WritesActiveWhenDifferent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read active: %v", err)
 	}
-	want, _ := json.MarshalIndent(cfg, "", "  ")
+	materialized, err := svc.ruleSetMaterializer().materializeConfig(cfg)
+	if err != nil {
+		t.Fatalf("materializeConfig: %v", err)
+	}
+	want, _ := json.MarshalIndent(materialized, "", "  ")
 	if string(got) != string(want) {
 		t.Errorf("active not overwritten with new bytes\nwant: %s\ngot:  %s", want, got)
 	}
@@ -122,7 +130,11 @@ func TestPersistConfigDirect_WritesActiveWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read active: %v", err)
 	}
-	want, _ := json.MarshalIndent(cfg, "", "  ")
+	materialized, err := svc.ruleSetMaterializer().materializeConfig(cfg)
+	if err != nil {
+		t.Fatalf("materializeConfig: %v", err)
+	}
+	want, _ := json.MarshalIndent(materialized, "", "  ")
 	if string(got) != string(want) {
 		t.Errorf("active not created with expected bytes\nwant: %s\ngot:  %s", want, got)
 	}

@@ -203,6 +203,26 @@ func TestValidateUnknownOutboundInDetours(t *testing.T) {
 	}
 }
 
+func TestValidate_HTTPClientDetourDangling(t *testing.T) {
+	o, dir := newTestOrch(t)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	writeSlot(t, dir, "20-router.json", `{
+		"http_clients":[{"tag":"rs-download","detour":"ghost-client"}],
+		"route":{"rule_set":[{"tag":"geo","type":"remote","http_client":{"detour":"ghost-rs"}}]}
+	}`)
+	o.enabled[SlotRouter] = true
+	res := o.Validate()
+	if !strings.Contains(res.Error(), "ghost-client") || !strings.Contains(res.Error(), "http_clients[0=\"rs-download\"].detour") {
+		t.Errorf("missing http_clients detour error: %s", res.Error())
+	}
+	if !strings.Contains(res.Error(), "ghost-rs") || !strings.Contains(res.Error(), "route.rule_set[0=\"geo\"].http_client.detour") {
+		t.Errorf("missing rule_set http_client.detour error: %s", res.Error())
+	}
+}
+
 func TestValidateUnknownRuleSetRefs(t *testing.T) {
 	o, dir := newTestOrch(t)
 	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})

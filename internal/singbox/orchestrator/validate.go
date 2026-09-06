@@ -271,6 +271,18 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 					parentTag: ruleSet.Tag, kind: "download_detour", idx: i, refTag: ruleSet.DownloadDetour,
 				})
 			}
+			if ruleSet.HTTPClient != nil && ruleSet.HTTPClient.Detour != "" {
+				rs.sels = append(rs.sels, selSection{
+					parentTag: ruleSet.Tag, kind: "http_client", idx: i, refTag: ruleSet.HTTPClient.Detour,
+				})
+			}
+		}
+		for i, hc := range c.HTTPClients {
+			if hc.Detour != "" {
+				rs.sels = append(rs.sels, selSection{
+					parentTag: hc.Tag, kind: "http_clients", idx: i, refTag: hc.Detour,
+				})
+			}
 		}
 		for i, ob := range c.Outbounds {
 			for j, member := range ob.Outbounds {
@@ -365,6 +377,10 @@ func (o *Orchestrator) validateWithEnabled(bytesFor func(Slot) ([]byte, error), 
 					where = fmt.Sprintf("outbounds[%d=%q].outbounds[%d]", s.idx, s.parentTag, s.memberIdx)
 				} else if s.kind == "download_detour" {
 					where = fmt.Sprintf("route.rule_set[%d=%q].download_detour", s.idx, s.parentTag)
+				} else if s.kind == "http_client" {
+					where = fmt.Sprintf("route.rule_set[%d=%q].http_client.detour", s.idx, s.parentTag)
+				} else if s.kind == "http_clients" {
+					where = fmt.Sprintf("http_clients[%d=%q].detour", s.idx, s.parentTag)
 				} else if s.kind == "dns_detour" {
 					where = fmt.Sprintf("dns.servers[%d=%q].detour", s.idx, s.parentTag)
 				}
@@ -532,9 +548,10 @@ type slotConfig struct {
 	// may route to an endpoint tag). 16-awg3.json is the first slot to carry
 	// them; without collecting their tags a rule → awg3 endpoint would fail
 	// with unknown-outbound and a tag colliding with an outbound would slip past.
-	Endpoints []outboundJSON `json:"endpoints,omitempty"`
-	Route     routeJSON      `json:"route"`
-	DNS       dnsJSON        `json:"dns"`
+	Endpoints   []outboundJSON   `json:"endpoints,omitempty"`
+	Route       routeJSON        `json:"route"`
+	DNS         dnsJSON          `json:"dns"`
+	HTTPClients []httpClientJSON `json:"http_clients,omitempty"`
 }
 
 type inboundJSON struct {
@@ -589,6 +606,14 @@ type ruleJSON struct {
 type ruleSetJSON struct {
 	Tag            string `json:"tag"`
 	DownloadDetour string `json:"download_detour,omitempty"`
+	HTTPClient     *struct {
+		Detour string `json:"detour,omitempty"`
+	} `json:"http_client,omitempty"`
+}
+
+type httpClientJSON struct {
+	Tag    string `json:"tag"`
+	Detour string `json:"detour,omitempty"`
 }
 
 type dnsJSON struct {
@@ -632,7 +657,7 @@ type finalSection struct {
 
 type selSection struct {
 	parentTag string
-	kind      string // "members" / "default" / "download_detour" / "dns_detour"
+	kind      string // "members" / "default" / "download_detour" / "http_client" / "http_clients" / "dns_detour"
 	idx       int
 	memberIdx int
 	refTag    string

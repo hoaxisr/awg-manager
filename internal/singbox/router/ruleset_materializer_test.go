@@ -461,3 +461,58 @@ func TestMaterializeConfig_RewritesNestedRuleRefs(t *testing.T) {
 		t.Fatalf("restored nested ref must be the inline tag, got %v", nested)
 	}
 }
+
+// sing-box 1.14: download_detour и неявный HTTP-клиент deprecated (удаление в
+// 1.16). Хранимая форма — download_detour; в слот уходит http_client{detour}
+// плюс общий клиент rs-download с detour на route.final. Без final — прямой
+// выход (решение владельца 2026-09-06).
+func TestMaterializeConfig_HTTPClients(t *testing.T) {
+	dir := t.TempDir()
+	m := ruleSetMaterializer{configDir: dir, binary: "/opt/bin/sing-box"}
+	cfg := &RouterConfig{
+		Route: Route{
+			Final: "vpn",
+			RuleSet: []RuleSet{
+				{Tag: "geo", Type: "remote", URL: "https://x/geo.srs", DownloadDetour: "direct"},
+				{Tag: "plain", Type: "remote", URL: "https://x/plain.srs"},
+			},
+		},
+	}
+	out, err := m.materializeConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.HTTPClients) != 1 || out.HTTPClients[0].Tag != "rs-download" || out.HTTPClients[0].Detour != "vpn" {
+		t.Fatalf("http_clients = %+v, want [{rs-download vpn}]", out.HTTPClients)
+	}
+	if out.Route.DefaultHTTPClient != "rs-download" {
+		t.Errorf("default_http_client = %q", out.Route.DefaultHTTPClient)
+	}
+	geo := out.Route.RuleSet[0]
+	if geo.DownloadDetour != "" || geo.HTTPClient == nil || geo.HTTPClient.Detour != "direct" {
+		t.Errorf("geo: download_detour=%q http_client=%+v, want http_client{direct}", geo.DownloadDetour, geo.HTTPClient)
+	}
+	if out.Route.RuleSet[1].HTTPClient != nil {
+		t.Errorf("plain must have no http_client: %+v", out.Route.RuleSet[1].HTTPClient)
+	}
+	// Исходный конфиг не тронут: материализация — проекция, не мутация.
+	if cfg.HTTPClients != nil || cfg.Route.RuleSet[0].DownloadDetour != "direct" {
+		t.Errorf("source config mutated: %+v", cfg)
+	}
+
+	// Без final клиент без detour — прямой выход.
+	cfg.Route.Final = ""
+	out, _ = m.materializeConfig(cfg)
+	if out.HTTPClients[0].Detour != "" {
+		t.Errorf("no final: detour = %q, want empty", out.HTTPClients[0].Detour)
+	}
+
+	// Обратная проекция восстанавливает хранимую форму.
+	back := m.restoreConfig(out)
+	if back.HTTPClients != nil || back.Route.DefaultHTTPClient != "" {
+		t.Errorf("restore left http_clients: %+v / %q", back.HTTPClients, back.Route.DefaultHTTPClient)
+	}
+	if rs := back.Route.RuleSet[0]; rs.HTTPClient != nil || rs.DownloadDetour != "direct" {
+		t.Errorf("restore: %+v", rs)
+	}
+}

@@ -184,15 +184,30 @@ func (r *Rule) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// RuleSetHTTPClient — http_client remote-набора в форме sing-box 1.14
+// (замена deprecated download_detour). Только в материализованном слоте:
+// restoreHTTPClients возвращает DownloadDetour, API/UI его не видят.
+type RuleSetHTTPClient struct {
+	Detour string `json:"detour,omitempty"`
+}
+
+// HTTPClient — запись верхнеуровневого http_clients (sing-box 1.14). Один
+// общий клиент rs-download для загрузки наборов, detour = route.final.
+type HTTPClient struct {
+	Tag    string `json:"tag"`
+	Detour string `json:"detour,omitempty"`
+}
+
 type RuleSet struct {
-	Tag            string           `json:"tag"`
-	Type           string           `json:"type"`
-	Format         string           `json:"format,omitempty"`
-	URL            string           `json:"url,omitempty"`
-	UpdateInterval string           `json:"update_interval,omitempty"`
-	DownloadDetour string           `json:"download_detour,omitempty"`
-	Path           string           `json:"path,omitempty"`
-	Rules          []map[string]any `json:"rules,omitempty"`
+	Tag            string             `json:"tag"`
+	Type           string             `json:"type"`
+	Format         string             `json:"format,omitempty"`
+	URL            string             `json:"url,omitempty"`
+	UpdateInterval string             `json:"update_interval,omitempty"`
+	DownloadDetour string             `json:"download_detour,omitempty"`
+	HTTPClient     *RuleSetHTTPClient `json:"http_client,omitempty"`
+	Path           string             `json:"path,omitempty"`
+	Rules          []map[string]any   `json:"rules,omitempty"`
 	// MaterializedSRS is set by ListRuleSets when a compiled .srs sibling
 	// exists for an inline ruleset. Not persisted in router JSON.
 	MaterializedSRS bool `json:"materialized_srs,omitempty"`
@@ -275,6 +290,9 @@ type Route struct {
 	// hostnames that no rule pins elsewhere (fakeip-tun: a "real" resolver
 	// so proxy server hostnames don't get fakeip addresses).
 	DefaultDomainResolver *DomainResolver `json:"default_domain_resolver,omitempty"`
+	// DefaultHTTPClient — тег клиента для загрузки наборов без http_client.
+	// Ставится материализацией (applyHTTPClients), в хранимой форме пуст.
+	DefaultHTTPClient string `json:"default_http_client,omitempty"`
 }
 
 type DomainResolver struct {
@@ -391,5 +409,6 @@ type RouterConfig struct {
 	Outbounds    []Outbound    `json:"outbounds"`
 	DNS          DNS           `json:"dns,omitempty"`
 	Route        Route         `json:"route"`
+	HTTPClients  []HTTPClient  `json:"http_clients,omitempty"`
 	Experimental *Experimental `json:"experimental,omitempty"`
 }
