@@ -91,6 +91,24 @@ func (d *schemaDoc) pickVariant(node map[string]any, value map[string]any) map[s
 			return v
 		}
 	}
+	// Отсутствие "type" в значении — это sing-box'овский вариант "default", а
+	// не произвольная первая ветка с properties.
+	if _, hasType := value["type"]; !hasType {
+		for _, v := range all {
+			props, _ := v["properties"].(map[string]any)
+			typeNode, _ := props["type"].(map[string]any)
+			if konst, ok := typeNode["const"]; ok && konst == "default" {
+				return v
+			}
+			if enum, ok := typeNode["enum"].([]any); ok {
+				for _, e := range enum {
+					if e == "default" {
+						return v
+					}
+				}
+			}
+		}
+	}
 	for _, v := range all {
 		if _, ok := v["properties"]; ok {
 			return v
