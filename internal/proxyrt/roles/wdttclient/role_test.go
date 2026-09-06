@@ -64,6 +64,7 @@ func (c *countCmds) DeleteOpkgTun(context.Context, string) error              { 
 func (c *countCmds) SetDescription(context.Context, string, string) error     { c.n++; return nil }
 func (c *countCmds) SetSecurityLevel(context.Context, string, string) error   { c.n++; return nil }
 func (c *countCmds) SetIPGlobal(context.Context, string) error                { c.n++; return nil }
+func (c *countCmds) ClearIPGlobal(context.Context, string) error              { c.n++; return nil }
 func (c *countCmds) SetAddress(context.Context, string, string, string) error { c.n++; return nil }
 func (c *countCmds) ClearAddress(context.Context, string) error               { c.n++; return nil }
 func (c *countCmds) SetMTU(context.Context, string, int) error                { c.n++; return nil }

@@ -104,6 +104,18 @@ func (c *InterfaceCommands) SetIPGlobal(ctx context.Context, name string) error 
 		c.queries.RunningConfig.InvalidateAll)
 }
 
+// ClearIPGlobal снимает `ip global` — половина больше не выходит в политики.
+// Форма и ответ («global priority cleared») сняты со стенда 5.01 2026-09-06;
+// security-level от неё не зависит (private принимается и при стоящем
+// global — и наоборот).
+func (c *InterfaceCommands) ClearIPGlobal(ctx context.Context, name string) error {
+	return postMutationChecked(ctx, c.poster, c.save,
+		map[string]any{"parse": fmt.Sprintf("interface %s no ip global", name)},
+		"clear ip global "+name,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll)
+}
+
 // clearAddressPayload is the RCI form that removes the configured IPv4
 // address; shared by SetAddress (inline best-effort clear) and ClearAddress.
 func clearAddressPayload(name string) map[string]any {

@@ -741,7 +741,9 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 	}
 
 	// Apply — destroy → rebuild. unbind/remove best-effort (ACL может ещё не
-	// существовать), но больше не глушим молча.
+	// существовать), но больше не глушим молча. С auto-delete unbind может
+	// унести список сам (стенд 2026-09-05) — remove после него no-op или
+	// отказ, он и так best-effort.
 	if err := aclCmd.ACLUnbind(ctx, iface, acl); err != nil {
 		s.log.Debug("unbind ACL before rebuild", "error", err, "iface", iface)
 	}
@@ -756,7 +758,20 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 			return fmt.Errorf("permit %s: %w", segments[i], err)
 		}
 	}
-	return aclCmd.ACLBind(ctx, iface, acl)
+	if err := aclCmd.ACLBind(ctx, iface, acl); err != nil {
+		return err
+	}
+	// auto-delete: NDMS снимает список вместе с последним ссылающимся
+	// интерфейсом (стенд 5.01, 2026-09-06: `no interface` унёс привязанный
+	// auto-delete-список; без него после удаления wdtt-сервера AWGM_OpkgTunN
+	// оставались в running-config — ресурс доступа у удаляемого инстанса
+	// ничего не доводит). Ставится ТОЛЬКО после bind («cannot enable
+	// auto-deletion for unreferenced lists»). Отказ — не отказ применения:
+	// список привязан и работает, остаток лишь переживёт интерфейс.
+	if err := aclCmd.ACLAutoDelete(ctx, acl); err != nil {
+		s.appLog.Warn("lan-acl", iface, "auto-delete списка "+acl+" не включён: "+err.Error())
+	}
+	return nil
 }
 
 // ListLANSegments returns the router's LAN bridge catalog for the UI picker.

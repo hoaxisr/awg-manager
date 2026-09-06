@@ -215,11 +215,21 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	// инстанса policy_exit в ведомости нет вовсе, и без зеркала остаток на
 	// WG-половине не мигрировал бы никогда. При включении permit вернёт
 	// policy_exit — снятие у выключенного ничего не ломает.
+	//
+	// Тот же ресурс снимает и `ip global` — при снятом тумблере
+	// ExposeToPolicies его иначе снять некому.
 	absent := []string{c.RawNdmsIface}
 	if !(enabled && c.ExposeToPolicies) {
 		absent = append(absent, c.NdmsIface)
 	}
-	r.permitAbsent.SetDesired(absent)
+	// `ip global` — только по снятому тумблеру, НЕ по выключению инстанса:
+	// повторный `ip global` сбрасывает permit политики в deny (стенд
+	// 2026-09-06), цикл выкл/вкл терял бы раскладку пользователя.
+	global := []string{c.RawNdmsIface}
+	if !c.ExposeToPolicies {
+		global = append(global, c.NdmsIface)
+	}
+	r.permitAbsent.SetDesired(absent, global)
 
 	if enabled {
 		r.nat.SetDesired(r.natGroups(c))

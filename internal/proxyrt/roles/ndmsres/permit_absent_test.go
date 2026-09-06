@@ -3,6 +3,7 @@ package ndmsres_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -26,7 +27,7 @@ func TestPermitAbsent_RemovesOnlyFromExistingListed(t *testing.T) {
 	}
 	// OpkgTun23 — в списке, но в NDMS его нет.
 	r := ndmsres.NewPermitAbsent("permit_absent", n, n)
-	r.SetDesired([]string{"OpkgTun17", "OpkgTun19", "OpkgTun23"})
+	r.SetDesired([]string{"OpkgTun17", "OpkgTun19", "OpkgTun23"}, nil)
 
 	obs, err := r.Observe(ctx)
 	if err != nil {
@@ -63,7 +64,7 @@ func TestPermitAbsent_NothingToDoConverges(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := ndmsres.NewPermitAbsent("permit_absent", n, n)
-	r.SetDesired([]string{"OpkgTun17", ""})
+	r.SetDesired([]string{"OpkgTun17", ""}, nil)
 	obs, err := r.Observe(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +74,80 @@ func TestPermitAbsent_NothingToDoConverges(t *testing.T) {
 	}
 	if got := r.Plan(proxyrt.Observation{Known: true, Exists: false, Attrs: map[string]string{"present": ""}}); len(got) != 0 {
 		t.Fatalf("пустой present не даёт шагов: %+v", got)
+	}
+}
+
+// Неэкспонированная половина теряет и ip global: стенд 2026-09-06 — после
+// снятия тумблера ExposeToPolicies WG-половина оставалась `ip global`,
+// снимать было некому (policy_exit аддитивен и из ведомости уходит).
+func TestPermitAbsent_ClearsIPGlobalOnUnexposed(t *testing.T) {
+	ctx := context.Background()
+	n := roletest.NewNDMS()
+	for _, name := range []string{"OpkgTun0", "OpkgTun1"} {
+		if err := n.CreateOpkgTunWithSecurityLevel(ctx, name, "x", "private"); err != nil {
+			t.Fatal(err)
+		}
+		if err := n.SetIPGlobal(ctx, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// OpkgTun1 несёт оба остатка, OpkgTun0 — только ip global.
+	if err := n.SetPermitAllACL(ctx, "OpkgTun1"); err != nil {
+		t.Fatal(err)
+	}
+	r := ndmsres.NewPermitAbsent("permit_absent", n, n)
+	r.SetDesired([]string{"OpkgTun0", "OpkgTun1"}, []string{"OpkgTun0", "OpkgTun1"})
+
+	obs, err := r.Observe(ctx)
+	if err != nil || obs.Exists {
+		t.Fatalf("ожидалось расхождение: err=%v obs=%+v", err, obs)
+	}
+	var ops []string
+	for _, s := range r.Plan(obs) {
+		ops = append(ops, s.Op+":"+s.Args["name"])
+		if err := r.Apply(ctx, s); err != nil {
+			t.Fatalf("apply %v: %v", s, err)
+		}
+	}
+	want := []string{"remove-acl:OpkgTun1", "clear-ip-global:OpkgTun0", "clear-ip-global:OpkgTun1"}
+	if !slices.Equal(ops, want) {
+		t.Fatalf("шаги: %v, ожидалось %v", ops, want)
+	}
+	for _, name := range []string{"OpkgTun0", "OpkgTun1"} {
+		if g, _ := n.HasIPGlobal(ctx, name); g {
+			t.Errorf("%s: ip global остался", name)
+		}
+	}
+	if obs, _ := r.Observe(ctx); !obs.Exists {
+		t.Fatalf("после снятия ресурс не сошёлся: %+v", obs)
+	}
+}
+
+// Интерфейс в списке permit, но НЕ в списке global: `ip global` не трогаем.
+// Это выключенный инстанс с включённым тумблером — повторный `ip global` при
+// включении сбросил бы permit пользователя в политиках в deny (стенд
+// 2026-09-06), поэтому списки разные намеренно.
+func TestPermitAbsent_KeepsIPGlobalOutsideGlobalList(t *testing.T) {
+	ctx := context.Background()
+	n := roletest.NewNDMS()
+	if err := n.CreateOpkgTunWithSecurityLevel(ctx, "OpkgTun0", "x", "private"); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.SetIPGlobal(ctx, "OpkgTun0"); err != nil {
+		t.Fatal(err)
+	}
+	r := ndmsres.NewPermitAbsent("permit_absent", n, n)
+	r.SetDesired([]string{"OpkgTun0"}, nil)
+
+	obs, err := r.Observe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !obs.Exists || len(r.Plan(obs)) != 0 {
+		t.Fatalf("ip global вне списка global — не расхождение и не шаг: %+v", obs)
+	}
+	if g, _ := n.HasIPGlobal(ctx, "OpkgTun0"); !g {
+		t.Fatal("ip global снят у интерфейса вне списка global")
 	}
 }
 

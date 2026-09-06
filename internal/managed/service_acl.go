@@ -32,6 +32,12 @@ func (s *Service) ForeignAccessGroups(ctx context.Context, iface string) ([]stri
 // выбор сегментов (стенд 2026-09-02/05). Паритет с ресурсом permit_absent у
 // wdtt. Только при наличии — без записи и RCI на чистом интерфейсе.
 func (s *Service) stripForeignPermitAll(ctx context.Context, iface string) error {
+	// галка веб-морды не сбрасывает наш кэш (стенд 2026-09-06: хук ndm на
+	// ACL-bind не приходит); применение — действие пользователя, один GET
+	// допустим.
+	if s.queries != nil && s.queries.RunningConfig != nil {
+		s.queries.RunningConfig.InvalidateAll()
+	}
 	names, err := s.ForeignAccessGroups(ctx, iface)
 	if err != nil {
 		return err
@@ -47,9 +53,9 @@ func (s *Service) stripForeignPermitAll(ctx context.Context, iface string) error
 }
 
 // SweepForeignPermitAll — бут-проход по всем managed-серверам: снять остаток
-// permit-all `_WEBADMIN_<iface>`, если он есть. Чтение из кэша running-config
-// (прогрет на старте), запись и RCI — только при наличии остатка: на чистом
-// роутере проход ничего не пишет (износ флеша — память проекта).
+// permit-all `_WEBADMIN_<iface>`, если он есть. Один GET running-config на
+// сервер (strip сбрасывает кэш), запись и RCI — только при наличии остатка: на
+// чистом роутере проход ничего не пишет (износ флеша — память проекта).
 func (s *Service) SweepForeignPermitAll(ctx context.Context) {
 	if s.commands == nil || s.commands.Interfaces == nil {
 		return
