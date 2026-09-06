@@ -22,8 +22,6 @@ func decide(event Event, state *State) []Action {
 		return decideWANUp(event, state)
 	case EventWANDown:
 		return decideWANDown(event, state)
-	case EventPingCheckFailed:
-		return decidePingCheckFailed(event, state)
 	case EventQuiesce:
 		return decideQuiesce(state)
 	default:
@@ -463,14 +461,6 @@ func decideRestart(event Event, state *State) []Action {
 	actions = appendPostStartActions(actions, t)
 
 	return actions
-}
-
-func decidePingCheckFailed(event Event, state *State) []Action {
-	t := state.tunnels[event.Tunnel]
-	if t == nil || !t.Running || t.Backend != "kernel" {
-		return nil
-	}
-	return []Action{{Type: ActionLinkToggle, Tunnel: t.ID}}
 }
 
 // appendPostStartActions adds monitoring + routing actions after a tunnel start.

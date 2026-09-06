@@ -11,8 +11,9 @@ type Event struct {
 
 // TunnelStateEvent is an internal dual-publish payload consumed by the
 // connectivity monitor when the orchestrator reports a state transition.
-// NOT forwarded to SSE clients — the frontend polls tunnels and reacts
-// to resource:invalidated hints instead.
+// Like every bus event it also reaches SSE clients (the stream has no
+// filter, api/events.go); the frontend ignores it and reacts to
+// resource:invalidated hints instead.
 type TunnelStateEvent struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
@@ -21,14 +22,16 @@ type TunnelStateEvent struct {
 }
 
 // TunnelDeletedEvent is an internal dual-publish payload emitted by the
-// orchestrator after tunnel deletion. NOT forwarded to SSE clients.
+// orchestrator after tunnel deletion. Reaches SSE clients unfiltered;
+// the frontend ignores it.
 type TunnelDeletedEvent struct {
 	ID string `json:"id"`
 }
 
 // PingCheckStateEvent is an internal dual-publish payload emitted by the
-// ping-check monitors and consumed by dnsroute failover. NOT forwarded
-// to SSE clients — the frontend polls the ping-check status list.
+// ping-check monitors on every check and consumed by dnsroute failover.
+// Reaches SSE clients unfiltered; the frontend ignores it and polls the
+// ping-check status list.
 type PingCheckStateEvent struct {
 	TunnelID        string `json:"tunnelId"`
 	Status          string `json:"status"`

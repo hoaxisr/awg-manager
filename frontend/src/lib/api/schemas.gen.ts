@@ -2455,6 +2455,7 @@ const api_TunnelPingStatusDTO: v.GenericSchema = v.looseObject({
 	status: v.optional(v.nullable(v.string())),
 	tunnelId: v.optional(v.nullable(v.string())),
 	tunnelName: v.optional(v.nullable(v.string())),
+	tunnelRunning: v.optional(v.nullable(v.boolean())),
 });
 
 const api_TunnelStateInfoDTO: v.GenericSchema = v.looseObject({
