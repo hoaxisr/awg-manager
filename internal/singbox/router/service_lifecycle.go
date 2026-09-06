@@ -983,14 +983,45 @@ func (s *ServiceImpl) heal1140SlotMigration(ctx context.Context, slot orchestrat
 		var shadow struct {
 			Route struct {
 				DefaultHTTPClient string `json:"default_http_client"`
+				RuleSet           []struct {
+					HTTPClient json.RawMessage `json:"http_client"`
+				} `json:"rule_set"`
 			} `json:"route"`
+			HTTPClients []struct {
+				Detour string `json:"detour"`
+			} `json:"http_clients"`
 		}
 		if err := json.Unmarshal(raw, &shadow); err != nil {
 			s.appLog.Warn("heal-1140-slot", "", err.Error())
 			return
 		}
-		if shadow.Route.DefaultHTTPClient != "" {
-			// Уже в форме 1.14 — материализация и запись не нужны.
+		// Старый (неверный) applyHTTPClients писал явный detour на пустой
+		// direct-outbound ("direct" — базовый тег, без загрузки outbound'ов),
+		// который sing-box 1.14 отвергает при старте: "detour to an empty
+		// direct outbound makes no sense" (стенд-находка). Такой слот уже
+		// несёт default_http_client и гейтом выше был бы принят за healthy —
+		// проверяем этот признак отдельно, чтобы всё равно перематериализовать.
+		brokenEmptyDirectDetour := false
+		for _, hc := range shadow.HTTPClients {
+			if hc.Detour == "direct" {
+				brokenEmptyDirectDetour = true
+				break
+			}
+		}
+		if !brokenEmptyDirectDetour {
+			for _, rs := range shadow.Route.RuleSet {
+				var obj struct {
+					Detour string `json:"detour"`
+				}
+				if err := json.Unmarshal(rs.HTTPClient, &obj); err == nil && obj.Detour == "direct" {
+					brokenEmptyDirectDetour = true
+					break
+				}
+			}
+		}
+		if shadow.Route.DefaultHTTPClient != "" && !brokenEmptyDirectDetour {
+			// Уже в форме 1.14, без бага пустого direct — материализация и
+			// запись не нужны.
 			return
 		}
 	}
@@ -1015,6 +1046,13 @@ func (s *ServiceImpl) heal1140SlotMigration(ctx context.Context, slot orchestrat
 		s.appLog.Warn("heal-1140-slot", "", err.Error())
 		return
 	}
+
+	// Проецируем уже материализованные http_clients/http_client обратно в
+	// download_detour, прежде чем повторно материализовать: иначе для слота
+	// с brokenEmptyDirectDetour applyHTTPClients увидел бы пустой
+	// DownloadDetour и оставил бы битый rs.HTTPClient как есть. На чистом
+	// pre-1.14 слоте (DownloadDetour уже стоит, HTTPClient пуст) — no-op.
+	restoreHTTPClients(cfg)
 
 	switch slot {
 	case orchestrator.SlotFakeIP:

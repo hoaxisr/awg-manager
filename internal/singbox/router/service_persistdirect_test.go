@@ -557,6 +557,68 @@ func TestHeal1140SlotMigration_RewritesLegacySlot(t *testing.T) {
 	}
 }
 
+// Стенд-находка: слот, уже переписанный в форму 1.14 СТАРЫМ (неверным) кодом
+// applyHTTPClients — явный detour на пустой direct-outbound — гейт по одному
+// лишь route.default_http_client пропускал как "уже мигрирован", хотя
+// sing-box такую форму отвергает при старте ("detour to an empty direct
+// outbound makes no sense"). heal1140SlotMigration должен распознать этот
+// признак (detour == "direct" в http_clients или в объектной форме
+// rule_set.http_client) и всё равно перематериализовать слот.
+func TestHeal1140SlotMigration_RepairsEmptyDirectDetour(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+	activePath := filepath.Join(dir, "20-router.json")
+
+	broken := `{
+		"outbounds": [{"type": "direct", "tag": "direct"}],
+		"http_clients": [{"tag": "rs-download", "detour": "direct"}],
+		"route": {
+			"rule_set": [{
+				"tag": "geosite-x", "type": "remote", "format": "binary",
+				"url": "https://example.com/x.srs", "update_interval": "24h",
+				"http_client": {"detour": "direct"}
+			}],
+			"rules": [{"action": "route", "rule_set": ["geosite-x"], "outbound": "direct"}],
+			"final": "direct",
+			"default_http_client": "rs-download"
+		}
+	}`
+	if err := os.WriteFile(activePath, []byte(broken), 0644); err != nil {
+		t.Fatalf("seed active: %v", err)
+	}
+	if err := svc.deps.Orch.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+
+	svc.heal1140SlotMigration(context.Background(), orchestrator.SlotRouter)
+
+	raw, err := os.ReadFile(activePath)
+	if err != nil {
+		t.Fatalf("read active: %v", err)
+	}
+	if strings.Contains(string(raw), `"detour": "direct"`) {
+		t.Errorf("still detours to empty direct after heal: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"http_client": "rs-direct:direct"`) {
+		t.Errorf("rule_set http_client should become a string ref to rs-direct:direct: %s", raw)
+	}
+
+	before, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	svc.heal1140SlotMigration(context.Background(), orchestrator.SlotRouter)
+
+	after, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat after: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("second call rewrote the already-healed slot (before=%v after=%v)", before.ModTime(), after.ModTime())
+	}
+}
+
 // A parked slot (no active 20-router.json — router disabled, or a dead
 // engine that never wrote one) must be a pure no-op: no read error logged,
 // nothing written. This also covers the "parked slot with a dead engine"
