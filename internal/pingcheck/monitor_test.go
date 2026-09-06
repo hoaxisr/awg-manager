@@ -46,7 +46,7 @@ func TestWaitHandshake_InterruptedByStopCh(t *testing.T) {
 	}()
 
 	start := time.Now()
-	result := s.waitHandshake("fake0", stopCh)
+	result := s.waitHandshake("fake0", time.Time{}, stopCh)
 	elapsed := time.Since(start)
 
 	if result {
@@ -73,7 +73,7 @@ func TestWaitHandshake_DeadlineWithoutStop(t *testing.T) {
 	stopCh := make(chan struct{}) // never closed
 
 	start := time.Now()
-	result := s.waitHandshake("fake0", stopCh)
+	result := s.waitHandshake("fake0", time.Time{}, stopCh)
 	elapsed := time.Since(start)
 
 	if result {
@@ -411,4 +411,75 @@ func waitFor(t *testing.T, cond func() bool, msg string) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal(msg)
+}
+
+// fixedWGClient отдаёт один и тот же штамп рукопожатия — как ядро после
+// down/up: latest-handshake сохранён, ключи сброшены, трафика нет.
+type fixedWGClient struct{ hs time.Time }
+
+func (c *fixedWGClient) Show(_ context.Context, _ string) (*wg.ShowResult, error) {
+	return &wg.ShowResult{HasPeer: true, LastHandshake: c.hs}, nil
+}
+
+// Старый штамп (даже минутной давности) после toggle — НЕ восстановление:
+// на стенде ядро сохраняет latest-handshake через down/up. Новее baseline — да.
+func TestWaitHandshake_RequiresStampNewerThanBaseline(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fastHandshakePoll(t)
+	stale := time.Now().Add(-time.Minute)
+	s := &Service{wg: &fixedWGClient{hs: stale}, ctx: ctx, handshakeTimeout: 3 * handshakePollFreq}
+	stopCh := make(chan struct{})
+
+	if s.waitHandshake("fake0", stale, stopCh) {
+		t.Fatal("штамп, равный снятому до down, не может считаться новым рукопожатием")
+	}
+	if !s.waitHandshake("fake0", stale.Add(-time.Second), stopCh) {
+		t.Fatal("штамп новее baseline обязан считаться рукопожатием")
+	}
+	if s.waitHandshake("fake0", time.Time{}, make(chan struct{})) != true {
+		t.Fatal("нулевой baseline (рукопожатия не было) + любой штамп = рукопожатие")
+	}
+}
+
+// Лечение снимает baseline ДО link down: после toggle сравнение идёт с ним,
+// и сохранённый ядром штамп не даёт ложного «recovered».
+func TestSensorTick_ToggleWithStaleStampIsNotRecovered(t *testing.T) {
+	orig := httpprobe.Client
+	t.Cleanup(func() { httpprobe.Client = orig })
+	httpprobe.Client = alwaysFailDoer{}
+	fastHandshakePoll(t)
+	s, m, config, _ := newKernelSensorService(t)
+	s.wg = &fixedWGClient{hs: time.Now().Add(-30 * time.Second)}
+	s.handshakeTimeout = 3 * handshakePollFreq
+	m.stopCh = make(chan struct{}) // не закрыт: waitHandshake доходит до опроса wg
+	bus := events.NewBus()
+	s.bus = bus
+	_, ch, unsub := bus.Subscribe()
+	t.Cleanup(unsub)
+
+	go func() { time.Sleep(4 * handshakePollFreq); close(m.stopCh) }() // выход из backoff
+	for i := 0; i < 3; i++ {
+		s.sensorTick(m, config)
+	}
+	for {
+		select {
+		case ev := <-ch:
+			if ev.Type == "pingcheck:state" && ev.Data.(events.PingCheckStateEvent).Status == "pass" {
+				t.Fatal("старый штамп после toggle дал ложный pass")
+			}
+		default:
+			if m.restartCount != 1 {
+				t.Fatalf("restartCount = %d, ожидали 1 (toggle без рукопожатия)", m.restartCount)
+			}
+			return
+		}
+	}
+}
+
+func fastHandshakePoll(t *testing.T) {
+	t.Helper()
+	old := handshakePollFreq
+	handshakePollFreq = 10 * time.Millisecond
+	t.Cleanup(func() { handshakePollFreq = old })
 }

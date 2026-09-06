@@ -10,10 +10,12 @@ import (
 )
 
 const (
-	handshakeTimeout  = 30 * time.Second
-	handshakePollFreq = 2 * time.Second
-	maxBackoff        = 30 * time.Minute
+	handshakeTimeout = 30 * time.Second
+	maxBackoff       = 30 * time.Minute
 )
+
+// handshakePollFreq — период опроса wg в waitHandshake; тесты ужимают.
+var handshakePollFreq = 2 * time.Second
 
 // runCmd — шов над exec.Run для команд лечения (`ip link set`, `awg set`); в
 // тестах подменяется рекордером, в проде — exec.Run.
@@ -168,6 +170,12 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 		newEndpoint = resolveEndpoint(stored.Peer.Endpoint)
 	}
 
+	// Штамп рукопожатия ДО down: ядро (wireguard и amneziawg, стенд
+	// 2026-09-06) сохраняет latest-handshake через down/up, а ключи сессии
+	// сбрасывает — трафик пойдёт только после НОВОГО рукопожатия. «Штамп
+	// моложе N минут» после up отдавал ложное «восстановлено».
+	baseline := s.lastHandshake(ifaceName)
+
 	// 2. Link down — NDMS switches to fallback immediately
 	//    conf: running preserved (user intent intact), link: pending
 	linkDown := true
@@ -192,7 +200,7 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 	}
 
 	// 5. Wait for handshake (interruptible by monitor stop signal)
-	ok := s.waitHandshake(ifaceName, m.stopCh)
+	ok := s.waitHandshake(ifaceName, baseline, m.stopCh)
 
 	s.mu.Lock()
 	m.restartCount++
@@ -263,10 +271,24 @@ func tryResolveEndpoint(endpoint string) string {
 	return net.JoinHostPort(ips[0], port)
 }
 
-// waitHandshake polls awg show for a fresh handshake after link toggle.
-// stopCh allows early exit when StopMonitoring is called during link toggle,
-// preventing the HTTP handler from blocking for up to 30 seconds.
-func (s *Service) waitHandshake(ifaceName string, stopCh <-chan struct{}) bool {
+// lastHandshake отдаёт текущий штамп рукопожатия интерфейса (нулевой, если
+// wg недоступен или рукопожатия не было).
+func (s *Service) lastHandshake(ifaceName string) time.Time {
+	if s.wg == nil {
+		return time.Time{}
+	}
+	show, err := s.wg.Show(s.ctx, ifaceName)
+	if err != nil || show == nil {
+		return time.Time{}
+	}
+	return show.LastHandshake
+}
+
+// waitHandshake polls awg show after link toggle for a handshake NEWER than
+// baseline (the stamp taken before link down). stopCh allows early exit when
+// StopMonitoring is called during link toggle, preventing the HTTP handler
+// from blocking for up to 30 seconds.
+func (s *Service) waitHandshake(ifaceName string, baseline time.Time, stopCh <-chan struct{}) bool {
 	timeout := s.handshakeTimeout
 	if timeout <= 0 {
 		timeout = handshakeTimeout
@@ -285,7 +307,7 @@ func (s *Service) waitHandshake(ifaceName string, stopCh <-chan struct{}) bool {
 			if err != nil {
 				continue
 			}
-			if show.HasRecentHandshake(3 * time.Minute) {
+			if !show.LastHandshake.IsZero() && show.LastHandshake.After(baseline) {
 				return true
 			}
 		case <-deadline:
