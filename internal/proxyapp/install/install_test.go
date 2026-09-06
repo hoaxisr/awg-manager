@@ -264,7 +264,7 @@ func TestStatus_UnknownSubsystem(t *testing.T) {
 	if err == nil {
 		t.Fatal("неизвестная подсистема обязана быть отказом, а не нулевым статусом")
 	}
-	if err.Error() != `неизвестная подсистема "singbox": ожидается wdtt или freeturn` {
+	if err.Error() != `неизвестная подсистема "singbox": ожидается wdtt, freeturn, obf-phobos или obf-clusterm` {
 		t.Fatalf("текст отказа: %q", err.Error())
 	}
 }

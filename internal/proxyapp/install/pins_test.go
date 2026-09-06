@@ -37,6 +37,37 @@ func TestFreeTurnEmbeddedBinaries_PinsComplete(t *testing.T) {
 	}
 }
 
+// wg-obfuscator (phobos и clusterm) — один бинарь на арку, сервера нет:
+// Server должен остаться пустым, иначе serverSupported() соврёт и Install
+// станет качать несуществующий второй файл.
+func TestObfPhobosEmbeddedBinaries_PinsComplete(t *testing.T) {
+	for _, arch := range []string{"aarch64-3.10", "mipsel-3.4", "mips-3.4"} {
+		specs, ok := ObfPhobosEmbeddedBinaries[arch]
+		if !ok {
+			t.Errorf("%s: нет секции", arch)
+			continue
+		}
+		checkPin(t, arch+"/client", specs.Client, ObfPhobosPinnedVersion)
+		if specs.Server.URL != "" {
+			t.Errorf("%s/server: ожидается пустой URL (однобинарный обфускатор): %+v", arch, specs.Server)
+		}
+	}
+}
+
+func TestObfClusterMEmbeddedBinaries_PinsComplete(t *testing.T) {
+	for _, arch := range []string{"aarch64-3.10", "mipsel-3.4", "mips-3.4"} {
+		specs, ok := ObfClusterMEmbeddedBinaries[arch]
+		if !ok {
+			t.Errorf("%s: нет секции", arch)
+			continue
+		}
+		checkPin(t, arch+"/client", specs.Client, ObfClusterMPinnedVersion)
+		if specs.Server.URL != "" {
+			t.Errorf("%s/server: ожидается пустой URL (однобинарный обфускатор): %+v", arch, specs.Server)
+		}
+	}
+}
+
 func checkPin(t *testing.T, name string, sp BinarySpec, version string) {
 	t.Helper()
 	if sp.URL == "" || sp.Version != version || len(sp.SHA256) != 64 || sp.Size <= 0 {

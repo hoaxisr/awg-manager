@@ -20,8 +20,10 @@ import (
 type Subsystem string
 
 const (
-	SubsystemWdtt     Subsystem = "wdtt"
-	SubsystemFreeTurn Subsystem = "freeturn"
+	SubsystemWdtt        Subsystem = "wdtt"
+	SubsystemFreeTurn    Subsystem = "freeturn"
+	SubsystemObfPhobos   Subsystem = "obf-phobos"
+	SubsystemObfClusterM Subsystem = "obf-clusterm"
 )
 
 // Downloader — узкий контракт загрузки (форма childproc.Downloader, по
@@ -146,6 +148,18 @@ func New(d Deps) *Service {
 				versionPath: versionPath(d.DataDir, "freeturn-version.json"),
 				specs:       archSpecs(FreeTurnEmbeddedBinaries, d.Arch),
 			},
+			SubsystemObfPhobos: {
+				name:        SubsystemObfPhobos,
+				clientBin:   filepath.Join(defaultBinDir, "awgm-wg-obfuscator-phobos"),
+				versionPath: versionPath(d.DataDir, "obf-phobos-version.json"),
+				specs:       archSpecs(ObfPhobosEmbeddedBinaries, d.Arch),
+			},
+			SubsystemObfClusterM: {
+				name:        SubsystemObfClusterM,
+				clientBin:   filepath.Join(defaultBinDir, "awgm-wg-obfuscator-clusterm"),
+				versionPath: versionPath(d.DataDir, "obf-clusterm-version.json"),
+				specs:       archSpecs(ObfClusterMEmbeddedBinaries, d.Arch),
+			},
 		},
 	}
 }
@@ -172,7 +186,7 @@ func archSpecs(table map[string]ArchSpecs, arch string) *ArchSpecs {
 func (s *Service) pick(name string) (*subsys, error) {
 	sub, ok := s.subs[Subsystem(strings.TrimSpace(name))]
 	if !ok {
-		return nil, fmt.Errorf("неизвестная подсистема %q: ожидается wdtt или freeturn", name)
+		return nil, fmt.Errorf("неизвестная подсистема %q: ожидается wdtt, freeturn, obf-phobos или obf-clusterm", name)
 	}
 	return sub, nil
 }
@@ -336,8 +350,28 @@ func (s *Service) Install(ctx context.Context, subsystem string) error {
 	if err := sub.writeInstalledVersion(label); err != nil {
 		s.warn(fmt.Sprintf("%s: version-file: %s", sub.name, err.Error()))
 	}
-	s.info(fmt.Sprintf("%s v%s установлен: %s, %s", sub.name, label, sub.clientBin, sub.serverBin))
+	if sub.serverBin == "" {
+		s.info(fmt.Sprintf("%s v%s установлен: %s", sub.name, label, sub.clientBin))
+	} else {
+		s.info(fmt.Sprintf("%s v%s установлен: %s, %s", sub.name, label, sub.clientBin, sub.serverBin))
+	}
 	return nil
+}
+
+// EnsureInstalled — путь к клиентскому бинарю подсистемы; если бинаря нет
+// или он не совпадает с пином, докачивает (тот же путь, что кнопка «Обновить»).
+func (s *Service) EnsureInstalled(ctx context.Context, subsystem string) (string, error) {
+	sub, err := s.pick(subsystem)
+	if err != nil {
+		return "", err
+	}
+	if sub.binariesMatchSpecs() {
+		return sub.clientBin, nil
+	}
+	if err := s.Install(ctx, subsystem); err != nil {
+		return "", err
+	}
+	return sub.clientBin, nil
 }
 
 // ErrInstancesExist — удаление бинарей отклонено: подсистемой ещё пользуются.

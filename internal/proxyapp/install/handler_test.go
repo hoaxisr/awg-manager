@@ -125,7 +125,7 @@ func TestServeStatus_Rejections(t *testing.T) {
 		if rec.Code != http.StatusBadRequest || env.Code != "BAD_REQUEST" {
 			t.Fatalf("код=%d тело=%s", rec.Code, rec.Body.String())
 		}
-		if !strings.Contains(env.Message, "ожидается wdtt или freeturn") {
+		if !strings.Contains(env.Message, "ожидается wdtt, freeturn, obf-phobos или obf-clusterm") {
 			t.Fatalf("сообщение: %q", env.Message)
 		}
 	})

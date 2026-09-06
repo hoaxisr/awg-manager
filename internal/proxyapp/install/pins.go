@@ -117,3 +117,29 @@ var FreeTurnEmbeddedBinaries = map[string]ArchSpecs{
 		Server: BinarySpec{Version: FreeTurnPinnedVersion, URL: freeturnReleaseBase + "ft-server-linux-mips-softfloat", SHA256: "3f43e69667f24121d62d29919c6196f9f8ac927ec97a92270b5a624d0cb849fd", Size: 7143617},
 	},
 }
+
+// ── wg-obfuscator ────────────────────────────────────────────────
+
+// Теги в hoaxisr/wg-obfuscator: awgm-phobos-v<ver> (ветка phobos — форк
+// Ground-Zerro/Phobos), awgm-clusterm-v<ver> (ветка clusterm — upstream).
+// Зеркало repo-sync-thirdparty кладёт ассеты в obf/<comp>/<ver>/.
+const (
+	ObfPhobosPinnedVersion   = "20260906-1"
+	ObfClusterMPinnedVersion = "1.6-1"
+	obfPhobosBase            = "http://repo.hoaxisr.ru/obf/phobos/" + ObfPhobosPinnedVersion + "/"
+	obfClusterMBase          = "http://repo.hoaxisr.ru/obf/clusterm/" + ObfClusterMPinnedVersion + "/"
+)
+
+// wg-obfuscator: один бинарь на арку, серверной половины нет (Server пустой →
+// serverSupported()=false, Install/binariesMatchSpecs её пропускают).
+var ObfPhobosEmbeddedBinaries = map[string]ArchSpecs{
+	"aarch64-3.10": {Client: BinarySpec{Version: ObfPhobosPinnedVersion, URL: obfPhobosBase + "wg-obfuscator-phobos-linux-arm64", SHA256: "611c3f2001e6f66afe8168db9737679f6640a620bafd09688ecd5f30279cfd43", Size: 170568}},
+	"mipsel-3.4":   {Client: BinarySpec{Version: ObfPhobosPinnedVersion, URL: obfPhobosBase + "wg-obfuscator-phobos-linux-mipsle-softfloat", SHA256: "bd59e224664d39cec3877a98f3ba32f24e9ab81cb1ac2752505735101c5a4361", Size: 228492}},
+	"mips-3.4":     {Client: BinarySpec{Version: ObfPhobosPinnedVersion, URL: obfPhobosBase + "wg-obfuscator-phobos-linux-mips-softfloat", SHA256: "8c5cc9792cbd2d772e5e30fcf88c4e7150e11a549a67ce38cca70668f01e159b", Size: 228556}},
+}
+
+var ObfClusterMEmbeddedBinaries = map[string]ArchSpecs{
+	"aarch64-3.10": {Client: BinarySpec{Version: ObfClusterMPinnedVersion, URL: obfClusterMBase + "wg-obfuscator-clusterm-linux-arm64", SHA256: "de21cb808f56d88e2ddba803b8530b05e2a1f4f007fea5dbe6715806565eb46a", Size: 129576}},
+	"mipsel-3.4":   {Client: BinarySpec{Version: ObfClusterMPinnedVersion, URL: obfClusterMBase + "wg-obfuscator-clusterm-linux-mipsle-softfloat", SHA256: "50fc63fd74dc367dee644c70e853d7534f2a78f6457d9a372bbc78d3946be604", Size: 192064}},
+	"mips-3.4":     {Client: BinarySpec{Version: ObfClusterMPinnedVersion, URL: obfClusterMBase + "wg-obfuscator-clusterm-linux-mips-softfloat", SHA256: "44531c7b0d3785cfe15925430ef758dd1d34f8a7280f7bb3dd2fbce039a0d0ea", Size: 192064}},
+}
