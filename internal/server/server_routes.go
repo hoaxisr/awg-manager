@@ -563,7 +563,7 @@ func (s *Server) registerServerRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// Managed WireGuard Servers (protected + boot guarded). The new
 	// route table is id-keyed: see ManagedServerHandler.Subtree for the
 	// full sub-path dispatch (peers, conf, asc, etc).
-	h.managedHandler = api.NewManagedServerHandler(s.managedService)
+	h.managedHandler = api.NewManagedServerHandler(s.managedService, h.appLog)
 	h.managedHandler.SetServersHandler(h.serverHandler)
 	h.serverHandler.SetManagedHandler(h.managedHandler)
 	if s.managedServiceImpl != nil {

@@ -165,7 +165,7 @@ func newManagedSubtreeHarness(t *testing.T, svc *recManagedSvc) (*ManagedServerH
 	sh := NewServersHandler(queries, store, nil, nil)
 	p := newBusProbe(t)
 	sh.SetEventBus(p.bus())
-	h := NewManagedServerHandler(svc)
+	h := NewManagedServerHandler(svc, nil)
 	h.SetServersHandler(sh)
 	return h, p
 }
@@ -264,6 +264,14 @@ func TestManagedSubtree_ServiceFailureStopsPipeline(t *testing.T) {
 	}
 }
 
+// scopeSpy — журнал с группой и подгруппой: обычный appLogSpy их не пишет,
+// и подмена scope прошла бы мимо пина.
+type scopeSpy struct{ entries []string }
+
+func (s *scopeSpy) AppLog(level logging.Level, group, subgroup, action, target, message string) {
+	s.entries = append(s.entries, group+"/"+subgroup+"|"+action+"|"+message)
+}
+
 // Отказ RestartOrStart больше не голый return: Warn в журнал и инвалидация servers,
 // чтобы карточка не зависла в «перезапускается». Пауза — через шов, без сна.
 func TestManagedRestart_FailurePublishesAndWarns(t *testing.T) {
@@ -273,10 +281,10 @@ func TestManagedRestart_FailurePublishesAndWarns(t *testing.T) {
 
 	svc := &recManagedSvc{err: errors.New("iface busy")}
 	p := newBusProbe(t)
-	spy := &appLogSpy{}
-	servers := &ServersHandler{log: logging.NewScopedLogger(spy, logging.GroupServer, logging.SubWan)}
+	spy := &scopeSpy{}
+	servers := &ServersHandler{}
 	servers.SetEventBus(p.bus())
-	h := &ManagedServerHandler{svc: svc}
+	h := NewManagedServerHandler(svc, spy)
 	h.SetServersHandler(servers)
 
 	rr := httptest.NewRecorder()
@@ -287,7 +295,7 @@ func TestManagedRestart_FailurePublishesAndWarns(t *testing.T) {
 	if got := p.waitInvalidated(t, 2*time.Second); !slices.Contains(got, "servers/managed-mutation") {
 		t.Fatalf("инвалидация не пришла: %v", got)
 	}
-	if len(spy.entries) != 1 || spy.entries[0] != "warn|restart|restart failed: iface busy" {
+	if len(spy.entries) != 1 || spy.entries[0] != "server/managed|restart|restart failed: iface busy" {
 		t.Fatalf("журнал = %v", spy.entries)
 	}
 }

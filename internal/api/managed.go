@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -249,6 +250,7 @@ func toManagedServerResponse(s *storage.ManagedServer, foreign []string) *manage
 type ManagedServerHandler struct {
 	svc     managed.ManagedServerService
 	servers *ServersHandler // for shared server:updated publishing
+	log     *logging.ScopedLogger
 }
 
 // SetServersHandler sets the servers handler for shared SSE publishing.
@@ -276,8 +278,11 @@ func (h *ManagedServerHandler) writeServersSnapshot(w http.ResponseWriter, r *ht
 }
 
 // NewManagedServerHandler creates a new managed server handler.
-func NewManagedServerHandler(svc managed.ManagedServerService) *ManagedServerHandler {
-	return &ManagedServerHandler{svc: svc}
+func NewManagedServerHandler(svc managed.ManagedServerService, appLogger logging.AppLogger) *ManagedServerHandler {
+	return &ManagedServerHandler{
+		svc: svc,
+		log: logging.NewScopedLogger(appLogger, logging.GroupServer, logging.SubManaged),
+	}
 }
 
 // foreignACLsFor — чужие привязки для карточки: без нашего AWGM_ (уже вычтен
@@ -889,9 +894,7 @@ func (h *ManagedServerHandler) Restart(w http.ResponseWriter, r *http.Request, i
 		time.Sleep(managedRestartDelay)
 
 		if err := h.svc.RestartOrStart(ctx, id); err != nil {
-			if h.servers != nil {
-				h.servers.log.Warn("restart", id, "restart failed: "+err.Error())
-			}
+			h.log.Warn("restart", id, "restart failed: "+err.Error())
 			// Карточка перерисуется свежим (не изменившимся) состоянием вместо
 			// вечного «перезапускается».
 			h.publishServerUpdated()

@@ -20,7 +20,7 @@ func TestManagedList_ForeignACLs(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h := NewManagedServerHandler(svc)
+	h := NewManagedServerHandler(svc, nil)
 	rr := httptest.NewRecorder()
 	h.List(rr, httptest.NewRequest(http.MethodGet, "/api/managed-servers", nil))
 	var env struct {
@@ -48,7 +48,7 @@ func TestManagedList_NoForeignACLs_OmitsField(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h := NewManagedServerHandler(svc)
+	h := NewManagedServerHandler(svc, nil)
 	rr := httptest.NewRecorder()
 	h.List(rr, httptest.NewRequest(http.MethodGet, "/api/managed-servers", nil))
 	if strings.Contains(rr.Body.String(), "foreignAcls") {
