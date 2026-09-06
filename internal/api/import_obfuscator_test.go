@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -227,6 +228,31 @@ func TestImportConf_MissingContentWithoutInstallURL(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest || errCode(t, rec) != "MISSING_CONTENT" {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// Замена конфига связанного клиента (wdtt/freeturn) идёт через ReplaceConfig,
+// который параметров релея не принимает: обфускатор в таком запросе потерялся
+// бы молча. Отказ вместо тихой потери.
+func TestImportConf_ObfuscatorWithLinkedClientRejected(t *testing.T) {
+	svc := &importStubSvc{imported: &service.TunnelWithStatus{ID: "awg20", Name: "imported"}}
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	if err := store.Create(&storage.AWGTunnel{ID: "awg21", Name: "linked", WdttClientID: "default"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	h := NewImportHandler(svc, store, &appLogSpy{})
+
+	rec := postImport(t, h, ImportConfRequest{
+		Content: "[Interface]", Name: "x", WdttClientID: "default",
+		Obfuscator: &ObfuscatorImportRequest{Target: "130.49.185.136:51824", Key: "k", Masking: "AUTO"},
+	})
+
+	if rec.Code != http.StatusBadRequest || errCode(t, rec) != "OBFUSCATOR_CONFLICT" {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if svc.replaceCalls != 0 {
+		t.Errorf("ReplaceConfig вызван %d раз — обфускатор потерялся бы молча", svc.replaceCalls)
 	}
 }
 

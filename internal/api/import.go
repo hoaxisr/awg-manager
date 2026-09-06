@@ -112,6 +112,13 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 	req.Content = h.patchImportContentForLinkedClient(req.Content, req.FreeTurnClientID, req.WdttClientID)
 
 	if existingID := findLinkedTunnelID(h.store, req.FreeTurnClientID, req.WdttClientID); existingID != "" {
+		// ReplaceConfig параметров релея не принимает: доехав сюда, обфускатор
+		// потерялся бы молча — туннель остался бы обычным, а пользователь
+		// считал бы его обфусцированным. Fail-closed.
+		if obf != nil {
+			response.Error(w, "обфускатор нельзя сочетать со связанным прокси-клиентом (wdtt/freeturn)", "OBFUSCATOR_CONFLICT")
+			return
+		}
 		if err := h.svc.ReplaceConfig(r.Context(), existingID, req.Content, req.Name); err != nil {
 			h.log.Warn("import", req.Name, "Failed to replace linked tunnel: "+err.Error())
 			response.Error(w, err.Error(), "IMPORT_FAILED")
