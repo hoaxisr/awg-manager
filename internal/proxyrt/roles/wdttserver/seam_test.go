@@ -394,6 +394,52 @@ func TestSeam_ServerPolicyExitFlags(t *testing.T) {
 	})
 }
 
+// Security-level половин: `public` при ExposeToPolicies достаётся ТОЛЬКО
+// WG-половине — она и есть выход политик (permit-all от policy_exit).
+// Raw-половина остаётся `private` при любом тумблере: она не выход, `ip
+// global`/permit ей не объявляются, а FORWARD ACCEPT снят — на 5.01
+// `_NDM_SL_FORWARD` пропускает NEW только private→public, и public raw-порт
+// остался бы без интернета (стенд 2026-09-05, решение владельца 2026-09-06).
+//
+// Мутация «raw тоже public» красит второй ассерт каждого подслучая.
+func TestSeam_ServerHalvesSecurityLevels(t *testing.T) {
+	levels := func(t *testing.T, p seamParts) (wg, raw string) {
+		t.Helper()
+		fwg, ok := p.ndms.Snapshot("OpkgTun17")
+		if !ok {
+			t.Fatal("WG-половина не создана")
+		}
+		fraw, ok := p.ndms.Snapshot("OpkgTun19")
+		if !ok {
+			t.Fatal("raw-половина не создана")
+		}
+		return fwg.SecurityLevel, fraw.SecurityLevel
+	}
+
+	t.Run("тумблер включён: public только у WG-половины", func(t *testing.T) {
+		p := newSeamParts(t)
+		cfg := seamCfg()
+		cfg.ExposeToPolicies = true
+		roletest.Converge(t, p.role, cfg, proxyrt.IntentEnabled)
+		wg, raw := levels(t, p)
+		if wg != "public" {
+			t.Errorf("WG-половина: security-level %q, ждали public — это выход политик", wg)
+		}
+		if raw != "private" {
+			t.Errorf("raw-половина: security-level %q, ждали private — public-порт без "+
+				"permit-all и без FORWARD ACCEPT оставляет абонента без интернета", raw)
+		}
+	})
+
+	t.Run("тумблер выключен: private обе", func(t *testing.T) {
+		p := newSeamParts(t)
+		roletest.Converge(t, p.role, seamCfg(), proxyrt.IntentEnabled)
+		if wg, raw := levels(t, p); wg != "private" || raw != "private" {
+			t.Fatalf("без тумблера уровни = wg:%q raw:%q, ждали private/private", wg, raw)
+		}
+	})
+}
+
 // ── RV2: миграция permit-all ────────────────────────────────────
 
 // Остаток прошлых версий: permit-all `_WEBADMIN_<iface>` стоит на обеих

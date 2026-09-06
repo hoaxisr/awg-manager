@@ -189,8 +189,13 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	}
 	r.ifaceWG.SetDesired(ndmsres.IfaceDesired{Present: enabled, Name: c.NdmsIface,
 		Description: roles.LabelServerWG, SecurityLevel: level, MTU: wgMTU})
+	// Уровень `public` при ExposeToPolicies получает только WG-половина: в
+	// политики выходит она (permit-all от policy_exit). Raw-половина — обычный
+	// private-клиент: интернет через security-level, LAN по сегментам
+	// (FORWARD ACCEPT снят, стенд 2026-09-05: `_NDM_SL_FORWARD` пропускает
+	// только private→public). Решение владельца 2026-09-06.
 	r.ifaceRaw.SetDesired(ndmsres.IfaceDesired{Present: enabled, Name: c.RawNdmsIface,
-		Description: roles.LabelServerRaw, SecurityLevel: level, MTU: rawMTU})
+		Description: roles.LabelServerRaw, SecurityLevel: "private", MTU: rawMTU})
 
 	r.addrWG.SetDesired(r.addrDesired(enabled, c.NdmsIface, c.WgIface, wgGatewayAddr, wgGatewayMask, wgMTU))
 	r.adminWG.SetDesired(ndmsres.AdminDesired{Name: c.NdmsIface, Up: enabled})

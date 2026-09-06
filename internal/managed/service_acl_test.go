@@ -70,3 +70,40 @@ func TestSweepForeignPermitAll_OnlyWherePresent(t *testing.T) {
 		t.Fatalf("чистый роутер: RCI не должно быть, got %v", got)
 	}
 }
+
+// Фасад ApplyLANSegmentsToInterface (его зовёт ресурс `ndms_access` роли wdtt
+// для ОБЕИХ половин сервера) чужой permit-all НЕ снимает: у wdtt тот же
+// остаток снимает `permit_absent`, исключая WG-половину при ExposeToPolicies —
+// там permit-all ставит `policy_exit` по замыслу. Сняв его здесь, фасад сносил
+// бы разрешение следующей строкой той же ведомости (4 лишние RCI-записи и
+// окно без permit-all на каждый рестарт демона).
+func TestApplyLANSegmentsToInterface_DoesNotStripForeignPermitAll(t *testing.T) {
+	svc, _, poster := newLANSegmentsTestService(t)
+	withRunningConfig(svc,
+		"interface Wireguard0",
+		"    security-level private",
+		"    ip access-group _WEBADMIN_Wireguard0 in",
+		"!",
+	)
+	resetPosts(poster)
+	err := svc.ApplyLANSegmentsToInterface(context.Background(), "Wireguard0", "10.66.66.1", "255.255.255.0", []string{"Home"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"no interface Wireguard0 ip access-group AWGM_Wireguard0 in",
+		"no access-list AWGM_Wireguard0",
+		"access-list AWGM_Wireguard0 permit ip 10.66.66.0 255.255.255.0 10.10.10.0 255.255.255.0",
+		"interface Wireguard0 ip access-group AWGM_Wireguard0 in",
+	}
+	got := parseStrings(poster)
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	for _, c := range got {
+		if strings.Contains(c, "_WEBADMIN_") {
+			t.Fatalf("фасад тронул чужой permit-all: %q", c)
+		}
+	}
+}
+
