@@ -588,3 +588,47 @@ func TestStopMonitoring_WaitsForCheckNow(t *testing.T) {
 		t.Fatal("после StopMonitoring tickMu всё ещё занят")
 	}
 }
+
+// Успешное лечение сразу даёт «alive», а не «recovering» до следующего тика.
+func TestSensorTick_SuccessfulToggleIsAliveAtOnce(t *testing.T) {
+	orig := httpprobe.Client
+	t.Cleanup(func() { httpprobe.Client = orig })
+	httpprobe.Client = alwaysFailDoer{}
+	fastHandshakePoll(t)
+	s, m, config, _ := newKernelSensorService(t)
+	baseline := time.Unix(time.Now().Add(-time.Minute).Unix(), 0)
+	c := &steppingWGClient{stamps: []time.Time{baseline, baseline.Add(5 * time.Second)}}
+	s.wg = c
+	s.handshakeTimeout = 3 * handshakePollFreq
+	m.stopCh = make(chan struct{})
+	s.monitors = map[string]*tunnelMonitor{"awg7": m}
+
+	for i := 0; i < 3; i++ {
+		s.sensorTick(m, config)
+	}
+	if m.restartCount != 1 || m.lastResult == nil || !m.lastResult.Success {
+		t.Fatalf("после успешного лечения restartCount=%d lastResult=%+v", m.restartCount, m.lastResult)
+	}
+	if got := s.GetTunnelPingStatus("awg7").Status; got != "alive" {
+		t.Fatalf("статус после успешного лечения %q, want alive", got)
+	}
+}
+
+// steppingWGClient отдаёт штампы по очереди: первый — baseline до down,
+// дальше — «новое рукопожатие».
+type steppingWGClient struct {
+	stamps []time.Time
+	i      int
+}
+
+func (c *steppingWGClient) Show(context.Context, string) (*wg.ShowResult, error) {
+	return &wg.ShowResult{HasPeer: true}, nil
+}
+
+func (c *steppingWGClient) LatestHandshake(context.Context, string) (time.Time, error) {
+	if c.i < len(c.stamps)-1 {
+		c.i++
+		return c.stamps[c.i-1], nil
+	}
+	return c.stamps[len(c.stamps)-1], nil
+}

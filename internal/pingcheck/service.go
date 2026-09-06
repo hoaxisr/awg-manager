@@ -233,19 +233,13 @@ func (s *Service) GetStatus() []TunnelStatus {
 		}
 
 		// Как nwgCardStatus: лежащий интерфейс — «stopped», но не во время
-		// лечения (failCount на пороге — окно down/up ещё идёт). Зеркало
-		// wdtt-raw не лечится и счётчик не сбрасывает — для него это не окно.
+		// лечения (см. pingStatus).
 		running := ifaceUp(s.resolveIfaceName(tunnelID))
 		status := "disabled"
 		if config != nil {
-			switch {
-			case (m.restartCount > 0 && (m.lastResult == nil || !m.lastResult.Success)) ||
-				(backend == "kernel" && m.failCount >= config.FailThreshold):
-				status = "recovering"
-			case !running:
+			status = pingStatus(m, config.FailThreshold, backend)
+			if status == "alive" && !running {
 				status = "stopped"
-			default:
-				status = "alive"
 			}
 		}
 
@@ -338,16 +332,32 @@ func (s *Service) GetTunnelPingStatus(tunnelID string) TunnelPingInfo {
 		return TunnelPingInfo{Status: "disabled"}
 	}
 
-	info := TunnelPingInfo{
-		Status:        "alive",
+	backend := "kernel"
+	if s.tunnels != nil {
+		if stored, err := s.tunnels.Get(tunnelID); err == nil && stored.Backend != "" {
+			backend = stored.Backend
+		}
+	}
+	return TunnelPingInfo{
+		Status:        pingStatus(m, m.failThreshold, backend),
 		RestartCount:  m.restartCount,
 		FailCount:     m.failCount,
 		FailThreshold: m.failThreshold,
 	}
-	if info.RestartCount > 0 && (m.lastResult == nil || !m.lastResult.Success) {
-		info.Status = "recovering"
+}
+
+// pingStatus — единая для карточки туннеля и страницы мониторинга оценка
+// живого монитора: «recovering» пока лечение не подтверждено успешной
+// проверкой либо идёт его окно down/up (failCount на пороге; зеркало wdtt-raw
+// не лечится и счётчик не сбрасывает — для него это не окно), иначе «alive».
+func pingStatus(m *tunnelMonitor, threshold int, backend string) string {
+	if m.restartCount > 0 && (m.lastResult == nil || !m.lastResult.Success) {
+		return "recovering"
 	}
-	return info
+	if backend == "kernel" && threshold > 0 && m.failCount >= threshold {
+		return "recovering"
+	}
+	return "alive"
 }
 
 // CheckAllNow triggers immediate checks on all monitored tunnels.

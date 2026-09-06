@@ -189,3 +189,38 @@ func TestGetStatus_KernelHealingWindowIsRecovering(t *testing.T) {
 		t.Fatalf("статус %+v, ожидали recovering", got)
 	}
 }
+
+// Карточка туннеля и страница мониторинга оценивают монитор одинаково:
+// окно лечения у kernel — «recovering» в обоих; у зеркала wdtt-raw порог
+// счётчика лечением не является.
+func TestGetTunnelPingStatus_MatchesGetStatus(t *testing.T) {
+	store := newTunnelStore(t)
+	for _, tn := range []*storage.AWGTunnel{
+		{ID: "awg3", Name: "Kernel", PingCheck: &storage.TunnelPingCheck{Enabled: true, Method: "http", Interval: 30, FailThreshold: 3}},
+		{ID: "wdttraw-de", Name: "Зеркало", Backend: "wdtt-raw", RawKernelIface: "opkgtun18", PingCheck: &storage.TunnelPingCheck{Enabled: true, Method: "http", Interval: 30, FailThreshold: 3}},
+	} {
+		if err := store.Create(tn); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &Service{tunnels: store, monitors: map[string]*tunnelMonitor{
+		"awg3":       {tunnelID: "awg3", failCount: 3, failThreshold: 3},
+		"wdttraw-de": {tunnelID: "wdttraw-de", failCount: 7, failThreshold: 3},
+	}}
+	old := ifaceUp
+	t.Cleanup(func() { ifaceUp = old })
+	ifaceUp = func(string) bool { return true }
+
+	if got := s.GetTunnelPingStatus("awg3").Status; got != "recovering" {
+		t.Fatalf("карточка kernel в окне лечения: %q, want recovering", got)
+	}
+	if got := s.GetTunnelPingStatus("wdttraw-de").Status; got != "alive" {
+		t.Fatalf("карточка зеркала за порогом: %q, want alive (лечения нет)", got)
+	}
+	for _, st := range s.GetStatus() {
+		want := map[string]string{"awg3": "recovering", "wdttraw-de": "alive"}[st.TunnelID]
+		if st.Status != want {
+			t.Fatalf("мониторинг %s: %q, want %q", st.TunnelID, st.Status, want)
+		}
+	}
+}

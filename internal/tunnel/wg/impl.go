@@ -153,6 +153,10 @@ func parseField(line, field string) string {
 // parseHandshakeTime parses handshake time from awg show output.
 // Format: "X minutes, Y seconds ago" or "X hours, Y minutes ago" etc.
 func parseHandshakeTime(s string) time.Time {
+	// wireguard-tools печатает «Now», когда с рукопожатия не прошло секунды.
+	if strings.EqualFold(strings.TrimSpace(s), "now") {
+		return time.Now()
+	}
 	if s == "" || s == "none" {
 		return time.Time{}
 	}

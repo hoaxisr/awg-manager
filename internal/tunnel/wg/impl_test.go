@@ -164,3 +164,10 @@ func TestParseLatestHandshakes(t *testing.T) {
 		t.Fatalf("берём самый свежий, got %v", got)
 	}
 }
+
+func TestParseHandshakeTime_Now(t *testing.T) {
+	got := parseHandshakeTime("Now")
+	if got.IsZero() || time.Since(got) > time.Second {
+		t.Fatalf("«Now» = рукопожатие только что, got %v", got)
+	}
+}

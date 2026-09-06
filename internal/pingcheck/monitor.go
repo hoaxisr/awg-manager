@@ -223,6 +223,10 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 	s.mu.Lock()
 	m.restartCount++
 	m.failCount = 0
+	if ok {
+		// Иначе статус «recovering» висел бы до следующего тика.
+		m.lastResult = &CheckResult{Success: true}
+	}
 	restartCount := m.restartCount
 	s.mu.Unlock()
 
