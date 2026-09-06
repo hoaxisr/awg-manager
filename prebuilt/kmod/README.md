@@ -55,7 +55,7 @@ messages carry a random tail outside the encryption, and a peer on 3.0 drops the
 on its length check without a word. Both ends have to be on 3.1, which is why the
 UI gates the switch on a *loaded* module of 3.1 or newer, not on the marker below.
 
-Source: `amnezia-vpn/amneziawg-linux-kernel-module`, tag **v3.1.20260812**
+Source: `amnezia-vpn/amneziawg-linux-kernel-module`, tag **v3.1.20260906**
 (AWG 3.0 landed on master via PR #192; the `feat/awg3` branch no longer exists).
 The kernel floor is 3.10, so no shipped model regresses.
 
@@ -64,7 +64,21 @@ from `kmod/amneziawg/patches/`: **013** (`awg_has_header_protection` deleted
 outright, which also drops a `down_read`/`up_read` from every inbound packet —
 a measurable win on mips), **018** (`has_protection` now computed after the
 `IS_ERR(wg)` check) and **022** (`le32_to_cpu` added on all four message-type
-comparisons). Eleven patches remain and apply to 3.1 unchanged.
+comparisons). 3.1.20260906 took **019** as well (`init_rwsem` on
+`header_protection.lock`, hunk for hunk, plus `down_write` in `set_key` where
+the key used to be written under a read lock). Ten patches remain; 010 and 017
+were regenerated for the new `trailer` argument of
+`wg_socket_send_buffer_to_peer()`, the rest apply unchanged.
+
+What 3.1.20260906 changes on the wire, on top of 3.1.20260812: random trailers
+are no longer appended to I1–I5 and junk packets, `DisableCookies` switches off
+the whole under-load path instead of only the cookie reply (handshakes without
+MAC2 were dropped under load before), and `ContentPaddingAddition` is capped by
+the peer's observed UDP window rather than the MTU. The netlink UAPI is
+unchanged, so the tool stays on v3.1.20260812. Upstream did not bump
+`src/version.h` for the tags after 20260812, so a stock build of this tag calls
+itself `3.1.20260812`; the recipe passes `WIREGUARD_VERSION=$(PKG_VERSION)` to
+Kbuild, which overrides the header, and `modinfo` reports the tag.
 
 The recipe and the patch stack live in `kmod/amneziawg/` in this repo; copy that
 directory to `keenetic-sdk/package/kernel/amneziawg/` and build there. The stock
@@ -76,17 +90,16 @@ on it:
 | 011 | `header_protection.c` uses the kernel 6.15 chacha API, reimplemented on the bundled zinc chacha20 |
 | 015 | the new blake2s compat block pulls the kernel's `crypto/blake2s.h` into zinc's own translation units |
 | 017 | Jmin is never checked against Jmax, so the junk packet size can run past the jmax-sized buffer |
-| 019 | `wg_newlink()` never initialises `header_protection.lock`, and a zeroed rwsem kills every MIPS target on the first `awg setconf` |
 | 021 | the crypt workers call `cond_resched()` inside the SIMD region, so an arm64 worker can sleep with NEON still held |
 
-019 is the one that put mipsel routers in a boot loop while aarch64 was fine:
-MIPS builds use `CONFIG_RWSEM_GENERIC_SPINLOCK`, where `__down_read()` reads a
-zeroed `wait_list` as "has waiters" and dereferences NULL, while
-`CONFIG_RWSEM_XCHGADD_ALGORITHM` on aarch64 reads the same zeroes as an unlocked
-rwsem. Both remaining bugs are reproduced on a KN-1810 stand, each against a
-build that carries the patch and one that does not. Neither is fixed upstream as
-of 3.1.20260812: `device.c` is untouched by 3.1, so `init_rwsem` is still absent
-and 019 is still what keeps every MIPS target from boot-looping.
+The former 019 (now upstream, see above) is the one that put mipsel routers in
+a boot loop while aarch64 was fine: `wg_newlink()` never initialised
+`header_protection.lock`, and MIPS builds use `CONFIG_RWSEM_GENERIC_SPINLOCK`,
+where `__down_read()` reads a zeroed `wait_list` as "has waiters" and
+dereferences NULL, while `CONFIG_RWSEM_XCHGADD_ALGORITHM` on aarch64 reads the
+same zeroes as an unlocked rwsem. 017 and 019 were both reproduced on a KN-1810
+stand, each against a build that carries the patch and one that does not. 017
+is still not fixed upstream.
 
 021 is the arm64 counterpart: `CONFIG_PREEMPT_COUNT` is not set on 4.9-ndm, so
 the `preempt_disable()` inside `kernel_neon_begin()` is a bare `barrier()` and
@@ -131,7 +144,7 @@ this on our side.
 2. Drop the awg3 `awg` tool into `../bin/` (see that README).
 3. Set `ExpectedKmodVersion` in `internal/sys/kmod/download.go` to the module's
    own version string, the one `modinfo` reports and the one that ends up in
-   `/sys/module/amneziawg/version` (`3.1.20260812` for this batch). Any change
+   `/sys/module/amneziawg/version` (`3.1.20260906` for this batch). Any change
    to the string makes installed routers re-copy the modules, and keeping it
    equal to the real version means `kernelModuleVersion` and
    `kernelModuleLoadedVersion` in system info agree once the router reboots.

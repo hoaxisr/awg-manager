@@ -81,7 +81,7 @@ index 5cc2e4c..72246b2 100644
 +		if (READ_ONCE(spec->pkt_size) > 0) {
  			mutex_lock(&spec->lock);
 -			jp_spec_applymods(spec, peer);
--			wg_socket_send_buffer_to_peer(peer, spec->pkt, spec->pkt_size, 0, 0);
+-			wg_socket_send_buffer_to_peer(peer, spec->pkt, spec->pkt_size, 0, 0, false);
 -			atomic_inc(&peer->jp_packet_counter);
 +			if (likely(spec->pkt && spec->pkt_size > 0)) {
 +				u8 *sendbuf = spec->pkt;
@@ -100,7 +100,7 @@ index 5cc2e4c..72246b2 100644
 +					}
 +				}
 +				wg_socket_send_buffer_to_peer(peer, sendbuf,
-+					spec->pkt_size, 0, 0);
++					spec->pkt_size, 0, 0, false);
 +				if (need_free)
 +					kfree(sendbuf);
 +				atomic_inc(&peer->jp_packet_counter);
@@ -120,10 +120,10 @@ index 5cc2e4c..72246b2 100644
  
 -			get_random_bytes(buffer, junk_packet_size);
 -			get_random_bytes(&ds, 1);
--			wg_socket_send_buffer_to_peer(peer, buffer, junk_packet_size, ds, 0);
+-			wg_socket_send_buffer_to_peer(peer, buffer, junk_packet_size, ds, 0, false);
 +				get_random_bytes(buffer, junk_packet_size);
 +				get_random_bytes(&ds, 1);
-+				wg_socket_send_buffer_to_peer(peer, buffer, junk_packet_size, ds, 0);
++				wg_socket_send_buffer_to_peer(peer, buffer, junk_packet_size, ds, 0, false);
 +			}
 +
 +			kfree(buffer);
