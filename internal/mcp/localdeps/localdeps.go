@@ -446,12 +446,27 @@ func (l *Local) rejectRaw(id string) error {
 	return nil
 }
 
+// rejectLocked mirrors the #818 guard of the REST handlers: a locked tunnel
+// refuses stop, enable/disable, default-route changes and config replace.
+// Start and restart stay allowed, as over REST.
+func (l *Local) rejectLocked(id string) error {
+	if st := l.stored(id); st != nil && st.Locked {
+		return fmt.Errorf("tunnel %q is locked against changes; unlock it in the web UI first", id)
+	}
+	return nil
+}
+
 func (l *Local) ControlTunnel(ctx context.Context, id, action string) error {
 	if l.c.Tunnels == nil {
 		return errUnavailable("tunnels")
 	}
 	if err := l.rejectRaw(id); err != nil {
 		return err
+	}
+	if action != mcpsrv.ActionStart && action != mcpsrv.ActionRestart {
+		if err := l.rejectLocked(id); err != nil {
+			return err
+		}
 	}
 	switch action {
 	case mcpsrv.ActionStart, mcpsrv.ActionStop, mcpsrv.ActionRestart:
@@ -566,6 +581,9 @@ func (l *Local) ReplaceTunnelConfig(ctx context.Context, id, cfg, newName string
 		return nil, errUnavailable("tunnels")
 	}
 	if err := l.rejectRaw(id); err != nil {
+		return nil, err
+	}
+	if err := l.rejectLocked(id); err != nil {
 		return nil, err
 	}
 	wasRunning := l.c.Tunnels.GetState(ctx, id).State == tunnel.StateRunning

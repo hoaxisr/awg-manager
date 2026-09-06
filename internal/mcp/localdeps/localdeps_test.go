@@ -1115,3 +1115,36 @@ func TestLocal_ImportTunnelSkipsPingCheckDefaultsWithoutService(t *testing.T) {
 		t.Fatalf("PingCheck written without the service: %+v", stored.PingCheck)
 	}
 }
+
+// TestLocal_LockedTunnelRejectsChanges зеркалит защиту #818 из REST-хендлеров:
+// запертый туннель не останавливают, не переключают автозапуск и маршрут по
+// умолчанию, не меняют конфиг; start и restart проходят, как и по REST.
+func TestLocal_LockedTunnelRejectsChanges(t *testing.T) {
+	ctx := context.Background()
+	l, ft, store := newLifecycle(t, tunnel.StateRunning)
+	if err := store.Update("tn-1", func(st *storage.AWGTunnel) error { st.Locked = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	fo := l.c.Orch.(*fakeOrch)
+
+	for _, a := range []string{mcpsrv.ActionStop, mcpsrv.ActionEnable, mcpsrv.ActionDisable, mcpsrv.ActionSetDefaultRoute, mcpsrv.ActionUnsetDefaultRoute} {
+		if err := l.ControlTunnel(ctx, "tn-1", a); err == nil {
+			t.Fatalf("%s on a locked tunnel must be rejected", a)
+		}
+	}
+	if len(fo.events) != 0 || len(ft.enabled) != 0 || len(ft.defRoute) != 0 {
+		t.Fatalf("locked tunnel was touched: events=%v enabled=%v defRoute=%v", fo.events, ft.enabled, ft.defRoute)
+	}
+	if _, err := l.ReplaceTunnelConfig(ctx, "tn-1", "cfg", ""); err == nil || len(ft.calls) != 0 {
+		t.Fatalf("replace on a locked tunnel: err=%v calls=%v", err, ft.calls)
+	}
+
+	for _, a := range []string{mcpsrv.ActionStart, mcpsrv.ActionRestart} {
+		if err := l.ControlTunnel(ctx, "tn-1", a); err != nil {
+			t.Fatalf("%s on a locked tunnel must pass: %v", a, err)
+		}
+	}
+	if len(fo.events) != 2 {
+		t.Fatalf("events = %+v", fo.events)
+	}
+}
