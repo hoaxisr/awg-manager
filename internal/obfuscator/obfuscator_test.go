@@ -1,0 +1,52 @@
+package obfuscator
+
+import (
+	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
+)
+
+func TestValidate(t *testing.T) {
+	ok := storage.Obfuscator{Flavor: "phobos", Target: "vpn.example.com:51824", Key: "k", Masking: "MEDIA", MaxDummy: 4, ObfuscateBytes: 16}
+	if err := Validate(&ok); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]storage.Obfuscator{
+		"no target":         {Flavor: "phobos", Key: "k", Masking: "STUN"},
+		"bad target":        {Flavor: "phobos", Target: "host", Key: "k", Masking: "STUN"},
+		"loopback target":   {Flavor: "phobos", Target: "127.0.0.1:1", Key: "k", Masking: "STUN"},
+		"no key":            {Flavor: "phobos", Target: "h:1", Masking: "STUN"},
+		"bad masking":       {Flavor: "phobos", Target: "h:1", Key: "k", Masking: "TLS"},
+		"media on clusterm": {Flavor: "clusterm", Target: "h:1", Key: "k", Masking: "MEDIA"},
+		"obfbytes clusterm": {Flavor: "clusterm", Target: "h:1", Key: "k", Masking: "STUN", ObfuscateBytes: 16},
+		"dummy too big":     {Flavor: "phobos", Target: "h:1", Key: "k", Masking: "STUN", MaxDummy: 1025},
+		"bad flavor":        {Flavor: "x", Target: "h:1", Key: "k", Masking: "STUN"},
+		"negative idle":     {Flavor: "phobos", Target: "h:1", Key: "k", Masking: "STUN", IdleTimeout: -1},
+	}
+	for name, c := range cases {
+		if err := Validate(&c); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+	if Validate(nil) != nil {
+		t.Fatal("nil is valid (no obfuscator)")
+	}
+}
+
+func TestEqual(t *testing.T) {
+	a := &storage.Obfuscator{Target: "h:1", Key: "k"}
+	b := &storage.Obfuscator{Target: "h:1", Key: "k"}
+	if !Equal(a, b) || !Equal(nil, nil) || Equal(a, nil) {
+		t.Fatal("Equal")
+	}
+	b.Key = "z"
+	if Equal(a, b) {
+		t.Fatal("must differ")
+	}
+}
+
+func TestBinaryName(t *testing.T) {
+	if BinaryName("phobos") != "awgm-wg-obfuscator-phobos" || BinaryName("clusterm") != "awgm-wg-obfuscator-clusterm" {
+		t.Fatal("names")
+	}
+}
