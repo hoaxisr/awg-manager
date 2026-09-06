@@ -164,16 +164,19 @@ func TestStateStoreHandsOutCopies(t *testing.T) {
 	// на месте — например, сортировка ресурсов в ручке API — не должна доезжать
 	// до хранилища: это порча состояния и гонка, невидимая для -race в пакете.
 	// Шаг несёт непустую карту: копия одного слайса оставила бы Args общей, и
-	// правка аргумента прошла бы в хранилище сквозь «копию».
+	// правка аргумента прошла бы в хранилище сквозь «копию». Ресурс несёт
+	// непустую Attrs по той же причине — карта в ResourceState такая же общая.
 	st := NewStateStore(&fakePublisher{}, fixedNow)
 	res := Result{
 		Steps:  []Step{{Resource: "a", Op: "create", Args: map[string]string{"address": "10.70.0.5"}, Reason: "нужно"}},
-		States: []ResourceState{{ID: "a", Status: StatusOK}},
+		States: []ResourceState{{ID: "a", Status: StatusOK, Attrs: map[string]string{"foreign-acl": "OpkgTun17:GUEST_ACL"}}},
 	}
 	st.Update("inst1", res, PhaseWaiting)
 
 	got, _ := st.Get("inst1")
 	got.Resources[0].Status = StatusFailed
+	got.Resources[0].Attrs["foreign-acl"] = "OpkgTun17:ПОДМЕНА"
+	got.Resources[0].Attrs["добавленный"] = "мусор"
 	got.LastPlan[0].Op = "destroy"
 	got.LastPlan[0].Args["address"] = "10.70.0.99"
 	got.LastPlan[0].Args["добавленный"] = "мусор"
@@ -181,6 +184,9 @@ func TestStateStoreHandsOutCopies(t *testing.T) {
 	again, _ := st.Get("inst1")
 	if again.Resources[0].Status != StatusOK {
 		t.Fatalf("правка выданного слайса ресурсов дошла до хранилища: %+v", again.Resources[0])
+	}
+	if again.Resources[0].Attrs["foreign-acl"] != "OpkgTun17:GUEST_ACL" || len(again.Resources[0].Attrs) != 1 {
+		t.Fatalf("правка карты ресурса дошла до хранилища: %+v", again.Resources[0].Attrs)
 	}
 	if again.LastPlan[0].Op != "create" {
 		t.Fatalf("правка выданного плана дошла до хранилища: %+v", again.LastPlan[0])
@@ -194,10 +200,14 @@ func TestStateStoreHandsOutCopies(t *testing.T) {
 
 	list := st.List()
 	list[0].Resources[0].Status = StatusFailed
+	list[0].Resources[0].Attrs["foreign-acl"] = "OpkgTun17:ПОДМЕНА"
 	list[0].LastPlan[0].Args["address"] = "10.70.0.77"
 	third, _ := st.Get("inst1")
 	if third.Resources[0].Status != StatusOK {
 		t.Fatalf("правка списка дошла до хранилища: %+v", third.Resources[0])
+	}
+	if third.Resources[0].Attrs["foreign-acl"] != "OpkgTun17:GUEST_ACL" {
+		t.Fatalf("правка карты ресурса через List дошла до хранилища: %+v", third.Resources[0].Attrs)
 	}
 	if third.LastPlan[0].Args["address"] != "10.70.0.5" {
 		t.Fatalf("правка аргумента через List дошла до хранилища: %+v", third.LastPlan[0].Args)
@@ -279,9 +289,41 @@ func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 			whyMustPublish: "та же причина шага, другой адрес",
 		},
 		{
-			// Detail сравнивается только потому, что ResourceState сличается
-			// целой структурой. Подслучай держит это свойство: попольное
-			// сравнение без Detail молча потеряет текст наблюдения.
+			// Статус — самое видимое, что есть у ресурса, и попольное
+			// сравнение обязано его нести: без ветки Status «ok» и «failed»
+			// при том же тексте наблюдения фронт не различит.
+			name: "сменился Status ресурса", intent: IntentEnabled, res: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "a", Status: StatusOK, Detail: "готово"}},
+			}, phase: PhaseWaiting,
+			secondIntent: IntentEnabled, secondPhase: PhaseWaiting,
+			secondRes: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "a", Status: StatusDrift, Detail: "готово"}},
+			},
+			whyMustPublish: "тот же текст наблюдения, другой статус",
+		},
+		{
+			// Ресурс подменился на другой при совпавшем статусе: длины равны,
+			// и без ветки ID подмена прошла бы молча. Это не выдумка ради
+			// ветки — состав ресурсов роли зависит от конфига (у сервера
+			// половины появляются и исчезают), и на позиции i вправо
+			// приезжает уже другой ресурс.
+			name: "сменился ID ресурса", intent: IntentEnabled, res: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "ndms_access", Status: StatusOK}},
+			}, phase: PhaseWaiting,
+			secondIntent: IntentEnabled, secondPhase: PhaseWaiting,
+			secondRes: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "permit_absent", Status: StatusOK}},
+			},
+			whyMustPublish: "тот же статус, другой ресурс на той же позиции",
+		},
+		{
+			// ResourceState сличается ПОПОЛЬНО (в нём карта Attrs, и `==` по
+			// структуре не компилируется). Подслучай держит Detail: поле,
+			// забытое в перечислении, молча потеряет текст наблюдения.
 			name: "сменился Detail ресурса", intent: IntentEnabled, res: Result{
 				Steps:  base.Steps,
 				States: []ResourceState{{ID: "a", Status: StatusOK, Detail: "oper up"}},
@@ -292,6 +334,21 @@ func TestStateStorePublishesOnAnyPublicChange(t *testing.T) {
 				States: []ResourceState{{ID: "a", Status: StatusOK, Detail: "oper down"}},
 			},
 			whyMustPublish: "тот же статус, другой текст наблюдения",
+		},
+		{
+			// Attrs — карта, и сравнивать её нужно maps.Equal: `x.Attrs !=
+			// y.Attrs` не компилируется, а пропуск поля прячет от пользователя
+			// смену чужих привязок ACL (ndms_access: foreign-acl).
+			name: "сменился Attrs ресурса", intent: IntentEnabled, res: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "a", Status: StatusOK, Attrs: map[string]string{"foreign-acl": "OpkgTun17:GUEST_ACL"}}},
+			}, phase: PhaseWaiting,
+			secondIntent: IntentEnabled, secondPhase: PhaseWaiting,
+			secondRes: Result{
+				Steps:  base.Steps,
+				States: []ResourceState{{ID: "a", Status: StatusOK, Attrs: map[string]string{"foreign-acl": "OpkgTun17:OTHER_ACL"}}},
+			},
+			whyMustPublish: "тот же статус, другие чужие привязки ACL",
 		},
 		{
 			// Список ресурсов вырос. Сравнение идёт циклом по ПРЕДЫДУЩЕМУ
@@ -384,5 +441,41 @@ func TestStateStoreGetAndList(t *testing.T) {
 	list := st.List()
 	if len(list) != 2 || list[0].ID != "a" || list[1].ID != "b" {
 		t.Fatalf("список не отсортирован по id: %+v", list)
+	}
+}
+
+// В состояние — и, значит, на шину — уходят только ПОЛЬЗОВАТЕЛЬСКИЕ атрибуты
+// наблюдения (Public). Служебные Attrs туда не копируются: в них лежат
+// величины вроде uptime_s, растущие между прогонами, и публикация по ним шла
+// бы на каждый будильник инстанса, а не на настоящее изменение.
+//
+// Состояния здесь строит настоящий Plan из наблюдений — иначе тест проверял бы
+// собственную сборку ResourceState, а не ту, что стоит в движке.
+func TestStateStorePublishesPublicAttrsOnly(t *testing.T) {
+	stateFor := func(obs Observation) Result {
+		r := &fakeResource{id: "a", obs: obs}
+		steps, states := Plan([]Resource{r}, observeAllForTest(r))
+		return Result{Intent: IntentEnabled, Steps: steps, States: states}
+	}
+	pub := &fakePublisher{}
+	st := NewStateStore(pub, fixedNow)
+
+	st.Update("inst1", stateFor(Observation{Known: true, Exists: true,
+		Attrs: map[string]string{"uptime_s": "1"}}), PhaseSettled)
+	st.Update("inst1", stateFor(Observation{Known: true, Exists: true,
+		Attrs: map[string]string{"uptime_s": "2"}}), PhaseSettled)
+	if len(pub.events) != 1 {
+		t.Fatalf("публикаций %d, ожидали 1: служебный uptime_s не повод показывать новое состояние", len(pub.events))
+	}
+	// А смена показываемого атрибута публикацию обязана дать.
+	st.Update("inst1", stateFor(Observation{Known: true, Exists: true,
+		Attrs:  map[string]string{"uptime_s": "3"},
+		Public: map[string]string{"foreign-acl": "OpkgTun17:GUEST_ACL"}}), PhaseSettled)
+	if len(pub.events) != 2 {
+		t.Fatalf("публикаций %d, ожидали 2: сменились чужие привязки ACL", len(pub.events))
+	}
+	got := pub.last.(InstanceState).Resources[0].Attrs
+	if got["foreign-acl"] != "OpkgTun17:GUEST_ACL" || got["uptime_s"] != "" {
+		t.Fatalf("наружу ушли не те атрибуты: %v", got)
 	}
 }

@@ -602,14 +602,17 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, resp)
 }
 
-// tunnelLockedMessage — текст 403 у всех пяти защищённых операций (#818).
+// tunnelLockedMessage — текст 403 у всех шести защищённых операций (#818).
 // Один на всех, чтобы пользователь везде читал одну и ту же подсказку.
 const tunnelLockedMessage = "туннель защищён от изменений — снимите защиту на карточке"
 
 // SetLock включает и снимает защиту туннеля от изменений (#818).
 //
 //	@Summary		Set tunnel lock
-//	@Description	Включает или снимает защиту туннеля от изменений: у защищённого туннеля Stop, ToggleEnabled, Update и Delete отвечают 403.
+//	@Description	Включает или снимает защиту туннеля от изменений: у защищённого туннеля Stop, ToggleEnabled,
+//	@Description	ToggleDefaultRoute, Update, Delete и Replace отвечают 403. Постановка замка на зеркальную запись
+//	@Description	wdtt-raw отвергается 409 (WDTT_RAW_OWNED, WDTT_RAW_OWNER_UNKNOWN) — замок ставится на инстансе;
+//	@Description	снятие проходит.
 //	@Tags			tunnels
 //	@Produce		json
 //	@Security		CookieAuth
@@ -617,6 +620,7 @@ const tunnelLockedMessage = "туннель защищён от изменени
 //	@Param			locked	query	bool	true	"Включить (true) или снять (false) защиту"
 //	@Success		200	{object}	TunnelLockResponse
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/tunnels/lock [post]
 func (h *TunnelsHandler) SetLock(w http.ResponseWriter, r *http.Request) {
@@ -639,6 +643,25 @@ func (h *TunnelsHandler) SetLock(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		response.Error(w, "параметр locked должен быть true или false", "INVALID_LOCKED")
 		return
+	}
+	// Замок на зеркальной записи ничего не держит: инстанс выключают и удаляют
+	// мимо ручек туннеля (exitreg/mirror.go, /api/proxyrt/instances/…), а сама
+	// запись — проекция конфига инстанса. Отказ по образцу Delete вместо
+	// декоративной галки (F95). Снятие (locked=false) не отвергаем.
+	if stored, err := h.store.Get(id); locked && err == nil && stored != nil && stored.Backend == backendWdttRaw {
+		owner, ownErr := h.mirrorOwnerKey(stored)
+		switch {
+		case ownErr != nil:
+			h.log.Warn("lock", stored.Name, "Refused: владелец raw-записи не проверен: "+ownErr.Error())
+			response.ErrorWithStatus(w, http.StatusConflict,
+				"владелец raw-записи не проверен: "+ownErr.Error(), "WDTT_RAW_OWNER_UNKNOWN")
+			return
+		case owner != "":
+			h.log.Info("lock", stored.Name, "Refused: запись принадлежит инстансу "+owner)
+			response.ErrorWithStatus(w, http.StatusConflict,
+				"запись принадлежит прокси-инстансу "+owner+"; замок ставится на инстансе", "WDTT_RAW_OWNED")
+			return
+		}
 	}
 	// Повторный запрос того же значения не переписывает файл: ErrNoChange
 	// гасит запись внутри Update, ответ остаётся успешным.

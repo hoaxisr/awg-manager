@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/ndmsres"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
@@ -85,8 +87,11 @@ func (q proxyNDMSQuery) HasIPGlobal(ctx context.Context, name string) (bool, err
 }
 
 func (q proxyNDMSQuery) HasPermitAllACL(ctx context.Context, name string) (bool, error) {
-	want := "ip access-group _WEBADMIN_" + name + " in"
-	return q.rcHasInterfaceLine(ctx, name, func(l string) bool { return l == want })
+	lines, err := q.rc.Lines(ctx)
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(query.InterfaceAccessGroupsOf(lines, name), "_WEBADMIN_"+name), nil
 }
 
 func (q proxyNDMSQuery) HasDefaultRoute(ctx context.Context, name string) (bool, error) {

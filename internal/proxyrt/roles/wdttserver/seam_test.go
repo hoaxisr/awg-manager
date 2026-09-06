@@ -2,6 +2,7 @@ package wdttserver
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -59,6 +60,10 @@ type recAccess struct {
 	nat    []string
 	policy []string
 	lan    []string
+	// foreign — чужие привязки ACL по интерфейсу, какими их видит роутер.
+	foreign map[string][]string
+	// foreignErr — отказ чтения по конкретному интерфейсу.
+	foreignErr map[string]error
 }
 
 func (a *recAccess) ApplyNATModeToInterface(_ context.Context, iface, mode string, prevWANs []string) ([]string, error) {
@@ -76,6 +81,13 @@ func (a *recAccess) ApplyLANSegmentsToInterface(_ context.Context, iface, addr, 
 	}
 	a.lan = append(a.lan, rec)
 	return nil
+}
+
+func (a *recAccess) ForeignAccessGroups(_ context.Context, iface string) ([]string, error) {
+	if err := a.foreignErr[iface]; err != nil {
+		return nil, err
+	}
+	return a.foreign[iface], nil
 }
 
 type recIngress struct{ calls []string }
@@ -112,9 +124,8 @@ func newSeamParts(t *testing.T) seamParts {
 		Link: &liveLink{now: now}, Runner: nilRunner{}, Gate: nilGate{},
 		Cmds: p.ndms, Query: p.ndms,
 		IPT: p.ipt, FW: &memFW{},
-		RunHook:       func(context.Context, string, string) error { return nil },
-		EnableForward: func() error { return nil },
-		IfaceExists:   func(string) bool { return true },
+		RunHook:     func(context.Context, string, string) error { return nil },
+		IfaceExists: func(string) bool { return true },
 		KernelWAN: func(_ context.Context, n string) (string, error) {
 			*asked = append(*asked, n)
 			return "eth9", nil
@@ -303,6 +314,14 @@ func TestSeam_NDMSAccessAppliesAllSteps(t *testing.T) {
 	if want := "OpkgTun17|10.66.0.1|255.255.0.0|br0|br1"; !hasRule(p.acc.lan, want) {
 		t.Errorf("сегменты LAN не доведены: %v, ждали %q", p.acc.lan, want)
 	}
+	// LAN-ACL — на ОБЕ половины, и у raw-половины СВОЯ peer-сеть: список
+	// строится от адреса интерфейса, и адрес WG-половины дал бы правила для
+	// чужой сети — то есть молча открытый (или закрытый) LAN у raw-абонента.
+	// Литералы, а не rawGatewayAddr/rawGatewayMask: ожидание не должно
+	// вычисляться тем же кодом, что и результат.
+	if want := "OpkgTun19|10.70.0.1|255.255.0.0|br0|br1"; !hasRule(p.acc.lan, want) {
+		t.Errorf("сегменты LAN не доведены до raw-половины: %v, ждали %q", p.acc.lan, want)
+	}
 	// Политика — на ОБЕ половины: один сервер, одна принадлежность. Абонент
 	// не должен маршрутизироваться по-разному в зависимости от того, каким
 	// портом подключился, а половины — это выбор порта, не свойство канала.
@@ -370,6 +389,52 @@ func TestSeam_ServerPolicyExitFlags(t *testing.T) {
 		roletest.Converge(t, p.role, seamCfg(), proxyrt.IntentEnabled) // ExposeToPolicies=false
 		if got := p.ndms.ExitOf("OpkgTun17"); got.IPGlobal || got.PermitAll || got.DefaultRoute {
 			t.Fatalf("выход объявлен без тумблера: %+v", got)
+		}
+	})
+}
+
+// Security-level половин: `public` при ExposeToPolicies достаётся ТОЛЬКО
+// WG-половине — она и есть выход политик (permit-all от policy_exit).
+// Raw-половина остаётся `private` при любом тумблере: она не выход, `ip
+// global`/permit ей не объявляются, а FORWARD ACCEPT снят — на 5.01
+// `_NDM_SL_FORWARD` пропускает NEW только private→public, и public raw-порт
+// остался бы без интернета (стенд 2026-09-05, решение владельца 2026-09-06).
+//
+// Мутация «raw тоже public» красит второй ассерт каждого подслучая.
+func TestSeam_ServerHalvesSecurityLevels(t *testing.T) {
+	levels := func(t *testing.T, p seamParts) (wg, raw string) {
+		t.Helper()
+		fwg, ok := p.ndms.Snapshot("OpkgTun17")
+		if !ok {
+			t.Fatal("WG-половина не создана")
+		}
+		fraw, ok := p.ndms.Snapshot("OpkgTun19")
+		if !ok {
+			t.Fatal("raw-половина не создана")
+		}
+		return fwg.SecurityLevel, fraw.SecurityLevel
+	}
+
+	t.Run("тумблер включён: public только у WG-половины", func(t *testing.T) {
+		p := newSeamParts(t)
+		cfg := seamCfg()
+		cfg.ExposeToPolicies = true
+		roletest.Converge(t, p.role, cfg, proxyrt.IntentEnabled)
+		wg, raw := levels(t, p)
+		if wg != "public" {
+			t.Errorf("WG-половина: security-level %q, ждали public — это выход политик", wg)
+		}
+		if raw != "private" {
+			t.Errorf("raw-половина: security-level %q, ждали private — public-порт без "+
+				"permit-all и без FORWARD ACCEPT оставляет абонента без интернета", raw)
+		}
+	})
+
+	t.Run("тумблер выключен: private обе", func(t *testing.T) {
+		p := newSeamParts(t)
+		roletest.Converge(t, p.role, seamCfg(), proxyrt.IntentEnabled)
+		if wg, raw := levels(t, p); wg != "private" || raw != "private" {
+			t.Fatalf("без тумблера уровни = wg:%q raw:%q, ждали private/private", wg, raw)
 		}
 	})
 }
@@ -469,4 +534,49 @@ func TestSeam_PermitAllResidueRemovedWhileDisabledAndExposed(t *testing.T) {
 			t.Errorf("permit-all остался на %s у выключенного инстанса с тумблером", name)
 		}
 	}
+}
+
+// ── H7 ──────────────────────────────────────────────────────────
+
+// Чужие привязки ACL доезжают до состояния ресурса ndms_access — того самого,
+// что читает API, — а `_WEBADMIN_<iface>` в них не попадает: его снимает
+// ресурс permit_absent, и «чужим» он не является.
+//
+// Проверяется результат Converge, а не поле ресурса: именно из res.States
+// состояние уходит наружу, и пин по внутренностям пропустил бы потерю Attrs
+// по дороге через план.
+func TestSeam_NDMSAccessReportsForeignACL(t *testing.T) {
+	p := newSeamParts(t)
+	// Обе половины несут своё: сервер один, и чужой список на raw-половине
+	// открывает абоненту ровно тот же LAN.
+	p.acc.foreign = map[string][]string{
+		"OpkgTun17": {"GUEST_ACL", "_WEBADMIN_OpkgTun17"},
+		"OpkgTun19": {"OTHER_ACL"},
+	}
+	res := roletest.Converge(t, p.role, seamCfg(), proxyrt.IntentEnabled)
+	if got := foreignACL(res); got != "OpkgTun17:GUEST_ACL,OpkgTun19:OTHER_ACL" {
+		t.Fatalf("foreign-acl = %q, ждали OpkgTun17:GUEST_ACL,OpkgTun19:OTHER_ACL (_WEBADMIN_ отфильтрован)\n%v", got, res.States)
+	}
+}
+
+// Отказ чтения по одной половине не роняет наблюдение ресурса: чужие привязки
+// — сведения для показа, и потерять из-за них весь прогон нельзя. Половина, по
+// которой не ответили, просто не попадает в ключ.
+func TestSeam_NDMSAccessSurvivesForeignACLReadError(t *testing.T) {
+	p := newSeamParts(t)
+	p.acc.foreign = map[string][]string{"OpkgTun19": {"OTHER_ACL"}}
+	p.acc.foreignErr = map[string]error{"OpkgTun17": errors.New("RCI недоступен")}
+	res := roletest.Converge(t, p.role, seamCfg(), proxyrt.IntentEnabled)
+	if got := foreignACL(res); got != "OpkgTun19:OTHER_ACL" {
+		t.Fatalf("foreign-acl = %q, ждали OpkgTun19:OTHER_ACL\n%v", got, res.States)
+	}
+}
+
+func foreignACL(res proxyrt.Result) string {
+	for _, st := range res.States {
+		if st.ID == roles.RNdmsAccess {
+			return st.Attrs["foreign-acl"]
+		}
+	}
+	return ""
 }

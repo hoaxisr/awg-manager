@@ -107,6 +107,10 @@ func (a *nilAccess) ApplyLANSegmentsToInterface(_ context.Context, iface, addr, 
 	return nil
 }
 
+func (a *nilAccess) ForeignAccessGroups(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
 type nilIngress struct{ calls int }
 
 func (n *nilIngress) EnsureWdttServerIngressRefs(context.Context, string, string) error {
@@ -137,11 +141,10 @@ func newRoleCmds(t *testing.T) (*Role, *nilAccess, *nilIngress, memQuery, *count
 		Instance: "default", Binary: "/opt/bin/wdtt-server",
 		Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
 		Cmds: cmds, Query: q, IPT: nilIPT{}, FW: nilFW{},
-		RunHook:       func(context.Context, string, string) error { return nil },
-		EnableForward: func() error { return nil },
-		IfaceExists:   func(string) bool { return true },
-		KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
-		Access:        acc, Ingress: ing, Now: time.Now,
+		RunHook:     func(context.Context, string, string) error { return nil },
+		IfaceExists: func(string) bool { return true },
+		KernelWAN:   func(_ context.Context, n string) (string, error) { return "eth3", nil },
+		Access:      acc, Ingress: ing, Now: time.Now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -185,8 +188,11 @@ func TestServerChainOrder(t *testing.T) {
 		"tun_handoff:wg", "tun_handoff:raw",
 		"ndms_address:wg", "ndms_admin_state:wg",
 		"ndms_address:raw", "ndms_admin_state:raw",
-		"ndms_access", "nat_rules", "forward_rules", "mss_clamp",
-		"netfilter_hook", "ingress_refs", "input_port", "permit_absent",
+		// netfilter_hook ДО forward_rules: снос легаси FORWARD должен идти
+		// после перезаписи файла хука, иначе прогон старого хука вернёт
+		// правило уже после его латча в reaped.
+		"ndms_access", "nat_rules", "netfilter_hook", "forward_rules",
+		"mss_clamp", "ingress_refs", "input_port", "permit_absent",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("состав: %v", got)
@@ -375,8 +381,8 @@ func TestServerDisabledLedger(t *testing.T) {
 		"ndms_interface:wg", "ndms_interface:raw", "process",
 		"ndms_address:wg", "ndms_admin_state:wg",
 		"ndms_address:raw", "ndms_admin_state:raw",
-		"ndms_access", "nat_rules", "forward_rules", "mss_clamp",
-		"netfilter_hook", "ingress_refs", "input_port", "permit_absent",
+		"ndms_access", "nat_rules", "netfilter_hook", "forward_rules",
+		"mss_clamp", "ingress_refs", "input_port", "permit_absent",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("disabled-состав: %v, ожидали %v", got, want)
@@ -522,11 +528,10 @@ func newServerParts(t *testing.T) serverParts {
 		Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
 		Cmds: p.cmds, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
 		IPT: p.ipt, FW: p.fw,
-		RunHook:       func(context.Context, string, string) error { return nil },
-		EnableForward: func() error { return nil },
-		IfaceExists:   func(string) bool { return true },
-		KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
-		Access:        p.acc, Ingress: p.ing, Now: time.Now,
+		RunHook:     func(context.Context, string, string) error { return nil },
+		IfaceExists: func(string) bool { return true },
+		KernelWAN:   func(_ context.Context, n string) (string, error) { return "eth3", nil },
+		Access:      p.acc, Ingress: p.ing, Now: time.Now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -567,10 +572,13 @@ func byID(res []proxyrt.Resource) map[proxyrt.ResourceID]proxyrt.Resource {
 }
 
 func TestServerDisabledEmptiesNetfilterDesired(t *testing.T) {
-	// Выключение сервера обязано СНИМАТЬ MASQUERADE, FORWARD-accept и
-	// netfilter.d-хук — и снимать их переходом ЖЕЛАЕМОГО в пустое, а не
-	// рукописным списком (G1). Страж на желаемое, а не на присутствие
-	// ресурса в списке: потеря SetDesired(nil) состав ведомости не меняет.
+	// Выключение сервера обязано СНИМАТЬ MASQUERADE и netfilter.d-хук — и
+	// снимать их переходом ЖЕЛАЕМОГО в пустое, а не рукописным списком (G1).
+	// Страж на желаемое, а не на присутствие ресурса в списке: потеря
+	// SetDesired(nil) состав ведомости не меняет.
+	//
+	// FORWARD-accept тут больше нет: его нет и у ВКЛЮЧЁННОГО сервера
+	// (TestServerNoForwardAcceptForRawHalf).
 	p := newServerParts(t)
 	cfg := srvCfg()
 
@@ -578,7 +586,7 @@ func TestServerDisabledEmptiesNetfilterDesired(t *testing.T) {
 	for _, id := range []proxyrt.ResourceID{roles.RNatRules, roles.RForwardRules, roles.RNetfilterHook} {
 		drive(t, res[id])
 	}
-	if len(p.ipt.rules("nat", "POSTROUTING")) == 0 || len(p.ipt.rules("filter", "FORWARD")) == 0 {
+	if len(p.ipt.rules("nat", "POSTROUTING")) == 0 {
 		t.Fatalf("включённый сервер не поставил правила: %v", p.ipt.chains)
 	}
 	if _, err := os.Stat(p.hookPath); err != nil {
@@ -592,11 +600,145 @@ func TestServerDisabledEmptiesNetfilterDesired(t *testing.T) {
 	if got := p.ipt.rules("nat", "POSTROUTING"); len(got) != 0 {
 		t.Fatalf("выключенный сервер оставил MASQUERADE: %v", got)
 	}
-	if got := p.ipt.rules("filter", "FORWARD"); len(got) != 0 {
-		t.Fatalf("выключенный сервер оставил FORWARD-accept: %v", got)
-	}
 	if _, err := os.Stat(p.hookPath); !os.IsNotExist(err) {
 		t.Fatalf("выключенный сервер оставил netfilter.d-хук: %v", err)
+	}
+}
+
+// Безусловного FORWARD accept у роли нет НИГДЕ: ни в ресурсе forward_rules,
+// ни в netfilter.d-хуке. Правила `-I FORWARD 1 -i opkgtun19 -j ACCEPT` и `-o`
+// вставали перед `_NDM_ACL_IN` и security-level, и raw-абонент видел весь
+// LAN, а выбор сегментов и ACL были бессильны (решение владельца 2026-09-05).
+//
+// Пин держит ОБА места: ресурс проверяется по живой цепочке модели, хук — по
+// телу файла. Ожидание — отсутствие, поэтому цепочка проверяется целиком
+// (любое правило в filter/FORWARD — уже отказ), а хук — по подстроке ACCEPT
+// с именем raw-половины в любой из двух форм.
+func TestServerNoForwardAcceptForRawHalf(t *testing.T) {
+	p := newServerParts(t)
+	cfg := srvCfg()
+
+	res := byID(p.role.Resources(proxyrt.IntentEnabled, cfg, proxyrt.NewObservations()))
+	for _, id := range []proxyrt.ResourceID{roles.RNatRules, roles.RForwardRules, roles.RNetfilterHook} {
+		drive(t, res[id])
+	}
+
+	if got := p.ipt.rules("filter", "FORWARD"); len(got) != 0 {
+		t.Errorf("включённый сервер поставил FORWARD-правила: %v", got)
+	}
+	body, err := os.ReadFile(p.hookPath)
+	if err != nil {
+		t.Fatalf("хук не написан: %v", err)
+	}
+	for _, bad := range []string{`-i "opkgtun19" -j ACCEPT`, `-o "opkgtun19" -j ACCEPT`} {
+		if strings.Contains(string(body), bad) {
+			t.Errorf("хук несёт FORWARD accept %q:\n%s", bad, body)
+		}
+	}
+}
+
+// Правило ПРЕЖНЕЙ версии на живом роутере снимается адресно. Апгрейд не
+// перезаписывает таблицы: `-i opkgtun19 -j ACCEPT` метки не несёт (усыновление
+// по метке слепо), в желаемом этого запуска его не было (разность желаемых
+// пуста), стартовая уборка щадит объявленные интерфейсы — значит без
+// именного сноса оно живёт до перезаписи таблиц движком ndm, а всё это время
+// raw-абонент видит весь LAN мимо ACL.
+//
+// Модель ЗАСЕЯНА обеими формами: пин на факт в таблице, а не на вызов.
+func TestServerSweepsLegacyForwardAcceptOfPreviousVersion(t *testing.T) {
+	const in, out = "-i opkgtun19 -j ACCEPT", "-o opkgtun19 -j ACCEPT"
+	p := newServerParts(t)
+	p.ipt.chains["filter/FORWARD"] = []string{in, out, "-i br0 -j ACCEPT"}
+
+	res := byID(p.role.Resources(proxyrt.IntentEnabled, srvCfg(), proxyrt.NewObservations()))
+	drive(t, res[roles.RForwardRules])
+
+	for _, gone := range []string{in, out} {
+		if slices.Contains(p.ipt.rules("filter", "FORWARD"), gone) {
+			t.Errorf("остаток прежней версии %q не снят: %v", gone, p.ipt.rules("filter", "FORWARD"))
+		}
+	}
+	// Чужое правило в той же цепочке — не наше дело.
+	if !slices.Contains(p.ipt.rules("filter", "FORWARD"), "-i br0 -j ACCEPT") {
+		t.Errorf("снесено чужое правило: %v", p.ipt.rules("filter", "FORWARD"))
+	}
+}
+
+// Тот же снос — и у ВЫКЛЮЧЕННОГО инстанса: апгрейд с выключенным сервером
+// иначе оставляет правило прежней версии жить до перезаписи таблиц ndm, а
+// при общем пуле OpkgTun переиспользованный индекс делает его чужим ACCEPT'ом.
+func TestServerSweepsLegacyForwardAcceptWhenDisabled(t *testing.T) {
+	const in, out = "-i opkgtun19 -j ACCEPT", "-o opkgtun19 -j ACCEPT"
+	p := newServerParts(t)
+	p.ipt.chains["filter/FORWARD"] = []string{in, out, "-i br0 -j ACCEPT"}
+	res := byID(p.role.Resources(proxyrt.IntentDisabled, srvCfg(), proxyrt.NewObservations()))
+	drive(t, res[roles.RForwardRules])
+	for _, gone := range []string{in, out} {
+		if slices.Contains(p.ipt.rules("filter", "FORWARD"), gone) {
+			t.Errorf("остаток прежней версии %q не снят у выключенного сервера: %v", gone, p.ipt.rules("filter", "FORWARD"))
+		}
+	}
+	if !slices.Contains(p.ipt.rules("filter", "FORWARD"), "-i br0 -j ACCEPT") {
+		t.Errorf("снесено чужое правило: %v", p.ipt.rules("filter", "FORWARD"))
+	}
+}
+
+// Порядок ведомости: файл хука переписывается ДО сноса легаси-правила.
+// Сценарий, который иначе теряется: на диске лежит хук ПРЕЖНЕЙ версии, он и
+// возвращает `-I FORWARD 1 -i opkgtun19 -j ACCEPT`, а движок ndm дёргает
+// netfilter.d по событиям, которые порождает тот же проход (создание
+// OpkgTun, адрес, admin up — всё выше по ведомости). Снеси легаси раньше
+// перезаписи файла — и прогон старого хука вернёт правило уже после того,
+// как ключ попал в reaped: Doom его больше не поднимет, и остаток доживёт до
+// рестарта демона.
+//
+// Модель: после КАЖДОГО ресурса «стреляет» ndm — прогоняется тот файл хука,
+// что лежит на диске в этот момент. Ресурсы доводятся в порядке ведомости,
+// поэтому пин красный ровно тогда, когда forward_rules объявлен раньше
+// netfilter_hook.
+func TestServerHookRewrittenBeforeLegacySweep(t *testing.T) {
+	const in, out = "-i opkgtun19 -j ACCEPT", "-o opkgtun19 -j ACCEPT"
+	p := newServerParts(t)
+	// Хук прежней версии: в нём те самые две строки FORWARD.
+	oldHook := "#!/bin/sh\ncase \"$table\" in\nfilter)\n" +
+		"  run -C FORWARD " + in + " || run -I FORWARD 1 " + in + "\n" +
+		"  run -C FORWARD " + out + " || run -I FORWARD 1 " + out + "\n;;\nesac\n"
+	if err := os.WriteFile(p.hookPath, []byte(oldHook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p.ipt.chains["filter/FORWARD"] = []string{in, out}
+
+	// ndm дёрнул netfilter.d: правила ставит тот файл, что лежит на диске.
+	fire := func() {
+		body, err := os.ReadFile(p.hookPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, rule := range []string{in, out} {
+			if strings.Contains(string(body), "-I FORWARD 1 "+rule) &&
+				!slices.Contains(p.ipt.rules("filter", "FORWARD"), rule) {
+				p.ipt.chains["filter/FORWARD"] = append(
+					[]string{rule}, p.ipt.chains["filter/FORWARD"]...)
+			}
+		}
+	}
+
+	netfilter := map[proxyrt.ResourceID]bool{
+		roles.RNatRules: true, roles.RForwardRules: true, roles.RNetfilterHook: true,
+	}
+	for _, res := range p.role.Resources(proxyrt.IntentEnabled, srvCfg(), proxyrt.NewObservations()) {
+		if !netfilter[res.ID()] {
+			continue
+		}
+		drive(t, res)
+		fire()
+	}
+
+	for _, gone := range []string{in, out} {
+		if slices.Contains(p.ipt.rules("filter", "FORWARD"), gone) {
+			t.Errorf("хук прежней версии вернул %q после сноса: %v",
+				gone, p.ipt.rules("filter", "FORWARD"))
+		}
 	}
 }
 
@@ -668,11 +810,10 @@ func TestNewPanicsOnNilAccessOrIngress(t *testing.T) {
 			Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
 			Cmds: &countCmds{}, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
 			IPT: nilIPT{}, FW: nilFW{},
-			RunHook:       func(context.Context, string, string) error { return nil },
-			EnableForward: func() error { return nil },
-			IfaceExists:   func(string) bool { return true },
-			KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
-			Access:        &nilAccess{}, Ingress: &nilIngress{}, Now: time.Now,
+			RunHook:     func(context.Context, string, string) error { return nil },
+			IfaceExists: func(string) bool { return true },
+			KernelWAN:   func(_ context.Context, n string) (string, error) { return "eth3", nil },
+			Access:      &nilAccess{}, Ingress: &nilIngress{}, Now: time.Now,
 		}
 	}
 	for name, mutate := range map[string]func(*Deps){
@@ -711,11 +852,10 @@ func TestResetStartBackoffReachesProcess(t *testing.T) {
 		Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: failGate{},
 		Cmds: &countCmds{}, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
 		IPT: nilIPT{}, FW: nilFW{},
-		RunHook:       func(context.Context, string, string) error { return nil },
-		EnableForward: func() error { return nil },
-		IfaceExists:   func(string) bool { return true },
-		KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
-		Access:        &nilAccess{}, Ingress: &nilIngress{}, Now: time.Now,
+		RunHook:     func(context.Context, string, string) error { return nil },
+		IfaceExists: func(string) bool { return true },
+		KernelWAN:   func(_ context.Context, n string) (string, error) { return "eth3", nil },
+		Access:      &nilAccess{}, Ingress: &nilIngress{}, Now: time.Now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -789,13 +929,8 @@ func TestServerNatModeNoneKeepsDNSAndHook(t *testing.T) {
 	if !strings.Contains(string(body), `-i "opkgtun17" -p udp --dport 53 -j DNAT --to-destination 10.66.0.1:53`) {
 		t.Errorf("хук не несёт перехват :53:\n%s", body)
 	}
-	// FORWARD в хуке не пинил никто (дыра нашлась ревью): без него перезапись
-	// таблиц ndm оставляет форвардинг сервера до ближайшей реконсиляции.
-	for _, want := range []string{`-i "opkgtun19" -j ACCEPT`, `-o "opkgtun19" -j ACCEPT`} {
-		if !strings.Contains(string(body), want) {
-			t.Errorf("хук не несёт FORWARD %q:\n%s", want, body)
-		}
-	}
+	// FORWARD-accept хук больше не несёт — пин на отсутствие держит
+	// TestServerNoForwardAcceptForRawHalf.
 	if strings.Contains(string(body), "MASQUERADE") {
 		t.Errorf("хук несёт маскарад при none:\n%s", body)
 	}
@@ -849,13 +984,13 @@ func TestNDMSAccessFingerprintCoversRawHalf(t *testing.T) {
 	acc := &nilAccess{}
 	a := NewNDMSAccess(roles.RNdmsAccess, acc)
 	a.SetDesired("OpkgTun17", "OpkgTun19", "full", nil, "P1",
-		wgGatewayAddr, wgGatewayMask, nil, true)
+		wgGatewayAddr, wgGatewayMask, rawGatewayAddr, rawGatewayMask, nil, true)
 	drive(t, a)
 	before := len(acc.applied)
 
 	// Меняется ТОЛЬКО имя raw-половины.
 	a.SetDesired("OpkgTun17", "OpkgTun21", "full", nil, "P1",
-		wgGatewayAddr, wgGatewayMask, nil, true)
+		wgGatewayAddr, wgGatewayMask, rawGatewayAddr, rawGatewayMask, nil, true)
 	obs, err := a.Observe(context.Background())
 	if err != nil {
 		t.Fatal(err)

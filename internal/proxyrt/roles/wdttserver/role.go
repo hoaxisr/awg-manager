@@ -50,18 +50,17 @@ var errTypeMismatch = errors.New("конфигурация не WdttServerConfig
 
 // Deps — зависимости роли (G4: всё в конструкторе).
 type Deps struct {
-	Instance      string
-	Binary        string
-	PinnedSHA256  string
-	Link          procres.TunLink
-	Runner        procres.ProcRunner
-	Gate          procres.BinaryGate
-	Cmds          ndmsres.Commands
-	Query         ndmsres.Query
-	IPT           netres.IPT
-	FW            netres.FW
-	RunHook       func(ctx context.Context, path, table string) error
-	EnableForward func() error
+	Instance     string
+	Binary       string
+	PinnedSHA256 string
+	Link         procres.TunLink
+	Runner       procres.ProcRunner
+	Gate         procres.BinaryGate
+	Cmds         ndmsres.Commands
+	Query        ndmsres.Query
+	IPT          netres.IPT
+	FW           netres.FW
+	RunHook      func(ctx context.Context, path, table string) error
 	// IfaceExists — kernel-интерфейс жив (InterfaceChecker.InterfaceExists):
 	// адрес NDMS ставится только после появления netdev от процесса — NDMS-
 	// адрес без kernel-адреса крутит nginx-reload вечно (PR #544).
@@ -142,7 +141,7 @@ func New(d Deps) (*Role, error) {
 	r.exit = ndmsres.NewPolicyExit(roles.RPolicyExit, d.Cmds, d.Query)
 	r.access = NewNDMSAccess(roles.RNdmsAccess, d.Access)
 	r.permitAbsent = ndmsres.NewPermitAbsent(roles.RPermitAbsent, d.Cmds, d.Query)
-	r.nat = netres.NewRuleSet(roles.RNatRules, d.IPT, nil)
+	r.nat = netres.NewRuleSet(roles.RNatRules, d.IPT)
 	// Маскарад — единственное наше помеченное правило, и ставится он не во
 	// всех режимах. Владение им принадлежит метке, а не текущему желаемому:
 	// без постоянной области усыновления правило, поставленное прошлым
@@ -152,7 +151,7 @@ func New(d Deps) (*Role, error) {
 	// отбивает гейт PROXY_KIND_SINGLETON (api/proxy_instances.go), иначе
 	// выключенный сносил бы маскарад живого.
 	r.nat.AdoptMarked("nat", "POSTROUTING", netres.Comment)
-	r.fwd = netres.NewRuleSet(roles.RForwardRules, d.IPT, d.EnableForward)
+	r.fwd = netres.NewRuleSet(roles.RForwardRules, d.IPT)
 	r.mss = netres.NewMSSClamp(roles.RMssClamp, d.IPT)
 	r.hook = netres.NewHook(roles.RNetfilterHook, netres.HookPath, d.RunHook)
 	r.ingress = NewIngressRefs(roles.RIngressRefs, d.Ingress)
@@ -189,8 +188,13 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	}
 	r.ifaceWG.SetDesired(ndmsres.IfaceDesired{Present: enabled, Name: c.NdmsIface,
 		Description: roles.LabelServerWG, SecurityLevel: level, MTU: wgMTU})
+	// Уровень `public` при ExposeToPolicies получает только WG-половина: в
+	// политики выходит она (permit-all от policy_exit). Raw-половина — обычный
+	// private-клиент: интернет через security-level, LAN по сегментам
+	// (FORWARD ACCEPT снят, стенд 2026-09-05: `_NDM_SL_FORWARD` пропускает
+	// только private→public). Решение владельца 2026-09-06.
 	r.ifaceRaw.SetDesired(ndmsres.IfaceDesired{Present: enabled, Name: c.RawNdmsIface,
-		Description: roles.LabelServerRaw, SecurityLevel: level, MTU: rawMTU})
+		Description: roles.LabelServerRaw, SecurityLevel: "private", MTU: rawMTU})
 
 	r.addrWG.SetDesired(r.addrDesired(enabled, c.NdmsIface, c.WgIface, wgGatewayAddr, wgGatewayMask, wgMTU))
 	r.adminWG.SetDesired(ndmsres.AdminDesired{Name: c.NdmsIface, Up: enabled})
@@ -201,7 +205,7 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 		SecurityLevel: "public", IPGlobal: true, PermitAllACL: true,
 		DefaultCandidacy: false}) // сервер — вход, кандидатуры нет
 	r.access.SetDesired(c.NdmsIface, c.RawNdmsIface, c.NatMode, c.StaticNATList(), c.Policy,
-		wgGatewayAddr, wgGatewayMask, c.LanSegments, enabled)
+		wgGatewayAddr, wgGatewayMask, rawGatewayAddr, rawGatewayMask, c.LanSegments, enabled)
 	// permit-all на половинах сервера быть не должно: стенд 2026-09-02 —
 	// он обнуляет выбор LAN-сегментов. Исключение — WG-половина при
 	// ExposeToPolicies: там разрешение ставит policy_exit по замыслу.
@@ -219,7 +223,16 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 
 	if enabled {
 		r.nat.SetDesired(r.natGroups(c))
-		r.fwd.SetDesired(netres.StaticGroups(netres.ForwardGroups([]string{c.RawIface})))
+		// FORWARD-правил у роли нет и во включённом состоянии: безусловный
+		// ACCEPT по `-i`/`-o` raw-половины стоял ПЕРЕД `_NDM_ACL_IN` и
+		// security-level и открывал raw-абоненту весь LAN мимо выбранных
+		// сегментов (решение владельца 2026-09-05). Доступ решают
+		// security-level половины и LAN-ACL обеих половин (access.go);
+		// интернет raw-абонентам даёт сам NDMS (`_NDM_SL_PRIVATE` — при
+		// security-level private; raw-половина всегда private, Б2), обратный
+		// трафик — RELATED,ESTABLISHED первым правилом FORWARD (стенд
+		// 2026-09-05).
+		r.fwd.SetDesired(nil)
 		r.mss.SetDesired([]string{rawPeerCIDR})
 		r.hook.SetDesired(r.hookGroups(c))
 		r.input.SetDesired(inputPorts(c))
@@ -230,6 +243,24 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 		r.mss.SetDesired(nil)
 		r.hook.SetDesired(nil)
 		r.input.SetDesired(nil)
+	}
+	// Легаси прежней версии: FORWARD ACCEPT raw-половины стоял раньше ACL
+	// и security-level; снимаем адресно, иначе живёт до перезаписи таблиц
+	// ndm. Разность желаемых его не даёт (за этот запуск демона в желаемом
+	// его не было), усыновления-по-метке ему не досталось — правило метки не
+	// несёт, — а стартовая уборка щадит объявленные интерфейсы. Форма — ровно
+	// та, что ставила прежняя версия. Pos не участвует ни в Key, ни в формах
+	// -C/-D; оставлен как форма прежней версии — правило именно так и
+	// вставлялось.
+	//
+	// Снимаем и у ВЫКЛЮЧЕННОГО: при апгрейде с выключенным инстансом правило
+	// прежней версии иначе живёт до перезаписи таблиц ndm, а при общем пуле
+	// OpkgTun переиспользованный индекс делает его чужим ACCEPT'ом.
+	if c.RawIface != "" {
+		r.fwd.Doom(
+			netres.Rule{Chain: "FORWARD", Pos: 1, Spec: []string{"-i", c.RawIface, "-j", "ACCEPT"}},
+			netres.Rule{Chain: "FORWARD", Pos: 1, Spec: []string{"-o", c.RawIface, "-j", "ACCEPT"}},
+		)
 	}
 	r.ingress.SetDesired(c.WgIface, c.RawIface, enabled)
 
@@ -246,7 +277,15 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	if enabled && c.ExposeToPolicies {
 		res = append(res, r.exit)
 	}
-	res = append(res, r.access, r.nat, r.fwd, r.mss, r.hook, r.ingress, r.input)
+	// netfilter_hook — ПЕРЕД forward_rules: хук прежней версии, лежащий на
+	// диске, сам возвращает `-I FORWARD 1 -i opkgtunN -j ACCEPT`, а движок ndm
+	// дёргает netfilter.d по событиям, которые порождает этот же проход
+	// (создание OpkgTun, адрес, admin up — всё выше по списку). Снеси легаси
+	// раньше перезаписи файла — и прогон старого хука вернёт правило уже
+	// после того, как ключ попал в `reaped`, то есть навсегда до рестарта
+	// демона. Обратной зависимости нет: хук наблюдает свой файл и тем же
+	// провайдером, что nat_rules, и о forward_rules/mss_clamp ничего не знает.
+	res = append(res, r.access, r.nat, r.hook, r.fwd, r.mss, r.ingress, r.input)
 	// permit_absent — В ХВОСТЕ: миграционный ресурс не гейтит правила. Первый
 	// unknown/failed в цепочке блокирует всё ниже (proxyrt/plan.go:11-15), а
 	// Observe здесь тянет running-config роутера — выше по списку
@@ -279,7 +318,7 @@ func (r *Role) addrDesired(enabled bool, ndmsName, kernel, addr, mask string, mt
 // ИНВАРИАНТ: режим NAT управляет ровно одним — подменой адреса источника.
 // Пользователь выбирает, как пакеты абонента выглядят на дальней стороне, а
 // не «насколько сервер работает». Поэтому перехват :53, метка политики,
-// FORWARD, MSS и netfilter-хук от режима не зависят: ни одно из них не про
+// MSS и netfilter-хук от режима не зависят: ни одно из них не про
 // адрес источника. none — «без подмены», и режим осмыслен сам по себе: адрес
 // абонента виден в LAN, вход sing-box работает (перехват в PREROUTING идёт до
 // всякого NAT).
@@ -342,8 +381,9 @@ func (r *Role) natGroups(c roles.WdttServerConfig) netres.GroupProvider {
 	}
 }
 
-// hookGroups — хук несёт ТЕ ЖЕ правила: FORWARD + DNS (метку политики даёт
-// NDMS через ndms_access, см. access.go).
+// hookGroups — хук несёт ТЕ ЖЕ правила, что и ресурсы: MASQUERADE + DNS
+// (метку политики даёт NDMS через ndms_access, см. access.go; FORWARD accept
+// снят — доступ raw-абонента в LAN решают security-level и LAN-ACL).
 func (r *Role) hookGroups(c roles.WdttServerConfig) netres.GroupProvider {
 	nat := r.natGroups(c)
 	return func(ctx context.Context) ([]netres.Group, error) {
@@ -354,7 +394,7 @@ func (r *Role) hookGroups(c roles.WdttServerConfig) netres.GroupProvider {
 		if len(groups) == 0 {
 			return nil, nil
 		}
-		return append(netres.ForwardGroups([]string{c.RawIface}), groups...), nil
+		return groups, nil
 	}
 }
 

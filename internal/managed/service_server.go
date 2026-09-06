@@ -183,7 +183,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateServerRequest
 	// applyLANSegmentsRaw гарантирует, что невалидный запрос (неизвестный
 	// сегмент, недоступный каталог) не начнёт разрушать рабочий ACL.
 	if changes.addressChanged && len(server.LANSegments) > 0 {
-		if err := s.applyLANSegmentsRaw(ctx, server.InterfaceName, req.Address, mask, server.LANSegments); err != nil {
+		if err := s.applyLANSegmentsRaw(ctx, server.InterfaceName, req.Address, mask, server.LANSegments, true); err != nil {
 			// Роутер уже сменил подсеть (rciUpdateServer выше), но storage ещё
 			// хранит старую — рассинхрон до следующего успешного Update. Это
 			// fail-closed по доступу (ACL не пересобран → сегмент недоступен),
@@ -462,7 +462,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	}
 	if len(server.LANSegments) > 0 {
 		// Teardown-only ветка applyLANSegmentsRaw: unbind + remove ACL (best-effort).
-		_ = s.applyLANSegmentsRaw(ctx, server.InterfaceName, "", "", nil)
+		_ = s.applyLANSegmentsRaw(ctx, server.InterfaceName, "", "", nil, true)
 	}
 
 	// Bring down — best-effort. rciDeleteInterface implies down.
@@ -683,8 +683,17 @@ func resolveLANSegmentsPlan(addr, mask string, segments []string, bridges []quer
 // applyLANSegmentsRaw applies LAN-forward ACL rules to an interface without
 // touching storage. Builds the full plan FIRST (no RCI); only after a valid
 // plan does it destroy and rebuild, so a bad request never tears down working
-// access. Empty segments = teardown (unbind+remove best-effort, errors logged only).
-func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask string, segments []string) error {
+// access. После валидного плана и перед нашим unbind — снятие чужого permit-all
+// `_WEBADMIN_` (stripForeignPermitAll); в teardown-ветке — первым действием
+// после проверки `commandsWired`.
+// Empty segments = teardown (unbind+remove best-effort, errors logged only).
+//
+// stripForeign — снимать ли чужой `_WEBADMIN_`. Это свойство ВСТРОЕННОГО
+// сервера (managed): у wdtt тот же остаток снимает ресурс `permit_absent` со
+// своим гейтом исключения, и снятие здесь сорвало бы permit-all, который при
+// ExposeToPolicies ставит `policy_exit` по замыслу. Фасад
+// ApplyLANSegmentsToInterface поэтому зовёт с false.
+func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask string, segments []string, stripForeign bool) error {
 	acl := "AWGM_" + iface
 	commandsWired := s.commands != nil && s.commands.Interfaces != nil
 
@@ -693,6 +702,11 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 		// литералы Service / деградация) — прежнее поведение сохраняем.
 		if !commandsWired {
 			return nil
+		}
+		if stripForeign {
+			if err := s.stripForeignPermitAll(ctx, iface); err != nil {
+				s.appLog.Warn("lan-acl", iface, "permit-all не проверен/не снят: "+err.Error())
+			}
 		}
 		if err := s.commands.Interfaces.ACLUnbind(ctx, iface, acl); err != nil {
 			s.log.Debug("unbind ACL (teardown)", "error", err, "iface", iface)
@@ -718,6 +732,12 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 	plan, err := resolveLANSegmentsPlan(addr, mask, segments, bridges)
 	if err != nil {
 		return err // старый ACL не тронут
+	}
+
+	if stripForeign {
+		if err := s.stripForeignPermitAll(ctx, iface); err != nil {
+			s.appLog.Warn("lan-acl", iface, "permit-all не проверен/не снят: "+err.Error())
+		}
 	}
 
 	// Apply — destroy → rebuild. unbind/remove best-effort (ACL может ещё не
@@ -772,7 +792,7 @@ func (s *Service) SetLANSegments(ctx context.Context, id string, segments []stri
 	if !ok {
 		return fmt.Errorf("managed server not found: %s", id)
 	}
-	if err := s.applyLANSegmentsRaw(ctx, server.InterfaceName, server.Address, server.Mask, segments); err != nil {
+	if err := s.applyLANSegmentsRaw(ctx, server.InterfaceName, server.Address, server.Mask, segments, true); err != nil {
 		return err
 	}
 	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {

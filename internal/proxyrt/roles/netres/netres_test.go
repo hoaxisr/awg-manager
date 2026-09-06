@@ -20,6 +20,9 @@ type fakeIPT struct {
 	// кавыченная зафиксирована в этом же репозитории
 	// (internal/singbox/router/iptables.go:1328 и тест рядом с ним).
 	quoteComment bool
+	// calls — счётчик обращений к iptables: тесты, где важна ЦЕНА прохода
+	// (лишний exec на роутере — дефект, а не мелочь), считают их.
+	calls int
 }
 
 func newFakeIPT() *fakeIPT {
@@ -41,6 +44,7 @@ type iptTransient struct{}
 func (iptTransient) Error() string { return "iptables: resource temporarily unavailable" }
 
 func (f *fakeIPT) Run(_ context.Context, args ...string) error {
+	f.calls++
 	table := "filter"
 	if len(args) >= 2 && args[0] == "-t" {
 		table, args = args[1], args[2:]
@@ -105,6 +109,7 @@ func (f *fakeIPT) Run(_ context.Context, args ...string) error {
 }
 
 func (f *fakeIPT) Output(_ context.Context, args ...string) (string, error) {
+	f.calls++
 	// Понимает только `-t T -S CHAIN` — ровно то, что зовёт listMarked.
 	if len(args) != 4 || args[0] != "-t" || args[2] != "-S" {
 		return "", iptNotFound{}
@@ -171,31 +176,25 @@ func driveRS(t *testing.T, r proxyrt.Resource) {
 	t.Fatal("не сошлось за 5 проходов")
 }
 
-func TestForwardRulesConverge(t *testing.T) {
-	ipt := newFakeIPT()
-	forwarded := 0
-	rs := NewRuleSet("forward_rules", ipt, func() error { forwarded++; return nil })
-	rs.SetDesired(StaticGroups(ForwardGroups([]string{"opkgtun19"})))
-
-	driveRS(t, rs)
-
-	if !ipt.has("filter/FORWARD", "-i opkgtun19 -j ACCEPT") ||
-		!ipt.has("filter/FORWARD", "-o opkgtun19 -j ACCEPT") {
-		t.Fatalf("FORWARD не приведён: %v", ipt.chains["filter/FORWARD"])
+// forwardGroups — фикстура пары FORWARD accept по -i и -o. Прод-построителя
+// (netres.ForwardGroups) больше нет: безусловный ACCEPT raw-половины
+// WDTT-сервера снят (решение владельца 2026-09-05, роль wdttserver), а
+// движку RuleSet/Hook для проверки по-прежнему нужен набор правил в цепочке
+// filter/FORWARD — та же форма, что стояла на роутерах.
+func forwardGroups(ifaces []string) []Group {
+	var out []Group
+	for _, iface := range ifaces {
+		out = append(out, Group{Guard: iface, Rules: []Rule{
+			{Chain: "FORWARD", Pos: 1, Spec: []string{"-i", iface, "-j", "ACCEPT"}},
+			{Chain: "FORWARD", Pos: 1, Spec: []string{"-o", iface, "-j", "ACCEPT"}},
+		}})
 	}
-	if forwarded == 0 {
-		t.Fatal("ip_forward обязан включаться вместе с FORWARD")
-	}
-	// Идемпотентность: второй прогон пуст.
-	obs, _ := rs.Observe(context.Background())
-	if steps := rs.Plan(obs); len(steps) != 0 {
-		t.Fatalf("повторный план не пуст: %v", steps)
-	}
+	return out
 }
 
 func TestMasqFullForm(t *testing.T) {
 	ipt := newFakeIPT()
-	rs := NewRuleSet("nat_rules", ipt, nil)
+	rs := NewRuleSet("nat_rules", ipt)
 	rs.SetDesired(StaticGroups(MasqGroups([]MasqPlan{{Iface: "opkgtun19", CIDR: "10.70.0.0/16"}}, "full", "")))
 	driveRS(t, rs)
 	want := "-s 10.70.0.0/16 ! -o opkgtun19 -m comment --comment AWGM_WDTT -j MASQUERADE"
@@ -225,7 +224,7 @@ func TestMasqInternetOnlyPinsWAN(t *testing.T) {
 	// internet-only без разрешённого WAN деградировал в full-форму молча
 	// (H1, PR #697) — здесь это ошибка построителя.
 	ipt := newFakeIPT()
-	rs := NewRuleSet("nat_rules", ipt, nil)
+	rs := NewRuleSet("nat_rules", ipt)
 	rs.SetDesired(StaticGroups(MasqGroups([]MasqPlan{{Iface: "opkgtun19", CIDR: "10.70.0.0/16"}}, "internet-only", "eth3")))
 	driveRS(t, rs)
 	want := "-s 10.70.0.0/16 -o eth3 -m comment --comment AWGM_WDTT -j MASQUERADE"
@@ -248,11 +247,65 @@ func TestMasqInternetOnlyWithoutWANRefuses(t *testing.T) {
 	}
 
 	ipt := newFakeIPT()
-	rs := NewRuleSet("nat_rules", ipt, nil)
+	rs := NewRuleSet("nat_rules", ipt)
 	rs.SetDesired(StaticGroups(MasqGroups(plans, "internet-only", "")))
 	driveRS(t, rs)
 	if len(ipt.chains["nat/POSTROUTING"]) != 0 {
 		t.Fatalf("правил быть не должно: %v", ipt.chains["nat/POSTROUTING"])
+	}
+}
+
+// Doom — снос правила, которого в желаемом не было НИ РАЗУ: форма прежней
+// версии демона, метки не несущая. Ни разность желаемых, ни усыновление-по-
+// метке её не находят, поэтому единственный путь — назвать её адресно.
+func TestRuleSetDoomRemovesRuleWithoutDesired(t *testing.T) {
+	const in, out = "-i opkgtun19 -j ACCEPT", "-o opkgtun19 -j ACCEPT"
+	ipt := newFakeIPT()
+	ipt.chains["filter/FORWARD"] = []string{in, out, "-i br0 -j ACCEPT"}
+	rs := NewRuleSet("forward_rules", ipt)
+	// Желаемого нет вовсе — снос обязан идти от одной лишь ведомости.
+	for _, r := range forwardGroups([]string{"opkgtun19"})[0].Rules {
+		rs.Doom(r)
+	}
+
+	driveRS(t, rs)
+
+	if ipt.has("filter/FORWARD", in) || ipt.has("filter/FORWARD", out) {
+		t.Fatalf("правила прежней версии не сняты: %v", ipt.chains["filter/FORWARD"])
+	}
+	if !ipt.has("filter/FORWARD", "-i br0 -j ACCEPT") {
+		t.Fatalf("снесено чужое правило: %v", ipt.chains["filter/FORWARD"])
+	}
+	// Снятое уходит из ведомости: иначе RecheckAfter держал бы ресурс
+	// волатильным вечно, а sweep ходил бы в iptables каждый проход.
+	if len(rs.doomed) != 0 {
+		t.Fatalf("ведомость не опустела: %v", rs.doomed)
+	}
+
+	// Doom зовут из декларации роли, то есть КАЖДЫЙ проход. Снятое правило он
+	// воскрешать не имеет права: иначе ведомость никогда не пустеет, Observe
+	// держит по `iptables -C` на правило каждый тик, а ресурс остаётся
+	// волатильным (RecheckAfter 15 с) навсегда — тот самый exec-churn на
+	// роутере, который уже был дефектом (PR #734).
+	for _, r := range forwardGroups([]string{"opkgtun19"})[0].Rules {
+		rs.Doom(r)
+	}
+	if len(rs.doomed) != 0 {
+		t.Errorf("снятое правило воскрешено: %v", rs.doomed)
+	}
+	before := ipt.calls
+	obs, err := rs.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ipt.calls != before {
+		t.Errorf("проход после сноса ходит в iptables: %d вызовов", ipt.calls-before)
+	}
+	if steps := rs.Plan(obs); len(steps) != 0 {
+		t.Fatalf("снос отсутствующего правила породил шаги: %v", steps)
+	}
+	if d := rs.RecheckAfter(); d != 0 {
+		t.Errorf("ресурс остался волатильным: RecheckAfter=%v", d)
 	}
 }
 
@@ -288,8 +341,8 @@ func TestRuleSetSweepsOnDesiredChange(t *testing.T) {
 			// Ренумерация интерфейса: правила на старом имени — «класс утечки,
 			// который чинили в 2.17.0» (server.go:218-220 старого кода).
 			name:        "смена интерфейса FORWARD",
-			before:      ForwardGroups([]string{"opkgtun19"}),
-			after:       ForwardGroups([]string{"opkgtun20"}),
+			before:      forwardGroups([]string{"opkgtun19"}),
+			after:       forwardGroups([]string{"opkgtun20"}),
 			mustDie:     "-i opkgtun19 -j ACCEPT",
 			mustLiveKey: "filter/FORWARD",
 			want:        "-i opkgtun20 -j ACCEPT",
@@ -310,7 +363,7 @@ func TestRuleSetSweepsOnDesiredChange(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			ipt := newFakeIPT()
-			rs := NewRuleSet("nat_rules", ipt, nil)
+			rs := NewRuleSet("nat_rules", ipt)
 			rs.SetDesired(StaticGroups(c.before))
 			driveRS(t, rs)
 			rs.SetDesired(StaticGroups(c.after))
@@ -355,7 +408,7 @@ func TestRuleSetAdoptsStaleMarkedWithoutMarkedDesired(t *testing.T) {
 				stale,
 				"-s 192.168.1.0/24 -j MASQUERADE", // чужое, без метки
 			}
-			rs := NewRuleSet("nat_rules", ipt, nil) // свежий = рестарт демона
+			rs := NewRuleSet("nat_rules", ipt) // свежий = рестарт демона
 			rs.AdoptMarked("nat", "POSTROUTING", Comment)
 			rs.SetDesired(StaticGroups(tc.desired))
 			driveRS(t, rs)
@@ -383,7 +436,7 @@ func TestRuleSetAdoptsStaleMarkedAfterDaemonRestart(t *testing.T) {
 		"-s 192.168.1.0/24 -j MASQUERADE",
 	}
 	// СВЕЖИЙ RuleSet = рестарт демона: last/doomed пусты.
-	rs := NewRuleSet("nat_rules", ipt, nil)
+	rs := NewRuleSet("nat_rules", ipt)
 	rs.SetDesired(StaticGroups(MasqGroups(
 		[]MasqPlan{{Iface: "opkgtun19", CIDR: "10.70.0.0/16"}}, "internet-only", "eth3")))
 	driveRS(t, rs)
@@ -404,10 +457,10 @@ func TestRuleSetAdoptsStaleMarkedAfterDaemonRestart(t *testing.T) {
 func TestRuleSetSweepKeepsRuleOnFailedDelete(t *testing.T) {
 	// M-2: неудавшийся снос не выбрасывает правило из ведомости.
 	ipt := newFakeIPT()
-	rs := NewRuleSet("forward_rules", ipt, nil)
-	rs.SetDesired(StaticGroups(ForwardGroups([]string{"opkgtun19"})))
+	rs := NewRuleSet("forward_rules", ipt)
+	rs.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun19"})))
 	driveRS(t, rs)
-	rs.SetDesired(StaticGroups(ForwardGroups([]string{"opkgtun20"})))
+	rs.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun20"})))
 
 	ipt.failDelete = true
 	obs, err := rs.Observe(context.Background())
@@ -451,7 +504,7 @@ func TestMSSClampBuildsChain(t *testing.T) {
 func TestHookScriptRendersFromSameRules(t *testing.T) {
 	// Хук — ЧЕТВЁРТЫЙ рендер тех же Rule: если правило есть в декларации,
 	// его форма обязана дословно попасть в скрипт (одно описание — кандидат №3).
-	groups := append(ForwardGroups([]string{"opkgtun19"}),
+	groups := append(forwardGroups([]string{"opkgtun19"}),
 		MasqGroups([]MasqPlan{{Iface: "opkgtun19", CIDR: "10.70.0.0/16"}}, "full", "")...)
 	script := HookScript(groups)
 
@@ -492,7 +545,7 @@ func TestHookScriptCoversEveryTable(t *testing.T) {
 	// Диспетчер по $table — рукописный список; выпадение таблицы из него молча
 	// теряет ВСЕ её правила: движок ndm зовёт хук по каждой таблице отдельно,
 	// и ветки, которой нет, он не заметит.
-	groups := append(ForwardGroups([]string{"opkgtun19"}),
+	groups := append(forwardGroups([]string{"opkgtun19"}),
 		MasqGroups([]MasqPlan{{Iface: "opkgtun19", CIDR: "10.70.0.0/16"}}, "full", "")...)
 	groups = append(groups, Group{Guard: "opkgtun19", Rules: []Rule{
 		{Table: "mangle", Chain: "PREROUTING", Pos: 1,
@@ -522,7 +575,7 @@ func TestHookResourceWritesAndRefreshes(t *testing.T) {
 			ran = append(ran, table)
 			return nil
 		})
-	h.SetDesired(StaticGroups(ForwardGroups([]string{"opkgtun19"})))
+	h.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun19"})))
 
 	driveRS(t, h)
 
@@ -534,7 +587,7 @@ func TestHookResourceWritesAndRefreshes(t *testing.T) {
 	if steps := h.Plan(obs); len(steps) != 0 {
 		t.Fatalf("без изменений шагов нет: %v", steps)
 	}
-	h.SetDesired(StaticGroups(ForwardGroups([]string{"opkgtun20"})))
+	h.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun20"})))
 	obs, _ = h.Observe(context.Background())
 	if steps := h.Plan(obs); len(steps) == 0 {
 		t.Fatal("смена декларации обязана переписать хук")
@@ -545,7 +598,7 @@ func TestHookDisabledRemovesFile(t *testing.T) {
 	dir := t.TempDir()
 	h := NewHook("netfilter_hook", dir+"/61-awgm-wdtt-forward.sh",
 		func(context.Context, string, string) error { return nil })
-	h.SetDesired(StaticGroups(ForwardGroups([]string{"opkgtun19"})))
+	h.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun19"})))
 	driveRS(t, h)
 	h.SetDesired(nil) // disabled / NAT none: правил нет — хука нет
 	driveRS(t, h)
@@ -630,7 +683,7 @@ func TestRuleSetAdoptsMarkedWhenCommentQuoted(t *testing.T) {
 		// чужое правило без нашей метки — трогать нельзя.
 		"-s 192.168.1.0/24 -j MASQUERADE",
 	}
-	rs := NewRuleSet("nat_rules", ipt, nil) // свежий ресурс = рестарт демона
+	rs := NewRuleSet("nat_rules", ipt) // свежий ресурс = рестарт демона
 	rs.SetDesired(StaticGroups(MasqGroups(
 		[]MasqPlan{{Iface: "opkgtun19", CIDR: "10.70.0.0/16"}}, "internet-only", "eth3")))
 	driveRS(t, rs)
@@ -666,8 +719,8 @@ func TestSweepRemovesDuplicateUnmarkedRule(t *testing.T) {
 	// (entware_nat_linux.go:316).
 	const dup = "-i opkgtun19 -j ACCEPT"
 	ipt := newFakeIPT()
-	rs := NewRuleSet("forward_rules", ipt, nil)
-	rs.SetDesired(StaticGroups(ForwardGroups([]string{"opkgtun19"})))
+	rs := NewRuleSet("forward_rules", ipt)
+	rs.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun19"})))
 	driveRS(t, rs)
 	// Вторая копия того же правила рядом.
 	ipt.chains["filter/FORWARD"] = append([]string{dup}, ipt.chains["filter/FORWARD"]...)
@@ -675,7 +728,7 @@ func TestSweepRemovesDuplicateUnmarkedRule(t *testing.T) {
 		t.Fatalf("фикстура: копий обязано быть две: %v", ipt.chains["filter/FORWARD"])
 	}
 
-	rs.SetDesired(StaticGroups(ForwardGroups([]string{"opkgtun20"})))
+	rs.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun20"})))
 	driveRS(t, rs)
 
 	if n := ipt.count("filter/FORWARD", dup); n != 0 {
@@ -689,10 +742,10 @@ func TestSweepKeepsRuleOnTransientCheckFailure(t *testing.T) {
 	// переписывает таблицы 18-21 раз на flap, а `-w` берёт xtables-lock.
 	// M-2 закрыл только отказ `-D`.
 	ipt := newFakeIPT()
-	rs := NewRuleSet("forward_rules", ipt, nil)
-	rs.SetDesired(StaticGroups(ForwardGroups([]string{"opkgtun19"})))
+	rs := NewRuleSet("forward_rules", ipt)
+	rs.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun19"})))
 	driveRS(t, rs)
-	rs.SetDesired(StaticGroups(ForwardGroups([]string{"opkgtun20"})))
+	rs.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun20"})))
 
 	obs, err := rs.Observe(context.Background())
 	if err != nil {

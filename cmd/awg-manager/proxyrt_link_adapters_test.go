@@ -717,10 +717,12 @@ func TestProxyIngressEnsurerDropsStaleAndSaves(t *testing.T) {
 }
 
 type fakeNATAccess struct {
-	nat    []string
-	policy []string
-	lan    []string
-	wans   []string
+	nat     []string
+	policy  []string
+	lan     []string
+	wans    []string
+	foreign []string
+	asked   []string
 }
 
 func (f *fakeNATAccess) ApplyNATModeToInterface(_ context.Context, iface, mode string, prevWANs []string) ([]string, error) {
@@ -731,6 +733,11 @@ func (f *fakeNATAccess) ApplyNATModeToInterface(_ context.Context, iface, mode s
 func (f *fakeNATAccess) ApplyPolicyToInterface(_ context.Context, iface, policy string) error {
 	f.policy = append(f.policy, iface+"|"+policy)
 	return nil
+}
+
+func (f *fakeNATAccess) ForeignAccessGroups(_ context.Context, iface string) ([]string, error) {
+	f.asked = append(f.asked, iface)
+	return f.foreign, nil
 }
 
 func (f *fakeNATAccess) ApplyLANSegmentsToInterface(_ context.Context, iface, addr, mask string, segments []string) error {
@@ -768,6 +775,15 @@ func TestProxyAccessApplierPassesArgsAndWAN(t *testing.T) {
 	}
 	if len(svc.lan) != 1 || svc.lan[0] != "OpkgTun17|10.66.0.1|255.255.0.0|Home" {
 		t.Fatalf("аргументы LAN: %v", svc.lan)
+	}
+
+	svc.foreign = []string{"GUEST_ACL"}
+	names, err := a.ForeignAccessGroups(context.Background(), "OpkgTun17")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(names, ",") != "GUEST_ACL" || strings.Join(svc.asked, ",") != "OpkgTun17" {
+		t.Fatalf("чужие привязки: names=%v спрошено=%v", names, svc.asked)
 	}
 }
 
