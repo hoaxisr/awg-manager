@@ -905,10 +905,11 @@ func (a *app) wireProxyrt() {
 		PostSeed: proxyPostSeed(a.exitMirror, proxyIPT{}, cmds, a.ndmsQueries.Interfaces,
 			proxyKillBinaries(installSvc),
 			func() error { return instancestore.ClearCleanupPending(store) }),
-		AllocIndex:   allocIndex,
-		AllocListen:  allocListen,
-		ReleasePins:  proxyReleasePins(a.shutdownCtx, opkgAlloc, portAlloc, book, journal),
-		WaitDisabled: proxyWaitDisabled(states),
+		EnsureBinaries: proxyEnsureBinaries(installSvc, journal),
+		AllocIndex:     allocIndex,
+		AllocListen:    allocListen,
+		ReleasePins:    proxyReleasePins(a.shutdownCtx, opkgAlloc, portAlloc, book, journal),
+		WaitDisabled:   proxyWaitDisabled(states),
 		RecordsChanged: func(reason string) {
 			a.eventBus.PublishInvalidated(events.ResourceProxyInstances, reason)
 		},
@@ -994,11 +995,7 @@ func (a *app) wireProxyrt() {
 	// Ретрай зовут фазы боота и хуки wan-up через proxyRuntimeNudge; Boot
 	// идемпотентен — живые инстансы не пересоздаются — и сериализован сам с
 	// собой (manager.bootMu).
-	go func() {
-		if err := mgr.Boot(a.shutdownCtx); err != nil {
-			journal.Warn("boot", "proxy", "прокси-рантайм не поднялся: "+err.Error())
-		}
-	}()
+	go a.proxyRuntimeNudge("wiring", proxyrt.EventBoot)
 }
 
 // proxyRuntime — срез менеджера, нужный ретраю боота. Шов ради теста: иначе
@@ -1036,6 +1033,12 @@ func (a *app) proxyRuntimeNudge(reason string, kind proxyrt.EventKind) {
 		return
 	}
 	bootedNow, err := proxyNudge(a.shutdownCtx, a.proxyMgr, kind)
+	// F98: без бинарей по пину бут отложен, старое поколение живо —
+	// повторяем с backoff; WAN-up-нудж и ручная установка ускоряют.
+	armBinariesRetry(&a.binariesRetryOnce, err, func() {
+		go proxyBinariesRetry(a.shutdownCtx, a.proxyMgr, proxyBinariesRetryDelays, proxyWait,
+			func(reason string) { a.proxyRuntimeNudge(reason, proxyrt.EventBoot) })
+	})
 	if a.bootLog == nil {
 		return
 	}

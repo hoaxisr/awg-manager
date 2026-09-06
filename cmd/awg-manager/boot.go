@@ -233,7 +233,8 @@ func (a *app) startBootSequence() {
 			// RCI, и на холодном старте первая попытка (горутина проводки)
 			// вполне могла упасть fail-closed. Эндпоинты связанных туннелей
 			// чинит ресурс linked_endpoint роли, отдельный проход не нужен.
-			a.proxyRuntimeNudge("cold-boot", proxyrt.EventBoot)
+			// Горутиной: бут прокси может ждать загрузки бинарей (F98).
+			go a.proxyRuntimeNudge("cold-boot", proxyrt.EventBoot)
 
 			// Wait for background migrations to finish (non-critical but
 			// we track them so they don't leak on shutdown).
@@ -268,7 +269,7 @@ func (a *app) startBootSequence() {
 				"Post-restore boot: syncing linked endpoints and cold-starting from archive")
 			a.orch.LoadState(context.Background())
 			a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventBoot})
-			a.proxyRuntimeNudge("post-restore", proxyrt.EventBoot)
+			go a.proxyRuntimeNudge("post-restore", proxyrt.EventBoot)
 			return
 		}
 
@@ -279,7 +280,7 @@ func (a *app) startBootSequence() {
 		a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventReconnect})
 		// Как на cold-boot: посев мог не состояться, если RCI ещё не отвечал
 		// сразу после opkg upgrade.
-		a.proxyRuntimeNudge("daemon-restart", proxyrt.EventBoot)
+		go a.proxyRuntimeNudge("daemon-restart", proxyrt.EventBoot)
 	}
 
 }
