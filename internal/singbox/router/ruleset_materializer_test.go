@@ -573,3 +573,71 @@ func TestMaterializeConfig_HTTPClients(t *testing.T) {
 		t.Errorf("restore geo-vpn: %+v", rs)
 	}
 }
+
+// F115(b): materializeConfig→restoreConfig→materializeConfig обязан давать
+// байт-в-байт одинаковый результат, и повторный materializeConfig БЕЗ
+// restore между вызовами не должен оставлять http_client-ссылку на
+// исчезнувший http_clients-клиент — applyHTTPClients пересобирает
+// cfg.HTTPClients с нуля на каждом вызове, и старый rs.HTTPClient.Ref
+// (rs-direct:X), уцелевший от первого прохода на не-inline rule_set'е
+// (DownloadDetour уже пуст), рисковал повиснуть.
+func TestMaterializeConfig_HTTPClients_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	withFakeRuleSetCompiler(t, func(binary string, args []string) (string, string, error) {
+		writeCompiledOutput(t, args, "compiled")
+		return "", "", nil
+	})
+	m := ruleSetMaterializer{configDir: dir, binary: "/opt/bin/sing-box"}
+
+	cfg := &RouterConfig{
+		Route: Route{
+			Final: "direct",
+			RuleSet: []RuleSet{
+				{Tag: "geo-direct", Type: "remote", URL: "https://x/geo.srs", DownloadDetour: "direct"},
+				{Tag: "geo-inline", Type: "inline", Rules: []map[string]any{{"domain_suffix": []any{"t.me"}}}},
+			},
+		},
+	}
+
+	first, err := m.materializeConfig(cfg)
+	if err != nil {
+		t.Fatalf("materializeConfig (1): %v", err)
+	}
+	firstJSON, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restored := m.restoreConfig(first)
+	second, err := m.materializeConfig(restored)
+	if err != nil {
+		t.Fatalf("materializeConfig (после restore): %v", err)
+	}
+	secondJSON, err := json.Marshal(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstJSON) != string(secondJSON) {
+		t.Errorf("materialize→restore→materialize не идемпотентен:\n1: %s\n2: %s", firstJSON, secondJSON)
+	}
+
+	// Двойная материализация БЕЗ restore между вызовами.
+	twice, err := m.materializeConfig(first)
+	if err != nil {
+		t.Fatalf("materializeConfig(materializeConfig(cfg)): %v", err)
+	}
+	geoDirect := findRuleSetByTag(twice.Route.RuleSet, "geo-direct")
+	if geoDirect.HTTPClient == nil || geoDirect.HTTPClient.Ref != "rs-direct:direct" {
+		t.Fatalf("geo-direct http_client после двойной материализации = %+v", geoDirect.HTTPClient)
+	}
+	found := false
+	for _, hc := range twice.HTTPClients {
+		if hc.Tag == geoDirect.HTTPClient.Ref {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("http_clients не содержит %q, на который ссылается geo-direct — висячая ссылка: %+v",
+			geoDirect.HTTPClient.Ref, twice.HTTPClients)
+	}
+}

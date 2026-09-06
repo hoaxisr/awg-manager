@@ -196,6 +196,18 @@ func applyHTTPClients(cfg *RouterConfig) {
 	for i := range cfg.Route.RuleSet {
 		rs := &cfg.Route.RuleSet[i]
 		if rs.DownloadDetour == "" {
+			// Уже материализован (повторный materializeConfig без restore
+			// между вызовами, F115) — cfg.HTTPClients выше пересобран с
+			// нуля, а rs.HTTPClient.Ref на rule_set'е, не прошедшем через
+			// expandManagedToInline (не inline/managed-local), уцелел от
+			// прошлого прохода. Без этого восстановления ссылка повисает:
+			// клиента, на который она указывает, в свежем http_clients нет.
+			if rs.HTTPClient != nil && strings.HasPrefix(rs.HTTPClient.Ref, ruleSetDirectClientPrefix) {
+				if _, ok := directClientSeen[rs.HTTPClient.Ref]; !ok {
+					directClientSeen[rs.HTTPClient.Ref] = struct{}{}
+					cfg.HTTPClients = append(cfg.HTTPClients, HTTPClient{Tag: rs.HTTPClient.Ref})
+				}
+			}
 			continue
 		}
 		x := rs.DownloadDetour

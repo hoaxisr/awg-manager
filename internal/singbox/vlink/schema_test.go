@@ -117,9 +117,53 @@ func (d *schemaDoc) pickVariant(node map[string]any, value map[string]any) map[s
 	return nil
 }
 
+// scalarJSONType maps a decoded JSON scalar to its JSON Schema type name.
+// Returns "" for values checkKeys does not scalar-check (nil/JSON null).
+func scalarJSONType(value any) string {
+	switch value.(type) {
+	case string:
+		return "string"
+	case bool:
+		return "boolean"
+	case float64:
+		return "number"
+	}
+	return ""
+}
+
+// schemaTypeMatches reports whether a schema "type" accepts a decoded value of
+// jsonType. "integer" accepts a float64 too — encoding/json has no separate
+// integer kind, every JSON number decodes to float64.
+func schemaTypeMatches(schemaType, jsonType string) bool {
+	return schemaType == jsonType || (jsonType == "number" && schemaType == "integer")
+}
+
+// scalarAllowed reports whether node's schema (directly, or via one branch of
+// its oneOf/anyOf) accepts a scalar of jsonType. A branch with no "type" and
+// no "properties" is untyped/free-form and accepts any scalar; a branch with
+// "properties" but no "type" is an implicit object and does not.
+func (d *schemaDoc) scalarAllowed(node map[string]any, jsonType string) bool {
+	for _, variant := range d.variants(node) {
+		if schemaType, ok := variant["type"].(string); ok {
+			if schemaTypeMatches(schemaType, jsonType) {
+				return true
+			}
+			continue
+		}
+		if _, isObject := variant["properties"]; !isObject {
+			return true
+		}
+	}
+	return false
+}
+
 // checkKeys walks the value against the schema and reports keys the schema does
 // not declare. Types and enums are deliberately not checked: those the option
-// layer enforces, and sing-box check catches them on the device.
+// layer enforces, and sing-box check catches them on the device. The one
+// exception is a scalar checked against an object-only schema node (see the
+// default case below) — that mismatch means the value landed in the wrong
+// slot entirely (e.g. a plain string where the schema requires an object),
+// not a fine-grained type/enum nuance.
 func (d *schemaDoc) checkKeys(t *testing.T, path string, node map[string]any, value any) {
 	t.Helper()
 	switch v := value.(type) {
@@ -153,6 +197,14 @@ func (d *schemaDoc) checkKeys(t *testing.T, path string, node map[string]any, va
 		}
 		for i, item := range v {
 			d.checkKeys(t, fmt.Sprintf("%s[%d]", path, i), items, item)
+		}
+	default:
+		jsonType := scalarJSONType(v)
+		if jsonType == "" {
+			return // null, or a Go type json.Unmarshal never produces here
+		}
+		if !d.scalarAllowed(node, jsonType) {
+			t.Errorf("%s: schema expects %v, got %T", path, node, value)
 		}
 	}
 }
@@ -253,5 +305,25 @@ func TestMaterializedRouterConfigMatchesSchema(t *testing.T) {
 			continue
 		}
 		doc.checkKeys(t, key, node, value)
+	}
+}
+
+// F115(a): checkKeys раньше проверял только map/slice-узлы — скаляр молча
+// проходил ЛЮБУЮ схему, даже объектную. HTTPClientReference — anyOf со
+// string-веткой (`rs-direct:<X>` из ruleset_materializer.go), поэтому строка
+// обязана пройти; HTTPClient — чистый объект без anyOf, и строка на его месте
+// обязана быть отклонена. checkKeys репортит через t.Errorf, поэтому
+// негативный случай проверяется через тот же предикат (scalarAllowed),
+// который checkKeys вызывает перед Errorf, — так тест не зависит от
+// намеренно проваленного sub-теста.
+func TestCheckKeys_ScalarAgainstAnyOf(t *testing.T) {
+	doc, _ := loadSchema(t)
+
+	ref := map[string]any{"$ref": "#/$defs/HTTPClientReference"}
+	doc.checkKeys(t, "http_client", ref, "rs-direct:direct") // не должен звать t.Errorf
+
+	obj := map[string]any{"$ref": "#/$defs/HTTPClient"}
+	if doc.scalarAllowed(obj, "string") {
+		t.Error("HTTPClient — объект без anyOf, строка на его месте обязана быть отклонена")
 	}
 }
