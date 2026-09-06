@@ -299,3 +299,38 @@ func TestTunnelReplaceConfRefusesLockedTunnel(t *testing.T) {
 		t.Fatalf("запись изменена: %+v (err=%v)", saved, err)
 	}
 }
+
+// ── замок на зеркальной записи wdtt-raw (F95) ────────────────────
+
+// Замок на зеркальной записи отвергается так же, как её удаление: галка,
+// которая ничего не держит, хуже отсутствующей.
+func TestSetLock_WdttRawRefusedWhileInstanceAlive(t *testing.T) {
+	h, store := rawDeleteEnv(t, "de")
+	rec := lockPost(t, h, "id=wdttraw-de&locked=true")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("код %d, ожидали 409 (тело %s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "WDTT_RAW_OWNED") {
+		t.Fatalf("ожидали код WDTT_RAW_OWNED, тело %s", rec.Body.String())
+	}
+	if saved, err := store.Get("wdttraw-de"); err != nil || saved.Locked {
+		t.Fatalf("запись всё-таки замкнута: %+v (err=%v)", saved, err)
+	}
+}
+
+// Снятие замка с зеркала не отвергается: иначе запись, защищённая до этой
+// правки, не разомкнётся ничем — гарды #818 держат Stop/Update/Delete, а
+// глиф на карточке зеркала скрыт.
+func TestSetLock_WdttRawUnlockAllowed(t *testing.T) {
+	h, store := rawDeleteEnv(t, "de")
+	if err := store.Update("wdttraw-de", func(x *storage.AWGTunnel) error { x.Locked = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	rec := lockPost(t, h, "id=wdttraw-de&locked=false")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, ожидали 200 (тело %s)", rec.Code, rec.Body.String())
+	}
+	if saved, err := store.Get("wdttraw-de"); err != nil || saved.Locked {
+		t.Fatalf("замок не снят: %+v (err=%v)", saved, err)
+	}
+}

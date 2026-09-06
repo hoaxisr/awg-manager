@@ -9022,6 +9022,10 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
@@ -19922,8 +19926,11 @@ paths:
       - tunnels
   /tunnels/lock:
     post:
-      description: 'Включает или снимает защиту туннеля от изменений: у защищённого
-        туннеля Stop, ToggleEnabled, Update и Delete отвечают 403.'
+      description: |-
+        Включает или снимает защиту туннеля от изменений: у защищённого туннеля Stop, ToggleEnabled,
+        ToggleDefaultRoute, Update, Delete и Replace отвечают 403. Постановка замка на зеркальную запись
+        wdtt-raw отвергается 409 (WDTT_RAW_OWNED, WDTT_RAW_OWNER_UNKNOWN) — замок ставится на инстансе;
+        снятие проходит.
       parameters:
       - description: Tunnel id
         in: query
@@ -19944,6 +19951,10 @@ paths:
             $ref: '#/definitions/api.TunnelLockResponse'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
