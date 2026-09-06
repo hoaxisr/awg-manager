@@ -32,6 +32,12 @@ func (s *Service) ForeignAccessGroups(ctx context.Context, iface string) ([]stri
 // выбор сегментов (стенд 2026-09-02/05). Паритет с ресурсом permit_absent у
 // wdtt. Только при наличии — без записи и RCI на чистом интерфейсе.
 func (s *Service) stripForeignPermitAll(ctx context.Context, iface string) error {
+	// галка веб-морды не сбрасывает наш кэш (стенд 2026-09-06: хук ndm на
+	// ACL-bind не приходит); применение — действие пользователя, один GET
+	// допустим.
+	if s.queries != nil && s.queries.RunningConfig != nil {
+		s.queries.RunningConfig.InvalidateAll()
+	}
 	names, err := s.ForeignAccessGroups(ctx, iface)
 	if err != nil {
 		return err
