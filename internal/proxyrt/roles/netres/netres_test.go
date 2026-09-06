@@ -192,31 +192,9 @@ func forwardGroups(ifaces []string) []Group {
 	return out
 }
 
-func TestForwardRulesConverge(t *testing.T) {
-	ipt := newFakeIPT()
-	forwarded := 0
-	rs := NewRuleSet("forward_rules", ipt, func() error { forwarded++; return nil })
-	rs.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun19"})))
-
-	driveRS(t, rs)
-
-	if !ipt.has("filter/FORWARD", "-i opkgtun19 -j ACCEPT") ||
-		!ipt.has("filter/FORWARD", "-o opkgtun19 -j ACCEPT") {
-		t.Fatalf("FORWARD не приведён: %v", ipt.chains["filter/FORWARD"])
-	}
-	if forwarded == 0 {
-		t.Fatal("ip_forward обязан включаться вместе с FORWARD")
-	}
-	// Идемпотентность: второй прогон пуст.
-	obs, _ := rs.Observe(context.Background())
-	if steps := rs.Plan(obs); len(steps) != 0 {
-		t.Fatalf("повторный план не пуст: %v", steps)
-	}
-}
-
 func TestMasqFullForm(t *testing.T) {
 	ipt := newFakeIPT()
-	rs := NewRuleSet("nat_rules", ipt, nil)
+	rs := NewRuleSet("nat_rules", ipt)
 	rs.SetDesired(StaticGroups(MasqGroups([]MasqPlan{{Iface: "opkgtun19", CIDR: "10.70.0.0/16"}}, "full", "")))
 	driveRS(t, rs)
 	want := "-s 10.70.0.0/16 ! -o opkgtun19 -m comment --comment AWGM_WDTT -j MASQUERADE"
@@ -246,7 +224,7 @@ func TestMasqInternetOnlyPinsWAN(t *testing.T) {
 	// internet-only без разрешённого WAN деградировал в full-форму молча
 	// (H1, PR #697) — здесь это ошибка построителя.
 	ipt := newFakeIPT()
-	rs := NewRuleSet("nat_rules", ipt, nil)
+	rs := NewRuleSet("nat_rules", ipt)
 	rs.SetDesired(StaticGroups(MasqGroups([]MasqPlan{{Iface: "opkgtun19", CIDR: "10.70.0.0/16"}}, "internet-only", "eth3")))
 	driveRS(t, rs)
 	want := "-s 10.70.0.0/16 -o eth3 -m comment --comment AWGM_WDTT -j MASQUERADE"
@@ -269,7 +247,7 @@ func TestMasqInternetOnlyWithoutWANRefuses(t *testing.T) {
 	}
 
 	ipt := newFakeIPT()
-	rs := NewRuleSet("nat_rules", ipt, nil)
+	rs := NewRuleSet("nat_rules", ipt)
 	rs.SetDesired(StaticGroups(MasqGroups(plans, "internet-only", "")))
 	driveRS(t, rs)
 	if len(ipt.chains["nat/POSTROUTING"]) != 0 {
@@ -284,7 +262,7 @@ func TestRuleSetDoomRemovesRuleWithoutDesired(t *testing.T) {
 	const in, out = "-i opkgtun19 -j ACCEPT", "-o opkgtun19 -j ACCEPT"
 	ipt := newFakeIPT()
 	ipt.chains["filter/FORWARD"] = []string{in, out, "-i br0 -j ACCEPT"}
-	rs := NewRuleSet("forward_rules", ipt, nil)
+	rs := NewRuleSet("forward_rules", ipt)
 	// Желаемого нет вовсе — снос обязан идти от одной лишь ведомости.
 	for _, r := range forwardGroups([]string{"opkgtun19"})[0].Rules {
 		rs.Doom(r)
@@ -385,7 +363,7 @@ func TestRuleSetSweepsOnDesiredChange(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			ipt := newFakeIPT()
-			rs := NewRuleSet("nat_rules", ipt, nil)
+			rs := NewRuleSet("nat_rules", ipt)
 			rs.SetDesired(StaticGroups(c.before))
 			driveRS(t, rs)
 			rs.SetDesired(StaticGroups(c.after))
@@ -430,7 +408,7 @@ func TestRuleSetAdoptsStaleMarkedWithoutMarkedDesired(t *testing.T) {
 				stale,
 				"-s 192.168.1.0/24 -j MASQUERADE", // чужое, без метки
 			}
-			rs := NewRuleSet("nat_rules", ipt, nil) // свежий = рестарт демона
+			rs := NewRuleSet("nat_rules", ipt) // свежий = рестарт демона
 			rs.AdoptMarked("nat", "POSTROUTING", Comment)
 			rs.SetDesired(StaticGroups(tc.desired))
 			driveRS(t, rs)
@@ -458,7 +436,7 @@ func TestRuleSetAdoptsStaleMarkedAfterDaemonRestart(t *testing.T) {
 		"-s 192.168.1.0/24 -j MASQUERADE",
 	}
 	// СВЕЖИЙ RuleSet = рестарт демона: last/doomed пусты.
-	rs := NewRuleSet("nat_rules", ipt, nil)
+	rs := NewRuleSet("nat_rules", ipt)
 	rs.SetDesired(StaticGroups(MasqGroups(
 		[]MasqPlan{{Iface: "opkgtun19", CIDR: "10.70.0.0/16"}}, "internet-only", "eth3")))
 	driveRS(t, rs)
@@ -479,7 +457,7 @@ func TestRuleSetAdoptsStaleMarkedAfterDaemonRestart(t *testing.T) {
 func TestRuleSetSweepKeepsRuleOnFailedDelete(t *testing.T) {
 	// M-2: неудавшийся снос не выбрасывает правило из ведомости.
 	ipt := newFakeIPT()
-	rs := NewRuleSet("forward_rules", ipt, nil)
+	rs := NewRuleSet("forward_rules", ipt)
 	rs.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun19"})))
 	driveRS(t, rs)
 	rs.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun20"})))
@@ -705,7 +683,7 @@ func TestRuleSetAdoptsMarkedWhenCommentQuoted(t *testing.T) {
 		// чужое правило без нашей метки — трогать нельзя.
 		"-s 192.168.1.0/24 -j MASQUERADE",
 	}
-	rs := NewRuleSet("nat_rules", ipt, nil) // свежий ресурс = рестарт демона
+	rs := NewRuleSet("nat_rules", ipt) // свежий ресурс = рестарт демона
 	rs.SetDesired(StaticGroups(MasqGroups(
 		[]MasqPlan{{Iface: "opkgtun19", CIDR: "10.70.0.0/16"}}, "internet-only", "eth3")))
 	driveRS(t, rs)
@@ -741,7 +719,7 @@ func TestSweepRemovesDuplicateUnmarkedRule(t *testing.T) {
 	// (entware_nat_linux.go:316).
 	const dup = "-i opkgtun19 -j ACCEPT"
 	ipt := newFakeIPT()
-	rs := NewRuleSet("forward_rules", ipt, nil)
+	rs := NewRuleSet("forward_rules", ipt)
 	rs.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun19"})))
 	driveRS(t, rs)
 	// Вторая копия того же правила рядом.
@@ -764,7 +742,7 @@ func TestSweepKeepsRuleOnTransientCheckFailure(t *testing.T) {
 	// переписывает таблицы 18-21 раз на flap, а `-w` берёт xtables-lock.
 	// M-2 закрыл только отказ `-D`.
 	ipt := newFakeIPT()
-	rs := NewRuleSet("forward_rules", ipt, nil)
+	rs := NewRuleSet("forward_rules", ipt)
 	rs.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun19"})))
 	driveRS(t, rs)
 	rs.SetDesired(StaticGroups(forwardGroups([]string{"opkgtun20"})))

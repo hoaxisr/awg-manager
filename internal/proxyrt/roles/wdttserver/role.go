@@ -50,18 +50,17 @@ var errTypeMismatch = errors.New("конфигурация не WdttServerConfig
 
 // Deps — зависимости роли (G4: всё в конструкторе).
 type Deps struct {
-	Instance      string
-	Binary        string
-	PinnedSHA256  string
-	Link          procres.TunLink
-	Runner        procres.ProcRunner
-	Gate          procres.BinaryGate
-	Cmds          ndmsres.Commands
-	Query         ndmsres.Query
-	IPT           netres.IPT
-	FW            netres.FW
-	RunHook       func(ctx context.Context, path, table string) error
-	EnableForward func() error
+	Instance     string
+	Binary       string
+	PinnedSHA256 string
+	Link         procres.TunLink
+	Runner       procres.ProcRunner
+	Gate         procres.BinaryGate
+	Cmds         ndmsres.Commands
+	Query        ndmsres.Query
+	IPT          netres.IPT
+	FW           netres.FW
+	RunHook      func(ctx context.Context, path, table string) error
 	// IfaceExists — kernel-интерфейс жив (InterfaceChecker.InterfaceExists):
 	// адрес NDMS ставится только после появления netdev от процесса — NDMS-
 	// адрес без kernel-адреса крутит nginx-reload вечно (PR #544).
@@ -142,7 +141,7 @@ func New(d Deps) (*Role, error) {
 	r.exit = ndmsres.NewPolicyExit(roles.RPolicyExit, d.Cmds, d.Query)
 	r.access = NewNDMSAccess(roles.RNdmsAccess, d.Access)
 	r.permitAbsent = ndmsres.NewPermitAbsent(roles.RPermitAbsent, d.Cmds, d.Query)
-	r.nat = netres.NewRuleSet(roles.RNatRules, d.IPT, nil)
+	r.nat = netres.NewRuleSet(roles.RNatRules, d.IPT)
 	// Маскарад — единственное наше помеченное правило, и ставится он не во
 	// всех режимах. Владение им принадлежит метке, а не текущему желаемому:
 	// без постоянной области усыновления правило, поставленное прошлым
@@ -152,7 +151,7 @@ func New(d Deps) (*Role, error) {
 	// отбивает гейт PROXY_KIND_SINGLETON (api/proxy_instances.go), иначе
 	// выключенный сносил бы маскарад живого.
 	r.nat.AdoptMarked("nat", "POSTROUTING", netres.Comment)
-	r.fwd = netres.NewRuleSet(roles.RForwardRules, d.IPT, d.EnableForward)
+	r.fwd = netres.NewRuleSet(roles.RForwardRules, d.IPT)
 	r.mss = netres.NewMSSClamp(roles.RMssClamp, d.IPT)
 	r.hook = netres.NewHook(roles.RNetfilterHook, netres.HookPath, d.RunHook)
 	r.ingress = NewIngressRefs(roles.RIngressRefs, d.Ingress)
@@ -234,20 +233,6 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 		// трафик — RELATED,ESTABLISHED первым правилом FORWARD (стенд
 		// 2026-09-05).
 		r.fwd.SetDesired(nil)
-		// Легаси прежней версии: FORWARD ACCEPT raw-половины стоял раньше ACL
-		// и security-level; снимаем адресно, иначе живёт до перезаписи таблиц
-		// ndm. Разность желаемых его не даёт (за этот запуск демона в
-		// желаемом его не было), усыновления-по-метке ему не досталось —
-		// правило метки не несёт, — а стартовая уборка щадит объявленные
-		// интерфейсы. Форма — ровно та, что ставила прежняя версия.
-		// Pos не участвует ни в Key, ни в формах -C/-D; оставлен как форма
-		// прежней версии — правило именно так и вставлялось.
-		if c.RawIface != "" {
-			r.fwd.Doom(
-				netres.Rule{Chain: "FORWARD", Pos: 1, Spec: []string{"-i", c.RawIface, "-j", "ACCEPT"}},
-				netres.Rule{Chain: "FORWARD", Pos: 1, Spec: []string{"-o", c.RawIface, "-j", "ACCEPT"}},
-			)
-		}
 		r.mss.SetDesired([]string{rawPeerCIDR})
 		r.hook.SetDesired(r.hookGroups(c))
 		r.input.SetDesired(inputPorts(c))
@@ -258,6 +243,24 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 		r.mss.SetDesired(nil)
 		r.hook.SetDesired(nil)
 		r.input.SetDesired(nil)
+	}
+	// Легаси прежней версии: FORWARD ACCEPT raw-половины стоял раньше ACL
+	// и security-level; снимаем адресно, иначе живёт до перезаписи таблиц
+	// ndm. Разность желаемых его не даёт (за этот запуск демона в желаемом
+	// его не было), усыновления-по-метке ему не досталось — правило метки не
+	// несёт, — а стартовая уборка щадит объявленные интерфейсы. Форма — ровно
+	// та, что ставила прежняя версия. Pos не участвует ни в Key, ни в формах
+	// -C/-D; оставлен как форма прежней версии — правило именно так и
+	// вставлялось.
+	//
+	// Снимаем и у ВЫКЛЮЧЕННОГО: при апгрейде с выключенным инстансом правило
+	// прежней версии иначе живёт до перезаписи таблиц ndm, а при общем пуле
+	// OpkgTun переиспользованный индекс делает его чужим ACCEPT'ом.
+	if c.RawIface != "" {
+		r.fwd.Doom(
+			netres.Rule{Chain: "FORWARD", Pos: 1, Spec: []string{"-i", c.RawIface, "-j", "ACCEPT"}},
+			netres.Rule{Chain: "FORWARD", Pos: 1, Spec: []string{"-o", c.RawIface, "-j", "ACCEPT"}},
+		)
 	}
 	r.ingress.SetDesired(c.WgIface, c.RawIface, enabled)
 

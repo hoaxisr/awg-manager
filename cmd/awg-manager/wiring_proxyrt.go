@@ -630,12 +630,6 @@ func proxyIfaceExists(name string) bool {
 	return err == nil
 }
 
-// proxyEnableForward — включение маршрутизации вместе с правилами сервера
-// (паритет старого entware-пути).
-func proxyEnableForward() error {
-	return os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o644)
-}
-
 // proxyRunHook — прогон netfilter.d-хука по одной таблице сразу после записи:
 // правила встают, не дожидаясь перезаписи таблиц движком ndm.
 func proxyRunHook(ctx context.Context, path, table string) error {
@@ -1157,16 +1151,15 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 				Instance: rec.ID, Binary: binary,
 				PinnedSHA256: installSvc.PinnedSHA256(rec.Kind),
 				Link:         link, Runner: runner, Gate: gate,
-				Cmds:          proxyNDMSCommands{InterfaceCommands: a.ndmsCommands.Interfaces, routes: a.ndmsCommands.Routes},
-				Query:         proxyNDMSQuery{ifaces: a.ndmsQueries.Interfaces, rc: a.ndmsQueries.RunningConfig},
-				IPT:           proxyIPT{},
-				FW:            book.forInstance(key),
-				RunHook:       proxyRunHook,
-				EnableForward: proxyEnableForward,
-				IfaceExists:   proxyIfaceExists,
-				KernelWAN:     proxyKernelWAN(a.ndmsQueries.Interfaces),
-				Access:        proxyAccessApplier{svc: a.managedService},
-				Ingress:       proxyIngressEnsurer{settings: a.settingsStore, router: a.routerSvc},
+				Cmds:        proxyNDMSCommands{InterfaceCommands: a.ndmsCommands.Interfaces, routes: a.ndmsCommands.Routes},
+				Query:       proxyNDMSQuery{ifaces: a.ndmsQueries.Interfaces, rc: a.ndmsQueries.RunningConfig},
+				IPT:         proxyIPT{},
+				FW:          book.forInstance(key),
+				RunHook:     proxyRunHook,
+				IfaceExists: proxyIfaceExists,
+				KernelWAN:   proxyKernelWAN(a.ndmsQueries.Interfaces),
+				Access:      proxyAccessApplier{svc: a.managedService},
+				Ingress:     proxyIngressEnsurer{settings: a.settingsStore, router: a.routerSvc},
 			})
 			if err != nil {
 				return nil, err

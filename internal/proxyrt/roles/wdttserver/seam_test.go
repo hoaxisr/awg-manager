@@ -124,9 +124,8 @@ func newSeamParts(t *testing.T) seamParts {
 		Link: &liveLink{now: now}, Runner: nilRunner{}, Gate: nilGate{},
 		Cmds: p.ndms, Query: p.ndms,
 		IPT: p.ipt, FW: &memFW{},
-		RunHook:       func(context.Context, string, string) error { return nil },
-		EnableForward: func() error { return nil },
-		IfaceExists:   func(string) bool { return true },
+		RunHook:     func(context.Context, string, string) error { return nil },
+		IfaceExists: func(string) bool { return true },
 		KernelWAN: func(_ context.Context, n string) (string, error) {
 			*asked = append(*asked, n)
 			return "eth9", nil

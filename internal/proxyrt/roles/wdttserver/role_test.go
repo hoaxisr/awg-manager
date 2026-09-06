@@ -141,11 +141,10 @@ func newRoleCmds(t *testing.T) (*Role, *nilAccess, *nilIngress, memQuery, *count
 		Instance: "default", Binary: "/opt/bin/wdtt-server",
 		Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
 		Cmds: cmds, Query: q, IPT: nilIPT{}, FW: nilFW{},
-		RunHook:       func(context.Context, string, string) error { return nil },
-		EnableForward: func() error { return nil },
-		IfaceExists:   func(string) bool { return true },
-		KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
-		Access:        acc, Ingress: ing, Now: time.Now,
+		RunHook:     func(context.Context, string, string) error { return nil },
+		IfaceExists: func(string) bool { return true },
+		KernelWAN:   func(_ context.Context, n string) (string, error) { return "eth3", nil },
+		Access:      acc, Ingress: ing, Now: time.Now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -529,11 +528,10 @@ func newServerParts(t *testing.T) serverParts {
 		Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
 		Cmds: p.cmds, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
 		IPT: p.ipt, FW: p.fw,
-		RunHook:       func(context.Context, string, string) error { return nil },
-		EnableForward: func() error { return nil },
-		IfaceExists:   func(string) bool { return true },
-		KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
-		Access:        p.acc, Ingress: p.ing, Now: time.Now,
+		RunHook:     func(context.Context, string, string) error { return nil },
+		IfaceExists: func(string) bool { return true },
+		KernelWAN:   func(_ context.Context, n string) (string, error) { return "eth3", nil },
+		Access:      p.acc, Ingress: p.ing, Now: time.Now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -666,6 +664,25 @@ func TestServerSweepsLegacyForwardAcceptOfPreviousVersion(t *testing.T) {
 	}
 }
 
+// Тот же снос — и у ВЫКЛЮЧЕННОГО инстанса: апгрейд с выключенным сервером
+// иначе оставляет правило прежней версии жить до перезаписи таблиц ndm, а
+// при общем пуле OpkgTun переиспользованный индекс делает его чужим ACCEPT'ом.
+func TestServerSweepsLegacyForwardAcceptWhenDisabled(t *testing.T) {
+	const in, out = "-i opkgtun19 -j ACCEPT", "-o opkgtun19 -j ACCEPT"
+	p := newServerParts(t)
+	p.ipt.chains["filter/FORWARD"] = []string{in, out, "-i br0 -j ACCEPT"}
+	res := byID(p.role.Resources(proxyrt.IntentDisabled, srvCfg(), proxyrt.NewObservations()))
+	drive(t, res[roles.RForwardRules])
+	for _, gone := range []string{in, out} {
+		if slices.Contains(p.ipt.rules("filter", "FORWARD"), gone) {
+			t.Errorf("остаток прежней версии %q не снят у выключенного сервера: %v", gone, p.ipt.rules("filter", "FORWARD"))
+		}
+	}
+	if !slices.Contains(p.ipt.rules("filter", "FORWARD"), "-i br0 -j ACCEPT") {
+		t.Errorf("снесено чужое правило: %v", p.ipt.rules("filter", "FORWARD"))
+	}
+}
+
 // Порядок ведомости: файл хука переписывается ДО сноса легаси-правила.
 // Сценарий, который иначе теряется: на диске лежит хук ПРЕЖНЕЙ версии, он и
 // возвращает `-I FORWARD 1 -i opkgtun19 -j ACCEPT`, а движок ndm дёргает
@@ -793,11 +810,10 @@ func TestNewPanicsOnNilAccessOrIngress(t *testing.T) {
 			Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: nilGate{},
 			Cmds: &countCmds{}, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
 			IPT: nilIPT{}, FW: nilFW{},
-			RunHook:       func(context.Context, string, string) error { return nil },
-			EnableForward: func() error { return nil },
-			IfaceExists:   func(string) bool { return true },
-			KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
-			Access:        &nilAccess{}, Ingress: &nilIngress{}, Now: time.Now,
+			RunHook:     func(context.Context, string, string) error { return nil },
+			IfaceExists: func(string) bool { return true },
+			KernelWAN:   func(_ context.Context, n string) (string, error) { return "eth3", nil },
+			Access:      &nilAccess{}, Ingress: &nilIngress{}, Now: time.Now,
 		}
 	}
 	for name, mutate := range map[string]func(*Deps){
@@ -836,11 +852,10 @@ func TestResetStartBackoffReachesProcess(t *testing.T) {
 		Link: &fakeLink{err: control.ErrNoSocket}, Runner: nilRunner{}, Gate: failGate{},
 		Cmds: &countCmds{}, Query: memQuery{facts: map[string]ndmsres.IfaceFacts{}},
 		IPT: nilIPT{}, FW: nilFW{},
-		RunHook:       func(context.Context, string, string) error { return nil },
-		EnableForward: func() error { return nil },
-		IfaceExists:   func(string) bool { return true },
-		KernelWAN:     func(_ context.Context, n string) (string, error) { return "eth3", nil },
-		Access:        &nilAccess{}, Ingress: &nilIngress{}, Now: time.Now,
+		RunHook:     func(context.Context, string, string) error { return nil },
+		IfaceExists: func(string) bool { return true },
+		KernelWAN:   func(_ context.Context, n string) (string, error) { return "eth3", nil },
+		Access:      &nilAccess{}, Ingress: &nilIngress{}, Now: time.Now,
 	})
 	if err != nil {
 		t.Fatal(err)

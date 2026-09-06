@@ -53,9 +53,6 @@ type RuleSet struct {
 	// формы, СОВПАВШЕЙ с однажды сметённой, становится no-op до конца жизни
 	// процесса.
 	reaped map[string]bool
-	// enableForward — включение ip_forward вместе с правилами; nil — не нужно.
-	// Прод: запись "1" в /proc/sys/net/ipv4/ip_forward.
-	enableForward func() error
 	// adopt — области усыновления, НЕ зависящие от текущего желаемого.
 	// Владение принадлежит метке: что мы когда-то поставили со своей меткой,
 	// то обязаны и снести — даже когда сейчас не хотим там ничего. Без этого
@@ -74,9 +71,9 @@ func (r *RuleSet) AdoptMarked(table, chain, tag string) {
 	r.adopt = append(r.adopt, adoptScope{table: table, chain: chain, tag: tag})
 }
 
-func NewRuleSet(id proxyrt.ResourceID, ipt IPT, enableForward func() error) *RuleSet {
+func NewRuleSet(id proxyrt.ResourceID, ipt IPT) *RuleSet {
 	return &RuleSet{id: id, ipt: ipt, provider: StaticGroups(nil),
-		doomed: map[string]Rule{}, reaped: map[string]bool{}, enableForward: enableForward}
+		doomed: map[string]Rule{}, reaped: map[string]bool{}}
 }
 
 // SetDesired: провайдер, дающий пустой набор, означает «правил быть не
@@ -225,11 +222,6 @@ func (r *RuleSet) Plan(obs proxyrt.Observation) []proxyrt.Step {
 func (r *RuleSet) Apply(ctx context.Context, s proxyrt.Step) error {
 	switch s.Op {
 	case "ensure":
-		if r.enableForward != nil {
-			if err := r.enableForward(); err != nil {
-				return err
-			}
-		}
 		for _, g := range r.last {
 			if err := g.ensure(ctx, r.ipt); err != nil {
 				return err
