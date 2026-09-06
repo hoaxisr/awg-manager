@@ -4791,6 +4791,14 @@ definitions:
         items:
           type: string
         type: array
+      source_mac_address:
+        description: SourceMACAddress matches the LAN device MAC (sing-box 1.14, kernel
+          neighbor table).
+        example:
+        - aa:bb:cc:dd:ee:ff
+        items:
+          type: string
+        type: array
     type: object
   api.SingboxRouterRuleDeleteRequest:
     properties:

@@ -98,9 +98,14 @@ type Rule struct {
 	Domain       []string `json:"domain,omitempty"`
 	IPCIDR       []string `json:"ip_cidr,omitempty"`
 	SourceIPCIDR []string `json:"source_ip_cidr,omitempty"`
-	Port         []int    `json:"port,omitempty"`
-	RuleSet      []string `json:"rule_set,omitempty"`
-	Protocol     string   `json:"protocol,omitempty"`
+	// SourceMACAddress — MAC LAN-устройства (sing-box 1.14, через таблицу
+	// соседей ядра). Сужающий матчер, как source_ip_cidr. Hostname-матчер не
+	// выносим: sing-box читает имена из lease-файлов dnsmasq/odhcpd/Kea, формат
+	// NDMS не проверен.
+	SourceMACAddress []string `json:"source_mac_address,omitempty"`
+	Port             []int    `json:"port,omitempty"`
+	RuleSet          []string `json:"rule_set,omitempty"`
+	Protocol         string   `json:"protocol,omitempty"`
 	// Inbound matches the sing-box listener tag the connection entered
 	// through (native sing-box route-rule field). Managed QoS-DSCP rules use
 	// it to bind a per-class inbound pair (tproxy-qos-N / redirect-qos-N) to

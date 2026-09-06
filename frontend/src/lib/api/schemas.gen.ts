@@ -1721,6 +1721,7 @@ const api_SingboxRouterRuleDTO: v.GenericSchema = v.looseObject({
 	protocol: v.optional(v.nullable(v.string())),
 	rule_set: v.optional(v.nullable(v.array(v.string()))),
 	source_ip_cidr: v.optional(v.nullable(v.array(v.string()))),
+	source_mac_address: v.optional(v.nullable(v.array(v.string()))),
 });
 
 const api_SingboxRouterRuleSetDTO: v.GenericSchema = v.looseObject({

@@ -382,3 +382,23 @@ func TestRuleSetReferencesSeeNestedBranches(t *testing.T) {
 		t.Fatal("удаление набора, на который ссылается ветка правила, должно быть отклонено")
 	}
 }
+
+func TestRule_SourceMACAddress(t *testing.T) {
+	r := Rule{SourceMACAddress: []string{"aa:bb:cc:dd:ee:ff"}, Action: "route", Outbound: "vpn"}
+	if !r.hasAnyMatcher() {
+		t.Fatal("MAC must count as a matcher")
+	}
+	if err := validateRule(r); err != nil {
+		t.Fatalf("valid MAC rejected: %v", err)
+	}
+	if err := validateRule(Rule{SourceMACAddress: []string{"not-a-mac"}}); err == nil {
+		t.Error("garbage MAC accepted")
+	}
+	// С rule_set + свои адреса MAC уходит в сужающую ветку logical(and).
+	mixed := Rule{RuleSet: []string{"geosite-x"}, IPCIDR: []string{"1.2.3.0/24"},
+		SourceMACAddress: r.SourceMACAddress, Action: "route", Outbound: "vpn"}
+	got := normalizeAddressOrRule(mixed)
+	if got.Mode != "and" || len(got.Rules) != 2 || len(got.Rules[0].SourceMACAddress) != 1 {
+		t.Errorf("narrowing branch lost MAC: %+v", got)
+	}
+}
