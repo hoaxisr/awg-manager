@@ -397,6 +397,30 @@ func TestSyncObfuscator_MovesHostRouteToNewTarget(t *testing.T) {
 	}
 }
 
+// Create резолвит Peer.Endpoint, а у обфусцированного туннеля это loopback —
+// 127.0.0.1 оседает в трекере. Маршрута под этим адресом никогда не было:
+// первый Start не имеет права слать в NDMS no-route на собственный loopback.
+func TestStartObfuscated_LoopbackTrackedIPIsNotRemoved(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+	st := obfStored()
+	st.ResolvedEndpointIP = ""
+	op.trackEndpointIP(st.ID, "127.0.0.1") // как после Create
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	posts := n.joined()
+	if strings.Contains(posts, `"host":"127.0.0.1"`) {
+		t.Fatalf("маршрут на loopback не трогаем:\n%s", posts)
+	}
+	if !strings.Contains(posts, `"host":"203.0.113.5"`) {
+		t.Fatalf("новый host-route не поставлен:\n%s", posts)
+	}
+}
+
 func TestStartPlainWG_WithoutObfuscator_StillRejected(t *testing.T) {
 	op := &OperatorNativeWG{appLog: logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps)}
 	st := obfStored()

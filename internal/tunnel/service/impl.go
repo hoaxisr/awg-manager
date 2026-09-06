@@ -635,11 +635,14 @@ func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *st
 	if !obfuscator.Equal(oldStored.Obfuscator, newStored.Obfuscator) {
 		ip, err := s.nwgOperator.SyncObfuscator(ctx, newStored)
 		if ip != "" {
-			// Персистим адрес target'а ДАЖЕ на ошибке Start: host-route уже
-			// переставлен, и без записи после рестарта демона снимать старый
-			// маршрут будет не по чему. Handler персистит ResolvedEndpointIP
-			// только если сервис его выставил (tunnels_crud.go:525-527).
+			// Handler после svc.Update fail-closed: на ошибке до store.Update
+			// он не доходит (tunnels_crud.go:513) — а host-route до нового
+			// адреса УЖЕ переставлен, и без записи после рестарта демона снять
+			// его будет не по чему. Поэтому пишем сами, узкой транзакцией;
+			// присваивание в newStored остаётся для handler-пути успеха
+			// (tunnels_crud.go:525-527).
 			newStored.ResolvedEndpointIP = ip
+			s.persistObfuscatorTargetIP(tunnelID, ip)
 		}
 		if err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync obfuscator: "+err.Error())
@@ -902,6 +905,25 @@ func prepareObfuscatorImport(parsed *storage.AWGTunnel, o *storage.Obfuscator, t
 	return nil
 }
 
+// persistObfuscatorTargetIP кладёт в запись адрес, под которым стоит host-route
+// до target'а релея. Транзакция узкая: единственное поле, ErrNoChange на
+// совпадении — файл не трогается. Отказ записи только логируется: маршрут уже
+// стоит, и валить из-за него правку туннеля нечестно.
+func (s *ServiceImpl) persistObfuscatorTargetIP(tunnelID, ip string) {
+	if ip == "" {
+		return
+	}
+	if err := s.store.Update(tunnelID, func(t *storage.AWGTunnel) error {
+		if t.ResolvedEndpointIP == ip {
+			return storage.ErrNoChange
+		}
+		t.ResolvedEndpointIP = ip
+		return nil
+	}); err != nil {
+		s.logWarn("obfuscator", tunnelID, "Failed to save target IP: "+err.Error())
+	}
+}
+
 // obfuscatorPortTaken — порт занят другим туннелем (снимок стора; окончательно
 // занятость проверяет bind-проба в PickLocalPort).
 func (s *ServiceImpl) obfuscatorPortTaken(port int) bool {
@@ -1067,7 +1089,9 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 		if newName != "" {
 			t.Name = newName
 		}
-		t.Obfuscator = stored.Obfuscator
+		if stored.Obfuscator != nil {
+			t.Obfuscator = stored.Obfuscator
+		}
 		t.ResolvedEndpointIP = stored.ResolvedEndpointIP
 		t.ActiveWAN = stored.ActiveWAN
 		t.StartedAt = stored.StartedAt
@@ -1136,14 +1160,7 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 			if err != nil {
 				s.logWarn("replace-config", tunnelID, "SyncObfuscator failed: "+err.Error())
 			}
-			if ip != "" && ip != stored.ResolvedEndpointIP {
-				if err := s.store.Update(tunnelID, func(t *storage.AWGTunnel) error {
-					t.ResolvedEndpointIP = ip
-					return nil
-				}); err != nil {
-					s.logWarn("replace-config", tunnelID, "Failed to save target IP: "+err.Error())
-				}
-			}
+			s.persistObfuscatorTargetIP(tunnelID, ip)
 		}
 	}
 

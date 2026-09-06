@@ -34,6 +34,29 @@ func TestPrepareObfuscatorImport(t *testing.T) {
 	}
 }
 
+// Handler после svc.Update fail-closed, поэтому адрес target'а в запись кладёт
+// сам сервис: host-route уже переставлен, и потерять адрес нельзя.
+func TestPersistObfuscatorTargetIP(t *testing.T) {
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	if err := store.Create(&storage.AWGTunnel{ID: "awg20", ResolvedEndpointIP: "198.51.100.1"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	s := &ServiceImpl{store: store}
+
+	s.persistObfuscatorTargetIP("awg20", "203.0.113.5")
+	if saved, _ := store.Get("awg20"); saved.ResolvedEndpointIP != "203.0.113.5" {
+		t.Fatalf("target IP не записан: %q", saved.ResolvedEndpointIP)
+	}
+	// Пустой адрес не имеет права затирать записанный, а несуществующий
+	// туннель — ронять вызывающего.
+	s.persistObfuscatorTargetIP("awg20", "")
+	s.persistObfuscatorTargetIP("awg99", "203.0.113.5")
+	if saved, _ := store.Get("awg20"); saved.ResolvedEndpointIP != "203.0.113.5" {
+		t.Fatalf("target IP затёрт: %q", saved.ResolvedEndpointIP)
+	}
+}
+
 func TestObfuscatorPortTaken(t *testing.T) {
 	dir := t.TempDir()
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))

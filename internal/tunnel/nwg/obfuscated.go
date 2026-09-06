@@ -229,12 +229,16 @@ func (o *OperatorNativeWG) addObfHostRoute(ctx context.Context, stored *storage.
 
 // obfRouteIP — адрес, под которым стоит host-route: свежий резолв этого запуска,
 // иначе сохранённый в записи.
+//
+// Loopback отсеивается: Create резолвит Peer.Endpoint, а у обфусцированного
+// туннеля это 127.0.0.1:<port>, и трекер приносит сюда 127.0.0.1. Маршрута под
+// таким адресом никогда не было — снимать его значит слать в NDMS лишний
+// no-route на собственный loopback.
 func (o *OperatorNativeWG) obfRouteIP(stored *storage.AWGTunnel) string {
-	if ip := o.GetTrackedEndpointIP(stored.ID); ip != "" {
-		return ip
-	}
-	if net.ParseIP(stored.ResolvedEndpointIP) != nil {
-		return stored.ResolvedEndpointIP
+	for _, candidate := range []string{o.GetTrackedEndpointIP(stored.ID), stored.ResolvedEndpointIP} {
+		if ip := net.ParseIP(candidate); ip != nil && !ip.IsLoopback() {
+			return candidate
+		}
 	}
 	return ""
 }
