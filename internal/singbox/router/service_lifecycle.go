@@ -931,6 +931,74 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string, 
 	return s.persistConfigDirect(ctx, cfg)
 }
 
+// healTunUDPSettings brings the tun-in inbound's udp_timeout/udp_nat_max and
+// the system route-options rule to spec for a tun-based mode (policy-tun /
+// fakeip). Both modes build tun-in ONLY on enable (ensurePolicyTunInbound,
+// ensureFakeIPOverlay), so — unlike tproxy-in, which healTProxyInbound covers
+// — a udpTimeout/udpNatMax change made via UpdateSettings on an already-running
+// mode stayed stale until Disable/Enable (F114).
+//
+// Only these two fields are touched: address/iface/stack are the enable
+// path's decision (index allocation, carrier), and re-deriving them here on
+// every tick would race that decision instead of healing drift.
+//
+// Steady-state guard BEFORE persisting, mirroring healTProxyInbound: skip the
+// marshal/write when both carriers already match.
+func (s *ServiceImpl) healTunUDPSettings(ctx context.Context, slot orchestrator.Slot, sr storage.SingboxRouterSettings) {
+	var (
+		cfg *RouterConfig
+		err error
+	)
+	switch slot {
+	case orchestrator.SlotFakeIP:
+		var data []byte
+		if s.deps.Orch != nil {
+			data, err = s.deps.Orch.LoadApplied(orchestrator.SlotFakeIP)
+		}
+		if err == nil {
+			cfg, err = parseRouterConfigBytes(data)
+		}
+	default:
+		cfg, err = s.loadAppliedRouterConfig()
+	}
+	if err != nil {
+		s.appLog.Warn("heal-tun-udp", "", err.Error())
+		return
+	}
+
+	idx := -1
+	for i := range cfg.Inbounds {
+		if cfg.Inbounds[i].Tag == "tun-in" {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		// Слот запаркован или tun-in ещё не создан (лечит другой heal) —
+		// чинить нечего.
+		return
+	}
+
+	effective := resolveUDPTimeout(sr.UDPTimeout)
+	in := &cfg.Inbounds[idx]
+	if in.UDPTimeout == effective && in.UDPNATMax == sr.UDPNATMax {
+		return
+	}
+	in.UDPTimeout = effective
+	in.UDPNATMax = sr.UDPNATMax
+	cfg.EnsureUDPTimeoutRule(effective)
+
+	switch slot {
+	case orchestrator.SlotFakeIP:
+		err = s.persistFakeIPConfig(ctx, cfg)
+	default:
+		err = s.persistConfigDirect(ctx, cfg)
+	}
+	if err != nil {
+		s.appLog.Warn("heal-tun-udp", "", err.Error())
+	}
+}
+
 // heal1140SlotMigration re-persists the applied config of the given slot
 // unchanged, so materializeConfig's byte-for-byte round trip repairs a slot
 // written before the sing-box 1.14 migration (download_detour, gso,

@@ -632,6 +632,67 @@ func TestReconcilePolicyTun_Heal1140SlotMigration(t *testing.T) {
 	}
 }
 
+// F114: смена udpTimeout/udpNatMax в настройках доезжает до tun-in без
+// Disable/Enable — до фикса tun-in строится только на enable
+// (ensurePolicyTunInbound), и UpdateSettings оставался мёртвым до
+// перезапуска режима.
+func TestReconcilePolicyTun_HealsUDPSettings(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	sr.UDPTimeout = "10m0s"
+	sr.UDPNATMax = 8192
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+
+	cfg, err := h.svc.loadAppliedRouterConfig()
+	if err != nil {
+		t.Fatalf("loadAppliedRouterConfig: %v", err)
+	}
+	var tun *Inbound
+	for i := range cfg.Inbounds {
+		if cfg.Inbounds[i].Tag == "tun-in" {
+			tun = &cfg.Inbounds[i]
+		}
+	}
+	if tun == nil {
+		t.Fatal("tun-in инбаунд отсутствует")
+	}
+	if tun.UDPTimeout != "10m0s" || tun.UDPNATMax != 8192 {
+		t.Errorf("tun-in UDPTimeout=%q UDPNATMax=%d, want 10m0s/8192", tun.UDPTimeout, tun.UDPNATMax)
+	}
+	ruleOK := false
+	for _, r := range cfg.Route.Rules {
+		if isSystemUDPTimeoutRule(r) {
+			ruleOK = r.UDPTimeout == "10m0s"
+		}
+	}
+	if !ruleOK {
+		t.Error("route-options правило udp_timeout не обновлено до 10m0s")
+	}
+
+	activePath := filepath.Join(h.dir, "20-router.json")
+	before, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun (второй тик): %v", err)
+	}
+	after, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat after: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("второй тик без изменений переписал слот (before=%v after=%v)", before.ModTime(), after.ModTime())
+	}
+}
+
 // Permit пропал (или не встал при включении: отказ RCI повторное включение не
 // ретраит — оно no-op'ится по гарду provisioned+live) → drift-heal доставляет его.
 func TestReconcilePolicyTun_PermitsWhenMissing(t *testing.T) {

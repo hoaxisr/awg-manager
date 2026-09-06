@@ -322,6 +322,12 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	// без отдельного вызова здесь слот навсегда остался бы на старой форме.
 	s.heal1140SlotMigration(ctx, orchestrator.SlotRouter)
 
+	// Смена udpTimeout/udpNatMax через UpdateSettings — tun-in policy-tun
+	// строится только на enable, поэтому без heal'а изменение не доезжало до
+	// живого режима (F114). После миграции слота — актуальный tun-in уже в
+	// форме 1.14.
+	s.healTunUDPSettings(ctx, orchestrator.SlotRouter, sr)
+
 	// Ingress-заворот: и drift-heal после сброса firewall NDMS, и применение
 	// смены состава ingress-интерфейсов (UpdateSettings завершается Reconcile'ом).
 	// Реап, идущий в Reconcile первым, наш заворот в этом режиме не трогает —

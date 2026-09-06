@@ -666,3 +666,69 @@ func TestReconcileFakeIPTun_Heal1140SlotMigration(t *testing.T) {
 		t.Errorf("second reconcile tick rewrote already-migrated slot (before=%v after=%v)", before.ModTime(), after.ModTime())
 	}
 }
+
+// F114: смена udpTimeout/udpNatMax доезжает до fakeip tun-in без
+// Disable/Enable — до фикса tun-in строится только на enable
+// (ensureFakeIPOverlay), и UpdateSettings оставался мёртвым до перезапуска
+// режима.
+func TestReconcileFakeIPTun_HealsUDPSettings(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	provisionForDisable(t, h)
+
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	sr.UDPTimeout = "10m0s"
+	sr.UDPNATMax = 8192
+
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+
+	activePath := filepath.Join(h.dir, "21-fakeip.json")
+	raw, err := os.ReadFile(activePath)
+	if err != nil {
+		t.Fatalf("read active: %v", err)
+	}
+	cfg, err := parseRouterConfigBytes(raw)
+	if err != nil {
+		t.Fatalf("parse active: %v", err)
+	}
+	var tun *Inbound
+	for i := range cfg.Inbounds {
+		if cfg.Inbounds[i].Tag == "tun-in" {
+			tun = &cfg.Inbounds[i]
+		}
+	}
+	if tun == nil {
+		t.Fatal("tun-in инбаунд отсутствует")
+	}
+	if tun.UDPTimeout != "10m0s" || tun.UDPNATMax != 8192 {
+		t.Errorf("tun-in UDPTimeout=%q UDPNATMax=%d, want 10m0s/8192", tun.UDPTimeout, tun.UDPNATMax)
+	}
+	ruleOK := false
+	for _, r := range cfg.Route.Rules {
+		if isSystemUDPTimeoutRule(r) {
+			ruleOK = r.UDPTimeout == "10m0s"
+		}
+	}
+	if !ruleOK {
+		t.Error("route-options правило udp_timeout не обновлено до 10m0s")
+	}
+
+	before, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun (2nd tick): %v", err)
+	}
+	after, err := os.Stat(activePath)
+	if err != nil {
+		t.Fatalf("stat after: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("второй тик без изменений переписал слот (before=%v after=%v)", before.ModTime(), after.ModTime())
+	}
+}
