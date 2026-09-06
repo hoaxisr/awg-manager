@@ -20,6 +20,13 @@ type Client interface {
 	// GetPeerPublicKey extracts the peer public key from interface state.
 	// Uses Show internally.
 	GetPeerPublicKey(ctx context.Context, iface string) (string, error)
+
+	// LatestHandshake отдаёт точный штамп последнего рукопожатия (epoch-секунды
+	// ядра, нулевое время — рукопожатия не было). В отличие от Show, чей штамп
+	// восстановлен из «N seconds ago» относительно time.Now() и дрожит на
+	// доли секунды между вызовами, этот пригоден для сравнения двух чтений.
+	// Command: awg show <iface> latest-handshakes
+	LatestHandshake(ctx context.Context, iface string) (time.Time, error)
 }
 
 // ShowResult contains the parsed output of awg show.

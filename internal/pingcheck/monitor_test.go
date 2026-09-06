@@ -24,6 +24,10 @@ func (c *slowWGClient) Show(ctx context.Context, iface string) (*wg.ShowResult, 
 	return &wg.ShowResult{HasPeer: true}, nil // no recent handshake
 }
 
+func (c *slowWGClient) LatestHandshake(context.Context, string) (time.Time, error) {
+	return time.Time{}, nil
+}
+
 // TestWaitHandshake_InterruptedByStopCh verifies that waitHandshake exits
 // immediately when stopCh is closed, rather than blocking for the full
 // 30-second handshake timeout. This prevents HTTP handlers from hanging
@@ -97,6 +101,11 @@ type spyWGClient struct {
 func (c *spyWGClient) Show(_ context.Context, _ string) (*wg.ShowResult, error) {
 	c.calls++
 	return &wg.ShowResult{HasPeer: true}, nil
+}
+
+func (c *spyWGClient) LatestHandshake(context.Context, string) (time.Time, error) {
+	c.calls++
+	return time.Time{}, nil
 }
 
 // alwaysFailDoer роняет HTTP-проверку мгновенно и без сети.
@@ -413,12 +422,21 @@ func waitFor(t *testing.T, cond func() bool, msg string) {
 	t.Fatal(msg)
 }
 
-// fixedWGClient отдаёт один и тот же штамп рукопожатия — как ядро после
-// down/up: latest-handshake сохранён, ключи сброшены, трафика нет.
-type fixedWGClient struct{ hs time.Time }
+// fixedWGClient отдаёт один и тот же штамп рукопожатия (целые epoch-секунды,
+// как `awg show latest-handshakes`) — как ядро после down/up: latest-handshake
+// сохранён, ключи сброшены, трафика нет. calls считает опросы.
+type fixedWGClient struct {
+	hs    time.Time
+	calls int
+}
 
 func (c *fixedWGClient) Show(_ context.Context, _ string) (*wg.ShowResult, error) {
 	return &wg.ShowResult{HasPeer: true, LastHandshake: c.hs}, nil
+}
+
+func (c *fixedWGClient) LatestHandshake(context.Context, string) (time.Time, error) {
+	c.calls++
+	return time.Unix(c.hs.Unix(), 0), nil
 }
 
 // Старый штамп (даже минутной давности) после toggle — НЕ восстановление:
@@ -427,12 +445,16 @@ func TestWaitHandshake_RequiresStampNewerThanBaseline(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	fastHandshakePoll(t)
-	stale := time.Now().Add(-time.Minute)
-	s := &Service{wg: &fixedWGClient{hs: stale}, ctx: ctx, handshakeTimeout: 3 * handshakePollFreq}
+	stale := time.Unix(time.Now().Add(-time.Minute).Unix(), 0)
+	c := &fixedWGClient{hs: stale}
+	s := &Service{wg: c, ctx: ctx, handshakeTimeout: 3 * handshakePollFreq}
 	stopCh := make(chan struct{})
 
 	if s.waitHandshake("fake0", stale, stopCh) {
 		t.Fatal("штамп, равный снятому до down, не может считаться новым рукопожатием")
+	}
+	if c.calls == 0 {
+		t.Fatal("wg ни разу не опрошен — критерий не проверен")
 	}
 	if !s.waitHandshake("fake0", stale.Add(-time.Second), stopCh) {
 		t.Fatal("штамп новее baseline обязан считаться рукопожатием")
@@ -450,7 +472,8 @@ func TestSensorTick_ToggleWithStaleStampIsNotRecovered(t *testing.T) {
 	httpprobe.Client = alwaysFailDoer{}
 	fastHandshakePoll(t)
 	s, m, config, _ := newKernelSensorService(t)
-	s.wg = &fixedWGClient{hs: time.Now().Add(-30 * time.Second)}
+	c := &fixedWGClient{hs: time.Now().Add(-30 * time.Second)}
+	s.wg = c
 	s.handshakeTimeout = 3 * handshakePollFreq
 	m.stopCh = make(chan struct{}) // не закрыт: waitHandshake доходит до опроса wg
 	bus := events.NewBus()
@@ -471,6 +494,9 @@ func TestSensorTick_ToggleWithStaleStampIsNotRecovered(t *testing.T) {
 		default:
 			if m.restartCount != 1 {
 				t.Fatalf("restartCount = %d, ожидали 1 (toggle без рукопожатия)", m.restartCount)
+			}
+			if c.calls < 2 {
+				t.Fatalf("wg опрошен %d раз — baseline и хотя бы один опрос после up обязательны", c.calls)
 			}
 			return
 		}
@@ -512,4 +538,53 @@ func TestCheckAllNow_SkipsBusyMonitorAndReturnsAtOnce(t *testing.T) {
 	s.CheckAllNow()
 	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return !m.lastCheck.IsZero() },
 		"свободный монитор обязан выполнить проверку по check-now")
+}
+
+// blockingDoer держит HTTP-проверку, пока тест не отпустит release.
+type blockingDoer struct{ release chan struct{} }
+
+func (d blockingDoer) Do(_ context.Context, _ httpclient.CallConfig) (*httpclient.Result, error) {
+	<-d.release
+	return &httpclient.Result{Metrics: httpclient.Metrics{HTTPCode: 204}}, nil
+}
+
+// StopMonitoring ждёт горутину check-now (она учтена в m.wg) — после
+// возврата никакой тик по этому монитору уже не идёт.
+func TestStopMonitoring_WaitsForCheckNow(t *testing.T) {
+	orig := httpprobe.Client
+	t.Cleanup(func() { httpprobe.Client = orig })
+	release := make(chan struct{})
+	httpprobe.Client = blockingDoer{release: release}
+	s, m, _, _ := newKernelSensorService(t)
+	m.stopCh = make(chan struct{})
+	s.monitors = map[string]*tunnelMonitor{"awg7": m}
+	s.running = true
+
+	s.CheckAllNow()
+	waitFor(t, func() bool {
+		if m.tickMu.TryLock() {
+			m.tickMu.Unlock()
+			return false
+		}
+		return true
+	}, "check-now обязан взять tickMu")
+
+	stopped := make(chan struct{})
+	go func() { s.StopMonitoring("awg7"); close(stopped) }()
+	select {
+	case <-stopped:
+		t.Fatal("StopMonitoring вернулся, пока check-now ещё в проверке")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("StopMonitoring не дождался check-now")
+	}
+	if m.tickMu.TryLock() {
+		m.tickMu.Unlock()
+	} else {
+		t.Fatal("после StopMonitoring tickMu всё ещё занят")
+	}
 }

@@ -28,6 +28,7 @@ var ifaceUp = func(name string) bool {
 // wgClient is the subset of wg.Client needed by the health sensor.
 type wgClient interface {
 	Show(ctx context.Context, iface string) (*wg.ShowResult, error)
+	LatestHandshake(ctx context.Context, iface string) (time.Time, error)
 }
 
 // Service manages ping check monitoring for all tunnels.
@@ -223,14 +224,23 @@ func (s *Service) GetStatus() []TunnelStatus {
 		monitoredIDs[tunnelID] = true
 		config := s.getCheckConfig(tunnelID)
 
+		// Бэкенд берём из записи: живой монитор бывает не только у kernel —
+		// зеркальную запись прокси-выхода этот цикл тоже перечисляет, и
+		// зашитое "kernel" врало о её природе.
+		backend := "kernel"
+		if stored, err := s.tunnels.Get(tunnelID); err == nil && stored.Backend != "" {
+			backend = stored.Backend
+		}
+
 		// Как nwgCardStatus: лежащий интерфейс — «stopped», но не во время
-		// лечения (failCount на пороге — окно down/up ещё идёт).
+		// лечения (failCount на пороге — окно down/up ещё идёт). Зеркало
+		// wdtt-raw не лечится и счётчик не сбрасывает — для него это не окно.
 		running := ifaceUp(s.resolveIfaceName(tunnelID))
 		status := "disabled"
 		if config != nil {
 			switch {
 			case (m.restartCount > 0 && (m.lastResult == nil || !m.lastResult.Success)) ||
-				m.failCount >= config.FailThreshold:
+				(backend == "kernel" && m.failCount >= config.FailThreshold):
 				status = "recovering"
 			case !running:
 				status = "stopped"
@@ -253,14 +263,6 @@ func (s *Service) GetStatus() []TunnelStatus {
 		}
 		if m.lastResult != nil {
 			lastLatency = m.lastResult.Latency
-		}
-
-		// Бэкенд берём из записи: живой монитор бывает не только у kernel —
-		// зеркальную запись прокси-выхода этот цикл тоже перечисляет, и
-		// зашитое "kernel" врало о её природе.
-		backend := "kernel"
-		if stored, err := s.tunnels.Get(tunnelID); err == nil && stored.Backend != "" {
-			backend = stored.Backend
 		}
 
 		result = append(result, TunnelStatus{
@@ -383,16 +385,22 @@ func (s *Service) CheckAllNow() {
 // вызывающего: sensorTick на пороге уходит в лечение (ждёт рукопожатие до
 // 30 с, затем backoff до maxBackoff), и HTTP-хендлер check-now висел бы всё
 // это время. Занятый монитор (тик или лечение в процессе) пропускается —
-// второе лечение на том же интерфейсе недопустимо. Окно гонки со
-// StopMonitoring: закрытый stopCh мгновенно выводит waitHandshake и backoff.
+// второе лечение на том же интерфейсе недопустимо. Горутина учтена в m.wg
+// под s.mu вместе с проверкой stopCh: StopMonitoring закрывает канал под тем
+// же локом и ждёт её, а закрытый канал мгновенно выводит из ожидания
+// рукопожатия и backoff (doLinkToggle снимает канал под локом до лечения).
 func (s *Service) checkNowAsync(m *tunnelMonitor, config *checkConfig) {
 	s.mu.RLock()
 	stopCh := m.stopCh
+	if stopCh != nil {
+		m.wg.Add(1)
+	}
 	s.mu.RUnlock()
 	if stopCh == nil {
 		return
 	}
 	go func() {
+		defer m.wg.Done()
 		if !m.tickMu.TryLock() {
 			return
 		}

@@ -178,6 +178,16 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 		newEndpoint = resolveEndpoint(stored.Peer.Endpoint)
 	}
 
+	// Канал остановки снимаем под локом ДО лечения: StopMonitoring закрывает
+	// его и обнуляет поле под s.mu, а чтение поля из середины лечения могло
+	// застать nil — и ожидание рукопожатия с backoff шли бы до конца.
+	s.mu.RLock()
+	stopCh := m.stopCh
+	s.mu.RUnlock()
+	if stopCh == nil {
+		return
+	}
+
 	// Штамп рукопожатия ДО down: ядро (wireguard и amneziawg, стенд
 	// 2026-09-06) сохраняет latest-handshake через down/up, а ключи сессии
 	// сбрасывает — трафик пойдёт только после НОВОГО рукопожатия. «Штамп
@@ -208,7 +218,7 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 	}
 
 	// 5. Wait for handshake (interruptible by monitor stop signal)
-	ok := s.waitHandshake(ifaceName, baseline, m.stopCh)
+	ok := s.waitHandshake(ifaceName, baseline, stopCh)
 
 	s.mu.Lock()
 	m.restartCount++
@@ -253,7 +263,7 @@ func (s *Service) doLinkToggle(m *tunnelMonitor, config *checkConfig, ifaceName 
 		s.logInfo(m.tunnelID, fmt.Sprintf("Backoff %v before next cycle", backoff))
 		select {
 		case <-time.After(backoff):
-		case <-m.stopCh:
+		case <-stopCh:
 		case <-s.ctx.Done():
 		}
 	}
@@ -279,17 +289,18 @@ func tryResolveEndpoint(endpoint string) string {
 	return net.JoinHostPort(ips[0], port)
 }
 
-// lastHandshake отдаёт текущий штамп рукопожатия интерфейса (нулевой, если
-// wg недоступен или рукопожатия не было).
+// lastHandshake отдаёт точный штамп рукопожатия интерфейса (epoch-секунды
+// ядра). Если штамп прочитать не удалось, отдаёт текущую секунду: тогда
+// восстановлением считается только рукопожатие новее «сейчас» — ложный минус
+// безвреден (следующий успешный тик всё равно публикует pass), ложный плюс
+// по старому штампу — нет.
 func (s *Service) lastHandshake(ifaceName string) time.Time {
-	if s.wg == nil {
-		return time.Time{}
+	if s.wg != nil {
+		if hs, err := s.wg.LatestHandshake(s.ctx, ifaceName); err == nil {
+			return hs
+		}
 	}
-	show, err := s.wg.Show(s.ctx, ifaceName)
-	if err != nil || show == nil {
-		return time.Time{}
-	}
-	return show.LastHandshake
+	return time.Now().Truncate(time.Second)
 }
 
 // waitHandshake polls awg show after link toggle for a handshake NEWER than
@@ -311,11 +322,11 @@ func (s *Service) waitHandshake(ifaceName string, baseline time.Time, stopCh <-c
 			if s.wg == nil {
 				continue
 			}
-			show, err := s.wg.Show(s.ctx, ifaceName)
+			hs, err := s.wg.LatestHandshake(s.ctx, ifaceName)
 			if err != nil {
 				continue
 			}
-			if !show.LastHandshake.IsZero() && show.LastHandshake.After(baseline) {
+			if !hs.IsZero() && hs.After(baseline) {
 				return true
 			}
 		case <-deadline:

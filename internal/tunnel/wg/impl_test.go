@@ -149,3 +149,18 @@ func TestShowResult_HasRecentHandshake(t *testing.T) {
 		t.Error("Expected HasRecentHandshake=false for zero time")
 	}
 }
+
+func TestParseLatestHandshakes(t *testing.T) {
+	if got := parseLatestHandshakes("pk1\t1788707043\n"); !got.Equal(time.Unix(1788707043, 0)) {
+		t.Fatalf("got %v", got)
+	}
+	if got := parseLatestHandshakes("pk1\t0\n"); !got.IsZero() {
+		t.Fatalf("0 = рукопожатия не было, got %v", got)
+	}
+	if got := parseLatestHandshakes(""); !got.IsZero() {
+		t.Fatalf("пустой вывод, got %v", got)
+	}
+	if got := parseLatestHandshakes("a\t5\nb\t9\nc\t7\n"); !got.Equal(time.Unix(9, 0)) {
+		t.Fatalf("берём самый свежий, got %v", got)
+	}
+}
