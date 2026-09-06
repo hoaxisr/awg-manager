@@ -18,6 +18,7 @@ import (
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
+	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -110,6 +111,14 @@ func runCleanup(dataDir string) {
 	operator := ops.NewOperator(cleanupNDMSQueries, cleanupNDMSCommands, wgClient, backendImpl, firewallMgr)
 
 	nwgOp := nwg.NewOperator(cleanupNDMSQueries, cleanupNDMSCommands, cleanupNDMSTransport, nil)
+	// Без раннера снос туннеля не гасит релей: процесс пережил бы удаление
+	// пакета. Бинарь тут только с диска — качать на удалении нечего.
+	nwgOp.SetObfuscator(obfuscator.NewRunner(obfuscator.RunnerDeps{
+		BinaryFor: func(_ context.Context, flavor string) (string, error) {
+			return filepath.Join(obfuscator.BinDir, obfuscator.BinaryName(flavor)), nil
+		},
+		Log: logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps),
+	}))
 	tunnelService := service.New(awgStore, nwgOp, operator, stateMgr, wan.NewModel(), nil)
 
 	// Wire orchestrator for lifecycle operations (Delete needs it)
@@ -204,6 +213,8 @@ func runCleanup(dataDir string) {
 	}
 	os.Remove(filepath.Join(dataDir, "port"))
 	os.Remove(filepath.Join(dataDir, "dns-routes.json"))
+	os.RemoveAll(obfuscator.ConfDir)
+	os.RemoveAll(obfuscator.RunDir)
 
 	fmt.Println("Done.")
 }

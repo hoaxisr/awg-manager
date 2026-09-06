@@ -11,6 +11,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndms "github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/testing"
@@ -39,6 +40,9 @@ type SystemTunnelDTO struct {
 	Connected     bool                 `json:"connected" example:"true"`
 	MTU           int                  `json:"mtu" example:"1420"`
 	Peer          *SystemTunnelPeerDTO `json:"peer,omitempty"`
+	// External — "phobos": интерфейс создан установщиком Phobos
+	// (description Phobos-…) и установка на месте; не наш, не перенимается.
+	External string `json:"external,omitempty" example:"phobos"`
 }
 
 // SystemTunnelsResponse is the envelope for GET /system-tunnels.
@@ -115,7 +119,20 @@ func (h *SystemTunnelsHandler) listSystemTunnels(ctx context.Context) ([]ndms.Sy
 	if visible == nil {
 		visible = []ndms.SystemWireguardTunnel{}
 	}
+	markExternal(visible, obfuscator.DetectForeign())
 	return visible, nil
+}
+
+// markExternal помечает системные туннели чужой установки Phobos. Условие
+// двойное (Q16): и префикс description от их установщика, и след самой
+// установки — переименованный чужой интерфейс бейджа не даёт.
+func markExternal(list []ndms.SystemWireguardTunnel, f obfuscator.Foreign) {
+	if !f.InitScript && !f.ProcessAlive {
+		return
+	}
+	for i := range list {
+		list[i].External = obfuscator.ExternalKind(list[i].Description)
+	}
 }
 
 // List returns all visible (non-hidden) system WireGuard tunnels.

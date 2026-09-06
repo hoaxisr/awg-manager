@@ -38,6 +38,16 @@ type TunnelListItemDTO struct {
 	WdttClientID              string                `json:"wdttClientId,omitempty" example:"default"`
 	FreeTurnClientID          string                `json:"freeTurnClientId,omitempty" example:"default"`
 	Locked                    bool                  `json:"locked,omitempty" example:"false"`
+	StatusDetails             string                `json:"statusDetails,omitempty" example:"обфускатор не запущен"`
+	Obfuscator                *ObfuscatorItemDTO    `json:"obfuscator,omitempty"`
+}
+
+// ObfuscatorItemDTO mirrors the obfuscator field in TunnelListItem: что
+// список показывает о релее (ключ наружу не отдаётся).
+type ObfuscatorItemDTO struct {
+	Flavor    string `json:"flavor" example:"phobos" enums:"phobos,clusterm"`
+	Target    string `json:"target" example:"1.2.3.4:51824"`
+	LocalPort int    `json:"localPort" example:"39000"`
 }
 
 // TunnelListResponse is the envelope for GET /tunnels/list.
@@ -113,6 +123,21 @@ type AWGTunnelDTO struct {
 	Interface     AWGInterfaceDTO     `json:"interface"`
 	Peer          AWGPeerDTO          `json:"peer"`
 	StateInfo     *TunnelStateInfoDTO `json:"stateInfo,omitempty"`
+	Obfuscator    *ObfuscatorDTO      `json:"obfuscator,omitempty"`
+}
+
+// ObfuscatorDTO mirrors storage.Obfuscator — параметры релея wg-obfuscator,
+// как их отдаёт карточка туннеля. Ключ здесь есть: это XOR-ключ релея, а не
+// приватный ключ WG, и вкладка «Обфускатор» его показывает и правит.
+type ObfuscatorDTO struct {
+	Flavor         string `json:"flavor" example:"phobos" enums:"phobos,clusterm"`
+	Target         string `json:"target" example:"1.2.3.4:51824"`
+	Key            string `json:"key" example:"secret"`
+	Masking        string `json:"masking" example:"STUN" enums:"STUN,MEDIA,AUTO,NONE"`
+	MaxDummy       int    `json:"maxDummy" example:"4"`
+	IdleTimeout    int    `json:"idleTimeout,omitempty" example:"120"`
+	ObfuscateBytes int    `json:"obfuscateBytes,omitempty" example:"16"`
+	LocalPort      int    `json:"localPort" example:"39000"`
 }
 
 // TunnelDetailResponse is the envelope for GET /tunnels/get.

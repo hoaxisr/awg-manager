@@ -60,6 +60,7 @@ const api_AWGTunnelDTO: v.GenericSchema = v.looseObject({
 	interface: v.optional(v.nullable(v.lazy(() => api_AWGInterfaceDTO))),
 	interfaceName: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
+	obfuscator: v.optional(v.nullable(v.lazy(() => api_ObfuscatorDTO))),
 	peer: v.optional(v.nullable(v.lazy(() => api_AWGPeerDTO))),
 	state: v.optional(v.nullable(v.string())),
 	stateInfo: v.optional(v.nullable(v.lazy(() => api_TunnelStateInfoDTO))),
@@ -933,6 +934,23 @@ const api_NativePingCheckStatusDTO: v.GenericSchema = v.looseObject({
 const api_NativePingCheckStatusResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_NativePingCheckStatusDTO))),
 	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_ObfuscatorDTO: v.GenericSchema = v.looseObject({
+	flavor: v.optional(v.nullable(v.string())),
+	idleTimeout: v.optional(v.nullable(v.number())),
+	key: v.optional(v.nullable(v.string())),
+	localPort: v.optional(v.nullable(v.number())),
+	masking: v.optional(v.nullable(v.string())),
+	maxDummy: v.optional(v.nullable(v.number())),
+	obfuscateBytes: v.optional(v.nullable(v.number())),
+	target: v.optional(v.nullable(v.string())),
+});
+
+const api_ObfuscatorItemDTO: v.GenericSchema = v.looseObject({
+	flavor: v.optional(v.nullable(v.string())),
+	localPort: v.optional(v.nullable(v.number())),
+	target: v.optional(v.nullable(v.string())),
 });
 
 const api_OkData: v.GenericSchema = v.looseObject({
@@ -2349,6 +2367,7 @@ const api_SystemServicesListResponse: v.GenericSchema = v.looseObject({
 const api_SystemTunnelDTO: v.GenericSchema = v.looseObject({
 	connected: v.optional(v.nullable(v.boolean())),
 	description: v.optional(v.nullable(v.string())),
+	external: v.optional(v.nullable(v.string())),
 	id: v.optional(v.nullable(v.string())),
 	interfaceName: v.optional(v.nullable(v.string())),
 	mtu: v.optional(v.nullable(v.number())),
@@ -2448,12 +2467,14 @@ const api_TunnelListItemDTO: v.GenericSchema = v.looseObject({
 	mtu: v.optional(v.nullable(v.number())),
 	name: v.optional(v.nullable(v.string())),
 	ndmsName: v.optional(v.nullable(v.string())),
+	obfuscator: v.optional(v.nullable(v.lazy(() => api_ObfuscatorItemDTO))),
 	pingCheck: v.optional(v.nullable(v.lazy(() => api_TunnelPingCheckStatus))),
 	resolvedIspInterface: v.optional(v.nullable(v.string())),
 	resolvedIspInterfaceLabel: v.optional(v.nullable(v.string())),
 	rxBytes: v.optional(v.nullable(v.number())),
 	startedAt: v.optional(v.nullable(v.string())),
 	status: v.optional(v.nullable(v.string())),
+	statusDetails: v.optional(v.nullable(v.string())),
 	txBytes: v.optional(v.nullable(v.number())),
 	type: v.optional(v.nullable(v.string())),
 	wdttClientId: v.optional(v.nullable(v.string())),

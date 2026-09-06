@@ -178,6 +178,12 @@ func BuildTunnelResponse(r *http.Request, svc TunnelService, store *storage.AWGT
 		peer := stored.Peer
 		peer.PresharedKey = ""
 		resp["peer"] = peer
+		if stored.Obfuscator != nil {
+			// Целиком, включая key: это XOR-ключ релея, а не приватный ключ
+			// WG — без него вкладка «Обфускатор» не может показать и править
+			// его (mergedObfuscator пустой ключ не затирает).
+			resp["obfuscator"] = stored.Obfuscator
+		}
 		resp["pingCheck"] = stored.PingCheck
 		resp["connectivityCheck"] = stored.ConnectivityCheck
 		resp["ispInterfaceLabel"] = stored.ISPInterfaceLabel
@@ -227,6 +233,28 @@ type tunnelItem struct {
 	FreeTurnClientID string `json:"freeTurnClientId,omitempty"`
 	// Locked — при true туннель защищён от изменений (#818).
 	Locked bool `json:"locked,omitempty"`
+	// StatusDetails — человекочитаемая причина состояния (StateInfo.Details),
+	// напр. «обфускатор не запущен».
+	StatusDetails string          `json:"statusDetails,omitempty"`
+	Obfuscator    *obfuscatorItem `json:"obfuscator,omitempty"`
+}
+
+// obfuscatorItem — что показывает список о релее; Key наружу не отдаём.
+type obfuscatorItem struct {
+	Flavor    string `json:"flavor"`
+	Target    string `json:"target"`
+	LocalPort int    `json:"localPort"`
+}
+
+func obfItem(stored *storage.AWGTunnel) *obfuscatorItem {
+	if stored == nil || stored.Obfuscator == nil {
+		return nil
+	}
+	return &obfuscatorItem{
+		Flavor:    stored.Obfuscator.Flavor,
+		Target:    stored.Obfuscator.Target,
+		LocalPort: stored.Obfuscator.LocalPort,
+	}
 }
 
 // listItems builds the tunnel list items for API response and SSE snapshots.
@@ -258,6 +286,11 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 		var mtu int
 		if stored != nil {
 			endpoint = stored.Peer.Endpoint
+			if stored.Obfuscator != nil {
+				// У обфусцированного туннеля Peer.Endpoint — loopback релея;
+				// пользователю показываем реальный сервер (Q7).
+				endpoint = stored.Obfuscator.Target
+			}
 			address = stored.Interface.Address
 			mtu = stored.Interface.MTU
 			awgVersion = config.ClassifyAWGVersion(&stored.Interface)
@@ -372,6 +405,8 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			PingCheck:                 pcInfo,
 			WdttClientID:              wdttClientID,
 			FreeTurnClientID:          freeTurnClientID,
+			StatusDetails:             t.StateInfo.Details,
+			Obfuscator:                obfItem(stored),
 		}
 		if stored != nil && stored.ConnectivityCheck != nil {
 			item.ConnectivityCheck = stored.ConnectivityCheck

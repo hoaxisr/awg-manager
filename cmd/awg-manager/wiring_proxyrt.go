@@ -18,6 +18,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/captcha"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/ftlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/install"
@@ -863,6 +864,21 @@ func (a *app) wireProxyrt() {
 		// холодном старте роутера оно длится минутами. Со стора же читаются и
 		// записи без воркера (отказ фабрики в Create).
 		InstanceCount: func(name install.Subsystem) (int, error) {
+			// Обфускатор не заводит прокси-инстансов: его бинарь держат
+			// туннели с этой разновидностью релея — по ним и гейт удаления.
+			if flavor, ok := obfFlavor(name); ok {
+				tuns, err := a.awgStore.List()
+				if err != nil {
+					return 0, err
+				}
+				n := 0
+				for i := range tuns {
+					if tuns[i].Obfuscator != nil && tuns[i].Obfuscator.Flavor == flavor {
+						n++
+					}
+				}
+				return n, nil
+			}
 			st, err := store.Load()
 			if err != nil {
 				return 0, err
@@ -879,6 +895,24 @@ func (a *app) wireProxyrt() {
 		// сериализован bootMu и может тянуться, а ответ UI ждать не должен.
 		Installed: func(install.Subsystem) { go a.proxyRuntimeNudge("install", proxyrt.EventBoot) },
 	})
+
+	// Релей wg-obfuscator: один процесс на туннель, бинарь докачивается тем
+	// же установщиком, что и прокси.
+	obfRunner := obfuscator.NewRunner(obfuscator.RunnerDeps{
+		BinaryFor: func(ctx context.Context, flavor string) (string, error) {
+			return installSvc.EnsureInstalled(ctx, "obf-"+flavor)
+		},
+		Log: logging.NewScopedLogger(a.loggingService, logging.GroupTunnel, logging.SubOps),
+	})
+	a.nwgOp.SetObfuscator(obfRunner)
+	// Усыновить релеи живых включённых туннелей, сирот погасить.
+	keep := func(id string) bool {
+		t, err := a.awgStore.Get(id)
+		return err == nil && t != nil && t.Obfuscator != nil && t.Enabled
+	}
+	if adopted := obfRunner.AdoptAll(keep); len(adopted) > 0 {
+		journal.Info("obfuscator", "", "усыновлены процессы: "+strings.Join(adopted, ", "))
+	}
 
 	records := proxyRecords{ref: ref}
 	mutator := proxyMutator{ref: ref}
@@ -1263,4 +1297,15 @@ func (d proxyrtDispatch) handler() http.HandlerFunc {
 			d.instances(w, r)
 		}
 	}
+}
+
+// obfFlavor — разновидность релея, чьи бинари держит подсистема установщика.
+func obfFlavor(name install.Subsystem) (string, bool) {
+	switch name {
+	case install.SubsystemObfPhobos:
+		return storage.ObfuscatorFlavorPhobos, true
+	case install.SubsystemObfClusterM:
+		return storage.ObfuscatorFlavorClusterM, true
+	}
+	return "", false
 }

@@ -206,6 +206,9 @@ type SystemWireguardTunnel struct {
 	Mask          string             `json:"mask,omitempty"`    // IPv4 mask
 	Uptime        int64              `json:"uptime,omitempty"`  // seconds since up
 	Peer          *WireguardPeerInfo `json:"peer,omitempty"`    // FIRST peer only
+	// External — "phobos": интерфейс создан установщиком Phobos
+	// (description Phobos-…) и установка на месте; не наш, не перенимается.
+	External string `json:"external,omitempty"`
 }
 
 // WireguardPeerInfo is the minimal tunnel-peer view (first peer only, for system-tunnel UI).
