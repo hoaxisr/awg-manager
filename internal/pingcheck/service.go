@@ -3,6 +3,7 @@ package pingcheck
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"sort"
 	"strings"
@@ -16,6 +17,13 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
 )
+
+// ifaceUp — шов над проверкой флага UP интерфейса: `tunnelRunning` kernel-записи
+// в статусе мониторинга (у nativewg ту же роль играет Bound из NDMS).
+var ifaceUp = func(name string) bool {
+	ifi, err := net.InterfaceByName(name)
+	return err == nil && ifi.Flags&net.FlagUp != 0
+}
 
 // wgClient is the subset of wg.Client needed by the health sensor.
 type wgClient interface {
@@ -257,6 +265,7 @@ func (s *Service) GetStatus() []TunnelStatus {
 			FailCount:     m.failCount,
 			FailThreshold: failThreshold,
 			RestartCount:  m.restartCount,
+			TunnelRunning: ifaceUp(s.resolveIfaceName(tunnelID)),
 		})
 	}
 
@@ -293,6 +302,7 @@ func (s *Service) GetStatus() []TunnelStatus {
 				Status:        "disabled",
 				Method:        "http",
 				FailThreshold: 3,
+				TunnelRunning: ifaceUp(ifaceName),
 			})
 		}
 	}

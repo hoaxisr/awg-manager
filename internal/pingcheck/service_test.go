@@ -122,3 +122,44 @@ func TestGetStatus_LegacyRecordStaysKernel(t *testing.T) {
 		t.Fatalf("backend = %q, want kernel", got[0].Backend)
 	}
 }
+
+// tunnelRunning у kernel-записи отражает флаг UP интерфейса, а не остаётся
+// false навсегда (репортёр #855 принял его за признак сбоя).
+func TestGetStatus_KernelTunnelRunningFollowsIfaceUp(t *testing.T) {
+	store := newTunnelStore(t)
+	if err := store.Create(&storage.AWGTunnel{
+		ID:        "awg3",
+		Name:      "Kernel",
+		PingCheck: &storage.TunnelPingCheck{Enabled: true, Method: "http", Interval: 30, FailThreshold: 3},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{
+		tunnels:  store,
+		monitors: map[string]*tunnelMonitor{"awg3": {tunnelID: "awg3", tunnelName: "Kernel"}},
+	}
+	old := ifaceUp
+	t.Cleanup(func() { ifaceUp = old })
+
+	for _, up := range []bool{true, false} {
+		var asked string
+		ifaceUp = func(name string) bool { asked = name; return up }
+		got := s.GetStatus()
+		if len(got) != 1 || got[0].TunnelRunning != up {
+			t.Fatalf("up=%v: статус %+v", up, got)
+		}
+		if asked != "opkgtun3" {
+			t.Fatalf("спросили интерфейс %q, ожидали opkgtun3", asked)
+		}
+	}
+}
+
+// Дефолт шва — настоящий флаг UP: lo поднят всегда, несуществующего нет.
+func TestIfaceUpDefault(t *testing.T) {
+	if !ifaceUp("lo") {
+		t.Fatal("lo обязан быть UP")
+	}
+	if ifaceUp("no-such-iface-855") {
+		t.Fatal("несуществующий интерфейс не может быть UP")
+	}
+}
