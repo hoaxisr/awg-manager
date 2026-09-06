@@ -15,6 +15,7 @@
 	import TunnelTitleRow from '$lib/components/tunnels/TunnelTitleRow.svelte';
 	import TunnelMetaText from '$lib/components/tunnels/TunnelMetaText.svelte';
 	import TunnelListTrafficCell from '$lib/components/tunnels/TunnelListTrafficCell.svelte';
+	import { tunnelLockAvailable } from '$lib/components/tunnels/tunnelPageSelectors';
 	import { formatRelativeTime, formatDuration } from '$lib/utils/format';
 	import { type AwgTunnelSortKey } from '$lib/stores/tunnelTableSort';
 	import { goto } from '$app/navigation';
@@ -274,10 +275,12 @@
 			{@const showConnectivityRow = awgShowConnectivityRow(tunnel.status)}
 				<div class="awg-list-row">
 				<div class="awg-list-cell awg-list-cell-toggle">
-					<TunnelLockGlyph
-						locked={!!tunnel.locked}
-						onclick={() => ctx.handleLockClick(tunnel.id)}
-					/>
+					{#if tunnelLockAvailable(tunnel)}
+						<TunnelLockGlyph
+							locked={!!tunnel.locked}
+							onclick={() => ctx.handleLockClick(tunnel.id)}
+						/>
+					{/if}
 					<span title={tunnel.locked ? 'Туннель защищён от изменений' : undefined}>
 						<Toggle
 							checked={ctx.isManagedTunnelOn(tunnel)}

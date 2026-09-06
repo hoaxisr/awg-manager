@@ -9,6 +9,7 @@
 	import TunnelPingButton from '$lib/components/tunnels/TunnelPingButton.svelte';
 	import TunnelTitleRow from '$lib/components/tunnels/TunnelTitleRow.svelte';
 	import TunnelLockGlyph from './TunnelLockGlyph.svelte';
+	import { tunnelLockAvailable } from './tunnelPageSelectors';
 	import { awgLedToStatusDot } from '$lib/utils/statusDot';
 	import { tunnels } from '$lib/stores/tunnels';
 	import { api } from '$lib/api/client';
@@ -58,6 +59,7 @@
 	// ─── Toggle / status logic ─────────────────────────────────────
 	let isOn = $derived(['running', 'starting', 'broken'].includes(tunnel.status));
 	let locked = $derived(!!tunnel.locked);
+	let lockAvailable = $derived(tunnelLockAvailable(tunnel));
 	let toggleDisabled = $derived(toggleLoading || tunnel.hasAddressConflict === true || locked);
 	const lockedTitle = 'Туннель защищён от изменений';
 
@@ -309,7 +311,9 @@
 			<div class="dense-toolbar" title={statusHint || undefined}>
 				<!-- row 1: toggle -->
 				<div class="dense-toolbar-top">
-					<TunnelLockGlyph {locked} size="sm" onclick={() => onLockClick?.()} />
+					{#if lockAvailable}
+						<TunnelLockGlyph {locked} size="sm" onclick={() => onLockClick?.()} />
+					{/if}
 					<span
 						title={locked ? lockedTitle : (tunnel.hasAddressConflict ? 'Конфликт адресов — другой туннель с таким же IP уже запущен' : undefined)}
 					>
@@ -378,7 +382,9 @@
 
 				<div class="head-right">
 					<div class="led-toggle">
-						<TunnelLockGlyph {locked} onclick={() => onLockClick?.()} />
+						{#if lockAvailable}
+							<TunnelLockGlyph {locked} onclick={() => onLockClick?.()} />
+						{/if}
 						<span
 							title={locked ? lockedTitle : (tunnel.hasAddressConflict ? 'Конфликт адресов — другой туннель с таким же IP уже запущен' : undefined)}
 						>

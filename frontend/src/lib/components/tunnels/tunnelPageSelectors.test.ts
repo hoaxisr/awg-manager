@@ -19,6 +19,7 @@ import {
 	sortFilterSystemList,
 	systemStatusLabel,
 	systemStatusVariant,
+	tunnelLockAvailable,
 	tunnelStatusBucket,
 } from './tunnelPageSelectors';
 import type {
@@ -283,5 +284,23 @@ describe('сводные статистики', () => {
 		expect(stats.avgDelayMs).toBe(40); // только активные сэмплируют
 		expect(stats.leaderName).toBe('Act');
 		expect(stats.leaderSharePct).toBe(75);
+	});
+});
+
+describe('tunnelLockAvailable', () => {
+	const base = {
+		id: 'x', name: 'x', type: 'awg', status: 'running', enabled: true, endpoint: '', address: '',
+		pingCheck: { status: 'disabled', restartCount: 0, failCount: 0, failThreshold: 0 },
+	} as TunnelListItem;
+	it('зеркало wdtt-raw без замка — глиф скрыт', () => {
+		expect(tunnelLockAvailable({ ...base, backend: 'wdtt-raw' })).toBe(false);
+	});
+	it('уже защищённое зеркало — глиф остаётся, чтобы снять замок', () => {
+		expect(tunnelLockAvailable({ ...base, backend: 'wdtt-raw', locked: true })).toBe(true);
+	});
+	it('kernel / nativewg / без бэкенда — замок есть', () => {
+		expect(tunnelLockAvailable({ ...base, backend: 'kernel' })).toBe(true);
+		expect(tunnelLockAvailable({ ...base, backend: 'nativewg' })).toBe(true);
+		expect(tunnelLockAvailable(base)).toBe(true);
 	});
 });
