@@ -60,7 +60,7 @@ func (a *app) setupOrchestrator() {
 		TunnelStore:   a.awgStore,
 		SettingsStore: a.settingsStore,
 		SystemTunnels: &monitoringSystemTunnelAdapter{svc: a.systemTunnelSvc},
-		Prober:        monitoring.NewTCPProber(),
+		Prober:        monitoring.NewHTTPProber(),
 		ICMPProber:    monitoring.NewICMPProber(),
 		Log:           a.loggingService,
 	})

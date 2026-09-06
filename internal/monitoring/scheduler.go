@@ -3,6 +3,7 @@ package monitoring
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -424,7 +425,29 @@ func (s *Scheduler) runProbeCell(ctx context.Context, t Target, tn Tunnel, isSel
 		}
 		return d, true
 	}
-	return s.proberFor(tn, isSelf).Probe(ctx, t.Host, tn.IfaceName, s.probeTimeout)
+	target := t.Host
+	if isSelf && tn.SelfURL != "" {
+		target = tn.SelfURL
+	}
+	return s.proberFor(tn, isSelf).Probe(ctx, target, tn.IfaceName, s.probeTimeout)
+}
+
+// connectivityCheckURL returns the configured connectivity-check URL and its
+// host (settings, else the default; the default when the stored one does not
+// parse). Same source as the manual check in testing.Service.
+func (s *Scheduler) connectivityCheckURL() (rawURL, host string) {
+	rawURL = storage.DefaultConnectivityCheckURL
+	if s.deps.SettingsStore != nil {
+		if settings, err := s.deps.SettingsStore.Get(); err == nil && settings != nil && settings.ConnectivityCheckURL != "" {
+			rawURL = settings.ConnectivityCheckURL
+		}
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Hostname() == "" {
+		rawURL = storage.DefaultConnectivityCheckURL
+		u, _ = url.Parse(rawURL)
+	}
+	return rawURL, u.Hostname()
 }
 
 // collectTunnels assembles Tunnel records from:
@@ -478,11 +501,12 @@ func (s *Scheduler) collectTunnels(ctx context.Context) []Tunnel {
 					}
 				}
 			}
-			// Default self-target for HTTP method matches the connectivity-
-			// check service: probe the same gstatic endpoint so the matrix
-			// cell labelled with that host shows the canonical card metric.
+			// Self-target for HTTP method is the configured connectivity-check
+			// URL — the same endpoint and probe the manual «Тест» button uses,
+			// so the card indicator cannot disagree with it.
+			selfURL := ""
 			if selfTarget == "" && selfMethod == "http" {
-				selfTarget = "connectivitycheck.gstatic.com"
+				selfURL, selfTarget = s.connectivityCheckURL()
 			}
 			if rt.IfaceName != "" {
 				managedClaimed[rt.IfaceName] = true
@@ -493,6 +517,7 @@ func (s *Scheduler) collectTunnels(ctx context.Context) []Tunnel {
 				IfaceName:       rt.IfaceName,
 				PingcheckTarget: pingTarget,
 				SelfTarget:      selfTarget,
+				SelfURL:         selfURL,
 				SelfMethod:      selfMethod,
 				Source:          "awg",
 				Backend:         rt.BackendType,

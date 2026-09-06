@@ -2,64 +2,42 @@ package monitoring
 
 import (
 	"context"
-	"net"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/httpprobe"
 	"github.com/hoaxisr/awg-manager/internal/icmpprobe"
-	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 )
 
-// Prober probes a single host through a specific interface and returns
-// latency in milliseconds + success flag. Implementations must be safe for
-// concurrent use.
+// Prober probes a single target through a specific interface and returns
+// latency in milliseconds + success flag. target is a URL for HTTPProber and
+// a host/IP for ICMPProber. Implementations must be safe for concurrent use.
 type Prober interface {
-	Probe(ctx context.Context, host, ifaceName string, timeout time.Duration) (latencyMs int, ok bool)
+	Probe(ctx context.Context, target, ifaceName string, timeout time.Duration) (latencyMs int, ok bool)
 }
 
-// TCPProber probes via a bare TCP connect to host:443 with SO_BINDTODEVICE
-// and reports the dial duration. The matrix metric has always been TCP RTT:
-// the previous HTTPS HEAD prober measured `time_connect - time_namelookup`
-// and discarded the TLS exchange — but on softfloat MIPS each discarded
-// TLS handshake costs seconds of CPU, so idle routers burned most of their
-// awg-manager CPU on throwaway handshakes every matrix tick.
-//
-// "Reachable" is defined as: TCP connect succeeded before the timeout
-// (was: any HTTP status code). For the bare-IP base targets these are
-// equivalent in practice. Hostname targets resolve inside the measured
-// window, matching the old time_total fallback behaviour.
-type TCPProber struct {
-	// port is dialed on every probed host; defaults to 443 (overridable
-	// in tests, where no fixed port can be listened on).
-	port string
-}
+// HTTPProber is the very probe the manual «Тест» button runs
+// (testing.Service.checkHTTP → httpprobe): HTTP GET of the configured
+// connectivity-check URL bound to the tunnel interface, success = 2xx/3xx.
+// One code path for the card indicator and the manual check means they can
+// never disagree. target is the full URL, not a bare host. The default URL is
+// plain http, so no TLS handshake burns softfloat-MIPS CPU per tick; an
+// https URL chosen by the user costs the same here as in the manual check.
+type HTTPProber struct{}
 
-// NewTCPProber builds a prober dialing the conventional HTTPS port.
-func NewTCPProber() *TCPProber {
-	return &TCPProber{port: "443"}
-}
+// NewHTTPProber builds the prober shared with the manual connectivity check.
+func NewHTTPProber() *HTTPProber { return &HTTPProber{} }
 
-// Probe opens and immediately closes one TCP connection through ifaceName.
-// ok=false on context cancellation or any dial error.
-func (p *TCPProber) Probe(ctx context.Context, host, ifaceName string, timeout time.Duration) (int, bool) {
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout+1*time.Second)
+// Probe performs one HTTP GET of target (URL) through ifaceName.
+// ok=false on transport error, non-success status or timeout.
+func (p *HTTPProber) Probe(ctx context.Context, target, ifaceName string, timeout time.Duration) (int, bool) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	port := p.port
-	if port == "" {
-		port = "443"
-	}
-	start := time.Now()
-	conn, err := httpclient.DialTCP(timeoutCtx, ifaceName, net.JoinHostPort(host, port), timeout)
-	if err != nil {
+	res, err := httpprobe.ByInterface(timeoutCtx, ifaceName, target, nil)
+	if err != nil || !httpprobe.SuccessCode(res.HTTPCode) {
 		return 0, false
 	}
-	_ = conn.Close()
-
-	latencyMs := int(time.Since(start).Milliseconds())
-	if latencyMs < 1 {
-		latencyMs = 1
-	}
-	return latencyMs, true
+	return res.LatencyMs, true
 }
 
 // ICMPProber sends a single native ICMP echo bound to the tunnel
