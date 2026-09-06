@@ -780,6 +780,14 @@ func (c *RouterConfig) renameOutboundReferences(oldTag, newTag string) {
 		if c.Route.RuleSet[i].DownloadDetour == oldTag {
 			c.Route.RuleSet[i].DownloadDetour = newTag
 		}
+		if hc := c.Route.RuleSet[i].HTTPClient; hc != nil && hc.Detour == oldTag {
+			hc.Detour = newTag
+		}
+	}
+	for i := range c.HTTPClients {
+		if c.HTTPClients[i].Detour == oldTag {
+			c.HTTPClients[i].Detour = newTag
+		}
 	}
 }
 
@@ -810,6 +818,14 @@ func (c *RouterConfig) removeOutboundReferences(tag string) {
 	for i := range c.Route.RuleSet {
 		if c.Route.RuleSet[i].DownloadDetour == tag {
 			c.Route.RuleSet[i].DownloadDetour = ""
+		}
+		if hc := c.Route.RuleSet[i].HTTPClient; hc != nil && hc.Detour == tag {
+			hc.Detour = ""
+		}
+	}
+	for i := range c.HTTPClients {
+		if c.HTTPClients[i].Detour == tag {
+			c.HTTPClients[i].Detour = ""
 		}
 	}
 }
@@ -842,6 +858,14 @@ func (c *RouterConfig) outboundReferences(tag string) []string {
 	for i, rs := range c.Route.RuleSet {
 		if rs.DownloadDetour == tag {
 			refs = append(refs, fmt.Sprintf("route.rule_set[%d=%q].download_detour", i, rs.Tag))
+		}
+		if rs.HTTPClient != nil && rs.HTTPClient.Detour == tag {
+			refs = append(refs, fmt.Sprintf("route.rule_set[%d=%q].http_client.detour", i, rs.Tag))
+		}
+	}
+	for i, hc := range c.HTTPClients {
+		if hc.Detour == tag {
+			refs = append(refs, fmt.Sprintf("http_clients[%d=%q].detour", i, hc.Tag))
 		}
 	}
 	return refs
