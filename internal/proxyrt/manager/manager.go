@@ -88,7 +88,7 @@ type Factory func(rec instancestore.Record, live *Live) (RunningInstance, error)
 // ErrBinariesPending — бут отложен воротами F98: бинари подсистемы не совпали
 // с пином сборки, а загрузка не удалась. Старое поколение не тронуто, воркеры
 // не собраны; повтор — забота проводки (proxyBinariesRetry).
-var ErrBinariesPending = errors.New("бинари прокси ещё не загружены")
+var ErrBinariesPending = errors.New("бинари не загружены")
 
 // Deps — все зависимости, конструктором (G4).
 type Deps struct {
@@ -293,7 +293,7 @@ func (m *Manager) Boot(ctx context.Context) error {
 			m.mu.Unlock()
 		}
 		if err := m.deps.EnsureBinaries(ctx, list, progress); err != nil {
-			m.deps.Journal.Warn("boot", "proxy", "бинари прокси: "+err.Error())
+			m.deps.Journal.Warn("boot", "proxy", "загрузка бинарей не удалась: "+err.Error())
 			progress(err.Error())
 			return err
 		}

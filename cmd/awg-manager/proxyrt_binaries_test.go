@@ -53,13 +53,20 @@ func TestProxyEnsureBinaries(t *testing.T) {
 		}
 	})
 	t.Run("отказ — ErrBinariesPending с причиной, остальные не качаются", func(t *testing.T) {
+		cause := errors.New("зеркало недоступно")
 		f := &fakeInstaller{
 			stale: []install.Subsystem{install.SubsystemWdtt, install.SubsystemFreeTurn},
-			fail:  map[string]error{"wdtt": errors.New("зеркало недоступно")},
+			fail:  map[string]error{"wdtt": cause},
 		}
 		err := proxyEnsureBinaries(f, &recProxyJournal{})(context.Background(), nil, func(string) {})
 		if !errors.Is(err, manager.ErrBinariesPending) {
 			t.Fatalf("ждали ErrBinariesPending: %v", err)
+		}
+		if !errors.Is(err, cause) {
+			t.Fatalf("причина обязана быть обёрнута: %v", err)
+		}
+		if !strings.HasPrefix(err.Error(), "Бинари wdtt не соответствуют") {
+			t.Fatalf("текст обязан начинаться по спеке: %v", err)
 		}
 		for _, want := range []string{"wdtt", "зеркало недоступно", "прежней версии не тронуты"} {
 			if !strings.Contains(err.Error(), want) {

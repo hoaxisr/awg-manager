@@ -31,8 +31,8 @@ func proxyEnsureBinaries(svc binaryInstaller, journal manager.Journal) func(cont
 			journal.Info("boot", "proxy", fmt.Sprintf("бинари %s не соответствуют пину сборки, загрузка с зеркала", name))
 			progress(fmt.Sprintf("Бинари %s не соответствуют этой версии awg-manager, идёт загрузка с зеркала…", name))
 			if err := svc.Install(ctx, string(name)); err != nil {
-				return fmt.Errorf("%w: %s: %v. Работающие процессы прежней версии не тронуты, повтор с нарастающим интервалом (до 15 мин)",
-					manager.ErrBinariesPending, name, err)
+				return fmt.Errorf("Бинари %s не соответствуют этой версии awg-manager, загрузка не удалась: %w. Работающие процессы прежней версии не тронуты, повтор с нарастающим интервалом (до 15 мин) [%w]",
+					name, err, manager.ErrBinariesPending)
 			}
 		}
 		return nil
