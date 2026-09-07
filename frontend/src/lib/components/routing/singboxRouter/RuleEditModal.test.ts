@@ -1,13 +1,24 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import RuleEditModal from './RuleEditModal.svelte';
-import type { SingboxRouterRule } from '$lib/types';
+import type { PolicyDevice, SingboxRouterRule } from '$lib/types';
 
 class ResizeObserverStub {
 	observe(): void {}
 	disconnect(): void {}
 }
 vi.stubGlobal('ResizeObserver', ResizeObserverStub);
+
+const { listPolicyDevices } = vi.hoisted(() => ({
+	listPolicyDevices: vi.fn(),
+}));
+vi.mock('$lib/api/client', () => ({
+	api: { listPolicyDevices },
+}));
+
+beforeEach(() => {
+	listPolicyDevices.mockReset().mockResolvedValue([]);
+});
 
 const baseProps = {
 	outboundOptions: [{ group: 'Туннели', items: [{ value: 'vpn', label: 'vpn' }] }],
@@ -128,5 +139,50 @@ describe('RuleEditModal', () => {
 		expect(saved.ip_cidr).toEqual(['66.22.192.0/18']);
 		expect(saved.rule_set).toEqual(['geosite-discord']);
 		expect(saved.type).toBeUndefined();
+	});
+
+	it('вводит MAC устройства и сохраняет его в нижнем регистре', async () => {
+		const onSave = vi.fn();
+		const rule: SingboxRouterRule = {
+			domain_suffix: ['example.com'],
+			action: 'route',
+			outbound: 'vpn',
+		};
+		render(RuleEditModal, { props: { ...baseProps, rule, onSave } });
+
+		const macField = screen.getByPlaceholderText('aa:bb:cc:dd:ee:ff');
+		await fireEvent.input(macField, { target: { value: 'AA:BB:CC:DD:EE:FF' } });
+
+		await fireEvent.click(screen.getByText('Сохранить'));
+
+		const saved = onSave.mock.calls[0][0] as SingboxRouterRule;
+		expect(saved.source_mac_address).toEqual(['aa:bb:cc:dd:ee:ff']);
+	});
+
+	it('пикер устройств добавляет MAC в нижнем регистре без дублей', async () => {
+		const devices: PolicyDevice[] = [
+			{ mac: 'AA:BB:CC:DD:EE:01', ip: '192.168.1.10', name: 'Ноутбук', hostname: '', active: true, link: '', policy: '' },
+		];
+		listPolicyDevices.mockResolvedValue(devices);
+		const onSave = vi.fn();
+		const rule: SingboxRouterRule = {
+			domain_suffix: ['example.com'],
+			action: 'route',
+			outbound: 'vpn',
+		};
+		render(RuleEditModal, { props: { ...baseProps, rule, onSave } });
+
+		const trigger = await screen.findByText('Добавить устройство…');
+		await fireEvent.click(trigger);
+		await fireEvent.click(screen.getByText(/Ноутбук · AA:BB:CC:DD:EE:01/));
+
+		// Повторный выбор того же устройства не должен добавить вторую строку.
+		await fireEvent.click(trigger);
+		await fireEvent.click(screen.getByText(/Ноутбук · AA:BB:CC:DD:EE:01/));
+
+		await fireEvent.click(screen.getByText('Сохранить'));
+
+		const saved = onSave.mock.calls[0][0] as SingboxRouterRule;
+		expect(saved.source_mac_address).toEqual(['aa:bb:cc:dd:ee:01']);
 	});
 });

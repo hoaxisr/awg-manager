@@ -249,6 +249,7 @@ func (s *ServiceImpl) ensureFakeIPOverlayFromState(cfg *RouterConfig) error {
 		RealServer: p.RealServer,
 		Stack:      sr.FakeIPStack,
 		UDPTimeout: sr.UDPTimeout,
+		UDPNATMax:  sr.UDPNATMax,
 	}
 	ensureFakeIPOverlay(cfg, spec)
 	return nil

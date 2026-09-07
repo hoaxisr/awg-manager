@@ -105,6 +105,12 @@ func TestNormalizeAddressOrRule(t *testing.T) {
 // логическом правиле. Тест перебирает поля Rule рефлексией и требует, чтобы
 // после нормализации на внешнем правиле не осталось ничего, кроме
 // служебных полей.
+//
+// Проверка внешнего правила — рефлексией по нулевому значению, а не через
+// hasAnyMatcher(): hasAnyMatcher — такое же закрытое перечисление полей, как
+// и narrowing/addressBranch внутри normalizeAddressOrRule, и на поле,
+// забытом сразу в обоих местах (так и было пропущено SourceMACAddress),
+// тест остался бы ложно-зелёным.
 func TestNormalizeAddressOrRule_AllMatchersRouted(t *testing.T) {
 	// Поля, которым МЕСТО на внешнем правиле логической формы.
 	outerOnly := map[string]bool{
@@ -132,9 +138,15 @@ func TestNormalizeAddressOrRule_AllMatchersRouted(t *testing.T) {
 		outer := got
 		outer.Type, outer.Mode, outer.Rules = "", "", nil
 		outer.Action, outer.Outbound, outer.UDPTimeout, outer.AwgmManaged = "", "", "", ""
-		if outer.hasAnyMatcher() {
-			t.Errorf("%s: матчер остался на внешнем logical-правиле (%+v) — sing-box отвергнет весь слот; "+
-				"добавьте поле в адресную или сужающую ветку normalizeAddressOrRule", field.Name, outer)
+		if ov := reflect.ValueOf(outer); !ov.IsZero() {
+			ot := ov.Type()
+			for j := 0; j < ot.NumField(); j++ {
+				if !ov.Field(j).IsZero() {
+					t.Errorf("%s: поле %s осталось на внешнем logical-правиле (%+v) — sing-box отвергнет весь слот; "+
+						"добавьте поле в адресную или сужающую ветку normalizeAddressOrRule",
+						field.Name, ot.Field(j).Name, outer)
+				}
+			}
 		}
 	}
 }
@@ -380,5 +392,25 @@ func TestRuleSetReferencesSeeNestedBranches(t *testing.T) {
 	}
 	if err := c.DeleteRuleSet("geosite-discord", false); err == nil {
 		t.Fatal("удаление набора, на который ссылается ветка правила, должно быть отклонено")
+	}
+}
+
+func TestRule_SourceMACAddress(t *testing.T) {
+	r := Rule{SourceMACAddress: []string{"aa:bb:cc:dd:ee:ff"}, Action: "route", Outbound: "vpn"}
+	if !r.hasAnyMatcher() {
+		t.Fatal("MAC must count as a matcher")
+	}
+	if err := validateRule(r); err != nil {
+		t.Fatalf("valid MAC rejected: %v", err)
+	}
+	if err := validateRule(Rule{SourceMACAddress: []string{"not-a-mac"}}); err == nil {
+		t.Error("garbage MAC accepted")
+	}
+	// С rule_set + свои адреса MAC уходит в сужающую ветку logical(and).
+	mixed := Rule{RuleSet: []string{"geosite-x"}, IPCIDR: []string{"1.2.3.0/24"},
+		SourceMACAddress: r.SourceMACAddress, Action: "route", Outbound: "vpn"}
+	got := normalizeAddressOrRule(mixed)
+	if got.Mode != "and" || len(got.Rules) != 2 || len(got.Rules[0].SourceMACAddress) != 1 {
+		t.Errorf("narrowing branch lost MAC: %+v", got)
 	}
 }

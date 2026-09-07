@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 var validDNSTypes = map[string]bool{
@@ -645,7 +646,7 @@ func (c *RouterConfig) MoveDNSServer(from, to int) error {
 	return nil
 }
 
-func (c *RouterConfig) SetDNSGlobals(final, strategy string) error {
+func (c *RouterConfig) SetDNSGlobals(final, strategy, timeout string) error {
 	if final != "" {
 		if _, ok := c.dnsServerTypes()[final]; !ok {
 			return fmt.Errorf("%w: final %q", ErrDNSServerNotFound, final)
@@ -654,7 +655,13 @@ func (c *RouterConfig) SetDNSGlobals(final, strategy string) error {
 	if !validDNSStrategies[strategy] {
 		return fmt.Errorf("dns: unknown strategy %q", strategy)
 	}
+	if timeout != "" {
+		if _, err := time.ParseDuration(timeout); err != nil {
+			return fmt.Errorf("dns: timeout: invalid duration %q: %w", timeout, err)
+		}
+	}
 	c.DNS.Final = final
 	c.DNS.Strategy = strategy
+	c.DNS.Timeout = timeout
 	return nil
 }

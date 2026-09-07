@@ -190,3 +190,23 @@ func contains(haystack, needle string) bool {
 	}
 	return false
 }
+
+func TestMerge_HTTPClientsConcatAndCollide(t *testing.T) {
+	dir := t.TempDir()
+	writeJSON(t, dir, "20-router.json", `{"http_clients":[{"tag":"rs-download","detour":"vpn"}]}`)
+	writeJSON(t, dir, "90-user.json", `{"http_clients":[{"tag":"mine"}]}`)
+	out, err := MergeDir(dir)
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	if !strings.Contains(out, `"tag": "rs-download"`) || !strings.Contains(out, `"tag": "mine"`) {
+		t.Errorf("http_clients not concatenated:\n%s", out)
+	}
+
+	writeJSON(t, dir, "90-user.json", `{"http_clients":[{"tag":"rs-download"}]}`)
+	_, err = MergeDir(dir)
+	ce, ok := err.(*CollisionError)
+	if !ok || ce.Kind != "http_clients" || ce.Tag != "rs-download" {
+		t.Fatalf("want http_clients collision, got %v", err)
+	}
+}

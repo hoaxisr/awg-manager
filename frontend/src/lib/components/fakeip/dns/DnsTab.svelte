@@ -280,6 +280,7 @@
 	async function handleDnsGlobalsSave(globals: {
 		final: string;
 		strategy: SingboxRouterDNSStrategy;
+		timeout: string;
 	}): Promise<void> {
 		await api.singboxFakeIPSetDNSGlobals(globals);
 		dnsGlobalsModalOpen = false;
@@ -621,6 +622,7 @@
 		servers={$storeDnsServers}
 		final={$storeDnsGlobals.final}
 		strategy={$storeDnsGlobals.strategy}
+		timeout={$storeDnsGlobals.timeout ?? ''}
 		onClose={() => (dnsGlobalsModalOpen = false)}
 		onSave={handleDnsGlobalsSave}
 	/>

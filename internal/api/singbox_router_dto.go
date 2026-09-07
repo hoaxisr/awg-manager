@@ -125,6 +125,10 @@ type SingboxRouterSettingsData struct {
 	// (5m0s). Increase to prevent long-quiet UDP applications (games, etc.) from
 	// having their sessions silently dropped mid-game.
 	UDPTimeout string `json:"udpTimeout,omitempty" example:"10m0s"`
+	// UDPNATMax caps UDP NAT sessions on the tproxy-in / tun-in / QoS inbounds
+	// (sing-box 1.14, LRU eviction). 0 = engine default (4096-16384 by memory).
+	// Range: 0..65536.
+	UDPNATMax int `json:"udpNatMax,omitempty" example:"4096"`
 	// QoSClasses lists DSCP-based QoS traffic classes routed to dedicated
 	// outbounds. At most 8 classes; DSCP must be 0-63 and unique across
 	// classes; outbound is required; name is limited to 32 characters.
@@ -173,9 +177,11 @@ type SingboxRouterRuleDTO struct {
 	DomainSuffix []string `json:"domain_suffix,omitempty" example:".example.com"`
 	IPCIDR       []string `json:"ip_cidr,omitempty" example:"10.0.0.0/8"`
 	SourceIPCIDR []string `json:"source_ip_cidr,omitempty" example:"192.168.1.100/32"`
-	Port         []int    `json:"port,omitempty" example:"443"`
-	RuleSet      []string `json:"rule_set,omitempty" example:"geosite-cn"`
-	Protocol     string   `json:"protocol,omitempty" example:"tcp"`
+	// SourceMACAddress matches the LAN device MAC (sing-box 1.14, kernel neighbor table).
+	SourceMACAddress []string `json:"source_mac_address,omitempty" example:"aa:bb:cc:dd:ee:ff"`
+	Port             []int    `json:"port,omitempty" example:"443"`
+	RuleSet          []string `json:"rule_set,omitempty" example:"geosite-cn"`
+	Protocol         string   `json:"protocol,omitempty" example:"tcp"`
 	// Inbound matches sing-box listener tags the connection entered through.
 	// Managed QoS-DSCP rules use the reserved tproxy-qos-N / redirect-qos-N
 	// tag pair (N = DSCP codepoint).

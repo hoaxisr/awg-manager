@@ -932,7 +932,11 @@
     }
   }
 
-  async function handleDnsGlobalsSave(globals: { final: string; strategy: SingboxRouterDNSStrategy }) {
+  async function handleDnsGlobalsSave(globals: {
+    final: string;
+    strategy: SingboxRouterDNSStrategy;
+    timeout: string;
+  }) {
     await api.singboxRouterPutDNSGlobals(globals);
     dnsGlobalsModalOpen = false;
     await singboxRouterStore.loadAll();
@@ -1338,6 +1342,7 @@
     servers={$storeDnsServers}
     final={$storeDnsGlobals.final}
     strategy={$storeDnsGlobals.strategy}
+    timeout={$storeDnsGlobals.timeout ?? ''}
     onClose={() => (dnsGlobalsModalOpen = false)}
     onSave={handleDnsGlobalsSave}
   />

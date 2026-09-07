@@ -44,6 +44,8 @@ export interface SingboxRouterSettings {
 	// UDP session timeout for tproxy-in. Go duration string (e.g. "3m0s", "10m0s").
 	// Empty = backend default (3m0s). Increase to fix dropped sessions in games.
 	udpTimeout?: string;
+	// Потолок UDP-NAT-сессий (sing-box 1.14). 0/undefined = движок выбирает сам.
+	udpNatMax?: number;
 	/**
 	 * policy-tun: перевести выбранные сегменты на static-NAT, чтобы sing-box
 	 * видел реальные адреса клиентов вместо адреса tun-шлюза. Требует непустого
@@ -269,6 +271,8 @@ export interface SingboxRouterRule {
 	domain_suffix?: string[];
 	ip_cidr?: string[];
 	source_ip_cidr?: string[];
+	// MAC LAN-устройства (sing-box 1.14). Сужающий матчер, как source_ip_cidr.
+	source_mac_address?: string[];
 	port?: number[];
 	rule_set?: string[];
 	inbound?: string[];
@@ -561,6 +565,8 @@ export interface SingboxRouterDNSRule {
 export interface SingboxRouterDNSGlobals {
 	final: string;
 	strategy: SingboxRouterDNSStrategy;
+	// Таймаут DNS-запроса (Go duration, sing-box 1.14). '' = 10s движка.
+	timeout?: string;
 }
 
 /** Режим DNS-пресета: '' — выключен. */

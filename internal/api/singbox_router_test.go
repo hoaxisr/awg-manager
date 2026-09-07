@@ -186,10 +186,10 @@ func (m *mockRouterSvc) UpdateDNSRule(ctx context.Context, index int, r router.D
 }
 func (m *mockRouterSvc) DeleteDNSRule(ctx context.Context, index int) error  { return nil }
 func (m *mockRouterSvc) MoveDNSRule(ctx context.Context, from, to int) error { return nil }
-func (m *mockRouterSvc) GetDNSGlobals(ctx context.Context) (string, string, error) {
-	return "", "", nil
+func (m *mockRouterSvc) GetDNSGlobals(ctx context.Context) (string, string, string, error) {
+	return "", "", "", nil
 }
-func (m *mockRouterSvc) SetDNSGlobals(ctx context.Context, final, strategy string) error {
+func (m *mockRouterSvc) SetDNSGlobals(ctx context.Context, final, strategy, timeout string) error {
 	return nil
 }
 func (m *mockRouterSvc) GetDNSChainPreset(ctx context.Context) (storage.DNSChainPresetState, error) {

@@ -286,12 +286,13 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		MTU:        p.MTU,
 		Stack:      sr.FakeIPStack,
 		UDPTimeout: sr.UDPTimeout,
+		UDPNATMax:  sr.UDPNATMax,
 	})
 	cfg.Outbounds = stripAutoManagedDirect(cfg.Outbounds)
 	cfg.EnsureSystemRules(sr.SnifferEnabled)
 	cfg.EnsureUDPTimeoutRule(resolveUDPTimeout(sr.UDPTimeout))
 	qosClasses := activeQoSClasses(sr.QoSClasses)
-	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout)
+	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout, sr.UDPNATMax)
 	cfg.EnsureRouteWAN(sr.WANAutoDetect, sr.WANInterface)
 
 	// Promote SlotRouter FIRST so persistConfigDirect targets the active path.

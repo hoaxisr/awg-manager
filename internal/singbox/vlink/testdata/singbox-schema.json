@@ -7005,9 +7005,6 @@
               "type": "string",
               "enum": [
                 "bbr",
-                "bbr_standard",
-                "bbr2",
-                "bbr2_variant",
                 "cubic",
                 "reno"
               ]
@@ -18178,5 +18175,5 @@
       ]
     }
   },
-  "x-singbox-version": "1.14.0-rc.1-awgm.15"
+  "x-singbox-version": "1.14.0-awgm.16"
 }

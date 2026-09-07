@@ -248,7 +248,7 @@ func TestUpdateDNSServerRenamesReferences(t *testing.T) {
 		DomainResolver: &DomainResolver{Server: "bootstrap"},
 	})
 	_ = c.AddDNSRule(DNSRule{DomainSuffix: []string{".ru"}, Server: "bootstrap"})
-	_ = c.SetDNSGlobals("bootstrap", "prefer_ipv4")
+	_ = c.SetDNSGlobals("bootstrap", "prefer_ipv4", "")
 
 	if err := c.UpdateDNSServer("bootstrap", makeDNSServer("boot", "udp", "9.9.9.9", "")); err != nil {
 		t.Fatal(err)
@@ -269,7 +269,7 @@ func TestDeleteDNSServerBlocksWhenReferenced(t *testing.T) {
 	_ = c.AddDNSServer(makeDNSServer("a", "udp", "1.1.1.1", ""))
 	_ = c.AddDNSServer(makeDNSServer("b", "udp", "8.8.8.8", ""))
 	_ = c.AddDNSRule(DNSRule{DomainSuffix: []string{".ru"}, Server: "a"})
-	_ = c.SetDNSGlobals("a", "")
+	_ = c.SetDNSGlobals("a", "", "")
 
 	if err := c.DeleteDNSServer("a", false); !errors.Is(err, ErrDNSServerReferenced) {
 		t.Errorf("expected referenced error, got %v", err)
@@ -509,7 +509,7 @@ func TestDNSRoundTrip(t *testing.T) {
 	})
 	_ = c.AddDNSRule(DNSRule{DomainSuffix: []string{".ru"}, Server: "bootstrap"})
 	_ = c.AddDNSRule(DNSRule{DomainSuffix: []string{".com"}, Server: "vpn"})
-	_ = c.SetDNSGlobals("vpn", "ipv4_only")
+	_ = c.SetDNSGlobals("vpn", "ipv4_only", "")
 
 	if err := SaveConfig(path, c); err != nil {
 		t.Fatal(err)
@@ -553,14 +553,32 @@ func TestAddDNSServerLocal(t *testing.T) {
 func TestSetDNSGlobalsRejectsUnknownServer(t *testing.T) {
 	c := NewEmptyConfig()
 	_ = c.AddDNSServer(makeDNSServer("s", "udp", "1.1.1.1", ""))
-	if err := c.SetDNSGlobals("nope", ""); !errors.Is(err, ErrDNSServerNotFound) {
+	if err := c.SetDNSGlobals("nope", "", ""); !errors.Is(err, ErrDNSServerNotFound) {
 		t.Errorf("expected not found, got %v", err)
 	}
-	if err := c.SetDNSGlobals("s", "ipv9"); err == nil {
+	if err := c.SetDNSGlobals("s", "ipv9", ""); err == nil {
 		t.Error("expected strategy error")
 	}
-	if err := c.SetDNSGlobals("", "prefer_ipv4"); err != nil {
+	if err := c.SetDNSGlobals("", "prefer_ipv4", ""); err != nil {
 		t.Errorf("empty final should be allowed: %v", err)
+	}
+}
+
+// dns.timeout (sing-box 1.14): таймаут запроса, пусто = 10s движка.
+func TestSetDNSGlobals_Timeout(t *testing.T) {
+	c := &RouterConfig{}
+	if err := c.SetDNSGlobals("", "prefer_ipv4", "5s"); err != nil || c.DNS.Timeout != "5s" {
+		t.Fatalf("timeout not stored: %v %+v", err, c.DNS)
+	}
+	if err := c.SetDNSGlobals("", "prefer_ipv4", ""); err != nil || c.DNS.Timeout != "" {
+		t.Fatalf("empty must clear: %v %+v", err, c.DNS)
+	}
+	if err := c.SetDNSGlobals("", "prefer_ipv4", "fast"); err == nil {
+		t.Error("garbage duration must be rejected")
+	}
+	raw, _ := json.Marshal(RouterConfig{DNS: DNS{Timeout: "5s"}})
+	if !strings.Contains(string(raw), `"timeout":"5s"`) {
+		t.Errorf("json: %s", raw)
 	}
 }
 

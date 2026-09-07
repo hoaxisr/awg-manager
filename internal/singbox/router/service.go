@@ -100,8 +100,8 @@ type Service interface {
 	DeleteDNSRule(ctx context.Context, index int) error
 	MoveDNSRule(ctx context.Context, from, to int) error
 
-	GetDNSGlobals(ctx context.Context) (final, strategy string, err error)
-	SetDNSGlobals(ctx context.Context, final, strategy string) error
+	GetDNSGlobals(ctx context.Context) (final, strategy, timeout string, err error)
+	SetDNSGlobals(ctx context.Context, final, strategy, timeout string) error
 
 	// GetDNSChainPreset / SetDNSChainPreset — DNS-пресет цепочек sing-box 1.14
 	// (Mode "" = выключен). Состояние живёт в настройках, правила цепочки —

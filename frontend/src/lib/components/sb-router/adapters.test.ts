@@ -295,6 +295,14 @@ describe('extractMatcherChips', () => {
     expect(chips).toEqual([{ kind: 'src', label: '192.168.1.0/24', mono: true }]);
   });
 
+  it('source_mac_address → src chips with mono', () => {
+    const chips = extractMatcherChips(
+      { source_mac_address: ['aa:bb:cc:dd:ee:ff'], action: 'route', outbound: 'vpn' },
+      noRulesets,
+    );
+    expect(chips).toEqual([{ kind: 'src', label: 'aa:bb:cc:dd:ee:ff', mono: true }]);
+  });
+
   it('port → port chips with mono', () => {
     const chips = extractMatcherChips({ port: [443, 8443] }, noRulesets);
     expect(chips).toEqual([

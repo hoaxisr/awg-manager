@@ -36,9 +36,9 @@ git diff internal/presets/defaults.json
 ## Pinned sing-box
 
 Use the project's single-source runtime version — `RequiredVersion` in
-`internal/singbox/installer/embedded.go` (currently `1.14.0-alpha.25`). Verified:
-that version's `rule-set decompile` reads the SagerNet rule-set-branch `.srs`
-(source format v2).
+`internal/singbox/installer/embedded.go`. Verified: that version's
+`rule-set decompile` reads the SagerNet rule-set-branch `.srs` (source
+format v2).
 
 ## Notes
 

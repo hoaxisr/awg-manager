@@ -2,9 +2,11 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -708,7 +710,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	if err != nil {
 		return err
 	}
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, sr.UDPTimeout)
+	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, sr.UDPTimeout, sr.UDPNATMax)
 	cfg.Outbounds = stripAutoManagedDirect(cfg.Outbounds)
 	cfg.EnsureSystemRules(sr.SnifferEnabled)
 	// Neutralize sing-box's short per-protocol UDP timeouts (QUIC/DTLS 30s,
@@ -723,7 +725,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	// own slot (18-qos-routes.json) and are synced after the config write
 	// below — see qos_routes.go for why they must not live in 20-router.json.
 	qosClasses := activeQoSClasses(sr.QoSClasses)
-	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout)
+	cfg.Inbounds, _ = ensureQoSInbounds(cfg.Inbounds, qosClasses, sr.UDPTimeout, sr.UDPNATMax)
 	// Settings was already loaded above; revalidate here in case the
 	// store is corrupted or hand-edited around a schema migration. We
 	// fail Enable rather than apply a half-broken config — the user
@@ -889,7 +891,7 @@ func filterTProxyInbound(in []Inbound) []Inbound {
 // Reconcile lands here). The rule used to be regenerated only by Enable, so
 // a changed timeout stayed stale in the config until the engine was toggled
 // off/on (#554). Idempotent.
-func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string) error {
+func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string, udpNATMax int) error {
 	// APPLIED config, not the effective (pending-first) view: heal writes to
 	// active/, so reading a user's staged draft here would materialize the
 	// draft into the live config BYPASSING ApplyDraft validation (and leave
@@ -907,24 +909,241 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string) 
 	inboundOK := false
 	for _, in := range cfg.Inbounds {
 		if in.Tag == "tproxy-in" {
-			inboundOK = in.UDPTimeout == effective && in.Listen == tproxyListen
+			// UDPNATMax тоже в guard'е: смена только udpNatMax в настройках должна
+			// доехать до живого движка через этот же путь, без Disable/Enable.
+			inboundOK = in.UDPTimeout == effective && in.Listen == tproxyListen && in.UDPNATMax == udpNATMax
 			break
 		}
 	}
-	ruleOK := false
-	for _, r := range cfg.Route.Rules {
-		if isSystemUDPTimeoutRule(r) {
-			ruleOK = r.UDPTimeout == effective
-			break
-		}
-	}
-	if inboundOK && ruleOK {
+	if inboundOK && systemUDPTimeoutRuleOK(cfg.Route.Rules, effective) {
 		return nil
 	}
-	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, udpTimeout)
+	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, udpTimeout, udpNATMax)
 	cfg.EnsureUDPTimeoutRule(effective)
 	// System self-heal — direct write, no staging UI.
 	return s.persistConfigDirect(ctx, cfg)
+}
+
+// healTunUDPSettings brings the tun-in inbound's udp_timeout/udp_nat_max and
+// the system route-options rule to spec for a tun-based mode (policy-tun /
+// fakeip). Both modes build tun-in ONLY on enable (ensurePolicyTunInbound,
+// ensureFakeIPOverlay), so — unlike tproxy-in, which healTProxyInbound covers
+// — a udpTimeout/udpNatMax change made via UpdateSettings on an already-running
+// mode stayed stale until Disable/Enable (F114).
+//
+// Only these two fields are touched: address/iface/stack are the enable
+// path's decision (index allocation, carrier), and re-deriving them here on
+// every tick would race that decision instead of healing drift.
+//
+// Steady-state guard BEFORE persisting, mirroring healTProxyInbound: skip the
+// marshal/write only when BOTH carriers already match — the inbound's fields
+// AND the system route-options rule (systemUDPTimeoutRuleOK). Checking the
+// inbound alone would leave a missing/stale rule unhealed forever once the
+// inbound fields happen to already be correct (fix round 1, review finding).
+func (s *ServiceImpl) healTunUDPSettings(ctx context.Context, slot orchestrator.Slot, sr storage.SingboxRouterSettings) {
+	var (
+		cfg *RouterConfig
+		err error
+	)
+	switch slot {
+	case orchestrator.SlotFakeIP:
+		var data []byte
+		if s.deps.Orch != nil {
+			data, err = s.deps.Orch.LoadApplied(orchestrator.SlotFakeIP)
+		}
+		if err == nil {
+			cfg, err = parseRouterConfigBytes(data)
+		}
+	default:
+		cfg, err = s.loadAppliedRouterConfig()
+	}
+	if err != nil {
+		s.appLog.Warn("heal-tun-udp", "", err.Error())
+		return
+	}
+
+	idx := -1
+	for i := range cfg.Inbounds {
+		if cfg.Inbounds[i].Tag == "tun-in" {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		// Слот запаркован или tun-in ещё не создан (лечит другой heal) —
+		// чинить нечего.
+		return
+	}
+
+	effective := resolveUDPTimeout(sr.UDPTimeout)
+	in := &cfg.Inbounds[idx]
+	inboundOK := in.UDPTimeout == effective && in.UDPNATMax == sr.UDPNATMax
+	if inboundOK && systemUDPTimeoutRuleOK(cfg.Route.Rules, effective) {
+		return
+	}
+	in.UDPTimeout = effective
+	in.UDPNATMax = sr.UDPNATMax
+	cfg.EnsureUDPTimeoutRule(effective)
+
+	switch slot {
+	case orchestrator.SlotFakeIP:
+		err = s.persistFakeIPConfig(ctx, cfg)
+	default:
+		err = s.persistConfigDirect(ctx, cfg)
+	}
+	if err != nil {
+		s.appLog.Warn("heal-tun-udp", "", err.Error())
+	}
+}
+
+// systemUDPTimeoutRuleOK reports whether rules already contain the system
+// route-options rule (see RouterConfig.EnsureUDPTimeoutRule) with
+// udp_timeout == effective. Shared by healTProxyInbound and
+// healTunUDPSettings so a missing/stale rule counts as drift the same way
+// in both — the rule is a SEPARATE carrier from the inbound's udp_timeout
+// field, and a guard that checks only the inbound would no-op forever while
+// the rule stays missing.
+func systemUDPTimeoutRuleOK(rules []Rule, effective string) bool {
+	for _, r := range rules {
+		if isSystemUDPTimeoutRule(r) {
+			return r.UDPTimeout == effective
+		}
+	}
+	return false
+}
+
+// heal1140SlotMigration re-persists the applied config of the given slot
+// unchanged, so materializeConfig's byte-for-byte round trip repairs a slot
+// written before the sing-box 1.14 migration (download_detour, gso,
+// endpoint_independent_nat) without needing a version marker. Best-effort — a
+// load or persist failure here must not abort the rest of the caller's
+// reconcile. Three call sites, two slots: reconcileInstalled (tproxy) and
+// reconcilePolicyTun target SlotRouter (20-router.json); reconcileFakeIPTun
+// targets SlotFakeIP (21-fakeip.json).
+//
+// Steady state is ONE file read and a JSON unmarshal into a two-field shadow
+// struct, not a load+persist: persistSlotDirect's byte-compare guard runs
+// AFTER materializeConfig, and materializeRuleSet has no unchanged-guard of
+// its own — every inline rule set would fork `sing-box rule-set compile` and
+// rename a fresh .json/.srs into config.d/rule-sets/inline/ on EVERY
+// reconcile tick (30s) forever, even though the byte-compare then finds the
+// slot unchanged and skips the write+SIGHUP. Materialization (and the
+// persist that follows it) runs only the first tick after upgrade, while the
+// slot has no route.default_http_client yet — applyHTTPClients sets that
+// field on every materialize, so its presence in the ALREADY MATERIALIZED
+// on-disk bytes is the migration marker. Cannot gate on the config returned
+// by loadAppliedRouterConfig/restoreConfig instead: restoreConfig clears
+// DefaultHTTPClient as part of projecting back to the stored form, so that
+// signal is invisible past the raw bytes.
+//
+// Load/persist are per-slot: SlotRouter goes through loadAppliedRouterConfig
+// + persistConfigDirect. SlotFakeIP deliberately does NOT use loadFakeIPConfig
+// (it wraps Orch.LoadEffective, which prefers pending/ over active/) — this
+// runs from reconcile self-heal, an enforcement path that LoadApplied's own
+// doc comment says must never act on a draft the user has not applied yet.
+// So SlotFakeIP reads Orch.LoadApplied directly (mirrors the existing
+// active/disabled-only read in referencedRuleSetArtifactBases) and persists
+// via persistFakeIPConfig.
+func (s *ServiceImpl) heal1140SlotMigration(ctx context.Context, slot orchestrator.Slot) {
+	if s.deps.Orch != nil {
+		activePath, err := s.deps.Orch.ActivePath(slot)
+		if err != nil {
+			s.appLog.Warn("heal-1140-slot", "", err.Error())
+			return
+		}
+		raw, err := os.ReadFile(activePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// Слот запаркован (или движок мёртв и его ещё не поднимали) —
+				// мигрировать нечего.
+				return
+			}
+			s.appLog.Warn("heal-1140-slot", "", err.Error())
+			return
+		}
+		var shadow struct {
+			Route struct {
+				DefaultHTTPClient string `json:"default_http_client"`
+				RuleSet           []struct {
+					HTTPClient json.RawMessage `json:"http_client"`
+				} `json:"rule_set"`
+			} `json:"route"`
+			HTTPClients []struct {
+				Detour string `json:"detour"`
+			} `json:"http_clients"`
+		}
+		if err := json.Unmarshal(raw, &shadow); err != nil {
+			s.appLog.Warn("heal-1140-slot", "", err.Error())
+			return
+		}
+		// Старый (неверный) applyHTTPClients писал явный detour на пустой
+		// direct-outbound ("direct" — базовый тег, без загрузки outbound'ов),
+		// который sing-box 1.14 отвергает при старте: "detour to an empty
+		// direct outbound makes no sense" (стенд-находка). Такой слот уже
+		// несёт default_http_client и гейтом выше был бы принят за healthy —
+		// проверяем этот признак отдельно, чтобы всё равно перематериализовать.
+		brokenEmptyDirectDetour := false
+		for _, hc := range shadow.HTTPClients {
+			if hc.Detour == "direct" {
+				brokenEmptyDirectDetour = true
+				break
+			}
+		}
+		if !brokenEmptyDirectDetour {
+			for _, rs := range shadow.Route.RuleSet {
+				var obj struct {
+					Detour string `json:"detour"`
+				}
+				if err := json.Unmarshal(rs.HTTPClient, &obj); err == nil && obj.Detour == "direct" {
+					brokenEmptyDirectDetour = true
+					break
+				}
+			}
+		}
+		if shadow.Route.DefaultHTTPClient != "" && !brokenEmptyDirectDetour {
+			// Уже в форме 1.14, без бага пустого direct — материализация и
+			// запись не нужны.
+			return
+		}
+	}
+
+	var (
+		cfg *RouterConfig
+		err error
+	)
+	switch slot {
+	case orchestrator.SlotFakeIP:
+		var data []byte
+		if s.deps.Orch != nil {
+			data, err = s.deps.Orch.LoadApplied(orchestrator.SlotFakeIP)
+		}
+		if err == nil {
+			cfg, err = parseRouterConfigBytes(data)
+		}
+	default:
+		cfg, err = s.loadAppliedRouterConfig()
+	}
+	if err != nil {
+		s.appLog.Warn("heal-1140-slot", "", err.Error())
+		return
+	}
+
+	// Проецируем уже материализованные http_clients/http_client обратно в
+	// download_detour, прежде чем повторно материализовать: иначе для слота
+	// с brokenEmptyDirectDetour applyHTTPClients увидел бы пустой
+	// DownloadDetour и оставил бы битый rs.HTTPClient как есть. На чистом
+	// pre-1.14 слоте (DownloadDetour уже стоит, HTTPClient пуст) — no-op.
+	restoreHTTPClients(cfg)
+
+	switch slot {
+	case orchestrator.SlotFakeIP:
+		err = s.persistFakeIPConfig(ctx, cfg)
+	default:
+		err = s.persistConfigDirect(ctx, cfg)
+	}
+	if err != nil {
+		s.appLog.Warn("heal-1140-slot", "", err.Error())
+	}
 }
 
 // ensureTProxyInbound enforces the SKeen-style split: tproxy-in
@@ -973,7 +1192,10 @@ func resolveUDPTimeout(configured string) string {
 	return DefaultUDPTimeout
 }
 
-func ensureTProxyInbound(in []Inbound, udpTimeout string) []Inbound {
+// ensureTProxyInbound converges tproxy-in/redirect-in to the canonical shapes
+// described above, applying the effective udp_timeout and udp_nat_max on
+// every call (the user may have changed either since the last sync).
+func ensureTProxyInbound(in []Inbound, udpTimeout string, udpNATMax int) []Inbound {
 	effective := resolveUDPTimeout(udpTimeout)
 	hasTProxy := false
 	hasRedirect := false
@@ -992,6 +1214,7 @@ func ensureTProxyInbound(in []Inbound, udpTimeout string) []Inbound {
 			}
 			// Always apply the effective timeout — user may have changed it.
 			in[i].UDPTimeout = effective
+			in[i].UDPNATMax = udpNATMax
 			// tcp_fast_open is meaningless on a UDP-only inbound.
 			if in[i].TCPFastOpen {
 				in[i].TCPFastOpen = false
@@ -1023,6 +1246,7 @@ func ensureTProxyInbound(in []Inbound, udpTimeout string) []Inbound {
 			Network:     "udp",
 			UDPFragment: true,
 			UDPTimeout:  effective,
+			UDPNATMax:   udpNATMax,
 		}}, out...)
 	}
 	if !hasRedirect {
@@ -1641,7 +1865,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// healTProxyInbound: a previous Install rollback or upgrade hop may have
 	// left 20-router.json without the tproxy-in inbound — re-add it
 	// idempotently so sing-box keeps listening on TPROXYPort.
-	if err := s.healTProxyInbound(ctx, sr.UDPTimeout); err != nil {
+	if err := s.healTProxyInbound(ctx, sr.UDPTimeout, sr.UDPNATMax); err != nil {
 		s.appLog.Warn("heal-tproxy", "", err.Error())
 	}
 	// healQoSConfig: per-class inbound pairs (20-router.json) + managed route
@@ -1664,6 +1888,16 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 			s.appLog.Warn("qos-dscp", "", fmt.Sprintf("sing-box not ready after QoS config heal: %v — installing anyway", err))
 		}
 	}
+	// Разовая миграция слота на форму sing-box 1.14: download_detour →
+	// http_client (см. applyHTTPClients), снятие удалённых полей gso и
+	// endpoint_independent_nat. Установки, обновившиеся с более старой
+	// версии, не переписывают 20-router.json до первой правки маршрутизации —
+	// без этого шага слот годами остаётся в устаревшей форме. persistConfigDirect
+	// сравнивает байты с активным файлом, поэтому в устоявшемся состоянии
+	// (слот уже переписан) это бесплатно: чтение и маршалинг без записи и SIGHUP.
+	// Тот же вызов есть в reconcilePolicyTun — policy-tun пишет тот же слот
+	// своим путём реконсиляции.
+	s.heal1140SlotMigration(ctx, orchestrator.SlotRouter)
 
 	// After a daemon restart or upgrade the old awg-manager process died
 	// with no chance to run Uninstall, so stale AWGM chains, ip rules

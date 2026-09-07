@@ -38,16 +38,18 @@ var mergedArrayPaths = []struct {
 	{"dns", "rules"},
 	{"route", "rules"},
 	{"route", "rule_set"},
+	{"", "http_clients"},
 }
 
 // taggedArrays are the merged paths whose elements carry a unique
 // `tag` field. sing-box rejects duplicate tags at startup; we mirror
 // that and return CollisionError instead of silently dropping rows.
 var taggedArrays = map[string]bool{
-	"inbounds":  true,
-	"outbounds": true,
-	"servers":   true, // dns.servers
-	"rule_set":  true, // route.rule_set
+	"inbounds":     true,
+	"outbounds":    true,
+	"servers":      true, // dns.servers
+	"rule_set":     true, // route.rule_set
+	"http_clients": true,
 }
 
 // CollisionError is returned when the same tag appears in two slot
@@ -55,7 +57,7 @@ var taggedArrays = map[string]bool{
 // — the message names the offending tag, kind, and both files.
 type CollisionError struct {
 	Tag        string
-	Kind       string // "inbounds" | "outbounds" | "servers" | "rule_set"
+	Kind       string // "inbounds" | "outbounds" | "servers" | "rule_set" | "http_clients"
 	FirstFile  string
 	SecondFile string
 }

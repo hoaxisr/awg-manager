@@ -7,7 +7,14 @@ import type { SingboxRouterRule } from '$lib/types';
 const ADDRESS_KEYS = ['domain', 'domain_suffix', 'ip_cidr', 'ip_is_private'] as const;
 
 /** Матчеры, ограничивающие правило целиком, — сужающая ветка logical(and). */
-const NARROWING_KEYS = ['source_ip_cidr', 'port', 'protocol', 'inbound', 'network'] as const;
+const NARROWING_KEYS = [
+	'source_ip_cidr',
+	'source_mac_address',
+	'port',
+	'protocol',
+	'inbound',
+	'network'
+] as const;
 
 /** Поля правила, не являющиеся матчерами: их наличие в ветке допустимо. */
 const NON_MATCHER_KEYS = new Set(['type', 'mode', 'action', 'outbound', 'udp_timeout']);

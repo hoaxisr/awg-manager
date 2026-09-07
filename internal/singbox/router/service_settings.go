@@ -247,6 +247,9 @@ func NormalizeSingboxRouterSettings(sr storage.SingboxRouterSettings) (storage.S
 			return sr, fmt.Errorf("udpTimeout: invalid duration %q: %w", sr.UDPTimeout, err)
 		}
 	}
+	if sr.UDPNATMax < 0 || sr.UDPNATMax > 65536 {
+		return sr, fmt.Errorf("udpNatMax: must be 0..65536, got %d", sr.UDPNATMax)
+	}
 	// source-preserve без списка сегментов — включённая опция, которая ничего не
 	// делает; пустой список при выключенной опции чистим, чтобы персист не тянул
 	// протухший выбор до следующего включения.

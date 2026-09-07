@@ -154,6 +154,56 @@ func TestRenameOutboundReferences_RewritesEveryReference(t *testing.T) {
 	}
 }
 
+func TestRewriteRouterConfigOutboundRefs_MaterializedHTTPClients(t *testing.T) {
+	cfg := NewEmptyConfig()
+	cfg.Route.Final = "vpn"
+	cfg.Route.DefaultHTTPClient = "rs-download"
+	cfg.HTTPClients = []HTTPClient{{Tag: "rs-download", Detour: "vpn"}}
+	cfg.Route.RuleSet = []RuleSet{
+		{Tag: "geo", Type: "remote", URL: "https://example.com/geo.srs", HTTPClient: &RuleSetHTTPClient{Detour: "vpn"}},
+	}
+
+	path := filepath.Join(t.TempDir(), "20-router.json")
+	if err := SaveConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	data, ok, err := rewriteRouterConfigOutboundRefs(path, "vpn", "vpn2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected rewrite to report a change")
+	}
+	if strings.Contains(string(data), `"vpn"`) {
+		t.Fatalf("dangling reference to old tag survived rewrite: %s", data)
+	}
+	if !strings.Contains(string(data), `"vpn2"`) {
+		t.Fatalf("new tag missing from rewritten config: %s", data)
+	}
+}
+
+func TestRemoveOutboundReferences_MaterializedHTTPClients(t *testing.T) {
+	cfg := NewEmptyConfig()
+	cfg.Route.Final = "vpn"
+	cfg.HTTPClients = []HTTPClient{{Tag: "rs-download", Detour: "vpn"}}
+	cfg.Route.RuleSet = []RuleSet{
+		{Tag: "geo", Type: "remote", URL: "https://example.com/geo.srs", HTTPClient: &RuleSetHTTPClient{Detour: "vpn"}},
+	}
+
+	cfg.removeOutboundReferences("vpn")
+
+	if cfg.HTTPClients[0].Detour != "" {
+		t.Errorf("http_clients[0].detour = %q, want cleared", cfg.HTTPClients[0].Detour)
+	}
+	if cfg.Route.RuleSet[0].HTTPClient.Detour != "" {
+		t.Errorf("rule_set[0].http_client.detour = %q, want cleared", cfg.Route.RuleSet[0].HTTPClient.Detour)
+	}
+	if refs := cfg.outboundReferences("vpn"); len(refs) != 0 {
+		t.Errorf("outboundReferences after removal = %v, want none", refs)
+	}
+}
+
 func TestStripAutoManagedDirect(t *testing.T) {
 	in := []Outbound{
 		// Proxy kernel ifaces (t2sN) are NEVER stripped: the bindable picker
