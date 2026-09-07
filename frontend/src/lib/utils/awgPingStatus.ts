@@ -6,7 +6,7 @@ export type AwgToggleTint = 'recovering' | 'starting' | 'unreachable';
 
 /** Label for the ping row during start / stop / ping-check recovery / broken. */
 export function awgPingStatusNote(
-	tunnel: Pick<TunnelListItem, 'status' | 'pingCheck'>,
+	tunnel: Pick<TunnelListItem, 'status' | 'pingCheck' | 'statusDetails'>,
 	variant: AwgPingLabelVariant = 'short',
 ): AwgPingStatusNote | null {
 	switch (tunnel.status) {
@@ -15,7 +15,9 @@ export function awgPingStatusNote(
 		case 'needs_stop':
 			return { text: 'Остановка...', tone: 'transitional' };
 		case 'broken':
-			return { text: 'Сломан', tone: 'recovering' };
+			// Причина состояния приходит только у обфусцированных туннелей и
+			// вытесняет общее «Сломан»: единственный видимый канал — эта метка.
+			return { text: tunnel.statusDetails || 'Сломан', tone: 'recovering' };
 	}
 
 	if (tunnel.status === 'running' && tunnel.pingCheck.status === 'recovering') {
@@ -81,7 +83,7 @@ export function awgShowConnectivityRow(status: string): boolean {
 
 /** List layout: ping chip only when there is a numeric latency to show. */
 export function awgListShowsPingButton(
-	tunnel: Pick<TunnelListItem, 'status' | 'connectivityCheck' | 'pingCheck'>,
+	tunnel: Pick<TunnelListItem, 'status' | 'connectivityCheck' | 'pingCheck' | 'statusDetails'>,
 	connectivity: { connected: boolean; latency: number | null } | undefined,
 ): boolean {
 	if (tunnel.status !== 'running') return false;

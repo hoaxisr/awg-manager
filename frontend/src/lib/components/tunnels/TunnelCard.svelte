@@ -751,6 +751,22 @@
 		/* gap: 2px; */
 	}
 
+	/* Причина «сломан» приходит текстом произвольной длины: без потолка она
+	   растягивает правую колонку заголовка и режет имя туннеля. */
+	.card.view-dense .dense-toolbar-bottom :global(.ping-btn) {
+		max-width: 5.5rem;
+		white-space: normal;
+		text-align: right;
+		line-height: 1.15;
+	}
+
+	.card.view-compact .connectivity-row :global(.ping-btn) {
+		max-width: 8rem;
+		white-space: normal;
+		text-align: right;
+		line-height: 1.2;
+	}
+
 	.meta-tags-dense {
 		display: flex;
 		flex-wrap: wrap;
