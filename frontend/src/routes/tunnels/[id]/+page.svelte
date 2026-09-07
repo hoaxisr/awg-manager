@@ -6,19 +6,19 @@
 	import { usageLevel } from '$lib/stores/settings';
 	import { notifications } from '$lib/stores/notifications';
 	import { api } from '$lib/api/client';
-	import type { AWGTunnel, SystemInfo, WANInterface, RouterInterface, TunnelListItem } from '$lib/types';
+	import type { AWGTunnel, SystemInfo, WANInterface, RouterInterface, TunnelListItem, TunnelObfuscator } from '$lib/types';
 	import { PageContainer, LoadingSpinner } from '$lib/components/layout';
 	import { Toggle, Dropdown, Tabs, type DropdownOption } from '$lib/components/ui';
 	import { superForm } from 'sveltekit-superforms';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { editTunnelSchema } from '$lib/schemas/tunnel';
-	import { AWGAdvancedParams, ReplaceTunnelConfigModal } from '$lib/components/tunnels';
+	import { AWGAdvancedParams, ObfuscatorParams, ReplaceTunnelConfigModal } from '$lib/components/tunnels';
 	import TunnelEditHeader from '$lib/components/tunnels/TunnelEditHeader.svelte';
 	import AwgConfigAnalyzer from '$lib/components/diagnostics/AwgConfigAnalyzer.svelte';
 	import { SettingsSectionLabel } from '$lib/components/settings';
 	import { AWG_PARAM_HINTS } from '$lib/utils/awgParamHints';
 	import { awgProxyOutdated, supportsAwg3, supportsAwg31OnNativeWG } from '$lib/utils/backendAvailability';
-	import { Network, Route, Router, Server, Tag } from 'lucide-svelte';
+	import { Network, Route, Router, Server, Shuffle, Tag } from 'lucide-svelte';
 
 	let { data } = $props();
 
@@ -33,14 +33,21 @@
 
 	type ActionStatus = 'loading' | 'success' | 'error';
 
-	type TunnelDetailTab = 'basic' | 'obfuscation' | 'routing' | 'awgConfig';
+	// Параметры обфускатора живут отдельным состоянием: общая editTunnelSchema —
+	// плоская форма WireGuard, обфускатор в неё не вписывается.
+	let obf = $state<TunnelObfuscator | null>(null);
+	let obfError = $state('');
+
+	type TunnelDetailTab = 'basic' | 'obfuscation' | 'obfuscator' | 'routing' | 'awgConfig';
 	let activeTab = $state<TunnelDetailTab>('basic');
-	const detailTabs = [
+	// У обфусцированного туннеля обычный WireGuard без AWG-параметров: вкладка
+	// «Обфускация» уступает место «Обфускатору».
+	let detailTabs = $derived([
 		{ id: 'basic', label: 'Основное' },
-		{ id: 'obfuscation', label: 'Обфускация' },
+		...(obf ? [{ id: 'obfuscator', label: 'Обфускатор' }] : [{ id: 'obfuscation', label: 'Обфускация' }]),
 		{ id: 'routing', label: 'Маршрутизация' },
 		{ id: 'awgConfig', label: 'Анализ конфига' },
-	];
+	]);
 	let replaceModalOpen = $state(false);
 
 	let tunnel = $state<AWGTunnel | null>(null);
@@ -146,6 +153,9 @@
 		loading = true;
 		try {
 			tunnel = await api.getTunnel(tunnelId);
+			obf = tunnel.obfuscator ? { ...tunnel.obfuscator } : null;
+			// Набор вкладок зависит от obf: пришедшая из URL вкладка могла исчезнуть.
+			if (!detailTabs.some(t => t.id === activeTab)) activeTab = 'basic';
 			populateForm();
 		} catch (e) {
 			notifications.error(`Ошибка загрузки: ${(e as Error).message}`);
@@ -229,9 +239,11 @@
 				keepaliveTimeout: $form.keepaliveTimeout || undefined,
 				maxHandshakeAttempts: $form.maxHandshakeAttempts || undefined
 			},
+			...(obf ? { obfuscator: { ...obf, idleTimeout: obf.idleTimeout || undefined, obfuscateBytes: obf.obfuscateBytes || undefined } } : {}),
 			peer: {
 				...tunnel!.peer,
-				endpoint: $form.endpoint,
+				// У обфусцированного туннеля endpoint — локальный релей, его не правят.
+				endpoint: obf ? tunnel!.peer.endpoint : $form.endpoint,
 				allowedIPs: $form.allowedIPs.split(',').map(ip => ip.trim()).filter(Boolean),
 				persistentKeepalive: $form.persistentKeepalive
 			}
@@ -248,8 +260,16 @@
 		}
 	}
 
+	// Сервер обфускатора не проходит через zod-схему формы — проверяем руками.
+	function obfTargetInvalid(): boolean {
+		obfError = obf && !/^\[?[^\s\]]+\]?:\d{1,5}$/.test(obf.target.trim()) ? 'Нужен host:port' : '';
+		if (obfError) notifications.error(`Сервер обфускатора: ${obfError}`);
+		return !!obfError;
+	}
+
 	async function handleSaveOnly() {
 		if (!tunnel) return;
+		if (obfTargetInvalid()) return;
 
 		saving = true;
 		try {
@@ -265,6 +285,7 @@
 
 	async function handleSaveAndStart() {
 		if (!tunnel) return;
+		if (obfTargetInvalid()) return;
 
 		const isRunning = tunnel.state === 'running';
 		actionStatus = 'loading';
@@ -431,8 +452,13 @@
 						</div>
 						<div class="flex flex-col gap-1.5" style="margin-bottom:12px">
 							<label class="field-label" for="endpoint">Endpoint</label>
-							<input type="text" id="endpoint" class="field-input" placeholder="vpn.example.com:51820 или [2001:db8::1]:51820" bind:value={$form.endpoint} />
-							{#if $errors.endpoint}<p class="text-xs text-error-500 mt-1">{$errors.endpoint}</p>{/if}
+							{#if obf}
+								<input type="text" id="endpoint" class="field-input" value={obf.target} disabled />
+								<p class="field-hint">Сервер задаётся во вкладке «Обфускатор»; WireGuard ходит в локальный релей.</p>
+							{:else}
+								<input type="text" id="endpoint" class="field-input" placeholder="vpn.example.com:51820 или [2001:db8::1]:51820" bind:value={$form.endpoint} />
+								{#if $errors.endpoint}<p class="text-xs text-error-500 mt-1">{$errors.endpoint}</p>{/if}
+							{/if}
 						</div>
 						<div class="inline-fields">
 							<div class="flex flex-col gap-1.5" style="flex:1">
@@ -465,6 +491,16 @@
 						awg3={awg3Available}
 						awg3Limited={tunnel?.backend === 'nativewg'}
 					/>
+				</div>
+
+			{:else if activeTab === 'obfuscator' && obf}
+				<div class="tab-form">
+					<section class="card tunnel-section">
+						<SettingsSectionLabel label="Обфускатор" icon={Shuffle} tone="indigo" header />
+						<div class="obf-fields">
+							<ObfuscatorParams bind:obfuscator={obf} error={obfError} />
+						</div>
+					</section>
 				</div>
 
 			{:else if activeTab === 'routing'}
@@ -597,6 +633,12 @@
 		display: flex;
 		gap: 12px;
 		align-items: flex-start;
+	}
+
+	.obf-fields {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
 	}
 
 	.tunnel-section {

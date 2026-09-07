@@ -387,6 +387,9 @@ const MOCK_AWG_TUNNELS = [
 		mtu: 1380,
 		startedAt: '',
 		backend: 'nativewg',
+		// Обфусцированный туннель: WireGuard ходит в локальный релей, сервер
+		// задаётся параметрами обфускатора (вкладка «Обфускатор» в редакторе).
+		obfuscator: { flavor: 'phobos', target: 'vpn.example.com:51824', key: 'k', masking: 'STUN', maxDummy: 4, localPort: 39000 },
 		connectivityCheck: { method: 'http' },
 		pingCheck: { status: 'alive', restartCount: 0, failCount: 0, failThreshold: 3 },
 	},
