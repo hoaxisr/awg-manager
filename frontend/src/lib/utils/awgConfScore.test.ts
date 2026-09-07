@@ -70,6 +70,18 @@ describe('scoreConfig — заголовки', () => {
 		const narrow = base({ h1: '10-500', h2: '3000-4000', h3: '5000-6000', h4: '7000-8000' }, {}, { version: 'awg2.0' });
 		expect(find(scoreConfig(narrow), 'H1–H4').delta).toBe(-5);
 	});
+
+	// Незаданный H модуль берёт из дефолта устройства 1/2/3/4 — оценка считает так же.
+	it('H не заданы без HP = дефолт 1/2/3/4: fail −25', () => {
+		const r = scoreConfig(base({ h1: '', h2: '', h3: '', h4: '' }));
+		expect(find(r, 'H1–H4').status).toBe('fail');
+		expect(find(r, 'H1–H4').delta).toBe(-25);
+		expect(find(r, 'H1–H4').value).toBe('— / — / — / —');
+	});
+
+	it('задан только H1 = 10, остальные дефолтные 2/3/4: warn −5', () => {
+		expect(find(scoreConfig(base({ h1: '10', h2: '', h3: '', h4: '' })), 'H1–H4').delta).toBe(-5);
+	});
 });
 
 describe('scoreConfig — junk и паддинг', () => {
@@ -154,11 +166,14 @@ describe('scoreConfig — сервер, сеть, факты', () => {
 		expect(find(scoreConfig(base({}, { endpoint: 'vpn.example.com:51820' })), 'Порт Endpoint').delta).toBe(-5);
 	});
 
-	it('MTU: потолок 1440 для IPv4-endpoint, 1420 для IPv6, минус ContentPadding; без баллов', () => {
+	it('MTU: потолок 1440 для IPv4-endpoint, 1420 для IPv6; ContentPadding потолок не снижает; без баллов', () => {
 		expect(find(scoreConfig(base({ mtu: 1440 })), 'MTU').status).toBe('pass');
 		expect(find(scoreConfig(base({ mtu: 1441 })), 'MTU').status).toBe('warn');
 		expect(find(scoreConfig(base({ mtu: 1421 }, { endpoint: '[2001:db8::1]:4443' })), 'MTU').status).toBe('warn');
-		expect(find(scoreConfig(base({ mtu: 1400, contentPaddingAddition: '0-64' })), 'MTU').status).toBe('warn');
+		// Движок режет добавку по свободному месту в UDP-окне — потолок прежний.
+		const padded = find(scoreConfig(base({ mtu: 1400, contentPaddingAddition: '0-64' })), 'MTU');
+		expect(padded.status).toBe('pass');
+		expect(padded.detail).toMatch(/ContentPaddingAddition 0-64 обрезается движком/);
 		expect(find(scoreConfig(base({ mtu: 1501 })), 'MTU').status).toBe('fail');
 		expect(find(scoreConfig(base({ mtu: 1279 })), 'MTU').status).toBe('fail');
 		// Парсерный дефолт 1280 без ключа в тексте — info, не pass.
@@ -183,12 +198,20 @@ describe('scoreConfig — сервер, сеть, факты', () => {
 		expect(r.summary.find((s) => s.label === 'AllowedIPs')?.value).toBe('0.0.0.0/0, ::/0 (по умолчанию)');
 	});
 
-	it('ошибки совместимости → вердикт «не поднимется», в балл не входят', () => {
+	it('ошибки совместимости → вердикт «не поднимется», в балл не входят и не дублируются в рекомендациях', () => {
 		const r = scoreConfig(base({}, {}, { errors: [{ code: 'hp_padding_min', message: 'S2 = 5: …' }] }));
 		expect(r.verdict.label).toBe('Конфиг не поднимется');
 		expect(r.verdict.tone).toBe('error');
+		expect(r.verdict.text).toBe('Бэкенд отверг конфиг, ошибки ниже.');
 		expect(r.score).toBe(40);
 		expect(r.checks.find((c) => c.cat === 'Совместимость')?.status).toBe('fail');
+		// Сообщение бэкенда показывают блок ошибок и чек — в «Рекомендации» оно не идёт.
+		expect(buildFixes(r.checks).some((f) => f.includes('S2 = 5'))).toBe(false);
+	});
+
+	it('awg3 без header protection: в тексте вердикта — пометка о профиле', () => {
+		const r = scoreConfig(base({ rekeyAfterTime: '120-150' }, {}, { version: 'awg3' }));
+		expect(r.verdict.text).toContain('(без header protection)');
 	});
 
 	it('вердикт по порогам и факты', () => {

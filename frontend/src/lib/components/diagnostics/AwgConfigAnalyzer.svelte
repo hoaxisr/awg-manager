@@ -618,7 +618,7 @@
 			</label>
 
 			<div class="bar">
-				<Button variant="primary" onclick={analyze} disabled={!canAnalyze || analyzing}>Анализировать</Button>
+				<Button variant="primary" onclick={analyze} disabled={!canAnalyze || analyzing} loading={analyzing}>Анализировать</Button>
 				<Button variant="secondary" onclick={() => fileInput?.click()}>Загрузить файл</Button>
 				<Button variant="ghost" onclick={clearAll}>Очистить</Button>
 				{#if canSave}

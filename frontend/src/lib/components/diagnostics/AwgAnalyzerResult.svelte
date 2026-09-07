@@ -43,7 +43,7 @@
 					stroke-dasharray={scoreRingDashArray(result.score)}
 					stroke={tone.color}
 				/>
-				<text x="60" y="53" class="ring-num" text-anchor="middle">{result.score}</text>
+				<text x="60" y="53" class="ring-num" text-anchor="middle">{compatFirst ? '—' : result.score}</text>
 				<text x="60" y="68" class="ring-sub" text-anchor="middle">{result.facts.profile}</text>
 			</svg>
 		</div>

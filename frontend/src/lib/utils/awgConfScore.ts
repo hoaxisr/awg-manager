@@ -93,16 +93,6 @@ function endpointPort(endpoint: string): number | null {
 	return m ? Number(m[1]) : null;
 }
 
-/** Верхняя граница ContentPaddingAddition: "0-64" → 64, "32" → 32, "" → 0. */
-function paddingMax(v: string): number {
-	const s = v.trim();
-	if (!s) return 0;
-	const m = /^(\d+)-(\d+)$/.exec(s);
-	if (m) return Number(m[2]);
-	const n = Number(s);
-	return Number.isFinite(n) ? n : 0;
-}
-
 export function scoreConfig(d: AwgAnalyzeData): ScoreResult {
 	const i = d.interface;
 	const hp = i.headerProtection;
@@ -117,11 +107,10 @@ export function scoreConfig(d: AwgAnalyzeData): ScoreResult {
 	if (hp) {
 		add({ cat: 'Заголовки', title: 'H1–H4', status: 'info', value: hVal, delta: 0,
 			detail: 'Заголовок зашифрован header protection — значения H1–H4 на проводе не видны, дефолт 1–4 допустим.' });
-	} else if (hs.some((h) => h === null)) {
-		add({ cat: 'Заголовки', title: 'H1–H4', status: 'info', value: hVal, delta: 0,
-			detail: 'H1–H4 заданы не полностью — модуль использует свои значения по умолчанию.' });
 	} else {
-		const singles = hs.map((h) => h!);
+		// Незаданный H модуль берёт из дефолта устройства 1/2/3/4 — так же
+		// считает ValidateHeaderRanges на бэкенде.
+		const singles = hs.map((h, idx) => h ?? { lo: idx + 1, hi: idx + 1, range: false });
 		const isDefault = !singles.some((h) => h.range) && singles.map((h) => h.lo).join(',') === '1,2,3,4';
 		const belowFive = singles.filter((h) => !h.range && h.lo < 5);
 		const narrow = singles.filter((h) => h.range && h.hi - h.lo < 1000);
@@ -240,20 +229,25 @@ export function scoreConfig(d: AwgAnalyzeData): ScoreResult {
 
 	// ── Сеть: MTU (совместимость, без баллов) ──────────────────────
 	const overhead = endpointIsIPv6(d.peer.endpoint) ? 80 : 60;
-	const pad = paddingMax(i.contentPaddingAddition);
-	const ceiling = 1500 - overhead - pad;
+	const ceiling = 1500 - overhead;
+	// ContentPaddingAddition из потолка не вычитается: оба движка режут добавку
+	// по свободному месту в UDP-окне (amneziawg-go send.go randomPaddingAddition,
+	// модуль ядра peer.h wg_peer_skb_randomize_padding_addition).
+	const padNote = i.contentPaddingAddition
+		? ` ContentPaddingAddition ${i.contentPaddingAddition} обрезается движком до свободного места в UDP-окне и потолок не снижает.`
+		: '';
 	if (!i.mtuSet) {
-		add({ cat: 'Сеть', title: 'MTU', status: 'info', value: 'не задан', delta: 0, detail: `Будет взято ${i.mtu} по умолчанию. Потолок для этого конфига ${ceiling} (1500 − ${overhead} внешний заголовок${pad ? ` − ${pad} ContentPadding` : ''}); для PPPoE ещё −8.` });
+		add({ cat: 'Сеть', title: 'MTU', status: 'info', value: 'не задан', delta: 0, detail: `Будет взято ${i.mtu} по умолчанию. Потолок для этого конфига ${ceiling} (1500 − ${overhead} внешний заголовок); для PPPoE ещё −8.${padNote}` });
 	} else if (i.mtu > 1500 || i.mtu < 1280) {
 		add({ cat: 'Сеть', title: 'MTU', status: 'fail', value: String(i.mtu), delta: 0,
 			detail: i.mtu > 1500 ? 'MTU > 1500 не пройдёт по Ethernet-пути.' : 'MTU < 1280 ниже минимума IPv6 и даёт лишнюю фрагментацию.',
 			fix: `Задайте MTU в диапазоне 1280–${ceiling}.` });
 	} else if (i.mtu > ceiling) {
 		add({ cat: 'Сеть', title: 'MTU', status: 'warn', value: String(i.mtu), delta: 0,
-			detail: `Выше потолка ${ceiling} = 1500 − ${overhead} внешний заголовок${pad ? ` − ${pad} ContentPadding` : ''}; на PPPoE потолок ещё на 8 ниже.`,
+			detail: `Выше потолка ${ceiling} = 1500 − ${overhead} внешний заголовок; на PPPoE потолок ещё на 8 ниже.`,
 			fix: `Снизьте MTU до ${ceiling} или ниже (PPPoE: ${ceiling - 8}).` });
 	} else {
-		add({ cat: 'Сеть', title: 'MTU', status: 'pass', value: String(i.mtu), delta: 0, detail: `В пределах потолка ${ceiling}.` });
+		add({ cat: 'Сеть', title: 'MTU', status: 'pass', value: String(i.mtu), delta: 0, detail: `В пределах потолка ${ceiling}.${padNote}` });
 	}
 
 	// ── Ключи (факты) ──────────────────────────────────────────────
@@ -264,20 +258,23 @@ export function scoreConfig(d: AwgAnalyzeData): ScoreResult {
 			: 'Опциональный симметричный ключ поверх DH не задан.' });
 
 	// ── Совместимость (с бэкенда) ──────────────────────────────────
+	// Без fix: одно сообщение — одно место. Ошибки уже показывает блок
+	// «Конфиг не поднимется», предупреждения — сами чеки этой категории.
 	for (const e of d.errors) {
-		add({ cat: 'Совместимость', title: e.code, status: 'fail', value: 'ошибка', delta: 0, detail: e.message, fix: e.message });
+		add({ cat: 'Совместимость', title: e.code, status: 'fail', value: 'ошибка', delta: 0, detail: e.message });
 	}
 	for (const w of d.warnings) {
-		add({ cat: 'Совместимость', title: w.code, status: 'warn', value: 'предупреждение', delta: 0, detail: w.message, fix: w.message });
+		add({ cat: 'Совместимость', title: w.code, status: 'warn', value: 'предупреждение', delta: 0, detail: w.message });
 	}
 
 	// ── Итог ───────────────────────────────────────────────────────
 	const score = Math.max(0, Math.min(100, base + checks.reduce((a, c) => a + c.delta, 0)));
 	const facts: ScoreFacts = { profile: PROFILE_LABEL[d.version], headerProtection: hp, cps, trailers: i.randomTrailers };
-	const profileText = `${facts.profile}${hp ? ' с header protection' : ''}${i.randomTrailers ? ' и random trailers' : ''}${cps !== 'нет' ? `, CPS: ${cps}` : ''}.`;
+	const noHp = (d.version === 'awg3' || d.version === 'awg3.1') && !hp ? ' (без header protection)' : '';
+	const profileText = `${facts.profile}${noHp}${hp ? ' с header protection' : ''}${i.randomTrailers ? ' и random trailers' : ''}${cps !== 'нет' ? `, CPS: ${cps}` : ''}.`;
 	let verdict: ScoreVerdict;
 	if (d.errors.length) {
-		verdict = { label: 'Конфиг не поднимется', tone: 'error', text: d.errors[0].message };
+		verdict = { label: 'Конфиг не поднимется', tone: 'error', text: 'Бэкенд отверг конфиг, ошибки ниже.' };
 	} else if (score >= 85) {
 		verdict = { label: 'Сильная обфускация', tone: 'accent', text: profileText };
 	} else if (score >= 60) {
