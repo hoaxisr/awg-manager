@@ -174,6 +174,9 @@ export interface ProxyListData {
   instances: ProxyInstanceView[];
 }
 
+/** Подсистема, которой ставят/снимают бинари ручками /proxyrt/install*. */
+export type ProxySubsystem = 'wdtt' | 'freeturn' | 'obf-phobos' | 'obf-clusterm';
+
 /** Ответ GET /proxyrt/install/status — семь полей install-блока старого статуса. */
 export interface ProxyInstallStatus {
   serverSupported?: boolean;

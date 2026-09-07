@@ -13,7 +13,6 @@ import type {
 	FreeTurnServerInstance,
 	FreeTurnStatus
 } from '$lib/types';
-import type { ProxySubsystem } from '$lib/stores/proxyInstall';
 import { SubscriptionsClient } from './clientSubscriptions';
 import {
 	instancePath,
@@ -28,7 +27,8 @@ import {
 	type ProxyInstanceView,
 	type ProxyKind,
 	type ProxyListData,
-	type ProxySeedView
+	type ProxySeedView,
+	type ProxySubsystem
 } from './proxyInstances';
 
 /** Ответ удаления инстанса: что снесено вместе с ним. */

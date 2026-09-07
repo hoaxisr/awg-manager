@@ -1,7 +1,9 @@
 import { api } from '$lib/api/client';
-import type { ProxyInstallStatus } from '$lib/api/proxyInstances';
+import type { ProxyInstallStatus, ProxySubsystem } from '$lib/api/proxyInstances';
 import { createPollingStore, type PollingStore } from './polling';
 import { registerStore } from './storeRegistry';
+
+export type { ProxySubsystem } from '$lib/api/proxyInstances';
 
 /**
  * Статус установки бинарей подсистем прокси — по одному store на подсистему.
@@ -14,8 +16,6 @@ import { registerStore } from './storeRegistry';
  * страницы. Сами бинари меняются только нашими же действиями, поэтому опрос
  * редкий.
  */
-export type ProxySubsystem = 'wdtt' | 'freeturn' | 'obf-phobos' | 'obf-clusterm';
-
 function storeFor(
 	subsystem: ProxySubsystem,
 	resource: 'proxyrt.instances' | 'tunnels',
