@@ -389,6 +389,11 @@ func (l *Local) stored(id string) *storage.AWGTunnel {
 
 func (l *Local) endpointOf(id string) string {
 	if st := l.stored(id); st != nil {
+		// У обфусцированного туннеля Peer.Endpoint — loopback релея; наружу
+		// показываем сервер, как и список в UI (Q7).
+		if st.Obfuscator != nil {
+			return st.Obfuscator.Target
+		}
 		return st.Peer.Endpoint
 	}
 	return ""

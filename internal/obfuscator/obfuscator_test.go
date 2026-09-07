@@ -22,6 +22,14 @@ func TestValidate(t *testing.T) {
 		"dummy too big":     {Flavor: "phobos", Target: "h:1", Key: "k", Masking: "STUN", MaxDummy: 1025},
 		"bad flavor":        {Flavor: "x", Target: "h:1", Key: "k", Masking: "STUN"},
 		"negative idle":     {Flavor: "phobos", Target: "h:1", Key: "k", Masking: "STUN", IdleTimeout: -1},
+		// Key/Target попадают в INI релея как есть: перевод строки или `[`
+		// подменили бы соседние ключи и секции (достижимо через JSON API/MCP).
+		"newline in key":    {Flavor: "phobos", Target: "h:1", Key: "k\nsource-if = 0.0.0.0", Masking: "STUN"},
+		"cr in key":         {Flavor: "phobos", Target: "h:1", Key: "k\rx", Masking: "STUN"},
+		"bracket in key":    {Flavor: "phobos", Target: "h:1", Key: "k[main]", Masking: "STUN"},
+		"newline in target": {Flavor: "phobos", Target: "h:1\nkey = zzz", Key: "k", Masking: "STUN"},
+		"bracket in target": {Flavor: "phobos", Target: "h:1[x]", Key: "k", Masking: "STUN"},
+		"localhost target":  {Flavor: "phobos", Target: "localhost:51824", Key: "k", Masking: "STUN"},
 	}
 	for name, c := range cases {
 		if err := Validate(&c); err == nil {

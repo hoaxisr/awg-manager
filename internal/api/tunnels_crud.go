@@ -496,6 +496,19 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "INVALID_OBFUSCATOR")
 		return
 	}
+	// UI этого не шлёт (endpoint disabled, вкладка «Обфускация» скрыта), а
+	// MCP/curl — может: чужой endpoint увёл бы WG мимо релея, а AWG-параметры
+	// легли бы ASC-обфускацией поверх обфускации релея.
+	if existing.Obfuscator != nil {
+		if merged.Peer.Endpoint != existing.Peer.Endpoint {
+			response.Error(w, "endpoint обфусцированного туннеля не правится", "INVALID_OBFUSCATOR")
+			return
+		}
+		if config.IsAWGObfuscated(&merged.Interface) {
+			response.Error(w, "параметры AWG несовместимы с обфускатором", "INVALID_OBFUSCATOR")
+			return
+		}
+	}
 
 	// Validate endpoint resolves (only if changed)
 	if merged.Peer.Endpoint != existing.Peer.Endpoint {

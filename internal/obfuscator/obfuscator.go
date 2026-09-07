@@ -47,11 +47,19 @@ func Validate(o *storage.Obfuscator) error {
 	if !ok {
 		return fmt.Errorf("неизвестная разновидность обфускатора %q", o.Flavor)
 	}
+	// Key/Target уезжают в INI релея как есть (RenderConf/RenderInstance):
+	// перевод строки или `[` подменили бы соседние ключи и секции. Через
+	// [instance] такое не приходит (парсер режет по строкам), а через JSON
+	// API/MCP — приходит.
+	if strings.ContainsAny(o.Key, "\r\n[") || strings.ContainsAny(o.Target, "\r\n[") {
+		return errors.New("недопустимые символы в key или target")
+	}
 	target, err := config.NormalizeEndpoint(o.Target)
 	if err != nil {
 		return fmt.Errorf("target: %w", err)
 	}
-	if host, _, _ := net.SplitHostPort(target); host == "" || (net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()) {
+	if host, _, _ := net.SplitHostPort(target); host == "" || host == "localhost" ||
+		(net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()) {
 		return errors.New("target должен указывать на сервер, а не на loopback")
 	}
 	if strings.TrimSpace(o.Key) == "" {

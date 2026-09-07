@@ -436,6 +436,25 @@ func TestLocal_ListTunnelsMapsStateAndEndpoint(t *testing.T) {
 	}
 }
 
+// У обфусцированного туннеля Peer.Endpoint — loopback релея; наружу (как и в
+// списке UI) показываем сервер (Q7).
+func TestLocal_EndpointOfObfuscatedIsTarget(t *testing.T) {
+	l, _, _, _ := newLocal(t)
+	if err := l.c.TunnelStore.Create(&storage.AWGTunnel{
+		ID: "tn-obf", Name: "PH", Backend: "nativewg",
+		Peer:       storage.AWGPeer{Endpoint: "127.0.0.1:39000"},
+		Obfuscator: &storage.Obfuscator{Flavor: storage.ObfuscatorFlavorPhobos, Target: "1.2.3.4:51824", LocalPort: 39000},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := l.endpointOf("tn-obf"); got != "1.2.3.4:51824" {
+		t.Fatalf("endpointOf = %q, want target", got)
+	}
+	if got := l.endpointOf("tn-1"); got != "vpn.example.net:51820" {
+		t.Fatalf("обычный туннель: endpointOf = %q", got)
+	}
+}
+
 func TestLocal_ControlTunnelDispatch(t *testing.T) {
 	l, ft, fo, _ := newLocal(t)
 	ctx := context.Background()

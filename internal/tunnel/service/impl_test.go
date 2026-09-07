@@ -608,3 +608,35 @@ func TestNew_NativeWGStateWiring(t *testing.T) {
 		}
 	})
 }
+
+// Правка обфусцированного туннеля обязана доехать до релея и без рукопожатия:
+// без ASC такой туннель висит в Starting, с ASC уезжает в Broken, упавший
+// релей — тоже Broken. Обычный туннель по-прежнему синхронизируется только
+// запущенным (Q21).
+func TestShouldSyncRuntime(t *testing.T) {
+	obf := &storage.AWGTunnel{Obfuscator: &storage.Obfuscator{Flavor: storage.ObfuscatorFlavorPhobos}}
+	plain := &storage.AWGTunnel{}
+	cases := []struct {
+		name   string
+		stored *storage.AWGTunnel
+		state  tunnel.State
+		want   bool
+	}{
+		{"обычный Running", plain, tunnel.StateRunning, true},
+		{"обычный Starting", plain, tunnel.StateStarting, false},
+		{"обычный Broken", plain, tunnel.StateBroken, false},
+		{"обычный Stopped", plain, tunnel.StateStopped, false},
+		{"обфускатор Running", obf, tunnel.StateRunning, true},
+		{"обфускатор Starting", obf, tunnel.StateStarting, true},
+		{"обфускатор Broken", obf, tunnel.StateBroken, true},
+		{"обфускатор Stopped", obf, tunnel.StateStopped, false},
+		{"обфускатор NotCreated", obf, tunnel.StateNotCreated, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := shouldSyncRuntime(c.stored, tunnel.StateInfo{State: c.state}); got != c.want {
+				t.Errorf("shouldSyncRuntime(%v) = %v, want %v", c.state, got, c.want)
+			}
+		})
+	}
+}

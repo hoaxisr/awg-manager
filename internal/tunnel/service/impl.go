@@ -475,12 +475,7 @@ func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.
 	} else {
 		stateInfo = s.state.GetState(ctx, tunnelID)
 	}
-	// Упавший релей даёт Broken, и именно тогда правка его параметров обязана
-	// его перезапустить — иначе туннель с исправленным ключом так и остался бы
-	// лежать до ручного рестарта (Q21).
-	obfBroken := newStored.Obfuscator != nil && stateInfo.State == tunnel.StateBroken &&
-		stateInfo.Details == obfuscator.DetailsNotRunning
-	if stateInfo.State != tunnel.StateRunning && !obfBroken {
+	if !shouldSyncRuntime(newStored, stateInfo) {
 		s.logInfo("update", tunnelID, "Tunnel updated (not running, runtime sync skipped)")
 		return nil
 	}
@@ -499,6 +494,22 @@ func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.
 	s.notifyAWGSyncer(ctx)
 	s.invalidateState(newStored.ID)
 	return nil
+}
+
+// shouldSyncRuntime — пускать ли правку в живой интерфейс. Обычный туннель
+// синхронизируется только запущенным. У обфусцированного правка обязана
+// доехать до релея и без рукопожатия: без ASC такой туннель висит в Starting
+// (PeerRemoteAddr=127.0.0.1 при живом релее), с ASC уезжает в Broken, а
+// упавший релей даёт Broken с DetailsNotRunning — во всех трёх случаях
+// «Сохранить» с новым ключом обязано перезапустить релей, иначе туннель
+// лечится только ручным рестартом (Q21). Набор состояний — как у
+// ReplaceConfig.
+func shouldSyncRuntime(stored *storage.AWGTunnel, stateInfo tunnel.StateInfo) bool {
+	if stateInfo.State == tunnel.StateRunning {
+		return true
+	}
+	return stored.Obfuscator != nil &&
+		(stateInfo.State == tunnel.StateStarting || stateInfo.State == tunnel.StateBroken)
 }
 
 // applyDiffKernel applies field-level diffs to a running kernel-backend

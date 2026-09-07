@@ -200,6 +200,29 @@ func TestImportConf_InstallURLFetched(t *testing.T) {
 	}
 }
 
+// Ссылку установки шлёт только вкладка Phobos: пакет без [instance] дал бы
+// обычный nativewg-туннель, падающий на старте с чужим «добавьте параметры
+// AWG». Отказ вместо подмены разновидности.
+func TestImportConf_InstallURLWithoutInstanceRejected(t *testing.T) {
+	h, svc, _ := importObfHarness(t)
+	plain := strings.SplitN(phobosConfFixture, "[instance]", 2)[0]
+	pkg := packageTarGz(t, map[string]string{"phobos-router/router.conf": plain})
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(pkg)
+	}))
+	defer srv.Close()
+
+	rec := postImport(t, h, ImportConfRequest{Name: "ph", InstallURL: srv.URL + "/api/install/tok"})
+
+	if rec.Code != http.StatusBadRequest || errCode(t, rec) != "OBFUSCATOR_INVALID" {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	// content остаётся пустым, только если Import не звали вовсе.
+	if svc.content != "" {
+		t.Errorf("Import вызван с %q — туннель не должен был завестись", svc.content)
+	}
+}
+
 func TestImportConf_InstallURLUnreachable(t *testing.T) {
 	h, _, _ := importObfHarness(t)
 

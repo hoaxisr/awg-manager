@@ -243,6 +243,11 @@ func (h *ImportHandler) resolveObfuscatorImport(ctx context.Context, req *Import
 		if len(unknown) > 0 {
 			h.log.Warn("import", req.Name, "[instance]: неизвестные ключи пропущены: "+strings.Join(unknown, ", "))
 		}
+	case req.InstallURL != "":
+		// Ссылку установки даёт только вкладка Phobos: без [instance] импорт
+		// молча дал бы обычный nativewg-туннель, который потом падает на
+		// старте с чужим «добавьте параметры AWG».
+		return nil, nil, &obfImportError{"OBFUSCATOR_INVALID", "в пакете Phobos нет секции [instance]"}
 	case req.Obfuscator != nil:
 		m := req.Obfuscator
 		flavor := m.Flavor

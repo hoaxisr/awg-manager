@@ -112,6 +112,9 @@ func (r *Runner) stopLocked(tunnelID string) error {
 	}
 	pid, ok := readPID(tunnelID)
 	if !ok {
+		// Нечитаемый pidfile тоже убираем: иначе AdoptAll спотыкался бы о
+		// него на каждом старте демона.
+		_ = os.Remove(pidPath(tunnelID))
 		return nil
 	}
 	if childproc.IsAlive(pid) && r.matchFn(pid) {

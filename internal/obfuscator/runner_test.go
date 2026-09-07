@@ -152,6 +152,23 @@ func TestRunner_AdoptAll(t *testing.T) {
 	}
 }
 
+// Нечитаемый pidfile тоже убирается: иначе AdoptAll спотыкался бы о него на
+// каждом старте демона.
+func TestRunner_AdoptAllRemovesGarbagePidfile(t *testing.T) {
+	r, _ := newTestRunner(t)
+	p := filepath.Join(RunDir, "awg23.pid")
+	if err := os.MkdirAll(RunDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("garbage"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.AdoptAll(func(string) bool { return true })
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatalf("битый pidfile остался: %v", err)
+	}
+}
+
 func TestRunner_StartRefusesBusyPort(t *testing.T) {
 	r, _ := newTestRunner(t)
 	o := obf()

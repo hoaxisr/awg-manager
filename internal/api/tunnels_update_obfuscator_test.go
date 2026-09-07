@@ -51,6 +51,32 @@ func TestTunnelUpdate_ObfuscatorUserFieldsOnly(t *testing.T) {
 	}
 }
 
+// UI это заблокировал (endpoint disabled, вкладка «Обфускация» скрыта), а
+// MCP/curl — нет: чужой endpoint увёл бы WG мимо релея, AWG-параметры легли бы
+// ASC-обфускацией поверх обфускации релея.
+func TestTunnelUpdate_ObfuscatorEndpointAndAWGRejected(t *testing.T) {
+	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
+	seedObfTunnel(t, store)
+
+	for name, body := range map[string]string{
+		"endpoint": `{"peer":{"publicKey":"p","endpoint":"9.9.9.9:51820"}}`,
+		"awg":      `{"interface":{"address":"10.25.0.4/32","mtu":1420,"jc":4,"jmin":40,"jmax":70,"s1":15,"s2":15,"h1":"1","h2":"2","h3":"3","h4":"4"}}`,
+	} {
+		rec := httptest.NewRecorder()
+		h.Update(rec, httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg20", strings.NewReader(body)))
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "INVALID_OBFUSCATOR") {
+			t.Errorf("%s: status=%d body=%s", name, rec.Code, rec.Body.String())
+		}
+		saved, _ := store.Get("awg20")
+		if saved.Peer.Endpoint != "127.0.0.1:39000" {
+			t.Errorf("%s: endpoint изменён на %s", name, saved.Peer.Endpoint)
+		}
+		if saved.Interface.AWGObfuscation.Jc != 0 {
+			t.Errorf("%s: AWG-параметры записаны: %+v", name, saved.Interface.AWGObfuscation)
+		}
+	}
+}
+
 func TestTunnelUpdate_ObfuscatorCannotBeAddedOrRemoved(t *testing.T) {
 	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
 	if err := store.Create(&storage.AWGTunnel{
