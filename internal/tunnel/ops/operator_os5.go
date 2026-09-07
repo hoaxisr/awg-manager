@@ -541,16 +541,23 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 		o.logInfo("reconcile", cfg.ID, "Created OpkgTun in NDMS")
 	}
 
-	// === Phase 2: Recreate kernel interface as amneziawg type ===
-	// After reboot, NDMS creates a generic OpkgTun interface from saved config.
-	// awg commands require an amneziawg-type interface, so we must recreate it.
-	// ip link del triggers transient NDMS state:error — safe under per-tunnel lock.
-	o.ipRun(ctx, "/opt/sbin/ip", "link", "del", "dev", names.IfaceName)
-	if err := o.backend.Start(ctx, names.IfaceName); err != nil {
-		return tunnel.NewOpError("reconcile", cfg.ID, "backend", err)
-	}
-	if err := o.backend.WaitReady(ctx, names.IfaceName, interfaceReadyTimeout); err != nil {
-		return tunnel.NewOpError("reconcile", cfg.ID, "backend", fmt.Errorf("wait ready: %w", err))
+	// === Phase 2: Ensure kernel interface is amneziawg type ===
+	// A live amneziawg device is kept as is: recreating it drops the session,
+	// and every awg-manager restart used to do exactly that (F129, #867).
+	// Only when the device is missing or is a generic tun (NDMS recreates one
+	// from saved config after reboot) is it recreated. ip link del triggers
+	// transient NDMS state:error — safe under per-tunnel lock.
+	if running, _ := o.backend.IsRunning(ctx, names.IfaceName); running {
+		o.logInfo("reconcile", cfg.ID, "Kernel interface alive, kept")
+	} else {
+		o.ipRun(ctx, "/opt/sbin/ip", "link", "del", "dev", names.IfaceName)
+		if err := o.backend.Start(ctx, names.IfaceName); err != nil {
+			return tunnel.NewOpError("reconcile", cfg.ID, "backend", err)
+		}
+		if err := o.backend.WaitReady(ctx, names.IfaceName, interfaceReadyTimeout); err != nil {
+			return tunnel.NewOpError("reconcile", cfg.ID, "backend", fmt.Errorf("wait ready: %w", err))
+		}
+		o.logInfo("reconcile", cfg.ID, "Kernel interface recreated as amneziawg")
 	}
 	mtu := cfg.MTU
 	if mtu == 0 {
@@ -560,10 +567,11 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 		"txqueuelen", "1000", "mtu", fmt.Sprintf("%d", mtu)); err != nil {
 		return tunnel.NewOpError("reconcile", cfg.ID, "kernel", fmt.Errorf("configure interface: %w", err))
 	}
-	o.logInfo("reconcile", cfg.ID, "Kernel interface recreated as amneziawg")
 
 	// === Phase 3: Apply WireGuard configuration ===
-	if err := o.wg.SetConf(ctx, names.IfaceName, cfg.ConfPath); err != nil {
+	// syncconf keeps the established session when the file is unchanged;
+	// on a fresh device it is equivalent to setconf.
+	if err := o.wg.SyncConf(ctx, names.IfaceName, cfg.ConfPath); err != nil {
 		return tunnel.NewOpError("reconcile", cfg.ID, "wg", err)
 	}
 	o.logInfo("reconcile", cfg.ID, "WireGuard config applied")
@@ -606,15 +614,16 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 		}
 	}
 
-	// Assign addresses on kernel interface (we own it after ip link del + add)
+	// Assign addresses on kernel interface (replace: the device may be the
+	// live one that already carries them)
 	if cfg.Address != "" {
 		addr := addressWithPrefix(cfg.Address, cfg.AddressPrefix)
-		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "address", "add", "dev", names.IfaceName, addr); err != nil {
+		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "address", "replace", "dev", names.IfaceName, addr); err != nil {
 			o.logWarn("reconcile", cfg.ID, "Failed to set IPv4 address: "+err.Error())
 		}
 	}
 	if cfg.AddressIPv6 != "" {
-		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "-6", "address", "add", "dev", names.IfaceName, cfg.AddressIPv6+"/128"); err != nil {
+		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "-6", "address", "replace", "dev", names.IfaceName, cfg.AddressIPv6+"/128"); err != nil {
 			o.logWarn("reconcile", cfg.ID, "Failed to set IPv6 address: "+err.Error())
 			o.appLog.Warn("reconcile", cfg.ID, "IPv6 адрес: "+err.Error())
 		}

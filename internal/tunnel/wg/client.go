@@ -13,6 +13,12 @@ type Client interface {
 	// Command: awg setconf <iface> <confPath>
 	SetConf(ctx context.Context, iface, confPath string) error
 
+	// SyncConf reconciles a live interface with a configuration file: peers
+	// and settings already matching are left untouched, so an established
+	// session survives when the file has not changed.
+	// Command: awg syncconf <iface> <confPath>
+	SyncConf(ctx context.Context, iface, confPath string) error
+
 	// Show retrieves the current state of an interface.
 	// Command: awg show <iface>
 	Show(ctx context.Context, iface string) (*ShowResult, error)

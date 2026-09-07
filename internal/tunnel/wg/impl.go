@@ -27,6 +27,15 @@ func (c *ClientImpl) SetConf(ctx context.Context, iface, confPath string) error 
 	return nil
 }
 
+// SyncConf reconciles a live interface with a configuration file.
+func (c *ClientImpl) SyncConf(ctx context.Context, iface, confPath string) error {
+	result, err := exec.Run(ctx, "/opt/sbin/awg", "syncconf", iface, confPath)
+	if err != nil {
+		return fmt.Errorf("awg syncconf %s: %w", iface, exec.FormatError(result, err))
+	}
+	return nil
+}
+
 // Show retrieves the current state of an interface.
 func (c *ClientImpl) Show(ctx context.Context, iface string) (*ShowResult, error) {
 	result, err := exec.Run(ctx, "/opt/sbin/awg", "show", iface)

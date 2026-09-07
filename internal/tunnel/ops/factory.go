@@ -16,6 +16,8 @@ import (
 type Backend interface {
 	Start(ctx context.Context, ifaceName string) error
 	Stop(ctx context.Context, ifaceName string) error
+	// IsRunning reports whether the kernel device exists and is amneziawg-typed.
+	IsRunning(ctx context.Context, ifaceName string) (bool, int)
 	WaitReady(ctx context.Context, ifaceName string, timeout time.Duration) error
 }
 
