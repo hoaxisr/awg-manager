@@ -1,14 +1,15 @@
 <script lang="ts">
 	import AmneziaConfEditor from './AmneziaConfEditor.svelte';
 	import VpnLinkPasteImport from './VpnLinkPasteImport.svelte';
+	import ObfuscatorImportForm, { type ManualObfuscator } from './ObfuscatorImportForm.svelte';
 	import { notifications } from '$lib/stores/notifications';
 	import {
 		getVpnPastePresentation,
 		PREMIUM_VPN_KEY_STORAGE
 	} from '$lib/utils/amneziaPremiumVpnPaste';
-	import { Upload, Clipboard, Crown, Link, Check } from 'lucide-svelte';
+	import { Upload, Clipboard, Crown, Link, Check, Shuffle, Waves } from 'lucide-svelte';
 
-	export type TunnelImportTab = 'file' | 'paste' | 'vpn';
+	export type TunnelImportTab = 'file' | 'paste' | 'vpn' | 'phobos' | 'clusterm';
 
 	interface CountryConfigMeta {
 		suggestedName?: string;
@@ -25,6 +26,10 @@
 		storageKey?: string;
 		loadStoredKeyOnMount?: boolean;
 		pastePlaceholder?: string;
+		/** Показать вкладки обфускаторов (только страница создания туннеля). */
+		obfuscatorTabs?: boolean;
+		obfInstallUrl?: string;
+		obfManual?: ManualObfuscator;
 		oncountryconfig?: (config: string, meta: CountryConfigMeta) => void | Promise<void>;
 		onregularconfig?: (meta: { suggestedName?: string }) => void;
 		/** Вызывается после успешного чтения файла (например, подсказка имени). */
@@ -39,6 +44,15 @@
 		linkPreview = $bindable(''),
 		storageKey = PREMIUM_VPN_KEY_STORAGE,
 		loadStoredKeyOnMount = true,
+		obfuscatorTabs = false,
+		obfInstallUrl = $bindable(''),
+		obfManual = $bindable<ManualObfuscator>({
+			target: '',
+			key: '',
+			masking: 'STUN',
+			maxDummy: 4,
+			idleTimeout: 0
+		}),
 		pastePlaceholder = '[Interface]\nPrivateKey = ...\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = ...\nEndpoint = vpn.example.com:51820\nAllowedIPs = 0.0.0.0/0',
 		oncountryconfig,
 		onregularconfig,
@@ -127,6 +141,26 @@
 			{/if}
 			{vpnPastePresentation.label}
 		</button>
+		{#if obfuscatorTabs}
+			<button
+				type="button"
+				class="tab"
+				class:tab-active={activeTab === 'phobos'}
+				onclick={() => (activeTab = 'phobos')}
+			>
+				<Shuffle size={16} aria-hidden="true" />
+				Phobos
+			</button>
+			<button
+				type="button"
+				class="tab"
+				class:tab-active={activeTab === 'clusterm'}
+				onclick={() => (activeTab = 'clusterm')}
+			>
+				<Waves size={16} aria-hidden="true" />
+				ClusterM
+			</button>
+		{/if}
 	</div>
 
 	<div class="tab-content">
@@ -186,6 +220,14 @@
 				{oncountryconfig}
 				{onregularconfig}
 			/>
+		{:else if activeTab === 'phobos'}
+			<div class="obf-form">
+				<ObfuscatorImportForm flavor="phobos" bind:content={importContent} bind:installUrl={obfInstallUrl} />
+			</div>
+		{:else if activeTab === 'clusterm'}
+			<div class="obf-form">
+				<ObfuscatorImportForm flavor="clusterm" bind:content={importContent} bind:obfuscator={obfManual} />
+			</div>
 		{/if}
 	</div>
 </div>
@@ -248,6 +290,12 @@
 	.tab-content {
 		margin-top: 16px;
 		padding: 0;
+	}
+
+	.obf-form {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
 	}
 
 	.file-drop-zone {

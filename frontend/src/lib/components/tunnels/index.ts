@@ -1,6 +1,7 @@
 export { default as AmneziaConfEditor } from './AmneziaConfEditor.svelte';
 export { default as TunnelConfigImportPanel } from './TunnelConfigImportPanel.svelte';
 export { default as VpnLinkPasteImport } from './VpnLinkPasteImport.svelte';
+export { default as ObfuscatorImportForm } from './ObfuscatorImportForm.svelte';
 export { default as AWGAdvancedParams } from './AWGAdvancedParams.svelte';
 export { default as ConnectivitySettingsModal } from './ConnectivitySettingsModal.svelte';
 export { default as DefaultRouteBadge } from './DefaultRouteBadge.svelte';
