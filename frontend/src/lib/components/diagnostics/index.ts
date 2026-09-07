@@ -16,3 +16,4 @@ export { default as UpstreamsTable } from './UpstreamsTable.svelte';
 export { default as PolicyStatRow } from './PolicyStatRow.svelte';
 export { default as StaticRecordsCard } from './StaticRecordsCard.svelte';
 export { default as RebindCard } from './RebindCard.svelte';
+export { default as AwgAnalyzerResult } from './AwgAnalyzerResult.svelte';

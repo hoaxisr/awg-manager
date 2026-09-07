@@ -12,27 +12,10 @@
 		buildServerPeerDropdownOptions,
 		decodeServerPeerValue,
 	} from '$lib/utils/serverPeerOptions';
-	import {
-		parseAWG,
-		detectVersion,
-		runChecks,
-		isUnmodifiedTunnelConf,
-		calcScores,
-		buildFixes,
-		buildConfigSummary,
-		buildUpgradeHints,
-		getVerdict,
-		dpiLabel,
-		camouflageFromI1,
-		scoreRingDashArray,
-		type AwgParsed,
-		type AwgVersionInfo,
-		type AwgCheck,
-		type AwgScores,
-		type AwgVerdict,
-		type AwgSummaryRow,
-	} from '$lib/utils/awgConfAnalyzer';
-	import { ShieldCheck, TrendingUp, CircleAlert } from 'lucide-svelte';
+	import { parseAWG, type AwgParsed } from '$lib/utils/awgConfAnalyzer';
+	import { scoreConfig, buildFixes, type ScoreResult } from '$lib/utils/awgConfScore';
+	import AwgAnalyzerResult from './AwgAnalyzerResult.svelte';
+	import { ShieldCheck } from 'lucide-svelte';
 	import { onMount } from 'svelte';
 
 	interface Props {
@@ -54,12 +37,9 @@
 	let loadedTunnelRaw = $state('');
 	let error = $state('');
 	let parsed: AwgParsed | null = $state(null);
-	let version: AwgVersionInfo | null = $state(null);
-	let checks: AwgCheck[] = $state([]);
-	let awgScores = $state<AwgScores | null>(null);
-	let verdict: AwgVerdict | null = $state(null);
+	let result: ScoreResult | null = $state(null);
 	let fixes: string[] = $state([]);
-	let camouflage = $state<'LOW' | 'MEDIUM' | 'HIGH'>('LOW');
+	let analyzing = $state(false);
 	let fileInput: HTMLInputElement | undefined = $state();
 
 	let tunnels = $state<TunnelListItem[]>([]);
@@ -98,13 +78,10 @@
 		selectedTunnelId = '';
 	}
 
-	function analyze() {
+	async function analyze() {
 		error = '';
 		parsed = null;
-		version = null;
-		checks = [];
-		awgScores = null;
-		verdict = null;
+		result = null;
 		fixes = [];
 		tunnelLoadError = '';
 
@@ -114,27 +91,20 @@
 			return;
 		}
 
+		analyzing = true;
 		try {
+			// Локальный разбор нужен только пути записи в туннель (parsedToTunnelUpdate).
 			const p = parseAWG(t);
-			const v = detectVersion(p.iface);
-			const c = runChecks(p.iface, p.peer, v, {
-				privateKeyHidden: isUnmodifiedTunnelConf(raw, loadedTunnelRaw),
-			});
-			const s = calcScores(c, p.iface, v);
-			const f = buildFixes(c, p.iface, p.peer, v);
-			const ver = getVerdict(s.total);
-			const cam = camouflageFromI1(p.iface);
-
+			const data = await api.analyzeAwgConf(t, selectedTunnelId || undefined);
+			const r = scoreConfig(data);
 			parsed = p;
-			version = v;
-			checks = c;
-			awgScores = s;
-			verdict = ver;
-			fixes = f;
-			camouflage = cam;
+			result = r;
+			fixes = buildFixes(r.checks);
 			lastAnalyzedRaw = t;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			analyzing = false;
 		}
 	}
 
@@ -146,12 +116,8 @@
 		}
 		error = '';
 		parsed = null;
-		version = null;
-		checks = [];
-		awgScores = null;
-		verdict = null;
+		result = null;
 		fixes = [];
-		camouflage = 'LOW';
 		selectedTunnelId = isEmbeddedLocked() ? initialTunnelId : '';
 		selectedPeerValue = '';
 		peerLoadError = '';
@@ -191,6 +157,8 @@
 			i.rejectAfterTime ? `RejectAfterTime = ${i.rejectAfterTime}` : '',
 			i.keepaliveTimeout ? `KeepaliveTimeout = ${i.keepaliveTimeout}` : '',
 			i.maxHandshakeAttempts ? `MaxHandshakeAttempts = ${i.maxHandshakeAttempts}` : '',
+			i.randomTrailers ? 'RandomTrailers = on' : '',
+			i.disableCookies ? 'DisableCookies = on' : '',
 			'',
 			'[Peer]',
 			p.publicKey ? `PublicKey = ${p.publicKey}` : '',
@@ -342,22 +310,7 @@
 			// провенанс верен по построению, и предикат ниже это увидит.
 			loadedTunnelRaw = currentRaw;
 
-			const v = detectVersion(freshParsed.iface);
-			const c = runChecks(freshParsed.iface, freshParsed.peer, v, {
-				privateKeyHidden: isUnmodifiedTunnelConf(currentRaw, loadedTunnelRaw),
-			});
-			const s = calcScores(c, freshParsed.iface, v);
-			const f = buildFixes(c, freshParsed.iface, freshParsed.peer, v);
-			version = v;
-			checks = c;
-			awgScores = s;
-			fixes = f;
-			verdict = getVerdict(s.total);
-			camouflage = camouflageFromI1(freshParsed.iface);
-			parsed = freshParsed;
-			error = '';
-			tunnelLoadError = '';
-			lastAnalyzedRaw = currentRaw;
+			await analyze();
 
 			notifications.success('Конфиг записан в туннель');
 			onTunnelSaved?.();
@@ -537,63 +490,7 @@
 				: 'Нет AWG-туннелей',
 	);
 
-	let parsedLines = $derived.by(() => {
-		if (!parsed) return [] as { key: string; value: string }[];
-		const { iface, peer } = parsed;
-		const rows: [string, string][] = [
-			['privatekey', iface.privatekey ? `${iface.privatekey.slice(0, 16)}…` : '—'],
-			['address', iface.address || '—'],
-			['dns', iface.dns || '—'],
-			['mtu', iface.mtu || '—'],
-			[
-				'jc/jmin/jmax',
-				[iface.jc, iface.jmin, iface.jmax].map((v) => v ?? '—').join(' / '),
-			],
-			['s1/s2', [iface.s1, iface.s2].map((v) => v ?? '—').join(' / ')],
-			[
-				's3/s4',
-				iface.s3 || iface.s4 ? [iface.s3, iface.s4].map((v) => v ?? '—').join(' / ') : '—',
-			],
-			['h1/h2/h3/h4', [iface.h1, iface.h2, iface.h3, iface.h4].map((v) => v ?? '—').join(' / ')],
-			[
-				'i1',
-				iface.i1 ? `${iface.i1.slice(0, 40)}${iface.i1.length > 40 ? '…' : ''}` : '—',
-			],
-			['endpoint', peer.endpoint || '—'],
-			['publickey', peer.publickey ? `${peer.publickey.slice(0, 16)}…` : '—'],
-			['allowedips', peer.allowedips || '—'],
-			['keepalive', peer.persistentkeepalive || '—'],
-		];
-		return rows
-			.filter(([, v]) => v && v !== '—')
-			.map(([key, value]) => ({ key, value }));
-	});
-
-	let categories = $derived([...new Set(checks.map((c) => c.cat))]);
 	let canAnalyze = $derived(raw.trim().length > 0);
-
-	const icons: Record<string, string> = {
-		pass: '✓',
-		warn: '!',
-		fail: '✗',
-		info: 'i',
-	};
-
-	let dpiL = $derived.by(() => {
-		const s = awgScores;
-		if (!s) return { text: '—', color: 'var(--color-text-muted, var(--text-muted))' };
-		return dpiLabel(s.dpi);
-	});
-
-	let summaryRows = $derived.by((): AwgSummaryRow[] => {
-		if (!parsed || !version) return [];
-		return buildConfigSummary(parsed.iface, parsed.peer, version);
-	});
-
-	let upgradeHints = $derived.by(() => {
-		if (!parsed || !version) return [] as string[];
-		return buildUpgradeHints(parsed.iface, version);
-	});
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -604,9 +501,9 @@
 			<ShieldCheck size={18} />
 		</div>
 		<div class="privacy-banner-body">
-			<p class="privacy-banner-title">Анализ только в браузере</p>
+			<p class="privacy-banner-title">Конфиг не покидает роутер</p>
 			<p class="privacy-banner-text">
-				Конфиг обрабатывается локально и не отправляется на сервер.
+				Конфиг проверяется на роутере; ключи в ответ не возвращаются.
 			</p>
 			<div class="privacy-banner-tags">
 				<span class="privacy-tag">Данные остаются у вас</span>
@@ -721,7 +618,7 @@
 			</label>
 
 			<div class="bar">
-				<Button variant="primary" onclick={analyze} disabled={!canAnalyze}>Анализировать</Button>
+				<Button variant="primary" onclick={analyze} disabled={!canAnalyze || analyzing}>Анализировать</Button>
 				<Button variant="secondary" onclick={() => fileInput?.click()}>Загрузить файл</Button>
 				<Button variant="ghost" onclick={clearAll}>Очистить</Button>
 				{#if canSave}
@@ -752,166 +649,8 @@
 		</div>
 
 		<div class="col-results">
-			{#if version && awgScores && verdict && parsed}
-		<section class="card ver">
-			<span class="ver-badge">{version.ver}</span>
-			<p class="ver-desc">{version.desc}</p>
-		</section>
-
-		{#if upgradeHints.length > 0}
-			<section
-				class="card fixes"
-				aria-labelledby="awg-upgrade-h"
-				style:--awg-fix-accent={verdict.color}
-				style:--awg-fix-tint={verdict.tint}
-			>
-				<div class="fixes-head">
-					<span class="fixes-head-icon" aria-hidden="true">
-						<TrendingUp size={18} />
-					</span>
-					<h3 id="awg-upgrade-h" class="fixes-h">Как усилить</h3>
-					<span class="fixes-count">{upgradeHints.length}</span>
-				</div>
-				<ul class="fix-list">
-					{#each upgradeHints as hint, idx (idx)}
-						<li class="fix-item">
-							<span class="fix-bullet" aria-hidden="true">→</span>
-							<span class="fix-text">{hint}</span>
-						</li>
-					{/each}
-				</ul>
-			</section>
-		{/if}
-
-		<section class="card score">
-			<div class="score-row">
-				<div class="ring-hold">
-					<svg
-						class="ring"
-						viewBox="0 0 120 120"
-						aria-hidden="true"
-						focusable="false"
-					>
-						<circle class="ring-track" cx="60" cy="60" r="50" />
-						<circle
-							class="ring-fill"
-							cx="60"
-							cy="60"
-							r="50"
-							stroke-dasharray={scoreRingDashArray(awgScores.total)}
-							stroke={verdict.color}
-						/>
-						<text x="60" y="53" class="ring-num" text-anchor="middle">{awgScores.total}</text>
-						<text x="60" y="68" class="ring-sub" text-anchor="middle">{version.ver}</text>
-					</svg>
-				</div>
-				<div class="verdict">
-					<span class="verdict-badge" style:background={verdict.tint} style:border-color={verdict.color} style:color={verdict.color}>
-						{verdict.label}
-					</span>
-					<p class="verdict-text">{verdict.text}</p>
-				</div>
-			</div>
-
-			<div class="minis">
-				<div class="mini">
-					<div class="mini-l">Версия</div>
-					<div class="mini-v accent">{version.ver}</div>
-				</div>
-				{#if version.obfLevel}
-					<div class="mini">
-						<div class="mini-l">CPS / обфускация</div>
-						<div class="mini-v soft">{version.obfLevel}</div>
-					</div>
-				{/if}
-				{#if version.protocol}
-					<div class="mini">
-						<div class="mini-l">Протокол I1</div>
-						<div class="mini-v soft">{version.protocol}</div>
-					</div>
-				{/if}
-				<div class="mini">
-					<div class="mini-l">DPI риск</div>
-					<div class="mini-v" style:color={dpiL.color}>{dpiL.text}</div>
-				</div>
-				<div class="mini">
-					<div class="mini-l">Stealth</div>
-					<div class="mini-v soft">{awgScores.stealth}%</div>
-				</div>
-				<div class="mini">
-					<div class="mini-l">Балл</div>
-					<div class="mini-v">{awgScores.total}%</div>
-				</div>
-				<div class="mini">
-					<div class="mini-l">Камуфляж</div>
-					<div class="mini-v soft">{camouflage}</div>
-				</div>
-			</div>
-		</section>
-
-		{#if summaryRows.length > 0}
-			<section class="card summary" aria-labelledby="awg-summary-h">
-				<h3 id="awg-summary-h" class="block-h">Что это за конфиг</h3>
-				<dl class="summary-dl">
-					{#each summaryRows as row (`${row.label}-${row.value}`)}
-						<div class="summary-row">
-							<dt>{row.label}</dt>
-							<dd>{row.value}</dd>
-						</div>
-					{/each}
-				</dl>
-			</section>
-		{/if}
-
-		{#if fixes.length > 0}
-			<section
-				class="card fixes"
-				style:--awg-fix-accent={verdict.color}
-				style:--awg-fix-tint={verdict.tint}
-			>
-				<div class="fixes-head">
-					<span class="fixes-head-icon" aria-hidden="true">
-						<CircleAlert size={18} />
-					</span>
-					<h3 class="fixes-h">Рекомендации</h3>
-					<span class="fixes-count">{fixes.length}</span>
-				</div>
-				<ul class="fix-list">
-					{#each fixes as line, idx (idx)}
-						<li class="fix-item">
-							<span class="fix-bullet" aria-hidden="true">→</span>
-							<span class="fix-text">{line}</span>
-						</li>
-					{/each}
-				</ul>
-			</section>
-		{/if}
-
-		{#if parsedLines.length > 0}
-			<section class="card prewrap">
-				<h3 class="block-h">Параметры (усечено)</h3>
-				<pre class="mono">{#each parsedLines as row (`${row.key}-${row.value}`)}
-<span class="k">{row.key.padEnd(14)}</span>= {row.value}
-{/each}</pre>
-			</section>
-		{/if}
-
-		{#each categories as cat (cat)}
-			<h4 class="cat">{cat}</h4>
-			<div class="grid">
-				{#each checks.filter((c) => c.cat === cat) as c (c.title + c.value)}
-					<div class="check check-{c.status}">
-						<div class="check-ic">{icons[c.status] ?? '?'}</div>
-						<div class="check-body">
-							<div class="check-t">{c.title}</div>
-							<code class="check-val">{c.value}</code>
-							<div class="check-d">{c.detail}</div>
-						</div>
-						<div class="check-w">{c.max > 0 ? `${c.pts}/${c.max}` : ''}</div>
-					</div>
-				{/each}
-			</div>
-		{/each}
+			{#if result}
+				<AwgAnalyzerResult {result} {fixes} />
 			{:else}
 				<div class="results-empty">
 					<p class="results-empty-title">Результаты анализа</p>
@@ -1211,37 +950,8 @@
 			display: none;
 		}
 
-		.card {
-			padding: 12px;
-			margin-bottom: 0.765rem;
-		}
-
 		.results-empty {
 			padding: 14px 12px;
-		}
-
-		.summary-row {
-			grid-template-columns: 1fr;
-			gap: 0.25rem;
-		}
-
-		.minis {
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-		}
-
-		.score-row {
-			flex-direction: column;
-			align-items: flex-start;
-		}
-
-		.ring-hold {
-			width: 100px;
-			height: 100px;
-		}
-
-		.ring {
-			width: 100px;
-			height: 100px;
 		}
 
 		.existing-tunnel-box {
@@ -1332,444 +1042,6 @@
 		color: var(--color-error);
 		font-size: 13px;
 		margin-bottom: 12px;
-	}
-
-	.card {
-		background: var(--color-bg-secondary, var(--bg-secondary));
-		border: 1px solid var(--color-border);
-		border-radius: 10px;
-		padding: 14px 16px;
-		margin-bottom: 12px;
-	}
-
-	.ver {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-start;
-		gap: 12px 16px;
-	}
-
-	.ver-badge {
-		flex-shrink: 0;
-		padding: 6px 14px;
-		border-radius: 999px;
-		font-weight: 700;
-		font-size: 13px;
-		background: var(--color-bg-tertiary, var(--bg-tertiary));
-		border: 1px solid var(--color-border);
-		color: var(--color-text-primary, var(--text-primary));
-	}
-
-	.ver-desc {
-		margin: 0;
-		flex: 1;
-		min-width: 200px;
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-text-secondary, var(--text-secondary));
-	}
-
-	.summary-dl {
-		margin: 4px 0 0;
-	}
-
-	.summary-row {
-		display: grid;
-		grid-template-columns: minmax(7.5rem, 36%) 1fr;
-		gap: 4px 12px;
-		padding: 7px 0;
-		border-bottom: 1px solid var(--color-border);
-		font-size: 12px;
-		line-height: 1.45;
-	}
-
-	.summary-row:last-child {
-		border-bottom: none;
-		padding-bottom: 0;
-	}
-
-	.summary-row dt {
-		margin: 0;
-		font-weight: 600;
-		color: var(--color-text-muted, var(--text-muted));
-	}
-
-	.summary-row dd {
-		margin: 0;
-		color: var(--color-text-primary, var(--text-primary));
-		word-break: break-word;
-	}
-
-	.score-row {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 20px 28px;
-		margin-bottom: 16px;
-	}
-
-	/* Inline SVG in a flex row otherwise leaves a “frame”/gap under the circle. */
-	.ring-hold {
-		flex-shrink: 0;
-		width: 120px;
-		height: 120px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		line-height: 0;
-		user-select: none;
-		-webkit-user-select: none;
-	}
-
-	.ring {
-		display: block;
-		width: 120px;
-		height: 120px;
-		overflow: visible;
-		outline: none;
-		border: none;
-		box-shadow: none;
-		/* Clip square SVG paint bounds so no faint rectangular halo / selection box. */
-		clip-path: circle(50% at 50% 50%);
-		-webkit-tap-highlight-color: transparent;
-	}
-
-	.ring:focus,
-	.ring:focus-visible,
-	.ring-hold:focus-visible {
-		outline: none;
-	}
-
-	.ring-track {
-		fill: none;
-		stroke: var(--color-border);
-		stroke-width: 10;
-	}
-
-	.ring-fill {
-		fill: none;
-		stroke-width: 10;
-		stroke-linecap: round;
-		transform: rotate(-90deg);
-		transform-box: fill-box;
-		transform-origin: center;
-		transition: stroke-dasharray 0.45s ease, stroke 0.25s ease;
-	}
-
-	.ring-num {
-		font-size: 22px;
-		font-weight: 800;
-		fill: var(--color-text-primary, var(--text-primary));
-	}
-
-	.ring-sub {
-		font-size: 9px;
-		fill: var(--color-text-muted, var(--text-muted));
-	}
-
-	.verdict {
-		flex: 1;
-		min-width: 200px;
-	}
-
-	.verdict-badge {
-		display: inline-block;
-		padding: 5px 14px;
-		border-radius: 999px;
-		font-weight: 700;
-		font-size: 14px;
-		border: 1px solid transparent;
-		margin-bottom: 8px;
-	}
-
-	.verdict-text {
-		margin: 0;
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-text-secondary, var(--text-secondary));
-	}
-
-	.minis {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-		gap: 8px;
-	}
-
-	.mini {
-		background: var(--color-settings-control-bg, var(--color-bg-tertiary, var(--bg-tertiary)));
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		padding: 8px 10px;
-	}
-
-	.mini-l {
-		font-size: 10px;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: var(--color-text-muted, var(--text-muted));
-		margin-bottom: 4px;
-	}
-
-	.mini-v {
-		font-size: 15px;
-		font-weight: 700;
-		color: var(--color-text-primary, var(--text-primary));
-	}
-
-	.mini-v.accent {
-		color: var(--color-accent, var(--accent));
-	}
-
-	.mini-v.soft {
-		color: var(--color-text-secondary, var(--text-secondary));
-	}
-
-	.block-h {
-		margin: 0 0 10px;
-		font-size: 11px;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		color: var(--color-accent, var(--accent));
-	}
-
-	.card.fixes {
-		--awg-fix-accent: var(--color-success, var(--success));
-		--awg-fix-tint: var(--color-success-tint);
-		border-color: color-mix(in srgb, var(--awg-fix-accent) 28%, var(--color-border));
-		background: linear-gradient(
-			165deg,
-			color-mix(in srgb, var(--awg-fix-accent) 12%, var(--color-bg-secondary, var(--bg-secondary))) 0%,
-			var(--color-bg-secondary, var(--bg-secondary)) 55%
-		);
-	}
-
-	.fixes-head {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		margin-bottom: 12px;
-	}
-
-	.fixes-head-icon {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 34px;
-		height: 34px;
-		border-radius: 10px;
-		flex-shrink: 0;
-		color: var(--awg-fix-accent);
-		background: var(--awg-fix-tint);
-		border: 1px solid color-mix(in srgb, var(--awg-fix-accent) 35%, transparent);
-	}
-
-	.fixes-h {
-		margin: 0;
-		flex: 1;
-		min-width: 0;
-		font-size: 11px;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		color: var(--awg-fix-accent);
-	}
-
-	.fixes-count {
-		flex-shrink: 0;
-		font-size: 11px;
-		font-weight: 700;
-		padding: 4px 10px;
-		border-radius: 999px;
-		font-variant-numeric: tabular-nums;
-		background: var(--awg-fix-tint);
-		color: var(--awg-fix-accent);
-		border: 1px solid color-mix(in srgb, var(--awg-fix-accent) 30%, transparent);
-	}
-
-	.fix-list {
-		margin: 0;
-		padding: 0;
-		list-style: none;
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-	}
-
-	.fix-item {
-		display: flex;
-		align-items: flex-start;
-		gap: 10px;
-		padding: 11px 12px;
-		border-radius: 9px;
-		background: var(--color-bg-tertiary, var(--bg-tertiary));
-		border: 1px solid var(--color-border);
-		transition: border-color 0.15s ease, background 0.15s ease;
-	}
-
-	.fix-item:hover {
-		border-color: color-mix(in srgb, var(--awg-fix-accent) 35%, var(--color-border));
-		background: color-mix(in srgb, var(--awg-fix-tint) 40%, var(--color-bg-tertiary, var(--bg-tertiary)));
-	}
-
-	.fix-bullet {
-		flex-shrink: 0;
-		width: 24px;
-		height: 24px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		margin-top: 1px;
-		border-radius: 7px;
-		font-size: 13px;
-		font-weight: 700;
-		line-height: 1;
-		color: var(--awg-fix-accent);
-		background: var(--awg-fix-tint);
-		border: 1px solid color-mix(in srgb, var(--awg-fix-accent) 25%, transparent);
-	}
-
-	.fix-text {
-		flex: 1;
-		min-width: 0;
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-text-primary, var(--text-primary));
-		white-space: pre-line;
-	}
-
-	.prewrap .mono {
-		margin: 0;
-		font-family: var(--font-mono);
-		font-size: 12px;
-		line-height: 1.5;
-		color: var(--color-text-secondary, var(--text-secondary));
-		white-space: pre-wrap;
-		word-break: break-word;
-	}
-
-	.prewrap .k {
-		color: var(--color-accent, var(--accent));
-	}
-
-	.cat {
-		margin: 18px 0 8px;
-		font-size: 11px;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.1em;
-		color: var(--color-text-muted, var(--text-muted));
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
-
-	.cat::after {
-		content: '';
-		flex: 1;
-		height: 1px;
-		background: var(--color-border);
-	}
-
-	.grid {
-		display: grid;
-		gap: 8px;
-	}
-
-	.check {
-		display: flex;
-		align-items: flex-start;
-		gap: 10px;
-		padding: 10px 12px;
-		background: var(--color-bg-secondary, var(--bg-secondary));
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		border-left-width: 3px;
-	}
-
-	.check-pass {
-		border-left-color: var(--color-success, var(--success));
-	}
-	.check-warn {
-		border-left-color: var(--color-warning, var(--warning));
-	}
-	.check-fail {
-		border-left-color: var(--color-error, var(--error));
-	}
-	.check-info {
-		border-left-color: var(--color-accent, var(--accent));
-	}
-
-	.check-ic {
-		width: 22px;
-		height: 22px;
-		border-radius: 50%;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 11px;
-		font-weight: 800;
-		flex-shrink: 0;
-		margin-top: 2px;
-	}
-
-	.check-pass .check-ic {
-		background: var(--color-success-tint);
-		color: var(--color-success);
-	}
-	.check-warn .check-ic {
-		background: var(--color-warning-tint);
-		color: var(--color-warning);
-	}
-	.check-fail .check-ic {
-		background: var(--color-error-tint);
-		color: var(--color-error);
-	}
-	.check-info .check-ic {
-		background: var(--color-accent-tint);
-		color: var(--color-accent, var(--accent));
-	}
-
-	.check-body {
-		flex: 1;
-		min-width: 0;
-	}
-
-	.check-t {
-		font-weight: 600;
-		font-size: 13px;
-		color: var(--color-text-primary, var(--text-primary));
-		margin-bottom: 2px;
-	}
-
-	.check-val {
-		display: inline-block;
-		margin-top: 2px;
-		padding: 1px 6px;
-		border-radius: 4px;
-		background: var(--color-bg-tertiary, var(--bg-tertiary));
-		font-family: var(--font-mono);
-		font-size: 11px;
-		color: var(--color-text-secondary, var(--text-secondary));
-		word-break: break-all;
-		max-width: 100%;
-	}
-
-	.check-d {
-		margin-top: 4px;
-		font-size: 12px;
-		line-height: 1.4;
-		color: var(--color-text-secondary, var(--text-secondary));
-	}
-
-	.check-w {
-		font-size: 11px;
-		color: var(--color-text-muted, var(--text-muted));
-		font-family: var(--font-mono);
-		flex-shrink: 0;
-		align-self: center;
-		min-width: 36px;
-		text-align: right;
 	}
 
 	.source-toggle {
