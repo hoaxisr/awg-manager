@@ -13,6 +13,7 @@ import type {
 	FreeTurnServerInstance,
 	FreeTurnStatus
 } from '$lib/types';
+import type { ProxySubsystem } from '$lib/stores/proxyInstall';
 import { SubscriptionsClient } from './clientSubscriptions';
 import {
 	instancePath,
@@ -88,11 +89,11 @@ export class FreeturnClient extends SubscriptionsClient {
 
 	// Публичные: этими же ручками живёт карточка «Интеграции» в настройках,
 	// где подсистемы ставят и удаляют целиком.
-	async proxyInstallStatus(subsystem: 'wdtt' | 'freeturn'): Promise<ProxyInstallStatus> {
+	async proxyInstallStatus(subsystem: ProxySubsystem): Promise<ProxyInstallStatus> {
 		return this.request<ProxyInstallStatus>(`/proxyrt/install/status?subsystem=${subsystem}`);
 	}
 
-	async proxyInstall(subsystem: 'wdtt' | 'freeturn'): Promise<void> {
+	async proxyInstall(subsystem: ProxySubsystem): Promise<void> {
 		await this.request('/proxyrt/install', {
 			method: 'POST',
 			body: JSON.stringify({ subsystem })
@@ -100,7 +101,7 @@ export class FreeturnClient extends SubscriptionsClient {
 	}
 
 	/** Снять бинари подсистемы. Отклоняется, пока есть её инстансы. */
-	async proxyUninstall(subsystem: 'wdtt' | 'freeturn'): Promise<void> {
+	async proxyUninstall(subsystem: ProxySubsystem): Promise<void> {
 		await this.request('/proxyrt/install/uninstall', {
 			method: 'POST',
 			body: JSON.stringify({ subsystem })

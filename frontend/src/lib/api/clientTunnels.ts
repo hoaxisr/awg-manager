@@ -6,6 +6,7 @@ import type {
 	ConnectivityResult,
 	DeleteResult,
 	ExternalTunnel,
+	ImportConfRequest,
 	IPResult,
 	NativePingCheckConfig,
 	NativePingCheckStatus,
@@ -203,17 +204,8 @@ export class TunnelsClient extends CoreClient {
 	// #region Import
 	// ─────────────────────────────────────────────
 
-	async importConfig(
-		content: string,
-		name?: string,
-		backend?: string,
-		freeTurnClientId?: string,
-		wdttClientId?: string
-	): Promise<AWGTunnel> {
-		return this.request('/import/conf', {
-			method: 'POST',
-			body: JSON.stringify({ content, name, backend, freeTurnClientId, wdttClientId })
-		});
+	async importConfig(req: ImportConfRequest): Promise<AWGTunnel> {
+		return this.request('/import/conf', { method: 'POST', body: JSON.stringify(req) });
 	}
 
 	async replaceConfig(id: string, content: string, name?: string): Promise<AWGTunnel> {

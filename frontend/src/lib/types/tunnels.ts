@@ -78,6 +78,30 @@ export interface TunnelStateInfo {
 	details?: string;
 }
 
+export type ObfuscatorFlavor = 'phobos' | 'clusterm';
+export type ObfuscatorMasking = 'STUN' | 'MEDIA' | 'AUTO' | 'NONE';
+
+export interface TunnelObfuscator {
+	flavor: ObfuscatorFlavor;
+	target: string;
+	key: string;
+	masking: ObfuscatorMasking;
+	maxDummy: number;
+	idleTimeout?: number;
+	obfuscateBytes?: number;
+	localPort: number;
+}
+
+export interface ImportConfRequest {
+	content?: string;
+	name?: string;
+	backend?: string;
+	freeTurnClientId?: string;
+	wdttClientId?: string;
+	installUrl?: string;
+	obfuscator?: Omit<TunnelObfuscator, 'localPort' | 'flavor'> & { flavor?: ObfuscatorFlavor };
+}
+
 export interface AWGTunnel {
 	id: string;
 	name: string;
@@ -97,6 +121,7 @@ export interface AWGTunnel {
 	backend?: 'nativewg' | 'kernel' | 'wdtt-raw';
 	freeTurnClientId?: string;
 	wdttClientId?: string;
+	obfuscator?: TunnelObfuscator;
 }
 
 export interface TunnelListItem {
@@ -135,6 +160,8 @@ export interface TunnelListItem {
 	};
 	/** При true туннель защищён от изменений: выключить, изменить и удалить нельзя (#818). */
 	locked?: boolean;
+	statusDetails?: string;
+	obfuscator?: { flavor: ObfuscatorFlavor; target: string; localPort: number };
 }
 
 export interface DeleteResult {
@@ -167,6 +194,7 @@ export interface SystemTunnel {
 	status: 'up' | 'down';
 	connected: boolean;
 	mtu: number;
+	external?: 'phobos';
 	address?: string; // IPv4 e.g. "10.8.1.3"
 	mask?: string;
 	uptime?: number; // seconds since up

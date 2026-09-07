@@ -97,7 +97,7 @@
 
 		loading = true;
 		try {
-			const tunnel = await tunnels.importConfig(content, importName, selectedBackend);
+			const tunnel = await tunnels.importConfig({ content, name: importName, backend: selectedBackend });
 			if (tunnel.warnings?.length) {
 				tunnel.warnings.forEach(w => notifications.warning(w));
 			}

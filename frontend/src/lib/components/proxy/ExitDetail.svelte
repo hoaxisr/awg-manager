@@ -212,13 +212,12 @@
 	async function importConf(conf: string) {
 		tunnelBusy = true;
 		try {
-			const tun = await api.importConfig(
-				conf,
-				row.name,
-				undefined,
-				row.protocol === 'freeturn' ? row.id : undefined,
-				row.protocol === 'wdtt' ? row.id : undefined,
-			);
+			const tun = await api.importConfig({
+				content: conf,
+				name: row.name,
+				freeTurnClientId: row.protocol === 'freeturn' ? row.id : undefined,
+				wdttClientId: row.protocol === 'wdtt' ? row.id : undefined,
+			});
 			markEnsured(row.id);
 			notifications.success(`Создан туннель «${tun.name}»`);
 			await onreload();

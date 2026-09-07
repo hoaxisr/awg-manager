@@ -28,6 +28,7 @@ import type {
 	SystemTunnel,
 	DeleteResult,
 	MonitoringSnapshot,
+	ImportConfRequest,
 } from '$lib/types';
 import type { TunnelTrafficEvent } from '$lib/api/events';
 
@@ -197,12 +198,8 @@ async function restart(id: string): Promise<void> {
 	}
 }
 
-async function importConfig(
-	content: string,
-	name?: string,
-	backend?: string
-): Promise<CreateResult> {
-	const tunnel = (await api.importConfig(content, name, backend)) as CreateResult;
+async function importConfig(req: ImportConfRequest): Promise<CreateResult> {
+	const tunnel = (await api.importConfig(req)) as CreateResult;
 	basePolling.invalidate();
 	return tunnel;
 }

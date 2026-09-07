@@ -340,13 +340,12 @@ async function importWgTunnel(
 	if (!conf || mode === 'raw') return undefined;
 	const port = linkedTunnelListenPort(listen);
 	if (port == null) return undefined;
-	const tunnel = await api.importConfig(
-		patchWgConfEndpoint(conf, port),
+	const tunnel = await api.importConfig({
+		content: patchWgConfEndpoint(conf, port),
 		name,
-		undefined,
-		link.freeTurnClientId,
-		link.wdttClientId,
-	);
+		freeTurnClientId: link.freeTurnClientId,
+		wdttClientId: link.wdttClientId,
+	});
 	return tunnel.id;
 }
 

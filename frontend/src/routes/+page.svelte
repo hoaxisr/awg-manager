@@ -1082,7 +1082,7 @@
 			importing = true;
 			try {
 				const name = file.name.replace(/\.conf$/i, '');
-				const tunnel = await tunnels.importConfig(content, name, selectedBackend);
+				const tunnel = await tunnels.importConfig({ content, name, backend: selectedBackend });
 				if (tunnel.warnings?.length) {
 					tunnel.warnings.forEach(w => notifications.warning(w));
 				}

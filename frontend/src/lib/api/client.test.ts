@@ -237,3 +237,39 @@ describe('deleteTunnel: два смысла 409', () => {
 		expect((err as Error).message).toBe('Конфликт: операция отклонена (409)');
 	});
 });
+
+describe('importConfig: тело запроса — объект целиком', () => {
+	const originalFetch = globalThis.fetch;
+
+	beforeEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it('передаёт installUrl в теле POST /import/conf', async () => {
+		let capturedBody = '';
+		globalThis.fetch = vi.fn().mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
+			capturedBody = String(init?.body ?? '');
+			return new Response(JSON.stringify({ id: 'awg1' }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		});
+
+		await api.importConfig({
+			content: 'wg-conf',
+			name: 'test',
+			backend: 'kernel',
+			installUrl: 'https://example.com/get',
+		});
+
+		const body = JSON.parse(capturedBody);
+		expect(body.installUrl).toBe('https://example.com/get');
+		expect(body.content).toBe('wg-conf');
+		expect(body.name).toBe('test');
+		expect(body.backend).toBe('kernel');
+	});
+});
