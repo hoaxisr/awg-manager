@@ -42,12 +42,12 @@
 		<label class="field-label" for="obf-content">
 			Или конфиг .conf с секцией [instance] / ссылка phobos://
 		</label>
-		<textarea id="obf-content" class="field-input font-mono" rows="10" bind:value={content}></textarea>
+		<textarea id="obf-content" class="field-textarea" rows="10" bind:value={content}></textarea>
 	</div>
 {:else}
 	<div class="flex flex-col gap-1.5">
 		<label class="field-label" for="obf-content">Конфиг WireGuard (.conf)</label>
-		<textarea id="obf-content" class="field-input font-mono" rows="8" bind:value={content}></textarea>
+		<textarea id="obf-content" class="field-textarea" rows="8" bind:value={content}></textarea>
 		<p class="form-hint">
 			Endpoint из файла не используется: WireGuard будет ходить в локальный релей, а релей — на
 			сервер ниже.
@@ -68,14 +68,14 @@
 	</div>
 	<div class="flex flex-col gap-1.5">
 		<label class="field-label" for="obf-masking">Маскировка</label>
-		<select id="obf-masking" class="field-input" bind:value={obfuscator.masking}>
+		<select id="obf-masking" class="field-select" bind:value={obfuscator.masking}>
 			<option value="STUN">STUN</option>
 			<option value="AUTO">AUTO</option>
 			<option value="NONE">NONE</option>
 		</select>
 	</div>
 	<div class="flex gap-3">
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-1 flex-col gap-1.5">
 			<label class="field-label" for="obf-dummy">max-dummy</label>
 			<input
 				id="obf-dummy"
@@ -86,7 +86,7 @@
 				bind:value={obfuscator.maxDummy}
 			>
 		</div>
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-1 flex-col gap-1.5">
 			<label class="field-label" for="obf-idle">idle-timeout, с (0 = по умолчанию)</label>
 			<input id="obf-idle" class="field-input" type="number" min="0" bind:value={obfuscator.idleTimeout}>
 		</div>

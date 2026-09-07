@@ -219,9 +219,11 @@
 		oncountryconfig={handlePremiumCountryConfig}
 	/>
 
-	<p class="form-hint">
-		Поддерживаются WireGuard и AmneziaWG конфигурации с параметрами Jc, Jmin, Jmax, S1-S4, H1-H4, I1-I5; вкладка vpn:// распознаёт клиентский конфиг в ссылке или ключ Premium (запрос списка стран через прокси cp.amnezia.org).
-	</p>
+	{#if !isObf}
+		<p class="form-hint">
+			Поддерживаются WireGuard и AmneziaWG конфигурации с параметрами Jc, Jmin, Jmax, S1-S4, H1-H4, I1-I5; вкладка vpn:// распознаёт клиентский конфиг в ссылке или ключ Premium (запрос списка стран через прокси cp.amnezia.org).
+		</p>
+	{/if}
 </div>
 </PageContainer>
 
