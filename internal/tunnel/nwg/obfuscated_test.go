@@ -57,11 +57,16 @@ func (f *fakeObfRunner) Alive(id string) bool {
 // пустым объектом (batch — массивом той же длины). Ходит через transport.Client,
 // который реализует и query.Getter, и command.Poster — поэтому и RCI-батч, и
 // RouteCommands приходят на этот же сервер.
+//
+// Запрос состояния интерфейса (POST {"show":{"interface":…}}) в posts не
+// попадает — там только команды; ответ задаётся ifaceResp, по умолчанию
+// «интерфейса нет».
 type captureNDMS struct {
 	srv       *httptest.Server
 	mu        sync.Mutex
 	posts     []string
-	failBatch bool // RCI-батч (массив команд) отвечает 500
+	failBatch bool   // RCI-батч (массив команд) отвечает 500
+	ifaceResp string // тело ответа на show interface
 }
 
 func newCaptureNDMS(t *testing.T) *captureNDMS {
@@ -73,6 +78,16 @@ func newCaptureNDMS(t *testing.T) *captureNDMS {
 			return
 		}
 		b, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(b), `"show"`) {
+			c.mu.Lock()
+			resp := c.ifaceResp
+			c.mu.Unlock()
+			if resp == "" {
+				resp = `{"show":{"interface":{}}}`
+			}
+			_, _ = w.Write([]byte(resp))
+			return
+		}
 		c.mu.Lock()
 		c.posts = append(c.posts, string(b))
 		failBatch := c.failBatch
@@ -98,6 +113,26 @@ func (c *captureNDMS) joined() string {
 	defer c.mu.Unlock()
 	return strings.Join(c.posts, "\n")
 }
+
+// firstPostWith — индекс первого тела с подстрокой, -1 если такого нет.
+// Нужен для порядка «сначала батч, потом host-route».
+func (c *captureNDMS) firstPostWith(sub string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i, p := range c.posts {
+		if strings.Contains(p, sub) {
+			return i
+		}
+	}
+	return -1
+}
+
+// obfIfaceRunningOnRelay — ответ RCI для интерфейса, уже поднятого на наш релей:
+// conf=running и peer смотрит в 127.0.0.1:39000 (LocalPort из obfStored).
+const obfIfaceRunningOnRelay = `{"show":{"interface":{"id":"Wireguard3","link":"up",
+	"summary":{"layer":{"conf":"running"}},
+	"wireguard":{"status":"up","peer":[{"online":true,"via":"ISP1",
+		"remote-endpoint-address":"127.0.0.1","remote-port":39000}]}}}}`
 
 func newObfOperator(t *testing.T, n *captureNDMS, fr *fakeObfRunner) *OperatorNativeWG {
 	t.Helper()
@@ -158,6 +193,38 @@ func TestStartObfuscated_RunnerRouteEndpointUp(t *testing.T) {
 	}
 	if op.GetTrackedEndpointIP("awg20") != "203.0.113.5" {
 		t.Fatal("target IP must be tracked for ResolvedEndpointIP persist")
+	}
+	// WAN для host-route читается после подъёма интерфейса — значит и сам
+	// маршрут ставится после батча.
+	batch, route := n.firstPostWith(`"up":true`), n.firstPostWith(`"host":"203.0.113.5"`)
+	if batch < 0 || route < 0 || batch > route {
+		t.Fatalf("host-route обязан идти после батча (batch=%d route=%d):\n%s", batch, route, posts)
+	}
+}
+
+// Start прилетает на каждый WAN-up и на рестарт демона: если интерфейс уже
+// поднят на наш релей, батч по нему — churn. Маршрут ставится всё равно.
+func TestStartObfuscated_AlreadyUpOnRelay_SkipsBatch(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	n.ifaceResp = obfIfaceRunningOnRelay
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+
+	if err := op.Start(context.Background(), obfStored()); err != nil {
+		t.Fatal(err)
+	}
+	if !fr.Alive("awg20") {
+		t.Fatal("релей обязан быть запущен и на уже поднятом интерфейсе")
+	}
+	posts := n.joined()
+	for _, forbidden := range []string{`"up":true`, `"connect"`, `127.0.0.1:39000`} {
+		if strings.Contains(posts, forbidden) {
+			t.Fatalf("батч по живому интерфейсу: %q в постах:\n%s", forbidden, posts)
+		}
+	}
+	if !strings.Contains(posts, `"host":"203.0.113.5"`) {
+		t.Fatalf("host-route обязан стоять и без батча:\n%s", posts)
 	}
 }
 
@@ -282,8 +349,9 @@ func TestStartObfuscated_BatchFailureRollsBack(t *testing.T) {
 	if fr.Alive("awg20") {
 		t.Fatal("relay must be stopped after failed batch")
 	}
-	if !strings.Contains(n.joined(), `"host":"203.0.113.5"`) || !strings.Contains(n.joined(), `"no":true`) {
-		t.Fatalf("host route must be removed on rollback:\n%s", n.joined())
+	// Маршрут ставится после батча — снимать на откате нечего.
+	if strings.Contains(n.joined(), `"host":"203.0.113.5"`) {
+		t.Fatalf("host-route не должен ни ставиться, ни сниматься при отказе батча:\n%s", n.joined())
 	}
 }
 

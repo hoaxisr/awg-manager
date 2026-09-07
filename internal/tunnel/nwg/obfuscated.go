@@ -28,13 +28,17 @@ type ObfuscatorRunner interface {
 func (o *OperatorNativeWG) SetObfuscator(r ObfuscatorRunner) { o.obf = r }
 
 // startObfuscated — путь Start для туннеля через релей:
-//  1. процесс релея на 127.0.0.1:LocalPort;
-//  2. резолв target (retry + кэш ResolvedEndpointIP) и host-route target/32
-//     через WAN по RCI — трафик релея не должен уйти в сам туннель;
-//  3. NDMS: peer endpoint = loopback, connect via, interface up.
+//  1. процесс релея на 127.0.0.1:LocalPort (Runner.Start идемпотентен);
+//  2. NDMS: peer endpoint = loopback, connect via, interface up — но только
+//     если интерфейс ещё НЕ поднят на этот самый релей: Start прилетает на
+//     каждый WAN-up и на рестарт демона, а батч по живому интерфейсу — churn;
+//  3. резолв target (retry + кэш ResolvedEndpointIP) и host-route target/32
+//     через WAN по RCI — трафик релея не должен уйти в сам туннель.
 //
-// При отказе батча снимаем и релей, и маршрут. Ни ASC, ни kmod-слота у такого
-// туннеля нет: WireGuard обычный.
+// Маршрут ставится ПОСЛЕ батча: до него peer.via в RCI показывает прежний WAN,
+// и на failover host-route ушёл бы через уже мёртвый канал. При отказе батча
+// маршрута ещё нет — откат сводится к остановке релея. Ни ASC, ни kmod-слота у
+// такого туннеля нет: WireGuard обычный.
 func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.AWGTunnel) error {
 	if o.obf == nil {
 		return fmt.Errorf("обфускатор не подключён")
@@ -47,6 +51,32 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 	if err := o.obf.Start(ctx, stored.ID, stored.Obfuscator); err != nil {
 		return err
 	}
+	loopback := "127.0.0.1:" + strconv.Itoa(stored.Obfuscator.LocalPort)
+	st, ok := o.readObfIfaceState(ctx, names)
+	alreadyUp := ok && st.Exists && st.ConfLayer == "running" &&
+		st.PeerRemoteAddr == "127.0.0.1" && st.PeerRemotePort == stored.Obfuscator.LocalPort
+	if alreadyUp {
+		o.appLog.Info("start", names.NDMSName, "интерфейс уже поднят на "+loopback+", батч пропущен")
+	} else {
+		if err := o.SyncAddressMTU(ctx, stored); err != nil {
+			o.appLog.Warn("sync-address-mtu", names.NDMSName, "on start: "+err.Error())
+		}
+		if err := o.SyncDNS(ctx, stored, nil, tunnel.ParseDNSList(stored.Interface.DNS)); err != nil {
+			o.appLog.Warn("apply-dns", names.NDMSName, err.Error())
+		}
+		if o.hookNotifier != nil {
+			o.hookNotifier.ExpectHook(names.NDMSName, "running")
+		}
+		cmds := []any{
+			payloads.CmdWireguardPeerEndpoint(names.NDMSName, stored.Peer.PublicKey, loopback),
+			payloads.CmdWireguardPeerConnect(names.NDMSName, stored.Peer.PublicKey, stored.ISPInterface),
+			payloads.CmdInterfaceUp(names.NDMSName, true),
+		}
+		if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
+			_ = o.obf.Stop(stored.ID)
+			return fmt.Errorf("start obfuscated: %w", err)
+		}
+	}
 	// Адрес прежнего маршрута берём ДО резолва: успешный резолв кладёт новый
 	// IP в trackedIP, и разницу уже было бы не увидеть.
 	prevIP := o.obfRouteIP(stored)
@@ -56,29 +86,23 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 		return err
 	}
 	o.moveObfHostRoute(ctx, stored, prevIP, targetIP)
-	if err := o.SyncAddressMTU(ctx, stored); err != nil {
-		o.appLog.Warn("sync-address-mtu", names.NDMSName, "on start: "+err.Error())
-	}
-	if err := o.SyncDNS(ctx, stored, nil, tunnel.ParseDNSList(stored.Interface.DNS)); err != nil {
-		o.appLog.Warn("apply-dns", names.NDMSName, err.Error())
-	}
-	loopback := "127.0.0.1:" + strconv.Itoa(stored.Obfuscator.LocalPort)
-	if o.hookNotifier != nil {
-		o.hookNotifier.ExpectHook(names.NDMSName, "running")
-	}
-	cmds := []any{
-		payloads.CmdWireguardPeerEndpoint(names.NDMSName, stored.Peer.PublicKey, loopback),
-		payloads.CmdWireguardPeerConnect(names.NDMSName, stored.Peer.PublicKey, stored.ISPInterface),
-		payloads.CmdInterfaceUp(names.NDMSName, true),
-	}
-	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
-		_ = o.obf.Stop(stored.ID)
-		_ = o.commands.Routes.RemoveHostRoute(ctx, targetIP)
-		return fmt.Errorf("start obfuscated: %w", err)
-	}
 	o.appLog.Info("start", names.NDMSName, fmt.Sprintf("obfuscator %s %s -> %s (%s)",
 		stored.Obfuscator.Flavor, loopback, stored.Obfuscator.Target, targetIP))
 	return nil
+}
+
+// readObfIfaceState — снимок интерфейса по RCI. false = прочитать не удалось
+// (транспорт или разбор), и решение принимается как при отсутствии данных.
+func (o *OperatorNativeWG) readObfIfaceState(ctx context.Context, names NWGNames) (NWGState, bool) {
+	body, err := o.fetchInterfaceRCI(ctx, names.NDMSName)
+	if err != nil {
+		return NWGState{}, false
+	}
+	st, err := parseRCIInterfaceResponse(body)
+	if err != nil {
+		return NWGState{}, false
+	}
+	return st, true
 }
 
 // stopObfuscated гасит релей и снимает host-route до target.
@@ -207,10 +231,10 @@ func (o *OperatorNativeWG) addObfHostRoute(ctx context.Context, stored *storage.
 	names := NewNWGNames(stored.NWGIndex)
 	wan := strings.TrimSpace(stored.ISPInterface)
 	if wan == "" {
-		if body, err := o.fetchInterfaceRCI(ctx, names.NDMSName); err == nil {
-			if st, err := parseRCIInterfaceResponse(body); err == nil && st.Exists {
-				wan = st.PeerVia
-			}
+		// Свежий запрос: peer.via читается уже после батча, поэтому на
+		// failover сюда приходит новый WAN, а не тот, что был до подъёма.
+		if st, ok := o.readObfIfaceState(ctx, names); ok && st.Exists {
+			wan = st.PeerVia
 		}
 	}
 	if wan == "" {
