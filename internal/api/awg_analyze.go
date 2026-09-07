@@ -2,11 +2,15 @@ package api
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
 )
 
@@ -270,4 +274,70 @@ func analyzeAwgConf(conf string, stored *storage.AWGTunnel, kmodVersion string) 
 		}
 	}
 	return d, nil
+}
+
+// ── Handler ──────────────────────────────────────────────────────
+
+// AwgAnalyzeHandler — POST /api/awg/analyze.
+type AwgAnalyzeHandler struct {
+	store  *storage.AWGTunnelStore
+	loader *kmod.Loader // nil в тестах и там, где модуля нет
+}
+
+func NewAwgAnalyzeHandler(store *storage.AWGTunnelStore, loader *kmod.Loader) *AwgAnalyzeHandler {
+	return &AwgAnalyzeHandler{store: store, loader: loader}
+}
+
+func (h *AwgAnalyzeHandler) kmodVersion() string {
+	if h.loader == nil {
+		return ""
+	}
+	if v := h.loader.LoadedVersion(); v != "" {
+		return v
+	}
+	return h.loader.OnDiskVersion()
+}
+
+// Analyze разбирает .conf и возвращает версию, поля без ключей и ошибки
+// совместимости.
+//
+//	@Summary		Анализ AWG/WireGuard .conf
+//	@Description	Классификация версии, нормализованные поля без ключевого материала, ошибки совместимости с модулем и предупреждения о версии модуля. tunnelId подставляет PrivateKey/PresharedKey из хранилища, если их нет в тексте.
+//	@Tags			tunnels
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			request	body		AwgAnalyzeRequest	true	"Текст conf и опциональный tunnelId"
+//	@Success		200		{object}	AwgAnalyzeResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		404		{object}	APIErrorEnvelope
+//	@Router			/awg/analyze [post]
+func (h *AwgAnalyzeHandler) Analyze(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[AwgAnalyzeRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(req.Conf) == "" {
+		response.Error(w, "Вставьте содержимое .conf файла AmneziaWG / WireGuard", "MISSING_CONF")
+		return
+	}
+	var stored *storage.AWGTunnel
+	if req.TunnelID != "" {
+		t, err := h.store.Get(req.TunnelID)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				response.ErrorWithStatus(w, http.StatusNotFound, "Туннель не найден", "NOT_FOUND")
+				return
+			}
+			response.InternalError(w, err.Error())
+			return
+		}
+		stored = t
+	}
+	data, err := analyzeAwgConf(req.Conf, stored, h.kmodVersion())
+	if err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_CONF")
+		return
+	}
+	response.Success(w, data)
 }

@@ -2,6 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -270,5 +273,97 @@ func TestAnalyzeAwgConf_NormalizedFields(t *testing.T) {
 	}
 	if d.Peer.Endpoint != "vpn.example.com:51820" || len(d.Peer.AllowedIPs) != 1 || d.Peer.PersistentKeepalive != "25-35" {
 		t.Fatalf("peer fields: %+v", d.Peer)
+	}
+}
+
+func newAnalyzeHandlerForTest(t *testing.T) (*AwgAnalyzeHandler, *storage.AWGTunnelStore) {
+	t.Helper()
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	return NewAwgAnalyzeHandler(store, nil), store
+}
+
+func postAnalyze(t *testing.T, h *AwgAnalyzeHandler, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/awg/analyze", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.Analyze(w, req)
+	return w
+}
+
+func TestAwgAnalyzeHandler_OK(t *testing.T) {
+	h, _ := newAnalyzeHandlerForTest(t)
+	body, _ := json.Marshal(AwgAnalyzeRequest{Conf: confPlainWG})
+	w := postAnalyze(t, h, string(body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var resp AwgAnalyzeResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Success || resp.Data.Version != "wg" {
+		t.Fatalf("resp: %+v", resp)
+	}
+	if strings.Contains(w.Body.String(), "cGVlclByaXZhdGVLZXk") {
+		t.Fatal("private key leaked into response body")
+	}
+}
+
+func TestAwgAnalyzeHandler_TunnelIDMergesPSK(t *testing.T) {
+	h, store := newAnalyzeHandlerForTest(t)
+	if err := store.Create(&storage.AWGTunnel{
+		ID: "awg1", Name: "t",
+		Interface: storage.AWGInterface{PrivateKey: "c3RvcmVkUHJpdmF0ZUtleUJhc2U2NEV4YW1wbGUwMDAwMD0=", Address: "10.8.0.2/32"},
+		Peer:      storage.AWGPeer{PublicKey: "c2VydmVyUHVibGljS2V5QmFzZTY0RXhhbXBsZTAwMD0=", PresharedKey: "c3RvcmVkUFNLcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHM9", Endpoint: "vpn.example.com:51820"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	noKeys := strings.Replace(confPlainWG, "PrivateKey = cGVlclByaXZhdGVLZXlCYXNlNjRFeGFtcGxlMDAwMDAwMD0=\n", "", 1)
+	body, _ := json.Marshal(AwgAnalyzeRequest{Conf: noKeys, TunnelID: "awg1"})
+	w := postAnalyze(t, h, string(body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var resp AwgAnalyzeResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if !resp.Data.Peer.HasPresharedKey || !resp.Data.HasPrivateKey {
+		t.Fatalf("#865: keys from store not reflected: %+v", resp.Data)
+	}
+	if strings.Contains(w.Body.String(), "c3RvcmVk") {
+		t.Fatal("stored key leaked into response body")
+	}
+}
+
+func TestAwgAnalyzeHandler_Errors(t *testing.T) {
+	h, _ := newAnalyzeHandlerForTest(t)
+	cases := []struct {
+		name string
+		body string
+		code int
+	}{
+		{"garbage conf", `{"conf":"not a conf"}`, http.StatusBadRequest},
+		{"empty conf", `{"conf":""}`, http.StatusBadRequest},
+		{"unknown tunnel", `{"conf":"` + strings.ReplaceAll(confPlainWG, "\n", `\n`) + `","tunnelId":"nope"}`, http.StatusNotFound},
+		{"invalid json", `{`, http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := postAnalyze(t, h, tc.body)
+			if w.Code != tc.code {
+				t.Fatalf("want %d, got %d: %s", tc.code, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestAwgAnalyzeHandler_MethodNotAllowed(t *testing.T) {
+	h, _ := newAnalyzeHandlerForTest(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/awg/analyze", nil)
+	w := httptest.NewRecorder()
+	h.Analyze(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want 405, got %d", w.Code)
 	}
 }

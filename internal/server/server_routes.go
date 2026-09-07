@@ -30,6 +30,7 @@ type routeHandlers struct {
 	appLog               *logging.Service
 	authHandler          *api.AuthHandler
 	tunnelsHandler       *api.TunnelsHandler
+	awgAnalyzeHandler    *api.AwgAnalyzeHandler
 	controlHandler       *api.ControlHandler
 	testingHandler       *api.TestingHandler
 	systemHandler        *api.SystemHandler
@@ -84,6 +85,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.tunnelsHandler.SetTrafficHistory(s.trafficHistory)
 	h.tunnelsHandler.SetOrchestrator(s.orch)
 	h.tunnelsHandler.SetProxyRecords(s.proxyRecords)
+	h.awgAnalyzeHandler = api.NewAwgAnalyzeHandler(s.tunnels, s.kmodLoader)
 	h.controlHandler = api.NewControlHandler(s.tunnelService, s.tunnels, h.appLog)
 	h.controlHandler.SetPingCheckService(s.pingCheckService)
 	h.controlHandler.SetOrchestrator(s.orch)
@@ -266,6 +268,7 @@ func (s *Server) registerTunnelRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/tunnels/export-all", h.guarded(h.tunnelsHandler.ExportAll))
 	mux.HandleFunc("/api/tunnels/replace", h.guarded(h.tunnelsHandler.ReplaceConf))
 	mux.HandleFunc("/api/tunnels/traffic", h.guarded(h.tunnelsHandler.Traffic))
+	mux.HandleFunc("/api/awg/analyze", h.guarded(h.awgAnalyzeHandler.Analyze))
 
 	// Control operations (protected + boot guarded)
 	mux.HandleFunc("/api/control/start", h.guarded(h.controlHandler.Start))

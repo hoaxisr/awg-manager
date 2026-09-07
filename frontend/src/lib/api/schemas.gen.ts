@@ -151,6 +151,67 @@ const api_Awg3TunnelDTO: v.GenericSchema = v.looseObject({
 	tag: v.optional(v.nullable(v.string())),
 });
 
+const api_AwgAnalyzeData: v.GenericSchema = v.looseObject({
+	errors: v.optional(v.nullable(v.array(v.lazy(() => api_AwgAnalyzeIssue)))),
+	hasPrivateKey: v.optional(v.nullable(v.boolean())),
+	interface: v.optional(v.nullable(v.lazy(() => api_AwgAnalyzeInterface))),
+	peer: v.optional(v.nullable(v.lazy(() => api_AwgAnalyzePeer))),
+	version: v.optional(v.nullable(v.string())),
+	warnings: v.optional(v.nullable(v.array(v.lazy(() => api_AwgAnalyzeIssue)))),
+});
+
+const api_AwgAnalyzeInterface: v.GenericSchema = v.looseObject({
+	address: v.optional(v.nullable(v.string())),
+	contentPaddingAddition: v.optional(v.nullable(v.string())),
+	disableCookies: v.optional(v.nullable(v.boolean())),
+	dns: v.optional(v.nullable(v.string())),
+	h1: v.optional(v.nullable(v.string())),
+	h2: v.optional(v.nullable(v.string())),
+	h3: v.optional(v.nullable(v.string())),
+	h4: v.optional(v.nullable(v.string())),
+	headerProtection: v.optional(v.nullable(v.boolean())),
+	i1: v.optional(v.nullable(v.string())),
+	i2: v.optional(v.nullable(v.string())),
+	i3: v.optional(v.nullable(v.string())),
+	i4: v.optional(v.nullable(v.string())),
+	i5: v.optional(v.nullable(v.string())),
+	jc: v.optional(v.nullable(v.number())),
+	jmax: v.optional(v.nullable(v.number())),
+	jmin: v.optional(v.nullable(v.number())),
+	keepaliveTimeout: v.optional(v.nullable(v.string())),
+	maxHandshakeAttempts: v.optional(v.nullable(v.string())),
+	mtu: v.optional(v.nullable(v.number())),
+	mtuSet: v.optional(v.nullable(v.boolean())),
+	randomTrailers: v.optional(v.nullable(v.boolean())),
+	rejectAfterTime: v.optional(v.nullable(v.string())),
+	rekeyAfterTime: v.optional(v.nullable(v.string())),
+	rekeyTimeout: v.optional(v.nullable(v.string())),
+	s1: v.optional(v.nullable(v.number())),
+	s2: v.optional(v.nullable(v.number())),
+	s3: v.optional(v.nullable(v.number())),
+	s4: v.optional(v.nullable(v.number())),
+});
+
+const api_AwgAnalyzeIssue: v.GenericSchema = v.looseObject({
+	code: v.optional(v.nullable(v.string())),
+	message: v.optional(v.nullable(v.string())),
+});
+
+const api_AwgAnalyzePeer: v.GenericSchema = v.looseObject({
+	allowedIPs: v.optional(v.nullable(v.array(v.string()))),
+	allowedIPsSet: v.optional(v.nullable(v.boolean())),
+	endpoint: v.optional(v.nullable(v.string())),
+	hasPresharedKey: v.optional(v.nullable(v.boolean())),
+	keepaliveSet: v.optional(v.nullable(v.boolean())),
+	persistentKeepalive: v.optional(v.nullable(v.string())),
+	presharedKeyFromStore: v.optional(v.nullable(v.boolean())),
+});
+
+const api_AwgAnalyzeResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_AwgAnalyzeData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_BackupWarningDTO: v.GenericSchema = v.looseObject({
 	interfaceName: v.optional(v.nullable(v.string())),
 	message: v.optional(v.nullable(v.string())),
@@ -3243,6 +3304,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /amnezia-premium/login": v.lazy(() => api_AmneziaPremiumLoginResponse),
 	"POST /auth/login": v.lazy(() => api_LoginResponseRaw),
 	"POST /auth/logout": v.lazy(() => api_APIEnvelope),
+	"POST /awg/analyze": v.lazy(() => api_AwgAnalyzeResponse),
 	"POST /awg3-endpoints": v.lazy(() => api_Awg3ListResponse),
 	"POST /client-routes/create": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_ClientRouteDTO))),

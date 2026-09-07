@@ -436,6 +436,183 @@ definitions:
         example: amsterdam
         type: string
     type: object
+  api.AwgAnalyzeData:
+    properties:
+      errors:
+        items:
+          $ref: '#/definitions/api.AwgAnalyzeIssue'
+        type: array
+      hasPrivateKey:
+        example: true
+        type: boolean
+      interface:
+        $ref: '#/definitions/api.AwgAnalyzeInterface'
+      peer:
+        $ref: '#/definitions/api.AwgAnalyzePeer'
+      version:
+        example: awg3.1
+        type: string
+      warnings:
+        items:
+          $ref: '#/definitions/api.AwgAnalyzeIssue'
+        type: array
+    type: object
+  api.AwgAnalyzeInterface:
+    properties:
+      address:
+        example: 10.8.0.2/32
+        type: string
+      contentPaddingAddition:
+        example: 0-64
+        type: string
+      disableCookies:
+        example: false
+        type: boolean
+      dns:
+        example: 10.8.0.1
+        type: string
+      h1:
+        example: "1"
+        type: string
+      h2:
+        example: "2"
+        type: string
+      h3:
+        example: "3"
+        type: string
+      h4:
+        example: "4"
+        type: string
+      headerProtection:
+        description: |-
+          HeaderProtection — ключ задан и валиден (32 байта base64). Сам ключ
+          не возвращается.
+        example: true
+        type: boolean
+      i1:
+        example: <b 0xc0000001>
+        type: string
+      i2:
+        example: ""
+        type: string
+      i3:
+        example: ""
+        type: string
+      i4:
+        example: ""
+        type: string
+      i5:
+        example: ""
+        type: string
+      jc:
+        example: 4
+        type: integer
+      jmax:
+        example: 1000
+        type: integer
+      jmin:
+        example: 50
+        type: integer
+      keepaliveTimeout:
+        example: ""
+        type: string
+      maxHandshakeAttempts:
+        example: ""
+        type: string
+      mtu:
+        example: 1420
+        type: integer
+      mtuSet:
+        description: |-
+          MTUSet — ключ MTU есть в тексте; иначе значение выше — дефолт парсера
+          (1280), а не выбор пользователя.
+        example: true
+        type: boolean
+      randomTrailers:
+        example: true
+        type: boolean
+      rejectAfterTime:
+        example: ""
+        type: string
+      rekeyAfterTime:
+        example: ""
+        type: string
+      rekeyTimeout:
+        example: ""
+        type: string
+      s1:
+        example: 12
+        type: integer
+      s2:
+        example: 12
+        type: integer
+      s3:
+        example: 12
+        type: integer
+      s4:
+        example: 12
+        type: integer
+    type: object
+  api.AwgAnalyzeIssue:
+    properties:
+      code:
+        example: hp_padding_min
+        type: string
+      message:
+        example: 'S2 = 5: при заданном HeaderProtectionKey значения S1-S4 должны быть
+          не меньше 12'
+        type: string
+    type: object
+  api.AwgAnalyzePeer:
+    properties:
+      allowedIPs:
+        example:
+        - 0.0.0.0/0
+        - ::/0
+        items:
+          type: string
+        type: array
+      allowedIPsSet:
+        example: true
+        type: boolean
+      endpoint:
+        example: vpn.example.com:51820
+        type: string
+      hasPresharedKey:
+        example: true
+        type: boolean
+      keepaliveSet:
+        example: true
+        type: boolean
+      persistentKeepalive:
+        example: 25-35
+        type: string
+      presharedKeyFromStore:
+        description: |-
+          PresharedKeyFromStore — PSK взят из хранилища по tunnelId, в тексте
+          его не было.
+        example: false
+        type: boolean
+    type: object
+  api.AwgAnalyzeRequest:
+    properties:
+      conf:
+        example: |
+          [Interface]
+          PrivateKey = ...
+        type: string
+      tunnelId:
+        example: awg1
+        type: string
+    type: object
+  api.AwgAnalyzeResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.AwgAnalyzeData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.BackupWarningDTO:
     properties:
       interfaceName:
@@ -8628,6 +8805,40 @@ paths:
       summary: Auth status
       tags:
       - auth
+  /awg/analyze:
+    post:
+      consumes:
+      - application/json
+      description: Классификация версии, нормализованные поля без ключевого материала,
+        ошибки совместимости с модулем и предупреждения о версии модуля. tunnelId
+        подставляет PrivateKey/PresharedKey из хранилища, если их нет в тексте.
+      parameters:
+      - description: Текст conf и опциональный tunnelId
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.AwgAnalyzeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AwgAnalyzeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Анализ AWG/WireGuard .conf
+      tags:
+      - tunnels
   /awg3-endpoints:
     get:
       produces:
