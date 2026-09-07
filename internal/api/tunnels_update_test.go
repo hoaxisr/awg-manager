@@ -292,6 +292,7 @@ type stubTunnelSvc struct {
 	getFn    func(ctx context.Context, id string) (*service.TunnelWithStatus, error)
 
 	replaceCalls int
+	replaceErr   error
 
 	setEnabledCalls      []toggleCall
 	setDefaultRouteCalls []toggleCall
@@ -364,7 +365,7 @@ func (s *stubTunnelSvc) Import(context.Context, string, string, string, service.
 }
 func (s *stubTunnelSvc) ReplaceConfig(context.Context, string, string, string) error {
 	s.replaceCalls++
-	return nil
+	return s.replaceErr
 }
 func (s *stubTunnelSvc) WANModel() *wan.Model                     { return nil }
 func (s *stubTunnelSvc) GetResolvedISP(string) string             { return "" }
@@ -576,6 +577,30 @@ func TestTunnelReplaceConf_OperationInProgressIs409(t *testing.T) {
 	// работающего туннеля молча заменяется под чужой операцией.
 	if stub.replaceCalls != 0 {
 		t.Fatalf("конфиг заменён вопреки занятому замку: вызовов ReplaceConfig = %d", stub.replaceCalls)
+	}
+}
+
+// ReplaceConfig возвращает fmt.Errorf("validate conf: %w", err), когда
+// config.ValidateObfuscation отвергает конфиг. Хендлер обязан вернуть 400
+// INVALID_AWG3, а не 500 InternalError.
+func TestTunnelReplaceConf_ValidateConfIs400InvalidAWG3(t *testing.T) {
+	stub := &stubTunnelSvc{
+		replaceErr: fmt.Errorf("validate conf: %s", "H1 и H2 пересекаются"),
+	}
+	h, store := newTunnelsUpdateHarness(t, stub)
+	if err := store.Create(&storage.AWGTunnel{ID: "awg11", Name: "NL_CHIS"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ReplaceConf(rec, httptest.NewRequest(http.MethodPost, "/tunnels/replace?id=awg11",
+		strings.NewReader(`{"content":"[Interface]\nAddress = 10.0.0.2/32\n"}`)))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("код ответа = %d, ожидался 400; тело: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "INVALID_AWG3") {
+		t.Fatalf("нет кода INVALID_AWG3 в теле: %s", rec.Body.String())
 	}
 }
 

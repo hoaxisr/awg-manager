@@ -40,7 +40,7 @@
 					cx="60"
 					cy="60"
 					r="50"
-					stroke-dasharray={scoreRingDashArray(result.score)}
+					stroke-dasharray={scoreRingDashArray(compatFirst ? 0 : result.score)}
 					stroke={tone.color}
 				/>
 				<text x="60" y="53" class="ring-num" text-anchor="middle">{compatFirst ? '—' : result.score}</text>

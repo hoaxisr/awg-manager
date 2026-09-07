@@ -975,6 +975,10 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 			response.BadRequest(w, err.Error())
 			return
 		}
+		if strings.Contains(err.Error(), "validate conf") {
+			response.Error(w, err.Error(), "INVALID_AWG3")
+			return
+		}
 		response.InternalError(w, err.Error())
 		return
 	}
