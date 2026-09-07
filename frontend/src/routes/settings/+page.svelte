@@ -318,7 +318,7 @@
 		});
 	}
 
-	// ── подсистемы прокси (WDTT, FreeTurn) ──────────────────────────
+	// ── подсистемы прокси (WDTT, FreeTurn, обфускаторы) ─────────────
 	// Бинари ставятся и снимаются целиком подсистемой: version-файл у половин
 	// общий, а раздельный снос сделал бы статус неоднозначным.
 	//
@@ -328,16 +328,22 @@
 	const PROXY_SUBSYSTEMS = [
 		{ key: 'wdtt' as const, label: 'WDTT' },
 		{ key: 'freeturn' as const, label: 'FreeTurn' },
+		{ key: 'obf-phobos' as const, label: 'wg-obfuscator (Phobos)' },
+		{ key: 'obf-clusterm' as const, label: 'wg-obfuscator (ClusterM)' },
 	];
 	let proxyBusy = $state<Record<string, boolean>>({});
 
-	// Автоподписка `$store` работает только с идентификатором, поэтому оба
-	// store'а разложены по переменным.
+	// Автоподписка `$store` работает только с идентификатором, поэтому
+	// store'ы разложены по переменным.
 	const wdttInstallStore = proxyInstallStatus.wdtt;
 	const freeturnInstallStore = proxyInstallStatus.freeturn;
+	const obfPhobosInstallStore = proxyInstallStatus['obf-phobos'];
+	const obfClusterMInstallStore = proxyInstallStatus['obf-clusterm'];
 	const proxyStatuses = $derived({
 		wdtt: $wdttInstallStore.data,
 		freeturn: $freeturnInstallStore.data,
+		'obf-phobos': $obfPhobosInstallStore.data,
+		'obf-clusterm': $obfClusterMInstallStore.data,
 	});
 
 	async function runProxyBinaries(

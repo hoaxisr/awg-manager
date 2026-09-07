@@ -413,6 +413,10 @@ const MOCK_AWG_TUNNELS = [
 		mtu: 1420,
 		startedAt: new Date(Date.now() - 900_000).toISOString(),
 		backend: 'kernel',
+		// Обфусцированный туннель, у которого не поднялся релей: причину
+		// состояния бэкенд отдаёт только у таких туннелей.
+		obfuscator: { flavor: 'clusterm', target: 'uk-lon.demo.example:51824', key: 'k', masking: 'AUTO', maxDummy: 0, localPort: 39001 },
+		statusDetails: 'обфускатор не запущен',
 		connectivityCheck: { method: 'http' },
 		pingCheck: { status: 'failed', restartCount: 3, failCount: 3, failThreshold: 3 },
 	},
@@ -569,6 +573,28 @@ function mockImportKernelTunnel(name, link = {}) {
 const MOCK_AWG_SELF_CHECK_FAIL = new Set(['awg-demo-fin', 'awg-demo-5']);
 
 const MOCK_SYSTEM_TUNNELS = [
+	{
+		id: 'Wireguard8',
+		interfaceName: 'nwg8',
+		description: 'Phobos-router',
+		status: 'up',
+		connected: true,
+		mtu: 1420,
+		// Интерфейс завёл установщик Phobos: awg-manager им не управляет.
+		external: 'phobos',
+		address: '10.30.0.2',
+		mask: '255.255.255.255',
+		uptime: 1_800,
+		peer: {
+			publicKey: mockPubkey(97),
+			endpoint: '127.0.0.1:39002',
+			via: 'ISP0',
+			rxBytes: 1_048_576,
+			txBytes: 524_288,
+			lastHandshake: new Date(Date.now() - 30_000).toISOString(),
+			online: true,
+		},
+	},
 	{
 		id: 'Wireguard6',
 		interfaceName: 'nwg0',
@@ -5410,7 +5436,8 @@ const server = http.createServer(async (req, res) => {
 				return;
 			}
 			const content = String(body.content ?? '');
-			if (!content) {
+			// Мастер обфускатора шлёт ссылку вместо текста: конфиг качает бэкенд.
+			if (!content && !String(body.installUrl ?? '').trim()) {
 				sendBackendError(res, 'missing config content', 'MISSING_CONTENT');
 				return;
 			}
@@ -8484,7 +8511,26 @@ const server = http.createServer(async (req, res) => {
 			});
 			return;
 		}
-		sendBackendError(res, `subsystem "${subsystem}": ожидали wdtt|freeturn`, 'BAD_REQUEST');
+		// Обфускаторы: «инстансы» подсистемы — туннели этой разновидности.
+		if (subsystem === 'obf-phobos' || subsystem === 'obf-clusterm') {
+			const flavor = subsystem === 'obf-phobos' ? 'phobos' : 'clusterm';
+			sendData(res, {
+				binariesPresent: true,
+				installAvailable: true,
+				installVersion: flavor === 'phobos' ? '1.4.0' : '0.9.3',
+				installedVersion: flavor === 'phobos' ? '1.4.0' : '0.9.2',
+				updateAvailable: flavor === 'clusterm',
+				installing: false,
+				instances: MOCK_AWG_TUNNELS.filter((t) => t.obfuscator?.flavor === flavor).length,
+				routerClock: mockRouterClock(),
+			});
+			return;
+		}
+		sendBackendError(
+			res,
+			`subsystem "${subsystem}": ожидали wdtt|freeturn|obf-phobos|obf-clusterm`,
+			'BAD_REQUEST',
+		);
 		return;
 	}
 

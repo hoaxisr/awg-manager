@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { Eye, EyeOff } from 'lucide-svelte';
 	import type { TunnelListItem } from '$lib/types';
-	import { Toggle, TrafficSparkline, TrafficChart, VersionBadge, StatusDot } from '$lib/components/ui';
+	import { Toggle, TrafficSparkline, TrafficChart, VersionBadge, StatusDot, Badge } from '$lib/components/ui';
 	import DefaultRouteBadge from './DefaultRouteBadge.svelte';
 	import ProxyOwnedBadge from './ProxyOwnedBadge.svelte';
 	import { TunnelListActions } from '$lib/components/ui';
@@ -198,7 +198,7 @@
 			case 'needs_stop':
 				return 'Остановка';
 			case 'broken':
-				return '';
+				return tunnel.statusDetails ?? '';
 			case 'disabled':
 				return 'Выключен';
 			default:
@@ -306,6 +306,9 @@
 						<VersionBadge kind="backend" value={tunnel.backend} />
 					{/if}
 					<ProxyOwnedBadge {tunnel} />
+					{#if tunnel.obfuscator}
+						<Badge variant="info" size="sm">{tunnel.obfuscator.flavor === 'phobos' ? 'Phobos' : 'ClusterM'}</Badge>
+					{/if}
 				</div>
 			</div>
 			<div class="dense-toolbar" title={statusHint || undefined}>
@@ -374,6 +377,9 @@
 							<VersionBadge kind="awg" value={tunnel.awgVersion} />
 						{/if}
 						<ProxyOwnedBadge {tunnel} />
+						{#if tunnel.obfuscator}
+							<Badge variant="info" size="sm">{tunnel.obfuscator.flavor === 'phobos' ? 'Phobos' : 'ClusterM'}</Badge>
+						{/if}
 					</div>
 					{#if view === 'compact' && headerStatusHint}
 						<span class="status-hint status-hint-left">{headerStatusHint}</span>

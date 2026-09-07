@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { SingboxStatus, HydraRouteStatus } from '$lib/types';
+	import type { ProxySubsystem } from '$lib/api/proxyInstances';
 	import { Button, ConfirmModal, Input, Modal, StatusDot } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { copyToClipboard } from '$lib/utils/clipboard';
@@ -11,7 +12,7 @@
 
 	/** Строка подсистемы прокси: её бинари ставятся и снимаются целиком. */
 	export interface ProxyBinaryRow {
-		key: 'wdtt' | 'freeturn';
+		key: ProxySubsystem;
 		label: string;
 		/** Бинари подсистемы лежат на диске. */
 		present: boolean;
@@ -393,7 +394,7 @@
 							<Button variant="primary" size="sm" loading={p.busy} onclick={p.oninstall}>
 								Обновить
 							</Button>
-						{:else}
+						{:else if !p.key.startsWith('obf-')}
 							<Button variant="secondary" size="sm" href="/proxy">Открыть</Button>
 						{/if}
 						<Button

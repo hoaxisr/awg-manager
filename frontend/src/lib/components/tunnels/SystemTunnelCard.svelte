@@ -147,6 +147,13 @@
 					</div>
 					<div class="meta-tags-dense">
 						<Badge variant="info" size="sm">Системный</Badge>
+						{#if tunnel.external === 'phobos'}
+							<Badge
+								variant="warning"
+								size="sm"
+								title="Создан установщиком Phobos; awg-manager им не управляет"
+							>внешний (Phobos)</Badge>
+						{/if}
 						<span class="iface-chip-dense" title={tunnel.interfaceName}>{tunnel.interfaceName}</span>
 					</div>
 				</div>
@@ -189,6 +196,12 @@
 					<div class="meta-line">
 						<span class="iface-name">{tunnel.interfaceName}</span>
 						<span class="version-badge badge-system">Системный</span>
+						{#if tunnel.external === 'phobos'}
+							<span
+								class="version-badge badge-system"
+								title="Создан установщиком Phobos; awg-manager им не управляет"
+							>внешний (Phobos)</span>
+						{/if}
 					</div>
 					{#if compactStatusHint}
 						<span class="status-hint-left">{compactStatusHint}</span>
