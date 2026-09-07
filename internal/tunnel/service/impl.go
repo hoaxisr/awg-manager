@@ -791,7 +791,7 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	// Тот же гейт, что и на create/update: чужой .conf с битым
 	// HeaderProtectionKey или коротким S1-S4 иначе доедет до ядра и туннель
 	// встанет с выключенной header protection — молча.
-	if err := config.ValidateAWG3(&parsed.Interface.AWGObfuscation); err != nil {
+	if err := config.ValidateObfuscation(&parsed.Interface.AWGObfuscation); err != nil {
 		return nil, err
 	}
 
