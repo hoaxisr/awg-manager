@@ -3,10 +3,12 @@ package nwg
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -127,12 +129,14 @@ func (c *captureNDMS) firstPostWith(sub string) int {
 	return -1
 }
 
-// obfIfaceRunningOnRelay — ответ RCI для интерфейса, уже поднятого на наш релей:
-// conf=running и peer смотрит в 127.0.0.1:39000 (LocalPort из obfStored).
-const obfIfaceRunningOnRelay = `{"show":{"interface":{"id":"Wireguard3","link":"up",
-	"summary":{"layer":{"conf":"running"}},
-	"wireguard":{"status":"up","peer":[{"online":true,"via":"ISP1",
-		"remote-endpoint-address":"127.0.0.1","remote-port":39000}]}}}}`
+// obfIfaceOnRelay — ответ RCI для интерфейса на нашем релее: conf=running, peer
+// смотрит в 127.0.0.1:39000 (LocalPort из obfStored), online — по аргументу.
+func obfIfaceOnRelay(online bool) string {
+	return `{"show":{"interface":{"id":"Wireguard3","link":"up",
+		"summary":{"layer":{"conf":"running"}},
+		"wireguard":{"status":"up","peer":[{"online":` + strconv.FormatBool(online) + `,"via":"ISP1",
+			"remote-endpoint-address":"127.0.0.1","remote-port":39000}]}}}}`
+}
 
 func newObfOperator(t *testing.T, n *captureNDMS, fr *fakeObfRunner) *OperatorNativeWG {
 	t.Helper()
@@ -207,7 +211,7 @@ func TestStartObfuscated_RunnerRouteEndpointUp(t *testing.T) {
 func TestStartObfuscated_AlreadyUpOnRelay_SkipsBatch(t *testing.T) {
 	withObfDirs(t)
 	n := newCaptureNDMS(t)
-	n.ifaceResp = obfIfaceRunningOnRelay
+	n.ifaceResp = obfIfaceOnRelay(true)
 	fr := newFakeObfRunner()
 	op := newObfOperator(t, n, fr)
 
@@ -225,6 +229,43 @@ func TestStartObfuscated_AlreadyUpOnRelay_SkipsBatch(t *testing.T) {
 	}
 	if !strings.Contains(posts, `"host":"203.0.113.5"`) {
 		t.Fatalf("host-route обязан стоять и без батча:\n%s", posts)
+	}
+}
+
+// Залипший интерфейс (conf=running, порт релея тот же, но пир offline — KN-1910)
+// обязан получить батч: иначе он останется мёртвым навсегда.
+func TestStartObfuscated_RunningButPeerOffline_SendsBatch(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	n.ifaceResp = obfIfaceOnRelay(false)
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+
+	if err := op.Start(context.Background(), obfStored()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(n.joined(), `"up":true`) {
+		t.Fatalf("залипший интерфейс обязан получить батч:\n%s", n.joined())
+	}
+}
+
+// ISPInterface пуст: WAN берётся из peer.via, прочитанного после батча.
+func TestStartObfuscated_HostRouteViaFreshPeerVia(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	// conf не running → батч уходит, а peer.via читается для маршрута.
+	n.ifaceResp = `{"show":{"interface":{"id":"Wireguard3","link":"up",
+		"wireguard":{"status":"up","peer":[{"online":true,"via":"PPPoE0"}]}}}}`
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+	st := obfStored()
+	st.ISPInterface = ""
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(n.joined(), `"interface":"PPPoE0"`) {
+		t.Fatalf("host-route обязан идти через свежий peer.via:\n%s", n.joined())
 	}
 }
 
@@ -355,6 +396,27 @@ func TestStartObfuscated_BatchFailureRollsBack(t *testing.T) {
 	}
 }
 
+// На бутe DNS может быть ещё не готов: отказ резолва не имеет права оставить
+// интерфейс поднятым без релея — до RCI-команд дело не доходит вовсе.
+func TestStartObfuscated_ResolveFailure_LeavesNDMSUntouched(t *testing.T) {
+	withObfDirs(t)
+	stubResolveGap(t)
+	n := newCaptureNDMS(t)
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+	op.resolveFn = func(string) (string, int, error) { return "", 0, errors.New("no DNS") }
+
+	if err := op.Start(context.Background(), obfStored()); err == nil {
+		t.Fatal("Start обязан упасть на отказе резолва")
+	}
+	if fr.Alive("awg20") {
+		t.Fatal("релей обязан быть погашен")
+	}
+	if n.joined() != "" {
+		t.Fatalf("NDMS-команд быть не должно:\n%s", n.joined())
+	}
+}
+
 func TestSyncKmodSlot_NoopForObfuscated(t *testing.T) {
 	op := &OperatorNativeWG{appLog: logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps)}
 	if err := op.SyncKmodSlot(context.Background(), obfStored()); err != nil {
@@ -383,6 +445,44 @@ func TestStopObfuscated_StopsRunnerAndRemovesRoute(t *testing.T) {
 	}
 	if !strings.Contains(n.joined(), `"no":true,"host":"203.0.113.5"`) && !strings.Contains(n.joined(), `"host":"203.0.113.5","no":true`) {
 		t.Fatalf("host route not removed:\n%s", n.joined())
+	}
+}
+
+// У двух туннелей target может резолвиться в один IP: host-route до него общий,
+// и Stop одного не имеет права обрубить второй.
+func TestStopObfuscated_SharedHostRouteKeptForNeighbour(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		held        bool
+		wantRemoved bool
+	}{
+		{"сосед держит маршрут", true, false},
+		{"соседа нет", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withObfDirs(t)
+			n := newCaptureNDMS(t)
+			fr := newFakeObfRunner()
+			op := newObfOperator(t, n, fr)
+			var gotID, gotIP string
+			op.SetObfuscatorRouteSharing(func(excludeID, ip string) bool {
+				gotID, gotIP = excludeID, ip
+				return tc.held
+			})
+			st := obfStored()
+			st.ResolvedEndpointIP = "203.0.113.5"
+
+			if err := op.Stop(context.Background(), st); err != nil {
+				t.Fatal(err)
+			}
+			if gotID != st.ID || gotIP != "203.0.113.5" {
+				t.Fatalf("шов вызван с (%q, %q)", gotID, gotIP)
+			}
+			removed := n.firstPostWith(`"host":"203.0.113.5"`) >= 0
+			if removed != tc.wantRemoved {
+				t.Fatalf("removed = %v, want %v:\n%s", removed, tc.wantRemoved, n.joined())
+			}
+		})
 	}
 }
 

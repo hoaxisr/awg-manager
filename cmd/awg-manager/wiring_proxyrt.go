@@ -905,6 +905,21 @@ func (a *app) wireProxyrt() {
 		Log: logging.NewScopedLogger(a.loggingService, logging.GroupTunnel, logging.SubOps),
 	})
 	a.nwgOp.SetObfuscator(obfRunner)
+	// Два обфусцированных туннеля могут смотреть на один IP сервера: host-route
+	// до него общий, и Stop одного не имеет права обрубить второй.
+	a.nwgOp.SetObfuscatorRouteSharing(func(excludeID, ip string) bool {
+		list, err := a.awgStore.List()
+		if err != nil {
+			return false
+		}
+		for i := range list {
+			t := &list[i]
+			if t.ID != excludeID && t.Obfuscator != nil && t.Enabled && t.ResolvedEndpointIP == ip {
+				return true
+			}
+		}
+		return false
+	})
 	// Усыновить релеи живых включённых туннелей, сирот погасить.
 	keep := func(id string) bool {
 		t, err := a.awgStore.Get(id)
