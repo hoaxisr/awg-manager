@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 )
 
@@ -35,8 +36,12 @@ const maxPendingLine = 64 * 1024
 // усекает файл при переполнении (self-ротация): писатель держит fd с
 // O_APPEND, после truncate ядро продолжит запись с offset 0. Без этого
 // долгоживущий adopted/спавненный sing-box на debug-уровне за месяцы
-// аптайма съел бы tmpfs (124M на роутере). Var — seam для тестов.
-var procLogMaxBytes = int64(4 * 1024 * 1024)
+// аптайма съел бы tmpfs (124M на роутере). Var — seam для тестов; atomic,
+// потому что tail-горутина живёт ещё 2*procLogTailPoll после Stop() и
+// читает потолок, пока соседний тест его переставляет (F127).
+var procLogMaxBytes atomic.Int64
+
+func init() { procLogMaxBytes.Store(4 * 1024 * 1024) }
 
 // openProcLog открывает файл лога; truncate=true — новый спавн начинает
 // лог своего поколения с нуля.
@@ -110,7 +115,7 @@ func tailFile(ctx context.Context, path string, fromEnd bool, onLine func(string
 			// окно микросекундное, для логов приемлемо. pending (частичная
 			// строка, уже вычитанная из файла) доклеится из нового начала.
 			// В отличие от чужого truncate выше — тот означает новый спавн.
-			if offset > procLogMaxBytes {
+			if offset > procLogMaxBytes.Load() {
 				if err := os.Truncate(path, 0); err == nil {
 					offset = 0
 				}

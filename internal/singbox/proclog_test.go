@@ -261,9 +261,8 @@ func TestTailFile_PendingCapFlushes(t *testing.T) {
 // строки доезжают до onLine тем же tail'ом (генерация НЕ завершается, в
 // отличие от чужого truncate из TestTailFile_TruncateEndsGeneration).
 func TestTailFile_SelfRotationKeepsGeneration(t *testing.T) {
-	old := procLogMaxBytes
-	procLogMaxBytes = 16
-	t.Cleanup(func() { procLogMaxBytes = old })
+	old := procLogMaxBytes.Swap(16)
+	t.Cleanup(func() { procLogMaxBytes.Store(old) })
 
 	dir := t.TempDir()
 	p := filepath.Join(dir, "out.log")
@@ -364,9 +363,8 @@ func TestOpenProcLog_TruncateKeepsAppend(t *testing.T) {
 // NUL-байтов. Эти байты не должны доезжать до onLine (до фикса они
 // доставлялись 64КБ-«строками» и раздували ОЗУ через slog-экранирование).
 func TestTailFile_PositionalWriterSparseHoleFiltered(t *testing.T) {
-	old := procLogMaxBytes
-	procLogMaxBytes = 16
-	t.Cleanup(func() { procLogMaxBytes = old })
+	old := procLogMaxBytes.Swap(16)
+	t.Cleanup(func() { procLogMaxBytes.Store(old) })
 
 	dir := t.TempDir()
 	p := filepath.Join(dir, "err.log")
