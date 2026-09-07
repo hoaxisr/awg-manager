@@ -111,6 +111,20 @@ describe('scoreConfig — junk и паддинг', () => {
 		const dup = base({ headerProtection: true, randomTrailers: true, s1: 12, s2: 5, s3: 12, s4: 12 }, {}, { version: 'awg3.1', errors: [{ code: 'hp_padding_min', message: 'S2 = 5: …' }] });
 		expect(scoreConfig(dup).checks.some((x) => x.title === 'S1 = S2 = S3 = S4 ≥ 12')).toBe(false);
 	});
+
+	it('при HP штраф S1+56=S2 не начисляется — значения не видны на проводе', () => {
+		const r = scoreConfig(base({ headerProtection: true, s1: 12, s2: 68, s3: 12, s4: 12 }, {}, { version: 'awg3' }));
+		expect(r.checks.some((x) => x.title === 'S1 + 56 ≠ S2')).toBe(false);
+		expect(r.score).toBe(85);
+	});
+
+	it('при HP Jmin/Jmax — info без штрафа', () => {
+		const r = scoreConfig(base({ headerProtection: true, jc: 3, jmin: 10, jmax: 30, s1: 12, s2: 12, s3: 12, s4: 12 }, {}, { version: 'awg3' }));
+		const c = find(r, 'Jmin/Jmax');
+		expect(c.status).toBe('info');
+		expect(c.delta).toBe(0);
+		expect(r.score).toBe(85);
+	});
 });
 
 describe('scoreConfig — CPS', () => {
@@ -125,6 +139,13 @@ describe('scoreConfig — CPS', () => {
 		expect(good.facts.cps).toBe('QUIC');
 		const bad = scoreConfig(base({ i1: '<r 16><b 0xc000000001>' }, {}, { version: 'awg1.5' }));
 		expect(find(bad, 'Структура I1').delta).toBe(-10);
+	});
+
+	it('любой тег делает I1 тегированным: без <b> первым — fail −10', () => {
+		const r = scoreConfig(base({ i1: '<r 16><t>' }, {}, { version: 'awg1.5' }));
+		const c = find(r, 'Структура I1');
+		expect(c.status).toBe('fail');
+		expect(c.delta).toBe(-10);
 	});
 });
 

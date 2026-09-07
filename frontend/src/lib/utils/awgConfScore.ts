@@ -75,7 +75,7 @@ const BASE: Record<ReturnType<typeof obfuscationTier>, number> = {
 
 function cpsProtocol(i1: string): string {
 	if (!i1) return 'нет';
-	if (/<\s*b\b/i.test(i1)) {
+	if (/</.test(i1)) {
 		const p = parseI1(i1).protocol;
 		return p && p !== 'Unknown' ? p : 'Custom';
 	}
@@ -159,13 +159,18 @@ export function scoreConfig(d: AwgAnalyzeData): ScoreResult {
 		add({ cat: 'Junk-пакеты', title: 'Jc', status: 'pass', value: String(i.jc), delta: 0, detail: `Jc=${i.jc} — в рекомендуемом диапазоне 3–10.` });
 	}
 	if (i.jc > 0) {
-		const spread = i.jmax - i.jmin;
-		if (spread < 30) {
-			add({ cat: 'Junk-пакеты', title: 'Jmin/Jmax', status: 'warn', value: `${i.jmin}–${i.jmax}`, delta: -5,
-				detail: 'Разброс размеров junk-пакетов меньше 30 байт — размер предсказуем.',
-				fix: 'Расширьте Jmin/Jmax так, чтобы разница была ≥ 30 байт.' });
+		if (hp) {
+			add({ cat: 'Junk-пакеты', title: 'Jmin/Jmax', status: 'info', value: `${i.jmin}–${i.jmax}`, delta: 0,
+				detail: 'При header protection размеры junk-пакетов не выдают протокол.' });
 		} else {
-			add({ cat: 'Junk-пакеты', title: 'Jmin/Jmax', status: 'pass', value: `${i.jmin}–${i.jmax}`, delta: 0, detail: 'Размеры junk-пакетов непредсказуемы.' });
+			const spread = i.jmax - i.jmin;
+			if (spread < 30) {
+				add({ cat: 'Junk-пакеты', title: 'Jmin/Jmax', status: 'warn', value: `${i.jmin}–${i.jmax}`, delta: -5,
+					detail: 'Разброс размеров junk-пакетов меньше 30 байт — размер предсказуем.',
+					fix: 'Расширьте Jmin/Jmax так, чтобы разница была ≥ 30 байт.' });
+			} else {
+				add({ cat: 'Junk-пакеты', title: 'Jmin/Jmax', status: 'pass', value: `${i.jmin}–${i.jmax}`, delta: 0, detail: 'Размеры junk-пакетов непредсказуемы.' });
+			}
 		}
 	}
 
@@ -184,7 +189,7 @@ export function scoreConfig(d: AwgAnalyzeData): ScoreResult {
 			add({ cat: sCat, title, status: 'pass', value: String(v), delta: 0, detail: 'Размер пакета рукопожатия изменён.' });
 		}
 	}
-	if (i.s1 > 0 && i.s2 > 0 && i.s1 + 56 === i.s2) {
+	if (!hp && i.s1 > 0 && i.s2 > 0 && i.s1 + 56 === i.s2) {
 		add({ cat: sCat, title: 'S1 + 56 ≠ S2', status: 'fail', value: `${i.s1} + 56 = ${i.s2}`, delta: -10,
 			detail: 'Правило Amnezia: S1 + 56 не должно равняться S2, иначе размеры Init и Response связаны.',
 			fix: 'Измените S1 или S2 так, чтобы S1 + 56 ≠ S2.' });
@@ -205,7 +210,7 @@ export function scoreConfig(d: AwgAnalyzeData): ScoreResult {
 	// ── CPS ────────────────────────────────────────────────────────
 	const cps = cpsProtocol(i.i1);
 	if (i.i1) {
-		if (/<\s*b\b/i.test(i.i1)) {
+		if (/</.test(i.i1)) {
 			const p = parseI1(i.i1);
 			const ok = p.errors.length === 0;
 			add({ cat: 'CPS (I1–I5)', title: 'Структура I1', status: ok ? 'pass' : 'fail', value: cps, delta: ok ? 0 : -10,
