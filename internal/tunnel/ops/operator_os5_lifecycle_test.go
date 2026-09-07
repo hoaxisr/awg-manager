@@ -175,7 +175,7 @@ func TestColdStart_KernelAddressCarriesUserPrefix(t *testing.T) {
 func TestReconcile_KernelAddressCarriesUserPrefix(t *testing.T) {
 	o, _, rec := newOS5Lifecycle(t)
 	err := o.Reconcile(context.Background(), lifecycleCfg(t))
-	if !hasCall(rec.Calls, "/opt/sbin/ip address add dev opkgtun10 10.9.7.2/26") {
+	if !hasCall(rec.Calls, "/opt/sbin/ip address replace dev opkgtun10 10.9.7.2/26") {
 		t.Fatalf("Reconcile: адрес с маской не выставлен (err=%v):\n%s", err, strings.Join(rec.Calls, "\n"))
 	}
 }
@@ -264,7 +264,7 @@ func TestSetupEndpointRoute_RefusesLoopThroughTunnelDevice(t *testing.T) {
 		t.Fatalf("петля не распознана: err=%v", err)
 	}
 	for _, c := range s.Calls {
-		if strings.Contains(c, "route add 203.0.113.7/32") {
+		if strings.Contains(c, "route replace 203.0.113.7/32") {
 			t.Fatalf("host-route поставлен несмотря на петлю: %s", c)
 		}
 	}
@@ -354,4 +354,63 @@ func TestDelete_RemovesEndpointHostRoute(t *testing.T) {
 			t.Fatalf("журнал = %v, ждали %q", spy.entries, want)
 		}
 	})
+}
+
+// F129 (#867): рестарт демона приходил в Reconcile на РАБОТАЮЩИЙ kernel-туннель
+// и безусловно делал ip link del + add + setconf — сессия рвалась на каждом
+// рестарте awg-manager. Живое amneziawg-устройство надо оставить и лишь
+// досинхронизировать конфиг (syncconf сохраняет сессию при неизменном конфиге).
+func TestReconcile_KeepsRunningKernelInterface(t *testing.T) {
+	backend := &MockBackend{running: true, pid: 1}
+	o, rec := newOS5LifecycleOn(t, &recordingPoster{}, ndmsquery.NewFakeGetter(), backend, false)
+	if err := o.Reconcile(context.Background(), lifecycleCfg(t)); err != nil {
+		t.Fatal(err)
+	}
+	if hasCall(rec.Calls, "/opt/sbin/ip link del dev opkgtun10") {
+		t.Fatalf("живое устройство удалено:\n%s", strings.Join(rec.Calls, "\n"))
+	}
+	if len(backend.StartCalls) != 0 {
+		t.Fatalf("устройство пересоздано: %v", backend.StartCalls)
+	}
+	wgc := o.wg.(*MockWGClient)
+	if len(wgc.SetConfCalls) != 0 || len(wgc.SyncConfCalls) != 1 {
+		t.Fatalf("ожидался один syncconf без setconf: set=%v sync=%v", wgc.SetConfCalls, wgc.SyncConfCalls)
+	}
+	if !hasCall(rec.Calls, "/opt/sbin/ip link set up dev opkgtun10") {
+		t.Fatalf("интерфейс не поднят:\n%s", strings.Join(rec.Calls, "\n"))
+	}
+}
+
+// Если amneziawg-устройства нет (после ребута NDMS воссоздал generic tun или
+// его снесли), Reconcile по-прежнему создаёт его заново.
+func TestReconcile_RecreatesMissingKernelInterface(t *testing.T) {
+	backend := &MockBackend{}
+	o, rec := newOS5LifecycleOn(t, &recordingPoster{}, ndmsquery.NewFakeGetter(), backend, false)
+	if err := o.Reconcile(context.Background(), lifecycleCfg(t)); err != nil {
+		t.Fatal(err)
+	}
+	if !hasCall(rec.Calls, "/opt/sbin/ip link del dev opkgtun10") || !slices.Equal(backend.StartCalls, []string{"opkgtun10"}) {
+		t.Fatalf("устройство не пересоздано: start=%v\n%s", backend.StartCalls, strings.Join(rec.Calls, "\n"))
+	}
+}
+
+// F130 (#867): три туннеля к одному серверу делят host-route; старт каждого
+// следующего делал `route del` + `route add` — окно, в котором пакеты уже
+// работающих туннелей уходили по default route (на роутере с политиками —
+// в чужой туннель). Замена атомарна.
+func TestSetupEndpointRoute_ReplacesSharedHostRouteAtomically(t *testing.T) {
+	o, _, _ := newOS5Lifecycle(t)
+	s := &scriptedIPRun{routeGet: "203.0.113.7 via 192.0.2.1 dev eth3 src 192.0.2.10 uid 0"}
+	o.ipRun = s.run
+	for _, id := range []string{"awg10", "awg11"} {
+		if _, err := o.SetupEndpointRoute(context.Background(), id, "203.0.113.7:51820", "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if hasCall(s.Calls, "/opt/sbin/ip route del 203.0.113.7/32") {
+		t.Fatalf("общий host-route снимался при старте соседа:\n%s", strings.Join(s.Calls, "\n"))
+	}
+	if !hasCall(s.Calls, "/opt/sbin/ip route replace 203.0.113.7/32 via 192.0.2.1") {
+		t.Fatalf("маршрут не поставлен через replace:\n%s", strings.Join(s.Calls, "\n"))
+	}
 }
