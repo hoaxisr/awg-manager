@@ -43,6 +43,7 @@ func TestAnalyzeAwgConf_Versions(t *testing.T) {
 		{"awg2.0", "H1 = 10-2000\nH2 = 3000-4000\nH3 = 5000-6000\nH4 = 7000-8000\n", "awg2.0"},
 		{"awg3 timers only", "H1 = 10\nH2 = 20\nH3 = 30\nH4 = 40\nRekeyAfterTime = 120-150\n", "awg3"},
 		{"awg3.1 flags", "H1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\nS1 = 12\nS2 = 12\nS3 = 12\nS4 = 12\nHeaderProtectionKey = " + testHPKey + "\nRandomTrailers = on\n", "awg3.1"},
+		{"awg3.1 flags spelled true", "H1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\nS1 = 12\nS2 = 12\nS3 = 12\nS4 = 12\nHeaderProtectionKey = " + testHPKey + "\nRandomTrailers = true\n", "awg3.1"},
 		{"showconf с off — не 3.1", "H1 = 10\nH2 = 20\nH3 = 30\nH4 = 40\nRandomTrailers = off\nDisableCookies = off\n", "awg1.0"},
 	}
 	for _, tc := range cases {
@@ -65,8 +66,8 @@ func TestAnalyzeAwgConf_NeverLeaksKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !d.Interface.HeaderProtection || !d.HasPrivateKey || !d.Peer.HasPresharedKey {
-		t.Fatalf("flags: hp=%v pk=%v psk=%v", d.Interface.HeaderProtection, d.HasPrivateKey, d.Peer.HasPresharedKey)
+	if !d.Interface.HeaderProtection || !d.Peer.HasPresharedKey {
+		t.Fatalf("flags: hp=%v psk=%v", d.Interface.HeaderProtection, d.Peer.HasPresharedKey)
 	}
 	// Ответ сериализуется целиком в handler'е — проверяем итоговый JSON, а
 	// не отдельные поля: так утечка через любое строковое поле DTO ловится.
@@ -108,6 +109,17 @@ func TestAnalyzeAwgConf_HeaderOverlapError(t *testing.T) {
 	}
 	if len(d.Errors) != 1 || d.Errors[0].Code != "h_overlap" {
 		t.Fatalf("want h_overlap, got %+v", d.Errors)
+	}
+}
+
+// Нечитаемое H — ошибка формата, а не пересечения: у неё свой код.
+func TestAnalyzeAwgConf_HeaderFormatError(t *testing.T) {
+	d, err := analyzeAwgConf(confWith("H1 = abc\nH2 = 20\nH3 = 30\nH4 = 40\n", ""), nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Errors) != 1 || d.Errors[0].Code != "h_invalid" {
+		t.Fatalf("want h_invalid, got %+v", d.Errors)
 	}
 }
 
@@ -165,8 +177,8 @@ func TestAnalyzeAwgConf_MergesStoredKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("analyze with stored keys: %v", err)
 	}
-	if !d.HasPrivateKey || !d.Peer.HasPresharedKey || !d.Peer.PresharedKeyFromStore {
-		t.Fatalf("stored keys not merged: pk=%v psk=%v fromStore=%v", d.HasPrivateKey, d.Peer.HasPresharedKey, d.Peer.PresharedKeyFromStore)
+	if !d.Peer.HasPresharedKey || !d.Peer.PresharedKeyFromStore {
+		t.Fatalf("stored keys not merged: psk=%v fromStore=%v", d.Peer.HasPresharedKey, d.Peer.PresharedKeyFromStore)
 	}
 	// PSK в тексте — не «из туннеля».
 	inText, err := analyzeAwgConf(confWith("", "PresharedKey = cHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHM9\n"), stored, "")
@@ -232,8 +244,8 @@ func TestMergeStoredKeys_EmptyKeyLineIsReplaced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("analyze: %v", err)
 	}
-	if !d.HasPrivateKey || !d.Peer.HasPresharedKey || !d.Peer.PresharedKeyFromStore {
-		t.Fatalf("empty key lines not replaced: pk=%v psk=%v fromStore=%v", d.HasPrivateKey, d.Peer.HasPresharedKey, d.Peer.PresharedKeyFromStore)
+	if !d.Peer.HasPresharedKey || !d.Peer.PresharedKeyFromStore {
+		t.Fatalf("empty key lines not replaced: psk=%v fromStore=%v", d.Peer.HasPresharedKey, d.Peer.PresharedKeyFromStore)
 	}
 	out := mergeStoredKeys(conf, stored)
 	if strings.Count(out, "PrivateKey") != 1 {
@@ -328,7 +340,7 @@ func TestAwgAnalyzeHandler_TunnelIDMergesPSK(t *testing.T) {
 	}
 	var resp AwgAnalyzeResponse
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	if !resp.Data.Peer.HasPresharedKey || !resp.Data.HasPrivateKey {
+	if !resp.Data.Peer.HasPresharedKey {
 		t.Fatalf("#865: keys from store not reflected: %+v", resp.Data)
 	}
 	if strings.Contains(w.Body.String(), "c3RvcmVk") {

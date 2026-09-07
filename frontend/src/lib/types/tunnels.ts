@@ -101,7 +101,6 @@ export interface AwgAnalyzeData {
 	version: AwgVersionId;
 	interface: AwgAnalyzeInterface;
 	peer: AwgAnalyzePeer;
-	hasPrivateKey: boolean;
 	errors: AwgAnalyzeIssue[];
 	warnings: AwgAnalyzeIssue[];
 }

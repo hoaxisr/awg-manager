@@ -442,9 +442,6 @@ definitions:
         items:
           $ref: '#/definitions/api.AwgAnalyzeIssue'
         type: array
-      hasPrivateKey:
-        example: true
-        type: boolean
       interface:
         $ref: '#/definitions/api.AwgAnalyzeInterface'
       peer:

@@ -153,7 +153,6 @@ const api_Awg3TunnelDTO: v.GenericSchema = v.looseObject({
 
 const api_AwgAnalyzeData: v.GenericSchema = v.looseObject({
 	errors: v.optional(v.nullable(v.array(v.lazy(() => api_AwgAnalyzeIssue)))),
-	hasPrivateKey: v.optional(v.nullable(v.boolean())),
 	interface: v.optional(v.nullable(v.lazy(() => api_AwgAnalyzeInterface))),
 	peer: v.optional(v.nullable(v.lazy(() => api_AwgAnalyzePeer))),
 	version: v.optional(v.nullable(v.string())),

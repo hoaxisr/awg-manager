@@ -1,12 +1,17 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+// ErrHeaderFormat — H-значение не разобрать (не число и не диапазон). Отличать
+// его от пересечения нужно вызывающим: анализатор отдаёт разные коды ошибок.
+var ErrHeaderFormat = errors.New("некорректное значение H")
 
 // headerRange — H-значение как отрезок [lo, hi]: одиночное число — вырожденный
 // отрезок, "min-max" — диапазон AWG 2.0.
@@ -20,13 +25,13 @@ func parseHeaderRange(name, v string) (headerRange, error) {
 		a, err1 := strconv.ParseUint(strings.TrimSpace(lo), 10, 32)
 		b, err2 := strconv.ParseUint(strings.TrimSpace(hi), 10, 32)
 		if err1 != nil || err2 != nil || a > b {
-			return headerRange{}, fmt.Errorf("%s = %q: некорректный диапазон", name, v)
+			return headerRange{}, fmt.Errorf("%w: %s = %q (ожидается число или диапазон min-max)", ErrHeaderFormat, name, v)
 		}
 		return headerRange{a, b}, nil
 	}
 	n, err := strconv.ParseUint(v, 10, 32)
 	if err != nil {
-		return headerRange{}, fmt.Errorf("%s = %q: некорректное значение", name, v)
+		return headerRange{}, fmt.Errorf("%w: %s = %q (ожидается число или диапазон min-max)", ErrHeaderFormat, name, v)
 	}
 	return headerRange{n, n}, nil
 }

@@ -83,12 +83,11 @@ type AwgAnalyzePeer struct {
 
 // AwgAnalyzeData — результат анализа.
 type AwgAnalyzeData struct {
-	Version       string              `json:"version" example:"awg3.1"`
-	Interface     AwgAnalyzeInterface `json:"interface"`
-	Peer          AwgAnalyzePeer      `json:"peer"`
-	HasPrivateKey bool                `json:"hasPrivateKey" example:"true"`
-	Errors        []AwgAnalyzeIssue   `json:"errors"`
-	Warnings      []AwgAnalyzeIssue   `json:"warnings"`
+	Version   string              `json:"version" example:"awg3.1"`
+	Interface AwgAnalyzeInterface `json:"interface"`
+	Peer      AwgAnalyzePeer      `json:"peer"`
+	Errors    []AwgAnalyzeIssue   `json:"errors"`
+	Warnings  []AwgAnalyzeIssue   `json:"warnings"`
 }
 
 // AwgAnalyzeResponse — конверт POST /awg/analyze.
@@ -240,9 +239,8 @@ func analyzeAwgConf(conf string, stored *storage.AWGTunnel, kmodVersion string) 
 			HasPresharedKey:       t.Peer.PresharedKey != "",
 			PresharedKeyFromStore: t.Peer.PresharedKey != "" && !pskInText,
 		},
-		HasPrivateKey: iface.PrivateKey != "",
-		Errors:        []AwgAnalyzeIssue{},
-		Warnings:      []AwgAnalyzeIssue{},
+		Errors:   []AwgAnalyzeIssue{},
+		Warnings: []AwgAnalyzeIssue{},
 	}
 
 	if err := config.ValidateAWG3(o); err != nil {
@@ -253,7 +251,11 @@ func analyzeAwgConf(conf string, stored *storage.AWGTunnel, kmodVersion string) 
 		d.Errors = append(d.Errors, AwgAnalyzeIssue{Code: code, Message: err.Error()})
 	}
 	if err := config.ValidateHeaderRanges(o); err != nil {
-		d.Errors = append(d.Errors, AwgAnalyzeIssue{Code: "h_overlap", Message: err.Error()})
+		code := "h_overlap"
+		if errors.Is(err, config.ErrHeaderFormat) {
+			code = "h_invalid"
+		}
+		d.Errors = append(d.Errors, AwgAnalyzeIssue{Code: code, Message: err.Error()})
 	}
 
 	// Гейт модуля ядра — только для kernel-бэкенда. NativeWG несёт awg_proxy

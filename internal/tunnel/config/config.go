@@ -348,9 +348,15 @@ func parseInterfaceField(tunnel *storage.AWGTunnel, key, value string) {
 	}
 }
 
-// awg3Bool разбирает булев ключ AWG 3.1 так же, как parse_bool в
-// amneziawg-tools: "on" без учёта регистра либо ненулевое число. Всё
-// остальное, включая "off" и пустую строку, — выключено.
+// awg3Bool разбирает булев ключ AWG 3.1: "on", "true", "yes" без учёта
+// регистра либо ненулевое число. Всё остальное, включая "off", "false", "no"
+// и пустую строку, — выключено.
+//
+// На вход принимаем шире, чем сам awg: parse_bool в amneziawg-tools знает
+// только on/off, и Generate поэтому всегда пишет "on" — единственную форму,
+// которую .conf доедет до утилиты. Но конфиги пишут руками и генераторами, а
+// true/yes для булева ключа — привычная запись, отвергать её на импорте не за
+// что.
 //
 // Отдельная функция, а не strconv.ParseBool: `awg showconf` печатает on/off,
 // которых ParseBool не знает, и печатает их ВСЕГДА — ядро кладёт оба флага в
@@ -359,7 +365,7 @@ func parseInterfaceField(tunnel *storage.AWGTunnel, key, value string) {
 // от которой защищает awg3Range.
 func awg3Bool(value string) bool {
 	v := strings.TrimSpace(value)
-	if strings.EqualFold(v, "on") {
+	if strings.EqualFold(v, "on") || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes") {
 		return true
 	}
 	n, err := strconv.ParseUint(v, 10, 32)

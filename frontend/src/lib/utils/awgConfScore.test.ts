@@ -18,7 +18,6 @@ function base(over: Partial<AwgAnalyzeData['interface']> = {}, peer: Partial<Awg
 			...over,
 		},
 		peer: { endpoint: 'vpn.example.com:4443', allowedIPs: ['0.0.0.0/0'], allowedIPsSet: true, persistentKeepalive: '25', keepaliveSet: true, hasPresharedKey: false, presharedKeyFromStore: false, ...peer },
-		hasPrivateKey: true,
 		errors: [],
 		warnings: [],
 		...top,
