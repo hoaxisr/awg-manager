@@ -48,10 +48,11 @@ func Validate(o *storage.Obfuscator) error {
 		return fmt.Errorf("неизвестная разновидность обфускатора %q", o.Flavor)
 	}
 	// Key/Target уезжают в INI релея как есть (RenderConf/RenderInstance):
-	// перевод строки или `[` подменили бы соседние ключи и секции. Через
-	// [instance] такое не приходит (парсер режет по строкам), а через JSON
-	// API/MCP — приходит.
-	if strings.ContainsAny(o.Key, "\r\n[") || strings.ContainsAny(o.Target, "\r\n[") {
+	// перевод строки подменил бы соседние ключи и секции. Через [instance]
+	// такое не приходит (парсер режет по строкам), а через JSON API/MCP —
+	// приходит. `[` внутри значения безопасен: заголовок секции распознаётся
+	// только в начале строки, а канонический IPv6-target — это `[::1]:port`.
+	if strings.ContainsAny(o.Key, "\r\n") || strings.ContainsAny(o.Target, "\r\n") {
 		return errors.New("недопустимые символы в key или target")
 	}
 	target, err := config.NormalizeEndpoint(o.Target)

@@ -94,7 +94,7 @@
 		// Вкладка Phobos: конфиг без [instance] — это обычный WireGuard, из него
 		// получился бы туннель без релея, падающий на старте с чужой ошибкой.
 		// Install-ссылку проверяет бэкенд — её содержимого мы здесь не видим.
-		if (activeTab === 'phobos' && content && !content.startsWith('phobos://') && !/^\s*\[instance\]/m.test(content)) {
+		if (activeTab === 'phobos' && content && !content.toLowerCase().startsWith('phobos://') && !/^\s*\[instance\]/im.test(content)) {
 			notifications.error('Нужен конфиг Phobos с секцией [instance] или ссылка phobos://');
 			return;
 		}

@@ -504,7 +504,11 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, "endpoint обфусцированного туннеля не правится", "INVALID_OBFUSCATOR")
 			return
 		}
-		if config.IsAWGObfuscated(&merged.Interface) {
+		// Сравнение с записью, а не абсолютное состояние: ручной импорт
+		// ClusterM принимает любой .conf, в том числе с AWG-параметрами, и
+		// такой туннель иначе стал бы вечно нередактируемым.
+		if config.IsAWGObfuscated(&merged.Interface) &&
+			merged.Interface.AWGObfuscation != existing.Interface.AWGObfuscation {
 			response.Error(w, "параметры AWG несовместимы с обфускатором", "INVALID_OBFUSCATOR")
 			return
 		}

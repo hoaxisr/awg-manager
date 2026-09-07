@@ -77,6 +77,36 @@ func TestTunnelUpdate_ObfuscatorEndpointAndAWGRejected(t *testing.T) {
 	}
 }
 
+// Ручной импорт ClusterM принимает любой .conf, в том числе с AWG-параметрами:
+// такая запись обязана остаться редактируемой — гард ловит ПОЯВЛЕНИЕ новых
+// параметров, а не факт их наличия.
+func TestTunnelUpdate_ObfuscatorKeepsExistingAWGParams(t *testing.T) {
+	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
+	awg := storage.AWGObfuscation{Jc: 4, Jmin: 40, Jmax: 70, S1: 15, S2: 15, H1: "1", H2: "2", H3: "3", H4: "4"}
+	if err := store.Create(&storage.AWGTunnel{
+		ID: "awg30", Name: "clusterm", Backend: "nativewg", NWGIndex: 4,
+		Interface: storage.AWGInterface{Address: "10.25.0.5/32", MTU: 1420, PrivateKey: "k", AWGObfuscation: awg},
+		Peer:      storage.AWGPeer{PublicKey: "p", Endpoint: "127.0.0.1:39001"},
+		Obfuscator: &storage.Obfuscator{
+			Flavor: storage.ObfuscatorFlavorClusterM, Target: "1.2.3.4:51824", Key: "k",
+			Masking: "STUN", LocalPort: 39001,
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	h.Update(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg30",
+		strings.NewReader(`{"name":"renamed"}`)))
+
+	saved, _ := store.Get("awg30")
+	if saved.Name != "renamed" {
+		t.Fatalf("правка отвергнута: %+v", saved)
+	}
+	if saved.Interface.AWGObfuscation != awg {
+		t.Fatalf("AWG-параметры потеряны: %+v", saved.Interface.AWGObfuscation)
+	}
+}
+
 func TestTunnelUpdate_ObfuscatorCannotBeAddedOrRemoved(t *testing.T) {
 	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
 	if err := store.Create(&storage.AWGTunnel{

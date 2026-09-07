@@ -11,6 +11,16 @@ func TestValidate(t *testing.T) {
 	if err := Validate(&ok); err != nil {
 		t.Fatal(err)
 	}
+	// `[` внутри значения не ломает INI (заголовок секции — только с начала
+	// строки), а канонический IPv6-target без него не записать.
+	for name, o := range map[string]storage.Obfuscator{
+		"ipv6 target":   {Flavor: "phobos", Target: "[2001:db8::1]:51824", Key: "k", Masking: "STUN"},
+		"bracket в key": {Flavor: "phobos", Target: "h:1", Key: "a[b", Masking: "STUN"},
+	} {
+		if err := Validate(&o); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
 	cases := map[string]storage.Obfuscator{
 		"no target":         {Flavor: "phobos", Key: "k", Masking: "STUN"},
 		"bad target":        {Flavor: "phobos", Target: "host", Key: "k", Masking: "STUN"},
@@ -26,9 +36,7 @@ func TestValidate(t *testing.T) {
 		// подменили бы соседние ключи и секции (достижимо через JSON API/MCP).
 		"newline in key":    {Flavor: "phobos", Target: "h:1", Key: "k\nsource-if = 0.0.0.0", Masking: "STUN"},
 		"cr in key":         {Flavor: "phobos", Target: "h:1", Key: "k\rx", Masking: "STUN"},
-		"bracket in key":    {Flavor: "phobos", Target: "h:1", Key: "k[main]", Masking: "STUN"},
 		"newline in target": {Flavor: "phobos", Target: "h:1\nkey = zzz", Key: "k", Masking: "STUN"},
-		"bracket in target": {Flavor: "phobos", Target: "h:1[x]", Key: "k", Masking: "STUN"},
 		"localhost target":  {Flavor: "phobos", Target: "localhost:51824", Key: "k", Masking: "STUN"},
 	}
 	for name, c := range cases {
