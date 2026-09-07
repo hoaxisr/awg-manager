@@ -45,6 +45,67 @@ export interface AWGPeer {
 	persistentKeepalive?: number | string;
 }
 
+// Ответ POST /api/awg/analyze — зеркало internal/api/awg_analyze.go.
+export type AwgVersionId = 'wg' | 'awg1.0' | 'awg1.5' | 'awg2.0' | 'awg3' | 'awg3.1';
+
+export interface AwgAnalyzeIssue {
+	code: string;
+	message: string;
+}
+
+export interface AwgAnalyzeInterface {
+	jc: number;
+	jmin: number;
+	jmax: number;
+	s1: number;
+	s2: number;
+	s3: number;
+	s4: number;
+	h1: string;
+	h2: string;
+	h3: string;
+	h4: string;
+	i1: string;
+	i2: string;
+	i3: string;
+	i4: string;
+	i5: string;
+	headerProtection: boolean;
+	contentPaddingAddition: string;
+	rekeyAfterTime: string;
+	rekeyTimeout: string;
+	rejectAfterTime: string;
+	keepaliveTimeout: string;
+	maxHandshakeAttempts: string;
+	randomTrailers: boolean;
+	disableCookies: boolean;
+	mtu: number;
+	/** Ключ MTU есть в тексте; иначе mtu — дефолт парсера 1280. */
+	mtuSet: boolean;
+	address: string;
+	dns: string;
+}
+
+export interface AwgAnalyzePeer {
+	endpoint: string;
+	allowedIPs: string[];
+	allowedIPsSet: boolean;
+	persistentKeepalive: string;
+	keepaliveSet: boolean;
+	hasPresharedKey: boolean;
+	/** PSK подставлен из хранилища по tunnelId, в тексте его не было. */
+	presharedKeyFromStore: boolean;
+}
+
+export interface AwgAnalyzeData {
+	version: AwgVersionId;
+	interface: AwgAnalyzeInterface;
+	peer: AwgAnalyzePeer;
+	hasPrivateKey: boolean;
+	errors: AwgAnalyzeIssue[];
+	warnings: AwgAnalyzeIssue[];
+}
+
 export interface ConnectivityCheckConfig {
 	method: 'http' | 'ping' | 'handshake' | 'disabled';
 	pingTarget?: string;
@@ -118,7 +179,7 @@ export interface TunnelListItem {
 	rxBytes?: number;
 	txBytes?: number;
 	lastHandshake?: string;
-	awgVersion?: 'wg' | 'awg1.0' | 'awg1.5' | 'awg2.0' | 'awg3' | 'awg3.1';
+	awgVersion?: AwgVersionId;
 	mtu?: number;
 	startedAt?: string;
 	backend?: 'nativewg' | 'kernel' | 'wdtt-raw';
