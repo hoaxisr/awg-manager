@@ -908,6 +908,11 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 	if err != nil {
 		return fmt.Errorf("parse conf: %w", err)
 	}
+	// Тот же гейт, что у импорта, create и update: модуль такой конфиг всё
+	// равно отвергнет на setconf, отказать здесь — честнее.
+	if err := config.ValidateObfuscation(&parsed.Interface.AWGObfuscation); err != nil {
+		return fmt.Errorf("validate conf: %w", err)
+	}
 
 	wasNativeRunning := false
 	wasKernelRunning := false
