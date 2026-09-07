@@ -544,7 +544,7 @@ definitions:
         example: 12
         type: integer
       s2:
-        example: 12
+        example: 5
         type: integer
       s3:
         example: 12
@@ -559,8 +559,7 @@ definitions:
         example: hp_padding_min
         type: string
       message:
-        example: 'S2 = 5: при заданном HeaderProtectionKey значения S1-S4 должны быть
-          не меньше 12'
+        example: Описание ошибки или предупреждения
         type: string
     type: object
   api.AwgAnalyzePeer:
@@ -8832,6 +8831,10 @@ paths:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       security:

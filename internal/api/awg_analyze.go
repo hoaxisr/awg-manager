@@ -28,7 +28,7 @@ type AwgAnalyzeRequest struct {
 // параметра не возвращается: сообщение его уже называет.
 type AwgAnalyzeIssue struct {
 	Code    string `json:"code" example:"hp_padding_min"`
-	Message string `json:"message" example:"S2 = 5: при заданном HeaderProtectionKey значения S1-S4 должны быть не меньше 12"`
+	Message string `json:"message" example:"Описание ошибки или предупреждения"`
 }
 
 // AwgAnalyzeInterface — секция [Interface] без ключевого материала.
@@ -37,7 +37,7 @@ type AwgAnalyzeInterface struct {
 	Jmin int    `json:"jmin" example:"50"`
 	Jmax int    `json:"jmax" example:"1000"`
 	S1   int    `json:"s1" example:"12"`
-	S2   int    `json:"s2" example:"12"`
+	S2   int    `json:"s2" example:"5"`
 	S3   int    `json:"s3" example:"12"`
 	S4   int    `json:"s4" example:"12"`
 	H1   string `json:"h1" example:"1"`
@@ -311,6 +311,7 @@ func (h *AwgAnalyzeHandler) kmodVersion() string {
 //	@Success		200		{object}	AwgAnalyzeResponse
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		404		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/awg/analyze [post]
 func (h *AwgAnalyzeHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[AwgAnalyzeRequest](w, r, http.MethodPost)
