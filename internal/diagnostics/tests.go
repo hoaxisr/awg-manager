@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
 
@@ -763,14 +765,15 @@ func (r *Runner) testTunnelConnectivity(ctx context.Context, t TunnelInfo) TestR
 
 	// Bound to the tunnel device (SO_BINDTODEVICE), names resolved through the
 	// tunnel DNS: a handshake with a dead data path must show up here as fail.
-	// Unbound, the request followed the default route and always passed with
-	// the WAN address (F128, #867).
-	var dns []string
-	for _, d := range strings.Split(t.Settings.DNS, ",") {
-		if d = strings.TrimSpace(d); d != "" {
-			dns = append(dns, d)
-		}
+	// Unbound, the request followed the system route and passed with a foreign
+	// address (F128, #867). A peer whose AllowedIPs do not cover the internet
+	// drops the probe in wg_xmit — that is not a broken tunnel.
+	if !slices.Contains(t.Settings.AllowedIPs, "0.0.0.0/0") {
+		res.Status = StatusSkip
+		res.Detail = "AllowedIPs не покрывают интернет — проверка неинформативна"
+		return res
 	}
+	dns := tunnel.ParseDNSList(t.Settings.DNS)
 	urls := []string{"https://ifconfig.me", "https://icanhazip.com", "https://ip.me"}
 	var lastErr error
 	for _, url := range urls {

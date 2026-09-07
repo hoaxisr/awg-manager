@@ -362,7 +362,9 @@ func TestDelete_RemovesEndpointHostRoute(t *testing.T) {
 // досинхронизировать конфиг (syncconf сохраняет сессию при неизменном конфиге).
 func TestReconcile_KeepsRunningKernelInterface(t *testing.T) {
 	backend := &MockBackend{running: true, pid: 1}
-	o, rec := newOS5LifecycleOn(t, &recordingPoster{}, ndmsquery.NewFakeGetter(), backend, false)
+	getter := ndmsquery.NewFakeGetter()
+	getter.SetJSON("/show/interface/", `{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","state":"up","link":"up"}}`)
+	o, rec := newOS5LifecycleOn(t, &recordingPoster{}, getter, backend, true)
 	if err := o.Reconcile(context.Background(), lifecycleCfg(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -381,16 +383,27 @@ func TestReconcile_KeepsRunningKernelInterface(t *testing.T) {
 	}
 }
 
-// Если amneziawg-устройства нет (после ребута NDMS воссоздал generic tun или
-// его снесли), Reconcile по-прежнему создаёт его заново.
-func TestReconcile_RecreatesMissingKernelInterface(t *testing.T) {
-	backend := &MockBackend{}
-	o, rec := newOS5LifecycleOn(t, &recordingPoster{}, ndmsquery.NewFakeGetter(), backend, false)
-	if err := o.Reconcile(context.Background(), lifecycleCfg(t)); err != nil {
-		t.Fatal(err)
+// Устройство пересоздаётся, если его нет (rmmod, ручной ip link del) — и если
+// записи OpkgTun в NDMS не было: на живом kernel-устройстве NDMS отвергает
+// ip address (exit 122), запись надо ставить на свежее.
+func TestReconcile_RecreatesKernelInterface(t *testing.T) {
+	cases := []struct {
+		name    string
+		backend *MockBackend
+	}{
+		{"устройства нет", &MockBackend{}},
+		{"устройство живо, записи OpkgTun нет", &MockBackend{running: true, pid: 1}},
 	}
-	if !hasCall(rec.Calls, "/opt/sbin/ip link del dev opkgtun10") || !slices.Equal(backend.StartCalls, []string{"opkgtun10"}) {
-		t.Fatalf("устройство не пересоздано: start=%v\n%s", backend.StartCalls, strings.Join(rec.Calls, "\n"))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			o, rec := newOS5LifecycleOn(t, &recordingPoster{}, ndmsquery.NewFakeGetter(), tc.backend, false)
+			if err := o.Reconcile(context.Background(), lifecycleCfg(t)); err != nil {
+				t.Fatal(err)
+			}
+			if !hasCall(rec.Calls, "/opt/sbin/ip link del dev opkgtun10") || !slices.Equal(tc.backend.StartCalls, []string{"opkgtun10"}) {
+				t.Fatalf("устройство не пересоздано: start=%v\n%s", tc.backend.StartCalls, strings.Join(rec.Calls, "\n"))
+			}
+		})
 	}
 }
 

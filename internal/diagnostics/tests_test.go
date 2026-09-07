@@ -212,7 +212,7 @@ func TestTunnelConnectivity_BindsToTunnelInterface(t *testing.T) {
 	}
 	r := &Runner{}
 	ti := TunnelInfo{ID: "awg10", Status: "running", InterfaceName: "opkgtun10",
-		Settings: TunnelSettings{DNS: "1.1.1.1, 8.8.8.8"}}
+		Settings: TunnelSettings{DNS: "1.1.1.1, 8.8.8.8", AllowedIPs: []string{"0.0.0.0/0", "::/0"}}}
 	res := r.testTunnelConnectivity(context.Background(), ti)
 	if res.Status != StatusPass || !strings.Contains(res.Detail, "203.0.113.9") {
 		t.Fatalf("status=%s detail=%q", res.Status, res.Detail)
@@ -230,5 +230,11 @@ func TestTunnelConnectivity_BindsToTunnelInterface(t *testing.T) {
 	res = r.testTunnelConnectivity(context.Background(), ti)
 	if res.Status != StatusFail || !strings.Contains(res.Detail, "i/o timeout") {
 		t.Fatalf("отказ через туннель не fail: status=%s detail=%q", res.Status, res.Detail)
+	}
+
+	// Узкие AllowedIPs: peer не покрывает адрес сервиса, пробу дропнет само ядро.
+	ti.Settings.AllowedIPs = []string{"10.0.0.0/8"}
+	if res = r.testTunnelConnectivity(context.Background(), ti); res.Status != StatusSkip {
+		t.Fatalf("узкие AllowedIPs должны давать skip: status=%s detail=%q", res.Status, res.Detail)
 	}
 }

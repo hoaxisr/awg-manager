@@ -542,12 +542,15 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	}
 
 	// === Phase 2: Ensure kernel interface is amneziawg type ===
-	// A live amneziawg device is kept as is: recreating it drops the session,
-	// and every awg-manager restart used to do exactly that (F129, #867).
-	// Only when the device is missing or is a generic tun (NDMS recreates one
-	// from saved config after reboot) is it recreated. ip link del triggers
-	// transient NDMS state:error — safe under per-tunnel lock.
-	if running, _ := o.backend.IsRunning(ctx, names.IfaceName); running {
+	// A live amneziawg device under an existing OpkgTun record is kept as is:
+	// recreating it drops the session, and every awg-manager restart used to
+	// do exactly that (F129, #867). It is recreated when the device is missing
+	// or is not amneziawg (rmmod, manual ip link del while suspended), and
+	// when the OpkgTun record had to be created: NDMS SetAddress below fails
+	// (exit 122) on a running kernel-mode device, so the device must be fresh.
+	// ip link del triggers transient NDMS state:error — safe under per-tunnel lock.
+	running, _ := o.backend.IsRunning(ctx, names.IfaceName)
+	if running && !justCreated {
 		o.logInfo("reconcile", cfg.ID, "Kernel interface alive, kept")
 	} else {
 		o.ipRun(ctx, "/opt/sbin/ip", "link", "del", "dev", names.IfaceName)
