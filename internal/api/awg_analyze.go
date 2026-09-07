@@ -121,11 +121,39 @@ func confHasKey(conf, section, key string) bool {
 // mergeStoredKeys вставляет PrivateKey после [Interface] и PresharedKey
 // после [Peer] из хранилища, если в тексте таких строк нет. Явная строка в
 // тексте всегда побеждает — та же merge-семантика, что у update.
+//
+// Пустая строка ключа (`PrivateKey =`) в тексте не считается «есть в
+// тексте» (confHasKey требует непустое значение), поэтому её сначала нужно
+// убрать: иначе она добавляется в файл ПОСЛЕ вставленной из хранилища
+// строки и config.Parse берёт значение из последней встреченной строки —
+// пустое побеждает молча. config.Generate пишет `PrivateKey = %s`
+// безусловно, а tunnels_view.go затирает ключ пустой строкой — этот случай
+// реально приходит с фронта.
 func mergeStoredKeys(conf string, stored *storage.AWGTunnel) string {
 	if stored == nil {
 		return conf
 	}
 	has := func(section, key string) bool { return confHasKey(conf, section, key) }
+	removeEmptyKeyLine := func(section, key string) {
+		cur := ""
+		out := make([]string, 0, strings.Count(conf, "\n")+1)
+		for _, l := range strings.Split(conf, "\n") {
+			trimmed := strings.TrimSpace(l)
+			switch strings.ToLower(trimmed) {
+			case "[interface]", "[peer]":
+				cur = strings.ToLower(trimmed)
+				out = append(out, l)
+				continue
+			}
+			if cur == section {
+				if k, v, ok := strings.Cut(trimmed, "="); ok && strings.EqualFold(strings.TrimSpace(k), key) && strings.TrimSpace(v) == "" {
+					continue
+				}
+			}
+			out = append(out, l)
+		}
+		conf = strings.Join(out, "\n")
+	}
 	insertAfter := func(section, line string) {
 		out := make([]string, 0, strings.Count(conf, "\n")+2)
 		for _, l := range strings.Split(conf, "\n") {
@@ -137,9 +165,11 @@ func mergeStoredKeys(conf string, stored *storage.AWGTunnel) string {
 		conf = strings.Join(out, "\n")
 	}
 	if stored.Interface.PrivateKey != "" && !has("[interface]", "PrivateKey") {
+		removeEmptyKeyLine("[interface]", "PrivateKey")
 		insertAfter("[Interface]", "PrivateKey = "+stored.Interface.PrivateKey)
 	}
 	if stored.Peer.PresharedKey != "" && !has("[peer]", "PresharedKey") {
+		removeEmptyKeyLine("[peer]", "PresharedKey")
 		insertAfter("[Peer]", "PresharedKey = "+stored.Peer.PresharedKey)
 	}
 	return conf

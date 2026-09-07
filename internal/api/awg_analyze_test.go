@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -55,19 +56,24 @@ func TestAnalyzeAwgConf_Versions(t *testing.T) {
 }
 
 func TestAnalyzeAwgConf_NeverLeaksKeys(t *testing.T) {
-	d, err := analyzeAwgConf(confWith("HeaderProtectionKey = "+testHPKey+"\nS1 = 12\nS2 = 12\nS3 = 12\nS4 = 12\nH1 = 10\nH2 = 20\nH3 = 30\nH4 = 40\n", "PresharedKey = cHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHM9\n"), nil, "")
+	const psk = "cHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHM9"
+	const privKey = "cGVlclByaXZhdGVLZXlCYXNlNjRFeGFtcGxlMDAwMDAwMD0="
+	d, err := analyzeAwgConf(confWith("HeaderProtectionKey = "+testHPKey+"\nS1 = 12\nS2 = 12\nS3 = 12\nS4 = 12\nH1 = 10\nH2 = 20\nH3 = 30\nH4 = 40\n", "PresharedKey = "+psk+"\n"), nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !d.Interface.HeaderProtection || !d.HasPrivateKey || !d.Peer.HasPresharedKey {
 		t.Fatalf("flags: hp=%v pk=%v psk=%v", d.Interface.HeaderProtection, d.HasPrivateKey, d.Peer.HasPresharedKey)
 	}
-	// Ответ сериализуется целиком в handler'е; здесь достаточно, что в DTO
-	// нет полей под ключи — проверка компилятором. Дополнительно: текст
-	// ключа не попал ни в одно строковое поле.
-	for _, s := range []string{d.Interface.I1, d.Interface.ContentPaddingAddition, d.Peer.Endpoint} {
-		if strings.Contains(s, testHPKey) {
-			t.Fatalf("key leaked into %q", s)
+	// Ответ сериализуется целиком в handler'е — проверяем итоговый JSON, а
+	// не отдельные поля: так утечка через любое строковое поле DTO ловится.
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{testHPKey, privKey, psk} {
+		if strings.Contains(string(b), secret) {
+			t.Fatalf("key leaked into JSON: %q\n%s", secret, b)
 		}
 	}
 }
@@ -160,7 +166,10 @@ func TestAnalyzeAwgConf_MergesStoredKeys(t *testing.T) {
 		t.Fatalf("stored keys not merged: pk=%v psk=%v fromStore=%v", d.HasPrivateKey, d.Peer.HasPresharedKey, d.Peer.PresharedKeyFromStore)
 	}
 	// PSK в тексте — не «из туннеля».
-	inText, _ := analyzeAwgConf(confWith("", "PresharedKey = cHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHM9\n"), stored, "")
+	inText, err := analyzeAwgConf(confWith("", "PresharedKey = cHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHM9\n"), stored, "")
+	if err != nil {
+		t.Fatalf("analyze psk in text: %v", err)
+	}
 	if !inText.Peer.HasPresharedKey || inText.Peer.PresharedKeyFromStore {
 		t.Fatalf("psk from text must not be flagged as from store: %+v", inText.Peer)
 	}
@@ -184,7 +193,10 @@ func TestAnalyzeAwgConf_DefaultsFlagged(t *testing.T) {
 	if d.Interface.MTU != 1280 || d.Peer.PersistentKeepalive != "25" || len(d.Peer.AllowedIPs) != 2 {
 		t.Fatalf("parser defaults changed: %+v %+v", d.Interface.MTU, d.Peer)
 	}
-	full, _ := analyzeAwgConf(confPlainWG, nil, "")
+	full, err := analyzeAwgConf(confPlainWG, nil, "")
+	if err != nil {
+		t.Fatalf("analyze full conf: %v", err)
+	}
 	if !full.Interface.MTUSet || !full.Peer.KeepaliveSet || !full.Peer.AllowedIPsSet {
 		t.Fatalf("explicit values not flagged: %+v %+v", full.Interface.MTUSet, full.Peer)
 	}
@@ -198,6 +210,31 @@ func TestMergeStoredKeys_KeepsExplicitText(t *testing.T) {
 	out := mergeStoredKeys(confWith("", "PresharedKey = TEXTPSK\n"), stored)
 	if strings.Contains(out, "STORED\n") || strings.Contains(out, "STOREDPSK") {
 		t.Fatalf("explicit keys in text must win:\n%s", out)
+	}
+}
+
+// Пустая строка ключа в тексте (config.Generate пишет `PrivateKey = %s`
+// безусловно, tunnels_view.go затирает значение пустой строкой) не должна
+// побеждать ключ из хранилища: она должна быть заменена, а не оставлена
+// висеть ПОСЛЕ вставленной строки — иначе config.Parse берёт последнее
+// встреченное значение, то есть пустое.
+func TestMergeStoredKeys_EmptyKeyLineIsReplaced(t *testing.T) {
+	conf := strings.Replace(confPlainWG, "PrivateKey = cGVlclByaXZhdGVLZXlCYXNlNjRFeGFtcGxlMDAwMDAwMD0=\n", "PrivateKey =\n", 1)
+	conf = strings.Replace(conf, "PersistentKeepalive = 25\n", "PersistentKeepalive = 25\nPresharedKey =\n", 1)
+	stored := &storage.AWGTunnel{
+		Interface: storage.AWGInterface{PrivateKey: "c3RvcmVkUHJpdmF0ZUtleUJhc2U2NEV4YW1wbGUwMDAwMD0="},
+		Peer:      storage.AWGPeer{PresharedKey: "c3RvcmVkUFNLcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHNrcHM9"},
+	}
+	d, err := analyzeAwgConf(conf, stored, "")
+	if err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	if !d.HasPrivateKey || !d.Peer.HasPresharedKey || !d.Peer.PresharedKeyFromStore {
+		t.Fatalf("empty key lines not replaced: pk=%v psk=%v fromStore=%v", d.HasPrivateKey, d.Peer.HasPresharedKey, d.Peer.PresharedKeyFromStore)
+	}
+	out := mergeStoredKeys(conf, stored)
+	if strings.Count(out, "PrivateKey") != 1 {
+		t.Fatalf("want exactly one PrivateKey line, got:\n%s", out)
 	}
 }
 
