@@ -1,9 +1,14 @@
 package diagnostics
 
 import (
+	"context"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 )
 
 func TestRunOptions_RestartCycleOnlyWhenIncludeRestart(t *testing.T) {
@@ -191,5 +196,39 @@ func TestRouteDevFromIPRouteGet(t *testing.T) {
 				t.Errorf("routeDevFromIPRouteGet(%q) = %q; want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+// F128 (#867): «Связность через туннель» ходила по default route (WAN) и
+// всегда давала pass с WAN-адресом роутера. Запрос обязан быть привязан к
+// интерфейсу туннеля, имя резолвится DNS-серверами туннеля, а отказ — fail.
+func TestTunnelConnectivity_BindsToTunnelInterface(t *testing.T) {
+	orig := httpDo
+	t.Cleanup(func() { httpDo = orig })
+	var got httpclient.CallConfig
+	httpDo = func(_ context.Context, cfg httpclient.CallConfig) (*httpclient.Result, error) {
+		got = cfg
+		return &httpclient.Result{Body: "203.0.113.9\n"}, nil
+	}
+	r := &Runner{}
+	ti := TunnelInfo{ID: "awg10", Status: "running", InterfaceName: "opkgtun10",
+		Settings: TunnelSettings{DNS: "1.1.1.1, 8.8.8.8"}}
+	res := r.testTunnelConnectivity(context.Background(), ti)
+	if res.Status != StatusPass || !strings.Contains(res.Detail, "203.0.113.9") {
+		t.Fatalf("status=%s detail=%q", res.Status, res.Detail)
+	}
+	if got.Interface != "opkgtun10" {
+		t.Fatalf("запрос не привязан к туннелю: Interface=%q", got.Interface)
+	}
+	if !slices.Equal(got.DNSServers, []string{"1.1.1.1", "8.8.8.8"}) {
+		t.Fatalf("DNS туннеля не переданы: %v", got.DNSServers)
+	}
+
+	httpDo = func(_ context.Context, _ httpclient.CallConfig) (*httpclient.Result, error) {
+		return nil, errors.New("dial tcp4 203.0.113.1:443: i/o timeout")
+	}
+	res = r.testTunnelConnectivity(context.Background(), ti)
+	if res.Status != StatusFail || !strings.Contains(res.Detail, "i/o timeout") {
+		t.Fatalf("отказ через туннель не fail: status=%s detail=%q", res.Status, res.Detail)
 	}
 }
