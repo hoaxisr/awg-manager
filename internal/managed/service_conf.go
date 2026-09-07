@@ -11,8 +11,10 @@ import (
 )
 
 // GenerateConf generates a WireGuard client .conf file for a peer of the
-// managed server identified by id.
-func (s *Service) GenerateConf(ctx context.Context, id, pubkey string) (string, error) {
+// managed server identified by id. Непустой endpointHost подставляется в
+// [Peer] Endpoint как есть — без обращения к WAN/KeenDNS: так конфиг просят
+// прокси-обвязки (FreeTurn), которые всё равно ведут клиента на 127.0.0.1.
+func (s *Service) GenerateConf(ctx context.Context, id, pubkey, endpointHost string) (string, error) {
 	server, ok := s.settings.GetManagedServerByID(id)
 	if !ok {
 		return "", fmt.Errorf("managed server not found: %s", id)
@@ -34,8 +36,11 @@ func (s *Service) GenerateConf(ctx context.Context, id, pubkey string) (string, 
 		return "", fmt.Errorf("server public key not available")
 	}
 
-	// Resolve endpoint: use stored value or fall back to WAN IP
-	endpoint := server.Endpoint
+	// Resolve endpoint: explicit host → stored value → WAN IP
+	endpoint := endpointHost
+	if endpoint == "" {
+		endpoint = server.Endpoint
+	}
 	if endpoint == "" {
 		wanIP, err := testing.GetWANIPWithFallback(ctx, s.queries.WANInterfaceAddress)
 		if err != nil {

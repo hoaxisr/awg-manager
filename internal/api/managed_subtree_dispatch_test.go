@@ -118,7 +118,7 @@ func (s *recManagedSvc) TogglePeer(_ context.Context, id, pubkey string, enabled
 	return s.err
 }
 
-func (s *recManagedSvc) GenerateConf(context.Context, string, string) (string, error) {
+func (s *recManagedSvc) GenerateConf(context.Context, string, string, string) (string, error) {
 	return "", nil
 }
 

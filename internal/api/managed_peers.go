@@ -92,6 +92,7 @@ func (h *ManagedServerHandler) UpdatePeer(w http.ResponseWriter, r *http.Request
 //	@Security		CookieAuth
 //	@Param			id		path		string	true	"Server id"
 //	@Param			pubkey	path		string	true	"Peer public key (URL-encoded)"
+//	@Param			endpoint	query		string	false	"Хост для [Peer] Endpoint вместо WAN/KeenDNS (прокси-обвязки шлют 127.0.0.1)"
 //	@Success		200		{object}	ServersAllResponse
 //	@Failure		404		{object}	APIErrorEnvelope
 //	@Failure		500		{object}	APIErrorEnvelope
@@ -159,7 +160,7 @@ func (h *ManagedServerHandler) PeerConf(w http.ResponseWriter, r *http.Request, 
 		response.MethodNotAllowed(w)
 		return
 	}
-	conf, err := h.svc.GenerateConf(r.Context(), id, pubkey)
+	conf, err := h.svc.GenerateConf(r.Context(), id, pubkey, r.URL.Query().Get("endpoint"))
 	if err != nil {
 		response.Error(w, err.Error(), "CONF_FAILED")
 		return

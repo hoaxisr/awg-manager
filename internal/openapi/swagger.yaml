@@ -10986,6 +10986,11 @@ paths:
         name: pubkey
         required: true
         type: string
+      - description: Хост для [Peer] Endpoint вместо WAN/KeenDNS (прокси-обвязки шлют
+          127.0.0.1)
+        in: query
+        name: endpoint
+        type: string
       produces:
       - application/json
       responses:
@@ -13267,6 +13272,11 @@ paths:
         in: path
         name: pubkey
         required: true
+        type: string
+      - description: Хост для [Peer] Endpoint вместо WAN/KeenDNS (прокси-обвязки шлют
+          127.0.0.1)
+        in: query
+        name: endpoint
         type: string
       produces:
       - application/json

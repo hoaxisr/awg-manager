@@ -55,12 +55,27 @@ func (s *Service) serverConfig(key string) (instancestore.Record, string, error)
 
 // List — состояние списка. Пустой ClientsFile означает «проверка выключена»:
 // путь едет в аргумент старта -clients-file, и без него сервер не проверяет id.
+// Файл по умолчанию при этом читается всё равно: выключение путь снимает, а
+// файл оставляет, и его записи при следующем включении снова получат доступ —
+// показывать их обязаны и в выключенном состоянии, иначе «Список пуст» врёт.
 func (s *Service) List(key string) (AllowlistStatus, error) {
-	_, clientsFile, err := s.serverConfig(key)
+	rec, clientsFile, err := s.serverConfig(key)
 	if err != nil {
 		return AllowlistStatus{}, err
 	}
-	return loadAllowlistStatus(clientsFile)
+	if strings.TrimSpace(clientsFile) != "" {
+		return loadAllowlistStatus(clientsFile)
+	}
+	st := AllowlistStatus{Enabled: false, Clients: []AllowlistEntry{}}
+	if strings.TrimSpace(s.deps.DataDir) == "" {
+		return st, nil
+	}
+	data, err := readAllowlistFile(defaultAllowlistPath(s.deps.DataDir, rec.ID))
+	if err != nil {
+		return st, err
+	}
+	st.Clients = allowlistEntriesFromFile(data)
+	return st, nil
 }
 
 // Add вносит Client ID в файл списка. Если список был выключен — включает его,
@@ -102,15 +117,19 @@ func (s *Service) Add(ctx context.Context, key, clientID, comment string) (AddAl
 	return AddAllowlistResult{AllowlistStatus: st, NeedsRestart: needsRestart}, nil
 }
 
-// Remove вычёркивает один Client ID из файла списка.
+// Remove вычёркивает один Client ID из файла списка. У выключенного списка —
+// из файла по умолчанию: его записи List показывает, значит, их можно и снять.
 func (s *Service) Remove(key, clientID string) error {
-	_, clientsFile, err := s.serverConfig(key)
+	rec, clientsFile, err := s.serverConfig(key)
 	if err != nil {
 		return err
 	}
 	path := strings.TrimSpace(clientsFile)
 	if path == "" {
-		return fmt.Errorf("allowlist не включён")
+		if strings.TrimSpace(s.deps.DataDir) == "" {
+			return fmt.Errorf("allowlist не включён")
+		}
+		path = defaultAllowlistPath(s.deps.DataDir, rec.ID)
 	}
 	return removeAllowlistClient(path, clientID)
 }

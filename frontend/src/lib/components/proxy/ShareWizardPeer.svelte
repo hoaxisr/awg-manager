@@ -1,10 +1,13 @@
+<script module lang="ts">
+	/** Значение опции «создать нового пира» (#871): создаёт владелец при отправке. */
+	export const NEW_PEER = '\0new';
+</script>
+
 <script lang="ts">
 	// Выбор WG-сервера роутера и пира для FreeTurn-сервера (WS-22..WS-25, WS-28).
-	// Механизм — тот же, что у виджета детали (`freeturn/ServerWgBind.svelte`):
-	// каталог `serverPeerOptions`, `.conf` пира из API и подстановка локального
-	// Endpoint. Свой компонент нужен ради подписей: у виджета детали и абзац, и
-	// подпись порта, и предупреждение Keenetic — легаси-строки, а в мастере
-	// каждая видимая строка обязана быть строкой микрокопии.
+	// Каталог `serverPeerOptions`, `.conf` пира из API и подстановка локального
+	// Endpoint. Тот же виджет служит модалке «Добавить» абонента (#871): там
+	// пиры отфильтрованы по серверу `-connect` и есть опция «создать нового».
 	import { onMount, untrack } from 'svelte';
 	import { Dropdown, Input } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
@@ -14,6 +17,7 @@
 	import {
 		buildRunningServerPeerDropdownOptions,
 		decodeServerPeerValue,
+		findServerByListenPort,
 		patchWgConfEndpoint,
 		resolveServerListenPort,
 	} from '$lib/utils/serverPeerOptions';
@@ -31,12 +35,20 @@
 		 * нет либо вставка ничего не решает.
 		 */
 		onpeerconf: (conf: string, confError: string, portUnknown: boolean) => void;
+		/** Показывать пиров только сервера с этим listen-портом (`-connect` раздачи). */
+		serverListenPort?: number;
+		/** Подпись опции «создать нового пира» — она первая и выбрана по умолчанию. */
+		createLabel?: string;
+		/** Выбранное значение (в т.ч. NEW_PEER), локальный порт Endpoint и «.conf ещё грузится». */
+		onpick?: (value: string, localPort: number, loading: boolean) => void;
 	}
 
-	let { endpointPort, onconnect, onpeerconf }: Props = $props();
+	let { endpointPort, onconnect, onpeerconf, serverListenPort, createLabel, onpick }: Props =
+		$props();
 
 	let snap = $state<ServersSnapshot | null>(null);
-	let selected = $state('');
+	// svelte-ignore state_referenced_locally -- стартовое значение выбора
+	let selected = $state(createLabel ? NEW_PEER : '');
 	let loading = $state(false);
 	// svelte-ignore state_referenced_locally -- стартовое значение поля порта
 	// Порт неизвестен (клиента FreeTurn на роутере нет или их несколько) —
@@ -53,7 +65,20 @@
 	/** listen сервера не определился: `-connect` этого пира собрать не из чего. */
 	let listenUnknown = $state(false);
 
-	const options = $derived(buildRunningServerPeerDropdownOptions(snap));
+	const options = $derived.by(() => {
+		const all = buildRunningServerPeerDropdownOptions(snap);
+		const own = findServerByListenPort(snap, serverListenPort ?? 0);
+		// Порт задан (в т.ч. 0 — `-connect` пуст), а сервер не поднят — пиров нет:
+		// чужой сервер в ссылке хуже пустого списка.
+		const scoped =
+			serverListenPort !== undefined
+				? all.filter((o) => {
+					const { kind, serverId } = decodeServerPeerValue(o.value);
+					return kind === own?.kind && serverId === own?.serverId;
+				})
+			: all;
+		return createLabel ? [{ value: NEW_PEER, label: createLabel }, ...scoped] : scoped;
+	});
 
 	onMount(() => {
 		const unsub = servers.subscribe((st) => (snap = st.data));
@@ -76,7 +101,12 @@
 		// WS-48: конфиг пира есть, а порта для Endpoint нет — либо его не ввели,
 		// либо не определился listen сервера. Вставка .conf тут ничего не чинит.
 		const portUnknown = listenUnknown || (!!src && !ok);
-		untrack(() => onpeerconf(conf, err, portUnknown));
+		const sel = selected;
+		const busy = loading;
+		untrack(() => {
+			onpeerconf(conf, err, portUnknown);
+			onpick?.(sel, ok ? localPort : 0, busy);
+		});
 	});
 
 	async function pick(value: string) {
@@ -85,7 +115,7 @@
 		fetchedConf = '';
 		confError = '';
 		listenUnknown = false;
-		if (!value || !snap) return;
+		if (!value || value === NEW_PEER || !snap) return;
 		loading = true;
 		try {
 			const { kind, serverId, pubkey } = decodeServerPeerValue(value);
@@ -103,10 +133,11 @@
 				?.peers?.find((p) => p.publicKey === pubkey);
 			keenetic = kind === 'system' && peer?.confAvailable !== true;
 			if (keenetic) return;
+			// Endpoint всё равно станет 127.0.0.1 — WAN-адрес бэкенду искать незачем.
 			fetchedConf =
 				kind === 'system'
-					? await api.getSystemServerPeerConf(serverId, pubkey)
-					: await api.getManagedPeerConf(serverId, pubkey);
+					? await api.getSystemServerPeerConf(serverId, pubkey, '127.0.0.1')
+					: await api.getManagedPeerConf(serverId, pubkey, '127.0.0.1');
 		} catch (e) {
 			// Ветка не-Keenetic: `keenetic` здесь уже false, поля вставки .conf
 			// на экране нет — причину обязан унести наверх сам компонент.

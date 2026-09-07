@@ -148,9 +148,11 @@ export class ServersClient extends SystemClient {
 		});
 	}
 
-	async getSystemServerPeerConf(serverId: string, pubkey: string): Promise<string> {
+	/** endpointHost — хост Endpoint вместо WAN/KeenDNS (прокси-обвязки шлют 127.0.0.1). */
+	async getSystemServerPeerConf(serverId: string, pubkey: string, endpointHost = ''): Promise<string> {
+		const q = endpointHost ? `?endpoint=${encodeURIComponent(endpointHost)}` : '';
 		const res = await this.request<{ conf: string }>(
-			`/servers/${encodeURIComponent(serverId)}/peers/${encodeURIComponent(pubkey)}/conf`
+			`/servers/${encodeURIComponent(serverId)}/peers/${encodeURIComponent(pubkey)}/conf${q}`
 		);
 		return res.conf;
 	}
@@ -261,8 +263,10 @@ export class ServersClient extends SystemClient {
 		});
 	}
 
-	async getManagedPeerConf(serverId: string, pubkey: string): Promise<string> {
-		const res = await this.request<{ conf: string }>(`/managed-servers/${encodeURIComponent(serverId)}/peers/${encodeURIComponent(pubkey)}/conf`);
+	/** endpointHost — хост Endpoint вместо WAN/KeenDNS (прокси-обвязки шлют 127.0.0.1). */
+	async getManagedPeerConf(serverId: string, pubkey: string, endpointHost = ''): Promise<string> {
+		const q = endpointHost ? `?endpoint=${encodeURIComponent(endpointHost)}` : '';
+		const res = await this.request<{ conf: string }>(`/managed-servers/${encodeURIComponent(serverId)}/peers/${encodeURIComponent(pubkey)}/conf${q}`);
 		return res.conf;
 	}
 

@@ -4,7 +4,12 @@
 	// копии конфига и уезжают кнопкой «Сохранить».
 	import { Badge, Button, ChipMultiSelect, Dropdown, FieldHint, FormRow, Input, SegmentedControl, Toggle } from '$lib/components/ui';
 	import { ServerAccessPolicyDropdown } from '$lib/components/servers';
-	import ServerWgBind from '../freeturn/ServerWgBind.svelte';
+	import { servers, type ServersSnapshot } from '$lib/stores/servers';
+	import {
+		buildRunningServerDropdownOptions,
+		connectForServerValue,
+		serverValueForConnect,
+	} from '$lib/utils/serverPeerOptions';
 	import { effectiveStaticWan } from '$lib/api/proxyInstances';
 	import { obfOptions } from '../freeturn/options';
 	import { listenPortNumber, setListenPort } from '$lib/utils/listenPortUtils';
@@ -38,13 +43,6 @@
 		onpolicy: (policy: string) => void;
 		onsave: () => void;
 		onrevert: () => void;
-		/** .conf выбранного пира — уезжает в ссылку абоненту FreeTurn (FS-18). */
-		onpeerconf?: (conf: string) => void;
-		/**
-		 * Выбранный пир FreeTurn-сервера. Состояние принадлежит детали: тот же
-		 * выбор показывает быстрый селект строки состояния (RB-12).
-		 */
-		peer?: string;
 	}
 
 	let {
@@ -60,9 +58,14 @@
 		onpolicy,
 		onsave,
 		onrevert,
-		onpeerconf,
-		peer = $bindable(''),
 	}: Props = $props();
+
+	// WG-сервер, куда FreeTurn отдаёт трафик (#871): выбор пишет `-connect`,
+	// сам выбор — производная от него, второго состояния нет.
+	let wgSnap = $state<ServersSnapshot | null>(null);
+	$effect(() => servers.subscribe((st) => (wgSnap = st.data)));
+	const wgServerOptions = $derived(buildRunningServerDropdownOptions(wgSnap));
+	const wgServer = $derived(serverValueForConnect(wgSnap, ftServer?.connect ?? ''));
 
 	const natMode = $derived((wdttServer?.natMode ?? 'full') as NatMode);
 	/**
@@ -217,23 +220,24 @@
 			/>
 		</div>
 	{:else if ftServer}
-		<!-- SH-59/SH-60: полей конфига с такими именами нет — это виджет, который
-		     пишет `-connect` и кладёт .conf пира в ссылку абоненту. Стоит ПЕРВЫМ
-		     (правка владельца 2026-08-27): сначала «куда ведёт раздача», потом
-		     «на каком порту принимает». -->
+		<!-- SH-59/SH-60: поля конфига с таким именем нет — выбор пишет `-connect`
+		     как 127.0.0.1:<listenPort>; .conf пира абоненту выбирает модалка
+		     «Добавить» (#871). Стоит ПЕРВЫМ (правка владельца 2026-08-27):
+		     сначала «куда ведёт раздача», потом «на каком порту принимает». -->
 		<p class="sub-title">WG-сервер</p>
-		<ServerWgBind
-			autoApply
-			compact
-			peerLabel="Пир"
-			bind:selected={peer}
-			onConnect={(addr) => {
-				if (ftServer) ftServer.connect = addr;
-			}}
-			onPeerConf={(conf) => onpeerconf?.(conf)}
-		/>
-
 		<div class="form">
+			<FormRow label="Сервер" hint="Поднятый WG-сервер роутера, в который FreeTurn отдаёт трафик абонентов">
+				<Dropdown
+					value={wgServer}
+					options={wgServerOptions}
+					placeholder={wgServerOptions.length ? 'Выберите…' : 'Нет поднятых WG-серверов'}
+					disabled={!wgServerOptions.length || busy}
+					onchange={(v) => {
+						if (ftServer) ftServer.connect = connectForServerValue(wgSnap, v);
+					}}
+					fullWidth
+				/>
+			</FormRow>
 			<FormRow
 				label="Listen-порт"
 				for="ft-listen"

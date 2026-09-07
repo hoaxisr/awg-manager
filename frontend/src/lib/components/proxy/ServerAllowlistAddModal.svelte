@@ -4,6 +4,19 @@
 	// отправке — у владельца списка.
 	import { RefreshCw } from 'lucide-svelte';
 	import { Button, IconButton, Input, Modal, Toggle } from '$lib/components/ui';
+	import ShareWizardPeer, { NEW_PEER } from './ShareWizardPeer.svelte';
+
+	/** Что уходит владельцу: пир либо NEW_PEER (создать под абонента, #871). */
+	export interface AddClientValues {
+		clientId: string;
+		name: string;
+		allow: boolean;
+		peer: string;
+		/** .conf выбранного пира с локальным Endpoint; у NEW_PEER пуст. */
+		peerConf: string;
+		/** Локальный порт FreeTurn-клиента для Endpoint создаваемого пира. */
+		localPort: number;
+	}
 
 	interface Props {
 		open: boolean;
@@ -11,11 +24,13 @@
 		busy?: boolean;
 		/** Отказ последней попытки: печатается здесь, у полей, которых он касается. */
 		error?: string;
-		onsubmit: (values: { clientId: string; name: string; allow: boolean }) => void;
+		/** listen-порт WG-сервера, на который смотрит `-connect` раздачи. */
+		serverListenPort?: number;
+		onsubmit: (values: AddClientValues) => void;
 		onclose: () => void;
 	}
 
-	let { open, busy = false, error = '', onsubmit, onclose }: Props = $props();
+	let { open, busy = false, error = '', serverListenPort, onsubmit, onclose }: Props = $props();
 
 	/** Client ID придумывает фронт: бэкенд в ответе лишь возвращает присланный. */
 	function randomClientId(): string {
@@ -27,8 +42,20 @@
 	let clientId = $state(randomClientId());
 	let name = $state('');
 	let allow = $state(true);
+	// Виджет пира живёт внутри окна и пересоздаётся с каждым открытием: сброса не нужно.
+	let peer = $state(NEW_PEER);
+	let peerConf = $state('');
+	let localPort = $state(0);
+	let portUnknown = $state(false);
+	let peerLoading = $state(false);
+	let confError = $state('');
 
-	const canSubmit = $derived(!!clientId.trim() && !busy);
+	// Существующий пир без .conf — ссылка ушла бы без WG (#871 — ровно про
+	// неполные ссылки): ждём загрузку, у Keenetic-пира — вставку .conf.
+	const confMissing = $derived(peer !== NEW_PEER && !peerConf.trim());
+	const canSubmit = $derived(
+		!!clientId.trim() && !busy && !portUnknown && localPort > 0 && !peerLoading && !confMissing,
+	);
 
 	// Закрытая модалка полей не хранит: следующее открытие начинается с чистой
 	// формы и нового Client ID.
@@ -41,7 +68,7 @@
 
 	function submit() {
 		if (!canSubmit) return;
-		onsubmit({ clientId: clientId.trim(), name: name.trim(), allow });
+		onsubmit({ clientId: clientId.trim(), name: name.trim(), allow, peer, peerConf, localPort });
 	}
 </script>
 
@@ -59,6 +86,29 @@
 			</IconButton>
 		</div>
 		<Input label="Имя абонента" bind:value={name} fullWidth />
+		<ShareWizardPeer
+			endpointPort={9000}
+			{serverListenPort}
+			createLabel="Создать нового под абонента"
+			onconnect={() => {}}
+			onpeerconf={(conf, err, unknown) => {
+				peerConf = conf;
+				confError = err;
+				portUnknown = unknown;
+			}}
+			onpick={(v, port, loading) => {
+				peer = v;
+				localPort = port;
+				peerLoading = loading;
+			}}
+		/>
+		{#if portUnknown || localPort <= 0}
+			<p class="add-error" role="alert">Укажите локальный порт FreeTurn-клиента абонента</p>
+		{:else if confMissing && !peerLoading}
+			<p class="add-error" role="alert">
+				{confError || 'Конфиг пира не получен — без него ссылка абоненту неполная'}
+			</p>
+		{/if}
 		<Toggle
 			label="Внести в список разрешённых"
 			checked={allow}

@@ -4,6 +4,7 @@
 	import { routerDnsHint } from './routerDnsHint';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { suggestNextPeerIP } from '$lib/utils/serverPeerOptions';
 
 	interface Props {
 		open: boolean;
@@ -51,18 +52,10 @@
 	);
 
 	function suggestNextIP(): string {
-		const parts = server.address.split('.');
-		if (parts.length !== 4) return '';
-		const base = parts.slice(0, 3).join('.');
-		const usedIPs = new Set([
+		return suggestNextPeerIP(
 			server.address,
-			...(server.peers ?? []).map(p => p.tunnelIP.replace(/\/\d+$/, ''))
-		]);
-		for (let i = 2; i < 255; i++) {
-			const candidate = `${base}.${i}`;
-			if (!usedIPs.has(candidate)) return `${candidate}/32`;
-		}
-		return '';
+			(server.peers ?? []).map((p) => p.tunnelIP.replace(/\/\d+$/, ''))
+		);
 	}
 
 	async function handleAdd() {

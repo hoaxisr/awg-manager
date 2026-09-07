@@ -7,6 +7,11 @@ import {
   linkedTunnelListenPort,
   freeturnLinkHasWg,
   patchWgConfEndpoint,
+  findServerByListenPort,
+  suggestNextPeerIP,
+  buildRunningServerDropdownOptions,
+  serverValueForConnect,
+  connectForServerValue,
 } from './serverPeerOptions';
 import type { ServersSnapshot } from '$lib/stores/servers';
 import type { ManagedServer, WireguardServer } from '$lib/types';
@@ -140,5 +145,50 @@ Endpoint = 127.0.0.1:9000
 AllowedIPs = 0.0.0.0/0`;
     expect(patchWgConfEndpoint(conf, 9001)).toContain('Endpoint = 127.0.0.1:9001');
     expect(patchWgConfEndpoint(conf, 9001)).not.toContain(':9000');
+  });
+
+  it('без строки Endpoint вставляет её в существующий [Peer], а не открывает второй', () => {
+    const conf = '[Interface]\nPrivateKey = x\n\n[Peer]\nPublicKey = y\nAllowedIPs = 0.0.0.0/0';
+    const out = patchWgConfEndpoint(conf, 9001);
+    expect(out.match(/\[Peer\]/g)).toHaveLength(1);
+    expect(out).toContain('[Peer]\nEndpoint = 127.0.0.1:9001\nPublicKey = y');
+  });
+});
+
+describe('выбор WG-сервера раздачи по -connect (#871)', () => {
+  const s = snap({
+    servers: [{ id: 'wg0', interfaceName: 'Wireguard0', description: 'Сис', address: '10.1.0.1', listenPort: 51820, status: 'up', peers: [] } as unknown as WireguardServer],
+    managed: [{ interfaceName: 'wgm1', description: 'Упр', address: '10.2.0.1', listenPort: 51821, peers: [] } as unknown as ManagedServer],
+    managedStats: { wgm1: { status: 'up', peers: [] } },
+  });
+  it('опции — поднятые серверы; значение ↔ -connect в обе стороны', () => {
+    const opts = buildRunningServerDropdownOptions(s);
+    expect(opts.map((o) => o.label)).toEqual(['Managed · Упр', 'Системный WG · Сис']);
+    const v = serverValueForConnect(s, '127.0.0.1:51820');
+    expect(v).toBe(opts[1].value);
+    expect(connectForServerValue(s, v)).toBe('127.0.0.1:51820');
+    expect(serverValueForConnect(s, '127.0.0.1:1')).toBe('');
+    expect(connectForServerValue(s, '')).toBe('');
+  });
+});
+
+
+describe('findServerByListenPort / suggestNextPeerIP (#871)', () => {
+  it('находит сервер по listen-порту -connect и отдаёт занятые адреса', () => {
+    const s = snap({
+      servers: [
+        {
+          id: 'wg0', listenPort: 51820, address: '10.7.0.1', status: 'up',
+          peers: [{ publicKey: 'A', allowedIPs: ['10.7.0.2/32'] }],
+        } as unknown as WireguardServer,
+      ],
+    });
+    const own = findServerByListenPort(s, 51820);
+    expect(own).toMatchObject({ kind: 'system', serverId: 'wg0', peerIPs: ['10.7.0.2'] });
+    expect(findServerByListenPort(s, 1)).toBeNull();
+    const down = snap({ servers: [{ id: 'wg1', listenPort: 51821, address: '10.7.1.1', status: 'down', peers: [] } as unknown as WireguardServer] });
+    expect(findServerByListenPort(down, 51821)).toBeNull();
+    expect(suggestNextPeerIP(own!.address, own!.peerIPs)).toBe('10.7.0.3/32');
+    expect(suggestNextPeerIP('fd00::1', [])).toBe('');
   });
 });

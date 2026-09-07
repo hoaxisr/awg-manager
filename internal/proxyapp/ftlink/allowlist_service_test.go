@@ -113,6 +113,31 @@ func TestAllowlist_ListDisabled(t *testing.T) {
 	}
 }
 
+// Выключенный список показывает записи файла по умолчанию: они получат доступ
+// при следующем включении, и «Список пуст» здесь был бы неправдой (#871, стенд).
+// Снять такую запись тоже можно, не включая проверку.
+func TestAllowlist_ListDisabledShowsDefaultFile(t *testing.T) {
+	s, _, _, dataDir := newAllowlistService(t, ftServerRecord(""))
+	path := defaultAllowlistPath(dataDir, "default")
+	if err := addAllowlistClient(path, okClientID, "Зомби"); err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.List(ftServerKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := AllowlistStatus{Enabled: false, Clients: []AllowlistEntry{{ClientID: okClientID, Comment: "Зомби"}}}
+	if !reflect.DeepEqual(st, want) {
+		t.Fatalf("статус=%+v, want %+v", st, want)
+	}
+	if err := s.Remove(ftServerKey, okClientID); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ = s.List(ftServerKey); len(st.Clients) != 0 {
+		t.Fatalf("после Remove у выключенного списка: %+v", st.Clients)
+	}
+}
+
 func TestAllowlist_ListReadsConfiguredFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "clients.json")
@@ -240,8 +265,11 @@ func TestAllowlist_Remove(t *testing.T) {
 	}
 }
 
+// Без каталога данных у выключенного списка нет и файла по умолчанию —
+// удалять неоткуда (с каталогом — см. TestAllowlist_ListDisabledShowsDefaultFile).
 func TestAllowlist_RemoveWhenDisabled(t *testing.T) {
-	s, _, _, _ := newAllowlistService(t, ftServerRecord(""))
+	_, src, mut, _ := newAllowlistService(t, ftServerRecord(""))
+	s := New(Deps{Records: src, Mutator: mut})
 	err := s.Remove(ftServerKey, okClientID)
 	if err == nil || err.Error() != "allowlist не включён" {
 		t.Fatalf("err=%v", err)
@@ -462,9 +490,10 @@ func TestAllowlistHandler_ErrorCodes(t *testing.T) {
 	if code, _ := decodeEnvelope(t, rr)["code"].(string); code != "FREETURN_ALLOWLIST_ADD_FAILED" {
 		t.Fatalf("код добавления=%v", decodeEnvelope(t, rr)["code"])
 	}
-	// Свежий сервис: неудачное добавление выше уже включило список, а отказ
-	// удаления нужен именно на ВЫКЛЮЧЕННОМ.
-	off, _, _, _ := newAllowlistService(t, ftServerRecord(""))
+	// Свежий сервис без каталога данных: неудачное добавление выше уже
+	// включило список, а отказ удаления нужен на ВЫКЛЮЧЕННОМ без файла по умолчанию.
+	_, src, mut, _ := newAllowlistService(t, ftServerRecord(""))
+	off := New(Deps{Records: src, Mutator: mut})
 	rr = serveAllowlist(t, off, http.MethodDelete, ftServerKey, []string{okClientID}, "")
 	if code, _ := decodeEnvelope(t, rr)["code"].(string); code != "FREETURN_ALLOWLIST_REMOVE_FAILED" {
 		t.Fatalf("код удаления=%v", decodeEnvelope(t, rr)["code"])

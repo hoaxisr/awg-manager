@@ -393,6 +393,7 @@ func (h *ServersHandler) ToggleServerPeer(w http.ResponseWriter, r *http.Request
 //	@Security		CookieAuth
 //	@Param			name	path		string	true	"Interface name (e.g. Wireguard0)"
 //	@Param			pubkey	path		string	true	"Peer public key"
+//	@Param			endpoint	query		string	false	"Хост для [Peer] Endpoint вместо WAN/KeenDNS (прокси-обвязки шлют 127.0.0.1)"
 //	@Success		200		{object}	PeerConfResponse
 //	@Failure		404		{object}	APIErrorEnvelope
 //	@Failure		500		{object}	APIErrorEnvelope
@@ -415,7 +416,7 @@ func (h *ServersHandler) ServerPeerConf(w http.ResponseWriter, r *http.Request, 
 		response.Error(w, "ключ клиента недоступен (создан вне AWG Manager или через KeenDNS)", "CONF_UNAVAILABLE")
 		return
 	}
-	conf, err := h.generateServerPeerConf(r.Context(), server, pubkey, sec)
+	conf, err := h.generateServerPeerConf(r.Context(), server, pubkey, sec, r.URL.Query().Get("endpoint"))
 	if err != nil {
 		response.Error(w, err.Error(), "CONF_FAILED")
 		return
@@ -423,10 +424,16 @@ func (h *ServersHandler) ServerPeerConf(w http.ResponseWriter, r *http.Request, 
 	response.Success(w, map[string]string{"conf": conf})
 }
 
-func (h *ServersHandler) generateServerPeerConf(ctx context.Context, server *ndms.WireguardServer, pubkey string, sec storage.ServerPeerSecret) (string, error) {
-	endpoint, err := h.resolveServerEndpoint(ctx, server.ID)
-	if err != nil {
-		return "", err
+// generateServerPeerConf: непустой endpointHost идёт в [Peer] Endpoint без
+// обращения к WAN/KeenDNS — так конфиг просят прокси-обвязки (FreeTurn),
+// которые всё равно ведут клиента на 127.0.0.1 и без WAN падали бы зря.
+func (h *ServersHandler) generateServerPeerConf(ctx context.Context, server *ndms.WireguardServer, pubkey string, sec storage.ServerPeerSecret, endpointHost string) (string, error) {
+	endpoint := endpointHost
+	if endpoint == "" {
+		var err error
+		if endpoint, err = h.resolveServerEndpoint(ctx, server.ID); err != nil {
+			return "", err
+		}
 	}
 	tunnelIP := sec.TunnelIP
 	if tunnelIP == "" {

@@ -4,6 +4,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
+	import { suggestNextPeerIP } from '$lib/utils/serverPeerOptions';
 
 	interface Props {
 		open: boolean;
@@ -26,15 +27,7 @@
 	}
 
 	function suggestNextIP(): string {
-		const parts = server.address.split('.');
-		if (parts.length !== 4) return '';
-		const base = parts.slice(0, 3).join('.');
-		const usedIPs = new Set([server.address, ...(server.peers ?? []).map(peerHostIP)]);
-		for (let i = 2; i < 255; i++) {
-			const candidate = `${base}.${i}`;
-			if (!usedIPs.has(candidate)) return `${candidate}/32`;
-		}
-		return '';
+		return suggestNextPeerIP(server.address, (server.peers ?? []).map(peerHostIP));
 	}
 
 	$effect(() => {

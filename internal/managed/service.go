@@ -51,7 +51,7 @@ type ManagedServerService interface {
 	TogglePeer(ctx context.Context, id, pubkey string, enabled bool) error
 
 	// Config generation
-	GenerateConf(ctx context.Context, id, pubkey string) (string, error)
+	GenerateConf(ctx context.Context, id, pubkey, endpointHost string) (string, error)
 
 	// Runtime stats
 	GetStats(ctx context.Context, id string) (*ManagedServerStats, error)
