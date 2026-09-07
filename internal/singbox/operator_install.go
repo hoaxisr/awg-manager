@@ -80,13 +80,12 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 	if o.inst != nil && s.CurrentVersion != "" && s.RequiredVersion != "" {
 		s.CurrentSHA256, _ = o.inst.CurrentSHA256()
 		s.RequiredSHA256 = o.inst.RequiredSHA256()
-		s.UpdateAvailable = s.CurrentVersion != s.RequiredVersion ||
-			(s.CurrentSHA256 != "" && s.RequiredSHA256 != "" && !strings.EqualFold(s.CurrentSHA256, s.RequiredSHA256))
+		s.UpdateAvailable = s.CurrentVersion != s.RequiredVersion || !o.inst.MatchesPinnedBytes(s.CurrentVersion)
 	} else {
 		s.UpdateAvailable = s.CurrentVersion != "" && s.RequiredVersion != "" && s.CurrentVersion != s.RequiredVersion
 	}
 	if o.inst != nil {
-		s.InstallState = string(o.inst.EvaluateInstallState())
+		s.InstallState = string(o.inst.EvaluateInstallState(s.CurrentVersion))
 		s.RequiredBytes = o.inst.RequiredSize() + installer.SafetyMargin
 		if free, ok := o.inst.FreeBytes(); ok {
 			s.FreeBytes = free
@@ -292,7 +291,7 @@ func (o *Operator) Install(ctx context.Context) error {
 	if o.inst == nil {
 		return fmt.Errorf("installer not wired")
 	}
-	if o.inst.EvaluateInstallState() == installer.InstallStateMissingNoSpace {
+	if o.inst.EvaluateInstallState("") == installer.InstallStateMissingNoSpace {
 		if o.installProgress != nil {
 			o.installProgress("install", "error", 0, 0, "недостаточно места на диске")
 		}
@@ -380,7 +379,9 @@ func (o *Operator) Update(ctx context.Context) error {
 	if o.inst.MatchesRequired(ctx) {
 		return nil
 	}
-	if o.inst.EvaluateInstallState() == installer.InstallStateOutdatedNoSpace {
+	// "" — UPX-копия pinned-версии уже отсечена MatchesRequired выше,
+	// версия на решение гейта больше не влияет.
+	if o.inst.EvaluateInstallState("") == installer.InstallStateOutdatedNoSpace {
 		if o.installProgress != nil {
 			o.installProgress("update", "error", 0, 0, "недостаточно места для обновления")
 		}

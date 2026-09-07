@@ -472,7 +472,7 @@ func TestEvaluateInstallState_CleanInstall_HasSpace(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "sing-box")
 	inst := New(target, "test-arch", BinarySpec{Version: "1.2.3", URL: "u", SHA256: "s", Size: 10 << 20}, nil)
 	inst.SetFreeDiskFn(func(string) (int64, bool) { return 200 << 20, true })
-	if got := inst.EvaluateInstallState(); got != InstallStateMissing {
+	if got := inst.EvaluateInstallState(""); got != InstallStateMissing {
 		t.Fatalf("got %q, want %q", got, InstallStateMissing)
 	}
 }
@@ -481,7 +481,7 @@ func TestEvaluateInstallState_CleanInstall_NoSpace(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "sing-box")
 	inst := New(target, "test-arch", BinarySpec{Version: "1.2.3", URL: "u", SHA256: "s", Size: 100 << 20}, nil)
 	inst.SetFreeDiskFn(func(string) (int64, bool) { return 50 << 20, true })
-	if got := inst.EvaluateInstallState(); got != InstallStateMissingNoSpace {
+	if got := inst.EvaluateInstallState(""); got != InstallStateMissingNoSpace {
 		t.Fatalf("got %q, want %q", got, InstallStateMissingNoSpace)
 	}
 }
@@ -492,7 +492,7 @@ func TestEvaluateInstallState_Upgrade_HasSpace(t *testing.T) {
 	_, _ = writeBinary(t, target, "old-content")
 	inst := New(target, "test-arch", BinarySpec{Version: "1.2.3", URL: "u", SHA256: "different-sha", Size: 10 << 20}, nil)
 	inst.SetFreeDiskFn(func(string) (int64, bool) { return 200 << 20, true })
-	if got := inst.EvaluateInstallState(); got != InstallStateMissing {
+	if got := inst.EvaluateInstallState(""); got != InstallStateMissing {
 		t.Fatalf("got %q, want %q (upgrade allowed)", got, InstallStateMissing)
 	}
 }
@@ -503,7 +503,7 @@ func TestEvaluateInstallState_Upgrade_NoSpace(t *testing.T) {
 	_, _ = writeBinary(t, target, "old-content")
 	inst := New(target, "test-arch", BinarySpec{Version: "1.2.3", URL: "u", SHA256: "different-sha", Size: 100 << 20}, nil)
 	inst.SetFreeDiskFn(func(string) (int64, bool) { return 50 << 20, true })
-	if got := inst.EvaluateInstallState(); got != InstallStateOutdatedNoSpace {
+	if got := inst.EvaluateInstallState(""); got != InstallStateOutdatedNoSpace {
 		t.Fatalf("got %q, want %q", got, InstallStateOutdatedNoSpace)
 	}
 }
@@ -514,7 +514,7 @@ func TestEvaluateInstallState_Installed_SameSHA(t *testing.T) {
 	sha, _ := writeBinary(t, target, "pinned-content")
 	inst := New(target, "test-arch", BinarySpec{Version: "1.2.3", URL: "u", SHA256: sha, Size: 10 << 20}, nil)
 	inst.SetFreeDiskFn(func(string) (int64, bool) { return 200 << 20, true })
-	if got := inst.EvaluateInstallState(); got != InstallStateInstalled {
+	if got := inst.EvaluateInstallState(""); got != InstallStateInstalled {
 		t.Fatalf("got %q, want %q", got, InstallStateInstalled)
 	}
 }
@@ -523,7 +523,7 @@ func TestEvaluateInstallState_FreeDiskUnknown_SkipsGate(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "sing-box")
 	inst := New(target, "test-arch", BinarySpec{Version: "1.2.3", URL: "u", SHA256: "s", Size: 100 << 20}, nil)
 	inst.SetFreeDiskFn(func(string) (int64, bool) { return 0, false })
-	if got := inst.EvaluateInstallState(); got != InstallStateMissing {
+	if got := inst.EvaluateInstallState(""); got != InstallStateMissing {
 		t.Fatalf("got %q, want %q", got, InstallStateMissing)
 	}
 }
@@ -532,7 +532,43 @@ func TestEvaluateInstallState_RequiredSizeZero_SkipsGate(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "sing-box")
 	inst := New(target, "test-arch", BinarySpec{Version: "1.2.3", URL: "u", SHA256: "s", Size: 0}, nil)
 	inst.SetFreeDiskFn(func(string) (int64, bool) { return 1 << 10, true })
-	if got := inst.EvaluateInstallState(); got != InstallStateMissing {
+	if got := inst.EvaluateInstallState(""); got != InstallStateMissing {
 		t.Fatalf("got %q, want %q", got, InstallStateMissing)
+	}
+}
+
+// Пользователи на маленьком флеше сжимают бинарь сами (upx): SHA такого
+// файла никогда не совпадёт с pinned, но версия та же — обновлять нечего.
+func TestEvaluateInstallState_UPXPacked_MatchesOnlySameVersion(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sing-box")
+	_, _ = writeBinary(t, target, "\x7fELF\x01\x01\x01\x00padding UPX! packed body")
+	inst := New(target, "test-arch", BinarySpec{Version: "1.2.3", URL: "u", SHA256: "different-sha", Size: 100 << 20}, nil)
+	inst.SetFreeDiskFn(func(string) (int64, bool) { return 50 << 20, true })
+	if got := inst.EvaluateInstallState("1.2.3"); got != InstallStateInstalled {
+		t.Fatalf("same version: got %q, want %q", got, InstallStateInstalled)
+	}
+	if got := inst.EvaluateInstallState("1.0.0"); got != InstallStateOutdatedNoSpace {
+		t.Fatalf("other version: got %q, want %q", got, InstallStateOutdatedNoSpace)
+	}
+	if got := inst.EvaluateInstallState(""); got != InstallStateOutdatedNoSpace {
+		t.Fatalf("unknown version: got %q, want %q", got, InstallStateOutdatedNoSpace)
+	}
+}
+
+func TestInstaller_MatchesRequired_UPXPackedSameVersion(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sing-box")
+	body := []byte("#!/bin/sh\n# UPX! marker as in a packed ELF\necho 'sing-box version 1.2.3'\n")
+	if err := os.WriteFile(target, body, 0755); err != nil {
+		t.Fatal(err)
+	}
+	inst := New(target, "test-arch", BinarySpec{Version: "1.2.3", SHA256: strings.Repeat("0", 64)}, nil)
+	if !inst.MatchesRequired(context.Background()) {
+		t.Fatal("MatchesRequired() = false, want true for UPX-packed binary of the pinned version")
+	}
+	other := New(target, "test-arch", BinarySpec{Version: "1.2.4", SHA256: strings.Repeat("0", 64)}, nil)
+	if other.MatchesRequired(context.Background()) {
+		t.Fatal("MatchesRequired() = true, want false for UPX-packed binary of another version")
 	}
 }

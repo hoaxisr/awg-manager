@@ -252,7 +252,7 @@ func (a *app) setupDeviceProxy() {
 			// Skip migration if there is not enough disk space — GetStatus
 			// will surface InstallStateMissingNoSpace automatically; no
 			// point burning bandwidth on a download that will fail.
-			if a.singboxInstaller.EvaluateInstallState() == installer.InstallStateMissingNoSpace {
+			if a.singboxInstaller.EvaluateInstallState("") == installer.InstallStateMissingNoSpace {
 				a.bootLog.Warn("singbox-auto-migration", "", "skipped: not enough disk space")
 				return
 			}

@@ -114,6 +114,30 @@ func TestOperator_ConfigPaths(t *testing.T) {
 	}
 }
 
+func TestOperator_GetStatus_NoUpdateForUPXPackedSameVersion(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	body := []byte("#!/bin/sh\n# UPX! marker as in a packed ELF\necho 'sing-box version 1.2.3'\n")
+	if err := os.WriteFile(binary, body, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	op.SetInstaller(installer.New(binary, "test-arch", installer.BinarySpec{
+		Version: "1.2.3",
+		SHA256:  strings.Repeat("f", 64),
+		Size:    100 << 20,
+	}, nil))
+
+	status := op.GetStatus(context.Background())
+	if status.UpdateAvailable {
+		t.Fatal("UpdateAvailable = true, want false for UPX-packed binary of the pinned version")
+	}
+	if status.InstallState != string(installer.InstallStateInstalled) {
+		t.Fatalf("InstallState = %q, want %q", status.InstallState, installer.InstallStateInstalled)
+	}
+}
+
 func TestOperator_GetStatus_UpdateAvailableWhenSameVersionSHADiffers(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "sing-box")
@@ -1972,7 +1996,7 @@ func TestOperator_Install_NoSpace_ReturnsNil(t *testing.T) {
 	if err := op.Install(context.Background()); err != nil {
 		t.Fatalf("Install returned error, expected nil: %v", err)
 	}
-	if got := inst.EvaluateInstallState(); got != installer.InstallStateMissingNoSpace {
+	if got := inst.EvaluateInstallState(""); got != installer.InstallStateMissingNoSpace {
 		t.Fatalf("EvaluateInstallState=%q, want %q", got, installer.InstallStateMissingNoSpace)
 	}
 }
@@ -1993,7 +2017,7 @@ func TestOperator_Update_NoSpace_ReturnsNil(t *testing.T) {
 	if err := op.Update(context.Background()); err != nil {
 		t.Fatalf("Update returned error, expected nil: %v", err)
 	}
-	if got := inst.EvaluateInstallState(); got != installer.InstallStateOutdatedNoSpace {
+	if got := inst.EvaluateInstallState(""); got != installer.InstallStateOutdatedNoSpace {
 		t.Fatalf("EvaluateInstallState=%q, want %q", got, installer.InstallStateOutdatedNoSpace)
 	}
 }
