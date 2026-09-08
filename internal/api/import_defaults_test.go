@@ -25,10 +25,15 @@ type importStubSvc struct {
 	// конфиг доехал до разбора (декодированная ссылка, снятые `= none`).
 	content string
 	name    string
+	// importErr — отказ импортёра, если тест его задал.
+	importErr error
 }
 
 func (s *importStubSvc) Import(_ context.Context, content, name, _ string, link service.ImportLink) (*service.TunnelWithStatus, error) {
 	s.link, s.content, s.name = link, content, name
+	if s.importErr != nil {
+		return nil, s.importErr
+	}
 	return s.imported, nil
 }
 

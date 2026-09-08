@@ -70,6 +70,56 @@ func TestSetASCParams_AllowsEmptySignatureFields(t *testing.T) {
 	}
 }
 
+// Разбор ASC-снимка больше не молчит: и битый JSON, и нестроковое i-поле
+// возвращают ошибку, а не пустую сигнатуру. null и "" остаются пустыми.
+func TestExtractASCSignatures_ReportsParseErrors(t *testing.T) {
+	if _, _, _, _, _, err := extractASCSignatures(json.RawMessage(`{"jc":3,`)); err == nil {
+		t.Fatal("битый JSON обязан вернуть ошибку")
+	}
+	if _, _, _, _, _, err := extractASCSignatures(json.RawMessage(`{"i1":5}`)); err == nil ||
+		!strings.Contains(err.Error(), "i1") {
+		t.Fatalf("нестроковое i1 обязано вернуть ошибку с именем поля, got %v", err)
+	}
+	i1, i2, _, _, _, err := extractASCSignatures(json.RawMessage(`{"i1":"<b 0x0a>","i2":null}`))
+	if err != nil || i1 != "<b 0x0a>" || i2 != "" {
+		t.Fatalf("валидный снимок: i1=%q i2=%q err=%v", i1, i2, err)
+	}
+}
+
+// F152: i1..i5 нестрокового типа молча проваливались в "" при разборе
+// (extractASCSignatures глотает ошибку json.Unmarshal) — сигнатура тихо
+// исчезала вместо отказа.
+func TestSetASCParams_RejectsNonStringSignatureField(t *testing.T) {
+	svc, _, _ := newCreateTestService(t)
+	server, err := svc.Create(context.Background(), CreateServerRequest{
+		Address:    "10.43.0.1",
+		Mask:       "255.255.255.0",
+		ListenPort: 52043,
+	})
+	if err != nil {
+		t.Fatalf("seed Create: %v", err)
+	}
+
+	raw := json.RawMessage(`{
+		"jc":3,"jmin":64,"jmax":256,"s1":15,"s2":16,
+		"h1":"100000001","h2":"1200000002","h3":"2400000003","h4":"3600000004",
+		"i1":5
+	}`)
+	err = svc.SetASCParams(context.Background(), server.InterfaceName, raw)
+	if err == nil || !strings.Contains(err.Error(), "i1") {
+		t.Fatalf("non-string i1 must be rejected with an i1-naming error, got %v", err)
+	}
+	// null остаётся допустимым: так NDMS отдаёт пустое поле.
+	rawNull := json.RawMessage(`{
+		"jc":3,"jmin":64,"jmax":256,"s1":15,"s2":16,
+		"h1":"100000001","h2":"1200000002","h3":"2400000003","h4":"3600000004",
+		"i1":null
+	}`)
+	if err := svc.SetASCParams(context.Background(), server.InterfaceName, rawNull); err != nil {
+		t.Fatalf("null i1 must pass: %v", err)
+	}
+}
+
 func TestSetASCParams_ExtendedPairValidation(t *testing.T) {
 	svc, _, _ := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{

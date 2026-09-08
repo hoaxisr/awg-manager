@@ -10,6 +10,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
@@ -149,6 +150,10 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.log.Warn("import", req.Name, "Failed to import tunnel: "+err.Error())
+		if errors.Is(err, signature.ErrPacketsTooLarge) {
+			response.Error(w, err.Error(), "SIGNATURE_TOO_LARGE")
+			return
+		}
 		response.Error(w, err.Error(), "IMPORT_FAILED")
 		return
 	}

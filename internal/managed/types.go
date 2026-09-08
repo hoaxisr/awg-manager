@@ -91,6 +91,13 @@ func (p PeerSignature) packets() signature.GeneratedPackets {
 // суммарная длина строк I1–I5 больше потолка их текстовой записи.
 var ErrSignatureTooLarge = errors.New("signature exceeds size limit")
 
+// ErrUnknownSignatureProfile — профиль имитации не из signature.Profiles.
+var ErrUnknownSignatureProfile = errors.New("unknown signature profile")
+
+// ErrSignatureGenerate — генератор сигнатуры отказал при добавлении пира.
+// AddPeer фейлится закрыто: пир без имитации выдавать молча нельзя.
+var ErrSignatureGenerate = errors.New("signature generation failed")
+
 // TogglePeerRequest contains parameters for enabling/disabling a peer.
 type TogglePeerRequest struct {
 	PublicKey string `json:"publicKey"`

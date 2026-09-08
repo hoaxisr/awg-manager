@@ -140,3 +140,26 @@ func TestIsEmptyASC(t *testing.T) {
 		}
 	}
 }
+
+// После переноса ASC за пиров мерж отдаёт "failed" с уже добавленными пирами:
+// они реально легли в NDMS и стор, значит страница серверов протухла и SSE
+// обязан прилететь.
+func TestHasActionableMutation(t *testing.T) {
+	cases := []struct {
+		name string
+		in   managed.RestoreOutcome
+		want bool
+	}{
+		{name: "created", in: managed.RestoreOutcome{Action: "created"}, want: true},
+		{name: "merged", in: managed.RestoreOutcome{Action: "merged"}, want: true},
+		{name: "renamed", in: managed.RestoreOutcome{Action: "renamed"}, want: true},
+		{name: "conflict", in: managed.RestoreOutcome{Action: "conflict"}, want: false},
+		{name: "failed без пиров", in: managed.RestoreOutcome{Action: "failed"}, want: false},
+		{name: "failed с пирами", in: managed.RestoreOutcome{Action: "failed", AddedPeers: 1}, want: true},
+	}
+	for _, tc := range cases {
+		if got := hasActionableMutation([]managed.RestoreOutcome{tc.in}); got != tc.want {
+			t.Fatalf("%s: hasActionableMutation(%+v)=%v want %v", tc.name, tc.in, got, tc.want)
+		}
+	}
+}

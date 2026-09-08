@@ -422,11 +422,17 @@ func (h *ManagedServerBackupHandler) RestoreDrift(w http.ResponseWriter, r *http
 
 // hasActionableMutation reports whether any outcome action warrants an SSE
 // invalidation (i.e. a server was actually created, merged, or renamed).
+// "failed" тоже считается, когда пиры уже легли в NDMS и стор: мерж падает на
+// ASC ПОСЛЕ добавления пиров, и без подсказки страница серверов протухает.
 func hasActionableMutation(outcomes []managed.RestoreOutcome) bool {
 	for _, o := range outcomes {
 		switch o.Action {
 		case "created", "merged", "renamed":
 			return true
+		case "failed":
+			if o.AddedPeers > 0 {
+				return true
+			}
 		}
 	}
 	return false

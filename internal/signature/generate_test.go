@@ -3,6 +3,7 @@ package signature
 import (
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -89,5 +90,24 @@ func TestGenerate_AllProfilesWithinLimitAndGrammar(t *testing.T) {
 		if p != "sip" && res.Packets.I2 != "" {
 			t.Fatalf("%s: only SIP uses I2", p)
 		}
+	}
+}
+
+func TestCheckSize(t *testing.T) {
+	ok := GeneratedPackets{I1: "<b 0x0102>", I2: "<r 4000>"}
+	if err := CheckSize(ok); err != nil {
+		t.Fatalf("4002 bytes must pass: %v", err)
+	}
+	over := GeneratedPackets{I1: "<r 1000><r 1000><r 1000><r 1000><r 97>"}
+	if !errors.Is(CheckSize(over), ErrPacketsTooLarge) {
+		t.Fatal("4097 token bytes must fail")
+	}
+	raw := GeneratedPackets{I1: strings.Repeat("x", MaxSignatureRawChars+1)}
+	if !errors.Is(CheckSize(raw), ErrPacketsTooLarge) {
+		t.Fatal("raw text over the char cap must fail even though it counts 0 token bytes")
+	}
+	edge := GeneratedPackets{I1: "<b 0x" + strings.Repeat("ab", MaxSignatureBytes) + ">"}
+	if err := CheckSize(edge); err != nil {
+		t.Fatalf("a 4096-byte <b> (8198 chars) must pass: %v", err)
 	}
 }

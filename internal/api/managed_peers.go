@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/managed"
@@ -57,6 +58,10 @@ func (h *ManagedServerHandler) AddPeer(w http.ResponseWriter, r *http.Request, i
 	}
 	peer, err := h.svc.AddPeer(r.Context(), id, req)
 	if err != nil {
+		if errors.Is(err, managed.ErrSignatureGenerate) {
+			response.Error(w, err.Error(), "SIGNATURE_GENERATE_FAILED")
+			return
+		}
 		response.Error(w, err.Error(), "ADD_PEER_FAILED")
 		return
 	}
@@ -89,7 +94,14 @@ func (h *ManagedServerHandler) UpdatePeer(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := h.svc.UpdatePeer(r.Context(), id, pubkey, req); err != nil {
-		response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
+		switch {
+		case errors.Is(err, managed.ErrUnknownSignatureProfile):
+			response.Error(w, err.Error(), "INVALID_SIGNATURE_PROFILE")
+		case errors.Is(err, managed.ErrSignatureTooLarge):
+			response.Error(w, err.Error(), "SIGNATURE_TOO_LARGE")
+		default:
+			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
+		}
 		return
 	}
 	h.svc.InvalidateCache(id)

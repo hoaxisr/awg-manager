@@ -46,7 +46,7 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 	// без имитации нельзя.
 	sig, err := signature.Generate(signature.DefaultProfile)
 	if err != nil {
-		return nil, fmt.Errorf("generate signature: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrSignatureGenerate, err)
 	}
 
 	// Parse tunnel IP
@@ -109,16 +109,9 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 	// Validate inputs BEFORE touching RCI or storage so we can fail clean.
 	if req.Signature != nil {
 		if req.Signature.Profile != "" && signature.CanonicalProtocol(req.Signature.Profile) == "" {
-			return fmt.Errorf("unknown signature profile: %s", req.Signature.Profile)
+			return fmt.Errorf("%w: %s", ErrUnknownSignatureProfile, req.Signature.Profile)
 		}
-		if signature.TotalByteSize(req.Signature.packets()) > signature.MaxSignatureBytes {
-			return ErrSignatureTooLarge
-		}
-		// ByteSize считает только распознанные токены, поэтому сырой текст
-		// проходит гейт выше как 0 байт. Ограничиваем ещё и длину самих строк:
-		// максимум даёт <b> на 4096 байт (8198 символов), токенные формы короче.
-		if len(req.Signature.I1)+len(req.Signature.I2)+len(req.Signature.I3)+
-			len(req.Signature.I4)+len(req.Signature.I5) > 2*signature.MaxSignatureBytes+80 {
+		if err := signature.CheckSize(req.Signature.packets()); err != nil {
 			return ErrSignatureTooLarge
 		}
 	}
@@ -185,7 +178,7 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		return fmt.Errorf("save to storage: %w", err)
 	}
 
-	s.log.Info("peer updated", "interface", iface, "pubkey", pubkey[:8]+"...")
+	s.log.Info("peer updated", "interface", iface, "pubkey", shortKey(pubkey))
 	s.appLog.Info("update-peer", req.Description, fmt.Sprintf("Peer %s updated", req.Description))
 	return nil
 }
@@ -227,7 +220,7 @@ func (s *Service) DeletePeer(ctx context.Context, id, pubkey string) error {
 		return fmt.Errorf("save to storage: %w", err)
 	}
 
-	s.log.Info("peer deleted", "interface", iface, "pubkey", pubkey[:8]+"...")
+	s.log.Info("peer deleted", "interface", iface, "pubkey", shortKey(pubkey))
 	s.appLog.Info("delete-peer", peerName, fmt.Sprintf("Peer %s deleted", peerName))
 	return nil
 }
@@ -264,13 +257,22 @@ func (s *Service) TogglePeer(ctx context.Context, id, pubkey string, enabled boo
 		return fmt.Errorf("save to storage: %w", err)
 	}
 
-	s.log.Info("peer toggled", "interface", iface, "pubkey", pubkey[:8]+"...", "enabled", enabled)
+	s.log.Info("peer toggled", "interface", iface, "pubkey", shortKey(pubkey), "enabled", enabled)
 	state := "disabled"
 	if enabled {
 		state = "enabled"
 	}
 	s.appLog.Info("toggle-peer", peerName, fmt.Sprintf("Peer %s %s", peerName, state))
 	return nil
+}
+
+// shortKey — префикс ключа для журнала. Импортированный ключ может быть
+// короче 8 символов, и pubkey[:8] на нём паниковал уже после записи в NDMS.
+func shortKey(k string) string {
+	if len(k) > 8 {
+		return k[:8] + "..."
+	}
+	return k
 }
 
 func (s *Service) findPeerIndex(server *storage.ManagedServer, pubkey string) int {

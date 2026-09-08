@@ -123,15 +123,6 @@ func (s *Service) restoreOne(ctx context.Context, sv ManagedServerExport, opts R
 			s.appLog.Warn("managed-restore-merge-conflict", sv.InterfaceName, fmt.Sprintf("Merge preflight found %d conflict(s)", len(conflicts)))
 			return outcome
 		}
-		if len(sv.ASC) > 0 {
-			if err := s.applyASCOnMerge(ctx, existingStorage.InterfaceName, sv.ASC); err != nil {
-				outcome.Action = "failed"
-				outcome.Error = err.Error()
-				s.sysLog().Error("managed restore merge ASC apply failed", "interface", sv.InterfaceName, "error", err)
-				s.appLog.Error("managed-restore-merge-failed", sv.InterfaceName, "Failed to apply ASC params on merge path")
-				return outcome
-			}
-		}
 		added, err := s.applyMergePeers(ctx, existingStorage, sv)
 		if err != nil {
 			outcome.Action = "failed"
@@ -139,6 +130,18 @@ func (s *Service) restoreOne(ctx context.Context, sv ManagedServerExport, opts R
 			s.sysLog().Error("managed restore merge failed", "interface", sv.InterfaceName, "error", err)
 			s.appLog.Error("managed-restore-merge-failed", sv.InterfaceName, "Failed to merge missing peers into existing live server")
 			return outcome
+		}
+		// ASC после пиров — сигнатура из ASC-снапшота должна дойти и до
+		// пиров, добавленных этим же мержем.
+		if len(sv.ASC) > 0 {
+			if err := s.applyASCOnMerge(ctx, existingStorage.InterfaceName, sv.ASC); err != nil {
+				outcome.Action = "failed"
+				outcome.AddedPeers = added
+				outcome.Error = "peers merged, ASC params apply failed: " + err.Error()
+				s.sysLog().Error("managed restore merge ASC apply failed", "interface", sv.InterfaceName, "addedPeers", added, "error", err)
+				s.appLog.Error("managed-restore-merge-failed", sv.InterfaceName, "Peers merged, but ASC params apply failed")
+				return outcome
+			}
 		}
 		outcome.Action = "merged"
 		outcome.AddedPeers = added
@@ -398,8 +401,11 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 	// клонируем: слайс общий с входным sv, а мы его правим.
 	saved.Peers = slices.Clone(sv.Peers)
 	if len(sv.ASC) > 0 {
-		if i1, i2, i3, i4, i5, err := extractASCSignatures(sv.ASC); err == nil &&
-			(i1 != "" || i2 != "" || i3 != "" || i4 != "" || i5 != "") {
+		i1, i2, i3, i4, i5, err := extractASCSignatures(sv.ASC)
+		if err != nil {
+			return true, fmt.Errorf("parse ASC signatures: %w", err)
+		}
+		if i1 != "" || i2 != "" || i3 != "" || i4 != "" || i5 != "" {
 			saved.LegacyI1, saved.LegacyI2, saved.LegacyI3, saved.LegacyI4, saved.LegacyI5 = i1, i2, i3, i4, i5
 		}
 	}
@@ -440,13 +446,10 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 	return true, nil
 }
 
-// mergePeers adds peers from sv that are not already present (by public
-// key) on the live existing server. Returns the count actually added.
+// preflightMergePeers проверяет входящих пиров merge-пути: пустой и битый
+// ключ, дубли ключей и адресов, попадание адреса в подсеть сервера. Уже
+// присутствующих пиров не смотрит — их отсеивает applyMergePeers.
 func (s *Service) preflightMergePeers(existing storage.ManagedServer, sv ManagedServerExport) []string {
-	have := make(map[string]struct{}, len(existing.Peers))
-	for _, p := range existing.Peers {
-		have[p.PublicKey] = struct{}{}
-	}
 	var conflicts []string
 	incomingPub := make(map[string]struct{}, len(sv.Peers))
 	incomingIP := make(map[string]struct{}, len(sv.Peers))
@@ -465,6 +468,12 @@ func (s *Service) preflightMergePeers(existing storage.ManagedServer, sv Managed
 			conflicts = append(conflicts, fmt.Sprintf("duplicate peer public key in import: %s", pub))
 		}
 		incomingPub[pub] = struct{}{}
+		// Ключ из чужого бэкапа доезжал до NDMS как есть, а журналы резали
+		// его как pubkey[:8] и роняли процесс. Форма ключа — 32 байта base64.
+		if b, err := base64.StdEncoding.DecodeString(pub); err != nil || len(b) != 32 {
+			conflicts = append(conflicts, fmt.Sprintf("invalid peer public key: %s", shortKey(pub)))
+			continue
+		}
 		ip, _, err := net.ParseCIDR(peer.TunnelIP)
 		if err != nil {
 			conflicts = append(conflicts, fmt.Sprintf("peer tunnel IP %q: %v", peer.TunnelIP, err))
@@ -477,9 +486,6 @@ func (s *Service) preflightMergePeers(existing storage.ManagedServer, sv Managed
 		incomingIP[ipStr] = struct{}{}
 		if err := validatePeerTunnelIP(serverSubnet, serverIP, ip); err != nil {
 			conflicts = append(conflicts, fmt.Sprintf("peer %s %v", pub, err))
-		}
-		if _, exists := have[pub]; exists {
-			continue
 		}
 	}
 	return conflicts
@@ -536,9 +542,9 @@ func (s *Service) applyASCOnMerge(ctx context.Context, ifaceName string, asc jso
 	}
 	i1, i2, i3, i4, i5, err := extractASCSignatures(asc)
 	if err != nil {
-		s.sysLog().Warn("managed restore merge ASC signatures parse failed", "interface", ifaceName, "error", err)
-		s.appLog.Warn("managed-restore-merge-asc-signatures", ifaceName, "ASC applied, but I1-I5 signatures could not be persisted: "+err.Error())
-		return nil
+		s.sysLog().Error("managed restore merge ASC signatures parse failed", "interface", ifaceName, "error", err)
+		s.appLog.Error("managed-restore-merge-asc-signatures", ifaceName, "ASC applied, but I1-I5 signatures could not be parsed: "+err.Error())
+		return fmt.Errorf("parse ASC signatures on merge: %w", err)
 	}
 	if i1 == "" && i2 == "" && i3 == "" && i4 == "" && i5 == "" {
 		return nil

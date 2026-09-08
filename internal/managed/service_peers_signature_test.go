@@ -80,8 +80,25 @@ func TestUpdatePeer_SignatureOptionalAndValidated(t *testing.T) {
 	// неизвестный профиль
 	err = svc.UpdatePeer(context.Background(), "Wireguard1", testPeerPubKey, UpdatePeerRequest{Description: "d2", TunnelIP: "10.0.0.2/32",
 		Signature: &PeerSignature{Profile: "tls", I1: "<b 0x02>"}})
-	if err == nil {
-		t.Fatal("unknown profile must be rejected")
+	if !errors.Is(err, ErrUnknownSignatureProfile) {
+		t.Fatalf("unknown profile err = %v", err)
+	}
+}
+
+// F150: ключ из чужого импорта короче 8 символов — логи резали pubkey[:8]
+// и роняли процесс паникой уже после успешной записи в NDMS.
+func TestPeerLogging_ShortPublicKeyDoesNotPanic(t *testing.T) {
+	svc, store, _ := newCreateTestService(t)
+	_ = store.AddManagedServer(storage.ManagedServer{InterfaceName: "Wireguard1", Address: "10.0.0.1", Mask: "255.255.255.0", ListenPort: 51820, Policy: "none",
+		Peers: []storage.ManagedPeer{{PublicKey: "abc", TunnelIP: "10.0.0.2/32", Description: "d", Enabled: true}}})
+	if err := svc.TogglePeer(context.Background(), "Wireguard1", "abc", false); err != nil {
+		t.Fatalf("toggle with a 3-char key must not panic or fail on logging: %v", err)
+	}
+	if err := svc.UpdatePeer(context.Background(), "Wireguard1", "abc", UpdatePeerRequest{Description: "d2", TunnelIP: "10.0.0.2/32"}); err != nil {
+		t.Fatalf("update with a 3-char key must not panic: %v", err)
+	}
+	if err := svc.DeletePeer(context.Background(), "Wireguard1", "abc"); err != nil {
+		t.Fatalf("delete with a 3-char key must not panic: %v", err)
 	}
 }
 

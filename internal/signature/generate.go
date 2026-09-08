@@ -71,11 +71,10 @@ func generate(profile string, r *mrand.Rand) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	size := TotalByteSize(packets)
-	if size > MaxSignatureBytes {
-		return Result{}, fmt.Errorf("%w: %d > %d", ErrPacketsTooLarge, size, MaxSignatureBytes)
+	if err := CheckSize(packets); err != nil {
+		return Result{}, err
 	}
-	return Result{Profile: key, Packets: packets, ByteSize: size}, nil
+	return Result{Profile: key, Packets: packets, ByteSize: TotalByteSize(packets)}, nil
 }
 
 // newCryptoSeededRand — math/rand с seed из crypto/rand: выбор хостов, длин и
@@ -114,4 +113,20 @@ func ByteSize(pattern string) int {
 
 func TotalByteSize(p GeneratedPackets) int {
 	return ByteSize(p.I1) + ByteSize(p.I2) + ByteSize(p.I3) + ByteSize(p.I4) + ByteSize(p.I5)
+}
+
+// MaxSignatureRawChars — потолок суммарной ДЛИНЫ строк I1–I5. ByteSize считает
+// только распознанные токены, поэтому сырой текст оценивался в 0 байт и
+// проходил гейт; `<b>` на 4096 байт — 8198 символов, токены короче.
+const MaxSignatureRawChars = 2*MaxSignatureBytes + 80
+
+// CheckSize — единая проверка размера сигнатуры для туннелей и пиров.
+func CheckSize(p GeneratedPackets) error {
+	if n := TotalByteSize(p); n > MaxSignatureBytes {
+		return fmt.Errorf("%w: %d > %d bytes", ErrPacketsTooLarge, n, MaxSignatureBytes)
+	}
+	if n := len(p.I1) + len(p.I2) + len(p.I3) + len(p.I4) + len(p.I5); n > MaxSignatureRawChars {
+		return fmt.Errorf("%w: %d > %d chars", ErrPacketsTooLarge, n, MaxSignatureRawChars)
+	}
+	return nil
 }

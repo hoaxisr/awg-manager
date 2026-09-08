@@ -454,6 +454,27 @@ func TestTunnelUpdate_DoesNotPersistOnServiceError(t *testing.T) {
 	}
 }
 
+// F151/Q32: негабаритная сигнатура отличается от прочих отказов AWG3
+// отдельным кодом — карточка показывает её на поле I1-I5, а не общей ошибкой.
+func TestTunnelUpdate_OversizedSignatureIsSignatureTooLarge(t *testing.T) {
+	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
+	if err := store.Create(&storage.AWGTunnel{
+		ID: "awg10", Name: "t1", Enabled: true,
+		Interface: storage.AWGInterface{Address: "10.0.0.2/32"},
+		Peer:      storage.AWGPeer{Endpoint: "1.2.3.4:51820"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	body := `{"interface":{"address":"10.0.0.2/32","i1":"` + strings.Repeat("y", 9000) + `"}}`
+	rr := httptest.NewRecorder()
+	h.Update(rr, httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10", strings.NewReader(body)))
+
+	if !strings.Contains(rr.Body.String(), "SIGNATURE_TOO_LARGE") {
+		t.Fatalf("нет кода SIGNATURE_TOO_LARGE в теле: %.200s", rr.Body.String())
+	}
+}
+
 func TestTunnelUpdate_PreservesStartedAt(t *testing.T) {
 	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
 	if err := store.Create(&storage.AWGTunnel{
