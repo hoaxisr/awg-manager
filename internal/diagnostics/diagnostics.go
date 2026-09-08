@@ -182,25 +182,26 @@ type ConnectionInfo struct {
 
 // TunnelSettings contains tunnel configuration from storage.
 type TunnelSettings struct {
-	MTU  int    `json:"mtu"`
-	DNS  string `json:"dns,omitempty"`
-	Qlen int    `json:"qlen,omitempty"`
-	Jc   int    `json:"jc,omitempty"`
-	Jmin int    `json:"jmin,omitempty"`
-	Jmax int    `json:"jmax,omitempty"`
-	S1   int    `json:"s1,omitempty"`
-	S2   int    `json:"s2,omitempty"`
-	S3   int    `json:"s3,omitempty"`
-	S4   int    `json:"s4,omitempty"`
-	H1   string `json:"h1,omitempty"`
-	H2   string `json:"h2,omitempty"`
-	H3   string `json:"h3,omitempty"`
-	H4   string `json:"h4,omitempty"`
-	I1   string `json:"i1,omitempty"`
-	I2   string `json:"i2,omitempty"`
-	I3   string `json:"i3,omitempty"`
-	I4   string `json:"i4,omitempty"`
-	I5   string `json:"i5,omitempty"`
+	MTU        int      `json:"mtu"`
+	DNS        string   `json:"dns,omitempty"`
+	AllowedIPs []string `json:"allowedIps,omitempty"`
+	Qlen       int      `json:"qlen,omitempty"`
+	Jc         int      `json:"jc,omitempty"`
+	Jmin       int      `json:"jmin,omitempty"`
+	Jmax       int      `json:"jmax,omitempty"`
+	S1         int      `json:"s1,omitempty"`
+	S2         int      `json:"s2,omitempty"`
+	S3         int      `json:"s3,omitempty"`
+	S4         int      `json:"s4,omitempty"`
+	H1         string   `json:"h1,omitempty"`
+	H2         string   `json:"h2,omitempty"`
+	H3         string   `json:"h3,omitempty"`
+	H4         string   `json:"h4,omitempty"`
+	I1         string   `json:"i1,omitempty"`
+	I2         string   `json:"i2,omitempty"`
+	I3         string   `json:"i3,omitempty"`
+	I4         string   `json:"i4,omitempty"`
+	I5         string   `json:"i5,omitempty"`
 
 	ISPInterfaceLabel string           `json:"ispInterfaceLabel,omitempty"`
 	PingCheckConfig   *PingCheckConfig `json:"pingCheckConfig,omitempty"`

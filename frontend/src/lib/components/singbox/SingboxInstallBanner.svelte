@@ -61,12 +61,6 @@
 		if (s.updateAvailable) {
 			return `update-available:${s.currentVersion ?? 'unknown'}:${s.requiredVersion ?? 'unknown'}:${s.requiredSha256 ?? 'unknown'}`;
 		}
-		// NaiveProxy requires the with_naive_outbound build tag. When
-		// the installed binary lacks it, naive outbounds silently fail
-		// at runtime — warn explicitly so the user swaps the build.
-		if (s.features && s.features.length > 0 && !s.features.includes('with_naive_outbound')) {
-			return 'no-naive';
-		}
 		return '';
 	});
 	const issue = $derived(signature.split(':', 1)[0]);
@@ -150,18 +144,6 @@
 				интерфейсы Proxy0/1/… не создаются и трафик sing-box никуда не маршрутизируется.
 				Добавьте компонент в веб-интерфейсе роутера (Настройки → Компоненты → «Клиент прокси»)
 				и перезапустите этот демон.
-			</span>
-		</div>
-		<IconButton ariaLabel="Скрыть" onclick={dismiss}>&times;</IconButton>
-	</div>
-{:else if visible && issue === 'no-naive'}
-	<div class="banner">
-		<div class="text">
-			<strong>Sing-box собран без поддержки NaiveProxy</strong>
-			<span>
-				В установленной сборке отсутствует тег <code>with_naive_outbound</code>.
-				VLESS/Reality и Hysteria2 работают, но NaiveProxy-туннели при запуске будут
-				отвергнуты сингбоксом. Установите сборку с этим тегом, если нужен NaiveProxy.
 			</span>
 		</div>
 		<IconButton ariaLabel="Скрыть" onclick={dismiss}>&times;</IconButton>

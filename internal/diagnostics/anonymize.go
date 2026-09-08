@@ -325,6 +325,7 @@ func (a *anonymizer) registerFromReport(report *Report) {
 		a.registerPublicIPsFromOutput(t.Routes.EndpointRoute)
 		a.registerPublicIPsFromOutput(t.Routes.DefaultRoute)
 		a.registerPublicIPsFromOutput(t.Settings.DNS)
+		a.registerPublicIPsFromOutput(strings.Join(t.Settings.AllowedIPs, " "))
 
 		a.registerHostsFromOutput(t.Interface.KernelAddr)
 		a.registerHostsFromOutput(t.Interface.KernelIPv6)

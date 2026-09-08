@@ -241,12 +241,11 @@ func (a *app) setupSingboxRuntime() {
 	}
 	subProxyMgr := singbox.NewProxyManager(a.ndmsQueries, a.ndmsCommands)
 	a.subAdapter = subscription.NewOperatorAdapter(a.sbOrch, subProxyMgr, a.singboxOp.Clash())
-	// Wire the Operator's cached sing-box build-tag probe into the
-	// subscription adapter so flush() Pass 1 can cheaply pre-filter
-	// outbounds whose type requires a missing optional build tag
-	// (naive). The probe is cached by binary
-	// mtime+size in Operator.detectVersionAndFeaturesCached — common
-	// path is ~10µs per call (stat-only check, no subprocess).
+	// Wire the Operator's sing-box build tags into the subscription
+	// adapter so flush() Pass 1 can cheaply pre-filter outbounds whose
+	// type requires a missing optional build tag (naive). Tags come from
+	// installer.RequiredTags for the pinned version; the version is cached
+	// by binary mtime+size — common path is ~10µs per call (stat only).
 	a.subAdapter.SetSingboxFeaturesFn(a.singboxOp.SingboxFeatures)
 	if err := a.subAdapter.LoadFromDisk(singboxConfigDir); err != nil {
 		a.bootLog.Warn("subscription-adapter", "load-from-disk", err.Error())

@@ -74,6 +74,33 @@ PY
     echo "  Updated $arch (sha=${sha:0:12}..., size=$size)"
 done
 
+# RequiredTags: теги сборки читаются из mipsel-ассета под qemu-user.
+# Без qemu константа остаётся прежней — предупреждаем, правится руками.
+mipsel_bin="$TMP/singbox-${VERSION}-mipsel-3.4"
+if command -v qemu-mipsel-static >/dev/null 2>&1; then
+    chmod +x "$mipsel_bin"
+    tags="$(qemu-mipsel-static "$mipsel_bin" version 2>/dev/null | sed -n 's/^Tags: *//p' | head -1)"
+    if [[ -n "$tags" ]]; then
+        TAGS="$tags" EMBEDDED_GO="$EMBEDDED_GO" python3 - <<'PY'
+import os, pathlib, re, sys
+p = pathlib.Path(os.environ["EMBEDDED_GO"])
+text = p.read_text()
+items = ", ".join(f'"{t.strip()}"' for t in os.environ["TAGS"].split(",") if t.strip())
+text, n = re.subn(r'var RequiredTags = \[\]string\{[^}]*\}',
+                  f'var RequiredTags = []string{{{items}}}', text, count=1)
+if n != 1:
+    sys.stderr.write("ERROR: RequiredTags not found in embedded.go\n")
+    sys.exit(1)
+p.write_text(text)
+PY
+        echo "  Updated RequiredTags: $tags"
+    else
+        echo "WARNING: qemu-mipsel-static printed no Tags — update RequiredTags in embedded.go by hand" >&2
+    fi
+else
+    echo "WARNING: qemu-mipsel-static not found — update RequiredTags in embedded.go by hand" >&2
+fi
+
 gofmt -w "$EMBEDDED_GO"
 echo "Done. Diff:"
 git diff --stat "$EMBEDDED_GO" || true

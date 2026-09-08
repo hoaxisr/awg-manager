@@ -384,6 +384,7 @@ func buildTunnelSettings(stored *storage.AWGTunnel) TunnelSettings {
 	ts := TunnelSettings{
 		MTU:               stored.Interface.MTU,
 		DNS:               stored.Interface.DNS,
+		AllowedIPs:        stored.Peer.AllowedIPs,
 		Qlen:              stored.Interface.Qlen,
 		Jc:                stored.Interface.Jc,
 		Jmin:              stored.Interface.Jmin,

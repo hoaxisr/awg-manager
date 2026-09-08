@@ -26,7 +26,13 @@ type MockWGClient struct {
 	showError    error
 	hasPeer      bool
 
-	SetConfCalls []struct{ Iface, Path string }
+	SetConfCalls  []struct{ Iface, Path string }
+	SyncConfCalls []struct{ Iface, Path string }
+}
+
+func (m *MockWGClient) SyncConf(ctx context.Context, iface, confPath string) error {
+	m.SyncConfCalls = append(m.SyncConfCalls, struct{ Iface, Path string }{iface, confPath})
+	return m.setConfError
 }
 
 func (m *MockWGClient) SetConf(ctx context.Context, iface, confPath string) error {

@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -28,76 +30,39 @@ import (
 var errSyntheticValidator = errors.New("synthetic validator")
 
 func TestParseSingboxVersionOutput(t *testing.T) {
-	t.Run("typical 1.13.x output", func(t *testing.T) {
-		out := "sing-box version 1.13.8\n" +
-			"\n" +
-			"Environment: go1.25.9 linux/arm64\n" +
-			"Tags: with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_naive_outbound,badlinkname,tfogo_checklinkname0,with_musl\n" +
-			"Revision: d5adb54bc6c6b2c21ab6f748276c4ec62d9bb650\n" +
-			"CGO: enabled\n"
-		version, features := parseSingboxVersionOutput(out)
-		if version != "1.13.8" {
-			t.Errorf("version = %q, want 1.13.8", version)
+	cases := map[string]string{
+		"sing-box version 1.13.8\nEnvironment: go1.25.9 linux/arm64\nTags: with_gvisor,with_quic\n": "1.13.8",
+		"sing-box version 1.2.3\n":                   "1.2.3",
+		"SingBox Version 1.13.11\nTaGs: with_quic\n": "1.13.11",
+		"":                                    "",
+		"Environment: go1.25.9 linux/arm64\n": "",
+	}
+	for in, want := range cases {
+		if got := parseSingboxVersionOutput(in); got != want {
+			t.Errorf("parse(%q) = %q, want %q", in, got, want)
 		}
-		wantFeatures := []string{
-			"with_gvisor", "with_quic", "with_dhcp", "with_wireguard",
-			"with_utls", "with_acme", "with_clash_api", "with_tailscale",
-			"with_ccm", "with_ocm", "with_naive_outbound", "badlinkname",
-			"tfogo_checklinkname0", "with_musl",
-		}
-		if !reflect.DeepEqual(features, wantFeatures) {
-			t.Errorf("features mismatch:\n  got  %v\n  want %v", features, wantFeatures)
-		}
-	})
+	}
+}
 
-	t.Run("missing Tags line — version only", func(t *testing.T) {
-		out := "sing-box version 1.10.0\nEnvironment: go1.22 linux/amd64\n"
-		version, features := parseSingboxVersionOutput(out)
-		if version != "1.10.0" {
-			t.Errorf("version = %q", version)
-		}
-		if len(features) != 0 {
-			t.Errorf("features = %v, want empty", features)
-		}
-	})
-
-	t.Run("tags with spaces around commas", func(t *testing.T) {
-		out := "sing-box version 1.0\nTags: with_a , with_b ,with_c\n"
-		_, features := parseSingboxVersionOutput(out)
-		want := []string{"with_a", "with_b", "with_c"}
-		if !reflect.DeepEqual(features, want) {
-			t.Errorf("features = %v, want %v", features, want)
-		}
-	})
-
-	t.Run("empty output", func(t *testing.T) {
-		v, f := parseSingboxVersionOutput("")
-		if v != "" || f != nil {
-			t.Errorf("want empty, got version=%q features=%v", v, f)
-		}
-	})
-
-	t.Run("version line alone", func(t *testing.T) {
-		v, f := parseSingboxVersionOutput("sing-box version 1.2.3\n")
-		if v != "1.2.3" {
-			t.Errorf("version = %q", v)
-		}
-		if len(f) != 0 {
-			t.Errorf("features = %v, want empty", f)
-		}
-	})
-
-	t.Run("accepts singbox alias and mixed case", func(t *testing.T) {
-		out := "SingBox Version 1.13.11\nTaGs: with_quic, with_naive_outbound\n"
-		v, f := parseSingboxVersionOutput(out)
-		if v != "1.13.11" {
-			t.Errorf("version = %q, want 1.13.11", v)
-		}
-		want := []string{"with_quic", "with_naive_outbound"}
-		if !reflect.DeepEqual(f, want) {
-			t.Errorf("features = %v, want %v", f, want)
-		}
-	})
+// Теги не пробуются у бинаря: у pinned-версии они известны из embedded.go,
+// у любой другой — «неизвестно», и гейты outbound-типов молчат.
+func TestFeaturesForVersion(t *testing.T) {
+	op := newOperatorForTest(t)
+	if got := op.featuresForVersion(installer.RequiredVersion); !reflect.DeepEqual(got, installer.RequiredTags) {
+		t.Fatalf("pinned: got %v, want RequiredTags", got)
+	}
+	if got := op.featuresForVersion("0.0.1"); got != nil {
+		t.Fatalf("other version: got %v, want nil", got)
+	}
+	if got := op.featuresForVersion(""); got != nil {
+		t.Fatalf("unknown version: got %v, want nil", got)
+	}
+	// С установщиком pinned — это spec.Version, а не константа.
+	binary := fakeBinary(t, t.TempDir())
+	op.SetInstaller(installer.New(binary, "test-arch", installer.BinarySpec{Version: "9.9.9", SHA256: strings.Repeat("a", 64)}, nil))
+	if got := op.featuresForVersion("9.9.9"); !reflect.DeepEqual(got, installer.RequiredTags) {
+		t.Fatalf("spec pinned: got %v, want RequiredTags", got)
+	}
 }
 
 func TestOperator_ConfigPaths(t *testing.T) {
@@ -111,6 +76,182 @@ func TestOperator_ConfigPaths(t *testing.T) {
 	}
 	if op.tunnelsFile() != filepath.Join(dir, "config.d", "10-tunnels.json") {
 		t.Errorf("tunnelsFile: %s", op.tunnelsFile())
+	}
+}
+
+// Байты совпали с pinned — версия известна без субпроцесса. Скрипт печатает
+// ЧУЖУЮ версию: если бы проба запустилась, тест бы это увидел.
+func TestDetectVersion_PinnedSHA_NoSubprocess(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	body := []byte("#!/bin/sh\necho 'sing-box version 9.9.9'\n")
+	sum := sha256.Sum256(body)
+	if err := os.WriteFile(binary, body, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	op.SetInstaller(installer.New(binary, "test-arch", installer.BinarySpec{Version: "1.2.3", SHA256: hex.EncodeToString(sum[:])}, nil))
+
+	v, f := op.detectVersionAndFeaturesCached(context.Background())
+	if v != "1.2.3" {
+		t.Fatalf("version = %q, want 1.2.3 (from pinned SHA, not from the script)", v)
+	}
+	if !reflect.DeepEqual(f, installer.RequiredTags) {
+		t.Fatalf("features = %v, want RequiredTags", f)
+	}
+	meta, ok := readFreshSidecar(binary)
+	if !ok || meta.Version != "1.2.3" {
+		t.Fatalf("sidecar = %+v ok=%v, want version 1.2.3 persisted", meta, ok)
+	}
+}
+
+// Процесс запущен, SHA чужой (UPX-копия) — версия из Clash API, субпроцесс
+// не нужен (скрипт завершается ошибкой, проба дала бы пустоту).
+func TestDetectVersion_FromClashWhenRunning(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	op.SetInstaller(installer.New(binary, "test-arch", installer.BinarySpec{Version: "1.2.3", SHA256: strings.Repeat("f", 64)}, nil))
+	if err := os.WriteFile(op.pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	op.proc.matchBinaryFn = func(int) bool { return true }
+	op.exeMatches = func(int, string) bool { return true } // /proc/self/exe теста ≠ скрипт
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"version":"sing-box 1.2.3"}`))
+	}))
+	defer ts.Close()
+	op.clash.SetAddress(strings.TrimPrefix(ts.URL, "http://"))
+
+	v, f := op.detectVersionAndFeaturesCached(context.Background())
+	if v != "1.2.3" {
+		t.Fatalf("version = %q, want 1.2.3 from Clash API", v)
+	}
+	if !reflect.DeepEqual(f, installer.RequiredTags) {
+		t.Fatalf("features = %v, want RequiredTags (version is pinned)", f)
+	}
+
+	// Clash погас, новый Operator без in-memory кэша — версия из sidecar.
+	ts.Close()
+	op2 := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	if v2, _ := op2.detectVersionAndFeaturesCached(context.Background()); v2 != "1.2.3" {
+		t.Fatalf("after restart version = %q, want 1.2.3 from sidecar", v2)
+	}
+}
+
+// Процесс не запущен, sidecar нет, SHA чужой — единственный оставшийся
+// источник: субпроцесс. Версия не pinned ⇒ теги неизвестны.
+// Чужой Clash на нашем порту при отсутствии pid-файла НЕ опрашивается.
+func TestDetectVersion_SubprocessFallback(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho 'sing-box version 0.0.7'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"version":"sing-box 1.2.3"}`))
+	}))
+	defer foreign.Close()
+	op.clash.SetAddress(strings.TrimPrefix(foreign.URL, "http://"))
+
+	v, f := op.detectVersionAndFeaturesCached(context.Background())
+	if v != "0.0.7" || f != nil {
+		t.Fatalf("got %q/%v, want 0.0.7/nil (subprocess, not the foreign Clash)", v, f)
+	}
+}
+
+// Процесс запущен, но Clash API недоступен (порт закрыт) — цепочка идёт
+// дальше к субпроцессу, а не возвращает пустую версию.
+func TestDetectVersion_RunningButClashDown_FallsBack(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho 'sing-box version 0.0.7'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	if err := os.WriteFile(op.pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	op.proc.matchBinaryFn = func(int) bool { return true }
+	op.exeMatches = func(int, string) bool { return true }
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	addr := strings.TrimPrefix(dead.URL, "http://")
+	dead.Close() // адрес остаётся, слушателя нет
+	op.clash.SetAddress(addr)
+
+	if v, _ := op.detectVersionAndFeaturesCached(context.Background()); v != "0.0.7" {
+		t.Fatalf("version = %q, want 0.0.7 from subprocess", v)
+	}
+}
+
+// Подмена бинаря при живом процессе: pid наш, но /proc/<pid>/exe — другой
+// файл. Clash молчит (иначе версия СТАРОГО процесса осела бы в sidecar
+// НОВОГО файла), версия — из субпроцесса по новому файлу.
+func TestDetectVersion_ExeMismatch_SkipsClash(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho 'sing-box version 0.0.7'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	if err := os.WriteFile(op.pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	op.proc.matchBinaryFn = func(int) bool { return true }
+	op.exeMatches = func(int, string) bool { return false }
+	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"version":"sing-box 1.2.3"}`))
+	}))
+	defer old.Close()
+	op.clash.SetAddress(strings.TrimPrefix(old.URL, "http://"))
+
+	if v, _ := op.detectVersionAndFeaturesCached(context.Background()); v != "0.0.7" {
+		t.Fatalf("version = %q, want 0.0.7 from the new file, not 1.2.3 from the old process", v)
+	}
+}
+
+// processExeIs сравнивает inode /proc/<pid>/exe и файла.
+func TestProcessExeIs(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("/proc only")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Skip(err)
+	}
+	if !processExeIs(os.Getpid(), self) {
+		t.Fatal("own exe must match")
+	}
+	if processExeIs(os.Getpid(), fakeBinary(t, t.TempDir())) {
+		t.Fatal("other file must not match")
+	}
+}
+
+func TestOperator_GetStatus_NoUpdateForUPXPackedSameVersion(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	body := []byte("#!/bin/sh\n# UPX! marker as in a packed ELF\necho 'sing-box version 1.2.3'\n")
+	if err := os.WriteFile(binary, body, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	op.SetInstaller(installer.New(binary, "test-arch", installer.BinarySpec{
+		Version: "1.2.3",
+		SHA256:  strings.Repeat("f", 64),
+		Size:    100 << 20,
+	}, nil))
+
+	status := op.GetStatus(context.Background())
+	if status.UpdateAvailable {
+		t.Fatal("UpdateAvailable = true, want false for UPX-packed binary of the pinned version")
+	}
+	if status.InstallState != string(installer.InstallStateInstalled) {
+		t.Fatalf("InstallState = %q, want %q", status.InstallState, installer.InstallStateInstalled)
 	}
 }
 
@@ -1972,7 +2113,7 @@ func TestOperator_Install_NoSpace_ReturnsNil(t *testing.T) {
 	if err := op.Install(context.Background()); err != nil {
 		t.Fatalf("Install returned error, expected nil: %v", err)
 	}
-	if got := inst.EvaluateInstallState(); got != installer.InstallStateMissingNoSpace {
+	if got := inst.EvaluateInstallState(""); got != installer.InstallStateMissingNoSpace {
 		t.Fatalf("EvaluateInstallState=%q, want %q", got, installer.InstallStateMissingNoSpace)
 	}
 }
@@ -1993,13 +2134,34 @@ func TestOperator_Update_NoSpace_ReturnsNil(t *testing.T) {
 	if err := op.Update(context.Background()); err != nil {
 		t.Fatalf("Update returned error, expected nil: %v", err)
 	}
-	if got := inst.EvaluateInstallState(); got != installer.InstallStateOutdatedNoSpace {
+	if got := inst.EvaluateInstallState(""); got != installer.InstallStateOutdatedNoSpace {
 		t.Fatalf("EvaluateInstallState=%q, want %q", got, installer.InstallStateOutdatedNoSpace)
 	}
 }
 
-// same-version+same-sha → MatchesRequired==true → Update должен быть no-op
-// без обращения к gate (gate стоит ПОСЛЕ MatchesRequired early-return).
+// same-version+same-sha → MatchesPinnedBytes==true → Update должен быть no-op
+// без обращения к gate (gate стоит ПОСЛЕ этого early-return).
+// UPX-копия pinned-версии: Update — no-op, скачивания нет. Downloader не
+// сконфигурирован, поэтому попытка скачать вернула бы ошибку.
+func TestOperator_Update_UPXPinned_NoOp(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	body := []byte("#!/bin/sh\n# UPX! marker as in a packed ELF\necho 'sing-box version 1.2.3'\n")
+	if err := os.WriteFile(binary, body, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	inst := installer.New(binary, "test-arch", installer.BinarySpec{
+		Version: "1.2.3", URL: "u", SHA256: strings.Repeat("f", 64), Size: 100 << 20,
+	}, nil)
+	inst.SetFreeDiskFn(func(string) (int64, bool) { return 200 << 20, true })
+	op.SetInstaller(inst)
+
+	if err := op.Update(context.Background()); err != nil {
+		t.Fatalf("Update = %v, want nil no-op for UPX copy of pinned version", err)
+	}
+}
+
 func TestOperator_Update_SameVersionSameSHA_NoOp(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "sing-box")
@@ -2021,7 +2183,7 @@ func TestOperator_Update_SameVersionSameSHA_NoOp(t *testing.T) {
 	if err := op.Update(context.Background()); err != nil {
 		t.Fatalf("Update returned error, expected no-op nil: %v", err)
 	}
-	// Бинарь не тронут — Update вернулся через MatchesRequired до gate'а.
+	// Бинарь не тронут — Update вернулся через MatchesPinnedBytes до gate'а.
 	if _, err := os.Stat(binary); err != nil {
 		t.Fatalf("binary disappeared: %v", err)
 	}

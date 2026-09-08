@@ -6,6 +6,7 @@
 package installer
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -169,16 +170,36 @@ func (i *Installer) binarySHA256() (string, error) {
 	return sha, nil
 }
 
-// MatchesRequired reports whether the installed binary matches both the
-// pinned version and pinned bytes. The SHA256 check is intentional: custom
-// sing-box rebuilds can keep the same upstream version while fixing target-
-// specific binary contents.
-func (i *Installer) MatchesRequired(ctx context.Context) bool {
-	if i.CurrentVersion(ctx) != i.RequiredVersion() {
+// MatchesPinnedBytes reports whether the bytes on disk are the pinned
+// build: SHA256 equal, or a UPX-packed copy of the pinned version (#868).
+// The SHA256 check is intentional: custom sing-box rebuilds can keep the
+// same upstream version while fixing target-specific binary contents.
+// Users on small flash compress the binary themselves; its SHA can never
+// match, and offering an update they have no room for is noise.
+// currentVersion is the version resolved by the operator (sidecar, Clash
+// API or probe); pass "" when unknown — then only the SHA counts.
+func (i *Installer) MatchesPinnedBytes(currentVersion string) bool {
+	sha, err := i.binarySHA256()
+	if err == nil && strings.EqualFold(sha, i.spec.SHA256) {
+		return true
+	}
+	return currentVersion != "" && currentVersion == i.spec.Version && isUPXPacked(i.binaryPath)
+}
+
+// isUPXPacked reports whether path carries the UPX loader magic. UPX puts
+// its l_info record right after the ELF program headers, so the first
+// page is enough — no need to scan the whole ~80MB file. Deliberately a
+// plain substring match: it only relaxes the SHA check for a binary that
+// already reports the pinned version, so a false positive costs nothing.
+func isUPXPacked(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
 		return false
 	}
-	currentSHA, err := i.CurrentSHA256()
-	return err == nil && strings.EqualFold(currentSHA, i.RequiredSHA256())
+	defer f.Close()
+	buf := make([]byte, 4096)
+	n, _ := io.ReadFull(f, buf)
+	return bytes.Contains(buf[:n], []byte("UPX!"))
 }
 
 // Download fetches the binary to <binaryPath>.tmp and verifies SHA256.
@@ -306,6 +327,8 @@ const SafetyMargin = safetyMargin
 // EvaluateInstallState reports the install state vs pinned spec, gated by
 // free disk. Pure file ops: isExecutable + cached binarySHA256 (no
 // `sing-box version` subprocess), so safe to call on every status-poll.
+// currentVersion — see MatchesPinnedBytes; "" when the caller only needs
+// the MissingNoSpace answer.
 //
 // Returns Installed/Missing/MissingNoSpace/OutdatedNoSpace. Free-disk unknown
 // OR spec.Size==0 → gate skipped (Missing instead of NoSpace).
@@ -313,15 +336,9 @@ const SafetyMargin = safetyMargin
 // Note: возвращает Missing и для clean install, и для outdated-with-space —
 // EvaluateInstallState отвечает только на «можно ли проходить gate»;
 // различение install vs update делается через UpdateAvailable в GetStatus.
-func (i *Installer) EvaluateInstallState() InstallState {
+func (i *Installer) EvaluateInstallState(currentVersion string) InstallState {
 	installed := isExecutable(i.binaryPath)
-
-	matches := false
-	if installed {
-		sha, err := i.binarySHA256()
-		matches = err == nil && strings.EqualFold(sha, i.spec.SHA256)
-	}
-	if matches {
+	if installed && i.MatchesPinnedBytes(currentVersion) {
 		return InstallStateInstalled
 	}
 

@@ -192,30 +192,29 @@ func (o *OperatorOS5Impl) addKernelHostRoute(ctx context.Context, endpointIP, ro
 		family = []string{"-6"}
 	}
 
-	// Remove stale first (idempotent)
-	args := append([]string{}, family...)
-	args = append(args, "route", "del", endpointIP+prefix)
-	o.ipRun(ctx, ipCmd, args...)
-
+	// `replace` is atomic: tunnels sharing the endpoint keep the route while
+	// a neighbour (re)starts — del+add left a window where their packets
+	// followed the default route (F130, #867).
+	var args []string
 	if net.ParseIP(routeTarget) != nil {
 		// Gateway is an IP — route via gateway
 		args = append([]string{}, family...)
-		args = append(args, "route", "add", endpointIP+prefix, "via", routeTarget)
+		args = append(args, "route", "replace", endpointIP+prefix, "via", routeTarget)
 		// IPv6 link-local gateways (fe80::) require explicit device
 		if device != "" && isIPv6LinkLocal(routeTarget) {
 			args = append(args, "dev", device)
 		}
 		result, err := o.ipRun(ctx, ipCmd, args...)
 		if err != nil {
-			return fmt.Errorf("ip route add %s%s via %s: %w", endpointIP, prefix, routeTarget, exec.FormatError(result, err))
+			return fmt.Errorf("ip route replace %s%s via %s: %w", endpointIP, prefix, routeTarget, exec.FormatError(result, err))
 		}
 	} else {
 		// Gateway is an interface name (tunnel chaining, PPPoE)
 		args = append([]string{}, family...)
-		args = append(args, "route", "add", endpointIP+prefix, "dev", routeTarget)
+		args = append(args, "route", "replace", endpointIP+prefix, "dev", routeTarget)
 		result, err := o.ipRun(ctx, ipCmd, args...)
 		if err != nil {
-			return fmt.Errorf("ip route add %s%s dev %s: %w", endpointIP, prefix, routeTarget, exec.FormatError(result, err))
+			return fmt.Errorf("ip route replace %s%s dev %s: %w", endpointIP, prefix, routeTarget, exec.FormatError(result, err))
 		}
 	}
 	return nil

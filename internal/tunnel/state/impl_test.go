@@ -73,7 +73,8 @@ type MockWGClient struct {
 	showError     error
 }
 
-func (m *MockWGClient) SetConf(ctx context.Context, iface, confPath string) error { return nil }
+func (m *MockWGClient) SetConf(ctx context.Context, iface, confPath string) error  { return nil }
+func (m *MockWGClient) SyncConf(ctx context.Context, iface, confPath string) error { return nil }
 func (m *MockWGClient) Show(ctx context.Context, iface string) (*wg.ShowResult, error) {
 	if m.showError != nil {
 		return nil, m.showError

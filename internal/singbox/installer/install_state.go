@@ -7,7 +7,8 @@ package installer
 type InstallState string
 
 const (
-	// InstallStateInstalled — бинарь на диске, версия и SHA совпадают с pinned.
+	// InstallStateInstalled — бинарь на диске, версия и SHA совпадают с pinned
+	// (или это UPX-сжатая копия pinned-версии, см. Installer.MatchesPinnedBytes).
 	InstallStateInstalled InstallState = "installed"
 	// InstallStateMissing — gate пропускает: clean install ИЛИ outdated-binary
 	// с достаточным местом. UI различает install vs update через отдельный
@@ -15,7 +16,7 @@ const (
 	InstallStateMissing InstallState = "missing"
 	// InstallStateMissingNoSpace — бинарь не установлен, и места под него не хватает.
 	InstallStateMissingNoSpace InstallState = "missing_no_space"
-	// InstallStateOutdatedNoSpace — установлен старый бинарь (версия и/или SHA отличаются),
+	// InstallStateOutdatedNoSpace — установлен старый бинарь (версия и/или SHA отличаются, не UPX-копия pinned),
 	// но места под новый не хватает. Старый продолжает работать.
 	InstallStateOutdatedNoSpace InstallState = "outdated_no_space"
 	// InstallStateInstalling — идёт активная установка/апгрейд (выставляется по сигналу

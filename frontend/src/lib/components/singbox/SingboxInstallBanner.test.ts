@@ -111,6 +111,17 @@ describe('SingboxInstallBanner', () => {
 		expect(queryByText(/Не хватает места/i)).toBeNull();
 	});
 
+	it('renders nothing for a build without with_naive_outbound (tags are not a banner concern)', () => {
+		setStatus({
+			...baseStatus,
+			installState: 'installed',
+			currentVersion: '1.10.0',
+			features: ['with_gvisor', 'with_quic'],
+		});
+		const { container } = render(SingboxInstallBanner);
+		expect(container.querySelector('.banner')).toBeNull();
+	});
+
 	it('does not render outdated-no-space when updateAvailable without installState', () => {
 		setStatus({
 			...baseStatus,
