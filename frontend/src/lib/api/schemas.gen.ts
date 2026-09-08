@@ -3555,7 +3555,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 })]),
 	"POST /terminal/start": v.lazy(() => api_TerminalStartResponse),
 	"POST /terminal/stop": v.lazy(() => api_APIEnvelope),
-	"POST /tunnels/create": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/delete": v.lazy(() => api_TunnelDeleteResponse),
 	"POST /tunnels/lock": v.lazy(() => api_TunnelLockResponse),
 	"POST /tunnels/pingcheck": v.lazy(() => api_APIEnvelope),

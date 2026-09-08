@@ -69,12 +69,6 @@ func NewOperatorOS4(
 	return o
 }
 
-// Create is a no-op on OS4 (interface created by process).
-func (o *OperatorOS4Impl) Create(ctx context.Context, cfg tunnel.Config) error {
-	// On OS4, interface is created when process starts
-	return nil
-}
-
 // ColdStart on OS4 is the same as Start — no NDMS/OpkgTun lifecycle.
 func (o *OperatorOS4Impl) ColdStart(ctx context.Context, cfg tunnel.Config) error {
 	return o.Start(ctx, cfg)

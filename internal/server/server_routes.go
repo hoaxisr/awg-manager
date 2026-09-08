@@ -260,7 +260,6 @@ func (s *Server) registerTunnelRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/tunnels/list", h.guarded(h.tunnelsHandler.List))
 	mux.HandleFunc("/api/tunnels/all", h.guarded(h.tunnelsHandler.GetAll))
 	mux.HandleFunc("/api/tunnels/get", h.guarded(h.tunnelsHandler.Get))
-	mux.HandleFunc("/api/tunnels/create", h.guarded(h.tunnelsHandler.Create))
 	mux.HandleFunc("/api/tunnels/update", h.guarded(h.tunnelsHandler.Update))
 	mux.HandleFunc("/api/tunnels/delete", h.guarded(h.tunnelsHandler.Delete))
 	mux.HandleFunc("/api/tunnels/lock", h.guarded(h.tunnelsHandler.SetLock))

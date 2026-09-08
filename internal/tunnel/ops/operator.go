@@ -13,10 +13,6 @@ import (
 // Operator is the interface for tunnel lifecycle operations.
 // All operations use direct ip commands for kernel interface management.
 type Operator interface {
-	// Create creates system resources for a tunnel without starting it.
-	// No-op for kernel tunnels (interface created by process).
-	Create(ctx context.Context, cfg tunnel.Config) error
-
 	// ColdStart creates a tunnel from scratch: ip link add + ip addr add +
 	// wg setconf + ip link set up + firewall.
 	// Used for: NotCreated, Broken, boot.

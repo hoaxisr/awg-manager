@@ -20296,30 +20296,6 @@ paths:
       summary: Composite tunnels snapshot
       tags:
       - tunnels
-  /tunnels/create:
-    post:
-      consumes:
-      - application/json
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.APIEnvelope'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Create tunnel
-      tags:
-      - tunnels
   /tunnels/delete:
     post:
       description: |-
