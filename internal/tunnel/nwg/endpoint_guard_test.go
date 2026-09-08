@@ -2,9 +2,9 @@ package nwg
 
 import (
 	"context"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,7 +21,7 @@ import (
 // идущего теста (фантомные wg-вызовы, гонка с восстановлением глобалов).
 func TestMain(m *testing.M) {
 	guardInterval = time.Hour
-	os.Exit(m.Run())
+	testutil.Main(m)
 }
 
 func newGuardTestOperator(t *testing.T) *OperatorNativeWG {
