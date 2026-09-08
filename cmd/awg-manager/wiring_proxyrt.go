@@ -964,6 +964,7 @@ func (a *app) wireProxyrt() {
 		RecordsChanged: func(reason string) {
 			a.eventBus.PublishInvalidated(events.ResourceProxyInstances, reason)
 		},
+		RemoveRuntime: proxyRemoveRuntime(roles.RuntimeDir),
 	})
 	ref.mgr = mgr
 	a.proxyMgr = mgr
