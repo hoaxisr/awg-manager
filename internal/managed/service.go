@@ -92,6 +92,26 @@ type Service struct {
 	// wgRun is the wg-tools execution seam. Production uses realWgRunner;
 	// tests inject a stub to avoid forking real binaries.
 	wgRun wgRunner
+	// keyGen is the peer key-generation seam. Production uses realKeyGen
+	// (execs /opt/sbin/awg); tests inject deterministic keys.
+	keyGen keyGenerator
+}
+
+// keyGenerator produces WireGuard key material for a new peer.
+type keyGenerator interface {
+	GenerateKeyPair(ctx context.Context) (privateKey, publicKey string, err error)
+	GeneratePresharedKey(ctx context.Context) (string, error)
+}
+
+// realKeyGen is the production keyGenerator over keys.go (awg genkey/pubkey/genpsk).
+type realKeyGen struct{}
+
+func (realKeyGen) GenerateKeyPair(ctx context.Context) (string, string, error) {
+	return GenerateKeyPair(ctx)
+}
+
+func (realKeyGen) GeneratePresharedKey(ctx context.Context) (string, error) {
+	return GeneratePresharedKey(ctx)
 }
 
 // New creates a new managed server service.
@@ -113,6 +133,7 @@ func New(
 		log:       log,
 		appLog:    logging.NewScopedLogger(appLogger, logging.GroupServer, logging.SubManaged),
 		wgRun:     realWgRunner,
+		keyGen:    realKeyGen{},
 	}
 }
 

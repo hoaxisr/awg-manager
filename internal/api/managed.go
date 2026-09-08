@@ -27,6 +27,14 @@ type ManagedPeerDTO struct {
 	TunnelIP     string `json:"tunnelIP" example:"10.10.0.2"`
 	DNS          string `json:"dns,omitempty" example:"8.8.8.8"`
 	Enabled      bool   `json:"enabled" example:"true"`
+	// i1..i5 и signatureProfile — сигнатура имитации этого клиента;
+	// попадает в его .conf.
+	I1               string `json:"i1,omitempty" example:"<b 0xc0>"`
+	I2               string `json:"i2,omitempty"`
+	I3               string `json:"i3,omitempty"`
+	I4               string `json:"i4,omitempty"`
+	I5               string `json:"i5,omitempty"`
+	SignatureProfile string `json:"signatureProfile,omitempty" example:"quic_initial"`
 }
 
 // ManagedServerDTO mirrors frontend ManagedServer.
@@ -214,6 +222,14 @@ type managedPeerPublic struct {
 	TunnelIP    string `json:"tunnelIP"`
 	DNS         string `json:"dns,omitempty"`
 	Enabled     bool   `json:"enabled"`
+	// I1..I5 и SignatureProfile — сигнатура имитации пира (CONTEXT.md
+	// «Владелец сигнатуры»); попадает в .conf этого пира.
+	I1               string `json:"i1,omitempty"`
+	I2               string `json:"i2,omitempty"`
+	I3               string `json:"i3,omitempty"`
+	I4               string `json:"i4,omitempty"`
+	I5               string `json:"i5,omitempty"`
+	SignatureProfile string `json:"signatureProfile,omitempty"`
 }
 
 // toManagedServerResponse converts storage model to a safe response DTO.
@@ -221,11 +237,17 @@ func toManagedServerResponse(s *storage.ManagedServer, foreign []string) *manage
 	peers := make([]managedPeerPublic, len(s.Peers))
 	for i, p := range s.Peers {
 		peers[i] = managedPeerPublic{
-			PublicKey:   p.PublicKey,
-			Description: p.Description,
-			TunnelIP:    p.TunnelIP,
-			DNS:         p.DNS,
-			Enabled:     p.Enabled,
+			PublicKey:        p.PublicKey,
+			Description:      p.Description,
+			TunnelIP:         p.TunnelIP,
+			DNS:              p.DNS,
+			Enabled:          p.Enabled,
+			I1:               p.I1,
+			I2:               p.I2,
+			I3:               p.I3,
+			I4:               p.I4,
+			I5:               p.I5,
+			SignatureProfile: p.SignatureProfile,
 		}
 	}
 	return &managedServerResponse{

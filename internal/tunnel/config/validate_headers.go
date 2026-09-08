@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -73,11 +74,22 @@ func ValidateHeaderRanges(o *storage.AWGObfuscation) error {
 }
 
 // ValidateObfuscation — общий гейт импорта, create и update: правила AWG 3.0
-// (ключ header protection, S1-S4 ≥ 12) и пересечение H1-H4. Анализатор
-// вызывает обе проверки по отдельности ради разных кодов ошибок.
+// (ключ header protection, S1-S4 ≥ 12), пересечение H1-H4 и размер сигнатуры
+// I1-I5. Анализатор вызывает проверки по отдельности ради разных кодов ошибок.
 func ValidateObfuscation(o *storage.AWGObfuscation) error {
 	if err := ValidateAWG3(o); err != nil {
 		return err
 	}
-	return ValidateHeaderRanges(o)
+	if err := ValidateHeaderRanges(o); err != nil {
+		return err
+	}
+	if o == nil {
+		return nil
+	}
+	// Тот же потолок, что у пиров встроенного сервера: без него негабаритная
+	// или сырая сигнатура доезжала до .conf и модуля.
+	if err := signature.CheckSize(signature.GeneratedPackets{I1: o.I1, I2: o.I2, I3: o.I3, I4: o.I4, I5: o.I5}); err != nil {
+		return fmt.Errorf("I1–I5: %w", err)
+	}
+	return nil
 }

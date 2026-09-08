@@ -59,3 +59,16 @@ func TestValidateObfuscation_CombinesBothRules(t *testing.T) {
 		t.Fatalf("want HeaderProtectionKey error, got %v", err)
 	}
 }
+
+// F151: гейт размера сигнатуры на пути туннеля. До правки I1-I5 туннеля не
+// проверялись вовсе — 9000 символов сырого текста доезжали до .conf и модуля.
+func TestValidateObfuscation_RejectsOversizedSignature(t *testing.T) {
+	o := &storage.AWGObfuscation{Jc: 3, Jmin: 10, Jmax: 50, I1: strings.Repeat("y", 9000)}
+	if err := ValidateObfuscation(o); err == nil || !strings.Contains(err.Error(), "I1") {
+		t.Fatalf("raw 9000-char I1 must be rejected with an I1-naming error, got %v", err)
+	}
+	o2 := &storage.AWGObfuscation{Jc: 3, Jmin: 10, Jmax: 50, I1: "<b 0xc3>", I2: "<r 1000>"}
+	if err := ValidateObfuscation(o2); err != nil {
+		t.Fatalf("valid signature must pass: %v", err)
+	}
+}

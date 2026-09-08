@@ -2,7 +2,7 @@ package api
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -13,6 +13,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 )
@@ -27,6 +28,9 @@ type ServerAddPeerRequestDTO struct {
 type ServerUpdatePeerRequestDTO struct {
 	Description string `json:"description" example:"My Phone"`
 	TunnelIP    string `json:"tunnelIP" example:"10.0.14.2/32"`
+	// Signature: nil — сигнатуру пира не трогать; объект — заменить все пять
+	// полей и профиль целиком (пустые поля объекта стирают старые байты).
+	Signature *PeerSignatureDTO `json:"signature,omitempty"`
 }
 
 // Subtree dispatches /api/servers/{name}/... operations.
@@ -175,6 +179,15 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 
+	// Сигнатура принадлежит пиру: генерируем по дефолтному профилю. Отказ
+	// генератора — отказ создания пира (fail closed), молча выдавать пира
+	// без имитации нельзя.
+	sig, err := signature.Generate(signature.DefaultProfile)
+	if err != nil {
+		response.Error(w, err.Error(), "SIGNATURE_GENERATE_FAILED")
+		return
+	}
+
 	privKey, pubKey, err := genKeyPair(r.Context())
 	if err != nil {
 		response.Error(w, err.Error(), "KEYGEN_FAILED")
@@ -206,6 +219,13 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		PresharedKey: psk,
 		Description:  req.Description,
 		TunnelIP:     req.TunnelIP,
+
+		I1:               sig.Packets.I1,
+		I2:               sig.Packets.I2,
+		I3:               sig.Packets.I3,
+		I4:               sig.Packets.I4,
+		I5:               sig.Packets.I5,
+		SignatureProfile: sig.Profile,
 	}); err != nil {
 		response.Error(w, err.Error(), "SAVE_FAILED")
 		return
@@ -255,6 +275,33 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		response.Error(w, "peer not found", "NOT_FOUND")
 		return
 	}
+	// Секрет читаем один раз: он же решает судьбу сигнатуры и он же
+	// примиряется с изменением ниже.
+	sec, hasSecret := h.settings.GetServerPeerSecret(name, pubkey)
+	// Сигнатуру проверяем ДО обращения к роутеру: отказ обязан быть чистым,
+	// без наполовину применённых изменений на NDMS.
+	sigProfile := ""
+	if req.Signature != nil {
+		var err error
+		if sigProfile, err = signature.ValidateProfileAndSize(req.Signature.Profile, req.Signature.packets()); err != nil {
+			switch {
+			case errors.Is(err, signature.ErrUnknownProtocol):
+				response.Error(w, err.Error(), "INVALID_SIGNATURE_PROFILE")
+			case errors.Is(err, signature.ErrPacketsTooLarge):
+				response.Error(w, err.Error(), "SIGNATURE_TOO_LARGE")
+			default:
+				response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
+			}
+			return
+		}
+		// Сигнатуре негде жить без секрета: пир создан вне AWG Manager,
+		// приватного ключа у нас нет, и заводить огрызок секрета ради
+		// имитации нельзя — .conf по нему всё равно не собрать.
+		if !hasSecret {
+			response.Error(w, "ключ клиента недоступен (создан вне AWG Manager или через KeenDNS)", "NO_PEER_SECRET")
+			return
+		}
+	}
 
 	oldIP := peerTunnelHostIP(peer)
 	wantIPChange := req.TunnelIP != "" && req.TunnelIP != oldIP+"/32" && req.TunnelIP != oldIP
@@ -284,7 +331,7 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 	// failure still reconciles even when the router side is now a no-op. The
 	// error is surfaced, not swallowed: a stale stored IP would hand out a
 	// wrong .conf after reboot.
-	if sec, ok := h.settings.GetServerPeerSecret(name, pubkey); ok {
+	if hasSecret {
 		changed := false
 		if req.TunnelIP != "" && sec.TunnelIP != req.TunnelIP {
 			sec.TunnelIP = req.TunnelIP
@@ -292,6 +339,14 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		}
 		if sec.Description != req.Description {
 			sec.Description = req.Description
+			changed = true
+		}
+		if req.Signature != nil {
+			sec.I1, sec.I2 = req.Signature.I1, req.Signature.I2
+			sec.I3, sec.I4, sec.I5 = req.Signature.I3, req.Signature.I4, req.Signature.I5
+			// Канонический ключ, не то, что прислали: валидация выше
+			// принимает " SIP " — хранить такое нельзя.
+			sec.SignatureProfile = sigProfile
 			changed = true
 		}
 		if changed {
@@ -461,7 +516,7 @@ func (h *ServersHandler) generateServerPeerConf(ctx context.Context, server *ndm
 
 	if h.queries != nil && h.queries.WGServers != nil {
 		if ascRaw, err := h.queries.WGServers.GetASCParams(ctx, server.ID, true); err == nil && ascRaw != nil {
-			writeServerASCParams(&b, ascRaw)
+			signature.WriteASCConf(&b, ascRaw, secPackets(sec))
 		}
 	}
 
@@ -493,24 +548,10 @@ func (h *ServersHandler) resolveServerEndpoint(ctx context.Context, serverID str
 	return testing.GetWANIPWithFallback(ctx, h.queries.WANInterfaceAddress)
 }
 
-func writeServerASCParams(b *strings.Builder, raw json.RawMessage) {
-	var ext ndms.ASCParamsExtended
-	if err := json.Unmarshal(raw, &ext); err != nil || ext.Jc == 0 {
-		return
-	}
-	b.WriteString(fmt.Sprintf("Jc = %d\n", ext.Jc))
-	b.WriteString(fmt.Sprintf("Jmin = %d\n", ext.Jmin))
-	b.WriteString(fmt.Sprintf("Jmax = %d\n", ext.Jmax))
-	b.WriteString(fmt.Sprintf("S1 = %d\n", ext.S1))
-	b.WriteString(fmt.Sprintf("S2 = %d\n", ext.S2))
-	b.WriteString(fmt.Sprintf("H1 = %s\n", ext.H1))
-	b.WriteString(fmt.Sprintf("H2 = %s\n", ext.H2))
-	b.WriteString(fmt.Sprintf("H3 = %s\n", ext.H3))
-	b.WriteString(fmt.Sprintf("H4 = %s\n", ext.H4))
-	if ext.S3 > 0 || ext.S4 > 0 {
-		b.WriteString(fmt.Sprintf("S3 = %d\n", ext.S3))
-		b.WriteString(fmt.Sprintf("S4 = %d\n", ext.S4))
-	}
+// secPackets — сигнатура пира из его секрета в виде, который понимает
+// signature.WriteASCConf.
+func secPackets(sec storage.ServerPeerSecret) signature.GeneratedPackets {
+	return signature.GeneratedPackets{I1: sec.I1, I2: sec.I2, I3: sec.I3, I4: sec.I4, I5: sec.I5}
 }
 
 func findServerPeer(server *ndms.WireguardServer, pubkey string) *ndms.WireguardServerPeer {
@@ -592,8 +633,6 @@ func (h *ServersHandler) validateServerPeerTunnelIP(server *ndms.WireguardServer
 	return nil
 }
 
-const builtInVPNServerDescription = "Wireguard VPN Server"
-
 func (h *ServersHandler) readSystemServerEnabled(ctx context.Context, iface string) (enabled bool, known bool) {
 	if h.queries == nil || h.queries.Interfaces == nil {
 		return false, false
@@ -607,7 +646,7 @@ func (h *ServersHandler) readSystemServerEnabled(ctx context.Context, iface stri
 
 func (h *ServersHandler) enrichServerDTO(ctx context.Context, srv ndms.WireguardServer) WireguardServerDTO {
 	dto := toWireguardServerDTO(srv)
-	dto.BuiltIn = srv.Description == builtInVPNServerDescription
+	dto.BuiltIn = srv.Description == ndms.BuiltInVPNServerDescription
 	if enabled, known := h.readSystemServerEnabled(ctx, srv.ID); known {
 		dto.Enabled = enabled
 		dto.EnabledKnown = true
@@ -636,6 +675,9 @@ func (h *ServersHandler) enrichServerDTO(ctx context.Context, srv ndms.Wireguard
 			if dto.Peers[i].Description == "" && sec.Description != "" {
 				dto.Peers[i].Description = sec.Description
 			}
+			dto.Peers[i].I1, dto.Peers[i].I2 = sec.I1, sec.I2
+			dto.Peers[i].I3, dto.Peers[i].I4, dto.Peers[i].I5 = sec.I3, sec.I4, sec.I5
+			dto.Peers[i].SignatureProfile = sec.SignatureProfile
 		}
 	}
 	return dto

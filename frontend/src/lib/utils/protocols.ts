@@ -1,32 +1,31 @@
 // ---------------------------------------------------------------------------
-// AWG Signature Packet Generators
+// AWG Signature Profile Catalog
 //
-// CPS I1–I5 generation is delegated to AmneziaWG Architect (MIT):
-// https://github.com/Vadim-Khristenko/AmneziaWG-Architect
+// Каталог профилей имитации (CONTEXT.md «Профиль имитации»). Сигнатуру
+// собирает бэкенд: POST /api/signature/generate. Ключи = signature.Profiles.
 //
 // Total of all I1-I5 fields must stay under 4096 bytes.
 // ---------------------------------------------------------------------------
 
-import {
-	generateSignaturePackets,
-	type LegacyProtocolKey,
-	type SignaturePackets,
-} from '$lib/utils/awg-architect/signature';
+export const MAX_SIGNATURE_BYTES = 4096;
 
-export type ProtocolKey = LegacyProtocolKey;
+export type ProtocolKey = 'quic_initial' | 'stun' | 'dns' | 'dtls' | 'sip';
 
 export const protocols: Record<ProtocolKey, { name: string; description: string }> = {
-	quic_initial: { name: 'QUIC Initial', description: 'RFC 9000 — основной протокол для обхода DPI' },
-	quic_0rtt: { name: 'QUIC 0-RTT', description: 'Early Data — возобновление сессии' },
-	tls: { name: 'TLS 1.3', description: 'Client Hello — HTTPS handshake' },
-	dtls: { name: 'DTLS 1.3', description: 'WebRTC, VoIP — медиа-трафик' },
-	http3: { name: 'HTTP/3', description: 'QUIC с расширенными типами пакетов' },
-	sip: { name: 'SIP', description: 'VoIP сигнализация — REGISTER' },
-	wireguard_noise: { name: 'Noise_IK', description: 'WireGuard handshake — нативный силуэт' },
-	dns_query: { name: 'DNS Query', description: 'UDP DNS-запрос (A/AAAA)' },
+	quic_initial: { name: 'QUIC Initial', description: 'HTTP/3 — валидный ClientHello с шифрованием по RFC 9001' },
+	stun: { name: 'STUN / TURN', description: 'WebRTC ICE — Binding или Allocate с FINGERPRINT' },
+	dns: { name: 'DNS Query', description: 'UDP DNS-запрос A/AAAA/HTTPS с EDNS0' },
+	dtls: { name: 'DTLS (WebRTC)', description: 'DTLS 1.2 ClientHello с use_srtp' },
+	sip: { name: 'SIP', description: 'VoIP — REGISTER и повтор с Digest-авторизацией (I1, I2)' },
 };
 
-export type { SignaturePackets };
+export interface SignaturePackets {
+	i1: string;
+	i2: string;
+	i3: string;
+	i4: string;
+	i5: string;
+}
 
 const CPS_TAG_RE = /<(\w+)(?:\s+([^>]*))?>/g;
 
@@ -68,8 +67,4 @@ export function calcTotalSize(packets: SignaturePackets): number {
 		calcByteSize(packets.i4) +
 		calcByteSize(packets.i5)
 	);
-}
-
-export function getSignaturePackets(protocol: ProtocolKey, mtu: number = 1280): SignaturePackets {
-	return generateSignaturePackets(protocol, mtu);
 }

@@ -34,7 +34,7 @@ func NewManagedServerBackupHandler(svc *managed.Service) *ManagedServerBackupHan
 // transport. Exists in api/ (rather than reusing managed.ManagedServerExport
 // directly) so swag can resolve it without crossing package boundaries —
 // matches the existing ManagedServerDTO pattern but includes the secret
-// fields (PrivateKey, I1, I2) needed for full restore.
+// fields (PrivateKey, ключи и сигнатуры пиров) needed for full restore.
 type ManagedServerBackupDTO struct {
 	InterfaceName string           `json:"interfaceName" example:"Wireguard1"`
 	Description   string           `json:"description,omitempty" example:"My VPN"`
@@ -48,12 +48,15 @@ type ManagedServerBackupDTO struct {
 	PrivateKey    string           `json:"privateKey,omitempty" example:"oA..."`
 	Policy        string           `json:"policy" example:"none"`
 	Peers         []ManagedPeerDTO `json:"peers"`
-	I1            string           `json:"i1,omitempty"`
-	I2            string           `json:"i2,omitempty"`
-	I3            string           `json:"i3,omitempty"`
-	I4            string           `json:"i4,omitempty"`
-	I5            string           `json:"i5,omitempty"`
-	ASC           json.RawMessage  `json:"asc,omitempty" swaggertype:"object"`
+	// Серверные i1..i5 из старых бэкапов, когда сигнатура была общей на весь
+	// сервер. Только на чтение: при импорте раздаются клиентам без своей
+	// сигнатуры, в новые бэкапы не пишутся.
+	LegacyI1 string          `json:"i1,omitempty"`
+	LegacyI2 string          `json:"i2,omitempty"`
+	LegacyI3 string          `json:"i3,omitempty"`
+	LegacyI4 string          `json:"i4,omitempty"`
+	LegacyI5 string          `json:"i5,omitempty"`
+	ASC      json.RawMessage `json:"asc,omitempty" swaggertype:"object"`
 }
 
 // ManagedServerBackupFile is the on-disk JSON shape.
@@ -144,13 +147,19 @@ func managedServerToBackupDTO(s storage.ManagedServer) ManagedServerBackupDTO {
 	peers := make([]ManagedPeerDTO, len(s.Peers))
 	for i, p := range s.Peers {
 		peers[i] = ManagedPeerDTO{
-			PublicKey:    p.PublicKey,
-			PrivateKey:   p.PrivateKey,
-			PresharedKey: p.PresharedKey,
-			Description:  p.Description,
-			TunnelIP:     p.TunnelIP,
-			DNS:          p.DNS,
-			Enabled:      p.Enabled,
+			PublicKey:        p.PublicKey,
+			PrivateKey:       p.PrivateKey,
+			PresharedKey:     p.PresharedKey,
+			Description:      p.Description,
+			TunnelIP:         p.TunnelIP,
+			DNS:              p.DNS,
+			Enabled:          p.Enabled,
+			I1:               p.I1,
+			I2:               p.I2,
+			I3:               p.I3,
+			I4:               p.I4,
+			I5:               p.I5,
+			SignatureProfile: p.SignatureProfile,
 		}
 	}
 	return ManagedServerBackupDTO{
@@ -166,11 +175,6 @@ func managedServerToBackupDTO(s storage.ManagedServer) ManagedServerBackupDTO {
 		PrivateKey:    s.PrivateKey,
 		Policy:        s.Policy,
 		Peers:         peers,
-		I1:            s.I1,
-		I2:            s.I2,
-		I3:            s.I3,
-		I4:            s.I4,
-		I5:            s.I5,
 		ASC:           s.ASC,
 	}
 }
@@ -202,16 +206,22 @@ func backupDTOToManagedServer(d ManagedServerBackupDTO) storage.ManagedServer {
 	peers := make([]storage.ManagedPeer, len(d.Peers))
 	for i, p := range d.Peers {
 		peers[i] = storage.ManagedPeer{
-			PublicKey:    p.PublicKey,
-			PrivateKey:   p.PrivateKey,
-			PresharedKey: p.PresharedKey,
-			Description:  p.Description,
-			TunnelIP:     p.TunnelIP,
-			DNS:          p.DNS,
-			Enabled:      p.Enabled,
+			PublicKey:        p.PublicKey,
+			PrivateKey:       p.PrivateKey,
+			PresharedKey:     p.PresharedKey,
+			Description:      p.Description,
+			TunnelIP:         p.TunnelIP,
+			DNS:              p.DNS,
+			Enabled:          p.Enabled,
+			I1:               p.I1,
+			I2:               p.I2,
+			I3:               p.I3,
+			I4:               p.I4,
+			I5:               p.I5,
+			SignatureProfile: p.SignatureProfile,
 		}
 	}
-	return storage.ManagedServer{
+	sv := storage.ManagedServer{
 		InterfaceName: d.InterfaceName,
 		Description:   d.Description,
 		Address:       d.Address,
@@ -224,13 +234,17 @@ func backupDTOToManagedServer(d ManagedServerBackupDTO) storage.ManagedServer {
 		PrivateKey:    d.PrivateKey,
 		Policy:        d.Policy,
 		Peers:         peers,
-		I1:            d.I1,
-		I2:            d.I2,
-		I3:            d.I3,
-		I4:            d.I4,
-		I5:            d.I5,
+		LegacyI1:      d.LegacyI1,
+		LegacyI2:      d.LegacyI2,
+		LegacyI3:      d.LegacyI3,
+		LegacyI4:      d.LegacyI4,
+		LegacyI5:      d.LegacyI5,
 		ASC:           d.ASC,
 	}
+	// Бэкап до схемы 36 нёс одну сигнатуру на сервер — раздаём её пирам,
+	// у которых своей нет, и очищаем серверные поля.
+	storage.MovePeerSignaturesFromServer(&sv)
+	return sv
 }
 
 // Export handles GET /api/managed/export.
@@ -408,11 +422,17 @@ func (h *ManagedServerBackupHandler) RestoreDrift(w http.ResponseWriter, r *http
 
 // hasActionableMutation reports whether any outcome action warrants an SSE
 // invalidation (i.e. a server was actually created, merged, or renamed).
+// "failed" тоже считается, когда пиры уже легли в NDMS и стор: мерж падает на
+// ASC ПОСЛЕ добавления пиров, и без подсказки страница серверов протухает.
 func hasActionableMutation(outcomes []managed.RestoreOutcome) bool {
 	for _, o := range outcomes {
 		switch o.Action {
 		case "created", "merged", "renamed":
 			return true
+		case "failed":
+			if o.AddedPeers > 0 {
+				return true
+			}
 		}
 	}
 	return false

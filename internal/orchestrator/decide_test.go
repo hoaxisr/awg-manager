@@ -1221,7 +1221,7 @@ func TestDecide_ReconnectAndWAN_Obfuscated(t *testing.T) {
 
 func TestTunnelStateFromStored_Obfuscated(t *testing.T) {
 	ts := tunnelStateFromStored(&storage.AWGTunnel{ID: "awg20", Backend: "nativewg",
-		Peer: storage.AWGPeer{Endpoint: "127.0.0.1:39000"},
+		Peer:       storage.AWGPeer{Endpoint: "127.0.0.1:39000"},
 		Obfuscator: &storage.Obfuscator{Flavor: "phobos", LocalPort: 39000}})
 	if !ts.Obfuscated || ts.ViaProxy || ts.EndpointMayV6 {
 		t.Fatalf("%+v", ts)

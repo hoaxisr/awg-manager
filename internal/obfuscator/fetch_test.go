@@ -28,7 +28,7 @@ func packageTarGz(t *testing.T, files map[string]string) []byte {
 func TestPackageURL(t *testing.T) {
 	cases := map[string]string{
 		"https://p.example/api/install/abc":                "https://p.example/api/install/abc/package.tar.gz",
-		"https://p.example/api/install/abc/":                "https://p.example/api/install/abc/package.tar.gz",
+		"https://p.example/api/install/abc/":               "https://p.example/api/install/abc/package.tar.gz",
 		"https://p.example/api/install/abc/package.tar.gz": "https://p.example/api/install/abc/package.tar.gz",
 	}
 	for in, want := range cases {

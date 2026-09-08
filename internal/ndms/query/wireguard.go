@@ -56,7 +56,6 @@ const (
 	// noHandshakeMarker: RCI sentinel for "no handshake ever".
 	noHandshakeMarker = int64(math.MaxInt32) // 2147483647
 
-	builtInVPNServerDescription = "Wireguard VPN Server"
 )
 
 // --- wire types (private) ----------------------------------------------------
@@ -246,7 +245,7 @@ func (s *WGServerStore) ListSystemTunnels(ctx context.Context) ([]ndms.SystemWir
 		if !strings.EqualFold(typeCheck.Type, "Wireguard") {
 			continue
 		}
-		if typeCheck.Description == builtInVPNServerDescription {
+		if typeCheck.Description == ndms.BuiltInVPNServerDescription {
 			continue
 		}
 		var detail rciWireguardDetail

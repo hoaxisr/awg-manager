@@ -2,10 +2,12 @@ package managed
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -30,14 +32,22 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 	}
 
 	// Generate keys
-	privKey, pubKey, err := GenerateKeyPair(ctx)
+	privKey, pubKey, err := s.keyGen.GenerateKeyPair(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("generate keypair: %w", err)
 	}
 
-	psk, err := GeneratePresharedKey(ctx)
+	psk, err := s.keyGen.GeneratePresharedKey(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("generate PSK: %w", err)
+	}
+
+	// Сигнатура принадлежит пиру: генерируем по дефолтному профилю. Отказ
+	// генерации — отказ создания пира (fail closed), молча выдавать пира
+	// без имитации нельзя.
+	sig, err := signature.Generate(signature.DefaultProfile)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrSignatureGenerate, err)
 	}
 
 	// Parse tunnel IP
@@ -63,6 +73,13 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		TunnelIP:     req.TunnelIP,
 		DNS:          req.DNS,
 		Enabled:      true,
+
+		I1:               sig.Packets.I1,
+		I2:               sig.Packets.I2,
+		I3:               sig.Packets.I3,
+		I4:               sig.Packets.I4,
+		I5:               sig.Packets.I5,
+		SignatureProfile: sig.Profile,
 	}
 	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
 		sv.Peers = append(sv.Peers, peer)
@@ -91,6 +108,22 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 	iface := server.InterfaceName
 
 	// Validate inputs BEFORE touching RCI or storage so we can fail clean.
+	sigProfile := ""
+	if req.Signature != nil {
+		var err error
+		if sigProfile, err = signature.ValidateProfileAndSize(req.Signature.Profile, req.Signature.packets()); err != nil {
+			switch {
+			case errors.Is(err, signature.ErrUnknownProtocol):
+				return fmt.Errorf("%w: %s", ErrUnknownSignatureProfile, req.Signature.Profile)
+			case errors.Is(err, signature.ErrPacketsTooLarge):
+				return ErrSignatureTooLarge
+			default:
+				// Чужую ошибку не переклеиваем в «слишком большая»: вызывающий
+				// не должен показывать пользователю неверную причину.
+				return fmt.Errorf("validate signature: %w", err)
+			}
+		}
+	}
 	wantTunnelChange := req.TunnelIP != "" && req.TunnelIP != peer.TunnelIP
 	if wantTunnelChange {
 		if err := s.validateTunnelIP(server, req.TunnelIP); err != nil {
@@ -139,12 +172,22 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		}
 		sv.Peers[i].Description = req.Description
 		sv.Peers[i].DNS = req.DNS
+		if req.Signature != nil {
+			sv.Peers[i].I1 = req.Signature.I1
+			sv.Peers[i].I2 = req.Signature.I2
+			sv.Peers[i].I3 = req.Signature.I3
+			sv.Peers[i].I4 = req.Signature.I4
+			sv.Peers[i].I5 = req.Signature.I5
+			// Канонический ключ, не то, что прислали: валидация выше
+			// принимает " SIP " — хранить такое нельзя.
+			sv.Peers[i].SignatureProfile = sigProfile
+		}
 		return nil
 	}); err != nil {
 		return fmt.Errorf("save to storage: %w", err)
 	}
 
-	s.log.Info("peer updated", "interface", iface, "pubkey", pubkey[:8]+"...")
+	s.log.Info("peer updated", "interface", iface, "pubkey", shortKey(pubkey))
 	s.appLog.Info("update-peer", req.Description, fmt.Sprintf("Peer %s updated", req.Description))
 	return nil
 }
@@ -186,7 +229,7 @@ func (s *Service) DeletePeer(ctx context.Context, id, pubkey string) error {
 		return fmt.Errorf("save to storage: %w", err)
 	}
 
-	s.log.Info("peer deleted", "interface", iface, "pubkey", pubkey[:8]+"...")
+	s.log.Info("peer deleted", "interface", iface, "pubkey", shortKey(pubkey))
 	s.appLog.Info("delete-peer", peerName, fmt.Sprintf("Peer %s deleted", peerName))
 	return nil
 }
@@ -223,13 +266,22 @@ func (s *Service) TogglePeer(ctx context.Context, id, pubkey string, enabled boo
 		return fmt.Errorf("save to storage: %w", err)
 	}
 
-	s.log.Info("peer toggled", "interface", iface, "pubkey", pubkey[:8]+"...", "enabled", enabled)
+	s.log.Info("peer toggled", "interface", iface, "pubkey", shortKey(pubkey), "enabled", enabled)
 	state := "disabled"
 	if enabled {
 		state = "enabled"
 	}
 	s.appLog.Info("toggle-peer", peerName, fmt.Sprintf("Peer %s %s", peerName, state))
 	return nil
+}
+
+// shortKey — префикс ключа для журнала. Импортированный ключ может быть
+// короче 8 символов, и pubkey[:8] на нём паниковал уже после записи в NDMS.
+func shortKey(k string) string {
+	if len(k) > 8 {
+		return k[:8] + "..."
+	}
+	return k
 }
 
 func (s *Service) findPeerIndex(server *storage.ManagedServer, pubkey string) int {

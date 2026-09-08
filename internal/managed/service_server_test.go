@@ -188,7 +188,16 @@ func (g *stateAwareGetter) Post(_ context.Context, payload any) (json.RawMessage
 	top, _ := payload.(map[string]any)
 	show, _ := top["show"].(map[string]any)
 	iface, _ := show["interface"].(map[string]any)
-	sn, _ := iface["system-name"].(map[string]any)
+	sn, ok := iface["system-name"].(map[string]any)
+	if !ok {
+		// {"show":{"interface":{"name":<id>}}} — детальный снимок интерфейса.
+		// Отдаём ровно то, что читает GenerateConf: публичный ключ сервера.
+		if id, ok := iface["name"].(string); ok && id != "" {
+			return []byte(`{"show":{"interface":{"id":"` + id + `","interface-name":"` + id +
+				`","type":"Wireguard","wireguard":{"public-key":"SRV-` + id + `"}}}}`), nil
+		}
+		return nil, errors.New("stateAwareGetter: Post payload not recognised")
+	}
 	name, _ := sn["name"].(string)
 	if name == "" {
 		return nil, errors.New("stateAwareGetter: Post payload not recognised")
@@ -241,7 +250,7 @@ func (p *recordingPoster) Post(ctx context.Context, payload any) (json.RawMessag
 // ListStore caches always miss — necessary because Create #1 and
 // Create #2 both call /show/interface/ and we want them to see
 // different snapshots.
-func newCreateTestService(t *testing.T) (*Service, *storage.SettingsStore) {
+func newCreateTestService(t *testing.T) (*Service, *storage.SettingsStore, *stateAwareGetter) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	store := storage.NewSettingsStore(tmpDir)
@@ -270,11 +279,30 @@ func newCreateTestService(t *testing.T) (*Service, *storage.SettingsStore) {
 	svc.wgRun = func(_ context.Context, _ string, _ ...string) (string, error) {
 		return "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n", nil
 	}
-	return svc, store
+	// AddPeer иначе форкает /opt/sbin/awg — на машине разработчика его нет.
+	svc.keyGen = &fakeKeyGen{}
+	return svc, store, getter
+}
+
+// fakeKeyGen выдаёт детерминированные ключи вместо awg genkey/pubkey/genpsk.
+type fakeKeyGen struct{ n int }
+
+func (f *fakeKeyGen) next() int {
+	f.n++
+	return f.n
+}
+
+func (f *fakeKeyGen) GenerateKeyPair(_ context.Context) (string, string, error) {
+	n := f.next()
+	return fmt.Sprintf("priv-%d", n), fmt.Sprintf("pub-%d", n), nil
+}
+
+func (f *fakeKeyGen) GeneratePresharedKey(_ context.Context) (string, error) {
+	return fmt.Sprintf("psk-%d", f.next()), nil
 }
 
 func TestService_CreateMultipleServers(t *testing.T) {
-	svc, store := newCreateTestService(t)
+	svc, store, _ := newCreateTestService(t)
 	ctx := context.Background()
 
 	first, err := svc.Create(ctx, CreateServerRequest{
@@ -385,7 +413,7 @@ func TestService_CreateRejectsConflicts(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			svc, _ := newCreateTestService(t)
+			svc, _, _ := newCreateTestService(t)
 			ctx := context.Background()
 			if _, err := svc.Create(ctx, CreateServerRequest{Address: "10.66.66.1", Mask: "255.255.255.0", ListenPort: 51820}); err != nil {
 				t.Fatalf("seed first server: %v", err)
@@ -422,7 +450,7 @@ func TestService_CreateRejectsConflicts(t *testing.T) {
 func TestService_Create_CapturesPrivateKey(t *testing.T) {
 	const wantKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
-	svc, store := newCreateTestService(t)
+	svc, store, _ := newCreateTestService(t)
 
 	// Stub wg-tools: return a known key regardless of the interface name.
 	svc.wgRun = func(_ context.Context, _ string, _ ...string) (string, error) {
@@ -483,7 +511,7 @@ func TestService_Create_CapturesPrivateKey(t *testing.T) {
 }
 
 func TestService_Create_FailsWhenPrivateKeyUnavailable(t *testing.T) {
-	svc, store := newCreateTestService(t)
+	svc, store, _ := newCreateTestService(t)
 
 	svc.wgRun = func(_ context.Context, _ string, _ ...string) (string, error) {
 		return "", errors.New("wg unavailable")
@@ -511,7 +539,7 @@ func TestService_Create_FailsWhenPrivateKeyUnavailable(t *testing.T) {
 // This is required for TestSetNATMode_InternetOnly_SetsStaticToWAN.
 func newNATModeTestService(t *testing.T) (*Service, *storage.SettingsStore, *recordingPoster) {
 	t.Helper()
-	svc, store := newCreateTestService(t)
+	svc, store, _ := newCreateTestService(t)
 
 	// Build a fake Getter that answers /show/ip/route with a default via PPPoE0.
 	routeGetter := query.NewFakeGetter()
@@ -824,7 +852,7 @@ func TestSetNATMode_InternetOnly_RemovesStaleTargets(t *testing.T) {
 }
 
 func TestService_Create_SkipsASCWhenDisabled(t *testing.T) {
-	svc, store := newCreateTestService(t)
+	svc, store, _ := newCreateTestService(t)
 
 	generate := false
 	server, err := svc.Create(context.Background(), CreateServerRequest{
@@ -1527,7 +1555,7 @@ func findInterfaceMTUPost(posts []map[string]interface{}, name string) (int, boo
 }
 
 func TestService_Create_SetsInterfaceMTU(t *testing.T) {
-	svc, _ := newCreateTestService(t)
+	svc, _, _ := newCreateTestService(t)
 
 	srv, err := svc.Create(context.Background(), CreateServerRequest{
 		Address: "10.66.66.1", Mask: "255.255.255.0", ListenPort: 51820, MTU: 1400,
@@ -1547,7 +1575,7 @@ func TestService_Create_SetsInterfaceMTU(t *testing.T) {
 }
 
 func TestService_Create_DefaultInterfaceMTU(t *testing.T) {
-	svc, _ := newCreateTestService(t)
+	svc, _, _ := newCreateTestService(t)
 
 	srv, err := svc.Create(context.Background(), CreateServerRequest{
 		Address: "10.66.66.1", Mask: "255.255.255.0", ListenPort: 51820,

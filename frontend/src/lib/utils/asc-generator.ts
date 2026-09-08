@@ -51,7 +51,7 @@ export interface GeneratedASCParams {
 
 /**
  * Generate all numeric/header ASC parameters.
- * I1-I5 are NOT included — use getSignaturePackets() or captureSignature().
+ * I1-I5 are NOT included — I1–I5 генерирует бэкенд (POST /api/signature/generate).
  *
  * Constraints (per AmneziaWG spec + Keenetic NDMS validation):
  *   Jc:     3-10

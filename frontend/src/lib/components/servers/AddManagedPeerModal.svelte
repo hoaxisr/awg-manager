@@ -2,6 +2,7 @@
 	import type { ManagedServer } from '$lib/types';
 	import { Modal, FormToggle, Button, FieldHint } from '$lib/components/ui';
 	import { routerDnsHint } from './routerDnsHint';
+	import { validateTunnelIP, validateDNSList } from '$lib/utils/peerForm';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { suggestNextPeerIP } from '$lib/utils/serverPeerOptions';
@@ -44,6 +45,9 @@
 		wasOpen = open;
 	});
 
+	const ipError = $derived(validateTunnelIP(tunnelIP));
+	const dnsError = $derived(validateDNSList(dns));
+
 	const isDirty = $derived(
 		description !== initialDescription ||
 		tunnelIP !== initialTunnelIP ||
@@ -82,7 +86,11 @@
 		<div class="form-group">
 			<label class="label" for="amp-ip">Tunnel IP (CIDR)</label>
 			<input type="text" id="amp-ip" class="input" bind:value={tunnelIP} placeholder="10.0.0.2/32" />
-			<span class="hint-text">Адрес клиента в VPN-сети</span>
+			{#if ipError}
+				<span class="field-hint is-error">{ipError}</span>
+			{:else}
+				<span class="hint-text">Адрес клиента в VPN-сети</span>
+			{/if}
 		</div>
 		<div class="form-group">
 			<label class="label" for="amp-dns">DNS серверы</label>
@@ -93,13 +101,17 @@
 					<FormToggle bind:checked={useRouterDNS} onchange={(val) => { dns = val ? routerIP : ''; }} size="sm" />
 				</div>
 			{/if}
-			<span class="hint-text">По умолчанию: 1.1.1.1, 8.8.8.8</span>
+			{#if dnsError}
+				<span class="field-hint is-error">{dnsError}</span>
+			{:else}
+				<span class="hint-text">По умолчанию: 1.1.1.1, 8.8.8.8</span>
+			{/if}
 		</div>
 	</div>
 
 	{#snippet actions()}
 		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
-		<Button variant="primary" size="md" onclick={handleAdd} disabled={!tunnelIP} loading={adding}>
+		<Button variant="primary" size="md" onclick={handleAdd} disabled={adding || !!ipError || !!dnsError} loading={adding}>
 			Добавить
 		</Button>
 	{/snippet}

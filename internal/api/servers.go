@@ -37,6 +37,15 @@ type WireguardServerPeerDTO struct {
 	Online        bool     `json:"online" example:"true"`
 	Enabled       bool     `json:"enabled" example:"true"`
 	ConfAvailable bool     `json:"confAvailable,omitempty" example:"true"`
+
+	// Сигнатура пира (CONTEXT.md «Сигнатура AWG»). Есть только у пиров с
+	// локальным секретом: у чужих её негде хранить.
+	I1               string `json:"i1,omitempty" example:"<b 0xc0>"`
+	I2               string `json:"i2,omitempty"`
+	I3               string `json:"i3,omitempty"`
+	I4               string `json:"i4,omitempty"`
+	I5               string `json:"i5,omitempty"`
+	SignatureProfile string `json:"signatureProfile,omitempty" example:"quic_initial"`
 }
 
 // WireguardServerDTO mirrors frontend WireguardServer.
@@ -273,7 +282,7 @@ func (h *ServersHandler) listServers(ctx context.Context) ([]ndms.WireguardServe
 		if managedSet[s.ID] || managedServerSet[s.ID] {
 			continue
 		}
-		isBuiltIn := s.Description == "Wireguard VPN Server"
+		isBuiltIn := s.Description == ndms.BuiltInVPNServerDescription
 		isMarked := serverSet[s.ID]
 		if isBuiltIn || isMarked {
 			servers = append(servers, s)

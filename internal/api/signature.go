@@ -92,13 +92,12 @@ const maxGenerateBodyBytes = 4 << 10
 // SignatureGenerateRequest is the POST /signature/generate body.
 type SignatureGenerateRequest struct {
 	Protocol string `json:"protocol" example:"quic_initial"`
-	MTU      int    `json:"mtu,omitempty" example:"1280"`
 }
 
 // SignatureGenerateData is the data field of SignatureGenerateResponse. It
 // mirrors SignatureCaptureData with source="generated" plus the canonical
-// protocol key (the "tls" alias resolves to "tls_client_hello") and the summed
-// I1–I5 byte size.
+// protocol key (quic_initial, stun, dns, dtls, sip; anything else is rejected
+// with UNKNOWN_PROTOCOL) and the summed I1–I5 byte size.
 type SignatureGenerateData struct {
 	OK       bool                `json:"ok" example:"true"`
 	Source   string              `json:"source" example:"generated"`
@@ -121,7 +120,7 @@ type SignatureGenerateResponse struct {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			request	body	SignatureGenerateRequest	true	"Protocol and optional MTU"
+//	@Param			request	body	SignatureGenerateRequest	true	"Protocol — один из quic_initial, stun, dns, dtls, sip"
 //	@Success		200	{object}	SignatureGenerateResponse
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		422	{object}	APIErrorEnvelope
@@ -145,7 +144,7 @@ func (h *SignatureHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	packets, size, err := signature.Generate(req.Protocol, req.MTU)
+	res, err := signature.Generate(req.Protocol)
 	if err != nil {
 		switch {
 		case errors.Is(err, signature.ErrUnknownProtocol):
@@ -162,14 +161,14 @@ func (h *SignatureHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, SignatureGenerateData{
 		OK:       true,
 		Source:   "generated",
-		Protocol: signature.CanonicalProtocol(req.Protocol),
-		ByteSize: size,
+		Protocol: res.Profile,
+		ByteSize: res.ByteSize,
 		Packets: SignaturePacketsDTO{
-			I1: packets.I1,
-			I2: packets.I2,
-			I3: packets.I3,
-			I4: packets.I4,
-			I5: packets.I5,
+			I1: res.Packets.I1,
+			I2: res.Packets.I2,
+			I3: res.Packets.I3,
+			I4: res.Packets.I4,
+			I5: res.Packets.I5,
 		},
 	})
 }

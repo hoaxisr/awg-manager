@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { protocols, getSignaturePackets, calcByteSize, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
+	import { protocols, calcByteSize, MAX_SIGNATURE_BYTES, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
 	import { api } from '$lib/api/client';
 	import type { ASCParams, ASCParamsExtended } from '$lib/types';
 	import { isExtendedASCParams } from '$lib/utils/asc-validation';
@@ -9,10 +9,8 @@
 	import { Badge, Button, Dropdown, FieldHint, type DropdownOption } from '$lib/components/ui';
 	import { Fingerprint, Hash, MoveHorizontal, Shredder, ShieldCheck, Shuffle } from 'lucide-svelte';
 
-	const MAX_SIGNATURE_BYTES = 4096;
-
 	type GenerateMode = 'protocol' | 'domain';
-	type SignatureModes = 'both' | 'domain';
+	type SignatureModes = 'both' | 'domain' | 'none';
 
 	type ASCErrorFields = Partial<Record<keyof ASCParamsExtended, string[]>>;
 
@@ -21,7 +19,6 @@
 		extended = undefined,
 		awg3 = false,
 		awg3Limited = false,
-		mtu = 1280,
 		errors = {},
 		hints = AWG_PARAM_HINTS,
 		signatureModes = 'both',
@@ -34,7 +31,6 @@
 		// NativeWG (awg_proxy) can only do header protection + random trailers —
 		// not the kernel-only timers / content padding. Hide those when true.
 		awg3Limited?: boolean;
-		mtu?: number;
 		errors?: ASCErrorFields;
 		hints?: Record<string, string>;
 		signatureModes?: SignatureModes;
@@ -98,14 +94,6 @@
 		return `${idPrefix}${name}`;
 	}
 
-	function generationErrorMessage(e: unknown): string {
-		const msg = e instanceof Error ? e.message : String(e);
-		if (/getRandomValues|crypto/i.test(msg)) {
-			return 'Генерация недоступна: откройте интерфейс по HTTPS или через localhost';
-		}
-		return msg || 'Ошибка генерации пакетов';
-	}
-
 	function applySignaturePackets(packets: SignaturePackets) {
 		params = {
 			...params,
@@ -117,33 +105,15 @@
 		} as ASCParams;
 	}
 
-	function handleGenerate() {
-		if (!showExtended) {
-			notifications.error('Signature-пакеты (I1–I5) недоступны на этом устройстве');
-			return;
-		}
-
+	async function handleGenerate() {
+		if (!showExtended) return;
 		generating = true;
 		try {
-			const packets = getSignaturePackets(selectedProtocol, mtu);
-			const size =
-				calcByteSize(packets.i1) +
-				calcByteSize(packets.i2) +
-				calcByteSize(packets.i3) +
-				calcByteSize(packets.i4) +
-				calcByteSize(packets.i5);
-			if (size > MAX_SIGNATURE_BYTES) {
-				notifications.error(
-					`Суммарный размер (${size} байт) превышает лимит ${MAX_SIGNATURE_BYTES}`,
-				);
-				return;
-			}
-
-			applySignaturePackets(packets);
-			const protoName = protocols[selectedProtocol]?.name ?? selectedProtocol;
-			notifications.success(`Signature-пакеты сгенерированы (${protoName})`);
-		} catch (e: unknown) {
-			notifications.error(generationErrorMessage(e));
+			const res = await api.generateSignature(selectedProtocol);
+			applySignaturePackets(res.packets);
+			notifications.success(`Сигнатура сгенерирована (${protocols[selectedProtocol].name})`);
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : 'Ошибка генерации');
 		} finally {
 			generating = false;
 		}
@@ -244,7 +214,7 @@
 		</div>
 	</section>
 
-	{#if showExtended}
+	{#if showExtended && signatureModes !== 'none'}
 		{@const ext = params as ASCParamsExtended}
 		<section class="card param-section">
 			<SettingsSectionLabel label="Signature пакеты (I1-I5)" icon={Fingerprint} tone="green" header />

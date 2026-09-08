@@ -55,3 +55,26 @@ func TestManagedList_NoForeignACLs_OmitsField(t *testing.T) {
 		t.Fatalf("foreignAcls не должен появляться без чужих ACL: %s", rr.Body.String())
 	}
 }
+
+// Сигнатура пира доезжает до UI: карточка сервера отдаёт i1..i5 и профиль,
+// приватный ключ при этом не утекает.
+func TestToManagedServerResponse_PeerCarriesSignature(t *testing.T) {
+	sv := &storage.ManagedServer{InterfaceName: "Wireguard1", Peers: []storage.ManagedPeer{
+		{PublicKey: "P", PrivateKey: "secret", I1: "<b 0x01>", I2: "<r 3>", SignatureProfile: "stun"},
+	}}
+	resp := toManagedServerResponse(sv, nil)
+	p := resp.Peers[0]
+	if p.I1 != "<b 0x01>" || p.I2 != "<r 3>" || p.SignatureProfile != "stun" {
+		t.Fatalf("%+v", p)
+	}
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "secret") {
+		t.Fatal("приватный ключ не должен утекать")
+	}
+	if !strings.Contains(string(raw), `"signatureProfile":"stun"`) {
+		t.Fatalf("json: %s", raw)
+	}
+}

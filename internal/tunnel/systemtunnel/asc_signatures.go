@@ -62,6 +62,37 @@ func splitASCSignatures(params json.RawMessage) (json.RawMessage, string) {
 	return out, strings.Join(notes, "; ")
 }
 
+// stripASCSignatures removes the i1-i5 keys from an ASC params object.
+//
+// Сигнатура интерфейса-сервера принадлежит его пирам (CONTEXT.md «Сигнатура
+// AWG»), и форма ASC сервера её не задаёт. Ключи именно ВЫРЕЗАЮТСЯ, а не
+// обнуляются: базовая форма ASC на 4.x про i1..i5 не знает, и пустая строка
+// в них — такой же отказ NDMS, как и заполненная.
+//
+// Как и splitASCSignatures: не объект или нечего резать — возвращаем ввод
+// байт в байт.
+func stripASCSignatures(params json.RawMessage) json.RawMessage {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(params, &obj); err != nil {
+		return params
+	}
+	found := false
+	for _, slot := range ascSignatureSlots {
+		if _, ok := obj[slot]; ok {
+			delete(obj, slot)
+			found = true
+		}
+	}
+	if !found {
+		return params
+	}
+	out, err := marshalNoEscape(obj)
+	if err != nil {
+		return params
+	}
+	return out
+}
+
 // marshalNoEscape marshals v without HTML escaping, so the <> in signature
 // packets survive instead of becoming </>.
 func marshalNoEscape(v any) (json.RawMessage, error) {

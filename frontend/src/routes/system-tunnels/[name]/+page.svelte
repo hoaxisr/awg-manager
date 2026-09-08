@@ -14,6 +14,12 @@
 
 	let tunnel = $state<SystemTunnel | null>(null);
 	let ascParams = $state<ASCParams | null>(null);
+	// Интерфейс-сервер (встроенный или перенятый пользователем) попадает в
+	// /api/servers/all по тому же предикату, что и на бэкенде. У него сигнатура
+	// принадлежит пирам (CONTEXT.md «Сигнатура AWG»), и форма ASC её не задаёт.
+	// Слушающий порт признаком сервера НЕ является: у поднятого туннеля-клиента
+	// он тоже есть.
+	let isServer = $state(false);
 	let saving = $state(false);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -26,12 +32,17 @@
 		loading = true;
 		error = null;
 		try {
-			const [t, asc] = await Promise.all([
+			const [t, asc, snap] = await Promise.all([
 				api.getSystemTunnel(name),
 				api.getASCParams(name),
+				// Разовый снимок списка серверов — чтобы знать, чья это сигнатура
+				// (см. isServer). Отказ страницу не роняет: без списка считаем
+				// туннель клиентским.
+				api.getAllServers().catch(() => null),
 			]);
 			tunnel = t;
 			ascParams = asc;
+			isServer = (snap?.servers ?? []).some((s) => s.id === name);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Не удалось загрузить данные';
 		} finally {
@@ -122,7 +133,9 @@
 		</div>
 
 		<div class="tab-content">
-			<ASCEditor bind:params={ascParams} mtu={tunnel.mtu} idPrefix="sys-" />
+			<!-- У интерфейса-сервера сигнатура принадлежит его пирам (CONTEXT.md
+			     «Сигнатура AWG»): правится в редакторе клиента, не здесь. -->
+			<ASCEditor bind:params={ascParams} idPrefix="sys-" signatureModes={isServer ? 'none' : 'both'} />
 		</div>
 	{/if}
 	</div>

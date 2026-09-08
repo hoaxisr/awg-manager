@@ -16,6 +16,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -194,6 +195,15 @@ func (h *TunnelsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, resp)
+}
+
+// awg3ErrorCode отделяет негабаритную сигнатуру от прочих отказов гейта
+// config.ValidateObfuscation: карточка показывает её на полях I1-I5.
+func awg3ErrorCode(err error) string {
+	if errors.Is(err, signature.ErrPacketsTooLarge) {
+		return "SIGNATURE_TOO_LARGE"
+	}
+	return "INVALID_AWG3"
 }
 
 // checkExplicitIDFree проверяет присланный клиентом идентификатор той же
@@ -391,7 +401,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := config.ValidateObfuscation(&merged.Interface.AWGObfuscation); err != nil {
-		response.Error(w, err.Error(), "INVALID_AWG3")
+		response.Error(w, err.Error(), awg3ErrorCode(err))
 		return
 	}
 	if err := obfuscator.Validate(merged.Obfuscator); err != nil {
@@ -903,7 +913,7 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if strings.Contains(err.Error(), "validate conf") {
-			response.Error(w, err.Error(), "INVALID_AWG3")
+			response.Error(w, err.Error(), awg3ErrorCode(err))
 			return
 		}
 		response.InternalError(w, err.Error())

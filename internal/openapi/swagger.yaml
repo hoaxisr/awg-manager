@@ -2206,6 +2206,20 @@ definitions:
       enabled:
         example: true
         type: boolean
+      i1:
+        description: |-
+          i1..i5 и signatureProfile — сигнатура имитации этого клиента;
+          попадает в его .conf.
+        example: <b 0xc0>
+        type: string
+      i2:
+        type: string
+      i3:
+        type: string
+      i4:
+        type: string
+      i5:
+        type: string
       presharedKey:
         example: JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ=
         type: string
@@ -2214,6 +2228,9 @@ definitions:
         type: string
       publicKey:
         example: HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH=
+        type: string
+      signatureProfile:
+        example: quic_initial
         type: string
       tunnelIP:
         example: 10.10.0.2
@@ -2265,6 +2282,10 @@ definitions:
         example: vpn.example.com:51821
         type: string
       i1:
+        description: |-
+          Серверные i1..i5 из старых бэкапов, когда сигнатура была общей на весь
+          сервер. Только на чтение: при импорте раздаются клиентам без своей
+          сигнатуры, в новые бэкапы не пишутся.
         type: string
       i2:
         type: string
@@ -2798,6 +2819,23 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.PeerSignatureDTO:
+    properties:
+      i1:
+        example: <b 0xc0>
+        type: string
+      i2:
+        type: string
+      i3:
+        type: string
+      i4:
+        type: string
+      i5:
+        type: string
+      profile:
+        example: quic_initial
+        type: string
     type: object
   api.PermitInterfaceRequest:
     properties:
@@ -3763,6 +3801,12 @@ definitions:
       description:
         example: My Phone
         type: string
+      signature:
+        allOf:
+        - $ref: '#/definitions/api.PeerSignatureDTO'
+        description: |-
+          Signature: nil — сигнатуру пира не трогать; объект — заменить все пять
+          полей и профиль целиком (пустые поля объекта стирают старые байты).
       tunnelIP:
         example: 10.0.14.2/32
         type: string
@@ -3993,9 +4037,6 @@ definitions:
     type: object
   api.SignatureGenerateRequest:
     properties:
-      mtu:
-        example: 1280
-        type: integer
       protocol:
         example: quic_initial
         type: string
@@ -7230,6 +7271,12 @@ definitions:
       dns:
         example: 8.8.8.8
         type: string
+      signature:
+        allOf:
+        - $ref: '#/definitions/api.PeerSignatureDTO'
+        description: |-
+          Signature: nil — сигнатуру пира не трогать; объект — заменить все пять
+          полей и профиль целиком (пустые поля объекта стирают старые байты).
       tunnelIP:
         example: 10.10.0.2/32
         type: string
@@ -7517,6 +7564,20 @@ definitions:
       endpoint:
         example: 1.2.3.4:12345
         type: string
+      i1:
+        description: |-
+          Сигнатура пира (CONTEXT.md «Сигнатура AWG»). Есть только у пиров с
+          локальным секретом: у чужих её негде хранить.
+        example: <b 0xc0>
+        type: string
+      i2:
+        type: string
+      i3:
+        type: string
+      i4:
+        type: string
+      i5:
+        type: string
       lastHandshake:
         example: "2024-01-15T10:30:00Z"
         type: string
@@ -7529,6 +7590,9 @@ definitions:
       rxBytes:
         example: 1048576
         type: integer
+      signatureProfile:
+        example: quic_initial
+        type: string
       txBytes:
         example: 524288
         type: integer
@@ -11035,8 +11099,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates fields (name, allowed-ips, ...) of the peer identified
-        by pubkey on the named managed server.
+      description: |-
+        Updates fields (name, allowed-ips, ...) of the peer identified by pubkey on the named managed server.
+        The signature field: absent — the peer signature is left untouched; present — it replaces all five packets and the profile.
       parameters:
       - description: Server id
         in: path
@@ -13718,7 +13783,7 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: Protocol and optional MTU
+      - description: Protocol — один из quic_initial, stun, dns, dtls, sip
         in: body
         name: request
         required: true

@@ -7,7 +7,7 @@
 	import type { ASCParams, ASCParamsExtended, SystemInfo } from '$lib/types';
 	import { PageContainer } from '$lib/components/layout';
 	import { ASCEditor } from '$lib/components/asc';
-	import { applyDisabledASCState, isExtendedASCParams, isZeroASCState, validateASCBeforeSave } from '$lib/utils/asc-validation';
+	import { applyDisabledASCState, isZeroASCState, validateASCBeforeSave } from '$lib/utils/asc-validation';
 	import { ArrowLeft } from 'lucide-svelte';
 	import { Button } from '$lib/components/ui';
 	import { generateASCParams } from '$lib/utils/asc-generator';
@@ -16,7 +16,6 @@
 
 	let ascParams = $state<ASCParams | null>(null);
 	let systemInfo = $state<SystemInfo | null>(null);
-	let serverMtu = $state(1280);
 	let saving = $state(false);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -31,21 +30,17 @@
 			const extended = systemInfo?.supportsExtendedASC ?? false;
 			const hRanges = systemInfo?.supportsHRanges ?? false;
 			const generated = generateASCParams({ extended, hRanges });
-			const existing = isExtendedASCParams(ascParams) ? (ascParams as ASCParamsExtended) : null;
-			const signatures = {
-				i1: existing?.i1 ?? '',
-				i2: existing?.i2 ?? '',
-				i3: existing?.i3 ?? '',
-				i4: existing?.i4 ?? '',
-				i5: existing?.i5 ?? '',
-			};
 
 			ascParams = extended
 				? ({
 						...generated,
 						s3: generated.s3!,
 						s4: generated.s4!,
-						...signatures,
+						i1: '',
+						i2: '',
+						i3: '',
+						i4: '',
+						i5: '',
 					} satisfies ASCParamsExtended)
 				: generated;
 
@@ -77,14 +72,12 @@
 		loading = true;
 		error = null;
 		try {
-			const [asc, info, server] = await Promise.all([
+			const [asc, info] = await Promise.all([
 				api.getManagedServerASC(serverId),
 				api.getSystemInfo(),
-				api.getManagedServer(serverId),
 			]);
 			ascParams = asc;
 			systemInfo = info;
-			serverMtu = server.mtu ?? 1280;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Не удалось загрузить параметры';
 		} finally {
@@ -178,7 +171,7 @@
 		<div class="py-12 text-center text-error-500">{error}</div>
 	{:else if ascParams}
 		<div class="tab-content">
-			<ASCEditor bind:params={ascParams} mtu={serverMtu} idPrefix="managed-" />
+			<ASCEditor bind:params={ascParams} signatureModes="none" idPrefix="managed-" />
 		</div>
 	{/if}
 	</div>
