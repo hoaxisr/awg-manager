@@ -3,9 +3,13 @@ package service
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
 // .conf с HeaderProtectionKey проходил мимо ValidateAWG3: гейт стоял только на
@@ -30,7 +34,7 @@ AllowedIPs = 0.0.0.0/0
 }
 
 func TestImportRejectsBadHeaderProtectionKey(t *testing.T) {
-	s, tunnels, _ := serviceForCreate(t, &createOp{})
+	s, tunnels, _ := serviceForImport(t)
 
 	// 31 байт вместо 32 — pubKeyToHex ниже по течению молча вернёт "".
 	_, err := s.Import(context.Background(), awg31Conf("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZQ==", 12), "t", "kernel", ImportLink{})
@@ -46,7 +50,7 @@ func TestImportRejectsBadHeaderProtectionKey(t *testing.T) {
 }
 
 func TestImportRejectsShortPaddingWithHeaderProtection(t *testing.T) {
-	s, _, _ := serviceForCreate(t, &createOp{})
+	s, _, _ := serviceForImport(t)
 
 	_, err := s.Import(context.Background(), awg31Conf("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", 11), "t", "kernel", ImportLink{})
 	if err == nil {
@@ -55,7 +59,7 @@ func TestImportRejectsShortPaddingWithHeaderProtection(t *testing.T) {
 }
 
 func TestImportAcceptsValidAWG31Conf(t *testing.T) {
-	s, _, _ := serviceForCreate(t, &createOp{})
+	s, _, _ := serviceForImport(t)
 
 	if _, err := s.Import(context.Background(), awg31Conf("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", 12), "t", "kernel", ImportLink{}); err != nil {
 		t.Fatalf("валидный AWG 3.1 .conf обязан импортироваться: %v", err)
@@ -68,7 +72,7 @@ func TestImportAcceptsValidAWG31Conf(t *testing.T) {
 // связанных его не видит: такой сироты не снять уже ничем, кроме ручного
 // удаления карточки.
 func TestImportWritesOwnershipLinkWithTheRecord(t *testing.T) {
-	s, _, _ := serviceForCreate(t, &createOp{})
+	s, _, _ := serviceForImport(t)
 
 	res, err := s.Import(context.Background(), awg31Conf("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", 12), "t", "kernel",
 		ImportLink{WdttClientID: "  default  "})
@@ -87,4 +91,19 @@ func TestImportWritesOwnershipLinkWithTheRecord(t *testing.T) {
 	if stored.FreeTurnClientID != "" {
 		t.Fatalf("чужая связь проставлена: %q", stored.FreeTurnClientID)
 	}
+}
+
+// serviceForImport — сервис над временным стором и каталогом .conf; оператор —
+// голый MockOperator: импорт ресурсы NDMS не создаёт, их поднимает Start.
+func serviceForImport(t *testing.T) (*ServiceImpl, string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	confs := filepath.Join(dir, "confs")
+	old := tunnel.ConfDir
+	tunnel.ConfDir = confs
+	t.Cleanup(func() { tunnel.ConfDir = old })
+
+	tunnels := filepath.Join(dir, "tunnels")
+	store := storage.NewAWGTunnelStoreWithLockDir(tunnels, filepath.Join(dir, "locks"))
+	return &ServiceImpl{store: store, legacyOperator: &MockOperator{}, state: NewMockStateManager()}, tunnels, confs
 }

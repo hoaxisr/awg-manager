@@ -62,6 +62,7 @@ type ServiceImpl struct {
 	// singleflight). nil in bare test constructions.
 	stateCache      *cache.KeyedStore[string, tunnel.StateInfo]
 	invalidatorOnce sync.Once
+	invalidatorStop func() // unsubscribe шины; nil, пока инвалидатор не поднят
 
 	// selfCreateGate (optional) suppresses the hook-driven snapshot refresh
 	// during awg-manager-initiated NDMS interface creations. Without it,
@@ -239,89 +240,6 @@ func (s *ServiceImpl) unlockTunnel(tunnelID string) {
 }
 
 // === CRUD Operations ===
-
-// Create создаёт туннель целиком: ресурс в NDMS, запись в хранилище и .conf —
-// одной операцией с откатом. Конфиг для оператора собирается здесь же из
-// записи каноническим StoredToConfig: вызывающий передаёт только запись, и
-// расходиться этим двум источникам больше негде.
-func (s *ServiceImpl) Create(ctx context.Context, stored *storage.AWGTunnel) error {
-	if stored == nil {
-		return fmt.Errorf("nil tunnel record")
-	}
-	tunnelID := stored.ID
-	cfg := orchestrator.StoredToConfig(stored)
-	// StoredToConfig это поле не переносит — те, кому оно нужно, дописывают
-	// его сами (так делает и оркестратор перед запуском). Без него отметка
-	// «маршрут по умолчанию» не действовала до первого включения туннеля.
-	cfg.DefaultRoute = stored.DefaultRoute
-
-	s.lockTunnel(tunnelID)
-	defer s.unlockTunnel(tunnelID)
-
-	// Check if tunnel already exists in storage
-	if s.store.Exists(tunnelID) {
-		return tunnel.ErrAlreadyExists
-	}
-
-	// NativeWG path
-	if s.isNativeWG(stored) {
-		if s.nwgOperator == nil {
-			return fmt.Errorf("NativeWG backend not available")
-		}
-		index, err := s.nwgOperator.Create(ctx, stored)
-		if err != nil {
-			return err
-		}
-		stored.NWGIndex = index
-		// Симметрично kernel-ветке: запись сохраняем здесь, иначе созданный
-		// в NDMS интерфейс осиротеет. Конфиг для nativewg не пишется — его
-		// никто не читает.
-		if err := s.store.Create(stored); err != nil {
-			if derr := s.nwgOperator.Delete(ctx, stored); derr != nil {
-				s.logWarn("create", tunnelID, "откат не удался, интерфейс остался в NDMS: "+derr.Error())
-			}
-			return fmt.Errorf("save tunnel: %w", err)
-		}
-		s.logInfo("create", tunnelID, "NativeWG tunnel created")
-		// Legacy tunnel:created publish removed (Task 14 sweep); handler
-		// layer calls publishTunnelList → resource:invalidated after all
-		// mutations, so no subscriber missed an update.
-		s.notifyAWGSyncer(ctx)
-		return nil
-	}
-
-	// Kernel path: create in NDMS (for OS5, no-op for OS4)
-	if err := s.legacyOperator.Create(ctx, cfg); err != nil {
-		return err
-	}
-
-	// Запись и конфиг — здесь же, а не у вызывающего: ресурс в NDMS уже
-	// создан, и если сохранить его не удастся, он останется жить без записи.
-	// Никто уже не будет знать, что он наш, и никто его не уберёт: стартовый
-	// подметатель ходит только по записям, а полная уборка бывает лишь при
-	// удалении пакета.
-	if err := s.store.Create(stored); err != nil {
-		if derr := s.legacyOperator.Delete(ctx, stored); derr != nil {
-			s.logWarn("create", tunnelID, "откат не удался, интерфейс остался в NDMS: "+derr.Error())
-		}
-		return fmt.Errorf("save tunnel: %w", err)
-	}
-	if err := config.WriteFile(stored); err != nil {
-		if derr := s.store.Delete(tunnelID); derr != nil {
-			s.logWarn("create", tunnelID, "откат не удался, запись осталась: "+derr.Error())
-		}
-		if derr := s.legacyOperator.Delete(ctx, stored); derr != nil {
-			s.logWarn("create", tunnelID, "откат не удался, интерфейс остался в NDMS: "+derr.Error())
-		}
-		return fmt.Errorf("write config: %w", err)
-	}
-
-	s.logInfo("create", tunnelID, "Tunnel created")
-	// Legacy tunnel:created publish removed (Task 14 sweep); handler
-	// layer emits resource:invalidated via publishTunnelList.
-	s.notifyAWGSyncer(ctx)
-	return nil
-}
 
 // storedIfaceNames resolves kernel and NDMS interface names for a stored
 // tunnel. Kernel tunnels do have an NDMS name (awgN -> OpkgTunN); only OS4

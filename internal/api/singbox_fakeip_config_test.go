@@ -23,6 +23,7 @@ func newTestFakeIPConfigHandler(t *testing.T) *SingboxFakeIPConfigHandler {
 	dir := t.TempDir()
 
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouter, Filename: "20-router.json"}); err != nil {
 		t.Fatal(err)
 	}

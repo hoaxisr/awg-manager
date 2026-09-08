@@ -41,6 +41,7 @@ func TestUseASC(t *testing.T) {
 				supportsASC:  func() bool { return c.asc },
 				supportsASC3: func() bool { return c.asc3 },
 			}
+			t.Cleanup(o.Close)
 			if got := o.useASC(&c.iface); got != c.wantUseASC {
 				t.Errorf("useASC = %v, want %v", got, c.wantUseASC)
 			}
@@ -52,6 +53,7 @@ func TestUseASC(t *testing.T) {
 // ASC неспособным на 3.x — то есть уходить на прокси, а не паниковать.
 func TestUseASCNilASC3IsProxy(t *testing.T) {
 	o := &OperatorNativeWG{supportsASC: func() bool { return true }}
+	t.Cleanup(o.Close)
 	iface := storage.AWGInterface{AWGObfuscation: storage.AWGObfuscation{
 		Jc: 4, H1: "1", H2: "2", H3: "3", H4: "4", RandomTrailers: true,
 	}}

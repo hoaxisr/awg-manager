@@ -75,9 +75,12 @@ type OperatorNativeWG struct {
 
 	// Endpoint-страж v6-туннелей на ASC (endpoint_guard.go): реестр
 	// «kernel-имя → ожидаемый endpoint», фоновая сверка wg show/set.
-	guardMu   sync.Mutex
-	guard     map[string]guardEntry
-	guardOnce sync.Once
+	guardMu     sync.Mutex
+	guard       map[string]guardEntry
+	guardOnce   sync.Once
+	guardCtx    context.Context    // контекст guardLoop и его sweep'ов
+	guardCancel context.CancelFunc // Close; nil, пока guardLoop не заведён
+	guardDone   chan struct{}      // закрывает guardLoop на выходе
 	// hasProxySlot reports a live kmod proxy slot on a listen port. Default:
 	// kmod.HasSlotListening; overridable in tests.
 	hasProxySlot func(listenPort int) bool

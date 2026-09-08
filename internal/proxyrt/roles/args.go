@@ -111,7 +111,17 @@ func FreeTurnClientArgs(c FreeTurnClientConfig) []string {
 	}
 	str("-transport", c.Transport)
 	str("-mode", c.Mode)
-	flag("-bond", c.Bond)
+	if k := c.KCP; k != nil && c.Mode == "tcp" {
+		args = append(args,
+			"-kcp-nodelay", strconv.Itoa(k.NoDelay),
+			"-kcp-interval", strconv.Itoa(k.Interval),
+			"-kcp-resend", strconv.Itoa(k.Resend),
+			"-kcp-nc", strconv.Itoa(k.NC),
+			"-kcp-sndwnd", strconv.Itoa(k.SndWnd),
+			"-kcp-rcvwnd", strconv.Itoa(k.RcvWnd),
+			"-kcp-mtu", strconv.Itoa(k.MTU),
+			"-kcp-acknodelay="+strconv.FormatBool(k.ACKNoDelay))
+	}
 	str("-obf-profile", c.ObfProfile)
 	str("-obf-key", c.ObfKey)
 	if c.StreamsPerCred > 0 {

@@ -26,9 +26,6 @@ func (s *listSvcStub) List(context.Context) ([]service.TunnelWithStatus, error) 
 func (s *listSvcStub) Get(context.Context, string) (*service.TunnelWithStatus, error) {
 	return nil, nil
 }
-func (s *listSvcStub) Create(context.Context, *storage.AWGTunnel) error {
-	return nil
-}
 func (s *listSvcStub) Update(context.Context, *storage.AWGTunnel, *storage.AWGTunnel) error {
 	return nil
 }

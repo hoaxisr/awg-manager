@@ -55,11 +55,13 @@ func newCaptureServer(t *testing.T) *captureServer {
 func newSyncTestOperator(t *testing.T, srvURL string) *OperatorNativeWG {
 	t.Helper()
 	sem := transport.NewSemaphore(2)
-	return &OperatorNativeWG{
+	o := &OperatorNativeWG{
 		transport:   transport.NewWithURL(srvURL, sem),
 		appLog:      logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps),
 		supportsASC: func() bool { return true }, // ASC — путь по умолчанию в тестах
 	}
+	t.Cleanup(o.Close)
+	return o
 }
 
 func TestSyncPeer_NoPreviousKey_OnlyAddsPeer(t *testing.T) {

@@ -12,12 +12,12 @@ export interface FreeTurnClientConfig {
 	streams: number;
 	transport: 'tcp' | 'udp';
 	mode: 'udp' | 'tcp';
-	bond: boolean;
 	obfProfile: 'none' | 'rtpopus' | 'rtpopus2' | 'rtpopus3';
 	obfKey?: string;
 	/** Ключ обфускации задан на бэкенде — значение наружу не отдаётся (Н5). */
 	obfKeySet?: boolean;
 	streamsPerCred: number;
+	kcp?: FreeTurnKCP;
 	platform: 'desktop' | 'mobile';
 	dnsMode: 'plain' | 'doh' | 'auto';
 	dnsServers?: string;
@@ -103,13 +103,24 @@ export interface FreeTurnStatus {
 	routerClock?: string;
 }
 
+/** Профиль KCP tcp-режима (upstream 3.2+): приезжает ссылкой, редактора нет. */
+export interface FreeTurnKCP {
+	nodelay: number;
+	interval: number;
+	resend: number;
+	nc: number;
+	sndwnd: number;
+	rcvwnd: number;
+	mtu: number;
+	acknodelay: boolean;
+}
+
 export interface FreeTurnLinkPayload {
 	v: number;
 	provider?: string;
 	peer?: string;
 	transport?: string;
 	mode?: string;
-	bond?: boolean;
 	obf?: string;
 	key?: string;
 	n?: number;
@@ -122,6 +133,7 @@ export interface FreeTurnLinkPayload {
 	name?: string;
 	mtu?: number;
 	wg?: string;
+	kcp?: FreeTurnKCP;
 }
 
 export interface FreeTurnGenerateLinkRequest {

@@ -1126,7 +1126,6 @@ const fullFreeturnJSON = `{
     "streams":12,
     "transport":"udp",
     "mode":"tcp",
-    "bond":true,
     "obfProfile":"rtpopus2",
     "obfKey":"ft-obf-key-client",
     "streamsPerCred":6,
@@ -1288,7 +1287,6 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 				Streams:        12,
 				Transport:      "udp",
 				Mode:           "tcp",
-				Bond:           true,
 				ObfProfile:     "rtpopus2",
 				ObfKey:         "ft-obf-key-client",
 				StreamsPerCred: 6,
@@ -1353,8 +1351,10 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 	// Форма nil→true закрыта TestSeedOpenFirewallAbsentOrNullMeansOn.
 	assertEveryFieldCarried(t, "WdttServerConfig", []any{*srv.WdttServer}, "OpenFirewall")
 	assertEveryFieldCarried(t, "ServerUser", []any{srv.Users[0]})
+	// KCP появился в freeturn 3.2 (F144) и приезжает только ссылкой freeturn://;
+	// старый freeturn.json, который переносит посев, его не знал.
 	assertEveryFieldCarried(t, "FreeTurnClientConfig",
-		[]any{*got["freeturn-client:ftc-1"].FreeTurnClient})
+		[]any{*got["freeturn-client:ftc-1"].FreeTurnClient}, "KCP")
 	assertEveryFieldCarried(t, "FreeTurnServerConfig",
 		[]any{*got["freeturn-server:fts-1"].FreeTurnServer}, "OpenFirewall")
 

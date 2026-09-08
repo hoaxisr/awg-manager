@@ -2832,11 +2832,22 @@ const ftlink_DecodeResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const ftlink_KCP: v.GenericSchema = v.looseObject({
+	acknodelay: v.optional(v.nullable(v.boolean())),
+	interval: v.optional(v.nullable(v.number())),
+	mtu: v.optional(v.nullable(v.number())),
+	nc: v.optional(v.nullable(v.number())),
+	nodelay: v.optional(v.nullable(v.number())),
+	rcvwnd: v.optional(v.nullable(v.number())),
+	resend: v.optional(v.nullable(v.number())),
+	sndwnd: v.optional(v.nullable(v.number())),
+});
+
 const ftlink_LinkPayload: v.GenericSchema = v.looseObject({
-	bond: v.optional(v.nullable(v.boolean())),
 	cid: v.optional(v.nullable(v.string())),
 	dns: v.optional(v.nullable(v.string())),
 	dnss: v.optional(v.nullable(v.string())),
+	kcp: v.optional(v.nullable(v.lazy(() => ftlink_KCP))),
 	key: v.optional(v.nullable(v.string())),
 	listen: v.optional(v.nullable(v.string())),
 	mcap: v.optional(v.nullable(v.boolean())),
@@ -3556,7 +3567,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 })]),
 	"POST /terminal/start": v.lazy(() => api_TerminalStartResponse),
 	"POST /terminal/stop": v.lazy(() => api_APIEnvelope),
-	"POST /tunnels/create": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/delete": v.lazy(() => api_TunnelDeleteResponse),
 	"POST /tunnels/lock": v.lazy(() => api_TunnelLockResponse),
 	"POST /tunnels/pingcheck": v.lazy(() => api_APIEnvelope),

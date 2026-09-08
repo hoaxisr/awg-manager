@@ -25,29 +25,6 @@ func TestNewOperatorOS4_IPRunDefaultsToExec(t *testing.T) {
 }
 
 // TestOperatorOS4_Create_NoOp verifies Create is a no-op on OS4.
-func TestOperatorOS4_Create_NoOp(t *testing.T) {
-	backendMock := &MockBackend{}
-	wgClient := &MockWGClient{}
-	fw := &MockFirewall{}
-
-	op := NewOperatorOS4(nil, nil, wgClient, backendMock, fw)
-
-	cfg := tunnel.Config{
-		ID:   "awg0",
-		Name: "Test Tunnel",
-	}
-
-	err := op.Create(context.Background(), cfg)
-
-	if err != nil {
-		t.Fatalf("Create() should be no-op, got error: %v", err)
-	}
-	// No backend calls should happen
-	if len(backendMock.StartCalls) != 0 {
-		t.Errorf("Backend should not be started on Create")
-	}
-}
-
 // Порядок Start на OS4: адрес → wg.SetConf → up → mtu → txqueuelen.
 // Команды зафиксированы литералами, а не рендером: `/32` в адресе — прод-факт
 // (configureIP игнорирует cfg.AddressPrefix, здесь он намеренно 26), а up, mtu

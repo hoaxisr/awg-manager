@@ -68,6 +68,7 @@ func newLifecycleOperator(t *testing.T, asc, asc3 bool) (*OperatorNativeWG, *pro
 		// (operator.go:1163-1165) — nil-func = крэш всего test-binary.
 		resolveFn: func(string) (string, int, error) { return "203.0.113.10", 5060, nil },
 	}
+	t.Cleanup(o.Close)
 	// kmod.EnsureLoaded (startProxy) без стабов читает хост: resolveKoPath →
 	// ndmsinfo, isLoadedFn → /proc/awg_proxy/version, modLoadedFn → /proc/modules,
 	// затем insmod. Стабы делают его детерминированным отказом «kmod: …» —

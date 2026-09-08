@@ -819,3 +819,43 @@ func TestNatModeUnknownSurvivesValidation(t *testing.T) {
 		t.Fatalf("natMode = %q, ждали full", got.NatMode)
 	}
 }
+
+// Сервер из 2.17 с дефолтами DTLS :56000 и WG 56001 после 2.18.0 получал raw
+// = DTLS+1 = 56001 и не стартовал: «порт 56001 занят дважды». Нормализация
+// обязана развести raw явным портом, не трогая WG (он в выданных ссылках).
+func TestNormalizeRawPortAvoidsWgAndDirect(t *testing.T) {
+	cases := []struct{ name, listen, direct, raw, want string }{
+		{"дефолты 2.17", "0.0.0.0:56000", "", "", "0.0.0.0:56002"},
+		{"direct занял DTLS+2", "0.0.0.0:56000", "0.0.0.0:56002", "", "0.0.0.0:56003"},
+		{"явный raw не трогаем", "0.0.0.0:56000", "", "0.0.0.0:56001", "0.0.0.0:56001"},
+		{"коллизии нет — дефолт не материализуем", "0.0.0.0:57002", "", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := newStore(t)
+			r := wdttServer("s")
+			r.WdttServer.Listen, r.WdttServer.WgPort = c.listen, 56001
+			r.WdttServer.DirectListen, r.WdttServer.RawListen = c.direct, c.raw
+			if _, err := s.Replace(func(st *State) error {
+				st.Records = append(st.Records, r)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			st, err := s.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := st.Records[0].WdttServer
+			if d.RawListen != c.want {
+				t.Errorf("rawListen=%q, want %q", d.RawListen, c.want)
+			}
+			if d.WgPort != 56001 {
+				t.Errorf("WG-порт сдвинут на %d — он зашит в ссылки абонентов", d.WgPort)
+			}
+			if c.raw == "" && d.Validate() != nil {
+				t.Errorf("после нормализации конфиг обязан быть валидным: %v", d.Validate())
+			}
+		})
+	}
+}

@@ -185,7 +185,6 @@ type oldFreeturnClient struct {
 	Streams        int    `json:"streams"`
 	Transport      string `json:"transport"`
 	Mode           string `json:"mode"`
-	Bond           bool   `json:"bond"`
 	ObfProfile     string `json:"obfProfile"`
 	ObfKey         string `json:"obfKey"`
 	StreamsPerCred int    `json:"streamsPerCred"`
@@ -621,7 +620,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		seeded = append(seeded, Record{ID: c.ID, Kind: KindFreeTurnClient, Name: c.Name,
 			Enabled: o.Enabled, SeededFrom: ftSrc, FreeTurnClient: &roles.FreeTurnClientConfig{
 				Listen: o.Listen, Peer: o.Peer, Provider: o.Provider, Links: o.Links,
-				Streams: o.Streams, Transport: o.Transport, Mode: o.Mode, Bond: o.Bond,
+				Streams: o.Streams, Transport: o.Transport, Mode: o.Mode,
 				ObfProfile: o.ObfProfile, ObfKey: o.ObfKey,
 				StreamsPerCred: o.StreamsPerCred, Platform: o.Platform,
 				DNSMode: o.DNSMode, DNSServers: o.DNSServers,

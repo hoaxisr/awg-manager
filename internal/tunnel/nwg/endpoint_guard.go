@@ -101,7 +101,11 @@ func (o *OperatorNativeWG) guardRegister(id string, e guardEntry) {
 	}
 	o.guard[id] = e
 	o.guardMu.Unlock()
-	o.guardOnce.Do(func() { go o.guardLoop() })
+	o.guardOnce.Do(func() {
+		o.guardCtx, o.guardCancel = context.WithCancel(context.Background())
+		o.guardDone = make(chan struct{})
+		go o.guardLoop()
+	})
 }
 
 func (o *OperatorNativeWG) guardUnregister(id string) {
@@ -165,11 +169,30 @@ func (o *OperatorNativeWG) guardMarkWarnedNoV4(id, spec, endpoint string) {
 }
 
 func (o *OperatorNativeWG) guardLoop() {
+	defer close(o.guardDone)
 	ticker := time.NewTicker(guardInterval)
 	defer ticker.Stop()
-	for range ticker.C {
-		o.guardSweep(context.Background())
+	for {
+		select {
+		case <-ticker.C:
+			o.guardSweep(o.guardCtx)
+		case <-o.guardCtx.Done():
+			return
+		}
 	}
+}
+
+// Close останавливает guardLoop (обрывая и sweep в полёте) и ждёт его
+// выхода; страж после этого не поднимется — guardRegister лишь наполняет
+// реестр. Прод зовёт из shutdown-хука, тесты — из t.Cleanup: без него
+// горутина стража переживает владельца (goleak, F150).
+func (o *OperatorNativeWG) Close() {
+	o.guardOnce.Do(func() {})
+	if o.guardCancel == nil {
+		return
+	}
+	o.guardCancel()
+	<-o.guardDone
 }
 
 // guardSweep — один проход сверки. Вынесен из цикла ради тестов.

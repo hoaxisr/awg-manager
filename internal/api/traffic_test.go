@@ -12,7 +12,9 @@ import (
 
 func TestTrafficHandler_RejectsUnsupportedPeriods(t *testing.T) {
 	h := &TunnelsHandler{}
-	h.SetTrafficHistory(traffic.New())
+	hist := traffic.New()
+	t.Cleanup(hist.Stop)
+	h.SetTrafficHistory(hist)
 
 	cases := []string{"15m", "2h", "48h", "7d", "30d", "bogus"}
 	for _, p := range cases {
@@ -27,7 +29,9 @@ func TestTrafficHandler_RejectsUnsupportedPeriods(t *testing.T) {
 
 func TestTrafficHandler_AcceptsValidPeriods(t *testing.T) {
 	h := &TunnelsHandler{}
-	h.SetTrafficHistory(traffic.New())
+	hist := traffic.New()
+	t.Cleanup(hist.Stop)
+	h.SetTrafficHistory(hist)
 
 	for _, p := range []string{"5m", "10m", "30m", "1h", "3h", "6h", "12h", "24h"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/tunnels/traffic?id=awg0&period="+p, nil)
@@ -41,7 +45,9 @@ func TestTrafficHandler_AcceptsValidPeriods(t *testing.T) {
 
 func TestTrafficHandler_MissingID(t *testing.T) {
 	h := &TunnelsHandler{}
-	h.SetTrafficHistory(traffic.New())
+	hist := traffic.New()
+	t.Cleanup(hist.Stop)
+	h.SetTrafficHistory(hist)
 	req := httptest.NewRequest(http.MethodGet, "/api/tunnels/traffic?period=1h", nil)
 	rr := httptest.NewRecorder()
 	h.Traffic(rr, req)
@@ -52,7 +58,9 @@ func TestTrafficHandler_MissingID(t *testing.T) {
 
 func TestTrafficHandler_WrongMethod(t *testing.T) {
 	h := &TunnelsHandler{}
-	h.SetTrafficHistory(traffic.New())
+	hist := traffic.New()
+	t.Cleanup(hist.Stop)
+	h.SetTrafficHistory(hist)
 	req := httptest.NewRequest(http.MethodPost, "/api/tunnels/traffic?id=awg0&period=1h", nil)
 	rr := httptest.NewRecorder()
 	h.Traffic(rr, req)
@@ -63,7 +71,9 @@ func TestTrafficHandler_WrongMethod(t *testing.T) {
 
 func TestTrafficHandler_AcceptsEmojiID(t *testing.T) {
 	h := &TunnelsHandler{}
-	h.SetTrafficHistory(traffic.New())
+	hist := traffic.New()
+	t.Cleanup(hist.Stop)
+	h.SetTrafficHistory(hist)
 	v := url.Values{}
 	v.Set("id", "🇷🇺 Russia [*CIDR] YA")
 	v.Set("period", "1h")
@@ -77,7 +87,9 @@ func TestTrafficHandler_AcceptsEmojiID(t *testing.T) {
 
 func TestTrafficHandler_AcceptsSpaceID(t *testing.T) {
 	h := &TunnelsHandler{}
-	h.SetTrafficHistory(traffic.New())
+	hist := traffic.New()
+	t.Cleanup(hist.Stop)
+	h.SetTrafficHistory(hist)
 	v := url.Values{}
 	v.Set("id", "AWG Test")
 	v.Set("period", "1h")
@@ -91,7 +103,9 @@ func TestTrafficHandler_AcceptsSpaceID(t *testing.T) {
 
 func TestTrafficHandler_RejectsOversizedID(t *testing.T) {
 	h := &TunnelsHandler{}
-	h.SetTrafficHistory(traffic.New())
+	hist := traffic.New()
+	t.Cleanup(hist.Stop)
+	h.SetTrafficHistory(hist)
 	v := url.Values{}
 	v.Set("id", strings.Repeat("a", 257))
 	v.Set("period", "1h")
@@ -105,7 +119,9 @@ func TestTrafficHandler_RejectsOversizedID(t *testing.T) {
 
 func TestTrafficHandler_RejectsControlCharID(t *testing.T) {
 	h := &TunnelsHandler{}
-	h.SetTrafficHistory(traffic.New())
+	hist := traffic.New()
+	t.Cleanup(hist.Stop)
+	h.SetTrafficHistory(hist)
 	v := url.Values{}
 	v.Set("id", "foo\x00bar")
 	v.Set("period", "1h")
@@ -119,7 +135,9 @@ func TestTrafficHandler_RejectsControlCharID(t *testing.T) {
 
 func TestTrafficHandler_AcceptsExactly256ByteID(t *testing.T) {
 	h := &TunnelsHandler{}
-	h.SetTrafficHistory(traffic.New())
+	hist := traffic.New()
+	t.Cleanup(hist.Stop)
+	h.SetTrafficHistory(hist)
 	v := url.Values{}
 	v.Set("id", strings.Repeat("a", 256))
 	v.Set("period", "1h")

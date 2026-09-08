@@ -155,6 +155,7 @@ func newObfOperator(t *testing.T, n *captureNDMS, fr *fakeObfRunner) *OperatorNa
 		supportsASC3: func() bool { return true },
 		resolveFn:    func(string) (string, int, error) { return "203.0.113.5", 51824, nil },
 	}
+	t.Cleanup(op.Close)
 	op.SetObfuscator(fr)
 	return op
 }
@@ -419,6 +420,7 @@ func TestStartObfuscated_ResolveFailure_LeavesNDMSUntouched(t *testing.T) {
 
 func TestSyncKmodSlot_NoopForObfuscated(t *testing.T) {
 	op := &OperatorNativeWG{appLog: logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps)}
+	t.Cleanup(op.Close)
 	if err := op.SyncKmodSlot(context.Background(), obfStored()); err != nil {
 		t.Fatal(err)
 	}
@@ -507,6 +509,7 @@ func TestGetState_ObfuscatorDown_IsBrokenWithDetails(t *testing.T) {
 	// Полный GetState требует RCI show interface; проверяем чистый оверлей.
 	fr := newFakeObfRunner()
 	op := &OperatorNativeWG{appLog: logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps)}
+	t.Cleanup(op.Close)
 	op.SetObfuscator(fr)
 	info := tunnel.StateInfo{State: tunnel.StateRunning}
 	op.overlayObfuscatorState(obfStored(), &info)
@@ -523,6 +526,7 @@ func TestGetState_ObfuscatorDown_IsBrokenWithDetails(t *testing.T) {
 func TestObfSlotPredicate_LiveRelayCountsAsSlot(t *testing.T) {
 	fr := newFakeObfRunner()
 	op := &OperatorNativeWG{appLog: logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps)}
+	t.Cleanup(op.Close)
 	op.SetObfuscator(fr)
 	st := obfStored()
 	pred := op.obfSlotPredicate(st)
@@ -591,6 +595,7 @@ func TestStartObfuscated_LoopbackTrackedIPIsNotRemoved(t *testing.T) {
 
 func TestStartPlainWG_WithoutObfuscator_StillRejected(t *testing.T) {
 	op := &OperatorNativeWG{appLog: logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps)}
+	t.Cleanup(op.Close)
 	st := obfStored()
 	st.Obfuscator = nil
 	if err := op.Start(context.Background(), st); err != tunnel.ErrNotObfuscated {

@@ -31,6 +31,7 @@ func validVlessJSON(server string) []byte {
 func TestOperatorAdapter_BatchesValidationToOneFlush(t *testing.T) {
 	dir := t.TempDir()
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +65,7 @@ func TestOperatorAdapter_BatchesValidationToOneFlush(t *testing.T) {
 func TestOperatorAdapter_RollbackRestoresCommitted(t *testing.T) {
 	dir := t.TempDir()
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +99,7 @@ func TestOperatorAdapter_RollbackRestoresCommitted(t *testing.T) {
 func TestOperatorAdapter_CommitEmptySlotOnDelete(t *testing.T) {
 	dir := t.TempDir()
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -164,6 +167,7 @@ func (offsetValidator) Validate(_ context.Context, dir string) error {
 func TestFlush_DropsOutboundByMergedInitializeIndex(t *testing.T) {
 	dir := t.TempDir()
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}

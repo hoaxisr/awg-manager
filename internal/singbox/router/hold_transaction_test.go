@@ -61,6 +61,7 @@ func TestDisable_HoldsForeignReloadsUntilDone(t *testing.T) {
 	dir := t.TempDir()
 	proc := &holdProbeProc{}
 	orch := orchestrator.NewWithAppliedPath(dir, proc, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	for _, m := range []orchestrator.SlotMeta{
 		{Slot: orchestrator.SlotRouter, Filename: "20-router.json"},
 		{Slot: orchestrator.SlotSubscriptions, Filename: "30-subscriptions.json"},

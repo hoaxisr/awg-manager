@@ -16,7 +16,7 @@ import (
 //   - The upstream free-turn-proxy format (see docs/uri.md in
 //     samosvalishe/free-turn-proxy): base64url, no padding
 //     (Go base64.RawURLEncoding), fields v/provider/peer/transport/mode/
-//     bond/obf/key/n/spc/cid/listen/dns/dnss/mcap/name. Notably it never
+//     obf/key/n/spc/cid/listen/dns/dnss/mcap/name. Notably it never
 //     includes the VK call link itself (unique per recipient) — the
 //     receiving client still has to enter -links by hand.
 //   - The informal freeturn-entware-installer format (install.sh's
@@ -36,7 +36,6 @@ type LinkPayload struct {
 
 	Transport string `json:"transport,omitempty"`
 	Mode      string `json:"mode,omitempty"`
-	Bond      bool   `json:"bond,omitempty"`
 
 	Obf string `json:"obf,omitempty"`
 	Key string `json:"key,omitempty"`
@@ -49,10 +48,25 @@ type LinkPayload struct {
 	DNSServers     string `json:"dnss,omitempty"`
 	ManualCaptcha  bool   `json:"mcap,omitempty"`
 	Name           string `json:"name,omitempty"` // comment for the owner's own clients.json entry
+	KCP            *KCP   `json:"kcp,omitempty"`  // upstream 3.2+: ARQ profile for -mode tcp
 
 	// awg-manager extensions, not part of the upstream spec:
 	MTU int    `json:"mtu,omitempty"`
 	WG  string `json:"wg,omitempty"` // optional bundled WireGuard client config
+}
+
+// KCP — профиль ARQ из ссылки (upstream uri.KCP, поле `kcp`), по полям равен
+// roles.FreeTurnKCP. Не алиас: swag (cmd/awg-manager/docs.go) не сканирует
+// internal/proxyrt/roles и не разрешил бы тип в схеме DecodeResponse.
+type KCP struct {
+	NoDelay    int  `json:"nodelay"`
+	Interval   int  `json:"interval"`
+	Resend     int  `json:"resend"`
+	NC         int  `json:"nc"`
+	SndWnd     int  `json:"sndwnd"`
+	RcvWnd     int  `json:"rcvwnd"`
+	MTU        int  `json:"mtu"`
+	ACKNoDelay bool `json:"acknodelay"`
 }
 
 // LinkScheme is the URI scheme prefix used by freeturn:// share links.
@@ -192,11 +206,6 @@ func mergeURLFormat(p *LinkPayload, compact string) {
 	if p.MTU == 0 {
 		if mtu, ok := intQuery(vals, "mtu"); ok {
 			p.MTU = mtu
-		}
-	}
-	if !p.Bond {
-		if b, ok := boolQuery(vals, "bond"); ok {
-			p.Bond = b
 		}
 	}
 	if !p.ManualCaptcha {

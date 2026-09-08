@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -332,6 +334,7 @@ func normalizeRecord(r *Record, dataDir string) {
 		}
 		d.RawListen = strings.TrimSpace(d.RawListen)
 		d.DirectListen = strings.TrimSpace(d.DirectListen)
+		resolveRawPortCollision(d)
 		d.NdmsIface = strings.TrimSpace(d.NdmsIface)
 		d.WgIface = strings.TrimSpace(d.WgIface)
 		d.RawNdmsIface = strings.TrimSpace(d.RawNdmsIface)
@@ -466,4 +469,42 @@ func validateState(st State) error {
 		return fmt.Errorf("wdtt-server может быть только один: правила AWGM_WDTT, CIDR 10.70.0.0/16 и netfilter-хук не несут инстансного дискриминатора (M-7 плана 3)")
 	}
 	return nil
+}
+
+// resolveRawPortCollision разводит неявный raw-порт (пусто = DTLS+1) с
+// WG- и direct-портами той же записи. Сервер, созданный в 2.17 с тогдашним
+// дефолтом DTLS :56000, после 2.18.0 получал raw 56001 = WG 56001: Validate
+// отказывал «порт 56001 занят дважды», и сервер не стартовал, пока
+// пользователь сам не сдвигал порт. Двигаем raw, а не WG: WG-порт зашит в
+// выданные абонентам ссылки, raw абонент получает из ссылки явно. Явный
+// RawListen — выбор пользователя, его коллизию покажет Validate.
+func resolveRawPortCollision(d *roles.WdttServerConfig) {
+	if d.RawListen != "" {
+		return
+	}
+	host, portStr, err := net.SplitHostPort(d.Listen)
+	if err != nil {
+		return
+	}
+	dtls, err := strconv.Atoi(portStr)
+	if err != nil || dtls <= 0 {
+		return
+	}
+	taken := map[int]bool{dtls: true, d.WgPort: true}
+	if d.DirectListen != "" && d.DirectListen != d.Listen {
+		if _, p, err := net.SplitHostPort(d.DirectListen); err == nil {
+			if n, err := strconv.Atoi(p); err == nil {
+				taken[n] = true
+			}
+		}
+	}
+	if !taken[dtls+1] {
+		return // дефолт DTLS+1 свободен — записывать его явно незачем
+	}
+	for raw := dtls + 2; raw < 65535; raw++ {
+		if !taken[raw] {
+			d.RawListen = net.JoinHostPort(host, strconv.Itoa(raw))
+			return
+		}
+	}
 }

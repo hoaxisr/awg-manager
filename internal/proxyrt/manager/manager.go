@@ -126,6 +126,12 @@ type Deps struct {
 	// инстансов, но и импорт ссылки через Mutator, и подсказка инвалидации
 	// его бы не заметила. nil — никого не уведомляем.
 	RecordsChanged func(reason string)
+	// RemoveRuntime — уборка файлов рантайма удалённого инстанса (сокет, журнал,
+	// pid, каталог состояния в tmpfs; F146). Живёт в композиционном корне: пути
+	// строятся по impl/role, которых менеджер не знает. Только при удалении:
+	// Stop их не трогает, pid и сокет переживают рестарт демона ради усыновления.
+	// nil — не убираем.
+	RemoveRuntime func(rec instancestore.Record) error
 }
 
 // recordsChanged — уведомление о смене состава записей; nil-безопасно.
@@ -995,6 +1001,11 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 		// Кэш переездов — В ТОЙ ЖЕ секции, что и диск: SeedInfo читает его, а
 		// на отказе транзакции менять его нечем.
 		m.moved = st.MovedListen
+		// Записи на диске уже нет, а воркер был: уборке ниже нужны настоящие
+		// Kind/ID, иначе она получила бы пустую Record.
+		if removed.ID == "" && ok {
+			removed = lastRec
+		}
 	}
 	m.mu.Unlock()
 	if err != nil {
@@ -1042,6 +1053,11 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 		m.deps.Journal.Info("delete", key, sweptMessage(removedNDMS))
 	}
 	m.deleteDataDir(key, removed, st.Records)
+	if m.deps.RemoveRuntime != nil {
+		if rerr := m.deps.RemoveRuntime(removed); rerr != nil {
+			m.deps.Journal.Warn("delete", key, "файлы рантайма не убраны: "+rerr.Error())
+		}
+	}
 	m.recordsChanged("deleted")
 	return nil
 }

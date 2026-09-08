@@ -21,6 +21,7 @@ import (
 func TestOperatorAdapter_AddOutbound_SkipsInvalidUUIDBeforeValid(t *testing.T) {
 	dir := t.TempDir()
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +98,7 @@ func TestOperatorAdapter_AddOutbound_ServiceLinksThenValidShareLinks(t *testing.
 
 	dir := t.TempDir()
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +126,7 @@ func TestOperatorAdapter_AddOutbound_ServiceLinksThenValidShareLinks(t *testing.
 func TestOperatorAdapter_Flush_UserSlotCollisionFailsFast(t *testing.T) {
 	dir := t.TempDir()
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	for _, meta := range orchestrator.KnownSlots() {
 		if meta.Slot == orchestrator.SlotUser {
 			if err := orch.Register(meta); err != nil {
@@ -182,6 +185,7 @@ func newAdapterForRemoveTests(t *testing.T, pm ProxyRegistrar) *OperatorAdapter 
 	t.Helper()
 	dir := t.TempDir()
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}

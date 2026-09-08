@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -502,5 +503,35 @@ func TestCreateRefusesBadIDBeforePersist(t *testing.T) {
 	}
 	if len(e.changed) != 0 {
 		t.Fatalf("уведомление об отказанной записи: %v", e.changed)
+	}
+}
+
+// F146: Delete отдаёт удалённую запись хуку уборки файлов рантайма — ровно
+// одну и ровно ту; отказ хука удаления не отменяет.
+func TestDeleteCallsRemoveRuntime(t *testing.T) {
+	e := newLiveEnv(t)
+	if _, err := e.st.Replace(func(st *instancestore.State) error {
+		st.Records = append(st.Records, instancestore.Record{
+			ID: "srv", Kind: instancestore.KindWdttServer, Name: "S", Enabled: true,
+			WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56000", ConfigDir: filepath.Join(e.dir, "wdtt", "server", "srv"),
+				NdmsIface: "OpkgTun20", WgIface: "opkgtun20", RawNdmsIface: "OpkgTun21", RawIface: "opkgtun21"}})
+		st.SeededFrom = []string{"test"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	e.m.deps.RemoveRuntime = func(rec instancestore.Record) error {
+		got = append(got, rec.Key())
+		return errors.New("tmpfs read-only")
+	}
+	if err := e.m.Delete(context.Background(), "wdtt-server:srv"); err != nil {
+		t.Fatalf("отказ хука не должен ронять удаление: %v", err)
+	}
+	if len(got) != 1 || got[0] != "wdtt-server:srv" {
+		t.Fatalf("хук уборки рантайма получил %v, ждали ровно [wdtt-server:srv]", got)
 	}
 }

@@ -18,6 +18,7 @@ func newUserSlotOrch(t *testing.T, userJSON string) *orchestrator.Orchestrator {
 	t.Helper()
 	dir := t.TempDir()
 	o := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(o.Close)
 	for _, meta := range orchestrator.KnownSlots() {
 		if meta.Slot == orchestrator.SlotUser {
 			if err := o.Register(meta); err != nil {

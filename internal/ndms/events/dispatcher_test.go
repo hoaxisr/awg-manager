@@ -42,8 +42,12 @@ func TestDispatcher_IfCreated_FetchesOnlyNewID(t *testing.T) {
 
 	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1"})
 
+	// Ждём ИСХОД (запись видна), а не POST в фейке: счётчик растёт до того,
+	// как OnCreated положит ответ в стор, и под нагрузкой Get ниже видел nil.
+	// Get при промахе HTTP не делает — счётчик fetch'ей не искажает.
 	waitFor(t, 200*time.Millisecond, func() bool {
-		return fg.PostInterfaceCalls("Wireguard1") > 0
+		got, _ := q.Interfaces.Get(context.Background(), "Wireguard1")
+		return got != nil
 	})
 
 	if got := fg.PostInterfaceCalls("Wireguard1"); got != 1 {

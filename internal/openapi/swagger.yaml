@@ -7783,10 +7783,27 @@ definitions:
         example: true
         type: boolean
     type: object
+  ftlink.KCP:
+    properties:
+      acknodelay:
+        type: boolean
+      interval:
+        type: integer
+      mtu:
+        type: integer
+      nc:
+        type: integer
+      nodelay:
+        type: integer
+      rcvwnd:
+        type: integer
+      resend:
+        type: integer
+      sndwnd:
+        type: integer
+    type: object
   ftlink.LinkPayload:
     properties:
-      bond:
-        type: boolean
       cid:
         description: -client-id — owner must allowlist this in clients.json
         type: string
@@ -7794,6 +7811,10 @@ definitions:
         type: string
       dnss:
         type: string
+      kcp:
+        allOf:
+        - $ref: '#/definitions/ftlink.KCP'
+        description: 'upstream 3.2+: ARQ profile for -mode tcp'
       key:
         type: string
       listen:
@@ -20338,30 +20359,6 @@ paths:
       security:
       - CookieAuth: []
       summary: Composite tunnels snapshot
-      tags:
-      - tunnels
-  /tunnels/create:
-    post:
-      consumes:
-      - application/json
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.APIEnvelope'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Create tunnel
       tags:
       - tunnels
   /tunnels/delete:

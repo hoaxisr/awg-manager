@@ -48,6 +48,7 @@ import type {
   FreeTurnCaptchaOverview,
   FreeTurnClientConfig,
   FreeTurnConfig,
+  FreeTurnKCP,
   FreeTurnProcessStatus,
   FreeTurnServerConfig,
   FreeTurnStatus,
@@ -338,6 +339,23 @@ export function toWdttServerConfig(v: ProxyInstanceView): WdttServerConfig {
   };
 }
 
+// kcp приезжает ссылкой freeturn:// и хранится как есть; null в PATCH снимает.
+function kcpOf(c: Cfg): FreeTurnKCP | undefined {
+  const k = c["kcp"];
+  if (!k || typeof k !== "object") return undefined;
+  const o = k as Cfg;
+  return {
+    nodelay: num(o, "nodelay") ?? 0,
+    interval: num(o, "interval") ?? 0,
+    resend: num(o, "resend") ?? 0,
+    nc: num(o, "nc") ?? 0,
+    sndwnd: num(o, "sndwnd") ?? 0,
+    rcvwnd: num(o, "rcvwnd") ?? 0,
+    mtu: num(o, "mtu") ?? 0,
+    acknodelay: bool(o, "acknodelay") === true,
+  };
+}
+
 export function toFreeTurnClientConfig(
   v: ProxyInstanceView,
 ): FreeTurnClientConfig {
@@ -352,12 +370,12 @@ export function toFreeTurnClientConfig(
     transport:
       (str(c, "transport") as FreeTurnClientConfig["transport"]) ?? "tcp",
     mode: (str(c, "mode") as FreeTurnClientConfig["mode"]) ?? "udp",
-    bond: bool(c, "bond") === true,
     obfProfile:
       (str(c, "obfProfile") as FreeTurnClientConfig["obfProfile"]) ?? "none",
     obfKey: "",
     obfKeySet: bool(c, "obfKeySet") === true,
     streamsPerCred: num(c, "streamsPerCred") ?? 0,
+    kcp: kcpOf(c),
     platform:
       (str(c, "platform") as FreeTurnClientConfig["platform"]) ?? "desktop",
     dnsMode: (str(c, "dnsMode") as FreeTurnClientConfig["dnsMode"]) ?? "auto",
@@ -680,9 +698,9 @@ export function toFreeTurnClientPatch(cfg: FreeTurnClientConfig): Cfg {
     streams: cfg.streams ?? 0,
     transport: cfg.transport ?? "tcp",
     mode: cfg.mode ?? "udp",
-    bond: cfg.bond === true,
     obfProfile: cfg.obfProfile ?? "none",
     streamsPerCred: cfg.streamsPerCred ?? 0,
+    kcp: cfg.kcp ?? null,
     platform: cfg.platform ?? "",
     dnsMode: cfg.dnsMode ?? "",
     dnsServers: cfg.dnsServers ?? "",

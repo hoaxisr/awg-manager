@@ -551,7 +551,9 @@ func TestReconcileConfigSteps_HealsMissingBootstrapEntry(t *testing.T) {
 	}
 
 	proc := NewProcess("", configDir, filepath.Join(dir, "singbox.pid"))
+	t.Cleanup(proc.Close)
 	orch := singboxorch.NewWithAppliedPath(configDir, proc, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	for _, meta := range singboxorch.KnownSlots() {
 		switch meta.Slot {
 		case singboxorch.SlotBase, singboxorch.SlotDefaults:

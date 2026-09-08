@@ -1760,6 +1760,7 @@ func TestEnableFakeIPTun_RollbackOnSlotRouterFlipFailure(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 
 	orch := orchestrator.NewWithAppliedPath(h.dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Register(orchestrator.SlotMeta{
 		Slot:     orchestrator.SlotFakeIP,
 		Filename: "21-fakeip.json",

@@ -10,7 +10,8 @@ import (
 // Перенос тестов link.go старого пакета (freeturn_test.go:27-72).
 
 func TestLink_Roundtrip(t *testing.T) {
-	p := LinkPayload{V: 1, Provider: "vk", Peer: "1.2.3.4:56000", Obf: "rtpopus2", Key: "aabb", MTU: 1280, WG: "[Interface]\nPrivateKey = x\n"}
+	p := LinkPayload{V: 1, Provider: "vk", Peer: "1.2.3.4:56000", Mode: "tcp", Obf: "rtpopus2", Key: "aabb", MTU: 1280, WG: "[Interface]\nPrivateKey = x\n",
+		KCP: &KCP{NoDelay: 1, Interval: 20, Resend: 2, NC: 1, SndWnd: 512, RcvWnd: 512, MTU: 1200, ACKNoDelay: true}}
 	link, err := EncodeLink(p)
 	if err != nil {
 		t.Fatal(err)

@@ -75,6 +75,7 @@ func TestSysfsPoller_FeedsHistoryAndPublishes(t *testing.T) {
 	lister.set(RunningTunnel{ID: "awg0", BackendType: "nativewg", IfaceName: "nwg0"})
 
 	hist := New()
+	t.Cleanup(hist.Stop)
 	defer hist.Stop()
 	pub := &spyPublisher{}
 
@@ -113,6 +114,7 @@ func TestSysfsPoller_MissingIfaceSkippedQuietly(t *testing.T) {
 	lister.set(RunningTunnel{ID: "awg0", BackendType: "kernel", IfaceName: "opkgtun0"})
 
 	hist := New()
+	t.Cleanup(hist.Stop)
 	defer hist.Stop()
 	pub := &spyPublisher{}
 	lg := &fakeLog{}
@@ -134,6 +136,7 @@ func TestSysfsPoller_NoRunningTunnelsIsNoop(t *testing.T) {
 	root := t.TempDir()
 	lister := &fakeTunnelLister{}
 	hist := New()
+	t.Cleanup(hist.Stop)
 	defer hist.Stop()
 	pub := &spyPublisher{}
 
@@ -151,7 +154,9 @@ func TestSysfsPoller_NoRunningTunnelsIsNoop(t *testing.T) {
 // wiring may fail before the poller is ever Start()ed. Stop() must not
 // block waiting for doneCh (the goroutine was never launched).
 func TestSysfsPoller_StopWithoutStart(t *testing.T) {
-	p := newSysfsPoller(&fakeTunnelLister{}, New(), &spyPublisher{}, &fakeLog{}, nil, t.TempDir(), 20*time.Millisecond)
+	hist := New()
+	t.Cleanup(hist.Stop)
+	p := newSysfsPoller(&fakeTunnelLister{}, hist, &spyPublisher{}, &fakeLog{}, nil, t.TempDir(), 20*time.Millisecond)
 	done := make(chan struct{})
 	go func() {
 		p.Stop()
@@ -167,7 +172,9 @@ func TestSysfsPoller_StopWithoutStart(t *testing.T) {
 // TestSysfsPoller_DoubleStartStop verifies sync.Once protection works
 // for both lifecycle entry points.
 func TestSysfsPoller_DoubleStartStop(t *testing.T) {
-	p := newSysfsPoller(&fakeTunnelLister{}, New(), &spyPublisher{}, &fakeLog{}, nil, t.TempDir(), 20*time.Millisecond)
+	hist := New()
+	t.Cleanup(hist.Stop)
+	p := newSysfsPoller(&fakeTunnelLister{}, hist, &spyPublisher{}, &fakeLog{}, nil, t.TempDir(), 20*time.Millisecond)
 	p.Start()
 	p.Start() // must be no-op
 	p.Stop()

@@ -487,6 +487,7 @@ func TestSetRouteFinal_AllowsSubscriptionCompositeTag(t *testing.T) {
 func TestRenameExternalOutboundTag_UpdatesActiveAndPending(t *testing.T) {
 	dir := t.TempDir()
 	orch := orchestrator.NewWithAppliedPath(dir, &fakeSingbox{dir: dir}, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouter, Filename: "20-router.json"}); err != nil {
 		t.Fatalf("Register router slot: %v", err)
 	}
@@ -1158,6 +1159,7 @@ func newOrchedTestService(t *testing.T) (*ServiceImpl, string) {
 	dir := t.TempDir()
 
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Register(orchestrator.SlotMeta{
 		Slot:     orchestrator.SlotRouter,
 		Filename: "20-router.json",

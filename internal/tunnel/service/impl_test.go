@@ -35,7 +35,6 @@ func (m *MockStateManager) SetState(tunnelID string, state tunnel.StateInfo) {
 
 // MockOperator is a mock operator.
 type MockOperator struct {
-	createError      error
 	startError       error
 	stopError        error
 	deleteError      error
@@ -47,7 +46,6 @@ type MockOperator struct {
 	// TrackedEndpointIPs maps tunnelID -> IP for GetTrackedEndpointIP.
 	TrackedEndpointIPs map[string]string
 
-	CreateCalls                  []tunnel.Config
 	StartCalls                   []tunnel.Config
 	StopCalls                    []string
 	DeleteCalls                  []string
@@ -66,11 +64,6 @@ type MockOperator struct {
 		ID, Addr, IPv6 string
 		Prefix         int
 	}
-}
-
-func (m *MockOperator) Create(ctx context.Context, cfg tunnel.Config) error {
-	m.CreateCalls = append(m.CreateCalls, cfg)
-	return m.createError
 }
 
 func (m *MockOperator) ColdStart(ctx context.Context, cfg tunnel.Config) error {

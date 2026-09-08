@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go.uber.org/goleak"
+
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"os"
 	"strings"
 	"sync"
@@ -25,9 +28,10 @@ const ifaceListPath = "/show/interface/"
 func TestMain(m *testing.M) {
 	orig := kernelIfaceExists
 	kernelIfaceExists = func(name string) bool { return name != "" }
-	code := m.Run()
-	kernelIfaceExists = orig
-	os.Exit(code)
+	testutil.Main(m, goleak.Cleanup(func(code int) {
+		kernelIfaceExists = orig
+		os.Exit(code)
+	}))
 }
 
 // sample /show/interface/ response with two interfaces — one running

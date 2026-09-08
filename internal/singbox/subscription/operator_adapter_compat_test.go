@@ -37,6 +37,7 @@ func slotOutboundByTag(t *testing.T, dir, tag string) map[string]any {
 func TestSubscriptionSlot_Hysteria2GetsChromeParrotFix(t *testing.T) {
 	dir := t.TempDir()
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -67,6 +68,7 @@ func TestSubscriptionSlot_Hysteria2GetsChromeParrotFix(t *testing.T) {
 func TestSubscriptionSlot_NaiveGetsUDPOverTCPFix(t *testing.T) {
 	dir := t.TempDir()
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}
@@ -95,6 +97,7 @@ func TestSubscriptionSlot_NaiveGetsUDPOverTCPFix(t *testing.T) {
 func TestSubscriptionSlot_UpdateOutboundGetsCompatFix(t *testing.T) {
 	dir := t.TempDir()
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}

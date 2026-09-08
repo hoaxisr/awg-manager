@@ -94,18 +94,36 @@ func TestWdttServerArgsDNSIsRouterRegardlessOfRelayMode(t *testing.T) {
 func TestFreeTurnArgs(t *testing.T) {
 	cl := FreeTurnClientConfig{
 		Listen: "127.0.0.1:9001", Peer: "relay.example:3478", Provider: "prov",
-		Links: "l1,l2", Streams: 2, Transport: "udp", Mode: "turn", Bond: true,
+		Links: "l1,l2", Streams: 2, Transport: "udp", Mode: "turn",
 		ObfProfile: "xor", ObfKey: "k", StreamsPerCred: 3, Platform: "mobile",
 		DNSMode: "doh", DNSServers: "1.1.1.1", ClientID: "cid",
 		Sub: "https://sub", Debug: true,
 	}
 	wantClient := "-listen 127.0.0.1:9001 -peer relay.example:3478 -provider prov " +
-		"-links l1,l2 -n 2 -transport udp -mode turn -bond -obf-profile xor -obf-key k " +
+		"-links l1,l2 -n 2 -transport udp -mode turn -obf-profile xor -obf-key k " +
 		"-streams-per-cred 3 -platform mobile -dns-mode doh -dns-servers 1.1.1.1 " +
 		"-client-id cid -sub https://sub -debug"
 	if got := strings.Join(FreeTurnClientArgs(cl), " "); got != wantClient {
 		t.Fatalf("argv клиента:\n%s\nждали:\n%s", got, wantClient)
 	}
+
+	// -kcp-* уезжают только в tcp-режиме и только когда профиль задан: в udp
+	// клиент 3.x отвергает любое отклонение KCP от дефолта на старте.
+	cl.KCP = &FreeTurnKCP{NoDelay: 1, Interval: 40, Resend: 2, NC: 1, SndWnd: 256, RcvWnd: 256, MTU: 1200, ACKNoDelay: false}
+	for _, mode := range []string{"udp", "turn", ""} {
+		cl.Mode = mode
+		if got := strings.Join(FreeTurnClientArgs(cl), " "); strings.Contains(got, "-kcp-") {
+			t.Errorf("mode %q не должен получать -kcp-*: %q", mode, got)
+		}
+	}
+	cl.Mode = "tcp"
+	wantKCP := "-mode tcp -kcp-nodelay 1 -kcp-interval 40 -kcp-resend 2 -kcp-nc 1 " +
+		"-kcp-sndwnd 256 -kcp-rcvwnd 256 -kcp-mtu 1200 -kcp-acknodelay=false -obf-profile xor"
+	if got := strings.Join(FreeTurnClientArgs(cl), " "); !strings.Contains(got, wantKCP) {
+		t.Errorf("argv tcp с KCP:\n%s\nждали фрагмент:\n%s", got, wantKCP)
+	}
+	cl.Mode = "turn"
+	cl.KCP = nil
 
 	// -platform уезжает ТОЛЬКО для mobile: у desktop его нет вовсе, и это не
 	// косметика — лишний флаг сдвинул бы отпечаток всем настольным клиентам.

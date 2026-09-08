@@ -89,3 +89,30 @@ func TestProxyRuntimeNudgeGuard_ArmsBinariesRetry(t *testing.T) {
 	}
 	t.Fatal("метод proxyRuntimeNudge в wiring_proxyrt.go не найден")
 }
+
+// F145: дети прокси-рантайма получают TZ роутера через routerclock — без этого
+// штампы журналов ft-client/wdtt отстают на смещение зоны, а сборка и тесты
+// этого не замечают.
+func TestProxyFactoryGuard_PassesRouterTZ(t *testing.T) {
+	_, f := parseMainFile(t, "wiring_proxyrt.go")
+
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "proxyFactory" || fn.Recv == nil {
+			continue
+		}
+		found := false
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if ok && sel.Sel.Name == "WithTZFromRouter" {
+				found = true
+			}
+			return true
+		})
+		if !found {
+			t.Fatal("proxyFactory не зовёт routerclock.WithTZFromRouter — дети стартуют без TZ роутера")
+		}
+		return
+	}
+	t.Fatal("метод proxyFactory в wiring_proxyrt.go не найден")
+}

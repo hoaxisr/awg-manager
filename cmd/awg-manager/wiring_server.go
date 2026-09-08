@@ -629,6 +629,12 @@ func (a *app) setupShutdown() {
 	a.srv.AddShutdownHook(a.geoRefreshScheduler.Stop)
 	a.srv.AddShutdownHook(a.routerScheduler.Stop)
 	a.srv.AddShutdownHook(a.sessionStore.Stop)
+	// Фоновые горутины с владельцем-демоном: debounce-reload sing-box, страж
+	// endpoint'ов NativeWG, инвалидатор кэша состояний — до остановки NDMS
+	// dispatcher'а, иначе sweep/reload стучатся в уже закрытый транспорт.
+	a.srv.AddShutdownHook(a.sbOrch.Close)
+	a.srv.AddShutdownHook(a.nwgOp.Close)
+	a.srv.AddShutdownHook(a.tunnelService.Close)
 	a.srv.AddShutdownHook(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()

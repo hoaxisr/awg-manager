@@ -56,6 +56,11 @@ type Orchestrator struct {
 	// For T4 reload coalescing.
 	reloadTimer *time.Timer
 	reloading   bool
+	// timerWG считает прогоны callback'а reloadTimer, которые ещё не
+	// завершились (см. scheduleReload про Reset на выстрелившем таймере);
+	// Close ждёт их.
+	timerWG sync.WaitGroup
+	closed  bool // Close вызван: scheduleReload больше не взводит таймер
 
 	// holds > 0 подавляет debounce-reload: продюсер, записавший слот во время
 	// перехода режима, не должен дёргать движок посреди чужой транзакции (при
