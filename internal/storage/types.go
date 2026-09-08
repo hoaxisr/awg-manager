@@ -408,6 +408,15 @@ type ServerPeerSecret struct {
 	PresharedKey string `json:"presharedKey,omitempty"`
 	Description  string `json:"description,omitempty"`
 	TunnelIP     string `json:"tunnelIP,omitempty"`
+
+	// Сигнатура принадлежит пиру (CONTEXT.md «Сигнатура AWG»): у сервера
+	// своей нет. Профиль пуст у сигнатур, набранных руками.
+	I1               string `json:"i1,omitempty"`
+	I2               string `json:"i2,omitempty"`
+	I3               string `json:"i3,omitempty"`
+	I4               string `json:"i4,omitempty"`
+	I5               string `json:"i5,omitempty"`
+	SignatureProfile string `json:"signatureProfile,omitempty"`
 }
 
 // ManagedPeer represents a client peer on the managed server.

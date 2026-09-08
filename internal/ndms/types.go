@@ -2,6 +2,11 @@ package ndms
 
 import "time"
 
+// BuiltInVPNServerDescription — описание встроенного WG-сервера Keenetic.
+// Единственный признак «этот интерфейс — встроенный сервер»: NDMS ставит его
+// сам, и по нему интерфейс отличают все слои проекта.
+const BuiltInVPNServerDescription = "Wireguard VPN Server"
+
 // Interface is a snapshot of one NDMS interface observed via
 // /show/interface/{name} or extracted from /show/interface/.
 type Interface struct {

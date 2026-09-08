@@ -2,6 +2,7 @@ package managed
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -107,12 +108,20 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 	iface := server.InterfaceName
 
 	// Validate inputs BEFORE touching RCI or storage so we can fail clean.
+	sigProfile := ""
 	if req.Signature != nil {
-		if req.Signature.Profile != "" && signature.CanonicalProtocol(req.Signature.Profile) == "" {
-			return fmt.Errorf("%w: %s", ErrUnknownSignatureProfile, req.Signature.Profile)
-		}
-		if err := signature.CheckSize(req.Signature.packets()); err != nil {
-			return ErrSignatureTooLarge
+		var err error
+		if sigProfile, err = signature.ValidateProfileAndSize(req.Signature.Profile, req.Signature.packets()); err != nil {
+			switch {
+			case errors.Is(err, signature.ErrUnknownProtocol):
+				return fmt.Errorf("%w: %s", ErrUnknownSignatureProfile, req.Signature.Profile)
+			case errors.Is(err, signature.ErrPacketsTooLarge):
+				return ErrSignatureTooLarge
+			default:
+				// Чужую ошибку не переклеиваем в «слишком большая»: вызывающий
+				// не должен показывать пользователю неверную причину.
+				return fmt.Errorf("validate signature: %w", err)
+			}
 		}
 	}
 	wantTunnelChange := req.TunnelIP != "" && req.TunnelIP != peer.TunnelIP
@@ -171,7 +180,7 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 			sv.Peers[i].I5 = req.Signature.I5
 			// Канонический ключ, не то, что прислали: валидация выше
 			// принимает " SIP " — хранить такое нельзя.
-			sv.Peers[i].SignatureProfile = signature.CanonicalProtocol(req.Signature.Profile)
+			sv.Peers[i].SignatureProfile = sigProfile
 		}
 		return nil
 	}); err != nil {

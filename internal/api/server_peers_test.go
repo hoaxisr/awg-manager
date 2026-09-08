@@ -16,6 +16,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -110,14 +111,12 @@ func TestServersHandler_AddServerPeer_StoresSecretAndPublishes(t *testing.T) {
 		}
 	}
 	sec, ok := store.GetServerPeerSecret("Wireguard0", peerFixturePubKey)
-	want := storage.ServerPeerSecret{
-		PrivateKey:   "PRIV-fixture",
-		PresharedKey: "PSK-fixture",
-		Description:  "Phone",
-		TunnelIP:     "10.9.0.7/32",
-	}
-	if !ok || sec != want {
-		t.Fatalf("секрет = %+v (ok=%v), want %+v", sec, ok, want)
+	// Сигнатура — предмет TestServersHandler_AddServerPeer_GeneratesSignature;
+	// здесь сверяем ключевой материал, чтобы тест не переписывался при каждом
+	// изменении генератора.
+	if !ok || sec.PrivateKey != "PRIV-fixture" || sec.PresharedKey != "PSK-fixture" ||
+		sec.Description != "Phone" || sec.TunnelIP != "10.9.0.7/32" {
+		t.Fatalf("секрет = %+v (ok=%v)", sec, ok)
 	}
 	if got, want := p.invalidated(), []string{"servers/server-peer-added"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("публикации = %v, want %v", got, want)
@@ -328,4 +327,157 @@ func TestServersHandler_DeleteServerPeer_SecretDeleteFailureIsLogged(t *testing.
 	if got := p.invalidated(); len(got) != 1 || got[0] != "servers/server-peer-deleted" {
 		t.Fatalf("публикации = %v", got)
 	}
+}
+
+// harnessServerID — имя сервера, которое сеет newServersPeerHarness/newServersNATHarness.
+const harnessServerID = "Wireguard0"
+
+func putServerPeer(t *testing.T, h *ServersHandler, pubkey, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, "/api/servers/"+harnessServerID+"/peers/"+pubkey, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.UpdateServerPeer(rr, req, harnessServerID, pubkey)
+	return rr
+}
+
+// Сигнатура принадлежит пиру (CONTEXT.md «Сигнатура AWG»): новый пир
+// системного сервера получает её сразу, дефолтным профилем.
+func TestServersHandler_AddServerPeer_GeneratesSignature(t *testing.T) {
+	h, store, _, _, _ := newServersPeerHarness(t, false)
+	stubPeerKeygen(t)
+
+	rr := postServerPeer(t, h, `{"description":"phone","tunnelIP":"10.9.0.2/32"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	sec, ok := store.GetServerPeerSecret(harnessServerID, peerFixturePubKey)
+	if !ok || sec.SignatureProfile != signature.DefaultProfile || !strings.HasPrefix(sec.I1, "<b 0xc") || sec.I2 != "" {
+		t.Fatalf("секрет-сигнатура = %+v (ok=%v)", sec, ok)
+	}
+}
+
+// PUT без поля signature сигнатуру не трогает; с полем — заменяет все пять
+// и канонизирует профиль; мусорный профиль и переросшая сигнатура отвергаются
+// ДО обращения к роутеру.
+func TestServersHandler_UpdateServerPeer_SignatureOptionalAndValidated(t *testing.T) {
+	h, store, _, _, _ := newServersPeerHarness(t, true)
+	if err := store.SetServerPeerSecret(harnessServerID, peerFixturePubKey, storage.ServerPeerSecret{
+		PrivateKey: "k", TunnelIP: "10.9.0.2/32", I1: "<b 0x01>", SignatureProfile: "dns",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"phone"}`); rr.Code != http.StatusOK {
+		t.Fatalf("PUT без signature: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	sec, _ := store.GetServerPeerSecret(harnessServerID, peerFixturePubKey)
+	if sec.I1 != "<b 0x01>" || sec.SignatureProfile != "dns" {
+		t.Fatalf("PUT без signature изменил сигнатуру: %+v", sec)
+	}
+
+	body := `{"description":"phone","signature":{"profile":" SIP ","i1":"<b 0x02>","i2":"<rc 3>","i3":"","i4":"","i5":""}}`
+	if rr := putServerPeer(t, h, peerFixturePubKey, body); rr.Code != http.StatusOK {
+		t.Fatalf("PUT с signature: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	sec, _ = store.GetServerPeerSecret(harnessServerID, peerFixturePubKey)
+	if sec.I1 != "<b 0x02>" || sec.I2 != "<rc 3>" || sec.SignatureProfile != "sip" {
+		t.Fatalf("сигнатура после PUT = %+v", sec)
+	}
+
+	rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","signature":{"profile":"tls","i1":"<b 0x03>"}}`)
+	if rr.Code != http.StatusBadRequest || decodeJSONBody(t, rr)["code"] != "INVALID_SIGNATURE_PROFILE" {
+		t.Fatalf("неизвестный профиль: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	huge := `{"description":"phone","signature":{"profile":"sip","i1":"` + strings.Repeat("a", 9000) + `"}}`
+	rr = putServerPeer(t, h, peerFixturePubKey, huge)
+	if rr.Code != http.StatusBadRequest || decodeJSONBody(t, rr)["code"] != "SIGNATURE_TOO_LARGE" {
+		t.Fatalf("переросшая сигнатура: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	sec, _ = store.GetServerPeerSecret(harnessServerID, peerFixturePubKey)
+	if sec.I1 != "<b 0x02>" || sec.SignatureProfile != "sip" {
+		t.Fatalf("отвергнутый PUT изменил сигнатуру: %+v", sec)
+	}
+}
+
+// Пир без локального секрета (создан в веб-интерфейсе Keenetic): сигнатуре
+// негде жить — запись отвергается, обычная правка описания работает как
+// работала. Секрет без приватного ключа не заводим.
+func TestServersHandler_UpdateServerPeer_SignatureWithoutSecret(t *testing.T) {
+	h, store, _, _, _ := newServersPeerHarness(t, true)
+
+	body := `{"description":"phone","signature":{"profile":"sip","i1":"<b 0x02>"}}`
+	rr := putServerPeer(t, h, peerFixturePubKey, body)
+	if rr.Code != http.StatusBadRequest || decodeJSONBody(t, rr)["code"] != "NO_PEER_SECRET" {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, ok := store.GetServerPeerSecret(harnessServerID, peerFixturePubKey); ok {
+		t.Fatal("отказ завёл секрет без приватного ключа")
+	}
+
+	if rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"laptop"}`); rr.Code != http.StatusOK {
+		t.Fatalf("PUT без signature: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// newServerConfHarness — минимальный обработчик для прямых проверок сборщика
+// .conf: из RCI нужен только снимок ASC интерфейса.
+func newServerConfHarness(t *testing.T, ascJSON string) *ServersHandler {
+	t.Helper()
+	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/rc/interface/"+harnessServerID+"/wireguard/asc", ascJSON)
+	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
+	store := storage.NewSettingsStore(t.TempDir())
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	return NewServersHandler(queries, store, nil, &appLogSpy{})
+}
+
+// Сигнатура пира уходит в .conf только когда у сервера есть ASC (Jc > 0):
+// без обфускации это обычный WireGuard, и строки I клиент не поймёт. Байты
+// берутся из секрета ПИРА, а не из ASC-параметров интерфейса.
+func TestServersHandler_GenerateServerPeerConf_SignatureFromPeerAndOnlyWithASC(t *testing.T) {
+	sec := storage.ServerPeerSecret{
+		PrivateKey: "PRIV", TunnelIP: "10.9.0.2/32",
+		I1: "<b 0x01>", I3: "<r 8>", SignatureProfile: "dns",
+	}
+
+	t.Run("с ASC", func(t *testing.T) {
+		// i1 интерфейса намеренно чужой: в конфиг обязана попасть сигнатура пира.
+		h := newServerConfHarness(t, `{"jc":"3","jmin":"8","jmax":"80","s1":"18","s2":"22","h1":"1","h2":"2","h3":"3","h4":"4","i1":"<b 0xdead>"}`)
+
+		server := &ndms.WireguardServer{ID: harnessServerID, ListenPort: 51820, MTU: 1420}
+		conf, err := h.generateServerPeerConf(context.Background(), server, peerFixturePubKey, sec, "1.2.3.4")
+		if err != nil {
+			t.Fatalf("generateServerPeerConf: %v", err)
+		}
+		for _, want := range []string{"Jc = 3\n", "I1 = <b 0x01>\n", "I3 = <r 8>\n"} {
+			if !strings.Contains(conf, want) {
+				t.Fatalf("в конфиге нет %q:\n%s", want, conf)
+			}
+		}
+		for _, unwanted := range []string{"0xdead", "I2 ="} {
+			if strings.Contains(conf, unwanted) {
+				t.Fatalf("в конфиге лишнее %q:\n%s", unwanted, conf)
+			}
+		}
+	})
+
+	t.Run("без ASC", func(t *testing.T) {
+		h := newServerConfHarness(t, `{"jc":"0"}`)
+
+		server := &ndms.WireguardServer{ID: harnessServerID, ListenPort: 51820, MTU: 1420}
+		conf, err := h.generateServerPeerConf(context.Background(), server, peerFixturePubKey, sec, "1.2.3.4")
+		if err != nil {
+			t.Fatalf("generateServerPeerConf: %v", err)
+		}
+		for _, unwanted := range []string{"Jc =", "I1 ="} {
+			if strings.Contains(conf, unwanted) {
+				t.Fatalf("сервер без ASC получил %q:\n%s", unwanted, conf)
+			}
+		}
+	})
 }

@@ -9,7 +9,7 @@ import (
 )
 
 // seedASC кладёт в фейковый NDMS числовые ASC-параметры интерфейса. Без них
-// writeASCParams выходит рано (Jc == 0) — и ни Jc, ни сигнатуры в .conf нет.
+// signature.WriteASCConf выходит рано (Jc == 0) — и ни Jc, ни сигнатуры в .conf нет.
 func seedASC(t *testing.T, g *stateAwareGetter, iface string) {
 	t.Helper()
 	g.mu.Lock()

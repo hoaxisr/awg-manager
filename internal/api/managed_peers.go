@@ -6,6 +6,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/signature"
 )
 
 // AddPeerRequestDTO is the swagger-visible body for POST /managed-servers/{id}/peers.
@@ -34,6 +35,10 @@ type PeerSignatureDTO struct {
 	I3      string `json:"i3"`
 	I4      string `json:"i4"`
 	I5      string `json:"i5"`
+}
+
+func (s *PeerSignatureDTO) packets() signature.GeneratedPackets {
+	return signature.GeneratedPackets{I1: s.I1, I2: s.I2, I3: s.I3, I4: s.I4, I5: s.I5}
 }
 
 // AddPeer adds a new peer to a managed server.

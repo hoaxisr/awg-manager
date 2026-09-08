@@ -2,11 +2,10 @@ package managed
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
-	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 )
@@ -74,7 +73,7 @@ func (s *Service) GenerateConf(ctx context.Context, id, pubkey, endpointHost str
 
 	// ASC params
 	if ascRaw != nil {
-		writeASCParams(&b, ascRaw, peer)
+		signature.WriteASCConf(&b, ascRaw, peerPackets(peer))
 	}
 
 	b.WriteString("\n[Peer]\n")
@@ -89,33 +88,7 @@ func (s *Service) GenerateConf(ctx context.Context, id, pubkey, endpointHost str
 	return b.String(), nil
 }
 
-// writeASCParams writes ASC parameters to the .conf [Interface] section:
-// numeric/header params from the NDMS snapshot raw, signature packets from
-// the peer record. Сервер без ASC (Jc == 0) — обычный WireGuard: ни
-// числовых параметров, ни сигнатуры в конфиг не пишем.
-func writeASCParams(b *strings.Builder, raw json.RawMessage, peer storage.ManagedPeer) {
-	var ext ndms.ASCParamsExtended
-	if err := json.Unmarshal(raw, &ext); err != nil || ext.Jc == 0 {
-		return
-	}
-
-	b.WriteString(fmt.Sprintf("Jc = %d\n", ext.Jc))
-	b.WriteString(fmt.Sprintf("Jmin = %d\n", ext.Jmin))
-	b.WriteString(fmt.Sprintf("Jmax = %d\n", ext.Jmax))
-	b.WriteString(fmt.Sprintf("S1 = %d\n", ext.S1))
-	b.WriteString(fmt.Sprintf("S2 = %d\n", ext.S2))
-	b.WriteString(fmt.Sprintf("H1 = %s\n", ext.H1))
-	b.WriteString(fmt.Sprintf("H2 = %s\n", ext.H2))
-	b.WriteString(fmt.Sprintf("H3 = %s\n", ext.H3))
-	b.WriteString(fmt.Sprintf("H4 = %s\n", ext.H4))
-
-	if ext.S3 > 0 || ext.S4 > 0 {
-		b.WriteString(fmt.Sprintf("S3 = %d\n", ext.S3))
-		b.WriteString(fmt.Sprintf("S4 = %d\n", ext.S4))
-	}
-	for i, sig := range []string{peer.I1, peer.I2, peer.I3, peer.I4, peer.I5} {
-		if sig != "" {
-			b.WriteString(fmt.Sprintf("I%d = %s\n", i+1, sig))
-		}
-	}
+// peerPackets — сигнатура пира в виде, который понимает общий writer.
+func peerPackets(peer storage.ManagedPeer) signature.GeneratedPackets {
+	return signature.GeneratedPackets{I1: peer.I1, I2: peer.I2, I3: peer.I3, I4: peer.I4, I5: peer.I5}
 }

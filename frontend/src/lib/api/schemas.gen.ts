@@ -2734,10 +2734,16 @@ const api_WireguardServerPeerDTO: v.GenericSchema = v.looseObject({
 	description: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	endpoint: v.optional(v.nullable(v.string())),
+	i1: v.optional(v.nullable(v.string())),
+	i2: v.optional(v.nullable(v.string())),
+	i3: v.optional(v.nullable(v.string())),
+	i4: v.optional(v.nullable(v.string())),
+	i5: v.optional(v.nullable(v.string())),
 	lastHandshake: v.optional(v.nullable(v.string())),
 	online: v.optional(v.nullable(v.boolean())),
 	publicKey: v.optional(v.nullable(v.string())),
 	rxBytes: v.optional(v.nullable(v.number())),
+	signatureProfile: v.optional(v.nullable(v.string())),
 	txBytes: v.optional(v.nullable(v.number())),
 });
 

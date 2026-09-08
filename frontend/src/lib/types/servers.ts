@@ -45,6 +45,14 @@ export interface WireguardServerPeer {
 	online: boolean;
 	enabled: boolean;
 	confAvailable?: boolean;
+	// Сигнатура пира (I1-I5) и профиль имитации, которым она сгенерирована.
+	// Есть только у пиров с локальным ключом (confAvailable).
+	i1?: string;
+	i2?: string;
+	i3?: string;
+	i4?: string;
+	i5?: string;
+	signatureProfile?: string;
 }
 
 export interface WireguardServerConfig {

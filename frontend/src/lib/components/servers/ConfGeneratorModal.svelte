@@ -24,7 +24,11 @@
 			`MTU = ${serverConfig.mtu}`,
 		];
 
-		if (ascParams) {
+		// Сигнатуры (I1-I5) здесь нет: она принадлежит пиру (CONTEXT.md
+		// «Сигнатура AWG»), а этот генератор открывается как раз для пиров,
+		// чьих ключей у нас нет. Jc == 0 — сервер без обфускации: числовые
+		// параметры в конфиг не пишем, как и на бэкенде.
+		if (ascParams && ascParams.jc > 0) {
 			lines.push(`Jc = ${ascParams.jc}`);
 			lines.push(`Jmin = ${ascParams.jmin}`);
 			lines.push(`Jmax = ${ascParams.jmax}`);
@@ -37,11 +41,6 @@
 			if ('s3' in ascParams) {
 				lines.push(`S3 = ${ascParams.s3}`);
 				lines.push(`S4 = ${ascParams.s4}`);
-				lines.push(`I1 = ${ascParams.i1}`);
-				lines.push(`I2 = ${ascParams.i2}`);
-				lines.push(`I3 = ${ascParams.i3}`);
-				lines.push(`I4 = ${ascParams.i4}`);
-				lines.push(`I5 = ${ascParams.i5}`);
 			}
 		}
 

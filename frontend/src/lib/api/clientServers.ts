@@ -24,6 +24,13 @@ export class ServersClient extends SystemClient {
 		return this.request(`/servers/config?name=${encodeURIComponent(name)}`);
 	}
 
+	// Снимок /servers/all разово, без подписки на polling-стор: страницам,
+	// которым нужен разовый ответ (кто из интерфейсов — сервер), интервал
+	// опроса не нужен.
+	async getAllServers(): Promise<import('$lib/stores/servers').ServersSnapshot> {
+		return this.request('/servers/all');
+	}
+
 	async markServerInterface(name: string): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request(`/servers/mark?name=${encodeURIComponent(name)}`, {
 			method: 'POST'
@@ -120,7 +127,13 @@ export class ServersClient extends SystemClient {
 	async updateSystemServerPeer(
 		serverId: string,
 		pubkey: string,
-		data: { description: string; tunnelIP: string }
+		// signature омитим — сигнатура пира не трогается; прислали — заменяет
+		// все пять полей и профиль.
+		data: {
+			description: string;
+			tunnelIP: string;
+			signature?: { profile: string; i1: string; i2: string; i3: string; i4: string; i5: string };
+		}
 	): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request(`/servers/${encodeURIComponent(serverId)}/peers/${encodeURIComponent(pubkey)}`, {
 			method: 'PUT',

@@ -120,6 +120,22 @@ func TotalByteSize(p GeneratedPackets) int {
 // проходил гейт; `<b>` на 4096 байт — 8198 символов, токены короче.
 const MaxSignatureRawChars = 2*MaxSignatureBytes + 80
 
+// ValidateProfileAndSize — единый гейт правки сигнатуры пира: профиль обязан
+// быть из Profiles (пустой допустим — сигнатура набрана руками), сумма I1–I5
+// обязана влезать в лимит. Возвращает КАНОНИЧЕСКИЙ ключ профиля: хранить
+// присланное (" SIP ") нельзя. Ошибки — сентинелы ErrUnknownProtocol и
+// ErrPacketsTooLarge, вызывающий переводит их в свои коды.
+func ValidateProfileAndSize(profile string, p GeneratedPackets) (string, error) {
+	canonical := CanonicalProtocol(profile)
+	if profile != "" && canonical == "" {
+		return "", fmt.Errorf("%w: %s", ErrUnknownProtocol, profile)
+	}
+	if err := CheckSize(p); err != nil {
+		return "", err
+	}
+	return canonical, nil
+}
+
 // CheckSize — единая проверка размера сигнатуры для туннелей и пиров.
 func CheckSize(p GeneratedPackets) error {
 	if n := TotalByteSize(p); n > MaxSignatureBytes {

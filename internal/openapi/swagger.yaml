@@ -3801,6 +3801,12 @@ definitions:
       description:
         example: My Phone
         type: string
+      signature:
+        allOf:
+        - $ref: '#/definitions/api.PeerSignatureDTO'
+        description: |-
+          Signature: nil — сигнатуру пира не трогать; объект — заменить все пять
+          полей и профиль целиком (пустые поля объекта стирают старые байты).
       tunnelIP:
         example: 10.0.14.2/32
         type: string
@@ -7558,6 +7564,20 @@ definitions:
       endpoint:
         example: 1.2.3.4:12345
         type: string
+      i1:
+        description: |-
+          Сигнатура пира (CONTEXT.md «Сигнатура AWG»). Есть только у пиров с
+          локальным секретом: у чужих её негде хранить.
+        example: <b 0xc0>
+        type: string
+      i2:
+        type: string
+      i3:
+        type: string
+      i4:
+        type: string
+      i5:
+        type: string
       lastHandshake:
         example: "2024-01-15T10:30:00Z"
         type: string
@@ -7570,6 +7590,9 @@ definitions:
       rxBytes:
         example: 1048576
         type: integer
+      signatureProfile:
+        example: quic_initial
+        type: string
       txBytes:
         example: 524288
         type: integer
