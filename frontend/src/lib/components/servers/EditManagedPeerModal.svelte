@@ -4,6 +4,7 @@
 	import { protocols, calcTotalSize, MAX_SIGNATURE_BYTES, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
 	import PeerSignatureEditor from './PeerSignatureEditor.svelte';
 	import { routerDnsHint } from './routerDnsHint';
+	import { validateTunnelIP, validateDNSList } from '$lib/utils/peerForm';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
@@ -64,6 +65,8 @@
 	});
 
 	const sigOver = $derived(calcTotalSize(sigPackets) > MAX_SIGNATURE_BYTES);
+	const ipError = $derived(validateTunnelIP(tunnelIP));
+	const dnsError = $derived(validateDNSList(dns));
 
 	const isDirty = $derived(
 		description !== peer.description ||
@@ -103,6 +106,7 @@
 		<div class="form-group">
 			<label class="label" for="emp-ip">Tunnel IP (CIDR)</label>
 			<input type="text" id="emp-ip" class="input" bind:value={tunnelIP} />
+			{#if ipError}<span class="field-hint is-error">{ipError}</span>{/if}
 		</div>
 		<div class="form-group">
 			<label class="label" for="emp-dns">DNS серверы</label>
@@ -113,7 +117,11 @@
 					<FormToggle bind:checked={useRouterDNS} onchange={(val) => { dns = val ? routerIP : ''; }} size="sm" />
 				</div>
 			{/if}
-			<span class="field-hint">Используется в конфиге клиента. По умолчанию: 1.1.1.1, 8.8.8.8</span>
+			{#if dnsError}
+				<span class="field-hint is-error">{dnsError}</span>
+			{:else}
+				<span class="field-hint">Используется в конфиге клиента. По умолчанию: 1.1.1.1, 8.8.8.8</span>
+			{/if}
 		</div>
 		<PeerSignatureEditor
 			profile={sigProfile}
@@ -124,7 +132,7 @@
 
 	{#snippet actions()}
 		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
-		<Button variant="primary" size="md" onclick={handleSave} loading={saving} disabled={saving || sigOver}>
+		<Button variant="primary" size="md" onclick={handleSave} loading={saving} disabled={saving || sigOver || !!ipError || !!dnsError}>
 			Сохранить
 		</Button>
 	{/snippet}
