@@ -495,7 +495,7 @@ func (h *Handler) EnsureWGTunnel(w http.ResponseWriter, r *http.Request, key str
 			ip, _, _ := strings.Cut(strings.TrimSpace(strings.SplitN(addr, ",", 2)[0]), "/")
 			response.ErrorWithStatus(w, http.StatusConflict,
 				fmt.Sprintf("Сервер выдал адрес %s, он уже занят: %s. Адрес назначает wdtt-server: "+
-					"обновите его на обоих роутерах до 1.4.0-5 и заведите абонента заново на одном из них",
+					"обновите его на обоих роутерах до 1.4.0-5 и заведите заново абонента этого клиента на его сервере",
 					ip, conflicts[0]),
 				"WDTT_WG_ADDRESS_CONFLICT")
 			return

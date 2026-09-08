@@ -628,8 +628,9 @@ func TestEnsureWG_AddressConflictIs409WithoutImport(t *testing.T) {
 		t.Fatalf("status=%d code=%s msg=%q", rr.Code, code, msg)
 	}
 	if !strings.HasPrefix(msg, "Сервер выдал адрес 10.66.0.5, он уже занят: ") ||
-		!strings.Contains(msg, "Сервер A") || !strings.Contains(msg, "1.4.0-5") {
-		t.Fatalf("сообщение без адреса-хоста/виновника/версии: %q", msg)
+		!strings.Contains(msg, "Сервер A") || !strings.Contains(msg, "1.4.0-5") ||
+		!strings.Contains(msg, "абонента этого клиента") {
+		t.Fatalf("сообщение без адреса-хоста/виновника/версии/совета: %q", msg)
 	}
 	if !reflect.DeepEqual(tunnels.conflictsAsked, []string{"10.66.0.5/32"}) {
 		t.Fatalf("проверка спрошена не по адресу конфига: %v", tunnels.conflictsAsked)
