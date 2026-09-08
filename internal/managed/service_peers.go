@@ -114,6 +114,13 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		if signature.TotalByteSize(req.Signature.packets()) > signature.MaxSignatureBytes {
 			return ErrSignatureTooLarge
 		}
+		// ByteSize считает только распознанные токены, поэтому сырой текст
+		// проходит гейт выше как 0 байт. Ограничиваем ещё и длину самих строк:
+		// максимум даёт <b> на 4096 байт (8198 символов), токенные формы короче.
+		if len(req.Signature.I1)+len(req.Signature.I2)+len(req.Signature.I3)+
+			len(req.Signature.I4)+len(req.Signature.I5) > 2*signature.MaxSignatureBytes+80 {
+			return ErrSignatureTooLarge
+		}
 	}
 	wantTunnelChange := req.TunnelIP != "" && req.TunnelIP != peer.TunnelIP
 	if wantTunnelChange {

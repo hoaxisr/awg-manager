@@ -76,13 +76,19 @@ func TestSTUN_AllocateHasTurnAttributes(t *testing.T) {
 			continue
 		}
 		attrs := stunAttrs(msg)
-		for _, attr := range []uint16{0x0014, 0x000D, 0x0019, 0x8027, 0x0006} {
+		for _, attr := range []uint16{0x0014, 0x000D, 0x0019, 0x0017, 0x0006} {
 			if _, ok := attrs[attr]; !ok {
 				t.Fatalf("Allocate lacks attribute %#04x", attr)
 			}
 		}
 		if !bytes.Equal(attrs[0x0019], []byte{0x11, 0, 0, 0}) {
 			t.Fatalf("REQUESTED-TRANSPORT % x", attrs[0x0019])
+		}
+		// REQUESTED-ADDRESS-FAMILY (RFC 6156 §4.1.1): семейство в ПЕРВОМ байте,
+		// три байта RFFU нулевые.
+		raf := attrs[0x0017]
+		if len(raf) != 4 || (raf[0] != 0x01 && raf[0] != 0x02) || !bytes.Equal(raf[1:4], []byte{0, 0, 0}) {
+			t.Fatalf("REQUESTED-ADDRESS-FAMILY % x", raf)
 		}
 		return
 	}

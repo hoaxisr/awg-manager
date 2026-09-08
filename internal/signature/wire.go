@@ -44,6 +44,13 @@ func varintLen(v uint64) int {
 	return 8
 }
 
+// varintBytes — значение в кодировке варинта (RFC 9000 §16) отдельным срезом.
+func varintBytes(v uint64) []byte {
+	w := &wire{}
+	w.varint(v)
+	return w.bytes()
+}
+
 // tokB — один токен <b 0x…> со строчным hex (NDMS принимает 1200 байт одним токеном, замер 2026-09-08).
 func tokB(p []byte) string { return "<b 0x" + hex.EncodeToString(p) + ">" }
 

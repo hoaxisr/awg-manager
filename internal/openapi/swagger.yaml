@@ -2208,8 +2208,8 @@ definitions:
         type: boolean
       i1:
         description: |-
-          I1..I5 и SignatureProfile — сигнатура имитации пира (CONTEXT.md
-          «Владелец сигнатуры»); попадает в .conf этого пира.
+          i1..i5 и signatureProfile — сигнатура имитации этого клиента;
+          попадает в его .conf.
         example: <b 0xc0>
         type: string
       i2:
@@ -2283,9 +2283,9 @@ definitions:
         type: string
       i1:
         description: |-
-          LegacyI1..LegacyI5 — серверная сигнатура бэкапов до схемы 36.
-          Только на чтение: при импорте раздаётся пирам без своей сигнатуры
-          (storage.MovePeerSignaturesFromServer), в новые бэкапы не пишется.
+          Серверные i1..i5 из старых бэкапов, когда сигнатура была общей на весь
+          сервер. Только на чтение: при импорте раздаются клиентам без своей
+          сигнатуры, в новые бэкапы не пишутся.
         type: string
       i2:
         type: string

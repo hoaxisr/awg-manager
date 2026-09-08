@@ -17,11 +17,16 @@
 	let { profile, packets, onchange }: Props = $props();
 
 	let generating = $state(false);
+	// Выбор в выпадашке — «чем генерировать», он локальный. Наружу профиль
+	// уходит только вместе с байтами: из «Сгенерировать» (профиль описывает
+	// пакеты) или пустым при правке руками (байты больше не из профиля).
+	// svelte-ignore state_referenced_locally — начальное значение, дальше выбор за пользователем
+	let selected = $state<ProfileValue>(profile);
 
 	const options = $derived<DropdownOption<ProfileValue>[]>([
 		// Пустой профиль показываем, только пока он выбран: сигнатура пришла
 		// от старого сервера или набрана руками — профиля у неё нет.
-		...(profile === '' ? [{ value: '' as ProfileValue, label: '— не задан —' }] : []),
+		...(selected === '' ? [{ value: '' as ProfileValue, label: '— не задан —' }] : []),
 		...Object.entries(protocols).map(([key, proto]) => ({
 			value: key as ProfileValue,
 			label: proto.name,
@@ -33,10 +38,11 @@
 	const overLimit = $derived(totalBytes > MAX_SIGNATURE_BYTES);
 
 	async function handleGenerate() {
-		const target: ProtocolKey = profile === '' ? 'quic_initial' : profile;
+		const target: ProtocolKey = selected === '' ? 'quic_initial' : selected;
 		generating = true;
 		try {
 			const res = await api.generateSignature(target);
+			selected = target;
 			onchange({
 				profile: target,
 				packets: { i1: res.packets.i1, i2: res.packets.i2, i3: res.packets.i3, i4: res.packets.i4, i5: res.packets.i5 },
@@ -58,12 +64,7 @@
 
 	<div class="generate-row">
 		<div class="profile-select">
-			<Dropdown
-				value={profile}
-				{options}
-				fullWidth
-				onchange={(v) => onchange({ profile: v, packets })}
-			/>
+			<Dropdown value={selected} {options} fullWidth onchange={(v) => (selected = v)} />
 		</div>
 		<Button variant="secondary" size="sm" onclick={handleGenerate} disabled={generating} loading={generating}>
 			Сгенерировать
@@ -79,7 +80,7 @@
 					id={`peer-sig-${field}`}
 					class="input"
 					value={packets[field]}
-					oninput={(e) => onchange({ profile, packets: { ...packets, [field]: e.currentTarget.value } })}
+					oninput={(e) => onchange({ profile: '', packets: { ...packets, [field]: e.currentTarget.value } })}
 				/>
 			</div>
 		{/each}

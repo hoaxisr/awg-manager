@@ -6,7 +6,10 @@ import mrand "math/rand"
 // hostPool — SNI/имена хостов для профилей. Первая часть (108 записей) —
 // DOMAIN_POOL из payloadGen (порт-спека §6, порядок = вес: чем выше, тем
 // чаще, дубли google.com/apple.com/microsoft.com/github.com сохранены как
-// вес), затем хосты прежнего generate_hostpools.go, которых там ещё нет.
+// вес), затем веб-хосты прежнего generate_hostpools.go, которых там ещё нет.
+// Только веб: STUN/TURN и SIP-инфраструктура из старых попротокольных пулов
+// сюда не входит (в h3 ClientHello такое имя выдаёт инструмент), STUN берёт
+// хосты из своих таблиц провайдеров.
 var hostPool = []string{
 	"google.com", "amazon.com", "reddit.com", "github.com", "mozilla.org", "microsoft.com",
 	"apple.com", "cloudflare.com", "bing.com", "adobe.com", "stackoverflow.com", "office.com",
@@ -63,38 +66,7 @@ var hostPool = []string{
 	"ftp.debian.org", "launchpad.net", "snapcraft.io", "alpinelinux.org", "archlinux.org", "centos.org",
 	"fedoraproject.org", "steamcdn-a.akamaihd.net", "store.steampowered.com", "commons.wikimedia.org", "gra-g1.ovh.net", "do.co",
 	"vultr.com", "zmtr.cn", "docker.com", "hub.docker.com", "registry-1.docker.io", "quay.io",
-	"ghcr.io", "jetbrains.com", "plugins.jetbrains.com", "download.jetbrains.com", "turn.yandex.net", "stun.yandex.net",
-	"stun1.yandex.net", "telemost.yandex.ru", "turn.vk.com", "stun.vk.com", "stun1.vk.com", "rtc.vk.com",
-	"stun.mail.ru", "turn.mail.ru", "stun.sipnet.ru", "stun.sipnet.net", "stun.zadarma.com", "turn.zadarma.com",
-	"stun.zepter.ru", "stun.mango-office.ru", "stun.beeline.ru", "stun.mts.ru", "stun.megafon.ru", "stun.rostelecom.ru",
-	"stun.tele2.ru", "stun.sber.ru", "stun.stunprotocol.org", "stunserver.stunprotocol.org", "stun.voip.ipp2p.com", "stun.voipstunt.com",
-	"stun.voipbuster.com", "stun.voipwise.com", "stun.voiptia.net", "stun.voxox.com", "stun.voxgratia.org", "stun.voys.nl",
-	"stun.voztele.com", "stun.voipzoom.com", "stun.vopium.com", "stun.ippi.fr", "stun.antisip.com", "stun.freecall.com",
-	"stun.internetcalls.com", "stun.counterpath.com", "stun.counterpath.net", "stun.softjoys.com", "stun.sipgate.net", "stun.sip.us",
-	"stun.ekiga.net", "stun.ideasip.com", "stun.schlund.de", "stun.xs4all.nl", "stun.xten.com", "stun.sonetel.com",
-	"stun.sonetel.net", "stun.rock.com", "stun.ooma.com", "stun.vyke.com", "stun.webcalldirect.com", "stun.wwdl.net",
-	"stun.yesdates.com", "stun.yesss.at", "stun.zoiper.com", "stun01.sipphone.com", "stun1.faktortel.com.au", "stun.noc.ams-ix.net",
-	"stun.xtratelecom.es", "stun.wifirst.net", "stun.whoi.edu", "stun.zadv.com", "stun.zentauron.de", "stun.voztovoice.org",
-	"stun1.voiceeclipse.net", "stun.f.haeder.net", "meet.jit.si", "stun.jit.si", "turn.jit.si", "8x8.vc",
-	"stun.services.mozilla.com", "turn.matrix.org", "stun.matrix.org", "stun.nextcloud.com", "turn.nextcloud.com", "janus.conf.meetecho.com",
-	"stun.meetecho.com", "global.stun.twilio.com", "stun.us1.twilio.com", "stun.ie1.twilio.com", "stun.au1.twilio.com", "stun.us2.twilio.com",
-	"stun.nexmo.com", "stun.vonage.com", "global.stun.bandwidth.com", "stun.plivo.com", "stun.signalwire.com", "stun.livekit.cloud",
-	"stun.metered.ca", "openrelay.metered.ca", "coturn.net", "freestun.net", "relay.webwormhole.io", "expressturn.com",
-	"sip.beeline.ru", "voip.beeline.ru", "sip.mts.ru", "voip.mts.ru", "sip.megafon.ru", "voip.megafon.ru",
-	"sip.tele2.ru", "voip.tele2.ru", "sip.rostelecom.ru", "voip.rostelecom.ru", "sip.mtt.ru", "voip.mtt.ru",
-	"sip.vk.com", "sip.yandex.ru", "sip.mail.ru", "voip.sberbank.ru", "sip.vats.sber.ru", "sip.tbank.ru",
-	"sip.sipnet.ru", "sip.sipnet.net", "sip2.sipnet.ru", "sip.mango-office.ru", "pbx.mango-office.ru", "sip.zadarma.com",
-	"pbx.zadarma.com", "sip.gravitel.ru", "sip.onlinepbx.ru", "sip.uis.ru", "pbx.uis.ru", "sip.comagic.ru",
-	"sip.binotel.ru", "sip.novofon.ru", "sip.megacall.ru", "sip.zebra-telecom.ru", "sip.obit.ru", "sip.mtsglobaltelecom.ru",
-	"pbx.rt.ru", "sip.telfin.ru", "sip.uiscom.ru", "sip.voxlink.ru", "sip.datafox.ru", "sip.sipmarket.net",
-	"sip.ngs.ru", "sip.kolabora.com", "sip.sipuni.com", "sip.voximplant.com", "sip.exolve.ru", "sip.dialpad.ru",
-	"sip.oblako.ru", "pbx.onlinesim.ru", "sip.onlinesim.ru", "sip.iptel.org", "sip2sip.info", "sip.linphone.org",
-	"proxy.sipthor.net", "sip.sipthor.net", "sip.antisip.com", "sip.ippi.fr", "sip.voipbuster.com", "sip.voipstunt.com",
-	"sip.freecall.com", "sip.powervoip.com", "sip.poivy.com", "sip.voipwise.com", "sip.internetcalls.com", "sip.counterpath.com",
-	"sipml5.org", "sip.zoiper.com", "sip.microsip.org", "asterisk.org", "sip.asterisk.org", "sip.kamailio.org",
-	"sip.opensips.org", "sip.freeswitch.org", "sip.vonage.com", "sip.ringcentral.com", "sip.8x8.com", "sip.plivo.com",
-	"sip.telnyx.com", "sip.bandwidth.com", "sip.twilio.com", "global.sip.twilio.com", "sip.infobip.com", "sip.messagebird.com",
-	"sip.signalwire.com", "sip.did.telnyx.com", "sip.livekit.cloud", "sip.dialpad.com", "sip.aircall.io", "sip.3cx.com",
+	"ghcr.io", "jetbrains.com", "plugins.jetbrains.com", "download.jetbrains.com",
 }
 
 // pickHost — выбор, взвешенный по рангу (payloadGen pickWeightedRankedDomain):

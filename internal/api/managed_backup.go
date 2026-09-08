@@ -48,9 +48,9 @@ type ManagedServerBackupDTO struct {
 	PrivateKey    string           `json:"privateKey,omitempty" example:"oA..."`
 	Policy        string           `json:"policy" example:"none"`
 	Peers         []ManagedPeerDTO `json:"peers"`
-	// LegacyI1..LegacyI5 — серверная сигнатура бэкапов до схемы 36.
-	// Только на чтение: при импорте раздаётся пирам без своей сигнатуры
-	// (storage.MovePeerSignaturesFromServer), в новые бэкапы не пишется.
+	// Серверные i1..i5 из старых бэкапов, когда сигнатура была общей на весь
+	// сервер. Только на чтение: при импорте раздаются клиентам без своей
+	// сигнатуры, в новые бэкапы не пишутся.
 	LegacyI1 string          `json:"i1,omitempty"`
 	LegacyI2 string          `json:"i2,omitempty"`
 	LegacyI3 string          `json:"i3,omitempty"`

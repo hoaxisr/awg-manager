@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	mrand "math/rand"
 	"strings"
 	"testing"
@@ -107,7 +108,16 @@ func mustAES(t *testing.T, k []byte) cipher.Block {
 }
 
 func TestQUICInitial_IsValidRFC9001Packet(t *testing.T) {
-	pk, err := buildQUICProfile(mrand.New(mrand.NewSource(7)))
+	// Несколько seed'ов: длины полей и GREASE выбираются из r, разбор обязан
+	// сходиться на любом розыгрыше.
+	for seed := int64(1); seed <= 3; seed++ {
+		t.Run(fmt.Sprintf("seed%d", seed), func(t *testing.T) { assertValidInitial(t, seed) })
+	}
+}
+
+func assertValidInitial(t *testing.T, seed int64) {
+	t.Helper()
+	pk, err := buildQUICProfile(mrand.New(mrand.NewSource(seed)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +191,7 @@ func TestQUICInitial_IsValidRFC9001Packet(t *testing.T) {
 	extLen := int(binary.BigEndian.Uint16(body[q:]))
 	q += 2
 	exts := body[q : q+extLen]
-	var sni, alpn, qtp []byte
+	var sni, alpn, qtp, supVer, keyShare []byte
 	var order []uint16
 	for e := 0; e < len(exts); {
 		typ := binary.BigEndian.Uint16(exts[e:])
@@ -193,6 +203,10 @@ func TestQUICInitial_IsValidRFC9001Packet(t *testing.T) {
 			sni = data
 		case 0x0010:
 			alpn = data
+		case 0x002B:
+			supVer = data
+		case 0x0033:
+			keyShare = data
 		case 0x0039:
 			qtp = data
 		}
@@ -217,6 +231,21 @@ func TestQUICInitial_IsValidRFC9001Packet(t *testing.T) {
 	// initial_source_connection_id (0x0f) внутри transport parameters равен SCID.
 	if !bytes.Contains(qtp, append([]byte{0x0f, byte(len(scid))}, scid...)) {
 		t.Fatalf("transport params lack initial_source_connection_id = scid")
+	}
+	// JA3-значимые поля: TLS 1.3 в supported_versions и настоящий x25519 в key_share.
+	if !bytes.Contains(supVer, []byte{0x03, 0x04}) {
+		t.Fatalf("supported_versions lacks TLS 1.3 (03 04): % x", supVer)
+	}
+	x25519 := bytes.Index(keyShare, []byte{0x00, 0x1D, 0x00, 0x20})
+	if x25519 < 0 || len(keyShare) < x25519+4+32 {
+		t.Fatalf("key_share lacks x25519 (00 1d) with a 32-byte key: % x", keyShare)
+	}
+	if bytes.Equal(keyShare[x25519+4:x25519+4+32], make([]byte, 32)) {
+		t.Fatal("x25519 public key is all zeroes")
+	}
+	// padding доводит ClientHello до цели 512 минус заголовки.
+	if len(ch) < 480 || len(ch) > 520 {
+		t.Fatalf("ClientHello = %d bytes, want ~512 (padding target)", len(ch))
 	}
 }
 

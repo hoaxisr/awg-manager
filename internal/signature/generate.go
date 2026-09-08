@@ -1,7 +1,6 @@
 package signature
 
 import (
-	crand "crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -82,11 +81,7 @@ func generate(profile string, r *mrand.Rand) (Result, error) {
 // newCryptoSeededRand — math/rand с seed из crypto/rand: выбор хостов, длин и
 // текстовых полей; ключевой материал QUIC берётся напрямую из crypto/rand.
 func newCryptoSeededRand() *mrand.Rand {
-	var seed [8]byte
-	if _, err := crand.Read(seed[:]); err != nil {
-		return mrand.New(mrand.NewSource(1))
-	}
-	return mrand.New(mrand.NewSource(int64(binary.LittleEndian.Uint64(seed[:]))))
+	return mrand.New(mrand.NewSource(int64(binary.LittleEndian.Uint64(randBytes(8)))))
 }
 
 var cpsTagRe = regexp.MustCompile(`<(\w+)(?:\s+([^>]*))?>`)

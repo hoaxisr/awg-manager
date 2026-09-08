@@ -71,6 +71,12 @@ func TestUpdatePeer_SignatureOptionalAndValidated(t *testing.T) {
 	if !errors.Is(err, ErrSignatureTooLarge) {
 		t.Fatalf("err = %v", err)
 	}
+	// сырой текст без токенов: ByteSize видит 0, ловит лимит на длину строк
+	err = svc.UpdatePeer(context.Background(), "Wireguard1", testPeerPubKey, UpdatePeerRequest{Description: "d2", TunnelIP: "10.0.0.2/32",
+		Signature: &PeerSignature{I1: strings.Repeat("x", 9000)}})
+	if !errors.Is(err, ErrSignatureTooLarge) {
+		t.Fatalf("raw text err = %v", err)
+	}
 	// неизвестный профиль
 	err = svc.UpdatePeer(context.Background(), "Wireguard1", testPeerPubKey, UpdatePeerRequest{Description: "d2", TunnelIP: "10.0.0.2/32",
 		Signature: &PeerSignature{Profile: "tls", I1: "<b 0x02>"}})

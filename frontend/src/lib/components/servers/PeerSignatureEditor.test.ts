@@ -1,6 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, fireEvent, waitFor, screen } from '@testing-library/svelte';
 import PeerSignatureEditor from './PeerSignatureEditor.svelte';
+
+// Панель Dropdown читает ResizeObserver при открытии, в jsdom его нет.
+class ResizeObserverStub {
+	observe(): void {}
+	disconnect(): void {}
+}
+vi.stubGlobal('ResizeObserver', ResizeObserverStub);
 
 const generateSignature = vi.fn(async (protocol: string) => ({
 	ok: true,
@@ -59,7 +66,9 @@ describe('PeerSignatureEditor', () => {
 		expect(getByText(/10 \/ 4096 байт/)).toBeTruthy();
 	});
 
-	it('reports a hand-edited packet field', async () => {
+	// Профиль описывает байты: правка руками их меняет, значит профиль больше
+	// не описывает содержимое полей.
+	it('manual edit clears profile', async () => {
 		const onchange = vi.fn();
 		const { getByLabelText } = render(PeerSignatureEditor, {
 			profile: 'dns',
@@ -70,8 +79,32 @@ describe('PeerSignatureEditor', () => {
 		await fireEvent.input(getByLabelText('I2'), { target: { value: '<r 4>' } });
 
 		expect(onchange).toHaveBeenLastCalledWith({
-			profile: 'dns',
+			profile: '',
 			packets: { i1: 'a', i2: '<r 4>', i3: '', i4: '', i5: '' },
+		});
+	});
+
+	// Выбор в выпадашке — это только «чем генерировать»: байты остались прежними,
+	// сообщать новый профиль наружу нечем.
+	it('changing the dropdown alone reports nothing, generate reports the pick', async () => {
+		const onchange = vi.fn();
+		const { getByText } = render(PeerSignatureEditor, {
+			profile: 'dns',
+			packets: { i1: 'a', i2: '', i3: '', i4: '', i5: '' },
+			onchange,
+		});
+
+		await fireEvent.click(getByText('DNS Query'));
+		await fireEvent.click(screen.getByRole('option', { name: /SIP/ }));
+		expect(onchange).not.toHaveBeenCalled();
+
+		await fireEvent.click(getByText('Сгенерировать'));
+
+		await waitFor(() => expect(onchange).toHaveBeenCalled());
+		expect(generateSignature).toHaveBeenLastCalledWith('sip');
+		expect(onchange).toHaveBeenLastCalledWith({
+			profile: 'sip',
+			packets: { i1: '<b 0x0102>', i2: '', i3: '', i4: '', i5: '' },
 		});
 	});
 });

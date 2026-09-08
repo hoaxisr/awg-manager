@@ -145,32 +145,30 @@ func keyShareData(grease uint16) ([]byte, error) {
 
 // quicTransportParams — расширение 0x0039, порядок и значения §1.7.4.
 func quicTransportParams(scid []byte) []byte {
-	params := []struct{ id, val uint64 }{
-		{0x01, 30000},    // max_idle_timeout
-		{0x03, 1472},     // max_udp_payload_size
-		{0x04, 15728640}, // initial_max_data
-		{0x05, 6291456},  // initial_max_stream_data_bidi_local
-		{0x06, 6291456},  // initial_max_stream_data_bidi_remote
-		{0x07, 6291456},  // initial_max_stream_data_uni
-		{0x08, 100},      // initial_max_streams_bidi
-		{0x09, 100},      // initial_max_streams_uni
-		{0x0a, 3},        // ack_delay_exponent
-		{0x0b, 25},       // max_ack_delay
+	params := []struct {
+		id  uint64
+		val []byte
+	}{
+		{0x01, varintBytes(30000)},                       // max_idle_timeout
+		{0x03, varintBytes(1472)},                        // max_udp_payload_size
+		{0x04, varintBytes(15728640)},                    // initial_max_data
+		{0x05, varintBytes(6291456)},                     // initial_max_stream_data_bidi_local
+		{0x06, varintBytes(6291456)},                     // initial_max_stream_data_bidi_remote
+		{0x07, varintBytes(6291456)},                     // initial_max_stream_data_uni
+		{0x08, varintBytes(100)},                         // initial_max_streams_bidi
+		{0x09, varintBytes(100)},                         // initial_max_streams_uni
+		{0x0a, varintBytes(3)},                           // ack_delay_exponent
+		{0x0b, varintBytes(25)},                          // max_ack_delay
+		{0x0c, nil},                                      // disable_active_migration — значение пустое
+		{0x0e, varintBytes(quicActiveConnectionIDLimit)}, // active_connection_id_limit
+		{0x0f, scid},                                     // initial_source_connection_id
 	}
 	w := &wire{}
 	for _, p := range params {
 		w.varint(p.id)
-		w.varint(uint64(varintLen(p.val)))
-		w.varint(p.val)
+		w.varint(uint64(len(p.val)))
+		w.raw(p.val)
 	}
-	w.varint(0x0c) // disable_active_migration — значение пустое
-	w.varint(0)
-	w.varint(0x0e) // active_connection_id_limit
-	w.varint(1)    // длина значения — 1 байт (варинт ≤ 63)
-	w.varint(quicActiveConnectionIDLimit)
-	w.varint(0x0f) // initial_source_connection_id
-	w.varint(uint64(len(scid)))
-	w.raw(scid)
 	return w.bytes()
 }
 

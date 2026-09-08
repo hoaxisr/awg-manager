@@ -84,9 +84,11 @@ type stunProvider struct {
 // всё сообщение, поэтому рантайм-токенов нет, только один <b>. Провайдер и
 // Allocate/Binding выбираются заново на каждую генерацию через r.
 //
-// Два намеренных отклонения от payloadGen (см. брифинг задачи): Allocate —
+// Три намеренных отклонения от payloadGen (см. брифинг задачи): Allocate —
 // тип 0x0003 (RFC 5766, а не 0x000A источника), REQUESTED-TRANSPORT — 4 байта
-// `11 00 00 00` (RFC 5766 §14.7, а не 8 байт источника).
+// `11 00 00 00` (RFC 5766 §14.7, а не 8 байт источника), REQUESTED-ADDRESS-
+// FAMILY — тип 0x0017 с семейством в первом байте (RFC 6156 §4.1.1, а не
+// нераспределённый 0x8027 с семейством во втором байте).
 func buildSTUN(r *mrand.Rand) (GeneratedPackets, error) {
 	p := stunProviders[r.Intn(len(stunProviders))]
 	host := p.servers[r.Intn(len(p.servers))]
@@ -107,7 +109,7 @@ func buildSTUN(r *mrand.Rand) (GeneratedPackets, error) {
 		if r.Intn(2) == 1 {
 			family = 0x02
 		}
-		attrs = append(attrs, stunAttr(0x8027, []byte{0x00, family, 0x00, 0x00})...) // REQUESTED-ADDRESS-FAMILY
+		attrs = append(attrs, stunAttr(0x0017, []byte{family, 0x00, 0x00, 0x00})...) // REQUESTED-ADDRESS-FAMILY
 	}
 
 	attrs = append(attrs, stunAttr(0x8022, []byte(p.software(r)))...) // SOFTWARE
@@ -124,7 +126,7 @@ func buildSTUN(r *mrand.Rand) (GeneratedPackets, error) {
 
 	attrs = append(attrs, stunAttr(0x0006, []byte(stunUsername(r, p, host, allocate)))...) // USERNAME
 
-	return GeneratedPackets{I1: tokB(buildSTUNMessage(msgType, attrs))}, nil
+	return GeneratedPackets{I1: tokB(buildSTUNMessage(r, msgType, attrs))}, nil
 }
 
 // stunUsername — форматы USERNAME (§2.6).
@@ -175,8 +177,11 @@ func u32Bytes(v uint32) []byte {
 // buildSTUNMessage — заголовок + атрибуты + FINGERPRINT (§2.7). CRC32 считается
 // по сообщению БЕЗ атрибута FINGERPRINT целиком (RFC 5389 §15.5), а поле длины
 // уже учитывает его 8 байт.
-func buildSTUNMessage(msgType uint16, attrs []byte) []byte {
-	txID := randBytes(12)
+func buildSTUNMessage(r *mrand.Rand, msgType uint16, attrs []byte) []byte {
+	// Transaction ID — из seed-ного RNG: STUN статичен целиком, ключевого
+	// материала здесь нет, и весь профиль остаётся seed-детерминированным.
+	txID := make([]byte, 12)
+	_, _ = r.Read(txID)
 	h := &wire{}
 	h.u16(int(msgType))
 	h.u16(len(attrs) + 8)
