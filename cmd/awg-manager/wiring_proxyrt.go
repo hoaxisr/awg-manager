@@ -540,6 +540,10 @@ func (t proxyTunnelImporter) Start(ctx context.Context, tunnelID string) error {
 	return t.svc.Start(ctx, tunnelID)
 }
 
+func (t proxyTunnelImporter) AddressConflicts(address string) []string {
+	return service.StoredAddressConflicts(t.store, address, "")
+}
+
 func (t proxyTunnelImporter) ForgetTraffic(tunnelID string) {
 	if t.traffic != nil {
 		t.traffic.Clear(tunnelID)
