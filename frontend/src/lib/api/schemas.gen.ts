@@ -794,9 +794,15 @@ const api_ManagedPeerDTO: v.GenericSchema = v.looseObject({
 	description: v.optional(v.nullable(v.string())),
 	dns: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
+	i1: v.optional(v.nullable(v.string())),
+	i2: v.optional(v.nullable(v.string())),
+	i3: v.optional(v.nullable(v.string())),
+	i4: v.optional(v.nullable(v.string())),
+	i5: v.optional(v.nullable(v.string())),
 	presharedKey: v.optional(v.nullable(v.string())),
 	privateKey: v.optional(v.nullable(v.string())),
 	publicKey: v.optional(v.nullable(v.string())),
+	signatureProfile: v.optional(v.nullable(v.string())),
 	tunnelIP: v.optional(v.nullable(v.string())),
 });
 

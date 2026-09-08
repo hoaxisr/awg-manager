@@ -19,6 +19,20 @@ type UpdatePeerRequestDTO struct {
 	Description string `json:"description" example:"My Phone"`
 	TunnelIP    string `json:"tunnelIP" example:"10.10.0.2/32"`
 	DNS         string `json:"dns,omitempty" example:"8.8.8.8"`
+	// Signature: nil — сигнатуру пира не трогать; объект — заменить все пять
+	// полей и профиль целиком (пустые поля объекта стирают старые байты).
+	Signature *PeerSignatureDTO `json:"signature,omitempty"`
+}
+
+// PeerSignatureDTO is the swagger-visible peer signature: five packets plus the
+// profile they were generated from ("" — набраны руками).
+type PeerSignatureDTO struct {
+	Profile string `json:"profile" example:"quic_initial"`
+	I1      string `json:"i1" example:"<b 0xc0>"`
+	I2      string `json:"i2"`
+	I3      string `json:"i3"`
+	I4      string `json:"i4"`
+	I5      string `json:"i5"`
 }
 
 // AddPeer adds a new peer to a managed server.
@@ -56,6 +70,7 @@ func (h *ManagedServerHandler) AddPeer(w http.ResponseWriter, r *http.Request, i
 //
 //	@Summary		Update managed-server peer
 //	@Description	Updates fields (name, allowed-ips, ...) of the peer identified by pubkey on the named managed server.
+//	@Description	The signature field: absent — the peer signature is left untouched; present — it replaces all five packets and the profile.
 //	@Tags			managed-servers
 //	@Accept			json
 //	@Produce		json

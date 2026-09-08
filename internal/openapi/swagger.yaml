@@ -2206,6 +2206,20 @@ definitions:
       enabled:
         example: true
         type: boolean
+      i1:
+        description: |-
+          I1..I5 и SignatureProfile — сигнатура имитации пира (CONTEXT.md
+          «Владелец сигнатуры»); попадает в .conf этого пира.
+        example: <b 0xc0>
+        type: string
+      i2:
+        type: string
+      i3:
+        type: string
+      i4:
+        type: string
+      i5:
+        type: string
       presharedKey:
         example: JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ=
         type: string
@@ -2214,6 +2228,9 @@ definitions:
         type: string
       publicKey:
         example: HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH=
+        type: string
+      signatureProfile:
+        example: quic_initial
         type: string
       tunnelIP:
         example: 10.10.0.2
@@ -2265,6 +2282,10 @@ definitions:
         example: vpn.example.com:51821
         type: string
       i1:
+        description: |-
+          LegacyI1..LegacyI5 — серверная сигнатура бэкапов до схемы 36.
+          Только на чтение: при импорте раздаётся пирам без своей сигнатуры
+          (storage.MovePeerSignaturesFromServer), в новые бэкапы не пишется.
         type: string
       i2:
         type: string
@@ -2798,6 +2819,23 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.PeerSignatureDTO:
+    properties:
+      i1:
+        example: <b 0xc0>
+        type: string
+      i2:
+        type: string
+      i3:
+        type: string
+      i4:
+        type: string
+      i5:
+        type: string
+      profile:
+        example: quic_initial
+        type: string
     type: object
   api.PermitInterfaceRequest:
     properties:
@@ -7227,6 +7265,12 @@ definitions:
       dns:
         example: 8.8.8.8
         type: string
+      signature:
+        allOf:
+        - $ref: '#/definitions/api.PeerSignatureDTO'
+        description: |-
+          Signature: nil — сигнатуру пира не трогать; объект — заменить все пять
+          полей и профиль целиком (пустые поля объекта стирают старые байты).
       tunnelIP:
         example: 10.10.0.2/32
         type: string
@@ -11011,8 +11055,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates fields (name, allowed-ips, ...) of the peer identified
-        by pubkey on the named managed server.
+      description: |-
+        Updates fields (name, allowed-ips, ...) of the peer identified by pubkey on the named managed server.
+        The signature field: absent — the peer signature is left untouched; present — it replaces all five packets and the profile.
       parameters:
       - description: Server id
         in: path
