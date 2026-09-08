@@ -7,6 +7,8 @@
 // Total of all I1-I5 fields must stay under 4096 bytes.
 // ---------------------------------------------------------------------------
 
+export const MAX_SIGNATURE_BYTES = 4096;
+
 export type ProtocolKey = 'quic_initial' | 'stun' | 'dns' | 'dtls' | 'sip';
 
 export const protocols: Record<ProtocolKey, { name: string; description: string }> = {

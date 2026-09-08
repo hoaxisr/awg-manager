@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { protocols, calcByteSize, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
+	import { protocols, calcByteSize, MAX_SIGNATURE_BYTES, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
 	import { api } from '$lib/api/client';
 	import type { ASCParams, ASCParamsExtended } from '$lib/types';
 	import { isExtendedASCParams } from '$lib/utils/asc-validation';
@@ -8,8 +8,6 @@
 	import { SettingsSectionLabel } from '$lib/components/settings';
 	import { Badge, Button, Dropdown, FieldHint, type DropdownOption } from '$lib/components/ui';
 	import { Fingerprint, Hash, MoveHorizontal, Shredder, ShieldCheck, Shuffle } from 'lucide-svelte';
-
-	const MAX_SIGNATURE_BYTES = 4096;
 
 	type GenerateMode = 'protocol' | 'domain';
 	type SignatureModes = 'both' | 'domain' | 'none';

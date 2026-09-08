@@ -2,9 +2,8 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Button, Dropdown, type DropdownOption } from '$lib/components/ui';
-	import { protocols, calcTotalSize, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
+	import { protocols, calcTotalSize, MAX_SIGNATURE_BYTES, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
 
-	const MAX_SIGNATURE_BYTES = 4096;
 	const FIELDS = ['i1', 'i2', 'i3', 'i4', 'i5'] as const;
 
 	type ProfileValue = ProtocolKey | '';

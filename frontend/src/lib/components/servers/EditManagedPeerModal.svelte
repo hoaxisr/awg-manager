@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { ManagedPeer } from '$lib/types';
 	import { Modal, FormToggle, Button, FieldHint } from '$lib/components/ui';
-	import { protocols, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
+	import { protocols, calcTotalSize, MAX_SIGNATURE_BYTES, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
 	import PeerSignatureEditor from './PeerSignatureEditor.svelte';
 	import { routerDnsHint } from './routerDnsHint';
 	import { api } from '$lib/api/client';
@@ -63,6 +63,8 @@
 		);
 	});
 
+	const sigOver = $derived(calcTotalSize(sigPackets) > MAX_SIGNATURE_BYTES);
+
 	const isDirty = $derived(
 		description !== peer.description ||
 		tunnelIP !== peer.tunnelIP ||
@@ -122,7 +124,7 @@
 
 	{#snippet actions()}
 		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
-		<Button variant="primary" size="md" onclick={handleSave} loading={saving}>
+		<Button variant="primary" size="md" onclick={handleSave} loading={saving} disabled={saving || sigOver}>
 			Сохранить
 		</Button>
 	{/snippet}

@@ -139,10 +139,11 @@ describe('scoreConfig — junk и паддинг', () => {
 });
 
 describe('scoreConfig — CPS', () => {
-	it('I2–I5: +2 за каждый, итог обрезается по 100', () => {
+	it('I2–I5 не дают бонуса: профили генератора заполняют только I1 (SIP — I1 и I2)', () => {
 		const r = scoreConfig(base({ headerProtection: true, randomTrailers: true, s1: 12, s2: 12, s3: 12, s4: 12, i1: '<b 0xc0000001>', i2: '<b 0x01>', i3: '<b 0x02>', i4: '<b 0x03>', i5: '<b 0x04>' }, {}, { version: 'awg3.1' }));
-		expect(find(r, 'Цепочка I2–I5').delta).toBe(8);
-		expect(r.score).toBe(100);
+		expect(find(r, 'Цепочка I2–I5')).toBeUndefined();
+		const one = scoreConfig(base({ headerProtection: true, randomTrailers: true, s1: 12, s2: 12, s3: 12, s4: 12, i1: '<b 0xc0000001>' }, {}, { version: 'awg3.1' }));
+		expect(r.score).toBe(one.score);
 	});
 
 	it('I1 с ошибкой структуры тегов: fail −10; протокол попадает в факты', () => {

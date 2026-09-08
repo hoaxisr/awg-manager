@@ -208,11 +208,6 @@ export function scoreConfig(d: AwgAnalyzeData): ScoreResult {
 		} else {
 			add({ cat: 'CPS (I1–I5)', title: 'Структура I1', status: 'pass', value: cps, delta: 0, detail: `Сырой hex, похож на ${cps}.` });
 		}
-		const chain = [i.i2, i.i3, i.i4, i.i5].filter(Boolean).length;
-		if (chain > 0) {
-			add({ cat: 'CPS (I1–I5)', title: 'Цепочка I2–I5', status: 'pass', value: `${chain} доп. пакетов`, delta: 2 * chain,
-				detail: `+2 за каждый дополнительный сигнатурный пакет (${chain}).` });
-		}
 	} else {
 		add({ cat: 'CPS (I1–I5)', title: 'I1', status: 'info', value: 'не задан', delta: 0,
 			detail: 'Мимикрия первого пакета не используется. Опционально: I1 с QUIC/TLS/DNS.' });
