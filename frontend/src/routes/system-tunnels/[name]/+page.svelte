@@ -122,7 +122,7 @@
 		</div>
 
 		<div class="tab-content">
-			<ASCEditor bind:params={ascParams} mtu={tunnel.mtu} idPrefix="sys-" />
+			<ASCEditor bind:params={ascParams} idPrefix="sys-" />
 		</div>
 	{/if}
 	</div>

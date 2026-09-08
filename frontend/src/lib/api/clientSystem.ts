@@ -468,10 +468,10 @@ export class SystemClient extends TunnelsClient {
 		return this.request(`/signature/capture?domain=${encodeURIComponent(domain)}`);
 	}
 
-	async generateSignature(protocol: string, mtu?: number): Promise<SignatureGenerateResult> {
+	async generateSignature(protocol: string): Promise<SignatureGenerateResult> {
 		return this.request('/signature/generate', {
 			method: 'POST',
-			body: JSON.stringify(mtu ? { protocol, mtu } : { protocol }),
+			body: JSON.stringify({ protocol }),
 		});
 	}
 

@@ -71,7 +71,6 @@
 	extended
 	{awg3}
 	{awg3Limited}
-	mtu={form.mtu}
 	{errors}
 	{hints}
 	{compact}
