@@ -1,6 +1,8 @@
 <script lang="ts">
 	import type { ManagedPeer } from '$lib/types';
 	import { Modal, FormToggle, Button, FieldHint } from '$lib/components/ui';
+	import { protocols, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
+	import PeerSignatureEditor from './PeerSignatureEditor.svelte';
 	import { routerDnsHint } from './routerDnsHint';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -23,6 +25,23 @@
 	let useRouterDNS = $state(false);
 	let saving = $state(false);
 	let wasOpen = $state(false);
+	let sigProfile = $state<ProtocolKey | ''>('');
+	let sigPackets = $state<SignaturePackets>({ i1: '', i2: '', i3: '', i4: '', i5: '' });
+
+	function peerProfile(): ProtocolKey | '' {
+		const p = peer.signatureProfile ?? '';
+		return p in protocols ? (p as ProtocolKey) : '';
+	}
+
+	function peerPackets(): SignaturePackets {
+		return {
+			i1: peer.i1 ?? '',
+			i2: peer.i2 ?? '',
+			i3: peer.i3 ?? '',
+			i4: peer.i4 ?? '',
+			i5: peer.i5 ?? '',
+		};
+	}
 
 	$effect(() => {
 		if (open && !wasOpen) {
@@ -30,21 +49,37 @@
 			tunnelIP = peer.tunnelIP;
 			dns = peer.dns || '';
 			useRouterDNS = routerIP !== '' && dns === routerIP;
+			sigProfile = peerProfile();
+			sigPackets = peerPackets();
 		}
 		wasOpen = open;
+	});
+
+	const sigDirty = $derived.by(() => {
+		const orig = peerPackets();
+		return (
+			sigProfile !== peerProfile() ||
+			(['i1', 'i2', 'i3', 'i4', 'i5'] as const).some((k) => sigPackets[k] !== orig[k])
+		);
 	});
 
 	const isDirty = $derived(
 		description !== peer.description ||
 		tunnelIP !== peer.tunnelIP ||
 		dns !== (peer.dns || '') ||
-		useRouterDNS !== (routerIP !== '' && (peer.dns || '') === routerIP)
+		useRouterDNS !== (routerIP !== '' && (peer.dns || '') === routerIP) ||
+		sigDirty
 	);
 
 	async function handleSave() {
 		saving = true;
 		try {
-			const fresh = await api.updateManagedPeer(serverId, peer.publicKey, { description, tunnelIP, dns: dns || undefined });
+			const fresh = await api.updateManagedPeer(serverId, peer.publicKey, {
+				description,
+				tunnelIP,
+				dns: dns || undefined,
+				signature: sigDirty ? { profile: sigProfile, ...sigPackets } : undefined,
+			});
 			servers.applyMutationResponse(fresh);
 			notifications.success('Клиент обновлён');
 			onclose();
@@ -78,6 +113,11 @@
 			{/if}
 			<span class="field-hint">Используется в конфиге клиента. По умолчанию: 1.1.1.1, 8.8.8.8</span>
 		</div>
+		<PeerSignatureEditor
+			profile={sigProfile}
+			packets={sigPackets}
+			onchange={(n) => { sigProfile = n.profile; sigPackets = n.packets; }}
+		/>
 	</div>
 
 	{#snippet actions()}

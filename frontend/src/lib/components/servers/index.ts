@@ -22,3 +22,4 @@ export { default as ServerAccessPolicyDropdown } from './ServerAccessPolicyDropd
 export { default as ServerEndpointSetting } from './ServerEndpointSetting.svelte';
 export { default as ServerSettingsPanel } from './ServerSettingsPanel.svelte';
 export { default as ServersPageSkeleton } from './ServersPageSkeleton.svelte';
+export { default as PeerSignatureEditor } from './PeerSignatureEditor.svelte';
