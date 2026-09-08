@@ -48,6 +48,7 @@ import type {
   FreeTurnCaptchaOverview,
   FreeTurnClientConfig,
   FreeTurnConfig,
+  FreeTurnKCP,
   FreeTurnProcessStatus,
   FreeTurnServerConfig,
   FreeTurnStatus,
@@ -338,6 +339,24 @@ export function toWdttServerConfig(v: ProxyInstanceView): WdttServerConfig {
   };
 }
 
+// kcp приезжает ссылкой freeturn:// и хранится как есть; null в PATCH снимает.
+function kcpOf(c: Cfg): FreeTurnKCP | undefined {
+  const k = c["kcp"];
+  if (!k || typeof k !== "object") return undefined;
+  const o = k as Record<string, unknown>;
+  const n = (key: string) => (typeof o[key] === "number" ? o[key] : 0);
+  return {
+    nodelay: n("nodelay"),
+    interval: n("interval"),
+    resend: n("resend"),
+    nc: n("nc"),
+    sndwnd: n("sndwnd"),
+    rcvwnd: n("rcvwnd"),
+    mtu: n("mtu"),
+    acknodelay: o["acknodelay"] === true,
+  };
+}
+
 export function toFreeTurnClientConfig(
   v: ProxyInstanceView,
 ): FreeTurnClientConfig {
@@ -357,6 +376,7 @@ export function toFreeTurnClientConfig(
     obfKey: "",
     obfKeySet: bool(c, "obfKeySet") === true,
     streamsPerCred: num(c, "streamsPerCred") ?? 0,
+    kcp: kcpOf(c),
     platform:
       (str(c, "platform") as FreeTurnClientConfig["platform"]) ?? "desktop",
     dnsMode: (str(c, "dnsMode") as FreeTurnClientConfig["dnsMode"]) ?? "auto",
@@ -681,6 +701,7 @@ export function toFreeTurnClientPatch(cfg: FreeTurnClientConfig): Cfg {
     mode: cfg.mode ?? "udp",
     obfProfile: cfg.obfProfile ?? "none",
     streamsPerCred: cfg.streamsPerCred ?? 0,
+    kcp: cfg.kcp ?? null,
     platform: cfg.platform ?? "",
     dnsMode: cfg.dnsMode ?? "",
     dnsServers: cfg.dnsServers ?? "",

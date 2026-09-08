@@ -7719,6 +7719,25 @@ definitions:
         example: true
         type: boolean
     type: object
+  ftlink.KCP:
+    properties:
+      acknodelay:
+        type: boolean
+      interval:
+        type: integer
+      mtu:
+        type: integer
+      nc:
+        type: integer
+      nodelay:
+        type: integer
+      rcvwnd:
+        type: integer
+      resend:
+        type: integer
+      sndwnd:
+        type: integer
+    type: object
   ftlink.LinkPayload:
     properties:
       cid:
@@ -7728,6 +7747,10 @@ definitions:
         type: string
       dnss:
         type: string
+      kcp:
+        allOf:
+        - $ref: '#/definitions/ftlink.KCP'
+        description: 'upstream 3.2+: ARQ profile for -mode tcp'
       key:
         type: string
       listen:

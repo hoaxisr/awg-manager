@@ -48,10 +48,25 @@ type LinkPayload struct {
 	DNSServers     string `json:"dnss,omitempty"`
 	ManualCaptcha  bool   `json:"mcap,omitempty"`
 	Name           string `json:"name,omitempty"` // comment for the owner's own clients.json entry
+	KCP            *KCP   `json:"kcp,omitempty"`  // upstream 3.2+: ARQ profile for -mode tcp
 
 	// awg-manager extensions, not part of the upstream spec:
 	MTU int    `json:"mtu,omitempty"`
 	WG  string `json:"wg,omitempty"` // optional bundled WireGuard client config
+}
+
+// KCP mirrors upstream uri.KCP (internal/uri/uri.go): the eight -kcp-* values
+// the link owner tuned; the guest gets the same ARQ. Compact-format links
+// (query string) never carry it.
+type KCP struct {
+	NoDelay    int  `json:"nodelay"`
+	Interval   int  `json:"interval"`
+	Resend     int  `json:"resend"`
+	NC         int  `json:"nc"`
+	SndWnd     int  `json:"sndwnd"`
+	RcvWnd     int  `json:"rcvwnd"`
+	MTU        int  `json:"mtu"`
+	ACKNoDelay bool `json:"acknodelay"`
 }
 
 // LinkScheme is the URI scheme prefix used by freeturn:// share links.

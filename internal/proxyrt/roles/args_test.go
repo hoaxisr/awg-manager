@@ -107,6 +107,21 @@ func TestFreeTurnArgs(t *testing.T) {
 		t.Fatalf("argv клиента:\n%s\nждали:\n%s", got, wantClient)
 	}
 
+	// -kcp-* уезжают только в tcp-режиме и только когда профиль задан: в udp
+	// клиент 3.x отвергает любое отклонение KCP от дефолта на старте.
+	cl.KCP = &FreeTurnKCP{NoDelay: 1, Interval: 40, Resend: 2, NC: 1, SndWnd: 256, RcvWnd: 256, MTU: 1200, ACKNoDelay: false}
+	if got := strings.Join(FreeTurnClientArgs(cl), " "); strings.Contains(got, "-kcp-") {
+		t.Errorf("udp-режим не должен получать -kcp-*: %q", got)
+	}
+	cl.Mode = "tcp"
+	wantKCP := "-mode tcp -kcp-nodelay 1 -kcp-interval 40 -kcp-resend 2 -kcp-nc 1 " +
+		"-kcp-sndwnd 256 -kcp-rcvwnd 256 -kcp-mtu 1200 -kcp-acknodelay=false -obf-profile xor"
+	if got := strings.Join(FreeTurnClientArgs(cl), " "); !strings.Contains(got, wantKCP) {
+		t.Errorf("argv tcp с KCP:\n%s\nждали фрагмент:\n%s", got, wantKCP)
+	}
+	cl.Mode = "turn"
+	cl.KCP = nil
+
 	// -platform уезжает ТОЛЬКО для mobile: у desktop его нет вовсе, и это не
 	// косметика — лишний флаг сдвинул бы отпечаток всем настольным клиентам.
 	cl.Platform = "desktop"

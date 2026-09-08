@@ -374,6 +374,22 @@ type FreeTurnClientConfig struct {
 	ClientID       string `json:"clientId,omitempty"`
 	Sub            string `json:"sub,omitempty"`
 	Debug          bool   `json:"debug,omitempty"`
+	// KCP — профиль ARQ tcp-режима (freeturn 3.2+, F144): приезжает полем `kcp`
+	// ссылки freeturn://, редактора в UI нет. Рендерится в -kcp-* только при
+	// Mode tcp: в udp клиент отвергает любое отклонение от дефолта на старте.
+	KCP *FreeTurnKCP `json:"kcp,omitempty"`
+}
+
+// FreeTurnKCP — восемь параметров KCP в форме upstream (uri.KCP / -kcp-*).
+type FreeTurnKCP struct {
+	NoDelay    int  `json:"nodelay"`
+	Interval   int  `json:"interval"`
+	Resend     int  `json:"resend"`
+	NC         int  `json:"nc"`
+	SndWnd     int  `json:"sndwnd"`
+	RcvWnd     int  `json:"rcvwnd"`
+	MTU        int  `json:"mtu"`
+	ACKNoDelay bool `json:"acknodelay"`
 }
 
 func (c FreeTurnClientConfig) Validate() error {
