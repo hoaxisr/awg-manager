@@ -66,10 +66,10 @@ const (
 	singboxVersionProbeTimeout = 15 * time.Second
 
 	// singboxMetaSidecarSuffix is appended to the binary path to locate
-	// the persisted (version, features) JSON written after every
-	// successful `sing-box version` probe. The sidecar's mtime is
-	// compared against the binary's mtime — fresh sidecar ⇒ no subprocess
-	// on the next read. Survives router reboots and daemon restarts.
+	// the persisted version JSON, written by whichever source of
+	// resolveVersionLocked answered (pinned SHA, Clash API, subprocess).
+	// The sidecar's mtime is compared against the binary's mtime — fresh
+	// sidecar ⇒ no probe on the next read. Survives reboots and restarts.
 	singboxMetaSidecarSuffix = ".meta.json"
 )
 

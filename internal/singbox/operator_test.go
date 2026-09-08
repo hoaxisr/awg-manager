@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +75,130 @@ func TestOperator_ConfigPaths(t *testing.T) {
 	}
 	if op.tunnelsFile() != filepath.Join(dir, "config.d", "10-tunnels.json") {
 		t.Errorf("tunnelsFile: %s", op.tunnelsFile())
+	}
+}
+
+// Байты совпали с pinned — версия известна без субпроцесса. Скрипт печатает
+// ЧУЖУЮ версию: если бы проба запустилась, тест бы это увидел.
+func TestDetectVersion_PinnedSHA_NoSubprocess(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	body := []byte("#!/bin/sh\necho 'sing-box version 9.9.9'\n")
+	sum := sha256.Sum256(body)
+	if err := os.WriteFile(binary, body, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	op.SetInstaller(installer.New(binary, "test-arch", installer.BinarySpec{Version: "1.2.3", SHA256: hex.EncodeToString(sum[:])}, nil))
+
+	v, f := op.detectVersionAndFeaturesCached(context.Background())
+	if v != "1.2.3" {
+		t.Fatalf("version = %q, want 1.2.3 (from pinned SHA, not from the script)", v)
+	}
+	if !reflect.DeepEqual(f, installer.RequiredTags) {
+		t.Fatalf("features = %v, want RequiredTags", f)
+	}
+	meta, ok := readFreshSidecar(binary)
+	if !ok || meta.Version != "1.2.3" {
+		t.Fatalf("sidecar = %+v ok=%v, want version 1.2.3 persisted", meta, ok)
+	}
+}
+
+// Процесс запущен, SHA чужой (UPX-копия) — версия из Clash API, субпроцесс
+// не нужен (скрипт завершается ошибкой, проба дала бы пустоту).
+func TestDetectVersion_FromClashWhenRunning(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	op.SetInstaller(installer.New(binary, "test-arch", installer.BinarySpec{Version: "1.2.3", SHA256: strings.Repeat("f", 64)}, nil))
+	if err := os.WriteFile(op.pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	op.proc.matchBinaryFn = func(int) bool { return true }
+	op.exeMatches = func(int, string) bool { return true } // /proc/self/exe теста ≠ скрипт
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"version":"sing-box 1.2.3"}`))
+	}))
+	defer ts.Close()
+	op.clash.SetAddress(strings.TrimPrefix(ts.URL, "http://"))
+
+	v, f := op.detectVersionAndFeaturesCached(context.Background())
+	if v != "1.2.3" {
+		t.Fatalf("version = %q, want 1.2.3 from Clash API", v)
+	}
+	if !reflect.DeepEqual(f, installer.RequiredTags) {
+		t.Fatalf("features = %v, want RequiredTags (version is pinned)", f)
+	}
+
+	// Clash погас, новый Operator без in-memory кэша — версия из sidecar.
+	ts.Close()
+	op2 := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	if v2, _ := op2.detectVersionAndFeaturesCached(context.Background()); v2 != "1.2.3" {
+		t.Fatalf("after restart version = %q, want 1.2.3 from sidecar", v2)
+	}
+}
+
+// Процесс не запущен, sidecar нет, SHA чужой — единственный оставшийся
+// источник: субпроцесс. Версия не pinned ⇒ теги неизвестны.
+// Чужой Clash на нашем порту при отсутствии pid-файла НЕ опрашивается.
+func TestDetectVersion_SubprocessFallback(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho 'sing-box version 0.0.7'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"version":"sing-box 1.2.3"}`))
+	}))
+	defer foreign.Close()
+	op.clash.SetAddress(strings.TrimPrefix(foreign.URL, "http://"))
+
+	v, f := op.detectVersionAndFeaturesCached(context.Background())
+	if v != "0.0.7" || f != nil {
+		t.Fatalf("got %q/%v, want 0.0.7/nil (subprocess, not the foreign Clash)", v, f)
+	}
+}
+
+// Процесс запущен, но Clash API недоступен (порт закрыт) — цепочка идёт
+// дальше к субпроцессу, а не возвращает пустую версию.
+func TestDetectVersion_RunningButClashDown_FallsBack(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho 'sing-box version 0.0.7'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	if err := os.WriteFile(op.pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	op.proc.matchBinaryFn = func(int) bool { return true }
+	op.exeMatches = func(int, string) bool { return true }
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	addr := strings.TrimPrefix(dead.URL, "http://")
+	dead.Close() // адрес остаётся, слушателя нет
+	op.clash.SetAddress(addr)
+
+	if v, _ := op.detectVersionAndFeaturesCached(context.Background()); v != "0.0.7" {
+		t.Fatalf("version = %q, want 0.0.7 from subprocess", v)
+	}
+}
+
+// Подмена бинаря при живом процессе: /proc/<pid>/exe — другой файл, Clash
+// молчит (иначе версия СТАРОГО процесса осела бы в sidecar НОВОГО файла).
+func TestProcessExeIs(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Skip(err)
+	}
+	if !processExeIs(os.Getpid(), self) {
+		t.Fatal("own exe must match")
+	}
+	if processExeIs(os.Getpid(), fakeBinary(t, t.TempDir())) {
+		t.Fatal("other file must not match")
 	}
 }
 

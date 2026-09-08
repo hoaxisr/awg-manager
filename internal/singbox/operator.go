@@ -179,6 +179,8 @@ type Operator struct {
 	versionProbeMu          sync.Mutex
 	versionProbeValue       string
 	versionProbeFingerprint string
+	// exeMatches — шов для тестов поверх processExeIs (nil = processExeIs).
+	exeMatches func(pid int, binary string) bool
 
 	// manuallyStopped is the sticky-stop intent: true means Control("stop")
 	// was called and Reconcile must skip starting the daemon until

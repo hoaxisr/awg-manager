@@ -107,22 +107,28 @@ func detectVersion(ctx context.Context, binary string) string {
 	return parseSingboxVersionOutput(string(out))
 }
 
-// detectVersionAndFeaturesCached returns (version, features) for the
-// managed sing-box binary, layered to avoid repeat subprocess spawns:
+// detectVersionAndFeaturesCached возвращает (version, features) для managed
+// sing-box. Источники версии по убыванию дешевизны (resolveVersionLocked):
 //
-//  1. In-memory cache keyed by fingerprint = "<mtime>_<size>" of the
-//     binary. Stat-only check — common path is ~10µs.
-//  2. Sidecar JSON at <binary>.meta.json with mtime ≥ binary.mtime. Read
-//     once, written by refreshVersionProbeAfterSwap after Install/Update,
-//     or here on the cold path. Survives daemon restarts: subprocess
-//     fires once per binary-swap event, not per process lifetime.
-//  3. Subprocess `<binary> version` fallback (cold path). Writes the
-//     sidecar so subsequent process starts skip straight to step 2.
+//  1. In-memory кэш по отпечатку "<mtime>_<size>" бинаря (stat, ~10 µс).
+//  2. Sidecar <binary>.meta.json с mtime ≥ mtime бинаря — переживает
+//     перезапуски демона и роутера.
+//  3. SHA256 бинаря равен pinned ⇒ версия = pinned (SHA уже кэширован
+//     установщиком для решения об обновлении).
+//  4. Наш процесс запущен и /proc/<pid>/exe — это тот же файл ⇒ Clash
+//     API /version. Покрывает UPX-копии и свои сборки без второй
+//     распаковки бинаря в RAM (#868). Требует Clash API без secret —
+//     наш 00-base.json его не ставит (на том же держится IsHealthy).
+//  5. Субпроцесс `<binary> version` — только чужой бинарь до первого
+//     старта.
 //
-// Sidecar mismatch (delete / corrupt JSON / mtime stale) silently falls
-// through to step 3 — self-heals on next call. `upx -d` of the pinned
-// binary changes mtime/size → step 3 spawns once on the decompressed
-// binary (~50ms, no UPX overhead), then steady-state stays at step 1.
+// Источники 3–5 пишут sidecar, дальше работает шаг 2. Теги — из
+// featuresForVersion, у бинаря не пробуются.
+//
+// Стоимость на холодном пути: шаг 3 хэширует ~80 МБ (~13 с на softfloat
+// MIPS) под versionProbeMu, если кэш SHA установщика пуст и sidecar нет —
+// то есть только для подменённого руками бинаря, и один раз на файл.
+// Раньше тот же путь тратил до 15 с в субпроцессе.
 func (o *Operator) detectVersionAndFeaturesCached(ctx context.Context) (string, []string) {
 	fingerprint := binaryFingerprint(o.binary)
 	if fingerprint == "" {
@@ -135,39 +141,83 @@ func (o *Operator) detectVersionAndFeaturesCached(ctx context.Context) (string, 
 	if o.versionProbeFingerprint == fingerprint && o.versionProbeValue != "" {
 		return o.versionProbeValue, o.featuresForVersion(o.versionProbeValue)
 	}
-
-	if meta, ok := readFreshSidecar(o.binary); ok {
-		o.versionProbeValue = meta.Version
-		o.versionProbeFingerprint = fingerprint
-		return meta.Version, o.featuresForVersion(meta.Version)
-	}
-
-	v := detectVersion(ctx, o.binary)
-	if v != "" {
-		_ = writeSidecar(o.binary, v) // best-effort persistence
-	}
+	v := o.resolveVersionLocked(ctx)
 	o.versionProbeValue = v
 	o.versionProbeFingerprint = fingerprint
 	return v, o.featuresForVersion(v)
 }
 
-// refreshVersionProbeAfterSwap re-runs the version probe immediately
-// after a successful binary activation (Install / Update). Writes the
-// sidecar so the next read serves from step 2 without ever spawning a
-// subprocess. Replaces the legacy "drop cache, let next reader re-probe"
-// pattern that left /singbox/status returning empty Features for up to
-// 30s after Install while the UI polled.
-func (o *Operator) refreshVersionProbeAfterSwap() {
-	ctx, cancel := context.WithTimeout(context.Background(), singboxVersionProbeTimeout)
-	defer cancel()
-	fingerprint := binaryFingerprint(o.binary)
+// resolveVersionLocked — шаги 2–5 из detectVersionAndFeaturesCached.
+// Вызывается под versionProbeMu.
+func (o *Operator) resolveVersionLocked(ctx context.Context) string {
+	if meta, ok := readFreshSidecar(o.binary); ok {
+		return meta.Version
+	}
+	if o.inst != nil && o.inst.MatchesPinnedBytes("") {
+		v := o.inst.RequiredVersion()
+		_ = writeSidecar(o.binary, v)
+		return v
+	}
+	// proc/clash nil у минимальных тестовых Operator'ов (operator_manual_stop_test.go).
+	if o.proc != nil && o.clash != nil {
+		if running, pid := o.proc.IsRunning(); running && o.exeIs(pid, o.binary) {
+			if v, err := o.clash.Version(ctx); err == nil {
+				_ = writeSidecar(o.binary, v)
+				return v
+			}
+		}
+	}
 	v := detectVersion(ctx, o.binary)
 	if v != "" {
 		_ = writeSidecar(o.binary, v)
 	}
+	return v
+}
+
+// exeIs — шов для тестов поверх processExeIs (в тесте pid = сам тест,
+// его /proc/self/exe никогда не совпадёт с фейковым скриптом).
+func (o *Operator) exeIs(pid int, binary string) bool {
+	if o.exeMatches != nil {
+		return o.exeMatches(pid, binary)
+	}
+	return processExeIs(pid, binary)
+}
+
+// processExeIs сообщает, что /proc/<pid>/exe и binary — один и тот же файл
+// (inode). Отсекает случай «бинарь подменили при живом процессе»: Clash
+// ответил бы версией СТАРОГО процесса, и она осела бы в sidecar НОВОГО
+// файла. Для UPX-стуба exe остаётся упакованным файлом — сравнение честное.
+func processExeIs(pid int, binary string) bool {
+	exe, err := os.Stat(fmt.Sprintf("/proc/%d/exe", pid))
+	if err != nil {
+		return false
+	}
+	bin, err := os.Stat(binary)
+	return err == nil && os.SameFile(exe, bin)
+}
+
+// resetVersionCache забывает версию: после Uninstall файла нет, кэшу
+// нечего описывать (раньше это делал refreshVersionProbeAfterSwap,
+// получая "" от пробы отсутствующего файла).
+func (o *Operator) resetVersionCache() {
+	o.versionProbeMu.Lock()
+	o.versionProbeValue, o.versionProbeFingerprint = "", ""
+	o.versionProbeMu.Unlock()
+}
+
+// recordPinnedVersion — после Install/Update на диске лежат байты, SHA
+// которых только что проверен: версия известна без пробы.
+// Пишет sidecar и кэш, чтобы первый же /singbox/status не хэшировал
+// и не спавнил.
+func (o *Operator) recordPinnedVersion() {
+	if o.inst == nil {
+		return
+	}
+	v := o.inst.RequiredVersion()
+	_ = writeSidecar(o.binary, v)
 	o.versionProbeMu.Lock()
 	o.versionProbeValue = v
-	o.versionProbeFingerprint = fingerprint
+	o.versionProbeFingerprint = binaryFingerprint(o.binary)
 	o.versionProbeMu.Unlock()
 }
 
@@ -301,7 +351,7 @@ func (o *Operator) Install(ctx context.Context) error {
 		report("error", 0, 0, err.Error())
 		return fmt.Errorf("activate sing-box: %w", err)
 	}
-	o.refreshVersionProbeAfterSwap()
+	o.recordPinnedVersion()
 	report("done", 0, 0, "")
 	return nil
 }
@@ -347,7 +397,7 @@ func (o *Operator) Uninstall(ctx context.Context) error {
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
-	o.refreshVersionProbeAfterSwap()
+	o.resetVersionCache()
 	return nil
 }
 
@@ -412,7 +462,7 @@ func (o *Operator) Update(ctx context.Context) error {
 		}
 		return fmt.Errorf("activate: %w", err)
 	}
-	o.refreshVersionProbeAfterSwap()
+	o.recordPinnedVersion()
 	if wasRunning {
 		report("start", 0, 0, "")
 		if _, err := o.startAndWait(ctx); err != nil {
