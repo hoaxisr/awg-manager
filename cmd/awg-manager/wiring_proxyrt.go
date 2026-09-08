@@ -38,6 +38,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
+	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
@@ -1172,7 +1173,10 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 		// vk_persona.json уходят в tmpfs, а не в /opt/bin рядом с бинарём.
 		// Каталог per-instance: файл персоны привязан к client-id, общий
 		// каталог двух инстансов сбрасывал бы поколение друг другу.
-		runner := procres.NewRunner(binary, base+".pid", []string{"FREETURN_STATE_DIR=" + base + ".state"})
+		// TZ роутера — POSIX-строка из /etc/TZ (F145): без неё штампы журналов
+		// детей отстают на смещение зоны, а tzfix форка freeturn читает именно её.
+		env := routerclock.WithTZFromRouter([]string{"FREETURN_STATE_DIR=" + base + ".state"})
+		runner := procres.NewRunner(binary, base+".pid", env)
 
 		var role proxyrt.Role
 		var cfg func() any
