@@ -1167,7 +1167,12 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 			Alive: childproc.MatchesBinary,
 		})
 		links.put(key, link)
-		runner := procres.NewRunner(binary, strings.TrimSuffix(sock, ".sock")+".pid", nil)
+		base := strings.TrimSuffix(sock, ".sock")
+		// FREETURN_STATE_DIR — патч 8 форка freeturn: client_config.json и
+		// vk_persona.json уходят в tmpfs, а не в /opt/bin рядом с бинарём.
+		// Каталог per-instance: файл персоны привязан к client-id, общий
+		// каталог двух инстансов сбрасывал бы поколение друг другу.
+		runner := procres.NewRunner(binary, base+".pid", []string{"FREETURN_STATE_DIR=" + base + ".state"})
 
 		var role proxyrt.Role
 		var cfg func() any
