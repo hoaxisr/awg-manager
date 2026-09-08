@@ -14,8 +14,8 @@ func TestExportAll_CopiesStorageWithPrivateKey(t *testing.T) {
 	_, _ = store.Load()
 	_ = store.AddManagedServer(storage.ManagedServer{
 		InterfaceName: "Wireguard0", Address: "10.0.0.1", Mask: "255.255.255.0",
-		ListenPort: 51820, PrivateKey: "PRIVKEY=", I1: "a", I2: "b", I3: "c", I4: "d", I5: "e",
-		Peers: []storage.ManagedPeer{},
+		ListenPort: 51820, PrivateKey: "PRIVKEY=",
+		Peers: []storage.ManagedPeer{{PublicKey: "P", I1: "a", I2: "b", I3: "c", I4: "d", I5: "e", SignatureProfile: "dns"}},
 	})
 
 	s := &Service{settings: store}
@@ -32,8 +32,9 @@ func TestExportAll_CopiesStorageWithPrivateKey(t *testing.T) {
 	if exported[0].InterfaceName != "Wireguard0" {
 		t.Errorf("InterfaceName: %q", exported[0].InterfaceName)
 	}
-	if exported[0].I3 != "c" || exported[0].I4 != "d" || exported[0].I5 != "e" {
-		t.Errorf("signature fields I3..I5 lost in export: %+v", exported[0])
+	p := exported[0].Peers[0]
+	if p.I3 != "c" || p.I4 != "d" || p.I5 != "e" || p.SignatureProfile != "dns" {
+		t.Errorf("peer signature lost in export: %+v", p)
 	}
 }
 

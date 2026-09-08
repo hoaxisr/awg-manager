@@ -427,3 +427,32 @@ func (s *SettingsStore) migrateToV35(settings *Settings) {
 		settings.SingboxRouter.FakeIPPool6 = "fc00::/18"
 	}
 }
+
+// migrateToV36 переносит сигнатуру I1–I5 с сервера на его пиров: до схемы 36
+// одна сигнатура на сервер копировалась в .conf каждого пира. Байты не
+// меняются — уже выданные конфиги остаются валидными. Пир со своей
+// сигнатурой не трогается. Идемпотентно.
+func (s *SettingsStore) migrateToV36(settings *Settings) {
+	for i := range settings.ManagedServers {
+		MovePeerSignaturesFromServer(&settings.ManagedServers[i])
+	}
+}
+
+// MovePeerSignaturesFromServer раздаёт серверную сигнатуру LegacyI1..LegacyI5
+// пирам, у которых своей нет, и очищает поля сервера. Байты копируются как
+// есть; профиль остаётся пустым — по унаследованным байтам его не восстановить.
+// Используется миграцией V36 и разбором старых бэкапов и ASC-снимков.
+// Идемпотентна: без непустых legacy-полей ничего не делает.
+func MovePeerSignaturesFromServer(sv *ManagedServer) {
+	if sv.LegacyI1 == "" && sv.LegacyI2 == "" && sv.LegacyI3 == "" && sv.LegacyI4 == "" && sv.LegacyI5 == "" {
+		return
+	}
+	for j := range sv.Peers {
+		p := &sv.Peers[j]
+		if p.I1 != "" || p.I2 != "" || p.I3 != "" || p.I4 != "" || p.I5 != "" {
+			continue
+		}
+		p.I1, p.I2, p.I3, p.I4, p.I5 = sv.LegacyI1, sv.LegacyI2, sv.LegacyI3, sv.LegacyI4, sv.LegacyI5
+	}
+	sv.LegacyI1, sv.LegacyI2, sv.LegacyI3, sv.LegacyI4, sv.LegacyI5 = "", "", "", "", ""
+}

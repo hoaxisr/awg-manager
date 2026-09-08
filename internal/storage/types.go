@@ -354,12 +354,16 @@ type ManagedServer struct {
 	// Always serialized — empty string is normalized to "none" on read.
 	Policy string        `json:"policy"`
 	Peers  []ManagedPeer `json:"peers"`
-	// Signature packets for client configs (not stored on NDMS server)
-	I1 string `json:"i1,omitempty"`
-	I2 string `json:"i2,omitempty"`
-	I3 string `json:"i3,omitempty"`
-	I4 string `json:"i4,omitempty"`
-	I5 string `json:"i5,omitempty"`
+	// LegacyI1..LegacyI5 — сигнатура сервера до схемы 36. Сигнатура принадлежит
+	// пиру (CONTEXT.md «Владелец сигнатуры»); поля читает migrateToV36 и импорт
+	// старого бэкапа, а restore использует их как временный переносчик
+	// сигнатуры из ASC-снимка. Все три пути заканчиваются вызовом
+	// MovePeerSignaturesFromServer, после которого поля пусты и в файл не пишутся.
+	LegacyI1 string `json:"i1,omitempty"`
+	LegacyI2 string `json:"i2,omitempty"`
+	LegacyI3 string `json:"i3,omitempty"`
+	LegacyI4 string `json:"i4,omitempty"`
+	LegacyI5 string `json:"i5,omitempty"`
 	// ASC is a runtime-only backup/restore snapshot of numeric/header ASC
 	// params (jc/jmin/jmax/s1/s2/s3/s4/h1/h2/h3/h4). Not persisted in
 	// settings.json — NDMS remains source-of-truth for these fields.
@@ -415,6 +419,15 @@ type ManagedPeer struct {
 	TunnelIP     string `json:"tunnelIP"`      // e.g. "10.0.0.2/32"
 	DNS          string `json:"dns,omitempty"` // per-peer DNS for .conf generation
 	Enabled      bool   `json:"enabled"`
+	// I1..I5 — сигнатура имитации, которую пир получает в своём .conf.
+	I1 string `json:"i1,omitempty"`
+	I2 string `json:"i2,omitempty"`
+	I3 string `json:"i3,omitempty"`
+	I4 string `json:"i4,omitempty"`
+	I5 string `json:"i5,omitempty"`
+	// SignatureProfile — профиль имитации, по которому сгенерирована;
+	// "" — унаследована от сервера или введена руками.
+	SignatureProfile string `json:"signatureProfile,omitempty"`
 }
 
 // ServerSettings contains HTTP server configuration.

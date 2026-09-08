@@ -472,7 +472,10 @@ func TestRestore_MergeAppliesASCAndPersistsIFields(t *testing.T) {
 		ListenPort:    51851,
 		PrivateKey:    priv,
 		Policy:        "none",
-		Peers:         []storage.ManagedPeer{},
+		Peers: []storage.ManagedPeer{
+			{PublicKey: "P1", TunnelIP: "10.61.0.2/32", Enabled: true},
+			{PublicKey: "P2", TunnelIP: "10.61.0.3/32", Enabled: true, I1: "OWN", SignatureProfile: "dns"},
+		},
 	})
 
 	pub := mustDerivePublicKey(t, priv)
@@ -538,8 +541,17 @@ func TestRestore_MergeAppliesASCAndPersistsIFields(t *testing.T) {
 	if !ok {
 		t.Fatalf("server not persisted")
 	}
-	if got.I1 != "AA" || got.I2 != "BB" || got.I3 != "CC" || got.I4 != "DD" || got.I5 != "EE" {
-		t.Fatalf("expected I1..I5 persisted from merge ASC input, got: %+v", got)
+	if got.LegacyI1 != "" || got.LegacyI2 != "" || got.LegacyI3 != "" || got.LegacyI4 != "" || got.LegacyI5 != "" {
+		t.Fatalf("server must keep no signature after merge, got: %+v", got)
+	}
+	if got.Peers[0].I1 != "AA" || got.Peers[0].I2 != "BB" || got.Peers[0].I3 != "CC" || got.Peers[0].I4 != "DD" || got.Peers[0].I5 != "EE" {
+		t.Fatalf("peer without own signature must inherit from merge ASC input, got: %+v", got.Peers[0])
+	}
+	if got.Peers[0].SignatureProfile != "" {
+		t.Fatalf("inherited signature has no known profile, got: %q", got.Peers[0].SignatureProfile)
+	}
+	if got.Peers[1].I1 != "OWN" || got.Peers[1].SignatureProfile != "dns" {
+		t.Fatalf("peer with its own signature must keep it, got: %+v", got.Peers[1])
 	}
 }
 
@@ -1020,6 +1032,10 @@ func TestRestore_AppliesASCAndPersistsIFields(t *testing.T) {
 		PrivateKey:    validPrivateKey(31),
 		Policy:        "none",
 		ASC:           asc,
+		Peers: []storage.ManagedPeer{
+			{PublicKey: "P1", TunnelIP: "10.170.0.2/32", Enabled: true},
+			{PublicKey: "P2", TunnelIP: "10.170.0.3/32", Enabled: true, I1: "OWN", SignatureProfile: "dns"},
+		},
 	}}, RestoreOptions{})
 	if len(out) != 1 || out[0].Action != "created" {
 		t.Fatalf("outcomes: %+v", out)
@@ -1058,8 +1074,61 @@ func TestRestore_AppliesASCAndPersistsIFields(t *testing.T) {
 	if !ok {
 		t.Fatalf("server not persisted")
 	}
-	if got.I1 != "AA" || got.I2 != "BB" || got.I3 != "CC" || got.I4 != "DD" || got.I5 != "EE" {
-		t.Fatalf("expected I1..I5 persisted from ASC input, got: %+v", got)
+	if got.LegacyI1 != "" || got.LegacyI2 != "" || got.LegacyI3 != "" || got.LegacyI4 != "" || got.LegacyI5 != "" {
+		t.Fatalf("server must keep no signature after restore, got: %+v", got)
+	}
+	if got.Peers[0].I1 != "AA" || got.Peers[0].I2 != "BB" || got.Peers[0].I3 != "CC" || got.Peers[0].I4 != "DD" || got.Peers[0].I5 != "EE" {
+		t.Fatalf("peer without own signature must inherit from ASC input, got: %+v", got.Peers[0])
+	}
+	if got.Peers[1].I1 != "OWN" || got.Peers[1].SignatureProfile != "dns" {
+		t.Fatalf("peer with its own signature must keep it, got: %+v", got.Peers[1])
+	}
+}
+
+func TestRestore_OldBackupServerSignatureGoesToPeers(t *testing.T) {
+	dir := t.TempDir()
+	store := storage.NewSettingsStore(dir)
+	_, _ = store.Load()
+	getter := &restoreLiveGetter{live: map[string]restoreLiveEntry{"Wireguard0": {Present: false}}}
+	ifaces := query.NewInterfaceStoreWithTTL(getter, query.NopLogger(), 0, 0)
+	queries := &query.Queries{
+		Interfaces: ifaces,
+		WGServers:  query.NewWGServerStore(getter, query.NopLogger(), ifaces),
+	}
+	poster := &fakePoster{onPost: getter.applyPost}
+	s := &Service{settings: store, transport: poster, queries: queries}
+
+	// Бэкап до схемы 36: сигнатура лежит у сервера, ASC-снимка нет.
+	out := s.Restore(context.Background(), []ManagedServerExport{{
+		InterfaceName: "Wireguard0",
+		Address:       "10.171.0.1",
+		Mask:          "255.255.255.0",
+		ListenPort:    52011,
+		PrivateKey:    validPrivateKey(32),
+		Policy:        "none",
+		LegacyI1:      "<b 0x0a>",
+		LegacyI3:      "<t>",
+		Peers: []storage.ManagedPeer{
+			{PublicKey: "P1", TunnelIP: "10.171.0.2/32", Enabled: true},
+			{PublicKey: "P2", TunnelIP: "10.171.0.3/32", Enabled: true, I1: "<b 0xff>", SignatureProfile: "sip"},
+		},
+	}}, RestoreOptions{})
+	if len(out) != 1 || out[0].Action != "created" {
+		t.Fatalf("outcomes: %+v", out)
+	}
+
+	got, ok := store.GetManagedServerByID("Wireguard0")
+	if !ok {
+		t.Fatalf("server not persisted")
+	}
+	if got.LegacyI1 != "" || got.LegacyI3 != "" {
+		t.Fatalf("server signature must not survive restore, got: %+v", got)
+	}
+	if got.Peers[0].I1 != "<b 0x0a>" || got.Peers[0].I3 != "<t>" || got.Peers[0].SignatureProfile != "" {
+		t.Fatalf("peer without own signature must inherit server's, got: %+v", got.Peers[0])
+	}
+	if got.Peers[1].I1 != "<b 0xff>" || got.Peers[1].I3 != "" || got.Peers[1].SignatureProfile != "sip" {
+		t.Fatalf("peer with its own signature must keep it, got: %+v", got.Peers[1])
 	}
 }
 

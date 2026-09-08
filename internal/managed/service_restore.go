@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -392,25 +393,17 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 	saved := sv
 	saved.InterfaceName = target
 	saved.ASC = nil
+	// Сигнатура из ASC-снимка старого бэкапа принадлежала серверу — раздаём
+	// её пирам, у которых своей нет, и у сервера не сохраняем (V36). Пиры
+	// клонируем: слайс общий с входным sv, а мы его правим.
+	saved.Peers = slices.Clone(sv.Peers)
 	if len(sv.ASC) > 0 {
-		if i1, i2, i3, i4, i5, err := extractASCSignatures(sv.ASC); err == nil {
-			if i1 != "" {
-				saved.I1 = i1
-			}
-			if i2 != "" {
-				saved.I2 = i2
-			}
-			if i3 != "" {
-				saved.I3 = i3
-			}
-			if i4 != "" {
-				saved.I4 = i4
-			}
-			if i5 != "" {
-				saved.I5 = i5
-			}
+		if i1, i2, i3, i4, i5, err := extractASCSignatures(sv.ASC); err == nil &&
+			(i1 != "" || i2 != "" || i3 != "" || i4 != "" || i5 != "") {
+			saved.LegacyI1, saved.LegacyI2, saved.LegacyI3, saved.LegacyI4, saved.LegacyI5 = i1, i2, i3, i4, i5
 		}
 	}
+	storage.MovePeerSignaturesFromServer(&saved)
 	switch persistMode {
 	case persistUpdateExisting:
 		s.sysLog().Debug("managed restore persisting mode", "target", target, "mode", "update-existing")
@@ -547,12 +540,14 @@ func (s *Service) applyASCOnMerge(ctx context.Context, ifaceName string, asc jso
 		s.appLog.Warn("managed-restore-merge-asc-signatures", ifaceName, "ASC applied, but I1-I5 signatures could not be persisted: "+err.Error())
 		return nil
 	}
+	if i1 == "" && i2 == "" && i3 == "" && i4 == "" && i5 == "" {
+		return nil
+	}
+	// Сигнатура из ASC-снимка достаётся пирам без своей (V36); у сервера
+	// она не оседает.
 	if err := s.settings.UpdateManagedServer(ifaceName, func(target *storage.ManagedServer) error {
-		target.I1 = i1
-		target.I2 = i2
-		target.I3 = i3
-		target.I4 = i4
-		target.I5 = i5
+		target.LegacyI1, target.LegacyI2, target.LegacyI3, target.LegacyI4, target.LegacyI5 = i1, i2, i3, i4, i5
+		storage.MovePeerSignaturesFromServer(target)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("persist ASC signatures on merge: %w", err)

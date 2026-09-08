@@ -8,7 +8,7 @@ import (
 )
 
 func TestSetASCParams_RejectsEmptyPayload(t *testing.T) {
-	svc, _ := newCreateTestService(t)
+	svc, _, _ := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{
 		Address:    "10.31.0.1",
 		Mask:       "255.255.255.0",
@@ -24,7 +24,7 @@ func TestSetASCParams_RejectsEmptyPayload(t *testing.T) {
 }
 
 func TestSetASCParams_RejectsEmptyRequiredFields(t *testing.T) {
-	svc, _ := newCreateTestService(t)
+	svc, _, _ := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{
 		Address:    "10.32.0.1",
 		Mask:       "255.255.255.0",
@@ -50,7 +50,7 @@ func TestSetASCParams_RejectsEmptyRequiredFields(t *testing.T) {
 }
 
 func TestSetASCParams_AllowsEmptySignatureFields(t *testing.T) {
-	svc, _ := newCreateTestService(t)
+	svc, _, _ := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{
 		Address:    "10.33.0.1",
 		Mask:       "255.255.255.0",
@@ -71,7 +71,7 @@ func TestSetASCParams_AllowsEmptySignatureFields(t *testing.T) {
 }
 
 func TestSetASCParams_ExtendedPairValidation(t *testing.T) {
-	svc, _ := newCreateTestService(t)
+	svc, _, _ := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{
 		Address:    "10.34.0.1",
 		Mask:       "255.255.255.0",
@@ -95,7 +95,7 @@ func TestSetASCParams_ExtendedPairValidation(t *testing.T) {
 }
 
 func TestSetASCParams_AllowsZeroDisabledState(t *testing.T) {
-	svc, _ := newCreateTestService(t)
+	svc, _, _ := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{
 		Address:    "10.35.0.1",
 		Mask:       "255.255.255.0",
@@ -115,7 +115,7 @@ func TestSetASCParams_AllowsZeroDisabledState(t *testing.T) {
 }
 
 func TestSetASCParams_AllowsExtendedDisabledStateWithEmptyS3S4(t *testing.T) {
-	svc, _ := newCreateTestService(t)
+	svc, _, _ := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{
 		Address:    "10.42.0.1",
 		Mask:       "255.255.255.0",
@@ -137,7 +137,7 @@ func TestSetASCParams_AllowsExtendedDisabledStateWithEmptyS3S4(t *testing.T) {
 }
 
 func TestSetASCParams_RejectsPartialDisabledState(t *testing.T) {
-	svc, _ := newCreateTestService(t)
+	svc, _, _ := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{
 		Address:    "10.37.0.1",
 		Mask:       "255.255.255.0",
@@ -157,7 +157,7 @@ func TestSetASCParams_RejectsPartialDisabledState(t *testing.T) {
 }
 
 func TestSetASCParams_RejectsMultipleInvalidNumericFields(t *testing.T) {
-	svc, _ := newCreateTestService(t)
+	svc, _, _ := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{
 		Address:    "10.38.0.1",
 		Mask:       "255.255.255.0",
@@ -183,7 +183,7 @@ func TestSetASCParams_RejectsMultipleInvalidNumericFields(t *testing.T) {
 }
 
 func TestSetASCParams_RejectsJmaxNotGreaterThanJmin(t *testing.T) {
-	svc, _ := newCreateTestService(t)
+	svc, _, _ := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{
 		Address:    "10.36.0.1",
 		Mask:       "255.255.255.0",
@@ -203,7 +203,7 @@ func TestSetASCParams_RejectsJmaxNotGreaterThanJmin(t *testing.T) {
 }
 
 func TestSetASCParams_AllowsZeroDisabledState_UsesClearPath(t *testing.T) {
-	svc, _ := newCreateTestService(t)
+	svc, _, _ := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{
 		Address:    "10.39.0.1",
 		Mask:       "255.255.255.0",
@@ -247,7 +247,7 @@ func TestSetASCParams_AllowsZeroDisabledState_UsesClearPath(t *testing.T) {
 }
 
 func TestSetASCParams_DisabledStateFailsWhenReadBackStillEnabled(t *testing.T) {
-	svc, _ := newCreateTestService(t)
+	svc, _, _ := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{
 		Address:    "10.43.0.1",
 		Mask:       "255.255.255.0",
@@ -275,7 +275,7 @@ func TestSetASCParams_DisabledStateFailsWhenReadBackStillEnabled(t *testing.T) {
 }
 
 func TestSetASCParams_SetFailsWhenReadBackDiffers(t *testing.T) {
-	svc, _ := newCreateTestService(t)
+	svc, _, _ := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{
 		Address:    "10.40.0.1",
 		Mask:       "255.255.255.0",
@@ -301,8 +301,10 @@ func TestSetASCParams_SetFailsWhenReadBackDiffers(t *testing.T) {
 	}
 }
 
-func TestSetASCParams_SavesIFieldsOnlyAfterApplyVerified(t *testing.T) {
-	svc, store := newCreateTestService(t)
+// Сигнатура принадлежит пиру: i1..i5 в теле сервера отбрасываются перед
+// NDMS и больше нигде не сохраняются (замена теста про персист I1-I5).
+func TestSetASCParams_StripsSignatureAndPersistsNothing(t *testing.T) {
+	svc, store, _ := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{
 		Address:    "10.41.0.1",
 		Mask:       "255.255.255.0",
@@ -312,26 +314,43 @@ func TestSetASCParams_SavesIFieldsOnlyAfterApplyVerified(t *testing.T) {
 		t.Fatalf("seed Create: %v", err)
 	}
 
-	poster := svc.transport.(*recordingPoster)
-	originalOnPost := poster.onPost
-	poster.onPost = func(_ map[string]interface{}) {
-		// Simulate router ignoring ASC updates.
-	}
-	defer func() { poster.onPost = originalOnPost }()
-
 	raw := json.RawMessage(`{
 		"jc":3,"jmin":64,"jmax":256,"s1":15,"s2":16,
 		"h1":"100000001","h2":"1200000002","h3":"2400000003","h4":"3600000004",
 		"i1":"sig1","i2":"sig2","i3":"sig3","i4":"sig4","i5":"sig5"
 	}`)
-	if err := svc.SetASCParams(context.Background(), server.InterfaceName, raw); err == nil {
-		t.Fatalf("expected read-back mismatch error")
+	if err := svc.SetASCParams(context.Background(), server.InterfaceName, raw); err != nil {
+		t.Fatalf("SetASCParams: %v", err)
 	}
+
+	poster := svc.transport.(*recordingPoster)
+	for _, post := range poster.posts {
+		iface, ok := post["interface"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		row, ok := iface[server.InterfaceName].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		wg, ok := row["wireguard"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		asc, ok := wg["asc"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if _, hasI1 := asc["i1"]; hasI1 {
+			t.Fatalf("i1 must be stripped before NDMS ASC payload: %+v", asc)
+		}
+	}
+
 	got, ok := store.GetManagedServerByID(server.InterfaceName)
 	if !ok {
 		t.Fatalf("server missing in store")
 	}
-	if got.I1 != "" || got.I2 != "" || got.I3 != "" || got.I4 != "" || got.I5 != "" {
-		t.Fatalf("I1-I5 must not be persisted on failed apply/read-back, got: %+v", got)
+	if got.LegacyI1 != "" || got.LegacyI2 != "" || got.LegacyI3 != "" || got.LegacyI4 != "" || got.LegacyI5 != "" {
+		t.Fatalf("server must not store a signature, got: %+v", got)
 	}
 }

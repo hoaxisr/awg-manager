@@ -27,6 +27,14 @@ type ManagedPeerDTO struct {
 	TunnelIP     string `json:"tunnelIP" example:"10.10.0.2"`
 	DNS          string `json:"dns,omitempty" example:"8.8.8.8"`
 	Enabled      bool   `json:"enabled" example:"true"`
+	// I1..I5 и SignatureProfile — сигнатура имитации пира (CONTEXT.md
+	// «Владелец сигнатуры»); попадает в .conf этого пира.
+	I1               string `json:"i1,omitempty" example:"<b 0xc0>"`
+	I2               string `json:"i2,omitempty"`
+	I3               string `json:"i3,omitempty"`
+	I4               string `json:"i4,omitempty"`
+	I5               string `json:"i5,omitempty"`
+	SignatureProfile string `json:"signatureProfile,omitempty" example:"quic_initial"`
 }
 
 // ManagedServerDTO mirrors frontend ManagedServer.

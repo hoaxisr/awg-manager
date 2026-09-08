@@ -1,5 +1,11 @@
 package managed
 
+import (
+	"errors"
+
+	"github.com/hoaxisr/awg-manager/internal/signature"
+)
+
 // DefaultMTU is applied when the server has no explicit MTU. The same value
 // is set on the router interface and written into generated peer configs.
 const DefaultMTU = 1376
@@ -57,11 +63,32 @@ type AddPeerRequest struct {
 }
 
 // UpdatePeerRequest contains parameters for updating a peer.
+// Signature: nil — сигнатуру пира не трогать; объект — заменить все пять
+// полей и профиль целиком (пустые поля объекта стирают старые байты).
 type UpdatePeerRequest struct {
-	Description string `json:"description"`
-	TunnelIP    string `json:"tunnelIP"`
-	DNS         string `json:"dns,omitempty"`
+	Description string         `json:"description"`
+	TunnelIP    string         `json:"tunnelIP"`
+	DNS         string         `json:"dns,omitempty"`
+	Signature   *PeerSignature `json:"signature,omitempty"`
 }
+
+// PeerSignature — сигнатура имитации пира: пять пакетов и профиль, по
+// которому они сгенерированы ("" — введены руками).
+type PeerSignature struct {
+	Profile string `json:"profile"`
+	I1      string `json:"i1"`
+	I2      string `json:"i2"`
+	I3      string `json:"i3"`
+	I4      string `json:"i4"`
+	I5      string `json:"i5"`
+}
+
+func (p PeerSignature) packets() signature.GeneratedPackets {
+	return signature.GeneratedPackets{I1: p.I1, I2: p.I2, I3: p.I3, I4: p.I4, I5: p.I5}
+}
+
+// ErrSignatureTooLarge — сумма I1–I5 больше signature.MaxSignatureBytes.
+var ErrSignatureTooLarge = errors.New("signature exceeds size limit")
 
 // TogglePeerRequest contains parameters for enabling/disabling a peer.
 type TogglePeerRequest struct {

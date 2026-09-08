@@ -62,7 +62,7 @@ func TestImport_RequiresTypeAndVersion(t *testing.T) {
 	}
 }
 
-func TestBackupDTO_RoundtripPreservesI1ToI5(t *testing.T) {
+func TestBackupDTO_RoundtripPreservesPeerSignature(t *testing.T) {
 	src := storage.ManagedServer{
 		InterfaceName: "Wireguard7",
 		Address:       "10.7.0.1",
@@ -70,20 +70,51 @@ func TestBackupDTO_RoundtripPreservesI1ToI5(t *testing.T) {
 		ListenPort:    51827,
 		PrivateKey:    "PRIV7=",
 		Policy:        "none",
-		I1:            "I1",
-		I2:            "I2",
-		I3:            "I3",
-		I4:            "I4",
-		I5:            "I5",
-		ASC:           []byte(`{"jc":3}`),
+		Peers: []storage.ManagedPeer{{
+			PublicKey: "P", TunnelIP: "10.7.0.2/32",
+			I1: "I1", I2: "I2", I3: "I3", I4: "I4", I5: "I5", SignatureProfile: "stun",
+		}},
+		ASC: []byte(`{"jc":3}`),
 	}
 	dto := managedServerToBackupDTO(src)
+	if dto.LegacyI1 != "" {
+		t.Fatalf("new backups must not carry a server-level signature: %+v", dto)
+	}
 	got := backupDTOToManagedServer(dto)
-	if got.I1 != src.I1 || got.I2 != src.I2 || got.I3 != src.I3 || got.I4 != src.I4 || got.I5 != src.I5 {
-		t.Fatalf("I-fields mismatch after roundtrip: got=%+v", got)
+	p, want := got.Peers[0], src.Peers[0]
+	if p.I1 != want.I1 || p.I2 != want.I2 || p.I3 != want.I3 || p.I4 != want.I4 || p.I5 != want.I5 || p.SignatureProfile != want.SignatureProfile {
+		t.Fatalf("peer signature mismatch after roundtrip: got=%+v", p)
 	}
 	if string(got.ASC) != string(src.ASC) {
 		t.Fatalf("ASC mismatch after roundtrip: got=%s want=%s", string(got.ASC), string(src.ASC))
+	}
+}
+
+// Бэкап до схемы 36 нёс одну сигнатуру на сервер — при импорте она
+// достаётся пирам без своей, у сервера не остаётся.
+func TestBackupDTO_OldServerSignatureGoesToPeers(t *testing.T) {
+	dto := ManagedServerBackupDTO{
+		InterfaceName: "Wireguard7",
+		Address:       "10.7.0.1",
+		Mask:          "255.255.255.0",
+		ListenPort:    51827,
+		Policy:        "none",
+		LegacyI1:      "<b 0x0a>",
+		LegacyI3:      "<t>",
+		Peers: []ManagedPeerDTO{
+			{PublicKey: "P1", TunnelIP: "10.7.0.2/32"},
+			{PublicKey: "P2", TunnelIP: "10.7.0.3/32", I1: "<b 0xff>", SignatureProfile: "sip"},
+		},
+	}
+	got := backupDTOToManagedServer(dto)
+	if got.LegacyI1 != "" || got.LegacyI3 != "" {
+		t.Fatalf("server signature must be cleared: %+v", got)
+	}
+	if got.Peers[0].I1 != "<b 0x0a>" || got.Peers[0].I3 != "<t>" || got.Peers[0].SignatureProfile != "" {
+		t.Fatalf("peer without own signature must inherit: %+v", got.Peers[0])
+	}
+	if got.Peers[1].I1 != "<b 0xff>" || got.Peers[1].I3 != "" || got.Peers[1].SignatureProfile != "sip" {
+		t.Fatalf("peer with own signature must keep it: %+v", got.Peers[1])
 	}
 }
 
