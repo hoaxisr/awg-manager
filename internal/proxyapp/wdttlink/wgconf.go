@@ -166,6 +166,28 @@ func ExtractPeerPublicKey(conf string) string {
 	return ""
 }
 
+// ExtractInterfaceAddress returns [Interface] Address from a WireGuard config
+// snippet (as written, possibly a comma-separated list), "" if absent.
+func ExtractInterfaceAddress(conf string) string {
+	inIface := false
+	for _, line := range strings.Split(conf, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "[") {
+			inIface = strings.EqualFold(t, "[interface]")
+			continue
+		}
+		if !inIface {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(t), "address") {
+			if parts := strings.SplitN(t, "=", 2); len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
+}
+
 func ListenPortFromAddr(listen string) int {
 	listen = strings.TrimSpace(listen)
 	if listen == "" {

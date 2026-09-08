@@ -60,6 +60,10 @@ type TunnelImporter interface {
 	// оно оставляло окно, в котором туннель уже создан, а связи ещё нет, и
 	// такой туннель невидим для уборки связанных (api.LinkedTunnelCleaner).
 	Import(ctx context.Context, conf, name, clientID string) (tunnelID, tunnelName string, err error)
+	// AddressConflicts — предупреждения о туннелях, уже занявших адрес
+	// (строка `Address` конфига, до создания записи). NDMS не поднимет второй
+	// OpkgTun с тем же /32, поэтому импорт с конфликтом отказывается (#869).
+	AddressConflicts(address string) []string
 	Start(ctx context.Context, tunnelID string) error
 	// ForgetTraffic снимает историю трафика удалённого туннеля: id
 	// переиспользуется, и чужая история подмешалась бы к новому туннелю.
@@ -332,6 +336,8 @@ type EnsureWGTunnelResponse struct {
 //	@Summary		Завести AWG-туннель под WireGuard-конфиг клиента
 //	@Description	409 WDTT_WG_NOT_READY означает «конфиг ещё не приехал от сервера» —
 //	@Description	это ожидание, а не сбой: ручку зовёт автоэффект страницы.
+//	@Description	409 WDTT_WG_ADDRESS_CONFLICT — адрес, выданный wdtt-server, уже занят другим туннелем
+//	@Description	(два сервера со старым wdtt-server выдают одинаковые адреса, #869); туннель не создаётся.
 //	@Tags			proxyrt
 //	@Produce		json
 //	@Security		CookieAuth
@@ -476,6 +482,24 @@ func (h *Handler) EnsureWGTunnel(w http.ResponseWriter, r *http.Request, key str
 			Message:    "AWG-туннель с таким WireGuard-конфигом уже существует",
 		})
 		return
+	}
+
+	// #869: адрес назначает сервер, сменить его на клиенте нельзя
+	// (allowed_ip пира), а NDMS не поднимет второй OpkgTun с тем же /32 —
+	// отказываем ДО создания записи, иначе появляется туннель, который не
+	// стартует, с ошибкой NDMS только в тосте.
+	if addr := ExtractInterfaceAddress(patched); addr != "" {
+		if conflicts := h.deps.Tunnels.AddressConflicts(addr); len(conflicts) > 0 {
+			// В сообщении — хост без префикса и первое предупреждение проверки
+			// (там имя туннеля и интерфейс).
+			ip, _, _ := strings.Cut(strings.TrimSpace(strings.SplitN(addr, ",", 2)[0]), "/")
+			response.ErrorWithStatus(w, http.StatusConflict,
+				fmt.Sprintf("Сервер выдал адрес %s, он уже занят: %s. Адрес назначает wdtt-server: "+
+					"обновите его на обоих роутерах до 1.4.0-5 и заведите абонента заново на одном из них",
+					ip, conflicts[0]),
+				"WDTT_WG_ADDRESS_CONFLICT")
+			return
+		}
 	}
 
 	tunnelID, tunnelName, err := h.deps.Tunnels.Import(r.Context(), patched, wantName, rec.ID)

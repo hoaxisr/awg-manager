@@ -90,3 +90,13 @@ func TestPatchWgConfEndpoint(t *testing.T) {
 		t.Fatalf("got=%q", got)
 	}
 }
+
+func TestExtractInterfaceAddress(t *testing.T) {
+	conf := "[Interface]\nPrivateKey = p\nAddress = 10.66.0.4/32, fd00::4/128\nDNS = 10.66.0.1\n\n[Peer]\nAddress = 9.9.9.9/32\n"
+	if got := ExtractInterfaceAddress(conf); got != "10.66.0.4/32, fd00::4/128" {
+		t.Fatalf("Address = %q", got)
+	}
+	if got := ExtractInterfaceAddress("[Peer]\nPublicKey = k\n"); got != "" {
+		t.Fatalf("без [Interface] ожидали пусто, got %q", got)
+	}
+}

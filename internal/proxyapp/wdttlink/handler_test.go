@@ -74,6 +74,9 @@ type fakeTunnels struct {
 	nextID    string
 	forgotten []string
 	published int
+
+	conflicts      []string
+	conflictsAsked []string
 }
 
 func (f *fakeTunnels) List() ([]storage.AWGTunnel, error) {
@@ -140,6 +143,11 @@ func (f *fakeTunnels) Start(_ context.Context, id string) error {
 func (f *fakeTunnels) ForgetTraffic(id string) { f.forgotten = append(f.forgotten, id) }
 
 func (f *fakeTunnels) PublishList(context.Context) { f.published++ }
+
+func (f *fakeTunnels) AddressConflicts(address string) []string {
+	f.conflictsAsked = append(f.conflictsAsked, address)
+	return f.conflicts
+}
 
 // fakeVetting — предикат пригодности абонента. Копия правила здесь ВЫНУЖДЕННАЯ:
 // взять прод-`wdttusers.Vetting` нельзя, там цикл импортов — `wdttusers`
@@ -599,6 +607,58 @@ func TestEnsureWG_ImportsWithPatchedEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(fmt.Sprint(data["message"]), "Создан AWG-туннель «Германия wdtt» (Endpoint 127.0.0.1:9100)") {
 		t.Fatalf("сообщение: %v", data["message"])
+	}
+}
+
+// #869: сервер выдал адрес, уже занятый туннелем другого wdtt-сервера. Импорт
+// создал бы туннель, который NDMS не поднимет («network … conflicts with
+// interface»), — отказываем до создания и называем виновника.
+func TestEnsureWG_AddressConflictIs409WithoutImport(t *testing.T) {
+	rec := wgClient()
+	h, _, _, tunnels := newTestHandler(t, rec)
+	h.deps.Snapshots = func(key string) (awgmproto.State, bool) {
+		return awgmproto.State{PID: 42, WG: &awgmproto.WGState{Config: wgConf}}, true
+	}
+	tunnels.conflicts = []string{`Адрес 10.66.0.5 совпадает с туннелем "Сервер A" (opkgtun17). Одновременный запуск невозможен`}
+
+	rr := httptest.NewRecorder()
+	h.EnsureWGTunnel(rr, post(t, ``), rec.Key())
+	_, msg, code := decodeEnvelope(t, rr)
+	if rr.Code != http.StatusConflict || code != "WDTT_WG_ADDRESS_CONFLICT" {
+		t.Fatalf("status=%d code=%s msg=%q", rr.Code, code, msg)
+	}
+	if !strings.HasPrefix(msg, "Сервер выдал адрес 10.66.0.5, он уже занят: ") ||
+		!strings.Contains(msg, "Сервер A") || !strings.Contains(msg, "1.4.0-5") {
+		t.Fatalf("сообщение без адреса-хоста/виновника/версии: %q", msg)
+	}
+	if !reflect.DeepEqual(tunnels.conflictsAsked, []string{"10.66.0.5/32"}) {
+		t.Fatalf("проверка спрошена не по адресу конфига: %v", tunnels.conflictsAsked)
+	}
+	if len(tunnels.imports) != 0 || len(tunnels.started) != 0 || tunnels.published != 0 {
+		t.Fatalf("при конфликте ничего не создаётся: imports=%d started=%d published=%d",
+			len(tunnels.imports), len(tunnels.started), tunnels.published)
+	}
+}
+
+// Совпавший по ключу туннель гардом не трогается: он уже существует, и его
+// адрес — это он сам.
+func TestEnsureWG_MatchingTunnelSkipsConflictCheck(t *testing.T) {
+	rec := wgClient()
+	h, _, _, tunnels := newTestHandler(t, rec)
+	h.deps.Snapshots = func(key string) (awgmproto.State, bool) {
+		return awgmproto.State{PID: 42, WG: &awgmproto.WGState{Config: wgConf}}, true
+	}
+	tunnels.tunnels = []storage.AWGTunnel{{ID: "wg-1", Name: "Есть", WdttClientID: "default",
+		Peer: storage.AWGPeer{PublicKey: "srvkey=", Endpoint: "127.0.0.1:9100"}}}
+	tunnels.conflicts = []string{"не должно спрашиваться"}
+
+	rr := httptest.NewRecorder()
+	h.EnsureWGTunnel(rr, post(t, ``), rec.Key())
+	if _, msg, code := decodeEnvelope(t, rr); code != "" {
+		t.Fatalf("отказ %s: %s", code, msg)
+	}
+	if len(tunnels.conflictsAsked) != 0 {
+		t.Fatalf("проверка спрошена на совпавшем туннеле: %v", tunnels.conflictsAsked)
 	}
 }
 
