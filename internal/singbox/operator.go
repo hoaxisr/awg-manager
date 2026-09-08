@@ -78,20 +78,12 @@ func normalizeSingboxLogLevel(v string) string {
 	return "info"
 }
 
-// supportsOutbound reports whether the installed sing-box binary supports
-// the given outbound type. Returns true for core types (no feature tag
-// required) and unknown types — sing-box check still catches unknown
-// type strings.
-func (o *Operator) supportsOutbound(obType string) bool {
-	return OutboundSupportedByFeatures(o.singboxFeaturesCached(), obType)
-}
-
-// SingboxFeatures returns the latest cached list of build tags from the
-// installed sing-box binary's `sing-box version` output. Safe for hot
-// callers (e.g. flush() Pass 1 of the subscription adapter): the probe
-// is cached under a mtime+size fingerprint — stat-only check costs ~10µs
-// on a router, no subprocess spawning unless the binary actually changed
-// on disk. Empty slice means probe failed or no binary installed.
+// SingboxFeatures — теги сборки установленного sing-box (см.
+// featuresForVersion: pinned-версия ⇒ installer.RequiredTags, иначе nil =
+// «неизвестно»). Безопасно для горячих вызовов (flush() Pass 1 адаптера
+// подписок): версия кэширована по отпечатку mtime+size бинаря, обычный
+// путь — один stat (~10 µс). Пустой список: бинаря нет, версия не
+// определена или не pinned.
 func (o *Operator) SingboxFeatures() []string { return o.singboxFeaturesCached() }
 
 func (o *Operator) singboxFeaturesCached() []string {
@@ -172,10 +164,10 @@ type Operator struct {
 	// reports are silently dropped (used by unit tests).
 	installProgress InstallProgressFn
 
-	// versionProbeMu guards the in-memory cache of `sing-box version`
-	// output. Cache key is versionProbeFingerprint = "<mtime>_<size>"
-	// of the binary; stat() on every read is ~10µs, so we never re-spawn
-	// when the binary hasn't moved.
+	// versionProbeMu guards the in-memory version cache filled by
+	// resolveVersionLocked. Cache key is versionProbeFingerprint =
+	// "<mtime>_<size>" of the binary; stat() on every read is ~10µs, so
+	// no source is consulted again while the binary hasn't moved.
 	versionProbeMu          sync.Mutex
 	versionProbeValue       string
 	versionProbeFingerprint string

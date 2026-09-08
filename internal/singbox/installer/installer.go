@@ -176,8 +176,8 @@ func (i *Installer) binarySHA256() (string, error) {
 // same upstream version while fixing target-specific binary contents.
 // Users on small flash compress the binary themselves; its SHA can never
 // match, and offering an update they have no room for is noise.
-// currentVersion is the probed `sing-box version`; pass "" when unknown —
-// then only the SHA counts.
+// currentVersion is the version resolved by the operator (sidecar, Clash
+// API or probe); pass "" when unknown — then only the SHA counts.
 func (i *Installer) MatchesPinnedBytes(currentVersion string) bool {
 	sha, err := i.binarySHA256()
 	if err == nil && strings.EqualFold(sha, i.spec.SHA256) {

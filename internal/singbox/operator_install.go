@@ -240,7 +240,8 @@ type metaSidecar struct {
 
 // readFreshSidecar returns the sidecar contents iff the file exists,
 // its mtime is ≥ the binary's mtime, and the JSON parses. Any failure
-// returns ok=false — caller falls through to the subprocess path.
+// returns ok=false — caller falls through to the next source in
+// resolveVersionLocked.
 func readFreshSidecar(binary string) (metaSidecar, bool) {
 	biFi, err := os.Stat(binary)
 	if err != nil {
@@ -395,8 +396,10 @@ func (o *Operator) Update(ctx context.Context) error {
 	if o.inst == nil {
 		return fmt.Errorf("installer not wired")
 	}
+	// MatchesPinnedBytes сам требует версию pinned, когда SHA не совпал
+	// (UPX-копия); при совпавшем SHA версия не важна — байты уже наши.
 	cur, _ := o.detectVersionAndFeaturesCached(ctx)
-	if cur == o.inst.RequiredVersion() && o.inst.MatchesPinnedBytes(cur) {
+	if o.inst.MatchesPinnedBytes(cur) {
 		return nil
 	}
 	// "" — UPX-копия pinned-версии уже отсечена проверкой выше,

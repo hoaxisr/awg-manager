@@ -587,8 +587,8 @@ func (o *Operator) ApplyConfig(ctx context.Context, cfg *Config) error {
 // checkTunnelFeatures — тот же гейт, что в AddTunnels, но по готовому
 // конфигу: он покрывает и UpdateTunnel/RenameTunnel, у которых своего нет.
 func (o *Operator) checkTunnelFeatures(cfg *Config) error {
-	// Пустой список = проба не удалась (бинарь ещё не установлен), а не
-	// «фич нет»: резать конфиг по такой догадке нельзя.
+	// Пустой список = теги неизвестны (бинаря нет или версия не pinned),
+	// а не «фич нет»: резать конфиг по такой догадке нельзя.
 	features := o.singboxFeaturesCached()
 	if len(features) == 0 {
 		return nil

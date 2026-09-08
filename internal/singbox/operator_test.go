@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -187,9 +188,37 @@ func TestDetectVersion_RunningButClashDown_FallsBack(t *testing.T) {
 	}
 }
 
-// Подмена бинаря при живом процессе: /proc/<pid>/exe — другой файл, Clash
-// молчит (иначе версия СТАРОГО процесса осела бы в sidecar НОВОГО файла).
+// Подмена бинаря при живом процессе: pid наш, но /proc/<pid>/exe — другой
+// файл. Clash молчит (иначе версия СТАРОГО процесса осела бы в sidecar
+// НОВОГО файла), версия — из субпроцесса по новому файлу.
+func TestDetectVersion_ExeMismatch_SkipsClash(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho 'sing-box version 0.0.7'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	if err := os.WriteFile(op.pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	op.proc.matchBinaryFn = func(int) bool { return true }
+	op.exeMatches = func(int, string) bool { return false }
+	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"version":"sing-box 1.2.3"}`))
+	}))
+	defer old.Close()
+	op.clash.SetAddress(strings.TrimPrefix(old.URL, "http://"))
+
+	if v, _ := op.detectVersionAndFeaturesCached(context.Background()); v != "0.0.7" {
+		t.Fatalf("version = %q, want 0.0.7 from the new file, not 1.2.3 from the old process", v)
+	}
+}
+
+// processExeIs сравнивает inode /proc/<pid>/exe и файла.
 func TestProcessExeIs(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("/proc only")
+	}
 	self, err := os.Executable()
 	if err != nil {
 		t.Skip(err)
@@ -2110,8 +2139,8 @@ func TestOperator_Update_NoSpace_ReturnsNil(t *testing.T) {
 	}
 }
 
-// same-version+same-sha → MatchesRequired==true → Update должен быть no-op
-// без обращения к gate (gate стоит ПОСЛЕ MatchesRequired early-return).
+// same-version+same-sha → MatchesPinnedBytes==true → Update должен быть no-op
+// без обращения к gate (gate стоит ПОСЛЕ этого early-return).
 // UPX-копия pinned-версии: Update — no-op, скачивания нет. Downloader не
 // сконфигурирован, поэтому попытка скачать вернула бы ошибку.
 func TestOperator_Update_UPXPinned_NoOp(t *testing.T) {
@@ -2154,7 +2183,7 @@ func TestOperator_Update_SameVersionSameSHA_NoOp(t *testing.T) {
 	if err := op.Update(context.Background()); err != nil {
 		t.Fatalf("Update returned error, expected no-op nil: %v", err)
 	}
-	// Бинарь не тронут — Update вернулся через MatchesRequired до gate'а.
+	// Бинарь не тронут — Update вернулся через MatchesPinnedBytes до gate'а.
 	if _, err := os.Stat(binary); err != nil {
 		t.Fatalf("binary disappeared: %v", err)
 	}

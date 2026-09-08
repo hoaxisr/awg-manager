@@ -1416,9 +1416,9 @@ func (o *Operator) checkOutboundFeatures() error {
 	ctx, cancel := context.WithTimeout(context.Background(), singboxVersionProbeTimeout)
 	defer cancel()
 	_, features := o.detectVersionAndFeaturesCached(ctx)
-	// Пустой список тегов — это «не удалось определить», а не «фич нет».
-	// Бинарь мог не отдать строку Tags вовсе; гейт на пути старта процесса
-	// не имеет права резать конфиг по такой догадке.
+	// Пустой список тегов — это «неизвестно» (версия не определена или не
+	// pinned), а не «фич нет»; гейт на пути старта процесса не имеет права
+	// резать конфиг по такой догадке.
 	if len(features) == 0 {
 		return nil
 	}
