@@ -156,7 +156,7 @@ func TestColdStart_DefaultRouteFollowsFlag(t *testing.T) {
 	})
 }
 
-// Маска из конфига доезжает до `ip address add`: регресс фикса 0128ebb3e
+// Маска из конфига доезжает до `ip address replace`: регресс фикса 0128ebb3e
 // («маска не доезжала до интерфейса») ловился только на NDMS-половине.
 // Ожидание — литерал /26, не addressWithPrefix.
 func TestColdStart_KernelAddressCarriesUserPrefix(t *testing.T) {
@@ -164,7 +164,7 @@ func TestColdStart_KernelAddressCarriesUserPrefix(t *testing.T) {
 	if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err != nil {
 		t.Fatal(err)
 	}
-	if !hasCall(rec.Calls, "/opt/sbin/ip address add dev opkgtun10 10.9.7.2/26") {
+	if !hasCall(rec.Calls, "/opt/sbin/ip address replace dev opkgtun10 10.9.7.2/26") {
 		t.Fatalf("адрес с маской пользователя не выставлен:\n%s", strings.Join(rec.Calls, "\n"))
 	}
 	if !hasCall(rec.Calls, "/opt/sbin/ip link set dev opkgtun10 txqueuelen 1000 mtu 1342") {

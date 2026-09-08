@@ -65,6 +65,30 @@ func addressWithPrefix(addr string, prefix int) string {
 	return fmt.Sprintf("%s/%d", addr, prefix)
 }
 
+// applyKernelAddresses кладёт адреса конфига на kernel-устройство. Именно
+// `replace`, не `add`: после SetAddress через RCI NDMS сам кладёт тот же адрес
+// своим хуком (стенд 5.01, 08.09: на устройстве уже inet …/24, `add` отвечает
+// «RTNETLINK answers: File exists», exit 2 — WARN в журнале при каждом старте
+// после F97), а порядок его хука и нашего `link up` ничем не закреплён, поэтому
+// ставим сами, идемпотентно. Единственная точка записи адресов на устройство:
+// Start и Reconcile идут через неё, литерал команды больше нигде не пишется
+// (пин — TestOS5_KernelAddressSingleWriter).
+func (o *OperatorOS5Impl) applyKernelAddresses(ctx context.Context, scope string, cfg tunnel.Config, iface string) {
+	if cfg.Address != "" {
+		addr := addressWithPrefix(cfg.Address, cfg.AddressPrefix)
+		if res, err := o.ipRun(ctx, "/opt/sbin/ip", "address", "replace", "dev", iface, addr); err != nil {
+			o.logWarn(scope, cfg.ID, "Failed to set IPv4 address: "+exec.FormatError(res, err).Error())
+		}
+	}
+	if cfg.AddressIPv6 != "" {
+		if res, err := o.ipRun(ctx, "/opt/sbin/ip", "-6", "address", "replace", "dev", iface, cfg.AddressIPv6+"/128"); err != nil {
+			err = exec.FormatError(res, err)
+			o.logWarn(scope, cfg.ID, "Failed to set IPv6 address: "+err.Error())
+			o.appLog.Warn(scope, cfg.ID, "IPv6 адрес: "+err.Error())
+		}
+	}
+}
+
 // ipRunFunc is the signature for running ip commands.
 // Defaults to exec.Run; overridden in tests to avoid real /opt/sbin/ip calls.
 type ipRunFunc func(ctx context.Context, name string, args ...string) (*exec.Result, error)
@@ -317,20 +341,7 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	o.logInfo("start", cfg.ID, "WireGuard config applied")
 
 	// === Phase 5: Assign addresses + bring up ===
-	// After ip link del + ip link add, this is OUR kernel interface —
-	// NDMS does not manage it. We must apply all config ourselves.
-	if cfg.Address != "" {
-		addr := addressWithPrefix(cfg.Address, cfg.AddressPrefix)
-		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "address", "add", "dev", names.IfaceName, addr); err != nil {
-			o.logWarn("start", cfg.ID, "Failed to set IPv4 address: "+err.Error())
-		}
-	}
-	if cfg.AddressIPv6 != "" {
-		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "-6", "address", "add", "dev", names.IfaceName, cfg.AddressIPv6+"/128"); err != nil {
-			o.logWarn("start", cfg.ID, "Failed to set IPv6 address: "+err.Error())
-			o.appLog.Warn("start", cfg.ID, "IPv6 адрес: "+err.Error())
-		}
-	}
+	o.applyKernelAddresses(ctx, "start", cfg, names.IfaceName)
 
 	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", names.IfaceName); err != nil {
 		o.rollbackStart(ctx, cfg.ID, names, justCreated)
@@ -617,20 +628,7 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 		}
 	}
 
-	// Assign addresses on kernel interface (replace: the device may be the
-	// live one that already carries them)
-	if cfg.Address != "" {
-		addr := addressWithPrefix(cfg.Address, cfg.AddressPrefix)
-		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "address", "replace", "dev", names.IfaceName, addr); err != nil {
-			o.logWarn("reconcile", cfg.ID, "Failed to set IPv4 address: "+err.Error())
-		}
-	}
-	if cfg.AddressIPv6 != "" {
-		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "-6", "address", "replace", "dev", names.IfaceName, cfg.AddressIPv6+"/128"); err != nil {
-			o.logWarn("reconcile", cfg.ID, "Failed to set IPv6 address: "+err.Error())
-			o.appLog.Warn("reconcile", cfg.ID, "IPv6 адрес: "+err.Error())
-		}
-	}
+	o.applyKernelAddresses(ctx, "reconcile", cfg, names.IfaceName)
 
 	if result, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "up", "dev", names.IfaceName); err != nil {
 		return tunnel.NewOpError("reconcile", cfg.ID, "link", fmt.Errorf("ip link up: %w", exec.FormatError(result, err)))
