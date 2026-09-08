@@ -1209,7 +1209,7 @@ func (s *ServiceImpl) CheckAddressConflicts(_ context.Context, tunnelID string) 
 	if err != nil {
 		return nil
 	}
-	return checkStoredAddressConflicts(s.store, stored.Interface.Address, tunnelID)
+	return StoredAddressConflicts(s.store, stored.Interface.Address, tunnelID)
 }
 
 // GetState returns the current state of a tunnel.

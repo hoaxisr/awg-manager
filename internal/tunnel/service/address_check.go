@@ -9,10 +9,12 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
 
-// checkStoredAddressConflicts checks if any stored tunnel shares an IP address
+// StoredAddressConflicts checks if any stored tunnel shares an IP address
 // with the given address string. Returns human-readable warning messages.
 // excludeID is skipped (used for Update to avoid warning about self).
-func checkStoredAddressConflicts(store *storage.AWGTunnelStore, address, excludeID string) []string {
+// Экспортирована для проводки proxyTunnelImporter (wdttlink.TunnelImporter):
+// проверка нужна ДО создания записи (#869).
+func StoredAddressConflicts(store *storage.AWGTunnelStore, address, excludeID string) []string {
 	newIPv4, newIPv6 := orchestrator.SplitAddresses(address)
 	if newIPv4 == "" && newIPv6 == "" {
 		return nil
