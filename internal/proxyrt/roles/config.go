@@ -376,7 +376,7 @@ type FreeTurnClientConfig struct {
 	Debug          bool   `json:"debug,omitempty"`
 	// KCP — профиль ARQ tcp-режима (freeturn 3.2+, F144): приезжает полем `kcp`
 	// ссылки freeturn://, редактора в UI нет. Рендерится в -kcp-* только при
-	// Mode tcp: в udp клиент отвергает любое отклонение от дефолта на старте.
+	// Mode tcp: вне tcp клиент отвергает любое отклонение от дефолта на старте.
 	KCP *FreeTurnKCP `json:"kcp,omitempty"`
 }
 
@@ -398,6 +398,34 @@ func (c FreeTurnClientConfig) Validate() error {
 	}
 	if strings.TrimSpace(c.Peer) == "" && strings.TrimSpace(c.Links) == "" && strings.TrimSpace(c.Sub) == "" {
 		return fmt.Errorf("не задан адрес реле (-peer / -links / подписка)")
+	}
+	return c.KCP.validate()
+}
+
+// validate зеркалит validateKCP клиента freeturn (internal/config/kcp.go):
+// частичный объект `kcp` из чужой ссылки даёт нули, и клиент падал бы на старте
+// флагом `-kcp-mtu 0` — без редактора в UI выхода из этого нет.
+func (k *FreeTurnKCP) validate() error {
+	if k == nil {
+		return nil
+	}
+	if k.NoDelay != 0 && k.NoDelay != 1 {
+		return fmt.Errorf("kcp.nodelay %d: допустимо 0 | 1", k.NoDelay)
+	}
+	if k.NC != 0 && k.NC != 1 {
+		return fmt.Errorf("kcp.nc %d: допустимо 0 | 1", k.NC)
+	}
+	if k.Interval <= 0 {
+		return fmt.Errorf("kcp.interval %d: должен быть положительным", k.Interval)
+	}
+	if k.Resend < 0 {
+		return fmt.Errorf("kcp.resend %d: не может быть отрицательным", k.Resend)
+	}
+	if k.SndWnd <= 0 || k.RcvWnd <= 0 {
+		return fmt.Errorf("kcp окна %d/%d: sndwnd и rcvwnd должны быть положительными", k.SndWnd, k.RcvWnd)
+	}
+	if k.MTU < 300 || k.MTU > 1350 {
+		return fmt.Errorf("kcp.mtu %d: допустимо 300..1350", k.MTU)
 	}
 	return nil
 }

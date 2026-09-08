@@ -55,9 +55,9 @@ type LinkPayload struct {
 	WG  string `json:"wg,omitempty"` // optional bundled WireGuard client config
 }
 
-// KCP mirrors upstream uri.KCP (internal/uri/uri.go): the eight -kcp-* values
-// the link owner tuned; the guest gets the same ARQ. Compact-format links
-// (query string) never carry it.
+// KCP — профиль ARQ из ссылки (upstream uri.KCP, поле `kcp`), по полям равен
+// roles.FreeTurnKCP. Не алиас: swag (cmd/awg-manager/docs.go) не сканирует
+// internal/proxyrt/roles и не разрешил бы тип в схеме DecodeResponse.
 type KCP struct {
 	NoDelay    int  `json:"nodelay"`
 	Interval   int  `json:"interval"`

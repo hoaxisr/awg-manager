@@ -48,6 +48,16 @@ func LogPath(dir, impl, role, instance string) (string, error) {
 	return buildPath(dir, impl, role, instance, ".log")
 }
 
+// PidPath — pid-файл процесса, тем же правилом.
+func PidPath(dir, impl, role, instance string) (string, error) {
+	return buildPath(dir, impl, role, instance, ".pid")
+}
+
+// StatePath — каталог состояния процесса (FREETURN_STATE_DIR), тем же правилом.
+func StatePath(dir, impl, role, instance string) (string, error) {
+	return buildPath(dir, impl, role, instance, ".state")
+}
+
 func buildPath(dir, impl, role, instance, ext string) (string, error) {
 	if err := ValidateInstance(instance); err != nil {
 		return "", err

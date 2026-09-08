@@ -26,7 +26,9 @@ import (
 type Runner struct {
 	binary  string
 	pidPath string
-	env     []string
+	// env — добавка к окружению демона, считается на КАЖДЫЙ Start: TZ роутера
+	// (F145) может смениться между рестартами ребёнка. nil — без добавки.
+	env func() []string
 
 	// mu защищает own — pid ребёнка, которого породили МЫ и которого ещё не
 	// схоронил reaper. Пишет его Start и та же горутина-reaper, читает
@@ -35,7 +37,7 @@ type Runner struct {
 	own int
 }
 
-func NewRunner(binary, pidPath string, env []string) *Runner {
+func NewRunner(binary, pidPath string, env func() []string) *Runner {
 	return &Runner{binary: binary, pidPath: pidPath, env: env}
 }
 
@@ -61,7 +63,12 @@ func (r *Runner) Start(ctx context.Context, args []string) (int, error) {
 		return 0, err
 	}
 	cmd := exec.Command(r.binary, args...)
-	cmd.Env = append(os.Environ(), r.env...)
+	cmd.Env = os.Environ()
+	if r.env != nil {
+		// Дубли ключей os/exec разрешает в пользу последнего — наш TZ побеждает
+		// TZ=UTC из окружения демона.
+		cmd.Env = append(cmd.Env, r.env()...)
+	}
 	// os/exec сам подставляет /dev/null при незаданных Stdout/Stderr —
 	// назначаем явно, чтобы контракт не держался на умолчании.
 	devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)

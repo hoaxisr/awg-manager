@@ -220,3 +220,32 @@ func TestWdttServerValidateDirectEqualToListenIsOff(t *testing.T) {
 		t.Fatalf("direct == listen означает «выключено»: %v", err)
 	}
 }
+
+// F144 (ревью): профиль KCP проверяется зеркально validateKCP клиента freeturn —
+// частичный объект из чужой ссылки даёт нули, и клиент падал бы на старте.
+func TestFreeTurnClientValidateKCP(t *testing.T) {
+	base := FreeTurnClientConfig{Listen: "127.0.0.1:9001", Peer: "p", Mode: "tcp"}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("без профиля: %v", err)
+	}
+	good := FreeTurnKCP{NoDelay: 1, Interval: 20, Resend: 2, NC: 1, SndWnd: 512, RcvWnd: 512, MTU: 1200, ACKNoDelay: true}
+	base.KCP = &good
+	if err := base.Validate(); err != nil {
+		t.Fatalf("дефолт upstream: %v", err)
+	}
+	bad := map[string]FreeTurnKCP{
+		"нули":      {},
+		"nodelay=2": {NoDelay: 2, Interval: 20, Resend: 2, NC: 1, SndWnd: 512, RcvWnd: 512, MTU: 1200},
+		"nc=2":      {NoDelay: 1, Interval: 20, Resend: 2, NC: 2, SndWnd: 512, RcvWnd: 512, MTU: 1200},
+		"resend<0":  {NoDelay: 1, Interval: 20, Resend: -1, NC: 1, SndWnd: 512, RcvWnd: 512, MTU: 1200},
+		"rcvwnd=0":  {NoDelay: 1, Interval: 20, Resend: 2, NC: 1, SndWnd: 512, MTU: 1200},
+		"mtu=1400":  {NoDelay: 1, Interval: 20, Resend: 2, NC: 1, SndWnd: 512, RcvWnd: 512, MTU: 1400},
+	}
+	for name, k := range bad {
+		k := k
+		base.KCP = &k
+		if err := base.Validate(); err == nil {
+			t.Errorf("%s: ожидали отказ", name)
+		}
+	}
+}

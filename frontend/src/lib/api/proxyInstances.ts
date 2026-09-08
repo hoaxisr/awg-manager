@@ -343,17 +343,16 @@ export function toWdttServerConfig(v: ProxyInstanceView): WdttServerConfig {
 function kcpOf(c: Cfg): FreeTurnKCP | undefined {
   const k = c["kcp"];
   if (!k || typeof k !== "object") return undefined;
-  const o = k as Record<string, unknown>;
-  const n = (key: string) => (typeof o[key] === "number" ? o[key] : 0);
+  const o = k as Cfg;
   return {
-    nodelay: n("nodelay"),
-    interval: n("interval"),
-    resend: n("resend"),
-    nc: n("nc"),
-    sndwnd: n("sndwnd"),
-    rcvwnd: n("rcvwnd"),
-    mtu: n("mtu"),
-    acknodelay: o["acknodelay"] === true,
+    nodelay: num(o, "nodelay") ?? 0,
+    interval: num(o, "interval") ?? 0,
+    resend: num(o, "resend") ?? 0,
+    nc: num(o, "nc") ?? 0,
+    sndwnd: num(o, "sndwnd") ?? 0,
+    rcvwnd: num(o, "rcvwnd") ?? 0,
+    mtu: num(o, "mtu") ?? 0,
+    acknodelay: bool(o, "acknodelay") === true,
   };
 }
 

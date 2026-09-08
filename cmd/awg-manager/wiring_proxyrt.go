@@ -964,7 +964,10 @@ func (a *app) wireProxyrt() {
 		RecordsChanged: func(reason string) {
 			a.eventBus.PublishInvalidated(events.ResourceProxyInstances, reason)
 		},
-		RemoveRuntime: proxyRemoveRuntime(roles.RuntimeDir),
+		RemoveRuntime: proxyRemoveRuntime(roles.RuntimeDir, func(k instancestore.Kind) string {
+			b, _ := installSvc.Binary(k)
+			return b
+		}),
 	})
 	ref.mgr = mgr
 	a.proxyMgr = mgr
@@ -1169,15 +1172,20 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 			Alive: childproc.MatchesBinary,
 		})
 		links.put(key, link)
-		base := strings.TrimSuffix(sock, ".sock")
+		paths, err := proxyRuntimePathsFor(roles.RuntimeDir, rec.Kind, rec.ID)
+		if err != nil {
+			return nil, err
+		}
 		// FREETURN_STATE_DIR — патч 8 форка freeturn: client_config.json и
 		// vk_persona.json уходят в tmpfs, а не в /opt/bin рядом с бинарём.
 		// Каталог per-instance: файл персоны привязан к client-id, общий
 		// каталог двух инстансов сбрасывал бы поколение друг другу.
 		// TZ роутера — POSIX-строка из /etc/TZ (F145): без неё штампы журналов
 		// детей отстают на смещение зоны, а tzfix форка freeturn читает именно её.
-		env := routerclock.WithTZFromRouter([]string{"FREETURN_STATE_DIR=" + base + ".state"})
-		runner := procres.NewRunner(binary, base+".pid", env)
+		// Считается на каждый Start: зону на роутере можно сменить между рестартами.
+		runner := procres.NewRunner(binary, paths.pid, func() []string {
+			return routerclock.WithTZFromRouter([]string{"FREETURN_STATE_DIR=" + paths.state})
+		})
 
 		var role proxyrt.Role
 		var cfg func() any

@@ -1001,6 +1001,11 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 		// Кэш переездов — В ТОЙ ЖЕ секции, что и диск: SeedInfo читает его, а
 		// на отказе транзакции менять его нечем.
 		m.moved = st.MovedListen
+		// Записи на диске уже нет, а воркер был: уборке ниже нужны настоящие
+		// Kind/ID, иначе она получила бы пустую Record.
+		if removed.ID == "" && ok {
+			removed = lastRec
+		}
 	}
 	m.mu.Unlock()
 	if err != nil {
