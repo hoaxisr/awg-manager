@@ -35,6 +35,7 @@ vi.mock('$lib/stores/notifications', () => ({ notifications: notify }));
 import { fireEvent, render, waitFor } from '@testing-library/svelte';
 import ExitDetail from './ExitDetail.svelte';
 import type { ProxyInstanceRow } from './rows';
+import { allowEnsure } from './ensureGuard';
 
 const CLIENT: WdttClientConfig = {
 	listen: '127.0.0.1:9000',
@@ -88,7 +89,7 @@ function mount(id: string, mode: 'wg' | 'raw' = 'wg') {
 
 function apiError(code: string, message: string): Error {
 	const e: Error & { status?: number; body?: unknown } = new Error(message);
-	e.status = code === 'WDTT_WG_NOT_READY' ? 409 : 400;
+	e.status = code === 'WDTT_WG_NOT_READY' || code === 'WDTT_WG_ADDRESS_CONFLICT' ? 409 : 400;
 	e.body = { error: true, message, code };
 	return e;
 }
@@ -121,6 +122,25 @@ describe('ExitDetail: автозавод связанного туннеля', (
 		await new Promise((r) => setTimeout(r, 20));
 		expect(apiMock.ensureWdttWgTunnel).not.toHaveBeenCalled();
 		expect(apiMock.ensureWdttRawTunnel).not.toHaveBeenCalled();
+	});
+
+	it('конфликт адреса (#869) показывается один раз и гасит автозавод', async () => {
+		apiMock.ensureWdttWgTunnel.mockRejectedValue(
+			apiError('WDTT_WG_ADDRESS_CONFLICT', 'Сервер выдал адрес 10.66.0.4, он уже занят'),
+		);
+		mount('conflict-1');
+		await waitFor(() => expect(notify.error).toHaveBeenCalledWith('Сервер выдал адрес 10.66.0.4, он уже занят'));
+		expect(notify.error).toHaveBeenCalledTimes(1);
+		// Автозавод больше не зовётся: конфликт не рассосётся сам, повтор
+		// каждые 20 с давал бы тост на каждый заход. Ручной вызов остаётся.
+		// Часы сдвигаются за кулдаун, иначе «false» дал бы сам кулдаун.
+		const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000);
+		try {
+			expect(allowEnsure('conflict-1', false)).toBe(false);
+			expect(allowEnsure('conflict-1', true)).toBe(true);
+		} finally {
+			now.mockRestore();
+		}
 	});
 });
 

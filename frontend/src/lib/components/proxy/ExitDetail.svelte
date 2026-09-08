@@ -7,7 +7,7 @@
 	import { Badge, Button, Card, FieldHint, SideDrawer, Stat, StatStrip } from '$lib/components/ui';
 	import { ExternalLink } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
-	import { WDTT_WG_NOT_READY } from '$lib/api/clientWdtt';
+	import { WDTT_WG_ADDRESS_CONFLICT, WDTT_WG_NOT_READY } from '$lib/api/clientWdtt';
 	import { notifications } from '$lib/stores/notifications';
 	import { errText } from '$lib/utils/errorMessage';
 	import { findPolicyForInterface } from '$lib/utils/accessPolicy';
@@ -197,7 +197,12 @@
 			// «Конфиг ещё не приехал» — не ошибка, а ожидание: автоэффект зовёт
 			// ручку сам, и тост на каждый заход был бы ложной тревогой. Глушим
 			// ровно этот код, не «ошибку вообще».
-			if (apiErrorCode(e) !== WDTT_WG_NOT_READY) notifications.error(errText(e));
+			const code = apiErrorCode(e);
+			if (code === WDTT_WG_NOT_READY) return;
+			// Конфликт адреса (#869) сам не рассосётся: тост один раз, автозавод
+			// гасим, кнопка «вручную» остаётся.
+			if (code === WDTT_WG_ADDRESS_CONFLICT) markEnsured(id);
+			notifications.error(errText(e));
 		} finally {
 			tunnelBusy = false;
 		}

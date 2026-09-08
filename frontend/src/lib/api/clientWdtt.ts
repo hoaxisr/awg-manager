@@ -50,6 +50,12 @@ export type WdttSaveServerResult = {
  */
 export const WDTT_WG_NOT_READY = 'WDTT_WG_NOT_READY';
 
+/**
+ * Сервер выдал адрес, уже занятый другим туннелем (#869): туннель не создан,
+ * само не рассосётся — автозавод после этого кода останавливается.
+ */
+export const WDTT_WG_ADDRESS_CONFLICT = 'WDTT_WG_ADDRESS_CONFLICT';
+
 export class WdttClient extends FreeturnClient {
 	async getWdttConfig(): Promise<WdttConfig> {
 		return toWdttConfig(await this.proxyList());
