@@ -78,22 +78,6 @@ func normalizeSingboxLogLevel(v string) string {
 	return "info"
 }
 
-// hasFeature reports whether the installed sing-box binary declares the
-// given build tag in its `sing-box version` output. Empty features means
-// probe failed — treat it conservatively as "feature NOT present" so we
-// don't gate soft-fail and leave it for sing-box check.
-func (o *Operator) hasFeature(feature string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), singboxVersionProbeTimeout)
-	defer cancel()
-	_, features := o.detectVersionAndFeaturesCached(ctx)
-	for _, f := range features {
-		if f == feature {
-			return true
-		}
-	}
-	return false
-}
-
 // supportsOutbound reports whether the installed sing-box binary supports
 // the given outbound type. Returns true for core types (no feature tag
 // required) and unknown types — sing-box check still catches unknown
@@ -194,7 +178,6 @@ type Operator struct {
 	// when the binary hasn't moved.
 	versionProbeMu          sync.Mutex
 	versionProbeValue       string
-	versionProbeFeatures    []string
 	versionProbeFingerprint string
 
 	// manuallyStopped is the sticky-stop intent: true means Control("stop")

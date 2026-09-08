@@ -68,12 +68,10 @@ type Status struct {
 	// tunnel cards with a neutral "via sing-box" badge instead of the
 	// per-tunnel ProxyN label.
 	NDMSProxyEnabled bool `json:"ndmsProxyEnabled"`
-	// Features enumerates the build tags of the installed sing-box
-	// binary (parsed from the `Tags:` line of `sing-box version`).
-	// Example: ["with_gvisor","with_quic","with_naive_outbound",…].
-	// The UI uses this to warn when a protocol the user configured
-	// isn't supported by the installed build (e.g. NaiveProxy needs
-	// with_naive_outbound).
+	// Features — теги сборки установленного sing-box. У бинаря не
+	// пробуются: для pinned-версии берутся из installer.RequiredTags,
+	// для любой другой пусты (неизвестны). UI по ним предупреждает про
+	// неподдерживаемый протокол (NaiveProxy → with_naive_outbound).
 	Features []string `json:"features,omitempty"`
 	// LastError is the last fatal sing-box stderr message captured by
 	// Process.OnExit. Cleared on successful start. UI surfaces this when

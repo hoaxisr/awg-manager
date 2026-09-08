@@ -28,76 +28,39 @@ import (
 var errSyntheticValidator = errors.New("synthetic validator")
 
 func TestParseSingboxVersionOutput(t *testing.T) {
-	t.Run("typical 1.13.x output", func(t *testing.T) {
-		out := "sing-box version 1.13.8\n" +
-			"\n" +
-			"Environment: go1.25.9 linux/arm64\n" +
-			"Tags: with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,with_naive_outbound,badlinkname,tfogo_checklinkname0,with_musl\n" +
-			"Revision: d5adb54bc6c6b2c21ab6f748276c4ec62d9bb650\n" +
-			"CGO: enabled\n"
-		version, features := parseSingboxVersionOutput(out)
-		if version != "1.13.8" {
-			t.Errorf("version = %q, want 1.13.8", version)
+	cases := map[string]string{
+		"sing-box version 1.13.8\nEnvironment: go1.25.9 linux/arm64\nTags: with_gvisor,with_quic\n": "1.13.8",
+		"sing-box version 1.2.3\n":                   "1.2.3",
+		"SingBox Version 1.13.11\nTaGs: with_quic\n": "1.13.11",
+		"":                                    "",
+		"Environment: go1.25.9 linux/arm64\n": "",
+	}
+	for in, want := range cases {
+		if got := parseSingboxVersionOutput(in); got != want {
+			t.Errorf("parse(%q) = %q, want %q", in, got, want)
 		}
-		wantFeatures := []string{
-			"with_gvisor", "with_quic", "with_dhcp", "with_wireguard",
-			"with_utls", "with_acme", "with_clash_api", "with_tailscale",
-			"with_ccm", "with_ocm", "with_naive_outbound", "badlinkname",
-			"tfogo_checklinkname0", "with_musl",
-		}
-		if !reflect.DeepEqual(features, wantFeatures) {
-			t.Errorf("features mismatch:\n  got  %v\n  want %v", features, wantFeatures)
-		}
-	})
+	}
+}
 
-	t.Run("missing Tags line — version only", func(t *testing.T) {
-		out := "sing-box version 1.10.0\nEnvironment: go1.22 linux/amd64\n"
-		version, features := parseSingboxVersionOutput(out)
-		if version != "1.10.0" {
-			t.Errorf("version = %q", version)
-		}
-		if len(features) != 0 {
-			t.Errorf("features = %v, want empty", features)
-		}
-	})
-
-	t.Run("tags with spaces around commas", func(t *testing.T) {
-		out := "sing-box version 1.0\nTags: with_a , with_b ,with_c\n"
-		_, features := parseSingboxVersionOutput(out)
-		want := []string{"with_a", "with_b", "with_c"}
-		if !reflect.DeepEqual(features, want) {
-			t.Errorf("features = %v, want %v", features, want)
-		}
-	})
-
-	t.Run("empty output", func(t *testing.T) {
-		v, f := parseSingboxVersionOutput("")
-		if v != "" || f != nil {
-			t.Errorf("want empty, got version=%q features=%v", v, f)
-		}
-	})
-
-	t.Run("version line alone", func(t *testing.T) {
-		v, f := parseSingboxVersionOutput("sing-box version 1.2.3\n")
-		if v != "1.2.3" {
-			t.Errorf("version = %q", v)
-		}
-		if len(f) != 0 {
-			t.Errorf("features = %v, want empty", f)
-		}
-	})
-
-	t.Run("accepts singbox alias and mixed case", func(t *testing.T) {
-		out := "SingBox Version 1.13.11\nTaGs: with_quic, with_naive_outbound\n"
-		v, f := parseSingboxVersionOutput(out)
-		if v != "1.13.11" {
-			t.Errorf("version = %q, want 1.13.11", v)
-		}
-		want := []string{"with_quic", "with_naive_outbound"}
-		if !reflect.DeepEqual(f, want) {
-			t.Errorf("features = %v, want %v", f, want)
-		}
-	})
+// Теги не пробуются у бинаря: у pinned-версии они известны из embedded.go,
+// у любой другой — «неизвестно», и гейты outbound-типов молчат.
+func TestFeaturesForVersion(t *testing.T) {
+	op := newOperatorForTest(t)
+	if got := op.featuresForVersion(installer.RequiredVersion); !reflect.DeepEqual(got, installer.RequiredTags) {
+		t.Fatalf("pinned: got %v, want RequiredTags", got)
+	}
+	if got := op.featuresForVersion("0.0.1"); got != nil {
+		t.Fatalf("other version: got %v, want nil", got)
+	}
+	if got := op.featuresForVersion(""); got != nil {
+		t.Fatalf("unknown version: got %v, want nil", got)
+	}
+	// С установщиком pinned — это spec.Version, а не константа.
+	binary := fakeBinary(t, t.TempDir())
+	op.SetInstaller(installer.New(binary, "test-arch", installer.BinarySpec{Version: "9.9.9", SHA256: strings.Repeat("a", 64)}, nil))
+	if got := op.featuresForVersion("9.9.9"); !reflect.DeepEqual(got, installer.RequiredTags) {
+		t.Fatalf("spec pinned: got %v, want RequiredTags", got)
+	}
 }
 
 func TestOperator_ConfigPaths(t *testing.T) {

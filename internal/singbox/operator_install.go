@@ -94,15 +94,15 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 	return s
 }
 
-// detectVersionAndFeatures shells out to `<binary> version` and returns
-// the version string and build tags parsed from its output. Exec
-// failure returns empty values.
-func detectVersionAndFeatures(ctx context.Context, binary string) (string, []string) {
+// detectVersion — субпроцесс `<binary> version`. Последний фолбэк для
+// чужого бинаря до его первого старта; на UPX-сборках с малой RAM может
+// падать (стубу нужно ~90 МБ), поэтому все остальные источники — раньше.
+func detectVersion(ctx context.Context, binary string) string {
 	probeCtx, cancel := context.WithTimeout(ctx, singboxVersionProbeTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(probeCtx, binary, "version").Output()
 	if err != nil {
-		return "", nil
+		return ""
 	}
 	return parseSingboxVersionOutput(string(out))
 }
@@ -133,24 +133,22 @@ func (o *Operator) detectVersionAndFeaturesCached(ctx context.Context) (string, 
 	defer o.versionProbeMu.Unlock()
 
 	if o.versionProbeFingerprint == fingerprint && o.versionProbeValue != "" {
-		return o.versionProbeValue, append([]string(nil), o.versionProbeFeatures...)
+		return o.versionProbeValue, o.featuresForVersion(o.versionProbeValue)
 	}
 
 	if meta, ok := readFreshSidecar(o.binary); ok {
 		o.versionProbeValue = meta.Version
-		o.versionProbeFeatures = append([]string(nil), meta.Features...)
 		o.versionProbeFingerprint = fingerprint
-		return meta.Version, append([]string(nil), meta.Features...)
+		return meta.Version, o.featuresForVersion(meta.Version)
 	}
 
-	v, f := detectVersionAndFeatures(ctx, o.binary)
+	v := detectVersion(ctx, o.binary)
 	if v != "" {
-		_ = writeSidecar(o.binary, v, f) // best-effort persistence
+		_ = writeSidecar(o.binary, v) // best-effort persistence
 	}
 	o.versionProbeValue = v
-	o.versionProbeFeatures = append([]string(nil), f...)
 	o.versionProbeFingerprint = fingerprint
-	return v, append([]string(nil), f...)
+	return v, o.featuresForVersion(v)
 }
 
 // refreshVersionProbeAfterSwap re-runs the version probe immediately
@@ -163,13 +161,12 @@ func (o *Operator) refreshVersionProbeAfterSwap() {
 	ctx, cancel := context.WithTimeout(context.Background(), singboxVersionProbeTimeout)
 	defer cancel()
 	fingerprint := binaryFingerprint(o.binary)
-	v, f := detectVersionAndFeatures(ctx, o.binary)
+	v := detectVersion(ctx, o.binary)
 	if v != "" {
-		_ = writeSidecar(o.binary, v, f)
+		_ = writeSidecar(o.binary, v)
 	}
 	o.versionProbeMu.Lock()
 	o.versionProbeValue = v
-	o.versionProbeFeatures = append([]string(nil), f...)
 	o.versionProbeFingerprint = fingerprint
 	o.versionProbeMu.Unlock()
 }
@@ -184,10 +181,28 @@ func binaryFingerprint(path string) string {
 	return fmt.Sprintf("%d_%d", fi.ModTime().UnixNano(), fi.Size())
 }
 
-// metaSidecar is the on-disk shape of <binary>.meta.json.
+// featuresForVersion — теги сборки для версии v. Наши сборки известны
+// наперёд: pinned-версия ⇒ installer.RequiredTags. Любая другая (своя
+// сборка, старый бинарь) ⇒ nil = «неизвестно»; гейты outbound-типов
+// в этом случае молчат и оставляют решение самому sing-box.
+func (o *Operator) featuresForVersion(v string) []string {
+	if v == "" {
+		return nil
+	}
+	pinned := installer.RequiredVersion
+	if o.inst != nil {
+		pinned = o.inst.RequiredVersion()
+	}
+	if v != pinned {
+		return nil
+	}
+	return append([]string(nil), installer.RequiredTags...)
+}
+
+// metaSidecar — содержимое <binary>.meta.json. Поле features старых
+// сайдкаров игнорируется: теги теперь из installer.RequiredTags.
 type metaSidecar struct {
-	Version  string   `json:"version"`
-	Features []string `json:"features"`
+	Version string `json:"version"`
 }
 
 // readFreshSidecar returns the sidecar contents iff the file exists,
@@ -220,58 +235,29 @@ func readFreshSidecar(binary string) (metaSidecar, bool) {
 	return m, true
 }
 
-// writeSidecar persists (version, features) next to the binary so
-// subsequent reads (this process or after restart) skip the subprocess.
+// writeSidecar persists version next to the binary so subsequent reads
+// (this process or after restart) skip the subprocess.
 // Best-effort: read-only filesystem / permission errors are returned
 // for logging but never abort the caller's flow.
-func writeSidecar(binary, version string, features []string) error {
-	data, err := json.Marshal(metaSidecar{Version: version, Features: features})
+func writeSidecar(binary, version string) error {
+	data, err := json.Marshal(metaSidecar{Version: version})
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(binary+singboxMetaSidecarSuffix, data, 0o644)
 }
 
-// parseSingboxVersionOutput parses the multi-line text produced by
-// `sing-box version`:
-//
-//	sing-box version 1.13.8
-//	Environment: go1.25.9 linux/arm64
-//	Tags: with_gvisor,with_quic,with_naive_outbound,...
-//	Revision: ...
-//	CGO: enabled
-//
-// Returns the version string (third field of the "sing-box version"
-// line) and the comma-separated build tags from the "Tags:" line.
-// Missing sections degrade to empty values — the caller is responsible
-// for deciding how to present "no tags detected".
-func parseSingboxVersionOutput(out string) (string, []string) {
-	var version string
-	var features []string
+// parseSingboxVersionOutput возвращает версию (третье поле строки
+// `sing-box version …`, регистр и дефис в имени не важны). Строка `Tags:`
+// больше не разбирается — теги известны из installer.RequiredTags.
+func parseSingboxVersionOutput(out string) string {
 	versionRe := regexp.MustCompile(`(?i)\bsing-?box\b\s+version\b\s+([^\s]+)`)
 	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if version == "" {
-			if m := versionRe.FindStringSubmatch(line); len(m) == 2 {
-				version = strings.TrimSpace(m[1])
-				continue
-			}
-		}
-		lower := strings.ToLower(line)
-		if strings.HasPrefix(lower, "tags:") {
-			tagsRaw := strings.TrimSpace(line[len("Tags:"):])
-			for _, t := range strings.Split(tagsRaw, ",") {
-				t = strings.TrimSpace(t)
-				if t != "" {
-					features = append(features, t)
-				}
-			}
+		if m := versionRe.FindStringSubmatch(strings.TrimSpace(line)); len(m) == 2 {
+			return strings.TrimSpace(m[1])
 		}
 	}
-	return version, features
+	return ""
 }
 
 // IsPresent reports whether the managed sing-box binary exists and is executable.
