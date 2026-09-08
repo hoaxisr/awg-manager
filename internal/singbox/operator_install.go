@@ -25,9 +25,6 @@ func (o *Operator) IsInstalled() (bool, string) {
 	if !isExecutable(o.binary) {
 		return false, ""
 	}
-	if o.inst != nil {
-		return true, o.inst.CurrentVersion(context.Background())
-	}
 	v, _ := o.detectVersionAndFeaturesCached(context.Background())
 	return true, v
 }
@@ -47,21 +44,7 @@ func (o *Operator) GetStatus(ctx context.Context) Status {
 	s := Status{}
 	if isExecutable(o.binary) {
 		s.Installed = true
-		detectedVersion, detectedFeatures := o.detectVersionAndFeaturesCached(ctx)
-		s.Features = detectedFeatures
-		if o.inst != nil {
-			// Prefer the version from detectVersionAndFeaturesCached: it already
-			// ran `sing-box version` (or served the 5m cache). Installer
-			// CurrentVersion runs the same subprocess again — on slow MIPS/UPX
-			// binaries that can exceed 6s per call, doubling latency for every
-			// /api/singbox/status poll (~12s back-to-back).
-			s.Version = detectedVersion
-			if s.Version == "" {
-				s.Version = o.inst.CurrentVersion(ctx)
-			}
-		} else {
-			s.Version = detectedVersion
-		}
+		s.Version, s.Features = o.detectVersionAndFeaturesCached(ctx)
 	}
 	if running, pid := o.proc.IsRunning(); running {
 		s.Running = true
@@ -412,10 +395,11 @@ func (o *Operator) Update(ctx context.Context) error {
 	if o.inst == nil {
 		return fmt.Errorf("installer not wired")
 	}
-	if o.inst.MatchesRequired(ctx) {
+	cur, _ := o.detectVersionAndFeaturesCached(ctx)
+	if cur == o.inst.RequiredVersion() && o.inst.MatchesPinnedBytes(cur) {
 		return nil
 	}
-	// "" — UPX-копия pinned-версии уже отсечена MatchesRequired выше,
+	// "" — UPX-копия pinned-версии уже отсечена проверкой выше,
 	// версия на решение гейта больше не влияет.
 	if o.inst.EvaluateInstallState("") == installer.InstallStateOutdatedNoSpace {
 		if o.installProgress != nil {

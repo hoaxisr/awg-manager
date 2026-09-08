@@ -2112,6 +2112,27 @@ func TestOperator_Update_NoSpace_ReturnsNil(t *testing.T) {
 
 // same-version+same-sha → MatchesRequired==true → Update должен быть no-op
 // без обращения к gate (gate стоит ПОСЛЕ MatchesRequired early-return).
+// UPX-копия pinned-версии: Update — no-op, скачивания нет. Downloader не
+// сконфигурирован, поэтому попытка скачать вернула бы ошибку.
+func TestOperator_Update_UPXPinned_NoOp(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "sing-box")
+	body := []byte("#!/bin/sh\n# UPX! marker as in a packed ELF\necho 'sing-box version 1.2.3'\n")
+	if err := os.WriteFile(binary, body, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(OperatorDeps{Dir: dir, Binary: binary})
+	inst := installer.New(binary, "test-arch", installer.BinarySpec{
+		Version: "1.2.3", URL: "u", SHA256: strings.Repeat("f", 64), Size: 100 << 20,
+	}, nil)
+	inst.SetFreeDiskFn(func(string) (int64, bool) { return 200 << 20, true })
+	op.SetInstaller(inst)
+
+	if err := op.Update(context.Background()); err != nil {
+		t.Fatalf("Update = %v, want nil no-op for UPX copy of pinned version", err)
+	}
+}
+
 func TestOperator_Update_SameVersionSameSHA_NoOp(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "sing-box")

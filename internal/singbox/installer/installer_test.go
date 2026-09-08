@@ -295,27 +295,6 @@ func TestInstaller_CurrentSHA256_RecomputesOnChange(t *testing.T) {
 	}
 }
 
-func TestInstaller_MatchesRequired_RequiresVersionAndSHA(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "sing-box")
-	body := []byte("#!/bin/sh\necho 'sing-box version 1.2.3'\n")
-	sum := sha256.Sum256(body)
-	hexSum := hex.EncodeToString(sum[:])
-	if err := os.WriteFile(target, body, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	inst := New(target, "test-arch", BinarySpec{Version: "1.2.3", SHA256: hexSum}, nil)
-	if !inst.MatchesRequired(context.Background()) {
-		t.Fatal("MatchesRequired() = false, want true for same version and SHA")
-	}
-
-	rebuilt := New(target, "test-arch", BinarySpec{Version: "1.2.3", SHA256: strings.Repeat("0", 64)}, nil)
-	if rebuilt.MatchesRequired(context.Background()) {
-		t.Fatal("MatchesRequired() = true, want false for same version but different SHA")
-	}
-}
-
 func TestInstaller_Download_ContextCancellation(t *testing.T) {
 	// Slow handler — writes one byte then blocks until the request context
 	// is cancelled. Mimics a stalled download.
@@ -553,22 +532,5 @@ func TestEvaluateInstallState_UPXPacked_MatchesOnlySameVersion(t *testing.T) {
 	}
 	if got := inst.EvaluateInstallState(""); got != InstallStateOutdatedNoSpace {
 		t.Fatalf("unknown version: got %q, want %q", got, InstallStateOutdatedNoSpace)
-	}
-}
-
-func TestInstaller_MatchesRequired_UPXPackedSameVersion(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "sing-box")
-	body := []byte("#!/bin/sh\n# UPX! marker as in a packed ELF\necho 'sing-box version 1.2.3'\n")
-	if err := os.WriteFile(target, body, 0755); err != nil {
-		t.Fatal(err)
-	}
-	inst := New(target, "test-arch", BinarySpec{Version: "1.2.3", SHA256: strings.Repeat("0", 64)}, nil)
-	if !inst.MatchesRequired(context.Background()) {
-		t.Fatal("MatchesRequired() = false, want true for UPX-packed binary of the pinned version")
-	}
-	other := New(target, "test-arch", BinarySpec{Version: "1.2.4", SHA256: strings.Repeat("0", 64)}, nil)
-	if other.MatchesRequired(context.Background()) {
-		t.Fatal("MatchesRequired() = true, want false for UPX-packed binary of another version")
 	}
 }

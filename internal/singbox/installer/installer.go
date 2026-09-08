@@ -170,17 +170,10 @@ func (i *Installer) binarySHA256() (string, error) {
 	return sha, nil
 }
 
-// MatchesRequired reports whether the installed binary matches both the
-// pinned version and pinned bytes. The SHA256 check is intentional: custom
-// sing-box rebuilds can keep the same upstream version while fixing target-
-// specific binary contents.
-func (i *Installer) MatchesRequired(ctx context.Context) bool {
-	cur := i.CurrentVersion(ctx)
-	return cur == i.RequiredVersion() && i.MatchesPinnedBytes(cur)
-}
-
 // MatchesPinnedBytes reports whether the bytes on disk are the pinned
 // build: SHA256 equal, or a UPX-packed copy of the pinned version (#868).
+// The SHA256 check is intentional: custom sing-box rebuilds can keep the
+// same upstream version while fixing target-specific binary contents.
 // Users on small flash compress the binary themselves; its SHA can never
 // match, and offering an update they have no room for is noise.
 // currentVersion is the probed `sing-box version`; pass "" when unknown —
