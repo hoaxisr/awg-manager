@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -134,6 +135,35 @@ func (c *ClashClient) IsHealthy() bool {
 	}
 	resp.Body.Close()
 	return resp.StatusCode == 200
+}
+
+// Version спрашивает версию у запущенного sing-box через /version
+// ({"version":"sing-box 1.14.0-awgm.16",…}); префикс "sing-box " срезается.
+// Дешёвая замена субпроцессу `sing-box version`, пока процесс жив.
+func (c *ClashClient) Version(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s/version", c.Address()), nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("version status: %d", resp.StatusCode)
+	}
+	var body struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	v := strings.TrimSpace(strings.TrimPrefix(body.Version, "sing-box "))
+	if v == "" {
+		return "", fmt.Errorf("version: empty")
+	}
+	return v, nil
 }
 
 // Address returns the Clash API address for WebSocket proxying.

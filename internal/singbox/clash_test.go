@@ -127,6 +127,28 @@ func clashServer(t *testing.T, h http.HandlerFunc) *ClashClient {
 	return NewClashClient(strings.TrimPrefix(ts.URL, "http://"))
 }
 
+func TestClashClient_Version(t *testing.T) {
+	c := clashServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/version" {
+			t.Errorf("path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"version":"sing-box 1.14.0-awgm.16","premium":true,"meta":true}`))
+	})
+	v, err := c.Version(context.Background())
+	if err != nil || v != "1.14.0-awgm.16" {
+		t.Fatalf("Version() = %q, %v; want 1.14.0-awgm.16", v, err)
+	}
+
+	bad := clashServer(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) })
+	if _, err := bad.Version(context.Background()); err == nil {
+		t.Error("500 → want error")
+	}
+	empty := clashServer(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"version":""}`)) })
+	if _, err := empty.Version(context.Background()); err == nil {
+		t.Error("empty version → want error")
+	}
+}
+
 func TestClashClient_IsHealthy(t *testing.T) {
 	ok := clashServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/version" {
