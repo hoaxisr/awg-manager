@@ -2821,7 +2821,6 @@ const ftlink_DecodeResponse: v.GenericSchema = v.looseObject({
 });
 
 const ftlink_LinkPayload: v.GenericSchema = v.looseObject({
-	bond: v.optional(v.nullable(v.boolean())),
 	cid: v.optional(v.nullable(v.string())),
 	dns: v.optional(v.nullable(v.string())),
 	dnss: v.optional(v.nullable(v.string())),

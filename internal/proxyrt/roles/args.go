@@ -111,7 +111,6 @@ func FreeTurnClientArgs(c FreeTurnClientConfig) []string {
 	}
 	str("-transport", c.Transport)
 	str("-mode", c.Mode)
-	flag("-bond", c.Bond)
 	str("-obf-profile", c.ObfProfile)
 	str("-obf-key", c.ObfKey)
 	if c.StreamsPerCred > 0 {

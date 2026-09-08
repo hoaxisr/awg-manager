@@ -2,7 +2,7 @@
 	// EX-34..48, EX-58, EX-66..EX-68 — «Дополнительно»: экспертные поля, работа
 	// с WireGuard-конфигом и освобождение портов. Свёрнута: глобального режима
 	// «Эксперт» больше нет (решение Q7 ИА).
-	import { Button, Dropdown, Input, Toggle } from '$lib/components/ui';
+	import { Button, Dropdown, Input } from '$lib/components/ui';
 	import WgConfExportPanel from '../proxy-panel/WgConfExportPanel.svelte';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
 	import { obfOptions } from '../freeturn/options';
@@ -94,19 +94,6 @@
 		{/if}
 	</div>
 
-	{#if ftClient}
-		<div class="toggle-row">
-			<Toggle
-				label="Bond"
-				hint="Bond — только в режиме TCP"
-				checked={ftClient.bond}
-				onchange={(v) => {
-					if (ftClient) ftClient.bond = v;
-				}}
-			/>
-		</div>
-	{/if}
-
 	{#if !raw}
 		<p class="sub-title">WireGuard-конфиг</p>
 		{#if wgConf && !confShown}
@@ -152,13 +139,5 @@
 		font-size: 0.75rem;
 		font-weight: 600;
 		color: var(--color-text-secondary);
-	}
-
-	.toggle-row {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-		margin-top: 0.875rem;
 	}
 </style>

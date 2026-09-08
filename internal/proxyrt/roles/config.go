@@ -365,7 +365,6 @@ type FreeTurnClientConfig struct {
 	Streams        int    `json:"streams,omitempty"`
 	Transport      string `json:"transport,omitempty"`
 	Mode           string `json:"mode,omitempty"`
-	Bond           bool   `json:"bond,omitempty"`
 	ObfProfile     string `json:"obfProfile,omitempty"`
 	ObfKey         string `json:"obfKey,omitempty"`
 	StreamsPerCred int    `json:"streamsPerCred,omitempty"`

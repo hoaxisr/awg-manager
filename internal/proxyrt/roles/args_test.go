@@ -94,13 +94,13 @@ func TestWdttServerArgsDNSIsRouterRegardlessOfRelayMode(t *testing.T) {
 func TestFreeTurnArgs(t *testing.T) {
 	cl := FreeTurnClientConfig{
 		Listen: "127.0.0.1:9001", Peer: "relay.example:3478", Provider: "prov",
-		Links: "l1,l2", Streams: 2, Transport: "udp", Mode: "turn", Bond: true,
+		Links: "l1,l2", Streams: 2, Transport: "udp", Mode: "turn",
 		ObfProfile: "xor", ObfKey: "k", StreamsPerCred: 3, Platform: "mobile",
 		DNSMode: "doh", DNSServers: "1.1.1.1", ClientID: "cid",
 		Sub: "https://sub", Debug: true,
 	}
 	wantClient := "-listen 127.0.0.1:9001 -peer relay.example:3478 -provider prov " +
-		"-links l1,l2 -n 2 -transport udp -mode turn -bond -obf-profile xor -obf-key k " +
+		"-links l1,l2 -n 2 -transport udp -mode turn -obf-profile xor -obf-key k " +
 		"-streams-per-cred 3 -platform mobile -dns-mode doh -dns-servers 1.1.1.1 " +
 		"-client-id cid -sub https://sub -debug"
 	if got := strings.Join(FreeTurnClientArgs(cl), " "); got != wantClient {

@@ -7721,8 +7721,6 @@ definitions:
     type: object
   ftlink.LinkPayload:
     properties:
-      bond:
-        type: boolean
       cid:
         description: -client-id — owner must allowlist this in clients.json
         type: string

@@ -205,7 +205,6 @@ export function applyFtPayload(cfg: FreeTurnClientConfig, p: FreeTurnLinkPayload
 	if (p.cid) cfg.clientId = p.cid;
 	if (p.transport) cfg.transport = p.transport as FreeTurnClientConfig['transport'];
 	if (p.mode) cfg.mode = p.mode as FreeTurnClientConfig['mode'];
-	if (typeof p.bond === 'boolean') cfg.bond = p.bond;
 	if (p.dns === 'plain' || p.dns === 'doh' || p.dns === 'auto') cfg.dnsMode = p.dns;
 }
 

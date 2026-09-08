@@ -16,7 +16,7 @@ import (
 //   - The upstream free-turn-proxy format (see docs/uri.md in
 //     samosvalishe/free-turn-proxy): base64url, no padding
 //     (Go base64.RawURLEncoding), fields v/provider/peer/transport/mode/
-//     bond/obf/key/n/spc/cid/listen/dns/dnss/mcap/name. Notably it never
+//     obf/key/n/spc/cid/listen/dns/dnss/mcap/name. Notably it never
 //     includes the VK call link itself (unique per recipient) — the
 //     receiving client still has to enter -links by hand.
 //   - The informal freeturn-entware-installer format (install.sh's
@@ -36,7 +36,6 @@ type LinkPayload struct {
 
 	Transport string `json:"transport,omitempty"`
 	Mode      string `json:"mode,omitempty"`
-	Bond      bool   `json:"bond,omitempty"`
 
 	Obf string `json:"obf,omitempty"`
 	Key string `json:"key,omitempty"`
@@ -192,11 +191,6 @@ func mergeURLFormat(p *LinkPayload, compact string) {
 	if p.MTU == 0 {
 		if mtu, ok := intQuery(vals, "mtu"); ok {
 			p.MTU = mtu
-		}
-	}
-	if !p.Bond {
-		if b, ok := boolQuery(vals, "bond"); ok {
-			p.Bond = b
 		}
 	}
 	if !p.ManualCaptcha {

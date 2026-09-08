@@ -12,7 +12,6 @@ export interface FreeTurnClientConfig {
 	streams: number;
 	transport: 'tcp' | 'udp';
 	mode: 'udp' | 'tcp';
-	bond: boolean;
 	obfProfile: 'none' | 'rtpopus' | 'rtpopus2' | 'rtpopus3';
 	obfKey?: string;
 	/** Ключ обфускации задан на бэкенде — значение наружу не отдаётся (Н5). */
@@ -109,7 +108,6 @@ export interface FreeTurnLinkPayload {
 	peer?: string;
 	transport?: string;
 	mode?: string;
-	bond?: boolean;
 	obf?: string;
 	key?: string;
 	n?: number;
