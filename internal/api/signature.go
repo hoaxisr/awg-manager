@@ -120,7 +120,7 @@ type SignatureGenerateResponse struct {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			request	body	SignatureGenerateRequest	true	"Protocol"
+//	@Param			request	body	SignatureGenerateRequest	true	"Protocol — один из quic_initial, stun, dns, dtls, sip"
 //	@Success		200	{object}	SignatureGenerateResponse
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		422	{object}	APIErrorEnvelope

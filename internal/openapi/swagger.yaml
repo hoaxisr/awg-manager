@@ -3993,9 +3993,6 @@ definitions:
     type: object
   api.SignatureGenerateRequest:
     properties:
-      mtu:
-        example: 1280
-        type: integer
       protocol:
         example: quic_initial
         type: string
@@ -13697,7 +13694,7 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: Protocol and optional MTU
+      - description: Protocol — один из quic_initial, stun, dns, dtls, sip
         in: body
         name: request
         required: true
