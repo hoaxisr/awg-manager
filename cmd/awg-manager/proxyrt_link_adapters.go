@@ -179,9 +179,11 @@ func (o proxyOccupancy) linkedToSelf(tun storage.AWGTunnel) bool {
 	return false
 }
 
-// recordPorts — порты, которые запись занимает на роутере. WgPort сервера —
-// паритет старого чек-листа (proxylisten/checker.go:100-102): внутренний
-// WG-порт занят так же, как DTLS-listen.
+// recordPorts — порты, которые запись занимает на роутере. Сервер WDTT
+// слушает четыре сокета (roles/config.go validatePorts): DTLS, raw (явный либо
+// DTLS+1), direct (если задан и не равен DTLS) и внутренний WG-порт — паритет
+// старого чек-листа (proxylisten/checker.go:100-102). Без raw и direct посев
+// не видел межзаписной коллизии на них (F156).
 func recordPorts(rec instancestore.Record) []int {
 	var addrs []string
 	var ports []int
@@ -189,9 +191,13 @@ func recordPorts(rec instancestore.Record) []int {
 	case rec.WdttClient != nil:
 		addrs = append(addrs, rec.WdttClient.Listen)
 	case rec.WdttServer != nil:
-		addrs = append(addrs, rec.WdttServer.Listen)
-		if rec.WdttServer.WgPort > 0 {
-			ports = append(ports, rec.WdttServer.WgPort)
+		srv := rec.WdttServer
+		addrs = append(addrs, srv.Listen, srv.EffectiveRawListen())
+		if d := strings.TrimSpace(srv.DirectListen); d != "" && d != strings.TrimSpace(srv.Listen) {
+			addrs = append(addrs, d)
+		}
+		if srv.WgPort > 0 {
+			ports = append(ports, srv.WgPort)
 		}
 	case rec.FreeTurnClient != nil:
 		addrs = append(addrs, rec.FreeTurnClient.Listen)

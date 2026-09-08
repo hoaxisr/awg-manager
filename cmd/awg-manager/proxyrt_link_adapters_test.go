@@ -1391,3 +1391,25 @@ func TestRawMirrorSurvivesEnabledClientReconcile(t *testing.T) {
 		t.Fatalf("качели инвалидации фронта: %v", pub.events)
 	}
 }
+
+// Занятость записи WDTT-сервера — все четыре его сокета. Raw (DTLS+1 либо
+// явный) и direct раньше в неё не входили, и посев не видел межзаписной
+// коллизии на них (F156).
+func TestRecordPortsWdttServerCountsRawAndDirect(t *testing.T) {
+	got := recordPorts(instancestore.Record{ID: "s", Kind: instancestore.KindWdttServer,
+		WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56002", WgPort: 56001, DirectListen: "0.0.0.0:56010"}})
+	want := map[int]bool{56002: true, 56001: true, 56003: true, 56010: true}
+	if len(got) != len(want) {
+		t.Fatalf("ports = %v, want %v", got, want)
+	}
+	for _, p := range got {
+		if !want[p] {
+			t.Fatalf("ports = %v, лишний %d", got, p)
+		}
+	}
+	explicit := recordPorts(instancestore.Record{ID: "s", Kind: instancestore.KindWdttServer,
+		WdttServer: &roles.WdttServerConfig{Listen: "0.0.0.0:56002", RawListen: "0.0.0.0:56013", DirectListen: "0.0.0.0:56002"}})
+	if len(explicit) != 2 || explicit[0] != 56002 || explicit[1] != 56013 {
+		t.Fatalf("явный raw и direct==DTLS: ports = %v, want [56002 56013]", explicit)
+	}
+}
