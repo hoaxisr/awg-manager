@@ -3,6 +3,13 @@ package installer
 
 const RequiredVersion = "1.14.0-awgm.16"
 
+// RequiredTags — теги сборки pinned-бинаря (строка `Tags:` из `sing-box version`),
+// сняты с mipsel-ассета. Гейт-значимые теги (with_naive_outbound) одинаковы
+// для всех трёх архитектур; служебные (with_low_memory, with_musl) могут
+// отличаться — это только отображение в Status.Features.
+// Обновляется regen-embedded.sh под qemu-user; без qemu — руками при бампе.
+var RequiredTags = []string{"with_gvisor", "with_quic", "with_wireguard", "with_utls", "with_acme", "with_clash_api", "with_v2ray_api", "with_naive_outbound", "with_cloudflared", "badlinkname", "tfogo_checklinkname0", "with_musl", "with_awg", "with_low_memory"}
+
 var EmbeddedBinaries = map[string]BinarySpec{
 	"mipsel-3.4":   {Version: RequiredVersion, URL: "http://repo.hoaxisr.ru/singbox/1.14.0-awgm.16/singbox-1.14.0-awgm.16-mipsel-3.4", SHA256: "e08dd4c08ae4c14535ffeed1b2c8c6d49e12a03be3061c8731eebd19bf6b2ff4", Size: 74285180},
 	"mips-3.4":     {Version: RequiredVersion, URL: "http://repo.hoaxisr.ru/singbox/1.14.0-awgm.16/singbox-1.14.0-awgm.16-mips-3.4", SHA256: "6368479ded7ed14edea2a8dbb06e5682bf7b2554a6838ef5876d65710439e8a5", Size: 56885405},
