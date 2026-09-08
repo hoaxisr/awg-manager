@@ -7,6 +7,7 @@ import (
 
 func TestFeedAndGet(t *testing.T) {
 	h := New()
+	t.Cleanup(h.Stop)
 	defer h.Stop()
 
 	// First call is baseline — no point emitted.
@@ -38,6 +39,7 @@ func TestFeedAndGet(t *testing.T) {
 
 func TestCounterReset(t *testing.T) {
 	h := New()
+	t.Cleanup(h.Stop)
 	defer h.Stop()
 
 	h.Feed("t1", 1000, 2000)
@@ -56,6 +58,7 @@ func TestCounterReset(t *testing.T) {
 
 func TestClear(t *testing.T) {
 	h := New()
+	t.Cleanup(h.Stop)
 	defer h.Stop()
 
 	h.Feed("t1", 1000, 2000)
@@ -69,6 +72,7 @@ func TestClear(t *testing.T) {
 
 func TestGetUnknownTunnel(t *testing.T) {
 	h := New()
+	t.Cleanup(h.Stop)
 	defer h.Stop()
 
 	pts := h.Get("nonexistent", time.Hour, 0)
@@ -101,6 +105,7 @@ func TestDownsample(t *testing.T) {
 
 func TestGetSinceFilter(t *testing.T) {
 	h := New()
+	t.Cleanup(h.Stop)
 	defer h.Stop()
 
 	now := time.Now().Unix()
@@ -136,6 +141,7 @@ func TestGetSinceFilter(t *testing.T) {
 
 func TestStats(t *testing.T) {
 	h := New()
+	t.Cleanup(h.Stop)
 	defer h.Stop()
 
 	h.Feed("t1", 1000, 100)
@@ -192,6 +198,7 @@ func TestWindowVolumeBytes(t *testing.T) {
 
 func TestStatsUnknownTunnel(t *testing.T) {
 	h := New()
+	t.Cleanup(h.Stop)
 	defer h.Stop()
 	s := h.Stats("nope", time.Hour)
 	if s.Points != 0 {
@@ -201,6 +208,7 @@ func TestStatsUnknownTunnel(t *testing.T) {
 
 func TestStopIsIdempotent(t *testing.T) {
 	h := New()
+	t.Cleanup(h.Stop)
 	h.Stop()
 	defer func() {
 		if r := recover(); r != nil {

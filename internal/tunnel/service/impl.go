@@ -62,6 +62,7 @@ type ServiceImpl struct {
 	// singleflight). nil in bare test constructions.
 	stateCache      *cache.KeyedStore[string, tunnel.StateInfo]
 	invalidatorOnce sync.Once
+	invalidatorStop func() // unsubscribe шины; nil, пока инвалидатор не поднят
 
 	// selfCreateGate (optional) suppresses the hook-driven snapshot refresh
 	// during awg-manager-initiated NDMS interface creations. Without it,

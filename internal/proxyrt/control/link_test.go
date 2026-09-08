@@ -661,7 +661,8 @@ func serveRaw(t *testing.T, path string, payload []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done); _ = ln.Close() })
 	go func() {
 		c, err := ln.Accept()
 		if err != nil {
@@ -669,7 +670,9 @@ func serveRaw(t *testing.T, path string, payload []byte) {
 		}
 		defer c.Close()
 		_, _ = c.Write(payload)
-		time.Sleep(time.Second)
+		// Держим соединение открытым до конца теста, а не фиксированную
+		// секунду: горутина не должна переживать владельца.
+		<-done
 	}()
 }
 

@@ -39,12 +39,14 @@ func newRCIStubServer(t *testing.T, response string) *rciStubServer {
 
 func newStateTestOperator(t *testing.T, srvURL string) *OperatorNativeWG {
 	t.Helper()
-	return &OperatorNativeWG{
+	o := &OperatorNativeWG{
 		transport:    transport.NewWithURL(srvURL, transport.NewSemaphore(2)),
 		appLog:       logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps),
 		supportsASC:  func() bool { return true },
 		hasProxySlot: func(int) bool { return false },
 	}
+	t.Cleanup(o.Close)
+	return o
 }
 
 func TestGetState_ViaPost_Running(t *testing.T) {

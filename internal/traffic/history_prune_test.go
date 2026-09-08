@@ -10,6 +10,7 @@ import (
 // считается от time.Now() без шва часов, и попасть в неё фикстурой нечем.
 func TestPrune_ThreeOutcomes(t *testing.T) {
 	h := New()
+	t.Cleanup(h.Stop)
 	defer h.Stop()
 	h.mu.Lock()
 	h.maxAge = time.Hour

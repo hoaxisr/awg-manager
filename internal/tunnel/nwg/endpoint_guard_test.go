@@ -24,10 +24,13 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func newGuardTestOperator() *OperatorNativeWG {
-	return &OperatorNativeWG{
+func newGuardTestOperator(t *testing.T) *OperatorNativeWG {
+	t.Helper()
+	o := &OperatorNativeWG{
 		appLog: logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps),
 	}
+	t.Cleanup(o.Close)
+	return o
 }
 
 // stubGuardLookup подменяет полный резолв имени в sweep; счётчик вызовов
@@ -68,7 +71,7 @@ func stubGuardWG(t *testing.T, showOut string, showErr error) *[][]string {
 // Endpoint слетел (NDMS переприменил конфиг — в ядре заглушка) → страж
 // возвращает его на место.
 func TestGuardSweep_RestoresDriftedEndpoint(t *testing.T) {
-	op := newGuardTestOperator()
+	op := newGuardTestOperator(t)
 	op.guardRegister("awg20", guardEntry{iface: "nwg3", pubkey: "PUB", endpoint: "[2a02::1]:51820", name: "Wireguard3"})
 	calls := stubGuardWG(t, "PUB\t127.0.0.1:1\n", nil)
 
@@ -85,7 +88,7 @@ func TestGuardSweep_RestoresDriftedEndpoint(t *testing.T) {
 
 // Endpoint на месте → страж молчит.
 func TestGuardSweep_NoopWhenEndpointMatches(t *testing.T) {
-	op := newGuardTestOperator()
+	op := newGuardTestOperator(t)
 	op.guardRegister("awg20", guardEntry{iface: "nwg3", pubkey: "PUB", endpoint: "[2a02::1]:51820", name: "Wireguard3"})
 	calls := stubGuardWG(t, "PUB\t[2a02::1]:51820\n", nil)
 
@@ -98,7 +101,7 @@ func TestGuardSweep_NoopWhenEndpointMatches(t *testing.T) {
 
 // После unregister (Stop/Delete) страж туннель не трогает.
 func TestGuardSweep_UnregisteredTunnelIgnored(t *testing.T) {
-	op := newGuardTestOperator()
+	op := newGuardTestOperator(t)
 	op.guardRegister("awg20", guardEntry{iface: "nwg3", pubkey: "PUB", endpoint: "[2a02::1]:51820", name: "Wireguard3"})
 	op.guardUnregister("awg20")
 	calls := stubGuardWG(t, "PUB\t127.0.0.1:1\n", nil)
@@ -117,7 +120,7 @@ func TestGuardSweep_UnregisteredTunnelIgnored(t *testing.T) {
 // страж обновляет ожидание в реестре и доводит ядро до нового адреса,
 // даже если старый endpoint в ядре «на месте».
 func TestGuardSweep_ReresolvesDDNSAndUpdatesKernel(t *testing.T) {
-	op := newGuardTestOperator()
+	op := newGuardTestOperator(t)
 	_ = stubGuardLookup(t, []string{"2a02::feed"}, nil)
 	op.guardRegister("awg20", guardEntry{iface: "nwg3", pubkey: "PUB", endpoint: "[2a02::1]:51820", spec: "vpn.example.com:51820", name: "Wireguard3"})
 	calls := stubGuardWG(t, "PUB\t[2a02::1]:51820\n", nil)
@@ -140,7 +143,7 @@ func TestGuardSweep_ReresolvesDDNSAndUpdatesKernel(t *testing.T) {
 // Анти-флап: round-robin DNS отдал записи в другом порядке, но текущий
 // адрес всё ещё среди них — endpoint не трогаем, живая сессия не дёргается.
 func TestGuardSweep_RoundRobinRotationNoFlap(t *testing.T) {
-	op := newGuardTestOperator()
+	op := newGuardTestOperator(t)
 	_ = stubGuardLookup(t, []string{"2a02::2", "2a02::1"}, nil)
 	op.guardRegister("awg20", guardEntry{iface: "nwg3", pubkey: "PUB", endpoint: "[2a02::1]:51820", spec: "vpn.example.com:51820", name: "Wireguard3"})
 	calls := stubGuardWG(t, "PUB\t[2a02::1]:51820\n", nil)
@@ -159,7 +162,7 @@ func TestGuardSweep_RoundRobinRotationNoFlap(t *testing.T) {
 // Dual-stack после переезда: текущий v6 выпал из резолва, у имени остались
 // A+AAAA — выбирается v4 (то же предпочтение, что у netutil.ResolveHost).
 func TestGuardSweep_DualStackPrefersV4WhenCurrentGone(t *testing.T) {
-	op := newGuardTestOperator()
+	op := newGuardTestOperator(t)
 	_ = stubGuardLookup(t, []string{"2a02::2", "198.51.100.7"}, nil)
 	op.guardRegister("awg20", guardEntry{iface: "nwg3", pubkey: "PUB", endpoint: "[2a02::1]:51820", spec: "vpn.example.com:51820", name: "Wireguard3"})
 	calls := stubGuardWG(t, "PUB\t[2a02::1]:51820\n", nil)
@@ -178,7 +181,7 @@ func TestGuardSweep_DualStackPrefersV4WhenCurrentGone(t *testing.T) {
 // DNS недоступен: страж работает по последнему известному адресу —
 // восстановление слетевшего endpoint'а не блокируется сбоем резолва.
 func TestGuardSweep_ResolveFailureFallsBackToLastKnown(t *testing.T) {
-	op := newGuardTestOperator()
+	op := newGuardTestOperator(t)
 	_ = stubGuardLookup(t, nil, context.DeadlineExceeded)
 	op.guardRegister("awg20", guardEntry{iface: "nwg3", pubkey: "PUB", endpoint: "[2a02::1]:51820", spec: "vpn.example.com:51820", name: "Wireguard3"})
 	calls := stubGuardWG(t, "PUB\t127.0.0.1:1\n", nil)
@@ -196,7 +199,7 @@ func TestGuardSweep_ResolveFailureFallsBackToLastKnown(t *testing.T) {
 
 // Литеральный spec не перерезолвливается — резолвер не дёргается вовсе.
 func TestGuardSweep_LiteralSpecSkipsResolve(t *testing.T) {
-	op := newGuardTestOperator()
+	op := newGuardTestOperator(t)
 	lookups := stubGuardLookup(t, nil, context.DeadlineExceeded)
 	op.guardRegister("awg20", guardEntry{iface: "nwg3", pubkey: "PUB", endpoint: "[2a02::1]:51820", spec: "[2a02::1]:51820", name: "Wireguard3"})
 	_ = stubGuardWG(t, "PUB\t[2a02::1]:51820\n", nil)
@@ -212,7 +215,7 @@ func TestGuardSweep_LiteralSpecSkipsResolve(t *testing.T) {
 // wg set не даёт установить endpoint по устаревшему снапшоту (wg set по
 // отсутствующему ключу воскресил бы удалённого пира).
 func TestGuardSweep_RecheckBeforeSetSkipsReplacedEntry(t *testing.T) {
-	op := newGuardTestOperator()
+	op := newGuardTestOperator(t)
 	op.guardRegister("awg20", guardEntry{iface: "nwg3", pubkey: "OLDKEY", endpoint: "[2a02::1]:51820", spec: "[2a02::1]:51820", name: "Wireguard3"})
 
 	origLookup, origRun, origOut := wgToolLookup, wgToolRun, wgToolOutput
@@ -239,7 +242,7 @@ func TestGuardSweep_RecheckBeforeSetSkipsReplacedEntry(t *testing.T) {
 // guardUpdateEndpoint: не воскрешает удалённую запись и не затирает
 // заменённую (другой spec) резолвом старого имени.
 func TestGuardUpdateEndpoint_StaleTargetsIgnored(t *testing.T) {
-	op := newGuardTestOperator()
+	op := newGuardTestOperator(t)
 
 	op.guardRegister("awg20", guardEntry{iface: "nwg3", pubkey: "PUB", endpoint: "[2a02::1]:51820", spec: "b.example.com:51820", name: "Wireguard3"})
 	op.guardUpdateEndpoint("awg20", "a.example.com:51820", "[2a02::feed]:51820")
@@ -417,7 +420,7 @@ func TestGuardSweep_V4RecoversAfterIPv6OnlyPeriod(t *testing.T) {
 // (страж без доступа к хранилищу) — пересобирать слот не по чему, значит
 // проход обязан пройти вхолостую, не двигая реестр (#702).
 func TestGuardSweep_ViaKmodEntryNeverTouchesKernel(t *testing.T) {
-	op := newGuardTestOperator()
+	op := newGuardTestOperator(t)
 	_ = stubGuardLookup(t, []string{"203.0.113.9"}, nil)
 	op.guardRegister("awg10", guardEntry{
 		iface:    "nwg1",

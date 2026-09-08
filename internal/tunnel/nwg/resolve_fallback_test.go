@@ -12,6 +12,7 @@ import (
 
 func TestTrackEndpointIP_GetReturnsTracked(t *testing.T) {
 	o := &OperatorNativeWG{}
+	t.Cleanup(o.Close)
 	if got := o.GetTrackedEndpointIP("awg10"); got != "" {
 		t.Fatalf("empty operator: GetTrackedEndpointIP = %q, want \"\"", got)
 	}
@@ -24,15 +25,18 @@ func TestTrackEndpointIP_GetReturnsTracked(t *testing.T) {
 	}
 }
 
-func newTestOperator(resolveFn func(string) (string, int, error)) *OperatorNativeWG {
-	return &OperatorNativeWG{
+func newTestOperator(t *testing.T, resolveFn func(string) (string, int, error)) *OperatorNativeWG {
+	t.Helper()
+	o := &OperatorNativeWG{
 		appLog:    logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps),
 		resolveFn: resolveFn,
 	}
+	t.Cleanup(o.Close)
+	return o
 }
 
 func TestResolveWithFallback_FreshSuccessTracks(t *testing.T) {
-	o := newTestOperator(func(string) (string, int, error) { return "9.9.9.9", 51820, nil })
+	o := newTestOperator(t, func(string) (string, int, error) { return "9.9.9.9", 51820, nil })
 	stored := &storage.AWGTunnel{ID: "awg10", Peer: storage.AWGPeer{Endpoint: "host.example:51820"}}
 
 	ip, port, err := o.resolveEndpointWithFallback(stored)
@@ -46,7 +50,7 @@ func TestResolveWithFallback_FreshSuccessTracks(t *testing.T) {
 
 func TestResolveWithFallback_RetriesThenSucceeds(t *testing.T) {
 	var calls int32
-	o := newTestOperator(func(string) (string, int, error) {
+	o := newTestOperator(t, func(string) (string, int, error) {
 		if atomic.AddInt32(&calls, 1) < 2 {
 			return "", 0, fmt.Errorf("dns timeout")
 		}
@@ -64,7 +68,7 @@ func TestResolveWithFallback_RetriesThenSucceeds(t *testing.T) {
 }
 
 func TestResolveWithFallback_AllFailUsesCacheNoTrack(t *testing.T) {
-	o := newTestOperator(func(string) (string, int, error) { return "", 0, fmt.Errorf("dns down") })
+	o := newTestOperator(t, func(string) (string, int, error) { return "", 0, fmt.Errorf("dns down") })
 	stored := &storage.AWGTunnel{
 		ID:                 "awg10",
 		Peer:               storage.AWGPeer{Endpoint: "host.example:51820"},
@@ -81,7 +85,7 @@ func TestResolveWithFallback_AllFailUsesCacheNoTrack(t *testing.T) {
 }
 
 func TestResolveWithFallback_AllFailNoCacheErrors(t *testing.T) {
-	o := newTestOperator(func(string) (string, int, error) { return "", 0, fmt.Errorf("dns down") })
+	o := newTestOperator(t, func(string) (string, int, error) { return "", 0, fmt.Errorf("dns down") })
 	stored := &storage.AWGTunnel{ID: "awg10", Peer: storage.AWGPeer{Endpoint: "host.example:51820"}}
 
 	if _, _, err := o.resolveEndpointWithFallback(stored); err == nil {
@@ -90,7 +94,7 @@ func TestResolveWithFallback_AllFailNoCacheErrors(t *testing.T) {
 }
 
 func TestResolveWithFallback_SlowAttemptTimesOut(t *testing.T) {
-	o := newTestOperator(func(string) (string, int, error) {
+	o := newTestOperator(t, func(string) (string, int, error) {
 		time.Sleep(resolveAttemptTimeout + 500*time.Millisecond)
 		return "9.9.9.9", 51820, nil
 	})

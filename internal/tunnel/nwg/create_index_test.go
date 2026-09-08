@@ -126,7 +126,7 @@ func newCreateTestOperator(t *testing.T, f *fakeNDMS) *OperatorNativeWG {
 	ndmsinfo.Reset() // Get()==nil -> Supports{HRanges,WireguardASC}() == false
 	sem := transport.NewSemaphore(4)
 	tr := transport.NewWithURL(f.srv.URL, sem)
-	return &OperatorNativeWG{
+	o := &OperatorNativeWG{
 		queries:     &query.Queries{Interfaces: query.NewInterfaceStore(tr, nil)},
 		transport:   tr,
 		kmod:        NewKmodManager(nil),
@@ -134,6 +134,8 @@ func newCreateTestOperator(t *testing.T, f *fakeNDMS) *OperatorNativeWG {
 		resolveFn:   func(string) (string, int, error) { return "203.0.113.10", 51820, nil },
 		supportsASC: func() bool { return false },
 	}
+	t.Cleanup(o.Close)
+	return o
 }
 
 func testTunnel(id, name string) *storage.AWGTunnel {

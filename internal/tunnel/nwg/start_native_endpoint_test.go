@@ -128,7 +128,7 @@ func newRCIBatchServer(t *testing.T, log *eventLog) *rciBatchServer {
 
 func newStartTestOperator(t *testing.T, srvURL string, poster *recordingPoster, resolvedIP string, port int) *OperatorNativeWG {
 	t.Helper()
-	return &OperatorNativeWG{
+	o := &OperatorNativeWG{
 		transport:   transport.NewWithURL(srvURL, transport.NewSemaphore(2)),
 		commands:    newStartTestCommands(poster),
 		appLog:      logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps),
@@ -137,6 +137,8 @@ func newStartTestOperator(t *testing.T, srvURL string, poster *recordingPoster, 
 			return resolvedIP, port, nil
 		},
 	}
+	t.Cleanup(o.Close)
+	return o
 }
 
 func startTestTunnel(endpoint string) *storage.AWGTunnel {

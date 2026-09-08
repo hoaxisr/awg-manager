@@ -179,7 +179,7 @@ func TestImportConfEndpoint(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			op := newTestOperator(c.resolve)
+			op := newTestOperator(t, c.resolve)
 			stored := &storage.AWGTunnel{ID: "awg1", Peer: storage.AWGPeer{Endpoint: c.endpoint}}
 			if got := op.importConfEndpoint(stored); got != c.want {
 				t.Fatalf("importConfEndpoint(%q) = %q, want %q", c.endpoint, got, c.want)

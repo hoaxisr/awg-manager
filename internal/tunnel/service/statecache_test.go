@@ -136,6 +136,7 @@ func TestStateCache_BusEventInvalidates(t *testing.T) {
 	s := newCacheTestService(t, mgr, 2*time.Second)
 	bus := events.NewBus()
 	s.SetEventBus(bus)
+	t.Cleanup(s.Close)
 
 	s.GetState(context.Background(), "t1")
 	bus.Publish("tunnel:state", events.TunnelStateEvent{ID: "t1", State: "stopped"})

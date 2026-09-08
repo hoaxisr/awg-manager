@@ -68,7 +68,8 @@ func (s *ServiceImpl) startStateInvalidator(bus *events.Bus) {
 		return
 	}
 	s.invalidatorOnce.Do(func() {
-		_, ch, _ := bus.Subscribe()
+		_, ch, unsub := bus.Subscribe()
+		s.invalidatorStop = unsub
 		go func() {
 			for ev := range ch {
 				switch ev.Type {
@@ -93,4 +94,13 @@ func (s *ServiceImpl) startStateInvalidator(bus *events.Bus) {
 			}
 		}()
 	})
+}
+
+// Close снимает подписку инвалидатора с шины (unsubscribe закрывает канал,
+// горутина выходит). Прод зовёт из shutdown-хука, тесты — из t.Cleanup.
+func (s *ServiceImpl) Close() {
+	s.invalidatorOnce.Do(func() {}) // happens-before с записью invalidatorStop
+	if s.invalidatorStop != nil {
+		s.invalidatorStop()
+	}
 }
