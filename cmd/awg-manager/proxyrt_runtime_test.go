@@ -72,6 +72,17 @@ func TestProxyRemoveRuntimeKillsSurvivor(t *testing.T) {
 		t.Skipf("sleep недоступен: %v", err)
 	}
 	t.Cleanup(func() { _ = child.Process.Kill(); _, _ = child.Process.Wait() })
+	// Сразу после Start /proc/<pid>/cmdline ещё пуст (замер: 274/300 на
+	// холостой машине), и fail-closed MatchesBinary объявит ребёнка чужим —
+	// RemoveRuntime, опознающий по /proc, его не тронет. Выживший в сценарии
+	// теста уже работает, поэтому ждём, пока /proc его покажет.
+	deadline := time.Now().Add(5 * time.Second)
+	for !childproc.MatchesBinary(child.Process.Pid, "sleep") {
+		if time.Now().After(deadline) {
+			t.Fatal("ребёнок так и не стал опознаваем по /proc")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	if err := os.WriteFile(p.pid, []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
 		t.Fatal(err)
 	}
