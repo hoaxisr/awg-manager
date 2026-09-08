@@ -77,3 +77,82 @@ func TestSIP_RegisterThenDigestRegister(t *testing.T) {
 		t.Fatal("response must be 32 hex")
 	}
 }
+
+func TestSIP_HeaderOrder(t *testing.T) {
+	pk, err := buildSIP(mrand.New(mrand.NewSource(11)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := func(p string) string {
+		var sb strings.Builder
+		for _, m := range tagRe.FindAllStringSubmatch(p, -1) {
+			switch m[1] {
+			case "b":
+				b, _ := hex.DecodeString(m[2][2:])
+				sb.Write(b)
+			case "rc":
+				n, _ := strconv.Atoi(m[2])
+				sb.WriteString(strings.Repeat("x", n))
+			}
+		}
+		return sb.String()
+	}
+	r1, r2 := render(pk.I1), render(pk.I2)
+
+	headerName := func(l string) string {
+		if i := strings.Index(l, ":"); i >= 0 {
+			return l[:i]
+		}
+		return l
+	}
+	names := func(s string) []string {
+		lines := strings.Split(s, "\r\n")
+		var out []string
+		// первая строка — request line, вторая — Via (обе не в списке заголовков ниже).
+		for _, l := range lines[2:] {
+			if l == "" {
+				continue
+			}
+			out = append(out, headerName(l))
+		}
+		return out
+	}
+
+	want := []string{"Via", "Max-Forwards", "From", "To", "Call-ID", "CSeq", "Contact",
+		"User-Agent", "Allow", "Supported", "Allow-Events", "Expires", "Content-Length"}
+	got1 := append([]string{"Via"}, names(r1)...)
+	if strings.Join(got1, ",") != strings.Join(want, ",") {
+		t.Fatalf("I1 header order = %v, want %v", got1, want)
+	}
+
+	got2 := append([]string{"Via"}, names(r2)...)
+	authIdx := -1
+	for i, n := range got2 {
+		if n == "Authorization" {
+			authIdx = i
+		}
+	}
+	cseqIdx := -1
+	for i, n := range got2 {
+		if n == "CSeq" {
+			cseqIdx = i
+		}
+	}
+	if authIdx == -1 || cseqIdx == -1 || authIdx != cseqIdx+1 {
+		t.Fatalf("I2 Authorization must follow CSeq immediately: %v", got2)
+	}
+
+	line := func(s, h string) string {
+		for _, l := range strings.Split(s, "\r\n") {
+			if strings.HasPrefix(l, h) {
+				return l
+			}
+		}
+		return ""
+	}
+	from := line(r1, "From:")
+	to := line(r1, "To:")
+	if i := strings.Index(from, ";tag="); i < 0 || from[:i] != "From: "+to[len("To: "):] {
+		t.Fatalf("To must equal From without ;tag=…: From=%q To=%q", from, to)
+	}
+}

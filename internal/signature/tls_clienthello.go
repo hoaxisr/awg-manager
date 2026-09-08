@@ -11,21 +11,28 @@ import (
 var greasePool = []uint16{0x0A0A, 0x1A1A, 0x2A2A, 0x3A3A, 0x4A4A, 0x5A5A, 0x6A6A, 0x7A7A,
 	0x8A8A, 0x9A9A, 0xAAAA, 0xBABA, 0xCACA, 0xDADA, 0xEAEA, 0xFAFA}
 var quicCipherSuites = []uint16{0x1301, 0x1302, 0x1303}
-var supportedGroups = []uint16{0x001D, 0x0017, 0x0018}
-var signatureAlgorithms = []uint16{0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601, 0x0807}
+var tlsSupportedGroups = []uint16{0x001D, 0x0017, 0x0018}
+var tlsSignatureAlgorithms = []uint16{0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601, 0x0807}
 
 const tlsPaddingTarget = 512
+
+// quicActiveConnectionIDLimit — значение active_connection_id_limit (§1.7.4).
+const quicActiveConnectionIDLimit = 8
 
 // buildClientHello собирает TLS 1.3 ClientHello для QUIC: 14 расширений в
 // порядке §1.7.2 (GREASE первым, вторичный GREASE предпоследним, padding
 // последним). Отступление от payloadGen: key_share x25519 — настоящий
 // публичный ключ crypto/ecdh, а не 32 случайных байта.
-func buildClientHello(r *mrand.Rand, host string, scid []byte) []byte {
+func buildClientHello(r *mrand.Rand, host string, scid []byte) ([]byte, error) {
 	i1 := r.Intn(len(greasePool))
 	// Вторичный GREASE обязан отличаться от первого (§1.7).
 	i2 := (i1 + 1 + r.Intn(len(greasePool)-1)) % len(greasePool)
 	grease1, grease2 := greasePool[i1], greasePool[i2]
 
+	keyShare, err := keyShareData(grease1)
+	if err != nil {
+		return nil, err
+	}
 	exts := [][]byte{
 		tlsExt(grease1, nil),
 		tlsExt(0x0000, sniData(host)),
@@ -35,7 +42,7 @@ func buildClientHello(r *mrand.Rand, host string, scid []byte) []byte {
 		tlsExt(0x000D, signatureAlgorithmsData()),
 		tlsExt(0x0012, nil),
 		tlsExt(0x002B, supportedVersionsData(grease1)),
-		tlsExt(0x0033, keyShareData(grease1)),
+		tlsExt(0x0033, keyShare),
 		tlsExt(0x002D, []byte{0x01, 0x01}),
 		tlsExt(0x0039, quicTransportParams(scid)),
 		tlsExt(0x001B, []byte{0x02, 0x00, 0x02}),
@@ -68,7 +75,7 @@ func buildClientHello(r *mrand.Rand, host string, scid []byte) []byte {
 	ch.u8(0x01)
 	ch.u24(len(body.bytes()))
 	ch.raw(body.bytes())
-	return ch.bytes()
+	return ch.bytes(), nil
 }
 
 // tlsExt — u16(type) u16(len) data.
@@ -91,9 +98,9 @@ func sniData(host string) []byte {
 
 func supportedGroupsData(grease uint16) []byte {
 	w := &wire{}
-	w.u16(2 * (1 + len(supportedGroups)))
+	w.u16(2 * (1 + len(tlsSupportedGroups)))
 	w.u16(int(grease))
-	for _, g := range supportedGroups {
+	for _, g := range tlsSupportedGroups {
 		w.u16(int(g))
 	}
 	return w.bytes()
@@ -101,8 +108,8 @@ func supportedGroupsData(grease uint16) []byte {
 
 func signatureAlgorithmsData() []byte {
 	w := &wire{}
-	w.u16(2 * len(signatureAlgorithms))
-	for _, a := range signatureAlgorithms {
+	w.u16(2 * len(tlsSignatureAlgorithms))
+	for _, a := range tlsSignatureAlgorithms {
 		w.u16(int(a))
 	}
 	return w.bytes()
@@ -116,10 +123,10 @@ func supportedVersionsData(grease uint16) []byte {
 	return w.bytes()
 }
 
-func keyShareData(grease uint16) []byte {
+func keyShareData(grease uint16) ([]byte, error) {
 	priv, err := ecdh.X25519().GenerateKey(crand.Reader)
 	if err != nil {
-		panic(err) // сбой crypto/rand невосстановим, как в randBytes
+		return nil, err
 	}
 	entries := &wire{}
 	entries.u16(int(grease))
@@ -133,7 +140,7 @@ func keyShareData(grease uint16) []byte {
 	w := &wire{}
 	w.u16(len(entries.bytes()))
 	w.raw(entries.bytes())
-	return w.bytes()
+	return w.bytes(), nil
 }
 
 // quicTransportParams — расширение 0x0039, порядок и значения §1.7.4.
@@ -159,8 +166,8 @@ func quicTransportParams(scid []byte) []byte {
 	w.varint(0x0c) // disable_active_migration — значение пустое
 	w.varint(0)
 	w.varint(0x0e) // active_connection_id_limit
-	w.varint(1)
-	w.varint(8)
+	w.varint(1)    // длина значения — 1 байт (варинт ≤ 63)
+	w.varint(quicActiveConnectionIDLimit)
 	w.varint(0x0f) // initial_source_connection_id
 	w.varint(uint64(len(scid)))
 	w.raw(scid)

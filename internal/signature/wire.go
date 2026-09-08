@@ -4,6 +4,7 @@ import (
 	crand "crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	mrand "math/rand"
 )
 
 // wire — big-endian байтовый буфер для сборки пакетов.
@@ -54,4 +55,14 @@ func randBytes(n int) []byte {
 		panic(err)
 	}
 	return b
+}
+
+// randHex — n случайных байт из инжектированного *mrand.Rand в hex; для
+// текстовых полей, которые обязаны быть seed-детерминированными (в отличие
+// от randBytes/crypto/rand, зарезервированного для ключевого материала QUIC
+// и DCID/SCID/PN).
+func randHex(r *mrand.Rand, n int) string {
+	b := make([]byte, n)
+	_, _ = r.Read(b) // math/rand: always fills, never errors
+	return hex.EncodeToString(b)
 }

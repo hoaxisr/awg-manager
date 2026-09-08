@@ -58,8 +58,8 @@ func buildSIP(r *mrand.Rand) (GeneratedPackets, error) {
 	localPort := strconv.Itoa(sipLocalPorts[r.Intn(len(sipLocalPorts))])
 	fromUser := sipUserPart(r)
 	display := sipDisplayNames[r.Intn(len(sipDisplayNames))]
-	tag := hex.EncodeToString(randBytes(6))
-	callID := hex.EncodeToString(randBytes(12)) + "@" + host
+	tag := randHex(r, 6)                  // From tag: 12 hex
+	callID := randHex(r, 12) + "@" + host // Call-ID: 24 hex@host
 	userAgent := sipUserAgents[r.Intn(len(sipUserAgents))]
 	allow := sipAllowHeaders[r.Intn(len(sipAllowHeaders))]
 	supported := sipSupportedHeaders[r.Intn(len(sipSupportedHeaders))]
@@ -74,8 +74,9 @@ func buildSIP(r *mrand.Rand) (GeneratedPackets, error) {
 	head := "REGISTER sip:" + host + " SIP/2.0\r\n" +
 		"Via: SIP/2.0/UDP " + localIP + ":" + localPort + ";branch=z9hG4bK"
 
-	// tail — всё после branch; порядок заголовков §5.2, Authorization сразу за CSeq.
-	tail := func(cseqNum int, auth string) string {
+	// afterBranch — всё после branch (начинается с ;rport); порядок заголовков
+	// §5.2, Authorization сразу за CSeq.
+	afterBranch := func(cseqNum int, auth string) string {
 		lines := []string{
 			"Max-Forwards: 70",
 			"From: " + addr + ";tag=" + tag,
@@ -100,7 +101,7 @@ func buildSIP(r *mrand.Rand) (GeneratedPackets, error) {
 	}
 
 	packet := func(cseqNum int, auth string) string {
-		return tokB([]byte(head)) + "<rc 18>" + tokB([]byte(tail(cseqNum, auth)))
+		return tokB([]byte(head)) + "<rc 18>" + tokB([]byte(afterBranch(cseqNum, auth)))
 	}
 
 	return GeneratedPackets{
@@ -113,8 +114,8 @@ func buildSIP(r *mrand.Rand) (GeneratedPackets, error) {
 // уходит: он нужен только чтобы response выглядел как настоящий MD5.
 func sipAuthorization(r *mrand.Rand, user, host string) string {
 	password := randomLetters(r, 12)
-	nonce := hex.EncodeToString(randBytes(16))
-	cnonce := hex.EncodeToString(randBytes(8))
+	nonce := randHex(r, 16) // nonce: 32 hex
+	cnonce := randHex(r, 8) // cnonce: 16 hex
 	uri := "sip:" + host
 	ha1 := md5Hex(user + ":" + host + ":" + password)
 	ha2 := md5Hex("REGISTER:" + uri)

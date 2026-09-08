@@ -10,6 +10,14 @@ func init() { builders["dtls"] = buildDTLS }
 // dtlsCipherSuites — §4.3, порядок дословный.
 var dtlsCipherSuites = []uint16{0xC02B, 0xC02F, 0xCCA9, 0xC02C, 0x009C, 0x009D}
 
+// Смещения тела ClientHello (client_version 2 байта + random 32 байта, затем
+// 1 байт длины session_id + сам session_id 32 байта) — для подстановки
+// рантайм-токенов вместо нулевых заглушек, см. buildDTLS.
+const (
+	dtlsRandomEnd    = 2 + 32
+	dtlsSessionIDEnd = dtlsRandomEnd + 1 + 32
+)
+
 // buildDTLS — DTLS 1.2 ClientHello (WebRTC, §4). Тело собирается целиком, чтобы
 // длины (record, handshake, fragment) считались по настоящему размеру, и лишь
 // потом random и session_id подменяются рантайм-токенами: random = <t> (4 байта
@@ -48,16 +56,17 @@ func buildDTLS(r *mrand.Rand) (GeneratedPackets, error) {
 	head.u24(len(b))          // fragment_length = вся длина
 	head.raw(b[:2])           // client_version
 
-	// b[2:34] — random, b[34] — длина session_id, b[35:67] — session_id.
-	i1 := tokB(head.bytes()) + "<t><r 28>" + tokB(b[34:35]) + "<r 32>" + tokB(b[67:])
+	// b[2:dtlsRandomEnd] — random, b[dtlsRandomEnd] — длина session_id,
+	// b[dtlsRandomEnd+1:dtlsSessionIDEnd] — session_id.
+	i1 := tokB(head.bytes()) + "<t><r 28>" + tokB(b[dtlsRandomEnd:dtlsRandomEnd+1]) + "<r 32>" + tokB(b[dtlsSessionIDEnd:])
 	return GeneratedPackets{I1: i1}, nil
 }
 
 // dtlsExtensions — §4.4, порядок дословный. GREASE в DTLS нет.
 func dtlsExtensions(host string) []byte {
 	groups := &wire{}
-	groups.u16(2 * len(supportedGroups))
-	for _, g := range supportedGroups {
+	groups.u16(2 * len(tlsSupportedGroups))
+	for _, g := range tlsSupportedGroups {
 		groups.u16(int(g))
 	}
 

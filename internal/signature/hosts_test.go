@@ -2,8 +2,17 @@ package signature
 
 import (
 	mrand "math/rand"
+	"net"
 	"testing"
 )
+
+func TestHostPool_NoIPLiterals(t *testing.T) {
+	for _, h := range hostPool {
+		if net.ParseIP(h) != nil {
+			t.Fatalf("host pool must not contain IP literals: %q", h)
+		}
+	}
+}
 
 func TestPickHost_FromPoolAndWeightedToHead(t *testing.T) {
 	r := mrand.New(mrand.NewSource(1))
