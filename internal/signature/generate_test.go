@@ -68,3 +68,26 @@ func TestTokB(t *testing.T) {
 		t.Fatalf("tokB = %q", got)
 	}
 }
+
+func TestGenerate_AllProfilesWithinLimitAndGrammar(t *testing.T) {
+	for _, p := range Profiles {
+		res, err := Generate(p)
+		if err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		if res.Profile != p || res.ByteSize != TotalByteSize(res.Packets) || res.ByteSize > MaxSignatureBytes {
+			t.Fatalf("%s: %+v", p, res)
+		}
+		for _, pk := range []string{res.Packets.I1, res.Packets.I2, res.Packets.I3, res.Packets.I4, res.Packets.I5} {
+			if pk != "" {
+				assertAllowedTokens(t, pk)
+			}
+		}
+		if res.Packets.I1 == "" {
+			t.Fatalf("%s: empty I1", p)
+		}
+		if p != "sip" && res.Packets.I2 != "" {
+			t.Fatalf("%s: only SIP uses I2", p)
+		}
+	}
+}
