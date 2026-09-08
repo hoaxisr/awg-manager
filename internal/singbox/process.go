@@ -99,6 +99,8 @@ type Process struct {
 	// startMu); no other goroutine touches these fields.
 	tailCancel context.CancelFunc
 	tailDone   chan struct{}
+	// monWG считает живые exit-мониторы спавненных поколений; Close ждёт их.
+	monWG sync.WaitGroup
 
 	// attached is true when the CURRENT generation's tails were raised by
 	// AttachIfRunning (adopting a live sing-box from a previous awgm
@@ -209,10 +211,7 @@ func (p *Process) startLocked() (spawned bool, err error) {
 	// losing at most the dead generation's final drain cycle — in
 	// exchange for correct attribution (no bytes of the new generation
 	// can ever reach the old generation's tail).
-	if p.tailCancel != nil {
-		p.tailCancel()
-		<-p.tailDone
-	}
+	p.joinTailsLocked()
 	// Whatever generation held tailCancel/tailDone above (adopted or
 	// spawned) is being superseded by this fresh spawn.
 	p.attached = false
@@ -251,7 +250,7 @@ func (p *Process) startLocked() (spawned bool, err error) {
 	_ = errF.Close()
 
 	// Fresh spawn: tail from the start of the (just-truncated) log files.
-	tailCancel := p.startTails(false)
+	tailCtx, tailCancel := p.startTails(false)
 
 	if err := p.writePID(cmd.Process.Pid); err != nil {
 		_ = syscall.Kill(cmd.Process.Pid, syscall.SIGTERM)
@@ -289,14 +288,18 @@ func (p *Process) startLocked() (spawned bool, err error) {
 		// before they stop; the returned error already carries the tail
 		// read directly from disk above, so this does not block the
 		// caller.
+		p.monWG.Add(1)
 		go func() {
-			time.Sleep(2 * procLogTailPoll)
+			defer p.monWG.Done()
+			drainTails(tailCtx)
 			tailCancel()
 		}()
 		return true, fmt.Errorf("sing-box exited during startup: %s", safeMsg)
 	case <-time.After(startupGracePeriod):
 		myPid := cmd.Process.Pid
+		p.monWG.Add(1)
 		go func() {
+			defer p.monWG.Done()
 			waitErr := <-errCh
 			// Читаем флаг СВОЕЙ генерации: stopLocked взводит его до
 			// сигнала, а генерация следующего Start — отдельный объект,
@@ -318,7 +321,7 @@ func (p *Process) startLocked() (spawned bool, err error) {
 			p.setLastStderr(safeTail)
 			// Give the tail goroutines one poll cycle to catch the
 			// process's last lines before cancelling them.
-			time.Sleep(2 * procLogTailPoll)
+			drainTails(tailCtx)
 			tailCancel()
 			if p.OnExit != nil {
 				p.OnExit(waitErr, safeTail, deliberate)
@@ -413,7 +416,7 @@ func (p *Process) effectiveLogDir() string {
 // fromEnd=true — адопция (не реиграть историю). done закрывается только
 // когда ОБЕ tail-горутины вернулись (WaitGroup), так что join в
 // startLocked не может проскочить, пока одна из них ещё дочитывает файл.
-func (p *Process) startTails(fromEnd bool) context.CancelFunc {
+func (p *Process) startTails(fromEnd bool) (context.Context, context.CancelFunc) {
 	logDir := p.effectiveLogDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -441,7 +444,28 @@ func (p *Process) startTails(fromEnd bool) context.CancelFunc {
 	}()
 	p.tailCancel = cancel
 	p.tailDone = done
-	return cancel
+	return ctx, cancel
+}
+
+// drainTails — пауза перед отменой tail'ов после смерти процесса, чтобы они
+// дочитали предсмертные строки. Обрывается, если tail'ы уже сняты (Close или
+// join следующего поколения): ждать больше нечего.
+func drainTails(tailCtx context.Context) {
+	select {
+	case <-time.After(2 * procLogTailPoll):
+	case <-tailCtx.Done():
+	}
+}
+
+// joinTailsLocked снимает tail-горутины текущего поколения и ждёт их; поля
+// обнуляются — поколение закрыто. Только под startMu.
+func (p *Process) joinTailsLocked() {
+	if p.tailCancel == nil {
+		return
+	}
+	p.tailCancel()
+	<-p.tailDone
+	p.tailCancel, p.tailDone = nil, nil
 }
 
 func singboxRuntimeEnv(base []string) []string {
@@ -487,6 +511,19 @@ func (p *Process) Stop() error {
 	p.startMu.Lock()
 	defer p.startMu.Unlock()
 	return p.stopLocked()
+}
+
+// Close снимает tail-горутины текущего поколения и ждёт exit-мониторы
+// спавненных поколений. Сам процесс не трогает — это teardown владельца
+// (тесты зовут в t.Cleanup), а не Stop: монитор живого процесса вернётся
+// только с его смертью. Без Close tail'ы переживают тест и читают чужое
+// состояние (race-job CI 07.09, F127). monWG ждём вне startMu: монитор
+// зовёт OnExit, которому startMu может понадобиться.
+func (p *Process) Close() {
+	p.startMu.Lock()
+	p.joinTailsLocked()
+	p.startMu.Unlock()
+	p.monWG.Wait()
 }
 
 // stopLocked is the lock-free body of Stop. Must be called with startMu held.

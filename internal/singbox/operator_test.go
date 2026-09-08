@@ -602,6 +602,7 @@ func TestOperatorApplyLogLevel_UsesOrchestratorSlotBase(t *testing.T) {
 	dir := t.TempDir()
 	op := NewOperator(OperatorDeps{Dir: dir})
 	orch := singboxorch.NewWithAppliedPath(op.ConfigDir(), op.Process(), filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	for _, meta := range singboxorch.KnownSlots() {
 		if meta.Slot == singboxorch.SlotBase {
 			if err := orch.Register(meta); err != nil {
@@ -1635,6 +1636,7 @@ func TestListTunnels_Running_NDMSDisabled_UsesClash(t *testing.T) {
 			op.configPath = configDir
 			op.pidPath = pidPath
 			op.proc = NewProcess(op.binary, configDir, pidPath)
+			t.Cleanup(op.proc.Close)
 			// The pid file holds the test process's own PID to fake "running";
 			// bypass the /proc cmdline identity check which would reject it.
 			op.proc.matchBinaryFn = func(int) bool { return true }
@@ -1744,7 +1746,9 @@ func newOperatorForTest(t *testing.T, opts ...operatorOpt) *Operator {
 	for _, o := range opts {
 		o(&d)
 	}
-	return NewOperator(d)
+	op := NewOperator(d)
+	t.Cleanup(op.Process().Close)
+	return op
 }
 
 // TestNextFreeListenPortSlot covers the NDMS-free slot allocator used by

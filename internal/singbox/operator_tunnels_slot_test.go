@@ -47,7 +47,9 @@ func newOrchedOperatorWithDeps(t *testing.T, deps OperatorDeps) *Operator {
 		deps.Binary = fakeBinary(t, deps.Dir)
 	}
 	op := NewOperator(deps)
+	t.Cleanup(op.Process().Close)
 	orch := singboxorch.NewWithAppliedPath(op.ConfigDir(), op.Process(), filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	for _, meta := range singboxorch.KnownSlots() {
 		switch meta.Slot {
 		case singboxorch.SlotBase, singboxorch.SlotTunnels, singboxorch.SlotRouter:

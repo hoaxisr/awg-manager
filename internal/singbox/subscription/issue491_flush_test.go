@@ -55,6 +55,7 @@ func newIssue491Harness(t *testing.T) (*OperatorAdapter, *issue491Validator) {
 	t.Helper()
 	dir := t.TempDir()
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	// Соседний слот, чтобы merged-снапшот отличался от standalone (2 файла vs 1).
 	if err := orch.Register(orchestrator.SlotMeta{Slot: orchestrator.SlotRouter, Filename: "20-router.json"}); err != nil {
 		t.Fatal(err)

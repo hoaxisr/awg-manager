@@ -16,7 +16,9 @@ import (
 func (o *Orchestrator) ReloadNow() error {
 	o.mu.Lock()
 	if o.reloadTimer != nil {
-		o.reloadTimer.Stop()
+		if o.reloadTimer.Stop() {
+			o.timerWG.Done()
+		}
 		o.reloadTimer = nil
 	}
 	// Явное применение накрывает и то, что подавил hold, — иначе release
@@ -34,11 +36,23 @@ func (o *Orchestrator) scheduleReload() {
 		o.pendingReload = true
 		return
 	}
+	if o.closed {
+		return // владелец ушёл — новых таймеров не взводим (Add после Wait = паника)
+	}
 	if o.reloadTimer != nil {
+		if !o.reloadTimer.Stop() {
+			// Таймер уже выстрелил, callback ждёт mu и увидит эту запись —
+			// Reset дал бы ему второй, лишний прогон. Забываем таймер: callback
+			// и сам обнулит его, а следующий scheduleReload взведёт новый.
+			o.reloadTimer = nil
+			return
+		}
 		o.reloadTimer.Reset(reloadDebounce)
 		return
 	}
+	o.timerWG.Add(1)
 	o.reloadTimer = time.AfterFunc(reloadDebounce, func() {
+		defer o.timerWG.Done()
 		// Решение про hold принимается ЗДЕСЬ, а не в HoldReloads: между
 		// срабатыванием таймера и взятием mu есть окно, в котором Stop() уже
 		// не отменяет запущенный callback. Проверяя hold внутри, мы закрываем
@@ -470,4 +484,22 @@ func (o *Orchestrator) userSlotHasMeaningfulContentLocked() bool {
 	return len(c.Inbounds) > 0 || len(c.Outbounds) > 0 ||
 		len(c.DNS.Servers) > 0 || len(c.DNS.Rules) > 0 ||
 		len(c.Route.Rules) > 0 || len(c.Route.RuleSet) > 0
+}
+
+// Close гасит невыстреливший debounce-таймер, дожидается уже запущенного
+// callback'а и запрещает взводить новые. Без него таймер переживает
+// владельца: в тестах — гонит Reload по удалённому TempDir под глобальным
+// heavyop и пишет в логгер завершённого теста (race-job CI 05.09 и 08.09).
+// Прод зовёт из shutdown-хука, тесты — из t.Cleanup.
+func (o *Orchestrator) Close() {
+	o.mu.Lock()
+	o.closed = true
+	if o.reloadTimer != nil {
+		if o.reloadTimer.Stop() {
+			o.timerWG.Done()
+		}
+		o.reloadTimer = nil
+	}
+	o.mu.Unlock()
+	o.timerWG.Wait()
 }

@@ -42,6 +42,7 @@ func newTestOperator(t *testing.T, persist func(bool) error) *Operator {
 		proc:              &Process{pidPath: pidPath},
 		persistManualStop: persist,
 	}
+	t.Cleanup(op.proc.Close)
 	return op
 }
 

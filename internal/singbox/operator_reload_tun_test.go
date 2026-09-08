@@ -23,6 +23,7 @@ func TestOperator_ReloadNeedsRestart_FollowsOrchestratorTun(t *testing.T) {
 	proc := &integrationProc{} // не запущен → Reload делает Start
 	orch := singboxorch.NewWithAppliedPath(op.ConfigDir(), proc,
 		filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	for _, meta := range singboxorch.KnownSlots() {
 		if meta.Slot == singboxorch.SlotBase || meta.Slot == singboxorch.SlotRouter {
 			if err := orch.Register(meta); err != nil {

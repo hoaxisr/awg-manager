@@ -93,6 +93,7 @@ func TestIssue287_ConcurrentCreate_DistinctListenPorts(t *testing.T) {
 func TestIssue287_AddInbound_RejectsDuplicateListenPort(t *testing.T) {
 	dir := t.TempDir()
 	orch := orchestrator.NewWithAppliedPath(dir, nil, filepath.Join(t.TempDir(), "singbox-applied.json"))
+	t.Cleanup(orch.Close)
 	if err := orch.Bootstrap(); err != nil {
 		t.Fatal(err)
 	}

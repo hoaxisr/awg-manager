@@ -171,6 +171,7 @@ func TestReload_DaemonRestartAdoptsRunningSingbox(t *testing.T) {
 	appliedStatePath = filepath.Join(t.TempDir(), "singbox-applied.json")
 
 	o1 := New(dir, fp)
+	t.Cleanup(o1.Close)
 	_ = o1.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
 	if err := o1.Bootstrap(); err != nil {
 		t.Fatal(err)
@@ -195,6 +196,7 @@ func TestReload_DaemonRestartAdoptsRunningSingbox(t *testing.T) {
 	// process restart) sing-box — seeded from the applied-state file o1
 	// left behind.
 	o2 := New(dir, fp)
+	t.Cleanup(o2.Close)
 	if !o2.CurrentHasTun() {
 		t.Fatal("constructor must seed prevHasTun=true from persisted applied state")
 	}

@@ -13,6 +13,7 @@ func setupOrch(t *testing.T) (*Orchestrator, string) {
 	t.Helper()
 	dir := t.TempDir()
 	o := New(dir, nil)
+	t.Cleanup(o.Close)
 	if err := o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -236,6 +237,7 @@ func (v *snapshotRecordingValidator) Validate(_ context.Context, dir string) err
 func TestApplyDraft_DisabledTargetIncludedInSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	o := New(dir, nil)
+	t.Cleanup(o.Close)
 	if err := o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"}); err != nil {
 		t.Fatalf("register: %v", err)
 	}

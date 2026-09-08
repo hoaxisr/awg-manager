@@ -156,6 +156,7 @@ func TestProcess_OnExitDoesNotClobberSuccessorPid(t *testing.T) {
 	}
 
 	p := NewProcess("/nonexistent", "/nonexistent.json", pidPath)
+	t.Cleanup(p.Close)
 	// Simulate the cleanup-on-exit logic with our own pid (different from successor).
 	myPid := 11111
 	p.cleanupPidIfOurs(myPid) // helper we'll add
@@ -195,6 +196,7 @@ func TestProcess_StartIsConcurrencySafe(t *testing.T) {
 	var spawnCount atomic.Int32
 
 	p := NewProcess("/bin/sleep", "/dev/null", filepath.Join(dir, "sing-box.pid"))
+	t.Cleanup(p.Close)
 	p.logDir = dir
 	p.startCmd = func(bin string, args ...string) (*exec.Cmd, error) {
 		spawnCount.Add(1)
@@ -239,6 +241,7 @@ func TestProcess_ReloadRestartsWhenTunPresent(t *testing.T) {
 	var sawSIGHUP, sawSIGTERM bool
 	var spawnCount atomic.Int32
 	p := NewProcess("/bin/sleep", "/dev/null", pidPath)
+	t.Cleanup(p.Close)
 	p.logDir = dir
 	p.signalFn = func(pid int, sig syscall.Signal) error {
 		switch sig {
@@ -281,6 +284,7 @@ func TestProcess_ReloadSIGHUPsWhenNoTun(t *testing.T) {
 	var sawSIGHUP bool
 	var spawnCount atomic.Int32
 	p := NewProcess("/bin/sleep", "/dev/null", pidPath)
+	t.Cleanup(p.Close)
 	p.logDir = dir
 	// The pidfile borrows the test's own pid to keep the process "alive" for
 	// the SIGHUP path; its cmdline is the test binary, not /bin/sleep, so the
@@ -321,6 +325,7 @@ func TestProcess_ReloadRespawnsWhenPidNotOurs(t *testing.T) {
 	}
 	var spawnCount atomic.Int32
 	p := NewProcess("/bin/sleep", "/dev/null", pidPath)
+	t.Cleanup(p.Close)
 	p.logDir = dir
 	p.matchBinaryFn = func(int) bool { return false } // foreign/recycled pid
 	p.signalFn = func(pid int, sig syscall.Signal) error { return nil }
@@ -357,6 +362,7 @@ func TestProcess_OnExitTailNotStolenBySuccessor(t *testing.T) {
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "sing-box.pid")
 	p := NewProcess("sing-box", "/dev/null", pidPath)
+	t.Cleanup(p.Close)
 	p.logDir = dir
 	p.startCmd = func(bin string, args ...string) (*exec.Cmd, error) {
 		// Sleeps past the 500ms grace period, then dies with a
@@ -416,6 +422,7 @@ func TestProcess_OnExitTailNotStolenBySuccessor(t *testing.T) {
 func TestProcess_RapidStopStartKeepsDeliberateFlag(t *testing.T) {
 	dir := t.TempDir()
 	p := NewProcess("/bin/sleep", "/dev/null", filepath.Join(dir, "sing-box.pid"))
+	t.Cleanup(p.Close)
 	p.logDir = dir
 	p.startCmd = func(bin string, args ...string) (*exec.Cmd, error) {
 		return exec.Command("/bin/sleep", "30"), nil
@@ -473,6 +480,7 @@ func TestProcess_RapidRestartNoCrossGenerationDelivery(t *testing.T) {
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "sing-box.pid")
 	p := NewProcess("/bin/sh", "/dev/null", pidPath)
+	t.Cleanup(p.Close)
 	p.logDir = dir
 
 	var mu sync.Mutex
@@ -530,6 +538,7 @@ func TestProcess_RapidRestartNoCrossGenerationDelivery(t *testing.T) {
 func TestProcess_AttachIfRunning(t *testing.T) {
 	dir := t.TempDir()
 	p := NewProcess("/bin/true", filepath.Join(dir, "cfg"), filepath.Join(dir, "sing-box.pid"))
+	t.Cleanup(p.Close)
 	p.logDir = dir
 	// Эмулируем «живой процесс»: pid-файл с нашим pid + identity-стаб.
 	if err := os.WriteFile(filepath.Join(dir, "sing-box.pid"), []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
@@ -591,6 +600,7 @@ func TestProcess_AttachThenStartSpawnedJoinsAdoptedTails(t *testing.T) {
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "sing-box.pid")
 	p := NewProcess("/bin/sh", "/dev/null", pidPath)
+	t.Cleanup(p.Close)
 	p.logDir = dir
 
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
@@ -700,6 +710,7 @@ func TestAttachIfRunning_KillsPositionalFdProcess(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 		p := NewProcess("/bin/sleep", "/dev/null", filepath.Join(dir, "sing-box.pid"))
+		t.Cleanup(p.Close)
 		p.logDir = dir
 		if err := p.writePID(cmd.Process.Pid); err != nil {
 			t.Fatal(err)

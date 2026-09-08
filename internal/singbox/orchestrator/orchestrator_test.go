@@ -18,6 +18,7 @@ func newTestOrch(t *testing.T) (*Orchestrator, string) {
 	t.Cleanup(func() { appliedStatePath = old })
 	dir := t.TempDir()
 	o := New(dir, nil) // nil ProcessController — Save/SetEnabled don't use it
+	t.Cleanup(o.Close)
 	return o, dir
 }
 
@@ -50,8 +51,77 @@ func TestNew_UsesDefaultAppliedStatePath(t *testing.T) {
 // the Start/Reload/Stop call the test asserts on.
 func newFakeOrch(t *testing.T, dir string, fp *fakeProc) *Orchestrator {
 	t.Helper()
+	old := appliedStatePath
 	appliedStatePath = filepath.Join(t.TempDir(), "singbox-applied.json")
-	return New(dir, fp)
+	t.Cleanup(func() { appliedStatePath = old })
+	o := New(dir, fp)
+	t.Cleanup(o.Close)
+	return o
+}
+
+// Close обязан снять невыстреливший debounce-таймер: иначе он стреляет после
+// конца теста и гонит Reload по чужому состоянию (race-job CI 08.09).
+func TestClose_StopsPendingTimer(t *testing.T) {
+	fp := &fakeProc{}
+	o := newFakeOrch(t, t.TempDir(), fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	o.Close()
+	time.Sleep(3 * reloadDebounce)
+	if got := fp.calls(); len(got) != 0 {
+		t.Fatalf("таймер выстрелил после Close: %v", got)
+	}
+}
+
+// Уже выстреливший callback Close отменить не может — значит обязан его
+// дождаться, иначе владелец уходит, а Reload ещё пишет в его логгер.
+func TestClose_WaitsForInflightCallback(t *testing.T) {
+	fp := &fakeProc{}
+	o := newFakeOrch(t, t.TempDir(), fp)
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	// Логгер — после Save/SetEnabled: блокирующий логгер должен ловить только
+	// callback таймера, а не синхронную строку из самого теста.
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	o.SetLogger(func(_, _ string) {
+		once.Do(func() { close(entered) })
+		<-release
+	})
+	<-entered // таймер выстрелил, callback стоит в логгере
+	closed := make(chan struct{})
+	go func() { o.Close(); close(closed) }()
+	select {
+	case <-closed:
+		t.Fatal("Close вернулся, пока callback ещё работает")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close не дождался callback")
+	}
+	if got := fp.calls(); !equalStrs(got, []string{"start"}) {
+		t.Fatalf("callback обязан был доработать до конца: %v", got)
+	}
 }
 
 func TestRegisterAndBootstrap(t *testing.T) {
