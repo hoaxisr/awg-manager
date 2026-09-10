@@ -2,6 +2,7 @@ package nwg
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -12,89 +13,84 @@ import (
 // прошивка знает только число. Все три пути в NDMS обязаны схлопывать его в
 // нижнюю границу — иначе keepalive либо теряется, либо валит операцию целиком.
 
-// Путь 1 — RCI-батч правки пира (замена конфига, правка карточки).
-func TestSyncPeer_KeepaliveRangeGoesToNDMSAsLowerBound(t *testing.T) {
-	cs := newCaptureServer(t)
-	op := newSyncTestOperator(t, cs.srv.URL)
+// keepaliveTable — значения, достижимые в записи туннеля, и то, что nwg обязан
+// положить в конфигурацию пира. Пустое ожидание означает «команду интервала
+// собирать не из чего»: keepalive, которого прошивке не отправить, не
+// подменяется ни дефолтом, ни нулём.
+//
+// Все значения достижимы: формат их принимает (config.ValidateKeepalive),
+// поэтому они попадают в запись импортом .conf, а всё, кроме "0-80", — ещё и
+// правкой карточки (её проверяет ValidateKeepaliveSubmitted).
+var keepaliveTable = []struct {
+	stored storage.Keepalive
+	want   int // 0 — команды интервала быть не должно
+}{
+	{"25", 25},
+	{"25-35", 25},
+	{" 25 - 35 ", 25},
+	{"0", 0},
+	{"0-80", 0},
+	{"", 0},
+}
 
-	stored := &storage.AWGTunnel{
-		NWGIndex: 5,
-		Peer: storage.AWGPeer{
-			PublicKey:           "newkey0000000000000000000000000000000000000=",
-			Endpoint:            "192.0.2.7:51820",
-			AllowedIPs:          []string{"0.0.0.0/0"},
-			PersistentKeepalive: "25-35",
-		},
+// assertKeepaliveInBatch проверяет команду интервала в отправленных телах.
+func assertKeepaliveInBatch(t *testing.T, bodies []string, want int) {
+	t.Helper()
+	joined := strings.Join(bodies, "\n")
+	if want == 0 {
+		if strings.Contains(joined, "keepalive-interval") {
+			t.Fatalf("keepalive породил команду интервала: %s", joined)
+		}
+		return
 	}
-	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
-		t.Fatalf("SyncPeer: %v", err)
-	}
-
-	joined := strings.Join(cs.bodies, "\n")
-	if !strings.Contains(joined, `"keepalive-interval":{"interval":25}`) {
-		t.Fatalf("нижняя граница диапазона не ушла в NDMS: %s", joined)
+	fragment := `"keepalive-interval":{"interval":` + strconv.Itoa(want) + `}`
+	if !strings.Contains(joined, fragment) {
+		t.Fatalf("в NDMS не ушёл %s: %s", fragment, joined)
 	}
 }
 
-// Выключенный keepalive команды не порождает. Команда пира в RCI
-// инкрементальная: отсутствие `keepalive-interval` означает «оставить в
-// прошивке прежнее значение», а не «выключить» — выключать нам нечем.
-func TestSyncPeer_KeepaliveZeroSendsNoIntervalCommand(t *testing.T) {
-	cs := newCaptureServer(t)
-	op := newSyncTestOperator(t, cs.srv.URL)
+// Путь 1 — RCI-батч правки пира (замена конфига, правка карточки).
+func TestSyncPeer_KeepaliveGoesToNDMSAsNumber(t *testing.T) {
+	for _, tc := range keepaliveTable {
+		t.Run(string(tc.stored), func(t *testing.T) {
+			cs := newCaptureServer(t)
+			op := newSyncTestOperator(t, cs.srv.URL)
 
-	stored := &storage.AWGTunnel{
-		NWGIndex: 5,
-		Peer: storage.AWGPeer{
-			PublicKey:           "newkey0000000000000000000000000000000000000=",
-			Endpoint:            "192.0.2.7:51820",
-			PersistentKeepalive: "0",
-		},
-	}
-	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
-		t.Fatalf("SyncPeer: %v", err)
-	}
-	if joined := strings.Join(cs.bodies, "\n"); strings.Contains(joined, "keepalive-interval") {
-		t.Fatalf("keepalive 0 породил команду интервала: %s", joined)
+			stored := &storage.AWGTunnel{
+				NWGIndex: 5,
+				Peer: storage.AWGPeer{
+					PublicKey:           "newkey0000000000000000000000000000000000000=",
+					Endpoint:            "192.0.2.7:51820",
+					AllowedIPs:          []string{"0.0.0.0/0"},
+					PersistentKeepalive: tc.stored,
+				},
+			}
+			if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+				t.Fatalf("SyncPeer: %v", err)
+			}
+			assertKeepaliveInBatch(t, cs.bodies, tc.want)
+		})
 	}
 }
 
 // Путь 2 — создание батчем (прошивки до 5.01.A.3).
-func TestCreateViaBatch_KeepaliveRangeGoesToNDMSAsLowerBound(t *testing.T) {
-	f := newFakeNDMS(t)
-	op := newCreateTestOperator(t, f)
+func TestCreateViaBatch_KeepaliveGoesToNDMSAsNumber(t *testing.T) {
+	for _, tc := range keepaliveTable {
+		t.Run(string(tc.stored), func(t *testing.T) {
+			f := newFakeNDMS(t)
+			op := newCreateTestOperator(t, f)
 
-	stored := testTunnel("a", "CH")
-	stored.Peer.PersistentKeepalive = "25-35"
-	if _, err := op.Create(context.Background(), stored); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+			stored := testTunnel("a", "CH")
+			stored.Peer.PersistentKeepalive = tc.stored
+			if _, err := op.Create(context.Background(), stored); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
 
-	f.mu.Lock()
-	joined := strings.Join(f.bodies, "\n")
-	f.mu.Unlock()
-	if !strings.Contains(joined, `"keepalive-interval":{"interval":25}`) {
-		t.Fatalf("нижняя граница диапазона не ушла в NDMS: %s", joined)
-	}
-}
-
-// Выключенный keepalive и здесь команды не порождает: батч создания собирает
-// того же пира той же командой, что SyncPeer.
-func TestCreateViaBatch_KeepaliveZeroSendsNoIntervalCommand(t *testing.T) {
-	f := newFakeNDMS(t)
-	op := newCreateTestOperator(t, f)
-
-	stored := testTunnel("a", "CH")
-	stored.Peer.PersistentKeepalive = "0"
-	if _, err := op.Create(context.Background(), stored); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-
-	f.mu.Lock()
-	joined := strings.Join(f.bodies, "\n")
-	f.mu.Unlock()
-	if strings.Contains(joined, "keepalive-interval") {
-		t.Fatalf("keepalive 0 породил команду интервала: %s", joined)
+			f.mu.Lock()
+			bodies := append([]string(nil), f.bodies...)
+			f.mu.Unlock()
+			assertKeepaliveInBatch(t, bodies, tc.want)
+		})
 	}
 }
 
@@ -118,18 +114,23 @@ func TestNDMSImportConf_KeepaliveRangeCollapsedToLowerBound(t *testing.T) {
 	}
 }
 
-// Fail-open запрещён: значение, которого прошивке не понять, не подменяется
-// выдуманным числом. Такой .conf NDMS отвергнет громко и целиком — это лучше
-// молча уехавшего keepalive 25 (свойство 3 плана).
+// Диапазон с нулевой нижней границей достижим: config.ValidateKeepalive его
+// принимает, поэтому он приезжает импортом .conf (ServiceImpl.Import keepalive
+// не проверяет, а config.Parse кладёт всё, что валидатор принял) и лежит в
+// записях, сохранённых до запрета на присланное значение.
 //
-// До записи туннеля значение доезжает импортом: ServiceImpl.Import keepalive
-// не валидирует, а config.Parse кладёт строку из файла как есть.
-func TestNDMSImportConf_UnreadableKeepaliveNotReplacedByDefault(t *testing.T) {
-	stored := importConfTunnel("70000")
-
-	conf, _ := ndmsImportConf(stored)
-	if got := confKeepalive(t, conf); got != "70000" {
-		t.Fatalf("нечитаемый keepalive подменён на %q:\n%s", got, conf)
+// В .conf такое уходить не должно ни в каком виде: строгий парсер NDMS
+// отвергает файл целиком, и туннель не создаётся вовсе. Проверяем свойство, а
+// не конкретное число: файл обязан нести keepalive, который прошивка примет.
+func TestNDMSImportConf_ZeroLowerBoundRangeNotInConf(t *testing.T) {
+	for _, ka := range []storage.Keepalive{"0-80", "0-0"} {
+		t.Run(string(ka), func(t *testing.T) {
+			conf, _ := ndmsImportConf(importConfTunnel(ka))
+			got := confKeepalive(t, conf)
+			if _, err := strconv.ParseUint(got, 10, 16); err != nil {
+				t.Fatalf("прошивка не примет PersistentKeepalive = %q:\n%s", got, conf)
+			}
+		})
 	}
 }
 

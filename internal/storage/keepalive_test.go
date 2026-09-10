@@ -20,8 +20,11 @@ func TestKeepaliveEffective(t *testing.T) {
 		{"0", 0, false},
 		{" 0 ", 0, false},
 		// Нижняя граница 0 — тот же выключенный keepalive, что и "0".
-		// ValidateKeepalive такое отвергает, но в записи оно ещё может лежать:
-		// keepalive не валидирует ни импорт, ни файлы прошлых версий.
+		// Значение достижимо: формат его проходит (ValidateKeepalive), и
+		// отвергает такое только ValidateKeepaliveSubmitted — то есть
+		// присланное карточкой. Импортом .conf оно приезжает в запись:
+		// ServiceImpl.Import keepalive не проверяет, а config.Parse кладёт
+		// всё, что валидатор формата принял.
 		{"0-80", 0, false},
 		// Вне u16: `awg setconf` и NDMS такое не примут, слать нечего.
 		{"65536", 0, false},

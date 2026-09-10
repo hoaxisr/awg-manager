@@ -70,12 +70,21 @@ func ndmsImportConf(stored *storage.AWGTunnel) (string, string) {
 	iface, note := splitSignatureTags(&stored.Interface)
 	safe.Interface = iface
 	// Тот же строгий парсер отвергает диапазон keepalive (AWG 3.0) вместе со
-	// всем импортом, поэтому в файл уходит его нижняя граница. Остальные
-	// значения не трогаем: пустое и "0" генератор разберёт сам, а нечитаемое
-	// дойдёт до NDMS и будет отвергнуто громко — это лучше, чем подменить его
-	// выдуманным дефолтом генератора.
-	if n, ok := stored.Peer.PersistentKeepalive.Effective(); ok && stored.Peer.PersistentKeepalive.IsRange() {
-		safe.Peer.PersistentKeepalive = storage.Keepalive(strconv.Itoa(n))
+	// всем импортом, поэтому диапазона в файле не остаётся ни в каком виде: с
+	// читаемой нижней границей уходит она, с нулевой ("0-80" — валидатор
+	// формата его принимает, и приезжает он импортом) поле стирается, и
+	// генератор подставляет DefaultPersistentKeepalive. Подмена видимая: 0
+	// означает выключенный keepalive, а выключенным генератор его записать не
+	// умеет — это отдельная задача владельца, и отказать здесь нельзя, иначе
+	// туннель не создастся вовсе.
+	//
+	// Одиночные значения не трогаем: всё, что доезжает до записи, прошивка
+	// принимает как есть.
+	if k := stored.Peer.PersistentKeepalive; k.IsRange() {
+		safe.Peer.PersistentKeepalive = ""
+		if n, ok := k.Effective(); ok {
+			safe.Peer.PersistentKeepalive = storage.Keepalive(strconv.Itoa(n))
+		}
 	}
 	return config.GenerateForExport(&safe), note
 }
