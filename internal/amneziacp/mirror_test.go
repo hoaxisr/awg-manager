@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 )
 
@@ -42,9 +43,10 @@ func newFakeClock() *fakeClock {
 
 func TestParseMirrorTo(t *testing.T) {
 	cases := []struct {
-		name string
-		html string
-		want string
+		name    string
+		html    string
+		want    string
+		wantErr error // причина отказа; nil — случай положительный
 	}{
 		{
 			name: "порядок name→data-link",
@@ -72,8 +74,8 @@ func TestParseMirrorTo(t *testing.T) {
 			want: fixtureOriginB,
 		},
 		{
-			name: "хвостовой слэш срезается",
-			html: mirrorPage(fixtureOriginA + "/"),
+			name: "хвостовые слэши отбрасываются",
+			html: mirrorPage(fixtureOriginA + "//"),
 			want: fixtureOriginA,
 		},
 		{
@@ -82,29 +84,80 @@ func TestParseMirrorTo(t *testing.T) {
 			want: fixtureOriginC,
 		},
 		{
+			name: "верхний регистр схемы приводится к нижнему",
+			html: mirrorPage("HTTPS://k7m2q9.example.test"),
+			want: fixtureOriginA,
+		},
+		{
+			name: "порт сохраняется",
+			html: mirrorPage(fixtureOriginB + ":8443"),
+			want: fixtureOriginB + ":8443",
+		},
+		{
 			name: "нужный meta не первый",
 			html: `<meta name="viewport" content="width=device-width"><meta name="mirror-to" data-link="` + fixtureOriginA + `">`,
 			want: fixtureOriginA,
 		},
-		{name: "тега нет вовсе", html: `<html><head><title>cp</title></head></html>`},
-		{name: "meta есть, data-link нет", html: `<meta name="mirror-to" content="` + fixtureOriginA + `">`},
-		{name: "пустой data-link", html: mirrorPage("")},
-		{name: "http вместо https", html: mirrorPage("http://k7m2q9.example.test")},
-		{name: "https без хоста", html: mirrorPage("https://")},
-		{name: "относительный адрес", html: mirrorPage("/cp/ru")},
-		{name: "адрес без схемы", html: mirrorPage("k7m2q9.example.test")},
-		{name: "пустой документ", html: ""},
+		{
+			// Пробелы вокруг значения name подрезаются — иначе такой тег
+			// проехал бы мимо и страница считалась бы без мета-тега.
+			name: "пробелы вокруг значения name",
+			html: `<meta name=" mirror-to " data-link="` + fixtureOriginC + `">`,
+			want: fixtureOriginC,
+		},
+		{
+			// Дубль атрибута: как в HTML-парсере браузера, выигрывает первый.
+			name: "дубль data-link — берётся первый",
+			html: `<meta name="mirror-to" data-link="` + fixtureOriginA + `" data-link="` + fixtureOriginB + `">`,
+			want: fixtureOriginA,
+		},
+		{
+			// Два подходящих тега: берётся первый, а не последний.
+			name: "два тега mirror-to — берётся первый",
+			html: `<meta name="mirror-to" data-link="` + fixtureOriginA + `"><meta name="mirror-to" data-link="` + fixtureOriginB + `">`,
+			want: fixtureOriginA,
+		},
+		{name: "тега нет вовсе", html: `<html><head><title>cp</title></head></html>`, wantErr: ErrNoMirrorTag},
+		{name: "пустой документ", html: "", wantErr: ErrNoMirrorTag},
+		{name: "meta есть, data-link нет", html: `<meta name="mirror-to" content="` + fixtureOriginA + `">`, wantErr: ErrBadMirrorLink},
+		{name: "пустой data-link", html: mirrorPage(""), wantErr: ErrBadMirrorLink},
+		{name: "http вместо https", html: mirrorPage("http://k7m2q9.example.test"), wantErr: ErrBadMirrorLink},
+		{name: "https без хоста", html: mirrorPage("https://"), wantErr: ErrBadMirrorLink},
+		{name: "относительный адрес", html: mirrorPage("/cp/ru"), wantErr: ErrBadMirrorLink},
+		{name: "адрес без схемы", html: mirrorPage("k7m2q9.example.test"), wantErr: ErrBadMirrorLink},
+		// Origin по RFC 6454 — только схема, хост и порт: всё остальное
+		// в data-link отвергается, а не отбрасывается молча.
+		{name: "путь", html: mirrorPage(fixtureOriginA + "/cp"), wantErr: ErrBadMirrorLink},
+		{name: "запрос", html: mirrorPage(fixtureOriginA + "/cp?m-path=/ru/"), wantErr: ErrBadMirrorLink},
+		{name: "пустой запрос", html: mirrorPage(fixtureOriginA + "?"), wantErr: ErrBadMirrorLink},
+		{name: "фрагмент", html: mirrorPage(fixtureOriginA + "#top"), wantErr: ErrBadMirrorLink},
+		{name: "userinfo", html: mirrorPage("https://u:p@k7m2q9.example.test"), wantErr: ErrBadMirrorLink},
+		{name: "адрес не разбирается", html: mirrorPage("https://[::1"), wantErr: ErrBadMirrorLink},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := ParseMirrorTo([]byte(tc.html))
-			if tc.want == "" {
+			if tc.wantErr != nil {
 				if err == nil {
 					t.Fatalf("ожидалась ошибка, получен origin %q", got)
 				}
 				if got != "" {
 					t.Fatalf("при ошибке origin обязан быть пустым, получен %q", got)
+				}
+				// Причина обязана быть различима сентинелом: вызывающий вне
+				// пакета отличает «тега нет» от «ссылка непригодна» типом.
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("причина отказа %v, ожидалась %v", err, tc.wantErr)
+				}
+				// И различима между собой: один сентинел под двумя именами
+				// проверку на присутствие переживает, а вызывающего не спасает.
+				other := ErrNoMirrorTag
+				if errors.Is(tc.wantErr, ErrNoMirrorTag) {
+					other = ErrBadMirrorLink
+				}
+				if errors.Is(err, other) {
+					t.Fatalf("причина совпала и с %v, и с %v: %v", tc.wantErr, other, err)
 				}
 				return
 			}
@@ -237,6 +290,33 @@ type recordingBody struct {
 	closed *atomic.Bool
 }
 
+// hugeBody отдаёт заданное число байт и считает отданные. Нужен потому, что
+// снятие io.LimitReader по возвращённой ошибке неотличимо: проверка длины
+// поймает и тело, прочитанное целиком, — но память к тому моменту уже съедена.
+type hugeBody struct {
+	left   int
+	served *atomic.Int64
+	closed *atomic.Bool
+}
+
+func (b *hugeBody) Read(p []byte) (int, error) {
+	if b.left <= 0 {
+		return 0, io.EOF
+	}
+	n := min(len(p), b.left)
+	for i := range p[:n] {
+		p[i] = 'x'
+	}
+	b.left -= n
+	b.served.Add(int64(n))
+	return n, nil
+}
+
+func (b *hugeBody) Close() error {
+	b.closed.Store(true)
+	return nil
+}
+
 func (b *recordingBody) Read(p []byte) (int, error) {
 	b.reads.Add(1)
 	return b.r.Read(p)
@@ -247,12 +327,23 @@ func (b *recordingBody) Close() error {
 	return nil
 }
 
-type stubTransport struct {
-	fn func(*http.Request) *http.Response
-}
+// roundTripFunc — транспорт для стабов. Возвращает и ответ, и ошибку: стаб,
+// который умеет только ответ, не может вести себя как настоящий транспорт на
+// отменённом контексте и на разрыве соединения.
+type roundTripFunc func(*http.Request) (*http.Response, error)
 
-func (t stubTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	return t.fn(r), nil
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// okResponse — 200 с указанным телом; тело считает Read'ы и закрытие.
+func okResponse(r *http.Request, body string, reads *atomic.Int64, closed *atomic.Bool) *http.Response {
+	return &http.Response{
+		StatusCode:    http.StatusOK,
+		Status:        "200 OK",
+		Header:        make(http.Header),
+		ContentLength: int64(len(body)),
+		Body:          &recordingBody{r: strings.NewReader(body), reads: reads, closed: closed},
+		Request:       r,
+	}
 }
 
 func TestMirrorOriginChecksStatusBeforeReadingBody(t *testing.T) {
@@ -261,7 +352,7 @@ func TestMirrorOriginChecksStatusBeforeReadingBody(t *testing.T) {
 	// Тело валидное: реализация, которая сначала читает и парсит, а статус
 	// смотрит только «если ничего не нашлось», отдаст этот origin наружу.
 	body := mirrorPage(fixtureOriginA)
-	client := &http.Client{Transport: stubTransport{fn: func(r *http.Request) *http.Response {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode:    http.StatusServiceUnavailable,
 			Status:        "503 Service Unavailable",
@@ -273,8 +364,8 @@ func TestMirrorOriginChecksStatusBeforeReadingBody(t *testing.T) {
 				closed: &closed,
 			},
 			Request: r,
-		}
-	}}}
+		}, nil
+	})}
 
 	m := newMirrorWithClock(client, testTTL, newFakeClock().now)
 	got, err := m.Origin(context.Background(), "https://mirror-503.example.test/cp")
@@ -349,14 +440,20 @@ func TestMirrorOriginNoMetaTagIsError(t *testing.T) {
 
 func TestMirrorOriginRejectsEmptyMirrorURL(t *testing.T) {
 	var calls atomic.Int64
-	client := &http.Client{Transport: stubTransport{fn: func(r *http.Request) *http.Response {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		calls.Add(1)
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody, Request: r}
-	}}}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody, Request: r}, nil
+	})}
 
 	m := newMirrorWithClock(client, testTTL, newFakeClock().now)
-	if got, err := m.Origin(context.Background(), "   "); err == nil {
+	got, err := m.Origin(context.Background(), "   ")
+	if err == nil {
 		t.Fatalf("пустой адрес зеркала обязан быть ошибкой, получен origin %q", got)
+	}
+	// Ненастроенный адрес и молчащее зеркало — разные классы: первый значит
+	// «зайдите в настройки», второй — «повторите позже» с ре-резолвом.
+	if !errors.Is(err, ErrMirrorNotConfigured) {
+		t.Fatalf("ошибка не различима сентинелом ErrMirrorNotConfigured: %v", err)
 	}
 	if n := calls.Load(); n != 0 {
 		t.Fatalf("при пустом адресе зеркала сделано %d запросов", n)
@@ -388,11 +485,15 @@ func TestMirrorInvalidateDropsCache(t *testing.T) {
 // Invalidate зовём из хендлера сервера — он выполняется строго внутри резолва.
 func TestMirrorInvalidateDuringResolveIsNotCached(t *testing.T) {
 	var hits atomic.Int64
-	var m *Mirror
+	// Резолвер попадает в хендлер через канал, а не через переменную,
+	// которой присваивают уже после запуска сервера: связь «сначала
+	// присвоили, потом хендлер прочитал» держится каналом, а не тем, когда
+	// именно net/http вызовет хендлер.
+	ready := make(chan *Mirror, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := hits.Add(1)
 		if n == 1 {
-			m.Invalidate()
+			(<-ready).Invalidate()
 			_, _ = io.WriteString(w, mirrorPage(fixtureOriginA))
 			return
 		}
@@ -401,7 +502,8 @@ func TestMirrorInvalidateDuringResolveIsNotCached(t *testing.T) {
 	defer srv.Close()
 
 	clock := newFakeClock()
-	m = newMirrorWithClock(srv.Client(), testTTL, clock.now)
+	m := newMirrorWithClock(srv.Client(), testTTL, clock.now)
+	ready <- m
 
 	got, err := m.Origin(context.Background(), srv.URL)
 	if err != nil {
@@ -424,15 +526,26 @@ func TestMirrorInvalidateDuringResolveIsNotCached(t *testing.T) {
 	}
 }
 
+// Что этот тест проверяет: отсутствие гонки под -race и то, что каждый
+// параллельный вызов получает корректный origin. Чего он НЕ проверяет и не
+// должен: единственности похода на промахе кэша. Одновременные промахи здесь
+// допустимы сознательно — резолв это GET статической страницы зеркала, чужую
+// квоту он не тратит, потребитель у резолвера один, и объединение
+// одновременных запросов было бы абстракцией без названной проблемы.
+// Счётчик походов зафиксирован рамками [1, число резолвящих горутин], чтобы
+// это решение было видно в тесте, а не подразумевалось.
 func TestMirrorOriginConcurrent(t *testing.T) {
+	var hits atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
 		_, _ = io.WriteString(w, mirrorPage(fixtureOriginA))
 	}))
 	defer srv.Close()
 
+	const goroutines, resolvers = 24, 20 // каждая шестая горутина инвалидирует
 	m := NewMirror(srv.Client(), testTTL)
 	var wg sync.WaitGroup
-	for i := range 24 {
+	for i := range goroutines {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -451,4 +564,250 @@ func TestMirrorOriginConcurrent(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+
+	if n := hits.Load(); n < 1 || n > resolvers {
+		t.Fatalf("походов к зеркалу %d, ожидались 1..%d", n, resolvers)
+	}
+}
+
+// Предел размера страницы — единственная защита от «зеркало ответило 200 и
+// отдало сотни мегабайт» на роутере со 128 МБ. Ровно на пределе страница
+// обязана разбираться, на байт больше — отказ; пара ловит и off-by-one.
+func TestMirrorOriginRejectsOversizedPage(t *testing.T) {
+	page := mirrorPage(fixtureOriginA)
+	if len(page) > maxMirrorHTML {
+		t.Fatalf("фикстура %d байт уже больше предела %d", len(page), maxMirrorHTML)
+	}
+	// Набивка — комментарий: она не может случайно стать вторым мета-тегом.
+	pad := func(total int) string {
+		filler := total - len(page) - len("<!---->")
+		return page + "<!--" + strings.Repeat("x", filler) + "-->"
+	}
+
+	cases := []struct {
+		name    string
+		size    int
+		wantErr bool
+	}{
+		{name: "ровно на пределе", size: maxMirrorHTML},
+		{name: "на байт больше предела", size: maxMirrorHTML + 1, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := pad(tc.size)
+			if len(body) != tc.size {
+				t.Fatalf("тело %d байт, ожидалось %d", len(body), tc.size)
+			}
+			var reads atomic.Int64
+			var closed atomic.Bool
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return okResponse(r, body, &reads, &closed), nil
+			})}
+
+			m := newMirrorWithClock(client, testTTL, newFakeClock().now)
+			got, err := m.Origin(context.Background(), "https://mirror-size.example.test/cp")
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("страница в %d байт обязана быть отвергнута, получен origin %q", tc.size, got)
+				}
+				if got != "" {
+					t.Fatalf("при превышении предела origin обязан быть пустым, получен %q", got)
+				}
+				if !errors.Is(err, ErrMirrorUnavailable) {
+					t.Fatalf("ошибка не различима сентинелом: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("страница ровно в предел обязана разбираться: %v", err)
+			}
+			if got != fixtureOriginA {
+				t.Fatalf("origin = %q, ожидался %q", got, fixtureOriginA)
+			}
+		})
+	}
+}
+
+// Предел обязан обрывать чтение, а не только отвергать результат: зеркало,
+// отдающее гигабайты, не должно доехать до памяти роутера целиком.
+func TestMirrorOriginStopsReadingAtLimit(t *testing.T) {
+	const bodySize = 8 * maxMirrorHTML
+	var served atomic.Int64
+	var closed atomic.Bool
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Status:        "200 OK",
+			Header:        make(http.Header),
+			ContentLength: bodySize,
+			Body:          &hugeBody{left: bodySize, served: &served, closed: &closed},
+			Request:       r,
+		}, nil
+	})}
+
+	m := newMirrorWithClock(client, testTTL, newFakeClock().now)
+	got, err := m.Origin(context.Background(), "https://mirror-huge.example.test/cp")
+	if err == nil {
+		t.Fatalf("страница в %d байт обязана быть отвергнута, получен origin %q", bodySize, got)
+	}
+	if !errors.Is(err, ErrMirrorUnavailable) {
+		t.Fatalf("ошибка не различима сентинелом: %v", err)
+	}
+	if n := served.Load(); n > maxMirrorHTML+1 {
+		t.Fatalf("прочитано %d байт при пределе %d: чтение не оборвано", n, maxMirrorHTML)
+	}
+	if !closed.Load() {
+		t.Fatal("тело ответа не закрыто")
+	}
+}
+
+// Причина отмены обязана доезжать до вызывающего типом: иначе «запрос
+// отменён» от «зеркало лежит» он отличит только разбором текста.
+func TestMirrorOriginPreservesCancellation(t *testing.T) {
+	var calls atomic.Int64
+	// Транспорт ведёт себя как настоящий: на отменённом контексте отдаёт
+	// ошибку контекста, а не ответ. Стаб, который r.Context() не смотрит,
+	// подмену %w на %v в обёртке поймать не может.
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		if err := r.Context().Err(); err != nil {
+			return nil, err
+		}
+		return okResponse(r, mirrorPage(fixtureOriginA), new(atomic.Int64), new(atomic.Bool)), nil
+	})}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	m := newMirrorWithClock(client, testTTL, newFakeClock().now)
+	got, err := m.Origin(ctx, "https://mirror-cancel.example.test/cp")
+	if err == nil {
+		t.Fatalf("отменённый контекст обязан быть ошибкой, получен origin %q", got)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("причина отмены потеряна при обёртке: %v", err)
+	}
+	if !errors.Is(err, ErrMirrorUnavailable) {
+		t.Fatalf("ошибка не различима сентинелом: %v", err)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("походов к транспорту %d, ожидался 1", n)
+	}
+}
+
+// Все пути отказа обязаны быть различимы сентинелом и не отдавать origin.
+// Таблица нужна потому, что снятие %w на непокрытом пути тесты переживало.
+func TestMirrorOriginFailurePathsAreDistinguishable(t *testing.T) {
+	page := mirrorPage(fixtureOriginA)
+
+	cases := []struct {
+		name      string
+		mirrorURL string
+		transport roundTripFunc
+		wantErr   error
+	}{
+		{
+			name:      "адрес зеркала не задан",
+			mirrorURL: "   ",
+			wantErr:   ErrMirrorNotConfigured,
+		},
+		{
+			name:      "непригодный адрес зеркала",
+			mirrorURL: "://зеркала-нет",
+			wantErr:   ErrMirrorUnavailable,
+		},
+		{
+			name:      "транспорт отказал",
+			mirrorURL: "https://mirror-dead.example.test/cp",
+			transport: func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("соединение разорвано")
+			},
+			wantErr: ErrMirrorUnavailable,
+		},
+		{
+			name:      "ответ не 200",
+			mirrorURL: "https://mirror-503.example.test/cp",
+			transport: func(r *http.Request) (*http.Response, error) {
+				resp := okResponse(r, page, new(atomic.Int64), new(atomic.Bool))
+				resp.StatusCode, resp.Status = http.StatusServiceUnavailable, "503 Service Unavailable"
+				return resp, nil
+			},
+			wantErr: ErrMirrorUnavailable,
+		},
+		{
+			name:      "тело не читается",
+			mirrorURL: "https://mirror-truncated.example.test/cp",
+			transport: func(r *http.Request) (*http.Response, error) {
+				resp := okResponse(r, page, new(atomic.Int64), new(atomic.Bool))
+				resp.Body = io.NopCloser(iotest.ErrReader(errors.New("соединение оборвалось на теле")))
+				return resp, nil
+			},
+			wantErr: ErrMirrorUnavailable,
+		},
+		{
+			name:      "страница без мета-тега",
+			mirrorURL: "https://mirror-nometa.example.test/cp",
+			transport: func(r *http.Request) (*http.Response, error) {
+				return okResponse(r, `<html><head><title>cp</title></head></html>`, new(atomic.Int64), new(atomic.Bool)), nil
+			},
+			wantErr: ErrNoMirrorTag,
+		},
+		{
+			name:      "мета-тег с непригодной ссылкой",
+			mirrorURL: "https://mirror-badlink.example.test/cp",
+			transport: func(r *http.Request) (*http.Response, error) {
+				return okResponse(r, mirrorPage("https://k7m2q9.example.test/cp?m-path=/ru/"), new(atomic.Int64), new(atomic.Bool)), nil
+			},
+			wantErr: ErrBadMirrorLink,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := tc.transport
+			if transport == nil {
+				transport = func(r *http.Request) (*http.Response, error) {
+					t.Fatalf("на этом пути запрос делать нельзя")
+					return nil, nil
+				}
+			}
+			m := newMirrorWithClock(&http.Client{Transport: transport}, testTTL, newFakeClock().now)
+			got, err := m.Origin(context.Background(), tc.mirrorURL)
+			if err == nil {
+				t.Fatalf("ожидалась ошибка, получен origin %q", got)
+			}
+			if got != "" {
+				t.Fatalf("при ошибке origin обязан быть пустым, получен %q", got)
+			}
+			if !errors.Is(err, ErrMirrorUnavailable) {
+				t.Fatalf("ошибка не различима общим сентинелом: %v", err)
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("причина отказа %v, ожидалась %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// Тело закрывается и на успешном пути: без этого соединение утекает на
+// каждом резолве, а не только на отказе.
+func TestMirrorOriginClosesBodyOnSuccess(t *testing.T) {
+	var reads atomic.Int64
+	var closed atomic.Bool
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return okResponse(r, mirrorPage(fixtureOriginA), &reads, &closed), nil
+	})}
+
+	m := newMirrorWithClock(client, testTTL, newFakeClock().now)
+	got, err := m.Origin(context.Background(), "https://mirror-ok.example.test/cp")
+	if err != nil {
+		t.Fatalf("резолв: %v", err)
+	}
+	if got != fixtureOriginA {
+		t.Fatalf("origin = %q, ожидался %q", got, fixtureOriginA)
+	}
+	if !closed.Load() {
+		t.Fatal("тело ответа не закрыто на успешном пути")
+	}
 }
