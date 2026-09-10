@@ -91,6 +91,26 @@ describe('editTunnelSchema persistentKeepalive', () => {
         expect(kaErr('70000')).toBeDefined();
         expect(kaErr('22-')).toBeDefined();
     });
+
+    // Ноль означает «keepalive выключен», диапазон — «случайное значение из
+    // отрезка»: вместе они противоречат друг другу. Бэкенд такое отвергает
+    // (config.ValidateKeepaliveSubmitted), и форма обязана сказать это в поле, а не
+    // после отправки.
+    it('отклоняет диапазон с нулевой нижней границей', () => {
+        expect(kaErr('0-80')).toBeDefined();
+        expect(kaErr('0-0')).toBeDefined();
+    });
+
+    // Отказ адресный: у AWG 3.0 device-параметров нулевая нижняя граница
+    // законна (ContentPaddingAddition = 0-64), и общий предикат u16-диапазона
+    // трогать нельзя.
+    it('не задевает device-параметры AWG 3.0', () => {
+        const res = editTunnelSchema.safeParse({
+            ...base('1.2.3.4:51820'),
+            contentPaddingAddition: '0-64',
+        });
+        expect(res.success).toBe(true);
+    });
 });
 
 // AWG 3.0 timing/padding params are u16_range_t: an int or "min-max" range,

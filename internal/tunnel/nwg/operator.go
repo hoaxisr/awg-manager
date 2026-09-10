@@ -286,7 +286,9 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 		peerCfg.AllowedIPv6 = []payloads.AllowedIP{{Address: "::", Mask: "0"}}
 	}
 	// NDMS принимает keepalive числом: диапазон AWG 3.0 схлопывается в нижнюю
-	// границу, выключенный и нечитаемый keepalive не отправляется вовсе.
+	// границу. На выключенный и нечитаемый keepalive команда не отправляется
+	// вовсе — поле пира в RCI инкрементальное, поэтому в прошивке останется
+	// прежнее значение интервала, а не «выключено».
 	if n, ok := stored.Peer.PersistentKeepalive.Effective(); ok {
 		peerCfg.KeepaliveInterval = n
 	}

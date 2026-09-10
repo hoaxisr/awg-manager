@@ -933,8 +933,12 @@ func TestTunnelUpdate_NativeWGAcceptsKeepaliveRange(t *testing.T) {
 	h.Update(rr, httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
 		strings.NewReader(`{"peer":{"publicKey":"pk","endpoint":"1.2.3.4:51820","persistentKeepalive":"25-35"}}`)))
 
-	if strings.Contains(rr.Body.String(), "INVALID_KEEPALIVE") {
-		t.Fatalf("диапазон отвергнут на nativewg: %.200s", rr.Body.String())
+	// stubTunnelSvc.Get отвечает ошибкой, поэтому даже принятая правка
+	// заканчивается 400 с UPDATE_FAILED из BuildTunnelResponse — уже ПОСЛЕ
+	// записи в стор. Код проверяем явно: «в теле нет INVALID_KEEPALIVE»
+	// читалось бы как «запрос прошёл», хотя тело в любом случае ошибка.
+	if got := decodeJSONBody(t, rr)["code"]; got != "UPDATE_FAILED" {
+		t.Fatalf("code = %v, ждали UPDATE_FAILED (диапазон отвергнут валидацией?): %.200s", got, rr.Body.String())
 	}
 	saved, err := store.Get("awg10")
 	if err != nil {
@@ -945,10 +949,76 @@ func TestTunnelUpdate_NativeWGAcceptsKeepaliveRange(t *testing.T) {
 	}
 }
 
+// Запрет нулевой нижней границы не запирает уже сохранённый туннель. В записи
+// "0-80" оказаться могло: до запрета его принимала валидация, а импорт
+// keepalive не проверяет вовсе. Правка, которая keepalive не присылает, обязана
+// проходить — иначе такой туннель нельзя ни переименовать, ни починить, потому
+// что чинят его той же правкой карточки. Тот же довод у валидаторов настроек
+// (internal/api/settings_derive.go): они трогают только присланное.
+func TestTunnelUpdate_StoredZeroRangeKeepaliveDoesNotBlockOtherEdits(t *testing.T) {
+	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
+	if err := store.Create(&storage.AWGTunnel{
+		ID: "awg10", Name: "прежнее", Backend: "kernel",
+		Interface: storage.AWGInterface{Address: "10.0.0.2/32", MTU: 1420},
+		Peer:      storage.AWGPeer{PublicKey: "pk", Endpoint: "1.2.3.4:51820", PersistentKeepalive: "0-80"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Тело без блока пира — ровно то, что шлёт переименование.
+	rr := httptest.NewRecorder()
+	h.Update(rr, httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
+		strings.NewReader(`{"name":"новое"}`)))
+
+	if got := decodeJSONBody(t, rr)["code"]; got == "INVALID_KEEPALIVE" {
+		t.Fatalf("сохранённый \"0-80\" запер правку туннеля: %.200s", rr.Body.String())
+	}
+	saved, err := store.Get("awg10")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if saved.Name != "новое" {
+		t.Fatalf("имя не сохранено: %q", saved.Name)
+	}
+	if saved.Peer.PersistentKeepalive != "0-80" {
+		t.Fatalf("keepalive изменён правкой имени: %q", saved.Peer.PersistentKeepalive)
+	}
+}
+
+// А присланное значение отвергается всегда — в том числе когда в записи лежит
+// такое же: критерий здесь «поле прислали», а не «значение изменилось».
+func TestTunnelUpdate_RejectsSubmittedZeroRangeKeepalive(t *testing.T) {
+	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
+	if err := store.Create(&storage.AWGTunnel{
+		ID: "awg10", Name: "t1", Backend: "kernel",
+		Interface: storage.AWGInterface{Address: "10.0.0.2/32", MTU: 1420},
+		Peer:      storage.AWGPeer{PublicKey: "pk", Endpoint: "1.2.3.4:51820", PersistentKeepalive: "0-80"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	h.Update(rr, httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
+		strings.NewReader(`{"name":"новое","peer":{"publicKey":"pk","endpoint":"1.2.3.4:51820","persistentKeepalive":"0-80"}}`)))
+
+	if got := decodeJSONBody(t, rr)["code"]; got != "INVALID_KEEPALIVE" {
+		t.Fatalf("code = %v, ждали INVALID_KEEPALIVE: %.200s", got, rr.Body.String())
+	}
+	saved, err := store.Get("awg10")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if saved.Name != "t1" {
+		t.Fatalf("правка применена вопреки отказу: имя %q", saved.Name)
+	}
+}
+
 // Формат по-прежнему проверяется: мусор в записи означает keepalive, который
-// не применится нигде, и молча уехать на диск он не должен.
+// не применится нигде, и молча уехать на диск он не должен. "0-80" в этом же
+// списке: нулевая нижняя граница означает выключенный keepalive, диапазон —
+// случайное значение из отрезка, вместе они противоречат друг другу.
 func TestTunnelUpdate_RejectsMalformedKeepalive(t *testing.T) {
-	for _, bad := range []string{"30-22", "70000", "abc", "22-"} {
+	for _, bad := range []string{"30-22", "70000", "abc", "22-", "0-80"} {
 		t.Run(bad, func(t *testing.T) {
 			h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
 			if err := store.Create(&storage.AWGTunnel{

@@ -8,8 +8,11 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
+// ValidateKeepalive — только формат. Её накладывают на слитую запись, поэтому
+// значение, сохранённое прошлой версией, обязано её проходить: иначе такой
+// туннель перестанет правиться целиком.
 func TestValidateKeepalive(t *testing.T) {
-	for _, ok := range []storage.Keepalive{"", "0", "25", "22-30", "0-80", "65535"} {
+	for _, ok := range []storage.Keepalive{"", "0", "25", "22-30", "65535", "0-80"} {
 		if err := ValidateKeepalive(ok); err != nil {
 			t.Fatalf("%q должно приниматься: %v", ok, err)
 		}
@@ -18,6 +21,29 @@ func TestValidateKeepalive(t *testing.T) {
 		if err := ValidateKeepalive(bad); err == nil {
 			t.Fatalf("%q должно отклоняться", bad)
 		}
+	}
+}
+
+// ValidateKeepaliveSubmitted — то же плюс запрет нулевой нижней границы: 0
+// означает «keepalive выключен», диапазон — «случайное значение из отрезка»,
+// вместе они противоречат друг другу. Её накладывают только на присланное
+// значение, поэтому запирать сохранённые туннели ей нечем.
+func TestValidateKeepaliveSubmitted(t *testing.T) {
+	for _, ok := range []storage.Keepalive{"", "0", "25", "22-30", "65535"} {
+		if err := ValidateKeepaliveSubmitted(ok); err != nil {
+			t.Fatalf("%q должно приниматься: %v", ok, err)
+		}
+	}
+	for _, bad := range []storage.Keepalive{"abc", "22-", "-5", "30-22", "70000", "0-80", "0-0", "00-80", " 0 - 80 "} {
+		if err := ValidateKeepaliveSubmitted(bad); err == nil {
+			t.Fatalf("%q должно отклоняться", bad)
+		}
+	}
+
+	// Отказ обязан объяснять причину — иначе пользователь правит вслепую.
+	err := ValidateKeepaliveSubmitted("0-80")
+	if err == nil || !strings.Contains(err.Error(), "выключ") {
+		t.Fatalf("сообщение не объясняет, что 0 означает выключенный keepalive: %v", err)
 	}
 }
 

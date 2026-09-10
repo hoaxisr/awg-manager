@@ -404,6 +404,15 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err.Error(), "INVALID_KEEPALIVE")
 		return
 	}
+	// Запрет нулевой нижней границы — только на ПРИСЛАННОМ значении: на слитой
+	// записи он запер бы туннель, сохранённый с "0-80" до запрета. Признак
+	// «блок пира прислали» — тот же, по которому его применяет mergedPeer.
+	if req.Peer.PublicKey != "" {
+		if err := config.ValidateKeepaliveSubmitted(req.Peer.PersistentKeepalive); err != nil {
+			response.Error(w, err.Error(), "INVALID_KEEPALIVE")
+			return
+		}
+	}
 	if err := config.ValidateObfuscation(&merged.Interface.AWGObfuscation); err != nil {
 		response.Error(w, err.Error(), awg3ErrorCode(err))
 		return

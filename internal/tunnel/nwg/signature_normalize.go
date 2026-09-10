@@ -70,10 +70,11 @@ func ndmsImportConf(stored *storage.AWGTunnel) (string, string) {
 	iface, note := splitSignatureTags(&stored.Interface)
 	safe.Interface = iface
 	// Тот же строгий парсер отвергает диапазон keepalive (AWG 3.0) вместе со
-	// всем импортом, поэтому в файл уходит нижняя граница; нечитаемое для
-	// прошивки значение стирается, и генератор подставит дефолт.
-	safe.Peer.PersistentKeepalive = ""
-	if n, ok := stored.Peer.PersistentKeepalive.Effective(); ok {
+	// всем импортом, поэтому в файл уходит его нижняя граница. Остальные
+	// значения не трогаем: пустое и "0" генератор разберёт сам, а нечитаемое
+	// дойдёт до NDMS и будет отвергнуто громко — это лучше, чем подменить его
+	// выдуманным дефолтом генератора.
+	if n, ok := stored.Peer.PersistentKeepalive.Effective(); ok && stored.Peer.PersistentKeepalive.IsRange() {
 		safe.Peer.PersistentKeepalive = storage.Keepalive(strconv.Itoa(n))
 	}
 	return config.GenerateForExport(&safe), note

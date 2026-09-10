@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { effectiveKeepalive } from './keepalive';
+import { effectiveKeepalive, keepaliveHint } from './keepalive';
 
 // Таблица обязана совпадать с TestKeepaliveEffective
 // (internal/storage/keepalive_test.go): подпись в карточке считает то же
@@ -19,6 +19,11 @@ describe('effectiveKeepalive', () => {
 		['abc', null],
 		['-5', null],
 		['22-', 22],
+		// U+FEFF: JS trim() его снимает, Go strings.TrimSpace — нет. Без
+		// явного отказа карточка показала бы «применяется 25 с» там, где
+		// бэкенд отвергает правку целиком.
+		['\ufeff25', null],
+		['25\ufeff', null],
 	];
 
 	for (const [raw, want] of table) {
@@ -34,4 +39,25 @@ describe('effectiveKeepalive', () => {
 		expect(effectiveKeepalive(null)).toBe(null);
 		expect(effectiveKeepalive(undefined)).toBe(null);
 	});
+});
+
+// Подпись «применяется N с» имеет смысл только там, где прошивка получает
+// число: NativeWG. Kernel понимает диапазон целиком, и подпись там врала бы.
+describe('keepaliveHint', () => {
+	const table: Array<[string | null | undefined, string, number | null]> = [
+		['nativewg', '25-35', 25],
+		['kernel', '25-35', null],
+		['nativewg', '25', null],
+		['kernel', '25', null],
+		[undefined, '25-35', null],
+		['', '25-35', null],
+		// Диапазон, который прошивке не отправить: показывать нечего.
+		['nativewg', '70000-80000', null],
+	];
+
+	for (const [backend, raw, want] of table) {
+		it(`${JSON.stringify(backend)} + ${JSON.stringify(raw)} → ${want}`, () => {
+			expect(keepaliveHint(backend, raw)).toBe(want);
+		});
+	}
 });
