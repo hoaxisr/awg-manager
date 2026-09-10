@@ -138,6 +138,10 @@ func TestParseMirrorTo(t *testing.T) {
 		},
 		{name: "тега нет вовсе", html: `<html><head><title>cp</title></head></html>`, wantErr: ErrNoMirrorTag},
 		{name: "пустой документ", html: "", wantErr: ErrNoMirrorTag},
+		// Сопоставление имени атрибута точное: браузер тег с пробелами внутри
+		// значения name тоже не сопоставил бы. Строка держит это решение —
+		// без неё возврат подрезки пробелов не заметил бы ни один тест.
+		{name: "пробелы внутри значения name", html: `<meta name=" mirror-to " data-link="` + fixtureOriginA + `">`, wantErr: ErrNoMirrorTag},
 		{name: "meta есть, data-link нет", html: `<meta name="mirror-to" content="` + fixtureOriginA + `">`, wantErr: ErrBadMirrorLink},
 		{name: "пустой data-link", html: mirrorPage(""), wantErr: ErrBadMirrorLink},
 		{name: "http вместо https", html: mirrorPage("http://k7m2q9.example.test"), wantErr: ErrBadMirrorLink},
