@@ -19,6 +19,10 @@ const (
 	DefaultInterface            = "br0"
 	DefaultPingCheckTarget      = "8.8.8.8"
 	DefaultConnectivityCheckURL = "http://connectivitycheck.gstatic.com/generate_204"
+	// DefaultAmneziaMirrorURL — официальное зеркало Amnezia CP, откуда
+	// берётся рабочий origin портала. Единственное место этого литерала:
+	// наружу (в том числе фронту) действующий адрес отдаёт бэкенд.
+	DefaultAmneziaMirrorURL = "https://storage.googleapis.com/amnezia/cp?m-path=/ru"
 	// DefaultSessionTTLHours is the fallback auth session lifetime — the
 	// historical fixed value before SessionTtlHours became configurable.
 	DefaultSessionTTLHours = 24
