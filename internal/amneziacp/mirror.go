@@ -33,9 +33,9 @@ var ErrMirrorNotConfigured = fmt.Errorf("%w: адрес зеркала не за
 const DefaultMirrorTTL = 30 * time.Minute
 
 // maxMirrorHTML ограничивает разбираемую страницу зеркала. Цель — роутер со
-// 128 МБ: живая страница CP весит десятки килобайт, мегабайт даёт запас на
-// её рост и на обёртки CDN, но не позволяет ответу в сотни мегабайт съесть
-// память целиком.
+// 128 МБ: живая страница весит 881 байт (снята 2026-09-10), мегабайт даёт
+// тысячекратный запас на её рост и на обёртки CDN, но не позволяет ответу в
+// сотни мегабайт съесть память целиком.
 const maxMirrorHTML = 1 << 20
 
 var (
@@ -58,7 +58,7 @@ var (
 func ParseMirrorTo(html []byte) (string, error) {
 	for _, tag := range metaTagRe.FindAll(html, -1) {
 		attrs := parseTagAttrs(string(tag))
-		if !strings.EqualFold(strings.TrimSpace(attrs["name"]), "mirror-to") {
+		if !strings.EqualFold(attrs["name"], "mirror-to") {
 			continue
 		}
 		return normalizeOrigin(attrs["data-link"])

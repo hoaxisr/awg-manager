@@ -21,6 +21,24 @@ const (
 	fixtureOriginC = "https://z6w1r4.example.test"
 )
 
+// realMirrorPage повторяет форму живой страницы зеркала (снята 2026-09-10,
+// 881 байт): нужный тег не первый, а перед ним стоит тег-обманка
+// original-url с само-закрывающимся `/>`. Адреса — .test, кроме
+// cp.amnezia.org в обманке: фолбэк на этот адрес спека запрещает, поэтому
+// data-link у обманки — та самая ссылка, которую резолвер обязан не взять.
+const realMirrorPage = `<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="description" content="Amnezia"/>
+<meta name="original-url" data-link="https://cp.amnezia.org"/>
+<meta name="mirror-to" data-link="` + fixtureOriginA + `">
+<title>Amnezia</title>
+</head>
+<body><div id="app"></div></body>
+</html>`
+
 // testTTL намеренно не равен DefaultMirrorTTL: реализация, забывшая про
 // настраиваемый TTL и взявшая дефолт, обязана быть видна.
 const testTTL = 7 * time.Minute
@@ -94,16 +112,17 @@ func TestParseMirrorTo(t *testing.T) {
 			want: fixtureOriginB + ":8443",
 		},
 		{
-			name: "нужный meta не первый",
-			html: `<meta name="viewport" content="width=device-width"><meta name="mirror-to" data-link="` + fixtureOriginA + `">`,
+			// Живая страница: тег-обманка original-url стоит ПЕРЕД нужным и
+			// несёт cp.amnezia.org. Резолвер, сопоставляющий любой тег с
+			// data-link, вернёт здесь запрещённый спекой адрес, а не origin.
+			name: "живая страница зеркала с тегом-обманкой",
+			html: realMirrorPage,
 			want: fixtureOriginA,
 		},
 		{
-			// Пробелы вокруг значения name подрезаются — иначе такой тег
-			// проехал бы мимо и страница считалась бы без мета-тега.
-			name: "пробелы вокруг значения name",
-			html: `<meta name=" mirror-to " data-link="` + fixtureOriginC + `">`,
-			want: fixtureOriginC,
+			name: "нужный meta не первый",
+			html: `<meta name="viewport" content="width=device-width"><meta name="mirror-to" data-link="` + fixtureOriginA + `">`,
+			want: fixtureOriginA,
 		},
 		{
 			// Дубль атрибута: как в HTML-парсере браузера, выигрывает первый.
@@ -129,6 +148,10 @@ func TestParseMirrorTo(t *testing.T) {
 		// в data-link отвергается, а не отбрасывается молча.
 		{name: "путь", html: mirrorPage(fixtureOriginA + "/cp"), wantErr: ErrBadMirrorLink},
 		{name: "запрос", html: mirrorPage(fixtureOriginA + "/cp?m-path=/ru/"), wantErr: ErrBadMirrorLink},
+		// Запрос без пути: у самого адреса зеркала форма именно такая. Без
+		// этой строки страж запроса снимался незаметно — в остальных
+		// фикстурах запрос идёт вместе с путём, и его ловил страж пути.
+		{name: "запрос без пути", html: mirrorPage(fixtureOriginA + "?m-path=/ru"), wantErr: ErrBadMirrorLink},
 		{name: "пустой запрос", html: mirrorPage(fixtureOriginA + "?"), wantErr: ErrBadMirrorLink},
 		{name: "фрагмент", html: mirrorPage(fixtureOriginA + "#top"), wantErr: ErrBadMirrorLink},
 		{name: "userinfo", html: mirrorPage("https://u:p@k7m2q9.example.test"), wantErr: ErrBadMirrorLink},
@@ -251,6 +274,15 @@ func TestMirrorOriginDefaultTTL(t *testing.T) {
 	}
 	if n := hits.Load(); n != 2 {
 		t.Fatalf("после дефолтного TTL походов %d, ожидалось 2", n)
+	}
+}
+
+// Фолбэка на http.DefaultClient нет: он берёт прокси из окружения и не имеет
+// таймаута. Проверка белого ящика — снаружи подмена nil на дефолт невидима:
+// резолв через неё точно так же ходит и точно так же отвечает.
+func TestNewMirrorKeepsNilClient(t *testing.T) {
+	if m := NewMirror(nil, testTTL); m.client != nil {
+		t.Fatalf("nil-клиент подменён на %v", m.client)
 	}
 }
 
@@ -417,24 +449,6 @@ func TestMirrorOriginDoesNotCacheFailure(t *testing.T) {
 	}
 	if n := hits.Load(); n != 2 {
 		t.Fatalf("походов %d, ожидалось 2", n)
-	}
-}
-
-func TestMirrorOriginNoMetaTagIsError(t *testing.T) {
-	var hits atomic.Int64
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		_, _ = io.WriteString(w, `<html><head><title>cp</title></head><body>hi</body></html>`)
-	}))
-	defer srv.Close()
-
-	m := newMirrorWithClock(srv.Client(), testTTL, newFakeClock().now)
-	got, err := m.Origin(context.Background(), srv.URL)
-	if err == nil {
-		t.Fatalf("страница без мета-тега обязана быть ошибкой, получен origin %q", got)
-	}
-	if !errors.Is(err, ErrMirrorUnavailable) {
-		t.Fatalf("ошибка не различима сентинелом: %v", err)
 	}
 }
 
@@ -763,6 +777,12 @@ func TestMirrorOriginFailurePathsAreDistinguishable(t *testing.T) {
 		},
 	}
 
+	// Конкретные причины отказа. Ожидаемая обязана срабатывать, соседние —
+	// нет: проверка только на присутствие переживает и сентинел-синоним, и
+	// чужую причину, подставленную на пути. wantErr, равный общему сентинелу,
+	// значит «конкретной причины на этом пути нет» — тогда молчат все три.
+	specific := []error{ErrMirrorNotConfigured, ErrNoMirrorTag, ErrBadMirrorLink}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			transport := tc.transport
@@ -785,6 +805,14 @@ func TestMirrorOriginFailurePathsAreDistinguishable(t *testing.T) {
 			}
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("причина отказа %v, ожидалась %v", err, tc.wantErr)
+			}
+			for _, other := range specific {
+				if other == tc.wantErr {
+					continue
+				}
+				if errors.Is(err, other) {
+					t.Fatalf("причина совпала и с ожидаемой %v, и с чужой %v: %v", tc.wantErr, other, err)
+				}
 			}
 		})
 	}
