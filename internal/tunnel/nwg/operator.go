@@ -285,10 +285,9 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	if hasIPv6AllowedIPs(stored.Peer.AllowedIPs) {
 		peerCfg.AllowedIPv6 = []payloads.AllowedIP{{Address: "::", Mask: "0"}}
 	}
-	// NDMS принимает keepalive числом; диапазон AWG 3.0 сюда попасть не должен
-	// (запрещён валидацией), а если попал — оставляем поле пустым, чтобы не
-	// подсунуть прошивке мусор.
-	if n, ok := stored.Peer.PersistentKeepalive.Single(); ok && n > 0 {
+	// NDMS принимает keepalive числом: диапазон AWG 3.0 схлопывается в нижнюю
+	// границу, выключенный и нечитаемый keepalive не отправляется вовсе.
+	if n, ok := stored.Peer.PersistentKeepalive.Effective(); ok {
 		peerCfg.KeepaliveInterval = n
 	}
 	if stored.Peer.PresharedKey != "" {

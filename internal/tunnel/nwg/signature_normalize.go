@@ -1,6 +1,7 @@
 package nwg
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/signature"
@@ -68,5 +69,12 @@ func ndmsImportConf(stored *storage.AWGTunnel) (string, string) {
 	safe := *stored
 	iface, note := splitSignatureTags(&stored.Interface)
 	safe.Interface = iface
+	// Тот же строгий парсер отвергает диапазон keepalive (AWG 3.0) вместе со
+	// всем импортом, поэтому в файл уходит нижняя граница; нечитаемое для
+	// прошивки значение стирается, и генератор подставит дефолт.
+	safe.Peer.PersistentKeepalive = ""
+	if n, ok := stored.Peer.PersistentKeepalive.Effective(); ok {
+		safe.Peer.PersistentKeepalive = storage.Keepalive(strconv.Itoa(n))
+	}
 	return config.GenerateForExport(&safe), note
 }

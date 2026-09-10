@@ -682,6 +682,19 @@ func (k Keepalive) Single() (int, bool) {
 	return n, true
 }
 
+// Effective возвращает значение, которое уходит на прошивку: одиночное — как
+// есть, диапазон — по нижней границе (NDMS и NativeWG принимают только число).
+// Пусто, "0", вне u16 и мусор дают (0, false) — слать нечего. Нулевая нижняя
+// граница ("0-80") — тот же выключенный keepalive, что и "0".
+func (k Keepalive) Effective() (int, bool) {
+	lo, _, _ := strings.Cut(string(k), "-")
+	n, err := strconv.ParseUint(strings.TrimSpace(lo), 10, 16)
+	if err != nil || n == 0 {
+		return 0, false
+	}
+	return int(n), true
+}
+
 func (k *Keepalive) UnmarshalJSON(data []byte) error {
 	var number int
 	if err := json.Unmarshal(data, &number); err == nil {

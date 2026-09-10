@@ -400,7 +400,7 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	applyTunnelUpdate(&merged, &req)
 	newPingCheckEnabled := merged.PingCheck != nil && merged.PingCheck.Enabled
 
-	if err := config.ValidateKeepaliveForBackend(merged.Peer.PersistentKeepalive, merged.Backend); err != nil {
+	if err := config.ValidateKeepalive(merged.Peer.PersistentKeepalive); err != nil {
 		response.Error(w, err.Error(), "INVALID_KEEPALIVE")
 		return
 	}

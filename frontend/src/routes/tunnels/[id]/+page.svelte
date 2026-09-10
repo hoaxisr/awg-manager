@@ -18,6 +18,7 @@
 	import { SettingsSectionLabel } from '$lib/components/settings';
 	import { AWG_PARAM_HINTS } from '$lib/utils/awgParamHints';
 	import { awgProxyOutdated, supportsAwg3, supportsAwg31OnNativeWG } from '$lib/utils/backendAvailability';
+	import { effectiveKeepalive } from '$lib/utils/keepalive';
 	import { Network, Route, Router, Server, Shuffle, Tag } from 'lucide-svelte';
 
 	let { data } = $props();
@@ -124,6 +125,15 @@
 	let isMirror = $derived(tunnel?.backend === 'wdtt-raw');
 
 	let otherTunnels = $derived(allTunnels.filter(t => t.id !== tunnelId));
+
+	// NativeWG отдаёт keepalive прошивке числом: диапазон AWG 3.0 схлопывается
+	// в нижнюю границу. В kernel-режиме диапазон работает целиком, и подписи
+	// там нет.
+	let keepaliveApplied = $derived.by(() => {
+		if (tunnel?.backend !== 'nativewg') return null;
+		if (!String($form.persistentKeepalive ?? '').includes('-')) return null;
+		return effectiveKeepalive($form.persistentKeepalive);
+	});
 
 	function handleKeydown(e: KeyboardEvent) {
 		if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -472,6 +482,9 @@
 								{#if $errors.persistentKeepalive}<p class="text-xs text-error-500 mt-1">{$errors.persistentKeepalive}</p>{/if}
 							</div>
 						</div>
+						{#if keepaliveApplied !== null}
+							<p class="field-hint">Keepalive: применяется {keepaliveApplied} с — диапазон понимает только режим kernel.</p>
+						{/if}
 					</section>
 				</form>
 

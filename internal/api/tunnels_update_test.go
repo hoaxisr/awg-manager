@@ -915,3 +915,64 @@ func TestTunnelUpdate_KeepsServiceResolvedEndpointIP(t *testing.T) {
 		t.Fatalf("резолв сервиса не доехал до записи: ResolvedEndpointIP=%q", saved.ResolvedEndpointIP)
 	}
 }
+
+// F186: диапазон keepalive (AWG 3.0) на nativewg больше не отвергается —
+// в NDMS уходит его нижняя граница, а в записи диапазон остаётся целиком.
+// Краснеет на возврате ValidateKeepaliveForBackend в хендлер.
+func TestTunnelUpdate_NativeWGAcceptsKeepaliveRange(t *testing.T) {
+	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
+	if err := store.Create(&storage.AWGTunnel{
+		ID: "awg10", Name: "t1", Backend: "nativewg",
+		Interface: storage.AWGInterface{Address: "10.0.0.2/32", MTU: 1420},
+		Peer:      storage.AWGPeer{PublicKey: "pk", Endpoint: "1.2.3.4:51820", PersistentKeepalive: "25"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	h.Update(rr, httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
+		strings.NewReader(`{"peer":{"publicKey":"pk","endpoint":"1.2.3.4:51820","persistentKeepalive":"25-35"}}`)))
+
+	if strings.Contains(rr.Body.String(), "INVALID_KEEPALIVE") {
+		t.Fatalf("диапазон отвергнут на nativewg: %.200s", rr.Body.String())
+	}
+	saved, err := store.Get("awg10")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if saved.Peer.PersistentKeepalive != "25-35" {
+		t.Fatalf("диапазон не сохранён: %q", saved.Peer.PersistentKeepalive)
+	}
+}
+
+// Формат по-прежнему проверяется: мусор в записи означает keepalive, который
+// не применится нигде, и молча уехать на диск он не должен.
+func TestTunnelUpdate_RejectsMalformedKeepalive(t *testing.T) {
+	for _, bad := range []string{"30-22", "70000", "abc", "22-"} {
+		t.Run(bad, func(t *testing.T) {
+			h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
+			if err := store.Create(&storage.AWGTunnel{
+				ID: "awg10", Name: "t1", Backend: "nativewg",
+				Interface: storage.AWGInterface{Address: "10.0.0.2/32", MTU: 1420},
+				Peer:      storage.AWGPeer{PublicKey: "pk", Endpoint: "1.2.3.4:51820", PersistentKeepalive: "25"},
+			}); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+
+			rr := httptest.NewRecorder()
+			h.Update(rr, httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
+				strings.NewReader(`{"peer":{"publicKey":"pk","endpoint":"1.2.3.4:51820","persistentKeepalive":"`+bad+`"}}`)))
+
+			if !strings.Contains(rr.Body.String(), "INVALID_KEEPALIVE") {
+				t.Fatalf("%q принят: %.200s", bad, rr.Body.String())
+			}
+			saved, err := store.Get("awg10")
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if saved.Peer.PersistentKeepalive != "25" {
+				t.Fatalf("%q сохранён вопреки отказу: %q", bad, saved.Peer.PersistentKeepalive)
+			}
+		})
+	}
+}

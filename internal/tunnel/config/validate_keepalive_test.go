@@ -21,23 +21,6 @@ func TestValidateKeepalive(t *testing.T) {
 	}
 }
 
-// NativeWG отдаёт keepalive в NDMS числом, диапазонов прошивка не знает.
-func TestValidateKeepaliveForBackend(t *testing.T) {
-	if err := ValidateKeepaliveForBackend("22-30", "kernel"); err != nil {
-		t.Fatalf("kernel должен принимать диапазон: %v", err)
-	}
-	if err := ValidateKeepaliveForBackend("25", "nativewg"); err != nil {
-		t.Fatalf("nativewg должен принимать одиночное значение: %v", err)
-	}
-	err := ValidateKeepaliveForBackend("22-30", "nativewg")
-	if err == nil {
-		t.Fatal("nativewg не должен принимать диапазон")
-	}
-	if !strings.Contains(err.Error(), "kernel") {
-		t.Fatalf("ошибка должна подсказывать про kernel-режим, получили %q", err)
-	}
-}
-
 // Одиночное значение остаётся в tunnels.json числом: файл, записанный новой
 // версией, продолжают читать предыдущие.
 func TestKeepaliveJSONShape(t *testing.T) {
