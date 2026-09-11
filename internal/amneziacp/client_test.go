@@ -1060,7 +1060,7 @@ func TestClientRejectsEmptyKeyWithoutNetwork(t *testing.T) {
 	if got, err := c.CountryConfig(ctx, "nl"); !errors.Is(err, ErrNoKey) {
 		t.Fatalf("конфиг страны при пустом ключе: %v (%q)", err, got)
 	}
-	if err := c.CheckKey(ctx, "  "); !errors.Is(err, ErrNoKey) {
+	if err := c.CheckKey(ctx, "  ", defaultRemember); !errors.Is(err, ErrNoKey) {
 		t.Fatalf("проверка пустого ключа: %v", err)
 	}
 	if n := cp.logins.Load() + cp.accounts.Load() + cp.configs.Load(); n != 0 {
@@ -1087,7 +1087,7 @@ func TestClientCheckKeyFailureKeepsSession(t *testing.T) {
 	if _, err := c.AccountInfo(ctx); err != nil {
 		t.Fatalf("первый account-info: %v", err)
 	}
-	if err := c.CheckKey(ctx, fixtureOtherKey); !errors.Is(err, ErrKeyRejected) {
+	if err := c.CheckKey(ctx, fixtureOtherKey, defaultRemember); !errors.Is(err, ErrKeyRejected) {
 		t.Fatalf("проверка отвергнутого ключа: %v", err)
 	}
 	if _, err := c.AccountInfo(ctx); err != nil {
@@ -1119,7 +1119,7 @@ func TestClientCheckKeyAdoptsSession(t *testing.T) {
 	c, _, _ := newTestClientWithKey(t, cp, stored.get)
 	ctx := context.Background()
 
-	if err := c.CheckKey(ctx, fixtureOtherKey); err != nil {
+	if err := c.CheckKey(ctx, fixtureOtherKey, defaultRemember); err != nil {
 		t.Fatalf("проверка ключа: %v", err)
 	}
 	stored.set(fixtureOtherKey) // Task 6: ключ сохранён после успешной проверки
@@ -1669,7 +1669,7 @@ func TestClientSessionRemembersKey(t *testing.T) {
 		c, _, _ := newTestClient(t, cp) // геттер отдаёт сохранённый fixtureKey
 		ctx := context.Background()
 
-		if err := c.CheckKey(ctx, fixtureOtherKey); err != nil {
+		if err := c.CheckKey(ctx, fixtureOtherKey, defaultRemember); err != nil {
 			t.Fatalf("проверка чужого ключа: %v", err)
 		}
 		if _, err := c.AccountInfo(ctx); err != nil {

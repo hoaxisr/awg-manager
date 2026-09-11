@@ -58,11 +58,12 @@ const (
 	// известно, к какой ручке портала собирались.
 	eventMirrorResolve = "mirror-resolve"
 
-	// loginRemember — значение remember в теле входа. Всегда true: сессию
-	// держит демон, а не человек за браузером, и долгая cookie — это меньше
-	// входов с роутера. С флагом «запомнить ключ на роутере» ничего общего не
-	// имеет: там речь про хранение секрета у нас, здесь — про срок cookie у CP.
-	loginRemember = true
+	// defaultRemember — значение remember в теле входа, пока явного входа не
+	// было. true: сессию держит демон, а не человек за браузером, и долгая
+	// cookie — это меньше входов с роутера. С флагом «запомнить ключ на
+	// роутере» ничего общего не имеет: там речь про хранение секрета у нас,
+	// здесь — про срок cookie у CP.
+	defaultRemember = true
 )
 
 // LogFunc — узкий колбэк журналирования: event ложится в поле события, detail
@@ -121,6 +122,11 @@ type Client struct {
 	origin string // хост, выдавший сессию
 	keyID  string // отпечаток ключа, которым сессия получена
 	sid    string
+	// remember — срок cookie, которого просил ПОСЛЕДНИЙ УДАВШИЙСЯ явный вход
+	// (CheckKey). Неявный ре-логин при протухшей сессии повторяет его: сессия
+	// у демона одна, спросить пользователя в этот момент не у кого, а
+	// подставить туда своё значение — значит молча отменить его выбор.
+	remember bool
 }
 
 // NewClient собирает клиента. httpClient == nil подменяется собственным прямым
@@ -146,6 +152,7 @@ func NewClient(httpClient *http.Client, mirrorURL MirrorURLFunc, key Subscriptio
 		mirrorURL: mirrorURL,
 		key:       key,
 		logf:      logf,
+		remember:  defaultRemember,
 	}
 }
 
@@ -253,7 +260,12 @@ func (c *Client) CountryConfig(ctx context.Context, countryCode string) (string,
 // этого не обязана отваливаться. Успех, наоборот, сессию занимает — ключ
 // сохраняется уже после проверки, и неудача сохранения не должна отменять
 // состоявшийся вход.
-func (c *Client) CheckKey(ctx context.Context, key string) error {
+//
+// remember — срок cookie, которого просит пользователь; сюда он приходит
+// аргументом, а не константой, потому что это его выбор, а не наш. Значение
+// запоминается ТОЛЬКО на удавшемся входе: отвергнутый ключ не должен менять
+// политику сессии, которая уже работает.
+func (c *Client) CheckKey(ctx context.Context, key string, remember bool) error {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return ErrNoKey
@@ -264,9 +276,10 @@ func (c *Client) CheckKey(ctx context.Context, key string) error {
 		if err != nil {
 			return err
 		}
-		sid, rec, err := c.login(ctx, origin, key)
+		sid, rec, err := c.login(ctx, origin, key, remember)
 		if err == nil {
 			c.adopt(origin, keyFingerprint(key), sid)
+			c.setRemember(remember)
 			return nil
 		}
 		lastErr = err
@@ -382,12 +395,26 @@ func (c *Client) session(ctx context.Context, origin, key string) (string, recov
 
 	// Одновременный промах даёт два входа — это допустимо: вход чужой квоты не
 	// тратит, а держать лок на время сетевого запроса дороже.
-	sid, rec, err := c.login(ctx, origin, key)
+	sid, rec, err := c.login(ctx, origin, key, c.rememberPolicy())
 	if err != nil {
 		return "", rec, err
 	}
 	c.adopt(origin, id, sid)
 	return sid, recoveryNone, nil
+}
+
+// setRemember / rememberPolicy — политика срока cookie под тем же локом, что
+// и сессия: явный вход её задаёт, неявный ре-логин повторяет.
+func (c *Client) setRemember(v bool) {
+	c.mu.Lock()
+	c.remember = v
+	c.mu.Unlock()
+}
+
+func (c *Client) rememberPolicy() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.remember
 }
 
 func (c *Client) adopt(origin, keyID, sid string) {
@@ -414,8 +441,8 @@ func (c *Client) dropSession(sid string) {
 	c.mu.Unlock()
 }
 
-func (c *Client) login(ctx context.Context, origin, key string) (string, recovery, error) {
-	payload, err := json.Marshal(map[string]any{"vpnKey": key, "remember": loginRemember})
+func (c *Client) login(ctx context.Context, origin, key string, remember bool) (string, recovery, error) {
+	payload, err := json.Marshal(map[string]any{"vpnKey": key, "remember": remember})
 	if err != nil {
 		return "", recoveryNone, fmt.Errorf("%w: тело входа: %w", ErrServiceUnavailable, err)
 	}

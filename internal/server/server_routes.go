@@ -517,6 +517,25 @@ func (s *Server) registerLogsImportRoutes(mux *http.ServeMux, h *routeHandlers) 
 	mux.HandleFunc("/api/amnezia-premium/account-info", h.guarded(amneziaCPHandler.AccountInfo))
 	mux.HandleFunc("/api/amnezia-premium/download-config", h.guarded(amneziaCPHandler.DownloadConfig))
 
+	// Ключ подписки Amnezia Premium: проверка и сохранение (POST), состояние
+	// (GET), удаление (DELETE). Одна ручка на три метода — состояние у них
+	// одно, и разводить его по трём путям нечем. Прежние ручки выше живут
+	// своей жизнью, пока на них держится мастер.
+	amneziaPremiumHandler := api.NewAmneziaPremiumHandler(s.settings, h.appLog)
+	amneziaPremiumHandler.SetEventBus(s.bus)
+	mux.HandleFunc("/api/amnezia/premium/key", h.guarded(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			amneziaPremiumHandler.KeyStatus(w, r)
+		case http.MethodPost:
+			amneziaPremiumHandler.SaveKey(w, r)
+		case http.MethodDelete:
+			amneziaPremiumHandler.DeleteKey(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}))
+
 	// External tunnels (protected + boot guarded)
 	mux.HandleFunc("/api/external-tunnels", h.guarded(h.externalHandler.List))
 	mux.HandleFunc("/api/external-tunnels/adopt", h.guarded(h.externalHandler.Adopt))

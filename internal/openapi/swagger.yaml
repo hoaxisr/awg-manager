@@ -315,6 +315,56 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.AmneziaPremiumKeyCheckedData:
+    properties:
+      saveError:
+        description: |-
+          SaveError — почему сохранить не вышло. Непустое значение вместе с
+          успешным ответом означает «вошли, но ключ не сохранён»: неудача
+          сохранения не отменяет состоявшийся вход.
+        type: string
+      stored:
+        description: Stored — шифротекст ключа лёг в настройки.
+        example: true
+        type: boolean
+    type: object
+  api.AmneziaPremiumKeyCheckedResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.AmneziaPremiumKeyCheckedData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.AmneziaPremiumKeyRequest:
+    properties:
+      key:
+        example: vpn://...
+        type: string
+      remember:
+        example: true
+        type: boolean
+      store:
+        example: true
+        type: boolean
+    type: object
+  api.AmneziaPremiumKeyStatusData:
+    properties:
+      stored:
+        example: true
+        type: boolean
+      usable:
+        example: true
+        type: boolean
+    type: object
+  api.AmneziaPremiumKeyStatusResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.AmneziaPremiumKeyStatusData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.AmneziaPremiumLoginData:
     properties:
       sid:
@@ -8901,6 +8951,97 @@ paths:
       security:
       - CookieAuth: []
       summary: Login to Amnezia Premium portal
+      tags:
+      - amnezia-premium
+  /amnezia/premium/key:
+    delete:
+      description: Стирает сохранённый шифротекст, забывает ключ в памяти демона и
+        роняет сессию портала.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumKeyStatusResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Удалить ключ подписки Amnezia Premium
+      tags:
+      - amnezia-premium
+    get:
+      description: stored — сохранённый шифротекст есть; usable — он расшифровывается
+        секретом устройства. Сам ключ не возвращается.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumKeyStatusResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Состояние ключа подписки Amnezia Premium
+      tags:
+      - amnezia-premium
+    post:
+      consumes:
+      - application/json
+      description: Проверяет ключ входом в портал Amnezia. При store=true сохраняет
+        его зашифрованным секретом устройства. Ключ и сессия портала в ответе не возвращаются.
+      parameters:
+      - description: Ключ подписки, флаг сохранения и remember для портала
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AmneziaPremiumKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumKeyCheckedResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Проверить и сохранить ключ подписки Amnezia Premium
       tags:
       - amnezia-premium
   /auth/login:

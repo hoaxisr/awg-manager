@@ -116,6 +116,26 @@ const api_AmneziaPremiumDownloadConfigResponse: v.GenericSchema = v.looseObject(
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_AmneziaPremiumKeyCheckedData: v.GenericSchema = v.looseObject({
+	saveError: v.optional(v.nullable(v.string())),
+	stored: v.optional(v.nullable(v.boolean())),
+});
+
+const api_AmneziaPremiumKeyCheckedResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumKeyCheckedData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_AmneziaPremiumKeyStatusData: v.GenericSchema = v.looseObject({
+	stored: v.optional(v.nullable(v.boolean())),
+	usable: v.optional(v.nullable(v.boolean())),
+});
+
+const api_AmneziaPremiumKeyStatusResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumKeyStatusData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_AmneziaPremiumLoginData: v.GenericSchema = v.looseObject({
 	sid: v.optional(v.nullable(v.string())),
 });
@@ -3139,6 +3159,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"DELETE /access-policies/assign": v.lazy(() => api_OkResponse),
 	"DELETE /access-policies/delete": v.lazy(() => api_OkResponse),
 	"DELETE /access-policies/permit": v.lazy(() => api_OkResponse),
+	"DELETE /amnezia/premium/key": v.lazy(() => api_AmneziaPremiumKeyStatusResponse),
 	"DELETE /awg3-endpoints/{id}": v.lazy(() => api_Awg3ListResponse),
 	"DELETE /connections": v.lazy(() => api_ConnectionKillEnvelope),
 	"DELETE /hydraroute/geo-files/delete": v.lazy(() => api_OkResponse),
@@ -3157,6 +3178,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /access-policies": v.lazy(() => api_AccessPoliciesListResponse),
 	"GET /access-policies/devices": v.lazy(() => api_PolicyDevicesListResponse),
 	"GET /access-policies/interfaces": v.lazy(() => api_PolicyInterfacesListResponse),
+	"GET /amnezia/premium/key": v.lazy(() => api_AmneziaPremiumKeyStatusResponse),
 	"GET /auth/status": v.lazy(() => api_AuthStatusResponse),
 	"GET /awg3-endpoints": v.lazy(() => api_Awg3ListResponse),
 	"GET /boot-status": v.lazy(() => api_BootStatusResponse),
@@ -3346,6 +3368,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /amnezia-premium/account-info": v.lazy(() => api_AmneziaPremiumAccountInfoResponse),
 	"POST /amnezia-premium/download-config": v.lazy(() => api_AmneziaPremiumDownloadConfigResponse),
 	"POST /amnezia-premium/login": v.lazy(() => api_AmneziaPremiumLoginResponse),
+	"POST /amnezia/premium/key": v.lazy(() => api_AmneziaPremiumKeyCheckedResponse),
 	"POST /auth/login": v.lazy(() => api_LoginResponseRaw),
 	"POST /auth/logout": v.lazy(() => api_APIEnvelope),
 	"POST /awg/analyze": v.lazy(() => api_AwgAnalyzeResponse),

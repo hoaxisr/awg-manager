@@ -27,6 +27,12 @@ const (
 	ResourceProxyInstances Resource = "proxyrt.instances"
 	ResourceMcpKeys        Resource = "mcpKeys"
 
+	// ResourceAmneziaPremiumKey — состояние ключа подписки Amnezia Premium
+	// (есть ли сохранённый шифротекст и читается ли он). Своё, а не
+	// ResourceSettings: шифротекст в ответ настроек не входит, и перечитывать
+	// по нему нечего — состояние ключа отдаёт отдельная ручка.
+	ResourceAmneziaPremiumKey Resource = "amneziaPremium.key"
+
 	ResourceSingboxStatus        Resource = "singbox.status"
 	ResourceSingboxTunnels       Resource = "singbox.tunnels"
 	ResourceSingboxRouterStaging Resource = "singbox.router.staging"
@@ -58,6 +64,7 @@ var AllResources = []Resource{
 	ResourceAwg3,
 	ResourceProxyInstances,
 	ResourceMcpKeys,
+	ResourceAmneziaPremiumKey,
 	ResourceSingboxStatus,
 	ResourceSingboxTunnels,
 	ResourceSingboxRouterStaging,
