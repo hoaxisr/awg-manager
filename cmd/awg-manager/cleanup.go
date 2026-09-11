@@ -86,9 +86,17 @@ func runCleanup(dataDir string) {
 	// прибрать по умолчанию. Цена известна и названа в сообщении — если
 	// молчат оба канала, часть остатков может пережить удаление пакета.
 	if err := ndmsinfo.Init(context.Background(), cleanupNDMSQueries.SystemInfo, 10*time.Second); err != nil {
+		// Init сам пробует и ndmc, и /etc/components.xml, поэтому досюда
+		// доходит только случай «версии нет ниоткуда». Уборка продолжится по
+		// умолчанию osdetect — с недавних пор это 5.x, и на роутере 4.x она
+		// пойдёт не тем оператором. Повиснуть в `opkg remove` всё равно хуже,
+		// поэтому цену называем вслух и идём дальше.
 		bootLog.Warn("ndms-version", "",
-			"версия NDMS не определена ни через RCI, ни через ndmc ("+err.Error()+
+			"версия NDMS не определена ни через RCI, ни через ndmc, ни из файла ("+err.Error()+
 				") — уборка идёт по умолчанию "+string(osdetect.Get())+", часть остатков может уцелеть")
+	} else if ndmsinfo.Source() != ndmsinfo.SourceRCI {
+		bootLog.Info("ndms-version", "",
+			"ndm не ответил, версия получена каналом "+ndmsinfo.Source()+": "+osdetect.ReleaseString())
 	}
 
 	// Create service components

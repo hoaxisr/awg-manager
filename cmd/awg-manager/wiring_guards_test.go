@@ -59,7 +59,10 @@ func TestBootSequence_PostRestoreBootsWithoutWANGate(t *testing.T) {
 // Главный инвариант F197: не узнали версию — НЕ ДЕЙСТВУЕМ. Половина проводки
 // (выбор оператора, режим файрвола, гейт DNS-маршрутов) замерзает снимком
 // прямо здесь, поэтому продолжение на умолчании неисправимо без перезапуска.
-func TestNDMSWiring_WaitsForVersionOnFailure(t *testing.T) {
+//
+// Каналов у Init теперь три (RCI, ndmc, /etc/components.xml), и досюда доходит
+// только случай «не ответил ни один». Ждать в нём обязательно.
+func TestNDMSWiring_WaitsWhenNoChannelAnswered(t *testing.T) {
 	src := readSource(t, "wiring_core.go")
 
 	init := strings.Index(src, "if err := ndmsinfo.Init(context.Background(), a.ndmsQueries.SystemInfo, ndmsTimeout); err != nil {")
@@ -68,7 +71,7 @@ func TestNDMSWiring_WaitsForVersionOnFailure(t *testing.T) {
 	if init < 0 || wait < 0 {
 		t.Fatalf("проводка версии изменилась: init=%d wait=%d", init, wait)
 	}
-	if wait < init || wait-init > 200 {
+	if wait < init || wait-init > 600 {
 		t.Error("отказ Init обязан уходить в ожидание версии, а не идти дальше на умолчании")
 	}
 }

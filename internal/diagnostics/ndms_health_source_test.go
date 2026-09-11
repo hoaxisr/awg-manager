@@ -14,7 +14,7 @@ import (
 // предупреждать.
 func TestNDMSHealth_WarnsWhenVersionAdopted(t *testing.T) {
 	store := ndmsquery.NewSystemInfoStore(nil, nil)
-	store.Adopt(ndms.Version{Release: "5.01.C.3.0-1", Title: "5.1.3"})
+	store.Adopt(ndms.Version{Release: "5.01.C.3.0-1", Title: "5.1.3"}, "ndmc")
 
 	r := &Runner{deps: Deps{NDMSQueries: &ndmsquery.Queries{SystemInfo: store}}}
 	got := r.testNDMSHealth(context.Background())
