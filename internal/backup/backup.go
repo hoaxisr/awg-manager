@@ -201,31 +201,21 @@ func Restore(dataDir string, r io.Reader) error {
 // пакета; тот же секрет и так живёт в памяти у storage.DeviceCipher, а
 // независимость откатной копии дороже.
 //
-// O_EXCL: если секрет в целевом каталоге почему-то уже есть, остаётся ОН.
-// Свой секрет старше архива, и именно им зашифровано всё, что пользователь
-// сохранит дальше, — затирать его копией нельзя ни при каких условиях.
+// Пишет не этот пакет, а storage.PublishDeviceKey: дисциплина записи файла
+// секрета одна на всех владельцев. Своя запись здесь (O_CREATE|O_EXCL прямо
+// на целевом имени) при отказе — например, кончилось место — оставляла под
+// именем файл нулевой длины, и ближайшее шифрование уносило эту пустышку в
+// карантин с сообщением «ключ подписки расшифровать больше нечем».
+// PublishDeviceKey при отказе не оставляет ничего, а занятое целевое имя для
+// него ошибка: если секрет в целевом каталоге почему-то уже есть, остаётся
+// ОН — свой секрет старше архива, и именно им зашифровано всё, что
+// пользователь сохранит дальше.
 func carryDeviceKey(prev, next string) error {
 	raw, err := os.ReadFile(filepath.Join(prev, storage.DeviceKeyFile))
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(next, storage.DeviceKeyFile), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(raw); err != nil {
-		f.Close()
-		return err
-	}
-	// Sync до Close, как и в storage.writeDeviceKey: пишем сразу под целевым
-	// именем, а состояние живёт на флеше с отложенным выделением — без fsync
-	// потеря питания сразу после восстановления оставила бы .device-key
-	// нулевой длины, и ключ подписки перестал бы расшифровываться.
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
+	return storage.PublishDeviceKey(next, raw)
 }
 
 // prunePreviousRestores оставляет только последнюю копию `<name>.pre-restore-*`.
@@ -430,8 +420,13 @@ func validateStaging(dir string) error {
 	if manifest.Version < 1 || manifest.Version > FileVersion {
 		return fmt.Errorf("версия архива %d не поддерживается", manifest.Version)
 	}
-	settingsPath := filepath.Join(dir, "settings.json")
-	if _, err := os.Stat(settingsPath); err != nil {
+	// Именно обычный файл. Проверка «путь существует» проходила и для
+	// КАТАЛОГА settings.json — его делает запись вида "settings.json/x" в
+	// подложенном архиве, — а дальше SettingsStore.Load получал EISDIR,
+	// который не IsNotExist, и панель не поднималась вовсе. Тот же класс,
+	// что каталог ".device-key" из архива.
+	info, err := os.Stat(filepath.Join(dir, "settings.json"))
+	if err != nil || !info.Mode().IsRegular() {
 		return fmt.Errorf("в архиве нет settings.json — это не резервная копия awg-manager")
 	}
 	return nil

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -731,4 +732,132 @@ func scanPrefix(sc *bufio.Scanner, prefix string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// Т1. Отказ записи не оставляет под именем секрета огрызок. Прежняя вторая
+// реализация (O_CREATE|O_EXCL прямо на целевом имени, internal/backup)
+// оставляла после EFBIG файл нулевой длины: ближайшее шифрование уносило эту
+// пустышку в карантин, заводило новый секрет и сообщало пользователю, что
+// прежний ключ подписки расшифровать больше нечем — и всё это из-за ВРЕМЕННОЙ
+// нехватки места, после которой повтор ещё мог сработать.
+func TestDeviceCipher_WriteFailureLeavesNothing(t *testing.T) {
+	dir := t.TempDir()
+
+	allow := forbidFileWrites(t)
+	_, err := NewDeviceCipher(dir).Encrypt(testSubscriptionKey)
+	allow()
+
+	if err == nil {
+		t.Fatal("Encrypt прошёл при запрете записи — отказ не смоделирован, проверка не состоялась")
+	}
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	for _, e := range entries {
+		info, statErr := e.Info()
+		size := int64(-1)
+		if statErr == nil {
+			size = info.Size()
+		}
+		t.Fatalf("после отказа записи в каталоге данных остался %s (%d байт): %v", e.Name(), size, err)
+	}
+}
+
+// forbidFileWrites запрещает процессу писать в обычные файлы: RLIMIT_FSIZE=0
+// разрешает создать файл, но любая запись в него отдаёт EFBIG — так же, как
+// при кончившемся месте на флеше. Лимит процессный и снимается возвращённой
+// функцией сразу после проверяемого вызова; на stdout тестового процесса он
+// не влияет — это канал, а не обычный файл. SIGXFSZ, который ядро шлёт вместе
+// с EFBIG, перехватывается, чтобы тестовый процесс не умер от него.
+func forbidFileWrites(t *testing.T) func() {
+	t.Helper()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGXFSZ)
+	var saved syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &saved); err != nil {
+		t.Fatalf("getrlimit: %v", err)
+	}
+	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &syscall.Rlimit{Cur: 0, Max: saved.Max}); err != nil {
+		t.Fatalf("setrlimit: %v", err)
+	}
+	done := false
+	allow := func() {
+		if done {
+			return
+		}
+		done = true
+		signal.Stop(sig)
+		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &saved); err != nil {
+			t.Fatalf("вернуть RLIMIT_FSIZE: %v", err)
+		}
+	}
+	t.Cleanup(allow)
+	return allow
+}
+
+// Т2. Карантин не уносит чужой ПРИГОДНЫЙ секрет. Сценарий двух экземпляров
+// разыгран по шагам, а не потоками: шаги — настоящие (чтение секрета,
+// карантин, шифрование), а порядок закреплён, потому что гонку выигрывают
+// по-разному и статистический страж здесь обречён мигать. Остаточное окно
+// Stat→Rename сверкой не закрывается (см. quarantineKey), и восьми
+// экземплярам на одном негодном файле хватало примерно одного прогона из 2000
+// при GOMAXPROCS=8, чтобы в него попасть; та же проверка без сверки краснела
+// в трети прогонов из 300. Здесь проверяется именно сверка: B уносит в
+// карантин то, что ПРОЧИТАЛ, а не то, что лежит под именем сейчас.
+func TestDeviceCipher_QuarantineDoesNotTakeForeignKey(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, DeviceKeyFile)
+	// Негодная длина, а не отсутствие файла: карантин включается только на
+	// ней, а гонка живёт именно в нём.
+	if err := os.WriteFile(keyPath, bytes.Repeat([]byte{'x'}, deviceKeyLen+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	SetNoticeSink(func(Notice) {})
+	t.Cleanup(func() { SetNoticeSink(nil) })
+
+	// Экземпляр B прочитал негодный секрет и ещё не дошёл до карантина.
+	slow := NewDeviceCipher(dir)
+	_, info, readErr := slow.readKeyFile()
+	if !errors.Is(readErr, errDeviceKeyBadLen) {
+		t.Fatalf("чтение негодного секрета = %v, want errDeviceKeyBadLen", readErr)
+	}
+
+	// Экземпляр A тем временем проходит весь путь: уносит негодный файл и
+	// заводит годный секрет, которым шифрует ключ подписки.
+	tokenA, err := NewDeviceCipher(dir).Encrypt(testSubscriptionKey)
+	if err != nil {
+		t.Fatalf("Encrypt первым экземпляром: %v", err)
+	}
+	good, err := os.ReadFile(keyPath)
+	if err != nil || len(good) != deviceKeyLen {
+		t.Fatalf("первый экземпляр не завёл годный секрет: %d байт, err=%v", len(good), err)
+	}
+
+	// Теперь B делает следующий шаг своего круга. Под именем лежит чужой
+	// ПРИГОДНЫЙ секрет — уносить его нельзя.
+	qerr := slow.quarantineKey(info, readErr)
+	if got, err := os.ReadFile(keyPath); err != nil || !bytes.Equal(got, good) {
+		t.Fatalf("чужой пригодный секрет уведён из-под имени: err=%v", err)
+	}
+	for name, content := range quarantineCopies(t, dir) {
+		if len(content) == deviceKeyLen {
+			t.Fatalf("в карантине %s лежит годный секрет", name)
+		}
+	}
+	if !errors.Is(qerr, errDeviceKeyRaced) {
+		t.Fatalf("карантин по устаревшему чтению = %v, want errDeviceKeyRaced", qerr)
+	}
+
+	// Круг B заканчивается на общем секрете: оба шифротекста читаются им.
+	tokenB, err := slow.Encrypt(testSubscriptionKey)
+	if err != nil {
+		t.Fatalf("Encrypt вторым экземпляром: %v", err)
+	}
+	reader := NewDeviceCipher(dir)
+	for name, token := range map[string]string{"первого": tokenA, "второго": tokenB} {
+		if got, err := reader.Decrypt(token); err != nil || got != testSubscriptionKey {
+			t.Fatalf("шифротекст %s экземпляра не читается оставшимся секретом: (%q, %v)", name, got, err)
+		}
+	}
 }

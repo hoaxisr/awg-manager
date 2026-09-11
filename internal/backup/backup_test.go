@@ -4,12 +4,14 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
@@ -956,6 +958,12 @@ func TestRestoreSkipsFilteredNamesUsedAsDirectories(t *testing.T) {
 		storage.DeviceKeyFile + "/x",
 		"settings.json.lock/x",
 		"tunnels.tmp/x",
+		// Отсеиваемое имя глубже первого уровня: все случаи выше ловятся и
+		// проверкой одного лишь верхнего сегмента, а предикат обязан
+		// смотреть на ВСЕХ предков. Верхний сегмент ("tunnels") здесь —
+		// обычный каталог данных, и появиться он может только вместе с
+		// распакованной записью.
+		"tunnels/awg1.json.tmp/x",
 	} {
 		t.Run(name, func(t *testing.T) {
 			archive := forgedArchive(t, map[string]string{
@@ -973,5 +981,116 @@ func TestRestoreSkipsFilteredNamesUsedAsDirectories(t *testing.T) {
 				t.Fatalf("%q приехал из архива: err=%v", top, err)
 			}
 		})
+	}
+}
+
+// Т3. settings.json, присланный КАТАЛОГОМ, — не резервная копия. Запись вида
+// "settings.json/x" проходила проверку «путь существует», приезжала в каталог
+// данных, и дальше SettingsStore.Load получал EISDIR — не IsNotExist, — то
+// есть панель не поднималась вовсе. Тот же класс, что каталог ".device-key".
+func TestRestoreRejectsSettingsAsDirectory(t *testing.T) {
+	archive := forgedArchive(t, map[string]string{
+		ManifestName:      validManifestJSON,
+		"settings.json/x": `{"version":32}`,
+	})
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "awg-manager")
+
+	err := Restore(dataDir, bytes.NewReader(archive))
+	if err == nil {
+		t.Fatal("архив с каталогом вместо settings.json принят")
+	}
+	if !strings.Contains(err.Error(), "settings.json") {
+		t.Fatalf("err = %v, ждали упоминание settings.json", err)
+	}
+	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
+		t.Fatalf("каталог данных создан отвергнутым архивом: err=%v", err)
+	}
+}
+
+// Т4. Имя временного файла секрета обязано начинаться с ".device-key.": из
+// архива его держит ровно этот префикс (shouldSkip), а не отдельное правило.
+// Осиротевший после сбоя питания временный файл — это ЖИВОЙ секрет установки,
+// и уехать в архив, который пользователь шлёт в поддержку и кладёт в облако,
+// он не имеет права.
+//
+// Имя берётся у самого storage, а не повторяется здесь литералом: inotify
+// показывает, что реально создано в каталоге, поэтому смена префикса в
+// storage красит этот тест, а не переезжает вместе с ним.
+func TestExportSkipsDeviceKeyTempFile(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDir, "settings.json"), []byte(`{"version":32}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fd, err := syscall.InotifyInit1(syscall.IN_NONBLOCK | syscall.IN_CLOEXEC)
+	if err != nil {
+		t.Fatalf("inotify_init1: %v", err)
+	}
+	defer syscall.Close(fd)
+	if _, err := syscall.InotifyAddWatch(fd, dataDir, syscall.IN_CREATE); err != nil {
+		t.Fatalf("inotify_add_watch: %v", err)
+	}
+	secret := bytes.Repeat([]byte("k"), 32)
+	if err := storage.PublishDeviceKey(dataDir, secret); err != nil {
+		t.Fatalf("PublishDeviceKey: %v", err)
+	}
+	tempName := ""
+	for _, name := range inotifyCreated(t, fd) {
+		if name != storage.DeviceKeyFile {
+			tempName = name
+		}
+	}
+	if tempName == "" {
+		t.Fatal("временный файл секрета не замечен — проверка не состоялась")
+	}
+
+	// Сбой питания между записью и получением целевого имени: временный файл
+	// остаётся в каталоге данных, и его застаёт выгрузка.
+	if err := os.WriteFile(filepath.Join(dataDir, tempName), secret, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := Export(dataDir, "2.18.2", &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	names := tarNames(t, buf.Bytes())
+	settingsFound := false
+	for _, name := range names {
+		if name == tempName {
+			t.Fatalf("временный файл секрета %q попал в архив: %v", tempName, names)
+		}
+		if name == "settings.json" {
+			settingsFound = true
+		}
+	}
+	if !settingsFound {
+		t.Fatalf("settings.json не попал в архив: %v", names)
+	}
+}
+
+// inotifyCreated вычитывает очередь событий целиком и отдаёт имена созданных
+// записей. События кладутся в очередь внутри самой операции над каталогом,
+// поэтому к возврату вызова они уже там: ждать нечего, от времени проверка не
+// зависит. Тест линуксовый по построению; проект работает только на Linux.
+func inotifyCreated(t *testing.T, fd int) []string {
+	t.Helper()
+	const header = 16 // int32 wd + uint32 mask + uint32 cookie + uint32 len
+	var out []string
+	buf := make([]byte, 16*1024)
+	for {
+		n, err := syscall.Read(fd, buf)
+		if err == syscall.EAGAIN {
+			return out
+		}
+		if err != nil {
+			t.Fatalf("чтение очереди inotify: %v", err)
+		}
+		for off := 0; off+header <= n; {
+			nameLen := int(binary.NativeEndian.Uint32(buf[off+12:]))
+			name := string(bytes.SplitN(buf[off+header:off+header+nameLen], []byte{0}, 2)[0])
+			out = append(out, name)
+			off += header + nameLen
+		}
 	}
 }
