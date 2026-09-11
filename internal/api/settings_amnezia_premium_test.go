@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -275,6 +276,97 @@ func TestUpdate_StoredBrokenMirrorURL_RoundTripHeals(t *testing.T) {
 	if snap.AmneziaPremiumMirrorURL != "" {
 		t.Fatalf("мусор остался в хранилище: %q", snap.AmneziaPremiumMirrorURL)
 	}
+}
+
+// Частичный патч поверх мусора, уже лежащего в хранилище, обязан проходить:
+// валидируем ТОЛЬКО присланное. Это не гипотетический сценарий — страница
+// настроек шлёт такие патчи сама: selectDownloadRoute отправляет один блок
+// {download:{…}}, savePingTargetsSettings — {pingCheck, connectivityCheckUrl},
+// оба без ...settings (frontend/src/routes/settings/+page.svelte). Сделай
+// валидацию адреса зеркала безусловной — и любая из этих кнопок начнёт
+// отвечать 400 у всякого, у кого в settings.json лежит испорченный адрес.
+func TestUpdate_StoredBrokenMirrorURL_DoesNotBlockPartialPatch(t *testing.T) {
+	h, store := newSettingsHandlerForTest(t)
+	const broken = "не адрес вовсе"
+	if err := store.Update(func(cur *storage.Settings) error {
+		cur.AmneziaPremiumMirrorURL = broken
+		return nil
+	}); err != nil {
+		t.Fatalf("seed broken mirror: %v", err)
+	}
+
+	// Ровно то, что шлёт selectDownloadRoute.
+	rr := perform(h.Update, http.MethodPost, "/settings/update",
+		`{"download":{"routeTag":"direct","routeKind":"direct"}}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("частичный патч отвергнут: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	snap, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Download.RouteTag != "direct" {
+		t.Fatalf("маршрут загрузок не сохранён: %+v", snap.Download)
+	}
+	// Неприсланное поле патч не трогает: чистка мусора — дело круговорота
+	// ответ→PATCH (TestUpdate_StoredBrokenMirrorURL_RoundTripHeals).
+	if snap.AmneziaPremiumMirrorURL != broken {
+		t.Fatalf("неприсланное поле изменено: %q", snap.AmneziaPremiumMirrorURL)
+	}
+}
+
+// Замена непригодного хранимого адреса дефолтом стирает правку человека —
+// того самого, кто правил settings.json руками и ошибся. Молча этого делать
+// нельзя: в журнале обязана быть РОВНО ОДНА строка (деривация настроек
+// выполняется дважды — на черновике и под локом стора, — и лог внутри неё
+// удвоил бы сообщение), и она обязана назвать отброшенный адрес.
+func TestUpdate_StoredBrokenMirrorURL_LogsReplacementOnce(t *testing.T) {
+	h, store := newSettingsHandlerForTest(t)
+	log := &recordingAppLogger{}
+	h.log = logging.NewScopedLogger(log, logging.GroupSystem, logging.SubSettings)
+
+	const broken = "не адрес вовсе"
+	if err := store.Update(func(cur *storage.Settings) error {
+		cur.AmneziaPremiumMirrorURL = broken
+		return nil
+	}); err != nil {
+		t.Fatalf("seed broken mirror: %v", err)
+	}
+
+	rr := perform(h.Get, http.MethodGet, "/settings/get", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	data, _ := decodeJSONBody(t, rr)["data"].(map[string]any)
+	body, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	rr = perform(h.Update, http.MethodPost, "/settings/update", string(body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var about []string
+	for _, m := range log.messages {
+		if strings.Contains(m, "зеркал") {
+			about = append(about, m)
+		}
+	}
+	if len(about) != 1 {
+		t.Fatalf("строк про зеркало в журнале %d, want 1: %v", len(about), log.messages)
+	}
+	if !strings.Contains(about[0], broken) {
+		t.Fatalf("в журнале не назван отброшенный адрес: %q", about[0])
+	}
+}
+
+// recordingAppLogger — журнал, видимый тесту.
+type recordingAppLogger struct{ messages []string }
+
+func (l *recordingAppLogger) AppLog(_ logging.Level, _, _, action, _, message string) {
+	l.messages = append(l.messages, action+": "+message)
 }
 
 // Круговорот «ответ → PATCH». Фронт сохраняет настройки ЦЕЛИКОМ

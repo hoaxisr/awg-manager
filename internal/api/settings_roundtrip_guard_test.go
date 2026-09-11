@@ -33,12 +33,13 @@ import (
 func TestSettingsRoundTrip_ResponseBodyPatchedBack_KeepsSecrets(t *testing.T) {
 	h, store := newSettingsHandlerForTest(t)
 
-	marks := map[string]string{}
+	found := newSecretFields()
 	if err := store.Update(func(cur *storage.Settings) error {
-		return fillSecretMarkers(reflect.ValueOf(cur).Elem(), "Settings", marks, 0)
+		return fillSecretMarkers(reflect.ValueOf(cur).Elem(), "Settings", found, 0)
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	marks := found.marks
 	if len(marks) == 0 {
 		t.Fatal("в дереве Settings не нашлось ни одного секретного поля — обход сломан")
 	}

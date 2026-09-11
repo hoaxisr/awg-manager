@@ -592,6 +592,17 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			h.log.Info("memory-saving", "", "Memory saving enabled")
 		}
 	}
+	// Непригодный адрес зеркала, лежавший в хранилище (downgrade, ручная
+	// правка), наружу не ушёл — вместо него уехал дефолт, а вернувшийся
+	// PATCH-ем дефолт стёр хранимое (см. settingsForResponse и
+	// normalizeAmneziaMirrorURL). Самоисцеление обязано быть слышно: человек,
+	// который правил settings.json руками и ошибся, иначе не узнает, куда
+	// делась его правка, — увидит лишь, что поле опустело.
+	if old := oldSettings.AmneziaPremiumMirrorURL; old != want.AmneziaPremiumMirrorURL &&
+		strings.TrimSpace(old) != "" && storage.ValidateAmneziaMirrorURL(old) != nil {
+		h.log.Warn("amnezia-mirror", "", fmt.Sprintf(
+			"непригодный адрес зеркала Amnezia в настройках отброшен (%q), действует адрес по умолчанию", old))
+	}
 	if oldSettings.ConnectivityCheckURL != want.ConnectivityCheckURL {
 		h.log.Info("connectivity-check", "", fmt.Sprintf("Connectivity check URL changed: %s -> %s", oldSettings.ConnectivityCheckURL, want.ConnectivityCheckURL))
 	}
