@@ -353,6 +353,17 @@ var nonPatchableSettings = map[string]struct{}{
 	// цированному клиенту подменить чужой ключ подписки (и затереть свой)
 	// мимо шифрования DeviceCipher — та же логика, что у serverPeerSecrets.
 	"amneziaPremiumKeyCipher": {},
+	// managedServers (и легаси-одиночка managedServer) несут приватные ключи
+	// самих серверов и их пиров — тот же ключевой материал, что и
+	// serverPeerSecrets, и хранит его только settings.json. Пишутся они
+	// ТОЛЬКО своими атомарными методами (AddManagedServer,
+	// UpdateManagedServer, DeleteManagedServer, SaveManagedServers) с
+	// собственных ручек серверов. На общем PATCH они дали бы аутентифи-
+	// цированному вызывающему переписать или стереть ключи — и стирали бы
+	// их САМИ, без всякого злого умысла: ответ настроек ключи снимает
+	// (settingsForResponse), а страница настроек шлёт тело ответа целиком.
+	"managedServers": {},
+	"managedServer":  {},
 }
 
 // TestSettingsPatch_ExcludesServerSecrets pins the intentional exclusion: a
