@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -84,17 +85,28 @@ func assertSecretsStillStored(t *testing.T, store *storage.SettingsStore) {
 	if got := snap.ServerPeerSecrets["srv-1"]["pub-1"].PrivateKey; got != testPeerPrivKey {
 		t.Errorf("приватный ключ пира в сторе = %q, want %q", got, testPeerPrivKey)
 	}
-	if len(snap.ManagedServers) != 1 || len(snap.ManagedServers[0].Peers) != 1 {
-		t.Fatalf("managed-серверы в сторе: %+v", snap.ManagedServers)
+	// Ищем по имени, а не по индексу: в сторе могут лежать и другие
+	// серверы — например, заполненные фикстурой стража круговорота.
+	idx := slices.IndexFunc(snap.ManagedServers, func(s storage.ManagedServer) bool {
+		return s.InterfaceName == testManagedSrvID
+	})
+	if idx < 0 {
+		t.Fatalf("managed-сервер %s исчез из стора: %+v", testManagedSrvID, snap.ManagedServers)
 	}
-	srv := snap.ManagedServers[0]
+	srv := snap.ManagedServers[idx]
+	pidx := slices.IndexFunc(srv.Peers, func(p storage.ManagedPeer) bool {
+		return p.PublicKey == testManagedPeerPub
+	})
+	if pidx < 0 {
+		t.Fatalf("пир %s исчез из стора: %+v", testManagedPeerPub, srv.Peers)
+	}
 	if srv.PrivateKey != testManagedSrvKey {
 		t.Errorf("приватный ключ managed-сервера в сторе = %q, want %q", srv.PrivateKey, testManagedSrvKey)
 	}
-	if got := srv.Peers[0].PrivateKey; got != testManagedPeerKey {
+	if got := srv.Peers[pidx].PrivateKey; got != testManagedPeerKey {
 		t.Errorf("приватный ключ пира managed в сторе = %q, want %q", got, testManagedPeerKey)
 	}
-	if got := srv.Peers[0].PresharedKey; got != testManagedPeerPSK {
+	if got := srv.Peers[pidx].PresharedKey; got != testManagedPeerPSK {
 		t.Errorf("preshared-ключ пира managed в сторе = %q, want %q", got, testManagedPeerPSK)
 	}
 }

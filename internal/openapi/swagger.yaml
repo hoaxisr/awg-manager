@@ -3956,6 +3956,10 @@ definitions:
       pingCheck:
         $ref: '#/definitions/api.PingCheckSettingsDTO'
       schemaVersion:
+        description: |-
+          SchemaVersion повторяет тег storage.Settings ВМЕСТЕ с omitempty:
+          страница шлёт тело ответа обратно PATCH-ем, а поле патчабельное, так
+          что "schemaVersion":0 в ответе уехал бы в хранилище.
         example: 16
         type: integer
       server:

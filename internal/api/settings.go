@@ -106,7 +106,10 @@ type GeoFileSettingsDTO struct {
 // листьями, встроенная неэкспортированная структура, тег `json:"-,"`).
 // Состав стережёт TestSettingsResponse_TopLevelKeysAreWhitelisted.
 type SettingsData struct {
-	SchemaVersion int  `json:"schemaVersion" example:"16"`
+	// SchemaVersion повторяет тег storage.Settings ВМЕСТЕ с omitempty:
+	// страница шлёт тело ответа обратно PATCH-ем, а поле патчабельное, так
+	// что "schemaVersion":0 в ответе уехал бы в хранилище.
+	SchemaVersion int  `json:"schemaVersion,omitempty" example:"16"`
 	AuthEnabled   bool `json:"authEnabled" example:"false"`
 	// SessionTtlHours is the auth session lifetime in hours (1..720,
 	// sliding window; server-side expiry applies immediately, browser
@@ -282,9 +285,15 @@ func (h *SettingsHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 // ЕДИНСТВЕННАЯ точка сборки: её проходят все три ручки, отдающие настройки
 // (Get, Update, RegenerateApiKey).
 //
-// Смена риска, ради которой эта граница и заменила вычистку по именам полей:
-// было «забыл снять секрет — тихая утечка», стало «забыл поле — его не видно
-// в интерфейсе». Первое замечают через годы, второе — сразу.
+// Цена ошибки ЗДЕСЬ — не «поле не видно в интерфейсе»: страница настроек шлёт
+// тело ответа обратно PATCH-ем, поэтому забытое или перепутанное присваивание
+// СТИРАЕТ хранимое на первом же сохранении (пропущенный authEnabled выключает
+// авторизацию панели). То же и у вложенных блоков: server, pingCheck, updates,
+// dnsRoute и geoFile патчатся ЦЕЛИКОМ (applyStructPatch), так что поле,
+// добавленное в storage-структуру и забытое в DTO, обнуляется. Стережёт
+// TestSettingsRoundTrip_ResponseBodyPatchedBack_KeepsSecrets: он заполняет
+// всё дерево настроек разными значениями и сверяет хранимое до и после
+// круговорота.
 //
 // Состав списка выведен из фактического потребления фронтом: рукописный тип
 // frontend/src/lib/types/system.ts (export interface Settings) плюс ключ API,
