@@ -11,6 +11,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -231,18 +233,43 @@ func assertNoPremiumSecrets(t *testing.T, where, text string, portal *premiumPor
 	}
 }
 
-func premiumChecked(t *testing.T, rec *httptest.ResponseRecorder) AmneziaPremiumKeyCheckedData {
+// premiumData — состояние ключа из тела ответа. Декодер один на все три
+// метода: форма ответа у них одна.
+func premiumData(t *testing.T, rec *httptest.ResponseRecorder) AmneziaPremiumKeyData {
 	t.Helper()
-	var data AmneziaPremiumKeyCheckedData
+	var data AmneziaPremiumKeyData
 	decodeEnvelope(t, rec.Body.Bytes(), &data)
 	return data
 }
 
-func premiumStatus(t *testing.T, rec *httptest.ResponseRecorder) AmneziaPremiumKeyStatusData {
+// premiumDataKeys — ИМЕНА полей тела ответа, отсортированные. Сравнение по
+// именам, а не по значениям: пропавшее поле — это и есть вторая форма.
+func premiumDataKeys(t *testing.T, rec *httptest.ResponseRecorder) []string {
 	t.Helper()
-	var data AmneziaPremiumKeyStatusData
+	var data map[string]json.RawMessage
 	decodeEnvelope(t, rec.Body.Bytes(), &data)
-	return data
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// premiumErrorCode — код отказа из тела ошибки.
+func premiumErrorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var env struct {
+		Error bool   `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("разбор тела отказа: %v\n%s", err, rec.Body.String())
+	}
+	if !env.Error {
+		t.Fatalf("тело не похоже на отказ: %s", rec.Body.String())
+	}
+	return env.Code
 }
 
 // deviceKeyFixture — секрет устройства фикстуры: 32 байта, различимые и не
@@ -264,7 +291,7 @@ func TestAmneziaPremiumKey_StoredEncrypted(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("сохранение ключа: %d %s", rec.Code, rec.Body.String())
 	}
-	if data := premiumChecked(t, rec); !data.Stored || data.SaveError != "" {
+	if data := premiumData(t, rec); !data.Stored || data.SaveError != "" {
 		t.Fatalf("ответ = %+v, ждали stored=true без ошибки сохранения", data)
 	}
 
@@ -287,7 +314,7 @@ func TestAmneziaPremiumKey_StoredEncrypted(t *testing.T) {
 		t.Fatalf("расшифрованный ключ = %q, want %q", plain, premiumKey)
 	}
 
-	if got := premiumStatus(t, st.status(t)); !got.Stored || !got.Usable {
+	if got := premiumData(t, st.status(t)); !got.Stored || !got.Usable {
 		t.Fatalf("статус = %+v, ждали stored=true usable=true", got)
 	}
 }
@@ -302,7 +329,7 @@ func TestAmneziaPremiumKey_StoreFalseKeepsKeyInMemoryOnly(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("проверка ключа без сохранения: %d %s", rec.Code, rec.Body.String())
 	}
-	if data := premiumChecked(t, rec); data.Stored || data.SaveError != "" {
+	if data := premiumData(t, rec); data.Stored || data.SaveError != "" {
 		t.Fatalf("ответ = %+v, ждали stored=false без ошибки сохранения", data)
 	}
 	if cipher := st.storedCipher(t); cipher != "" {
@@ -314,7 +341,7 @@ func TestAmneziaPremiumKey_StoreFalseKeepsKeyInMemoryOnly(t *testing.T) {
 	if got := st.h.subscriptionKey(); got != premiumKey {
 		t.Errorf("ключ для клиента CP = %q, want %q — режим «не запоминать» потерял ключ", got, premiumKey)
 	}
-	if got := premiumStatus(t, st.status(t)); got.Stored || got.Usable {
+	if got := premiumData(t, st.status(t)); got.Stored || got.Usable {
 		t.Errorf("статус = %+v, ждали stored=false usable=false", got)
 	}
 }
@@ -369,7 +396,7 @@ func TestAmneziaPremiumKey_DeleteForgetsEverything(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("удаление: %d %s", rec.Code, rec.Body.String())
 	}
-	if got := premiumStatus(t, rec); got.Stored || got.Usable {
+	if got := premiumData(t, rec); got.Stored || got.Usable {
 		t.Errorf("ответ удаления = %+v, ждали stored=false usable=false", got)
 	}
 	if cipher := st.storedCipher(t); cipher != "" {
@@ -381,7 +408,7 @@ func TestAmneziaPremiumKey_DeleteForgetsEverything(t *testing.T) {
 	if got := st.h.subscriptionKey(); got != "" {
 		t.Errorf("ключ для клиента CP после удаления = %q, ждали пусто", got)
 	}
-	if got := premiumStatus(t, st.status(t)); got.Stored || got.Usable {
+	if got := premiumData(t, st.status(t)); got.Stored || got.Usable {
 		t.Errorf("статус после удаления = %+v, ждали stored=false usable=false", got)
 	}
 }
@@ -420,7 +447,7 @@ func TestAmneziaPremiumKey_StatusUnusableCipherSurvives(t *testing.T) {
 				t.Fatalf("подготовка шифротекста: %v", err)
 			}
 
-			got := premiumStatus(t, st.status(t))
+			got := premiumData(t, st.status(t))
 			if !got.Stored || got.Usable {
 				t.Fatalf("статус = %+v, ждали stored=true usable=false", got)
 			}
@@ -437,8 +464,39 @@ func TestAmneziaPremiumKey_StatusUnusableCipherSurvives(t *testing.T) {
 	}
 }
 
+// Поля store нет — ключ НЕ сохраняется. Умолчание у нашего секрета закрытое:
+// ключ на флеше без спроса пользователь сам не отменит, а лишний повторный
+// ввод ключа — отменит. Тест стоит рядом с соседним про remember намеренно:
+// умолчания у двух флагов РАЗНЫЕ, и это то место, где легко ошибиться.
+func TestAmneziaPremiumKey_StoreDefaultsToFalse(t *testing.T) {
+	st := newPremiumStand(t)
+
+	rec := st.post(t, `{"key":"`+premiumKey+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("проверка ключа без поля store: %d %s", rec.Code, rec.Body.String())
+	}
+	if data := premiumData(t, rec); data.Stored || data.Usable || data.SaveError != "" {
+		t.Fatalf("ответ = %+v, ждали stored=false usable=false без ошибки сохранения", data)
+	}
+	if cipher := st.storedCipher(t); cipher != "" {
+		t.Errorf("шифротекст в настройках = %q, ждали пусто: сохранять не просили", cipher)
+	}
+	if file := st.settingsFile(t); strings.Contains(file, premiumKeyBody) {
+		t.Errorf("settings.json несёт тело ключа, хотя сохранять не просили:\n%s", file)
+	}
+	if _, err := os.Stat(st.deviceKeyPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("файл секрета устройства %s создан без поля store (%v)", storage.DeviceKeyFile, err)
+	}
+	// Вход при этом состоялся: ключ работает в памяти демона до перезапуска.
+	if got := st.h.subscriptionKey(); got != premiumKey {
+		t.Errorf("ключ для клиента CP = %q, want %q — вход состоялся, ключ обязан работать", got, premiumKey)
+	}
+}
+
 // remember — выбор пользователя, и он доезжает до портала как есть.
-// Отсутствие поля означает true.
+// Отсутствие поля означает true — умолчание тут ОБРАТНОЕ тому, что у store
+// (см. TestAmneziaPremiumKey_StoreDefaultsToFalse): срок чужой cookie нашим
+// секретом не является.
 func TestAmneziaPremiumKey_RememberReachesPortal(t *testing.T) {
 	cases := []struct {
 		name string
@@ -447,7 +505,7 @@ func TestAmneziaPremiumKey_RememberReachesPortal(t *testing.T) {
 	}{
 		{"прислан false", `{"key":"` + premiumKey + `","store":false,"remember":false}`, false},
 		{"прислан true", `{"key":"` + premiumKey + `","store":false,"remember":true}`, true},
-		{"поля нет", `{"key":"` + premiumKey + `","store":false}`, true},
+		{"поля нет", `{"key":"` + premiumKey + `"}`, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -535,7 +593,7 @@ func TestAmneziaPremiumKey_SaveFailureDoesNotCancelLogin(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("код = %d, ждали 200: неудача сохранения отменила вход: %s", rec.Code, rec.Body.String())
 	}
-	data := premiumChecked(t, rec)
+	data := premiumData(t, rec)
 	if data.Stored {
 		t.Errorf("ответ = %+v, ждали stored=false", data)
 	}
@@ -582,4 +640,93 @@ func TestAmneziaPremiumKey_MutationsPublishInvalidation(t *testing.T) {
 		t.Fatalf("удаление: %d %s", rec.Code, rec.Body.String())
 	}
 	next("deleted")
+}
+
+// Незнакомый отказ клиента CP уходит в закрытый отказ, а не в успех и не в
+// панику: разбор идёт по сентинелам, и общая ветка обязана ловить всё, чего
+// мы не опознали.
+func TestAmneziaPremiumKey_UnknownClientFailureFailsClosed(t *testing.T) {
+	t.Run("сентинел, которого мы не знаем", func(t *testing.T) {
+		status, code, msg := cpFailure(errors.New("отказ неизвестного класса"))
+		if status != http.StatusServiceUnavailable || code != codePremiumServiceUnavailable {
+			t.Fatalf("перевод отказа = %d/%s, ждали %d/%s", status, code, http.StatusServiceUnavailable, codePremiumServiceUnavailable)
+		}
+		if msg == "" {
+			t.Error("отказ без сообщения: пользователю нечего показать")
+		}
+	})
+	t.Run("реальный путь: портал ответил 500", func(t *testing.T) {
+		st := newPremiumStand(t)
+		st.portal.setStatus(http.StatusInternalServerError)
+
+		rec := st.post(t, `{"key":"`+premiumKey+`","store":true}`)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("код = %d, ждали %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+		}
+		if code := premiumErrorCode(t, rec); code != codePremiumServiceUnavailable {
+			t.Errorf("код отказа = %q, want %q", code, codePremiumServiceUnavailable)
+		}
+		if cipher := st.storedCipher(t); cipher != "" {
+			t.Errorf("шифротекст в настройках = %q, ждали пусто: ключ не проверен", cipher)
+		}
+		assertNoPremiumSecrets(t, "отказ портала", rec.Body.String(), st.portal)
+	})
+}
+
+// Форма ответа одна у всех трёх методов: состояние ключа одно, и разбирать
+// его интерфейс обязан одним способом. Сравниваются ИМЕНА полей тела.
+func TestAmneziaPremiumKey_OneResponseShape(t *testing.T) {
+	want := []string{"saveError", "stored", "usable"}
+	cases := []struct {
+		name string
+		call func(*testing.T, *premiumStand) *httptest.ResponseRecorder
+	}{
+		{"POST с сохранением", func(t *testing.T, st *premiumStand) *httptest.ResponseRecorder {
+			return st.post(t, `{"key":"`+premiumKey+`","store":true}`)
+		}},
+		{"POST без сохранения", func(t *testing.T, st *premiumStand) *httptest.ResponseRecorder {
+			return st.post(t, `{"key":"`+premiumKey+`","store":false}`)
+		}},
+		{"GET", func(t *testing.T, st *premiumStand) *httptest.ResponseRecorder {
+			return st.status(t)
+		}},
+		{"DELETE", func(t *testing.T, st *premiumStand) *httptest.ResponseRecorder {
+			return st.del(t)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newPremiumStand(t)
+			rec := tc.call(t, st)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("код = %d: %s", rec.Code, rec.Body.String())
+			}
+			got := premiumDataKeys(t, rec)
+			if !slices.Equal(got, want) {
+				t.Fatalf("поля тела = %v, want %v: у методов разошлась форма ответа", got, want)
+			}
+		})
+	}
+}
+
+// POST не выдумывает состояние: при store=false ключ с прошлого раза остаётся
+// сохранённым, и POST говорит про него то же, что GET.
+func TestAmneziaPremiumKey_PostReportsStateOfStoredKey(t *testing.T) {
+	st := newPremiumStand(t)
+	if rec := st.post(t, `{"key":"`+premiumKey+`","store":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("подготовка: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec := st.post(t, `{"key":"`+premiumKey+`","store":false}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("повторная проверка ключа: %d %s", rec.Code, rec.Body.String())
+	}
+	post := premiumData(t, rec)
+	get := premiumData(t, st.status(t))
+	if post != get {
+		t.Fatalf("POST сказал %+v, GET — %+v: состояние одно, ответы разные", post, get)
+	}
+	if !post.Stored || !post.Usable {
+		t.Fatalf("состояние = %+v, ждали stored=true usable=true: сохранённый ключ никуда не делся", post)
+	}
 }

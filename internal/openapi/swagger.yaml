@@ -315,24 +315,28 @@ definitions:
         example: true
         type: boolean
     type: object
-  api.AmneziaPremiumKeyCheckedData:
+  api.AmneziaPremiumKeyData:
     properties:
       saveError:
         description: |-
-          SaveError — почему сохранить не вышло. Непустое значение вместе с
-          успешным ответом означает «вошли, но ключ не сохранён»: неудача
-          сохранения не отменяет состоявшийся вход.
+          SaveError — почему сохранить не вышло; пусто, когда сохранять не просили
+          или сохранение прошло. Непустое значение вместе с успешным ответом POST
+          означает «вошли, но ключ не сохранён»: неудача сохранения не отменяет
+          состоявшийся вход. Без omitempty намеренно: поле, пропадающее из тела
+          там, где ошибки нет, — это и есть вторая форма ответа.
         type: string
       stored:
-        description: Stored — шифротекст ключа лёг в настройки.
+        description: Stored — шифротекст ключа лежит в настройках.
         example: true
         type: boolean
-    type: object
-  api.AmneziaPremiumKeyCheckedResponse:
-    properties:
-      data:
-        $ref: '#/definitions/api.AmneziaPremiumKeyCheckedData'
-      success:
+      usable:
+        description: |-
+          Usable — сохранённый шифротекст расшифровывается секретом устройства.
+          Пара stored:false, usable:false читается как «ключа нет, расшифровывать
+          нечего», а не «ключ есть, но сломан»; сломанный ключ — это stored:true,
+          usable:false. Непригодный шифротекст НЕ стирается: пользователь видит
+          usable:false и вводит ключ заново, а секрет устройства ещё может
+          вернуться из бэкапа.
         example: true
         type: boolean
     type: object
@@ -345,22 +349,13 @@ definitions:
         example: true
         type: boolean
       store:
-        example: true
+        example: false
         type: boolean
     type: object
-  api.AmneziaPremiumKeyStatusData:
-    properties:
-      stored:
-        example: true
-        type: boolean
-      usable:
-        example: true
-        type: boolean
-    type: object
-  api.AmneziaPremiumKeyStatusResponse:
+  api.AmneziaPremiumKeyResponse:
     properties:
       data:
-        $ref: '#/definitions/api.AmneziaPremiumKeyStatusData'
+        $ref: '#/definitions/api.AmneziaPremiumKeyData'
       success:
         example: true
         type: boolean
@@ -8963,7 +8958,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.AmneziaPremiumKeyStatusResponse'
+            $ref: '#/definitions/api.AmneziaPremiumKeyResponse'
         "405":
           description: Method Not Allowed
           schema:
@@ -8986,7 +8981,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.AmneziaPremiumKeyStatusResponse'
+            $ref: '#/definitions/api.AmneziaPremiumKeyResponse'
         "405":
           description: Method Not Allowed
           schema:
@@ -9004,7 +8999,8 @@ paths:
       consumes:
       - application/json
       description: Проверяет ключ входом в портал Amnezia. При store=true сохраняет
-        его зашифрованным секретом устройства. Ключ и сессия портала в ответе не возвращаются.
+        его зашифрованным секретом устройства; без поля store ключ не сохраняется.
+        Ключ и сессия портала в ответе не возвращаются.
       parameters:
       - description: Ключ подписки, флаг сохранения и remember для портала
         in: body
@@ -9018,7 +9014,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.AmneziaPremiumKeyCheckedResponse'
+            $ref: '#/definitions/api.AmneziaPremiumKeyResponse'
         "400":
           description: Bad Request
           schema:
