@@ -331,6 +331,70 @@ func (s *premiumStand) settingsFile(t *testing.T) string {
 	return string(raw)
 }
 
+// storedPlainKey — сохранённый ключ, расшифрованный секретом устройства;
+// пусто, когда шифротекста нет.
+func (s *premiumStand) storedPlainKey(t *testing.T) string {
+	t.Helper()
+	cipher := s.storedCipher(t)
+	if cipher == "" {
+		return ""
+	}
+	plain, err := storage.NewDeviceCipher(s.dir).Decrypt(cipher)
+	if err != nil {
+		t.Fatalf("расшифровка сохранённого ключа: %v", err)
+	}
+	return plain
+}
+
+// memoryKey — ключ в памяти демона. Читается поле, а не subscriptionKey():
+// тот на пустой памяти подставляет сохранённый и тем самым прячет ровно то
+// расхождение, ради которого проверка написана.
+func (s *premiumStand) memoryKey(t *testing.T) string {
+	t.Helper()
+	s.h.mu.Lock()
+	defer s.h.mu.Unlock()
+	return s.h.sessionKey
+}
+
+// assertPremiumKeyConsistent — в памяти и на диске ОДИН И ТОТ ЖЕ ключ.
+// Расхождение не видно живой панели и всплывает при перезапуске демона:
+// подписка работала и пропала. Проверка — для путей, где сохранять просили
+// (store=true); при store=false ключ в памяти без ключа на диске — норма.
+func assertPremiumKeyConsistent(t *testing.T, st *premiumStand, where string) {
+	t.Helper()
+	mem := st.memoryKey(t)
+	disk := st.storedPlainKey(t)
+	if mem != disk {
+		t.Errorf("%s: в памяти %q, на диске %q — состояние ключа расползлось", where, mem, disk)
+	}
+}
+
+// breakSettingsFile подменяет settings.json каталогом: запись настроек
+// (AtomicWrite → rename поверх каталога) отказывает, чтение идёт из кэша
+// стора и продолжает работать. Отдаёт починку — после неё запись снова
+// проходит, так что фазы «удаление не записалось» и «сохранение записалось»
+// задаёт тест, а не тайминг.
+func (s *premiumStand) breakSettingsFile(t *testing.T) (repair func()) {
+	t.Helper()
+	path := filepath.Join(s.dir, "settings.json")
+	away := path + ".away"
+	if err := os.Rename(path, away); err != nil {
+		t.Fatalf("отвести settings.json: %v", err)
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("подменить settings.json каталогом: %v", err)
+	}
+	return func() {
+		t.Helper()
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("убрать каталог-подмену: %v", err)
+		}
+		if err := os.Rename(away, path); err != nil {
+			t.Fatalf("вернуть settings.json: %v", err)
+		}
+	}
+}
+
 func (s *premiumStand) deviceKeyPath() string {
 	return filepath.Join(s.dir, storage.DeviceKeyFile)
 }
@@ -371,13 +435,23 @@ func (s *premiumStand) portalSessionAlive(t *testing.T, key string) bool {
 // проверка только по схеме «vpn://» обманывается реализацией, снёсшей схему и
 // оставившей сам ключ. Один и тот же набор проверяется на двух границах —
 // в ответе и в журнале: граница у секрета не одна.
-func premiumSecretProbes(portal *premiumPortal) []string {
-	return []string{"vpn://", premiumKeyBody, premiumOtherKeyBody, "v_sid", "sid", portal.sid(1)}
+//
+// Шифротекст сохранённого ключа — такой же признак: вместе с файлом секрета
+// устройства он расшифровывается обратно в ключ, а журнал уезжает в поддержку
+// отдельно от флеша не всегда. Пустой шифротекст в пробы не идёт: strings.
+// Contains по пустой строке верен всегда и ослепил бы весь набор.
+func premiumSecretProbes(t *testing.T, st *premiumStand) []string {
+	t.Helper()
+	probes := []string{"vpn://", premiumKeyBody, premiumOtherKeyBody, "v_sid", "sid", st.portal.sid(1)}
+	if cipher := st.storedCipher(t); cipher != "" {
+		probes = append(probes, cipher)
+	}
+	return probes
 }
 
-func assertNoPremiumSecrets(t *testing.T, where, text string, portal *premiumPortal) {
+func assertNoPremiumSecrets(t *testing.T, where, text string, st *premiumStand) {
 	t.Helper()
-	for _, probe := range premiumSecretProbes(portal) {
+	for _, probe := range premiumSecretProbes(t, st) {
 		if strings.Contains(text, probe) {
 			t.Errorf("%s: найден %q: %s", where, probe, text)
 		}
@@ -530,7 +604,7 @@ func TestAmneziaPremiumKey_ResponsesCarryNoSecrets(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newPremiumStand(t)
 			rec := tc.call(t, st)
-			assertNoPremiumSecrets(t, tc.name, rec.Body.String(), st.portal)
+			assertNoPremiumSecrets(t, tc.name, rec.Body.String(), st)
 		})
 	}
 }
@@ -757,7 +831,7 @@ func TestAmneziaPremiumKey_SaveFailureDoesNotCancelLogin(t *testing.T) {
 	if got := st.h.subscriptionKey(); got != premiumKey {
 		t.Errorf("ключ для клиента CP = %q, want %q — вход состоялся, ключ обязан работать", got, premiumKey)
 	}
-	assertNoPremiumSecrets(t, "неудача сохранения", rec.Body.String(), st.portal)
+	assertNoPremiumSecrets(t, "неудача сохранения", rec.Body.String(), st)
 }
 
 // Состояние ключа персистентно и меняется — вторая вкладка узнаёт об этом по
@@ -827,7 +901,7 @@ func TestAmneziaPremiumKey_UnknownClientFailureFailsClosed(t *testing.T) {
 		if got := st.h.subscriptionKey(); got != premiumKey {
 			t.Errorf("ключ для клиента CP = %q, want %q — отказ портала отнял рабочую подписку", got, premiumKey)
 		}
-		assertNoPremiumSecrets(t, "отказ портала", rec.Body.String(), st.portal)
+		assertNoPremiumSecrets(t, "отказ портала", rec.Body.String(), st)
 	})
 }
 
@@ -924,7 +998,7 @@ func TestAmneziaPremiumKey_DeleteDuringCheckIsNotUndone(t *testing.T) {
 	if code := premiumErrorCode(t, postRec); code != codePremiumStateChanged {
 		t.Errorf("код отказа = %q, want %q", code, codePremiumStateChanged)
 	}
-	assertNoPremiumSecrets(t, "проверка под удалением", postRec.Body.String(), st.portal)
+	assertNoPremiumSecrets(t, "проверка под удалением", postRec.Body.String(), st)
 
 	if cipher := st.storedCipher(t); cipher != "" {
 		t.Errorf("шифротекст после удаления = %q, ждали пусто: ключ воскрес", cipher)
@@ -937,6 +1011,173 @@ func TestAmneziaPremiumKey_DeleteDuringCheckIsNotUndone(t *testing.T) {
 	}
 	if got := premiumData(t, st.status(t)); got.Stored || got.Usable {
 		t.Errorf("статус = %+v, ждали stored=false usable=false", got)
+	}
+	// Состояние согласовано: ключа нет ни в памяти, ни на диске. Половинчатый
+	// исход (в памяти есть, на диске нет) панель показывала бы как рабочую
+	// подписку до первого перезапуска демона.
+	assertPremiumKeyConsistent(t, st, "стирание под летящим сохранением")
+}
+
+// Неудавшееся удаление не отменяет летящее сохранение: стирать было нечего,
+// поколение не сдвинулось, и вернувшаяся проверка ключа доводит своё дело до
+// конца. Сдвиг поколения ДО того, как выяснился исход стирания (а он неминуем,
+// если стирание вынести из-под захвата), давал бы здесь 409 «введите ключ
+// заново» на ровном месте.
+//
+// Фазы задаёт тест: ответ портала придержан, запись настроек сломана ровно на
+// время удаления и починена до того, как сохранение пошло на диск.
+func TestAmneziaPremiumKey_FailedDeleteDoesNotCancelFlyingSave(t *testing.T) {
+	st := newPremiumStand(t)
+	hold := st.portal.holdNextLogin(t)
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- st.post(t, `{"key":"`+premiumKey+`","store":true}`) }()
+
+	select {
+	case <-hold.arrived:
+	case <-time.After(10 * time.Second):
+		t.Fatal("вход не дошёл до портала: придержать нечего")
+	}
+
+	repair := st.breakSettingsFile(t)
+	delRec := st.del(t)
+	if delRec.Code != http.StatusInternalServerError {
+		t.Fatalf("код удаления = %d, ждали %d: запись настроек сломана: %s",
+			delRec.Code, http.StatusInternalServerError, delRec.Body.String())
+	}
+	if code := premiumErrorCode(t, delRec); code != codePremiumDeleteError {
+		t.Errorf("код отказа удаления = %q, want %q", code, codePremiumDeleteError)
+	}
+	repair()
+
+	hold.release()
+	postRec := <-done
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("код проверки = %d, ждали 200: удаление не состоялось, отменять сохранение нечем: %s",
+			postRec.Code, postRec.Body.String())
+	}
+	data := premiumData(t, postRec)
+	if !data.Stored || data.SaveError != "" {
+		t.Fatalf("ответ = %+v, ждали stored=true без ошибки сохранения", data)
+	}
+	if got := st.storedPlainKey(t); got != premiumKey {
+		t.Errorf("на диске ключ %q, want %q", got, premiumKey)
+	}
+	if got := st.memoryKey(t); got != premiumKey {
+		t.Errorf("в памяти ключ %q, want %q", got, premiumKey)
+	}
+	assertPremiumKeyConsistent(t, st, "сохранение под неудавшимся удалением")
+}
+
+// Двойной клик по «Сохранить»: два сохранения ОДНОГО ключа. Оба успешны, ключ
+// сохранён, 409 не видит никто — поколение стережёт удаление, а не очередь
+// сохранений. Двигай его каждая запись — вернувшийся вторым получал бы
+// «введите ключ заново» поверх успешно сохранённого ключа.
+//
+// Порядок фаз задан придержанным ответом портала, а не таймингом: второй вход
+// проходит целиком, пока первый висит в портале.
+func TestAmneziaPremiumKey_ConcurrentSavesOfSameKeySucceed(t *testing.T) {
+	st := newPremiumStand(t)
+	hold := st.portal.holdNextLogin(t)
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- st.post(t, `{"key":"`+premiumKey+`","store":true}`) }()
+
+	select {
+	case <-hold.arrived:
+	case <-time.After(10 * time.Second):
+		t.Fatal("первый вход не дошёл до портала: придержать нечего")
+	}
+
+	second := st.post(t, `{"key":"`+premiumKey+`","store":true}`)
+	if second.Code != http.StatusOK {
+		t.Fatalf("второе сохранение: %d %s", second.Code, second.Body.String())
+	}
+	hold.release()
+
+	first := <-done
+	if first.Code != http.StatusOK {
+		t.Fatalf("код первого сохранения = %d, ждали 200: тот же ключ сохранили дважды, отменять нечего: %s",
+			first.Code, first.Body.String())
+	}
+	for name, rec := range map[string]*httptest.ResponseRecorder{"первое": first, "второе": second} {
+		if data := premiumData(t, rec); !data.Stored || data.SaveError != "" {
+			t.Errorf("%s сохранение: ответ = %+v, ждали stored=true без ошибки сохранения", name, data)
+		}
+	}
+	if got := st.storedPlainKey(t); got != premiumKey {
+		t.Errorf("на диске ключ %q, want %q", got, premiumKey)
+	}
+	assertPremiumKeyConsistent(t, st, "два сохранения одного ключа")
+}
+
+// Два сохранения РАЗНЫХ ключей: оба успешны, побеждает вернувшееся последним,
+// и память с диском держат один и тот же ключ. Смена ключа — обычная запись
+// настроек, а не отмена чужой команды: ни один из двух не имеет права ни
+// получить 409, ни оставить состояние в ноль.
+func TestAmneziaPremiumKey_ConcurrentSavesOfDifferentKeysAgree(t *testing.T) {
+	st := newPremiumStand(t)
+	hold := st.portal.holdNextLogin(t)
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- st.post(t, `{"key":"`+premiumKey+`","store":true}`) }()
+
+	select {
+	case <-hold.arrived:
+	case <-time.After(10 * time.Second):
+		t.Fatal("первый вход не дошёл до портала: придержать нечего")
+	}
+
+	second := st.post(t, `{"key":"`+premiumOtherKey+`","store":true}`)
+	if second.Code != http.StatusOK {
+		t.Fatalf("сохранение второго ключа: %d %s", second.Code, second.Body.String())
+	}
+	if got := st.storedPlainKey(t); got != premiumOtherKey {
+		t.Fatalf("после второго сохранения на диске %q, want %q", got, premiumOtherKey)
+	}
+	hold.release()
+
+	first := <-done
+	if first.Code != http.StatusOK {
+		t.Fatalf("код первого сохранения = %d, ждали 200: %s", first.Code, first.Body.String())
+	}
+	if data := premiumData(t, first); !data.Stored || data.SaveError != "" {
+		t.Errorf("ответ первого сохранения = %+v, ждали stored=true без ошибки сохранения", data)
+	}
+	// Вернувшееся последним и победило: на диске ровно один ключ из двух, а не
+	// пусто и не чужой.
+	if got := st.storedPlainKey(t); got != premiumKey {
+		t.Errorf("на диске ключ %q, want %q — победило не вернувшееся последним", got, premiumKey)
+	}
+	assertPremiumKeyConsistent(t, st, "два сохранения разных ключей")
+}
+
+// Пустой ключ — первый отказ, который увидит мастер на пустой вставке: 400 и
+// свой код, до портала запрос не доходит, сохранённый ключ не трогается.
+// Пробелы обрезаются: «ключ» из одних пробелов — это пустой ключ.
+func TestAmneziaPremiumKey_EmptyKeyRejected(t *testing.T) {
+	for _, body := range []string{`{"key":"","store":true}`, `{"key":"   ","store":true}`} {
+		t.Run(body, func(t *testing.T) {
+			st := newPremiumStand(t)
+			seeded := st.seedStoredKey(t, premiumKey)
+
+			rec := st.post(t, body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("код = %d, ждали %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+			if code := premiumErrorCode(t, rec); code != codePremiumNoKey {
+				t.Errorf("код отказа = %q, want %q", code, codePremiumNoKey)
+			}
+			if n := len(st.portal.seen()); n != 0 {
+				t.Errorf("входов в портал %d, ждали 0: пустой ключ не повод идти наружу", n)
+			}
+			if cipher := st.storedCipher(t); cipher != seeded {
+				t.Errorf("шифротекст = %q, ждали нетронутый %q", cipher, seeded)
+			}
+			if got := st.memoryKey(t); got != "" {
+				t.Errorf("в памяти ключ %q, ждали пусто", got)
+			}
+		})
 	}
 }
 
@@ -1038,7 +1279,7 @@ func TestAmneziaPremiumKey_FailureMapping(t *testing.T) {
 				if cipher := st.storedCipher(t); cipher != seeded {
 					t.Errorf("шифротекст = %q, ждали нетронутый %q: отказ тронул сохранённый ключ", cipher, seeded)
 				}
-				assertNoPremiumSecrets(t, tc.name, rec.Body.String(), st.portal)
+				assertNoPremiumSecrets(t, tc.name, rec.Body.String(), st)
 			})
 		}
 
@@ -1061,7 +1302,7 @@ func TestAmneziaPremiumKey_FailureMapping(t *testing.T) {
 			if cipher := st.storedCipher(t); cipher != seeded {
 				t.Errorf("шифротекст = %q, ждали нетронутый %q", cipher, seeded)
 			}
-			assertNoPremiumSecrets(t, "зеркало не отдаёт origin", rec.Body.String(), st.portal)
+			assertNoPremiumSecrets(t, "зеркало не отдаёт origin", rec.Body.String(), st)
 		})
 	})
 }
@@ -1149,7 +1390,7 @@ func TestAmneziaPremiumKey_LogCarriesNoSecrets(t *testing.T) {
 			if st.log.count() == 0 {
 				t.Fatal("путь не оставил в журнале ни строки")
 			}
-			assertNoPremiumSecrets(t, "журнал: "+tc.name, st.log.text(), st.portal)
+			assertNoPremiumSecrets(t, "журнал: "+tc.name, st.log.text(), st)
 		})
 	}
 }
@@ -1175,11 +1416,17 @@ func TestAmneziaPremiumKey_DeleteDropsPortalSession(t *testing.T) {
 	}
 }
 
-// Отменённая проверка (состояние ключа сменили, пока мы ходили в портал) тоже
-// роняет сессию: вход состоялся, но ключ, которым он сделан, у нас уже
-// забрали. Ответ портала придержан — окно открыто ровно на время, нужное
-// тесту.
-func TestAmneziaPremiumKey_CancelledCheckDropsPortalSession(t *testing.T) {
+// Отменённая проверка (состояние ключа сбросили, пока мы ходили в портал) НЕ
+// трогает сессию портала. Сброс тут возможен только грубый, на весь клиент, а
+// в кэше к этому моменту лежит сессия, заведённая ДРУГИМ, уже прошедшим
+// сохранением: уронив её, мы выгоняем работающую подписку — ту самую, которую
+// пользователь только что ввёл заново. Своя сессия привязана к отпечатку
+// ключа и запросом другим ключом не переиспользуется, так что ронять её
+// незачем.
+//
+// Порядок фаз задан придержанным ответом портала: пока первая проверка висит,
+// пользователь успевает удалить ключ и ввести его заново.
+func TestAmneziaPremiumKey_CancelledCheckKeepsPortalSession(t *testing.T) {
 	st := newPremiumStand(t)
 	hold := st.portal.holdNextLogin(t)
 
@@ -1194,18 +1441,28 @@ func TestAmneziaPremiumKey_CancelledCheckDropsPortalSession(t *testing.T) {
 	if rec := st.del(t); rec.Code != http.StatusOK {
 		t.Fatalf("удаление: %d %s", rec.Code, rec.Body.String())
 	}
+	// Ключ введён заново и принят: с этого момента в кэше клиента живёт
+	// сессия, к отменённой проверке отношения не имеющая.
+	if rec := st.post(t, `{"key":"`+premiumKey+`","store":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("повторный ввод ключа: %d %s", rec.Code, rec.Body.String())
+	}
 	hold.release()
 
 	postRec := <-done
 	if postRec.Code != http.StatusConflict {
 		t.Fatalf("код проверки = %d, ждали %d: %s", postRec.Code, http.StatusConflict, postRec.Body.String())
 	}
-	if st.portalSessionAlive(t, premiumKey) {
-		t.Error("сессия портала, добытая забранным ключом, осталась жива")
+	if !st.portalSessionAlive(t, premiumKey) {
+		t.Error("отменённая проверка уронила сессию портала — ре-логин на ровном месте")
 	}
+	// Введённый заново ключ отменённая проверка тоже не тронула.
+	if got := st.storedPlainKey(t); got != premiumKey {
+		t.Errorf("на диске ключ %q, want %q", got, premiumKey)
+	}
+	assertPremiumKeyConsistent(t, st, "отменённая проверка")
 	// Тот же путь — и граница журнала: строка про отменённую проверку пишется
 	// там, где ключ в области видимости.
-	assertNoPremiumSecrets(t, "журнал: отменённая проверка", st.log.text(), st.portal)
+	assertNoPremiumSecrets(t, "журнал: отменённая проверка", st.log.text(), st)
 }
 
 // Подмена транспорта роняет уже собранного клиента CP. Иначе он продолжил бы
