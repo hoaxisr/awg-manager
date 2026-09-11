@@ -167,9 +167,12 @@ func (r *Runner) testNDMSHealth(ctx context.Context) TestResult {
 	// его ровно тогда, когда HTTP-морда молчит. Без этой ветки проверка «NDMS
 	// отвечает» давала бы Pass именно в тот момент, когда она обязана
 	// предупреждать.
-	if r.deps.NDMSQueries.SystemInfo.Adopted() {
+	// Источник называем поимённо. Раньше здесь стояло «получено через ndmc»
+	// для ЛЮБОГО запасного канала, и с появлением файлового (components.xml)
+	// эта строка начала врать пользователю прямо в диагностике.
+	if src := r.deps.NDMSQueries.SystemInfo.Source(); src != "rci" {
 		res.Status = StatusWarn
-		res.Detail = "RCI (HTTP :79) не ответил при старте — версия получена через ndmc: " + v.Title
+		res.Detail = "RCI (HTTP :79) не ответил при старте — версия получена каналом " + src + ": " + v.Title
 		return res
 	}
 

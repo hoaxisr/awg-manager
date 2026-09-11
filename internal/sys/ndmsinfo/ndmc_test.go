@@ -222,9 +222,17 @@ func TestVersionFromNdmc_RejectsTruncatedOutput(t *testing.T) {
 // квадратичную работу, а на mipsel это жор CPU прямо на старте. За потолком
 // ничего не разбирается.
 func TestParseNdmcVersion_StopsAtOutputCap(t *testing.T) {
+	// Предохранитель: размер считается от проверяемого потолка, и мутация его
+	// в большое значение превратила бы тест в пожирателя памяти.
+	if maxNdmcOutput > 4<<20 {
+		t.Fatalf("потолок %d неправдоподобен — тест не станет строить такой вход", maxNdmcOutput)
+	}
+	fixtureSize := maxNdmcOutput + 1024
+
 	var b strings.Builder
+	b.Grow(fixtureSize + 128)
 	b.WriteString("release: 5.01.C.3.0-1\ncomponents: base\n")
-	for b.Len() < maxNdmcOutput+1024 {
+	for b.Len() < fixtureSize {
 		b.WriteString("мусорная строка без двоеточия\n")
 	}
 	b.WriteString("title: за потолком\n")

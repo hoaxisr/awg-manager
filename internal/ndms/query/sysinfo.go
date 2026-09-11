@@ -17,10 +17,15 @@ type SystemInfoStore struct {
 	getter Getter
 	log    Logger
 
-	mu      sync.RWMutex
-	loaded  bool
-	adopted bool // значение пришло не от RCI, а от запасного канала
-	value   ndms.Version
+	mu     sync.RWMutex
+	loaded bool
+	// source — каким каналом добыто значение: SourceRCI / SourceNdmc /
+	// SourceFile (константы в internal/sys/ndmsinfo). Одно поле вместо пары
+	// булевых признаков: два флага кодировали одно перечисление и успели
+	// разойтись — диагностика печатала «получено через ndmc» для версии из
+	// файла, потому что читала флаг, а не источник.
+	source string
+	value  ndms.Version
 
 	initSF *cache.SingleFlight[struct{}, ndms.Version]
 }
@@ -83,16 +88,20 @@ func (s *SystemInfoStore) Init(ctx context.Context) error {
 		s.mu.Lock()
 		s.value = v
 		s.loaded = true
+		s.source = sourceRCI
 		s.mu.Unlock()
 		return v, nil
 	})
 	return err
 }
 
-// Adopt принимает версию, добытую другим каналом (ndmc через unix-сокет —
-// см. internal/sys/ndmsinfo/ndmc.go), когда RCI не ответил. Уже загруженное
-// значение не трогает: живой ответ RCI считается точнее.
-func (s *SystemInfoStore) Adopt(v ndms.Version) {
+// Adopt принимает версию, добытую запасным каналом: ndmc через unix-сокет
+// (internal/sys/ndmsinfo/ndmc.go) или файл /etc/components.xml. Уже
+// загруженное значение не трогает — живой ответ RCI считается точнее.
+//
+// source обязателен: по нему диагностика отличает «RCI жив» от «RCI молчал,
+// выручил запасной канал», а без него эти случаи неразличимы.
+func (s *SystemInfoStore) Adopt(v ndms.Version, source string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.loaded {
@@ -100,16 +109,29 @@ func (s *SystemInfoStore) Adopt(v ndms.Version) {
 	}
 	s.value = v
 	s.loaded = true
-	s.adopted = true
+	s.source = source
 }
 
+// Source сообщает, каким каналом добыта версия, или "" пока её нет.
+func (s *SystemInfoStore) Source() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.loaded {
+		return ""
+	}
+	return s.source
+}
+
+// sourceRCI дублирует ndmsinfo.SourceRCI: импортировать тот пакет отсюда
+// нельзя, он сам зависит от query.
+const sourceRCI = "rci"
+
 // Adopted сообщает, что версия получена НЕ от RCI, а запасным каналом.
-// Признак живёт рядом с данными, а не глобальной переменной: его читает
-// диагностика, для которой «store наполнен» больше не равно «RCI жив».
+// Обёртка над Source(): диагностике нужен и факт, и имя канала.
 func (s *SystemInfoStore) Adopted() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.adopted
+	return s.loaded && s.source != sourceRCI
 }
 
 // Get returns the cached Version. Returns ErrNotInitialized if Init was

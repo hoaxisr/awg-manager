@@ -125,12 +125,16 @@ func (a *app) setupNDMS() {
 	// MUST run before kmod.New(): the kmod loader reads model/SoC from
 	// ndmsinfo.Get() at construction time.
 	if err := ndmsinfo.Init(context.Background(), a.ndmsQueries.SystemInfo, ndmsTimeout); err != nil {
+		// Init перебрал все каналы — RCI, ndmc и файл /etc/components.xml.
+		// Раз версии нет и оттуда, действовать нельзя: половина проводки
+		// (выбор оператора, режим файрвола, гейт DNS-маршрутов) замерзает
+		// снимком прямо здесь и не переигрывается никогда.
 		a.waitForNDMSVersion(err)
-	} else if ndmsinfo.Source() == ndmsinfo.SourceNdmc {
-		// Запасной канал сработал — значит RCI не ответил. Сам туннельный
-		// тракт в порядке, но это ранний признак залипшей HTTP-морды NDMS.
+	} else if src := ndmsinfo.Source(); src != ndmsinfo.SourceRCI {
+		// Запасной канал сработал — значит RCI не ответил. Туннельный тракт
+		// при этом в порядке, но это ранний признак залипшей HTTP-морды NDMS.
 		a.bootLog.Warn("ndms-version", "",
-			"RCI не ответил, версия получена через ndmc: "+osdetect.ReleaseString())
+			"RCI не ответил, версия получена каналом "+src+": "+osdetect.ReleaseString())
 	}
 
 	// Load kernel module if available (before backend detection).

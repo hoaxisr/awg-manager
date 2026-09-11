@@ -25,13 +25,16 @@ var (
 const (
 	SourceRCI  = "rci"
 	SourceNdmc = "ndmc"
+	// SourceFile — версия взята из /etc/components.xml. Она ЧАСТИЧНАЯ: релиз
+	// и hw_id есть, списка компонентов нет, дозагрузка у ndm продолжается.
+	SourceFile = "components.xml"
 )
 
 // Source сообщает, каким каналом получена версия, или "" если она неизвестна.
 // Нужен, чтобы переход на запасной канал был ВИДЕН: молчаливый успех запасного
 // пути ничем не отличался бы от обычного, а он означает, что RCI не ответил.
-// Своего состояния не держит — спрашивает store, где признак лежит рядом с
-// данными и не может с ними разойтись.
+// Своего состояния не держит — спрашивает store, где источник лежит рядом с
+// данными и разойтись с ними не может.
 func Source() string {
 	storeMu.RLock()
 	s := store
@@ -39,13 +42,7 @@ func Source() string {
 	if s == nil {
 		return ""
 	}
-	if _, err := s.Get(); err != nil {
-		return ""
-	}
-	if s.Adopted() {
-		return SourceNdmc
-	}
-	return SourceRCI
+	return s.Source()
 }
 
 // Init initialises the version store reference and blocks until the
@@ -76,7 +73,19 @@ func Init(ctx context.Context, sysInfo *query.SystemInfoStore, timeout time.Dura
 			// unix-сокет, то есть не зависит ни от HTTP на :79, ни от того,
 			// чем этот :79 занят.
 			if v, err := versionFromNdmc(ctx); err == nil {
-				sysInfo.Adopt(v)
+				sysInfo.Adopt(v, SourceNdmc)
+				return nil
+			}
+			// Обе службы молчат — остаётся файл. Он лежит локально и отвечает,
+			// даже когда ndm не поднялся вовсе, а несёт всё, чем демон
+			// распоряжается на старте: релиз, hw_id и состав компонентов
+			// (см. components_xml.go). Поэтому «версии нет» — теперь
+			// действительно последний исход, а не первый же отказ :79.
+			//
+			// Порядок именно такой: файл не должен перебивать живой ответ
+			// службы, он лишь страхует её молчание.
+			if v, err := versionFromComponentsXML(); err == nil {
+				sysInfo.Adopt(v, SourceFile)
 				return nil
 			}
 			return fmt.Errorf("NDMS not available after %s", timeout)
