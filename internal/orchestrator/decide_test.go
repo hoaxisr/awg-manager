@@ -1591,3 +1591,41 @@ func TestDecide_NDMSHook_DisabledStopsAfterQuiescence(t *testing.T) {
 		t.Fatal("a conf=disabled after the quiescence window must stop the tunnel (user intent honoured)")
 	}
 }
+
+func TestDecide_WANUp_StartsNativeWGWithASCAndV6Endpoint(t *testing.T) {
+	s := newState()
+	s.supportsASC = true
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg0"] = &tunnelState{
+		ID: "awg0", Backend: "nativewg", Enabled: true, Running: false, NWGIndex: 0, EndpointMayV6: true,
+	}
+
+	actions := decide(Event{Type: EventWANUp, WANIface: "eth3"}, &s)
+
+	starts := filterActions(actions, ActionStartNativeWG)
+	if len(starts) != 1 {
+		t.Fatalf("expected 1 StartNativeWG for ASC+v6 tunnel on WAN up, got %d", len(starts))
+	}
+}
+
+func TestDecide_WANUp_ColdStartsMultipleStoppedKernelTunnels(t *testing.T) {
+	s := newState()
+	s.anyWANUpFn = func() bool { return true }
+	s.tunnels["awg10"] = &tunnelState{
+		ID: "awg10", Backend: "kernel", Enabled: true, Running: false,
+	}
+	s.tunnels["awg11"] = &tunnelState{
+		ID: "awg11", Backend: "kernel", Enabled: true, Running: false,
+	}
+	s.tunnels["awg12"] = &tunnelState{
+		ID: "awg12", Backend: "kernel", Enabled: false, Running: false,
+	}
+
+	actions := decide(Event{Type: EventWANUp, WANIface: "apcli1"}, &s)
+
+	starts := filterActions(actions, ActionColdStartKernel)
+	if len(starts) != 2 {
+		t.Fatalf("expected 2 ColdStartKernel on WAN up, got %d", len(starts))
+	}
+	assertNoActionForTunnel(t, actions, "awg12", ActionColdStartKernel)
+}

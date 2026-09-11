@@ -454,6 +454,11 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 	// Ensure tunnel is in cache (covers tunnels created/imported after startup)
 	if event.Tunnel != "" {
 		o.state.ensureTunnel(event.Tunnel, o.store)
+	} else if len(o.state.tunnels) == 0 && o.store != nil {
+		o.state.loadFromStore(o.store)
+		if o.state.anyWANUpFn == nil && o.wanModel != nil {
+			o.state.anyWANUpFn = o.wanModel.AnyUp
+		}
 	}
 	actions := decide(event, &o.state)
 	// conf=disabled detail: тот же резолвер, что decideNDMSHook —

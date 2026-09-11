@@ -212,6 +212,8 @@ func (a *app) startBootSequence() {
 			// (legacy garbage from the pre-hardened resolver, e.g. "ISP").
 			a.tunnelService.HealStaleActiveWAN()
 
+			a.orch.LoadState(a.shutdownCtx)
+
 			// Detect actual WAN state.
 			gwIface, err := a.ndmsQueries.Routes.GetDefaultGatewayInterface(a.shutdownCtx)
 			if err != nil {
@@ -224,7 +226,6 @@ func (a *app) startBootSequence() {
 					fmt.Sprintf("Tunnel start at %s (uptime ~%ds)",
 						time.Since(bootStart).Round(time.Second),
 						int(time.Since(bootStart).Seconds())+int(a.uptime)))
-				a.orch.LoadState(a.shutdownCtx)
 				a.orch.HandleEvent(a.shutdownCtx, orchestrator.Event{Type: orchestrator.EventBoot})
 			}
 

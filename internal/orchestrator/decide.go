@@ -300,7 +300,7 @@ func decideWANUp(event Event, state *State) []Action {
 				actions = appendPostStartActions(actions, t)
 				continue
 			}
-			if state.supportsASC && !t.ViaProxy {
+			if state.supportsASC && !t.ViaProxy && !t.EndpointMayV6 {
 				continue // NDMS handles failover natively via ASC on >= 5.01.A.3
 			}
 			// Skip only when actively running on a DIFFERENT WAN (multi-WAN:
