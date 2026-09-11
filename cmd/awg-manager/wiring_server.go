@@ -585,6 +585,10 @@ func (a *app) setupListen() {
 func (a *app) setupShutdown() {
 	// Shutdown context — cancelled on shutdown
 	a.shutdownCtx, a.shutdownCancel = context.WithCancel(context.Background())
+	// Отложенный бут приезжает из горутины хука с её 60-секундным дедлайном;
+	// исполнять его надо под жизнью демона, иначе бут на нескольких туннелях
+	// обрывается посередине и повтора не будет.
+	a.orch.SetBaseContext(a.shutdownCtx)
 	a.deferOnExit(a.shutdownCancel)
 
 	// Start the monitoring scheduler now that shutdownCtx exists.

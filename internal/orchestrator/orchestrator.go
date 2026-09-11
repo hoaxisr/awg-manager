@@ -106,6 +106,12 @@ type Orchestrator struct {
 	staticRoute StaticRouteExecutor
 	clientRoute ClientRouteExecutor
 
+	// baseCtx — контекст жизни демона. Нужен отложенному буту: тот приезжает
+	// из горутины NDMS-хука, у которой свой 60-секундный дедлайн
+	// (internal/api/hook.go), а бут на нескольких туннелях с медленным NDMS
+	// в него не укладывается — обрывался бы посередине и без повтора.
+	baseCtx context.Context
+
 	// Event bus for SSE publishing
 	bus *events.Bus
 
@@ -229,6 +235,14 @@ func (o *Orchestrator) RefreshTunnelState(tunnelID string) {
 		fresh.lastConfRunningAt = cur.lastConfRunningAt
 	}
 	o.state.tunnels[tunnelID] = fresh
+}
+
+// SetBaseContext задаёт контекст жизни демона для работ, которые нельзя
+// исполнять под коротким контекстом вызывающего (отложенный бут).
+func (o *Orchestrator) SetBaseContext(ctx context.Context) {
+	o.mu.Lock()
+	o.baseCtx = ctx
+	o.mu.Unlock()
 }
 
 // LoadState populates the state cache from storage and live operator state.
@@ -419,6 +433,34 @@ func (o *Orchestrator) awaitTunnelIdle(ctx context.Context, ndmsName string) {
 
 // HandleEvent is the single entry point for ALL events.
 // Decides what to do, then executes.
+// decideLocked принимает решение под o.mu и сообщает, был ли это отложенный
+// бут. Выделено из HandleEvent, чтобы диспетчеризацию можно было проверить
+// без исполнителей: иначе единственным признаком подмены decideBoot на что-то
+// другое остаётся паника на nil-исполнителе, а это не проверка.
+func (o *Orchestrator) decideLocked(event Event) (actions []Action, deferredBoot bool, baseCtx context.Context) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	// Ensure tunnel is in cache (covers tunnels created/imported after startup)
+	if event.Tunnel != "" {
+		o.state.ensureTunnel(event.Tunnel, o.store)
+	}
+	// Отложенный бут: загрузка прошла без WAN, и первое WAN-событие обязано
+	// отработать за неё. Пометку снимает сам decideBoot.
+	//
+	// WANUp берём из модели WAN, а НЕ из факта прихода EventWANUp. Хук шлёт
+	// это событие для любого интерфейса с ipv4-слоем, кроме туннельных
+	// (IsNonISPInterface отсеивает только их): подъём LAN-моста br0 или
+	// L2TP-клиента запускал бы полный бут при мёртвом WAN — холодный старт
+	// всех туннелей и глобальный sweep маршрутов в никуда. Модель знает
+	// только интерфейсы с ролью WAN из NDMS. Не подтвердилось — decideBoot
+	// оставит пометку, и бут дождётся настоящего WAN.
+	if event.Type == EventWANUp && o.state.bootPending {
+		return decideBoot(Event{Type: EventBoot, WANUp: o.state.anyWANUp(), Now: event.Now}, &o.state), true, o.baseCtx
+	}
+	return decide(event, &o.state), false, o.baseCtx
+}
+
 func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 	// Filter self-triggered NDMS hooks before decide.
 	// Our operators register expected hooks before InterfaceUp/Down.
@@ -450,12 +492,13 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 	}
 
 	// Decide (under lock)
-	o.mu.Lock()
-	// Ensure tunnel is in cache (covers tunnels created/imported after startup)
-	if event.Tunnel != "" {
-		o.state.ensureTunnel(event.Tunnel, o.store)
+	actions, deferredBoot, baseCtx := o.decideLocked(event)
+	execCtx := ctx
+	if deferredBoot && baseCtx != nil {
+		execCtx = baseCtx
 	}
-	actions := decide(event, &o.state)
+
+	o.mu.Lock()
 	// conf=disabled detail: тот же резолвер, что decideNDMSHook —
 	// findByNDMSName(event.NDMSName), layer=="conf" (НЕ event.Tunnel).
 	if event.Type == EventNDMSHook && event.Layer == "conf" && event.Level == "disabled" {
@@ -483,6 +526,11 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 		return nil
 	}
 
+	if deferredBoot {
+		o.appLog.Info("startup", "",
+			fmt.Sprintf("отложенный бут пошёл по WAN-up (%s), действий: %d", event.WANIface, len(actions)))
+	}
+
 	// Per-tunnel lock for execution
 	tunnelID := event.Tunnel
 	if tunnelID == "" {
@@ -490,7 +538,7 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 		// tunnel and run each group under that tunnel's lock so a concurrent
 		// single-tunnel NDMS hook for the same tunnel cannot interleave a
 		// Stop into the middle of our Start sequence (the boot kill race).
-		return o.executeActionsGrouped(ctx, actions, event.Type.String())
+		return o.executeActionsGrouped(execCtx, actions, event.Type.String())
 	}
 
 	// Single-tunnel event: lock that tunnel. Bounded acquisition (issue
@@ -500,11 +548,11 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 	// another and kept the tunnel wedged until the daemon was restarted.
 	// Failing fast with ErrOperationInProgress gives the UI an honest,
 	// retryable "операция уже выполняется" instead of a hung request.
-	if err := o.lockTunnel(ctx, tunnelID, event.Type.String()); err != nil {
+	if err := o.lockTunnel(execCtx, tunnelID, event.Type.String()); err != nil {
 		return err
 	}
 	defer o.unlockTunnel(tunnelID)
-	return o.executeActions(ctx, actions)
+	return o.executeActions(execCtx, actions)
 }
 
 // tunnelLockTimeout bounds how long a caller waits for a busy tunnel's

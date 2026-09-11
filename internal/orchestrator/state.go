@@ -69,6 +69,14 @@ type State struct {
 	tunnels     map[string]*tunnelState // tunnelID → state
 	anyWANUpFn  func() bool             // delegates to wanModel.AnyUp()
 	supportsASC bool
+	// bootPending — загрузка прошла с неподнятым WAN, и EventBoot не
+	// выстрелил. Первый WAN-up отдаёт decideBoot вместо decideWANUp: бут
+	// не состоялся, и это его момент. Без этого на такой загрузке молча
+	// пропадала вся боотовая работа — не только старт туннелей, но и
+	// глобальный sweep маршрутов, возврат endpoint'а v6-туннелю из
+	// заглушки NDMS и регистрация endpoint-стража у hostname-туннелей
+	// (он живёт в памяти демона и наполняется только стартом).
+	bootPending bool
 }
 
 // newState creates an empty state.
