@@ -19,8 +19,11 @@ import (
 // должен, а совпадение имени по литералу в двух пакетах развалится молча.
 const DeviceKeyFile = ".device-key"
 
-// deviceKeyLen — длина секрета, AES-256.
-const deviceKeyLen = 32
+// DeviceKeyLen — длина секрета, AES-256. Экспортирована по той же причине,
+// что и DeviceKeyFile: internal/backup читает файл секрета для переноса из
+// откатного каталога, и читать его без границы нельзя — панель живёт на
+// роутере со 128 МБ.
+const DeviceKeyLen = 32
 
 // ErrDeviceKeyMissing — секрета устройства нет или он непригоден (файл
 // отсутствует либо обрезан). Отличается от ErrDeviceCiphertext, потому что
@@ -33,10 +36,13 @@ var ErrDeviceKeyMissing = errors.New("device key missing")
 // а не «ключа нет», и сам ключ при этом НЕ стирает.
 var ErrDeviceCiphertext = errors.New("device ciphertext undecryptable")
 
-// errDeviceKeyBadLen — файл секрета есть, но его длина не 32 байта. Наружу
-// он идёт как ErrDeviceKeyMissing (пригодного секрета нет), а внутри пакета
-// отличает «файла нет» от «файл негоден»: во втором случае его уносят в
-// карантин, а не затирают.
+// errDeviceKeyBadLen — секрет негодной длины. На чтении это файл, который
+// есть, но длиной не 32 байта: наружу он идёт как ErrDeviceKeyMissing
+// (пригодного секрета нет), а внутри пакета отличает «файла нет» от «файл
+// негоден» — во втором случае его уносят в карантин, а не затирают. На записи
+// (PublishDeviceKey) — те же 32 байта, но уже у того, что просят
+// опубликовать; там он идёт наружу голым, чтобы отказ не спутали ни с
+// «пригодного секрета нет», ни с занятым именем (fs.ErrExist).
 var errDeviceKeyBadLen = errors.New("device key bad length")
 
 // errDeviceKeyRaced — пока мы читали негодный секрет, под его именем оказался
@@ -140,53 +146,92 @@ func (c *DeviceCipher) keyForRead() ([]byte, error) {
 // Круг повторяется, только когда гонку выиграл кто-то другой: и карантин, и
 // заведение опираются на то, что под именем лежит ожидаемый файл, а это
 // между вызовами могло перестать быть правдой.
-func (c *DeviceCipher) keyForWrite() ([]byte, error) {
+//
+// Уведомление пользователю уходит отсюда, одно на весь вызов и после того,
+// как исход известен. Раньше его печатал сам карантин — то есть ДО заведения
+// нового секрета: если заведение потом отказывало (кончилось место — та самая
+// беда, ради которой у записи один владелец), пользователю уже сказали про
+// заведённый секрет, которого нет, а на повторных кругах обещали это ещё раз.
+func (c *DeviceCipher) keyForWrite() (key []byte, err error) {
+	var (
+		bad   error  // чем забракован лежавший под именем файл
+		saved string // имя карантинной копии, если унести удалось
+		stuck error  // унести не удалось: негодный файл остался под именем
+	)
+	defer func() {
+		switch {
+		case stuck != nil:
+			recordNotice("quarantine", DeviceKeyFile, fmt.Sprintf(
+				"Файл секрета устройства %s негоден (%v), и убрать его в сторону не вышло: %v. Пока он на месте, ключ подписки Amnezia сохранить не получится.",
+				DeviceKeyFile, bad, stuck))
+		case saved == "":
+			// Уносить было нечего (секрета просто нет) либо гонку выиграл
+			// другой экземпляр: сообщать пользователю не о чем.
+		case err != nil:
+			recordNotice("quarantine", DeviceKeyFile, fmt.Sprintf(
+				"Файл секрета устройства %s негоден (%v) и убран рядом как %s, но завести новый не вышло: %v. Ранее сохранённый ключ подписки Amnezia расшифровать больше нечем, а сохранить новый пока не получится.",
+				DeviceKeyFile, bad, saved, err))
+		default:
+			// Текст адресован человеку в журнале, а не инженеру в консоли:
+			// секрет привязан к установке, и единственное действие
+			// пользователя — ввести ключ подписки заново. Паниковать не о
+			// чем: на здоровой установке это сообщение не появляется вовсе.
+			recordNotice("quarantine", DeviceKeyFile, fmt.Sprintf(
+				"Файл секрета устройства %s негоден (%v); заведён новый, прежний сохранён рядом как %s. Ранее сохранённый ключ подписки Amnezia расшифровать больше нечем — введите его заново.",
+				DeviceKeyFile, bad, saved))
+		}
+	}()
+
 	var last error
 	for attempt := 0; attempt < deviceKeyAttempts; attempt++ {
-		raw, info, err := c.readKeyFile()
+		raw, info, rerr := c.readKeyFile()
 		switch {
-		case err == nil:
+		case rerr == nil:
 			return raw, nil
-		case errors.Is(err, errDeviceKeyBadLen):
+		case errors.Is(rerr, errDeviceKeyBadLen):
 			// Файл есть, но длина не та. Самый вероятный способ получить
 			// лишний байт — дописанный \n после просмотра редактором, и тогда
 			// первые 32 байта — настоящий секрет, который ещё можно достать.
 			// Поэтому файл не затирается новым секретом, а уносится в
 			// карантин, и человек узнаёт об этом из журнала.
-			switch qerr := c.quarantineKey(info, err); {
+			bad = rerr
+			name, qerr := c.quarantineKey(info, rerr)
+			switch {
 			case qerr == nil:
+				saved = name
 			case errors.Is(qerr, errDeviceKeyRaced):
 				last = qerr
 				continue
 			default:
 				// Негодный файл остался под именем: заводить секрет поверх
 				// него нельзя, а читать нечего. Отказ закрытый.
+				stuck = qerr
 				return nil, qerr
 			}
-		case !errors.Is(err, ErrDeviceKeyMissing):
+		case !errors.Is(rerr, ErrDeviceKeyMissing):
 			// Файл есть, но прочитать его не вышло (EIO, EISDIR). Отказ
 			// закрытый: перезаписать секрет здесь — гарантированно потерять
 			// то, что ещё читается после починки железа.
-			return nil, err
+			return nil, rerr
 		}
-		key, err := c.createKey()
-		if err == nil {
-			return key, nil
+		fresh, cerr := c.createKey()
+		if cerr == nil {
+			return fresh, nil
 		}
-		if !errors.Is(err, ErrDeviceKeyMissing) {
-			return nil, err
+		if !errors.Is(cerr, ErrDeviceKeyMissing) {
+			return nil, cerr
 		}
 		// Имя занял другой экземпляр, и его файл непригоден. Читать его
 		// нечего, затирать нельзя — на следующем круге он поедет в карантин
 		// как обычный негодный секрет.
-		last = err
+		last = cerr
 	}
 	return nil, fmt.Errorf("device key: секрет не заведён за %d попыток: %w", deviceKeyAttempts, last)
 }
 
 // createKey заводит секрет ровно один раз на dataDir.
 func (c *DeviceCipher) createKey() ([]byte, error) {
-	fresh := make([]byte, deviceKeyLen)
+	fresh := make([]byte, DeviceKeyLen)
 	if _, err := rand.Read(fresh); err != nil {
 		return nil, fmt.Errorf("device key: rand: %w", err)
 	}
@@ -228,6 +273,16 @@ func (c *DeviceCipher) createKey() ([]byte, error) {
 // AtomicWritePerm не годится тем же боком: он завершается rename'ом, который
 // молча затирает чужой файл.
 func PublishDeviceKey(dataDir string, key []byte) error {
+	// Длина проверяется здесь, а не у вызывающих: на пути createKey она верна
+	// по построению (32 байта из rand.Read), а на пути переноса из откатного
+	// каталога байты берутся из файла КАК ЕСТЬ. Пустой или раздувшийся файл,
+	// опубликованный под именем секрета, ближайшее шифрование уносит в
+	// карантин и сообщает пользователю, что ключ подписки расшифровать больше
+	// нечем, — то есть негодный файл в откатной копии превращался бы в
+	// потерю ключа, а не в отказ переноса.
+	if len(key) != DeviceKeyLen {
+		return fmt.Errorf("device key: %w: %d байт вместо %d", errDeviceKeyBadLen, len(key), DeviceKeyLen)
+	}
 	if err := os.MkdirAll(dataDir, DirPermission); err != nil {
 		return fmt.Errorf("device key: %w", err)
 	}
@@ -282,7 +337,11 @@ func writeDeviceKey(f *os.File, key []byte) error {
 // файл: пока мы читали негодный секрет, другой экземпляр успел унести его в
 // карантин и завести годный. Без сверки карантин утаскивал бы чужой
 // ПРИГОДНЫЙ секрет, и все выданные им шифротексты переставали читаться.
-func (c *DeviceCipher) quarantineKey(read fs.FileInfo, reason error) error {
+//
+// Первым значением идёт имя карантинной копии. Уведомление пользователю
+// отсюда не уходит: что ему сказать, известно только после того, как отработал
+// createKey, — см. keyForWrite.
+func (c *DeviceCipher) quarantineKey(read fs.FileInfo, reason error) (string, error) {
 	holder, err := os.CreateTemp(c.dataDir, DeviceKeyFile+".corrupt.*")
 	if err == nil {
 		holder.Close()
@@ -299,13 +358,13 @@ func (c *DeviceCipher) quarantineKey(read fs.FileInfo, reason error) error {
 		var now fs.FileInfo
 		if now, err = os.Stat(c.path()); err != nil || !os.SameFile(read, now) {
 			os.Remove(holder.Name())
-			return errDeviceKeyRaced
+			return "", errDeviceKeyRaced
 		}
 		if err = os.Rename(c.path(), holder.Name()); err != nil {
 			os.Remove(holder.Name())
 			if os.IsNotExist(err) {
 				// Имя увели между Stat и Rename — обычный проигрыш гонки.
-				return errDeviceKeyRaced
+				return "", errDeviceKeyRaced
 			}
 		}
 	}
@@ -313,22 +372,12 @@ func (c *DeviceCipher) quarantineKey(read fs.FileInfo, reason error) error {
 		// Файл остаётся на месте: заведение нового секрета упрётся в занятое
 		// имя и откажет закрыто, а прежний файл никто не затрёт.
 		fmt.Fprintf(os.Stderr, "storage: %s is unusable (%v); quarantine failed: %v\n", c.path(), reason, err)
-		recordNotice("quarantine", DeviceKeyFile, fmt.Sprintf(
-			"Файл секрета устройства %s негоден (%v), и убрать его в сторону не вышло: %v. Пока он на месте, ключ подписки Amnezia сохранить не получится.",
-			DeviceKeyFile, reason, err))
-		return fmt.Errorf("device key: карантин: %w", err)
+		return "", fmt.Errorf("device key: карантин: %w", err)
 	}
 	syncDir(c.dataDir)
 	saved := filepath.Base(holder.Name())
-	fmt.Fprintf(os.Stderr, "storage: %s is unusable (%v); moved to %s, new device key generated\n", c.path(), reason, saved)
-	// Текст адресован человеку в журнале, а не инженеру в консоли: секрет
-	// привязан к установке, и единственное действие пользователя — ввести
-	// ключ подписки заново. Паниковать не о чем: на здоровой установке это
-	// сообщение не появляется вовсе.
-	recordNotice("quarantine", DeviceKeyFile, fmt.Sprintf(
-		"Файл секрета устройства %s негоден (%v); заведён новый, прежний сохранён рядом как %s. Ранее сохранённый ключ подписки Amnezia расшифровать больше нечем — введите его заново.",
-		DeviceKeyFile, reason, saved))
-	return nil
+	fmt.Fprintf(os.Stderr, "storage: %s is unusable (%v); moved to %s\n", c.path(), reason, saved)
+	return saved, nil
 }
 
 // readKeyFile отдаёт ErrDeviceKeyMissing и на отсутствующий, и на негодный
@@ -352,14 +401,14 @@ func (c *DeviceCipher) readKeyFile() ([]byte, fs.FileInfo, error) {
 	// Читаем на байт больше нужного: этого хватает, чтобы отличить годную
 	// длину от негодной, и подложенный на место секрета огромный файл не
 	// уедет в память целиком — панель живёт на роутере со 128 МБ.
-	raw, err := io.ReadAll(io.LimitReader(f, deviceKeyLen+1))
+	raw, err := io.ReadAll(io.LimitReader(f, DeviceKeyLen+1))
 	if err != nil {
 		return nil, nil, fmt.Errorf("device key: %w", err)
 	}
-	if len(raw) != deviceKeyLen {
+	if len(raw) != DeviceKeyLen {
 		// FileInfo отдаётся и здесь: именно этот файл поедет в карантин, и
 		// сверять его там будут по этому же inode.
-		return nil, info, fmt.Errorf("%w: %d байт вместо %d (%w)", ErrDeviceKeyMissing, info.Size(), deviceKeyLen, errDeviceKeyBadLen)
+		return nil, info, fmt.Errorf("%w: %d байт вместо %d (%w)", ErrDeviceKeyMissing, info.Size(), DeviceKeyLen, errDeviceKeyBadLen)
 	}
 	return raw, info, nil
 }

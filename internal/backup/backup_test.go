@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -1092,5 +1093,133 @@ func inotifyCreated(t *testing.T, fd int) []string {
 			out = append(out, name)
 			off += header + nameLen
 		}
+	}
+}
+
+// Т1. Отказ записи во время переноса секрета не оставляет под целевым именем
+// ни пустого, ни короткого файла. Прежняя, вторая реализация записи жила
+// здесь же (O_CREATE|O_EXCL прямо на целевом имени + Write): после EFBIG под
+// именем оставался файл нулевой длины, и ближайшее шифрование уносило эту
+// пустышку в карантин, сообщая пользователю, что прежний ключ подписки
+// расшифровать больше нечем, — из-за ВРЕМЕННОЙ нехватки места, после которой
+// повтор ещё мог сработать. Проверяется путь, который менялся: сам перенос,
+// а не соседний storage (там свойство держалось и до правки).
+func TestCarryDeviceKeyWriteFailureLeavesNothing(t *testing.T) {
+	root := t.TempDir()
+	from := filepath.Join(root, "from")
+	to := filepath.Join(root, "to")
+	for _, dir := range []string{from, to} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secret := bytes.Repeat([]byte("s"), storage.DeviceKeyLen)
+	if err := os.WriteFile(filepath.Join(from, storage.DeviceKeyFile), secret, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	allow := forbidFileWrites(t)
+	err := carryDeviceKey(from, to)
+	allow()
+
+	if err == nil {
+		t.Fatal("перенос прошёл при запрете записи — отказ не смоделирован, проверка не состоялась")
+	}
+	entries, readErr := os.ReadDir(to)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	for _, e := range entries {
+		info, statErr := e.Info()
+		size := int64(-1)
+		if statErr == nil {
+			size = info.Size()
+		}
+		t.Fatalf("после отказа записи в целевом каталоге остался %s (%d байт): %v", e.Name(), size, err)
+	}
+}
+
+// forbidFileWrites запрещает процессу писать в обычные файлы: RLIMIT_FSIZE=0
+// разрешает создать файл, но любая запись в него отдаёт EFBIG — так же, как
+// при кончившемся месте на флеше. Лимит процессный и снимается возвращённой
+// функцией сразу после проверяемого вызова; на stdout тестового процесса он
+// не влияет — это канал, а не обычный файл. SIGXFSZ, который ядро шлёт вместе
+// с EFBIG, перехватывается, чтобы тестовый процесс не умер от него, и
+// перехват снимается ПОСЛЕ возврата лимита: в обратном порядке любая запись,
+// попавшая в зазор, убила бы тестовый бинарь. Близнец живёт в
+// internal/storage (devicecipher_test.go): помощник тестовый и в обоих
+// пакетах неэкспортируемый.
+func forbidFileWrites(t *testing.T) func() {
+	t.Helper()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGXFSZ)
+	var saved syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &saved); err != nil {
+		t.Fatalf("getrlimit: %v", err)
+	}
+	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &syscall.Rlimit{Cur: 0, Max: saved.Max}); err != nil {
+		t.Fatalf("setrlimit: %v", err)
+	}
+	done := false
+	allow := func() {
+		if done {
+			return
+		}
+		done = true
+		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &saved); err != nil {
+			t.Fatalf("вернуть RLIMIT_FSIZE: %v", err)
+		}
+		signal.Stop(sig)
+	}
+	t.Cleanup(allow)
+	return allow
+}
+
+// Т3. Секрет негодной длины из откатного каталога не публикуется под целевым
+// именем. Байты там берутся из файла как есть, и опубликованная пустышка (или
+// раздувшийся файл) прожила бы до ближайшего шифрования, которое унесло бы её
+// в карантин со словами «ключ подписки расшифровать больше нечем». Отказ
+// переноса молчит по построению — восстановление он не отменяет, — поэтому
+// проверяется не ошибка, а то, что под именем ничего не появилось.
+func TestRestoreDoesNotCarryBadLengthDeviceKey(t *testing.T) {
+	cases := []struct {
+		name string
+		size int
+	}{
+		{"пустой", 0},
+		{"раздувшийся", storage.DeviceKeyLen + 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			dataDir := filepath.Join(root, "awg-manager")
+			if err := os.MkdirAll(dataDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dataDir, "settings.json"), []byte(`{"version":32}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var buf bytes.Buffer
+			if err := Export(dataDir, "2.18.2", &buf); err != nil {
+				t.Fatalf("Export: %v", err)
+			}
+			// Секрет кладётся после выгрузки нарочно: в архив он всё равно не
+			// едет, а в откатном каталоге оказаться обязан.
+			if err := os.WriteFile(filepath.Join(dataDir, storage.DeviceKeyFile), bytes.Repeat([]byte("x"), tc.size), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := Restore(dataDir, bytes.NewReader(buf.Bytes())); err != nil {
+				t.Fatalf("Restore: %v", err)
+			}
+
+			info, err := os.Stat(filepath.Join(dataDir, storage.DeviceKeyFile))
+			if err == nil {
+				t.Fatalf("негодный секрет (%d байт) опубликован под целевым именем: %d байт", tc.size, info.Size())
+			}
+			if !os.IsNotExist(err) {
+				t.Fatalf("под именем секрета: %v", err)
+			}
+		})
 	}
 }

@@ -211,7 +211,17 @@ func Restore(dataDir string, r io.Reader) error {
 // ОН — свой секрет старше архива, и именно им зашифровано всё, что
 // пользователь сохранит дальше.
 func carryDeviceKey(prev, next string) error {
-	raw, err := os.ReadFile(filepath.Join(prev, storage.DeviceKeyFile))
+	f, err := os.Open(filepath.Join(prev, storage.DeviceKeyFile))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	// С границей, а не os.ReadFile: под именем секрета в откатном каталоге
+	// мог оказаться раздувшийся файл, и в память он уехал бы целиком — панель
+	// живёт на роутере со 128 МБ. Байт сверх годной длины оставлен нарочно:
+	// обрежь чтение ровно по 32, и 33-байтовый файл стал бы неотличим от
+	// годного секрета, то есть опубликовался бы как секрет.
+	raw, err := io.ReadAll(io.LimitReader(f, storage.DeviceKeyLen+1))
 	if err != nil {
 		return err
 	}

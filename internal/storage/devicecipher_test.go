@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -129,8 +130,8 @@ func TestDeviceCipher_KeyFilePermissions(t *testing.T) {
 	if perm := info.Mode().Perm(); perm != 0o600 {
 		t.Fatalf("права секрета %o, want 600", perm)
 	}
-	if info.Size() != deviceKeyLen {
-		t.Fatalf("размер секрета %d, want %d", info.Size(), deviceKeyLen)
+	if info.Size() != DeviceKeyLen {
+		t.Fatalf("размер секрета %d, want %d", info.Size(), DeviceKeyLen)
 	}
 }
 
@@ -180,7 +181,7 @@ func TestDeviceCipher_TruncatedKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat секрета: %v", err)
 	}
-	if info.Size() != deviceKeyLen {
+	if info.Size() != DeviceKeyLen {
 		t.Fatalf("секрет не перегенерирован: размер %d", info.Size())
 	}
 	if info.Mode().Perm() != 0o600 {
@@ -371,7 +372,7 @@ func TestDeviceCipher_NoPlaintextSliceLeaks(t *testing.T) {
 }
 
 // Т6. Длина секрета закреплена литералом 32 (AES-256). Сравнение с самой
-// константой реализации не поймало бы понижение deviceKeyLen до 16.
+// константой реализации не поймало бы понижение DeviceKeyLen до 16.
 func TestDeviceCipher_KeyLengthIs32(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := NewDeviceCipher(dir).Encrypt(testSubscriptionKey); err != nil {
@@ -591,8 +592,8 @@ func TestDeviceCipher_SecondQuarantineKeepsFirst(t *testing.T) {
 	keyPath := filepath.Join(dir, DeviceKeyFile)
 
 	damaged := [][]byte{
-		bytes.Repeat([]byte{'a'}, deviceKeyLen+1),
-		bytes.Repeat([]byte{'b'}, deviceKeyLen+2),
+		bytes.Repeat([]byte{'a'}, DeviceKeyLen+1),
+		bytes.Repeat([]byte{'b'}, DeviceKeyLen+2),
 	}
 	for i, content := range damaged {
 		if err := os.WriteFile(keyPath, content, 0o600); err != nil {
@@ -787,10 +788,14 @@ func forbidFileWrites(t *testing.T) func() {
 			return
 		}
 		done = true
-		signal.Stop(sig)
+		// Лимит снимается ПЕРВЫМ: пока он стоит, любая запись в обычный файл
+		// отдаёт EFBIG вместе с SIGXFSZ, а действие сигнала по умолчанию —
+		// убить процесс. Сними перехват раньше лимита — и в этот зазор
+		// тестовый бинарь умирает от собственного сигнала.
 		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &saved); err != nil {
 			t.Fatalf("вернуть RLIMIT_FSIZE: %v", err)
 		}
+		signal.Stop(sig)
 	}
 	t.Cleanup(allow)
 	return allow
@@ -810,7 +815,7 @@ func TestDeviceCipher_QuarantineDoesNotTakeForeignKey(t *testing.T) {
 	keyPath := filepath.Join(dir, DeviceKeyFile)
 	// Негодная длина, а не отсутствие файла: карантин включается только на
 	// ней, а гонка живёт именно в нём.
-	if err := os.WriteFile(keyPath, bytes.Repeat([]byte{'x'}, deviceKeyLen+1), 0o600); err != nil {
+	if err := os.WriteFile(keyPath, bytes.Repeat([]byte{'x'}, DeviceKeyLen+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	SetNoticeSink(func(Notice) {})
@@ -830,18 +835,18 @@ func TestDeviceCipher_QuarantineDoesNotTakeForeignKey(t *testing.T) {
 		t.Fatalf("Encrypt первым экземпляром: %v", err)
 	}
 	good, err := os.ReadFile(keyPath)
-	if err != nil || len(good) != deviceKeyLen {
+	if err != nil || len(good) != DeviceKeyLen {
 		t.Fatalf("первый экземпляр не завёл годный секрет: %d байт, err=%v", len(good), err)
 	}
 
 	// Теперь B делает следующий шаг своего круга. Под именем лежит чужой
 	// ПРИГОДНЫЙ секрет — уносить его нельзя.
-	qerr := slow.quarantineKey(info, readErr)
+	_, qerr := slow.quarantineKey(info, readErr)
 	if got, err := os.ReadFile(keyPath); err != nil || !bytes.Equal(got, good) {
 		t.Fatalf("чужой пригодный секрет уведён из-под имени: err=%v", err)
 	}
 	for name, content := range quarantineCopies(t, dir) {
-		if len(content) == deviceKeyLen {
+		if len(content) == DeviceKeyLen {
 			t.Fatalf("в карантине %s лежит годный секрет", name)
 		}
 	}
@@ -859,5 +864,124 @@ func TestDeviceCipher_QuarantineDoesNotTakeForeignKey(t *testing.T) {
 		if got, err := reader.Decrypt(token); err != nil || got != testSubscriptionKey {
 			t.Fatalf("шифротекст %s экземпляра не читается оставшимся секретом: (%q, %v)", name, got, err)
 		}
+	}
+}
+
+// Т2. PublishDeviceKey требует ровно DeviceKeyLen байт. На пути createKey
+// длина верна по построению (32 байта из rand.Read), а на пути переноса из
+// откатного каталога (internal/backup) байты берутся из файла КАК ЕСТЬ:
+// пустой или раздувшийся файл, опубликованный под именем секрета, ближайшее
+// шифрование унесёт в карантин и скажет пользователю, что ключ подписки
+// расшифровать больше нечем. Отказ обязан быть закрытым и отличимым от
+// «имя занято» сентинелом, а не текстом.
+func TestPublishDeviceKey_RejectsWrongLength(t *testing.T) {
+	cases := []struct {
+		name string
+		key  []byte
+	}{
+		{"nil", nil},
+		{"пусто", []byte{}},
+		{"короче", bytes.Repeat([]byte{'k'}, DeviceKeyLen-1)},
+		{"длиннее", bytes.Repeat([]byte{'k'}, DeviceKeyLen+1)},
+		{"огромный", bytes.Repeat([]byte{'k'}, 1<<20)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			err := PublishDeviceKey(dir, tc.key)
+
+			if !errors.Is(err, errDeviceKeyBadLen) {
+				t.Fatalf("PublishDeviceKey(%d байт) = %v, want errDeviceKeyBadLen", len(tc.key), err)
+			}
+			if errors.Is(err, fs.ErrExist) {
+				t.Fatalf("отказ по длине неотличим от занятого имени: %v", err)
+			}
+			entries, readErr := os.ReadDir(dir)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			for _, e := range entries {
+				t.Fatalf("после отказа по длине в каталоге данных остался %s", e.Name())
+			}
+		})
+	}
+}
+
+// collectNotices перехватывает уведомления пользователю на время теста.
+// Довайринговый буфер выгружается в свежий приёмник, поэтому накопленное
+// соседними тестами сбрасывается сразу после подключения: иначе «ровно одно
+// уведомление» превратилось бы в счёт чужих.
+func collectNotices(t *testing.T) func() []Notice {
+	t.Helper()
+	var got []Notice
+	SetNoticeSink(func(n Notice) { got = append(got, n) })
+	got = nil
+	t.Cleanup(func() { SetNoticeSink(nil) })
+	return func() []Notice { return got }
+}
+
+// Т4(а). Уведомление о карантине уходит ОДНО за вызов и только после того,
+// как новый секрет действительно заведён. Печатал его раньше сам карантин —
+// то есть до заведения, и на каждом круге цикла заново.
+func TestDeviceCipher_QuarantineNoticeFollowsNewKey(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, DeviceKeyFile), bytes.Repeat([]byte{'x'}, DeviceKeyLen+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	notices := collectNotices(t)
+
+	if _, err := NewDeviceCipher(dir).Encrypt(testSubscriptionKey); err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+
+	got := notices()
+	if len(got) != 1 {
+		t.Fatalf("уведомлений %d, want 1: %v", len(got), got)
+	}
+	fresh, err := os.ReadFile(filepath.Join(dir, DeviceKeyFile))
+	if err != nil || len(fresh) != DeviceKeyLen {
+		t.Fatalf("секрет после карантина: %d байт, %v", len(fresh), err)
+	}
+	copies := quarantineCopies(t, dir)
+	if len(copies) != 1 {
+		t.Fatalf("карантинных копий %d, want 1", len(copies))
+	}
+	for saved := range copies {
+		if !strings.Contains(got[0].Message, saved) {
+			t.Fatalf("уведомление не называет карантинную копию %s: %q", saved, got[0].Message)
+		}
+	}
+}
+
+// Т4(б). Карантин удался, а заведение нового секрета отказало (кончилось
+// место — та самая беда, ради которой у записи один владелец): уведомление
+// обязано сказать правду, а не пообещать заведённый секрет, которого нет.
+func TestDeviceCipher_NoticeDoesNotPromiseKeyThatFailed(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, DeviceKeyFile), bytes.Repeat([]byte{'x'}, DeviceKeyLen+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	notices := collectNotices(t)
+
+	allow := forbidFileWrites(t)
+	_, err := NewDeviceCipher(dir).Encrypt(testSubscriptionKey)
+	allow()
+
+	if err == nil {
+		t.Fatal("Encrypt прошёл при запрете записи — отказ не смоделирован, проверка не состоялась")
+	}
+	got := notices()
+	if len(got) != 1 {
+		t.Fatalf("уведомлений %d, want 1: %v", len(got), got)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, DeviceKeyFile)); !os.IsNotExist(statErr) {
+		t.Fatalf("секрет не заводился, а под именем что-то есть: %v", statErr)
+	}
+	if strings.Contains(got[0].Message, "заведён новый") {
+		t.Fatalf("уведомление обещает заведённый секрет, которого нет: %q", got[0].Message)
+	}
+	if !strings.Contains(got[0].Message, "не вышло") {
+		t.Fatalf("уведомление не говорит, что завести секрет не вышло: %q", got[0].Message)
 	}
 }
