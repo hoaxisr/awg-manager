@@ -34,6 +34,23 @@ const (
 	MaxSessionTTLHours = 720
 )
 
+// EffectiveAmneziaMirrorURL — ДЕЙСТВУЮЩИЙ адрес зеркала Amnezia CP по
+// хранимому значению: пустое (в том числе из одних пробелов) означает
+// «зеркало по умолчанию».
+//
+// Единственное место этого правила: его читает и ответ настроек
+// (settingsForResponse в internal/api), и premium-линия, которой нужен адрес
+// для клиента CP. Дефолт намеренно НЕ заполняется в defaultSettings, как
+// сделано у ConnectivityCheckURL: он осел бы в settings.json и перестал бы
+// ротироваться с релизом, а поле настраиваемое ровно потому, что зеркало
+// переезжает.
+func EffectiveAmneziaMirrorURL(stored string) string {
+	if v := strings.TrimSpace(stored); v != "" {
+		return v
+	}
+	return DefaultAmneziaMirrorURL
+}
+
 // SettingsStore manages application settings.
 type SettingsStore struct {
 	path     string

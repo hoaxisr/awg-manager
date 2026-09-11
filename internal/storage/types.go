@@ -105,8 +105,10 @@ type Settings struct {
 	// AmneziaPremiumMirrorURL — адрес зеркала Amnezia CP, с которого
 	// резолвер берёт рабочий origin портала. Настраивается, потому что
 	// зеркало переезжает: константа заперла бы мастер до следующего релиза.
-	// Пусто = DefaultAmneziaMirrorURL; действующий адрес подставляется на
-	// выдаче, в файле пустое значение остаётся пустым.
+	// Пусто = DefaultAmneziaMirrorURL; действующий адрес даёт
+	// EffectiveAmneziaMirrorURL. В файле пустое значение остаётся пустым, и
+	// присланный дефолт схлопывается в него же (normalizeAmneziaMirrorURL в
+	// internal/api): прибитый литерал отменил бы ротацию зеркала.
 	AmneziaPremiumMirrorURL string `json:"amneziaPremiumMirrorUrl,omitempty"`
 	// AmneziaPremiumKeyCipher — ключ подписки Amnezia Premium, зашифрованный
 	// DeviceCipher. Пишется ТОЛЬКО ручками premium (никогда через

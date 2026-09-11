@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -246,5 +247,115 @@ func TestUpdate_StoredBrokenMirrorURL_DoesNotBlockOtherSettings(t *testing.T) {
 	}
 	if snap.UsageLevel != "expert" {
 		t.Fatalf("usageLevel = %q, want expert", snap.UsageLevel)
+	}
+}
+
+// Круговорот «ответ → PATCH». Фронт сохраняет настройки ЦЕЛИКОМ
+// (api.updateSettings({ ...settings, ... })), а ответ несёт ПОДСТАВЛЕННЫЙ
+// действующий адрес зеркала. Без схлопывания на записи первый же щелчок
+// любым тумблером прибил бы дефолтный литерал в settings.json, и смена
+// зеркала в новом релизе не доехала бы до такого пользователя.
+func TestUpdate_MirrorRoundTrip_KeepsStorageEmpty(t *testing.T) {
+	h, store := newSettingsHandlerForTest(t)
+
+	rr := perform(h.Get, http.MethodGet, "/settings/get", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	data, _ := decodeJSONBody(t, rr)["data"].(map[string]any)
+	if got, _ := data["amneziaPremiumMirrorUrl"].(string); got != storage.DefaultAmneziaMirrorURL {
+		t.Fatalf("в ответе %q, want дефолт %q", got, storage.DefaultAmneziaMirrorURL)
+	}
+
+	// Ровно то, что шлёт страница настроек: весь объект ответа обратно.
+	body, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	rr = perform(h.Update, http.MethodPost, "/settings/update", string(body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	snap, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.AmneziaPremiumMirrorURL != "" {
+		t.Fatalf("дефолт прибит в хранилище: %q", snap.AmneziaPremiumMirrorURL)
+	}
+}
+
+// Негодный адрес отвергается и НЕ записывается.
+func TestUpdate_AmneziaMirrorURL_Rejected(t *testing.T) {
+	cases := []struct {
+		name string
+		sent string
+	}{
+		// user:pass@ лёг бы в settings.json (бэкап, поддержка), а начало
+		// строки показывало бы знакомое имя вместо настоящего хоста.
+		{"userinfo", "https://u-test:p-test@mirror.test/cp"},
+		{"пустой хост", "https:///cp"},
+		{"фрагмент", "https://mirror.test/cp#anchor"},
+		{"длиннее предела", "https://mirror.test/cp?m-path=/" + strings.Repeat("a", maxAmneziaMirrorURLLen)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, store := newSettingsHandlerForTest(t)
+			body, err := json.Marshal(map[string]string{"amneziaPremiumMirrorUrl": tc.sent})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rr := perform(h.Update, http.MethodPost, "/settings/update", string(body))
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), "INVALID_AMNEZIA_MIRROR_URL") {
+				t.Fatalf("нет кода INVALID_AMNEZIA_MIRROR_URL: %s", rr.Body.String())
+			}
+			snap, err := store.Snapshot()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if snap.AmneziaPremiumMirrorURL != "" {
+				t.Fatalf("отвергнутый адрес записан: %q", snap.AmneziaPremiumMirrorURL)
+			}
+		})
+	}
+}
+
+// Годный адрес принимается и приводится к хранимому виду: визуально пустое
+// поле и присланный дефолт значат «зеркало по умолчанию» и хранятся пустыми
+// (только пустое продолжает ротироваться с релизом), свой адрес — дословно.
+// Путь и запрос законны: их содержит сам дефолт.
+func TestUpdate_AmneziaMirrorURL_Accepted(t *testing.T) {
+	cases := []struct {
+		name string
+		sent string
+		want string
+	}{
+		{"одни пробелы", "   ", ""},
+		{"путь и запрос", testMirrorURL, testMirrorURL},
+		{"дефолтный адрес", storage.DefaultAmneziaMirrorURL, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, store := newSettingsHandlerForTest(t)
+			body, err := json.Marshal(map[string]string{"amneziaPremiumMirrorUrl": tc.sent})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rr := perform(h.Update, http.MethodPost, "/settings/update", string(body))
+			if rr.Code != http.StatusOK {
+				t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+			}
+			snap, err := store.Snapshot()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if snap.AmneziaPremiumMirrorURL != tc.want {
+				t.Fatalf("в хранилище %q, want %q", snap.AmneziaPremiumMirrorURL, tc.want)
+			}
+		})
 	}
 }

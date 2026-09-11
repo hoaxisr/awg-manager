@@ -295,10 +295,11 @@ func settingsForResponse(s *storage.Settings) *storage.Settings {
 		out.ManagedServer = &cp
 	}
 	// Пусто в хранилище означает «зеркало по умолчанию». Наружу отдаётся
-	// действующий адрес, чтобы у фронта не было собственной копии литерала.
-	if out.AmneziaPremiumMirrorURL == "" {
-		out.AmneziaPremiumMirrorURL = storage.DefaultAmneziaMirrorURL
-	}
+	// действующий адрес, чтобы у фронта не было собственной копии литерала;
+	// правило одно на всех читателей — storage.EffectiveAmneziaMirrorURL.
+	// Обратный ход (подставленный дефолт вернулся PATCH-ем) схлопывает
+	// normalizeAmneziaMirrorURL на записи.
+	out.AmneziaPremiumMirrorURL = storage.EffectiveAmneziaMirrorURL(out.AmneziaPremiumMirrorURL)
 	return &out
 }
 

@@ -105,10 +105,10 @@ func (h *SettingsHandler) deriveSettingsHead(cur *storage.Settings, patch *stora
 	// уже лежащее в settings.json (downgrade, ручная правка), иначе заперло бы
 	// сохранение ВСЕХ остальных настроек.
 	if patch.AmneziaPremiumMirrorURL != nil {
-		cur.AmneziaPremiumMirrorURL = strings.TrimSpace(cur.AmneziaPremiumMirrorURL)
 		if err := validateAmneziaMirrorURL(cur.AmneziaPremiumMirrorURL); err != nil {
 			return prev, settingsErr(err.Error(), "INVALID_AMNEZIA_MIRROR_URL")
 		}
+		cur.AmneziaPremiumMirrorURL = normalizeAmneziaMirrorURL(cur.AmneziaPremiumMirrorURL)
 	}
 
 	cur.Download.RouteTag = strings.TrimSpace(cur.Download.RouteTag)
@@ -188,8 +188,38 @@ func (h *SettingsHandler) deriveSettingsTail(cur *storage.Settings, patch *stora
 	return nil
 }
 
+// normalizeAmneziaMirrorURL приводит присланный адрес зеркала к ХРАНИМОМУ
+// виду: пробелы по краям срезаются, а адрес, совпавший с дефолтным,
+// схлопывается в пустую строку. Смысл тот же — «зеркало по умолчанию».
+//
+// Схлопывание обязательно, потому что наружу ответ отдаёт ДЕЙСТВУЮЩИЙ адрес
+// (settingsForResponse), а фронт сохраняет настройки целиком —
+// api.updateSettings({ ...settings, ... }). Без него первый же щелчок любым
+// тумблером на странице настроек вернул бы подставленный дефолт PATCH-ем и
+// прибил бы литерал в settings.json; после этого «пусто = дефолт» перестаёт
+// работать, и смена зеркала в новом релизе не доедет ни до одного
+// пользователя, который хоть раз сохранял настройки, — то есть исчезает
+// ровно та ротируемость, ради которой поле и сделали настраиваемым.
+func normalizeAmneziaMirrorURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == storage.DefaultAmneziaMirrorURL {
+		return ""
+	}
+	return raw
+}
+
+// maxAmneziaMirrorURLLen ограничивает длину адреса зеркала. Соображение то
+// же, что у maxMirrorHTML в internal/amneziacp: цель — роутер со 128 МБ, и
+// адрес в сотню килобайт уехал бы на флеш в settings.json и в каждый ответ
+// /settings/get. Дефолтный адрес — 45 символов, так что 2048 (предел, ниже
+// которого адрес переваривает любой HTTP-стек) даёт сорокакратный запас.
+const maxAmneziaMirrorURLLen = 2048
+
 // validateAmneziaMirrorURL проверяет адрес зеркала Amnezia CP. Пустое значение
-// годно: оно означает «зеркало по умолчанию» (storage.DefaultAmneziaMirrorURL).
+// (и значение из одних пробелов) годно: оно означает «зеркало по умолчанию»
+// (storage.DefaultAmneziaMirrorURL). Подрезка пробелов — внутри: функция
+// обязана быть самодостаточной, иначе следующий вызывающий получит отказ на
+// визуально пустом поле.
 //
 // Требуем ровно то, что нужно резолверу (internal/amneziacp.Mirror.resolve):
 // абсолютный адрес с хостом — по нему уходит обычный GET, чью страницу
@@ -201,9 +231,20 @@ func (h *SettingsHandler) deriveSettingsTail(cur *storage.Settings, patch *stora
 // Схема только https: со страницы зеркала приезжает хост, которому клиент
 // затем шлёт ключ подписки, поэтому подменить её по пути к зеркалу быть не
 // должно.
+//
+// user:pass@ — отказ, как и в normalizeOrigin: пара логин/пароль легла бы в
+// settings.json, который уезжает в бэкап и в поддержку, а строка вида
+// https://storage.googleapis.com@evil.example/cp показывает пользователю
+// знакомое имя, хотя запрос уйдёт на evil.example. Фрагмент — отказ по
+// бедности: в запрос он не уходит, смысла в поле не имеет, и молча хранить
+// значение, часть которого игнорируется, хуже, чем сказать об этом сразу.
 func validateAmneziaMirrorURL(raw string) error {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
+	}
+	if len(raw) > maxAmneziaMirrorURLLen {
+		return fmt.Errorf("адрес зеркала Amnezia длиннее %d символов", maxAmneziaMirrorURLLen)
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -211,6 +252,12 @@ func validateAmneziaMirrorURL(raw string) error {
 	}
 	if u.Scheme != "https" || u.Host == "" {
 		return errors.New("адрес зеркала Amnezia должен быть абсолютным https-адресом")
+	}
+	if u.User != nil {
+		return errors.New("адрес зеркала Amnezia не должен содержать user:pass@")
+	}
+	if u.Fragment != "" {
+		return errors.New("адрес зеркала Amnezia не должен содержать #фрагмент")
 	}
 	return nil
 }

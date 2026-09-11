@@ -875,3 +875,36 @@ func TestSettingsStore_ApiKeyRoundTrip(t *testing.T) {
 		t.Fatalf("GetApiKey без настроек = %q, want пусто", got)
 	}
 }
+
+// Действующий адрес зеркала Amnezia: на свежей установке правило отдаёт
+// непустой дефолт, хотя в самих настройках поле пустое (дефолт в файле
+// перестал бы ротироваться с релизом); после записи своего адреса — свой.
+func TestEffectiveAmneziaMirrorURL(t *testing.T) {
+	store := NewSettingsStore(t.TempDir())
+	settings, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if settings.AmneziaPremiumMirrorURL != "" {
+		t.Fatalf("свежая установка несёт адрес зеркала: %q", settings.AmneziaPremiumMirrorURL)
+	}
+	if got := EffectiveAmneziaMirrorURL(settings.AmneziaPremiumMirrorURL); got != DefaultAmneziaMirrorURL {
+		t.Fatalf("действующий адрес = %q, want %q", got, DefaultAmneziaMirrorURL)
+	}
+
+	// Домен из зарезервированного .test (RFC 2606) — репозиторий публичный.
+	const custom = "https://mirror.test/cp?m-path=/ru"
+	if err := store.Update(func(cur *Settings) error {
+		cur.AmneziaPremiumMirrorURL = custom
+		return nil
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	snap, err := store.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if got := EffectiveAmneziaMirrorURL(snap.AmneziaPremiumMirrorURL); got != custom {
+		t.Fatalf("действующий адрес = %q, want %q", got, custom)
+	}
+}
