@@ -126,12 +126,18 @@ func mockIPRun(_ context.Context, _ string, _ ...string) (*exec.Result, error) {
 type ipRunRecorder struct {
 	Calls  []string
 	failOn string
+	// failErr — текст отказа; пусто = «нет такого маршрута» (ответ ip(8) на
+	// снятие того, чего нет).
+	failErr string
 }
 
 func (r *ipRunRecorder) run(_ context.Context, name string, args ...string) (*exec.Result, error) {
 	call := name + " " + strings.Join(args, " ")
 	r.Calls = append(r.Calls, call)
 	if r.failOn != "" && strings.Contains(call, r.failOn) {
+		if r.failErr != "" {
+			return &exec.Result{}, errors.New(r.failErr)
+		}
 		return &exec.Result{}, errors.New("ip: RTNETLINK answers: No such process")
 	}
 	return &exec.Result{}, nil

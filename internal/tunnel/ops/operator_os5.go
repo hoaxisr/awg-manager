@@ -108,7 +108,10 @@ type OperatorOS5Impl struct {
 	appLog *logging.ScopedLogger
 
 	// Endpoint route tracking (tunnelID -> endpointIP)
-	endpointRoutes   map[string]string
+	endpointRoutes map[string]string
+	// routeHeldByOther — «host-route до ip держит ещё кто-то, кроме excludeID»,
+	// по стору и через бэкенды. См. removeHostRouteIfUnused.
+	routeHeldByOther func(excludeID, ip string) bool
 	endpointRoutesMu sync.RWMutex
 
 	// DNS tracking (tunnelID -> DNS servers applied via NDMS)
@@ -426,9 +429,10 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 			endpointIP = ip
 		}
 	}
-	// Петлю снимаем тоже — см. гард в SetupEndpointRoute: он только на создании,
-	// а наследство прежних версий уходит с роутера именно отсюда. Через общий
-	// путь с ref-count: сосед к тому же серверу маршрут не потеряет (F130/#867).
+	// Петлю снимаем тоже: skipEndpointHostRoute запрещает ставить маршрут, но
+	// не снимать — наследство прежних версий уходит с роутера отсюда и из
+	// гарда на старте. Через общий путь с ref-count: сосед к тому же серверу
+	// маршрут не потеряет (F130/#867).
 	o.removeHostRouteIfUnused(ctx, "delete", stored.ID, endpointIP)
 
 	// 2. Remove NDMS interface — cleans everything:
@@ -780,6 +784,14 @@ func (o *OperatorOS5Impl) GetSystemName(ctx context.Context, ndmsID string) stri
 }
 
 // SetAppLogger sets the web UI logger.
+// SetEndpointRouteSharing подключает проверку «host-route до этого IP держит
+// другой туннель» поверх карты endpointRoutes. Нужна, потому что тот же
+// host-route ставит обфусцированный nativewg-туннель (nwg.addObfHostRoute), а
+// карта про чужой бэкенд ничего не знает.
+func (o *OperatorOS5Impl) SetEndpointRouteSharing(fn func(excludeID, ip string) bool) {
+	o.routeHeldByOther = fn
+}
+
 func (o *OperatorOS5Impl) SetAppLogger(logger logging.AppLogger) {
 	o.appLog = logging.NewScopedLogger(logger, logging.GroupTunnel, logging.SubOps)
 }

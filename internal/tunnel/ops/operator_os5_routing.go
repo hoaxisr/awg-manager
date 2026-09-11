@@ -93,7 +93,9 @@ func (o *OperatorOS5Impl) SetupEndpointRoute(ctx context.Context, tunnelID, endp
 	// здесь, а не в отдельном проходе (F227). Снятие идёт общим путём, так что
 	// сосед к тому же адресу своего маршрута не теряет.
 	//
-	// Возврат пустой: маршрута нет, и персистить вызывающему нечего. Петлю в
+	// Возврат пустой: маршрута нет. Вызывающие на пустоту реагируют по-разному
+	// — оркестратор поле не трогает, applyDiffKernel присваивает как есть
+	// (handler пустое в запись не переносит, tunnels_crud.go). Петлю в
 	// ResolvedEndpointIP это НЕ закрывает — она приезжает туда другим путём:
 	// RestoreEndpointTracking кладёт её в карту на рестарте демона, а
 	// оркестратор сохраняет GetTrackedEndpointIP в запись (F230).
@@ -121,16 +123,19 @@ func (o *OperatorOS5Impl) SetupEndpointRoute(ctx context.Context, tunnelID, endp
 		routeDevice = device
 	}
 
+	// В карту кладём ДО команды: «намерение», а не «факт». Иначе между
+	// `ip route replace` и записью есть окно, в котором Stop/Delete соседа
+	// считает маршрут ничьим и снимает живой (карта и стор под разными
+	// локами, пути идут параллельно).
+	o.endpointRoutesMu.Lock()
+	o.endpointRoutes[tunnelID] = endpointIP
+	o.endpointRoutesMu.Unlock()
+
 	if err := o.addKernelHostRoute(ctx, endpointIP, routeTarget, routeDevice); err != nil {
 		o.logWarn("setup_route", tunnelID, "Failed to add kernel endpoint route: "+err.Error())
 		o.appLog.Warn("start", tunnelID, "Маршрут до endpoint "+endpointIP+": "+err.Error())
 		return "", fmt.Errorf("add kernel host route to %s: %w", endpointIP, err)
 	}
-
-	// Track for cleanup
-	o.endpointRoutesMu.Lock()
-	o.endpointRoutes[tunnelID] = endpointIP
-	o.endpointRoutesMu.Unlock()
 
 	logSuffix := ""
 	if ispName != "" {
@@ -143,7 +148,8 @@ func (o *OperatorOS5Impl) SetupEndpointRoute(ctx context.Context, tunnelID, endp
 
 // CleanupEndpointRoute removes the endpoint route for a tunnel.
 func (o *OperatorOS5Impl) CleanupEndpointRoute(ctx context.Context, tunnelID string) error {
-	// Петлю снимаем тоже — см. гард в SetupEndpointRoute: он только на создании.
+	// Петлю снимаем тоже — см. skipEndpointHostRoute: он запрещает ставить
+	// маршрут, но не снимать.
 	o.removeHostRouteIfUnused(ctx, "cleanup_route", tunnelID, "")
 	return nil
 }
@@ -153,15 +159,14 @@ func (o *OperatorOS5Impl) CleanupEndpointRoute(ctx context.Context, tunnelID str
 // туннеля к одному серверу делят один host-route (F130/#867).
 //
 // Адрес берётся из карты, fallbackIP — запасной для случая, когда карты нет
-// (удаление туннеля, который с рестарта демона не поднимался). Карта читается,
-// правится и пересчитывается под ОДНИМ захватом: раздельные чтение и правка
-// оставляли окно, в котором параллельный SetupEndpointRoute успевал положить
-// туннелю новый адрес — тогда из карты уходила свежая запись, а из ядра
-// снимался прежний маршрут.
+// (удаление туннеля, который с рестарта демона не поднимался). Чтение, правка
+// и пересчёт ссылок идут под ОДНИМ захватом: прежде пересчёт брал свой RLock
+// уже после того, как запись из карты убрали, — в этом промежутке сосед мог
+// встать или уйти, и решение принималось по устаревшему составу.
 //
-// action уезжает в журнал: снятие бывает на трёх путях (правка карточки,
-// откат неудачного Reconcile, удаление туннеля), и запись должна говорить,
-// который из них сработал.
+// action уезжает в журнал. Путей снятия четыре: гард на старте (setup_route),
+// правка карточки и откат неудачного Reconcile (cleanup_route), остановка
+// (stop) и удаление туннеля (delete).
 func (o *OperatorOS5Impl) removeHostRouteIfUnused(ctx context.Context, action, tunnelID, fallbackIP string) {
 	o.endpointRoutesMu.Lock()
 	endpointIP := o.endpointRoutes[tunnelID]
@@ -181,19 +186,40 @@ func (o *OperatorOS5Impl) removeHostRouteIfUnused(ctx context.Context, action, t
 	if endpointIP == "" {
 		return
 	}
+	// Карта знает только kernel-туннели этого процесса. Тот же host-route
+	// ставит обфусцированный nativewg-туннель — до target'а релея, тем же
+	// объектом NDMS (`nwg.addObfHostRoute`), и его собственный ref-count
+	// (`SetObfuscatorRouteSharing`) о нас тоже не знает. Общий предикат по
+	// стору закрывает обе стороны: без него Stop kernel-туннеля сносил бы
+	// маршрут работающего обфусцированного соседа на тот же сервер.
+	if !stillInUse && o.routeHeldByOther != nil && o.routeHeldByOther(tunnelID, endpointIP) {
+		stillInUse = true
+	}
 	if stillInUse {
 		o.logInfo(action, tunnelID, "IP "+endpointIP+" still in use by another tunnel")
 		return
 	}
 
 	// NDMS кэширует маршруты ядра, но их снятие не отслеживает — снимаем в обоих.
+	kernelRemoved := true
 	if err := o.delKernelHostRoute(ctx, endpointIP); err != nil {
+		kernelRemoved = false
+		if noSuchRoute(err) {
+			// Снимать нечего. Путь проходной: уборка зовётся и на старте
+			// связанного туннеля (F227), где маршрута обычно и не было. Ни
+			// предупреждения, ни запроса в NDMS — его запись живёт только
+			// вместе с ядерным маршрутом, NDMS переигрывает её при каждой
+			// загрузке. И тем более не пишем «удалён» — это была бы ложь.
+			return
+		}
 		o.logWarn(action, tunnelID, "ip route del "+endpointIP+": "+err.Error())
 	}
 	if err := o.commands.Routes.RemoveHostRoute(ctx, endpointIP); err != nil {
 		o.logWarn(action, tunnelID, "RemoveHostRoute: "+err.Error())
 	}
-	o.appLog.Info(action, tunnelID, "Маршрут до endpoint "+endpointIP+" удалён")
+	if kernelRemoved {
+		o.appLog.Info(action, tunnelID, "Маршрут до endpoint "+endpointIP+" удалён")
+	}
 }
 
 // RestoreEndpointTracking restores endpoint route tracking without creating the route.
@@ -216,6 +242,14 @@ func (o *OperatorOS5Impl) RestoreEndpointTracking(ctx context.Context, tunnelID,
 	if err != nil {
 		o.logWarn("restore_tracking", tunnelID, "Failed to resolve endpoint: "+err.Error())
 		return "", nil // Non-fatal
+	}
+
+	// Немаршрутизируемый адрес в карту не кладём: под ним маршрута не бывает,
+	// а «владелец» из него получился бы настоящий — два связанных туннеля
+	// держали бы друг другу уборку под ключом 127.0.0.1 (F230).
+	if skipEndpointHostRoute(endpointIP) {
+		o.logInfo("restore_tracking", tunnelID, "endpoint не маршрутизируется ("+endpointIP+") — маршрут не отслеживаем")
+		return "", nil
 	}
 
 	// Add to tracking map (route already exists in system)
@@ -312,6 +346,13 @@ func isIPv6LinkLocal(ip string) bool {
 }
 
 // delKernelHostRoute removes a host route.
+// noSuchRoute — «такого маршрута нет»: ip(8) отвечает так и на снятие
+// отсутствующего маршрута, и на снятие из отсутствующей таблицы.
+func noSuchRoute(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "No such process") || strings.Contains(msg, "No such file or directory")
+}
+
 func (o *OperatorOS5Impl) delKernelHostRoute(ctx context.Context, endpointIP string) error {
 	prefix := "/32"
 	family := []string{}

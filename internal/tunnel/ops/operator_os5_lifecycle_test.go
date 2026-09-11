@@ -340,18 +340,47 @@ func TestDelete_RemovesEndpointHostRoute(t *testing.T) {
 			t.Fatalf("host-route не снят в NDMS:\n%v", poster.payloads)
 		}
 	})
-	t.Run("отказ ip route del не роняет Delete, но виден в журнале", func(t *testing.T) {
-		o, _, rec := newOS5Lifecycle(t)
-		rec.failOn = "route del 203.0.113.5/32"
+	t.Run("нечего снимать — молча, и NDMS не тревожим", func(t *testing.T) {
+		o, poster, rec := newOS5Lifecycle(t)
+		rec.failOn = "route del 203.0.113.5/32" // ip(8): No such process
 		spy := &recAppLog{}
 		o.SetAppLogger(spy)
 		stored := &storage.AWGTunnel{ID: "awg10", ResolvedEndpointIP: "203.0.113.5"}
+
 		if err := o.Delete(context.Background(), stored); err != nil {
 			t.Fatalf("Delete обязан оставаться best-effort: %v", err)
 		}
-		want := "warn|delete|awg10|ip route del 203.0.113.5: ip: RTNETLINK answers: No such process"
+
+		if hasPayload(poster.payloads, `{"ip":{"route":{"host":"203.0.113.5","no":true}}}`) {
+			t.Errorf("в NDMS ушёл запрос на снятие несуществующего маршрута: %v", poster.payloads)
+		}
+		for _, e := range spy.entries {
+			if strings.Contains(e, "route del") || strings.Contains(e, "Маршрут до endpoint") {
+				t.Errorf("шум в журнале там, где снимать было нечего: %q", e)
+			}
+		}
+	})
+	t.Run("настоящий отказ ip route del виден в журнале", func(t *testing.T) {
+		o, _, rec := newOS5Lifecycle(t)
+		rec.failOn = "route del 203.0.113.5/32"
+		rec.failErr = "ip: Operation not permitted"
+		spy := &recAppLog{}
+		o.SetAppLogger(spy)
+		stored := &storage.AWGTunnel{ID: "awg10", ResolvedEndpointIP: "203.0.113.5"}
+
+		if err := o.Delete(context.Background(), stored); err != nil {
+			t.Fatalf("Delete обязан оставаться best-effort: %v", err)
+		}
+
+		want := "warn|delete|awg10|ip route del 203.0.113.5: ip: Operation not permitted"
 		if !slices.Contains(spy.entries, want) {
 			t.Fatalf("журнал = %v, ждали %q", spy.entries, want)
+		}
+		// «Удалён» после «не смог» — ложь, которую пользователь видит в /logs.
+		if slices.ContainsFunc(spy.entries, func(e string) bool {
+			return strings.Contains(e, "Маршрут до endpoint")
+		}) {
+			t.Errorf("журнал обещает снятие маршрута, которого не было: %v", spy.entries)
 		}
 	})
 
@@ -482,8 +511,9 @@ func TestSetupEndpointRoute_ReplacesSharedHostRouteAtomically(t *testing.T) {
 // Роутер такую команду ПРИНИМАЕТ (стенд 5.01): в ядре оседает
 // `127.0.0.1 dev ppp0`, в конфиге NDMS — host-route `127.0.0.1/32`.
 //
-// Адрес наружу не возвращается: иначе вызывающие запишут петлю в
-// ResolvedEndpointIP, где у loopback-пира лежит адрес target'а релея.
+// Адрес наружу не возвращается: пустая строка говорит вызывающему «маршрута
+// нет». (Соглашение «в ResolvedEndpointIP лежит target релея» — про
+// обфусцированные туннели, а они всегда nativewg и сюда не приходят.)
 func TestSetupEndpointRoute_SkipsUnroutableEndpoint(t *testing.T) {
 	for _, tc := range []struct{ endpoint, del string }{
 		{"127.0.0.1:51820", "/opt/sbin/ip route del 127.0.0.1/32"},     // связанный wdtt/freeturn
@@ -495,7 +525,11 @@ func TestSetupEndpointRoute_SkipsUnroutableEndpoint(t *testing.T) {
 	} {
 		endpoint := tc.endpoint
 		t.Run(endpoint, func(t *testing.T) {
-			o, _, rec := newOS5Lifecycle(t)
+			o, _, _ := newOS5Lifecycle(t)
+			// scriptedIPRun, а не ipRunRecorder: с пустым выводом `ip route get`
+			// постановка маршрута падает раньше гарда, и проверять было бы нечего.
+			rec := &scriptedIPRun{routeGet: "x via 192.0.2.1 dev eth3 src 192.0.2.10 uid 0"}
+			o.ipRun = rec.run
 			spy := &recAppLog{}
 			o.SetAppLogger(spy)
 
@@ -558,6 +592,8 @@ func TestSetupEndpointRoute_KeepsPrivateEndpoint(t *testing.T) {
 func TestStop_RemovesEndpointRoute(t *testing.T) {
 	t.Run("маршрут снят", func(t *testing.T) {
 		o, poster, rec := newOS5Lifecycle(t)
+		spy := &recAppLog{}
+		o.SetAppLogger(spy)
 		if _, err := o.RestoreEndpointTracking(context.Background(), "awg10", "203.0.113.5:51820"); err != nil {
 			t.Fatalf("RestoreEndpointTracking: %v", err)
 		}
@@ -574,6 +610,10 @@ func TestStop_RemovesEndpointRoute(t *testing.T) {
 		}
 		if got := o.GetTrackedEndpointIP("awg10"); got != "" {
 			t.Errorf("остановленный туннель остался в карте: %q", got)
+		}
+		want := "info|stop|awg10|Маршрут до endpoint 203.0.113.5 удалён"
+		if !slices.Contains(spy.entries, want) {
+			t.Errorf("журнал = %v, ждали %q", spy.entries, want)
 		}
 	})
 
@@ -601,6 +641,68 @@ func TestStop_RemovesEndpointRoute(t *testing.T) {
 	})
 }
 
+// Адрес, который не разбирается как IP (endpoint с именем хоста), гард не
+// глотает: пусть отказывает команда ip и причина видна в журнале. Молчаливый
+// пропуск спрятал бы испорченную запись туннеля.
+func TestSkipEndpointHostRoute_KeepsUnparsableAddress(t *testing.T) {
+	if skipEndpointHostRoute("vpn.example.com") {
+		t.Error("имя хоста принято за непригодный адрес — маршрут будет молча пропущен")
+	}
+}
+
+// Ref-count считает владельцев ОДНОГО адреса. Сосед с другим endpoint снятию
+// не мешает — иначе любой второй туннель запирал бы уборку навсегда.
+func TestStop_NeighbourWithOtherAddressDoesNotHold(t *testing.T) {
+	o, poster, rec := newOS5Lifecycle(t)
+	if _, err := o.RestoreEndpointTracking(context.Background(), "awg10", "203.0.113.5:51820"); err != nil {
+		t.Fatalf("RestoreEndpointTracking awg10: %v", err)
+	}
+	if _, err := o.RestoreEndpointTracking(context.Background(), "awg11", "198.51.100.9:51820"); err != nil {
+		t.Fatalf("RestoreEndpointTracking awg11: %v", err)
+	}
+
+	if err := o.Stop(context.Background(), "awg10"); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	if !hasCall(rec.Calls, "/opt/sbin/ip route del 203.0.113.5/32") {
+		t.Errorf("маршрут не снят, хотя сосед смотрит на другой адрес: %v", rec.Calls)
+	}
+	if !hasPayload(poster.payloads, `{"ip":{"route":{"host":"203.0.113.5","no":true}}}`) {
+		t.Errorf("маршрут не снят в NDMS: %v", poster.payloads)
+	}
+	if got := o.GetTrackedEndpointIP("awg11"); got != "198.51.100.9" {
+		t.Errorf("сосед потерял свою запись: %q", got)
+	}
+}
+
+// Тот же host-route ставит обфусцированный nativewg-туннель (до target'а
+// релея, тем же объектом NDMS). Карта про чужой бэкенд не знает, поэтому
+// снятие спрашивает ещё и общий предикат по стору.
+func TestStop_KeepsRouteHeldByOtherBackend(t *testing.T) {
+	o, poster, rec := newOS5Lifecycle(t)
+	o.SetEndpointRouteSharing(func(excludeID, ip string) bool {
+		return excludeID == "awg10" && ip == "203.0.113.5" // маршрут держит обфусцированный сосед
+	})
+	if _, err := o.RestoreEndpointTracking(context.Background(), "awg10", "203.0.113.5:51820"); err != nil {
+		t.Fatalf("RestoreEndpointTracking: %v", err)
+	}
+
+	if err := o.Stop(context.Background(), "awg10"); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	if hasCall(rec.Calls, "/opt/sbin/ip route del 203.0.113.5/32") {
+		t.Errorf("снят маршрут, который держит туннель другого бэкенда: %v", rec.Calls)
+	}
+	if hasPayload(poster.payloads, `{"ip":{"route":{"host":"203.0.113.5","no":true}}}`) {
+		t.Errorf("запись снята в NDMS, хотя маршрут держит другой бэкенд: %v", poster.payloads)
+	}
+	if got := o.GetTrackedEndpointIP("awg10"); got != "" {
+		t.Errorf("остановленный туннель остался в карте: %q", got)
+	}
+}
+
 // M1: у туннеля, которого нет в карте (не поднимался с рестарта демона),
 // снимать нечего. Без раннего возврата в роутер уехали бы `ip route del /32` и
 // host-route с пустым адресом.
@@ -619,36 +721,31 @@ func TestCleanupEndpointRoute_UntrackedTunnelIsNoop(t *testing.T) {
 	}
 }
 
-// Снятие обязано работать и для петли. На роутере, поработавшем под прежней
-// версией, мусорный маршрут уже лежит, а NDMS переигрывает его в ядро на
-// каждой загрузке — это единственный путь, которым он уходит с роутера.
-func TestCleanupEndpointRoute_RemovesLoopbackLeftover(t *testing.T) {
+// Петлю в карту не кладём: маршрута под ней не бывает, а «владельцем» она
+// получилась бы настоящим — два связанных туннеля держали бы друг другу
+// уборку под ключом 127.0.0.1 (F230). Наследство прежних версий снимается не
+// отсюда, а из гарда SetupEndpointRoute и из Delete по записи туннеля.
+func TestRestoreEndpointTracking_SkipsUnroutableEndpoint(t *testing.T) {
 	o, poster, rec := newOS5Lifecycle(t)
 	spy := &recAppLog{}
 	o.SetAppLogger(spy)
 
-	// Так карта наполняется на рестарте демона для уже поднятого туннеля.
-	if _, err := o.RestoreEndpointTracking(context.Background(), "awg1", "127.0.0.1:51820"); err != nil {
+	ip, err := o.RestoreEndpointTracking(context.Background(), "awg1", "127.0.0.1:51820")
+	if err != nil {
 		t.Fatalf("RestoreEndpointTracking: %v", err)
 	}
-	if got := o.GetTrackedEndpointIP("awg1"); got != "127.0.0.1" {
-		t.Fatalf("наследство не попало в карту: %q", got)
+	if ip != "" {
+		t.Errorf("адрес ушёл вызывающему и окажется в ResolvedEndpointIP: %q", ip)
 	}
-
-	if err := o.CleanupEndpointRoute(context.Background(), "awg1"); err != nil {
-		t.Fatalf("CleanupEndpointRoute: %v", err)
+	if got := o.GetTrackedEndpointIP("awg1"); got != "" {
+		t.Errorf("петля попала в карту: %q", got)
 	}
-
-	if !hasCall(rec.Calls, "/opt/sbin/ip route del 127.0.0.1/32") {
-		t.Errorf("маршрут из ядра не снят: %v", rec.Calls)
+	if len(rec.Calls) != 0 || len(poster.payloads) != 0 {
+		t.Errorf("трекинг не должен ничего слать: %v %v", rec.Calls, poster.payloads)
 	}
-	if !hasPayload(poster.payloads, `{"ip":{"route":{"host":"127.0.0.1","no":true}}}`) {
-		t.Error("запись host-route не снята из конфига NDMS — она переживёт перезагрузку роутера")
-	}
-	// Метка действия в журнале — своя у каждого пути снятия, иначе запись врёт
-	// о том, что случилось с туннелем.
-	want := "info|cleanup_route|awg1|Маршрут до endpoint 127.0.0.1 удалён"
-	if !slices.Contains(spy.entries, want) {
-		t.Errorf("журнал = %v, ждали %q", spy.entries, want)
+	if !slices.ContainsFunc(spy.entries, func(e string) bool {
+		return strings.HasPrefix(e, "info|restore_tracking|awg1|endpoint не маршрутизируется")
+	}) {
+		t.Errorf("пропуск не виден в журнале: %v", spy.entries)
 	}
 }
