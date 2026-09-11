@@ -52,7 +52,20 @@ func (o *OperatorOS5Impl) getEndpointIPFromWG(ctx context.Context, tunnelID, fal
 // kernelDevice is the kernel interface name (e.g., "eth3") for oif constraint;
 // empty string means no constraint (ip route get picks the best route).
 // Returns the resolved endpoint IP on success, error on failure.
-// Endpoint route failure is always fatal — prevents routing loops.
+//
+// Отказ НЕ фатален, и решает это вызывающий. Прежняя строка обещала
+// обратное («always fatal — prevents routing loops»), но ни один вызывающий
+// так себя не вёл: оба ставят Warn и продолжают, а признак endpointRouteOK
+// доживает только до предупреждения в журнале. Расхождение опасно не
+// поведением, а тем, что следующий инженер поверит комментарию и сделает
+// отказ фатальным: на одноканальном роутере этот маршрут для внешнего
+// трафика избыточен — замерено на стенде 5.01, удаление маршрута путь
+// трафика не изменило, потому что у WAN своя таблица со своим дефолтом.
+// Значимость маршрута — мульти-WAN с привязкой к не-предпочтительному
+// каналу и цепочки туннелей.
+//
+// Вызов идемпотентен: под ним `ip route replace`, поэтому повторять его на
+// старте, реконнекте и при смене WAN безопасно.
 func (o *OperatorOS5Impl) SetupEndpointRoute(ctx context.Context, tunnelID, endpoint, kernelDevice, ispName string) (string, error) {
 	if endpoint == "" {
 		return "", nil
@@ -144,6 +157,13 @@ func (o *OperatorOS5Impl) CleanupEndpointRoute(ctx context.Context, tunnelID str
 // RestoreEndpointTracking restores endpoint route tracking without creating the route.
 // Used on daemon restart for tunnels that are already running.
 // Returns the resolved endpoint IP on success, empty string on non-fatal failure.
+//
+// ВНИМАНИЕ: наличие маршрута в ядре здесь НЕ проверяется — карта заполняется
+// на веру. Обычно вера оправдана (маршрут пережил перезапуск демона вместе с
+// туннелем), но если таблицы успел перезаписать ndm, мы считаем маршрут
+// живым, а его нет. Цена ошибки мала: карта нужна снятию маршрута, а снятие
+// отсутствующего безвредно. Создать маршрут отсюда нечем — kernelDevice
+// вызывающему неизвестен.
 func (o *OperatorOS5Impl) RestoreEndpointTracking(ctx context.Context, tunnelID, endpoint string) (string, error) {
 	if endpoint == "" {
 		return "", nil

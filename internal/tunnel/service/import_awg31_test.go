@@ -105,5 +105,14 @@ func serviceForImport(t *testing.T) (*ServiceImpl, string, string) {
 
 	tunnels := filepath.Join(dir, "tunnels")
 	store := storage.NewAWGTunnelStoreWithLockDir(tunnels, filepath.Join(dir, "locks"))
-	return &ServiceImpl{store: store, legacyOperator: &MockOperator{}, state: NewMockStateManager()}, tunnels, confs
+	// Источник занятости OpkgTun обязателен на пути OS5: без него выбор ID
+	// отказывается работать намеренно (storage/awg_store.go:417-423). Раньше
+	// харнесс до этой ветки не доходил — версия ОС в тестах неизвестна, а
+	// фолбэк был на 4.x; теперь неизвестность означает 5.x (osdetect.Get).
+	return &ServiceImpl{
+		store:          store,
+		legacyOperator: &MockOperator{},
+		state:          NewMockStateManager(),
+		opkgOccupancy:  func(context.Context) (map[int]bool, error) { return nil, nil },
+	}, tunnels, confs
 }

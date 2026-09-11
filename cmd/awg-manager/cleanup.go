@@ -79,10 +79,16 @@ func runCleanup(dataDir string) {
 		IsOS5:  osdetect.Is5,
 	})
 
-	// Init NDMS info (needed for OS detection). Wire ndmsinfo to the
-	// SystemInfoStore, then initialize with retry.
+	// Init NDMS info (needed for OS detection). Запасной канал (ndmc через
+	// unix-сокет) живёт внутри Init, так что деинсталляция получает его даром.
+	//
+	// В отличие от демона, здесь НЕ ждём: повиснуть в деинсталляции хуже, чем
+	// прибрать по умолчанию. Цена известна и названа в сообщении — если
+	// молчат оба канала, часть остатков может пережить удаление пакета.
 	if err := ndmsinfo.Init(context.Background(), cleanupNDMSQueries.SystemInfo, 10*time.Second); err != nil {
-		bootLog.Warn("ndms-version", "", err.Error())
+		bootLog.Warn("ndms-version", "",
+			"версия NDMS не определена ни через RCI, ни через ndmc ("+err.Error()+
+				") — уборка идёт по умолчанию "+string(osdetect.Get())+", часть остатков может уцелеть")
 	}
 
 	// Create service components
