@@ -356,6 +356,26 @@ func (s *premiumStand) memoryKey(t *testing.T) string {
 	return s.h.sessionKey
 }
 
+// stateUnderLock — ключ в памяти и шифротекст в настройках, снятые ПОД ТЕМ ЖЕ
+// захватом, под которым их меняет обработчик. Два чтения без замка показывали
+// бы расхождение и на исправном коде: между ними успевает пройти целая
+// операция, — так что наблюдатель половинчатого состояния обязан брать замок.
+//
+// Настройки читаются Get(), а не Snapshot(): нужен опубликованный кэш стора
+// (запись публикует его только на успехе), а не прогон всего дерева настроек
+// через JSON на каждый снимок. На загруженном сторе Get не отказывает, и
+// стенд его загружает при сборке.
+func (s *premiumStand) stateUnderLock() (mem, cipher string) {
+	s.h.mu.Lock()
+	defer s.h.mu.Unlock()
+	mem = s.h.sessionKey
+	cur, err := s.store.Get()
+	if err != nil {
+		return mem, ""
+	}
+	return mem, strings.TrimSpace(cur.AmneziaPremiumKeyCipher)
+}
+
 // assertPremiumKeyConsistent — в памяти и на диске ОДИН И ТОТ ЖЕ ключ.
 // Расхождение не видно живой панели и всплывает при перезапуске демона:
 // подписка работала и пропала. Проверка — для путей, где сохранять просили
@@ -968,10 +988,17 @@ func TestAmneziaPremiumKey_PostReportsStateOfStoredKey(t *testing.T) {
 // поколения вернувшийся SaveKey безусловно возвращал ключ и в память, и на
 // флеш — команда пользователя молча отменялась.
 //
+// В сторе лежит ДРУГОЙ сохранённый ключ: поколение двигает фактическая смена
+// состояния, и удалению обязано быть что удалять. Ключ фикстуры отличается от
+// присланного намеренно — на совпадающих значениях проверки «шифротекста нет»
+// и «в файле нет тела ключа» не различали бы «стёрли сохранённое» и «не
+// записали присланное».
+//
 // Ответ портала придержан, а не подгадан по времени: окно открыто ровно на
 // время, которое нужно тесту.
 func TestAmneziaPremiumKey_DeleteDuringCheckIsNotUndone(t *testing.T) {
 	st := newPremiumStand(t)
+	st.seedStoredKey(t, premiumOtherKey)
 	hold := st.portal.holdNextLogin(t)
 
 	done := make(chan *httptest.ResponseRecorder, 1)
@@ -983,7 +1010,8 @@ func TestAmneziaPremiumKey_DeleteDuringCheckIsNotUndone(t *testing.T) {
 		t.Fatal("вход не дошёл до портала: придержать нечего")
 	}
 
-	// Ключа ещё нет нигде: проверка висит в портале.
+	// Присланного ключа ещё нет нигде: проверка висит в портале. Стирается
+	// сохранённый ключ фикстуры.
 	delRec := st.del(t)
 	if delRec.Code != http.StatusOK {
 		t.Fatalf("удаление: %d %s", delRec.Code, delRec.Body.String())
@@ -1003,7 +1031,7 @@ func TestAmneziaPremiumKey_DeleteDuringCheckIsNotUndone(t *testing.T) {
 	if cipher := st.storedCipher(t); cipher != "" {
 		t.Errorf("шифротекст после удаления = %q, ждали пусто: ключ воскрес", cipher)
 	}
-	if file := st.settingsFile(t); strings.Contains(file, premiumKeyBody) {
+	if file := st.settingsFile(t); strings.Contains(file, premiumKeyBody) || strings.Contains(file, premiumOtherKeyBody) {
 		t.Errorf("settings.json несёт тело удалённого ключа:\n%s", file)
 	}
 	if got := st.h.subscriptionKey(); got != "" {
@@ -1018,15 +1046,16 @@ func TestAmneziaPremiumKey_DeleteDuringCheckIsNotUndone(t *testing.T) {
 	assertPremiumKeyConsistent(t, st, "стирание под летящим сохранением")
 }
 
-// Неудавшееся удаление не отменяет летящее сохранение: стирать было нечего,
-// поколение не сдвинулось, и вернувшаяся проверка ключа доводит своё дело до
-// конца. Сдвиг поколения ДО того, как выяснился исход стирания (а он неминуем,
-// если стирание вынести из-под захвата), давал бы здесь 409 «введите ключ
-// заново» на ровном месте.
+// Удаление на ПУСТОМ состоянии со сломанной записью настроек — не отказ, и оно
+// не отменяет летящее сохранение. Исход операции определяет ДОСТИГНУТОЕ
+// состояние: ключа нет ни в памяти, ни на диске — ровно то, чего просил
+// пользователь, — и то, дошли ли мы при этом до файла, ничего не меняет. Отказ
+// здесь гнал бы пользователя повторять удавшееся удаление, а сдвиг поколения
+// давал бы 409 «введите ключ заново» законному сохранению на ровном месте.
 //
 // Фазы задаёт тест: ответ портала придержан, запись настроек сломана ровно на
 // время удаления и починена до того, как сохранение пошло на диск.
-func TestAmneziaPremiumKey_FailedDeleteDoesNotCancelFlyingSave(t *testing.T) {
+func TestAmneziaPremiumKey_EmptyDeleteDoesNotCancelFlyingSave(t *testing.T) {
 	st := newPremiumStand(t)
 	hold := st.portal.holdNextLogin(t)
 
@@ -1041,12 +1070,12 @@ func TestAmneziaPremiumKey_FailedDeleteDoesNotCancelFlyingSave(t *testing.T) {
 
 	repair := st.breakSettingsFile(t)
 	delRec := st.del(t)
-	if delRec.Code != http.StatusInternalServerError {
-		t.Fatalf("код удаления = %d, ждали %d: запись настроек сломана: %s",
-			delRec.Code, http.StatusInternalServerError, delRec.Body.String())
+	if delRec.Code != http.StatusOK {
+		t.Fatalf("код удаления = %d, ждали 200: стирать было нечего, состояние уже такое, какого просили: %s",
+			delRec.Code, delRec.Body.String())
 	}
-	if code := premiumErrorCode(t, delRec); code != codePremiumDeleteError {
-		t.Errorf("код отказа удаления = %q, want %q", code, codePremiumDeleteError)
+	if data := premiumData(t, delRec); data.Stored || data.Usable {
+		t.Errorf("ответ удаления = %+v, ждали stored=false usable=false", data)
 	}
 	repair()
 
@@ -1416,53 +1445,263 @@ func TestAmneziaPremiumKey_DeleteDropsPortalSession(t *testing.T) {
 	}
 }
 
-// Отменённая проверка (состояние ключа сбросили, пока мы ходили в портал) НЕ
-// трогает сессию портала. Сброс тут возможен только грубый, на весь клиент, а
-// в кэше к этому моменту лежит сессия, заведённая ДРУГИМ, уже прошедшим
-// сохранением: уронив её, мы выгоняем работающую подписку — ту самую, которую
-// пользователь только что ввёл заново. Своя сессия привязана к отпечатку
-// ключа и запросом другим ключом не переиспользуется, так что ронять её
-// незачем.
+// Отменённая проверка (состояние ключа сбросили, пока мы ходили в портал) не
+// оставляет живой сессию портала, добытую забранным ключом. CheckKey делает
+// adopt ВНУТРИ себя, прямо перед возвратом, так что к отменённой ветке в кэше
+// клиента лежит именно эта сессия — и запрос под ней был бы запросом от имени
+// ключа, которого у нас уже нет. Сброс возможен только грубый, на весь клиент,
+// и может задеть сессию более новую: это лишний ре-логин, и он дешевле живой
+// сессии забранного ключа.
 //
-// Порядок фаз задан придержанным ответом портала: пока первая проверка висит,
-// пользователь успевает удалить ключ и ввести его заново.
-func TestAmneziaPremiumKey_CancelledCheckKeepsPortalSession(t *testing.T) {
+// В сторе лежит сохранённый ключ: поколение двигает фактическая смена
+// состояния, и удалению обязано быть что удалять, иначе проверку никто не
+// отменит.
+//
+// Порядок фаз задан придержанным ответом портала: пока проверка висит,
+// пользователь успевает удалить ключ (и, во втором случае, ввести другой).
+func TestAmneziaPremiumKey_CancelledCheckDropsPortalSession(t *testing.T) {
+	// Повторный ввод идёт ДРУГИМ ключом намеренно: на одном и том же ключе
+	// отпечатки совпадают, сессия повторного ввода неотличима от сессии
+	// отменённой проверки, и проверка зелена независимо от того, чью сессию
+	// оставил отменённый вход.
+	cases := []struct {
+		name  string
+		again string // ключ повторного ввода; пусто — ввода не было
+	}{
+		{"без повторного ввода", ""},
+		{"повторный ввод другим ключом", premiumOtherKey},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newPremiumStand(t)
+			st.seedStoredKey(t, premiumKey)
+			hold := st.portal.holdNextLogin(t)
+
+			done := make(chan *httptest.ResponseRecorder, 1)
+			go func() { done <- st.post(t, `{"key":"`+premiumKey+`","store":true}`) }()
+
+			select {
+			case <-hold.arrived:
+			case <-time.After(10 * time.Second):
+				t.Fatal("вход не дошёл до портала: придержать нечего")
+			}
+			if rec := st.del(t); rec.Code != http.StatusOK {
+				t.Fatalf("удаление: %d %s", rec.Code, rec.Body.String())
+			}
+			if tc.again != "" {
+				// Ключ введён заново и принят: с этого момента в кэше клиента
+				// живёт сессия ДРУГОГО ключа — более новая, чем та, которую
+				// добудет отменённая проверка.
+				if rec := st.post(t, `{"key":"`+tc.again+`","store":true}`); rec.Code != http.StatusOK {
+					t.Fatalf("повторный ввод ключа: %d %s", rec.Code, rec.Body.String())
+				}
+			}
+			hold.release()
+
+			postRec := <-done
+			if postRec.Code != http.StatusConflict {
+				t.Fatalf("код проверки = %d, ждали %d: %s", postRec.Code, http.StatusConflict, postRec.Body.String())
+			}
+			// Сохранённое отменённая проверка не трогает: ключа нет, а при
+			// повторном вводе на диске лежит ровно введённый заново.
+			if got := st.storedPlainKey(t); got != tc.again {
+				t.Errorf("на диске ключ %q, want %q", got, tc.again)
+			}
+			if got := st.memoryKey(t); got != tc.again {
+				t.Errorf("в памяти ключ %q, want %q", got, tc.again)
+			}
+			// Проба последней: она сама входит в портал и заводит новую сессию.
+			if st.portalSessionAlive(t, premiumKey) {
+				t.Error("сессия портала, добытая забранным ключом, пережила отменённую проверку")
+			}
+			// Тот же путь — и граница журнала: строка про отменённую проверку
+			// пишется там, где ключ в области видимости.
+			assertNoPremiumSecrets(t, "журнал: отменённая проверка", st.log.text(), st)
+		})
+	}
+}
+
+// Неудавшееся удаление при НЕПУСТОМ состоянии всё равно побеждает летящее
+// сохранение: состояние сменилось (память забыта), значит сменилось и
+// поколение, и вернувшаяся проверка ключ не возвращает. Двигай поколение по
+// успеху записи — и отказ записи открывал бы дверь летящему сохранению:
+// «забудь мой секрет» отменялось бы молча.
+//
+// Случай store=false отдельно: там память — ЕДИНСТВЕННАЯ копия секрета, её
+// уничтожение и есть удаление, а стирать на диске нечего, так что отказом это
+// не является.
+//
+// Фазы задаёт тест: ответ портала придержан, запись настроек сломана ровно на
+// время удаления и починена до того, как сохранение пошло на диск.
+func TestAmneziaPremiumKey_FailedDeleteStillBeatsFlyingSave(t *testing.T) {
+	// Летящее сохранение идёт ДРУГИМ ключом, чем тот, что уже в состоянии: на
+	// совпадающих значениях «ключ не вернулся» было бы неотличимо от «ключ
+	// никуда не девался».
+	cases := []struct {
+		name string
+		// store — сохранять ли ключ подготовки и летящий ключ на диск.
+		store bool
+		// wantDelete — код удаления со сломанной записью настроек.
+		wantDelete int
+		// wantStored — что лежит на диске в конце.
+		wantStored string
+	}{
+		// Шифротекст пережил сломанную запись — состояния, которого просили,
+		// мы не достигли, и это отказ.
+		{"store=true", true, http.StatusInternalServerError, premiumKey},
+		// Стирать было нечего: единственная копия жила в памяти и уничтожена.
+		{"store=false", false, http.StatusOK, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newPremiumStand(t)
+			body := fmt.Sprintf(`{"key":%q,"store":%v}`, premiumKey, tc.store)
+			if rec := st.post(t, body); rec.Code != http.StatusOK {
+				t.Fatalf("подготовка: %d %s", rec.Code, rec.Body.String())
+			}
+
+			hold := st.portal.holdNextLogin(t)
+			done := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				done <- st.post(t, fmt.Sprintf(`{"key":%q,"store":%v}`, premiumOtherKey, tc.store))
+			}()
+			select {
+			case <-hold.arrived:
+			case <-time.After(10 * time.Second):
+				t.Fatal("вход не дошёл до портала: придержать нечего")
+			}
+
+			repair := st.breakSettingsFile(t)
+			delRec := st.del(t)
+			if delRec.Code != tc.wantDelete {
+				t.Fatalf("код удаления = %d, ждали %d: %s", delRec.Code, tc.wantDelete, delRec.Body.String())
+			}
+			repair()
+
+			hold.release()
+			postRec := <-done
+			if postRec.Code != http.StatusConflict {
+				t.Fatalf("код проверки = %d, ждали %d: ключ, который у нас забрали, не сохраняют молча: %s",
+					postRec.Code, http.StatusConflict, postRec.Body.String())
+			}
+			if code := premiumErrorCode(t, postRec); code != codePremiumStateChanged {
+				t.Errorf("код отказа = %q, want %q", code, codePremiumStateChanged)
+			}
+			if got := st.memoryKey(t); got != "" {
+				t.Errorf("в памяти ключ %q, ждали пусто: летящее сохранение вернуло забранный ключ", got)
+			}
+			if got := st.storedPlainKey(t); got != tc.wantStored {
+				t.Errorf("на диске ключ %q, want %q", got, tc.wantStored)
+			}
+			if file := st.settingsFile(t); strings.Contains(file, premiumOtherKeyBody) {
+				t.Errorf("settings.json несёт тело летящего ключа:\n%s", file)
+			}
+		})
+	}
+}
+
+// Неудавшееся удаление всё равно забывает ключ в памяти и роняет сессию
+// портала: при отказе у нас обязано остаться МЕНЬШЕ секрета, а не больше.
+// Делай и то и другое только на успехе записи — и пользователь, нажавший
+// «забыть ключ», остался бы и с ключом в памяти демона, и с живой сессией
+// портала, добытой этим ключом.
+func TestAmneziaPremiumKey_FailedDeleteForgetsMemoryAndSession(t *testing.T) {
 	st := newPremiumStand(t)
-	hold := st.portal.holdNextLogin(t)
-
-	done := make(chan *httptest.ResponseRecorder, 1)
-	go func() { done <- st.post(t, `{"key":"`+premiumKey+`","store":true}`) }()
-
-	select {
-	case <-hold.arrived:
-	case <-time.After(10 * time.Second):
-		t.Fatal("вход не дошёл до портала: придержать нечего")
-	}
-	if rec := st.del(t); rec.Code != http.StatusOK {
-		t.Fatalf("удаление: %d %s", rec.Code, rec.Body.String())
-	}
-	// Ключ введён заново и принят: с этого момента в кэше клиента живёт
-	// сессия, к отменённой проверке отношения не имеющая.
 	if rec := st.post(t, `{"key":"`+premiumKey+`","store":true}`); rec.Code != http.StatusOK {
-		t.Fatalf("повторный ввод ключа: %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("подготовка: %d %s", rec.Code, rec.Body.String())
 	}
-	hold.release()
-
-	postRec := <-done
-	if postRec.Code != http.StatusConflict {
-		t.Fatalf("код проверки = %d, ждали %d: %s", postRec.Code, http.StatusConflict, postRec.Body.String())
-	}
+	// Контроль: до удаления сессия ЖИВА. Без него проверка ниже зелена и на
+	// клиенте, который сессию вообще не кэширует, — то есть слепа.
 	if !st.portalSessionAlive(t, premiumKey) {
-		t.Error("отменённая проверка уронила сессию портала — ре-логин на ровном месте")
+		t.Fatal("сессии портала нет ещё до удаления: наблюдать нечего")
 	}
-	// Введённый заново ключ отменённая проверка тоже не тронула.
+
+	repair := st.breakSettingsFile(t)
+	delRec := st.del(t)
+	repair()
+	if delRec.Code != http.StatusInternalServerError {
+		t.Fatalf("код удаления = %d, ждали %d: запись настроек сломана, шифротекст остался: %s",
+			delRec.Code, http.StatusInternalServerError, delRec.Body.String())
+	}
+	if code := premiumErrorCode(t, delRec); code != codePremiumDeleteError {
+		t.Errorf("код отказа удаления = %q, want %q", code, codePremiumDeleteError)
+	}
+	// Запись и правда не прошла: шифротекст на месте. Без этой проверки тест
+	// одинаково зелен и на пути, где стирание удалось.
 	if got := st.storedPlainKey(t); got != premiumKey {
-		t.Errorf("на диске ключ %q, want %q", got, premiumKey)
+		t.Fatalf("на диске ключ %q, want %q: стирание не отказало, проверять нечего", got, premiumKey)
 	}
-	assertPremiumKeyConsistent(t, st, "отменённая проверка")
-	// Тот же путь — и граница журнала: строка про отменённую проверку пишется
-	// там, где ключ в области видимости.
-	assertNoPremiumSecrets(t, "журнал: отменённая проверка", st.log.text(), st)
+	if got := st.memoryKey(t); got != "" {
+		t.Errorf("в памяти ключ %q, ждали пусто: неудавшаяся запись оставила секрет у нас", got)
+	}
+	if st.portalSessionAlive(t, premiumKey) {
+		t.Error("сессия портала пережила неудавшееся удаление")
+	}
+}
+
+// Удаление стирает шифротекст ПОД ТЕМ ЖЕ захватом, под которым забывает ключ в
+// памяти. Точный интерливинг снаружи не воспроизвести, поэтому проверяется
+// наблюдаемое следствие: наблюдатель, берущий тот же замок, НИКОГДА не видит
+// половинчатого состояния — «в памяти пусто, на диске ключ» или наоборот.
+// Вынеси запись настроек из-под захвата — и половинчатое состояние становится
+// наблюдаемым на всё время записи на флеш.
+func TestAmneziaPremiumKey_DeleteErasesUnderHandlerLock(t *testing.T) {
+	st := newPremiumStand(t)
+
+	var (
+		mu     sync.Mutex
+		splits []string
+		probes int
+	)
+	stop := make(chan struct{})
+	gone := make(chan struct{})
+	var once sync.Once
+	halt := func() { once.Do(func() { close(stop) }) }
+	// Уборка ждёт наблюдателя: ранний t.Fatal иначе оставил бы горутину жить, а
+	// пакет сторожит утечки горутин (leak_test.go).
+	t.Cleanup(func() { halt(); <-gone })
+
+	go func() {
+		defer close(gone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			mem, cipher := st.stateUnderLock()
+			mu.Lock()
+			probes++
+			if (mem == "") != (cipher == "") {
+				// В диагностику идут признаки, а не значения: печатать
+				// шифротекст незачем, а расползание описывается тем, какая из
+				// двух половин пуста.
+				splits = append(splits, fmt.Sprintf("в памяти пусто=%v, шифротекст пусто=%v", mem == "", cipher == ""))
+			}
+			mu.Unlock()
+		}
+	}()
+
+	for i := 0; i < 30; i++ {
+		if rec := st.post(t, `{"key":"`+premiumKey+`","store":true}`); rec.Code != http.StatusOK {
+			t.Fatalf("сохранение %d: %d %s", i, rec.Code, rec.Body.String())
+		}
+		if rec := st.del(t); rec.Code != http.StatusOK {
+			t.Fatalf("удаление %d: %d %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	halt()
+	<-gone
+
+	mu.Lock()
+	defer mu.Unlock()
+	if probes == 0 {
+		t.Fatal("наблюдатель не снял ни одного снимка: проверять нечего")
+	}
+	if len(splits) > 0 {
+		t.Errorf("состояние расползалось %d раз из %d снимков, например: %s",
+			len(splits), probes, splits[0])
+	}
 }
 
 // Подмена транспорта роняет уже собранного клиента CP. Иначе он продолжил бы
