@@ -114,7 +114,8 @@ type Settings struct {
 	// AmneziaPremiumKeyCipher — ключ подписки Amnezia Premium, зашифрованный
 	// DeviceCipher. Пишется ТОЛЬКО ручками premium (никогда через
 	// /settings/update — см. nonPatchableSettings) и наружу не отдаётся ни
-	// одним ответом настроек (см. settingsForResponse в internal/api).
+	// одним ответом настроек: в белый список SettingsData (internal/api) оно
+	// не входит.
 	AmneziaPremiumKeyCipher string `json:"amneziaPremiumKeyCipher,omitempty"`
 }
 

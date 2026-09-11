@@ -140,14 +140,13 @@ func TestSettingsResponses_StripSecretsAndFillMirror(t *testing.T) {
 	}
 }
 
-// Вычистка обязана вернуть КОПИЮ, а не править аргумент по месту: сегодня
-// все три ручки подают ей снапшот, но ничто не мешает будущему вызывающему
-// подать store.Get() — ЖИВОЙ объект кэша демона (так же делится памятью и
-// черновик want из Update: он поверхностно скопирован с живого объекта и
-// делит с ним карты и backing-массив ManagedServers). Правка по месту на
-// этом пути стёрла бы ключи из памяти демона, а следующая запись настроек
-// унесла бы пропажу на диск.
-func TestSettingsForResponse_DoesNotMutateLiveStoreCache(t *testing.T) {
+// Сборка ответа только ЧИТАЕТ аргумент. Проверяется на ЖИВОМ объекте кэша
+// демона (store.Get(), а не снапшот): сегодня все три ручки подают снапшот,
+// но так же делится памятью и черновик want из Update — он поверхностно
+// скопирован с живого объекта и делит с ним карты и backing-массив
+// ManagedServers. Правка по месту на этом пути стёрла бы ключи из памяти
+// демона, а следующая запись настроек унесла бы пропажу на диск.
+func TestSettingsResponse_DoesNotMutateLiveStoreCache(t *testing.T) {
 	_, store := newSettingsHandlerForTest(t)
 	seedSettingsSecrets(t, store)
 
@@ -156,18 +155,11 @@ func TestSettingsForResponse_DoesNotMutateLiveStoreCache(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 
-	out := settingsForResponse(live)
-	if out.AmneziaPremiumKeyCipher != "" || out.ServerPeerSecrets != nil {
-		t.Errorf("наружу отданы секреты: cipher=%q peers=%v",
-			out.AmneziaPremiumKeyCipher, out.ServerPeerSecrets)
+	body, err := json.Marshal(settingsResponse(live))
+	if err != nil {
+		t.Fatalf("маршал ответа: %v", err)
 	}
-	if len(out.ManagedServers) != 1 || len(out.ManagedServers[0].Peers) != 1 {
-		t.Fatalf("managed-серверы в ответе: %+v", out.ManagedServers)
-	}
-	if srv := out.ManagedServers[0]; srv.PrivateKey != "" ||
-		srv.Peers[0].PrivateKey != "" || srv.Peers[0].PresharedKey != "" {
-		t.Errorf("наружу отданы ключи managed-сервера: %+v", srv)
-	}
+	assertNoSecretsInBody(t, string(body))
 
 	// Живой кэш при этом не пострадал — иначе секреты пропали бы и из стора.
 	assertSecretsStillStored(t, store)

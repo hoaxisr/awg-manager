@@ -3909,6 +3909,14 @@ definitions:
           "the built-in default"; responses always carry the effective address.
         example: https://storage.googleapis.com/amnezia/cp?m-path=/ru
         type: string
+      apiKey:
+        description: |-
+          ApiKey is the opaque secret accepted in place of a session cookie via
+          `Authorization: Bearer <key>`. Отдаётся сознательно: панель настроек
+          показывает его и даёт скопировать — ключ для того и заводится. Ротация
+          — POST /settings/regenerate-api-key.
+        example: d2f1c0a4-5b6e-4a7c-8d9e-0f1a2b3c4d5e
+        type: string
       authEnabled:
         example: false
         type: boolean
@@ -13672,8 +13680,10 @@ paths:
       - servers
   /settings/get:
     get:
-      description: Returns the full Settings object (server, pingCheck, logging, dnsRoute,
-        managed, apiKey, ...).
+      description: 'Returns the settings whitelist (SettingsData): server, pingCheck,
+        logging, updates, download, dnsRoute, geoFile, apiKey and the rest of the
+        fields the UI reads. Server-internal state (managed servers, peer secrets,
+        sing-box router, OpkgTun ownership) is NOT part of the response.'
       produces:
       - application/json
       responses:

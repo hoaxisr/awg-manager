@@ -1431,6 +1431,7 @@ const api_ServersAllResponse: v.GenericSchema = v.looseObject({
 
 const api_SettingsData: v.GenericSchema = v.looseObject({
 	amneziaPremiumMirrorUrl: v.optional(v.nullable(v.string())),
+	apiKey: v.optional(v.nullable(v.string())),
 	authEnabled: v.optional(v.nullable(v.boolean())),
 	connectivityCheckUrl: v.optional(v.nullable(v.string())),
 	disableMemorySaving: v.optional(v.nullable(v.boolean())),

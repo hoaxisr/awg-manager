@@ -95,7 +95,16 @@ type GeoFileSettingsDTO struct {
 	RefreshDailyTime     string `json:"refreshDailyTime" example:"03:00"`
 }
 
-// SettingsData is the payload for GET /settings/get.
+// SettingsData is the payload of every settings response (Get, Update,
+// RegenerateApiKey) — и НАСТОЯЩИЙ тип тела, а не только документация.
+//
+// Состав — белый список: каждое отдаваемое поле названо здесь и в
+// settingsResponse ровно по одному разу. Новое поле storage.Settings
+// наружу не уходит, пока его сюда не внесли: отказ закрытый по построению.
+// Так эта граница заменила вычистку секретов по именам полей, трижды
+// пропустившую настоящую утечку (структура с секретным именем и невинными
+// листьями, встроенная неэкспортированная структура, тег `json:"-,"`).
+// Состав стережёт TestSettingsResponse_TopLevelKeysAreWhitelisted.
 type SettingsData struct {
 	SchemaVersion int  `json:"schemaVersion" example:"16"`
 	AuthEnabled   bool `json:"authEnabled" example:"false"`
@@ -108,7 +117,12 @@ type SettingsData struct {
 	EntwareAuthEnabled bool `json:"entwareAuthEnabled" example:"false"`
 	// McpEnabled turns on the Model Context Protocol endpoint at /mcp.
 	// Off by default; keys are managed via /mcp/keys*.
-	McpEnabled                bool                 `json:"mcpEnabled" example:"false"`
+	McpEnabled bool `json:"mcpEnabled" example:"false"`
+	// ApiKey is the opaque secret accepted in place of a session cookie via
+	// `Authorization: Bearer <key>`. Отдаётся сознательно: панель настроек
+	// показывает его и даёт скопировать — ключ для того и заводится. Ротация
+	// — POST /settings/regenerate-api-key.
+	ApiKey                    string               `json:"apiKey,omitempty" example:"d2f1c0a4-5b6e-4a7c-8d9e-0f1a2b3c4d5e"`
 	Server                    ServerSettingsDTO    `json:"server"`
 	PingCheck                 PingCheckSettingsDTO `json:"pingCheck"`
 	Logging                   LoggingSettingsDTO   `json:"logging"`
@@ -262,79 +276,103 @@ func (h *SettingsHandler) SetDownloadService(svc *downloader.Service) {
 // resource:invalidated hint to all connected clients.
 func (h *SettingsHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
-// settingsForResponse готовит настройки к выдаче наружу: снимает секреты и
-// подставляет действующий адрес зеркала Amnezia. ЕДИНСТВЕННАЯ точка этих
-// правил — её проходят все ответы, отдающие настройки целиком (Get, Update,
-// RegenerateApiKey). Копии разошлись бы молча, и разойтись им было бы в
-// сторону утечки ключей. Полноту набора стережёт
-// TestSettingsResponse_SecretFieldsAreClassified.
+// settingsResponse строит тело ответа настроек по БЕЛОМУ СПИСКУ: из
+// storage.Settings в SettingsData переносится ровно то, что названо ниже, —
+// поле за полем, без рефлексии и без «скопировать всё и снять лишнее».
+// ЕДИНСТВЕННАЯ точка сборки: её проходят все три ручки, отдающие настройки
+// (Get, Update, RegenerateApiKey).
 //
-// Возвращает КОПИЮ и не правит по месту НИЧЕГО, до чего дотянулась: аргумент
-// делит с чужой памятью и карты, и backing-массивы срезов. Снапшот — сам по
-// себе копия, а вот черновик want из Update поверхностно скопирован с ЖИВОГО
-// кэша стора: правка элемента ManagedServers по месту стёрла бы приватные
-// ключи из памяти демона, а следующая запись настроек унесла бы пропажу на
-// диск. То же ждёт будущего вызывающего, который подаст сюда store.Get().
-func settingsForResponse(s *storage.Settings) *storage.Settings {
-	out := *s
-	// Шифротекст ключа подписки Amnezia Premium не покидает бэкенд: его
-	// читает только premium-линия, расшифровывая DeviceCipher.
-	out.AmneziaPremiumKeyCipher = ""
-	// Приватные ключи клиентских пиров встроенных серверов: NDMS их не
-	// хранит, хранит наш settings.json — и в ответах настроек им не место.
-	out.ServerPeerSecrets = nil
-	// Ключевой материал managed-серверов. Собственная ручка серверов его не
-	// отдаёт (у ManagedServerDTO поля PrivateKey нет вовсе), исключение
-	// названо ровно на одном пути — бэкапе (ManagedServerBackupDTO). Ответ
-	// настроек этим путём не является.
-	out.ManagedServers = managedServersForResponse(out.ManagedServers)
-	// Legacy-поле живо до первой записи после миграции (migrateManagedServers)
-	// и до неё несёт тот же ключевой материал.
-	if out.ManagedServer != nil {
-		cp := managedServerForResponse(*out.ManagedServer)
-		out.ManagedServer = &cp
+// Смена риска, ради которой эта граница и заменила вычистку по именам полей:
+// было «забыл снять секрет — тихая утечка», стало «забыл поле — его не видно
+// в интерфейсе». Первое замечают через годы, второе — сразу.
+//
+// Состав списка выведен из фактического потребления фронтом: рукописный тип
+// frontend/src/lib/types/system.ts (export interface Settings) плюс ключ API,
+// который панель показывает. Ключевой материал (AmneziaPremiumKeyCipher,
+// ServerPeerSecrets, ManagedServers/ManagedServer) и backend-managed запись
+// владения (OpkgTun, DNSChainPreset, SingboxRouter, …) сюда не входят вовсе,
+// поэтому уехать наружу им физически неоткуда.
+//
+// Аргумент только читается: DTO забирает срезы как есть (Interfaces,
+// MonitoringExcludedTunnels), но ни один писатель их не трогает, и правки по
+// месту здесь нет — живой кэш стора не пострадает и у будущего вызывающего,
+// подавшего сюда store.Get().
+func settingsResponse(s *storage.Settings) SettingsData {
+	return SettingsData{
+		SchemaVersion:      s.SchemaVersion,
+		AuthEnabled:        s.AuthEnabled,
+		SessionTtlHours:    s.SessionTtlHours,
+		EntwareAuthEnabled: s.EntwareAuthEnabled,
+		McpEnabled:         s.McpEnabled,
+		ApiKey:             s.ApiKey,
+		Server: ServerSettingsDTO{
+			Port:       s.Server.Port,
+			Interface:  s.Server.Interface,
+			Interfaces: s.Server.Interfaces,
+		},
+		PingCheck: PingCheckSettingsDTO{
+			Enabled: s.PingCheck.Enabled,
+			Defaults: PingCheckDefaultsDTO{
+				Method:        s.PingCheck.Defaults.Method,
+				Target:        s.PingCheck.Defaults.Target,
+				Interval:      s.PingCheck.Defaults.Interval,
+				DeadInterval:  s.PingCheck.Defaults.DeadInterval,
+				FailThreshold: s.PingCheck.Defaults.FailThreshold,
+			},
+		},
+		Logging: LoggingSettingsDTO{
+			Enabled:           s.Logging.Enabled,
+			MaxAge:            s.Logging.MaxAge,
+			LogLevel:          s.Logging.LogLevel,
+			SingboxLogLevel:   s.Logging.SingboxLogLevel,
+			AppMaxEntries:     s.Logging.AppMaxEntries,
+			SingboxMaxEntries: s.Logging.SingboxMaxEntries,
+		},
+		MonitoringExcludedTunnels: s.MonitoringExcludedTunnels,
+		DisableMemorySaving:       s.DisableMemorySaving,
+		Updates: UpdateSettingsDTO{
+			CheckEnabled:            s.Updates.CheckEnabled,
+			Channel:                 s.Updates.Channel,
+			AutoInstallEnabled:      s.Updates.AutoInstallEnabled,
+			AutoInstallIntervalDays: s.Updates.AutoInstallIntervalDays,
+			AutoInstallTime:         s.Updates.AutoInstallTime,
+		},
+		Download: DownloadSettingsDTO{
+			RouteTag:  s.Download.RouteTag,
+			RouteKind: s.Download.RouteKind,
+		},
+		DnsRoute: DNSRouteSettingsDTO{
+			AutoRefreshEnabled:   s.DNSRoute.AutoRefreshEnabled,
+			RefreshIntervalHours: s.DNSRoute.RefreshIntervalHours,
+			RefreshMode:          s.DNSRoute.RefreshMode,
+			RefreshDailyTime:     s.DNSRoute.RefreshDailyTime,
+		},
+		GeoFile: GeoFileSettingsDTO{
+			AutoRefreshEnabled:   s.GeoFile.AutoRefreshEnabled,
+			RefreshIntervalHours: s.GeoFile.RefreshIntervalHours,
+			RefreshMode:          s.GeoFile.RefreshMode,
+			RefreshDailyTime:     s.GeoFile.RefreshDailyTime,
+		},
+		ConnectivityCheckURL: s.ConnectivityCheckURL,
+		UsageLevel:           s.UsageLevel,
+		SingboxBootstrapDNS:  s.SingboxBootstrapDNS,
+		SingboxClashPort:     s.SingboxClashPort,
+		// Пусто в хранилище означает «зеркало по умолчанию». Наружу отдаётся
+		// действующий адрес, чтобы у фронта не было собственной копии
+		// литерала; правило одно на всех читателей —
+		// storage.EffectiveAmneziaMirrorURL. Оно же не выпускает наружу
+		// непригодное хранимое значение: эхо мусора вернулось бы PATCH-ем
+		// (страница шлёт тело ответа целиком) и заперло бы сохранение всех
+		// настроек 400-м. Обратный ход (подставленный дефолт вернулся
+		// PATCH-ем) схлопывает normalizeAmneziaMirrorURL на записи.
+		AmneziaPremiumMirrorURL: storage.EffectiveAmneziaMirrorURL(s.AmneziaPremiumMirrorURL),
 	}
-	// Пусто в хранилище означает «зеркало по умолчанию». Наружу отдаётся
-	// действующий адрес, чтобы у фронта не было собственной копии литерала;
-	// правило одно на всех читателей — storage.EffectiveAmneziaMirrorURL.
-	// Оно же не выпускает наружу непригодное хранимое значение: эхо мусора
-	// вернулось бы PATCH-ем (страница шлёт тело ответа целиком) и заперло бы
-	// сохранение всех настроек 400-м. Обратный ход (подставленный дефолт
-	// вернулся PATCH-ем) схлопывает normalizeAmneziaMirrorURL на записи.
-	out.AmneziaPremiumMirrorURL = storage.EffectiveAmneziaMirrorURL(out.AmneziaPremiumMirrorURL)
-	return &out
-}
-
-// managedServersForResponse — см. managedServerForResponse. Возвращает новый
-// срез: правка элементов по месту досталась бы и вызывающему.
-func managedServersForResponse(in []storage.ManagedServer) []storage.ManagedServer {
-	if in == nil {
-		return nil
-	}
-	out := make([]storage.ManagedServer, len(in))
-	for i, srv := range in {
-		out[i] = managedServerForResponse(srv)
-	}
-	return out
-}
-
-// managedServerForResponse снимает с КОПИИ записи managed-сервера приватный
-// ключ самого сервера и ключи его пиров. Peers клонируется: срез пришёл по
-// значению, но backing-массив общий с вызывающим.
-func managedServerForResponse(srv storage.ManagedServer) storage.ManagedServer {
-	srv.PrivateKey = ""
-	srv.Peers = slices.Clone(srv.Peers)
-	for i := range srv.Peers {
-		srv.Peers[i].PrivateKey = ""
-		srv.Peers[i].PresharedKey = ""
-	}
-	return srv
 }
 
 // Get returns current settings.
 //
 //	@Summary		Get settings
-//	@Description	Returns the full Settings object (server, pingCheck, logging, dnsRoute, managed, apiKey, ...).
+//	@Description	Returns the settings whitelist (SettingsData): server, pingCheck, logging, updates, download, dnsRoute, geoFile, apiKey and the rest of the fields the UI reads. Server-internal state (managed servers, peer secrets, sing-box router, OpkgTun ownership) is NOT part of the response.
 //	@Tags			settings
 //	@Produce		json
 //	@Security		CookieAuth
@@ -356,7 +394,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.Success(w, settingsForResponse(settings))
+	response.Success(w, settingsResponse(settings))
 }
 
 // Update saves settings.
@@ -594,7 +632,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	// Непригодный адрес зеркала, лежавший в хранилище (downgrade, ручная
 	// правка), наружу не ушёл — вместо него уехал дефолт, а вернувшийся
-	// PATCH-ем дефолт стёр хранимое (см. settingsForResponse и
+	// PATCH-ем дефолт стёр хранимое (см. settingsResponse и
 	// normalizeAmneziaMirrorURL). Самоисцеление обязано быть слышно: человек,
 	// который правил settings.json руками и ошибся, иначе не узнает, куда
 	// делась его правка, — увидит лишь, что поле опустело.
@@ -655,7 +693,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		out = &want
 	}
-	response.Success(w, settingsForResponse(out))
+	response.Success(w, settingsResponse(out))
 	h.bus.PublishInvalidated(events.ResourceSettings, "updated")
 
 	// Порт мог смениться — перепроверяем экспозицию. В горутине с
@@ -704,7 +742,7 @@ func (h *SettingsHandler) RegenerateApiKey(w http.ResponseWriter, r *http.Reques
 	}
 
 	h.log.Info("api-key", "", "API key regenerated")
-	response.Success(w, settingsForResponse(settings))
+	response.Success(w, settingsResponse(settings))
 	h.bus.PublishInvalidated(events.ResourceSettings, "api-key-rotated")
 }
 

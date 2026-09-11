@@ -3,49 +3,49 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
-// Страж инварианта «снято на чтении — значит непатчабельно».
+// Страж инварианта «не показали — значит не потеряли».
 //
-// Вычистка ответа (settingsForResponse) и запись (storage.SettingsPatch) —
-// два независимых решения, и их рассогласование само по себе ничем не
-// ловится. А страница настроек шлёт обратно ВЕСЬ объект ответа
-// (api.updateSettings({ ...settings, ... })), поэтому вычищенное поле,
-// оставшееся патчабельным, возвращается PATCH-ем пустым и затирает
-// настоящее значение: утечка превращается в потерю данных. Ровно это
-// случилось с ключами managed-серверов.
+// Состав ответа (белый список SettingsData) и запись (storage.SettingsPatch) —
+// два независимых решения, и их рассогласование ничем больше не ловится. А
+// страница настроек шлёт обратно ВЕСЬ объект ответа
+// (api.updateSettings({ ...settings, ... })), поэтому поле, которое ответ не
+// показывает, обязано пережить такой круговорот нетронутым. Раньше здесь
+// ломались ключи managed-серверов: ответ их вычищал, а патч принимал — и
+// первый же щелчок тумблером затирал их пустыми.
 //
-// Проверка идёт на РЕАЛЬНЫХ ручках и по РЕЗУЛЬТАТУ, а не по спискам полей:
-// секретные поля Settings заполняются маркерами через тот же обход, что и в
-// TestSettingsResponse_SecretFieldsAreClassified, поэтому поле, добавленное
-// завтра в вычистку мимо nonPatchableSettings, роняет этот тест без правки
-// каких-либо перечней.
-//
-// Красным он становится там, где вычищенное значение ВСЁ РАВНО едет в теле:
-// у поля внутри сериализуемого контейнера (элемент managedServers, поле
-// блока server). Одиночный скаляр верхнего уровня с omitempty защищён сам:
-// пустым он из тела исчезает, и патч его не касается.
+// Проверка идёт на РЕАЛЬНЫХ ручках и по РЕЗУЛЬТАТУ: сравнивается всё
+// хранимое целиком, а не перечень полей. Поле, добавленное завтра в
+// storage.Settings мимо белого списка, попадает под проверку само.
 func TestSettingsRoundTrip_ResponseBodyPatchedBack_KeepsSecrets(t *testing.T) {
 	h, store := newSettingsHandlerForTest(t)
 
-	found := newSecretFields()
+	// Ключевой материал, которого ответ не показывает вовсе.
+	seedSettingsSecrets(t, store)
+	// Плюс backend-managed запись владения и прочие поля вне белого списка:
+	// потерять их так же нельзя, а секретами они не являются.
 	if err := store.Update(func(cur *storage.Settings) error {
-		return fillSecretMarkers(reflect.ValueOf(cur).Elem(), "Settings", found, 0)
+		cur.ServerInterfaces = []string{testManagedSrvID}
+		cur.ManagedPolicies = []string{"Policy0"}
+		cur.ServerInterfaceMeta = map[string]storage.ServerInterfaceMeta{
+			testManagedSrvID: {NATStaticWAN: "ISP"},
+		}
+		cur.SingboxManuallyStopped = true
+		cur.ManagedPeerAllowIPsMigrated = true
+		cur.OpkgTun = &storage.OpkgTunState{
+			Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 17,
+		}
+		cur.DNSChainPreset = &storage.DNSChainPresetState{Mode: "resilient"}
+		return nil
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	marks := found.marks
-	if len(marks) == 0 {
-		t.Fatal("в дереве Settings не нашлось ни одного секретного поля — обход сломан")
-	}
-	// Фикстура обязана ДОЕХАТЬ до хранилища: иначе проверка ниже зеленела бы
-	// на пустом месте — страж стерёг бы сам себя.
-	assertMarkersStored(t, store, marks, "после засева")
+
+	before := storedSettingsJSON(t, store)
 
 	rr := perform(h.Get, http.MethodGet, "/settings/get", "")
 	if rr.Code != http.StatusOK {
@@ -64,25 +64,22 @@ func TestSettingsRoundTrip_ResponseBodyPatchedBack_KeepsSecrets(t *testing.T) {
 		t.Fatalf("update: code=%d body=%s", rr.Code, rr.Body.String())
 	}
 
-	assertMarkersStored(t, store, marks, "после круговорота ответ→PATCH")
+	if after := storedSettingsJSON(t, store); after != before {
+		t.Errorf("круговорот ответ→PATCH изменил хранимое:\nбыло:  %s\nстало: %s", before, after)
+	}
+	// Отдельно и по именам — чтобы отказ сразу называл ключевой материал.
+	assertSecretsStillStored(t, store)
 }
 
-// assertMarkersStored — маркер ищется по ЗНАЧЕНИЮ во всём хранимом JSON, а не
-// по пути: миграции стора вправе переложить значение в другое поле (легаси
-// managedServer переезжает в managedServers), и это не потеря.
-func assertMarkersStored(t *testing.T, store *storage.SettingsStore, marks map[string]string, when string) {
+func storedSettingsJSON(t *testing.T, store *storage.SettingsStore) string {
 	t.Helper()
 	snap, err := store.Snapshot()
 	if err != nil {
 		t.Fatalf("snapshot: %v", err)
 	}
-	stored, err := json.Marshal(snap)
+	b, err := json.Marshal(snap)
 	if err != nil {
 		t.Fatalf("маршал хранимого: %v", err)
 	}
-	for path, marker := range marks {
-		if !strings.Contains(string(stored), marker) {
-			t.Errorf("%s: значение %s пропало из хранилища (маркер %q)", when, path, marker)
-		}
-	}
+	return string(b)
 }
