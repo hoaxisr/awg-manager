@@ -1,14 +1,18 @@
 package storage
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -420,16 +424,38 @@ func TestDeviceCipher_BadLengthKeyQuarantined(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	SetNoticeSink(func(Notice) {})
+	var notices []Notice
+	SetNoticeSink(func(n Notice) { notices = append(notices, n) })
+	t.Cleanup(func() { SetNoticeSink(nil) })
+
 	if _, err := NewDeviceCipher(dir).Encrypt(testSubscriptionKey); err != nil {
 		t.Fatalf("Encrypt на негодном секрете: %v", err)
 	}
 
-	saved, err := os.ReadFile(keyPath + ".corrupt")
-	if err != nil {
-		t.Fatalf("негодный секрет не сохранён в карантине: %v", err)
+	copies := quarantineCopies(t, dir)
+	if len(copies) != 1 {
+		t.Fatalf("карантинных копий %d, want 1", len(copies))
 	}
-	if !bytes.Equal(saved, append(append([]byte(nil), original...), '\n')) {
-		t.Fatalf("в карантине не тот файл")
+	var savedName string
+	for name, content := range copies {
+		savedName = name
+		if !bytes.Equal(content, append(append([]byte(nil), original...), '\n')) {
+			t.Fatalf("в карантине не тот файл")
+		}
+	}
+
+	// Человек узнаёт о потере из журнала, и текст — про ключ подписки, а не
+	// про настройки: сообщение QuarantineCorrupt тут звучало бы паникой и
+	// звало бы «создать настройки заново».
+	if len(notices) != 1 {
+		t.Fatalf("уведомлений %d, want 1: %+v", len(notices), notices)
+	}
+	if notices[0].Target != DeviceKeyFile || !strings.Contains(notices[0].Message, savedName) {
+		t.Fatalf("уведомление не называет копию %s: %+v", savedName, notices[0])
+	}
+	if strings.Contains(notices[0].Message, "Настройки") {
+		t.Fatalf("уведомление о секрете говорит про настройки: %q", notices[0].Message)
 	}
 	fresh, err := os.ReadFile(keyPath)
 	if err != nil {
@@ -438,4 +464,271 @@ func TestDeviceCipher_BadLengthKeyQuarantined(t *testing.T) {
 	if len(fresh) != 32 || bytes.Equal(fresh, original) {
 		t.Fatalf("новый секрет негоден: %d байт, совпадает со старым: %v", len(fresh), bytes.Equal(fresh, original))
 	}
+}
+
+// quarantineCopies отдаёт карантинные копии секрета по именам. Имена
+// уникальны по построению, поэтому перебор каталога, а не фиксированное имя.
+func quarantineCopies(t *testing.T, dir string) map[string][]byte {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, DeviceKeyFile+".corrupt.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	copies := make(map[string][]byte, len(matches))
+	for _, path := range matches {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("чтение карантинной копии %s: %v", filepath.Base(path), err)
+		}
+		copies[filepath.Base(path)] = raw
+	}
+	return copies
+}
+
+// Т1. Под целевым именем никогда не лежит недописанный секрет.
+//
+// Проверка не статистическая: inotify фиксирует КАЖДУЮ операцию в каталоге,
+// а не состояние в случайно выбранный момент. Запись через целевое имя
+// (IN_MODIFY, IN_CLOSE_WRITE на .device-key) означает окно, в котором файл
+// уже существует и ещё неполон, — ровно то, из-за чего проигравший гонки
+// уносил в карантин недописанный секрет победителя. Имя должно появляться
+// только целиком: IN_CREATE от os.Link или IN_MOVED_TO от rename.
+//
+// Тест линуксовый по построению (inotify); проект собирается и работает
+// только на Linux.
+func TestDeviceCipher_KeyNameNeverWrittenThrough(t *testing.T) {
+	dir := t.TempDir()
+
+	fd, err := syscall.InotifyInit1(syscall.IN_NONBLOCK | syscall.IN_CLOEXEC)
+	if err != nil {
+		t.Fatalf("inotify_init1: %v", err)
+	}
+	defer syscall.Close(fd)
+	const mask = syscall.IN_CREATE | syscall.IN_MODIFY | syscall.IN_CLOSE_WRITE | syscall.IN_MOVED_TO
+	if _, err := syscall.InotifyAddWatch(fd, dir, mask); err != nil {
+		t.Fatalf("inotify_add_watch: %v", err)
+	}
+
+	if _, err := NewDeviceCipher(dir).Encrypt(testSubscriptionKey); err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+
+	seen := false
+	for _, ev := range readInotify(t, fd) {
+		if ev.name != DeviceKeyFile {
+			continue
+		}
+		seen = true
+		if ev.mask&(syscall.IN_MODIFY|syscall.IN_CLOSE_WRITE) != 0 {
+			t.Fatalf("в %s писали через целевое имя (маска %#x): файл был виден недописанным", DeviceKeyFile, ev.mask)
+		}
+	}
+	if !seen {
+		t.Fatalf("inotify не увидел появления %s — проверка не состоялась", DeviceKeyFile)
+	}
+}
+
+type inotifyRecord struct {
+	mask uint32
+	name string
+}
+
+// readInotify вычитывает очередь событий целиком. События кладутся в очередь
+// внутри самой операции над каталогом, поэтому к моменту возврата Encrypt они
+// уже там: ждать нечего, и от времени проверка не зависит.
+func readInotify(t *testing.T, fd int) []inotifyRecord {
+	t.Helper()
+	const header = 16 // int32 wd + uint32 mask + uint32 cookie + uint32 len
+	var out []inotifyRecord
+	buf := make([]byte, 16*1024)
+	for {
+		n, err := syscall.Read(fd, buf)
+		if err == syscall.EAGAIN {
+			return out
+		}
+		if err != nil {
+			t.Fatalf("чтение очереди inotify: %v", err)
+		}
+		for off := 0; off+header <= n; {
+			m := binary.NativeEndian.Uint32(buf[off+4:])
+			nameLen := int(binary.NativeEndian.Uint32(buf[off+12:]))
+			name := string(bytes.SplitN(buf[off+header:off+header+nameLen], []byte{0}, 2)[0])
+			out = append(out, inotifyRecord{mask: m, name: name})
+			off += header + nameLen
+		}
+	}
+}
+
+// Т4. После нормального заведения секрета в каталоге данных нет ничего,
+// кроме самого секрета: временный файл убран при любом исходе. Копия секрета,
+// пережившая заведение, — это лишний экземпляр ключа на флеше и лишний файл,
+// который однажды прочитают вместо настоящего.
+func TestDeviceCipher_NoLeftoverFilesAfterCreate(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := NewDeviceCipher(dir).Encrypt(testSubscriptionKey); err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != DeviceKeyFile {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("в каталоге данных %v, want только %s", names, DeviceKeyFile)
+	}
+}
+
+// Т3. Вторая порча не уничтожает первую карантинную копию. Имя копии у
+// QuarantineCorrupt фиксированное (<путь>.corrupt), а os.Rename на Linux
+// молча затирает цель — для секрета это означало бы потерю первой копии,
+// самой ценной: в ней вероятнее всего лежит настоящий секрет.
+func TestDeviceCipher_SecondQuarantineKeepsFirst(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, DeviceKeyFile)
+
+	damaged := [][]byte{
+		bytes.Repeat([]byte{'a'}, deviceKeyLen+1),
+		bytes.Repeat([]byte{'b'}, deviceKeyLen+2),
+	}
+	for i, content := range damaged {
+		if err := os.WriteFile(keyPath, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NewDeviceCipher(dir).Encrypt(testSubscriptionKey); err != nil {
+			t.Fatalf("Encrypt на негодном секрете #%d: %v", i, err)
+		}
+	}
+
+	copies := quarantineCopies(t, dir)
+	if len(copies) != 2 {
+		t.Fatalf("карантинных копий %d, want 2 (вторая порча затёрла первую)", len(copies))
+	}
+	for i, want := range damaged {
+		found := false
+		for _, got := range copies {
+			if bytes.Equal(got, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("порченый секрет #%d не сохранился в карантине", i)
+		}
+	}
+}
+
+// childDeviceKeyDirEnv включает дочерний процесс теста конкуренции: без
+// переменной TestDeviceCipherChildEncrypt ничего не делает.
+const childDeviceKeyDirEnv = "AWGM_TEST_DEVICE_KEY_DIR"
+
+// TestDeviceCipherChildEncrypt — тело дочернего процесса, а не проверка.
+// Печатает READY, ждёт закрытия stdin (общий старт) и отдаёт шифротекст.
+func TestDeviceCipherChildEncrypt(t *testing.T) {
+	dir := os.Getenv(childDeviceKeyDirEnv)
+	if dir == "" {
+		t.Skip("дочерний процесс TestDeviceCipher_SeparateProcessesShareKey")
+	}
+	fmt.Println("READY")
+	gate := make([]byte, 1)
+	os.Stdin.Read(gate) // старт по закрытию pipe родителем
+	token, err := NewDeviceCipher(dir).Encrypt(testSubscriptionKey)
+	if err != nil {
+		fmt.Println("FAIL", err)
+		t.Fatalf("Encrypt: %v", err)
+	}
+	fmt.Println("TOKEN", token)
+}
+
+// Т2. Секрет один и на несколько ПРОЦЕССОВ. Горутины делят адресное
+// пространство, а демон и `--cleanup` — нет: между процессами мьютекс не
+// работает вовсе, и заведение секрета стережёт только файловая система.
+func TestDeviceCipher_SeparateProcessesShareKey(t *testing.T) {
+	if testing.Short() {
+		t.Skip("запускает дочерние процессы")
+	}
+	dir := t.TempDir()
+	const n = 8
+
+	type child struct {
+		cmd   *exec.Cmd
+		stdin *os.File
+		out   *bufio.Scanner
+	}
+	children := make([]child, 0, n)
+	for i := 0; i < n; i++ {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestDeviceCipherChildEncrypt$")
+		cmd.Env = append(os.Environ(), childDeviceKeyDirEnv+"="+dir)
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd.Stdin = r
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("запуск дочернего #%d: %v", i, err)
+		}
+		r.Close()
+		children = append(children, child{cmd: cmd, stdin: w, out: bufio.NewScanner(stdout)})
+	}
+
+	// Все процессы доходят до READY, и только потом снимается барьер: иначе
+	// первый успевает завести секрет до запуска остальных, и гонки нет.
+	for i, ch := range children {
+		if !scanUntil(ch.out, "READY") {
+			t.Fatalf("дочерний #%d не дошёл до старта", i)
+		}
+	}
+	for _, ch := range children {
+		ch.stdin.Close()
+	}
+
+	for i, ch := range children {
+		line, ok := scanPrefix(ch.out, "TOKEN ")
+		if !ok {
+			t.Fatalf("дочерний #%d не отдал шифротекст", i)
+		}
+		if err := ch.cmd.Wait(); err != nil {
+			t.Fatalf("дочерний #%d завершился с ошибкой: %v", i, err)
+		}
+		got, err := NewDeviceCipher(dir).Decrypt(line)
+		if err != nil || got != testSubscriptionKey {
+			t.Fatalf("шифротекст процесса #%d не читается общим секретом: (%q, %v)", i, got, err)
+		}
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != DeviceKeyFile {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("в каталоге данных %v, want только %s", names, DeviceKeyFile)
+	}
+}
+
+func scanUntil(sc *bufio.Scanner, want string) bool {
+	for sc.Scan() {
+		if sc.Text() == want {
+			return true
+		}
+	}
+	return false
+}
+
+func scanPrefix(sc *bufio.Scanner, prefix string) (string, bool) {
+	for sc.Scan() {
+		if rest, ok := strings.CutPrefix(sc.Text(), prefix); ok {
+			return rest, true
+		}
+	}
+	return "", false
 }

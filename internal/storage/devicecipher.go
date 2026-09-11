@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // DeviceKeyFile — имя файла секрета устройства в dataDir. Экспортировано
@@ -19,16 +18,8 @@ import (
 // должен, а совпадение имени по литералу в двух пакетах развалится молча.
 const DeviceKeyFile = ".device-key"
 
-const (
-	deviceKeyLen  = 32 // AES-256
-	deviceKeyPerm = 0o600
-	// deviceKeyRaceRetries/deviceKeyRaceDelay — окно между созданием файла
-	// победителем гонки и записью в него 32 байт: проигравший в этот момент
-	// видит файл нулевой длины. Окно — микросекунды, поэтому ждём коротко и
-	// конечное число раз, а потом отказываем закрыто.
-	deviceKeyRaceRetries = 20
-	deviceKeyRaceDelay   = 5 * time.Millisecond
-)
+// deviceKeyLen — длина секрета, AES-256.
+const deviceKeyLen = 32
 
 // ErrDeviceKeyMissing — секрета устройства нет или он непригоден (файл
 // отсутствует либо обрезан). Отличается от ErrDeviceCiphertext, потому что
@@ -140,9 +131,9 @@ func (c *DeviceCipher) keyForWrite() ([]byte, error) {
 		// Файл есть, но длина не та. Самый вероятный способ получить лишний
 		// байт — дописанный \n после просмотра редактором, и тогда первые
 		// 32 байта — настоящий секрет, который ещё можно достать. Поэтому
-		// файл не затирается новым секретом, а уносится в <путь>.corrupt,
-		// и человек узнаёт об этом из журнала.
-		QuarantineCorrupt(c.path(), err)
+		// файл не затирается новым секретом, а уносится в карантин, и
+		// человек узнаёт об этом из журнала.
+		c.quarantineKey(err)
 	case !errors.Is(err, ErrDeviceKeyMissing):
 		// Файл есть, но прочитать его не вышло (EIO, EISDIR). Отказ
 		// закрытый: перезаписать секрет здесь — гарантированно потерять
@@ -152,15 +143,20 @@ func (c *DeviceCipher) keyForWrite() ([]byte, error) {
 	return c.createKey()
 }
 
-// createKey заводит секрет ровно один раз на dataDir. Победителя выбирает
-// сама файловая система: O_CREATE|O_EXCL создаёт файл либо отказывает с
-// EEXIST, и проигравший берёт чужой секрет вместо своего. Это верно и для
-// двух экземпляров в процессе, и для двух процессов (демон и --cleanup
-// живут одновременно), где мьютекс не помог бы вовсе.
+// createKey заводит секрет ровно один раз на dataDir. Секрет пишется во
+// временный файл, доводится до носителя и только потом получает целевое имя
+// через os.Link: под именем .device-key недописанного файла не бывает ни в
+// какой момент. Победителя выбирает сама файловая система — Link на занятое
+// имя отдаёт EEXIST, — и проигравший читает чужой секрет, ПОЛНЫЙ по
+// построению. Это верно и для двух экземпляров в процессе, и для двух
+// процессов (демон и --cleanup живут одновременно), где мьютекс не помог бы
+// вовсе.
 //
-// Общий AtomicWritePerm тут не годится: он завершается rename'ом, который
-// молча затирает чужой файл, — и второй пришедший похоронил бы шифротекст
-// первого.
+// O_CREATE|O_EXCL прямо на целевом имени так не умеет: он закрывает окно
+// «файла нет → создать», но открывает другое — между созданием inode и
+// записью 32 байт файл существует и пуст, то есть выглядит негодным. Общий
+// AtomicWritePerm не годится тем же боком: он завершается rename'ом, который
+// молча затирает чужой файл.
 func (c *DeviceCipher) createKey() ([]byte, error) {
 	if err := os.MkdirAll(c.dataDir, DirPermission); err != nil {
 		return nil, fmt.Errorf("device key: %w", err)
@@ -169,18 +165,28 @@ func (c *DeviceCipher) createKey() ([]byte, error) {
 	if _, err := rand.Read(fresh); err != nil {
 		return nil, fmt.Errorf("device key: rand: %w", err)
 	}
-	f, err := os.OpenFile(c.path(), os.O_WRONLY|os.O_CREATE|os.O_EXCL, deviceKeyPerm)
+	// Имя временного файла уникально по построению (os.CreateTemp), а не по
+	// pid и часам: два экземпляра в одном процессе успевают получить
+	// одинаковую наносекунду. Режим у CreateTemp 0600 — ровно тот, что нужен
+	// секрету, и он же уезжает на целевое имя вместе с inode. Префикс
+	// .device-key. исключён из бэкапа тем же предикатом, что и сам секрет:
+	// временная копия в архив не уедет, даже если её застанут.
+	tmp, err := os.CreateTemp(c.dataDir, DeviceKeyFile+".new.*")
 	if err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return c.raceWinnerKey()
-		}
 		return nil, fmt.Errorf("device key: %w", err)
 	}
-	if err := writeDeviceKey(f, fresh); err != nil {
-		// Недописанный секрет хуже отсутствующего: он выглядит пригодным
-		// файлом и увёл бы следующий запуск в карантин вместо чистого
-		// заведения.
-		os.Remove(c.path())
+	// Лишней копии секрета на флеше не остаётся ни при каком исходе: после
+	// удачного Link у inode уже есть целевое имя, при отказе — тем более.
+	defer os.Remove(tmp.Name())
+	if err := writeDeviceKey(tmp, fresh); err != nil {
+		return nil, fmt.Errorf("device key: %w", err)
+	}
+	if err := os.Link(tmp.Name(), c.path()); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			// Гонку выиграл другой: читаем его секрет один раз, без повторов
+			// — под целевым именем пустого файла не бывает.
+			return c.readKeyFile()
+		}
 		return nil, fmt.Errorf("device key: %w", err)
 	}
 	syncDir(c.dataDir)
@@ -203,17 +209,38 @@ func writeDeviceKey(f *os.File, key []byte) error {
 	return f.Close()
 }
 
-// raceWinnerKey читает секрет, заведённый тем, кто выиграл O_EXCL. Чтение
-// повторяется: между созданием файла и записью 32 байт есть окно, в котором
-// файл пуст и выглядит непригодным.
-func (c *DeviceCipher) raceWinnerKey() ([]byte, error) {
-	for attempt := 0; ; attempt++ {
-		raw, err := c.readKeyFile()
-		if err == nil || attempt == deviceKeyRaceRetries || !errors.Is(err, ErrDeviceKeyMissing) {
-			return raw, err
+// quarantineKey уносит негодный файл секрета в копию с уникальным по
+// построению именем. Общий QuarantineCorrupt тут не годится: он
+// переименовывает в фиксированное <путь>.corrupt, а os.Rename на Linux молча
+// затирает цель — вторая порча уничтожила бы первую копию, ту самую, где
+// вероятнее всего лежит настоящий секрет.
+func (c *DeviceCipher) quarantineKey(reason error) {
+	holder, err := os.CreateTemp(c.dataDir, DeviceKeyFile+".corrupt.*")
+	if err == nil {
+		holder.Close()
+		if err = os.Rename(c.path(), holder.Name()); err != nil {
+			os.Remove(holder.Name())
 		}
-		time.Sleep(deviceKeyRaceDelay)
 	}
+	if err != nil {
+		// Файл остаётся на месте: заведение нового секрета упрётся в занятое
+		// имя и откажет закрыто, а прежний файл никто не затрёт.
+		fmt.Fprintf(os.Stderr, "storage: %s is unusable (%v); quarantine failed: %v\n", c.path(), reason, err)
+		recordNotice("quarantine", DeviceKeyFile, fmt.Sprintf(
+			"Файл секрета устройства %s негоден (%v), и убрать его в сторону не вышло: %v. Пока он на месте, ключ подписки Amnezia сохранить не получится.",
+			DeviceKeyFile, reason, err))
+		return
+	}
+	syncDir(c.dataDir)
+	saved := filepath.Base(holder.Name())
+	fmt.Fprintf(os.Stderr, "storage: %s is unusable (%v); moved to %s, new device key generated\n", c.path(), reason, saved)
+	// Текст адресован человеку в журнале, а не инженеру в консоли: секрет
+	// привязан к установке, и единственное действие пользователя — ввести
+	// ключ подписки заново. Паниковать не о чем: на здоровой установке это
+	// сообщение не появляется вовсе.
+	recordNotice("quarantine", DeviceKeyFile, fmt.Sprintf(
+		"Файл секрета устройства %s негоден (%v); заведён новый, прежний сохранён рядом как %s. Ранее сохранённый ключ подписки Amnezia расшифровать больше нечем — введите его заново.",
+		DeviceKeyFile, reason, saved))
 }
 
 // readKeyFile отдаёт ErrDeviceKeyMissing и на отсутствующий, и на негодный
