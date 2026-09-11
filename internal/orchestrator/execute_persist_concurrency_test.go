@@ -168,6 +168,21 @@ type fakeKernelOp struct {
 	coldStartErr error
 	deleteErr    error
 	stops        int
+
+	// resumes/endpointRoutes — для проверки того, что возврат линка приводит
+	// и маршрут до endpoint (см. resume_endpoint_route_test.go).
+	resumes        int
+	endpointRoutes []endpointRouteCall
+	endpointErr    error
+	endpointIP     string // что SetupEndpointRoute вернёт вызывающему
+}
+
+// endpointRouteCall — аргументы одного вызова SetupEndpointRoute.
+type endpointRouteCall struct {
+	tunnelID     string
+	endpoint     string
+	kernelDevice string
+	ispName      string
 }
 
 func (f *fakeKernelOp) Create(context.Context, tunnel.Config) error { return nil }
@@ -181,7 +196,7 @@ func (f *fakeKernelOp) Delete(context.Context, *storage.AWGTunnel) error {
 }
 func (f *fakeKernelOp) Reconcile(context.Context, tunnel.Config) error          { return nil }
 func (f *fakeKernelOp) Suspend(context.Context, string) error                   { return nil }
-func (f *fakeKernelOp) Resume(context.Context, string) error                    { return nil }
+func (f *fakeKernelOp) Resume(context.Context, string) error                    { f.resumes++; return nil }
 func (f *fakeKernelOp) ApplyConfig(context.Context, string, string) error       { return nil }
 func (f *fakeKernelOp) SetDefaultRoute(context.Context, string) error           { return nil }
 func (f *fakeKernelOp) RemoveDefaultRoute(context.Context, string) error        { return nil }
@@ -192,8 +207,11 @@ func (f *fakeKernelOp) SyncDNS(context.Context, string, []string) error         
 func (f *fakeKernelOp) UpdateDescription(context.Context, string, string) error { return nil }
 func (f *fakeKernelOp) GetSystemName(context.Context, string) string            { return "" }
 func (f *fakeKernelOp) SetAppLogger(logging.AppLogger)                          {}
-func (f *fakeKernelOp) SetupEndpointRoute(context.Context, string, string, string, string) (string, error) {
-	return "", nil
+func (f *fakeKernelOp) SetupEndpointRoute(_ context.Context, tunnelID, endpoint, kernelDevice, ispName string) (string, error) {
+	f.endpointRoutes = append(f.endpointRoutes, endpointRouteCall{
+		tunnelID: tunnelID, endpoint: endpoint, kernelDevice: kernelDevice, ispName: ispName,
+	})
+	return f.endpointIP, f.endpointErr
 }
 func (f *fakeKernelOp) RestoreEndpointTracking(context.Context, string, string) (string, error) {
 	return "", nil
