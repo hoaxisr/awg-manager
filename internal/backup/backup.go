@@ -173,30 +173,59 @@ func Restore(dataDir string, r io.Reader) error {
 		// берём из отложенного каталога — иначе зашифрованный им ключ
 		// подписки перестанет читаться.
 		//
-		// Жёсткая ссылка, а не переименование: отложенный каталог остаётся
-		// на диске как путь ручного отката (prunePreviousRestores), а после
-		// переноса в нём лежал бы settings.json с шифротекстом и НЕ лежал бы
-		// секрет, которым он зашифрован, — откат возвращал бы нечитаемый
-		// ключ подписки. Ссылка даёт секрет под обоими именами; previous и
-		// dataDir — соседи в одном каталоге, то есть заведомо одна ФС.
-		// Чтения с записью нет: секрет не попадает в память этого пакета,
-		// права 0600 и владелец сохраняются сами. Ветки «скопировать, если
-		// ссылки не поддерживаются» нет намеренно: /opt на Entware — это
-		// Linux-ФС с жёсткими ссылками (иначе не работает сам opkg), а копия
-		// ради гипотетической ФС означала бы секрет в памяти и вторую
-		// реализацию прав.
+		// Копия, а не переименование: отложенный каталог остаётся на диске
+		// как путь ручного отката (prunePreviousRestores), а после переноса
+		// в нём лежал бы settings.json с шифротекстом и НЕ лежал бы секрет,
+		// которым он зашифрован, — откат возвращал бы нечитаемый ключ
+		// подписки. Почему именно копия, а не жёсткая ссылка — в
+		// carryDeviceKey.
 		//
 		// Ошибка намеренно молчит и восстановление НЕ отменяет: данные уже
 		// на месте и валидны, а единственное следствие — ключ подписки
 		// станет нерасшифровываемым, и этот случай спроектирован (наружу
 		// уходит usable:false). Ронять из-за него удавшийся restore хуже.
-		_ = os.Link(filepath.Join(previous, storage.DeviceKeyFile), filepath.Join(dataDir, storage.DeviceKeyFile))
+		_ = carryDeviceKey(previous, dataDir)
 	}
 	prunePreviousRestores(parent, filepath.Base(dataDir), previous)
 	if err := WritePostRestoreMarker(dataDir); err != nil {
 		return fmt.Errorf("не удалось записать маркер post-restore: %w", err)
 	}
 	return nil
+}
+
+// carryDeviceKey копирует секрет устройства из prev в next. Копия, а не
+// жёсткая ссылка: под ссылкой это один inode, и правка файла НА МЕСТЕ портила
+// бы обе копии разом — карантин унёс бы имя из каталога данных и завёл там
+// новый секрет, а в откатной копии остался бы мусор, то есть откат вернул бы
+// нерасшифровываемый ключ подписки. Цена — 32 байта секрета в памяти этого
+// пакета; тот же секрет и так живёт в памяти у storage.DeviceCipher, а
+// независимость откатной копии дороже.
+//
+// O_EXCL: если секрет в целевом каталоге почему-то уже есть, остаётся ОН.
+// Свой секрет старше архива, и именно им зашифровано всё, что пользователь
+// сохранит дальше, — затирать его копией нельзя ни при каких условиях.
+func carryDeviceKey(prev, next string) error {
+	raw, err := os.ReadFile(filepath.Join(prev, storage.DeviceKeyFile))
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(next, storage.DeviceKeyFile), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(raw); err != nil {
+		f.Close()
+		return err
+	}
+	// Sync до Close, как и в storage.writeDeviceKey: пишем сразу под целевым
+	// именем, а состояние живёт на флеше с отложенным выделением — без fsync
+	// потеря питания сразу после восстановления оставила бы .device-key
+	// нулевой длины, и ключ подписки перестал бы расшифровываться.
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // prunePreviousRestores оставляет только последнюю копию `<name>.pre-restore-*`.
@@ -251,6 +280,26 @@ func shouldSkip(rel string) bool {
 	return false
 }
 
+// skipFromArchive — shouldSkip для имени ИЗ архива: отсеивает ещё и всё, что
+// лежит под отсеиваемым именем. На выгрузке это делает filepath.SkipDir, а
+// здесь предикат смотрел только на имя целиком, и ".device-key/x" проходил
+// мимо фильтра: в каталоге данных появлялся КАТАЛОГ ".device-key", после чего
+// свой секрет туда уже не записать и не прочитать — ключ подписки терялся
+// навсегда. Тем же путём проходили "settings.json.lock/x" и прочие имена,
+// отсеиваемые по суффиксу.
+func skipFromArchive(name string) bool {
+	for {
+		if shouldSkip(name) {
+			return true
+		}
+		i := strings.LastIndex(name, "/")
+		if i < 0 {
+			return false
+		}
+		name = name[:i]
+	}
+}
+
 func writeTarBytes(tw *tar.Writer, name string, data []byte, mod time.Time) error {
 	hdr := &tar.Header{
 		Name:    name,
@@ -293,6 +342,20 @@ func extractArchive(r io.Reader, destDir string) error {
 		if name == ".." || strings.HasPrefix(name, "../") || strings.Contains(name, "/../") {
 			return fmt.Errorf("небезопасный путь в архиве: %q", hdr.Name)
 		}
+		// Отказ, а не нормализация: наш Export строит имена через filepath.Rel
+		// и потому НИКОГДА не пишет ни абсолютных имён, ни имени корня — такое
+		// имя признак подлога, а не совместимости со старыми архивами.
+		// Нормализация («/.device-key» → «.device-key») стирала бы эту разницу.
+		//
+		// Ведущий слэш filepath.Clean не снимает: "/.device-key" остаётся с
+		// ним, shouldSkip сравнивает с относительными именами и не срабатывает,
+		// а filepath.Join(destDir, "/.device-key") кладёт файл ровно в каталог
+		// данных — одним символом обходился весь фильтр распаковки (и секрет
+		// устройства, и run/, и locks/). Имя корня (".") Export пропускает
+		// явно, а при распаковке оно означало бы запись поверх самого каталога.
+		if strings.HasPrefix(name, "/") || name == "." {
+			return fmt.Errorf("недопустимое имя записи в архиве — это не резервная копия awg-manager")
+		}
 		// Симметрия с выгрузкой: чего мы принципиально не кладём в архив,
 		// того из архива принципиально не достаём. Без этого подложенный
 		// .device-key ложился бы в каталог данных (и правами из tar-заголовка),
@@ -308,7 +371,7 @@ func extractArchive(r io.Reader, destDir string) error {
 		// Манифест — исключение: в архив его кладёт сам Export отдельной
 		// записью (в каталоге данных его нет), а из staging его читает
 		// validateStaging.
-		if name != ManifestName && shouldSkip(name) {
+		if name != ManifestName && skipFromArchive(name) {
 			continue
 		}
 		target := filepath.Join(destDir, filepath.FromSlash(name))
@@ -347,18 +410,25 @@ func extractArchive(r io.Reader, destDir string) error {
 }
 
 func validateStaging(dir string) error {
-	manifestPath := filepath.Join(dir, ManifestName)
+	// Манифест обязателен, а тип и версия в нём — обязательно наши. Его
+	// кладёт сам Export с первой версии фичи, поэтому архив без манифеста
+	// (или с пустыми полями) — не старый бэкап, а чужой tar.gz либо попытка
+	// уйти от этих же проверок. Читать его условно («есть — проверим, нет —
+	// и ладно») означало бы, что достаточно выкинуть одну запись, чтобы
+	// восстановление приняло что угодно с settings.json внутри.
+	raw, err := os.ReadFile(filepath.Join(dir, ManifestName))
+	if err != nil {
+		return fmt.Errorf("в архиве нет %s — это не резервная копия awg-manager", ManifestName)
+	}
 	var manifest Manifest
-	if raw, err := os.ReadFile(manifestPath); err == nil {
-		if err := json.Unmarshal(raw, &manifest); err != nil {
-			return fmt.Errorf("некорректный %s: %w", ManifestName, err)
-		}
-		if manifest.Type != "" && manifest.Type != FileType {
-			return fmt.Errorf("неподдерживаемый тип архива: %q", manifest.Type)
-		}
-		if manifest.Version > 0 && manifest.Version > FileVersion {
-			return fmt.Errorf("версия архива %d не поддерживается", manifest.Version)
-		}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return fmt.Errorf("некорректный %s: %w", ManifestName, err)
+	}
+	if manifest.Type != FileType {
+		return fmt.Errorf("неподдерживаемый тип архива: %q", manifest.Type)
+	}
+	if manifest.Version < 1 || manifest.Version > FileVersion {
+		return fmt.Errorf("версия архива %d не поддерживается", manifest.Version)
 	}
 	settingsPath := filepath.Join(dir, "settings.json")
 	if _, err := os.Stat(settingsPath); err != nil {

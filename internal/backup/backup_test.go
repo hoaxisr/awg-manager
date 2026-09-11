@@ -87,6 +87,11 @@ func TestExportRestoreRoundtrip(t *testing.T) {
 
 func TestValidateStagingRejectsBadArchive(t *testing.T) {
 	dir := t.TempDir()
+	// Манифест на месте — иначе отказ придёт раньше и про него, а проверяется
+	// здесь именно отсутствие settings.json.
+	if err := os.WriteFile(filepath.Join(dir, ManifestName), []byte(validManifestJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := validateStaging(dir); err == nil || !strings.Contains(err.Error(), "settings.json") {
 		t.Fatalf("expected settings.json error, got %v", err)
 	}
@@ -459,6 +464,11 @@ func forgedArchive(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
+// validManifestJSON — манифест ровно того вида, что кладёт Export. Литералы,
+// а не прод-константы: подделыватель архива берёт манифест из настоящего
+// бэкапа, и переименование константы не должно молча чинить такой тест.
+const validManifestJSON = `{"version":1,"type":"awg-manager-full-backup"}`
+
 // settingsWithKey/keyFromSettings — settings.json ровно в той роли, в какой
 // он участвует в задаче: носитель шифротекста ключа подписки.
 func settingsWithKey(t *testing.T, dir, token string) {
@@ -492,6 +502,7 @@ func keyFromSettings(t *testing.T, dir string) string {
 func TestRestoreIgnoresDeviceKeyFromArchive(t *testing.T) {
 	foreign := strings.Repeat("A", 32)
 	archive := forgedArchive(t, map[string]string{
+		ManifestName:          validManifestJSON,
 		"settings.json":       `{"version":32}`,
 		storage.DeviceKeyFile: foreign,
 	})
@@ -685,5 +696,282 @@ func TestRestoreForeignBackupYieldsUnusableKey(t *testing.T) {
 	}
 	if !bytes.Equal(after, own) {
 		t.Fatal("секрет после восстановления чужого бэкапа не свой")
+	}
+}
+
+// Ведущий слэш обходил фильтр распаковки целиком: filepath.Clean оставляет
+// "/.device-key" как есть, shouldSkip сравнивает с относительными именами и не
+// срабатывает, а filepath.Join(destDir, "/.device-key") кладёт файл ровно
+// туда, куда его и хотели положить. Тем же путём проходило всё прочее
+// отсеиваемое — run/, locks/, .lock. Проверяется на реальном пути (Restore),
+// а не на extractArchive: обходили именно восстановление.
+func TestRestoreRejectsAbsoluteNamesInArchive(t *testing.T) {
+	cases := map[string]string{
+		"секрет устройства": "/" + storage.DeviceKeyFile,
+		"рантайм-каталог":   "/run/x",
+		"корень архива":     ".",
+	}
+	for title, name := range cases {
+		t.Run(title, func(t *testing.T) {
+			archive := forgedArchive(t, map[string]string{
+				ManifestName:    validManifestJSON,
+				"settings.json": `{"version":32}`,
+				name:            strings.Repeat("B", 32),
+			})
+			root := t.TempDir()
+			dataDir := filepath.Join(root, "awg-manager")
+
+			err := Restore(dataDir, bytes.NewReader(archive))
+			if err == nil {
+				t.Fatalf("архив с записью %q принят", name)
+			}
+			// Только для абсолютных имён: имя корня (".") содержится в любом
+			// пути, и проверка «не пересказывает» на нём ловила бы точку в
+			// тексте сообщения, а не пересказ архива.
+			if strings.HasPrefix(name, "/") && strings.Contains(err.Error(), name) {
+				t.Errorf("ошибка пересказывает содержимое архива: %v", err)
+			}
+			if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
+				t.Fatalf("каталог данных создан отвергнутым архивом: err=%v", err)
+			}
+		})
+	}
+}
+
+// Отложенная копия <dir>.pre-restore-* — путь ручного отката, поэтому её
+// секрет обязан быть отдельным файлом, а не вторым именем того же inode.
+// Жёсткая ссылка давала «оба имени видят секрет» сразу после Restore (что и
+// проверял TestRestoreKeepsRollbackCopySelfSufficient), но правка файла НА
+// МЕСТЕ портила обе копии разом: карантин уносил имя из dataDir, заводил там
+// новый секрет, а в откатной копии оставался мусор.
+func TestRestoreRollbackCopyIsIndependentOfDataDir(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "awg-manager")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	token, err := storage.NewDeviceCipher(dataDir).Encrypt("vpn://test-key-independent")
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	settingsWithKey(t, dataDir, token)
+	original, err := os.ReadFile(filepath.Join(dataDir, storage.DeviceKeyFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := Export(dataDir, "2.18.2", &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if err := Restore(dataDir, bytes.NewReader(buf.Bytes())); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(root, "awg-manager.pre-restore-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("ожидали одну откатную копию, получили %v", matches)
+	}
+	previous := matches[0]
+
+	// Правка НА МЕСТЕ (без O_TRUNC и без временного файла) — ровно то, что
+	// видит второе имя жёсткой ссылки и не видит копия.
+	overwriteInPlace(t, filepath.Join(dataDir, storage.DeviceKeyFile), strings.Repeat("X", len(original)))
+	if got := mustRead(t, filepath.Join(previous, storage.DeviceKeyFile)); !bytes.Equal(got, original) {
+		t.Fatalf("правка секрета в каталоге данных видна в откатной копии: копии не независимы")
+	}
+
+	overwriteInPlace(t, filepath.Join(previous, storage.DeviceKeyFile), strings.Repeat("Y", len(original)))
+	if got := mustRead(t, filepath.Join(dataDir, storage.DeviceKeyFile)); !bytes.Equal(got, []byte(strings.Repeat("X", len(original)))) {
+		t.Fatalf("правка секрета в откатной копии видна в каталоге данных: копии не независимы")
+	}
+}
+
+func overwriteInPlace(t *testing.T, path, body string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("открыть %s: %v", path, err)
+	}
+	if _, err := f.Write([]byte(body)); err != nil {
+		f.Close()
+		t.Fatalf("запись %s: %v", path, err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("чтение %s: %v", path, err)
+	}
+	return raw
+}
+
+// Перенос секрета в восстановленный каталог не имеет права затереть уже
+// лежащий там секрет: свой секрет старше архива, и именно им зашифровано всё,
+// что пользователь сохранит дальше.
+func TestCarryDeviceKeyKeepsExistingTarget(t *testing.T) {
+	root := t.TempDir()
+	from := filepath.Join(root, "from")
+	to := filepath.Join(root, "to")
+	for _, dir := range []string{from, to} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(from, storage.DeviceKeyFile), []byte(strings.Repeat("A", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	own := []byte(strings.Repeat("B", 32))
+	if err := os.WriteFile(filepath.Join(to, storage.DeviceKeyFile), own, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := carryDeviceKey(from, to); err == nil {
+		t.Fatal("перенос поверх существующего секрета прошёл молча")
+	}
+	if got := mustRead(t, filepath.Join(to, storage.DeviceKeyFile)); !bytes.Equal(got, own) {
+		t.Fatal("свой секрет затёрт переносом")
+	}
+}
+
+// Перенос в каталог без секрета: копия байт в байт и права 0600 — секрет не
+// имеет права стать доступным на чтение кому-то ещё.
+func TestCarryDeviceKeyCopiesBytesAndMode(t *testing.T) {
+	root := t.TempDir()
+	from := filepath.Join(root, "from")
+	to := filepath.Join(root, "to")
+	for _, dir := range []string{from, to} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secret := []byte(strings.Repeat("S", 32))
+	if err := os.WriteFile(filepath.Join(from, storage.DeviceKeyFile), secret, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := carryDeviceKey(from, to); err != nil {
+		t.Fatalf("carryDeviceKey: %v", err)
+	}
+	if got := mustRead(t, filepath.Join(to, storage.DeviceKeyFile)); !bytes.Equal(got, secret) {
+		t.Fatalf("скопированы не те байты: %q", got)
+	}
+	info, err := os.Stat(filepath.Join(to, storage.DeviceKeyFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("права копии %o, want 600", perm)
+	}
+}
+
+// Тип и версия архива — то немногое, что отличает наш бэкап от чужого tar.gz
+// до распаковки настроек. Манифест кладёт сам Export с самой первой версии
+// фичи, поэтому его отсутствие — не совместимость, а подлог или чужой файл.
+func TestRestoreRejectsBadManifest(t *testing.T) {
+	cases := map[string]struct {
+		files map[string]string
+		want  string
+	}{
+		"чужой тип": {
+			files: map[string]string{
+				ManifestName:    `{"version":1,"type":"some-other-tool-backup"}`,
+				"settings.json": `{"version":32}`,
+			},
+			want: "тип архива",
+		},
+		"версия из будущего": {
+			files: map[string]string{
+				ManifestName:    `{"version":2,"type":"awg-manager-full-backup"}`,
+				"settings.json": `{"version":32}`,
+			},
+			want: "версия архива",
+		},
+		"пустой манифест": {
+			files: map[string]string{
+				ManifestName:    `{}`,
+				"settings.json": `{"version":32}`,
+			},
+			want: "тип архива",
+		},
+		"без манифеста": {
+			files: map[string]string{
+				"settings.json": `{"version":32}`,
+			},
+			want: ManifestName,
+		},
+	}
+	for title, tc := range cases {
+		t.Run(title, func(t *testing.T) {
+			root := t.TempDir()
+			dataDir := filepath.Join(root, "awg-manager")
+			err := Restore(dataDir, bytes.NewReader(forgedArchive(t, tc.files)))
+			if err == nil {
+				t.Fatal("архив принят")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, ждали упоминание %q", err, tc.want)
+			}
+			if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
+				t.Fatalf("каталог данных создан отвергнутым архивом: err=%v", err)
+			}
+		})
+	}
+}
+
+// Архив, снятый нашим же Export, обязан проходить те же проверки — иначе
+// «отказ по умолчанию» закрывает и нормальный путь.
+func TestRestoreAcceptsOwnExport(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "settings.json"), []byte(`{"version":32}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := Export(source, "2.18.2", &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if err := Restore(filepath.Join(root, "awg-manager"), bytes.NewReader(buf.Bytes())); err != nil {
+		t.Fatalf("Restore своего же архива: %v", err)
+	}
+}
+
+// Отсеиваемое имя, использованное как каталог: на выгрузке весь такой
+// подкаталог отрезает filepath.SkipDir, а при распаковке предикат смотрел
+// только на имя целиком. Так из чужого архива в каталоге данных появлялся
+// КАТАЛОГ ".device-key" — свой секрет после этого не прочитать и не записать,
+// то есть ключ подписки терялся навсегда.
+func TestRestoreSkipsFilteredNamesUsedAsDirectories(t *testing.T) {
+	for _, name := range []string{
+		storage.DeviceKeyFile + "/x",
+		"settings.json.lock/x",
+		"tunnels.tmp/x",
+	} {
+		t.Run(name, func(t *testing.T) {
+			archive := forgedArchive(t, map[string]string{
+				ManifestName:    validManifestJSON,
+				"settings.json": `{"version":32}`,
+				name:            "payload",
+			})
+			root := t.TempDir()
+			dataDir := filepath.Join(root, "awg-manager")
+			if err := Restore(dataDir, bytes.NewReader(archive)); err != nil {
+				t.Fatalf("Restore: %v", err)
+			}
+			top := strings.SplitN(name, "/", 2)[0]
+			if _, err := os.Stat(filepath.Join(dataDir, top)); !os.IsNotExist(err) {
+				t.Fatalf("%q приехал из архива: err=%v", top, err)
+			}
+		})
 	}
 }
