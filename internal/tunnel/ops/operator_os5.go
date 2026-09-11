@@ -421,15 +421,9 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 		}
 	}
 	// Петлю снимаем тоже — см. гард в SetupEndpointRoute: он только на создании,
-	// а наследство прежних версий уходит с роутера именно отсюда.
-	if endpointIP != "" {
-		if err := o.delKernelHostRoute(ctx, endpointIP); err != nil {
-			o.logWarn("delete", stored.ID, "ip route del "+endpointIP+": "+err.Error())
-		}
-		if err := o.commands.Routes.RemoveHostRoute(ctx, endpointIP); err != nil {
-			o.logWarn("delete", stored.ID, "RemoveHostRoute: "+err.Error())
-		}
-	}
+	// а наследство прежних версий уходит с роутера именно отсюда. Через общий
+	// путь с ref-count: сосед к тому же серверу маршрут не потеряет (F130/#867).
+	o.removeHostRouteIfUnused(ctx, "delete", stored.ID, endpointIP)
 
 	// 2. Remove NDMS interface — cleans everything:
 	//    address, MTU, security-level, ip global, default route, DNS name-servers
@@ -450,10 +444,7 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 
 	// 4. Persist NDMS config
 
-	// 5. Clear in-memory tracking
-	o.endpointRoutesMu.Lock()
-	delete(o.endpointRoutes, stored.ID)
-	o.endpointRoutesMu.Unlock()
+	// 5. Clear in-memory tracking (endpointRoutes уже забыт на шаге 1)
 	o.appliedDNSMu.Lock()
 	delete(o.appliedDNS, stored.ID)
 	o.appliedDNSMu.Unlock()
