@@ -523,18 +523,7 @@ func (s *Server) registerLogsImportRoutes(mux *http.ServeMux, h *routeHandlers) 
 	// своей жизнью, пока на них держится мастер.
 	amneziaPremiumHandler := api.NewAmneziaPremiumHandler(s.settings, h.appLog)
 	amneziaPremiumHandler.SetEventBus(s.bus)
-	mux.HandleFunc("/api/amnezia/premium/key", h.guarded(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			amneziaPremiumHandler.KeyStatus(w, r)
-		case http.MethodPost:
-			amneziaPremiumHandler.SaveKey(w, r)
-		case http.MethodDelete:
-			amneziaPremiumHandler.DeleteKey(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	}))
+	mux.HandleFunc("/api/amnezia/premium/key", h.guarded(amneziaPremiumHandler.Key))
 
 	// External tunnels (protected + boot guarded)
 	mux.HandleFunc("/api/external-tunnels", h.guarded(h.externalHandler.List))

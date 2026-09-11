@@ -153,6 +153,37 @@ func (h *AmneziaPremiumHandler) client() *amneziacp.Client {
 	return h.cp
 }
 
+// Key — единственная точка входа ручки /amnezia/premium/key: метод выбирает
+// операцию. Разбор метода живёт здесь, а не в закрытии регистрации маршрута,
+// ровно ради чужого метода: отказ обязан приехать тем же конвертом API
+// (response.MethodNotAllowed), что и отказы самих операций, иначе фронт
+// получает на одном пути то JSON, то текст. Ср. AccessPolicyHandler.PermitInterface.
+func (h *AmneziaPremiumHandler) Key(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.KeyStatus(w, r)
+	case http.MethodPost:
+		h.SaveKey(w, r)
+	case http.MethodDelete:
+		h.DeleteKey(w, r)
+	default:
+		response.MethodNotAllowed(w)
+	}
+}
+
+// resetPortalSession выбрасывает сессию портала, если клиент уже собран.
+// Зовётся везде, где ключ перестал быть нашим: сессия добыта ИМ, и жить
+// дольше него не имеет права. Клиент ради сброса не собирается — сбрасывать
+// тогда нечего.
+func (h *AmneziaPremiumHandler) resetPortalSession() {
+	h.mu.Lock()
+	cp := h.cp
+	h.mu.Unlock()
+	if cp != nil {
+		cp.ResetSession()
+	}
+}
+
 // mirrorURL — ДЕЙСТВУЮЩИЙ адрес зеркала. Настройки читаются на КАЖДОМ
 // вызове: смена адреса обязана доезжать без перезапуска панели. Правило
 // «пусто ИЛИ негодно = зеркало по умолчанию» живёт одно на всех — в
@@ -282,6 +313,11 @@ func (h *AmneziaPremiumHandler) SaveKey(w http.ResponseWriter, r *http.Request) 
 		// сменили, пока мы ходили в портал. Отвечать успехом здесь значило бы
 		// сказать «ключ принят» про ключ, которого у нас нет ни в памяти, ни
 		// на диске.
+		//
+		// Сессию, которую только что добыл этот вход, роняем: она получена
+		// ключом, который у нас уже забрали, и оставить её значит ходить в
+		// портал от имени забытого ключа.
+		h.resetPortalSession()
 		h.log.Info(logActionPremium, "key-check", "route=direct состояние ключа сменилось за время проверки — ключ не сохранён")
 		response.ErrorWithStatus(w, http.StatusConflict,
 			"Состояние ключа подписки изменилось, пока шла проверка — введите ключ заново", codePremiumStateChanged)
@@ -413,11 +449,8 @@ func (h *AmneziaPremiumHandler) DeleteKey(w http.ResponseWriter, r *http.Request
 	h.mu.Lock()
 	h.keyGen++
 	h.sessionKey = ""
-	cp := h.cp
 	h.mu.Unlock()
-	if cp != nil {
-		cp.ResetSession()
-	}
+	h.resetPortalSession()
 
 	if err := h.settings.Update(func(cur *storage.Settings) error {
 		cur.AmneziaPremiumKeyCipher = ""

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -15,11 +16,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/amneziacp"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -140,12 +143,24 @@ func (p *premiumPortal) seen() []premiumLogin {
 // схлопнулось бы в зеркало по умолчанию, то есть тест ушёл бы в интернет.
 func newPremiumMirror(t *testing.T, origin string) *httptest.Server {
 	t.Helper()
+	srv, _ := newPremiumMirrorCounted(t, origin)
+	return srv
+}
+
+// newPremiumMirrorCounted — то же зеркало плюс счётчик резолвов: сколько раз
+// за origin действительно ходили в сеть. Кэш origin живёт ВНУТРИ клиента CP,
+// поэтому счётчик — единственное наблюдаемое следствие того, что клиент один
+// и тот же, а не пересобирается на каждый запрос.
+func newPremiumMirrorCounted(t *testing.T, origin string) (*httptest.Server, *atomic.Int64) {
+	t.Helper()
+	var hits atomic.Int64
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
 		_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8">`+
 			`<meta name="mirror-to" data-link="`+origin+`"></head><body>ok</body></html>`)
 	}))
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, &hits
 }
 
 // newPremiumBrokenMirror — зеркало, которое не отдаёт origin: страница
@@ -180,11 +195,43 @@ func premiumHTTPClient(t *testing.T, servers ...*httptest.Server) *http.Client {
 
 // premiumStand — обработчик на стенде «зеркало + портал».
 type premiumStand struct {
-	h      *AmneziaPremiumHandler
-	dir    string
-	store  *storage.SettingsStore
-	portal *premiumPortal
-	mirror *httptest.Server
+	h          *AmneziaPremiumHandler
+	dir        string
+	store      *storage.SettingsStore
+	portal     *premiumPortal
+	mirror     *httptest.Server
+	mirrorHits *atomic.Int64
+	log        *premiumLogSink
+}
+
+// premiumLogSink — журнал приложения, видимый тесту. Обработчик — ЕДИНСТВЕННЫЙ
+// слой, где ключ подписки вообще в области видимости, так что его строки
+// проверять больше некому; с nil-журналом (как было) содержимое строк не
+// проверяется вовсе.
+//
+// Под локом: строки пишет и горутина запроса, и горутина летящей проверки в
+// тестах гонки.
+type premiumLogSink struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (s *premiumLogSink) AppLog(_ logging.Level, _, _, action, target, message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lines = append(s.lines, action+" "+target+": "+message)
+}
+
+func (s *premiumLogSink) text() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return strings.Join(s.lines, "\n")
+}
+
+func (s *premiumLogSink) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.lines)
 }
 
 // newPremiumStand собирает стенд. extraTrust — стенды, чьи сертификаты нужны
@@ -199,12 +246,15 @@ func newPremiumStand(t *testing.T, extraTrust ...*httptest.Server) *premiumStand
 		t.Fatalf("загрузка настроек: %v", err)
 	}
 	portal := newPremiumPortal(t, "a")
-	mirror := newPremiumMirror(t, portal.srv.URL)
+	mirror, mirrorHits := newPremiumMirrorCounted(t, portal.srv.URL)
 
-	h := NewAmneziaPremiumHandler(store, nil)
+	// Журнал видимый, а не nil: строки обработчика — единственное место, где
+	// ключ подписки может утечь незамеченным, и стенд обязан их показывать.
+	log := &premiumLogSink{}
+	h := NewAmneziaPremiumHandler(store, log)
 	h.SetHTTPClient(premiumHTTPClient(t, append([]*httptest.Server{mirror, portal.srv}, extraTrust...)...))
 
-	st := &premiumStand{h: h, dir: dir, store: store, portal: portal, mirror: mirror}
+	st := &premiumStand{h: h, dir: dir, store: store, portal: portal, mirror: mirror, mirrorHits: mirrorHits, log: log}
 	st.setMirror(t, mirror.URL)
 	return st
 }
@@ -285,9 +335,42 @@ func (s *premiumStand) deviceKeyPath() string {
 	return filepath.Join(s.dir, storage.DeviceKeyFile)
 }
 
+// portalSessionAlive — жива ли у клиента CP сессия портала.
+//
+// Сессия наружу не выходит ни ответом, ни геттером, и спросить про неё прямо
+// нечем. Наблюдаемое следствие — ЛИШНИЙ вход в портал: запрос, который умеет
+// переиспользовать сессию (AccountInfo), при живой сессии за входом не идёт,
+// при сброшенной — идёт. CheckKey для наблюдения не годится: он логинится
+// всегда, и по нему живая сессия от сброшенной неотличима.
+//
+// Ключ на время пробы возвращается в память: пустой ключ клиент отсекает до
+// всякой сети (ErrNoKey), и входа тогда не будет ни в одном из двух случаев,
+// то есть проба ослепнет. Прежнее значение возвращается на место — проба не
+// должна менять то, что проверяет тест дальше.
+//
+// Ответ портала на /api/account-info здесь 404, и это неважно: считаются
+// входы, а не исход запроса (404 повторов не вызывает).
+func (s *premiumStand) portalSessionAlive(t *testing.T, key string) bool {
+	t.Helper()
+	s.h.mu.Lock()
+	prev := s.h.sessionKey
+	s.h.sessionKey = key
+	s.h.mu.Unlock()
+	defer func() {
+		s.h.mu.Lock()
+		s.h.sessionKey = prev
+		s.h.mu.Unlock()
+	}()
+
+	before := len(s.portal.seen())
+	_, _ = s.h.client().AccountInfo(context.Background())
+	return len(s.portal.seen()) == before
+}
+
 // premiumSecretProbes — признаки утечки. Тело ключа — отдельный признак:
 // проверка только по схеме «vpn://» обманывается реализацией, снёсшей схему и
-// оставившей сам ключ.
+// оставившей сам ключ. Один и тот же набор проверяется на двух границах —
+// в ответе и в журнале: граница у секрета не одна.
 func premiumSecretProbes(portal *premiumPortal) []string {
 	return []string{"vpn://", premiumKeyBody, premiumOtherKeyBody, "v_sid", "sid", portal.sid(1)}
 }
@@ -296,7 +379,7 @@ func assertNoPremiumSecrets(t *testing.T, where, text string, portal *premiumPor
 	t.Helper()
 	for _, probe := range premiumSecretProbes(portal) {
 		if strings.Contains(text, probe) {
-			t.Errorf("%s: в ответе найден %q: %s", where, probe, text)
+			t.Errorf("%s: найден %q: %s", where, probe, text)
 		}
 	}
 }
@@ -980,5 +1063,330 @@ func TestAmneziaPremiumKey_FailureMapping(t *testing.T) {
 			}
 			assertNoPremiumSecrets(t, "зеркало не отдаёт origin", rec.Body.String(), st.portal)
 		})
+	})
+}
+
+// Журнал — ГРАНИЦА: его видно на /logs и он уезжает в поддержку. Обработчик —
+// единственный слой, где ключ подписки вообще в области видимости, поэтому
+// стража его строкам взять больше неоткуда. Проверяются все пути ручки, а не
+// только успешный: секрет чаще всего дописывают в строку отказа, разбирая
+// жалобу.
+func TestAmneziaPremiumKey_LogCarriesNoSecrets(t *testing.T) {
+	cases := []struct {
+		name string
+		// run прогоняет путь целиком и отдаёт стенд: часть путей требует
+		// своего стенда (чужое зеркало), поэтому стенд заводит сам случай.
+		run func(*testing.T) *premiumStand
+	}{
+		{"вход без сохранения", func(t *testing.T) *premiumStand {
+			st := newPremiumStand(t)
+			if rec := st.post(t, `{"key":"`+premiumKey+`","store":false}`); rec.Code != http.StatusOK {
+				t.Fatalf("вход: %d %s", rec.Code, rec.Body.String())
+			}
+			return st
+		}},
+		{"вход с сохранением", func(t *testing.T) *premiumStand {
+			st := newPremiumStand(t)
+			if rec := st.post(t, `{"key":"`+premiumKey+`","store":true}`); rec.Code != http.StatusOK {
+				t.Fatalf("сохранение: %d %s", rec.Code, rec.Body.String())
+			}
+			return st
+		}},
+		{"ключ отклонён порталом", func(t *testing.T) *premiumStand {
+			st := newPremiumStand(t)
+			st.portal.setStatus(http.StatusUnauthorized)
+			if rec := st.post(t, `{"key":"`+premiumOtherKey+`","store":true}`); rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("код = %d, ждали %d: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+			}
+			return st
+		}},
+		{"зеркало не отдаёт origin", func(t *testing.T) *premiumStand {
+			broken := newPremiumBrokenMirror(t)
+			st := newPremiumStand(t, broken)
+			st.setMirror(t, broken.URL)
+			if rec := st.post(t, `{"key":"`+premiumKey+`","store":true}`); rec.Code != http.StatusBadGateway {
+				t.Fatalf("код = %d, ждали %d: %s", rec.Code, http.StatusBadGateway, rec.Body.String())
+			}
+			return st
+		}},
+		{"сохранить не удалось", func(t *testing.T) *premiumStand {
+			st := newPremiumStand(t)
+			if err := os.Mkdir(st.deviceKeyPath(), 0o755); err != nil {
+				t.Fatalf("подготовка: %v", err)
+			}
+			if rec := st.post(t, `{"key":"`+premiumKey+`","store":true}`); rec.Code != http.StatusOK {
+				t.Fatalf("вход: %d %s", rec.Code, rec.Body.String())
+			}
+			return st
+		}},
+		{"состояние", func(t *testing.T) *premiumStand {
+			st := newPremiumStand(t)
+			if rec := st.post(t, `{"key":"`+premiumKey+`","store":true}`); rec.Code != http.StatusOK {
+				t.Fatalf("подготовка: %d %s", rec.Code, rec.Body.String())
+			}
+			if rec := st.status(t); rec.Code != http.StatusOK {
+				t.Fatalf("статус: %d %s", rec.Code, rec.Body.String())
+			}
+			return st
+		}},
+		{"удаление", func(t *testing.T) *premiumStand {
+			st := newPremiumStand(t)
+			if rec := st.post(t, `{"key":"`+premiumKey+`","store":true}`); rec.Code != http.StatusOK {
+				t.Fatalf("подготовка: %d %s", rec.Code, rec.Body.String())
+			}
+			if rec := st.del(t); rec.Code != http.StatusOK {
+				t.Fatalf("удаление: %d %s", rec.Code, rec.Body.String())
+			}
+			return st
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := tc.run(t)
+			// Немой журнал прошёл бы эту проверку, ничего не доказав: путь
+			// обязан оставить в нём хоть строку, иначе разбирать жалобу не по
+			// чему.
+			if st.log.count() == 0 {
+				t.Fatal("путь не оставил в журнале ни строки")
+			}
+			assertNoPremiumSecrets(t, "журнал: "+tc.name, st.log.text(), st.portal)
+		})
+	}
+}
+
+// Удаление ключа роняет сессию портала: она добыта ключом, которого у нас уже
+// нет, и запрос под ней — это запрос от имени забытого ключа.
+func TestAmneziaPremiumKey_DeleteDropsPortalSession(t *testing.T) {
+	st := newPremiumStand(t)
+	if rec := st.post(t, `{"key":"`+premiumKey+`","store":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("подготовка: %d %s", rec.Code, rec.Body.String())
+	}
+	// Контроль: до удаления сессия ЖИВА. Без него проверка ниже зелена и на
+	// клиенте, который сессию вообще не кэширует, — то есть слепа.
+	if !st.portalSessionAlive(t, premiumKey) {
+		t.Fatal("сессии портала нет ещё до удаления: наблюдать нечего")
+	}
+
+	if rec := st.del(t); rec.Code != http.StatusOK {
+		t.Fatalf("удаление: %d %s", rec.Code, rec.Body.String())
+	}
+	if st.portalSessionAlive(t, premiumKey) {
+		t.Error("сессия портала пережила удаление ключа")
+	}
+}
+
+// Отменённая проверка (состояние ключа сменили, пока мы ходили в портал) тоже
+// роняет сессию: вход состоялся, но ключ, которым он сделан, у нас уже
+// забрали. Ответ портала придержан — окно открыто ровно на время, нужное
+// тесту.
+func TestAmneziaPremiumKey_CancelledCheckDropsPortalSession(t *testing.T) {
+	st := newPremiumStand(t)
+	hold := st.portal.holdNextLogin(t)
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- st.post(t, `{"key":"`+premiumKey+`","store":true}`) }()
+
+	select {
+	case <-hold.arrived:
+	case <-time.After(10 * time.Second):
+		t.Fatal("вход не дошёл до портала: придержать нечего")
+	}
+	if rec := st.del(t); rec.Code != http.StatusOK {
+		t.Fatalf("удаление: %d %s", rec.Code, rec.Body.String())
+	}
+	hold.release()
+
+	postRec := <-done
+	if postRec.Code != http.StatusConflict {
+		t.Fatalf("код проверки = %d, ждали %d: %s", postRec.Code, http.StatusConflict, postRec.Body.String())
+	}
+	if st.portalSessionAlive(t, premiumKey) {
+		t.Error("сессия портала, добытая забранным ключом, осталась жива")
+	}
+	// Тот же путь — и граница журнала: строка про отменённую проверку пишется
+	// там, где ключ в области видимости.
+	assertNoPremiumSecrets(t, "журнал: отменённая проверка", st.log.text(), st.portal)
+}
+
+// Подмена транспорта роняет уже собранного клиента CP. Иначе он продолжил бы
+// ходить ПРЕЖНИМ транспортом, и шов, названный в комментарии к SetHTTPClient,
+// не работал бы: тест, поставивший свой клиент вторым, молча проверял бы
+// чужой.
+//
+// Наблюдаемое следствие: новый транспорт не доверяет сертификатам стендов, и
+// следующий запрос обязан отказать, а не пройти.
+func TestAmneziaPremiumKey_SetHTTPClientDropsBuiltClient(t *testing.T) {
+	st := newPremiumStand(t)
+	if rec := st.post(t, `{"key":"`+premiumKey+`","store":false}`); rec.Code != http.StatusOK {
+		t.Fatalf("подготовка: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Клиент без доверенных сертификатов: до стендов ему не дойти.
+	st.h.SetHTTPClient(premiumHTTPClient(t))
+
+	rec := st.post(t, `{"key":"`+premiumKey+`","store":false}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("код = %d, ждали %d: запрос ушёл прежним транспортом: %s",
+			rec.Code, http.StatusBadGateway, rec.Body.String())
+	}
+	if code := premiumErrorCode(t, rec); code != codePremiumMirrorUnavailable {
+		t.Errorf("код отказа = %q, want %q", code, codePremiumMirrorUnavailable)
+	}
+	if n := len(st.portal.seen()); n != 1 {
+		t.Errorf("входов в портал %d, ждали 1: второй ушёл прежним транспортом", n)
+	}
+}
+
+// Клиент CP собирается ОДИН раз и переиспользуется — ради кэшей внутри него.
+// Наблюдаемое следствие: второй запрос подряд не резолвит зеркало заново.
+// Пересборка клиента на каждый вызов выбрасывала бы и кэш origin, и сессию,
+// то есть каждое действие пользователя стоило бы лишнего похода в сеть.
+func TestAmneziaPremiumKey_PortalClientIsReused(t *testing.T) {
+	st := newPremiumStand(t)
+	for i := range 2 {
+		if rec := st.post(t, `{"key":"`+premiumKey+`","store":false}`); rec.Code != http.StatusOK {
+			t.Fatalf("вход %d: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+	if n := len(st.portal.seen()); n != 2 {
+		t.Fatalf("входов в портал %d, ждали 2: считать резолвы не по чему", n)
+	}
+	if n := st.mirrorHits.Load(); n != 1 {
+		t.Errorf("резолвов зеркала %d, ждали 1: клиент CP пересобран, его кэши потеряны", n)
+	}
+}
+
+// store и remember — РАЗНЫЕ флаги, и ни один не смеет зависеть от другого:
+// remember уходит в ПОРТАЛ (срок его cookie), store решает судьбу НАШЕГО
+// секрета. Проверяются все четыре сочетания, и в каждом — и что ушло в
+// портал, и что легло (или не легло) в настройки: по отдельности каждый флаг
+// зелен и на реализации, которая их связала.
+func TestAmneziaPremiumKey_StoreAndRememberAreIndependent(t *testing.T) {
+	for _, store := range []bool{false, true} {
+		for _, remember := range []bool{false, true} {
+			t.Run(fmt.Sprintf("store=%v/remember=%v", store, remember), func(t *testing.T) {
+				st := newPremiumStand(t)
+				rec := st.post(t, fmt.Sprintf(`{"key":%q,"store":%v,"remember":%v}`, premiumKey, store, remember))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("вход: %d %s", rec.Code, rec.Body.String())
+				}
+
+				seen := st.portal.seen()
+				if len(seen) != 1 {
+					t.Fatalf("входов в портал %d, ждали 1", len(seen))
+				}
+				if seen[0].Key != premiumKey {
+					t.Errorf("ключ в теле запроса к порталу = %q, want %q", seen[0].Key, premiumKey)
+				}
+				if seen[0].Remember != remember {
+					t.Errorf("remember в портале = %v, want %v: на него повлиял store", seen[0].Remember, remember)
+				}
+
+				data := premiumData(t, rec)
+				if data.SaveError != "" {
+					t.Errorf("ошибка сохранения %q там, где её быть не должно", data.SaveError)
+				}
+				cipher := st.storedCipher(t)
+				if !store {
+					if cipher != "" {
+						t.Errorf("шифротекст = %q, ждали пусто: сохранять не просили", cipher)
+					}
+					if data.Stored || data.Usable {
+						t.Errorf("ответ = %+v, ждали stored=false usable=false", data)
+					}
+					return
+				}
+				if !data.Stored || !data.Usable {
+					t.Errorf("ответ = %+v, ждали stored=true usable=true: сохранить просили", data)
+				}
+				plain, err := storage.NewDeviceCipher(st.dir).Decrypt(cipher)
+				if err != nil {
+					t.Fatalf("расшифровка сохранённого ключа: %v", err)
+				}
+				if plain != premiumKey {
+					t.Errorf("сохранён ключ %q, want %q", plain, premiumKey)
+				}
+			})
+		}
+	}
+}
+
+// Сохранённый ключ переживает перезапуск демона: свежий обработчик над тем же
+// каталогом отдаёт клиенту CP ключ с диска. В памяти у него нет ничего, и
+// путь «ключ есть в сторе, но нет в памяти» — ровно тот, по которому панель
+// работает после каждой перезагрузки роутера.
+func TestAmneziaPremiumKey_StoredKeySurvivesRestart(t *testing.T) {
+	st := newPremiumStand(t)
+	if rec := st.post(t, `{"key":"`+premiumKey+`","store":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("подготовка: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Перезапуск: новый стор и новый обработчик над тем же каталогом.
+	store := storage.NewSettingsStore(st.dir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("загрузка настроек после перезапуска: %v", err)
+	}
+	fresh := NewAmneziaPremiumHandler(store, &premiumLogSink{})
+
+	if got := fresh.subscriptionKey(); got != premiumKey {
+		t.Errorf("ключ для клиента CP после перезапуска = %q, want %q — подписка потеряна", got, premiumKey)
+	}
+	rec := httptest.NewRecorder()
+	fresh.KeyStatus(rec, httptest.NewRequest(http.MethodGet, "/api/amnezia/premium/key", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("статус после перезапуска: %d %s", rec.Code, rec.Body.String())
+	}
+	if data := premiumData(t, rec); !data.Stored || !data.Usable {
+		t.Errorf("статус после перезапуска = %+v, ждали stored=true usable=true", data)
+	}
+}
+
+// Разбор метода отвечает КОНВЕРТОМ API, а не текстом: фронт на этом пути
+// разбирает JSON, и plain text от http.Error он читает как сломанный ответ.
+// Заодно проверяется сама разводка: метод обязан попасть в свою операцию.
+func TestAmneziaPremiumKey_MethodRouter(t *testing.T) {
+	t.Run("чужой метод — конверт API", func(t *testing.T) {
+		for _, method := range []string{http.MethodPut, http.MethodPatch, http.MethodHead} {
+			t.Run(method, func(t *testing.T) {
+				st := newPremiumStand(t)
+				rec := httptest.NewRecorder()
+				st.h.Key(rec, httptest.NewRequest(method, "/api/amnezia/premium/key", strings.NewReader(`{}`)))
+				if rec.Code != http.StatusMethodNotAllowed {
+					t.Fatalf("код = %d, want 405: %s", rec.Code, rec.Body.String())
+				}
+				if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+					t.Errorf("Content-Type = %q, ждали JSON", ct)
+				}
+				if code := premiumErrorCode(t, rec); code != "METHOD_NOT_ALLOWED" {
+					t.Errorf("код отказа = %q, want METHOD_NOT_ALLOWED", code)
+				}
+			})
+		}
+	})
+
+	t.Run("каждый метод уходит в свою операцию", func(t *testing.T) {
+		st := newPremiumStand(t)
+		call := func(method, body string) *httptest.ResponseRecorder {
+			t.Helper()
+			rec := httptest.NewRecorder()
+			st.h.Key(rec, httptest.NewRequest(method, "/api/amnezia/premium/key", strings.NewReader(body)))
+			return rec
+		}
+
+		if rec := call(http.MethodPost, `{"key":"`+premiumKey+`","store":true}`); rec.Code != http.StatusOK {
+			t.Fatalf("POST: %d %s", rec.Code, rec.Body.String())
+		}
+		if n := len(st.portal.seen()); n != 1 {
+			t.Errorf("входов в портал %d, ждали 1: POST ушёл не в проверку ключа", n)
+		}
+		if rec := call(http.MethodGet, ""); premiumData(t, rec) != (AmneziaPremiumKeyData{Stored: true, Usable: true}) {
+			t.Errorf("GET = %s, ждали состояние сохранённого ключа", rec.Body.String())
+		}
+		if rec := call(http.MethodDelete, ""); rec.Code != http.StatusOK {
+			t.Fatalf("DELETE: %d %s", rec.Code, rec.Body.String())
+		}
+		if cipher := st.storedCipher(t); cipher != "" {
+			t.Errorf("шифротекст после DELETE = %q, ждали пусто: удаление не случилось", cipher)
+		}
 	})
 }
