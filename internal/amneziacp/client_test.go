@@ -34,6 +34,20 @@ const fixtureConf = "[Interface]\n" +
 	"[Peer]\n" +
 	"Endpoint = nl-77.example.test:51830"
 
+// fixtureConfWithKeyHeader — форма живого ответа download-config (снята
+// 2026-09-11): не JSON, а готовый .conf с заголовком из комментариев, в одном
+// из которых лежит сам ключ подписки. Значения синтетические.
+const fixtureConfWithKeyHeader = "# Generated on: 2026-09-11\n" +
+	"# VPN Key: " + fixtureKey + "\n" +
+	"# Keenetic: interface Wireguard0\n" +
+	fixtureConf
+
+// fixtureConfHeaderKept — что обязано остаться от живой формы: заголовок без
+// строки с ключом подписки.
+const fixtureConfHeaderKept = "# Generated on: 2026-09-11\n" +
+	"# Keenetic: interface Wireguard0\n" +
+	fixtureConf
+
 // fixtureBigInt — 2^53+1: через float64 это число не проходит (превращается в
 // 9007199254740992). Зонд на то, что скраб не гоняет значения через any.
 const fixtureBigInt = "9007199254740993"
@@ -49,7 +63,9 @@ const fixtureAccountData = `{"display_name":"Подписка 77",` +
 
 const fixtureAccountJSON = `{"data":` + fixtureAccountData + `}`
 
-func sidFor(n int64) string { return fmt.Sprintf("sid-%d", n) }
+// stubSid — сессия для тестов на стабах транспорта: стенда с его нумерацией
+// там нет.
+const stubSid = "sid-stub-1"
 
 // logRecorder ловит строки узкого колбэка логирования.
 type logRecorder struct {
@@ -73,6 +89,9 @@ func (l *logRecorder) all() string {
 // сценарию теста. Один стенд = один origin.
 type fakeCP struct {
 	srv *httptest.Server
+	// tag различает стенды: сессии двух стендов обязаны быть различимы,
+	// иначе «сессия выдана именно этим хостом» проверяется вакуумно.
+	tag string
 
 	// Сценарии: n — номер запроса к ручке, начиная с 1. nil = всегда 200.
 	loginStatus   func(n int64) int
@@ -83,6 +102,17 @@ type fakeCP struct {
 	configBody  string
 	// loginWithoutCookie — вход отвечает 200, но сессию не выдаёт.
 	loginWithoutCookie bool
+	// extraCookie — имя посторонней cookie, которую портал ставит ПЕРЕД
+	// сессией (за CDN так приходит __cf_bm и подобные).
+	extraCookie string
+	// redirectStatus/redirectTo — портал отвечает редиректом на чужой хост.
+	redirectStatus int
+	redirectTo     string
+	// configAbort — портал рвёт соединение, успев принять запрос конфига.
+	configAbort bool
+	// accountHold вызывается внутри обработчика account-info: тест держит
+	// запрос в полёте.
+	accountHold func(n int64, r *http.Request)
 
 	logins   atomic.Int64
 	accounts atomic.Int64
@@ -92,13 +122,19 @@ type fakeCP struct {
 	seenSid     []string // cookie сессии в каждом запросе под сессией
 	seenOrigin  []string // заголовок Origin
 	seenReferer []string
+	seenUA      []string // User-Agent
+	seenType    []string // Content-Type
 	seenKeys    []string // ключи из тел /api/login
 	seenCountry []string // коды стран из тел /api/download-config
 }
 
-func newFakeCP(t *testing.T) *fakeCP {
+func newFakeCP(t *testing.T) *fakeCP { return newTaggedCP(t, "a") }
+
+// newTaggedCP поднимает стенд с собственной меткой сессий: тестам с двумя
+// стендами нужно отличать сессию одного от сессии другого.
+func newTaggedCP(t *testing.T, tag string) *fakeCP {
 	t.Helper()
-	f := &fakeCP{accountBody: fixtureAccountJSON}
+	f := &fakeCP{tag: tag, accountBody: fixtureAccountJSON}
 	f.configBody = `{"data":{"config":` + mustJSONString(t, fixtureConf) + `}}`
 	f.srv = httptest.NewTLSServer(http.HandlerFunc(f.handle))
 	t.Cleanup(f.srv.Close)
@@ -107,11 +143,22 @@ func newFakeCP(t *testing.T) *fakeCP {
 
 func (f *fakeCP) origin() string { return f.srv.URL }
 
+// sid — сессия, которую стенд выдаёт n-м входом. Метка стенда в значении:
+// два стенда не должны чеканить одинаковые сессии.
+func (f *fakeCP) sid(n int64) string { return fmt.Sprintf("sid-%s-%d", f.tag, n) }
+
 func (f *fakeCP) handle(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.seenOrigin = append(f.seenOrigin, r.Header.Get("Origin"))
 	f.seenReferer = append(f.seenReferer, r.Header.Get("Referer"))
+	f.seenUA = append(f.seenUA, r.Header.Get("User-Agent"))
+	f.seenType = append(f.seenType, r.Header.Get("Content-Type"))
 	f.mu.Unlock()
+
+	if f.redirectStatus != 0 {
+		http.Redirect(w, r, f.redirectTo+r.URL.Path, f.redirectStatus)
+		return
+	}
 
 	switch r.URL.Path {
 	case "/api/login":
@@ -129,13 +176,19 @@ func (f *fakeCP) handle(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"message":"нет"}`, status)
 			return
 		}
+		if f.extraCookie != "" {
+			http.SetCookie(w, &http.Cookie{Name: f.extraCookie, Value: "cdn-junk", Path: "/"})
+		}
 		if !f.loginWithoutCookie {
-			http.SetCookie(w, &http.Cookie{Name: "v_sid", Value: sidFor(n), Path: "/"})
+			http.SetCookie(w, &http.Cookie{Name: "v_sid", Value: f.sid(n), Path: "/"})
 		}
 		_, _ = io.WriteString(w, `{"data":{"ok":true}}`)
 	case "/api/account-info":
 		n := f.accounts.Add(1)
 		f.recordSid(r)
+		if f.accountHold != nil {
+			f.accountHold(n, r)
+		}
 		if status := scriptStatus(f.accountStatus, n); status != http.StatusOK {
 			http.Error(w, `{"message":"нет"}`, status)
 			return
@@ -155,6 +208,11 @@ func (f *fakeCP) handle(w http.ResponseWriter, r *http.Request) {
 		if status := scriptStatus(f.configStatus, n); status != http.StatusOK {
 			http.Error(w, `{"message":"нет"}`, status)
 			return
+		}
+		if f.configAbort {
+			// Запрос портал принял, ответ не доехал: ровно тот случай, в
+			// котором повтор съедает второй слот устройства.
+			panic(http.ErrAbortHandler)
 		}
 		_, _ = io.WriteString(w, f.configBody)
 	default:
@@ -189,6 +247,20 @@ func (f *fakeCP) referers() []string {
 	defer f.mu.Unlock()
 	return append([]string(nil), f.seenReferer...)
 }
+
+func (f *fakeCP) uas() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.seenUA...)
+}
+
+func (f *fakeCP) types() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.seenType...)
+}
+
+func (f *fakeCP) hits() int64 { return f.logins.Load() + f.accounts.Load() + f.configs.Load() }
 
 func (f *fakeCP) keys() []string {
 	f.mu.Lock()
@@ -257,10 +329,17 @@ func steadyMirror(t *testing.T, hits *atomic.Int64, origin string) *httptest.Ser
 // постоянный ключ.
 func newTestClient(t *testing.T, cp *fakeCP) (*Client, *logRecorder, *atomic.Int64) {
 	t.Helper()
+	return newTestClientWithKey(t, cp, func() string { return fixtureKey })
+}
+
+// newTestClientWithKey — тот же стенд, но ключ отдаёт переданный геттер:
+// сессия привязана и к ключу, поэтому его смену нужно уметь изобразить.
+func newTestClientWithKey(t *testing.T, cp *fakeCP, key func() string) (*Client, *logRecorder, *atomic.Int64) {
+	t.Helper()
 	var mirrorHits atomic.Int64
 	mirror := steadyMirror(t, &mirrorHits, cp.origin())
 	rec := &logRecorder{}
-	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL }, func() string { return fixtureKey }, rec.log)
+	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL }, key, rec.log)
 	return c, rec, &mirrorHits
 }
 
@@ -312,8 +391,8 @@ func TestClientReusesSession(t *testing.T) {
 		t.Fatalf("запросов account-info %d, ожидалось 3", n)
 	}
 	for i, sid := range cp.sids() {
-		if sid != sidFor(1) {
-			t.Fatalf("запрос %d ушёл с сессией %q, ожидалась %q", i, sid, sidFor(1))
+		if sid != cp.sid(1) {
+			t.Fatalf("запрос %d ушёл с сессией %q, ожидалась %q", i, sid, cp.sid(1))
 		}
 	}
 	// Зеркало тоже кэшируется: три вызова не дают трёх резолвов.
@@ -345,8 +424,8 @@ func TestClientRelogsInOnStaleSession(t *testing.T) {
 		t.Fatalf("входов %d, ожидалось 2 (ре-логина на 401 нет)", n)
 	}
 	sids := cp.sids()
-	if len(sids) != 2 || sids[1] != sidFor(2) {
-		t.Fatalf("сессии запросов %v, ожидалось, что повтор пойдёт со свежей %q", sids, sidFor(2))
+	if len(sids) != 2 || sids[1] != cp.sid(2) {
+		t.Fatalf("сессии запросов %v, ожидалось, что повтор пойдёт со свежей %q", sids, cp.sid(2))
 	}
 }
 
@@ -433,8 +512,8 @@ func TestClientRetriesAfterHostRotation(t *testing.T) {
 // Точка 6: смена origin обнуляет сессию — cookie одного хоста на другом
 // недействительна.
 func TestClientDropsSessionWhenOriginChanges(t *testing.T) {
-	cpA := newFakeCP(t)
-	cpB := newFakeCP(t)
+	cpA := newTaggedCP(t, "a")
+	cpB := newTaggedCP(t, "b")
 	client := cpClient(t, cpA.srv, cpB.srv)
 
 	var hitsA, hitsB atomic.Int64
@@ -470,9 +549,13 @@ func TestClientDropsSessionWhenOriginChanges(t *testing.T) {
 	if len(sidsB) != 1 {
 		t.Fatalf("запросов под сессией на хосте B %d, ожидался 1", len(sidsB))
 	}
-	// Сессия B выдана самим B: sid хоста A на нём недействителен.
-	if sidsB[0] != sidFor(1) {
-		t.Fatalf("хост B получил сессию %q, ожидалась выданная им самим %q", sidsB[0], sidFor(1))
+	// Сессия B выдана самим B: sid хоста A на нём недействителен. Метки
+	// стендов разные, поэтому утверждение не вакуумно.
+	if sidsB[0] != cpB.sid(1) {
+		t.Fatalf("хост B получил сессию %q, ожидалась выданная им самим %q", sidsB[0], cpB.sid(1))
+	}
+	if sidsB[0] == cpA.sid(1) {
+		t.Fatalf("на хост B уехала сессия хоста A: %q", sidsB[0])
 	}
 	if n := cpA.logins.Load(); n != 1 {
 		t.Fatalf("входов на хосте A %d, ожидался 1", n)
@@ -538,6 +621,19 @@ func TestClientCountryConfigExtraction(t *testing.T) {
 			want: fixtureConf,
 		},
 		{
+			// Живая форма: .conf текстом, а в заголовке-комментарии — ключ
+			// подписки. Строка с ключом обязана быть вырезана, остальной
+			// заголовок — уцелеть.
+			name: "живая форма: .conf с заголовком и ключом подписки",
+			body: fixtureConfWithKeyHeader,
+			want: fixtureConfHeaderKept,
+		},
+		{
+			name: "та же форма внутри конверта",
+			body: `{"data":{"config":` + mustJSONString(t, fixtureConfWithKeyHeader) + `}}`,
+			want: fixtureConfHeaderKept,
+		},
+		{
 			// Обрамляющие пробелы срезаются: конфиг едет дальше в парсер.
 			name: "конфиг обрамлён пробелами",
 			body: `{"data":{"config":` + mustJSONString(t, "\n  "+fixtureConf+"\n\n") + `}}`,
@@ -558,6 +654,11 @@ func TestClientCountryConfigExtraction(t *testing.T) {
 			if got != tc.want {
 				t.Fatalf("конфиг = %q, ожидался ровно %q", got, tc.want)
 			}
+			// Ключ подписки не имеет права доехать до файла туннеля ни в
+			// одной из форм ответа.
+			if strings.Contains(got, "vpn://") {
+				t.Fatalf("ключ подписки уехал в конфигурацию: %q", got)
+			}
 		})
 	}
 
@@ -570,9 +671,11 @@ func TestClientCountryConfigExtraction(t *testing.T) {
 		confM := strings.Replace(fixtureConf, "10.77.3.9", "10.77.3.12", 1)
 		confZ := strings.Replace(fixtureConf, "10.77.3.9", "10.77.3.13", 1)
 		cp := newFakeCP(t)
-		cp.configBody = `{"data":{"m_config":` + mustJSONString(t, confM) +
-			`,"z_config":` + mustJSONString(t, confZ) +
-			`,"a_config":` + mustJSONString(t, confA) + `}}`
+		// Поля названы одинаково, различаются вложенные объекты: имена вида
+		// a_config полем конфигурации не считаются вовсе.
+		cp.configBody = `{"data":{"m":{"config":` + mustJSONString(t, confM) +
+			`},"z":{"config":` + mustJSONString(t, confZ) +
+			`},"a":{"config":` + mustJSONString(t, confA) + `}}}`
 		c, _, _ := newTestClient(t, cp)
 
 		for i := range 12 {
@@ -587,19 +690,36 @@ func TestClientCountryConfigExtraction(t *testing.T) {
 	})
 
 	t.Run("в ответе нет конфигурации", func(t *testing.T) {
-		cp := newFakeCP(t)
-		cp.configBody = `{"data":{"status":"pending"}}`
-		c, _, _ := newTestClient(t, cp)
+		bad := []struct{ name, body string }{
+			{
+				name: "поля конфигурации нет",
+				body: `{"data":{"status":"pending"}}`,
+			},
+			{
+				// Строка сканированием всего ответа нашлась бы и уехала бы
+				// пользователю как конфигурация страны. Конфигурация берётся
+				// только из названного поля.
+				name: "конфигурация лежит в поле с посторонним именем",
+				body: `{"data":{"status":"pending","hint":` + mustJSONString(t, fixtureConf) + `}}`,
+			},
+		}
+		for _, tc := range bad {
+			t.Run(tc.name, func(t *testing.T) {
+				cp := newFakeCP(t)
+				cp.configBody = tc.body
+				c, _, _ := newTestClient(t, cp)
 
-		got, err := c.CountryConfig(context.Background(), "nl")
-		if err == nil {
-			t.Fatalf("ответ без конфигурации обязан быть ошибкой, получено %q", got)
-		}
-		if got != "" {
-			t.Fatalf("при ошибке конфиг обязан быть пустым, получено %q", got)
-		}
-		if !errors.Is(err, ErrServiceUnavailable) {
-			t.Fatalf("ошибка не различима сентинелом: %v", err)
+				got, err := c.CountryConfig(context.Background(), "nl")
+				if err == nil {
+					t.Fatalf("ответ без конфигурации обязан быть ошибкой, получено %q", got)
+				}
+				if got != "" {
+					t.Fatalf("при ошибке конфиг обязан быть пустым, получено %q", got)
+				}
+				if !errors.Is(err, ErrServiceUnavailable) {
+					t.Fatalf("ошибка не различима сентинелом: %v", err)
+				}
+			})
 		}
 	})
 
@@ -633,6 +753,8 @@ func TestClientAccountInfoScrubsSubscriptionKey(t *testing.T) {
 		{name: "data — массив", body: `{"data":[{"server_country_code":"nl"}]}`},
 		{name: "data — строка", body: `{"data":"нет"}`},
 		{name: "data — null", body: `{"data":null}`},
+		{name: "data — пустой объект", body: `{"data":{}}`},
+		{name: "ответ — пустой объект", body: `{}`},
 		{name: "ответ — null", body: `null`},
 		{name: "ответ — массив", body: `[{"server_country_code":"nl"}]`},
 		{name: "ответ не JSON", body: `не json`},
@@ -750,7 +872,7 @@ func TestClientChecksStatusBeforeReadingBody(t *testing.T) {
 			return okResponse(r, mirrorPage(fixtureOriginA), new(atomic.Int64), new(atomic.Bool)), nil
 		case r.URL.Path == "/api/login":
 			resp := okResponse(r, `{"data":{"ok":true}}`, new(atomic.Int64), new(atomic.Bool))
-			resp.Header.Set("Set-Cookie", "v_sid="+sidFor(1)+"; Path=/")
+			resp.Header.Set("Set-Cookie", "v_sid="+stubSid+"; Path=/")
 			return resp, nil
 		default:
 			resp := okResponse(r, fixtureAccountJSON, &reads, &closed)
@@ -780,7 +902,12 @@ const stubMirrorURL = "https://mirror-stub.example.test/cp"
 // Предел размера ответа обязан обрывать чтение, а не только отвергать
 // результат: цель — роутер со 128 МБ.
 func TestClientStopsReadingAtLimit(t *testing.T) {
-	const bodySize = 4 * maxCPBody
+	// Размер фикстуры — литерал, а не выражение от maxCPBody: иначе любое
+	// значение предела проходит тест, включая снятый предел.
+	if maxCPBody != 1<<20 {
+		t.Fatalf("предел тела %d, ожидался 1 МиБ", maxCPBody)
+	}
+	const bodySize = 4 << 20
 	var served atomic.Int64
 	var closed atomic.Bool
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -789,7 +916,7 @@ func TestClientStopsReadingAtLimit(t *testing.T) {
 			return okResponse(r, mirrorPage(fixtureOriginA), new(atomic.Int64), new(atomic.Bool)), nil
 		case r.URL.Path == "/api/login":
 			resp := okResponse(r, `{"data":{"ok":true}}`, new(atomic.Int64), new(atomic.Bool))
-			resp.Header.Set("Set-Cookie", "v_sid="+sidFor(1)+"; Path=/")
+			resp.Header.Set("Set-Cookie", "v_sid="+stubSid+"; Path=/")
 			return resp, nil
 		default:
 			return &http.Response{
@@ -877,8 +1004,8 @@ func TestClientCheckKeyFailureKeepsSession(t *testing.T) {
 	if len(sids) != 2 {
 		t.Fatalf("запросов под сессией %d, ожидалось 2", len(sids))
 	}
-	if sids[0] != sidFor(1) || sids[1] != sidFor(1) {
-		t.Fatalf("сессии запросов %v, ожидалась прежняя %q в обоих", sids, sidFor(1))
+	if sids[0] != cp.sid(1) || sids[1] != cp.sid(1) {
+		t.Fatalf("сессии запросов %v, ожидалась прежняя %q в обоих", sids, cp.sid(1))
 	}
 	// Проверялся именно присланный ключ, а не сохранённый.
 	if keys := cp.keys(); len(keys) != 2 || keys[1] != fixtureOtherKey {
@@ -887,21 +1014,43 @@ func TestClientCheckKeyFailureKeepsSession(t *testing.T) {
 }
 
 // Успешная проверка занимает сессию: Task 6 сохраняет ключ уже после неё, и
-// неудача сохранения не должна отменять состоявшийся вход.
+// неудача сохранения не должна отменять состоявшийся вход. Порядок здесь тот
+// же, что в Task 6: проверили ключ — сохранили — пошли за данными.
 func TestClientCheckKeyAdoptsSession(t *testing.T) {
 	cp := newFakeCP(t)
-	c, _, _ := newTestClient(t, cp)
+	stored := &keyHolder{key: fixtureKey}
+	c, _, _ := newTestClientWithKey(t, cp, stored.get)
 	ctx := context.Background()
 
 	if err := c.CheckKey(ctx, fixtureOtherKey); err != nil {
 		t.Fatalf("проверка ключа: %v", err)
 	}
+	stored.set(fixtureOtherKey) // Task 6: ключ сохранён после успешной проверки
 	if _, err := c.AccountInfo(ctx); err != nil {
 		t.Fatalf("account-info после проверки: %v", err)
 	}
 	if n := cp.logins.Load(); n != 1 {
 		t.Fatalf("входов %d, ожидался 1 (сессия проверки не занята)", n)
 	}
+}
+
+// keyHolder изображает владельца ключа: геттер отдаёт то, что сохранено
+// сейчас, а не то, что было при сборке клиента.
+type keyHolder struct {
+	mu  sync.Mutex
+	key string
+}
+
+func (h *keyHolder) get() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.key
+}
+
+func (h *keyHolder) set(key string) {
+	h.mu.Lock()
+	h.key = key
+	h.mu.Unlock()
 }
 
 // ResetSession выбрасывает сессию: следующий вызов входит заново.
@@ -965,7 +1114,7 @@ func TestClientLogsResolvedOriginWithoutSecrets(t *testing.T) {
 	if strings.Contains(lines, fixtureKey) || strings.Contains(lines, "vpn://") {
 		t.Fatalf("ключ подписки попал в журнал: %s", lines)
 	}
-	if strings.Contains(lines, sidFor(1)) {
+	if strings.Contains(lines, cp.sid(1)) {
 		t.Fatalf("сессия попала в журнал: %s", lines)
 	}
 }
@@ -1043,5 +1192,471 @@ func TestClientPreservesCancellation(t *testing.T) {
 	}
 	if n := cp.logins.Load(); n != 0 {
 		t.Fatalf("входов %d, ожидался 0", n)
+	}
+}
+
+// Критично: редиректы портала не выполняются. На 307/308 Go переигрывает тело
+// запроса — ключ подписки уехал бы на хост из Location; на 301/302 документ
+// чужого хоста приехал бы как ответ портала. Политика «не следовать» доводит
+// 3xx до проверки статуса, и он становится отказом.
+func TestClientDoesNotFollowRedirects(t *testing.T) {
+	statuses := []int{
+		http.StatusTemporaryRedirect,
+		http.StatusPermanentRedirect,
+		http.StatusFound,
+		http.StatusMovedPermanently,
+	}
+	for _, status := range statuses {
+		t.Run(fmt.Sprintf("%d", status), func(t *testing.T) {
+			foreign := newTaggedCP(t, "foreign")
+			cp := newTaggedCP(t, "cp")
+			cp.redirectStatus = status
+			cp.redirectTo = foreign.origin()
+
+			var mirrorHits atomic.Int64
+			mirror := steadyMirror(t, &mirrorHits, cp.origin())
+			rec := &logRecorder{}
+			c := NewClient(cpClient(t, cp.srv, foreign.srv),
+				func() string { return mirror.URL },
+				func() string { return fixtureKey }, rec.log)
+
+			got, err := c.AccountInfo(context.Background())
+			if err == nil {
+				t.Fatalf("редирект обязан быть отказом, получено %s", got)
+			}
+			if !errors.Is(err, ErrServiceUnavailable) {
+				t.Fatalf("ошибка не различима сентинелом: %v", err)
+			}
+			if n := foreign.hits(); n != 0 {
+				t.Fatalf("на чужой хост ушло %d запросов, ожидался 0", n)
+			}
+			if keys := foreign.keys(); len(keys) != 0 {
+				t.Fatalf("ключ подписки уехал на чужой хост: %v", keys)
+			}
+			if strings.Contains(rec.all(), "vpn://") {
+				t.Fatalf("ключ подписки попал в журнал: %s", rec.all())
+			}
+		})
+	}
+}
+
+// Политика редиректов ставится на копии: переданный клиент чужой, его
+// поведение на других путях — не наше дело. Резолвер зеркала берёт ту же
+// копию: чужой хост в Location у зеркала не лучше, чем у портала.
+func TestNewClientDoesNotMutatePassedClient(t *testing.T) {
+	passed := &http.Client{}
+	c := NewClient(passed, func() string { return stubMirrorURL }, func() string { return fixtureKey }, func(string, string) {})
+
+	if passed.CheckRedirect != nil {
+		t.Fatal("политика редиректов навязана чужому объекту")
+	}
+	if c.http == passed {
+		t.Fatal("клиент взят как есть — политика редиректов не поставлена")
+	}
+	if c.http.CheckRedirect == nil {
+		t.Fatal("политика редиректов не поставлена")
+	}
+	if c.mirror.client != c.http {
+		t.Fatal("резолвер зеркала работает мимо политики редиректов")
+	}
+}
+
+// Критично: ключ вырезается по значению и на любой глубине. Чёрный список имён
+// полей верхнего уровня течёт каждой из пяти форм ниже.
+func TestClientAccountInfoScrubsKeyAtAnyDepth(t *testing.T) {
+	cases := []struct{ name, body string }{
+		{
+			name: "вложенный объект",
+			body: `{"data":{"display_name":"п","meta":{"vpn_key":"` + fixtureKey + `"}}}`,
+		},
+		{
+			name: "элемент массива",
+			body: `{"data":{"display_name":"п","links":["` + fixtureKey + `","нет"]}}`,
+		},
+		{
+			name: "переименованное поле",
+			body: `{"data":{"display_name":"п","subscription_link":"` + fixtureKey + `"}}`,
+		},
+		{
+			name: "вложенный конверт",
+			body: `{"data":{"display_name":"п","data":{"payload":{"k":"` + fixtureKey + `"}}}}`,
+		},
+		{
+			name: "ключ внутри текста сообщения",
+			body: `{"data":{"display_name":"п","message":"ваш ключ ` + fixtureKey + ` активен"}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cp := newFakeCP(t)
+			cp.accountBody = tc.body
+			c, rec, _ := newTestClient(t, cp)
+
+			got, err := c.AccountInfo(context.Background())
+			if err != nil {
+				t.Fatalf("account-info: %v", err)
+			}
+			if strings.Contains(string(got), "vpn://") {
+				t.Fatalf("ключ подписки уехал наружу: %s", got)
+			}
+			if strings.Contains(rec.all(), "vpn://") {
+				t.Fatalf("ключ подписки уехал в журнал: %s", rec.all())
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(got, &fields); err != nil {
+				t.Fatalf("ответ не разбирается: %v (%s)", err, got)
+			}
+			if _, ok := fields["display_name"]; !ok {
+				t.Fatalf("соседнее поле выброшено вместе с ключом: %s", got)
+			}
+		})
+	}
+}
+
+// Критично: эхо ключа подписки в ответе не отдаётся как конфигурация. Ключ —
+// валидная vpn://-ссылка, поэтому «любая строка, которая разбирается» выдала бы
+// пользователю чужой регион и приватный ключ всей подписки в файле туннеля.
+func TestClientCountryConfigRefusesSubscriptionKeyEcho(t *testing.T) {
+	// Ключ обязан быть разбираемым — иначе утверждение вакуумно: отказ пришёл
+	// бы от декодера, а не от проверки.
+	foreignConf := strings.Replace(fixtureConf, "10.77.3.9", "10.88.1.2", 1)
+	keyLink := vpnLinkWithConf(t, foreignConf)
+
+	cases := []struct{ name, body string }{
+		{
+			name: "эхо в поле конфигурации",
+			body: `{"data":{"config":` + mustJSONString(t, keyLink) + `}}`,
+		},
+		{
+			// Форма ответа-ошибки: конфигурации нет, есть эхо присланного
+			// ключа в поле с посторонним именем.
+			name: "эхо в постороннем поле",
+			body: `{"error":"ключ отклонён","a_key":` + mustJSONString(t, keyLink) + `}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cp := newFakeCP(t)
+			cp.configBody = tc.body
+			c, _, _ := newTestClientWithKey(t, cp, func() string { return keyLink })
+
+			got, err := c.CountryConfig(context.Background(), "nl")
+			if err == nil {
+				t.Fatalf("эхо ключа обязано быть отказом, получено %q", got)
+			}
+			if got != "" {
+				t.Fatalf("при отказе конфиг обязан быть пустым, получено %q", got)
+			}
+			if !errors.Is(err, ErrServiceUnavailable) {
+				t.Fatalf("ошибка не различима сентинелом: %v", err)
+			}
+		})
+	}
+}
+
+// Критично: сессия помнит, каким ключом получена. Иначе проверка чужого ключа
+// занимает сессию, и следующий обычный запрос уходит под ней — каталог чужой
+// подписки, а выдача конфига тратит чужой слот.
+func TestClientSessionRemembersKey(t *testing.T) {
+	t.Run("после проверки чужого ключа запрос идёт под своей сессией", func(t *testing.T) {
+		cp := newFakeCP(t)
+		c, _, _ := newTestClient(t, cp) // геттер отдаёт сохранённый fixtureKey
+		ctx := context.Background()
+
+		if err := c.CheckKey(ctx, fixtureOtherKey); err != nil {
+			t.Fatalf("проверка чужого ключа: %v", err)
+		}
+		if _, err := c.AccountInfo(ctx); err != nil {
+			t.Fatalf("account-info после проверки: %v", err)
+		}
+
+		if n := cp.logins.Load(); n != 2 {
+			t.Fatalf("входов %d, ожидалось 2: запрос ушёл под сессией чужого ключа", n)
+		}
+		keys := cp.keys()
+		if len(keys) != 2 || keys[0] != fixtureOtherKey || keys[1] != fixtureKey {
+			t.Fatalf("во входах ключи %v, ожидались проверяемый и сохранённый", keys)
+		}
+		sids := cp.sids()
+		if len(sids) != 1 || sids[0] != cp.sid(2) {
+			t.Fatalf("account-info ушёл с сессией %v, ожидалась %q — выданная под сохранённый ключ", sids, cp.sid(2))
+		}
+	})
+
+	t.Run("смена ключа в геттере перелогинивает", func(t *testing.T) {
+		cp := newFakeCP(t)
+		stored := &keyHolder{key: fixtureKey}
+		c, _, _ := newTestClientWithKey(t, cp, stored.get)
+		ctx := context.Background()
+
+		if _, err := c.AccountInfo(ctx); err != nil {
+			t.Fatalf("первый account-info: %v", err)
+		}
+		stored.set(fixtureOtherKey)
+		if _, err := c.AccountInfo(ctx); err != nil {
+			t.Fatalf("второй account-info: %v", err)
+		}
+
+		if n := cp.logins.Load(); n != 2 {
+			t.Fatalf("входов %d, ожидалось 2: сессия прежнего ключа переиспользована", n)
+		}
+		sids := cp.sids()
+		if len(sids) != 2 || sids[1] != cp.sid(2) {
+			t.Fatalf("сессии запросов %v, вторым ожидалась свежая %q", sids, cp.sid(2))
+		}
+	})
+}
+
+// Критично: сессия выбирается из ответа по имени. За CDN первой приходит своя
+// cookie (__cf_bm и подобные), и «первая попавшаяся» означает мусор вместо
+// сессии во всех последующих запросах.
+func TestClientPicksSessionCookieByName(t *testing.T) {
+	cp := newFakeCP(t)
+	cp.extraCookie = "__cf_bm"
+	c, _, _ := newTestClient(t, cp)
+
+	if _, err := c.AccountInfo(context.Background()); err != nil {
+		t.Fatalf("account-info: %v", err)
+	}
+	sids := cp.sids()
+	if len(sids) != 1 || sids[0] != cp.sid(1) {
+		t.Fatalf("запрос ушёл с сессией %v, ожидалась %q", sids, cp.sid(1))
+	}
+}
+
+// Расходная операция не повторяется вслепую: портал мог успеть обработать
+// запрос до обрыва, и повтор съедает второй слот устройства подписки. Кэш
+// адреса при этом всё равно сбрасывается — следующая попытка пользователя
+// обязана пойти на свежий хост.
+func TestClientDoesNotRetryConfigDownload(t *testing.T) {
+	cp := newFakeCP(t)
+	cp.configAbort = true
+	c, _, mirrorHits := newTestClient(t, cp)
+	ctx := context.Background()
+
+	if _, err := c.AccountInfo(ctx); err != nil {
+		t.Fatalf("прогрев сессии: %v", err)
+	}
+	if n := mirrorHits.Load(); n != 1 {
+		t.Fatalf("резолвов зеркала после прогрева %d, ожидался 1", n)
+	}
+
+	got, err := c.CountryConfig(ctx, "nl")
+	if err == nil {
+		t.Fatalf("оборванный ответ обязан быть отказом, получено %q", got)
+	}
+	if !errors.Is(err, ErrServiceUnavailable) {
+		t.Fatalf("ошибка не различима сентинелом: %v", err)
+	}
+	if n := cp.configs.Load(); n != 1 {
+		t.Fatalf("запросов конфига %d, ожидался 1: повтор тратит второй слот устройства", n)
+	}
+
+	if _, err := c.AccountInfo(ctx); err != nil {
+		t.Fatalf("account-info после отказа: %v", err)
+	}
+	if n := mirrorHits.Load(); n != 2 {
+		t.Fatalf("резолвов зеркала %d, ожидалось 2: мёртвый адрес остался в кэше", n)
+	}
+}
+
+// Ответ портала 5xx не повторяется: это не протухшая cookie и не мёртвый хост,
+// повтор лишь удваивает нагрузку на лежащий портал.
+func TestClientDoesNotRetryServerError(t *testing.T) {
+	cp := newFakeCP(t)
+	cp.accountStatus = func(int64) int { return http.StatusInternalServerError }
+	c, _, mirrorHits := newTestClient(t, cp)
+
+	if _, err := c.AccountInfo(context.Background()); !errors.Is(err, ErrServiceUnavailable) {
+		t.Fatalf("500 обязан быть отказом сервиса: %v", err)
+	}
+	if n := cp.accounts.Load(); n != 1 {
+		t.Fatalf("запросов к порталу %d, ожидался 1", n)
+	}
+	if n := cp.logins.Load(); n != 1 {
+		t.Fatalf("входов %d, ожидался 1", n)
+	}
+	if n := mirrorHits.Load(); n != 1 {
+		t.Fatalf("резолвов зеркала %d, ожидался 1", n)
+	}
+}
+
+// Секреты не попадают ни в текст ошибки, ни в журнал: текст ошибки доезжает и
+// до ответа API, и до журнала приложения.
+func TestClientKeepsSecretsOutOfErrorsAndLog(t *testing.T) {
+	assertNoSecrets := func(t *testing.T, err error, cp *fakeCP, rec *logRecorder) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("ожидался отказ")
+		}
+		for _, secret := range []string{fixtureKey, fixtureOtherKey, "vpn://", cp.sid(1), cp.sid(2)} {
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("секрет %q в тексте ошибки: %v", secret, err)
+			}
+			if strings.Contains(rec.all(), secret) {
+				t.Fatalf("секрет %q в журнале: %s", secret, rec.all())
+			}
+		}
+	}
+
+	t.Run("отказ входа", func(t *testing.T) {
+		cp := newFakeCP(t)
+		cp.loginStatus = func(int64) int { return http.StatusUnauthorized }
+		c, rec, _ := newTestClient(t, cp)
+
+		_, err := c.AccountInfo(context.Background())
+		assertNoSecrets(t, err, cp, rec)
+	})
+
+	t.Run("отказ под сессией", func(t *testing.T) {
+		cp := newFakeCP(t)
+		cp.accountStatus = func(int64) int { return http.StatusUnauthorized }
+		c, rec, _ := newTestClient(t, cp)
+
+		_, err := c.AccountInfo(context.Background())
+		assertNoSecrets(t, err, cp, rec)
+	})
+
+	t.Run("сетевой отказ под живой сессией", func(t *testing.T) {
+		cp := newFakeCP(t)
+		c, rec, _ := newTestClient(t, cp)
+		if _, err := c.AccountInfo(context.Background()); err != nil {
+			t.Fatalf("прогрев сессии: %v", err)
+		}
+		cp.srv.Close()
+
+		_, err := c.AccountInfo(context.Background())
+		assertNoSecrets(t, err, cp, rec)
+	})
+
+	t.Run("неразобранный ответ", func(t *testing.T) {
+		cp := newFakeCP(t)
+		// Обрыв JSON, и ключ подписки внутри: реализация, подклеивающая тело
+		// к тексту ошибки, обязана краснеть.
+		cp.accountBody = `{"data":{"vpn_key":"` + fixtureKey + `"`
+		c, rec, _ := newTestClient(t, cp)
+
+		_, err := c.AccountInfo(context.Background())
+		assertNoSecrets(t, err, cp, rec)
+	})
+}
+
+// Отменённый запрос не выбрасывает общий кэш адреса: пользователь, закрывший
+// вкладку, не должен гнать остальных на повторный резолв.
+func TestClientCancellationKeepsMirrorCache(t *testing.T) {
+	cp := newFakeCP(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cp.accountHold = func(n int64, r *http.Request) {
+		if n != 2 {
+			return
+		}
+		cancel()             // отмена, пока запрос в полёте
+		<-r.Context().Done() // ответ заведомо не доедет
+	}
+	c, _, mirrorHits := newTestClient(t, cp)
+
+	if _, err := c.AccountInfo(context.Background()); err != nil {
+		t.Fatalf("прогрев кэша: %v", err)
+	}
+	if n := mirrorHits.Load(); n != 1 {
+		t.Fatalf("резолвов зеркала после прогрева %d, ожидался 1", n)
+	}
+
+	if _, err := c.AccountInfo(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("причина отмены потеряна: %v", err)
+	}
+	if _, err := c.AccountInfo(context.Background()); err != nil {
+		t.Fatalf("запрос после отмены: %v", err)
+	}
+	if n := mirrorHits.Load(); n != 1 {
+		t.Fatalf("резолвов зеркала %d, ожидался 1: отменённый запрос выбросил общий кэш", n)
+	}
+}
+
+// Отказ резолва зеркала обязан быть виден в журнале: это самая вероятная
+// жалоба в этой линии. Адрес зеркала секретом не является.
+func TestClientLogsMirrorResolveFailure(t *testing.T) {
+	cp := newFakeCP(t)
+	var mirrorHits atomic.Int64
+	mirror := mirrorServer(t, &mirrorHits) // без адресов — отвечает 500
+	rec := &logRecorder{}
+	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL },
+		func() string { return fixtureKey }, rec.log)
+
+	if _, err := c.AccountInfo(context.Background()); !errors.Is(err, ErrServiceUnavailable) {
+		t.Fatalf("отказ резолва: %v", err)
+	}
+
+	lines := rec.all()
+	if lines == "" {
+		t.Fatal("отказ резолва зеркала не оставил ни строки в журнале")
+	}
+	if !strings.Contains(lines, mirror.URL) {
+		t.Fatalf("в журнале нет адреса зеркала %q: %s", mirror.URL, lines)
+	}
+	if strings.Contains(lines, "vpn://") {
+		t.Fatalf("секрет в журнале: %s", lines)
+	}
+	if n := cp.hits(); n != 0 {
+		t.Fatalf("обращений к порталу %d, ожидался 0", n)
+	}
+}
+
+// Форма запроса к порталу закреплена. Браузерный UA существен: с UA по
+// умолчанию запрос отвергает защита перед порталом, а её отказ мы
+// классифицируем как «ключ отклонён» — то есть соврём про исправный ключ.
+func TestClientSendsBrowserRequestShape(t *testing.T) {
+	if !strings.HasPrefix(browserUA, "Mozilla/") {
+		t.Fatalf("UA %q не браузерный", browserUA)
+	}
+	cp := newFakeCP(t)
+	c, _, _ := newTestClient(t, cp)
+
+	if _, err := c.CountryConfig(context.Background(), "nl"); err != nil {
+		t.Fatalf("конфиг страны: %v", err)
+	}
+
+	uas := cp.uas()
+	if len(uas) != 2 {
+		t.Fatalf("запросов к порталу %d, ожидалось 2 (вход и конфиг)", len(uas))
+	}
+	for i, ua := range uas {
+		if ua != browserUA {
+			t.Fatalf("запрос %d ушёл с UA %q, ожидался %q", i, ua, browserUA)
+		}
+	}
+	// Оба запроса с телом: тип содержимого — как у веб-приложения портала.
+	for i, ct := range cp.types() {
+		if ct != "text/plain;charset=UTF-8" {
+			t.Fatalf("запрос %d ушёл с Content-Type %q, ожидался text/plain;charset=UTF-8", i, ct)
+		}
+	}
+}
+
+// Неполные зависимости роняют сборку, а не первый запрос пользователя:
+// nil-журнал в проде — паника посреди обработки запроса.
+func TestNewClientRequiresDependencies(t *testing.T) {
+	mirror := func() string { return stubMirrorURL }
+	key := func() string { return fixtureKey }
+	logf := func(string, string) {}
+
+	cases := []struct {
+		name string
+		call func()
+	}{
+		{name: "без геттера зеркала", call: func() { NewClient(nil, nil, key, logf) }},
+		{name: "без геттера ключа", call: func() { NewClient(nil, mirror, nil, logf) }},
+		{name: "без журнала", call: func() { NewClient(nil, mirror, key, nil) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("неполные зависимости обязаны ронять сборку зависимостей")
+				}
+			}()
+			tc.call()
+		})
 	}
 }

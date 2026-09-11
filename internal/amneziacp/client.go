@@ -3,6 +3,8 @@ package amneziacp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,6 +52,11 @@ const (
 	// отвергает WAF перед CP.
 	browserUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+	// eventMirrorResolve — имя операции резолва зеркала в журнале. Своя
+	// операция, а не операция запроса: резолв идёт до того, как станет
+	// известно, к какой ручке портала собирались.
+	eventMirrorResolve = "mirror-resolve"
+
 	// loginRemember — значение remember в теле входа. Всегда true: сессию
 	// держит демон, а не человек за браузером, и долгая cookie — это меньше
 	// входов с роутера. С флагом «запомнить ключ на роутере» ничего общего не
@@ -78,7 +85,21 @@ type cpRequest struct {
 	path    string
 	referer string // путь Referer'а, как у веб-приложения портала
 	payload []byte
+	// repeatable == false запрещает повтор запроса после сетевого отказа:
+	// портал мог успеть обработать запрос до обрыва, и повтор расходной ручки
+	// съест второй слот устройства подписки. Нулевое значение — запрет:
+	// повторяемость объявляется явно.
+	repeatable bool
 }
+
+// MirrorURLFunc отдаёт адрес зеркала, SubscriptionKeyFunc — ключ подписки.
+// Типы разные не ради красоты: два соседних параметра конструктора были бы оба
+// func() string, перепутать их местами компилятор не мешает, а ценой ошибки
+// стал бы ключ подписки, ушедший в сеть как адрес.
+type MirrorURLFunc func() string
+
+// SubscriptionKeyFunc — см. MirrorURLFunc.
+type SubscriptionKeyFunc func() string
 
 // Client владеет парой «origin зеркала + сессия портала»: сам логинится
 // сохранённым ключом, переживает ротацию хоста и протухший sid и не выпускает
@@ -90,23 +111,34 @@ type cpRequest struct {
 type Client struct {
 	http      *http.Client
 	mirror    *Mirror
-	mirrorURL func() string
-	key       func() string
+	mirrorURL MirrorURLFunc
+	key       SubscriptionKeyFunc
 	logf      LogFunc
 
 	mu     sync.Mutex
 	origin string // хост, выдавший сессию
+	keyID  string // отпечаток ключа, которым сессия получена
 	sid    string
 }
 
 // NewClient собирает клиента. httpClient == nil подменяется собственным прямым
 // клиентом: маршрут загрузок в этой линии не участвует. Геттеры и logf
-// обязательны — без любого из них клиент нерабочий, и молчаливая подмена
-// спрятала бы ошибку сборки зависимостей.
-func NewClient(httpClient *http.Client, mirrorURL, key func() string, logf LogFunc) *Client {
+// обязательны, и их отсутствие — паника на сборке зависимостей: иначе
+// nil-журнал уронит демон на первом же запросе пользователя, а не при запуске.
+func NewClient(httpClient *http.Client, mirrorURL MirrorURLFunc, key SubscriptionKeyFunc, logf LogFunc) *Client {
+	if mirrorURL == nil {
+		panic("amneziacp.NewClient: геттер адреса зеркала обязателен")
+	}
+	if key == nil {
+		panic("amneziacp.NewClient: геттер ключа подписки обязателен")
+	}
+	if logf == nil {
+		panic("amneziacp.NewClient: журнал обязателен")
+	}
 	if httpClient == nil {
 		httpClient = newDirectClient()
 	}
+	httpClient = withoutRedirects(httpClient)
 	return &Client{
 		http:      httpClient,
 		mirror:    NewMirror(httpClient, 0),
@@ -116,12 +148,25 @@ func NewClient(httpClient *http.Client, mirrorURL, key func() string, logf LogFu
 	}
 }
 
+// withoutRedirects копирует клиента и запрещает следовать редиректам. Политика
+// нужна и на пути к порталу, и на пути к зеркалу: на 307/308 Go переигрывает
+// тело запроса — ключ подписки уехал бы на хост из Location, — а на 301/302
+// документ чужого хоста приехал бы как ответ портала. С запретом 3xx доезжает
+// до проверки статуса и становится отказом. Копия, а не правка переданного
+// клиента: объект чужой, его политика — не наше дело.
+func withoutRedirects(c *http.Client) *http.Client {
+	dup := *c
+	dup.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &dup
+}
+
 // newDirectClient — прямой клиент к зеркалу и порталу.
 //
-// База — httpclient.NewTransport ради пина HTTP/1.1 (ForceAttemptHTTP2=false):
-// фронт зеркала — тот же CDN, что и у портала, и на h2 он отвечает EOF и
-// «malformed HTTP response» — ровно та поломка, ради которой httpclient и
-// заведён.
+// База — httpclient.NewTransport ради пина HTTP/1.1 (ForceAttemptHTTP2=false).
+// Пин нужен из-за портала: на h2 он отвечает EOF и «malformed HTTP response» —
+// ровно та поломка, ради которой httpclient и заведён. Зеркало лежит на
+// хранилище Google и с h2 работает, общего фронта у них нет; один транспорт на
+// оба пути — потому что клиент один, а не потому что фронт общий.
 //
 // Прокси из окружения, в отличие от снятого internal/api/amnezia_cp.go, не
 // берётся: при заданном HTTPS_PROXY запрос ушёл бы через чужой прокси — мимо
@@ -151,11 +196,13 @@ func newDirectClient() *http.Client {
 
 // AccountInfo отдаёт данные подписки без ключа подписки внутри.
 func (c *Client) AccountInfo(ctx context.Context) (json.RawMessage, error) {
-	body, err := c.call(ctx, cpRequest{
+	body, _, err := c.call(ctx, cpRequest{
 		event:   "account-info",
 		method:  http.MethodGet,
 		path:    "/api/account-info",
 		referer: "/ru",
+		// Чтение ничего не тратит: повтор после сетевого отказа безопасен.
+		repeatable: true,
 	})
 	if err != nil {
 		return nil, err
@@ -178,17 +225,19 @@ func (c *Client) CountryConfig(ctx context.Context, countryCode string) (string,
 	if err != nil {
 		return "", fmt.Errorf("%w: тело запроса конфига: %w", ErrServiceUnavailable, err)
 	}
-	body, err := c.call(ctx, cpRequest{
+	body, key, err := c.call(ctx, cpRequest{
 		event:   "download-config",
 		method:  http.MethodPost,
 		path:    "/api/download-config",
 		referer: "/ru",
 		payload: payload,
+		// repeatable не ставится сознательно: портал мог выдать конфиг и
+		// потерять соединение на ответе, а повтор съел бы второй слот.
 	})
 	if err != nil {
 		return "", err
 	}
-	return extractConf(body)
+	return extractConf(body, key)
 }
 
 // CheckKey проверяет присланный ключ входом в портал. Неудача текущую сессию
@@ -209,11 +258,12 @@ func (c *Client) CheckKey(ctx context.Context, key string) error {
 		}
 		sid, rec, err := c.login(ctx, origin, key)
 		if err == nil {
-			c.adopt(origin, sid)
+			c.adopt(origin, keyFingerprint(key), sid)
 			return nil
 		}
 		lastErr = err
-		if !c.again(ctx, rec, attempt) {
+		// Вход ничего не тратит: повторяем его наравне с чтением.
+		if !c.again(ctx, rec, attempt, true) {
 			return lastErr
 		}
 	}
@@ -222,45 +272,56 @@ func (c *Client) CheckKey(ctx context.Context, key string) error {
 // ResetSession выбрасывает сессию: следующий вызов войдёт заново.
 func (c *Client) ResetSession() {
 	c.mu.Lock()
-	c.origin, c.sid = "", ""
+	c.origin, c.keyID, c.sid = "", "", ""
 	c.mu.Unlock()
 }
 
 // call выполняет запрос под сессией, восстанавливая её при протухании и
-// перерезолвя зеркало при сетевом отказе.
-func (c *Client) call(ctx context.Context, req cpRequest) ([]byte, error) {
+// перерезолвя зеркало при сетевом отказе. Вторым значением отдаётся ключ,
+// которым запрос сделан: разбору ответа он нужен, чтобы не принять эхо ключа
+// за данные, а повторное чтение геттера дало бы уже другое значение.
+func (c *Client) call(ctx context.Context, req cpRequest) ([]byte, string, error) {
 	// Пустой ключ отсекается до любого похода в сеть — и к порталу, и к
 	// зеркалу: резолв ради заведомо невозможного запроса бессмыслен.
 	key := strings.TrimSpace(c.key())
 	if key == "" {
-		return nil, ErrNoKey
+		return nil, "", ErrNoKey
 	}
 
 	var lastErr error
 	for attempt := 0; ; attempt++ {
 		origin, err := c.resolve(ctx)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
+		// Отказ резолва и отказ входа повторяемы независимо от самого запроса:
+		// до расходной ручки портала дело ещё не дошло.
+		repeatable := true
 		sid, rec, err := c.session(ctx, origin, key)
 		if err == nil {
 			var body []byte
 			body, rec, err = c.send(ctx, origin, sid, req)
 			if err == nil {
-				return body, nil
+				return body, key, nil
 			}
+			repeatable = req.repeatable
 		}
 		lastErr = err
-		if !c.again(ctx, rec, attempt) {
-			return nil, lastErr
+		if !c.again(ctx, rec, attempt, repeatable) {
+			return nil, "", lastErr
 		}
 	}
 }
 
-// again решает, делать ли повтор, и готовит к нему клиента. Отменённый
-// контекст повтором не лечится.
-func (c *Client) again(ctx context.Context, rec recovery, attempt int) bool {
-	if rec == recoveryNone || attempt+1 >= maxAttempts || ctx.Err() != nil {
+// again решает, делать ли повтор, и готовит к нему клиента.
+//
+// Порядок проверок значим. Отменённый контекст повтором не лечится и кэш
+// адреса не трогает: кэш общий, и пользователь, закрывший вкладку, не должен
+// ломать резолв остальным. Мёртвый хост, наоборот, выбрасывается из кэша даже
+// когда повтора не будет (расходный запрос, исчерпанные попытки) — иначе
+// следующая попытка пользователя пойдёт на тот же труп до конца TTL.
+func (c *Client) again(ctx context.Context, rec recovery, attempt int, repeatable bool) bool {
+	if rec == recoveryNone || ctx.Err() != nil {
 		return false
 	}
 	if rec == recoveryMirror {
@@ -268,12 +329,16 @@ func (c *Client) again(ctx context.Context, rec recovery, attempt int) bool {
 		// а не дожить в кэше до конца TTL.
 		c.mirror.Invalidate()
 	}
-	return true
+	return repeatable && attempt+1 < maxAttempts
 }
 
 func (c *Client) resolve(ctx context.Context) (string, error) {
-	origin, err := c.mirror.Origin(ctx, c.mirrorURL())
+	mirrorURL := c.mirrorURL()
+	origin, err := c.mirror.Origin(ctx, mirrorURL)
 	if err != nil {
+		// Отказ резолва — самая вероятная жалоба в этой линии, и разбирать её
+		// без строки в журнале не по чему. Адрес зеркала секретом не является.
+		c.logf(eventMirrorResolve, fmt.Sprintf("mirror=%s route=direct resolve=%v", mirrorURL, err))
 		// Недоступное зеркало — тот же класс, что и молчащий портал. Своя
 		// причина остаётся различимой по ErrMirrorUnavailable и соседям.
 		return "", fmt.Errorf("%w: %w", ErrServiceUnavailable, err)
@@ -282,11 +347,14 @@ func (c *Client) resolve(ctx context.Context) (string, error) {
 }
 
 // session отдаёт cookie для указанного хоста, входя при необходимости. Сессия
-// хранится вместе с origin, который её выдал: cookie одного хоста зеркала на
-// другом недействительна, поэтому смена origin обнуляет sid сама.
+// хранится вместе с origin, который её выдал, и с отпечатком ключа, которым
+// получена: cookie одного хоста зеркала на другом недействительна, а сессия
+// чужого ключа показала бы каталог чужой подписки и потратила бы её слот.
+// Поэтому смена любого из двух обнуляет sid сама.
 func (c *Client) session(ctx context.Context, origin, key string) (string, recovery, error) {
+	id := keyFingerprint(key)
 	c.mu.Lock()
-	if c.origin == origin && c.sid != "" {
+	if c.origin == origin && c.keyID == id && c.sid != "" {
 		sid := c.sid
 		c.mu.Unlock()
 		return sid, recoveryNone, nil
@@ -299,14 +367,22 @@ func (c *Client) session(ctx context.Context, origin, key string) (string, recov
 	if err != nil {
 		return "", rec, err
 	}
-	c.adopt(origin, sid)
+	c.adopt(origin, id, sid)
 	return sid, recoveryNone, nil
 }
 
-func (c *Client) adopt(origin, sid string) {
+func (c *Client) adopt(origin, keyID, sid string) {
 	c.mu.Lock()
-	c.origin, c.sid = origin, sid
+	c.origin, c.keyID, c.sid = origin, keyID, sid
 	c.mu.Unlock()
+}
+
+// keyFingerprint — отпечаток ключа подписки. Хранится вместо самого ключа:
+// секрет и так живёт у владельца геттера, класть его в объект второй раз
+// незачем. Наружу отпечаток не отдаётся.
+func keyFingerprint(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
 }
 
 // dropSession выбрасывает сессию, если она всё ещё та, на которой случился
@@ -314,7 +390,7 @@ func (c *Client) adopt(origin, sid string) {
 func (c *Client) dropSession(sid string) {
 	c.mu.Lock()
 	if c.sid == sid {
-		c.origin, c.sid = "", ""
+		c.origin, c.keyID, c.sid = "", "", ""
 	}
 	c.mu.Unlock()
 }
@@ -443,96 +519,183 @@ func sessionFromResponse(resp *http.Response) string {
 	return ""
 }
 
-// subscriptionKeyFields — поля ответа портала, несущие сам ключ подписки.
-// Живой ответ кладёт его рядом с остальными полями, в vpn_key; camelCase
-// срезается заодно — строка кода против необратимой протечки ключа в браузер.
-var subscriptionKeyFields = []string{"vpn_key", "vpnKey"}
+// vpnLinkScheme — префикс ссылки подписки. Ключ подписки Amnezia сам является
+// vpn://-ссылкой, поэтому признак секрета в ответе портала — значение, а не
+// имя поля: имя живого ответа перечислить нельзя, а «vpn://» узнаётся само.
+const vpnLinkScheme = "vpn://"
+
+// decodeJSON разбирает ответ портала с сохранением точности чисел: через
+// обычный any большие целые проехали бы float64 и потеряли значение (живой
+// ответ несёт счётчики). Хвост после первого значения — отказ: ответ портала
+// это один документ, а не поток.
+func decodeJSON(raw []byte) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	if dec.More() {
+		return nil, errors.New("лишние данные после JSON-документа")
+	}
+	return v, nil
+}
 
 // scrubAccountInfo вырезает ключ подписки из ответа портала. Работает и когда
-// конверт data есть, и когда его нет. Неожиданная форма — ошибка, а не пустой
-// объект: пустой каталог пользователь прочитает как «в подписке нет стран».
+// конверт data есть, и когда его нет. Неожиданная и пустая форма — ошибка, а
+// не пустой объект: пустой каталог пользователь прочитает как «в подписке нет
+// стран».
 func scrubAccountInfo(raw []byte) (json.RawMessage, error) {
-	// Разбор в map[string]json.RawMessage, а не в map[string]any: значения
-	// уезжают наружу как пришли. Через any числа проехали бы float64 и
-	// потеряли точность.
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &top); err != nil {
+	doc, err := decodeJSON(raw)
+	if err != nil {
 		return nil, fmt.Errorf("%w: ответ account-info не разобран: %w", ErrServiceUnavailable, err)
 	}
-	fields := top
-	if inner, ok := top["data"]; ok {
-		fields = nil
-		if err := json.Unmarshal(inner, &fields); err != nil {
-			return nil, fmt.Errorf("%w: конверт data в account-info — не объект: %w", ErrServiceUnavailable, err)
+	fields, ok := doc.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%w: account-info — не объект", ErrServiceUnavailable)
+	}
+	if inner, wrapped := fields["data"]; wrapped {
+		if fields, ok = inner.(map[string]any); !ok {
+			// JSON null разбирается в nil-значение, а не в объект: без этой
+			// ветки пустой ответ дошёл бы до интерфейса как подписка без стран.
+			return nil, fmt.Errorf("%w: конверт data в account-info — не объект", ErrServiceUnavailable)
 		}
 	}
-	// JSON null разбирается в nil-мапу без ошибки: без этой проверки пустой
-	// ответ дошёл бы до интерфейса как подписка без стран.
-	if fields == nil {
+	if len(fields) == 0 {
 		return nil, fmt.Errorf("%w: account-info без данных", ErrServiceUnavailable)
 	}
 
-	for _, field := range subscriptionKeyFields {
-		delete(fields, field)
-	}
-	out, err := json.Marshal(fields)
+	out, err := json.Marshal(withoutSecrets(fields))
 	if err != nil {
 		return nil, fmt.Errorf("%w: сборка account-info: %w", ErrServiceUnavailable, err)
 	}
 	return out, nil
 }
 
+// withoutSecrets возвращает копию значения без строк, несущих ключ подписки.
+// Обход рекурсивный и по значению, а не чёрный список имён полей на верхнем
+// уровне: ключ течёт вложенным объектом, элементом массива, переименованным
+// полем, вложенным конвертом и текстом сообщения об ошибке — все пять форм
+// чёрный список пропускает.
+func withoutSecrets(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, item := range x {
+			if carriesKey(item) {
+				continue
+			}
+			out[k] = withoutSecrets(item)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(x))
+		for _, item := range x {
+			if carriesKey(item) {
+				continue
+			}
+			out = append(out, withoutSecrets(item))
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func carriesKey(v any) bool {
+	s, ok := v.(string)
+	return ok && strings.Contains(s, vpnLinkScheme)
+}
+
 // errNoConf — внутренний признак «в этой строке конфигурации нет».
 var errNoConf = errors.New("конфигурации нет")
 
-// extractConf достаёт .conf из ответа портала. Сначала разбирается ответ,
-// потом берётся значение поля, и только потом решается, .conf это или
-// vpn://-ссылка: проверка подстроки на сыром ответе отдала бы наружу целиком
-// JSON-конверт — он содержит [Interface] внутри экранированной строки.
-func extractConf(raw []byte) (string, error) {
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		// Не JSON — портал отдал сам .conf или ссылку текстом.
-		conf, cerr := confFromCandidate(string(raw))
+// confFields — имена полей JSON-ответа, несущих конфигурацию. Живой
+// download-config отдаёт .conf текстом (см. extractConf), но конверт мог бы
+// прийти от другой ручки или другого тарифа. Сканировать все строки ответа
+// нельзя: ключ подписки сам валидная vpn://-ссылка, и его эхо в ответе-ошибке
+// уехало бы пользователю как конфигурация — чужой регион и приватный ключ всей
+// подписки в файле туннеля.
+var confFields = []string{"conf", "config", "last_config", "wireguard_config"}
+
+// extractConf достаёт .conf из ответа портала.
+//
+// Живая форма (снята 2026-09-11) — не JSON: готовый .conf с заголовком из
+// комментариев, в одном из которых лежит сам ключ подписки. Поэтому порядок
+// такой: сперва пробуем разобрать JSON (валидный .conf в JSON не разбирается,
+// а вот JSON-конверт содержит «[Interface]» внутри экранированной строки — и
+// проверка подстроки на сыром ответе отдала бы наружу весь конверт), и только
+// не разобрав — читаем тело как .conf или как ссылку.
+//
+// key — ключ, которым сделан запрос: его эхо конфигурацией не считается.
+func extractConf(raw []byte, key string) (string, error) {
+	doc, err := decodeJSON(raw)
+	if err != nil {
+		conf, cerr := confFromCandidate(string(raw), key)
 		if cerr != nil {
 			return "", fmt.Errorf("%w: ответ download-config не разобран: %w", ErrServiceUnavailable, err)
 		}
 		return conf, nil
 	}
-	for _, cand := range jsonStrings(v, nil) {
-		if conf, err := confFromCandidate(cand); err == nil {
+	for _, cand := range confCandidates(doc, nil) {
+		if conf, err := confFromCandidate(cand, key); err == nil {
 			return conf, nil
 		}
 	}
 	return "", fmt.Errorf("%w: в ответе download-config нет конфигурации", ErrServiceUnavailable)
 }
 
-func confFromCandidate(s string) (string, error) {
+func confFromCandidate(s, key string) (string, error) {
 	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "vpn://") {
+	// Эхо ключа подписки конфигурацией не является, даже когда разбирается как
+	// ссылка: в нём вся подписка, а не выбранная страна.
+	if key != "" && s == key {
+		return "", errNoConf
+	}
+	if strings.HasPrefix(s, vpnLinkScheme) {
 		conf, err := DecodeVPNLinkToConf(s)
 		if err != nil {
 			return "", err
 		}
-		if strings.TrimSpace(conf) == "" {
+		conf = withoutKeyLines(conf)
+		if conf == "" {
 			return "", errNoConf
 		}
 		return conf, nil
 	}
 	if strings.Contains(s, "[Interface]") {
-		return s, nil
+		return withoutKeyLines(s), nil
 	}
 	return "", errNoConf
 }
 
-// jsonStrings собирает строковые значения ответа. Обход детерминированный:
-// ключи объектов перебираются по порядку, а не по случайному порядку map —
-// иначе выбор конфигурации из ответа с несколькими строками зависел бы от
-// запуска.
-func jsonStrings(v any, out []string) []string {
+// withoutKeyLines вырезает из .conf строки с ключом подписки. Живой
+// download-config отдаёт заголовок вида «# VPN Key: vpn://…» перед
+// [Interface], и без вырезания ключ всей подписки лёг бы в файл туннеля на
+// флеш и в предпросмотр в интерфейсе. Режется строка целиком: «vpn://» бывает
+// в этом файле только в комментарии-заголовке, значением параметра WireGuard
+// или AWG такая строка не бывает.
+func withoutKeyLines(conf string) string {
+	if !strings.Contains(conf, vpnLinkScheme) {
+		return strings.TrimSpace(conf)
+	}
+	lines := strings.Split(conf, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.Contains(line, vpnLinkScheme) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
+// confCandidates собирает значения полей из confFields. Обход
+// детерминированный: ключи объектов перебираются по порядку, а не по
+// случайному порядку map — иначе выбор конфигурации из ответа с несколькими
+// полями зависел бы от запуска.
+func confCandidates(v any, out []string) []string {
 	switch x := v.(type) {
-	case string:
-		out = append(out, x)
 	case map[string]any:
 		keys := make([]string, 0, len(x))
 		for k := range x {
@@ -540,11 +703,17 @@ func jsonStrings(v any, out []string) []string {
 		}
 		slices.Sort(keys)
 		for _, k := range keys {
-			out = jsonStrings(x[k], out)
+			if s, isStr := x[k].(string); isStr {
+				if slices.Contains(confFields, strings.ToLower(k)) {
+					out = append(out, s)
+				}
+				continue
+			}
+			out = confCandidates(x[k], out)
 		}
 	case []any:
 		for _, item := range x {
-			out = jsonStrings(item, out)
+			out = confCandidates(item, out)
 		}
 	}
 	return out
