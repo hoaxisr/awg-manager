@@ -79,6 +79,20 @@ func bootEvent(gatewayErr error) orchestrator.Event {
 	return orchestrator.Event{Type: orchestrator.EventBoot, WANUp: !wanDown}
 }
 
+// restorePingMonitors заводит мониторы пинг-чека для туннелей, которые уже
+// работают и потому не проходили через старт.
+//
+// Реестр мониторов резидентный и наполняется ТОЛЬКО побочным эффектом старта
+// туннеля (ActionStartMonitoring из appendPostStartActions). Туннель,
+// переживший перезапуск демона — а ASC-nativewg переживает его всегда, потому
+// что живёт в NDMS, — оставался без монитора до конца жизни процесса: молча
+// не работали DNS-failover (он слушает только события пинг-чека), эскалация
+// перезапуском, журнал проверок и кнопка «Проверить». Вызов идемпотентен:
+// внутри проверяется и что туннель запущен, и что пинг-чек ему включён.
+func (a *app) restorePingMonitors() {
+	a.pingCheckFacade.StartMonitoringAllRunning()
+}
+
 // startBootSequence detects boot vs daemon-restart and runs the boot
 // pipeline (NDMS wait, WAN stability, migrations, orchestrator events).
 func (a *app) startBootSequence() {
@@ -258,6 +272,7 @@ func (a *app) startBootSequence() {
 			// ними окно, в котором WAN-фронт обрабатывался как обычный и
 			// терялся, а отложенный бут потом ждал второго фронта.
 			a.orch.HandleEvent(a.shutdownCtx, bootEvent(err))
+			a.restorePingMonitors()
 
 			// Маркер надо снять и здесь: холодный старт и так поднимается из
 			// восстановленного конфига, а невынутый маркер на всех последующих
@@ -308,7 +323,13 @@ func (a *app) startBootSequence() {
 			a.bootLog.Info("startup", "",
 				"Post-restore boot: syncing linked endpoints and cold-starting from archive")
 			a.orch.LoadState(context.Background())
-			a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventBoot})
+			// WANUp:true — этот путь и раньше бутил без проверки WAN; менять
+			// его тем же коммитом не будем, но гейта здесь нет (в трекере).
+			a.orch.HandleEvent(context.Background(), orchestrator.Event{
+				Type:  orchestrator.EventBoot,
+				WANUp: true,
+			})
+			a.restorePingMonitors()
 			go a.proxyRuntimeNudge("post-restore", proxyrt.EventBoot)
 			return
 		}
@@ -318,6 +339,7 @@ func (a *app) startBootSequence() {
 
 		a.orch.LoadState(context.Background())
 		a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventReconnect})
+		a.restorePingMonitors()
 		// Как на cold-boot: посев мог не состояться, если RCI ещё не отвечал
 		// сразу после opkg upgrade.
 		go a.proxyRuntimeNudge("daemon-restart", proxyrt.EventBoot)

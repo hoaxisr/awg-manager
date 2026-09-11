@@ -54,3 +54,24 @@ func TestBootSequence_UsesBootEvent(t *testing.T) {
 		t.Error("бут-последовательность больше не шлёт событие через bootEvent(err)")
 	}
 }
+
+// F198: реестр мониторов пинг-чека наполняется только побочным эффектом
+// старта туннеля, поэтому каждый путь бут-последовательности обязан его
+// восстанавливать — иначе туннель, переживший перезапуск демона, остаётся
+// без монитора. Страж строковый по той же причине, что и выше: проверяется
+// проводка, а не хелпер.
+func TestBootSequence_RestoresPingMonitorsOnEveryPath(t *testing.T) {
+	src, err := os.ReadFile("boot.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	// Три пути: холодная загрузка, восстановление из бэкапа, рестарт демона.
+	const wantPaths = 3
+	if got := strings.Count(text, "a.orch.HandleEvent("); got != wantPaths {
+		t.Fatalf("путей бута стало %d вместо %d — проверьте, что каждый восстанавливает мониторы", got, wantPaths)
+	}
+	if got := strings.Count(text, "a.restorePingMonitors()"); got != wantPaths {
+		t.Errorf("мониторы восстанавливаются на %d путях из %d", got, wantPaths)
+	}
+}
