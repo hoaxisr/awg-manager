@@ -485,14 +485,15 @@ func TestSetupEndpointRoute_ReplacesSharedHostRouteAtomically(t *testing.T) {
 // Адрес наружу не возвращается: иначе вызывающие запишут петлю в
 // ResolvedEndpointIP, где у loopback-пира лежит адрес target'а релея.
 func TestSetupEndpointRoute_SkipsUnroutableEndpoint(t *testing.T) {
-	for _, endpoint := range []string{
-		"127.0.0.1:51820",  // связанный wdtt/freeturn
-		"127.0.0.5:1234",   // вся /8, а не один адрес
-		"[::1]:51820",      // v6-петля
-		"0.0.0.0:51820",    // «неуказанный»
-		"169.254.10.1:500", // link-local unicast
-		"[ff02::1]:51820",  // link-local multicast
+	for _, tc := range []struct{ endpoint, del string }{
+		{"127.0.0.1:51820", "/opt/sbin/ip route del 127.0.0.1/32"},     // связанный wdtt/freeturn
+		{"127.0.0.5:1234", "/opt/sbin/ip route del 127.0.0.5/32"},      // вся /8, а не один адрес
+		{"[::1]:51820", "/opt/sbin/ip -6 route del ::1/128"},           // v6-петля
+		{"0.0.0.0:51820", "/opt/sbin/ip route del 0.0.0.0/32"},         // «неуказанный»
+		{"169.254.10.1:500", "/opt/sbin/ip route del 169.254.10.1/32"}, // link-local unicast
+		{"[ff02::1]:51820", "/opt/sbin/ip -6 route del ff02::1/128"},   // link-local multicast
 	} {
+		endpoint := tc.endpoint
 		t.Run(endpoint, func(t *testing.T) {
 			o, _, rec := newOS5Lifecycle(t)
 			spy := &recAppLog{}
@@ -505,8 +506,12 @@ func TestSetupEndpointRoute_SkipsUnroutableEndpoint(t *testing.T) {
 			if ip != "" {
 				t.Errorf("адрес не должен уходить вызывающему (попадёт в ResolvedEndpointIP), got %q", ip)
 			}
-			if len(rec.Calls) != 0 {
-				t.Errorf("ни одной ip-команды не ожидается: %v", rec.Calls)
+			// Маршрут не ставится, но наследство прежней версии снимается (F227).
+			if slices.ContainsFunc(rec.Calls, func(c string) bool { return strings.Contains(c, "route replace") }) {
+				t.Errorf("маршрут до немаршрутизируемого адреса поставлен: %v", rec.Calls)
+			}
+			if !hasCall(rec.Calls, tc.del) {
+				t.Errorf("наследство не снято, ждали %q: %v", tc.del, rec.Calls)
 			}
 			if got := o.GetTrackedEndpointIP("awg1"); got != "" {
 				t.Errorf("в карту маршрутов попал %q", got)
