@@ -598,10 +598,17 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// normalizeAmneziaMirrorURL). Самоисцеление обязано быть слышно: человек,
 	// который правил settings.json руками и ошибся, иначе не узнает, куда
 	// делась его правка, — увидит лишь, что поле опустело.
-	if old := oldSettings.AmneziaPremiumMirrorURL; old != want.AmneziaPremiumMirrorURL &&
+	//
+	// Признак самоисцеления — новое значение СТАЛО ПУСТЫМ, то есть действует
+	// дефолт. Признак «новое отличается от старого» здесь врёт: он верен и
+	// тогда, когда поверх мусора прислали годный адрес, — а там ничего не
+	// отброшено и действует присланное, так что оба утверждения строки
+	// оказались бы ложными.
+	if old := oldSettings.AmneziaPremiumMirrorURL; want.AmneziaPremiumMirrorURL == "" &&
 		strings.TrimSpace(old) != "" && storage.ValidateAmneziaMirrorURL(old) != nil {
 		h.log.Warn("amnezia-mirror", "", fmt.Sprintf(
-			"непригодный адрес зеркала Amnezia в настройках отброшен (%q), действует адрес по умолчанию", old))
+			"непригодный адрес зеркала Amnezia в настройках отброшен (%q), действует адрес по умолчанию",
+			mirrorURLForLog(old)))
 	}
 	if oldSettings.ConnectivityCheckURL != want.ConnectivityCheckURL {
 		h.log.Info("connectivity-check", "", fmt.Sprintf("Connectivity check URL changed: %s -> %s", oldSettings.ConnectivityCheckURL, want.ConnectivityCheckURL))
@@ -732,6 +739,45 @@ func formatRefreshSchedule(enabled bool, mode string, intervalHours int, dailyTi
 		return "daily at " + dailyTime
 	}
 	return fmt.Sprintf("every %dh", intervalHours)
+}
+
+// maxLoggedMirrorURLLen ограничивает длину адреса зеркала В ЖУРНАЛЕ.
+// storage.MaxAmneziaMirrorURLLen действует только на присланное через API, а
+// в журнал попадает ХРАНИМОЕ значение — то самое, что легло в settings.json
+// ручной правкой или откатом версии, мимо всякой проверки. Журнал
+// приложения — кольцевой буфер в памяти роутера со 128 МБ; чтобы узнать свою
+// опечатку, двух сотен байт хватает, а мегабайтное значение выбило бы из
+// буфера всё остальное.
+const maxLoggedMirrorURLLen = 200
+
+// mirrorURLForLog готовит непригодный адрес зеркала к записи в журнал.
+// Журнал — граница: он виден на странице /logs и уезжает в поддержку.
+// ValidateAmneziaMirrorURL отвергает user:pass@ ровно потому, что паре
+// логин/пароль нечего делать в settings.json (см. её шапку), — и отказ
+// валидатора не смеет сам стать каналом публикации этой пары.
+// (*url.URL).Redacted() здесь мало: он прячет пароль, но оставляет имя
+// пользователя, поэтому userinfo снимается целиком. Значение, которое
+// разборщику не далось — или спрятало пару в Opaque, как бессхемное
+// "user:pass@host", — не показываем вовсе: что в нём лежит, мы не знаем.
+func mirrorURLForLog(raw string) string {
+	v := strings.TrimSpace(raw)
+	u, err := url.Parse(v)
+	if err != nil {
+		return "<адрес не разбирается>"
+	}
+	switch {
+	case u.User != nil:
+		u.User = url.User("xxxxx")
+		v = u.String()
+	case strings.Contains(u.Opaque, "@"):
+		return "<адрес не разбирается>"
+	}
+	if len(v) > maxLoggedMirrorURLLen {
+		// ToValidUTF8 убирает руну, разрубленную пополам границей среза.
+		v = strings.ToValidUTF8(v[:maxLoggedMirrorURLLen], "") +
+			fmt.Sprintf("…(всего %d байт)", len(raw))
+	}
+	return v
 }
 
 func normalizePingCheckTarget(target string) string {

@@ -369,6 +369,134 @@ func (l *recordingAppLogger) AppLog(_ logging.Level, _, _, action, _, message st
 	l.messages = append(l.messages, action+": "+message)
 }
 
+// mirrorLogLines — строки журнала, говорящие про зеркало.
+func mirrorLogLines(log *recordingAppLogger) []string {
+	var out []string
+	for _, m := range log.messages {
+		if strings.Contains(m, "зеркал") {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// seedBrokenMirrorAndRoundTrip кладёт в стор непригодный адрес и прогоняет
+// круговорот «ответ → PATCH», которым фронт сохраняет настройки целиком:
+// именно на нём хранимый мусор заменяется дефолтом. Возвращает строки
+// журнала про зеркало.
+func seedBrokenMirrorAndRoundTrip(t *testing.T, stored string) []string {
+	t.Helper()
+	h, store := newSettingsHandlerForTest(t)
+	log := &recordingAppLogger{}
+	h.log = logging.NewScopedLogger(log, logging.GroupSystem, logging.SubSettings)
+
+	if err := store.Update(func(cur *storage.Settings) error {
+		cur.AmneziaPremiumMirrorURL = stored
+		return nil
+	}); err != nil {
+		t.Fatalf("seed broken mirror: %v", err)
+	}
+
+	rr := perform(h.Get, http.MethodGet, "/settings/get", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	data, _ := decodeJSONBody(t, rr)["data"].(map[string]any)
+	body, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	rr = perform(h.Update, http.MethodPost, "/settings/update", string(body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	snap, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.AmneziaPremiumMirrorURL != "" {
+		t.Fatalf("мусор остался в хранилище: %q", snap.AmneziaPremiumMirrorURL)
+	}
+	return mirrorLogLines(log)
+}
+
+// Годный адрес, ПРИСЛАННЫЙ поверх мусора, — не самоисцеление: ничего не
+// отброшено, и действует присланное, а не дефолт. Строки про зеркало быть не
+// должно, иначе она врёт обоими своими утверждениями. Признак самоисцеления
+// — «новое значение стало пустым»; признак «новое отличается от старого»
+// верен и здесь, поэтому пиннится именно условие, а не факт записи в журнал.
+func TestUpdate_MirrorReplacedBySentValue_NoDiscardLog(t *testing.T) {
+	h, store := newSettingsHandlerForTest(t)
+	log := &recordingAppLogger{}
+	h.log = logging.NewScopedLogger(log, logging.GroupSystem, logging.SubSettings)
+
+	if err := store.Update(func(cur *storage.Settings) error {
+		cur.AmneziaPremiumMirrorURL = "не адрес вовсе"
+		return nil
+	}); err != nil {
+		t.Fatalf("seed broken mirror: %v", err)
+	}
+
+	const sent = "https://mirror2.test/cp"
+	rr := perform(h.Update, http.MethodPost, "/settings/update",
+		`{"amneziaPremiumMirrorUrl":"`+sent+`"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	snap, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.AmneziaPremiumMirrorURL != sent {
+		t.Fatalf("в хранилище %q, want %q", snap.AmneziaPremiumMirrorURL, sent)
+	}
+	if got := mirrorLogLines(log); len(got) != 0 {
+		t.Fatalf("строка про отброшенный адрес там, где ничего не потеряно: %v", got)
+	}
+}
+
+// Пара логин/пароль из хранимого адреса не смеет попасть в журнал: его
+// видно на /logs и он уезжает в поддержку, а ValidateAmneziaMirrorURL
+// отвергает user:pass@ ровно ради того, чтобы эта пара никуда не уехала.
+func TestUpdate_StoredMirrorURLWithCredentials_LogHidesThem(t *testing.T) {
+	// Секреты фикстуры заведомо нерабочие: репозиторий публичный.
+	const (
+		login  = "u-test"
+		pass   = "p-test-not-a-real-password"
+		stored = "https://" + login + ":" + pass + "@mirror.test/cp"
+	)
+
+	lines := seedBrokenMirrorAndRoundTrip(t, stored)
+	if len(lines) != 1 {
+		t.Fatalf("строк про зеркало %d, want 1: %v", len(lines), lines)
+	}
+	if strings.Contains(lines[0], pass) {
+		t.Fatalf("пароль в журнале: %q", lines[0])
+	}
+	if strings.Contains(lines[0], login) {
+		t.Fatalf("логин в журнале: %q", lines[0])
+	}
+}
+
+// Длина хранимого значения ничем не ограничена: предел
+// storage.MaxAmneziaMirrorURLLen стоит только на присланном через API, а в
+// журнал попадает то, что легло в файл ручной правкой или откатом версии, —
+// ровно тот случай, ради которого строка и написана. Журнал приложения —
+// кольцевой буфер в памяти роутера со 128 МБ.
+func TestUpdate_StoredOverlongMirrorURL_LogIsBounded(t *testing.T) {
+	stored := "https://" + strings.Repeat("a", 300000) + ".test/cp"
+
+	lines := seedBrokenMirrorAndRoundTrip(t, stored)
+	if len(lines) != 1 {
+		t.Fatalf("строк про зеркало %d, want 1: %v", len(lines), lines)
+	}
+	if len(lines[0]) > 512 {
+		t.Fatalf("строка журнала %d байт, want <= 512", len(lines[0]))
+	}
+}
+
 // Круговорот «ответ → PATCH». Фронт сохраняет настройки ЦЕЛИКОМ
 // (api.updateSettings({ ...settings, ... })), а ответ несёт ПОДСТАВЛЕННЫЙ
 // действующий адрес зеркала. Без схлопывания на записи первый же щелчок
