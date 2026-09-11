@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,19 +28,56 @@ const (
 	fixtureOtherKey = "vpn://test-key-b21c"
 )
 
-// fixtureConf — то, что подписка отдаёт за страну. Без хвостового перевода
+// fixtureConf — то, что подписка отдаёт за страну: полный набор параметров
+// AWG 3.x живого ответа (Приложение А плана), а не три строки. Беднее живой
+// формы фикстура быть не должна: на трёх строках вырезание «всех строк со
+// словом Key» выглядит безобидным, а здесь оно уносит PrivateKey, PublicKey,
+// PresharedKey и HeaderProtectionKey и краснеет сразу. Без хвостового перевода
 // строки: клиент обрамляющие пробелы срезает, и сравнение идёт на равенство.
 const fixtureConf = "[Interface]\n" +
+	"Address = 10.77.3.9/32\n" +
+	"DNS = 10.77.0.1\n" +
 	"PrivateKey = tEsTPr1v4t3K3yF1xtur3N0tR34lN0tR34lAAA=\n" +
-	"Address = 10.77.3.9/32\n\n" +
+	"Jc = 4\n" +
+	"Jmin = 40\n" +
+	"Jmax = 70\n" +
+	"S1 = 0\n" +
+	"S2 = 0\n" +
+	"S3 = 0\n" +
+	"S4 = 0\n" +
+	"H1 = 1148573568\n" +
+	"H2 = 1290017281\n" +
+	"H3 = 1937006594\n" +
+	"H4 = 2088452867\n" +
+	"HeaderProtectionKey = hPtEsTH34d3rPr0t3ct10nK3yF1xtur3N0tR34lAA=\n" +
+	"RekeyAfterTime = 120\n" +
+	"RekeyTimeout = 5\n" +
+	"RejectAfterTime = 180\n" +
+	"KeepaliveTimeout = 10\n" +
+	"MaxHandshakeAttempts = 18\n" +
+	"ContentPaddingAddition = 32\n" +
+	"I1 = <b 0xf1a2c4>\n" +
+	"I2 = <b 0x5c0719>\n\n" +
 	"[Peer]\n" +
-	"Endpoint = nl-77.example.test:51830"
+	"PublicKey = tEsTPubl1cK3yF1xtur3N0tR34lN0tR34lN0tR34=\n" +
+	"PresharedKey = tEsTPr3sh4r3dK3yF1xtur3N0tR34lN0tR34lAA=\n" +
+	"AllowedIPs = 0.0.0.0/0, ::/0\n" +
+	"Endpoint = nl-77.example.test:51830\n" +
+	"PersistentKeepalive = 25"
 
 // fixtureConfWithKeyHeader — форма живого ответа download-config (снята
 // 2026-09-11): не JSON, а готовый .conf с заголовком из комментариев, в одном
 // из которых лежит сам ключ подписки. Значения синтетические.
 const fixtureConfWithKeyHeader = "# Generated on: 2026-09-11\n" +
 	"# VPN Key: " + fixtureKey + "\n" +
+	"# Keenetic: interface Wireguard0\n" +
+	fixtureConf
+
+// fixtureConfOtherKeyHeader — тот же ключ в комментарии, но подпись другая.
+// Вырезание обязано идти по значению: реализация, ищущая «# VPN Key:», на этой
+// форме отдаёт ключ всей подписки в файл туннеля.
+const fixtureConfOtherKeyHeader = "# Generated on: 2026-09-11\n" +
+	"# Подписка: " + fixtureKey + "\n" +
 	"# Keenetic: interface Wireguard0\n" +
 	fixtureConf
 
@@ -102,9 +141,12 @@ type fakeCP struct {
 	configBody  string
 	// loginWithoutCookie — вход отвечает 200, но сессию не выдаёт.
 	loginWithoutCookie bool
-	// extraCookie — имя посторонней cookie, которую портал ставит ПЕРЕД
-	// сессией (за CDN так приходит __cf_bm и подобные).
-	extraCookie string
+	// extraCookie/trailingCookie — имена посторонних cookie, которые портал
+	// ставит перед сессией и после неё (за CDN так приходит __cf_bm и
+	// подобные). Нужны обе стороны: мусор только перед сессией переживает
+	// реализацию «берём последнюю», только после — «берём первую».
+	extraCookie    string
+	trailingCookie string
 	// redirectStatus/redirectTo — портал отвечает редиректом на чужой хост.
 	redirectStatus int
 	redirectTo     string
@@ -173,7 +215,7 @@ func (f *fakeCP) handle(w http.ResponseWriter, r *http.Request) {
 		f.seenKeys = append(f.seenKeys, payload.VPNKey)
 		f.mu.Unlock()
 		if status := scriptStatus(f.loginStatus, n); status != http.StatusOK {
-			http.Error(w, `{"message":"нет"}`, status)
+			respondStatus(w, r, status)
 			return
 		}
 		if f.extraCookie != "" {
@@ -181,6 +223,9 @@ func (f *fakeCP) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		if !f.loginWithoutCookie {
 			http.SetCookie(w, &http.Cookie{Name: "v_sid", Value: f.sid(n), Path: "/"})
+		}
+		if f.trailingCookie != "" {
+			http.SetCookie(w, &http.Cookie{Name: f.trailingCookie, Value: "cdn-junk", Path: "/"})
 		}
 		_, _ = io.WriteString(w, `{"data":{"ok":true}}`)
 	case "/api/account-info":
@@ -190,7 +235,7 @@ func (f *fakeCP) handle(w http.ResponseWriter, r *http.Request) {
 			f.accountHold(n, r)
 		}
 		if status := scriptStatus(f.accountStatus, n); status != http.StatusOK {
-			http.Error(w, `{"message":"нет"}`, status)
+			respondStatus(w, r, status)
 			return
 		}
 		_, _ = io.WriteString(w, f.accountBody)
@@ -206,7 +251,7 @@ func (f *fakeCP) handle(w http.ResponseWriter, r *http.Request) {
 		f.seenCountry = append(f.seenCountry, payload.CountryCode)
 		f.mu.Unlock()
 		if status := scriptStatus(f.configStatus, n); status != http.StatusOK {
-			http.Error(w, `{"message":"нет"}`, status)
+			respondStatus(w, r, status)
 			return
 		}
 		if f.configAbort {
@@ -272,6 +317,17 @@ func (f *fakeCP) countries() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.seenCountry...)
+}
+
+// respondStatus отвечает по сценарию теста. 3xx — с Location, как
+// веб-приложение гонит на страницу входа при мёртвой cookie; остальное — телом
+// ошибки.
+func respondStatus(w http.ResponseWriter, r *http.Request, status int) {
+	if status/100 == 3 {
+		http.Redirect(w, r, "/ru/login", status)
+		return
+	}
+	http.Error(w, `{"message":"нет"}`, status)
 }
 
 func scriptStatus(script func(int64) int, n int64) int {
@@ -362,10 +418,11 @@ func TestClientBuildsRequestsFromResolvedOrigin(t *testing.T) {
 			t.Fatalf("запрос %d: Origin=%q, ожидался резолвнутый %q", i, got, cp.origin())
 		}
 	}
-	for i, got := range cp.referers() {
-		if !strings.HasPrefix(got, cp.origin()+"/") {
-			t.Fatalf("запрос %d: Referer=%q, ожидался от резолвнутого %q", i, got, cp.origin())
-		}
+	// Referer закрепляется целиком, а не префиксом: путь в нём — часть формы
+	// запроса веб-приложения портала, и его подмена обязана быть слышна.
+	wantReferers := []string{cp.origin() + "/ru/login", cp.origin() + "/ru"}
+	if got := cp.referers(); !slices.Equal(got, wantReferers) {
+		t.Fatalf("Referer'ы %v, ожидались %v", got, wantReferers)
 	}
 	// Ключ уходит в портал ровно тот, что отдал геттер.
 	if keys := cp.keys(); len(keys) != 1 || keys[0] != fixtureKey {
@@ -634,6 +691,20 @@ func TestClientCountryConfigExtraction(t *testing.T) {
 			want: fixtureConfHeaderKept,
 		},
 		{
+			// Признак строки с ключом — значение, а не подпись комментария:
+			// реализация, ищущая «# VPN Key:», отдаёт ключ подписки в файл.
+			name: "ключ в комментарии с другой подписью",
+			body: fixtureConfOtherKeyHeader,
+			want: fixtureConfHeaderKept,
+		},
+		{
+			// Ветка ссылки вырезает ключ наравне с текстовой: .conf внутри
+			// vpn:// приезжает с тем же заголовком.
+			name: "ссылка vpn:// с заголовком и ключом подписки",
+			body: `{"data":{"config":` + mustJSONString(t, vpnLinkWithConf(t, fixtureConfWithKeyHeader)) + `}}`,
+			want: fixtureConfHeaderKept,
+		},
+		{
 			// Обрамляющие пробелы срезаются: конфиг едет дальше в парсер.
 			name: "конфиг обрамлён пробелами",
 			body: `{"data":{"config":` + mustJSONString(t, "\n  "+fixtureConf+"\n\n") + `}}`,
@@ -701,6 +772,13 @@ func TestClientCountryConfigExtraction(t *testing.T) {
 				// только из названного поля.
 				name: "конфигурация лежит в поле с посторонним именем",
 				body: `{"data":{"status":"pending","hint":` + mustJSONString(t, fixtureConf) + `}}`,
+			},
+			{
+				// Имя поля ровно одно. Живая форма ответа текстовая, полей в
+				// ней нет, и список придуманных имён «на случай другой формы»
+				// — конфигурируемость под то, чего не существует.
+				name: "поле названо conf, а не config",
+				body: `{"data":{"conf":` + mustJSONString(t, fixtureConf) + `}}`,
 			},
 		}
 		for _, tc := range bad {
@@ -1142,7 +1220,7 @@ func TestNewClientSubstitutesNilHTTPClient(t *testing.T) {
 		t.Fatal("транспорт берёт прокси — запрос уйдёт мимо требования о регионе")
 	}
 	if tr.ForceAttemptHTTP2 {
-		t.Fatal("не снят ForceAttemptHTTP2: фронт зеркала на h2 отвечает EOF")
+		t.Fatal("не снят ForceAttemptHTTP2: портал на h2 отвечает EOF")
 	}
 }
 
@@ -1241,14 +1319,21 @@ func TestClientDoesNotFollowRedirects(t *testing.T) {
 }
 
 // Политика редиректов ставится на копии: переданный клиент чужой, его
-// поведение на других путях — не наше дело. Резолвер зеркала берёт ту же
-// копию: чужой хост в Location у зеркала не лучше, чем у портала.
+// поведение на других путях — не наше дело. Копия не уносит с собой хранилище
+// cookie: к нашему ручному заголовку сессии дописалась бы вторая.
 func TestNewClientDoesNotMutatePassedClient(t *testing.T) {
-	passed := &http.Client{}
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("сборка хранилища cookie: %v", err)
+	}
+	passed := &http.Client{Jar: jar}
 	c := NewClient(passed, func() string { return stubMirrorURL }, func() string { return fixtureKey }, func(string, string) {})
 
 	if passed.CheckRedirect != nil {
 		t.Fatal("политика редиректов навязана чужому объекту")
+	}
+	if passed.Jar != jar {
+		t.Fatal("хранилище cookie отобрано у чужого объекта")
 	}
 	if c.http == passed {
 		t.Fatal("клиент взят как есть — политика редиректов не поставлена")
@@ -1256,8 +1341,14 @@ func TestNewClientDoesNotMutatePassedClient(t *testing.T) {
 	if c.http.CheckRedirect == nil {
 		t.Fatal("политика редиректов не поставлена")
 	}
-	if c.mirror.client != c.http {
-		t.Fatal("резолвер зеркала работает мимо политики редиректов")
+	if c.http.Jar != nil {
+		t.Fatal("копия унесла хранилище cookie: к заголовку сессии допишется вторая")
+	}
+	// Резолвер зеркала работает переданным клиентом: запрет редиректов у него
+	// сломал бы резолв на апгрейде протокола и хвостовом слэше, а защищать
+	// там нечего — запрос без тела и без секрета.
+	if c.mirror.client != passed {
+		t.Fatal("резолвер зеркала работает не переданным клиентом")
 	}
 }
 
@@ -1311,6 +1402,126 @@ func TestClientAccountInfoScrubsKeyAtAnyDepth(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Критично: вырезание по имени поля живёт поверх вырезания по значению.
+// Портал волен отдать ключ обрезанным или в собственной кодировке — схемы в
+// значении тогда нет, а поле называется тем же vpn_key, и без чёрного списка
+// секрет уезжает в браузер.
+func TestClientAccountInfoScrubsKeyFieldsByName(t *testing.T) {
+	// Значение без «vpn://»: вырезание по значению его не узнаёт.
+	const opaque = "c2VjcmV0LXdpdGhvdXQtc2NoZW1l"
+
+	cases := []struct{ name, body, field string }{
+		{
+			name:  "vpn_key на верхнем уровне",
+			body:  `{"data":{"display_name":"п","vpn_key":"` + opaque + `"}}`,
+			field: "vpn_key",
+		},
+		{
+			name:  "vpnKey во вложенном объекте",
+			body:  `{"data":{"display_name":"п","meta":{"vpnKey":"` + opaque + `"}}}`,
+			field: "vpnKey",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cp := newFakeCP(t)
+			cp.accountBody = tc.body
+			c, _, _ := newTestClient(t, cp)
+
+			got, err := c.AccountInfo(context.Background())
+			if err != nil {
+				t.Fatalf("account-info: %v", err)
+			}
+			if strings.Contains(string(got), opaque) {
+				t.Fatalf("ключ подписки уехал наружу: %s", got)
+			}
+			if strings.Contains(string(got), tc.field) {
+				t.Fatalf("поле %q осталось: %s", tc.field, got)
+			}
+			if !strings.Contains(string(got), "display_name") {
+				t.Fatalf("соседнее поле выброшено вместе с ключом: %s", got)
+			}
+		})
+	}
+}
+
+// Критично: вырезание по значению не портит данные. Секрет заменяется
+// маркером, а не удаляется, — иначе поле со свободным текстом исчезает
+// целиком, а элемент массива выпадает со сдвигом индексов, по которым фронт
+// считает длину. Пустота проверяется после скраба: иначе ответ, от которого
+// после вычистки ничего не осталось, уходит наружу пустым объектом и читается
+// как «в подписке нет стран».
+func TestClientAccountInfoScrubKeepsShape(t *testing.T) {
+	t.Run("свободный текст остаётся полем", func(t *testing.T) {
+		cp := newFakeCP(t)
+		cp.accountBody = `{"data":{"display_name":"п","message":"ваш ключ ` + fixtureKey + ` активен"}}`
+		c, _, _ := newTestClient(t, cp)
+
+		got, err := c.AccountInfo(context.Background())
+		if err != nil {
+			t.Fatalf("account-info: %v", err)
+		}
+		if strings.Contains(string(got), "vpn://") {
+			t.Fatalf("ключ подписки уехал наружу: %s", got)
+		}
+		var fields struct {
+			Message *string `json:"message"`
+		}
+		if err := json.Unmarshal(got, &fields); err != nil {
+			t.Fatalf("ответ не разбирается: %v (%s)", err, got)
+		}
+		if fields.Message == nil {
+			t.Fatalf("поле со свободным текстом исчезло целиком: %s", got)
+		}
+		if !strings.HasPrefix(*fields.Message, "ваш ключ ") || !strings.HasSuffix(*fields.Message, " активен") {
+			t.Fatalf("текст поля испорчен: %q", *fields.Message)
+		}
+	})
+
+	t.Run("элемент массива не выпадает", func(t *testing.T) {
+		cp := newFakeCP(t)
+		cp.accountBody = `{"data":{"display_name":"п","links":["` + fixtureKey + `","нет","` + fixtureKey + `"]}}`
+		c, _, _ := newTestClient(t, cp)
+
+		got, err := c.AccountInfo(context.Background())
+		if err != nil {
+			t.Fatalf("account-info: %v", err)
+		}
+		if strings.Contains(string(got), "vpn://") {
+			t.Fatalf("ключ подписки уехал наружу: %s", got)
+		}
+		var fields struct {
+			Links []string `json:"links"`
+		}
+		if err := json.Unmarshal(got, &fields); err != nil {
+			t.Fatalf("ответ не разбирается: %v (%s)", err, got)
+		}
+		if len(fields.Links) != 3 {
+			t.Fatalf("в массиве %d элементов, ожидалось 3: индексы сдвинулись", len(fields.Links))
+		}
+		if fields.Links[1] != "нет" {
+			t.Fatalf("элемент 1 = %q, ожидался %q: индексы сдвинулись", fields.Links[1], "нет")
+		}
+	})
+
+	t.Run("вычищенный до пустоты ответ — ошибка", func(t *testing.T) {
+		cp := newFakeCP(t)
+		cp.accountBody = `{"data":{"vpn_key":"` + fixtureKey + `"}}`
+		c, _, _ := newTestClient(t, cp)
+
+		got, err := c.AccountInfo(context.Background())
+		if err == nil {
+			t.Fatalf("ответ без данных после скраба обязан быть ошибкой, получено %s", got)
+		}
+		if got != nil {
+			t.Fatalf("при ошибке данные обязаны быть пустыми, получено %s", got)
+		}
+		if !errors.Is(err, ErrServiceUnavailable) {
+			t.Fatalf("ошибка не различима сентинелом: %v", err)
+		}
+	})
 }
 
 // Критично: эхо ключа подписки в ответе не отдаётся как конфигурация. Ключ —
@@ -1410,17 +1621,28 @@ func TestClientSessionRemembersKey(t *testing.T) {
 // Критично: сессия выбирается из ответа по имени. За CDN первой приходит своя
 // cookie (__cf_bm и подобные), и «первая попавшаяся» означает мусор вместо
 // сессии во всех последующих запросах.
+// Мусор проверяется с обеих сторон: только перед сессией его переживает
+// реализация «берём последнюю», только после — «берём первую».
 func TestClientPicksSessionCookieByName(t *testing.T) {
-	cp := newFakeCP(t)
-	cp.extraCookie = "__cf_bm"
-	c, _, _ := newTestClient(t, cp)
-
-	if _, err := c.AccountInfo(context.Background()); err != nil {
-		t.Fatalf("account-info: %v", err)
+	cases := []struct{ name, before, after string }{
+		{name: "мусор перед сессией", before: "__cf_bm"},
+		{name: "мусор после сессии", after: "__cf_bm"},
+		{name: "мусор с обеих сторон", before: "__cf_bm", after: "_ga"},
 	}
-	sids := cp.sids()
-	if len(sids) != 1 || sids[0] != cp.sid(1) {
-		t.Fatalf("запрос ушёл с сессией %v, ожидалась %q", sids, cp.sid(1))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cp := newFakeCP(t)
+			cp.extraCookie, cp.trailingCookie = tc.before, tc.after
+			c, _, _ := newTestClient(t, cp)
+
+			if _, err := c.AccountInfo(context.Background()); err != nil {
+				t.Fatalf("account-info: %v", err)
+			}
+			sids := cp.sids()
+			if len(sids) != 1 || sids[0] != cp.sid(1) {
+				t.Fatalf("запрос ушёл с сессией %v, ожидалась %q", sids, cp.sid(1))
+			}
+		})
 	}
 }
 
@@ -1457,6 +1679,111 @@ func TestClientDoesNotRetryConfigDownload(t *testing.T) {
 	}
 	if n := mirrorHits.Load(); n != 2 {
 		t.Fatalf("резолвов зеркала %d, ожидалось 2: мёртвый адрес остался в кэше", n)
+	}
+}
+
+// Критично: отказ авторизации на расходной ручке лечится ре-логином. Он —
+// определённый ответ: портал запрос отверг, слот не потрачен, повтор после
+// восстановления сессии бесплатен. Запрет слепого повтора заведён под сетевой
+// обрыв, у которого исход неизвестен, и на этот случай распространяться не
+// должен: иначе протухшая сессия читается пользователем как «ключ отклонён», и
+// мастер предложит заменить рабочий ключ.
+func TestClientRelogsInOnConfigAuthFailure(t *testing.T) {
+	cp := newFakeCP(t)
+	cp.configStatus = func(n int64) int {
+		if n == 1 {
+			return http.StatusUnauthorized
+		}
+		return http.StatusOK
+	}
+	c, _, _ := newTestClient(t, cp)
+	ctx := context.Background()
+
+	if _, err := c.AccountInfo(ctx); err != nil {
+		t.Fatalf("прогрев сессии: %v", err)
+	}
+
+	got, err := c.CountryConfig(ctx, "nl")
+	if err != nil {
+		t.Fatalf("конфиг страны после ре-логина: %v", err)
+	}
+	if got != fixtureConf {
+		t.Fatalf("конфиг = %q, ожидался %q", got, fixtureConf)
+	}
+	if n := cp.logins.Load(); n != 2 {
+		t.Fatalf("входов %d, ожидалось 2 (ре-логина на отказе авторизации нет)", n)
+	}
+	if n := cp.configs.Load(); n != 2 {
+		t.Fatalf("запросов конфига %d, ожидалось 2", n)
+	}
+	sids := cp.sids()
+	if len(sids) != 3 || sids[2] != cp.sid(2) {
+		t.Fatalf("сессии запросов %v, ожидалось, что повтор пойдёт со свежей %q", sids, cp.sid(2))
+	}
+}
+
+// Критично: ответ портала с перенаправлением — это протухшая сессия, а не
+// «сервис недоступен». Веб-приложения именно так и гонят на страницу входа при
+// мёртвой cookie, и без сброса закэшированная мёртвая сессия жила бы до
+// перезапуска демона, повторяя тот же ответ на каждый вызов.
+func TestClientRelogsInOnPortalRedirect(t *testing.T) {
+	cp := newFakeCP(t)
+	cp.accountStatus = func(n int64) int {
+		if n == 1 {
+			return http.StatusFound
+		}
+		return http.StatusOK
+	}
+	c, _, _ := newTestClient(t, cp)
+
+	got, err := c.AccountInfo(context.Background())
+	if err != nil {
+		t.Fatalf("account-info после ре-логина: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("пустой ответ после ре-логина")
+	}
+	if n := cp.logins.Load(); n != 2 {
+		t.Fatalf("входов %d, ожидалось 2 (перенаправление не сбросило сессию)", n)
+	}
+	sids := cp.sids()
+	if len(sids) != 2 || sids[1] != cp.sid(2) {
+		t.Fatalf("сессии запросов %v, ожидалось, что повтор пойдёт со свежей %q", sids, cp.sid(2))
+	}
+}
+
+// Зеркало резолвится переданным клиентом, без запрета редиректов: адрес
+// зеркала вводит пользователь, и апгрейд протокола, хвостовой слэш или
+// сокращатель приезжают перенаправлением. Защищать там нечего — запрос без
+// тела и без секрета.
+func TestClientFollowsMirrorRedirect(t *testing.T) {
+	cp := newFakeCP(t)
+	var mirrorHits atomic.Int64
+	mirror := steadyMirror(t, &mirrorHits, cp.origin())
+
+	var redirects atomic.Int64
+	entry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirects.Add(1)
+		http.Redirect(w, r, mirror.URL, http.StatusMovedPermanently)
+	}))
+	t.Cleanup(entry.Close)
+
+	rec := &logRecorder{}
+	c := NewClient(cpClient(t, cp.srv), func() string { return entry.URL },
+		func() string { return fixtureKey }, rec.log)
+
+	got, err := c.AccountInfo(context.Background())
+	if err != nil {
+		t.Fatalf("резолв через перенаправление: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("пустой ответ")
+	}
+	if n := redirects.Load(); n != 1 {
+		t.Fatalf("обращений к перенаправляющему адресу %d, ожидалось 1", n)
+	}
+	if n := mirrorHits.Load(); n != 1 {
+		t.Fatalf("обращений к странице зеркала %d, ожидалось 1", n)
 	}
 }
 
@@ -1592,8 +1919,11 @@ func TestClientLogsMirrorResolveFailure(t *testing.T) {
 	if lines == "" {
 		t.Fatal("отказ резолва зеркала не оставил ни строки в журнале")
 	}
-	if !strings.Contains(lines, mirror.URL) {
-		t.Fatalf("в журнале нет адреса зеркала %q: %s", mirror.URL, lines)
+	// Своё поле, а не просто вхождение адреса: адрес и так попадает в текст
+	// чужой ошибки, и без поля утверждение переживает удаление mirror= из
+	// формата строки.
+	if !strings.Contains(lines, "mirror="+mirror.URL) {
+		t.Fatalf("в журнале нет поля mirror=%s: %s", mirror.URL, lines)
 	}
 	if strings.Contains(lines, "vpn://") {
 		t.Fatalf("секрет в журнале: %s", lines)

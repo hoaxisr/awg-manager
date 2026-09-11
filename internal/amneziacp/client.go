@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 )
@@ -93,9 +94,9 @@ type cpRequest struct {
 }
 
 // MirrorURLFunc отдаёт адрес зеркала, SubscriptionKeyFunc — ключ подписки.
-// Типы разные не ради красоты: два соседних параметра конструктора были бы оба
-// func() string, перепутать их местами компилятор не мешает, а ценой ошибки
-// стал бы ключ подписки, ушедший в сеть как адрес.
+// Имена типов — документация сигнатуры, а не защита: func-литерал приводится к
+// любому из них, поэтому перепутанные местами геттеры компилируются. Поймать
+// перестановку можно только чтением вызова.
 type MirrorURLFunc func() string
 
 // SubscriptionKeyFunc — см. MirrorURLFunc.
@@ -138,9 +139,8 @@ func NewClient(httpClient *http.Client, mirrorURL MirrorURLFunc, key Subscriptio
 	if httpClient == nil {
 		httpClient = newDirectClient()
 	}
-	httpClient = withoutRedirects(httpClient)
 	return &Client{
-		http:      httpClient,
+		http:      withoutRedirects(httpClient),
 		mirror:    NewMirror(httpClient, 0),
 		mirrorURL: mirrorURL,
 		key:       key,
@@ -149,14 +149,21 @@ func NewClient(httpClient *http.Client, mirrorURL MirrorURLFunc, key Subscriptio
 }
 
 // withoutRedirects копирует клиента и запрещает следовать редиректам. Политика
-// нужна и на пути к порталу, и на пути к зеркалу: на 307/308 Go переигрывает
-// тело запроса — ключ подписки уехал бы на хост из Location, — а на 301/302
-// документ чужого хоста приехал бы как ответ портала. С запретом 3xx доезжает
-// до проверки статуса и становится отказом. Копия, а не правка переданного
-// клиента: объект чужой, его политика — не наше дело.
+// нужна на пути к порталу: на 307/308 Go переигрывает тело запроса — ключ
+// подписки уехал бы на хост из Location, — а на 301/302 документ чужого хоста
+// приехал бы как ответ портала. С запретом 3xx доезжает до проверки статуса и
+// становится отказом. На путь к зеркалу политика не ставится: запрос туда без
+// тела и без секрета, а адрес зеркала вводит пользователь — апгрейд протокола,
+// хвостовой слэш и сокращатель приезжают перенаправлением, и запрет сломал бы
+// резолв на ровном месте.
+//
+// Копия, а не правка переданного клиента: объект чужой, его политика — не наше
+// дело. Хранилище cookie в копию не берётся: сессию мы ставим заголовком сами,
+// а жившая в хранилище вызывающего cookie дописалась бы к нему второй.
 func withoutRedirects(c *http.Client) *http.Client {
 	dup := *c
 	dup.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	dup.Jar = nil
 	return &dup
 }
 
@@ -320,6 +327,12 @@ func (c *Client) call(ctx context.Context, req cpRequest) ([]byte, string, error
 // ломать резолв остальным. Мёртвый хост, наоборот, выбрасывается из кэша даже
 // когда повтора не будет (расходный запрос, исчерпанные попытки) — иначе
 // следующая попытка пользователя пойдёт на тот же труп до конца TTL.
+//
+// repeatable запрещает только повтор после сетевого отказа: там исход неизвестен
+// — портал мог обработать расходный запрос и потерять соединение на ответе.
+// Восстановление сессии этим флагом не ограничено: отказ авторизации —
+// определённый ответ, портал запрос отверг и слот не потратил, а без повтора
+// протухшая сессия читается пользователем как отклонённый ключ.
 func (c *Client) again(ctx context.Context, rec recovery, attempt int, repeatable bool) bool {
 	if rec == recoveryNone || ctx.Err() != nil {
 		return false
@@ -328,8 +341,11 @@ func (c *Client) again(ctx context.Context, rec recovery, attempt int, repeatabl
 		// Хост в мета-теге ротируется: мёртвый адрес обязан быть добыт заново,
 		// а не дожить в кэше до конца TTL.
 		c.mirror.Invalidate()
+		if !repeatable {
+			return false
+		}
 	}
-	return repeatable && attempt+1 < maxAttempts
+	return attempt+1 < maxAttempts
 }
 
 func (c *Client) resolve(ctx context.Context) (string, error) {
@@ -494,6 +510,12 @@ func statusRecovery(code int) recovery {
 		// Протухшая cookie: войти заново и повторить.
 		return recoverySession
 	}
+	if code/100 == 3 {
+		// Перенаправление — тоже протухшая cookie: веб-приложения так и гонят
+		// на страницу входа. Без сброса мёртвая сессия осталась бы в кэше до
+		// перезапуска демона, повторяя тот же ответ на каждый вызов.
+		return recoverySession
+	}
 	return recoveryNone
 }
 
@@ -520,8 +542,9 @@ func sessionFromResponse(resp *http.Response) string {
 }
 
 // vpnLinkScheme — префикс ссылки подписки. Ключ подписки Amnezia сам является
-// vpn://-ссылкой, поэтому признак секрета в ответе портала — значение, а не
-// имя поля: имя живого ответа перечислить нельзя, а «vpn://» узнаётся само.
+// vpn://-ссылкой, поэтому значение — признак секрета наравне с именем поля
+// (см. subscriptionKeyFields): все имена живого ответа перечислить нельзя, а
+// «vpn://» узнаётся само.
 const vpnLinkScheme = "vpn://"
 
 // decodeJSON разбирает ответ портала с сохранением точности чисел: через
@@ -561,50 +584,82 @@ func scrubAccountInfo(raw []byte) (json.RawMessage, error) {
 			return nil, fmt.Errorf("%w: конверт data в account-info — не объект", ErrServiceUnavailable)
 		}
 	}
+	// Пустота проверяется ПОСЛЕ скраба: ответ, от которого после вычистки
+	// ничего не осталось, наружу уходить не должен — пустой каталог
+	// пользователь прочитает как «в подписке нет стран».
+	scrubSecrets(fields)
 	if len(fields) == 0 {
 		return nil, fmt.Errorf("%w: account-info без данных", ErrServiceUnavailable)
 	}
 
-	out, err := json.Marshal(withoutSecrets(fields))
+	out, err := json.Marshal(fields)
 	if err != nil {
 		return nil, fmt.Errorf("%w: сборка account-info: %w", ErrServiceUnavailable, err)
 	}
 	return out, nil
 }
 
-// withoutSecrets возвращает копию значения без строк, несущих ключ подписки.
-// Обход рекурсивный и по значению, а не чёрный список имён полей на верхнем
-// уровне: ключ течёт вложенным объектом, элементом массива, переименованным
-// полем, вложенным конвертом и текстом сообщения об ошибке — все пять форм
-// чёрный список пропускает.
-func withoutSecrets(v any) any {
+// subscriptionKeyFields — имена полей, несущих сам ключ подписки. Чёрный список
+// живёт поверх поиска по значению, а не вместо него: портал волен отдать ключ
+// обрезанным или в своей кодировке, схемы в значении тогда нет, а имя поля то
+// же. Обратное тоже верно — имена живого ответа перечислить нельзя, — поэтому
+// нужны оба признака.
+var subscriptionKeyFields = []string{"vpn_key", "vpnKey"}
+
+// secretMarker заменяет вырезанный секрет. Замена, а не удаление: удаление
+// уносит поле со свободным текстом целиком и сдвигает индексы массива, по
+// которым фронт считает длину.
+const secretMarker = "[вырезано]"
+
+// scrubSecrets вычищает ключ подписки из разобранного ответа портала на месте.
+// Копии нет сознательно: значение только что разобрано здесь же, владелец у
+// него один, а вторая копия дерева — самый дорогой путь этой фичи на роутере
+// со 128 МБ. Удаление ключей во время обхода map спецификация Go разрешает:
+// удалённые записи просто не выдаются.
+//
+// Обход рекурсивный, признаков два — имя поля и значение: ключ течёт вложенным
+// объектом, элементом массива, переименованным полем, вложенным конвертом и
+// текстом сообщения об ошибке.
+func scrubSecrets(v any) {
 	switch x := v.(type) {
 	case map[string]any:
-		out := make(map[string]any, len(x))
 		for k, item := range x {
-			if carriesKey(item) {
+			if slices.Contains(subscriptionKeyFields, k) {
+				delete(x, k)
 				continue
 			}
-			out[k] = withoutSecrets(item)
+			if s, isStr := item.(string); isStr {
+				x[k] = maskSecret(s)
+				continue
+			}
+			scrubSecrets(item)
 		}
-		return out
 	case []any:
-		out := make([]any, 0, len(x))
-		for _, item := range x {
-			if carriesKey(item) {
+		for i, item := range x {
+			if s, isStr := item.(string); isStr {
+				x[i] = maskSecret(s)
 				continue
 			}
-			out = append(out, withoutSecrets(item))
+			scrubSecrets(item)
 		}
-		return out
-	default:
-		return v
 	}
 }
 
-func carriesKey(v any) bool {
-	s, ok := v.(string)
-	return ok && strings.Contains(s, vpnLinkScheme)
+// maskSecret заменяет маркером каждую vpn://-ссылку в строке, оставляя
+// остальной текст на месте.
+func maskSecret(s string) string {
+	for {
+		at := strings.Index(s, vpnLinkScheme)
+		if at < 0 {
+			return s
+		}
+		// Ссылка кончается там, где начинается пробел: в base64url его нет.
+		end := len(s)
+		if i := strings.IndexFunc(s[at:], unicode.IsSpace); i >= 0 {
+			end = at + i
+		}
+		s = s[:at] + secretMarker + s[end:]
+	}
 }
 
 // errNoConf — внутренний признак «в этой строке конфигурации нет».
@@ -616,7 +671,11 @@ var errNoConf = errors.New("конфигурации нет")
 // нельзя: ключ подписки сам валидная vpn://-ссылка, и его эхо в ответе-ошибке
 // уехало бы пользователю как конфигурация — чужой регион и приватный ключ всей
 // подписки в файле туннеля.
-var confFields = []string{"conf", "config", "last_config", "wireguard_config"}
+//
+// Имя одно и живым ответом НЕ подтверждено: в текстовой форме полей нет вовсе,
+// «config» здесь — самая вероятная догадка. Список из нескольких придуманных
+// имён был бы конфигурируемостью под форму, которой не существует.
+var confFields = []string{"config"}
 
 // extractConf достаёт .conf из ответа портала.
 //
