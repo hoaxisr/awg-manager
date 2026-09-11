@@ -553,6 +553,54 @@ func TestSetupEndpointRoute_KeepsPrivateEndpoint(t *testing.T) {
 	}
 }
 
+// F231: остановленный туннель не держит host-route. Карта маршрутов должна
+// означать «маршрут стоит», иначе остановленный сосед вечно запрещает снятие.
+func TestStop_RemovesEndpointRoute(t *testing.T) {
+	t.Run("маршрут снят", func(t *testing.T) {
+		o, poster, rec := newOS5Lifecycle(t)
+		if _, err := o.RestoreEndpointTracking(context.Background(), "awg10", "203.0.113.5:51820"); err != nil {
+			t.Fatalf("RestoreEndpointTracking: %v", err)
+		}
+
+		if err := o.Stop(context.Background(), "awg10"); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+
+		if !hasCall(rec.Calls, "/opt/sbin/ip route del 203.0.113.5/32") {
+			t.Errorf("маршрут из ядра не снят: %v", rec.Calls)
+		}
+		if !hasPayload(poster.payloads, `{"ip":{"route":{"host":"203.0.113.5","no":true}}}`) {
+			t.Errorf("запись host-route не снята в NDMS: %v", poster.payloads)
+		}
+		if got := o.GetTrackedEndpointIP("awg10"); got != "" {
+			t.Errorf("остановленный туннель остался в карте: %q", got)
+		}
+	})
+
+	t.Run("маршрут держит работающий сосед", func(t *testing.T) {
+		o, poster, rec := newOS5Lifecycle(t)
+		for _, id := range []string{"awg10", "awg11"} {
+			if _, err := o.RestoreEndpointTracking(context.Background(), id, "203.0.113.5:51820"); err != nil {
+				t.Fatalf("RestoreEndpointTracking %s: %v", id, err)
+			}
+		}
+
+		if err := o.Stop(context.Background(), "awg10"); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+
+		if hasCall(rec.Calls, "/opt/sbin/ip route del 203.0.113.5/32") {
+			t.Errorf("маршрут снят, хотя им пользуется awg11: %v", rec.Calls)
+		}
+		if hasPayload(poster.payloads, `{"ip":{"route":{"host":"203.0.113.5","no":true}}}`) {
+			t.Errorf("маршрут снят в NDMS, хотя им пользуется awg11: %v", poster.payloads)
+		}
+		if got := o.GetTrackedEndpointIP("awg11"); got != "203.0.113.5" {
+			t.Errorf("сосед потерял свою запись: %q", got)
+		}
+	})
+}
+
 // M1: у туннеля, которого нет в карте (не поднимался с рестарта демона),
 // снимать нечего. Без раннего возврата в роутер уехали бы `ip route del /32` и
 // host-route с пустым адресом.

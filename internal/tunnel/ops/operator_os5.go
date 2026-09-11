@@ -363,6 +363,12 @@ func (o *OperatorOS5Impl) Stop(ctx context.Context, tunnelID string) error {
 	// InterfaceDown sets conf: disabled — NDMS won't bring it up on its own.
 	o.interfaceDownBestEffort(ctx, tunnelID, names.NDMSName)
 
+	// Остановленному туннелю host-route не нужен, а карта маршрутов обязана
+	// означать «маршрут стоит», а не «туннель когда-то стартовал»: иначе
+	// остановленный сосед вечно держит чужой адрес от снятия (F231). Сосед,
+	// который РАБОТАЕТ, маршрут удержит — снятие идёт общим путём с ref-count.
+	o.removeHostRouteIfUnused(ctx, "stop", tunnelID, "")
+
 	// Save NDMS config so router UI reflects conf: disabled.
 
 	o.logInfo("stop", tunnelID, "Tunnel stopped (link down, conf: disabled)")
