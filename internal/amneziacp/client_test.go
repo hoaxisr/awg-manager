@@ -15,6 +15,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,9 +26,26 @@ import (
 // Фикстуры: ключи и адреса выдуманные — репозиторий публичный. Значения
 // намеренно не круглые и не граничные, чтобы совпадение с дефолтом было видно.
 const (
-	fixtureKey      = "vpn://test-key-7f3a"
-	fixtureOtherKey = "vpn://test-key-b21c"
+	fixtureKeyBody      = "test-key-7f3a"
+	fixtureOtherKeyBody = "test-key-b21c"
+
+	fixtureKey      = vpnLinkScheme + fixtureKeyBody
+	fixtureOtherKey = vpnLinkScheme + fixtureOtherKeyBody
 )
+
+// leakedSecret возвращает признак утечки ключа подписки, найденный в тексте,
+// или пустую строку. Схемы недостаточно: скраб, снёсший только "vpn://" и
+// оставивший тело ключа, проходит проверку на схему и проверку на ключ целиком
+// — обе, потому что фикстурный ключ со схемы начинается. Наружу при этом уехал
+// секрет. Поэтому тело ключа — отдельный признак.
+func leakedSecret(text string) string {
+	for _, probe := range []string{vpnLinkScheme, fixtureKeyBody, fixtureOtherKeyBody} {
+		if strings.Contains(text, probe) {
+			return probe
+		}
+	}
+	return ""
+}
 
 // fixtureConf — то, что подписка отдаёт за страну: полный набор параметров
 // AWG 3.x живого ответа (Приложение А плана), а не три строки. Беднее живой
@@ -728,7 +746,7 @@ func TestClientCountryConfigExtraction(t *testing.T) {
 			}
 			// Ключ подписки не имеет права доехать до файла туннеля ни в
 			// одной из форм ответа.
-			if strings.Contains(got, "vpn://") {
+			if leakedSecret(got) != "" {
 				t.Fatalf("ключ подписки уехал в конфигурацию: %q", got)
 			}
 		})
@@ -870,10 +888,10 @@ func assertScrubbed(t *testing.T, body string) {
 	}
 	// Ищем не имя поля, а сам секрет: скраб, вырезающий только известное имя
 	// из известного конверта, обязан краснеть на второй форме ответа.
-	if strings.Contains(string(got), "vpn://") {
+	if leakedSecret(string(got)) != "" {
 		t.Fatalf("ключ подписки уехал наружу: %s", got)
 	}
-	if strings.Contains(rec.all(), "vpn://") {
+	if leakedSecret(rec.all()) != "" {
 		t.Fatalf("ключ подписки уехал в журнал: %s", rec.all())
 	}
 	// Остальные поля обязаны доехать: пустой каталог пользователь прочитает
@@ -1190,7 +1208,7 @@ func TestClientLogsResolvedOriginWithoutSecrets(t *testing.T) {
 	if !strings.Contains(lines, "cp_http=200") {
 		t.Fatalf("в журнале нет кода ответа портала: %s", lines)
 	}
-	if strings.Contains(lines, fixtureKey) || strings.Contains(lines, "vpn://") {
+	if leakedSecret(lines) != "" {
 		t.Fatalf("ключ подписки попал в журнал: %s", lines)
 	}
 	if strings.Contains(lines, cp.sid(1)) {
@@ -1243,7 +1261,7 @@ func TestClientConcurrentAccountInfo(t *testing.T) {
 				t.Errorf("вызов %d: %v", i, err)
 				return
 			}
-			if strings.Contains(string(got), "vpn://") {
+			if leakedSecret(string(got)) != "" {
 				t.Errorf("вызов %d: ключ подписки уехал наружу", i)
 			}
 		}(i)
@@ -1312,7 +1330,7 @@ func TestClientDoesNotFollowRedirects(t *testing.T) {
 			if keys := foreign.keys(); len(keys) != 0 {
 				t.Fatalf("ключ подписки уехал на чужой хост: %v", keys)
 			}
-			if strings.Contains(rec.all(), "vpn://") {
+			if leakedSecret(rec.all()) != "" {
 				t.Fatalf("ключ подписки попал в журнал: %s", rec.all())
 			}
 		})
@@ -1388,10 +1406,10 @@ func TestClientAccountInfoScrubsKeyAtAnyDepth(t *testing.T) {
 			if err != nil {
 				t.Fatalf("account-info: %v", err)
 			}
-			if strings.Contains(string(got), "vpn://") {
+			if leakedSecret(string(got)) != "" {
 				t.Fatalf("ключ подписки уехал наружу: %s", got)
 			}
-			if strings.Contains(rec.all(), "vpn://") {
+			if leakedSecret(rec.all()) != "" {
 				t.Fatalf("ключ подписки уехал в журнал: %s", rec.all())
 			}
 			var fields map[string]json.RawMessage
@@ -1473,7 +1491,7 @@ func TestClientAccountInfoScrubKeepsShape(t *testing.T) {
 		if err != nil {
 			t.Fatalf("account-info: %v", err)
 		}
-		if strings.Contains(string(got), "vpn://") {
+		if leakedSecret(string(got)) != "" {
 			t.Fatalf("ключ подписки уехал наружу: %s", got)
 		}
 		var fields struct {
@@ -1499,7 +1517,7 @@ func TestClientAccountInfoScrubKeepsShape(t *testing.T) {
 		if err != nil {
 			t.Fatalf("account-info: %v", err)
 		}
-		if strings.Contains(string(got), "vpn://") {
+		if leakedSecret(string(got)) != "" {
 			t.Fatalf("ключ подписки уехал наружу: %s", got)
 		}
 		var fields struct {
@@ -1538,6 +1556,38 @@ func TestClientAccountInfoScrubKeepsShape(t *testing.T) {
 // адреса, который задаёт пользователь, то есть вход не доверенный, а целевое
 // железо — MIPS-роутер: реализация, пересобирающая всю строку на каждом
 // вхождении и ищущая каждый раз с начала, на мегабайте считает десятки секунд.
+// Оба списка имён сопоставляются через strings.ToLower, поэтому запись с
+// заглавной буквой в них была бы мёртвой: сопоставление до неё не доберётся, а
+// автор записи будет считать поле прикрытым. Инвариант дешевле стеречь, чем
+// ловить по факту утечки.
+func TestSecretFieldNamesAreLowercase(t *testing.T) {
+	for _, list := range []struct {
+		name  string
+		names []string
+	}{
+		{"subscriptionKeyFields", subscriptionKeyFields},
+		{"confFields", confFields},
+	} {
+		for _, name := range list.names {
+			if name != strings.ToLower(name) {
+				t.Errorf("%s: запись %q не в нижнем регистре — сопоставление до неё не дойдёт", list.name, name)
+			}
+		}
+	}
+}
+
+// Сохранность текста ВОКРУГ вырезанного, когда вхождений несколько: замена
+// маркером обязана оставить на месте и то, что между ссылками. Проверка
+// секундомером (TestMaskSecretStaysLinear) этого не видит, а в ответе портала
+// свободный текст с двумя ссылками — обычное дело.
+func TestMaskSecretKeepsTextBetweenOccurrences(t *testing.T) {
+	in := "до " + fixtureKey + " между " + fixtureOtherKey + " после"
+	want := "до " + secretMarker + " между " + secretMarker + " после"
+	if got := maskSecret(in); got != want {
+		t.Fatalf("maskSecret(%q) = %q, ожидалось %q", in, got, want)
+	}
+}
+
 func TestMaskSecretStaysLinear(t *testing.T) {
 	const occurrences = 44000
 	var b strings.Builder
@@ -1803,41 +1853,58 @@ func TestClientRelogsInOnPortalRedirect(t *testing.T) {
 // успеха, которую наш запрет редиректов превращает в отказ. Повтор в этом
 // случае съедает второй слот устройства подписки.
 func TestClientDoesNotRetryConfigRedirect(t *testing.T) {
-	cp := newFakeCP(t)
-	cp.configStatus = func(n int64) int {
-		if n == 1 {
-			return http.StatusFound
-		}
-		return http.StatusOK
-	}
-	c, _, _ := newTestClient(t, cp)
-	ctx := context.Background()
+	// Перебор кодов, а не один 302: гейт повтора устроен как «всё, кроме
+	// отказа авторизации», и правка, выделившая из 3xx один код обратно в
+	// протухшую сессию, вернула бы двойной расход слота, оставаясь зелёной на
+	// тесте с единственным кодом. 307/308 здесь важнее прочих: именно на них
+	// Go переигрывает тело запроса на хост из Location, то есть ключ подписки
+	// уехал бы на чужой адрес, не запрети мы редиректы.
+	for _, code := range []int{
+		http.StatusMovedPermanently,
+		http.StatusFound,
+		http.StatusSeeOther,
+		http.StatusTemporaryRedirect,
+		http.StatusPermanentRedirect,
+	} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			cp := newFakeCP(t)
+			cp.configStatus = func(n int64) int {
+				if n == 1 {
+					return code
+				}
+				return http.StatusOK
+			}
+			c, _, _ := newTestClient(t, cp)
+			ctx := context.Background()
 
-	if _, err := c.AccountInfo(ctx); err != nil {
-		t.Fatalf("прогрев сессии: %v", err)
-	}
+			if _, err := c.AccountInfo(ctx); err != nil {
+				t.Fatalf("прогрев сессии: %v", err)
+			}
 
-	got, err := c.CountryConfig(ctx, "nl")
-	if err == nil {
-		t.Fatalf("перенаправление обязано быть отказом, получено %q", got)
-	}
-	if !errors.Is(err, ErrServiceUnavailable) {
-		t.Fatalf("ошибка не различима сентинелом: %v", err)
-	}
-	if n := cp.configs.Load(); n != 1 {
-		t.Fatalf("запросов конфига %d, ожидался 1: повтор тратит второй слот устройства", n)
-	}
-	if n := cp.logins.Load(); n != 1 {
-		t.Fatalf("входов %d, ожидался 1: повтора не было, входить заново незачем", n)
-	}
+			got, err := c.CountryConfig(ctx, "nl")
+			if err == nil {
+				t.Fatalf("перенаправление обязано быть отказом, получено %q", got)
+			}
+			if !errors.Is(err, ErrServiceUnavailable) {
+				t.Fatalf("ошибка не различима сентинелом: %v", err)
+			}
+			if n := cp.configs.Load(); n != 1 {
+				t.Fatalf("запросов конфига %d, ожидался 1: повтор тратит второй слот устройства", n)
+			}
+			if n := cp.logins.Load(); n != 1 {
+				t.Fatalf("входов %d, ожидался 1: повтора не было, входить заново незачем", n)
+			}
 
-	// Сессию перенаправление обязано уронить: иначе мёртвая cookie живёт до
-	// перезапуска демона, повторяя тот же ответ на каждый вызов.
-	if _, err := c.AccountInfo(ctx); err != nil {
-		t.Fatalf("account-info после отказа: %v", err)
-	}
-	if n := cp.logins.Load(); n != 2 {
-		t.Fatalf("входов %d, ожидалось 2: мёртвая сессия осталась в кэше", n)
+			// Сессию перенаправление обязано уронить: иначе мёртвая cookie
+			// живёт до перезапуска демона, повторяя тот же ответ на каждый
+			// вызов.
+			if _, err := c.AccountInfo(ctx); err != nil {
+				t.Fatalf("account-info после отказа: %v", err)
+			}
+			if n := cp.logins.Load(); n != 2 {
+				t.Fatalf("входов %d, ожидалось 2: мёртвая сессия осталась в кэше", n)
+			}
+		})
 	}
 }
 
@@ -2014,7 +2081,7 @@ func TestClientLogsMirrorResolveFailure(t *testing.T) {
 	if !strings.Contains(lines, "mirror="+mirror.URL) {
 		t.Fatalf("в журнале нет поля mirror=%s: %s", mirror.URL, lines)
 	}
-	if strings.Contains(lines, "vpn://") {
+	if leakedSecret(lines) != "" {
 		t.Fatalf("секрет в журнале: %s", lines)
 	}
 	if n := cp.hits(); n != 0 {
