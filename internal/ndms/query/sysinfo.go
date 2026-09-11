@@ -17,9 +17,10 @@ type SystemInfoStore struct {
 	getter Getter
 	log    Logger
 
-	mu     sync.RWMutex
-	loaded bool
-	value  ndms.Version
+	mu      sync.RWMutex
+	loaded  bool
+	adopted bool // значение пришло не от RCI, а от запасного канала
+	value   ndms.Version
 
 	initSF *cache.SingleFlight[struct{}, ndms.Version]
 }
@@ -86,6 +87,29 @@ func (s *SystemInfoStore) Init(ctx context.Context) error {
 		return v, nil
 	})
 	return err
+}
+
+// Adopt принимает версию, добытую другим каналом (ndmc через unix-сокет —
+// см. internal/sys/ndmsinfo/ndmc.go), когда RCI не ответил. Уже загруженное
+// значение не трогает: живой ответ RCI считается точнее.
+func (s *SystemInfoStore) Adopt(v ndms.Version) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.loaded {
+		return
+	}
+	s.value = v
+	s.loaded = true
+	s.adopted = true
+}
+
+// Adopted сообщает, что версия получена НЕ от RCI, а запасным каналом.
+// Признак живёт рядом с данными, а не глобальной переменной: его читает
+// диагностика, для которой «store наполнен» больше не равно «RCI жив».
+func (s *SystemInfoStore) Adopted() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.adopted
 }
 
 // Get returns the cached Version. Returns ErrNotInitialized if Init was

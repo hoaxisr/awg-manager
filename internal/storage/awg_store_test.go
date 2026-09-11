@@ -211,16 +211,35 @@ func TestAWGTunnelStoreExists(t *testing.T) {
 	}
 }
 
-func TestAWGTunnelStoreNextAvailableIDOS4Fallback(t *testing.T) {
+// Ветка OS4 проверяется через чистую функцию: раньше её покрывал только
+// глобальный фолбэк osdetect, а он теперь отдаёт 5.x (см. следующий тест).
+func TestNextAvailableIDOS4Kernel(t *testing.T) {
+	tunnels := []AWGTunnel{
+		{ID: "awgm0", Name: "zero"},
+		{ID: "awgm2", Name: "two"},
+		{ID: "awg10", Name: "os5-style"},
+	}
+
+	got, err := nextAvailableID(tunnels, "kernel", false, occupancyOf(), context.Background())
+	if err != nil {
+		t.Fatalf("nextAvailableID() error = %v", err)
+	}
+	if got != "awgm1" {
+		t.Fatalf("nextAvailableID() = %q, want awgm1", got)
+	}
+}
+
+// Версия ОС неизвестна — считаем 5.x. Фолбэк развёрнут осознанно
+// (osdetect.Get): оператор OS5 на четвёрке падает громко, оператор OS4 на
+// пятёрке ломает тихо. До этой ветки вообще не должно доходить — версию
+// добывают два независимых канала, RCI и ndmc.
+func TestAWGTunnelStoreNextAvailableIDUnknownOSAssumesOS5(t *testing.T) {
 	ndmsinfo.Reset()
 	t.Cleanup(ndmsinfo.Reset)
 
 	store, _ := newTestAWGStore(t)
 
 	if err := store.Create(&AWGTunnel{ID: "awgm0", Name: "zero"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Create(&AWGTunnel{ID: "awgm2", Name: "two"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Create(&AWGTunnel{ID: "awg10", Name: "os5-style"}); err != nil {
@@ -231,8 +250,11 @@ func TestAWGTunnelStoreNextAvailableIDOS4Fallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NextAvailableID() error = %v", err)
 	}
-	if got != "awgm1" {
-		t.Fatalf("NextAvailableID() = %q, want awgm1", got)
+	if got == "awgm1" {
+		t.Fatal("NextAvailableID() дал имя OS4 — фолбэк снова четвёрка?")
+	}
+	if len(got) < 4 || got[:3] != "awg" || got == "awg10" {
+		t.Fatalf("NextAvailableID() = %q, ожидали свободное имя в стиле OS5", got)
 	}
 }
 

@@ -21,6 +21,33 @@ var (
 	store   *query.SystemInfoStore
 )
 
+// SourceRCI и SourceNdmc — значения Source().
+const (
+	SourceRCI  = "rci"
+	SourceNdmc = "ndmc"
+)
+
+// Source сообщает, каким каналом получена версия, или "" если она неизвестна.
+// Нужен, чтобы переход на запасной канал был ВИДЕН: молчаливый успех запасного
+// пути ничем не отличался бы от обычного, а он означает, что RCI не ответил.
+// Своего состояния не держит — спрашивает store, где признак лежит рядом с
+// данными и не может с ними разойтись.
+func Source() string {
+	storeMu.RLock()
+	s := store
+	storeMu.RUnlock()
+	if s == nil {
+		return ""
+	}
+	if _, err := s.Get(); err != nil {
+		return ""
+	}
+	if s.Adopted() {
+		return SourceNdmc
+	}
+	return SourceRCI
+}
+
 // Init initialises the version store reference and blocks until the
 // underlying SystemInfoStore is loaded or the timeout expires. Retries
 // every second on failure (e.g. NDMS not yet up at boot).
@@ -29,7 +56,13 @@ func Init(ctx context.Context, sysInfo *query.SystemInfoStore, timeout time.Dura
 	store = sysInfo
 	storeMu.Unlock()
 
-	deadline := time.After(timeout)
+	// Дедлайн держим явным временем, а не каналом в select. В select он
+	// конкурировал с тикером, и когда готовы оба (RCI висит дольше тикa —
+	// у HTTP-клиента свой бэкстоп 30 с), Go выбирает ветку СЛУЧАЙНО. Из-за
+	// этого запасной канал ценой 70 мс открывался через непредсказуемое
+	// число 30-секундных попыток, а сообщение «not available after 1s»
+	// врало про фактические 18 с.
+	deadlineAt := time.Now().Add(timeout)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
@@ -38,9 +71,17 @@ func Init(ctx context.Context, sysInfo *query.SystemInfoStore, timeout time.Dura
 	}
 
 	for {
-		select {
-		case <-deadline:
+		if !time.Now().Before(deadlineAt) {
+			// RCI молчит — спрашиваем ndm вторым каналом. Он ходит через
+			// unix-сокет, то есть не зависит ни от HTTP на :79, ни от того,
+			// чем этот :79 занят.
+			if v, err := versionFromNdmc(ctx); err == nil {
+				sysInfo.Adopt(v)
+				return nil
+			}
 			return fmt.Errorf("NDMS not available after %s", timeout)
+		}
+		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
