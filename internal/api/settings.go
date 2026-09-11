@@ -297,8 +297,10 @@ func settingsForResponse(s *storage.Settings) *storage.Settings {
 	// Пусто в хранилище означает «зеркало по умолчанию». Наружу отдаётся
 	// действующий адрес, чтобы у фронта не было собственной копии литерала;
 	// правило одно на всех читателей — storage.EffectiveAmneziaMirrorURL.
-	// Обратный ход (подставленный дефолт вернулся PATCH-ем) схлопывает
-	// normalizeAmneziaMirrorURL на записи.
+	// Оно же не выпускает наружу непригодное хранимое значение: эхо мусора
+	// вернулось бы PATCH-ем (страница шлёт тело ответа целиком) и заперло бы
+	// сохранение всех настроек 400-м. Обратный ход (подставленный дефолт
+	// вернулся PATCH-ем) схлопывает normalizeAmneziaMirrorURL на записи.
 	out.AmneziaPremiumMirrorURL = storage.EffectiveAmneziaMirrorURL(out.AmneziaPremiumMirrorURL)
 	return &out
 }

@@ -35,8 +35,7 @@ func TestSettingsRoundTrip_ResponseBodyPatchedBack_KeepsSecrets(t *testing.T) {
 
 	marks := map[string]string{}
 	if err := store.Update(func(cur *storage.Settings) error {
-		fillSecretMarkers(t, reflect.ValueOf(cur).Elem(), "Settings", marks, 0)
-		return nil
+		return fillSecretMarkers(reflect.ValueOf(cur).Elem(), "Settings", marks, 0)
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

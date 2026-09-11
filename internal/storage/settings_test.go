@@ -908,3 +908,33 @@ func TestEffectiveAmneziaMirrorURL(t *testing.T) {
 		t.Fatalf("действующий адрес = %q, want %q", got, custom)
 	}
 }
+
+// Непригодное хранимое значение считается отсутствующим: действующим
+// адресом становится дефолт.
+//
+// Значение из одних пробелов — то же «пусто», записанное неаккуратно.
+// Испорченный адрес (downgrade, ручная правка) нельзя ни отдать клиенту CP,
+// ни эхо-ить в ответ настроек: страница шлёт тело ответа целиком, и мусор
+// вернулся бы PATCH-ем, получая 400 на каждое сохранение.
+func TestEffectiveAmneziaMirrorURL_UnusableStoredMeansDefault(t *testing.T) {
+	cases := []struct {
+		name   string
+		stored string
+		want   string
+	}{
+		{"одни пробелы", "   ", DefaultAmneziaMirrorURL},
+		{"не адрес вовсе", "не адрес вовсе", DefaultAmneziaMirrorURL},
+		{"не https", "http://mirror.test/cp", DefaultAmneziaMirrorURL},
+		{"с user:pass@", "https://u-test:p-test@mirror.test/cp", DefaultAmneziaMirrorURL},
+		// Годный адрес пробелы по краям не портят — их срезает то же
+		// правило, что делает «одни пробелы» пустым значением.
+		{"годный адрес в пробелах", "  https://mirror.test/cp  ", "https://mirror.test/cp"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := EffectiveAmneziaMirrorURL(tc.stored); got != tc.want {
+				t.Fatalf("действующий адрес = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

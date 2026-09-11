@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -226,9 +227,16 @@ func TestUpdate_AmneziaMirrorURLValidation(t *testing.T) {
 }
 
 // Испорченный адрес, УЖЕ лежащий в хранилище (downgrade, ручная правка), не
-// должен запирать сохранение остальных настроек: валидируется только
-// присланное поле.
-func TestUpdate_StoredBrokenMirrorURL_DoesNotBlockOtherSettings(t *testing.T) {
+// должен запирать страницу настроек — и уходит из файла сам.
+//
+// Проверяется тот круговорот, который единственно и бывает у реального
+// фронта: страница шлёт обратно тело ответа ЦЕЛИКОМ
+// (api.updateSettings({ ...settings, ... })), так что поле адреса в PATCH
+// есть ВСЕГДА и всегда проходит валидацию. Эхо хранимого мусора давало бы
+// 400 на каждое сохранение; наружу вместо него уходит дефолт
+// (storage.EffectiveAmneziaMirrorURL), возвращается тем же PATCH-ем и
+// схлопывается в пустое — мусор из settings.json вычищается сам.
+func TestUpdate_StoredBrokenMirrorURL_RoundTripHeals(t *testing.T) {
 	h, store := newSettingsHandlerForTest(t)
 	if err := store.Update(func(cur *storage.Settings) error {
 		cur.AmneziaPremiumMirrorURL = "не адрес вовсе"
@@ -237,16 +245,35 @@ func TestUpdate_StoredBrokenMirrorURL_DoesNotBlockOtherSettings(t *testing.T) {
 		t.Fatalf("seed broken mirror: %v", err)
 	}
 
-	rr := perform(h.Update, http.MethodPost, "/settings/update", `{"usageLevel":"expert"}`)
+	rr := perform(h.Get, http.MethodGet, "/settings/get", "")
 	if rr.Code != http.StatusOK {
-		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("get: code=%d body=%s", rr.Code, rr.Body.String())
 	}
+	data, _ := decodeJSONBody(t, rr)["data"].(map[string]any)
+	if got, _ := data["amneziaPremiumMirrorUrl"].(string); got != storage.DefaultAmneziaMirrorURL {
+		t.Fatalf("в ответе эхо хранимого %q, want дефолт %q", got, storage.DefaultAmneziaMirrorURL)
+	}
+
+	// Тело ответа целиком обратно, как на любом щелчке тумблером.
+	data["usageLevel"] = "expert"
+	body, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	rr = perform(h.Update, http.MethodPost, "/settings/update", string(body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+
 	snap, err := store.Snapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if snap.UsageLevel != "expert" {
 		t.Fatalf("usageLevel = %q, want expert", snap.UsageLevel)
+	}
+	if snap.AmneziaPremiumMirrorURL != "" {
+		t.Fatalf("мусор остался в хранилище: %q", snap.AmneziaPremiumMirrorURL)
 	}
 }
 
@@ -291,13 +318,29 @@ func TestUpdate_AmneziaMirrorURL_Rejected(t *testing.T) {
 	cases := []struct {
 		name string
 		sent string
+		// wantMsg — кусок текста отказа, когда он важен сам по себе.
+		wantMsg string
 	}{
 		// user:pass@ лёг бы в settings.json (бэкап, поддержка), а начало
 		// строки показывало бы знакомое имя вместо настоящего хоста.
-		{"userinfo", "https://u-test:p-test@mirror.test/cp"},
-		{"пустой хост", "https:///cp"},
-		{"фрагмент", "https://mirror.test/cp#anchor"},
-		{"длиннее предела", "https://mirror.test/cp?m-path=/" + strings.Repeat("a", maxAmneziaMirrorURLLen)},
+		{name: "userinfo", sent: "https://u-test:p-test@mirror.test/cp"},
+		{name: "пустой хост", sent: "https:///cp"},
+		{name: "фрагмент", sent: "https://mirror.test/cp#anchor"},
+		// Пустой фрагмент url.Parse не отличает от его отсутствия (признака
+		// «решётка была» у url.URL нет), а решётка сохранилась бы в файле.
+		{name: "пустой фрагмент", sent: "https://mirror.test/cp#"},
+		{
+			name: "длиннее предела",
+			sent: "https://mirror.test/cp?m-path=/" + strings.Repeat("a", storage.MaxAmneziaMirrorURLLen),
+		},
+		// Предел считается в БАЙТАХ — ровно в них адрес уезжает в запрос и на
+		// флеш. Символов здесь вдвое меньше предела, байт — больше; текст
+		// отказа обязан называть ту же единицу, что считает код.
+		{
+			name:    "длиннее предела в байтах, но не в символах",
+			sent:    "https://mirror.test/cp?m-path=/" + strings.Repeat("я", storage.MaxAmneziaMirrorURLLen/2),
+			wantMsg: fmt.Sprintf("длиннее %d байт", storage.MaxAmneziaMirrorURLLen),
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -312,6 +355,9 @@ func TestUpdate_AmneziaMirrorURL_Rejected(t *testing.T) {
 			}
 			if !strings.Contains(rr.Body.String(), "INVALID_AMNEZIA_MIRROR_URL") {
 				t.Fatalf("нет кода INVALID_AMNEZIA_MIRROR_URL: %s", rr.Body.String())
+			}
+			if tc.wantMsg != "" && !strings.Contains(rr.Body.String(), tc.wantMsg) {
+				t.Fatalf("в отказе нет %q: %s", tc.wantMsg, rr.Body.String())
 			}
 			snap, err := store.Snapshot()
 			if err != nil {

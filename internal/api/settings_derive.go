@@ -2,10 +2,8 @@ package api
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -103,9 +101,14 @@ func (h *SettingsHandler) deriveSettingsHead(cur *storage.Settings, patch *stora
 	// Адрес зеркала Amnezia CP. Трогаем и валидируем ТОЛЬКО присланное: тот
 	// же контракт, что у singboxBootstrapDNS в хвосте — испорченное значение,
 	// уже лежащее в settings.json (downgrade, ручная правка), иначе заперло бы
-	// сохранение ВСЕХ остальных настроек.
+	// сохранение ВСЕХ остальных настроек. Наружу такое значение не уходит:
+	// storage.EffectiveAmneziaMirrorURL отдаёт вместо него дефолт, и
+	// круговорот «ответ → PATCH» вычищает мусор из файла.
+	//
+	// Признак годности — общий со storage, здесь к нему добавляется только
+	// код ошибки.
 	if patch.AmneziaPremiumMirrorURL != nil {
-		if err := validateAmneziaMirrorURL(cur.AmneziaPremiumMirrorURL); err != nil {
+		if err := storage.ValidateAmneziaMirrorURL(cur.AmneziaPremiumMirrorURL); err != nil {
 			return prev, settingsErr(err.Error(), "INVALID_AMNEZIA_MIRROR_URL")
 		}
 		cur.AmneziaPremiumMirrorURL = normalizeAmneziaMirrorURL(cur.AmneziaPremiumMirrorURL)
@@ -206,58 +209,4 @@ func normalizeAmneziaMirrorURL(raw string) string {
 		return ""
 	}
 	return raw
-}
-
-// maxAmneziaMirrorURLLen ограничивает длину адреса зеркала. Соображение то
-// же, что у maxMirrorHTML в internal/amneziacp: цель — роутер со 128 МБ, и
-// адрес в сотню килобайт уехал бы на флеш в settings.json и в каждый ответ
-// /settings/get. Дефолтный адрес — 45 символов, так что 2048 (предел, ниже
-// которого адрес переваривает любой HTTP-стек) даёт сорокакратный запас.
-const maxAmneziaMirrorURLLen = 2048
-
-// validateAmneziaMirrorURL проверяет адрес зеркала Amnezia CP. Пустое значение
-// (и значение из одних пробелов) годно: оно означает «зеркало по умолчанию»
-// (storage.DefaultAmneziaMirrorURL). Подрезка пробелов — внутри: функция
-// обязана быть самодостаточной, иначе следующий вызывающий получит отказ на
-// визуально пустом поле.
-//
-// Требуем ровно то, что нужно резолверу (internal/amneziacp.Mirror.resolve):
-// абсолютный адрес с хостом — по нему уходит обычный GET, чью страницу
-// разбирает ParseMirrorTo. Путь и запрос здесь ЗАКОННЫ, их содержит сам
-// дефолтный адрес; правило «origin — только схема, хост и порт» из
-// normalizeOrigin относится к data-link из мета-тега, а не к этому полю, и
-// запрет пути отверг бы дефолт.
-//
-// Схема только https: со страницы зеркала приезжает хост, которому клиент
-// затем шлёт ключ подписки, поэтому подменить её по пути к зеркалу быть не
-// должно.
-//
-// user:pass@ — отказ, как и в normalizeOrigin: пара логин/пароль легла бы в
-// settings.json, который уезжает в бэкап и в поддержку, а строка вида
-// https://storage.googleapis.com@evil.example/cp показывает пользователю
-// знакомое имя, хотя запрос уйдёт на evil.example. Фрагмент — отказ по
-// бедности: в запрос он не уходит, смысла в поле не имеет, и молча хранить
-// значение, часть которого игнорируется, хуже, чем сказать об этом сразу.
-func validateAmneziaMirrorURL(raw string) error {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	if len(raw) > maxAmneziaMirrorURLLen {
-		return fmt.Errorf("адрес зеркала Amnezia длиннее %d символов", maxAmneziaMirrorURLLen)
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("адрес зеркала Amnezia непригоден: %v", err)
-	}
-	if u.Scheme != "https" || u.Host == "" {
-		return errors.New("адрес зеркала Amnezia должен быть абсолютным https-адресом")
-	}
-	if u.User != nil {
-		return errors.New("адрес зеркала Amnezia не должен содержать user:pass@")
-	}
-	if u.Fragment != "" {
-		return errors.New("адрес зеркала Amnezia не должен содержать #фрагмент")
-	}
-	return nil
 }
