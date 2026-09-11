@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/amneziacp"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -48,6 +49,34 @@ type premiumPortal struct {
 	mu     sync.Mutex
 	logins []premiumLogin
 	status int // 0 или 200 — успех; иначе отвечает этим статусом
+	hold   *premiumHold
+}
+
+// premiumHold — придержанный ответ портала. Тест узнаёт по arrived, что вход
+// ДОШЁЛ до портала, и держит ответ, пока сам не позовёт release. Так окно
+// «запрос в портале» открывается ровно на то время, которое нужно тесту, и
+// проверка гонки не зависит от того, кто из горутин успел раньше.
+type premiumHold struct {
+	arrived chan struct{}
+	gate    chan struct{}
+	once    sync.Once
+}
+
+// release отпускает придержанный ответ. Идемпотентен: его же зовёт уборка
+// теста, иначе ранний t.Fatal оставил бы обработчик стенда висеть, а
+// httptest.Server.Close ждёт своих запросов — падение теста превратилось бы в
+// зависание всего пакета.
+func (h *premiumHold) release() { h.once.Do(func() { close(h.gate) }) }
+
+// holdNextLogin придерживает ОДИН следующий вход: остальные идут как обычно.
+func (p *premiumPortal) holdNextLogin(t *testing.T) *premiumHold {
+	t.Helper()
+	h := &premiumHold{arrived: make(chan struct{}), gate: make(chan struct{})}
+	t.Cleanup(h.release)
+	p.mu.Lock()
+	p.hold = h
+	p.mu.Unlock()
+	return h
 }
 
 func newPremiumPortal(t *testing.T, tag string) *premiumPortal {
@@ -71,7 +100,14 @@ func (p *premiumPortal) handle(w http.ResponseWriter, r *http.Request) {
 	p.logins = append(p.logins, in)
 	n := len(p.logins)
 	status := p.status
+	hold := p.hold
+	p.hold = nil
 	p.mu.Unlock()
+
+	if hold != nil {
+		close(hold.arrived)
+		<-hold.gate
+	}
 
 	if status != 0 && status != http.StatusOK {
 		http.Error(w, `{"message":"нет"}`, status)
@@ -107,6 +143,18 @@ func newPremiumMirror(t *testing.T, origin string) *httptest.Server {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8">`+
 			`<meta name="mirror-to" data-link="`+origin+`"></head><body>ok</body></html>`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// newPremiumBrokenMirror — зеркало, которое не отдаёт origin: страница
+// отвечает, но мета-тега в ней нет. Тот же класс отказа, что и мёртвый хост,
+// но без ожидания сетевого таймаута.
+func newPremiumBrokenMirror(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"></head><body>ok</body></html>`)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -200,6 +248,26 @@ func (s *premiumStand) storedCipher(t *testing.T) string {
 		t.Fatalf("снимок настроек: %v", err)
 	}
 	return snap.AmneziaPremiumKeyCipher
+}
+
+// seedStoredKey кладёт в стор ГОДНЫЙ сохранённый ключ и отдаёт его шифротекст.
+// Фикстура нужна там, где проверяется, что отказ НЕ трогает сохранённое: на
+// пустом сторе проверка «шифротекста нет» одинаково зелена и когда мы ничего
+// не записали, и когда стёрли чужое, то есть слепа ровно к тому дефекту, ради
+// которого написана.
+func (s *premiumStand) seedStoredKey(t *testing.T, key string) string {
+	t.Helper()
+	token, err := storage.NewDeviceCipher(s.dir).Encrypt(key)
+	if err != nil {
+		t.Fatalf("шифрование ключа фикстуры: %v", err)
+	}
+	if err := s.store.Update(func(cur *storage.Settings) error {
+		cur.AmneziaPremiumKeyCipher = token
+		return nil
+	}); err != nil {
+		t.Fatalf("запись ключа фикстуры: %v", err)
+	}
+	return token
 }
 
 // settingsFile — содержимое settings.json С ДИСКА: проверять хранение секрета
@@ -655,19 +723,26 @@ func TestAmneziaPremiumKey_UnknownClientFailureFailsClosed(t *testing.T) {
 			t.Error("отказ без сообщения: пользователю нечего показать")
 		}
 	})
+	// В сторе УЖЕ лежит годный сохранённый ключ, и он другой, чем присланный:
+	// отказ портала не имеет права ни записать присланный, ни стереть
+	// сохранённый. Пустой стор ловил бы только первое.
 	t.Run("реальный путь: портал ответил 500", func(t *testing.T) {
 		st := newPremiumStand(t)
+		seeded := st.seedStoredKey(t, premiumKey)
 		st.portal.setStatus(http.StatusInternalServerError)
 
-		rec := st.post(t, `{"key":"`+premiumKey+`","store":true}`)
+		rec := st.post(t, `{"key":"`+premiumOtherKey+`","store":true}`)
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("код = %d, ждали %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 		}
 		if code := premiumErrorCode(t, rec); code != codePremiumServiceUnavailable {
 			t.Errorf("код отказа = %q, want %q", code, codePremiumServiceUnavailable)
 		}
-		if cipher := st.storedCipher(t); cipher != "" {
-			t.Errorf("шифротекст в настройках = %q, ждали пусто: ключ не проверен", cipher)
+		if cipher := st.storedCipher(t); cipher != seeded {
+			t.Errorf("шифротекст в настройках = %q, ждали нетронутый %q: отказ портала не трогает сохранённый ключ", cipher, seeded)
+		}
+		if got := st.h.subscriptionKey(); got != premiumKey {
+			t.Errorf("ключ для клиента CP = %q, want %q — отказ портала отнял рабочую подписку", got, premiumKey)
 		}
 		assertNoPremiumSecrets(t, "отказ портала", rec.Body.String(), st.portal)
 	})
@@ -729,4 +804,181 @@ func TestAmneziaPremiumKey_PostReportsStateOfStoredKey(t *testing.T) {
 	if !post.Stored || !post.Usable {
 		t.Fatalf("состояние = %+v, ждали stored=true usable=true: сохранённый ключ никуда не делся", post)
 	}
+}
+
+// «Забудь ключ» побеждает летящую проверку. Поход в портал длится до таймаута
+// клиента, и DELETE, пришедший в это окно, обязан остаться в силе: без сверки
+// поколения вернувшийся SaveKey безусловно возвращал ключ и в память, и на
+// флеш — команда пользователя молча отменялась.
+//
+// Ответ портала придержан, а не подгадан по времени: окно открыто ровно на
+// время, которое нужно тесту.
+func TestAmneziaPremiumKey_DeleteDuringCheckIsNotUndone(t *testing.T) {
+	st := newPremiumStand(t)
+	hold := st.portal.holdNextLogin(t)
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- st.post(t, `{"key":"`+premiumKey+`","store":true}`) }()
+
+	select {
+	case <-hold.arrived:
+	case <-time.After(10 * time.Second):
+		t.Fatal("вход не дошёл до портала: придержать нечего")
+	}
+
+	// Ключа ещё нет нигде: проверка висит в портале.
+	delRec := st.del(t)
+	if delRec.Code != http.StatusOK {
+		t.Fatalf("удаление: %d %s", delRec.Code, delRec.Body.String())
+	}
+	hold.release()
+
+	postRec := <-done
+	if postRec.Code != http.StatusConflict {
+		t.Fatalf("код проверки = %d, ждали %d: ключ, который у нас забрали, не сохраняют молча: %s",
+			postRec.Code, http.StatusConflict, postRec.Body.String())
+	}
+	if code := premiumErrorCode(t, postRec); code != codePremiumStateChanged {
+		t.Errorf("код отказа = %q, want %q", code, codePremiumStateChanged)
+	}
+	assertNoPremiumSecrets(t, "проверка под удалением", postRec.Body.String(), st.portal)
+
+	if cipher := st.storedCipher(t); cipher != "" {
+		t.Errorf("шифротекст после удаления = %q, ждали пусто: ключ воскрес", cipher)
+	}
+	if file := st.settingsFile(t); strings.Contains(file, premiumKeyBody) {
+		t.Errorf("settings.json несёт тело удалённого ключа:\n%s", file)
+	}
+	if got := st.h.subscriptionKey(); got != "" {
+		t.Errorf("ключ для клиента CP после удаления = %q, ждали пусто: ключ воскрес в памяти", got)
+	}
+	if got := premiumData(t, st.status(t)); got.Stored || got.Usable {
+		t.Errorf("статус = %+v, ждали stored=false usable=false", got)
+	}
+}
+
+// Отвергнутый ключ не вытесняет рабочий сессионный: иначе пользователь, вставив
+// просроченный ключ, терял бы действующую подписку до перезапуска демона.
+// Порядок строк в SaveKey — не гарантия, гарантия — эта проверка.
+func TestAmneziaPremiumKey_RejectedKeyKeepsWorkingSessionKey(t *testing.T) {
+	st := newPremiumStand(t)
+	if rec := st.post(t, `{"key":"`+premiumKey+`","store":false}`); rec.Code != http.StatusOK {
+		t.Fatalf("подготовка: %d %s", rec.Code, rec.Body.String())
+	}
+
+	st.portal.setStatus(http.StatusUnauthorized)
+	rec := st.post(t, `{"key":"`+premiumOtherKey+`","store":false}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("код = %d, ждали %d: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if got := st.h.subscriptionKey(); got != premiumKey {
+		t.Fatalf("ключ для клиента CP = %q, want %q — отвергнутый ключ вытеснил рабочий", got, premiumKey)
+	}
+}
+
+// Перевод отказов клиента CP в ответ ручки: сентинел → статус и машинный код.
+// Отдельным утверждением — НИ ОДИН отказ не отдаёт 401: на любой 401 фронт
+// (frontend/src/lib/api/clientCore.ts) зовёт onUnauthorized и разлогинивает
+// панель, то есть отозванный ключ подписки выкидывал бы пользователя из
+// панели.
+func TestAmneziaPremiumKey_FailureMapping(t *testing.T) {
+	t.Run("перевод сентинелов", func(t *testing.T) {
+		cases := []struct {
+			name   string
+			err    error
+			status int
+			code   string
+		}{
+			{"ключ отклонён", amneziacp.ErrKeyRejected, http.StatusUnprocessableEntity, codePremiumKeyRejected},
+			{"ключ отклонён, обёрнут", fmt.Errorf("вход: %w", amneziacp.ErrKeyRejected), http.StatusUnprocessableEntity, codePremiumKeyRejected},
+			{"ключа нет", amneziacp.ErrNoKey, http.StatusBadRequest, codePremiumNoKey},
+			{"зеркало недоступно", amneziacp.ErrMirrorUnavailable, http.StatusBadGateway, codePremiumMirrorUnavailable},
+			{"адрес зеркала не задан", amneziacp.ErrMirrorNotConfigured, http.StatusBadGateway, codePremiumMirrorUnavailable},
+			// Так отказ зеркала и приходит с реального пути: клиент CP
+			// оборачивает его в общий сентинел, и ветка зеркала обязана быть
+			// РАНЬШЕ общей, иначе своя причина теряется.
+			{"зеркало недоступно под общим сентинелом", fmt.Errorf("%w: %w", amneziacp.ErrServiceUnavailable, amneziacp.ErrMirrorUnavailable), http.StatusBadGateway, codePremiumMirrorUnavailable},
+			{"сервис недоступен", amneziacp.ErrServiceUnavailable, http.StatusServiceUnavailable, codePremiumServiceUnavailable},
+			{"сентинел, которого мы не знаем", errors.New("отказ неизвестного класса"), http.StatusServiceUnavailable, codePremiumServiceUnavailable},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				status, code, msg := cpFailure(tc.err)
+				if status != tc.status || code != tc.code {
+					t.Fatalf("перевод отказа = %d/%s, ждали %d/%s", status, code, tc.status, tc.code)
+				}
+				if status == http.StatusUnauthorized {
+					t.Fatal("401 наружу разлогинивает панель")
+				}
+				if msg == "" {
+					t.Error("отказ без сообщения: пользователю нечего показать")
+				}
+			})
+		}
+	})
+
+	// Реальный путь: отказ рождается там, где он рождается в жизни, и едет
+	// через весь обработчик. Сохранённый ключ в сторе годный и другой, чем
+	// присланный: ни один отказ не смеет его стереть.
+	t.Run("реальный путь", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			arrange func(*testing.T, *premiumStand)
+			status  int
+			code    string
+		}{
+			{"портал ответил 401", func(_ *testing.T, st *premiumStand) { st.portal.setStatus(http.StatusUnauthorized) },
+				http.StatusUnprocessableEntity, codePremiumKeyRejected},
+			{"портал ответил 403", func(_ *testing.T, st *premiumStand) { st.portal.setStatus(http.StatusForbidden) },
+				http.StatusUnprocessableEntity, codePremiumKeyRejected},
+			{"портал ответил 422", func(_ *testing.T, st *premiumStand) { st.portal.setStatus(http.StatusUnprocessableEntity) },
+				http.StatusUnprocessableEntity, codePremiumKeyRejected},
+			{"портал ответил 500", func(_ *testing.T, st *premiumStand) { st.portal.setStatus(http.StatusInternalServerError) },
+				http.StatusServiceUnavailable, codePremiumServiceUnavailable},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				st := newPremiumStand(t)
+				seeded := st.seedStoredKey(t, premiumKey)
+				tc.arrange(t, st)
+
+				rec := st.post(t, `{"key":"`+premiumOtherKey+`","store":true}`)
+				if rec.Code != tc.status {
+					t.Fatalf("код = %d, ждали %d: %s", rec.Code, tc.status, rec.Body.String())
+				}
+				if rec.Code == http.StatusUnauthorized {
+					t.Fatal("401 наружу разлогинивает панель")
+				}
+				if code := premiumErrorCode(t, rec); code != tc.code {
+					t.Errorf("код отказа = %q, want %q", code, tc.code)
+				}
+				if cipher := st.storedCipher(t); cipher != seeded {
+					t.Errorf("шифротекст = %q, ждали нетронутый %q: отказ тронул сохранённый ключ", cipher, seeded)
+				}
+				assertNoPremiumSecrets(t, tc.name, rec.Body.String(), st.portal)
+			})
+		}
+
+		t.Run("зеркало не отдаёт origin", func(t *testing.T) {
+			broken := newPremiumBrokenMirror(t)
+			st := newPremiumStand(t, broken)
+			seeded := st.seedStoredKey(t, premiumKey)
+			st.setMirror(t, broken.URL)
+
+			rec := st.post(t, `{"key":"`+premiumOtherKey+`","store":true}`)
+			if rec.Code != http.StatusBadGateway {
+				t.Fatalf("код = %d, ждали %d: %s", rec.Code, http.StatusBadGateway, rec.Body.String())
+			}
+			if code := premiumErrorCode(t, rec); code != codePremiumMirrorUnavailable {
+				t.Errorf("код отказа = %q, want %q", code, codePremiumMirrorUnavailable)
+			}
+			if n := len(st.portal.seen()); n != 0 {
+				t.Errorf("входов в портал %d, ждали 0: origin не резолвился", n)
+			}
+			if cipher := st.storedCipher(t); cipher != seeded {
+				t.Errorf("шифротекст = %q, ждали нетронутый %q", cipher, seeded)
+			}
+			assertNoPremiumSecrets(t, "зеркало не отдаёт origin", rec.Body.String(), st.portal)
+		})
+	})
 }

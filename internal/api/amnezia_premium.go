@@ -20,6 +20,7 @@ import (
 const (
 	codePremiumNoKey              = "AMNEZIA_PREMIUM_NO_KEY"
 	codePremiumKeyRejected        = "AMNEZIA_PREMIUM_KEY_REJECTED"
+	codePremiumStateChanged       = "AMNEZIA_PREMIUM_STATE_CHANGED"
 	codePremiumMirrorUnavailable  = "AMNEZIA_PREMIUM_MIRROR_UNAVAILABLE"
 	codePremiumServiceUnavailable = "AMNEZIA_PREMIUM_UNAVAILABLE"
 	codePremiumSettingsError      = "AMNEZIA_PREMIUM_SETTINGS_ERROR"
@@ -96,6 +97,13 @@ type AmneziaPremiumHandler struct {
 	// ErrNoKey, и пользователь, отказавшийся хранить ключ у нас, терял бы
 	// подписку на первом же протухшем sid.
 	sessionKey string
+	// keyGen — поколение состояния ключа: растёт на КАЖДОМ его изменении
+	// (удаление, запись проверенного ключа). SaveKey снимает поколение ДО
+	// похода в портал и сверяет на возврате, потому что поход длится до
+	// таймаута клиента: без сверки DELETE, пришедший в это окно, молча
+	// отменялся бы вернувшимся SaveKey — тот безусловно вернул бы ключ и в
+	// память, и на флеш. «Забудь мой секрет» обязано побеждать.
+	keyGen     uint64
 	httpClient *http.Client
 	cp         *amneziacp.Client
 }
@@ -236,6 +244,7 @@ func (h *AmneziaPremiumHandler) logf(event, detail string) {
 //	@Success		200		{object}	AmneziaPremiumKeyResponse
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		405		{object}	APIErrorEnvelope
+//	@Failure		409		{object}	APIErrorEnvelope
 //	@Failure		422		{object}	APIErrorEnvelope
 //	@Failure		502		{object}	APIErrorEnvelope
 //	@Failure		503		{object}	APIErrorEnvelope
@@ -256,6 +265,10 @@ func (h *AmneziaPremiumHandler) SaveKey(w http.ResponseWriter, r *http.Request) 
 	remember := req.Remember == nil || *req.Remember
 	store := req.Store != nil && *req.Store
 
+	// Поколение снимается ДО похода в портал: всё время похода состояние
+	// ключа принадлежит не нам, и пользователь волен его сменить.
+	gen := h.keyGeneration()
+
 	// Контекст запроса уезжает в портал: закрытая пользователем вкладка
 	// обязана отменять поход наружу, а не висеть до таймаута клиента.
 	if err := h.client().CheckKey(r.Context(), key, remember); err != nil {
@@ -263,23 +276,27 @@ func (h *AmneziaPremiumHandler) SaveKey(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Ключ живёт в памяти демона независимо от того, сохранён ли он: иначе
-	// режим «не запоминать» ломается на первом же ре-логине, а при неудаче
-	// сохранения пользователь оставался бы с работающей сессией и без ключа.
-	h.mu.Lock()
-	h.sessionKey = key
-	h.mu.Unlock()
+	cancelled, saveErr := h.commitKey(key, gen, store)
+	if cancelled {
+		// Вход состоялся, но записывать его результат некуда: состояние ключа
+		// сменили, пока мы ходили в портал. Отвечать успехом здесь значило бы
+		// сказать «ключ принят» про ключ, которого у нас нет ни в памяти, ни
+		// на диске.
+		h.log.Info(logActionPremium, "key-check", "route=direct состояние ключа сменилось за время проверки — ключ не сохранён")
+		response.ErrorWithStatus(w, http.StatusConflict,
+			"Состояние ключа подписки изменилось, пока шла проверка — введите ключ заново", codePremiumStateChanged)
+		return
+	}
 
-	var saveErr string
-	if store {
-		if err := h.persistKey(key); err != nil {
-			// Вход состоялся: отказ здесь — не отказ всего вызова, иначе
-			// пользователь увидит «не вышло» после успешной проверки ключа.
-			h.log.Warn(logActionPremium, "key-save", "route=direct сохранить ключ подписки не удалось: "+err.Error())
-			saveErr = saveErrorMessage(err)
-		} else {
-			h.bus.PublishInvalidated(events.ResourceAmneziaPremiumKey, "saved")
-		}
+	var saveErrMsg string
+	switch {
+	case saveErr != nil:
+		// Вход состоялся: отказ здесь — не отказ всего вызова, иначе
+		// пользователь увидит «не вышло» после успешной проверки ключа.
+		h.log.Warn(logActionPremium, "key-save", "route=direct сохранить ключ подписки не удалось: "+saveErr.Error())
+		saveErrMsg = saveErrorMessage(saveErr)
+	case store:
+		h.bus.PublishInvalidated(events.ResourceAmneziaPremiumKey, "saved")
 	}
 
 	// Состояние читается заново, а не выводится из исхода сохранения: при
@@ -291,10 +308,50 @@ func (h *AmneziaPremiumHandler) SaveKey(w http.ResponseWriter, r *http.Request) 
 		// вместе с состоявшимся входом, а не роняем весь вызов.
 		h.log.Warn(logActionPremium, "key-check", "route=direct состояние сохранённого ключа не прочитано: "+err.Error())
 	}
-	out.SaveError = saveErr
+	out.SaveError = saveErrMsg
 	h.log.Info(logActionPremium, "key-check", fmt.Sprintf(
 		"route=direct remember=%v store=%v stored=%v", remember, store, out.Stored))
 	response.Success(w, out)
+}
+
+// keyGeneration — поколение состояния ключа на сейчас.
+func (h *AmneziaPremiumHandler) keyGeneration() uint64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.keyGen
+}
+
+// commitKey — единственная точка записи проверенного ключа. Пишет его в память
+// и, если просили, на диск, но ТОЛЬКО когда состояние ключа не сменилось за
+// время похода в портал: cancelled=true означает «у нас этот ключ уже забрали»,
+// и тогда не пишется ничего — ни в память, ни на диск.
+//
+// Сверка поколения и обе записи идут в ОДНОЙ критической секции: разнеси их —
+// и DELETE снова встраивается между сверкой и записью, только окно станет уже,
+// а класс отказа останется. Поход в портал внутрь не попадает, он уже позади;
+// на время persistKey (шифрование + запись настроек) лок держится — это
+// доли секунды против сорока пяти секунд похода наружу.
+//
+// Поколение двигает КАЖДАЯ удавшаяся запись, а не только удаление: два
+// одновременных POST'а — тоже смена состояния под чужим носом, и вернувшийся
+// вторым обязан узнать об этом, а не затирать чужой ключ.
+//
+// saveErr — неудача сохранения на диск; вход при этом состоялся, и ключ
+// остаётся в памяти демона: иначе режим «не запоминать» ломается на первом же
+// ре-логине, а при неудаче сохранения пользователь остался бы с работающей
+// сессией и без ключа.
+func (h *AmneziaPremiumHandler) commitKey(key string, gen uint64, store bool) (cancelled bool, saveErr error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.keyGen != gen {
+		return true, nil
+	}
+	h.keyGen++
+	h.sessionKey = key
+	if !store {
+		return false, nil
+	}
+	return false, h.persistKey(key)
 }
 
 // KeyStatus отдаёт состояние сохранённого ключа.
@@ -349,7 +406,12 @@ func (h *AmneziaPremiumHandler) DeleteKey(w http.ResponseWriter, r *http.Request
 	// Память забывается ДО записи: если запись не удастся, у нас останется
 	// меньше секрета, а не больше. Клиент здесь не собирается ради сброса
 	// сессии, которой может и не быть.
+	//
+	// Поколение двигается здесь же, под тем же локом: летящий SaveKey,
+	// вернувшись из портала, обязан увидеть смену состояния и не воскресить
+	// удалённый ключ.
 	h.mu.Lock()
+	h.keyGen++
 	h.sessionKey = ""
 	cp := h.cp
 	h.mu.Unlock()
