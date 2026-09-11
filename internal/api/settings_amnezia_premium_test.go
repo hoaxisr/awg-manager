@@ -12,13 +12,19 @@ import (
 // Секреты фикстур: репозиторий публичный, поэтому значения заведомо
 // нерабочие, а домены — из зарезервированного .test (RFC 2606).
 const (
-	testPremiumCipher = "cipher-test-AAAA=="
-	testPeerPrivKey   = "privkey-test-BBBB="
-	testMirrorURL     = "https://mirror.test/cp?m-path=/ru"
+	testPremiumCipher  = "cipher-test-AAAA=="
+	testPeerPrivKey    = "privkey-test-BBBB="
+	testMirrorURL      = "https://mirror.test/cp?m-path=/ru"
+	testManagedSrvKey  = "srvkey-test-CCCC="
+	testManagedPeerKey = "peerkey-test-DDDD="
+	testManagedPeerPSK = "psk-test-EEEE="
+	testManagedSrvID   = "Wireguard9"
+	testManagedPeerPub = "pubkey-test-FFFF="
 )
 
-// seedSettingsSecrets кладёт в стор оба секрета, которые ответы настроек
-// обязаны снимать: шифротекст ключа подписки и приватный ключ пира сервера.
+// seedSettingsSecrets кладёт в стор весь ключевой материал, который ответы
+// настроек обязаны снимать: шифротекст ключа подписки, приватный ключ пира
+// системного сервера и ключи managed-сервера (своего и пира).
 func seedSettingsSecrets(t *testing.T, store *storage.SettingsStore) {
 	t.Helper()
 	if err := store.Update(func(cur *storage.Settings) error {
@@ -31,6 +37,34 @@ func seedSettingsSecrets(t *testing.T, store *storage.SettingsStore) {
 		PrivateKey: testPeerPrivKey,
 	}); err != nil {
 		t.Fatalf("seed peer secret: %v", err)
+	}
+	if err := store.AddManagedServer(storage.ManagedServer{
+		InterfaceName: testManagedSrvID,
+		PrivateKey:    testManagedSrvKey,
+		Peers: []storage.ManagedPeer{{
+			PublicKey:    testManagedPeerPub,
+			PrivateKey:   testManagedPeerKey,
+			PresharedKey: testManagedPeerPSK,
+		}},
+	}); err != nil {
+		t.Fatalf("seed managed server: %v", err)
+	}
+}
+
+// assertNoSecretsInBody — проверка по ЗНАЧЕНИЯМ: переименование поля мимо
+// неё не проскочит.
+func assertNoSecretsInBody(t *testing.T, body string) {
+	t.Helper()
+	for _, s := range []struct{ name, value string }{
+		{"шифротекст ключа подписки", testPremiumCipher},
+		{"приватный ключ пира системного сервера", testPeerPrivKey},
+		{"приватный ключ managed-сервера", testManagedSrvKey},
+		{"приватный ключ пира managed-сервера", testManagedPeerKey},
+		{"preshared-ключ пира managed-сервера", testManagedPeerPSK},
+	} {
+		if strings.Contains(body, s.value) {
+			t.Errorf("%s в теле ответа: %s", s.name, body)
+		}
 	}
 }
 
@@ -47,12 +81,25 @@ func assertSecretsStillStored(t *testing.T, store *storage.SettingsStore) {
 	if got := snap.ServerPeerSecrets["srv-1"]["pub-1"].PrivateKey; got != testPeerPrivKey {
 		t.Errorf("приватный ключ пира в сторе = %q, want %q", got, testPeerPrivKey)
 	}
+	if len(snap.ManagedServers) != 1 || len(snap.ManagedServers[0].Peers) != 1 {
+		t.Fatalf("managed-серверы в сторе: %+v", snap.ManagedServers)
+	}
+	srv := snap.ManagedServers[0]
+	if srv.PrivateKey != testManagedSrvKey {
+		t.Errorf("приватный ключ managed-сервера в сторе = %q, want %q", srv.PrivateKey, testManagedSrvKey)
+	}
+	if got := srv.Peers[0].PrivateKey; got != testManagedPeerKey {
+		t.Errorf("приватный ключ пира managed в сторе = %q, want %q", got, testManagedPeerKey)
+	}
+	if got := srv.Peers[0].PresharedKey; got != testManagedPeerPSK {
+		t.Errorf("preshared-ключ пира managed в сторе = %q, want %q", got, testManagedPeerPSK)
+	}
 }
 
 // Все ручки, отдающие настройки целиком, проходят одну вычистку: в теле нет
-// ни шифротекста ключа подписки, ни приватных ключей пиров (проверка по
-// ЗНАЧЕНИЮ — переименование поля мимо неё не проскочит), а пустой адрес
-// зеркала подменён действующим дефолтом. Сохранённое при этом цело.
+// ни шифротекста ключа подписки, ни ключевого материала пиров и
+// managed-серверов, а пустой адрес зеркала подменён действующим дефолтом.
+// Сохранённое при этом цело.
 func TestSettingsResponses_StripSecretsAndFillMirror(t *testing.T) {
 	cases := []struct {
 		name string
@@ -78,13 +125,7 @@ func TestSettingsResponses_StripSecretsAndFillMirror(t *testing.T) {
 			if rr.Code != http.StatusOK {
 				t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
 			}
-			body := rr.Body.String()
-			if strings.Contains(body, testPremiumCipher) {
-				t.Errorf("шифротекст ключа подписки в теле ответа: %s", body)
-			}
-			if strings.Contains(body, testPeerPrivKey) {
-				t.Errorf("приватный ключ пира в теле ответа: %s", body)
-			}
+			assertNoSecretsInBody(t, rr.Body.String())
 
 			data, _ := decodeJSONBody(t, rr)["data"].(map[string]any)
 			if got, _ := data["amneziaPremiumMirrorUrl"].(string); got != storage.DefaultAmneziaMirrorURL {
@@ -96,13 +137,14 @@ func TestSettingsResponses_StripSecretsAndFillMirror(t *testing.T) {
 	}
 }
 
-// Запасная ветка Update отдаёт ЧЕРНОВИК — поверхностную копию живого кэша
-// стора, делящую с ним карты. Вычистка обязана вернуть копию, а не править
-// черновик по месту: иначе ответ на /settings/update стирал бы приватные
-// ключи пиров из памяти демона. Через HTTP эту ветку не достать (Snapshot
-// после успешной записи не отказывает), поэтому черновик собирается здесь
-// ровно так же, как его собирает Update.
-func TestSettingsForResponse_DraftSharesMapsWithStore(t *testing.T) {
+// Вычистка обязана вернуть КОПИЮ, а не править аргумент по месту: сегодня
+// все три ручки подают ей снапшот, но ничто не мешает будущему вызывающему
+// подать store.Get() — ЖИВОЙ объект кэша демона (так же делится памятью и
+// черновик want из Update: он поверхностно скопирован с живого объекта и
+// делит с ним карты и backing-массив ManagedServers). Правка по месту на
+// этом пути стёрла бы ключи из памяти демона, а следующая запись настроек
+// унесла бы пропажу на диск.
+func TestSettingsForResponse_DoesNotMutateLiveStoreCache(t *testing.T) {
 	_, store := newSettingsHandlerForTest(t)
 	seedSettingsSecrets(t, store)
 
@@ -110,13 +152,21 @@ func TestSettingsForResponse_DraftSharesMapsWithStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	want := *live // так Update строит черновик
 
-	out := settingsForResponse(&want)
+	out := settingsForResponse(live)
 	if out.AmneziaPremiumKeyCipher != "" || out.ServerPeerSecrets != nil {
-		t.Errorf("черновик отдан наружу с секретами: cipher=%q peers=%v",
+		t.Errorf("наружу отданы секреты: cipher=%q peers=%v",
 			out.AmneziaPremiumKeyCipher, out.ServerPeerSecrets)
 	}
+	if len(out.ManagedServers) != 1 || len(out.ManagedServers[0].Peers) != 1 {
+		t.Fatalf("managed-серверы в ответе: %+v", out.ManagedServers)
+	}
+	if srv := out.ManagedServers[0]; srv.PrivateKey != "" ||
+		srv.Peers[0].PrivateKey != "" || srv.Peers[0].PresharedKey != "" {
+		t.Errorf("наружу отданы ключи managed-сервера: %+v", srv)
+	}
+
+	// Живой кэш при этом не пострадал — иначе секреты пропали бы и из стора.
 	assertSecretsStillStored(t, store)
 }
 

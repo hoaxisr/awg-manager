@@ -266,13 +266,15 @@ func (h *SettingsHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 // подставляет действующий адрес зеркала Amnezia. ЕДИНСТВЕННАЯ точка этих
 // правил — её проходят все ответы, отдающие настройки целиком (Get, Update,
 // RegenerateApiKey). Копии разошлись бы молча, и разойтись им было бы в
-// сторону утечки ключей.
+// сторону утечки ключей. Полноту набора стережёт
+// TestSettingsResponse_SecretFieldsAreClassified.
 //
-// Возвращает КОПИЮ и правит только поля верхнего уровня в ней. Аргументом
-// приходит и снапшот (уже сам по себе копия), и черновик want из Update — а
-// тот поверхностная копия ЖИВОГО кэша стора и делит с ним карты. Вычистка по
-// месту стёрла бы приватные ключи пиров из памяти демона, а следующая запись
-// настроек унесла бы пропажу на диск.
+// Возвращает КОПИЮ и не правит по месту НИЧЕГО, до чего дотянулась: аргумент
+// делит с чужой памятью и карты, и backing-массивы срезов. Снапшот — сам по
+// себе копия, а вот черновик want из Update поверхностно скопирован с ЖИВОГО
+// кэша стора: правка элемента ManagedServers по месту стёрла бы приватные
+// ключи из памяти демона, а следующая запись настроек унесла бы пропажу на
+// диск. То же ждёт будущего вызывающего, который подаст сюда store.Get().
 func settingsForResponse(s *storage.Settings) *storage.Settings {
 	out := *s
 	// Шифротекст ключа подписки Amnezia Premium не покидает бэкенд: его
@@ -281,12 +283,49 @@ func settingsForResponse(s *storage.Settings) *storage.Settings {
 	// Приватные ключи клиентских пиров встроенных серверов: NDMS их не
 	// хранит, хранит наш settings.json — и в ответах настроек им не место.
 	out.ServerPeerSecrets = nil
+	// Ключевой материал managed-серверов. Собственная ручка серверов его не
+	// отдаёт (у ManagedServerDTO поля PrivateKey нет вовсе), исключение
+	// названо ровно на одном пути — бэкапе (ManagedServerBackupDTO). Ответ
+	// настроек этим путём не является.
+	out.ManagedServers = managedServersForResponse(out.ManagedServers)
+	// Legacy-поле живо до первой записи после миграции (migrateManagedServers)
+	// и до неё несёт тот же ключевой материал.
+	if out.ManagedServer != nil {
+		cp := managedServerForResponse(*out.ManagedServer)
+		out.ManagedServer = &cp
+	}
 	// Пусто в хранилище означает «зеркало по умолчанию». Наружу отдаётся
 	// действующий адрес, чтобы у фронта не было собственной копии литерала.
 	if out.AmneziaPremiumMirrorURL == "" {
 		out.AmneziaPremiumMirrorURL = storage.DefaultAmneziaMirrorURL
 	}
 	return &out
+}
+
+// managedServersForResponse — см. managedServerForResponse. Возвращает новый
+// срез: правка элементов по месту досталась бы и вызывающему.
+func managedServersForResponse(in []storage.ManagedServer) []storage.ManagedServer {
+	if in == nil {
+		return nil
+	}
+	out := make([]storage.ManagedServer, len(in))
+	for i, srv := range in {
+		out[i] = managedServerForResponse(srv)
+	}
+	return out
+}
+
+// managedServerForResponse снимает с КОПИИ записи managed-сервера приватный
+// ключ самого сервера и ключи его пиров. Peers клонируется: срез пришёл по
+// значению, но backing-массив общий с вызывающим.
+func managedServerForResponse(srv storage.ManagedServer) storage.ManagedServer {
+	srv.PrivateKey = ""
+	srv.Peers = slices.Clone(srv.Peers)
+	for i := range srv.Peers {
+		srv.Peers[i].PrivateKey = ""
+		srv.Peers[i].PresharedKey = ""
+	}
+	return srv
 }
 
 // Get returns current settings.
