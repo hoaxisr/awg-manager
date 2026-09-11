@@ -354,6 +354,22 @@ func TestDelete_RemovesEndpointHostRoute(t *testing.T) {
 			t.Fatalf("журнал = %v, ждали %q", spy.entries, want)
 		}
 	})
+
+	// F117: наследство прежних версий. Тогда host-route до петли реально
+	// ставился, и удаление туннеля — путь, которым он уходит с роутера.
+	t.Run("петля от прежней версии", func(t *testing.T) {
+		o, poster, rec := newOS5Lifecycle(t)
+		stored := &storage.AWGTunnel{ID: "awg10", ResolvedEndpointIP: "127.0.0.1"}
+		if err := o.Delete(context.Background(), stored); err != nil {
+			t.Fatal(err)
+		}
+		if !hasCall(rec.Calls, "/opt/sbin/ip route del 127.0.0.1/32") {
+			t.Errorf("маршрут не снят из ядра: %v", rec.Calls)
+		}
+		if !hasPayload(poster.payloads, `{"ip":{"route":{"host":"127.0.0.1","no":true}}}`) {
+			t.Error("host-route не снят из конфига NDMS — переживёт перезагрузку роутера")
+		}
+	})
 }
 
 // F129 (#867): рестарт демона приходил в Reconcile на РАБОТАЮЩИЙ kernel-туннель
@@ -425,5 +441,79 @@ func TestSetupEndpointRoute_ReplacesSharedHostRouteAtomically(t *testing.T) {
 	}
 	if !hasCall(s.Calls, "/opt/sbin/ip route replace 203.0.113.7/32 via 192.0.2.1") {
 		t.Fatalf("маршрут не поставлен через replace:\n%s", strings.Join(s.Calls, "\n"))
+	}
+}
+
+// F117: до петли хост-маршрут не нужен. Связанные туннели wdtt/freeturn в
+// WG-режиме несут endpoint 127.0.0.1:<порт> — релей слушает на самом роутере.
+// Роутер такую команду ПРИНИМАЕТ (стенд 5.01): в ядре оседает
+// `127.0.0.1 dev ppp0`, в конфиге NDMS — host-route `127.0.0.1/32`.
+//
+// Адрес наружу не возвращается: иначе вызывающие запишут петлю в
+// ResolvedEndpointIP, где у loopback-пира лежит адрес target'а релея.
+func TestSetupEndpointRoute_SkipsUnroutableEndpoint(t *testing.T) {
+	for _, endpoint := range []string{
+		"127.0.0.1:51820",  // связанный wdtt/freeturn
+		"127.0.0.5:1234",   // вся /8, а не один адрес
+		"[::1]:51820",      // v6-петля
+		"0.0.0.0:51820",    // «неуказанный»
+		"169.254.10.1:500", // link-local unicast
+		"[ff02::1]:51820",  // link-local multicast
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			o, _, rec := newOS5Lifecycle(t)
+
+			ip, err := o.SetupEndpointRoute(context.Background(), "awg1", endpoint, "eth3", "eth3")
+			if err != nil {
+				t.Fatalf("немаршрутизируемый endpoint — не ошибка: %v", err)
+			}
+			if ip != "" {
+				t.Errorf("адрес не должен уходить вызывающему (попадёт в ResolvedEndpointIP), got %q", ip)
+			}
+			if len(rec.Calls) != 0 {
+				t.Errorf("ни одной ip-команды не ожидается: %v", rec.Calls)
+			}
+			if got := o.GetTrackedEndpointIP("awg1"); got != "" {
+				t.Errorf("в карту маршрутов попал %q", got)
+			}
+		})
+	}
+}
+
+// Адрес, который не разбирается как IP (endpoint с именем хоста), гард не
+// глотает: пусть отказывает команда ip и причина видна в журнале. Молчаливый
+// пропуск спрятал бы испорченную запись туннеля.
+func TestSkipEndpointHostRoute_KeepsUnparsableAddress(t *testing.T) {
+	if skipEndpointHostRoute("vpn.example.com") {
+		t.Error("имя хоста принято за непригодный адрес — маршрут будет молча пропущен")
+	}
+	if !skipEndpointHostRoute("::") {
+		t.Error("неуказанный адрес обязан отсеиваться")
+	}
+}
+
+// Снятие обязано работать и для петли. На роутере, поработавшем под прежней
+// версией, мусорный маршрут уже лежит, а NDMS переигрывает его в ядро на
+// каждой загрузке — это единственный путь, которым он уходит с роутера.
+func TestCleanupEndpointRoute_RemovesLoopbackLeftover(t *testing.T) {
+	o, poster, rec := newOS5Lifecycle(t)
+
+	// Так карта наполняется на рестарте демона для уже поднятого туннеля.
+	if _, err := o.RestoreEndpointTracking(context.Background(), "awg1", "127.0.0.1:51820"); err != nil {
+		t.Fatalf("RestoreEndpointTracking: %v", err)
+	}
+	if got := o.GetTrackedEndpointIP("awg1"); got != "127.0.0.1" {
+		t.Fatalf("наследство не попало в карту: %q", got)
+	}
+
+	if err := o.CleanupEndpointRoute(context.Background(), "awg1"); err != nil {
+		t.Fatalf("CleanupEndpointRoute: %v", err)
+	}
+
+	if !hasCall(rec.Calls, "/opt/sbin/ip route del 127.0.0.1/32") {
+		t.Errorf("маршрут из ядра не снят: %v", rec.Calls)
+	}
+	if !hasPayload(poster.payloads, `{"ip":{"route":{"host":"127.0.0.1","no":true}}}`) {
+		t.Error("запись host-route не снята из конфига NDMS — она переживёт перезагрузку роутера")
 	}
 }

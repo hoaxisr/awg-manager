@@ -78,6 +78,27 @@ func (o *OperatorOS5Impl) SetupEndpointRoute(ctx context.Context, tunnelID, endp
 		return "", fmt.Errorf("resolve endpoint: %w", err)
 	}
 
+	// Маршрут до петли не ставим. Связанные туннели wdtt/freeturn в WG-режиме
+	// несут endpoint 127.0.0.1:<порт> — релей слушает на самом роутере. Роутер
+	// такую команду ПРИНИМАЕТ (проверено на 5.01): в ядре оседает
+	// `127.0.0.1 dev ppp0 scope link`, в конфиге NDMS — host-route
+	// `127.0.0.1/32`. Трафик не страдает (таблица local выигрывает у main), но
+	// ядро и конфигурация роутера засоряются.
+	//
+	// Гард стоит ТОЛЬКО на создании: снятие (CleanupEndpointRoute, Delete)
+	// обязано работать и для петли — на роутере от прежней версии мусор уже
+	// лежит, а NDMS переигрывает его в ядро на каждой загрузке.
+	//
+	// Возврат пустой: маршрута нет, и персистить вызывающему нечего. Но петлю
+	// в ResolvedEndpointIP это не закрывает — `service.Update` (impl.go:487)
+	// присваивает возврат без проверки на пустоту (F229), а
+	// RestoreEndpointTracking намеренно кладёт петлю в карту на рестарте
+	// демона: по ней наследство прежних версий потом и снимается.
+	if skipEndpointHostRoute(endpointIP) {
+		o.logInfo("setup_route", tunnelID, "endpoint не маршрутизируется ("+endpointIP+") — хост-маршрут не нужен")
+		return "", nil
+	}
+
 	// Resolve route target from kernel routing table.
 	// oif constraint ensures we route via the intended WAN device.
 	gateway, device, err := o.resolveKernelRouteTarget(ctx, endpointIP, kernelDevice)
@@ -128,7 +149,7 @@ func (o *OperatorOS5Impl) CleanupEndpointRoute(ctx context.Context, tunnelID str
 	if !exists || endpointIP == "" {
 		return nil
 	}
-
+	// Петлю снимаем тоже — см. гард в SetupEndpointRoute: он только на создании.
 	// Check if another tunnel uses the same IP (reference counting)
 	o.endpointRoutesMu.RLock()
 	stillInUse := false
@@ -193,6 +214,29 @@ func (o *OperatorOS5Impl) GetTrackedEndpointIP(tunnelID string) string {
 }
 
 // === Kernel route helpers (bypass NDMS) ===
+
+// skipEndpointHostRoute сообщает, что хост-маршрут через WAN до такого адреса
+// ставить незачем: петля, link-local, «неуказанный».
+//
+// Имя про решение, а не про свойство адреса: 127.0.0.1 и fe80:: как раз
+// маршрутизируются — первый через lo, второй on-link, — просто не через WAN.
+//
+// Набор совпадает с SSRF-гардом `internal/proxyapp/wdttlink`, но совпадение
+// случайное: там режут внутренние адреса, здесь — бессмысленные для маршрута.
+// Тот же случай у nativewg решён иначе: `nwg.obfRouteIP`
+// (`internal/tunnel/nwg/obfuscated.go`) отбрасывает петлю при ВЫБОРЕ адреса
+// для снятия, потому что там маршрута никогда и не было. Чиня третий такой
+// случай, загляните в оба.
+func skipEndpointHostRoute(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		// Неразбираемый адрес пропускаем дальше: пусть отказывает команда ip,
+		// а не молчаливый предикат — так причина видна в журнале.
+		return false
+	}
+	return parsed.IsLoopback() || parsed.IsLinkLocalUnicast() ||
+		parsed.IsLinkLocalMulticast() || parsed.IsUnspecified()
+}
 
 // isIPv6 returns true if the given IP string is an IPv6 address.
 func isIPv6(ip string) bool {

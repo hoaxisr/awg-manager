@@ -420,6 +420,8 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 			endpointIP = ip
 		}
 	}
+	// Петлю снимаем тоже — см. гард в SetupEndpointRoute: он только на создании,
+	// а наследство прежних версий уходит с роутера именно отсюда.
 	if endpointIP != "" {
 		if err := o.delKernelHostRoute(ctx, endpointIP); err != nil {
 			o.logWarn("delete", stored.ID, "ip route del "+endpointIP+": "+err.Error())
