@@ -12,6 +12,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // newRecords кладёт записи ЧЕРЕЗ хранилище: нормализация и инварианты те же,
@@ -293,5 +294,139 @@ func TestPostRestoreMarker_ConsumedOnce(t *testing.T) {
 	}
 	if HasPostRestoreMarker(dir) {
 		t.Fatal("маркер виден после Consume")
+	}
+}
+
+// tarNames отдаёт имена всех записей архива — проверяем состав по реальному
+// выходу Export, а не по предикату shouldSkip.
+func tarNames(t *testing.T, archive []byte) []string {
+	t.Helper()
+	gr, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	defer gr.Close()
+	var names []string
+	tr := tar.NewReader(gr)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return names
+		}
+		if err != nil {
+			t.Fatalf("tar: %v", err)
+		}
+		names = append(names, hdr.Name)
+	}
+}
+
+// Секрет устройства в бэкап не едет: архив уходит в поддержку и в облако.
+// settings.json проверяется тем же тестом намеренно — иначе shouldSkip,
+// отсеивающий вообще всё, оставил бы тест зелёным.
+func TestExportSkipsDeviceKey(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDir, "settings.json"), []byte(`{"version":32}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.NewDeviceCipher(dataDir).Encrypt("vpn://test-key-export"); err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, storage.DeviceKeyFile)); err != nil {
+		t.Fatalf("секрет не создан, тест бессмысленен: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := Export(dataDir, "2.18.2", &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	names := tarNames(t, buf.Bytes())
+	settingsFound := false
+	for _, name := range names {
+		if name == storage.DeviceKeyFile {
+			t.Fatalf("секрет устройства попал в архив: %v", names)
+		}
+		if name == "settings.json" {
+			settingsFound = true
+		}
+	}
+	if !settingsFound {
+		t.Fatalf("settings.json не попал в архив: %v", names)
+	}
+}
+
+// Восстановление СВОЕГО бэкапа на СВОЁМ роутере не должно ронять ключ
+// подписки: секрета в архиве нет по построению, поэтому Restore переносит
+// существующий из отложенного каталога.
+func TestRestoreCarriesDeviceKey(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "awg-manager")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "settings.json"), []byte(`{"version":32}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	token, err := storage.NewDeviceCipher(dataDir).Encrypt("vpn://test-key-restore")
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := Export(dataDir, "2.18.2", &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if err := Restore(dataDir, bytes.NewReader(buf.Bytes())); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(dataDir, storage.DeviceKeyFile))
+	if err != nil {
+		t.Fatalf("секрет не перенесён: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("права перенесённого секрета %o, want 600", perm)
+	}
+	got, err := storage.NewDeviceCipher(dataDir).Decrypt(token)
+	if err != nil {
+		t.Fatalf("Decrypt после Restore: %v", err)
+	}
+	if got != "vpn://test-key-restore" {
+		t.Fatalf("Decrypt = %q", got)
+	}
+}
+
+// Восстановление в каталог, где секрета не было: переносить нечего, и это не
+// повод уронить восстановление.
+func TestRestoreWithoutDeviceKeySucceeds(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "settings.json"), []byte(`{"version":32}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := Export(source, "2.18.2", &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	target := filepath.Join(root, "awg-manager")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "settings.json"), []byte(`{"version":31}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Restore(target, bytes.NewReader(buf.Bytes())); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "settings.json")); err != nil {
+		t.Fatalf("данные не восстановлены: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, storage.DeviceKeyFile)); !os.IsNotExist(err) {
+		t.Fatalf("секрет взялся из ниоткуда: %v", err)
 	}
 }

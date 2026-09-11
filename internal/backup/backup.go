@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 const (
@@ -147,11 +149,13 @@ func Restore(dataDir string, r io.Reader) error {
 		return err
 	}
 
+	hadPrevious := false
 	if _, err := os.Stat(dataDir); err == nil {
 		if err := os.Rename(dataDir, previous); err != nil {
 			_ = os.RemoveAll(staging)
 			return fmt.Errorf("не удалось сохранить текущие данные: %w", err)
 		}
+		hadPrevious = true
 	} else if !os.IsNotExist(err) {
 		_ = os.RemoveAll(staging)
 		return err
@@ -162,6 +166,20 @@ func Restore(dataDir string, r io.Reader) error {
 		_ = os.Rename(previous, dataDir)
 		_ = os.RemoveAll(staging)
 		return fmt.Errorf("не удалось применить резервную копию: %w", err)
+	}
+	if hadPrevious {
+		// Секрет устройства в архив не попадает по построению (shouldSkip),
+		// поэтому после восстановления СВОЕГО бэкапа на СВОЁМ роутере его
+		// переносим из отложенного каталога — иначе зашифрованный им ключ
+		// подписки перестанет читаться. Переименование, а не чтение с
+		// записью: секрет не попадает в память этого пакета, а права 0600
+		// сохраняются сами.
+		//
+		// Ошибка намеренно молчит и восстановление НЕ отменяет: данные уже
+		// на месте и валидны, а единственное следствие — ключ подписки
+		// станет нерасшифровываемым, и этот случай спроектирован (наружу
+		// уходит usable:false). Ронять из-за него удавшийся restore хуже.
+		_ = os.Rename(filepath.Join(previous, storage.DeviceKeyFile), filepath.Join(dataDir, storage.DeviceKeyFile))
 	}
 	prunePreviousRestores(parent, filepath.Base(dataDir), previous)
 	if err := WritePostRestoreMarker(dataDir); err != nil {
@@ -188,6 +206,13 @@ func prunePreviousRestores(parent, name, keep string) {
 
 func shouldSkip(rel string) bool {
 	if rel == ManifestName {
+		return true
+	}
+	// Секрет устройства привязан к установке и в бэкап не едет: архив
+	// пользователь пересылает в поддержку и кладёт в облако. Префикс — про
+	// временный файл AtomicWritePerm (<имя>.tmp.<pid>.<ns>), который несёт
+	// тот же секрет и может попасться обходу на параллельной записи.
+	if rel == storage.DeviceKeyFile || strings.HasPrefix(rel, storage.DeviceKeyFile+".") {
 		return true
 	}
 	if rel == "run" || strings.HasPrefix(rel, "run/") {
