@@ -74,9 +74,10 @@ type LogFunc func(event, detail string)
 type recovery int
 
 const (
-	recoveryNone    recovery = iota // повторять нечего
-	recoverySession                 // cookie протухла: войти заново
-	recoveryMirror                  // хост не отвечает: перерезолвить зеркало
+	recoveryNone     recovery = iota // повторять нечего
+	recoverySession                  // cookie протухла: войти заново
+	recoveryRedirect                 // перенаправление: сессию сбросить, но исход запроса неизвестен
+	recoveryMirror                   // хост не отвечает: перерезолвить зеркало
 )
 
 // cpRequest описывает один вызов портала.
@@ -328,11 +329,13 @@ func (c *Client) call(ctx context.Context, req cpRequest) ([]byte, string, error
 // когда повтора не будет (расходный запрос, исчерпанные попытки) — иначе
 // следующая попытка пользователя пойдёт на тот же труп до конца TTL.
 //
-// repeatable запрещает только повтор после сетевого отказа: там исход неизвестен
-// — портал мог обработать расходный запрос и потерять соединение на ответе.
-// Восстановление сессии этим флагом не ограничено: отказ авторизации —
-// определённый ответ, портал запрос отверг и слот не потратил, а без повтора
-// протухшая сессия читается пользователем как отклонённый ключ.
+// repeatable запрещает повтор везде, где исход запроса неизвестен: после
+// сетевого отказа (портал мог обработать расходный запрос и потерять
+// соединение на ответе) и после перенаправления (302 на подписанную ссылку
+// скачивания — форма успеха, которую наш запрет редиректов превращает в
+// отказ). Исключение одно — recoverySession: отказ авторизации определённый
+// ответ, портал запрос отверг и слот не потратил, а без повтора протухшая
+// сессия читается пользователем как отклонённый ключ.
 func (c *Client) again(ctx context.Context, rec recovery, attempt int, repeatable bool) bool {
 	if rec == recoveryNone || ctx.Err() != nil {
 		return false
@@ -341,9 +344,9 @@ func (c *Client) again(ctx context.Context, rec recovery, attempt int, repeatabl
 		// Хост в мета-теге ротируется: мёртвый адрес обязан быть добыт заново,
 		// а не дожить в кэше до конца TTL.
 		c.mirror.Invalidate()
-		if !repeatable {
-			return false
-		}
+	}
+	if rec != recoverySession && !repeatable {
+		return false
 	}
 	return attempt+1 < maxAttempts
 }
@@ -445,7 +448,7 @@ func (c *Client) login(ctx context.Context, origin, key string) (string, recover
 func (c *Client) send(ctx context.Context, origin, sid string, req cpRequest) ([]byte, recovery, error) {
 	resp, rec, err := c.do(ctx, origin, sid, req)
 	if err != nil {
-		if rec == recoverySession {
+		if rec == recoverySession || rec == recoveryRedirect {
 			c.dropSession(sid)
 		}
 		return nil, rec, err
@@ -513,8 +516,12 @@ func statusRecovery(code int) recovery {
 	if code/100 == 3 {
 		// Перенаправление — тоже протухшая cookie: веб-приложения так и гонят
 		// на страницу входа. Без сброса мёртвая сессия осталась бы в кэше до
-		// перезапуска демона, повторяя тот же ответ на каждый вызов.
-		return recoverySession
+		// перезапуска демона, повторяя тот же ответ на каждый вызов. Но своя
+		// подсказка, а не recoverySession: 302 не доказывает, что запрос не
+		// обработан — у расходной ручки перенаправление на подписанную ссылку
+		// скачивания вполне бывает формой успеха, которую наш запрет
+		// редиректов превращает в отказ.
+		return recoveryRedirect
 	}
 	return recoveryNone
 }
@@ -604,7 +611,11 @@ func scrubAccountInfo(raw []byte) (json.RawMessage, error) {
 // обрезанным или в своей кодировке, схемы в значении тогда нет, а имя поля то
 // же. Обратное тоже верно — имена живого ответа перечислить нельзя, — поэтому
 // нужны оба признака.
-var subscriptionKeyFields = []string{"vpn_key", "vpnKey"}
+//
+// Имена — в нижнем регистре: сопоставление регистронезависимо (см.
+// scrubSecrets), как и у поиска поля конфигурации, потому что регистр имени
+// выбирает портал. Запись с заглавной буквой в этом списке была бы мёртвой.
+var subscriptionKeyFields = []string{"vpn_key", "vpnkey"}
 
 // secretMarker заменяет вырезанный секрет. Замена, а не удаление: удаление
 // уносит поле со свободным текстом целиком и сдвигает индексы массива, по
@@ -624,7 +635,7 @@ func scrubSecrets(v any) {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, item := range x {
-			if slices.Contains(subscriptionKeyFields, k) {
+			if slices.Contains(subscriptionKeyFields, strings.ToLower(k)) {
 				delete(x, k)
 				continue
 			}
@@ -647,19 +658,33 @@ func scrubSecrets(v any) {
 
 // maskSecret заменяет маркером каждую vpn://-ссылку в строке, оставляя
 // остальной текст на месте.
+//
+// Один проход со сборкой результата, а не пересборка всей строки на каждом
+// вхождении: тело приезжает с адреса, который задаёт пользователь, вход не
+// доверенный, а целевое железо — MIPS-роутер. Проход эквивалентен поиску с
+// начала после каждой замены: до первого вхождения ссылок нет по построению, а
+// маркер новых не создаёт — ни сам, ни на стыках.
 func maskSecret(s string) string {
-	for {
-		at := strings.Index(s, vpnLinkScheme)
-		if at < 0 {
-			return s
-		}
-		// Ссылка кончается там, где начинается пробел: в base64url его нет.
-		end := len(s)
-		if i := strings.IndexFunc(s[at:], unicode.IsSpace); i >= 0 {
-			end = at + i
-		}
-		s = s[:at] + secretMarker + s[end:]
+	at := strings.Index(s, vpnLinkScheme)
+	if at < 0 {
+		return s
 	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for at >= 0 {
+		b.WriteString(s[:at])
+		b.WriteString(secretMarker)
+		// Ссылка кончается там, где начинается пробел: в base64url его нет.
+		rest := s[at:]
+		if i := strings.IndexFunc(rest, unicode.IsSpace); i >= 0 {
+			s = rest[i:]
+		} else {
+			s = ""
+		}
+		at = strings.Index(s, vpnLinkScheme)
+	}
+	b.WriteString(s)
+	return b.String()
 }
 
 // errNoConf — внутренний признак «в этой строке конфигурации нет».

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // Фикстуры: ключи и адреса выдуманные — репозиторий публичный. Значения
@@ -1423,6 +1424,15 @@ func TestClientAccountInfoScrubsKeyFieldsByName(t *testing.T) {
 			body:  `{"data":{"display_name":"п","meta":{"vpnKey":"` + opaque + `"}}}`,
 			field: "vpnKey",
 		},
+		{
+			// Регистр имени поля выбирает портал, а не мы. Сопоставление
+			// обязано быть регистронезависимым, как у поиска поля
+			// конфигурации: иначе поле со значением без схемы уезжает наружу
+			// целиком — ровно случай, под который чёрный список и заведён.
+			name:  "VPN_Key в другом регистре",
+			body:  `{"data":{"display_name":"п","VPN_Key":"` + opaque + `"}}`,
+			field: "VPN_Key",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1522,6 +1532,41 @@ func TestClientAccountInfoScrubKeepsShape(t *testing.T) {
 			t.Fatalf("ошибка не различима сентинелом: %v", err)
 		}
 	})
+}
+
+// Критично: замена секрета маркером линейна по длине тела. Тело приезжает с
+// адреса, который задаёт пользователь, то есть вход не доверенный, а целевое
+// железо — MIPS-роутер: реализация, пересобирающая всю строку на каждом
+// вхождении и ищущая каждый раз с начала, на мегабайте считает десятки секунд.
+func TestMaskSecretStaysLinear(t *testing.T) {
+	const occurrences = 44000
+	var b strings.Builder
+	for range occurrences {
+		b.WriteString(fixtureKey)
+		b.WriteString(" ")
+		b.WriteString(strings.Repeat("x", 30))
+		b.WriteString(" ")
+	}
+	body := b.String()
+	if len(body) < 1<<20 {
+		t.Fatalf("тело %d байт, тест рассчитан на мегабайт", len(body))
+	}
+
+	start := time.Now()
+	got := maskSecret(body)
+	elapsed := time.Since(start)
+
+	if strings.Contains(got, vpnLinkScheme) {
+		t.Fatalf("секрет остался в результате")
+	}
+	if n := strings.Count(got, secretMarker); n != occurrences {
+		t.Fatalf("маркеров %d, ожидалось %d", n, occurrences)
+	}
+	// Порог с запасом к текущему железу: линейная замена укладывается в
+	// единицы миллисекунд, квадратичная — в десятки секунд.
+	if elapsed > time.Second {
+		t.Fatalf("замена в теле %d байт заняла %v — замена квадратична", len(body), elapsed)
+	}
 }
 
 // Критично: эхо ключа подписки в ответе не отдаётся как конфигурация. Ключ —
@@ -1749,6 +1794,50 @@ func TestClientRelogsInOnPortalRedirect(t *testing.T) {
 	sids := cp.sids()
 	if len(sids) != 2 || sids[1] != cp.sid(2) {
 		t.Fatalf("сессии запросов %v, ожидалось, что повтор пойдёт со свежей %q", sids, cp.sid(2))
+	}
+}
+
+// Критично: перенаправление на расходной ручке сессию роняет, но запрос не
+// повторяет. 302 не доказывает, что портал запрос не обработал: у выдачи
+// конфига перенаправление на подписанную ссылку скачивания — вполне форма
+// успеха, которую наш запрет редиректов превращает в отказ. Повтор в этом
+// случае съедает второй слот устройства подписки.
+func TestClientDoesNotRetryConfigRedirect(t *testing.T) {
+	cp := newFakeCP(t)
+	cp.configStatus = func(n int64) int {
+		if n == 1 {
+			return http.StatusFound
+		}
+		return http.StatusOK
+	}
+	c, _, _ := newTestClient(t, cp)
+	ctx := context.Background()
+
+	if _, err := c.AccountInfo(ctx); err != nil {
+		t.Fatalf("прогрев сессии: %v", err)
+	}
+
+	got, err := c.CountryConfig(ctx, "nl")
+	if err == nil {
+		t.Fatalf("перенаправление обязано быть отказом, получено %q", got)
+	}
+	if !errors.Is(err, ErrServiceUnavailable) {
+		t.Fatalf("ошибка не различима сентинелом: %v", err)
+	}
+	if n := cp.configs.Load(); n != 1 {
+		t.Fatalf("запросов конфига %d, ожидался 1: повтор тратит второй слот устройства", n)
+	}
+	if n := cp.logins.Load(); n != 1 {
+		t.Fatalf("входов %d, ожидался 1: повтора не было, входить заново незачем", n)
+	}
+
+	// Сессию перенаправление обязано уронить: иначе мёртвая cookie живёт до
+	// перезапуска демона, повторяя тот же ответ на каждый вызов.
+	if _, err := c.AccountInfo(ctx); err != nil {
+		t.Fatalf("account-info после отказа: %v", err)
+	}
+	if n := cp.logins.Load(); n != 2 {
+		t.Fatalf("входов %d, ожидалось 2: мёртвая сессия осталась в кэше", n)
 	}
 }
 
