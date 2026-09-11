@@ -988,17 +988,14 @@ func TestAmneziaPremiumKey_PostReportsStateOfStoredKey(t *testing.T) {
 // поколения вернувшийся SaveKey безусловно возвращал ключ и в память, и на
 // флеш — команда пользователя молча отменялась.
 //
-// В сторе лежит ДРУГОЙ сохранённый ключ: поколение двигает фактическая смена
-// состояния, и удалению обязано быть что удалять. Ключ фикстуры отличается от
-// присланного намеренно — на совпадающих значениях проверки «шифротекста нет»
-// и «в файле нет тела ключа» не различали бы «стёрли сохранённое» и «не
-// записали присланное».
+// Состояние ПУСТОЕ: удалять нечего, и это тот самый случай, ради которого
+// поколение двигает каждое удаление. Пользователь нажал «забыть» до того, как
+// ключ где-либо появился, — вернувшаяся проверка не имеет права его завести.
 //
 // Ответ портала придержан, а не подгадан по времени: окно открыто ровно на
 // время, которое нужно тесту.
 func TestAmneziaPremiumKey_DeleteDuringCheckIsNotUndone(t *testing.T) {
 	st := newPremiumStand(t)
-	st.seedStoredKey(t, premiumOtherKey)
 	hold := st.portal.holdNextLogin(t)
 
 	done := make(chan *httptest.ResponseRecorder, 1)
@@ -1010,8 +1007,7 @@ func TestAmneziaPremiumKey_DeleteDuringCheckIsNotUndone(t *testing.T) {
 		t.Fatal("вход не дошёл до портала: придержать нечего")
 	}
 
-	// Присланного ключа ещё нет нигде: проверка висит в портале. Стирается
-	// сохранённый ключ фикстуры.
+	// Ключа ещё нет нигде: проверка висит в портале.
 	delRec := st.del(t)
 	if delRec.Code != http.StatusOK {
 		t.Fatalf("удаление: %d %s", delRec.Code, delRec.Body.String())
@@ -1031,7 +1027,7 @@ func TestAmneziaPremiumKey_DeleteDuringCheckIsNotUndone(t *testing.T) {
 	if cipher := st.storedCipher(t); cipher != "" {
 		t.Errorf("шифротекст после удаления = %q, ждали пусто: ключ воскрес", cipher)
 	}
-	if file := st.settingsFile(t); strings.Contains(file, premiumKeyBody) || strings.Contains(file, premiumOtherKeyBody) {
+	if file := st.settingsFile(t); strings.Contains(file, premiumKeyBody) {
 		t.Errorf("settings.json несёт тело удалённого ключа:\n%s", file)
 	}
 	if got := st.h.subscriptionKey(); got != "" {
@@ -1046,16 +1042,20 @@ func TestAmneziaPremiumKey_DeleteDuringCheckIsNotUndone(t *testing.T) {
 	assertPremiumKeyConsistent(t, st, "стирание под летящим сохранением")
 }
 
-// Удаление на ПУСТОМ состоянии со сломанной записью настроек — не отказ, и оно
-// не отменяет летящее сохранение. Исход операции определяет ДОСТИГНУТОЕ
-// состояние: ключа нет ни в памяти, ни на диске — ровно то, чего просил
-// пользователь, — и то, дошли ли мы при этом до файла, ничего не меняет. Отказ
-// здесь гнал бы пользователя повторять удавшееся удаление, а сдвиг поколения
-// давал бы 409 «введите ключ заново» законному сохранению на ровном месте.
+// Удаление на ПУСТОМ состоянии со сломанной записью настроек — не отказ, и при
+// этом оно отменяет летящее сохранение. Два правила независимы и проверяются
+// вместе именно потому, что их легко склеить:
+//
+//   - код ответа считает ДОСТИГНУТОЕ состояние: ключа нет ни в памяти, ни на
+//     диске — ровно то, чего просил пользователь, а дошли ли мы при этом до
+//     файла, ничего не меняет. Отказ здесь гнал бы повторять удавшееся
+//     удаление;
+//   - поколение считает НАМЕРЕНИЕ: «ключа у меня быть не должно» сказано, и
+//     вернувшаяся проверка не имеет права завести ключ заново.
 //
 // Фазы задаёт тест: ответ портала придержан, запись настроек сломана ровно на
-// время удаления и починена до того, как сохранение пошло на диск.
-func TestAmneziaPremiumKey_EmptyDeleteDoesNotCancelFlyingSave(t *testing.T) {
+// время удаления и починена до того, как сохранение пошло бы на диск.
+func TestAmneziaPremiumKey_EmptyDeleteWithBrokenWriteBeatsFlyingSave(t *testing.T) {
 	st := newPremiumStand(t)
 	hold := st.portal.holdNextLogin(t)
 
@@ -1081,21 +1081,23 @@ func TestAmneziaPremiumKey_EmptyDeleteDoesNotCancelFlyingSave(t *testing.T) {
 
 	hold.release()
 	postRec := <-done
-	if postRec.Code != http.StatusOK {
-		t.Fatalf("код проверки = %d, ждали 200: удаление не состоялось, отменять сохранение нечем: %s",
-			postRec.Code, postRec.Body.String())
+	if postRec.Code != http.StatusConflict {
+		t.Fatalf("код проверки = %d, ждали %d: ключ, который просили забыть, не заводят молча: %s",
+			postRec.Code, http.StatusConflict, postRec.Body.String())
 	}
-	data := premiumData(t, postRec)
-	if !data.Stored || data.SaveError != "" {
-		t.Fatalf("ответ = %+v, ждали stored=true без ошибки сохранения", data)
+	if code := premiumErrorCode(t, postRec); code != codePremiumStateChanged {
+		t.Errorf("код отказа = %q, want %q", code, codePremiumStateChanged)
 	}
-	if got := st.storedPlainKey(t); got != premiumKey {
-		t.Errorf("на диске ключ %q, want %q", got, premiumKey)
+	if got := st.storedPlainKey(t); got != "" {
+		t.Errorf("на диске ключ %q, ждали пусто: летящее сохранение завело забытый ключ", got)
 	}
-	if got := st.memoryKey(t); got != premiumKey {
-		t.Errorf("в памяти ключ %q, want %q", got, premiumKey)
+	if got := st.memoryKey(t); got != "" {
+		t.Errorf("в памяти ключ %q, ждали пусто: летящее сохранение завело забытый ключ", got)
 	}
-	assertPremiumKeyConsistent(t, st, "сохранение под неудавшимся удалением")
+	if file := st.settingsFile(t); strings.Contains(file, premiumKeyBody) {
+		t.Errorf("settings.json несёт тело летящего ключа:\n%s", file)
+	}
+	assertPremiumKeyConsistent(t, st, "сохранение под пустым удалением")
 }
 
 // Двойной клик по «Сохранить»: два сохранения ОДНОГО ключа. Оба успешны, ключ
@@ -1453,10 +1455,6 @@ func TestAmneziaPremiumKey_DeleteDropsPortalSession(t *testing.T) {
 // и может задеть сессию более новую: это лишний ре-логин, и он дешевле живой
 // сессии забранного ключа.
 //
-// В сторе лежит сохранённый ключ: поколение двигает фактическая смена
-// состояния, и удалению обязано быть что удалять, иначе проверку никто не
-// отменит.
-//
 // Порядок фаз задан придержанным ответом портала: пока проверка висит,
 // пользователь успевает удалить ключ (и, во втором случае, ввести другой).
 func TestAmneziaPremiumKey_CancelledCheckDropsPortalSession(t *testing.T) {
@@ -1474,7 +1472,6 @@ func TestAmneziaPremiumKey_CancelledCheckDropsPortalSession(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newPremiumStand(t)
-			st.seedStoredKey(t, premiumKey)
 			hold := st.portal.holdNextLogin(t)
 
 			done := make(chan *httptest.ResponseRecorder, 1)
@@ -1522,10 +1519,11 @@ func TestAmneziaPremiumKey_CancelledCheckDropsPortalSession(t *testing.T) {
 }
 
 // Неудавшееся удаление при НЕПУСТОМ состоянии всё равно побеждает летящее
-// сохранение: состояние сменилось (память забыта), значит сменилось и
-// поколение, и вернувшаяся проверка ключ не возвращает. Двигай поколение по
-// успеху записи — и отказ записи открывал бы дверь летящему сохранению:
-// «забудь мой секрет» отменялось бы молча.
+// сохранение: поколение двигает само удаление, а не исход записи в файл, и
+// вернувшаяся проверка ключ не возвращает. Двигай поколение по успеху записи —
+// и отказ записи открывал бы дверь летящему сохранению: «забудь мой секрет»
+// отменялось бы молча, а при store=false ещё и восстанавливалась бы
+// единственная копия секрета, которую удаление уже уничтожило.
 //
 // Случай store=false отдельно: там память — ЕДИНСТВЕННАЯ копия секрета, её
 // уничтожение и есть удаление, а стирать на диске нечего, так что отказом это
