@@ -137,6 +137,10 @@ type SettingsData struct {
 	// awg-manager's internal control channel, not a user-facing listener
 	// (ADR 0001). 0 means "default" (9099). Issue #788.
 	SingboxClashPort int `json:"singboxClashPort,omitempty" example:"9099"`
+	// AmneziaPremiumMirrorURL is the Amnezia CP mirror address the Premium
+	// wizard resolves the live portal origin from. Empty in storage means
+	// "the built-in default"; responses always carry the effective address.
+	AmneziaPremiumMirrorURL string `json:"amneziaPremiumMirrorUrl,omitempty" example:"https://storage.googleapis.com/amnezia/cp?m-path=/ru"`
 }
 
 // SettingsResponse is the envelope for GET /settings/get.
@@ -258,6 +262,33 @@ func (h *SettingsHandler) SetDownloadService(svc *downloader.Service) {
 // resource:invalidated hint to all connected clients.
 func (h *SettingsHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
+// settingsForResponse готовит настройки к выдаче наружу: снимает секреты и
+// подставляет действующий адрес зеркала Amnezia. ЕДИНСТВЕННАЯ точка этих
+// правил — её проходят все ответы, отдающие настройки целиком (Get, Update,
+// RegenerateApiKey). Копии разошлись бы молча, и разойтись им было бы в
+// сторону утечки ключей.
+//
+// Возвращает КОПИЮ и правит только поля верхнего уровня в ней. Аргументом
+// приходит и снапшот (уже сам по себе копия), и черновик want из Update — а
+// тот поверхностная копия ЖИВОГО кэша стора и делит с ним карты. Вычистка по
+// месту стёрла бы приватные ключи пиров из памяти демона, а следующая запись
+// настроек унесла бы пропажу на диск.
+func settingsForResponse(s *storage.Settings) *storage.Settings {
+	out := *s
+	// Шифротекст ключа подписки Amnezia Premium не покидает бэкенд: его
+	// читает только premium-линия, расшифровывая DeviceCipher.
+	out.AmneziaPremiumKeyCipher = ""
+	// Приватные ключи клиентских пиров встроенных серверов: NDMS их не
+	// хранит, хранит наш settings.json — и в ответах настроек им не место.
+	out.ServerPeerSecrets = nil
+	// Пусто в хранилище означает «зеркало по умолчанию». Наружу отдаётся
+	// действующий адрес, чтобы у фронта не было собственной копии литерала.
+	if out.AmneziaPremiumMirrorURL == "" {
+		out.AmneziaPremiumMirrorURL = storage.DefaultAmneziaMirrorURL
+	}
+	return &out
+}
+
 // Get returns current settings.
 //
 //	@Summary		Get settings
@@ -283,7 +314,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.Success(w, settings)
+	response.Success(w, settingsForResponse(settings))
 }
 
 // Update saves settings.
@@ -557,12 +588,14 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Наружу отдаём снапшот, а не want: Update опубликовал запись, выведенную
 	// из актуального состояния, и она может отличаться от черновика полями,
-	// которые этот путь не трогает.
-	if snap, err := h.store.Snapshot(); err == nil {
-		response.Success(w, snap)
-	} else {
-		response.Success(w, &want)
+	// которые этот путь не трогает. Черновик — запасной вариант на отказ
+	// снапшота. Вычистка одна на обе ветки: отдельный вызов на запасной
+	// ветке некому было бы держать красным — через HTTP она недостижима.
+	out, err := h.store.Snapshot()
+	if err != nil {
+		out = &want
 	}
+	response.Success(w, settingsForResponse(out))
 	h.bus.PublishInvalidated(events.ResourceSettings, "updated")
 
 	// Порт мог смениться — перепроверяем экспозицию. В горутине с
@@ -611,7 +644,7 @@ func (h *SettingsHandler) RegenerateApiKey(w http.ResponseWriter, r *http.Reques
 	}
 
 	h.log.Info("api-key", "", "API key regenerated")
-	response.Success(w, settings)
+	response.Success(w, settingsForResponse(settings))
 	h.bus.PublishInvalidated(events.ResourceSettings, "api-key-rotated")
 }
 

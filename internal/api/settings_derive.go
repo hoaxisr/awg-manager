@@ -2,8 +2,10 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -98,6 +100,17 @@ func (h *SettingsHandler) deriveSettingsHead(cur *storage.Settings, patch *stora
 		return prev, settingsErr(err.Error(), "INVALID_CONNECTIVITY_CHECK_URL")
 	}
 
+	// Адрес зеркала Amnezia CP. Трогаем и валидируем ТОЛЬКО присланное: тот
+	// же контракт, что у singboxBootstrapDNS в хвосте — испорченное значение,
+	// уже лежащее в settings.json (downgrade, ручная правка), иначе заперло бы
+	// сохранение ВСЕХ остальных настроек.
+	if patch.AmneziaPremiumMirrorURL != nil {
+		cur.AmneziaPremiumMirrorURL = strings.TrimSpace(cur.AmneziaPremiumMirrorURL)
+		if err := validateAmneziaMirrorURL(cur.AmneziaPremiumMirrorURL); err != nil {
+			return prev, settingsErr(err.Error(), "INVALID_AMNEZIA_MIRROR_URL")
+		}
+	}
+
 	cur.Download.RouteTag = strings.TrimSpace(cur.Download.RouteTag)
 	if cur.Download.RouteTag == "" {
 		cur.Download.RouteTag = "direct"
@@ -171,6 +184,33 @@ func (h *SettingsHandler) deriveSettingsTail(cur *storage.Settings, patch *stora
 		if !autoInstallTimePattern.MatchString(cur.Updates.AutoInstallTime) {
 			return settingsErr("updates.autoInstallTime must be in HH:MM (24h) format", "INVALID_AUTO_INSTALL_TIME")
 		}
+	}
+	return nil
+}
+
+// validateAmneziaMirrorURL проверяет адрес зеркала Amnezia CP. Пустое значение
+// годно: оно означает «зеркало по умолчанию» (storage.DefaultAmneziaMirrorURL).
+//
+// Требуем ровно то, что нужно резолверу (internal/amneziacp.Mirror.resolve):
+// абсолютный адрес с хостом — по нему уходит обычный GET, чью страницу
+// разбирает ParseMirrorTo. Путь и запрос здесь ЗАКОННЫ, их содержит сам
+// дефолтный адрес; правило «origin — только схема, хост и порт» из
+// normalizeOrigin относится к data-link из мета-тега, а не к этому полю, и
+// запрет пути отверг бы дефолт.
+//
+// Схема только https: со страницы зеркала приезжает хост, которому клиент
+// затем шлёт ключ подписки, поэтому подменить её по пути к зеркалу быть не
+// должно.
+func validateAmneziaMirrorURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("адрес зеркала Amnezia непригоден: %v", err)
+	}
+	if u.Scheme != "https" || u.Host == "" {
+		return errors.New("адрес зеркала Amnezia должен быть абсолютным https-адресом")
 	}
 	return nil
 }

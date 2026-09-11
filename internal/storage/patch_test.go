@@ -348,6 +348,11 @@ var nonPatchableSettings = map[string]struct{}{
 	// fakeip/policyTun (легаси-ключи остаются в списке: PATCH не должен уметь
 	// подсунуть их и после миграции).
 	"opkgTun": {},
+	// amneziaPremiumKeyCipher — шифротекст ключа подписки Amnezia Premium,
+	// пишется ТОЛЬКО ручками premium. На общем PATCH он дал бы аутентифи-
+	// цированному клиенту подменить чужой ключ подписки (и затереть свой)
+	// мимо шифрования DeviceCipher — та же логика, что у serverPeerSecrets.
+	"amneziaPremiumKeyCipher": {},
 }
 
 // TestSettingsPatch_ExcludesServerSecrets pins the intentional exclusion: a

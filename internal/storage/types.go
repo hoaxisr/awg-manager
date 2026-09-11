@@ -102,6 +102,17 @@ type Settings struct {
 	// preset (see DNSChainPresetState). Pointer so it's absent from JSON when
 	// never enabled; nil = no preset. Written ONLY via SetDNSChainPresetState.
 	DNSChainPreset *DNSChainPresetState `json:"dnsChainPreset,omitempty"`
+	// AmneziaPremiumMirrorURL — адрес зеркала Amnezia CP, с которого
+	// резолвер берёт рабочий origin портала. Настраивается, потому что
+	// зеркало переезжает: константа заперла бы мастер до следующего релиза.
+	// Пусто = DefaultAmneziaMirrorURL; действующий адрес подставляется на
+	// выдаче, в файле пустое значение остаётся пустым.
+	AmneziaPremiumMirrorURL string `json:"amneziaPremiumMirrorUrl,omitempty"`
+	// AmneziaPremiumKeyCipher — ключ подписки Amnezia Premium, зашифрованный
+	// DeviceCipher. Пишется ТОЛЬКО ручками premium (никогда через
+	// /settings/update — см. nonPatchableSettings) и наружу не отдаётся ни
+	// одним ответом настроек (см. settingsForResponse в internal/api).
+	AmneziaPremiumKeyCipher string `json:"amneziaPremiumKeyCipher,omitempty"`
 }
 
 // DNSChainPresetState is backend-managed state of the DNS-chain preset

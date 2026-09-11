@@ -41,6 +41,7 @@ type SettingsPatch struct {
 	SingboxBootstrapDNS         *string                `json:"singboxBootstrapDNS,omitempty"`
 	SingboxClashPort            *int                   `json:"singboxClashPort,omitempty"`
 	ManagedPeerAllowIPsMigrated *bool                  `json:"managedPeerAllowIPsMigrated,omitempty"`
+	AmneziaPremiumMirrorURL     *string                `json:"amneziaPremiumMirrorUrl,omitempty"`
 }
 
 // DownloadSettingsPatch supports true partial updates for /settings/update

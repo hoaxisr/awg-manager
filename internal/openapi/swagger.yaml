@@ -3902,6 +3902,13 @@ definitions:
     type: object
   api.SettingsData:
     properties:
+      amneziaPremiumMirrorUrl:
+        description: |-
+          AmneziaPremiumMirrorURL is the Amnezia CP mirror address the Premium
+          wizard resolves the live portal origin from. Empty in storage means
+          "the built-in default"; responses always carry the effective address.
+        example: https://storage.googleapis.com/amnezia/cp?m-path=/ru
+        type: string
       authEnabled:
         example: false
         type: boolean
