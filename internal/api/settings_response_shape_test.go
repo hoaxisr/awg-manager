@@ -22,6 +22,10 @@ import (
 // backend-managed записи владения: фронт их не читает, а половина несёт
 // ключевой материал.
 //
+// Нет и amneziaPremiumMirrorUrl: адрес зеркала Amnezia принадлежит мастеру
+// premium — его читают и пишут ручки premium, а общая страница настроек его
+// не показывает и никогда не читала.
+//
 // Отсутствует и hiddenSystemTunnels, объявленный в рукописном типе фронта:
 // поля с таким именем нет ни в storage.Settings, ни в SettingsPatch, и ни
 // один компонент фронта его не читает — объявление мёртвое, отдавать нечего.
@@ -45,7 +49,6 @@ var settingsResponseKeys = []string{
 	"usageLevel",
 	"singboxBootstrapDNS",
 	"singboxClashPort",
-	"amneziaPremiumMirrorUrl",
 }
 
 // seedAllResponseFields наполняет КАЖДОЕ поле белого списка непустым

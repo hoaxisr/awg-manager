@@ -113,9 +113,8 @@ func assertSecretsStillStored(t *testing.T, store *storage.SettingsStore) {
 
 // Все ручки, отдающие настройки целиком, проходят одну вычистку: в теле нет
 // ни шифротекста ключа подписки, ни ключевого материала пиров и
-// managed-серверов, а пустой адрес зеркала подменён действующим дефолтом.
-// Сохранённое при этом цело.
-func TestSettingsResponses_StripSecretsAndFillMirror(t *testing.T) {
+// managed-серверов. Сохранённое при этом цело.
+func TestSettingsResponses_StripSecrets(t *testing.T) {
 	cases := []struct {
 		name string
 		call func(*SettingsHandler) *httptest.ResponseRecorder
@@ -141,12 +140,6 @@ func TestSettingsResponses_StripSecretsAndFillMirror(t *testing.T) {
 				t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
 			}
 			assertNoSecretsInBody(t, rr.Body.String())
-
-			data, _ := decodeJSONBody(t, rr)["data"].(map[string]any)
-			if got, _ := data["amneziaPremiumMirrorUrl"].(string); got != storage.DefaultAmneziaMirrorURL {
-				t.Errorf("адрес зеркала в ответе = %q, want дефолт %q", got, storage.DefaultAmneziaMirrorURL)
-			}
-
 			assertSecretsStillStored(t, store)
 		})
 	}
@@ -224,30 +217,21 @@ func TestUpdate_AmneziaMirrorURLValidation(t *testing.T) {
 	if snap.AmneziaPremiumMirrorURL != testMirrorURL {
 		t.Fatalf("сохранён %q, want %q", snap.AmneziaPremiumMirrorURL, testMirrorURL)
 	}
-	// Непустое значение отдаётся как есть, дефолт его не подменяет.
-	data, _ := decodeJSONBody(t, rr)["data"].(map[string]any)
-	if got, _ := data["amneziaPremiumMirrorUrl"].(string); got != testMirrorURL {
-		t.Fatalf("в ответе %q, want %q", got, testMirrorURL)
-	}
 }
 
-// Испорченный адрес, УЖЕ лежащий в хранилище (downgrade, ручная правка), не
-// должен запирать страницу настроек — и уходит из файла сам.
+// Хранимый адрес зеркала переживает круговорот «ответ → PATCH».
 //
-// Проверяется тот круговорот, который единственно и бывает у реального
-// фронта: страница шлёт обратно тело ответа ЦЕЛИКОМ
-// (api.updateSettings({ ...settings, ... })), так что поле адреса в PATCH
-// есть ВСЕГДА и всегда проходит валидацию. Эхо хранимого мусора давало бы
-// 400 на каждое сохранение; наружу вместо него уходит дефолт
-// (storage.EffectiveAmneziaMirrorURL), возвращается тем же PATCH-ем и
-// схлопывается в пустое — мусор из settings.json вычищается сам.
-func TestUpdate_StoredBrokenMirrorURL_RoundTripHeals(t *testing.T) {
+// Поле ушло из общего ответа настроек — оно принадлежит мастеру premium, — а
+// страница настроек шлёт обратно тело ответа ЦЕЛИКОМ. Раз поля в теле нет,
+// патч его не присылает, и хранимое обязано остаться нетронутым: иначе
+// первый же щелчок любым тумблером стирал бы адрес, вписанный через мастер.
+func TestUpdate_StoredMirrorURL_SurvivesResponseRoundTrip(t *testing.T) {
 	h, store := newSettingsHandlerForTest(t)
 	if err := store.Update(func(cur *storage.Settings) error {
-		cur.AmneziaPremiumMirrorURL = "не адрес вовсе"
+		cur.AmneziaPremiumMirrorURL = testMirrorURL
 		return nil
 	}); err != nil {
-		t.Fatalf("seed broken mirror: %v", err)
+		t.Fatalf("seed mirror: %v", err)
 	}
 
 	rr := perform(h.Get, http.MethodGet, "/settings/get", "")
@@ -255,12 +239,11 @@ func TestUpdate_StoredBrokenMirrorURL_RoundTripHeals(t *testing.T) {
 		t.Fatalf("get: code=%d body=%s", rr.Code, rr.Body.String())
 	}
 	data, _ := decodeJSONBody(t, rr)["data"].(map[string]any)
-	if got, _ := data["amneziaPremiumMirrorUrl"].(string); got != storage.DefaultAmneziaMirrorURL {
-		t.Fatalf("в ответе эхо хранимого %q, want дефолт %q", got, storage.DefaultAmneziaMirrorURL)
+	if _, ok := data["amneziaPremiumMirrorUrl"]; ok {
+		t.Errorf("адрес зеркала в общем ответе настроек: %s", rr.Body.String())
 	}
 
-	// Тело ответа целиком обратно, как на любом щелчке тумблером.
-	data["usageLevel"] = "expert"
+	// Ровно то, что шлёт страница настроек на любом тумблере.
 	body, err := json.Marshal(data)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -274,11 +257,8 @@ func TestUpdate_StoredBrokenMirrorURL_RoundTripHeals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.UsageLevel != "expert" {
-		t.Fatalf("usageLevel = %q, want expert", snap.UsageLevel)
-	}
-	if snap.AmneziaPremiumMirrorURL != "" {
-		t.Fatalf("мусор остался в хранилище: %q", snap.AmneziaPremiumMirrorURL)
+	if snap.AmneziaPremiumMirrorURL != testMirrorURL {
+		t.Fatalf("адрес после круговорота = %q, want %q", snap.AmneziaPremiumMirrorURL, testMirrorURL)
 	}
 }
 
@@ -313,8 +293,8 @@ func TestUpdate_StoredBrokenMirrorURL_DoesNotBlockPartialPatch(t *testing.T) {
 	if snap.Download.RouteTag != "direct" {
 		t.Fatalf("маршрут загрузок не сохранён: %+v", snap.Download)
 	}
-	// Неприсланное поле патч не трогает: чистка мусора — дело круговорота
-	// ответ→PATCH (TestUpdate_StoredBrokenMirrorURL_RoundTripHeals).
+	// Неприсланное поле патч не трогает: мусор уйдёт из файла только с
+	// явно присланным значением (TestUpdate_StoredBrokenMirrorURL_LogsReplacementOnce).
 	if snap.AmneziaPremiumMirrorURL != broken {
 		t.Fatalf("неприсланное поле изменено: %q", snap.AmneziaPremiumMirrorURL)
 	}
@@ -326,43 +306,13 @@ func TestUpdate_StoredBrokenMirrorURL_DoesNotBlockPartialPatch(t *testing.T) {
 // выполняется дважды — на черновике и под локом стора, — и лог внутри неё
 // удвоил бы сообщение), и она обязана назвать отброшенный адрес.
 func TestUpdate_StoredBrokenMirrorURL_LogsReplacementOnce(t *testing.T) {
-	h, store := newSettingsHandlerForTest(t)
-	log := &recordingAppLogger{}
-	h.log = logging.NewScopedLogger(log, logging.GroupSystem, logging.SubSettings)
-
 	const broken = "не адрес вовсе"
-	if err := store.Update(func(cur *storage.Settings) error {
-		cur.AmneziaPremiumMirrorURL = broken
-		return nil
-	}); err != nil {
-		t.Fatalf("seed broken mirror: %v", err)
+	lines := seedBrokenMirrorAndClear(t, broken)
+	if len(lines) != 1 {
+		t.Fatalf("строк про зеркало в журнале %d, want 1: %v", len(lines), lines)
 	}
-
-	rr := perform(h.Get, http.MethodGet, "/settings/get", "")
-	if rr.Code != http.StatusOK {
-		t.Fatalf("get: code=%d body=%s", rr.Code, rr.Body.String())
-	}
-	data, _ := decodeJSONBody(t, rr)["data"].(map[string]any)
-	body, err := json.Marshal(data)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	rr = perform(h.Update, http.MethodPost, "/settings/update", string(body))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("update: code=%d body=%s", rr.Code, rr.Body.String())
-	}
-
-	var about []string
-	for _, m := range log.messages {
-		if strings.Contains(m, "зеркал") {
-			about = append(about, m)
-		}
-	}
-	if len(about) != 1 {
-		t.Fatalf("строк про зеркало в журнале %d, want 1: %v", len(about), log.messages)
-	}
-	if !strings.Contains(about[0], broken) {
-		t.Fatalf("в журнале не назван отброшенный адрес: %q", about[0])
+	if !strings.Contains(lines[0], broken) {
+		t.Fatalf("в журнале не назван отброшенный адрес: %q", lines[0])
 	}
 }
 
@@ -384,11 +334,12 @@ func mirrorLogLines(log *recordingAppLogger) []string {
 	return out
 }
 
-// seedBrokenMirrorAndRoundTrip кладёт в стор непригодный адрес и прогоняет
-// круговорот «ответ → PATCH», которым фронт сохраняет настройки целиком:
-// именно на нём хранимый мусор заменяется дефолтом. Возвращает строки
-// журнала про зеркало.
-func seedBrokenMirrorAndRoundTrip(t *testing.T, stored string) []string {
+// seedBrokenMirrorAndClear кладёт в стор непригодный адрес и присылает поле
+// пустым — единственный оставшийся путь, на котором хранимый мусор
+// заменяется дефолтом: в общем ответе настроек поля больше нет, так что
+// круговорот «ответ → PATCH» его не трогает. Возвращает строки журнала про
+// зеркало.
+func seedBrokenMirrorAndClear(t *testing.T, stored string) []string {
 	t.Helper()
 	h, store := newSettingsHandlerForTest(t)
 	log := &recordingAppLogger{}
@@ -401,16 +352,8 @@ func seedBrokenMirrorAndRoundTrip(t *testing.T, stored string) []string {
 		t.Fatalf("seed broken mirror: %v", err)
 	}
 
-	rr := perform(h.Get, http.MethodGet, "/settings/get", "")
-	if rr.Code != http.StatusOK {
-		t.Fatalf("get: code=%d body=%s", rr.Code, rr.Body.String())
-	}
-	data, _ := decodeJSONBody(t, rr)["data"].(map[string]any)
-	body, err := json.Marshal(data)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	rr = perform(h.Update, http.MethodPost, "/settings/update", string(body))
+	rr := perform(h.Update, http.MethodPost, "/settings/update",
+		`{"amneziaPremiumMirrorUrl":""}`)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("update: code=%d body=%s", rr.Code, rr.Body.String())
 	}
@@ -472,7 +415,7 @@ func TestUpdate_StoredMirrorURLWithCredentials_LogHidesThem(t *testing.T) {
 		stored = "https://" + login + ":" + pass + "@mirror.test/cp"
 	)
 
-	lines := seedBrokenMirrorAndRoundTrip(t, stored)
+	lines := seedBrokenMirrorAndClear(t, stored)
 	if len(lines) != 1 {
 		t.Fatalf("строк про зеркало %d, want 1: %v", len(lines), lines)
 	}
@@ -492,48 +435,12 @@ func TestUpdate_StoredMirrorURLWithCredentials_LogHidesThem(t *testing.T) {
 func TestUpdate_StoredOverlongMirrorURL_LogIsBounded(t *testing.T) {
 	stored := "https://" + strings.Repeat("a", 300000) + ".test/cp"
 
-	lines := seedBrokenMirrorAndRoundTrip(t, stored)
+	lines := seedBrokenMirrorAndClear(t, stored)
 	if len(lines) != 1 {
 		t.Fatalf("строк про зеркало %d, want 1: %v", len(lines), lines)
 	}
 	if len(lines[0]) > 512 {
 		t.Fatalf("строка журнала %d байт, want <= 512", len(lines[0]))
-	}
-}
-
-// Круговорот «ответ → PATCH». Фронт сохраняет настройки ЦЕЛИКОМ
-// (api.updateSettings({ ...settings, ... })), а ответ несёт ПОДСТАВЛЕННЫЙ
-// действующий адрес зеркала. Без схлопывания на записи первый же щелчок
-// любым тумблером прибил бы дефолтный литерал в settings.json, и смена
-// зеркала в новом релизе не доехала бы до такого пользователя.
-func TestUpdate_MirrorRoundTrip_KeepsStorageEmpty(t *testing.T) {
-	h, store := newSettingsHandlerForTest(t)
-
-	rr := perform(h.Get, http.MethodGet, "/settings/get", "")
-	if rr.Code != http.StatusOK {
-		t.Fatalf("get: code=%d body=%s", rr.Code, rr.Body.String())
-	}
-	data, _ := decodeJSONBody(t, rr)["data"].(map[string]any)
-	if got, _ := data["amneziaPremiumMirrorUrl"].(string); got != storage.DefaultAmneziaMirrorURL {
-		t.Fatalf("в ответе %q, want дефолт %q", got, storage.DefaultAmneziaMirrorURL)
-	}
-
-	// Ровно то, что шлёт страница настроек: весь объект ответа обратно.
-	body, err := json.Marshal(data)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	rr = perform(h.Update, http.MethodPost, "/settings/update", string(body))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("update: code=%d body=%s", rr.Code, rr.Body.String())
-	}
-
-	snap, err := store.Snapshot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snap.AmneziaPremiumMirrorURL != "" {
-		t.Fatalf("дефолт прибит в хранилище: %q", snap.AmneziaPremiumMirrorURL)
 	}
 }
 

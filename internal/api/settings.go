@@ -154,10 +154,6 @@ type SettingsData struct {
 	// awg-manager's internal control channel, not a user-facing listener
 	// (ADR 0001). 0 means "default" (9099). Issue #788.
 	SingboxClashPort int `json:"singboxClashPort,omitempty" example:"9099"`
-	// AmneziaPremiumMirrorURL is the Amnezia CP mirror address the Premium
-	// wizard resolves the live portal origin from. Empty in storage means
-	// "the built-in default"; responses always carry the effective address.
-	AmneziaPremiumMirrorURL string `json:"amneziaPremiumMirrorUrl,omitempty" example:"https://storage.googleapis.com/amnezia/cp?m-path=/ru"`
 }
 
 // SettingsResponse is the envelope for GET /settings/get.
@@ -366,15 +362,6 @@ func settingsResponse(s *storage.Settings) SettingsData {
 		UsageLevel:           s.UsageLevel,
 		SingboxBootstrapDNS:  s.SingboxBootstrapDNS,
 		SingboxClashPort:     s.SingboxClashPort,
-		// Пусто в хранилище означает «зеркало по умолчанию». Наружу отдаётся
-		// действующий адрес, чтобы у фронта не было собственной копии
-		// литерала; правило одно на всех читателей —
-		// storage.EffectiveAmneziaMirrorURL. Оно же не выпускает наружу
-		// непригодное хранимое значение: эхо мусора вернулось бы PATCH-ем
-		// (страница шлёт тело ответа целиком) и заперло бы сохранение всех
-		// настроек 400-м. Обратный ход (подставленный дефолт вернулся
-		// PATCH-ем) схлопывает normalizeAmneziaMirrorURL на записи.
-		AmneziaPremiumMirrorURL: storage.EffectiveAmneziaMirrorURL(s.AmneziaPremiumMirrorURL),
 	}
 }
 
@@ -640,11 +627,12 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Непригодный адрес зеркала, лежавший в хранилище (downgrade, ручная
-	// правка), наружу не ушёл — вместо него уехал дефолт, а вернувшийся
-	// PATCH-ем дефолт стёр хранимое (см. settingsResponse и
-	// normalizeAmneziaMirrorURL). Самоисцеление обязано быть слышно: человек,
-	// который правил settings.json руками и ошибся, иначе не узнает, куда
-	// делась его правка, — увидит лишь, что поле опустело.
+	// правка), заменён дефолтом: поле прислали пустым. Через страницу
+	// настроек этот путь недостижим — поля нет в общем ответе, а страница
+	// шлёт обратно тело ответа; остаются прямой вызов API и ручки premium,
+	// которым поле принадлежит. Замена обязана быть слышна: человек, который
+	// правил settings.json руками и ошибся, иначе не узнает, куда делась его
+	// правка, — увидит лишь, что поле опустело.
 	//
 	// Признак самоисцеления — новое значение СТАЛО ПУСТЫМ, то есть действует
 	// дефолт. Признак «новое отличается от старого» здесь врёт: он верен и
