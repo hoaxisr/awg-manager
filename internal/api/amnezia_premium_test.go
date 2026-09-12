@@ -1,9 +1,12 @@
 package api
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,11 +34,61 @@ import (
 // не совпадают: проверка «в ответе нет секрета» по совпадающим значениям
 // доказывала бы не то.
 const (
-	premiumKeyBody      = "test-key-4d91-saved"
-	premiumKey          = "vpn://" + premiumKeyBody
 	premiumOtherKeyBody = "test-key-0b57-other"
 	premiumOtherKey     = "vpn://" + premiumOtherKeyBody
 )
+
+// premiumKeySubscriptionConf — конфигурация, зашитая в фикстурный ключ
+// подписки. Это конфигурация ВСЕЙ подписки, и ровно она уезжает наружу, когда
+// страж эха снят; от выдаваемой за страну (premiumConfFixture) отличается
+// адресом — подмену видно по одному полю.
+const premiumKeySubscriptionConf = "[Interface]\n" +
+	"Address = 10.88.1.2/32\n" +
+	"PrivateKey = test-subscription-private-DDDD=\n" +
+	"\n" +
+	"[Peer]\n" +
+	"PublicKey = test-subscription-public-EEEE=\n" +
+	"AllowedIPs = 0.0.0.0/0\n" +
+	"Endpoint = 198.51.100.7:51820\n"
+
+// premiumKey — ключ подписки в фикстурах. Это НАСТОЯЩАЯ vpn://-ссылка (четыре
+// служебных байта, zlib, base64url), а не выдуманная строка, и потому var, а
+// не const.
+//
+// Разбираемость обязательна: с ключом, который никуда не декодируется,
+// проверка «эхо ключа вместо конфигурации» вакуумна — отказ приходит от
+// декодера ссылки, и страж эха, снятый мутацией, остаётся зелёным. Этажом ниже
+// от этой ловушки защитились явно (internal/amneziacp), здесь её повторили.
+var (
+	premiumKeyBody = premiumVPNLinkBody(premiumKeySubscriptionConf)
+	premiumKey     = "vpn://" + premiumKeyBody
+)
+
+// premiumVPNLinkBody собирает тело vpn://-ссылки в формате клиента Amnezia.
+// Паника, а не t.Fatal: это фикстура уровня пакета, и собраться она обязана
+// до первого теста.
+func premiumVPNLinkBody(conf string) string {
+	inner, err := json.Marshal(map[string]string{"config": conf})
+	if err != nil {
+		panic(err)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"containers": []any{map[string]any{"awg": map[string]any{"last_config": string(inner)}}},
+	})
+	if err != nil {
+		panic(err)
+	}
+	var buf bytes.Buffer
+	buf.Write([]byte{0, 0, 0, 0})
+	zw := zlib.NewWriter(&buf)
+	if _, err := zw.Write(payload); err != nil {
+		panic(err)
+	}
+	if err := zw.Close(); err != nil {
+		panic(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf.Bytes())
+}
 
 // premiumLogin — то, с чем пришёл вход на стенд портала.
 type premiumLogin struct {
@@ -69,6 +122,9 @@ type premiumPortal struct {
 	configBody string
 	// configHold придерживает ОДИН следующий запрос конфигурации.
 	configHold *premiumHold
+	// configAbort — портал рвёт соединение, успев принять РАСХОДНЫЙ запрос:
+	// слот мог быть списан, а ответа не будет.
+	configAbort bool
 }
 
 // premiumHold — придержанный ответ портала. Тест узнаёт по arrived, что вход
@@ -168,9 +224,16 @@ func (p *premiumPortal) handleDownloadConfig(w http.ResponseWriter, r *http.Requ
 	p.configs = append(p.configs, in.CountryCode)
 	status := p.configStatus
 	respBody := p.configBody
+	abort := p.configAbort
 	hold := p.configHold
 	p.configHold = nil
 	p.mu.Unlock()
+
+	if abort {
+		// Запрос принят, ответ не доедет: ровно тот случай, в котором ручной
+		// повтор съедает второй слот устройства подписки.
+		panic(http.ErrAbortHandler)
+	}
 
 	if hold != nil {
 		close(hold.arrived)
@@ -204,6 +267,14 @@ func (p *premiumPortal) setAccount(body string) {
 func (p *premiumPortal) setConfigStatus(code int) {
 	p.mu.Lock()
 	p.configStatus = code
+	p.mu.Unlock()
+}
+
+// setConfigAbort заставляет расходную ручку рвать соединение после приёма
+// запроса.
+func (p *premiumPortal) setConfigAbort(v bool) {
+	p.mu.Lock()
+	p.configAbort = v
 	p.mu.Unlock()
 }
 
@@ -1467,7 +1538,7 @@ func TestAmneziaPremiumKey_FailureMapping(t *testing.T) {
 			// оборачивает его в общий сентинел, и ветка зеркала обязана быть
 			// РАНЬШЕ общей, иначе своя причина теряется.
 			{"зеркало недоступно под общим сентинелом", fmt.Errorf("%w: %w", amneziacp.ErrServiceUnavailable, amneziacp.ErrMirrorUnavailable), http.StatusBadGateway, codePremiumMirrorUnavailable},
-			{"ответ расходной ручки не разобран", amneziacp.ErrResponseUnusable, http.StatusBadGateway, codePremiumResponseUnusable},
+			{"исход расходной операции неизвестен", amneziacp.ErrOutcomeUnknown, http.StatusBadGateway, codePremiumOutcomeUnknown},
 			{"сервис недоступен", amneziacp.ErrServiceUnavailable, http.StatusServiceUnavailable, codePremiumServiceUnavailable},
 			{"сентинел, которого мы не знаем", errors.New("отказ неизвестного класса"), http.StatusServiceUnavailable, codePremiumServiceUnavailable},
 		}
@@ -2129,7 +2200,7 @@ const premiumLeakProbe = "test-leak-6e2c"
 // (installation_uuid, os_version): проверка белого списка на одном поле
 // прошла бы и у того, кто пересылает объект по списку имён, вычищая одно
 // известное.
-const premiumAccountFixture = `{"data":{
+var premiumAccountFixture = `{"data":{
 	"display_name":"Premium test-plan-77",
 	"display_description":"` + premiumLeakProbe + `-display-description",
 	"subscription_status":"` + premiumLeakProbe + `-status",
@@ -2166,7 +2237,7 @@ const premiumAccountFixture = `{"data":{
 // с комментарием-шапкой, ВТОРАЯ строка которого несёт ключ всей подписки.
 // Ключ в фикстуре настоящий (тот же, которым входили): без него проверка «в
 // ответе нет секрета» доказывала бы не то — вырезать было бы нечего.
-const premiumConfFixture = "# AmneziaVPN\n" +
+var premiumConfFixture = "# AmneziaVPN\n" +
 	"# VPN Key: " + premiumKey + "\n" +
 	"# Country: Netherlands\n" +
 	"[Interface]\n" +
@@ -2773,21 +2844,44 @@ func assertNotRetryable(t *testing.T, msg string) {
 	}
 }
 
-// Оба отказа расходной операции советуют ОДНО И ТО ЖЕ и одними словами: и там
-// и там пользователю надо посмотреть, что у портала, а не жать кнопку заново.
-// Две формулировки одного совета расходятся — одна из них уже успела позвать
-// «прежде чем запрашивать снова», то есть ровно к повтору, который тратит
-// второй слот подписки (F200).
-func TestAmneziaPremiumConfig_BothNonRetryableTextsShareOneAdvice(t *testing.T) {
-	_, _, redirect := cpFailure(fmt.Errorf("%w: стенд", amneziacp.ErrOutcomeUnknown))
-	_, _, unusable := cpFailure(fmt.Errorf("%w: стенд", amneziacp.ErrResponseUnusable))
-	assertNotRetryable(t, redirect)
-	assertNotRetryable(t, unusable)
-	if !strings.HasSuffix(redirect, premiumCheckDeviceCount) {
-		t.Errorf("текст перенаправления кончается не общим советом: %s", redirect)
+// premiumKeyOtherEncoding — тот же ключ подписки, записанный иначе: обычный
+// алфавит base64 вместо URL-безопасного и хвостовые '='. Байты полезной
+// нагрузки те же, строка другая — ровно та форма, которой зонд ревьюера обошёл
+// страж эха, сравнивавший строки на равенство.
+func premiumKeyOtherEncoding(t *testing.T) string {
+	t.Helper()
+	raw, err := base64.RawURLEncoding.DecodeString(premiumKeyBody)
+	if err != nil {
+		t.Fatalf("фикстурный ключ не разбирается: проверка стража была бы вакуумной: %v", err)
 	}
-	if !strings.HasSuffix(unusable, premiumCheckDeviceCount) {
-		t.Errorf("текст непригодного ответа кончается не общим советом: %s", unusable)
+	other := "vpn://" + base64.StdEncoding.EncodeToString(raw)
+	if other == premiumKey {
+		t.Fatal("другая запись совпала с самим ключом: проверка вакуумна")
+	}
+	return other
+}
+
+// premiumSpentSlotClaims — слова, которыми текст УТВЕРЖДАЕТ судьбу слота
+// подписки. Утверждать её нам нечем: «портал ответил успехом» доказывает
+// только то, что 200 ответил кто-то, — интерстишл WAF перед CP приезжает с тем
+// же кодом, а адрес портала резолвится с зеркала, которое задаёт сам
+// пользователь. Пользователь, которому сказали «слот потрачен», не потратив
+// его, перестаёт верить и счётчику, и панели.
+var premiumSpentSlotClaims = []string{"потрачен", "потрачена", "списан", "израсходован", "обработал запрос"}
+
+// Единственный неповторяемый отказ линии: текст не зовёт повторить, кончается
+// общим советом и НЕ утверждает потраченный слот как факт.
+func TestAmneziaPremiumConfig_NonRetryableTextIsHonest(t *testing.T) {
+	_, _, msg := cpFailure(fmt.Errorf("%w: стенд", amneziacp.ErrOutcomeUnknown))
+	assertNotRetryable(t, msg)
+	if !strings.HasSuffix(msg, premiumCheckDeviceCount) {
+		t.Errorf("текст кончается не общим советом: %s", msg)
+	}
+	low := strings.ToLower(msg)
+	for _, claim := range premiumSpentSlotClaims {
+		if strings.Contains(low, claim) {
+			t.Errorf("текст утверждает судьбу слота (%q), которой мы не знаем: %s", claim, msg)
+		}
 	}
 }
 
@@ -2813,17 +2907,42 @@ func TestAmneziaPremiumConfig_RedirectIsNotRetryable(t *testing.T) {
 	}
 }
 
-// Ответ 200 с непригодным телом у расходной ручки — СВОЙ класс отказа, и
-// текст НЕ зовёт повторить. Это хуже перенаправления: там исход неизвестен, а
-// здесь портал отработал (статус успеха), слот устройства подписки списан, и
-// не разобрался только ответ. Общий «сервис недоступен — попробуйте позже»
-// отправляет пользователя за вторым слотом (F200).
+// Критично: обрыв связи ПОСЛЕ того, как расходный запрос ушёл в портал, —
+// неповторяемый класс. Портал мог запрос обработать и потерять соединение на
+// ответе: слот устройства подписки списан, а «Сервис Amnezia недоступен —
+// попробуйте позже» зовёт пользователя за вторым (F200). К порталу при этом
+// уходит ровно один запрос: автоматического повтора тоже быть не должно.
+func TestAmneziaPremiumConfig_NetworkDropAfterSendIsNotRetryable(t *testing.T) {
+	st := newPremiumStand(t)
+	st.seedCatalog(t)
+	st.portal.setConfigAbort(true)
+
+	rec := st.config(t, "nl")
+	if rec.Code == http.StatusOK {
+		t.Fatalf("оборванный ответ пришёл успехом: %s", rec.Body.String())
+	}
+	if code := premiumErrorCode(t, rec); code != codePremiumOutcomeUnknown {
+		t.Fatalf("код отказа = %q, want %q", code, codePremiumOutcomeUnknown)
+	}
+	assertNotRetryable(t, premiumErrorMessage(t, rec))
+	if got := st.portal.configsSeen(); len(got) != 1 {
+		t.Fatalf("запросов конфигурации к порталу %d (%v), ждали 1", len(got), got)
+	}
+}
+
+// Ответ 200 с непригодным телом у расходной ручки — неповторяемый класс, и
+// текст НЕ зовёт повторить: расходный запрос до портала дошёл, слот устройства
+// подписки мог быть списан, а общий «сервис недоступен — попробуйте позже»
+// отправляет пользователя за вторым (F200).
 func TestAmneziaPremiumConfig_UnusableResponseIsNotRetryable(t *testing.T) {
-	// Формы непригодного тела с реального пути: конверт без конфигурации и
-	// эхо присланного ключа вместо неё. Обе приезжают со статусом 200.
+	// Формы непригодного тела с реального пути: конверт без конфигурации и эхо
+	// присланного ключа вместо неё. Обе приезжают со статусом 200. Эхо — в двух
+	// записях: ту же ссылку портал волен вернуть в обычном алфавите base64, и
+	// страж, сравнивающий строки, такую запись пропускает.
 	cases := []struct{ name, body string }{
 		{"конверт без конфигурации", `{"data":{"status":"pending"}}`},
 		{"эхо ключа подписки вместо конфигурации", `{"data":{"config":"` + premiumKey + `"}}`},
+		{"эхо ключа подписки в другой записи base64", `{"data":{"config":"` + premiumKeyOtherEncoding(t) + `"}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2835,10 +2954,13 @@ func TestAmneziaPremiumConfig_UnusableResponseIsNotRetryable(t *testing.T) {
 			if rec.Code == http.StatusOK {
 				t.Fatalf("непригодный ответ пришёл успехом: %s", rec.Body.String())
 			}
-			if code := premiumErrorCode(t, rec); code != codePremiumResponseUnusable {
-				t.Fatalf("код отказа = %q, want %q", code, codePremiumResponseUnusable)
+			if code := premiumErrorCode(t, rec); code != codePremiumOutcomeUnknown {
+				t.Fatalf("код отказа = %q, want %q", code, codePremiumOutcomeUnknown)
 			}
 			assertNotRetryable(t, premiumErrorMessage(t, rec))
+			if body := rec.Body.String(); strings.Contains(body, "10.88.1.2") {
+				t.Fatalf("наружу уехала конфигурация из ключа подписки: %s", body)
+			}
 			if got := st.portal.configsSeen(); len(got) != 1 {
 				t.Fatalf("запросов конфигурации к порталу %d (%v), ждали 1", len(got), got)
 			}

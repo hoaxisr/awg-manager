@@ -171,6 +171,12 @@ type fakeCP struct {
 	redirectTo     string
 	// configAbort — портал рвёт соединение, успев принять запрос конфига.
 	configAbort bool
+	// configTruncate — портал отвечает 200 и рвёт соединение на теле: статус
+	// успеха уже уехал клиенту, а тела он не дочитает.
+	configTruncate bool
+	// configHold вызывается внутри обработчика download-config: тест держит
+	// РАСХОДНЫЙ запрос в полёте.
+	configHold func(n int64, r *http.Request)
 	// accountHold вызывается внутри обработчика account-info: тест держит
 	// запрос в полёте.
 	accountHold func(n int64, r *http.Request)
@@ -269,6 +275,9 @@ func (f *fakeCP) handle(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.seenCountry = append(f.seenCountry, payload.CountryCode)
 		f.mu.Unlock()
+		if f.configHold != nil {
+			f.configHold(n, r)
+		}
 		if status := scriptStatus(f.configStatus, n); status != http.StatusOK {
 			respondStatus(w, r, status)
 			return
@@ -276,6 +285,14 @@ func (f *fakeCP) handle(w http.ResponseWriter, r *http.Request) {
 		if f.configAbort {
 			// Запрос портал принял, ответ не доехал: ровно тот случай, в
 			// котором повтор съедает второй слот устройства.
+			panic(http.ErrAbortHandler)
+		}
+		if f.configTruncate {
+			// Статус успеха клиент уже получил, а тело обрывается на середине:
+			// ответ идёт чанками, поэтому заголовки уезжают с первым же
+			// сбросом буфера, и обрыв ловится именно чтением тела.
+			_, _ = io.WriteString(w, f.configBody[:len(f.configBody)/2])
+			w.(http.Flusher).Flush()
 			panic(http.ErrAbortHandler)
 		}
 		_, _ = io.WriteString(w, f.configBody)
@@ -813,15 +830,15 @@ func TestClientCountryConfigExtraction(t *testing.T) {
 				if got != "" {
 					t.Fatalf("при ошибке конфиг обязан быть пустым, получено %q", got)
 				}
-				// Расходная ручка ответила успехом — слот подписки уже
-				// потрачен, и отказ обязан нести СВОЮ причину. Общий «сервис
-				// недоступен» отправил бы пользователя повторить, то есть
-				// потратить второй слот.
-				if !errors.Is(err, ErrResponseUnusable) {
+				// Расходный запрос до портала дошёл — слот подписки мог
+				// быть списан, и отказ обязан нести СВОЮ причину. Общий
+				// «сервис недоступен» отправил бы пользователя повторить, то
+				// есть потратить второй слот.
+				if !errors.Is(err, ErrOutcomeUnknown) {
 					t.Fatalf("ошибка не различима сентинелом: %v", err)
 				}
 				if errors.Is(err, ErrServiceUnavailable) {
-					t.Fatalf("потраченный слот выдан за «сервис недоступен, повторите»: %v", err)
+					t.Fatalf("неизвестный исход выдан за «сервис недоступен, повторите»: %v", err)
 				}
 			})
 		}
@@ -1058,13 +1075,13 @@ func TestClientStopsReadingAtLimit(t *testing.T) {
 	if got != "" {
 		t.Fatalf("при отказе конфиг обязан быть пустым, получено %d байт", len(got))
 	}
-	// Статус ответа был успешным — портал запрос обработал, слот подписки
-	// потрачен. Причина отказа обязана это различать.
-	if !errors.Is(err, ErrResponseUnusable) {
+	// Расходный запрос до портала дошёл — слот подписки мог быть списан.
+	// Причина отказа обязана это различать.
+	if !errors.Is(err, ErrOutcomeUnknown) {
 		t.Fatalf("ошибка не различима сентинелом: %v", err)
 	}
 	if errors.Is(err, ErrServiceUnavailable) {
-		t.Fatalf("потраченный слот выдан за «сервис недоступен, повторите»: %v", err)
+		t.Fatalf("неизвестный исход выдан за «сервис недоступен, повторите»: %v", err)
 	}
 	if n := served.Load(); n > maxCPBody+1 {
 		t.Fatalf("прочитано %d байт при пределе %d: чтение не оборвано", n, maxCPBody)
@@ -1709,13 +1726,157 @@ func TestClientCountryConfigRefusesSubscriptionKeyEcho(t *testing.T) {
 			if got != "" {
 				t.Fatalf("при отказе конфиг обязан быть пустым, получено %q", got)
 			}
-			if !errors.Is(err, ErrResponseUnusable) {
+			if !errors.Is(err, ErrOutcomeUnknown) {
 				t.Fatalf("ошибка не различима сентинелом: %v", err)
 			}
 			if errors.Is(err, ErrServiceUnavailable) {
 				t.Fatalf("потраченный слот выдан за «сервис недоступен, повторите»: %v", err)
 			}
 		})
+	}
+}
+
+// Критично: страж эха сравнивает ссылки по СОДЕРЖИМОМУ, а не по написанию.
+// Одну и ту же ссылку записывают многими способами, и сравнение строк на
+// равенство пропускало всё, кроме побайтового совпадения: зондом ревьюера
+// портал вернул тот же ключ в обычном алфавите base64 — байты те же, строка
+// другая, — и наружу уехала конфигурация всей подписки с её приватным ключом.
+//
+// Формы проверяются пачкой, а не одна: закрывать надо класс записей, а не
+// конкретный обход. Каждая форма сверяется с исходной ссылкой на неравенство —
+// совпавшая форма проверяла бы прежний страж и была бы вакуумна.
+func TestClientCountryConfigRefusesSubscriptionKeyEchoInAnyEncoding(t *testing.T) {
+	// Ключ обязан быть разбираемым — иначе отказ придёт от декодера, а не от
+	// стража.
+	foreignConf := strings.Replace(fixtureConf, "10.77.3.9", "10.88.1.2", 1)
+	keyLink := vpnLinkWithConf(t, foreignConf)
+	payload, ok := vpnLinkPayload(keyLink)
+	if !ok {
+		t.Fatal("фикстурный ключ не разбирается: проверка стража была бы вакуумной")
+	}
+
+	forms := []struct{ name, link string }{
+		{"обычный алфавит base64 с хвостовыми =", vpnLinkScheme + base64.StdEncoding.EncodeToString(payload)},
+		{"обычный алфавит base64 без хвостовых =", vpnLinkScheme + base64.RawStdEncoding.EncodeToString(payload)},
+		{"URL-алфавит с хвостовыми =", vpnLinkScheme + base64.URLEncoding.EncodeToString(payload)},
+		{"обрамляющие пробелы", " \n\t" + keyLink + "\n "},
+	}
+	for _, form := range forms {
+		t.Run(form.name, func(t *testing.T) {
+			if form.link == keyLink {
+				t.Fatalf("форма записи совпала с самим ключом: проверка вакуумна")
+			}
+			cp := newFakeCP(t)
+			cp.configBody = `{"data":{"config":` + mustJSONString(t, form.link) + `}}`
+			c, _, _ := newTestClientWithKey(t, cp, func() string { return keyLink })
+
+			got, err := c.CountryConfig(context.Background(), "nl")
+			if err == nil {
+				t.Fatalf("эхо ключа обязано быть отказом, получено %q", got)
+			}
+			if got != "" {
+				t.Fatalf("при отказе конфиг обязан быть пустым, получено %q", got)
+			}
+			if strings.Contains(got, "10.88.1.2") {
+				t.Fatalf("наружу уехала конфигурация из ключа подписки: %q", got)
+			}
+			if !errors.Is(err, ErrOutcomeUnknown) {
+				t.Fatalf("ошибка не различима сентинелом: %v", err)
+			}
+		})
+	}
+}
+
+// Критично: сетевой отказ ПОСЛЕ того, как расходный запрос ушёл в портал, —
+// свой класс. Портал мог запрос обработать и потерять соединение на ответе:
+// слот устройства подписки списан, а «сервис недоступен — попробуйте позже»
+// зовёт пользователя за вторым (F200). Отказ ДО отправки, наоборот, безопасно
+// повторяем: портал запроса не видел.
+func TestClientConfigNetworkFailureBeforeSendStaysRepeatable(t *testing.T) {
+	cp := newFakeCP(t)
+	c, _, _ := newTestClient(t, cp)
+	ctx := context.Background()
+
+	if _, err := c.AccountInfo(ctx); err != nil {
+		t.Fatalf("прогрев сессии: %v", err)
+	}
+	// Хост умер с прогретой сессией: запрос до портала не доедет вовсе.
+	cp.srv.Close()
+
+	got, err := c.CountryConfig(ctx, "nl")
+	if err == nil {
+		t.Fatalf("мёртвый хост обязан быть отказом, получено %q", got)
+	}
+	if !errors.Is(err, ErrServiceUnavailable) {
+		t.Fatalf("не ушедший запрос выдан за неизвестный исход: %v", err)
+	}
+	if errors.Is(err, ErrOutcomeUnknown) {
+		t.Fatalf("не ушедший запрос выдан за неизвестный исход: %v", err)
+	}
+	if n := cp.configs.Load(); n != 0 {
+		t.Fatalf("запросов конфигурации у портала %d, ожидался 0: запрос не должен был уйти", n)
+	}
+}
+
+// Критично: отмена контекста В ПОЛЁТЕ — тот же класс, что обрыв соединения:
+// расходный запрос портал уже принял. Отмена ДО запроса остаётся повторяемой
+// (TestClientPreservesCancellation), и различие между ними — не тип ошибки
+// контекста, а факт отправки.
+func TestClientConfigCancelledInFlightIsNotRetryable(t *testing.T) {
+	cp := newFakeCP(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cp.configHold = func(_ int64, r *http.Request) {
+		cancel()             // запрос уже у портала
+		<-r.Context().Done() // ответ заведомо не доедет
+	}
+	c, _, _ := newTestClient(t, cp)
+
+	if _, err := c.AccountInfo(context.Background()); err != nil {
+		t.Fatalf("прогрев сессии: %v", err)
+	}
+
+	got, err := c.CountryConfig(ctx, "nl")
+	if err == nil {
+		t.Fatalf("отменённый в полёте запрос обязан быть отказом, получено %q", got)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("причина отмены потеряна: %v", err)
+	}
+	if !errors.Is(err, ErrOutcomeUnknown) {
+		t.Fatalf("ушедший расходный запрос выдан за повторяемый отказ: %v", err)
+	}
+	if errors.Is(err, ErrServiceUnavailable) {
+		t.Fatalf("неизвестный исход выдан за «сервис недоступен, повторите»: %v", err)
+	}
+	if n := cp.configs.Load(); n != 1 {
+		t.Fatalf("запросов конфигурации %d, ожидался 1: повтор тратит второй слот устройства", n)
+	}
+}
+
+// Критично: обрыв чтения тела ПОСЛЕ статуса 2xx — тоже неизвестный исход.
+// Статус успеха уже уехал клиенту, то есть запрос портал принял; повторять
+// такое нельзя, а прежде эта ветка отдавала общий «сервис недоступен».
+func TestClientConfigTruncatedBodyIsNotRetryable(t *testing.T) {
+	cp := newFakeCP(t)
+	cp.configTruncate = true
+	c, _, _ := newTestClient(t, cp)
+
+	got, err := c.CountryConfig(context.Background(), "nl")
+	if err == nil {
+		t.Fatalf("оборванное тело обязано быть отказом, получено %q", got)
+	}
+	if got != "" {
+		t.Fatalf("при отказе конфиг обязан быть пустым, получено %q", got)
+	}
+	if !errors.Is(err, ErrOutcomeUnknown) {
+		t.Fatalf("ошибка не различима сентинелом: %v", err)
+	}
+	if errors.Is(err, ErrServiceUnavailable) {
+		t.Fatalf("неизвестный исход выдан за «сервис недоступен, повторите»: %v", err)
+	}
+	if n := cp.configs.Load(); n != 1 {
+		t.Fatalf("запросов конфигурации %d, ожидался 1: повтор тратит второй слот устройства", n)
 	}
 }
 
@@ -1804,6 +1965,11 @@ func TestClientPicksSessionCookieByName(t *testing.T) {
 // запрос до обрыва, и повтор съедает второй слот устройства подписки. Кэш
 // адреса при этом всё равно сбрасывается — следующая попытка пользователя
 // обязана пойти на свежий хост.
+//
+// Причина отказа — своя: запрос УШЁЛ в портал, и чем он там кончился, мы не
+// знаем. Общий «сервис недоступен» зовёт пользователя повторить руками, то
+// есть потратить второй слот, — автоматический повтор тут запрещён ровно по
+// этой причине, а ручной приглашался текстом (F200).
 func TestClientDoesNotRetryConfigDownload(t *testing.T) {
 	cp := newFakeCP(t)
 	cp.configAbort = true
@@ -1821,8 +1987,11 @@ func TestClientDoesNotRetryConfigDownload(t *testing.T) {
 	if err == nil {
 		t.Fatalf("оборванный ответ обязан быть отказом, получено %q", got)
 	}
-	if !errors.Is(err, ErrServiceUnavailable) {
+	if !errors.Is(err, ErrOutcomeUnknown) {
 		t.Fatalf("ошибка не различима сентинелом: %v", err)
+	}
+	if errors.Is(err, ErrServiceUnavailable) {
+		t.Fatalf("неизвестный исход выдан за «сервис недоступен, повторите»: %v", err)
 	}
 	if n := cp.configs.Load(); n != 1 {
 		t.Fatalf("запросов конфига %d, ожидался 1: повтор тратит второй слот устройства", n)

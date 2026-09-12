@@ -11,9 +11,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -36,29 +38,33 @@ var ErrKeyRejected = errors.New("ключ подписки Amnezia отклон�
 // Конкретика зеркала остаётся доступной по ErrMirrorUnavailable.
 var ErrServiceUnavailable = errors.New("сервис Amnezia недоступен")
 
-// ErrOutcomeUnknown — портал ответил перенаправлением на РАСХОДНОЙ ручке, и
-// исход запроса неизвестен: 3xx означает либо «веб-приложение гонит на
-// страницу входа» (запрос не обработан), либо «ручка отдаёт подписанную
-// ссылку» (запрос обработан, слот устройства подписки потрачен). Различить их
-// нечем — см. statusRecovery.
+// ErrOutcomeUnknown — РАСХОДНЫЙ запрос до портала дошёл, а чем он у портала
+// кончился, мы не знаем. Дороги сюда три, общее у них одно: слот устройства
+// подписки МОГ быть списан, и повтор стоит пользователю второго слота.
 //
-// Отдельный сентинел, и он НЕ обёрнут в ErrServiceUnavailable сознательно:
-// смысл того — «повторите», а здесь повтор стоит пользователю второго слота
-// подписки. Вызывающий обязан сказать человеку «проверьте, не выдалась ли
+//   - Перенаправление в ответе: 3xx означает либо «веб-приложение гонит на
+//     страницу входа» (запрос не обработан), либо «ручка отдаёт подписанную
+//     ссылку» (обработан) — различить нечем, см. statusRecovery.
+//   - Сетевой отказ ПОСЛЕ того, как запрос ушёл в сеть: обрыв до ответа,
+//     таймаут, отмена контекста в полёте. Портал мог обработать запрос и
+//     потерять соединение на ответе.
+//   - Ответ успеха, из которого конфигурации не собрать: нераспознанный
+//     конверт, эхо ключа вместо конфигурации, тело больше предела, обрыв
+//     чтения тела.
+//
+// Третья дорога прежде утверждала потраченный слот как ФАКТ и имела ради этого
+// свой сентинел. Основанием было только «статус 2xx», а основание негодное:
+// между нами и порталом стоит WAF/CDN (ради него и заведён browserUA), и его
+// интерстишл с кодом 200 попадает ровно сюда; адрес портала к тому же
+// резолвится с зеркала, которое задаёт сам пользователь, — любой отвечающий
+// 200 хост порождал ложное «слот потрачен». Отличать известный исход от
+// неизвестного оказалось нечем, и сентинел остался один: совет пользователю у
+// всех трёх дорог всё равно общий — посмотреть счётчик устройств у портала.
+//
+// НЕ обёрнут в ErrServiceUnavailable сознательно: смысл того — «повторите», а
+// здесь вызывающий обязан сказать человеку «проверьте, не выдалась ли
 // конфигурация», а не «попробуйте ещё раз» (F200).
 var ErrOutcomeUnknown = errors.New("исход запроса к Amnezia неизвестен")
-
-// ErrResponseUnusable — портал ОТРАБОТАЛ расходный запрос (ответил успехом), а
-// разобрать ответ не удалось: нераспознанный конверт, эхо ключа вместо
-// конфигурации, тело больше предела.
-//
-// От ErrOutcomeUnknown отличается определённостью: там исход неизвестен, здесь
-// он известен — статус успеха означает, что слот устройства подписки уже
-// потрачен. Повторять нельзя ровно так же, поэтому и здесь свой сентинел, не
-// обёрнутый в ErrServiceUnavailable: смысл того — «повторите», а повтор стоит
-// пользователю второго слота. Вызывающий обязан сказать человеку «проверьте,
-// не выдалась ли конфигурация», а не «попробуйте ещё раз».
-var ErrResponseUnusable = errors.New("ответ Amnezia не разобран")
 
 const (
 	// maxCPBody ограничивает ответ портала. Живой account-info — единицы
@@ -515,26 +521,26 @@ func (c *Client) send(ctx context.Context, origin, sid string, req cpRequest) ([
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCPBody+1))
 	if err != nil {
-		return nil, recoveryNone, fmt.Errorf("%w: чтение ответа %s: %w", bodySentinel(req), req.path, err)
+		return nil, recoveryNone, fmt.Errorf("%w: чтение ответа %s: %w", outcomeSentinel(req), req.path, err)
 	}
 	if len(body) > maxCPBody {
-		return nil, recoveryNone, fmt.Errorf("%w: ответ %s больше %d байт", bodySentinel(req), req.path, maxCPBody)
+		return nil, recoveryNone, fmt.Errorf("%w: ответ %s больше %d байт", outcomeSentinel(req), req.path, maxCPBody)
 	}
 	return body, recoveryNone, nil
 }
 
-// bodySentinel — причина отказа на непригодном теле УСПЕШНОГО ответа портала.
+// outcomeSentinel — причина отказа там, где запрос УЖЕ уехал в портал, а чем
+// он у портала кончился, мы не знаем.
 //
-// У расходной (неповторяемой) ручки статус успеха означает, что запрос
-// обработан и слот устройства подписки уже потрачен: такой отказ обязан
-// нести ErrResponseUnusable, иначе пользователь читает «попробуйте позже» и
-// тратит второй слот. У повторяемых ручек повтор безвреден, и причина
-// остаётся прежней.
-func bodySentinel(req cpRequest) error {
+// У расходной (неповторяемой) ручки такой отказ обязан нести
+// ErrOutcomeUnknown: слот устройства подписки мог быть списан, и пользователь,
+// прочитавший «попробуйте позже», тратит второй. У повторяемых ручек повтор
+// безвреден — чтение слота не тратит, — и причина остаётся прежней.
+func outcomeSentinel(req cpRequest) error {
 	if req.repeatable {
 		return ErrServiceUnavailable
 	}
-	return ErrResponseUnusable
+	return ErrOutcomeUnknown
 }
 
 // do шлёт один запрос к порталу и классифицирует отказ. Тело успешного ответа
@@ -545,7 +551,21 @@ func (c *Client) do(ctx context.Context, origin, sid string, req cpRequest) (*ht
 	if len(req.payload) > 0 {
 		body = bytes.NewReader(req.payload)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, req.method, origin+req.path, body)
+	// sent — ушёл ли запрос в сеть целиком. Единственный доступный нам признак
+	// того, что портал запрос ВИДЕЛ: после этого момента любой сетевой отказ
+	// (обрыв до ответа, таймаут, отмена контекста в полёте) оставляет исход
+	// расходной операции неизвестным. Признак берётся у транспорта, а не
+	// угадывается по тексту ошибки: *url.Error одинаков и для мёртвого хоста,
+	// и для обрыва на чтении ответа.
+	var sent atomic.Bool
+	traced := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				sent.Store(true)
+			}
+		},
+	})
+	httpReq, err := http.NewRequestWithContext(traced, req.method, origin+req.path, body)
 	if err != nil {
 		return nil, recoveryNone, fmt.Errorf("%w: запрос %s: %w", ErrServiceUnavailable, req.path, err)
 	}
@@ -566,8 +586,17 @@ func (c *Client) do(ctx context.Context, origin, sid string, req cpRequest) (*ht
 	if err != nil {
 		// В журнал идут резолвнутый адрес и маршрут: при разборе жалобы
 		// спрашивают именно их. Ключа и сессии здесь нет.
-		c.logf(req.event, fmt.Sprintf("origin=%s route=direct %s %s network=%v", origin, req.method, req.path, err))
-		return nil, recoveryMirror, fmt.Errorf("%w: %s %s: %w", ErrServiceUnavailable, req.method, req.path, err)
+		c.logf(req.event, fmt.Sprintf("origin=%s route=direct %s %s sent=%t network=%v", origin, req.method, req.path, sent.Load(), err))
+		// Запрос, успевший уйти в сеть, портал МОГ обработать и потерять
+		// соединение на ответе: у расходной ручки это стоило слота устройства
+		// подписки, и звать пользователя повторить нельзя (F200). Не ушедший
+		// запрос — мёртвый хост, отказ соединения, отмена до записи — не видел
+		// никто, и повтор там безопасен и правилен.
+		sentinel := ErrServiceUnavailable
+		if sent.Load() {
+			sentinel = outcomeSentinel(req)
+		}
+		return nil, recoveryMirror, fmt.Errorf("%w: %s %s: %w", sentinel, req.method, req.path, err)
 	}
 
 	// Статус — до чтения тела (иначе большой ответ приезжает в память раньше,
@@ -620,8 +649,8 @@ func statusError(code int, req cpRequest) error {
 		// что 401/403, а не «сервис лежит».
 		return fmt.Errorf("%w: %s %s", ErrKeyRejected, req.method, req.path)
 	}
-	if code/100 == 3 && !req.repeatable {
-		return fmt.Errorf("%w: %s %s ответил %d", ErrOutcomeUnknown, req.method, req.path, code)
+	if code/100 == 3 {
+		return fmt.Errorf("%w: %s %s ответил %d", outcomeSentinel(req), req.method, req.path, code)
 	}
 	return fmt.Errorf("%w: %s %s ответил %d", ErrServiceUnavailable, req.method, req.path, code)
 }
@@ -804,7 +833,7 @@ func extractConf(raw []byte, key string) (string, error) {
 	if err != nil {
 		conf, cerr := confFromCandidate(string(raw), key)
 		if cerr != nil {
-			return "", fmt.Errorf("%w: ответ download-config не разобран: %w", ErrResponseUnusable, err)
+			return "", fmt.Errorf("%w: ответ download-config не разобран: %w", ErrOutcomeUnknown, err)
 		}
 		return conf, nil
 	}
@@ -813,14 +842,14 @@ func extractConf(raw []byte, key string) (string, error) {
 			return conf, nil
 		}
 	}
-	return "", fmt.Errorf("%w: в ответе download-config нет конфигурации", ErrResponseUnusable)
+	return "", fmt.Errorf("%w: в ответе download-config нет конфигурации", ErrOutcomeUnknown)
 }
 
 func confFromCandidate(s, key string) (string, error) {
 	s = strings.TrimSpace(s)
 	// Эхо ключа подписки конфигурацией не является, даже когда разбирается как
 	// ссылка: в нём вся подписка, а не выбранная страна.
-	if key != "" && s == key {
+	if keyEcho(s, key) {
 		return "", errNoConf
 	}
 	if strings.HasPrefix(s, vpnLinkScheme) {
@@ -838,6 +867,53 @@ func confFromCandidate(s, key string) (string, error) {
 		return withoutKeyLines(s), nil
 	}
 	return "", errNoConf
+}
+
+// keyEcho сообщает, что кандидат несёт наш же ключ подписки, а не
+// конфигурацию страны.
+//
+// Сравнение идёт по СОДЕРЖИМОМУ ссылки, а не по её написанию. Равенство строк
+// закрывало ровно одну запись из многих, и обход доказан зондом: ту же ссылку
+// портал волен вернуть в обычном алфавите base64 вместо URL-безопасного
+// (base64URLDecode сам мапит '-'→'+' и '_'→'/'), с хвостовыми '=' или без них,
+// с неканоническими битами в последнем символе, в другом регистре схемы, с
+// обрамляющими пробелами — байты те же, строка другая, и наружу уезжала
+// конфигурация всей подписки вместе с её приватным ключом.
+//
+// Сравниваются байты полезной нагрузки — то, ВО ЧТО декодируется текст
+// ссылки; это закрывает весь класс форм её записи. Пересжатие или переупаковка
+// нагрузки (те же данные, другие байты) им не закрыты: портал возвращает то,
+// что мы ему прислали, и вводить ради непронаблюдённой формы сравнение
+// распакованных конфигураций — значит завести новый отказ, при котором
+// законная конфигурация страны, совпавшая с конфигурацией подписки, перестанет
+// выдаваться.
+func keyEcho(candidate, key string) bool {
+	if key == "" {
+		return false
+	}
+	candRaw, candOK := vpnLinkPayload(candidate)
+	keyRaw, keyOK := vpnLinkPayload(key)
+	if !candOK || !keyOK {
+		// Разобрать нечего — сравнивать остаётся написание, приведённое к
+		// общему виду. Отказ по умолчанию закрытый: сомнительное совпадение
+		// лучше засчитать эхом, чем выдать ключ подписки за конфигурацию.
+		return strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(key))
+	}
+	return bytes.Equal(candRaw, keyRaw)
+}
+
+// vpnLinkPayload отдаёт полезную нагрузку vpn://-ссылки. Схема сравнивается
+// без учёта регистра: её пишет портал, а не мы.
+func vpnLinkPayload(s string) ([]byte, bool) {
+	s = strings.TrimSpace(s)
+	if len(s) <= len(vpnLinkScheme) || !strings.EqualFold(s[:len(vpnLinkScheme)], vpnLinkScheme) {
+		return nil, false
+	}
+	raw, err := base64URLDecode(s[len(vpnLinkScheme):])
+	if err != nil || len(raw) == 0 {
+		return nil, false
+	}
+	return raw, true
 }
 
 // withoutKeyLines вырезает из .conf строки с ключом подписки. Живой
