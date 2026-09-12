@@ -384,6 +384,27 @@ func TestDelete_RemovesEndpointHostRoute(t *testing.T) {
 		}
 	})
 
+	// F229: запись могла остаться без ResolvedEndpointIP — правка карточки
+	// связанного туннеля обнуляет поле, потому что маршрута до петли нет.
+	// Зацепка при этом не теряется: адрес дорезолвливается из endpoint'а, и
+	// наследство прежних версий всё равно уходит с роутера.
+	t.Run("петля без записанного адреса", func(t *testing.T) {
+		o, poster, rec := newOS5Lifecycle(t)
+		stored := &storage.AWGTunnel{ID: "awg10"}
+		stored.Peer.Endpoint = "127.0.0.1:51820"
+
+		if err := o.Delete(context.Background(), stored); err != nil {
+			t.Fatal(err)
+		}
+
+		if !hasCall(rec.Calls, "/opt/sbin/ip route del 127.0.0.1/32") {
+			t.Errorf("наследство не снято из ядра: %v", rec.Calls)
+		}
+		if !hasPayload(poster.payloads, `{"ip":{"route":{"host":"127.0.0.1","no":true}}}`) {
+			t.Errorf("наследство не снято в NDMS: %v", poster.payloads)
+		}
+	})
+
 	// F228: три туннеля к одному серверу делят один host-route (F130/#867).
 	// Удаление одного из них не должно срывать маршрут у оставшихся.
 	t.Run("маршрут держит сосед", func(t *testing.T) {
