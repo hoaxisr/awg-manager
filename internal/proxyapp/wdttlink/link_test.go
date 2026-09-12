@@ -1,6 +1,7 @@
 package wdttlink
 
 import (
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -290,4 +291,55 @@ func TestSubscriptionClientRedirectPolicy(t *testing.T) {
 			t.Fatal("четвёртый хоп принят — предел редиректов потерян")
 		}
 	})
+}
+
+// roundTripFunc — транспорт-запись: подменённый клиент подписки ничего не
+// диалит, а только называет запрос, который через него прошёл.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+// Стражи подписки (прямой выход, blockInternalDial, политика редиректов)
+// живут в subscriptionClient, поэтому загрузка ОБЯЗАНА идти через него.
+// Клиент, собранный в fetchSubscriptionLink по месту, уносит их все разом, и
+// проверки свойств самой функции subscriptionClient этого не видят.
+func TestFetchSubscriptionLinkGoesThroughSubscriptionClient(t *testing.T) {
+	origLookup := lookupIP
+	defer func() { lookupIP = origLookup }()
+	lookupIP = func(string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	}
+
+	origClient := subscriptionClient
+	defer func() { subscriptionClient = origClient }()
+	var seen []*http.Request
+	subscriptionClient = func() *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			seen = append(seen, req)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader("qwdtt://config?peer=203.0.113.10&pass=x&hashes=h")),
+				Header:     make(http.Header),
+				Request:    req,
+			}, nil
+		})}
+	}
+
+	const subURL = "https://sub.example.test/sub?token=fixture-token"
+	res, err := fetchSubscriptionLink(subURL)
+	if err != nil {
+		t.Fatalf("загрузка подписки: %v", err)
+	}
+	if len(seen) != 1 {
+		t.Fatalf("через клиента подписки прошло %d запросов, ожидался 1 — загрузка собрала клиента по месту", len(seen))
+	}
+	if got := seen[0].URL.String(); got != subURL {
+		t.Fatalf("запрошен %q, ожидался %q", got, subURL)
+	}
+	if res.Profile == nil {
+		t.Fatal("профиль не разобран")
+	}
+	if res.Profile.Peer != "203.0.113.10:56000" {
+		t.Fatalf("peer=%q — ответ подменённого клиента не доехал до разбора", res.Profile.Peer)
+	}
 }
