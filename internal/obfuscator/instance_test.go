@@ -21,8 +21,8 @@ Endpoint = 127.0.0.1:13255
 [instance]
 source-if = 127.0.0.1
 source-lport = 13255
-target = 130.49.185.136:51824
-key = XR0NEf8MhGAGcCpc
+target = 203.0.113.136:51824
+key = fixture-key-0000000
 masking = STUN
 obfuscate-bytes = 16
 max-dummy = 45
@@ -36,7 +36,7 @@ func TestParseInstance_Phobos(t *testing.T) {
 	if err != nil || !present {
 		t.Fatalf("err=%v present=%v", err, present)
 	}
-	want := storage.Obfuscator{Flavor: "phobos", Target: "130.49.185.136:51824", Key: "XR0NEf8MhGAGcCpc",
+	want := storage.Obfuscator{Flavor: "phobos", Target: "203.0.113.136:51824", Key: "fixture-key-0000000",
 		Masking: "STUN", MaxDummy: 45, IdleTimeout: 300, ObfuscateBytes: 16}
 	if *o != want {
 		t.Fatalf("got %+v want %+v", *o, want)

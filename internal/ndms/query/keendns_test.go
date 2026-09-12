@@ -12,15 +12,15 @@ import (
 // доменом для доступа служит их склейка booked.domain.
 func TestKeenDNSFetch_BuildsFQDNFromBookedAndDomain(t *testing.T) {
 	g := NewFakeGetter()
-	g.SetRaw("/show/ndns", []byte(`{"name":"impod","booked":"impod","domain":"crazedns.ru","address":"91.144.142.72"}`))
+	g.SetRaw("/show/ndns", []byte(`{"name":"example","booked":"example","domain":"crazedns.ru","address":"203.0.113.72"}`))
 	s := NewKeenDNSStore(g, NopLogger())
 
 	info, err := s.Get(context.Background())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if info == nil || info.Domain != "impod.crazedns.ru" {
-		t.Fatalf("Domain=%v want impod.crazedns.ru", info)
+	if info == nil || info.Domain != "example.crazedns.ru" {
+		t.Fatalf("Domain=%v want example.crazedns.ru", info)
 	}
 }
 

@@ -37,7 +37,7 @@ func TestValidateSubURL_AcceptsPublic(t *testing.T) {
 	orig := lookupIP
 	defer func() { lookupIP = orig }()
 	lookupIP = func(string) ([]net.IP, error) {
-		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+		return []net.IP{net.ParseIP("203.0.113.34")}, nil
 	}
 	if err := validateSubURL("https://example.com/sub"); err != nil {
 		t.Fatalf("expected public host accepted, got %v", err)
@@ -61,7 +61,7 @@ func TestBlockInternalDial(t *testing.T) {
 			t.Errorf("expected rejection for %s", addr)
 		}
 	}
-	for _, addr := range []string{"8.8.8.8:443", "93.184.216.34:443"} {
+	for _, addr := range []string{"203.0.113.8:443", "203.0.113.34:443"} {
 		if err := blockInternalDial("tcp", addr, nil); err != nil {
 			t.Errorf("expected accept for %s, got %v", addr, err)
 		}
@@ -238,7 +238,7 @@ func TestSubscriptionClientRedirectPolicy(t *testing.T) {
 	orig := lookupIP
 	defer func() { lookupIP = orig }()
 	lookupIP = func(string) ([]net.IP, error) {
-		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+		return []net.IP{net.ParseIP("203.0.113.34")}, nil
 	}
 
 	c := subscriptionClient()
@@ -308,7 +308,7 @@ func TestFetchSubscriptionLinkGoesThroughSubscriptionClient(t *testing.T) {
 	origLookup := lookupIP
 	defer func() { lookupIP = origLookup }()
 	lookupIP = func(string) ([]net.IP, error) {
-		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+		return []net.IP{net.ParseIP("203.0.113.34")}, nil
 	}
 
 	origClient := subscriptionClient

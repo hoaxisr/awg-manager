@@ -326,18 +326,18 @@ func TestStaticIPv4InZones(t *testing.T) {
 	hosts := []string{"my.keenetic.net", "my.netcraze.net"}
 	zones := []string{"keenetic.pro", "netcraze.pro", "netcraze.io", "crazedns.ru"}
 	proxies := []DNSProxy{{Name: "System", Static: []DNSStaticRecord{
-		{Host: "my.keenetic.net", Type: "A", Value: "78.47.125.180"},
+		{Host: "my.keenetic.net", Type: "A", Value: "198.51.100.180"},
 		{Host: "awgm-dnscheck.test", Type: "A", Value: "192.168.0.1"},
-		{Host: "impod.netcraze.pro", Type: "AAAA", Value: "2001:2:7847:1251:feee:ed78:4712:5180"},
-		{Host: "awgm.impod.netcraze.pro", Type: "A", Value: "78.47.125.180"},
-		{Host: "ccb8e46a1680cb7a8ebd6ea1.netcraze.io", Type: "A", Value: "78.47.125.180"},
+		{Host: "example.netcraze.pro", Type: "AAAA", Value: "2001:db8::180"},
+		{Host: "awgm.example.netcraze.pro", Type: "A", Value: "198.51.100.180"},
+		{Host: "ccb8e46a1680cb7a8ebd6ea1.netcraze.io", Type: "A", Value: "198.51.100.180"},
 	}}, {Name: "Policy0", Static: []DNSStaticRecord{
 		// 5.1.3/5.2: адрес сервиса переехал в документационный диапазон.
 		{Host: "My.Keenetic.Net.", Type: "A", Value: "198.51.100.37"},
 	}}}
 
 	got := StaticIPv4InZones(proxies, hosts, zones)
-	want := []string{"78.47.125.180", "198.51.100.37"}
+	want := []string{"198.51.100.180", "198.51.100.37"}
 	if len(got) != len(want) {
 		t.Fatalf("StaticIPv4InZones = %v, want %v", got, want)
 	}

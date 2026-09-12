@@ -64,9 +64,9 @@ func TestClassify_NoIfw_ReplyDstSNAT(t *testing.T) {
 
 func TestClassify_NoIfw_ReplyDstWAN(t *testing.T) {
 	// Форвардный SNAT в WAN без ifw: трафик клиента напрямую, НЕ «Локально».
-	s := enrichSvc(map[string][]string{"eth3": {"91.144.142.72/24"}}, "")
+	s := enrichSvc(map[string][]string{"eth3": {"203.0.113.72/24"}}, "")
 	wanIPs := s.wanLocalIPs([]string{"eth3"})
-	c := s.classify(rawConn{Connection: Connection{Src: "192.168.0.54", Dst: "77.88.21.232"}, replyDst: "91.144.142.72"},
+	c := s.classify(rawConn{Connection: Connection{Src: "192.168.0.54", Dst: "198.51.100.232"}, replyDst: "203.0.113.72"},
 		nil, nil, nil, wanIPs, 0, false)
 	if c.RouteClass != "direct" || c.Interface != "eth3" {
 		t.Errorf("routeClass/iface = %q/%q, want direct/eth3", c.RouteClass, c.Interface)
@@ -85,7 +85,7 @@ func TestClassify_NoIfw_SingboxMark(t *testing.T) {
 
 func TestClassify_NoIfw_Local(t *testing.T) {
 	s := enrichSvc(nil, "")
-	c := s.classify(rawConn{Connection: Connection{Src: "91.144.142.72", Dst: "9.9.9.9"}},
+	c := s.classify(rawConn{Connection: Connection{Src: "203.0.113.72", Dst: "9.9.9.9"}},
 		nil, nil, nil, nil, 0, false)
 	if c.RouteClass != "local" || c.TunnelName != "Локально" {
 		t.Errorf("routeClass/name = %q/%q, want local/Локально", c.RouteClass, c.TunnelName)

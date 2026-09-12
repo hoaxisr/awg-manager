@@ -63,7 +63,7 @@ func (f fakeIfaces) List(context.Context) ([]ndms.Interface, error) {
 // routerIfaces mirrors the stand: a public WAN and a private LAN bridge.
 func routerIfaces() fakeIfaces {
 	return fakeIfaces{byName: map[string]ndms.Interface{
-		"PPPoE0": {ID: "PPPoE0", SecurityLevel: "public", Address: "91.144.142.72"},
+		"PPPoE0": {ID: "PPPoE0", SecurityLevel: "public", Address: "203.0.113.72"},
 		"Home":   {ID: "Home", SecurityLevel: "private", Address: "192.168.0.1"},
 	}}
 }
