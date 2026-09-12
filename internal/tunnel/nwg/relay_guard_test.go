@@ -278,8 +278,15 @@ func TestSyncObfuscator_RelayStartFailed_KeepsRouteUntouched(t *testing.T) {
 	st := obfStored()
 	fr.setFailStart(errors.New("loopback-порт занят"))
 
-	if _, err := op.SyncObfuscator(context.Background(), st); err == nil {
+	ip, err := op.SyncObfuscator(context.Background(), st)
+	if err == nil {
 		t.Fatal("отказ запуска релея обязан доехать до вызывающего")
+	}
+	// Адрес наружу отдавать нельзя: по нему вызывающий персистит
+	// ResolvedEndpointIP, а маршрута на этот адрес мы не поставили — прежняя
+	// запись осталась бы на роутере ничьей.
+	if ip != "" {
+		t.Fatalf("отдан адрес %q, под который маршрут не встал", ip)
 	}
 
 	if posts := n.joined(); strings.Contains(posts, `"route"`) {

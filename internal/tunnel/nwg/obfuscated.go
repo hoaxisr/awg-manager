@@ -174,7 +174,11 @@ func (o *OperatorNativeWG) SyncObfuscator(ctx context.Context, stored *storage.A
 	// Порядок тот же, что в startObfuscated и у стража: сначала релей, потом
 	// маршрут. Иначе отказ запуска стоил бы команды в NDMS на пустом месте.
 	if err := o.obf.Start(ctx, stored.ID, stored.Obfuscator); err != nil {
-		return targetIP, err
+		// Адрес наружу не отдаём: вызывающий по нему персистит
+		// ResolvedEndpointIP, а маршрут на этот адрес мы не поставили —
+		// прежняя запись осталась бы на роутере, и снимать её было бы не по
+		// чему (тот самый осиротевший host-route, ради которого всё затеяно).
+		return "", err
 	}
 	o.moveObfHostRoute(ctx, stored, prevIP, targetIP)
 	o.guardRegisterRelay(stored, targetIP)
