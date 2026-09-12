@@ -602,3 +602,46 @@ func TestStartPlainWG_WithoutObfuscator_StillRejected(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// F236: у v6-таргета host-route выражается формой ipv6 с prefix /128. Без
+// флага V6 запрос уходил v4-формой, роутер отвечал «invalid destination host»,
+// и маршрута не было вовсе — трафик релея уходил в сам туннель.
+func TestAddObfHostRoute_V6TargetUsesIPv6Form(t *testing.T) {
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, &fakeObfRunner{})
+	stored := obfStored()
+
+	if err := op.addObfHostRoute(context.Background(), stored, "2001:db8::5"); err != nil {
+		t.Fatalf("addObfHostRoute: %v", err)
+	}
+
+	if n.firstPostWith(`"prefix":"2001:db8::5/128"`) < 0 {
+		t.Fatalf("v6 host-route ушёл не той формой: %v", n.posts)
+	}
+	if n.firstPostWith(`"host":"2001:db8::5"`) >= 0 {
+		t.Fatalf("v4-форма с v6-адресом отвергается роутером: %v", n.posts)
+	}
+	// Без WAN маршрут бессмыслен (трафик релея уйдёт в сам туннель), без
+	// метки владения его не отличить от чужого при уборке.
+	if n.firstPostWith(`"interface":"ISP0"`) < 0 {
+		t.Fatalf("v6 host-route без WAN: %v", n.posts)
+	}
+	if n.firstPostWith(`"comment":"awgm-obfuscator awg20"`) < 0 {
+		t.Fatalf("v6 host-route без метки владения: %v", n.posts)
+	}
+}
+
+// v4-таргет как был.
+func TestAddObfHostRoute_V4TargetUsesIPv4Form(t *testing.T) {
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, &fakeObfRunner{})
+	stored := obfStored()
+
+	if err := op.addObfHostRoute(context.Background(), stored, "203.0.113.5"); err != nil {
+		t.Fatalf("addObfHostRoute: %v", err)
+	}
+
+	if n.firstPostWith(`"host":"203.0.113.5"`) < 0 {
+		t.Fatalf("v4 host-route ушёл не той формой: %v", n.posts)
+	}
+}

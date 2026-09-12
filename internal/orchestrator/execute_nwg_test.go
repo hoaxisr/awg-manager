@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -13,9 +14,11 @@ import (
 // fakeNWGOp — счётчик вызовов вместо реального оператора: NativeWGExecutor
 // целиком, чтобы фейк годился и соседним execute-действиям.
 type fakeNWGOp struct {
-	state    tunnel.StateInfo
-	starts   int
-	restores int
+	state tunnel.StateInfo
+	// Счётчики атомарны по той же причине, что у fakeKernelOp: Start умеет
+	// парковаться в отдельной горутине.
+	starts   atomic.Int64
+	restores atomic.Int64
 
 	// Парковка Start: закрыть entered и ждать release. nil — не парковаться.
 	entered chan struct{}
@@ -23,7 +26,7 @@ type fakeNWGOp struct {
 }
 
 func (f *fakeNWGOp) Start(context.Context, *storage.AWGTunnel) error {
-	f.starts++
+	f.starts.Add(1)
 	park(f.entered, f.release)
 	return nil
 }
@@ -31,7 +34,7 @@ func (f *fakeNWGOp) Stop(context.Context, *storage.AWGTunnel) error         { re
 func (f *fakeNWGOp) Delete(context.Context, *storage.AWGTunnel) error       { return nil }
 func (f *fakeNWGOp) SuspendProxy(context.Context, *storage.AWGTunnel) error { return nil }
 func (f *fakeNWGOp) RestoreKmodTunnel(context.Context, *storage.AWGTunnel) error {
-	f.restores++
+	f.restores.Add(1)
 	return nil
 }
 func (f *fakeNWGOp) GetState(context.Context, *storage.AWGTunnel) tunnel.StateInfo {
@@ -66,11 +69,11 @@ func TestReconcileNativeWG_RunningWithHandshakeAdoptsSlotWithoutRestart(t *testi
 		t.Fatalf("executeReconcileNativeWG: %v", err)
 	}
 
-	if op.starts != 0 {
-		t.Errorf("полный старт при живом хендшейке: Start вызван %d раз, ожидалось 0", op.starts)
+	if op.starts.Load() != 0 {
+		t.Errorf("полный старт при живом хендшейке: Start вызван %d раз, ожидалось 0", op.starts.Load())
 	}
-	if op.restores != 1 {
-		t.Errorf("усыновление слота вызвано %d раз, ожидалось ровно 1", op.restores)
+	if op.restores.Load() != 1 {
+		t.Errorf("усыновление слота вызвано %d раз, ожидалось ровно 1", op.restores.Load())
 	}
 }
 
@@ -83,10 +86,10 @@ func TestReconcileNativeWG_NoHandshakeRunsFullStart(t *testing.T) {
 		t.Fatalf("executeReconcileNativeWG: %v", err)
 	}
 
-	if op.starts != 1 {
-		t.Errorf("Start вызван %d раз, ожидалось 1", op.starts)
+	if op.starts.Load() != 1 {
+		t.Errorf("Start вызван %d раз, ожидалось 1", op.starts.Load())
 	}
-	if op.restores != 0 {
-		t.Errorf("усыновление слота на пути полного старта вызвано %d раз, ожидалось 0", op.restores)
+	if op.restores.Load() != 0 {
+		t.Errorf("усыновление слота на пути полного старта вызвано %d раз, ожидалось 0", op.restores.Load())
 	}
 }

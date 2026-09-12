@@ -108,7 +108,10 @@ type OperatorOS5Impl struct {
 	appLog *logging.ScopedLogger
 
 	// Endpoint route tracking (tunnelID -> endpointIP)
-	endpointRoutes   map[string]string
+	endpointRoutes map[string]string
+	// routeHeldByOther — «host-route до ip держит ещё кто-то, кроме excludeID»,
+	// по стору и через бэкенды. См. removeHostRouteIfUnused.
+	routeHeldByOther func(excludeID, ip string) bool
 	endpointRoutesMu sync.RWMutex
 
 	// DNS tracking (tunnelID -> DNS servers applied via NDMS)
@@ -363,6 +366,12 @@ func (o *OperatorOS5Impl) Stop(ctx context.Context, tunnelID string) error {
 	// InterfaceDown sets conf: disabled — NDMS won't bring it up on its own.
 	o.interfaceDownBestEffort(ctx, tunnelID, names.NDMSName)
 
+	// Остановленному туннелю host-route не нужен, а карта маршрутов обязана
+	// означать «маршрут стоит», а не «туннель когда-то стартовал»: иначе
+	// остановленный сосед вечно держит чужой адрес от снятия (F231). Сосед,
+	// который РАБОТАЕТ, маршрут удержит — снятие идёт общим путём с ref-count.
+	o.removeHostRouteIfUnused(ctx, "stop", tunnelID, "")
+
 	// Save NDMS config so router UI reflects conf: disabled.
 
 	o.logInfo("stop", tunnelID, "Tunnel stopped (link down, conf: disabled)")
@@ -420,14 +429,11 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 			endpointIP = ip
 		}
 	}
-	if endpointIP != "" {
-		if err := o.delKernelHostRoute(ctx, endpointIP); err != nil {
-			o.logWarn("delete", stored.ID, "ip route del "+endpointIP+": "+err.Error())
-		}
-		if err := o.commands.Routes.RemoveHostRoute(ctx, endpointIP); err != nil {
-			o.logWarn("delete", stored.ID, "RemoveHostRoute: "+err.Error())
-		}
-	}
+	// Петлю снимаем тоже: skipEndpointHostRoute запрещает ставить маршрут, но
+	// не снимать — наследство прежних версий уходит с роутера отсюда и из
+	// гарда на старте. Через общий путь с ref-count: сосед к тому же серверу
+	// маршрут не потеряет (F130/#867).
+	o.removeHostRouteIfUnused(ctx, "delete", stored.ID, endpointIP)
 
 	// 2. Remove NDMS interface — cleans everything:
 	//    address, MTU, security-level, ip global, default route, DNS name-servers
@@ -448,10 +454,7 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 
 	// 4. Persist NDMS config
 
-	// 5. Clear in-memory tracking
-	o.endpointRoutesMu.Lock()
-	delete(o.endpointRoutes, stored.ID)
-	o.endpointRoutesMu.Unlock()
+	// 5. Clear in-memory tracking (endpointRoutes уже забыт на шаге 1)
 	o.appliedDNSMu.Lock()
 	delete(o.appliedDNS, stored.ID)
 	o.appliedDNSMu.Unlock()
@@ -781,6 +784,14 @@ func (o *OperatorOS5Impl) GetSystemName(ctx context.Context, ndmsID string) stri
 }
 
 // SetAppLogger sets the web UI logger.
+// SetEndpointRouteSharing подключает проверку «host-route до этого IP держит
+// другой туннель» поверх карты endpointRoutes. Нужна, потому что тот же
+// host-route ставит обфусцированный nativewg-туннель (nwg.addObfHostRoute), а
+// карта про чужой бэкенд ничего не знает.
+func (o *OperatorOS5Impl) SetEndpointRouteSharing(fn func(excludeID, ip string) bool) {
+	o.routeHeldByOther = fn
+}
+
 func (o *OperatorOS5Impl) SetAppLogger(logger logging.AppLogger) {
 	o.appLog = logging.NewScopedLogger(logger, logging.GroupTunnel, logging.SubOps)
 }

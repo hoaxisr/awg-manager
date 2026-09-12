@@ -2,6 +2,8 @@ package command
 
 import (
 	"context"
+	"fmt"
+	"net"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
@@ -25,10 +27,11 @@ type StaticRouteSpec struct {
 	Mask      string
 	Reject    bool
 	Comment   string
-	// V6 selects the IPv6 route form: the payload uses the "ipv6" outer key and
-	// emits ONLY {network, interface, auto/no} — no mask/host/reject/comment
-	// (the v6 pool route is a plain auto network route). v4 (V6 false) keeps the
-	// full form (auto/reject/comment/mask/host).
+	// V6 selects the IPv6 route form: the payload uses the "ipv6" outer key,
+	// а подсеть уезжает ключом prefix — у v6 нет ни mask, ни host.
+	// Host здесь значит то же, что у v4: хост-маршрут, только выражается он
+	// как prefix с /128 (стенд 5.01: `ipv6 route 2001:db8::1/128 PPPoE0 auto`).
+	// Comment роутер принимает и хранит (`… auto !awgm-test`).
 	V6 bool
 }
 
@@ -68,8 +71,43 @@ func (c *RouteCommands) RemoveIPv6DefaultRoute(ctx context.Context, name string)
 	return c.mutateTolerant(ctx, payload, "remove ipv6 default route "+name, isNetlinkFileExists)
 }
 
-// RemoveHostRoute removes an IPv4 host route (best-effort).
+// v6Prefix — подсеть для формы ipv6: сеть как есть, хост как /128.
+//
+// Пустой результат — отказ, а не запрос: NDMS молча отбрасывает неизвестное
+// поле, и снятие без подсети целится в ::/0, то есть в ДЕФОЛТНЫЙ маршрут
+// интерфейса (проверено на стенде 5.01). Тип комбинацию `V6` + `Host` не
+// запрещает, поэтому проверка стоит здесь, а не у вызывающих.
+// При обоих заполненных полях побеждает Network: у v6 сеть и хост выражаются
+// одним ключом, и «сеть плюс хост» — не запрос, а ошибка вызывающего.
+func v6Prefix(route StaticRouteSpec) (string, error) {
+	switch {
+	case route.Network != "":
+		return route.Network, nil
+	case route.Host != "":
+		return route.Host + "/128", nil
+	default:
+		return "", fmt.Errorf("ipv6 route without prefix: %+v", route)
+	}
+}
+
+// RemoveHostRoute removes a host route.
+//
+// Неразобранный адрес уходит v4-формой: пусть отказывает NDMS и причина видна
+// в журнале — молчаливый v6-путь превратил бы мусор в «/128».
+//
+// У v6 своя форма: ключ `ipv6` и `prefix` с /128. Проверено на стенде 5.01:
+// v4-форма с v6-адресом отвергается («invalid destination host»), а
+// `ipv6.route.host` НЕ адресует хост — запрос вырождается в удаление ::/0,
+// то есть дефолтного маршрута (тот же капкан описан у AddStaticRoute).
 func (c *RouteCommands) RemoveHostRoute(ctx context.Context, host string) error {
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		payload := map[string]any{
+			"ipv6": map[string]any{
+				"route": map[string]any{"prefix": host + "/128", "no": true},
+			},
+		}
+		return c.mutate(ctx, payload, "remove ipv6 host route "+host)
+	}
 	payload := map[string]any{
 		"ip": map[string]any{
 			"route": map[string]any{"no": true, "host": host},
@@ -79,9 +117,13 @@ func (c *RouteCommands) RemoveHostRoute(ctx context.Context, host string) error 
 }
 
 // AddStaticRoute adds a network or host route to the given interface. For v6
-// (route.V6) it emits the bare {prefix, interface, auto} form under the "ipv6"
-// key (NDMS reasserts on iface up); for v4 it keeps the full
+// (route.V6) it emits {prefix, interface, auto} plus reject/comment when set
+// (NDMS reasserts on iface up); for v4 it keeps the full
 // auto/reject/comment/mask/host form under "ip".
+//
+// Стенд 5.01 принял v6-reject: `ipv6 route 2001:db8:bb::/48 PPPoE0 auto
+// reject`. Интерфейс обязателен для любого v6-маршрута — без него роутер
+// отвечает «no input».
 //
 // Ключ подсети у v6 — ИМЕННО prefix, не network (как у v4). NDMS молча
 // отбрасывает неизвестное поле, и запрос вырождается: add остаётся без
@@ -89,27 +131,11 @@ func (c *RouteCommands) RemoveHostRoute(ctx context.Context, host string) error 
 // в ::/0 — то есть в ДЕФОЛТНЫЙ маршрут интерфейса. Форма стенд-проверена
 // 2026-08-24: сам роутер хранит запись как {prefix, interface, auto, comment}.
 func (c *RouteCommands) AddStaticRoute(ctx context.Context, route StaticRouteSpec) error {
-	if route.V6 {
-		payload := map[string]any{
-			"ipv6": map[string]any{
-				"route": map[string]any{
-					"prefix":    route.Network,
-					"interface": route.Interface,
-					"auto":      true,
-				},
-			},
-		}
-		return c.mutate(ctx, payload, "add ipv6 static route")
-	}
+	// Общая часть у обеих форм одна и та же; различаются только ключ
+	// назначения (prefix против host|network+mask) и внешний ключ.
 	inner := map[string]any{
 		"interface": route.Interface,
 		"auto":      true,
-	}
-	if route.Host != "" {
-		inner["host"] = route.Host
-	} else {
-		inner["network"] = route.Network
-		inner["mask"] = route.Mask
 	}
 	if route.Reject {
 		inner["reject"] = true
@@ -117,21 +143,45 @@ func (c *RouteCommands) AddStaticRoute(ctx context.Context, route StaticRouteSpe
 	if route.Comment != "" {
 		inner["comment"] = route.Comment
 	}
-	payload := map[string]any{
-		"ip": map[string]any{"route": inner},
+
+	if route.V6 {
+		prefix, err := v6Prefix(route)
+		if err != nil {
+			return err
+		}
+		if route.Interface == "" {
+			// Стенд 5.01: ЛЮБОЙ v6-маршрут без интерфейса роутер отвергает
+			// («no input») — проверено и на host-, и на сетевой форме. Отказ
+			// здесь даёт причину в журнале вместо загадочного отказа RCI, а
+			// для reject это ещё и разница между kill-switch и утечкой.
+			return fmt.Errorf("ipv6 route without interface: %+v", route)
+		}
+		inner["prefix"] = prefix
+		return c.mutate(ctx, map[string]any{"ipv6": map[string]any{"route": inner}}, "add ipv6 static route")
 	}
-	return c.mutate(ctx, payload, "add static route")
+
+	if route.Host != "" {
+		inner["host"] = route.Host
+	} else {
+		inner["network"] = route.Network
+		inner["mask"] = route.Mask
+	}
+	return c.mutate(ctx, map[string]any{"ip": map[string]any{"route": inner}}, "add static route")
 }
 
 // RemoveStaticRoute removes a previously-added static route. For v6 (route.V6)
-// it emits the bare {network, interface, no} form under "ipv6"; for v4 it emits
-// {interface, no, host|network+mask} under "ip".
+// it emits {prefix, interface, no} under "ipv6" — ключ ИМЕННО prefix, см.
+// v6Prefix; for v4 it emits {interface, no, host|network+mask} under "ip".
 func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRouteSpec) error {
 	if route.V6 {
+		prefix, err := v6Prefix(route)
+		if err != nil {
+			return err
+		}
 		payload := map[string]any{
 			"ipv6": map[string]any{
 				"route": map[string]any{
-					"prefix":    route.Network,
+					"prefix":    prefix,
 					"interface": route.Interface,
 					"no":        true,
 				},

@@ -41,6 +41,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/ops"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
 
@@ -910,21 +911,33 @@ func (a *app) wireProxyrt() {
 		Log: logging.NewScopedLogger(a.loggingService, logging.GroupTunnel, logging.SubOps),
 	})
 	a.nwgOp.SetObfuscator(obfRunner)
-	// Два обфусцированных туннеля могут смотреть на один IP сервера: host-route
-	// до него общий, и Stop одного не имеет права обрубить второй.
-	a.nwgOp.SetObfuscatorRouteSharing(func(excludeID, ip string) bool {
+	// Два туннеля могут смотреть на один IP сервера: host-route до него общий,
+	// и Stop одного не имеет права обрубить второй. Бэкенд значения не имеет —
+	// обфусцированный nativewg ставит ту же запись `ip route host`, что и
+	// kernel-туннель (nwg.addObfHostRoute против ops.addKernelHostRoute), так
+	// что предикат обязан видеть оба: до этого каждый ref-count считал только
+	// своих и снимал чужое.
+	routeHeldByOther := func(excludeID, ip string) bool {
+		if ip == "" {
+			return false
+		}
 		list, err := a.awgStore.List()
 		if err != nil {
 			return false
 		}
 		for i := range list {
 			t := &list[i]
-			if t.ID != excludeID && t.Obfuscator != nil && t.Enabled && t.ResolvedEndpointIP == ip {
+			if t.ID != excludeID && t.Enabled && t.ResolvedEndpointIP == ip {
 				return true
 			}
 		}
 		return false
-	})
+	}
+	a.nwgOp.SetObfuscatorRouteSharing(routeHeldByOther)
+	// На OS4 endpoint-маршрутами оператор не управляет — там подключать нечего.
+	if os5, ok := a.operator.(*ops.OperatorOS5Impl); ok {
+		os5.SetEndpointRouteSharing(routeHeldByOther)
+	}
 	// Усыновить релеи живых включённых туннелей, сирот погасить.
 	keep := func(id string) bool {
 		t, err := a.awgStore.Get(id)
