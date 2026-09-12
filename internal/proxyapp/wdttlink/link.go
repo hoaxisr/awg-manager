@@ -488,8 +488,17 @@ func newSubscriptionClient() *http.Client {
 	return &http.Client{
 		Timeout: 20 * time.Second,
 		Transport: &http.Transport{
-			Proxy:       nil,
-			DialContext: (&net.Dialer{Timeout: 10 * time.Second, Control: blockInternalDial}).DialContext,
+			Proxy: nil,
+			// Keep-alive снят (как и у канонического httpclient.NewTransport):
+			// транспорт собирается на КАЖДЫЙ вызов и живёт ровно одну
+			// загрузку, второго запроса через него не будет. Соединение,
+			// оставленное в пуле такого транспорта, не переиспользуется
+			// никогда, но и не закрывается: CloseIdleConnections звать некому,
+			// а IdleConnTimeout по умолчанию нулевой, то есть бессрочный, —
+			// сокет и его readLoop переживают сборку мусора. На роутере со
+			// 128 МБ это течь на каждый вызов.
+			DisableKeepAlives: true,
+			DialContext:       (&net.Dialer{Timeout: 10 * time.Second, Control: blockInternalDial}).DialContext,
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 3 {
