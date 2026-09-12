@@ -3,7 +3,6 @@ package router
 import (
 	"bytes"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -87,38 +86,29 @@ func (c *ruleSetCache) urlLock(url string) *sync.Mutex {
 var ruleSetHTTPClient = newRuleSetHTTPClient()
 
 func newRuleSetHTTPClient() *http.Client {
-	c := &http.Client{Timeout: ruleSetDownloadTimeout}
 	// Прокси окружения наследуется СОЗНАТЕЛЬНО (Proxy оставлен нулевым,
 	// httpclient.ProxyInheritEnv): это загрузка rule-set'а из интернета,
 	// и прокси, прописанный владельцем роутера в окружении демона, уважить
 	// правильно. Требования «только напрямую» тут нет.
 	tr, err := httpclient.NewTransport(httpclient.TransportConfig{})
-	if err != nil || tr == nil {
-		tr = ruleSetFallbackTransport()
+	if err != nil {
+		// Утверждение об инварианте, а не обработка: отказать NewTransport
+		// может только на разборе ProxyURL, а он здесь пуст. Вернуть ошибку
+		// некуда — клиент строится при инициализации пакетной переменной, —
+		// а тихо оставить Transport нулевым нельзя: нулевой это
+		// http.DefaultTransport с пустым ALPN, сервер договаривается на h2,
+		// и вместо rule-set'а приезжает EOF (Fastly,
+		// raw.githubusercontent.com) или «malformed HTTP response»
+		// (Cloudflare) — ровно та поломка, ради которой httpclient и заведён.
+		// Громкий отказ на старте (ср. panic на nil-журнале в
+		// amneziacp.NewClient) дешевле запасного транспорта: тот был бы
+		// недостижимым кодом, который живёт и расходится с основным.
+		//
+		// tr == nil не проверяется: NewTransport такого не отдаёт — транспорт
+		// там всегда Clone базового (см. Client.buildTransport).
+		panic("router: транспорт загрузки rule-set'ов не собрался: " + err.Error())
 	}
-	c.Transport = tr
-	return c
-}
-
-// ruleSetFallbackTransport — запасной транспорт на случай, когда канонический
-// не собрался.
-//
-// Клиент строится при инициализации пакетной переменной, вернуть ошибку
-// некуда. Но и оставить Transport нулевым нельзя: нулевой — это
-// http.DefaultTransport, у которого ALPN пустой, сервер договаривается на h2,
-// и вместо rule-set'а приезжает EOF (Fastly, raw.githubusercontent.com) или
-// «malformed HTTP response» (Cloudflare) — ровно та поломка, ради которой
-// httpclient и заведён. Раньше здесь была именно такая тихая деградация.
-//
-// Повторяются ровно те свойства основного транспорта, без которых зеркала
-// ломаются. Прокси окружения наследуется так же сознательно, как и у
-// основного (ср. newRuleSetHTTPClient).
-func ruleSetFallbackTransport() *http.Transport {
-	return &http.Transport{
-		Proxy:             http.ProxyFromEnvironment,
-		ForceAttemptHTTP2: false,
-		TLSClientConfig:   &tls.Config{NextProtos: []string{"http/1.1"}},
-	}
+	return &http.Client{Timeout: ruleSetDownloadTimeout, Transport: tr}
 }
 
 // getOrDownload returns the local file path for url, downloading and
