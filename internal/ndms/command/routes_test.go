@@ -142,6 +142,65 @@ func TestRouteCommands_RemoveStaticRoute_V6Host(t *testing.T) {
 	}
 }
 
+// F238, стенд 5.01: `ipv6 route 2001:db8:bb::/48 PPPoE0 auto reject`.
+func TestRouteCommands_AddStaticRoute_V6Reject(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		spec       StaticRouteSpec
+		wantPrefix string
+	}{
+		{"сеть", StaticRouteSpec{Network: "2001:db8:bb::/48", Interface: "PPPoE0", Reject: true, V6: true}, "2001:db8:bb::/48"},
+		{"хост", StaticRouteSpec{Host: "2001:db8::1", Interface: "PPPoE0", Reject: true, V6: true}, "2001:db8::1/128"},
+		{"с меткой владения", StaticRouteSpec{Network: "2001:db8:bb::/48", Interface: "PPPoE0", Reject: true, Comment: "awgm-drain", V6: true}, "2001:db8:bb::/48"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmds, poster := newTestRouteCommands(t)
+			if err := cmds.AddStaticRoute(context.Background(), tc.spec); err != nil {
+				t.Fatalf("AddStaticRoute: %v", err)
+			}
+			r := poster.Payloads()[0].(map[string]any)["ipv6"].(map[string]any)["route"].(map[string]any)
+			if r["auto"] != true {
+				t.Errorf("reject-маршрут без auto NDMS не переигрывает на iface up: %#v", r)
+			}
+			if r["reject"] != true {
+				t.Errorf("reject потерян — kill-switch стал обычным маршрутом: %#v", r)
+			}
+			if r["prefix"] != tc.wantPrefix || r["interface"] != "PPPoE0" {
+				t.Errorf("add ipv6 reject: %#v", r)
+			}
+			if tc.spec.Comment != "" && r["comment"] != tc.spec.Comment {
+				// Без метки владения маршрут не подберёт стартовый sweep.
+				t.Errorf("метка владения потеряна рядом с reject: %#v", r)
+			}
+		})
+	}
+}
+
+// Стенд 5.01: ЛЮБОЙ v6-маршрут без интерфейса роутер отвергает («no input») —
+// и host-форма, и сетевая. Отказываем сами, а не отправляем заведомо мёртвый
+// запрос; для reject это ещё и разница между kill-switch и утечкой.
+func TestRouteCommands_V6WithoutInterface_Refused(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		spec StaticRouteSpec
+	}{
+		{"reject", StaticRouteSpec{Network: "2001:db8:bb::/48", Reject: true, V6: true}},
+		{"сеть", StaticRouteSpec{Network: "2001:db8:bb::/48", V6: true}},
+		{"хост", StaticRouteSpec{Host: "2001:db8::1", V6: true}},
+		{"с меткой владения", StaticRouteSpec{Network: "2001:db8:bb::/48", Comment: "awgm-drain", V6: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmds, poster := newTestRouteCommands(t)
+			if err := cmds.AddStaticRoute(context.Background(), tc.spec); err == nil {
+				t.Fatal("v6-маршрут без интерфейса обязан отказывать")
+			}
+			if n := len(poster.Payloads()); n != 0 {
+				t.Fatalf("в NDMS ушёл заведомо отвергаемый запрос: %#v", poster.Payloads())
+			}
+		})
+	}
+}
+
 // Запрос без подсети не отправляется вовсе: NDMS молча отбрасывает неизвестное
 // поле, и снятие вырождается в удаление ::/0 — дефолтного маршрута.
 // Заполнены оба поля — побеждает Network: у v6 сеть и хост выражаются одним
@@ -279,7 +338,8 @@ func TestRouteCommands_AddStaticRoute_V6(t *testing.T) {
 	if r["prefix"] != "3f80::/10" || r["interface"] != "OpkgTun10" || r["auto"] != true {
 		t.Errorf("ipv6 route: %#v", r)
 	}
-	// v6 add emits ONLY {prefix, interface, auto} — no network/mask/host/reject/comment/no.
+	// v6 add для этой spec эмитит {prefix, interface, auto} — без network/mask/host
+	// (их у v6-формы нет вовсе) и без reject/comment, которых spec не задаёт.
 	for _, k := range []string{"network", "mask", "host", "reject", "comment", "no"} {
 		if _, ok := r[k]; ok {
 			t.Errorf("v6 add must not emit %q: %#v", k, r)
