@@ -107,3 +107,11 @@ func isACLUnsupported(msg string) bool {
 	return strings.Contains(strings.ToLower(msg), "no such command: access-list") ||
 		strings.Contains(strings.ToLower(msg), "no such command: access-group")
 }
+
+// toleratesRouteRemoval — безобидные отказы СНЯТИЯ маршрута: интерфейса уже
+// нет, либо netlink ответил «file exists», потому что по тому же адресу в
+// таблице остался ещё один маршрут (стенд 5.01: запись при этом снимается,
+// в running-config её больше нет).
+func toleratesRouteRemoval(msg string) bool {
+	return isNoSuchInterface(msg) || isNetlinkFileExists(msg)
+}

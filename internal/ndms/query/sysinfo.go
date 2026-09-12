@@ -19,6 +19,12 @@ type SystemInfoStore struct {
 
 	mu     sync.RWMutex
 	loaded bool
+	// source — каким каналом добыто значение: SourceRCI / SourceNdmc /
+	// SourceFile (константы в internal/sys/ndmsinfo). Одно поле вместо пары
+	// булевых признаков: два флага кодировали одно перечисление и успели
+	// разойтись — диагностика печатала «получено через ndmc» для версии из
+	// файла, потому что читала флаг, а не источник.
+	source string
 	value  ndms.Version
 
 	initSF *cache.SingleFlight[struct{}, ndms.Version]
@@ -82,10 +88,50 @@ func (s *SystemInfoStore) Init(ctx context.Context) error {
 		s.mu.Lock()
 		s.value = v
 		s.loaded = true
+		s.source = sourceRCI
 		s.mu.Unlock()
 		return v, nil
 	})
 	return err
+}
+
+// Adopt принимает версию, добытую запасным каналом: ndmc через unix-сокет
+// (internal/sys/ndmsinfo/ndmc.go) или файл /etc/components.xml. Уже
+// загруженное значение не трогает — живой ответ RCI считается точнее.
+//
+// source обязателен: по нему диагностика отличает «RCI жив» от «RCI молчал,
+// выручил запасной канал», а без него эти случаи неразличимы.
+func (s *SystemInfoStore) Adopt(v ndms.Version, source string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.loaded {
+		return
+	}
+	s.value = v
+	s.loaded = true
+	s.source = source
+}
+
+// Source сообщает, каким каналом добыта версия, или "" пока её нет.
+func (s *SystemInfoStore) Source() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.loaded {
+		return ""
+	}
+	return s.source
+}
+
+// sourceRCI дублирует ndmsinfo.SourceRCI: импортировать тот пакет отсюда
+// нельзя, он сам зависит от query.
+const sourceRCI = "rci"
+
+// Adopted сообщает, что версия получена НЕ от RCI, а запасным каналом.
+// Обёртка над Source(): диагностике нужен и факт, и имя канала.
+func (s *SystemInfoStore) Adopted() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loaded && s.source != sourceRCI
 }
 
 // Get returns the cached Version. Returns ErrNotInitialized if Init was

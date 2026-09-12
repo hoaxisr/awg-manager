@@ -168,8 +168,9 @@ type Server struct {
 	proxyRt ProxyRtSurface
 
 	// Restart lifecycle
-	restartOnce   sync.Once // prevents multiple restart goroutines
-	shutdownHooks []func()  // cleanup functions called before syscall.Exec
+	restartOnce   sync.Once  // prevents multiple restart goroutines
+	hooksMu       sync.Mutex // пишет проводка, читает горутина рестарта
+	shutdownHooks []func()   // cleanup functions called before syscall.Exec
 }
 
 // Deps groups all New() construction-time dependencies into a named
@@ -622,8 +623,23 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // AddShutdownHook registers a function to call before syscall.Exec restart.
+//
+// Именно перед exec, а не на любом завершении: образ процесса там переживает
+// смену, поэтому открытые сокеты и воркеры надо снять руками. На обычном
+// выходе (SIGTERM) их закрывает ядро, а уборка, которая обязана идти всегда,
+// регистрируется через app.deferOnExit.
 func (s *Server) AddShutdownHook(fn func()) {
+	s.hooksMu.Lock()
+	defer s.hooksMu.Unlock()
 	s.shutdownHooks = append(s.shutdownHooks, fn)
+}
+
+// shutdownHooksSnapshot отдаёт копию ведомости: исполняются хуки в отдельной
+// горутине, регистрируются в проводке, и читать срез без снимка — гонка.
+func (s *Server) shutdownHooksSnapshot() []func() {
+	s.hooksMu.Lock()
+	defer s.hooksMu.Unlock()
+	return append([]func(){}, s.shutdownHooks...)
 }
 
 // ScheduleRestart schedules a self-restart of the daemon after a short delay.
@@ -646,7 +662,7 @@ func (s *Server) ScheduleRestart() {
 			s.appLog.Info("restart", executable, "restarting daemon")
 
 			// Run shutdown hooks (stop PingCheck, sessions, log buffer, etc.)
-			for _, fn := range s.shutdownHooks {
+			for _, fn := range s.shutdownHooksSnapshot() {
 				fn()
 			}
 

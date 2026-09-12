@@ -45,6 +45,11 @@
  * - POST /__mock/singbox-install-fail {"enabled": true|false};
  * - POST /__mock/singbox-running {"running": true|false} — живость sing-box в
  *   GET /singbox/status (env MOCK_SINGBOX_DOWN=1 выключает её на старте).
+ * - POST /__mock/hydraroute-installed {"installed": true|false} — установлен ли
+ *   HydraRoute в GET /system/hydraroute-status (env MOCK_HYDRAROUTE_ABSENT=1
+ *   снимает на старте). Нужен, чтобы посмотреть карточку интеграций в
+ *   состоянии «ничего не установлено»: там у HydraRoute вместо «Открыть»
+ *   ссылка «Инструкция →».
  *
  * Default upstream: http://127.0.0.1:8080 (Prism). Listen: 8081.
  */
@@ -141,6 +146,7 @@ const MOCK_CAPABILITY_GROUPS = Object.freeze([
 			'POST /__mock/reset',
 			'POST /__mock/singbox-install-fail',
 			'POST /__mock/singbox-running',
+			'POST /__mock/hydraroute-installed',
 			'POST /__mock/download-faults',
 			'POST /__mock/keenetic-os',
 		],
@@ -186,6 +192,7 @@ function getRuntimeState() {
 		mcpKeys: mockMcpKeys.length,
 		singboxInstallShouldFail,
 		singboxRunning,
+		hydraRouteInstalled,
 		downloadFaultsEnabled,
 		downloadFaultProbability,
 		logsCleared: { ...bucketCleared },
@@ -205,6 +212,7 @@ function resetRuntimeControls() {
 	mockMcpKeySeq = 0;
 	singboxInstallShouldFail = process.env.MOCK_SINGBOX_INSTALL_FAIL === '1';
 	singboxRunning = process.env.MOCK_SINGBOX_DOWN !== '1';
+	hydraRouteInstalled = process.env.MOCK_HYDRAROUTE_ABSENT !== '1';
 	downloadFaultsEnabled = process.env.MOCK_DOWNLOAD_FAULTS !== '0';
 	downloadFaultProbability = parseProbability(process.env.MOCK_DOWNLOAD_FAULT_PROB, 0.4);
 	bucketCleared.app = false;
@@ -2709,13 +2717,21 @@ const mockDnsProxyInfo = {
 };
 
 /** HydraRoute Neo в блоке AWGM (GET /system/hydraroute-status). */
-const mockHydraRouteStatus = {
+const mockHydraRouteStatusInstalled = {
 	installed: true,
 	running: true,
 	version: '2.4.1',
 	pid: 2345,
 	processState: 'running',
 };
+
+const mockHydraRouteStatusAbsent = {
+	installed: false,
+	running: false,
+	processState: 'not_installed',
+};
+
+let hydraRouteInstalled = process.env.MOCK_HYDRAROUTE_ABSENT !== '1';
 
 const mockRoutingDnsRoutes = [
 	{
@@ -6230,7 +6246,10 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	if (req.method === 'GET' && path === '/system/hydraroute-status') {
-		send(res, 200, { success: true, data: mockHydraRouteStatus });
+		send(res, 200, {
+			success: true,
+			data: hydraRouteInstalled ? mockHydraRouteStatusInstalled : mockHydraRouteStatusAbsent,
+		});
 		return;
 	}
 
@@ -6472,6 +6491,18 @@ const server = http.createServer(async (req, res) => {
 			singboxRunning = body.running !== false;
 			send(res, 200, { ok: true, singboxRunning });
 			console.log(`[mock-proxy] singboxRunning → ${singboxRunning}`);
+		} catch (e) {
+			send(res, 400, { error: String(e) });
+		}
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/__mock/hydraroute-installed') {
+		try {
+			const body = await readJsonBody(req);
+			hydraRouteInstalled = body.installed !== false;
+			send(res, 200, { ok: true, hydraRouteInstalled });
+			console.log(`[mock-proxy] hydraRouteInstalled → ${hydraRouteInstalled}`);
 		} catch (e) {
 			send(res, 400, { error: String(e) });
 		}
@@ -9200,7 +9231,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
 	console.log(`mock-proxy on http://127.0.0.1:${PORT} → ${UPSTREAM} (usageLevel=${usageLevel})`);
-	console.log('[mock-proxy] controls: GET /__mock/capabilities, GET /__mock/tunnels, POST /__mock/reset-runtime, POST /__mock/singbox-install-fail, POST /__mock/singbox-running, POST /__mock/download-faults, POST /__mock/keenetic-os');
+	console.log('[mock-proxy] controls: GET /__mock/capabilities, GET /__mock/tunnels, POST /__mock/reset-runtime, POST /__mock/singbox-install-fail, POST /__mock/singbox-running, POST /__mock/hydraroute-installed, POST /__mock/download-faults, POST /__mock/keenetic-os');
 	console.log(`[mock-proxy] keenetic-os: ${mockKeeneticProfile.key} (supportsExtendedASC=${mockKeeneticProfile.extended}; default: 5.1, force: MOCK_KEENETIC_OS=5.0|5.1, switch: POST /__mock/keenetic-os)`);
 	console.log(`[mock-proxy] download faults: enabled=${downloadFaultsEnabled} p=${downloadFaultProbability} (disable: MOCK_DOWNLOAD_FAULTS=0)`);
 });

@@ -81,6 +81,12 @@ type OperatorNativeWG struct {
 	guardCtx    context.Context    // контекст guardLoop и его sweep'ов
 	guardCancel context.CancelFunc // Close; nil, пока guardLoop не заведён
 	guardDone   chan struct{}      // закрывает guardLoop на выходе
+	guardNudge  chan struct{}      // внеочередной проход; заводится в guardRegister
+	// tunnelLock — per-tunnel замок оркестратора; nil = работать без него
+	// (тесты и конфигурации без оркестратора).
+	tunnelLock func(ctx context.Context, tunnelID, owner string, work func() error) error
+	// persistResolvedIP кладёт адрес target'а в запись туннеля.
+	persistResolvedIP func(tunnelID, ip string)
 	// hasProxySlot reports a live kmod proxy slot on a listen port. Default:
 	// kmod.HasSlotListening; overridable in tests.
 	hasProxySlot func(listenPort int) bool
@@ -106,6 +112,14 @@ type OperatorNativeWG struct {
 	// обязано это показывать: без маршрута трафик релея уходит в сам туннель.
 	obfRouteMu  sync.Mutex
 	obfRouteErr map[string]string
+
+	// obfRoutedWAN — WAN (имя NDMS), под которым host-route был поставлен, по
+	// ID туннеля. Сверять не с чем другим: запись NDMS ключуется парой
+	// (host, interface), а ActiveWAN в сторе держит KERNEL-имя (ResolveActiveWAN
+	// переводит peer.via в ppp0) и обновляется по своим правилам. Карта живёт
+	// в памяти: после рестарта демона WAN неизвестен, и прежняя запись
+	// снимается вслепую — заодно уходит мусор прошлой жизни.
+	obfRoutedWAN map[string]string
 }
 
 // NewOperator creates a new NativeWG operator.
@@ -132,6 +146,18 @@ func (o *OperatorNativeWG) SetHookNotifier(hn tunnel.HookNotifier) {
 // SetTunnelLookup задаёт доступ к хранилищу туннелей.
 func (o *OperatorNativeWG) SetTunnelLookup(fn func(tunnelID string) (*storage.AWGTunnel, error)) {
 	o.tunnelLookup = fn
+}
+
+// SetTunnelLock подключает per-tunnel замок оркестратора: страж правит
+// host-route и состояние релея — то же, что действия оркестратора.
+func (o *OperatorNativeWG) SetTunnelLock(fn func(ctx context.Context, tunnelID, owner string, work func() error) error) {
+	o.tunnelLock = fn
+}
+
+// SetResolvedIPPersister подключает запись адреса target'а в стор туннеля:
+// стора у оператора нет, писать умеет только владелец проводки.
+func (o *OperatorNativeWG) SetResolvedIPPersister(fn func(tunnelID, ip string)) {
+	o.persistResolvedIP = fn
 }
 
 // Create creates a NativeWG tunnel in NDMS.
@@ -274,7 +300,7 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	// 127.0.0.1:proxy или реальный); IPv6-литерал NDMS в create-команде не
 	// принимает — заглушка, как в createViaImport.
 	peerEndpoint := fmt.Sprintf("%s:%d", endpointIP, endpointPort)
-	if ip := net.ParseIP(endpointIP); ip != nil && ip.To4() == nil {
+	if isV6Literal(endpointIP) {
 		peerEndpoint = ndmsEndpointPlaceholder
 	}
 	peerCfg := payloads.PeerConfig{
@@ -427,7 +453,7 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 	// wireguard-tools по kernel-имени nwgN, ПОСЛЕ поднятия интерфейса —
 	// up/down у NDMS сбрасывает kernel-endpoint на значение из его конфига.
 	endpointIsV6 := false
-	if ip := net.ParseIP(endpointIP); ip != nil && ip.To4() == nil {
+	if isV6Literal(endpointIP) {
 		endpointIsV6 = true
 		// hostname→v6-only резолв: прекчек по литералу выше не сработал.
 		if wgToolLookup() == "" {
@@ -498,7 +524,7 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 		})
 		o.appLog.Info("start", names.NDMSName,
 			fmt.Sprintf("IPv6 endpoint %s выставлен в ядро через wg set %s (RCI NDMS v6 не принимает); endpoint-страж следит за сбросами NDMS", realEndpoint, names.IfaceName))
-	} else if guard, viaNDMS := guardModeForEndpoint(stored.Peer.Endpoint, false); guard {
+	} else if guard, mode := guardModeForEndpoint(stored.Peer.Endpoint, false); guard {
 		// Hostname→v4: endpoint в конфиге NDMS — литерал, и NDMS его
 		// никогда не перерезолвит. Страж следит за сменой адреса за
 		// именем и доводит его в конфиг (#702).
@@ -508,7 +534,7 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 			endpoint: realEndpoint,
 			spec:     stored.Peer.Endpoint,
 			name:     names.NDMSName,
-			viaNDMS:  viaNDMS,
+			mode:     mode,
 		})
 	} else {
 		o.guardUnregister(stored.ID)
@@ -1224,7 +1250,21 @@ func (o *OperatorNativeWG) resolveOnce(endpoint string, timeout time.Duration) (
 
 // trackEndpointIP records a freshly-resolved endpoint IP for a tunnel.
 // Lazy-inits the map so struct-literal construction (tests) is safe.
+//
+// Адрес, до которого host-route не ставят, не трекаем. Туда попадает
+// Peer.Endpoint обфусцированного туннеля (127.0.0.1:<порт> локального релея —
+// его резолвит createViaBatch) и связанных туннелей wdtt/freeturn в WG-режиме
+// (их резолвят startNative/startProxy). Оркестратор сохраняет
+// GetTrackedEndpointIP в ResolvedEndpointIP (execute.go), а это поле означает
+// адрес, до которого ставится host-route: петля затирала бы там адрес target'а
+// релея. F230.
+//
+// Прежнее значение при этом сохраняется: карта отражает последний адрес, под
+// которым маршрут действительно ставился.
 func (o *OperatorNativeWG) trackEndpointIP(tunnelID, ip string) {
+	if netutil.SkipHostRoute(ip) {
+		return
+	}
 	o.trackedMu.Lock()
 	defer o.trackedMu.Unlock()
 	if o.trackedIP == nil {

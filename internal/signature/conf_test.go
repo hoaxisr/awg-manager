@@ -64,6 +64,12 @@ func TestValidateProfileAndSize(t *testing.T) {
 		t.Fatalf("неизвестный профиль дал %v", err)
 	}
 
+	// Предохранитель: размер входа считается от проверяемой константы, и её
+	// мутация в большое значение превратила бы тест в пожирателя памяти —
+	// прогон валит машину вместо того, чтобы покраснеть.
+	if MaxSignatureChars > 1<<20 {
+		t.Fatalf("MaxSignatureChars=%d неправдоподобен — тест не станет строить такой вход", MaxSignatureChars)
+	}
 	if _, err := ValidateProfileAndSize("sip", GeneratedPackets{I1: strings.Repeat("a", MaxSignatureChars+1)}); !errors.Is(err, ErrPacketsTooLarge) {
 		t.Fatalf("строка сверх лимита дала %v", err)
 	}

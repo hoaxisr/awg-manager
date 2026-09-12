@@ -12,10 +12,10 @@ import (
 func TestSelectBundledModuleWarnsOnUnknownModel(t *testing.T) {
 	dir := t.TempDir()
 	setModulesDir(t, dir)
-	if err := os.MkdirAll(BundledDir, 0755); err != nil {
+	if err := os.MkdirAll(BundledDir(), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(BundledDir, "amneziawg-KN-1810.ko"), []byte("ko"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(BundledDir(), "amneziawg-KN-1810.ko"), []byte("ko"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -26,7 +26,7 @@ func TestSelectBundledModuleWarnsOnUnknownModel(t *testing.T) {
 	if len(warned) != 1 || !strings.Contains(warned[0], "KN-1613") {
 		t.Errorf("ожидали одну запись с моделью, получили %v", warned)
 	}
-	if _, err := os.Stat(BundledDir); !os.IsNotExist(err) {
+	if _, err := os.Stat(BundledDir()); !os.IsNotExist(err) {
 		t.Error("bundled должен быть снесён")
 	}
 }
@@ -35,10 +35,10 @@ func TestSelectBundledModuleWarnsOnUnknownModel(t *testing.T) {
 func TestSelectBundledModuleSilentOnAliasHit(t *testing.T) {
 	dir := t.TempDir()
 	setModulesDir(t, dir)
-	if err := os.MkdirAll(BundledDir, 0755); err != nil {
+	if err := os.MkdirAll(BundledDir(), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(BundledDir, "amneziawg-KN-1810.ko"), []byte("ko"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(BundledDir(), "amneziawg-KN-1810.ko"), []byte("ko"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -56,7 +56,7 @@ func TestSelectBundledModuleSilentOnAliasHit(t *testing.T) {
 
 func setModulesDir(t *testing.T, dir string) {
 	t.Helper()
-	oldModules, oldBundled := ModulesDir, BundledDir
-	ModulesDir, BundledDir = dir, filepath.Join(dir, "bundled")
-	t.Cleanup(func() { ModulesDir, BundledDir = oldModules, oldBundled })
+	old := ModulesDir
+	ModulesDir = dir
+	t.Cleanup(func() { ModulesDir = old })
 }

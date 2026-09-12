@@ -113,4 +113,6 @@ Telegram: [@awgmanager](https://t.me/awgmanager)
 
 Другой вариант управления AmneziaWG сервером - https://github.com/pumbaX/awg-multi-script
 
+Docker-образ AmneziaWG сервера - https://github.com/AYastrebov/docker-amneziawg
+
 Документация проекта - https://awgm.hoaxisr.ru/install/

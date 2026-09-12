@@ -303,7 +303,54 @@ func (o *Orchestrator) executeResumeKernel(ctx context.Context, action Action) e
 		return err
 	}
 	o.appLog.Info("resume", action.Tunnel, "kernel tunnel resumed")
+	o.refreshEndpointRouteAfterResume(ctx, action.Tunnel)
 	return nil
+}
+
+// refreshEndpointRouteAfterResume приводит маршрут до endpoint после возврата
+// линка.
+//
+// Resume — это ровно `ip link set up`, о маршрутах он не знает. А пока линк
+// лежал, ядро вычистило всё, что вело через этот интерфейс, включая хост-
+// маршрут до endpoint; вдобавок после передозвона (PPPoE/DHCP) шлюз может
+// оказаться другим. Раньше маршрут не переигрывался до следующего полного
+// старта туннеля.
+//
+// Канал при этом НЕ менялся: ActionResumeKernel выдаётся только туннелю с
+// явной привязкой и только когда поднялся тот же самый интерфейс
+// (canStartOnWAN). Смена канала — это ветка ISPInterface=="" → Reconcile,
+// который маршрут обновляет сам.
+//
+// Отказ не фатален — см. контракт SetupEndpointRoute; туннель уже поднят, и
+// ронять его из-за маршрута нельзя.
+func (o *Orchestrator) refreshEndpointRouteAfterResume(ctx context.Context, tunnelID string) {
+	stored, err := o.store.Get(tunnelID)
+	if err != nil || stored.Peer.Endpoint == "" {
+		return
+	}
+	resolvedWAN, err := o.resolveWAN(ctx, stored.ISPInterface)
+	if err != nil {
+		o.appLog.Warn("resume", tunnelID, "маршрут до endpoint не обновлён, WAN не разрешён: "+err.Error())
+		return
+	}
+	ip, err := o.kernelOp.SetupEndpointRoute(ctx, tunnelID, stored.Peer.Endpoint,
+		o.resolveKernelDevice(resolvedWAN), resolvedWAN)
+	if err != nil {
+		o.appLog.Warn("resume", tunnelID, "маршрут до endpoint не обновлён: "+err.Error())
+		return
+	}
+	// Свежий адрес обязан осесть в записи — как это делают старт и реконсайл.
+	// Иначе следующий холодный старт засеет маршрут протухшим IP из стора
+	// (execute.go, ветка ColdStart), и туннель пойдёт через мёртвый шлюз.
+	if err := o.store.Update(tunnelID, func(t *storage.AWGTunnel) error {
+		t.ActiveWAN = resolvedWAN
+		if ip != "" {
+			t.ResolvedEndpointIP = ip
+		}
+		return nil
+	}); err != nil {
+		o.persistWarn(tunnelID, "resume endpoint route", err)
+	}
 }
 
 // executeStartNativeWG starts a NativeWG tunnel via the NWG operator.
@@ -328,12 +375,19 @@ func (o *Orchestrator) executeStartNativeWG(ctx context.Context, action Action) 
 	// WAN events. Empty result preserves the previous ActiveWAN — protects
 	// against transient RCI failure when re-starting an already-running tunnel.
 	activeWAN := o.nwgOp.ResolveActiveWAN(ctx, stored)
+	// Адрес — в ту же транзакцию: ActionPersistRunning доедет лишь через
+	// несколько действий, а до тех пор соседний туннель с тем же target
+	// читает из стора прежний адрес и решает по нему, чей это host-route.
+	trackedIP := o.nwgOp.GetTrackedEndpointIP(action.Tunnel)
 	startedAt := time.Now().UTC().Format(time.RFC3339)
 	if err := o.store.Update(action.Tunnel, func(t *storage.AWGTunnel) error {
 		t.Enabled = true
 		t.StartedAt = startedAt
 		if activeWAN != "" {
 			t.ActiveWAN = activeWAN
+		}
+		if trackedIP != "" {
+			t.ResolvedEndpointIP = trackedIP
 		}
 		return nil
 	}); err != nil {

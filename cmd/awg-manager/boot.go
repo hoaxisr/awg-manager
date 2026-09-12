@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -58,6 +59,38 @@ func populateWANModel(ctx context.Context, queries *ndmsquery.Queries, model *wa
 		ifaceList = append(ifaceList, fmt.Sprintf("%s(up=%t)", iface.Name, iface.Up))
 	}
 	appLog.Info("populate-wan", "", fmt.Sprintf("WAN model populated, count=%d ifaces=[%s]", len(interfaces), strings.Join(ifaceList, " ")))
+}
+
+// bootEvent переводит результат пробы дефолтного шлюза в событие бута.
+// Отдельной функцией — чтобы связь «проба не удалась ⇒ бут откладывается»
+// держал тест: в прошлый раз именно эта проводка молча оказалась не в той
+// ветке, и поймал её только стенд.
+//
+// Откладывает бут ТОЛЬКО ErrNoDefaultRoute. GetDefaultGatewayInterface
+// отвечает ошибкой и когда дефолтного маршрута действительно нет, и когда
+// список маршрутов не удалось получить вовсе (RCI молчит, таймаут, семафор) —
+// а ровно перед этой пробой идёт LoadState, то есть пачка RCI-запросов,
+// создающая нагрузку там, где потом читается решающий ответ. Принять
+// транспортный отказ за «WAN нет» значит отложить бут до фронта WAN-up,
+// которого при уже поднятом WAN никто не пришлёт: туннели простоят до
+// ручного вмешательства — та самая F194, только другим входом.
+func bootEvent(gatewayErr error) orchestrator.Event {
+	wanDown := errors.Is(gatewayErr, ndmsquery.ErrNoDefaultRoute)
+	return orchestrator.Event{Type: orchestrator.EventBoot, WANUp: !wanDown}
+}
+
+// restorePingMonitors заводит мониторы пинг-чека для туннелей, которые уже
+// работают и потому не проходили через старт.
+//
+// Реестр мониторов резидентный и наполняется ТОЛЬКО побочным эффектом старта
+// туннеля (ActionStartMonitoring из appendPostStartActions). Туннель,
+// переживший перезапуск демона — а ASC-nativewg переживает его всегда, потому
+// что живёт в NDMS, — оставался без монитора до конца жизни процесса: молча
+// не работали DNS-failover (он слушает только события пинг-чека), эскалация
+// перезапуском, журнал проверок и кнопка «Проверить». Вызов идемпотентен:
+// внутри проверяется и что туннель запущен, и что пинг-чек ему включён.
+func (a *app) restorePingMonitors() {
+	a.pingCheckFacade.StartMonitoringAllRunning()
 }
 
 // startBootSequence detects boot vs daemon-restart and runs the boot
@@ -212,6 +245,14 @@ func (a *app) startBootSequence() {
 			// (legacy garbage from the pre-hardened resolver, e.g. "ISP").
 			a.tunnelService.HealStaleActiveWAN()
 
+			// Кэш оркестратора наполняется независимо от состояния WAN.
+			// Внутри else он оставался пустым на загрузке с неподнятым WAN, и
+			// пришедший через минуту EventWANUp решал по пустой карте туннелей:
+			// ноль действий, ни строки в журнале, туннели стоят до ручного
+			// старта. Глобальные события (WAN, NDMS-хуки) своего ensureTunnel
+			// не имеют — им нужен уже загруженный кэш.
+			a.orch.LoadState(a.shutdownCtx)
+
 			// Detect actual WAN state.
 			gwIface, err := a.ndmsQueries.Routes.GetDefaultGatewayInterface(a.shutdownCtx)
 			if err != nil {
@@ -224,9 +265,14 @@ func (a *app) startBootSequence() {
 					fmt.Sprintf("Tunnel start at %s (uptime ~%ds)",
 						time.Since(bootStart).Round(time.Second),
 						int(time.Since(bootStart).Seconds())+int(a.uptime)))
-				a.orch.LoadState(a.shutdownCtx)
-				a.orch.HandleEvent(a.shutdownCtx, orchestrator.Event{Type: orchestrator.EventBoot})
 			}
+			// Событие шлём ВСЕГДА, результат пробы едет полем. Решать, бут
+			// это или он откладывается до появления WAN, обязан владелец
+			// состояния: отдельный вызов следом за пробой оставлял между
+			// ними окно, в котором WAN-фронт обрабатывался как обычный и
+			// терялся, а отложенный бут потом ждал второго фронта.
+			a.orch.HandleEvent(a.shutdownCtx, bootEvent(err))
+			a.restorePingMonitors()
 
 			// Маркер надо снять и здесь: холодный старт и так поднимается из
 			// восстановленного конфига, а невынутый маркер на всех последующих
@@ -277,7 +323,13 @@ func (a *app) startBootSequence() {
 			a.bootLog.Info("startup", "",
 				"Post-restore boot: syncing linked endpoints and cold-starting from archive")
 			a.orch.LoadState(context.Background())
-			a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventBoot})
+			// WANUp:true — этот путь и раньше бутил без проверки WAN; менять
+			// его тем же коммитом не будем, но гейта здесь нет (в трекере).
+			a.orch.HandleEvent(context.Background(), orchestrator.Event{
+				Type:  orchestrator.EventBoot,
+				WANUp: true,
+			})
+			a.restorePingMonitors()
 			go a.proxyRuntimeNudge("post-restore", proxyrt.EventBoot)
 			return
 		}
@@ -287,6 +339,7 @@ func (a *app) startBootSequence() {
 
 		a.orch.LoadState(context.Background())
 		a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventReconnect})
+		a.restorePingMonitors()
 		// Как на cold-boot: посев мог не состояться, если RCI ещё не отвечал
 		// сразу после opkg upgrade.
 		go a.proxyRuntimeNudge("daemon-restart", proxyrt.EventBoot)

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -164,24 +165,46 @@ type fakeKernelOp struct {
 	entered chan struct{}
 	release chan struct{}
 
-	// coldStartErr/deleteErr — отказ соответствующего шага; stops — счётчик Stop.
+	// coldStartErr/deleteErr — отказ соответствующего шага. Счётчики атомарны
+	// на будущее: сегодня все читатели стоят после join, гонки нет, но
+	// ColdStart умеет парковаться в отдельной горутине — первое же чтение
+	// счётчика параллельно с парковкой стало бы флейком.
 	coldStartErr error
 	deleteErr    error
-	stops        int
+	stops        atomic.Int64
+	coldStarts   atomic.Int64
+
+	// resumes/endpointRoutes — для проверки того, что возврат линка приводит
+	// и маршрут до endpoint (см. resume_endpoint_route_test.go). Срез под
+	// мьютексом по той же причине, что счётчики атомарны.
+	resumes        atomic.Int64
+	routesMu       sync.Mutex
+	endpointRoutes []endpointRouteCall
+	endpointErr    error
+	endpointIP     string // что SetupEndpointRoute вернёт вызывающему
+}
+
+// endpointRouteCall — аргументы одного вызова SetupEndpointRoute.
+type endpointRouteCall struct {
+	tunnelID     string
+	endpoint     string
+	kernelDevice string
+	ispName      string
 }
 
 func (f *fakeKernelOp) Create(context.Context, tunnel.Config) error { return nil }
 func (f *fakeKernelOp) ColdStart(context.Context, tunnel.Config) error {
+	f.coldStarts.Add(1)
 	park(f.entered, f.release)
 	return f.coldStartErr
 }
-func (f *fakeKernelOp) Stop(context.Context, string) error { f.stops++; return nil }
+func (f *fakeKernelOp) Stop(context.Context, string) error { f.stops.Add(1); return nil }
 func (f *fakeKernelOp) Delete(context.Context, *storage.AWGTunnel) error {
 	return f.deleteErr
 }
 func (f *fakeKernelOp) Reconcile(context.Context, tunnel.Config) error          { return nil }
 func (f *fakeKernelOp) Suspend(context.Context, string) error                   { return nil }
-func (f *fakeKernelOp) Resume(context.Context, string) error                    { return nil }
+func (f *fakeKernelOp) Resume(context.Context, string) error                    { f.resumes.Add(1); return nil }
 func (f *fakeKernelOp) ApplyConfig(context.Context, string, string) error       { return nil }
 func (f *fakeKernelOp) SetDefaultRoute(context.Context, string) error           { return nil }
 func (f *fakeKernelOp) RemoveDefaultRoute(context.Context, string) error        { return nil }
@@ -192,8 +215,20 @@ func (f *fakeKernelOp) SyncDNS(context.Context, string, []string) error         
 func (f *fakeKernelOp) UpdateDescription(context.Context, string, string) error { return nil }
 func (f *fakeKernelOp) GetSystemName(context.Context, string) string            { return "" }
 func (f *fakeKernelOp) SetAppLogger(logging.AppLogger)                          {}
-func (f *fakeKernelOp) SetupEndpointRoute(context.Context, string, string, string, string) (string, error) {
-	return "", nil
+func (f *fakeKernelOp) SetupEndpointRoute(_ context.Context, tunnelID, endpoint, kernelDevice, ispName string) (string, error) {
+	f.routesMu.Lock()
+	f.endpointRoutes = append(f.endpointRoutes, endpointRouteCall{
+		tunnelID: tunnelID, endpoint: endpoint, kernelDevice: kernelDevice, ispName: ispName,
+	})
+	f.routesMu.Unlock()
+	return f.endpointIP, f.endpointErr
+}
+
+// routeCalls — снимок записанных вызовов под тем же мьютексом.
+func (f *fakeKernelOp) routeCalls() []endpointRouteCall {
+	f.routesMu.Lock()
+	defer f.routesMu.Unlock()
+	return append([]endpointRouteCall(nil), f.endpointRoutes...)
 }
 func (f *fakeKernelOp) RestoreEndpointTracking(context.Context, string, string) (string, error) {
 	return "", nil

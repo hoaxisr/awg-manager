@@ -26,13 +26,18 @@ const (
 	// legacyPidFile is the pre-move location; one-shot cleanup on startup
 	// removes it after an upgrade so the old file does not linger.
 	legacyPidFile = "/opt/var/run/awg-manager.pid"
-	// serviceStderrLog captures the daemon's stderr under --service start:
-	// panic traces and early-boot warnings that predate the app logger.
-	// Lives on the /var/run tmpfs like the PID file: it is read while the
-	// router is up (a dead daemon is diagnosed without a reboot), and it
-	// must not cost a flash write on every start (#854).
-	serviceStderrLog = "/var/run/awg-manager/stderr.log"
 )
+
+// serviceStderrLog captures the daemon's stderr under --service start:
+// panic traces and early-boot warnings that predate the app logger.
+// Lives on the /var/run tmpfs like the PID file: it is read while the
+// router is up (a dead daemon is diagnosed without a reboot), and it
+// must not cost a flash write on every start (#854).
+//
+// Переменная, а не константа, ради шва для теста: сюда же пишет
+// reportStartupStall, и без подмены пути проверить его нечем, а прогон
+// тестов гадил бы в системный каталог.
+var serviceStderrLog = "/var/run/awg-manager/stderr.log"
 
 // runService handles --service flag: start/stop/restart/status.
 // This replaces the shell logic that was previously in S99awg-manager.

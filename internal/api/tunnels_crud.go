@@ -251,6 +251,7 @@ func (h *TunnelsHandler) checkExplicitIDFree(ctx context.Context, tunnelID, back
 //	@Success		200	{object}	APIEnvelope
 //	@Failure		400	{object}	APIErrorEnvelope
 //	@Failure		403	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/tunnels/update [post]
 func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -453,6 +454,14 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// the change to the running interface, we don't persist it either,
 	// otherwise on-disk state would diverge from the live state.
 	if err := h.svc.Update(r.Context(), existing, &merged); err != nil {
+		if errors.Is(err, tunnel.ErrOperationInProgress) {
+			// Занятый per-tunnel замок — ретраибельный конфликт, а не отказ
+			// правки: карточка цела, туннель просто занят своим действием
+			// (WAN-up, рестарт по ping-check). Тот же контракт, что у
+			// delete выше и у start/stop/restart в control.go.
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "OPERATION_IN_PROGRESS")
+			return
+		}
 		h.log.Warn("update", merged.Name, "Service update failed: "+err.Error())
 		response.Error(w, err.Error(), "UPDATE_FAILED")
 		return

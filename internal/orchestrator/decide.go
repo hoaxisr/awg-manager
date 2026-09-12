@@ -1,11 +1,13 @@
 package orchestrator
 
 // decide takes an event and current state, returns actions to execute.
-// Pure function — no I/O, no side effects. All decision logic lives here.
+// Без I/O. Единственная мутация состояния здесь — пометка «бут не состоялся»
+// в decideBoot/decideReconnect: решать это обязан владелец состояния, иначе
+// обязанность снова уезжает вызывающему (ровно так и появился F194).
 func decide(event Event, state *State) []Action {
 	switch event.Type {
 	case EventBoot:
-		return decideBoot(state)
+		return decideBoot(event, state)
 	case EventReconnect:
 		return decideReconnect(state)
 	case EventStart:
@@ -29,7 +31,17 @@ func decide(event Event, state *State) []Action {
 	}
 }
 
-func decideBoot(state *State) []Action {
+func decideBoot(event Event, state *State) []Action {
+	// WAN не поднят — бута не будет: стартовать туннели некуда, а приводить
+	// маршруты бессмысленно. Отмечаем, что бут ДОЛЖЕН состояться, и первое
+	// WAN-событие отработает за него (HandleEvent). Решение принимает тот,
+	// кто владеет состоянием, а не вызывающий отдельным методом.
+	if !event.WANUp {
+		state.bootPending = true
+		return nil
+	}
+	state.bootPending = false
+
 	var actions []Action
 
 	for _, t := range state.tunnels {
@@ -85,6 +97,19 @@ func decideBoot(state *State) []Action {
 }
 
 func decideReconnect(state *State) []Action {
+	// Реконнект поднимает включённые туннели и приводит маршруты — то есть
+	// делает работу бута. Пометка «бут не состоялся» после него не нужна:
+	// оставить её значит однажды выстрелить полным бутом на ровном месте
+	// (этот путь живёт и в середине жизни демона — quiesce/resume бэкапа).
+	//
+	// Но только при поднятом WAN. Сам реконнект WAN не проверяет вовсе, и на
+	// загрузке с лежащим WAN экспорт бэкапа (quiesce → resume) снимал бы
+	// пометку, ничего при этом не подняв: отложенный бут терялся, а настоящий
+	// WAN-up получал уже обычный decideWANUp.
+	if state.anyWANUp() {
+		state.bootPending = false
+	}
+
 	var actions []Action
 
 	actions = append(actions, Action{Type: ActionRestoreEndpointTracking})
