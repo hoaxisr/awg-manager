@@ -53,12 +53,6 @@
         loading = false;
     });
 
-    function handlePremiumCountryConfig(_config: string, meta: { suggestedName?: string }) {
-        if (meta.suggestedName && newName === tunnelName) {
-            newName = meta.suggestedName;
-        }
-    }
-
     async function handleReplace() {
         let content = importContent.trim();
         if (!content) return;
@@ -110,8 +104,6 @@
         bind:activeTab
         bind:vpnPasteInput
         bind:linkPreview
-        loadStoredKeyOnMount={true}
-        oncountryconfig={handlePremiumCountryConfig}
     />
 
     <div class="name-field">
