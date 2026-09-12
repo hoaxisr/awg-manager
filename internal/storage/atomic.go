@@ -8,6 +8,13 @@ import (
 )
 
 const FilePermission = 0644
+
+// SecretFilePermission — режим файлов, несущих секреты ОТКРЫТЫМ текстом:
+// settings.json и его спутники (.bak, .corrupt) хранят apiKey панели и
+// приватные ключи пиров и managed-серверов. 0644 делал их читаемыми любым
+// пользователем роутера, а демон работает от root — послаблять права было
+// нечем.
+const SecretFilePermission = 0600
 const DirPermission = 0755
 
 // AtomicWrite writes data to path atomically using temp file + rename.
