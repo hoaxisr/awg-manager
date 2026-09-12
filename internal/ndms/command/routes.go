@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"net"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
@@ -68,8 +69,24 @@ func (c *RouteCommands) RemoveIPv6DefaultRoute(ctx context.Context, name string)
 	return c.mutateTolerant(ctx, payload, "remove ipv6 default route "+name, isNetlinkFileExists)
 }
 
-// RemoveHostRoute removes an IPv4 host route (best-effort).
+// RemoveHostRoute removes a host route.
+//
+// Неразобранный адрес уходит v4-формой: пусть отказывает NDMS и причина видна
+// в журнале — молчаливый v6-путь превратил бы мусор в «/128».
+//
+// У v6 своя форма: ключ `ipv6` и `prefix` с /128. Проверено на стенде 5.01:
+// v4-форма с v6-адресом отвергается («invalid destination host»), а
+// `ipv6.route.host` НЕ адресует хост — запрос вырождается в удаление ::/0,
+// то есть дефолтного маршрута (тот же капкан описан у AddStaticRoute).
 func (c *RouteCommands) RemoveHostRoute(ctx context.Context, host string) error {
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		payload := map[string]any{
+			"ipv6": map[string]any{
+				"route": map[string]any{"prefix": host + "/128", "no": true},
+			},
+		}
+		return c.mutate(ctx, payload, "remove ipv6 host route "+host)
+	}
 	payload := map[string]any{
 		"ip": map[string]any{
 			"route": map[string]any{"no": true, "host": host},

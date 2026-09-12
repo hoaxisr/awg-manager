@@ -65,6 +65,47 @@ func TestRouteCommands_RemoveHostRoute(t *testing.T) {
 	}
 }
 
+// Стенд 5.01: v4-форма с v6-адресом отвергается («invalid destination host»),
+// а `ipv6.route.host` целится в ::/0 — то есть в дефолтный маршрут. Снимать
+// v6 host-route можно только через prefix с /128.
+func TestRouteCommands_RemoveHostRoute_V6UsesPrefix(t *testing.T) {
+	for _, host := range []string{
+		"2001:db8::1",
+		"2001:db8:0:0:0:0:0:1", // развёрнутая форма — без «::» в строке
+		"fe80::1",
+	} {
+		t.Run(host, func(t *testing.T) {
+			cmds, poster := newTestRouteCommands(t)
+			_ = cmds.RemoveHostRoute(context.Background(), host)
+			if n := len(poster.Payloads()); n != 1 {
+				t.Fatalf("ждали ровно один запрос, получили %d: %#v", n, poster.Payloads())
+			}
+			payload := poster.Payloads()[0].(map[string]any)
+			if _, v4 := payload["ip"]; v4 {
+				t.Fatalf("v6-адрес ушёл v4-формой: %#v", payload)
+			}
+			r := payload["ipv6"].(map[string]any)["route"].(map[string]any)
+			if r["prefix"] != host+"/128" || r["no"] != true {
+				t.Errorf("remove ipv6 host: %#v", r)
+			}
+			if len(r) != 2 {
+				t.Errorf("лишние ключи в v6-форме (ключ host удаляет ::/0): %#v", r)
+			}
+		})
+	}
+}
+
+// Не-IP уходит v4-формой: отказ NDMS виден в журнале, а не превращается в
+// «/128» из мусора.
+func TestRouteCommands_RemoveHostRoute_UnparsableStaysV4(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	_ = cmds.RemoveHostRoute(context.Background(), "vpn.example.com:51820")
+	payload := poster.Payloads()[0].(map[string]any)
+	if _, v6 := payload["ipv6"]; v6 {
+		t.Fatalf("неразобранный адрес ушёл v6-формой: %#v", payload)
+	}
+}
+
 func TestRouteCommands_AddStaticRoute_Network(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
 	_ = cmds.AddStaticRoute(context.Background(), StaticRouteSpec{
