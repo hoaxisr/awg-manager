@@ -2640,23 +2640,29 @@ func TestClientStopsRetryingDeadMirror(t *testing.T) {
 	}
 }
 
-// Запасной транспорт клиента портала обязан нести ТО ЖЕ, ради чего берётся
-// основной: пин ALPN http/1.1. Ревью показало, что прежний `&http.Transport{}`
-// оставлял ALPN пустым, сервер договаривался на h2, и портал отвечал EOF —
-// ровно та поломка, ради которой пакет httpclient и заведён. Тест на
-// `Proxy`/`ForceAttemptHTTP2` этого не ловил: нулевой транспорт им обоим
-// удовлетворяет.
-func TestDirectClientFallbackKeepsHTTP1Pin(t *testing.T) {
-	tr := baseDirectTransport()
+// Клиент портала обязан нести ровно то, ради чего он собран через httpclient:
+// прокси окружения не берётся (иначе запрос уйдёт мимо требования о регионе) и
+// ALPN пришпилен к http/1.1 (на h2 портал отвечает EOF и «malformed HTTP
+// response»). Проверка на `Proxy`/`ForceAttemptHTTP2` без ALPN этого не ловит:
+// нулевой транспорт им обоим удовлетворяет, а ALPN оставляет пустым.
+//
+// Проверяется ТОТ транспорт, который реально уходит в работу: запасного тут
+// больше нет, и недостижимая ветка его сборки снята (P052).
+func TestNewDirectClientPinsHTTP1AndSkipsProxy(t *testing.T) {
+	c := newDirectClient()
 
+	tr, ok := c.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("транспорт не *http.Transport, а %T — свойства проверить нечем", c.Transport)
+	}
 	if tr.Proxy != nil {
-		t.Error("запасной транспорт берёт прокси")
+		t.Error("клиент портала берёт прокси окружения")
 	}
 	if tr.ForceAttemptHTTP2 {
-		t.Error("запасной транспорт пробует h2")
+		t.Error("клиент портала пробует h2")
 	}
 	if tr.TLSClientConfig == nil {
-		t.Fatal("у запасного транспорта нет TLS-конфигурации — ALPN не пришпилен")
+		t.Fatal("нет TLS-конфигурации — ALPN не пришпилен, сервер договорится на h2")
 	}
 	if got := tr.TLSClientConfig.NextProtos; len(got) != 1 || got[0] != "http/1.1" {
 		t.Fatalf("ALPN = %v, ожидался [http/1.1]: на h2 портал отвечает EOF", got)

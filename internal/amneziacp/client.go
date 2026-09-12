@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -231,13 +230,15 @@ func withoutRedirects(c *http.Client) *http.Client {
 // выхода недостаточно.
 func newDirectClient() *http.Client {
 	tr, err := httpclient.NewTransport(httpclient.TransportConfig{Proxy: httpclient.ProxyDirect})
-	if err != nil || tr == nil {
-		// Ветка недостижима сегодня: NewTransport отказывает только на
-		// негодном ProxyURL, а его тут нет. Оставлена как страховка, но
-		// собирается на том же базовом транспорте — иначе теряется пин
-		// ALPN http/1.1, ровно тот, ради которого пакет httpclient здесь и
-		// взят: на h2 портал отвечает EOF и «malformed HTTP response».
-		tr = baseDirectTransport()
+	if err != nil {
+		// Отказать этот вызов не может: NewTransport возвращает ошибку только
+		// на негодном ProxyURL, а здесь его нет вовсе. Запасного транспорта
+		// поэтому не держим — держали бы недостижимую копию тех же свойств, и
+		// она молча разъехалась бы с каноническими. Паника здесь ловится
+		// перехватом в loggingMiddleware и становится 500 с записью в журнал:
+		// если недостижимое всё-таки случится, это будет видно, а не
+		// подменится тихим клиентом без пина ALPN.
+		panic("amneziacp: сборка прямого транспорта: " + err.Error())
 	}
 	tr.DialContext = (&net.Dialer{
 		Timeout:   12 * time.Second,
@@ -252,20 +253,6 @@ func newDirectClient() *http.Client {
 	// пользователь видел это как «каждая вставка ключа висит ~40 секунд».
 	tr.DisableKeepAlives = true
 	return &http.Client{Transport: tr, Timeout: 45 * time.Second}
-}
-
-// baseDirectTransport — запасной транспорт прямого выхода, собранный руками.
-//
-// Повторяет ровно те свойства основного, без которых портал ломается: прокси
-// не берётся, ALPN пришпилен к http/1.1, попытка h2 снята. Нулевой
-// http.Transport здесь не годится — он оставляет ALPN пустым, и сервер
-// договаривается на h2, которого этот транспорт не умеет.
-func baseDirectTransport() *http.Transport {
-	return &http.Transport{
-		Proxy:             nil,
-		ForceAttemptHTTP2: false,
-		TLSClientConfig:   &tls.Config{NextProtos: []string{"http/1.1"}},
-	}
 }
 
 // AccountInfo отдаёт данные подписки без ключа подписки внутри.
