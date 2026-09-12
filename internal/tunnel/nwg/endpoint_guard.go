@@ -157,11 +157,6 @@ func (o *OperatorNativeWG) guardUnregister(id string) {
 	o.guardMu.Unlock()
 }
 
-func (o *OperatorNativeWG) guardHas(id string) bool {
-	_, ok := o.guardGet(id)
-	return ok
-}
-
 func (o *OperatorNativeWG) guardGet(id string) (guardEntry, bool) {
 	o.guardMu.Lock()
 	defer o.guardMu.Unlock()

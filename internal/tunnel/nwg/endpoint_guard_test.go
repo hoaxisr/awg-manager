@@ -33,6 +33,14 @@ func newGuardTestOperator(t *testing.T) *OperatorNativeWG {
 	return o
 }
 
+// guardHas — «за туннелем следит страж». Живёт в тестах: прод-код после
+// перевода sync.go на guardGet его больше не зовёт, а в ассертах он читаемее
+// пары с игнорируемым значением.
+func (o *OperatorNativeWG) guardHas(id string) bool {
+	_, ok := o.guardGet(id)
+	return ok
+}
+
 // stubGuardLookup подменяет полный резолв имени в sweep; счётчик вызовов
 // возвращается для ассертов.
 func stubGuardLookup(t *testing.T, ips []string, err error) *int {
