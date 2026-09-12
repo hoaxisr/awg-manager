@@ -227,20 +227,6 @@ func withoutRedirects(c *http.Client) *http.Client {
 // нужно ЯВНО: httpclient.NewTransport наследует прокси окружения сам, когда
 // транспорт не привязан к интерфейсу, и «не передавать ProxyURL» для прямого
 // выхода недостаточно.
-// baseDirectTransport — запасной транспорт прямого выхода, собранный руками.
-//
-// Повторяет ровно те свойства основного, без которых портал ломается: прокси
-// не берётся, ALPN пришпилен к http/1.1, попытка h2 снята. Нулевой
-// http.Transport здесь не годится — он оставляет ALPN пустым, и сервер
-// договаривается на h2, которого этот транспорт не умеет.
-func baseDirectTransport() *http.Transport {
-	return &http.Transport{
-		Proxy:             nil,
-		ForceAttemptHTTP2: false,
-		TLSClientConfig:   &tls.Config{NextProtos: []string{"http/1.1"}},
-	}
-}
-
 func newDirectClient() *http.Client {
 	tr, err := httpclient.NewTransport(httpclient.TransportConfig{Proxy: httpclient.ProxyDirect})
 	if err != nil || tr == nil {
@@ -264,6 +250,20 @@ func newDirectClient() *http.Client {
 	// пользователь видел это как «каждая вставка ключа висит ~40 секунд».
 	tr.DisableKeepAlives = true
 	return &http.Client{Transport: tr, Timeout: 45 * time.Second}
+}
+
+// baseDirectTransport — запасной транспорт прямого выхода, собранный руками.
+//
+// Повторяет ровно те свойства основного, без которых портал ломается: прокси
+// не берётся, ALPN пришпилен к http/1.1, попытка h2 снята. Нулевой
+// http.Transport здесь не годится — он оставляет ALPN пустым, и сервер
+// договаривается на h2, которого этот транспорт не умеет.
+func baseDirectTransport() *http.Transport {
+	return &http.Transport{
+		Proxy:             nil,
+		ForceAttemptHTTP2: false,
+		TLSClientConfig:   &tls.Config{NextProtos: []string{"http/1.1"}},
+	}
 }
 
 // AccountInfo отдаёт данные подписки без ключа подписки внутри.
@@ -364,7 +364,7 @@ func (c *Client) CheckKey(ctx context.Context, key string, remember bool) error 
 	}
 	var lastErr error
 	for attempt := 0; ; attempt++ {
-		origin, err := c.resolve(ctx)
+		origin, err := c.resolveRetrying(ctx)
 		if err != nil {
 			return err
 		}
@@ -403,24 +403,9 @@ func (c *Client) call(ctx context.Context, req cpRequest) ([]byte, string, error
 
 	var lastErr error
 	for attempt := 0; ; attempt++ {
-		origin, err := c.resolve(ctx)
+		origin, err := c.resolveRetrying(ctx)
 		if err != nil {
-			// Отказ резолва ПОВТОРЯЕМ, и повторяем независимо от самого
-			// запроса: до портала дело не дошло вовсе, расходная ручка не
-			// тронута. Раньше эта ветка уходила наружу минуя цикл — то есть
-			// одна сетевая икота на пути к зеркалу гарантированно роняла
-			// вызов, хотя весь механизм повторов стоит рядом и комментарий
-			// ниже обещает ровно обратное.
-			//
-			// recoveryMirror, а не recoveryNone: он же просит перерезолвить
-			// зеркало на следующей попытке. Кэш при этом сбрасывается
-			// (again → mirror.Invalidate), и это правильно — раз Origin
-			// отказал, годного адреса в кэше нет.
-			lastErr = err
-			if !c.again(ctx, recoveryMirror, attempt, true) {
-				return nil, "", lastErr
-			}
-			continue
+			return nil, "", err
 		}
 		// Отказ резолва и отказ входа повторяемы независимо от самого запроса:
 		// до расходной ручки портала дело ещё не дошло.
@@ -469,6 +454,62 @@ func (c *Client) again(ctx context.Context, rec recovery, attempt int, repeatabl
 		return false
 	}
 	return attempt+1 < maxAttempts
+}
+
+// resolveRetrying — резолв зеркала со СВОИМ бюджетом попыток.
+//
+// Бюджет отдельный, а не общий с запросом, и это главное в этой функции.
+// Общий приводил к компаундному отказу: икота зеркала съедала единственный
+// повтор, и следующая за ней протухшая cookie уже не восстанавливалась —
+// наружу уезжал ErrKeyRejected, то есть пользователю предлагали заменить
+// РАБОЧИЙ ключ. Ровно тот исход, против которого написан комментарий в again.
+// До появления повтора резолва тот же вход давал честное «сервис недоступен».
+//
+// Расходной ручке отдельный бюджет не опасен: её повтор в любом случае заперт
+// гейтом recoverySession в again, а до портала при отказе резолва дело не
+// доходит вовсе.
+//
+// Повторяются ТОЛЬКО недетерминированные отказы. Страница без мета-тега,
+// непригодный data-link, превышение предела размера и незаданный адрес — это
+// приговор, который не изменится за секунду: повтор стоил бы второго полного
+// похода за страницей зеркала через CDN на роутере со 128 МБ и второй строки
+// в журнале, не давая ничего.
+func (c *Client) resolveRetrying(ctx context.Context) (string, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			// Адрес мог смениться: ротируемый хост обязан быть добыт заново,
+			// а не дожить в кэше до конца TTL.
+			c.mirror.Invalidate()
+		}
+		origin, err := c.resolve(ctx)
+		if err == nil {
+			return origin, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil || !mirrorFailureRepeatable(err) {
+			return "", lastErr
+		}
+	}
+	return "", lastErr
+}
+
+// mirrorFailureRepeatable — имеет ли смысл повторять этот отказ резолва.
+//
+// Детерминированные разборы страницы и незаданный адрес — нет. Всё остальное
+// (транспорт, таймаут, не-200 от зеркала) — да: это ровно та икота, из-за
+// которой один отказ ронял весь вызов.
+func mirrorFailureRepeatable(err error) bool {
+	switch {
+	case errors.Is(err, ErrMirrorNotConfigured):
+		// Контракт ErrMirrorNotConfigured прямо просит не повторять и не гнать
+		// принудительный ре-резолв, а отправить пользователя в настройки.
+		return false
+	case errors.Is(err, ErrNoMirrorTag), errors.Is(err, ErrBadMirrorLink):
+		return false
+	default:
+		return true
+	}
 }
 
 func (c *Client) resolve(ctx context.Context) (string, error) {

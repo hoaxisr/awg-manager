@@ -1038,7 +1038,8 @@ func downloadFileWithClient(ctx context.Context, client *http.Client, rawURL, de
 		// so it inherits the pinned HTTP/1.1 ALPN + ForceAttemptHTTP2=false —
 		// geo mirrors like raw.githubusercontent.com return EOF/malformed h2
 		// otherwise (the failure httpclient exists to prevent).
-		// ProxyFromEnv не задан СОЗНАТЕЛЬНО: загрузка идёт в интернет за
+		// Прокси окружения наследуется СОЗНАТЕЛЬНО (Proxy оставлен нулевым,
+	// httpclient.ProxyInheritEnv): загрузка идёт в интернет за
 		// файлом, и если владелец роутера прописал HTTP(S)_PROXY в окружении
 		// демона, уважить его — правильное поведение. Требования «только
 		// напрямую» тут нет, в отличие от клиента портала Amnezia.

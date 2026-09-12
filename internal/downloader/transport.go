@@ -188,7 +188,8 @@ func newHTTPClientFromSpec(spec TransportSpec) (*http.Client, error) {
 		return nil, fmt.Errorf("unsupported transport mode %q", spec.Mode)
 	}
 
-	// ProxyFromEnv не задан СОЗНАТЕЛЬНО: у режима «через прокси» адрес уже
+	// Прокси окружения наследуется СОЗНАТЕЛЬНО (Proxy оставлен нулевым,
+	// httpclient.ProxyInheritEnv): у режима «через прокси» адрес уже
 	// стоит в cfg.ProxyURL и он сильнее окружения, а у прямого режима
 	// наследование прокси владельца роутера — желаемое поведение загрузчика.
 	tr, err := httpclient.NewTransport(cfg)
