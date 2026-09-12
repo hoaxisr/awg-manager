@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -810,9 +811,19 @@ func (a *diagLogAdapter) GetBucketStats(bucket logging.Bucket) logging.BufferSta
 
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Panic recovery
+		// Panic recovery.
+		//
+		// Ответ 500 отдаётся ВМЕСТЕ с записью в журнал, и порядок именно
+		// такой: раньше обработчик молча превращал панику в 500, и в app-логе
+		// не оставалось ни строки — авария выглядела для пользователя как
+		// «внутренняя ошибка», а для нас не выглядела никак. Стек нужен
+		// целиком: паника в обработчике приходит из чужого кадра, и одно её
+		// значение («runtime error: invalid memory address») места не
+		// называет.
 		defer func() {
 			if err := recover(); err != nil {
+				s.appLog.Error("panic", r.URL.Path,
+					fmt.Sprintf("%s %s: %v\n%s", r.Method, r.URL.Path, err, debug.Stack()))
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
 				w.Write([]byte(`{"error":true,"message":"internal server error","code":"PANIC"}`))
