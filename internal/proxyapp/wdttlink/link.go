@@ -372,18 +372,7 @@ func fetchSubscriptionLink(rawURL string) (LinkDecodeResult, error) {
 	if err := validateSubURL(rawURL); err != nil {
 		return LinkDecodeResult{}, err
 	}
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{Timeout: 10 * time.Second, Control: blockInternalDial}).DialContext,
-		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 3 {
-				return fmt.Errorf("слишком много редиректов при загрузке подписки")
-			}
-			return validateSubURL(req.URL.String())
-		},
-	}
+	client := subscriptionClient()
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return LinkDecodeResult{}, err
@@ -476,6 +465,33 @@ func validateSubURL(raw string) error {
 	// DNS-rebinding закрыт dial-time IP-пином (blockInternalDial в Transport клиента):
 	// фактический IP каждого connect проверяется повторно, резолв здесь — ранний отказ + defense-in-depth.
 	return nil
+}
+
+// subscriptionClient собирает клиента загрузки подписки.
+//
+// Proxy у транспорта ОБЯЗАН оставаться nil, и это не умолчание, а работающая
+// защита: страж SSRF здесь — blockInternalDial, то есть Control диалера, и
+// смотрит он на адрес, который РЕАЛЬНО диалится. С прокси диалится прокси, а
+// внутренний адрес уезжает ему строкой в запросе — страж молча перестаёт
+// закрывать что-либо, заодно с проверкой редиректов (validateSubURL в
+// CheckRedirect тоже видит только URL, но не то, куда пошло соединение).
+// Поэтому «уборка» вида httpclient.NewTransport(TransportConfig{}) здесь НЕ
+// безобидна: транспорт httpclient по умолчанию наследует прокси окружения.
+// Держит границу TestSubscriptionClientDialsTargetDirectly.
+func subscriptionClient() *http.Client {
+	return &http.Client{
+		Timeout: 20 * time.Second,
+		Transport: &http.Transport{
+			Proxy:       nil,
+			DialContext: (&net.Dialer{Timeout: 10 * time.Second, Control: blockInternalDial}).DialContext,
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return fmt.Errorf("слишком много редиректов при загрузке подписки")
+			}
+			return validateSubURL(req.URL.String())
+		},
+	}
 }
 
 // blockInternalDial проверяет фактически подключаемый IP в момент dial (после резолва,
