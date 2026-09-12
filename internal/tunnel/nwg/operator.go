@@ -1223,7 +1223,17 @@ func (o *OperatorNativeWG) resolveOnce(endpoint string, timeout time.Duration) (
 
 // trackEndpointIP records a freshly-resolved endpoint IP for a tunnel.
 // Lazy-inits the map so struct-literal construction (tests) is safe.
+//
+// Петлю не трекаем. У обфусцированного туннеля Peer.Endpoint — это
+// 127.0.0.1:<порт> локального релея, и Create/SyncPeer резолвят именно его;
+// оркестратор же сохраняет GetTrackedEndpointIP в ResolvedEndpointIP
+// (execute.go), а это поле означает адрес, до которого ставится host-route.
+// Адрес target'а релея кладёт туда отдельный путь (persistObfuscatorTargetIP),
+// и петля его затирала бы. F230.
 func (o *OperatorNativeWG) trackEndpointIP(tunnelID, ip string) {
+	if parsed := net.ParseIP(ip); parsed != nil && parsed.IsLoopback() {
+		return
+	}
 	o.trackedMu.Lock()
 	defer o.trackedMu.Unlock()
 	if o.trackedIP == nil {
