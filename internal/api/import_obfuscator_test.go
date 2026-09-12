@@ -31,7 +31,7 @@ Endpoint = 127.0.0.1:13255
 [instance]
 source-if = 127.0.0.1
 source-lport = 13255
-target = 130.49.185.136:51824
+target = 203.0.113.136:51824
 key = XR0NEf8MhGAGcCpc
 masking = STUN
 obfuscate-bytes = 16
@@ -79,7 +79,7 @@ func TestImportConf_InstanceSectionBecomesPhobosObfuscator(t *testing.T) {
 	postImport(t, h, ImportConfRequest{Content: phobosConfFixture, Name: "ph"})
 
 	o := svc.link.Obfuscator
-	if o == nil || o.Flavor != storage.ObfuscatorFlavorPhobos || o.Target != "130.49.185.136:51824" {
+	if o == nil || o.Flavor != storage.ObfuscatorFlavorPhobos || o.Target != "203.0.113.136:51824" {
 		t.Fatalf("link.Obfuscator = %+v", o)
 	}
 	if o.Key != "XR0NEf8MhGAGcCpc" || o.Masking != "STUN" || o.MaxDummy != 45 || o.IdleTimeout != 300 || o.ObfuscateBytes != 16 {
@@ -107,7 +107,7 @@ func TestImportConf_PhobosLinkDecoded(t *testing.T) {
 
 	postImport(t, h, ImportConfRequest{Content: link})
 
-	if svc.link.Obfuscator == nil || svc.link.Obfuscator.Target != "130.49.185.136:51824" {
+	if svc.link.Obfuscator == nil || svc.link.Obfuscator.Target != "203.0.113.136:51824" {
 		t.Fatalf("link.Obfuscator = %+v", svc.link.Obfuscator)
 	}
 	if svc.name != "Mobil phone" {
@@ -129,7 +129,7 @@ func TestImportConf_ManualClusterM(t *testing.T) {
 		"\n[Peer]\nPublicKey = g/G4y2XkTY5mPLMYYXXCarvyxUSHUzM1vpIYRHwwFT4=\nAllowedIPs = 0.0.0.0/0\nEndpoint = 1.2.3.4:51820\n"
 
 	rec := postImport(t, h, ImportConfRequest{Content: conf, Name: "manual", Obfuscator: &ObfuscatorImportRequest{
-		Target: "130.49.185.136:51824", Key: "k", Masking: "stun", MaxDummy: 45,
+		Target: "203.0.113.136:51824", Key: "k", Masking: "stun", MaxDummy: 45,
 	}})
 
 	if rec.Code != http.StatusOK {
@@ -192,7 +192,7 @@ func TestImportConf_InstallURLFetched(t *testing.T) {
 
 	postImport(t, h, ImportConfRequest{Name: "ph", InstallURL: srv.URL + "/api/install/tok"})
 
-	if svc.link.Obfuscator == nil || svc.link.Obfuscator.Target != "130.49.185.136:51824" {
+	if svc.link.Obfuscator == nil || svc.link.Obfuscator.Target != "203.0.113.136:51824" {
 		t.Fatalf("link.Obfuscator = %+v", svc.link.Obfuscator)
 	}
 	if !strings.Contains(svc.content, "PrivateKey") {
@@ -268,7 +268,7 @@ func TestImportConf_ObfuscatorWithLinkedClientRejected(t *testing.T) {
 
 	rec := postImport(t, h, ImportConfRequest{
 		Content: "[Interface]", Name: "x", WdttClientID: "default",
-		Obfuscator: &ObfuscatorImportRequest{Target: "130.49.185.136:51824", Key: "k", Masking: "AUTO"},
+		Obfuscator: &ObfuscatorImportRequest{Target: "203.0.113.136:51824", Key: "k", Masking: "AUTO"},
 	})
 
 	if rec.Code != http.StatusBadRequest || errCode(t, rec) != "OBFUSCATOR_CONFLICT" {
