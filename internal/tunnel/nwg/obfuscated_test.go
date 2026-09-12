@@ -596,6 +596,29 @@ func TestStartObfuscated_LoopbackTrackedIPIsNotRemoved(t *testing.T) {
 	}
 }
 
+// Не только петля: в записи туннеля мог осесть и «неуказанный» 0.0.0.0 —
+// фильтрующий DNS отдаёт его на заблокированный домен. Маршрута под ним не
+// было, снимать нечего.
+func TestStartObfuscated_UnroutableStoredIPIsNotRemoved(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+	st := obfStored()
+	st.ResolvedEndpointIP = "0.0.0.0"
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	posts := n.joined()
+	if strings.Contains(posts, `"host":"0.0.0.0"`) {
+		t.Fatalf("маршрут на «неуказанный» адрес не трогаем:\n%s", posts)
+	}
+	if !strings.Contains(posts, `"host":"203.0.113.5"`) {
+		t.Fatalf("новый host-route не поставлен:\n%s", posts)
+	}
+}
+
 func TestStartPlainWG_WithoutObfuscator_StillRejected(t *testing.T) {
 	op := &OperatorNativeWG{appLog: logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps)}
 	t.Cleanup(op.Close)
