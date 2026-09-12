@@ -83,6 +83,8 @@ export interface RuleCardData {
   outbound: OutboundDisplay;
   /** System rule (ip_is_private bypass, sniff, hijack-dns) — рендерится muted */
   isSystem: boolean;
+  /** Правило сгенерировано awg-manager (awgm_managed): reconcile его перепишет, bulk-outbound отвергнет */
+  isManaged: boolean;
   /** Эвристика простого правила для beginner UI */
   simplicity: RuleSimplicity;
   /** Пояснение при наведении (только системные правила) */

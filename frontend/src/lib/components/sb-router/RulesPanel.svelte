@@ -127,7 +127,7 @@
   let prevRulesRef: SingboxRouterRule[] | undefined;
 
   function isSelectable(card: RuleCardData): boolean {
-    return !card.isSystem && (card.action === 'route' || card.action === 'direct');
+    return !card.isSystem && !card.isManaged && (card.action === 'route' || card.action === 'direct');
   }
 
   let selectableIndices = $derived(

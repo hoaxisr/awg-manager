@@ -13,9 +13,13 @@ import (
 
 // McpKeyDTO is one MCP key as listed (no secret material).
 type McpKeyDTO struct {
-	ID         string     `json:"id" example:"3f9c1a2b4d5e6f70"`
-	Name       string     `json:"name" example:"laptop"`
-	CreatedAt  time.Time  `json:"createdAt"`
+	ID        string    `json:"id" example:"3f9c1a2b4d5e6f70"`
+	Name      string    `json:"name" example:"laptop"`
+	CreatedAt time.Time `json:"createdAt"`
+	// ReadOnly is always present, unlike the stored field: the UI has to
+	// distinguish a restricted key from a full one, and an omitted false
+	// would render the same as "unknown".
+	ReadOnly   bool       `json:"readOnly" example:"false"`
 	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
 }
 
@@ -33,6 +37,10 @@ type McpKeysListResponse struct {
 // McpKeyCreateRequest is the body of POST /mcp/keys/create.
 type McpKeyCreateRequest struct {
 	Name string `json:"name" example:"laptop"`
+	// ReadOnly mints a key restricted to tools that change nothing.
+	// Omitted means full access, matching the behaviour before scopes
+	// existed — clients that do not know the field keep working.
+	ReadOnly bool `json:"readOnly,omitempty" example:"false"`
 }
 
 // McpKeyCreatedData is the payload of POST /mcp/keys/create. Key is the
@@ -41,6 +49,7 @@ type McpKeyCreatedData struct {
 	ID        string    `json:"id" example:"3f9c1a2b4d5e6f70"`
 	Name      string    `json:"name" example:"laptop"`
 	CreatedAt time.Time `json:"createdAt"`
+	ReadOnly  bool      `json:"readOnly" example:"false"`
 	Key       string    `json:"key" example:"awgm_Q3VyaW91cz8gVGhpcyBpcyBqdXN0IGFuIGV4YW1wbGU"`
 }
 
@@ -82,7 +91,7 @@ func NewMcpKeysHandler(store *storage.McpKeyStore, appLogger logging.AppLogger) 
 }
 
 func toKeyDTO(k storage.McpKey) McpKeyDTO {
-	dto := McpKeyDTO{ID: k.ID, Name: k.Name, CreatedAt: k.CreatedAt}
+	dto := McpKeyDTO{ID: k.ID, Name: k.Name, CreatedAt: k.CreatedAt, ReadOnly: k.ReadOnly}
 	if !k.LastUsedAt.IsZero() {
 		t := k.LastUsedAt
 		dto.LastUsedAt = &t
@@ -132,7 +141,7 @@ func (h *McpKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	key, plaintext, err := h.store.Create(req.Name)
+	key, plaintext, err := h.store.Create(req.Name, req.ReadOnly)
 	if err != nil {
 		if errors.Is(err, storage.ErrMcpKeyInvalidName) {
 			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "MCP_KEY_INVALID_NAME")
@@ -145,9 +154,13 @@ func (h *McpKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		response.ErrorWithStatus(w, http.StatusInternalServerError, "failed to create key", "MCP_KEY_CREATE_ERROR")
 		return
 	}
-	h.log.Info("key-create", key.Name, "MCP key created")
+	scope := "full access"
+	if key.ReadOnly {
+		scope = "read-only"
+	}
+	h.log.Info("key-create", key.Name, "MCP key created ("+scope+")")
 	h.bus.PublishInvalidated(events.ResourceMcpKeys, "created")
-	response.Success(w, McpKeyCreatedData{ID: key.ID, Name: key.Name, CreatedAt: key.CreatedAt, Key: plaintext})
+	response.Success(w, McpKeyCreatedData{ID: key.ID, Name: key.Name, CreatedAt: key.CreatedAt, ReadOnly: key.ReadOnly, Key: plaintext})
 }
 
 // Revoke deletes an MCP key by id.

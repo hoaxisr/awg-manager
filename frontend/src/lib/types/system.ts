@@ -422,6 +422,8 @@ export interface McpKey {
 	id: string;
 	name: string;
 	createdAt: string;
+	/** Ключ только для чтения: инструменты MCP, меняющие роутер, ему запрещены. */
+	readOnly?: boolean;
 	lastUsedAt?: string;
 }
 

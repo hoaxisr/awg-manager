@@ -5144,14 +5144,17 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	if (req.method === 'GET' && path === '/mcp/keys') {
-		sendData(res, { keys: mockMcpKeys.map(({ id, name, createdAt, lastUsedAt }) => ({ id, name, createdAt, ...(lastUsedAt ? { lastUsedAt } : {}) })) });
+		sendData(res, { keys: mockMcpKeys.map(({ id, name, createdAt, readOnly, lastUsedAt }) => ({ id, name, createdAt, readOnly: !!readOnly, ...(lastUsedAt ? { lastUsedAt } : {}) })) });
 		return;
 	}
 	if (req.method === 'POST' && path === '/mcp/keys/create') {
 		const text = await readRequestText(req);
 		let name = '';
+		let readOnly = false;
 		try {
-			name = String(JSON.parse(text || '{}').name ?? '').trim();
+			const body = JSON.parse(text || '{}');
+			name = String(body.name ?? '').trim();
+			readOnly = body.readOnly === true;
 		} catch {
 			sendInvalidRequest(res, 'invalid JSON');
 			return;
@@ -5161,10 +5164,10 @@ const server = http.createServer(async (req, res) => {
 			return;
 		}
 		mockMcpKeySeq += 1;
-		const key = { id: `mockkey-${mockMcpKeySeq}`, name, createdAt: new Date().toISOString(), lastUsedAt: '' };
+		const key = { id: `mockkey-${mockMcpKeySeq}`, name, createdAt: new Date().toISOString(), readOnly, lastUsedAt: '' };
 		mockMcpKeys.push(key);
 		console.log(`[mock-proxy] MCP key created: ${name}`);
-		sendData(res, { id: key.id, name: key.name, createdAt: key.createdAt, key: `awgm_mock_${mockMcpKeySeq}_${Math.random().toString(36).slice(2, 12)}` });
+		sendData(res, { id: key.id, name: key.name, createdAt: key.createdAt, readOnly: key.readOnly, key: `awgm_mock_${mockMcpKeySeq}_${Math.random().toString(36).slice(2, 12)}` });
 		return;
 	}
 	if (req.method === 'POST' && path === '/mcp/keys/revoke') {

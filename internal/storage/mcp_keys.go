@@ -44,14 +44,43 @@ var ErrMcpKeyInvalidName = errors.New("invalid mcp key name")
 // McpKey is one named bearer key for the /mcp endpoint. Only the SHA-256
 // of the plaintext is stored; the plaintext is shown once at creation.
 type McpKey struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Hash       string    `json:"hash"`
-	CreatedAt  time.Time `json:"createdAt"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Hash      string    `json:"hash"`
+	CreatedAt time.Time `json:"createdAt"`
+	// ReadOnly limits the key to tools that change nothing. Absent in
+	// files written before scopes existed, and absent must mean FULL
+	// access: reading it as read-only would silently break every key
+	// already handed out. New restricted keys always write the field.
+	ReadOnly   bool      `json:"readOnly,omitempty"`
 	LastUsedAt time.Time `json:"lastUsedAt,omitzero"`
 }
 
-const mcpKeysFileVersion = 1
+// fileVersionFor picks the lowest format version that carries every field
+// in snapshot. An older build refuses a newer version outright (Load), so
+// stamping every save with the newest number would lock all keys out on a
+// downgrade even when no key uses the newer field. The bump is applied
+// only when it protects something: a read-only key an older build would
+// silently rewrite as full-access.
+func fileVersionFor(keys []McpKey) int {
+	for _, k := range keys {
+		if k.ReadOnly {
+			return mcpKeysFileVersion
+		}
+	}
+	return mcpKeysFileVersionLegacy
+}
+
+// mcpKeysFileVersionLegacy is the format before scoped keys existed.
+const mcpKeysFileVersionLegacy = 1
+
+// mcpKeysFileVersion is bumped whenever a field is added that an older
+// build would silently drop on its next save. Version 2 added readOnly:
+// an older build reading it as version 1 would rewrite the file without
+// the field on its first Touch, and the key would come back full-access
+// after the next upgrade. The version check turns that build read-only
+// instead (see Load).
+const mcpKeysFileVersion = 2
 
 type mcpKeysFileV1 struct {
 	// Version is the on-disk format. 0 (absent) and 1 are the current
@@ -266,7 +295,7 @@ func (s *McpKeyStore) persist(snapshot []McpKey) error {
 // but LastUsedAt, and doubling the hourly flash write for that would be
 // waste.
 func (s *McpKeyStore) persistFileLocked(snapshot []McpKey, withBackup bool) error {
-	data, err := json.MarshalIndent(mcpKeysFileV1{Version: mcpKeysFileVersion, Keys: snapshot}, "", "  ")
+	data, err := json.MarshalIndent(mcpKeysFileV1{Version: fileVersionFor(snapshot), Keys: snapshot}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -313,7 +342,8 @@ func hashMcpKey(plaintext string) string {
 }
 
 // Create mints a new key. The returned plaintext is never stored.
-func (s *McpKeyStore) Create(name string) (McpKey, string, error) {
+// readOnly restricts it to tools that change nothing.
+func (s *McpKeyStore) Create(name string, readOnly bool) (McpKey, string, error) {
 	name, err := validateKeyName(name)
 	if err != nil {
 		return McpKey{}, "", err
@@ -340,6 +370,7 @@ func (s *McpKeyStore) Create(name string) (McpKey, string, error) {
 		Name:      name,
 		Hash:      hashMcpKey(plaintext),
 		CreatedAt: s.now().UTC(),
+		ReadOnly:  readOnly,
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

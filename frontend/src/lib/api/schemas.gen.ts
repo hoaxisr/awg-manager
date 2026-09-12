@@ -956,6 +956,7 @@ const api_McpKeyCreatedData: v.GenericSchema = v.looseObject({
 	id: v.optional(v.nullable(v.string())),
 	key: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
+	readOnly: v.optional(v.nullable(v.boolean())),
 });
 
 const api_McpKeyCreatedResponse: v.GenericSchema = v.looseObject({
@@ -968,6 +969,7 @@ const api_McpKeyDTO: v.GenericSchema = v.looseObject({
 	id: v.optional(v.nullable(v.string())),
 	lastUsedAt: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
+	readOnly: v.optional(v.nullable(v.boolean())),
 });
 
 const api_McpKeyRevokedData: v.GenericSchema = v.looseObject({
@@ -1881,6 +1883,7 @@ const api_SingboxRouterQoSClassDTO: v.GenericSchema = v.looseObject({
 
 const api_SingboxRouterRuleDTO: v.GenericSchema = v.looseObject({
 	action: v.optional(v.nullable(v.string())),
+	awgm_managed: v.optional(v.nullable(v.string())),
 	domain_suffix: v.optional(v.nullable(v.array(v.string()))),
 	inbound: v.optional(v.nullable(v.array(v.string()))),
 	ip_cidr: v.optional(v.nullable(v.array(v.string()))),

@@ -219,3 +219,26 @@ func TestBulkSetRuleSetDetour_AtomicOnPartialFailure(t *testing.T) {
 		t.Fatalf("config mutated despite invalid element: %+v", cfg.Route.RuleSet)
 	}
 }
+
+// TestBulkSetRuleOutbound_RefusesManagedRules — ревью нашло гонку: адаптер
+// MCP проверял awgm_managed по индексу, а служба перечитывала конфиг и
+// писала по тому же индексу без этой проверки. Сдвиг индексов между двумя
+// шагами (правка в веб-интерфейсе) сажал запись на другое правило. Проверка
+// обязана стоять там, где конфиг только что загружен.
+func TestBulkSetRuleOutbound_RefusesManagedRules(t *testing.T) {
+	c := &RouterConfig{}
+	c.Route.Rules = []Rule{
+		{DomainSuffix: []string{"a.example"}, Outbound: "direct"},
+		{DomainSuffix: []string{"b.example"}, Outbound: "direct", AwgmManaged: "selective-ip"},
+	}
+	known := func(string) bool { return true }
+	if err := bulkSetRuleOutbound(c, []int{1}, "proxy", known); err == nil {
+		t.Fatal("a managed rule must be refused")
+	}
+	if c.Route.Rules[1].Outbound != "direct" {
+		t.Fatal("a refused batch must not have mutated anything")
+	}
+	if err := bulkSetRuleOutbound(c, []int{0}, "proxy", known); err != nil {
+		t.Fatalf("a user rule must still be accepted: %v", err)
+	}
+}

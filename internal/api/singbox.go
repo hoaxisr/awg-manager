@@ -307,6 +307,11 @@ func (h *SingboxHandler) DelayCheck(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, map[string]any{"tag": tag, "delay": delay})
 }
 
+// DelayChecker exposes the latency prober so other wiring (the MCP
+// adapter) can reuse the one instance that already runs periodically —
+// a second checker would double the probes against the same proxies.
+func (h *SingboxHandler) DelayChecker() *singbox.DelayChecker { return h.delayChecker }
+
 // Status handles GET /api/singbox/status.
 //
 //	@Summary		Sing-box status

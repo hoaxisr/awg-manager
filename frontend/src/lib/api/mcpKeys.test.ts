@@ -30,7 +30,7 @@ describe('MCP key API', () => {
 		const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
 		expect(url).toBe('/api/mcp/keys/create');
 		expect(init.method).toBe('POST');
-		expect(JSON.parse(String(init.body))).toEqual({ name: 'phone' });
+		expect(JSON.parse(String(init.body))).toEqual({ name: 'phone', readOnly: false });
 	});
 
 	it('revokeMcpKey posts the id', async () => {

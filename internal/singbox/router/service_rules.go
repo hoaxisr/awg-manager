@@ -118,6 +118,13 @@ func bulkSetRuleOutbound(c *RouterConfig, indices []int, outbound string, known 
 		if isSystemRule(c.Route.Rules[i]) {
 			return fmt.Errorf("%w: rule %d is a system rule", ErrBulkInvalidSelection, i)
 		}
+		// Checked here, on the config just loaded, and not only by the
+		// caller: a caller that inspected an earlier snapshot can be
+		// looking at a different index after a concurrent edit, and a
+		// managed rule silently reverts on the next reconcile anyway.
+		if c.Route.Rules[i].AwgmManaged != "" {
+			return fmt.Errorf("%w: rule %d is managed by awg-manager", ErrBulkInvalidSelection, i)
+		}
 	}
 	for _, i := range indices {
 		c.Route.Rules[i].Outbound = outbound

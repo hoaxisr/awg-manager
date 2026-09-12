@@ -215,7 +215,7 @@ func TestTools_SingboxAndServers(t *testing.T) {
 		t.Fatal("uninstall must be rejected")
 	}
 	_, out = callTool(t, s, "list_managed_servers", nil)
-	if len(out["servers"].([]any)) != 1 {
+	if len(out["servers"].([]any)) != 2 {
 		t.Fatalf("servers = %v", out["servers"])
 	}
 }

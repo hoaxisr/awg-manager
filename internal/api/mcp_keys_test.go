@@ -208,3 +208,52 @@ func TestMcpKeys_MutationsPublishInvalidation(t *testing.T) {
 	}
 	next("revoked")
 }
+
+// TestMcpKeys_CreateReadOnlyKey — область ключа задаётся при выпуске и
+// потом не меняется, поэтому она обязана быть и в ответе на создание, и в
+// списке: иначе пользователь не отличит ключ только для чтения от
+// полноправного и не поймёт, какой из них отзывать.
+func TestMcpKeys_CreateReadOnlyKey(t *testing.T) {
+	h, store := newMcpKeysHandler(t)
+
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/mcp/keys/create", strings.NewReader(`{"name":"reader","readOnly":true}`)))
+	if rec.Code != 200 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	data := decode(t, rec)["data"].(map[string]any)
+	if data["readOnly"] != true {
+		t.Fatalf("create response = %v, want readOnly true", data)
+	}
+
+	stored := store.List()
+	if len(stored) != 1 || !stored[0].ReadOnly {
+		t.Fatalf("stored = %+v, want the scope persisted", stored)
+	}
+
+	rec = httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/keys", nil))
+	listed := decode(t, rec)["data"].(map[string]any)["keys"].([]any)
+	if len(listed) != 1 || listed[0].(map[string]any)["readOnly"] != true {
+		t.Fatalf("listed = %v, want the scope shown", listed)
+	}
+}
+
+// TestMcpKeys_CreateDefaultsToFullAccess — умолчание должно совпадать с
+// поведением до появления областей, иначе существующие клиенты, не
+// знающие о поле, начнут получать урезанные ключи.
+func TestMcpKeys_CreateDefaultsToFullAccess(t *testing.T) {
+	h, store := newMcpKeysHandler(t)
+
+	rec := httptest.NewRecorder()
+	h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/mcp/keys/create", strings.NewReader(`{"name":"laptop"}`)))
+	if rec.Code != 200 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	if data := decode(t, rec)["data"].(map[string]any); data["readOnly"] != false {
+		t.Fatalf("create response = %v, want readOnly false", data)
+	}
+	if stored := store.List(); len(stored) != 1 || stored[0].ReadOnly {
+		t.Fatalf("stored = %+v, want a full-access key", stored)
+	}
+}
