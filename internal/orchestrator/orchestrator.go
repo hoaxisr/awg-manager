@@ -124,7 +124,10 @@ type Orchestrator struct {
 	// confSettleDelay overrides the package const; injectable for tests.
 	confSettleDelay time.Duration
 
-	// confLayerRunning reads the interface's CURRENT conf layer straight from
+	// confLayerRunning (пишется и читается под o.mu — у остальных Set*-полей
+	// контракт слабее: они ставятся однократно в setupOrchestrator до приёма
+	// событий и дальше не меняются) reads the
+	// interface's CURRENT conf layer straight from
 	// NDMS (fresh, not from the snapshot cache). Им перепроверяются обе грани:
 	// conf=disabled перед остановкой и conf=running перед подъёмом.
 	// Ошибка значит «не знаем» — грань остаётся в силе. nil → check skipped.
@@ -196,6 +199,8 @@ func (o *Orchestrator) SetOnTunnelRunning(fn func(tunnelID string)) { o.onTunnel
 // Им перепроверяются ОБЕ грани: conf=disabled перед остановкой и conf=running
 // перед подъёмом. nil-safe: без пробы обе верят хукам как есть.
 func (o *Orchestrator) SetConfLayerProbe(fn func(ctx context.Context, ndmsName string) (bool, error)) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	o.confLayerRunning = fn
 }
 
@@ -386,6 +391,7 @@ func (o *Orchestrator) settleConfDisabled(ctx context.Context, event Event) bool
 	o.mu.Lock()
 	t = o.state.tunnels[tunnelID]
 	bounced := t != nil && t.lastConfRunningAt.After(now)
+	probe := o.confLayerRunning
 	o.mu.Unlock()
 	if t == nil {
 		return true
@@ -401,10 +407,10 @@ func (o *Orchestrator) settleConfDisabled(ctx context.Context, event Event) bool
 	// bring the interface back. Ask NDMS what it actually holds (issue #669:
 	// one lost edge left the tunnel stopped and Enabled=false, which nothing
 	// in the daemon ever undoes). An unreadable NDMS leaves the edge in force.
-	if o.confLayerRunning == nil {
+	if probe == nil {
 		return true
 	}
-	up, err := o.confLayerRunning(ctx, event.NDMSName)
+	up, err := probe(ctx, event.NDMSName)
 	if err != nil || !up {
 		return true
 	}
@@ -435,14 +441,15 @@ func (o *Orchestrator) settleConfRunning(ctx context.Context, event Event) bool 
 	if t != nil {
 		tunnelID, running = t.ID, t.Running
 	}
+	probe := o.confLayerRunning
 	o.mu.Unlock()
 
 	// Неизвестный или уже работающий туннель decide и так не тронет.
-	if tunnelID == "" || running || o.confLayerRunning == nil {
+	if tunnelID == "" || running || probe == nil {
 		return true
 	}
 
-	up, err := o.confLayerRunning(ctx, event.NDMSName)
+	up, err := probe(ctx, event.NDMSName)
 	if ctx.Err() != nil {
 		// Вызывающий сдался — исполнять на мёртвом контексте нечего: действия
 		// отвалятся посередине. Тот же выбор, что в settleConfDisabled.
