@@ -682,26 +682,14 @@ type lockHolder struct {
 
 // WithTunnelLock выполняет fn под тем же per-tunnel замком, которым
 // оркестратор сериализует свои действия. Нужен владельцам, которые правят
-// живой туннель в обход событий (service.Update, ReplaceConfig): без замка
-// их работа переплетается с WAN-up по тому же туннелю.
+// живой туннель в обход событий (service.Update) и стражу endpoint'ов в
+// nwg: без замка их работа переплетается с WAN-up по тому же туннелю.
 func (o *Orchestrator) WithTunnelLock(ctx context.Context, tunnelID, owner string, fn func() error) error {
 	if err := o.lockTunnel(ctx, tunnelID, owner); err != nil {
 		return err
 	}
 	defer o.unlockTunnel(tunnelID)
 	return fn()
-}
-
-// NewForTest и LockTunnelForTest — минимальные двери для тестов соседних
-// пакетов: проверить, что владелец берёт per-tunnel замок, иначе нечем.
-func NewForTest() *Orchestrator { return &Orchestrator{state: newState()} }
-
-// LockTunnelForTest занимает замок и возвращает освобождение.
-func (o *Orchestrator) LockTunnelForTest(tunnelID, owner string) (func(), error) {
-	if err := o.lockTunnel(context.Background(), tunnelID, owner); err != nil {
-		return nil, err
-	}
-	return func() { o.unlockTunnel(tunnelID) }, nil
 }
 
 // lockTunnel acquires the per-tunnel execution semaphore. Gives up when ctx

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -82,6 +83,14 @@ type OperatorNativeWG struct {
 	guardCancel context.CancelFunc // Close; nil, пока guardLoop не заведён
 	guardDone   chan struct{}      // закрывает guardLoop на выходе
 	guardNudge  chan struct{}      // внеочередной проход по внешнему поводу
+	// guardNudgeAt — когда стража будили в прошлый раз (UnixNano): хук
+	// публичный, и проходы по нему прорежены.
+	guardNudgeAt atomic.Int64
+	// tunnelLock — per-tunnel замок оркестратора; nil = работать без него
+	// (тесты и конфигурации без оркестратора).
+	tunnelLock func(tunnelID, owner string, work func() error) error
+	// persistResolvedIP кладёт адрес target'а в запись туннеля.
+	persistResolvedIP func(tunnelID, ip string)
 	// hasProxySlot reports a live kmod proxy slot on a listen port. Default:
 	// kmod.HasSlotListening; overridable in tests.
 	hasProxySlot func(listenPort int) bool

@@ -36,6 +36,13 @@ import (
 // падают → рестарт»).
 var guardInterval = 20 * time.Second
 
+// relayRestartCooldown — минимальный зазор между перезапусками релея по смене
+// адреса target'а; nudgeCooldown — то же для внеочередных проходов по хуку.
+var (
+	relayRestartCooldown = 5 * time.Minute
+	nudgeCooldown        = 5 * time.Second
+)
+
 type guardEntry struct {
 	iface    string // kernel-имя (nwgN)
 	pubkey   string
@@ -57,6 +64,10 @@ type guardEntry struct {
 	// (resolve_host_wait в wg-obfuscator). Смена A-записи доходит до него
 	// только рестартом, а host-route до старого адреса надо переставить.
 	viaRelay bool
+	// relayRestartedAt — когда релей перезапускали последний раз. Резолвер,
+	// отдающий ротирующее ПОДМНОЖЕСТВО A-записей, иначе рвал бы живую сессию
+	// каждый проход: анти-флап считает такой ответ сменой адреса.
+	relayRestartedAt time.Time
 	// warnedNoV4 — адрес, о непригодности которого для NDMS уже
 	// предупредили (см. viaNDMS-ветку guardSweep). Без этой памяти
 	// предупреждение печаталось бы каждые guardInterval.
@@ -229,14 +240,16 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 						fresh := net.JoinHostPort(pickEndpointIP(ips), port)
 						prev := expected // для лога: «был» обязан печатать старое
 						expected = fresh
-						if !e.viaNDMS && !e.viaKmod {
+						if !e.viaNDMS && !e.viaKmod && !e.viaRelay {
 							// Только чистый v6-режим: сверка идёт с
 							// фактическим wg show, поэтому реестр можно
 							// двигать сразу — упавший wg set повторится на
 							// следующем проходе. У viaNDMS и viaKmod
 							// readback'а нет, они сверяются с самим реестром:
 							// преждевременная запись навсегда увела бы их в
-							// `continue` после первой же неудачи.
+							// `continue` после первой же неудачи. viaRelay —
+							// такой же режим: сдвинутый заранее реестр оставил
+							// бы релей погашенным до перезапуска демона.
 							o.appLog.Info("endpoint-guard", e.name,
 								fmt.Sprintf("%s резолвится в новый адрес: %s (был %s)", e.spec, fresh, prev))
 							o.guardUpdateEndpoint(id, e.spec, fresh)
@@ -443,25 +456,62 @@ func (o *OperatorNativeWG) guardRegisterRelay(stored *storage.AWGTunnel, ip stri
 }
 
 // NudgeEndpointGuard просит стража пройтись вне очереди. Повод внешний —
-// смена адреса WAN (хук ifipchanged): ждать до тика незачем, а лишний проход
-// дёшев (адрес меняется только на смену резолва).
+// смена адреса WAN (хук ifipchanged): ждать до тика незачем.
+//
+// Проходы прорежены: хук публичный и без авторизации, а проход стоит резолва
+// на каждую запись (плюс `wg show` у v6-режима). Без этого кто угодно в
+// локальной сети гонял бы демон в DNS сколько угодно часто.
 func (o *OperatorNativeWG) NudgeEndpointGuard() {
+	now := time.Now().UnixNano()
+	last := o.guardNudgeAt.Load()
+	if now-last < int64(nudgeCooldown) {
+		return
+	}
+	if !o.guardNudgeAt.CompareAndSwap(last, now) {
+		return // кто-то разбудил стража прямо сейчас
+	}
 	select {
 	case o.guardNudge <- struct{}{}:
 	default: // проход уже запланирован или стража нет — второй не нужен
 	}
 }
 
-// syncRelayTarget доводит смену адреса target'а до релея: маршрут на новый
-// адрес и перезапуск процесса. Возвращает false, когда делать нечего или
-// сделать не удалось.
+// syncRelayTarget доводит смену адреса target'а до релея: перезапуск процесса
+// и перенос host-route. Возвращает false, когда делать нечего или сделать не
+// удалось.
 func (o *OperatorNativeWG) syncRelayTarget(ctx context.Context, id string, e guardEntry, expected string) bool {
 	// Адрес обновляем только на смену резолва: рестарт релея рвёт живую
 	// сессию, вхолостую его гонять нельзя.
 	if expected == e.endpoint || o.tunnelLookup == nil || o.obf == nil {
 		return false
 	}
-	// Перепроверка перед дорогой операцией — как в соседних ветках стража.
+	// Резолвер, отдающий ротирующее подмножество A-записей, выглядит как
+	// бесконечная смена адреса. Туннель переживёт лишние минуты на прежнем
+	// адресе, а рестарт каждые 20 секунд — нет.
+	if !e.relayRestartedAt.IsZero() && time.Since(e.relayRestartedAt) < relayRestartCooldown {
+		return false
+	}
+	// Под тем же per-tunnel замком, что и действия оркестратора: страж правит
+	// host-route и состояние релея, то есть ровно то, что запрещено править
+	// в обход замка владельцам в service.
+	if o.tunnelLock == nil {
+		return o.restartRelayForNewTarget(ctx, id, e, expected)
+	}
+	done := false
+	if err := o.tunnelLock(id, "endpoint-guard", func() error {
+		done = o.restartRelayForNewTarget(ctx, id, e, expected)
+		return nil
+	}); err != nil {
+		o.appLog.Debug("endpoint-guard", e.name, "туннель занят, перенос адреса отложен: "+err.Error())
+		return false
+	}
+	return done
+}
+
+// restartRelayForNewTarget — тело переноса, уже под замком.
+func (o *OperatorNativeWG) restartRelayForNewTarget(ctx context.Context, id string, e guardEntry, expected string) bool {
+	// Перепроверка под замком: Stop туннеля мог успеть снять запись, и тогда
+	// рестарт поднял бы релей погашенного туннеля.
 	if cur, ok := o.guardGet(id); !ok || cur.spec != e.spec || !cur.viaRelay {
 		return false
 	}
@@ -474,21 +524,50 @@ func (o *OperatorNativeWG) syncRelayTarget(ctx context.Context, id string, e gua
 	if splitErr != nil {
 		return false
 	}
-	// Маршрут — до рестарта: пока релей поднимается, трафик к новому адресу
-	// уже не должен уходить в сам туннель.
-	prevIP := o.obfRouteIP(stored)
-	o.trackEndpointIP(id, freshIP)
-	o.moveObfHostRoute(ctx, stored, prevIP, freshIP)
 	// Stop обязателен: Runner.Start идемпотентен по СОДЕРЖИМОМУ INI, а там
-	// имя, которое не менялось — без остановки он решит, что всё уже
-	// сделано, и релей продолжит слать на прежний адрес.
+	// имя, которое не менялось — без остановки он решит, что всё уже сделано,
+	// и релей продолжит слать на прежний адрес.
 	_ = o.obf.Stop(id)
 	if err := o.obf.Start(ctx, id, stored.Obfuscator); err != nil {
+		// Маршрут не трогаем: иначе каждая неудача стоила бы RCI-команды и
+		// записи конфигурации роутера, а проход повторяется каждые 20 секунд.
 		o.appLog.Warn("endpoint-guard", e.name, "перезапуск релея не удался: "+err.Error())
 		return false
 	}
+	// Маршрут — после успешного старта: до него релею всё равно нечем слать.
+	prevIP := o.obfRouteIP(stored)
+	o.trackEndpointIP(id, freshIP)
+	o.moveObfHostRoute(ctx, stored, prevIP, freshIP)
 	o.guardUpdateEndpoint(id, e.spec, expected)
+	o.markRelayRestarted(id, e.spec)
+	// Адрес обязан пережить рестарт демона: по нему снимается host-route, и
+	// по нему же сосед с тем же target решает, чей это маршрут.
+	if o.persistResolvedIP != nil {
+		o.persistResolvedIP(id, freshIP)
+	}
 	o.appLog.Info("endpoint-guard", e.name,
 		fmt.Sprintf("target %s сменил адрес на %s — релей перезапущен, host-route переставлен", e.spec, freshIP))
 	return true
+}
+
+// markRelayRestarted отмечает момент рестарта — от него считается cooldown.
+func (o *OperatorNativeWG) markRelayRestarted(id, spec string) {
+	o.guardMu.Lock()
+	defer o.guardMu.Unlock()
+	if e, ok := o.guard[id]; ok && e.spec == spec {
+		e.relayRestartedAt = time.Now()
+		o.guard[id] = e
+	}
+}
+
+// SetTunnelLock подключает per-tunnel замок оркестратора: страж правит
+// host-route и состояние релея — то же, что действия оркестратора.
+func (o *OperatorNativeWG) SetTunnelLock(fn func(tunnelID, owner string, work func() error) error) {
+	o.tunnelLock = fn
+}
+
+// SetResolvedIPPersister подключает запись адреса target'а в стор туннеля:
+// стора у оператора нет, писать умеет только владелец проводки.
+func (o *OperatorNativeWG) SetResolvedIPPersister(fn func(tunnelID, ip string)) {
+	o.persistResolvedIP = fn
 }

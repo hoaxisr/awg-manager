@@ -314,7 +314,9 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 		// v6-литерал под стражем не держим — резолвить нечего, адрес
 		// доводят startProxy/SyncKmodSlot.
 		if guard, _ := guardModeForEndpoint(stored.Peer.Endpoint, false); !guard {
-			o.guardUnregister(stored.ID)
+			if e, ok := o.guardGet(stored.ID); !ok || !e.viaRelay {
+				o.guardUnregister(stored.ID)
+			}
 		} else if cur, ok := o.guardGet(stored.ID); ok && cur.spec == stored.Peer.Endpoint {
 			o.guardReplaceIfPresent(stored.ID, guardEntry{
 				iface:    NewNWGNames(stored.NWGIndex).IfaceName,
@@ -413,8 +415,11 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 			o.guardRegister(stored.ID, entry)
 			break
 		}
-		// v4-литерал — резолвить нечего, стражу тут делать нечего.
-		if o.guardHas(stored.ID) {
+		// v4-литерал — резолвить нечего, стражу тут делать нечего. Кроме
+		// записи про target релея: у обфусцированного туннеля endpoint ВСЕГДА
+		// литерал 127.0.0.1:<порт>, и снимать по нему слежку за DDNS-именем
+		// target'а — значит выключать её при любой правке пира.
+		if e, ok := o.guardGet(stored.ID); ok && !e.viaRelay {
 			o.guardUnregister(stored.ID)
 			o.appLog.Info("sync-peer", ndmsName, "endpoint теперь v4-литерал — endpoint-страж снят, адресом управляет NDMS")
 		}
@@ -423,7 +428,7 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 		// или endpoint изменились, реестр стража устарел — снять, иначе он
 		// воскресит старого пира. При неизменном пире транзиентный сбой
 		// DNS защиту не снимает.
-		if e, ok := o.guardGet(stored.ID); ok &&
+		if e, ok := o.guardGet(stored.ID); ok && !e.viaRelay &&
 			(e.pubkey != stored.Peer.PublicKey || e.spec != stored.Peer.Endpoint) {
 			o.guardUnregister(stored.ID)
 			o.appLog.Warn("sync-peer", ndmsName,

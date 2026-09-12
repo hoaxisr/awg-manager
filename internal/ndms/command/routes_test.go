@@ -484,3 +484,42 @@ func TestRouteCommands_ExactPayloads(t *testing.T) {
 		})
 	}
 }
+
+// Снятие парной формой при живой второй записи на тот же адрес: роутер
+// отвечает «system failed [0xcffd0198] … file exists», но запись при этом
+// уходит (стенд 5.01). Считать это отказом — значит писать в журнал Warn на
+// штатном пути и городить ложную причину в состоянии туннеля.
+func TestRouteCommands_RemoveStaticRoute_ToleratesFileExists(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		route StaticRouteSpec
+	}{
+		{"v4", StaticRouteSpec{Host: "203.0.113.5", Interface: "PPPoE0"}},
+		{"v6", StaticRouteSpec{Host: "2001:db8::5", Interface: "PPPoE0", V6: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmds, poster := newTestRouteCommands(t)
+			poster.SetErrorFor(1) // роутер отвечает ложной netlink-ошибкой
+
+			if err := cmds.RemoveStaticRoute(context.Background(), tc.route); err != nil {
+				t.Fatalf("«file exists» на снятии — не отказ: %v", err)
+			}
+			// И повторять нечего: парная форма снимает ровно свою запись.
+			if n := len(poster.Payloads()); n != 1 {
+				t.Fatalf("ждали один вызов, получили %d", n)
+			}
+		})
+	}
+}
+
+// Настоящий отказ снятия обязан доехать до вызывающего: иначе несуществующий
+// интерфейс и опечатка в адресе выглядели бы как успешная уборка.
+func TestRouteCommands_RemoveStaticRoute_RealErrorSurfaces(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	poster.SetResponse(`{"ip":{"route":{"status":[{"status":"error","message":"invalid destination host"}]}}}`)
+
+	err := cmds.RemoveStaticRoute(context.Background(), StaticRouteSpec{Host: "203.0.113.5", Interface: "PPPoE0"})
+	if err == nil {
+		t.Fatal("настоящий отказ проглочен")
+	}
+}

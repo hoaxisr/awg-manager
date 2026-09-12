@@ -28,6 +28,9 @@ type fakeObfRunner struct {
 	started map[string]*storage.Obfuscator
 	alive   map[string]bool
 	starts  map[string]int
+	// failStart — настоящий Runner отказывает на занятом loopback-порту и на
+	// недокачанном бинаре; без этого пути отказа не проверить.
+	failStart error
 }
 
 func newFakeObfRunner() *fakeObfRunner {
@@ -37,6 +40,9 @@ func newFakeObfRunner() *fakeObfRunner {
 func (f *fakeObfRunner) Start(_ context.Context, id string, o *storage.Obfuscator) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failStart != nil {
+		return f.failStart
+	}
 	// Настоящий Runner идемпотентен по СОДЕРЖИМОМУ INI: живой процесс с тем
 	// же конфигом он не трогает (runner.go). Фейк обязан это повторять —
 	// иначе тест не отличит перезапуск релея от бесплодного повторного Start.
@@ -69,6 +75,13 @@ func (f *fakeObfRunner) Stop(id string) error {
 	return nil
 }
 
+// setFailStart заставляет следующий Start отказать.
+func (f *fakeObfRunner) setFailStart(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failStart = err
+}
+
 func (f *fakeObfRunner) Alive(id string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -88,6 +101,7 @@ type captureNDMS struct {
 	mu        sync.Mutex
 	posts     []string
 	failBatch bool   // RCI-батч (массив команд) отвечает 500
+	failRoute bool   // команды маршрута отвечают отказом во вложенном status
 	ifaceResp string // тело ответа на show interface
 }
 
@@ -112,8 +126,13 @@ func newCaptureNDMS(t *testing.T) *captureNDMS {
 		}
 		c.mu.Lock()
 		c.posts = append(c.posts, string(b))
-		failBatch := c.failBatch
+		failBatch, failRoute := c.failBatch, c.failRoute
 		c.mu.Unlock()
+		if failRoute && strings.Contains(string(b), `"route"`) {
+			// Форма отказа роутера: HTTP 200 и ошибка во вложенном status.
+			_, _ = w.Write([]byte(`{"ip":{"route":{"status":[{"status":"error","message":"invalid destination host"}]}}}`))
+			return
+		}
 		if strings.HasPrefix(strings.TrimSpace(string(b)), "[") {
 			if failBatch {
 				http.Error(w, "boom", http.StatusInternalServerError)
@@ -506,13 +525,18 @@ func TestStopObfuscated_StopsRunnerAndRemovesRoute(t *testing.T) {
 	if err := op.Start(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
+	// Без сброса ассерт ниже удовлетворяла бы слепая уборка со СТАРТА, и тест
+	// оставался бы зелёным, даже если Stop маршрут не трогает вовсе.
+	n.reset()
 	if err := op.Stop(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
 	if fr.Alive("awg20") {
 		t.Fatal("runner still alive")
 	}
-	if !strings.Contains(n.joined(), `"no":true,"host":"203.0.113.5"`) && !strings.Contains(n.joined(), `"host":"203.0.113.5","no":true`) {
+	// WAN записи известен (его запомнил Start), поэтому снятие идёт парной
+	// формой: соседний маршрут на тот же адрес через другой канал — не наш.
+	if !strings.Contains(n.joined(), `"host":"203.0.113.5","interface":"ISP0","no":true`) {
 		t.Fatalf("host route not removed:\n%s", n.joined())
 	}
 }
@@ -949,5 +973,47 @@ func TestSyncRelayTarget_SameAddress_KeepsRelayRunning(t *testing.T) {
 	}
 	if rm := n.routeRemovals(); len(rm) > 0 {
 		t.Fatalf("маршрут тронут впустую: %v", rm)
+	}
+}
+
+// У v6 своя форма и на СНЯТИИ: v4-форму с v6-адресом роутер отвергает
+// («invalid destination host»), и запись осталась бы висеть.
+func TestStopObfuscated_V6TargetUsesIPv6RemovalForm(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+	st.ResolvedEndpointIP = "2001:db8::5"
+	op.setObfRoutedWAN(st.ID, "ISP0")
+
+	op.stopObfuscated(context.Background(), st)
+
+	if n.firstPostWith(`"prefix":"2001:db8::5/128"`) < 0 {
+		t.Fatalf("v6 host-route снят не той формой:\n%s", n.joined())
+	}
+	if n.firstPostWith(`"host":"2001:db8::5"`) >= 0 {
+		t.Fatalf("v4-форма с v6-адресом роутером отвергается:\n%s", n.joined())
+	}
+}
+
+// Отказ постановки маршрута не должен запоминаться как «маршрут стоит под этим
+// WAN»: следующий Start решил бы, что снимать нечего, и запись на прежнем
+// канале осталась бы навсегда.
+func TestStartObfuscated_RouteAddFailed_DoesNotRememberWAN(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	n.failRoute = true
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, known := op.routedObfWAN(st.ID); known {
+		t.Fatal("WAN запомнен, хотя маршрут не встал")
+	}
+	if op.obfRouteErrFor(st.ID) == "" {
+		t.Fatal("причина отсутствия маршрута обязана попасть в реестр")
 	}
 }

@@ -185,10 +185,10 @@ func (h *HookHandler) HandleNDMS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1a) Смена адреса интерфейса — повод перепроверить DDNS-имена: страж
-	// пройдётся вне очереди. Горутиной: проход ходит в DNS и держал бы ответ
-	// на хук.
+	// пройдётся вне очереди. Вызов неблокирующий (будит чужую горутину), так
+	// что ответ на хук он не задерживает.
 	if event.Type == events.EventIfIPChanged && h.endpointNudge != nil {
-		go h.endpointNudge()
+		h.endpointNudge()
 	}
 
 	// 1b) On interface create/destroy, rebroadcast the tunnel list so

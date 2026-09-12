@@ -41,16 +41,22 @@ func nwgOperatorOnStub(t *testing.T) *nwg.OperatorNativeWG {
 // оркестратора: иначе она переплетается с WAN-up по тому же туннелю, и
 // снятия с постановками host-route наезжают друг на друга.
 func TestUpdate_ObfuscatorSyncTakesTunnelLock(t *testing.T) {
-	orch := orchestrator.NewForTest()
+	orch := orchestrator.New(nil, nil, nil, nil, nil, nil)
 	s := &ServiceImpl{state: NewMockStateManager(), nwgOperator: nwgOperatorOnStub(t)}
 	s.SetOrchestrator(orch)
 
-	// Замок занят кем-то другим; контекст отменён, чтобы не ждать таймаут.
-	release, err := orch.LockTunnelForTest("awg20", "wan-up")
-	if err != nil {
-		t.Fatalf("подготовка: %v", err)
-	}
-	defer release()
+	// Замок занят кем-то другим — держим его из соседней горутины, как это
+	// делал бы WAN-up; контекст правки отменён, чтобы не ждать таймаут.
+	held, release := make(chan struct{}), make(chan struct{})
+	go func() {
+		_ = orch.WithTunnelLock(context.Background(), "awg20", "wan-up", func() error {
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
+	defer close(release)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -64,7 +70,7 @@ func TestUpdate_ObfuscatorSyncTakesTunnelLock(t *testing.T) {
 		Obfuscator: &storage.Obfuscator{Flavor: storage.ObfuscatorFlavorPhobos, Target: "203.0.113.9:51820", Key: "k", LocalPort: 39000},
 	}
 
-	err = s.applyDiffNWG(ctx, old, updated)
+	err := s.applyDiffNWG(ctx, old, updated)
 	if err == nil || !strings.Contains(err.Error(), "sync obfuscator") {
 		t.Fatalf("правка обфускатора обязана споткнуться о занятый замок, получили: %v", err)
 	}

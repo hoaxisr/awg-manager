@@ -8,10 +8,10 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
-// maxHostRouteEntries — сколько записей одного host-route снимаем за вызов.
-// Столько же, сколько у роутера бывает WAN-интерфейсов с запасом: каждая
-// попытка убирает одну запись, лишние попытки на пустом месте отвечают
-// «no such route», то есть успехом.
+// maxHostRouteEntries — потолок повторов слепого снятия host-route. Роутер
+// снимает по одной записи за вызов и отвечает ложной ошибкой «file exists»,
+// пока по адресу остаётся ещё одна (стенд 5.01); потолок нужен, чтобы
+// постоянный отказ не крутился вечно.
 const maxHostRouteEntries = 4
 
 type RouteCommands struct {

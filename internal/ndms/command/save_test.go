@@ -85,8 +85,6 @@ func (f *fakePoster) SetErrorFor(n int) {
 	f.errFor = n
 }
 
-var errFakePost = errors.New("system failed [0xcffd0198]")
-
 func (f *fakePoster) SetError(err error) {
 	f.mu.Lock()
 	f.nextErr = err
