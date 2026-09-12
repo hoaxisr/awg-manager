@@ -1025,43 +1025,6 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 		}
 	})
 
-	t.Run("foreign permit-all is stripped first", func(t *testing.T) {
-		svc, store, poster := newLANSegmentsTestService(t)
-		spy := &recAppLog{}
-		svc.appLog = logging.NewScopedLogger(spy, logging.GroupServer, logging.SubManaged)
-		withRunningConfig(svc,
-			"interface Wireguard0",
-			"    security-level private",
-			"    ip access-group _WEBADMIN_Wireguard0 in",
-			"!",
-		)
-		seedServer(t, store, ifaceName)
-		resetPosts(poster)
-
-		if err := svc.SetLANSegments(context.Background(), ifaceName, []string{"Home"}); err != nil {
-			t.Fatalf("SetLANSegments: %v", err)
-		}
-
-		// Текст Info — часть пина: по нему администратор узнаёт, ЧТО и почему
-		// снято с его интерфейса; ложная запись (снятие не нашего остатка)
-		// была бы дезинформацией.
-		want := "info|lan-acl|Wireguard0|снят permit-all _WEBADMIN_Wireguard0: " +
-			"он открывал клиентам весь LAN мимо выбора сегментов"
-		if len(spy.entries) == 0 || spy.entries[0] != want {
-			t.Fatalf("журнал = %v, первая запись должна быть %q", spy.entries, want)
-		}
-
-		assertParses(t, parseStrings(poster), []string{
-			"no interface Wireguard0 ip access-group _WEBADMIN_Wireguard0 in",
-			"no access-list _WEBADMIN_Wireguard0",
-			fmt.Sprintf("no interface %s ip access-group %s in", ifaceName, acl),
-			"no access-list " + acl,
-			fmt.Sprintf("access-list %s permit ip 10.66.66.0 255.255.255.0 10.10.10.0 255.255.255.0", acl),
-			fmt.Sprintf("interface %s ip access-group %s in", ifaceName, acl),
-			fmt.Sprintf("access-list %s auto-delete", acl),
-		})
-	})
-
 	t.Run("empty segments unbinds and removes only", func(t *testing.T) {
 		svc, store, poster := newLANSegmentsTestService(t)
 		ctx := context.Background()
@@ -1087,7 +1050,9 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 		}
 	})
 
-	t.Run("empty segments still strips foreign permit-all", func(t *testing.T) {
+	// Teardown-ветка тоже не трогает чужой `_WEBADMIN_` (#879): снятие
+	// сегментов — не повод сносить правила межсетевого экрана пользователя.
+	t.Run("empty segments leave foreign permit-all alone", func(t *testing.T) {
 		svc, store, poster := newLANSegmentsTestService(t)
 		withRunningConfig(svc,
 			"interface Wireguard0",
@@ -1102,8 +1067,6 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 		}
 
 		assertParses(t, parseStrings(poster), []string{
-			"no interface Wireguard0 ip access-group _WEBADMIN_Wireguard0 in",
-			"no access-list _WEBADMIN_Wireguard0",
 			fmt.Sprintf("no interface %s ip access-group %s in", ifaceName, acl),
 			"no access-list " + acl,
 		})

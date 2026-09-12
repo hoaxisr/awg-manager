@@ -12,7 +12,8 @@ import (
 )
 
 // Карточка сервера отдаёт чужие привязки ACL интерфейса (foreignAcls): наш
-// AWGM_ вычтен службой, _WEBADMIN_ снимает strip и «посторонним» не считается.
+// AWGM_ вычтен службой, `_WEBADMIN_` показывается — с #879 мы его не снимаем,
+// и предупреждение на карточке заменило снятие.
 func TestManagedList_ForeignACLs(t *testing.T) {
 	_, store, _, _, svc := newServersNATHarness(t) // см. правку возврата харнесса
 	if err := store.AddManagedServer(storage.ManagedServer{
@@ -31,8 +32,8 @@ func TestManagedList_ForeignACLs(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil || len(env.Data) != 1 {
 		t.Fatalf("ответ: %v %s", err, rr.Body.String())
 	}
-	// _WEBADMIN_ снимает strip — «посторонним» не считается; AWGM_ — наш.
-	if want := []string{"GUEST_ACL"}; !slices.Equal(env.Data[0].ForeignAcls, want) {
+	// AWGM_ — наш, вычтен службой; остальные показываем как есть.
+	if want := []string{"GUEST_ACL", "_WEBADMIN_Wireguard1"}; !slices.Equal(env.Data[0].ForeignAcls, want) {
 		t.Fatalf("foreignAcls = %v, want %v", env.Data[0].ForeignAcls, want)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 	"time"
 
@@ -308,16 +307,13 @@ func NewManagedServerHandler(svc managed.ManagedServerService, appLogger logging
 }
 
 // foreignACLsFor — чужие привязки для карточки: без нашего AWGM_ (уже вычтен
-// службой) и без _WEBADMIN_<iface> — его снимает strip при ближайшем применении
-// или буте, показывать как «посторонний» нечего (ruling по ревью С2, паритет с H7).
+// службой). `_WEBADMIN_<iface>` здесь ТОЖЕ чужой и показывается: это правила
+// межсетевого экрана пользователя из веб-морды роутера, и с #879 мы их больше
+// не снимаем — предупреждение на карточке заменило снятие.
 // Ошибка чтения running-config → nil: карточка без предупреждения, не без сервера.
 func (h *ManagedServerHandler) foreignACLsFor(ctx context.Context, iface string) []string {
 	names, err := h.svc.ForeignAccessGroups(ctx, iface)
-	if err != nil {
-		return nil
-	}
-	names = slices.DeleteFunc(names, func(n string) bool { return n == "_WEBADMIN_"+iface })
-	if len(names) == 0 {
+	if err != nil || len(names) == 0 {
 		return nil
 	}
 	return names

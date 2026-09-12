@@ -108,6 +108,14 @@ func isACLUnsupported(msg string) bool {
 		strings.Contains(strings.ToLower(msg), "no such command: access-group")
 }
 
+// isACLRuleAbsent: `no rule found to delete.` (Network::Acl, стенд 5.01
+// 2026-09-12) — снимаемого правила в списке уже нет. Для точечного снятия
+// нашего permit-all это цель, а не отказ: список читается заранее, так что
+// фраза означает гонку с чужой правкой.
+func isACLRuleAbsent(msg string) bool {
+	return strings.Contains(strings.ToLower(msg), "no rule found to delete")
+}
+
 // toleratesRouteRemoval — безобидные отказы СНЯТИЯ маршрута: интерфейса уже
 // нет, либо netlink ответил «file exists», потому что по тому же адресу в
 // таблице остался ещё один маршрут (стенд 5.01: запись при этом снимается,

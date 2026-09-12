@@ -214,7 +214,7 @@ func (a *app) startBootSequence() {
 			// Best-effort, idempotent migrations — must NOT block tunnel start.
 			// tunnelService cleanup below is fast and stays inline.
 			var bgDone sync.WaitGroup
-			bgDone.Add(3)
+			bgDone.Add(2)
 			go func() {
 				defer bgDone.Done()
 				// Back-fill ManagedServer.PrivateKey for entries created before
@@ -230,13 +230,6 @@ func (a *app) startBootSequence() {
 				// firmware rejects multiple peers sharing 0.0.0.0/0. Gated by a
 				// persisted flag; best-effort, retries next boot if NDMS is down.
 				a.managedService.MigratePeerAllowIPs(a.shutdownCtx)
-			}()
-			go func() {
-				defer bgDone.Done()
-				// Остаток permit-all веб-морды обнуляет выбор сегментов:
-				// безусловный ACCEPT срабатывает до нашего AWGM_-списка.
-				// Снимаем только если есть — на чистом роутере ни записи, ни RCI.
-				a.managedService.SweepForeignPermitAll(a.shutdownCtx)
 			}()
 
 			// Migrate legacy NDMS ID values to kernel names (one-time after model is populated).
@@ -316,8 +309,6 @@ func (a *app) startBootSequence() {
 		// allow-ips. Flag-gated, best-effort. Without this the migration
 		// would only fire on a cold router boot (isBoot branch above).
 		a.managedService.MigratePeerAllowIPs(context.Background())
-		// Остаток permit-all веб-морды обнуляет выбор сегментов; снимаем только если есть.
-		a.managedService.SweepForeignPermitAll(context.Background())
 
 		if backup.ConsumePostRestoreMarker(a.dataDir) {
 			a.bootLog.Info("startup", "",

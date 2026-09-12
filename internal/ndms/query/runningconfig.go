@@ -98,6 +98,45 @@ func InterfaceAccessGroupsOf(lines []string, iface string) []string {
 	return out
 }
 
+// ACLRulesOf — правила списка доступа из running-config: строки `permit …`
+// и `deny …` его блока. header — полная строка заголовка: `access-list <name>`
+// или `ipv6 access-list <name>` (у NDMS под IPv6 своё пространство списков, и
+// имена в них не пересекаются). Флаги блока (`auto-delete`) правилами не
+// считаются: снять их отдельной командой нельзя, и на «список чей-то ещё» они
+// не указывают.
+//
+// Нужен снятию permit-all: список `_WEBADMIN_<iface>` — это ЕЩЁ И место, куда
+// веб-морда роутера кладёт правила межсетевого экрана интерфейса, поэтому
+// сносить его целиком можно, только если кроме нашего правила в нём ничего
+// нет (F314, issue #879).
+func ACLRulesOf(lines []string, header string) []string {
+	out := []string{}
+	in := false
+	for _, raw := range lines {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		if raw == trimmed { // без отступа — заголовок блока или его конец
+			in = trimmed == header
+			continue
+		}
+		if in && (strings.HasPrefix(trimmed, "permit ") || strings.HasPrefix(trimmed, "deny ")) {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+// ACLRules — то же по кэшированному running-config.
+func (s *RunningConfigStore) ACLRules(ctx context.Context, header string) ([]string, error) {
+	lines, err := s.Lines(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ACLRulesOf(lines, header), nil
+}
+
 // InterfaceAccessGroups — то же по кэшированному running-config.
 func (s *RunningConfigStore) InterfaceAccessGroups(ctx context.Context, iface string) ([]string, error) {
 	lines, err := s.Lines(ctx)
