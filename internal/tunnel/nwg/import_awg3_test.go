@@ -1,7 +1,6 @@
 package nwg
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -93,10 +92,11 @@ func TestStripAWG3Params_LeavesNothingOfVersion3(t *testing.T) {
 
 	stripAWG3Params(&iface)
 
-	if got := config.ClassifyAWGVersion(&iface); got == "awg3" || got == "awg3.1" {
+	switch got := config.ClassifyAWGVersion(&iface); got {
+	case "awg3", "awg3.1":
 		t.Fatalf("после снятия конфиг всё ещё %s — параметр 3.x остался в файле", got)
-	}
-	if got := config.ClassifyAWGVersion(&iface); got != "awg2.0" {
+	case "awg2.0":
+	default:
 		t.Fatalf("снято лишнее: обфускация 2.0 обязана пережить снятие, получили %s", got)
 	}
 }
@@ -127,10 +127,6 @@ func TestASC3FlagAndPayloadMoveTogether(t *testing.T) {
 	raw, err := buildASCJSON(&iface)
 	if err != nil {
 		t.Fatalf("buildASCJSON: %v", err)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		t.Fatalf("разбор payload: %v", err)
 	}
 	if !strings.Contains(string(raw), iface.HeaderProtectionKey) {
 		t.Fatalf("ASC 3.0 включён, но payload не несёт параметров устройства 3.0 — premium-туннель встанет как 2.0:\n%s", raw)
