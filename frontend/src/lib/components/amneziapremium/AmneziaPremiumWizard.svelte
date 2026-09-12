@@ -37,6 +37,7 @@
 	import PremiumCountryList from './PremiumCountryList.svelte';
 	import PremiumCreateFooter from './PremiumCreateFooter.svelte';
 	import PremiumKeyForm from './PremiumKeyForm.svelte';
+	import PremiumMirrorField from './PremiumMirrorField.svelte';
 	import PremiumSubscriptionCard from './PremiumSubscriptionCard.svelte';
 	// Временный блок миграции ключа из localStorage — снимается целиком, см. F276.
 	import { clearLegacyPremiumKeys, readLegacyPremiumKey } from './premiumKeyMigration';
@@ -432,6 +433,13 @@
 				onselect={chooseCountry}
 			/>
 		</div>
+	{/if}
+
+	<!-- Адрес зеркала — настройка «на чёрный день»: на вводе ключа он свёрнут и
+	     основному пути не мешает, а на экране ошибки раскрыт, потому что там он
+	     единственный способ починиться. -->
+	{#if phase === 'key' || phase === 'error'}
+		<PremiumMirrorField forceOpen={phase === 'error'} />
 	{/if}
 {/snippet}
 

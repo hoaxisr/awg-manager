@@ -8,6 +8,7 @@ const amneziaPremiumCatalog = vi.fn();
 const amneziaPremiumSaveKey = vi.fn();
 const amneziaPremiumForgetKey = vi.fn();
 const amneziaPremiumConfig = vi.fn();
+const amneziaPremiumMirror = vi.fn();
 
 vi.mock('$lib/api/client', () => ({
 	api: {
@@ -15,7 +16,9 @@ vi.mock('$lib/api/client', () => ({
 		amneziaPremiumCatalog: (...a: unknown[]) => amneziaPremiumCatalog(...a),
 		amneziaPremiumSaveKey: (...a: unknown[]) => amneziaPremiumSaveKey(...a),
 		amneziaPremiumForgetKey: (...a: unknown[]) => amneziaPremiumForgetKey(...a),
-		amneziaPremiumConfig: (...a: unknown[]) => amneziaPremiumConfig(...a)
+		amneziaPremiumConfig: (...a: unknown[]) => amneziaPremiumConfig(...a),
+		amneziaPremiumMirror: (...a: unknown[]) => amneziaPremiumMirror(...a),
+		amneziaPremiumSaveMirror: vi.fn()
 	}
 }));
 
@@ -57,6 +60,7 @@ beforeEach(() => {
 	localStorage.clear();
 	amneziaPremiumCatalog.mockResolvedValue(CATALOG);
 	amneziaPremiumForgetKey.mockResolvedValue(KEY_ABSENT);
+	amneziaPremiumMirror.mockResolvedValue({ mirrorUrl: 'https://mirror-alpha.fixture.test/cp' });
 });
 
 describe('AmneziaPremiumWizard', () => {
@@ -142,6 +146,32 @@ describe('AmneziaPremiumWizard', () => {
 		await fireEvent.click(another);
 		await settle();
 		expect(screen.getByLabelText('Ключ подписки Amnezia Premium')).toBeTruthy();
+	});
+
+	it('на экране ошибки зеркала адрес зеркала раскрыт и показывает действующий', async () => {
+		amneziaPremiumKeyState.mockRejectedValue(new Error('Зеркало Amnezia недоступно (fixture)'));
+
+		render(AmneziaPremiumWizard, {
+			props: { open: true, onclose: vi.fn(), onconfig: vi.fn() }
+		});
+		await settle();
+
+		// Правка адреса — единственный способ починиться, когда зеркало не
+		// отвечает: прятать её за раскрывашкой на этом экране нельзя.
+		const field = screen.getByLabelText<HTMLInputElement>('Адрес зеркала Amnezia');
+		expect(field.value).toBe('https://mirror-alpha.fixture.test/cp');
+	});
+
+	it('на вводе ключа адрес зеркала свёрнут и запроса за собой не тянет', async () => {
+		amneziaPremiumKeyState.mockResolvedValue(KEY_ABSENT);
+
+		render(AmneziaPremiumWizard, {
+			props: { open: true, onclose: vi.fn(), onconfig: vi.fn() }
+		});
+		await settle();
+
+		expect(screen.queryByLabelText('Адрес зеркала Amnezia')).toBeNull();
+		expect(amneziaPremiumMirror).not.toHaveBeenCalled();
 	});
 
 	it('ключ из localStorage подставляется и стирается после успешного входа без «запомнить»', async () => {
