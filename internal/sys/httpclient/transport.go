@@ -17,6 +17,21 @@ type TransportConfig struct {
 
 	// DNSServers are used for hostname resolution when Interface is set.
 	DNSServers []string
+
+	// ProxyFromEnv — брать ли прокси из окружения (HTTP_PROXY/HTTPS_PROXY),
+	// когда ProxyURL пуст и привязки к интерфейсу нет.
+	//
+	// Поле заведено потому, что умолчание здесь НЕ очевидно и один раз уже
+	// подвело: `NewTransport(TransportConfig{})` молча наследует прокси
+	// окружения, хотя в коде вызывающего слова «прокси» нет вовсе. Клиенту,
+	// которому нужен прямой выход, мало «не передавать ProxyURL» — снимать
+	// наследование надо ЯВНО.
+	//
+	// nil — прежнее поведение (наследовать). false — прямой выход, что бы ни
+	// стояло в окружении. true — наследовать явно. Указывать явно стоит
+	// всегда: nil оставлен только чтобы не менять поведение уже написанных
+	// вызывающих, а не как рекомендуемый выбор.
+	ProxyFromEnv *bool
 }
 
 // NewTransport returns an http.Transport with optional interface binding
@@ -42,9 +57,18 @@ func NewTransport(cfg TransportConfig) (*http.Transport, error) {
 	}
 
 	c := &Client{baseTransport: base}
-	return c.buildTransport(CallConfig{
+	tr := c.buildTransport(CallConfig{
 		Interface:      cfg.Interface,
 		DNSServers:     cfg.DNSServers,
 		ConnectTimeout: 10 * time.Second,
-	}, parsedProxy), nil
+	}, parsedProxy)
+
+	// Явный запрет сильнее умолчания, но слабее явного ProxyURL: адрес,
+	// названный вызывающим прямо, — это его решение, и молча выбрасывать его
+	// нельзя. Поэтому проверка стоит после сборки и трогает только тот
+	// случай, где прокси взялся из окружения сам.
+	if cfg.ProxyFromEnv != nil && !*cfg.ProxyFromEnv && parsedProxy == nil {
+		tr.Proxy = nil
+	}
+	return tr, nil
 }
