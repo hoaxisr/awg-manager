@@ -87,5 +87,45 @@ func ndmsImportConf(stored *storage.AWGTunnel) (string, string) {
 			safe.Peer.PersistentKeepalive = storage.Keepalive(strconv.Itoa(n))
 		}
 	}
+	stripAWG3Params(&safe.Interface)
 	return config.GenerateForExport(&safe), note
+}
+
+// stripAWG3Params убирает из ИМПОРТИРУЕМОГО в NDMS файла параметры устройства
+// AWG 3.0/3.1. Пользовательской выгрузки это не касается: она идёт мимо этой
+// проекции, прямо через config.GenerateForExport.
+//
+// У этих параметров НЕТ адресата в NDMS ни на одной прошивке. Канал у прошивки
+// ровно один — метод ASC, и он их не несёт: ndms.ASCParamsExtended
+// заканчивается на S3/S4 и I1-I5, а buildASCJSON не шлёт их сознательно
+// («firmware ASC does not model the awg3-specific device params»). Импорт
+// каналом не является тем более: файл разбирает строгий парсер AmneziaWG, и
+// каждый такой ключ он выбрасывает со строкой уровня W в системном журнале
+// («skipping unrecognized parameter»). На стенде 12.09.2026 (5.01.C.3.0-1) это
+// семь строк W на КАЖДЫЙ импорт premium-туннеля; kernel-бэкенд на том же
+// конфиге не дал ни одной.
+//
+// Потерять нечего: применяют эти параметры awg_proxy.ko (buildKmodConfig берёт
+// их из ЗАПИСИ туннеля, operator.go) и kernel-бэкенд через `awg setconf` —
+// оба читают хранилище, а не этот файл. Конфиг с любым из них на сегодняшних
+// прошивках вообще уходит на проксирующий путь: ASC 3.0 не умеет ни одна
+// (ndmsinfo.SupportsWireguardASC3), а на проксирующем пути startProxy ещё и
+// снимает принятые прошивкой параметры ASC, иначе обфускация ляжет дважды.
+//
+// Флаги 3.1 (RandomTrailers, DisableCookies) снимаются вместе с остальными:
+// канал у них ровно такой же, то есть никакой.
+//
+// Когда ASC научится 3.0 (Keenetic обещает в одной из 5.02.A), нести их будет
+// метод ASC — правка ляжет в ASCParamsExtended и buildASCJSON, а импорт
+// останется чистым. Сцепку сторожит TestASC3FlagAndPayloadMoveTogether.
+func stripAWG3Params(iface *storage.AWGInterface) {
+	iface.HeaderProtectionKey = ""
+	iface.ContentPaddingAddition = ""
+	iface.RekeyAfterTime = ""
+	iface.RekeyTimeout = ""
+	iface.RejectAfterTime = ""
+	iface.KeepaliveTimeout = ""
+	iface.MaxHandshakeAttempts = ""
+	iface.RandomTrailers = false
+	iface.DisableCookies = false
 }
