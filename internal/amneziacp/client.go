@@ -223,14 +223,19 @@ func withoutRedirects(c *http.Client) *http.Client {
 // Прокси из окружения, в отличие от снятого internal/api/amnezia_cp.go, не
 // берётся: при заданном HTTPS_PROXY запрос ушёл бы через чужой прокси — мимо
 // требования о регионе, ради которого зеркало и понадобилось. Снимать его
-// нужно явно: httpclient.NewTransport ставит ProxyFromEnvironment сам, когда
-// транспорт не привязан к интерфейсу.
+// нужно ЯВНО: httpclient.NewTransport наследует прокси окружения сам, когда
+// транспорт не привязан к интерфейсу, и «не передавать ProxyURL» для прямого
+// выхода недостаточно.
 func newDirectClient() *http.Client {
-	tr, err := httpclient.NewTransport(httpclient.TransportConfig{})
+	direct := false
+	tr, err := httpclient.NewTransport(httpclient.TransportConfig{ProxyFromEnv: &direct})
 	if err != nil || tr == nil {
 		tr = &http.Transport{}
+		// Запасной транспорт собирается руками, и наследование прокси ему
+		// взяться неоткуда, — но требование прямого выхода держится здесь
+		// же, а не в одной ветке из двух.
+		tr.Proxy = nil
 	}
-	tr.Proxy = nil
 	tr.DialContext = (&net.Dialer{
 		Timeout:   12 * time.Second,
 		KeepAlive: 30 * time.Second,
