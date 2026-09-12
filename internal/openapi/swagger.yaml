@@ -276,20 +276,6 @@ definitions:
         example: true
         type: boolean
     type: object
-  api.AmneziaPremiumAccountInfoRequest:
-    properties:
-      sid:
-        example: v_sid_cookie_value
-        type: string
-    type: object
-  api.AmneziaPremiumAccountInfoResponse:
-    properties:
-      data:
-        type: object
-      success:
-        example: true
-        type: boolean
-    type: object
   api.AmneziaPremiumCatalogData:
     properties:
       activeDeviceCount:
@@ -400,31 +386,6 @@ definitions:
           type: string
         type: array
     type: object
-  api.AmneziaPremiumDownloadConfigData:
-    properties:
-      config:
-        example: |-
-          [Interface]
-          PrivateKey = ...
-        type: string
-    type: object
-  api.AmneziaPremiumDownloadConfigRequest:
-    properties:
-      countryCode:
-        example: nl
-        type: string
-      sid:
-        example: v_sid_cookie_value
-        type: string
-    type: object
-  api.AmneziaPremiumDownloadConfigResponse:
-    properties:
-      data:
-        $ref: '#/definitions/api.AmneziaPremiumDownloadConfigData'
-      success:
-        example: true
-        type: boolean
-    type: object
   api.AmneziaPremiumIssuedConfig:
     properties:
       countryCode:
@@ -499,32 +460,6 @@ definitions:
     properties:
       data:
         $ref: '#/definitions/api.AmneziaPremiumKeyData'
-      success:
-        example: true
-        type: boolean
-    type: object
-  api.AmneziaPremiumLoginData:
-    properties:
-      sid:
-        example: v_sid_cookie_value
-        type: string
-    type: object
-  api.AmneziaPremiumLoginRequest:
-    properties:
-      remember:
-        example: true
-        type: boolean
-      vpn_key:
-        example: vpn://...
-        type: string
-      vpnKey:
-        example: vpn://...
-        type: string
-    type: object
-  api.AmneziaPremiumLoginResponse:
-    properties:
-      data:
-        $ref: '#/definitions/api.AmneziaPremiumLoginData'
       success:
         example: true
         type: boolean
@@ -9020,103 +8955,6 @@ paths:
       summary: Set access policy standalone mode
       tags:
       - access-policy
-  /amnezia-premium/account-info:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Portal session id returned by login
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/api.AmneziaPremiumAccountInfoRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.AmneziaPremiumAccountInfoResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Get Amnezia Premium account info
-      tags:
-      - amnezia-premium
-  /amnezia-premium/download-config:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Portal session id and country code
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/api.AmneziaPremiumDownloadConfigRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.AmneziaPremiumDownloadConfigResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Download Amnezia Premium config
-      tags:
-      - amnezia-premium
-  /amnezia-premium/login:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Premium vpn:// key
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/api.AmneziaPremiumLoginRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.AmneziaPremiumLoginResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "422":
-          description: Unprocessable Entity
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Login to Amnezia Premium portal
-      tags:
-      - amnezia-premium
   /amnezia/premium/catalog:
     get:
       description: 'Данные подписки и список стран. Ответ собирается по белому списку:

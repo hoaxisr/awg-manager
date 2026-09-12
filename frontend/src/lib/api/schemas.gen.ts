@@ -102,11 +102,6 @@ const api_AllInterfacesResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
-const api_AmneziaPremiumAccountInfoResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.unknown())),
-	success: v.optional(v.nullable(v.boolean())),
-});
-
 const api_AmneziaPremiumCatalogData: v.GenericSchema = v.looseObject({
 	activeDeviceCount: v.optional(v.nullable(v.number())),
 	countries: v.optional(v.nullable(v.array(v.lazy(() => api_AmneziaPremiumCountry)))),
@@ -137,15 +132,6 @@ const api_AmneziaPremiumCountry: v.GenericSchema = v.looseObject({
 	protocols: v.optional(v.nullable(v.array(v.string()))),
 });
 
-const api_AmneziaPremiumDownloadConfigData: v.GenericSchema = v.looseObject({
-	config: v.optional(v.nullable(v.string())),
-});
-
-const api_AmneziaPremiumDownloadConfigResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumDownloadConfigData))),
-	success: v.optional(v.nullable(v.boolean())),
-});
-
 const api_AmneziaPremiumIssuedConfig: v.GenericSchema = v.looseObject({
 	countryCode: v.optional(v.nullable(v.string())),
 	lastIssuedAt: v.optional(v.nullable(v.string())),
@@ -161,15 +147,6 @@ const api_AmneziaPremiumKeyData: v.GenericSchema = v.looseObject({
 
 const api_AmneziaPremiumKeyResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumKeyData))),
-	success: v.optional(v.nullable(v.boolean())),
-});
-
-const api_AmneziaPremiumLoginData: v.GenericSchema = v.looseObject({
-	sid: v.optional(v.nullable(v.string())),
-});
-
-const api_AmneziaPremiumLoginResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumLoginData))),
 	success: v.optional(v.nullable(v.boolean())),
 });
 
@@ -3404,9 +3381,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /access-policies/interface-up": v.lazy(() => api_OkResponse),
 	"POST /access-policies/permit": v.lazy(() => api_OkResponse),
 	"POST /access-policies/standalone": v.lazy(() => api_OkResponse),
-	"POST /amnezia-premium/account-info": v.lazy(() => api_AmneziaPremiumAccountInfoResponse),
-	"POST /amnezia-premium/download-config": v.lazy(() => api_AmneziaPremiumDownloadConfigResponse),
-	"POST /amnezia-premium/login": v.lazy(() => api_AmneziaPremiumLoginResponse),
 	"POST /amnezia/premium/config": v.lazy(() => api_AmneziaPremiumConfigResponse),
 	"POST /amnezia/premium/key": v.lazy(() => api_AmneziaPremiumKeyResponse),
 	"POST /amnezia/premium/mirror": v.lazy(() => api_AmneziaPremiumMirrorResponse),

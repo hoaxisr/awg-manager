@@ -511,16 +511,9 @@ func (s *Server) registerLogsImportRoutes(mux *http.ServeMux, h *routeHandlers) 
 	// Import (protected + boot guarded)
 	mux.HandleFunc("/api/import/conf", h.guarded(h.importHandler.ImportConf))
 
-	amneziaCPHandler := api.NewAmneziaCPHandler(h.appLog)
-	amneziaCPHandler.SetDownloader(s.downloadSvc)
-	mux.HandleFunc("/api/amnezia-premium/login", h.guarded(amneziaCPHandler.Login))
-	mux.HandleFunc("/api/amnezia-premium/account-info", h.guarded(amneziaCPHandler.AccountInfo))
-	mux.HandleFunc("/api/amnezia-premium/download-config", h.guarded(amneziaCPHandler.DownloadConfig))
-
 	// Ключ подписки Amnezia Premium: проверка и сохранение (POST), состояние
 	// (GET), удаление (DELETE). Одна ручка на три метода — состояние у них
-	// одно, и разводить его по трём путям нечем. Прежние ручки выше живут
-	// своей жизнью, пока на них держится мастер.
+	// одно, и разводить его по трём путям нечем.
 	amneziaPremiumHandler := api.NewAmneziaPremiumHandler(s.settings, h.appLog)
 	amneziaPremiumHandler.SetEventBus(s.bus)
 	mux.HandleFunc("/api/amnezia/premium/key", h.guarded(amneziaPremiumHandler.Key))
