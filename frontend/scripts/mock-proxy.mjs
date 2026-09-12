@@ -4957,7 +4957,7 @@ function randomizeDelays() {
 // Ключ подписки живёт ТОЛЬКО в памяти мока — ровно как на роутере, где он
 // лежит зашифрованным в настройках и наружу не выходит. Наружу уезжает лишь
 // состояние: сохранён / читается ли.
-const mockPremiumKey = { stored: false, usable: false };
+const mockPremiumKey = { stored: false, usable: false, session: false };
 
 // Страны мока покрывают три метки строки: свежую, устаревшую и vless-only
 // (последнюю мастер обязан скрыть — забрать её нечем).
@@ -5363,6 +5363,9 @@ const server = http.createServer(async (req, res) => {
 		if (req.method === 'DELETE') {
 			mockPremiumKey.stored = false;
 			mockPremiumKey.usable = false;
+			// «Забыть» забывает и сессионный ключ — как DeleteKey на бэкенде:
+			// иначе после удаления каталог продолжал бы отвечать.
+			mockPremiumKey.session = false;
 			console.log('[mock-proxy] amnezia/premium/key: ключ забыт');
 			sendPremiumKeyState(res);
 			return;
@@ -5392,6 +5395,7 @@ const server = http.createServer(async (req, res) => {
 				}
 				// store — судьба секрета, и умолчание у него закрытое, как на бэкенде.
 				mockPremiumKey.stored = payload.store === true;
+				mockPremiumKey.session = true;
 				mockPremiumKey.usable = mockPremiumKey.stored;
 				console.log(`[mock-proxy] amnezia/premium/key: вход ок, store=${mockPremiumKey.stored}`);
 				sendPremiumKeyState(res);
@@ -5403,7 +5407,10 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	if (req.method === 'GET' && path === '/amnezia/premium/catalog') {
-		if (!mockPremiumKey.stored) {
+		// Ключ доступен и без сохранения: при store=false он живёт в памяти демона
+		// (sessionKey на бэкенде), и каталог обязан работать — иначе мок ломает
+		// главный путь мастера «ввёл ключ, не запоминая → каталог».
+		if (!mockPremiumKey.stored && !mockPremiumKey.session) {
 			sendPremiumNoKey(res);
 			return;
 		}

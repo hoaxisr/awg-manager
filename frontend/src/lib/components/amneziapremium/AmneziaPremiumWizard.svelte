@@ -450,11 +450,13 @@
 			Продолжить
 		</Button>
 	{:else if phase === 'error'}
+		<div class="premium-error-actions">
 		<Button variant="secondary" size="md" onclick={onclose}>Закрыть</Button>
 		<Button variant="secondary" size="md" onclick={retry}>{retryLabel}</Button>
 		<!-- Без этого действия пользователь с отозванным сохранённым ключом
 		     заперт: вкладки со вставкой vpn:// больше нет. -->
 		<Button variant="primary" size="md" onclick={resetToKeyEntry}>Ввести другой ключ</Button>
+		</div>
 	{:else}
 		<div class="premium-footer">
 			{#if keyStored && keyUsable}
@@ -573,5 +575,43 @@
 		align-items: center;
 		justify-content: flex-end;
 		gap: 8px;
+		min-width: 0;
+	}
+
+	/* Modal на ≤640px растягивает КАЖДУЮ кнопку подвала на всю ширину. Для
+	   сегмента бэкенда это неверно: он один контрол из двух кнопок, и
+	   растянутые половинки выталкивали «Создать туннель» за край модалки
+	   (поймано визуальным прогоном на 400px). Возвращаем сегменту его
+	   собственную ширину, а поле имени на узком экране пускаем на всю
+	   строку, чтобы перенос был по смыслу: имя — строкой, выбор и кнопка —
+	   следующей. */
+	/* Три действия экрана ошибки на ~400px в строку не помещаются даже
+	   растянутыми правилом модалки (Modal.svelte, ≤640px: каждой кнопке
+	   width:100%): последняя вылезала за край. Свой контейнер с переносом и
+	   собственной минимальной шириной — перенос случается внутри подвала. */
+	.premium-error-actions {
+		display: flex;
+		flex: 1;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: 8px;
+		min-width: 0;
+	}
+
+	.premium-error-actions :global(.btn) {
+		flex: 1 1 140px;
+		width: auto;
+		min-width: 0;
+	}
+
+	.premium-footer :global(.premium-backend-option) {
+		flex: 0 0 auto;
+		width: auto;
+	}
+
+	@media (max-width: 640px) {
+		.premium-footer :global(.premium-name-input) {
+			flex: 1 1 100%;
+		}
 	}
 </style>
