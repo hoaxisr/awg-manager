@@ -276,67 +276,230 @@ definitions:
         example: true
         type: boolean
     type: object
-  api.AmneziaPremiumAccountInfoRequest:
+  api.AmneziaPremiumCatalogData:
     properties:
-      sid:
-        example: v_sid_cookie_value
+      activeDeviceCount:
+        description: |-
+          ActiveDeviceCount / MaxDeviceCount — счётчик устройств подписки, как
+          его отдаёт портал. Сами по issued_configs не считаем: наш подсчёт
+          расходился с портальным.
+        example: 3
+        type: integer
+      countries:
+        description: |-
+          Countries — список стран подписки. Пустой список — не отказ: это
+          правдивый ответ портала, и придумывать по нему ошибку значило бы
+          решать за пользователя, что его подписка сломана. А вот ОТСУТСТВИЕ
+          поля у портала — отказ: см. premiumCatalog. Поле здесь всегда непустой
+          ссылкой ([] или список), null не уезжает никогда.
+        items:
+          $ref: '#/definitions/api.AmneziaPremiumCountry'
+        type: array
+      issuedConfigs:
+        description: |-
+          IssuedConfigs — уже выданные конфигурации подписки. Без omitempty и с
+          сохранением nil ровно по той же причине, что у Protocols выше: старый
+          ответ портала поля не содержал, и «портал про выданное не сказал» (null)
+          не то же самое, что «выданного нет» ([]). В первом случае мастер обязан
+          промолчать про повторную выдачу, во втором — считать, что страна ещё не
+          выдавалась.
+        items:
+          $ref: '#/definitions/api.AmneziaPremiumIssuedConfig'
+        type: array
+      maxDeviceCount:
+        example: 7
+        type: integer
+      planName:
+        description: |-
+          PlanName — название тарифа (display_name). subscription_description для
+          подписи не годится: там рекламный абзац, а не название.
+        example: Premium
+        type: string
+      subscriptionEndDate:
+        description: |-
+          SubscriptionEndDate — «действует до», как прислал портал (ISO 8601).
+          Строкой, а не временем: активность считает интерфейс, и разбор даты на
+          две стороны разошёлся бы.
+        example: "2027-04-19T08:31:00Z"
         type: string
     type: object
-  api.AmneziaPremiumAccountInfoResponse:
+  api.AmneziaPremiumCatalogResponse:
     properties:
       data:
-        type: object
+        $ref: '#/definitions/api.AmneziaPremiumCatalogData'
       success:
         example: true
         type: boolean
     type: object
-  api.AmneziaPremiumDownloadConfigData:
+  api.AmneziaPremiumConfigData:
     properties:
       config:
-        example: |-
-          [Interface]
-          PrivateKey = ...
+        description: |-
+          Config — текст .conf. Строки с ключом подписки из него вырезаны
+          клиентом (amneziacp.withoutKeyLines): живой ответ несёт ключ всей
+          подписки в комментарии-шапке.
+        type: string
+      countryCode:
+        description: CountryCode — страна в том виде, в каком ушла в портал.
+        example: nl
         type: string
     type: object
-  api.AmneziaPremiumDownloadConfigRequest:
+  api.AmneziaPremiumConfigRequest:
     properties:
       countryCode:
         example: nl
         type: string
-      sid:
-        example: v_sid_cookie_value
-        type: string
     type: object
-  api.AmneziaPremiumDownloadConfigResponse:
+  api.AmneziaPremiumConfigResponse:
     properties:
       data:
-        $ref: '#/definitions/api.AmneziaPremiumDownloadConfigData'
+        $ref: '#/definitions/api.AmneziaPremiumConfigData'
       success:
         example: true
         type: boolean
     type: object
-  api.AmneziaPremiumLoginData:
+  api.AmneziaPremiumCountry:
     properties:
-      sid:
-        example: v_sid_cookie_value
+      code:
+        description: |-
+          Code — код страны, как его прислал портал (server_country_code).
+          Регистр не трогаем: он же уезжает обратно в запрос конфигурации, где
+          приводится к нижнему уже клиентом.
+        example: nl
+        type: string
+      name:
+        description: |-
+          Name — название страны, как его прислал портал, вместе с суффиксами
+          вида «Switzerland [P2P]».
+        example: Netherlands
+        type: string
+      protocols:
+        description: |-
+          Protocols — признак доступности страны: список протоколов, которыми её
+          отдаёт подписка (available_protocols). Нам годится только awg, но
+          решение «показывать ли страну» принимает интерфейс — здесь важно
+          сохранить РАЗЛИЧИЕ между пустым списком (страна не отдаётся ничем) и
+          отсутствующим полем (старый ответ портала его не содержал, и страну
+          отбрасывать нельзя). Поэтому без omitempty: nil уезжает как null,
+          пустой список — как [].
+        items:
+          type: string
+        type: array
+    type: object
+  api.AmneziaPremiumIssuedConfig:
+    properties:
+      countryCode:
+        description: |-
+          CountryCode — страна выданной конфигурации, как её прислал портал
+          (server_country_code). Регистр не трогаем — сопоставление с кодом
+          страны каталога делает интерфейс, как и во всём остальном каталоге.
+        example: nl
+        type: string
+      lastIssuedAt:
+        description: |-
+          LastIssuedAt — когда конфигурацию выдавали в последний раз
+          (last_downloaded), строкой в том виде, в каком прислал портал.
+        example: "2026-09-01T10:00:00Z"
+        type: string
+      portalUpdatedAt:
+        description: |-
+          PortalUpdatedAt — когда конфигурацию в последний раз меняли на стороне
+          портала (worker_last_updated). Позже LastIssuedAt — значит выданное
+          пользователю устарело.
+        example: "2026-09-02T10:00:00Z"
+        type: string
+      sourceType:
+        description: |-
+          SourceType — вид записи, как его прислал портал (source_type), строкой
+          и без разбора. Мастер делит записи по нему: gateway_account — активное
+          устройство подписки, всё прочее (и пустое — старый ответ портала поля
+          не содержал) переиздаваемо, и обе механики выше применяются ТОЛЬКО к
+          переиздаваемым. Без этого поля страна, где выдано активное устройство,
+          считалась бы уже выданной, и мастер показал бы состояние, которого нет.
+        example: downloaded_config
         type: string
     type: object
-  api.AmneziaPremiumLoginRequest:
+  api.AmneziaPremiumKeyData:
     properties:
+      saveError:
+        description: |-
+          SaveError — почему сохранить не вышло; пусто, когда сохранять не просили
+          или сохранение прошло. Непустое значение вместе с успешным ответом POST
+          означает «вошли, но ключ не сохранён»: неудача сохранения не отменяет
+          состоявшийся вход. Без omitempty намеренно: поле, пропадающее из тела
+          там, где ошибки нет, — это и есть вторая форма ответа.
+        type: string
+      stored:
+        description: Stored — шифротекст ключа лежит в настройках.
+        example: true
+        type: boolean
+      usable:
+        description: |-
+          Usable — сохранённый шифротекст расшифровывается секретом устройства.
+          Пара stored:false, usable:false читается как «ключа нет, расшифровывать
+          нечего», а не «ключ есть, но сломан»; сломанный ключ — это stored:true,
+          usable:false. Непригодный шифротекст НЕ стирается: пользователь видит
+          usable:false и вводит ключ заново, а секрет устройства ещё может
+          вернуться из бэкапа.
+        example: true
+        type: boolean
+    type: object
+  api.AmneziaPremiumKeyRequest:
+    properties:
+      key:
+        example: vpn://...
+        type: string
       remember:
         example: true
         type: boolean
-      vpn_key:
-        example: vpn://...
-        type: string
-      vpnKey:
-        example: vpn://...
-        type: string
+      store:
+        example: false
+        type: boolean
     type: object
-  api.AmneziaPremiumLoginResponse:
+  api.AmneziaPremiumKeyResponse:
     properties:
       data:
-        $ref: '#/definitions/api.AmneziaPremiumLoginData'
+        $ref: '#/definitions/api.AmneziaPremiumKeyData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.AmneziaPremiumMirrorData:
+    properties:
+      mirrorUrl:
+        example: https://storage.googleapis.com/amnezia/cp?m-path=/ru
+        type: string
+    type: object
+  api.AmneziaPremiumMirrorRequest:
+    properties:
+      mirrorUrl:
+        example: https://storage.googleapis.com/amnezia/cp?m-path=/ru
+        type: string
+    type: object
+  api.AmneziaPremiumMirrorResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.AmneziaPremiumMirrorData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.AmneziaPremiumRevokeData:
+    properties:
+      countryCode:
+        example: nl
+        type: string
+    type: object
+  api.AmneziaPremiumRevokeRequest:
+    properties:
+      countryCode:
+        example: nl
+        type: string
+    type: object
+  api.AmneziaPremiumRevokeResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.AmneziaPremiumRevokeData'
       success:
         example: true
         type: boolean
@@ -2016,6 +2179,12 @@ definitions:
     type: object
   api.ImportConfRequest:
     properties:
+      amneziaCountry:
+        description: |-
+          AmneziaCountry — код страны подписки Amnezia Premium, из которой взята
+          конфигурация. Шлёт его мастер; обычный импорт файла поле не присылает,
+          и туннель остаётся без метки страны.
+        type: string
       backend:
         description: '"nativewg" | "kernel" (default: "kernel")'
         type: string
@@ -3902,6 +4071,14 @@ definitions:
     type: object
   api.SettingsData:
     properties:
+      apiKey:
+        description: |-
+          ApiKey is the opaque secret accepted in place of a session cookie via
+          `Authorization: Bearer <key>`. Отдаётся сознательно: панель настроек
+          показывает его и даёт скопировать — ключ для того и заводится. Ротация
+          — POST /settings/regenerate-api-key.
+        example: d2f1c0a4-5b6e-4a7c-8d9e-0f1a2b3c4d5e
+        type: string
       authEnabled:
         example: false
         type: boolean
@@ -3941,6 +4118,10 @@ definitions:
       pingCheck:
         $ref: '#/definitions/api.PingCheckSettingsDTO'
       schemaVersion:
+        description: |-
+          SchemaVersion повторяет тег storage.Settings ВМЕСТЕ с omitempty:
+          страница шлёт тело ответа обратно PATCH-ем, а поле патчабельное, так
+          что "schemaVersion":0 в ответе уехал бы в хранилище.
         example: 16
         type: integer
       server:
@@ -8794,101 +8975,309 @@ paths:
       summary: Set access policy standalone mode
       tags:
       - access-policy
-  /amnezia-premium/account-info:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Portal session id returned by login
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/api.AmneziaPremiumAccountInfoRequest'
+  /amnezia/premium/catalog:
+    get:
+      description: 'Данные подписки и список стран. Ответ собирается по белому списку:
+        ключ подписки, сессия портала и прочие поля ответа портала наружу не выходят.'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.AmneziaPremiumAccountInfoResponse'
+            $ref: '#/definitions/api.AmneziaPremiumCatalogResponse'
         "400":
           description: Bad Request
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Get Amnezia Premium account info
-      tags:
-      - amnezia-premium
-  /amnezia-premium/download-config:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Portal session id and country code
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/api.AmneziaPremiumDownloadConfigRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.AmneziaPremiumDownloadConfigResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Download Amnezia Premium config
-      tags:
-      - amnezia-premium
-  /amnezia-premium/login:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Premium vpn:// key
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/api.AmneziaPremiumLoginRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.AmneziaPremiumLoginResponse'
-        "400":
-          description: Bad Request
+        "405":
+          description: Method Not Allowed
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "422":
           description: Unprocessable Entity
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Каталог подписки Amnezia Premium
+      tags:
+      - amnezia-premium
+  /amnezia/premium/config:
+    post:
+      consumes:
+      - application/json
+      description: 'Расходная операция: тратит слот устройств подписки. Параллельный
+        запрос той же страны отвергается (409); разные страны идут параллельно. Ключ
+        подписки в ответе не возвращается и вырезается из самой конфигурации.'
+      parameters:
+      - description: Код страны
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AmneziaPremiumConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumConfigResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Получить конфигурацию страны Amnezia Premium
+      tags:
+      - amnezia-premium
+  /amnezia/premium/key:
+    delete:
+      description: Стирает сохранённый шифротекст, забывает ключ в памяти демона и
+        роняет сессию портала.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumKeyResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
-      summary: Login to Amnezia Premium portal
+      summary: Удалить ключ подписки Amnezia Premium
+      tags:
+      - amnezia-premium
+    get:
+      description: stored — сохранённый шифротекст есть; usable — он расшифровывается
+        секретом устройства. Сам ключ не возвращается.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumKeyResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Состояние ключа подписки Amnezia Premium
+      tags:
+      - amnezia-premium
+    post:
+      consumes:
+      - application/json
+      description: Проверяет ключ входом в портал Amnezia. При store=true сохраняет
+        его зашифрованным секретом устройства; без поля store ключ не сохраняется.
+        Ключ и сессия портала в ответе не возвращаются.
+      parameters:
+      - description: Ключ подписки, флаг сохранения и remember для портала
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AmneziaPremiumKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumKeyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Проверить и сохранить ключ подписки Amnezia Premium
+      tags:
+      - amnezia-premium
+  /amnezia/premium/mirror:
+    get:
+      description: 'Отдаёт адрес, по которому панель реально ходит: хранимое пустое
+        (и непригодное) значение означает адрес по умолчанию.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumMirrorResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Действующий адрес зеркала Amnezia
+      tags:
+      - amnezia-premium
+    post:
+      consumes:
+      - application/json
+      description: Пустое значение и присланный адрес по умолчанию хранятся пустыми
+        (так адрес продолжает ротироваться с релизом). Непригодное хранимое значение
+        заменяется присланным. В ответе — действующий адрес.
+      parameters:
+      - description: Адрес зеркала; пустое значение — зеркало по умолчанию
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AmneziaPremiumMirrorRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumMirrorResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Задать адрес зеркала Amnezia
+      tags:
+      - amnezia-premium
+  /amnezia/premium/revoke:
+    post:
+      consumes:
+      - application/json
+      description: Возвращает слот устройств подписки. Ломает работающий туннель этой
+        страны — подтверждение обязано быть на стороне интерфейса. Параллельный запрос
+        той же страны (отзыв или выдача) отвергается (409).
+      parameters:
+      - description: Код страны
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AmneziaPremiumRevokeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumRevokeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Отозвать конфигурацию страны Amnezia Premium
       tags:
       - amnezia-premium
   /auth/login:
@@ -13665,8 +14054,10 @@ paths:
       - servers
   /settings/get:
     get:
-      description: Returns the full Settings object (server, pingCheck, logging, dnsRoute,
-        managed, apiKey, ...).
+      description: 'Returns the settings whitelist (SettingsData): server, pingCheck,
+        logging, updates, download, dnsRoute, geoFile, apiKey and the rest of the
+        fields the UI reads. Server-internal state (managed servers, peer secrets,
+        sing-box router, OpkgTun ownership) is NOT part of the response.'
       produces:
       - application/json
       responses:

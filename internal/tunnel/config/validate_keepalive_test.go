@@ -8,8 +8,11 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
+// ValidateKeepalive — только формат. Её накладывают на слитую запись, поэтому
+// значение, сохранённое прошлой версией, обязано её проходить: иначе такой
+// туннель перестанет правиться целиком.
 func TestValidateKeepalive(t *testing.T) {
-	for _, ok := range []storage.Keepalive{"", "0", "25", "22-30", "0-80", "65535"} {
+	for _, ok := range []storage.Keepalive{"", "0", "25", "22-30", "65535", "0-80"} {
 		if err := ValidateKeepalive(ok); err != nil {
 			t.Fatalf("%q должно приниматься: %v", ok, err)
 		}
@@ -21,20 +24,26 @@ func TestValidateKeepalive(t *testing.T) {
 	}
 }
 
-// NativeWG отдаёт keepalive в NDMS числом, диапазонов прошивка не знает.
-func TestValidateKeepaliveForBackend(t *testing.T) {
-	if err := ValidateKeepaliveForBackend("22-30", "kernel"); err != nil {
-		t.Fatalf("kernel должен принимать диапазон: %v", err)
+// ValidateKeepaliveSubmitted — то же плюс запрет нулевой нижней границы: 0
+// означает «keepalive выключен», диапазон — «случайное значение из отрезка»,
+// вместе они противоречат друг другу. Её накладывают только на присланное
+// значение, поэтому запирать сохранённые туннели ей нечем.
+func TestValidateKeepaliveSubmitted(t *testing.T) {
+	for _, ok := range []storage.Keepalive{"", "0", "25", "22-30", "65535"} {
+		if err := ValidateKeepaliveSubmitted(ok); err != nil {
+			t.Fatalf("%q должно приниматься: %v", ok, err)
+		}
 	}
-	if err := ValidateKeepaliveForBackend("25", "nativewg"); err != nil {
-		t.Fatalf("nativewg должен принимать одиночное значение: %v", err)
+	for _, bad := range []storage.Keepalive{"abc", "22-", "-5", "30-22", "70000", "0-80", "0-0", "00-80", " 0 - 80 "} {
+		if err := ValidateKeepaliveSubmitted(bad); err == nil {
+			t.Fatalf("%q должно отклоняться", bad)
+		}
 	}
-	err := ValidateKeepaliveForBackend("22-30", "nativewg")
-	if err == nil {
-		t.Fatal("nativewg не должен принимать диапазон")
-	}
-	if !strings.Contains(err.Error(), "kernel") {
-		t.Fatalf("ошибка должна подсказывать про kernel-режим, получили %q", err)
+
+	// Отказ обязан объяснять причину — иначе пользователь правит вслепую.
+	err := ValidateKeepaliveSubmitted("0-80")
+	if err == nil || !strings.Contains(err.Error(), "выключ") {
+		t.Fatalf("сообщение не объясняет, что 0 означает выключенный keepalive: %v", err)
 	}
 }
 

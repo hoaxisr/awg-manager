@@ -562,7 +562,7 @@ func (l *Local) ImportTunnel(ctx context.Context, name, cfg string) (mcpsrv.Tunn
 			if stored.PingCheck != nil {
 				return storage.ErrNoChange
 			}
-			stored.PingCheck = storage.DefaultTunnelPingCheck()
+			stored.PingCheck = storage.DefaultTunnelPingCheckFor(stored.AmneziaCountry)
 			return nil
 		})
 		if err != nil {
@@ -597,7 +597,10 @@ func (l *Local) ReplaceTunnelConfig(ctx context.Context, id, cfg, newName string
 			return nil, fmt.Errorf("failed to stop tunnel before config replace: %w", err)
 		}
 	}
-	if err := l.c.Tunnels.ReplaceConfig(ctx, id, cfg, newName); err != nil {
+	// Страна подписки инструменту MCP неизвестна и им не трогается (nil):
+	// "" стирало бы метку страны у туннеля мастера на любой замене конфига
+	// извне.
+	if err := l.c.Tunnels.ReplaceConfig(ctx, id, cfg, newName, service.ReplaceOptions{}); err != nil {
 		l.tunnelLog.Warn("replace-config", id, "Failed to replace tunnel config (MCP): "+err.Error())
 		return nil, err
 	}

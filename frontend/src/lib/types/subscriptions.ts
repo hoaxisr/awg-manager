@@ -1,31 +1,84 @@
-// === Amnezia Premium (cp.amnezia.org via backend proxy) ===
+// === Amnezia Premium (мастер подписки; ручки /api/amnezia/premium/*) ===
+//
+// Имена полей — НАШИ (camelCase), как их отдаёт бэкенд: ответ портала он
+// собирает полем за полем и наружу не проксирует. Ни ключа подписки, ни
+// сессии портала здесь нет и быть не может.
 
-/** Country row from GET account-info `data.available_countries`. */
+/** Страна каталога подписки: элемент `countries` ответа GET /amnezia/premium/catalog. */
 export interface AmneziaPremiumCountry {
-	server_country_code: string;
-	server_country_name: string;
+	/** Код страны в том виде, в каком прислал портал; регистр не нормализован. */
+	code: string;
+	/** Название страны вместе с суффиксами вида «Switzerland [P2P]». */
+	name: string;
+	/**
+	 * Протоколы, которыми подписка отдаёт страну. null/отсутствие — портал
+	 * поля не прислал, и страну по нему отбрасывать нельзя; пустой список —
+	 * страна не отдаётся ничем.
+	 */
+	protocols?: string[] | null;
 }
 
-/** Запись из `data.issued_configs` (уже выданные конфиги в Amnezia CP). */
+/**
+ * Уже выданная подпиской конфигурация: элемент `issuedConfigs` каталога.
+ *
+ * Отметки времени — СЫРЫЕ строки портала, а не готовые флаги: решение
+ * «устарела ли выдача» принимает фронт (premiumCountryConfigFreshness), и
+ * отсутствие отметки обязано отличаться от «отметка есть, но не подходит».
+ */
 export interface AmneziaPremiumIssuedConfig {
-	installation_uuid?: string;
-	/** Время последнего изменения адреса/воркера на стороне CP. */
-	worker_last_updated?: string;
-	/** Время последней выдачи конфига клиенту; если раньше worker_last_updated — конфиг устарел. */
-	last_downloaded?: string;
-	server_country_code?: string;
-	server_country_name?: string;
-	source_type?: string;
-	os_version?: string;
+	/** Страна выданной конфигурации; регистр не нормализован. */
+	countryCode?: string;
+	/** Когда конфигурацию выдавали в последний раз. */
+	lastIssuedAt?: string;
+	/** Когда конфигурацию в последний раз меняли на стороне портала. */
+	portalUpdatedAt?: string;
+	/** Вид записи: gateway_account — активное устройство, остальное переиздаваемо. */
+	sourceType?: string;
 }
 
-/** Nested JSON under Amnezia CP account-info `data`. */
-export interface AmneziaPremiumAccountInfo {
-	http_status?: number;
-	available_countries?: AmneziaPremiumCountry[];
-	issued_configs?: AmneziaPremiumIssuedConfig[];
-	subscription_status?: string;
-	vpn_key?: string;
+/** Данные подписки и список стран: GET /amnezia/premium/catalog. */
+export interface AmneziaPremiumCatalog {
+	planName?: string;
+	/** «Действует до», строкой ISO 8601 в том виде, в каком прислал портал. */
+	subscriptionEndDate?: string;
+	activeDeviceCount?: number;
+	maxDeviceCount?: number;
+	/** Список стран подписки; бэкенд всегда шлёт список, пустой — не отказ. */
+	countries: AmneziaPremiumCountry[];
+	/** null — портал про выданное не сказал; [] — выданного нет. Это разные состояния. */
+	issuedConfigs?: AmneziaPremiumIssuedConfig[] | null;
+}
+
+/** Состояние ключа подписки — общая форма ответа GET/POST/DELETE /amnezia/premium/key. */
+export interface AmneziaPremiumKeyState {
+	/** Шифротекст ключа лежит в настройках. */
+	stored: boolean;
+	/** Сохранённый шифротекст расшифровывается секретом устройства. */
+	usable: boolean;
+	/** Почему сохранить не вышло; пусто — сохранять не просили или сохранение прошло. */
+	saveError: string;
+}
+
+/** Выданная конфигурация страны: POST /amnezia/premium/config. */
+export interface AmneziaPremiumConfig {
+	countryCode: string;
+	/** Текст .conf; строки с ключом подписки бэкенд из него вырезал. */
+	config: string;
+}
+
+/**
+ * Отозванная конфигурация страны: POST /amnezia/premium/revoke. Слот устройств
+ * подписки возвращён. Счётчика устройств здесь нет намеренно — его знает
+ * каталог, и второй источник этого числа разошёлся бы с ним при первом же
+ * отзыве из соседней вкладки.
+ */
+export interface AmneziaPremiumRevoke {
+	countryCode: string;
+}
+
+/** ДЕЙСТВУЮЩИЙ адрес зеркала Amnezia: GET/POST /amnezia/premium/mirror. */
+export interface AmneziaPremiumMirror {
+	mirrorUrl: string;
 }
 
 // === Subscriptions ===

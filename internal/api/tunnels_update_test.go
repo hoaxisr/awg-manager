@@ -292,6 +292,10 @@ type stubTunnelSvc struct {
 
 	replaceCalls int
 	replaceErr   error
+	// replaceOpts — опции ПОСЛЕДНЕЙ замены: по ним видно, какую семантику
+	// страны handler передал сервису (nil = «не трогать»).
+	replaceOpts  service.ReplaceOptions
+	replaceNames []string
 
 	setEnabledCalls      []toggleCall
 	setDefaultRouteCalls []toggleCall
@@ -344,8 +348,10 @@ func (s *stubTunnelSvc) SetDefaultRoute(_ context.Context, id string, v bool) er
 func (s *stubTunnelSvc) Import(context.Context, string, string, string, service.ImportLink) (*service.TunnelWithStatus, error) {
 	return nil, fmt.Errorf("stub")
 }
-func (s *stubTunnelSvc) ReplaceConfig(context.Context, string, string, string) error {
+func (s *stubTunnelSvc) ReplaceConfig(_ context.Context, _, _, newName string, opts service.ReplaceOptions) error {
 	s.replaceCalls++
+	s.replaceOpts = opts
+	s.replaceNames = append(s.replaceNames, newName)
 	return s.replaceErr
 }
 func (s *stubTunnelSvc) WANModel() *wan.Model                     { return nil }
@@ -845,9 +851,13 @@ func TestTunnelUpdate_FieldInventoryComplete(t *testing.T) {
 		"ResolvedEndpointIP": true,
 		"WdttClientID":       true,
 		"FreeTurnClientID":   true,
-		"RawKernelIface":     true,
-		"RawNdmsIface":       true,
-		"Locked":             true,
+		// AmneziaCountry владеют импорт и замена конфигурации: метка обязана
+		// жить ровно столько, сколько конфигурация, которую она описывает.
+		// Правка карточкой развязала бы её с конфигом.
+		"AmneziaCountry": true,
+		"RawKernelIface": true,
+		"RawNdmsIface":   true,
+		"Locked":         true,
 	}
 
 	rt := reflect.TypeOf(storage.AWGTunnel{})
@@ -913,6 +923,137 @@ func TestTunnelUpdate_KeepsServiceResolvedEndpointIP(t *testing.T) {
 	}
 	if saved.ResolvedEndpointIP != "203.0.113.7" {
 		t.Fatalf("резолв сервиса не доехал до записи: ResolvedEndpointIP=%q", saved.ResolvedEndpointIP)
+	}
+}
+
+// F186: диапазон keepalive (AWG 3.0) на nativewg больше не отвергается —
+// в NDMS уходит его нижняя граница, а в записи диапазон остаётся целиком.
+// Краснеет на возврате ValidateKeepaliveForBackend в хендлер.
+func TestTunnelUpdate_NativeWGAcceptsKeepaliveRange(t *testing.T) {
+	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
+	if err := store.Create(&storage.AWGTunnel{
+		ID: "awg10", Name: "t1", Backend: "nativewg",
+		Interface: storage.AWGInterface{Address: "10.0.0.2/32", MTU: 1420},
+		Peer:      storage.AWGPeer{PublicKey: "pk", Endpoint: "1.2.3.4:51820", PersistentKeepalive: "25"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	h.Update(rr, httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
+		strings.NewReader(`{"peer":{"publicKey":"pk","endpoint":"1.2.3.4:51820","persistentKeepalive":"25-35"}}`)))
+
+	// stubTunnelSvc.Get отвечает ошибкой, поэтому даже принятая правка
+	// заканчивается 400 с UPDATE_FAILED из BuildTunnelResponse — уже ПОСЛЕ
+	// записи в стор. Код проверяем явно: «в теле нет INVALID_KEEPALIVE»
+	// читалось бы как «запрос прошёл», хотя тело в любом случае ошибка.
+	if got := decodeJSONBody(t, rr)["code"]; got != "UPDATE_FAILED" {
+		t.Fatalf("code = %v, ждали UPDATE_FAILED (диапазон отвергнут валидацией?): %.200s", got, rr.Body.String())
+	}
+	saved, err := store.Get("awg10")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if saved.Peer.PersistentKeepalive != "25-35" {
+		t.Fatalf("диапазон не сохранён: %q", saved.Peer.PersistentKeepalive)
+	}
+}
+
+// Запрет нулевой нижней границы не запирает уже сохранённый туннель. В записи
+// "0-80" оказаться могло: до запрета его принимала валидация, а импорт
+// keepalive не проверяет вовсе. Правка, которая keepalive не присылает, обязана
+// проходить — иначе такой туннель нельзя ни переименовать, ни починить, потому
+// что чинят его той же правкой карточки. Тот же довод у валидаторов настроек
+// (internal/api/settings_derive.go): они трогают только присланное.
+func TestTunnelUpdate_StoredZeroRangeKeepaliveDoesNotBlockOtherEdits(t *testing.T) {
+	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
+	if err := store.Create(&storage.AWGTunnel{
+		ID: "awg10", Name: "прежнее", Backend: "kernel",
+		Interface: storage.AWGInterface{Address: "10.0.0.2/32", MTU: 1420},
+		Peer:      storage.AWGPeer{PublicKey: "pk", Endpoint: "1.2.3.4:51820", PersistentKeepalive: "0-80"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Тело без блока пира — ровно то, что шлёт переименование.
+	rr := httptest.NewRecorder()
+	h.Update(rr, httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
+		strings.NewReader(`{"name":"новое"}`)))
+
+	if got := decodeJSONBody(t, rr)["code"]; got == "INVALID_KEEPALIVE" {
+		t.Fatalf("сохранённый \"0-80\" запер правку туннеля: %.200s", rr.Body.String())
+	}
+	saved, err := store.Get("awg10")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if saved.Name != "новое" {
+		t.Fatalf("имя не сохранено: %q", saved.Name)
+	}
+	if saved.Peer.PersistentKeepalive != "0-80" {
+		t.Fatalf("keepalive изменён правкой имени: %q", saved.Peer.PersistentKeepalive)
+	}
+}
+
+// А присланное значение отвергается всегда — в том числе когда в записи лежит
+// такое же: критерий здесь «поле прислали», а не «значение изменилось».
+func TestTunnelUpdate_RejectsSubmittedZeroRangeKeepalive(t *testing.T) {
+	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
+	if err := store.Create(&storage.AWGTunnel{
+		ID: "awg10", Name: "t1", Backend: "kernel",
+		Interface: storage.AWGInterface{Address: "10.0.0.2/32", MTU: 1420},
+		Peer:      storage.AWGPeer{PublicKey: "pk", Endpoint: "1.2.3.4:51820", PersistentKeepalive: "0-80"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	h.Update(rr, httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
+		strings.NewReader(`{"name":"новое","peer":{"publicKey":"pk","endpoint":"1.2.3.4:51820","persistentKeepalive":"0-80"}}`)))
+
+	if got := decodeJSONBody(t, rr)["code"]; got != "INVALID_KEEPALIVE" {
+		t.Fatalf("code = %v, ждали INVALID_KEEPALIVE: %.200s", got, rr.Body.String())
+	}
+	saved, err := store.Get("awg10")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if saved.Name != "t1" {
+		t.Fatalf("правка применена вопреки отказу: имя %q", saved.Name)
+	}
+}
+
+// Формат по-прежнему проверяется: мусор в записи означает keepalive, который
+// не применится нигде, и молча уехать на диск он не должен. "0-80" в этом же
+// списке: нулевая нижняя граница означает выключенный keepalive, диапазон —
+// случайное значение из отрезка, вместе они противоречат друг другу.
+func TestTunnelUpdate_RejectsMalformedKeepalive(t *testing.T) {
+	for _, bad := range []string{"30-22", "70000", "abc", "22-", "0-80"} {
+		t.Run(bad, func(t *testing.T) {
+			h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
+			if err := store.Create(&storage.AWGTunnel{
+				ID: "awg10", Name: "t1", Backend: "nativewg",
+				Interface: storage.AWGInterface{Address: "10.0.0.2/32", MTU: 1420},
+				Peer:      storage.AWGPeer{PublicKey: "pk", Endpoint: "1.2.3.4:51820", PersistentKeepalive: "25"},
+			}); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+
+			rr := httptest.NewRecorder()
+			h.Update(rr, httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
+				strings.NewReader(`{"peer":{"publicKey":"pk","endpoint":"1.2.3.4:51820","persistentKeepalive":"`+bad+`"}}`)))
+
+			if !strings.Contains(rr.Body.String(), "INVALID_KEEPALIVE") {
+				t.Fatalf("%q принят: %.200s", bad, rr.Body.String())
+			}
+			saved, err := store.Get("awg10")
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if saved.Peer.PersistentKeepalive != "25" {
+				t.Fatalf("%q сохранён вопреки отказу: %q", bad, saved.Peer.PersistentKeepalive)
+			}
+		})
 	}
 }
 

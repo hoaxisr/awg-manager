@@ -102,6 +102,21 @@ type Settings struct {
 	// preset (see DNSChainPresetState). Pointer so it's absent from JSON when
 	// never enabled; nil = no preset. Written ONLY via SetDNSChainPresetState.
 	DNSChainPreset *DNSChainPresetState `json:"dnsChainPreset,omitempty"`
+	// AmneziaPremiumMirrorURL — адрес зеркала Amnezia CP, с которого
+	// резолвер берёт рабочий origin портала. Настраивается, потому что
+	// зеркало переезжает: константа заперла бы мастер до следующего релиза.
+	// Пусто (как и непригодное значение) = DefaultAmneziaMirrorURL;
+	// действующий адрес даёт EffectiveAmneziaMirrorURL. В файле пустое
+	// значение остаётся пустым, и присланный дефолт схлопывается в него же
+	// (normalizeAmneziaMirrorURL в internal/api): прибитый литерал отменил
+	// бы ротацию зеркала.
+	AmneziaPremiumMirrorURL string `json:"amneziaPremiumMirrorUrl,omitempty"`
+	// AmneziaPremiumKeyCipher — ключ подписки Amnezia Premium, зашифрованный
+	// DeviceCipher. Пишется ТОЛЬКО ручками premium (никогда через
+	// /settings/update — см. nonPatchableSettings) и наружу не отдаётся ни
+	// одним ответом настроек: в белый список SettingsData (internal/api) оно
+	// не входит.
+	AmneziaPremiumKeyCipher string `json:"amneziaPremiumKeyCipher,omitempty"`
 }
 
 // DNSChainPresetState is backend-managed state of the DNS-chain preset
@@ -514,30 +529,39 @@ type ConnectivityCheckConfig struct {
 
 // AWGTunnel represents AmneziaWG tunnel metadata.
 type AWGTunnel struct {
-	ID                 string                   `json:"id"`
-	Name               string                   `json:"name"`
-	Type               string                   `json:"type,omitempty"` // "awg"
-	Enabled            bool                     `json:"enabled"`
-	Locked             bool                     `json:"locked,omitempty"`             // Защита от изменений (#818): Stop/ToggleEnabled/ToggleDefaultRoute/Update/Delete/Replace отвечают 403
-	DefaultRoute       bool                     `json:"defaultRoute"`                 // Create NDMS default route (ip route default OpkgTunX)
-	DefaultRouteSet    bool                     `json:"defaultRouteSet,omitempty"`    // Migration sentinel: false = field never saved, default to true
-	ISPInterface       string                   `json:"ispInterface,omitempty"`       // Override ISP interface for endpoint route (empty = auto-detect)
-	ISPInterfaceLabel  string                   `json:"ispInterfaceLabel,omitempty"`  // Human-readable name for UI display
-	ResolvedEndpointIP string                   `json:"resolvedEndpointIP,omitempty"` // Persisted resolved endpoint IP for reliable cleanup
-	ActiveWAN          string                   `json:"activeWAN,omitempty"`          // Persisted resolved WAN for WAN event matching
-	StartedAt          string                   `json:"startedAt,omitempty"`          // RFC3339 timestamp of last successful start
-	Backend            string                   `json:"backend,omitempty"`            // "nativewg" | "kernel" | "wdtt-raw" | "" (legacy=kernel)
-	FreeTurnClientID   string                   `json:"freeTurnClientId,omitempty"`   // set when AWG tunnel is auto-created from freeturn:// import
-	WdttClientID       string                   `json:"wdttClientId,omitempty"`       // set when AWG tunnel is auto-created from wdtt/qwdtt import
-	RawKernelIface     string                   `json:"rawKernelIface,omitempty"`     // wdtt-raw: kernel TUN (e.g. wdttraw0 / opkgtun17)
-	RawNdmsIface       string                   `json:"rawNdmsIface,omitempty"`       // wdtt-raw: NDMS OpkgTun name (e.g. OpkgTun17)
-	NWGIndex           int                      `json:"nwgIndex"`                     // Wireguard{N} index, nativewg only (0 is valid!)
-	CreatedAt          string                   `json:"createdAt"`
-	Interface          AWGInterface             `json:"interface"`
-	Peer               AWGPeer                  `json:"peer"`
-	PingCheck          *TunnelPingCheck         `json:"pingCheck,omitempty"`
-	ConnectivityCheck  *ConnectivityCheckConfig `json:"connectivityCheck,omitempty"`
-	Obfuscator         *Obfuscator              `json:"obfuscator,omitempty"` // wg-obfuscator (Phobos/ClusterM); nil = обычный туннель
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Type               string `json:"type,omitempty"` // "awg"
+	Enabled            bool   `json:"enabled"`
+	Locked             bool   `json:"locked,omitempty"`             // Защита от изменений (#818): Stop/ToggleEnabled/ToggleDefaultRoute/Update/Delete/Replace отвечают 403
+	DefaultRoute       bool   `json:"defaultRoute"`                 // Create NDMS default route (ip route default OpkgTunX)
+	DefaultRouteSet    bool   `json:"defaultRouteSet,omitempty"`    // Migration sentinel: false = field never saved, default to true
+	ISPInterface       string `json:"ispInterface,omitempty"`       // Override ISP interface for endpoint route (empty = auto-detect)
+	ISPInterfaceLabel  string `json:"ispInterfaceLabel,omitempty"`  // Human-readable name for UI display
+	ResolvedEndpointIP string `json:"resolvedEndpointIP,omitempty"` // Persisted resolved endpoint IP for reliable cleanup
+	ActiveWAN          string `json:"activeWAN,omitempty"`          // Persisted resolved WAN for WAN event matching
+	StartedAt          string `json:"startedAt,omitempty"`          // RFC3339 timestamp of last successful start
+	Backend            string `json:"backend,omitempty"`            // "nativewg" | "kernel" | "wdtt-raw" | "" (legacy=kernel)
+	FreeTurnClientID   string `json:"freeTurnClientId,omitempty"`   // set when AWG tunnel is auto-created from freeturn:// import
+	WdttClientID       string `json:"wdttClientId,omitempty"`       // set when AWG tunnel is auto-created from wdtt/qwdtt import
+	// AmneziaCountry — код страны подписки Amnezia Premium, из которой
+	// получена ТЕКУЩАЯ конфигурация туннеля (нормализован: нижний регистр,
+	// без пробелов по краям). Пусто — конфигурация не из мастера.
+	//
+	// Владельцы поля ровно два: импорт и замена конфигурации. Поле обязано
+	// умирать вместе с конфигурацией, которую описывает: пользователь,
+	// заменивший .conf вручную, иначе видел бы в мастере метку «этой стране
+	// уже соответствует туннель» на туннеле, к подписке отношения не имеющем.
+	AmneziaCountry    string                   `json:"amneziaCountry,omitempty"`
+	RawKernelIface    string                   `json:"rawKernelIface,omitempty"` // wdtt-raw: kernel TUN (e.g. wdttraw0 / opkgtun17)
+	RawNdmsIface      string                   `json:"rawNdmsIface,omitempty"`   // wdtt-raw: NDMS OpkgTun name (e.g. OpkgTun17)
+	NWGIndex          int                      `json:"nwgIndex"`                 // Wireguard{N} index, nativewg only (0 is valid!)
+	CreatedAt         string                   `json:"createdAt"`
+	Interface         AWGInterface             `json:"interface"`
+	Peer              AWGPeer                  `json:"peer"`
+	PingCheck         *TunnelPingCheck         `json:"pingCheck,omitempty"`
+	ConnectivityCheck *ConnectivityCheckConfig `json:"connectivityCheck,omitempty"`
+	Obfuscator        *Obfuscator              `json:"obfuscator,omitempty"` // wg-obfuscator (Phobos/ClusterM); nil = обычный туннель
 }
 
 // TunnelPingCheck contains per-tunnel ping check configuration.
@@ -571,6 +595,24 @@ func DefaultTunnelPingCheck() *TunnelPingCheck {
 		Timeout:       5,
 		Restart:       true,
 	}
+}
+
+// DefaultTunnelPingCheckFor — та же запись с поправкой на происхождение
+// туннеля. Туннель подписки Amnezia Premium (непустой amneziaCountry) рождается
+// с методом "http" вместо "icmp": выходы коммерческих VPN режут ICMP, и на
+// стенде 2026-09-12 через живой премиум-туннель потери составили 60-100%
+// ДАЖЕ до 1.1.1.1, тогда как обычный TCP шёл 3 из 3. С методом "icmp" такой
+// туннель, если включить мониторинг, считался бы мёртвым постоянно, а при
+// Restart=true его ещё и перезапускало бы по кругу.
+//
+// Правило живёт здесь, а не в обработчике импорта, потому что путей импорта
+// два (web и MCP), и разойтись они не должны.
+func DefaultTunnelPingCheckFor(amneziaCountry string) *TunnelPingCheck {
+	pc := DefaultTunnelPingCheck()
+	if strings.TrimSpace(amneziaCountry) != "" {
+		pc.Method = "http"
+	}
+	return pc
 }
 
 // AWGObfuscation groups all AmneziaWG obfuscation parameters into a
@@ -680,6 +722,19 @@ func (k Keepalive) Single() (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// Effective возвращает значение, которое уходит на прошивку: одиночное — как
+// есть, диапазон — по нижней границе (NDMS и NativeWG принимают только число).
+// Пусто, "0", вне u16 и мусор дают (0, false) — слать нечего. Нулевая нижняя
+// граница ("0-80") — тот же выключенный keepalive, что и "0".
+func (k Keepalive) Effective() (int, bool) {
+	lo, _, _ := strings.Cut(string(k), "-")
+	n, err := strconv.ParseUint(strings.TrimSpace(lo), 10, 16)
+	if err != nil || n == 0 {
+		return 0, false
+	}
+	return int(n), true
 }
 
 func (k *Keepalive) UnmarshalJSON(data []byte) error {

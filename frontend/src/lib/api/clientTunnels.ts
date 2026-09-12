@@ -2,7 +2,11 @@ import type {
 	ASCParams,
 	AWGTagInfo,
 	AWGTunnel,
-	AmneziaPremiumAccountInfo,
+	AmneziaPremiumCatalog,
+	AmneziaPremiumConfig,
+	AmneziaPremiumKeyState,
+	AmneziaPremiumMirror,
+	AmneziaPremiumRevoke,
 	ConnectivityResult,
 	DeleteResult,
 	ExternalTunnel,
@@ -208,34 +212,113 @@ export class TunnelsClient extends CoreClient {
 		return this.request('/import/conf', { method: 'POST', body: JSON.stringify(req) });
 	}
 
-	async replaceConfig(id: string, content: string, name?: string): Promise<AWGTunnel> {
+	/**
+	 * Заменяет конфигурацию туннеля.
+	 *
+	 * amneziaCountry уезжает ВСЕГДА, и отсутствие страны означает «очистить»:
+	 * замена файлом обязана снять прежнюю метку страны подписки, иначе туннель
+	 * остался бы помечен страной, к которой новая конфигурация отношения не
+	 * имеет. Поэтому здесь пустая строка, а не пропущенное поле.
+	 */
+	async replaceConfig(
+		id: string,
+		content: string,
+		name?: string,
+		amneziaCountry?: string
+	): Promise<AWGTunnel> {
 		return this.request(`/tunnels/replace?id=${encodeURIComponent(id)}`, {
 			method: 'POST',
-			body: JSON.stringify({ content, name: name || '' })
+			body: JSON.stringify({
+				content,
+				name: name || '',
+				amneziaCountry: amneziaCountry ?? ''
+			})
 		});
 	}
 
-	async amneziaPremiumLogin(vpnKey: string): Promise<{ sid: string }> {
-		return this.request('/amnezia-premium/login', {
+	// #endregion
+
+
+	// ─────────────────────────────────────────────
+	// #region Amnezia Premium — ключ подписки, каталог, выдача
+	// ─────────────────────────────────────────────
+	//
+	// Сессия портала и сам ключ подписки в браузер не приходят: с ними
+	// работает только бэкенд.
+
+	/**
+	 * Проверяет ключ подписки входом в портал и, если просили, сохраняет его
+	 * на устройстве зашифрованным.
+	 *
+	 * store и remember — РАЗНЫЕ флаги с разными умолчаниями, и это не
+	 * опечатка. store решает судьбу НАШЕГО секрета: умолчание закрытое, ключ
+	 * на флеш не кладётся, пока об этом не попросили явно. remember задаёт
+	 * срок cookie у ПОРТАЛА: умолчание true, иначе ре-логин на каждом шаге.
+	 * Оба уезжают явно — умолчание должно читаться здесь, а не выводиться из
+	 * отсутствия поля на той стороне.
+	 */
+	async amneziaPremiumSaveKey(
+		key: string,
+		opts: { store?: boolean; remember?: boolean } = {}
+	): Promise<AmneziaPremiumKeyState> {
+		return this.request('/amnezia/premium/key', {
 			method: 'POST',
-			body: JSON.stringify({ vpnKey: vpnKey.trim(), remember: true })
+			body: JSON.stringify({
+				key: key.trim(),
+				store: opts.store ?? false,
+				remember: opts.remember ?? true
+			})
 		});
 	}
 
-	async amneziaPremiumAccountInfo(sid: string): Promise<AmneziaPremiumAccountInfo> {
-		return this.request('/amnezia-premium/account-info', {
+	/** Состояние сохранённого ключа подписки. */
+	async amneziaPremiumKeyState(): Promise<AmneziaPremiumKeyState> {
+		return this.request('/amnezia/premium/key');
+	}
+
+	/** Забыть ключ подписки: стирает шифротекст и роняет сессию портала. */
+	async amneziaPremiumForgetKey(): Promise<AmneziaPremiumKeyState> {
+		return this.request('/amnezia/premium/key', { method: 'DELETE' });
+	}
+
+	/** Данные подписки и список стран. Операция читающая. */
+	async amneziaPremiumCatalog(): Promise<AmneziaPremiumCatalog> {
+		return this.request('/amnezia/premium/catalog');
+	}
+
+	/**
+	 * Выдаёт конфигурацию выбранной страны. Операция РАСХОДНАЯ: каждая выдача
+	 * тратит слот устройств подписки, повторять её вслепую нельзя.
+	 */
+	async amneziaPremiumConfig(countryCode: string): Promise<AmneziaPremiumConfig> {
+		return this.request('/amnezia/premium/config', {
 			method: 'POST',
-			body: JSON.stringify({ sid })
+			body: JSON.stringify({ countryCode })
 		});
 	}
 
-	async amneziaPremiumDownloadConfig(
-		sid: string,
-		countryCode: string
-	): Promise<{ config: string }> {
-		return this.request('/amnezia-premium/download-config', {
+	/**
+	 * Отзывает конфигурацию страны и ВОЗВРАЩАЕТ слот устройств подписки —
+	 * обратная операция к amneziaPremiumConfig. Ломает работающий туннель этой
+	 * страны, поэтому вызывать только после подтверждения пользователем.
+	 */
+	async amneziaPremiumRevoke(countryCode: string): Promise<AmneziaPremiumRevoke> {
+		return this.request('/amnezia/premium/revoke', {
 			method: 'POST',
-			body: JSON.stringify({ sid, countryCode })
+			body: JSON.stringify({ countryCode })
+		});
+	}
+
+	/** Действующий адрес зеркала Amnezia (не хранимый: пустое хранимое = адрес по умолчанию). */
+	async amneziaPremiumMirror(): Promise<AmneziaPremiumMirror> {
+		return this.request('/amnezia/premium/mirror');
+	}
+
+	/** Записывает адрес зеркала; пустое значение возвращает зеркало по умолчанию. */
+	async amneziaPremiumSaveMirror(mirrorUrl: string): Promise<AmneziaPremiumMirror> {
+		return this.request('/amnezia/premium/mirror', {
+			method: 'POST',
+			body: JSON.stringify({ mirrorUrl })
 		});
 	}
 

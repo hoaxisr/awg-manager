@@ -71,7 +71,10 @@ type Service interface {
 	// ReplaceConfig replaces a tunnel's Interface and Peer from a new .conf,
 	// preserving all metadata (ID, Backend, NWGIndex, routing, PingCheck, etc.).
 	// Does NOT handle stop/start — caller is responsible for lifecycle.
-	ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string) error
+	//
+	// opts — поля записи, которые меняются ВМЕСТЕ с конфигурацией и тем же
+	// мутатором (см. ReplaceOptions).
+	ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string, opts ReplaceOptions) error
 
 	// Validation
 
@@ -119,11 +122,29 @@ type Service interface {
 type ImportLink struct {
 	// WdttClientID — storage.AWGTunnel.WdttClientID.
 	WdttClientID string
+	// AmneziaCountry — страна подписки Amnezia Premium, из которой получена
+	// импортируемая конфигурация (storage.AWGTunnel.AmneziaCountry).
+	// Нормализуется импортом; пусто — импорт не из мастера.
+	AmneziaCountry string
 	// FreeTurnClientID — storage.AWGTunnel.FreeTurnClientID.
 	FreeTurnClientID string
 	// Obfuscator — туннель через wg-obfuscator (Phobos/ClusterM). LocalPort
 	// выбирает Import; бэкенд принудительно nativewg.
 	Obfuscator *storage.Obfuscator
+}
+
+// ReplaceOptions — поля записи, которые описывают ИМЕННО заменяемую
+// конфигурацию и потому едут в тот же мутатор, что и она.
+//
+// Указатель, а не строка: шестым позиционным string соседние вызовы, которым
+// страна безразлична (импорт связанного прокси-клиента, инструмент MCP),
+// передали бы "" — и молча стёрли бы чужое поле. nil читается компилятором
+// как «не трогать», пустая строка — как осознанная очистка.
+type ReplaceOptions struct {
+	// AmneziaCountry — storage.AWGTunnel.AmneziaCountry. nil — поле не
+	// трогать; непустое значение — поставить (нормализуется); пустая строка —
+	// очистить (конфигурация пришла не из мастера Amnezia Premium).
+	AmneziaCountry *string
 }
 
 // TunnelWithStatus combines stored tunnel data with live status.

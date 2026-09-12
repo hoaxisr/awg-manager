@@ -348,6 +348,31 @@ var nonPatchableSettings = map[string]struct{}{
 	// fakeip/policyTun (легаси-ключи остаются в списке: PATCH не должен уметь
 	// подсунуть их и после миграции).
 	"opkgTun": {},
+	// amneziaPremiumKeyCipher — шифротекст ключа подписки Amnezia Premium,
+	// пишется ТОЛЬКО ручками premium. На общем PATCH он дал бы аутентифи-
+	// цированному клиенту подменить чужой ключ подписки (и затереть свой)
+	// мимо шифрования DeviceCipher — та же логика, что у serverPeerSecrets.
+	"amneziaPremiumKeyCipher": {},
+	// amneziaPremiumMirrorUrl — адрес зеркала Amnezia CP. Секретом он не
+	// является, причина исключения другая: поле принадлежит мастеру premium,
+	// а не странице настроек (решение владельца), и пишется ТОЛЬКО его
+	// ручкой — она же валидирует присланное и лечит испорченное хранимое.
+	// Оставь поле в патче — и появятся ДВЕ записи одного значения с разными
+	// правилами: у второй (общий PATCH) валидации больше нет вовсе, то есть
+	// мусор снова попадал бы в settings.json мимо всякой проверки.
+	"amneziaPremiumMirrorUrl": {},
+	// managedServers (и легаси-одиночка managedServer) несут приватные ключи
+	// самих серверов и их пиров — тот же ключевой материал, что и
+	// serverPeerSecrets, и хранит его только settings.json. Пишутся они
+	// ТОЛЬКО своими атомарными методами (AddManagedServer,
+	// UpdateManagedServer, DeleteManagedServer, SaveManagedServers) с
+	// собственных ручек серверов. На общем PATCH они дали бы аутентифи-
+	// цированному вызывающему переписать или стереть ключи — и стирали бы
+	// их САМИ, без всякого злого умысла: ответ настроек ключи снимает
+	// (белый список settingsResponse их не содержит), а страница настроек шлёт
+	// тело ответа целиком.
+	"managedServers": {},
+	"managedServer":  {},
 }
 
 // TestSettingsPatch_ExcludesServerSecrets pins the intentional exclusion: a

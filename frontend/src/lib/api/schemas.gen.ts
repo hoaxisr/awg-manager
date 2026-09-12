@@ -102,26 +102,69 @@ const api_AllInterfacesResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
-const api_AmneziaPremiumAccountInfoResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.unknown())),
+const api_AmneziaPremiumCatalogData: v.GenericSchema = v.looseObject({
+	activeDeviceCount: v.optional(v.nullable(v.number())),
+	countries: v.optional(v.nullable(v.array(v.lazy(() => api_AmneziaPremiumCountry)))),
+	issuedConfigs: v.optional(v.nullable(v.array(v.lazy(() => api_AmneziaPremiumIssuedConfig)))),
+	maxDeviceCount: v.optional(v.nullable(v.number())),
+	planName: v.optional(v.nullable(v.string())),
+	subscriptionEndDate: v.optional(v.nullable(v.string())),
+});
+
+const api_AmneziaPremiumCatalogResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumCatalogData))),
 	success: v.optional(v.nullable(v.boolean())),
 });
 
-const api_AmneziaPremiumDownloadConfigData: v.GenericSchema = v.looseObject({
+const api_AmneziaPremiumConfigData: v.GenericSchema = v.looseObject({
 	config: v.optional(v.nullable(v.string())),
+	countryCode: v.optional(v.nullable(v.string())),
 });
 
-const api_AmneziaPremiumDownloadConfigResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumDownloadConfigData))),
+const api_AmneziaPremiumConfigResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumConfigData))),
 	success: v.optional(v.nullable(v.boolean())),
 });
 
-const api_AmneziaPremiumLoginData: v.GenericSchema = v.looseObject({
-	sid: v.optional(v.nullable(v.string())),
+const api_AmneziaPremiumCountry: v.GenericSchema = v.looseObject({
+	code: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	protocols: v.optional(v.nullable(v.array(v.string()))),
 });
 
-const api_AmneziaPremiumLoginResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumLoginData))),
+const api_AmneziaPremiumIssuedConfig: v.GenericSchema = v.looseObject({
+	countryCode: v.optional(v.nullable(v.string())),
+	lastIssuedAt: v.optional(v.nullable(v.string())),
+	portalUpdatedAt: v.optional(v.nullable(v.string())),
+	sourceType: v.optional(v.nullable(v.string())),
+});
+
+const api_AmneziaPremiumKeyData: v.GenericSchema = v.looseObject({
+	saveError: v.optional(v.nullable(v.string())),
+	stored: v.optional(v.nullable(v.boolean())),
+	usable: v.optional(v.nullable(v.boolean())),
+});
+
+const api_AmneziaPremiumKeyResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumKeyData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_AmneziaPremiumMirrorData: v.GenericSchema = v.looseObject({
+	mirrorUrl: v.optional(v.nullable(v.string())),
+});
+
+const api_AmneziaPremiumMirrorResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumMirrorData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_AmneziaPremiumRevokeData: v.GenericSchema = v.looseObject({
+	countryCode: v.optional(v.nullable(v.string())),
+});
+
+const api_AmneziaPremiumRevokeResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumRevokeData))),
 	success: v.optional(v.nullable(v.boolean())),
 });
 
@@ -1430,6 +1473,7 @@ const api_ServersAllResponse: v.GenericSchema = v.looseObject({
 });
 
 const api_SettingsData: v.GenericSchema = v.looseObject({
+	apiKey: v.optional(v.nullable(v.string())),
 	authEnabled: v.optional(v.nullable(v.boolean())),
 	connectivityCheckUrl: v.optional(v.nullable(v.string())),
 	disableMemorySaving: v.optional(v.nullable(v.boolean())),
@@ -3138,6 +3182,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"DELETE /access-policies/assign": v.lazy(() => api_OkResponse),
 	"DELETE /access-policies/delete": v.lazy(() => api_OkResponse),
 	"DELETE /access-policies/permit": v.lazy(() => api_OkResponse),
+	"DELETE /amnezia/premium/key": v.lazy(() => api_AmneziaPremiumKeyResponse),
 	"DELETE /awg3-endpoints/{id}": v.lazy(() => api_Awg3ListResponse),
 	"DELETE /connections": v.lazy(() => api_ConnectionKillEnvelope),
 	"DELETE /hydraroute/geo-files/delete": v.lazy(() => api_OkResponse),
@@ -3156,6 +3201,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /access-policies": v.lazy(() => api_AccessPoliciesListResponse),
 	"GET /access-policies/devices": v.lazy(() => api_PolicyDevicesListResponse),
 	"GET /access-policies/interfaces": v.lazy(() => api_PolicyInterfacesListResponse),
+	"GET /amnezia/premium/catalog": v.lazy(() => api_AmneziaPremiumCatalogResponse),
+	"GET /amnezia/premium/key": v.lazy(() => api_AmneziaPremiumKeyResponse),
+	"GET /amnezia/premium/mirror": v.lazy(() => api_AmneziaPremiumMirrorResponse),
 	"GET /auth/status": v.lazy(() => api_AuthStatusResponse),
 	"GET /awg3-endpoints": v.lazy(() => api_Awg3ListResponse),
 	"GET /boot-status": v.lazy(() => api_BootStatusResponse),
@@ -3342,9 +3390,10 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /access-policies/interface-up": v.lazy(() => api_OkResponse),
 	"POST /access-policies/permit": v.lazy(() => api_OkResponse),
 	"POST /access-policies/standalone": v.lazy(() => api_OkResponse),
-	"POST /amnezia-premium/account-info": v.lazy(() => api_AmneziaPremiumAccountInfoResponse),
-	"POST /amnezia-premium/download-config": v.lazy(() => api_AmneziaPremiumDownloadConfigResponse),
-	"POST /amnezia-premium/login": v.lazy(() => api_AmneziaPremiumLoginResponse),
+	"POST /amnezia/premium/config": v.lazy(() => api_AmneziaPremiumConfigResponse),
+	"POST /amnezia/premium/key": v.lazy(() => api_AmneziaPremiumKeyResponse),
+	"POST /amnezia/premium/mirror": v.lazy(() => api_AmneziaPremiumMirrorResponse),
+	"POST /amnezia/premium/revoke": v.lazy(() => api_AmneziaPremiumRevokeResponse),
 	"POST /auth/login": v.lazy(() => api_LoginResponseRaw),
 	"POST /auth/logout": v.lazy(() => api_APIEnvelope),
 	"POST /awg/analyze": v.lazy(() => api_AwgAnalyzeResponse),

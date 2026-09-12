@@ -401,9 +401,18 @@ func (h *TunnelsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	applyTunnelUpdate(&merged, &req)
 	newPingCheckEnabled := merged.PingCheck != nil && merged.PingCheck.Enabled
 
-	if err := config.ValidateKeepaliveForBackend(merged.Peer.PersistentKeepalive, merged.Backend); err != nil {
+	if err := config.ValidateKeepalive(merged.Peer.PersistentKeepalive); err != nil {
 		response.Error(w, err.Error(), "INVALID_KEEPALIVE")
 		return
+	}
+	// Запрет нулевой нижней границы — только на ПРИСЛАННОМ значении: на слитой
+	// записи он запер бы туннель, сохранённый с "0-80" до запрета. Признак
+	// «блок пира прислали» — тот же, по которому его применяет mergedPeer.
+	if req.Peer.PublicKey != "" {
+		if err := config.ValidateKeepaliveSubmitted(req.Peer.PersistentKeepalive); err != nil {
+			response.Error(w, err.Error(), "INVALID_KEEPALIVE")
+			return
+		}
 	}
 	if err := config.ValidateObfuscation(&merged.Interface.AWGObfuscation); err != nil {
 		response.Error(w, err.Error(), awg3ErrorCode(err))
@@ -870,6 +879,11 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseJSON[struct {
 		Content string `json:"content"`
 		Name    string `json:"name"`
+		// AmneziaCountry — страна подписки Amnezia Premium, из которой взята
+		// НОВАЯ конфигурация. Поле шлёт мастер; замена файлом его не шлёт, и
+		// прежняя метка обязана исчезнуть — иначе пользователь видел бы
+		// привязку к стране у конфигурации, к подписке не относящейся.
+		AmneziaCountry string `json:"amneziaCountry"`
 	}](w, r, http.MethodPost)
 	if !ok {
 		return
@@ -914,9 +928,12 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Replace config
+	// Replace config. Страна едет в ту же запись, что и сама конфигурация:
+	// отдельного сохранения из handler'а здесь нет — оно было бы вторым
+	// циклом записи на флеш и окном рассогласования.
 	var warnings []string
-	if err := h.svc.ReplaceConfig(r.Context(), id, req.Content, req.Name); err != nil {
+	opts := service.ReplaceOptions{AmneziaCountry: &req.AmneziaCountry}
+	if err := h.svc.ReplaceConfig(r.Context(), id, req.Content, req.Name, opts); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			response.ErrorWithStatus(w, http.StatusNotFound, err.Error(), "NOT_FOUND")
 			return

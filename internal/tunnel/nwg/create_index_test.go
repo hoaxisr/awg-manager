@@ -24,9 +24,10 @@ import (
 // reads the InterfaceStore cache, and the cache must reflect a just-created
 // (or just-deleted) interface for back-to-back allocations to be correct.
 type fakeNDMS struct {
-	srv   *httptest.Server
-	mu    sync.Mutex
-	known map[string]bool // interface id -> exists
+	srv    *httptest.Server
+	mu     sync.Mutex
+	known  map[string]bool // interface id -> exists
+	bodies []string        // каждое присланное тело: по нему проверяют команды
 }
 
 func newFakeNDMS(t *testing.T, seed ...string) *fakeNDMS {
@@ -42,6 +43,9 @@ func newFakeNDMS(t *testing.T, seed ...string) *fakeNDMS {
 
 func (f *fakeNDMS) handle(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
+	f.mu.Lock()
+	f.bodies = append(f.bodies, string(body))
+	f.mu.Unlock()
 
 	// fetchListMap: GET /show/interface/ -> { id: {iface}, ... }
 	if r.Method == http.MethodGet {

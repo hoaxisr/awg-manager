@@ -783,6 +783,7 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	// невидим.
 	parsed.WdttClientID = strings.TrimSpace(link.WdttClientID)
 	parsed.FreeTurnClientID = strings.TrimSpace(link.FreeTurnClientID)
+	parsed.AmneziaCountry = normalizeAmneziaCountry(link.AmneziaCountry)
 
 	if link.Obfuscator != nil {
 		if err := prepareObfuscatorImport(parsed, link.Obfuscator, s.obfuscatorPortTaken); err != nil {
@@ -838,6 +839,14 @@ func prepareObfuscatorImport(parsed *storage.AWGTunnel, o *storage.Obfuscator, t
 	parsed.ResolvedEndpointIP = ""
 	parsed.Backend = "nativewg"
 	return nil
+}
+
+// normalizeAmneziaCountry приводит код страны к виду, в котором он лежит в
+// записи: нижний регистр, без пробелов по краям. Сравнение кода записи с
+// кодом каталога в мастере — строковое, и «NL» рядом с «nl» дало бы туннель,
+// не совпавший ни с одной страной каталога.
+func normalizeAmneziaCountry(code string) string {
+	return strings.ToLower(strings.TrimSpace(code))
 }
 
 // withTunnelLock выполняет fn под per-tunnel замком оркестратора. Замка может
@@ -940,7 +949,7 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 
 // ReplaceConfig replaces a tunnel's Interface and Peer from a parsed .conf,
 // preserving identity, routing, monitoring, and all other metadata.
-func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string) error {
+func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string, opts ReplaceOptions) error {
 	s.lockTunnel(tunnelID)
 	defer s.unlockTunnel(tunnelID)
 
@@ -1032,6 +1041,14 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 	stored.ActiveWAN = ""
 	stored.StartedAt = ""
 
+	// Нормализация — ДО мутатора: под dir-lock'ом позволены только
+	// присваивания заранее вычисленных значений.
+	var amneziaCountry *string
+	if opts.AmneziaCountry != nil {
+		normalized := normalizeAmneziaCountry(*opts.AmneziaCountry)
+		amneziaCountry = &normalized
+	}
+
 	// Save to storage. Мутатор присваивает уже вычисленные выше поля свежей
 	// записи под локом — сброс runtime-полей здесь осознанная часть замены
 	// конфига, а не затирание чужой параллельной правки.
@@ -1046,6 +1063,13 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 		}
 		if stored.Obfuscator != nil {
 			t.Obfuscator = stored.Obfuscator
+		}
+		// Страна подписки описывает ровно ту конфигурацию, которую кладёт
+		// этот же мутатор, — поэтому едет с ней одной записью. Вторым
+		// Update это был бы лишний цикл флеша и окно, в котором конфигурация
+		// уже новая, а метка страны ещё от прежней.
+		if amneziaCountry != nil {
+			t.AmneziaCountry = *amneziaCountry
 		}
 		t.ResolvedEndpointIP = stored.ResolvedEndpointIP
 		t.ActiveWAN = stored.ActiveWAN
