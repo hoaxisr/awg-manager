@@ -875,25 +875,48 @@ func TestMirrorOriginRejectsSchemeDowngrade(t *testing.T) {
 	}
 }
 
-// Апгрейд и переход внутри https запрещать нельзя: адрес зеркала вводит
-// пользователь, и перенаправлением приезжают и хвостовой слэш, и сокращатель.
-// Тест держит границу узкой — запрещён спуск, а не редирект вообще.
-func TestMirrorOriginFollowsSchemeUpgrade(t *testing.T) {
-	var hits atomic.Int64
-	target := mirrorServer(t, &hits, fixtureOriginA)
+// Следовать перенаправлениям зеркалу нужно: адрес вводит пользователь, и
+// хвостовой слэш с сокращателем приезжают именно ими. Оба остаются ВНУТРИ
+// https — вход резолвера всегда https: ValidateAmneziaMirrorURL отвергает
+// другую схему у присланного адреса, а EffectiveAmneziaMirrorURL подменяет
+// непригодное хранимое дефолтом. Это производственный случай, и он первый.
+//
+// Апгрейд http → https в производстве поэтому не возникает, но покрыт: он —
+// граница самой политики, запрещён СПУСК, а не смена схемы. Запрет любой
+// смены (напрашивающаяся «уборка») переехал бы её молча.
+func TestMirrorOriginFollowsRedirect(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		entry func(http.Handler) *httptest.Server
+	}{
+		{name: "внутри https", entry: httptest.NewTLSServer},
+		{name: "апгрейд с http", entry: httptest.NewServer},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hits atomic.Int64
+			target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits.Add(1)
+				_, _ = io.WriteString(w, mirrorPage(fixtureOriginA))
+			}))
+			t.Cleanup(target.Close)
 
-	entry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL, http.StatusMovedPermanently)
-	}))
-	t.Cleanup(entry.Close)
+			entry := tc.entry(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, target.URL, http.StatusMovedPermanently)
+			}))
+			t.Cleanup(entry.Close)
 
-	m := newMirrorWithClock(target.Client(), testTTL, newFakeClock().now)
-	got, err := m.Origin(context.Background(), entry.URL)
-	if err != nil {
-		t.Fatalf("резолв через перенаправление: %v", err)
-	}
-	if got != fixtureOriginA {
-		t.Fatalf("origin = %q, ожидался %q", got, fixtureOriginA)
+			m := newMirrorWithClock(target.Client(), testTTL, newFakeClock().now)
+			got, err := m.Origin(context.Background(), entry.URL)
+			if err != nil {
+				t.Fatalf("резолв через перенаправление: %v", err)
+			}
+			if got != fixtureOriginA {
+				t.Fatalf("origin = %q, ожидался %q", got, fixtureOriginA)
+			}
+			if n := hits.Load(); n != 1 {
+				t.Fatalf("страница зеркала опрошена %d раз, ожидался 1", n)
+			}
+		})
 	}
 }
 
