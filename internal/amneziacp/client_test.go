@@ -1694,17 +1694,23 @@ func TestMaskSecretKeepsTextBetweenOccurrences(t *testing.T) {
 }
 
 func TestMaskSecretStaysLinear(t *testing.T) {
-	const occurrences = 44000
+	// Размер берётся ПОД пределом принимаемого тела: строки, до которых
+	// доходит maskSecret, приезжают из разобранного ответа, а он ограничен
+	// maxCPBody. Тело сверх предела вычистка обрезает намеренно (см.
+	// TestMaskSecret_OutputNeverExceedsAcceptedBody), и требовать от неё
+	// полной замены на таком входе значило бы проверять недостижимый случай.
 	var b strings.Builder
-	for range occurrences {
+	occurrences := 0
+	for b.Len() < maxCPBody*9/10 {
 		b.WriteString(fixtureKey)
 		b.WriteString(" ")
 		b.WriteString(strings.Repeat("x", 30))
 		b.WriteString(" ")
+		occurrences++
 	}
 	body := b.String()
-	if len(body) < 1<<20 {
-		t.Fatalf("тело %d байт, тест рассчитан на мегабайт", len(body))
+	if len(body) < 1<<19 {
+		t.Fatalf("тело %d байт, тест рассчитан на сотни килобайт", len(body))
 	}
 
 	start := time.Now()
@@ -2486,5 +2492,44 @@ func TestClientCountryConfigStillDoesNotRetryAfterLostResponse(t *testing.T) {
 	}
 	if n := cp.configs.Load(); n != 1 {
 		t.Fatalf("запросов выдачи %d, ожидался ровно 1 — повтор съел бы второй слот", n)
+	}
+}
+
+// Вычистка секрета не может раздуть ответ: маркер (18 байт) длиннее
+// минимального вырезаемого токена `vpn://` (6 байт), поэтому тело из одних
+// таких токенов росло втрое. Вход ограничен maxCPBody, выход не был ограничен
+// ничем — на роутере со 128 МБ это давало до ~3 МиБ из одного ответа.
+func TestMaskSecret_OutputNeverExceedsAcceptedBody(t *testing.T) {
+	// Тело из одних токенов — худший случай для роста.
+	worst := strings.Repeat("vpn:// ", maxCPBody/7+16)
+	got := maskSecret(worst)
+
+	if len(got) > maxCPBody+len(maskOverflowMarker) {
+		t.Fatalf("выход %d байт при пределе %d — вычистка раздувает ответ", len(got), maxCPBody)
+	}
+	if !strings.HasSuffix(got, maskOverflowMarker) {
+		t.Fatalf("обрезка не помечена: получатель не отличит её от конца строки")
+	}
+	if strings.Contains(got, vpnLinkScheme) {
+		t.Fatalf("в обрезанном выходе осталась схема ключа")
+	}
+}
+
+// Обычный ответ предел не трогает: вычистка по-прежнему сокращает, а не режет.
+func TestMaskSecret_NormalBodyIsNotTruncated(t *testing.T) {
+	in := `{"message":"ключ vpn://AAAAtest-key-fixture отвергнут","code":"X"}`
+	got := maskSecret(in)
+
+	if strings.Contains(got, maskOverflowMarker) {
+		t.Fatalf("обычный ответ обрезан: %q", got)
+	}
+	if strings.Contains(got, "test-key-fixture") {
+		t.Fatalf("ключ не вырезан: %q", got)
+	}
+	if !strings.Contains(got, secretMarker) {
+		t.Fatalf("маркер не поставлен: %q", got)
+	}
+	if !strings.Contains(got, "отвергнут") {
+		t.Fatalf("остальной текст потерян: %q", got)
 	}
 }
