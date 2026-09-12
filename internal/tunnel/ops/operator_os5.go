@@ -343,10 +343,6 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	o.logInfo("start", cfg.ID, "Firewall rules added")
 	o.appLog.Info("start", cfg.ID, "Правила файрвола добавлены для "+names.IfaceName)
 
-	// === Phase 8: Save NDMS configuration ===
-	// Saves interface state (address, MTU, conf: running).
-	// Routes are kernel-level volatile — re-created on every Start.
-
 	o.logInfo("start", cfg.ID, "Tunnel started successfully")
 	return nil
 }
@@ -371,8 +367,6 @@ func (o *OperatorOS5Impl) Stop(ctx context.Context, tunnelID string) error {
 	// остановленный сосед вечно держит чужой адрес от снятия (F231). Сосед,
 	// который РАБОТАЕТ, маршрут удержит — снятие идёт общим путём с ref-count.
 	o.removeHostRouteIfUnused(ctx, "stop", tunnelID, "")
-
-	// Save NDMS config so router UI reflects conf: disabled.
 
 	o.logInfo("stop", tunnelID, "Tunnel stopped (link down, conf: disabled)")
 	o.appLog.Info("stop", tunnelID, "Туннель остановлен")
@@ -429,7 +423,7 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 			endpointIP = ip
 		}
 	}
-	// Петлю снимаем тоже: skipEndpointHostRoute запрещает ставить маршрут, но
+	// Петлю снимаем тоже: netutil.SkipHostRoute запрещает ставить маршрут, но
 	// не снимать — наследство прежних версий уходит с роутера отсюда и из
 	// гарда на старте. Через общий путь с ref-count: сосед к тому же серверу
 	// маршрут не потеряет (F130/#867).
@@ -452,9 +446,9 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 	// 3. Remove kernel interface (our amneziawg — NDMS can't delete what we created)
 	o.ipRun(ctx, "/opt/sbin/ip", "link", "del", "dev", names.IfaceName)
 
-	// 4. Persist NDMS config
-
-	// 5. Clear in-memory tracking (endpointRoutes уже забыт на шаге 1)
+	// 4. Clear in-memory tracking (endpointRoutes уже забыт на шаге 1).
+	//    Сохранения конфигурации среди шагов нет: его ведёт SaveCoordinator,
+	//    который сам сводит запросы всех команд в одну запись.
 	o.appliedDNSMu.Lock()
 	delete(o.appliedDNS, stored.ID)
 	o.appliedDNSMu.Unlock()
@@ -618,8 +612,6 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	}
 	o.logInfo("reconcile", cfg.ID, "Firewall rules added")
 	o.appLog.Info("reconcile", cfg.ID, "Правила файрвола добавлены для "+names.IfaceName)
-
-	// === Phase 6: Save NDMS configuration ===
 
 	o.logInfo("reconcile", cfg.ID, "Reconciliation complete")
 	o.appLog.Info("reconcile", cfg.ID, "Конфигурация NDMS восстановлена")

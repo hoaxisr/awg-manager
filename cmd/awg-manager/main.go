@@ -24,6 +24,13 @@ func main() {
 	slowReqMS := flag.Int("slow-request-ms", 0, "Log HTTP handlers slower than this (ms) to stderr via slog (0 disables); long-lived SSE/WS routes are excluded")
 	flag.Parse()
 
+	// `-data-dir` обязан соблюдаться целиком: иначе демон в песочнице пишет
+	// .conf туннелей, файлы релея, модули и скрипты роутера в БОЕВОЙ каталог
+	// (F168, наблюдалось на стенде 08.09). Ставим сразу после разбора флагов:
+	// ниже по main из того же каталога работают и --cleanup, и --service, и
+	// сторы с операторами читают эти пути уже при конструировании.
+	applyDataDir(*dataDir)
+
 	// Adopt the router's local timezone before anything reads time.Local.
 	// Keenetic stores the zone as a POSIX string ("MSK-3") in /var/TZ, which
 	// the Go runtime does not honor via /etc/localtime — so without this the

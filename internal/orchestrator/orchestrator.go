@@ -119,6 +119,8 @@ type Orchestrator struct {
 	appLog *logging.ScopedLogger
 
 	// clock returns current time; injectable for tests. nil → time.Now.
+	// Читается без o.mu: ставится в New (или тестом до первого события) и
+	// дальше не меняется — в отличие от хуков, которые ставит проводка.
 	clock func() time.Time
 
 	// confSettleDelay overrides the package const; injectable for tests.
@@ -184,16 +186,33 @@ func (o *Orchestrator) SetStaticRoute(sr StaticRouteExecutor) { o.staticRoute = 
 func (o *Orchestrator) SetClientRoute(cr ClientRouteExecutor) { o.clientRoute = cr }
 
 // SetEventBus sets the event bus for SSE publishing.
-func (o *Orchestrator) SetEventBus(bus *events.Bus) { o.bus = bus }
+//
+// Все три хука ниже (bus, ifaceInvalidator, onTunnelRunning) ЧИТАЮТСЯ из
+// updateState под o.mu, поэтому и пишутся под ним же: асимметрия
+// «write-unlocked / read-locked» — та же болезнь, что у пробы conf-слоя, и
+// стоит она столько же, сколько лишний Lock на старте демона. F258.
+func (o *Orchestrator) SetEventBus(bus *events.Bus) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.bus = bus
+}
 
 // SetInterfaceInvalidator wires the NDMS interface-cache refresh invoked on a
 // kernel tunnel's confirmed "running" transition. nil-safe. See issue #328.
-func (o *Orchestrator) SetInterfaceInvalidator(fn func(name string)) { o.ifaceInvalidator = fn }
+func (o *Orchestrator) SetInterfaceInvalidator(fn func(name string)) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.ifaceInvalidator = fn
+}
 
 // SetOnTunnelRunning wires a callback invoked when any tunnel (kernel or
 // NativeWG) reaches confirmed running state. Used to restart HydraRoute Neo
 // so it re-applies CONNMARK rules.
-func (o *Orchestrator) SetOnTunnelRunning(fn func(tunnelID string)) { o.onTunnelRunning = fn }
+func (o *Orchestrator) SetOnTunnelRunning(fn func(tunnelID string)) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.onTunnelRunning = fn
+}
 
 // SetConfLayerProbe wires the fresh NDMS read of an interface's conf layer.
 // Им перепроверяются ОБЕ грани: conf=disabled перед остановкой и conf=running

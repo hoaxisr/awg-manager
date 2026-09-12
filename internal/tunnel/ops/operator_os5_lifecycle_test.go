@@ -384,6 +384,29 @@ func TestDelete_RemovesEndpointHostRoute(t *testing.T) {
 		}
 	})
 
+	// F229: запись могла остаться без ResolvedEndpointIP — правка карточки
+	// связанного туннеля обнуляет поле, потому что маршрута до петли нет.
+	// Зацепка при этом не теряется: адрес берётся из endpoint'а. Здесь это
+	// литерал, который netutil разбирает без обращения к DNS, — ветка
+	// настоящего резолва в Delete остаётся непокрытой (в ней блокирующий
+	// сетевой вызов без таймаута, отдельная находка).
+	t.Run("петля без записанного адреса", func(t *testing.T) {
+		o, poster, rec := newOS5Lifecycle(t)
+		stored := &storage.AWGTunnel{ID: "awg10"}
+		stored.Peer.Endpoint = "127.0.0.1:51820"
+
+		if err := o.Delete(context.Background(), stored); err != nil {
+			t.Fatal(err)
+		}
+
+		if !hasCall(rec.Calls, "/opt/sbin/ip route del 127.0.0.1/32") {
+			t.Errorf("наследство не снято из ядра: %v", rec.Calls)
+		}
+		if !hasPayload(poster.payloads, `{"ip":{"route":{"host":"127.0.0.1","no":true}}}`) {
+			t.Errorf("наследство не снято в NDMS: %v", poster.payloads)
+		}
+	})
+
 	// F228: три туннеля к одному серверу делят один host-route (F130/#867).
 	// Удаление одного из них не должно срывать маршрут у оставшихся.
 	t.Run("маршрут держит сосед", func(t *testing.T) {
@@ -641,15 +664,6 @@ func TestStop_RemovesEndpointRoute(t *testing.T) {
 	})
 }
 
-// Адрес, который не разбирается как IP (endpoint с именем хоста), гард не
-// глотает: пусть отказывает команда ip и причина видна в журнале. Молчаливый
-// пропуск спрятал бы испорченную запись туннеля.
-func TestSkipEndpointHostRoute_KeepsUnparsableAddress(t *testing.T) {
-	if skipEndpointHostRoute("vpn.example.com") {
-		t.Error("имя хоста принято за непригодный адрес — маршрут будет молча пропущен")
-	}
-}
-
 // Ref-count считает владельцев ОДНОГО адреса. Сосед с другим endpoint снятию
 // не мешает — иначе любой второй туннель запирал бы уборку навсегда.
 func TestStop_NeighbourWithOtherAddressDoesNotHold(t *testing.T) {
@@ -726,26 +740,37 @@ func TestCleanupEndpointRoute_UntrackedTunnelIsNoop(t *testing.T) {
 // уборку под ключом 127.0.0.1 (F230). Наследство прежних версий снимается не
 // отсюда, а из гарда SetupEndpointRoute и из Delete по записи туннеля.
 func TestRestoreEndpointTracking_SkipsUnroutableEndpoint(t *testing.T) {
-	o, poster, rec := newOS5Lifecycle(t)
-	spy := &recAppLog{}
-	o.SetAppLogger(spy)
+	for _, endpoint := range []string{
+		"127.0.0.1:51820",  // связанный wdtt/freeturn
+		"127.0.0.5:1234",   // вся /8
+		"[::1]:51820",      // v6-петля
+		"0.0.0.0:51820",    // «неуказанный»: фильтрующий DNS на заблокированный домен
+		"169.254.10.1:500", // link-local unicast
+		"[ff02::1]:51820",  // link-local multicast
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			o, poster, rec := newOS5Lifecycle(t)
+			spy := &recAppLog{}
+			o.SetAppLogger(spy)
 
-	ip, err := o.RestoreEndpointTracking(context.Background(), "awg1", "127.0.0.1:51820")
-	if err != nil {
-		t.Fatalf("RestoreEndpointTracking: %v", err)
-	}
-	if ip != "" {
-		t.Errorf("адрес ушёл вызывающему и окажется в ResolvedEndpointIP: %q", ip)
-	}
-	if got := o.GetTrackedEndpointIP("awg1"); got != "" {
-		t.Errorf("петля попала в карту: %q", got)
-	}
-	if len(rec.Calls) != 0 || len(poster.payloads) != 0 {
-		t.Errorf("трекинг не должен ничего слать: %v %v", rec.Calls, poster.payloads)
-	}
-	if !slices.ContainsFunc(spy.entries, func(e string) bool {
-		return strings.HasPrefix(e, "info|restore_tracking|awg1|endpoint не маршрутизируется")
-	}) {
-		t.Errorf("пропуск не виден в журнале: %v", spy.entries)
+			ip, err := o.RestoreEndpointTracking(context.Background(), "awg1", endpoint)
+			if err != nil {
+				t.Fatalf("RestoreEndpointTracking: %v", err)
+			}
+			if ip != "" {
+				t.Errorf("адрес ушёл вызывающему и окажется в ResolvedEndpointIP: %q", ip)
+			}
+			if got := o.GetTrackedEndpointIP("awg1"); got != "" {
+				t.Errorf("непригодный адрес попал в карту: %q — два туннеля запрут друг другу уборку", got)
+			}
+			if len(rec.Calls) != 0 || len(poster.payloads) != 0 {
+				t.Errorf("трекинг не должен ничего слать: %v %v", rec.Calls, poster.payloads)
+			}
+			if !slices.ContainsFunc(spy.entries, func(e string) bool {
+				return strings.HasPrefix(e, "info|restore_tracking|awg1|endpoint не маршрутизируется")
+			}) {
+				t.Errorf("пропуск не виден в журнале: %v", spy.entries)
+			}
+		})
 	}
 }

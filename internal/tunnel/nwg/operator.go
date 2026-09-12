@@ -1223,7 +1223,21 @@ func (o *OperatorNativeWG) resolveOnce(endpoint string, timeout time.Duration) (
 
 // trackEndpointIP records a freshly-resolved endpoint IP for a tunnel.
 // Lazy-inits the map so struct-literal construction (tests) is safe.
+//
+// Адрес, до которого host-route не ставят, не трекаем. Туда попадает
+// Peer.Endpoint обфусцированного туннеля (127.0.0.1:<порт> локального релея —
+// его резолвит createViaBatch) и связанных туннелей wdtt/freeturn в WG-режиме
+// (их резолвят startNative/startProxy). Оркестратор сохраняет
+// GetTrackedEndpointIP в ResolvedEndpointIP (execute.go), а это поле означает
+// адрес, до которого ставится host-route: петля затирала бы там адрес target'а
+// релея. F230.
+//
+// Прежнее значение при этом сохраняется: карта отражает последний адрес, под
+// которым маршрут действительно ставился.
 func (o *OperatorNativeWG) trackEndpointIP(tunnelID, ip string) {
+	if netutil.SkipHostRoute(ip) {
+		return
+	}
 	o.trackedMu.Lock()
 	defer o.trackedMu.Unlock()
 	if o.trackedIP == nil {
