@@ -456,3 +456,22 @@ func MovePeerSignaturesFromServer(sv *ManagedServer) {
 	}
 	sv.LegacyI1, sv.LegacyI2, sv.LegacyI3, sv.LegacyI4, sv.LegacyI5 = "", "", "", "", ""
 }
+
+// migrateToV37 переводит цель пробы связи с gstatic на cp.cloudflare у тех,
+// кто адрес НЕ ТРОГАЛ. Прежний дефолт систематически не отвечает с выходов
+// коммерческих VPN (замер на стенде 2026-09-12: 1 ответ из 3 через живой
+// туннель Amnezia против 3 из 3 с WAN), из-за чего исправный туннель
+// показывался как «Нет связи». Новые установки берут адрес из
+// DefaultConnectivityCheckURL; этой миграцией правка доходит до уже
+// установленных панелей.
+//
+// Сравнение со СТАРЫМ дефолтом, а не «перезаписать всегда»: выбранный
+// пользователем адрес — его решение, и молча заменить его значило бы отобрать
+// настройку. Пустое значение тоже заполняется: пустым его читает
+// pingcheck.checkURL как «взять дефолт», и оставлять дыру в файле незачем.
+// Идемпотентна.
+func (s *SettingsStore) migrateToV37(settings *Settings) {
+	if settings.ConnectivityCheckURL == "" || settings.ConnectivityCheckURL == legacyGstaticCheckURL {
+		settings.ConnectivityCheckURL = DefaultConnectivityCheckURL
+	}
+}

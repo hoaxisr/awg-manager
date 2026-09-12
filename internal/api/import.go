@@ -182,7 +182,7 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 	if err := h.store.Update(tunnel.ID, func(stored *storage.AWGTunnel) error {
 		changed := false
 		if h.pingCheck != nil && stored.PingCheck == nil {
-			stored.PingCheck = storage.DefaultTunnelPingCheck()
+			stored.PingCheck = storage.DefaultTunnelPingCheckFor(stored.AmneziaCountry)
 			changed = true
 		}
 		if !changed {

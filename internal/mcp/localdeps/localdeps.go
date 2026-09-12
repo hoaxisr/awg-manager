@@ -562,7 +562,7 @@ func (l *Local) ImportTunnel(ctx context.Context, name, cfg string) (mcpsrv.Tunn
 			if stored.PingCheck != nil {
 				return storage.ErrNoChange
 			}
-			stored.PingCheck = storage.DefaultTunnelPingCheck()
+			stored.PingCheck = storage.DefaultTunnelPingCheckFor(stored.AmneziaCountry)
 			return nil
 		})
 		if err != nil {

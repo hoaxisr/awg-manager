@@ -597,6 +597,24 @@ func DefaultTunnelPingCheck() *TunnelPingCheck {
 	}
 }
 
+// DefaultTunnelPingCheckFor — та же запись с поправкой на происхождение
+// туннеля. Туннель подписки Amnezia Premium (непустой amneziaCountry) рождается
+// с методом "http" вместо "icmp": выходы коммерческих VPN режут ICMP, и на
+// стенде 2026-09-12 через живой премиум-туннель потери составили 60-100%
+// ДАЖЕ до 1.1.1.1, тогда как обычный TCP шёл 3 из 3. С методом "icmp" такой
+// туннель, если включить мониторинг, считался бы мёртвым постоянно, а при
+// Restart=true его ещё и перезапускало бы по кругу.
+//
+// Правило живёт здесь, а не в обработчике импорта, потому что путей импорта
+// два (web и MCP), и разойтись они не должны.
+func DefaultTunnelPingCheckFor(amneziaCountry string) *TunnelPingCheck {
+	pc := DefaultTunnelPingCheck()
+	if strings.TrimSpace(amneziaCountry) != "" {
+		pc.Method = "http"
+	}
+	return pc
+}
+
 // AWGObfuscation groups all AmneziaWG obfuscation parameters into a
 // dedicated value type. Comparable via `==`, which lets diff helpers
 // stay future-proof: when a new obfuscation field appears, every

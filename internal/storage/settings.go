@@ -16,11 +16,24 @@ import (
 )
 
 const (
-	CurrentSchemaVersion        = 36
+	CurrentSchemaVersion        = 37
 	DefaultPort                 = 2222
 	DefaultInterface            = "br0"
 	DefaultPingCheckTarget      = "8.8.8.8"
-	DefaultConnectivityCheckURL = "http://connectivitycheck.gstatic.com/generate_204"
+	// DefaultConnectivityCheckURL — цель TCP-пробы связи. Cloudflare, а не
+	// Google: замерено на стенде 2026-09-12 через живой туннель Amnezia
+	// Premium (выход Frankfurt) — gstatic отвечал 1 раз из 3, cp.cloudflare
+	// 3 из 3 за ~0.47 с, при том что с WAN напрямую gstatic отвечал 3 из 3.
+	// Google систематически режет свои адреса с выходов коммерческих VPN, а
+	// панель существует ради VPN-туннелей — то есть прежняя цель давала
+	// «Нет связи» на исправном туннеле. Семантика прежняя: HTTP 204 с пустым
+	// телом.
+	DefaultConnectivityCheckURL = "https://cp.cloudflare.com/generate_204"
+
+	// legacyGstaticCheckURL — прежний дефолт. Хранится ради миграции V37:
+	// отличить «пользователь не трогал адрес» от «пользователь выбрал
+	// gstatic сам» можно только сравнением с этой строкой.
+	legacyGstaticCheckURL = "http://connectivitycheck.gstatic.com/generate_204"
 	// DefaultAmneziaMirrorURL — официальное зеркало Amnezia CP, откуда
 	// резолвер берёт рабочий origin портала. Единственное место этого
 	// литерала.
@@ -297,6 +310,9 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		}
 		if settings.SchemaVersion < 36 {
 			s.migrateToV36(&settings)
+		}
+		if settings.SchemaVersion < 37 {
+			s.migrateToV37(&settings)
 		}
 	}
 
