@@ -414,10 +414,39 @@ describe('метка строки страны', () => {
 
 	// Активное устройство — не выданная конфигурация: иначе у страны, где
 	// просто живёт устройство подписки, появится метка про конфигурацию,
-	// которой никто не выдавал.
-	it('запись активного устройства меткой «уже выдавался» не становится', () => {
+	// которой никто не выдавал. Но и молчать нельзя (F284): страна уже
+	// занимает слот, и без метки пользователь выдаёт по ней вторую запись.
+	it('запись активного устройства даёт свою метку, а не «уже выдавался»', () => {
 		const active = issuedConfig({ countryCode: 'is', sourceType: 'gateway_account' });
-		expect(premiumCountryLabel('is', [active], tunnels)).toBeNull();
+		expect(premiumCountryLabel('is', [active], tunnels)).toEqual({
+			kind: 'external',
+			text: 'получено вне AWG-M',
+		});
+	});
+
+	// Приоритет: «получено вне AWG-M» — самая слабая метка. Любая из трёх
+	// предыдущих говорит то же самое конкретнее и обязана перебивать её.
+	it('«получено вне AWG-M» перебивается выдачей, туннелем и устареванием', () => {
+		const device = issuedConfig({ countryCode: 'is', sourceType: 'gateway_account' });
+
+		// Выданная конфигурация той же страны важнее.
+		expect(premiumCountryLabel('is', [device, freshIS], tunnels)?.kind).toBe('issued');
+		// Устаревшая — тем более.
+		expect(premiumCountryLabel('is', [device, staleIS], tunnels)?.kind).toBe('stale');
+
+		// Туннель важнее устройства: страна «ch» в фикстуре туннелей есть.
+		const deviceCH = issuedConfig({ countryCode: 'ch', sourceType: 'gateway_account' });
+		expect(premiumCountryLabel('ch', [deviceCH], tunnels)).toEqual({
+			kind: 'tunnel',
+			text: 'туннель awg-ch-2',
+		});
+	});
+
+	// Метка ищется по СВОЕЙ стране: устройство в другой стране на эту не
+	// распространяется, иначе одно устройство пометило бы весь список.
+	it('устройство чужой страны метку не ставит', () => {
+		const device = issuedConfig({ countryCode: 'is', sourceType: 'gateway_account' });
+		expect(premiumCountryLabel('de', [device], tunnels)).toBeNull();
 	});
 
 	it('регистр кода страны на метку не влияет', () => {
