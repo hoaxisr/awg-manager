@@ -124,3 +124,28 @@ func TestLoggingMiddleware_QuietWithoutPanic(t *testing.T) {
 		t.Fatalf("журнал получил %d записей на обычный запрос", len(rec.entries))
 	}
 }
+
+// ErrAbortHandler — штатный обрыв обработчика, а не авария: им прерывается
+// httputil.ReverseProxy, когда клиент ушёл после отдачи заголовков (у нас так
+// смонтирован прокси капчи). net/http свою панику этим значением из
+// логирования стека исключает; мы обязаны делать то же, иначе закрытая вкладка
+// пишет в кольцо журнала пару килобайт стека на каждый обрыв.
+func TestLoggingMiddleware_AbortHandlerIsNotLogged(t *testing.T) {
+	rec := &recordingAppLogger{}
+	s := &Server{appLog: logging.NewScopedLogger(rec, logging.GroupServer, logging.SubHTTP)}
+	h := s.loggingMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic(http.ErrAbortHandler)
+	}))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/proxyrt/instances/x/captcha/", nil))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("код = %d, want %d — обработка обрыва не должна была измениться", w.Code, http.StatusInternalServerError)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.entries) != 0 {
+		t.Fatalf("обрыв клиента попал в журнал (%d записей): %q", len(rec.entries), rec.entries[0].message)
+	}
+}
