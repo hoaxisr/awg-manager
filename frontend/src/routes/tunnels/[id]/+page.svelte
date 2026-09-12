@@ -603,6 +603,7 @@
 			tunnelState={tunnel.state ?? 'stopped'}
 			backendLabel={tunnel.backend === 'nativewg' ? 'NativeWG' : 'Kernel'}
 			ndmsName={tunnel.interfaceName ?? tunnel.id}
+			tunnelCountry={tunnel.amneziaCountry}
 			onclose={() => replaceModalOpen = false}
 			onreplaced={() => { replaceModalOpen = false; loadTunnel(); }}
 		/>

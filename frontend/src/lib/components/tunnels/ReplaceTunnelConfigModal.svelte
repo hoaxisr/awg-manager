@@ -1,7 +1,9 @@
 <script lang="ts">
-    import { TriangleAlert } from 'lucide-svelte';
+    import { Crown, TriangleAlert } from 'lucide-svelte';
     import { Modal, Button } from '$lib/components/ui';
     import TunnelConfigImportPanel from './TunnelConfigImportPanel.svelte';
+    import { AmneziaPremiumWizard } from '$lib/components/amneziapremium';
+    import type { PremiumWizardResult } from '$lib/components/amneziapremium';
     import { api } from '$lib/api/client';
     import { notifications } from '$lib/stores/notifications';
     import { isVpnLink } from '$lib/utils/vpnlink';
@@ -13,6 +15,8 @@
         tunnelState: string;
         backendLabel: string;
         ndmsName: string;
+        /** Страна подписки, которой туннель помечен сейчас: объекта туннеля здесь нет. */
+        tunnelCountry?: string;
         onclose: () => void;
         onreplaced?: () => void;
     }
@@ -24,6 +28,7 @@
         tunnelState,
         backendLabel,
         ndmsName,
+        tunnelCountry,
         onclose,
         onreplaced
     }: Props = $props();
@@ -35,6 +40,7 @@
     let vpnPasteInput = $state('');
     let linkPreview = $state('');
     let wasOpen = $state(false);
+    let premiumOpen = $state(false);
 
     // Reset state when modal opens (only once per open cycle so polling-tick
     // re-runs don't wipe user edits).
@@ -51,7 +57,35 @@
         vpnPasteInput = '';
         linkPreview = '';
         loading = false;
+        premiumOpen = false;
     });
+
+    /**
+     * Замена конфигурации тем, что выдал мастер подписки. Страна уезжает
+     * вместе с конфигурацией: без неё туннель остался бы помеченным прежней
+     * страной, к которой новая конфигурация отношения не имеет.
+     */
+    async function replaceFromPremium(result: PremiumWizardResult) {
+        loading = true;
+        try {
+            const replaced = await api.replaceConfig(
+                tunnelId,
+                result.config,
+                newName !== tunnelName ? newName : undefined,
+                result.countryCode
+            );
+            if (replaced.warnings?.length) {
+                replaced.warnings.forEach((w: string) => notifications.warning(w));
+            }
+            notifications.success('Конфигурация заменена');
+            onclose();
+            onreplaced?.();
+        } catch (e) {
+            notifications.error(e instanceof Error ? e.message : 'Ошибка замены конфигурации');
+        } finally {
+            loading = false;
+        }
+    }
 
     async function handleReplace() {
         let content = importContent.trim();
@@ -106,6 +140,11 @@
         bind:linkPreview
     />
 
+    <button type="button" class="premium-entry" disabled={loading} onclick={() => (premiumOpen = true)}>
+        <Crown size={14} aria-hidden="true" />
+        Взять конфиг из Amnezia Premium
+    </button>
+
     <div class="name-field">
         <label class="field-label" for="replace-name">Имя туннеля</label>
         <input type="text" id="replace-name" class="name-input" bind:value={newName} placeholder={tunnelName}>
@@ -119,6 +158,16 @@
         </Button>
     {/snippet}
 </Modal>
+
+<!-- Карта «страна → туннель» здесь состоит из одного туннеля — того, который
+     заменяем: за списком ради метки «туннель …» модалка не ходит. -->
+<AmneziaPremiumWizard
+    open={premiumOpen}
+    replaceTarget={{ id: tunnelId, name: tunnelName, country: tunnelCountry }}
+    countryTunnels={[{ name: tunnelName, amneziaCountry: tunnelCountry }]}
+    onclose={() => (premiumOpen = false)}
+    onconfig={(result) => void replaceFromPremium(result)}
+/>
 
 <style>
     .replace-info {
@@ -187,5 +236,27 @@
         font-size: 0.6875rem;
         color: var(--text-muted);
         margin-top: 2px;
+    }
+
+    .premium-entry {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 12px;
+        padding: 0;
+        font-size: 0.75rem;
+        background: none;
+        border: none;
+        color: var(--accent);
+        cursor: pointer;
+    }
+
+    .premium-entry:hover:not(:disabled) {
+        text-decoration: underline;
+    }
+
+    .premium-entry:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
     }
 </style>

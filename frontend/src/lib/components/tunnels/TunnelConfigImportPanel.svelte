@@ -3,8 +3,7 @@
 	import VpnLinkPasteImport from './VpnLinkPasteImport.svelte';
 	import ObfuscatorImportForm, { type ManualObfuscator } from './ObfuscatorImportForm.svelte';
 	import { notifications } from '$lib/stores/notifications';
-	import { getVpnPastePresentation } from '$lib/utils/amneziaPremiumVpnPaste';
-	import { Upload, Clipboard, Crown, Link, Check, Shuffle, Waves } from 'lucide-svelte';
+	import { Upload, Clipboard, Link, Check, Shuffle, Waves } from 'lucide-svelte';
 
 	export type TunnelImportTab = 'file' | 'paste' | 'vpn' | 'phobos' | 'clusterm';
 
@@ -47,8 +46,6 @@
 	let fileInput = $state<HTMLInputElement>();
 	let dragOver = $state(false);
 	let vpnPasteImport = $state<VpnLinkPasteImport>();
-
-	let vpnPastePresentation = $derived(getVpnPastePresentation(vpnPasteInput));
 
 	function handleFileSelect(event: Event) {
 		const input = event.target as HTMLInputElement;
@@ -118,13 +115,11 @@
 			<Clipboard size={16} />
 			Вставить текст
 		</button>
+		<!-- Подпись и иконка постоянные: подписку обслуживает мастер, и
+		     вкладке больше не нужно превращаться в «Amnezia Premium». -->
 		<button type="button" class="tab" class:tab-active={activeTab === 'vpn'} onclick={activateVpnTab}>
-			{#if vpnPastePresentation.kind === 'premium'}
-				<Crown size={16} aria-hidden="true" />
-			{:else}
-				<Link size={16} aria-hidden="true" />
-			{/if}
-			{vpnPastePresentation.label}
+			<Link size={16} aria-hidden="true" />
+			Вставить ссылку
 		</button>
 		{#if obfuscatorTabs}
 			<button
