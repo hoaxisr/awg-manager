@@ -92,3 +92,74 @@ func mustReq(t *testing.T, url string) *http.Request {
 	}
 	return req
 }
+
+// Привязка к интерфейсу запрещает прокси ВСЕГДА, в том числе когда вызывающий
+// просит наследовать. Место было слепым: буквальная реализация «явного
+// наследования» уводила туннельный трафик через прокси окружения мимо
+// устройства, и набор тестов молчал.
+func TestNewTransport_BoundInterfaceIgnoresInheritRequest(t *testing.T) {
+	tr, err := NewTransport(TransportConfig{Interface: "nwg0", Proxy: ProxyInheritEnv})
+	if err != nil {
+		t.Fatalf("транспорт: %v", err)
+	}
+	if tr.Proxy != nil {
+		t.Fatal("привязанный транспорт получил прокси — трафик уйдёт мимо устройства")
+	}
+}
+
+// Адрес прокси из одних пробелов — это «адрес не задан», а не «задан». Иначе
+// такая строка считается НАЗВАННЫМ адресом и отменяет запрошенный прямой
+// выход: поле с защитным смыслом молча перестаёт действовать.
+//
+// Проверяются ОБА входа пакета: расхождение между ними уже случалось —
+// строгий разбор добавили в NewTransport и забыли про Client.Do.
+func TestProxyURL_BlankDoesNotDefeatDirect(t *testing.T) {
+	tr, err := NewTransport(TransportConfig{ProxyURL: "   ", Proxy: ProxyDirect})
+	if err != nil {
+		t.Fatalf("NewTransport: %v", err)
+	}
+	if tr.Proxy != nil {
+		u, _ := tr.Proxy(mustReq(t, "https://example.test/x"))
+		t.Fatalf("NewTransport: прямой выход отменён пустым адресом: %v", u)
+	}
+
+	c := &Client{baseTransport: &http.Transport{}}
+	parsed, err := parseProxyURL("   ")
+	if err != nil {
+		t.Fatalf("parseProxyURL: %v", err)
+	}
+	if got := c.buildTransport(CallConfig{Proxy: ProxyDirect}, parsed); got.Proxy != nil {
+		u, _ := got.Proxy(mustReq(t, "https://example.test/x"))
+		t.Fatalf("Client.Do: прямой выход отменён пустым адресом: %v", u)
+	}
+}
+
+// Негодный адрес прокси — громкий отказ, а не тихий нерабочий транспорт.
+// url.Parse не отвергает строку без схемы и хоста, и такой «прокси» валил бы
+// каждый запрос уже в рантайме, попутно подавляя ProxyDirect.
+func TestProxyURL_UnusableIsRefused(t *testing.T) {
+	for _, bad := range []string{"не-адрес", "garbage", "//host-without-scheme"} {
+		if _, err := NewTransport(TransportConfig{ProxyURL: bad}); err == nil {
+			t.Errorf("NewTransport принял %q как адрес прокси", bad)
+		}
+		if _, err := parseProxyURL(bad); err == nil {
+			t.Errorf("parseProxyURL принял %q — тот же ввод пройдёт через Client.Do", bad)
+		}
+	}
+}
+
+// Второй вход — Client.Do через CallConfig — тоже умеет требовать прямой
+// выход. Он шире NewTransport: через него ходят диагностика, пробы связи и
+// измерение «прямого» IP.
+func TestBuildTransport_CallConfigHonoursDirect(t *testing.T) {
+	c := &Client{baseTransport: &http.Transport{}}
+
+	inherit := c.buildTransport(CallConfig{}, nil)
+	if inherit.Proxy == nil {
+		t.Fatal("умолчание CallConfig изменилось: прокси окружения больше не наследуется")
+	}
+	direct := c.buildTransport(CallConfig{Proxy: ProxyDirect}, nil)
+	if direct.Proxy != nil {
+		t.Fatal("CallConfig{Proxy: ProxyDirect} не даёт прямого выхода")
+	}
+}

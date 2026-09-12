@@ -59,25 +59,9 @@ const (
 // and/or HTTP proxy. Caller owns the returned value; clone per-client if
 // needed.
 func NewTransport(cfg TransportConfig) (*http.Transport, error) {
-	var parsedProxy *url.URL
-	// Пробелы по краям снимаются ДО проверки на пустоту: адрес из одних
-	// пробелов — это «адрес не задан», а не «задан». Без этого url.Parse
-	// успешно разбирал "   " в URL без схемы и хоста, такой адрес считался
-	// НАЗВАННЫМ и отменял запрошенный прямой выход — то есть поле с защитным
-	// смыслом молча переставало действовать.
-	if proxyURL := strings.TrimSpace(cfg.ProxyURL); proxyURL != "" {
-		u, err := url.Parse(proxyURL)
-		if err != nil {
-			return nil, fmt.Errorf("httpclient: invalid proxy URL %q: %w", cfg.ProxyURL, err)
-		}
-		// url.Parse не отвергает строку без схемы и хоста ("не-адрес"
-		// разбирается успешно). Такой «прокси» не работает ни для одного
-		// запроса, и уехать молча он не должен — тем более что он подавляет
-		// ProxyDirect.
-		if u.Scheme == "" || u.Host == "" {
-			return nil, fmt.Errorf("httpclient: proxy URL %q has no scheme or host", cfg.ProxyURL)
-		}
-		parsedProxy = u
+	parsedProxy, err := parseProxyURL(cfg.ProxyURL)
+	if err != nil {
+		return nil, err
 	}
 
 	base := &http.Transport{
@@ -104,4 +88,35 @@ func NewTransport(cfg TransportConfig) (*http.Transport, error) {
 		tr.Proxy = nil
 	}
 	return tr, nil
+}
+
+// parseProxyURL разбирает адрес прокси, заданный вызывающим. nil без ошибки —
+// адрес не задан.
+//
+// Один разбор на ОБА входа пакета (NewTransport и Client.Do): расхождение
+// между ними уже случалось — строгую проверку добавили в один, и тот же ввод
+// вёл себя в двух местах по-разному.
+//
+// Пробелы снимаются ДО проверки на пустоту: адрес из одних пробелов — это
+// «адрес не задан», а не «задан». Иначе url.Parse успешно разбирал "   " в
+// URL без схемы и хоста, такой адрес считался НАЗВАННЫМ и подавлял
+// запрошенный ProxyDirect — поле с защитным смыслом молча переставало
+// действовать.
+//
+// Адрес без схемы или хоста — громкий отказ: url.Parse не отвергает
+// "не-адрес", а такой «прокси» не работает ни для одного запроса и уехать
+// молча не должен.
+func parseProxyURL(raw string) (*url.URL, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("httpclient: invalid proxy URL %q: %w", raw, err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return nil, fmt.Errorf("httpclient: proxy URL %q has no scheme or host", raw)
+	}
+	return u, nil
 }

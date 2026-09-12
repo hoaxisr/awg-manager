@@ -129,13 +129,12 @@ func (c *Client) Do(ctx context.Context, cfg CallConfig) (*Result, error) {
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), buildTrace(timings)))
 
 	// Validate proxy URL early so traffic never leaks via WAN on parse failure.
-	var parsedProxy *url.URL
-	if cfg.ProxyURL != "" {
-		var err error
-		parsedProxy, err = url.Parse(cfg.ProxyURL)
-		if err != nil {
-			return nil, fmt.Errorf("httpclient: invalid proxy URL %q: %w", cfg.ProxyURL, err)
-		}
+	// Разбор ОБЩИЙ с NewTransport: раньше строгая проверка стояла только там,
+	// и один и тот же мусорный адрес на двух входах пакета вёл себя
+	// по-разному — здесь он молча подавлял ProxyDirect.
+	parsedProxy, err := parseProxyURL(cfg.ProxyURL)
+	if err != nil {
+		return nil, err
 	}
 
 	// Build per-call transport (interface binding + proxy).

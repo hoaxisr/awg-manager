@@ -2605,7 +2605,13 @@ func TestClientStopsRetryingDeadMirror(t *testing.T) {
 	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL },
 		func() string { return fixtureKey }, rec.log)
 
-	_, err := c.AccountInfo(context.Background())
+	// Дедлайн обязателен: без него мутация «снять предел попыток» даёт
+	// бесконечный цикл, и тест висит до таймаута всего прогона вместо
+	// внятного красного. again проверяет ctx.Err() первым.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := c.AccountInfo(ctx)
 	if err == nil {
 		t.Fatal("мёртвое зеркало обязано быть ошибкой")
 	}
@@ -2640,5 +2646,74 @@ func TestDirectClientFallbackKeepsHTTP1Pin(t *testing.T) {
 	}
 	if got := tr.TLSClientConfig.NextProtos; len(got) != 1 || got[0] != "http/1.1" {
 		t.Fatalf("ALPN = %v, ожидался [http/1.1]: на h2 портал отвечает EOF", got)
+	}
+}
+
+// Детерминированный отказ резолва НЕ повторяется: страница без мета-тега
+// завтра такой же, как сейчас, и второй полный поход за ней через CDN на
+// роутере со 128 МБ не покупает ничего.
+func TestClientDoesNotRetryDeterministicMirrorFailure(t *testing.T) {
+	cp := newFakeCP(t)
+	var hits atomic.Int64
+	// Страница отвечает 200, но без мета-тега — разбор детерминирован.
+	mirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = io.WriteString(w, "<html><head></head><body>нет тега</body></html>")
+	}))
+	t.Cleanup(mirror.Close)
+
+	rec := &logRecorder{}
+	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL },
+		func() string { return fixtureKey }, rec.log)
+
+	if _, err := c.AccountInfo(context.Background()); err == nil {
+		t.Fatal("страница без мета-тега обязана быть ошибкой")
+	}
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("обращений к зеркалу %d, ожидалось 1 — детерминированный отказ повторён", n)
+	}
+}
+
+// Икота зеркала НЕ съедает бюджет восстановления сессии.
+//
+// Пока счётчик попыток был общим, компаундный отказ (икота зеркала плюс
+// протухшая cookie) выдавал ErrKeyRejected — пользователю предлагали заменить
+// РАБОЧИЙ ключ. Честный исход здесь — успех: сессия восстановима.
+func TestClientMirrorHiccupDoesNotBurnSessionRetry(t *testing.T) {
+	cp := newFakeCP(t)
+	// Первый заход в портал отвечает 401 (протухшая cookie), второй — успех.
+	cp.accountStatus = func(n int64) int {
+		if n == 1 {
+			return http.StatusUnauthorized
+		}
+		return http.StatusOK
+	}
+	var hits atomic.Int64
+	mirror := flakyMirror(t, &hits, 1, cp.origin())
+	rec := &logRecorder{}
+	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL },
+		func() string { return fixtureKey }, rec.log)
+
+	if _, err := c.AccountInfo(context.Background()); err != nil {
+		t.Fatalf("икота зеркала съела повтор сессии: %v", err)
+	}
+}
+
+// Ключевой вход — проверка ключа — тоже переживает икоту зеркала. Раньше
+// починили только call, и самая заметная пользователю ручка осталась с тем же
+// дефектом.
+func TestClientCheckKeySurvivesMirrorHiccup(t *testing.T) {
+	cp := newFakeCP(t)
+	var hits atomic.Int64
+	mirror := flakyMirror(t, &hits, 1, cp.origin())
+	rec := &logRecorder{}
+	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL },
+		func() string { return fixtureKey }, rec.log)
+
+	if err := c.CheckKey(context.Background(), fixtureKey, true); err != nil {
+		t.Fatalf("икота зеркала уронила проверку ключа: %v", err)
+	}
+	if n := hits.Load(); n != 2 {
+		t.Fatalf("обращений к зеркалу %d, ожидалось 2", n)
 	}
 }

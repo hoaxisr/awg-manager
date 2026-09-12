@@ -87,7 +87,8 @@ var ruleSetHTTPClient = newRuleSetHTTPClient()
 
 func newRuleSetHTTPClient() *http.Client {
 	c := &http.Client{Timeout: ruleSetDownloadTimeout}
-	// ProxyFromEnv не задан СОЗНАТЕЛЬНО: это загрузка rule-set'а из интернета,
+	// Прокси окружения наследуется СОЗНАТЕЛЬНО (Proxy оставлен нулевым,
+	// httpclient.ProxyInheritEnv): это загрузка rule-set'а из интернета,
 	// и прокси, прописанный владельцем роутера в окружении демона, уважить
 	// правильно. Требования «только напрямую» тут нет.
 	if tr, err := httpclient.NewTransport(httpclient.TransportConfig{}); err == nil && tr != nil {
