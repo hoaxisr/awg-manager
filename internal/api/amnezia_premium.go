@@ -644,6 +644,32 @@ type AmneziaPremiumCountry struct {
 	Protocols []string `json:"protocols"`
 }
 
+// AmneziaPremiumIssuedConfig — конфигурация, уже выданная подпиской. Ровно
+// три поля, и каждое — под названную механику мастера (спека §5.1): код
+// страны, чтобы сопоставить запись с элементом списка стран, и две отметки
+// времени, по которым мастер решает, устарела ли выданная конфигурация. Всё
+// прочее, что портал кладёт в issued_configs, до браузера не доезжает.
+//
+// Отметки уезжают СЫРЫМИ, а не готовым флагом «устарел», по двум причинам.
+// Во-первых, признак считается сравнением двух дат, и посчитать его здесь
+// значит завести второе место, где живёт правило устаревания, — первое уже
+// есть на фронте (isPremiumCountryConfigStale). Во-вторых, bool уничтожает
+// различие «сравнивать нечем» (отметки нет) и «сравнили, не устарела»: оба
+// стали бы false, и мастер не смог бы промолчать там, где данных нет.
+type AmneziaPremiumIssuedConfig struct {
+	// CountryCode — страна выданной конфигурации, как её прислал портал
+	// (server_country_code). Регистр не трогаем — сопоставление с кодом
+	// страны каталога делает интерфейс, как и во всём остальном каталоге.
+	CountryCode string `json:"countryCode" example:"nl"`
+	// LastIssuedAt — когда конфигурацию выдавали в последний раз
+	// (last_downloaded), строкой в том виде, в каком прислал портал.
+	LastIssuedAt string `json:"lastIssuedAt" example:"2026-09-01T10:00:00Z"`
+	// PortalUpdatedAt — когда конфигурацию в последний раз меняли на стороне
+	// портала (worker_last_updated). Позже LastIssuedAt — значит выданное
+	// пользователю устарело.
+	PortalUpdatedAt string `json:"portalUpdatedAt" example:"2026-09-02T10:00:00Z"`
+}
+
 // AmneziaPremiumCatalogData — данные подписки и список стран.
 //
 // БЕЛЫЙ СПИСОК, собираемый поле за полем: ответ портала наружу не
@@ -652,10 +678,10 @@ type AmneziaPremiumCountry struct {
 // ответа перечислить невозможно. Всё, чего нет в этой структуре, до браузера
 // не доезжает по построению (закрывает F183).
 //
-// Состав — ровно то, что показывает мастер (спека §5.2): название тарифа,
-// срок действия, счётчик устройств, список стран. Продление, контакты
-// поддержки и правовые ссылки портал отдаёт, но мы их не берём — решение
-// владельца.
+// Состав — ровно то, что показывает мастер (спека §5.1, §5.2): название
+// тарифа, срок действия, счётчик устройств, список стран и узкий срез уже
+// выданных конфигураций. Продление, контакты поддержки и правовые ссылки
+// портал отдаёт, но мы их не берём — решение владельца.
 type AmneziaPremiumCatalogData struct {
 	// PlanName — название тарифа (display_name). subscription_description для
 	// подписи не годится: там рекламный абзац, а не название.
@@ -673,6 +699,13 @@ type AmneziaPremiumCatalogData struct {
 	// правдивый ответ портала, и придумывать по нему ошибку значило бы
 	// решать за пользователя, что его подписка сломана.
 	Countries []AmneziaPremiumCountry `json:"countries"`
+	// IssuedConfigs — уже выданные конфигурации подписки. Без omitempty и с
+	// сохранением nil ровно по той же причине, что у Protocols выше: старый
+	// ответ портала поля не содержал, и «портал про выданное не сказал» (null)
+	// не то же самое, что «выданного нет» ([]). В первом случае мастер обязан
+	// промолчать про повторную выдачу, во втором — считать, что страна ещё не
+	// выдавалась.
+	IssuedConfigs []AmneziaPremiumIssuedConfig `json:"issuedConfigs"`
 }
 
 // AmneziaPremiumCatalogResponse — конверт GET /amnezia/premium/catalog.
@@ -694,6 +727,11 @@ type premiumAccountInfo struct {
 		Name      string   `json:"server_country_name"`
 		Protocols []string `json:"available_protocols"`
 	} `json:"available_countries"`
+	IssuedConfigs []struct {
+		Code              string `json:"server_country_code"`
+		LastDownloaded    string `json:"last_downloaded"`
+		WorkerLastUpdated string `json:"worker_last_updated"`
+	} `json:"issued_configs"`
 }
 
 // premiumCatalog переносит ответ портала в наш DTO поле за полем.
@@ -718,6 +756,19 @@ func premiumCatalog(raw []byte) (AmneziaPremiumCatalogData, error) {
 			Name:      c.Name,
 			Protocols: c.Protocols,
 		})
+	}
+	// Слайс заводится ТОЛЬКО когда поле у портала было: безусловный make
+	// превратил бы отсутствующее поле в пустой список и стёр различие,
+	// ради которого оно и едет без omitempty (см. IssuedConfigs).
+	if in.IssuedConfigs != nil {
+		out.IssuedConfigs = make([]AmneziaPremiumIssuedConfig, 0, len(in.IssuedConfigs))
+		for _, c := range in.IssuedConfigs {
+			out.IssuedConfigs = append(out.IssuedConfigs, AmneziaPremiumIssuedConfig{
+				CountryCode:     c.Code,
+				LastIssuedAt:    c.LastDownloaded,
+				PortalUpdatedAt: c.WorkerLastUpdated,
+			})
+		}
 	}
 	return out, nil
 }

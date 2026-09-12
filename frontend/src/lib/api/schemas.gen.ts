@@ -110,6 +110,7 @@ const api_AmneziaPremiumAccountInfoResponse: v.GenericSchema = v.looseObject({
 const api_AmneziaPremiumCatalogData: v.GenericSchema = v.looseObject({
 	activeDeviceCount: v.optional(v.nullable(v.number())),
 	countries: v.optional(v.nullable(v.array(v.lazy(() => api_AmneziaPremiumCountry)))),
+	issuedConfigs: v.optional(v.nullable(v.array(v.lazy(() => api_AmneziaPremiumIssuedConfig)))),
 	maxDeviceCount: v.optional(v.nullable(v.number())),
 	planName: v.optional(v.nullable(v.string())),
 	subscriptionEndDate: v.optional(v.nullable(v.string())),
@@ -143,6 +144,12 @@ const api_AmneziaPremiumDownloadConfigData: v.GenericSchema = v.looseObject({
 const api_AmneziaPremiumDownloadConfigResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumDownloadConfigData))),
 	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_AmneziaPremiumIssuedConfig: v.GenericSchema = v.looseObject({
+	countryCode: v.optional(v.nullable(v.string())),
+	lastIssuedAt: v.optional(v.nullable(v.string())),
+	portalUpdatedAt: v.optional(v.nullable(v.string())),
 });
 
 const api_AmneziaPremiumKeyData: v.GenericSchema = v.looseObject({

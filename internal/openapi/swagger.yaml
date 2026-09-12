@@ -307,6 +307,17 @@ definitions:
         items:
           $ref: '#/definitions/api.AmneziaPremiumCountry'
         type: array
+      issuedConfigs:
+        description: |-
+          IssuedConfigs — уже выданные конфигурации подписки. Без omitempty и с
+          сохранением nil ровно по той же причине, что у Protocols выше: старый
+          ответ портала поля не содержал, и «портал про выданное не сказал» (null)
+          не то же самое, что «выданного нет» ([]). В первом случае мастер обязан
+          промолчать про повторную выдачу, во втором — считать, что страна ещё не
+          выдавалась.
+        items:
+          $ref: '#/definitions/api.AmneziaPremiumIssuedConfig'
+        type: array
       maxDeviceCount:
         example: 7
         type: integer
@@ -411,6 +422,29 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.AmneziaPremiumIssuedConfig:
+    properties:
+      countryCode:
+        description: |-
+          CountryCode — страна выданной конфигурации, как её прислал портал
+          (server_country_code). Регистр не трогаем — сопоставление с кодом
+          страны каталога делает интерфейс, как и во всём остальном каталоге.
+        example: nl
+        type: string
+      lastIssuedAt:
+        description: |-
+          LastIssuedAt — когда конфигурацию выдавали в последний раз
+          (last_downloaded), строкой в том виде, в каком прислал портал.
+        example: "2026-09-01T10:00:00Z"
+        type: string
+      portalUpdatedAt:
+        description: |-
+          PortalUpdatedAt — когда конфигурацию в последний раз меняли на стороне
+          портала (worker_last_updated). Позже LastIssuedAt — значит выданное
+          пользователю устарело.
+        example: "2026-09-02T10:00:00Z"
+        type: string
     type: object
   api.AmneziaPremiumKeyData:
     properties:

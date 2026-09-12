@@ -2090,6 +2090,13 @@ const premiumLeakProbe = "test-leak-6e2c"
 // РАЗНЫЕ по признаку доступности: с awg, без awg и вовсе без поля протоколов
 // — старый ответ портала его не содержал, и различие «пусто» / «нет поля»
 // обязано доехать до интерфейса.
+//
+// Выданных конфигураций ДВЕ, и они тоже разные: у nl отметка портала позже
+// выдачи (конфигурация устарела), у de — раньше (не устарела). Перепутанные
+// местами отметки были бы видны. Лишние поля объекта портала здесь у обеих
+// записей и разные (installation_uuid, source_type, os_version): проверка
+// белого списка на одном поле прошла бы и у того, кто пересылает объект по
+// списку имён, вычищая одно известное.
 const premiumAccountFixture = `{"data":{
 	"display_name":"Premium test-plan-77",
 	"display_description":"` + premiumLeakProbe + `-display-description",
@@ -2115,7 +2122,10 @@ const premiumAccountFixture = `{"data":{
 	],
 	"issued_configs":[
 		{"server_country_code":"nl","last_downloaded":"2026-09-01T10:00:00Z",
-		 "worker_last_updated":"2026-09-02T10:00:00Z","installation_uuid":"` + premiumLeakProbe + `-uuid"}
+		 "worker_last_updated":"2026-09-02T10:00:00Z","installation_uuid":"` + premiumLeakProbe + `-uuid"},
+		{"server_country_code":"de","last_downloaded":"2026-09-03T11:22:33Z",
+		 "worker_last_updated":"2026-08-20T00:00:00Z","source_type":"` + premiumLeakProbe + `-source",
+		 "os_version":"` + premiumLeakProbe + `-os"}
 	]
 }}`
 
@@ -2242,6 +2252,93 @@ func TestAmneziaPremiumCatalog_WhitelistDropsPortalExtras(t *testing.T) {
 	}
 	if got := string(raw.Data.Countries[2]["protocols"]); got != "null" {
 		t.Errorf("страна без поля протоколов: protocols = %s, want null", got)
+	}
+}
+
+// Срез уже выданных конфигураций доезжает до ответа — ОБЕ записи фикстуры,
+// каждая с кодом страны и двумя отметками времени. Отметки едут сырыми: метку
+// «конфиг устарел» мастер получает сравнением, и посчитанный здесь bool стёр
+// бы различие «сравнивать нечем» и «не устарела».
+//
+// Проверяется и НАБОР ключей каждой записи: пересылка объекта портала целиком
+// сравнение значений проходит (нужные поля в ней на месте) и валится только
+// здесь, на лишних.
+func TestAmneziaPremiumCatalog_IssuedConfigsReachResponse(t *testing.T) {
+	st := newPremiumStand(t)
+	st.seedCatalog(t)
+
+	rec := st.catalog(t)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("каталог: %d %s", rec.Code, rec.Body.String())
+	}
+	data := premiumCatalogData(t, rec)
+	want := []AmneziaPremiumIssuedConfig{
+		{CountryCode: "nl", LastIssuedAt: "2026-09-01T10:00:00Z", PortalUpdatedAt: "2026-09-02T10:00:00Z"},
+		{CountryCode: "de", LastIssuedAt: "2026-09-03T11:22:33Z", PortalUpdatedAt: "2026-08-20T00:00:00Z"},
+	}
+	if !slices.Equal(data.IssuedConfigs, want) {
+		t.Fatalf("выданные конфигурации = %+v, want %+v", data.IssuedConfigs, want)
+	}
+
+	var raw struct {
+		Data struct {
+			IssuedConfigs []map[string]json.RawMessage `json:"issuedConfigs"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("разбор тела: %v", err)
+	}
+	if n := len(raw.Data.IssuedConfigs); n != len(want) {
+		t.Fatalf("записей в теле %d, want %d: %s", n, len(want), rec.Body.String())
+	}
+	wantKeys := []string{"countryCode", "lastIssuedAt", "portalUpdatedAt"}
+	for i, obj := range raw.Data.IssuedConfigs {
+		keys := make([]string, 0, len(obj))
+		for k := range obj {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		if !slices.Equal(keys, wantKeys) {
+			t.Errorf("запись %d несёт поля %v, want %v", i, keys, wantKeys)
+		}
+	}
+}
+
+// «Портал про выданное не сказал» и «выданного нет» — РАЗНЫЕ состояния, и
+// различие живёт в сыром JSON: null против []. Приведи первое ко второму — и
+// мастер на старом ответе портала уверенно скажет «эта страна ещё не
+// выдавалась», чего портал не говорил.
+func TestAmneziaPremiumCatalog_IssuedConfigsAbsentIsNotEmpty(t *testing.T) {
+	cases := []struct {
+		name    string
+		account string
+		want    string
+	}{
+		{"поля нет", `{"data":{"display_name":"Premium test-plan-77"}}`, "null"},
+		{"пустой список", `{"data":{"display_name":"Premium test-plan-77","issued_configs":[]}}`, "[]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newPremiumStand(t)
+			st.seedCatalog(t)
+			// Ответ портала подменяется ПОСЛЕ входа: сам вход в account-info не
+			// ходит, а каталог читает портал на каждый запрос.
+			st.portal.setAccount(tc.account)
+
+			rec := st.catalog(t)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("каталог: %d %s", rec.Code, rec.Body.String())
+			}
+			var raw struct {
+				Data map[string]json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+				t.Fatalf("разбор тела: %v", err)
+			}
+			if got := string(raw.Data["issuedConfigs"]); got != tc.want {
+				t.Errorf("issuedConfigs = %s, want %s", got, tc.want)
+			}
+		})
 	}
 }
 
