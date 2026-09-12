@@ -48,6 +48,18 @@ var ErrServiceUnavailable = errors.New("сервис Amnezia недоступе�
 // конфигурация», а не «попробуйте ещё раз» (F200).
 var ErrOutcomeUnknown = errors.New("исход запроса к Amnezia неизвестен")
 
+// ErrResponseUnusable — портал ОТРАБОТАЛ расходный запрос (ответил успехом), а
+// разобрать ответ не удалось: нераспознанный конверт, эхо ключа вместо
+// конфигурации, тело больше предела.
+//
+// От ErrOutcomeUnknown отличается определённостью: там исход неизвестен, здесь
+// он известен — статус успеха означает, что слот устройства подписки уже
+// потрачен. Повторять нельзя ровно так же, поэтому и здесь свой сентинел, не
+// обёрнутый в ErrServiceUnavailable: смысл того — «повторите», а повтор стоит
+// пользователю второго слота. Вызывающий обязан сказать человеку «проверьте,
+// не выдалась ли конфигурация», а не «попробуйте ещё раз».
+var ErrResponseUnusable = errors.New("ответ Amnezia не разобран")
+
 const (
 	// maxCPBody ограничивает ответ портала. Живой account-info — единицы
 	// килобайт, .conf — сотни байт; мегабайт даёт запас на рост, но не даёт
@@ -503,12 +515,26 @@ func (c *Client) send(ctx context.Context, origin, sid string, req cpRequest) ([
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCPBody+1))
 	if err != nil {
-		return nil, recoveryNone, fmt.Errorf("%w: чтение ответа %s: %w", ErrServiceUnavailable, req.path, err)
+		return nil, recoveryNone, fmt.Errorf("%w: чтение ответа %s: %w", bodySentinel(req), req.path, err)
 	}
 	if len(body) > maxCPBody {
-		return nil, recoveryNone, fmt.Errorf("%w: ответ %s больше %d байт", ErrServiceUnavailable, req.path, maxCPBody)
+		return nil, recoveryNone, fmt.Errorf("%w: ответ %s больше %d байт", bodySentinel(req), req.path, maxCPBody)
 	}
 	return body, recoveryNone, nil
+}
+
+// bodySentinel — причина отказа на непригодном теле УСПЕШНОГО ответа портала.
+//
+// У расходной (неповторяемой) ручки статус успеха означает, что запрос
+// обработан и слот устройства подписки уже потрачен: такой отказ обязан
+// нести ErrResponseUnusable, иначе пользователь читает «попробуйте позже» и
+// тратит второй слот. У повторяемых ручек повтор безвреден, и причина
+// остаётся прежней.
+func bodySentinel(req cpRequest) error {
+	if req.repeatable {
+		return ErrServiceUnavailable
+	}
+	return ErrResponseUnusable
 }
 
 // do шлёт один запрос к порталу и классифицирует отказ. Тело успешного ответа
@@ -555,8 +581,14 @@ func (c *Client) do(ctx context.Context, origin, sid string, req cpRequest) (*ht
 }
 
 func statusRecovery(code int) recovery {
-	if code == http.StatusUnauthorized || code == http.StatusForbidden {
+	if code == http.StatusUnauthorized {
 		// Протухшая cookie: войти заново и повторить.
+		//
+		// 403 сюда НЕ входит, хотя причина отказа у них общая (см.
+		// statusError): 401 — «кто ты», то есть правдоподобно истёкшая
+		// сессия, а 403 — «нельзя», то есть политика или исчерпанная квота.
+		// Вход заново её не меняет, а повтор расходной ручки после него
+		// стоит второго слота устройства подписки.
 		return recoverySession
 	}
 	if code/100 == 3 {
@@ -772,7 +804,7 @@ func extractConf(raw []byte, key string) (string, error) {
 	if err != nil {
 		conf, cerr := confFromCandidate(string(raw), key)
 		if cerr != nil {
-			return "", fmt.Errorf("%w: ответ download-config не разобран: %w", ErrServiceUnavailable, err)
+			return "", fmt.Errorf("%w: ответ download-config не разобран: %w", ErrResponseUnusable, err)
 		}
 		return conf, nil
 	}
@@ -781,7 +813,7 @@ func extractConf(raw []byte, key string) (string, error) {
 			return conf, nil
 		}
 	}
-	return "", fmt.Errorf("%w: в ответе download-config нет конфигурации", ErrServiceUnavailable)
+	return "", fmt.Errorf("%w: в ответе download-config нет конфигурации", ErrResponseUnusable)
 }
 
 func confFromCandidate(s, key string) (string, error) {

@@ -813,8 +813,15 @@ func TestClientCountryConfigExtraction(t *testing.T) {
 				if got != "" {
 					t.Fatalf("при ошибке конфиг обязан быть пустым, получено %q", got)
 				}
-				if !errors.Is(err, ErrServiceUnavailable) {
+				// Расходная ручка ответила успехом — слот подписки уже
+				// потрачен, и отказ обязан нести СВОЮ причину. Общий «сервис
+				// недоступен» отправил бы пользователя повторить, то есть
+				// потратить второй слот.
+				if !errors.Is(err, ErrResponseUnusable) {
 					t.Fatalf("ошибка не различима сентинелом: %v", err)
+				}
+				if errors.Is(err, ErrServiceUnavailable) {
+					t.Fatalf("потраченный слот выдан за «сервис недоступен, повторите»: %v", err)
 				}
 			})
 		}
@@ -996,15 +1003,29 @@ func TestClientChecksStatusBeforeReadingBody(t *testing.T) {
 // напрямую транспортом, поднимать сервер незачем.
 const stubMirrorURL = "https://mirror-stub.example.test/cp"
 
-// Предел размера ответа обязан обрывать чтение, а не только отвергать
-// результат: цель — роутер со 128 МБ.
+// Предел размера ответа обязан отвергать ВАЛИДНОЕ тело, которое больше
+// предела, и обрывать чтение, а не только отвергать результат: цель — роутер
+// со 128 МБ.
+//
+// Тело именно валидное и именно у РАСХОДНОЙ ручки. На мусорном теле тест зелен
+// по неверной причине: мусор отвергает разбор, и со снятым пределом он
+// отвергает его ровно так же. Конфигурация, обрезанная на пределе, наоборот,
+// разбирается как настоящая — без проверки длины пользователь получил бы
+// обрубок конфигурации в файле туннеля, а роутер — тело целиком в памяти.
 func TestClientStopsReadingAtLimit(t *testing.T) {
 	// Размер фикстуры — литерал, а не выражение от maxCPBody: иначе любое
 	// значение предела проходит тест, включая снятый предел.
 	if maxCPBody != 1<<20 {
 		t.Fatalf("предел тела %d, ожидался 1 МиБ", maxCPBody)
 	}
-	const bodySize = 4 << 20
+	// Конфигурация в начале, заполнитель комментариями следом: обрезанное на
+	// пределе тело обязано оставаться разбираемым, иначе тест снова краснеет
+	// не на пределе. 4 байта на строку × 512 Ки строк = 2 МиБ заполнителя.
+	body := fixtureConf + "\n" + strings.Repeat("# x\n", 512<<10)
+	if len(body) <= maxCPBody {
+		t.Fatalf("тело фикстуры %d байт, оно обязано быть больше предела %d", len(body), maxCPBody)
+	}
+
 	var served atomic.Int64
 	var closed atomic.Bool
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -1020,8 +1041,8 @@ func TestClientStopsReadingAtLimit(t *testing.T) {
 				StatusCode:    http.StatusOK,
 				Status:        "200 OK",
 				Header:        make(http.Header),
-				ContentLength: bodySize,
-				Body:          &hugeBody{left: bodySize, served: &served, closed: &closed},
+				ContentLength: int64(len(body)),
+				Body:          &countingBody{r: strings.NewReader(body), served: &served, closed: &closed},
 				Request:       r,
 			}, nil
 		}
@@ -1030,12 +1051,20 @@ func TestClientStopsReadingAtLimit(t *testing.T) {
 	rec := &logRecorder{}
 	c := NewClient(client, func() string { return stubMirrorURL }, func() string { return fixtureKey }, rec.log)
 
-	got, err := c.AccountInfo(context.Background())
+	got, err := c.CountryConfig(context.Background(), "nl")
 	if err == nil {
-		t.Fatalf("ответ в %d байт обязан быть отвергнут, получено %s", bodySize, got)
+		t.Fatalf("тело в %d байт обязано быть отвергнуто, получено %d байт конфигурации", len(body), len(got))
 	}
-	if !errors.Is(err, ErrServiceUnavailable) {
+	if got != "" {
+		t.Fatalf("при отказе конфиг обязан быть пустым, получено %d байт", len(got))
+	}
+	// Статус ответа был успешным — портал запрос обработал, слот подписки
+	// потрачен. Причина отказа обязана это различать.
+	if !errors.Is(err, ErrResponseUnusable) {
 		t.Fatalf("ошибка не различима сентинелом: %v", err)
+	}
+	if errors.Is(err, ErrServiceUnavailable) {
+		t.Fatalf("потраченный слот выдан за «сервис недоступен, повторите»: %v", err)
 	}
 	if n := served.Load(); n > maxCPBody+1 {
 		t.Fatalf("прочитано %d байт при пределе %d: чтение не оборвано", n, maxCPBody)
@@ -1043,6 +1072,33 @@ func TestClientStopsReadingAtLimit(t *testing.T) {
 	if !closed.Load() {
 		t.Fatal("тело ответа не закрыто")
 	}
+
+	// У ПОВТОРЯЕМОЙ ручки та же длина — прежний класс отказа: повтор чтения
+	// ничего не стоит, и звать повторить там честно.
+	if _, err := c.AccountInfo(context.Background()); !errors.Is(err, ErrServiceUnavailable) {
+		t.Fatalf("предел у повторяемой ручки сменил класс отказа: %v", err)
+	}
+}
+
+// countingBody отдаёт готовое тело и считает ОТДАННЫЕ байты: предел обязан
+// обрывать чтение, а не только отвергать прочитанное. Тело собрано заранее, а
+// не генерируется на лету (ср. hugeBody): проверке нужна валидная
+// конфигурация в начале, а не заполнитель целиком.
+type countingBody struct {
+	r      *strings.Reader
+	served *atomic.Int64
+	closed *atomic.Bool
+}
+
+func (b *countingBody) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	b.served.Add(int64(n))
+	return n, err
+}
+
+func (b *countingBody) Close() error {
+	b.closed.Store(true)
+	return nil
 }
 
 // Точка 10: пустой ключ отсекается до сети — ни к порталу, ни к зеркалу.
@@ -1653,8 +1709,11 @@ func TestClientCountryConfigRefusesSubscriptionKeyEcho(t *testing.T) {
 			if got != "" {
 				t.Fatalf("при отказе конфиг обязан быть пустым, получено %q", got)
 			}
-			if !errors.Is(err, ErrServiceUnavailable) {
+			if !errors.Is(err, ErrResponseUnusable) {
 				t.Fatalf("ошибка не различима сентинелом: %v", err)
+			}
+			if errors.Is(err, ErrServiceUnavailable) {
+				t.Fatalf("потраченный слот выдан за «сервис недоступен, повторите»: %v", err)
 			}
 		})
 	}

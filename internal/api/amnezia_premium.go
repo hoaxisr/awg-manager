@@ -34,6 +34,11 @@ const (
 	// отказ линии, на котором повторять НЕЛЬЗЯ: повтор потратит второй слот
 	// подписки.
 	codePremiumOutcomeUnknown = "AMNEZIA_PREMIUM_OUTCOME_UNKNOWN"
+	// codePremiumResponseUnusable — портал расходную операцию ВЫПОЛНИЛ
+	// (ответил успехом), а его ответ не разобран. Свой код рядом с
+	// codePremiumOutcomeUnknown, а не он же: там исход неизвестен, здесь слот
+	// подписки потрачен точно, и повторять нельзя тем более.
+	codePremiumResponseUnusable = "AMNEZIA_PREMIUM_RESPONSE_UNUSABLE"
 	// codeInvalidAmneziaMirrorURL — тот же код, которым непригодный адрес
 	// зеркала отвергали настройки, пока поле принадлежало им: класс отказа не
 	// изменился, менять код значило бы ломать клиента ради переезда ручки.
@@ -611,6 +616,14 @@ func cpFailure(err error) (status int, code, message string) {
 		return http.StatusBadGateway, codePremiumOutcomeUnknown,
 			"Портал Amnezia ответил перенаправлением — выдана конфигурация или нет, неизвестно. " +
 				"Откройте список стран и проверьте счётчик устройств, прежде чем запрашивать снова"
+	case errors.Is(err, amneziacp.ErrResponseUnusable):
+		// Портал запрос ОБРАБОТАЛ: слот устройства подписки потрачен, а
+		// разобрать ответ не удалось. Текст говорит это прямо и повторить не
+		// зовёт — повтор потратит второй слот (F200).
+		return http.StatusBadGateway, codePremiumResponseUnusable,
+			"Портал Amnezia обработал запрос, но конфигурацию из ответа разобрать не удалось — " +
+				"слот устройства подписки потрачен. Откройте список стран и проверьте счётчик устройств, " +
+				"прежде чем запрашивать конфигурацию этой страны"
 	case errors.Is(err, amneziacp.ErrMirrorUnavailable):
 		return http.StatusBadGateway, codePremiumMirrorUnavailable, "Зеркало Amnezia недоступно — попробуйте позже"
 	default:

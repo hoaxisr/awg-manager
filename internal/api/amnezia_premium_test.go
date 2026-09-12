@@ -64,6 +64,9 @@ type premiumPortal struct {
 	configs []string
 	// configStatus — статус ответа /api/download-config; 0 или 200 — успех.
 	configStatus int
+	// configBody — тело успешного ответа /api/download-config. Пусто —
+	// premiumConfFixture, то есть живая форма выдачи.
+	configBody string
 	// configHold придерживает ОДИН следующий запрос конфигурации.
 	configHold *premiumHold
 }
@@ -164,6 +167,7 @@ func (p *premiumPortal) handleDownloadConfig(w http.ResponseWriter, r *http.Requ
 	p.mu.Lock()
 	p.configs = append(p.configs, in.CountryCode)
 	status := p.configStatus
+	respBody := p.configBody
 	hold := p.configHold
 	p.configHold = nil
 	p.mu.Unlock()
@@ -183,7 +187,10 @@ func (p *premiumPortal) handleDownloadConfig(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(status)
 		return
 	}
-	_, _ = io.WriteString(w, premiumConfFixture)
+	if respBody == "" {
+		respBody = premiumConfFixture
+	}
+	_, _ = io.WriteString(w, respBody)
 }
 
 // setAccount задаёт тело ответа /api/account-info.
@@ -197,6 +204,14 @@ func (p *premiumPortal) setAccount(body string) {
 func (p *premiumPortal) setConfigStatus(code int) {
 	p.mu.Lock()
 	p.configStatus = code
+	p.mu.Unlock()
+}
+
+// setConfigBody задаёт тело УСПЕШНОГО ответа расходной ручки: слот подписки
+// портал списал, а что приехало в ответе — дело теста.
+func (p *premiumPortal) setConfigBody(body string) {
+	p.mu.Lock()
+	p.configBody = body
 	p.mu.Unlock()
 }
 
@@ -433,6 +448,18 @@ func (s *premiumStand) configInto(rec http.ResponseWriter, code string) {
 	req := httptest.NewRequest(http.MethodPost, "/api/amnezia/premium/config",
 		strings.NewReader(`{"countryCode":"`+code+`"}`))
 	s.h.Config(rec, req)
+}
+
+// configWithContext запрашивает конфигурацию запросом с ЧУЖИМ контекстом:
+// так проверяется, что контекст запроса доезжает до портала, а не подменяется
+// по дороге на context.Background().
+func (s *premiumStand) configWithContext(t *testing.T, ctx context.Context, code string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/amnezia/premium/config",
+		strings.NewReader(`{"countryCode":"`+code+`"}`)).WithContext(ctx)
+	s.h.Config(rec, req)
+	return rec
 }
 
 func (s *premiumStand) config(t *testing.T, code string) *httptest.ResponseRecorder {
@@ -1440,6 +1467,7 @@ func TestAmneziaPremiumKey_FailureMapping(t *testing.T) {
 			// оборачивает его в общий сентинел, и ветка зеркала обязана быть
 			// РАНЬШЕ общей, иначе своя причина теряется.
 			{"зеркало недоступно под общим сентинелом", fmt.Errorf("%w: %w", amneziacp.ErrServiceUnavailable, amneziacp.ErrMirrorUnavailable), http.StatusBadGateway, codePremiumMirrorUnavailable},
+			{"ответ расходной ручки не разобран", amneziacp.ErrResponseUnusable, http.StatusBadGateway, codePremiumResponseUnusable},
 			{"сервис недоступен", amneziacp.ErrServiceUnavailable, http.StatusServiceUnavailable, codePremiumServiceUnavailable},
 			{"сентинел, которого мы не знаем", errors.New("отказ неизвестного класса"), http.StatusServiceUnavailable, codePremiumServiceUnavailable},
 		}
@@ -2546,6 +2574,134 @@ func TestAmneziaPremiumConfig_RedirectIsNotRetryable(t *testing.T) {
 	}
 	if got := st.portal.configsSeen(); len(got) != 1 {
 		t.Fatalf("запросов конфигурации к порталу %d (%v), ждали 1", len(got), got)
+	}
+}
+
+// Ответ 200 с непригодным телом у расходной ручки — СВОЙ класс отказа, и
+// текст НЕ зовёт повторить. Это хуже перенаправления: там исход неизвестен, а
+// здесь портал отработал (статус успеха), слот устройства подписки списан, и
+// не разобрался только ответ. Общий «сервис недоступен — попробуйте позже»
+// отправляет пользователя за вторым слотом (F200).
+func TestAmneziaPremiumConfig_UnusableResponseIsNotRetryable(t *testing.T) {
+	// Формы непригодного тела с реального пути: конверт без конфигурации и
+	// эхо присланного ключа вместо неё. Обе приезжают со статусом 200.
+	cases := []struct{ name, body string }{
+		{"конверт без конфигурации", `{"data":{"status":"pending"}}`},
+		{"эхо ключа подписки вместо конфигурации", `{"data":{"config":"` + premiumKey + `"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newPremiumStand(t)
+			st.seedCatalog(t)
+			st.portal.setConfigBody(tc.body)
+
+			rec := st.config(t, "nl")
+			if rec.Code == http.StatusOK {
+				t.Fatalf("непригодный ответ пришёл успехом: %s", rec.Body.String())
+			}
+			if code := premiumErrorCode(t, rec); code != codePremiumResponseUnusable {
+				t.Fatalf("код отказа = %q, want %q", code, codePremiumResponseUnusable)
+			}
+			// Приманки шире трёх слов: проверяется отсутствие приглашения
+			// повторить, а не отсутствие конкретной формулировки. «снова» и
+			// «повтор» ловят и живой текст, если он станет зовущим.
+			msg := premiumErrorMessage(t, rec)
+			for _, lure := range []string{"попробуйте", "повтор", "снова", "ещё раз"} {
+				if strings.Contains(strings.ToLower(msg), lure) {
+					t.Errorf("текст зовёт повторить расходную операцию (%q): %s", lure, msg)
+				}
+			}
+			if got := st.portal.configsSeen(); len(got) != 1 {
+				t.Fatalf("запросов конфигурации к порталу %d (%v), ждали 1", len(got), got)
+			}
+			assertNoPremiumSecrets(t, tc.name, rec.Body.String(), st)
+		})
+	}
+}
+
+// Критично: 403 у расходной ручки повтора не даёт, 401 — даёт.
+//
+// Приравнивать их нельзя, хотя причина отказа наружу у них общая. 401 — «кто
+// ты», то есть правдоподобно истёкшая cookie: ре-логин её чинит, а портал
+// запрос отверг и слот не потратил. 403 — «нельзя»: политика или исчерпанная
+// квота, вход заново её не меняет, а второй расходный запрос стоит второго
+// слота устройства подписки.
+func TestAmneziaPremiumConfig_ForbiddenIsNotRetried(t *testing.T) {
+	cases := []struct {
+		name        string
+		status      int
+		wantConfigs int
+		wantLogins  int
+	}{
+		// Вход при подготовке стенда — первый: у 401 к нему добавляется
+		// ре-логин, у 403 — нет.
+		{"401 лечится ре-логином", http.StatusUnauthorized, 2, 2},
+		{"403 повтора не даёт", http.StatusForbidden, 1, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newPremiumStand(t)
+			st.seedCatalog(t)
+			st.portal.setConfigStatus(tc.status)
+
+			rec := st.config(t, "nl")
+			if rec.Code == http.StatusOK {
+				t.Fatalf("отказ портала пришёл успехом: %s", rec.Body.String())
+			}
+			if got := st.portal.configsSeen(); len(got) != tc.wantConfigs {
+				t.Fatalf("запросов к расходной ручке %d (%v), ждали %d: лишний запрос тратит слот подписки",
+					len(got), got, tc.wantConfigs)
+			}
+			if n := len(st.portal.seen()); n != tc.wantLogins {
+				t.Fatalf("входов в портал %d, ждали %d", n, tc.wantLogins)
+			}
+		})
+	}
+
+	// Вход 403 не расходный, и его поведение не меняется: ключ отклонён,
+	// второго входа нет.
+	t.Run("вход 403 ведёт себя как прежде", func(t *testing.T) {
+		st := newPremiumStand(t)
+		st.portal.setStatus(http.StatusForbidden)
+
+		rec := st.post(t, `{"key":"`+premiumKey+`"}`)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("код = %d, ждали 422: %s", rec.Code, rec.Body.String())
+		}
+		if code := premiumErrorCode(t, rec); code != codePremiumKeyRejected {
+			t.Fatalf("код отказа = %q, want %q", code, codePremiumKeyRejected)
+		}
+		if n := len(st.portal.seen()); n != 1 {
+			t.Fatalf("входов в портал %d, ждали 1", n)
+		}
+	})
+}
+
+// Критично: контекст запроса доезжает до портала. Пользователь закрыл вкладку
+// — расходный запрос обязан умереть вместе с ней, а не жить дальше и тратить
+// слот устройства подписки. Обработчик, сходивший в портал с
+// context.Background(), эту проверку не проходит: отменённый запрос до
+// расходной ручки не доходит вовсе.
+func TestAmneziaPremiumConfig_CancelledRequestReachesPortal(t *testing.T) {
+	st := newPremiumStand(t)
+	// Сессия прогрета: без прогрева отменённый запрос умер бы ещё на входе, и
+	// проверка была бы зелена независимо от того, чей контекст уехал дальше.
+	st.seedCatalog(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	rec := st.configWithContext(t, ctx, "nl")
+	if rec.Code == http.StatusOK {
+		t.Fatalf("отменённый запрос пришёл успехом: %s", rec.Body.String())
+	}
+	if got := st.portal.configsSeen(); len(got) != 0 {
+		t.Fatalf("запросов к расходной ручке %d (%v), ждали 0: отмена не доехала до портала", len(got), got)
+	}
+	// Замок страны обязан быть отпущен и на этом пути: иначе отменённая
+	// вкладка запирает страну до перезапуска демона.
+	if rec := st.config(t, "nl"); rec.Code != http.StatusOK {
+		t.Fatalf("запрос после отмены: %d %s — замок не отпущен", rec.Code, rec.Body.String())
 	}
 }
 
