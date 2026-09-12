@@ -1,3 +1,8 @@
+<script lang="ts" module>
+	/** Откуда берём ключ: сохранённый на роутере или введённый заново. */
+	export type PremiumKeySource = 'stored' | 'new';
+</script>
+
 <script lang="ts">
 	import Button from '$lib/components/ui/Button.svelte';
 
@@ -8,40 +13,92 @@
 		busy: boolean;
 		/** Ключ на роутере лежит, но не расшифровывается: единственный выход — забыть его. */
 		unusableStored: boolean;
+		/** На роутере лежит ПРИГОДНЫЙ ключ — значит есть из чего выбирать. */
+		hasStoredKey: boolean;
+		/** Что делаем: берём сохранённый ключ или вводим другой. */
+		source: PremiumKeySource;
 		oninput: (value: string) => void;
 		onremember: (remember: boolean) => void;
+		onsource: (source: PremiumKeySource) => void;
 		onforget: () => void;
 	}
 
-	let { value, remember, busy, unusableStored, oninput, onremember, onforget }: Props = $props();
+	let {
+		value,
+		remember,
+		busy,
+		unusableStored,
+		hasStoredKey,
+		source,
+		oninput,
+		onremember,
+		onsource,
+		onforget
+	}: Props = $props();
+
+	// Поле ключа прячется, а не гасится: выбран сохранённый ключ — вводить
+	// нечего, и пустое неактивное поле рядом с выбором читается как «сюда всё
+	// равно надо что-то вписать».
+	const showInput = $derived(!hasStoredKey || source === 'new');
 </script>
 
 <div class="premium-key-form">
+	{#if hasStoredKey}
+		<!-- Хранение ключа имеет смысл ровно тогда, когда им можно
+		     воспользоваться не вводя его заново. Выбор явный: молча применять
+		     сохранённый ключ значит не дать сменить подписку, а молча просить
+		     ввод — обесценить хранение. -->
+		<fieldset class="premium-key-source" disabled={busy}>
+			<legend class="premium-key-source-legend">На роутере сохранён ключ подписки.</legend>
+			<label class="premium-key-source-option">
+				<input
+					type="radio"
+					name="premium-key-source"
+					value="stored"
+					checked={source === 'stored'}
+					onchange={() => onsource('stored')}
+				/>
+				<span>Использовать сохранённый ключ</span>
+			</label>
+			<label class="premium-key-source-option">
+				<input
+					type="radio"
+					name="premium-key-source"
+					value="new"
+					checked={source === 'new'}
+					onchange={() => onsource('new')}
+				/>
+				<span>Ввести другой ключ</span>
+			</label>
+		</fieldset>
+	{/if}
 	{#if unusableStored}
 		<p class="premium-key-unusable">
 			Сохранённый на роутере ключ не читается — его зашифровали другим секретом устройства.
 			Забудьте его и введите ключ заново.
 		</p>
 	{/if}
-	<label class="field-label" for="premium-key-input">Ключ подписки Amnezia Premium</label>
-	<textarea
-		id="premium-key-input"
-		class="field-textarea premium-key-input"
-		placeholder="vpn://…"
-		spellcheck="false"
-		disabled={busy}
-		{value}
-		oninput={(e) => oninput(e.currentTarget.value)}
-	></textarea>
-	<label class="premium-key-remember">
-		<input
-			type="checkbox"
-			checked={remember}
+	{#if showInput}
+		<label class="field-label" for="premium-key-input">Ключ подписки Amnezia Premium</label>
+		<textarea
+			id="premium-key-input"
+			class="field-textarea premium-key-input"
+			placeholder="vpn://…"
+			spellcheck="false"
 			disabled={busy}
-			onchange={(e) => onremember(e.currentTarget.checked)}
-		/>
-		<span>Запомнить ключ на роутере (хранится в зашифрованном виде)</span>
-	</label>
+			{value}
+			oninput={(e) => oninput(e.currentTarget.value)}
+		></textarea>
+		<label class="premium-key-remember">
+			<input
+				type="checkbox"
+				checked={remember}
+				disabled={busy}
+				onchange={(e) => onremember(e.currentTarget.checked)}
+			/>
+			<span>Запомнить ключ на роутере (хранится в зашифрованном виде)</span>
+		</label>
+	{/if}
 	<p class="premium-key-direct">
 		Запрос к сервису Amnezia уходит с роутера напрямую, поэтому список стран и выдача зависят от
 		того, доступен ли сервис из вашего региона.
@@ -106,6 +163,34 @@
 	.premium-key-actions {
 		display: flex;
 		justify-content: flex-start;
+	}
+
+	.premium-key-source {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		margin: 0;
+		padding: 10px 12px;
+		border: 1px solid var(--border, var(--color-border));
+		border-radius: 8px;
+	}
+
+	.premium-key-source-legend {
+		padding: 0 4px;
+		font-size: 0.8125rem;
+		color: var(--text-secondary, var(--color-text-secondary));
+	}
+
+	.premium-key-source-option {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.875rem;
+		cursor: pointer;
+	}
+
+	.premium-key-source-option input {
+		flex-shrink: 0;
 	}
 
 	/* Перенесено дословно из VpnLinkPasteImport вместе со стилями: юридический

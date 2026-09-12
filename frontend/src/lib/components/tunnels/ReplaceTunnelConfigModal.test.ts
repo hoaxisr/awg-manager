@@ -79,6 +79,11 @@ describe('ReplaceTunnelConfigModal', () => {
 		await fireEvent.click(screen.getByText('Взять конфиг из Amnezia Premium'));
 		await settle();
 
+		// Ключ на роутере сохранён, поэтому мастер сначала спрашивает, брать
+		// его или ввести другой; сохранённый выбран по умолчанию.
+		await fireEvent.click(screen.getByRole('button', { name: 'Продолжить' }));
+		await settle();
+
 		// Страна туннеля выбрана заранее — мастер нацелен на этот туннель.
 		expect(screen.getByText('Amnezia Premium → fx-tunnel-old')).toBeTruthy();
 		expect(screen.getByRole('option', { name: /Zedquay/ }).getAttribute('aria-selected')).toBe(
