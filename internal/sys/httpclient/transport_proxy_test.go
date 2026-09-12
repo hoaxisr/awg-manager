@@ -38,8 +38,7 @@ func sameFunc(a, b func(*http.Request) (*url.URL, error)) bool {
 // портала Amnezia нужен ПРЯМОЙ выход с роутера — иначе запрос уйдёт через
 // чужой хост мимо требования о регионе, ради которого зеркало и понадобилось.
 func TestNewTransport_EnvProxyRefusedExplicitly(t *testing.T) {
-	direct := false
-	tr, err := NewTransport(TransportConfig{ProxyFromEnv: &direct})
+	tr, err := NewTransport(TransportConfig{Proxy: ProxyDirect})
 	if err != nil {
 		t.Fatalf("транспорт: %v", err)
 	}
@@ -53,10 +52,9 @@ func TestNewTransport_EnvProxyRefusedExplicitly(t *testing.T) {
 // его — противоречие вызывающего, и молча выбрасывать НАЗВАННЫЙ адрес хуже,
 // чем уважить его.
 func TestNewTransport_ExplicitProxyURLWinsOverRefusal(t *testing.T) {
-	direct := false
 	tr, err := NewTransport(TransportConfig{
-		ProxyURL:     "http://explicit.fixture.test:8080",
-		ProxyFromEnv: &direct,
+		ProxyURL: "http://explicit.fixture.test:8080",
+		Proxy:    ProxyDirect,
 	})
 	if err != nil {
 		t.Fatalf("транспорт: %v", err)
