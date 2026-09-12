@@ -2,6 +2,8 @@ package wdttlink
 
 import (
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -189,5 +191,40 @@ func TestDecodeImport_QwdttJSONFile(t *testing.T) {
 	}
 	if len(got.VKHashes) != 1 || got.VKHashes[0] != "m0mwRXzYPZNMvTI0kx6jPnVc8HJOUxV3izOqu_0w3zU" {
 		t.Fatalf("hashes=%v", got.VKHashes)
+	}
+}
+
+// Страж SSRF загрузки подписки держится на том, что транспорт диалит САМ ХОСТ
+// подписки: blockInternalDial — Control диалера и видит только реально
+// диалимый адрес. С прокси диалится прокси, а внутренний адрес уезжает ему
+// строкой в запросе — защита исчезает молча. Поле Proxy здесь поэтому не
+// умолчание, а часть защиты; тест держит обе половины: и что прокси не
+// спрашивается, и что страж реально достижим через собранного клиента.
+func TestSubscriptionClientDialsTargetDirectly(t *testing.T) {
+	c := subscriptionClient()
+
+	tr, ok := c.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("транспорт не *http.Transport, а %T — страж на Control диалера мог потеряться", c.Transport)
+	}
+	if tr.Proxy != nil {
+		t.Fatal("у транспорта задан Proxy: диалится прокси, и blockInternalDial перестаёт закрывать внутренние адреса")
+	}
+
+	// Вторая половина: страж достижим через клиента целиком, а не только как
+	// отдельная функция. Сервер на loopback — ровно тот адрес, который страж
+	// обязан закрыть.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("запрос доехал до внутреннего адреса")
+	}))
+	defer srv.Close()
+
+	resp, err := c.Get(srv.URL)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("запрос на loopback прошёл — страж не подключён к клиенту")
+	}
+	if !strings.Contains(err.Error(), "внутренний адрес") {
+		t.Fatalf("запрос отклонён не стражем: %v", err)
 	}
 }
