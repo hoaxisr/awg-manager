@@ -484,6 +484,26 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.AmneziaPremiumRevokeData:
+    properties:
+      countryCode:
+        example: nl
+        type: string
+    type: object
+  api.AmneziaPremiumRevokeRequest:
+    properties:
+      countryCode:
+        example: nl
+        type: string
+    type: object
+  api.AmneziaPremiumRevokeResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.AmneziaPremiumRevokeData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.AssignDeviceRequest:
     properties:
       mac:
@@ -9204,6 +9224,60 @@ paths:
       security:
       - CookieAuth: []
       summary: Задать адрес зеркала Amnezia
+      tags:
+      - amnezia-premium
+  /amnezia/premium/revoke:
+    post:
+      consumes:
+      - application/json
+      description: Возвращает слот устройств подписки. Ломает работающий туннель этой
+        страны — подтверждение обязано быть на стороне интерфейса. Параллельный запрос
+        той же страны (отзыв или выдача) отвергается (409).
+      parameters:
+      - description: Код страны
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AmneziaPremiumRevokeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumRevokeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Отозвать конфигурацию страны Amnezia Premium
       tags:
       - amnezia-premium
   /auth/login:

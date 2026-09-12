@@ -9,6 +9,7 @@ const amneziaPremiumSaveKey = vi.fn();
 const amneziaPremiumForgetKey = vi.fn();
 const amneziaPremiumConfig = vi.fn();
 const amneziaPremiumMirror = vi.fn();
+const amneziaPremiumRevoke = vi.fn();
 
 vi.mock('$lib/api/client', () => ({
 	api: {
@@ -18,6 +19,7 @@ vi.mock('$lib/api/client', () => ({
 		amneziaPremiumForgetKey: (...a: unknown[]) => amneziaPremiumForgetKey(...a),
 		amneziaPremiumConfig: (...a: unknown[]) => amneziaPremiumConfig(...a),
 		amneziaPremiumMirror: (...a: unknown[]) => amneziaPremiumMirror(...a),
+		amneziaPremiumRevoke: (...a: unknown[]) => amneziaPremiumRevoke(...a),
 		amneziaPremiumSaveMirror: vi.fn()
 	}
 }));
@@ -61,7 +63,20 @@ beforeEach(() => {
 	amneziaPremiumCatalog.mockResolvedValue(CATALOG);
 	amneziaPremiumForgetKey.mockResolvedValue(KEY_ABSENT);
 	amneziaPremiumMirror.mockResolvedValue({ mirrorUrl: 'https://mirror-alpha.fixture.test/cp' });
+	amneziaPremiumRevoke.mockResolvedValue({ countryCode: 'fx' });
 });
+
+/**
+ * Проходит экран выбора ключа, оставляя выбранным СОХРАНЁННЫЙ ключ.
+ *
+ * Отдельный шаг, а не «каталог сам появится»: мастер с сохранённым ключом
+ * больше не уходит в каталог молча — пользователь выбирает, брать этот ключ
+ * или ввести другой. Тесты, которым нужен каталог, зовут этот хелпер.
+ */
+async function useStoredKey() {
+	await fireEvent.click(screen.getByRole('button', { name: 'Продолжить' }));
+	await settle();
+}
 
 describe('AmneziaPremiumWizard', () => {
 	it('гасит ответ, долетевший после закрытия: при следующем открытии каталога нет', async () => {
@@ -116,6 +131,7 @@ describe('AmneziaPremiumWizard', () => {
 			props: { open: true, onclose: vi.fn(), onconfig: vi.fn() }
 		});
 		await settle();
+		await useStoredKey();
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Забыть ключ' }));
 		await settle();
@@ -223,6 +239,7 @@ describe('AmneziaPremiumWizard', () => {
 		const onclose = vi.fn();
 		render(AmneziaPremiumWizard, { props: { open: true, onclose, onconfig } });
 		await settle();
+		await useStoredKey();
 
 		await fireEvent.click(screen.getByText('Fixtureland [P2P]'));
 		await fireEvent.click(screen.getByRole('button', { name: 'Создать туннель' }));
@@ -258,6 +275,7 @@ describe('AmneziaPremiumWizard', () => {
 			}
 		});
 		await settle();
+		await useStoredKey();
 
 		const nativewg = screen.getByRole('button', { name: 'NativeWG' });
 		expect(nativewg.hasAttribute('disabled')).toBe(true);
@@ -287,6 +305,7 @@ describe('AmneziaPremiumWizard', () => {
 			}
 		});
 		await settle();
+		await useStoredKey();
 
 		await fireEvent.click(screen.getByText('Zedquay'));
 		const create = screen.getByRole('button', { name: 'Создать туннель' });
@@ -304,6 +323,7 @@ describe('AmneziaPremiumWizard', () => {
 			props: { open: true, onclose: vi.fn(), onconfig: vi.fn() }
 		});
 		await settle();
+		await useStoredKey();
 
 		expect(screen.getByText('Подписка истекла — конфигурации не выдаются.')).toBeTruthy();
 		const create = screen.getByRole('button', { name: 'Создать туннель' });
@@ -327,6 +347,7 @@ describe('AmneziaPremiumWizard', () => {
 			}
 		});
 		await settle();
+		await useStoredKey();
 
 		expect(screen.queryByText('Vlessland')).toBeNull();
 		// Выбранной строки нет — значит и заменять нечем, кнопка недоступна.
@@ -349,6 +370,7 @@ describe('AmneziaPremiumWizard', () => {
 			}
 		});
 		await settle();
+		await useStoredKey();
 
 		expect(screen.getByText('Amnezia Premium → fx-tunnel-old')).toBeTruthy();
 		expect(screen.queryByLabelText('Имя туннеля')).toBeNull();
@@ -359,5 +381,176 @@ describe('AmneziaPremiumWizard', () => {
 		expect(screen.getByRole('option', { name: /Zedquay/ }).getAttribute('aria-selected')).toBe(
 			'true'
 		);
+	});
+
+	it('сохранённый ключ НЕ применяется молча: мастер спрашивает и не ходит в каталог сам', async () => {
+		amneziaPremiumKeyState.mockResolvedValue(KEY_PRESENT);
+
+		render(AmneziaPremiumWizard, {
+			props: { open: true, onclose: vi.fn(), onconfig: vi.fn() }
+		});
+		await settle();
+
+		// Каталога ещё нет — и запроса за ним тоже: хранение ключа не отменяет
+		// права выбрать другую подписку.
+		expect(amneziaPremiumCatalog).not.toHaveBeenCalled();
+		expect(screen.queryByText('Fixtureland [P2P]')).toBeNull();
+		expect(screen.getByText('Использовать сохранённый ключ')).toBeTruthy();
+		expect(screen.getByText('Ввести другой ключ')).toBeTruthy();
+
+		await useStoredKey();
+		expect(amneziaPremiumCatalog).toHaveBeenCalledTimes(1);
+		expect(screen.getByText('Fixtureland [P2P]')).toBeTruthy();
+	});
+
+	it('сохранённый ключ по умолчанию выбран, и поле ввода не показывается', async () => {
+		amneziaPremiumKeyState.mockResolvedValue(KEY_PRESENT);
+
+		render(AmneziaPremiumWizard, {
+			props: { open: true, onclose: vi.fn(), onconfig: vi.fn() }
+		});
+		await settle();
+
+		// Поле ввода спрятано: вводить нечего, пока выбран сохранённый ключ.
+		expect(screen.queryByLabelText('Ключ подписки Amnezia Premium')).toBeNull();
+		// «Продолжить» доступна БЕЗ ввода — иначе сохранённый ключ бесполезен.
+		expect(screen.getByRole('button', { name: 'Продолжить' }).hasAttribute('disabled')).toBe(false);
+	});
+
+	it('выбор «ввести другой ключ» открывает поле и уносит новый ключ в портал', async () => {
+		amneziaPremiumKeyState.mockResolvedValue(KEY_PRESENT);
+		amneziaPremiumSaveKey.mockResolvedValue(KEY_PRESENT);
+
+		render(AmneziaPremiumWizard, {
+			props: { open: true, onclose: vi.fn(), onconfig: vi.fn() }
+		});
+		await settle();
+
+		await fireEvent.click(screen.getByLabelText('Ввести другой ключ'));
+		await settle();
+
+		const field = screen.getByLabelText('Ключ подписки Amnezia Premium');
+		await fireEvent.input(field, { target: { value: 'vpn://test-key-fixture-other' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Продолжить' }));
+		await settle();
+
+		expect(amneziaPremiumSaveKey).toHaveBeenCalledTimes(1);
+		expect(amneziaPremiumSaveKey.mock.calls[0][0]).toBe('vpn://test-key-fixture-other');
+	});
+
+	it('сохранённый ключ не пересохраняется: «Продолжить» на нём в портал ключ не шлёт', async () => {
+		amneziaPremiumKeyState.mockResolvedValue(KEY_PRESENT);
+
+		render(AmneziaPremiumWizard, {
+			props: { open: true, onclose: vi.fn(), onconfig: vi.fn() }
+		});
+		await settle();
+		await useStoredKey();
+
+		// Ключ уже у демона: повторная отправка гоняла бы секрет по сети зря.
+		expect(amneziaPremiumSaveKey).not.toHaveBeenCalled();
+	});
+
+	it('отзыв предлагается только у страны с выданной конфигурацией', async () => {
+		amneziaPremiumKeyState.mockResolvedValue(KEY_PRESENT);
+		amneziaPremiumCatalog.mockResolvedValue({
+			...CATALOG,
+			issuedConfigs: [
+				{
+					countryCode: 'fx',
+					lastIssuedAt: '2031-01-05T10:00:00Z',
+					portalUpdatedAt: '2030-12-01T10:00:00Z',
+					sourceType: 'country_config'
+				}
+			]
+		});
+
+		render(AmneziaPremiumWizard, {
+			props: { open: true, onclose: vi.fn(), onconfig: vi.fn() }
+		});
+		await settle();
+		await useStoredKey();
+
+		// Ничего не выбрано — отзывать нечего.
+		expect(screen.queryByRole('button', { name: 'Отозвать' })).toBeNull();
+
+		// Страна БЕЗ выданной конфигурации: кнопки по-прежнему нет.
+		await fireEvent.click(screen.getByText('Zedquay'));
+		await settle();
+		expect(screen.queryByRole('button', { name: 'Отозвать' })).toBeNull();
+
+		// Страна с выданной конфигурацией — кнопка появилась.
+		await fireEvent.click(screen.getByText('Fixtureland [P2P]'));
+		await settle();
+		expect(screen.getByRole('button', { name: 'Отозвать' })).toBeTruthy();
+	});
+
+	it('отзыв спрашивает подтверждение, зовёт ручку и перечитывает каталог', async () => {
+		amneziaPremiumKeyState.mockResolvedValue(KEY_PRESENT);
+		amneziaPremiumCatalog.mockResolvedValue({
+			...CATALOG,
+			issuedConfigs: [
+				{
+					countryCode: 'fx',
+					lastIssuedAt: '2031-01-05T10:00:00Z',
+					portalUpdatedAt: '2030-12-01T10:00:00Z',
+					sourceType: 'country_config'
+				}
+			]
+		});
+
+		render(AmneziaPremiumWizard, {
+			props: { open: true, onclose: vi.fn(), onconfig: vi.fn() }
+		});
+		await settle();
+		await useStoredKey();
+
+		await fireEvent.click(screen.getByText('Fixtureland [P2P]'));
+		await settle();
+		await fireEvent.click(screen.getByRole('button', { name: 'Отозвать' }));
+		await settle();
+
+		// Подтверждение обязательно: отзыв ломает работающий туннель страны.
+		expect(screen.getByText('Отозвать конфигурацию?')).toBeTruthy();
+		expect(amneziaPremiumRevoke).not.toHaveBeenCalled();
+
+		const calls = amneziaPremiumCatalog.mock.calls.length;
+		// Кнопок «Отозвать» теперь две — в подвале и в подтверждении. Нужна
+		// вторая: именно она подтверждает, первая лишь открыла диалог.
+		const confirmButtons = screen.getAllByRole('button', { name: 'Отозвать' });
+		await fireEvent.click(confirmButtons[confirmButtons.length - 1]);
+		await settle();
+
+		expect(amneziaPremiumRevoke).toHaveBeenCalledTimes(1);
+		expect(amneziaPremiumRevoke.mock.calls[0][0]).toBe('fx');
+		// Счётчик устройств и метки строк изменились у портала — список перечитан.
+		expect(amneziaPremiumCatalog.mock.calls.length).toBe(calls + 1);
+	});
+
+	it('отзыв НЕ предлагается для устройства приложения Amnezia', async () => {
+		amneziaPremiumKeyState.mockResolvedValue(KEY_PRESENT);
+		amneziaPremiumCatalog.mockResolvedValue({
+			...CATALOG,
+			issuedConfigs: [
+				{
+					countryCode: 'fx',
+					lastIssuedAt: '2031-01-05T10:00:00Z',
+					portalUpdatedAt: '2030-12-01T10:00:00Z',
+					// Устройство приложения: его заводили не мы, и отзывается
+					// оно другой ручкой портала.
+					sourceType: 'gateway_account'
+				}
+			]
+		});
+
+		render(AmneziaPremiumWizard, {
+			props: { open: true, onclose: vi.fn(), onconfig: vi.fn() }
+		});
+		await settle();
+		await useStoredKey();
+
+		await fireEvent.click(screen.getByText('Fixtureland [P2P]'));
+		await settle();
+		expect(screen.queryByRole('button', { name: 'Отозвать' })).toBeNull();
 	});
 });

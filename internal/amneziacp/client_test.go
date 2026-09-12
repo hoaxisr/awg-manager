@@ -180,10 +180,16 @@ type fakeCP struct {
 	// accountHold вызывается внутри обработчика account-info: тест держит
 	// запрос в полёте.
 	accountHold func(n int64, r *http.Request)
+	// revokeStatus/revokeAbort — сценарии ручки отзыва. Отдельные от
+	// configStatus/configAbort: отзыв и выдача обязаны вести себя по-разному
+	// на потерянном ответе, и общий сценарий эту разницу бы спрятал.
+	revokeStatus func(n int64) int
+	revokeAbort  func(n int64) bool
 
 	logins   atomic.Int64
 	accounts atomic.Int64
 	configs  atomic.Int64
+	revokes  atomic.Int64
 
 	mu          sync.Mutex
 	seenSid     []string // cookie сессии в каждом запросе под сессией
@@ -193,6 +199,7 @@ type fakeCP struct {
 	seenType    []string // Content-Type
 	seenKeys    []string // ключи из тел /api/login
 	seenCountry []string // коды стран из тел /api/download-config
+	seenRevoke  []string // коды стран из тел /api/revoke-country-config
 }
 
 func newFakeCP(t *testing.T) *fakeCP { return newTaggedCP(t, "a") }
@@ -296,6 +303,27 @@ func (f *fakeCP) handle(w http.ResponseWriter, r *http.Request) {
 			panic(http.ErrAbortHandler)
 		}
 		_, _ = io.WriteString(w, f.configBody)
+	case "/api/revoke-country-config":
+		n := f.revokes.Add(1)
+		f.recordSid(r)
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+		var payload struct {
+			CountryCode string `json:"countryCode"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		f.mu.Lock()
+		f.seenRevoke = append(f.seenRevoke, payload.CountryCode)
+		f.mu.Unlock()
+		if status := scriptStatus(f.revokeStatus, n); status != http.StatusOK {
+			respondStatus(w, r, status)
+			return
+		}
+		if f.revokeAbort != nil && f.revokeAbort(n) {
+			// Запрос портал принял, ответ не доехал. Для отзыва, в отличие от
+			// выдачи, повтор безопасен — слот он не тратит.
+			panic(http.ErrAbortHandler)
+		}
+		_, _ = io.WriteString(w, `{"message":"Country configuration successfully deleted."}`)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
@@ -2383,5 +2411,80 @@ func TestNewClientRequiresDependencies(t *testing.T) {
 			}()
 			tc.call()
 		})
+	}
+}
+
+// Отзыв уходит по своему пути, своим методом и со своим телом. Проверка
+// пословная, а не «запрос был»: перепутанный путь увёл бы отзыв в выдачу, то
+// есть вместо возврата слота потратил бы ещё один.
+func TestClientRevokeCountryConfig(t *testing.T) {
+	cp := newFakeCP(t)
+	c, _, _ := newTestClient(t, cp)
+
+	if err := c.RevokeCountryConfig(context.Background(), "  NL  "); err != nil {
+		t.Fatalf("отзыв: %v", err)
+	}
+	if n := cp.revokes.Load(); n != 1 {
+		t.Fatalf("запросов отзыва %d, ожидался ровно 1", n)
+	}
+	if n := cp.configs.Load(); n != 0 {
+		t.Fatalf("отзыв сходил в РАСХОДНУЮ ручку выдачи %d раз — это тратит слот, а не возвращает", n)
+	}
+	cp.mu.Lock()
+	seen := append([]string(nil), cp.seenRevoke...)
+	cp.mu.Unlock()
+	if len(seen) != 1 || seen[0] != "nl" {
+		t.Fatalf("портал увидел коды %q, ожидался [nl] (нижний регистр, без пробелов)", seen)
+	}
+}
+
+// Пустой код — отказ БЕЗ похода в сеть: запрос без страны портал всё равно не
+// поймёт, а отзыв «чего-нибудь» опаснее отказа.
+func TestClientRevokeRejectsEmptyCountryWithoutNetwork(t *testing.T) {
+	cp := newFakeCP(t)
+	c, _, mirrorHits := newTestClient(t, cp)
+
+	if err := c.RevokeCountryConfig(context.Background(), "   "); err == nil {
+		t.Fatal("пустой код страны обязан быть ошибкой")
+	}
+	if n := cp.revokes.Load(); n != 0 {
+		t.Fatalf("запросов отзыва %d, ожидалось 0", n)
+	}
+	if n := mirrorHits.Load(); n != 0 {
+		t.Fatalf("резолвов зеркала %d, ожидалось 0 — отказ обязан быть до сети", n)
+	}
+}
+
+// Главное отличие отзыва от выдачи: потерянный ответ ПЕРЕСПРАШИВАЕТСЯ.
+// У выдачи повтор запрещён, потому что съел бы второй слот; у отзыва слот не
+// тратится, а повтор по уже отозванной стране даёт тот же исход. Тест
+// краснеет, если repeatable у отзыва снять.
+func TestClientRevokeRetriesAfterLostResponse(t *testing.T) {
+	cp := newFakeCP(t)
+	// Первый запрос портал принимает и рвёт соединение, второй отвечает.
+	cp.revokeAbort = func(n int64) bool { return n == 1 }
+	c, _, _ := newTestClient(t, cp)
+
+	if err := c.RevokeCountryConfig(context.Background(), "nl"); err != nil {
+		t.Fatalf("отзыв обязан пережить потерянный ответ повтором: %v", err)
+	}
+	if n := cp.revokes.Load(); n != 2 {
+		t.Fatalf("запросов отзыва %d, ожидалось 2 (первый оборван, второй успешен)", n)
+	}
+}
+
+// Зеркальная страховка к предыдущему тесту: выдача на том же обрыве НЕ
+// повторяется. Без неё «повторять можно» легко расползлось бы на расходную
+// операцию — тест держит границу с обеих сторон.
+func TestClientCountryConfigStillDoesNotRetryAfterLostResponse(t *testing.T) {
+	cp := newFakeCP(t)
+	cp.configAbort = true
+	c, _, _ := newTestClient(t, cp)
+
+	if _, err := c.CountryConfig(context.Background(), "nl"); err == nil {
+		t.Fatal("оборванная выдача обязана быть ошибкой")
+	}
+	if n := cp.configs.Load(); n != 1 {
+		t.Fatalf("запросов выдачи %d, ожидался ровно 1 — повтор съел бы второй слот", n)
 	}
 }

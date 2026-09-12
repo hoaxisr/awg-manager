@@ -159,6 +159,15 @@ const api_AmneziaPremiumMirrorResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_AmneziaPremiumRevokeData: v.GenericSchema = v.looseObject({
+	countryCode: v.optional(v.nullable(v.string())),
+});
+
+const api_AmneziaPremiumRevokeResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumRevokeData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_AuthStatusResponse: v.GenericSchema = v.looseObject({
 	authDisabled: v.optional(v.nullable(v.boolean())),
 	authenticated: v.optional(v.nullable(v.boolean())),
@@ -3384,6 +3393,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /amnezia/premium/config": v.lazy(() => api_AmneziaPremiumConfigResponse),
 	"POST /amnezia/premium/key": v.lazy(() => api_AmneziaPremiumKeyResponse),
 	"POST /amnezia/premium/mirror": v.lazy(() => api_AmneziaPremiumMirrorResponse),
+	"POST /amnezia/premium/revoke": v.lazy(() => api_AmneziaPremiumRevokeResponse),
 	"POST /auth/login": v.lazy(() => api_LoginResponseRaw),
 	"POST /auth/logout": v.lazy(() => api_APIEnvelope),
 	"POST /awg/analyze": v.lazy(() => api_AwgAnalyzeResponse),

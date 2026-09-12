@@ -17,7 +17,8 @@
 //   MOCK_AWG_TUNNELS rows with counts split from stats.tunneled so the tunnel chip
 //   row matches diagnostics UI (same as a real router).
 // - Amnezia Premium: GET/POST/DELETE /amnezia/premium/key, GET /amnezia/premium/catalog,
-//   POST /amnezia/premium/config (paths without /api — Vite rewrite). Ключ подписки
+//   POST /amnezia/premium/config, POST /amnezia/premium/revoke (paths without /api —
+//   Vite rewrite). Ключ подписки
 //   живёт в памяти мока, как на роутере: браузер его обратно не получает.
 // - Diagnostics «Окружение: GET /dns-check/client (Test-Phone @ 192.168.1.42,
 //   policy Policy1), /system/hydraroute-status, plus existing /routing/*, /tunnels/all,
@@ -4420,6 +4421,7 @@ const DOWNLOAD_FAULT_ROUTES = [
 	{ method: 'POST', path: '/amnezia/premium/key', style: 'envelope', code: 'AMNEZIA_PREMIUM_KEY_REJECTED' },
 	{ method: 'GET', path: '/amnezia/premium/catalog', style: 'envelope', code: 'AMNEZIA_PREMIUM_UNAVAILABLE' },
 	{ method: 'POST', path: '/amnezia/premium/config', style: 'envelope', code: 'AMNEZIA_PREMIUM_OUTCOME_UNKNOWN' },
+	{ method: 'POST', path: '/amnezia/premium/revoke', style: 'envelope', code: 'AMNEZIA_PREMIUM_UNAVAILABLE' },
 	{ method: 'POST', path: '/singbox/install', style: 'envelope', code: 'SINGBOX_INSTALL_ERROR' },
 	{ method: 'POST', path: '/singbox/update', style: 'envelope', code: 'SINGBOX_UPDATE_ERROR' },
 	// NB: /download/outbounds is route *discovery*, not a download — never fault
@@ -5445,7 +5447,10 @@ const server = http.createServer(async (req, res) => {
 				send(res, 400, { error: true, message: 'invalid JSON', code: 'INVALID_JSON' });
 				return;
 			}
-			if (!mockPremiumKey.stored) {
+			// Как и у каталога: ключ без сохранения живёт в памяти демона, и
+			// выдача обязана работать. Проверка только по stored ломала бы
+			// главный путь «ввёл ключ, не запоминая → выдал конфигурацию».
+			if (!mockPremiumKey.stored && !mockPremiumKey.session) {
 				sendPremiumNoKey(res);
 				return;
 			}
@@ -5458,8 +5463,54 @@ const server = http.createServer(async (req, res) => {
 				});
 				return;
 			}
+			// Выданное запоминается: без этого метка «конфиг уже выдавался» и
+			// кнопка отзыва в dev-режиме не проверяются — список выданных
+			// оставался бы фикстурой, не реагирующей на действия.
+			const now = new Date().toISOString();
+			MOCK_AMNEZIA_PREMIUM_ISSUED.push({
+				server_country_code: countryCode,
+				worker_last_updated: now,
+				last_downloaded: now,
+				source_type: 'country_config',
+			});
 			console.log(`[mock-proxy] amnezia/premium/config ${countryCode}`);
 			sendData(res, { countryCode, config: buildMockAmneziaPremiumConf(countryCode) });
+		});
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/amnezia/premium/revoke') {
+		readRequestText(req).then((raw) => {
+			let payload;
+			try {
+				payload = JSON.parse(raw || '{}');
+			} catch {
+				send(res, 400, { error: true, message: 'invalid JSON', code: 'INVALID_JSON' });
+				return;
+			}
+			if (!mockPremiumKey.stored && !mockPremiumKey.session) {
+				sendPremiumNoKey(res);
+				return;
+			}
+			const countryCode = String(payload.countryCode ?? '').trim().toLowerCase();
+			if (!countryCode) {
+				send(res, 400, {
+					error: true,
+					message: 'Страна не выбрана',
+					code: 'AMNEZIA_PREMIUM_NO_COUNTRY',
+				});
+				return;
+			}
+			// Снимается ТОЛЬКО выданная нами конфигурация страны: устройство
+			// приложения (gateway_account) живёт за другой ручкой портала, и
+			// мок обязан вести себя так же, иначе в dev-режиме отзыв выглядел
+			// бы всесильным.
+			const idx = MOCK_AMNEZIA_PREMIUM_ISSUED.findIndex(
+				(c) => c.server_country_code === countryCode && c.source_type === 'country_config',
+			);
+			if (idx >= 0) MOCK_AMNEZIA_PREMIUM_ISSUED.splice(idx, 1);
+			console.log(`[mock-proxy] amnezia/premium/revoke ${countryCode} (найдено: ${idx >= 0})`);
+			sendData(res, { countryCode });
 		});
 		return;
 	}

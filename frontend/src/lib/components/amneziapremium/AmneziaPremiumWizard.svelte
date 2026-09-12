@@ -36,7 +36,7 @@
 	} from '$lib/utils/amneziaPremiumCatalog';
 	import PremiumCountryList from './PremiumCountryList.svelte';
 	import PremiumCreateFooter from './PremiumCreateFooter.svelte';
-	import PremiumKeyForm from './PremiumKeyForm.svelte';
+	import PremiumKeyForm, { type PremiumKeySource } from './PremiumKeyForm.svelte';
 	import PremiumMirrorField from './PremiumMirrorField.svelte';
 	import PremiumSubscriptionCard from './PremiumSubscriptionCard.svelte';
 	// Временный блок миграции ключа из localStorage — снимается целиком, см. F276.
@@ -89,6 +89,13 @@
 	let retryLabel = $state('Повторить');
 	let busy = $state(false);
 	let confirmCountry = $state('');
+	/** Страна, которую подтверждают к отзыву; пусто — подтверждения нет. */
+	let revokeCountry = $state('');
+	/**
+	 * Что делаем с ключом на экране ввода. Умолчание 'new': пока не известно,
+	 * что на роутере лежит пригодный ключ, выбирать не из чего.
+	 */
+	let keySource = $state<PremiumKeySource>('new');
 
 	// Поколение загрузки. Намеренно НЕ $state: значение нигде не рисуется, а
 	// реактивным оно сделало бы зависимым от себя эффект, который его же
@@ -118,7 +125,26 @@
 	const title = $derived(
 		replaceTarget ? `Amnezia Premium → ${replaceTarget.name}` : 'Amnezia Premium'
 	);
-	const canSubmitKey = $derived(keyInput.trim().length > 0 && !busy);
+	/** Есть из чего выбирать: на роутере лежит ключ, и он расшифровывается. */
+	const hasStoredKey = $derived(keyStored && keyUsable);
+	const canSubmitKey = $derived(
+		!busy && (hasStoredKey && keySource === 'stored' ? true : keyInput.trim().length > 0)
+	);
+	const revokeCountryName = $derived(
+		catalog?.countries.find((c) => c.code === revokeCountry)?.name ?? revokeCountry
+	);
+	/**
+	 * Отзывать можно только ВЫДАННУЮ нами конфигурацию страны. Устройство
+	 * приложения Amnezia (source_type=gateway_account) сюда не попадает:
+	 * isPremiumCountryIssued его не считает, и отзывать его наша панель не
+	 * должна — она его не заводила.
+	 */
+	const canRevoke = $derived(
+		phase === 'catalog' &&
+			selectedCountry !== '' &&
+			!busy &&
+			isPremiumCountryIssued(issuedConfigs, selectedCountry)
+	);
 
 	const nativewgAvailable = $derived(backendAvailability?.nativewg !== false);
 	const kernelAvailable = $derived(backendAvailability?.kernel !== false);
@@ -168,7 +194,9 @@
 		// и держать его с прошлого открытия значит утверждать непроверенное.
 		keyStored = false;
 		keyUsable = false;
+		keySource = 'new';
 		remember = false;
+		revokeCountry = '';
 		saveWarning = '';
 		confirmCountry = '';
 		errorText = '';
@@ -192,10 +220,10 @@
 			if (isStale(gen)) return;
 			keyStored = state.stored;
 			keyUsable = state.usable;
-			if (state.stored && state.usable) {
-				await loadCatalog(gen);
-				return;
-			}
+			// Сохранённый ключ НЕ применяется молча: пользователь выбирает сам,
+			// взять его или ввести другой. Иначе сменить подписку можно было бы
+			// только через «Забыть ключ», то есть потеряв старый.
+			keySource = state.stored && state.usable ? 'stored' : 'new';
 			phase = 'key';
 		} catch (e) {
 			if (isStale(gen)) return;
@@ -226,6 +254,12 @@
 	}
 
 	async function submitKey(): Promise<void> {
+		// Сохранённый ключ уже лежит у демона — заново его посылать незачем:
+		// повторный вход ничего не даёт, а ключ лишний раз проехал бы по сети.
+		if (hasStoredKey && keySource === 'stored') {
+			await loadCatalog(++loadGen);
+			return;
+		}
 		const key = keyInput.trim();
 		if (!key) return;
 		const gen = ++loadGen;
@@ -284,6 +318,10 @@
 		errorHint = '';
 		saveWarning = '';
 		confirmCountry = '';
+		revokeCountry = '';
+		// Сюда приходят «забыть ключ» и «ввести другой ключ» — в обоих случаях
+		// пользователь хочет НОВЫЙ ключ, а не тот, что лежит на роутере.
+		keySource = 'new';
 		busy = false;
 		phase = 'key';
 	}
@@ -389,6 +427,36 @@
 			failWith(e, 'config');
 		}
 	}
+
+	/**
+	 * Отзывает конфигурацию страны: слот устройств подписки возвращается.
+	 *
+	 * Каталог перечитывается ПОСЛЕ успеха — счётчик устройств и метки строк
+	 * изменились у портала, и оставить прежний список значило бы показывать
+	 * отозванную страну занятой. Мастер при этом не закрывается: отзыв часто
+	 * делают, чтобы тут же выдать конфигурацию другой страны.
+	 */
+	async function revokeConfig(code: string): Promise<void> {
+		const gen = loadGen;
+		busy = true;
+		try {
+			await api.amneziaPremiumRevoke(code);
+			if (isStale(gen)) return;
+			busy = false;
+			revokeCountry = '';
+			// Выбор снимается: страна, по которой конфигурации больше нет, не
+			// должна оставаться выбранной под кнопкой «Отозвать».
+			selectedCountry = '';
+			await loadCatalog(++loadGen);
+		} catch (e) {
+			if (isStale(gen)) return;
+			busy = false;
+			revokeCountry = '';
+			// Источник 'catalog', а не 'config': отзыв слот не тратит, и
+			// вернуться к списку стран после него безопасно.
+			failWith(e, 'catalog');
+		}
+	}
 </script>
 
 {#snippet wizardBody()}
@@ -398,8 +466,11 @@
 			{remember}
 			{busy}
 			unusableStored={keyStored && !keyUsable}
+			{hasStoredKey}
+			source={keySource}
 			oninput={(v) => (keyInput = v)}
 			onremember={(v) => (remember = v)}
+			onsource={(v) => (keySource = v)}
 			onforget={() => void forgetKey()}
 		/>
 	{:else if phase === 'loading'}
@@ -445,6 +516,13 @@
 
 {#snippet wizardActions()}
 	{#if phase === 'key'}
+		{#if hasStoredKey}
+			<!-- Выход из подписки доступен прямо здесь: пользователь, пришедший
+			     сменить ключ, не должен искать «забыть» за каталогом. -->
+			<Button variant="ghost" size="md" disabled={busy} onclick={() => void forgetKey()}>
+				Забыть ключ
+			</Button>
+		{/if}
 		<Button variant="secondary" size="md" onclick={onclose}>Отмена</Button>
 		<Button variant="primary" size="md" disabled={!canSubmitKey} onclick={() => void submitKey()}>
 			Продолжить
@@ -480,6 +558,15 @@
 					onbackend={(v) => (backend = v)}
 				/>
 			{/if}
+			{#if canRevoke}
+				<!-- Появляется только у страны с ВЫДАННОЙ конфигурацией: отзывать
+				     нечего там, где мы ничего не выдавали. Возвращает слот
+				     устройств подписки — единственный способ это сделать, кроме
+				     личного кабинета Amnezia. -->
+				<Button variant="ghost" size="md" onclick={() => (revokeCountry = selectedCountry)}>
+					Отозвать
+				</Button>
+			{/if}
 			<Button
 				variant="primary"
 				size="md"
@@ -500,6 +587,19 @@
 	closeOnBackdrop={false}
 	children={wizardBody}
 	actions={wizardActions}
+/>
+
+<ConfirmModal
+	open={revokeCountry !== ''}
+	title="Отозвать конфигурацию?"
+	message={`Конфигурация страны «${revokeCountryName}» будет отозвана у Amnezia, слот устройств подписки вернётся. Туннель, работающий на этой конфигурации, перестанет подключаться.`}
+	secondary="Чтобы пользоваться страной снова, конфигурацию придётся выдать заново — это опять займёт слот."
+	confirmLabel="Отозвать"
+	cancelLabel="Отмена"
+	variant="danger"
+	{busy}
+	onConfirm={() => void revokeConfig(revokeCountry)}
+	onClose={() => (revokeCountry = '')}
 />
 
 <ConfirmModal
@@ -612,6 +712,26 @@
 	@media (max-width: 640px) {
 		.premium-footer :global(.premium-name-input) {
 			flex: 1 1 100%;
+		}
+
+		/* Модалка на узком экране растягивает КАЖДУЮ кнопку подвала
+		   (Modal.svelte, ≤640px: width:100%), а flex-shrink их затем сжимает —
+		   и текст режется, а не переносится. Пока кнопка была одна, это не
+		   проявлялось; с появлением «Отозвать» на 400px обрезало «Создать
+		   туннель». Своя минимальная ширина переводит нехватку места в
+		   ПЕРЕНОС строки. */
+		.premium-footer :global(.btn) {
+			flex: 1 1 140px;
+			width: auto;
+			min-width: 0;
+		}
+
+		/* Сегмент бэкенда из этого правила исключён: он компактен и переносом
+		   не управляется — иначе «NativeWG|Kernel» разъехался бы на всю
+		   ширину, отобрав строку у кнопок. */
+		.premium-footer :global(.premium-backend-option) {
+			flex: 0 0 auto;
+			width: auto;
 		}
 	}
 </style>

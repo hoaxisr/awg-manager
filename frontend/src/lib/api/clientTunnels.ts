@@ -6,6 +6,7 @@ import type {
 	AmneziaPremiumConfig,
 	AmneziaPremiumKeyState,
 	AmneziaPremiumMirror,
+	AmneziaPremiumRevoke,
 	ConnectivityResult,
 	DeleteResult,
 	ExternalTunnel,
@@ -291,6 +292,18 @@ export class TunnelsClient extends CoreClient {
 	 */
 	async amneziaPremiumConfig(countryCode: string): Promise<AmneziaPremiumConfig> {
 		return this.request('/amnezia/premium/config', {
+			method: 'POST',
+			body: JSON.stringify({ countryCode })
+		});
+	}
+
+	/**
+	 * Отзывает конфигурацию страны и ВОЗВРАЩАЕТ слот устройств подписки —
+	 * обратная операция к amneziaPremiumConfig. Ломает работающий туннель этой
+	 * страны, поэтому вызывать только после подтверждения пользователем.
+	 */
+	async amneziaPremiumRevoke(countryCode: string): Promise<AmneziaPremiumRevoke> {
+		return this.request('/amnezia/premium/revoke', {
 			method: 'POST',
 			body: JSON.stringify({ countryCode })
 		});

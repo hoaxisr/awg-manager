@@ -1000,6 +1000,89 @@ func (h *AmneziaPremiumHandler) endCountryConfig(code string) {
 	h.mu.Unlock()
 }
 
+// AmneziaPremiumRevokeRequest — тело POST /amnezia/premium/revoke.
+type AmneziaPremiumRevokeRequest struct {
+	CountryCode string `json:"countryCode" example:"nl"`
+}
+
+// AmneziaPremiumRevokeData — исход отзыва. Наружу идёт только код страны:
+// сколько слотов осталось, знает каталог, и второй источник этого числа
+// разошёлся бы с ним при первом же отзыве из соседней вкладки.
+type AmneziaPremiumRevokeData struct {
+	CountryCode string `json:"countryCode" example:"nl"`
+}
+
+// AmneziaPremiumRevokeResponse — конверт ответа отзыва.
+type AmneziaPremiumRevokeResponse struct {
+	Success bool                     `json:"success" example:"true"`
+	Data    AmneziaPremiumRevokeData `json:"data"`
+}
+
+// Revoke отзывает конфигурацию страны и возвращает слот устройств подписки.
+//
+// Операция ОБРАТНАЯ расходной, но замок берётся тот же: отзыв и выдача одной
+// страны, пущенные разом, у портала встретились бы гонкой, а её исход —
+// потраченный или невозвращённый слот. Разные страны, как и у выдачи, идут
+// параллельно.
+//
+//	@Summary		Отозвать конфигурацию страны Amnezia Premium
+//	@Description	Возвращает слот устройств подписки. Ломает работающий туннель этой страны — подтверждение обязано быть на стороне интерфейса. Параллельный запрос той же страны (отзыв или выдача) отвергается (409).
+//	@Tags			amnezia-premium
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		AmneziaPremiumRevokeRequest	true	"Код страны"
+//	@Success		200		{object}	AmneziaPremiumRevokeResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		403		{object}	APIErrorEnvelope
+//	@Failure		405		{object}	APIErrorEnvelope
+//	@Failure		409		{object}	APIErrorEnvelope
+//	@Failure		422		{object}	APIErrorEnvelope
+//	@Failure		502		{object}	APIErrorEnvelope
+//	@Failure		503		{object}	APIErrorEnvelope
+//	@Router			/amnezia/premium/revoke [post]
+func (h *AmneziaPremiumHandler) Revoke(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[AmneziaPremiumRevokeRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	code := strings.ToLower(strings.TrimSpace(req.CountryCode))
+	if code == "" {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "Страна не выбрана", codePremiumNoCountry)
+		return
+	}
+	if len(code) > maxCountryCodeLen {
+		// Тот же предел и та же причина, что у выдачи: присланный код уезжает
+		// и в тело запроса к порталу, и в журнал, а журнал здесь кольцевой и
+		// живёт в памяти роутера.
+		h.log.Warn(logActionPremium, "revoke-country-config", fmt.Sprintf(
+			"route=direct код страны длиннее %d байт (%d) — отказ", maxCountryCodeLen, len(code)))
+		response.ErrorWithStatus(w, http.StatusBadRequest,
+			fmt.Sprintf("Код страны длиннее %d байт", maxCountryCodeLen), codePremiumBadCountry)
+		return
+	}
+	if !h.beginCountryConfig(code) {
+		h.log.Info(logActionPremium, "revoke-country-config",
+			fmt.Sprintf("route=direct country=%q страна уже занята запросом — отказ", code))
+		response.ErrorWithStatus(w, http.StatusConflict,
+			"По этой стране уже выполняется запрос — дождитесь ответа", codePremiumConfigBusy)
+		return
+	}
+	defer h.endCountryConfig(code)
+
+	if err := h.client().RevokeCountryConfig(r.Context(), code); err != nil {
+		h.failCP(w, "revoke-country-config", err)
+		return
+	}
+	h.log.Info(logActionPremium, "revoke-country-config",
+		fmt.Sprintf("route=direct country=%q конфигурация отозвана, слот возвращён", code))
+	// Как и у выдачи — ПОСЛЕ успеха портала: счётчик устройств и список
+	// выданных конфигураций изменились, соседняя вкладка иначе продолжит
+	// показывать отозванную страну занятой.
+	h.bus.PublishInvalidated(events.ResourceAmneziaPremiumCatalog, "config-revoked")
+	response.Success(w, AmneziaPremiumRevokeData{CountryCode: code})
+}
+
 // AmneziaPremiumMirrorRequest — тело POST /amnezia/premium/mirror.
 //
 // Поле обычной строкой, а не указателем: «поля нет» и «поле пустое» означают

@@ -129,6 +129,14 @@ type premiumPortal struct {
 	// configAbort — портал рвёт соединение, успев принять РАСХОДНЫЙ запрос:
 	// слот мог быть списан, а ответа не будет.
 	configAbort bool
+	// revokes — коды стран, с которыми приходили на
+	// /api/revoke-country-config, в порядке прихода. Список отдельный от
+	// configs: смешав их, нельзя было бы отличить возврат слота от траты.
+	revokes []string
+	// revokeStatus — статус ответа отзыва; 0 или 200 — успех.
+	revokeStatus int
+	// revokeHold придерживает ОДИН следующий запрос отзыва.
+	revokeHold *premiumHold
 }
 
 // premiumHold — придержанный ответ портала. Тест узнаёт по arrived, что вход
@@ -174,6 +182,8 @@ func (p *premiumPortal) handle(w http.ResponseWriter, r *http.Request) {
 		p.handleAccountInfo(w, r)
 	case "/api/download-config":
 		p.handleDownloadConfig(w, r)
+	case "/api/revoke-country-config":
+		p.handleRevokeConfig(w, r)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
@@ -288,6 +298,12 @@ func (p *premiumPortal) setConfigStatus(code int) {
 	p.mu.Unlock()
 }
 
+func (p *premiumPortal) setRevokeStatus(code int) {
+	p.mu.Lock()
+	p.revokeStatus = code
+	p.mu.Unlock()
+}
+
 // setConfigAbort заставляет расходную ручку рвать соединение после приёма
 // запроса.
 func (p *premiumPortal) setConfigAbort(v bool) {
@@ -322,6 +338,49 @@ func (p *premiumPortal) configsSeen() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]string(nil), p.configs...)
+}
+
+func (p *premiumPortal) revokesSeen() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.revokes...)
+}
+
+// holdNextRevoke придерживает ОДИН следующий отзыв: остальные идут как обычно.
+func (p *premiumPortal) holdNextRevoke(t *testing.T) *premiumHold {
+	t.Helper()
+	h := &premiumHold{arrived: make(chan struct{}), gate: make(chan struct{})}
+	t.Cleanup(h.release)
+	p.mu.Lock()
+	p.revokeHold = h
+	p.mu.Unlock()
+	return h
+}
+
+func (p *premiumPortal) handleRevokeConfig(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	var in struct {
+		CountryCode string `json:"countryCode"`
+	}
+	_ = json.Unmarshal(body, &in)
+
+	p.mu.Lock()
+	p.revokes = append(p.revokes, in.CountryCode)
+	status := p.revokeStatus
+	hold := p.revokeHold
+	p.revokeHold = nil
+	p.mu.Unlock()
+
+	if hold != nil {
+		close(hold.arrived)
+		<-hold.gate
+	}
+
+	if status != 0 && status != http.StatusOK {
+		w.WriteHeader(status)
+		return
+	}
+	_, _ = io.WriteString(w, `{"message":"Country configuration successfully deleted."}`)
 }
 
 // sid — сессия, выданная n-м входом. Метка стенда внутри значения.
@@ -548,6 +607,20 @@ func (s *premiumStand) configWithContext(t *testing.T, ctx context.Context, code
 	req := httptest.NewRequest(http.MethodPost, "/api/amnezia/premium/config",
 		strings.NewReader(`{"countryCode":"`+code+`"}`)).WithContext(ctx)
 	s.h.Config(rec, req)
+	return rec
+}
+
+// revokeInto отзывает конфигурацию страны, записывая в переданный recorder.
+func (s *premiumStand) revokeInto(rec http.ResponseWriter, code string) {
+	req := httptest.NewRequest(http.MethodPost, "/api/amnezia/premium/revoke",
+		strings.NewReader(`{"countryCode":"`+code+`"}`))
+	s.h.Revoke(rec, req)
+}
+
+func (s *premiumStand) revoke(t *testing.T, code string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.revokeInto(rec, code)
 	return rec
 }
 
@@ -2586,6 +2659,30 @@ func TestAmneziaPremiumMutations_PublishInvalidation(t *testing.T) {
 		waitEvent(t, ch, events.ResourceAmneziaPremiumCatalog, "config-issued")
 	})
 
+	t.Run("отзыв конфигурации", func(t *testing.T) {
+		st := newPremiumStand(t)
+		bus := events.NewBus()
+		st.h.SetEventBus(bus)
+		_, ch, unsub := bus.Subscribe()
+		defer unsub()
+		st.seedCatalog(t)
+
+		// Отказ портала: слот не вернулся — публиковать нечего.
+		st.portal.setRevokeStatus(http.StatusInternalServerError)
+		if rec := st.revoke(t, "nl"); rec.Code == http.StatusOK {
+			t.Fatalf("отказ портала пришёл успехом: %s", rec.Body.String())
+		}
+		noEvent(t, ch)
+
+		st.portal.setRevokeStatus(http.StatusOK)
+		if rec := st.revoke(t, "nl"); rec.Code != http.StatusOK {
+			t.Fatalf("отзыв конфигурации: %d %s", rec.Code, rec.Body.String())
+		}
+		// Причина СВОЯ: «config-issued» на отзыве соврала бы журналу и
+		// подписчику про то, что со слотом случилось.
+		waitEvent(t, ch, events.ResourceAmneziaPremiumCatalog, "config-revoked")
+	})
+
 	t.Run("запись адреса зеркала", func(t *testing.T) {
 		st := newPremiumStand(t)
 		bus := events.NewBus()
@@ -3461,5 +3558,167 @@ func TestAmneziaPremiumMirror_MethodRouter(t *testing.T) {
 	decodeEnvelope(t, rec.Body.Bytes(), &data)
 	if data.MirrorURL != testMirrorURL {
 		t.Fatalf("GET отдал %q, want %q", data.MirrorURL, testMirrorURL)
+	}
+}
+
+// Отзыв делит замок с выдачей: две операции по одной стране, пущенные разом,
+// у портала встретились бы гонкой, чей исход — потраченный либо
+// невозвращённый слот. Тест краснеет, если отзыву дать свой замок или не дать
+// никакого.
+func TestAmneziaPremiumRevoke_SharesLockWithConfig(t *testing.T) {
+	t.Run("выдача держит — отзыв отвергнут", func(t *testing.T) {
+		st := newPremiumStand(t)
+		st.seedCatalog(t)
+
+		hold := st.portal.holdNextConfig(t)
+		done := make(chan *httptest.ResponseRecorder, 1)
+		go func() {
+			rec := httptest.NewRecorder()
+			st.configInto(rec, "nl")
+			done <- rec
+		}()
+		<-hold.arrived
+
+		rec := st.revoke(t, "nl")
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("отзыв во время выдачи: %d %s, ждали 409", rec.Code, rec.Body.String())
+		}
+		if code := premiumErrorCode(t, rec); code != codePremiumConfigBusy {
+			t.Errorf("код отказа = %q, want %q", code, codePremiumConfigBusy)
+		}
+		if got := st.portal.revokesSeen(); len(got) != 0 {
+			t.Fatalf("портал увидел отзывы %v во время выдачи — гонка за слот", got)
+		}
+
+		hold.release()
+		if rec := <-done; rec.Code != http.StatusOK {
+			t.Fatalf("выдача: %d %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("отзыв держит — выдача отвергнута", func(t *testing.T) {
+		st := newPremiumStand(t)
+		st.seedCatalog(t)
+
+		hold := st.portal.holdNextRevoke(t)
+		done := make(chan *httptest.ResponseRecorder, 1)
+		go func() {
+			rec := httptest.NewRecorder()
+			st.revokeInto(rec, "nl")
+			done <- rec
+		}()
+		<-hold.arrived
+
+		rec := st.config(t, "nl")
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("выдача во время отзыва: %d %s, ждали 409", rec.Code, rec.Body.String())
+		}
+		if got := st.portal.configsSeen(); len(got) != 0 {
+			t.Fatalf("портал увидел выдачи %v во время отзыва — потрачен слот", got)
+		}
+
+		hold.release()
+		if rec := <-done; rec.Code != http.StatusOK {
+			t.Fatalf("отзыв: %d %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	// Разные страны параллелить можно: слот у портала ключуется страной.
+	t.Run("разные страны идут параллельно", func(t *testing.T) {
+		st := newPremiumStand(t)
+		st.seedCatalog(t)
+
+		hold := st.portal.holdNextRevoke(t)
+		done := make(chan *httptest.ResponseRecorder, 1)
+		go func() {
+			rec := httptest.NewRecorder()
+			st.revokeInto(rec, "nl")
+			done <- rec
+		}()
+		<-hold.arrived
+
+		if rec := st.revoke(t, "de"); rec.Code != http.StatusOK {
+			t.Fatalf("отзыв другой страны: %d %s, ждали 200", rec.Code, rec.Body.String())
+		}
+
+		hold.release()
+		if rec := <-done; rec.Code != http.StatusOK {
+			t.Fatalf("первый отзыв: %d %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// Замок берётся по НОРМАЛИЗОВАННОМУ коду — та же ловушка, что у выдачи:
+// « NL » и «nl» это одна страна и один слот.
+func TestAmneziaPremiumRevoke_LockKeyIsNormalized(t *testing.T) {
+	st := newPremiumStand(t)
+	st.seedCatalog(t)
+
+	hold := st.portal.holdNextRevoke(t)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		st.revokeInto(rec, "nl")
+		done <- rec
+	}()
+	<-hold.arrived
+
+	if rec := st.revoke(t, " NL "); rec.Code != http.StatusConflict {
+		t.Fatalf("та же страна в другом написании: %d %s, ждали 409", rec.Code, rec.Body.String())
+	}
+
+	hold.release()
+	if rec := <-done; rec.Code != http.StatusOK {
+		t.Fatalf("отзыв: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := st.portal.revokesSeen(); !slices.Equal(got, []string{"nl"}) {
+		t.Fatalf("портал видел %v, want [nl]", got)
+	}
+}
+
+// Пустая и слишком длинная страна отвергаются ДО портала — как у выдачи.
+func TestAmneziaPremiumRevoke_RejectsBadCountryBeforePortal(t *testing.T) {
+	cases := []struct {
+		name string
+		code string
+		want string
+	}{
+		{"пусто", "", codePremiumNoCountry},
+		{"одни пробелы", "   ", codePremiumNoCountry},
+		{"длиннее предела", strings.Repeat("x", maxCountryCodeLen+1), codePremiumBadCountry},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newPremiumStand(t)
+			st.seedCatalog(t)
+
+			rec := st.revoke(t, tc.code)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("%d %s, ждали 400", rec.Code, rec.Body.String())
+			}
+			if code := premiumErrorCode(t, rec); code != tc.want {
+				t.Errorf("код отказа = %q, want %q", code, tc.want)
+			}
+			if got := st.portal.revokesSeen(); len(got) != 0 {
+				t.Fatalf("портал увидел %v — отказ обязан быть до портала", got)
+			}
+		})
+	}
+}
+
+// Замок отпускается на ЛЮБОМ исходе: иначе страна остаётся занятой до
+// перезапуска демона, и отозвать её больше нельзя.
+func TestAmneziaPremiumRevoke_LockReleasedOnFailure(t *testing.T) {
+	st := newPremiumStand(t)
+	st.seedCatalog(t)
+
+	st.portal.setRevokeStatus(http.StatusInternalServerError)
+	if rec := st.revoke(t, "nl"); rec.Code == http.StatusOK {
+		t.Fatalf("отказ портала пришёл успехом: %s", rec.Body.String())
+	}
+
+	st.portal.setRevokeStatus(http.StatusOK)
+	if rec := st.revoke(t, "nl"); rec.Code != http.StatusOK {
+		t.Fatalf("повторный отзыв после отказа: %d %s — замок не отпущен", rec.Code, rec.Body.String())
 	}
 }

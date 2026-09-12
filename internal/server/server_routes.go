@@ -522,6 +522,10 @@ func (s *Server) registerLogsImportRoutes(mux *http.ServeMux, h *routeHandlers) 
 	// устройств подписки.
 	mux.HandleFunc("/api/amnezia/premium/catalog", h.guarded(amneziaPremiumHandler.Catalog))
 	mux.HandleFunc("/api/amnezia/premium/config", h.guarded(amneziaPremiumHandler.Config))
+	// Отзыв конфигурации страны (POST) — обратная выдаче операция, ВОЗВРАЩАЕТ
+	// слот. Отдельный путь по той же причине, по какой выдача отделена от
+	// каталога: разные последствия для подписки.
+	mux.HandleFunc("/api/amnezia/premium/revoke", h.guarded(amneziaPremiumHandler.Revoke))
 	// Адрес зеркала: действующий (GET) и запись (POST). Живёт здесь, а не в
 	// настройках, — поле принадлежит мастеру premium.
 	mux.HandleFunc("/api/amnezia/premium/mirror", h.guarded(amneziaPremiumHandler.Mirror))

@@ -66,6 +66,16 @@ export interface AmneziaPremiumConfig {
 	config: string;
 }
 
+/**
+ * Отозванная конфигурация страны: POST /amnezia/premium/revoke. Слот устройств
+ * подписки возвращён. Счётчика устройств здесь нет намеренно — его знает
+ * каталог, и второй источник этого числа разошёлся бы с ним при первом же
+ * отзыве из соседней вкладки.
+ */
+export interface AmneziaPremiumRevoke {
+	countryCode: string;
+}
+
 /** ДЕЙСТВУЮЩИЙ адрес зеркала Amnezia: GET/POST /amnezia/premium/mirror. */
 export interface AmneziaPremiumMirror {
 	mirrorUrl: string;

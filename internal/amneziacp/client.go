@@ -292,6 +292,41 @@ func (c *Client) CountryConfig(ctx context.Context, countryCode string) (string,
 	return extractConf(body, key)
 }
 
+// RevokeCountryConfig отзывает у портала конфигурацию страны и ВОЗВРАЩАЕТ слот
+// устройств подписки — обратная операция к CountryConfig. Проверено на живой
+// подписке 2026-09-12: счётчик устройств падает, страна уходит из
+// issued_configs, ответ — `{"message":"Country configuration successfully
+// deleted."}`.
+//
+// repeatable, в отличие от выдачи, ставится СОЗНАТЕЛЬНО: отзыв слот не тратит,
+// а повтор по уже отозванной стране даёт тот же исход «конфигурации нет».
+// Поэтому доставленный запрос с потерянным ответом безопасно переспросить —
+// ровно та причина, по которой у выдачи повтор запрещён, здесь отсутствует.
+//
+// Отзывается только конфигурация страны (source_type=country_config).
+// Устройство приложения Amnezia (gateway_account) живёт за другой ручкой
+// портала (/api/revoke-gateway-config), и трогать его панель не должна: она
+// его не заводила.
+func (c *Client) RevokeCountryConfig(ctx context.Context, countryCode string) error {
+	code := strings.ToLower(strings.TrimSpace(countryCode))
+	if code == "" {
+		return errors.New("amneziacp: код страны пуст")
+	}
+	payload, err := json.Marshal(map[string]string{"countryCode": code})
+	if err != nil {
+		return fmt.Errorf("%w: тело запроса отзыва: %w", ErrServiceUnavailable, err)
+	}
+	_, _, err = c.call(ctx, cpRequest{
+		event:      "revoke-country-config",
+		method:     http.MethodPost,
+		path:       "/api/revoke-country-config",
+		referer:    "/ru",
+		payload:    payload,
+		repeatable: true,
+	})
+	return err
+}
+
 // CheckKey проверяет присланный ключ входом в портал. Неудача текущую сессию
 // не трогает: пользователь мог ввести чужой ключ, уже работающая подписка от
 // этого не обязана отваливаться. Успех, наоборот, сессию занимает — ключ
