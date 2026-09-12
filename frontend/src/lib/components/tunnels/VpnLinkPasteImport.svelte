@@ -111,12 +111,6 @@
 			Это ключ Amnezia Premium. Список стран и выдачу конфигураций обслуживает мастер подписки —
 			откройте его.
 		</p>
-		<p class="premium-cp-note">
-			Если распознан ключ для получения параметров подписки, приложение может обратиться к внешнему сервису по вашей инициативе.<br>
-			AWG Manager не связан с операторами таких сервисов, не проверяет и не гарантирует ключи, доступность их API а так же стабильность работы данного функционала.<br>
-			В рамках использования приложения и связанных решений вы принимаете на себя ответственность за соблюдение законодательства страны, в которой находитесь.<br>
-			Данный функционал не является официальной интеграцией и не подлежит технической поддержке.
-		</p>
 	{/if}
 	{#if linkError}
 		<p class="link-error">{linkError}</p>
@@ -176,17 +170,6 @@
 		padding: 8px 12px;
 		background: var(--color-accent-tint);
 		border: 1px solid var(--accent, var(--color-accent));
-		border-radius: 8px;
-	}
-
-	.premium-cp-note {
-		font-size: 12px;
-		line-height: 1.45;
-		color: var(--text-muted, var(--color-text-muted));
-		margin: 10px 0 0;
-		padding: 8px 12px;
-		background: var(--bg-secondary, var(--color-bg-secondary));
-		border: 1px solid var(--border, var(--color-border));
 		border-radius: 8px;
 	}
 </style>
