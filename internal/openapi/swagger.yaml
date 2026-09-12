@@ -9132,6 +9132,10 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "405":
           description: Method Not Allowed
           schema:
@@ -9176,6 +9180,10 @@ paths:
             $ref: '#/definitions/api.AmneziaPremiumConfigResponse'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "405":
@@ -9272,6 +9280,10 @@ paths:
             $ref: '#/definitions/api.AmneziaPremiumKeyResponse'
         "400":
           description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "405":

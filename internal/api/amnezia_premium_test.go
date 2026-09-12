@@ -111,6 +111,10 @@ type premiumPortal struct {
 	// таким он и был, пока каталога не существовало, и тесты ключа на это
 	// опираются (см. portalSessionAlive).
 	account string
+	// accountStatusOnce — статус, которым account-info ответит на СЛЕДУЮЩИЙ
+	// запрос; дальше ручка отвечает как обычно. Ровно та форма, которую
+	// замерил ревьюер на живом портале: 403 на первый запрос и 200 на второй.
+	accountStatusOnce int
 	// configs — коды стран, с которыми приходили на /api/download-config, в
 	// порядке прихода. Считается именно этот список: «к порталу ушёл ровно
 	// один запрос» проверяется по расходной ручке, а не по входам.
@@ -204,12 +208,26 @@ func (p *premiumPortal) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (p *premiumPortal) handleAccountInfo(w http.ResponseWriter, _ *http.Request) {
 	p.mu.Lock()
 	body := p.account
+	once := p.accountStatusOnce
+	p.accountStatusOnce = 0
 	p.mu.Unlock()
+	if once != 0 {
+		w.WriteHeader(once)
+		return
+	}
 	if body == "" {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	_, _ = io.WriteString(w, body)
+}
+
+// failNextAccount заставляет каталожную ручку ответить указанным статусом
+// РОВНО ОДИН раз.
+func (p *premiumPortal) failNextAccount(code int) {
+	p.mu.Lock()
+	p.accountStatusOnce = code
+	p.mu.Unlock()
 }
 
 // handleDownloadConfig — РАСХОДНАЯ ручка портала: считает каждый приход.
@@ -1531,6 +1549,7 @@ func TestAmneziaPremiumKey_FailureMapping(t *testing.T) {
 		}{
 			{"ключ отклонён", amneziacp.ErrKeyRejected, http.StatusUnprocessableEntity, codePremiumKeyRejected},
 			{"ключ отклонён, обёрнут", fmt.Errorf("вход: %w", amneziacp.ErrKeyRejected), http.StatusUnprocessableEntity, codePremiumKeyRejected},
+			{"операция запрещена", amneziacp.ErrForbidden, http.StatusForbidden, codePremiumForbidden},
 			{"ключа нет", amneziacp.ErrNoKey, http.StatusBadRequest, codePremiumNoKey},
 			{"зеркало недоступно", amneziacp.ErrMirrorUnavailable, http.StatusBadGateway, codePremiumMirrorUnavailable},
 			{"адрес зеркала не задан", amneziacp.ErrMirrorNotConfigured, http.StatusBadGateway, codePremiumMirrorUnavailable},
@@ -1570,8 +1589,10 @@ func TestAmneziaPremiumKey_FailureMapping(t *testing.T) {
 		}{
 			{"портал ответил 401", func(_ *testing.T, st *premiumStand) { st.portal.setStatus(http.StatusUnauthorized) },
 				http.StatusUnprocessableEntity, codePremiumKeyRejected},
+			// 403 — свой класс: портал запретил операцию. «Ключ отклонён»
+			// здесь звало бы заменить ключ на исчерпанном лимите устройств.
 			{"портал ответил 403", func(_ *testing.T, st *premiumStand) { st.portal.setStatus(http.StatusForbidden) },
-				http.StatusUnprocessableEntity, codePremiumKeyRejected},
+				http.StatusForbidden, codePremiumForbidden},
 			{"портал ответил 422", func(_ *testing.T, st *premiumStand) { st.portal.setStatus(http.StatusUnprocessableEntity) },
 				http.StatusUnprocessableEntity, codePremiumKeyRejected},
 			{"портал ответил 500", func(_ *testing.T, st *premiumStand) { st.portal.setStatus(http.StatusInternalServerError) },
@@ -2665,6 +2686,46 @@ func TestAmneziaPremiumConfig_SameCountrySerialized(t *testing.T) {
 	}
 }
 
+// Замок берётся по НОРМАЛИЗОВАННОМУ коду страны: «nl» и « NL » — одна страна
+// и один слот подписки.
+//
+// Проверка отдельная от TestAmneziaPremiumConfig_SameCountrySerialized, потому
+// что та шлёт «nl» дважды и к написанию слепа. Зонд ревьюера это показал:
+// однострочная правка «брать код из тела как есть» проходит весь пакет
+// зелёной, а пользователю стоит второго слота устройства подписки — в портал
+// уходят два запроса, потому что до портала код всё равно доедет
+// нормализованным.
+func TestAmneziaPremiumConfig_LockKeyIsNormalized(t *testing.T) {
+	st := newPremiumStand(t)
+	st.seedCatalog(t)
+
+	hold := st.portal.holdNextConfig(t)
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		st.configInto(rec, "nl")
+		first <- rec
+	}()
+	<-hold.arrived
+
+	// Та же страна в другом написании: регистр и пробелы по краям.
+	second := st.config(t, " NL ")
+	if second.Code != http.StatusConflict {
+		t.Fatalf("та же страна в другом написании: %d %s, ждали 409", second.Code, second.Body.String())
+	}
+	if code := premiumErrorCode(t, second); code != codePremiumConfigBusy {
+		t.Errorf("код отказа = %q, want %q", code, codePremiumConfigBusy)
+	}
+
+	hold.release()
+	if rec := <-first; rec.Code != http.StatusOK {
+		t.Fatalf("первый запрос: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := st.portal.configsSeen(); !slices.Equal(got, []string{"nl"}) {
+		t.Fatalf("портал видел %v, want [nl] — слот подписки потрачен дважды", got)
+	}
+}
+
 // Разные страны параллелить можно: слот тратится по каждой отдельно, и общий
 // замок на всю операцию превратил бы мастер в очередь.
 func TestAmneziaPremiumConfig_DifferentCountriesRunInParallel(t *testing.T) {
@@ -2816,31 +2877,32 @@ func TestAmneziaPremiumConfig_LongCountryCodeRejectedBeforePortal(t *testing.T) 
 	}
 }
 
-// premiumRetryLures — слова, которыми русский текст зовёт сделать то же самое
-// ещё раз. Набор ШИРОКИЙ и общий на оба отказа расходной операции намеренно:
-// узкий список пиннил бы конкретную формулировку и пропустил бы текст, который
-// зовёт повторить другими словами. Каждое слово ловит живой зовущий текст,
-// который в этой же линии уже есть: «попробуйте» — «Зеркало Amnezia
-// недоступно — попробуйте позже», «снова» — прежний хвост «прежде чем
-// запрашивать снова», «заново» — «введите ключ заново».
+// premiumApprovedNonRetryableTexts — ПОЛНЫЙ список текстов, которыми линия
+// отказывает там, где повтор расходной операции опасен. Формулировки лежат
+// здесь литералами, а не берутся из прод-кода: проверка, читающая ту же
+// константу, из которой собран ответ, зелена при любой её правке.
 //
-// Корни, а не слова целиком: «повтор» ловит и «повторите», и «повторный»,
-// «запроси»/«запрашива» — «запросите ещё», «запрашивайте снова». Голое
-// «запрос» сюда не годится: «Портал Amnezia обработал запрос» ни к чему не
-// зовёт.
-var premiumRetryLures = []string{
-	"попробуйте", "попытайтесь", "повтор", "снова", "ещё раз", "еще раз",
-	"заново", "запросите", "запрашивай", "перезапрос",
+// Список пришёл на смену набору слов-приманок («попробуйте», «снова», …).
+// Чёрный список неполон по построению, и это не гипотеза: зонд ревьюера
+// прошёл его зелёным текстом «Откройте список стран, проверьте счётчик
+// устройств и жмите кнопку по новой — второй раз обычно проходит», в котором
+// ни одного из слов набора нет.
+//
+// Что проверка стережёт: неутверждённый текст не доедет до пользователя
+// молча — любая правка формулировки обязана быть внесена сюда явно. Чего она
+// не может: судить, зовёт ли внесённая формулировка повторить. Это решает
+// человек, который её сюда вносит.
+var premiumApprovedNonRetryableTexts = []string{
+	"Портал Amnezia не подтвердил выдачу конфигурации — выдана она или нет, неизвестно. " +
+		"Откройте список стран и проверьте счётчик устройств подписки.",
 }
 
-// assertNotRetryable — текст отказа не зовёт повторить расходную операцию.
+// assertNotRetryable — текст отказа совпадает с утверждённой формулировкой.
 func assertNotRetryable(t *testing.T, msg string) {
 	t.Helper()
-	low := strings.ToLower(msg)
-	for _, lure := range premiumRetryLures {
-		if strings.Contains(low, lure) {
-			t.Errorf("текст зовёт повторить расходную операцию (%q): %s", lure, msg)
-		}
+	if !slices.Contains(premiumApprovedNonRetryableTexts, msg) {
+		t.Errorf("текст отказа не утверждён: %q\nвнесите его в premiumApprovedNonRetryableTexts, "+
+			"убедившись, что он не зовёт повторить расходную операцию", msg)
 	}
 }
 
@@ -2969,24 +3031,27 @@ func TestAmneziaPremiumConfig_UnusableResponseIsNotRetryable(t *testing.T) {
 	}
 }
 
-// Критично: 403 у расходной ручки повтора не даёт, 401 — даёт.
+// Критично: 403 у РАСХОДНОЙ ручки повтора не даёт, 401 — даёт.
 //
-// Приравнивать их нельзя, хотя причина отказа наружу у них общая. 401 — «кто
-// ты», то есть правдоподобно истёкшая cookie: ре-логин её чинит, а портал
-// запрос отверг и слот не потратил. 403 — «нельзя»: политика или исчерпанная
-// квота, вход заново её не меняет, а второй расходный запрос стоит второго
-// слота устройства подписки.
+// Приравнивать их нельзя. 401 — «кто ты», то есть правдоподобно истёкшая
+// cookie: ре-логин её чинит, а портал запрос отверг и слот не потратил. 403 —
+// «нельзя»: политика или исчерпанная квота, и второй расходный запрос после
+// входа стоит второго слота устройства подписки.
+//
+// Наружу они тоже идут РАЗНЫМИ классами: 403 — не «ключ отклонён», иначе
+// мастер на исчерпанном лимите устройств зовёт заменить рабочий ключ.
 func TestAmneziaPremiumConfig_ForbiddenIsNotRetried(t *testing.T) {
 	cases := []struct {
 		name        string
 		status      int
 		wantConfigs int
 		wantLogins  int
+		wantCode    string
 	}{
 		// Вход при подготовке стенда — первый: у 401 к нему добавляется
 		// ре-логин, у 403 — нет.
-		{"401 лечится ре-логином", http.StatusUnauthorized, 2, 2},
-		{"403 повтора не даёт", http.StatusForbidden, 1, 1},
+		{"401 лечится ре-логином", http.StatusUnauthorized, 2, 2, codePremiumKeyRejected},
+		{"403 повтора не даёт", http.StatusForbidden, 1, 1, codePremiumForbidden},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2998,6 +3063,9 @@ func TestAmneziaPremiumConfig_ForbiddenIsNotRetried(t *testing.T) {
 			if rec.Code == http.StatusOK {
 				t.Fatalf("отказ портала пришёл успехом: %s", rec.Body.String())
 			}
+			if code := premiumErrorCode(t, rec); code != tc.wantCode {
+				t.Errorf("код отказа = %q, want %q", code, tc.wantCode)
+			}
 			if got := st.portal.configsSeen(); len(got) != tc.wantConfigs {
 				t.Fatalf("запросов к расходной ручке %d (%v), ждали %d: лишний запрос тратит слот подписки",
 					len(got), got, tc.wantConfigs)
@@ -3008,23 +3076,71 @@ func TestAmneziaPremiumConfig_ForbiddenIsNotRetried(t *testing.T) {
 		})
 	}
 
-	// Вход 403 не расходный, и его поведение не меняется: ключ отклонён,
-	// второго входа нет.
-	t.Run("вход 403 ведёт себя как прежде", func(t *testing.T) {
+	// Вход 403 повтора тоже не даёт: отказ определённый, и вторым входом тем
+	// же ключом он не чинится. Класс наружу — запрет, а не «ключ отклонён»:
+	// портал отвечает 403 и на живом ключе, и звать заменить его нельзя.
+	t.Run("вход 403 не повторяется и не винит ключ", func(t *testing.T) {
 		st := newPremiumStand(t)
 		st.portal.setStatus(http.StatusForbidden)
 
 		rec := st.post(t, `{"key":"`+premiumKey+`"}`)
-		if rec.Code != http.StatusUnprocessableEntity {
-			t.Fatalf("код = %d, ждали 422: %s", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("код = %d, ждали 403: %s", rec.Code, rec.Body.String())
 		}
-		if code := premiumErrorCode(t, rec); code != codePremiumKeyRejected {
-			t.Fatalf("код отказа = %q, want %q", code, codePremiumKeyRejected)
+		if code := premiumErrorCode(t, rec); code != codePremiumForbidden {
+			t.Fatalf("код отказа = %q, want %q", code, codePremiumForbidden)
 		}
 		if n := len(st.portal.seen()); n != 1 {
 			t.Fatalf("входов в портал %d, ждали 1", n)
 		}
 	})
+}
+
+// Критично: 403 на ПОВТОРЯЕМОЙ ручке лечится ре-логином и вторая попытка
+// удаётся.
+//
+// Ревьюер замерил это на живом портале: 403 на первый account-info и 200 на
+// второй. Общий запрет ре-логина по коду 403 превращал такой ответ в «Портал
+// Amnezia отклонил ключ подписки», то есть звал пользователя заменить рабочий
+// ключ. Каталог ничего не тратит — повтор здесь бесплатен.
+func TestAmneziaPremiumCatalog_ForbiddenHealsByRelogin(t *testing.T) {
+	st := newPremiumStand(t)
+	st.seedCatalog(t)
+	st.portal.failNextAccount(http.StatusForbidden)
+
+	rec := st.catalog(t)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("каталог после 403: %d %s — ре-логина не было", rec.Code, rec.Body.String())
+	}
+	// Вход при подготовке стенда — первый, ре-логин после 403 — второй.
+	if n := len(st.portal.seen()); n != 2 {
+		t.Fatalf("входов в портал %d, ждали 2: ре-логина после 403 не было", n)
+	}
+}
+
+// 403 — свой класс отказа со своим текстом: про запрет и квоту, а не про
+// негодный ключ. Слитый с 401 класс советовал бы заменить ключ, который
+// работает.
+func TestAmneziaPremiumForbidden_IsOwnFailureClass(t *testing.T) {
+	status, code, msg := cpFailure(fmt.Errorf("%w: стенд", amneziacp.ErrForbidden))
+	_, rejectedCode, rejectedMsg := cpFailure(fmt.Errorf("%w: стенд", amneziacp.ErrKeyRejected))
+
+	if code == rejectedCode {
+		t.Errorf("403 и «ключ отклонён» отдают один код %q", code)
+	}
+	if msg == rejectedMsg {
+		t.Errorf("403 и «ключ отклонён» отдают один текст: %s", msg)
+	}
+	if status != http.StatusForbidden {
+		t.Errorf("статус = %d, want %d", status, http.StatusForbidden)
+	}
+	low := strings.ToLower(msg)
+	if strings.Contains(low, "ключ") {
+		t.Errorf("текст 403 говорит про ключ — на исчерпанной квоте это совет заменить рабочий ключ: %s", msg)
+	}
+	if !strings.Contains(low, "устройств") {
+		t.Errorf("текст 403 не называет причину (лимит устройств подписки): %s", msg)
+	}
 }
 
 // Критично: контекст запроса доезжает до портала. Пользователь закрыл вкладку

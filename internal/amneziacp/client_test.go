@@ -948,7 +948,10 @@ func TestClientFailureSentinels(t *testing.T) {
 		wantErr error
 	}{
 		{name: "401 — ключ отклонён", status: http.StatusUnauthorized, wantErr: ErrKeyRejected},
-		{name: "403 — ключ отклонён", status: http.StatusForbidden, wantErr: ErrKeyRejected},
+		// 403 — не «ключ отклонён»: «нельзя» вместо «ключ не годится». По
+		// первому пользователя зовут заменить ключ, а живое значение 403 —
+		// исчерпанный лимит устройств подписки, где ключ рабочий.
+		{name: "403 — операция запрещена", status: http.StatusForbidden, wantErr: ErrForbidden},
 		{name: "422 — ключ отклонён", status: http.StatusUnprocessableEntity, wantErr: ErrKeyRejected},
 		{name: "500 — сервис недоступен", status: http.StatusInternalServerError, wantErr: ErrServiceUnavailable},
 		{name: "503 — сервис недоступен", status: http.StatusServiceUnavailable, wantErr: ErrServiceUnavailable},
@@ -968,12 +971,13 @@ func TestClientFailureSentinels(t *testing.T) {
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("причина отказа %v, ожидалась %v", err, tc.wantErr)
 			}
-			other := ErrKeyRejected
-			if tc.wantErr == ErrKeyRejected {
-				other = ErrServiceUnavailable
-			}
-			if errors.Is(err, other) {
-				t.Fatalf("причина совпала и с %v, и с %v: %v", tc.wantErr, other, err)
+			for _, other := range []error{ErrKeyRejected, ErrForbidden, ErrServiceUnavailable, ErrOutcomeUnknown} {
+				if other == tc.wantErr {
+					continue
+				}
+				if errors.Is(err, other) {
+					t.Fatalf("причина совпала и с %v, и с %v: %v", tc.wantErr, other, err)
+				}
 			}
 			if errors.Is(err, ErrNoKey) {
 				t.Fatalf("отказ портала спутан с отсутствием ключа: %v", err)

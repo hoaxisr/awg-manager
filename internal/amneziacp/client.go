@@ -27,9 +27,16 @@ import (
 // запрос.
 var ErrNoKey = errors.New("ключ подписки Amnezia не задан")
 
-// ErrKeyRejected — портал отказал в ключе (401/403/422). Статус портала наружу
+// ErrKeyRejected — портал отказал в ключе (401/422). Статус портала наружу
 // не транслируется: 401 от CP, отданный наружу как 401, разлогинивает панель.
 var ErrKeyRejected = errors.New("ключ подписки Amnezia отклонён")
+
+// ErrForbidden — портал ответил 403: операцию он запретил. Отдельный класс от
+// ErrKeyRejected, потому что совет пользователю противоположный. 401 и 422 —
+// «ключ не годится», и по ним человека зовут ввести другой ключ. 403 — «нельзя»:
+// самое вероятное живое значение — исчерпанный лимит устройств подписки, и
+// замена рабочего ключа тут не поможет, а навредит.
+var ErrForbidden = errors.New("портал Amnezia запретил операцию")
 
 // ErrServiceUnavailable — до данных подписки не добраться: молчит портал, не
 // резолвится зеркало, ответ неожиданной формы. Причина отказа обязана
@@ -492,8 +499,9 @@ func (c *Client) login(ctx context.Context, origin, key string, remember bool) (
 		repeatable: true,
 	})
 	if err != nil {
-		if errors.Is(err, ErrKeyRejected) {
-			// Повторять вход тем же ключом смысла нет.
+		if errors.Is(err, ErrKeyRejected) || errors.Is(err, ErrForbidden) {
+			// Повторять вход тем же ключом смысла нет: оба отказа —
+			// определённый ответ портала, от повтора он не меняется.
 			rec = recoveryNone
 		}
 		return "", rec, err
@@ -604,21 +612,30 @@ func (c *Client) do(ctx context.Context, origin, sid string, req cpRequest) (*ht
 	c.logf(req.event, fmt.Sprintf("origin=%s route=direct %s %s cp_http=%d", origin, req.method, req.path, resp.StatusCode))
 	if resp.StatusCode/100 != 2 {
 		resp.Body.Close()
-		return nil, statusRecovery(resp.StatusCode), statusError(resp.StatusCode, req)
+		return nil, statusRecovery(resp.StatusCode, req), statusError(resp.StatusCode, req)
 	}
 	return resp, recoveryNone, nil
 }
 
-func statusRecovery(code int) recovery {
+// statusRecovery решает, что делать после отказа портала. Смотрит и на статус,
+// и на запрос: цена повтора у ручек разная, и одним статусом она не задаётся.
+func statusRecovery(code int, req cpRequest) recovery {
 	if code == http.StatusUnauthorized {
 		// Протухшая cookie: войти заново и повторить.
-		//
-		// 403 сюда НЕ входит, хотя причина отказа у них общая (см.
-		// statusError): 401 — «кто ты», то есть правдоподобно истёкшая
-		// сессия, а 403 — «нельзя», то есть политика или исчерпанная квота.
-		// Вход заново её не меняет, а повтор расходной ручки после него
-		// стоит второго слота устройства подписки.
 		return recoverySession
+	}
+	if code == http.StatusForbidden {
+		// 403 — «нельзя», то есть политика или исчерпанная квота (см.
+		// statusError). Вход заново её не меняет — но 403 приезжает и на
+		// живом ключе с рабочей подпиской: портал отвечал им на ПЕРВЫЙ
+		// account-info и 200 на второй. Поэтому решает цена повтора, а не
+		// статус: повторяемой ручке ре-логин ничего не стоит и чинит ровно
+		// этот отказ, а у расходной повтор после входа стоит второго слота
+		// устройства подписки.
+		if req.repeatable {
+			return recoverySession
+		}
+		return recoveryNone
 	}
 	if code/100 == 3 {
 		// Перенаправление означает одно из двух, и различить их мы не можем:
@@ -644,10 +661,15 @@ func statusRecovery(code int) recovery {
 // 3xx остаётся обычным «сервис недоступен».
 func statusError(code int, req cpRequest) error {
 	switch code {
-	case http.StatusUnauthorized, http.StatusForbidden, http.StatusUnprocessableEntity:
+	case http.StatusUnauthorized, http.StatusUnprocessableEntity:
 		// 422 портал отдаёт на непригодный ключ во входе — это тот же класс,
-		// что 401/403, а не «сервис лежит».
+		// что 401, а не «сервис лежит».
 		return fmt.Errorf("%w: %s %s", ErrKeyRejected, req.method, req.path)
+	case http.StatusForbidden:
+		// 403 — свой класс: «нельзя» вместо «ключ не годится». Слить его с
+		// 401 значило бы на исчерпанном лимите устройств советовать человеку
+		// заменить рабочий ключ подписки.
+		return fmt.Errorf("%w: %s %s", ErrForbidden, req.method, req.path)
 	}
 	if code/100 == 3 {
 		return fmt.Errorf("%w: %s %s ответил %d", outcomeSentinel(req), req.method, req.path, code)

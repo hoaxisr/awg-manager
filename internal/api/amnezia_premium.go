@@ -30,6 +30,11 @@ const (
 	codePremiumNoCountry          = "AMNEZIA_PREMIUM_NO_COUNTRY"
 	codePremiumBadCountry         = "AMNEZIA_PREMIUM_BAD_COUNTRY"
 	codePremiumConfigBusy         = "AMNEZIA_PREMIUM_CONFIG_BUSY"
+	// codePremiumForbidden — портал ответил 403: операцию он запретил. Свой
+	// код, а не codePremiumKeyRejected: «ключ отклонён» зовёт человека ввести
+	// другой ключ, а самое вероятное живое значение 403 — исчерпанный лимит
+	// устройств подписки, где рабочий ключ менять не надо.
+	codePremiumForbidden = "AMNEZIA_PREMIUM_FORBIDDEN"
 	// codePremiumOutcomeUnknown — расходный запрос до портала дошёл, а исход
 	// его неизвестен: перенаправление, обрыв связи после отправки, непригодный
 	// ответ. Свой код, потому что это единственный класс отказа линии, на
@@ -310,6 +315,7 @@ func (h *AmneziaPremiumHandler) logf(event, detail string) {
 //	@Param			body	body		AmneziaPremiumKeyRequest	true	"Ключ подписки, флаг сохранения и remember для портала"
 //	@Success		200		{object}	AmneziaPremiumKeyResponse
 //	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		403		{object}	APIErrorEnvelope
 //	@Failure		405		{object}	APIErrorEnvelope
 //	@Failure		409		{object}	APIErrorEnvelope
 //	@Failure		422		{object}	APIErrorEnvelope
@@ -607,10 +613,18 @@ const premiumCheckDeviceCount = "Откройте список стран и п�
 //
 // Статус портала наружу не транслируется: 401 от CP, отданный наружу как
 // 401, разлогинил бы панель. Отклонённый ключ — 422, как и у прежних ручек.
+// Наш 403 на ErrForbidden со статусом портала совпал, но не переписан с него:
+// класс отказа выбирает сентинел.
 func cpFailure(err error) (status int, code, message string) {
 	switch {
 	case errors.Is(err, amneziacp.ErrKeyRejected):
 		return http.StatusUnprocessableEntity, codePremiumKeyRejected, "Портал Amnezia отклонил ключ подписки"
+	case errors.Is(err, amneziacp.ErrForbidden):
+		// Про ключ в этом тексте не говорится сознательно: 403 — это запрет
+		// операции, а не приговор ключу, и звать заменить рабочий ключ по
+		// исчерпанному лимиту устройств нельзя.
+		return http.StatusForbidden, codePremiumForbidden,
+			"Портал Amnezia запретил операцию — возможно, исчерпан лимит устройств подписки"
 	case errors.Is(err, amneziacp.ErrNoKey):
 		return http.StatusBadRequest, codePremiumNoKey, "Ключ подписки Amnezia не задан"
 	case errors.Is(err, amneziacp.ErrOutcomeUnknown):
@@ -822,6 +836,7 @@ func premiumCatalog(raw []byte) (AmneziaPremiumCatalogData, error) {
 //	@Security		CookieAuth
 //	@Success		200	{object}	AmneziaPremiumCatalogResponse
 //	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		403	{object}	APIErrorEnvelope
 //	@Failure		405	{object}	APIErrorEnvelope
 //	@Failure		422	{object}	APIErrorEnvelope
 //	@Failure		502	{object}	APIErrorEnvelope
@@ -893,6 +908,7 @@ type AmneziaPremiumConfigResponse struct {
 //	@Param			body	body		AmneziaPremiumConfigRequest	true	"Код страны"
 //	@Success		200		{object}	AmneziaPremiumConfigResponse
 //	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		403		{object}	APIErrorEnvelope
 //	@Failure		405		{object}	APIErrorEnvelope
 //	@Failure		409		{object}	APIErrorEnvelope
 //	@Failure		422		{object}	APIErrorEnvelope
