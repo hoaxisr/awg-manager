@@ -44,13 +44,14 @@ func TestResumeKernel_RefreshesEndpointRoute(t *testing.T) {
 		t.Fatalf("executeResumeKernel: %v", err)
 	}
 
-	if fake.resumes != 1 {
-		t.Errorf("Resume вызван %d раз", fake.resumes)
+	if fake.resumes.Load() != 1 {
+		t.Errorf("Resume вызван %d раз", fake.resumes.Load())
 	}
-	if len(fake.endpointRoutes) != 1 {
-		t.Fatalf("маршрут до endpoint не обновлён: вызовов %d", len(fake.endpointRoutes))
+	calls := fake.routeCalls()
+	if len(calls) != 1 {
+		t.Fatalf("маршрут до endpoint не обновлён: вызовов %d", len(calls))
 	}
-	got := fake.endpointRoutes[0]
+	got := calls[0]
 	if got.tunnelID != "awg1" || got.endpoint != "vpn.example.com:51820" {
 		t.Errorf("вызов с %+v", got)
 	}
@@ -67,8 +68,8 @@ func TestResumeKernel_SkipsWhenNoEndpoint(t *testing.T) {
 	if err := o.executeResumeKernel(context.Background(), Action{Type: ActionResumeKernel, Tunnel: "awg1"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(fake.endpointRoutes) != 0 {
-		t.Errorf("без endpoint маршрут трогать нечего, а вызовов %d", len(fake.endpointRoutes))
+	if n := len(fake.routeCalls()); n != 0 {
+		t.Errorf("без endpoint маршрут трогать нечего, а вызовов %d", n)
 	}
 }
 
@@ -86,8 +87,8 @@ func TestResumeKernel_EndpointRouteFailureIsNotFatal(t *testing.T) {
 	if err := o.executeResumeKernel(context.Background(), Action{Type: ActionResumeKernel, Tunnel: "awg1"}); err != nil {
 		t.Errorf("отказ маршрута не должен ронять Resume: %v", err)
 	}
-	if fake.resumes != 1 {
-		t.Errorf("Resume вызван %d раз", fake.resumes)
+	if fake.resumes.Load() != 1 {
+		t.Errorf("Resume вызван %d раз", fake.resumes.Load())
 	}
 }
 

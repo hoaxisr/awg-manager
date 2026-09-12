@@ -69,7 +69,7 @@ func TestConfDisabled_StaleRunningDoesNotSuppress(t *testing.T) {
 // tearing the tunnel down.
 func TestConfDisabled_SuppressedWhenNDMSStillHoldsInterfaceEnabled(t *testing.T) {
 	o := settledTunnel()
-	o.confLayerRunning = func(context.Context, string) (bool, error) { return true, nil }
+	o.SetConfLayerProbe(func(context.Context, string) (bool, error) { return true, nil })
 
 	if o.settleConfDisabled(context.Background(), confHook("disabled")) {
 		t.Fatal("NDMS reports conf=running — the disabled edge was a restart, the stop must be suppressed")
@@ -78,7 +78,7 @@ func TestConfDisabled_SuppressedWhenNDMSStillHoldsInterfaceEnabled(t *testing.T)
 
 func TestConfDisabled_StopsWhenNDMSConfirmsDisabled(t *testing.T) {
 	o := settledTunnel()
-	o.confLayerRunning = func(context.Context, string) (bool, error) { return false, nil }
+	o.SetConfLayerProbe(func(context.Context, string) (bool, error) { return false, nil })
 
 	if !o.settleConfDisabled(context.Background(), confHook("disabled")) {
 		t.Fatal("NDMS confirms the interface is disabled — the stop must proceed")
@@ -89,9 +89,9 @@ func TestConfDisabled_StopsWhenNDMSConfirmsDisabled(t *testing.T) {
 // stop: fall back to the edge we were given.
 func TestConfDisabled_StopsWhenNDMSUnreadable(t *testing.T) {
 	o := settledTunnel()
-	o.confLayerRunning = func(context.Context, string) (bool, error) {
+	o.SetConfLayerProbe(func(context.Context, string) (bool, error) {
 		return false, errors.New("rci timeout")
-	}
+	})
 
 	if !o.settleConfDisabled(context.Background(), confHook("disabled")) {
 		t.Fatal("probe error must leave the disabled edge in force")
@@ -279,8 +279,8 @@ func TestHandleEvent_ConfRunning_NDMSHoldsDown_DoesNotStart(t *testing.T) {
 		t.Fatalf("HandleEvent: %v", err)
 	}
 
-	if op.coldStarts != 0 {
-		t.Fatalf("туннель поднят по грани, которую опровергает NDMS: coldStarts=%d", op.coldStarts)
+	if op.coldStarts.Load() != 0 {
+		t.Fatalf("туннель поднят по грани, которую опровергает NDMS: coldStarts=%d", op.coldStarts.Load())
 	}
 	// Главный вред #233 — не лишний старт, а порча стора: ActionPersistRunning
 	// вернул бы Enabled=true поверх того, что нажал пользователь.
@@ -304,7 +304,7 @@ func TestHandleEvent_ConfRunning_NDMSHoldsUp_Starts(t *testing.T) {
 		t.Fatalf("HandleEvent: %v", err)
 	}
 
-	if op.coldStarts == 0 {
+	if op.coldStarts.Load() == 0 {
 		t.Fatal("внешнее включение из веб-интерфейса роутера обязано поднимать туннель (issue #183)")
 	}
 	if got := mustGet(t, store, "awg10"); !got.Enabled {
@@ -350,7 +350,7 @@ func TestConfRunning_InFlightStopSkipsProbe(t *testing.T) {
 	if probed {
 		t.Error("после ожидания своей операции проба бессмысленна — спрашивать NDMS не надо")
 	}
-	if op.coldStarts == 0 {
+	if op.coldStarts.Load() == 0 {
 		t.Error("грань должна дойти до decide: иначе туннель остаётся лежать с Enabled=false (#669)")
 	}
 }
@@ -365,4 +365,25 @@ func TestConfRunning_CancelledContextStopsHere(t *testing.T) {
 	if o.settleConfRunning(ctx, opkgConfHook("running")) {
 		t.Fatal("на отменённом контексте старт начинать нельзя — действия отвалятся посередине")
 	}
+}
+
+// F239: проба ставится в проводке, а читается из обработчика хуков. Сегодня
+// эти пути не пересекаются по времени, но поле — обычное, и без лока гонка
+// ловится детектором сразу. Тест держит защиту: на откаченной правке он даёт
+// WARNING: DATA RACE под -race.
+func TestConfLayerProbe_SetAndReadAreRaceFree(t *testing.T) {
+	o := stoppedTunnel()
+	o.SetConfLayerProbe(func(context.Context, string) (bool, error) { return false, nil })
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			o.SetConfLayerProbe(func(context.Context, string) (bool, error) { return false, nil })
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		o.settleConfRunning(context.Background(), opkgConfHook("running"))
+	}
+	<-done
 }
