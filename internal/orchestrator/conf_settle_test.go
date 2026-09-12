@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
@@ -384,6 +385,35 @@ func TestConfLayerProbe_SetAndReadAreRaceFree(t *testing.T) {
 	}()
 	for i := 0; i < 200; i++ {
 		o.settleConfRunning(context.Background(), opkgConfHook("running"))
+	}
+	<-done
+}
+
+// F258: хуки читаются из updateState под o.mu, поэтому и ставиться обязаны
+// под ним. Детектор ловит здесь обращение к шине — оно идёт первым, до
+// store.Get; чтения ifaceInvalidator и onTunnelRunning лежат в той же
+// критической секции ЗА обращением к стору, а его файловый лок создаёт
+// happens-before и прячет их гонку от -race. Поэтому тест держит класс, а не
+// каждое поле поимённо.
+func TestHookSetters_AreRaceFreeAgainstUpdateState(t *testing.T) {
+	store := lifecycleStore(t, &storage.AWGTunnel{ID: "awg10", Name: "g", Enabled: true})
+	o := &Orchestrator{state: newState(), store: store, bus: events.NewBus()}
+	o.state.tunnels["awg10"] = &tunnelState{ID: "awg10", Backend: "kernel"}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			o.SetEventBus(events.NewBus())
+			o.SetInterfaceInvalidator(func(string) {})
+			o.SetOnTunnelRunning(func(string) {})
+		}
+	}()
+	// ColdStart читает все три хука (publish + invalidator + onTunnelRunning),
+	// Stop — только шину: без первого мутация «сеттер без лока» не видна.
+	for i := 0; i < 200; i++ {
+		o.updateState(Action{Type: ActionColdStartKernel, Tunnel: "awg10"})
+		o.updateState(Action{Type: ActionStopKernel, Tunnel: "awg10"})
 	}
 	<-done
 }
