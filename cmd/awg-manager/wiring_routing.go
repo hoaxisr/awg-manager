@@ -14,7 +14,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
-	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmsevents "github.com/hoaxisr/awg-manager/internal/ndms/events"
 	ndmsmetrics "github.com/hoaxisr/awg-manager/internal/ndms/metrics"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -180,15 +179,31 @@ func (a *app) setupEventWiring() {
 	// a frozen "down" snapshot and policy/WAN/all-interface lists misreport the
 	// tunnel as down (#328). Async — Invalidate does a blocking HTTP.
 	a.orch.SetInterfaceInvalidator(func(name string) { go a.ndmsQueries.Interfaces.Invalidate(name) })
-	// Second-guess an external conf=disabled edge before stopping a tunnel:
-	// FetchSummary goes to NDMS on every call, so it sees the interface as it
-	// is now, not as the last hook left it (#669).
+	// Перепроверка внешней грани conf перед действием — и disabled перед
+	// остановкой, и running перед подъёмом: FetchSummary ходит в NDMS на
+	// каждый вызов, поэтому видит интерфейс таким, каков он сейчас, а не
+	// каким его оставил последний хук (#669).
+	//
+	// Пустой ответ (интерфейса нет, status-error «unable to find») — это «не
+	// знаем», а НЕ «держит down»: иначе подъём по грани conf=running получал
+	// бы вето от неответившего NDMS, хотя обе проверки обязаны в таком случае
+	// оставлять грань в силе.
 	a.orch.SetConfLayerProbe(func(ctx context.Context, name string) (bool, error) {
 		details, err := a.ndmsQueries.Interfaces.FetchSummary(ctx, name)
-		if err != nil || details == nil {
+		if err != nil {
 			return false, err
 		}
-		return details.Intent() == ndms.IntentUp, nil
+		if details == nil {
+			return false, fmt.Errorf("interface %s: NDMS не вернул данных", name)
+		}
+		// Не Intent(): он двузначен и относит "pending" к down. Для грани
+		// conf=running это вето без второй попытки — NDMS шлёт её однократно,
+		// и настоящее включение, застигнутое в переходной фазе, потерялось бы.
+		up, known := details.ConfIntent()
+		if !known {
+			return false, fmt.Errorf("interface %s: conf layer %q — состояние переходное", name, details.ConfLayer)
+		}
+		return up, nil
 	})
 	// Full hr-neo restart on tunnel-running — NDMS assigns fwmarks only
 	// during rci_create_policies (hr-neo startup), so tunnels appearing

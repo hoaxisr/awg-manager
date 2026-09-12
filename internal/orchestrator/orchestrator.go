@@ -125,8 +125,9 @@ type Orchestrator struct {
 	confSettleDelay time.Duration
 
 	// confLayerRunning reads the interface's CURRENT conf layer straight from
-	// NDMS (fresh, not from the snapshot cache). Used to second-guess a
-	// conf=disabled edge before acting on it. nil → check skipped.
+	// NDMS (fresh, not from the snapshot cache). Им перепроверяются обе грани:
+	// conf=disabled перед остановкой и conf=running перед подъёмом.
+	// Ошибка значит «не знаем» — грань остаётся в силе. nil → check skipped.
 	confLayerRunning func(ctx context.Context, ndmsName string) (bool, error)
 
 	// ifaceInvalidator, when set, refreshes the NDMS interface cache for a
@@ -192,7 +193,8 @@ func (o *Orchestrator) SetInterfaceInvalidator(fn func(name string)) { o.ifaceIn
 func (o *Orchestrator) SetOnTunnelRunning(fn func(tunnelID string)) { o.onTunnelRunning = fn }
 
 // SetConfLayerProbe wires the fresh NDMS read of an interface's conf layer.
-// nil-safe: without it, settleConfDisabled falls back to the hook edges alone.
+// Им перепроверяются ОБЕ грани: conf=disabled перед остановкой и conf=running
+// перед подъёмом. nil-safe: без пробы обе верят хукам как есть.
 func (o *Orchestrator) SetConfLayerProbe(fn func(ctx context.Context, ndmsName string) (bool, error)) {
 	o.confLayerRunning = fn
 }
@@ -411,12 +413,59 @@ func (o *Orchestrator) settleConfDisabled(ctx context.Context, event Event) bool
 	return false
 }
 
+// settleConfRunning — зеркало settleConfDisabled для грани conf=running.
+//
+// NDMS переигрывает конфигурацию сам и шлёт conf=running по интерфейсам,
+// которых мы не трогали: на стенде 5.01 пачка пришла через девять секунд
+// после удаления СОСЕДНЕГО OpkgTun. Поднимать туннель по такой грани нельзя —
+// decideNDMSHook сознательно не смотрит на Enabled (внешнее включение из
+// веб-интерфейса роутера обязано работать, issue #183), и ActionPersistRunning
+// вернёт Enabled=true: стор начнёт противоречить тому, что нажал пользователь.
+//
+// Отличает грани не время, а факт: спрашиваем NDMS, что он держит СЕЙЧАС.
+// Держит up — включение настоящее. Держит down — грань уже неверна, её
+// породила чужая операция. Непрочитанный NDMS оставляет грань в силе, как и в
+// settleConfDisabled: лучше лишний старт, чем туннель, лежащий до ручного
+// вмешательства (#669).
+func (o *Orchestrator) settleConfRunning(ctx context.Context, event Event) bool {
+	o.mu.Lock()
+	t := o.state.findByNDMSName(event.NDMSName)
+	var tunnelID string
+	var running bool
+	if t != nil {
+		tunnelID, running = t.ID, t.Running
+	}
+	o.mu.Unlock()
+
+	// Неизвестный или уже работающий туннель decide и так не тронет.
+	if tunnelID == "" || running || o.confLayerRunning == nil {
+		return true
+	}
+
+	up, err := o.confLayerRunning(ctx, event.NDMSName)
+	if ctx.Err() != nil {
+		// Вызывающий сдался — исполнять на мёртвом контексте нечего: действия
+		// отвалятся посередине. Тот же выбор, что в settleConfDisabled.
+		return false
+	}
+	if err != nil || up {
+		return true
+	}
+	o.appLog.Info("conf-settle", tunnelID,
+		"NDMS держит интерфейс выключенным — conf=running не от пользователя, туннель не поднимаем")
+	return false
+}
+
 // awaitTunnelIdle blocks until nothing is executing for the tunnel behind
 // ndmsName (or the wait gives up). An external conf=running that lands while
 // our own stop is still running would otherwise be swallowed by decide's
 // t.Running guard — and since that stop persists Enabled=false, no later
 // event brings the tunnel back on its own (issue #669).
-func (o *Orchestrator) awaitTunnelIdle(ctx context.Context, ndmsName string) {
+// Возвращает true, если ждать пришлось: по туннелю в этот момент шла НАША
+// операция. Это важно для settleConfRunning — её вопрос «что NDMS держит
+// сейчас» после нашей же остановки получает ответ «down», потому что
+// InterfaceDown только что его туда и записал, а не потому что грань чужая.
+func (o *Orchestrator) awaitTunnelIdle(ctx context.Context, ndmsName string) bool {
 	o.mu.Lock()
 	var tunnelID string
 	if t := o.state.findByNDMSName(ndmsName); t != nil {
@@ -424,10 +473,29 @@ func (o *Orchestrator) awaitTunnelIdle(ctx context.Context, ndmsName string) {
 	}
 	o.mu.Unlock()
 	if tunnelID == "" {
-		return
+		return false
+	}
+	if o.tryLockTunnel(tunnelID, "await-idle") {
+		o.unlockTunnel(tunnelID)
+		return false
 	}
 	if err := o.lockTunnel(ctx, tunnelID, "await-idle"); err == nil {
 		o.unlockTunnel(tunnelID)
+	}
+	return true
+}
+
+// tryLockTunnel — неблокирующий lockTunnel: берёт замок, если он свободен
+// прямо сейчас, и сообщает, получилось ли.
+func (o *Orchestrator) tryLockTunnel(tunnelID, owner string) bool {
+	semAny, _ := o.tunnelMu.LoadOrStore(tunnelID, make(chan struct{}, 1))
+	sem := semAny.(chan struct{})
+	select {
+	case sem <- struct{}{}:
+		o.tunnelLockOwner.Store(tunnelID, &lockHolder{owner: owner, since: time.Now()})
+		return true
+	default:
+		return false
 	}
 }
 
@@ -478,8 +546,18 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 	if event.Type == EventNDMSHook && event.Layer == "conf" {
 		switch event.Level {
 		case "running":
+			// Ждали своей же операции — спрашивать NDMS бесполезно: он
+			// отдаст то, что мы сами только что записали. Грань идёт в decide
+			// как до появления пробы, иначе вернётся #669: наш Stop
+			// персистит Enabled=false, и поднять туннель больше нечему.
+			if !o.awaitTunnelIdle(ctx, event.NDMSName) && !o.settleConfRunning(ctx, event) {
+				return nil
+			}
+			// Штамп «видели внешний running» ставим только для грани, которая
+			// устояла: по нему settleConfDisabled отличает перезапуск
+			// интерфейса в NDMS от настоящего выключения, и опровергнутая
+			// грань подавляла бы там законную остановку.
 			o.noteConfRunning(event.NDMSName)
-			o.awaitTunnelIdle(ctx, event.NDMSName)
 		case "disabled":
 			if !o.settleConfDisabled(ctx, event) {
 				return nil

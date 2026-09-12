@@ -164,10 +164,12 @@ type fakeKernelOp struct {
 	entered chan struct{}
 	release chan struct{}
 
-	// coldStartErr/deleteErr — отказ соответствующего шага; stops — счётчик Stop.
+	// coldStartErr/deleteErr — отказ соответствующего шага; stops/coldStarts —
+	// счётчики Stop и ColdStart.
 	coldStartErr error
 	deleteErr    error
 	stops        int
+	coldStarts   int
 
 	// resumes/endpointRoutes — для проверки того, что возврат линка приводит
 	// и маршрут до endpoint (см. resume_endpoint_route_test.go).
@@ -187,6 +189,7 @@ type endpointRouteCall struct {
 
 func (f *fakeKernelOp) Create(context.Context, tunnel.Config) error { return nil }
 func (f *fakeKernelOp) ColdStart(context.Context, tunnel.Config) error {
+	f.coldStarts++
 	park(f.entered, f.release)
 	return f.coldStartErr
 }
