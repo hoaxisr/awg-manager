@@ -103,12 +103,22 @@ type captureNDMS struct {
 	failBatch bool   // RCI-батч (массив команд) отвечает 500
 	failRoute bool   // команды маршрута отвечают отказом во вложенном status
 	ifaceResp string // тело ответа на show interface
+	// confLines — строки running-config: по ним снятие host-route находит
+	// СВОИ записи (по метке !awgm-) и снимает их парной формой.
+	confLines []string
 }
 
 func newCaptureNDMS(t *testing.T) *captureNDMS {
 	t.Helper()
 	c := &captureNDMS{}
 	c.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/show/running-config") {
+			c.mu.Lock()
+			lines := append([]string{}, c.confLines...)
+			c.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": lines})
+			return
+		}
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/show/ip/route") {
 			_ = json.NewEncoder(w).Encode([]map[string]any{{"destination": "0.0.0.0/0", "interface": "ISP0"}})
 			return
@@ -453,11 +463,14 @@ func TestStartObfuscated_RemovesStaleTargetRoute(t *testing.T) {
 	op := newObfOperator(t, n, fr)
 	st := obfStored()
 	st.ResolvedEndpointIP = "198.51.100.1"
+	// Прежняя запись живёт в конфигурации роутера с нашей меткой — по ней её
+	// и находят: слепой залп по адресу снёс бы заодно чужие записи.
+	n.confLines = []string{"    ip route 198.51.100.1 ISP0 auto !awgm-obfuscator awg20"}
 
 	if err := op.Start(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(n.joined(), `"host":"198.51.100.1","no":true`) {
+	if !strings.Contains(n.joined(), `"host":"198.51.100.1","interface":"ISP0","no":true`) {
 		t.Fatalf("прежний host-route не снят:\n%s", n.joined())
 	}
 	if !strings.Contains(n.joined(), `"host":"203.0.113.5"`) {
@@ -564,6 +577,7 @@ func TestStopObfuscated_SharedHostRouteKeptForNeighbour(t *testing.T) {
 			})
 			st := obfStored()
 			st.ResolvedEndpointIP = "203.0.113.5"
+			n.confLines = []string{"    ip route 203.0.113.5 ISP0 auto !awgm-obfuscator awg20"}
 
 			if err := op.Stop(context.Background(), st); err != nil {
 				t.Fatal(err)
@@ -640,6 +654,7 @@ func TestSyncObfuscator_MovesHostRouteToNewTarget(t *testing.T) {
 	op := newObfOperator(t, n, fr)
 	st := obfStored()
 	st.ResolvedEndpointIP = "198.51.100.1" // маршрут стоит под прежним адресом target
+	n.confLines = []string{"    ip route 198.51.100.1 ISP0 auto !awgm-obfuscator awg20"}
 
 	targetIP, err := op.SyncObfuscator(context.Background(), st)
 	if err != nil {
@@ -652,7 +667,7 @@ func TestSyncObfuscator_MovesHostRouteToNewTarget(t *testing.T) {
 		t.Fatal("релей должен быть перезапущен")
 	}
 	posts := n.joined()
-	if !strings.Contains(posts, `"host":"198.51.100.1","no":true`) {
+	if !strings.Contains(posts, `"host":"198.51.100.1","interface":"ISP0","no":true`) {
 		t.Fatalf("старый host-route не снят:\n%s", posts)
 	}
 	if !strings.Contains(posts, `"host":"203.0.113.5"`) {
@@ -847,21 +862,29 @@ func TestStartObfuscated_SameWAN_KeepsRoute(t *testing.T) {
 }
 
 // Рестарт демона: реестр WAN пуст, а адрес в записи есть. Под каким WAN стоит
-// запись — неизвестно, поэтому снимаем вслепую, заодно унося мусор прошлой
-// жизни (RemoveHostRoute чистит все записи по адресу).
-func TestStartObfuscated_WANUnknownAfterRestart_ClearsBlind(t *testing.T) {
+// запись, оператор не помнит — зато помнит роутер: запись ищется в его
+// конфигурации по нашей метке и снимается парой (host, interface). Слепой залп
+// по адресу остаётся только на случай, когда конфигурацию не прочитать.
+func TestStartObfuscated_WANUnknownAfterRestart_RemovesByConfigEntry(t *testing.T) {
 	withObfDirs(t)
 	n := newCaptureNDMS(t)
 	op := newObfOperator(t, n, newFakeObfRunner())
 	st := obfStored()
 	st.ResolvedEndpointIP = "203.0.113.5"
+	n.confLines = []string{
+		"    ip route 203.0.113.5 PPPoE0 auto !awgm-obfuscator awg20",
+		"    ip route 203.0.113.5 Bridge0 auto !чужой маршрут",
+	}
 
 	if err := op.Start(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
 
-	if n.firstPostWith(`{"ip":{"route":{"host":"203.0.113.5","no":true}}}`) < 0 {
-		t.Fatalf("при неизвестном WAN снимаем слепой формой по адресу:\n%s", n.joined())
+	if n.firstPostWith(`"host":"203.0.113.5","interface":"PPPoE0","no":true`) < 0 {
+		t.Fatalf("своя запись не снята парной формой:\n%s", n.joined())
+	}
+	if n.firstPostWith(`"interface":"Bridge0","no":true`) >= 0 {
+		t.Fatalf("снята чужая запись на том же адресе:\n%s", n.joined())
 	}
 }
 

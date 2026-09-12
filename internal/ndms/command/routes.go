@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
@@ -117,6 +118,15 @@ func v6Prefix(route StaticRouteSpec) (string, error) {
 // Неразобранный адрес уходит v4-формой: пусть отказывает NDMS и причина видна
 // в журнале — молчаливый v6-путь превратил бы мусор в «/128».
 func (c *RouteCommands) RemoveHostRoute(ctx context.Context, host string) error {
+	// Сначала точный путь: читаем записи по адресу из конфигурации роутера и
+	// снимаем СВОИ (по метке владения) каждую своей парой (host, interface).
+	// Слепая форма снимает всё, что стоит на адресе, включая статический
+	// маршрут, заведённый пользователем руками, — а различить их можно только
+	// по метке, которую ставим мы сами (AddStaticRoute.Comment).
+	if done, err := c.removeOwnedHostRoutes(ctx, host); done {
+		return err
+	}
+
 	payload := map[string]any{
 		"ip": map[string]any{
 			"route": map[string]any{"no": true, "host": host},
@@ -147,6 +157,64 @@ func (c *RouteCommands) RemoveHostRoute(ctx context.Context, host string) error 
 		}
 	}
 	return lastErr
+}
+
+// ownedRouteMark — метка владения в комментарии записи. Её ставит
+// AddStaticRoute всем нашим маршрутам (`… auto !awgm-obfuscator awg20`).
+const ownedRouteMark = "!awgm-"
+
+// removeOwnedHostRoutes снимает записи host-route по адресу, помеченные как
+// наши, каждую парной формой (host, interface). done=false означает «точным
+// путём не получилось» — конфигурацию не прочитать; вызывающий падает на
+// слепую форму, как раньше.
+//
+// Запись без нашей метки не трогаем вовсе: это либо маршрут пользователя,
+// либо запись, которую NDMS завёл сам, — снимать её за него мы не вправе.
+func (c *RouteCommands) removeOwnedHostRoutes(ctx context.Context, host string) (bool, error) {
+	if c.queries == nil || c.queries.RunningConfig == nil {
+		return false, nil
+	}
+	lines, err := c.queries.RunningConfig.Lines(ctx)
+	if err != nil {
+		return false, nil
+	}
+	v6 := false
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		v6 = true
+	}
+	// Пустой список — снимать нечего, и это успех: маршрута, за который
+	// отвечает вызывающий, на роутере нет. Слепой залп по адресу тут только
+	// снёс бы чужую запись.
+	var firstErr error
+	for _, iface := range ownedHostRouteIfaces(lines, host, v6) {
+		spec := StaticRouteSpec{Host: host, Interface: iface, V6: v6}
+		if rmErr := c.RemoveStaticRoute(ctx, spec); rmErr != nil && firstErr == nil {
+			firstErr = rmErr
+		}
+	}
+	return true, firstErr
+}
+
+// ownedHostRouteIfaces — интерфейсы наших записей host-route по адресу.
+// Формат строки конфигурации: `ip route <host> <iface> auto !awgm-…`,
+// у v6 — `ipv6 route <prefix>/128 <iface> auto !awgm-…` (стенд 5.01).
+func ownedHostRouteIfaces(lines []string, host string, v6 bool) []string {
+	keyword, dest := "ip", host
+	if v6 {
+		keyword, dest = "ipv6", host+"/128"
+	}
+	var out []string
+	for _, line := range lines {
+		f := strings.Fields(strings.TrimSpace(line))
+		if len(f) < 4 || f[0] != keyword || f[1] != "route" || f[2] != dest {
+			continue
+		}
+		if !strings.Contains(line, ownedRouteMark) {
+			continue
+		}
+		out = append(out, f[3])
+	}
+	return out
 }
 
 // AddStaticRoute adds a network or host route to the given interface. For v6
