@@ -32,6 +32,7 @@
 		isPremiumCountryIssued,
 		isPremiumIssueAllowed,
 		premiumActiveDevicesForCountry,
+		premiumIssuedConfigsForCountry,
 		premiumSubscriptionState
 	} from '$lib/utils/amneziaPremiumCatalog';
 	import PremiumCountryList from './PremiumCountryList.svelte';
@@ -116,8 +117,24 @@
 		catalog ? premiumSubscriptionState(catalog.subscriptionEndDate, nowMs) : 'unknown'
 	);
 	const issueAllowed = $derived(catalog !== null && isPremiumIssueAllowed(subscriptionState));
-	const confirmDevices = $derived(
-		confirmCountry ? premiumActiveDevicesForCountry(issuedConfigs, confirmCountry).length : 0
+	/**
+	 * Сколько слотов подписки страна занимает СЕЙЧАС — обе разновидности
+	 * записей вместе.
+	 *
+	 * Прежний счётчик брал только записи gateway_account, и у страны с нашей
+	 * выданной конфигурацией диалог говорил «Повторная выдача тратит слот» и
+	 * тут же «Активных устройств: 0» — ноль читался как «свободно». Слот
+	 * занимает КАЖДАЯ запись, независимо от того, кто её завёл.
+	 */
+	const confirmSlots = $derived(
+		confirmCountry
+			? premiumIssuedConfigsForCountry(issuedConfigs, confirmCountry).length +
+					premiumActiveDevicesForCountry(issuedConfigs, confirmCountry).length
+			: 0
+	);
+	/** Выдавали ли конфигурацию по этой стране МЫ: от этого зависит текст вопроса. */
+	const confirmIssuedByUs = $derived(
+		confirmCountry !== '' && isPremiumCountryIssued(issuedConfigs, confirmCountry)
 	);
 	const confirmCountryName = $derived(
 		catalog?.countries.find((c) => c.code === confirmCountry)?.name ?? confirmCountry
@@ -137,7 +154,10 @@
 	 * Отзывать можно только ВЫДАННУЮ нами конфигурацию страны. Устройство
 	 * приложения Amnezia (source_type=gateway_account) сюда не попадает:
 	 * isPremiumCountryIssued его не считает, и отзывать его наша панель не
-	 * должна — она его не заводила.
+	 * должна — она его не заводила. Портал такой записью владеет через другую
+	 * ручку (/api/revoke-gateway-config), и трогать её отсюда нечем: саму
+	 * конфигурацию мы не получали и вернуть её слот не можем. Отсюда и текст
+	 * подтверждения выдачи по такой стране.
 	 */
 	const canRevoke = $derived(
 		phase === 'catalog' &&
@@ -396,9 +416,23 @@
 		if (!nameEdited) tunnelName = code ? `awg-${code.toLowerCase()}` : '';
 	}
 
+	/**
+	 * Подтверждение спрашивается, когда страна УЖЕ занимает слот подписки, —
+	 * независимо от того, кто этот слот занял.
+	 *
+	 * Раньше условием было только `isPremiumCountryIssued`, то есть наша
+	 * выдача. Страна с записью «получено вне AWG-M» проходила молча, и
+	 * РАСХОДНАЯ выдача тратила второй слот из семи без единого вопроса —
+	 * ровно тот промах, ради которого заводилась метка строки (F284). Метка
+	 * показывает цену, подтверждение не даёт заплатить её случайно; одной
+	 * метки мало, потому что она не стоит на пути у кнопки.
+	 */
 	function requestConfig(): void {
 		if (!selectedCountry || !issueAllowed) return;
-		if (isPremiumCountryIssued(issuedConfigs, selectedCountry)) {
+		const occupied =
+			isPremiumCountryIssued(issuedConfigs, selectedCountry) ||
+			premiumActiveDevicesForCountry(issuedConfigs, selectedCountry).length > 0;
+		if (occupied) {
 			confirmCountry = selectedCountry;
 			return;
 		}
@@ -604,10 +638,14 @@
 
 <ConfirmModal
 	open={confirmCountry !== ''}
-	title="Выдать конфигурацию повторно?"
-	message={`По стране «${confirmCountryName}» конфигурация уже выдавалась. Повторная выдача тратит слот устройств подписки.`}
-	secondary={`Активных устройств по этой стране: ${confirmDevices}.`}
-	confirmLabel="Выдать повторно"
+	title={confirmIssuedByUs ? 'Выдать конфигурацию повторно?' : 'Страна уже занимает слот — выдать?'}
+	message={confirmIssuedByUs
+		? `По стране «${confirmCountryName}» конфигурация уже выдавалась. Повторная выдача займёт ЕЩЁ ОДИН слот устройств подписки.`
+		: `По стране «${confirmCountryName}» конфигурация уже получена вне AWG-M. Выдача займёт ЕЩЁ ОДИН слот устройств подписки.`}
+	secondary={confirmIssuedByUs
+		? `Сейчас эта страна занимает слотов подписки: ${confirmSlots}.`
+		: `Сейчас эта страна занимает слотов подписки: ${confirmSlots}. Конфигурацию, полученную вне AWG-M, панель отозвать не может — этот слот отсюда не вернуть.`}
+	confirmLabel={confirmIssuedByUs ? 'Выдать повторно' : 'Выдать'}
 	cancelLabel="Отмена"
 	variant="primary"
 	{busy}

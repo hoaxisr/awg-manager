@@ -449,6 +449,23 @@ describe('метка строки страны', () => {
 		expect(premiumCountryLabel('de', [device], tunnels)).toBeNull();
 	});
 
+	// Регистр и пробелы у НОВОЙ ветки — отдельным тестом.
+	//
+	// Бэкенд нормализацию кода не делает СОЗНАТЕЛЬНО: `internal/api/
+	// amnezia_premium.go` отдаёт и `server_country_code` выданных записей, и
+	// код страны каталога так, как прислал портал, — сопоставление на
+	// интерфейсе. Значит «FX» против «fx» — живая возможность, а не выдумка
+	// теста, и без этой проверки снятие нормализации внутри
+	// premiumActiveDevicesForCountry возвращает дефект F284 целиком, оставляя
+	// набор зелёным.
+	it('регистр и пробелы не мешают метке «получено вне AWG-M»', () => {
+		const device = issuedConfig({ countryCode: ' Is ', sourceType: 'gateway_account' });
+		expect(premiumCountryLabel('IS', [device], tunnels)).toEqual({
+			kind: 'external',
+			text: 'получено вне AWG-M',
+		});
+	});
+
 	it('регистр кода страны на метку не влияет', () => {
 		expect(premiumCountryLabel('NL', [staleNL], tunnels)?.kind).toBe('stale');
 		expect(premiumCountryLabel(' Ch ', [], tunnels)).toEqual({

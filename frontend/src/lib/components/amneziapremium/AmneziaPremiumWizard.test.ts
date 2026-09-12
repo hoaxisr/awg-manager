@@ -245,9 +245,10 @@ describe('AmneziaPremiumWizard', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Создать туннель' }));
 		await settle();
 
-		// Счётчик активных устройств — длина массива из хелпера: запись
-		// gateway_account одна, country_config в него не входит.
-		expect(screen.getByText('Активных устройств по этой стране: 1.')).toBeTruthy();
+		// Счётчик считает ВСЕ записи страны: слот занимает каждая, независимо
+		// от того, кто её завёл. В фикстуре их две — country_config и
+		// gateway_account.
+		expect(screen.getByText('Сейчас эта страна занимает слотов подписки: 2.')).toBeTruthy();
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Выдать повторно' }));
 		await waitFor(() => expect(onconfig).toHaveBeenCalledTimes(1));
@@ -552,5 +553,76 @@ describe('AmneziaPremiumWizard', () => {
 		await fireEvent.click(screen.getByText('Fixtureland [P2P]'));
 		await settle();
 		expect(screen.queryByRole('button', { name: 'Отозвать' })).toBeNull();
+	});
+
+	it('выдача по стране, полученной вне AWG-M, спрашивает подтверждение (F-A)', async () => {
+		amneziaPremiumKeyState.mockResolvedValue(KEY_PRESENT);
+		amneziaPremiumCatalog.mockResolvedValue({
+			...CATALOG,
+			issuedConfigs: [
+				{
+					countryCode: 'fx',
+					lastIssuedAt: '2031-01-05T10:00:00Z',
+					portalUpdatedAt: '2030-12-01T10:00:00Z',
+					// Запись есть, но выдавали её НЕ мы: слот занят, отозвать
+					// его отсюда нельзя.
+					sourceType: 'gateway_account'
+				}
+			]
+		});
+		const onconfig = vi.fn();
+
+		render(AmneziaPremiumWizard, {
+			props: { open: true, onclose: vi.fn(), onconfig }
+		});
+		await settle();
+		await useStoredKey();
+
+		await fireEvent.click(screen.getByText('Fixtureland [P2P]'));
+		await fireEvent.input(screen.getByLabelText('Имя туннеля'), { target: { value: 'awg-fx' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Создать туннель' }));
+		await settle();
+
+		// Расходная операция НЕ ушла: сначала вопрос.
+		expect(amneziaPremiumConfig).not.toHaveBeenCalled();
+		expect(screen.getByText('Страна уже занимает слот — выдать?')).toBeTruthy();
+		// И сказано главное: этот слот из панели не вернуть.
+		expect(screen.getByText(/панель отозвать не может/)).toBeTruthy();
+	});
+
+	it('счётчик слотов в подтверждении считает обе разновидности записей (F-D)', async () => {
+		amneziaPremiumKeyState.mockResolvedValue(KEY_PRESENT);
+		amneziaPremiumCatalog.mockResolvedValue({
+			...CATALOG,
+			issuedConfigs: [
+				{
+					countryCode: 'fx',
+					lastIssuedAt: '2031-01-05T10:00:00Z',
+					portalUpdatedAt: '2030-12-01T10:00:00Z',
+					sourceType: 'country_config'
+				},
+				{
+					countryCode: 'fx',
+					lastIssuedAt: '2031-01-06T10:00:00Z',
+					portalUpdatedAt: '2030-12-01T10:00:00Z',
+					sourceType: 'gateway_account'
+				}
+			]
+		});
+
+		render(AmneziaPremiumWizard, {
+			props: { open: true, onclose: vi.fn(), onconfig: vi.fn() }
+		});
+		await settle();
+		await useStoredKey();
+
+		await fireEvent.click(screen.getByText('Fixtureland [P2P]'));
+		await fireEvent.input(screen.getByLabelText('Имя туннеля'), { target: { value: 'awg-fx' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Создать туннель' }));
+		await settle();
+
+		// Обе записи занимают слот. Прежний счётчик брал только gateway_account
+		// и у страны с одной нашей выдачей показывал ноль — «свободно».
+		expect(screen.getByText(/занимает слотов подписки: 2/)).toBeTruthy();
 	});
 });
