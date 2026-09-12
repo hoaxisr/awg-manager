@@ -2,9 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +13,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 )
 
@@ -24,8 +25,12 @@ func (nopPublisher) Publish(string, any) {}
 // нам важен порядок взятия замка, а не ответы роутера.
 func nwgOperatorOnStub(t *testing.T) *nwg.OperatorNativeWG {
 	t.Helper()
+	// Интерфейс отвечает «поднят»: иначе Update решит, что синхронизировать
+	// нечего, и до ветки под замком не дойдёт.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(`{"show":{"interface":{"id":"Wireguard0","link":"up","state":"up",
+			"summary":{"layer":{"conf":"running","link":"running"}},
+			"wireguard":{"status":"up","peer":[{"online":true}]}}}}`))
 	}))
 	t.Cleanup(srv.Close)
 	tr := transport.NewWithURL(srv.URL, transport.NewSemaphore(2))
@@ -37,10 +42,10 @@ func nwgOperatorOnStub(t *testing.T) *nwg.OperatorNativeWG {
 	return op
 }
 
-// Правка обфускатора идёт под тем же per-tunnel замком, что и действия
-// оркестратора: иначе она переплетается с WAN-up по тому же туннелю, и
-// снятия с постановками host-route наезжают друг на друга.
-func TestUpdate_ObfuscatorSyncTakesTunnelLock(t *testing.T) {
+// Правка живого nativewg-туннеля идёт под тем же per-tunnel замком, что и
+// действия оркестратора: иначе она переплетается с WAN-up по тому же туннелю,
+// и команды в NDMS наезжают друг на друга.
+func TestUpdate_NativeWGDiffTakesTunnelLock(t *testing.T) {
 	orch := orchestrator.New(nil, nil, nil, nil, nil, nil)
 	s := &ServiceImpl{state: NewMockStateManager(), nwgOperator: nwgOperatorOnStub(t)}
 	s.SetOrchestrator(orch)
@@ -57,8 +62,11 @@ func TestUpdate_ObfuscatorSyncTakesTunnelLock(t *testing.T) {
 	}()
 	<-held
 	defer close(release)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	// Короткий дедлайн вместо отмены: чтение состояния по RCI должно успеть
+	// (иначе Update решит, что туннель не запущен, и до замка не дойдёт), а
+	// ожидание занятого замка — упереться в дедлайн, не в tunnelLockTimeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
 
 	old := &storage.AWGTunnel{
 		ID: "awg20", Backend: "nativewg",
@@ -70,8 +78,11 @@ func TestUpdate_ObfuscatorSyncTakesTunnelLock(t *testing.T) {
 		Obfuscator: &storage.Obfuscator{Flavor: storage.ObfuscatorFlavorPhobos, Target: "203.0.113.9:51820", Key: "k", LocalPort: 39000},
 	}
 
-	err := s.applyDiffNWG(ctx, old, updated)
-	if err == nil || !strings.Contains(err.Error(), "sync obfuscator") {
-		t.Fatalf("правка обфускатора обязана споткнуться о занятый замок, получили: %v", err)
+	err := s.Update(ctx, old, updated)
+	if err == nil {
+		t.Fatal("правка живого туннеля обязана споткнуться о занятый замок")
+	}
+	if !errors.Is(err, tunnel.ErrOperationInProgress) {
+		t.Fatalf("ждали отказ по замку, получили: %v", err)
 	}
 }

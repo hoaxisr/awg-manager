@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -104,7 +105,7 @@ func TestGuardSweep_RelayTargetChanged_TakesTunnelLock(t *testing.T) {
 	op, _, fr, st := relayGuardFixture(t)
 	stubGuardLookup(t, []string{"198.51.100.7"}, nil)
 	var owner atomic.Value
-	op.SetTunnelLock(func(_, o string, work func() error) error {
+	op.SetTunnelLock(func(_ context.Context, _, o string, work func() error) error {
 		owner.Store(o)
 		return errors.New("туннель занят")
 	})
@@ -137,32 +138,61 @@ func TestGuardSweep_RelayRestartCooldown(t *testing.T) {
 	}
 }
 
-// Внеочередные проходы прорежены: хук публичный и без авторизации.
-func TestNudgeEndpointGuard_Throttled(t *testing.T) {
-	op := &OperatorNativeWG{guardNudge: make(chan struct{}, 1)}
+// Внеочередные проходы прорежены самим циклом стража: хук публичный и без
+// авторизации, а каждый проход стоит резолва на каждую запись.
+func TestGuardLoop_NudgeIsThrottled(t *testing.T) {
+	calls := countingGuardLookup(t, "203.0.113.5")
+	op, _, _, _ := relayGuardFixture(t)
 
 	op.NudgeEndpointGuard()
-	<-op.guardNudge // забрали первый повод
-	op.NudgeEndpointGuard()
+	waitFor(t, 2*time.Second, func() bool { return calls.Load() >= 1 })
+	after := calls.Load()
 
-	select {
-	case <-op.guardNudge:
-		t.Fatal("второй пинок подряд обязан быть отброшен")
-	default:
+	op.NudgeEndpointGuard() // сразу следом, внутри выдержки
+	time.Sleep(300 * time.Millisecond)
+
+	if got := calls.Load(); got != after {
+		t.Fatalf("второй пинок подряд дал лишний проход: резолвов %d, было %d", got, after)
 	}
 }
 
-// Но сам канал до цикла доходит: иначе пинок не делает ничего.
-func TestNudgeEndpointGuard_DeliversFirstNudge(t *testing.T) {
-	op := &OperatorNativeWG{guardNudge: make(chan struct{}, 1)}
+// Но первый пинок до цикла доходит — иначе хук не делает ничего.
+func TestGuardLoop_FirstNudgeWakesSweep(t *testing.T) {
+	calls := countingGuardLookup(t, "203.0.113.5")
+	op, _, _, _ := relayGuardFixture(t)
 
 	op.NudgeEndpointGuard()
 
-	select {
-	case <-op.guardNudge:
-	default:
-		t.Fatal("пинок не доехал до цикла стража")
+	waitFor(t, 2*time.Second, func() bool { return calls.Load() >= 1 })
+}
+
+// countingGuardLookup — подмена резолва со счётчиком для тестов, где проход
+// идёт в горутине цикла: обычный stubGuardLookup считает в голый int, и
+// -race ловит гонку на нём. Ставится ДО фикстуры: цикл стража поднимается
+// первой регистрацией записи и сразу читает эту переменную.
+func countingGuardLookup(t *testing.T, ips ...string) *atomic.Int64 {
+	t.Helper()
+	orig := guardLookupIPs
+	var calls atomic.Int64
+	guardLookupIPs = func(string) ([]string, error) {
+		calls.Add(1)
+		return ips, nil
 	}
+	t.Cleanup(func() { guardLookupIPs = orig })
+	return &calls
+}
+
+// waitFor ждёт условие, опрашивая его; иначе тест зависел бы от одной паузы.
+func waitFor(t *testing.T, limit time.Duration, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		if ok() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("условие не наступило за отведённое время")
 }
 
 // Правка пира не должна выключать присмотр за target'ом: endpoint у
@@ -176,7 +206,7 @@ func TestSyncPeer_KeepsRelayGuardEntry(t *testing.T) {
 	}
 
 	e, ok := op.guardGet(st.ID)
-	if !ok || !e.viaRelay {
+	if !ok || e.mode != guardRelay {
 		t.Fatalf("правка пира сняла присмотр за target'ом: %+v ok=%v", e, ok)
 	}
 	if e.spec != st.Obfuscator.Target {
@@ -196,7 +226,7 @@ func TestSyncObfuscator_RegistersRelayGuard(t *testing.T) {
 	}
 
 	e, ok := op.guardGet(st.ID)
-	if !ok || !e.viaRelay || e.spec != st.Obfuscator.Target {
+	if !ok || e.mode != guardRelay || e.spec != st.Obfuscator.Target {
 		t.Fatalf("после правки релея за target'ом никто не следит: %+v ok=%v", e, ok)
 	}
 }
@@ -218,5 +248,44 @@ func TestGuardSweep_RelayLookupFailed_KeepsRelay(t *testing.T) {
 	}
 	if e, _ := op.guardGet(st.ID); e.endpoint != "203.0.113.5:51824" {
 		t.Fatalf("реестр сдвинут без переноса: %q", e.endpoint)
+	}
+}
+
+// Резолв не изменился — трогать нечего: рестарт релея рвёт живую сессию, а
+// постановка маршрута стоит команды в NDMS и записи конфигурации роутера.
+func TestGuardSweep_RelayTargetUnchanged_DoesNothing(t *testing.T) {
+	op, n, fr, st := relayGuardFixture(t)
+	stubGuardLookup(t, []string{"203.0.113.5"}, nil) // тот же адрес, что дал Start
+	startsBefore := fr.startCount(st.ID)
+
+	op.guardSweep(context.Background())
+
+	if got := fr.startCount(st.ID); got != startsBefore {
+		t.Fatalf("релей перезапущен впустую: стартов %d, было %d", got, startsBefore)
+	}
+	if posts := n.joined(); strings.Contains(posts, `"route"`) {
+		t.Fatalf("маршрут тронут впустую:\n%s", posts)
+	}
+}
+
+// Правка релея не поднялась — маршрут не трогаем: команда в NDMS стоит записи
+// конфигурации роутера, а вести её некуда, релей мёртв.
+func TestSyncObfuscator_RelayStartFailed_KeepsRouteUntouched(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+	st := obfStored()
+	fr.setFailStart(errors.New("loopback-порт занят"))
+
+	if _, err := op.SyncObfuscator(context.Background(), st); err == nil {
+		t.Fatal("отказ запуска релея обязан доехать до вызывающего")
+	}
+
+	if posts := n.joined(); strings.Contains(posts, `"route"`) {
+		t.Fatalf("маршрут тронут при мёртвом релее:\n%s", posts)
+	}
+	if op.guardHas(st.ID) {
+		t.Fatal("страж поставлен на туннель, релей которого не поднялся")
 	}
 }

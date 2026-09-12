@@ -19,11 +19,9 @@ import (
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/staticroute"
-	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
-	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
 )
 
@@ -37,28 +35,13 @@ func (a *app) setupOrchestrator() {
 	a.nwgOp.SetHookNotifier(a.orch) // operators register expected hooks before InterfaceUp/Down
 	// Endpoint-страж правит host-route и перезапускает релей — то же, что
 	// действия оркестратора, значит под тем же per-tunnel замком.
-	a.nwgOp.SetTunnelLock(func(tunnelID, owner string, work func() error) error {
-		return a.orch.WithTunnelLock(context.Background(), tunnelID, owner, work)
+	a.nwgOp.SetTunnelLock(func(ctx context.Context, tunnelID, owner string, work func() error) error {
+		return a.orch.WithTunnelLock(ctx, tunnelID, owner, work)
 	})
 	// Новый адрес target'а обязан пережить рестарт демона: по нему снимается
 	// host-route, и по нему сосед с тем же target решает, чей это маршрут.
-	a.nwgOp.SetResolvedIPPersister(func(tunnelID, ip string) {
-		if err := a.awgStore.Update(tunnelID, func(t *storage.AWGTunnel) error {
-			if t.ResolvedEndpointIP == ip {
-				return storage.ErrNoChange
-			}
-			t.ResolvedEndpointIP = ip
-			return nil
-		}); err != nil {
-			a.bootLog.Warn("endpoint-guard", tunnelID, "адрес target'а не сохранён: "+err.Error())
-		}
-	})
-	// OS5 kernel operator also uses ExpectHook (via OpkgTun two-layer arch).
-	if os5Op, ok := a.operator.(interface {
-		SetHookNotifier(tunnel.HookNotifier)
-	}); ok {
-		os5Op.SetHookNotifier(a.orch)
-	}
+	a.nwgOp.SetResolvedIPPersister(a.tunnelService.PersistObfuscatorTargetIP)
+
 	a.orch.SetSupportsASC(ndmsinfo.SupportsWireguardASC)
 	a.orch.SetPingCheck(a.pingCheckFacade)
 	// dnsRouteService wiring to orchestrator happens later, after ndmsCommands is built.

@@ -149,8 +149,8 @@ func (o *OperatorNativeWG) stopObfuscated(ctx context.Context, stored *storage.A
 	}
 	o.clearObfRouteErr(stored.ID)
 	o.guardUnregister(stored.ID)
-	routedWAN, _ := o.routedObfWAN(stored.ID)
-	o.forgetObfRoutedWAN(stored.ID)
+	routedWAN := o.obfRoutedWANFor(stored.ID)
+	o.clearObfRoutedWAN(stored.ID)
 	if ip := o.obfRouteIP(stored); ip != "" {
 		if err := o.removeObfHostRoute(ctx, stored.ID, ip, routedWAN); err != nil {
 			o.appLog.Warn("stop", stored.ID, "снять host-route "+ip+": "+err.Error())
@@ -171,9 +171,14 @@ func (o *OperatorNativeWG) SyncObfuscator(ctx context.Context, stored *storage.A
 	if err != nil {
 		return "", err
 	}
+	// Порядок тот же, что в startObfuscated и у стража: сначала релей, потом
+	// маршрут. Иначе отказ запуска стоил бы команды в NDMS на пустом месте.
+	if err := o.obf.Start(ctx, stored.ID, stored.Obfuscator); err != nil {
+		return targetIP, err
+	}
 	o.moveObfHostRoute(ctx, stored, prevIP, targetIP)
 	o.guardRegisterRelay(stored, targetIP)
-	return targetIP, o.obf.Start(ctx, stored.ID, stored.Obfuscator)
+	return targetIP, nil
 }
 
 // moveObfHostRoute переставляет host-route с прежнего адреса target'а на новый.
@@ -186,12 +191,12 @@ func (o *OperatorNativeWG) moveObfHostRoute(ctx context.Context, stored *storage
 	// потом некому — маршрут ставится по новому WAN и расхождения не видно.
 	// Сверяемся с тем, что отправили сами (obfRoutedWAN), а не с ActiveWAN:
 	// тот держит kernel-имя интерфейса и с именем NDMS не сравним.
-	routedWAN, known := o.routedObfWAN(stored.ID)
-	if prevIP != "" && (prevIP != targetIP || (wanErr == nil && (!known || routedWAN != wan))) {
+	routedWAN := o.obfRoutedWANFor(stored.ID)
+	if prevIP != "" && (prevIP != targetIP || (wanErr == nil && routedWAN != wan)) {
 		if err := o.removeObfHostRoute(ctx, stored.ID, prevIP, routedWAN); err != nil {
 			o.appLog.Warn("obfuscator", stored.ID, "снять прежний host-route "+prevIP+": "+err.Error())
 		}
-		o.forgetObfRoutedWAN(stored.ID)
+		o.clearObfRoutedWAN(stored.ID)
 	}
 	if wanErr == nil {
 		wanErr = o.addObfHostRoute(ctx, stored, targetIP, wan)
@@ -205,13 +210,13 @@ func (o *OperatorNativeWG) moveObfHostRoute(ctx context.Context, stored *storage
 	o.clearObfRouteErr(stored.ID)
 }
 
-// routedObfWAN — WAN, под которым host-route стоит по нашим данным. false =
-// не знаем (первый заход после рестарта демона): тогда снимаем вслепую.
-func (o *OperatorNativeWG) routedObfWAN(tunnelID string) (string, bool) {
+// obfRoutedWANFor — WAN, под которым host-route стоит по нашим данным. Пусто =
+// не знаем (первый заход после рестарта демона): тогда снимаем вслепую, и
+// пустое значение отличается от любого настоящего имени само по себе.
+func (o *OperatorNativeWG) obfRoutedWANFor(tunnelID string) string {
 	o.obfRouteMu.Lock()
 	defer o.obfRouteMu.Unlock()
-	wan, ok := o.obfRoutedWAN[tunnelID]
-	return wan, ok
+	return o.obfRoutedWAN[tunnelID]
 }
 
 func (o *OperatorNativeWG) setObfRoutedWAN(tunnelID, wan string) {
@@ -223,7 +228,7 @@ func (o *OperatorNativeWG) setObfRoutedWAN(tunnelID, wan string) {
 	o.obfRoutedWAN[tunnelID] = wan
 }
 
-func (o *OperatorNativeWG) forgetObfRoutedWAN(tunnelID string) {
+func (o *OperatorNativeWG) clearObfRoutedWAN(tunnelID string) {
 	o.obfRouteMu.Lock()
 	defer o.obfRouteMu.Unlock()
 	delete(o.obfRoutedWAN, tunnelID)

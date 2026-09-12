@@ -200,7 +200,7 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 				// поломки.
 				return fmt.Errorf("sync peer: резолв %s не удался, смена ключа пира не применена: %w",
 					stored.Peer.Endpoint, err)
-			} else if e, guarded := o.guardGet(stored.ID); guarded && !e.viaNDMS && !e.viaKmod &&
+			} else if e, guarded := o.guardGet(stored.ID); guarded && e.mode == guardKernel &&
 				e.spec != stored.Peer.Endpoint {
 				// v6-история: в конфиге NDMS лежит заглушка 127.0.0.1:1,
 				// а не рабочий адрес (запись v6-стража — единственное
@@ -314,7 +314,7 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 		// v6-литерал под стражем не держим — резолвить нечего, адрес
 		// доводят startProxy/SyncKmodSlot.
 		if guard, _ := guardModeForEndpoint(stored.Peer.Endpoint, false); !guard {
-			if e, ok := o.guardGet(stored.ID); !ok || !e.viaRelay {
+			if e, ok := o.guardGet(stored.ID); !ok || e.mode != guardRelay {
 				o.guardUnregister(stored.ID)
 			}
 		} else if cur, ok := o.guardGet(stored.ID); ok && cur.spec == stored.Peer.Endpoint {
@@ -324,7 +324,7 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 				endpoint: cur.endpoint,
 				spec:     stored.Peer.Endpoint,
 				name:     ndmsName,
-				viaKmod:  true,
+				mode:     guardKmod,
 			})
 		}
 	case kernelV6:
@@ -365,9 +365,9 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 		// 127.0.0.1:<порт слота> (его держат SyncKmodSlot и RestoreKmodTunnel,
 		// operator.go:807/849) — страж, доводящий туда реальный адрес сервера,
 		// сломал бы proxy-туннель. Non-ASC вне объёма этого плана.
-		guard, viaNDMS := guardModeForEndpoint(stored.Peer.Endpoint, false)
+		guard, mode := guardModeForEndpoint(stored.Peer.Endpoint, false)
 		if guard && !o.useASC(&stored.Interface) {
-			// Proxy-путь: за адресом следит режим viaKmod (Task A2), его
+			// Proxy-путь: за адресом следит режим guardKmod (Task A2), его
 			// ставит startProxy. Здесь только освежаем запись — ключ или
 			// имя могли смениться, а протухший spec в реестре заставил бы
 			// стража резолвить не тот домен. Снимать стража нельзя:
@@ -391,7 +391,7 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 				endpoint: cur.endpoint, // прежний резолв — он же в слоте
 				spec:     stored.Peer.Endpoint,
 				name:     ndmsName,
-				viaKmod:  true,
+				mode:     guardKmod,
 			})
 			break
 		}
@@ -404,12 +404,12 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 				endpoint: resolvedV4, // резолв, НЕ rciEndpoint (там имя)
 				spec:     stored.Peer.Endpoint,
 				name:     ndmsName,
-				viaNDMS:  viaNDMS,
+				mode:     mode,
 			}
 			// Register безусловный — в отличие от v6-ветки выше, где он
 			// воскресил бы запись, снятую параллельным Stop/Delete, и страж
 			// начал бы делать wg set по мёртвому устройству. Здесь цена
-			// гонки другая: viaNDMS правит конфиг NDMS, а он у остановленного
+			// гонки другая: guardNDMS правит конфиг NDMS, а он у остановленного
 			// туннеля живёт и должен быть актуален. Delete снимает запись
 			// (operator.go:561-568), так что вечной она не станет.
 			o.guardRegister(stored.ID, entry)
@@ -419,7 +419,7 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 		// записи про target релея: у обфусцированного туннеля endpoint ВСЕГДА
 		// литерал 127.0.0.1:<порт>, и снимать по нему слежку за DDNS-именем
 		// target'а — значит выключать её при любой правке пира.
-		if e, ok := o.guardGet(stored.ID); ok && !e.viaRelay {
+		if e, ok := o.guardGet(stored.ID); ok && e.mode != guardRelay {
 			o.guardUnregister(stored.ID)
 			o.appLog.Info("sync-peer", ndmsName, "endpoint теперь v4-литерал — endpoint-страж снят, адресом управляет NDMS")
 		}
@@ -428,7 +428,7 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 		// или endpoint изменились, реестр стража устарел — снять, иначе он
 		// воскресит старого пира. При неизменном пире транзиентный сбой
 		// DNS защиту не снимает.
-		if e, ok := o.guardGet(stored.ID); ok && !e.viaRelay &&
+		if e, ok := o.guardGet(stored.ID); ok && e.mode != guardRelay &&
 			(e.pubkey != stored.Peer.PublicKey || e.spec != stored.Peer.Endpoint) {
 			o.guardUnregister(stored.ID)
 			o.appLog.Warn("sync-peer", ndmsName,

@@ -399,7 +399,13 @@ func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.
 	}
 
 	if s.isNativeWG(newStored) && s.nwgOperator != nil {
-		if err := s.applyDiffNWG(ctx, oldStored, newStored); err != nil {
+		// Под per-tunnel замком оркестратора целиком: правка живого туннеля
+		// шлёт в NDMS ключ, адрес, DNS, пира и параметры релея, а при смене
+		// пути ASC↔awg_proxy — ещё Stop и Start. Всё это переплетается с
+		// WAN-up по тому же туннелю, если идёт мимо замка.
+		if err := s.withTunnelLock(ctx, tunnelID, "update", func() error {
+			return s.applyDiffNWG(ctx, oldStored, newStored)
+		}); err != nil {
 			return err
 		}
 	} else {
@@ -562,7 +568,7 @@ func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *st
 	}
 
 	if !obfuscator.Equal(oldStored.Obfuscator, newStored.Obfuscator) {
-		ip, err := s.syncObfuscatorLocked(ctx, tunnelID, newStored)
+		ip, err := s.nwgOperator.SyncObfuscator(ctx, newStored)
 		if ip != "" {
 			// Handler после svc.Update fail-closed: на ошибке до store.Update
 			// он не доходит (tunnels_crud.go:513) — а host-route до нового
@@ -834,27 +840,25 @@ func prepareObfuscatorImport(parsed *storage.AWGTunnel, o *storage.Obfuscator, t
 	return nil
 }
 
-// syncObfuscatorLocked зовёт SyncObfuscator под per-tunnel замком
-// оркестратора. Без замка правка карточки идёт параллельно WAN-up по тому же
-// туннелю, и снятия с постановками host-route переплетаются. Оркестратора
-// может не быть (тесты сервиса) — тогда работаем как раньше.
-func (s *ServiceImpl) syncObfuscatorLocked(ctx context.Context, tunnelID string, stored *storage.AWGTunnel) (string, error) {
+// withTunnelLock выполняет fn под per-tunnel замком оркестратора. Замка может
+// не быть (тесты сервиса) — тогда работаем как раньше.
+func (s *ServiceImpl) withTunnelLock(ctx context.Context, tunnelID, owner string, fn func() error) error {
 	if s.orch == nil {
-		return s.nwgOperator.SyncObfuscator(ctx, stored)
+		return fn()
 	}
-	var ip string
-	err := s.orch.WithTunnelLock(ctx, tunnelID, "sync-obfuscator", func() error {
-		var syncErr error
-		ip, syncErr = s.nwgOperator.SyncObfuscator(ctx, stored)
-		return syncErr
-	})
-	return ip, err
+	return s.orch.WithTunnelLock(ctx, tunnelID, owner, fn)
 }
 
 // persistObfuscatorTargetIP кладёт в запись адрес, под которым стоит host-route
 // до target'а релея. Транзакция узкая: единственное поле, ErrNoChange на
 // совпадении — файл не трогается. Отказ записи только логируется: маршрут уже
 // стоит, и валить из-за него правку туннеля нечестно.
+// PersistObfuscatorTargetIP экспортирован для endpoint-стража (nwg): у
+// оператора нет стора, а адрес target'а обязан пережить рестарт демона.
+func (s *ServiceImpl) PersistObfuscatorTargetIP(tunnelID, ip string) {
+	s.persistObfuscatorTargetIP(tunnelID, ip)
+}
+
 func (s *ServiceImpl) persistObfuscatorTargetIP(tunnelID, ip string) {
 	if ip == "" {
 		return

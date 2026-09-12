@@ -335,7 +335,7 @@ func TestStartObfuscated_DropsEndpointGuardEntry(t *testing.T) {
 	st := obfStored()
 	op.guardRegister(st.ID, guardEntry{
 		iface: "nwg3", pubkey: "PUB", endpoint: "203.0.113.5:51824",
-		spec: "vpn.example.com:51824", name: "Wireguard3", viaNDMS: true,
+		spec: "vpn.example.com:51824", name: "Wireguard3", mode: guardNDMS,
 	})
 
 	if err := op.Start(context.Background(), st); err != nil {
@@ -348,7 +348,7 @@ func TestStartObfuscated_DropsEndpointGuardEntry(t *testing.T) {
 	if !ok {
 		t.Fatal("за target'ом релея никто не следит")
 	}
-	if e.viaNDMS || e.viaKmod || !e.viaRelay {
+	if e.mode != guardRelay {
 		t.Fatalf("режим стража не тот: %+v", e)
 	}
 	if e.spec != st.Obfuscator.Target {
@@ -879,8 +879,8 @@ func TestStopObfuscated_ForgetsRoutedWAN(t *testing.T) {
 	st.ResolvedEndpointIP = "203.0.113.5"
 	op.stopObfuscated(context.Background(), st)
 
-	if _, known := op.routedObfWAN(st.ID); known {
-		t.Fatal("после Stop WAN маршрута обязан быть забыт")
+	if wan := op.obfRoutedWANFor(st.ID); wan != "" {
+		t.Fatalf("после Stop WAN маршрута обязан быть забыт, а помним %q", wan)
 	}
 }
 
@@ -904,75 +904,6 @@ func TestStartObfuscated_RouteLoopRefused_KeepsPreviousRoute(t *testing.T) {
 	}
 	if op.obfRouteErrFor(st.ID) == "" {
 		t.Fatal("причина отсутствия маршрута обязана попасть в реестр")
-	}
-}
-
-// F118: у target'а сменилась A-запись. Релей резолвит имя только при старте,
-// поэтому его надо перезапустить, а host-route — переставить на новый адрес.
-func TestSyncRelayTarget_AddressChanged_RestartsRelayAndMovesRoute(t *testing.T) {
-	withObfDirs(t)
-	n := newCaptureNDMS(t)
-	fr := newFakeObfRunner()
-	op := newObfOperator(t, n, fr)
-	st := obfStored()
-	op.SetTunnelLookup(func(string) (*storage.AWGTunnel, error) { return st, nil })
-
-	if err := op.Start(context.Background(), st); err != nil {
-		t.Fatal(err)
-	}
-	e, ok := op.guardGet(st.ID)
-	if !ok {
-		t.Fatal("подготовка: записи стража нет")
-	}
-	startsBefore := fr.startCount(st.ID)
-	n.reset()
-
-	if !op.syncRelayTarget(context.Background(), st.ID, e, "198.51.100.7:51824") {
-		t.Fatal("смена адреса обязана быть доведена")
-	}
-
-	posts := n.joined()
-	if !strings.Contains(posts, `"host":"198.51.100.7"`) {
-		t.Fatalf("host-route до нового адреса не поставлен:\n%s", posts)
-	}
-	if !strings.Contains(posts, `"host":"203.0.113.5","interface":"ISP0","no":true`) {
-		t.Fatalf("маршрут до прежнего адреса не снят:\n%s", posts)
-	}
-	if got := fr.startCount(st.ID); got != startsBefore+1 {
-		t.Fatalf("релей не перезапущен: стартов %d, было %d", got, startsBefore)
-	}
-	if e2, _ := op.guardGet(st.ID); e2.endpoint != "198.51.100.7:51824" {
-		t.Fatalf("реестр стража не сдвинулся: %q", e2.endpoint)
-	}
-	if op.GetTrackedEndpointIP(st.ID) != "198.51.100.7" {
-		t.Fatal("адрес маршрута обязан быть виден Stop'у")
-	}
-}
-
-// Тот же адрес — рестарта быть не должно: он рвёт живую сессию.
-func TestSyncRelayTarget_SameAddress_KeepsRelayRunning(t *testing.T) {
-	withObfDirs(t)
-	n := newCaptureNDMS(t)
-	fr := newFakeObfRunner()
-	op := newObfOperator(t, n, fr)
-	st := obfStored()
-	op.SetTunnelLookup(func(string) (*storage.AWGTunnel, error) { return st, nil })
-
-	if err := op.Start(context.Background(), st); err != nil {
-		t.Fatal(err)
-	}
-	e, _ := op.guardGet(st.ID)
-	startsBefore := fr.startCount(st.ID)
-	n.reset()
-
-	if op.syncRelayTarget(context.Background(), st.ID, e, e.endpoint) {
-		t.Fatal("адрес не менялся — делать нечего")
-	}
-	if got := fr.startCount(st.ID); got != startsBefore {
-		t.Fatalf("релей перезапущен впустую: стартов %d, было %d", got, startsBefore)
-	}
-	if rm := n.routeRemovals(); len(rm) > 0 {
-		t.Fatalf("маршрут тронут впустую: %v", rm)
 	}
 }
 
@@ -1010,8 +941,8 @@ func TestStartObfuscated_RouteAddFailed_DoesNotRememberWAN(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, known := op.routedObfWAN(st.ID); known {
-		t.Fatal("WAN запомнен, хотя маршрут не встал")
+	if wan := op.obfRoutedWANFor(st.ID); wan != "" {
+		t.Fatalf("WAN %q запомнен, хотя маршрут не встал", wan)
 	}
 	if op.obfRouteErrFor(st.ID) == "" {
 		t.Fatal("причина отсутствия маршрута обязана попасть в реестр")
