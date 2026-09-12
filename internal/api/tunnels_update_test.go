@@ -915,3 +915,35 @@ func TestTunnelUpdate_KeepsServiceResolvedEndpointIP(t *testing.T) {
 		t.Fatalf("резолв сервиса не доехал до записи: ResolvedEndpointIP=%q", saved.ResolvedEndpointIP)
 	}
 }
+
+// Занятый per-tunnel замок — ретраибельный конфликт, а не отказ правки:
+// карточка цела, туннель просто занят своим действием (WAN-up, рестарт по
+// ping-check). Контракт тот же, что у delete и у start/stop/restart: 409 и
+// код OPERATION_IN_PROGRESS, по которому фронт покажет «попробуйте ещё раз»,
+// а не «сохранение не удалось».
+func TestUpdate_BusyTunnelAnswersConflict(t *testing.T) {
+	stub := &stubTunnelSvc{updateFn: func(context.Context, *storage.AWGTunnel, *storage.AWGTunnel) error {
+		return tunnel.ErrOperationInProgress
+	}}
+	h, store := newTunnelsUpdateHarness(t, stub)
+	seedTunnel(t, store, &storage.AWGTunnel{ID: "awg10", Name: "t", Enabled: true})
+
+	rr := httptest.NewRecorder()
+	h.Update(rr, httptest.NewRequest(http.MethodPost, "/tunnels/update?id=awg10",
+		strings.NewReader(`{"name":"новое"}`)))
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("код %d, ждали 409; тело %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "OPERATION_IN_PROGRESS") {
+		t.Fatalf("в ответе нет кода OPERATION_IN_PROGRESS: %s", rr.Body.String())
+	}
+	// Fail-closed остаётся в силе: на отказе службы запись не переписывается.
+	saved, err := store.Get("awg10")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if saved.Name != "t" {
+		t.Fatalf("карточка переписана вопреки отказу: %q", saved.Name)
+	}
+}

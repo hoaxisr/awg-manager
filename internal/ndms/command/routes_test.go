@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -68,6 +69,52 @@ func TestRouteCommands_RemoveHostRoute(t *testing.T) {
 // Стенд 5.01: v4-форма с v6-адресом отвергается («invalid destination host»),
 // а `ipv6.route.host` целится в ::/0 — то есть в дефолтный маршрут. Снимать
 // v6 host-route можно только через prefix с /128.
+// F120: NDMS держит запись на КАЖДЫЙ интерфейс, и форма без interface снимает
+// ровно одну, отвечая «system failed» на остатке. Стенд 5.01: две записи —
+// первая команда убирает одну и отказывает, вторая убирает последнюю. Без
+// повтора записи копились бы при каждой смене WAN.
+func TestRouteCommands_RemoveHostRoute_ClearsEveryEntry(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	poster.SetErrorFor(1) // одна лишняя запись: первый вызов отказывает
+
+	if err := cmds.RemoveHostRoute(context.Background(), "203.0.113.77"); err != nil {
+		t.Fatalf("снятие обязано доводиться до конца: %v", err)
+	}
+	if n := len(poster.Payloads()); n != 2 {
+		t.Fatalf("ждали два вызова (по записи на интерфейс), получили %d", n)
+	}
+}
+
+// Отказ, который не кончается, не превращается в бесконечный цикл и доезжает
+// до вызывающего.
+func TestRouteCommands_RemoveHostRoute_GivesUpOnPersistentFailure(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	poster.SetErrorFor(100)
+
+	if err := cmds.RemoveHostRoute(context.Background(), "203.0.113.77"); err == nil {
+		t.Fatal("постоянный отказ обязан доехать до вызывающего")
+	}
+	// Число литералом, а не через саму константу: иначе тест проверяет код
+	// против себя же и переживёт поднятие потолка, ради которого его и пишут.
+	if n := len(poster.Payloads()); n != 4 {
+		t.Errorf("попыток %d, ждали 4", n)
+	}
+}
+
+// Настоящий отказ повторять незачем: каждая попытка стоит save.Request() и
+// двух инвалидаций, а под замком оркестратора — ещё и времени.
+func TestRouteCommands_RemoveHostRoute_RealErrorIsNotRetried(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	poster.SetError(errors.New("boom"))
+
+	if err := cmds.RemoveHostRoute(context.Background(), "203.0.113.77"); err == nil {
+		t.Fatal("отказ обязан доехать до вызывающего")
+	}
+	if n := len(poster.Payloads()); n != 1 {
+		t.Fatalf("ждали одну попытку, получили %d", n)
+	}
+}
+
 func TestRouteCommands_RemoveHostRoute_V6UsesPrefix(t *testing.T) {
 	for _, host := range []string{
 		"2001:db8::1",
@@ -435,5 +482,44 @@ func TestRouteCommands_ExactPayloads(t *testing.T) {
 				t.Errorf("payload mismatch:\n got: %s\nwant: %s", got, tc.want)
 			}
 		})
+	}
+}
+
+// Снятие парной формой при живой второй записи на тот же адрес: роутер
+// отвечает «system failed [0xcffd0198] … file exists», но запись при этом
+// уходит (стенд 5.01). Считать это отказом — значит писать в журнал Warn на
+// штатном пути и городить ложную причину в состоянии туннеля.
+func TestRouteCommands_RemoveStaticRoute_ToleratesFileExists(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		route StaticRouteSpec
+	}{
+		{"v4", StaticRouteSpec{Host: "203.0.113.5", Interface: "PPPoE0"}},
+		{"v6", StaticRouteSpec{Host: "2001:db8::5", Interface: "PPPoE0", V6: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmds, poster := newTestRouteCommands(t)
+			poster.SetErrorFor(1) // роутер отвечает ложной netlink-ошибкой
+
+			if err := cmds.RemoveStaticRoute(context.Background(), tc.route); err != nil {
+				t.Fatalf("«file exists» на снятии — не отказ: %v", err)
+			}
+			// И повторять нечего: парная форма снимает ровно свою запись.
+			if n := len(poster.Payloads()); n != 1 {
+				t.Fatalf("ждали один вызов, получили %d", n)
+			}
+		})
+	}
+}
+
+// Настоящий отказ снятия обязан доехать до вызывающего: иначе несуществующий
+// интерфейс и опечатка в адресе выглядели бы как успешная уборка.
+func TestRouteCommands_RemoveStaticRoute_RealErrorSurfaces(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	poster.SetResponse(`{"ip":{"route":{"status":[{"status":"error","message":"invalid destination host"}]}}}`)
+
+	err := cmds.RemoveStaticRoute(context.Background(), StaticRouteSpec{Host: "203.0.113.5", Interface: "PPPoE0"})
+	if err == nil {
+		t.Fatal("настоящий отказ проглочен")
 	}
 }

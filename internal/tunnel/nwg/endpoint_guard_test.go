@@ -33,6 +33,14 @@ func newGuardTestOperator(t *testing.T) *OperatorNativeWG {
 	return o
 }
 
+// guardHas — «за туннелем следит страж». Живёт в тестах: прод-код после
+// перевода sync.go на guardGet его больше не зовёт, а в ассертах он читаемее
+// пары с игнорируемым значением.
+func (o *OperatorNativeWG) guardHas(id string) bool {
+	_, ok := o.guardGet(id)
+	return ok
+}
+
 // stubGuardLookup подменяет полный резолв имени в sweep; счётчик вызовов
 // возвращается для ассертов.
 func stubGuardLookup(t *testing.T, ips []string, err error) *int {
@@ -245,13 +253,13 @@ func TestGuardUpdateEndpoint_StaleTargetsIgnored(t *testing.T) {
 	op := newGuardTestOperator(t)
 
 	op.guardRegister("awg20", guardEntry{iface: "nwg3", pubkey: "PUB", endpoint: "[2a02::1]:51820", spec: "b.example.com:51820", name: "Wireguard3"})
-	op.guardUpdateEndpoint("awg20", "a.example.com:51820", "[2a02::feed]:51820")
+	op.guardUpdateEndpoint("awg20", "a.example.com:51820", "[2a02::feed]:51820", false)
 	if entry, _ := op.guardGet("awg20"); entry.endpoint != "[2a02::1]:51820" {
 		t.Fatalf("update with stale spec must be ignored: %+v", entry)
 	}
 
 	op.guardUnregister("awg20")
-	op.guardUpdateEndpoint("awg20", "b.example.com:51820", "[2a02::feed]:51820")
+	op.guardUpdateEndpoint("awg20", "b.example.com:51820", "[2a02::feed]:51820", false)
 	if op.guardHas("awg20") {
 		t.Fatal("update must not resurrect an unregistered entry")
 	}
@@ -273,7 +281,7 @@ func TestGuardSweep_V4UpdatesNDMSEndpoint(t *testing.T) {
 		endpoint: "198.51.100.1:51820", // этого адреса в резолве больше нет
 		spec:     "vpn.example.com:51820",
 		name:     "Wireguard3",
-		viaNDMS:  true,
+		mode:     guardNDMS,
 	})
 
 	op.guardSweep(context.Background())
@@ -305,7 +313,7 @@ func TestGuardSweep_V4RoundRobinNoFlap(t *testing.T) {
 		endpoint: "198.51.100.1:51820",
 		spec:     "vpn.example.com:51820",
 		name:     "Wireguard3",
-		viaNDMS:  true,
+		mode:     guardNDMS,
 	})
 
 	op.guardSweep(context.Background())
@@ -336,7 +344,7 @@ func TestGuardSweep_V4RetriesAfterFailedPost(t *testing.T) {
 		endpoint: "198.51.100.1:51820",
 		spec:     "vpn.example.com:51820",
 		name:     "Wireguard3",
-		viaNDMS:  true,
+		mode:     guardNDMS,
 	})
 
 	op.guardSweep(context.Background())
@@ -368,7 +376,7 @@ func TestGuardSweep_V4SkipsIPv6OnlyResolve(t *testing.T) {
 		endpoint: "198.51.100.1:51820", // этого адреса в резолве больше нет
 		spec:     "vpn.example.com:51820",
 		name:     "Wireguard3",
-		viaNDMS:  true,
+		mode:     guardNDMS,
 	})
 
 	op.guardSweep(context.Background())
@@ -395,7 +403,7 @@ func TestGuardSweep_V4RecoversAfterIPv6OnlyPeriod(t *testing.T) {
 		endpoint: "198.51.100.1:51820",
 		spec:     "vpn.example.com:51820",
 		name:     "Wireguard3",
-		viaNDMS:  true,
+		mode:     guardNDMS,
 	})
 	op.guardSweep(context.Background())
 
@@ -428,7 +436,7 @@ func TestGuardSweep_ViaKmodEntryNeverTouchesKernel(t *testing.T) {
 		endpoint: "198.51.100.1:51820", // этого адреса в резолве больше нет
 		spec:     "vpn.example.com:51820",
 		name:     "Wireguard3",
-		viaKmod:  true,
+		mode:     guardKmod,
 	})
 	calls := stubGuardWG(t, "PUB\t127.0.0.1:40001\n", nil)
 
@@ -470,7 +478,7 @@ func TestGuardSweep_KmodRebuildsSlotOnAddressChange(t *testing.T) {
 		endpoint: "198.51.100.1:51820",
 		spec:     "vpn.example.com:51820",
 		name:     "Wireguard3",
-		viaKmod:  true,
+		mode:     guardKmod,
 	})
 
 	op.guardSweep(context.Background())
@@ -510,7 +518,7 @@ func TestGuardSweep_KmodRetriesAfterFailedRebuild(t *testing.T) {
 	})
 	op.guardRegister("awg10", guardEntry{
 		iface: "nwg3", pubkey: "PUB", endpoint: "198.51.100.1:51820",
-		spec: "vpn.example.com:51820", name: "Wireguard3", viaKmod: true,
+		spec: "vpn.example.com:51820", name: "Wireguard3", mode: guardKmod,
 	})
 
 	op.guardSweep(context.Background())
@@ -536,7 +544,7 @@ func TestGuardSweep_KmodNoRebuildWhenAddressStable(t *testing.T) {
 
 	op.guardRegister("awg10", guardEntry{
 		iface: "nwg3", pubkey: "PUB", endpoint: "198.51.100.1:51820",
-		spec: "vpn.example.com:51820", name: "Wireguard3", viaKmod: true,
+		spec: "vpn.example.com:51820", name: "Wireguard3", mode: guardKmod,
 	})
 
 	op.guardSweep(context.Background())
@@ -562,7 +570,7 @@ func TestGuardSweep_KmodRebuildsSlotOnV6Address(t *testing.T) {
 	})
 	op.guardRegister("awg10", guardEntry{
 		iface: "nwg3", pubkey: "PUB", endpoint: "[2001:db8::1]:51820",
-		spec: "vpn.example.com:51820", name: "Wireguard3", viaKmod: true,
+		spec: "vpn.example.com:51820", name: "Wireguard3", mode: guardKmod,
 	})
 
 	op.guardSweep(context.Background())
@@ -578,19 +586,19 @@ func TestGuardModeForEndpoint(t *testing.T) {
 		endpoint string
 		kernelV6 bool
 		guard    bool
-		viaNDMS  bool
+		mode     guardMode
 	}{
-		{"v6 в ядро", "[2001:db8::1]:51820", true, true, false},
-		{"hostname через NDMS", "vpn.example.com:51820", false, true, true},
-		{"v4-литерал без стража", "203.0.113.1:51820", false, false, false},
-		{"пустой endpoint", "", false, false, false},
+		{"v6 в ядро", "[2001:db8::1]:51820", true, true, guardKernel},
+		{"hostname через NDMS", "vpn.example.com:51820", false, true, guardNDMS},
+		{"v4-литерал без стража", "203.0.113.1:51820", false, false, guardKernel},
+		{"пустой endpoint", "", false, false, guardKernel},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			guard, viaNDMS := guardModeForEndpoint(tc.endpoint, tc.kernelV6)
-			if guard != tc.guard || viaNDMS != tc.viaNDMS {
+			guard, mode := guardModeForEndpoint(tc.endpoint, tc.kernelV6)
+			if guard != tc.guard || mode != tc.mode {
 				t.Fatalf("guardModeForEndpoint(%q, %v) = (%v, %v), want (%v, %v)",
-					tc.endpoint, tc.kernelV6, guard, viaNDMS, tc.guard, tc.viaNDMS)
+					tc.endpoint, tc.kernelV6, guard, mode, tc.guard, tc.mode)
 			}
 		})
 	}
@@ -606,5 +614,42 @@ func TestWGShowHasEndpoint(t *testing.T) {
 	}
 	if wgShowHasEndpoint(out, "MISSING", "[2a02::1]:51820") {
 		t.Fatal("missing peer must be reported as mismatch")
+	}
+}
+
+// Выдержка общая для дорогих операций: пересборка слота рвёт соединение
+// (новый listen-порт) ровно так же, как рестарт релея. Резолвер, отдающий
+// ротирующее подмножество A-записей, без неё гонял бы её каждый проход.
+func TestGuardSweep_KmodRebuildRespectsCooldown(t *testing.T) {
+	cs := newCaptureServer(t)
+	op := newSyncTestOperator(t, cs.srv.URL)
+	op.supportsASC = func() bool { return false }
+	op.resolveFn = func(string) (string, int, error) { return "203.0.113.9", 51820, nil }
+	km, stub := newKmodManagerForTest()
+	op.kmod = km
+	op.SetTunnelLookup(func(id string) (*storage.AWGTunnel, error) {
+		return &storage.AWGTunnel{
+			ID: id, NWGIndex: 3,
+			Peer: storage.AWGPeer{PublicKey: "PUB", Endpoint: "vpn.example.com:51820"},
+		}, nil
+	})
+	op.guardRegister("awg10", guardEntry{
+		iface: "nwg3", pubkey: "PUB", endpoint: "198.51.100.1:51820",
+		spec: "vpn.example.com:51820", name: "Wireguard3", mode: guardKmod,
+	})
+
+	_ = stubGuardLookup(t, []string{"203.0.113.9"}, nil)
+	op.guardSweep(context.Background()) // первая пересборка — штатная
+	if !strings.Contains(stub.listBody, "203.0.113.9:51820") {
+		t.Fatalf("подготовка: слот не пересобран:\n%s", stub.listBody)
+	}
+	before := stub.countWrites("/proc/awg_proxy/add")
+
+	// Резолвер «передумал» — без выдержки слот пересобрался бы снова.
+	_ = stubGuardLookup(t, []string{"198.51.100.1"}, nil)
+	op.guardSweep(context.Background())
+
+	if got := stub.countWrites("/proc/awg_proxy/add"); got != before {
+		t.Fatalf("пересборка внутри выдержки: сборок %d, было %d", got, before)
 	}
 }

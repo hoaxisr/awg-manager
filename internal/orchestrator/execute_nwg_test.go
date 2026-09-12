@@ -23,6 +23,9 @@ type fakeNWGOp struct {
 	// Парковка Start: закрыть entered и ждать release. nil — не парковаться.
 	entered chan struct{}
 	release chan struct{}
+
+	// trackedIP — адрес, который оператор зарезолвил на старте.
+	trackedIP string
 }
 
 func (f *fakeNWGOp) Start(context.Context, *storage.AWGTunnel) error {
@@ -41,7 +44,7 @@ func (f *fakeNWGOp) GetState(context.Context, *storage.AWGTunnel) tunnel.StateIn
 	return f.state
 }
 func (f *fakeNWGOp) ResolveActiveWAN(context.Context, *storage.AWGTunnel) string { return "" }
-func (f *fakeNWGOp) GetTrackedEndpointIP(string) string                          { return "" }
+func (f *fakeNWGOp) GetTrackedEndpointIP(string) string                          { return f.trackedIP }
 func (f *fakeNWGOp) ConfigurePingCheck(context.Context, *storage.AWGTunnel, ndms.PingCheckConfig) error {
 	return nil
 }

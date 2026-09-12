@@ -680,6 +680,18 @@ type lockHolder struct {
 	refused atomic.Int32
 }
 
+// WithTunnelLock выполняет fn под тем же per-tunnel замком, которым
+// оркестратор сериализует свои действия. Нужен владельцам, которые правят
+// живой туннель в обход событий (service.Update) и стражу endpoint'ов в
+// nwg: без замка их работа переплетается с WAN-up по тому же туннелю.
+func (o *Orchestrator) WithTunnelLock(ctx context.Context, tunnelID, owner string, fn func() error) error {
+	if err := o.lockTunnel(ctx, tunnelID, owner); err != nil {
+		return err
+	}
+	defer o.unlockTunnel(tunnelID)
+	return fn()
+}
+
 // lockTunnel acquires the per-tunnel execution semaphore. Gives up when ctx
 // is cancelled (client disconnected) or after tunnelLockTimeout. owner names
 // the operation for the log — it is what identifies the holder when a later

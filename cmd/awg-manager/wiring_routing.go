@@ -33,13 +33,16 @@ func (a *app) setupOrchestrator() {
 	// Create orchestrator — single brain for all lifecycle decisions.
 	a.orch = orchestrator.New(a.awgStore, a.operator, a.nwgOp, a.stateMgr, a.wanModel, a.loggingService)
 	a.tunnelService.SetOrchestrator(a.orch)
-	a.nwgOp.SetHookNotifier(a.orch) // operators register expected hooks before InterfaceUp/Down
-	// OS5 kernel operator also uses ExpectHook (via OpkgTun two-layer arch).
-	if os5Op, ok := a.operator.(interface {
-		SetHookNotifier(tunnel.HookNotifier)
-	}); ok {
-		os5Op.SetHookNotifier(a.orch)
-	}
+	// Оба оператора регистрируют ожидаемые хуки до InterfaceUp/Down.
+	wireHookNotifiers(a.orch, a.nwgOp, a.operator)
+	// Endpoint-страж правит host-route и перезапускает релей — то же, что
+	// действия оркестратора, значит под тем же per-tunnel замком.
+	a.nwgOp.SetTunnelLock(func(ctx context.Context, tunnelID, owner string, work func() error) error {
+		return a.orch.WithTunnelLock(ctx, tunnelID, owner, work)
+	})
+	// Новый адрес target'а обязан пережить рестарт демона: по нему снимается
+	// host-route, и по нему сосед с тем же target решает, чей это маршрут.
+	a.nwgOp.SetResolvedIPPersister(a.tunnelService.PersistObfuscatorTargetIP)
 	a.orch.SetSupportsASC(ndmsinfo.SupportsWireguardASC)
 	a.orch.SetPingCheck(a.pingCheckFacade)
 	// dnsRouteService wiring to orchestrator happens later, after ndmsCommands is built.
@@ -262,4 +265,23 @@ func (j dnsFailoverJournal) Warnf(format string, args ...interface{}) {
 
 func (j dnsFailoverJournal) Infof(format string, args ...interface{}) {
 	j.log.Info("failover", "", fmt.Sprintf(format, args...))
+}
+
+// hookNotifierSetter — оператор, умеющий принять источник ожидаемых хуков.
+type hookNotifierSetter interface {
+	SetHookNotifier(tunnel.HookNotifier)
+}
+
+// wireHookNotifiers подключает оркестратор обоим операторам: nwg и, на OS5,
+// kernel-оператору (у того ExpectHook работает через двухслойный OpkgTun).
+// Вынесено из setupOrchestrator ради страж-теста: пропущенный здесь оператор
+// молча превращает свой expectHook в no-op, и собственное `conf: disabled`
+// приезжает в оркестратор как чужое событие.
+func wireHookNotifiers(orch tunnel.HookNotifier, nwgOp hookNotifierSetter, kernelOp any) {
+	if nwgOp != nil {
+		nwgOp.SetHookNotifier(orch)
+	}
+	if ks, ok := kernelOp.(hookNotifierSetter); ok {
+		ks.SetHookNotifier(orch)
+	}
 }
