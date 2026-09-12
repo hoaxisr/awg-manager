@@ -2533,3 +2533,89 @@ func TestMaskSecret_NormalBodyIsNotTruncated(t *testing.T) {
 		t.Fatalf("остальной текст потерян: %q", got)
 	}
 }
+
+// flakyMirror — зеркало, которое отказывает первые failures раз, а дальше
+// отвечает как обычно. Изображает сетевую икоту на пути к зеркалу.
+func flakyMirror(t *testing.T, hits *atomic.Int64, failures int64, origin string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hits.Add(1) <= failures {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		_, _ = io.WriteString(w, mirrorPage(origin))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// Одна икота на пути к зеркалу НЕ роняет вызов: резолв повторяется.
+//
+// Раньше ветка отказа резолва уходила наружу минуя цикл попыток — механизм
+// повторов стоял рядом и не работал. Пользователь видел «сервис недоступен»
+// там, где хватало одной повторной попытки.
+func TestClientRetriesAfterMirrorResolveFailure(t *testing.T) {
+	cp := newFakeCP(t)
+	var mirrorHits atomic.Int64
+	mirror := flakyMirror(t, &mirrorHits, 1, cp.origin())
+	rec := &logRecorder{}
+	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL },
+		func() string { return fixtureKey }, rec.log)
+
+	if _, err := c.AccountInfo(context.Background()); err != nil {
+		t.Fatalf("одна икота зеркала уронила вызов: %v", err)
+	}
+	if n := mirrorHits.Load(); n != 2 {
+		t.Fatalf("обращений к зеркалу %d, ожидалось 2 (отказ и успешный повтор)", n)
+	}
+}
+
+// Повтор резолва НЕ зависит от повторяемости самого запроса: до портала дело
+// не дошло, расходная ручка не тронута. Это и есть причина, по которой
+// resolve повторяется всегда, а send — только у repeatable-запросов.
+func TestClientRetriesMirrorResolveEvenForNonRepeatableRequest(t *testing.T) {
+	cp := newFakeCP(t)
+	var mirrorHits atomic.Int64
+	mirror := flakyMirror(t, &mirrorHits, 1, cp.origin())
+	rec := &logRecorder{}
+	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL },
+		func() string { return fixtureKey }, rec.log)
+
+	// CountryConfig — РАСХОДНАЯ ручка, её повтор запрещён.
+	if _, err := c.CountryConfig(context.Background(), "nl"); err != nil {
+		t.Fatalf("икота зеркала уронила расходный вызов: %v", err)
+	}
+	if n := mirrorHits.Load(); n != 2 {
+		t.Fatalf("обращений к зеркалу %d, ожидалось 2", n)
+	}
+	// Портал при этом увидел РОВНО ОДИН запрос: повторялся резолв, а не
+	// расходная операция.
+	if n := cp.configs.Load(); n != 1 {
+		t.Fatalf("запросов к расходной ручке %d, ожидался 1 — повтор съел бы слот подписки", n)
+	}
+}
+
+// Повторы не бесконечны: вечно мёртвое зеркало даёт ровно maxAttempts
+// обращений и внятный отказ.
+func TestClientStopsRetryingDeadMirror(t *testing.T) {
+	cp := newFakeCP(t)
+	var mirrorHits atomic.Int64
+	mirror := flakyMirror(t, &mirrorHits, 1<<30, cp.origin())
+	rec := &logRecorder{}
+	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL },
+		func() string { return fixtureKey }, rec.log)
+
+	_, err := c.AccountInfo(context.Background())
+	if err == nil {
+		t.Fatal("мёртвое зеркало обязано быть ошибкой")
+	}
+	if !errors.Is(err, ErrServiceUnavailable) {
+		t.Fatalf("причина не различима сентинелом ErrServiceUnavailable: %v", err)
+	}
+	if n := mirrorHits.Load(); n != maxAttempts {
+		t.Fatalf("обращений к зеркалу %d, ожидалось ровно %d", n, maxAttempts)
+	}
+	if n := cp.logins.Load(); n != 0 {
+		t.Fatalf("входов в портал %d — резолв не удался, идти было некуда", n)
+	}
+}
