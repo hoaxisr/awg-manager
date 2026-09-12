@@ -467,7 +467,13 @@ func validateSubURL(raw string) error {
 	return nil
 }
 
-// subscriptionClient собирает клиента загрузки подписки.
+// subscriptionClient — seam для тестов (ср. lookupIP выше): подменой видно,
+// что загрузка подписки идёт ИМЕННО этим клиентом, со всеми его стражами, а
+// не собранным по месту. Снаружи пакета клиент не подменяется; тест,
+// подменивший seam, не должен быть параллельным.
+var subscriptionClient = newSubscriptionClient
+
+// newSubscriptionClient собирает клиента загрузки подписки.
 //
 // Proxy у транспорта ОБЯЗАН оставаться nil, и это не умолчание, а работающая
 // защита: страж SSRF здесь — blockInternalDial, то есть Control диалера, и
@@ -478,7 +484,7 @@ func validateSubURL(raw string) error {
 // Поэтому «уборка» вида httpclient.NewTransport(TransportConfig{}) здесь НЕ
 // безобидна: транспорт httpclient по умолчанию наследует прокси окружения.
 // Держит границу TestSubscriptionClientDialsTargetDirectly.
-func subscriptionClient() *http.Client {
+func newSubscriptionClient() *http.Client {
 	return &http.Client{
 		Timeout: 20 * time.Second,
 		Transport: &http.Transport{
