@@ -843,3 +843,86 @@ func TestMirrorOriginClosesBodyOnSuccess(t *testing.T) {
 		t.Fatal("тело ответа не закрыто на успешном пути")
 	}
 }
+
+// Спуск с https на http при резолве зеркала — отказ, а не молчаливое
+// следование. Ценность не в самом запросе (он без тела и без секрета), а в
+// том, ЧТО с него приезжает: хост, которому клиент затем шлёт ключ подписки.
+// Проверка настроек обещает «схема только https» ровно поэтому; без запрета
+// обещание обходится одним 302 (доказано пробой при ревью P007).
+func TestMirrorOriginRejectsSchemeDowngrade(t *testing.T) {
+	var attackerHits atomic.Int64
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerHits.Add(1)
+		_, _ = io.WriteString(w, mirrorPage(fixtureOriginC))
+	}))
+	t.Cleanup(attacker.Close)
+
+	entry := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL, http.StatusFound)
+	}))
+	t.Cleanup(entry.Close)
+
+	m := newMirrorWithClock(entry.Client(), testTTL, newFakeClock().now)
+	origin, err := m.Origin(context.Background(), entry.URL)
+	if err == nil {
+		t.Fatalf("спуск на http принят, origin = %q", origin)
+	}
+	if !errors.Is(err, ErrMirrorUnavailable) {
+		t.Fatalf("класс ошибки не «зеркало недоступно»: %v", err)
+	}
+	if n := attackerHits.Load(); n != 0 {
+		t.Fatalf("http-хост всё-таки опрошен (%d раз) — запрет не сработал", n)
+	}
+}
+
+// Апгрейд и переход внутри https запрещать нельзя: адрес зеркала вводит
+// пользователь, и перенаправлением приезжают и хвостовой слэш, и сокращатель.
+// Тест держит границу узкой — запрещён спуск, а не редирект вообще.
+func TestMirrorOriginFollowsSchemeUpgrade(t *testing.T) {
+	var hits atomic.Int64
+	target := mirrorServer(t, &hits, fixtureOriginA)
+
+	entry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusMovedPermanently)
+	}))
+	t.Cleanup(entry.Close)
+
+	m := newMirrorWithClock(target.Client(), testTTL, newFakeClock().now)
+	got, err := m.Origin(context.Background(), entry.URL)
+	if err != nil {
+		t.Fatalf("резолв через перенаправление: %v", err)
+	}
+	if got != fixtureOriginA {
+		t.Fatalf("origin = %q, ожидался %q", got, fixtureOriginA)
+	}
+}
+
+// Своя политика редиректов выключает штатный предел net/http целиком, поэтому
+// предел обязан быть восстановлен руками: зеркало, перенаправляющее на себя,
+// иначе крутит запрос до отмены контекста.
+func TestMirrorOriginStopsEndlessRedirects(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Redirect(w, r, "/next", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	m := newMirrorWithClock(srv.Client(), testTTL, newFakeClock().now)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	origin, err := m.Origin(ctx, srv.URL)
+	if err == nil {
+		t.Fatalf("бесконечная цепочка принята, origin = %q", origin)
+	}
+	if !errors.Is(err, ErrMirrorUnavailable) {
+		t.Fatalf("класс ошибки не «зеркало недоступно»: %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("цепочку остановил таймаут теста, а не предел перенаправлений")
+	}
+	if n := hits.Load(); n > maxMirrorRedirects+1 {
+		t.Fatalf("походов %d, предел %d не соблюдён", n, maxMirrorRedirects)
+	}
+}

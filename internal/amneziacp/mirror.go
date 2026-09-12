@@ -38,6 +38,12 @@ const DefaultMirrorTTL = 30 * time.Minute
 // сотни мегабайт съесть память целиком.
 const maxMirrorHTML = 1 << 20
 
+// maxMirrorRedirects повторяет предел, который net/http применяет сам, пока
+// CheckRedirect не задан. Как только политика задана, штатный предел
+// выключается целиком — цепочку надо ограничивать своими руками, иначе
+// зеркало, перенаправляющее на себя, крутит запрос до отмены контекста.
+const maxMirrorRedirects = 10
+
 var (
 	metaTagRe = regexp.MustCompile(`(?is)<meta\b[^>]*>`)
 	tagAttrRe = regexp.MustCompile(`(?is)([a-z0-9_:-]+)\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+)`)
@@ -138,7 +144,45 @@ func newMirrorWithClock(client *http.Client, ttl time.Duration, now func() time.
 	if ttl <= 0 {
 		ttl = DefaultMirrorTTL
 	}
-	return &Mirror{client: client, ttl: ttl, now: now}
+	return &Mirror{client: withoutSchemeDowngrade(client), ttl: ttl, now: now}
+}
+
+// withoutSchemeDowngrade копирует клиента и запрещает перенаправление, которое
+// уводит с https на что-то другое.
+//
+// Следовать перенаправлениям зеркалу НУЖНО: адрес вводит пользователь, и
+// хвостовой слэш, сокращатель и апгрейд протокола приезжают именно ими. Но
+// запрос к зеркалу не безобиден, хотя и уходит без тела и без секрета: со
+// страницы приезжает ХОСТ, которому клиент затем шлёт ключ подписки. Разрешив
+// спуск на http, мы отдаём назначение этого ключа тому, кто сидит на канале, —
+// проверка «схема только https» в настройках (internal/storage/settings.go)
+// обещает ровно обратное, и обход доказан пробой: https-зеркало → 302 →
+// http-хост → страница с mirror-to → origin атакующего без единой ошибки.
+//
+// Апгрейд (http → https) и переход https → https разрешены: запрещён именно
+// спуск, а не перенаправление.
+//
+// Копия, а не правка переданного клиента: объект чужой, его политика на других
+// путях — не наше дело (ср. withoutRedirects).
+func withoutSchemeDowngrade(c *http.Client) *http.Client {
+	// nil сохраняется как nil: фолбэка на http.DefaultClient здесь нет
+	// намеренно (см. NewMirror), и подменять его копией пустого клиента —
+	// значит завести тот самый фолбэк с прокси из окружения и без таймаута.
+	if c == nil {
+		return nil
+	}
+	dup := *c
+	dup.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxMirrorRedirects {
+			return fmt.Errorf("%w: больше %d перенаправлений", ErrMirrorUnavailable, maxMirrorRedirects)
+		}
+		if prev := via[len(via)-1]; prev.URL.Scheme == "https" && req.URL.Scheme != "https" {
+			return fmt.Errorf("%w: перенаправление с https на %q — со страницы зеркала приезжает хост, которому мы шлём ключ подписки",
+				ErrMirrorUnavailable, req.URL.Scheme)
+		}
+		return nil
+	}
+	return &dup
 }
 
 // Origin возвращает рабочий origin CP для указанного адреса зеркала.
