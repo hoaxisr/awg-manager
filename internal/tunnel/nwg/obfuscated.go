@@ -244,7 +244,8 @@ func (o *OperatorNativeWG) resolveTarget(stored *storage.AWGTunnel) (string, err
 	return ip, nil
 }
 
-// addObfHostRoute: host-форма ip route — {host, interface, auto, comment} — запись
+// addObfHostRoute: host-форма ip route — {host, interface, auto, comment}, у
+// v6-таргета та же запись в форме ipv6 с {prefix: <addr>/128, …} — запись
 // NDMS, переживает пересчёт таблицы. WAN: ISPInterface туннеля → peer.via из RCI (WAN,
 // которым NDMS реально ведёт пира) → текущий дефолтный шлюз. Отказ только если
 // это наш собственный WireguardN (дефолт через себя = петля).
@@ -273,14 +274,8 @@ func (o *OperatorNativeWG) addObfHostRoute(ctx context.Context, stored *storage.
 	// в петлю, ради которой маршрут и ставится.
 	return o.commands.Routes.AddStaticRoute(ctx, command.StaticRouteSpec{
 		Host: ip, Interface: wan, Comment: "awgm-obfuscator " + stored.ID,
-		V6: isV6Addr(ip),
+		V6: isV6Literal(ip),
 	})
-}
-
-// isV6Addr — тот же разбор, что у соседей по пакету (operator.go, sync.go).
-func isV6Addr(ip string) bool {
-	parsed := net.ParseIP(ip)
-	return parsed != nil && parsed.To4() == nil
 }
 
 // obfRouteIP — адрес, под которым стоит host-route: свежий резолв этого запуска,

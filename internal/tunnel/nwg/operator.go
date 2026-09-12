@@ -274,7 +274,7 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	// 127.0.0.1:proxy или реальный); IPv6-литерал NDMS в create-команде не
 	// принимает — заглушка, как в createViaImport.
 	peerEndpoint := fmt.Sprintf("%s:%d", endpointIP, endpointPort)
-	if ip := net.ParseIP(endpointIP); ip != nil && ip.To4() == nil {
+	if isV6Literal(endpointIP) {
 		peerEndpoint = ndmsEndpointPlaceholder
 	}
 	peerCfg := payloads.PeerConfig{
@@ -426,7 +426,7 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 	// wireguard-tools по kernel-имени nwgN, ПОСЛЕ поднятия интерфейса —
 	// up/down у NDMS сбрасывает kernel-endpoint на значение из его конфига.
 	endpointIsV6 := false
-	if ip := net.ParseIP(endpointIP); ip != nil && ip.To4() == nil {
+	if isV6Literal(endpointIP) {
 		endpointIsV6 = true
 		// hostname→v6-only резолв: прекчек по литералу выше не сработал.
 		if wgToolLookup() == "" {

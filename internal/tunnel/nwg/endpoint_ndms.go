@@ -20,6 +20,19 @@ import (
 // порт 1 ядро эфемерные сокеты не вешает.
 const ndmsEndpointPlaceholder = "127.0.0.1:1"
 
+// isV6Literal — «строка это v6-литерал»: вход уже отрезолвлен (результат
+// резолва endpoint'а, адрес из карты маршрутов).
+//
+// НЕ для СЫРОЙ endpoint-строки (`host:port`, hostname) — для неё критерий
+// ниже, в EndpointHostIsIPv6, и он намеренно не использует To4:
+// IPv4-mapped "::ffff:1.2.3.4" даёт To4() != nil, но NDMS такую форму
+// отвергает. Рядом в пакете есть и другие родственные предикаты с иными
+// границами (endpoint_guard.go) — они не дубли.
+func isV6Literal(ip string) bool {
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.To4() == nil
+}
+
 // EndpointHostIsIPv6 — endpoint несёт IPv6-литерал хоста. Понимает все
 // реальные формы: "[v6]:port", "[v6]" без порта, голый "v6",
 // небракетированный "v6:port" (некоторые провайдеры так выгружают конфиги)

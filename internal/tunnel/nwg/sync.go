@@ -175,7 +175,7 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 			v4Confirmed = !strings.Contains(host, ":")
 		default:
 			if ip, port, err := o.resolveEndpointFresh(stored.Peer.Endpoint); err == nil {
-				if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
+				if isV6Literal(ip) {
 					kernelEndpoint = net.JoinHostPort(ip, strconv.Itoa(port))
 					kernelV6 = true
 				} else {
