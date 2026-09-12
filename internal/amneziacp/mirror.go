@@ -177,6 +177,13 @@ func withoutSchemeDowngrade(c *http.Client) *http.Client {
 		return nil
 	}
 	dup := *c
+	// Хранилище cookie в копию не берётся — как и в withoutRedirects, и по
+	// той же причине: зеркалу оно не нужно (один GET, сессия ставится
+	// заголовком), а взятое чужое работало бы в обе стороны. Set-Cookie со
+	// страницы зеркала или любого из хопов лёг бы в хранилище ЧУЖОГО объекта,
+	// а лежащие там cookie (в том числе сессия портала) уехали бы на хост
+	// зеркала — на хост, который к тому же приезжает редиректом.
+	dup.Jar = nil
 	dup.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= maxMirrorRedirects {
 			return fmt.Errorf("%w: больше %d перенаправлений", ErrMirrorUnavailable, maxMirrorRedirects)

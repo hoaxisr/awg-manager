@@ -1479,8 +1479,12 @@ func TestNewClientDoesNotMutatePassedClient(t *testing.T) {
 	if c.mirror.client.CheckRedirect == nil {
 		t.Fatal("у резолвера зеркала нет политики редиректов")
 	}
-	if c.mirror.client.Jar != jar {
-		t.Fatal("резолвер зеркала потерял хранилище cookie переданного клиента")
+	// Хранилище cookie копия зеркала не уносит — ровно как копия портала:
+	// зеркалу оно не нужно (один GET, сессия ставится заголовком), а чужое
+	// работало бы в обе стороны — Set-Cookie со страницы зеркала лёг бы в
+	// хранилище вызывающего, а его cookie уехали бы на хост зеркала.
+	if c.mirror.client.Jar != nil {
+		t.Fatal("копия зеркала унесла хранилище cookie: cookie вызывающего уедут на хост зеркала, а Set-Cookie со страницы — в чужое хранилище")
 	}
 }
 
