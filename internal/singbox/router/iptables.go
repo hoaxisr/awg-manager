@@ -81,6 +81,35 @@ const (
 	maxIPRuleDrainPasses = 32
 )
 
+// SetDataDir перенацеливает файлы роутера в каталог данных демона. Нужна
+// потому, что `-data-dir` иначе соблюдается наполовину: демон, запущенный в
+// песочнице, писал ctclean.sh и правила netfilter в БОЕВОЙ /opt/etc/awg-manager
+// (F168). Хук ndm (netfilterHookPath) не трогаем — он живёт в /opt/etc/ndm и к
+// каталогу данных отношения не имеет.
+func SetDataDir(dir string) {
+	sub := filepath.Join(dir, "singbox")
+	netfilterRulesPath = filepath.Join(sub, "router-netfilter.rules")
+	netfilterBlackholePath = filepath.Join(sub, "router-blackhole.rules")
+	netfilterMangleRulesPath = filepath.Join(sub, "router-netfilter-mangle.rules")
+	netfilterNatRulesPath = filepath.Join(sub, "router-netfilter-nat.rules")
+	netfilterCtCleanPath = filepath.Join(sub, "awgm-ctclean.sh")
+	bypassSavePath = filepath.Join(sub, "bypass.ipset")
+}
+
+// DataDirPaths — текущие пути, производные от каталога данных. Существует для
+// проверки того, что SetDataDir не забыл ни одного: список файлов растёт, а
+// забытый путь молча уводит запись в боевой каталог.
+func DataDirPaths() map[string]string {
+	return map[string]string{
+		"netfilterRulesPath":       netfilterRulesPath,
+		"netfilterBlackholePath":   netfilterBlackholePath,
+		"netfilterMangleRulesPath": netfilterMangleRulesPath,
+		"netfilterNatRulesPath":    netfilterNatRulesPath,
+		"netfilterCtCleanPath":     netfilterCtCleanPath,
+		"bypassSavePath":           bypassSavePath,
+	}
+}
+
 // Mutable in tests via t.Cleanup so they can redirect into a tmp dir.
 // Production code reads these at call time.
 var (
