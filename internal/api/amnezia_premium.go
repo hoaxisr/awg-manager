@@ -1,9 +1,11 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -25,6 +27,17 @@ const (
 	codePremiumServiceUnavailable = "AMNEZIA_PREMIUM_UNAVAILABLE"
 	codePremiumSettingsError      = "AMNEZIA_PREMIUM_SETTINGS_ERROR"
 	codePremiumDeleteError        = "AMNEZIA_PREMIUM_DELETE_ERROR"
+	codePremiumNoCountry          = "AMNEZIA_PREMIUM_NO_COUNTRY"
+	codePremiumConfigBusy         = "AMNEZIA_PREMIUM_CONFIG_BUSY"
+	// codePremiumOutcomeUnknown — исход расходной операции неизвестен
+	// (перенаправление у портала). Свой код, потому что это единственный
+	// отказ линии, на котором повторять НЕЛЬЗЯ: повтор потратит второй слот
+	// подписки.
+	codePremiumOutcomeUnknown = "AMNEZIA_PREMIUM_OUTCOME_UNKNOWN"
+	// codeInvalidAmneziaMirrorURL — тот же код, которым непригодный адрес
+	// зеркала отвергали настройки, пока поле принадлежало им: класс отказа не
+	// изменился, менять код значило бы ломать клиента ради переезда ручки.
+	codeInvalidAmneziaMirrorURL = "INVALID_AMNEZIA_MIRROR_URL"
 )
 
 // logActionPremium — действие в журнале приложения; целью (target) идёт имя
@@ -115,6 +128,16 @@ type AmneziaPremiumHandler struct {
 	keyGen     uint64
 	httpClient *http.Client
 	cp         *amneziacp.Client
+	// configInFlight — страны, по которым выдача конфигурации сейчас летит.
+	// Замок расходной операции: она тратит слот устройств подписки, и второй
+	// запрос той же страны обязан получить отказ, а не уйти в портал вторым.
+	// Ключ — код страны в нижнем регистре, тот же, что уезжает в портал.
+	//
+	// Это правило НЕЗАВИСИМО от поколения ключа выше: там гейт «удаление
+	// побеждает летящее сохранение», здесь — «расходная операция не идёт
+	// дважды». Общий у них только лок, и он никогда не удерживается на время
+	// похода в сеть.
+	configInFlight map[string]struct{}
 }
 
 // NewAmneziaPremiumHandler собирает обработчик. appLogger может быть nil
@@ -581,10 +604,452 @@ func cpFailure(err error) (status int, code, message string) {
 		return http.StatusUnprocessableEntity, codePremiumKeyRejected, "Портал Amnezia отклонил ключ подписки"
 	case errors.Is(err, amneziacp.ErrNoKey):
 		return http.StatusBadRequest, codePremiumNoKey, "Ключ подписки Amnezia не задан"
+	case errors.Is(err, amneziacp.ErrOutcomeUnknown):
+		// Единственный отказ линии, где текст НЕ зовёт повторить: 3xx у
+		// расходной ручки мог быть формой успеха, и тогда слот подписки уже
+		// потрачен, а повтор потратит второй (F200).
+		return http.StatusBadGateway, codePremiumOutcomeUnknown,
+			"Портал Amnezia ответил перенаправлением — выдана конфигурация или нет, неизвестно. " +
+				"Откройте список стран и проверьте счётчик устройств, прежде чем запрашивать снова"
 	case errors.Is(err, amneziacp.ErrMirrorUnavailable):
 		return http.StatusBadGateway, codePremiumMirrorUnavailable, "Зеркало Amnezia недоступно — попробуйте позже"
 	default:
 		// ErrServiceUnavailable и всё, что не опознано: отказ закрытый.
 		return http.StatusServiceUnavailable, codePremiumServiceUnavailable, "Сервис Amnezia недоступен — попробуйте позже"
 	}
+}
+
+// === Каталог подписки, выдача конфигурации, адрес зеркала ===
+
+// AmneziaPremiumCountry — страна каталога подписки.
+//
+// Имена полей НАШИ (camelCase), а не портальные: ответ собирается полем за
+// полем, и совпадение имён с чужим ответом создавало бы впечатление, что он
+// пересылается как есть.
+type AmneziaPremiumCountry struct {
+	// Code — код страны, как его прислал портал (server_country_code).
+	// Регистр не трогаем: он же уезжает обратно в запрос конфигурации, где
+	// приводится к нижнему уже клиентом.
+	Code string `json:"code" example:"nl"`
+	// Name — название страны, как его прислал портал, вместе с суффиксами
+	// вида «Switzerland [P2P]».
+	Name string `json:"name" example:"Netherlands"`
+	// Protocols — признак доступности страны: список протоколов, которыми её
+	// отдаёт подписка (available_protocols). Нам годится только awg, но
+	// решение «показывать ли страну» принимает интерфейс — здесь важно
+	// сохранить РАЗЛИЧИЕ между пустым списком (страна не отдаётся ничем) и
+	// отсутствующим полем (старый ответ портала его не содержал, и страну
+	// отбрасывать нельзя). Поэтому без omitempty: nil уезжает как null,
+	// пустой список — как [].
+	Protocols []string `json:"protocols"`
+}
+
+// AmneziaPremiumCatalogData — данные подписки и список стран.
+//
+// БЕЛЫЙ СПИСОК, собираемый поле за полем: ответ портала наружу не
+// проксируется. В его data лежит в том числе сам ключ подписки, и полагаться
+// на вычистку по имени поля как на единственную защиту нельзя — имена живого
+// ответа перечислить невозможно. Всё, чего нет в этой структуре, до браузера
+// не доезжает по построению (закрывает F183).
+//
+// Состав — ровно то, что показывает мастер (спека §5.2): название тарифа,
+// срок действия, счётчик устройств, список стран. Продление, контакты
+// поддержки и правовые ссылки портал отдаёт, но мы их не берём — решение
+// владельца.
+type AmneziaPremiumCatalogData struct {
+	// PlanName — название тарифа (display_name). subscription_description для
+	// подписи не годится: там рекламный абзац, а не название.
+	PlanName string `json:"planName" example:"Premium"`
+	// SubscriptionEndDate — «действует до», как прислал портал (ISO 8601).
+	// Строкой, а не временем: активность считает интерфейс, и разбор даты на
+	// две стороны разошёлся бы.
+	SubscriptionEndDate string `json:"subscriptionEndDate" example:"2027-04-19T08:31:00Z"`
+	// ActiveDeviceCount / MaxDeviceCount — счётчик устройств подписки, как
+	// его отдаёт портал. Сами по issued_configs не считаем: наш подсчёт
+	// расходился с портальным.
+	ActiveDeviceCount int64 `json:"activeDeviceCount" example:"3"`
+	MaxDeviceCount    int64 `json:"maxDeviceCount" example:"7"`
+	// Countries — список стран подписки. Пустой список — не отказ: это
+	// правдивый ответ портала, и придумывать по нему ошибку значило бы
+	// решать за пользователя, что его подписка сломана.
+	Countries []AmneziaPremiumCountry `json:"countries"`
+}
+
+// AmneziaPremiumCatalogResponse — конверт GET /amnezia/premium/catalog.
+type AmneziaPremiumCatalogResponse struct {
+	Success bool                      `json:"success" example:"true"`
+	Data    AmneziaPremiumCatalogData `json:"data"`
+}
+
+// premiumAccountInfo — то, что мы ЧИТАЕМ из ответа портала. Имена полей
+// портальные (snake_case); всё, чего здесь нет, json.Unmarshal отбрасывает
+// сам — это и есть механизм белого списка.
+type premiumAccountInfo struct {
+	DisplayName         string `json:"display_name"`
+	SubscriptionEndDate string `json:"subscription_end_date"`
+	ActiveDeviceCount   int64  `json:"active_device_count"`
+	MaxDeviceCount      int64  `json:"max_device_count"`
+	AvailableCountries  []struct {
+		Code      string   `json:"server_country_code"`
+		Name      string   `json:"server_country_name"`
+		Protocols []string `json:"available_protocols"`
+	} `json:"available_countries"`
+}
+
+// premiumCatalog переносит ответ портала в наш DTO поле за полем.
+func premiumCatalog(raw []byte) (AmneziaPremiumCatalogData, error) {
+	var in premiumAccountInfo
+	if err := json.Unmarshal(raw, &in); err != nil {
+		// Ответ неожиданной формы — тот же класс, что молчащий портал:
+		// пользователю нечего исправлять в своём ключе.
+		return AmneziaPremiumCatalogData{}, fmt.Errorf(
+			"%w: данные подписки не разобраны: %w", amneziacp.ErrServiceUnavailable, err)
+	}
+	out := AmneziaPremiumCatalogData{
+		PlanName:            in.DisplayName,
+		SubscriptionEndDate: in.SubscriptionEndDate,
+		ActiveDeviceCount:   in.ActiveDeviceCount,
+		MaxDeviceCount:      in.MaxDeviceCount,
+		Countries:           make([]AmneziaPremiumCountry, 0, len(in.AvailableCountries)),
+	}
+	for _, c := range in.AvailableCountries {
+		out.Countries = append(out.Countries, AmneziaPremiumCountry{
+			Code:      c.Code,
+			Name:      c.Name,
+			Protocols: c.Protocols,
+		})
+	}
+	return out, nil
+}
+
+// Catalog отдаёт данные подписки и список стран.
+//
+//	@Summary		Каталог подписки Amnezia Premium
+//	@Description	Данные подписки и список стран. Ответ собирается по белому списку: ключ подписки, сессия портала и прочие поля ответа портала наружу не выходят.
+//	@Tags			amnezia-premium
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	AmneziaPremiumCatalogResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Failure		422	{object}	APIErrorEnvelope
+//	@Failure		502	{object}	APIErrorEnvelope
+//	@Failure		503	{object}	APIErrorEnvelope
+//	@Router			/amnezia/premium/catalog [get]
+func (h *AmneziaPremiumHandler) Catalog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	// Ключа нет — клиент отвечает ErrNoKey ДО всякого похода в сеть: ни к
+	// порталу, ни к зеркалу запрос не уходит (см. amneziacp.Client.call).
+	raw, err := h.client().AccountInfo(r.Context())
+	if err != nil {
+		h.failCP(w, "catalog", err)
+		return
+	}
+	data, err := premiumCatalog(raw)
+	if err != nil {
+		h.failCP(w, "catalog", err)
+		return
+	}
+	h.log.Info(logActionPremium, "catalog", fmt.Sprintf("route=direct стран=%d", len(data.Countries)))
+	response.Success(w, data)
+}
+
+// AmneziaPremiumConfigRequest — тело POST /amnezia/premium/config.
+type AmneziaPremiumConfigRequest struct {
+	CountryCode string `json:"countryCode" example:"nl"`
+}
+
+// AmneziaPremiumConfigData — выданная конфигурация.
+type AmneziaPremiumConfigData struct {
+	// CountryCode — страна в том виде, в каком ушла в портал.
+	CountryCode string `json:"countryCode" example:"nl"`
+	// Config — текст .conf. Строки с ключом подписки из него вырезаны
+	// клиентом (amneziacp.withoutKeyLines): живой ответ несёт ключ всей
+	// подписки в комментарии-шапке.
+	Config string `json:"config"`
+}
+
+// AmneziaPremiumConfigResponse — конверт POST /amnezia/premium/config.
+type AmneziaPremiumConfigResponse struct {
+	Success bool                     `json:"success" example:"true"`
+	Data    AmneziaPremiumConfigData `json:"data"`
+}
+
+// Config выдаёт конфигурацию выбранной страны.
+//
+// Операция РАСХОДНАЯ: каждая выдача тратит слот устройств подписки. Поэтому
+// она сериализуется ЗДЕСЬ, а не на фронте: две вкладки и двойной клик фронт
+// не ловит, а цена лишнего запроса — реальный слот пользователя.
+//
+//	@Summary		Получить конфигурацию страны Amnezia Premium
+//	@Description	Расходная операция: тратит слот устройств подписки. Параллельный запрос той же страны отвергается (409); разные страны идут параллельно. Ключ подписки в ответе не возвращается и вырезается из самой конфигурации.
+//	@Tags			amnezia-premium
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		AmneziaPremiumConfigRequest	true	"Код страны"
+//	@Success		200		{object}	AmneziaPremiumConfigResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		405		{object}	APIErrorEnvelope
+//	@Failure		409		{object}	APIErrorEnvelope
+//	@Failure		422		{object}	APIErrorEnvelope
+//	@Failure		502		{object}	APIErrorEnvelope
+//	@Failure		503		{object}	APIErrorEnvelope
+//	@Router			/amnezia/premium/config [post]
+func (h *AmneziaPremiumHandler) Config(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[AmneziaPremiumConfigRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	// Нижний регистр — тот же, что применит клиент: замок обязан запираться
+	// тем же ключом, каким делается запрос, иначе «NL» и «nl» уедут в портал
+	// оба.
+	code := strings.ToLower(strings.TrimSpace(req.CountryCode))
+	if code == "" {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "Страна не выбрана", codePremiumNoCountry)
+		return
+	}
+	if !h.beginCountryConfig(code) {
+		// Отказ, а не ожидание: ждущий запрос всё равно кончился бы вторым
+		// походом в портал либо ответом, которого пользователь уже не ждёт.
+		h.log.Info(logActionPremium, "country-config",
+			fmt.Sprintf("route=direct country=%s запрос уже выполняется — отказ", code))
+		response.ErrorWithStatus(w, http.StatusConflict,
+			"Конфигурация для этой страны уже запрашивается — дождитесь ответа", codePremiumConfigBusy)
+		return
+	}
+	// defer, а не вызов в конце: замок обязан отпускаться и на отказе, и на
+	// панике внутри (её ловит уже http.Server, но замок к тому моменту должен
+	// быть отпущен — иначе страна остаётся занятой до перезапуска демона).
+	defer h.endCountryConfig(code)
+
+	conf, err := h.client().CountryConfig(r.Context(), code)
+	if err != nil {
+		h.failCP(w, "country-config", err)
+		return
+	}
+	h.log.Info(logActionPremium, "country-config",
+		fmt.Sprintf("route=direct country=%s конфигурация выдана", code))
+	response.Success(w, AmneziaPremiumConfigData{CountryCode: code, Config: conf})
+}
+
+// beginCountryConfig занимает страну под выдачу конфигурации. false означает
+// «по этой стране запрос уже летит».
+//
+// Замок держит h.mu — тот же, под которым живут ключ и его поколение. Второго
+// лока здесь нет сознательно: он завёл бы порядок захватов там, где его нигде
+// больше нет, а сам захват не переживает ни одного похода в сеть — под ним
+// только вставка в карту.
+//
+// Карта, а не флаг: разные страны параллелить можно и нужно, слот тратится
+// по каждой отдельно.
+func (h *AmneziaPremiumHandler) beginCountryConfig(code string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, busy := h.configInFlight[code]; busy {
+		return false
+	}
+	if h.configInFlight == nil {
+		h.configInFlight = make(map[string]struct{})
+	}
+	h.configInFlight[code] = struct{}{}
+	return true
+}
+
+// endCountryConfig отпускает страну. Запись удаляется, а не помечается: карта
+// обязана быть пустой в покое, иначе её размер растёт с числом стран, по
+// которым когда-либо ходили.
+func (h *AmneziaPremiumHandler) endCountryConfig(code string) {
+	h.mu.Lock()
+	delete(h.configInFlight, code)
+	h.mu.Unlock()
+}
+
+// AmneziaPremiumMirrorRequest — тело POST /amnezia/premium/mirror.
+//
+// Поле обычной строкой, а не указателем: «поля нет» и «поле пустое» означают
+// здесь одно и то же — зеркало по умолчанию. Запись безусловна, и это же
+// лечит испорченное хранимое значение (см. SaveMirror).
+type AmneziaPremiumMirrorRequest struct {
+	MirrorURL string `json:"mirrorUrl" example:"https://storage.googleapis.com/amnezia/cp?m-path=/ru"`
+}
+
+// AmneziaPremiumMirrorData — ДЕЙСТВУЮЩИЙ адрес зеркала.
+//
+// Наружу идёт именно действующий, а не хранимый: хранимое пустое означает
+// «зеркало по умолчанию», и показать пользователю пустое поле значило бы
+// скрыть от него адрес, по которому панель реально ходит. Хранимое при этом
+// остаётся пустым — только так адрес продолжает ротироваться с релизом.
+type AmneziaPremiumMirrorData struct {
+	MirrorURL string `json:"mirrorUrl" example:"https://storage.googleapis.com/amnezia/cp?m-path=/ru"`
+}
+
+// AmneziaPremiumMirrorResponse — конверт обоих методов /amnezia/premium/mirror.
+type AmneziaPremiumMirrorResponse struct {
+	Success bool                     `json:"success" example:"true"`
+	Data    AmneziaPremiumMirrorData `json:"data"`
+}
+
+// Mirror — точка входа ручки адреса зеркала: метод выбирает операцию,
+// как у Key.
+func (h *AmneziaPremiumHandler) Mirror(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.MirrorStatus(w, r)
+	case http.MethodPost:
+		h.SaveMirror(w, r)
+	default:
+		response.MethodNotAllowed(w)
+	}
+}
+
+// MirrorStatus отдаёт действующий адрес зеркала.
+//
+//	@Summary		Действующий адрес зеркала Amnezia
+//	@Description	Отдаёт адрес, по которому панель реально ходит: хранимое пустое (и непригодное) значение означает адрес по умолчанию.
+//	@Tags			amnezia-premium
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	AmneziaPremiumMirrorResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Router			/amnezia/premium/mirror [get]
+func (h *AmneziaPremiumHandler) MirrorStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	// Тот же геттер, которым адрес берёт клиент CP: два понимания
+	// «действующего адреса» разошлись бы молча.
+	response.Success(w, AmneziaPremiumMirrorData{MirrorURL: h.mirrorURL()})
+}
+
+// SaveMirror записывает адрес зеркала.
+//
+// Запись БЕЗУСЛОВНА, и это и есть лечение испорченного хранимого значения.
+// Поле ушло из общего ответа настроек, а страница настроек шлёт обратно тело
+// ответа целиком — значит прежний путь самоисцеления (прислать поле пустым
+// через /settings/update) закрыт, и мусор из settings.json убрать было
+// нечем. Здесь любая запись — и своим адресом, и пустая — кладёт на его место
+// проверенное значение; GET при этом не лечит ничего сознательно: чтение,
+// которое пишет на флеш, — это износ флеша на каждом открытии мастера.
+//
+// Замена непригодного значения слышна в журнале: человек, который правил
+// settings.json руками и ошибся, иначе не узнает, куда делась его правка.
+//
+//	@Summary		Задать адрес зеркала Amnezia
+//	@Description	Пустое значение и присланный адрес по умолчанию хранятся пустыми (так адрес продолжает ротироваться с релизом). Непригодное хранимое значение заменяется присланным. В ответе — действующий адрес.
+//	@Tags			amnezia-premium
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		AmneziaPremiumMirrorRequest	true	"Адрес зеркала; пустое значение — зеркало по умолчанию"
+//	@Success		200		{object}	AmneziaPremiumMirrorResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		405		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/amnezia/premium/mirror [post]
+func (h *AmneziaPremiumHandler) SaveMirror(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[AmneziaPremiumMirrorRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	// Нормализация ДО проверки: присланный дефолт схлопывается в пустое, а
+	// пустое годно.
+	sent := normalizeAmneziaMirrorURL(req.MirrorURL)
+	if err := storage.ValidateAmneziaMirrorURL(sent); err != nil {
+		// Признак годности общий со storage; здесь к нему добавляется только
+		// код ошибки — тот же, что был у прежнего пути через настройки.
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), codeInvalidAmneziaMirrorURL)
+		return
+	}
+
+	// Прежнее значение снимается ПОД ЛОКОМ стора, тем же, под которым идёт
+	// запись: прочитать его отдельным Get значило бы рассказать в журнал про
+	// значение, которое к моменту записи могло смениться.
+	var replaced string
+	if err := h.settings.Update(func(cur *storage.Settings) error {
+		replaced = cur.AmneziaPremiumMirrorURL
+		cur.AmneziaPremiumMirrorURL = sent
+		return nil
+	}); err != nil {
+		h.log.Warn(logActionPremium, "mirror-save", "route=direct записать адрес зеркала не удалось: "+err.Error())
+		response.ErrorWithStatus(w, http.StatusInternalServerError,
+			"Не удалось сохранить адрес зеркала", codePremiumSettingsError)
+		return
+	}
+
+	// Строка пишется только когда что-то ДЕЙСТВИТЕЛЬНО отброшено: непригодное
+	// хранимое значение, которое пользователь увидеть уже не сможет. Замена
+	// годного адреса другим годным ничего не теряет, и говорить про неё
+	// «отброшен» было бы неправдой.
+	if strings.TrimSpace(replaced) != "" && storage.ValidateAmneziaMirrorURL(replaced) != nil {
+		h.log.Warn(logActionPremium, "mirror-save", fmt.Sprintf(
+			"route=direct непригодный адрес зеркала Amnezia в настройках отброшен (%q)", mirrorURLForLog(replaced)))
+	}
+	// Действующий адрес читается заново, а не выводится из присланного:
+	// пустое присланное означает дефолт, и ответ обязан назвать его. Он же
+	// идёт в журнал — секретом адрес не является, а при разборе жалобы
+	// спрашивают именно его.
+	shown := h.mirrorURL()
+	h.log.Info(logActionPremium, "mirror-save", "route=direct действующий адрес зеркала: "+shown)
+	response.Success(w, AmneziaPremiumMirrorData{MirrorURL: shown})
+}
+
+// normalizeAmneziaMirrorURL приводит присланный адрес зеркала к ХРАНИМОМУ
+// виду: пробелы по краям срезаются, а адрес, совпавший с дефолтным,
+// схлопывается в пустую строку. Смысл тот же — «зеркало по умолчанию».
+//
+// Схлопывание обязательно, потому что вписанный явно дефолт (руками или
+// формой, подставившей действующий адрес) прибил бы литерал в settings.json;
+// после этого «пусто = дефолт» перестаёт работать, и смена зеркала в новом
+// релизе не доедет ни до одного такого пользователя, — то есть исчезает
+// ровно та ротируемость, ради которой поле и сделали настраиваемым.
+func normalizeAmneziaMirrorURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == storage.DefaultAmneziaMirrorURL {
+		return ""
+	}
+	return raw
+}
+
+// maxLoggedMirrorURLLen ограничивает длину адреса зеркала В ЖУРНАЛЕ.
+// storage.MaxAmneziaMirrorURLLen действует только на присланное через API, а
+// в журнал попадает ХРАНИМОЕ значение — то самое, что легло в settings.json
+// ручной правкой или откатом версии, мимо всякой проверки. Журнал
+// приложения — кольцевой буфер в памяти роутера со 128 МБ; чтобы узнать свою
+// опечатку, двух сотен байт хватает, а мегабайтное значение выбило бы из
+// буфера всё остальное.
+const maxLoggedMirrorURLLen = 200
+
+// mirrorURLForLog готовит непригодный адрес зеркала к записи в журнал.
+// Журнал — граница: он виден на странице /logs и уезжает в поддержку.
+// ValidateAmneziaMirrorURL отвергает user:pass@ ровно потому, что паре
+// логин/пароль нечего делать в settings.json (см. её шапку), — и отказ
+// валидатора не смеет сам стать каналом публикации этой пары.
+// (*url.URL).Redacted() здесь мало: он прячет пароль, но оставляет имя
+// пользователя, поэтому userinfo снимается целиком. Значение, которое
+// разборщику не далось — или спрятало пару в Opaque, как бессхемное
+// "user:pass@host", — не показываем вовсе: что в нём лежит, мы не знаем.
+func mirrorURLForLog(raw string) string {
+	v := strings.TrimSpace(raw)
+	u, err := url.Parse(v)
+	if err != nil {
+		return "<адрес не разбирается>"
+	}
+	switch {
+	case u.User != nil:
+		u.User = url.User("xxxxx")
+		v = u.String()
+	case strings.Contains(u.Opaque, "@"):
+		return "<адрес не разбирается>"
+	}
+	if len(v) > maxLoggedMirrorURLLen {
+		// ToValidUTF8 убирает руну, разрубленную пополам границей среза.
+		v = strings.ToValidUTF8(v[:maxLoggedMirrorURLLen], "") +
+			fmt.Sprintf("…(всего %d байт)", len(raw))
+	}
+	return v
 }

@@ -524,6 +524,14 @@ func (s *Server) registerLogsImportRoutes(mux *http.ServeMux, h *routeHandlers) 
 	amneziaPremiumHandler := api.NewAmneziaPremiumHandler(s.settings, h.appLog)
 	amneziaPremiumHandler.SetEventBus(s.bus)
 	mux.HandleFunc("/api/amnezia/premium/key", h.guarded(amneziaPremiumHandler.Key))
+	// Каталог подписки (GET) и выдача конфигурации страны (POST). Пути
+	// разные, потому что операции разные: первая читает, вторая ТРАТИТ слот
+	// устройств подписки.
+	mux.HandleFunc("/api/amnezia/premium/catalog", h.guarded(amneziaPremiumHandler.Catalog))
+	mux.HandleFunc("/api/amnezia/premium/config", h.guarded(amneziaPremiumHandler.Config))
+	// Адрес зеркала: действующий (GET) и запись (POST). Живёт здесь, а не в
+	// настройках, — поле принадлежит мастеру premium.
+	mux.HandleFunc("/api/amnezia/premium/mirror", h.guarded(amneziaPremiumHandler.Mirror))
 
 	// External tunnels (protected + boot guarded)
 	mux.HandleFunc("/api/external-tunnels", h.guarded(h.externalHandler.List))

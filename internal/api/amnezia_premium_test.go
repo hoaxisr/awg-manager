@@ -53,6 +53,19 @@ type premiumPortal struct {
 	logins []premiumLogin
 	status int // 0 или 200 — успех; иначе отвечает этим статусом
 	hold   *premiumHold
+
+	// account — тело ответа /api/account-info. Пусто = стенд отвечает 404:
+	// таким он и был, пока каталога не существовало, и тесты ключа на это
+	// опираются (см. portalSessionAlive).
+	account string
+	// configs — коды стран, с которыми приходили на /api/download-config, в
+	// порядке прихода. Считается именно этот список: «к порталу ушёл ровно
+	// один запрос» проверяется по расходной ручке, а не по входам.
+	configs []string
+	// configStatus — статус ответа /api/download-config; 0 или 200 — успех.
+	configStatus int
+	// configHold придерживает ОДИН следующий запрос конфигурации.
+	configHold *premiumHold
 }
 
 // premiumHold — придержанный ответ портала. Тест узнаёт по arrived, что вход
@@ -91,10 +104,19 @@ func newPremiumPortal(t *testing.T, tag string) *premiumPortal {
 }
 
 func (p *premiumPortal) handle(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/api/login" {
+	switch r.URL.Path {
+	case "/api/login":
+		p.handleLogin(w, r)
+	case "/api/account-info":
+		p.handleAccountInfo(w, r)
+	case "/api/download-config":
+		p.handleDownloadConfig(w, r)
+	default:
 		w.WriteHeader(http.StatusNotFound)
-		return
 	}
+}
+
+func (p *premiumPortal) handleLogin(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
 	var in premiumLogin
 	_ = json.Unmarshal(body, &in)
@@ -118,6 +140,84 @@ func (p *premiumPortal) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: "v_sid", Value: p.sid(n), Path: "/"})
 	_, _ = io.WriteString(w, `{"data":{"ok":true}}`)
+}
+
+func (p *premiumPortal) handleAccountInfo(w http.ResponseWriter, _ *http.Request) {
+	p.mu.Lock()
+	body := p.account
+	p.mu.Unlock()
+	if body == "" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	_, _ = io.WriteString(w, body)
+}
+
+// handleDownloadConfig — РАСХОДНАЯ ручка портала: считает каждый приход.
+func (p *premiumPortal) handleDownloadConfig(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	var in struct {
+		CountryCode string `json:"countryCode"`
+	}
+	_ = json.Unmarshal(body, &in)
+
+	p.mu.Lock()
+	p.configs = append(p.configs, in.CountryCode)
+	status := p.configStatus
+	hold := p.configHold
+	p.configHold = nil
+	p.mu.Unlock()
+
+	if hold != nil {
+		close(hold.arrived)
+		<-hold.gate
+	}
+
+	if status != 0 && status != http.StatusOK {
+		if status/100 == 3 {
+			// Перенаправление, а не страница ошибки: у портала 302 — форма
+			// выдачи подписанной ссылки, и наш запрет редиректов превращает
+			// её в отказ с неизвестным исходом.
+			w.Header().Set("Location", p.srv.URL+"/download/"+in.CountryCode)
+		}
+		w.WriteHeader(status)
+		return
+	}
+	_, _ = io.WriteString(w, premiumConfFixture)
+}
+
+// setAccount задаёт тело ответа /api/account-info.
+func (p *premiumPortal) setAccount(body string) {
+	p.mu.Lock()
+	p.account = body
+	p.mu.Unlock()
+}
+
+// setConfigStatus задаёт статус ответа расходной ручки.
+func (p *premiumPortal) setConfigStatus(code int) {
+	p.mu.Lock()
+	p.configStatus = code
+	p.mu.Unlock()
+}
+
+// holdNextConfig придерживает ОДИН следующий запрос конфигурации: остальные
+// идут как обычно. Так окно «запрос в портале» открывается ровно на то время,
+// которое нужно тесту, и проверка гонки не зависит от тайминга.
+func (p *premiumPortal) holdNextConfig(t *testing.T) *premiumHold {
+	t.Helper()
+	h := &premiumHold{arrived: make(chan struct{}), gate: make(chan struct{})}
+	t.Cleanup(h.release)
+	p.mu.Lock()
+	p.configHold = h
+	p.mu.Unlock()
+	return h
+}
+
+// configsSeen — коды стран, с которыми приходили на расходную ручку.
+func (p *premiumPortal) configsSeen() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.configs...)
 }
 
 // sid — сессия, выданная n-м входом. Метка стенда внутри значения.
@@ -212,26 +312,56 @@ type premiumStand struct {
 // Под локом: строки пишет и горутина запроса, и горутина летящей проверки в
 // тестах гонки.
 type premiumLogSink struct {
-	mu    sync.Mutex
-	lines []string
+	mu      sync.Mutex
+	records []premiumLogRecord
 }
 
-func (s *premiumLogSink) AppLog(_ logging.Level, _, _, action, target, message string) {
+// premiumLogRecord — одна строка журнала. Уровень и цель хранятся отдельно от
+// текста: проверка «замена непригодного адреса слышна РОВНО ОДНОЙ строкой» не
+// может отбирать строки по их же тексту — так она пиннила бы формулировку
+// вместо свойства.
+type premiumLogRecord struct {
+	level   logging.Level
+	action  string
+	target  string
+	message string
+}
+
+func (s *premiumLogSink) AppLog(level logging.Level, _, _, action, target, message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.lines = append(s.lines, action+" "+target+": "+message)
+	s.records = append(s.records, premiumLogRecord{level: level, action: action, target: target, message: message})
 }
 
 func (s *premiumLogSink) text() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return strings.Join(s.lines, "\n")
+	lines := make([]string, 0, len(s.records))
+	for _, r := range s.records {
+		lines = append(lines, r.action+" "+r.target+": "+r.message)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (s *premiumLogSink) count() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.lines)
+	return len(s.records)
+}
+
+// warnings — предупреждения по указанной операции. Запись адреса зеркала
+// оставляет ещё и обычную строку уровня info, и отбор по уровню отделяет
+// «что-то потеряно» от «адрес записан».
+func (s *premiumLogSink) warnings(target string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, r := range s.records {
+		if r.level == logging.LevelWarn && r.target == target {
+			out = append(out, r.message)
+		}
+	}
+	return out
 }
 
 // newPremiumStand собирает стенд. extraTrust — стенды, чьи сертификаты нужны
@@ -288,6 +418,63 @@ func (s *premiumStand) del(t *testing.T) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	s.h.DeleteKey(rec, httptest.NewRequest(http.MethodDelete, "/api/amnezia/premium/key", nil))
 	return rec
+}
+
+func (s *premiumStand) catalog(t *testing.T) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.h.Catalog(rec, httptest.NewRequest(http.MethodGet, "/api/amnezia/premium/catalog", nil))
+	return rec
+}
+
+// config запрашивает конфигурацию страны. Пишет в переданный recorder, чтобы
+// вызывающий мог отдать свой — в том числе роняющий панику на записи.
+func (s *premiumStand) configInto(rec http.ResponseWriter, code string) {
+	req := httptest.NewRequest(http.MethodPost, "/api/amnezia/premium/config",
+		strings.NewReader(`{"countryCode":"`+code+`"}`))
+	s.h.Config(rec, req)
+}
+
+func (s *premiumStand) config(t *testing.T, code string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.configInto(rec, code)
+	return rec
+}
+
+func (s *premiumStand) mirrorGet(t *testing.T) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.h.Mirror(rec, httptest.NewRequest(http.MethodGet, "/api/amnezia/premium/mirror", nil))
+	return rec
+}
+
+func (s *premiumStand) mirrorPost(t *testing.T, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.h.Mirror(rec, httptest.NewRequest(http.MethodPost, "/api/amnezia/premium/mirror", strings.NewReader(body)))
+	return rec
+}
+
+// storedMirror — адрес зеркала, как он лежит в сторе.
+func (s *premiumStand) storedMirror(t *testing.T) string {
+	t.Helper()
+	snap, err := s.store.Snapshot()
+	if err != nil {
+		t.Fatalf("снимок настроек: %v", err)
+	}
+	return snap.AmneziaPremiumMirrorURL
+}
+
+// seedCatalog готовит стенд к запросу каталога: ключ в памяти демона и ответ
+// портала на account-info.
+func (s *premiumStand) seedCatalog(t *testing.T) {
+	t.Helper()
+	s.portal.setAccount(premiumAccountFixture)
+	rec := s.post(t, `{"key":"`+premiumKey+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("вход ключом: %d %s", rec.Code, rec.Body.String())
+	}
 }
 
 // storedCipher — шифротекст ключа, как он лежит в сторе.
@@ -1883,4 +2070,665 @@ func TestAmneziaPremiumKey_MethodRouter(t *testing.T) {
 			t.Errorf("шифротекст после DELETE = %q, ждали пусто: удаление не случилось", cipher)
 		}
 	})
+}
+
+// === Каталог, выдача конфигурации, адрес зеркала ===
+
+// premiumLeakProbe — значение полей ответа портала, которых нет в белом
+// списке. Значение одно и узнаваемое: белый список обязан отбросить их все,
+// и проверка ищет именно его, а не имена полей — переименованное поле мимо
+// проверки по имени проскочило бы.
+const premiumLeakProbe = "test-leak-6e2c"
+
+// premiumAccountFixture — ответ портала /api/account-info: поля живого
+// ответа (снят 2026-09-10) плюс ключ подписки, который портал в нём
+// действительно отдаёт.
+//
+// Значения нарочно различимы и не совпадают ни с нулями, ни с дефолтами, ни
+// между собой: счётчики 3 и 7 (перепутанные местами были бы видны), дата
+// окончания не «сегодня», название тарифа не пустое. Страны три и они
+// РАЗНЫЕ по признаку доступности: с awg, без awg и вовсе без поля протоколов
+// — старый ответ портала его не содержал, и различие «пусто» / «нет поля»
+// обязано доехать до интерфейса.
+const premiumAccountFixture = `{"data":{
+	"display_name":"Premium test-plan-77",
+	"display_description":"` + premiumLeakProbe + `-display-description",
+	"subscription_status":"` + premiumLeakProbe + `-status",
+	"subscription_start_date":"2026-01-05T00:00:00Z",
+	"subscription_end_date":"2027-04-19T08:31:00Z",
+	"subscription_period_days":365,
+	"subscription_description":"` + premiumLeakProbe + `-advertising",
+	"active_device_count":3,
+	"max_device_count":7,
+	"service_type":"` + premiumLeakProbe + `-service",
+	"service_info":"` + premiumLeakProbe + `-service-info",
+	"support_info":"` + premiumLeakProbe + `-support",
+	"renewal_link":"https://renew.` + premiumLeakProbe + `.test/pay",
+	"renewal_link_status":"` + premiumLeakProbe + `-renewal-status",
+	"vpn_key":"` + premiumKey + `",
+	"available_countries":[
+		{"server_country_code":"nl","server_country_code_l10n":"nl","server_country_name":"Netherlands",
+		 "available_protocols":["awg","vless"],"internal_note":"` + premiumLeakProbe + `-country"},
+		{"server_country_code":"ch","server_country_code_l10n":"ch","server_country_name":"Switzerland [P2P]",
+		 "available_protocols":[]},
+		{"server_country_code":"de","server_country_code_l10n":"de","server_country_name":"Germany"}
+	],
+	"issued_configs":[
+		{"server_country_code":"nl","last_downloaded":"2026-09-01T10:00:00Z",
+		 "worker_last_updated":"2026-09-02T10:00:00Z","installation_uuid":"` + premiumLeakProbe + `-uuid"}
+	]
+}}`
+
+// premiumConfFixture — живая форма ответа /api/download-config: готовый .conf
+// с комментарием-шапкой, ВТОРАЯ строка которого несёт ключ всей подписки.
+// Ключ в фикстуре настоящий (тот же, которым входили): без него проверка «в
+// ответе нет секрета» доказывала бы не то — вырезать было бы нечего.
+const premiumConfFixture = "# AmneziaVPN\n" +
+	"# VPN Key: " + premiumKey + "\n" +
+	"# Country: Netherlands\n" +
+	"[Interface]\n" +
+	"Address = 10.77.3.9/32\n" +
+	"PrivateKey = test-conf-private-AAAA=\n" +
+	"Jc = 4\n" +
+	"\n" +
+	"[Peer]\n" +
+	"PublicKey = test-conf-public-BBBB=\n" +
+	"PresharedKey = test-conf-preshared-CCCC=\n" +
+	"AllowedIPs = 0.0.0.0/0\n" +
+	"Endpoint = 203.0.113.77:51820\n"
+
+// premiumErrorMessage — текст отказа из тела ошибки.
+func premiumErrorMessage(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var env struct {
+		Error   bool   `json:"error"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("разбор тела отказа: %v\n%s", err, rec.Body.String())
+	}
+	if !env.Error {
+		t.Fatalf("тело не похоже на отказ: %s", rec.Body.String())
+	}
+	return env.Message
+}
+
+// premiumCatalogData — каталог из тела ответа.
+func premiumCatalogData(t *testing.T, rec *httptest.ResponseRecorder) AmneziaPremiumCatalogData {
+	t.Helper()
+	var data AmneziaPremiumCatalogData
+	decodeEnvelope(t, rec.Body.Bytes(), &data)
+	return data
+}
+
+// Каталог без ключа отвергается ДО всякой сети: ни портал, ни зеркало запроса
+// не видят. Поход наружу ради заведомо невозможного запроса — это и лишний
+// трафик, и лишняя запись «зеркало недоступно» в журнале там, где ключа
+// просто нет.
+func TestAmneziaPremiumCatalog_NoKeyReachesNobody(t *testing.T) {
+	st := newPremiumStand(t)
+	st.portal.setAccount(premiumAccountFixture)
+
+	rec := st.catalog(t)
+	if rec.Code/100 != 4 {
+		t.Fatalf("каталог без ключа: %d %s, ждали 4xx", rec.Code, rec.Body.String())
+	}
+	if code := premiumErrorCode(t, rec); code != codePremiumNoKey {
+		t.Errorf("код отказа = %q, want %q", code, codePremiumNoKey)
+	}
+	if n := len(st.portal.seen()); n != 0 {
+		t.Errorf("входов в портал %d, ждали 0", n)
+	}
+	if n := st.mirrorHits.Load(); n != 0 {
+		t.Errorf("обращений к зеркалу %d, ждали 0", n)
+	}
+}
+
+// Ответ каталога собирается по БЕЛОМУ СПИСКУ: поля портала, которых в нём
+// нет, наружу не выходят — ни на верхнем уровне, ни внутри страны, ни новые
+// (в фикстуре их несколько, все с узнаваемым значением). Проверка парная:
+// заодно убеждаемся, что нужные поля на месте, иначе пустой ответ прошёл бы
+// проверку на утечку.
+func TestAmneziaPremiumCatalog_WhitelistDropsPortalExtras(t *testing.T) {
+	st := newPremiumStand(t)
+	st.seedCatalog(t)
+
+	rec := st.catalog(t)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("каталог: %d %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); strings.Contains(body, premiumLeakProbe) {
+		t.Errorf("поле портала мимо белого списка уехало наружу: %s", body)
+	}
+
+	data := premiumCatalogData(t, rec)
+	if data.PlanName != "Premium test-plan-77" {
+		t.Errorf("planName = %q", data.PlanName)
+	}
+	if data.SubscriptionEndDate != "2027-04-19T08:31:00Z" {
+		t.Errorf("subscriptionEndDate = %q", data.SubscriptionEndDate)
+	}
+	if data.ActiveDeviceCount != 3 || data.MaxDeviceCount != 7 {
+		t.Errorf("счётчик устройств = %d из %d, want 3 из 7", data.ActiveDeviceCount, data.MaxDeviceCount)
+	}
+	if len(data.Countries) != 3 {
+		t.Fatalf("стран %d, want 3: %+v", len(data.Countries), data.Countries)
+	}
+	want := []AmneziaPremiumCountry{
+		{Code: "nl", Name: "Netherlands", Protocols: []string{"awg", "vless"}},
+		{Code: "ch", Name: "Switzerland [P2P]", Protocols: []string{}},
+		{Code: "de", Name: "Germany", Protocols: nil},
+	}
+	for i, w := range want {
+		got := data.Countries[i]
+		if got.Code != w.Code || got.Name != w.Name || !slices.Equal(got.Protocols, w.Protocols) {
+			t.Errorf("страна %d = %+v, want %+v", i, got, w)
+		}
+	}
+	// «Протоколов пусто» и «поля протоколов не было» — РАЗНЫЕ состояния:
+	// старый ответ портала поля не содержал, и такую страну отбрасывать
+	// нельзя. Сравнение структур этого различия не ловит (nil и []string{}
+	// у slices.Equal равны), поэтому смотрим на сам JSON.
+	var raw struct {
+		Data struct {
+			Countries []map[string]json.RawMessage `json:"countries"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("разбор тела: %v", err)
+	}
+	if got := string(raw.Data.Countries[1]["protocols"]); got != "[]" {
+		t.Errorf("страна без awg: protocols = %s, want []", got)
+	}
+	if got := string(raw.Data.Countries[2]["protocols"]); got != "null" {
+		t.Errorf("страна без поля протоколов: protocols = %s, want null", got)
+	}
+}
+
+// Ни один ответ новых ручек не несёт секрета: ни схемы ссылки, ни тела
+// ключа, ни сессии портала, ни шифротекста. Граница проверяется на всех
+// ручках разом — таблицей, потому что забыть одну проще всего.
+func TestAmneziaPremiumHandlers_ResponsesCarryNoSecrets(t *testing.T) {
+	cases := []struct {
+		name string
+		call func(*premiumStand) *httptest.ResponseRecorder
+	}{
+		{"каталог", func(st *premiumStand) *httptest.ResponseRecorder { return st.catalog(t) }},
+		{"конфигурация страны", func(st *premiumStand) *httptest.ResponseRecorder { return st.config(t, "nl") }},
+		{"адрес зеркала (GET)", func(st *premiumStand) *httptest.ResponseRecorder { return st.mirrorGet(t) }},
+		{"адрес зеркала (POST)", func(st *premiumStand) *httptest.ResponseRecorder {
+			return st.mirrorPost(t, `{"mirrorUrl":""}`)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newPremiumStand(t)
+			st.portal.setAccount(premiumAccountFixture)
+			// Ключ СОХРАНЁННЫЙ: так в сторе есть шифротекст, и он попадает в
+			// набор проб — на пустом сторе эта проба выпала бы.
+			if rec := st.post(t, `{"key":"`+premiumKey+`","store":true}`); rec.Code != http.StatusOK {
+				t.Fatalf("вход: %d %s", rec.Code, rec.Body.String())
+			}
+
+			rec := tc.call(st)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("ответ: %d %s", rec.Code, rec.Body.String())
+			}
+			assertNoPremiumSecrets(t, "тело ответа", rec.Body.String(), st)
+			assertNoPremiumSecrets(t, "журнал", st.log.text(), st)
+		})
+	}
+}
+
+// Выдача конфигурации — РАСХОДНАЯ операция: она тратит слот устройств
+// подписки. Два параллельных запроса ОДНОЙ страны обязаны дать один поход в
+// портал: второй отвергается с внятным кодом, а не встаёт в очередь и не
+// уходит следом.
+//
+// Детерминизм даёт придержанный ответ портала: тест сам решает, когда первый
+// запрос находится внутри критической секции.
+func TestAmneziaPremiumConfig_SameCountrySerialized(t *testing.T) {
+	st := newPremiumStand(t)
+	st.seedCatalog(t)
+
+	hold := st.portal.holdNextConfig(t)
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		st.configInto(rec, "nl")
+		first <- rec
+	}()
+	<-hold.arrived
+
+	second := st.config(t, "nl")
+	if second.Code != http.StatusConflict {
+		t.Fatalf("параллельный запрос той же страны: %d %s, ждали 409", second.Code, second.Body.String())
+	}
+	if code := premiumErrorCode(t, second); code != codePremiumConfigBusy {
+		t.Errorf("код отказа = %q, want %q", code, codePremiumConfigBusy)
+	}
+
+	hold.release()
+	if rec := <-first; rec.Code != http.StatusOK {
+		t.Fatalf("первый запрос: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := st.portal.configsSeen(); len(got) != 1 {
+		t.Fatalf("запросов конфигурации к порталу %d (%v), ждали 1 — слот подписки потрачен дважды", len(got), got)
+	}
+}
+
+// Разные страны параллелить можно: слот тратится по каждой отдельно, и общий
+// замок на всю операцию превратил бы мастер в очередь.
+func TestAmneziaPremiumConfig_DifferentCountriesRunInParallel(t *testing.T) {
+	st := newPremiumStand(t)
+	st.seedCatalog(t)
+
+	hold := st.portal.holdNextConfig(t)
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		st.configInto(rec, "nl")
+		first <- rec
+	}()
+	<-hold.arrived
+
+	// Вторая страна проходит, пока первая ещё висит в портале.
+	if rec := st.config(t, "de"); rec.Code != http.StatusOK {
+		t.Fatalf("вторая страна: %d %s", rec.Code, rec.Body.String())
+	}
+
+	hold.release()
+	if rec := <-first; rec.Code != http.StatusOK {
+		t.Fatalf("первая страна: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := st.portal.configsSeen(); !slices.Equal(got, []string{"nl", "de"}) {
+		t.Fatalf("портал видел %v, want [nl de]", got)
+	}
+}
+
+// Замок отпускается на ЛЮБОМ исходе: после успеха, после отказа и после
+// паники внутри обработчика. Оставленный замок запирает страну до перезапуска
+// демона — пользователь получал бы 409 на каждую попытку.
+func TestAmneziaPremiumConfig_LockReleasedOnEveryOutcome(t *testing.T) {
+	t.Run("после успеха", func(t *testing.T) {
+		st := newPremiumStand(t)
+		st.seedCatalog(t)
+		if rec := st.config(t, "nl"); rec.Code != http.StatusOK {
+			t.Fatalf("первый запрос: %d %s", rec.Code, rec.Body.String())
+		}
+		if rec := st.config(t, "nl"); rec.Code != http.StatusOK {
+			t.Fatalf("повторный запрос: %d %s — замок не отпущен", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("после отказа", func(t *testing.T) {
+		st := newPremiumStand(t)
+		st.seedCatalog(t)
+		st.portal.setConfigStatus(http.StatusInternalServerError)
+		if rec := st.config(t, "nl"); rec.Code == http.StatusOK {
+			t.Fatalf("отказ портала пришёл успехом: %s", rec.Body.String())
+		}
+		st.portal.setConfigStatus(http.StatusOK)
+		if rec := st.config(t, "nl"); rec.Code != http.StatusOK {
+			t.Fatalf("запрос после отказа: %d %s — замок не отпущен", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("после паники", func(t *testing.T) {
+		st := newPremiumStand(t)
+		st.seedCatalog(t)
+
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("паника не случилась — проверка ослепла")
+				}
+			}()
+			// Паника на записи ответа: обработчик к этому моменту уже сходил
+			// в портал и держит замок страны.
+			st.configInto(&premiumPanicWriter{}, "nl")
+		}()
+
+		if rec := st.config(t, "nl"); rec.Code != http.StatusOK {
+			t.Fatalf("запрос после паники: %d %s — замок не отпущен", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// premiumPanicWriter роняет панику на записи тела ответа — то есть уже после
+// похода в портал. Своего recover обработчик не ставит (его ставит
+// http.Server), но замок обязан отпуститься по пути наверх.
+type premiumPanicWriter struct{ header http.Header }
+
+func (p *premiumPanicWriter) Header() http.Header {
+	if p.header == nil {
+		p.header = http.Header{}
+	}
+	return p.header
+}
+
+func (p *premiumPanicWriter) Write([]byte) (int, error) {
+	panic("тестовая паника на записи ответа")
+}
+
+func (p *premiumPanicWriter) WriteHeader(int) {}
+
+// Перенаправление у расходной ручки — свой класс отказа, и текст НЕ зовёт
+// повторить: 302 у портала бывает формой успеха, и тогда слот подписки уже
+// потрачен, а повтор потратит второй (F200). К порталу при этом уходит ровно
+// один запрос — автоматического повтора тоже быть не должно.
+func TestAmneziaPremiumConfig_RedirectIsNotRetryable(t *testing.T) {
+	st := newPremiumStand(t)
+	st.seedCatalog(t)
+	st.portal.setConfigStatus(http.StatusFound)
+
+	rec := st.config(t, "nl")
+	if rec.Code == http.StatusOK {
+		t.Fatalf("перенаправление пришло успехом: %s", rec.Body.String())
+	}
+	if code := premiumErrorCode(t, rec); code != codePremiumOutcomeUnknown {
+		t.Fatalf("код отказа = %q, want %q", code, codePremiumOutcomeUnknown)
+	}
+	msg := premiumErrorMessage(t, rec)
+	for _, lure := range []string{"попробуйте", "повтор", "ещё раз", "снова запрос"} {
+		if strings.Contains(strings.ToLower(msg), lure) {
+			t.Errorf("текст зовёт повторить расходную операцию (%q): %s", lure, msg)
+		}
+	}
+	if got := st.portal.configsSeen(); len(got) != 1 {
+		t.Fatalf("запросов конфигурации к порталу %d (%v), ждали 1", len(got), got)
+	}
+}
+
+// Смена адреса зеркала через ручку доезжает без перезапуска панели: следующий
+// запрос уходит на новый портал, а не на прежний.
+func TestAmneziaPremiumMirror_ChangePickedUpWithoutRestart(t *testing.T) {
+	second := newPremiumPortal(t, "b")
+	second.setAccount(premiumAccountFixture)
+	secondMirror := newPremiumMirror(t, second.srv.URL)
+	st := newPremiumStand(t, second.srv, secondMirror)
+	st.seedCatalog(t)
+
+	if rec := st.catalog(t); rec.Code != http.StatusOK {
+		t.Fatalf("каталог через первое зеркало: %d %s", rec.Code, rec.Body.String())
+	}
+
+	if rec := st.mirrorPost(t, `{"mirrorUrl":"`+secondMirror.URL+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("запись адреса зеркала: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := st.storedMirror(t); got != secondMirror.URL {
+		t.Fatalf("в хранилище %q, want %q", got, secondMirror.URL)
+	}
+
+	if rec := st.catalog(t); rec.Code != http.StatusOK {
+		t.Fatalf("каталог через второе зеркало: %d %s", rec.Code, rec.Body.String())
+	}
+	if n := len(second.seen()); n == 0 {
+		t.Fatal("второй портал запросов не видел — смена адреса зеркала не доехала")
+	}
+
+	// И действующий адрес ручка отдаёт новый.
+	rec := st.mirrorGet(t)
+	var data AmneziaPremiumMirrorData
+	decodeEnvelope(t, rec.Body.Bytes(), &data)
+	if data.MirrorURL != secondMirror.URL {
+		t.Fatalf("действующий адрес = %q, want %q", data.MirrorURL, secondMirror.URL)
+	}
+}
+
+// Испорченное хранимое значение лечится ЗАПИСЬЮ через эту ручку. Прежний путь
+// самоисцеления (прислать поле пустым в общий патч настроек) закрыт вместе с
+// уходом поля из ответа настроек, и без этого мусор остался бы в settings.json
+// навсегда.
+func TestAmneziaPremiumMirror_WriteHealsBrokenStoredValue(t *testing.T) {
+	const broken = "не адрес вовсе"
+	cases := []struct {
+		name string
+		sent string
+		want string
+	}{
+		{"своим адресом", testMirrorURL, testMirrorURL},
+		{"пустым значением", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newPremiumStand(t)
+			st.setMirror(t, broken)
+
+			if rec := st.mirrorPost(t, `{"mirrorUrl":"`+tc.sent+`"}`); rec.Code != http.StatusOK {
+				t.Fatalf("запись адреса: %d %s", rec.Code, rec.Body.String())
+			}
+			if got := st.storedMirror(t); got != tc.want {
+				t.Fatalf("в хранилище %q, want %q — мусор не вылечен", got, tc.want)
+			}
+
+			// Замена непригодного значения обязана быть СЛЫШНА: человек,
+			// правивший settings.json руками, иначе не узнает, куда делась
+			// его правка. Ровно одна строка — повторы в журнале роутера со
+			// 128 МБ вытесняют всё остальное.
+			warns := st.log.warnings("mirror-save")
+			if len(warns) != 1 {
+				t.Fatalf("предупреждений про запись зеркала %d, want 1: %v", len(warns), warns)
+			}
+			if !strings.Contains(warns[0], broken) {
+				t.Fatalf("в журнале не назван отброшенный адрес: %q", warns[0])
+			}
+		})
+	}
+}
+
+// Замена годного адреса другим годным ничего не теряет — предупреждения быть
+// не должно, иначе строка врёт обоими своими утверждениями.
+func TestAmneziaPremiumMirror_GoodValueReplacedQuietly(t *testing.T) {
+	st := newPremiumStand(t)
+	st.setMirror(t, testMirrorURL)
+
+	const other = "https://mirror2.test/cp"
+	if rec := st.mirrorPost(t, `{"mirrorUrl":"`+other+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("запись адреса: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := st.storedMirror(t); got != other {
+		t.Fatalf("в хранилище %q, want %q", got, other)
+	}
+	if warns := st.log.warnings("mirror-save"); len(warns) != 0 {
+		t.Fatalf("предупреждение там, где ничего не потеряно: %v", warns)
+	}
+}
+
+// Пара логин/пароль из хранимого адреса не смеет попасть в журнал: он виден
+// на /logs и уезжает в поддержку, а ValidateAmneziaMirrorURL отвергает
+// user:pass@ ровно ради того, чтобы эта пара никуда не уехала.
+func TestAmneziaPremiumMirror_LogHidesStoredCredentials(t *testing.T) {
+	// Секреты фикстуры заведомо нерабочие: репозиторий публичный.
+	const (
+		login  = "u-test"
+		pass   = "p-test-not-a-real-password"
+		stored = "https://" + login + ":" + pass + "@mirror.test/cp"
+	)
+	st := newPremiumStand(t)
+	st.setMirror(t, stored)
+
+	if rec := st.mirrorPost(t, `{"mirrorUrl":""}`); rec.Code != http.StatusOK {
+		t.Fatalf("запись адреса: %d %s", rec.Code, rec.Body.String())
+	}
+	warns := st.log.warnings("mirror-save")
+	if len(warns) != 1 {
+		t.Fatalf("предупреждений %d, want 1: %v", len(warns), warns)
+	}
+	if strings.Contains(warns[0], pass) {
+		t.Fatalf("пароль в журнале: %q", warns[0])
+	}
+	if strings.Contains(warns[0], login) {
+		t.Fatalf("логин в журнале: %q", warns[0])
+	}
+}
+
+// Длина ХРАНИМОГО значения ничем не ограничена: предел
+// storage.MaxAmneziaMirrorURLLen стоит только на присланном через API, а в
+// журнал попадает то, что легло в файл ручной правкой или откатом версии.
+// Журнал приложения — кольцевой буфер в памяти роутера со 128 МБ.
+func TestAmneziaPremiumMirror_LogIsBounded(t *testing.T) {
+	st := newPremiumStand(t)
+	st.setMirror(t, "https://"+strings.Repeat("a", 300000)+".test/cp")
+
+	if rec := st.mirrorPost(t, `{"mirrorUrl":""}`); rec.Code != http.StatusOK {
+		t.Fatalf("запись адреса: %d %s", rec.Code, rec.Body.String())
+	}
+	warns := st.log.warnings("mirror-save")
+	if len(warns) != 1 {
+		t.Fatalf("предупреждений %d, want 1: %v", len(warns), warns)
+	}
+	if len(warns[0]) > 512 {
+		t.Fatalf("строка журнала %d байт, want <= 512", len(warns[0]))
+	}
+}
+
+// Негодный адрес отвергается и НЕ записывается: хранимое остаётся прежним.
+func TestAmneziaPremiumMirror_RejectsBadValue(t *testing.T) {
+	cases := []struct {
+		name    string
+		sent    string
+		wantMsg string
+	}{
+		{name: "не https", sent: "http://mirror.test/cp"},
+		// user:pass@ лёг бы в settings.json (бэкап, поддержка), а начало
+		// строки показывало бы знакомое имя вместо настоящего хоста.
+		{name: "userinfo", sent: "https://u-test:p-test@mirror.test/cp"},
+		{name: "пустой хост", sent: "https:///cp"},
+		{name: "фрагмент", sent: "https://mirror.test/cp#anchor"},
+		{name: "пустой фрагмент", sent: "https://mirror.test/cp#"},
+		{
+			name: "длиннее предела",
+			sent: "https://mirror.test/cp?m-path=/" + strings.Repeat("a", storage.MaxAmneziaMirrorURLLen),
+		},
+		// Предел считается в БАЙТАХ — ровно в них адрес уезжает в запрос и на
+		// флеш. Символов здесь вдвое меньше предела, байт — больше.
+		{
+			name:    "длиннее предела в байтах, но не в символах",
+			sent:    "https://mirror.test/cp?m-path=/" + strings.Repeat("я", storage.MaxAmneziaMirrorURLLen/2),
+			wantMsg: fmt.Sprintf("длиннее %d байт", storage.MaxAmneziaMirrorURLLen),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newPremiumStand(t)
+			// Поверх ГОДНОГО хранимого: на пустом сторе проверка «отвергнутый
+			// адрес не записан» одинаково зелена и когда мы ничего не
+			// записали, и когда стёрли чужое.
+			st.setMirror(t, testMirrorURL)
+
+			body, err := json.Marshal(map[string]string{"mirrorUrl": tc.sent})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := st.mirrorPost(t, string(body))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if code := premiumErrorCode(t, rec); code != codeInvalidAmneziaMirrorURL {
+				t.Errorf("код отказа = %q, want %q", code, codeInvalidAmneziaMirrorURL)
+			}
+			if tc.wantMsg != "" && !strings.Contains(rec.Body.String(), tc.wantMsg) {
+				t.Errorf("в отказе нет %q: %s", tc.wantMsg, rec.Body.String())
+			}
+			if got := st.storedMirror(t); got != testMirrorURL {
+				t.Fatalf("хранимое изменилось на %q — отвергнутый адрес записан", got)
+			}
+		})
+	}
+}
+
+// Годный адрес принимается и приводится к ХРАНИМОМУ виду: визуально пустое
+// поле и присланный дефолт значат «зеркало по умолчанию» и хранятся пустыми
+// (только пустое продолжает ротироваться с релизом), свой адрес — дословно.
+// Наружу при этом идёт ДЕЙСТВУЮЩИЙ адрес, а не хранимый.
+func TestAmneziaPremiumMirror_AcceptsAndNormalizes(t *testing.T) {
+	cases := []struct {
+		name       string
+		sent       string
+		wantStored string
+		wantShown  string
+	}{
+		{"одни пробелы", "   ", "", storage.DefaultAmneziaMirrorURL},
+		{"путь и запрос", testMirrorURL, testMirrorURL, testMirrorURL},
+		{"дефолтный адрес", storage.DefaultAmneziaMirrorURL, "", storage.DefaultAmneziaMirrorURL},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newPremiumStand(t)
+			body, err := json.Marshal(map[string]string{"mirrorUrl": tc.sent})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := st.mirrorPost(t, string(body))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if got := st.storedMirror(t); got != tc.wantStored {
+				t.Fatalf("в хранилище %q, want %q", got, tc.wantStored)
+			}
+			var data AmneziaPremiumMirrorData
+			decodeEnvelope(t, rec.Body.Bytes(), &data)
+			if data.MirrorURL != tc.wantShown {
+				t.Fatalf("в ответе %q, want %q", data.MirrorURL, tc.wantShown)
+			}
+		})
+	}
+}
+
+// Чужой метод на каждой новой ручке — 405 КОНВЕРТОМ API, а не текстом: на
+// одном пути фронт не должен получать то JSON, то не JSON.
+func TestAmneziaPremiumHandlers_MethodNotAllowed(t *testing.T) {
+	cases := []struct {
+		name   string
+		path   string
+		method string
+		call   func(*premiumStand, http.ResponseWriter, *http.Request)
+	}{
+		{"каталог: POST", "/api/amnezia/premium/catalog", http.MethodPost,
+			func(st *premiumStand, w http.ResponseWriter, r *http.Request) { st.h.Catalog(w, r) }},
+		{"конфигурация: GET", "/api/amnezia/premium/config", http.MethodGet,
+			func(st *premiumStand, w http.ResponseWriter, r *http.Request) { st.h.Config(w, r) }},
+		{"зеркало: DELETE", "/api/amnezia/premium/mirror", http.MethodDelete,
+			func(st *premiumStand, w http.ResponseWriter, r *http.Request) { st.h.Mirror(w, r) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newPremiumStand(t)
+			rec := httptest.NewRecorder()
+			tc.call(st, rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader("{}")))
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("code=%d, want 405: %s", rec.Code, rec.Body.String())
+			}
+			var env struct {
+				Error   bool   `json:"error"`
+				Message string `json:"message"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil || !env.Error {
+				t.Fatalf("405 пришёл не конвертом API: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// Метод выбирает операцию у ручки зеркала: GET читает, POST пишет.
+func TestAmneziaPremiumMirror_MethodRouter(t *testing.T) {
+	st := newPremiumStand(t)
+
+	if rec := st.mirrorPost(t, `{"mirrorUrl":"`+testMirrorURL+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("POST: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := st.storedMirror(t); got != testMirrorURL {
+		t.Fatalf("POST не записал адрес: %q", got)
+	}
+
+	rec := st.mirrorGet(t)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: %d %s", rec.Code, rec.Body.String())
+	}
+	var data AmneziaPremiumMirrorData
+	decodeEnvelope(t, rec.Body.Bytes(), &data)
+	if data.MirrorURL != testMirrorURL {
+		t.Fatalf("GET отдал %q, want %q", data.MirrorURL, testMirrorURL)
+	}
 }

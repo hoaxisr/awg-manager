@@ -36,6 +36,18 @@ var ErrKeyRejected = errors.New("ключ подписки Amnezia отклон�
 // Конкретика зеркала остаётся доступной по ErrMirrorUnavailable.
 var ErrServiceUnavailable = errors.New("сервис Amnezia недоступен")
 
+// ErrOutcomeUnknown — портал ответил перенаправлением на РАСХОДНОЙ ручке, и
+// исход запроса неизвестен: 3xx означает либо «веб-приложение гонит на
+// страницу входа» (запрос не обработан), либо «ручка отдаёт подписанную
+// ссылку» (запрос обработан, слот устройства подписки потрачен). Различить их
+// нечем — см. statusRecovery.
+//
+// Отдельный сентинел, и он НЕ обёрнут в ErrServiceUnavailable сознательно:
+// смысл того — «повторите», а здесь повтор стоит пользователю второго слота
+// подписки. Вызывающий обязан сказать человеку «проверьте, не выдалась ли
+// конфигурация», а не «попробуйте ещё раз» (F200).
+var ErrOutcomeUnknown = errors.New("исход запроса к Amnezia неизвестен")
+
 const (
 	// maxCPBody ограничивает ответ портала. Живой account-info — единицы
 	// килобайт, .conf — сотни байт; мегабайт даёт запас на рост, но не даёт
@@ -453,6 +465,13 @@ func (c *Client) login(ctx context.Context, origin, key string, remember bool) (
 		path:    "/api/login",
 		referer: "/ru/login",
 		payload: payload,
+		// Вход ничего не тратит — повторять его можно. Объявляется явно,
+		// потому что нулевое значение поля означает запрет, а повторяют вход
+		// оба вызывающих (CheckKey и call передают repeatable=true своими
+		// руками). Читает поле statusError: без этой строки перенаправление
+		// на входе уехало бы наружу как «исход неизвестен», хотя слот
+		// подписки вход не тратит.
+		repeatable: true,
 	})
 	if err != nil {
 		if errors.Is(err, ErrKeyRejected) {
@@ -557,15 +576,22 @@ func statusRecovery(code int) recovery {
 
 // statusError переводит статус портала в нашу причину отказа. Наружу статус не
 // уходит: отозванный premium-ключ не должен разлогинивать панель.
+//
+// Перенаправление у НЕповторяемой (то есть расходной) ручки — свой класс:
+// повторять его нельзя, потому что 302 мог быть формой успеха и слот уже
+// потрачен. У повторяемых ручек этого различия нет — там повтор безвреден, и
+// 3xx остаётся обычным «сервис недоступен».
 func statusError(code int, req cpRequest) error {
 	switch code {
 	case http.StatusUnauthorized, http.StatusForbidden, http.StatusUnprocessableEntity:
 		// 422 портал отдаёт на непригодный ключ во входе — это тот же класс,
 		// что 401/403, а не «сервис лежит».
 		return fmt.Errorf("%w: %s %s", ErrKeyRejected, req.method, req.path)
-	default:
-		return fmt.Errorf("%w: %s %s ответил %d", ErrServiceUnavailable, req.method, req.path, code)
 	}
+	if code/100 == 3 && !req.repeatable {
+		return fmt.Errorf("%w: %s %s ответил %d", ErrOutcomeUnknown, req.method, req.path, code)
+	}
+	return fmt.Errorf("%w: %s %s ответил %d", ErrServiceUnavailable, req.method, req.path, code)
 }
 
 func sessionFromResponse(resp *http.Response) string {

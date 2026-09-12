@@ -1885,8 +1885,15 @@ func TestClientDoesNotRetryConfigRedirect(t *testing.T) {
 			if err == nil {
 				t.Fatalf("перенаправление обязано быть отказом, получено %q", got)
 			}
-			if !errors.Is(err, ErrServiceUnavailable) {
+			// Свой сентинел, и НЕ «сервис недоступен»: смысл того —
+			// «повторите», а повтор расходной ручки стоит второго слота
+			// подписки. Вызывающий обязан различать эти два класса типом,
+			// иначе текст отказа снова позовёт пользователя повторить (F200).
+			if !errors.Is(err, ErrOutcomeUnknown) {
 				t.Fatalf("ошибка не различима сентинелом: %v", err)
+			}
+			if errors.Is(err, ErrServiceUnavailable) {
+				t.Fatalf("неизвестный исход выдан за «сервис недоступен, повторите»: %v", err)
 			}
 			if n := cp.configs.Load(); n != 1 {
 				t.Fatalf("запросов конфига %d, ожидался 1: повтор тратит второй слот устройства", n)

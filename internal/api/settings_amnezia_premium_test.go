@@ -2,14 +2,12 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -184,38 +182,30 @@ func TestUpdate_AmneziaPremiumKeyCipherNotPatchable(t *testing.T) {
 	assertSecretsStillStored(t, store)
 }
 
-// Адрес зеркала: не-https отвергается и НЕ записывается, годный сохраняется
-// с подрезанными пробелами.
-func TestUpdate_AmneziaMirrorURLValidation(t *testing.T) {
+// Адрес зеркала через общий патч настроек НЕ пишется: поле принадлежит
+// мастеру premium и в SettingsPatch его нет вовсе (nonPatchableSettings).
+// Присланное значение молча игнорируется — patch-семантика, как у
+// singboxRouter.routingMode, — а хранимое остаётся прежним.
+func TestUpdate_AmneziaMirrorURL_IgnoredByGenericPatch(t *testing.T) {
 	h, store := newSettingsHandlerForTest(t)
+	if err := store.Update(func(cur *storage.Settings) error {
+		cur.AmneziaPremiumMirrorURL = testMirrorURL
+		return nil
+	}); err != nil {
+		t.Fatalf("seed mirror: %v", err)
+	}
 
 	rr := perform(h.Update, http.MethodPost, "/settings/update",
-		`{"amneziaPremiumMirrorUrl":"http://mirror.test/cp"}`)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("не-https: code=%d body=%s", rr.Code, rr.Body.String())
-	}
-	if !strings.Contains(rr.Body.String(), "INVALID_AMNEZIA_MIRROR_URL") {
-		t.Fatalf("нет кода INVALID_AMNEZIA_MIRROR_URL: %s", rr.Body.String())
+		`{"amneziaPremiumMirrorUrl":"https://mirror-attacker.test/cp"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
 	}
 	snap, err := store.Snapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.AmneziaPremiumMirrorURL != "" {
-		t.Fatalf("отвергнутый адрес записан: %q", snap.AmneziaPremiumMirrorURL)
-	}
-
-	rr = perform(h.Update, http.MethodPost, "/settings/update",
-		`{"amneziaPremiumMirrorUrl":"  `+testMirrorURL+`  "}`)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("годный адрес: code=%d body=%s", rr.Code, rr.Body.String())
-	}
-	snap, err = store.Snapshot()
-	if err != nil {
-		t.Fatal(err)
-	}
 	if snap.AmneziaPremiumMirrorURL != testMirrorURL {
-		t.Fatalf("сохранён %q, want %q", snap.AmneziaPremiumMirrorURL, testMirrorURL)
+		t.Fatalf("общий патч переписал адрес зеркала: %q", snap.AmneziaPremiumMirrorURL)
 	}
 }
 
@@ -297,242 +287,5 @@ func TestUpdate_StoredBrokenMirrorURL_DoesNotBlockPartialPatch(t *testing.T) {
 	// явно присланным значением (TestUpdate_StoredBrokenMirrorURL_LogsReplacementOnce).
 	if snap.AmneziaPremiumMirrorURL != broken {
 		t.Fatalf("неприсланное поле изменено: %q", snap.AmneziaPremiumMirrorURL)
-	}
-}
-
-// Замена непригодного хранимого адреса дефолтом стирает правку человека —
-// того самого, кто правил settings.json руками и ошибся. Молча этого делать
-// нельзя: в журнале обязана быть РОВНО ОДНА строка (деривация настроек
-// выполняется дважды — на черновике и под локом стора, — и лог внутри неё
-// удвоил бы сообщение), и она обязана назвать отброшенный адрес.
-func TestUpdate_StoredBrokenMirrorURL_LogsReplacementOnce(t *testing.T) {
-	const broken = "не адрес вовсе"
-	lines := seedBrokenMirrorAndClear(t, broken)
-	if len(lines) != 1 {
-		t.Fatalf("строк про зеркало в журнале %d, want 1: %v", len(lines), lines)
-	}
-	if !strings.Contains(lines[0], broken) {
-		t.Fatalf("в журнале не назван отброшенный адрес: %q", lines[0])
-	}
-}
-
-// recordingAppLogger — журнал, видимый тесту.
-type recordingAppLogger struct{ messages []string }
-
-func (l *recordingAppLogger) AppLog(_ logging.Level, _, _, action, _, message string) {
-	l.messages = append(l.messages, action+": "+message)
-}
-
-// mirrorLogLines — строки журнала, говорящие про зеркало.
-func mirrorLogLines(log *recordingAppLogger) []string {
-	var out []string
-	for _, m := range log.messages {
-		if strings.Contains(m, "зеркал") {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
-// seedBrokenMirrorAndClear кладёт в стор непригодный адрес и присылает поле
-// пустым — единственный оставшийся путь, на котором хранимый мусор
-// заменяется дефолтом: в общем ответе настроек поля больше нет, так что
-// круговорот «ответ → PATCH» его не трогает. Возвращает строки журнала про
-// зеркало.
-func seedBrokenMirrorAndClear(t *testing.T, stored string) []string {
-	t.Helper()
-	h, store := newSettingsHandlerForTest(t)
-	log := &recordingAppLogger{}
-	h.log = logging.NewScopedLogger(log, logging.GroupSystem, logging.SubSettings)
-
-	if err := store.Update(func(cur *storage.Settings) error {
-		cur.AmneziaPremiumMirrorURL = stored
-		return nil
-	}); err != nil {
-		t.Fatalf("seed broken mirror: %v", err)
-	}
-
-	rr := perform(h.Update, http.MethodPost, "/settings/update",
-		`{"amneziaPremiumMirrorUrl":""}`)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("update: code=%d body=%s", rr.Code, rr.Body.String())
-	}
-
-	snap, err := store.Snapshot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snap.AmneziaPremiumMirrorURL != "" {
-		t.Fatalf("мусор остался в хранилище: %q", snap.AmneziaPremiumMirrorURL)
-	}
-	return mirrorLogLines(log)
-}
-
-// Годный адрес, ПРИСЛАННЫЙ поверх мусора, — не самоисцеление: ничего не
-// отброшено, и действует присланное, а не дефолт. Строки про зеркало быть не
-// должно, иначе она врёт обоими своими утверждениями. Признак самоисцеления
-// — «новое значение стало пустым»; признак «новое отличается от старого»
-// верен и здесь, поэтому пиннится именно условие, а не факт записи в журнал.
-func TestUpdate_MirrorReplacedBySentValue_NoDiscardLog(t *testing.T) {
-	h, store := newSettingsHandlerForTest(t)
-	log := &recordingAppLogger{}
-	h.log = logging.NewScopedLogger(log, logging.GroupSystem, logging.SubSettings)
-
-	if err := store.Update(func(cur *storage.Settings) error {
-		cur.AmneziaPremiumMirrorURL = "не адрес вовсе"
-		return nil
-	}); err != nil {
-		t.Fatalf("seed broken mirror: %v", err)
-	}
-
-	const sent = "https://mirror2.test/cp"
-	rr := perform(h.Update, http.MethodPost, "/settings/update",
-		`{"amneziaPremiumMirrorUrl":"`+sent+`"}`)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("update: code=%d body=%s", rr.Code, rr.Body.String())
-	}
-
-	snap, err := store.Snapshot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snap.AmneziaPremiumMirrorURL != sent {
-		t.Fatalf("в хранилище %q, want %q", snap.AmneziaPremiumMirrorURL, sent)
-	}
-	if got := mirrorLogLines(log); len(got) != 0 {
-		t.Fatalf("строка про отброшенный адрес там, где ничего не потеряно: %v", got)
-	}
-}
-
-// Пара логин/пароль из хранимого адреса не смеет попасть в журнал: его
-// видно на /logs и он уезжает в поддержку, а ValidateAmneziaMirrorURL
-// отвергает user:pass@ ровно ради того, чтобы эта пара никуда не уехала.
-func TestUpdate_StoredMirrorURLWithCredentials_LogHidesThem(t *testing.T) {
-	// Секреты фикстуры заведомо нерабочие: репозиторий публичный.
-	const (
-		login  = "u-test"
-		pass   = "p-test-not-a-real-password"
-		stored = "https://" + login + ":" + pass + "@mirror.test/cp"
-	)
-
-	lines := seedBrokenMirrorAndClear(t, stored)
-	if len(lines) != 1 {
-		t.Fatalf("строк про зеркало %d, want 1: %v", len(lines), lines)
-	}
-	if strings.Contains(lines[0], pass) {
-		t.Fatalf("пароль в журнале: %q", lines[0])
-	}
-	if strings.Contains(lines[0], login) {
-		t.Fatalf("логин в журнале: %q", lines[0])
-	}
-}
-
-// Длина хранимого значения ничем не ограничена: предел
-// storage.MaxAmneziaMirrorURLLen стоит только на присланном через API, а в
-// журнал попадает то, что легло в файл ручной правкой или откатом версии, —
-// ровно тот случай, ради которого строка и написана. Журнал приложения —
-// кольцевой буфер в памяти роутера со 128 МБ.
-func TestUpdate_StoredOverlongMirrorURL_LogIsBounded(t *testing.T) {
-	stored := "https://" + strings.Repeat("a", 300000) + ".test/cp"
-
-	lines := seedBrokenMirrorAndClear(t, stored)
-	if len(lines) != 1 {
-		t.Fatalf("строк про зеркало %d, want 1: %v", len(lines), lines)
-	}
-	if len(lines[0]) > 512 {
-		t.Fatalf("строка журнала %d байт, want <= 512", len(lines[0]))
-	}
-}
-
-// Негодный адрес отвергается и НЕ записывается.
-func TestUpdate_AmneziaMirrorURL_Rejected(t *testing.T) {
-	cases := []struct {
-		name string
-		sent string
-		// wantMsg — кусок текста отказа, когда он важен сам по себе.
-		wantMsg string
-	}{
-		// user:pass@ лёг бы в settings.json (бэкап, поддержка), а начало
-		// строки показывало бы знакомое имя вместо настоящего хоста.
-		{name: "userinfo", sent: "https://u-test:p-test@mirror.test/cp"},
-		{name: "пустой хост", sent: "https:///cp"},
-		{name: "фрагмент", sent: "https://mirror.test/cp#anchor"},
-		// Пустой фрагмент url.Parse не отличает от его отсутствия (признака
-		// «решётка была» у url.URL нет), а решётка сохранилась бы в файле.
-		{name: "пустой фрагмент", sent: "https://mirror.test/cp#"},
-		{
-			name: "длиннее предела",
-			sent: "https://mirror.test/cp?m-path=/" + strings.Repeat("a", storage.MaxAmneziaMirrorURLLen),
-		},
-		// Предел считается в БАЙТАХ — ровно в них адрес уезжает в запрос и на
-		// флеш. Символов здесь вдвое меньше предела, байт — больше; текст
-		// отказа обязан называть ту же единицу, что считает код.
-		{
-			name:    "длиннее предела в байтах, но не в символах",
-			sent:    "https://mirror.test/cp?m-path=/" + strings.Repeat("я", storage.MaxAmneziaMirrorURLLen/2),
-			wantMsg: fmt.Sprintf("длиннее %d байт", storage.MaxAmneziaMirrorURLLen),
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			h, store := newSettingsHandlerForTest(t)
-			body, err := json.Marshal(map[string]string{"amneziaPremiumMirrorUrl": tc.sent})
-			if err != nil {
-				t.Fatal(err)
-			}
-			rr := perform(h.Update, http.MethodPost, "/settings/update", string(body))
-			if rr.Code != http.StatusBadRequest {
-				t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
-			}
-			if !strings.Contains(rr.Body.String(), "INVALID_AMNEZIA_MIRROR_URL") {
-				t.Fatalf("нет кода INVALID_AMNEZIA_MIRROR_URL: %s", rr.Body.String())
-			}
-			if tc.wantMsg != "" && !strings.Contains(rr.Body.String(), tc.wantMsg) {
-				t.Fatalf("в отказе нет %q: %s", tc.wantMsg, rr.Body.String())
-			}
-			snap, err := store.Snapshot()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if snap.AmneziaPremiumMirrorURL != "" {
-				t.Fatalf("отвергнутый адрес записан: %q", snap.AmneziaPremiumMirrorURL)
-			}
-		})
-	}
-}
-
-// Годный адрес принимается и приводится к хранимому виду: визуально пустое
-// поле и присланный дефолт значат «зеркало по умолчанию» и хранятся пустыми
-// (только пустое продолжает ротироваться с релизом), свой адрес — дословно.
-// Путь и запрос законны: их содержит сам дефолт.
-func TestUpdate_AmneziaMirrorURL_Accepted(t *testing.T) {
-	cases := []struct {
-		name string
-		sent string
-		want string
-	}{
-		{"одни пробелы", "   ", ""},
-		{"путь и запрос", testMirrorURL, testMirrorURL},
-		{"дефолтный адрес", storage.DefaultAmneziaMirrorURL, ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			h, store := newSettingsHandlerForTest(t)
-			body, err := json.Marshal(map[string]string{"amneziaPremiumMirrorUrl": tc.sent})
-			if err != nil {
-				t.Fatal(err)
-			}
-			rr := perform(h.Update, http.MethodPost, "/settings/update", string(body))
-			if rr.Code != http.StatusOK {
-				t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
-			}
-			snap, err := store.Snapshot()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if snap.AmneziaPremiumMirrorURL != tc.want {
-				t.Fatalf("в хранилище %q, want %q", snap.AmneziaPremiumMirrorURL, tc.want)
-			}
-		})
 	}
 }

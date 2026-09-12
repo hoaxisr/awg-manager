@@ -98,22 +98,10 @@ func (h *SettingsHandler) deriveSettingsHead(cur *storage.Settings, patch *stora
 		return prev, settingsErr(err.Error(), "INVALID_CONNECTIVITY_CHECK_URL")
 	}
 
-	// Адрес зеркала Amnezia CP. Трогаем и валидируем ТОЛЬКО присланное: тот
-	// же контракт, что у singboxBootstrapDNS в хвосте — испорченное значение,
-	// уже лежащее в settings.json (downgrade, ручная правка), иначе заперло бы
-	// сохранение ВСЕХ остальных настроек. Наружу такое значение не уходит
-	// вовсе: поля нет в белом списке ответа настроек, а читатели адреса берут
-	// его через storage.EffectiveAmneziaMirrorURL, который непригодное
-	// хранимое подменяет дефолтом.
-	//
-	// Признак годности — общий со storage, здесь к нему добавляется только
-	// код ошибки.
-	if patch.AmneziaPremiumMirrorURL != nil {
-		if err := storage.ValidateAmneziaMirrorURL(cur.AmneziaPremiumMirrorURL); err != nil {
-			return prev, settingsErr(err.Error(), "INVALID_AMNEZIA_MIRROR_URL")
-		}
-		cur.AmneziaPremiumMirrorURL = normalizeAmneziaMirrorURL(cur.AmneziaPremiumMirrorURL)
-	}
+	// Адреса зеркала Amnezia CP здесь больше нет: поле принадлежит мастеру
+	// premium и пишется его ручкой (internal/api/amnezia_premium.go), где
+	// живут и валидация, и нормализация, и лечение испорченного хранимого.
+	// В SettingsPatch поля нет вовсе — см. nonPatchableSettings.
 
 	cur.Download.RouteTag = strings.TrimSpace(cur.Download.RouteTag)
 	if cur.Download.RouteTag == "" {
@@ -190,21 +178,4 @@ func (h *SettingsHandler) deriveSettingsTail(cur *storage.Settings, patch *stora
 		}
 	}
 	return nil
-}
-
-// normalizeAmneziaMirrorURL приводит присланный адрес зеркала к ХРАНИМОМУ
-// виду: пробелы по краям срезаются, а адрес, совпавший с дефолтным,
-// схлопывается в пустую строку. Смысл тот же — «зеркало по умолчанию».
-//
-// Схлопывание обязательно, потому что вписанный явно дефолт (руками или
-// формой, подставившей действующий адрес) прибил бы литерал в settings.json;
-// после этого «пусто = дефолт» перестаёт работать, и смена зеркала в новом
-// релизе не доедет ни до одного такого пользователя, — то есть исчезает
-// ровно та ротируемость, ради которой поле и сделали настраиваемым.
-func normalizeAmneziaMirrorURL(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == storage.DefaultAmneziaMirrorURL {
-		return ""
-	}
-	return raw
 }

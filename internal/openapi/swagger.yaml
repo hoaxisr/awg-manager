@@ -290,6 +290,103 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.AmneziaPremiumCatalogData:
+    properties:
+      activeDeviceCount:
+        description: |-
+          ActiveDeviceCount / MaxDeviceCount — счётчик устройств подписки, как
+          его отдаёт портал. Сами по issued_configs не считаем: наш подсчёт
+          расходился с портальным.
+        example: 3
+        type: integer
+      countries:
+        description: |-
+          Countries — список стран подписки. Пустой список — не отказ: это
+          правдивый ответ портала, и придумывать по нему ошибку значило бы
+          решать за пользователя, что его подписка сломана.
+        items:
+          $ref: '#/definitions/api.AmneziaPremiumCountry'
+        type: array
+      maxDeviceCount:
+        example: 7
+        type: integer
+      planName:
+        description: |-
+          PlanName — название тарифа (display_name). subscription_description для
+          подписи не годится: там рекламный абзац, а не название.
+        example: Premium
+        type: string
+      subscriptionEndDate:
+        description: |-
+          SubscriptionEndDate — «действует до», как прислал портал (ISO 8601).
+          Строкой, а не временем: активность считает интерфейс, и разбор даты на
+          две стороны разошёлся бы.
+        example: "2027-04-19T08:31:00Z"
+        type: string
+    type: object
+  api.AmneziaPremiumCatalogResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.AmneziaPremiumCatalogData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.AmneziaPremiumConfigData:
+    properties:
+      config:
+        description: |-
+          Config — текст .conf. Строки с ключом подписки из него вырезаны
+          клиентом (amneziacp.withoutKeyLines): живой ответ несёт ключ всей
+          подписки в комментарии-шапке.
+        type: string
+      countryCode:
+        description: CountryCode — страна в том виде, в каком ушла в портал.
+        example: nl
+        type: string
+    type: object
+  api.AmneziaPremiumConfigRequest:
+    properties:
+      countryCode:
+        example: nl
+        type: string
+    type: object
+  api.AmneziaPremiumConfigResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.AmneziaPremiumConfigData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.AmneziaPremiumCountry:
+    properties:
+      code:
+        description: |-
+          Code — код страны, как его прислал портал (server_country_code).
+          Регистр не трогаем: он же уезжает обратно в запрос конфигурации, где
+          приводится к нижнему уже клиентом.
+        example: nl
+        type: string
+      name:
+        description: |-
+          Name — название страны, как его прислал портал, вместе с суффиксами
+          вида «Switzerland [P2P]».
+        example: Netherlands
+        type: string
+      protocols:
+        description: |-
+          Protocols — признак доступности страны: список протоколов, которыми её
+          отдаёт подписка (available_protocols). Нам годится только awg, но
+          решение «показывать ли страну» принимает интерфейс — здесь важно
+          сохранить РАЗЛИЧИЕ между пустым списком (страна не отдаётся ничем) и
+          отсутствующим полем (старый ответ портала его не содержал, и страну
+          отбрасывать нельзя). Поэтому без omitempty: nil уезжает как null,
+          пустой список — как [].
+        items:
+          type: string
+        type: array
+    type: object
   api.AmneziaPremiumDownloadConfigData:
     properties:
       config:
@@ -382,6 +479,26 @@ definitions:
     properties:
       data:
         $ref: '#/definitions/api.AmneziaPremiumLoginData'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.AmneziaPremiumMirrorData:
+    properties:
+      mirrorUrl:
+        example: https://storage.googleapis.com/amnezia/cp?m-path=/ru
+        type: string
+    type: object
+  api.AmneziaPremiumMirrorRequest:
+    properties:
+      mirrorUrl:
+        example: https://storage.googleapis.com/amnezia/cp?m-path=/ru
+        type: string
+    type: object
+  api.AmneziaPremiumMirrorResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.AmneziaPremiumMirrorData'
       success:
         example: true
         type: boolean
@@ -8948,6 +9065,92 @@ paths:
       summary: Login to Amnezia Premium portal
       tags:
       - amnezia-premium
+  /amnezia/premium/catalog:
+    get:
+      description: 'Данные подписки и список стран. Ответ собирается по белому списку:
+        ключ подписки, сессия портала и прочие поля ответа портала наружу не выходят.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumCatalogResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Каталог подписки Amnezia Premium
+      tags:
+      - amnezia-premium
+  /amnezia/premium/config:
+    post:
+      consumes:
+      - application/json
+      description: 'Расходная операция: тратит слот устройств подписки. Параллельный
+        запрос той же страны отвергается (409); разные страны идут параллельно. Ключ
+        подписки в ответе не возвращается и вырезается из самой конфигурации.'
+      parameters:
+      - description: Код страны
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AmneziaPremiumConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumConfigResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Получить конфигурацию страны Amnezia Premium
+      tags:
+      - amnezia-premium
   /amnezia/premium/key:
     delete:
       description: Стирает сохранённый шифротекст, забывает ключ в памяти демона и
@@ -9042,6 +9245,63 @@ paths:
       security:
       - CookieAuth: []
       summary: Проверить и сохранить ключ подписки Amnezia Premium
+      tags:
+      - amnezia-premium
+  /amnezia/premium/mirror:
+    get:
+      description: 'Отдаёт адрес, по которому панель реально ходит: хранимое пустое
+        (и непригодное) значение означает адрес по умолчанию.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumMirrorResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Действующий адрес зеркала Amnezia
+      tags:
+      - amnezia-premium
+    post:
+      consumes:
+      - application/json
+      description: Пустое значение и присланный адрес по умолчанию хранятся пустыми
+        (так адрес продолжает ротироваться с релизом). Непригодное хранимое значение
+        заменяется присланным. В ответе — действующий адрес.
+      parameters:
+      - description: Адрес зеркала; пустое значение — зеркало по умолчанию
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AmneziaPremiumMirrorRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumMirrorResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Задать адрес зеркала Amnezia
       tags:
       - amnezia-premium
   /auth/login:

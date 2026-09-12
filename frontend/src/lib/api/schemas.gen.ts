@@ -107,6 +107,35 @@ const api_AmneziaPremiumAccountInfoResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_AmneziaPremiumCatalogData: v.GenericSchema = v.looseObject({
+	activeDeviceCount: v.optional(v.nullable(v.number())),
+	countries: v.optional(v.nullable(v.array(v.lazy(() => api_AmneziaPremiumCountry)))),
+	maxDeviceCount: v.optional(v.nullable(v.number())),
+	planName: v.optional(v.nullable(v.string())),
+	subscriptionEndDate: v.optional(v.nullable(v.string())),
+});
+
+const api_AmneziaPremiumCatalogResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumCatalogData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_AmneziaPremiumConfigData: v.GenericSchema = v.looseObject({
+	config: v.optional(v.nullable(v.string())),
+	countryCode: v.optional(v.nullable(v.string())),
+});
+
+const api_AmneziaPremiumConfigResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumConfigData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_AmneziaPremiumCountry: v.GenericSchema = v.looseObject({
+	code: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	protocols: v.optional(v.nullable(v.array(v.string()))),
+});
+
 const api_AmneziaPremiumDownloadConfigData: v.GenericSchema = v.looseObject({
 	config: v.optional(v.nullable(v.string())),
 });
@@ -133,6 +162,15 @@ const api_AmneziaPremiumLoginData: v.GenericSchema = v.looseObject({
 
 const api_AmneziaPremiumLoginResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumLoginData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_AmneziaPremiumMirrorData: v.GenericSchema = v.looseObject({
+	mirrorUrl: v.optional(v.nullable(v.string())),
+});
+
+const api_AmneziaPremiumMirrorResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumMirrorData))),
 	success: v.optional(v.nullable(v.boolean())),
 });
 
@@ -3169,7 +3207,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /access-policies": v.lazy(() => api_AccessPoliciesListResponse),
 	"GET /access-policies/devices": v.lazy(() => api_PolicyDevicesListResponse),
 	"GET /access-policies/interfaces": v.lazy(() => api_PolicyInterfacesListResponse),
+	"GET /amnezia/premium/catalog": v.lazy(() => api_AmneziaPremiumCatalogResponse),
 	"GET /amnezia/premium/key": v.lazy(() => api_AmneziaPremiumKeyResponse),
+	"GET /amnezia/premium/mirror": v.lazy(() => api_AmneziaPremiumMirrorResponse),
 	"GET /auth/status": v.lazy(() => api_AuthStatusResponse),
 	"GET /awg3-endpoints": v.lazy(() => api_Awg3ListResponse),
 	"GET /boot-status": v.lazy(() => api_BootStatusResponse),
@@ -3359,7 +3399,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /amnezia-premium/account-info": v.lazy(() => api_AmneziaPremiumAccountInfoResponse),
 	"POST /amnezia-premium/download-config": v.lazy(() => api_AmneziaPremiumDownloadConfigResponse),
 	"POST /amnezia-premium/login": v.lazy(() => api_AmneziaPremiumLoginResponse),
+	"POST /amnezia/premium/config": v.lazy(() => api_AmneziaPremiumConfigResponse),
 	"POST /amnezia/premium/key": v.lazy(() => api_AmneziaPremiumKeyResponse),
+	"POST /amnezia/premium/mirror": v.lazy(() => api_AmneziaPremiumMirrorResponse),
 	"POST /auth/login": v.lazy(() => api_LoginResponseRaw),
 	"POST /auth/logout": v.lazy(() => api_APIEnvelope),
 	"POST /awg/analyze": v.lazy(() => api_AwgAnalyzeResponse),
