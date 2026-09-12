@@ -58,7 +58,7 @@ func (s *KeenDNSStore) fetch(ctx context.Context, _ string) (*KeenDNSInfo, error
 }
 
 // parseKeenDNS строит FQDN доступа из полей booked + domain ответа /show/ndns
-// (например booked="impod", domain="crazedns.ru" → "impod.crazedns.ru").
+// (например booked="example", domain="crazedns.ru" → "example.crazedns.ru").
 // Любой домен Keenetic покрывается автоматически — без allowlist суффиксов.
 // Допущение: domain — это зона, а не уже готовый FQDN (verified на ребренд-OS,
 // для стоковой *.keenetic.pro не перепроверялось).

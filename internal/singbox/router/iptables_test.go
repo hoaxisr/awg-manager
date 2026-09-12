@@ -1763,19 +1763,19 @@ func TestBuildRestoreInput_KeenDNSCIDRFromRouterOnly(t *testing.T) {
 	if len(cidrs) != 0 {
 		t.Fatalf("пресет не должен приносить BypassCIDRs, got %v", cidrs)
 	}
-	if out := buildRestoreInput(RestoreInputSpec{PolicyMark: "0xffffaaa", BypassCIDRs: cidrs}); strings.Contains(out, "78.47.125.180") {
+	if out := buildRestoreInput(RestoreInputSpec{PolicyMark: "0xffffaaa", BypassCIDRs: cidrs}); strings.Contains(out, "198.51.100.180") {
 		t.Errorf("адрес KeenDNS не должен быть зашит в код:\n%s", out)
 	}
 
-	withAddr, err := resolveBypassCIDRs([]string{"keendns"}, "", []string{"78.47.125.180/32"})
+	withAddr, err := resolveBypassCIDRs([]string{"keendns"}, "", []string{"198.51.100.180/32"})
 	if err != nil {
 		t.Fatalf("resolveBypassCIDRs: %v", err)
 	}
 	out := buildRestoreInput(RestoreInputSpec{PolicyMark: "0xffffaaa", BypassCIDRs: withAddr})
-	if !strings.Contains(out, "-A "+ChainName+" -d 78.47.125.180/32 -j RETURN") {
+	if !strings.Contains(out, "-A "+ChainName+" -d 198.51.100.180/32 -j RETURN") {
 		t.Errorf("адрес с роутера обязан стать RETURN в mangle:\n%s", out)
 	}
-	if !strings.Contains(out, "-A "+RedirectChain+" -d 78.47.125.180/32 -j RETURN") {
+	if !strings.Contains(out, "-A "+RedirectChain+" -d 198.51.100.180/32 -j RETURN") {
 		t.Errorf("адрес с роутера обязан стать RETURN в nat:\n%s", out)
 	}
 }
