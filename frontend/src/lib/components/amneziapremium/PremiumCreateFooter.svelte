@@ -4,12 +4,18 @@
 	interface Props {
 		name: string;
 		backend: PremiumWizardBackend;
+		/** Недоступный бэкенд выбрать нельзя: см. chosenBackend в мастере (F277). */
+		nativewgAvailable: boolean;
+		kernelAvailable: boolean;
 		disabled: boolean;
 		onname: (name: string) => void;
 		onbackend: (backend: PremiumWizardBackend) => void;
 	}
 
-	let { name, backend, disabled, onname, onbackend }: Props = $props();
+	let { name, backend, nativewgAvailable, kernelAvailable, disabled, onname, onbackend }: Props =
+		$props();
+
+	const unavailableTitle = 'Недоступен на этом роутере';
 </script>
 
 <input
@@ -27,7 +33,8 @@
 		class="premium-backend-option"
 		class:premium-backend-option--active={backend === 'nativewg'}
 		aria-pressed={backend === 'nativewg'}
-		{disabled}
+		disabled={disabled || !nativewgAvailable}
+		title={nativewgAvailable ? '' : unavailableTitle}
 		onclick={() => onbackend('nativewg')}
 	>
 		NativeWG
@@ -37,7 +44,8 @@
 		class="premium-backend-option"
 		class:premium-backend-option--active={backend === 'kernel'}
 		aria-pressed={backend === 'kernel'}
-		{disabled}
+		disabled={disabled || !kernelAvailable}
+		title={kernelAvailable ? '' : unavailableTitle}
 		onclick={() => onbackend('kernel')}
 	>
 		Kernel

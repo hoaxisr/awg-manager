@@ -214,6 +214,55 @@ describe('AmneziaPremiumWizard', () => {
 		expect(onclose).toHaveBeenCalledTimes(1);
 	});
 
+	it('недоступный NativeWG не выбирается, и выдача уезжает на kernel (F277)', async () => {
+		amneziaPremiumKeyState.mockResolvedValue(KEY_PRESENT);
+		amneziaPremiumConfig.mockResolvedValue({ countryCode: 'zq', config: '[Interface]\n# fixture-zq' });
+
+		const onconfig = vi.fn();
+		render(AmneziaPremiumWizard, {
+			props: {
+				open: true,
+				backendAvailability: { nativewg: false, kernel: true },
+				onclose: vi.fn(),
+				onconfig
+			}
+		});
+		await settle();
+
+		const nativewg = screen.getByRole('button', { name: 'NativeWG' });
+		expect(nativewg.hasAttribute('disabled')).toBe(true);
+		expect(nativewg.getAttribute('aria-pressed')).toBe('false');
+		expect(screen.getByRole('button', { name: 'Kernel' }).getAttribute('aria-pressed')).toBe(
+			'true'
+		);
+
+		await fireEvent.click(screen.getByText('Zedquay'));
+		await fireEvent.click(screen.getByRole('button', { name: 'Создать туннель' }));
+		await waitFor(() => expect(onconfig).toHaveBeenCalledTimes(1));
+
+		// Слот устройств подписки тратится ДО импорта, поэтому недоступный
+		// бэкенд не должен доехать даже выбранным по умолчанию.
+		expect(onconfig.mock.calls[0][0].backend).toBe('kernel');
+	});
+
+	it('без единого доступного бэкенда выдача не предлагается (F277)', async () => {
+		amneziaPremiumKeyState.mockResolvedValue(KEY_PRESENT);
+
+		render(AmneziaPremiumWizard, {
+			props: {
+				open: true,
+				backendAvailability: { nativewg: false, kernel: false },
+				onclose: vi.fn(),
+				onconfig: vi.fn()
+			}
+		});
+		await settle();
+
+		await fireEvent.click(screen.getByText('Zedquay'));
+		const create = screen.getByRole('button', { name: 'Создать туннель' });
+		expect(create.hasAttribute('disabled') || create.classList.contains('is-disabled')).toBe(true);
+	});
+
 	it('истёкшая подписка не даёт выдать конфигурацию', async () => {
 		amneziaPremiumKeyState.mockResolvedValue(KEY_PRESENT);
 		amneziaPremiumCatalog.mockResolvedValue({

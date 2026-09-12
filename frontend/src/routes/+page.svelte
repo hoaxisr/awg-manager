@@ -15,7 +15,7 @@
 		DefaultRouteBadge,
 		TunnelCardSkeleton,
 	} from '$lib/components/tunnels';
-	import { TunnelListActions } from '$lib/components/ui';
+	import { Button, TunnelListActions } from '$lib/components/ui';
 	import { PageContainer, PageHeader, EmptyState, WelcomeBanner } from '$lib/components/layout';
 	import { tunnelsSkeletonCount, clampSkeletonCount } from '$lib/stores/skeletonCounts';
 	import {
@@ -32,6 +32,8 @@
 	import { singboxDelayHistory, singboxStatus, singboxTraffic, singboxTunnels } from '$lib/stores/singbox';
 	import { awg3Tunnels } from '$lib/stores/awg3';
 	import { Awg3TunnelsSection, Awg3ImportModal } from '$lib/components/awg3';
+	import { AmneziaPremiumWizard } from '$lib/components/amneziapremium';
+	import type { PremiumWizardResult } from '$lib/components/amneziapremium';
 	import { feedTraffic, getTrafficRates, getTrafficSparklineSeries, subscribeTraffic } from '$lib/stores/traffic';
 	import { usageLevel } from '$lib/stores/settings';
 	import { isSectionVisible, isTunnelDashboardAvailable } from '$lib/types/usageLevel';
@@ -86,7 +88,7 @@
 		type TunnelRenderMode,
 	} from '$lib/constants/singboxLayout';
 	import { isMockDevMode as getIsMockDevMode } from '$lib/env';
-	import { Eye, EyeOff, Server, Upload, LayoutGrid, Link, Globe, TriangleAlert } from 'lucide-svelte';
+	import { Eye, EyeOff, Server, Upload, LayoutGrid, Link, Globe, TriangleAlert, Crown } from 'lucide-svelte';
 	import { formatRunningSub, pluralForm, SUBSCRIPTION_WORDS, TUNNEL_WORDS } from '$lib/utils/pluralize';
 	import TunnelSectionHeader from '$lib/components/tunnels/TunnelSectionHeader.svelte';
 	import {
@@ -1097,6 +1099,34 @@
 		reader.readAsText(file);
 	}
 
+	let premiumWizardOpen = $state(false);
+
+	/**
+	 * Конфигурация, выданная мастером Amnezia Premium, заводится обычным
+	 * импортом — своей ручки создания у мастера нет. Страна уезжает вместе с
+	 * конфигурацией: по ней список стран потом показывает «туннель awg-nl».
+	 */
+	async function importPremiumConfig(result: PremiumWizardResult) {
+		importing = true;
+		try {
+			const tunnel = await tunnels.importConfig({
+				content: result.config,
+				name: result.suggestedName,
+				backend: result.backend,
+				amneziaCountry: result.countryCode
+			});
+			if (tunnel.warnings?.length) {
+				tunnel.warnings.forEach(w => notifications.warning(w));
+			}
+			notifications.success('Туннель импортирован');
+			goto(`/tunnels/${tunnel.id}`);
+		} catch (err) {
+			notifications.error(err instanceof Error ? err.message : 'Ошибка импорта');
+		} finally {
+			importing = false;
+		}
+	}
+
 	// Terminal status line
 	let statusLine = $derived.by(() => {
 		if (!sysInfo) return '';
@@ -1677,7 +1707,14 @@
 </svelte:head>
 
 <PageContainer width="full">
-	<PageHeader title="Туннели" />
+	<PageHeader title="Туннели">
+		{#snippet actions()}
+			<Button variant="secondary" size="sm" onclick={() => (premiumWizardOpen = true)}>
+				{#snippet iconBefore()}<Crown size={14} aria-hidden="true" />{/snippet}
+				Amnezia Premium
+			</Button>
+		{/snippet}
+	</PageHeader>
 	<WelcomeBanner />
 	{#if loading}
 		<div aria-hidden="true">
@@ -1844,6 +1881,16 @@
 {/if}
 
 <TunnelPageModals ctx={pageModalsCtx} />
+
+<!-- Карта «страна → туннель» и доступность бэкендов берутся из уже
+     загруженного страницей: своих запросов мастер на это не делает. -->
+<AmneziaPremiumWizard
+	open={premiumWizardOpen}
+	countryTunnels={awgList}
+	backendAvailability={sysInfo?.backendAvailability}
+	onclose={() => (premiumWizardOpen = false)}
+	onconfig={(result) => void importPremiumConfig(result)}
+/>
 
 {#if awg3Visible}
 	<!-- Импорт AWG3: из меню «Создать», empty-state и вкладки WG endpoints. -->

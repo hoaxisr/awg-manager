@@ -47,11 +47,24 @@
 		replaceTarget?: PremiumWizardReplaceTarget | null;
 		/** «Страна → туннель» списком: из него берётся метка «туннель awg-nl». */
 		countryTunnels?: readonly { name: string; amneziaCountry?: string }[];
+		/**
+		 * Доступность бэкендов — с уже загруженного страницей system/info.
+		 * Отсутствует — доступность неизвестна (как на странице создания
+		 * туннеля до ответа), и гасить выбор нечем.
+		 */
+		backendAvailability?: { nativewg: boolean; kernel: boolean };
 		onclose: () => void;
 		onconfig: (result: PremiumWizardResult) => void;
 	}
 
-	let { open, replaceTarget = null, countryTunnels = [], onclose, onconfig }: Props = $props();
+	let {
+		open,
+		replaceTarget = null,
+		countryTunnels = [],
+		backendAvailability,
+		onclose,
+		onconfig
+	}: Props = $props();
 
 	type Phase = 'key' | 'loading' | 'catalog' | 'error';
 	type RetryKind = 'init' | 'login' | 'catalog';
@@ -105,11 +118,30 @@
 		replaceTarget ? `Amnezia Premium → ${replaceTarget.name}` : 'Amnezia Premium'
 	);
 	const canSubmitKey = $derived(keyInput.trim().length > 0 && !busy);
+
+	const nativewgAvailable = $derived(backendAvailability?.nativewg !== false);
+	const kernelAvailable = $derived(backendAvailability?.kernel !== false);
+	/**
+	 * Бэкенд, который уедет в импорт. Недоступный выбранным не остаётся:
+	 * выдача конфигурации тратит слот устройств подписки ДО того, как импорт
+	 * откажет, и слот этот не возвращается (F277).
+	 */
+	const chosenBackend = $derived<PremiumWizardBackend>(
+		backend === 'nativewg' && !nativewgAvailable
+			? 'kernel'
+			: backend === 'kernel' && !kernelAvailable
+				? 'nativewg'
+				: backend
+	);
+
 	const canIssue = $derived(
 		selectedCountry !== '' &&
 			issueAllowed &&
 			!busy &&
-			(replaceTarget !== null || tunnelName.trim().length > 0)
+			(replaceTarget !== null ||
+				// Ни одного доступного бэкенда — выдавать нечего: импорт откажет,
+				// а слот подписки уже потрачен.
+				(tunnelName.trim().length > 0 && (nativewgAvailable || kernelAvailable)))
 	);
 
 	// Инициализация привязана к переходу «закрыт → открыт». Единственная
@@ -346,7 +378,7 @@
 				countryCode: cfg.countryCode || code,
 				config: cfg.config,
 				suggestedName: replaceTarget ? replaceTarget.name : tunnelName.trim(),
-				backend: replaceTarget ? undefined : backend
+				backend: replaceTarget ? undefined : chosenBackend
 			});
 			onclose();
 		} catch (e) {
@@ -427,7 +459,9 @@
 			{#if !replaceTarget}
 				<PremiumCreateFooter
 					name={tunnelName}
-					{backend}
+					backend={chosenBackend}
+					{nativewgAvailable}
+					{kernelAvailable}
 					disabled={phase !== 'catalog' || busy}
 					onname={(v) => {
 						nameEdited = true;
