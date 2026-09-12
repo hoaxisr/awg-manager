@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -93,8 +94,24 @@ func TestRouteCommands_RemoveHostRoute_GivesUpOnPersistentFailure(t *testing.T) 
 	if err := cmds.RemoveHostRoute(context.Background(), "203.0.113.77"); err == nil {
 		t.Fatal("постоянный отказ обязан доехать до вызывающего")
 	}
-	if n := len(poster.Payloads()); n != maxHostRouteEntries {
-		t.Errorf("попыток %d, ждали %d", n, maxHostRouteEntries)
+	// Число литералом, а не через саму константу: иначе тест проверяет код
+	// против себя же и переживёт поднятие потолка, ради которого его и пишут.
+	if n := len(poster.Payloads()); n != 4 {
+		t.Errorf("попыток %d, ждали 4", n)
+	}
+}
+
+// Настоящий отказ повторять незачем: каждая попытка стоит save.Request() и
+// двух инвалидаций, а под замком оркестратора — ещё и времени.
+func TestRouteCommands_RemoveHostRoute_RealErrorIsNotRetried(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	poster.SetError(errors.New("boom"))
+
+	if err := cmds.RemoveHostRoute(context.Background(), "203.0.113.77"); err == nil {
+		t.Fatal("отказ обязан доехать до вызывающего")
+	}
+	if n := len(poster.Payloads()); n != 1 {
+		t.Fatalf("ждали одну попытку, получили %d", n)
 	}
 }
 

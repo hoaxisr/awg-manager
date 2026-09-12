@@ -33,9 +33,10 @@ func (f *fakePoster) Post(ctx context.Context, payload any) (json.RawMessage, er
 	// — ложный красный, — но повод краснеть выдуманный.
 	f.mu.Lock()
 	err := f.nextErr
+	fileExists := false
 	if f.errFor > 0 {
 		f.errFor--
-		err = errFakePost
+		fileExists = true
 	}
 	sleep := f.sleep
 	f.payloads = append(f.payloads, payload)
@@ -50,6 +51,9 @@ func (f *fakePoster) Post(ctx context.Context, payload any) (json.RawMessage, er
 	f.mu.Lock()
 	resp := f.nextResp
 	f.mu.Unlock()
+	if fileExists {
+		resp = routerFileExistsBody
+	}
 	if resp == nil {
 		resp = json.RawMessage(`{}`)
 	}
@@ -66,8 +70,15 @@ func (f *fakePoster) SetResponse(resp string) {
 
 func (f *fakePoster) Calls() int32 { return atomic.LoadInt32(&f.calls) }
 
-// SetErrorFor заставляет отказать n первых вызовов — так роутер отвечает,
-// пока у host-route остаётся больше одной записи.
+// routerFileExistsBody — дословный ответ роутера (стенд 5.01), когда запись
+// снята, но по тому же адресу в таблице осталась ещё одна: HTTP 200 и
+// status:"error" внутри. Ошибка ложная — снятие прошло.
+var routerFileExistsBody = json.RawMessage(`{"ip":{"route":{"status":[{"status":"error",` +
+	`"code":"268239256","ident":"Io::Netlink","critical":"yes",` +
+	`"message":"system failed [0xcffd0198], got an error response: file exists."}]}}}`)
+
+// SetErrorFor заставляет n первых вызовов ответить этим отказом — так роутер
+// отвечает, пока у host-route остаётся больше одной записи.
 func (f *fakePoster) SetErrorFor(n int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

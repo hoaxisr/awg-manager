@@ -591,6 +591,11 @@ func TestStartObfuscated_LoopbackTrackedIPIsNotRemoved(t *testing.T) {
 	if strings.Contains(posts, `"host":"127.0.0.1"`) {
 		t.Fatalf("маршрут на loopback не трогаем:\n%s", posts)
 	}
+	// И не снимаем ничего вовсе: отброшенный prevIP не должен превращаться
+	// в no-route (в том числе с пустым host).
+	if rm := n.routeRemovals(); len(rm) > 0 {
+		t.Fatalf("снятие на пустом prevIP: %v", rm)
+	}
 	if !strings.Contains(posts, `"host":"203.0.113.5"`) {
 		t.Fatalf("новый host-route не поставлен:\n%s", posts)
 	}
@@ -637,7 +642,7 @@ func TestAddObfHostRoute_V6TargetUsesIPv6Form(t *testing.T) {
 	op := newObfOperator(t, n, &fakeObfRunner{})
 	stored := obfStored()
 
-	if err := op.addObfHostRoute(context.Background(), stored, "2001:db8::5"); err != nil {
+	if err := op.addObfHostRoute(context.Background(), stored, "2001:db8::5", "ISP0"); err != nil {
 		t.Fatalf("addObfHostRoute: %v", err)
 	}
 
@@ -663,11 +668,150 @@ func TestAddObfHostRoute_V4TargetUsesIPv4Form(t *testing.T) {
 	op := newObfOperator(t, n, &fakeObfRunner{})
 	stored := obfStored()
 
-	if err := op.addObfHostRoute(context.Background(), stored, "203.0.113.5"); err != nil {
+	if err := op.addObfHostRoute(context.Background(), stored, "203.0.113.5", "ISP0"); err != nil {
 		t.Fatalf("addObfHostRoute: %v", err)
 	}
 
 	if n.firstPostWith(`"host":"203.0.113.5"`) < 0 {
 		t.Fatalf("v4 host-route ушёл не той формой: %v", n.posts)
+	}
+}
+
+// routeRemovals — посты, снимающие маршрут (снятие адреса интерфейса под эту
+// проверку не подпадает: там нет ключа "route").
+func (c *captureNDMS) routeRemovals() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for _, p := range c.posts {
+		if strings.Contains(p, `"route"`) && strings.Contains(p, `"no":true`) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// reset забывает накопленные посты: нужен, когда проверяется ВТОРОЙ Start,
+// а первый только готовит состояние.
+func (c *captureNDMS) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.posts = nil
+}
+
+// Смена WAN при неизменном адресе: запись NDMS ключуется парой (host, interface),
+// и без снятия прежней их становится две — одна через мёртвый канал (стенд 5.01).
+// Состояние готовится настоящим Start, а не выставленным полем: сверка идёт с
+// тем, что оператор сам отправил в NDMS.
+func TestStartObfuscated_WANChanged_ClearsRouteOnOldWAN(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored() // ISPInterface = ISP0
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	n.reset()
+
+	// Тот же адрес (резолв даёт 203.0.113.5), но WAN сменился.
+	st.ResolvedEndpointIP = "203.0.113.5"
+	st.ISPInterface = "ISP1"
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+
+	posts := n.joined()
+	// Снятие адресуется парой (host, interface) прежнего WAN: соседняя запись
+	// на тот же адрес через другой канал не наша и остаться обязана.
+	if !strings.Contains(posts, `"host":"203.0.113.5","interface":"ISP0","no":true`) {
+		t.Fatalf("запись на прежнем WAN не снята точной формой:\n%s", posts)
+	}
+	if n.firstPostWith(`"interface":"ISP0","no":true`) > n.firstPostWith(`"interface":"ISP1"`) {
+		t.Fatalf("снятие обязано идти до добавления:\n%s", posts)
+	}
+}
+
+// Тот же WAN и тот же адрес — снимать нечего: лишний no-route оставил бы окно
+// без маршрута на каждом WAN-up соседнего канала.
+func TestStartObfuscated_SameWAN_KeepsRoute(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	n.reset()
+
+	st.ResolvedEndpointIP = "203.0.113.5"
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+
+	if rm := n.routeRemovals(); len(rm) > 0 {
+		t.Fatalf("маршрут не менялся, снятие лишнее: %v", rm)
+	}
+}
+
+// Рестарт демона: реестр WAN пуст, а адрес в записи есть. Под каким WAN стоит
+// запись — неизвестно, поэтому снимаем вслепую, заодно унося мусор прошлой
+// жизни (RemoveHostRoute чистит все записи по адресу).
+func TestStartObfuscated_WANUnknownAfterRestart_ClearsBlind(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+	st.ResolvedEndpointIP = "203.0.113.5"
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+
+	if n.firstPostWith(`{"ip":{"route":{"host":"203.0.113.5","no":true}}}`) < 0 {
+		t.Fatalf("при неизвестном WAN снимаем слепой формой по адресу:\n%s", n.joined())
+	}
+}
+
+// Stop снимает маршрут — значит и память о его WAN обязана уйти, иначе
+// следующий Start на том же WAN решит, что снимать нечего.
+func TestStopObfuscated_ForgetsRoutedWAN(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	st.ResolvedEndpointIP = "203.0.113.5"
+	op.stopObfuscated(context.Background(), st)
+
+	if _, known := op.routedObfWAN(st.ID); known {
+		t.Fatal("после Stop WAN маршрута обязан быть забыт")
+	}
+}
+
+// Петля (дефолт через сам туннель) при живом прежнем маршруте: поставить новый
+// нечем, значит и снимать старый нельзя — иначе трафик релея уйдёт в туннель,
+// ради чего маршрут и существует.
+func TestStartObfuscated_RouteLoopRefused_KeepsPreviousRoute(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+	st.ISPInterface = "Wireguard3"        // == NewNWGNames(st.NWGIndex).NDMSName
+	st.ResolvedEndpointIP = "203.0.113.5" // адрес не менялся: снимать нечего и незачем
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatalf("Start не должен валиться из-за маршрута: %v", err)
+	}
+
+	if rm := n.routeRemovals(); len(rm) > 0 {
+		t.Fatalf("прежний маршрут снят, а новый поставить нечем: %v", rm)
+	}
+	if op.obfRouteErrFor(st.ID) == "" {
+		t.Fatal("причина отсутствия маршрута обязана попасть в реестр")
 	}
 }

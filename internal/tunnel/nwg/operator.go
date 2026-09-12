@@ -106,6 +106,14 @@ type OperatorNativeWG struct {
 	// обязано это показывать: без маршрута трафик релея уходит в сам туннель.
 	obfRouteMu  sync.Mutex
 	obfRouteErr map[string]string
+
+	// obfRoutedWAN — WAN (имя NDMS), под которым host-route был поставлен, по
+	// ID туннеля. Сверять не с чем другим: запись NDMS ключуется парой
+	// (host, interface), а ActiveWAN в сторе держит KERNEL-имя (ResolveActiveWAN
+	// переводит peer.via в ppp0) и обновляется по своим правилам. Карта живёт
+	// в памяти: после рестарта демона WAN неизвестен, и прежняя запись
+	// снимается вслепую — заодно уходит мусор прошлой жизни.
+	obfRoutedWAN map[string]string
 }
 
 // NewOperator creates a new NativeWG operator.

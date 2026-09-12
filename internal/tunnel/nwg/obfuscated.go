@@ -36,12 +36,24 @@ func (o *OperatorNativeWG) SetObfuscatorRouteSharing(fn func(excludeID, ip strin
 }
 
 // removeObfHostRoute снимает host-route, если он не нужен другому туннелю.
-func (o *OperatorNativeWG) removeObfHostRoute(ctx context.Context, tunnelID, ip string) error {
+//
+// wan — интерфейс, под которым запись стоит по нашим данным. Он есть почти
+// всегда, и тогда снятие адресуется парой (host, interface), которой запись
+// NDMS и ключуется: чужая запись на тот же адрес через другой WAN остаётся
+// нетронутой (стенд 5.01). Пустой wan — «не знаем» (первый заход после
+// рестарта демона): там слепая форма по адресу, она уносит все записи этого
+// адреса, заодно вычищая мусор прошлой жизни.
+func (o *OperatorNativeWG) removeObfHostRoute(ctx context.Context, tunnelID, ip, wan string) error {
 	if o.obfRouteHeldByOther != nil && o.obfRouteHeldByOther(tunnelID, ip) {
 		o.appLog.Info("obfuscator", tunnelID, "host-route "+ip+" нужен другому туннелю, оставляем")
 		return nil
 	}
-	return o.commands.Routes.RemoveHostRoute(ctx, ip)
+	if wan == "" {
+		return o.commands.Routes.RemoveHostRoute(ctx, ip)
+	}
+	return o.commands.Routes.RemoveStaticRoute(ctx, command.StaticRouteSpec{
+		Host: ip, Interface: wan, V6: isV6Literal(ip),
+	})
 }
 
 // startObfuscated — путь Start для туннеля через релей:
@@ -133,8 +145,10 @@ func (o *OperatorNativeWG) stopObfuscated(ctx context.Context, stored *storage.A
 		_ = o.obf.Stop(stored.ID)
 	}
 	o.clearObfRouteErr(stored.ID)
+	routedWAN, _ := o.routedObfWAN(stored.ID)
+	o.forgetObfRoutedWAN(stored.ID)
 	if ip := o.obfRouteIP(stored); ip != "" {
-		if err := o.removeObfHostRoute(ctx, stored.ID, ip); err != nil {
+		if err := o.removeObfHostRoute(ctx, stored.ID, ip, routedWAN); err != nil {
 			o.appLog.Warn("stop", stored.ID, "снять host-route "+ip+": "+err.Error())
 		}
 	}
@@ -161,17 +175,53 @@ func (o *OperatorNativeWG) SyncObfuscator(ctx context.Context, stored *storage.A
 // Отказ маршрута Start не валит (на WAN-up туннель всё равно перезапустится),
 // но остаётся в реестре причин и доезжает до пользователя через Details.
 func (o *OperatorNativeWG) moveObfHostRoute(ctx context.Context, stored *storage.AWGTunnel, prevIP, targetIP string) {
-	if prevIP != "" && prevIP != targetIP {
-		if err := o.removeObfHostRoute(ctx, stored.ID, prevIP); err != nil {
+	wan, wanErr := o.obfRouteWAN(ctx, stored)
+	// Запись NDMS ключуется парой (host, interface): при смене WAN с прежним
+	// адресом старая запись остаётся и ведёт через мёртвый канал, а снять её
+	// потом некому — маршрут ставится по новому WAN и расхождения не видно.
+	// Сверяемся с тем, что отправили сами (obfRoutedWAN), а не с ActiveWAN:
+	// тот держит kernel-имя интерфейса и с именем NDMS не сравним.
+	routedWAN, known := o.routedObfWAN(stored.ID)
+	if prevIP != "" && (prevIP != targetIP || (wanErr == nil && (!known || routedWAN != wan))) {
+		if err := o.removeObfHostRoute(ctx, stored.ID, prevIP, routedWAN); err != nil {
 			o.appLog.Warn("obfuscator", stored.ID, "снять прежний host-route "+prevIP+": "+err.Error())
 		}
+		o.forgetObfRoutedWAN(stored.ID)
 	}
-	if err := o.addObfHostRoute(ctx, stored, targetIP); err != nil {
-		o.appLog.Warn("obfuscator", stored.ID, "host-route до "+targetIP+": "+err.Error())
-		o.setObfRouteErr(stored.ID, err.Error())
+	if wanErr == nil {
+		wanErr = o.addObfHostRoute(ctx, stored, targetIP, wan)
+	}
+	if wanErr != nil {
+		o.appLog.Warn("obfuscator", stored.ID, "host-route до "+targetIP+": "+wanErr.Error())
+		o.setObfRouteErr(stored.ID, wanErr.Error())
 		return
 	}
+	o.setObfRoutedWAN(stored.ID, wan)
 	o.clearObfRouteErr(stored.ID)
+}
+
+// routedObfWAN — WAN, под которым host-route стоит по нашим данным. false =
+// не знаем (первый заход после рестарта демона): тогда снимаем вслепую.
+func (o *OperatorNativeWG) routedObfWAN(tunnelID string) (string, bool) {
+	o.obfRouteMu.Lock()
+	defer o.obfRouteMu.Unlock()
+	wan, ok := o.obfRoutedWAN[tunnelID]
+	return wan, ok
+}
+
+func (o *OperatorNativeWG) setObfRoutedWAN(tunnelID, wan string) {
+	o.obfRouteMu.Lock()
+	defer o.obfRouteMu.Unlock()
+	if o.obfRoutedWAN == nil {
+		o.obfRoutedWAN = make(map[string]string)
+	}
+	o.obfRoutedWAN[tunnelID] = wan
+}
+
+func (o *OperatorNativeWG) forgetObfRoutedWAN(tunnelID string) {
+	o.obfRouteMu.Lock()
+	defer o.obfRouteMu.Unlock()
+	delete(o.obfRoutedWAN, tunnelID)
 }
 
 func (o *OperatorNativeWG) setObfRouteErr(tunnelID, msg string) {
@@ -245,12 +295,11 @@ func (o *OperatorNativeWG) resolveTarget(stored *storage.AWGTunnel) (string, err
 	return ip, nil
 }
 
-// addObfHostRoute: host-форма ip route — {host, interface, auto, comment}, у
-// v6-таргета та же запись в форме ipv6 с {prefix: <addr>/128, …} — запись
-// NDMS, переживает пересчёт таблицы. WAN: ISPInterface туннеля → peer.via из RCI (WAN,
-// которым NDMS реально ведёт пира) → текущий дефолтный шлюз. Отказ только если
-// это наш собственный WireguardN (дефолт через себя = петля).
-func (o *OperatorNativeWG) addObfHostRoute(ctx context.Context, stored *storage.AWGTunnel, ip string) error {
+// obfRouteWAN — интерфейс, через который ставится host-route: ISPInterface
+// туннеля → peer.via из RCI (WAN, которым NDMS реально ведёт пира) → текущий
+// дефолтный шлюз. Отказ только если это наш собственный WireguardN (дефолт
+// через себя = петля).
+func (o *OperatorNativeWG) obfRouteWAN(ctx context.Context, stored *storage.AWGTunnel) (string, error) {
 	names := NewNWGNames(stored.NWGIndex)
 	wan := strings.TrimSpace(stored.ISPInterface)
 	if wan == "" {
@@ -263,12 +312,19 @@ func (o *OperatorNativeWG) addObfHostRoute(ctx context.Context, stored *storage.
 	if wan == "" {
 		var err error
 		if wan, err = o.queries.Routes.GetDefaultGatewayInterface(ctx); err != nil {
-			return fmt.Errorf("default WAN: %w", err)
+			return "", fmt.Errorf("default WAN: %w", err)
 		}
 	}
 	if wan == names.NDMSName {
-		return fmt.Errorf("дефолтный маршрут уже через %s (сам туннель), host-route не ставится", wan)
+		return "", fmt.Errorf("дефолтный маршрут уже через %s (сам туннель), host-route не ставится", wan)
 	}
+	return wan, nil
+}
+
+// addObfHostRoute: host-форма ip route — {host, interface, auto, comment}, у
+// v6-таргета та же запись в форме ipv6 с {prefix: <addr>/128, …} — запись
+// NDMS, переживает пересчёт таблицы.
+func (o *OperatorNativeWG) addObfHostRoute(ctx context.Context, stored *storage.AWGTunnel, ip, wan string) error {
 	// V6 — не украшение: у v6 своя форма (prefix вместо host), и без флага
 	// роутер отвечает «invalid destination host», а host-route до target'а
 	// релея не встаёт вовсе — трафик релея уходит в сам туннель, то есть

@@ -132,11 +132,18 @@ func (c *RouteCommands) RemoveHostRoute(ctx context.Context, host string) error 
 		op = "remove ipv6 host route " + host
 	}
 
+	// Повторяем ТОЛЬКО на «file exists»: этим роутер отвечает, когда запись
+	// снята, а в таблице остался ещё один маршрут на тот же адрес (стенд 5.01,
+	// см. isNetlinkFileExists). Любой другой отказ — настоящий, и долбить им
+	// роутер незачем: каждая попытка стоит save.Request() и двух инвалидаций.
 	var lastErr error
 	for attempt := 0; attempt < maxHostRouteEntries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("%s: %w", op, err)
+		}
 		lastErr = c.mutate(ctx, payload, op)
-		if lastErr == nil {
-			return nil
+		if lastErr == nil || !isNetlinkFileExists(lastErr.Error()) {
+			return lastErr
 		}
 	}
 	return lastErr
@@ -213,7 +220,7 @@ func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRoute
 				},
 			},
 		}
-		return c.mutateTolerant(ctx, payload, "remove ipv6 static route", isNoSuchInterface)
+		return c.mutateTolerant(ctx, payload, "remove ipv6 static route", toleratesRouteRemoval)
 	}
 	inner := map[string]any{
 		"interface": route.Interface,
@@ -228,7 +235,7 @@ func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRoute
 	payload := map[string]any{
 		"ip": map[string]any{"route": inner},
 	}
-	return c.mutateTolerant(ctx, payload, "remove static route", isNoSuchInterface)
+	return c.mutateTolerant(ctx, payload, "remove static route", toleratesRouteRemoval)
 }
 
 // mutate is a thin wrapper over postMutation with RouteCommands' fixed
