@@ -27,6 +27,7 @@ type fakeObfRunner struct {
 	mu      sync.Mutex
 	started map[string]*storage.Obfuscator
 	alive   map[string]bool
+	starts  map[string]int
 }
 
 func newFakeObfRunner() *fakeObfRunner {
@@ -36,10 +37,29 @@ func newFakeObfRunner() *fakeObfRunner {
 func (f *fakeObfRunner) Start(_ context.Context, id string, o *storage.Obfuscator) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Настоящий Runner идемпотентен по СОДЕРЖИМОМУ INI: живой процесс с тем
+	// же конфигом он не трогает (runner.go). Фейк обязан это повторять —
+	// иначе тест не отличит перезапуск релея от бесплодного повторного Start.
+	if f.alive[id] && f.started[id] != nil &&
+		obfuscator.RenderConf(f.started[id]) == obfuscator.RenderConf(o) {
+		return nil
+	}
 	cp := *o
 	f.started[id] = &cp
 	f.alive[id] = true
+	if f.starts == nil {
+		f.starts = map[string]int{}
+	}
+	f.starts[id]++
 	return nil
+}
+
+// startCount — сколько раз релей поднимали: перезапуск при смене адреса
+// target'а иначе не отличить от «ничего не делали».
+func (f *fakeObfRunner) startCount(id string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.starts[id]
 }
 
 func (f *fakeObfRunner) Stop(id string) error {
@@ -302,8 +322,55 @@ func TestStartObfuscated_DropsEndpointGuardEntry(t *testing.T) {
 	if err := op.Start(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
+	// Прежняя запись (viaNDMS) переписала бы loopback-endpoint реальным
+	// адресом сервера. На её место встаёт запись про target релея: она
+	// endpoint не трогает вовсе, а следит за DDNS у самого обфускатора.
+	e, ok := op.guardGet(st.ID)
+	if !ok {
+		t.Fatal("за target'ом релея никто не следит")
+	}
+	if e.viaNDMS || e.viaKmod || !e.viaRelay {
+		t.Fatalf("режим стража не тот: %+v", e)
+	}
+	if e.spec != st.Obfuscator.Target {
+		t.Fatalf("страж следит не за target'ом: %q", e.spec)
+	}
+}
+
+// Литеральный адрес в target'е резолвить нечего — записи стража быть не должно.
+func TestStartObfuscated_LiteralTargetNeedsNoGuard(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+	st.Obfuscator.Target = "203.0.113.5:51824"
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
 	if op.guardHas(st.ID) {
-		t.Fatal("запись стража должна быть снята на обфусцированном пути")
+		t.Fatal("за литералом следить нечего")
+	}
+}
+
+// Остановленный туннель страж чинить не должен: рестарт релея поднял бы
+// процесс, который только что погасили.
+func TestStopObfuscated_DropsGuardEntry(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	if !op.guardHas(st.ID) {
+		t.Fatal("подготовка: записи стража нет")
+	}
+	op.stopObfuscated(context.Background(), st)
+
+	if op.guardHas(st.ID) {
+		t.Fatal("после Stop страж обязан забыть туннель")
 	}
 }
 
@@ -813,5 +880,74 @@ func TestStartObfuscated_RouteLoopRefused_KeepsPreviousRoute(t *testing.T) {
 	}
 	if op.obfRouteErrFor(st.ID) == "" {
 		t.Fatal("причина отсутствия маршрута обязана попасть в реестр")
+	}
+}
+
+// F118: у target'а сменилась A-запись. Релей резолвит имя только при старте,
+// поэтому его надо перезапустить, а host-route — переставить на новый адрес.
+func TestSyncRelayTarget_AddressChanged_RestartsRelayAndMovesRoute(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+	st := obfStored()
+	op.SetTunnelLookup(func(string) (*storage.AWGTunnel, error) { return st, nil })
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	e, ok := op.guardGet(st.ID)
+	if !ok {
+		t.Fatal("подготовка: записи стража нет")
+	}
+	startsBefore := fr.startCount(st.ID)
+	n.reset()
+
+	if !op.syncRelayTarget(context.Background(), st.ID, e, "198.51.100.7:51824") {
+		t.Fatal("смена адреса обязана быть доведена")
+	}
+
+	posts := n.joined()
+	if !strings.Contains(posts, `"host":"198.51.100.7"`) {
+		t.Fatalf("host-route до нового адреса не поставлен:\n%s", posts)
+	}
+	if !strings.Contains(posts, `"host":"203.0.113.5","interface":"ISP0","no":true`) {
+		t.Fatalf("маршрут до прежнего адреса не снят:\n%s", posts)
+	}
+	if got := fr.startCount(st.ID); got != startsBefore+1 {
+		t.Fatalf("релей не перезапущен: стартов %d, было %d", got, startsBefore)
+	}
+	if e2, _ := op.guardGet(st.ID); e2.endpoint != "198.51.100.7:51824" {
+		t.Fatalf("реестр стража не сдвинулся: %q", e2.endpoint)
+	}
+	if op.GetTrackedEndpointIP(st.ID) != "198.51.100.7" {
+		t.Fatal("адрес маршрута обязан быть виден Stop'у")
+	}
+}
+
+// Тот же адрес — рестарта быть не должно: он рвёт живую сессию.
+func TestSyncRelayTarget_SameAddress_KeepsRelayRunning(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+	st := obfStored()
+	op.SetTunnelLookup(func(string) (*storage.AWGTunnel, error) { return st, nil })
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := op.guardGet(st.ID)
+	startsBefore := fr.startCount(st.ID)
+	n.reset()
+
+	if op.syncRelayTarget(context.Background(), st.ID, e, e.endpoint) {
+		t.Fatal("адрес не менялся — делать нечего")
+	}
+	if got := fr.startCount(st.ID); got != startsBefore {
+		t.Fatalf("релей перезапущен впустую: стартов %d, было %d", got, startsBefore)
+	}
+	if rm := n.routeRemovals(); len(rm) > 0 {
+		t.Fatalf("маршрут тронут впустую: %v", rm)
 	}
 }

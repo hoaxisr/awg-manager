@@ -120,6 +120,9 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 		}
 	}
 	o.moveObfHostRoute(ctx, stored, prevIP, targetIP)
+	// Страж следит за target'ом: релей резолвит имя один раз при старте, и
+	// без присмотра смена A-записи оставила бы туннель мёртвым до перезапуска.
+	o.guardRegisterRelay(stored, targetIP)
 	o.appLog.Info("start", names.NDMSName, fmt.Sprintf("obfuscator %s %s -> %s (%s)",
 		stored.Obfuscator.Flavor, loopback, stored.Obfuscator.Target, targetIP))
 	return nil
@@ -145,6 +148,7 @@ func (o *OperatorNativeWG) stopObfuscated(ctx context.Context, stored *storage.A
 		_ = o.obf.Stop(stored.ID)
 	}
 	o.clearObfRouteErr(stored.ID)
+	o.guardUnregister(stored.ID)
 	routedWAN, _ := o.routedObfWAN(stored.ID)
 	o.forgetObfRoutedWAN(stored.ID)
 	if ip := o.obfRouteIP(stored); ip != "" {
@@ -168,6 +172,7 @@ func (o *OperatorNativeWG) SyncObfuscator(ctx context.Context, stored *storage.A
 		return "", err
 	}
 	o.moveObfHostRoute(ctx, stored, prevIP, targetIP)
+	o.guardRegisterRelay(stored, targetIP)
 	return targetIP, o.obf.Start(ctx, stored.ID, stored.Obfuscator)
 }
 

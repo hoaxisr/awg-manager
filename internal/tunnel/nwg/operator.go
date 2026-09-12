@@ -81,6 +81,7 @@ type OperatorNativeWG struct {
 	guardCtx    context.Context    // контекст guardLoop и его sweep'ов
 	guardCancel context.CancelFunc // Close; nil, пока guardLoop не заведён
 	guardDone   chan struct{}      // закрывает guardLoop на выходе
+	guardNudge  chan struct{}      // внеочередной проход по внешнему поводу
 	// hasProxySlot reports a live kmod proxy slot on a listen port. Default:
 	// kmod.HasSlotListening; overridable in tests.
 	hasProxySlot func(listenPort int) bool
@@ -119,6 +120,7 @@ type OperatorNativeWG struct {
 // NewOperator creates a new NativeWG operator.
 func NewOperator(queries *query.Queries, commands *command.Commands, tr *transport.Client, appLogger logging.AppLogger) *OperatorNativeWG {
 	op := &OperatorNativeWG{
+		guardNudge:   make(chan struct{}, 1),
 		queries:      queries,
 		commands:     commands,
 		transport:    tr,

@@ -52,6 +52,11 @@ type guardEntry struct {
 	// реальный адрес живёт в слоте. Трогать ядро по такой записи НЕЛЬЗЯ —
 	// wg set увёл бы трафик мимо прокси, без обфускации.
 	viaKmod bool
+	// viaRelay — доводить адрес перезапуском обфускатора: target релея живёт
+	// в его INI ИМЕНЕМ, и резолвит его релей ровно один раз при старте
+	// (resolve_host_wait в wg-obfuscator). Смена A-записи доходит до него
+	// только рестартом, а host-route до старого адреса надо переставить.
+	viaRelay bool
 	// warnedNoV4 — адрес, о непригодности которого для NDMS уже
 	// предупредили (см. viaNDMS-ветку guardSweep). Без этой памяти
 	// предупреждение печаталось бы каждые guardInterval.
@@ -176,6 +181,8 @@ func (o *OperatorNativeWG) guardLoop() {
 		select {
 		case <-ticker.C:
 			o.guardSweep(o.guardCtx)
+		case <-o.guardNudge:
+			o.guardSweep(o.guardCtx)
 		case <-o.guardCtx.Done():
 			return
 		}
@@ -273,6 +280,10 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 			o.guardUpdateEndpoint(id, e.spec, expected)
 			o.appLog.Info("endpoint-guard", e.name,
 				fmt.Sprintf("%s сменил адрес — в NDMS выставлен %s", e.spec, expected))
+			continue
+		}
+		if e.viaRelay {
+			o.syncRelayTarget(ctx, id, e, expected)
 			continue
 		}
 		if e.viaKmod {
@@ -405,4 +416,79 @@ func wgShowHasEndpoint(out, pubkey, endpoint string) bool {
 		}
 	}
 	return false
+}
+
+// guardRegisterRelay ставит запись стража на target обфусцированного туннеля.
+// Литеральный адрес резолвить нечего — запись снимается, чтобы страж не
+// возил впустую.
+func (o *OperatorNativeWG) guardRegisterRelay(stored *storage.AWGTunnel, ip string) {
+	if stored.Obfuscator == nil {
+		o.guardUnregister(stored.ID)
+		return
+	}
+	host, port, err := net.SplitHostPort(stored.Obfuscator.Target)
+	if err != nil || net.ParseIP(host) != nil {
+		o.guardUnregister(stored.ID)
+		return
+	}
+	names := NewNWGNames(stored.NWGIndex)
+	o.guardRegister(stored.ID, guardEntry{
+		iface:    names.IfaceName,
+		pubkey:   stored.Peer.PublicKey,
+		endpoint: net.JoinHostPort(ip, port),
+		spec:     stored.Obfuscator.Target,
+		name:     names.NDMSName,
+		viaRelay: true,
+	})
+}
+
+// NudgeEndpointGuard просит стража пройтись вне очереди. Повод внешний —
+// смена адреса WAN (хук ifipchanged): ждать до тика незачем, а лишний проход
+// дёшев (адрес меняется только на смену резолва).
+func (o *OperatorNativeWG) NudgeEndpointGuard() {
+	select {
+	case o.guardNudge <- struct{}{}:
+	default: // проход уже запланирован или стража нет — второй не нужен
+	}
+}
+
+// syncRelayTarget доводит смену адреса target'а до релея: маршрут на новый
+// адрес и перезапуск процесса. Возвращает false, когда делать нечего или
+// сделать не удалось.
+func (o *OperatorNativeWG) syncRelayTarget(ctx context.Context, id string, e guardEntry, expected string) bool {
+	// Адрес обновляем только на смену резолва: рестарт релея рвёт живую
+	// сессию, вхолостую его гонять нельзя.
+	if expected == e.endpoint || o.tunnelLookup == nil || o.obf == nil {
+		return false
+	}
+	// Перепроверка перед дорогой операцией — как в соседних ветках стража.
+	if cur, ok := o.guardGet(id); !ok || cur.spec != e.spec || !cur.viaRelay {
+		return false
+	}
+	stored, lookupErr := o.tunnelLookup(id)
+	if lookupErr != nil || stored == nil || stored.Obfuscator == nil {
+		o.appLog.Warn("endpoint-guard", e.name, "туннель не найден в хранилище — релей не перезапущен")
+		return false
+	}
+	freshIP, _, splitErr := net.SplitHostPort(expected)
+	if splitErr != nil {
+		return false
+	}
+	// Маршрут — до рестарта: пока релей поднимается, трафик к новому адресу
+	// уже не должен уходить в сам туннель.
+	prevIP := o.obfRouteIP(stored)
+	o.trackEndpointIP(id, freshIP)
+	o.moveObfHostRoute(ctx, stored, prevIP, freshIP)
+	// Stop обязателен: Runner.Start идемпотентен по СОДЕРЖИМОМУ INI, а там
+	// имя, которое не менялось — без остановки он решит, что всё уже
+	// сделано, и релей продолжит слать на прежний адрес.
+	_ = o.obf.Stop(id)
+	if err := o.obf.Start(ctx, id, stored.Obfuscator); err != nil {
+		o.appLog.Warn("endpoint-guard", e.name, "перезапуск релея не удался: "+err.Error())
+		return false
+	}
+	o.guardUpdateEndpoint(id, e.spec, expected)
+	o.appLog.Info("endpoint-guard", e.name,
+		fmt.Sprintf("target %s сменил адрес на %s — релей перезапущен, host-route переставлен", e.spec, freshIP))
+	return true
 }

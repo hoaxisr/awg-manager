@@ -47,6 +47,7 @@ type HookHandler struct {
 	wanModel       HookWANModel   // may be nil until SetWANModel is called
 	refreshTunnels TunnelHookInvalidator
 	proxyNudge     ProxyRuntimeNudge
+	endpointNudge  func()
 	log            *logging.ScopedLogger
 	wanLog         *logging.ScopedLogger
 	// selfCreateGate counts in-flight awg-manager-initiated NDMS interface
@@ -108,6 +109,14 @@ func (h *HookHandler) SetTunnelRefresher(fn TunnelHookInvalidator) {
 // the workers of an already booted runtime.
 func (h *HookHandler) SetProxyRuntimeNudge(fn ProxyRuntimeNudge) {
 	h.proxyNudge = fn
+}
+
+// SetEndpointGuardNudge подключает внеочередной проход endpoint-стража.
+// Повод — ifipchanged: адрес WAN сменился, и адрес сервера за DDNS-именем
+// мог смениться заодно (у провайдера это одно событие). Ждать тика стража
+// незачем — лишний проход дёшев, адрес он меняет только на смену резолва.
+func (h *HookHandler) SetEndpointGuardNudge(fn func()) {
+	h.endpointNudge = fn
 }
 
 // HandleNDMS is the unified hook endpoint. The shared forwarder script
@@ -173,6 +182,13 @@ func (h *HookHandler) HandleNDMS(w http.ResponseWriter, r *http.Request) {
 	// 1) Enqueue into Dispatcher for cache invalidation (async, non-blocking).
 	if h.dispatcher != nil {
 		h.dispatcher.Enqueue(event)
+	}
+
+	// 1a) Смена адреса интерфейса — повод перепроверить DDNS-имена: страж
+	// пройдётся вне очереди. Горутиной: проход ходит в DNS и держал бы ответ
+	// на хук.
+	if event.Type == events.EventIfIPChanged && h.endpointNudge != nil {
+		go h.endpointNudge()
 	}
 
 	// 1b) On interface create/destroy, rebroadcast the tunnel list so
