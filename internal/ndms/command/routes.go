@@ -8,6 +8,12 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
+// maxHostRouteEntries — сколько записей одного host-route снимаем за вызов.
+// Столько же, сколько у роутера бывает WAN-интерфейсов с запасом: каждая
+// попытка убирает одну запись, лишние попытки на пустом месте отвечают
+// «no such route», то есть успехом.
+const maxHostRouteEntries = 4
+
 type RouteCommands struct {
 	poster  Poster
 	save    *SaveCoordinator
@@ -92,28 +98,48 @@ func v6Prefix(route StaticRouteSpec) (string, error) {
 
 // RemoveHostRoute removes a host route.
 //
-// Неразобранный адрес уходит v4-формой: пусть отказывает NDMS и причина видна
-// в журнале — молчаливый v6-путь превратил бы мусор в «/128».
+// NDMS хранит ОТДЕЛЬНУЮ запись на каждый интерфейс, а форма без interface
+// снимает ровно одну и на остатке отвечает `system failed [0xcffd0198]`.
+// Стенд 5.01: две записи (PPPoE0 и Bridge0) → первая команда убирает одну и
+// отдаёт ошибку, вторая убирает последнюю и отвечает успехом, третья говорит
+// «no such route» (это тоже успех). Поэтому повторяем, пока не перестанет
+// отказывать: иначе при смене WAN записи накапливались бы, а снятие вечно
+// возвращало ошибку в журнал (F120).
+//
+// Интерфейс не указываем сознательно: вызывающие снимают маршрут по адресу и
+// не знают, через какой WAN он был поставлен — в этом и смысл уборки.
 //
 // У v6 своя форма: ключ `ipv6` и `prefix` с /128. Проверено на стенде 5.01:
 // v4-форма с v6-адресом отвергается («invalid destination host»), а
 // `ipv6.route.host` НЕ адресует хост — запрос вырождается в удаление ::/0,
 // то есть дефолтного маршрута (тот же капкан описан у AddStaticRoute).
+//
+// Неразобранный адрес уходит v4-формой: пусть отказывает NDMS и причина видна
+// в журнале — молчаливый v6-путь превратил бы мусор в «/128».
 func (c *RouteCommands) RemoveHostRoute(ctx context.Context, host string) error {
-	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
-		payload := map[string]any{
-			"ipv6": map[string]any{
-				"route": map[string]any{"prefix": host + "/128", "no": true},
-			},
-		}
-		return c.mutate(ctx, payload, "remove ipv6 host route "+host)
-	}
 	payload := map[string]any{
 		"ip": map[string]any{
 			"route": map[string]any{"no": true, "host": host},
 		},
 	}
-	return c.mutate(ctx, payload, "remove host route "+host)
+	op := "remove host route " + host
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		payload = map[string]any{
+			"ipv6": map[string]any{
+				"route": map[string]any{"prefix": host + "/128", "no": true},
+			},
+		}
+		op = "remove ipv6 host route " + host
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < maxHostRouteEntries; attempt++ {
+		lastErr = c.mutate(ctx, payload, op)
+		if lastErr == nil {
+			return nil
+		}
+	}
+	return lastErr
 }
 
 // AddStaticRoute adds a network or host route to the given interface. For v6

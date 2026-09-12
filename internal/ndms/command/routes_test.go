@@ -68,6 +68,36 @@ func TestRouteCommands_RemoveHostRoute(t *testing.T) {
 // Стенд 5.01: v4-форма с v6-адресом отвергается («invalid destination host»),
 // а `ipv6.route.host` целится в ::/0 — то есть в дефолтный маршрут. Снимать
 // v6 host-route можно только через prefix с /128.
+// F120: NDMS держит запись на КАЖДЫЙ интерфейс, и форма без interface снимает
+// ровно одну, отвечая «system failed» на остатке. Стенд 5.01: две записи —
+// первая команда убирает одну и отказывает, вторая убирает последнюю. Без
+// повтора записи копились бы при каждой смене WAN.
+func TestRouteCommands_RemoveHostRoute_ClearsEveryEntry(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	poster.SetErrorFor(1) // одна лишняя запись: первый вызов отказывает
+
+	if err := cmds.RemoveHostRoute(context.Background(), "203.0.113.77"); err != nil {
+		t.Fatalf("снятие обязано доводиться до конца: %v", err)
+	}
+	if n := len(poster.Payloads()); n != 2 {
+		t.Fatalf("ждали два вызова (по записи на интерфейс), получили %d", n)
+	}
+}
+
+// Отказ, который не кончается, не превращается в бесконечный цикл и доезжает
+// до вызывающего.
+func TestRouteCommands_RemoveHostRoute_GivesUpOnPersistentFailure(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	poster.SetErrorFor(100)
+
+	if err := cmds.RemoveHostRoute(context.Background(), "203.0.113.77"); err == nil {
+		t.Fatal("постоянный отказ обязан доехать до вызывающего")
+	}
+	if n := len(poster.Payloads()); n != maxHostRouteEntries {
+		t.Errorf("попыток %d, ждали %d", n, maxHostRouteEntries)
+	}
+}
+
 func TestRouteCommands_RemoveHostRoute_V6UsesPrefix(t *testing.T) {
 	for _, host := range []string{
 		"2001:db8::1",

@@ -15,9 +15,11 @@ import (
 // --- Test doubles ---
 
 type fakePoster struct {
-	mu       sync.Mutex
-	calls    int32
-	nextErr  error
+	mu      sync.Mutex
+	calls   int32
+	nextErr error
+	// errFor — сколько ПЕРВЫХ вызовов отказывают (для повторяющихся команд).
+	errFor   int
 	nextResp json.RawMessage
 	sleep    time.Duration
 	payloads []any
@@ -31,6 +33,10 @@ func (f *fakePoster) Post(ctx context.Context, payload any) (json.RawMessage, er
 	// — ложный красный, — но повод краснеть выдуманный.
 	f.mu.Lock()
 	err := f.nextErr
+	if f.errFor > 0 {
+		f.errFor--
+		err = errFakePost
+	}
 	sleep := f.sleep
 	f.payloads = append(f.payloads, payload)
 	f.mu.Unlock()
@@ -59,6 +65,16 @@ func (f *fakePoster) SetResponse(resp string) {
 }
 
 func (f *fakePoster) Calls() int32 { return atomic.LoadInt32(&f.calls) }
+
+// SetErrorFor заставляет отказать n первых вызовов — так роутер отвечает,
+// пока у host-route остаётся больше одной записи.
+func (f *fakePoster) SetErrorFor(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.errFor = n
+}
+
+var errFakePost = errors.New("system failed [0xcffd0198]")
 
 func (f *fakePoster) SetError(err error) {
 	f.mu.Lock()
