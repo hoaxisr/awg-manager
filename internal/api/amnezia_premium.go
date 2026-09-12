@@ -681,8 +681,8 @@ type AmneziaPremiumCountry struct {
 //
 // Отметки и вид уезжают СЫРЫМИ, а не готовыми флагами («устарел»,
 // «переиздаваема»), по двум причинам. Во-первых, оба признака уже вычисляются
-// на фронте (isPremiumCountryConfigStale, isPremiumIssuedConfigReissuable в
-// frontend/src/lib/utils/amneziaPremiumVpnPaste.ts), и посчитать их здесь
+// на фронте (premiumCountryConfigFreshness, isPremiumIssuedConfigReissuable в
+// frontend/src/lib/utils/amneziaPremiumCatalog.ts), и посчитать их здесь
 // значит завести второе место, где живёт правило, — в том числе второе
 // знание про строку gateway_account, которому потом расходиться. Во-вторых,
 // bool уничтожает различие «судить не по чему» (поля нет) и «судили, не

@@ -22,7 +22,7 @@ export interface AmneziaPremiumCountry {
  * Уже выданная подпиской конфигурация: элемент `issuedConfigs` каталога.
  *
  * Отметки времени — СЫРЫЕ строки портала, а не готовые флаги: решение
- * «устарела ли выдача» принимает фронт (isPremiumCountryConfigStale), и
+ * «устарела ли выдача» принимает фронт (premiumCountryConfigFreshness), и
  * отсутствие отметки обязано отличаться от «отметка есть, но не подходит».
  */
 export interface AmneziaPremiumIssuedConfig {
