@@ -569,17 +569,20 @@ func TestSyncObfuscator_MovesHostRouteToNewTarget(t *testing.T) {
 	}
 }
 
-// Create резолвит Peer.Endpoint, а у обфусцированного туннеля это loopback —
-// 127.0.0.1 оседает в трекере. Маршрута под этим адресом никогда не было:
-// первый Start не имеет права слать в NDMS no-route на собственный loopback.
+// Петля могла осесть в ЗАПИСИ туннеля под прежними версиями (трекер её не
+// принимает с F230). Маршрута под этим адресом никогда не было: Start не имеет
+// права слать в NDMS no-route на собственный loopback.
+//
+// Состояние готовим именно записью: через trackEndpointIP оно больше не
+// создаётся, и тест, оставленный на прежней подготовке, проходил бы при любом
+// содержимом obfRouteIP — то есть сторожил бы пустоту.
 func TestStartObfuscated_LoopbackTrackedIPIsNotRemoved(t *testing.T) {
 	withObfDirs(t)
 	n := newCaptureNDMS(t)
 	fr := newFakeObfRunner()
 	op := newObfOperator(t, n, fr)
 	st := obfStored()
-	st.ResolvedEndpointIP = ""
-	op.trackEndpointIP(st.ID, "127.0.0.1") // как после Create
+	st.ResolvedEndpointIP = "127.0.0.1" // наследство прежней версии в записи
 
 	if err := op.Start(context.Background(), st); err != nil {
 		t.Fatal(err)

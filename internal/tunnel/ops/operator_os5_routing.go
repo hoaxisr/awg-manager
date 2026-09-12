@@ -99,7 +99,7 @@ func (o *OperatorOS5Impl) SetupEndpointRoute(ctx context.Context, tunnelID, endp
 	// ResolvedEndpointIP это НЕ закрывает — она приезжает туда другим путём:
 	// RestoreEndpointTracking кладёт её в карту на рестарте демона, а
 	// оркестратор сохраняет GetTrackedEndpointIP в запись (F230).
-	if skipEndpointHostRoute(endpointIP) {
+	if netutil.SkipHostRoute(endpointIP) {
 		o.logInfo("setup_route", tunnelID, "endpoint не маршрутизируется ("+endpointIP+") — хост-маршрут не нужен")
 		o.removeHostRouteIfUnused(ctx, "setup_route", tunnelID, endpointIP)
 		return "", nil
@@ -148,8 +148,8 @@ func (o *OperatorOS5Impl) SetupEndpointRoute(ctx context.Context, tunnelID, endp
 
 // CleanupEndpointRoute removes the endpoint route for a tunnel.
 func (o *OperatorOS5Impl) CleanupEndpointRoute(ctx context.Context, tunnelID string) error {
-	// Петлю снимаем тоже — см. skipEndpointHostRoute: он запрещает ставить
-	// маршрут, но не снимать.
+	// Петлю снимаем тоже — netutil.SkipHostRoute запрещает ставить маршрут, но
+	// не снимать.
 	o.removeHostRouteIfUnused(ctx, "cleanup_route", tunnelID, "")
 	return nil
 }
@@ -247,7 +247,7 @@ func (o *OperatorOS5Impl) RestoreEndpointTracking(ctx context.Context, tunnelID,
 	// Немаршрутизируемый адрес в карту не кладём: под ним маршрута не бывает,
 	// а «владелец» из него получился бы настоящий — два связанных туннеля
 	// держали бы друг другу уборку под ключом 127.0.0.1 (F230).
-	if skipEndpointHostRoute(endpointIP) {
+	if netutil.SkipHostRoute(endpointIP) {
 		o.logInfo("restore_tracking", tunnelID, "endpoint не маршрутизируется ("+endpointIP+") — маршрут не отслеживаем")
 		return "", nil
 	}
@@ -269,29 +269,6 @@ func (o *OperatorOS5Impl) GetTrackedEndpointIP(tunnelID string) string {
 }
 
 // === Kernel route helpers (bypass NDMS) ===
-
-// skipEndpointHostRoute сообщает, что хост-маршрут через WAN до такого адреса
-// ставить незачем: петля, link-local, «неуказанный».
-//
-// Имя про решение, а не про свойство адреса: 127.0.0.1 и fe80:: как раз
-// маршрутизируются — первый через lo, второй on-link, — просто не через WAN.
-//
-// Набор совпадает с SSRF-гардом `internal/proxyapp/wdttlink`, но совпадение
-// случайное: там режут внутренние адреса, здесь — бессмысленные для маршрута.
-// Тот же случай у nativewg решён иначе: `nwg.obfRouteIP`
-// (`internal/tunnel/nwg/obfuscated.go`) отбрасывает петлю при ВЫБОРЕ адреса
-// для снятия, потому что там маршрута никогда и не было. Чиня третий такой
-// случай, загляните в оба.
-func skipEndpointHostRoute(ip string) bool {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		// Неразбираемый адрес пропускаем дальше: пусть отказывает команда ip,
-		// а не молчаливый предикат — так причина видна в журнале.
-		return false
-	}
-	return parsed.IsLoopback() || parsed.IsLinkLocalUnicast() ||
-		parsed.IsLinkLocalMulticast() || parsed.IsUnspecified()
-}
 
 // isIPv6 returns true if the given IP string is an IPv6 address.
 func isIPv6(ip string) bool {

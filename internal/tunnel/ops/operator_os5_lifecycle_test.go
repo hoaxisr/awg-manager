@@ -662,15 +662,6 @@ func TestStop_RemovesEndpointRoute(t *testing.T) {
 	})
 }
 
-// Адрес, который не разбирается как IP (endpoint с именем хоста), гард не
-// глотает: пусть отказывает команда ip и причина видна в журнале. Молчаливый
-// пропуск спрятал бы испорченную запись туннеля.
-func TestSkipEndpointHostRoute_KeepsUnparsableAddress(t *testing.T) {
-	if skipEndpointHostRoute("vpn.example.com") {
-		t.Error("имя хоста принято за непригодный адрес — маршрут будет молча пропущен")
-	}
-}
-
 // Ref-count считает владельцев ОДНОГО адреса. Сосед с другим endpoint снятию
 // не мешает — иначе любой второй туннель запирал бы уборку навсегда.
 func TestStop_NeighbourWithOtherAddressDoesNotHold(t *testing.T) {
