@@ -88,8 +88,11 @@ func TestRouteCommands_RemoveHostRoute_V6UsesPrefix(t *testing.T) {
 			if r["prefix"] != host+"/128" || r["no"] != true {
 				t.Errorf("remove ipv6 host: %#v", r)
 			}
+			// Ровно два ключа: `host` в v6-форме удаляет ::/0, а снятие без
+			// интерфейса стенд 5.01 принял («deleted static route:
+			// 2001:db8::2/128 via PPPoE0») — интерфейс здесь не нужен.
 			if len(r) != 2 {
-				t.Errorf("лишние ключи в v6-форме (ключ host удаляет ::/0): %#v", r)
+				t.Errorf("лишние ключи в v6-форме: %#v", r)
 			}
 		})
 	}
@@ -103,6 +106,78 @@ func TestRouteCommands_RemoveHostRoute_UnparsableStaysV4(t *testing.T) {
 	payload := poster.Payloads()[0].(map[string]any)
 	if _, v6 := payload["ipv6"]; v6 {
 		t.Fatalf("неразобранный адрес ушёл v6-формой: %#v", payload)
+	}
+}
+
+// F236: host-маршрут у v6 выражается как prefix с /128 — стенд 5.01 принял
+// `{prefix, interface, auto, comment}` и сохранил запись
+// `ipv6 route 2001:db8::2/128 PPPoE0 auto !awgm-test`. Раньше v6-ветка ключ
+// Host игнорировала, и для обфусцированного туннеля с v6-таргетом маршрут не
+// вставал вовсе.
+func TestRouteCommands_AddStaticRoute_V6Host(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	_ = cmds.AddStaticRoute(context.Background(), StaticRouteSpec{
+		Host: "2001:db8::1", Interface: "PPPoE0", Comment: "awgm-obfuscator awg10", V6: true,
+	})
+	r := poster.Payloads()[0].(map[string]any)["ipv6"].(map[string]any)["route"].(map[string]any)
+	if r["prefix"] != "2001:db8::1/128" || r["interface"] != "PPPoE0" || r["auto"] != true {
+		t.Errorf("add ipv6 host: %#v", r)
+	}
+	if r["comment"] != "awgm-obfuscator awg10" {
+		t.Errorf("комментарий владения потерян: %#v", r)
+	}
+	if _, ok := r["host"]; ok {
+		t.Errorf("ключ host в v6-форме NDMS молча отбрасывает: %#v", r)
+	}
+}
+
+func TestRouteCommands_RemoveStaticRoute_V6Host(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	_ = cmds.RemoveStaticRoute(context.Background(), StaticRouteSpec{
+		Host: "2001:db8::1", Interface: "PPPoE0", V6: true,
+	})
+	r := poster.Payloads()[0].(map[string]any)["ipv6"].(map[string]any)["route"].(map[string]any)
+	if r["prefix"] != "2001:db8::1/128" || r["no"] != true {
+		t.Errorf("remove ipv6 host: %#v", r)
+	}
+}
+
+// Запрос без подсети не отправляется вовсе: NDMS молча отбрасывает неизвестное
+// поле, и снятие вырождается в удаление ::/0 — дефолтного маршрута.
+// Заполнены оба поля — побеждает Network: у v6 сеть и хост выражаются одним
+// ключом, и «сеть плюс хост» разошлись бы молча.
+func TestRouteCommands_V6NetworkWinsOverHost(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t)
+	_ = cmds.AddStaticRoute(context.Background(), StaticRouteSpec{
+		Network: "2001:db8::/64", Host: "2001:db8::1", Interface: "PPPoE0", V6: true,
+	})
+	r := poster.Payloads()[0].(map[string]any)["ipv6"].(map[string]any)["route"].(map[string]any)
+	if r["prefix"] != "2001:db8::/64" {
+		t.Errorf("приоритет полей разъехался: %#v", r)
+	}
+}
+
+func TestRouteCommands_V6WithoutPrefix_Refused(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(*RouteCommands) error
+	}{
+		{"add", func(c *RouteCommands) error {
+			return c.AddStaticRoute(context.Background(), StaticRouteSpec{Interface: "PPPoE0", V6: true})
+		}},
+		{"remove", func(c *RouteCommands) error {
+			return c.RemoveStaticRoute(context.Background(), StaticRouteSpec{Interface: "PPPoE0", V6: true})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmds, poster := newTestRouteCommands(t)
+			if err := tc.call(cmds); err == nil {
+				t.Fatal("v6-маршрут без подсети обязан отказывать, а не уходить в NDMS")
+			}
+			if n := len(poster.Payloads()); n != 0 {
+				t.Fatalf("в NDMS ушёл запрос без подсети: %#v", poster.Payloads())
+			}
+		})
 	}
 }
 

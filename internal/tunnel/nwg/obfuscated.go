@@ -267,9 +267,20 @@ func (o *OperatorNativeWG) addObfHostRoute(ctx context.Context, stored *storage.
 	if wan == names.NDMSName {
 		return fmt.Errorf("дефолтный маршрут уже через %s (сам туннель), host-route не ставится", wan)
 	}
+	// V6 — не украшение: у v6 своя форма (prefix вместо host), и без флага
+	// роутер отвечает «invalid destination host», а host-route до target'а
+	// релея не встаёт вовсе — трафик релея уходит в сам туннель, то есть
+	// в петлю, ради которой маршрут и ставится.
 	return o.commands.Routes.AddStaticRoute(ctx, command.StaticRouteSpec{
 		Host: ip, Interface: wan, Comment: "awgm-obfuscator " + stored.ID,
+		V6: isV6Addr(ip),
 	})
+}
+
+// isV6Addr — тот же разбор, что у соседей по пакету (operator.go, sync.go).
+func isV6Addr(ip string) bool {
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.To4() == nil
 }
 
 // obfRouteIP — адрес, под которым стоит host-route: свежий резолв этого запуска,
