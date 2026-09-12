@@ -28,6 +28,7 @@ const (
 	codePremiumSettingsError      = "AMNEZIA_PREMIUM_SETTINGS_ERROR"
 	codePremiumDeleteError        = "AMNEZIA_PREMIUM_DELETE_ERROR"
 	codePremiumNoCountry          = "AMNEZIA_PREMIUM_NO_COUNTRY"
+	codePremiumBadCountry         = "AMNEZIA_PREMIUM_BAD_COUNTRY"
 	codePremiumConfigBusy         = "AMNEZIA_PREMIUM_CONFIG_BUSY"
 	// codePremiumOutcomeUnknown — исход расходной операции неизвестен
 	// (перенаправление у портала). Свой код, потому что это единственный
@@ -593,6 +594,14 @@ func (h *AmneziaPremiumHandler) failCP(w http.ResponseWriter, event string, err 
 	response.ErrorWithStatus(w, status, msg, code)
 }
 
+// premiumCheckDeviceCount — хвост обоих отказов расходной операции, у которых
+// исход у портала уже состоялся или неизвестен. Хвост ОДИН на оба, потому что
+// и делать пользователю в обоих случаях надо одно: посмотреть, что у портала,
+// а не жать кнопку заново. Две формулировки одного совета расходятся: одна из
+// них уже успела позвать «прежде чем запрашивать снова», то есть ровно к
+// повтору, который тратит второй слот подписки (F200).
+const premiumCheckDeviceCount = "Откройте список стран и проверьте счётчик устройств подписки."
+
 // cpFailure переводит отказ клиента CP в наш ответ. Разбор идёт по
 // СЕНТИНЕЛАМ, и порядок значим: ErrMirrorUnavailable, дойдя до вызывающего,
 // обёрнут в ErrServiceUnavailable — общая ветка обязана быть последней.
@@ -610,20 +619,19 @@ func cpFailure(err error) (status int, code, message string) {
 	case errors.Is(err, amneziacp.ErrNoKey):
 		return http.StatusBadRequest, codePremiumNoKey, "Ключ подписки Amnezia не задан"
 	case errors.Is(err, amneziacp.ErrOutcomeUnknown):
-		// Единственный отказ линии, где текст НЕ зовёт повторить: 3xx у
+		// Один из двух отказов линии, где текст НЕ зовёт повторить: 3xx у
 		// расходной ручки мог быть формой успеха, и тогда слот подписки уже
 		// потрачен, а повтор потратит второй (F200).
 		return http.StatusBadGateway, codePremiumOutcomeUnknown,
 			"Портал Amnezia ответил перенаправлением — выдана конфигурация или нет, неизвестно. " +
-				"Откройте список стран и проверьте счётчик устройств, прежде чем запрашивать снова"
+				premiumCheckDeviceCount
 	case errors.Is(err, amneziacp.ErrResponseUnusable):
 		// Портал запрос ОБРАБОТАЛ: слот устройства подписки потрачен, а
 		// разобрать ответ не удалось. Текст говорит это прямо и повторить не
 		// зовёт — повтор потратит второй слот (F200).
 		return http.StatusBadGateway, codePremiumResponseUnusable,
 			"Портал Amnezia обработал запрос, но конфигурацию из ответа разобрать не удалось — " +
-				"слот устройства подписки потрачен. Откройте список стран и проверьте счётчик устройств, " +
-				"прежде чем запрашивать конфигурацию этой страны"
+				"слот устройства подписки потрачен. " + premiumCheckDeviceCount
 	case errors.Is(err, amneziacp.ErrMirrorUnavailable):
 		return http.StatusBadGateway, codePremiumMirrorUnavailable, "Зеркало Amnezia недоступно — попробуйте позже"
 	default:
@@ -721,7 +729,9 @@ type AmneziaPremiumCatalogData struct {
 	MaxDeviceCount    int64 `json:"maxDeviceCount" example:"7"`
 	// Countries — список стран подписки. Пустой список — не отказ: это
 	// правдивый ответ портала, и придумывать по нему ошибку значило бы
-	// решать за пользователя, что его подписка сломана.
+	// решать за пользователя, что его подписка сломана. А вот ОТСУТСТВИЕ
+	// поля у портала — отказ: см. premiumCatalog. Поле здесь всегда непустой
+	// ссылкой ([] или список), null не уезжает никогда.
 	Countries []AmneziaPremiumCountry `json:"countries"`
 	// IssuedConfigs — уже выданные конфигурации подписки. Без omitempty и с
 	// сохранением nil ровно по той же причине, что у Protocols выше: старый
@@ -767,6 +777,17 @@ func premiumCatalog(raw []byte) (AmneziaPremiumCatalogData, error) {
 		// пользователю нечего исправлять в своём ключе.
 		return AmneziaPremiumCatalogData{}, fmt.Errorf(
 			"%w: данные подписки не разобраны: %w", amneziacp.ErrServiceUnavailable, err)
+	}
+	// Списка стран у портала НЕ БЫЛО (поля нет или оно null) — отказ, а не
+	// пустой каталог: пустой каталог пользователь прочитает как «в моей
+	// подписке нет ни одной страны». То же правило и по той же причине уже
+	// стоит слоем ниже (amneziacp.scrubAccountInfo отвергает пустой объект);
+	// безусловный make здесь стирал бы различие «портал про страны не сказал»
+	// и «стран нет» ровно там, где ниже его берегут. Пустой список при этом
+	// проходит: это правдивый ответ портала.
+	if in.AvailableCountries == nil {
+		return AmneziaPremiumCatalogData{}, fmt.Errorf(
+			"%w: в данных подписки нет списка стран", amneziacp.ErrServiceUnavailable)
 	}
 	out := AmneziaPremiumCatalogData{
 		PlanName:            in.DisplayName,
@@ -839,6 +860,15 @@ type AmneziaPremiumConfigRequest struct {
 	CountryCode string `json:"countryCode" example:"nl"`
 }
 
+// maxCountryCodeLen ограничивает длину кода страны В БАЙТАХ. Соображение то
+// же, что у maxLoggedMirrorURLLen выше: цель — роутер со 128 МБ, журнал
+// приложения кольцевой и в памяти, а принятый код уезжает в него на каждой
+// выдаче. Общий предел на тело запроса (мегабайт) от этого не спасает: код в
+// двести тысяч символов даёт строку журнала в двести тысяч байт и выбивает
+// из буфера всё остальное. Живой код — две буквы («nl»), так что 64 байта
+// дают тридцатикратный запас и остаются мелочью в журнале даже целиком.
+const maxCountryCodeLen = 64
+
 // AmneziaPremiumConfigData — выданная конфигурация.
 type AmneziaPremiumConfigData struct {
 	// CountryCode — страна в том виде, в каком ушла в портал.
@@ -889,11 +919,22 @@ func (h *AmneziaPremiumHandler) Config(w http.ResponseWriter, r *http.Request) {
 		response.ErrorWithStatus(w, http.StatusBadRequest, "Страна не выбрана", codePremiumNoCountry)
 		return
 	}
+	if len(code) > maxCountryCodeLen {
+		// Отказ ДО похода в портал: расходная операция заведомо невозможна,
+		// а присланное значение иначе уехало бы и в тело запроса к порталу, и
+		// в журнал целиком. Сам код в эту строку НЕ попадает — он и есть то,
+		// что не влезло; длины хватает, чтобы понять, что прислал клиент.
+		h.log.Warn(logActionPremium, "country-config", fmt.Sprintf(
+			"route=direct код страны длиннее %d байт (%d) — отказ", maxCountryCodeLen, len(code)))
+		response.ErrorWithStatus(w, http.StatusBadRequest,
+			fmt.Sprintf("Код страны длиннее %d байт", maxCountryCodeLen), codePremiumBadCountry)
+		return
+	}
 	if !h.beginCountryConfig(code) {
 		// Отказ, а не ожидание: ждущий запрос всё равно кончился бы вторым
 		// походом в портал либо ответом, которого пользователь уже не ждёт.
 		h.log.Info(logActionPremium, "country-config",
-			fmt.Sprintf("route=direct country=%s запрос уже выполняется — отказ", code))
+			fmt.Sprintf("route=direct country=%q запрос уже выполняется — отказ", code))
 		response.ErrorWithStatus(w, http.StatusConflict,
 			"Конфигурация для этой страны уже запрашивается — дождитесь ответа", codePremiumConfigBusy)
 		return
@@ -909,7 +950,12 @@ func (h *AmneziaPremiumHandler) Config(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info(logActionPremium, "country-config",
-		fmt.Sprintf("route=direct country=%s конфигурация выдана", code))
+		fmt.Sprintf("route=direct country=%q конфигурация выдана", code))
+	// Публикуется ПОСЛЕ успеха портала: операция расходная, и подсказка
+	// «перечитай каталог» на отказе звала бы перечитывать то, что не менялось.
+	// Счётчик устройств и список выданных конфигураций у портала выдачей
+	// изменились — вторая вкладка иначе продолжит показывать прежние.
+	h.bus.PublishInvalidated(events.ResourceAmneziaPremiumCatalog, "config-issued")
 	response.Success(w, AmneziaPremiumConfigData{CountryCode: code, Config: conf})
 }
 
@@ -1072,6 +1118,11 @@ func (h *AmneziaPremiumHandler) SaveMirror(w http.ResponseWriter, r *http.Reques
 	// спрашивают именно его.
 	shown := h.mirrorURL()
 	h.log.Info(logActionPremium, "mirror-save", "route=direct действующий адрес зеркала: "+shown)
+	// Публикуется ПОСЛЕ удавшейся записи: на отказе settings.Update выше уже
+	// вернул, и подсказка там означала бы «перечитай» про несостоявшуюся
+	// смену. Своим ключом, а не ResourceSettings: адрес ушёл из общего ответа
+	// настроек и читается отдельной ручкой.
+	h.bus.PublishInvalidated(events.ResourceAmneziaPremiumMirror, "saved")
 	response.Success(w, AmneziaPremiumMirrorData{MirrorURL: shown})
 }
 

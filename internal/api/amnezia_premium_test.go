@@ -2354,8 +2354,11 @@ func TestAmneziaPremiumCatalog_IssuedConfigsAbsentIsNotEmpty(t *testing.T) {
 		account string
 		want    string
 	}{
-		{"поля нет", `{"data":{"display_name":"Premium test-plan-77"}}`, "null"},
-		{"пустой список", `{"data":{"display_name":"Premium test-plan-77","issued_configs":[]}}`, "[]"},
+		// available_countries в обеих фикстурах есть намеренно: его ОТСУТСТВИЕ —
+		// отдельный отказ каталога (см. TestAmneziaPremiumCatalog_CountriesAbsentIsRefused),
+		// и без поля этот случай сюда бы не доехал вовсе.
+		{"поля нет", `{"data":{"display_name":"Premium test-plan-77","available_countries":[]}}`, "null"},
+		{"пустой список", `{"data":{"display_name":"Premium test-plan-77","available_countries":[],"issued_configs":[]}}`, "[]"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2380,6 +2383,143 @@ func TestAmneziaPremiumCatalog_IssuedConfigsAbsentIsNotEmpty(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Списка стран у портала НЕ БЫЛО — отказ, а не пустой каталог: пустой каталог
+// пользователь прочитает как «в моей подписке нет ни одной стран», то есть как
+// правду про свою подписку. Слоем ниже (amneziacp.scrubAccountInfo) эта защита
+// уже стоит и по той же причине; здесь её не было.
+//
+// Пустой список при этом проходит: это правдивый ответ портала, и придумывать
+// по нему ошибку значило бы решать за пользователя, что подписка сломана.
+func TestAmneziaPremiumCatalog_CountriesAbsentIsRefused(t *testing.T) {
+	cases := []struct {
+		name    string
+		account string
+		wantOK  bool
+	}{
+		{"поля нет", `{"data":{"display_name":"Premium test-plan-77"}}`, false},
+		{"поле null", `{"data":{"display_name":"Premium test-plan-77","available_countries":null}}`, false},
+		{"пустой список", `{"data":{"display_name":"Premium test-plan-77","available_countries":[]}}`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newPremiumStand(t)
+			st.seedCatalog(t)
+			st.portal.setAccount(tc.account)
+
+			rec := st.catalog(t)
+			if !tc.wantOK {
+				if rec.Code == http.StatusOK {
+					t.Fatalf("отсутствие списка стран пришло успехом: %s", rec.Body.String())
+				}
+				// Класс отказа — «портал ответил не тем», а не «ключ плох»:
+				// пользователю в своём ключе исправлять нечего.
+				if code := premiumErrorCode(t, rec); code != codePremiumServiceUnavailable {
+					t.Errorf("код отказа = %q, want %q", code, codePremiumServiceUnavailable)
+				}
+				return
+			}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("пустой список стран пришёл отказом: %d %s", rec.Code, rec.Body.String())
+			}
+			// Различие «поля нет» и «стран нет» живёт в сыром JSON: отказ
+			// против [], а не null.
+			var raw struct {
+				Data map[string]json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+				t.Fatalf("разбор тела: %v", err)
+			}
+			if got := string(raw.Data["countries"]); got != "[]" {
+				t.Errorf("countries = %s, want []", got)
+			}
+		})
+	}
+}
+
+// Обе оставшиеся мутирующие ручки публикуют подсказку инвалидации ПОСЛЕ
+// успеха и молчат на отказе. Без публикации вторая вкладка продолжает
+// показывать прежний счётчик устройств и прежний адрес зеркала; публикация до
+// успеха зовёт перечитать то, что не менялось.
+//
+// Ключи РАЗНЫЕ: выдача конфигурации меняет состояние подписки У ПОРТАЛА
+// (счётчик устройств, список выданных), а запись зеркала — нашу настройку,
+// которую отдаёт своя ручка. Один ключ на двоих будил бы поход в портал на
+// каждую правку адреса.
+func TestAmneziaPremiumMutations_PublishInvalidation(t *testing.T) {
+	// waitEvent — событие с шины или провал по таймауту.
+	waitEvent := func(t *testing.T, ch <-chan events.Event, want events.Resource, reason string) {
+		t.Helper()
+		select {
+		case ev := <-ch:
+			data, _ := ev.Data.(events.ResourceInvalidatedEvent)
+			if ev.Type != events.EventResourceInvalidated || data.Resource != want || data.Reason != reason {
+				t.Fatalf("событие = %+v, want %s/%s", ev, want, reason)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("события %s/%s не было", want, reason)
+		}
+	}
+	// noEvent — на шине пусто. Пауза короткая: публикация синхронна с
+	// обработчиком, так что событие, если бы оно было, уже лежало бы в канале.
+	noEvent := func(t *testing.T, ch <-chan events.Event) {
+		t.Helper()
+		select {
+		case ev := <-ch:
+			t.Fatalf("событие на отказе: %+v", ev)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	t.Run("выдача конфигурации", func(t *testing.T) {
+		st := newPremiumStand(t)
+		bus := events.NewBus()
+		st.h.SetEventBus(bus)
+		_, ch, unsub := bus.Subscribe()
+		defer unsub()
+		st.seedCatalog(t)
+
+		// Отказ портала: расходная операция не состоялась — публиковать нечего.
+		st.portal.setConfigStatus(http.StatusInternalServerError)
+		if rec := st.config(t, "nl"); rec.Code == http.StatusOK {
+			t.Fatalf("отказ портала пришёл успехом: %s", rec.Body.String())
+		}
+		noEvent(t, ch)
+
+		st.portal.setConfigStatus(http.StatusOK)
+		if rec := st.config(t, "nl"); rec.Code != http.StatusOK {
+			t.Fatalf("выдача конфигурации: %d %s", rec.Code, rec.Body.String())
+		}
+		waitEvent(t, ch, events.ResourceAmneziaPremiumCatalog, "config-issued")
+	})
+
+	t.Run("запись адреса зеркала", func(t *testing.T) {
+		st := newPremiumStand(t)
+		bus := events.NewBus()
+		st.h.SetEventBus(bus)
+		_, ch, unsub := bus.Subscribe()
+		defer unsub()
+
+		// Непригодный адрес отвергается до всякой записи.
+		if rec := st.mirrorPost(t, `{"mirrorUrl":"не адрес вовсе"}`); rec.Code != http.StatusBadRequest {
+			t.Fatalf("непригодный адрес: %d %s, ждали 400", rec.Code, rec.Body.String())
+		}
+		noEvent(t, ch)
+
+		// Запись не удалась — настройка прежняя, публиковать нечего.
+		repair := st.breakSettingsFile(t)
+		if rec := st.mirrorPost(t, `{"mirrorUrl":"`+testMirrorURL+`"}`); rec.Code == http.StatusOK {
+			t.Fatalf("неудавшаяся запись пришла успехом: %s", rec.Body.String())
+		}
+		noEvent(t, ch)
+		repair()
+
+		if rec := st.mirrorPost(t, `{"mirrorUrl":"`+testMirrorURL+`"}`); rec.Code != http.StatusOK {
+			t.Fatalf("запись адреса: %d %s", rec.Code, rec.Body.String())
+		}
+		waitEvent(t, ch, events.ResourceAmneziaPremiumMirror, "saved")
+	})
 }
 
 // Ни один ответ новых ручек не несёт секрета: ни схемы ссылки, ни тела
@@ -2550,6 +2690,107 @@ func (p *premiumPanicWriter) Write([]byte) (int, error) {
 
 func (p *premiumPanicWriter) WriteHeader(int) {}
 
+// Слишком длинный код страны отвергается ДО похода в портал, и в журнал он не
+// попадает вовсе. Общий предел на тело запроса (мегабайт) здесь не защита:
+// код в двести тысяч символов давал строку журнала в двести тысяч байт, а
+// журнал приложения — кольцевой буфер в памяти роутера со 128 МБ, и одна
+// такая запись выбивает из него всё остальное. Перевод строки внутри кода
+// вдобавок рвал бы запись журнала на несколько.
+func TestAmneziaPremiumConfig_LongCountryCodeRejectedBeforePortal(t *testing.T) {
+	st := newPremiumStand(t)
+	st.seedCatalog(t)
+	before := st.log.count()
+
+	// Длина живого кода — две буквы. Здесь 200 000 символов в теле запроса
+	// (150 000 после разбора JSON) с переводами строк внутри, как их замерил
+	// ревьюер: перевод строки рвал бы запись журнала на несколько.
+	code := strings.Repeat(`nl\n`, 50000)
+	rec := st.config(t, code)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("длинный код страны: %d %s, ждали 400", rec.Code, rec.Body.String())
+	}
+	if got := premiumErrorCode(t, rec); got != codePremiumBadCountry {
+		t.Errorf("код отказа = %q, want %q", got, codePremiumBadCountry)
+	}
+	// Главное: расходная операция к порталу не уходила.
+	if got := st.portal.configsSeen(); len(got) != 0 {
+		t.Fatalf("запросов конфигурации к порталу %d (%v), ждали 0", len(got), got)
+	}
+
+	// В журнале — ровно одна новая строка, и она короткая: код в неё не
+	// попадает ни целиком, ни куском.
+	added := st.log.count() - before
+	if added != 1 {
+		t.Fatalf("новых строк журнала %d, want 1", added)
+	}
+	warns := st.log.warnings("country-config")
+	if len(warns) != 1 {
+		t.Fatalf("предупреждений про код страны %d, want 1: %v", len(warns), warns)
+	}
+	if n := len(warns[0]); n > 200 {
+		t.Errorf("строка журнала %d байт — предел на код страны не удержал журнал: %q", n, warns[0])
+	}
+	if strings.Contains(warns[0], "nl\nnl") {
+		t.Errorf("код страны уехал в журнал: %q", warns[0])
+	}
+	// Ответ пользователю тоже не эхо присланного.
+	if n := rec.Body.Len(); n > 512 {
+		t.Errorf("тело отказа %d байт — присланный код уехал обратно: %s", n, rec.Body.String()[:200])
+	}
+
+	// Годный код после отказа по-прежнему проходит: предел не запирает ручку.
+	if rec := st.config(t, "nl"); rec.Code != http.StatusOK {
+		t.Fatalf("годный код после отказа: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// premiumRetryLures — слова, которыми русский текст зовёт сделать то же самое
+// ещё раз. Набор ШИРОКИЙ и общий на оба отказа расходной операции намеренно:
+// узкий список пиннил бы конкретную формулировку и пропустил бы текст, который
+// зовёт повторить другими словами. Каждое слово ловит живой зовущий текст,
+// который в этой же линии уже есть: «попробуйте» — «Зеркало Amnezia
+// недоступно — попробуйте позже», «снова» — прежний хвост «прежде чем
+// запрашивать снова», «заново» — «введите ключ заново».
+//
+// Корни, а не слова целиком: «повтор» ловит и «повторите», и «повторный»,
+// «запроси»/«запрашива» — «запросите ещё», «запрашивайте снова». Голое
+// «запрос» сюда не годится: «Портал Amnezia обработал запрос» ни к чему не
+// зовёт.
+var premiumRetryLures = []string{
+	"попробуйте", "попытайтесь", "повтор", "снова", "ещё раз", "еще раз",
+	"заново", "запросите", "запрашивай", "перезапрос",
+}
+
+// assertNotRetryable — текст отказа не зовёт повторить расходную операцию.
+func assertNotRetryable(t *testing.T, msg string) {
+	t.Helper()
+	low := strings.ToLower(msg)
+	for _, lure := range premiumRetryLures {
+		if strings.Contains(low, lure) {
+			t.Errorf("текст зовёт повторить расходную операцию (%q): %s", lure, msg)
+		}
+	}
+}
+
+// Оба отказа расходной операции советуют ОДНО И ТО ЖЕ и одними словами: и там
+// и там пользователю надо посмотреть, что у портала, а не жать кнопку заново.
+// Две формулировки одного совета расходятся — одна из них уже успела позвать
+// «прежде чем запрашивать снова», то есть ровно к повтору, который тратит
+// второй слот подписки (F200).
+func TestAmneziaPremiumConfig_BothNonRetryableTextsShareOneAdvice(t *testing.T) {
+	_, _, redirect := cpFailure(fmt.Errorf("%w: стенд", amneziacp.ErrOutcomeUnknown))
+	_, _, unusable := cpFailure(fmt.Errorf("%w: стенд", amneziacp.ErrResponseUnusable))
+	assertNotRetryable(t, redirect)
+	assertNotRetryable(t, unusable)
+	if !strings.HasSuffix(redirect, premiumCheckDeviceCount) {
+		t.Errorf("текст перенаправления кончается не общим советом: %s", redirect)
+	}
+	if !strings.HasSuffix(unusable, premiumCheckDeviceCount) {
+		t.Errorf("текст непригодного ответа кончается не общим советом: %s", unusable)
+	}
+}
+
 // Перенаправление у расходной ручки — свой класс отказа, и текст НЕ зовёт
 // повторить: 302 у портала бывает формой успеха, и тогда слот подписки уже
 // потрачен, а повтор потратит второй (F200). К порталу при этом уходит ровно
@@ -2566,12 +2807,7 @@ func TestAmneziaPremiumConfig_RedirectIsNotRetryable(t *testing.T) {
 	if code := premiumErrorCode(t, rec); code != codePremiumOutcomeUnknown {
 		t.Fatalf("код отказа = %q, want %q", code, codePremiumOutcomeUnknown)
 	}
-	msg := premiumErrorMessage(t, rec)
-	for _, lure := range []string{"попробуйте", "повтор", "ещё раз", "снова запрос"} {
-		if strings.Contains(strings.ToLower(msg), lure) {
-			t.Errorf("текст зовёт повторить расходную операцию (%q): %s", lure, msg)
-		}
-	}
+	assertNotRetryable(t, premiumErrorMessage(t, rec))
 	if got := st.portal.configsSeen(); len(got) != 1 {
 		t.Fatalf("запросов конфигурации к порталу %d (%v), ждали 1", len(got), got)
 	}
@@ -2602,15 +2838,7 @@ func TestAmneziaPremiumConfig_UnusableResponseIsNotRetryable(t *testing.T) {
 			if code := premiumErrorCode(t, rec); code != codePremiumResponseUnusable {
 				t.Fatalf("код отказа = %q, want %q", code, codePremiumResponseUnusable)
 			}
-			// Приманки шире трёх слов: проверяется отсутствие приглашения
-			// повторить, а не отсутствие конкретной формулировки. «снова» и
-			// «повтор» ловят и живой текст, если он станет зовущим.
-			msg := premiumErrorMessage(t, rec)
-			for _, lure := range []string{"попробуйте", "повтор", "снова", "ещё раз"} {
-				if strings.Contains(strings.ToLower(msg), lure) {
-					t.Errorf("текст зовёт повторить расходную операцию (%q): %s", lure, msg)
-				}
-			}
+			assertNotRetryable(t, premiumErrorMessage(t, rec))
 			if got := st.portal.configsSeen(); len(got) != 1 {
 				t.Fatalf("запросов конфигурации к порталу %d (%v), ждали 1", len(got), got)
 			}

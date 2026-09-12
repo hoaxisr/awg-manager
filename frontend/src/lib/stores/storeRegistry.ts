@@ -34,6 +34,8 @@ export type ResourceKey =
 	| 'proxyrt.instances'             // ResourceProxyInstances — состав инстансов прокси
 	| 'mcpKeys'                     // ResourceMcpKeys — ключи MCP-сервера
 	| 'amneziaPremium.key'          // ResourceAmneziaPremiumKey — состояние ключа подписки Amnezia Premium
+	| 'amneziaPremium.catalog'     // ResourceAmneziaPremiumCatalog — данные подписки у портала (счётчик устройств, выданные конфигурации)
+	| 'amneziaPremium.mirror'      // ResourceAmneziaPremiumMirror — адрес зеркала Amnezia
 	| 'bypass-set';                 // публикуется после наполнения AWGM-BYPASS (storeBypassSetOutcome)
 
 /**
