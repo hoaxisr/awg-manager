@@ -124,3 +124,123 @@ export function premiumCountryConfigFreshness(
 	if (states.includes('unknown')) return 'unknown';
 	return 'fresh';
 }
+
+// === Карточка подписки и метка строки страны ===
+
+/**
+ * Флаг страны из двухбуквенного кода: пара региональных индикаторов.
+ *
+ * Всё, что не пара латинских букв, даёт ПУСТУЮ строку: половина флага и
+ * «квадратик с кодом» в списке стран читаются как поломка вёрстки, а не как
+ * отсутствие данных.
+ */
+export function premiumCountryFlag(code: string): string {
+	const cc = premiumCountryCode(code);
+	if (!/^[a-z]{2}$/.test(cc)) return '';
+	const base = 0x1f1e6 - 'a'.charCodeAt(0);
+	return String.fromCodePoint(...[...cc].map((ch) => base + ch.charCodeAt(0)));
+}
+
+/** Порог «истекает» — 30 дней, как в клиенте Amnezia (`apiUtils.h`, `withinDays = 30`). */
+const PREMIUM_EXPIRING_DAYS = 30;
+const DAY_MS = 86_400_000;
+
+/**
+ * Состояние подписки считается ПО ДАТЕ, а не по статусу портала, — так делает
+ * клиент Amnezia (`apiAccountInfoModel.cpp`, `isSubscriptionExpired`).
+ *
+ * `unknown` — даты нет или она непарсима. Это отдельное состояние: свести его
+ * к `active` значило бы выдать неизвестное за норму, а к `expired` — запретить
+ * выдачу подписке, про срок которой портал просто промолчал.
+ */
+export type PremiumSubscriptionState = 'active' | 'expiring' | 'expired' | 'unknown';
+
+/** Сколько осталось до конца подписки, мс; null — считать не от чего. */
+function premiumMsLeft(endDate: string | undefined, nowMs: number): number | null {
+	const left = Date.parse(endDate?.trim() ?? '') - nowMs;
+	return Number.isFinite(left) ? left : null;
+}
+
+/** Время — аргументом: с `Date.now()` внутри проверка зависела бы от часов машины. */
+export function premiumSubscriptionState(
+	endDate: string | undefined,
+	nowMs: number
+): PremiumSubscriptionState {
+	const left = premiumMsLeft(endDate, nowMs);
+	if (left === null) return 'unknown';
+	if (left <= 0) return 'expired';
+	return left <= PREMIUM_EXPIRING_DAYS * DAY_MS ? 'expiring' : 'active';
+}
+
+/**
+ * Дней до конца подписки, вверх (начатый день ещё идёт); null — даты нет.
+ * У истёкшей подписки значение нулевое или отрицательное.
+ */
+export function premiumSubscriptionDaysLeft(
+	endDate: string | undefined,
+	nowMs: number
+): number | null {
+	const left = premiumMsLeft(endDate, nowMs);
+	return left === null ? null : Math.ceil(left / DAY_MS);
+}
+
+/**
+ * Можно ли забирать конфигурацию при таком состоянии подписки.
+ *
+ * Запрещает ТОЛЬКО истёкшая. «Истекает» — предупреждение (жёлтая карточка), а
+ * не запрет; «срок неизвестен» тоже не запрет: портал мог не прислать дату, и
+ * выключать по этому фичу — значит ломать работающую подписку.
+ */
+export function isPremiumIssueAllowed(state: PremiumSubscriptionState): boolean {
+	return state !== 'expired';
+}
+
+/**
+ * Дата С ГОДОМ; на мусоре — пустая строка.
+ *
+ * `formatDate` из `utils/format.ts` не подходит дважды: она печатает без года
+ * (а «действует до 03.10» без года бессмысленно) и отдаёт на непарсимом входе
+ * `'—'`, то есть рисует прочерк там, где строку показывать вообще не следует.
+ */
+export function formatPremiumDate(value: string | undefined): string {
+	const ms = Date.parse(value?.trim() ?? '');
+	if (!Number.isFinite(ms)) return '';
+	return new Date(ms).toLocaleDateString('ru-RU', {
+		day: '2-digit',
+		month: '2-digit',
+		year: 'numeric',
+	});
+}
+
+export type PremiumCountryLabelKind = 'stale' | 'tunnel' | 'issued';
+
+export interface PremiumCountryLabel {
+	kind: PremiumCountryLabelKind;
+	text: string;
+}
+
+/**
+ * Метка строки страны — ОДНА функция: приоритет задаётся здесь, а не порядком
+ * `{:else if}` в разметке.
+ *
+ * Порядок: устарела → туннель → уже выдавалась. «Конфиг устарел» обязан идти
+ * первым: у страны с туннелем конфигурация устаревает ровно так же, а лесенка,
+ * где туннель проверяется раньше, эту метку не покажет никогда — то есть
+ * спрячет её у единственных, кому она нужна (пришедших обновить конфигурацию).
+ * «Уже выдавалась» — последняя: это самая слабая новость из трёх.
+ */
+export function premiumCountryLabel<T extends { name: string; amneziaCountry?: string }>(
+	code: string,
+	issued: AmneziaPremiumIssuedConfig[],
+	tunnels: readonly T[]
+): PremiumCountryLabel | null {
+	if (premiumCountryConfigFreshness(issued, code) === 'stale') {
+		return { kind: 'stale', text: 'конфиг устарел' };
+	}
+	const tunnel = findPremiumCountryTunnel(tunnels, code);
+	if (tunnel) return { kind: 'tunnel', text: `туннель ${tunnel.name}` };
+	if (isPremiumCountryIssued(issued, code)) {
+		return { kind: 'issued', text: 'конфиг уже выдавался' };
+	}
+	return null;
+}

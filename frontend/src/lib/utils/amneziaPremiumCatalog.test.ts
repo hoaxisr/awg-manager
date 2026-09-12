@@ -2,15 +2,21 @@ import { describe, expect, it } from 'vitest';
 import type { AmneziaPremiumCountry, AmneziaPremiumIssuedConfig } from '$lib/types';
 import {
 	findPremiumCountryTunnel,
+	formatPremiumDate,
 	isPremiumCountryAvailable,
 	isPremiumCountryIssued,
+	isPremiumIssueAllowed,
 	isPremiumIssuedConfigActiveDevice,
 	isPremiumIssuedConfigReissuable,
 	premiumActiveDevicesForCountry,
 	premiumCountryConfigFreshness,
+	premiumCountryFlag,
+	premiumCountryLabel,
 	premiumIssuedConfigFreshness,
-	premiumIssuedConfigSourceType,
 	premiumIssuedConfigsForCountry,
+	premiumIssuedConfigSourceType,
+	premiumSubscriptionDaysLeft,
+	premiumSubscriptionState,
 } from './amneziaPremiumCatalog';
 
 // Фикстура НАШЕЙ формы ответа (camelCase), той самой, что отдаёт
@@ -247,5 +253,182 @@ describe('активное устройство против переиздав�
 		expect(premiumIssuedConfigsForCountry(issued, 'nl')).toEqual([reissuable]);
 		expect(isPremiumCountryIssued(issued, 'nl')).toBe(true);
 		expect(premiumCountryConfigFreshness(issued, 'nl')).toBe('stale');
+	});
+});
+
+describe('флаг страны из кода', () => {
+	it('собирает флаг из пары региональных индикаторов', () => {
+		expect(premiumCountryFlag('de')).toBe('\u{1F1E9}\u{1F1EA}');
+		expect(premiumCountryFlag('is')).toBe('\u{1F1EE}\u{1F1F8}');
+	});
+
+	it('не спотыкается о регистр и пробелы кода', () => {
+		expect(premiumCountryFlag('Nl')).toBe('\u{1F1F3}\u{1F1F1}');
+		expect(premiumCountryFlag(' CH ')).toBe('\u{1F1E8}\u{1F1ED}');
+	});
+
+	// Половина флага и «квадратик с кодом» читаются как поломка вёрстки, а не
+	// как отсутствие данных: на любом не-двухбуквенном коде значка просто нет.
+	it('на коде не из двух латинских букв отдаёт пустую строку', () => {
+		expect(premiumCountryFlag('')).toBe('');
+		expect(premiumCountryFlag('d')).toBe('');
+		expect(premiumCountryFlag('deu')).toBe('');
+		expect(premiumCountryFlag('74')).toBe('');
+		expect(premiumCountryFlag('шв')).toBe('');
+	});
+});
+
+describe('состояние подписки по дате окончания', () => {
+	// Часы машины в расчёт не входят: «сейчас» приходит аргументом.
+	const now = Date.parse('2026-10-07T04:31:00Z');
+
+	it('подписку с запасом больше порога считает действующей', () => {
+		expect(premiumSubscriptionState('2027-02-14T21:05:00Z', now)).toBe('active');
+	});
+
+	// Порог — 30 дней, как в клиенте Amnezia (apiUtils.h, withinDays = 30).
+	// Ровно порог — уже предупреждение, минутой дальше — ещё нет.
+	it('ровно на пороге предупреждает, а минутой дальше — нет', () => {
+		expect(premiumSubscriptionState('2026-11-06T04:31:00Z', now)).toBe('expiring');
+		expect(premiumSubscriptionState('2026-11-06T04:32:00Z', now)).toBe('active');
+	});
+
+	it('считает истёкшей подписку ровно в момент окончания и после него', () => {
+		expect(premiumSubscriptionState('2026-10-07T04:31:00Z', now)).toBe('expired');
+		expect(premiumSubscriptionState('2026-09-29T18:12:00Z', now)).toBe('expired');
+	});
+
+	// «Срока нет» — не «действует» и не «истекла»: и то и другое было бы
+	// выдачей неизвестного за известное, каждое в свою сторону.
+	it('различает отсутствие даты и мусор от действующей подписки', () => {
+		expect(premiumSubscriptionState(undefined, now)).toBe('unknown');
+		expect(premiumSubscriptionState('', now)).toBe('unknown');
+		expect(premiumSubscriptionState('   ', now)).toBe('unknown');
+		expect(premiumSubscriptionState('бессрочно', now)).toBe('unknown');
+	});
+
+	it('считает дни до конца вверх: начатый день ещё идёт', () => {
+		expect(premiumSubscriptionDaysLeft('2026-10-09T07:48:00Z', now)).toBe(3);
+		expect(premiumSubscriptionDaysLeft('2026-11-06T04:31:00Z', now)).toBe(30);
+		expect(premiumSubscriptionDaysLeft('2026-11-06T04:32:00Z', now)).toBe(31);
+	});
+
+	it('у истёкшей подписки дней не остаётся, а без даты считать нечего', () => {
+		expect(premiumSubscriptionDaysLeft('2026-10-07T04:31:00Z', now)).toBe(0);
+		expect(premiumSubscriptionDaysLeft('2026-09-29T18:12:00Z', now)).toBe(-7);
+		expect(premiumSubscriptionDaysLeft('бессрочно', now)).toBeNull();
+		expect(premiumSubscriptionDaysLeft(undefined, now)).toBeNull();
+	});
+});
+
+describe('доступность выдачи конфигурации', () => {
+	// Жёлтая карточка — предупреждение, а не запрет, а отсутствие даты не
+	// должно выключать фичу. Реализация «доступна = state === active» обязана
+	// уронить обе эти проверки.
+	it('истекающая подписка и неизвестный срок выдачу НЕ запрещают', () => {
+		expect(isPremiumIssueAllowed('expiring')).toBe(true);
+		expect(isPremiumIssueAllowed('unknown')).toBe(true);
+	});
+
+	it('действующая подписка выдачу разрешает, истёкшая — запрещает', () => {
+		expect(isPremiumIssueAllowed('active')).toBe(true);
+		expect(isPremiumIssueAllowed('expired')).toBe(false);
+	});
+});
+
+describe('форматирование даты подписки', () => {
+	// Без года «действует до 08.03» ничего не сообщает: подписки живут годами.
+	// Отметки местного времени (без Z) — чтобы проверка не зависела от TZ.
+	it('печатает дату с годом', () => {
+		expect(formatPremiumDate('2027-03-08T12:00:00')).toBe('08.03.2027');
+		expect(formatPremiumDate('2026-11-21T19:47:00')).toBe('21.11.2026');
+	});
+
+	// formatDate из utils/format.ts отдала бы здесь '—', то есть нарисовала бы
+	// строку «действует до —» там, где строки быть не должно вовсе.
+	it('на мусоре и на отсутствии даёт ПУСТУЮ строку, не прочерк и не Invalid Date', () => {
+		expect(formatPremiumDate('бессрочно')).toBe('');
+		expect(formatPremiumDate('')).toBe('');
+		expect(formatPremiumDate('   ')).toBe('');
+		expect(formatPremiumDate(undefined)).toBe('');
+	});
+});
+
+describe('метка строки страны', () => {
+	const tunnels = [
+		{ id: 'tun-3', name: 'awg-nl-7', amneziaCountry: 'nl' },
+		{ id: 'tun-8', name: 'awg-ch-2', amneziaCountry: ' CH ' },
+	];
+
+	const staleNL = issuedConfig({
+		countryCode: 'nl',
+		portalUpdatedAt: '2026-07-19T14:26:00Z',
+		lastIssuedAt: '2026-07-11T08:03:00Z',
+	});
+	const freshNL = issuedConfig({
+		countryCode: 'nl',
+		portalUpdatedAt: '2026-06-13T22:41:00Z',
+		lastIssuedAt: '2026-06-27T05:19:00Z',
+	});
+	const freshIS = issuedConfig({
+		countryCode: 'is',
+		portalUpdatedAt: '2026-08-02T11:34:00Z',
+		lastIssuedAt: '2026-08-16T03:57:00Z',
+	});
+	const staleIS = issuedConfig({
+		countryCode: 'is',
+		portalUpdatedAt: '2026-08-29T09:12:00Z',
+		lastIssuedAt: '2026-08-16T03:57:00Z',
+	});
+
+	// Ядро контракта: у страны с туннелем конфигурация устаревает точно так же,
+	// и лесенка «сначала туннель» спрячет «конфиг устарел» навсегда — ровно у
+	// тех, кто пришёл его обновлять.
+	it('«конфиг устарел» важнее «туннель», когда есть и то и другое', () => {
+		expect(premiumCountryLabel('nl', [staleNL], tunnels)).toEqual({
+			kind: 'stale',
+			text: 'конфиг устарел',
+		});
+	});
+
+	it('показывает туннель, когда выданная конфигурация не устарела', () => {
+		expect(premiumCountryLabel('nl', [freshNL], tunnels)).toEqual({
+			kind: 'tunnel',
+			text: 'туннель awg-nl-7',
+		});
+	});
+
+	// Отдельная ветка: реализация «выдавалась ? устарела : ничего» отдаст здесь
+	// «конфиг устарел» и покраснеет.
+	it('«уже выдавался» отличается от «устарел» и от «ничего»', () => {
+		expect(premiumCountryLabel('is', [freshIS], tunnels)).toEqual({
+			kind: 'issued',
+			text: 'конфиг уже выдавался',
+		});
+		expect(premiumCountryLabel('is', [staleIS], tunnels)).toEqual({
+			kind: 'stale',
+			text: 'конфиг устарел',
+		});
+		expect(premiumCountryLabel('is', [], tunnels)).toBeNull();
+	});
+
+	// Активное устройство — не выданная конфигурация: иначе у страны, где
+	// просто живёт устройство подписки, появится метка про конфигурацию,
+	// которой никто не выдавал.
+	it('запись активного устройства меткой «уже выдавался» не становится', () => {
+		const active = issuedConfig({ countryCode: 'is', sourceType: 'gateway_account' });
+		expect(premiumCountryLabel('is', [active], tunnels)).toBeNull();
+	});
+
+	it('регистр кода страны на метку не влияет', () => {
+		expect(premiumCountryLabel('NL', [staleNL], tunnels)?.kind).toBe('stale');
+		expect(premiumCountryLabel(' Ch ', [], tunnels)).toEqual({
+			kind: 'tunnel',
+			text: 'туннель awg-ch-2',
+		});
+	});
+
+	it('у страны без туннеля и без выдач метки нет', () => {
+		expect(premiumCountryLabel('de', [staleNL, freshIS], tunnels)).toBeNull();
 	});
 });
