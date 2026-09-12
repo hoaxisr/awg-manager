@@ -3,7 +3,11 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/logging"
 )
 
 // Паника в handler'е не имеет права ронять процесс: без recover падает весь
@@ -46,5 +50,102 @@ func TestLoggingMiddleware_PassesThroughWithoutPanic(t *testing.T) {
 	}
 	if got := rec.Body.String(); got != "ok" {
 		t.Fatalf("тело = %q, want %q", got, "ok")
+	}
+}
+
+// recordingAppLogger — приёмник записей журнала для проверок ниже.
+type recordingAppLogger struct {
+	mu      sync.Mutex
+	entries []recordedEntry
+}
+
+type recordedEntry struct {
+	level                                    logging.Level
+	group, subgroup, action, target, message string
+}
+
+func (r *recordingAppLogger) AppLog(level logging.Level, group, subgroup, action, target, message string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.entries = append(r.entries, recordedEntry{level, group, subgroup, action, target, message})
+}
+
+// Паника обязана оставлять след в журнале. Раньше перехват отдавал 500 и молчал:
+// для пользователя это «внутренняя ошибка», а для нас — вообще ничего, авария
+// не воспроизводилась и не искалась. Стек нужен целиком: паника приходит из
+// чужого кадра, и одно её значение места не называет.
+func TestLoggingMiddleware_PanicReachesTheLog(t *testing.T) {
+	rec := &recordingAppLogger{}
+	s := &Server{appLog: logging.NewScopedLogger(rec, logging.GroupServer, logging.SubHTTP)}
+	h := s.loggingMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("взорвалось")
+	}))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/amnezia/premium/catalog", nil))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("код = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.entries) != 1 {
+		t.Fatalf("записей в журнале %d, ожидалась одна — паника потерялась", len(rec.entries))
+	}
+	e := rec.entries[0]
+	if e.level != logging.LevelError {
+		t.Errorf("уровень записи %v, ожидался Error", e.level)
+	}
+	if !strings.Contains(e.message, "взорвалось") {
+		t.Errorf("в записи нет значения паники: %q", e.message)
+	}
+	if !strings.Contains(e.message, "/api/amnezia/premium/catalog") || !strings.Contains(e.message, http.MethodPost) {
+		t.Errorf("в записи нет запроса, на котором упало: %q", e.message)
+	}
+	// Кадр самого перехвата — доказательство, что приехал стек, а не только текст.
+	if !strings.Contains(e.message, "loggingMiddleware") {
+		t.Errorf("в записи нет стека: %q", e.message)
+	}
+}
+
+// Без паники журнал молчит: запись на каждый запрос — это износ флеша и шум.
+func TestLoggingMiddleware_QuietWithoutPanic(t *testing.T) {
+	rec := &recordingAppLogger{}
+	s := &Server{appLog: logging.NewScopedLogger(rec, logging.GroupServer, logging.SubHTTP)}
+	h := s.loggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/tunnels/list", nil))
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.entries) != 0 {
+		t.Fatalf("журнал получил %d записей на обычный запрос", len(rec.entries))
+	}
+}
+
+// ErrAbortHandler — штатный обрыв обработчика, а не авария: им прерывается
+// httputil.ReverseProxy, когда клиент ушёл после отдачи заголовков (у нас так
+// смонтирован прокси капчи). net/http свою панику этим значением из
+// логирования стека исключает; мы обязаны делать то же, иначе закрытая вкладка
+// пишет в кольцо журнала пару килобайт стека на каждый обрыв.
+func TestLoggingMiddleware_AbortHandlerIsNotLogged(t *testing.T) {
+	rec := &recordingAppLogger{}
+	s := &Server{appLog: logging.NewScopedLogger(rec, logging.GroupServer, logging.SubHTTP)}
+	h := s.loggingMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic(http.ErrAbortHandler)
+	}))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/proxyrt/instances/x/captcha/", nil))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("код = %d, want %d — обработка обрыва не должна была измениться", w.Code, http.StatusInternalServerError)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.entries) != 0 {
+		t.Fatalf("обрыв клиента попал в журнал (%d записей): %q", len(rec.entries), rec.entries[0].message)
 	}
 }

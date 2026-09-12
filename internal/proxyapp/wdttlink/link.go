@@ -372,18 +372,7 @@ func fetchSubscriptionLink(rawURL string) (LinkDecodeResult, error) {
 	if err := validateSubURL(rawURL); err != nil {
 		return LinkDecodeResult{}, err
 	}
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{Timeout: 10 * time.Second, Control: blockInternalDial}).DialContext,
-		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 3 {
-				return fmt.Errorf("слишком много редиректов при загрузке подписки")
-			}
-			return validateSubURL(req.URL.String())
-		},
-	}
+	client := subscriptionClient()
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return LinkDecodeResult{}, err
@@ -476,6 +465,59 @@ func validateSubURL(raw string) error {
 	// DNS-rebinding закрыт dial-time IP-пином (blockInternalDial в Transport клиента):
 	// фактический IP каждого connect проверяется повторно, резолв здесь — ранний отказ + defense-in-depth.
 	return nil
+}
+
+// subscriptionClient — seam для тестов (ср. lookupIP выше): подменой видно,
+// что загрузка подписки идёт ИМЕННО этим клиентом, со всеми его стражами, а
+// не собранным по месту. Снаружи пакета клиент не подменяется; тест,
+// подменивший seam, не должен быть параллельным.
+var subscriptionClient = newSubscriptionClient
+
+// newSubscriptionClient собирает клиента загрузки подписки.
+//
+// Proxy у транспорта ОБЯЗАН оставаться nil, и это не умолчание, а работающая
+// защита: страж SSRF здесь — blockInternalDial, то есть Control диалера, и
+// смотрит он на адрес, который РЕАЛЬНО диалится. С прокси диалится прокси, а
+// внутренний адрес уезжает ему строкой в запросе — страж молча перестаёт
+// закрывать что-либо, заодно с проверкой редиректов (validateSubURL в
+// CheckRedirect тоже видит только URL, но не то, куда пошло соединение).
+// Поэтому «уборка» вида httpclient.NewTransport(TransportConfig{}) здесь НЕ
+// безобидна: транспорт httpclient по умолчанию наследует прокси окружения.
+// Держит границу TestSubscriptionClientDialsTargetDirectly.
+func newSubscriptionClient() *http.Client {
+	return &http.Client{
+		Timeout: 20 * time.Second,
+		Transport: &http.Transport{
+			Proxy: nil,
+			// Keep-alive снят (как и у канонического httpclient.NewTransport):
+			// транспорт собирается на КАЖДЫЙ вызов и живёт ровно одну
+			// загрузку, второго запроса через него не будет. Соединение,
+			// оставленное в пуле такого транспорта, не переиспользуется
+			// никогда, но и не закрывается: CloseIdleConnections звать некому,
+			// а IdleConnTimeout по умолчанию нулевой, то есть бессрочный, —
+			// сокет и его readLoop переживают сборку мусора. На роутере со
+			// 128 МБ это течь на каждый вызов.
+			DisableKeepAlives: true,
+			DialContext:       (&net.Dialer{Timeout: 10 * time.Second, Control: blockInternalDial}).DialContext,
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return fmt.Errorf("слишком много редиректов при загрузке подписки")
+			}
+			// Спуск с https на http — отказ, а не молчаливое следование.
+			// validateSubURL разрешает обе схемы (и на первом адресе это
+			// верно: его вводит пользователь), но в адресе подписки живёт
+			// токен — он же остаётся в SubURL для RefreshSubscription. После
+			// 302 на http токен и все заголовки уехали бы открытым текстом:
+			// net/http снимает чувствительные заголовки при смене ХОСТА, а
+			// схема на это не влияет. Запрещён именно СПУСК, а не редирект:
+			// апгрейд и переход внутри https сервер подписки использует сам.
+			if prev := via[len(via)-1]; prev.URL.Scheme == "https" && req.URL.Scheme != "https" {
+				return fmt.Errorf("перенаправление подписки с https на %q: в адресе живёт токен", req.URL.Scheme)
+			}
+			return validateSubURL(req.URL.String())
+		},
+	}
 }
 
 // blockInternalDial проверяет фактически подключаемый IP в момент dial (после резолва,

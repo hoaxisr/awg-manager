@@ -1468,11 +1468,23 @@ func TestNewClientDoesNotMutatePassedClient(t *testing.T) {
 	if c.http.Jar != nil {
 		t.Fatal("копия унесла хранилище cookie: к заголовку сессии допишется вторая")
 	}
-	// Резолвер зеркала работает переданным клиентом: запрет редиректов у него
-	// сломал бы резолв на апгрейде протокола и хвостовом слэше, а защищать
-	// там нечего — запрос без тела и без секрета.
-	if c.mirror.client != passed {
-		t.Fatal("резолвер зеркала работает не переданным клиентом")
+	// Резолвер зеркала тоже работает КОПИЕЙ: полного запрета редиректов у него
+	// нет (сломал бы резолв на хвостовом слэше и сокращателе), но есть
+	// своя политика — запрет спуска с https. Со страницы зеркала приезжает
+	// хост, которому мы затем шлём ключ подписки, поэтому «защищать там нечего»
+	// неверно.
+	if c.mirror.client == passed {
+		t.Fatal("резолвер зеркала взял клиента как есть — запрет спуска с https не поставлен")
+	}
+	if c.mirror.client.CheckRedirect == nil {
+		t.Fatal("у резолвера зеркала нет политики редиректов")
+	}
+	// Хранилище cookie копия зеркала не уносит — ровно как копия портала:
+	// зеркалу оно не нужно (один GET, сессия ставится заголовком), а чужое
+	// работало бы в обе стороны — Set-Cookie со страницы зеркала лёг бы в
+	// хранилище вызывающего, а его cookie уехали бы на хост зеркала.
+	if c.mirror.client.Jar != nil {
+		t.Fatal("копия зеркала унесла хранилище cookie: cookie вызывающего уедут на хост зеркала, а Set-Cookie со страницы — в чужое хранилище")
 	}
 }
 
@@ -1694,17 +1706,23 @@ func TestMaskSecretKeepsTextBetweenOccurrences(t *testing.T) {
 }
 
 func TestMaskSecretStaysLinear(t *testing.T) {
-	const occurrences = 44000
+	// Размер берётся ПОД пределом принимаемого тела: строки, до которых
+	// доходит maskSecret, приезжают из разобранного ответа, а он ограничен
+	// maxCPBody. Тело сверх предела вычистка обрезает намеренно (см.
+	// TestMaskSecret_OutputNeverExceedsAcceptedBody), и требовать от неё
+	// полной замены на таком входе значило бы проверять недостижимый случай.
 	var b strings.Builder
-	for range occurrences {
+	occurrences := 0
+	for b.Len() < maxCPBody*9/10 {
 		b.WriteString(fixtureKey)
 		b.WriteString(" ")
 		b.WriteString(strings.Repeat("x", 30))
 		b.WriteString(" ")
+		occurrences++
 	}
 	body := b.String()
-	if len(body) < 1<<20 {
-		t.Fatalf("тело %d байт, тест рассчитан на мегабайт", len(body))
+	if len(body) < 1<<19 {
+		t.Fatalf("тело %d байт, тест рассчитан на сотни килобайт", len(body))
 	}
 
 	start := time.Now()
@@ -2175,10 +2193,12 @@ func TestClientDoesNotRetryConfigRedirect(t *testing.T) {
 	}
 }
 
-// Зеркало резолвится переданным клиентом, без запрета редиректов: адрес
-// зеркала вводит пользователь, и апгрейд протокола, хвостовой слэш или
-// сокращатель приезжают перенаправлением. Защищать там нечего — запрос без
-// тела и без секрета.
+// Зеркало резолвится КОПИЕЙ переданного клиента: полного запрета редиректов
+// у неё нет — адрес зеркала вводит пользователь, и хвостовой слэш или
+// сокращатель приезжают перенаправлением, — но есть своя, более узкая
+// политика (withoutSchemeDowngrade). «Защищать там нечего» неверно: запрос
+// действительно уходит без тела и без секрета, а вот СО СТРАНИЦЫ приезжает
+// хост, которому клиент затем шлёт ключ подписки.
 func TestClientFollowsMirrorRedirect(t *testing.T) {
 	cp := newFakeCP(t)
 	var mirrorHits atomic.Int64
@@ -2486,5 +2506,234 @@ func TestClientCountryConfigStillDoesNotRetryAfterLostResponse(t *testing.T) {
 	}
 	if n := cp.configs.Load(); n != 1 {
 		t.Fatalf("запросов выдачи %d, ожидался ровно 1 — повтор съел бы второй слот", n)
+	}
+}
+
+// Вычистка секрета не может раздуть ответ: маркер (18 байт) длиннее
+// минимального вырезаемого токена `vpn://` (6 байт), поэтому тело из одних
+// таких токенов росло втрое. Вход ограничен maxCPBody, выход не был ограничен
+// ничем — на роутере со 128 МБ это давало до ~3 МиБ из одного ответа.
+func TestMaskSecret_OutputNeverExceedsAcceptedBody(t *testing.T) {
+	// Тело из одних токенов — худший случай для роста.
+	worst := strings.Repeat("vpn:// ", maxCPBody/7+16)
+	got := maskSecret(worst)
+
+	if len(got) > maxCPBody+len(maskOverflowMarker) {
+		t.Fatalf("выход %d байт при пределе %d — вычистка раздувает ответ", len(got), maxCPBody)
+	}
+	if !strings.HasSuffix(got, maskOverflowMarker) {
+		t.Fatalf("обрезка не помечена: получатель не отличит её от конца строки")
+	}
+	if strings.Contains(got, vpnLinkScheme) {
+		t.Fatalf("в обрезанном выходе осталась схема ключа")
+	}
+}
+
+// Обычный ответ предел не трогает: вычистка по-прежнему сокращает, а не режет.
+func TestMaskSecret_NormalBodyIsNotTruncated(t *testing.T) {
+	in := `{"message":"ключ vpn://AAAAtest-key-fixture отвергнут","code":"X"}`
+	got := maskSecret(in)
+
+	if strings.Contains(got, maskOverflowMarker) {
+		t.Fatalf("обычный ответ обрезан: %q", got)
+	}
+	if strings.Contains(got, "test-key-fixture") {
+		t.Fatalf("ключ не вырезан: %q", got)
+	}
+	if !strings.Contains(got, secretMarker) {
+		t.Fatalf("маркер не поставлен: %q", got)
+	}
+	if !strings.Contains(got, "отвергнут") {
+		t.Fatalf("остальной текст потерян: %q", got)
+	}
+}
+
+// flakyMirror — зеркало, которое отказывает первые failures раз, а дальше
+// отвечает как обычно. Изображает сетевую икоту на пути к зеркалу.
+func flakyMirror(t *testing.T, hits *atomic.Int64, failures int64, origin string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hits.Add(1) <= failures {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		_, _ = io.WriteString(w, mirrorPage(origin))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// Одна икота на пути к зеркалу НЕ роняет вызов: резолв повторяется.
+//
+// Раньше ветка отказа резолва уходила наружу минуя цикл попыток — механизм
+// повторов стоял рядом и не работал. Пользователь видел «сервис недоступен»
+// там, где хватало одной повторной попытки.
+func TestClientRetriesAfterMirrorResolveFailure(t *testing.T) {
+	cp := newFakeCP(t)
+	var mirrorHits atomic.Int64
+	mirror := flakyMirror(t, &mirrorHits, 1, cp.origin())
+	rec := &logRecorder{}
+	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL },
+		func() string { return fixtureKey }, rec.log)
+
+	if _, err := c.AccountInfo(context.Background()); err != nil {
+		t.Fatalf("одна икота зеркала уронила вызов: %v", err)
+	}
+	if n := mirrorHits.Load(); n != 2 {
+		t.Fatalf("обращений к зеркалу %d, ожидалось 2 (отказ и успешный повтор)", n)
+	}
+}
+
+// Повтор резолва НЕ зависит от повторяемости самого запроса: до портала дело
+// не дошло, расходная ручка не тронута. Это и есть причина, по которой
+// resolve повторяется всегда, а send — только у repeatable-запросов.
+func TestClientRetriesMirrorResolveEvenForNonRepeatableRequest(t *testing.T) {
+	cp := newFakeCP(t)
+	var mirrorHits atomic.Int64
+	mirror := flakyMirror(t, &mirrorHits, 1, cp.origin())
+	rec := &logRecorder{}
+	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL },
+		func() string { return fixtureKey }, rec.log)
+
+	// CountryConfig — РАСХОДНАЯ ручка, её повтор запрещён.
+	if _, err := c.CountryConfig(context.Background(), "nl"); err != nil {
+		t.Fatalf("икота зеркала уронила расходный вызов: %v", err)
+	}
+	if n := mirrorHits.Load(); n != 2 {
+		t.Fatalf("обращений к зеркалу %d, ожидалось 2", n)
+	}
+	// Портал при этом увидел РОВНО ОДИН запрос: повторялся резолв, а не
+	// расходная операция.
+	if n := cp.configs.Load(); n != 1 {
+		t.Fatalf("запросов к расходной ручке %d, ожидался 1 — повтор съел бы слот подписки", n)
+	}
+}
+
+// Повторы не бесконечны: вечно мёртвое зеркало даёт ровно maxAttempts
+// обращений и внятный отказ.
+func TestClientStopsRetryingDeadMirror(t *testing.T) {
+	cp := newFakeCP(t)
+	var mirrorHits atomic.Int64
+	mirror := flakyMirror(t, &mirrorHits, 1<<30, cp.origin())
+	rec := &logRecorder{}
+	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL },
+		func() string { return fixtureKey }, rec.log)
+
+	// Дедлайн обязателен: без него мутация «снять предел попыток» даёт
+	// бесконечный цикл, и тест висит до таймаута всего прогона вместо
+	// внятного красного. again проверяет ctx.Err() первым.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := c.AccountInfo(ctx)
+	if err == nil {
+		t.Fatal("мёртвое зеркало обязано быть ошибкой")
+	}
+	if !errors.Is(err, ErrServiceUnavailable) {
+		t.Fatalf("причина не различима сентинелом ErrServiceUnavailable: %v", err)
+	}
+	if n := mirrorHits.Load(); n != maxAttempts {
+		t.Fatalf("обращений к зеркалу %d, ожидалось ровно %d", n, maxAttempts)
+	}
+	if n := cp.logins.Load(); n != 0 {
+		t.Fatalf("входов в портал %d — резолв не удался, идти было некуда", n)
+	}
+}
+
+// Клиент портала обязан нести ровно то, ради чего он собран через httpclient:
+// прокси окружения не берётся (иначе запрос уйдёт мимо требования о регионе) и
+// ALPN пришпилен к http/1.1 (на h2 портал отвечает EOF и «malformed HTTP
+// response»). Проверка на `Proxy`/`ForceAttemptHTTP2` без ALPN этого не ловит:
+// нулевой транспорт им обоим удовлетворяет, а ALPN оставляет пустым.
+//
+// Проверяется ТОТ транспорт, который реально уходит в работу: запасного тут
+// больше нет, и недостижимая ветка его сборки снята (P052).
+func TestNewDirectClientPinsHTTP1AndSkipsProxy(t *testing.T) {
+	c := newDirectClient()
+
+	tr, ok := c.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("транспорт не *http.Transport, а %T — свойства проверить нечем", c.Transport)
+	}
+	if tr.Proxy != nil {
+		t.Error("клиент портала берёт прокси окружения")
+	}
+	if tr.ForceAttemptHTTP2 {
+		t.Error("клиент портала пробует h2")
+	}
+	if tr.TLSClientConfig == nil {
+		t.Fatal("нет TLS-конфигурации — ALPN не пришпилен, сервер договорится на h2")
+	}
+	if got := tr.TLSClientConfig.NextProtos; len(got) != 1 || got[0] != "http/1.1" {
+		t.Fatalf("ALPN = %v, ожидался [http/1.1]: на h2 портал отвечает EOF", got)
+	}
+}
+
+// Детерминированный отказ резолва НЕ повторяется: страница без мета-тега
+// завтра такой же, как сейчас, и второй полный поход за ней через CDN на
+// роутере со 128 МБ не покупает ничего.
+func TestClientDoesNotRetryDeterministicMirrorFailure(t *testing.T) {
+	cp := newFakeCP(t)
+	var hits atomic.Int64
+	// Страница отвечает 200, но без мета-тега — разбор детерминирован.
+	mirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = io.WriteString(w, "<html><head></head><body>нет тега</body></html>")
+	}))
+	t.Cleanup(mirror.Close)
+
+	rec := &logRecorder{}
+	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL },
+		func() string { return fixtureKey }, rec.log)
+
+	if _, err := c.AccountInfo(context.Background()); err == nil {
+		t.Fatal("страница без мета-тега обязана быть ошибкой")
+	}
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("обращений к зеркалу %d, ожидалось 1 — детерминированный отказ повторён", n)
+	}
+}
+
+// Икота зеркала НЕ съедает бюджет восстановления сессии.
+//
+// Пока счётчик попыток был общим, компаундный отказ (икота зеркала плюс
+// протухшая cookie) выдавал ErrKeyRejected — пользователю предлагали заменить
+// РАБОЧИЙ ключ. Честный исход здесь — успех: сессия восстановима.
+func TestClientMirrorHiccupDoesNotBurnSessionRetry(t *testing.T) {
+	cp := newFakeCP(t)
+	// Первый заход в портал отвечает 401 (протухшая cookie), второй — успех.
+	cp.accountStatus = func(n int64) int {
+		if n == 1 {
+			return http.StatusUnauthorized
+		}
+		return http.StatusOK
+	}
+	var hits atomic.Int64
+	mirror := flakyMirror(t, &hits, 1, cp.origin())
+	rec := &logRecorder{}
+	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL },
+		func() string { return fixtureKey }, rec.log)
+
+	if _, err := c.AccountInfo(context.Background()); err != nil {
+		t.Fatalf("икота зеркала съела повтор сессии: %v", err)
+	}
+}
+
+// Ключевой вход — проверка ключа — тоже переживает икоту зеркала. Раньше
+// починили только call, и самая заметная пользователю ручка осталась с тем же
+// дефектом.
+func TestClientCheckKeySurvivesMirrorHiccup(t *testing.T) {
+	cp := newFakeCP(t)
+	var hits atomic.Int64
+	mirror := flakyMirror(t, &hits, 1, cp.origin())
+	rec := &logRecorder{}
+	c := NewClient(cpClient(t, cp.srv), func() string { return mirror.URL },
+		func() string { return fixtureKey }, rec.log)
+
+	if err := c.CheckKey(context.Background(), fixtureKey, true); err != nil {
+		t.Fatalf("икота зеркала уронила проверку ключа: %v", err)
+	}
+	if n := hits.Load(); n != 2 {
+		t.Fatalf("обращений к зеркалу %d, ожидалось 2", n)
 	}
 }

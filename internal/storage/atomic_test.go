@@ -109,8 +109,14 @@ func TestAtomicWrite_ReadOnlyDirRefusesAndKeepsOld(t *testing.T) {
 	}
 	failWrites(t, dir) // root-skip внутри
 	err := AtomicWrite(path, []byte("NEW"))
-	if err == nil || !strings.Contains(err.Error(), "write temp file") {
-		t.Fatalf("err = %v, want write temp file", err)
+	// Проверяется ПОВЕДЕНИЕ (отказ + старое содержимое цело), а не текст:
+	// временный файл теперь создаётся через os.CreateTemp, и в каталоге
+	// только для чтения спотыкается уже создание, а не запись.
+	if err == nil {
+		t.Fatalf("запись в каталог только для чтения обязана быть ошибкой")
+	}
+	if !strings.Contains(err.Error(), "temp file") {
+		t.Fatalf("err = %v, ожидалась ошибка вокруг временного файла", err)
 	}
 	if b, _ := os.ReadFile(path); string(b) != "OLD" {
 		t.Fatalf("старое содержимое затёрто: %q", b)

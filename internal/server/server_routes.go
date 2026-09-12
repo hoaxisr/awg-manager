@@ -452,7 +452,7 @@ func (s *Server) registerSettingsRoutes(mux *http.ServeMux, h *routeHandlers) {
 		case http.MethodPost:
 			h.pingCheckHandler.ConfigureTunnelPingCheck(w, r)
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			response.MethodNotAllowed(w)
 		}
 	}))
 	mux.HandleFunc("/api/tunnels/pingcheck/remove", h.guarded(h.pingCheckHandler.RemoveTunnelPingCheck))
@@ -474,7 +474,7 @@ func (s *Server) registerDeviceProxyRoutes(mux *http.ServeMux, h *routeHandlers)
 		case http.MethodPut:
 			deviceProxyHandler.SaveConfig(w, r)
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			response.MethodNotAllowed(w)
 		}
 	}))
 	mux.HandleFunc("/api/proxy/runtime", h.guarded(deviceProxyHandler.GetRuntime))
@@ -494,7 +494,7 @@ func (s *Server) registerDeviceProxyRoutes(mux *http.ServeMux, h *routeHandlers)
 		case http.MethodDelete:
 			deviceProxyHandler.DeleteInstance(w, r)
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			response.MethodNotAllowed(w)
 		}
 	}))
 	mux.HandleFunc("/api/proxy/instances/apply", h.guarded(deviceProxyHandler.ApplyInstances))
@@ -810,7 +810,7 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 			case http.MethodDelete:
 				s.singboxHandler.DeleteTunnel(w, r)
 			default:
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				response.MethodNotAllowed(w)
 			}
 		}))
 	}

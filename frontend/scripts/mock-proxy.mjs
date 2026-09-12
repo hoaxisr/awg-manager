@@ -17,8 +17,9 @@
 //   MOCK_AWG_TUNNELS rows with counts split from stats.tunneled so the tunnel chip
 //   row matches diagnostics UI (same as a real router).
 // - Amnezia Premium: GET/POST/DELETE /amnezia/premium/key, GET /amnezia/premium/catalog,
-//   POST /amnezia/premium/config, POST /amnezia/premium/revoke (paths without /api —
-//   Vite rewrite). Ключ подписки
+//   POST /amnezia/premium/config, POST /amnezia/premium/revoke,
+//   GET/POST /amnezia/premium/mirror (paths without /api — Vite rewrite).
+//   Ключ подписки
 //   живёт в памяти мока, как на роутере: браузер его обратно не получает.
 // - Diagnostics «Окружение: GET /dns-check/client (Test-Phone @ 192.168.1.42,
 //   policy Policy1), /system/hydraroute-status, plus existing /routing/*, /tunnels/all,
@@ -4438,6 +4439,7 @@ const DOWNLOAD_FAULT_ROUTES = [
 	{ method: 'GET', path: '/amnezia/premium/catalog', style: 'envelope', code: 'AMNEZIA_PREMIUM_UNAVAILABLE' },
 	{ method: 'POST', path: '/amnezia/premium/config', style: 'envelope', code: 'AMNEZIA_PREMIUM_OUTCOME_UNKNOWN' },
 	{ method: 'POST', path: '/amnezia/premium/revoke', style: 'envelope', code: 'AMNEZIA_PREMIUM_UNAVAILABLE' },
+	{ method: 'GET', path: '/amnezia/premium/mirror', style: 'envelope', code: 'AMNEZIA_PREMIUM_MIRROR_UNAVAILABLE' },
 	{ method: 'POST', path: '/singbox/install', style: 'envelope', code: 'SINGBOX_INSTALL_ERROR' },
 	{ method: 'POST', path: '/singbox/update', style: 'envelope', code: 'SINGBOX_UPDATE_ERROR' },
 	// NB: /download/outbounds is route *discovery*, not a download — never fault
@@ -4977,6 +4979,42 @@ function randomizeDelays() {
 // состояние: сохранён / читается ли.
 const mockPremiumKey = { stored: false, usable: false, session: false };
 
+// Адрес зеркала Amnezia. ХРАНИМОЕ значение, а не действующее: пустое означает
+// «зеркало по умолчанию», ровно как в storage.EffectiveAmneziaMirrorURL. Без
+// состояния здесь запрос уходил наверх в Prism и получал статический пример из
+// swagger — поле в мастере рисовалось, но сценарий «сохранил → перезагрузил
+// страницу → адрес на месте» проверить было нечем (F278).
+const MOCK_AMNEZIA_MIRROR_DEFAULT = 'https://storage.googleapis.com/amnezia/cp?m-path=/ru';
+let mockPremiumMirrorStored = '';
+
+/** Действующий адрес: пустое и непригодное хранимое означают дефолт. */
+function mockPremiumMirrorEffective() {
+	const v = mockPremiumMirrorStored.trim();
+	return v === '' || validateMockMirrorURL(v) !== null ? MOCK_AMNEZIA_MIRROR_DEFAULT : v;
+}
+
+/**
+ * Те же правила, что у storage.ValidateAmneziaMirrorURL: пусто годно (дефолт),
+ * иначе абсолютный https-адрес без user:pass@ и без #фрагмента, не длиннее
+ * 2048 байт. Мок повторяет ОТКАЗЫ, а не только успех: иначе ветку ошибки в
+ * мастере без роутера не пройти.
+ */
+function validateMockMirrorURL(raw) {
+	const v = String(raw ?? '').trim();
+	if (v === '') return null;
+	if (Buffer.byteLength(v, 'utf8') > 2048) return 'адрес зеркала Amnezia длиннее 2048 байт';
+	let u;
+	try {
+		u = new URL(v);
+	} catch {
+		return 'адрес зеркала Amnezia непригоден';
+	}
+	if (u.protocol !== 'https:' || !u.host) return 'адрес зеркала Amnezia должен быть абсолютным https-адресом';
+	if (u.username || u.password) return 'адрес зеркала Amnezia не должен содержать user:pass@';
+	if (v.includes('#')) return 'адрес зеркала Amnezia не должен содержать #фрагмент';
+	return null;
+}
+
 // Страны мока покрывают три метки строки: свежую, устаревшую и vless-only
 // (последнюю мастер обязан скрыть — забрать её нечем).
 const MOCK_AMNEZIA_PREMIUM_COUNTRIES = [
@@ -5491,6 +5529,42 @@ const server = http.createServer(async (req, res) => {
 			});
 			console.log(`[mock-proxy] amnezia/premium/config ${countryCode}`);
 			sendData(res, { countryCode, config: buildMockAmneziaPremiumConf(countryCode) });
+		});
+		return;
+	}
+
+	if (path === '/amnezia/premium/mirror') {
+		if (req.method === 'GET') {
+			sendData(res, { mirrorUrl: mockPremiumMirrorEffective() });
+			return;
+		}
+		if (req.method !== 'POST') {
+			send(res, 405, { error: true, message: 'method not allowed', code: 'METHOD_NOT_ALLOWED' });
+			return;
+		}
+		readRequestText(req).then((raw) => {
+			let payload;
+			try {
+				payload = JSON.parse(raw || '{}');
+			} catch {
+				send(res, 400, { error: true, message: 'invalid JSON', code: 'INVALID_JSON' });
+				return;
+			}
+			// Нормализация ДО проверки, как на бэкенде: присланный дефолт
+			// схлопывается в пустое, и «вернуть по умолчанию» не оседает в
+			// хранимом значении отдельной строкой.
+			let sent = String(payload.mirrorUrl ?? '').trim();
+			if (sent === MOCK_AMNEZIA_MIRROR_DEFAULT) sent = '';
+			const bad = validateMockMirrorURL(sent);
+			if (bad !== null) {
+				send(res, 400, { error: true, message: bad, code: 'INVALID_AMNEZIA_MIRROR_URL' });
+				return;
+			}
+			mockPremiumMirrorStored = sent;
+			console.log(`[mock-proxy] amnezia/premium/mirror сохранён: ${sent === '' ? '(дефолт)' : sent}`);
+			// Отдаётся ДЕЙСТВУЮЩИЙ адрес, а не присланный: пустое присланное
+			// означает дефолт, и ответ обязан его назвать.
+			sendData(res, { mirrorUrl: mockPremiumMirrorEffective() });
 		});
 		return;
 	}

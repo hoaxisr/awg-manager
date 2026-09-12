@@ -44,7 +44,7 @@ func TestParseConntrackLine_TCP(t *testing.T) {
 }
 
 func TestParseConntrackLine_UDP(t *testing.T) {
-	line := `ipv4     2 udp      17 98 src=178.205.128.207 dst=89.232.109.74 sport=53907 dport=53 packets=2 bytes=154 src=89.232.109.74 dst=178.205.128.207 sport=53 dport=53907 packets=2 bytes=331 [ASSURED] [FASTNAT] mark=0 nmark=256 sc=0 nomac swan no_if attrs= use=2`
+	line := `ipv4     2 udp      17 98 src=198.51.100.207 dst=198.51.100.74 sport=53907 dport=53 packets=2 bytes=154 src=198.51.100.74 dst=198.51.100.207 sport=53 dport=53907 packets=2 bytes=331 [ASSURED] [FASTNAT] mark=0 nmark=256 sc=0 nomac swan no_if attrs= use=2`
 	conn, ok := parseConntrackLine(line)
 	if !ok {
 		t.Fatal("expected parse ok")
@@ -92,7 +92,7 @@ func TestParseConntrackLine_IPv6LoopbackSkipped_Legacy(t *testing.T) {
 }
 
 func TestParseConntrackLine_NewFields(t *testing.T) {
-	line := `ipv4     2 tcp      6 1183 ESTABLISHED src=192.168.0.54 dst=77.88.21.232 sport=56939 dport=443 packets=10 bytes=2411 src=77.88.21.232 dst=91.144.142.72 sport=443 dport=56939 packets=10 bytes=1966 [ASSURED] [FASTNAT] mark=268434097 nmark=256 sc=0 ifw=32 ifl=28 mac=fc:8b:97:0a:52:74 slan attrs= use=2`
+	line := `ipv4     2 tcp      6 1183 ESTABLISHED src=192.168.0.54 dst=198.51.100.232 sport=56939 dport=443 packets=10 bytes=2411 src=198.51.100.232 dst=203.0.113.72 sport=443 dport=56939 packets=10 bytes=1966 [ASSURED] [FASTNAT] mark=268434097 nmark=256 sc=0 ifw=32 ifl=28 mac=00:00:5e:00:53:01 slan attrs= use=2`
 	c, ok := parseConntrackLine(line)
 	if !ok {
 		t.Fatal("expected line to parse")
@@ -106,8 +106,8 @@ func TestParseConntrackLine_NewFields(t *testing.T) {
 	if c.Bytes != 2411+1966 {
 		t.Errorf("Bytes = %d, want sum", c.Bytes)
 	}
-	if c.replyDst != "91.144.142.72" {
-		t.Errorf("replyDst = %q, want 91.144.142.72", c.replyDst)
+	if c.replyDst != "203.0.113.72" {
+		t.Errorf("replyDst = %q, want 203.0.113.72", c.replyDst)
 	}
 	if c.mark != 268434097 {
 		t.Errorf("mark = %d, want 268434097", c.mark)
@@ -149,7 +149,7 @@ func TestParseConntrackLine_IPv6LoopbackSkipped(t *testing.T) {
 
 func TestParseConntrack_MultiLine(t *testing.T) {
 	data := `ipv4     2 tcp      6 1187 ESTABLISHED src=192.168.1.15 dst=185.199.110.133 sport=49158 dport=443 packets=14 bytes=3389 src=185.199.110.133 dst=172.16.0.2 sport=443 dport=49158 packets=12 bytes=6182 [ASSURED] [FASTNAT] mark=268434092 nmark=0 sc=0 ifw=59 ifl=35 mac=b0:4a:b4:74:80:f8 slan attrs= use=2
-ipv4     2 tcp      6 1187 ESTABLISHED src=192.168.1.150 dst=213.180.204.179 sport=59460 dport=443 packets=317 bytes=17187 src=213.180.204.179 dst=178.205.128.207 sport=443 dport=59460 packets=318 bytes=49226 [ASSURED] [FASTNAT] mark=0 nmark=256 sc=0 ifw=36 ifl=35 mac=bc:24:11:33:6c:2d slan attrs= use=3
+ipv4     2 tcp      6 1187 ESTABLISHED src=192.168.1.150 dst=198.51.100.179 sport=59460 dport=443 packets=317 bytes=17187 src=198.51.100.179 dst=198.51.100.207 sport=443 dport=59460 packets=318 bytes=49226 [ASSURED] [FASTNAT] mark=0 nmark=256 sc=0 ifw=36 ifl=35 mac=00:00:5e:00:53:02 slan attrs= use=3
 ipv4     2 tcp      6 1186 ESTABLISHED src=127.0.0.1 dst=127.0.0.1 sport=55006 dport=79 packets=1338 bytes=142918 src=127.0.0.1 dst=127.0.0.1 sport=79 dport=55006 packets=930 bytes=1427210 [ASSURED] mark=0 nmark=0 sc=0 use=2`
 
 	conns := parseConntrack(strings.NewReader(data))

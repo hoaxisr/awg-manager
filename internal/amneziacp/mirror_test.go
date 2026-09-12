@@ -843,3 +843,109 @@ func TestMirrorOriginClosesBodyOnSuccess(t *testing.T) {
 		t.Fatal("тело ответа не закрыто на успешном пути")
 	}
 }
+
+// Спуск с https на http при резолве зеркала — отказ, а не молчаливое
+// следование. Ценность не в самом запросе (он без тела и без секрета), а в
+// том, ЧТО с него приезжает: хост, которому клиент затем шлёт ключ подписки.
+// Проверка настроек обещает «схема только https» ровно поэтому; без запрета
+// обещание обходится одним 302 (доказано пробой при ревью P007).
+func TestMirrorOriginRejectsSchemeDowngrade(t *testing.T) {
+	var attackerHits atomic.Int64
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerHits.Add(1)
+		_, _ = io.WriteString(w, mirrorPage(fixtureOriginC))
+	}))
+	t.Cleanup(attacker.Close)
+
+	entry := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL, http.StatusFound)
+	}))
+	t.Cleanup(entry.Close)
+
+	m := newMirrorWithClock(entry.Client(), testTTL, newFakeClock().now)
+	origin, err := m.Origin(context.Background(), entry.URL)
+	if err == nil {
+		t.Fatalf("спуск на http принят, origin = %q", origin)
+	}
+	if !errors.Is(err, ErrMirrorUnavailable) {
+		t.Fatalf("класс ошибки не «зеркало недоступно»: %v", err)
+	}
+	if n := attackerHits.Load(); n != 0 {
+		t.Fatalf("http-хост всё-таки опрошен (%d раз) — запрет не сработал", n)
+	}
+}
+
+// Следовать перенаправлениям зеркалу нужно: адрес вводит пользователь, и
+// хвостовой слэш с сокращателем приезжают именно ими. Оба остаются ВНУТРИ
+// https — вход резолвера всегда https: ValidateAmneziaMirrorURL отвергает
+// другую схему у присланного адреса, а EffectiveAmneziaMirrorURL подменяет
+// непригодное хранимое дефолтом. Это производственный случай, и он первый.
+//
+// Апгрейд http → https в производстве поэтому не возникает, но покрыт: он —
+// граница самой политики, запрещён СПУСК, а не смена схемы. Запрет любой
+// смены (напрашивающаяся «уборка») переехал бы её молча.
+func TestMirrorOriginFollowsRedirect(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		entry func(http.Handler) *httptest.Server
+	}{
+		{name: "внутри https", entry: httptest.NewTLSServer},
+		{name: "апгрейд с http", entry: httptest.NewServer},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hits atomic.Int64
+			target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits.Add(1)
+				_, _ = io.WriteString(w, mirrorPage(fixtureOriginA))
+			}))
+			t.Cleanup(target.Close)
+
+			entry := tc.entry(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, target.URL, http.StatusMovedPermanently)
+			}))
+			t.Cleanup(entry.Close)
+
+			m := newMirrorWithClock(target.Client(), testTTL, newFakeClock().now)
+			got, err := m.Origin(context.Background(), entry.URL)
+			if err != nil {
+				t.Fatalf("резолв через перенаправление: %v", err)
+			}
+			if got != fixtureOriginA {
+				t.Fatalf("origin = %q, ожидался %q", got, fixtureOriginA)
+			}
+			if n := hits.Load(); n != 1 {
+				t.Fatalf("страница зеркала опрошена %d раз, ожидался 1", n)
+			}
+		})
+	}
+}
+
+// Своя политика редиректов выключает штатный предел net/http целиком, поэтому
+// предел обязан быть восстановлен руками: зеркало, перенаправляющее на себя,
+// иначе крутит запрос до отмены контекста.
+func TestMirrorOriginStopsEndlessRedirects(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Redirect(w, r, "/next", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	m := newMirrorWithClock(srv.Client(), testTTL, newFakeClock().now)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	origin, err := m.Origin(ctx, srv.URL)
+	if err == nil {
+		t.Fatalf("бесконечная цепочка принята, origin = %q", origin)
+	}
+	if !errors.Is(err, ErrMirrorUnavailable) {
+		t.Fatalf("класс ошибки не «зеркало недоступно»: %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("цепочку остановил таймаут теста, а не предел перенаправлений")
+	}
+	if n := hits.Load(); n > maxMirrorRedirects+1 {
+		t.Fatalf("походов %d, предел %d не соблюдён", n, maxMirrorRedirects)
+	}
+}

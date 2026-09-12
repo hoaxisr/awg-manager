@@ -38,6 +38,12 @@ const DefaultMirrorTTL = 30 * time.Minute
 // сотни мегабайт съесть память целиком.
 const maxMirrorHTML = 1 << 20
 
+// maxMirrorRedirects повторяет предел, который net/http применяет сам, пока
+// CheckRedirect не задан. Как только политика задана, штатный предел
+// выключается целиком — цепочку надо ограничивать своими руками, иначе
+// зеркало, перенаправляющее на себя, крутит запрос до отмены контекста.
+const maxMirrorRedirects = 10
+
 var (
 	metaTagRe = regexp.MustCompile(`(?is)<meta\b[^>]*>`)
 	tagAttrRe = regexp.MustCompile(`(?is)([a-z0-9_:-]+)\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+)`)
@@ -123,10 +129,18 @@ type Mirror struct {
 	gen uint64
 }
 
-// NewMirror создаёт резолвер. client обязателен и подмены на nil не имеет:
-// http.DefaultClient берёт прокси из окружения (при заданном HTTPS_PROXY
-// резолв ушёл бы через чужой прокси — мимо требования о регионе, ради
-// которого зеркало и понадобилось) и не имеет таймаута.
+// NewMirror создаёт резолвер.
+//
+// client нужен рабочий, но обязательность НЕ проверяется: с nil резолвер
+// собирается, а падает первый же Origin — на разыменовании. Подмены nil на
+// http.DefaultClient здесь нет намеренно: он берёт прокси из окружения (при
+// заданном HTTPS_PROXY резолв ушёл бы через чужой прокси — мимо требования о
+// регионе, ради которого зеркало и понадобилось) и не имеет таймаута.
+//
+// Клиент берётся КОПИЕЙ: у копии снимается хранилище cookie и ставится своя
+// политика редиректов (withoutSchemeDowngrade) — переданный объект не
+// меняется.
+//
 // ttl <= 0 означает DefaultMirrorTTL.
 func NewMirror(client *http.Client, ttl time.Duration) *Mirror {
 	return newMirrorWithClock(client, ttl, time.Now)
@@ -138,7 +152,57 @@ func newMirrorWithClock(client *http.Client, ttl time.Duration, now func() time.
 	if ttl <= 0 {
 		ttl = DefaultMirrorTTL
 	}
-	return &Mirror{client: client, ttl: ttl, now: now}
+	return &Mirror{client: withoutSchemeDowngrade(client), ttl: ttl, now: now}
+}
+
+// withoutSchemeDowngrade копирует клиента и запрещает перенаправление, которое
+// уводит с https на что-то другое.
+//
+// Следовать перенаправлениям зеркалу НУЖНО: адрес вводит пользователь, и
+// хвостовой слэш с сокращателем приезжают именно ими. Оба остаются ВНУТРИ
+// https: вход резолвера всегда https — ValidateAmneziaMirrorURL отвергает
+// другую схему у присланного адреса, а EffectiveAmneziaMirrorURL подменяет
+// непригодное хранимое дефолтом (internal/storage/settings.go). Но
+// запрос к зеркалу не безобиден, хотя и уходит без тела и без секрета: со
+// страницы приезжает ХОСТ, которому клиент затем шлёт ключ подписки. Разрешив
+// спуск на http, мы отдаём назначение этого ключа тому, кто сидит на канале, —
+// проверка «схема только https» в настройках (internal/storage/settings.go)
+// обещает ровно обратное, и обход доказан пробой: https-зеркало → 302 →
+// http-хост → страница с mirror-to → origin атакующего без единой ошибки.
+//
+// Переход https → https разрешён, апгрейд http → https — тоже: запрещён
+// именно спуск, а не перенаправление. Апгрейда в производстве не бывает
+// (вход всегда https, см. выше); граница проведена по спуску потому, что
+// защищаемое свойство — «схема не понижается», а не «схема не меняется».
+//
+// Копия, а не правка переданного клиента: объект чужой, его политика на других
+// путях — не наше дело (ср. withoutRedirects).
+func withoutSchemeDowngrade(c *http.Client) *http.Client {
+	// nil сохраняется как nil: фолбэка на http.DefaultClient здесь нет
+	// намеренно (см. NewMirror), и подменять его копией пустого клиента —
+	// значит завести тот самый фолбэк с прокси из окружения и без таймаута.
+	if c == nil {
+		return nil
+	}
+	dup := *c
+	// Хранилище cookie в копию не берётся — как и в withoutRedirects, и по
+	// той же причине: зеркалу оно не нужно (один GET, сессия ставится
+	// заголовком), а взятое чужое работало бы в обе стороны. Set-Cookie со
+	// страницы зеркала или любого из хопов лёг бы в хранилище ЧУЖОГО объекта,
+	// а лежащие там cookie (в том числе сессия портала) уехали бы на хост
+	// зеркала — на хост, который к тому же приезжает редиректом.
+	dup.Jar = nil
+	dup.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxMirrorRedirects {
+			return fmt.Errorf("%w: больше %d перенаправлений", ErrMirrorUnavailable, maxMirrorRedirects)
+		}
+		if prev := via[len(via)-1]; prev.URL.Scheme == "https" && req.URL.Scheme != "https" {
+			return fmt.Errorf("%w: перенаправление с https на %q — со страницы зеркала приезжает хост, которому мы шлём ключ подписки",
+				ErrMirrorUnavailable, req.URL.Scheme)
+		}
+		return nil
+	}
+	return &dup
 }
 
 // Origin возвращает рабочий origin CP для указанного адреса зеркала.

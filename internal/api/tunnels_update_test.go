@@ -928,7 +928,8 @@ func TestTunnelUpdate_KeepsServiceResolvedEndpointIP(t *testing.T) {
 
 // F186: диапазон keepalive (AWG 3.0) на nativewg больше не отвергается —
 // в NDMS уходит его нижняя граница, а в записи диапазон остаётся целиком.
-// Краснеет на возврате ValidateKeepaliveForBackend в хендлер.
+// Краснеет, если хендлер снова начнёт отвергать диапазон на nativewg —
+// неважно, какой именно проверкой.
 func TestTunnelUpdate_NativeWGAcceptsKeepaliveRange(t *testing.T) {
 	h, store := newTunnelsUpdateHarness(t, &stubTunnelSvc{})
 	if err := store.Create(&storage.AWGTunnel{

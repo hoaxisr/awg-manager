@@ -197,10 +197,12 @@ func NewClient(httpClient *http.Client, mirrorURL MirrorURLFunc, key Subscriptio
 // нужна на пути к порталу: на 307/308 Go переигрывает тело запроса — ключ
 // подписки уехал бы на хост из Location, — а на 301/302 документ чужого хоста
 // приехал бы как ответ портала. С запретом 3xx доезжает до проверки статуса и
-// становится отказом. На путь к зеркалу политика не ставится: запрос туда без
-// тела и без секрета, а адрес зеркала вводит пользователь — апгрейд протокола,
-// хвостовой слэш и сокращатель приезжают перенаправлением, и запрет сломал бы
-// резолв на ровном месте.
+// становится отказом. На путь к зеркалу полный запрет не ставится: адрес
+// зеркала вводит пользователь — хвостовой слэш и сокращатель приезжают
+// перенаправлением, и запрет сломал бы резолв на ровном месте. Но
+// безобидным этот путь не является: со страницы зеркала приезжает хост,
+// которому мы затем шлём ключ подписки, поэтому там стоит своя, более узкая
+// политика — withoutSchemeDowngrade в mirror.go.
 //
 // Копия, а не правка переданного клиента: объект чужой, его политика — не наше
 // дело. Хранилище cookie в копию не берётся: сессию мы ставим заголовком сами,
@@ -223,14 +225,21 @@ func withoutRedirects(c *http.Client) *http.Client {
 // Прокси из окружения, в отличие от снятого internal/api/amnezia_cp.go, не
 // берётся: при заданном HTTPS_PROXY запрос ушёл бы через чужой прокси — мимо
 // требования о регионе, ради которого зеркало и понадобилось. Снимать его
-// нужно явно: httpclient.NewTransport ставит ProxyFromEnvironment сам, когда
-// транспорт не привязан к интерфейсу.
+// нужно ЯВНО: httpclient.NewTransport наследует прокси окружения сам, когда
+// транспорт не привязан к интерфейсу, и «не передавать ProxyURL» для прямого
+// выхода недостаточно.
 func newDirectClient() *http.Client {
-	tr, err := httpclient.NewTransport(httpclient.TransportConfig{})
-	if err != nil || tr == nil {
-		tr = &http.Transport{}
+	tr, err := httpclient.NewTransport(httpclient.TransportConfig{Proxy: httpclient.ProxyDirect})
+	if err != nil {
+		// Отказать этот вызов не может: NewTransport возвращает ошибку только
+		// на негодном ProxyURL, а здесь его нет вовсе. Запасного транспорта
+		// поэтому не держим — держали бы недостижимую копию тех же свойств, и
+		// она молча разъехалась бы с каноническими. Паника здесь ловится
+		// перехватом в loggingMiddleware и становится 500 с записью в журнал:
+		// если недостижимое всё-таки случится, это будет видно, а не
+		// подменится тихим клиентом без пина ALPN.
+		panic("amneziacp: сборка прямого транспорта: " + err.Error())
 	}
-	tr.Proxy = nil
 	tr.DialContext = (&net.Dialer{
 		Timeout:   12 * time.Second,
 		KeepAlive: 30 * time.Second,
@@ -344,7 +353,7 @@ func (c *Client) CheckKey(ctx context.Context, key string, remember bool) error 
 	}
 	var lastErr error
 	for attempt := 0; ; attempt++ {
-		origin, err := c.resolve(ctx)
+		origin, err := c.resolveRetrying(ctx)
 		if err != nil {
 			return err
 		}
@@ -383,7 +392,7 @@ func (c *Client) call(ctx context.Context, req cpRequest) ([]byte, string, error
 
 	var lastErr error
 	for attempt := 0; ; attempt++ {
-		origin, err := c.resolve(ctx)
+		origin, err := c.resolveRetrying(ctx)
 		if err != nil {
 			return nil, "", err
 		}
@@ -434,6 +443,62 @@ func (c *Client) again(ctx context.Context, rec recovery, attempt int, repeatabl
 		return false
 	}
 	return attempt+1 < maxAttempts
+}
+
+// resolveRetrying — резолв зеркала со СВОИМ бюджетом попыток.
+//
+// Бюджет отдельный, а не общий с запросом, и это главное в этой функции.
+// Общий приводил к компаундному отказу: икота зеркала съедала единственный
+// повтор, и следующая за ней протухшая cookie уже не восстанавливалась —
+// наружу уезжал ErrKeyRejected, то есть пользователю предлагали заменить
+// РАБОЧИЙ ключ. Ровно тот исход, против которого написан комментарий в again.
+// До появления повтора резолва тот же вход давал честное «сервис недоступен».
+//
+// Расходной ручке отдельный бюджет не опасен: её повтор в любом случае заперт
+// гейтом recoverySession в again, а до портала при отказе резолва дело не
+// доходит вовсе.
+//
+// Повторяются ТОЛЬКО недетерминированные отказы. Страница без мета-тега,
+// непригодный data-link, превышение предела размера и незаданный адрес — это
+// приговор, который не изменится за секунду: повтор стоил бы второго полного
+// похода за страницей зеркала через CDN на роутере со 128 МБ и второй строки
+// в журнале, не давая ничего.
+func (c *Client) resolveRetrying(ctx context.Context) (string, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			// Адрес мог смениться: ротируемый хост обязан быть добыт заново,
+			// а не дожить в кэше до конца TTL.
+			c.mirror.Invalidate()
+		}
+		origin, err := c.resolve(ctx)
+		if err == nil {
+			return origin, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil || !mirrorFailureRepeatable(err) {
+			return "", lastErr
+		}
+	}
+	return "", lastErr
+}
+
+// mirrorFailureRepeatable — имеет ли смысл повторять этот отказ резолва.
+//
+// Детерминированные разборы страницы и незаданный адрес — нет. Всё остальное
+// (транспорт, таймаут, не-200 от зеркала) — да: это ровно та икота, из-за
+// которой один отказ ронял весь вызов.
+func mirrorFailureRepeatable(err error) bool {
+	switch {
+	case errors.Is(err, ErrMirrorNotConfigured):
+		// Контракт ErrMirrorNotConfigured прямо просит не повторять и не гнать
+		// принудительный ре-резолв, а отправить пользователя в настройки.
+		return false
+	case errors.Is(err, ErrNoMirrorTag), errors.Is(err, ErrBadMirrorLink):
+		return false
+	default:
+		return true
+	}
 }
 
 func (c *Client) resolve(ctx context.Context) (string, error) {
@@ -845,6 +910,13 @@ func maskSecret(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for at >= 0 {
+		// Предел проверяется ДО записи, а не после: иначе фрагмент с маркером
+		// успевают уехать в буфер, и граница становится «предел плюс сколько
+		// получилось».
+		if b.Len()+at+len(secretMarker) > maxCPBody {
+			b.WriteString(maskOverflowMarker)
+			return b.String()
+		}
 		b.WriteString(s[:at])
 		b.WriteString(secretMarker)
 		// Ссылка кончается там, где начинается пробел: в base64url его нет.
@@ -854,11 +926,28 @@ func maskSecret(s string) string {
 		} else {
 			s = ""
 		}
+		// Выход не может перерасти принятый вход. Маркер (18 байт) длиннее
+		// минимального вырезаемого токена `vpn://` (6 байт), поэтому тело из
+		// одних таких токенов раздувало результат втрое: вход ограничен
+		// maxCPBody, выход не был ограничен ничем, и на роутере со 128 МБ это
+		// давало до ~3 МиБ из одного ответа. Предел общий с телом: больше, чем
+		// приняли, наружу уйти не может.
 		at = strings.Index(s, vpnLinkScheme)
+	}
+	// Хвост — кусок исходной строки, вырезать в нём уже нечего; предел он
+	// перерасти не может, потому что длиннее входа хвост не бывает.
+	if b.Len()+len(s) > maxCPBody {
+		b.WriteString(maskOverflowMarker)
+		return b.String()
 	}
 	b.WriteString(s)
 	return b.String()
 }
+
+// maskOverflowMarker ставится вместо хвоста, который не поместился в предел.
+// Молча обрывать нельзя: получатель обязан отличать «строка кончилась» от
+// «строку обрезали», иначе обрезанный ответ читается как полный.
+const maskOverflowMarker = "[обрезано]"
 
 // errNoConf — внутренний признак «в этой строке конфигурации нет».
 var errNoConf = errors.New("конфигурации нет")
