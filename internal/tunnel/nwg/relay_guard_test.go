@@ -296,3 +296,44 @@ func TestSyncObfuscator_RelayStartFailed_KeepsRouteUntouched(t *testing.T) {
 		t.Fatal("страж поставлен на туннель, релей которого не поднялся")
 	}
 }
+
+// Замок берётся с дедлайном от контекста прохода, а не с нуля: иначе Close
+// демона ждал бы освобождения до tunnelLockTimeout, а один занятый туннель
+// держал бы весь проход стража, голодая остальные записи.
+func TestGuardSweep_LockWaitIsBounded(t *testing.T) {
+	op, _, _, _ := relayGuardFixture(t)
+	stubGuardLookup(t, []string{"198.51.100.7"}, nil)
+	var gotDeadline bool
+	op.SetTunnelLock(func(ctx context.Context, _, _ string, _ func() error) error {
+		_, gotDeadline = ctx.Deadline()
+		return errors.New("туннель занят")
+	})
+
+	op.guardSweep(context.Background())
+
+	if !gotDeadline {
+		t.Fatal("замок берётся без дедлайна — проход и Close могут ждать минутами")
+	}
+}
+
+// Пока страж ждал замок, туннель могли остановить: поднимать его релей и
+// ставить маршрут под уже снятую запись нельзя.
+func TestGuardSweep_EntryDroppedWhileWaitingLock_SkipsRestart(t *testing.T) {
+	op, n, fr, st := relayGuardFixture(t)
+	stubGuardLookup(t, []string{"198.51.100.7"}, nil)
+	startsBefore := fr.startCount(st.ID)
+	op.SetTunnelLock(func(_ context.Context, id, _ string, work func() error) error {
+		// Ровно то, что делает Stop, пока мы стояли в очереди за замком.
+		op.guardUnregister(id)
+		return work()
+	})
+
+	op.guardSweep(context.Background())
+
+	if got := fr.startCount(st.ID); got != startsBefore {
+		t.Fatalf("релей остановленного туннеля поднят: стартов %d, было %d", got, startsBefore)
+	}
+	if posts := n.joined(); strings.Contains(posts, `"host":"198.51.100.7"`) {
+		t.Fatalf("маршрут поставлен под снятую запись:\n%s", posts)
+	}
+}

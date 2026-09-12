@@ -616,3 +616,40 @@ func TestWGShowHasEndpoint(t *testing.T) {
 		t.Fatal("missing peer must be reported as mismatch")
 	}
 }
+
+// Выдержка общая для дорогих операций: пересборка слота рвёт соединение
+// (новый listen-порт) ровно так же, как рестарт релея. Резолвер, отдающий
+// ротирующее подмножество A-записей, без неё гонял бы её каждый проход.
+func TestGuardSweep_KmodRebuildRespectsCooldown(t *testing.T) {
+	cs := newCaptureServer(t)
+	op := newSyncTestOperator(t, cs.srv.URL)
+	op.supportsASC = func() bool { return false }
+	op.resolveFn = func(string) (string, int, error) { return "203.0.113.9", 51820, nil }
+	km, stub := newKmodManagerForTest()
+	op.kmod = km
+	op.SetTunnelLookup(func(id string) (*storage.AWGTunnel, error) {
+		return &storage.AWGTunnel{
+			ID: id, NWGIndex: 3,
+			Peer: storage.AWGPeer{PublicKey: "PUB", Endpoint: "vpn.example.com:51820"},
+		}, nil
+	})
+	op.guardRegister("awg10", guardEntry{
+		iface: "nwg3", pubkey: "PUB", endpoint: "198.51.100.1:51820",
+		spec: "vpn.example.com:51820", name: "Wireguard3", mode: guardKmod,
+	})
+
+	_ = stubGuardLookup(t, []string{"203.0.113.9"}, nil)
+	op.guardSweep(context.Background()) // первая пересборка — штатная
+	if !strings.Contains(stub.listBody, "203.0.113.9:51820") {
+		t.Fatalf("подготовка: слот не пересобран:\n%s", stub.listBody)
+	}
+	before := stub.countWrites("/proc/awg_proxy/add")
+
+	// Резолвер «передумал» — без выдержки слот пересобрался бы снова.
+	_ = stubGuardLookup(t, []string{"198.51.100.1"}, nil)
+	op.guardSweep(context.Background())
+
+	if got := stub.countWrites("/proc/awg_proxy/add"); got != before {
+		t.Fatalf("пересборка внутри выдержки: сборок %d, было %d", got, before)
+	}
+}

@@ -52,7 +52,11 @@ func (f *fakePoster) Post(ctx context.Context, payload any) (json.RawMessage, er
 	resp := f.nextResp
 	f.mu.Unlock()
 	if fileExists {
+		// Форма ответа идёт за формой запроса: у v6-команды ключ ipv6.
 		resp = routerFileExistsBody
+		if payloadMentionsIPv6(payload) {
+			resp = routerFileExistsBodyV6
+		}
 	}
 	if resp == nil {
 		resp = json.RawMessage(`{}`)
@@ -74,6 +78,12 @@ func (f *fakePoster) Calls() int32 { return atomic.LoadInt32(&f.calls) }
 // снята, но по тому же адресу в таблице осталась ещё одна: HTTP 200 и
 // status:"error" внутри. Ошибка ложная — снятие прошло.
 var routerFileExistsBody = json.RawMessage(`{"ip":{"route":{"status":[{"status":"error",` +
+	`"code":"268239256","ident":"Io::Netlink","critical":"yes",` +
+	`"message":"system failed [0xcffd0198], got an error response: file exists."}]}}}`)
+
+// То же для v6: роутер отвечает под ключом ipv6, и подсовывать сюда v4-тело
+// значит проверять терпимость на форме, которой в этом случае не бывает.
+var routerFileExistsBodyV6 = json.RawMessage(`{"ipv6":{"route":{"status":[{"status":"error",` +
 	`"code":"268239256","ident":"Io::Netlink","critical":"yes",` +
 	`"message":"system failed [0xcffd0198], got an error response: file exists."}]}}}`)
 
@@ -754,4 +764,14 @@ func TestSaveCoordinator_FireDispatchedDuringFlushYields(t *testing.T) {
 	if got := poster.Calls(); got != 1 {
 		t.Errorf("POST'ов %d, ждали 1 (только Flush): fire не уступил владение состоянием", got)
 	}
+}
+
+// payloadMentionsIPv6 — команда пришла в v6-форме (внешний ключ "ipv6").
+func payloadMentionsIPv6(payload any) bool {
+	m, ok := payload.(map[string]any)
+	if !ok {
+		return false
+	}
+	_, v6 := m["ipv6"]
+	return v6
 }

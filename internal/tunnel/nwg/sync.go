@@ -314,9 +314,7 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 		// v6-литерал под стражем не держим — резолвить нечего, адрес
 		// доводят startProxy/SyncKmodSlot.
 		if guard, _ := guardModeForEndpoint(stored.Peer.Endpoint, false); !guard {
-			if e, ok := o.guardGet(stored.ID); !ok || e.mode != guardRelay {
-				o.guardUnregister(stored.ID)
-			}
+			o.guardUnregister(stored.ID)
 		} else if cur, ok := o.guardGet(stored.ID); ok && cur.spec == stored.Peer.Endpoint {
 			o.guardReplaceIfPresent(stored.ID, guardEntry{
 				iface:    NewNWGNames(stored.NWGIndex).IfaceName,

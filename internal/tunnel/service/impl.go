@@ -849,16 +849,16 @@ func (s *ServiceImpl) withTunnelLock(ctx context.Context, tunnelID, owner string
 	return s.orch.WithTunnelLock(ctx, tunnelID, owner, fn)
 }
 
-// persistObfuscatorTargetIP кладёт в запись адрес, под которым стоит host-route
-// до target'а релея. Транзакция узкая: единственное поле, ErrNoChange на
-// совпадении — файл не трогается. Отказ записи только логируется: маршрут уже
-// стоит, и валить из-за него правку туннеля нечестно.
 // PersistObfuscatorTargetIP экспортирован для endpoint-стража (nwg): у
 // оператора нет стора, а адрес target'а обязан пережить рестарт демона.
 func (s *ServiceImpl) PersistObfuscatorTargetIP(tunnelID, ip string) {
 	s.persistObfuscatorTargetIP(tunnelID, ip)
 }
 
+// persistObfuscatorTargetIP кладёт в запись адрес, под которым стоит host-route
+// до target'а релея. Транзакция узкая: единственное поле, ErrNoChange на
+// совпадении — файл не трогается. Отказ записи только логируется: маршрут уже
+// стоит, и валить из-за него правку туннеля нечестно.
 func (s *ServiceImpl) persistObfuscatorTargetIP(tunnelID, ip string) {
 	if ip == "" {
 		return
