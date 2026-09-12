@@ -292,6 +292,10 @@ type stubTunnelSvc struct {
 
 	replaceCalls int
 	replaceErr   error
+	// replaceOpts — опции ПОСЛЕДНЕЙ замены: по ним видно, какую семантику
+	// страны handler передал сервису (nil = «не трогать»).
+	replaceOpts  service.ReplaceOptions
+	replaceNames []string
 
 	setEnabledCalls      []toggleCall
 	setDefaultRouteCalls []toggleCall
@@ -344,8 +348,10 @@ func (s *stubTunnelSvc) SetDefaultRoute(_ context.Context, id string, v bool) er
 func (s *stubTunnelSvc) Import(context.Context, string, string, string, service.ImportLink) (*service.TunnelWithStatus, error) {
 	return nil, fmt.Errorf("stub")
 }
-func (s *stubTunnelSvc) ReplaceConfig(context.Context, string, string, string) error {
+func (s *stubTunnelSvc) ReplaceConfig(_ context.Context, _, _, newName string, opts service.ReplaceOptions) error {
 	s.replaceCalls++
+	s.replaceOpts = opts
+	s.replaceNames = append(s.replaceNames, newName)
 	return s.replaceErr
 }
 func (s *stubTunnelSvc) WANModel() *wan.Model                     { return nil }
@@ -845,9 +851,13 @@ func TestTunnelUpdate_FieldInventoryComplete(t *testing.T) {
 		"ResolvedEndpointIP": true,
 		"WdttClientID":       true,
 		"FreeTurnClientID":   true,
-		"RawKernelIface":     true,
-		"RawNdmsIface":       true,
-		"Locked":             true,
+		// AmneziaCountry владеют импорт и замена конфигурации: метка обязана
+		// жить ровно столько, сколько конфигурация, которую она описывает.
+		// Правка карточкой развязала бы её с конфигом.
+		"AmneziaCountry": true,
+		"RawKernelIface": true,
+		"RawNdmsIface":   true,
+		"Locked":         true,
 	}
 
 	rt := reflect.TypeOf(storage.AWGTunnel{})

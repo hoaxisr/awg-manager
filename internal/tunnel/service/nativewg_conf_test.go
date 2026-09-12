@@ -44,7 +44,7 @@ func TestReplaceConfigSkipsConfForNativeWG(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.ReplaceConfig(context.Background(), "awg20", sampleConf, ""); err != nil {
+	if err := s.ReplaceConfig(context.Background(), "awg20", sampleConf, "", ReplaceOptions{}); err != nil {
 		t.Fatalf("ReplaceConfig: %v", err)
 	}
 
@@ -60,7 +60,7 @@ func TestReplaceConfigWritesConfForKernel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.ReplaceConfig(context.Background(), "awg10", sampleConf, ""); err != nil {
+	if err := s.ReplaceConfig(context.Background(), "awg10", sampleConf, "", ReplaceOptions{}); err != nil {
 		t.Fatalf("ReplaceConfig: %v", err)
 	}
 
@@ -89,7 +89,7 @@ func TestReplaceConfig_ClearsPresharedKeyAbsentInNewConf(t *testing.T) {
 	}
 
 	// sampleConf секции PresharedKey не содержит.
-	if err := s.ReplaceConfig(context.Background(), "awg10", sampleConf, ""); err != nil {
+	if err := s.ReplaceConfig(context.Background(), "awg10", sampleConf, "", ReplaceOptions{}); err != nil {
 		t.Fatalf("ReplaceConfig: %v", err)
 	}
 
@@ -113,7 +113,7 @@ func TestReplaceConfig_RejectsOverlappingHeaders(t *testing.T) {
 	conf := strings.Replace(sampleConf, "Address = 10.8.0.2/32",
 		"Address = 10.8.0.2/32\nH1 = 10\nH2 = 10\nH3 = 30\nH4 = 40", 1)
 
-	err := s.ReplaceConfig(context.Background(), "awg10", conf, "")
+	err := s.ReplaceConfig(context.Background(), "awg10", conf, "", ReplaceOptions{})
 	if err == nil {
 		t.Fatal("ReplaceConfig принял конфиг с H1 = H2, ожидалась ошибка")
 	}

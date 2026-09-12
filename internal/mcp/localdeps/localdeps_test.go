@@ -758,7 +758,7 @@ func (f *lifecycleTunnels) Start(context.Context, string) error {
 	f.calls = append(f.calls, "start")
 	return f.startErr
 }
-func (f *lifecycleTunnels) ReplaceConfig(_ context.Context, _, cfg, _ string) error {
+func (f *lifecycleTunnels) ReplaceConfig(_ context.Context, _, cfg, _ string, _ service.ReplaceOptions) error {
 	f.calls = append(f.calls, "replace")
 	f.importedCfg = cfg
 	return f.replaceErr

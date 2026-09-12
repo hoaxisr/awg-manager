@@ -529,30 +529,39 @@ type ConnectivityCheckConfig struct {
 
 // AWGTunnel represents AmneziaWG tunnel metadata.
 type AWGTunnel struct {
-	ID                 string                   `json:"id"`
-	Name               string                   `json:"name"`
-	Type               string                   `json:"type,omitempty"` // "awg"
-	Enabled            bool                     `json:"enabled"`
-	Locked             bool                     `json:"locked,omitempty"`             // Защита от изменений (#818): Stop/ToggleEnabled/ToggleDefaultRoute/Update/Delete/Replace отвечают 403
-	DefaultRoute       bool                     `json:"defaultRoute"`                 // Create NDMS default route (ip route default OpkgTunX)
-	DefaultRouteSet    bool                     `json:"defaultRouteSet,omitempty"`    // Migration sentinel: false = field never saved, default to true
-	ISPInterface       string                   `json:"ispInterface,omitempty"`       // Override ISP interface for endpoint route (empty = auto-detect)
-	ISPInterfaceLabel  string                   `json:"ispInterfaceLabel,omitempty"`  // Human-readable name for UI display
-	ResolvedEndpointIP string                   `json:"resolvedEndpointIP,omitempty"` // Persisted resolved endpoint IP for reliable cleanup
-	ActiveWAN          string                   `json:"activeWAN,omitempty"`          // Persisted resolved WAN for WAN event matching
-	StartedAt          string                   `json:"startedAt,omitempty"`          // RFC3339 timestamp of last successful start
-	Backend            string                   `json:"backend,omitempty"`            // "nativewg" | "kernel" | "wdtt-raw" | "" (legacy=kernel)
-	FreeTurnClientID   string                   `json:"freeTurnClientId,omitempty"`   // set when AWG tunnel is auto-created from freeturn:// import
-	WdttClientID       string                   `json:"wdttClientId,omitempty"`       // set when AWG tunnel is auto-created from wdtt/qwdtt import
-	RawKernelIface     string                   `json:"rawKernelIface,omitempty"`     // wdtt-raw: kernel TUN (e.g. wdttraw0 / opkgtun17)
-	RawNdmsIface       string                   `json:"rawNdmsIface,omitempty"`       // wdtt-raw: NDMS OpkgTun name (e.g. OpkgTun17)
-	NWGIndex           int                      `json:"nwgIndex"`                     // Wireguard{N} index, nativewg only (0 is valid!)
-	CreatedAt          string                   `json:"createdAt"`
-	Interface          AWGInterface             `json:"interface"`
-	Peer               AWGPeer                  `json:"peer"`
-	PingCheck          *TunnelPingCheck         `json:"pingCheck,omitempty"`
-	ConnectivityCheck  *ConnectivityCheckConfig `json:"connectivityCheck,omitempty"`
-	Obfuscator         *Obfuscator              `json:"obfuscator,omitempty"` // wg-obfuscator (Phobos/ClusterM); nil = обычный туннель
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Type               string `json:"type,omitempty"` // "awg"
+	Enabled            bool   `json:"enabled"`
+	Locked             bool   `json:"locked,omitempty"`             // Защита от изменений (#818): Stop/ToggleEnabled/ToggleDefaultRoute/Update/Delete/Replace отвечают 403
+	DefaultRoute       bool   `json:"defaultRoute"`                 // Create NDMS default route (ip route default OpkgTunX)
+	DefaultRouteSet    bool   `json:"defaultRouteSet,omitempty"`    // Migration sentinel: false = field never saved, default to true
+	ISPInterface       string `json:"ispInterface,omitempty"`       // Override ISP interface for endpoint route (empty = auto-detect)
+	ISPInterfaceLabel  string `json:"ispInterfaceLabel,omitempty"`  // Human-readable name for UI display
+	ResolvedEndpointIP string `json:"resolvedEndpointIP,omitempty"` // Persisted resolved endpoint IP for reliable cleanup
+	ActiveWAN          string `json:"activeWAN,omitempty"`          // Persisted resolved WAN for WAN event matching
+	StartedAt          string `json:"startedAt,omitempty"`          // RFC3339 timestamp of last successful start
+	Backend            string `json:"backend,omitempty"`            // "nativewg" | "kernel" | "wdtt-raw" | "" (legacy=kernel)
+	FreeTurnClientID   string `json:"freeTurnClientId,omitempty"`   // set when AWG tunnel is auto-created from freeturn:// import
+	WdttClientID       string `json:"wdttClientId,omitempty"`       // set when AWG tunnel is auto-created from wdtt/qwdtt import
+	// AmneziaCountry — код страны подписки Amnezia Premium, из которой
+	// получена ТЕКУЩАЯ конфигурация туннеля (нормализован: нижний регистр,
+	// без пробелов по краям). Пусто — конфигурация не из мастера.
+	//
+	// Владельцы поля ровно два: импорт и замена конфигурации. Поле обязано
+	// умирать вместе с конфигурацией, которую описывает: пользователь,
+	// заменивший .conf вручную, иначе видел бы в мастере метку «этой стране
+	// уже соответствует туннель» на туннеле, к подписке отношения не имеющем.
+	AmneziaCountry    string                   `json:"amneziaCountry,omitempty"`
+	RawKernelIface    string                   `json:"rawKernelIface,omitempty"` // wdtt-raw: kernel TUN (e.g. wdttraw0 / opkgtun17)
+	RawNdmsIface      string                   `json:"rawNdmsIface,omitempty"`   // wdtt-raw: NDMS OpkgTun name (e.g. OpkgTun17)
+	NWGIndex          int                      `json:"nwgIndex"`                 // Wireguard{N} index, nativewg only (0 is valid!)
+	CreatedAt         string                   `json:"createdAt"`
+	Interface         AWGInterface             `json:"interface"`
+	Peer              AWGPeer                  `json:"peer"`
+	PingCheck         *TunnelPingCheck         `json:"pingCheck,omitempty"`
+	ConnectivityCheck *ConnectivityCheckConfig `json:"connectivityCheck,omitempty"`
+	Obfuscator        *Obfuscator              `json:"obfuscator,omitempty"` // wg-obfuscator (Phobos/ClusterM); nil = обычный туннель
 }
 
 // TunnelPingCheck contains per-tunnel ping check configuration.

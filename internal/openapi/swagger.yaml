@@ -2224,6 +2224,12 @@ definitions:
     type: object
   api.ImportConfRequest:
     properties:
+      amneziaCountry:
+        description: |-
+          AmneziaCountry — код страны подписки Amnezia Premium, из которой взята
+          конфигурация. Шлёт его мастер; обычный импорт файла поле не присылает,
+          и туннель остаётся без метки страны.
+        type: string
       backend:
         description: '"nativewg" | "kernel" (default: "kernel")'
         type: string

@@ -68,6 +68,10 @@ type ImportConfRequest struct {
 	InstallURL string `json:"installUrl,omitempty"`
 	// Obfuscator — параметры релея руками (ClusterM). Несовместимо с [instance] в Content.
 	Obfuscator *ObfuscatorImportRequest `json:"obfuscator,omitempty"`
+	// AmneziaCountry — код страны подписки Amnezia Premium, из которой взята
+	// конфигурация. Шлёт его мастер; обычный импорт файла поле не присылает,
+	// и туннель остаётся без метки страны.
+	AmneziaCountry string `json:"amneziaCountry,omitempty"`
 }
 
 // ObfuscatorImportRequest — пользовательские поля релея при ручном вводе.
@@ -120,7 +124,11 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, "обфускатор нельзя сочетать со связанным прокси-клиентом (wdtt/freeturn)", "OBFUSCATOR_CONFLICT")
 			return
 		}
-		if err := h.svc.ReplaceConfig(r.Context(), existingID, req.Content, req.Name); err != nil {
+		// Страна подписки здесь НЕ трогается (nil): эта ветка — повторный
+		// импорт связанного прокси-клиента (wdtt/freeturn), а не замена
+		// конфигурации из мастера. Передать сюда "" значило бы стирать метку
+		// у чужого туннеля на каждом обновлении клиента.
+		if err := h.svc.ReplaceConfig(r.Context(), existingID, req.Content, req.Name, service.ReplaceOptions{}); err != nil {
 			h.log.Warn("import", req.Name, "Failed to replace linked tunnel: "+err.Error())
 			response.Error(w, err.Error(), "IMPORT_FAILED")
 			return
@@ -147,6 +155,7 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 		WdttClientID:     req.WdttClientID,
 		FreeTurnClientID: req.FreeTurnClientID,
 		Obfuscator:       obf,
+		AmneziaCountry:   req.AmneziaCountry,
 	})
 	if err != nil {
 		h.log.Warn("import", req.Name, "Failed to import tunnel: "+err.Error())
