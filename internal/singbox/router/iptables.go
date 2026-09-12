@@ -84,8 +84,11 @@ const (
 // SetDataDir перенацеливает файлы роутера в каталог данных демона. Нужна
 // потому, что `-data-dir` иначе соблюдается наполовину: демон, запущенный в
 // песочнице, писал ctclean.sh и правила netfilter в БОЕВОЙ /opt/etc/awg-manager
-// (F168). Хук ndm (netfilterHookPath) не трогаем — он живёт в /opt/etc/ndm и к
-// каталогу данных отношения не имеет.
+// (F168).
+//
+// Хук ndm живёт по своему пути (/opt/etc/ndm/netfilter.d) и здесь не меняется —
+// но его ТЕЛО ссылается на все перенацеленные файлы, поэтому песочница обязана
+// увести и его: см. SetNetfilterHookPath.
 func SetDataDir(dir string) {
 	sub := filepath.Join(dir, "singbox")
 	netfilterRulesPath = filepath.Join(sub, "router-netfilter.rules")
@@ -108,6 +111,27 @@ func DataDirPaths() map[string]string {
 		"netfilterCtCleanPath":     netfilterCtCleanPath,
 		"bypassSavePath":           bypassSavePath,
 	}
+}
+
+// SetNetfilterHookPath уводит сам хук ndm в сторону. Зовётся только тогда,
+// когда каталог данных НЕ боевой: тело хука ссылается на правила и скрипты
+// каталога данных, и стендовый запуск иначе переписал бы боевой хук ссылками
+// в /tmp — после ухода песочницы ndm восстанавливал бы правила по мёртвым
+// путям, молча (F168).
+func SetNetfilterHookPath(path string) { netfilterHookPath = path }
+
+// NetfilterHookPath — текущий путь хука; нужен тестам, чтобы вернуть его.
+func NetfilterHookPath() string { return netfilterHookPath }
+
+// RestoreDataDirPaths возвращает пути, снятые DataDirPaths. Пара к ней для
+// тестов, которые трогают глобальные каталоги.
+func RestoreDataDirPaths(p map[string]string) {
+	netfilterRulesPath = p["netfilterRulesPath"]
+	netfilterBlackholePath = p["netfilterBlackholePath"]
+	netfilterMangleRulesPath = p["netfilterMangleRulesPath"]
+	netfilterNatRulesPath = p["netfilterNatRulesPath"]
+	netfilterCtCleanPath = p["netfilterCtCleanPath"]
+	bypassSavePath = p["bypassSavePath"]
 }
 
 // Mutable in tests via t.Cleanup so they can redirect into a tmp dir.

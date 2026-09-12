@@ -390,11 +390,8 @@ func TestConfLayerProbe_SetAndReadAreRaceFree(t *testing.T) {
 }
 
 // F258: хуки читаются из updateState под o.mu, поэтому и ставиться обязаны
-// под ним. Детектор ловит здесь обращение к шине — оно идёт первым, до
-// store.Get; чтения ifaceInvalidator и onTunnelRunning лежат в той же
-// критической секции ЗА обращением к стору, а его файловый лок создаёт
-// happens-before и прячет их гонку от -race. Поэтому тест держит класс, а не
-// каждое поле поимённо.
+// под ним. Тест держит каждое из трёх полей: возврат любого сеттера к записи
+// без лока даёт WARNING: DATA RACE (проверено мутацией каждого).
 func TestHookSetters_AreRaceFreeAgainstUpdateState(t *testing.T) {
 	store := lifecycleStore(t, &storage.AWGTunnel{ID: "awg10", Name: "g", Enabled: true})
 	o := &Orchestrator{state: newState(), store: store, bus: events.NewBus()}

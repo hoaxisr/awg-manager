@@ -26,9 +26,11 @@ const (
 // It is a var (not const) to allow overriding in tests.
 var ModulesDir = "/opt/etc/awg-manager/modules"
 
-// BundledDir is the directory containing bundled per-model .ko files from IPK.
-// After selecting the correct module, this directory is removed.
-var BundledDir = filepath.Join(ModulesDir, "bundled")
+// BundledDir — каталог с .ko из IPK под конкретную модель. После выбора
+// нужного модуля каталог УДАЛЯЕТСЯ, поэтому он обязан считаться от текущего
+// ModulesDir, а не запоминаться при инициализации пакета: демон с другим
+// -data-dir иначе сносил бы боевой каталог (F168).
+func BundledDir() string { return filepath.Join(ModulesDir, "bundled") }
 
 const (
 	// ModuleName is the name of the kernel module.
@@ -297,7 +299,7 @@ func (l *Loader) EnsureModule(ctx context.Context) error {
 // copies it to ModulesDir/amneziawg.ko, writes the version file, and removes BundledDir.
 // This is a one-shot operation after IPK install/upgrade.
 func (l *Loader) selectBundledModule() {
-	entries, err := os.ReadDir(BundledDir)
+	entries, err := os.ReadDir(BundledDir())
 	if err != nil {
 		return // no bundled dir — normal restart
 	}
@@ -313,7 +315,7 @@ func (l *Loader) selectBundledModule() {
 	var found string
 	for _, e := range entries {
 		if e.Name() == koName {
-			found = filepath.Join(BundledDir, koName)
+			found = filepath.Join(BundledDir(), koName)
 			break
 		}
 	}
@@ -322,7 +324,7 @@ func (l *Loader) selectBundledModule() {
 			aliasName := fmt.Sprintf("amneziawg-%s.ko", alias)
 			for _, e := range entries {
 				if e.Name() == aliasName {
-					found = filepath.Join(BundledDir, aliasName)
+					found = filepath.Join(BundledDir(), aliasName)
 					break
 				}
 			}
@@ -337,7 +339,7 @@ func (l *Loader) selectBundledModule() {
 		if l.Warn != nil {
 			l.Warn(fmt.Sprintf("no bundled kernel module for model %s — kernel mode works only if a module is already installed", l.model))
 		}
-		os.RemoveAll(BundledDir)
+		os.RemoveAll(BundledDir())
 		return
 	}
 
@@ -348,7 +350,7 @@ func (l *Loader) selectBundledModule() {
 	}
 
 	// Write version from bundled/version file
-	versionPath := filepath.Join(BundledDir, "version")
+	versionPath := filepath.Join(BundledDir(), "version")
 	if data, err := os.ReadFile(versionPath); err == nil {
 		_ = writeVersion(strings.TrimSpace(string(data)))
 	}
@@ -357,7 +359,7 @@ func (l *Loader) selectBundledModule() {
 	l.modulePath = targetPath
 
 	// Clean up — bundled dir no longer needed
-	os.RemoveAll(BundledDir)
+	os.RemoveAll(BundledDir())
 }
 
 // copyFile copies src to dst atomically (write to .tmp, fsync, then rename).
@@ -365,6 +367,12 @@ func (l *Loader) selectBundledModule() {
 // after, so a power loss before writeback would otherwise leave a torn .ko
 // with no way to recover short of reinstalling the package.
 func copyFile(src, dst string) error {
+	// Каталог назначения может не существовать: с нестандартным -data-dir его
+	// никто не создаёт заранее, и без этого установка модуля молча не
+	// срабатывала (F168).
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		return err

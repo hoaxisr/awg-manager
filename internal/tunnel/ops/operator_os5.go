@@ -343,7 +343,6 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	o.logInfo("start", cfg.ID, "Firewall rules added")
 	o.appLog.Info("start", cfg.ID, "Правила файрвола добавлены для "+names.IfaceName)
 
-
 	o.logInfo("start", cfg.ID, "Tunnel started successfully")
 	return nil
 }
@@ -613,7 +612,6 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	}
 	o.logInfo("reconcile", cfg.ID, "Firewall rules added")
 	o.appLog.Info("reconcile", cfg.ID, "Правила файрвола добавлены для "+names.IfaceName)
-
 
 	o.logInfo("reconcile", cfg.ID, "Reconciliation complete")
 	o.appLog.Info("reconcile", cfg.ID, "Конфигурация NDMS восстановлена")

@@ -14,10 +14,7 @@ import (
 // F168: флаг `-data-dir` соблюдался наполовину — демон в песочнице всё равно
 // писал .conf туннелей, конфиги релея и модули в боевой /opt/etc/awg-manager.
 func TestApplyDataDir_RedirectsDerivedPaths(t *testing.T) {
-	oldConf, oldObf, oldMod := tunnel.ConfDir, obfuscator.ConfDir, kmod.ModulesDir
-	t.Cleanup(func() {
-		tunnel.ConfDir, obfuscator.ConfDir, kmod.ModulesDir = oldConf, oldObf, oldMod
-	})
+	restorePaths(t)
 
 	dir := t.TempDir()
 	applyDataDir(dir)
@@ -39,6 +36,8 @@ func TestApplyDataDir_RedirectsDerivedPaths(t *testing.T) {
 // Пути роутера тоже уезжают в каталог данных: до правки демон в песочнице
 // писал туда же, куда боевой, — ctclean.sh и правила netfilter.
 func TestApplyDataDir_RedirectsRouterPaths(t *testing.T) {
+	restorePaths(t)
+
 	dir := t.TempDir()
 	applyDataDir(dir)
 
@@ -47,13 +46,35 @@ func TestApplyDataDir_RedirectsRouterPaths(t *testing.T) {
 			t.Errorf("%s остался вне каталога данных: %q", name, got)
 		}
 	}
+	// Хук ndm лежит вне каталога данных, но его тело ссылается на эти файлы:
+	// песочница обязана увести и его, иначе перепишет боевой скрипт ссылками
+	// на временный каталог.
+	if got := router.NetfilterHookPath(); !strings.HasPrefix(got, dir) {
+		t.Errorf("хук ndm остался боевым при небоевом каталоге данных: %q", got)
+	}
 }
 
-// Пустой флаг ничего не переставляет: боевые значения остаются как есть.
-func TestApplyDataDir_EmptyKeepsDefaults(t *testing.T) {
-	before := tunnel.ConfDir
-	applyDataDir("")
-	if tunnel.ConfDir != before {
-		t.Errorf("пустой каталог данных переписал путь: %q", tunnel.ConfDir)
+// Боевой каталог оставляет хук ndm на месте: иначе демон перестал бы ставить
+// его туда, откуда его читает роутер.
+func TestApplyDataDir_ProductionKeepsHook(t *testing.T) {
+	restorePaths(t)
+
+	applyDataDir(defaultDataDir)
+
+	if got := router.NetfilterHookPath(); got != "/opt/etc/ndm/netfilter.d/50-awgm-tproxy.sh" {
+		t.Errorf("боевой хук уехал: %q", got)
 	}
+}
+
+// restorePaths возвращает все глобальные каталоги после теста: иначе
+// следующий тест пакета получит пути в удалённый TempDir.
+func restorePaths(t *testing.T) {
+	t.Helper()
+	conf, obf, mod, hook := tunnel.ConfDir, obfuscator.ConfDir, kmod.ModulesDir, router.NetfilterHookPath()
+	routerPaths := router.DataDirPaths()
+	t.Cleanup(func() {
+		tunnel.ConfDir, obfuscator.ConfDir, kmod.ModulesDir = conf, obf, mod
+		router.SetNetfilterHookPath(hook)
+		router.RestoreDataDirPaths(routerPaths)
+	})
 }

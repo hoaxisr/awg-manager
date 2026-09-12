@@ -95,10 +95,7 @@ func (o *OperatorOS5Impl) SetupEndpointRoute(ctx context.Context, tunnelID, endp
 	//
 	// Возврат пустой: маршрута нет. Вызывающие на пустоту реагируют по-разному
 	// — оркестратор поле не трогает, applyDiffKernel присваивает как есть
-	// (handler пустое в запись не переносит, tunnels_crud.go). Петлю в
-	// ResolvedEndpointIP это НЕ закрывает — она приезжает туда другим путём:
-	// RestoreEndpointTracking кладёт её в карту на рестарте демона, а
-	// оркестратор сохраняет GetTrackedEndpointIP в запись (F230).
+	// (handler пустое в запись не переносит, tunnels_crud.go).
 	if netutil.SkipHostRoute(endpointIP) {
 		o.logInfo("setup_route", tunnelID, "endpoint не маршрутизируется ("+endpointIP+") — хост-маршрут не нужен")
 		o.removeHostRouteIfUnused(ctx, "setup_route", tunnelID, endpointIP)
