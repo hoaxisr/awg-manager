@@ -80,6 +80,15 @@ func (o *OperatorOS5Impl) applyKernelAddresses(ctx context.Context, scope string
 			o.logWarn(scope, cfg.ID, "Failed to set IPv4 address: "+exec.FormatError(res, err).Error())
 		}
 	}
+	// v6 всегда снимаем перед установкой: `replace` кладёт новый /128, но
+	// прежний с устройства не убирает — при смене адреса у живого туннеля на
+	// интерфейсе осталось бы два, и выбор исходящего адреса стал бы
+	// непредсказуемым. На Start операция пустая: устройство только что создано.
+	// Убрать адрес больше некому: NDMS до kernel-интерфейса не дотягивается
+	// (см. SyncAddress), а второй точки записи адресов контракт не допускает.
+	if res, err := o.ipRun(ctx, "/opt/sbin/ip", "-6", "address", "flush", "dev", iface); err != nil {
+		o.logWarn(scope, cfg.ID, "Failed to clear IPv6 address: "+exec.FormatError(res, err).Error())
+	}
 	if cfg.AddressIPv6 != "" {
 		if res, err := o.ipRun(ctx, "/opt/sbin/ip", "-6", "address", "replace", "dev", iface, cfg.AddressIPv6+"/128"); err != nil {
 			err = exec.FormatError(res, err)
@@ -230,11 +239,19 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 		return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("set MTU: %w", err))
 	}
 
-	if cfg.AddressIPv6 != "" {
-		if err := o.commands.Interfaces.SetIPv6Address(ctx, names.NDMSName, cfg.AddressIPv6); err != nil {
-			o.logWarn("start", cfg.ID, "Failed to set NDMS IPv6 address: "+err.Error())
-		}
-	}
+	// v6-адрес в NDMS не отправляем: применить его к нашему устройству роутер
+	// не может. Kernel-путь удаляет tun-устройство, созданное NDMS, и ставит
+	// своё `amneziawg` — после подмены Ip6Tools отвечает на любую попытку
+	// `no such device[19]` (стенд 5.01, 12.09: при up, повторной командой и
+	// после down/up; на нетронутом tun-устройстве адрес встаёт без ошибок).
+	// Адрес кладёт applyKernelAddresses ниже, и он же возвращает его после
+	// каждого старта, включая холодную загрузку.
+	//
+	// И не чистим: любое обращение к слою ipv6 будит NDMS — он видит адрес,
+	// который мы положили на устройство, и заводит запись сам, после чего
+	// пытается её применить и снова упирается в `no such device` (стенд 5.01,
+	// 12.09). Оставленный в покое слой молчит, а запись прежних версий уходит
+	// при ближайшем пересоздании интерфейса вместе с ним.
 
 	// Ensure ip global is set — it's not part of CreateOpkgTun anymore
 	// (split out to avoid premature nginx binding), so re-apply on every start.
@@ -528,11 +545,8 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 		if err := o.commands.Interfaces.SetAddress(ctx, names.NDMSName, __addr, __mask); err != nil {
 			return tunnel.NewOpError("reconcile", cfg.ID, "ndms", fmt.Errorf("set address: %w", err))
 		}
-		if cfg.AddressIPv6 != "" {
-			if err := o.commands.Interfaces.SetIPv6Address(ctx, names.NDMSName, cfg.AddressIPv6); err != nil {
-				o.logWarn("reconcile", cfg.ID, "Failed to set NDMS IPv6 address: "+err.Error())
-			}
-		}
+		// v6 в NDMS не трогаем вовсе (см. ColdStart): адрес кладёт
+		// applyKernelAddresses.
 	}
 	if cfg.MTU > 0 {
 		if err := o.commands.Interfaces.SetMTU(ctx, names.NDMSName, cfg.MTU); err != nil {
@@ -716,13 +730,14 @@ func (o *OperatorOS5Impl) SyncAddress(ctx context.Context, tunnelID string, addr
 	if err := o.commands.Interfaces.SetAddress(ctx, names.NDMSName, __addr, __mask); err != nil {
 		return tunnel.NewOpError("sync_address", tunnelID, "ndms", err)
 	}
-	if ipv6 != "" {
-		if err := o.commands.Interfaces.SetIPv6Address(ctx, names.NDMSName, ipv6); err != nil {
-			o.logWarn("sync_address", tunnelID, "Failed to set IPv6: "+err.Error())
-		}
-	} else {
-		o.commands.Interfaces.ClearIPv6Address(ctx, names.NDMSName)
-	}
+	// v6 правим прямо на устройстве, через ту же единственную точку записи:
+	// в NDMS он до kernel-интерфейса не доходит вовсе (см. ColdStart), то есть
+	// до этой правки смена v6-адреса у живого туннеля не применялась до его
+	// перезапуска.
+	o.applyKernelAddresses(ctx, "sync_address", tunnel.Config{
+		ID: tunnelID, Address: address, AddressPrefix: prefix, AddressIPv6: ipv6,
+	}, names.IfaceName)
+
 	o.logInfo("sync_address", tunnelID, fmt.Sprintf("Address synced: %s, IPv6: %s", address, ipv6))
 	return nil
 }

@@ -15,6 +15,11 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
 
+// obfRouteComment — подпись наших записей host-route в конфигурации роутера.
+// Ею же снимаем: подписал — значит можешь снять ровно свою запись, не трогая
+// чужие на том же адресе (command.RemoveOwnHostRoute).
+func obfRouteComment(tunnelID string) string { return "awgm-obfuscator " + tunnelID }
+
 // obfRouteDetailsPrefix — начало StateInfo.Details, когда релей жив, а host-route
 // до target поставить не удалось: без него трафик релея уходит в сам туннель.
 const obfRouteDetailsPrefix = "маршрут до сервера не поставлен: "
@@ -41,15 +46,16 @@ func (o *OperatorNativeWG) SetObfuscatorRouteSharing(fn func(excludeID, ip strin
 // всегда, и тогда снятие адресуется парой (host, interface), которой запись
 // NDMS и ключуется: чужая запись на тот же адрес через другой WAN остаётся
 // нетронутой (стенд 5.01). Пустой wan — «не знаем» (первый заход после
-// рестарта демона): там слепая форма по адресу, она уносит все записи этого
-// адреса, заодно вычищая мусор прошлой жизни.
+// рестарта демона): тогда запись ищется в конфигурации роутера по нашей
+// подписи, и снимается только она — статический маршрут пользователя на тот
+// же адрес переживает нашу уборку.
 func (o *OperatorNativeWG) removeObfHostRoute(ctx context.Context, tunnelID, ip, wan string) error {
 	if o.obfRouteHeldByOther != nil && o.obfRouteHeldByOther(tunnelID, ip) {
 		o.appLog.Info("obfuscator", tunnelID, "host-route "+ip+" нужен другому туннелю, оставляем")
 		return nil
 	}
 	if wan == "" {
-		return o.commands.Routes.RemoveHostRoute(ctx, ip)
+		return o.commands.Routes.RemoveOwnHostRoute(ctx, ip, obfRouteComment(tunnelID))
 	}
 	return o.commands.Routes.RemoveStaticRoute(ctx, command.StaticRouteSpec{
 		Host: ip, Interface: wan, V6: isV6Literal(ip),
@@ -344,7 +350,7 @@ func (o *OperatorNativeWG) addObfHostRoute(ctx context.Context, stored *storage.
 	// релея не встаёт вовсе — трафик релея уходит в сам туннель, то есть
 	// в петлю, ради которой маршрут и ставится.
 	return o.commands.Routes.AddStaticRoute(ctx, command.StaticRouteSpec{
-		Host: ip, Interface: wan, Comment: "awgm-obfuscator " + stored.ID,
+		Host: ip, Interface: wan, Comment: obfRouteComment(stored.ID),
 		V6: isV6Literal(ip),
 	})
 }
