@@ -489,6 +489,17 @@ func subscriptionClient() *http.Client {
 			if len(via) >= 3 {
 				return fmt.Errorf("слишком много редиректов при загрузке подписки")
 			}
+			// Спуск с https на http — отказ, а не молчаливое следование.
+			// validateSubURL разрешает обе схемы (и на первом адресе это
+			// верно: его вводит пользователь), но в адресе подписки живёт
+			// токен — он же остаётся в SubURL для RefreshSubscription. После
+			// 302 на http токен и все заголовки уехали бы открытым текстом:
+			// net/http снимает чувствительные заголовки при смене ХОСТА, а
+			// схема на это не влияет. Запрещён именно СПУСК, а не редирект:
+			// апгрейд и переход внутри https сервер подписки использует сам.
+			if prev := via[len(via)-1]; prev.URL.Scheme == "https" && req.URL.Scheme != "https" {
+				return fmt.Errorf("перенаправление подписки с https на %q: в адресе живёт токен", req.URL.Scheme)
+			}
 			return validateSubURL(req.URL.String())
 		},
 	}
