@@ -228,3 +228,66 @@ func TestSubscriptionClientDialsTargetDirectly(t *testing.T) {
 		t.Fatalf("запрос отклонён не стражем: %v", err)
 	}
 }
+
+// Вторая половина стража подписки — политика редиректов собранного клиента.
+// Без неё 302 уводит загрузку куда угодно: validateSubURL на первом адресе
+// проверяет то, что ввёл пользователь, а не то, куда его перекинули.
+func TestSubscriptionClientRedirectPolicy(t *testing.T) {
+	orig := lookupIP
+	defer func() { lookupIP = orig }()
+	lookupIP = func(string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	}
+
+	c := subscriptionClient()
+	if c.CheckRedirect == nil {
+		t.Fatal("политики редиректов нет: 302 уводит загрузку подписки куда угодно")
+	}
+
+	mkReq := func(t *testing.T, raw string) *http.Request {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, raw, nil)
+		if err != nil {
+			t.Fatalf("запрос к %s: %v", raw, err)
+		}
+		return req
+	}
+	chain := func(t *testing.T, urls ...string) []*http.Request {
+		t.Helper()
+		var via []*http.Request
+		for _, u := range urls {
+			via = append(via, mkReq(t, u))
+		}
+		return via
+	}
+
+	const httpsSub = "https://sub.example.test/sub?token=fixture-token"
+
+	t.Run("спуск с https на http отклонён", func(t *testing.T) {
+		err := c.CheckRedirect(mkReq(t, "http://sub.example.test/sub?token=fixture-token"),
+			chain(t, httpsSub))
+		if err == nil {
+			t.Fatal("спуск на http принят — токен подписки уедет открытым текстом")
+		}
+	})
+
+	t.Run("переход внутри https разрешён", func(t *testing.T) {
+		if err := c.CheckRedirect(mkReq(t, "https://other.example.test/sub?token=fixture-token"),
+			chain(t, httpsSub)); err != nil {
+			t.Fatalf("переход https→https отклонён: %v", err)
+		}
+	})
+
+	t.Run("внутренний адрес отклонён", func(t *testing.T) {
+		if err := c.CheckRedirect(mkReq(t, "https://localhost/sub"), chain(t, httpsSub)); err == nil {
+			t.Fatal("редирект на внутренний адрес принят — validateSubURL на редиректе потерян")
+		}
+	})
+
+	t.Run("предел хопов соблюдён", func(t *testing.T) {
+		if err := c.CheckRedirect(mkReq(t, httpsSub),
+			chain(t, httpsSub, httpsSub, httpsSub)); err == nil {
+			t.Fatal("четвёртый хоп принят — предел редиректов потерян")
+		}
+	})
+}
