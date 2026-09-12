@@ -2091,12 +2091,16 @@ const premiumLeakProbe = "test-leak-6e2c"
 // — старый ответ портала его не содержал, и различие «пусто» / «нет поля»
 // обязано доехать до интерфейса.
 //
-// Выданных конфигураций ДВЕ, и они тоже разные: у nl отметка портала позже
-// выдачи (конфигурация устарела), у de — раньше (не устарела). Перепутанные
-// местами отметки были бы видны. Лишние поля объекта портала здесь у обеих
-// записей и разные (installation_uuid, source_type, os_version): проверка
-// белого списка на одном поле прошла бы и у того, кто пересылает объект по
-// списку имён, вычищая одно известное.
+// Выданных конфигураций ДВЕ, и они разные по ОБОИМ признакам, которыми их
+// различает мастер. По отметкам: у nl отметка портала позже выдачи
+// (конфигурация устарела), у de — раньше (не устарела). По виду записи: nl —
+// переиздаваемая (downloaded_config), de — активное устройство подписки
+// (gateway_account), к которому обе механики мастера НЕ применяются. Значения
+// различимы между собой, так что перепутанные местами поля были бы видны.
+// Лишние поля объекта портала здесь у обеих записей и разные
+// (installation_uuid, os_version): проверка белого списка на одном поле
+// прошла бы и у того, кто пересылает объект по списку имён, вычищая одно
+// известное.
 const premiumAccountFixture = `{"data":{
 	"display_name":"Premium test-plan-77",
 	"display_description":"` + premiumLeakProbe + `-display-description",
@@ -2122,9 +2126,10 @@ const premiumAccountFixture = `{"data":{
 	],
 	"issued_configs":[
 		{"server_country_code":"nl","last_downloaded":"2026-09-01T10:00:00Z",
-		 "worker_last_updated":"2026-09-02T10:00:00Z","installation_uuid":"` + premiumLeakProbe + `-uuid"},
+		 "worker_last_updated":"2026-09-02T10:00:00Z","source_type":"downloaded_config",
+		 "installation_uuid":"` + premiumLeakProbe + `-uuid"},
 		{"server_country_code":"de","last_downloaded":"2026-09-03T11:22:33Z",
-		 "worker_last_updated":"2026-08-20T00:00:00Z","source_type":"` + premiumLeakProbe + `-source",
+		 "worker_last_updated":"2026-08-20T00:00:00Z","source_type":"gateway_account",
 		 "os_version":"` + premiumLeakProbe + `-os"}
 	]
 }}`
@@ -2256,9 +2261,14 @@ func TestAmneziaPremiumCatalog_WhitelistDropsPortalExtras(t *testing.T) {
 }
 
 // Срез уже выданных конфигураций доезжает до ответа — ОБЕ записи фикстуры,
-// каждая с кодом страны и двумя отметками времени. Отметки едут сырыми: метку
-// «конфиг устарел» мастер получает сравнением, и посчитанный здесь bool стёр
-// бы различие «сравнивать нечем» и «не устарела».
+// каждая с кодом страны, двумя отметками времени и видом записи. Значения
+// едут сырыми: и «конфиг устарел», и «запись переиздаваема» мастер считает
+// сам, а посчитанный здесь bool стёр бы различие «судить не по чему» и «не
+// подходит».
+//
+// Вид записи у двух записей РАЗНЫЙ и сверяется по значению: без него мастер
+// посчитал бы выданной страну, где запись — активное устройство подписки, к
+// которому ни повторная выдача, ни устаревание не относятся.
 //
 // Проверяется и НАБОР ключей каждой записи: пересылка объекта портала целиком
 // сравнение значений проходит (нужные поля в ней на месте) и валится только
@@ -2273,8 +2283,10 @@ func TestAmneziaPremiumCatalog_IssuedConfigsReachResponse(t *testing.T) {
 	}
 	data := premiumCatalogData(t, rec)
 	want := []AmneziaPremiumIssuedConfig{
-		{CountryCode: "nl", LastIssuedAt: "2026-09-01T10:00:00Z", PortalUpdatedAt: "2026-09-02T10:00:00Z"},
-		{CountryCode: "de", LastIssuedAt: "2026-09-03T11:22:33Z", PortalUpdatedAt: "2026-08-20T00:00:00Z"},
+		{CountryCode: "nl", LastIssuedAt: "2026-09-01T10:00:00Z", PortalUpdatedAt: "2026-09-02T10:00:00Z",
+			SourceType: "downloaded_config"},
+		{CountryCode: "de", LastIssuedAt: "2026-09-03T11:22:33Z", PortalUpdatedAt: "2026-08-20T00:00:00Z",
+			SourceType: "gateway_account"},
 	}
 	if !slices.Equal(data.IssuedConfigs, want) {
 		t.Fatalf("выданные конфигурации = %+v, want %+v", data.IssuedConfigs, want)
@@ -2291,7 +2303,7 @@ func TestAmneziaPremiumCatalog_IssuedConfigsReachResponse(t *testing.T) {
 	if n := len(raw.Data.IssuedConfigs); n != len(want) {
 		t.Fatalf("записей в теле %d, want %d: %s", n, len(want), rec.Body.String())
 	}
-	wantKeys := []string{"countryCode", "lastIssuedAt", "portalUpdatedAt"}
+	wantKeys := []string{"countryCode", "lastIssuedAt", "portalUpdatedAt", "sourceType"}
 	for i, obj := range raw.Data.IssuedConfigs {
 		keys := make([]string, 0, len(obj))
 		for k := range obj {

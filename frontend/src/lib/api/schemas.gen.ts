@@ -150,6 +150,7 @@ const api_AmneziaPremiumIssuedConfig: v.GenericSchema = v.looseObject({
 	countryCode: v.optional(v.nullable(v.string())),
 	lastIssuedAt: v.optional(v.nullable(v.string())),
 	portalUpdatedAt: v.optional(v.nullable(v.string())),
+	sourceType: v.optional(v.nullable(v.string())),
 });
 
 const api_AmneziaPremiumKeyData: v.GenericSchema = v.looseObject({
