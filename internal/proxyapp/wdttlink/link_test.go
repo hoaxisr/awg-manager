@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -341,5 +342,46 @@ func TestFetchSubscriptionLinkGoesThroughSubscriptionClient(t *testing.T) {
 	}
 	if res.Profile.Peer != "203.0.113.10:56000" {
 		t.Fatalf("peer=%q — ответ подменённого клиента не доехал до разбора", res.Profile.Peer)
+	}
+}
+
+// Транспорт клиента подписки собирается на каждый вызов и живёт одну
+// загрузку: соединение, осевшее в его пуле, не переиспользуется никогда, но
+// и не закрывается — CloseIdleConnections звать некому. Тест смотрит на
+// соединения, а не на поле: считает, сколько раз сервер увидел новое.
+func TestSubscriptionClientKeepsNoIdleConnections(t *testing.T) {
+	var conns atomic.Int64
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	srv.Start()
+	defer srv.Close()
+
+	c := subscriptionClient()
+	tr, ok := c.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("транспорт не *http.Transport, а %T", c.Transport)
+	}
+	// Диалер подменён: loopback страж закрывает намеренно (эту границу держит
+	// TestSubscriptionClientDialsTargetDirectly), а здесь проверяется пул
+	// соединений — остальной транспорт остаётся тем же.
+	tr.DialContext = (&net.Dialer{}).DialContext
+
+	for i := 1; i <= 2; i++ {
+		resp, err := c.Get(srv.URL)
+		if err != nil {
+			t.Fatalf("запрос %d: %v", i, err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+
+	if n := conns.Load(); n != 2 {
+		t.Fatalf("сервер увидел %d новых соединений, ожидалось 2: транспорт держит простаивающее соединение, а закрыть его некому", n)
 	}
 }
