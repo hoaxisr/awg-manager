@@ -375,12 +375,19 @@ func (o *Orchestrator) executeStartNativeWG(ctx context.Context, action Action) 
 	// WAN events. Empty result preserves the previous ActiveWAN — protects
 	// against transient RCI failure when re-starting an already-running tunnel.
 	activeWAN := o.nwgOp.ResolveActiveWAN(ctx, stored)
+	// Адрес — в ту же транзакцию: ActionPersistRunning доедет лишь через
+	// несколько действий, а до тех пор соседний туннель с тем же target
+	// читает из стора прежний адрес и решает по нему, чей это host-route.
+	trackedIP := o.nwgOp.GetTrackedEndpointIP(action.Tunnel)
 	startedAt := time.Now().UTC().Format(time.RFC3339)
 	if err := o.store.Update(action.Tunnel, func(t *storage.AWGTunnel) error {
 		t.Enabled = true
 		t.StartedAt = startedAt
 		if activeWAN != "" {
 			t.ActiveWAN = activeWAN
+		}
+		if trackedIP != "" {
+			t.ResolvedEndpointIP = trackedIP
 		}
 		return nil
 	}); err != nil {

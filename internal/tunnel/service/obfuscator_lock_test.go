@@ -1,0 +1,71 @@
+package service
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
+)
+
+type nopPublisher struct{}
+
+func (nopPublisher) Publish(string, any) {}
+
+// nwgOperatorOnStub — настоящий оператор, но весь RCI уходит в заглушку:
+// нам важен порядок взятия замка, а не ответы роутера.
+func nwgOperatorOnStub(t *testing.T) *nwg.OperatorNativeWG {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	tr := transport.NewWithURL(srv.URL, transport.NewSemaphore(2))
+	q := query.NewQueries(query.Deps{Getter: tr, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	sc := command.NewSaveCoordinator(tr, nopPublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	cmds := command.NewCommands(command.Deps{Poster: tr, Save: sc, Queries: q, IsOS5: func() bool { return true }})
+	op := nwg.NewOperator(q, cmds, tr, nil)
+	t.Cleanup(func() { op.Close(); tr.Close() })
+	return op
+}
+
+// Правка обфускатора идёт под тем же per-tunnel замком, что и действия
+// оркестратора: иначе она переплетается с WAN-up по тому же туннелю, и
+// снятия с постановками host-route наезжают друг на друга.
+func TestUpdate_ObfuscatorSyncTakesTunnelLock(t *testing.T) {
+	orch := orchestrator.NewForTest()
+	s := &ServiceImpl{state: NewMockStateManager(), nwgOperator: nwgOperatorOnStub(t)}
+	s.SetOrchestrator(orch)
+
+	// Замок занят кем-то другим; контекст отменён, чтобы не ждать таймаут.
+	release, err := orch.LockTunnelForTest("awg20", "wan-up")
+	if err != nil {
+		t.Fatalf("подготовка: %v", err)
+	}
+	defer release()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	old := &storage.AWGTunnel{
+		ID: "awg20", Backend: "nativewg",
+		Interface: storage.AWGInterface{Address: "10.0.0.1/32", MTU: 1420},
+	}
+	updated := &storage.AWGTunnel{
+		ID: "awg20", Backend: "nativewg",
+		Interface:  storage.AWGInterface{Address: "10.0.0.1/32", MTU: 1420},
+		Obfuscator: &storage.Obfuscator{Flavor: storage.ObfuscatorFlavorPhobos, Target: "203.0.113.9:51820", Key: "k", LocalPort: 39000},
+	}
+
+	err = s.applyDiffNWG(ctx, old, updated)
+	if err == nil || !strings.Contains(err.Error(), "sync obfuscator") {
+		t.Fatalf("правка обфускатора обязана споткнуться о занятый замок, получили: %v", err)
+	}
+}

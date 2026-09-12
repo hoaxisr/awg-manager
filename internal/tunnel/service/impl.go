@@ -562,7 +562,7 @@ func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *st
 	}
 
 	if !obfuscator.Equal(oldStored.Obfuscator, newStored.Obfuscator) {
-		ip, err := s.nwgOperator.SyncObfuscator(ctx, newStored)
+		ip, err := s.syncObfuscatorLocked(ctx, tunnelID, newStored)
 		if ip != "" {
 			// Handler после svc.Update fail-closed: на ошибке до store.Update
 			// он не доходит (tunnels_crud.go:513) — а host-route до нового
@@ -834,6 +834,23 @@ func prepareObfuscatorImport(parsed *storage.AWGTunnel, o *storage.Obfuscator, t
 	return nil
 }
 
+// syncObfuscatorLocked зовёт SyncObfuscator под per-tunnel замком
+// оркестратора. Без замка правка карточки идёт параллельно WAN-up по тому же
+// туннелю, и снятия с постановками host-route переплетаются. Оркестратора
+// может не быть (тесты сервиса) — тогда работаем как раньше.
+func (s *ServiceImpl) syncObfuscatorLocked(ctx context.Context, tunnelID string, stored *storage.AWGTunnel) (string, error) {
+	if s.orch == nil {
+		return s.nwgOperator.SyncObfuscator(ctx, stored)
+	}
+	var ip string
+	err := s.orch.WithTunnelLock(ctx, tunnelID, "sync-obfuscator", func() error {
+		var syncErr error
+		ip, syncErr = s.nwgOperator.SyncObfuscator(ctx, stored)
+		return syncErr
+	})
+	return ip, err
+}
+
 // persistObfuscatorTargetIP кладёт в запись адрес, под которым стоит host-route
 // до target'а релея. Транзакция узкая: единственное поле, ErrNoChange на
 // совпадении — файл не трогается. Отказ записи только логируется: маршрут уже
@@ -1085,16 +1102,13 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 				s.logWarn("replace-config", tunnelID, "Start after peer sync failed: "+err.Error())
 			}
 		}
-		// Релей у работающего (или упавшего — он тоже в wasNativeRunning)
-		// туннеля поднимается под новые параметры, а его ответ — адрес
-		// target'а: без записи в стор после рестарта демона снимать прежний
-		// host-route будет не по чему.
+		// Адрес target'а: без записи в стор после рестарта демона снимать
+		// прежний host-route будет не по чему. Берём тот, что оператор
+		// зарезолвил в Start выше — второй проход (SyncObfuscator) делал бы
+		// ту же работу заново: снял бы только что поставленный маршрут и
+		// поставил его снова, в одном запросе add → remove → add.
 		if stored.Obfuscator != nil && wasNativeRunning {
-			ip, err := s.nwgOperator.SyncObfuscator(ctx, stored)
-			if err != nil {
-				s.logWarn("replace-config", tunnelID, "SyncObfuscator failed: "+err.Error())
-			}
-			s.persistObfuscatorTargetIP(tunnelID, ip)
+			s.persistObfuscatorTargetIP(tunnelID, s.nwgOperator.GetTrackedEndpointIP(tunnelID))
 		}
 	}
 
