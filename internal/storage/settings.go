@@ -183,6 +183,13 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		// a single bad file does not leave the daemon permanently down.
 		quarantine := s.path + ".corrupt"
 		renamed := os.Rename(s.path, quarantine) == nil
+		if renamed {
+			// Карантинный файл — снимок настроек целиком, то есть он несёт те
+			// же секреты открытым текстом. Вычистить их нечем: файл на то и
+			// карантинный, что не разбирается. Остаётся закрыть права — он
+			// переживает перезагрузки и лежит до ручного разбора.
+			_ = os.Chmod(quarantine, SecretFilePermission)
+		}
 		where := "quarantined to " + quarantine
 		if !renamed {
 			where = "corrupt file left in place (rename to " + quarantine + " failed)"
@@ -992,13 +999,47 @@ func (s *SettingsStore) saveUnlocked(settings *Settings) error {
 	// inode survives the rename below). Load() falls back to it if the main
 	// file is ever found corrupt after a power loss.
 	bakPath := s.path + ".bak"
+	hadPrevious := false
 	if _, err := os.Stat(s.path); err == nil {
+		hadPrevious = true
 		_ = os.Remove(bakPath)
 		_ = os.Link(s.path, bakPath)
 	}
 
-	if err := AtomicWrite(s.path, buf.Bytes()); err != nil {
+	if err := AtomicWritePerm(s.path, buf.Bytes(), SecretFilePermission); err != nil {
 		return err
+	}
+
+	// Секрет, УБРАННЫЙ этой записью, не должен остаться жить в .bak.
+	//
+	// Иначе «забыть ключ» (и перевыпуск apiKey, и удаление сервера с его
+	// приватными ключами) снимали секрет только с основного файла, а рядом
+	// оставалась копия с ним — до следующей произвольной записи настроек.
+	// Проверено на живом роутере 12.09.2026: после удаления ключа подписки в
+	// settings.json вхождений шифротекста 0, в settings.json.bak — 1, при
+	// живом .device-key рядом. Это относится ко ВСЕМ секретам настроек, а не
+	// только к ключу подписки.
+	//
+	// Вторая запись делается ТОЛЬКО когда секрет действительно пропал:
+	// безусловная удваивала бы число записей на флеш у каждой правки настроек.
+	// Страховка от порчи при этом сохраняется — .bak остаётся валидным файлом
+	// настроек, просто уже без снятого секрета.
+	//
+	// Сравнение идёт по БАЙТАМ прежнего файла, а не по кэшу: мутаторы
+	// (updateUnlocked) копируют структуру поверхностно, и правка карты или
+	// среза по месту видна была бы в обеих копиях сразу — сравнение по
+	// структуре молча пропускало бы ровно те секреты, что лежат в
+	// serverPeerSecrets и managedServers.
+	if hadPrevious {
+		if prev, err := os.ReadFile(bakPath); err == nil && secretsDropped(prev, buf.Bytes()) {
+			if err := AtomicWritePerm(bakPath, buf.Bytes(), SecretFilePermission); err != nil {
+				// Основной файл уже записан и секрета не несёт; отказ второй
+				// записи не отменяет правку, но молчать о нём нельзя — копия
+				// с секретом осталась на флеше.
+				recordNotice("secret-bak", bakPath,
+					fmt.Sprintf("не удалось перезаписать %s после снятия секрета (%v) — копия с секретом осталась на флеше", bakPath, err))
+			}
+		}
 	}
 	// Публикация ТОЛЬКО после успешной записи: при провале кэш не должен нести
 	// незаписанное (F3). Для мутаторов, передающих сюда свежую копию, это и
