@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -9,8 +10,12 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
+const probeComment = "awgm-obfuscator awg20"
+
 // routeCommandsWithConfig — команды маршрутов, у которых running-config отдаёт
 // заданные строки. Форма ответа роутера: {"message":[ …строки конфигурации… ]}.
+// Строки пишутся как в running-config: `ip route …` — команда глобальная, без
+// отступа (отступ там только у тела блоков `interface`).
 func routeCommandsWithConfig(t *testing.T, lines ...string) (*RouteCommands, *fakePoster) {
 	t.Helper()
 	fg := query.NewFakeGetter()
@@ -25,15 +30,33 @@ func routeCommandsWithConfig(t *testing.T, lines ...string) (*RouteCommands, *fa
 	return NewRouteCommands(poster, sc, q), poster
 }
 
-// Наши записи снимаются каждая своей парой (host, interface) — по метке
-// владения, которую ставит AddStaticRoute.
-func TestRemoveHostRoute_RemovesOwnedEntriesByInterface(t *testing.T) {
+// routePayload достаёт тело команды маршрута из полезной нагрузки.
+func routePayload(t *testing.T, p any, key string) map[string]any {
+	t.Helper()
+	root, ok := p.(map[string]any)
+	if !ok {
+		t.Fatalf("не та форма запроса: %#v", p)
+	}
+	fam, ok := root[key].(map[string]any)
+	if !ok {
+		t.Fatalf("нет ключа %q: %#v", key, p)
+	}
+	r, ok := fam["route"].(map[string]any)
+	if !ok {
+		t.Fatalf("нет route: %#v", p)
+	}
+	return r
+}
+
+// Свои записи снимаются каждая своей парой (host, interface) — по подписи,
+// которую поставил владелец.
+func TestRemoveOwnHostRoute_RemovesOwnEntriesByInterface(t *testing.T) {
 	cmds, poster := routeCommandsWithConfig(t,
-		"    ip route 203.0.113.5 PPPoE0 auto !awgm-obfuscator awg20",
-		"    ip route 203.0.113.5 Bridge0 auto !awgm-obfuscator awg21",
+		"ip route 203.0.113.5 PPPoE0 auto !"+probeComment,
+		"ip route 203.0.113.5 Bridge0 auto !"+probeComment,
 	)
 
-	if err := cmds.RemoveHostRoute(context.Background(), "203.0.113.5"); err != nil {
+	if err := cmds.RemoveOwnHostRoute(context.Background(), "203.0.113.5", probeComment); err != nil {
 		t.Fatalf("снятие: %v", err)
 	}
 
@@ -43,7 +66,7 @@ func TestRemoveHostRoute_RemovesOwnedEntriesByInterface(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, p := range posts {
-		r := p.(map[string]any)["ip"].(map[string]any)["route"].(map[string]any)
+		r := routePayload(t, p, "ip")
 		if r["no"] != true || r["host"] != "203.0.113.5" {
 			t.Fatalf("не снятие нашего адреса: %#v", r)
 		}
@@ -54,15 +77,15 @@ func TestRemoveHostRoute_RemovesOwnedEntriesByInterface(t *testing.T) {
 	}
 }
 
-// Запись без нашей метки — чужая: пользовательский статический маршрут на тот
+// Запись с чужой подписью — чужая: пользовательский статический маршрут на тот
 // же адрес обязан пережить снятие нашего.
-func TestRemoveHostRoute_KeepsForeignEntry(t *testing.T) {
+func TestRemoveOwnHostRoute_KeepsForeignEntry(t *testing.T) {
 	cmds, poster := routeCommandsWithConfig(t,
-		"    ip route 203.0.113.5 PPPoE0 auto !awgm-obfuscator awg20",
-		"    ip route 203.0.113.5 Bridge0 auto !мой маршрут",
+		"ip route 203.0.113.5 PPPoE0 auto !"+probeComment,
+		"ip route 203.0.113.5 Bridge0 auto !маршрут пользователя",
 	)
 
-	if err := cmds.RemoveHostRoute(context.Background(), "203.0.113.5"); err != nil {
+	if err := cmds.RemoveOwnHostRoute(context.Background(), "203.0.113.5", probeComment); err != nil {
 		t.Fatalf("снятие: %v", err)
 	}
 
@@ -70,35 +93,96 @@ func TestRemoveHostRoute_KeepsForeignEntry(t *testing.T) {
 	if len(posts) != 1 {
 		t.Fatalf("ждали одну команду (только свою запись), получили %d: %#v", len(posts), posts)
 	}
-	r := posts[0].(map[string]any)["ip"].(map[string]any)["route"].(map[string]any)
-	if r["interface"] != "PPPoE0" {
+	if r := routePayload(t, posts[0], "ip"); r["interface"] != "PPPoE0" {
 		t.Fatalf("снята чужая запись: %#v", r)
 	}
 }
 
-// Своих записей нет — снимать нечего, слепой залп по адресу только снёс бы
-// чужое. Для вызывающего это успех.
-func TestRemoveHostRoute_NoOwnedEntriesSendsNothing(t *testing.T) {
+// Подпись сверяется целиком: чужая запись, в комментарий которой наша подпись
+// попала куском, не наша.
+func TestRemoveOwnHostRoute_CommentMatchedWhole(t *testing.T) {
 	cmds, poster := routeCommandsWithConfig(t,
-		"    ip route 203.0.113.5 Bridge0 auto !чужой маршрут",
+		"ip route 203.0.113.5 Bridge0 auto !не "+probeComment+" вовсе",
 	)
 
-	if err := cmds.RemoveHostRoute(context.Background(), "203.0.113.5"); err != nil {
+	if err := cmds.RemoveOwnHostRoute(context.Background(), "203.0.113.5", probeComment); err != nil {
+		t.Fatalf("снятие: %v", err)
+	}
+	if n := len(poster.Payloads()); n != 0 {
+		t.Fatalf("снята запись с чужим комментарием: %#v", poster.Payloads())
+	}
+}
+
+// Снятие по одному адресу не трогает наши же записи по другим адресам.
+func TestRemoveOwnHostRoute_OtherAddressesUntouched(t *testing.T) {
+	cmds, poster := routeCommandsWithConfig(t,
+		"ip route 203.0.113.5 PPPoE0 auto !"+probeComment,
+		"ip route 198.51.100.7 PPPoE0 auto !"+probeComment,
+	)
+
+	if err := cmds.RemoveOwnHostRoute(context.Background(), "203.0.113.5", probeComment); err != nil {
 		t.Fatalf("снятие: %v", err)
 	}
 
+	posts := poster.Payloads()
+	if len(posts) != 1 {
+		t.Fatalf("ждали одну команду, получили %d: %#v", len(posts), posts)
+	}
+	if r := routePayload(t, posts[0], "ip"); r["host"] != "203.0.113.5" {
+		t.Fatalf("снят не тот адрес: %#v", r)
+	}
+}
+
+// Форма через шлюз и network+mask: четвёртое поле там не интерфейс, такие
+// записи не наши, даже если подпись совпала.
+func TestRemoveOwnHostRoute_IgnoresNonHostForms(t *testing.T) {
+	cmds, poster := routeCommandsWithConfig(t,
+		"ip route 203.0.113.5 192.168.1.1 PPPoE0 auto !"+probeComment,
+	)
+
+	if err := cmds.RemoveOwnHostRoute(context.Background(), "203.0.113.5", probeComment); err != nil {
+		t.Fatalf("снятие: %v", err)
+	}
 	if n := len(poster.Payloads()); n != 0 {
-		t.Fatalf("по чужой записи ушло %d команд: %#v", n, poster.Payloads())
+		t.Fatalf("снята запись формы «через шлюз»: %#v", poster.Payloads())
+	}
+}
+
+// Битая или обрезанная строка конфигурации не роняет разбор.
+func TestRemoveOwnHostRoute_SurvivesShortLines(t *testing.T) {
+	cmds, poster := routeCommandsWithConfig(t,
+		"", "ip", "ip route", "ip route 203.0.113.5", "!",
+		"ip route 203.0.113.5 PPPoE0 auto !"+probeComment,
+	)
+
+	if err := cmds.RemoveOwnHostRoute(context.Background(), "203.0.113.5", probeComment); err != nil {
+		t.Fatalf("снятие: %v", err)
+	}
+	if n := len(poster.Payloads()); n != 1 {
+		t.Fatalf("ждали одну команду, получили %d: %#v", n, poster.Payloads())
+	}
+}
+
+// Отказ снятия своей записи обязан доехать до вызывающего: молчаливый успех
+// оставил бы маршрут на роутере, а туннель считал бы его снятым.
+func TestRemoveOwnHostRoute_FailureReachesCaller(t *testing.T) {
+	cmds, poster := routeCommandsWithConfig(t,
+		"ip route 203.0.113.5 PPPoE0 auto !"+probeComment,
+	)
+	poster.SetError(errors.New("boom"))
+
+	if err := cmds.RemoveOwnHostRoute(context.Background(), "203.0.113.5", probeComment); err == nil {
+		t.Fatal("отказ снятия проглочен")
 	}
 }
 
 // v6: своя форма и в конфигурации (prefix с /128), и в снятии.
-func TestRemoveHostRoute_OwnedV6UsesPrefixForm(t *testing.T) {
+func TestRemoveOwnHostRoute_V6UsesPrefixForm(t *testing.T) {
 	cmds, poster := routeCommandsWithConfig(t,
-		"    ipv6 route 2001:db8::5/128 PPPoE0 auto !awgm-obfuscator awg20",
+		"ipv6 route 2001:db8::5/128 PPPoE0 auto !"+probeComment,
 	)
 
-	if err := cmds.RemoveHostRoute(context.Background(), "2001:db8::5"); err != nil {
+	if err := cmds.RemoveOwnHostRoute(context.Background(), "2001:db8::5", probeComment); err != nil {
 		t.Fatalf("снятие: %v", err)
 	}
 
@@ -106,8 +190,46 @@ func TestRemoveHostRoute_OwnedV6UsesPrefixForm(t *testing.T) {
 	if len(posts) != 1 {
 		t.Fatalf("ждали одну команду, получили %d", len(posts))
 	}
-	r := posts[0].(map[string]any)["ipv6"].(map[string]any)["route"].(map[string]any)
+	r := routePayload(t, posts[0], "ipv6")
 	if r["prefix"] != "2001:db8::5/128" || r["interface"] != "PPPoE0" {
 		t.Fatalf("v6-снятие не той формы: %#v", r)
+	}
+}
+
+// Конфигурацию не прочитать — падаем на слепую форму: лучше снять лишнее, чем
+// оставить свой маршрут на роутере.
+func TestRemoveOwnHostRoute_UnreadableConfigFallsBackToBlind(t *testing.T) {
+	cmds, poster := newTestRouteCommands(t) // FakeGetter без running-config
+
+	if err := cmds.RemoveOwnHostRoute(context.Background(), "203.0.113.5", probeComment); err != nil {
+		t.Fatalf("снятие: %v", err)
+	}
+
+	posts := poster.Payloads()
+	if len(posts) != 1 {
+		t.Fatalf("ждали слепую форму одной командой, получили %d", len(posts))
+	}
+	r := routePayload(t, posts[0], "ip")
+	if _, hasIface := r["interface"]; hasIface {
+		t.Fatalf("слепая форма не должна указывать интерфейс: %#v", r)
+	}
+}
+
+// Пустая подпись — у вызывающего своей записи нет: прежняя слепая форма.
+func TestRemoveOwnHostRoute_NoCommentIsBlind(t *testing.T) {
+	cmds, poster := routeCommandsWithConfig(t,
+		"ip route 203.0.113.5 PPPoE0 auto !"+probeComment,
+	)
+
+	if err := cmds.RemoveOwnHostRoute(context.Background(), "203.0.113.5", ""); err != nil {
+		t.Fatalf("снятие: %v", err)
+	}
+
+	posts := poster.Payloads()
+	if len(posts) != 1 {
+		t.Fatalf("ждали одну слепую команду, получили %d", len(posts))
+	}
+	if _, hasIface := routePayload(t, posts[0], "ip")["interface"]; hasIface {
+		t.Fatal("при пустой подписи снятие обязано быть слепым")
 	}
 }

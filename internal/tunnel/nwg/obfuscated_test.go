@@ -465,7 +465,7 @@ func TestStartObfuscated_RemovesStaleTargetRoute(t *testing.T) {
 	st.ResolvedEndpointIP = "198.51.100.1"
 	// Прежняя запись живёт в конфигурации роутера с нашей меткой — по ней её
 	// и находят: слепой залп по адресу снёс бы заодно чужие записи.
-	n.confLines = []string{"    ip route 198.51.100.1 ISP0 auto !awgm-obfuscator awg20"}
+	n.confLines = []string{"ip route 198.51.100.1 ISP0 auto !awgm-obfuscator awg20"}
 
 	if err := op.Start(context.Background(), st); err != nil {
 		t.Fatal(err)
@@ -577,7 +577,7 @@ func TestStopObfuscated_SharedHostRouteKeptForNeighbour(t *testing.T) {
 			})
 			st := obfStored()
 			st.ResolvedEndpointIP = "203.0.113.5"
-			n.confLines = []string{"    ip route 203.0.113.5 ISP0 auto !awgm-obfuscator awg20"}
+			n.confLines = []string{"ip route 203.0.113.5 ISP0 auto !awgm-obfuscator awg20"}
 
 			if err := op.Stop(context.Background(), st); err != nil {
 				t.Fatal(err)
@@ -654,7 +654,7 @@ func TestSyncObfuscator_MovesHostRouteToNewTarget(t *testing.T) {
 	op := newObfOperator(t, n, fr)
 	st := obfStored()
 	st.ResolvedEndpointIP = "198.51.100.1" // маршрут стоит под прежним адресом target
-	n.confLines = []string{"    ip route 198.51.100.1 ISP0 auto !awgm-obfuscator awg20"}
+	n.confLines = []string{"ip route 198.51.100.1 ISP0 auto !awgm-obfuscator awg20"}
 
 	targetIP, err := op.SyncObfuscator(context.Background(), st)
 	if err != nil {
@@ -689,6 +689,9 @@ func TestStartObfuscated_LoopbackTrackedIPIsNotRemoved(t *testing.T) {
 	op := newObfOperator(t, n, fr)
 	st := obfStored()
 	st.ResolvedEndpointIP = "127.0.0.1" // наследство прежней версии в записи
+	// Запись в конфигурации есть — значит если фильтр loopback пропадёт,
+	// снятие реально уйдёт в роутер, и тест это увидит.
+	n.confLines = []string{"ip route 127.0.0.1 ISP0 auto !awgm-obfuscator awg20"}
 
 	if err := op.Start(context.Background(), st); err != nil {
 		t.Fatal(err)
@@ -717,6 +720,9 @@ func TestStartObfuscated_UnroutableStoredIPIsNotRemoved(t *testing.T) {
 	op := newObfOperator(t, n, fr)
 	st := obfStored()
 	st.ResolvedEndpointIP = "0.0.0.0"
+	// Как и у loopback: запись в конфигурации есть, чтобы пропажа фильтра
+	// была видна — снятие ушло бы в роутер.
+	n.confLines = []string{"ip route 0.0.0.0 ISP0 auto !awgm-obfuscator awg20"}
 
 	if err := op.Start(context.Background(), st); err != nil {
 		t.Fatal(err)
@@ -872,8 +878,8 @@ func TestStartObfuscated_WANUnknownAfterRestart_RemovesByConfigEntry(t *testing.
 	st := obfStored()
 	st.ResolvedEndpointIP = "203.0.113.5"
 	n.confLines = []string{
-		"    ip route 203.0.113.5 PPPoE0 auto !awgm-obfuscator awg20",
-		"    ip route 203.0.113.5 Bridge0 auto !чужой маршрут",
+		"ip route 203.0.113.5 PPPoE0 auto !awgm-obfuscator awg20",
+		"ip route 203.0.113.5 Bridge0 auto !чужой маршрут",
 	}
 
 	if err := op.Start(context.Background(), st); err != nil {
