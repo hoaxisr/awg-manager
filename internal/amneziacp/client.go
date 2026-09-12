@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -226,15 +227,29 @@ func withoutRedirects(c *http.Client) *http.Client {
 // нужно ЯВНО: httpclient.NewTransport наследует прокси окружения сам, когда
 // транспорт не привязан к интерфейсу, и «не передавать ProxyURL» для прямого
 // выхода недостаточно.
+// baseDirectTransport — запасной транспорт прямого выхода, собранный руками.
+//
+// Повторяет ровно те свойства основного, без которых портал ломается: прокси
+// не берётся, ALPN пришпилен к http/1.1, попытка h2 снята. Нулевой
+// http.Transport здесь не годится — он оставляет ALPN пустым, и сервер
+// договаривается на h2, которого этот транспорт не умеет.
+func baseDirectTransport() *http.Transport {
+	return &http.Transport{
+		Proxy:             nil,
+		ForceAttemptHTTP2: false,
+		TLSClientConfig:   &tls.Config{NextProtos: []string{"http/1.1"}},
+	}
+}
+
 func newDirectClient() *http.Client {
-	direct := false
-	tr, err := httpclient.NewTransport(httpclient.TransportConfig{ProxyFromEnv: &direct})
+	tr, err := httpclient.NewTransport(httpclient.TransportConfig{Proxy: httpclient.ProxyDirect})
 	if err != nil || tr == nil {
-		tr = &http.Transport{}
-		// Запасной транспорт собирается руками, и наследование прокси ему
-		// взяться неоткуда, — но требование прямого выхода держится здесь
-		// же, а не в одной ветке из двух.
-		tr.Proxy = nil
+		// Ветка недостижима сегодня: NewTransport отказывает только на
+		// негодном ProxyURL, а его тут нет. Оставлена как страховка, но
+		// собирается на том же базовом транспорте — иначе теряется пин
+		// ALPN http/1.1, ровно тот, ради которого пакет httpclient здесь и
+		// взят: на h2 портал отвечает EOF и «malformed HTTP response».
+		tr = baseDirectTransport()
 	}
 	tr.DialContext = (&net.Dialer{
 		Timeout:   12 * time.Second,

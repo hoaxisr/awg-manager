@@ -2619,3 +2619,26 @@ func TestClientStopsRetryingDeadMirror(t *testing.T) {
 		t.Fatalf("входов в портал %d — резолв не удался, идти было некуда", n)
 	}
 }
+
+// Запасной транспорт клиента портала обязан нести ТО ЖЕ, ради чего берётся
+// основной: пин ALPN http/1.1. Ревью показало, что прежний `&http.Transport{}`
+// оставлял ALPN пустым, сервер договаривался на h2, и портал отвечал EOF —
+// ровно та поломка, ради которой пакет httpclient и заведён. Тест на
+// `Proxy`/`ForceAttemptHTTP2` этого не ловил: нулевой транспорт им обоим
+// удовлетворяет.
+func TestDirectClientFallbackKeepsHTTP1Pin(t *testing.T) {
+	tr := baseDirectTransport()
+
+	if tr.Proxy != nil {
+		t.Error("запасной транспорт берёт прокси")
+	}
+	if tr.ForceAttemptHTTP2 {
+		t.Error("запасной транспорт пробует h2")
+	}
+	if tr.TLSClientConfig == nil {
+		t.Fatal("у запасного транспорта нет TLS-конфигурации — ALPN не пришпилен")
+	}
+	if got := tr.TLSClientConfig.NextProtos; len(got) != 1 || got[0] != "http/1.1" {
+		t.Fatalf("ALPN = %v, ожидался [http/1.1]: на h2 портал отвечает EOF", got)
+	}
+}
