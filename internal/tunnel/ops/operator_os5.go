@@ -80,20 +80,21 @@ func (o *OperatorOS5Impl) applyKernelAddresses(ctx context.Context, scope string
 			o.logWarn(scope, cfg.ID, "Failed to set IPv4 address: "+exec.FormatError(res, err).Error())
 		}
 	}
+	// v6 всегда снимаем перед установкой: `replace` кладёт новый /128, но
+	// прежний с устройства не убирает — при смене адреса у живого туннеля на
+	// интерфейсе осталось бы два, и выбор исходящего адреса стал бы
+	// непредсказуемым. На Start операция пустая: устройство только что создано.
+	// Убрать адрес больше некому: NDMS до kernel-интерфейса не дотягивается
+	// (см. SyncAddress), а второй точки записи адресов контракт не допускает.
+	if res, err := o.ipRun(ctx, "/opt/sbin/ip", "-6", "address", "flush", "dev", iface); err != nil {
+		o.logWarn(scope, cfg.ID, "Failed to clear IPv6 address: "+exec.FormatError(res, err).Error())
+	}
 	if cfg.AddressIPv6 != "" {
 		if res, err := o.ipRun(ctx, "/opt/sbin/ip", "-6", "address", "replace", "dev", iface, cfg.AddressIPv6+"/128"); err != nil {
 			err = exec.FormatError(res, err)
 			o.logWarn(scope, cfg.ID, "Failed to set IPv6 address: "+err.Error())
 			o.appLog.Warn(scope, cfg.ID, "IPv6 адрес: "+err.Error())
 		}
-		return
-	}
-	// v6 в конфиге нет — снимаем его с устройства. На Start это пустая
-	// операция (устройство только что создано), а правке адреса у живого
-	// туннеля без неё нечем убрать адрес: NDMS до kernel-интерфейса не
-	// дотягивается, а второй точки записи адресов контракт не допускает.
-	if res, err := o.ipRun(ctx, "/opt/sbin/ip", "-6", "address", "flush", "dev", iface); err != nil {
-		o.logWarn(scope, cfg.ID, "Failed to clear IPv6 address: "+exec.FormatError(res, err).Error())
 	}
 }
 

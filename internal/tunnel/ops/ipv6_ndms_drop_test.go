@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
 // os5WithRecorders — оператор OS5, у которого видно и RCI-команды, и вызовы ip.
@@ -120,6 +122,95 @@ func TestSyncAddress_LeavesNDMSIPv6LayerAlone(t *testing.T) {
 			if _, touched := body["ipv6"]; touched {
 				t.Fatalf("слой ipv6 у %s тронут: %+v", name, p)
 			}
+		}
+	}
+}
+
+// Reconcile — путь, ради которого заведён F268: адрес кладётся на устройство,
+// слой ipv6 в NDMS не трогается вовсе. ColdStart в юнит-тесте недостижим
+// (упирается в заглушки бэкенда раньше), его закрывает TestOS5_NoNDMSIPv6Calls.
+func TestReconcile_LeavesNDMSIPv6LayerAlone(t *testing.T) {
+	o, poster, calls := os5WithRecorders(t)
+	cfg := tunnel.Config{
+		ID: "awg10", Address: "10.8.0.2", AddressPrefix: 32,
+		AddressIPv6: "2001:db8::2", MTU: 1420,
+	}
+
+	// Отказ пути не важен: важно, что ушло в роутер и в ip до того, как он
+	// упёрся в заглушки.
+	_ = o.Reconcile(context.Background(), cfg)
+
+	for _, p := range poster.payloads {
+		root, _ := p.(map[string]any)
+		ifaces, _ := root["interface"].(map[string]any)
+		for name, v := range ifaces {
+			body, _ := v.(map[string]any)
+			if _, touched := body["ipv6"]; touched {
+				t.Fatalf("слой ipv6 у %s тронут: %+v", name, p)
+			}
+		}
+	}
+	if got := ipCallsWith(*calls, "2001:db8::2/128"); len(got) == 0 {
+		t.Fatalf("v6-адрес не лёг на устройство: %v", *calls)
+	}
+}
+
+// Прежний адрес снимается ПЕРЕД установкой нового: `replace` его не убирает,
+// и на устройстве остались бы два /128.
+func TestApplyKernelAddresses_FlushPrecedesReplace(t *testing.T) {
+	o, _, calls := os5WithRecorders(t)
+
+	o.applyKernelAddresses(context.Background(), "проба", tunnel.Config{
+		ID: "awg10", AddressIPv6: "2001:db8::2",
+	}, "opkgtun10")
+
+	var flushAt, replaceAt = -1, -1
+	for i, c := range *calls {
+		joined := strings.Join(c, " ")
+		if strings.Contains(joined, "flush") {
+			flushAt = i
+		}
+		if strings.Contains(joined, "replace") && strings.Contains(joined, "2001:db8::2/128") {
+			replaceAt = i
+		}
+	}
+	if flushAt < 0 {
+		t.Fatalf("прежний v6 не снят: %v", *calls)
+	}
+	if replaceAt < 0 {
+		t.Fatalf("новый v6 не поставлен: %v", *calls)
+	}
+	if flushAt > replaceAt {
+		t.Fatalf("снятие идёт после установки — новый адрес стёрт: %v", *calls)
+	}
+}
+
+// Правка адреса живого туннеля кладёт на устройство и v4: до перевода на
+// applyKernelAddresses его ставил только NDMS.
+func TestSyncAddress_IPv4AlsoGoesToKernel(t *testing.T) {
+	o, _, calls := os5WithRecorders(t)
+
+	if err := o.SyncAddress(context.Background(), "awg10", "10.8.0.2", 32, ""); err != nil {
+		t.Fatalf("SyncAddress: %v", err)
+	}
+
+	if got := ipCallsWith(*calls, "10.8.0.2/32"); len(got) == 0 {
+		t.Fatalf("v4-адрес не лёг на устройство: %v", *calls)
+	}
+}
+
+// Ни один путь OS5 не обращается к слою ipv6 в NDMS: роутер не может
+// применить адрес к нашему kernel-устройству (стенд 5.01), команда только
+// порождает две строки уровня C на каждый старт. Проверка по исходнику —
+// ColdStart юнит-тестом не достаётся, а возврат вызова туда должен падать.
+func TestOS5_NoNDMSIPv6Calls(t *testing.T) {
+	src, err := os.ReadFile("operator_os5.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"SetIPv6Address", "ClearIPv6Address"} {
+		if strings.Contains(string(src), "Interfaces."+name) {
+			t.Errorf("operator_os5.go снова зовёт %s: роутер не может применить v6 к нашему устройству", name)
 		}
 	}
 }
