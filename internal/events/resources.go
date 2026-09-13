@@ -27,6 +27,25 @@ const (
 	ResourceProxyInstances Resource = "proxyrt.instances"
 	ResourceMcpKeys        Resource = "mcpKeys"
 
+	// ResourceAmneziaPremiumKey — состояние ключа подписки Amnezia Premium
+	// (есть ли сохранённый шифротекст и читается ли он). Своё, а не
+	// ResourceSettings: шифротекст в ответ настроек не входит, и перечитывать
+	// по нему нечего — состояние ключа отдаёт отдельная ручка.
+	ResourceAmneziaPremiumKey Resource = "amneziaPremium.key"
+
+	// ResourceAmneziaPremiumCatalog — данные подписки у ПОРТАЛА: счётчик
+	// устройств и список уже выданных конфигураций. Меняет их выдача
+	// конфигурации страны — расходная операция. Своё, а не ключ выше: там
+	// наше состояние (лежит ли шифротекст у нас), здесь чужое, и читает его
+	// отдельная ручка /amnezia/premium/catalog.
+	ResourceAmneziaPremiumCatalog Resource = "amneziaPremium.catalog"
+
+	// ResourceAmneziaPremiumMirror — адрес зеркала Amnezia. Своё, а не
+	// ResourceSettings: поле ушло из общего ответа настроек и отдаётся
+	// отдельной ручкой /amnezia/premium/mirror, так что подсказка по
+	// настройкам его читателя не разбудит.
+	ResourceAmneziaPremiumMirror Resource = "amneziaPremium.mirror"
+
 	ResourceSingboxStatus        Resource = "singbox.status"
 	ResourceSingboxTunnels       Resource = "singbox.tunnels"
 	ResourceSingboxRouterStaging Resource = "singbox.router.staging"
@@ -58,6 +77,9 @@ var AllResources = []Resource{
 	ResourceAwg3,
 	ResourceProxyInstances,
 	ResourceMcpKeys,
+	ResourceAmneziaPremiumKey,
+	ResourceAmneziaPremiumCatalog,
+	ResourceAmneziaPremiumMirror,
 	ResourceSingboxStatus,
 	ResourceSingboxTunnels,
 	ResourceSingboxRouterStaging,

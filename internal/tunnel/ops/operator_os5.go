@@ -80,6 +80,15 @@ func (o *OperatorOS5Impl) applyKernelAddresses(ctx context.Context, scope string
 			o.logWarn(scope, cfg.ID, "Failed to set IPv4 address: "+exec.FormatError(res, err).Error())
 		}
 	}
+	// v6 всегда снимаем перед установкой: `replace` кладёт новый /128, но
+	// прежний с устройства не убирает — при смене адреса у живого туннеля на
+	// интерфейсе осталось бы два, и выбор исходящего адреса стал бы
+	// непредсказуемым. На Start операция пустая: устройство только что создано.
+	// Убрать адрес больше некому: NDMS до kernel-интерфейса не дотягивается
+	// (см. SyncAddress), а второй точки записи адресов контракт не допускает.
+	if res, err := o.ipRun(ctx, "/opt/sbin/ip", "-6", "address", "flush", "dev", iface); err != nil {
+		o.logWarn(scope, cfg.ID, "Failed to clear IPv6 address: "+exec.FormatError(res, err).Error())
+	}
 	if cfg.AddressIPv6 != "" {
 		if res, err := o.ipRun(ctx, "/opt/sbin/ip", "-6", "address", "replace", "dev", iface, cfg.AddressIPv6+"/128"); err != nil {
 			err = exec.FormatError(res, err)
@@ -108,7 +117,10 @@ type OperatorOS5Impl struct {
 	appLog *logging.ScopedLogger
 
 	// Endpoint route tracking (tunnelID -> endpointIP)
-	endpointRoutes   map[string]string
+	endpointRoutes map[string]string
+	// routeHeldByOther — «host-route до ip держит ещё кто-то, кроме excludeID»,
+	// по стору и через бэкенды. См. removeHostRouteIfUnused.
+	routeHeldByOther func(excludeID, ip string) bool
 	endpointRoutesMu sync.RWMutex
 
 	// DNS tracking (tunnelID -> DNS servers applied via NDMS)
@@ -227,11 +239,19 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 		return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("set MTU: %w", err))
 	}
 
-	if cfg.AddressIPv6 != "" {
-		if err := o.commands.Interfaces.SetIPv6Address(ctx, names.NDMSName, cfg.AddressIPv6); err != nil {
-			o.logWarn("start", cfg.ID, "Failed to set NDMS IPv6 address: "+err.Error())
-		}
-	}
+	// v6-адрес в NDMS не отправляем: применить его к нашему устройству роутер
+	// не может. Kernel-путь удаляет tun-устройство, созданное NDMS, и ставит
+	// своё `amneziawg` — после подмены Ip6Tools отвечает на любую попытку
+	// `no such device[19]` (стенд 5.01, 12.09: при up, повторной командой и
+	// после down/up; на нетронутом tun-устройстве адрес встаёт без ошибок).
+	// Адрес кладёт applyKernelAddresses ниже, и он же возвращает его после
+	// каждого старта, включая холодную загрузку.
+	//
+	// И не чистим: любое обращение к слою ipv6 будит NDMS — он видит адрес,
+	// который мы положили на устройство, и заводит запись сам, после чего
+	// пытается её применить и снова упирается в `no such device` (стенд 5.01,
+	// 12.09). Оставленный в покое слой молчит, а запись прежних версий уходит
+	// при ближайшем пересоздании интерфейса вместе с ним.
 
 	// Ensure ip global is set — it's not part of CreateOpkgTun anymore
 	// (split out to avoid premature nginx binding), so re-apply on every start.
@@ -340,10 +360,6 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	o.logInfo("start", cfg.ID, "Firewall rules added")
 	o.appLog.Info("start", cfg.ID, "Правила файрвола добавлены для "+names.IfaceName)
 
-	// === Phase 8: Save NDMS configuration ===
-	// Saves interface state (address, MTU, conf: running).
-	// Routes are kernel-level volatile — re-created on every Start.
-
 	o.logInfo("start", cfg.ID, "Tunnel started successfully")
 	return nil
 }
@@ -363,7 +379,11 @@ func (o *OperatorOS5Impl) Stop(ctx context.Context, tunnelID string) error {
 	// InterfaceDown sets conf: disabled — NDMS won't bring it up on its own.
 	o.interfaceDownBestEffort(ctx, tunnelID, names.NDMSName)
 
-	// Save NDMS config so router UI reflects conf: disabled.
+	// Остановленному туннелю host-route не нужен, а карта маршрутов обязана
+	// означать «маршрут стоит», а не «туннель когда-то стартовал»: иначе
+	// остановленный сосед вечно держит чужой адрес от снятия (F231). Сосед,
+	// который РАБОТАЕТ, маршрут удержит — снятие идёт общим путём с ref-count.
+	o.removeHostRouteIfUnused(ctx, "stop", tunnelID, "")
 
 	o.logInfo("stop", tunnelID, "Tunnel stopped (link down, conf: disabled)")
 	o.appLog.Info("stop", tunnelID, "Туннель остановлен")
@@ -420,14 +440,11 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 			endpointIP = ip
 		}
 	}
-	if endpointIP != "" {
-		if err := o.delKernelHostRoute(ctx, endpointIP); err != nil {
-			o.logWarn("delete", stored.ID, "ip route del "+endpointIP+": "+err.Error())
-		}
-		if err := o.commands.Routes.RemoveHostRoute(ctx, endpointIP); err != nil {
-			o.logWarn("delete", stored.ID, "RemoveHostRoute: "+err.Error())
-		}
-	}
+	// Петлю снимаем тоже: netutil.SkipHostRoute запрещает ставить маршрут, но
+	// не снимать — наследство прежних версий уходит с роутера отсюда и из
+	// гарда на старте. Через общий путь с ref-count: сосед к тому же серверу
+	// маршрут не потеряет (F130/#867).
+	o.removeHostRouteIfUnused(ctx, "delete", stored.ID, endpointIP)
 
 	// 2. Remove NDMS interface — cleans everything:
 	//    address, MTU, security-level, ip global, default route, DNS name-servers
@@ -446,12 +463,9 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 	// 3. Remove kernel interface (our amneziawg — NDMS can't delete what we created)
 	o.ipRun(ctx, "/opt/sbin/ip", "link", "del", "dev", names.IfaceName)
 
-	// 4. Persist NDMS config
-
-	// 5. Clear in-memory tracking
-	o.endpointRoutesMu.Lock()
-	delete(o.endpointRoutes, stored.ID)
-	o.endpointRoutesMu.Unlock()
+	// 4. Clear in-memory tracking (endpointRoutes уже забыт на шаге 1).
+	//    Сохранения конфигурации среди шагов нет: его ведёт SaveCoordinator,
+	//    который сам сводит запросы всех команд в одну запись.
 	o.appliedDNSMu.Lock()
 	delete(o.appliedDNS, stored.ID)
 	o.appliedDNSMu.Unlock()
@@ -531,11 +545,8 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 		if err := o.commands.Interfaces.SetAddress(ctx, names.NDMSName, __addr, __mask); err != nil {
 			return tunnel.NewOpError("reconcile", cfg.ID, "ndms", fmt.Errorf("set address: %w", err))
 		}
-		if cfg.AddressIPv6 != "" {
-			if err := o.commands.Interfaces.SetIPv6Address(ctx, names.NDMSName, cfg.AddressIPv6); err != nil {
-				o.logWarn("reconcile", cfg.ID, "Failed to set NDMS IPv6 address: "+err.Error())
-			}
-		}
+		// v6 в NDMS не трогаем вовсе (см. ColdStart): адрес кладёт
+		// applyKernelAddresses.
 	}
 	if cfg.MTU > 0 {
 		if err := o.commands.Interfaces.SetMTU(ctx, names.NDMSName, cfg.MTU); err != nil {
@@ -615,8 +626,6 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	}
 	o.logInfo("reconcile", cfg.ID, "Firewall rules added")
 	o.appLog.Info("reconcile", cfg.ID, "Правила файрвола добавлены для "+names.IfaceName)
-
-	// === Phase 6: Save NDMS configuration ===
 
 	o.logInfo("reconcile", cfg.ID, "Reconciliation complete")
 	o.appLog.Info("reconcile", cfg.ID, "Конфигурация NDMS восстановлена")
@@ -721,13 +730,14 @@ func (o *OperatorOS5Impl) SyncAddress(ctx context.Context, tunnelID string, addr
 	if err := o.commands.Interfaces.SetAddress(ctx, names.NDMSName, __addr, __mask); err != nil {
 		return tunnel.NewOpError("sync_address", tunnelID, "ndms", err)
 	}
-	if ipv6 != "" {
-		if err := o.commands.Interfaces.SetIPv6Address(ctx, names.NDMSName, ipv6); err != nil {
-			o.logWarn("sync_address", tunnelID, "Failed to set IPv6: "+err.Error())
-		}
-	} else {
-		o.commands.Interfaces.ClearIPv6Address(ctx, names.NDMSName)
-	}
+	// v6 правим прямо на устройстве, через ту же единственную точку записи:
+	// в NDMS он до kernel-интерфейса не доходит вовсе (см. ColdStart), то есть
+	// до этой правки смена v6-адреса у живого туннеля не применялась до его
+	// перезапуска.
+	o.applyKernelAddresses(ctx, "sync_address", tunnel.Config{
+		ID: tunnelID, Address: address, AddressPrefix: prefix, AddressIPv6: ipv6,
+	}, names.IfaceName)
+
 	o.logInfo("sync_address", tunnelID, fmt.Sprintf("Address synced: %s, IPv6: %s", address, ipv6))
 	return nil
 }
@@ -781,6 +791,14 @@ func (o *OperatorOS5Impl) GetSystemName(ctx context.Context, ndmsID string) stri
 }
 
 // SetAppLogger sets the web UI logger.
+// SetEndpointRouteSharing подключает проверку «host-route до этого IP держит
+// другой туннель» поверх карты endpointRoutes. Нужна, потому что тот же
+// host-route ставит обфусцированный nativewg-туннель (nwg.addObfHostRoute), а
+// карта про чужой бэкенд ничего не знает.
+func (o *OperatorOS5Impl) SetEndpointRouteSharing(fn func(excludeID, ip string) bool) {
+	o.routeHeldByOther = fn
+}
+
 func (o *OperatorOS5Impl) SetAppLogger(logger logging.AppLogger) {
 	o.appLog = logging.NewScopedLogger(logger, logging.GroupTunnel, logging.SubOps)
 }

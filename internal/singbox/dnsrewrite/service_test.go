@@ -162,7 +162,7 @@ func TestSetKeenDNSEnabled_AddsBlockFirstAndClears(t *testing.T) {
 	store := &fakeStore{items: []DNSRewrite{{Pattern: "*.pro", IPs: []string{"10.0.0.5"}}}}
 	svc := NewService(store, orch)
 
-	if err := svc.SetKeenDNSEnabled(true, "impod.netcraze.pro"); err != nil {
+	if err := svc.SetKeenDNSEnabled(true, "example.netcraze.pro"); err != nil {
 		t.Fatal(err)
 	}
 	slot := slotOf(t, orch)
@@ -248,7 +248,7 @@ func TestSetKeenDNSEnabled_DropsLegacyManaged(t *testing.T) {
 	orch := newFakeOrch()
 	store := &fakeStore{items: []DNSRewrite{
 		{Pattern: "nas.lan", IPs: []string{"10.0.0.5"}},
-		{Pattern: "impod.crazedns.ru", IPs: []string{"192.168.0.1"}, Managed: ManagedKeenDNS},
+		{Pattern: "example.crazedns.ru", IPs: []string{"192.168.0.1"}, Managed: ManagedKeenDNS},
 		{Pattern: "my.keenetic.net", IPs: []string{"192.168.0.1"}, Managed: ManagedKeenDNS},
 	}}
 	svc := NewService(store, orch)

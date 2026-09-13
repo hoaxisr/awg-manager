@@ -80,11 +80,15 @@ func (m *Model) SetUp(name string, up bool) (changed bool) {
 		m.mu.Unlock()
 		return changed
 	}
-	populated := m.populated
 	m.mu.Unlock()
 
-	// Unknown interface after initial populate — re-query NDMS
-	if populated && m.repopulateFn != nil {
+	// Неизвестный интерфейс — перезапрашиваем NDMS. Гард по populated здесь
+	// стоял, и он же делал модель пустой НАВСЕГДА: ListWAN на старте мог не
+	// ответить, populated оставался false, а единственный путь наполнения
+	// после старта сам был закрыт этим же признаком. Дальше AnyUp() вечно
+	// врёт «WAN нет», в журнале ни строки про WAN, а включение туннеля из
+	// веб-морды роутера перестаёт работать (регресс #183).
+	if m.repopulateFn != nil {
 		m.repopulateFn()
 		// Apply hook state after repopulate (NDMS snapshot may lag behind hook)
 		m.mu.Lock()

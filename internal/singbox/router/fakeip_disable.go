@@ -170,8 +170,14 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	// v4 needs NO auto-route removal here — step 2 renewed the single pool route in
 	// place; the async drain (step 7) removes it after the window.
 	// TODO(fakeip-v6-drain): v6 is fail-open on dual-stack routers with a v6 default
-	// route (no reject equivalent). Closing it needs the v6 route form to support a
-	// reject/blackhole route (ndms work + stand verification) — not done in v1.
+	// route. Форма больше не препятствие: стенд 5.01 принял v6-reject
+	// (`ipv6 route <prefix> <iface> auto reject`), и AddStaticRoute его
+	// доставляет. Осталась работа в самом drain — обновить маршрут пула как
+	// reject вместо снятия, симметрично шагу 2 у v4. Ловушка на этом пути:
+	// снятие v6-маршрута идёт через mutateTolerant(isNoSuchInterface), а к
+	// моменту уборки интерфейс tun уже удалён — отказ будет проглочен, и
+	// reject-маршрут останется резать префикс навсегда. У v4 от этого есть
+	// стартовый sweep, у v6 его нет.
 	if haveV6 {
 		if err := s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
 			V6: true, Network: inet6Range, Interface: ndmsName,

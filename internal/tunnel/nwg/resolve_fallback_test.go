@@ -109,3 +109,47 @@ func TestResolveWithFallback_SlowAttemptTimesOut(t *testing.T) {
 		t.Fatalf("got (%q,%v), want (5.5.5.5,nil) via cache after timeouts", ip, err)
 	}
 }
+
+// F230: адрес, до которого host-route не ставят, в трекер не попадает. Туда
+// приходит Peer.Endpoint обфусцированного туннеля (127.0.0.1:<порт> релея) и
+// связанных туннелей wdtt/freeturn, а оркестратор сохраняет трекер в
+// ResolvedEndpointIP — поле, означающее адрес host-route.
+func TestTrackEndpointIP_SkipsAddressesWithoutRoute(t *testing.T) {
+	for _, ip := range []string{"127.0.0.1", "127.0.0.5", "::1", "0.0.0.0", "fe80::1"} {
+		t.Run(ip, func(t *testing.T) {
+			o := newTestOperator(t, nil)
+			o.trackEndpointIP("awg20", ip)
+			if got := o.GetTrackedEndpointIP("awg20"); got != "" {
+				t.Errorf("непригодный для маршрута адрес попал в трекер: %q", got)
+			}
+		})
+	}
+}
+
+// Прежнее значение переживает такой адрес: карта означает «последний адрес, под
+// которым маршрут ставился», и петля не имеет права его вытеснить.
+func TestTrackEndpointIP_SkippedAddressDoesNotEvict(t *testing.T) {
+	o := newTestOperator(t, nil)
+	o.trackEndpointIP("awg20", "203.0.113.5")
+	o.trackEndpointIP("awg20", "127.0.0.1")
+
+	if got := o.GetTrackedEndpointIP("awg20"); got != "203.0.113.5" {
+		t.Errorf("петля вытеснила отслеженный адрес: %q", got)
+	}
+}
+
+// Уровень вызова: резолв петли по-прежнему ОТДАЁТ её вызывающему (kernel-пиру
+// обфусцированного туннеля нужен именно loopback), но в трекер не кладёт.
+func TestResolveWithFallback_LoopbackReturnedButNotTracked(t *testing.T) {
+	o := newTestOperator(t, func(string) (string, int, error) { return "127.0.0.1", 39000, nil })
+	st := &storage.AWGTunnel{ID: "awg20"}
+	st.Peer.Endpoint = "127.0.0.1:39000"
+
+	ip, port, err := o.resolveEndpointWithFallback(st)
+	if err != nil || ip != "127.0.0.1" || port != 39000 {
+		t.Fatalf("резолв обязан отдать петлю вызывающему: %q %d %v", ip, port, err)
+	}
+	if got := o.GetTrackedEndpointIP("awg20"); got != "" {
+		t.Errorf("петля попала в трекер через resolveEndpointWithFallback: %q", got)
+	}
+}

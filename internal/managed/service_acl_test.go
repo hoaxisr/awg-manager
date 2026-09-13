@@ -2,18 +2,16 @@ package managed
 
 import (
 	"context"
-	"encoding/json"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
-	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
-// Running-config недоступен → сегменты всё равно применяются (4 прежние команды),
-// а факт «permit-all не проверен» уходит в журнал приложения Warn.
-func TestApplyLANSegments_RunningConfigUnavailable_WarnsAndProceeds(t *testing.T) {
+// Running-config недоступен → сегменты всё равно применяются (4 прежние
+// команды + auto-delete), и никакого Warn: ради ACL мы в running-config
+// больше не ходим — чужой `_WEBADMIN_` не снимается (#879).
+func TestApplyLANSegments_RunningConfigUnavailable_ProceedsSilently(t *testing.T) {
 	svc, store, poster := newLANSegmentsTestService(t) // stateAwareGetter: running-config = ошибка
 	spy := &recAppLog{}
 	svc.appLog = logging.NewScopedLogger(spy, logging.GroupServer, logging.SubManaged)
@@ -25,10 +23,7 @@ func TestApplyLANSegments_RunningConfigUnavailable_WarnsAndProceeds(t *testing.T
 	if n := len(parseStrings(poster)); n != 5 {
 		t.Fatalf("команд %d, ждали 5", n)
 	}
-	// SetLANSegments после применения пишет свой Info — две записи.
-	if len(spy.entries) != 2 ||
-		!strings.HasPrefix(spy.entries[0], "warn|lan-acl|Wireguard0|permit-all не проверен/не снят: ") ||
-		spy.entries[1] != "info|lan-segments|Wireguard0|LAN segments changed: Home" {
+	if len(spy.entries) != 1 || spy.entries[0] != "info|lan-segments|Wireguard0|LAN segments changed: Home" {
 		t.Fatalf("журнал = %v", spy.entries)
 	}
 }
@@ -46,52 +41,12 @@ func TestForeignAccessGroups_ExcludesOurs(t *testing.T) {
 	}
 }
 
-// Sweep снимает остаток ТОЛЬКО там, где он есть: два сервера, остаток у одного →
-// ровно две команды и обе про него; чистый роутер → ноль RCI.
-func TestSweepForeignPermitAll_OnlyWherePresent(t *testing.T) {
-	svc, store, poster := newLANSegmentsTestService(t)
-	seedServer(t, store, "Wireguard0")
-	seedServer(t, store, "Wireguard1") // стор проверяет только уникальность имени интерфейса
-	withRunningConfig(svc,
-		"interface Wireguard0", "    security-level private", "!",
-		"interface Wireguard1", "    ip access-group _WEBADMIN_Wireguard1 in", "!",
-	)
-	resetPosts(poster)
-	svc.SweepForeignPermitAll(context.Background())
-	want := []string{
-		"no interface Wireguard1 ip access-group _WEBADMIN_Wireguard1 in",
-		"no access-list _WEBADMIN_Wireguard1",
-	}
-	if got := parseStrings(poster); !slices.Equal(got, want) {
-		t.Fatalf("got %v want %v", got, want)
-	}
-	withRunningConfig(svc, "interface Wireguard0", "!", "interface Wireguard1", "!")
-	resetPosts(poster)
-	svc.SweepForeignPermitAll(context.Background())
-	if got := parseStrings(poster); len(got) != 0 {
-		t.Fatalf("чистый роутер: RCI не должно быть, got %v", got)
-	}
-}
-
-// Фасад ApplyLANSegmentsToInterface (его зовёт ресурс `ndms_access` роли wdtt
-// для ОБЕИХ половин сервера) чужой permit-all НЕ снимает: у wdtt тот же
-// остаток снимает `permit_absent`, исключая WG-половину при ExposeToPolicies —
-// там permit-all ставит `policy_exit` по замыслу. Сняв его здесь, фасад сносил
-// бы разрешение следующей строкой той же ведомости (4 лишние RCI-записи и
-// окно без permit-all на каждый рестарт демона).
-func TestApplyLANSegmentsToInterface_DoesNotStripForeignPermitAll(t *testing.T) {
-	svc, _, poster := newLANSegmentsTestService(t)
-	withRunningConfig(svc,
-		"interface Wireguard0",
-		"    security-level private",
-		"    ip access-group _WEBADMIN_Wireguard0 in",
-		"!",
-	)
-	resetPosts(poster)
-	err := svc.ApplyLANSegmentsToInterface(context.Background(), "Wireguard0", "10.66.66.1", "255.255.255.0", []string{"Home"})
-	if err != nil {
-		t.Fatal(err)
-	}
+// Чужой `_WEBADMIN_<iface>` не трогает НИ ОДИН путь применения сегментов:
+// это правила межсетевого экрана пользователя из веб-морды роутера (список
+// именуется по интерфейсу и держит все его строки, не только permit-all).
+// Прежний код снимал его целиком по имени — issue #879: правило пропадало
+// после каждой перезагрузки роутера.
+func TestApplyLANSegments_NeverTouchesForeignPermitAll(t *testing.T) {
 	want := []string{
 		"no interface Wireguard0 ip access-group AWGM_Wireguard0 in",
 		"no access-list AWGM_Wireguard0",
@@ -99,14 +54,35 @@ func TestApplyLANSegmentsToInterface_DoesNotStripForeignPermitAll(t *testing.T) 
 		"interface Wireguard0 ip access-group AWGM_Wireguard0 in",
 		"access-list AWGM_Wireguard0 auto-delete",
 	}
-	got := parseStrings(poster)
-	if !slices.Equal(got, want) {
-		t.Fatalf("got %v want %v", got, want)
-	}
-	for _, c := range got {
-		if strings.Contains(c, "_WEBADMIN_") {
-			t.Fatalf("фасад тронул чужой permit-all: %q", c)
-		}
+	for _, tc := range []struct {
+		name  string
+		apply func(*Service) error
+	}{
+		{"фасад ndms_access роли wdtt", func(svc *Service) error {
+			return svc.ApplyLANSegmentsToInterface(context.Background(), "Wireguard0", "10.66.66.1", "255.255.255.0", []string{"Home"})
+		}},
+		{"карточка встроенного сервера", func(svc *Service) error {
+			return svc.SetLANSegments(context.Background(), "Wireguard0", []string{"Home"})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, store, poster := newLANSegmentsTestService(t)
+			seedServer(t, store, "Wireguard0")
+			withRunningConfig(svc,
+				"interface Wireguard0",
+				"    security-level private",
+				"    ip access-group _WEBADMIN_Wireguard0 in",
+				"!",
+			)
+			resetPosts(poster)
+			if err := tc.apply(svc); err != nil {
+				t.Fatal(err)
+			}
+			got := parseStrings(poster)
+			if !slices.Equal(got, want) {
+				t.Fatalf("got %v want %v", got, want)
+			}
+		})
 	}
 }
 
@@ -123,45 +99,5 @@ func TestForeignAccessGroups_NoStore_ErrorsWithoutRCI(t *testing.T) {
 	}
 	if got := parseStrings(poster); len(got) != 0 {
 		t.Fatalf("RCI не должно быть, got %v", got)
-	}
-}
-
-// Пин «мутация наоборот» (стенд 2026-09-06): галка веб-морды привязывает
-// _WEBADMIN_<iface>, но хук ndm на ACL-bind в наш кэш не приходит. Кэш
-// прогрет ДО привязки; без InvalidateAll в stripForeignPermitAll первое
-// применение сегментов читает старый (чистый) блок и остаток не видит.
-func TestStripForeignPermitAll_InvalidatesRunningConfigCache(t *testing.T) {
-	svc, store, poster := newLANSegmentsTestService(t)
-	seedServer(t, store, "Wireguard0")
-
-	fg := query.NewFakeGetter()
-	cleanBlock, _ := json.Marshal(map[string]any{"message": []string{
-		"interface Wireguard0", "    security-level private", "!",
-	}})
-	fg.SetJSON("/show/running-config", string(cleanBlock))
-	svc.queries.RunningConfig = query.NewRunningConfigStore(fg, query.NopLogger())
-
-	// Прогрев кэша чистым блоком — TTL 60 мин, без InvalidateAll второй Get
-	// на этот путь не пойдёт.
-	if _, err := svc.queries.RunningConfig.Lines(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	// Галка веб-морды привязала permit-all на роутере; ndm-хук в наш кэш не
-	// пришёл — меняем ответ FakeGetter «мимо» сервиса, как изменился бы
-	// running-config за спиной кэша.
-	dirtyBlock, _ := json.Marshal(map[string]any{"message": []string{
-		"interface Wireguard0", "    security-level private",
-		"    ip access-group _WEBADMIN_Wireguard0 in", "!",
-	}})
-	fg.SetJSON("/show/running-config", string(dirtyBlock))
-
-	resetPosts(poster)
-	if err := svc.SetLANSegments(context.Background(), "Wireguard0", []string{"Home"}); err != nil {
-		t.Fatal(err)
-	}
-	want := "no interface Wireguard0 ip access-group _WEBADMIN_Wireguard0 in"
-	if got := parseStrings(poster); !slices.Contains(got, want) {
-		t.Fatalf("остаток permit-all не снят (кэш не сброшен?): %v", got)
 	}
 }

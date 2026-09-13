@@ -3,19 +3,9 @@
 	import VpnLinkPasteImport from './VpnLinkPasteImport.svelte';
 	import ObfuscatorImportForm, { type ManualObfuscator } from './ObfuscatorImportForm.svelte';
 	import { notifications } from '$lib/stores/notifications';
-	import {
-		getVpnPastePresentation,
-		PREMIUM_VPN_KEY_STORAGE
-	} from '$lib/utils/amneziaPremiumVpnPaste';
-	import { Upload, Clipboard, Crown, Link, Check, Shuffle, Waves } from 'lucide-svelte';
+	import { Upload, Clipboard, Link, Check, Shuffle, Waves } from 'lucide-svelte';
 
 	export type TunnelImportTab = 'file' | 'paste' | 'vpn' | 'phobos' | 'clusterm';
-
-	interface CountryConfigMeta {
-		suggestedName?: string;
-		countryCode: string;
-		countryLabel: string;
-	}
 
 	interface Props {
 		variant?: 'page' | 'modal';
@@ -23,14 +13,11 @@
 		activeTab?: TunnelImportTab;
 		vpnPasteInput?: string;
 		linkPreview?: string;
-		storageKey?: string;
-		loadStoredKeyOnMount?: boolean;
 		pastePlaceholder?: string;
 		/** Показать вкладки обфускаторов (только страница создания туннеля). */
 		obfuscatorTabs?: boolean;
 		obfInstallUrl?: string;
 		obfManual?: ManualObfuscator;
-		oncountryconfig?: (config: string, meta: CountryConfigMeta) => void | Promise<void>;
 		onregularconfig?: (meta: { suggestedName?: string }) => void;
 		/** Вызывается после успешного чтения файла (например, подсказка имени). */
 		onfileloaded?: (file: File, content: string) => void;
@@ -42,8 +29,6 @@
 		activeTab = $bindable<TunnelImportTab>('file'),
 		vpnPasteInput = $bindable(''),
 		linkPreview = $bindable(''),
-		storageKey = PREMIUM_VPN_KEY_STORAGE,
-		loadStoredKeyOnMount = true,
 		obfuscatorTabs = false,
 		obfInstallUrl = $bindable(''),
 		obfManual = $bindable<ManualObfuscator>({
@@ -54,7 +39,6 @@
 			idleTimeout: 0
 		}),
 		pastePlaceholder = '[Interface]\nPrivateKey = ...\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = ...\nEndpoint = vpn.example.com:51820\nAllowedIPs = 0.0.0.0/0',
-		oncountryconfig,
 		onregularconfig,
 		onfileloaded
 	}: Props = $props();
@@ -62,8 +46,6 @@
 	let fileInput = $state<HTMLInputElement>();
 	let dragOver = $state(false);
 	let vpnPasteImport = $state<VpnLinkPasteImport>();
-
-	let vpnPastePresentation = $derived(getVpnPastePresentation(vpnPasteInput));
 
 	function handleFileSelect(event: Event) {
 		const input = event.target as HTMLInputElement;
@@ -133,13 +115,11 @@
 			<Clipboard size={16} />
 			Вставить текст
 		</button>
+		<!-- Подпись и иконка постоянные: подписку обслуживает мастер, и
+		     вкладке больше не нужно превращаться в «Amnezia Premium». -->
 		<button type="button" class="tab" class:tab-active={activeTab === 'vpn'} onclick={activateVpnTab}>
-			{#if vpnPastePresentation.kind === 'premium'}
-				<Crown size={16} aria-hidden="true" />
-			{:else}
-				<Link size={16} aria-hidden="true" />
-			{/if}
-			{vpnPastePresentation.label}
+			<Link size={16} aria-hidden="true" />
+			Вставить ссылку
 		</button>
 		{#if obfuscatorTabs}
 			<button
@@ -214,10 +194,7 @@
 				bind:value={vpnPasteInput}
 				bind:configContent={importContent}
 				bind:linkPreview
-				{storageKey}
 				{variant}
-				{loadStoredKeyOnMount}
-				{oncountryconfig}
 				{onregularconfig}
 			/>
 		{:else if activeTab === 'phobos'}

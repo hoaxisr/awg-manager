@@ -18,6 +18,7 @@
 	import { SettingsSectionLabel } from '$lib/components/settings';
 	import { AWG_PARAM_HINTS } from '$lib/utils/awgParamHints';
 	import { awgProxyOutdated, supportsAwg3, supportsAwg31OnNativeWG } from '$lib/utils/backendAvailability';
+	import { keepaliveHint } from '$lib/utils/keepalive';
 	import { Network, Route, Router, Server, Shuffle, Tag } from 'lucide-svelte';
 
 	let { data } = $props();
@@ -124,6 +125,10 @@
 	let isMirror = $derived(tunnel?.backend === 'wdtt-raw');
 
 	let otherTunnels = $derived(allTunnels.filter(t => t.id !== tunnelId));
+
+	// Решение «показывать ли подпись» — в keepaliveHint: на страницу тестов
+	// нет, а на хелпер есть таблица (lib/utils/keepalive.test.ts).
+	let keepaliveApplied = $derived(keepaliveHint(tunnel?.backend, $form.persistentKeepalive));
 
 	function handleKeydown(e: KeyboardEvent) {
 		if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -472,6 +477,9 @@
 								{#if $errors.persistentKeepalive}<p class="text-xs text-error-500 mt-1">{$errors.persistentKeepalive}</p>{/if}
 							</div>
 						</div>
+						{#if keepaliveApplied !== null}
+							<p class="field-hint">Keepalive: применяется {keepaliveApplied} с — диапазон понимает только режим kernel.</p>
+						{/if}
 					</section>
 				</form>
 
@@ -595,6 +603,7 @@
 			tunnelState={tunnel.state ?? 'stopped'}
 			backendLabel={tunnel.backend === 'nativewg' ? 'NativeWG' : 'Kernel'}
 			ndmsName={tunnel.interfaceName ?? tunnel.id}
+			tunnelCountry={tunnel.amneziaCountry}
 			onclose={() => replaceModalOpen = false}
 			onreplaced={() => { replaceModalOpen = false; loadTunnel(); }}
 		/>

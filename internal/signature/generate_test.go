@@ -116,6 +116,12 @@ func TestCheckSize(t *testing.T) {
 	}
 
 	// Сырой текст без токенов — 0 байт по ByteSize, но строку занимает.
+	// Предохранитель: размер входа считается от проверяемой константы, и её
+	// мутация в большое значение превратила бы тест в пожирателя памяти —
+	// прогон валит машину вместо того, чтобы покраснеть.
+	if MaxSignatureChars > 1<<20 {
+		t.Fatalf("MaxSignatureChars=%d неправдоподобен — тест не станет строить такой вход", MaxSignatureChars)
+	}
 	raw := GeneratedPackets{I1: strings.Repeat("x", MaxSignatureChars+1)}
 	if !errors.Is(CheckSize(raw), ErrPacketsTooLarge) {
 		t.Fatal("сырой текст сверх лимита обязан отвергаться")

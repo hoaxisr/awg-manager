@@ -98,6 +98,11 @@ func (h *SettingsHandler) deriveSettingsHead(cur *storage.Settings, patch *stora
 		return prev, settingsErr(err.Error(), "INVALID_CONNECTIVITY_CHECK_URL")
 	}
 
+	// Адреса зеркала Amnezia CP здесь больше нет: поле принадлежит мастеру
+	// premium и пишется его ручкой (internal/api/amnezia_premium.go), где
+	// живут и валидация, и нормализация, и лечение испорченного хранимого.
+	// В SettingsPatch поля нет вовсе — см. nonPatchableSettings.
+
 	cur.Download.RouteTag = strings.TrimSpace(cur.Download.RouteTag)
 	if cur.Download.RouteTag == "" {
 		cur.Download.RouteTag = "direct"

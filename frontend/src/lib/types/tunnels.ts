@@ -160,6 +160,8 @@ export interface ImportConfRequest {
 	wdttClientId?: string;
 	installUrl?: string;
 	obfuscator?: Omit<TunnelObfuscator, 'localPort' | 'flavor'> & { flavor?: ObfuscatorFlavor };
+	/** Код страны подписки Amnezia Premium; шлёт только мастер. */
+	amneziaCountry?: string;
 }
 
 export interface AWGTunnel {
@@ -181,6 +183,8 @@ export interface AWGTunnel {
 	backend?: 'nativewg' | 'kernel' | 'wdtt-raw';
 	freeTurnClientId?: string;
 	wdttClientId?: string;
+	/** Страна подписки Amnezia Premium, из которой получена конфигурация; пусто — не из мастера. */
+	amneziaCountry?: string;
 	obfuscator?: TunnelObfuscator;
 }
 
@@ -212,6 +216,11 @@ export interface TunnelListItem {
 	wdttClientId?: string;
 	/** То же для FreeTurn-клиента: пара к wdttClientId. */
 	freeTurnClientId?: string;
+	/**
+	 * Страна подписки Amnezia Premium, из которой получена конфигурация.
+	 * Мастер читает именно список, поэтому метку страны он берёт отсюда.
+	 */
+	amneziaCountry?: string;
 	pingCheck: {
 		status: 'alive' | 'recovering' | 'disabled';
 		restartCount: number;

@@ -27,6 +27,10 @@ type fakeObfRunner struct {
 	mu      sync.Mutex
 	started map[string]*storage.Obfuscator
 	alive   map[string]bool
+	starts  map[string]int
+	// failStart — настоящий Runner отказывает на занятом loopback-порту и на
+	// недокачанном бинаре; без этого пути отказа не проверить.
+	failStart error
 }
 
 func newFakeObfRunner() *fakeObfRunner {
@@ -36,10 +40,32 @@ func newFakeObfRunner() *fakeObfRunner {
 func (f *fakeObfRunner) Start(_ context.Context, id string, o *storage.Obfuscator) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failStart != nil {
+		return f.failStart
+	}
+	// Настоящий Runner идемпотентен по СОДЕРЖИМОМУ INI: живой процесс с тем
+	// же конфигом он не трогает (runner.go). Фейк обязан это повторять —
+	// иначе тест не отличит перезапуск релея от бесплодного повторного Start.
+	if f.alive[id] && f.started[id] != nil &&
+		obfuscator.RenderConf(f.started[id]) == obfuscator.RenderConf(o) {
+		return nil
+	}
 	cp := *o
 	f.started[id] = &cp
 	f.alive[id] = true
+	if f.starts == nil {
+		f.starts = map[string]int{}
+	}
+	f.starts[id]++
 	return nil
+}
+
+// startCount — сколько раз релей поднимали: перезапуск при смене адреса
+// target'а иначе не отличить от «ничего не делали».
+func (f *fakeObfRunner) startCount(id string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.starts[id]
 }
 
 func (f *fakeObfRunner) Stop(id string) error {
@@ -47,6 +73,13 @@ func (f *fakeObfRunner) Stop(id string) error {
 	defer f.mu.Unlock()
 	delete(f.alive, id)
 	return nil
+}
+
+// setFailStart заставляет следующий Start отказать.
+func (f *fakeObfRunner) setFailStart(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failStart = err
 }
 
 func (f *fakeObfRunner) Alive(id string) bool {
@@ -68,13 +101,24 @@ type captureNDMS struct {
 	mu        sync.Mutex
 	posts     []string
 	failBatch bool   // RCI-батч (массив команд) отвечает 500
+	failRoute bool   // команды маршрута отвечают отказом во вложенном status
 	ifaceResp string // тело ответа на show interface
+	// confLines — строки running-config: по ним снятие host-route находит
+	// СВОИ записи (по метке !awgm-) и снимает их парной формой.
+	confLines []string
 }
 
 func newCaptureNDMS(t *testing.T) *captureNDMS {
 	t.Helper()
 	c := &captureNDMS{}
 	c.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/show/running-config") {
+			c.mu.Lock()
+			lines := append([]string{}, c.confLines...)
+			c.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": lines})
+			return
+		}
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/show/ip/route") {
 			_ = json.NewEncoder(w).Encode([]map[string]any{{"destination": "0.0.0.0/0", "interface": "ISP0"}})
 			return
@@ -92,8 +136,13 @@ func newCaptureNDMS(t *testing.T) *captureNDMS {
 		}
 		c.mu.Lock()
 		c.posts = append(c.posts, string(b))
-		failBatch := c.failBatch
+		failBatch, failRoute := c.failBatch, c.failRoute
 		c.mu.Unlock()
+		if failRoute && strings.Contains(string(b), `"route"`) {
+			// Форма отказа роутера: HTTP 200 и ошибка во вложенном status.
+			_, _ = w.Write([]byte(`{"ip":{"route":{"status":[{"status":"error","message":"invalid destination host"}]}}}`))
+			return
+		}
 		if strings.HasPrefix(strings.TrimSpace(string(b)), "[") {
 			if failBatch {
 				http.Error(w, "boom", http.StatusInternalServerError)
@@ -296,14 +345,61 @@ func TestStartObfuscated_DropsEndpointGuardEntry(t *testing.T) {
 	st := obfStored()
 	op.guardRegister(st.ID, guardEntry{
 		iface: "nwg3", pubkey: "PUB", endpoint: "203.0.113.5:51824",
-		spec: "vpn.example.com:51824", name: "Wireguard3", viaNDMS: true,
+		spec: "vpn.example.com:51824", name: "Wireguard3", mode: guardNDMS,
 	})
 
 	if err := op.Start(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
+	// Прежняя запись (viaNDMS) переписала бы loopback-endpoint реальным
+	// адресом сервера. На её место встаёт запись про target релея: она
+	// endpoint не трогает вовсе, а следит за DDNS у самого обфускатора.
+	e, ok := op.guardGet(st.ID)
+	if !ok {
+		t.Fatal("за target'ом релея никто не следит")
+	}
+	if e.mode != guardRelay {
+		t.Fatalf("режим стража не тот: %+v", e)
+	}
+	if e.spec != st.Obfuscator.Target {
+		t.Fatalf("страж следит не за target'ом: %q", e.spec)
+	}
+}
+
+// Литеральный адрес в target'е резолвить нечего — записи стража быть не должно.
+func TestStartObfuscated_LiteralTargetNeedsNoGuard(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+	st.Obfuscator.Target = "203.0.113.5:51824"
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
 	if op.guardHas(st.ID) {
-		t.Fatal("запись стража должна быть снята на обфусцированном пути")
+		t.Fatal("за литералом следить нечего")
+	}
+}
+
+// Остановленный туннель страж чинить не должен: рестарт релея поднял бы
+// процесс, который только что погасили.
+func TestStopObfuscated_DropsGuardEntry(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	if !op.guardHas(st.ID) {
+		t.Fatal("подготовка: записи стража нет")
+	}
+	op.stopObfuscated(context.Background(), st)
+
+	if op.guardHas(st.ID) {
+		t.Fatal("после Stop страж обязан забыть туннель")
 	}
 }
 
@@ -367,11 +463,14 @@ func TestStartObfuscated_RemovesStaleTargetRoute(t *testing.T) {
 	op := newObfOperator(t, n, fr)
 	st := obfStored()
 	st.ResolvedEndpointIP = "198.51.100.1"
+	// Прежняя запись живёт в конфигурации роутера с нашей меткой — по ней её
+	// и находят: слепой залп по адресу снёс бы заодно чужие записи.
+	n.confLines = []string{"ip route 198.51.100.1 ISP0 auto !awgm-obfuscator awg20"}
 
 	if err := op.Start(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(n.joined(), `"host":"198.51.100.1","no":true`) {
+	if !strings.Contains(n.joined(), `"host":"198.51.100.1","interface":"ISP0","no":true`) {
 		t.Fatalf("прежний host-route не снят:\n%s", n.joined())
 	}
 	if !strings.Contains(n.joined(), `"host":"203.0.113.5"`) {
@@ -439,13 +538,18 @@ func TestStopObfuscated_StopsRunnerAndRemovesRoute(t *testing.T) {
 	if err := op.Start(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
+	// Без сброса ассерт ниже удовлетворяла бы слепая уборка со СТАРТА, и тест
+	// оставался бы зелёным, даже если Stop маршрут не трогает вовсе.
+	n.reset()
 	if err := op.Stop(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
 	if fr.Alive("awg20") {
 		t.Fatal("runner still alive")
 	}
-	if !strings.Contains(n.joined(), `"no":true,"host":"203.0.113.5"`) && !strings.Contains(n.joined(), `"host":"203.0.113.5","no":true`) {
+	// WAN записи известен (его запомнил Start), поэтому снятие идёт парной
+	// формой: соседний маршрут на тот же адрес через другой канал — не наш.
+	if !strings.Contains(n.joined(), `"host":"203.0.113.5","interface":"ISP0","no":true`) {
 		t.Fatalf("host route not removed:\n%s", n.joined())
 	}
 }
@@ -473,6 +577,7 @@ func TestStopObfuscated_SharedHostRouteKeptForNeighbour(t *testing.T) {
 			})
 			st := obfStored()
 			st.ResolvedEndpointIP = "203.0.113.5"
+			n.confLines = []string{"ip route 203.0.113.5 ISP0 auto !awgm-obfuscator awg20"}
 
 			if err := op.Stop(context.Background(), st); err != nil {
 				t.Fatal(err)
@@ -549,6 +654,7 @@ func TestSyncObfuscator_MovesHostRouteToNewTarget(t *testing.T) {
 	op := newObfOperator(t, n, fr)
 	st := obfStored()
 	st.ResolvedEndpointIP = "198.51.100.1" // маршрут стоит под прежним адресом target
+	n.confLines = []string{"ip route 198.51.100.1 ISP0 auto !awgm-obfuscator awg20"}
 
 	targetIP, err := op.SyncObfuscator(context.Background(), st)
 	if err != nil {
@@ -561,7 +667,7 @@ func TestSyncObfuscator_MovesHostRouteToNewTarget(t *testing.T) {
 		t.Fatal("релей должен быть перезапущен")
 	}
 	posts := n.joined()
-	if !strings.Contains(posts, `"host":"198.51.100.1","no":true`) {
+	if !strings.Contains(posts, `"host":"198.51.100.1","interface":"ISP0","no":true`) {
 		t.Fatalf("старый host-route не снят:\n%s", posts)
 	}
 	if !strings.Contains(posts, `"host":"203.0.113.5"`) {
@@ -569,17 +675,23 @@ func TestSyncObfuscator_MovesHostRouteToNewTarget(t *testing.T) {
 	}
 }
 
-// Create резолвит Peer.Endpoint, а у обфусцированного туннеля это loopback —
-// 127.0.0.1 оседает в трекере. Маршрута под этим адресом никогда не было:
-// первый Start не имеет права слать в NDMS no-route на собственный loopback.
+// Петля могла осесть в ЗАПИСИ туннеля под прежними версиями (трекер её не
+// принимает с F230). Маршрута под этим адресом никогда не было: Start не имеет
+// права слать в NDMS no-route на собственный loopback.
+//
+// Состояние готовим именно записью: через trackEndpointIP оно больше не
+// создаётся, и тест, оставленный на прежней подготовке, проходил бы при любом
+// содержимом obfRouteIP — то есть сторожил бы пустоту.
 func TestStartObfuscated_LoopbackTrackedIPIsNotRemoved(t *testing.T) {
 	withObfDirs(t)
 	n := newCaptureNDMS(t)
 	fr := newFakeObfRunner()
 	op := newObfOperator(t, n, fr)
 	st := obfStored()
-	st.ResolvedEndpointIP = ""
-	op.trackEndpointIP(st.ID, "127.0.0.1") // как после Create
+	st.ResolvedEndpointIP = "127.0.0.1" // наследство прежней версии в записи
+	// Запись в конфигурации есть — значит если фильтр loopback пропадёт,
+	// снятие реально уйдёт в роутер, и тест это увидит.
+	n.confLines = []string{"ip route 127.0.0.1 ISP0 auto !awgm-obfuscator awg20"}
 
 	if err := op.Start(context.Background(), st); err != nil {
 		t.Fatal(err)
@@ -587,6 +699,37 @@ func TestStartObfuscated_LoopbackTrackedIPIsNotRemoved(t *testing.T) {
 	posts := n.joined()
 	if strings.Contains(posts, `"host":"127.0.0.1"`) {
 		t.Fatalf("маршрут на loopback не трогаем:\n%s", posts)
+	}
+	// И не снимаем ничего вовсе: отброшенный prevIP не должен превращаться
+	// в no-route (в том числе с пустым host).
+	if rm := n.routeRemovals(); len(rm) > 0 {
+		t.Fatalf("снятие на пустом prevIP: %v", rm)
+	}
+	if !strings.Contains(posts, `"host":"203.0.113.5"`) {
+		t.Fatalf("новый host-route не поставлен:\n%s", posts)
+	}
+}
+
+// Не только петля: в записи туннеля мог осесть и «неуказанный» 0.0.0.0 —
+// фильтрующий DNS отдаёт его на заблокированный домен. Маршрута под ним не
+// было, снимать нечего.
+func TestStartObfuscated_UnroutableStoredIPIsNotRemoved(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+	st := obfStored()
+	st.ResolvedEndpointIP = "0.0.0.0"
+	// Как и у loopback: запись в конфигурации есть, чтобы пропажа фильтра
+	// была видна — снятие ушло бы в роутер.
+	n.confLines = []string{"ip route 0.0.0.0 ISP0 auto !awgm-obfuscator awg20"}
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	posts := n.joined()
+	if strings.Contains(posts, `"host":"0.0.0.0"`) {
+		t.Fatalf("маршрут на «неуказанный» адрес не трогаем:\n%s", posts)
 	}
 	if !strings.Contains(posts, `"host":"203.0.113.5"`) {
 		t.Fatalf("новый host-route не поставлен:\n%s", posts)
@@ -600,5 +743,237 @@ func TestStartPlainWG_WithoutObfuscator_StillRejected(t *testing.T) {
 	st.Obfuscator = nil
 	if err := op.Start(context.Background(), st); err != tunnel.ErrNotObfuscated {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// F236: у v6-таргета host-route выражается формой ipv6 с prefix /128. Без
+// флага V6 запрос уходил v4-формой, роутер отвечал «invalid destination host»,
+// и маршрута не было вовсе — трафик релея уходил в сам туннель.
+func TestAddObfHostRoute_V6TargetUsesIPv6Form(t *testing.T) {
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, &fakeObfRunner{})
+	stored := obfStored()
+
+	if err := op.addObfHostRoute(context.Background(), stored, "2001:db8::5", "ISP0"); err != nil {
+		t.Fatalf("addObfHostRoute: %v", err)
+	}
+
+	if n.firstPostWith(`"prefix":"2001:db8::5/128"`) < 0 {
+		t.Fatalf("v6 host-route ушёл не той формой: %v", n.posts)
+	}
+	if n.firstPostWith(`"host":"2001:db8::5"`) >= 0 {
+		t.Fatalf("v4-форма с v6-адресом отвергается роутером: %v", n.posts)
+	}
+	// Без WAN маршрут бессмыслен (трафик релея уйдёт в сам туннель), без
+	// метки владения его не отличить от чужого при уборке.
+	if n.firstPostWith(`"interface":"ISP0"`) < 0 {
+		t.Fatalf("v6 host-route без WAN: %v", n.posts)
+	}
+	if n.firstPostWith(`"comment":"awgm-obfuscator awg20"`) < 0 {
+		t.Fatalf("v6 host-route без метки владения: %v", n.posts)
+	}
+}
+
+// v4-таргет как был.
+func TestAddObfHostRoute_V4TargetUsesIPv4Form(t *testing.T) {
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, &fakeObfRunner{})
+	stored := obfStored()
+
+	if err := op.addObfHostRoute(context.Background(), stored, "203.0.113.5", "ISP0"); err != nil {
+		t.Fatalf("addObfHostRoute: %v", err)
+	}
+
+	if n.firstPostWith(`"host":"203.0.113.5"`) < 0 {
+		t.Fatalf("v4 host-route ушёл не той формой: %v", n.posts)
+	}
+}
+
+// routeRemovals — посты, снимающие маршрут (снятие адреса интерфейса под эту
+// проверку не подпадает: там нет ключа "route").
+func (c *captureNDMS) routeRemovals() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for _, p := range c.posts {
+		if strings.Contains(p, `"route"`) && strings.Contains(p, `"no":true`) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// reset забывает накопленные посты: нужен, когда проверяется ВТОРОЙ Start,
+// а первый только готовит состояние.
+func (c *captureNDMS) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.posts = nil
+}
+
+// Смена WAN при неизменном адресе: запись NDMS ключуется парой (host, interface),
+// и без снятия прежней их становится две — одна через мёртвый канал (стенд 5.01).
+// Состояние готовится настоящим Start, а не выставленным полем: сверка идёт с
+// тем, что оператор сам отправил в NDMS.
+func TestStartObfuscated_WANChanged_ClearsRouteOnOldWAN(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored() // ISPInterface = ISP0
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	n.reset()
+
+	// Тот же адрес (резолв даёт 203.0.113.5), но WAN сменился.
+	st.ResolvedEndpointIP = "203.0.113.5"
+	st.ISPInterface = "ISP1"
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+
+	posts := n.joined()
+	// Снятие адресуется парой (host, interface) прежнего WAN: соседняя запись
+	// на тот же адрес через другой канал не наша и остаться обязана.
+	if !strings.Contains(posts, `"host":"203.0.113.5","interface":"ISP0","no":true`) {
+		t.Fatalf("запись на прежнем WAN не снята точной формой:\n%s", posts)
+	}
+	if n.firstPostWith(`"interface":"ISP0","no":true`) > n.firstPostWith(`"interface":"ISP1"`) {
+		t.Fatalf("снятие обязано идти до добавления:\n%s", posts)
+	}
+}
+
+// Тот же WAN и тот же адрес — снимать нечего: лишний no-route оставил бы окно
+// без маршрута на каждом WAN-up соседнего канала.
+func TestStartObfuscated_SameWAN_KeepsRoute(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	n.reset()
+
+	st.ResolvedEndpointIP = "203.0.113.5"
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+
+	if rm := n.routeRemovals(); len(rm) > 0 {
+		t.Fatalf("маршрут не менялся, снятие лишнее: %v", rm)
+	}
+}
+
+// Рестарт демона: реестр WAN пуст, а адрес в записи есть. Под каким WAN стоит
+// запись, оператор не помнит — зато помнит роутер: запись ищется в его
+// конфигурации по нашей метке и снимается парой (host, interface). Слепой залп
+// по адресу остаётся только на случай, когда конфигурацию не прочитать.
+func TestStartObfuscated_WANUnknownAfterRestart_RemovesByConfigEntry(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+	st.ResolvedEndpointIP = "203.0.113.5"
+	n.confLines = []string{
+		"ip route 203.0.113.5 PPPoE0 auto !awgm-obfuscator awg20",
+		"ip route 203.0.113.5 Bridge0 auto !чужой маршрут",
+	}
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+
+	if n.firstPostWith(`"host":"203.0.113.5","interface":"PPPoE0","no":true`) < 0 {
+		t.Fatalf("своя запись не снята парной формой:\n%s", n.joined())
+	}
+	if n.firstPostWith(`"interface":"Bridge0","no":true`) >= 0 {
+		t.Fatalf("снята чужая запись на том же адресе:\n%s", n.joined())
+	}
+}
+
+// Stop снимает маршрут — значит и память о его WAN обязана уйти, иначе
+// следующий Start на том же WAN решит, что снимать нечего.
+func TestStopObfuscated_ForgetsRoutedWAN(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	st.ResolvedEndpointIP = "203.0.113.5"
+	op.stopObfuscated(context.Background(), st)
+
+	if wan := op.obfRoutedWANFor(st.ID); wan != "" {
+		t.Fatalf("после Stop WAN маршрута обязан быть забыт, а помним %q", wan)
+	}
+}
+
+// Петля (дефолт через сам туннель) при живом прежнем маршруте: поставить новый
+// нечем, значит и снимать старый нельзя — иначе трафик релея уйдёт в туннель,
+// ради чего маршрут и существует.
+func TestStartObfuscated_RouteLoopRefused_KeepsPreviousRoute(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+	st.ISPInterface = "Wireguard3"        // == NewNWGNames(st.NWGIndex).NDMSName
+	st.ResolvedEndpointIP = "203.0.113.5" // адрес не менялся: снимать нечего и незачем
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatalf("Start не должен валиться из-за маршрута: %v", err)
+	}
+
+	if rm := n.routeRemovals(); len(rm) > 0 {
+		t.Fatalf("прежний маршрут снят, а новый поставить нечем: %v", rm)
+	}
+	if op.obfRouteErrFor(st.ID) == "" {
+		t.Fatal("причина отсутствия маршрута обязана попасть в реестр")
+	}
+}
+
+// У v6 своя форма и на СНЯТИИ: v4-форму с v6-адресом роутер отвергает
+// («invalid destination host»), и запись осталась бы висеть.
+func TestStopObfuscated_V6TargetUsesIPv6RemovalForm(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+	st.ResolvedEndpointIP = "2001:db8::5"
+	op.setObfRoutedWAN(st.ID, "ISP0")
+
+	op.stopObfuscated(context.Background(), st)
+
+	if n.firstPostWith(`"prefix":"2001:db8::5/128"`) < 0 {
+		t.Fatalf("v6 host-route снят не той формой:\n%s", n.joined())
+	}
+	if n.firstPostWith(`"host":"2001:db8::5"`) >= 0 {
+		t.Fatalf("v4-форма с v6-адресом роутером отвергается:\n%s", n.joined())
+	}
+}
+
+// Отказ постановки маршрута не должен запоминаться как «маршрут стоит под этим
+// WAN»: следующий Start решил бы, что снимать нечего, и запись на прежнем
+// канале осталась бы навсегда.
+func TestStartObfuscated_RouteAddFailed_DoesNotRememberWAN(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	n.failRoute = true
+	op := newObfOperator(t, n, newFakeObfRunner())
+	st := obfStored()
+
+	if err := op.Start(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+
+	if wan := op.obfRoutedWANFor(st.ID); wan != "" {
+		t.Fatalf("WAN %q запомнен, хотя маршрут не встал", wan)
+	}
+	if op.obfRouteErrFor(st.ID) == "" {
+		t.Fatal("причина отсутствия маршрута обязана попасть в реестр")
 	}
 }

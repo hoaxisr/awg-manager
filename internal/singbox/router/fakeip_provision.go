@@ -18,8 +18,9 @@ type StaticRouteSpec struct {
 	Mask      string
 	Reject    bool
 	Comment   string
-	// V6 selects the IPv6 route form (bare network+interface, no mask/host/
-	// reject/comment). Mirrors ndmscommand.StaticRouteSpec.V6.
+	// V6 selects the IPv6 route form: подсеть уезжает ключом prefix (хост — как
+	// /128), mask и host там отсутствуют, а reject и comment поддержаны.
+	// Mirrors ndmscommand.StaticRouteSpec.V6.
 	V6 bool
 }
 

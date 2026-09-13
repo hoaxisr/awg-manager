@@ -86,9 +86,9 @@ func TestExecuteStop_KeepsEnabledClearsRuntime(t *testing.T) {
 		}
 
 		got := mustGet(t, store, "awg10")
-		if !got.Enabled || got.ActiveWAN != "" || got.StartedAt != "" || op.stops != 1 {
+		if !got.Enabled || got.ActiveWAN != "" || got.StartedAt != "" || op.stops.Load() != 1 {
 			t.Fatalf("kernel Stop: Enabled=%v ActiveWAN=%q StartedAt=%q stops=%d",
-				got.Enabled, got.ActiveWAN, got.StartedAt, op.stops)
+				got.Enabled, got.ActiveWAN, got.StartedAt, op.stops.Load())
 		}
 	})
 
@@ -225,8 +225,8 @@ func TestExecuteGroup_RespectsTunnelLock(t *testing.T) {
 	if err := o.executeGroup(ctx, []Action{{Type: ActionStopKernel, Tunnel: "awg10"}}, "user"); err == nil {
 		t.Fatal("группа исполнилась под чужим локом")
 	}
-	if op.stops != 0 {
-		t.Fatalf("Stop исполнен под чужим локом: %d", op.stops)
+	if op.stops.Load() != 0 {
+		t.Fatalf("Stop исполнен под чужим локом: %d", op.stops.Load())
 	}
 	o.unlockTunnel("awg10")
 }

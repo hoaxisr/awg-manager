@@ -399,7 +399,13 @@ func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.
 	}
 
 	if s.isNativeWG(newStored) && s.nwgOperator != nil {
-		if err := s.applyDiffNWG(ctx, oldStored, newStored); err != nil {
+		// Под per-tunnel замком оркестратора целиком: правка живого туннеля
+		// шлёт в NDMS ключ, адрес, DNS, пира и параметры релея, а при смене
+		// пути ASC↔awg_proxy — ещё Stop и Start. Всё это переплетается с
+		// WAN-up по тому же туннелю, если идёт мимо замка.
+		if err := s.withTunnelLock(ctx, tunnelID, "update", func() error {
+			return s.applyDiffNWG(ctx, oldStored, newStored)
+		}); err != nil {
 			return err
 		}
 	} else {
@@ -777,6 +783,7 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	// невидим.
 	parsed.WdttClientID = strings.TrimSpace(link.WdttClientID)
 	parsed.FreeTurnClientID = strings.TrimSpace(link.FreeTurnClientID)
+	parsed.AmneziaCountry = normalizeAmneziaCountry(link.AmneziaCountry)
 
 	if link.Obfuscator != nil {
 		if err := prepareObfuscatorImport(parsed, link.Obfuscator, s.obfuscatorPortTaken); err != nil {
@@ -832,6 +839,29 @@ func prepareObfuscatorImport(parsed *storage.AWGTunnel, o *storage.Obfuscator, t
 	parsed.ResolvedEndpointIP = ""
 	parsed.Backend = "nativewg"
 	return nil
+}
+
+// normalizeAmneziaCountry приводит код страны к виду, в котором он лежит в
+// записи: нижний регистр, без пробелов по краям. Сравнение кода записи с
+// кодом каталога в мастере — строковое, и «NL» рядом с «nl» дало бы туннель,
+// не совпавший ни с одной страной каталога.
+func normalizeAmneziaCountry(code string) string {
+	return strings.ToLower(strings.TrimSpace(code))
+}
+
+// withTunnelLock выполняет fn под per-tunnel замком оркестратора. Замка может
+// не быть (тесты сервиса) — тогда работаем как раньше.
+func (s *ServiceImpl) withTunnelLock(ctx context.Context, tunnelID, owner string, fn func() error) error {
+	if s.orch == nil {
+		return fn()
+	}
+	return s.orch.WithTunnelLock(ctx, tunnelID, owner, fn)
+}
+
+// PersistObfuscatorTargetIP экспортирован для endpoint-стража (nwg): у
+// оператора нет стора, а адрес target'а обязан пережить рестарт демона.
+func (s *ServiceImpl) PersistObfuscatorTargetIP(tunnelID, ip string) {
+	s.persistObfuscatorTargetIP(tunnelID, ip)
 }
 
 // persistObfuscatorTargetIP кладёт в запись адрес, под которым стоит host-route
@@ -919,7 +949,7 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 
 // ReplaceConfig replaces a tunnel's Interface and Peer from a parsed .conf,
 // preserving identity, routing, monitoring, and all other metadata.
-func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string) error {
+func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string, opts ReplaceOptions) error {
 	s.lockTunnel(tunnelID)
 	defer s.unlockTunnel(tunnelID)
 
@@ -1011,6 +1041,14 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 	stored.ActiveWAN = ""
 	stored.StartedAt = ""
 
+	// Нормализация — ДО мутатора: под dir-lock'ом позволены только
+	// присваивания заранее вычисленных значений.
+	var amneziaCountry *string
+	if opts.AmneziaCountry != nil {
+		normalized := normalizeAmneziaCountry(*opts.AmneziaCountry)
+		amneziaCountry = &normalized
+	}
+
 	// Save to storage. Мутатор присваивает уже вычисленные выше поля свежей
 	// записи под локом — сброс runtime-полей здесь осознанная часть замены
 	// конфига, а не затирание чужой параллельной правки.
@@ -1025,6 +1063,13 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 		}
 		if stored.Obfuscator != nil {
 			t.Obfuscator = stored.Obfuscator
+		}
+		// Страна подписки описывает ровно ту конфигурацию, которую кладёт
+		// этот же мутатор, — поэтому едет с ней одной записью. Вторым
+		// Update это был бы лишний цикл флеша и окно, в котором конфигурация
+		// уже новая, а метка страны ещё от прежней.
+		if amneziaCountry != nil {
+			t.AmneziaCountry = *amneziaCountry
 		}
 		t.ResolvedEndpointIP = stored.ResolvedEndpointIP
 		t.ActiveWAN = stored.ActiveWAN
@@ -1085,16 +1130,13 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 				s.logWarn("replace-config", tunnelID, "Start after peer sync failed: "+err.Error())
 			}
 		}
-		// Релей у работающего (или упавшего — он тоже в wasNativeRunning)
-		// туннеля поднимается под новые параметры, а его ответ — адрес
-		// target'а: без записи в стор после рестарта демона снимать прежний
-		// host-route будет не по чему.
+		// Адрес target'а: без записи в стор после рестарта демона снимать
+		// прежний host-route будет не по чему. Берём тот, что оператор
+		// зарезолвил в Start выше — второй проход (SyncObfuscator) делал бы
+		// ту же работу заново: снял бы только что поставленный маршрут и
+		// поставил его снова, в одном запросе add → remove → add.
 		if stored.Obfuscator != nil && wasNativeRunning {
-			ip, err := s.nwgOperator.SyncObfuscator(ctx, stored)
-			if err != nil {
-				s.logWarn("replace-config", tunnelID, "SyncObfuscator failed: "+err.Error())
-			}
-			s.persistObfuscatorTargetIP(tunnelID, ip)
+			s.persistObfuscatorTargetIP(tunnelID, s.nwgOperator.GetTrackedEndpointIP(tunnelID))
 		}
 	}
 

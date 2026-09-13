@@ -222,6 +222,12 @@ func TestTailFile_TruncateEndsGeneration(t *testing.T) {
 func TestTailFile_PendingCapFlushes(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "nolinebreak.log")
+	// Предохранитель: размер входа считается от проверяемой константы, и её
+	// мутация в большое значение превратила бы тест в пожирателя памяти —
+	// прогон валит машину вместо того, чтобы покраснеть.
+	if maxPendingLine > 4<<20 {
+		t.Fatalf("maxPendingLine=%d неправдоподобен — тест не станет строить такой вход", maxPendingLine)
+	}
 	big := strings.Repeat("x", maxPendingLine+1000) // без '\n'
 	if err := os.WriteFile(p, []byte(big), 0644); err != nil {
 		t.Fatal(err)

@@ -223,12 +223,12 @@ func TestResolveBypassCIDRs_KeenDNSPreset(t *testing.T) {
 // в список, схлопнуться с ручным дублем и не сдвинуть порядок пользовательских
 // подсетей.
 func TestResolveBypassCIDRs_AdhocFromRouter(t *testing.T) {
-	got, err := resolveBypassCIDRs([]string{"keendns"}, "10.0.0.0/8, 78.47.125.180",
-		[]string{"78.47.125.180/32"})
+	got, err := resolveBypassCIDRs([]string{"keendns"}, "10.0.0.0/8, 198.51.100.180",
+		[]string{"198.51.100.180/32"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := []string{"78.47.125.180/32", "10.0.0.0/8"}
+	want := []string{"198.51.100.180/32", "10.0.0.0/8"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -247,11 +247,11 @@ func TestResolveBypassCIDRs_PortPresetsContributeNoCIDRs(t *testing.T) {
 func TestResolveBypassCIDRs_DedupWithinExtra(t *testing.T) {
 	// Дубль в пользовательском списке схлопывается, порядок стабильный.
 	// (Пресеты сюда больше ничего не приносят — keendns ушёл в DNS-rewrite.)
-	got, err := resolveBypassCIDRs([]string{"keendns"}, "78.47.125.180, 10.0.0.0/8, 78.47.125.180/32", nil)
+	got, err := resolveBypassCIDRs([]string{"keendns"}, "198.51.100.180, 10.0.0.0/8, 198.51.100.180/32", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := []string{"78.47.125.180/32", "10.0.0.0/8"}
+	want := []string{"198.51.100.180/32", "10.0.0.0/8"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("got %v, want %v", got, want)
 	}

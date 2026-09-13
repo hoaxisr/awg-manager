@@ -47,6 +47,12 @@ type CallConfig struct {
 	// Supports "http://", "socks5://", "socks5h://" schemes.
 	ProxyURL string
 
+	// Proxy — что делать с прокси из окружения. Нулевое значение
+	// (ProxyInheritEnv) — прежнее поведение: непривязанный транспорт
+	// наследует HTTP(S)_PROXY. ProxyDirect снимает наследование там, где
+	// «прямой выход» — часть смысла запроса, а не умолчание.
+	Proxy ProxyPolicy
+
 	// Method defaults to GET; set to "HEAD" for monitoring probes.
 	Method string
 
@@ -123,13 +129,12 @@ func (c *Client) Do(ctx context.Context, cfg CallConfig) (*Result, error) {
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), buildTrace(timings)))
 
 	// Validate proxy URL early so traffic never leaks via WAN on parse failure.
-	var parsedProxy *url.URL
-	if cfg.ProxyURL != "" {
-		var err error
-		parsedProxy, err = url.Parse(cfg.ProxyURL)
-		if err != nil {
-			return nil, fmt.Errorf("httpclient: invalid proxy URL %q: %w", cfg.ProxyURL, err)
-		}
+	// Разбор ОБЩИЙ с NewTransport: раньше строгая проверка стояла только там,
+	// и один и тот же мусорный адрес на двух входах пакета вёл себя
+	// по-разному — здесь он молча подавлял ProxyDirect.
+	parsedProxy, err := parseProxyURL(cfg.ProxyURL)
+	if err != nil {
+		return nil, err
 	}
 
 	// Build per-call transport (interface binding + proxy).
@@ -219,9 +224,14 @@ func (c *Client) buildTransport(cfg CallConfig, parsedProxy *url.URL) *http.Tran
 	// Set up proxy. Explicit URL wins; otherwise honour HTTP_PROXY/HTTPS_PROXY
 	// for direct (unbound) egress. Bind mode must not use env proxy — traffic
 	// must stay on the tunnel interface.
+	//
+	// cfg.Proxy == ProxyDirect снимает наследование окружения у НЕпривязанного
+	// транспорта: «не передавать ProxyURL» для прямого выхода недостаточно, и
+	// этот вход тоже должен уметь его потребовать — он шире, чем NewTransport,
+	// и через него ходят диагностика, пробы связи и измерение «прямого» IP.
 	if parsedProxy != nil {
 		t.Proxy = http.ProxyURL(parsedProxy)
-	} else if cfg.Interface == "" {
+	} else if cfg.Interface == "" && cfg.Proxy != ProxyDirect {
 		t.Proxy = http.ProxyFromEnvironment
 	}
 

@@ -54,15 +54,15 @@ func TestSyncKeenDNSPreset_HappyPath(t *testing.T) {
 	sync := &recordingKeenDNSSync{}
 	svc := newKeenDNSSyncTestSvc(sync)
 	svc.keenDNSInfoProv = &fakeKeenDNSInfo{
-		fqdn:  "impod.netcraze.pro",
-		addrs: []string{"78.47.125.180", "91.144.142.72"},
+		fqdn:  "example.netcraze.pro",
+		addrs: []string{"198.51.100.180", "203.0.113.72"},
 	}
 
 	svc.syncKeenDNSPreset(context.Background(), keenDNSPresetSettings(true))
-	if len(sync.calls) != 1 || sync.calls[0] != (keenDNSSyncCall{true, "impod.netcraze.pro"}) {
+	if len(sync.calls) != 1 || sync.calls[0] != (keenDNSSyncCall{true, "example.netcraze.pro"}) {
 		t.Fatalf("вызовы синка = %v", sync.calls)
 	}
-	want := []string{"78.47.125.180/32", "91.144.142.72/32"}
+	want := []string{"198.51.100.180/32", "203.0.113.72/32"}
 	if got := svc.keenDNSBypass(); !slices.Equal(got, want) {
 		t.Fatalf("обход = %v, want %v", got, want)
 	}
@@ -71,8 +71,8 @@ func TestSyncKeenDNSPreset_HappyPath(t *testing.T) {
 func TestSyncKeenDNSPreset_PresetOffClears(t *testing.T) {
 	sync := &recordingKeenDNSSync{}
 	svc := newKeenDNSSyncTestSvc(sync)
-	svc.keenDNSInfoProv = &fakeKeenDNSInfo{fqdn: "impod.netcraze.pro", addrs: []string{"78.47.125.180"}}
-	svc.setKeenDNSBypass([]string{"78.47.125.180"})
+	svc.keenDNSInfoProv = &fakeKeenDNSInfo{fqdn: "example.netcraze.pro", addrs: []string{"198.51.100.180"}}
+	svc.setKeenDNSBypass([]string{"198.51.100.180"})
 
 	svc.syncKeenDNSPreset(context.Background(), keenDNSPresetSettings(false))
 	if len(sync.calls) != 1 || sync.calls[0] != (keenDNSSyncCall{false, ""}) {
@@ -112,7 +112,7 @@ func TestSyncKeenDNSPreset_KeepsLastGoodBypass(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			sync := &recordingKeenDNSSync{}
 			svc := newKeenDNSSyncTestSvc(sync)
-			info := &fakeKeenDNSInfo{fqdn: "impod.netcraze.pro", addrs: []string{"78.47.125.180"}}
+			info := &fakeKeenDNSInfo{fqdn: "example.netcraze.pro", addrs: []string{"198.51.100.180"}}
 			svc.keenDNSInfoProv = info
 			sr := keenDNSPresetSettings(true)
 			svc.syncKeenDNSPreset(context.Background(), sr)
@@ -123,7 +123,7 @@ func TestSyncKeenDNSPreset_KeepsLastGoodBypass(t *testing.T) {
 			tc.fail(info)
 
 			svc.syncKeenDNSPreset(context.Background(), sr)
-			want := []string{"78.47.125.180/32"}
+			want := []string{"198.51.100.180/32"}
 			if got := svc.keenDNSBypass(); !slices.Equal(got, want) {
 				t.Fatalf("обход = %v, want %v", got, want)
 			}
@@ -136,7 +136,7 @@ func TestSyncKeenDNSPreset_KeepsLastGoodBypass(t *testing.T) {
 func TestSyncKeenDNSPreset_InfoCached(t *testing.T) {
 	sync := &recordingKeenDNSSync{}
 	svc := newKeenDNSSyncTestSvc(sync)
-	info := &fakeKeenDNSInfo{fqdn: "impod.netcraze.pro", addrs: []string{"78.47.125.180"}}
+	info := &fakeKeenDNSInfo{fqdn: "example.netcraze.pro", addrs: []string{"198.51.100.180"}}
 	svc.keenDNSInfoProv = info
 
 	sr := keenDNSPresetSettings(true)
@@ -177,14 +177,14 @@ func TestReconcileInstalled_KeenDNSCIDRChangeReinstalls(t *testing.T) {
 		t.Fatalf("устойчивое состояние не должно переустанавливать правила, got %d", restoreCalls)
 	}
 
-	svc.setKeenDNSBypass([]string{"78.47.125.180"})
+	svc.setKeenDNSBypass([]string{"198.51.100.180"})
 	if err := svc.reconcileInstalled(context.Background(), sr); err != nil {
 		t.Fatalf("reconcileInstalled: %v", err)
 	}
 	if restoreCalls != 1 {
 		t.Fatalf("появление адреса KeenDNS обязано переустановить правила, got %d", restoreCalls)
 	}
-	if !slices.Contains(svc.appliedSpec.BypassCIDRs, "78.47.125.180/32") {
+	if !slices.Contains(svc.appliedSpec.BypassCIDRs, "198.51.100.180/32") {
 		t.Fatalf("применённые bypass-CIDR = %v", svc.appliedSpec.BypassCIDRs)
 	}
 

@@ -15,6 +15,9 @@ const (
 )
 
 func writeVersion(version string) error {
+	if err := os.MkdirAll(ModulesDir, 0755); err != nil {
+		return err
+	}
 	path := filepath.Join(ModulesDir, versionFile)
 	return os.WriteFile(path, []byte(version), 0644)
 }

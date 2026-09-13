@@ -248,7 +248,10 @@ func (a *app) setupSingboxRuntime() {
 	// by binary mtime+size — common path is ~10µs per call (stat only).
 	a.subAdapter.SetSingboxFeaturesFn(a.singboxOp.SingboxFeatures)
 	if err := a.subAdapter.LoadFromDisk(singboxConfigDir); err != nil {
-		a.bootLog.Warn("subscription-adapter", "load-from-disk", err.Error())
+		// Не предупреждение: пока слот не прочитан, адаптер отказывает в
+		// записи (иначе первая же операция стёрла бы все подписки), значит
+		// подписки не работают до устранения причины.
+		a.bootLog.Error("subscription-adapter", "load-from-disk", err.Error())
 	}
 	a.subSvc = subscription.NewService(a.subStore, a.subAdapter)
 	a.subSvc.SetAppLogger(a.loggingService)

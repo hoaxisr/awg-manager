@@ -17,14 +17,8 @@ func (s *Service) ApplyNATModeToInterface(ctx context.Context, ifaceName, mode s
 }
 
 // ApplyLANSegmentsToInterface sets LAN segment ACL for any WireGuard-like interface.
-//
-// stripForeign=false: чужой permit-all `_WEBADMIN_` у чужих интерфейсов
-// (обе половины сервера wdtt) снимает ресурс `permit_absent` — с гейтом,
-// исключающим WG-половину при ExposeToPolicies, где permit-all ставит
-// `policy_exit` по замыслу. Сняв его здесь, фасад сносил бы разрешение
-// следующей строкой той же ведомости.
 func (s *Service) ApplyLANSegmentsToInterface(ctx context.Context, iface, addr, mask string, segments []string) error {
-	return s.applyLANSegmentsRaw(ctx, iface, addr, mask, segments, false)
+	return s.applyLANSegmentsRaw(ctx, iface, addr, mask, segments)
 }
 
 // ApplyPolicyToInterface sets or clears the ip hotspot policy on an interface.

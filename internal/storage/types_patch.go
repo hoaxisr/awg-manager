@@ -31,8 +31,6 @@ type SettingsPatch struct {
 	ConnectivityCheckURL        *string                `json:"connectivityCheckUrl,omitempty"`
 	UsageLevel                  *string                `json:"usageLevel,omitempty"`
 	ServerInterfaces            *[]string              `json:"serverInterfaces,omitempty"`
-	ManagedServers              *[]ManagedServer       `json:"managedServers,omitempty"`
-	ManagedServer               *ManagedServer         `json:"managedServer,omitempty"`
 	ManagedPolicies             *[]string              `json:"managedPolicies,omitempty"`
 	MonitoringExcludedTunnels   *[]string              `json:"monitoringExcludedTunnels,omitempty"`
 	SingboxRouter               *SingboxRouterSettings `json:"singboxRouter,omitempty"`

@@ -45,12 +45,45 @@ type KeeneticClient struct {
 func NewKeeneticClient() *KeeneticClient {
 	return &KeeneticClient{
 		httpClient: &http.Client{
-			Timeout: httpTimeout,
+			Timeout:   httpTimeout,
+			Transport: routerTransport(),
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
 		},
 	}
+}
+
+// routerTransport — транспорт для запросов к СОБСТВЕННОМУ роутеру.
+//
+// Единственное его отличие от умолчания — снятый прокси, и снят он не для
+// порядка. Без `Transport` клиент берёт `http.DefaultTransport`, а тот
+// уважает HTTP_PROXY/HTTPS_PROXY из окружения демона. Go исключает из этого
+// только `localhost` и loopback, а адрес роутера (см. resolveAddr, фолбэк
+// 192.168.1.1) под исключение НЕ попадает. При заданном HTTP_PROXY на чужой
+// хост по НЕЗАШИФРОВАННОМУ http уехали бы логин администратора, cookies и
+// sha256(challenge + md5(login:realm:password)) — то есть значение,
+// эквивалентное паролю для этого challenge.
+//
+// Путь не умозрительный: init-скрипт (entware/files/etc/init.d/S99awg-manager)
+// окружение не чистит, он правит только PATH и TZ, так что `export HTTP_PROXY`
+// перед рестартом демона достаточно.
+//
+// Прокси к собственному роутеру по локальной сети не помогает НИКОГДА, поэтому
+// здесь не поле выбора, а безусловное снятие. Новому коду, которому нужен
+// прямой выход, брать httpclient.TransportConfig{Proxy: httpclient.ProxyDirect};
+// здесь базовый транспорт клонируется, чтобы правка меняла ровно прокси и
+// ничего больше — остальные умолчания (пул, таймауты, h2) остаются как были.
+func routerTransport() http.RoundTripper {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		// Чужой DefaultTransport подменить нечем, но и молча ходить через него
+		// нельзя: пустой транспорт хуже по умолчаниям, зато без прокси.
+		return &http.Transport{}
+	}
+	tr := base.Clone()
+	tr.Proxy = nil
+	return tr
 }
 
 // resolveAddr returns the router address to use. The result is cached only when

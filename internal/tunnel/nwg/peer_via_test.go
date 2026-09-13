@@ -36,7 +36,7 @@ const realWireguard0JSON = `{
         "local-port": 43328,
         "remote-port": 443,
         "via": "PPPoE0",
-        "local-endpoint-address": "178.205.128.207",
+        "local-endpoint-address": "198.51.100.207",
         "remote-endpoint-address": "46.149.74.35",
         "rxbytes": 355096,
         "txbytes": 316437,

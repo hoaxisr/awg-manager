@@ -119,6 +119,12 @@ func TestDecodeBody_Valid(t *testing.T) {
 }
 
 func TestParseJSON_OversizedBody(t *testing.T) {
+	// Предохранитель: размер входа считается от проверяемой константы, и её
+	// мутация в большое значение превратила бы тест в пожирателя памяти —
+	// прогон валит машину вместо того, чтобы покраснеть.
+	if maxBodySize > 4<<20 {
+		t.Fatalf("maxBodySize=%d неправдоподобен — тест не станет строить такой вход", maxBodySize)
+	}
 	body := strings.Repeat("x", maxBodySize+1)
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	rr := httptest.NewRecorder()

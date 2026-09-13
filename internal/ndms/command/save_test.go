@@ -15,9 +15,11 @@ import (
 // --- Test doubles ---
 
 type fakePoster struct {
-	mu       sync.Mutex
-	calls    int32
-	nextErr  error
+	mu      sync.Mutex
+	calls   int32
+	nextErr error
+	// errFor — сколько ПЕРВЫХ вызовов отказывают (для повторяющихся команд).
+	errFor   int
 	nextResp json.RawMessage
 	sleep    time.Duration
 	payloads []any
@@ -31,6 +33,11 @@ func (f *fakePoster) Post(ctx context.Context, payload any) (json.RawMessage, er
 	// — ложный красный, — но повод краснеть выдуманный.
 	f.mu.Lock()
 	err := f.nextErr
+	fileExists := false
+	if f.errFor > 0 {
+		f.errFor--
+		fileExists = true
+	}
 	sleep := f.sleep
 	f.payloads = append(f.payloads, payload)
 	f.mu.Unlock()
@@ -44,6 +51,13 @@ func (f *fakePoster) Post(ctx context.Context, payload any) (json.RawMessage, er
 	f.mu.Lock()
 	resp := f.nextResp
 	f.mu.Unlock()
+	if fileExists {
+		// Форма ответа идёт за формой запроса: у v6-команды ключ ipv6.
+		resp = routerFileExistsBody
+		if payloadMentionsIPv6(payload) {
+			resp = routerFileExistsBodyV6
+		}
+	}
 	if resp == nil {
 		resp = json.RawMessage(`{}`)
 	}
@@ -59,6 +73,27 @@ func (f *fakePoster) SetResponse(resp string) {
 }
 
 func (f *fakePoster) Calls() int32 { return atomic.LoadInt32(&f.calls) }
+
+// routerFileExistsBody — дословный ответ роутера (стенд 5.01), когда запись
+// снята, но по тому же адресу в таблице осталась ещё одна: HTTP 200 и
+// status:"error" внутри. Ошибка ложная — снятие прошло.
+var routerFileExistsBody = json.RawMessage(`{"ip":{"route":{"status":[{"status":"error",` +
+	`"code":"268239256","ident":"Io::Netlink","critical":"yes",` +
+	`"message":"system failed [0xcffd0198], got an error response: file exists."}]}}}`)
+
+// То же для v6: роутер отвечает под ключом ipv6, и подсовывать сюда v4-тело
+// значит проверять терпимость на форме, которой в этом случае не бывает.
+var routerFileExistsBodyV6 = json.RawMessage(`{"ipv6":{"route":{"status":[{"status":"error",` +
+	`"code":"268239256","ident":"Io::Netlink","critical":"yes",` +
+	`"message":"system failed [0xcffd0198], got an error response: file exists."}]}}}`)
+
+// SetErrorFor заставляет n первых вызовов ответить этим отказом — так роутер
+// отвечает, пока у host-route остаётся больше одной записи.
+func (f *fakePoster) SetErrorFor(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.errFor = n
+}
 
 func (f *fakePoster) SetError(err error) {
 	f.mu.Lock()
@@ -729,4 +764,14 @@ func TestSaveCoordinator_FireDispatchedDuringFlushYields(t *testing.T) {
 	if got := poster.Calls(); got != 1 {
 		t.Errorf("POST'ов %d, ждали 1 (только Flush): fire не уступил владение состоянием", got)
 	}
+}
+
+// payloadMentionsIPv6 — команда пришла в v6-форме (внешний ключ "ipv6").
+func payloadMentionsIPv6(payload any) bool {
+	m, ok := payload.(map[string]any)
+	if !ok {
+		return false
+	}
+	_, v6 := m["ipv6"]
+	return v6
 }

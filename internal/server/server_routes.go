@@ -267,6 +267,9 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.proxyRuntimeNudge != nil {
 		h.hookHandler.SetProxyRuntimeNudge(s.proxyRuntimeNudge)
 	}
+	if s.nwgOp != nil {
+		h.hookHandler.SetEndpointGuardNudge(s.nwgOp.NudgeEndpointGuard)
+	}
 	mux.HandleFunc("/api/hook/ndms", h.hookHandler.HandleNDMS)
 
 	// WAN status (protected) — event ingress is now /api/hook/ndms.
@@ -469,7 +472,7 @@ func (s *Server) registerSettingsRoutes(mux *http.ServeMux, h *routeHandlers) {
 		case http.MethodPost:
 			h.pingCheckHandler.ConfigureTunnelPingCheck(w, r)
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			response.MethodNotAllowed(w)
 		}
 	}))
 	mux.HandleFunc("/api/tunnels/pingcheck/remove", h.guarded(h.pingCheckHandler.RemoveTunnelPingCheck))
@@ -491,7 +494,7 @@ func (s *Server) registerDeviceProxyRoutes(mux *http.ServeMux, h *routeHandlers)
 		case http.MethodPut:
 			deviceProxyHandler.SaveConfig(w, r)
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			response.MethodNotAllowed(w)
 		}
 	}))
 	mux.HandleFunc("/api/proxy/runtime", h.guarded(deviceProxyHandler.GetRuntime))
@@ -511,7 +514,7 @@ func (s *Server) registerDeviceProxyRoutes(mux *http.ServeMux, h *routeHandlers)
 		case http.MethodDelete:
 			deviceProxyHandler.DeleteInstance(w, r)
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			response.MethodNotAllowed(w)
 		}
 	}))
 	mux.HandleFunc("/api/proxy/instances/apply", h.guarded(deviceProxyHandler.ApplyInstances))
@@ -531,11 +534,24 @@ func (s *Server) registerLogsImportRoutes(mux *http.ServeMux, h *routeHandlers) 
 	// Import (protected + boot guarded)
 	mux.HandleFunc("/api/import/conf", h.guarded(h.importHandler.ImportConf))
 
-	amneziaCPHandler := api.NewAmneziaCPHandler(h.appLog)
-	amneziaCPHandler.SetDownloader(s.downloadSvc)
-	mux.HandleFunc("/api/amnezia-premium/login", h.guarded(amneziaCPHandler.Login))
-	mux.HandleFunc("/api/amnezia-premium/account-info", h.guarded(amneziaCPHandler.AccountInfo))
-	mux.HandleFunc("/api/amnezia-premium/download-config", h.guarded(amneziaCPHandler.DownloadConfig))
+	// Ключ подписки Amnezia Premium: проверка и сохранение (POST), состояние
+	// (GET), удаление (DELETE). Одна ручка на три метода — состояние у них
+	// одно, и разводить его по трём путям нечем.
+	amneziaPremiumHandler := api.NewAmneziaPremiumHandler(s.settings, h.appLog)
+	amneziaPremiumHandler.SetEventBus(s.bus)
+	mux.HandleFunc("/api/amnezia/premium/key", h.guarded(amneziaPremiumHandler.Key))
+	// Каталог подписки (GET) и выдача конфигурации страны (POST). Пути
+	// разные, потому что операции разные: первая читает, вторая ТРАТИТ слот
+	// устройств подписки.
+	mux.HandleFunc("/api/amnezia/premium/catalog", h.guarded(amneziaPremiumHandler.Catalog))
+	mux.HandleFunc("/api/amnezia/premium/config", h.guarded(amneziaPremiumHandler.Config))
+	// Отзыв конфигурации страны (POST) — обратная выдаче операция, ВОЗВРАЩАЕТ
+	// слот. Отдельный путь по той же причине, по какой выдача отделена от
+	// каталога: разные последствия для подписки.
+	mux.HandleFunc("/api/amnezia/premium/revoke", h.guarded(amneziaPremiumHandler.Revoke))
+	// Адрес зеркала: действующий (GET) и запись (POST). Живёт здесь, а не в
+	// настройках, — поле принадлежит мастеру premium.
+	mux.HandleFunc("/api/amnezia/premium/mirror", h.guarded(amneziaPremiumHandler.Mirror))
 
 	// External tunnels (protected + boot guarded)
 	mux.HandleFunc("/api/external-tunnels", h.guarded(h.externalHandler.List))
@@ -814,7 +830,7 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 			case http.MethodDelete:
 				s.singboxHandler.DeleteTunnel(w, r)
 			default:
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				response.MethodNotAllowed(w)
 			}
 		}))
 	}

@@ -13,7 +13,7 @@ func TestDecide_Boot_StartsEnabledKernelTunnels(t *testing.T) {
 	s.tunnels["awg1"] = &tunnelState{ID: "awg1", Backend: "kernel", Enabled: true}
 	s.tunnels["awg2"] = &tunnelState{ID: "awg2", Backend: "kernel", Enabled: false}
 
-	actions := decide(Event{Type: EventBoot}, &s)
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
 
 	starts := filterActions(actions, ActionColdStartKernel)
 	if len(starts) != 2 {
@@ -27,7 +27,7 @@ func TestDecide_Boot_ReconcilesNativeWGWithoutASC(t *testing.T) {
 	s.supportsASC = false
 	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "nativewg", Enabled: true, NWGIndex: 0}
 
-	actions := decide(Event{Type: EventBoot}, &s)
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
 
 	if n := len(filterActions(actions, ActionReconcileNativeWG)); n != 1 {
 		t.Errorf("expected 1 ReconcileNativeWG for non-ASC nativewg, got %d", n)
@@ -42,7 +42,7 @@ func TestDecide_Boot_SkipsNativeWGWithASC(t *testing.T) {
 	s.supportsASC = true
 	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "nativewg", Enabled: true, NWGIndex: 0}
 
-	actions := decide(Event{Type: EventBoot}, &s)
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
 
 	starts := filterActions(actions, ActionStartNativeWG)
 	if len(starts) != 0 {
@@ -82,7 +82,7 @@ func TestDecide_Boot_StartsNativeWGWithASCAndV6Endpoint(t *testing.T) {
 	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "nativewg", Enabled: true, NWGIndex: 0, EndpointMayV6: true}
 	s.tunnels["awg1"] = &tunnelState{ID: "awg1", Backend: "nativewg", Enabled: false, NWGIndex: 1, EndpointMayV6: true}
 
-	actions := decide(Event{Type: EventBoot}, &s)
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
 
 	starts := filterActions(actions, ActionStartNativeWG)
 	if len(starts) != 1 {
@@ -101,7 +101,7 @@ func TestDecide_Boot_IncludesMonitoring(t *testing.T) {
 		PingCheck: &storage.TunnelPingCheck{Enabled: true},
 	}
 
-	actions := decide(Event{Type: EventBoot}, &s)
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
 
 	monitors := filterActions(actions, ActionStartMonitoring)
 	if len(monitors) != 1 {
@@ -113,7 +113,7 @@ func TestDecide_Boot_IncludesRouting(t *testing.T) {
 	s := newState()
 	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "kernel", Enabled: true}
 
-	actions := decide(Event{Type: EventBoot}, &s)
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
 
 	if !hasAction(actions, ActionReconcileStaticRoutes) {
 		t.Error("expected ActionReconcileStaticRoutes")
@@ -131,7 +131,7 @@ func TestDecide_Boot_NativeWGConfiguresPingCheck(t *testing.T) {
 		PingCheck: &storage.TunnelPingCheck{Enabled: true},
 	}
 
-	actions := decide(Event{Type: EventBoot}, &s)
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
 
 	if !hasAction(actions, ActionConfigurePingCheck) {
 		t.Error("NativeWG boot should configure NDMS ping-check profile")
@@ -143,7 +143,7 @@ func TestDecide_Boot_SkipsDisabledTunnels(t *testing.T) {
 	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "kernel", Enabled: false}
 	s.tunnels["awg1"] = &tunnelState{ID: "awg1", Backend: "nativewg", Enabled: false, NWGIndex: 0}
 
-	actions := decide(Event{Type: EventBoot}, &s)
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
 
 	starts := filterActions(actions, ActionColdStartKernel)
 	nwgStarts := filterActions(actions, ActionStartNativeWG)
@@ -1185,7 +1185,7 @@ func TestDecide_Boot_ObfuscatedNativeWG_AlwaysFullStart(t *testing.T) {
 			s := newState()
 			s.supportsASC = asc
 			s.tunnels["awg20"] = &tunnelState{ID: "awg20", Backend: "nativewg", Enabled: true, NWGIndex: 3, Obfuscated: true, Running: running}
-			actions := decide(Event{Type: EventBoot}, &s)
+			actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
 			if n := len(filterActions(actions, ActionStartNativeWG)); n != 1 {
 				t.Errorf("asc=%v running=%v: StartNativeWG=%d, want 1", asc, running, n)
 			}
@@ -1259,7 +1259,7 @@ func TestDecide_Boot_ReconcilesRunningKernelTunnel(t *testing.T) {
 		ID: "awg10", Backend: "kernel", Enabled: true, Running: true,
 	}
 
-	actions := decide(Event{Type: EventBoot}, &s)
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
 
 	// Running kernel tunnel should be reconciled, not cold-started.
 	reconciles := filterActions(actions, ActionReconcileKernel)
@@ -1278,7 +1278,7 @@ func TestDecide_Boot_ColdStartsStoppedKernelTunnel(t *testing.T) {
 		ID: "awg10", Backend: "kernel", Enabled: true, Running: false,
 	}
 
-	actions := decide(Event{Type: EventBoot}, &s)
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
 
 	coldStarts := filterActions(actions, ActionColdStartKernel)
 	if len(coldStarts) != 1 {
@@ -1589,5 +1589,138 @@ func TestDecide_NDMSHook_DisabledStopsAfterQuiescence(t *testing.T) {
 
 	if !hasAction(actions, ActionStopNativeWG) {
 		t.Fatal("a conf=disabled after the quiescence window must stop the tunnel (user intent honoured)")
+	}
+}
+
+// Загрузка с неподнятым WAN: бут не выполняется, но помечает себя
+// несостоявшимся. Без пометки пришедший позже EventWANUp решал бы обычным
+// путём, а он не делает ни глобального sweep'а маршрутов, ни того, что нужно
+// nativewg-туннелям после ребута роутера.
+func TestDecideBoot_WANDownArmsPending(t *testing.T) {
+	s := newState()
+	s.tunnels["awg10"] = &tunnelState{ID: "awg10", Backend: "kernel", Enabled: true}
+
+	if got := decideBoot(Event{Type: EventBoot, WANUp: false}, &s); len(got) != 0 {
+		t.Fatalf("бут без WAN обязан не давать действий, получено: %v", got)
+	}
+	if !s.bootPending {
+		t.Fatal("бут без WAN обязан пометить себя несостоявшимся")
+	}
+}
+
+// Состоявшийся бут снимает пометку: иначе первый же WAN-фронт когда-нибудь
+// потом выстрелил бы полным бутом на ровном месте.
+func TestDecideBoot_WANUpClearsPending(t *testing.T) {
+	s := newState()
+	s.bootPending = true
+	s.tunnels["awg10"] = &tunnelState{ID: "awg10", Backend: "kernel", Enabled: true}
+
+	got := decideBoot(Event{Type: EventBoot, WANUp: true}, &s)
+	if s.bootPending {
+		t.Error("состоявшийся бут обязан снимать пометку")
+	}
+	if len(filterActions(got, ActionColdStartKernel)) != 1 {
+		t.Errorf("ожидали холодный старт туннеля, действия: %v", got)
+	}
+}
+
+// Реконнект делает всю работу бута (в т.ч. на пути quiesce/resume в середине
+// жизни демона) — значит обязан снимать пометку.
+func TestDecideReconnect_ClearsBootPending(t *testing.T) {
+	s := newState()
+	s.bootPending = true
+	s.anyWANUpFn = func() bool { return true }
+
+	decideReconnect(&s)
+
+	if s.bootPending {
+		t.Error("реконнект обязан снимать пометку несостоявшегося бута")
+	}
+}
+
+// Реконнект без WAN ничего не поднимает (WAN он не проверяет вовсе), поэтому
+// и снимать пометку ему нечем: экспорт бэкапа на загрузке с лежащим WAN
+// оставил бы туннели стоять до ручного старта.
+func TestDecideReconnect_KeepsBootPendingWithoutWAN(t *testing.T) {
+	s := newState()
+	s.bootPending = true
+	s.anyWANUpFn = func() bool { return false }
+
+	decideReconnect(&s)
+
+	if !s.bootPending {
+		t.Error("без WAN пометка обязана остаться")
+	}
+}
+
+// Проводка отложенного бута: первое WAN-событие обязано выполнить именно БУТ,
+// а не реконнект и не обычный decideWANUp. Разница с реконнектом видна по
+// ActionRestoreEndpointTracking (его даёт только он), разница с decideWANUp —
+// по глобальному sweep'у маршрутов (его decideWANUp не даёт вовсе).
+func TestDecideLocked_DeferredBootRunsBoot(t *testing.T) {
+	o := &Orchestrator{state: newState()}
+	o.state.supportsASC = true
+	o.state.bootPending = true
+	o.state.anyWANUpFn = func() bool { return true }
+	o.state.tunnels["awg20"] = &tunnelState{
+		ID: "awg20", Backend: "nativewg", Enabled: true, Running: false,
+		NWGIndex: 0, EndpointMayV6: true,
+	}
+
+	actions, deferred, _ := o.decideLocked(Event{Type: EventWANUp, WANIface: "ppp0"})
+
+	if !deferred {
+		t.Fatal("первое WAN-событие после бута без WAN обязано считаться отложенным бутом")
+	}
+	if len(filterActions(actions, ActionStartNativeWG)) != 1 {
+		t.Errorf("бут обязан стартовать nativewg с EndpointMayV6: %v", actions)
+	}
+	if len(filterActions(actions, ActionReconcileStaticRoutes)) != 1 {
+		t.Errorf("бут обязан дать глобальный sweep маршрутов: %v", actions)
+	}
+	if n := len(filterActions(actions, ActionRestoreEndpointTracking)); n != 0 {
+		t.Errorf("это бут, а не реконнект: RestoreEndpointTracking не ожидается (%d)", n)
+	}
+	if o.state.bootPending {
+		t.Error("пометка обязана сниматься")
+	}
+
+	// Второе событие идёт обычным путём: ASC-ветка decideWANUp пропускает.
+	actions2, deferred2, _ := o.decideLocked(Event{Type: EventWANUp, WANIface: "ppp0"})
+	if deferred2 || len(actions2) != 0 {
+		t.Errorf("второй WAN-up должен идти обычным путём, получено: deferred=%v actions=%v", deferred2, actions2)
+	}
+}
+
+// EventWANUp приходит и от интерфейсов, которые WAN-ом не являются: хук
+// отсеивает только туннельные имена, так что подъём LAN-моста br0 или
+// L2TP-клиента доезжает сюда наравне с настоящим WAN. Отложенный бут обязан
+// сверяться с моделью WAN, иначе он холодно стартует все туннели и гоняет
+// глобальный sweep маршрутов при мёртвом WAN — да ещё и снимает пометку,
+// так что настоящий WAN-up уже ничего не поднимет.
+func TestDecideLocked_DeferredBootWaitsForRealWAN(t *testing.T) {
+	o := &Orchestrator{state: newState()}
+	o.state.supportsASC = true
+	o.state.bootPending = true
+	o.state.anyWANUpFn = func() bool { return false } // модель WAN: ни одного поднятого
+	o.state.tunnels["awg20"] = &tunnelState{
+		ID: "awg20", Backend: "nativewg", Enabled: true, Running: false,
+		NWGIndex: 0, EndpointMayV6: true,
+	}
+
+	actions, _, _ := o.decideLocked(Event{Type: EventWANUp, WANIface: "br0"})
+
+	if len(actions) != 0 {
+		t.Errorf("при мёртвом WAN бут не должен давать действий: %v", actions)
+	}
+	if !o.state.bootPending {
+		t.Fatal("пометка обязана остаться — бут ещё не состоялся")
+	}
+
+	// Пришёл настоящий WAN: теперь бут обязан отработать.
+	o.state.anyWANUpFn = func() bool { return true }
+	actions2, deferred2, _ := o.decideLocked(Event{Type: EventWANUp, WANIface: "ppp0"})
+	if !deferred2 || len(filterActions(actions2, ActionStartNativeWG)) != 1 {
+		t.Errorf("настоящий WAN обязан запустить отложенный бут: %v", actions2)
 	}
 }

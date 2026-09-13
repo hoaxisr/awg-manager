@@ -875,3 +875,66 @@ func TestSettingsStore_ApiKeyRoundTrip(t *testing.T) {
 		t.Fatalf("GetApiKey без настроек = %q, want пусто", got)
 	}
 }
+
+// Действующий адрес зеркала Amnezia: на свежей установке правило отдаёт
+// непустой дефолт, хотя в самих настройках поле пустое (дефолт в файле
+// перестал бы ротироваться с релизом); после записи своего адреса — свой.
+func TestEffectiveAmneziaMirrorURL(t *testing.T) {
+	store := NewSettingsStore(t.TempDir())
+	settings, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if settings.AmneziaPremiumMirrorURL != "" {
+		t.Fatalf("свежая установка несёт адрес зеркала: %q", settings.AmneziaPremiumMirrorURL)
+	}
+	if got := EffectiveAmneziaMirrorURL(settings.AmneziaPremiumMirrorURL); got != DefaultAmneziaMirrorURL {
+		t.Fatalf("действующий адрес = %q, want %q", got, DefaultAmneziaMirrorURL)
+	}
+
+	// Домен из зарезервированного .test (RFC 2606) — репозиторий публичный.
+	const custom = "https://mirror.test/cp?m-path=/ru"
+	if err := store.Update(func(cur *Settings) error {
+		cur.AmneziaPremiumMirrorURL = custom
+		return nil
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	snap, err := store.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if got := EffectiveAmneziaMirrorURL(snap.AmneziaPremiumMirrorURL); got != custom {
+		t.Fatalf("действующий адрес = %q, want %q", got, custom)
+	}
+}
+
+// Непригодное хранимое значение считается отсутствующим: действующим
+// адресом становится дефолт.
+//
+// Значение из одних пробелов — то же «пусто», записанное неаккуратно.
+// Испорченный адрес (downgrade, ручная правка) нельзя ни отдать клиенту CP,
+// ни эхо-ить в ответ настроек: страница шлёт тело ответа целиком, и мусор
+// вернулся бы PATCH-ем, получая 400 на каждое сохранение.
+func TestEffectiveAmneziaMirrorURL_UnusableStoredMeansDefault(t *testing.T) {
+	cases := []struct {
+		name   string
+		stored string
+		want   string
+	}{
+		{"одни пробелы", "   ", DefaultAmneziaMirrorURL},
+		{"не адрес вовсе", "не адрес вовсе", DefaultAmneziaMirrorURL},
+		{"не https", "http://mirror.test/cp", DefaultAmneziaMirrorURL},
+		{"с user:pass@", "https://u-test:p-test@mirror.test/cp", DefaultAmneziaMirrorURL},
+		// Годный адрес пробелы по краям не портят — их срезает то же
+		// правило, что делает «одни пробелы» пустым значением.
+		{"годный адрес в пробелах", "  https://mirror.test/cp  ", "https://mirror.test/cp"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := EffectiveAmneziaMirrorURL(tc.stored); got != tc.want {
+				t.Fatalf("действующий адрес = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -60,10 +60,19 @@ export const editTunnelSchema = z.object({
     }, { message: 'IPv6 endpoint указывается в квадратных скобках: [2001:db8::1]:51820' }),
     allowedIPs: z.string().min(1, 'AllowedIPs обязателен'),
     // В AWG 3.0 keepalive стал диапазоном "min-max", из которого пир берёт
-    // случайное значение на каждый взвод таймера; NativeWG диапазон не примет,
-    // это проверяет бэкенд.
+    // случайное значение на каждый взвод таймера. Диапазон принимают оба
+    // бэкенда: kernel применяет его целиком, NativeWG отдаёт прошивке нижнюю
+    // границу (storage.Keepalive.Effective).
+    //
+    // Нулевая нижняя граница отвергается отдельным предикатом, а не правкой
+    // isU16Range: 0 означает «keepalive выключен», и с диапазоном это
+    // противоречие — а вот у device-параметров AWG 3.0 нулевая нижняя граница
+    // законна (ContentPaddingAddition = 0-64), и общий предикат им нужен как
+    // есть. Зеркало config.ValidateKeepaliveSubmitted на бэкенде.
     persistentKeepalive: z.coerce.string().default('25')
-        .refine(isU16Range, { message: 'Укажите число 0-65535 или диапазон min-max' }),
+        .refine(isU16Range, { message: 'Укажите число 0-65535 или диапазон min-max' })
+        .refine(v => !(v.includes('-') && Number(v.split('-')[0]) === 0),
+            { message: 'Нижняя граница 0 означает выключенный keepalive — диапазоном его не задать' }),
     // AWG params
     jc: z.coerce.number().int().min(1).max(128).default(4),
     jmin: z.coerce.number().int().min(0).max(1280).default(40),

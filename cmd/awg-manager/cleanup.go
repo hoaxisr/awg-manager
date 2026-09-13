@@ -79,10 +79,24 @@ func runCleanup(dataDir string) {
 		IsOS5:  osdetect.Is5,
 	})
 
-	// Init NDMS info (needed for OS detection). Wire ndmsinfo to the
-	// SystemInfoStore, then initialize with retry.
+	// Init NDMS info (needed for OS detection). Запасной канал (ndmc через
+	// unix-сокет) живёт внутри Init, так что деинсталляция получает его даром.
+	//
+	// В отличие от демона, здесь НЕ ждём: повиснуть в деинсталляции хуже, чем
+	// прибрать по умолчанию. Цена известна и названа в сообщении — если
+	// молчат оба канала, часть остатков может пережить удаление пакета.
 	if err := ndmsinfo.Init(context.Background(), cleanupNDMSQueries.SystemInfo, 10*time.Second); err != nil {
-		bootLog.Warn("ndms-version", "", err.Error())
+		// Init сам пробует и ndmc, и /etc/components.xml, поэтому досюда
+		// доходит только случай «версии нет ниоткуда». Уборка продолжится по
+		// умолчанию osdetect — с недавних пор это 5.x, и на роутере 4.x она
+		// пойдёт не тем оператором. Повиснуть в `opkg remove` всё равно хуже,
+		// поэтому цену называем вслух и идём дальше.
+		bootLog.Warn("ndms-version", "",
+			"версия NDMS не определена ни через RCI, ни через ndmc, ни из файла ("+err.Error()+
+				") — уборка идёт по умолчанию "+string(osdetect.Get())+", часть остатков может уцелеть")
+	} else if ndmsinfo.Source() != ndmsinfo.SourceRCI {
+		bootLog.Info("ndms-version", "",
+			"ndm не ответил, версия получена каналом "+ndmsinfo.Source()+": "+osdetect.ReleaseString())
 	}
 
 	// Create service components

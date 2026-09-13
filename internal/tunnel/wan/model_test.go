@@ -174,19 +174,29 @@ func TestSetUp_UnknownInterface_TriggersRepopulate(t *testing.T) {
 	}
 }
 
-func TestSetUp_UnknownInterface_BeforePopulate_NoRepopulate(t *testing.T) {
+// F199: ListWAN на старте мог не ответить — модель осталась ненаполненной.
+// Раньше перезапрос в этом состоянии был запрещён тем же признаком
+// populated, и модель оставалась пустой до конца жизни процесса: AnyUp()
+// вечно врал «WAN нет». Хук ipv4 — единственный шанс восстановиться, и он
+// обязан им пользоваться.
+func TestSetUp_UnknownInterface_BeforePopulate_Repopulates(t *testing.T) {
 	m := NewModel()
 
 	repopulateCalled := false
 	m.SetRepopulateFn(func() {
 		repopulateCalled = true
+		// Так ведёт себя настоящий коллбэк: перечитывает NDMS и наполняет.
+		m.Populate([]Interface{{Name: "usb0", ID: "UsbLte0"}})
 	})
 
-	// Before Populate, unknown interface should NOT trigger repopulate
-	m.SetUp("usb0", true)
-
-	if repopulateCalled {
-		t.Error("repopulate should not be called before initial Populate")
+	if changed := m.SetUp("usb0", true); !changed {
+		t.Error("первое появление интерфейса — переход")
+	}
+	if !repopulateCalled {
+		t.Fatal("ненаполненная модель обязана перезапросить NDMS")
+	}
+	if !m.AnyUp() {
+		t.Error("после восстановления модель обязана видеть поднятый WAN")
 	}
 }
 

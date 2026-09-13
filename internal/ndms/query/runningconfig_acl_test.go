@@ -55,3 +55,34 @@ func TestInterfaceAccessGroups_PropagatesFetchError(t *testing.T) {
 		t.Fatal("ожидалась ошибка")
 	}
 }
+
+// ACLRulesOf разбирает блок списка: правила отдаёт, флаг `auto-delete` — нет
+// (снять его отдельной командой нельзя, и «список чужой» он не означает).
+// Заголовок передаётся целиком, потому что у IPv6 своё пространство списков с
+// тем же именем — `ipv6 access-list _WEBADMIN_X` и `access-list _WEBADMIN_X`
+// это разные блоки.
+func TestACLRulesOf_BlockAndFlags(t *testing.T) {
+	lines := []string{
+		"access-list _WEBADMIN_Wireguard0",
+		"    permit tcp 10.77.0.2 255.255.255.255 0.0.0.0 0.0.0.0",
+		"    permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0",
+		"    auto-delete",
+		"! ",
+		"ipv6 access-list _WEBADMIN_Wireguard0",
+		"    permit ipv6 ::/0 ::/0",
+		"! ",
+	}
+	if got, want := ACLRulesOf(lines, "access-list _WEBADMIN_Wireguard0"), []string{
+		"permit tcp 10.77.0.2 255.255.255.255 0.0.0.0 0.0.0.0",
+		"permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("v4: got %v want %v", got, want)
+	}
+	if got, want := ACLRulesOf(lines, "ipv6 access-list _WEBADMIN_Wireguard0"),
+		[]string{"permit ipv6 ::/0 ::/0"}; !slices.Equal(got, want) {
+		t.Fatalf("v6: got %v want %v", got, want)
+	}
+	if got := ACLRulesOf(lines, "access-list _WEBADMIN_Wireguard9"); len(got) != 0 || got == nil {
+		t.Fatalf("незнакомый список: got %v, ждали пустой не-nil", got)
+	}
+}

@@ -258,6 +258,22 @@ func (d InterfaceDetails) Intent() InterfaceIntent {
 	return IntentDown
 }
 
+// ConfIntent — намерение админа, отличающее переходное состояние от ответа.
+// known=false значит «NDMS ещё не решил» (conf: pending или незнакомый слой):
+// такой ответ нельзя читать ни как «включил», ни как «выключил». Intent()
+// двузначен и относит pending к down — это безопасно для решения «стоит ли
+// останавливать», но не для решения «стоит ли поднимать».
+func (d InterfaceDetails) ConfIntent() (up, known bool) {
+	switch d.ConfLayer {
+	case "running":
+		return true, true
+	case "disabled":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
 // LinkUp returns true if the link layer is up.
 func (d InterfaceDetails) LinkUp() bool { return d.Link == "up" }
 

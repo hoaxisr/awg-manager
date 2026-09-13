@@ -144,13 +144,6 @@
 		await executeImport(importContent);
 	}
 
-	async function handlePremiumCountryConfig(config: string, meta: { suggestedName?: string }) {
-		if (!importName && meta.suggestedName) {
-			importName = meta.suggestedName;
-		}
-		await executeImport(config);
-	}
-
 </script>
 
 <svelte:head>
@@ -224,12 +217,11 @@
 		onregularconfig={(meta) => {
 			if (meta.suggestedName && !importName) importName = meta.suggestedName;
 		}}
-		oncountryconfig={handlePremiumCountryConfig}
 	/>
 
 	{#if !isObf}
 		<p class="form-hint">
-			Поддерживаются WireGuard и AmneziaWG конфигурации с параметрами Jc, Jmin, Jmax, S1-S4, H1-H4, I1-I5; вкладка vpn:// распознаёт клиентский конфиг в ссылке или ключ Premium (запрос списка стран через прокси cp.amnezia.org).
+			Поддерживаются WireGuard и AmneziaWG конфигурации с параметрами Jc, Jmin, Jmax, S1-S4, H1-H4, I1-I5; вкладка vpn:// распознаёт клиентский конфиг в ссылке; ключ Amnezia Premium обслуживает отдельный мастер подписки.
 		</p>
 	{/if}
 </div>

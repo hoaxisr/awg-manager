@@ -33,14 +33,26 @@ func ValidateKeepalive(k storage.Keepalive) error {
 	return nil
 }
 
-// ValidateKeepaliveForBackend вдобавок запрещает диапазон на NativeWG: туда
-// keepalive уходит числом через ASC/NDMS, и диапазонов прошивка не понимает.
-func ValidateKeepaliveForBackend(k storage.Keepalive, backend string) error {
+// ValidateKeepaliveSubmitted проверяет ПРИСЛАННОЕ значение и вдобавок к формату
+// запрещает диапазон с нулевой нижней границей: 0 означает «keepalive
+// выключен», диапазон — «случайное значение из отрезка на каждый взвод
+// таймера», вместе они бессмысленны, и именно такое значение разводило пути
+// (запись хранила диапазон, а прошивке не уходило ничего).
+//
+// Отдельно от ValidateKeepalive, потому что на слитую запись этот запрет
+// накладывать нельзя: туннель, сохранённый с "0-80" до запрета, перестал бы
+// правиться вообще — включая ту самую правку, которой keepalive и чинят.
+// Тот же довод у валидаторов настроек в internal/api/settings_derive.go.
+func ValidateKeepaliveSubmitted(k storage.Keepalive) error {
 	if err := ValidateKeepalive(k); err != nil {
 		return err
 	}
-	if backend == "nativewg" && k.IsRange() {
-		return fmt.Errorf("PersistentKeepalive: диапазон %q работает только в режиме kernel с модулем AmneziaWG 3.0, NativeWG принимает одно число", k)
+	loStr, _, isRange := strings.Cut(string(k), "-")
+	if !isRange {
+		return nil
+	}
+	if lo, _ := strconv.ParseUint(strings.TrimSpace(loStr), 10, 16); lo == 0 { // формат уже проверен
+		return fmt.Errorf("PersistentKeepalive: %q — нижняя граница 0 означает выключенный keepalive, диапазоном её задать нельзя", k)
 	}
 	return nil
 }

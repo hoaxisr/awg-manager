@@ -22,7 +22,7 @@ const sampleInterfaceJSON = `{
 				"local-port": 43185,
 				"remote-port": 4500,
 				"via": "PPPoE0",
-				"local-endpoint-address": "178.205.128.207",
+				"local-endpoint-address": "198.51.100.207",
 				"remote-endpoint-address": "162.159.192.1",
 				"rxbytes": 1422,
 				"txbytes": 11078,

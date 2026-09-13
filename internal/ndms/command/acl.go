@@ -139,11 +139,20 @@ func (c *InterfaceCommands) SetPermitAllACLv6(ctx context.Context, name string) 
 	)
 }
 
-// RemovePermitAllACLv6 снимает v6-привязку и удаляет v6-список. Best-effort по
-// замыслу, как и v4-близнец: интерфейс мог быть уже удалён, а auto-delete —
-// каскадировать список.
+// RemovePermitAllACLv6 — v6-близнец RemovePermitAllACL: та же развилка «в
+// списке есть чужие правила → снять только нашу строку», та же терпимость к
+// прошивкам без v6-ACL (isACLUnsupported: там блока нет, чужих правил нет,
+// и обе команды чистой ветки отказ терпят).
 func (c *InterfaceCommands) RemovePermitAllACLv6(ctx context.Context, name string) error {
 	acl := "_WEBADMIN_" + name
+	foreign, err := c.hasForeignACLRules(ctx, "ipv6 access-list "+acl, permitAllRuleV6)
+	if err != nil {
+		return fmt.Errorf("acl6 rules %s: %w", acl, err)
+	}
+	if foreign {
+		return c.removeOurPermitRule(ctx,
+			fmt.Sprintf("no ipv6 access-list %s %s", acl, permitAllRuleV6), "acl6 permit remove "+acl)
+	}
 	unbindErr := postMutationCheckedTolerant(ctx, c.poster, c.save,
 		map[string]any{"parse": fmt.Sprintf("no interface %s ipv6 access-group %s in", name, acl)},
 		"acl6 unbind "+acl,
@@ -163,14 +172,68 @@ func (c *InterfaceCommands) RemovePermitAllACLv6(ctx context.Context, name strin
 	return removeErr
 }
 
-// RemovePermitAllACL снимает permit-all `_WEBADMIN_<name>` с интерфейса и
-// удаляет список. Идемпотентно: «привязки/списка уже нет» (argument parse
-// error — стенд 2026-09-05) не ошибка; прочие отказы всплывают. auto-delete
-// мог снести список сразу после unbind — remove это тоже терпит (симметрия
-// на практике мёртвая: стенд показал, что `no access-list` после
-// auto-delete отвечает «access list removed», не ошибкой).
+// permitAllRuleV4/V6 — наше правило в списке `_WEBADMIN_<name>`, как его
+// печатает running-config (стенд 5.01, 2026-09-12).
+const (
+	permitAllRuleV4 = "permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0"
+	permitAllRuleV6 = "permit ipv6 ::/0 ::/0"
+)
+
+// hasForeignACLRules — есть ли в списке правила, кроме нашего permit-all.
+// Кэш сбрасывается перед чтением: правила в этот список пишет ещё и веб-морда
+// роутера, а хук ndm на её правку к нам не приходит (стенд 2026-09-06) — по
+// устаревшему снимку мы снесли бы чужие строки.
+func (c *InterfaceCommands) hasForeignACLRules(ctx context.Context, header, ours string) (bool, error) {
+	c.queries.RunningConfig.InvalidateAll()
+	rules, err := c.queries.RunningConfig.ACLRules(ctx, header)
+	if err != nil {
+		return false, err
+	}
+	for _, r := range rules {
+		if r != ours {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// removeOurPermitRule снимает ТОЛЬКО нашу строку, оставляя список и привязку
+// пользователю (`no rule found to delete.` — цель достигнута, стенд 5.01).
+func (c *InterfaceCommands) removeOurPermitRule(ctx context.Context, cmd, label string) error {
+	return postMutationCheckedTolerant(ctx, c.poster, c.save,
+		map[string]any{"parse": cmd},
+		label,
+		func(msg string) bool { return isACLRuleAbsent(msg) || isACLUnsupported(msg) },
+		c.queries.RunningConfig.InvalidateAll,
+	)
+}
+
+// RemovePermitAllACL снимает наш permit-all с интерфейса.
+//
+// Список `_WEBADMIN_<name>` — это ЕЩЁ И место, куда веб-морда Keenetic кладёт
+// правила межсетевого экрана интерфейса, поэтому сносить его целиком можно
+// только тогда, когда кроме нашей строки в нём ничего нет; иначе снимается
+// одна наша строка, а список и его привязка остаются пользователю (F314,
+// issue #879: `no access-list` уносил и правило, написанное руками). Пустой
+// список NDMS сам не убирает (стенд 5.01, 2026-09-12) — в «чистой» ветке
+// по-прежнему unbind + `no access-list`, чтобы вернуть роутер ровно в то
+// состояние, какое было до нас.
+//
+// Running-config недоступен — не снимаем НИЧЕГО: гадать, чей это список,
+// дороже, чем оставить своё разрешение до следующего прохода.
+//
+// Идемпотентность чистой ветки прежняя: «привязки/списка уже нет» (argument
+// parse error — стенд 2026-09-05) не ошибка; прочие отказы всплывают.
 func (c *InterfaceCommands) RemovePermitAllACL(ctx context.Context, name string) error {
 	acl := "_WEBADMIN_" + name
+	foreign, err := c.hasForeignACLRules(ctx, "access-list "+acl, permitAllRuleV4)
+	if err != nil {
+		return fmt.Errorf("acl rules %s: %w", acl, err)
+	}
+	if foreign {
+		return c.removeOurPermitRule(ctx,
+			fmt.Sprintf("no access-list %s %s", acl, permitAllRuleV4), "acl permit remove "+acl)
+	}
 	unbindErr := postMutationCheckedTolerant(ctx, c.poster, c.save,
 		map[string]any{"parse": fmt.Sprintf("no interface %s ip access-group %s in", name, acl)},
 		"acl unbind "+acl,

@@ -373,3 +373,17 @@ func TestAddTunnel_SlotsExhausted_ENOSPC(t *testing.T) {
 		t.Fatalf("ENOSPC must not trigger EEXIST del-retry; got %d del writes", got)
 	}
 }
+
+// countWrites — сколько раз писали в указанный узел /proc. Нужен тестам, где
+// важна не последняя запись, а сам факт повторной операции.
+func (p *procStub) countWrites(path string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, w := range p.writes {
+		if w.path == path {
+			n++
+		}
+	}
+	return n
+}

@@ -36,24 +36,60 @@ import (
 // падают → рестарт»).
 var guardInterval = 20 * time.Second
 
+// guardActCooldown — минимальный зазор между дорогими операциями стража
+// (пересборка kmod-слота, рестарт релея) по одной записи; nudgeCooldown — то
+// же для внеочередных проходов по хуку.
+var (
+	guardActCooldown = 5 * time.Minute
+	nudgeCooldown    = 5 * time.Second
+	// guardLockWait — сколько страж ждёт занятый per-tunnel замок.
+	guardLockWait = 2 * time.Second
+)
+
+// guardMode — способ доведения адреса до цели.
+type guardMode int
+
+const (
+	// guardKernel — писать endpoint прямо в ядро (wg set). Так для v6:
+	// NDMS такой endpoint не принимает. Единственный режим с readback —
+	// сверка идёт с фактическим `wg show`, поэтому реестр можно двигать
+	// заранее, неудачный wg set повторится на следующем проходе.
+	guardKernel guardMode = iota
+	// guardNDMS — доводить адрес в конфиг NDMS. Так для hostname→v4:
+	// владелец конфига здесь NDMS, и он переписывает kernel-endpoint своим
+	// значением при каждом переприменении — wg set проиграл бы ему гонку.
+	guardNDMS
+	// guardKmod — доводить адрес пересборкой слота awg_proxy.ko. Так на
+	// proxy-прошивках: в конфиге NDMS там 127.0.0.1:<порт слота>, а
+	// реальный адрес живёт в слоте. Трогать ядро по такой записи НЕЛЬЗЯ —
+	// wg set увёл бы трафик мимо прокси, без обфускации.
+	guardKmod
+	// guardRelay — доводить адрес перезапуском обфускатора: target релея
+	// живёт в его INI ИМЕНЕМ, и резолвит его релей ровно один раз при
+	// старте (resolve_host_wait в wg-obfuscator). Смена A-записи доходит
+	// до него только рестартом, а host-route до старого адреса надо
+	// переставить.
+	guardRelay
+)
+
 type guardEntry struct {
 	iface    string // kernel-имя (nwgN)
 	pubkey   string
 	endpoint string // последний известный резолв, каноническая форма host:port
 	spec     string // endpoint из конфига (hostname:port или литерал) — для перерезолва DDNS
 	name     string // NDMS-имя для логов
-	// viaNDMS — доводить адрес не в ядро, а в конфиг NDMS. Так для
-	// hostname→v4: владелец конфига здесь NDMS, и он переписывает
-	// kernel-endpoint своим значением при каждом переприменении —
-	// wg set проиграл бы ему гонку.
-	viaNDMS bool
-	// viaKmod — доводить адрес пересборкой слота awg_proxy.ko. Так на
-	// proxy-прошивках: в конфиге NDMS там 127.0.0.1:<порт слота>, а
-	// реальный адрес живёт в слоте. Трогать ядро по такой записи НЕЛЬЗЯ —
-	// wg set увёл бы трафик мимо прокси, без обфускации.
-	viaKmod bool
+	// mode — как доводить адрес до цели. Перечисление, а не три флага:
+	// общий блок sweep отличает «доводку в ядро» от остальных режимов, и с
+	// флагами это было отрицательное условие, которое каждый новый режим
+	// обязан дописать в себя (забытый viaRelay стоил отключённого присмотра).
+	mode guardMode
+	// actedAt — когда по этой записи в последний раз делали дорогую
+	// операцию (пересборка слота, рестарт релея). Резолвер, отдающий
+	// ротирующее ПОДМНОЖЕСТВО A-записей, иначе рвал бы живую сессию каждый
+	// проход: анти-флап считает такой ответ сменой адреса.
+	actedAt time.Time
 	// warnedNoV4 — адрес, о непригодности которого для NDMS уже
-	// предупредили (см. viaNDMS-ветку guardSweep). Без этой памяти
+	// предупредили (см. ветку guardNDMS в guardSweep). Без этой памяти
 	// предупреждение печаталось бы каждые guardInterval.
 	warnedNoV4 string
 }
@@ -62,15 +98,15 @@ type guardEntry struct {
 // v6 — доводкой в ядро (NDMS его не принимает), hostname→v4 — доводкой в
 // конфиг NDMS (адрес за именем может смениться, а NDMS хранит литерал),
 // v4-литерал — никак, резолвить нечего.
-func guardModeForEndpoint(endpoint string, kernelV6 bool) (guard, viaNDMS bool) {
+func guardModeForEndpoint(endpoint string, kernelV6 bool) (guard bool, mode guardMode) {
 	if kernelV6 {
-		return true, false
+		return true, guardKernel
 	}
 	host, ok := splitEndpointHost(endpoint)
 	if !ok || net.ParseIP(host) != nil {
-		return false, false
+		return false, guardKernel
 	}
-	return true, true
+	return true, guardNDMS
 }
 
 // guardSyncKmodEntry ставит (или снимает) kmod-запись стража по текущему
@@ -90,7 +126,7 @@ func (o *OperatorNativeWG) guardSyncKmodEntry(stored *storage.AWGTunnel, endpoin
 		endpoint: net.JoinHostPort(endpointIP, strconv.Itoa(endpointPort)),
 		spec:     stored.Peer.Endpoint,
 		name:     names.NDMSName,
-		viaKmod:  true,
+		mode:     guardKmod,
 	})
 }
 
@@ -100,11 +136,18 @@ func (o *OperatorNativeWG) guardRegister(id string, e guardEntry) {
 		o.guard = make(map[string]guardEntry)
 	}
 	o.guard[id] = e
+	// Канал внеочередных проходов заводим здесь же: оператор могли собрать
+	// литералом, минуя NewOperator (тесты соседних пакетов), и тогда пинок
+	// уходил бы в никуда.
+	if o.guardNudge == nil {
+		o.guardNudge = make(chan struct{}, 1)
+	}
+	nudge := o.guardNudge
 	o.guardMu.Unlock()
 	o.guardOnce.Do(func() {
 		o.guardCtx, o.guardCancel = context.WithCancel(context.Background())
 		o.guardDone = make(chan struct{})
-		go o.guardLoop()
+		go o.guardLoop(nudge)
 	})
 }
 
@@ -112,11 +155,6 @@ func (o *OperatorNativeWG) guardUnregister(id string) {
 	o.guardMu.Lock()
 	delete(o.guard, id)
 	o.guardMu.Unlock()
-}
-
-func (o *OperatorNativeWG) guardHas(id string) bool {
-	_, ok := o.guardGet(id)
-	return ok
 }
 
 func (o *OperatorNativeWG) guardGet(id string) (guardEntry, bool) {
@@ -144,7 +182,9 @@ func (o *OperatorNativeWG) guardReplaceIfPresent(id string, e guardEntry) bool {
 // всё ещё в реестре И несёт тот же spec: иначе гонка со Stop/Delete
 // воскресила бы удалённую запись, а гонка с SyncPeer (сменил spec) —
 // затёрла бы свежий endpoint резолвом СТАРОГО имени.
-func (o *OperatorNativeWG) guardUpdateEndpoint(id, spec, endpoint string) {
+// acted=true дополнительно отмечает момент дорогой операции — от него
+// считается guardActCooldown.
+func (o *OperatorNativeWG) guardUpdateEndpoint(id, spec, endpoint string, acted bool) {
 	o.guardMu.Lock()
 	defer o.guardMu.Unlock()
 	if e, ok := o.guard[id]; ok && e.spec == spec {
@@ -152,6 +192,9 @@ func (o *OperatorNativeWG) guardUpdateEndpoint(id, spec, endpoint string) {
 		// Реестр встал на годный адрес — прошлое предупреждение о
 		// непригодном больше не актуально.
 		e.warnedNoV4 = ""
+		if acted {
+			e.actedAt = time.Now()
+		}
 		o.guard[id] = e
 	}
 }
@@ -168,13 +211,23 @@ func (o *OperatorNativeWG) guardMarkWarnedNoV4(id, spec, endpoint string) {
 	}
 }
 
-func (o *OperatorNativeWG) guardLoop() {
+func (o *OperatorNativeWG) guardLoop(nudge <-chan struct{}) {
 	defer close(o.guardDone)
 	ticker := time.NewTicker(guardInterval)
 	defer ticker.Stop()
+	var lastNudge time.Time
 	for {
 		select {
 		case <-ticker.C:
+			o.guardSweep(o.guardCtx)
+		case <-nudge:
+			// Прореживаем здесь, в единственной горутине стража: проход
+			// стоит резолва на каждую запись, а разбудить нас может кто
+			// угодно в локальной сети — хук публичный.
+			if time.Since(lastNudge) < nudgeCooldown {
+				continue
+			}
+			lastNudge = time.Now()
 			o.guardSweep(o.guardCtx)
 		case <-o.guardCtx.Done():
 			return
@@ -222,23 +275,25 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 						fresh := net.JoinHostPort(pickEndpointIP(ips), port)
 						prev := expected // для лога: «был» обязан печатать старое
 						expected = fresh
-						if !e.viaNDMS && !e.viaKmod {
+						if e.mode == guardKernel {
 							// Только чистый v6-режим: сверка идёт с
 							// фактическим wg show, поэтому реестр можно
 							// двигать сразу — упавший wg set повторится на
 							// следующем проходе. У viaNDMS и viaKmod
 							// readback'а нет, они сверяются с самим реестром:
 							// преждевременная запись навсегда увела бы их в
-							// `continue` после первой же неудачи.
+							// `continue` после первой же неудачи. Условие
+							// положительное: новый режим попадает в безопасную
+							// ветку сам, его не надо дописывать сюда.
 							o.appLog.Info("endpoint-guard", e.name,
 								fmt.Sprintf("%s резолвится в новый адрес: %s (был %s)", e.spec, fresh, prev))
-							o.guardUpdateEndpoint(id, e.spec, fresh)
+							o.guardUpdateEndpoint(id, e.spec, fresh, false)
 						}
 					}
 				}
 			}
 		}
-		if e.viaNDMS {
+		if e.mode == guardNDMS {
 			// v4: адрес живёт в конфиге NDMS. Команду шлём только на
 			// смену резолва — иначе каждый проход переписывал бы конфиг.
 			if expected == e.endpoint {
@@ -270,12 +325,23 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 			}
 			// Реестр двигаем только после успеха: иначе неудачный Post
 			// потерял бы смену адреса до перезапуска демона.
-			o.guardUpdateEndpoint(id, e.spec, expected)
+			o.guardUpdateEndpoint(id, e.spec, expected, false)
 			o.appLog.Info("endpoint-guard", e.name,
 				fmt.Sprintf("%s сменил адрес — в NDMS выставлен %s", e.spec, expected))
 			continue
 		}
-		if e.viaKmod {
+		// Дорогие режимы рвут живую сессию (новый listen-порт слота, рестарт
+		// релея). Выдержка общая: у kmod та же уязвимость к резолверу,
+		// отдающему ротирующее подмножество записей.
+		if expected != e.endpoint && (e.mode == guardKmod || e.mode == guardRelay) &&
+			!e.actedAt.IsZero() && time.Since(e.actedAt) < guardActCooldown {
+			continue
+		}
+		if e.mode == guardRelay {
+			o.syncRelayTarget(ctx, id, e, expected)
+			continue
+		}
+		if e.mode == guardKmod {
 			// Proxy-путь: адресом владеет слот awg_proxy.ko, а в
 			// kernel-endpoint'е стоит 127.0.0.1:<порт слота>. Слот
 			// пересобирается только на смену резолва — операция рвёт
@@ -299,7 +365,7 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 				o.appLog.Warn("endpoint-guard", e.name, "пересборка kmod-слота не удалась: "+err.Error())
 				continue
 			}
-			o.guardUpdateEndpoint(id, e.spec, expected)
+			o.guardUpdateEndpoint(id, e.spec, expected, true)
 			o.appLog.Info("endpoint-guard", e.name,
 				fmt.Sprintf("%s сменил адрес — kmod-слот пересобран на %s", e.spec, expected))
 			continue
@@ -405,4 +471,20 @@ func wgShowHasEndpoint(out, pubkey, endpoint string) bool {
 		}
 	}
 	return false
+}
+
+// NudgeEndpointGuard просит стража пройтись вне очереди. Повод внешний —
+// смена адреса WAN (хук ifipchanged): ждать до тика незачем. Частоту
+// ограничивает сам цикл (см. guardLoop): хук публичный и без авторизации.
+func (o *OperatorNativeWG) NudgeEndpointGuard() {
+	o.guardMu.Lock()
+	nudge := o.guardNudge
+	o.guardMu.Unlock()
+	if nudge == nil {
+		return // стража ещё нет — будить некого
+	}
+	select {
+	case nudge <- struct{}{}:
+	default: // проход уже запланирован — второй не нужен
+	}
 }

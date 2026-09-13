@@ -95,9 +95,21 @@ type GeoFileSettingsDTO struct {
 	RefreshDailyTime     string `json:"refreshDailyTime" example:"03:00"`
 }
 
-// SettingsData is the payload for GET /settings/get.
+// SettingsData is the payload of every settings response (Get, Update,
+// RegenerateApiKey) — и НАСТОЯЩИЙ тип тела, а не только документация.
+//
+// Состав — белый список: каждое отдаваемое поле названо здесь и в
+// settingsResponse ровно по одному разу. Новое поле storage.Settings
+// наружу не уходит, пока его сюда не внесли: отказ закрытый по построению.
+// Так эта граница заменила вычистку секретов по именам полей, трижды
+// пропустившую настоящую утечку (структура с секретным именем и невинными
+// листьями, встроенная неэкспортированная структура, тег `json:"-,"`).
+// Состав стережёт TestSettingsResponse_TopLevelKeysAreWhitelisted.
 type SettingsData struct {
-	SchemaVersion int  `json:"schemaVersion" example:"16"`
+	// SchemaVersion повторяет тег storage.Settings ВМЕСТЕ с omitempty:
+	// страница шлёт тело ответа обратно PATCH-ем, а поле патчабельное, так
+	// что "schemaVersion":0 в ответе уехал бы в хранилище.
+	SchemaVersion int  `json:"schemaVersion,omitempty" example:"16"`
 	AuthEnabled   bool `json:"authEnabled" example:"false"`
 	// SessionTtlHours is the auth session lifetime in hours (1..720,
 	// sliding window; server-side expiry applies immediately, browser
@@ -108,7 +120,12 @@ type SettingsData struct {
 	EntwareAuthEnabled bool `json:"entwareAuthEnabled" example:"false"`
 	// McpEnabled turns on the Model Context Protocol endpoint at /mcp.
 	// Off by default; keys are managed via /mcp/keys*.
-	McpEnabled                bool                 `json:"mcpEnabled" example:"false"`
+	McpEnabled bool `json:"mcpEnabled" example:"false"`
+	// ApiKey is the opaque secret accepted in place of a session cookie via
+	// `Authorization: Bearer <key>`. Отдаётся сознательно: панель настроек
+	// показывает его и даёт скопировать — ключ для того и заводится. Ротация
+	// — POST /settings/regenerate-api-key.
+	ApiKey                    string               `json:"apiKey,omitempty" example:"d2f1c0a4-5b6e-4a7c-8d9e-0f1a2b3c4d5e"`
 	Server                    ServerSettingsDTO    `json:"server"`
 	PingCheck                 PingCheckSettingsDTO `json:"pingCheck"`
 	Logging                   LoggingSettingsDTO   `json:"logging"`
@@ -258,10 +275,100 @@ func (h *SettingsHandler) SetDownloadService(svc *downloader.Service) {
 // resource:invalidated hint to all connected clients.
 func (h *SettingsHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
+// settingsResponse строит тело ответа настроек по БЕЛОМУ СПИСКУ: из
+// storage.Settings в SettingsData переносится ровно то, что названо ниже, —
+// поле за полем, без рефлексии и без «скопировать всё и снять лишнее».
+// ЕДИНСТВЕННАЯ точка сборки: её проходят все три ручки, отдающие настройки
+// (Get, Update, RegenerateApiKey).
+//
+// Цена ошибки ЗДЕСЬ — не «поле не видно в интерфейсе»: страница настроек шлёт
+// тело ответа обратно PATCH-ем, поэтому забытое или перепутанное присваивание
+// СТИРАЕТ хранимое на первом же сохранении (пропущенный authEnabled выключает
+// авторизацию панели). То же и у вложенных блоков: server, pingCheck, updates,
+// dnsRoute и geoFile патчатся ЦЕЛИКОМ (applyStructPatch), так что поле,
+// добавленное в storage-структуру и забытое в DTO, обнуляется. Стережёт
+// TestSettingsRoundTrip_ResponseBodyPatchedBack_KeepsSecrets: он заполняет
+// всё дерево настроек разными значениями и сверяет хранимое до и после
+// круговорота.
+//
+// Состав списка выведен из фактического потребления фронтом: рукописный тип
+// frontend/src/lib/types/system.ts (export interface Settings) плюс ключ API,
+// который панель показывает. Ключевой материал (AmneziaPremiumKeyCipher,
+// ServerPeerSecrets, ManagedServers/ManagedServer) и backend-managed запись
+// владения (OpkgTun, DNSChainPreset, SingboxRouter, …) сюда не входят вовсе,
+// поэтому уехать наружу им физически неоткуда.
+//
+// Аргумент только читается: DTO забирает срезы как есть (Interfaces,
+// MonitoringExcludedTunnels), но ни один писатель их не трогает, и правки по
+// месту здесь нет — живой кэш стора не пострадает и у будущего вызывающего,
+// подавшего сюда store.Get().
+func settingsResponse(s *storage.Settings) SettingsData {
+	return SettingsData{
+		SchemaVersion:      s.SchemaVersion,
+		AuthEnabled:        s.AuthEnabled,
+		SessionTtlHours:    s.SessionTtlHours,
+		EntwareAuthEnabled: s.EntwareAuthEnabled,
+		McpEnabled:         s.McpEnabled,
+		ApiKey:             s.ApiKey,
+		Server: ServerSettingsDTO{
+			Port:       s.Server.Port,
+			Interface:  s.Server.Interface,
+			Interfaces: s.Server.Interfaces,
+		},
+		PingCheck: PingCheckSettingsDTO{
+			Enabled: s.PingCheck.Enabled,
+			Defaults: PingCheckDefaultsDTO{
+				Method:        s.PingCheck.Defaults.Method,
+				Target:        s.PingCheck.Defaults.Target,
+				Interval:      s.PingCheck.Defaults.Interval,
+				DeadInterval:  s.PingCheck.Defaults.DeadInterval,
+				FailThreshold: s.PingCheck.Defaults.FailThreshold,
+			},
+		},
+		Logging: LoggingSettingsDTO{
+			Enabled:           s.Logging.Enabled,
+			MaxAge:            s.Logging.MaxAge,
+			LogLevel:          s.Logging.LogLevel,
+			SingboxLogLevel:   s.Logging.SingboxLogLevel,
+			AppMaxEntries:     s.Logging.AppMaxEntries,
+			SingboxMaxEntries: s.Logging.SingboxMaxEntries,
+		},
+		MonitoringExcludedTunnels: s.MonitoringExcludedTunnels,
+		DisableMemorySaving:       s.DisableMemorySaving,
+		Updates: UpdateSettingsDTO{
+			CheckEnabled:            s.Updates.CheckEnabled,
+			Channel:                 s.Updates.Channel,
+			AutoInstallEnabled:      s.Updates.AutoInstallEnabled,
+			AutoInstallIntervalDays: s.Updates.AutoInstallIntervalDays,
+			AutoInstallTime:         s.Updates.AutoInstallTime,
+		},
+		Download: DownloadSettingsDTO{
+			RouteTag:  s.Download.RouteTag,
+			RouteKind: s.Download.RouteKind,
+		},
+		DnsRoute: DNSRouteSettingsDTO{
+			AutoRefreshEnabled:   s.DNSRoute.AutoRefreshEnabled,
+			RefreshIntervalHours: s.DNSRoute.RefreshIntervalHours,
+			RefreshMode:          s.DNSRoute.RefreshMode,
+			RefreshDailyTime:     s.DNSRoute.RefreshDailyTime,
+		},
+		GeoFile: GeoFileSettingsDTO{
+			AutoRefreshEnabled:   s.GeoFile.AutoRefreshEnabled,
+			RefreshIntervalHours: s.GeoFile.RefreshIntervalHours,
+			RefreshMode:          s.GeoFile.RefreshMode,
+			RefreshDailyTime:     s.GeoFile.RefreshDailyTime,
+		},
+		ConnectivityCheckURL: s.ConnectivityCheckURL,
+		UsageLevel:           s.UsageLevel,
+		SingboxBootstrapDNS:  s.SingboxBootstrapDNS,
+		SingboxClashPort:     s.SingboxClashPort,
+	}
+}
+
 // Get returns current settings.
 //
 //	@Summary		Get settings
-//	@Description	Returns the full Settings object (server, pingCheck, logging, dnsRoute, managed, apiKey, ...).
+//	@Description	Returns the settings whitelist (SettingsData): server, pingCheck, logging, updates, download, dnsRoute, geoFile, apiKey and the rest of the fields the UI reads. Server-internal state (managed servers, peer secrets, sing-box router, OpkgTun ownership) is NOT part of the response.
 //	@Tags			settings
 //	@Produce		json
 //	@Security		CookieAuth
@@ -283,7 +390,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.Success(w, settings)
+	response.Success(w, settingsResponse(settings))
 }
 
 // Update saves settings.
@@ -557,12 +664,14 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Наружу отдаём снапшот, а не want: Update опубликовал запись, выведенную
 	// из актуального состояния, и она может отличаться от черновика полями,
-	// которые этот путь не трогает.
-	if snap, err := h.store.Snapshot(); err == nil {
-		response.Success(w, snap)
-	} else {
-		response.Success(w, &want)
+	// которые этот путь не трогает. Черновик — запасной вариант на отказ
+	// снапшота. Вычистка одна на обе ветки: отдельный вызов на запасной
+	// ветке некому было бы держать красным — через HTTP она недостижима.
+	out, err := h.store.Snapshot()
+	if err != nil {
+		out = &want
 	}
+	response.Success(w, settingsResponse(out))
 	h.bus.PublishInvalidated(events.ResourceSettings, "updated")
 
 	// Порт мог смениться — перепроверяем экспозицию. В горутине с
@@ -611,7 +720,7 @@ func (h *SettingsHandler) RegenerateApiKey(w http.ResponseWriter, r *http.Reques
 	}
 
 	h.log.Info("api-key", "", "API key regenerated")
-	response.Success(w, settings)
+	response.Success(w, settingsResponse(settings))
 	h.bus.PublishInvalidated(events.ResourceSettings, "api-key-rotated")
 }
 

@@ -315,3 +315,25 @@ func TestInspect_RuleSetUnsupported_NoBinary(t *testing.T) {
 		t.Errorf("Note = %q, want substring \"rule_set\"", res.Note)
 	}
 }
+
+// Пин ALPN http/1.1 обязан стоять на клиенте, которым идёт загрузка.
+// Нулевой Transport — это http.DefaultTransport с пустым ALPN: сервер
+// договаривается на h2, и вместо rule-set'а приезжает EOF (Fastly,
+// raw.githubusercontent.com) или «malformed HTTP response» (Cloudflare) —
+// ровно та поломка, ради которой httpclient и заведён. Проверяется пакетная
+// переменная, а не только конструктор: загрузка ходит именно через неё.
+func TestRuleSetHTTPClientPinsHTTP11(t *testing.T) {
+	tr, ok := ruleSetHTTPClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("транспорт не задан или не *http.Transport, а %T — ALPN остаётся пустым", ruleSetHTTPClient.Transport)
+	}
+	if tr.ForceAttemptHTTP2 {
+		t.Error("ForceAttemptHTTP2 не снят")
+	}
+	if tr.TLSClientConfig == nil {
+		t.Fatal("TLSClientConfig не задан — ALPN пустой, сервер договорится на h2")
+	}
+	if got := tr.TLSClientConfig.NextProtos; len(got) != 1 || got[0] != "http/1.1" {
+		t.Errorf("ALPN = %v, ожидался [http/1.1]", got)
+	}
+}

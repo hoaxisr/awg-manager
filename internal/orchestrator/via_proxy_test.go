@@ -14,7 +14,7 @@ func TestDecide_Boot_ReconcilesProxyTunnelOnASCFirmware(t *testing.T) {
 		ID: "awg20", Backend: "nativewg", Enabled: true, NWGIndex: 0, ViaProxy: true,
 	}
 
-	actions := decide(Event{Type: EventBoot}, &s)
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
 
 	if n := len(filterActions(actions, ActionReconcileNativeWG)); n != 1 {
 		t.Errorf("proxy-туннель после ребута обязан получить ReconcileNativeWG, got %d", n)

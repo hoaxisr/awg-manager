@@ -3,8 +3,10 @@ package storage
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,11 +16,28 @@ import (
 )
 
 const (
-	CurrentSchemaVersion        = 36
+	CurrentSchemaVersion        = 37
 	DefaultPort                 = 2222
 	DefaultInterface            = "br0"
 	DefaultPingCheckTarget      = "8.8.8.8"
-	DefaultConnectivityCheckURL = "http://connectivitycheck.gstatic.com/generate_204"
+	// DefaultConnectivityCheckURL — цель TCP-пробы связи. Cloudflare, а не
+	// Google: замерено на стенде 2026-09-12 через живой туннель Amnezia
+	// Premium (выход Frankfurt) — gstatic отвечал 1 раз из 3, cp.cloudflare
+	// 3 из 3 за ~0.47 с, при том что с WAN напрямую gstatic отвечал 3 из 3.
+	// Google систематически режет свои адреса с выходов коммерческих VPN, а
+	// панель существует ради VPN-туннелей — то есть прежняя цель давала
+	// «Нет связи» на исправном туннеле. Семантика прежняя: HTTP 204 с пустым
+	// телом.
+	DefaultConnectivityCheckURL = "https://cp.cloudflare.com/generate_204"
+
+	// legacyGstaticCheckURL — прежний дефолт. Хранится ради миграции V37:
+	// отличить «пользователь не трогал адрес» от «пользователь выбрал
+	// gstatic сам» можно только сравнением с этой строкой.
+	legacyGstaticCheckURL = "http://connectivitycheck.gstatic.com/generate_204"
+	// DefaultAmneziaMirrorURL — официальное зеркало Amnezia CP, откуда
+	// резолвер берёт рабочий origin портала. Единственное место этого
+	// литерала.
+	DefaultAmneziaMirrorURL = "https://storage.googleapis.com/amnezia/cp?m-path=/ru"
 	// DefaultSessionTTLHours is the fallback auth session lifetime — the
 	// historical fixed value before SessionTtlHours became configurable.
 	DefaultSessionTTLHours = 24
@@ -29,6 +48,91 @@ const (
 	MinSessionTTLHours = 1
 	MaxSessionTTLHours = 720
 )
+
+// EffectiveAmneziaMirrorURL — ДЕЙСТВУЮЩИЙ адрес зеркала Amnezia CP по
+// хранимому значению: пустое (в том числе из одних пробелов) И НЕПРИГОДНОЕ
+// означают «зеркало по умолчанию».
+//
+// Единственное место этого правила. В общий ответ настроек поле не входит —
+// оно принадлежит мастеру premium: адрес читают его ручка
+// (api.AmneziaPremiumHandler.mirrorURL) и через неё клиент CP. Дефолт
+// намеренно НЕ заполняется в defaultSettings, как
+// сделано у ConnectivityCheckURL: он осел бы в settings.json и перестал бы
+// ротироваться с релизом, а поле настраиваемое ровно потому, что зеркало
+// переезжает.
+//
+// Непригодное хранимое значение (downgrade, ручная правка) считается
+// отсутствующим потому, что функция с таким именем не смеет отдать клиенту
+// CP адрес, по которому нельзя сходить.
+func EffectiveAmneziaMirrorURL(stored string) string {
+	v := strings.TrimSpace(stored)
+	if v == "" || ValidateAmneziaMirrorURL(v) != nil {
+		return DefaultAmneziaMirrorURL
+	}
+	return v
+}
+
+// MaxAmneziaMirrorURLLen ограничивает длину адреса зеркала В БАЙТАХ: именно
+// байты уезжают в запрос и ложатся в settings.json на флеш. Соображение то
+// же, что у maxMirrorHTML в internal/amneziacp: цель — роутер со 128 МБ, и
+// адрес в сотню килобайт уехал бы на флеш и в каждый ответ /settings/get.
+// Дефолтный адрес — 45 байт, так что 2048 (предел, ниже которого адрес
+// переваривает любой HTTP-стек) даёт сорокакратный запас.
+const MaxAmneziaMirrorURLLen = 2048
+
+// ValidateAmneziaMirrorURL проверяет адрес зеркала Amnezia CP. Пустое
+// значение (и значение из одних пробелов) годно: оно означает «зеркало по
+// умолчанию» (DefaultAmneziaMirrorURL). Подрезка пробелов — внутри: функция
+// обязана быть самодостаточной, иначе следующий вызывающий получит отказ на
+// визуально пустом поле.
+//
+// Живёт рядом с правилом «пусто = дефолт», потому что признак годности нужен
+// обоим слоям: EffectiveAmneziaMirrorURL выбрасывает по нему непригодное
+// хранимое, а валидация присланного в internal/api добавляет от себя только
+// код ошибки. Два своих понимания «годного адреса» разошлись бы молча.
+//
+// Требуем ровно то, что нужно резолверу (internal/amneziacp.Mirror.resolve):
+// абсолютный адрес с хостом — по нему уходит обычный GET, чью страницу
+// разбирает ParseMirrorTo. Путь и запрос здесь ЗАКОННЫ, их содержит сам
+// дефолтный адрес; правило «origin — только схема, хост и порт» из
+// normalizeOrigin относится к data-link из мета-тега, а не к этому полю, и
+// запрет пути отверг бы дефолт.
+//
+// Схема только https: со страницы зеркала приезжает хост, которому клиент
+// затем шлёт ключ подписки, поэтому подменить её по пути к зеркалу быть не
+// должно.
+//
+// user:pass@ — отказ, как и в normalizeOrigin: пара логин/пароль легла бы в
+// settings.json, который уезжает в бэкап и в поддержку, а строка вида
+// https://storage.googleapis.com@evil.example/cp показывает пользователю
+// знакомое имя, хотя запрос уйдёт на evil.example. Фрагмент — отказ по
+// бедности: в запрос он не уходит, смысла в поле не имеет, и молча хранить
+// значение, часть которого игнорируется, хуже, чем сказать об этом сразу.
+// Ищем его в ИСХОДНОЙ строке: у url.URL нет признака «решётка была», и
+// пустой фрагмент ("…/cp#") иначе сохранился бы вместе с решёткой.
+func ValidateAmneziaMirrorURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if len(raw) > MaxAmneziaMirrorURLLen {
+		return fmt.Errorf("адрес зеркала Amnezia длиннее %d байт", MaxAmneziaMirrorURLLen)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("адрес зеркала Amnezia непригоден: %v", err)
+	}
+	if u.Scheme != "https" || u.Host == "" {
+		return errors.New("адрес зеркала Amnezia должен быть абсолютным https-адресом")
+	}
+	if u.User != nil {
+		return errors.New("адрес зеркала Amnezia не должен содержать user:pass@")
+	}
+	if strings.Contains(raw, "#") {
+		return errors.New("адрес зеркала Amnezia не должен содержать #фрагмент")
+	}
+	return nil
+}
 
 // SettingsStore manages application settings.
 type SettingsStore struct {
@@ -79,6 +183,13 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		// a single bad file does not leave the daemon permanently down.
 		quarantine := s.path + ".corrupt"
 		renamed := os.Rename(s.path, quarantine) == nil
+		if renamed {
+			// Карантинный файл — снимок настроек целиком, то есть он несёт те
+			// же секреты открытым текстом. Вычистить их нечем: файл на то и
+			// карантинный, что не разбирается. Остаётся закрыть права — он
+			// переживает перезагрузки и лежит до ручного разбора.
+			_ = os.Chmod(quarantine, SecretFilePermission)
+		}
 		where := "quarantined to " + quarantine
 		if !renamed {
 			where = "corrupt file left in place (rename to " + quarantine + " failed)"
@@ -206,6 +317,9 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		}
 		if settings.SchemaVersion < 36 {
 			s.migrateToV36(&settings)
+		}
+		if settings.SchemaVersion < 37 {
+			s.migrateToV37(&settings)
 		}
 	}
 
@@ -885,13 +999,47 @@ func (s *SettingsStore) saveUnlocked(settings *Settings) error {
 	// inode survives the rename below). Load() falls back to it if the main
 	// file is ever found corrupt after a power loss.
 	bakPath := s.path + ".bak"
+	hadPrevious := false
 	if _, err := os.Stat(s.path); err == nil {
+		hadPrevious = true
 		_ = os.Remove(bakPath)
 		_ = os.Link(s.path, bakPath)
 	}
 
-	if err := AtomicWrite(s.path, buf.Bytes()); err != nil {
+	if err := AtomicWritePerm(s.path, buf.Bytes(), SecretFilePermission); err != nil {
 		return err
+	}
+
+	// Секрет, УБРАННЫЙ этой записью, не должен остаться жить в .bak.
+	//
+	// Иначе «забыть ключ» (и перевыпуск apiKey, и удаление сервера с его
+	// приватными ключами) снимали секрет только с основного файла, а рядом
+	// оставалась копия с ним — до следующей произвольной записи настроек.
+	// Проверено на живом роутере 12.09.2026: после удаления ключа подписки в
+	// settings.json вхождений шифротекста 0, в settings.json.bak — 1, при
+	// живом .device-key рядом. Это относится ко ВСЕМ секретам настроек, а не
+	// только к ключу подписки.
+	//
+	// Вторая запись делается ТОЛЬКО когда секрет действительно пропал:
+	// безусловная удваивала бы число записей на флеш у каждой правки настроек.
+	// Страховка от порчи при этом сохраняется — .bak остаётся валидным файлом
+	// настроек, просто уже без снятого секрета.
+	//
+	// Сравнение идёт по БАЙТАМ прежнего файла, а не по кэшу: мутаторы
+	// (updateUnlocked) копируют структуру поверхностно, и правка карты или
+	// среза по месту видна была бы в обеих копиях сразу — сравнение по
+	// структуре молча пропускало бы ровно те секреты, что лежат в
+	// serverPeerSecrets и managedServers.
+	if hadPrevious {
+		if prev, err := os.ReadFile(bakPath); err == nil && secretsDropped(prev, buf.Bytes()) {
+			if err := AtomicWritePerm(bakPath, buf.Bytes(), SecretFilePermission); err != nil {
+				// Основной файл уже записан и секрета не несёт; отказ второй
+				// записи не отменяет правку, но молчать о нём нельзя — копия
+				// с секретом осталась на флеше.
+				recordNotice("secret-bak", bakPath,
+					fmt.Sprintf("не удалось перезаписать %s после снятия секрета (%v) — копия с секретом осталась на флеше", bakPath, err))
+			}
+		}
 	}
 	// Публикация ТОЛЬКО после успешной записи: при провале кэш не должен нести
 	// незаписанное (F3). Для мутаторов, передающих сюда свежую копию, это и

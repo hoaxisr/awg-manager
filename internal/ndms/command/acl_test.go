@@ -3,9 +3,12 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 // aclBodyPoster отдаёт заранее заданные тела ответов по очереди (пустая
@@ -35,11 +38,22 @@ func nestedACLError(msg string) json.RawMessage {
 }
 
 func newACLTestCommands(bodies ...json.RawMessage) (*InterfaceCommands, *aclBodyPoster) {
+	return newACLTestCommandsRC(nil, bodies...)
+}
+
+// newACLTestCommandsRC — то же с заданным running-config: снятие permit-all
+// читает список, чтобы отличить «в нём только наша строка» от «там правила
+// пользователя» (F314). rcLines == nil — блока нет, то есть чистая ветка.
+func newACLTestCommandsRC(rcLines []string, bodies ...json.RawMessage) (*InterfaceCommands, *aclBodyPoster) {
 	poster := &aclBodyPoster{bodies: bodies}
 	// Настоящий SaveCoordinator (Request не nil-safe — nil-wiring должен
 	// падать громко); часовой debounce — save в тестах не летит.
 	sc := NewSaveCoordinator(poster, nil, time.Hour, time.Hour, 0, nil)
-	return NewInterfaceCommands(poster, sc, testQueries(), nil), poster
+	fg := query.NewFakeGetter()
+	body, _ := json.Marshal(map[string]any{"message": rcLines})
+	fg.SetJSON("/show/running-config", string(body))
+	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	return NewInterfaceCommands(poster, sc, q, nil), poster
 }
 
 func TestACLPrimitives_ParseForms(t *testing.T) {
@@ -248,5 +262,96 @@ func TestSetPermitAllACLv6_RealErrorStillFails(t *testing.T) {
 	cmds, _ := newACLTestCommands(nestedACLError("argument parse error."))
 	if err := cmds.SetPermitAllACLv6(context.Background(), "OpkgTun0"); err == nil {
 		t.Fatal("ожидался отказ на argument parse error, получен nil")
+	}
+}
+
+// F314/#879: в списке `_WEBADMIN_<iface>` лежат ЕЩЁ И правила межсетевого
+// экрана пользователя (веб-морда роутера пишет их туда же). Если кроме нашей
+// строки там есть что-то ещё — снимается ровно наша строка, а список и его
+// привязка остаются: `no access-list` унёс бы и чужие правила.
+func TestRemovePermitAllACL_ForeignRulesPresent_RemovesOnlyOurRule(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rc     []string
+		remove func(*InterfaceCommands) error
+		want   string
+	}{
+		{
+			name: "v4",
+			rc: []string{"access-list _WEBADMIN_OpkgTun0",
+				"    permit tcp 10.77.0.2 255.255.255.255 0.0.0.0 0.0.0.0",
+				"    permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0",
+				"    auto-delete", "!"},
+			remove: func(c *InterfaceCommands) error {
+				return c.RemovePermitAllACL(context.Background(), "OpkgTun0")
+			},
+			want: "no access-list _WEBADMIN_OpkgTun0 permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0",
+		},
+		{
+			name: "v6",
+			rc: []string{"ipv6 access-list _WEBADMIN_OpkgTun0",
+				"    permit ipv6 2001:db8::/32 ::/0",
+				"    permit ipv6 ::/0 ::/0", "!"},
+			remove: func(c *InterfaceCommands) error {
+				return c.RemovePermitAllACLv6(context.Background(), "OpkgTun0")
+			},
+			want: "no ipv6 access-list _WEBADMIN_OpkgTun0 permit ipv6 ::/0 ::/0",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmds, poster := newACLTestCommandsRC(tc.rc)
+			if err := tc.remove(cmds); err != nil {
+				t.Fatalf("снятие: %v", err)
+			}
+			if len(poster.parses) != 1 || poster.parses[0] != tc.want {
+				t.Fatalf("parses = %v, ждали ровно [%q]", poster.parses, tc.want)
+			}
+		})
+	}
+}
+
+// Только наша строка (плюс флаг auto-delete, правилом он не считается) —
+// список наш целиком: прежняя пара unbind + `no access-list`. Пустой список
+// NDMS сам не убирает (стенд 5.01), поэтому оставлять его нельзя.
+func TestRemovePermitAllACL_OnlyOurRule_RemovesWholeList(t *testing.T) {
+	cmds, poster := newACLTestCommandsRC([]string{"access-list _WEBADMIN_OpkgTun0",
+		"    permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0", "    auto-delete", "!"})
+	if err := cmds.RemovePermitAllACL(context.Background(), "OpkgTun0"); err != nil {
+		t.Fatalf("RemovePermitAllACL: %v", err)
+	}
+	want := []string{
+		"no interface OpkgTun0 ip access-group _WEBADMIN_OpkgTun0 in",
+		"no access-list _WEBADMIN_OpkgTun0",
+	}
+	if len(poster.parses) != 2 || poster.parses[0] != want[0] || poster.parses[1] != want[1] {
+		t.Fatalf("parses = %v, want %v", poster.parses, want)
+	}
+}
+
+// Гонка с чужой правкой: нашей строки в списке уже нет. `no rule found to
+// delete.` (стенд 5.01) — цель достигнута, а не отказ.
+func TestRemovePermitAllACL_RuleAlreadyGone_Tolerated(t *testing.T) {
+	cmds, _ := newACLTestCommandsRC([]string{"access-list _WEBADMIN_OpkgTun0",
+		"    permit tcp 10.77.0.2 255.255.255.255 0.0.0.0 0.0.0.0",
+		"    permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0", "!"},
+		nestedACLError("no rule found to delete."))
+	if err := cmds.RemovePermitAllACL(context.Background(), "OpkgTun0"); err != nil {
+		t.Fatalf("«правила уже нет» обязано прощаться: %v", err)
+	}
+}
+
+// Running-config не прочитан — не снимаем НИЧЕГО: решить, чей это список,
+// нечем, а снести чужие правила необратимо.
+func TestRemovePermitAllACL_RunningConfigUnreadable_TouchesNothing(t *testing.T) {
+	cmds, poster := newACLTestCommandsRC(nil)
+	fg := query.NewFakeGetter()
+	fg.SetError("/show/running-config", errors.New("ndms boom"))
+	cmds.queries = query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	err := cmds.RemovePermitAllACL(context.Background(), "OpkgTun0")
+	if err == nil || !strings.Contains(err.Error(), "ndms boom") {
+		t.Fatalf("err = %v, ждали отказ чтения running-config", err)
+	}
+	if len(poster.parses) != 0 {
+		t.Fatalf("ни одной команды быть не должно, got %v", poster.parses)
 	}
 }

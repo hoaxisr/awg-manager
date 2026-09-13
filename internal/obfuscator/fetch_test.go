@@ -84,6 +84,12 @@ func TestFetchPhobosConf_TooBig(t *testing.T) {
 	if _, err := FetchPhobosConf(context.Background(), srv.URL+"/api/install/tok"); err == nil {
 		t.Fatal("expected size error")
 	}
+	// Предохранитель: размер входа считается от проверяемой константы, и её
+	// мутация в большое значение превратила бы тест в пожирателя памяти —
+	// прогон валит машину вместо того, чтобы покраснеть.
+	if MaxPackageBytes > 64<<20 {
+		t.Fatalf("MaxPackageBytes=%d неправдоподобен — тест не станет строить такой вход", MaxPackageBytes)
+	}
 	// Без Content-Length: gzip-поток больше лимита → та же внятная ошибка.
 	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gz := gzip.NewWriter(w)

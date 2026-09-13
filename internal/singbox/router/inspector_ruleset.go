@@ -86,11 +86,29 @@ func (c *ruleSetCache) urlLock(url string) *sync.Mutex {
 var ruleSetHTTPClient = newRuleSetHTTPClient()
 
 func newRuleSetHTTPClient() *http.Client {
-	c := &http.Client{Timeout: ruleSetDownloadTimeout}
-	if tr, err := httpclient.NewTransport(httpclient.TransportConfig{}); err == nil && tr != nil {
-		c.Transport = tr
+	// Прокси окружения наследуется СОЗНАТЕЛЬНО (Proxy оставлен нулевым,
+	// httpclient.ProxyInheritEnv): это загрузка rule-set'а из интернета,
+	// и прокси, прописанный владельцем роутера в окружении демона, уважить
+	// правильно. Требования «только напрямую» тут нет.
+	tr, err := httpclient.NewTransport(httpclient.TransportConfig{})
+	if err != nil {
+		// Утверждение об инварианте, а не обработка: отказать NewTransport
+		// может только на разборе ProxyURL, а он здесь пуст. Вернуть ошибку
+		// некуда — клиент строится при инициализации пакетной переменной, —
+		// а тихо оставить Transport нулевым нельзя: нулевой это
+		// http.DefaultTransport с пустым ALPN, сервер договаривается на h2,
+		// и вместо rule-set'а приезжает EOF (Fastly,
+		// raw.githubusercontent.com) или «malformed HTTP response»
+		// (Cloudflare) — ровно та поломка, ради которой httpclient и заведён.
+		// Громкий отказ на старте (ср. panic на nil-журнале в
+		// amneziacp.NewClient) дешевле запасного транспорта: тот был бы
+		// недостижимым кодом, который живёт и расходится с основным.
+		//
+		// tr == nil не проверяется: NewTransport такого не отдаёт — транспорт
+		// там всегда Clone базового (см. Client.buildTransport).
+		panic("router: транспорт загрузки rule-set'ов не собрался: " + err.Error())
 	}
-	return c
+	return &http.Client{Timeout: ruleSetDownloadTimeout, Transport: tr}
 }
 
 // getOrDownload returns the local file path for url, downloading and

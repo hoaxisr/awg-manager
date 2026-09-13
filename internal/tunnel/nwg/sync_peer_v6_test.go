@@ -369,7 +369,7 @@ func TestSyncPeer_ProxyFirmwareV6DoesNotBypassKmod(t *testing.T) {
 	if len(*calls) != 0 {
 		t.Fatalf("на proxy-пути wg set в обход прокси недопустим: %v", *calls)
 	}
-	if entry, ok := op.guardGet(stored.ID); ok && !entry.viaKmod {
+	if entry, ok := op.guardGet(stored.ID); ok && entry.mode != guardKmod {
 		t.Fatalf("на proxy-пути страж обязан быть в режиме kmod: %+v", entry)
 	}
 	joined := strings.Join(cs.bodies, "\n")

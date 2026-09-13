@@ -46,7 +46,7 @@ type TunnelService interface {
 	Import(ctx context.Context, confContent, name, backend string, link service.ImportLink) (*service.TunnelWithStatus, error)
 
 	// ReplaceConfig replaces a tunnel's config from a new .conf file.
-	ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string) error
+	ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string, opts service.ReplaceOptions) error
 
 	// WAN state model
 	WANModel() *wan.Model

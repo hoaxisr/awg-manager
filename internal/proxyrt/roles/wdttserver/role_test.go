@@ -1007,3 +1007,35 @@ func TestNDMSAccessFingerprintCoversRawHalf(t *testing.T) {
 		t.Fatalf("политика не доведена до новой raw-половины: %v", acc.applied)
 	}
 }
+
+// Порядок ресурсов — часть корректности, а не оформления: список роли это
+// цепочка, где первый отказавший блокирует всё ниже (proxyrt/plan.go).
+//
+// netfilter_hook обязан идти ПЕРЕД forward_rules. Хук прежней версии, лежащий
+// на диске, сам возвращает `-I FORWARD 1 -i opkgtunN -j ACCEPT`, а движок ndm
+// дёргает netfilter.d по событиям, которые порождает этот же проход. Снеси
+// легаси раньше перезаписи файла — и прогон старого хука вернёт правило уже
+// после того, как ключ попал в reaped, то есть навсегда до перезапуска
+// демона: ACCEPT стоит выше ACL, и абонент raw-половины ходит во весь LAN
+// мимо выбранных сегментов, пока панель показывает настройку применённой.
+func TestServerResourceOrder_HookBeforeForwardRules(t *testing.T) {
+	p := newServerParts(t)
+
+	res := p.role.Resources(proxyrt.IntentEnabled, srvCfg(), proxyrt.NewObservations())
+
+	posOf := func(want proxyrt.ResourceID) int {
+		for i, r := range res {
+			if r.ID() == want {
+				return i
+			}
+		}
+		return -1
+	}
+	hook, fwd := posOf(roles.RNetfilterHook), posOf(roles.RForwardRules)
+	if hook < 0 || fwd < 0 {
+		t.Fatalf("ресурсы пропали из списка: hook=%d fwd=%d", hook, fwd)
+	}
+	if hook > fwd {
+		t.Errorf("netfilter_hook (%d) обязан идти перед forward_rules (%d)", hook, fwd)
+	}
+}

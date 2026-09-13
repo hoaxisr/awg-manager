@@ -283,8 +283,8 @@ func desiredTunCIDRs(cfg *RouterConfig) (v4 []string, v6 []string) {
 }
 
 // addCIDRRoute installs one specific dst route to the tun. v4 routes carry the
-// CIDR comment (recognizable in NDMS config); the v6 form emits only
-// network+interface (see StaticRouteSpec.V6).
+// CIDR comment (recognizable in NDMS config); the v6 form differs — see
+// StaticRouteSpec.V6.
 func (s *ServiceImpl) addCIDRRoute(ctx context.Context, ndmsName, cidr string, v6 bool) error {
 	if v6 {
 		return s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{

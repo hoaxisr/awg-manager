@@ -62,11 +62,22 @@ func parseRelease(release string) parsedVersion {
 }
 
 // Get returns the OS version from cached NDMS version info.
-// Returns Version4x if info is not available (safe fallback).
+//
+// Версия неизвестна — считаем 5.x. Прежний фолбэк на 4.x был подписан «safe»,
+// но безопасен ровно обратный выбор, потому что цена ошибки несимметрична:
+//   - оператор OS5 на роутере 4.x падает ГРОМКО, NDMS отвечает
+//     `unsupported interface type: "OpkgTun"` (наблюдалось на стенде, пока он
+//     был на 4.03);
+//   - оператор OS4 на роутере 5.x молча делает прямые ip-команды мимо модели
+//     NDMS — ровно это и воспроизводилось в F197.
+//
+// Громкий отказ на старой и редкой платформе лучше тихой поломки на текущей.
+// Сюда вообще нельзя доходить: версию добывают два независимых канала
+// (RCI и ndmc, см. internal/sys/ndmsinfo), это последний рубеж.
 func Get() Version {
 	info := ndmsinfo.Get()
 	if info == nil || info.Release == "" {
-		return Version4x
+		return Version5
 	}
 	if len(info.Release) > 0 && info.Release[0] >= '5' {
 		return Version5

@@ -1038,12 +1038,22 @@ func downloadFileWithClient(ctx context.Context, client *http.Client, rawURL, de
 		// so it inherits the pinned HTTP/1.1 ALPN + ForceAttemptHTTP2=false —
 		// geo mirrors like raw.githubusercontent.com return EOF/malformed h2
 		// otherwise (the failure httpclient exists to prevent).
+		// Прокси окружения наследуется СОЗНАТЕЛЬНО (Proxy оставлен нулевым,
+		// httpclient.ProxyInheritEnv): загрузка идёт в интернет за файлом, и
+		// если владелец роутера прописал HTTP(S)_PROXY в окружении демона,
+		// уважить его — правильное поведение. Требования «только напрямую»
+		// тут нет, в отличие от клиента портала Amnezia.
+		//
+		// Отказ сборки транспорта — отказ загрузки, а НЕ тихий откат на
+		// http.Client{}: такой откат оставлял ALPN пустым, сервер
+		// договаривался на h2, и вместо внятной ошибки приезжал EOF или
+		// «malformed HTTP response» — ровно та поломка, ради которой
+		// httpclient и заведён.
 		tr, terr := httpclient.NewTransport(httpclient.TransportConfig{})
-		if terr != nil || tr == nil {
-			client = &http.Client{}
-		} else {
-			client = &http.Client{Transport: tr}
+		if terr != nil {
+			return 0, fmt.Errorf("build transport: %w", terr)
 		}
+		client = &http.Client{Transport: tr}
 	}
 
 	resp, err := client.Do(req)

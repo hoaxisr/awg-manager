@@ -162,6 +162,20 @@ func (r *Runner) testNDMSHealth(ctx context.Context) TestResult {
 		return res
 	}
 
+	// У версии теперь два источника, и наполненный store больше НЕ означает,
+	// что отвечал RCI: запасной канал ndmc ходит через unix-сокет и наполнит
+	// его ровно тогда, когда HTTP-морда молчит. Без этой ветки проверка «NDMS
+	// отвечает» давала бы Pass именно в тот момент, когда она обязана
+	// предупреждать.
+	// Источник называем поимённо. Раньше здесь стояло «получено через ndmc»
+	// для ЛЮБОГО запасного канала, и с появлением файлового (components.xml)
+	// эта строка начала врать пользователю прямо в диагностике.
+	if src := r.deps.NDMSQueries.SystemInfo.Source(); src != "rci" {
+		res.Status = StatusWarn
+		res.Detail = "RCI (HTTP :79) не ответил при старте — версия получена каналом " + src + ": " + v.Title
+		return res
+	}
+
 	res.Status = StatusPass
 	res.Detail = v.Title
 	return res

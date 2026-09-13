@@ -98,14 +98,14 @@ func TestAnonymize_PublicIPInTestDetail(t *testing.T) {
 		Tests: []TestResult{
 			{
 				Name:   "tunnel_connectivity",
-				Detail: "IP: 95.25.93.179 (via https://ifconfig.me)",
+				Detail: "IP: 198.51.100.93 (via https://ifconfig.me)",
 			},
 		},
 	}
 
 	anonymize(&report)
 
-	if strings.Contains(report.Tests[0].Detail, "95.25.93.179") {
+	if strings.Contains(report.Tests[0].Detail, "198.51.100.93") {
 		t.Fatalf("public IP still present: %s", report.Tests[0].Detail)
 	}
 	if !strings.Contains(report.Tests[0].Detail, "PUBLIC-IP-") {
@@ -154,7 +154,7 @@ func TestAnonymize_PublicIPsInStructuredTunnelSettings(t *testing.T) {
 					},
 				},
 				Routes: RouteInfo{
-					EndpointRoute: "95.25.93.179 via 192.168.1.1 dev eth3",
+					EndpointRoute: "198.51.100.93 via 192.168.1.1 dev eth3",
 				},
 			},
 		},
@@ -172,7 +172,7 @@ func TestAnonymize_PublicIPsInStructuredTunnelSettings(t *testing.T) {
 	if strings.Contains(out, "8.8.8.8") {
 		t.Fatalf("ping target public IP still present: %s", out)
 	}
-	if strings.Contains(out, "95.25.93.179") {
+	if strings.Contains(out, "198.51.100.93") {
 		t.Fatalf("route public IP still present: %s", out)
 	}
 	if !strings.Contains(out, "PUBLIC-IP-") {
@@ -459,12 +459,12 @@ func TestAnonymize_HostnamesInTestsAndTunnelSettings(t *testing.T) {
 func TestAnonymize_HostnamesInWANAndAWGProxyModule(t *testing.T) {
 	report := Report{
 		WAN: WANInfo{
-			NDMSRouteTable: "route to wan-check.example.test via 95.25.93.179",
+			NDMSRouteTable: "route to wan-check.example.test via 198.51.100.93",
 			IPRouteTable:   "default via isp-gw.example.test dev eth3",
-			IPAddr:         "inet 95.25.93.179 peer isp.example.test",
+			IPAddr:         "inet 198.51.100.93 peer isp.example.test",
 		},
 		AWGProxyModule: AWGProxyModule{
-			RawList: "endpoint proxy-endpoint.example.test:443 via 95.25.93.179",
+			RawList: "endpoint proxy-endpoint.example.test:443 via 198.51.100.93",
 			DmesgLines: []string{
 				"awg-proxy failed to resolve proxy-endpoint.example.test",
 			},
@@ -493,7 +493,7 @@ func TestAnonymize_HostnamesInWANAndAWGProxyModule(t *testing.T) {
 	if !strings.Contains(out, "HOST-") {
 		t.Fatalf("HOST-* aliases not found:\n%s", out)
 	}
-	if strings.Contains(out, "95.25.93.179") {
+	if strings.Contains(out, "198.51.100.93") {
 		t.Fatalf("public IP should still be anonymized:\n%s", out)
 	}
 	if !strings.Contains(out, "PUBLIC-IP-") {

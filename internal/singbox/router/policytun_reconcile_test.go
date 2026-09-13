@@ -1528,13 +1528,13 @@ func TestReconcilePolicyTun_QoSKeenDNSCIDRChanged_Reinstalls(t *testing.T) {
 	all, _ := h.store.Load()
 	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
 
-	h.svc.setKeenDNSBypass([]string{"78.47.125.180"})
+	h.svc.setKeenDNSBypass([]string{"198.51.100.180"})
 
 	installs, last := tickPolicyTunQoS(t, h, sr)
 	if installs != 1 {
 		t.Fatalf("появление адреса KeenDNS обязано переустановить правила: installs = %d, want 1", installs)
 	}
-	if !strings.Contains(last, "78.47.125.180/32") {
+	if !strings.Contains(last, "198.51.100.180/32") {
 		t.Errorf("адрес KeenDNS не попал в правила обхода:\n%s", last)
 	}
 
