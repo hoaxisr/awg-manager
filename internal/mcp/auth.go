@@ -24,6 +24,9 @@ const loopbackRejectLogInterval = time.Minute
 type KeyInfo struct {
 	ID   string
 	Name string
+	// ReadOnly limits the key to tools that change nothing. Enforced by
+	// RequireWriteScope, which reads this off the request context.
+	ReadOnly bool
 }
 
 // Throttle is the anti-brute-force gate; *auth.LoginThrottle satisfies it.

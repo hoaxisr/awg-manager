@@ -58,7 +58,7 @@ type UpdateServerRequest struct {
 // AddPeerRequest contains parameters for adding a peer to the managed server.
 type AddPeerRequest struct {
 	Description string `json:"description"`
-	TunnelIP    string `json:"tunnelIP"` // e.g. "10.0.0.2/32"
+	TunnelIP    string `json:"tunnelIP"` // e.g. "10.0.0.2/32"; empty — AddPeer allocates the first free one
 	DNS         string `json:"dns,omitempty"`
 }
 

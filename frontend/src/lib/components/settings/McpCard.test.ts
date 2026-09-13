@@ -80,7 +80,7 @@ describe('McpCard', () => {
 		const dialog = screen.getByRole('dialog');
 		await fireEvent.input(within(dialog).getByPlaceholderText('Например, laptop'), { target: { value: 'phone' } });
 		await fireEvent.click(within(dialog).getByText('Создать'));
-		await waitFor(() => expect(base.oncreate).toHaveBeenCalledWith('phone'));
+		await waitFor(() => expect(base.oncreate).toHaveBeenCalledWith('phone', false));
 		await waitFor(() => expect(screen.getByText('awgm_secret')).toBeTruthy());
 		expect(screen.getByText(/claude mcp add/)).toBeTruthy();
 	});
@@ -164,5 +164,70 @@ describe('McpCard', () => {
 		await fireEvent.click(screen.getByText('Создать ключ'));
 		expect(within(screen.getByRole('dialog')).getByPlaceholderText('Например, laptop')).toBeTruthy();
 		expect(screen.queryByText('awgm_secret')).toBeNull();
+	});
+});
+
+describe('McpCard: область ключа', () => {
+	beforeEach(() => {
+		notify.success.mockClear();
+		notify.error.mockClear();
+		clipboardMock.mockReset();
+	});
+
+	// Ключ выдаётся один раз и область его потом не поменять, поэтому
+	// выбор обязан быть в момент создания.
+	it('создание ключа передаёт выбранную область', async () => {
+		const oncreate = vi.fn(async (name: string, readOnly: boolean) => ({
+			id: 'k9',
+			name,
+			readOnly,
+			createdAt: '2026-09-02T11:00:00Z',
+			key: 'awgm_secret',
+		}));
+		render(McpCard, { ...base, oncreate, enabled: true, keys });
+
+		await fireEvent.click(screen.getByText('Создать ключ'));
+		const dialog = screen.getByRole('dialog');
+		await fireEvent.input(within(dialog).getByPlaceholderText('Например, laptop'), { target: { value: 'reader' } });
+		await fireEvent.click(within(dialog).getByRole('checkbox'));
+		await fireEvent.click(within(dialog).getByText('Создать'));
+
+		await waitFor(() => expect(oncreate).toHaveBeenCalledWith('reader', true));
+	});
+
+	// Умолчание — полный доступ: так вёл себя выпуск ключей до появления
+	// областей, и менять его молча нельзя.
+	it('по умолчанию создаётся полноправный ключ', async () => {
+		const oncreate = vi.fn(async (name: string, readOnly: boolean) => ({
+			id: 'k9',
+			name,
+			readOnly,
+			createdAt: '2026-09-02T11:00:00Z',
+			key: 'awgm_secret',
+		}));
+		render(McpCard, { ...base, oncreate, enabled: true, keys });
+
+		await fireEvent.click(screen.getByText('Создать ключ'));
+		const dialog = screen.getByRole('dialog');
+		await fireEvent.input(within(dialog).getByPlaceholderText('Например, laptop'), { target: { value: 'laptop2' } });
+		await fireEvent.click(within(dialog).getByText('Создать'));
+
+		await waitFor(() => expect(oncreate).toHaveBeenCalledWith('laptop2', false));
+	});
+
+	// В списке ключ только для чтения обязан быть отличим: иначе не понять,
+	// какой ключ отзывать и какой отдавать агенту.
+	it('в списке видно, какой ключ только для чтения', () => {
+		const mixed: McpKey[] = [
+			{ id: 'k1', name: 'laptop', createdAt: '2026-09-02T10:00:00Z', readOnly: false },
+			{ id: 'k2', name: 'reader', createdAt: '2026-09-02T10:00:00Z', readOnly: true },
+		];
+		render(McpCard, { ...base, enabled: true, keys: mixed });
+
+		const readerRow = screen.getByText('reader').closest('tr')!;
+		expect(within(readerRow).getByText(/только чтение/i)).toBeTruthy();
+
+		const laptopRow = screen.getByText('laptop').closest('tr')!;
+		expect(within(laptopRow).queryByText(/только чтение/i)).toBeNull();
 	});
 });

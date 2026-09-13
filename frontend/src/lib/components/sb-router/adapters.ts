@@ -455,6 +455,7 @@ export function singboxRuleToCard(
     action,
     outbound,
     isSystem,
+    isManaged: !!rule.awgm_managed,
     simplicity,
     tooltip: isSystem ? systemRuleTooltip(rule) : undefined,
   };

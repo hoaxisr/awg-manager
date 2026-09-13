@@ -24,6 +24,11 @@ type SingboxRouterHandler struct {
 	routerRefs      tunnelservice.RouterRefChecker
 }
 
+// Service exposes the router service so other wiring (the MCP adapter)
+// works against the same instance the HTTP handlers use, rather than a
+// second one with its own view of the staging draft.
+func (h *SingboxRouterHandler) Service() router.Service { return h.svc }
+
 func NewSingboxRouterHandler(svc router.Service, appLogger logging.AppLogger) *SingboxRouterHandler {
 	return &SingboxRouterHandler{
 		svc: svc,

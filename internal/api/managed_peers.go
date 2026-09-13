@@ -12,8 +12,10 @@ import (
 // AddPeerRequestDTO is the swagger-visible body for POST /managed-servers/{id}/peers.
 type AddPeerRequestDTO struct {
 	Description string `json:"description" example:"My Phone"`
-	TunnelIP    string `json:"tunnelIP" example:"10.10.0.2/32"`
-	DNS         string `json:"dns,omitempty" example:"8.8.8.8"`
+	// TunnelIP is optional: when empty, the first free host address in the
+	// server's subnet is allocated.
+	TunnelIP string `json:"tunnelIP,omitempty" example:"10.10.0.2/32"`
+	DNS      string `json:"dns,omitempty" example:"8.8.8.8"`
 }
 
 // UpdatePeerRequestDTO is the swagger-visible body for PUT /managed-servers/{id}/peers/{pubkey}.

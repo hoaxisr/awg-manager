@@ -21,7 +21,7 @@
 		/** Origin веб-интерфейса, например http://192.168.1.1:2222. */
 		origin: string;
 		ontoggle: (enabled: boolean) => void;
-		oncreate: (name: string) => Promise<McpKeyCreated>;
+		oncreate: (name: string, readOnly: boolean) => Promise<McpKeyCreated>;
 		onrevoke: (id: string) => Promise<void>;
 	}
 
@@ -31,6 +31,9 @@
 
 	let createOpen = $state(false);
 	let nameDraft = $state('');
+	// Область выбирается только при выпуске: сменить её у существующего
+	// ключа нельзя, иначе выданный агенту ключ менял бы права под ним.
+	let readOnlyDraft = $state(false);
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
 	let created = $state<McpKeyCreated | null>(null);
@@ -39,6 +42,7 @@
 
 	function openCreate() {
 		nameDraft = '';
+		readOnlyDraft = false;
 		createError = null;
 		created = null;
 		createOpen = true;
@@ -51,6 +55,7 @@
 		createOpen = false;
 		created = null;
 		nameDraft = '';
+		readOnlyDraft = false;
 		createError = null;
 	}
 
@@ -63,7 +68,7 @@
 		creating = true;
 		createError = null;
 		try {
-			created = await oncreate(name);
+			created = await oncreate(name, readOnlyDraft);
 		} catch (e) {
 			createError = e instanceof Error ? e.message : 'Не удалось создать ключ';
 		} finally {
@@ -190,7 +195,12 @@
 							<tbody>
 								{#each keys as k (k.id)}
 									<tr>
-										<td>{k.name}</td>
+										<td>
+											{k.name}
+											{#if k.readOnly}
+												<Badge variant="info" size="sm">только чтение</Badge>
+											{/if}
+										</td>
 										<td>{formatDate(k.createdAt)}</td>
 										<td>{k.lastUsedAt ? formatDate(k.lastUsedAt) : '—'}</td>
 										<td class="text-right">
@@ -219,6 +229,10 @@
 				maxlength="64"
 				onkeydown={(e) => e.key === 'Enter' && submitCreate()}
 			/>
+			<Toggle checked={readOnlyDraft} onchange={(v) => (readOnlyDraft = v)} label="Только чтение" size="sm" />
+			<span class="setting-description text-xs">
+				Такой ключ читает состояние, логи и маршруты, но не может ничего изменить на роутере и не выдаёт конфиги с приватными ключами.
+			</span>
 			{#if createError}<span class="text-error text-sm">{createError}</span>{/if}
 		</div>
 	{:else}

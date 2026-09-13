@@ -127,3 +127,26 @@ func TestGetASCParams_NoSignatureFieldsAnymore(t *testing.T) {
 		}
 	}
 }
+
+// TestAddPeer_RejectsDNSThatIsNotAnAddressList — DNS пира рендерится в
+// .conf клиента как есть; всё, что не список адресов, — инъекция строк
+// в конфиг, который потом выполнит wg-quick. Проверка нужна в службе, а
+// не только в MCP: REST-путь ведёт сюда же.
+func TestAddPeer_RejectsDNSThatIsNotAnAddressList(t *testing.T) {
+	svc, store, _ := newCreateTestService(t)
+	if err := store.AddManagedServer(storage.ManagedServer{InterfaceName: "Wireguard1", Address: "10.0.0.1", Mask: "255.255.255.0", ListenPort: 51820, Policy: "none"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, dns := range []string{"1.1.1.1\nPostUp = id", "dns.example.com", "1.1.1.1;8.8.8.8"} {
+		if _, err := svc.AddPeer(context.Background(), "Wireguard1", AddPeerRequest{Description: "p", TunnelIP: "10.0.0.2/32", DNS: dns}); err == nil {
+			t.Errorf("AddPeer accepted dns %q", dns)
+		}
+	}
+	if _, err := svc.AddPeer(context.Background(), "Wireguard1", AddPeerRequest{Description: "p", TunnelIP: "10.0.0.2/32", DNS: "1.1.1.1, 8.8.8.8"}); err != nil {
+		t.Fatalf("a plain list must be accepted: %v", err)
+	}
+	sv, _ := store.GetManagedServerByID("Wireguard1")
+	if err := svc.UpdatePeer(context.Background(), "Wireguard1", sv.Peers[0].PublicKey, UpdatePeerRequest{Description: "p", TunnelIP: "10.0.0.2/32", DNS: "1.1.1.1\n[Peer]"}); err == nil {
+		t.Error("UpdatePeer accepted an injected dns")
+	}
+}

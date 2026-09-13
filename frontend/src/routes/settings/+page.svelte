@@ -521,8 +521,8 @@ $effect(() => {
 		}
 	}
 
-	async function createMcpKey(name: string): Promise<McpKeyCreated> {
-		const created = await api.createMcpKey(name);
+	async function createMcpKey(name: string, readOnly: boolean): Promise<McpKeyCreated> {
+		const created = await api.createMcpKey(name, readOnly);
 		await mcpKeys.refetch();
 		return created;
 	}

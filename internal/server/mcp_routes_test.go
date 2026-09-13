@@ -74,7 +74,7 @@ func TestMcpEndpoint_NotFoundWhenDisabled(t *testing.T) {
 	s, keys := newMcpServer(t, false)
 	s.registerMcpRoutes(mux, mcpRouteHandlers())
 
-	_, plaintext, err := keys.Create("laptop")
+	_, plaintext, err := keys.Create("laptop", false)
 	if err != nil {
 		t.Fatal(err)
 	}

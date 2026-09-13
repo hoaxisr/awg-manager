@@ -21,13 +21,22 @@ func NewServer(deps Deps, version string) *mcp.Server {
 	}, &mcp.ServerOptions{
 		Instructions: "Tools manage AmneziaWG/WireGuard tunnels and routing on a Keenetic router via awg-manager. " +
 			"Tunnel ids come from list_tunnels. Writes are reversible except remove_dns_route and remove_static_route, which delete a routing list permanently — MCP cannot restore it. " +
-			"Other destructive operations (delete tunnel, backup restore, system update) are not exposed.",
+			"To stop a routing list from applying, use set_dns_route_enabled / set_static_route_enabled / set_client_route_enabled; to change one, use update_dns_route. Removal is for lists the user wants gone for good. " +
+			"Sing-box routing rule edits go into a DRAFT shared with the web interface: they change nothing until apply_singbox_staging, and discarding one destroys the user's unsaved edits too. " +
+			"list_dns_routes truncates long domain lists: use get_dns_route or explain_route before telling the user a domain is not routed. " +
+			"add_server_peer creates working VPN credentials and get_server_peer_config returns a client's private key: call them only when the user asked, and hand the config to them rather than repeating it elsewhere. " +
+			"A key may be read-only, in which case every tool that changes the router is refused with nothing applied. " +
+			"Other destructive operations (delete tunnel, delete peer, backup restore, system update) are not exposed.",
 	})
 	registerSystemTools(s, deps)
+	registerObservabilityTools(s, deps)
 	registerTunnelTools(s, deps)
 	registerRoutingTools(s, deps)
+	registerExplainTools(s, deps)
 	registerSingboxTools(s, deps)
+	registerRouterTools(s, deps)
 	registerServerTools(s, deps)
+	registerPeerTools(s, deps)
 	s.AddResource(&mcp.Resource{
 		URI:         ResourceOpenAPI,
 		Name:        "openapi",

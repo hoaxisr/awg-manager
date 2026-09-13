@@ -35,6 +35,67 @@ type dnsRoutesOut struct {
 	Routes []DNSRoute `json:"routes"`
 }
 
+// updateDNSOut is the edited list plus anything the edit cost that the
+// caller did not ask for.
+type updateDNSOut struct {
+	DNSRoute
+	Warnings []string `json:"warnings,omitempty" jsonschema:"non-fatal losses the edit caused — show these to the user"`
+}
+
+// setRouteEnabledIn carries an explicit enabled flag: there is no toggle
+// semantics on purpose, so an agent retrying after a timeout cannot flip
+// a list back to where it started.
+type setRouteEnabledIn struct {
+	RouteID string `json:"routeId" jsonschema:"list id from the corresponding list_* tool"`
+	Enabled bool   `json:"enabled" jsonschema:"true turns the list on, false turns it off"`
+}
+
+type setClientRouteEnabledIn struct {
+	ClientIP string `json:"clientIp" jsonschema:"LAN client IPv4 from list_client_routes or list_devices"`
+	Enabled  bool   `json:"enabled" jsonschema:"true routes the device through its tunnel again, false suspends the route"`
+}
+
+type dnsRouteDetailIn struct {
+	RouteID       string `json:"routeId" jsonschema:"list id from list_dns_routes"`
+	DomainsOffset int    `json:"domainsOffset,omitempty" jsonschema:"index of the first domain to return; default 0"`
+}
+
+// dnsRouteDetailOut is the full record with Domains replaced by one page
+// of at most MaxDomainsInDetail entries. DomainCount is always the real
+// size of the list, so an agent can tell a short page from a short list —
+// answering "that domain is not in the list" from a truncated page is the
+// failure this output is shaped to prevent.
+type dnsRouteDetailOut struct {
+	DNSRouteDetail
+	DomainCount      int  `json:"domainCount" jsonschema:"total domains in the list, ignoring paging"`
+	DomainsOffset    int  `json:"domainsOffset" jsonschema:"index of the first domain returned"`
+	DomainsTruncated bool `json:"domainsTruncated" jsonschema:"true when domains beyond this page remain — call again with a larger domainsOffset before concluding a domain is absent"`
+}
+
+// pageDNSRouteDetail cuts one page out of detail.Domains. An offset past
+// the end yields an empty page rather than an error: an agent walking the
+// pages should be able to stop on an empty result.
+func pageDNSRouteDetail(detail DNSRouteDetail, offset int) dnsRouteDetailOut {
+	total := len(detail.Domains)
+	start := min(offset, total)
+	end := min(start+MaxDomainsInDetail, total)
+	// Three-index slice: the page must not be able to grow into the rest
+	// of the list through an append somewhere downstream.
+	detail.Domains = detail.Domains[start:end:end]
+	if detail.Domains == nil {
+		detail.Domains = []string{}
+	}
+	if detail.Routes == nil {
+		detail.Routes = []RouteTarget{}
+	}
+	return dnsRouteDetailOut{
+		DNSRouteDetail:   detail,
+		DomainCount:      total,
+		DomainsOffset:    start,
+		DomainsTruncated: end < total,
+	}
+}
+
 type staticRoutesOut struct {
 	Routes []StaticRoute `json:"routes"`
 }
@@ -99,6 +160,25 @@ func registerRoutingTools(s *mcp.Server, d Deps) {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name: "get_dns_route",
+		Description: "One domain routing list in full: every domain (list_dns_routes shows only the first 50), plus the excludes and subscriptions it omits entirely. " +
+			"Use this to answer whether a specific domain is in a list. Domains are paged: when domainsTruncated is true, call again with domainsOffset to read on.",
+		Annotations: readOnly("Get DNS route"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in dnsRouteDetailIn) (*mcp.CallToolResult, dnsRouteDetailOut, error) {
+		if in.RouteID == "" {
+			return nil, dnsRouteDetailOut{}, fmt.Errorf("routeId is required")
+		}
+		if in.DomainsOffset < 0 {
+			return nil, dnsRouteDetailOut{}, fmt.Errorf("domainsOffset must not be negative")
+		}
+		detail, err := d.GetDNSRoute(ctx, in.RouteID)
+		if err != nil {
+			return nil, dnsRouteDetailOut{}, err
+		}
+		return nil, pageDNSRouteDetail(detail, in.DomainsOffset), nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "add_dns_route",
 		Description: "Create a domain routing list that sends the given domains (and subdomains) through a tunnel. The list is created enabled and takes effect immediately.",
 		Annotations: safeWrite("Add DNS route", false),
@@ -113,6 +193,50 @@ func registerRoutingTools(s *mcp.Server, d Deps) {
 			return nil, DNSRoute{}, err
 		}
 		out, err := d.AddDNSRoute(ctx, in)
+		return nil, out, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "update_dns_route",
+		Description: "Edit an existing domain routing list in place: rename it, replace its manual entries, or send it through a different tunnel. " +
+			"Omitted fields are left untouched; excludes, subscriptions and the backend always survive, which is why this is the way to change a list, " +
+			"not remove_dns_route followed by add_dns_route. manualDomains replaces EVERY manual entry, CIDR subnets included — read them from get_dns_route first. Check the returned warnings.",
+		Annotations: safeWrite("Update DNS route", true),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in DNSRouteUpdate) (*mcp.CallToolResult, updateDNSOut, error) {
+		if in.RouteID == "" {
+			return nil, updateDNSOut{}, fmt.Errorf("routeId is required")
+		}
+		if strings.TrimSpace(in.Name) == "" && in.ManualDomains == nil && in.TunnelID == "" {
+			return nil, updateDNSOut{}, fmt.Errorf("nothing to update: pass at least one of name, manualDomains or tunnelId")
+		}
+		if in.ManualDomains != nil {
+			if err := validateDomains(in.ManualDomains); err != nil {
+				return nil, updateDNSOut{}, err
+			}
+		}
+		if in.TunnelID != "" {
+			if err := requireTunnelID(in.TunnelID); err != nil {
+				return nil, updateDNSOut{}, err
+			}
+		}
+		in.Name = strings.TrimSpace(in.Name)
+		updated, warnings, err := d.UpdateDNSRoute(ctx, in)
+		if err != nil {
+			return nil, updateDNSOut{}, err
+		}
+		return nil, updateDNSOut{DNSRoute: updated, Warnings: warnings}, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "set_dns_route_enabled",
+		Description: "Turn a domain routing list on or off. The list itself is kept, so this is the reversible way to stop routing a set of domains — " +
+			"prefer it to remove_dns_route, which destroys the list for good. Takes effect immediately.",
+		Annotations: safeWrite("Enable/disable DNS route", true),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setRouteEnabledIn) (*mcp.CallToolResult, DNSRoute, error) {
+		if in.RouteID == "" {
+			return nil, DNSRoute{}, fmt.Errorf("routeId is required")
+		}
+		out, err := d.SetDNSRouteEnabled(ctx, in.RouteID, in.Enabled)
 		return nil, out, err
 	})
 
@@ -160,6 +284,19 @@ func registerRoutingTools(s *mcp.Server, d Deps) {
 			return nil, StaticRoute{}, err
 		}
 		out, err := d.AddStaticRoute(ctx, in)
+		return nil, out, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "set_static_route_enabled",
+		Description: "Turn a static (CIDR) routing list on or off, keeping the list itself. The reversible alternative to remove_static_route, " +
+			"which destroys the list and every subnet in it. Takes effect immediately.",
+		Annotations: safeWrite("Enable/disable static route", true),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setRouteEnabledIn) (*mcp.CallToolResult, StaticRoute, error) {
+		if in.RouteID == "" {
+			return nil, StaticRoute{}, fmt.Errorf("routeId is required")
+		}
+		out, err := d.SetStaticRouteEnabled(ctx, in.RouteID, in.Enabled)
 		return nil, out, err
 	})
 
@@ -220,6 +357,22 @@ func registerRoutingTools(s *mcp.Server, d Deps) {
 			return nil, clientRouteOut{}, err
 		}
 		return nil, clientRouteOut{Route: route, Removed: route == nil}, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "set_client_route_enabled",
+		Description: "Switch one device's route off or on without removing it — the device falls back to normal routing while disabled, " +
+			"and the route keeps its tunnel and fallback for when it is switched back. To remove the route entirely, call set_client_route with an empty tunnelId.",
+		Annotations: safeWrite("Enable/disable client route", true),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setClientRouteEnabledIn) (*mcp.CallToolResult, ClientRoute, error) {
+		ip := net.ParseIP(strings.TrimSpace(in.ClientIP))
+		if ip == nil || ip.To4() == nil {
+			return nil, ClientRoute{}, fmt.Errorf("clientIp %q is not a valid IPv4 address", in.ClientIP)
+		}
+		// Canonical spelling only, for the same reason as set_client_route:
+		// Deps matches this against the stored, already-canonical IP.
+		out, err := d.SetClientRouteEnabled(ctx, ip.To4().String(), in.Enabled)
+		return nil, out, err
 	})
 
 	mcp.AddTool(s, &mcp.Tool{

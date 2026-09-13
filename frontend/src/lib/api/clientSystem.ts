@@ -313,8 +313,8 @@ export class SystemClient extends TunnelsClient {
 		return data.keys ?? [];
 	}
 
-	async createMcpKey(name: string): Promise<McpKeyCreated> {
-		return this.request('/mcp/keys/create', { method: 'POST', body: JSON.stringify({ name }) });
+	async createMcpKey(name: string, readOnly = false): Promise<McpKeyCreated> {
+		return this.request('/mcp/keys/create', { method: 'POST', body: JSON.stringify({ name, readOnly }) });
 	}
 
 	async revokeMcpKey(id: string): Promise<void> {

@@ -81,15 +81,16 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 			t.Errorf("tool %s has no output schema", tool.Name)
 		}
 	}
-	// Full 23-tool catalogue across all five register* groups.
+	// Full tool catalogue across all five register* groups.
 	want := []string{
-		"get_system_status", "get_logs", "test_connectivity", "get_monitoring_matrix", "run_pingcheck",
+		"get_system_status", "get_logs", "test_connectivity", "check_ip", "get_monitoring_matrix", "run_pingcheck", "list_connections", "get_pingcheck_logs", "run_diagnostics", "get_diagnostics",
 		"list_tunnels", "get_tunnel", "control_tunnel", "create_tunnel", "replace_tunnel_config", "export_tunnel_config",
-		"list_dns_routes", "add_dns_route", "remove_dns_route",
-		"list_static_routes", "add_static_route", "remove_static_route",
-		"list_client_routes", "set_client_route",
-		"list_access_policies", "list_devices",
-		"list_managed_servers", "control_singbox",
+		"list_dns_routes", "get_dns_route", "add_dns_route", "update_dns_route", "set_dns_route_enabled", "remove_dns_route",
+		"list_static_routes", "add_static_route", "set_static_route_enabled", "remove_static_route",
+		"list_client_routes", "set_client_route", "set_client_route_enabled",
+		"list_access_policies", "list_devices", "explain_route",
+		"list_managed_servers", "list_server_peers", "add_server_peer", "set_server_peer_enabled", "get_server_peer_config", "control_singbox", "list_singbox_tunnels", "singbox_delay_check",
+		"list_singbox_rules", "list_singbox_outbounds", "get_singbox_staging", "set_singbox_rule_outbound", "apply_singbox_staging", "discard_singbox_staging",
 	}
 	for _, n := range want {
 		if byName[n] == nil {

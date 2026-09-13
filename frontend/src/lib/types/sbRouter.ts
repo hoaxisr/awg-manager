@@ -292,6 +292,10 @@ export interface SingboxRouterRule {
 	network?: string;
 	// `udp_timeout` route option carried by the system `route-options` rule.
 	udp_timeout?: string;
+	// Set on rules awg-manager generates itself. The backend rewrites them
+	// on the next reconcile and refuses them in bulk-outbound, so the UI
+	// must not offer them for selection.
+	awgm_managed?: string;
 	// A `logical` rule combines its nested `rules` by `mode`. The backend
 	// stores «пресет ИЛИ свои адреса» in this form (see flattenRouterRule):
 	// sing-box would otherwise AND a rule_set with the rule's own addresses

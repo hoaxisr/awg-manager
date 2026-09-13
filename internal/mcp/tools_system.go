@@ -81,6 +81,19 @@ func registerSystemTools(s *mcp.Server, d Deps) {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name: "check_ip",
+		Description: "Compare the external IP seen through a tunnel with the one seen over the bare WAN. This is the check that answers whether traffic really goes through the tunnel: " +
+			"ipChanged=false means it does NOT, even when test_connectivity succeeds. The tunnel must be running. Takes several seconds and makes outbound requests.",
+		Annotations: readOnly("Check external IP"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in connIn) (*mcp.CallToolResult, IPCheckResult, error) {
+		if err := requireTunnelID(in.TunnelID); err != nil {
+			return nil, IPCheckResult{}, err
+		}
+		out, err := d.CheckIP(ctx, in.TunnelID)
+		return nil, out, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_monitoring_matrix",
 		Description: "Latest latency matrix: every monitored target × every tunnel, with ok/latency per cell.",
 		Annotations: readOnly("Monitoring matrix"),

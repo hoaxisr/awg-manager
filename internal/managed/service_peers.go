@@ -7,9 +7,36 @@ import (
 	"net"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/managed/peerip"
 	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+// ErrInvalidPeerDNS is returned when a peer's DNS is not a plain list of
+// IP addresses. The value is rendered verbatim into the client .conf as
+// "DNS = …", so anything else — a hostname, a second line, a "PostUp ="
+// smuggled after a newline — is a config injection that wg-quick would
+// execute on the user's machine when they import the file.
+var ErrInvalidPeerDNS = errors.New("peer DNS must be a comma-separated list of IP addresses")
+
+// ValidatePeerDNS checks and canonicalises a peer DNS list. Empty is
+// allowed (the server default applies). Each entry must parse as an IP;
+// the result is re-joined with ", " so no original bytes survive.
+func ValidatePeerDNS(dns string) (string, error) {
+	if strings.TrimSpace(dns) == "" {
+		return "", nil
+	}
+	parts := strings.Split(dns, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		ip := net.ParseIP(strings.TrimSpace(p))
+		if ip == nil {
+			return "", fmt.Errorf("%w: %q", ErrInvalidPeerDNS, p)
+		}
+		out = append(out, ip.String())
+	}
+	return strings.Join(out, ", "), nil
+}
 
 // AddPeer adds a new client peer to the managed server identified by id.
 // Returns the created peer (including private key for .conf generation).
@@ -19,10 +46,29 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		return nil, fmt.Errorf("managed server not found: %s", id)
 	}
 
+	// An empty TunnelIP means "allocate": the first free host address in
+	// the server's subnet. The MCP tools rely on this — an address invented
+	// by a model either collides or lands outside the subnet.
+	if strings.TrimSpace(req.TunnelIP) == "" {
+		used := make([]string, 0, len(server.Peers))
+		for _, p := range server.Peers {
+			used = append(used, p.TunnelIP)
+		}
+		req.TunnelIP = peerip.NextFree(server.Address, used)
+		if req.TunnelIP == "" {
+			return nil, peerip.ErrNoFree
+		}
+	}
+
 	// Validate tunnel IP
 	if err := s.validateTunnelIP(server, req.TunnelIP); err != nil {
 		return nil, err
 	}
+	dns, err := ValidatePeerDNS(req.DNS)
+	if err != nil {
+		return nil, err
+	}
+	req.DNS = dns
 
 	// Check tunnel IP not already used
 	for _, p := range server.Peers {
@@ -82,6 +128,15 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		SignatureProfile: sig.Profile,
 	}
 	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
+		// The "already in use" check above ran on a snapshot. Two
+		// concurrent adds without an explicit address both allocate the
+		// same one; re-checking under the store lock is what stops the
+		// second from persisting a duplicate.
+		for _, p := range sv.Peers {
+			if p.TunnelIP == req.TunnelIP {
+				return fmt.Errorf("tunnel IP %s already in use", req.TunnelIP)
+			}
+		}
 		sv.Peers = append(sv.Peers, peer)
 		return nil
 	}); err != nil {
@@ -108,6 +163,11 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 	iface := server.InterfaceName
 
 	// Validate inputs BEFORE touching RCI or storage so we can fail clean.
+	dns, err := ValidatePeerDNS(req.DNS)
+	if err != nil {
+		return err
+	}
+	req.DNS = dns
 	sigProfile := ""
 	if req.Signature != nil {
 		var err error

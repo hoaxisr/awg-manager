@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -15,11 +16,30 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/mcp/localdeps"
 	"github.com/hoaxisr/awg-manager/internal/openapi"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 	sysports "github.com/hoaxisr/awg-manager/internal/sys/ports"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
+
+// singboxOperatorWithDelay joins the operator with the latency prober so
+// together they satisfy localdeps.SingboxOperator.
+type singboxOperatorWithDelay struct {
+	*singbox.Operator
+	delay *singbox.DelayChecker
+}
+
+// CheckDelay probes one proxy. Without a checker wired there is nothing to
+// measure with, and saying so beats reporting every proxy as silent.
+func (s singboxOperatorWithDelay) CheckDelay(ctx context.Context, tag string) (int, error) {
+	if s.delay == nil {
+		return 0, fmt.Errorf("sing-box delay checker is not available on this build")
+	}
+	// Probe, not CheckOne: the checker is shared with the periodic sweep,
+	// and CheckOne answers 0 both for "timed out" and "already probing".
+	return s.delay.Probe(ctx, tag)
+}
 
 // routeHandlers держит handlers, разделяемые секциями registerRoutes.
 // Конструирование и перекрёстная проводка — в buildRouteHandlers; секционные
@@ -1090,6 +1110,11 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.loggingService != nil {
 		logs = s.loggingService
 	}
+	// explain_route sweeps the routing lists for a domain, so it needs the
+	// domain's addresses; the same IPv4-only lookup /routing/resolve does.
+	resolveHost := func(ctx context.Context, host string) ([]string, error) {
+		return (&net.Resolver{}).LookupHost(ctx, host)
+	}
 	var connTester localdeps.ConnectivityTester
 	if s.testingService != nil {
 		connTester = s.testingService
@@ -1098,9 +1123,43 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.monitoringService != nil {
 		mon = s.monitoringService
 	}
+	// Конкретные типы, а не интерфейсы: интерфейс с nil-указателем внутри
+	// сравнение с nil проходит, и первый же вызов уронил бы демон.
+	// Тот же экземпляр службы, что и у HTTP-обработчиков: у второго был бы
+	// свой взгляд на черновик, и «применить» применяло бы не то.
+	var routerForMcp localdeps.SingboxRouter
+	if s.singboxRouterHandler != nil {
+		if svc := s.singboxRouterHandler.Service(); svc != nil {
+			routerForMcp = svc
+		}
+	}
+	var connsForMcp localdeps.ConnectionLister
+	if h.connectionsService != nil {
+		connsForMcp = h.connectionsService
+	}
+	var diagForMcp localdeps.DiagnosticsRunner
+	if h.diagRunner != nil {
+		diagForMcp = h.diagRunner
+	}
+	// Пиры через MCP ведёт служба управляемых серверов: только её серверы
+	// заведены целиком нами, и только у них есть подсеть, из которой можно
+	// выдать адрес.
+	// Конкретный тип, а не интерфейс службы: интерфейс с nil-указателем
+	// внутри сравнение с nil проходит, и первый же вызов уронил бы демон.
+	var managedForMcp localdeps.ManagedServers
+	if s.managedServiceImpl != nil {
+		managedForMcp = s.managedServiceImpl
+	}
 	var singboxOp localdeps.SingboxOperator
 	if s.singboxOp != nil {
-		singboxOp = s.singboxOp
+		// The operator alone cannot probe latency; the delay checker owns
+		// that, and it lives on the sing-box handler. Compose the two so
+		// MCP reuses the running checker instead of starting its own.
+		var delay *singbox.DelayChecker
+		if s.singboxHandler != nil {
+			delay = s.singboxHandler.DelayChecker()
+		}
+		singboxOp = singboxOperatorWithDelay{Operator: s.singboxOp, delay: delay}
 	}
 	var bus localdeps.Publisher
 	if s.bus != nil {
@@ -1129,8 +1188,13 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 		Monitoring:     mon,
 		PingCheck:      s.pingCheckService,
 		ListServers:    h.serverHandler.ListServers,
+		Managed:        managedForMcp,
+		Connections:    connsForMcp,
+		Router:         routerForMcp,
+		Diagnostics:    diagForMcp,
 		Singbox:        singboxOp,
 		SystemInfo:     h.systemHandler.InfoData,
+		Resolve:        resolveHost,
 		Bus:            bus,
 
 		PingCheckSnapshot: pingSnapshot,
@@ -1142,6 +1206,10 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// а не в конструкторе Server: до регистрации маршрутов MCP нет.
 	s.mcpCalls, s.mcpCallsCancel = context.WithCancel(context.Background())
 	mcpServer.AddReceivingMiddleware(mcp.CallDeadline(mcpToolTimeout, s.mcpCalls))
+	// Ключ только для чтения не должен доходить до записи. Проверка стоит
+	// перед обработчиком инструмента: «нельзя» после применения изменения
+	// было бы худшим из исходов.
+	mcpServer.AddReceivingMiddleware(mcp.RequireWriteScope())
 	// Один info-лог на вызов инструмента: имя инструмента + имя ключа
 	// (никогда сам ключ), длительность и исход — спека §8.
 	mcpServer.AddReceivingMiddleware(func(next sdk.MethodHandler) sdk.MethodHandler {
@@ -1165,7 +1233,11 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 			} else if r, ok := res.(*sdk.CallToolResult); ok && r.IsError {
 				outcome = "tool-error"
 			}
-			mcpLog.Info("call", toolName, fmt.Sprintf("key=%s %s %dms", keyName, outcome, time.Since(start).Milliseconds()))
+			scope := ""
+			if k, ok := mcp.KeyFromContext(ctx); ok && k.ReadOnly {
+				scope = " scope=read-only"
+			}
+			mcpLog.Info("call", toolName, fmt.Sprintf("key=%s%s %s %dms", keyName, scope, outcome, time.Since(start).Milliseconds()))
 			return res, err
 		}
 	})
@@ -1177,7 +1249,7 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 		Enabled: s.settings.IsMcpEnabled,
 		Verify: func(tok string) (mcp.KeyInfo, bool) {
 			k, ok := s.mcpKeys.Verify(tok)
-			return mcp.KeyInfo{ID: k.ID, Name: k.Name}, ok
+			return mcp.KeyInfo{ID: k.ID, Name: k.Name, ReadOnly: k.ReadOnly}, ok
 		},
 		Touch:    s.mcpKeys.Touch,
 		Throttle: throttle,
