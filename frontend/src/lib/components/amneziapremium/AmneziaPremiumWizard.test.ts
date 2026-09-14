@@ -10,6 +10,8 @@ const amneziaPremiumForgetKey = vi.fn();
 const amneziaPremiumConfig = vi.fn();
 const amneziaPremiumMirror = vi.fn();
 const amneziaPremiumRevoke = vi.fn();
+const amneziaPremiumDeclaredCountry = vi.fn();
+const amneziaPremiumSaveDeclaredCountry = vi.fn();
 
 vi.mock('$lib/api/client', () => ({
 	api: {
@@ -20,7 +22,9 @@ vi.mock('$lib/api/client', () => ({
 		amneziaPremiumConfig: (...a: unknown[]) => amneziaPremiumConfig(...a),
 		amneziaPremiumMirror: (...a: unknown[]) => amneziaPremiumMirror(...a),
 		amneziaPremiumRevoke: (...a: unknown[]) => amneziaPremiumRevoke(...a),
-		amneziaPremiumSaveMirror: vi.fn()
+		amneziaPremiumSaveMirror: vi.fn(),
+		amneziaPremiumDeclaredCountry: (...a: unknown[]) => amneziaPremiumDeclaredCountry(...a),
+		amneziaPremiumSaveDeclaredCountry: (...a: unknown[]) => amneziaPremiumSaveDeclaredCountry(...a)
 	}
 }));
 
@@ -64,6 +68,11 @@ beforeEach(() => {
 	amneziaPremiumForgetKey.mockResolvedValue(KEY_ABSENT);
 	amneziaPremiumMirror.mockResolvedValue({ mirrorUrl: 'https://mirror-alpha.fixture.test/cp' });
 	amneziaPremiumRevoke.mockResolvedValue({ countryCode: 'fx' });
+	// Страна подключения выбрана заранее: без неё кнопка выдачи заперта, и
+	// каждый тест выдачи начинался бы с одного и того же приседания. Тесты
+	// самого запрета переопределяют это значение.
+	amneziaPremiumDeclaredCountry.mockResolvedValue({ declaredCountryCode: 'ru' });
+	amneziaPremiumSaveDeclaredCountry.mockResolvedValue({ declaredCountryCode: 'ru' });
 });
 
 /**
@@ -553,6 +562,34 @@ describe('AmneziaPremiumWizard', () => {
 		await fireEvent.click(screen.getByText('Fixtureland [P2P]'));
 		await settle();
 		expect(screen.queryByRole('button', { name: 'Отозвать' })).toBeNull();
+	});
+
+	// Портал требует страну подключения в каждой выдаче (P054). Пока её нет,
+	// РАСХОДНАЯ кнопка заперта: иначе пользователь жмёт её и получает отказ,
+	// причина которого спрятана в теле ответа.
+	it('без страны подключения кнопка выдачи заперта', async () => {
+		amneziaPremiumKeyState.mockResolvedValue(KEY_PRESENT);
+		amneziaPremiumDeclaredCountry.mockResolvedValue({ declaredCountryCode: '' });
+
+		render(AmneziaPremiumWizard, { props: { open: true, onclose: vi.fn(), onconfig: vi.fn() } });
+		await settle();
+		await useStoredKey();
+
+		await fireEvent.click(screen.getByText('Fixtureland [P2P]'));
+		await fireEvent.input(screen.getByLabelText('Имя туннеля'), { target: { value: 'awg-fx' } });
+		await settle();
+
+		const issue = screen.getByRole('button', { name: 'Создать туннель' }) as HTMLButtonElement;
+		expect(issue.disabled).toBe(true);
+
+		// Выбор страны подключения отпирает её — и ничего больше не требуется.
+		amneziaPremiumSaveDeclaredCountry.mockResolvedValue({ declaredCountryCode: 'ag' });
+		await fireEvent.click(screen.getByText('Другие страны и регионы'));
+		await settle();
+		expect(amneziaPremiumSaveDeclaredCountry).toHaveBeenCalledWith('ag');
+		expect(
+			(screen.getByRole('button', { name: 'Создать туннель' }) as HTMLButtonElement).disabled
+		).toBe(false);
 	});
 
 	it('выдача по стране, полученной вне AWG-M, спрашивает подтверждение (F-A)', async () => {

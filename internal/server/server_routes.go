@@ -552,6 +552,10 @@ func (s *Server) registerLogsImportRoutes(mux *http.ServeMux, h *routeHandlers) 
 	// Адрес зеркала: действующий (GET) и запись (POST). Живёт здесь, а не в
 	// настройках, — поле принадлежит мастеру premium.
 	mux.HandleFunc("/api/amnezia/premium/mirror", h.guarded(amneziaPremiumHandler.Mirror))
+	// Страна подключения: сохранённая (GET) и запись (POST). Портал требует
+	// её в каждой выдаче конфигурации, и живёт она там же, где зеркало,  —
+	// у мастера premium, а не в общих настройках.
+	mux.HandleFunc("/api/amnezia/premium/declared-country", h.guarded(amneziaPremiumHandler.DeclaredCountry))
 
 	// External tunnels (protected + boot guarded)
 	mux.HandleFunc("/api/external-tunnels", h.guarded(h.externalHandler.List))

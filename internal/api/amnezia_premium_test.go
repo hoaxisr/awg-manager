@@ -119,6 +119,10 @@ type premiumPortal struct {
 	// порядке прихода. Считается именно этот список: «к порталу ушёл ровно
 	// один запрос» проверяется по расходной ручке, а не по входам.
 	configs []string
+	// declared — страны подключения из тех же тел, в том же порядке. Портал
+	// сделал поле обязательным (P054), и стенд обязан видеть, с чем ушёл
+	// расходный запрос.
+	declared []string
 	// configStatus — статус ответа /api/download-config; 0 или 200 — успех.
 	configStatus int
 	// configBody — тело успешного ответа /api/download-config. Пусто —
@@ -244,12 +248,14 @@ func (p *premiumPortal) failNextAccount(code int) {
 func (p *premiumPortal) handleDownloadConfig(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
 	var in struct {
-		CountryCode string `json:"countryCode"`
+		CountryCode         string `json:"countryCode"`
+		DeclaredCountryCode string `json:"declaredCountryCode"`
 	}
 	_ = json.Unmarshal(body, &in)
 
 	p.mu.Lock()
 	p.configs = append(p.configs, in.CountryCode)
+	p.declared = append(p.declared, in.DeclaredCountryCode)
 	status := p.configStatus
 	respBody := p.configBody
 	abort := p.configAbort
@@ -331,6 +337,13 @@ func (p *premiumPortal) holdNextConfig(t *testing.T) *premiumHold {
 	p.configHold = h
 	p.mu.Unlock()
 	return h
+}
+
+// declaredSeen — страны подключения, с которыми приходили на расходную ручку.
+func (p *premiumPortal) declaredSeen() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.declared...)
 }
 
 // configsSeen — коды стран, с которыми приходили на расходную ручку.
@@ -549,7 +562,42 @@ func newPremiumStand(t *testing.T, extraTrust ...*httptest.Server) *premiumStand
 
 	st := &premiumStand{h: h, dir: dir, store: store, portal: portal, mirror: mirror, mirrorHits: mirrorHits, log: log}
 	st.setMirror(t, mirror.URL)
+	// Страна подключения выбрана заранее: без неё выдача не идёт вовсе, и
+	// каждый тест расходной ручки начинался бы с одного и того же приседания.
+	// Тесты самого выбора стирают её явно (см. setDeclaredCountry).
+	st.setDeclaredCountry(t, amneziacp.DeclaredCountryRussia)
 	return st
+}
+
+// setDeclaredCountry кладёт страну подключения в настройки МИМО ручки: тесты
+// выдачи проверяют выдачу, а не запись выбора, и пустое значение сюда кладут
+// намеренно — так проверяется отказ без выбора.
+func (s *premiumStand) setDeclaredCountry(t *testing.T, code string) {
+	t.Helper()
+	if err := s.store.Update(func(cur *storage.Settings) error {
+		cur.AmneziaPremiumDeclaredCountry = code
+		return nil
+	}); err != nil {
+		t.Fatalf("запись страны подключения: %v", err)
+	}
+}
+
+// declaredCountry дёргает ручку страны подключения.
+func (s *premiumStand) declaredCountry(t *testing.T) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.h.DeclaredCountry(rec, httptest.NewRequest(http.MethodGet, "/api/amnezia/premium/declared-country", nil))
+	return rec
+}
+
+// saveDeclaredCountry шлёт тело в ручку страны подключения как есть: тесты
+// присылают в том числе непригодное.
+func (s *premiumStand) saveDeclaredCountry(t *testing.T, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.h.DeclaredCountry(rec, httptest.NewRequest(http.MethodPost,
+		"/api/amnezia/premium/declared-country", strings.NewReader(body)))
+	return rec
 }
 
 func (s *premiumStand) setMirror(t *testing.T, url string) {
@@ -646,6 +694,15 @@ func (s *premiumStand) mirrorPost(t *testing.T, body string) *httptest.ResponseR
 }
 
 // storedMirror — адрес зеркала, как он лежит в сторе.
+func (s *premiumStand) storedDeclaredCountry(t *testing.T) string {
+	t.Helper()
+	snap, err := s.store.Snapshot()
+	if err != nil {
+		t.Fatalf("снимок настроек: %v", err)
+	}
+	return snap.AmneziaPremiumDeclaredCountry
+}
+
 func (s *premiumStand) storedMirror(t *testing.T) string {
 	t.Helper()
 	snap, err := s.store.Snapshot()
@@ -2709,6 +2766,33 @@ func TestAmneziaPremiumMutations_PublishInvalidation(t *testing.T) {
 		}
 		waitEvent(t, ch, events.ResourceAmneziaPremiumMirror, "saved")
 	})
+
+	t.Run("запись страны подключения", func(t *testing.T) {
+		st := newPremiumStand(t)
+		bus := events.NewBus()
+		st.h.SetEventBus(bus)
+		_, ch, unsub := bus.Subscribe()
+		defer unsub()
+
+		// Чужое значение отвергается до всякой записи.
+		if rec := st.saveDeclaredCountry(t, `{"declaredCountryCode":"nl"}`); rec.Code != http.StatusBadRequest {
+			t.Fatalf("чужое значение: %d %s, ждали 400", rec.Code, rec.Body.String())
+		}
+		noEvent(t, ch)
+
+		// Запись не удалась — настройка прежняя, публиковать нечего.
+		repair := st.breakSettingsFile(t)
+		if rec := st.saveDeclaredCountry(t, `{"declaredCountryCode":"ag"}`); rec.Code == http.StatusOK {
+			t.Fatalf("неудавшаяся запись пришла успехом: %s", rec.Body.String())
+		}
+		noEvent(t, ch)
+		repair()
+
+		if rec := st.saveDeclaredCountry(t, `{"declaredCountryCode":"ag"}`); rec.Code != http.StatusOK {
+			t.Fatalf("запись страны подключения: %d %s", rec.Code, rec.Body.String())
+		}
+		waitEvent(t, ch, events.ResourceAmneziaPremiumDeclaredCountry, "saved")
+	})
 }
 
 // Ни один ответ новых ручек не несёт секрета: ни схемы ссылки, ни тела
@@ -2724,6 +2808,12 @@ func TestAmneziaPremiumHandlers_ResponsesCarryNoSecrets(t *testing.T) {
 		{"адрес зеркала (GET)", func(st *premiumStand) *httptest.ResponseRecorder { return st.mirrorGet(t) }},
 		{"адрес зеркала (POST)", func(st *premiumStand) *httptest.ResponseRecorder {
 			return st.mirrorPost(t, `{"mirrorUrl":""}`)
+		}},
+		{"страна подключения (GET)", func(st *premiumStand) *httptest.ResponseRecorder {
+			return st.declaredCountry(t)
+		}},
+		{"страна подключения (POST)", func(st *premiumStand) *httptest.ResponseRecorder {
+			return st.saveDeclaredCountry(t, `{"declaredCountryCode":"ru"}`)
 		}},
 	}
 	for _, tc := range cases {
@@ -3515,6 +3605,8 @@ func TestAmneziaPremiumHandlers_MethodNotAllowed(t *testing.T) {
 			func(st *premiumStand, w http.ResponseWriter, r *http.Request) { st.h.Config(w, r) }},
 		{"зеркало: DELETE", "/api/amnezia/premium/mirror", http.MethodDelete,
 			func(st *premiumStand, w http.ResponseWriter, r *http.Request) { st.h.Mirror(w, r) }},
+		{"страна подключения: DELETE", "/api/amnezia/premium/declared-country", http.MethodDelete,
+			func(st *premiumStand, w http.ResponseWriter, r *http.Request) { st.h.DeclaredCountry(w, r) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3717,4 +3809,115 @@ func TestAmneziaPremiumRevoke_LockReleasedOnFailure(t *testing.T) {
 	if rec := st.revoke(t, "nl"); rec.Code != http.StatusOK {
 		t.Fatalf("повторный отзыв после отказа: %d %s — замок не отпущен", rec.Code, rec.Body.String())
 	}
+}
+
+// Портал сделал страну подключения обязательной в выдаче (P054). Без выбора
+// РАСХОДНАЯ ручка обязана отказать НЕ ходя в портал: запрос всё равно вернул
+// бы 400, а «сходить и получить отказ» — это потраченная попытка и лишний
+// повод пользователю нажать ещё раз.
+func TestAmneziaPremiumConfig_WithoutDeclaredCountryNoPortalCall(t *testing.T) {
+	// Пустое и непригодное хранимое значение — один класс: выдавать
+	// конфигурацию по значению, которого портал не знает, нельзя ни в том, ни
+	// в другом случае.
+	for _, stored := range []string{"", "   ", "nl", "RUS"} {
+		t.Run(fmt.Sprintf("хранимое %q", stored), func(t *testing.T) {
+			st := newPremiumStand(t)
+			st.seedCatalog(t)
+			st.setDeclaredCountry(t, stored)
+
+			rec := st.config(t, "nl")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("code=%d, want 400: %s", rec.Code, rec.Body.String())
+			}
+			if code := premiumErrorCode(t, rec); code != codePremiumNoDeclaredCountry {
+				t.Fatalf("код отказа = %q, want %q", code, codePremiumNoDeclaredCountry)
+			}
+			if got := st.portal.configsSeen(); len(got) != 0 {
+				t.Fatalf("в портал ушло %d расходных запросов (%v), ожидался 0", len(got), got)
+			}
+		})
+	}
+}
+
+// Сохранённый выбор доезжает до портала тем же значением. Проверяется именно
+// «ag»: подстановка «ru» константой прошла бы стенд по умолчанию незамеченной
+// и выдала бы пользователю за границей конфигурацию, собранную не под него.
+func TestAmneziaPremiumConfig_DeclaredCountryReachesPortal(t *testing.T) {
+	st := newPremiumStand(t)
+	st.seedCatalog(t)
+	st.setDeclaredCountry(t, amneziacp.DeclaredCountryOther)
+
+	if rec := st.config(t, "nl"); rec.Code != http.StatusOK {
+		t.Fatalf("выдача: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := st.portal.declaredSeen(); !slices.Equal(got, []string{amneziacp.DeclaredCountryOther}) {
+		t.Fatalf("в портал ушли страны подключения %v, ожидалась одна %q", got, amneziacp.DeclaredCountryOther)
+	}
+}
+
+// Ручка выбора: метод выбирает операцию, значение нормализуется, чужое
+// отвергается, а непригодное хранимое читается как «выбора не было».
+func TestAmneziaPremiumDeclaredCountry_ReadWrite(t *testing.T) {
+	t.Run("метод выбирает операцию", func(t *testing.T) {
+		st := newPremiumStand(t)
+		st.setDeclaredCountry(t, "")
+
+		if rec := st.saveDeclaredCountry(t, `{"declaredCountryCode":"ag"}`); rec.Code != http.StatusOK {
+			t.Fatalf("POST: %d %s", rec.Code, rec.Body.String())
+		}
+		if got := st.storedDeclaredCountry(t); got != amneziacp.DeclaredCountryOther {
+			t.Fatalf("в хранилище %q, want %q", got, amneziacp.DeclaredCountryOther)
+		}
+		var data AmneziaPremiumDeclaredCountryData
+		decodeEnvelope(t, st.declaredCountry(t).Body.Bytes(), &data)
+		if data.DeclaredCountryCode != amneziacp.DeclaredCountryOther {
+			t.Fatalf("GET вернул %q, want %q", data.DeclaredCountryCode, amneziacp.DeclaredCountryOther)
+		}
+	})
+
+	t.Run("значение нормализуется", func(t *testing.T) {
+		st := newPremiumStand(t)
+		if rec := st.saveDeclaredCountry(t, `{"declaredCountryCode":"  RU  "}`); rec.Code != http.StatusOK {
+			t.Fatalf("POST: %d %s", rec.Code, rec.Body.String())
+		}
+		// В хранилище ложится ровно то, что признает выдача: «RU» её геттер
+		// уже не узнает, и выбор молча перестал бы действовать.
+		if got := st.storedDeclaredCountry(t); got != amneziacp.DeclaredCountryRussia {
+			t.Fatalf("в хранилище %q, want %q", got, amneziacp.DeclaredCountryRussia)
+		}
+	})
+
+	t.Run("чужое значение отвергается и хранимое не трогает", func(t *testing.T) {
+		for _, body := range []string{
+			`{"declaredCountryCode":""}`,
+			`{"declaredCountryCode":"nl"}`,
+			`{"declaredCountryCode":"россия"}`,
+			`{}`,
+		} {
+			st := newPremiumStand(t)
+			rec := st.saveDeclaredCountry(t, body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("тело %s: code=%d, want 400: %s", body, rec.Code, rec.Body.String())
+			}
+			if code := premiumErrorCode(t, rec); code != codePremiumNoDeclaredCountry {
+				t.Fatalf("тело %s: код отказа = %q, want %q", body, code, codePremiumNoDeclaredCountry)
+			}
+			// Прежний выбор переживает отказ: иначе опечатка клиента ломала
+			// бы работающую выдачу.
+			if got := st.storedDeclaredCountry(t); got != amneziacp.DeclaredCountryRussia {
+				t.Fatalf("тело %s: хранимое стало %q", body, got)
+			}
+		}
+	})
+
+	t.Run("непригодное хранимое читается как отсутствие выбора", func(t *testing.T) {
+		st := newPremiumStand(t)
+		st.setDeclaredCountry(t, "nl")
+
+		var data AmneziaPremiumDeclaredCountryData
+		decodeEnvelope(t, st.declaredCountry(t).Body.Bytes(), &data)
+		if data.DeclaredCountryCode != "" {
+			t.Fatalf("GET вернул %q, ожидалось пустое", data.DeclaredCountryCode)
+		}
+	})
 }

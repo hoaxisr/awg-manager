@@ -18,7 +18,8 @@
 //   row matches diagnostics UI (same as a real router).
 // - Amnezia Premium: GET/POST/DELETE /amnezia/premium/key, GET /amnezia/premium/catalog,
 //   POST /amnezia/premium/config, POST /amnezia/premium/revoke,
-//   GET/POST /amnezia/premium/mirror (paths without /api — Vite rewrite).
+//   GET/POST /amnezia/premium/mirror, GET/POST /amnezia/premium/declared-country
+//   (paths without /api — Vite rewrite).
 //   Ключ подписки
 //   живёт в памяти мока, как на роутере: браузер его обратно не получает.
 // - Diagnostics «Окружение: GET /dns-check/client (Test-Phone @ 192.168.1.42,
@@ -4440,6 +4441,7 @@ const DOWNLOAD_FAULT_ROUTES = [
 	{ method: 'POST', path: '/amnezia/premium/config', style: 'envelope', code: 'AMNEZIA_PREMIUM_OUTCOME_UNKNOWN' },
 	{ method: 'POST', path: '/amnezia/premium/revoke', style: 'envelope', code: 'AMNEZIA_PREMIUM_UNAVAILABLE' },
 	{ method: 'GET', path: '/amnezia/premium/mirror', style: 'envelope', code: 'AMNEZIA_PREMIUM_MIRROR_UNAVAILABLE' },
+	{ method: 'GET', path: '/amnezia/premium/declared-country', style: 'envelope', code: 'AMNEZIA_PREMIUM_UNAVAILABLE' },
 	{ method: 'POST', path: '/singbox/install', style: 'envelope', code: 'SINGBOX_INSTALL_ERROR' },
 	{ method: 'POST', path: '/singbox/update', style: 'envelope', code: 'SINGBOX_UPDATE_ERROR' },
 	// NB: /download/outbounds is route *discovery*, not a download — never fault
@@ -4986,6 +4988,11 @@ const mockPremiumKey = { stored: false, usable: false, session: false };
 // страницу → адрес на месте» проверить было нечем (F278).
 const MOCK_AMNEZIA_MIRROR_DEFAULT = 'https://storage.googleapis.com/amnezia/cp?m-path=/ru';
 let mockPremiumMirrorStored = '';
+// Страна подключения: пусто = выбора не было, как на чистом роутере. Портал
+// требует её в каждой выдаче, поэтому мок обязан отказывать так же — иначе
+// dev-режим показывал бы путь, которого в бою нет.
+let mockPremiumDeclaredCountry = '';
+const MOCK_PREMIUM_DECLARED_COUNTRIES = ['ru', 'ag'];
 
 /** Действующий адрес: пустое и непригодное хранимое означают дефолт. */
 function mockPremiumMirrorEffective() {
@@ -5520,6 +5527,14 @@ const server = http.createServer(async (req, res) => {
 				});
 				return;
 			}
+			if (!mockPremiumDeclaredCountry) {
+				send(res, 400, {
+					error: true,
+					message: 'Не выбрана страна, из которой вы подключаетесь',
+					code: 'AMNEZIA_PREMIUM_NO_DECLARED_COUNTRY',
+				});
+				return;
+			}
 			// Выданное запоминается: без этого метка «конфиг уже выдавался» и
 			// кнопка отзыва в dev-режиме не проверяются — список выданных
 			// оставался бы фикстурой, не реагирующей на действия.
@@ -5532,6 +5547,39 @@ const server = http.createServer(async (req, res) => {
 			});
 			console.log(`[mock-proxy] amnezia/premium/config ${countryCode}`);
 			sendData(res, { countryCode, config: buildMockAmneziaPremiumConf(countryCode) });
+		});
+		return;
+	}
+
+	if (path === '/amnezia/premium/declared-country') {
+		if (req.method === 'GET') {
+			sendData(res, { declaredCountryCode: mockPremiumDeclaredCountry });
+			return;
+		}
+		if (req.method !== 'POST') {
+			send(res, 405, { error: true, message: 'method not allowed', code: 'METHOD_NOT_ALLOWED' });
+			return;
+		}
+		readRequestText(req).then((raw) => {
+			let payload;
+			try {
+				payload = JSON.parse(raw || '{}');
+			} catch {
+				send(res, 400, { error: true, message: 'invalid JSON', code: 'INVALID_JSON' });
+				return;
+			}
+			const code = String(payload.declaredCountryCode ?? '').trim().toLowerCase();
+			if (!MOCK_PREMIUM_DECLARED_COUNTRIES.includes(code)) {
+				send(res, 400, {
+					error: true,
+					message: 'Страна подключения должна быть "ru" (Россия) или "ag" (другие страны и регионы)',
+					code: 'AMNEZIA_PREMIUM_NO_DECLARED_COUNTRY',
+				});
+				return;
+			}
+			mockPremiumDeclaredCountry = code;
+			console.log(`[mock-proxy] amnezia/premium/declared-country: ${code}`);
+			sendData(res, { declaredCountryCode: code });
 		});
 		return;
 	}

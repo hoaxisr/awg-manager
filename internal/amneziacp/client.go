@@ -271,18 +271,49 @@ func (c *Client) AccountInfo(ctx context.Context) (json.RawMessage, error) {
 	return scrubAccountInfo(body)
 }
 
+// DeclaredCountryRussia и DeclaredCountryOther — два значения страны
+// подключения, которые принимает портал; третьего у него нет. Это НЕ страна
+// сервера: портал спрашивает, ИЗ КАКОЙ страны клиент будет подключаться, и
+// обещает по ней «конфигурацию с подходящими настройками».
+const (
+	DeclaredCountryRussia = "ru"
+	DeclaredCountryOther  = "ag"
+)
+
+// ValidDeclaredCountry сообщает, годится ли значение как страна подключения.
+// Список закрытый и живёт здесь, а не у вызывающего: словарь портала — дело
+// клиента портала, и незнакомое значение обязано останавливаться у нас, а не
+// уезжать в расходную ручку за отказом.
+func ValidDeclaredCountry(code string) bool {
+	return code == DeclaredCountryRussia || code == DeclaredCountryOther
+}
+
 // CountryConfig выдаёт .conf выбранной страны. Операция расходная — тратит
 // слот устройств подписки, — поэтому сериализовать её вызовы обязан
 // вызывающий: клиент про параллельные запросы пользователя не знает.
 //
+// declaredCountry — страна, ИЗ которой пользователь будет подключаться
+// (см. DeclaredCountryRussia). Портал сделал поле обязательным: без него
+// ручка отвечает 400 (P054, проверено живой пробой 14.09.2026). Непригодное
+// значение — отказ ДО похода в сеть: расходная ручка всё равно ответит
+// отказом, а тратить на это попытку незачем.
+//
 // Пустой код страны — ошибка вызывающего: он валидирует ввод до вызова,
 // отдельного сентинела под это нет.
-func (c *Client) CountryConfig(ctx context.Context, countryCode string) (string, error) {
+func (c *Client) CountryConfig(ctx context.Context, countryCode, declaredCountry string) (string, error) {
 	code := strings.ToLower(strings.TrimSpace(countryCode))
 	if code == "" {
 		return "", errors.New("amneziacp: код страны пуст")
 	}
-	payload, err := json.Marshal(map[string]string{"countryCode": code})
+	declared := strings.ToLower(strings.TrimSpace(declaredCountry))
+	if !ValidDeclaredCountry(declared) {
+		return "", fmt.Errorf("amneziacp: страна подключения %q не из списка портала (%s, %s)",
+			declaredCountry, DeclaredCountryRussia, DeclaredCountryOther)
+	}
+	payload, err := json.Marshal(map[string]string{
+		"countryCode":         code,
+		"declaredCountryCode": declared,
+	})
 	if err != nil {
 		return "", fmt.Errorf("%w: тело запроса конфига: %w", ErrServiceUnavailable, err)
 	}

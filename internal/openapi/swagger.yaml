@@ -389,6 +389,26 @@ definitions:
           type: string
         type: array
     type: object
+  api.AmneziaPremiumDeclaredCountryData:
+    properties:
+      declaredCountryCode:
+        example: ru
+        type: string
+    type: object
+  api.AmneziaPremiumDeclaredCountryRequest:
+    properties:
+      declaredCountryCode:
+        example: ru
+        type: string
+    type: object
+  api.AmneziaPremiumDeclaredCountryResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.AmneziaPremiumDeclaredCountryData'
+      success:
+        example: true
+        type: boolean
+    type: object
   api.AmneziaPremiumIssuedConfig:
     properties:
       countryCode:
@@ -9094,6 +9114,63 @@ paths:
       security:
       - CookieAuth: []
       summary: Получить конфигурацию страны Amnezia Premium
+      tags:
+      - amnezia-premium
+  /amnezia/premium/declared-country:
+    get:
+      description: 'Страна, ИЗ которой пользователь подключается: портал требует её
+        в каждой выдаче конфигурации. Пустое значение — выбора ещё не было (непригодное
+        хранимое значение отдаётся так же).'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumDeclaredCountryResponse'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Сохранённая страна подключения Amnezia
+      tags:
+      - amnezia-premium
+    post:
+      consumes:
+      - application/json
+      description: 'Допустимы только два значения портала: ru (Россия) и ag (другие
+        страны и регионы). Пустое и любое иное — отказ.'
+      parameters:
+      - description: 'Страна подключения: ru или ag'
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AmneziaPremiumDeclaredCountryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AmneziaPremiumDeclaredCountryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Задать страну подключения Amnezia
       tags:
       - amnezia-premium
   /amnezia/premium/key:

@@ -4,6 +4,7 @@ import type {
 	AWGTunnel,
 	AmneziaPremiumCatalog,
 	AmneziaPremiumConfig,
+	AmneziaPremiumDeclaredCountry,
 	AmneziaPremiumKeyState,
 	AmneziaPremiumMirror,
 	AmneziaPremiumRevoke,
@@ -312,6 +313,24 @@ export class TunnelsClient extends CoreClient {
 	/** Действующий адрес зеркала Amnezia (не хранимый: пустое хранимое = адрес по умолчанию). */
 	async amneziaPremiumMirror(): Promise<AmneziaPremiumMirror> {
 		return this.request('/amnezia/premium/mirror');
+	}
+
+	/** Сохранённая страна подключения; пустая строка — выбора ещё не было. */
+	async amneziaPremiumDeclaredCountry(): Promise<AmneziaPremiumDeclaredCountry> {
+		return this.request('/amnezia/premium/declared-country');
+	}
+
+	/**
+	 * Записывает страну подключения. Портал знает ровно два значения: 'ru' и
+	 * 'ag'; всё прочее бэкенд отвергает, не ходя в портал.
+	 */
+	async amneziaPremiumSaveDeclaredCountry(
+		declaredCountryCode: string
+	): Promise<AmneziaPremiumDeclaredCountry> {
+		return this.request('/amnezia/premium/declared-country', {
+			method: 'POST',
+			body: JSON.stringify({ declaredCountryCode })
+		});
 	}
 
 	/** Записывает адрес зеркала; пустое значение возвращает зеркало по умолчанию. */

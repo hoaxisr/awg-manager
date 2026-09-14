@@ -191,15 +191,16 @@ type fakeCP struct {
 	configs  atomic.Int64
 	revokes  atomic.Int64
 
-	mu          sync.Mutex
-	seenSid     []string // cookie сессии в каждом запросе под сессией
-	seenOrigin  []string // заголовок Origin
-	seenReferer []string
-	seenUA      []string // User-Agent
-	seenType    []string // Content-Type
-	seenKeys    []string // ключи из тел /api/login
-	seenCountry []string // коды стран из тел /api/download-config
-	seenRevoke  []string // коды стран из тел /api/revoke-country-config
+	mu           sync.Mutex
+	seenSid      []string // cookie сессии в каждом запросе под сессией
+	seenOrigin   []string // заголовок Origin
+	seenReferer  []string
+	seenUA       []string // User-Agent
+	seenType     []string // Content-Type
+	seenKeys     []string // ключи из тел /api/login
+	seenCountry  []string // коды стран из тел /api/download-config
+	seenDeclared []string // страны подключения из тел /api/download-config
+	seenRevoke   []string // коды стран из тел /api/revoke-country-config
 }
 
 func newFakeCP(t *testing.T) *fakeCP { return newTaggedCP(t, "a") }
@@ -276,11 +277,13 @@ func (f *fakeCP) handle(w http.ResponseWriter, r *http.Request) {
 		f.recordSid(r)
 		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
 		var payload struct {
-			CountryCode string `json:"countryCode"`
+			CountryCode         string `json:"countryCode"`
+			DeclaredCountryCode string `json:"declaredCountryCode"`
 		}
 		_ = json.Unmarshal(body, &payload)
 		f.mu.Lock()
 		f.seenCountry = append(f.seenCountry, payload.CountryCode)
+		f.seenDeclared = append(f.seenDeclared, payload.DeclaredCountryCode)
 		f.mu.Unlock()
 		if f.configHold != nil {
 			f.configHold(n, r)
@@ -381,6 +384,14 @@ func (f *fakeCP) countries() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.seenCountry...)
+}
+
+// declared — страны подключения из тел /api/download-config. Портал сделал
+// поле обязательным (P054), и стенд обязан видеть его наравне с кодом страны.
+func (f *fakeCP) declared() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.seenDeclared...)
 }
 
 // respondStatus отвечает по сценарию теста. 3xx — с Location, как
@@ -782,7 +793,7 @@ func TestClientCountryConfigExtraction(t *testing.T) {
 			cp.configBody = tc.body
 			c, _, _ := newTestClient(t, cp)
 
-			got, err := c.CountryConfig(context.Background(), "NL")
+			got, err := c.CountryConfig(context.Background(), "NL", DeclaredCountryRussia)
 			if err != nil {
 				t.Fatalf("конфиг страны: %v", err)
 			}
@@ -814,7 +825,7 @@ func TestClientCountryConfigExtraction(t *testing.T) {
 		c, _, _ := newTestClient(t, cp)
 
 		for i := range 12 {
-			got, err := c.CountryConfig(context.Background(), "nl")
+			got, err := c.CountryConfig(context.Background(), "nl", DeclaredCountryRussia)
 			if err != nil {
 				t.Fatalf("вызов %d: %v", i, err)
 			}
@@ -851,7 +862,7 @@ func TestClientCountryConfigExtraction(t *testing.T) {
 				cp.configBody = tc.body
 				c, _, _ := newTestClient(t, cp)
 
-				got, err := c.CountryConfig(context.Background(), "nl")
+				got, err := c.CountryConfig(context.Background(), "nl", DeclaredCountryRussia)
 				if err == nil {
 					t.Fatalf("ответ без конфигурации обязан быть ошибкой, получено %q", got)
 				}
@@ -876,11 +887,52 @@ func TestClientCountryConfigExtraction(t *testing.T) {
 		cp := newFakeCP(t)
 		c, _, _ := newTestClient(t, cp)
 
-		if _, err := c.CountryConfig(context.Background(), "  NL  "); err != nil {
+		if _, err := c.CountryConfig(context.Background(), "  NL  ", "  RU  "); err != nil {
 			t.Fatalf("конфиг страны: %v", err)
 		}
 		if got := cp.countries(); len(got) != 1 || got[0] != "nl" {
 			t.Fatalf("в портал ушли коды стран %v, ожидался один нормализованный %q", got, "nl")
+		}
+		// Страна подключения нормализуется наравне с кодом страны: портал
+		// знает её в нижнем регистре, и «RU» он не признает.
+		if got := cp.declared(); len(got) != 1 || got[0] != DeclaredCountryRussia {
+			t.Fatalf("в портал ушли страны подключения %v, ожидалась одна %q", got, DeclaredCountryRussia)
+		}
+	})
+
+	// Портал сделал страну подключения обязательной (P054): без неё
+	// download-config отвечает 400. Отказ обязан случаться ДО сети — иначе
+	// расходная ручка тратит попытку на заведомо безрезультатный запрос.
+	t.Run("страна подключения вне словаря портала — отказ без запроса", func(t *testing.T) {
+		for _, declared := range []string{"", "   ", "nl", "russia", "RU-77"} {
+			cp := newFakeCP(t)
+			c, _, _ := newTestClient(t, cp)
+
+			got, err := c.CountryConfig(context.Background(), "nl", declared)
+			if err == nil {
+				t.Fatalf("страна подключения %q принята, конфиг %q", declared, got)
+			}
+			if got != "" {
+				t.Fatalf("при отказе конфиг обязан быть пустым, получено %q", got)
+			}
+			if n := cp.hits(); n != 0 {
+				t.Fatalf("страна подключения %q: в портал ушло %d запросов, ожидался 0", declared, n)
+			}
+		}
+	})
+
+	// Второе допустимое значение обязано доезжать до портала как есть:
+	// схлопнуть его в «ru» значило бы выдавать пользователю за границей
+	// конфигурацию, собранную не под него.
+	t.Run("другие страны и регионы уходят в портал своим значением", func(t *testing.T) {
+		cp := newFakeCP(t)
+		c, _, _ := newTestClient(t, cp)
+
+		if _, err := c.CountryConfig(context.Background(), "nl", DeclaredCountryOther); err != nil {
+			t.Fatalf("конфиг страны: %v", err)
+		}
+		if got := cp.declared(); len(got) != 1 || got[0] != DeclaredCountryOther {
+			t.Fatalf("в портал ушли страны подключения %v, ожидалась одна %q", got, DeclaredCountryOther)
 		}
 	})
 }
@@ -1100,7 +1152,7 @@ func TestClientStopsReadingAtLimit(t *testing.T) {
 	rec := &logRecorder{}
 	c := NewClient(client, func() string { return stubMirrorURL }, func() string { return fixtureKey }, rec.log)
 
-	got, err := c.CountryConfig(context.Background(), "nl")
+	got, err := c.CountryConfig(context.Background(), "nl", DeclaredCountryRussia)
 	if err == nil {
 		t.Fatalf("тело в %d байт обязано быть отвергнуто, получено %d байт конфигурации", len(body), len(got))
 	}
@@ -1162,7 +1214,7 @@ func TestClientRejectsEmptyKeyWithoutNetwork(t *testing.T) {
 	if got, err := c.AccountInfo(ctx); !errors.Is(err, ErrNoKey) {
 		t.Fatalf("account-info при пустом ключе: %v (%s)", err, got)
 	}
-	if got, err := c.CountryConfig(ctx, "nl"); !errors.Is(err, ErrNoKey) {
+	if got, err := c.CountryConfig(ctx, "nl", DeclaredCountryRussia); !errors.Is(err, ErrNoKey) {
 		t.Fatalf("конфиг страны при пустом ключе: %v (%q)", err, got)
 	}
 	if err := c.CheckKey(ctx, "  ", defaultRemember); !errors.Is(err, ErrNoKey) {
@@ -1769,7 +1821,7 @@ func TestClientCountryConfigRefusesSubscriptionKeyEcho(t *testing.T) {
 			cp.configBody = tc.body
 			c, _, _ := newTestClientWithKey(t, cp, func() string { return keyLink })
 
-			got, err := c.CountryConfig(context.Background(), "nl")
+			got, err := c.CountryConfig(context.Background(), "nl", DeclaredCountryRussia)
 			if err == nil {
 				t.Fatalf("эхо ключа обязано быть отказом, получено %q", got)
 			}
@@ -1820,7 +1872,7 @@ func TestClientCountryConfigRefusesSubscriptionKeyEchoInAnyEncoding(t *testing.T
 			cp.configBody = `{"data":{"config":` + mustJSONString(t, form.link) + `}}`
 			c, _, _ := newTestClientWithKey(t, cp, func() string { return keyLink })
 
-			got, err := c.CountryConfig(context.Background(), "nl")
+			got, err := c.CountryConfig(context.Background(), "nl", DeclaredCountryRussia)
 			if err == nil {
 				t.Fatalf("эхо ключа обязано быть отказом, получено %q", got)
 			}
@@ -1853,7 +1905,7 @@ func TestClientConfigNetworkFailureBeforeSendStaysRepeatable(t *testing.T) {
 	// Хост умер с прогретой сессией: запрос до портала не доедет вовсе.
 	cp.srv.Close()
 
-	got, err := c.CountryConfig(ctx, "nl")
+	got, err := c.CountryConfig(ctx, "nl", DeclaredCountryRussia)
 	if err == nil {
 		t.Fatalf("мёртвый хост обязан быть отказом, получено %q", got)
 	}
@@ -1886,7 +1938,7 @@ func TestClientConfigCancelledInFlightIsNotRetryable(t *testing.T) {
 		t.Fatalf("прогрев сессии: %v", err)
 	}
 
-	got, err := c.CountryConfig(ctx, "nl")
+	got, err := c.CountryConfig(ctx, "nl", DeclaredCountryRussia)
 	if err == nil {
 		t.Fatalf("отменённый в полёте запрос обязан быть отказом, получено %q", got)
 	}
@@ -1912,7 +1964,7 @@ func TestClientConfigTruncatedBodyIsNotRetryable(t *testing.T) {
 	cp.configTruncate = true
 	c, _, _ := newTestClient(t, cp)
 
-	got, err := c.CountryConfig(context.Background(), "nl")
+	got, err := c.CountryConfig(context.Background(), "nl", DeclaredCountryRussia)
 	if err == nil {
 		t.Fatalf("оборванное тело обязано быть отказом, получено %q", got)
 	}
@@ -2033,7 +2085,7 @@ func TestClientDoesNotRetryConfigDownload(t *testing.T) {
 		t.Fatalf("резолвов зеркала после прогрева %d, ожидался 1", n)
 	}
 
-	got, err := c.CountryConfig(ctx, "nl")
+	got, err := c.CountryConfig(ctx, "nl", DeclaredCountryRussia)
 	if err == nil {
 		t.Fatalf("оборванный ответ обязан быть отказом, получено %q", got)
 	}
@@ -2076,7 +2128,7 @@ func TestClientRelogsInOnConfigAuthFailure(t *testing.T) {
 		t.Fatalf("прогрев сессии: %v", err)
 	}
 
-	got, err := c.CountryConfig(ctx, "nl")
+	got, err := c.CountryConfig(ctx, "nl", DeclaredCountryRussia)
 	if err != nil {
 		t.Fatalf("конфиг страны после ре-логина: %v", err)
 	}
@@ -2159,7 +2211,7 @@ func TestClientDoesNotRetryConfigRedirect(t *testing.T) {
 				t.Fatalf("прогрев сессии: %v", err)
 			}
 
-			got, err := c.CountryConfig(ctx, "nl")
+			got, err := c.CountryConfig(ctx, "nl", DeclaredCountryRussia)
 			if err == nil {
 				t.Fatalf("перенаправление обязано быть отказом, получено %q", got)
 			}
@@ -2386,7 +2438,7 @@ func TestClientSendsBrowserRequestShape(t *testing.T) {
 	cp := newFakeCP(t)
 	c, _, _ := newTestClient(t, cp)
 
-	if _, err := c.CountryConfig(context.Background(), "nl"); err != nil {
+	if _, err := c.CountryConfig(context.Background(), "nl", DeclaredCountryRussia); err != nil {
 		t.Fatalf("конфиг страны: %v", err)
 	}
 
@@ -2501,7 +2553,7 @@ func TestClientCountryConfigStillDoesNotRetryAfterLostResponse(t *testing.T) {
 	cp.configAbort = true
 	c, _, _ := newTestClient(t, cp)
 
-	if _, err := c.CountryConfig(context.Background(), "nl"); err == nil {
+	if _, err := c.CountryConfig(context.Background(), "nl", DeclaredCountryRussia); err == nil {
 		t.Fatal("оборванная выдача обязана быть ошибкой")
 	}
 	if n := cp.configs.Load(); n != 1 {
@@ -2596,7 +2648,7 @@ func TestClientRetriesMirrorResolveEvenForNonRepeatableRequest(t *testing.T) {
 		func() string { return fixtureKey }, rec.log)
 
 	// CountryConfig — РАСХОДНАЯ ручка, её повтор запрещён.
-	if _, err := c.CountryConfig(context.Background(), "nl"); err != nil {
+	if _, err := c.CountryConfig(context.Background(), "nl", DeclaredCountryRussia); err != nil {
 		t.Fatalf("икота зеркала уронила расходный вызов: %v", err)
 	}
 	if n := mirrorHits.Load(); n != 2 {

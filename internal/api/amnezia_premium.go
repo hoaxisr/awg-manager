@@ -30,6 +30,11 @@ const (
 	codePremiumNoCountry          = "AMNEZIA_PREMIUM_NO_COUNTRY"
 	codePremiumBadCountry         = "AMNEZIA_PREMIUM_BAD_COUNTRY"
 	codePremiumConfigBusy         = "AMNEZIA_PREMIUM_CONFIG_BUSY"
+	// codePremiumNoDeclaredCountry — страна подключения не выбрана. Свой код,
+	// а не codePremiumNoCountry: та зовёт выбрать страну СЕРВЕРА в списке, а
+	// здесь не хватает страны, ИЗ которой пользователь подключается, и
+	// чинится это другим полем мастера.
+	codePremiumNoDeclaredCountry = "AMNEZIA_PREMIUM_NO_DECLARED_COUNTRY"
 	// codePremiumForbidden — портал ответил 403: операцию он запретил. Свой
 	// код, а не codePremiumKeyRejected: «ключ отклонён» зовёт человека ввести
 	// другой ключ, а самое вероятное живое значение 403 — исчерпанный лимит
@@ -245,6 +250,24 @@ func (h *AmneziaPremiumHandler) mirrorURL() string {
 		return storage.EffectiveAmneziaMirrorURL("")
 	}
 	return storage.EffectiveAmneziaMirrorURL(cur.AmneziaPremiumMirrorURL)
+}
+
+// declaredCountry — хранимая страна подключения. Пусто означает «выбора ещё
+// не было»: непригодное хранимое значение (ручная правка settings.json,
+// откат версии) схлопывается в него же, потому что выдавать конфигурацию по
+// значению, которого портал не знает, всё равно нельзя. Ошибка чтения
+// настроек даёт то же пустое — мастер спросит заново, а расходный запрос в
+// портал по неизвестному значению не уйдёт.
+func (h *AmneziaPremiumHandler) declaredCountry() string {
+	cur, err := h.settings.Get()
+	if err != nil {
+		return ""
+	}
+	v := strings.ToLower(strings.TrimSpace(cur.AmneziaPremiumDeclaredCountry))
+	if !amneziacp.ValidDeclaredCountry(v) {
+		return ""
+	}
+	return v
 }
 
 // subscriptionKey — ключ для клиента CP: сперва сессионный, иначе
@@ -939,6 +962,18 @@ func (h *AmneziaPremiumHandler) Config(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("Код страны длиннее %d байт", maxCountryCodeLen), codePremiumBadCountry)
 		return
 	}
+	// Страна подключения проверяется ДО замка и до похода в портал: портал
+	// требует её в каждой выдаче и без неё отвечает 400 (P054), то есть
+	// запрос заведомо безрезультатен. Хранимое значение — единственный
+	// источник: пишет его своя ручка, она же сверяет со словарём портала.
+	declared := h.declaredCountry()
+	if declared == "" {
+		h.log.Info(logActionPremium, "country-config",
+			fmt.Sprintf("route=direct country=%q страна подключения не выбрана — отказ", code))
+		response.ErrorWithStatus(w, http.StatusBadRequest,
+			"Не выбрана страна, из которой вы подключаетесь", codePremiumNoDeclaredCountry)
+		return
+	}
 	if !h.beginCountryConfig(code) {
 		// Отказ, а не ожидание: ждущий запрос всё равно кончился бы вторым
 		// походом в портал либо ответом, которого пользователь уже не ждёт.
@@ -953,13 +988,13 @@ func (h *AmneziaPremiumHandler) Config(w http.ResponseWriter, r *http.Request) {
 	// быть отпущен — иначе страна остаётся занятой до перезапуска демона).
 	defer h.endCountryConfig(code)
 
-	conf, err := h.client().CountryConfig(r.Context(), code)
+	conf, err := h.client().CountryConfig(r.Context(), code, declared)
 	if err != nil {
 		h.failCP(w, "country-config", err)
 		return
 	}
 	h.log.Info(logActionPremium, "country-config",
-		fmt.Sprintf("route=direct country=%q конфигурация выдана", code))
+		fmt.Sprintf("route=direct country=%q declared=%q конфигурация выдана", code, declared))
 	// Публикуется ПОСЛЕ успеха портала: операция расходная, и подсказка
 	// «перечитай каталог» на отказе звала бы перечитывать то, что не менялось.
 	// Счётчик устройств и список выданных конфигураций у портала выдачей
@@ -1081,6 +1116,117 @@ func (h *AmneziaPremiumHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	// показывать отозванную страну занятой.
 	h.bus.PublishInvalidated(events.ResourceAmneziaPremiumCatalog, "config-revoked")
 	response.Success(w, AmneziaPremiumRevokeData{CountryCode: code})
+}
+
+// AmneziaPremiumDeclaredCountryRequest — тело POST /amnezia/premium/declared-country.
+//
+// Пустое значение — отказ, а не «сбросить выбор»: единственный потребитель
+// поля — расходная выдача конфигурации, и молчаливый сброс превратил бы
+// опечатку клиента в неработающую кнопку без объяснения.
+type AmneziaPremiumDeclaredCountryRequest struct {
+	DeclaredCountryCode string `json:"declaredCountryCode" example:"ru"`
+}
+
+// AmneziaPremiumDeclaredCountryData — ХРАНИМЫЙ выбор страны подключения.
+//
+// Пусто = выбора ещё не было; своего умолчания у нас нет сознательно. Портал
+// предупреждает, что по неверной стране подключения VPN может не заработать,
+// — подставить за пользователя «Россия» значило бы угадать за него и молча
+// выдать конфигурацию, собранную не под него.
+type AmneziaPremiumDeclaredCountryData struct {
+	DeclaredCountryCode string `json:"declaredCountryCode" example:"ru"`
+}
+
+// AmneziaPremiumDeclaredCountryResponse — конверт обоих методов
+// /amnezia/premium/declared-country.
+type AmneziaPremiumDeclaredCountryResponse struct {
+	Success bool                              `json:"success" example:"true"`
+	Data    AmneziaPremiumDeclaredCountryData `json:"data"`
+}
+
+// DeclaredCountry — точка входа ручки страны подключения: метод выбирает
+// операцию, как у Key и Mirror.
+func (h *AmneziaPremiumHandler) DeclaredCountry(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.DeclaredCountryStatus(w, r)
+	case http.MethodPost:
+		h.SaveDeclaredCountry(w, r)
+	default:
+		response.MethodNotAllowed(w)
+	}
+}
+
+// DeclaredCountryStatus отдаёт сохранённый выбор.
+//
+//	@Summary		Сохранённая страна подключения Amnezia
+//	@Description	Страна, ИЗ которой пользователь подключается: портал требует её в каждой выдаче конфигурации. Пустое значение — выбора ещё не было (непригодное хранимое значение отдаётся так же).
+//	@Tags			amnezia-premium
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	AmneziaPremiumDeclaredCountryResponse
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Router			/amnezia/premium/declared-country [get]
+func (h *AmneziaPremiumHandler) DeclaredCountryStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	// Тот же геттер, которым страну берёт выдача: два понимания «выбранной
+	// страны» разошлись бы молча, и мастер показывал бы выбор, с которым
+	// выдача отказывает.
+	response.Success(w, AmneziaPremiumDeclaredCountryData{DeclaredCountryCode: h.declaredCountry()})
+}
+
+// SaveDeclaredCountry записывает страну подключения.
+//
+// Значение сверяется со словарём портала ЗДЕСЬ, потому что ручка —
+// единственный писатель поля: через /settings/update его нет вовсе
+// (nonPatchableSettings). Чужое значение доехало бы иначе до расходной ручки
+// и вернулось оттуда отказом портала.
+//
+//	@Summary		Задать страну подключения Amnezia
+//	@Description	Допустимы только два значения портала: ru (Россия) и ag (другие страны и регионы). Пустое и любое иное — отказ.
+//	@Tags			amnezia-premium
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		AmneziaPremiumDeclaredCountryRequest	true	"Страна подключения: ru или ag"
+//	@Success		200		{object}	AmneziaPremiumDeclaredCountryResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		405		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/amnezia/premium/declared-country [post]
+func (h *AmneziaPremiumHandler) SaveDeclaredCountry(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[AmneziaPremiumDeclaredCountryRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	// Нормализация та же, что применит клиент портала: иначе «RU» осело бы в
+	// settings.json в виде, которого геттер выдачи уже не признает.
+	code := strings.ToLower(strings.TrimSpace(req.DeclaredCountryCode))
+	if !amneziacp.ValidDeclaredCountry(code) {
+		response.ErrorWithStatus(w, http.StatusBadRequest,
+			fmt.Sprintf("Страна подключения должна быть %q (Россия) или %q (другие страны и регионы)",
+				amneziacp.DeclaredCountryRussia, amneziacp.DeclaredCountryOther),
+			codePremiumNoDeclaredCountry)
+		return
+	}
+
+	if err := h.settings.Update(func(cur *storage.Settings) error {
+		cur.AmneziaPremiumDeclaredCountry = code
+		return nil
+	}); err != nil {
+		h.log.Warn(logActionPremium, "declared-country", "route=direct записать страну подключения не удалось: "+err.Error())
+		response.ErrorWithStatus(w, http.StatusInternalServerError,
+			"Не удалось сохранить страну подключения", codePremiumSettingsError)
+		return
+	}
+	h.log.Info(logActionPremium, "declared-country", "route=direct страна подключения: "+code)
+	// Публикуется ПОСЛЕ удавшейся записи — как у зеркала: на отказе записи
+	// подсказка означала бы «перечитай» про несостоявшуюся смену.
+	h.bus.PublishInvalidated(events.ResourceAmneziaPremiumDeclaredCountry, "saved")
+	response.Success(w, AmneziaPremiumDeclaredCountryData{DeclaredCountryCode: code})
 }
 
 // AmneziaPremiumMirrorRequest — тело POST /amnezia/premium/mirror.

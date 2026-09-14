@@ -37,6 +37,7 @@
 	} from '$lib/utils/amneziaPremiumCatalog';
 	import PremiumCountryList from './PremiumCountryList.svelte';
 	import PremiumCreateFooter from './PremiumCreateFooter.svelte';
+	import PremiumDeclaredCountryField from './PremiumDeclaredCountryField.svelte';
 	import PremiumKeyForm, { type PremiumKeySource } from './PremiumKeyForm.svelte';
 	import PremiumMirrorField from './PremiumMirrorField.svelte';
 	import PremiumSubscriptionCard from './PremiumSubscriptionCard.svelte';
@@ -81,6 +82,12 @@
 	/** Отметка времени на момент загрузки каталога: срок подписки не должен «ехать» при перерисовках. */
 	let nowMs = $state(0);
 	let selectedCountry = $state('');
+	/**
+	 * Страна, ИЗ которой подключается пользователь: портал требует её в
+	 * каждой выдаче и по ней собирает параметры конфигурации. Значение живёт
+	 * на роутере, сюда его приносит поле выбора; пусто — выбора ещё не было.
+	 */
+	let declaredCountry = $state('');
 	let tunnelName = $state('');
 	let nameEdited = $state(false);
 	let backend = $state<PremiumWizardBackend>('nativewg');
@@ -183,6 +190,9 @@
 
 	const canIssue = $derived(
 		selectedCountry !== '' &&
+			// Без страны подключения портал отвечает отказом на РАСХОДНУЮ
+			// ручку: запирать кнопку дешевле, чем объяснять потом отказ.
+			declaredCountry !== '' &&
 			issueAllowed &&
 			!busy &&
 			(replaceTarget !== null ||
@@ -529,6 +539,11 @@
 					Ключ проверен, но сохранить его на роутере не вышло: {saveWarning}
 				</p>
 			{/if}
+			<PremiumDeclaredCountryField
+				value={declaredCountry}
+				disabled={busy}
+				onchange={(code) => (declaredCountry = code)}
+			/>
 			<PremiumCountryList
 				countries={catalog.countries}
 				issued={issuedConfigs}

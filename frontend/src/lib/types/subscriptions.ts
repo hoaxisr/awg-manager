@@ -76,6 +76,16 @@ export interface AmneziaPremiumRevoke {
 	countryCode: string;
 }
 
+/**
+ * Страна, ИЗ которой пользователь подключается: GET/POST
+ * /amnezia/premium/declared-country. Портал требует её в каждой выдаче
+ * конфигурации. Пусто — выбора ещё не было; умолчания у фронта нет, за
+ * пользователя страну подключения не угадывают.
+ */
+export interface AmneziaPremiumDeclaredCountry {
+	declaredCountryCode: string;
+}
+
 /** ДЕЙСТВУЮЩИЙ адрес зеркала Amnezia: GET/POST /amnezia/premium/mirror. */
 export interface AmneziaPremiumMirror {
 	mirrorUrl: string;

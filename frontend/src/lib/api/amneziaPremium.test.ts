@@ -135,6 +135,19 @@ describe('каталог, выдача и зеркало Amnezia Premium', () =>
 		expect(req.body).toEqual({ countryCode: 'nl' });
 	});
 
+	it('страна подключения читается и записывается одной ручкой', async () => {
+		const getCaptured = captureFetch({ declaredCountryCode: 'ru' });
+		const saved = await api.amneziaPremiumDeclaredCountry();
+		expect(getCaptured().url).toBe('/api/amnezia/premium/declared-country');
+		expect(getCaptured().method).toBe('GET');
+		expect(saved.declaredCountryCode).toBe('ru');
+
+		const postCaptured = captureFetch({ declaredCountryCode: 'ag' });
+		await api.amneziaPremiumSaveDeclaredCountry('ag');
+		expect(postCaptured().method).toBe('POST');
+		expect(postCaptured().body).toEqual({ declaredCountryCode: 'ag' });
+	});
+
 	it('адрес зеркала читается и записывается одной ручкой', async () => {
 		const getCaptured = captureFetch({ mirrorUrl: 'https://mirror.test/cp' });
 		await api.amneziaPremiumMirror();

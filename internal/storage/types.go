@@ -117,6 +117,14 @@ type Settings struct {
 	// одним ответом настроек: в белый список SettingsData (internal/api) оно
 	// не входит.
 	AmneziaPremiumKeyCipher string `json:"amneziaPremiumKeyCipher,omitempty"`
+	// AmneziaPremiumDeclaredCountry — страна, ИЗ которой пользователь
+	// подключается: портал требует её в каждой выдаче конфигурации и по ней
+	// собирает параметры (см. amneziacp.DeclaredCountryRussia). Не страна
+	// сервера. Хранится, чтобы мастер не спрашивал одно и то же на каждой
+	// выдаче; пусто = выбора ещё не было, и выдача без него не идёт.
+	// Пишется ручкой premium с тем же значением, с которым ушёл запрос в
+	// портал; через /settings/update поля нет (nonPatchableSettings).
+	AmneziaPremiumDeclaredCountry string `json:"amneziaPremiumDeclaredCountry,omitempty"`
 }
 
 // DNSChainPresetState is backend-managed state of the DNS-chain preset

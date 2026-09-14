@@ -132,6 +132,15 @@ const api_AmneziaPremiumCountry: v.GenericSchema = v.looseObject({
 	protocols: v.optional(v.nullable(v.array(v.string()))),
 });
 
+const api_AmneziaPremiumDeclaredCountryData: v.GenericSchema = v.looseObject({
+	declaredCountryCode: v.optional(v.nullable(v.string())),
+});
+
+const api_AmneziaPremiumDeclaredCountryResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_AmneziaPremiumDeclaredCountryData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
 const api_AmneziaPremiumIssuedConfig: v.GenericSchema = v.looseObject({
 	countryCode: v.optional(v.nullable(v.string())),
 	lastIssuedAt: v.optional(v.nullable(v.string())),
@@ -3205,6 +3214,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /access-policies/devices": v.lazy(() => api_PolicyDevicesListResponse),
 	"GET /access-policies/interfaces": v.lazy(() => api_PolicyInterfacesListResponse),
 	"GET /amnezia/premium/catalog": v.lazy(() => api_AmneziaPremiumCatalogResponse),
+	"GET /amnezia/premium/declared-country": v.lazy(() => api_AmneziaPremiumDeclaredCountryResponse),
 	"GET /amnezia/premium/key": v.lazy(() => api_AmneziaPremiumKeyResponse),
 	"GET /amnezia/premium/mirror": v.lazy(() => api_AmneziaPremiumMirrorResponse),
 	"GET /auth/status": v.lazy(() => api_AuthStatusResponse),
@@ -3394,6 +3404,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /access-policies/permit": v.lazy(() => api_OkResponse),
 	"POST /access-policies/standalone": v.lazy(() => api_OkResponse),
 	"POST /amnezia/premium/config": v.lazy(() => api_AmneziaPremiumConfigResponse),
+	"POST /amnezia/premium/declared-country": v.lazy(() => api_AmneziaPremiumDeclaredCountryResponse),
 	"POST /amnezia/premium/key": v.lazy(() => api_AmneziaPremiumKeyResponse),
 	"POST /amnezia/premium/mirror": v.lazy(() => api_AmneziaPremiumMirrorResponse),
 	"POST /amnezia/premium/revoke": v.lazy(() => api_AmneziaPremiumRevokeResponse),

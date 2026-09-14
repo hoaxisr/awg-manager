@@ -46,6 +46,12 @@ const (
 	// настройкам его читателя не разбудит.
 	ResourceAmneziaPremiumMirror Resource = "amneziaPremium.mirror"
 
+	// ResourceAmneziaPremiumDeclaredCountry — страна, ИЗ которой пользователь
+	// подключается. Своё по той же причине, что у зеркала: поля нет в общем
+	// ответе настроек, оно отдаётся ручкой
+	// /amnezia/premium/declared-country.
+	ResourceAmneziaPremiumDeclaredCountry Resource = "amneziaPremium.declaredCountry"
+
 	ResourceSingboxStatus        Resource = "singbox.status"
 	ResourceSingboxTunnels       Resource = "singbox.tunnels"
 	ResourceSingboxRouterStaging Resource = "singbox.router.staging"
@@ -80,6 +86,7 @@ var AllResources = []Resource{
 	ResourceAmneziaPremiumKey,
 	ResourceAmneziaPremiumCatalog,
 	ResourceAmneziaPremiumMirror,
+	ResourceAmneziaPremiumDeclaredCountry,
 	ResourceSingboxStatus,
 	ResourceSingboxTunnels,
 	ResourceSingboxRouterStaging,
