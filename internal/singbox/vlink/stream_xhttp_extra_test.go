@@ -315,3 +315,62 @@ func TestEncodeOutbound_WSEarlyDataHeader(t *testing.T) {
 		}
 	}
 }
+
+// #908: подписка несла "scMaxEachPostBytes":"0". Xray считает нулевую верхнюю
+// границу признаком «не задано» и берёт умолчание, а sing-box паникует на
+// From <= 0 и уносит с собой весь процесс вместе с прокси. Переносить такое
+// значение нельзя — умолчание у обоих одинаковое.
+func TestParseXHTTPExtra_ZeroScRangesDropped(t *testing.T) {
+	extra := `{"scMaxEachPostBytes":"0","scMinPostsIntervalMs":"0","scStreamUpServerSecs":"0",` +
+		`"xPaddingBytes":"0","scMaxBufferedPosts":30,"noGRPCHeader":false}`
+	got := parseXHTTPExtra(extra)
+	for _, k := range []string{
+		"sc_max_each_post_bytes",
+		"sc_min_posts_interval_ms",
+		"sc_stream_up_server_secs",
+		"x_padding_bytes",
+	} {
+		if v, present := got[k]; present {
+			t.Errorf("%s=%v перенесено, ожидался пропуск", k, v)
+		}
+	}
+	// Остальное не задето.
+	if got["sc_max_buffered_posts"] != float64(30) {
+		t.Errorf("sc_max_buffered_posts=%v", got["sc_max_buffered_posts"])
+	}
+	if got["no_grpc_header"] != false {
+		t.Errorf("no_grpc_header=%v", got["no_grpc_header"])
+	}
+
+	// Диапазон, НАЧИНАЮЩИЙСЯ с нуля, тоже роняет sing-box — и тоже не едет.
+	if v, present := parseXHTTPExtra(`{"scMaxEachPostBytes":"0-1000"}`)["sc_max_each_post_bytes"]; present {
+		t.Errorf("sc_max_each_post_bytes=%v перенесено", v)
+	}
+	// Нормальное значение переносится как было.
+	if v := parseXHTTPExtra(`{"scMaxEachPostBytes":"1000-2000"}`)["sc_max_each_post_bytes"]; v != "1000-2000" {
+		t.Errorf("sc_max_each_post_bytes=%v, want 1000-2000", v)
+	}
+}
+
+// Тот же ноль, пришедший ссылкой целиком — путь, которым его принёс репортёр.
+func TestParseVless_Issue908LinkDoesNotCarryZeroRange(t *testing.T) {
+	extra := url.QueryEscape(`{"scMaxEachPostBytes":"0","xmux":{"maxConcurrency":"0","maxConnections":"3"}}`)
+	link := "vless://11111111-2222-3333-4444-555555555555@188.68.218.110:443" +
+		"?type=xhttp&mode=packet-up&path=%2Fapi%2Fv2%2F&host=forward-change.pushbyte.cc" +
+		"&security=tls&sni=forward-change.pushbyte.cc&extra=" + extra + "#Germany"
+	got, err := ParseLink(link)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	var ob map[string]any
+	json.Unmarshal(got.Outbound, &ob)
+	tr, _ := ob["transport"].(map[string]any)
+	if v, present := tr["sc_max_each_post_bytes"]; present {
+		t.Errorf("sc_max_each_post_bytes=%v перенесено в аутбаунд", v)
+	}
+	// xmux с нулями не трогаем: там ноль означает «без лимита» и паники нет.
+	xmux, _ := tr["xmux"].(map[string]any)
+	if xmux["max_concurrency"] != "0" {
+		t.Errorf("xmux.max_concurrency=%v, want 0", xmux["max_concurrency"])
+	}
+}
