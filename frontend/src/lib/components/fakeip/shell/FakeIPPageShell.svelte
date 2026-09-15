@@ -34,6 +34,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Tabs } from '$lib/components/ui';
+	import type { TunStack } from '$lib/types';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { deviceProxyInstances } from '$lib/stores/deviceproxy';
@@ -61,7 +62,7 @@
 		wanAutoDetect?: boolean;
 		wanInterface?: string;
 		/** TCP/IP-стек fakeip-tun (gvisor/system) — hero-факт. */
-		fakeipStack?: 'gvisor' | 'system';
+		fakeipStack?: TunStack;
 		/** Активный fakeip tun-интерфейс из статуса (e.g. «opkgtun0»). */
 		fakeipIface?: string;
 		onRestart: () => void | Promise<void>;
@@ -81,7 +82,7 @@
 		engineState,
 		wanAutoDetect = true,
 		wanInterface,
-		fakeipStack = 'gvisor',
+		fakeipStack = '',
 		fakeipIface,
 		onRestart,
 		createButton,

@@ -11,6 +11,7 @@
 -->
 <script lang="ts">
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
+	import type { TunStack } from '$lib/types';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
 	import { singboxMemory } from '$lib/stores/singboxMemory';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
@@ -28,7 +29,7 @@
 		wanAutoDetect: boolean;
 		wanInterface?: string;
 		snifferEnabled: boolean;
-		fakeipStack?: 'gvisor' | 'system';
+		fakeipStack?: TunStack;
 		fakeipPool4?: string;
 		fakeipPool6?: string;
 		fakeipMtu?: number;

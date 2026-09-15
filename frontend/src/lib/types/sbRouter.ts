@@ -2,6 +2,13 @@
 // #region Singbox Router (Phase 2 — TProxy routing engine)
 // ─────────────────────────────────────────────
 
+/**
+ * TCP/IP-стек tun-инбаунда. Пустая строка — не «не задано», а «ключ stack в
+ * конфиг не писать»: sing-box берёт собственный стек sing-tun (дефолт с 1.15).
+ * Остальные — legacy, удаляются в sing-box 1.17.
+ */
+export type TunStack = '' | 'gvisor' | 'system' | 'mixed';
+
 export interface SingboxRouterSettings {
 	enabled: boolean;
 	policyName: string;
@@ -30,10 +37,10 @@ export interface SingboxRouterSettings {
 	ingressInterfaces?: string[];
 	// fakeip-tun engine settings (user-editable; round-trip via GET/PUT
 	// /singbox/router/settings). Defaults mirror DefaultFakeIPTunParams:
-	//   fakeipStack: gvisor (system → lower throughput, backend forces gso:false)
+	//   fakeipStack: '' (ключ stack не пишется → собственный стек sing-tun)
 	//   fakeipPool4: "198.18.0.0/15", fakeipPool6: "fc00::/18" ("" disables v6)
 	//   fakeipMtu: 1500. All omitempty on the wire → absent on legacy payloads.
-	fakeipStack?: 'gvisor' | 'system';
+	fakeipStack?: TunStack;
 	fakeipPool4?: string;
 	fakeipPool6?: string;
 	fakeipMtu?: number;

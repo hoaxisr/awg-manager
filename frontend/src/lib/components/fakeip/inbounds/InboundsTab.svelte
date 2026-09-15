@@ -249,7 +249,7 @@
 			iface={$status?.fakeipIface}
 			address={$status?.fakeipTunAddr}
 			{tunDns}
-			fakeipStack={$settings?.fakeipStack ?? 'gvisor'}
+			fakeipStack={$settings?.fakeipStack ?? ''}
 			fakeipMtu={$settings?.fakeipMtu}
 			{live}
 		/>

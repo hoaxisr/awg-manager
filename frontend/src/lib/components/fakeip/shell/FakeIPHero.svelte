@@ -24,6 +24,8 @@
 	import { Button, Modal } from '$lib/components/ui';
 	import { JsonConfigDrawer } from '$lib/components/singbox-routing';
 	import { TracePanel, traceOpen, openTrace, closeTrace } from '$lib/components/sb-router';
+	import { tunStackLabel } from '$lib/components/sb-router/tunStack';
+	import type { TunStack } from '$lib/types';
 	import { FileJson, Search, RotateCw } from 'lucide-svelte';
 	import type { FakeIPEngineState } from '../engineState';
 
@@ -37,7 +39,7 @@
 		/** WAN: явный системный интерфейс (когда не авто). */
 		wanInterface?: string;
 		/** TCP/IP-стек fakeip-tun (gvisor/system) — первый факт субтайтла. */
-		fakeipStack?: 'gvisor' | 'system';
+		fakeipStack?: TunStack;
 		/** Активный fakeip tun-интерфейс из статуса (e.g. «opkgtun0»); опционально. */
 		fakeipIface?: string;
 		/** Перезапуск sing-box (страница зовёт api.singboxControl('restart')). */
@@ -53,7 +55,7 @@
 		engineState,
 		wanAutoDetect = true,
 		wanInterface,
-		fakeipStack = 'gvisor',
+		fakeipStack = '',
 		fakeipIface,
 		onRestart,
 		restartEnabled = true,
@@ -79,7 +81,9 @@
 	);
 
 	// Честный субтайтл: стек (· iface, если провижен) · WAN · состояние.
-	const stackFact = $derived(fakeipIface ? `${fakeipStack} · ${fakeipIface}` : fakeipStack);
+	const stackFact = $derived(
+		fakeipIface ? `${tunStackLabel(fakeipStack)} · ${fakeipIface}` : tunStackLabel(fakeipStack),
+	);
 	const wanFact = $derived(
 		wanAutoDetect ? 'WAN авто' : wanInterface ? `WAN ${wanInterface}` : '',
 	);
