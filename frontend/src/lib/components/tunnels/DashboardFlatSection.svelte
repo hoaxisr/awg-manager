@@ -64,6 +64,7 @@
 			tunnel={item.tunnel}
 			view={ctx.effectiveAwgRenderMode === 'list-card' ? 'list' : ctx.effectiveAwgCardViewMode}
 			onadopt={(name) => ctx.handleAdoptClick(name)}
+			ondelete={(name) => ctx.handleExternalDelete(name)}
 		/>
 	{:else if item.kind === 'awg3'}
 		<Awg3TunnelCard

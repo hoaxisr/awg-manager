@@ -1365,6 +1365,13 @@ input.api-key-input {
 	color: var(--text-secondary);
 }
 
+/* Строка подтверждения, предупреждающая о потере: живой туннель под сносом,
+   совпадение адреса. Здесь, а не в компоненте: .confirm-text общий, и
+   scoped-класс рядом с ним Svelte молча выбросил бы. */
+.confirm-warn {
+	color: var(--color-warning, #e0af68);
+}
+
 .delete-hint {
 	font-size: 12px;
 	color: var(--text-muted);

@@ -991,12 +991,54 @@
 	// External tunnels
 	let adoptDialogOpen = $state(false);
 	let adoptingInterface = $state('');
+	let confirmExternalDelete = $state<{
+		interfaceName: string;
+		label: string;
+		live: boolean;
+		conflictsWith: string;
+		address: string;
+	} | null>(null);
+	let confirmExternalDeleteBusy = $state(false);
 	let adoptError = $state('');
 	let adoptLoading = $state(false);
 
 	function handleAdoptClick(interfaceName: string): void {
 		adoptingInterface = interfaceName;
 		adoptDialogOpen = true;
+	}
+
+	// Удаление чужого интерфейса необратимо и уносит вместе с ним адреса,
+	// маршруты и permit'ы в политиках, поэтому спрашиваем подтверждение и
+	// называем в нём описание — по нему пользователь и опознаёт интерфейс.
+	function handleExternalDelete(interfaceName: string): void {
+		const ext = externalList.find((t) => t.interfaceName === interfaceName);
+		confirmExternalDelete = {
+			interfaceName,
+			label: ext?.description ? ` «${ext.description}»` : '',
+			// Живой чужой туннель — отдельная строка предупреждения: рукопожатие
+			// и трафик у него идут прямо сейчас, и снос оборвёт работающее.
+			live: !!ext?.lastHandshake,
+			conflictsWith: ext?.conflictsWith ?? '',
+			address: ext?.addresses?.[0] ?? '',
+		};
+	}
+
+	async function confirmExternalDeleteNow(): Promise<void> {
+		const target = confirmExternalDelete;
+		if (!target) return;
+		confirmExternalDeleteBusy = true;
+		try {
+			await api.deleteOrphanIface(target.interfaceName);
+			notifications.success(`Интерфейс ${target.interfaceName} удалён`);
+			confirmExternalDelete = null;
+			await tunnels.refetch();
+		} catch (e) {
+			notifications.error(
+				`Не удалось удалить ${target.interfaceName}: ${e instanceof Error ? e.message : e}`,
+			);
+		} finally {
+			confirmExternalDeleteBusy = false;
+		}
 	}
 
 	async function handleAdopt(data: { content: string; name: string }): Promise<void> {
@@ -1619,7 +1661,7 @@
 		set selectedBackend(v) { selectedBackend = v; },
 		get fileInput() { return fileInput; },
 		set fileInput(v) { fileInput = v; },
-		endpointHost, endpointPort, endpointVisible, toggleEndpointVisible, externalStatusLabel, externalStatusVariant, systemStatusLabel, systemStatusVariant, isManagedTunnelOn, managedRouteMeta, showManagedPing, latestRate, sparklineSeries, handleAdoptClick, handleAwgSortChange, handleDragLeave, handleDragOver, handleDrop, handleFileSelect, openAwgDiagnostics, openConnectivitySettings, openDetail, requestDelete, handleLockClick, markAsServer, handleToggleOnOff, checkPing, handleExportAll,
+		endpointHost, endpointPort, endpointVisible, toggleEndpointVisible, externalStatusLabel, externalStatusVariant, systemStatusLabel, systemStatusVariant, isManagedTunnelOn, managedRouteMeta, showManagedPing, latestRate, sparklineSeries, handleAdoptClick, handleExternalDelete, handleAwgSortChange, handleDragLeave, handleDragOver, handleDrop, handleFileSelect, openAwgDiagnostics, openConnectivitySettings, openDetail, requestDelete, handleLockClick, markAsServer, handleToggleOnOff, checkPing, handleExportAll,
 	};
 
 	// Live-контекст flat-дашборда (см. dashboardFlatContext.ts).
@@ -1657,11 +1699,15 @@
 		set dashboardTagFilter(v) { dashboardTagFilter = v; },
 		get flatGridEl() { return flatGridEl; },
 		set flatGridEl(v) { flatGridEl = v; },
-		handleAdoptClick, handleExportAll, handleGripKeydown, handleGripPointerDown, handleToggleOnOff, markAsServer, openAwg3Import, openAwgDiagnostics, openDetail, openSingboxDetail, openWizard, requestDelete, handleLockClick, requestSubscriptionDelete,
+		handleAdoptClick, handleExternalDelete, handleExportAll, handleGripKeydown, handleGripPointerDown, handleToggleOnOff, markAsServer, openAwg3Import, openAwgDiagnostics, openDetail, openSingboxDetail, openWizard, requestDelete, handleLockClick, requestSubscriptionDelete,
 	};
 
 	// Live-контекст модалок страницы (см. tunnelPageModalsContext.ts).
 	const pageModalsCtx: TunnelPageModalsContext = {
+		get confirmExternalDelete() { return confirmExternalDelete; },
+		set confirmExternalDelete(v) { confirmExternalDelete = v; },
+		get confirmExternalDeleteBusy() { return confirmExternalDeleteBusy; },
+		confirmExternalDeleteNow,
 		get awgList() { return awgList; },
 		get systemList() { return systemList; },
 		get singboxTunnelsList() { return singboxTunnelsList; },

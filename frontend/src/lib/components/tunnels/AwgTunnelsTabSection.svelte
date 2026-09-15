@@ -570,9 +570,15 @@
 								<span class="awg-inline-badge awg-inline-badge--muted">external</span>
 								{#if tunnel.isAWG}
 									<span class="awg-inline-badge">AWG</span>
+								{:else}
+									<span class="awg-inline-badge awg-inline-badge--muted">только интерфейс</span>
 								{/if}
 							</div>
 							<div class="awg-list-sub">
+								{#if tunnel.description}
+									«{tunnel.description}»
+									<span class="awg-list-dot">·</span>
+								{/if}
 								{#if tunnel.publicKey}
 									{tunnel.publicKey.slice(0, 16)}…
 									<span class="awg-list-dot">·</span>
@@ -592,6 +598,11 @@
 								Handshake {tunnel.lastHandshake ? formatRelativeTime(tunnel.lastHandshake) : '—'}
 							</div>
 							<div class="awg-list-sub">Не управляется AWG Manager</div>
+							{#if tunnel.conflictsWith}
+								<div class="awg-list-sub awg-ext-conflict">
+									⚠ адрес {tunnel.addresses?.[0] ?? ''} занят туннелем «{tunnel.conflictsWith}»
+								</div>
+							{/if}
 						</div>
 						<div class="awg-list-cell">
 							<div class="awg-list-kv-primary awg-list-mono awg-endpoint-line">
@@ -629,17 +640,29 @@
 								<div class="traffic-rate tx">↑ {formatBytes(tunnel.txBytes)}</div>
 							</div>
 						</div>
-						<div class="awg-list-cell awg-list-cell-actions">
+						<div class="awg-list-cell awg-list-cell-actions awg-ext-actions">
 							<!-- Короткая надпись: полная не влезала в колонку действий и
 							     вылезала за неё на узких экранах. Смысл — в title. -->
-							<Button
-								variant="primary"
-								size="sm"
-								title="Взять под управление: {tunnel.interfaceName}"
-								onclick={() => ctx.handleAdoptClick(tunnel.interfaceName)}
-							>
-								Взять
-							</Button>
+							{#if tunnel.isAWG}
+								<Button
+									variant="primary"
+									size="sm"
+									title="Взять под управление: {tunnel.interfaceName}"
+									onclick={() => ctx.handleAdoptClick(tunnel.interfaceName)}
+								>
+									Взять
+								</Button>
+							{/if}
+							{#if tunnel.removable}
+								<Button
+									variant="outline-danger"
+									size="sm"
+									title="Удалить интерфейс {tunnel.interfaceName} с роутера"
+									onclick={() => ctx.handleExternalDelete(tunnel.interfaceName)}
+								>
+									Удалить
+								</Button>
+							{/if}
 						</div>
 					</div>
 				{/each}
@@ -709,6 +732,7 @@
 							tunnel={extTunnel}
 							view={awgGridView}
 							onadopt={(name) => ctx.handleAdoptClick(name)}
+							ondelete={(name) => ctx.handleExternalDelete(name)}
 						/>
 					{/each}
 				</div>
@@ -721,6 +745,17 @@
 {/if}
 
 <style>
+	.awg-ext-conflict {
+		color: var(--color-warning, #e0af68);
+	}
+
+	.awg-ext-actions {
+		display: flex;
+		gap: 6px;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+	}
+
 
 	/* ── D7: drag-reorder (общее pointer-ядро sb-router/reorderDrag).
 	   Движок вертикальный, поэтому на время активного drag сетка
