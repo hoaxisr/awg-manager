@@ -105,8 +105,11 @@ type SingboxRouterSettingsData struct {
 	// redirected through the sing-box router (e.g. "managed:Wireguard3").
 	IngressInterfaces []string `json:"ingressInterfaces,omitempty" example:"managed:Wireguard3"`
 	// --- fakeip-tun engine settings (user-editable) ---
-	// FakeIPStack selects the sing-tun stack: "gvisor" (default) or "system".
-	FakeIPStack string `json:"fakeipStack,omitempty" example:"gvisor" enums:"gvisor,system"`
+	// FakeIPStack selects the sing-tun stack for both tun modes (fakeip-tun и
+	// policy-tun). Empty (default) = собственный стек sing-tun: ключ `stack` в
+	// конфиг не пишется. "gvisor", "system", "mixed" — legacy, удаляются в
+	// sing-box 1.17.
+	FakeIPStack string `json:"fakeipStack,omitempty" example:"" enums:"gvisor,system,mixed"`
 	// FakeIPPool4 is the fakeip v4 pool CIDR (default "198.18.0.0/15").
 	FakeIPPool4 string `json:"fakeipPool4,omitempty" example:"198.18.0.0/15"`
 	// FakeIPPool6 is the fakeip v6 pool CIDR (default "fc00::/18").

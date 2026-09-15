@@ -475,3 +475,19 @@ func (s *SettingsStore) migrateToV37(settings *Settings) {
 		settings.ConnectivityCheckURL = DefaultConnectivityCheckURL
 	}
 }
+
+// migrateToV38 снимает вшитый "gvisor" у тех, кто стек НЕ ВЫБИРАЛ. До v38
+// нормализация дефолтила пустое значение в "gvisor", поэтому оно лежит в файле
+// у каждой установки. С sing-box 1.15 пустое значение означает «ключ stack не
+// писать» — движок берёт собственный стек sing-tun, который и стал дефолтом;
+// legacy-стеки удаляются в 1.17.
+//
+// Сравнение со СТАРЫМ дефолтом, как в migrateToV37: "system" и "mixed" — это
+// осознанный выбор, его не трогаем. Оборотная сторона известна и принята:
+// у того, кто выбрал "gvisor" руками, выбор снимется — в файле он неотличим от
+// подставленного дефолта. Идемпотентна.
+func (s *SettingsStore) migrateToV38(settings *Settings) {
+	if settings.SingboxRouter.FakeIPStack == "gvisor" {
+		settings.SingboxRouter.FakeIPStack = ""
+	}
+}

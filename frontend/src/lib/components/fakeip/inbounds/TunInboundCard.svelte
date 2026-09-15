@@ -6,6 +6,8 @@
 -->
 <script lang="ts">
 	import { Lock } from 'lucide-svelte';
+	import { tunStackLabel } from '$lib/components/sb-router/tunStack';
+	import type { TunStack } from '$lib/types';
 
 	interface Props {
 		/** Активный fakeip tun-интерфейс (status.fakeipIface), e.g. «opkgtun10». */
@@ -14,7 +16,7 @@
 		address?: string;
 		/** DNS клиентам для ручной настройки (status.fakeipDns). */
 		tunDns?: string;
-		fakeipStack?: 'gvisor' | 'system';
+		fakeipStack?: TunStack;
 		fakeipMtu?: number;
 		/** Движок запущен → статус-точка достоверна (success), иначе muted. */
 		live?: boolean;
@@ -23,13 +25,13 @@
 		iface,
 		address,
 		tunDns,
-		fakeipStack = 'gvisor',
+		fakeipStack = '',
 		fakeipMtu,
 		live = false,
 	}: Props = $props();
 
 	const stackMtuLabel = $derived(
-		fakeipMtu ? `${fakeipStack} · ${fakeipMtu}` : fakeipStack,
+		fakeipMtu ? `${tunStackLabel(fakeipStack)} · ${fakeipMtu}` : tunStackLabel(fakeipStack),
 	);
 	const dnsLabel = $derived(tunDns ? `${tunDns} (hijack)` : '—');
 </script>

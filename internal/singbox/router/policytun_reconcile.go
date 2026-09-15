@@ -326,7 +326,7 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	// строится только на enable, поэтому без heal'а изменение не доезжало до
 	// живого режима (F114). После миграции слота — актуальный tun-in уже в
 	// форме 1.14.
-	s.healTunUDPSettings(ctx, orchestrator.SlotRouter, sr)
+	s.healTunSettings(ctx, orchestrator.SlotRouter, sr)
 
 	// Ingress-заворот: и drift-heal после сброса firewall NDMS, и применение
 	// смены состава ingress-интерфейсов (UpdateSettings завершается Reconcile'ом).

@@ -7,8 +7,8 @@
     - Движок: «Перезапустить» (onRestart → api.singboxControl) + тумблер ON при
       routingMode==='fakeip-tun' && enabled. Сам API НЕ дёргает — onToggleEngine
       запрашивает смену режима (диалог подтверждения рендерит страница).
-    - TCP/IP-стек: Dropdown gvisor / system (settings.fakeipStack). system —
-      ниже throughput-потолок, backend форсит gso:false.
+    - TCP/IP-стек: Dropdown из TUN_STACK_OPTIONS (settings.fakeipStack).
+      Пусто = собственный стек sing-tun (дефолт), остальное — legacy.
     - WAN-интерфейс: «Авто» + список api.singboxRouterListWANInterfaces()
       (kernel-имя + label). Тот же discriminator, что sb-router StatusDrawer:
       Авто → {wanAutoDetect:true, wanInterface:''}; иначе {wanAutoDetect:false,
@@ -32,7 +32,8 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { mergeAndSaveSettings } from '$lib/components/sb-router/settingsActions';
-	import type { SingboxRouterSettings, SingboxRouterWANInterface } from '$lib/types';
+	import { TUN_STACK_OPTIONS, tunStackHint } from '$lib/components/sb-router/tunStack';
+	import type { SingboxRouterSettings, SingboxRouterWANInterface, TunStack } from '$lib/types';
 
 	interface Props {
 		/** Движок включён в режиме fakeip-tun (routingMode==='fakeip-tun' && enabled). */
@@ -44,7 +45,7 @@
 		/** Sniffing включён. */
 		snifferEnabled: boolean;
 		/** TCP/IP-стек fakeip-tun. */
-		fakeipStack?: 'gvisor' | 'system';
+		fakeipStack?: TunStack;
 		/** fakeip-пул v4 (CIDR). */
 		fakeipPool4?: string;
 		/** fakeip-пул v6 (CIDR; пусто = v6 выключен). */
@@ -107,10 +108,7 @@
 		if (!saving) mtuDraft.v = fakeipMtu != null ? String(fakeipMtu) : '';
 	});
 
-	const stackOptions: DropdownOption<'gvisor' | 'system'>[] = [
-		{ value: 'gvisor', label: 'gvisor' },
-		{ value: 'system', label: 'system' },
-	];
+	const stackOptions: DropdownOption<TunStack>[] = TUN_STACK_OPTIONS;
 
 	// WAN-пикер: «Авто» + kernel-интерфейсы. value '' = авто.
 	const wanOptions = $derived<DropdownOption[]>([
@@ -122,11 +120,7 @@
 	]);
 	const wanValue = $derived(wanAutoDetect ? '' : (wanInterface ?? ''));
 
-	const stackHint = $derived(
-		fakeipStack === 'system'
-			? 'ниже throughput-потолок, требует gso:false'
-			: undefined,
-	);
+	const stackHint = $derived(tunStackHint(fakeipStack));
 
 	// Лёгкая клиентская проверка CIDR (backend валидирует авторитетно).
 	const CIDR4 = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
@@ -145,8 +139,8 @@
 		}
 	}
 
-	function handleStack(v: 'gvisor' | 'system'): void {
-		if (v === (fakeipStack ?? 'gvisor')) return;
+	function handleStack(v: TunStack): void {
+		if (v === (fakeipStack ?? '')) return;
 		void save({ fakeipStack: v });
 	}
 
@@ -237,12 +231,12 @@
 			</span>
 		</div>
 
-		<!-- TCP/IP-стек: gvisor / system. -->
+		<!-- TCP/IP-стек: sing-tun (пусто) + legacy-значения. -->
 		<div class="erow">
 			<span class="k">TCP/IP-стек</span>
 			<span class="val ctl">
 				<Dropdown
-					value={fakeipStack ?? 'gvisor'}
+					value={fakeipStack ?? ''}
 					options={stackOptions}
 					disabled={saving}
 					fullWidth

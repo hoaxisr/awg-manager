@@ -146,7 +146,7 @@
 			{engineState}
 			wanAutoDetect={$settings?.wanAutoDetect ?? true}
 			wanInterface={$settings?.wanInterface}
-			fakeipStack={$settings?.fakeipStack ?? 'gvisor'}
+			fakeipStack={$settings?.fakeipStack ?? ''}
 			fakeipIface={$status?.fakeipIface}
 			onRestart={handleRestart}
 		>
@@ -173,7 +173,7 @@
 				wanAutoDetect={$settings?.wanAutoDetect ?? true}
 				wanInterface={$settings?.wanInterface}
 				snifferEnabled={$settings?.snifferEnabled ?? false}
-				fakeipStack={$settings?.fakeipStack ?? 'gvisor'}
+				fakeipStack={$settings?.fakeipStack ?? ''}
 				fakeipPool4={$settings?.fakeipPool4}
 				fakeipPool6={$settings?.fakeipPool6}
 				fakeipMtu={$settings?.fakeipMtu}

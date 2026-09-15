@@ -11,6 +11,8 @@
 -->
 <script lang="ts">
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
+	import { tunStackLabel } from '$lib/components/sb-router/tunStack';
+	import type { TunStack } from '$lib/types';
 	import { singboxProxies } from '$lib/stores/singboxProxies';
 	import { singboxMemory } from '$lib/stores/singboxMemory';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
@@ -28,7 +30,7 @@
 		wanAutoDetect: boolean;
 		wanInterface?: string;
 		snifferEnabled: boolean;
-		fakeipStack?: 'gvisor' | 'system';
+		fakeipStack?: TunStack;
 		fakeipPool4?: string;
 		fakeipPool6?: string;
 		fakeipMtu?: number;
@@ -91,7 +93,7 @@
 </script>
 
 <section class="overview">
-	<OverviewCards {engineLive} {engineLabel} {memoryBytes} {notLiveReason} {composites} />
+	<OverviewCards {engineLive} {engineLabel} stackLabel={tunStackLabel(fakeipStack)} {memoryBytes} {notLiveReason} {composites} />
 
 	<TrafficPanel {engineLive} {notLiveReason} />
 

@@ -4,7 +4,7 @@
   (composite). Без cfg-бейджей: зелёная точка на карточке движка — обычный
   status-индикатор.
 
-    1. Движок — «● <статус>» из engineState + sub «gvisor» (стек честно; индекс
+    1. Движок — «● <статус>» из engineState + sub со стеком из настроек (индекс
        opkgtun в DTO отсутствует, не выдумываем).
     2. Память sing-box — процессная RSS в байтах из поля `memory` Clash
        /connections WebSocket (singbox:memory SSE); 0 пока движок не запущен
@@ -24,6 +24,8 @@
 		engineLive: boolean;
 		/** Текст статуса движка (работает / остановлен / clash ↯). */
 		engineLabel: string;
+		/** Подпись TCP/IP-стека под статусом движка (из настроек). */
+		stackLabel: string;
 		/** Память процесса sing-box в байтах (Clash /connections `memory`). */
 		memoryBytes: number;
 		/** Причина не-live состояния для текста empty-state composite-блока. */
@@ -32,7 +34,7 @@
 		composites: ActiveCompositeRow[];
 	}
 
-	let { engineLive, engineLabel, memoryBytes, notLiveReason, composites }: Props = $props();
+	let { engineLive, engineLabel, stackLabel, memoryBytes, notLiveReason, composites }: Props = $props();
 
 	const notLiveText = $derived(
 		notLiveReason === 'clash-down'
@@ -49,7 +51,7 @@
 			{engineLabel}
 		</div>
 		<div class="l">движок</div>
-		<div class="s">gvisor</div>
+		<div class="s">{stackLabel}</div>
 	</div>
 
 	<!-- Память sing-box -->

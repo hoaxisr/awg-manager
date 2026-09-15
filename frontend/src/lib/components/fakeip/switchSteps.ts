@@ -49,7 +49,7 @@ const ENABLE_STEPS: UIStepDef[] = [
 	{
 		milestone: 'provision',
 		title: 'Интерфейс OpkgTun создан',
-		detail: 'gvisor · non-global · private · MTU 1500',
+		detail: 'non-global · private · MTU 1500',
 	},
 	{
 		milestone: 'provision',

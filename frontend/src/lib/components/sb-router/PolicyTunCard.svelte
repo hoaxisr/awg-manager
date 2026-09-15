@@ -8,12 +8,14 @@
   дровера: onPatch → applyPatch → mergeAndSaveSettings → PUT /singbox/router/settings.
 -->
 <script lang="ts">
-  import { Toggle, Button, Badge, Modal } from '$lib/components/ui';
+  import { Toggle, Button, Badge, Modal, Dropdown } from '$lib/components/ui';
+  import { TUN_STACK_OPTIONS, tunStackHint } from './tunStack';
   import { api } from '$lib/api/client';
   import IssueRow from './IssueRow.svelte';
   import PolicyCombobox from './PolicyCombobox.svelte';
   import { pluralize, DEVICE_WORDS } from '$lib/utils/pluralize';
   import type {
+    TunStack,
     PolicyTunNATEgress,
     PolicyTunNATSegmentInfo,
     SingboxRouterSettings,
@@ -88,6 +90,23 @@
       : [...selected, name];
   }
 
+  // Стек — то же поле settings.fakeipStack, что правит панель FakeIP: у бэкенда
+  // он один на оба tun-режима. Пустое значение = собственный стек sing-tun.
+  const stackHint = $derived(
+    (() => {
+      const legacy = tunStackHint(cfg.fakeipStack);
+      const first = legacy
+        ? `${legacy[0].toUpperCase()}${legacy.slice(1)}.`
+        : 'Стек sing-tun — самый быстрый; общий с режимом FakeIP.';
+      return `${first} Смена применяется перезапуском движка.`;
+    })(),
+  );
+
+  function handleStack(v: TunStack) {
+    if (v === (cfg.fakeipStack ?? '')) return;
+    void onPatch({ fakeipStack: v });
+  }
+
   function handleToggle(checked: boolean) {
     if (checked) {
       void openPicker();
@@ -128,6 +147,12 @@
   {:else}
     <p class="hint">Интерфейс ещё не создан — он появится после включения режима.</p>
   {/if}
+
+  <div class="field">
+    <span class="lbl">TCP/IP-стек</span>
+    <Dropdown value={cfg.fakeipStack ?? ''} options={TUN_STACK_OPTIONS} fullWidth onchange={handleStack} />
+  </div>
+  <p class="hint">{stackHint}</p>
 
   <div class="field">
     <span class="lbl">Политика доступа</span>

@@ -924,23 +924,28 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string, 
 	return s.persistConfigDirect(ctx, cfg)
 }
 
-// healTunUDPSettings brings the tun-in inbound's udp_timeout/udp_nat_max and
-// the system route-options rule to spec for a tun-based mode (policy-tun /
+// healTunSettings brings the tun-in inbound's udp_timeout/udp_nat_max/stack
+// and the system route-options rule to spec for a tun-based mode (policy-tun /
 // fakeip). Both modes build tun-in ONLY on enable (ensurePolicyTunInbound,
 // ensureFakeIPOverlay), so — unlike tproxy-in, which healTProxyInbound covers
 // — a udpTimeout/udpNatMax change made via UpdateSettings on an already-running
 // mode stayed stale until Disable/Enable (F114).
 //
-// Only these two fields are touched: address/iface/stack are the enable
-// path's decision (index allocation, carrier), and re-deriving them here on
-// every tick would race that decision instead of healing drift.
+// Стек лечится здесь по той же причине: в fakeip-режиме его доносит
+// reapplyFakeIPOverlay, а в policy-tun overlay не перегенерируется — без этого
+// селектор стека в карточке режима молча не применялся бы до перевключения.
+// Значение берётся из настроек как есть, ничего не выводится.
+//
+// Address/iface по-прежнему НЕ трогаем: они — решение пути enable (выделение
+// индекса, carrier), и пересчёт их на каждом тике гонялся бы с этим решением
+// вместо лечения дрейфа.
 //
 // Steady-state guard BEFORE persisting, mirroring healTProxyInbound: skip the
 // marshal/write only when BOTH carriers already match — the inbound's fields
 // AND the system route-options rule (systemUDPTimeoutRuleOK). Checking the
 // inbound alone would leave a missing/stale rule unhealed forever once the
 // inbound fields happen to already be correct (fix round 1, review finding).
-func (s *ServiceImpl) healTunUDPSettings(ctx context.Context, slot orchestrator.Slot, sr storage.SingboxRouterSettings) {
+func (s *ServiceImpl) healTunSettings(ctx context.Context, slot orchestrator.Slot, sr storage.SingboxRouterSettings) {
 	var (
 		cfg *RouterConfig
 		err error
@@ -958,7 +963,7 @@ func (s *ServiceImpl) healTunUDPSettings(ctx context.Context, slot orchestrator.
 		cfg, err = s.loadAppliedRouterConfig()
 	}
 	if err != nil {
-		s.appLog.Warn("heal-tun-udp", "", err.Error())
+		s.appLog.Warn("heal-tun", "", err.Error())
 		return
 	}
 
@@ -977,12 +982,14 @@ func (s *ServiceImpl) healTunUDPSettings(ctx context.Context, slot orchestrator.
 
 	effective := resolveUDPTimeout(sr.UDPTimeout)
 	in := &cfg.Inbounds[idx]
-	inboundOK := in.UDPTimeout == effective && in.UDPNATMax == sr.UDPNATMax
+	inboundOK := in.UDPTimeout == effective && in.UDPNATMax == sr.UDPNATMax &&
+		in.Stack == sr.FakeIPStack
 	if inboundOK && systemUDPTimeoutRuleOK(cfg.Route.Rules, effective) {
 		return
 	}
 	in.UDPTimeout = effective
 	in.UDPNATMax = sr.UDPNATMax
+	in.Stack = sr.FakeIPStack
 	cfg.EnsureUDPTimeoutRule(effective)
 
 	switch slot {
@@ -992,14 +999,14 @@ func (s *ServiceImpl) healTunUDPSettings(ctx context.Context, slot orchestrator.
 		err = s.persistConfigDirect(ctx, cfg)
 	}
 	if err != nil {
-		s.appLog.Warn("heal-tun-udp", "", err.Error())
+		s.appLog.Warn("heal-tun", "", err.Error())
 	}
 }
 
 // systemUDPTimeoutRuleOK reports whether rules already contain the system
 // route-options rule (see RouterConfig.EnsureUDPTimeoutRule) with
 // udp_timeout == effective. Shared by healTProxyInbound and
-// healTunUDPSettings so a missing/stale rule counts as drift the same way
+// healTunSettings so a missing/stale rule counts as drift the same way
 // in both — the rule is a SEPARATE carrier from the inbound's udp_timeout
 // field, and a guard that checks only the inbound would no-op forever while
 // the rule stays missing.

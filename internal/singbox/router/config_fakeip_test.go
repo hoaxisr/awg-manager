@@ -31,9 +31,10 @@ func TestEnsureFakeIPOverlay_StackNoGSOOrEIN(t *testing.T) {
 		stack   string
 		wantStk string
 	}{
-		{"empty defaults to gvisor", "", "gvisor"},
+		{"empty stays empty", "", ""},
 		{"gvisor stays gvisor", "gvisor", "gvisor"},
 		{"system stays system", "system", "system"},
+		{"mixed stays mixed", "mixed", "mixed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -48,6 +49,12 @@ func TestEnsureFakeIPOverlay_StackNoGSOOrEIN(t *testing.T) {
 			raw, err := json.Marshal(in)
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
+			}
+			// Пустой стек обязан исчезнуть из JSON целиком: ключ `stack`
+			// удалён из схемы sing-box 1.15 (schema:"omit"), и именно его
+			// отсутствие включает собственный стек sing-tun.
+			if hasStack := strings.Contains(string(raw), `"stack"`); hasStack != (tc.wantStk != "") {
+				t.Errorf("ключ stack в JSON = %v при stack=%q: %s", hasStack, tc.wantStk, raw)
 			}
 			if strings.Contains(string(raw), `"gso"`) {
 				t.Errorf("marshaled tun inbound must not carry gso, got: %s", raw)

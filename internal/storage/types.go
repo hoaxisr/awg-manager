@@ -273,9 +273,12 @@ type SingboxRouterSettings struct {
 	// Unlike OpkgTunState (backend-managed operational state) these are user
 	// intent, defaulted by NormalizeSingboxRouterSettings.
 	//
-	// FakeIPStack selects the sing-tun stack: "gvisor" (default, robust) or
-	// "system" (lower CPU/RAM; on this kernel REQUIRES gso:false — set
-	// automatically by the config builder).
+	// FakeIPStack selects the sing-tun stack for BOTH tun modes (fakeip-tun и
+	// policy-tun). Пустое ЗНАЧИМО: ключ `stack` не пишется в конфиг вовсе, и
+	// sing-box берёт собственный стек sing-tun («go», с 1.15.0) — он же наш
+	// дефолт. Legacy-значения "gvisor", "system", "mixed" пишутся дословно:
+	// 1.15 принимает их с deprecation-warning, 1.16 потребует
+	// ENABLE_DEPRECATED_TUN_STACK=true, 1.17 удалит.
 	FakeIPStack string `json:"fakeipStack,omitempty"`
 	// FakeIPPool4 is the fakeip v4 pool CIDR (default "198.18.0.0/15").
 	FakeIPPool4 string `json:"fakeipPool4,omitempty"`

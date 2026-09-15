@@ -2,8 +2,8 @@
   FakeIPHero — шапка страницы FakeIP (мокап `.hero`): kick-eyebrow + крупный
   title + hsub-факты + панель действий.
 
-  ЧЕСТНОСТЬ субтайтла: показываем только реально известные факты. «gvisor»
-  фиксирован для fakeip-tun (см. EngineSettingsCard), WAN — из settings, состояние
+  ЧЕСТНОСТЬ субтайтла: показываем только реально известные факты. Стек — из
+  настроек (пусто = собственный стек sing-tun), WAN — из settings, состояние
   движка — из engineState. Имя opkgtun-интерфейса и fakeip-пул backend в
   settings/status НЕ отдаёт (DefaultFakeIPTunParams не в DTO) — НЕ выдумываем их,
   как и EngineSettingsCard показывает пул «по умолчанию».
@@ -24,6 +24,8 @@
 	import { Button, Modal } from '$lib/components/ui';
 	import { JsonConfigDrawer } from '$lib/components/singbox-routing';
 	import { TracePanel, traceOpen, openTrace, closeTrace } from '$lib/components/sb-router';
+	import { tunStackLabel } from '$lib/components/sb-router/tunStack';
+	import type { TunStack } from '$lib/types';
 	import { FileJson, Search, RotateCw } from 'lucide-svelte';
 	import type { FakeIPEngineState } from '../engineState';
 
@@ -36,8 +38,8 @@
 		wanAutoDetect?: boolean;
 		/** WAN: явный системный интерфейс (когда не авто). */
 		wanInterface?: string;
-		/** TCP/IP-стек fakeip-tun (gvisor/system) — первый факт субтайтла. */
-		fakeipStack?: 'gvisor' | 'system';
+		/** TCP/IP-стек tun-режимов (пусто = собственный стек sing-tun) — первый факт субтайтла. */
+		fakeipStack?: TunStack;
 		/** Активный fakeip tun-интерфейс из статуса (e.g. «opkgtun0»); опционально. */
 		fakeipIface?: string;
 		/** Перезапуск sing-box (страница зовёт api.singboxControl('restart')). */
@@ -53,7 +55,7 @@
 		engineState,
 		wanAutoDetect = true,
 		wanInterface,
-		fakeipStack = 'gvisor',
+		fakeipStack = '',
 		fakeipIface,
 		onRestart,
 		restartEnabled = true,
@@ -79,7 +81,9 @@
 	);
 
 	// Честный субтайтл: стек (· iface, если провижен) · WAN · состояние.
-	const stackFact = $derived(fakeipIface ? `${fakeipStack} · ${fakeipIface}` : fakeipStack);
+	const stackFact = $derived(
+		fakeipIface ? `${tunStackLabel(fakeipStack)} · ${fakeipIface}` : tunStackLabel(fakeipStack),
+	);
 	const wanFact = $derived(
 		wanAutoDetect ? 'WAN авто' : wanInterface ? `WAN ${wanInterface}` : '',
 	);
