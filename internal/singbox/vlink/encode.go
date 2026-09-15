@@ -300,6 +300,19 @@ func encodeMieru(ob map[string]any, label string) (string, error) {
 	return u.String(), nil
 }
 
+// outboundTLSEnabled — включён ли у аутбаунда TLS или Reality.
+func outboundTLSEnabled(ob map[string]any) bool {
+	tls, _ := ob["tls"].(map[string]any)
+	if tls == nil {
+		return false
+	}
+	if tls["enabled"] == true {
+		return true
+	}
+	reality, _ := tls["reality"].(map[string]any)
+	return reality != nil && reality["enabled"] == true
+}
+
 func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 	q := url.Values{}
 
@@ -336,7 +349,28 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 				q.Set("serviceName", svc)
 			}
 		case "http":
-			network = "h2"
+			// Транспорт http БЕЗ TLS — это HTTP/1.1-обфускация заголовком, то
+			// есть tcp+headerType=http у ссылки; h2 у чужих клиентов
+			// подразумевает TLS, и ссылка с ним не заработает. Зеркало ветки
+			// разбора в stream.go (#904, F322).
+			if outboundTLSEnabled(ob) {
+				network = "h2"
+			} else {
+				network = "tcp"
+				q.Set("type", "tcp") // headerType без своего транспорта чужой парсер не поймёт
+				q.Set("headerType", "http")
+			}
+			// Метод пишем всегда, когда транспорт без TLS: пустое поле у
+			// sing-box означает PUT (client.go), а обратный разбор ссылки
+			// подставляет GET — без явного значения метод мутировал бы на
+			// круге экспорт→импорт.
+			method, _ := transport["method"].(string)
+			switch {
+			case method != "":
+				q.Set("method", method)
+			case network == "tcp":
+				q.Set("method", "PUT")
+			}
 			if path, _ := transport["path"].(string); path != "" {
 				q.Set("path", path)
 			}
@@ -388,8 +422,7 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 	if tls, _ := ob["tls"].(map[string]any); tls != nil {
 		reality, _ := tls["reality"].(map[string]any)
 		hasReality := reality != nil && reality["enabled"] == true
-		hasTLS := tls["enabled"] == true
-		if hasReality || hasTLS {
+		if outboundTLSEnabled(ob) {
 			if hasReality {
 				q.Set("security", "reality")
 				if pk, _ := reality["public_key"].(string); pk != "" {

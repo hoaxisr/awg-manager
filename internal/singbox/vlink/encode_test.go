@@ -3,6 +3,7 @@ package vlink
 import (
 	"encoding/json"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -16,6 +17,8 @@ func TestEncodeOutbound_RoundTrip(t *testing.T) {
 		"hysteria2://mypass@example.com:8443?sni=h.example.com&alpn=h3#srv",
 		"hy2://p@example.com:8443?sni=h&insecure=1",
 		"naive+https://user:pass@example.com:443#n",
+		// #904/F322: обфускация заголовком обязана пережить круг, а не уехать h2.
+		"vless://uuid-here-1111-2222-333333333333@example.com:80?type=tcp&headerType=http&host=h.example.com&path=%2Fp&security=none#obfs",
 	}
 	for _, link := range links {
 		t.Run(link[:min(40, len(link))], func(t *testing.T) {
@@ -46,6 +49,87 @@ func TestEncodeOutbound_RoundTrip(t *testing.T) {
 			}
 		})
 	}
+}
+
+// F322: транспорт http без TLS кодируется обфускацией заголовком, а не h2 —
+// h2 у чужих клиентов подразумевает TLS. С TLS остаётся h2.
+func TestEncodeOutbound_HTTPTransportSplitsByTLS(t *testing.T) {
+	obfs := `{"type":"vless","server":"example.com","server_port":80,` +
+		`"uuid":"uuid-here-1111-2222-333333333333",` +
+		`"transport":{"type":"http","method":"GET","path":"/p","host":["h.example.com"]}}`
+	link, err := EncodeOutbound([]byte(obfs), "o")
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	q := linkQuery(t, link)
+	if q.Get("type") != "tcp" || q.Get("headerType") != "http" {
+		t.Errorf("no-TLS: type=%q headerType=%q, want tcp/http (link %s)", q.Get("type"), q.Get("headerType"), link)
+	}
+	if q.Get("method") != "GET" {
+		t.Errorf("no-TLS: method=%q, want GET", q.Get("method"))
+	}
+
+	h2 := `{"type":"vless","server":"example.com","server_port":443,` +
+		`"uuid":"uuid-here-1111-2222-333333333333",` +
+		`"transport":{"type":"http","path":"/p","host":["h.example.com"]},` +
+		`"tls":{"enabled":true,"server_name":"h.example.com"}}`
+	link, err = EncodeOutbound([]byte(h2), "h")
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	q = linkQuery(t, link)
+	if q.Get("type") != "h2" || q.Get("headerType") != "" {
+		t.Errorf("TLS: type=%q headerType=%q, want h2 and no headerType (link %s)", q.Get("type"), q.Get("headerType"), link)
+	}
+
+	// Reality без tls.enabled — реальная форма аутбаунда в этом пакете; она
+	// тоже TLS, значит h2, а не обфускация.
+	reality := `{"type":"vless","server":"example.com","server_port":443,` +
+		`"uuid":"uuid-here-1111-2222-333333333333",` +
+		`"transport":{"type":"http","path":"/p"},` +
+		`"tls":{"server_name":"h","reality":{"enabled":true,"public_key":"K","short_id":"ab"}}}`
+	link, err = EncodeOutbound([]byte(reality), "r")
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	q = linkQuery(t, link)
+	if q.Get("type") != "h2" || q.Get("headerType") != "" {
+		t.Errorf("reality: type=%q headerType=%q, want h2 (link %s)", q.Get("type"), q.Get("headerType"), link)
+	}
+}
+
+// Метод не должен мутировать на круге: пустой method у sing-box означает PUT,
+// а разбор обфускации подставляет GET (F323).
+func TestEncodeOutbound_HTTPMethodSurvivesRoundTrip(t *testing.T) {
+	ob := `{"type":"vless","server":"example.com","server_port":80,` +
+		`"uuid":"uuid-here-1111-2222-333333333333",` +
+		`"transport":{"type":"http","path":"/p"}}`
+	link, err := EncodeOutbound([]byte(ob), "m")
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if q := linkQuery(t, link); q.Get("method") != "PUT" {
+		t.Fatalf("method=%q, want PUT (link %s)", q.Get("method"), link)
+	}
+	back, err := ParseLink(link)
+	if err != nil {
+		t.Fatalf("reparse: %v", err)
+	}
+	var got map[string]any
+	json.Unmarshal(back.Outbound, &got)
+	tr, _ := got["transport"].(map[string]any)
+	if tr["method"] != "PUT" {
+		t.Errorf("после круга method=%v, want PUT", tr["method"])
+	}
+}
+
+func linkQuery(t *testing.T, link string) url.Values {
+	t.Helper()
+	u, err := url.Parse(link)
+	if err != nil {
+		t.Fatalf("parse link %q: %v", link, err)
+	}
+	return u.Query()
 }
 
 func TestEncodeOutbound_VlessRealityWithoutTLSFlag(t *testing.T) {
@@ -155,6 +239,15 @@ func assertEncodeRoundTrip(t *testing.T, want, got map[string]any) {
 		if typ, _ := wantTransport["type"].(string); typ != "" && typ != "tcp" {
 			if gotTyp, _ := gotTransport["type"].(string); gotTyp != typ {
 				t.Fatalf("transport.type: want %q got %q", typ, gotTyp)
+			}
+		}
+		// Один только type совпадал бы и у h2, и у обфускации заголовком —
+		// круг обязан сохранять и содержимое транспорта (#904, F322).
+		for _, k := range []string{"path", "host", "method", "service_name", "max_early_data", "early_data_header_name"} {
+			if w, ok := wantTransport[k]; ok && w != nil {
+				if !reflect.DeepEqual(gotTransport[k], w) {
+					t.Fatalf("transport.%s: want %v got %v", k, w, gotTransport[k])
+				}
 			}
 		}
 	}
