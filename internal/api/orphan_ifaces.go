@@ -128,7 +128,8 @@ func (h *OrphanIfaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, "не удалось собрать занятость OpkgTun: "+err.Error(), "OCCUPANCY_FAILED")
 		return
 	}
-	if !containsIndex(orphans, idx) {
+	target, isOrphan := orphanByIndex(orphans, idx)
+	if !isOrphan {
 		response.ErrorWithStatus(w, http.StatusConflict,
 			req.Iface+": у номера появился владелец, удалять нечего. Обновите список туннелей.", "NOT_ORPHAN")
 		return
@@ -143,17 +144,23 @@ func (h *OrphanIfaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Порядок — запись, потом устройство: так делает teardown режимов роутера,
 	// и так устройство, которое NDMS уносит вместе с записью, не приходится
 	// сносить дважды.
-	// Оба имени строятся из НОМЕРА, а не из присланной строки: ядро зовёт
-	// интерфейс opkgtun10, NDMS — OpkgTun10, а клиент мог прислать любое из
-	// написаний (и с ведущими нулями). Снести надо то, что нашли по следу.
-	ndmsName := fmt.Sprintf("OpkgTun%d", idx)
+	// Имя записи NDMS берётся ИЗ НАЙДЕННОГО, а не собирается из номера: собрать
+	// его заново значит завести второй разборщик рядом с тем, которым занятость
+	// считал пул, и на записи, которую один принимает, а другой нет, снос ушёл
+	// бы мимо — а DeleteOpkgTun к отсутствию толерантен, то есть ручка
+	// отчиталась бы успехом. Имя устройства ядра каноническое: клиент мог
+	// прислать любое написание (и с ведущими нулями).
+	ndmsName := target.NDMSName
 	iface := fmt.Sprintf("opkgtun%d", idx)
-	if err := h.ndms.DeleteOpkgTun(r.Context(), ndmsName); err != nil {
-		response.Error(w, "не удалось снять запись "+ndmsName+": "+err.Error(), "NDMS_DELETE_FAILED")
-		return
+	if ndmsName != "" {
+		if err := h.ndms.DeleteOpkgTun(r.Context(), ndmsName); err != nil {
+			response.Error(w, "не удалось снять запись "+ndmsName+": "+err.Error(), "NDMS_DELETE_FAILED")
+			return
+		}
 	}
 
-	// Снос устройства БЕЗУСЛОВНЫЙ. Прежде он шёл под проверкой наличия, а та
+	// Снос устройства БЕЗУСЛОВНЫЙ — в том числе когда записи NDMS не было вовсе
+	// (устройство подняли мимо неё). Прежде он шёл под проверкой наличия, а та
 	// была fail-open: незапустившийся `ip` читался как «устройства нет», и
 	// ручка отчитывалась успехом, оставив номер занятым. Лишний вызов на
 	// несуществующем устройстве стоит одного отказа с понятным текстом.
@@ -161,7 +168,7 @@ func (h *OrphanIfaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		// Запись снята, устройство осталось: номер по-прежнему занят, и
 		// молчать об этом нельзя — пользователь решит, что убрано всё.
 		h.log.Warn("orphan-delete", iface, "запись NDMS снята, устройство осталось: "+err.Error())
-		response.Error(w, "запись "+ndmsName+" снята, но устройство "+iface+" удалить не удалось: "+err.Error(), "LINK_DELETE_FAILED")
+		response.Error(w, "устройство "+iface+" удалить не удалось: "+err.Error(), "LINK_DELETE_FAILED")
 		return
 	}
 
@@ -172,15 +179,16 @@ func (h *OrphanIfaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// containsIndex — сверка по НОМЕРУ, а не по строке имени. IndexOf принимает оба
+// orphanByIndex — поиск по НОМЕРУ, а не по строке имени. IndexOf принимает оба
 // написания («OpkgTun10» и «opkgtun10») и глотает ведущие нули, а список сирот
 // строится в одном каноническом; сравнение строк отвечало бы на «OpkgTun10»
-// отказом «у номера есть владелец», что неправда.
-func containsIndex(orphans []external.OrphanIface, idx int) bool {
+// отказом «у номера есть владелец», что неправда. Отдаёт саму находку: снос
+// ходит по ЕЁ имени записи NDMS, а не по собранному заново.
+func orphanByIndex(orphans []external.OrphanIface, idx int) (external.OrphanIface, bool) {
 	for _, o := range orphans {
 		if n, ok := opkgtun.IndexOf(o.Iface); ok && n == idx {
-			return true
+			return o, true
 		}
 	}
-	return false
+	return external.OrphanIface{}, false
 }

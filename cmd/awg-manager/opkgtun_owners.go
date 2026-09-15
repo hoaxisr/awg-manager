@@ -165,9 +165,14 @@ func ndmsHolders(a *routerOpkgTunIndexAdapter) func(context.Context) (opkgtun.Ta
 			// Разбор шире пула (ExtractInterfaceNumber принимает ещё awgN и
 			// awgmN) и оставлен таким намеренно: сузить значит пометить МЕНЬШЕ
 			// занятых, а это единственное направление ошибки, приводящее к
-			// коллизии. Достижимость лишнего класса не проверялась: ID у NDMS
-			// это класс плюс индекс, и классов «Awg»/«Awgm» у прошивки, судя по
-			// всему, нет (F315).
+			// коллизии. Лишний класс на прошивке НЕ достижим — замерено на
+			// стенде 5.01.C.3.0-1 15.09.2026: `show interface` отдаёт классы
+			// Bridge, GigabitEthernet, OpkgTun, PPPoE, WifiMaster, и записи
+			// OpkgTun зовутся ровно «OpkgTun<N>» (F315).
+			//
+			// Тот же разбор обязан применять КАЖДЫЙ, кто спрашивает «есть ли
+			// запись NDMS у этого номера»: свой, более строгий, дал бы запись,
+			// которую занятость видит, а спрашивающий нет.
 			num, ok := sysinfo.ExtractInterfaceNumber(strings.ToLower(i.ID))
 			if !ok {
 				continue

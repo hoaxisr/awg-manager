@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/external"
 )
 
@@ -32,13 +34,28 @@ func orphanReq(t *testing.T, h *OrphanIfaceHandler, body string) *httptest.Respo
 	return rr
 }
 
+// listOf — сироты «обе половины на месте»: имя записи NDMS приходит от роутера
+// и несётся до сноса как есть.
 func listOf(ifaces ...string) func(context.Context) ([]external.OrphanIface, error) {
 	return func(context.Context) ([]external.OrphanIface, error) {
 		out := make([]external.OrphanIface, 0, len(ifaces))
 		for _, i := range ifaces {
-			out = append(out, external.OrphanIface{Iface: i})
+			num, _ := opkgtun.IndexOf(i)
+			out = append(out, external.OrphanIface{
+				Iface:        i,
+				NDMSName:     fmt.Sprintf("OpkgTun%d", num),
+				NDMSRecord:   true,
+				KernelDevice: true,
+			})
 		}
 		return out, nil
+	}
+}
+
+// listKernelOnly — устройство есть, записи NDMS нет вовсе.
+func listKernelOnly(iface string) func(context.Context) ([]external.OrphanIface, error) {
+	return func(context.Context) ([]external.OrphanIface, error) {
+		return []external.OrphanIface{{Iface: iface, KernelDevice: true}}, nil
 	}
 }
 
@@ -116,14 +133,19 @@ func TestOrphanDelete_RemovesKernelDeviceWhenNoNDMSRecord(t *testing.T) {
 	linkDelete = func(_ context.Context, iface string) error { deleted = iface; return nil }
 	t.Cleanup(func() { linkDelete = prev })
 
-	// DeleteOpkgTun толерантен к отсутствию записи и отдаёт nil.
-	h := NewOrphanIfaceHandler(listOf("opkgtun10"), &fakeOrphanNDMS{}, nil)
+	ndms := &fakeOrphanNDMS{}
+	h := NewOrphanIfaceHandler(listKernelOnly("opkgtun10"), ndms, nil)
 
 	if rr := orphanReq(t, h, `{"iface":"opkgtun10"}`); rr.Code != 200 {
 		t.Fatalf("code = %d, ждали 200 (%s)", rr.Code, rr.Body.String())
 	}
 	if deleted != "opkgtun10" {
 		t.Fatalf("устройство ядра не снесено при отсутствующей записи NDMS (deleted=%q)", deleted)
+	}
+	// Записи не было — в NDMS ходить незачем: снос имени, собранного из номера,
+	// ушёл бы мимо и был бы принят за успех.
+	if len(ndms.deleted) != 0 {
+		t.Fatalf("ходили в NDMS без записи: %v", ndms.deleted)
 	}
 }
 

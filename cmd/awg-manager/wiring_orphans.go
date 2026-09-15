@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/external"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 )
 
 // orphanIfaces — сироты пула в виде, готовом для списка внешних туннелей и
@@ -75,7 +77,7 @@ func orphanIfacesWith(pool *opkgtun.Pool, ifaces *ndmsquery.InterfaceStore, excl
 		out := make([]external.OrphanIface, 0, len(orphans))
 		for _, o := range orphans {
 			iface := fmt.Sprintf("opkgtun%d", o.Index)
-			descr, inNDMS := ndms[o.Index]
+			rec, inNDMS := ndms[o.Index]
 			inKernel := kernelIfacePresent(iface)
 			// Показываем ТОЛЬКО интерфейсы OpkgTun — то есть номера, за
 			// которыми стоит настоящая сущность: запись NDMS OpkgTun<N> или
@@ -94,7 +96,8 @@ func orphanIfacesWith(pool *opkgtun.Pool, ifaces *ndmsquery.InterfaceStore, excl
 			}
 			out = append(out, external.OrphanIface{
 				Iface:        iface,
-				Description:  descr,
+				NDMSName:     rec.id,
+				Description:  rec.description,
 				Addrs:        ifaceAddrs(iface),
 				NDMSRecord:   inNDMS,
 				KernelDevice: inKernel,
@@ -112,7 +115,19 @@ func orphanIfacesWith(pool *opkgtun.Pool, ifaces *ndmsquery.InterfaceStore, excl
 // ndmsDescriptionsFn — описания записей OpkgTun по номеру, для списка внешних
 // туннелей.
 func ndmsDescriptionsFn(ifaces *ndmsquery.InterfaceStore) func(context.Context) map[int]string {
-	return func(ctx context.Context) map[int]string { return ndmsOpkgTuns(ctx, ifaces) }
+	return func(ctx context.Context) map[int]string {
+		out := map[int]string{}
+		for n, rec := range ndmsOpkgTuns(ctx, ifaces) {
+			out[n] = rec.description
+		}
+		return out
+	}
+}
+
+// ndmsRecord — запись интерфейса в NDMS так, как её отдал роутер.
+type ndmsRecord struct {
+	id          string
+	description string
 }
 
 // ndmsOpkgTuns — записи OpkgTun в NDMS: номер → описание. НАЛИЧИЕ ключа значит
@@ -121,8 +136,8 @@ func ndmsDescriptionsFn(ifaces *ndmsquery.InterfaceStore) func(context.Context) 
 // Отказ чтения не отказывает всей проверке: описание — подсказка человеку, а не
 // основание решения. Но и сиротой по одному лишь отсутствию записи никто не
 // становится — вторая половина проверки смотрит в ядро.
-func ndmsOpkgTuns(ctx context.Context, ifaces *ndmsquery.InterfaceStore) map[int]string {
-	out := map[int]string{}
+func ndmsOpkgTuns(ctx context.Context, ifaces *ndmsquery.InterfaceStore) map[int]ndmsRecord {
+	out := map[int]ndmsRecord{}
 	if ifaces == nil {
 		return out
 	}
@@ -131,9 +146,15 @@ func ndmsOpkgTuns(ctx context.Context, ifaces *ndmsquery.InterfaceStore) map[int
 		return out
 	}
 	for _, i := range all {
-		if n, ok := opkgtun.NDMSIndexOf(i.ID); ok {
-			out[n] = i.Description
+		// ТОТ ЖЕ разбор, которым занятость считал пул (ndmsHolders). Свой,
+		// более строгий, давал бы записи, которую пул видит, а показ нет: номер
+		// приезжал бы как «только устройство», а снос уходил бы имени, которого
+		// в NDMS нет.
+		n, ok := sysinfo.ExtractInterfaceNumber(strings.ToLower(i.ID))
+		if !ok {
+			continue
 		}
+		out[n] = ndmsRecord{id: i.ID, description: i.Description}
 	}
 	return out
 }
