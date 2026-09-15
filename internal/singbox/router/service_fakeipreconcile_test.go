@@ -733,7 +733,7 @@ func TestReconcileFakeIPTun_HealsUDPSettings(t *testing.T) {
 	}
 }
 
-// F114 fix round 1: guard в healTunUDPSettings обязан ловить не только
+// F114 fix round 1: guard в healTunSettings обязан ловить не только
 // расхождение полей tun-in, но и пропавшее/устаревшее route-options
 // правило — иначе при уже верных полях инбаунда heal no-op'ится навсегда,
 // хотя правило снято. Инбаунд не трогаем (sr не меняем — дефолт "5m0s"),

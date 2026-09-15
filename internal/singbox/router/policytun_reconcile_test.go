@@ -693,7 +693,58 @@ func TestReconcilePolicyTun_HealsUDPSettings(t *testing.T) {
 	}
 }
 
-// F114 fix round 1: guard в healTunUDPSettings обязан ловить не только
+// Смена стека в настройках доезжает до tun-in policy-tun без Disable/Enable:
+// в fakeip-режиме её доносит reapplyFakeIPOverlay, а здесь overlay не
+// перегенерируется — без heal селектор стека в карточке режима был бы мёртвым.
+func TestReconcilePolicyTun_HealsStack(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
+	// Провижининг оставил стек по умолчанию (пустой = собственный стек
+	// sing-tun); пользователь откатывается на legacy-gvisor.
+	sr.FakeIPStack = "gvisor"
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if got := policyTunInbound(t, h).Stack; got != "gvisor" {
+		t.Errorf("tun-in stack = %q, want gvisor", got)
+	}
+
+	// И обратно: пустое значение обязано СНЯТЬ ключ, а не остаться gvisor'ом.
+	sr.FakeIPStack = ""
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun (обратно): %v", err)
+	}
+	if got := policyTunInbound(t, h).Stack; got != "" {
+		t.Errorf("tun-in stack = %q, want пустой", got)
+	}
+	raw, err := os.ReadFile(filepath.Join(h.dir, "20-router.json"))
+	if err != nil {
+		t.Fatalf("read active: %v", err)
+	}
+	if strings.Contains(string(raw), `"stack"`) {
+		t.Errorf("ключ stack остался в слоте: %s", raw)
+	}
+}
+
+// policyTunInbound возвращает tun-in из применённого слота.
+func policyTunInbound(t *testing.T, h *policyTunEnableHarness) *Inbound {
+	t.Helper()
+	cfg, err := h.svc.loadAppliedRouterConfig()
+	if err != nil {
+		t.Fatalf("loadAppliedRouterConfig: %v", err)
+	}
+	for i := range cfg.Inbounds {
+		if cfg.Inbounds[i].Tag == "tun-in" {
+			return &cfg.Inbounds[i]
+		}
+	}
+	t.Fatal("tun-in инбаунд отсутствует")
+	return nil
+}
+
+// F114 fix round 1: guard в healTunSettings обязан ловить не только
 // расхождение полей tun-in, но и пропавшее/устаревшее route-options
 // правило — иначе при уже верных полях инбаунда heal no-op'ится навсегда,
 // хотя правило снято. Инбаунд не трогаем (sr не меняем — дефолт "5m0s"),

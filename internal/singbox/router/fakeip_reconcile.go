@@ -136,7 +136,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// Смена udpTimeout/udpNatMax через UpdateSettings — tun-in fakeip строится
 	// только на enable, поэтому без heal'а изменение не доезжало до живого
 	// режима (F114). После миграции слота — актуальный tun-in уже в форме 1.14.
-	s.healTunUDPSettings(ctx, orchestrator.SlotFakeIP, sr)
+	s.healTunSettings(ctx, orchestrator.SlotFakeIP, sr)
 
 	// One-shot (до первого УСПЕХА) ассерт permit-ACL: покрывает апгрейд
 	// awg-manager поверх уже включённого fakeip (ACL появился в этой версии)
