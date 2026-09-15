@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
+	import { linkImportErrorText } from '$lib/utils/linkImportError';
 	import { singboxStatus, singboxTunnels } from '$lib/stores/singbox';
 	import type { SingboxImportResponse } from '$lib/types';
 
@@ -101,7 +102,7 @@
 					<strong>Ошибки: {result.errors.length}</strong>
 					<ul>
 						{#each result.errors ?? [] as e}
-							<li>Строка {e.line}: {e.error}</li>
+							<li>Строка {e.line}: {linkImportErrorText(e.error)}</li>
 						{/each}
 					</ul>
 				</div>

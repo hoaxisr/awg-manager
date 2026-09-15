@@ -9,6 +9,7 @@
 	import { runWithConcurrency } from '$lib/utils/runWithConcurrency';
 	import { singboxDelayHistory, triggerDelayCheck } from '$lib/stores/singbox';
 	import { notifications } from '$lib/stores/notifications';
+	import { linkImportErrorText, translateKnownError } from '$lib/utils/linkImportError';
 	import SubscriptionMemberList from './SubscriptionMemberList.svelte';
 	import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
@@ -182,12 +183,30 @@
 		const beforeRejected = rejectedMembers.length;
 		try {
 			const result = await api.refreshSubscription(subscription.id);
+			// skippedOther здесь НЕТ намеренно: неподдерживаемый протокол бэкенд
+			// считает и в счётчике, и в ошибках разбора (vlink: clash.go,
+			// singbox.go, vlink.go — везде одинаково), поэтому он показывается
+			// ниже, с названием протокола. Дубликаты и vmess записей в ошибках
+			// не порождают — эти два счётчика и остаются здесь.
 			const skipped: string[] = [];
 			if (result.skippedDuplicate > 0) skipped.push(`дубликатов: ${result.skippedDuplicate}`);
 			if (result.skippedVmess > 0) skipped.push(`vmess: ${result.skippedVmess}`);
-			if (result.skippedOther > 0) skipped.push(`не поддерживаемых: ${result.skippedOther}`);
 			if (skipped.length > 0) {
 				notifications.warning(`Пропущено — ${skipped.join(', ')}`);
+			}
+			// Ошибки разбора доезжали до ответа, но нигде не показывались:
+			// сервер просто исчезал из подписки без причины.
+			const parseErrors = result.parseErrors ?? [];
+			if (parseErrors.length > 0) {
+				// Причины дедуплицируем: у подписки на сотню узлов одного
+				// протокола это одна и та же фраза сто раз.
+				const reasons = [...new Set(parseErrors.map(linkImportErrorText))];
+				const shown = reasons.slice(0, 3);
+				const rest = reasons.length - shown.length;
+				notifications.warning(
+					`Не разобрано серверов: ${parseErrors.length}. ${shown.join('; ')}` +
+						(rest > 0 ? ` и ещё ${rest} причин` : '')
+				);
 			}
 			const updated = await api.getSubscription(subscription.id);
 			const infoN = updated.infoItems?.length ?? 0;
@@ -200,7 +219,9 @@
 			}
 			onUpdated();
 		} catch (e) {
-			lastError = e instanceof Error ? e.message : 'Не удалось обновить';
+			// Сообщение несёт внутри английскую строку разбора («Первая ошибка
+			// парсера: …») — прогоняем через ту же обёртку, что и остальные.
+			lastError = e instanceof Error ? translateKnownError(e.message) : 'Не удалось обновить';
 		} finally {
 			refreshing = false;
 		}
