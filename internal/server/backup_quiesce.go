@@ -75,7 +75,11 @@ func (s *Server) ResumeAfterBackup(parent context.Context) {
 		if s.proxyRuntime == nil {
 			return
 		}
-		if err := s.proxyRuntime.Boot(context.Background()); err != nil {
+		// ctx вызывающего, а не Background: за этим Boot стоит посев, а тот
+		// ждёт очередь пула по ctx.Done(). На Background ожидание неотменяемо,
+		// и застрявший в RCI источник держал бы очередь всех четырёх
+		// подсистем до конца процесса.
+		if err := s.proxyRuntime.Boot(ctx); err != nil {
 			s.appLog.Warn("backup-resume", "", "прокси-рантайм не поднялся: "+err.Error())
 		}
 	}()

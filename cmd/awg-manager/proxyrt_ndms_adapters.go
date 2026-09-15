@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/ndmsres"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
@@ -147,19 +147,10 @@ func proxyKernelWAN(ifaces systemNameResolver) func(ctx context.Context, ndmsNam
 	}
 }
 
-// opkgTunIndex — proxyrt.IndexOf: чистый разбор имени, без ввода-вывода
-// (зовётся под локом аллокатора).
-func opkgTunIndex(name string) (int, bool) {
-	const p = "OpkgTun"
-	if !strings.HasPrefix(name, p) {
-		return 0, false
-	}
-	n, err := strconv.Atoi(name[len(p):])
-	if err != nil || n < 0 {
-		return 0, false
-	}
-	return n, true
-}
+// opkgTunIndex — номер из имени интерфейса. Разбор один на проект
+// (opkgtun.IndexOf): собственный принимал бы «OpkgTun+5» как 5, потому что это
+// принимает strconv.Atoi, — а расхождение двух разборов и породило #891.
+func opkgTunIndex(name string) (int, bool) { return opkgtun.IndexOf(name) }
 
 // opkgTunSupported — поддерживает ли прошивка интерфейсы OpkgTun. Источник
 // один, osdetect.Is5 (wiring_core.go:87): на 4.x запрос даёт «unsupported

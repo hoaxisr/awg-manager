@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
@@ -105,14 +106,18 @@ func serviceForImport(t *testing.T) (*ServiceImpl, string, string) {
 
 	tunnels := filepath.Join(dir, "tunnels")
 	store := storage.NewAWGTunnelStoreWithLockDir(tunnels, filepath.Join(dir, "locks"))
-	// Источник занятости OpkgTun обязателен на пути OS5: без него выбор ID
-	// отказывается работать намеренно (storage/awg_store.go:417-423). Раньше
-	// харнесс до этой ветки не доходил — версия ОС в тестах неизвестна, а
-	// фолбэк был на 4.x; теперь неизвестность означает 5.x (osdetect.Get).
-	return &ServiceImpl{
+	// Пул номеров OpkgTun обязателен на пути OS5: без него выдача ID
+	// отказывается работать намеренно. Харнесс подставляет пустую занятость —
+	// в тестах на роутер не ходим, — но состав из одного источника настоящий.
+	pool := opkgtun.NewPool(16, opkgtun.Source{
+		Name: "тест",
+		Read: func(context.Context) (opkgtun.Taken, error) { return nil, nil },
+	})
+	svc := &ServiceImpl{
 		store:          store,
 		legacyOperator: &MockOperator{},
 		state:          NewMockStateManager(),
-		opkgOccupancy:  func(context.Context) (map[int]bool, error) { return nil, nil },
-	}, tunnels, confs
+	}
+	svc.SetOpkgTunPool(pool, func() bool { return true })
+	return svc, tunnels, confs
 }

@@ -7,163 +7,163 @@ import (
 	"testing"
 )
 
-func TestAllocIndexPrefersPinnedWhenFree(t *testing.T) {
-	a := NewAllocator(IndexRange{Min: 17, Max: 49})
+func TestAllocPortPrefersPinnedWhenFree(t *testing.T) {
+	a := NewAllocator(PortRange{Min: 9000, Max: 9200})
 
-	got, err := a.AllocIndex("inst1", 23, map[int]bool{})
+	got, err := a.AllocPort("inst1", 9006, true, map[int]bool{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != 23 {
-		t.Fatalf("индекс %d, ожидали закреплённый 23: на имя OpkgTun23 ссылаются permit'ы пользователя", got)
+	if got != 9006 {
+		t.Fatalf("порт %d, ожидали закреплённый 9006: порт стоит в ссылке абонента, и переезд рвёт соединение", got)
 	}
 }
 
-func TestAllocIndexSkipsTaken(t *testing.T) {
-	a := NewAllocator(IndexRange{Min: 17, Max: 49})
+func TestAllocPortSkipsTaken(t *testing.T) {
+	a := NewAllocator(PortRange{Min: 9000, Max: 9200})
 
-	got, err := a.AllocIndex("inst1", 0, map[int]bool{17: true, 18: true})
+	got, err := a.AllocPort("inst1", 0, false, map[int]bool{9000: true, 9001: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != 19 {
-		t.Fatalf("индекс %d, ожидали 19", got)
+	if got != 9002 {
+		t.Fatalf("порт %d, ожидали 9002", got)
 	}
 }
 
-func TestAllocIndexPinnedButTakenFallsBack(t *testing.T) {
-	a := NewAllocator(IndexRange{Min: 17, Max: 49})
+func TestAllocPortPinnedButTakenFallsBack(t *testing.T) {
+	a := NewAllocator(PortRange{Min: 9000, Max: 9200})
 
-	got, err := a.AllocIndex("inst1", 17, map[int]bool{17: true})
+	got, err := a.AllocPort("inst1", 9000, true, map[int]bool{9000: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == 17 {
-		t.Fatal("занятый закреплённый индекс переиспользовать нельзя")
+	if got == 9000 {
+		t.Fatal("занятый закреплённый порт переиспользовать нельзя")
 	}
 }
 
-func TestAllocIndexExhausted(t *testing.T) {
-	a := NewAllocator(IndexRange{Min: 17, Max: 18})
+func TestAllocPortExhausted(t *testing.T) {
+	a := NewAllocator(PortRange{Min: 9000, Max: 9001})
 
-	if _, err := a.AllocIndex("inst1", 0, map[int]bool{17: true, 18: true}); !errors.Is(err, ErrNoFreeIndex) {
-		t.Fatalf("ошибка %v, ожидали ErrNoFreeIndex", err)
+	if _, err := a.AllocPort("inst1", 0, false, map[int]bool{9000: true, 9001: true}); !errors.Is(err, ErrNoFreePort) {
+		t.Fatalf("ошибка %v, ожидали ErrNoFreePort", err)
 	}
 }
 
-func TestAllocIndexReleaseReturnsToPool(t *testing.T) {
-	a := NewAllocator(IndexRange{Min: 17, Max: 17})
+func TestAllocPortReleaseReturnsToPool(t *testing.T) {
+	a := NewAllocator(PortRange{Min: 9000, Max: 9000})
 
-	if _, err := a.AllocIndex("inst1", 0, map[int]bool{}); err != nil {
+	if _, err := a.AllocPort("inst1", 0, false, map[int]bool{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.AllocIndex("inst2", 0, map[int]bool{}); !errors.Is(err, ErrNoFreeIndex) {
-		t.Fatal("занятый номер не должен выдаваться дважды")
+	if _, err := a.AllocPort("inst2", 0, false, map[int]bool{}); !errors.Is(err, ErrNoFreePort) {
+		t.Fatal("занятый порт не должен выдаваться дважды")
 	}
 	a.Release("inst1")
-	if _, err := a.AllocIndex("inst2", 0, map[int]bool{}); err != nil {
-		t.Fatalf("после освобождения номер обязан выдаваться: %v", err)
+	if _, err := a.AllocPort("inst2", 0, false, map[int]bool{}); err != nil {
+		t.Fatalf("после освобождения порт обязан выдаваться: %v", err)
 	}
 }
 
-func TestAllocIndexIsIdempotentForSameOwner(t *testing.T) {
-	// Повторный проход реконсиляции не должен менять номер интерфейса:
-	// на имя OpkgTunN ссылаются permit'ы пользователя в политиках.
-	a := NewAllocator(IndexRange{Min: 17, Max: 49})
+func TestAllocPortIsIdempotentForSameOwner(t *testing.T) {
+	// Повторный проход реконсиляции не должен менять порт: он стоит в ссылке
+	// абонента снаружи, и переезд рвёт соединение.
+	a := NewAllocator(PortRange{Min: 9000, Max: 9200})
 
-	first, err := a.AllocIndex("inst1", 23, map[int]bool{})
+	first, err := a.AllocPort("inst1", 9006, true, map[int]bool{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := a.AllocIndex("inst1", 23, map[int]bool{})
+	second, err := a.AllocPort("inst1", 9006, true, map[int]bool{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first != second {
-		t.Fatalf("номер сменился с %d на %d при повторном выделении тому же владельцу", first, second)
+		t.Fatalf("порт сменился с %d на %d при повторном выделении тому же владельцу", first, second)
 	}
 }
 
-func TestAllocIndexDoesNotGiveOthersHeldNumber(t *testing.T) {
-	a := NewAllocator(IndexRange{Min: 17, Max: 49})
-	mine, _ := a.AllocIndex("inst1", 17, map[int]bool{})
-	other, err := a.AllocIndex("inst2", 17, map[int]bool{})
+func TestAllocPortDoesNotGiveOthersHeldPort(t *testing.T) {
+	a := NewAllocator(PortRange{Min: 9000, Max: 9200})
+	mine, _ := a.AllocPort("inst1", 9000, true, map[int]bool{})
+	other, err := a.AllocPort("inst2", 9000, true, map[int]bool{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if other == mine {
-		t.Fatalf("номер %d выдан двум владельцам", mine)
+		t.Fatalf("порт %d выдан двум владельцам", mine)
 	}
 }
 
-func TestAllocIndexReleaseIsByOwnerNotByNumber(t *testing.T) {
-	// Release по владельцу, а не по номеру: иначе остаётся способ освободить
-	// чужой номер. Владельцы — РАЗНЫЕ ключи одного инстанса, как в проде
-	// (`key/wg`, `key/raw`, `key/listen`): за каждым ровно один номер.
-	a := NewAllocator(IndexRange{Min: 17, Max: 18})
+func TestAllocPortReleaseIsByOwnerNotByPort(t *testing.T) {
+	// Release по владельцу, а не по порту: иначе остаётся способ освободить
+	// чужой порт. Владельцы — РАЗНЫЕ ключи одного инстанса, как в проде
+	// (`key/wg`, `key/raw`, `key/listen`): за каждым ровно один порт.
+	a := NewAllocator(PortRange{Min: 9000, Max: 9001})
 
-	if _, err := a.AllocIndex("inst1/wg", 17, map[int]bool{}); err != nil {
+	if _, err := a.AllocPort("inst1/wg", 9000, true, map[int]bool{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.AllocIndex("inst1/raw", 18, map[int]bool{}); err != nil {
+	if _, err := a.AllocPort("inst1/raw", 9001, true, map[int]bool{}); err != nil {
 		t.Fatal(err)
 	}
 	a.Release("inst2") // чужой владелец ничего не освобождает
-	if _, err := a.AllocIndex("inst3", 0, map[int]bool{}); !errors.Is(err, ErrNoFreeIndex) {
-		t.Fatal("Release чужого владельца не должен освобождать номера")
+	if _, err := a.AllocPort("inst3", 0, false, map[int]bool{}); !errors.Is(err, ErrNoFreePort) {
+		t.Fatal("Release чужого владельца не должен освобождать порты")
 	}
 
 	a.Release("inst1/wg")
-	if _, err := a.AllocIndex("inst3", 17, map[int]bool{}); err != nil {
-		t.Fatalf("после освобождения владельца номер 17 обязан выдаваться: %v", err)
+	if _, err := a.AllocPort("inst3", 9000, true, map[int]bool{}); err != nil {
+		t.Fatalf("после освобождения владельца порт 9000 обязан выдаваться: %v", err)
 	}
-	// Освобождён ровно один владелец: номер второго остаётся за ним.
-	if _, err := a.AllocIndex("inst4", 18, map[int]bool{}); !errors.Is(err, ErrNoFreeIndex) {
-		t.Fatal("Release одного ключа не должен освобождать номер другого")
+	// Освобождён ровно один владелец: порт второго остаётся за ним.
+	if _, err := a.AllocPort("inst4", 9001, true, map[int]bool{}); !errors.Is(err, ErrNoFreePort) {
+		t.Fatal("Release одного ключа не должен освобождать порт другого")
 	}
 }
 
-// За владельцем остаётся РОВНО ОДИН номер: переезжая, он отдаёт прежний.
-// Иначе номер, с которого владелец ушёл (listen-порт, занятый чужим
+// За владельцем остаётся РОВНО ОДИН порт: переезжая, он отдаёт прежний.
+// Иначе порт, с которого владелец ушёл (listen-порт, занятый чужим
 // туннелем), висел бы за ним до удаления инстанса или рестарта демона —
 // недоступный другим и уже никому не нужный.
-func TestAllocIndexMoveReleasesPreviousNumber(t *testing.T) {
-	a := NewAllocator(IndexRange{Min: 17, Max: 18})
+func TestAllocPortMoveReleasesPreviousPort(t *testing.T) {
+	a := NewAllocator(PortRange{Min: 9000, Max: 9001})
 
-	first, err := a.AllocIndex("inst1/listen", 17, map[int]bool{})
-	if err != nil || first != 17 {
-		t.Fatalf("первый номер: %d, %v", first, err)
+	first, err := a.AllocPort("inst1/listen", 9000, true, map[int]bool{})
+	if err != nil || first != 9000 {
+		t.Fatalf("первый порт: %d, %v", first, err)
 	}
-	// 17 занят снаружи — владелец переезжает на 18.
-	moved, err := a.AllocIndex("inst1/listen", 17, map[int]bool{17: true})
-	if err != nil || moved != 18 {
+	// 9000 занят снаружи — владелец переезжает на 9001.
+	moved, err := a.AllocPort("inst1/listen", 9000, true, map[int]bool{9000: true})
+	if err != nil || moved != 9001 {
 		t.Fatalf("переезд: %d, %v", moved, err)
 	}
-	// 17 обязан снова выдаваться: прежний захват снят вместе с переездом.
-	if got, err := a.AllocIndex("inst2", 17, map[int]bool{}); err != nil || got != 17 {
-		t.Fatalf("прежний номер не освобождён: %d, %v", got, err)
+	// 9000 обязан снова выдаваться: прежний захват снят вместе с переездом.
+	if got, err := a.AllocPort("inst2", 9000, true, map[int]bool{}); err != nil || got != 9000 {
+		t.Fatalf("прежний порт не освобождён: %d, %v", got, err)
 	}
 }
 
-func TestAllocIndexOwnNumberInTakenBreaksPinning(t *testing.T) {
-	// Документирует цену нарушения контракта taken: собственный номер,
+func TestAllocPortOwnPortInTakenBreaksPinning(t *testing.T) {
+	// Документирует цену нарушения контракта taken: собственный порт,
 	// попавший в taken, читается как чужой, и закрепление ломается.
 	// Это не желаемое поведение, а зафиксированное следствие.
-	a := NewAllocator(IndexRange{Min: 17, Max: 49})
+	a := NewAllocator(PortRange{Min: 9000, Max: 9200})
 
-	got, err := a.AllocIndex("inst1", 23, map[int]bool{23: true})
+	got, err := a.AllocPort("inst1", 9006, true, map[int]bool{9006: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == 23 {
+	if got == 9006 {
 		t.Fatal("контракт taken изменился — обнови докстроку и этот тест")
 	}
 }
 
-func TestAllocIndexConcurrentGivesDistinct(t *testing.T) {
-	// Два воркера одновременно видят «номер свободен». Без общего лока оба
-	// взяли бы одинаковый и столкнулись бы на создании интерфейса.
-	a := NewAllocator(IndexRange{Min: 17, Max: 49})
+func TestAllocPortConcurrentGivesDistinct(t *testing.T) {
+	// Два воркера одновременно видят «порт свободен». Без общего лока оба
+	// взяли бы одинаковый, и второй инстанс не поднялся бы: адрес занят.
+	a := NewAllocator(PortRange{Min: 9000, Max: 9200})
 
 	const n = 20
 	var wg sync.WaitGroup
@@ -175,18 +175,37 @@ func TestAllocIndexConcurrentGivesDistinct(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			idx, err := a.AllocIndex(owner, 0, map[int]bool{})
+			idx, err := a.AllocPort(owner, 0, false, map[int]bool{})
 			if err != nil {
 				t.Error(err)
 				return
 			}
 			mu.Lock()
 			if seen[idx] {
-				t.Errorf("индекс %d выдан дважды", idx)
+				t.Errorf("порт %d выдан дважды", idx)
 			}
 			seen[idx] = true
 			mu.Unlock()
 		}()
 	}
 	wg.Wait()
+}
+
+// Закреплённый порт ВНЕ диапазона обязан подменяться на свободный, а не
+// выдаваться как есть: порт приходит из конфига снаружи, а валидатор ссылки
+// абонента (roles/linkres) порт вне пула отвергает — инстанс с ним не поднялся
+// бы вовсе.
+func TestAllocPortRefusesPinOutsideRange(t *testing.T) {
+	a := NewAllocator(PortRange{Min: 9000, Max: 9001})
+
+	got, err := a.AllocPort("inst1", 80, true, map[int]bool{})
+	if err != nil {
+		t.Fatalf("выдача: %v", err)
+	}
+	if got == 80 {
+		t.Fatal("выдан закреплённый порт вне диапазона: валидатор отвергнет его, инстанс не поднимется")
+	}
+	if got < 9000 || got > 9001 {
+		t.Fatalf("порт %d вне диапазона 9000..9001", got)
+	}
 }

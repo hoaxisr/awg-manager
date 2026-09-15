@@ -87,7 +87,6 @@ type Server struct {
 	proxyRecords               api.ProxyRecordLister
 	loggingService             *logging.Service
 	kmodLoader                 *kmod.Loader
-	opkgTunOccupancy           storage.OpkgTunPins
 	updaterService             *updater.Service
 	ndmsQueries                *ndmsquery.Queries
 	ndmsCommands               *ndmscommand.Commands
@@ -183,20 +182,17 @@ type Server struct {
 // via the existing post-construction Set*Handler() / SetSingboxOperator()
 // setters — see SetSingboxRouterHandler etc. below in this file.
 type Deps struct {
-	TunnelService    api.TunnelService
-	ExternalService  api.ExternalTunnelService
-	TestingService   *testing.Service
-	Keenetic         *auth.KeeneticClient
-	Sessions         *auth.SessionStore
-	Settings         *storage.SettingsStore
-	Tunnels          *storage.AWGTunnelStore
-	PingCheckService api.PingCheckService
-	ProxyRecords     api.ProxyRecordLister
-	LoggingService   *logging.Service
-	KmodLoader       *kmod.Loader
-	// OpkgTunOccupancy — занятость номеров OpkgTun: живые интерфейсы плюс пины
-	// чужих подсистем. Нужна выдаче идентификатора kernel-туннеля.
-	OpkgTunOccupancy     storage.OpkgTunPins
+	TunnelService        api.TunnelService
+	ExternalService      api.ExternalTunnelService
+	TestingService       *testing.Service
+	Keenetic             *auth.KeeneticClient
+	Sessions             *auth.SessionStore
+	Settings             *storage.SettingsStore
+	Tunnels              *storage.AWGTunnelStore
+	PingCheckService     api.PingCheckService
+	ProxyRecords         api.ProxyRecordLister
+	LoggingService       *logging.Service
+	KmodLoader           *kmod.Loader
 	UpdaterService       *updater.Service
 	NdmsQueries          *ndmsquery.Queries
 	NdmsCommands         *ndmscommand.Commands
@@ -260,7 +256,6 @@ func New(cfg Config, deps Deps) *Server {
 		proxyRecords:           deps.ProxyRecords,
 		loggingService:         deps.LoggingService,
 		kmodLoader:             deps.KmodLoader,
-		opkgTunOccupancy:       deps.OpkgTunOccupancy,
 		updaterService:         deps.UpdaterService,
 		ndmsQueries:            deps.NdmsQueries,
 		ndmsCommands:           deps.NdmsCommands,

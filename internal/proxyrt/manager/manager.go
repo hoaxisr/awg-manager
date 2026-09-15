@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/control"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
@@ -35,11 +36,12 @@ type RegistryPort interface {
 	DropMirror(id, ownerInstanceID string) error
 }
 
+// SweepPort — уборка ресурсов роутера. Ведомость объявленного собирает
+// declare, и собирает ИЗ СТОРА, о котором пакет уборки не знает; найденные
+// имена она получает аргументом. Поэтому собрать её раньше скана невозможно —
+// порядок держит подпись, а не договорённость.
 type SweepPort interface {
-	Sweep(ctx context.Context, declared map[string]bool) ([]string, error)
-	// OwnedNames — имена всего, что сканер нашёл по нашим меткам. Нужен
-	// уборке на пути удаления при незаверенном посеве (deleteSweepDeclared).
-	OwnedNames(ctx context.Context) ([]string, error)
+	Sweep(ctx context.Context, declare func(found []string) (map[string]bool, error)) ([]string, error)
 }
 
 type RunningInstance interface {
@@ -109,9 +111,11 @@ type Deps struct {
 	// обёрнутая ErrBinariesPending, откладывает бут: старое поколение живёт,
 	// PostSeed и сборка воркеров не выполняются. nil — шаг пропущен.
 	EnsureBinaries func(ctx context.Context, records []instancestore.Record, progress func(msg string)) error
-	// Выделение пинов — обязанность писателя конфига (план 3), то есть НАША
-	// (Щ1): без этого создание raw-клиента и сервера через API невозможно.
-	AllocIndex func(owner string, pinned int, havePin bool) (int, error)
+	// OpkgTunPool — общий пул номеров OpkgTun, ОДИН на процесс: его делят
+	// режимы роутера, kernel-туннели и мы. Выделение номера — обязанность
+	// писателя конфига (план 3), то есть наша (Щ1): без этого создание
+	// raw-клиента и сервера через API невозможно.
+	OpkgTunPool *opkgtun.Pool
 	// AllocListen выдаёт клиенту локальный listen. current — адрес, который уже
 	// стоит в записи: годный (в пуле и ничей) возвращается как есть, негодный
 	// заменяется свободным. Занятость считается без собственной записи
@@ -188,7 +192,7 @@ type Manager struct {
 func New(d Deps) *Manager {
 	if d.Store == nil || d.Registry == nil || d.Sweeper == nil || d.Factory == nil ||
 		d.Journal == nil || d.Seed == nil || d.PostSeed == nil ||
-		d.AllocIndex == nil || d.AllocListen == nil || d.ReleasePins == nil ||
+		d.OpkgTunPool == nil || d.AllocListen == nil || d.ReleasePins == nil ||
 		d.WaitDisabled == nil {
 		panic("manager.New: неполные зависимости (G4)")
 	}
@@ -323,6 +327,14 @@ func (m *Manager) Boot(ctx context.Context) error {
 	// клиент на прежний адрес. Строка пишется на КАЖДОМ бооте, а не только на
 	// свежем посеве: список приходит с диска, и человек, читающий журнал после
 	// перезапуска, должен увидеть причину чужого молчания на старом порту.
+	// Схлопнутые дубли печатаются на КАЖДОМ бооте, как и переезды портов, и по
+	// той же причине: инстанс пропал навсегда, повторного посева не будет, и
+	// человек, читающий журнал после перезапуска, обязан узнать, почему его
+	// инстанса нет.
+	for _, dup := range res.State.DroppedDuplicates {
+		m.deps.Journal.Warn("boot", "proxy",
+			"инстанс пропущен на посеве: дубликат ключа — "+dup)
+	}
 	for _, mv := range res.State.MovedListen {
 		m.deps.Journal.Warn("boot", "proxy", fmt.Sprintf(
 			"listen-порт переехал: %s (%s) с %s на %s",
@@ -428,12 +440,49 @@ func (m *Manager) Boot(ctx context.Context) error {
 		m.deps.Journal.Warn("boot", "proxy", "уборка NDMS пропущена: посев не сертифицирован — "+certErr)
 		return nil
 	}
-	if removedNDMS, serr := m.deps.Sweeper.Sweep(ctx, declaredNDMS); serr != nil {
-		m.deps.Journal.Warn("boot", "proxy", "уборка NDMS: "+serr.Error())
+	// Ведомость собирается ВНУТРИ уборки, после скана, и заново из стора — не
+	// та, что собрана в начале боота (:320). Между ними стоит m.booted = true,
+	// и с этого мгновения ручка создания принимает новый инстанс: старая
+	// ведомость о нём не знает, а его свежий интерфейс уже виден скану —
+	// уборка снесла бы его вместе с permit'ами политик.
+	if removedNDMS, serr := m.deps.Sweeper.Sweep(ctx, func([]string) (map[string]bool, error) {
+		return m.declaredNDMSFromStore(list)
+	}); serr != nil {
+		m.deps.Journal.Warn("boot", "proxy", "уборка NDMS не выполнена: "+serr.Error())
 	} else {
 		m.deps.Journal.Info("boot", "proxy", sweptMessage(removedNDMS))
 	}
 	return nil
+}
+
+// declaredNDMSFromStore — ведомость объявленных имён по ЖИВОМУ стору.
+//
+// known — состав, который вызывающий уже держит в руках. Нужен ровно для
+// одной проверки: Load() на ОТСУТСТВУЮЩЕМ файле отдаёт пустое состояние БЕЗ
+// ошибки (instancestore/store.go: os.IsNotExist → State{}, nil), а для
+// ведомости «записей нет» означает «сносить всё найденное». Пока ведомость
+// строилась из памяти, класс был невозможен; перечитывание его завело, потому
+// пустой ответ при заведомо непустом составе — это «не знаем», а не приговор.
+// Законно пустой стор (удалили последний инстанс) через known тоже проходит:
+// там и защищать нечего.
+//
+// Перечитывание, а не снимок вызывающего: ведомость собирается после скана
+// именно затем, чтобы увидеть записи, появившиеся с момента, когда снимок был
+// взят. Отказ чтения — это «не знаем», и вызывающий на нём уборку пропускает.
+//
+// Читает БЕЗ m.mu, в отличие от остальных касаний стора здесь. Это намеренно:
+// правило «диск и снимок в памяти — одной секцией» защищает ПИСАТЕЛЯ от
+// потери чужой правки, а тут правка чужая как раз и нужна — взять её под
+// локом означало бы не увидеть запись, ради которой перечитывание и затеяно.
+func (m *Manager) declaredNDMSFromStore(known []instancestore.Record) (map[string]bool, error) {
+	st, err := m.deps.Store.Load()
+	if err != nil {
+		return nil, fmt.Errorf("ведомость: %w", err)
+	}
+	if len(st.Records) == 0 && len(known) > 0 {
+		return nil, fmt.Errorf("ведомость: стор не содержит записей, хотя инстансов %d — файл состояния исчез?", len(known))
+	}
+	return instance.DeclaredNDMSNames(namedOf(st.Records)), nil
 }
 
 // listenMoveIfRejected — переезд, если аллокатор ОТВЕРГ намерение по listen.
@@ -502,12 +551,53 @@ func (m *Manager) Enabled(key string) (on, ok bool) {
 	return false, false
 }
 
-// ensurePins — выделение пинов и listen-порта писателем конфига (Щ1, план 3).
-// Пины OpkgTun идемпотентны: заполненные имена не трогает. Listen — особый,
-// см. ниже: он сверяется каждый раз. Возвращает владельцев СВЕЖИХ
-// аллокаций: если операция дальше сорвётся (отказ реестра/диска), вызывающий
-// обязан отдать их обратно через ReleasePins — иначе held аллокатора течёт до
-// рестарта (Н6 ревью).
+// halfIndex — номер из уже заполненной половины пары имён. Обе формы годятся:
+// NDMS знает интерфейс как OpkgTunN, ядро — как opkgtunN, и потеряться могла
+// любая из двух.
+func halfIndex(ndms, kernel string) (int, bool) {
+	if idx, ok := opkgtun.IndexOf(ndms); ok {
+		return idx, true
+	}
+	return opkgtun.IndexOf(kernel)
+}
+
+// ensured — то, что выделила ensurePins и что вызывающий обязан вернуть.
+//
+// Две половины с РАЗНЫМ жизненным циклом, и путать их нельзя:
+//   - res держит номера OpkgTun и закрывается на ЛЮБОМ исходе, включая
+//     успешный: после записи номер держит уже запись. Ставится defer-ом сразу
+//     за вызовом, ДО проверки ошибки — Close nil-безопасен;
+//   - listen держит порт, и отдаётся он ТОЛЬКО на пути отказа: на успехе порт
+//     остаётся за инстансом.
+//
+// Поэтому метода «отдай всё» здесь нет: он рано или поздно попал бы в defer, и
+// успешное создание потеряло бы свой порт.
+type ensured struct {
+	res    *opkgtun.Reservation
+	listen string // ключ владельца порта; "" — порт не выделялся
+}
+
+// releaseListen отдаёт listen-порт. Только на пути отказа. Номер OpkgTun сюда
+// не входит — его снимает res.Close() независимо от исхода.
+//
+// Ключ ТОЛЬКО порта, без голого ключа записи: тот у Delete кормит ведомость
+// INPUT-портов, а здесь воркер ещё не запускался и снимать из ведомости
+// нечего. Лишний ключ был бы безвреден сегодня и опасен завтра — Release
+// освобождает ВСЕ номера владельца.
+func (e ensured) releaseListen(rel func(...string)) {
+	if e.listen != "" {
+		rel(e.listen)
+	}
+}
+
+// ensurePins — выделение номеров OpkgTun и listen-порта писателем конфига
+// (Щ1, план 3). Идемпотентна: заполненные имена не трогает, и заявка уходит в
+// пул только на НЕДОСТАЮЩЕЕ поле. Ноль заявок — пула не касаемся вовсе:
+// штатный Update ничего не выделяет, и платить за него обходом RCI незачем.
+//
+// Все номера берутся ОДНОЙ резервацией: у сервера их два, и две резервации
+// подряд означали бы, что между ними половину номера уводит соседняя
+// подсистема. Пул выдаёт «всё или ничего».
 //
 // Listen спрашивается ВСЕГДА, а не только когда он пуст: годный порт
 // аллокатор возвращает как есть, а негодный (вне пула либо занятый чужой
@@ -518,81 +608,105 @@ func (m *Manager) Enabled(key string) (on, ok bool) {
 // Endpoint связанного туннеля за переездом следует сам (linkres.LinkedEndpoint
 // правит его ДО подъёма).
 //
-// Listen идёт под СВОИМ ключом владельца — key+"/listen" (I-3 ревью, круг 2),
-// ровно как обе половины сервера (key+"/wg", key+"/raw"). Голый key брать
-// нельзя: Allocator.Release (alloc.go:78-86) освобождает ВСЕ номера владельца,
-// и возврат после listen-only-аллокации отобрал бы у ЖИВОЙ записи её индекс
-// OpkgTun (путь Update: пин на диске есть, пуст только listen). Отдельный ключ
-// сохраняет резерв — без него два параллельных Create (ручки задачи 7 — HTTP)
-// получили бы от сканирующего аллокатора ОДИН порт: ensurePins и запись на
-// диск не атомарны, а validateState уникальность Listen не проверяет.
+// Listen идёт под СВОИМ ключом владельца — key+"/listen", ровно как обе
+// половины сервера у пула (key+"/wg", key+"/raw"). Голый key брать нельзя:
+// Allocator.Release освобождает ВСЕ номера владельца, и возврат после
+// listen-only-аллокации отобрал бы у ЖИВОЙ записи её порт. Отдельный ключ
+// сохраняет резерв — без него два параллельных Create получили бы ОДИН порт:
+// ensurePins и запись на диск не атомарны, а validateState уникальность
+// Listen не проверяет.
 //
-// НАЗВАННАЯ ЦЕНА (F4 ревью задачи 14): зовётся ПОД m.mu (Create и update), а
-// прод-AllocIndex внутри считает занятость пула OpkgTun — то есть ходит в RCI
-// за списком интерфейсов NDMS. На время этого запроса вся поверхность
-// /api/proxyrt/* и Shutdown стоят. Вынести вызов из-под замка нельзя дёшево:
-// выделение и запись записи обязаны быть одной сериализованной операцией,
-// иначе два параллельных Create получат один номер. Класс существовал у
-// Create и до волны; ретраи боота (задача 16) лишь повышают частоту.
-func (m *Manager) ensurePins(rec *instancestore.Record) (allocated []string, err error) {
+// НАЗВАННАЯ ЦЕНА: зовётся ПОД m.mu (Create и update), а пул внутри читает
+// занятость — то есть ходит в RCI за списком интерфейсов NDMS. На время этого
+// запроса вся поверхность /api/proxyrt/* и Shutdown стоят. Вынести вызов
+// из-под замка нельзя дёшево: выделение и запись записи обязаны быть одной
+// сериализованной операцией, иначе два параллельных Create получат один
+// номер. Класс существовал у Create и до волны.
+func (m *Manager) ensurePins(ctx context.Context, rec *instancestore.Record) (ensured, error) {
 	key := rec.Key()
+	var out ensured
+
+	// Заявки и то, куда лягут выданные номера, собираются вместе: порядок
+	// заявок и порядок присваиваний обязан совпадать, и держать их рядом —
+	// единственный способ этого не разойтись.
+	var reqs []opkgtun.Request
+	var apply []func(int)
+	// want — заявка на пару имён (NDMS и kernel). Если ОДНО из них уже
+	// заполнено, номер берётся из него пином: половина пары могла потеряться
+	// на правке или битой записи, а уехать с номера нельзя — имя стоит в
+	// permit'ах пользователя, и permit пересозданием не воскресает.
+	want := func(field, ndms, kernel string, set func(int)) {
+		self := opkgtun.ProxyHolder(key, field, rec.Name)
+		req := opkgtun.Want(self)
+		if idx, ok := halfIndex(ndms, kernel); ok {
+			req = opkgtun.WantPinned(self, idx)
+		}
+		reqs = append(reqs, req)
+		apply = append(apply, set)
+	}
+
 	switch rec.Kind {
 	case instancestore.KindWdttClient:
 		c := rec.WdttClient
 		if c == nil {
-			return nil, fmt.Errorf("инстанс %s: нет конфига", key)
+			return out, fmt.Errorf("инстанс %s: нет конфига", key)
 		}
 		if c.Mode == "raw" && (c.NdmsIface == "" || c.RawIface == "") {
-			idx, err := m.deps.AllocIndex(key, 0, false)
-			if err != nil {
-				return allocated, fmt.Errorf("нет свободного OpkgTun: %w", err)
-			}
-			allocated = append(allocated, key)
-			c.NdmsIface = fmt.Sprintf("OpkgTun%d", idx)
-			c.RawIface = fmt.Sprintf("opkgtun%d", idx)
+			want("", c.NdmsIface, c.RawIface, func(n int) {
+				c.NdmsIface = fmt.Sprintf("OpkgTun%d", n)
+				c.RawIface = fmt.Sprintf("opkgtun%d", n)
+			})
 		}
-		l, err := m.deps.AllocListen(key+"/listen", rec.Kind, rec.ID, c.Listen)
-		if err != nil {
-			return allocated, fmt.Errorf("нет свободного listen-порта: %w", err)
-		}
-		allocated = append(allocated, key+"/listen")
-		c.Listen = l
 	case instancestore.KindWdttServer:
 		c := rec.WdttServer
 		if c == nil {
-			return nil, fmt.Errorf("инстанс %s: нет конфига", key)
+			return out, fmt.Errorf("инстанс %s: нет конфига", key)
 		}
 		if c.NdmsIface == "" || c.WgIface == "" {
-			idx, err := m.deps.AllocIndex(key+"/wg", 0, false)
-			if err != nil {
-				return allocated, fmt.Errorf("нет свободного OpkgTun (wg): %w", err)
-			}
-			allocated = append(allocated, key+"/wg")
-			c.NdmsIface = fmt.Sprintf("OpkgTun%d", idx)
-			c.WgIface = fmt.Sprintf("opkgtun%d", idx)
+			want("wg", c.NdmsIface, c.WgIface, func(n int) {
+				c.NdmsIface = fmt.Sprintf("OpkgTun%d", n)
+				c.WgIface = fmt.Sprintf("opkgtun%d", n)
+			})
 		}
 		if c.RawNdmsIface == "" || c.RawIface == "" {
-			idx, err := m.deps.AllocIndex(key+"/raw", 0, false)
-			if err != nil {
-				return allocated, fmt.Errorf("нет свободного OpkgTun (raw): %w", err)
-			}
-			allocated = append(allocated, key+"/raw")
-			c.RawNdmsIface = fmt.Sprintf("OpkgTun%d", idx)
-			c.RawIface = fmt.Sprintf("opkgtun%d", idx)
+			want("raw", c.RawNdmsIface, c.RawIface, func(n int) {
+				c.RawNdmsIface = fmt.Sprintf("OpkgTun%d", n)
+				c.RawIface = fmt.Sprintf("opkgtun%d", n)
+			})
 		}
 	case instancestore.KindFreeTurnClient:
-		c := rec.FreeTurnClient
-		if c == nil {
-			return nil, fmt.Errorf("инстанс %s: нет конфига", key)
+		if rec.FreeTurnClient == nil {
+			return out, fmt.Errorf("инстанс %s: нет конфига", key)
 		}
-		l, err := m.deps.AllocListen(key+"/listen", rec.Kind, rec.ID, c.Listen)
-		if err != nil {
-			return allocated, fmt.Errorf("нет свободного listen-порта: %w", err)
-		}
-		allocated = append(allocated, key+"/listen")
-		c.Listen = l
 	}
-	return allocated, nil
+
+	res, err := m.deps.OpkgTunPool.Reserve(ctx, reqs...)
+	out.res = res
+	if err != nil {
+		return out, fmt.Errorf("нет свободного OpkgTun: %w", err)
+	}
+	if c := res.Conflicts(); len(c) > 0 {
+		m.deps.Journal.Warn("pins", key, "спорные номера OpkgTun: "+c.String())
+	}
+	for i, n := range res.Numbers() {
+		apply[i](n)
+	}
+
+	// Порт — после номеров, потому что номера дороже: их держит резервация, и
+	// на отказе порта она закроется у вызывающего сама.
+	//
+	// Развилка «у кого есть свой listen» берётся у instancestore.ClientListen,
+	// а не пишется здесь заново: вторая копия рано или поздно разъедется, и
+	// новая клиентская роль молча выпала бы из одного из двух путей.
+	if listen := instancestore.ClientListen(rec); listen != nil {
+		l, err := m.deps.AllocListen(key+"/listen", rec.Kind, rec.ID, *listen)
+		if err != nil {
+			return out, fmt.Errorf("нет свободного listen-порта: %w", err)
+		}
+		out.listen = key + "/listen"
+		*listen = l
+	}
+	return out, nil
 }
 
 // reconcileBootListen сверяет локальные порты клиентов с занятостью и
@@ -690,7 +804,7 @@ func (m *Manager) mutateStoreLocked(mutate func(*instancestore.State) error) (in
 		// при ЧАСТИЧНОМ отказе (registry.go:171-231 копит ошибки errors.Join)
 		// память реестра и зеркальные записи уже обновлены, отменена только
 		// наша запись. Самолечение: следующая мутация и боот строят ведомость
-		// от диска, Sweep сносит осиротевшее.
+		// от диска, уборка сносит осиротевшее.
 		func(state instancestore.State) error {
 			return m.deps.Registry.SetDeclared(declsOf(state.Records))
 		})
@@ -720,10 +834,13 @@ func (m *Manager) Create(ctx context.Context, rec instancestore.Record) error {
 		wantListen = *p
 	}
 	m.mu.Lock()
-	allocated, err := m.ensurePins(&rec)
+	pins, err := m.ensurePins(ctx, &rec)
 	m.mu.Unlock()
+	// Номера держатся до записи и отпускаются на ЛЮБОМ исходе: после записи их
+	// держит уже запись. defer стоит до проверки ошибки — Close nil-безопасен.
+	defer pins.res.Close()
 	if err != nil {
-		m.deps.ReleasePins(allocated...)
+		pins.releaseListen(m.deps.ReleasePins)
 		return err
 	}
 	var moved []instancestore.ListenMove
@@ -744,9 +861,10 @@ func (m *Manager) Create(ctx context.Context, rec instancestore.Record) error {
 	}
 	m.mu.Unlock()
 	if err != nil {
-		// Н6: запись не легла — свежие пины отдаются, иначе held течёт до
-		// рестарта и индексы «заняты» несуществующим инстансом.
-		m.deps.ReleasePins(allocated...)
+		// Н6: запись не легла — свежий порт отдаётся, иначе ведомость держит
+		// его за несуществующим инстансом до рестарта. Номера уйдут сами:
+		// их держит резервация, а её закрывает defer выше.
+		pins.releaseListen(m.deps.ReleasePins)
 		return err
 	}
 	// Уведомление ПОСЛЕ записи на диск и до сборки воркера: счётчик инстансов
@@ -775,13 +893,14 @@ func (m *Manager) Create(ctx context.Context, rec instancestore.Record) error {
 // пересборка записи литералом молча теряет CreatedAt/Sub/Users (задача 7
 // предупреждает хендлеры о том же — замечание 11 ревью).
 //
-// Возврат пинов идёт ВНЕ m.mu: он доходит до ведомости INPUT-портов, а та
+// Возврат порта идёт ВНЕ m.mu: он доходит до ведомости INPUT-портов, а та
 // ходит в iptables — держать на этом лок менеджера значило бы вешать всю
-// поверхность API на секунды.
+// поверхность API на секунды. Номера так возвращать не нужно: их держит
+// резервация, и закрывает её сам update.
 func (m *Manager) Update(ctx context.Context, key string, mutate func(*instancestore.Record) error) error {
-	allocated, err := m.update(key, mutate)
+	pins, err := m.update(ctx, key, mutate)
 	if err != nil {
-		m.deps.ReleasePins(allocated...) // Н6
+		pins.releaseListen(m.deps.ReleasePins) // Н6
 		return err
 	}
 	return nil
@@ -801,15 +920,15 @@ func (m *Manager) Update(ctx context.Context, key string, mutate func(*instances
 // «какие пины понадобятся» был бы вторым исполнением чужого замыкания.
 // Потери параллельной правки нет — все мутации менеджера сериализует m.mu, а
 // других писателей у store после посева не бывает.
-func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (allocated []string, err error) {
+func (m *Manager) update(ctx context.Context, key string, mutate func(*instancestore.Record) error) (pins ensured, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.booted {
-		return nil, errNotBooted(m.seedErr)
+		return pins, errNotBooted(m.seedErr)
 	}
 	cur, err := m.deps.Store.Load()
 	if err != nil {
-		return nil, err
+		return pins, err
 	}
 	cand, found := instancestore.Record{}, false
 	for _, rec := range cur.Records {
@@ -819,7 +938,7 @@ func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (
 		}
 	}
 	if !found {
-		return nil, fmt.Errorf("инстанс %s не найден", key)
+		return pins, fmt.Errorf("инстанс %s не найден", key)
 	}
 	// Объявление ДО правки. Снимается ЗДЕСЬ и отдельным значением, а не копией
 	// записи: конфиг лежит за указателем, копия Record им не владеет, и после
@@ -830,7 +949,7 @@ func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (
 		prevExitOwner = cand.ID
 	}
 	if err := mutate(&cand); err != nil {
-		return nil, err
+		return pins, err
 	}
 	// НАМЕРЕНИЕ по listen снимается ПОСЛЕ мутатора и ДО ensurePins: переезд —
 	// это когда аллокатор ОТВЕРГ желаемый порт, а не когда порт поменяли
@@ -841,8 +960,11 @@ func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (
 	if p := instancestore.ClientListen(&cand); p != nil {
 		wantListen = *p
 	}
-	if allocated, err = m.ensurePins(&cand); err != nil { // Щ1: wg→raw и пустой listen
-		return allocated, err
+	pins, err = m.ensurePins(ctx, &cand) // Щ1: wg→raw и пустой listen
+	// Номера держатся до записи и отпускаются на любом исходе.
+	defer pins.res.Close()
+	if err != nil {
+		return pins, err
 	}
 	// PF16: канал уведомления о переезде ОДИН на все пути. Боот пишет свои
 	// переезды в MovedListen (reconcileBootListen), правка молчала — при том
@@ -870,7 +992,7 @@ func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (
 		return fmt.Errorf("инстанс %s не найден", key)
 	})
 	if err != nil {
-		return allocated, err
+		return pins, err
 	}
 	if len(moved) > 0 {
 		m.moved = st.MovedListen
@@ -926,7 +1048,7 @@ func (m *Manager) update(key string, mutate func(*instancestore.Record) error) (
 		mg.inst.ResetStartBackoff()
 		mg.inst.Post(proxyrt.EventIntentChanged)
 	}
-	return nil, nil
+	return pins, nil
 }
 
 func (m *Manager) SetEnabled(ctx context.Context, key string, on bool) error {
@@ -1034,21 +1156,26 @@ func (m *Manager) Delete(ctx context.Context, key string) error {
 		}
 	}
 
-	// Пины отдаются ДО уборки: Sweep приговаривает ресурс, только если его
-	// номер не закреплён в аллокаторе (sweep.go), а закреплён он как раз за
-	// удаляемым инстансом — уборщик пропускал ровно те записи, ради которых
-	// вызван, и OpkgTun удалённого инстанса доживал до следующего боота, съедая
-	// индекс (стенд 2026-08-28). Обратный порядок безопасен: решение о сносе
-	// принимается под локом аллокатора, и номер, уже перехваченный параллельным
-	// Create, уборщик пропустит.
-	m.deps.ReleasePins(key, key+"/wg", key+"/raw", key+"/listen")
+	// Пины отдаются до уборки. Прежде порядок был вынужденным в обратную
+	// сторону: уборка спрашивала аллокатор и пропускала ресурс, чей номер
+	// закреплён, — то есть ровно тот, ради которого вызвана (стенд
+	// 2026-08-28). Теперь уборка аллокатора не спрашивает, и этот порядок
+	// открывает окно: освободившийся номер может перехватить параллельное
+	// создание раньше, чем мы отсканируем роутер. Окно закрыто в ведомости —
+	// deleteSweepDeclared сверяется с живыми записями, — а не порядком шагов,
+	// потому что обратный порядок задержал бы возврат номера на время сносов
+	// в RCI.
+	// Два ключа, а не четыре: номера OpkgTun своего аллокатора не имеют —
+	// их держат записи, и запись только что снята. Порт ключуется
+	// key+"/listen", голый key кормит ведомость INPUT-портов.
+	m.deps.ReleasePins(key, key+"/listen")
 
-	if declaredNDMS, lerr := m.deleteSweepDeclared(ctx, removed, st.Records); lerr != nil {
-		// Ведомость не собрана — не сносим ничего: «не знаем» не равно «наш и
-		// лишний» (тот же довод, что у Sweep на упавшем скане).
-		m.deps.Journal.Warn("delete", key, "уборка NDMS пропущена: "+lerr.Error())
-	} else if removedNDMS, serr := m.deps.Sweeper.Sweep(ctx, declaredNDMS); serr != nil {
-		m.deps.Journal.Warn("delete", key, "уборка NDMS: "+serr.Error())
+	if removedNDMS, serr := m.deps.Sweeper.Sweep(ctx, func(found []string) (map[string]bool, error) {
+		return m.deleteSweepDeclared(removed, st.Records, found)
+	}); serr != nil {
+		// Скан упал или ведомость не собрана — не сносим ничего: «не знаем» не
+		// равно «наш и лишний».
+		m.deps.Journal.Warn("delete", key, "уборка NDMS не выполнена: "+serr.Error())
 	} else {
 		m.deps.Journal.Info("delete", key, sweptMessage(removedNDMS))
 	}
@@ -1137,9 +1264,14 @@ func strictlyUnder(dir, path string) bool {
 }
 
 // deleteSweepDeclared — ведомость уборщика на пути удаления инстанса.
+// Зовётся ПОСЛЕ Scan: found — то, что скан уже нашёл.
 //
-// Заверенный посев: обычная ведомость из ОСТАВШИХСЯ записей — список полон, и
-// уборка заодно подбирает сирот.
+// Заверенный посев: обычная ведомость из оставшихся записей — список полон, и
+// уборка заодно подбирает сирот. Записи перечитываются из стора, а не берутся
+// снимком удаляющей транзакции: между снимком и сканом ручка создания могла
+// принять инстанс, и его свежий интерфейс уже в found. Цена — новый способ
+// отказа: временная ошибка чтения стора пропускает уборку целиком, и интерфейс
+// только что удалённого инстанса доживёт до следующего боота.
 //
 // Незаверенный: список записей неполон (амендмент F), интерфейсов
 // непереехавших инстансов в нём нет, и обычная ведомость приговорила бы их
@@ -1148,19 +1280,28 @@ func strictlyUnder(dir, path string) bool {
 // бы сиротой навсегда. Поэтому ведомость строится наоборот — всё, что нашёл
 // сканер, МИНУС имена удаляемого: снесётся ровно то, что удаляем, а всё
 // незнакомое уцелеет.
-func (m *Manager) deleteSweepDeclared(ctx context.Context, removed instancestore.Record,
-	left []instancestore.Record) (map[string]bool, error) {
+//
+// «Минус имена удаляемого» — ещё не всё: имя могло смениться владельцем, пока
+// шло удаление. Пины отдаются ДО уборки, аллокатор выдаёт низший свободный, и
+// параллельное создание получает ровно освободившийся номер — его свежий
+// интерфейс попадает в скан под именем удаляемого и был бы снесён вместе с
+// permit'ами своих политик. Прежде этот класс закрывала консультация с
+// аллокатором (номер закреплён за перехватившим — пропускаем); теперь его
+// закрывает сверка с живыми записями. Неполнота списка тут безопасна: он
+// только ЗАЩИЩАЕТ, приговорить по нему нельзя ничего.
+func (m *Manager) deleteSweepDeclared(removed instancestore.Record,
+	left []instancestore.Record, found []string) (map[string]bool, error) {
 	if m.SeedInfo().Certified {
-		return instance.DeclaredNDMSNames(namedOf(left)), nil
+		return m.declaredNDMSFromStore(left)
 	}
-	found, err := m.deps.Sweeper.OwnedNames(ctx)
+	live, err := m.declaredNDMSFromStore(left)
 	if err != nil {
 		return nil, err
 	}
 	doomed := instance.DeclaredNDMSNames(namedOf([]instancestore.Record{removed}))
 	declared := make(map[string]bool, len(found))
 	for _, name := range found {
-		if !doomed[name] {
+		if !doomed[name] || live[name] {
 			declared[name] = true
 		}
 	}

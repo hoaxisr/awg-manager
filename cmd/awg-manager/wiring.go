@@ -22,6 +22,7 @@ import (
 	ndmsmetrics "github.com/hoaxisr/awg-manager/internal/ndms/metrics"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/presets"
@@ -109,12 +110,12 @@ type app struct {
 	nwgOp         *nwg.OperatorNativeWG
 	wanModel      *wan.Model
 	tunnelService *service.ServiceImpl
-	// opkgTunOccupancy — занятость номеров OpkgTun: живые интерфейсы плюс пины
-	// владельцев. Собирается один раз и раздаётся всем, кто выдаёт номера.
-	opkgTunOccupancy storage.OpkgTunPins
-	// opkgNDMSPins — пины по записям NDMS: номер занят записью, устройства
-	// может уже не быть.
-	opkgNDMSPins storage.OpkgTunPins
+	// opkgTunOwners — пять поставщиков занятости пула OpkgTun. Состав общий на
+	// всех, кто выдаёт номера, и потому собирается один раз (opkgTunOwners).
+	opkgTunOwners opkgTunOwners
+	// opkgPool — общий пул номеров OpkgTun, ОДИН на процесс: второй экземпляр
+	// означал бы две очереди на выбор, то есть отсутствие атомарности.
+	opkgPool     *opkgtun.Pool
 	catalog      *routing.CatalogImpl
 	exitRegistry *exitreg.Registry
 	// exitMirror — зеркальные записи tunnel-store реестра выходов. Держится

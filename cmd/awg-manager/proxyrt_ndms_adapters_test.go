@@ -181,6 +181,10 @@ func TestOpkgTunIndex(t *testing.T) {
 		{"OpkgTun", 0, false},
 		{"OpkgTun1x", 0, false},
 		{"OpkgTun-1", 0, false},
+		// Прежний разбор на strconv.Atoi принимал это как 5 — расхождение
+		// двух разборов имени и породило #891.
+		{"OpkgTun+5", 0, false},
+		{"opkgtun18", 18, true}, // ядро пишет строчными
 	} {
 		n, ok := opkgTunIndex(c.in)
 		if n != c.n || ok != c.ok {

@@ -1209,7 +1209,7 @@ func TestDisableFakeIPTun_NoAddressClearsOnHappyPath(t *testing.T) {
 	// И НЕ гасит интерфейс до удаления: NDMS создаёт интерфейс по любой мутации
 	// его имени, а teardown штатно зовут на уже снесённом (откаты, реап-ретраи).
 	// Рождённая так пустышка без нашего описания невидима для реапа и занимает
-	// индекс навсегда — пул 0..9 вычерпывался за десяток переходов.
+	// индекс навсегда — прежний пул 0..9 вычерпывался за десяток переходов.
 	if h.log.has("InterfaceDown:" + ndmsName) {
 		t.Errorf("happy path must not touch the iface before delete (create-on-reference): %v", h.log.calls)
 	}

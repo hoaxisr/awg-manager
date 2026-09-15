@@ -5,12 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
-	"time"
 )
-
-// noIndex — разборщик «номер неизвестен»: ресурс рассматривается только по
-// declared, как было до появления консультации с аллокатором.
-func noIndex(string) (int, bool) { return 0, false }
 
 type fakeScanner struct {
 	out []OwnedResource
@@ -24,25 +19,30 @@ func (f fakeScanner) Scan(context.Context, []string) ([]OwnedResource, error) {
 type fakeRemover struct {
 	mu      sync.Mutex
 	removed []string
-	delay   time.Duration
 	err     error
-	entered chan struct{} // сигнал «я внутри Remove», до задержки
 }
 
 func (f *fakeRemover) Remove(_ context.Context, r OwnedResource) error {
-	if f.entered != nil {
-		select {
-		case f.entered <- struct{}{}:
-		default:
-		}
-	}
-	if f.delay > 0 {
-		time.Sleep(f.delay)
-	}
 	f.mu.Lock()
 	f.removed = append(f.removed, r.Name)
 	f.mu.Unlock()
 	return f.err
+}
+
+// declaring — ведомость-подстановка: отдаёт готовую карту и запоминает имена,
+// с которыми её позвали.
+func declaring(declared map[string]bool, gotNames *[]string) func([]string) (map[string]bool, error) {
+	return func(found []string) (map[string]bool, error) {
+		if gotNames != nil {
+			*gotNames = found
+		}
+		return declared, nil
+	}
+}
+
+func sweepAll(t *testing.T, sw *Sweeper, ctx context.Context, declared map[string]bool) ([]string, error) {
+	t.Helper()
+	return sw.Sweep(ctx, declaring(declared, nil))
 }
 
 func TestSweepRemovesOnlyUndeclared(t *testing.T) {
@@ -52,10 +52,10 @@ func TestSweepRemovesOnlyUndeclared(t *testing.T) {
 		{Label: "AWGM WDTT", Name: "OpkgTun20"},
 	}}
 	rm := &fakeRemover{}
-	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}),
-		[]string{"AWGM WDTT client", "AWGM WDTT"}, noIndex)
+	sw := NewSweeper(sc, rm, []string{"AWGM WDTT client", "AWGM WDTT"})
 
-	removed, err := sw.Sweep(context.Background(), map[string]bool{"OpkgTun18": true, "OpkgTun20": true})
+	removed, err := sweepAll(t, sw, context.Background(),
+		map[string]bool{"OpkgTun18": true, "OpkgTun20": true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,9 +69,9 @@ func TestSweepNeverRemovesDeclared(t *testing.T) {
 	// таймеру. Выключенный инстанс продолжает объявлять свои ресурсы.
 	sc := fakeScanner{out: []OwnedResource{{Label: "AWGM WDTT client", Name: "OpkgTun18"}}}
 	rm := &fakeRemover{}
-	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"AWGM WDTT client"}, noIndex)
+	sw := NewSweeper(sc, rm, []string{"AWGM WDTT client"})
 
-	removed, err := sw.Sweep(context.Background(), map[string]bool{"OpkgTun18": true})
+	removed, err := sweepAll(t, sw, context.Background(), map[string]bool{"OpkgTun18": true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,13 +80,14 @@ func TestSweepNeverRemovesDeclared(t *testing.T) {
 	}
 }
 
-func TestSweepFailedScanRemovesNothing(t *testing.T) {
-	// «Не знаем» не равно «наш и лишний». Скан упал — не сносим ничего.
+func TestScanFailedRemovesNothing(t *testing.T) {
+	// «Не знаем» не равно «наш и лишний». Скан упал — вызывающему нечего
+	// сносить, и до SweepFound он не доходит.
 	sc := fakeScanner{err: errors.New("rci недоступен")}
 	rm := &fakeRemover{}
-	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"AWGM WDTT client"}, noIndex)
+	sw := NewSweeper(sc, rm, []string{"AWGM WDTT client"})
 
-	removed, err := sw.Sweep(context.Background(), map[string]bool{})
+	removed, err := sweepAll(t, sw, context.Background(), map[string]bool{})
 	if err == nil {
 		t.Fatal("ожидали ошибку скана")
 	}
@@ -100,9 +101,9 @@ func TestSweepFailedScanRemovesNothing(t *testing.T) {
 func TestSweepReportsRemoveError(t *testing.T) {
 	sc := fakeScanner{out: []OwnedResource{{Label: "AWGM WDTT client", Name: "OpkgTun19"}}}
 	rm := &fakeRemover{err: errors.New("rci отказал")}
-	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"AWGM WDTT client"}, noIndex)
+	sw := NewSweeper(sc, rm, []string{"AWGM WDTT client"})
 
-	removed, err := sw.Sweep(context.Background(), map[string]bool{})
+	removed, err := sweepAll(t, sw, context.Background(), map[string]bool{})
 	if err == nil {
 		t.Fatal("ошибка сноса обязана доехать наружу, а не проглотиться")
 	}
@@ -111,47 +112,18 @@ func TestSweepReportsRemoveError(t *testing.T) {
 	}
 }
 
-func TestSweepDoesNotHoldAllocatorLockDuringRemoval(t *testing.T) {
-	// Снос — это RCI-вызовы на секунды. Держать на них лок аллокатора значит
-	// остановить выделение номеров всем инстансам.
-	alloc := NewAllocator(IndexRange{Min: 17, Max: 49})
-	sc := fakeScanner{out: []OwnedResource{{Label: "L", Name: "OpkgTun19"}}}
-	rm := &fakeRemover{delay: 150 * time.Millisecond, entered: make(chan struct{}, 1)}
-	sw := NewSweeper(sc, rm, alloc, []string{"L"}, noIndex)
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		sw.Sweep(context.Background(), map[string]bool{})
-	}()
-
-	// Ждём сигнал «снос начался», а не спим наугад: сон дал бы ложный зелёный,
-	// если планировщик задержит старт горутины дольше сна.
-	<-rm.entered
-	start := time.Now()
-	if _, err := alloc.AllocIndex("inst1", 0, map[int]bool{}); err != nil {
-		t.Fatal(err)
-	}
-	if waited := time.Since(start); waited > 100*time.Millisecond {
-		t.Fatalf("выделение номера ждало лок %v — уборщик держит его на время сносов", waited)
-	}
-	<-done
-}
-
 func TestSweepFindsOrphanByLabelPrefix(t *testing.T) {
 	// Сканер отдаёт ФАКТИЧЕСКОЕ описание ресурса, а не константу-метку: у
 	// клиента описание — это метка плюс имя инстанса (roles.ClientDescription),
 	// и другого текста в NDMS попросту нет. Сверка точным равенством на этом
-	// месте молча переставала находить клиентские сироты — ровно тот мёртвый
-	// скан, который план и чинит, только этажом выше.
+	// месте молча переставала находить клиентские сироты.
 	sc := fakeScanner{out: []OwnedResource{
 		{Label: "AWGM WDTT Raw Client: мой инстанс", Name: "OpkgTun19"},
 	}}
 	rm := &fakeRemover{}
-	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}),
-		[]string{"AWGM WDTT Raw Client"}, noIndex)
+	sw := NewSweeper(sc, rm, []string{"AWGM WDTT Raw Client"})
 
-	removed, err := sw.Sweep(context.Background(), map[string]bool{})
+	removed, err := sweepAll(t, sw, context.Background(), map[string]bool{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,19 +132,26 @@ func TestSweepFindsOrphanByLabelPrefix(t *testing.T) {
 	}
 }
 
+// Страховка от бага в сканере: цена ошибки — снесённый чужой интерфейс
+// роутера, поэтому метку проверяет сам уборщик, а не только сканер. Проверки
+// две, в двух разных функциях, и тесты на них РАЗНЫЕ: один упавший не должен
+// скрывать состояние второго.
 func TestSweepIgnoresForeignLabel(t *testing.T) {
-	// Страховка от бага в сканере: цена ошибки — снесённый чужой интерфейс
-	// роутера, поэтому метку проверяем сами, а не только доверяем сканеру.
-	sc := fakeScanner{out: []OwnedResource{
+	rm := &fakeRemover{}
+	sw := NewSweeper(fakeScanner{out: []OwnedResource{
 		{Label: "AWGM WDTT client", Name: "OpkgTun19"},
 		{Label: "Чужая метка", Name: "OpkgTun20"},
-	}}
-	rm := &fakeRemover{}
-	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"AWGM WDTT client"}, noIndex)
+	}}, rm, []string{"AWGM WDTT client"})
 
-	removed, err := sw.Sweep(context.Background(), map[string]bool{})
+	var gotNames []string
+	removed, err := sw.Sweep(context.Background(), declaring(map[string]bool{}, &gotNames))
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Ведомость не должна и знать о чужом: иначе её автор однажды объявит его
+	// своим, чтобы «спасти».
+	if len(gotNames) != 1 || gotNames[0] != "OpkgTun19" {
+		t.Fatalf("ведомость позвана с %v, ожидали только наше", gotNames)
 	}
 	if len(removed) != 1 || removed[0] != "OpkgTun19" {
 		t.Fatalf("удалено %v, ожидали только OpkgTun19", removed)
@@ -184,6 +163,58 @@ func TestSweepIgnoresForeignLabel(t *testing.T) {
 	}
 }
 
+// Отказ ведомости — то же «не знаем», что и упавший скан: не сносим ничего.
+func TestSweepDeclarerFailureRemovesNothing(t *testing.T) {
+	rm := &fakeRemover{}
+	sw := NewSweeper(fakeScanner{out: []OwnedResource{{Label: "L", Name: "OpkgTun19"}}},
+		rm, []string{"L"})
+
+	removed, err := sw.Sweep(context.Background(), func([]string) (map[string]bool, error) {
+		return nil, errors.New("стор не читается")
+	})
+	if err == nil {
+		t.Fatal("отказ ведомости обязан доехать наружу")
+	}
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	if len(removed) != 0 || len(rm.removed) != 0 {
+		t.Fatalf("снесено %v при несобранной ведомости", rm.removed)
+	}
+}
+
+// Отказ сноса на одном ресурсе не отменяет уборку остальных: одна недоступная
+// запись RCI не должна оставлять весь остаток сирот до следующего боота.
+func TestSweepContinuesAfterRemoveFailure(t *testing.T) {
+	sc := fakeScanner{out: []OwnedResource{
+		{Label: "L", Name: "OpkgTun19"},
+		{Label: "L", Name: "OpkgTun20"},
+	}}
+	rm := &flakyRemover{failOn: "OpkgTun19"}
+	sw := NewSweeper(sc, rm, []string{"L"})
+
+	removed, err := sweepAll(t, sw, context.Background(), map[string]bool{})
+	if err == nil {
+		t.Fatal("отказ сноса обязан доехать наружу")
+	}
+	if len(removed) != 1 || removed[0] != "OpkgTun20" {
+		t.Fatalf("снесено %v; отказ на одном не отменяет уборку остальных", removed)
+	}
+}
+
+// flakyRemover отказывает на одном имени и сносит остальные.
+type flakyRemover struct {
+	failOn  string
+	removed []string
+}
+
+func (f *flakyRemover) Remove(_ context.Context, r OwnedResource) error {
+	if r.Name == f.failOn {
+		return errors.New("rci отказал")
+	}
+	f.removed = append(f.removed, r.Name)
+	return nil
+}
+
 func TestSweepStopsOnCanceledContext(t *testing.T) {
 	// Отмена — не отказ уборки: пакет уже отделяет одно от другого в цикле и
 	// воркере. Прекращаем сносы и не считаем это провалом.
@@ -192,12 +223,12 @@ func TestSweepStopsOnCanceledContext(t *testing.T) {
 		{Label: "L", Name: "OpkgTun20"},
 	}}
 	rm := &fakeRemover{}
-	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"L"}, noIndex)
+	sw := NewSweeper(sc, rm, []string{"L"})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	removed, err := sw.Sweep(ctx, map[string]bool{})
+	removed, err := sw.Sweep(ctx, declaring(map[string]bool{}, nil))
 	if err != nil {
 		t.Fatalf("отмена не должна приезжать как отказ уборки: %v", err)
 	}
@@ -211,54 +242,6 @@ func TestSweepStopsOnCanceledContext(t *testing.T) {
 	}
 }
 
-func TestSweepSpareResourceHeldByAllocator(t *testing.T) {
-	// Инстанс получил номер и создал интерфейс, но объявиться ещё не успел:
-	// declared его не содержит. Сносить нельзя — иначе уборщик уничтожает
-	// только что созданный интерфейс.
-	alloc := NewAllocator(IndexRange{Min: 17, Max: 49})
-	if _, err := alloc.AllocIndex("inst1", 19, map[int]bool{}); err != nil {
-		t.Fatal(err)
-	}
-	sc := fakeScanner{out: []OwnedResource{{Label: "L", Name: "OpkgTun19"}}}
-	rm := &fakeRemover{}
-	sw := NewSweeper(sc, rm, alloc, []string{"L"}, func(n string) (int, bool) {
-		if n == "OpkgTun19" {
-			return 19, true
-		}
-		return 0, false
-	})
-
-	removed, err := sw.Sweep(context.Background(), map[string]bool{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(removed) != 0 {
-		t.Fatalf("снесён закреплённый номер: %v", removed)
-	}
-}
-
-func TestSweepRemovesUnheldResourceWithKnownIndex(t *testing.T) {
-	// Обратная сторона предыдущего: номер разобран, но ни за кем не закреплён —
-	// сирота, сносим. Иначе консультация с аллокатором выключила бы уборку.
-	alloc := NewAllocator(IndexRange{Min: 17, Max: 49})
-	sc := fakeScanner{out: []OwnedResource{{Label: "L", Name: "OpkgTun19"}}}
-	rm := &fakeRemover{}
-	sw := NewSweeper(sc, rm, alloc, []string{"L"}, func(n string) (int, bool) {
-		if n == "OpkgTun19" {
-			return 19, true
-		}
-		return 0, false
-	})
-
-	removed, err := sw.Sweep(context.Background(), map[string]bool{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(removed) != 1 || removed[0] != "OpkgTun19" {
-		t.Fatalf("удалено %v, ожидали OpkgTun19: номер ни за кем не закреплён", removed)
-	}
-}
-
 func TestSweepCanceledRemoveIsNotFailure(t *testing.T) {
 	// Отмена, вернувшаяся из самого Remove, — не отказ уборки: прекращаем и
 	// молчим, как и при отмене, замеченной до вызова.
@@ -267,9 +250,9 @@ func TestSweepCanceledRemoveIsNotFailure(t *testing.T) {
 		{Label: "L", Name: "OpkgTun20"},
 	}}
 	rm := &fakeRemover{err: context.Canceled}
-	sw := NewSweeper(sc, rm, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"L"}, noIndex)
+	sw := NewSweeper(sc, rm, []string{"L"})
 
-	removed, err := sw.Sweep(context.Background(), map[string]bool{})
+	removed, err := sweepAll(t, sw, context.Background(), map[string]bool{})
 	if err != nil {
 		t.Fatalf("отмена из Remove не должна приезжать как отказ уборки: %v", err)
 	}
@@ -283,36 +266,26 @@ func TestSweepCanceledRemoveIsNotFailure(t *testing.T) {
 	}
 }
 
-func TestNewSweeperPanicsWithoutLabels(t *testing.T) {
-	// Уборщик — единственный путь удаления. Конструктор без меток означал бы
-	// вечное накопление сирот без единого сигнала: это ошибка программирования,
-	// а не режим работы.
-	defer func() {
-		if recover() == nil {
-			t.Fatal("ожидали панику на пустом списке меток")
-		}
-	}()
-	NewSweeper(fakeScanner{}, &fakeRemover{}, NewAllocator(IndexRange{Min: 17, Max: 49}), nil, noIndex)
-}
-
-func TestNewSweeperPanicsWithoutIndexOf(t *testing.T) {
-	// nil-разборщик компилируется и падает только на пути уборки — между
-	// решением о сносе и сносами. Отказ обязан быть в конструкторе.
-	defer func() {
-		if recover() == nil {
-			t.Fatal("ожидали панику на nil-разборщике имени")
-		}
-	}()
-	NewSweeper(fakeScanner{}, &fakeRemover{}, NewAllocator(IndexRange{Min: 17, Max: 49}), []string{"L"}, nil)
-}
-
-func TestNewSweeperPanicsWithoutAllocator(t *testing.T) {
-	// Та же болезнь: nil компилируется, а разыменование случается посреди Sweep,
-	// на консультации held. Отказ обязан быть в конструкторе.
-	defer func() {
-		if recover() == nil {
-			t.Fatal("ожидали панику на nil-аллокаторе")
-		}
-	}()
-	NewSweeper(fakeScanner{}, &fakeRemover{}, nil, []string{"L"}, noIndex)
+func TestNewSweeperPanics(t *testing.T) {
+	cases := []struct {
+		name string
+		call func()
+	}{
+		// Уборщик — единственный путь удаления. Конструктор без меток означал бы
+		// вечное накопление сирот без единого сигнала.
+		{"без меток", func() { NewSweeper(fakeScanner{}, &fakeRemover{}, nil) }},
+		// nil компилируется и падает посреди уборки, а не при сборке движка.
+		{"без сканера", func() { NewSweeper(nil, &fakeRemover{}, []string{"L"}) }},
+		{"без сносчика", func() { NewSweeper(fakeScanner{}, nil, []string{"L"}) }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("ожидали панику")
+				}
+			}()
+			c.call()
+		})
+	}
 }

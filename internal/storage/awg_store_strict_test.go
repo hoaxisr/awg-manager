@@ -40,7 +40,8 @@ func TestListStrictFailsOnCorruptJSONWithoutQuarantine(t *testing.T) {
 	if _, err := s.ListStrict(); err == nil {
 		t.Fatal("битый файл обязан валить ListStrict целиком")
 	}
-	// Побочных действий нет: файл на месте, карантина не случилось.
+	// Побочных действий нет: файл на месте, карантина не случилось. На этом
+	// свойстве держится зеркало реестра выходов (требование 20).
 	if _, err := os.Stat(bad); err != nil {
 		t.Fatalf("ListStrict не имеет права трогать файл: %v", err)
 	}

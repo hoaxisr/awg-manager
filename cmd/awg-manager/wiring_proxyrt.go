@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -110,149 +109,27 @@ func (b *proxyLinkBook) snapshot(key string) (awgmproto.State, bool) {
 
 // ── занятость номеров OpkgTun ────────────────────────────────────
 
-// opkgOccupancyAllOwners — занятость пула OpkgTun: живое (только /sys) плюс пины
-// ЧЕТЫРЁХ владельцев — записи AWG-туннелей, удерживающая запись настроек,
-// записи NDMS и записи прокси-инстансов.
-//
-// Состав — контракт для ВСЕХ, кто выдаёт номера (прокси, туннели), а не только
-// для прокси: на mips/mipsel пул общий, и поставщик, выпавший у одного
-// вызывающего, отдаёт ему чужой занятый номер как свободный.
-//
-// Состав собран здесь, а не в месте вызова, потому что он и есть контракт:
-// выпавший поставщик не ломает ни сборку, ни один прогон — он просто отдаёт
-// чужой номер как свободный, и коллизия всплывает интерфейсом, который увели
-// у соседней подсистемы.
-//
-// Записи NDMS приходят ОТДЕЛЬНЫМ поставщиком, а не половиной живого: после
-// `ip link del opkgtunN` запись живёт дальше со state error, устройства нет.
-// Номер занят, интерфейс мёртв, и одна карта на оба вопроса врёт.
-func opkgOccupancyAllOwners(live storage.OpkgTunIndexLister, ndmsPins storage.OpkgTunPins,
-	awg *storage.AWGTunnelStore, settings *storage.SettingsStore, store *instancestore.Store,
-) storage.OpkgTunPins {
-	return storage.OpkgTunOccupancy(live,
-		awg.OpkgTunPinsOf,
-		settings.OpkgTunPinsOf,
-		ndmsPins,
-		proxyRecordPins(store),
-	)
-}
-
-// routerForeignOpkgPins — пины ЧУЖИХ владельцев для режимов роутера: записи
-// туннелей, записи NDMS без живого устройства и записи прокси-инстансов. Своя
-// удерживающая запись сюда не входит намеренно — она приходит из настроек, и
-// подмешивание её перепинило бы роутер сам на себя (см. Deps.OpkgTunPins).
-func routerForeignOpkgPins(awg *storage.AWGTunnelStore, ndmsPins storage.OpkgTunPins,
-	store *instancestore.Store,
-) storage.OpkgTunPins {
-	return storage.MergeOpkgTunPins(awg.OpkgTunPinsOf, ndmsPins, proxyRecordPins(store))
-}
-
-// proxyRecordPins — четвёртый поставщик пинов пула OpkgTun: записи
-// прокси-инстансов. Три остальных (записи туннелей, удерживающая запись
-// настроек, записи NDMS) приходят готовыми из internal/storage и адаптера
-// NDMS — здесь только своё.
-func proxyRecordPins(store *instancestore.Store) storage.OpkgTunPins {
-	return func(context.Context) (map[int]bool, error) {
-		st, err := store.Load()
-		if err != nil {
-			return nil, err
-		}
-		pins := map[int]bool{}
-		for _, rec := range st.Records {
-			for _, name := range proxyRecordIfaces(rec) {
-				if idx, ok := opkgTunIndex(name); ok {
-					pins[idx] = true
-				}
-			}
-		}
-		return pins, nil
-	}
-}
-
-// proxyRecordIfaces — NDMS-имена, которые держит запись. У сервера их два:
-// WG-половина и raw-половина.
-func proxyRecordIfaces(rec instancestore.Record) []string {
+// proxyRecordIfaces — NDMS-имена, которые держит запись, по ПОЛЮ записи.
+// Поле — вторая половина ключа владельца (opkgtun.ProxyHolder):
+// у сервера половин две, и номер каждой закреплён за своим ключом, иначе
+// освобождение одной снимало бы пин другой. У клиента поле пустое.
+func proxyRecordIfaces(rec instancestore.Record) []recordHalf {
 	switch {
 	case rec.WdttClient != nil:
-		return []string{rec.WdttClient.NdmsIface}
+		return []recordHalf{{iface: rec.WdttClient.NdmsIface}}
 	case rec.WdttServer != nil:
-		return []string{rec.WdttServer.NdmsIface, rec.WdttServer.RawNdmsIface}
+		return []recordHalf{
+			{field: "wg", iface: rec.WdttServer.NdmsIface},
+			{field: "raw", iface: rec.WdttServer.RawNdmsIface},
+		}
 	}
 	return nil
 }
 
-// proxyOwnPin — пин, принадлежащий ИМЕННО этому владельцу, и признак того,
-// есть ли у владельца запись вообще. Владелец бывает трёх форм: key
-// (raw-клиент), key+"/wg" и key+"/raw" (половины сервера) — суффикс выбирает
-// ПОЛЕ записи. Второй пин той же записи собственным НЕ считается: это другой
-// интерфейс, и коллизия с ним запрещена.
-func proxyOwnPin(recs []instancestore.Record, owner string) (idx int, ok, haveRecord bool) {
-	key, field := owner, ""
-	if i := strings.LastIndex(owner, "/"); i >= 0 {
-		key, field = owner[:i], owner[i+1:]
-	}
-	for _, rec := range recs {
-		if rec.Key() != key {
-			continue
-		}
-		switch {
-		case field == "" && rec.WdttClient != nil:
-			idx, ok = opkgTunIndex(rec.WdttClient.NdmsIface)
-		case field == "wg" && rec.WdttServer != nil:
-			idx, ok = opkgTunIndex(rec.WdttServer.NdmsIface)
-		case field == "raw" && rec.WdttServer != nil:
-			idx, ok = opkgTunIndex(rec.WdttServer.RawNdmsIface)
-		}
-		return idx, ok, true
-	}
-	return 0, false, false
-}
-
-// proxyAllocIndex — формула taken для manager.Deps.AllocIndex и SeedDeps:
-// общая занятость МИНУС собственные пины владельца.
-//
-// Собственный пин берётся из ЗАПИСИ владельца, а при её отсутствии — из
-// заявленного pinned. Развилка не косметическая: пока записи нет (посев),
-// живой интерфейс с этим номером принадлежит тому же инстансу, и без
-// вычитания усыновление превратилось бы в перепин с повисшими permit'ами
-// пользователя. Как только запись есть, своим считается ровно пин ЕЁ поля:
-// заявка на чужой номер (в том числе на вторую половину собственного
-// сервера) собственной не становится.
-//
-// Fail-closed: отказ любого поставщика занятости — отказ аллокации. Неполная
-// картина читается как «номер свободен», а это единственное направление
-// ошибки, дающее коллизию интерфейсов.
-func proxyAllocIndex(ctx context.Context, alloc *proxyrt.Allocator, min int,
-	occupancy storage.OpkgTunPins, store *instancestore.Store,
-) func(owner string, pinned int, havePin bool) (int, error) {
-	return func(owner string, pinned int, havePin bool) (int, error) {
-		taken, err := occupancy(ctx)
-		if err != nil {
-			return 0, err
-		}
-		st, err := store.Load()
-		if err != nil {
-			return 0, err
-		}
-		switch idx, ok, haveRecord := proxyOwnPin(st.Records, owner); {
-		case ok:
-			delete(taken, idx)
-		case !haveRecord && havePin:
-			// Записи ещё нет — это посев: заявленный пин прочитан из СТАРОГО
-			// конфига того же инстанса, и живой интерфейс с этим номером —
-			// его собственный.
-			delete(taken, pinned)
-		}
-		// Сентинел «пина нет» — min-1, а не ноль: на mips диапазон начинается
-		// с нуля, и ноль там законный пин (alloc.go сверяет pinned с
-		// диапазоном, всё вне него игнорируя).
-		p := min - 1
-		if havePin {
-			p = pinned
-		}
-		return alloc.AllocIndex(owner, p, taken)
-	}
-}
+// recordHalf — половина записи: поле ключа владельца и её NDMS-имя. Срез, а не
+// карта: у битой записи сервера оба имени могут совпасть, и победитель на
+// карте определялся бы обходом, то есть менялся от запуска к запуску.
+type recordHalf struct{ field, iface string }
 
 // proxyAllocListen — выдача локального listen-порта клиенту. РЕЗЕРВИРУЮЩАЯ:
 // свой аллокатор с собственным ключом владельца (key+"/listen"), а не скан
@@ -280,14 +157,12 @@ func proxyAllocListen(ctx context.Context, alloc *proxyrt.Allocator,
 		if err != nil {
 			return "", fmt.Errorf("занятость портов: %w", err)
 		}
-		// Текущий порт идёт закреплением: AllocIndex вернёт его, если он в
-		// диапазоне и свободен, иначе выдаст первый свободный. Значение вне
-		// пула аллокатор игнорирует — им же гасится «порта нет вовсе».
-		pinned := roles.ListenPortMin - 1
-		if port, ok := localhostPort(current); ok {
-			pinned = port
-		}
-		p, err := alloc.AllocIndex(ownerKey, pinned, taken)
+		// Текущий порт идёт закреплением: AllocPort вернёт его, если он годен,
+		// иначе выдаст первый свободный. Годность — дело аллокатора: правило
+		// диапазона живёт при его окне, и вторая копия правила здесь разошлась
+		// бы с ним ровно так, как разошлись копии карты в #891.
+		port, havePin := localhostPort(current)
+		p, err := alloc.AllocPort(ownerKey, port, havePin, taken)
 		if err != nil {
 			return "", fmt.Errorf("нет свободного порта в %d..%d: %w",
 				roles.ListenPortMin, roles.ListenPortMax, err)
@@ -296,17 +171,20 @@ func proxyAllocListen(ctx context.Context, alloc *proxyrt.Allocator,
 	}
 }
 
-// proxyReleasePins — возврат свежих аллокаций и снятие вклада инстанса из
+// proxyReleasePins — возврат свежего listen-порта и снятие вклада инстанса из
 // ведомости INPUT-портов.
 //
-// Без аргументов — no-op: Update зовёт с nil на любом отказе. Неизвестные
-// владельцы терпятся молча: Delete зовёт четыре ключа вслепую.
-func proxyReleasePins(ctx context.Context, opkg, port *proxyrt.Allocator,
+// Номера OpkgTun сюда больше не входят: их держит резервация пула, и
+// закрывает её сам менеджер — на любом исходе, включая успешный. Имя оставлено
+// прежним: его знают все вызывающие, а «возврат пинов» по смыслу не изменился.
+//
+// Без аргументов — no-op: Update зовёт с пустым списком на отказе без
+// аллокаций. Неизвестные владельцы терпятся молча: Delete зовёт ключи вслепую.
+func proxyReleasePins(ctx context.Context, port *proxyrt.Allocator,
 	book *proxyFWBook, journal instance.Journal,
 ) func(ownerKeys ...string) {
 	return func(ownerKeys ...string) {
 		for _, k := range ownerKeys {
-			opkg.Release(k)
 			port.Release(k)
 		}
 		if len(ownerKeys) == 0 {
@@ -806,17 +684,12 @@ func (a *app) wireProxyrt() {
 	// сериализацию записи по разным замкам.
 	store := a.proxyStore
 
-	// (1) Аллокаторы: номера OpkgTun и локальные listen-порты клиентов.
-	opkgMin, opkgMax, _ := roles.OpkgIndexRange(runtime.GOARCH)
-	opkgAlloc := proxyrt.NewAllocator(proxyrt.IndexRange{Min: opkgMin, Max: opkgMax})
-	portAlloc := proxyrt.NewAllocator(proxyrt.IndexRange{
+	// (1) Аллокатор локальных listen-портов клиентов. Номера OpkgTun своего
+	// аллокатора у прокси больше не имеют: их выдаёт общий пул (a.opkgPool),
+	// потому что пул делят четыре подсистемы и отдельная очередь у каждой
+	// означала отсутствие атомарности.
+	portAlloc := proxyrt.NewAllocator(proxyrt.PortRange{
 		Min: roles.ListenPortMin, Max: roles.ListenPortMax})
-
-	// (2) Занятость пула OpkgTun (состав и его цена — opkgOccupancyAllOwners).
-	ndmsIfaces := &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces}
-	occupancy := opkgOccupancyAllOwners(ndmsIfaces, ndmsIfaces.NDMSOpkgTunPins,
-		a.awgStore, a.settingsStore, store)
-	allocIndex := proxyAllocIndex(a.shutdownCtx, opkgAlloc, opkgMin, occupancy, store)
 	allocListen := proxyAllocListen(a.shutdownCtx, portAlloc, store, a.awgStore)
 
 	// (3) Посев из конфигов старого мира.
@@ -826,8 +699,8 @@ func (a *app) wireProxyrt() {
 			FreeturnPath: filepath.Join(a.dataDir, "freeturn.json"),
 			RuntimeDir:   filepath.Join(a.dataDir, "run"),
 			LivePermits:  livePermitsFor(a.ndmsQueries.Policies),
-			AllocIndex:   allocIndex,
-			GOARCH:       runtime.GOARCH,
+			OpkgTunPool:  a.opkgPool,
+			Journal:      journal.Warn,
 		})
 	}
 
@@ -839,7 +712,7 @@ func (a *app) wireProxyrt() {
 	sweeper := proxyrt.NewSweeper(
 		proxySweepScanner{ifaces: a.ndmsQueries.Interfaces},
 		proxySweepRemover{cmds: cmds},
-		opkgAlloc, instance.SweepLabels(), opkgTunIndex)
+		instance.SweepLabels())
 
 	// (5) Состояние реконсиляции — его читает ручка списка инстансов.
 	states := proxyrt.NewStateStore(a.eventBus, nil)
@@ -970,9 +843,9 @@ func (a *app) wireProxyrt() {
 			proxyKillBinaries(installSvc),
 			func() error { return instancestore.ClearCleanupPending(store) }),
 		EnsureBinaries: proxyEnsureBinaries(installSvc, journal),
-		AllocIndex:     allocIndex,
+		OpkgTunPool:    a.opkgPool,
 		AllocListen:    allocListen,
-		ReleasePins:    proxyReleasePins(a.shutdownCtx, opkgAlloc, portAlloc, book, journal),
+		ReleasePins:    proxyReleasePins(a.shutdownCtx, portAlloc, book, journal),
 		WaitDisabled:   proxyWaitDisabled(states),
 		RecordsChanged: func(reason string) {
 			a.eventBus.PublishInvalidated(events.ResourceProxyInstances, reason)
