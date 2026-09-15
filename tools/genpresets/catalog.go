@@ -9,7 +9,7 @@ const sagerNetSiteRoot = "https://raw.githubusercontent.com/SagerNet/sing-geosit
 // deterministic. Bump intentionally, then re-run the generator + commit.
 const (
 	sagerNetPinSHA = "4fe72acfd29178e56c9d4699a12062097a16f755" // pinned 2026-06-02 (SagerNet/sing-geosite rule-set)
-	vernettePinSHA = "bf5dc6dbe23b3a855d5b4b7fde7dce971bf068ee" // pinned 2026-07-15 (hoaxisr/rulesets master, коммит Action'а)
+	vernettePinSHA = "2636ffb0ea5a15e29331a3b75ee31d8dc3ccf058" // pinned 2026-09-15 (hoaxisr/rulesets master, коммит Action'а)
 )
 
 // pinnedFetchURL rewrites a moving-branch .srs URL to its pinned-commit form,
@@ -67,4 +67,5 @@ var additions = []addition{
 	{"patreon", "Patreon", "patreon", "social", srs("patreon"), "tunnel"},
 	{"medium", "Medium", "medium", "social", srs("medium"), "tunnel"},
 	{"kinopub", "Kino.pub", "kinopub", "media", srs("kinopub"), "tunnel"},
+	{"bungie", "Bungie", "lucide-gamepad-2", "gaming", "https://repo.hoaxisr.ru/rulesets/srs/bungie.srs", "tunnel"},
 }

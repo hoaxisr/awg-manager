@@ -226,7 +226,8 @@
           "gemini.google.com",
           "generativelanguage.googleapis.com",
           "proactivebackend-pa.googleapis.com",
-          "robinfrontend-pa.googleapis.com"
+          "robinfrontend-pa.googleapis.com",
+          "signaler-pa.clients6.google.com"
         ]
       },
       "singbox": {
@@ -2283,6 +2284,37 @@
     }
   },
   {
+    "id": "bungie",
+    "name": "Bungie",
+    "iconSlug": "lucide-gamepad-2",
+    "category": "gaming",
+    "notice": "Destiny 2, Marathon. PlayFab используется не только Bungie",
+    "origin": "",
+    "engines": {
+      "dns": {
+        "domains": [
+          "bungie.net",
+          "playfab.com",
+          "playfabapi.com"
+        ],
+        "subnets": [
+          "172.97.56.0/22",
+          "199.38.212.0/22",
+          "205.209.16.0/21"
+        ]
+      },
+      "singbox": {
+        "ruleSets": [
+          {
+            "tag": "geosite-bungie",
+            "url": "https://repo.hoaxisr.ru/rulesets/srs/bungie.srs"
+          }
+        ],
+        "action": "tunnel"
+      }
+    }
+  },
+  {
     "id": "category-games",
     "name": "Все игры",
     "iconSlug": "lucide-gamepad-2",
@@ -2290,6 +2322,7 @@
     "notice": "Steam, Epic, PlayStation, Xbox, Nintendo, Blizzard и другие",
     "covers": [
       "blizzard",
+      "bungie",
       "ea",
       "epicgames",
       "nintendo",
@@ -3410,19 +3443,19 @@
           "cdn2site.com",
           "gfw.ovh",
           "kino.pub",
+          "kino.watch",
           "kinopub.online",
           "kpdl.link",
           "mos-gorsud.co",
           "pushbr.com",
-          "smarttvcdn.online",
-          "kino.watch"
+          "smarttvcdn.online"
         ]
       },
       "singbox": {
         "ruleSets": [
           {
             "tag": "geosite-kinopub",
-            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-kinopub.srs"
+            "url": "https://repo.hoaxisr.ru/rulesets/srs/kinopub.srs"
           }
         ],
         "action": "tunnel"
