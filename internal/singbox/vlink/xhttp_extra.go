@@ -27,7 +27,7 @@ type extraKind int
 
 const (
 	kindRange         extraKind = iota // number, "N" or "N-M"
-	kindPositiveRange                  // a Range the option layer refuses at zero
+	kindPositiveRange                  // a Range that must not start at zero
 	kindBool
 	kindInt
 	kindHeaders
@@ -41,14 +41,23 @@ var extraFields = map[string]struct {
 	key  string
 	kind extraKind
 }{
-	"headers":              {"headers", kindHeaders},
-	"xPaddingBytes":        {"x_padding_bytes", kindPositiveRange},
-	"noGRPCHeader":         {"no_grpc_header", kindBool},
-	"noSSEHeader":          {"no_sse_header", kindBool},
-	"scMaxEachPostBytes":   {"sc_max_each_post_bytes", kindRange},
-	"scMinPostsIntervalMs": {"sc_min_posts_interval_ms", kindRange},
+	"headers":       {"headers", kindHeaders},
+	"xPaddingBytes": {"x_padding_bytes", kindPositiveRange},
+	"noGRPCHeader":  {"no_grpc_header", kindBool},
+	"noSSEHeader":   {"no_sse_header", kindBool},
+	// sc*-диапазоны — positive: ноль у них означает РАЗНОЕ у Xray и у нашего
+	// sing-box, и расхождение стоит процесса. Xray считает нулевую верхнюю
+	// границу признаком «не задано» и подставляет умолчание
+	// (splithttp/config.go: `c.ScMaxEachPostBytes == nil || …To == 0`), а порт
+	// той же функции в sing-box проверяет только nil
+	// (option/v2ray_transport.go:376) и затем ПАНИКУЕТ на `From <= 0`
+	// (transport/v2rayxhttp/client.go:185) — падает весь процесс, а с ним и
+	// прокси. Поэтому диапазон, начинающийся с нуля, не переносим вовсе: у
+	// sing-box включится ровно то умолчание, которое подставил бы Xray (#908).
+	"scMaxEachPostBytes":   {"sc_max_each_post_bytes", kindPositiveRange},
+	"scMinPostsIntervalMs": {"sc_min_posts_interval_ms", kindPositiveRange},
 	"scMaxBufferedPosts":   {"sc_max_buffered_posts", kindInt},
-	"scStreamUpServerSecs": {"sc_stream_up_server_secs", kindRange},
+	"scStreamUpServerSecs": {"sc_stream_up_server_secs", kindPositiveRange},
 }
 
 // clashXHTTPFields maps mihomo's kebab-case xhttp-opts keys to the camelCase
@@ -134,8 +143,10 @@ func parseXHTTPExtra(raw string) map[string]any {
 				out[f.key] = v
 			}
 		case kindPositiveRange:
-			// "x_padding_bytes cannot be disabled" — a zero from the link
-			// would make the whole config unloadable.
+			// Ноль здесь ломает по-разному: x_padding_bytes «cannot be
+			// disabled» и делает конфигурацию незагружаемой, а sc*-диапазоны
+			// роняют процесс уже в рантайме (#908). В обоих случаях поле
+			// просто не переносим — включается умолчание.
 			if lo, _, ok := rangeBounds(v); ok && lo > 0 {
 				out[f.key] = v
 			}

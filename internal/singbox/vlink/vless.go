@@ -86,6 +86,9 @@ func buildVlessOutbound(host string, port uint16, uuid, flow, encryption string,
 		"uuid":        uuid,
 	}
 	if f := normalizeFlow(flow); f != "" {
+		if err := checkVlessFlow(f, stream); err != nil {
+			return nil, err
+		}
 		out["flow"] = f
 	}
 	stream.MergeIntoOutbound(out)
@@ -146,8 +149,42 @@ func vlessUUIDFallback(userinfo string, q url.Values, authority string) (string,
 	return "", errors.New("vless: uuid not found in any source")
 }
 
+// checkVlessFlow отсекает комбинации, которые sing-box принимает конфигом, но
+// не может набрать:
+//
+//   - чужой flow (xtls-rprx-direct и прочие из старого Xray) — sing-vmess знает
+//     ровно "" и xtls-rprx-vision, остальное валит СОЗДАНИЕ аутбаунда, то есть
+//     и `sing-box check`, то есть применение ВСЕЙ конфигурации, а не одной
+//     записи;
+//   - vision без TLS — в vision уезжает голый TCP (protocol/vless/outbound.go:
+//     157-162), а NewVisionConn требует TLS-соединение (sing-vmess
+//     vless/vision.go: «vision: not a valid supported TLS connection»), то есть
+//     падает КАЖДЫЙ dial;
+//   - vision поверх любого транспорта — у ws/grpc/xhttp то же самое (их conn не
+//     реализуют ReaderWithUpstream, и CastReader до TLS не доходит), а вот
+//     httpupgrade под TLS ОТДАЁТ настоящий *tls.Conn, и клиент такой dial
+//     набрал бы. Отвергаем всё равно: сервер этого не примет — Xray держит
+//     vision только на raw/tcp («XTLS only supports TLS and REALITY directly
+//     for now»), то есть собеседника у такой комбинации нет.
+func checkVlessFlow(flow string, stream *StreamBuilder) error {
+	if flow != "xtls-rprx-vision" {
+		return fmt.Errorf("vlink: vless: unsupported flow %q (sing-box knows only xtls-rprx-vision)", flow)
+	}
+	if stream == nil || stream.TLS == nil {
+		return fmt.Errorf("vlink: vless: flow %q requires TLS or Reality", flow)
+	}
+	if stream.Network != "tcp" {
+		return fmt.Errorf("vlink: vless: flow %q works only over plain tcp, not %q", flow, stream.Network)
+	}
+	return nil
+}
+
 func normalizeFlow(f string) string {
-	if f == "" || strings.EqualFold(f, "none") {
+	// Регистр значения приводим, как и у type/security: суффикс -udp443 тут
+	// уже нормализуется, а панель, написавшая XTLS-RPRX-VISION, не должна
+	// стоить пользователю узла — sing-box сравнивает flow точно.
+	f = strings.ToLower(strings.TrimSpace(f))
+	if f == "" || f == "none" {
 		return ""
 	}
 	return strings.TrimSuffix(f, "-udp443")

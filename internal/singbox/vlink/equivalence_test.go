@@ -415,6 +415,62 @@ var eqScenarios = []eqScenario{
 		amnezia: true,
 	},
 	{
+		// #904: tcp + обфускация заголовком http. У всех форматов своя запись
+		// одного и того же — headerType=http у ссылки, network: http у Clash,
+		// tcpSettings.header у Xray — и все обязаны дать транспорт http.
+		name: "vless-tcp-http-header",
+		canonical: `{
+			"type": "vless",
+			"server": "s8.example.com",
+			"server_port": 80,
+			"uuid": "11111111-2222-3333-4444-555555555555",
+			"transport": {
+				"type": "http",
+				"method": "GET",
+				"host": ["h8.example.com"],
+				"path": "/p8"
+			}
+		}`,
+		link: "vless://11111111-2222-3333-4444-555555555555@s8.example.com:80" +
+			"?type=tcp&headerType=http&host=h8.example.com&path=%2Fp8&security=none#s8",
+		clash: `proxies:
+  - name: s8
+    type: vless
+    server: s8.example.com
+    port: 80
+    uuid: 11111111-2222-3333-4444-555555555555
+    network: http
+    http-opts:
+      path:
+        - /p8
+      headers:
+        Host:
+          - h8.example.com
+`,
+		xray: `{"outbounds":[{
+			"protocol": "vless",
+			"tag": "s8",
+			"settings": {"vnext": [{
+				"address": "s8.example.com",
+				"port": 80,
+				"users": [{"id": "11111111-2222-3333-4444-555555555555", "encryption": "none"}]
+			}]},
+			"streamSettings": {
+				"network": "tcp",
+				"tcpSettings": {
+					"header": {
+						"type": "http",
+						"request": {
+							"path": ["/p8"],
+							"headers": {"Host": ["h8.example.com"]}
+						}
+					}
+				}
+			}
+		}]}`,
+		amnezia: true,
+	},
+	{
 		name: "trojan-ws-tls",
 		canonical: `{
 			"type": "trojan",

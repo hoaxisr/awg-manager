@@ -93,13 +93,23 @@ func clashFieldsToValues(p map[string]any) url.Values {
 		}
 	case "http":
 		hp := nestedMap(p, "http-opts")
-		// http-opts.path and http-opts.host are []string per Clash spec.
-		// Take the first non-empty entry to mirror h2-opts handling above.
+		// network: http у mihomo — это не h2, а обфускация заголовком поверх
+		// tcp (StreamHTTPConn), то же самое, что headerType=http у ссылки.
+		// Отдаём её тем же ключом, чтобы решение о транспорте принималось в
+		// одном месте — в BuildStreamFromQuery, вместе с запретом на TLS.
+		v.Set("type", "tcp")
+		v.Set("headerType", "http")
+		// mihomo: HTTPOptions{method, path []string, headers map[string][]string}
+		// — ключа host здесь нет, Host приезжает заголовком (adapter/outbound/
+		// vmess.go). Берём первый непустой элемент, как у h2-opts выше.
 		if paths := asStringSlice(hp["path"]); len(paths) > 0 {
 			v.Set("path", paths[0])
 		}
-		if hosts := asStringSlice(hp["host"]); len(hosts) > 0 {
+		if hosts := asStringSlice(nestedMap(hp, "headers")["Host"]); len(hosts) > 0 {
 			v.Set("host", hosts[0])
+		}
+		if m := asString(hp["method"]); m != "" {
+			v.Set("method", m)
 		}
 	case "h2":
 		hp := nestedMap(p, "h2-opts")

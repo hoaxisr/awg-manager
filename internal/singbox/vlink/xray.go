@@ -16,14 +16,18 @@ type XrayOutbound struct {
 }
 
 type XrayStream struct {
-	Network             string             `json:"network"`
-	Security            string             `json:"security"`
-	TLSSettings         *XrayTLSConfig     `json:"tlsSettings"`
-	RealitySettings     *XrayRealityConfig `json:"realitySettings"`
-	WSSettings          *XrayWSConfig      `json:"wsSettings"`
-	GRPCSettings        *XrayGRPCConfig    `json:"grpcSettings"`
-	HTTPSettings        *XrayHTTPConfig    `json:"httpSettings"`
-	HTTPUpgradeSettings *XrayWSConfig      `json:"httpupgradeSettings"`
+	Network         string             `json:"network"`
+	Security        string             `json:"security"`
+	TLSSettings     *XrayTLSConfig     `json:"tlsSettings"`
+	RealitySettings *XrayRealityConfig `json:"realitySettings"`
+	TCPSettings     *XrayTCPConfig     `json:"tcpSettings"`
+	// Современный Xray зовёт ту же сеть "raw" и кладёт блок в rawSettings,
+	// причём он ПЕРЕБИВАЕТ tcpSettings (infra/conf/transport_internet.go:119).
+	RAWSettings         *XrayTCPConfig  `json:"rawSettings"`
+	WSSettings          *XrayWSConfig   `json:"wsSettings"`
+	GRPCSettings        *XrayGRPCConfig `json:"grpcSettings"`
+	HTTPSettings        *XrayHTTPConfig `json:"httpSettings"`
+	HTTPUpgradeSettings *XrayWSConfig   `json:"httpupgradeSettings"`
 	// xhttp несёт настройки плоско (xmux, xPaddingBytes, ...) и/или внутри
 	// "extra" — ключи в обеих формах те же, что в share-ссылке, поэтому объект
 	// уезжает в разбор целиком.
@@ -46,6 +50,26 @@ type XrayRealityConfig struct {
 	Fingerprint string `json:"fingerprint"`
 }
 
+// XrayTCPConfig несёт только обфускацию заголовком: остальное в tcpSettings
+// (acceptProxyProtocol) к транспорту не относится.
+type XrayTCPConfig struct {
+	Header *XrayTCPHeader `json:"header"`
+}
+
+type XrayTCPHeader struct {
+	Type    string          `json:"type"`
+	Request *XrayTCPRequest `json:"request"`
+}
+
+// XrayTCPRequest — заголовок запроса. path у Xray список, значения headers —
+// тоже списки, но встречается и форма со строкой, поэтому разбираются как any
+// общими хелперами.
+type XrayTCPRequest struct {
+	Method  string         `json:"method"`
+	Path    []string       `json:"path"`
+	Headers map[string]any `json:"headers"`
+}
+
 type XrayWSConfig struct {
 	Host    string            `json:"host"`
 	Path    string            `json:"path"`
@@ -57,8 +81,9 @@ type XrayGRPCConfig struct {
 }
 
 type XrayHTTPConfig struct {
-	Path string   `json:"path"`
-	Host []string `json:"host"`
+	Method string   `json:"method"`
+	Path   string   `json:"path"`
+	Host   []string `json:"host"`
 }
 
 // VlessSettings represents settings block for VLESS protocol in Xray.
@@ -264,6 +289,7 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 
 	var server string
 	var port uint16
+	var vlessFlow string
 
 	switch proto {
 	case "vless":
@@ -287,9 +313,9 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		sbOutbound["server"] = server
 		sbOutbound["server_port"] = int(port)
 		sbOutbound["uuid"] = user.ID
-		if f := normalizeFlow(user.Flow); f != "" {
-			sbOutbound["flow"] = f
-		}
+		// Само присваивание ниже, после сборки транспорта: checkVlessFlow
+		// судит по паре (flow, транспорт+TLS), а stream здесь ещё не собран.
+		vlessFlow = normalizeFlow(user.Flow)
 
 	case "trojan":
 		var settings TrojanSettings
@@ -339,12 +365,23 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 
 	// Транспорт и TLS собирает общий слой — тот же, что у share-ссылок и
 	// Clash. Своей реализации здесь больше нет.
+	var stream *StreamBuilder
 	if ob.StreamSettings != nil {
-		stream, err := BuildStreamFromQuery(xrayStreamToValues(ob.StreamSettings, server), server)
+		var err error
+		stream, err = BuildStreamFromQuery(xrayStreamToValues(ob.StreamSettings, server), server)
 		if err != nil {
 			return nil, fmt.Errorf("xray: %w", err)
 		}
 		stream.MergeIntoOutbound(sbOutbound)
+	}
+	if vlessFlow != "" {
+		// Xray-вход раньше ставил flow напрямую и проходил мимо проверки,
+		// которую ссылки и Clash уже получили: подписка в формате Xray несла
+		// чужой flow дальше и роняла применение всей конфигурации.
+		if err := checkVlessFlow(vlessFlow, stream); err != nil {
+			return nil, err
+		}
+		sbOutbound["flow"] = vlessFlow
 	}
 
 	rawJSON, err := json.Marshal(sbOutbound)
@@ -374,14 +411,46 @@ func xrayStreamToValues(stream *XrayStream, defaultHost string) url.Values {
 	}
 
 	network := strings.ToLower(stream.Network)
-	if network == "splithttp" {
+	switch network {
+	case "splithttp":
 		network = "xhttp"
+	case "raw":
+		network = "tcp"
 	}
 	if network != "" {
 		v.Set("type", network)
 	}
 
 	switch network {
+	case "tcp":
+		// Тип заголовка уезжает как есть: что с ним делать — знает
+		// BuildStreamFromQuery (она же отвергает несуществующие на tcp).
+		// Фильтровать здесь значило бы вернуть Xray-входу своё решение о
+		// транспорте и своё молчание на непонятом значении.
+		tcp := stream.TCPSettings
+		if stream.RAWSettings != nil {
+			tcp = stream.RAWSettings
+		}
+		if t := tcp; t != nil && t.Header != nil && t.Header.Type != "" {
+			v.Set("headerType", t.Header.Type)
+			if req := t.Header.Request; req != nil {
+				if req.Method != "" {
+					v.Set("method", req.Method)
+				}
+				if len(req.Path) > 0 {
+					v.Set("path", req.Path[0])
+				}
+				// Значение заголовка у Xray — список, но встречается и строка;
+				// asStringSlice принимает обе формы.
+				hosts := asStringSlice(req.Headers["Host"])
+				if len(hosts) == 0 {
+					hosts = asStringSlice(req.Headers["host"])
+				}
+				if len(hosts) > 0 {
+					v.Set("host", hosts[0])
+				}
+			}
+		}
 	case "ws":
 		if ws := stream.WSSettings; ws != nil {
 			v.Set("path", ws.Path)
@@ -398,6 +467,9 @@ func xrayStreamToValues(stream *XrayStream, defaultHost string) url.Values {
 		}
 	case "http", "h2":
 		if h := stream.HTTPSettings; h != nil {
+			if h.Method != "" {
+				v.Set("method", h.Method)
+			}
 			v.Set("path", h.Path)
 			if len(h.Host) > 0 {
 				v.Set("host", h.Host[0])

@@ -20,6 +20,7 @@ type StreamBuilder struct {
 	EarlyDataHeaderName string
 	ServiceName         string
 	Mode                string         // xhttp mode: auto | packet-up | stream-up | stream-one
+	HTTPMethod          string         // метод запроса транспорта http; пусто — умолчание sing-box
 	XPaddingBytes       string         // xhttp x_padding_bytes (mandatory, non-zero); defaulted in MergeIntoOutbound
 	XHTTPExtra          map[string]any // xhttp fields from ?extra=, already in sing-box snake_case (#797)
 	BindInterface       string         // egress kernel interface for dial (#709)
@@ -57,6 +58,11 @@ type outboundRTLS struct {
 //
 //	type, security, sni, alpn, fp/fingerprint, insecure, pbk, sid — как в ссылке
 //	path, host, serviceName, mode                                 — как в ссылке
+//	headerType      — обфускация заголовком у type=tcp. Понимается только
+//	                  http (и только без TLS) — это транспорт http sing-box;
+//	                  none отсутствует, всё прочее — отказ.
+//	method          — метод запроса транспорта http. У обфускации по
+//	                  умолчанию GET, у h2 — умолчание sing-box.
 //	ed, eh          — ранние данные ws: размер и имя заголовка. Форма "?ed=N"
 //	                  внутри path эквивалентна ed=N с заголовком
 //	                  Sec-WebSocket-Protocol; пустой eh означает ранние данные
@@ -79,14 +85,50 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 		s.Network = "ws"
 	case "grpc":
 		s.Network = "grpc"
-	case "h2":
-		s.Network = "http"
-	case "http":
+	case "h2", "http":
+		// HTTP/2-транспорт. БЕЗ TLS это h2c — HTTP/2 открытым текстом: v2fly
+		// поднимает под него h2c.NewHandler (transport/internet/http/hub.go),
+		// mihomo просто не оборачивает соединение в TLS. Клиент sing-box h2c
+		// не умеет: выбор HTTP/1.1 против HTTP/2 у него жёстко привязан к
+		// наличию TLS (transport/v2rayhttp/client.go — http2 := tlsConfig != nil),
+		// и молча отдать вместо h2c HTTP/1.1 значит выдать конфиг другого
+		// протокола. Отвергаем (F324). Обфускация заголовком, которая в
+		// sing-box как раз выражается, пишется однозначно — type=tcp&headerType=http.
+		if sec := strings.ToLower(q.Get("security")); sec == "" || sec == "none" {
+			return nil, fmt.Errorf("vlink: transport %q without TLS is h2c, which sing-box cannot dial (header obfuscation is type=tcp&headerType=http)", netRaw)
+		}
 		s.Network = "http"
 	case "httpupgrade":
 		s.Network = "httpupgrade"
-	case "tcp":
+	case "tcp", "raw":
+		// raw — нынешнее имя tcp у Xray (infra/conf: case "raw", "tcp").
 		s.Network = "tcp"
+		// Обфускация заголовком у tcp-транспорта Xray/v2ray: клиент один раз
+		// пишет HTTP/1.1-запрос перед полезной нагрузкой и снимает один ответ.
+		// Это ровно транспорт http sing-box без TLS (transport/v2rayhttp:
+		// dialHTTP → HTTPConn.writeRequest), поэтому отображаем в него. С TLS
+		// тот же транспорт становится HTTP/2 — другой протокол, а не та же
+		// обфускация поверх TLS, поэтому такую ссылку отвергаем, а не собираем
+		// молча заведомо неработающий аутбаунд.
+		switch ht := strings.ToLower(strings.TrimSpace(q.Get("headerType"))); ht {
+		case "", "none":
+		case "http":
+			if sec := strings.ToLower(q.Get("security")); sec != "" && sec != "none" {
+				return nil, fmt.Errorf("vlink: tcp headerType=http under %s: header obfuscation inside TLS has no sing-box equivalent", sec)
+			}
+			s.Network = "http"
+			// У tcp в v2ray/Xray есть ровно два заголовка, none и http, и для
+			// http клиенты шлют GET (mihomo transport/vmess/http.go:67, Xray
+			// RequestConfig). sing-box без указания шлёт PUT
+			// (transport/v2rayhttp/client.go), поэтому метод задаём явно:
+			// сервер его обычно не проверяет, но обфускация на то и обфускация.
+			s.HTTPMethod = "GET"
+		default:
+			// Остальные заголовки (srtp, utp, wechat-video, dtls, wireguard) —
+			// это mKCP, на tcp они не существуют. Молча собрать голый tcp
+			// значит выдать заведомо неработающий аутбаунд — как в #904.
+			return nil, fmt.Errorf("vlink: unsupported tcp headerType %q", ht)
+		}
 	case "xhttp", "splithttp":
 		s.Network = "xhttp"
 	default:
@@ -94,6 +136,10 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 	}
 	if strings.EqualFold(q.Get("mode"), "gun") {
 		s.Network = "grpc"
+	}
+	// Явный метод (его несут Clash и Xray, ссылка — нет) перебивает умолчание.
+	if m := strings.ToUpper(strings.TrimSpace(q.Get("method"))); m != "" && s.Network == "http" {
+		s.HTTPMethod = m
 	}
 
 	// Path / Host / WS early data
@@ -267,6 +313,9 @@ func (s *StreamBuilder) MergeIntoOutbound(out map[string]any) {
 			}
 		case "http":
 			transport["type"] = "http"
+			if s.HTTPMethod != "" {
+				transport["method"] = s.HTTPMethod
+			}
 			if s.Host != "" {
 				transport["host"] = []string{s.Host}
 			}

@@ -389,3 +389,59 @@ func TestParseSingboxBody_TagBecomesLabel(t *testing.T) {
 		t.Errorf("Tag = %q, want empty (assigned downstream)", res.Outbounds[0].Tag)
 	}
 }
+
+// Подписка в формате sing-box JSON — такой же чужой вход, как ссылка и Clash.
+// Отвергаем у неё ровно то, что роняет больше одной записи: чужой плагин и
+// чужой flow валят применение всей конфигурации, нулевой sc-диапазон xhttp —
+// весь процесс в рантайме (#908).
+func TestParseSingboxBody_FatalCombinationsRejected(t *testing.T) {
+	ob := func(extra string) []byte {
+		return []byte(`{"outbounds":[{"type":"vless","tag":"x","server":"a.example.com",` +
+			`"server_port":443,"uuid":"11111111-2222-3333-4444-555555555555"` + extra + `}]}`)
+	}
+	rejected := map[string][]byte{
+		"чужой flow":     ob(`,"flow":"xtls-rprx-direct","tls":{"enabled":true}`),
+		"vision без TLS": ob(`,"flow":"xtls-rprx-vision"`),
+		"vision поверх ws": ob(`,"flow":"xtls-rprx-vision","tls":{"enabled":true},` +
+			`"transport":{"type":"ws","path":"/w"}`),
+		"неизвестный транспорт": ob(`,"transport":{"type":"kcp"}`),
+		"нулевой sc-диапазон": ob(`,"tls":{"enabled":true},"transport":{"type":"xhttp",` +
+			`"path":"/p","sc_max_each_post_bytes":"0","x_padding_bytes":"100-1000"}`),
+		"нулевой padding": ob(`,"tls":{"enabled":true},"transport":{"type":"xhttp",` +
+			`"path":"/p","x_padding_bytes":"0"}`),
+		"чужой ss-плагин": []byte(`{"outbounds":[{"type":"shadowsocks","tag":"s",` +
+			`"server":"a.example.com","server_port":8388,"method":"aes-256-gcm",` +
+			`"password":"p","plugin":"xray-plugin"}]}`),
+	}
+	for name, body := range rejected {
+		t.Run(name, func(t *testing.T) {
+			res := ParseSingboxBody(body)
+			if len(res.Outbounds) > 0 {
+				t.Errorf("принят: %s", res.Outbounds[0].Outbound)
+			}
+			if len(res.Errors) == 0 {
+				t.Error("ошибка не сообщена")
+			}
+		})
+	}
+
+	// Рабочие формы по-прежнему проходят, включая транспорт http без TLS —
+	// у sing-box это его собственная обфускация заголовком, а не h2c.
+	accepted := map[string][]byte{
+		"vision на голом tcp": ob(`,"flow":"xtls-rprx-vision","tls":{"enabled":true}`),
+		"http без TLS":        ob(`,"transport":{"type":"http","path":"/p"}`),
+		"xhttp с нормальным диапазоном": ob(`,"tls":{"enabled":true},"transport":{"type":"xhttp",` +
+			`"path":"/p","sc_max_each_post_bytes":"1000-2000"}`),
+		"ss с известным плагином": []byte(`{"outbounds":[{"type":"shadowsocks","tag":"s",` +
+			`"server":"a.example.com","server_port":8388,"method":"aes-256-gcm",` +
+			`"password":"p","plugin":"obfs-local","plugin_opts":"obfs=http"}]}`),
+	}
+	for name, body := range accepted {
+		t.Run(name, func(t *testing.T) {
+			res := ParseSingboxBody(body)
+			if len(res.Outbounds) != 1 {
+				t.Errorf("отвергнут: errors=%v", res.Errors)
+			}
+		})
+	}
+}

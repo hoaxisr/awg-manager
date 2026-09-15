@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { Modal, Button, Dropdown } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
+	import { linkImportErrorText } from '$lib/utils/linkImportError';
 	import { singboxStatus, singboxTunnels } from '$lib/stores/singbox';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
@@ -313,7 +314,7 @@
 			singboxTunnels.applyMutationResponse(res.tunnels);
 			singleResult = {
 				imported: res.imported?.length ?? 0,
-				errors: (res.errors ?? []).map((e) => e.error),
+				errors: (res.errors ?? []).map((e) => linkImportErrorText(e.error)),
 			};
 			if ((res.imported?.length ?? 0) > 0) {
 				open = false;

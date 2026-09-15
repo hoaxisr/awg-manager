@@ -141,13 +141,35 @@ func TestMapClashShadowsocks_PluginV2rayPlugin(t *testing.T) {
 	}
 }
 
-func TestMapClashShadowsocks_PluginUnknownPassthrough(t *testing.T) {
+// Раньше неизвестное имя плагина пропускалось насквозь. В sing-box
+// зарегистрированы ровно два плагина (transport/sip003), остальное валит
+// создание аутбаунда, а значит и `sing-box check`, а значит и применение ВСЕЙ
+// конфигурации: одна запись чужой подписки (xray-plugin, shadow-tls, kcptun,
+// cloak) блокировала бы все остальные. Ничто между разбором и применением
+// имя плагина не проверяет — значит проверять здесь.
+func TestMapClashShadowsocks_PluginUnknown_Rejected(t *testing.T) {
+	for _, plugin := range []string{"unknown-plugin", "xray-plugin", "shadow-tls"} {
+		in := map[string]any{
+			"server":   "h",
+			"port":     8388,
+			"cipher":   "aes-128-gcm",
+			"password": "p",
+			"plugin":   plugin,
+		}
+		if _, err := mapClashShadowsocks(in); err == nil {
+			t.Errorf("%s: принят", plugin)
+		}
+	}
+}
+
+// Два известных плагина по-прежнему проходят.
+func TestMapClashShadowsocks_PluginKnown_Accepted(t *testing.T) {
 	in := map[string]any{
 		"server":   "h",
 		"port":     8388,
 		"cipher":   "aes-128-gcm",
 		"password": "p",
-		"plugin":   "unknown-plugin",
+		"plugin":   "v2ray-plugin",
 	}
 	got, err := mapClashShadowsocks(in)
 	if err != nil {
@@ -157,7 +179,7 @@ func TestMapClashShadowsocks_PluginUnknownPassthrough(t *testing.T) {
 	if err := json.Unmarshal(got.Outbound, &ob); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if ob["plugin"] != "unknown-plugin" {
-		t.Errorf("plugin=%v want unknown-plugin (default branch passthrough)", ob["plugin"])
+	if ob["plugin"] != "v2ray-plugin" {
+		t.Errorf("plugin=%v want v2ray-plugin", ob["plugin"])
 	}
 }

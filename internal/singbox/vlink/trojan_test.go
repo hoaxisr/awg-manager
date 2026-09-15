@@ -83,3 +83,37 @@ func TestParseTrojan_FragmentBecomesLabel(t *testing.T) {
 		t.Errorf("Label=%q want %q", got.Label, "TrojanDE-02")
 	}
 }
+
+// У trojan TLS обязателен (при отсутствии security он форсится), а обфускация
+// заголовком внутри TLS в sing-box невыразима. Снимать параметр молча нельзя:
+// сервер может быть настроен именно так (Xray это выражает), и тогда узел
+// молча превратился бы в чистый TLS и висел. Отвергаем — как у vless.
+func TestParseTrojan_HeaderTypeUnderTLS_Rejected(t *testing.T) {
+	if _, err := ParseLink("trojan://mypass@example.com:443?type=tcp&headerType=http&host=h.example.com#srv"); err == nil {
+		t.Error("принято")
+	}
+	// headerType=none — не обфускация, а её отсутствие: принимается.
+	got, err := ParseLink("trojan://mypass@example.com:443?type=tcp&headerType=none#srv")
+	if err != nil {
+		t.Fatalf("headerType=none: %v", err)
+	}
+	var ob map[string]any
+	json.Unmarshal(got.Outbound, &ob)
+	if ob["transport"] != nil {
+		t.Errorf("transport=%v, want absent", ob["transport"])
+	}
+}
+
+// Без TLS trojan бывает (trojan-go) — там параметр осмыслен и работает.
+func TestParseTrojan_HeaderTypeWithoutTLS(t *testing.T) {
+	got, err := ParseLink("trojan://mypass@example.com:80?type=tcp&headerType=http&security=none&path=/p#srv")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	var ob map[string]any
+	json.Unmarshal(got.Outbound, &ob)
+	tr, _ := ob["transport"].(map[string]any)
+	if tr["type"] != "http" || tr["path"] != "/p" {
+		t.Errorf("transport=%v, want type=http path=/p", tr)
+	}
+}

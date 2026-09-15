@@ -86,3 +86,19 @@ func TestMapClashTrojan_InvalidPortString(t *testing.T) {
 		t.Errorf("want port error, got %v", err)
 	}
 }
+
+// Clash-trojan идёт тем же путём, что и ссылка: обфускация заголовком внутри
+// TLS невыразима — отказ, а не молчаливая потеря транспорта.
+func TestMapClashTrojan_HTTPNetworkUnderTLS_Rejected(t *testing.T) {
+	in := map[string]any{
+		"server":    "t.example.com",
+		"port":      443,
+		"password":  "p",
+		"network":   "http",
+		"tls":       true,
+		"http-opts": map[string]any{"path": []any{"/p"}},
+	}
+	if _, err := mapClashTrojan(in); err == nil {
+		t.Error("принято")
+	}
+}
