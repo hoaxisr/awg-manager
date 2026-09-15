@@ -679,8 +679,12 @@ func (r *Runner) testEndpointReachable(ctx context.Context, t TunnelInfo) TestRe
 
 	result, err := exec.Run(ctx, "ping", "-c", "3", ip)
 	if err != nil {
-		res.Status = StatusFail
-		res.Detail = fmt.Sprintf("Ping %s: недоступен", ip)
+		// Warn, а не fail: молчание на ICMP — норма для VPS, большинство их
+		// режет. Живость пира доказывает awg_handshake, и он рядом; красный
+		// здесь означает отказ на исправном туннеле — в дампе с роутера так
+		// падали все четыре, включая тот, через который прошло 751 MiB.
+		res.Status = StatusWarn
+		res.Detail = fmt.Sprintf("Ping %s: нет ответа (ICMP часто закрыт на VPS — см. awg_handshake)", ip)
 		return res
 	}
 
