@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	CurrentSchemaVersion        = 37
-	DefaultPort                 = 2222
-	DefaultInterface            = "br0"
-	DefaultPingCheckTarget      = "8.8.8.8"
+	CurrentSchemaVersion   = 37
+	DefaultPort            = 2222
+	DefaultInterface       = "br0"
+	DefaultPingCheckTarget = "8.8.8.8"
 	// DefaultConnectivityCheckURL — цель TCP-пробы связи. Cloudflare, а не
 	// Google: замерено на стенде 2026-09-12 через живой туннель Amnezia
 	// Premium (выход Frankfurt) — gstatic отвечал 1 раз из 3, cp.cloudflare
@@ -743,6 +743,36 @@ func (s *SettingsStore) SetOpkgTunState(st *OpkgTunState) error {
 		cp.OpkgTun = st
 		return nil
 	})
+}
+
+// OpkgTunStateSnapshot — КОПИЯ записи владения режима роутера. nil без ошибки
+// означает «записи нет»; ошибка — «прочитать не удалось».
+//
+// Разделять обязательно: эту запись читает поставщик занятости пула OpkgTun, а
+// там ошибка НЕ равна «свободно». Схлопни их в один bool — повреждённый
+// settings.json молча освободил бы номер режима роутера, и его забрал бы
+// kernel-туннель.
+//
+// Узкий геттер, а не Snapshot(): тот делает JSON-round-trip ВСЕХ настроек,
+// включая приватные ключи серверов и пиров, ради двух полей — и стоит сотни
+// микросекунд с сотнями килобайт мусора на каждый вызов. Занятость пула
+// спрашивают на каждой выдаче номера, под общим семафором, за которым стоит
+// очередь из четырёх подсистем.
+//
+// Копия, а не живой указатель: писатели меняют запись копированием
+// (SetOpkgTunState, SetOpkgTunNATSegments публикуют НОВЫЙ указатель), но отдать
+// наружу живой значит разрешить читателю пережить следующую публикацию.
+func (s *SettingsStore) OpkgTunStateSnapshot() (*OpkgTunState, error) {
+	if _, err := s.Get(); err != nil { // гарантировать загрузку кэша
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.settings == nil || s.settings.OpkgTun == nil {
+		return nil, nil
+	}
+	cp := *s.settings.OpkgTun
+	return &cp, nil
 }
 
 // SetOpkgTunNATSegments пишет ТОЛЬКО policy-payload записи владения, не трогая

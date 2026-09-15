@@ -45,9 +45,17 @@ func ExtractInterfaceNumber(ifaceName string) (int, bool) {
 }
 
 // ListSystemInterfaces returns a list of tunnel interface numbers found in the system.
-// На 5.x собирает номера opkgtunX, на 4.x — awgX и awgmX. Деления «наши/чужие»
-// по номеру НЕТ: диапазоны подсистем разведены выше (storage.nextAvailableID и
-// аллокаторы режимов роутера и wdtt), а здесь нужны все занятые номера подряд.
+// На 5.x собирает номера opkgtunX, на 4.x — awgX и awgmX.
+//
+// Деления «наши/чужие» функция НЕ делает и делать не может: по номеру их не
+// различить — с #891 номер OpkgTun один на четыре подсистемы и выдаётся из
+// общего пула (internal/opkgtun), собственных окон у подсистем не осталось.
+// Кому деление нужно, тот делит сам, по своим записям: так поступает
+// external.List, вычитая номера управляемых туннелей.
+//
+// Потребителей два, и они разные: занятость пула (живая половина, router_adapters)
+// и список внешних туннелей (external.List). Второй на 4.x получает ещё и
+// awgX/awgmX, к пулу не относящиеся вовсе.
 func ListSystemInterfaces() ([]int, error) {
 	entries, err := os.ReadDir("/sys/class/net")
 	if err != nil {
@@ -69,8 +77,9 @@ func ListSystemInterfaces() ([]int, error) {
 		// Check awgm pattern (awg-manager on OS 4.x)
 		if matches := awgmPattern.FindStringSubmatch(name); matches != nil {
 			if num, err := strconv.Atoi(matches[1]); err == nil {
-				// Store as negative to distinguish from awgX
-				// This is just for enumeration, actual number extraction is separate
+				// ВНИМАНИЕ: awgmN и awgN дают НЕРАЗЛИЧИМЫЕ номера — класс имени
+				// здесь теряется. external.List это переживает (дедуплицирует),
+				// занятость пула на 4.x — тоже (интерфейсов OpkgTun там нет).
 				numbers = append(numbers, num)
 			}
 			continue

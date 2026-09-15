@@ -747,7 +747,8 @@ func (o *Orchestrator) lockBusyErr(tunnelID, owner, reason string) error {
 // удалять её мог только сам держатель, и тогда конкурент успевал создать
 // новый канал, а отложенный unlock сливал ЧУЖОЙ токен — взаимоисключение
 // ломалось. Цена отказа от очистки — один пустой канал на когда-либо
-// существовавший ID туннеля (диапазоны awg10..16 и awg20+ конечны).
+// существовавший ID туннеля (пул номеров OpkgTun конечен — см.
+// opkgtun.Ceiling).
 func (o *Orchestrator) unlockTunnel(tunnelID string) {
 	if hAny, ok := o.tunnelLockOwner.LoadAndDelete(tunnelID); ok {
 		h := hAny.(*lockHolder)

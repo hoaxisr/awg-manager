@@ -45,6 +45,17 @@ type fileFormat struct {
 	// повторного посева не будет никогда, и без записи пользователь после
 	// первого же перезапуска не узнал бы, что его инстансы не перенеслись.
 	SkippedSources []SkippedSource `json:"skippedSources,omitempty"`
+	// DroppedDuplicates — инстансы, схлопнутые на посеве как дубликаты ключа:
+	// два клиента с одним id дают один ключ хранилища, и записать оба нельзя.
+	// Выигрывает первый; второй пропадает НАВСЕГДА — повторного посева не
+	// будет. Поэтому запись лежит на диске рядом со SkippedSources и по той же
+	// причине: без неё пользователь после первого же перезапуска не узнал бы,
+	// что его инстанс не перенёсся.
+	//
+	// В гейт сертификации НЕ входит: гейт монотонен, и заперев им уборку, мы
+	// оставили бы осиротевшие интерфейсы навсегда. Схлопнутый дубль — потеря
+	// инстанса, а не неполнота ведомости.
+	DroppedDuplicates []string `json:"droppedDuplicates,omitempty"`
 	// MovedListen — переезды listen-порта при разведении конфликта за порт.
 	// Пишут ЧЕТЫРЕ пути: посев, боот, `Manager.Create` и `Manager.update` —
 	// это первоисточник поля, поэтому перечень здесь обязан быть полным.
@@ -94,6 +105,12 @@ type State struct {
 	// не удалось, чинить файл некому, а ретрая посева нет. Непустой список
 	// запирает сертификацию посева (manager.Boot).
 	SkippedSources []SkippedSource
+	// DroppedDuplicates — инстансы, схлопнутые на посеве как дубликаты ключа.
+	// Молчать нельзя по той же причине, что и о SkippedSources: инстанс
+	// пропал НАВСЕГДА, повторного посева не будет. В гейт сертификации НЕ
+	// входит: гейт монотонен, и заперев им уборку, мы оставили бы
+	// осиротевшие интерфейсы навсегда.
+	DroppedDuplicates []string
 	// MovedListen — инстансы, которым СМЕНИЛИ listen-адрес, разводя конфликт
 	// за порт (амендмент G2 — посев; позже добавились боот, создание и правка).
 	// Молчать об этом нельзя: снаружи мог быть настроен клиент на прежний порт.
@@ -149,7 +166,7 @@ func (s *Store) loadLocked() (State, error) {
 	st := State{Seeded: len(f.SeededFrom) > 0, SeededFrom: f.SeededFrom,
 		CleanupPending: f.CleanupPending, LegacyKernelIfaces: f.LegacyKernelIfaces,
 		OldGenProcs: f.OldGenProcs, SkippedSources: f.SkippedSources,
-		MovedListen: f.MovedListen, Records: f.Instances}
+		MovedListen: f.MovedListen, DroppedDuplicates: f.DroppedDuplicates, Records: f.Instances}
 	for i := range st.Records {
 		normalizeRecord(&st.Records[i], s.dir)
 	}
@@ -210,7 +227,7 @@ func (s *Store) ReplaceChecked(mutate func(*State) error, beforeWrite func(State
 	f := fileFormat{Version: fileVersion, SeededFrom: st.SeededFrom,
 		CleanupPending: st.CleanupPending, LegacyKernelIfaces: st.LegacyKernelIfaces,
 		OldGenProcs: st.OldGenProcs, SkippedSources: st.SkippedSources,
-		MovedListen: st.MovedListen, Instances: st.Records}
+		MovedListen: st.MovedListen, DroppedDuplicates: st.DroppedDuplicates, Instances: st.Records}
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return State{}, err

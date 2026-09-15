@@ -48,7 +48,8 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// Fail-fast nil-guard: production wires every fakeip dep, but a degraded /
 	// mis-wired build would otherwise nil-panic mid-provision. Refuse loudly
 	// before touching any state.
-	if s.deps.OpkgTun == nil || s.deps.StaticRoutes == nil || s.deps.OpkgTunIndices == nil {
+	if s.deps.OpkgTun == nil || s.deps.StaticRoutes == nil || s.deps.OpkgTunIndices == nil ||
+		s.deps.OpkgTunPool == nil {
 		return fmt.Errorf("fakeip-tun: provisioning deps not wired")
 	}
 	// Последний рубеж гейта прошивки: сюда приходит и восстановление режима из
@@ -103,7 +104,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// installed-check is always false and routes every scheduler tick + startup here.
 	// If we are already provisioned with a LIVE iface, this is a no-op reconcile —
 	// re-provisioning would allocate a new index, clobber persist, orphan the prior
-	// iface, and exhaust the 0..9 range. Full drift-reconcile (re-add routes,
+	// iface, and exhaust the pool. Full drift-reconcile (re-add routes,
 	// restart a dead sing-box) is handled by reconcileFakeIPTun; here we
 	// only prevent the leak. Sits BEFORE allocate/SetOpkgTunState/Create — the
 	// no-op return runs before any rollback is pushed.
@@ -118,26 +119,54 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	}
 
 	// Handover: единая запись владения одна на всех, поэтому запись ЧУЖОГО
-	// режима обязана быть освобождена ДО аллокации (restore NAT best-effort →
-	// teardown), иначе её интерфейс остался бы зомби без персиста. Провал
-	// release оставляет чужой интерфейс живым — live не перечитываем, аллокатор
-	// его пропустит.
+	// режима обязана быть освобождена ДО выдачи (restore NAT best-effort →
+	// teardown), иначе её интерфейс остался бы зомби без персиста.
+	//
+	// Пин на отобранный номер честится ТОЛЬКО при removed — то есть когда
+	// интерфейс снесли МЫ САМИ. Провал release и «доказанно чужой» дают
+	// removed=false: в первом случае чужой интерфейс жив, во втором на номере
+	// стоит посторонний, и претендовать на него мы не вправе.
 	prevRecord := settings.OpkgTun // снапшот ДО каких-либо мутаций
+	pin := noPin
 	if prevRecord != nil && prevRecord.Mode != storage.OpkgTunModeFakeIP {
-		if _, rerr := s.releaseForeignOpkgTun(ctx, prevRecord, "fakeip-enable"); rerr != nil {
+		removed, rerr := s.releaseForeignOpkgTun(ctx, prevRecord, "fakeip-enable")
+		if rerr != nil {
 			s.appLog.Warn("fakeip-enable", tunNDMSName(prevRecord.Index), "release foreign opkgtun: "+rerr.Error())
-		} else if live, err = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx); err != nil {
-			return fmt.Errorf("enable fakeip-tun: list opkgtun indices: %w", err)
 		}
+		// live после сноса НЕ перечитывается: занятость собирает пул сам, а
+		// вторая ветка (пин на свой прежний номер) сюда не попадает вовсе.
+		// Прежде перечитывание было обязательным — live шла в аллокатор, — а
+		// теперь оно только лишний обход RCI, чей транзиентный отказ обрывал
+		// бы включение УЖЕ ПОСЛЕ сноса прежнего режима: интерфейса нет, запись
+		// старая, и пользователь остаётся без обоих режимов до следующего тика.
+		if removed {
+			// Интерфейс снесли МЫ САМИ — номер точно наш и точно пуст, поэтому
+			// пин обычный: перебивать на нём больше нечего.
+			pin = opkgTunPin{index: prevRecord.Index, proven: true}
+		}
+	} else {
+		pin = s.pinFor(ctx, prev, live, fakeIPTunDescription)
 	}
 
-	taken, err := allocOccupancy(ctx, live, s.deps.OpkgTunPins)
+	idx, res, err := s.reserveOpkgTun(ctx, storage.OpkgTunModeFakeIP, pin)
 	if err != nil {
 		return fmt.Errorf("enable fakeip-tun: %w", err)
 	}
-	idx, err := allocateFakeIPIndex(taken)
-	if err != nil {
-		return fmt.Errorf("enable fakeip-tun: allocate index: %w", err)
+	// Резервация держит номер до записи владения. Закрывается ПОСЛЕДНЕЙ: её
+	// defer регистрируется раньше отката, а defer'ы идут в обратном порядке —
+	// сперва откат снимает созданное, и только потом номер уходит в оборот.
+	//
+	// НЕ упрощать до res.Close() здесь: окно между выдачей и персистом узкое,
+	// и ни один тест разницы не увидит — соседний проситель в него попадает
+	// только на живом роутере. Свойство «пока резервация открыта, номер чужому
+	// не достаётся» проверено этажом ниже, у пула.
+	defer res.Close()
+	// Сравнение с ПРЕЖНЕЙ записью, чья бы она ни была: на handover своя запись
+	// (prev) пуста, а номер меняется именно там — permit'ы пользователя
+	// остаются на старом имени, и молчать об этом нельзя.
+	if prevRecord != nil && prevRecord.Index != idx {
+		s.appLog.Warn("fakeip-enable", tunIfaceName(idx),
+			"индекс OpkgTun изменился — проверьте permit в политиках")
 	}
 	// Two names per index (stand-verified): NDMS RCI rejects the lowercase kernel
 	// name, so every NDMS op (create/delete, address/mtu, up/down, static routes)

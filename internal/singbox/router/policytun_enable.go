@@ -23,7 +23,8 @@ import (
 func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Settings, sr storage.SingboxRouterSettings) (err error) {
 	// Fail-fast nil-guard: a degraded / mis-wired build would otherwise
 	// nil-panic mid-provision. Refuse loudly before touching any state.
-	if s.deps.OpkgTun == nil || s.deps.OpkgTunIndices == nil || s.deps.DefaultRoute == nil {
+	if s.deps.OpkgTun == nil || s.deps.OpkgTunIndices == nil || s.deps.DefaultRoute == nil ||
+		s.deps.OpkgTunPool == nil {
 		return fmt.Errorf("policy-tun: provisioning deps not wired")
 	}
 	// Последний рубеж гейта прошивки: сюда приходит и восстановление режима из
@@ -81,48 +82,59 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	}
 
 	// Handover: единая запись владения одна на всех, поэтому запись ЧУЖОГО
-	// режима (fakeip) обязана быть освобождена ДО аллокации (restore NAT
-	// best-effort → teardown). Провал release оставляет чужой интерфейс живым —
-	// live не перечитываем, аллокатор его пропустит.
+	// режима (fakeip) обязана быть освобождена ДО выдачи (restore NAT
+	// best-effort → teardown).
+	//
+	// Пин на отобранный номер честится ТОЛЬКО при removed — то есть когда
+	// интерфейс снесли МЫ САМИ. Провал release и «доказанно чужой» дают
+	// removed=false: в первом случае чужой интерфейс жив, во втором на номере
+	// стоит посторонний, и претендовать на него мы не вправе.
 	prevRecord := settings.OpkgTun // снапшот ДО каких-либо мутаций
+	pin := noPin
 	if prevRecord != nil && prevRecord.Mode != storage.OpkgTunModePolicyTun {
-		if _, rerr := s.releaseForeignOpkgTun(ctx, prevRecord, "policy-tun-enable"); rerr != nil {
+		removed, rerr := s.releaseForeignOpkgTun(ctx, prevRecord, "policy-tun-enable")
+		if rerr != nil {
 			s.appLog.Warn("policy-tun-enable", tunNDMSName(prevRecord.Index), "release foreign opkgtun: "+rerr.Error())
-		} else if live, err = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx); err != nil {
-			return fmt.Errorf("enable policy-tun: list opkgtun indices: %w", err)
 		}
+		// live после сноса НЕ перечитывается: занятость собирает пул сам, а
+		// вторая ветка (пин на свой прежний номер) сюда не попадает вовсе.
+		// Прежде перечитывание было обязательным — live шла в аллокатор, — а
+		// теперь оно только лишний обход RCI, чей транзиентный отказ обрывал
+		// бы включение УЖЕ ПОСЛЕ сноса прежнего режима.
+		if removed {
+			// Интерфейс снесли МЫ САМИ — номер точно наш и точно пуст, поэтому
+			// пин обычный: перебивать на нём больше нечего.
+			pin = opkgTunPin{index: prevRecord.Index, proven: true}
+		}
+	} else {
+		// Свой прежний номер предпочитается, пока он наш: пользователь
+		// закрепил permit'ы в политике за конкретным именем. Занятый персистом
+		// номер тоже наш, если на нём висит НАШ интерфейс — выключение его
+		// больше не удаляет, а удерживает (holdOpkgTun).
+		pin = s.pinFor(ctx, prev, live, policyTunDescription)
 	}
 
-	// Prefer the persisted index while it is free: the user pins permits in the
-	// NDMS policy to a concrete OpkgTun name, and silently renaming the exit on
-	// every enable would break them.
-	//
-	// Занятый персистом индекс тоже наш, если на нём висит НАШ интерфейс:
-	// выключение его больше не удаляет, а удерживает (holdOpkgTun). Без этой
-	// ветки удержание оборачивалось бы дрейфом хуже прежнего — номер занят,
-	// аллокатор берёт следующий, permit в политике остаётся на прежнем имени.
-	// Владение доказывается описанием; скан не подключён — «не знаем» ≠ «наш».
-	idx := 0
-	switch {
-	case prev != nil && !live[prev.Index]:
-		idx = prev.Index
-	case prev != nil && s.ownsOpkgTun(ctx, tunNDMSName(prev.Index), policyTunDescription):
-		idx = prev.Index
-	default:
-		taken, oerr := allocOccupancy(ctx, live, s.deps.OpkgTunPins)
-		if oerr != nil {
-			return fmt.Errorf("enable policy-tun: %w", oerr)
-		}
-		if idx, err = allocateFakeIPIndex(taken); err != nil {
-			return fmt.Errorf("enable policy-tun: allocate index: %w", err)
-		}
+	idx, res, err := s.reserveOpkgTun(ctx, storage.OpkgTunModePolicyTun, pin)
+	if err != nil {
+		return fmt.Errorf("enable policy-tun: %w", err)
 	}
+	// Резервация держит номер до записи владения. Закрывается ПОСЛЕДНЕЙ: её
+	// defer регистрируется раньше отката, а defer'ы идут в обратном порядке.
+	//
+	// НЕ упрощать до res.Close() здесь: окно между выдачей и персистом узкое,
+	// и ни один тест разницы не увидит — соседний проситель в него попадает
+	// только на живом роутере. Свойство «пока резервация открыта, номер чужому
+	// не достаётся» проверено этажом ниже, у пула.
+	defer res.Close()
 	// Two names per index: NDMS RCI takes the CamelCase ndmsName, the kernel
 	// (sing-box config, ip flush, /sys carrier) sees the lowercase iface.
 	ndmsName := tunNDMSName(idx)
 	iface := tunIfaceName(idx)
-	if prev != nil && prev.Index != idx {
-		s.appLog.Warn("policy-tun", iface, "индекс OpkgTun изменился — проверьте permit в политиках")
+	// Сравнение с ПРЕЖНЕЙ записью, чья бы она ни была: на handover своя запись
+	// (prev) пуста, а номер меняется именно там.
+	if prevRecord != nil && prevRecord.Index != idx {
+		s.appLog.Warn("policy-tun-enable", iface,
+			"индекс OpkgTun изменился — проверьте permit в политиках")
 	}
 
 	// rollback is a LIFO stack of inverse operations; each resource-creating

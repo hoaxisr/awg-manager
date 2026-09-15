@@ -15,6 +15,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -232,7 +233,48 @@ func newTestService(t *testing.T, deps Deps) *ServiceImpl {
 	// (false, false) — тот же вердикт, что тесты видели от хоста без iptables.
 	stubXtDscpProbe(t, false, false)
 	stubEnsureKernelModule(t)
-	return &ServiceImpl{deps: deps}
+	svc := &ServiceImpl{deps: deps}
+	if svc.deps.OpkgTunPool == nil {
+		svc.deps.OpkgTunPool = testOpkgTunPool(svc)
+	}
+	return svc
+}
+
+// testOpkgTunPool — пул для тестов: живая половина и запись режима роутера
+// читаются у сервиса В МОМЕНТ ВЫЗОВА, потому что тесты подменяют deps уже
+// после сборки. Состав тот же, что у прода, минус источники, которых в
+// юнит-тестах нет (записи туннелей, прокси, NDMS): их подменяют адресно.
+func testOpkgTunPool(s *ServiceImpl, extra ...opkgtun.Source) *opkgtun.Pool {
+	src := []opkgtun.Source{
+		{Name: "запись режима роутера", Read: func(context.Context) (opkgtun.Taken, error) {
+			if s.deps.Settings == nil {
+				return nil, nil
+			}
+			snap, err := s.deps.Settings.Snapshot()
+			if err != nil {
+				return nil, err
+			}
+			if snap.OpkgTun == nil {
+				return nil, nil
+			}
+			return opkgtun.Taken{snap.OpkgTun.Index: opkgtun.RouterModeHolder(snap.OpkgTun.Mode)}, nil
+		}},
+		{Name: "живые интерфейсы", Read: func(ctx context.Context) (opkgtun.Taken, error) {
+			if s.deps.OpkgTunIndices == nil {
+				return nil, nil
+			}
+			live, err := s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx)
+			if err != nil {
+				return nil, err
+			}
+			out := make(opkgtun.Taken, len(live))
+			for i := range live {
+				out[i] = opkgtun.LiveHolder(i)
+			}
+			return out, nil
+		}},
+	}
+	return opkgtun.NewPool(16, append(src, extra...)...)
 }
 
 // stubEnsureKernelModule overrides the ensureKernelModuleFn seam for the test
@@ -1186,6 +1228,9 @@ func newOrchedTestService(t *testing.T) (*ServiceImpl, string) {
 			Orch:     orch,
 			Bus:      bus,
 		},
+	}
+	if svc.deps.OpkgTunPool == nil {
+		svc.deps.OpkgTunPool = testOpkgTunPool(svc)
 	}
 	return svc, dir
 }

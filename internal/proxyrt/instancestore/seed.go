@@ -12,12 +12,12 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/childproc"
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 )
 
-// SeedDeps — зависимости посева. LivePermits и AllocIndex замыкает проводка
-// (задача 14): первый — наблюдение политик (RCI), второй — proxyrt.Allocator
-// с формулой taken, не отбирающей у владельца его живой интерфейс (B2).
+// SeedDeps — зависимости посева. LivePermits и OpkgTunPool замыкает проводка
+// (задача 14): первое — наблюдение политик (RCI), второй — общий пул номеров.
 type SeedDeps struct {
 	WdttPath     string
 	FreeturnPath string
@@ -25,10 +25,15 @@ type SeedDeps struct {
 	// roles.RuntimeDir = /tmp/awgm — ДРУГОЙ каталог, kill-list был бы пуст).
 	RuntimeDir  string
 	LivePermits func(ctx context.Context, ndmsIface string) ([]string, error)
-	// AllocIndex: havePin=true — просим сохранить конкретный индекс (Щ13:
-	// ноль — законный пин на mips, сентинелом не является).
-	AllocIndex func(owner string, pinned int, havePin bool) (int, error)
-	GOARCH     string
+	// OpkgTunPool — общий пул номеров OpkgTun. Все номера посева берутся ОДНОЙ
+	// резервацией: «всё или ничего» и пины раньше беспиновых. Раздельные
+	// выдачи означали бы, что беспиновый инстанс, встреченный в файле раньше,
+	// занимает номер, на который у следующего стоит пин, — и permit'ы
+	// пользователя рвутся на ровном месте.
+	OpkgTunPool *opkgtun.Pool
+	// Journal — куда сказать о схлопнутых дублях. nil допустим: сообщение
+	// дублируется в State.DroppedDuplicates, которое печатает боот.
+	Journal func(action, target, msg string)
 }
 
 // OldGenProc — процесс старого поколения: номер и ОТПЕЧАТОК (время старта,
@@ -72,17 +77,35 @@ type SeedResult struct {
 // умирают в этой же волне, а посев живёт. Незнакомые поля игнорируются — это
 // чтение чужого формата, не наш файл.
 
+// Записи старых файлов названы типами, а не анонимными структурами: дедуп по
+// ключу общий на все три вида, и без имени его нечем параметризовать.
+type oldWdttClientEntry struct {
+	ID     string        `json:"id"`
+	Name   string        `json:"name"`
+	Config oldWdttClient `json:"config"`
+}
+
+type oldWdttServerEntry struct {
+	ID     string        `json:"id"`
+	Name   string        `json:"name"`
+	Config oldWdttServer `json:"config"`
+}
+
+type oldFreeturnClientEntry struct {
+	ID     string            `json:"id"`
+	Name   string            `json:"name"`
+	Config oldFreeturnClient `json:"config"`
+}
+
+type oldFreeturnServerEntry struct {
+	ID     string            `json:"id"`
+	Name   string            `json:"name"`
+	Config oldFreeturnServer `json:"config"`
+}
+
 type oldWdttFile struct {
-	Clients []struct {
-		ID     string        `json:"id"`
-		Name   string        `json:"name"`
-		Config oldWdttClient `json:"config"`
-	} `json:"clients"`
-	Servers []struct {
-		ID     string        `json:"id"`
-		Name   string        `json:"name"`
-		Config oldWdttServer `json:"config"`
-	} `json:"servers"`
+	Clients []oldWdttClientEntry `json:"clients"`
+	Servers []oldWdttServerEntry `json:"servers"`
 }
 
 type oldWdttClient struct {
@@ -159,17 +182,9 @@ type oldWdttServer struct {
 }
 
 type oldFreeturnFile struct {
-	Version int `json:"version"`
-	Clients []struct {
-		ID     string            `json:"id"`
-		Name   string            `json:"name"`
-		Config oldFreeturnClient `json:"config"`
-	} `json:"clients"`
-	Servers []struct {
-		ID     string            `json:"id"`
-		Name   string            `json:"name"`
-		Config oldFreeturnServer `json:"config"`
-	} `json:"servers"`
+	Version int                      `json:"version"`
+	Clients []oldFreeturnClientEntry `json:"clients"`
+	Servers []oldFreeturnServerEntry `json:"servers"`
 	// Legacy v1 (до 2026-07-21): singular-поля; миграцию v1→v2 делал ТОЛЬКО
 	// старый Store.Load (migrate.go) — посев обязан прочитать их сам (B6).
 	Client *oldFreeturnClient `json:"client"`
@@ -223,6 +238,44 @@ func openFirewall(old *bool) bool { return old == nil || *old }
 // посева на нём не поднимал бы прокси-подсистему вовсе, и пользователь не мог
 // бы даже пересоздать инстансы руками — интерфейса нет. Поэтому это ПРОПУСК с
 // причиной, а не ошибка.
+
+// dedupeByID — записи с одинаковым ключом хранилища схлопываются в ПЕРВУЮ.
+//
+// Два инстанса с одним id дают один ключ, и записать оба нельзя: validateState
+// роняет весь посев, а с ним прокси-подсистему — боот уходит в вечные ретраи
+// (повторного посева не будет никогда). Схлопнутая запись пропадает навсегда,
+// поэтому её метка возвращается вызывающему: он скажет и в журнал, и на диск.
+//
+// Дедуп именно здесь, а не на заявках пула: заявка ключуется записью, и дубль
+// ключей — паника пула. С диска она прийти не должна.
+//
+// ЧЕГО ОН НЕ ДЕЛАЕТ: не спасает от записи с ПУСТЫМ id — её отвергает
+// validateState раньше, и одиночная такая запись валит посев ровно как валила.
+// Дедуп закрывает только дубль ключей.
+//
+// Ключ строится по СЫРОМУ id, как и Record.Key(): триммить здесь значило бы
+// схлопнуть «a» и «a » в один дубль, хотя ключи хранилища у них разные, и
+// вторая запись пропала бы, не будучи дублем.
+func dedupeByID[T any](in []T, kind Kind, at func(T) (id, name string), dropped []string) ([]T, []string) {
+	seen := make(map[string]bool, len(in))
+	out := make([]T, 0, len(in))
+	for _, v := range in {
+		id, name := at(v)
+		key := string(kind) + ":" + id
+		if seen[key] {
+			label := key
+			if n := strings.TrimSpace(name); n != "" {
+				label += " («" + n + "»)"
+			}
+			dropped = append(dropped, label)
+			continue
+		}
+		seen[key] = true
+		out = append(out, v)
+	}
+	return out, dropped
+}
+
 func readOldFile(path string, dst any) (ok bool, skipped string, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -235,20 +288,6 @@ func readOldFile(path string, dst any) (ok bool, skipped string, err error) {
 		return false, err.Error(), nil
 	}
 	return true, "", nil
-}
-
-// parseOpkgIndex — "OpkgTun18" → (18, true). Ок-флагом, не сентинелом:
-// OpkgTun0 — законное имя (Щ13).
-func parseOpkgIndex(name string) (int, bool) {
-	const p = "OpkgTun"
-	if !strings.HasPrefix(name, p) {
-		return 0, false
-	}
-	n, err := strconv.Atoi(name[len(p):])
-	if err != nil || n < 0 {
-		return 0, false
-	}
-	return n, true
 }
 
 // normalizeFreeturnV1 — подъём singular-полей v1 (до 2026-07-21) в списки:
@@ -446,7 +485,14 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 
 	var wdttFile oldWdttFile
 	var ftFile oldFreeturnFile
+	if d.OpkgTunPool == nil {
+		// Паника, а не отказ: пул без вызывающего — дефект проводки, и
+		// он обязан падать с именем, а не nil-разыменованием из чужого
+		// пакета посреди боота (manager.New делает то же).
+		panic("instancestore: посев без пула номеров OpkgTun")
+	}
 	var skipped []SkippedSource
+	var dropped []string
 	wdttOK, wdttSkip, err := readOldFile(d.WdttPath, &wdttFile)
 	if err != nil {
 		return SeedResult{}, err
@@ -469,25 +515,92 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		normalizeFreeturnV1(&ftFile) // B6: триггер version<2 — внутри
 	}
 
-	idxMin, idxMax, _ := roles.OpkgIndexRange(d.GOARCH)
 	var seeded []Record
 	var legacyIfaces []string
 
-	// ensurePin — валидный пин: свой, если он в диапазоне, иначе новый
-	// (перепин mips, требование (7в) плана 3). keptLive — выдан ровно
-	// запрошенный пин: только тогда можно спрашивать live-permits (у
-	// перепиненного старого интерфейса не существовало).
-	ensurePin := func(owner, ndmsName string) (ndms, kernel string, keptLive bool, err error) {
-		pinned, havePin := parseOpkgIndex(strings.TrimSpace(ndmsName))
-		if havePin && (pinned < idxMin || pinned > idxMax) {
-			havePin = false // недостижимый на этой архитектуре — перепин
+	// Дедуп ДО всего остального: два клиента с одним id дают один ключ
+	// хранилища, и записать оба нельзя — validateState роняет ВЕСЬ посев, а с
+	// ним прокси-подсистему, и боот уходит в вечные ретраи. Выигрывает первый;
+	// второй пропадает навсегда, поэтому о нём говорят и в журнал, и на диск.
+	//
+	// Дедуп именно ЗДЕСЬ, а не на заявках: заявка строится от ключа записи, и
+	// дубль заявок — паника пула. С диска её быть не должно.
+	wdttFile.Clients, dropped = dedupeByID(wdttFile.Clients, KindWdttClient,
+		func(e oldWdttClientEntry) (string, string) { return e.ID, e.Name }, dropped)
+	wdttFile.Servers, dropped = dedupeByID(wdttFile.Servers, KindWdttServer,
+		func(e oldWdttServerEntry) (string, string) { return e.ID, e.Name }, dropped)
+	ftFile.Clients, dropped = dedupeByID(ftFile.Clients, KindFreeTurnClient,
+		func(e oldFreeturnClientEntry) (string, string) { return e.ID, e.Name }, dropped)
+	ftFile.Servers, dropped = dedupeByID(ftFile.Servers, KindFreeTurnServer,
+		func(e oldFreeturnServerEntry) (string, string) { return e.ID, e.Name }, dropped)
+	if d.Journal != nil {
+		for _, label := range dropped {
+			d.Journal("seed", label, "инстанс пропущен: дубликат ключа в старом конфиге")
 		}
-		idx, err := d.AllocIndex(owner, pinned, havePin)
-		if err != nil {
-			return "", "", false, fmt.Errorf("посев: нет свободного OpkgTun для %s: %w", owner, err)
+	}
+
+	// Пре-проход: все заявки на номера собираются ДО сборки записей и уходят в
+	// пул ОДНОЙ резервацией. Так пины честятся раньше беспиновых по всему
+	// файлу сразу — раздельные выдачи отдали бы номер с чужим пином тому, кто
+	// просто встретился в файле раньше.
+	//
+	// Потолок прошивки проверяет сам пул: недостижимый пин он отвергает и
+	// уводит просителя в перебор (перепин mips, требование (7в) плана 3).
+	// Порога снизу нет: номер ниже окна выдачи инстанс мог занять на прошлых
+	// версиях, и переезд с него порвал бы permit'ы пользователя.
+	type seedPin struct {
+		pinned  int
+		havePin bool
+		idx     int
+	}
+	pins := map[string]*seedPin{}
+	var reqs []opkgtun.Request
+	var owners []string
+	askPin := func(key, field, name, ndmsName string) {
+		owner := key
+		if field != "" {
+			owner = key + "/" + field
 		}
-		return fmt.Sprintf("OpkgTun%d", idx), fmt.Sprintf("opkgtun%d", idx),
-			havePin && idx == pinned, nil
+		p := &seedPin{}
+		p.pinned, p.havePin = opkgtun.NDMSIndexOf(strings.TrimSpace(ndmsName))
+		self := opkgtun.ProxyHolder(key, field, name)
+		if p.havePin {
+			reqs = append(reqs, opkgtun.WantPinned(self, p.pinned))
+		} else {
+			reqs = append(reqs, opkgtun.Want(self))
+		}
+		pins[owner] = p
+		owners = append(owners, owner)
+	}
+	for _, c := range wdttFile.Clients {
+		if strings.TrimSpace(c.Config.ConnMode) == "raw" {
+			askPin(string(KindWdttClient)+":"+c.ID, "", c.Name, c.Config.NdmsIface)
+		}
+	}
+	for _, sv := range wdttFile.Servers {
+		key := string(KindWdttServer) + ":" + sv.ID
+		askPin(key, "wg", sv.Name, sv.Config.NdmsIface)
+		askPin(key, "raw", sv.Name, sv.Config.RawNdmsIface)
+	}
+
+	res, err := d.OpkgTunPool.Reserve(ctx, reqs...)
+	// Резервация держит номера до записи состояния и закрывается на любом
+	// исходе: после Replace их держат сами записи.
+	defer res.Close()
+	if err != nil {
+		return SeedResult{}, fmt.Errorf("посев: нет свободного OpkgTun: %w", err)
+	}
+	for i, n := range res.Numbers() {
+		pins[owners[i]].idx = n
+	}
+
+	// takePin — имена по выданному номеру. keptLive: выдан ровно запрошенный
+	// пин; только тогда можно спрашивать live-permits — у перепиненного
+	// старого интерфейса не существовало.
+	takePin := func(owner string) (ndms, kernel string, keptLive bool) {
+		p := pins[owner]
+		return fmt.Sprintf("OpkgTun%d", p.idx), fmt.Sprintf("opkgtun%d", p.idx),
+			p.havePin && p.idx == p.pinned
 	}
 
 	// Имя источника ложится в КАЖДУЮ перенесённую запись: по нему UI показывает
@@ -519,10 +632,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		}
 		if cfg.Mode == "raw" {
 			owner := string(KindWdttClient) + ":" + c.ID
-			ndms, kernel, keptLive, err := ensurePin(owner, c.Config.NdmsIface)
-			if err != nil {
-				return SeedResult{}, err
-			}
+			ndms, kernel, keptLive := takePin(owner)
 			cfg.NdmsIface, cfg.RawIface = ndms, kernel
 			// Намерение членства = live ∪ cache (§9). Ошибка наблюдения —
 			// отказ ВСЕГО посева («флаг только по успешному наблюдению»).
@@ -594,15 +704,9 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		} else {
 			legacyIfaces = append(legacyIfaces, "wdttraw0")
 		}
-		ndmsWG, kernWG, _, err := ensurePin(owner+"/wg", o.NdmsIface)
-		if err != nil {
-			return SeedResult{}, err
-		}
+		ndmsWG, kernWG, _ := takePin(owner + "/wg")
 		cfg.NdmsIface, cfg.WgIface = ndmsWG, kernWG
-		ndmsRaw, kernRaw, _, err := ensurePin(owner+"/raw", o.RawNdmsIface)
-		if err != nil {
-			return SeedResult{}, err
-		}
+		ndmsRaw, kernRaw, _ := takePin(owner + "/raw")
 		cfg.RawNdmsIface, cfg.RawIface = ndmsRaw, kernRaw
 		rec := Record{ID: s.ID, Kind: KindWdttServer, Name: s.Name,
 			Enabled: o.Enabled, WdttServer: &cfg, SeededFrom: wdttSrc,
@@ -670,6 +774,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 		}
 		state.SeededFrom = from
 		state.SkippedSources = skipped
+		state.DroppedDuplicates = dropped
 		state.MovedListen = moves
 		state.CleanupPending = true
 		state.LegacyKernelIfaces = legacyIfaces

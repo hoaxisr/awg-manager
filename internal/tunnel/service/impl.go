@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/cache"
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
@@ -40,10 +42,15 @@ type ServiceImpl struct {
 	legacyOperator ops.Operator          // Kernel backend (OS5/OS4)
 	appLog         *logging.ScopedLogger // UI-visible logging
 
-	// opkgOccupancy — занятость номеров OpkgTun (живые интерфейсы плюс пины
-	// чужих подсистем). Нужна только kernel-ветке выдачи идентификатора:
-	// номер kernel-туннеля одновременно является номером интерфейса.
-	opkgOccupancy storage.OpkgTunPins
+	// opkgPool — общий пул номеров OpkgTun. Нужен только kernel-ветке выдачи
+	// идентификатора: номер kernel-туннеля одновременно является номером
+	// интерфейса, и пул делится с режимами роутера, прокси и записями NDMS.
+	opkgPool *opkgtun.Pool
+	// opkgTunSupported — поддерживает ли прошивка интерфейсы OpkgTun. Решение
+	// принимается в МОМЕНТ ВЫЗОВА, а не при сборке: определение версии ОС
+	// best-effort, NDMS поднимается минутами, и зафиксированный на старте
+	// ответ «это 4.x» пережил бы саму 4.x.
+	opkgTunSupported func() bool
 
 	// tunnelMu provides per-tunnel mutexes for lifecycle operations.
 	// Key: tunnelID (string), Value: *sync.Mutex
@@ -83,8 +90,10 @@ type AWGSyncer interface {
 
 func (s *ServiceImpl) SetAWGSyncer(sync AWGSyncer) { s.awgSyncer = sync }
 
-// SetOpkgTunOccupancy задаёт источник занятости номеров OpkgTun.
-func (s *ServiceImpl) SetOpkgTunOccupancy(occ storage.OpkgTunPins) { s.opkgOccupancy = occ }
+// SetOpkgTunPool задаёт пул номеров OpkgTun и предикат поддержки прошивкой.
+func (s *ServiceImpl) SetOpkgTunPool(pool *opkgtun.Pool, supported func() bool) {
+	s.opkgPool, s.opkgTunSupported = pool, supported
+}
 
 func (s *ServiceImpl) SetDeviceProxyRefChecker(c DeviceProxyRefChecker) { s.deviceProxyRefs = c }
 func (s *ServiceImpl) SetRouterRefChecker(c RouterRefChecker)           { s.routerRefs = c }
@@ -796,11 +805,15 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 		return s.importNativeWG(ctx, parsed)
 	}
 
-	// Kernel path (existing logic)
-	tunnelID, err := s.store.NextAvailableID(ctx, backend, s.opkgOccupancy)
+	// Kernel path.
+	tunnelID, res, err := s.kernelID(ctx, parsed.Name)
 	if err != nil {
 		return nil, fmt.Errorf("generate ID: %w", err)
 	}
+	// Резервация держит номер до записи: без неё между выбором и Create
+	// соседняя подсистема успевает увести его (#891). Close на ЛЮБОМ исходе —
+	// после записи номер держит уже сама запись.
+	defer res.Close()
 	parsed.ID = tunnelID
 	parsed.Type = "awg"
 	parsed.CreatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -898,15 +911,79 @@ func (s *ServiceImpl) obfuscatorPortTaken(port int) bool {
 	return false
 }
 
+// kernelID — идентификатор kernel-туннеля и резервация его номера.
+//
+// На OS 4.x интерфейсов OpkgTun нет вовсе: номер там ничей, идентификатор
+// awgm<N> выдаёт хранилище, а резервация возвращается nil — Close на ней
+// безопасен, поэтому вызывающему развилка не нужна.
+//
+// На OS 5.x номер выдаёт общий пул. Занятые ИДЕНТИФИКАТОРЫ уходят туда
+// отдельным вето: awg<N> — ключ хранилища, и легаси NativeWG на awg12 занимает
+// его, не занимая номера OpkgTun12 (#891). Выдать такой номер значит получить
+// ErrAlreadyExists на записи.
+func (s *ServiceImpl) kernelID(ctx context.Context, name string) (string, *opkgtun.Reservation, error) {
+	if s.opkgTunSupported == nil || s.opkgPool == nil {
+		return "", nil, fmt.Errorf("пул номеров OpkgTun не подключён")
+	}
+	if !s.opkgTunSupported() {
+		id, err := s.store.NextAvailableOS4ID()
+		return id, nil, err
+	}
+	// Прощающее чтение — ради карантина: битый JSON не чинится ожиданием, и
+	// строгое перечисление отказывало бы на нём вечно, запирая выдачу номеров.
+	// List() выводит повреждённую запись из обращения переименованием и
+	// сообщает об этом пользователю, а его же вывод — уже вычищенный список
+	// для вето. Второе, строгое, чтение здесь было бы третьим обходом каталога
+	// за одну выдачу и не давало бы ничего: класс «временно нечитаемый файл»
+	// закрывает поставщик занятости (fail-closed), а столкновение
+	// идентификаторов — сам Create.
+	tunnels, err := s.store.List()
+	if err != nil {
+		return "", nil, fmt.Errorf("перечислить туннели: %w", err)
+	}
+	res, err := s.opkgPool.Reserve(ctx,
+		opkgtun.Want(opkgtun.TunnelHolder("", name)).Excluding(identifierHolders(tunnels)))
+	if err != nil {
+		return "", nil, err
+	}
+	if c := res.Conflicts(); len(c) > 0 {
+		s.logWarn("import", "", "спорные номера OpkgTun: "+c.String())
+	}
+	return "awg" + strconv.Itoa(res.Numbers()[0]), res, nil
+}
+
+// identifierHolders — номера, чьи ИДЕНТИФИКАТОРЫ awg<N> уже заняты. Это другое
+// множество, чем занятость: nativewg номер OpkgTun не занимает, но ключ
+// хранилища держит, и наоборот — прокси держит номер, не занимая ключа.
+func identifierHolders(tunnels []storage.AWGTunnel) opkgtun.Taken {
+	out := make(opkgtun.Taken, len(tunnels))
+	for _, t := range tunnels {
+		num, ok := storage.AWGIdentifierNum(t.ID)
+		if !ok {
+			continue
+		}
+		if t.Backend == "nativewg" {
+			out[num] = opkgtun.SystemTunnelHolder(t.ID, t.Name)
+			continue
+		}
+		out[num] = opkgtun.TunnelHolder(t.ID, t.Name)
+	}
+	return out
+}
+
 // importNativeWG creates a tunnel using the NativeWG backend.
 func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTunnel) (*TunnelWithStatus, error) {
 	if s.nwgOperator == nil {
 		return nil, fmt.Errorf("NativeWG backend not available")
 	}
 
-	// Generate tunnel ID — NativeWG-диапазон (awg20+), не делит
-	// kernel-лимит OpkgTun10..16.
-	tunnelID, err := s.store.NextAvailableID(ctx, "nativewg", nil)
+	// Generate tunnel ID. Диапазон NativeWG начинается ВЫШЕ потолка OpkgTun
+	// этой архитектуры, поэтому с выдачей kernel-туннелей он не пересекается
+	// вовсе (storage.nwgFloor). Пересечение было бы гонкой, а не просто
+	// чересполосицей: номер kernel'а выдаёт пул, и открытую резервацию этот
+	// перебор не видит — проигравший получил бы «tunnel already exists» без
+	// ретрая (F317).
+	tunnelID, err := s.store.NextAvailableID("nativewg")
 	if err != nil {
 		return nil, fmt.Errorf("generate ID: %w", err)
 	}

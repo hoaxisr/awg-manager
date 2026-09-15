@@ -30,34 +30,3 @@ func TestAWGTunnelOpkgTunIndex(t *testing.T) {
 		})
 	}
 }
-
-func TestOpkgTunIndicesOf(t *testing.T) {
-	tunnels := []AWGTunnel{
-		{ID: "awg10", Backend: "kernel"},
-		{ID: "awg13"},                             // legacy kernel
-		{ID: "awg25", Backend: "nativewg"},        // номер не занимает
-		{ID: "wdttraw-home", Backend: "wdtt-raw"}, // номер живёт в RawNdmsIface
-		{ID: "awgm5", Backend: "kernel"},          // OS4, NDMS-имени нет
-	}
-
-	got := OpkgTunIndicesOf(tunnels)
-
-	want := map[int]bool{10: true, 13: true}
-	if len(got) != len(want) {
-		t.Fatalf("OpkgTunIndicesOf() = %v, want %v", got, want)
-	}
-	for idx := range want {
-		if !got[idx] {
-			t.Errorf("номер %d должен быть занят, got %v", idx, got)
-		}
-	}
-}
-
-// Пустая выдача при пустом входе — отдельный случай: аллокатор обязан отличать
-// «занятых нет» от «не смогли посмотреть», и второе выражается ошибкой у
-// поставщика, а не пустой картой здесь.
-func TestOpkgTunIndicesOfEmpty(t *testing.T) {
-	if got := OpkgTunIndicesOf(nil); len(got) != 0 {
-		t.Errorf("OpkgTunIndicesOf(nil) = %v, want пустую карту", got)
-	}
-}

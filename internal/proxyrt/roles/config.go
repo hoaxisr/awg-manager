@@ -52,8 +52,10 @@ type WdttClientConfig struct {
 	VKAuthMode  string `json:"vkAuthMode,omitempty"`
 
 	// Пин индекса (только raw): на имя OpkgTunN ссылаются permit'ы политик.
-	NdmsIface string `json:"ndmsIface,omitempty"` // OpkgTun17..49
-	RawIface  string `json:"rawIface,omitempty"`  // opkgtun17..49
+	// Номер приходит из ОБЩЕГО пула (internal/opkgtun), собственного окна у
+	// прокси больше нет — оно разошлось бы с прошивкой (#891).
+	NdmsIface string `json:"ndmsIface,omitempty"` // OpkgTunN
+	RawIface  string `json:"rawIface,omitempty"`  // opkgtunN
 
 	// Policies — намерение членства в политиках доступа. Единственный
 	// писатель — пользователь (спека §4.4).
@@ -96,7 +98,7 @@ func (c WdttClientConfig) Validate() error {
 // group.go:14). Оба значения кратны девяти — дефолт доезжает до процесса
 // без молчаливого урезания.
 //
-// Параметр goarch, а не runtime.GOARCH внутри: симметрично OpkgIndexRange,
+// Параметр goarch, а не runtime.GOARCH внутри: симметрично opkgtun.Ceiling,
 // чтобы поведение проверялось тестом на всех архитектурах сразу.
 func DefaultWorkers(goarch string) int {
 	switch goarch {
@@ -121,8 +123,8 @@ func (c WdttClientConfig) NDMSNames() []string { return []string{c.NdmsIface} }
 // ничего сверх. Только примитивы: roles не узнаёт ни про exitreg, ни про
 // wdttclient — идентификатор выхода строит потребитель.
 type RawExit struct {
-	NDMSName    string // пин: OpkgTun17..49
-	KernelIface string // пин: opkgtun17..49
+	NDMSName    string // пин: OpkgTunN (номер из общего пула)
+	KernelIface string // пин: opkgtunN
 	Name        string // человеческое имя инстанса — в имя зеркальной записи
 	Peer        string // адрес сервера — в эндпоинт карточки
 }

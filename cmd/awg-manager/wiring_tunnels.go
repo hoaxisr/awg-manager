@@ -12,6 +12,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
@@ -90,23 +91,15 @@ func (a *app) setupTunnels() {
 	// Create the main tunnel service
 	a.tunnelService = service.New(a.awgStore, a.nwgOp, a.operator, a.stateMgr, a.wanModel, a.loggingService)
 
-	// Занятость номеров OpkgTun: живое (устройства в ядре) плюс пины ЧЕТЫРЁХ
-	// владельцев — записи туннелей, удерживающая запись настроек, записи NDMS
-	// и записи прокси-инстансов. Записи NDMS отделены от живого намеренно:
-	// запись NDMS переживает удаление устройства (стенд 5.01.C.3.0-1), её
-	// номер занят, но интерфейс мёртв. Состав — один на всех выдающих номера
-	// (opkgOccupancyAllOwners): на mips/mipsel пул общий, и выпавший
-	// поставщик отдал бы чужой занятый номер как свободный.
+	// Пять владельцев пула OpkgTun собираются ЗДЕСЬ и раздаются готовыми:
+	// состав общий на всех, кто выдаёт номера (opkgTunOwners).
 	opkgIndices := &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces}
-	a.opkgNDMSPins = opkgIndices.NDMSOpkgTunPins
-	a.opkgTunOccupancy = opkgOccupancyAllOwners(
-		opkgIndices,
-		opkgIndices.NDMSOpkgTunPins,
-		a.awgStore,
-		a.settingsStore,
-		a.proxyStore,
-	)
-	a.tunnelService.SetOpkgTunOccupancy(a.opkgTunOccupancy)
+	a.opkgTunOwners = newOpkgTunOwners(ndmsSource(opkgIndices), liveSource(opkgIndices),
+		a.awgStore, a.settingsStore, a.proxyStore)
+	// Пул собирается ОДИН на процесс и тем же составом: второй экземпляр
+	// означал бы две очереди на выбор, то есть отсутствие атомарности.
+	a.opkgPool = opkgtun.NewPool(opkgtun.CeilingForHost(), a.opkgTunOwners.all()...)
+	a.tunnelService.SetOpkgTunPool(a.opkgPool, opkgTunSupported)
 
 	// Migrate legacy ISPInterface="none" to "" (auto) for tunnels from older versions.
 	a.tunnelService.MigrateISPInterfaceNone()

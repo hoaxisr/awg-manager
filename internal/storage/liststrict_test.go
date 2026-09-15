@@ -6,31 +6,6 @@ import (
 	"testing"
 )
 
-// Занятость номеров OpkgTun обязана отличать «записей нет» от «не смогли
-// посмотреть»: прощающее перечисление на битом файле уносит его в карантин и
-// продолжает, то есть молча освобождает номер туннеля, который никуда не делся.
-func TestListStrictFailsOnCorruptFile(t *testing.T) {
-	store, dir := newTestAWGStore(t)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	good := filepath.Join(dir, "awg10.json")
-	if err := os.WriteFile(good, []byte(`{"id":"awg10","backend":"kernel"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	bad := filepath.Join(dir, "awg11.json")
-	if err := os.WriteFile(bad, []byte(`{"id":"awg11",`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := store.ListStrict(); err == nil {
-		t.Fatal("ListStrict на битом файле обязан вернуть ошибку")
-	}
-	if _, err := os.Stat(bad); err != nil {
-		t.Errorf("ListStrict не должен трогать файлы, а awg11.json исчез: %v", err)
-	}
-}
-
 func TestListStrictMissingDirIsEmpty(t *testing.T) {
 	store, _ := newTestAWGStore(t)
 

@@ -9,7 +9,6 @@ package manager_test
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
@@ -80,19 +80,19 @@ func (*e2eInstance) Stop()                       {}
 // e2eSweeper — уборщик NDMS-интерфейсов: ходит в RCI, поэтому фейк.
 type e2eSweeper struct{}
 
-func (e2eSweeper) Sweep(context.Context, map[string]bool) ([]string, error) { return nil, nil }
+func (e2eSweeper) Sweep(context.Context, func([]string) (map[string]bool, error)) ([]string, error) {
+	return nil, nil
+}
 
-func (e2eSweeper) OwnedNames(context.Context) ([]string, error) { return nil, nil }
-
-// keepPin — «выдай запрошенное». Отказ на непинованном запросе не украшение:
-// перепин на этом прогоне означал бы, что архитектура фикстуры или диапазон
-// индексов разъехались, и молча выданный новый индекс увёл бы прогон мимо
-// проверяемой цепочки — вместо цепочки проверялась бы аллокация.
-func keepPin(owner string, pinned int, havePin bool) (int, error) {
-	if !havePin {
-		return 0, errors.New("посев не сохранил пин владельца " + owner)
-	}
-	return pinned, nil
+// keepPinPool — пул с ПУСТОЙ занятостью: пины честатся как есть. Перепин на
+// этом прогоне означал бы, что фикстура и пул разъехались, и молча выданный
+// новый номер увёл бы прогон мимо проверяемой цепочки — вместо цепочки
+// проверялась бы выдача. Ловится ассертами на имена интерфейсов ниже.
+func keepPinPool() *opkgtun.Pool {
+	return opkgtun.NewPool(49, opkgtun.Source{
+		Name: "тест",
+		Read: func(context.Context) (opkgtun.Taken, error) { return nil, nil },
+	})
 }
 
 func saveTunnel(t *testing.T, st *storage.AWGTunnelStore, rec *storage.AWGTunnel) {
@@ -149,8 +149,7 @@ func TestBootSeedsDeclaresMirrorsAndDeleteRemoves(t *testing.T) {
 		FreeturnPath: filepath.Join(oldDir, "freeturn.json"),
 		RuntimeDir:   t.TempDir(),
 		LivePermits:  func(context.Context, string) ([]string, error) { return nil, nil },
-		AllocIndex:   keepPin,
-		GOARCH:       "arm64",
+		OpkgTunPool:  keepPinPool(),
 	}
 
 	postSeedCalls := 0
@@ -176,7 +175,7 @@ func TestBootSeedsDeclaresMirrorsAndDeleteRemoves(t *testing.T) {
 			_, err := mirror.ZeroStaleAddresses()
 			return err
 		},
-		AllocIndex: keepPin,
+		OpkgTunPool: keepPinPool(),
 		AllocListen: func(_ string, _ instancestore.Kind, _, current string) (string, error) {
 			if current != "" {
 				return current, nil
@@ -314,7 +313,7 @@ func TestDeleteRemovesMirrorWhateverTheSeedGate(t *testing.T) {
 			seedDeps := instancestore.SeedDeps{
 				WdttPath: wdttPath, FreeturnPath: ftPath, RuntimeDir: t.TempDir(),
 				LivePermits: func(context.Context, string) ([]string, error) { return nil, nil },
-				AllocIndex:  keepPin, GOARCH: "arm64",
+				OpkgTunPool: keepPinPool(),
 			}
 			m := manager.New(manager.Deps{
 				Store:    instStore,
@@ -330,7 +329,7 @@ func TestDeleteRemovesMirrorWhateverTheSeedGate(t *testing.T) {
 				PostSeed: func(context.Context, instancestore.SeedResult, map[string]bool) error {
 					return nil // добивание и снос правил ходят в kill(2) и iptables
 				},
-				AllocIndex: keepPin,
+				OpkgTunPool: keepPinPool(),
 				AllocListen: func(_ string, _ instancestore.Kind, _, current string) (string, error) {
 					if current != "" {
 						return current, nil
@@ -445,7 +444,7 @@ func TestModeSwitchRemovesMirrorWhateverTheSeedGate(t *testing.T) {
 			seedDeps := instancestore.SeedDeps{
 				WdttPath: wdttPath, FreeturnPath: ftPath, RuntimeDir: t.TempDir(),
 				LivePermits: func(context.Context, string) ([]string, error) { return nil, nil },
-				AllocIndex:  keepPin, GOARCH: "arm64",
+				OpkgTunPool: keepPinPool(),
 			}
 			stopped := map[string]bool{}
 			m := manager.New(manager.Deps{
@@ -463,7 +462,7 @@ func TestModeSwitchRemovesMirrorWhateverTheSeedGate(t *testing.T) {
 				PostSeed: func(context.Context, instancestore.SeedResult, map[string]bool) error {
 					return nil // добивание и снос правил ходят в kill(2) и iptables
 				},
-				AllocIndex: keepPin,
+				OpkgTunPool: keepPinPool(),
 				AllocListen: func(_ string, _ instancestore.Kind, _, current string) (string, error) {
 					if current != "" {
 						return current, nil

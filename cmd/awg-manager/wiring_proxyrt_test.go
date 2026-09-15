@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/listenfirewall"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/captcha"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/install"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttusers"
@@ -33,24 +36,12 @@ import (
 
 // ── занятость номеров OpkgTun ────────────────────────────────────
 
-// mipsRange — общий пул mips: 0..15. Берётся явно, а не от runtime.GOARCH:
-// ноль там законный номер, и именно на нём ловится сентинел «пина нет».
-func mipsRange(t *testing.T) (int, int) {
+// mipsCeiling — потолок прошивки mips. Берётся из канонической карты, а не
+// числом, и по имени архитектуры, а не от runtime.GOARCH: тест не должен
+// зависеть от машины, на которой его запустили.
+func mipsCeiling(t *testing.T) int {
 	t.Helper()
-	min, max, shared := roles.OpkgIndexRange("mipsle")
-	if !shared || min != 0 {
-		t.Fatalf("диапазон mips изменился: %d..%d shared=%v", min, max, shared)
-	}
-	return min, max
-}
-
-type fakeLiveIfaces struct {
-	live map[int]bool
-	err  error
-}
-
-func (f fakeLiveIfaces) LiveOpkgTunIndices(context.Context) (map[int]bool, error) {
-	return f.live, f.err
+	return opkgtun.Ceiling("mipsle")
 }
 
 // occEnv — окружение формулы taken: хранилище прокси-инстансов, хранилище
@@ -84,15 +75,77 @@ func newOccEnv(t *testing.T) *occEnv {
 // настоящие.
 func (e *occEnv) alloc(t *testing.T, live map[int]bool) func(string, int, bool) (int, error) {
 	t.Helper()
-	return e.allocWithNDMS(t, live, func(context.Context) (map[int]bool, error) { return nil, nil })
+	return e.allocWithNDMS(t, live, func(context.Context) (map[int]string, error) { return nil, nil })
 }
 
-func (e *occEnv) allocWithNDMS(t *testing.T, live map[int]bool, ndmsPins storage.OpkgTunPins) func(string, int, bool) (int, error) {
+func (e *occEnv) allocWithNDMS(t *testing.T, live map[int]bool, ndmsPins func(context.Context) (map[int]string, error)) func(string, int, bool) (int, error) {
 	t.Helper()
-	min, max := mipsRange(t)
-	occ := opkgOccupancyAllOwners(fakeLiveIfaces{live: live}, ndmsPins, e.awg, e.settings, e.store)
-	return proxyAllocIndex(context.Background(),
-		proxyrt.NewAllocator(proxyrt.IndexRange{Min: min, Max: max}), min, occ, e.store)
+	pool := e.pool(t, live, ndmsPins)
+	return func(key string, pinned int, havePin bool) (int, error) {
+		nums, err := reserveAll(pool, []proxyReq{{key: key, pinned: pinned, havePin: havePin}})
+		if err != nil {
+			return 0, err
+		}
+		return nums[0], nil
+	}
+}
+
+// pool — БОЕВОЙ состав источников поверх потолка mips.
+func (e *occEnv) pool(t *testing.T, live map[int]bool, ndmsPins func(context.Context) (map[int]string, error)) *opkgtun.Pool {
+	t.Helper()
+	return opkgtun.NewPool(mipsCeiling(t), e.owners(live, ndmsPins).all()...)
+}
+
+type proxyReq struct {
+	key     string
+	pinned  int
+	havePin bool
+}
+
+// reserveAll — все заявки ОДНОЙ резервацией. Резервация закрывается сразу:
+// номера держит либо занятость источников, либо ничего — тестам нужен ИСХОД
+// выбора, а не удержание.
+func reserveAll(pool *opkgtun.Pool, want []proxyReq) ([]int, error) {
+	reqs := make([]opkgtun.Request, 0, len(want))
+	for _, w := range want {
+		self := opkgtun.ProxyHolder(w.key, "", "")
+		if w.havePin {
+			reqs = append(reqs, opkgtun.WantPinned(self, w.pinned))
+			continue
+		}
+		reqs = append(reqs, opkgtun.Want(self))
+	}
+	res, err := pool.Reserve(context.Background(), reqs...)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Close()
+	return res.Numbers(), nil
+}
+
+// owners — БОЕВОЙ состав поставщиков: три настоящих (записи туннелей, запись
+// режима роутера, записи прокси) и две подставленных половины, зависящих от
+// роутера. Состав собирает прод-функция, иначе проверялся бы не он.
+func (e *occEnv) owners(live map[int]bool, ndmsPins func(context.Context) (map[int]string, error)) opkgTunOwners {
+	ndms := opkgtun.Source{Name: "записи NDMS", Read: func(ctx context.Context) (opkgtun.Taken, error) {
+		pins, err := ndmsPins(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make(opkgtun.Taken, len(pins))
+		for idx, name := range pins {
+			out[idx] = opkgtun.AnonHolder(name)
+		}
+		return out, nil
+	}}
+	liveSrc := opkgtun.Source{Name: "живые интерфейсы", Read: func(context.Context) (opkgtun.Taken, error) {
+		out := make(opkgtun.Taken, len(live))
+		for idx := range live {
+			out[idx] = opkgtun.LiveHolder(idx)
+		}
+		return out, nil
+	}}
+	return newOpkgTunOwners(ndms, liveSrc, e.awg, e.settings, e.store)
 }
 
 func (e *occEnv) putRecord(t *testing.T, rec instancestore.Record) {
@@ -122,13 +175,13 @@ func serverRecord(id, wgNDMS, wgKernel, rawNDMS, rawKernel string) instancestore
 // B2: живой интерфейс владельца не отбирается у него самого. Без вычитания
 // заявленного пина усыновление превратилось бы в перепин, и permit'ы
 // пользователя, выписанные на OpkgTun18, повисли бы.
-func TestAllocIndexAdoptsOwnLiveInterface(t *testing.T) {
+func TestProxyNumberAdoptsOwnLiveInterface(t *testing.T) {
 	e := newOccEnv(t)
 	// Номер берётся внутри mips-диапазона: 18 туда не попадает.
 	alloc := e.alloc(t, map[int]bool{7: true})
 	got, err := alloc("wdtt-client:de", 7, true)
 	if err != nil {
-		t.Fatalf("AllocIndex: %v", err)
+		t.Fatalf("AllocPort: %v", err)
 	}
 	if got != 7 {
 		t.Fatalf("усыновление живого интерфейса: got %d, want 7", got)
@@ -137,64 +190,53 @@ func TestAllocIndexAdoptsOwnLiveInterface(t *testing.T) {
 
 // Пин ЧУЖОЙ записи прокси занят: без поставщика записей инстансов второй
 // владелец получил бы имя первого.
-func TestAllocIndexRespectsOtherProxyRecordPin(t *testing.T) {
+func TestProxyNumberRespectsOtherProxyRecordPin(t *testing.T) {
 	e := newOccEnv(t)
 	e.putRecord(t, rawClientRecord("de", "OpkgTun3", "opkgtun3"))
-	alloc := e.alloc(t, nil)
 
-	// Пул перебирается целиком: с одной выдачей аллокатор отдал бы младший
-	// свободный номер и разошёлся бы с занятостью незаметно.
-	for i := 0; i <= 15; i++ {
-		got, err := alloc("wdtt-client:nl-"+string(rune('a'+i)), 0, false)
-		if err != nil {
-			break
-		}
-		if got == 3 {
-			t.Fatal("выдан номер, который держит запись другого инстанса")
-		}
+	// Пул выбирается целиком ОДНОЙ резервацией: с одной заявкой выдача отдала
+	// бы младший свободный номер и разошлась бы с занятостью незаметно.
+	nums, err := reserveAll(e.pool(t, nil, noNDMSPins), manyReqs(14))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(nums, 3) {
+		t.Fatalf("выдан номер, который держит запись другого инстанса: %v", nums)
 	}
 }
 
-// Сентинел «пина нет» обязан быть вне диапазона: ноль на mips — законный
-// номер, и переданный как pinned он выдавался бы вопреки занятости.
-func TestAllocIndexWithoutPinDoesNotClaimZero(t *testing.T) {
-	e := newOccEnv(t)
-	alloc := e.alloc(t, map[int]bool{0: true})
-
-	got, err := alloc("wdtt-client:de", 0, false)
-	if err != nil {
-		t.Fatalf("AllocIndex: %v", err)
+// manyReqs — n беспиновых заявок разных владельцев. Пул выдаёт «всё или
+// ничего», поэтому n — ровно число СВОБОДНЫХ номеров: окно mips это 2..16,
+// минус один занятый.
+func manyReqs(n int) []proxyReq {
+	out := make([]proxyReq, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, proxyReq{key: "wdtt-client:nl-" + strconv.Itoa(i)})
 	}
-	if got == 0 {
-		t.Fatal("занятый нулевой номер выдан как свободный: сентинел спутан с пином")
-	}
+	return out
 }
 
 // Ф1: запись AWG-туннеля держит номер с момента СОЗДАНИЯ, интерфейс появится
 // только при первом включении. Без этого поставщика прокси занял бы номер
 // выключенного туннеля, а первое же его включение усыновило бы чужой
 // интерфейс по номеру.
-func TestAllocIndexRespectsAwgRecordWithoutLiveInterface(t *testing.T) {
+func TestProxyNumberRespectsAwgRecordWithoutLiveInterface(t *testing.T) {
 	e := newOccEnv(t)
 	if err := e.awg.Create(&storage.AWGTunnel{ID: "awg12", Name: "vpn", Backend: "kernel"}); err != nil {
 		t.Fatalf("awg.Create: %v", err)
 	}
-	alloc := e.alloc(t, nil)
-
-	for i := 0; i <= 15; i++ {
-		got, err := alloc("owner-"+string(rune('a'+i)), 0, false)
-		if err != nil {
-			break
-		}
-		if got == 12 {
-			t.Fatal("выдан номер записи AWG-туннеля без живого интерфейса")
-		}
+	nums, err := reserveAll(e.pool(t, nil, noNDMSPins), manyReqs(14))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(nums, 12) {
+		t.Fatalf("выдан номер записи AWG-туннеля без живого интерфейса: %v", nums)
 	}
 }
 
 // nativewg живёт как Wireguard<N> и OpkgTun не создаёт: его идентификатор
 // пула номеров не отнимает.
-func TestAllocIndexIgnoresNativeWGRecord(t *testing.T) {
+func TestProxyNumberIgnoresNativeWGRecord(t *testing.T) {
 	e := newOccEnv(t)
 	if err := e.awg.Create(&storage.AWGTunnel{ID: "awg5", Name: "nwg", Backend: "nativewg"}); err != nil {
 		t.Fatalf("awg.Create: %v", err)
@@ -203,20 +245,36 @@ func TestAllocIndexIgnoresNativeWGRecord(t *testing.T) {
 
 	got, err := alloc("wdtt-client:de", 5, true)
 	if err != nil {
-		t.Fatalf("AllocIndex: %v", err)
+		t.Fatalf("AllocPort: %v", err)
 	}
 	if got != 5 {
 		t.Fatalf("nativewg-запись отняла номер: got %d, want 5", got)
 	}
 }
 
+// Резерв 0..1 — правило ВЫДАЧИ нового номера, а не владения: инстанс, занявший
+// OpkgTun0 на прошлых версиях, обязан его удержать. Переезд переименовал бы
+// интерфейс, а его имя стоит в permit'ах политики пользователя.
+func TestProxyNumberKeepsPinBelowIssueRange(t *testing.T) {
+	e := newOccEnv(t)
+	alloc := e.alloc(t, nil)
+
+	got, err := alloc("wdtt-client:de", 0, true)
+	if err != nil {
+		t.Fatalf("AllocPort: %v", err)
+	}
+	if got != 0 {
+		t.Fatalf("выдан %d: пин OpkgTun0 перепинован, permit'ы пользователя повиснут", got)
+	}
+}
+
 // Запись NDMS без устройства в /sys держит номер: `ip link del opkgtunN`
 // оставляет её живой со state error, и выданный по ней номер отдал бы
 // интерфейс с чужой записью.
-func TestAllocIndexRespectsNdmsRecordPin(t *testing.T) {
+func TestProxyNumberRespectsNdmsRecordPin(t *testing.T) {
 	e := newOccEnv(t)
-	alloc := e.allocWithNDMS(t, nil, func(context.Context) (map[int]bool, error) {
-		return map[int]bool{9: true}, nil
+	alloc := e.allocWithNDMS(t, nil, func(context.Context) (map[int]string, error) {
+		return map[int]string{9: "запись NDMS OpkgTun9"}, nil
 	})
 
 	for i := 0; i <= 15; i++ {
@@ -232,7 +290,7 @@ func TestAllocIndexRespectsNdmsRecordPin(t *testing.T) {
 
 // Удерживающая запись настроек занимает номер, даже когда интерфейса нет и
 // Provisioned=false. Ноль — законный номер режимов роутера.
-func TestAllocIndexRespectsSettingsHoldAtZero(t *testing.T) {
+func TestProxyNumberRespectsSettingsHoldAtZero(t *testing.T) {
 	e := newOccEnv(t)
 	// Схема v34 (develop): две зеркальные записи FakeIP/PolicyTun схлопнуты
 	// в одну OpkgTunState, режим лежит полем.
@@ -243,7 +301,7 @@ func TestAllocIndexRespectsSettingsHoldAtZero(t *testing.T) {
 
 	got, err := alloc("wdtt-client:de", 0, false)
 	if err != nil {
-		t.Fatalf("AllocIndex: %v", err)
+		t.Fatalf("AllocPort: %v", err)
 	}
 	if got == 0 {
 		t.Fatal("выдан номер, удержанный записью настроек")
@@ -253,9 +311,9 @@ func TestAllocIndexRespectsSettingsHoldAtZero(t *testing.T) {
 // Fail-closed: «не смогли посмотреть» обязано быть отказом. Неполная картина
 // читается как «номер свободен» — единственное направление ошибки, дающее
 // коллизию.
-func TestAllocIndexFailsClosedOnOccupancyError(t *testing.T) {
+func TestProxyNumberFailsClosedOnOccupancyError(t *testing.T) {
 	e := newOccEnv(t)
-	alloc := e.allocWithNDMS(t, nil, func(context.Context) (map[int]bool, error) {
+	alloc := e.allocWithNDMS(t, nil, func(context.Context) (map[int]string, error) {
 		return nil, errors.New("NDMS недоступен")
 	})
 
@@ -266,7 +324,7 @@ func TestAllocIndexFailsClosedOnOccupancyError(t *testing.T) {
 
 // Второй пин СОБСТВЕННОЙ записи чужой не становится: это другой интерфейс
 // того же инстанса, и коллизия с ним запрещена.
-func TestAllocIndexKeepsSiblingPinOfOwnRecord(t *testing.T) {
+func TestProxyNumberKeepsSiblingPinOfOwnRecord(t *testing.T) {
 	e := newOccEnv(t)
 	e.putRecord(t, serverRecord("default", "OpkgTun4", "opkgtun4", "OpkgTun5", "opkgtun5"))
 	alloc := e.alloc(t, nil)
@@ -274,7 +332,7 @@ func TestAllocIndexKeepsSiblingPinOfOwnRecord(t *testing.T) {
 	// Запрос WG-половины с пином raw-половины: raw остаётся занятым.
 	got, err := alloc("wdtt-server:default/wg", 5, true)
 	if err != nil {
-		t.Fatalf("AllocIndex: %v", err)
+		t.Fatalf("AllocPort: %v", err)
 	}
 	if got == 5 {
 		t.Fatal("выдан номер второй половины собственной записи")
@@ -286,7 +344,7 @@ func TestAllocIndexKeepsSiblingPinOfOwnRecord(t *testing.T) {
 func newListenAllocFull(t *testing.T, e *occEnv) func(string, instancestore.Kind, string, string) (string, error) {
 	t.Helper()
 	return proxyAllocListen(context.Background(),
-		proxyrt.NewAllocator(proxyrt.IndexRange{Min: roles.ListenPortMin, Max: roles.ListenPortMax}),
+		proxyrt.NewAllocator(proxyrt.PortRange{Min: roles.ListenPortMin, Max: roles.ListenPortMax}),
 		e.store, e.awg)
 }
 
@@ -418,11 +476,10 @@ func recordingBook(keys []string) (*proxyFWBook, *[]int) {
 }
 
 func TestReleasePinsWithoutOwnersIsNoop(t *testing.T) {
-	opkg := proxyrt.NewAllocator(proxyrt.IndexRange{Min: 0, Max: 3})
-	port := proxyrt.NewAllocator(proxyrt.IndexRange{Min: 9000, Max: 9001})
+	port := proxyrt.NewAllocator(proxyrt.PortRange{Min: 9000, Max: 9001})
 	book, applied := recordingBook([]string{"wdtt-server:default"})
 
-	proxyReleasePins(context.Background(), opkg, port, book, nil)()
+	proxyReleasePins(context.Background(), port, book, nil)()
 
 	if len(*applied) != 0 {
 		t.Fatalf("пустой вызов тронул ведомость портов: %v", *applied)
@@ -430,34 +487,26 @@ func TestReleasePinsWithoutOwnersIsNoop(t *testing.T) {
 }
 
 func TestReleasePinsToleratesUnknownOwners(t *testing.T) {
-	opkg := proxyrt.NewAllocator(proxyrt.IndexRange{Min: 0, Max: 3})
-	port := proxyrt.NewAllocator(proxyrt.IndexRange{Min: 9000, Max: 9001})
+	port := proxyrt.NewAllocator(proxyrt.PortRange{Min: 9000, Max: 9001})
 	book, _ := recordingBook(nil)
 
 	// Delete зовёт четыре ключа вслепую — ни один из них ведомости не знаком.
-	proxyReleasePins(context.Background(), opkg, port, book, nil)(
+	proxyReleasePins(context.Background(), port, book, nil)(
 		"wdtt-client:x", "wdtt-client:x/wg", "wdtt-client:x/raw", "wdtt-client:x/listen")
 }
 
-// Освобождение владельца возвращает и номер, и порт: без этого held течёт до
-// перезапуска демона, а номера «заняты» несуществующим инстансом.
-func TestReleasePinsReturnsIndexAndPort(t *testing.T) {
-	opkg := proxyrt.NewAllocator(proxyrt.IndexRange{Min: 0, Max: 0})
-	port := proxyrt.NewAllocator(proxyrt.IndexRange{Min: 9000, Max: 9000})
+// Освобождение владельца возвращает порт. Номера сюда больше не входят: их
+// держит резервация пула, и закрывает её менеджер сам — на любом исходе.
+func TestReleasePinsReturnsPort(t *testing.T) {
+	port := proxyrt.NewAllocator(proxyrt.PortRange{Min: 9000, Max: 9000})
 	book, _ := recordingBook(nil)
-	if _, err := opkg.AllocIndex("k", -1, nil); err != nil {
-		t.Fatalf("AllocIndex: %v", err)
-	}
-	if _, err := port.AllocIndex("k/listen", 8999, nil); err != nil {
-		t.Fatalf("AllocIndex: %v", err)
+	if _, err := port.AllocPort("k/listen", 8999, false, nil); err != nil {
+		t.Fatalf("AllocPort: %v", err)
 	}
 
-	proxyReleasePins(context.Background(), opkg, port, book, nil)("k", "k/listen")
+	proxyReleasePins(context.Background(), port, book, nil)("k", "k/listen")
 
-	if _, err := opkg.AllocIndex("other", -1, nil); err != nil {
-		t.Fatalf("номер не вернулся: %v", err)
-	}
-	if _, err := port.AllocIndex("other/listen", 8999, nil); err != nil {
+	if _, err := port.AllocPort("other/listen", 8999, false, nil); err != nil {
 		t.Fatalf("порт не вернулся: %v", err)
 	}
 }
@@ -465,11 +514,10 @@ func TestReleasePinsReturnsIndexAndPort(t *testing.T) {
 // Снятие вклада из ведомости идёт по ПЕРВОМУ ключу — голому ключу записи,
 // под которым инстанс получал хендл.
 func TestReleasePinsForgetsFirstKeyInBook(t *testing.T) {
-	opkg := proxyrt.NewAllocator(proxyrt.IndexRange{Min: 0, Max: 3})
-	port := proxyrt.NewAllocator(proxyrt.IndexRange{Min: 9000, Max: 9001})
+	port := proxyrt.NewAllocator(proxyrt.PortRange{Min: 9000, Max: 9001})
 	book, applied := recordingBook([]string{"wdtt-server:default"})
 
-	proxyReleasePins(context.Background(), opkg, port, book, nil)(
+	proxyReleasePins(context.Background(), port, book, nil)(
 		"wdtt-server:default", "wdtt-server:default/wg")
 
 	if len(*applied) == 0 {
@@ -487,9 +535,9 @@ func (stubRegistry) DropMirror(string, string) error      { return nil }
 
 type stubSweeper struct{}
 
-func (stubSweeper) Sweep(context.Context, map[string]bool) ([]string, error) { return nil, nil }
-
-func (stubSweeper) OwnedNames(context.Context) ([]string, error) { return nil, nil }
+func (stubSweeper) Sweep(context.Context, func([]string) (map[string]bool, error)) ([]string, error) {
+	return nil, nil
+}
 
 type stubJournal struct{}
 
@@ -524,12 +572,14 @@ func newFactoryApp(t *testing.T, book *proxyFWBook) (*app, manager.Factory, *pro
 			return instancestore.SeedResult{}, nil
 		},
 		PostSeed: func(context.Context, instancestore.SeedResult, map[string]bool) error { return nil },
-		AllocIndex: func(_ string, pinned int, havePin bool) (int, error) {
-			if havePin {
-				return pinned, nil
-			}
-			return 0, errors.New("в тесте фабрики выделение не нужно")
-		},
+		// Пул исчерпан: в тесте фабрики выделение не нужно, и попытка выдать
+		// номер обязана быть видна отказом, а не молча пройти.
+		OpkgTunPool: opkgtun.NewPool(0, opkgtun.Source{
+			Name: "исчерпан",
+			Read: func(context.Context) (opkgtun.Taken, error) {
+				return opkgtun.Taken{0: opkgtun.TunnelHolder("awg0", "чужой")}, nil
+			},
+		}),
 		AllocListen: func(string, instancestore.Kind, string, string) (string, error) {
 			return "127.0.0.1:9000", nil
 		},
@@ -831,10 +881,6 @@ func (fakeRunning) Stop()                       {}
 // транзакции», потому что читают они тот же store.
 func newProdAllocManager(t *testing.T, e *occEnv) *manager.Manager {
 	t.Helper()
-	min, max := mipsRange(t)
-	occ := opkgOccupancyAllOwners(fakeLiveIfaces{}, func(context.Context) (map[int]bool, error) {
-		return nil, nil
-	}, e.awg, e.settings, e.store)
 	ctx := context.Background()
 	return manager.New(manager.Deps{
 		Store: e.store, Registry: stubRegistry{}, Sweeper: stubSweeper{},
@@ -846,11 +892,10 @@ func newProdAllocManager(t *testing.T, e *occEnv) *manager.Manager {
 			st, err := e.store.Load()
 			return instancestore.SeedResult{State: st}, err
 		},
-		PostSeed: func(context.Context, instancestore.SeedResult, map[string]bool) error { return nil },
-		AllocIndex: proxyAllocIndex(ctx,
-			proxyrt.NewAllocator(proxyrt.IndexRange{Min: min, Max: max}), min, occ, e.store),
+		PostSeed:    func(context.Context, instancestore.SeedResult, map[string]bool) error { return nil },
+		OpkgTunPool: e.pool(t, nil, noNDMSPins),
 		AllocListen: proxyAllocListen(ctx,
-			proxyrt.NewAllocator(proxyrt.IndexRange{Min: roles.ListenPortMin, Max: roles.ListenPortMax}),
+			proxyrt.NewAllocator(proxyrt.PortRange{Min: roles.ListenPortMin, Max: roles.ListenPortMax}),
 			e.store, e.awg),
 		ReleasePins:  func(...string) {},
 		WaitDisabled: func(string, time.Duration) bool { return true },

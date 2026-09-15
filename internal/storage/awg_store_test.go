@@ -2,12 +2,12 @@ package storage
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 )
 
@@ -220,7 +220,7 @@ func TestNextAvailableIDOS4Kernel(t *testing.T) {
 		{ID: "awg10", Name: "os5-style"},
 	}
 
-	got, err := nextAvailableID(tunnels, "kernel", false, occupancyOf(), context.Background())
+	got, err := nextAvailableID(tunnels, "kernel", false, mipsOpkgTunCeiling)
 	if err != nil {
 		t.Fatalf("nextAvailableID() error = %v", err)
 	}
@@ -246,15 +246,21 @@ func TestAWGTunnelStoreNextAvailableIDUnknownOSAssumesOS5(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := store.NextAvailableID(context.Background(), "kernel", occupancyOf())
+	// Kernel на 5.x сюда больше не приходит — номер ему выдаёт пул. Признак
+	// того, что фолбэк остался пятёркой, теперь именно отказ: на четвёрке
+	// вернулось бы имя awgm*.
+	if got, err := store.NextAvailableID("kernel"); err == nil {
+		t.Fatalf("NextAvailableID() = %q, ожидали отказ: на 5.x kernel идёт в пул", got)
+	}
+	// nativewg на 5.x по-прежнему обслуживается здесь. Различает версии ОС
+	// ПРЕФИКС, а не номер: на четвёрке вернулось бы awgm*. Сам номер зависит
+	// от потолка архитектуры и проверяется таблицей nextAvailableID.
+	got, err := store.NextAvailableID("nativewg")
 	if err != nil {
-		t.Fatalf("NextAvailableID() error = %v", err)
+		t.Fatalf("NextAvailableID(nativewg) error = %v", err)
 	}
-	if got == "awgm1" {
-		t.Fatal("NextAvailableID() дал имя OS4 — фолбэк снова четвёрка?")
-	}
-	if len(got) < 4 || got[:3] != "awg" || got == "awg10" {
-		t.Fatalf("NextAvailableID() = %q, ожидали свободное имя в стиле OS5", got)
+	if !strings.HasPrefix(got, "awg") || strings.HasPrefix(got, "awgm") {
+		t.Fatalf("NextAvailableID(nativewg) = %q, ждали имя пятёрки awg<N>", got)
 	}
 }
 
@@ -276,80 +282,49 @@ func awgTunnelsFromIDs(ids []string, nativewg ...string) []AWGTunnel {
 	return out
 }
 
-func TestNextAvailableIDOS5Kernel(t *testing.T) {
-	tests := []struct {
-		name    string
-		tunnels []AWGTunnel
-		want    string
-	}{
-		{"empty store", nil, "awg10"},
-		{"first free", awgTunnelsFromIDs([]string{"awg10", "awg11"}), "awg12"},
-		{"gap reused", awgTunnelsFromIDs([]string{"awg10", "awg12"}), "awg11"},
-		// Легаси NativeWG-туннель на awg12 занимает номер в kernel-диапазоне —
-		// kernel-аллокатор обязан его пропустить (без миграции).
-		{"skips legacy nativewg id", awgTunnelsFromIDs(
-			[]string{"awg10", "awg11", "awg12"}, "awg12"), "awg13"},
-		// NativeWG-туннели нового диапазона (awg20+) kernel-диапазон не съедают.
-		{"ignores nwg range ids", awgTunnelsFromIDs(
-			[]string{"awg20", "awg21"}, "awg20", "awg21"), "awg10"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := nextAvailableID(tt.tunnels, "kernel", true, occupancyOf(), context.Background())
-			if err != nil {
-				t.Fatalf("nextAvailableID() error = %v", err)
-			}
-			if got != tt.want {
-				t.Fatalf("nextAvailableID() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestNextAvailableIDOS5KernelExhaustion(t *testing.T) {
-	// awg10..awg16 заняты — прошивочный потолок kernel-AWG (7 туннелей).
-	// Занятость учитывается по ID независимо от backend: легаси NativeWG
-	// на awg16 тоже съедает kernel-слот.
-	ids := []string{"awg10", "awg11", "awg12", "awg13", "awg14", "awg15", "awg16"}
-	for _, legacy := range []string{"", "awg16"} {
-		tunnels := awgTunnelsFromIDs(ids, legacy)
-		_, err := nextAvailableID(tunnels, "kernel", true, occupancyOf(), context.Background())
-		if err == nil {
-			t.Fatalf("nextAvailableID() error = nil, want exhaustion (legacy=%q)", legacy)
-		}
-		if err.Error() != "maximum number of tunnels reached (7)" {
-			t.Fatalf("exhaustion message = %q, want byte-identical legacy message", err.Error())
-		}
-	}
-}
+// Потолки берутся у КАНОНИЧЕСКОЙ карты по имени архитектуры, а не числом и не
+// от runtime.GOARCH: числом это была бы копия карты, а от runtime.GOARCH тест
+// зависел бы от машины, на которой его запустили.
+var (
+	mipsOpkgTunCeiling = opkgtun.Ceiling("mipsle")
+	armOpkgTunCeiling  = opkgtun.Ceiling("arm64")
+)
 
 func TestNextAvailableIDOS5NativeWG(t *testing.T) {
 	kernelFull := []string{"awg10", "awg11", "awg12", "awg13", "awg14", "awg15", "awg16"}
 	tests := []struct {
 		name    string
 		tunnels []AWGTunnel
+		ceiling int
 		want    string
 	}{
-		{"empty store", nil, "awg20"},
+		{"empty store", nil, mipsOpkgTunCeiling, "awg20"},
 		// Сам баг: kernel-диапазон полностью занят, NativeWG всё равно
 		// получает собственный ID awg20 (раньше — ошибка общего лимита 7).
-		{"kernel range full", awgTunnelsFromIDs(kernelFull), "awg20"},
+		{"kernel range full", awgTunnelsFromIDs(kernelFull), mipsOpkgTunCeiling, "awg20"},
 		{"skips occupied", awgTunnelsFromIDs(
-			[]string{"awg20", "awg21"}, "awg20", "awg21"), "awg22"},
+			[]string{"awg20", "awg21"}, "awg20", "awg21"), mipsOpkgTunCeiling, "awg22"},
 		{"gap reused", awgTunnelsFromIDs(
-			[]string{"awg20", "awg22"}, "awg20", "awg22"), "awg21"},
+			[]string{"awg20", "awg22"}, "awg20", "awg22"), mipsOpkgTunCeiling, "awg21"},
 		// Диапазон не ограничен сверху десятью ID: awg20..awg30 заняты → awg31.
 		{"beyond ten ids", awgTunnelsFromIDs([]string{
 			"awg20", "awg21", "awg22", "awg23", "awg24", "awg25",
 			"awg26", "awg27", "awg28", "awg29", "awg30",
-		}), "awg31"},
+		}), mipsOpkgTunCeiling, "awg31"},
 		// Легаси NativeWG на awg12 не мешает выдаче нового диапазона.
 		{"legacy nwg id untouched", awgTunnelsFromIDs(
-			[]string{"awg12"}, "awg12"), "awg20"},
+			[]string{"awg12"}, "awg12"), mipsOpkgTunCeiling, "awg20"},
+		// arm: потолок OpkgTun 49, и kernel туда заходит — диапазон NativeWG
+		// обязан начаться ВЫШЕ него, иначе два выбирающих спорят за один ключ.
+		{"arm: выше потолка OpkgTun", nil, armOpkgTunCeiling, "awg50"},
+		// Легаси NativeWG, осевший в kernel-диапазоне до разведения, свой ключ
+		// сохраняет — миграции нет, а вето пула его пропускает.
+		{"arm: легаси в kernel-диапазоне", awgTunnelsFromIDs(
+			[]string{"awg20"}, "awg20"), armOpkgTunCeiling, "awg50"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := nextAvailableID(tt.tunnels, "nativewg", true, nil, context.Background())
+			got, err := nextAvailableID(tt.tunnels, "nativewg", true, tt.ceiling)
 			if err != nil {
 				t.Fatalf("nextAvailableID() error = %v", err)
 			}
@@ -361,23 +336,47 @@ func TestNextAvailableIDOS5NativeWG(t *testing.T) {
 }
 
 func TestNextAvailableIDBackendFallbacks(t *testing.T) {
-	// Пустой/неизвестный backend трактуется как kernel (OS5).
+	// Пустой/неизвестный backend — это kernel, и на 5.x он идёт в пул, а не
+	// сюда. Отказ, а не «запасной» номер: запасной разошёлся бы с пулом.
 	for _, backend := range []string{"", "kernel", "unknown"} {
-		got, err := nextAvailableID(nil, backend, true, occupancyOf(), context.Background())
-		if err != nil {
-			t.Fatalf("nextAvailableID(%q) error = %v", backend, err)
-		}
-		if got != "awg10" {
-			t.Fatalf("nextAvailableID(%q) = %q, want awg10", backend, got)
+		if got, err := nextAvailableID(nil, backend, true, mipsOpkgTunCeiling); err == nil {
+			t.Fatalf("nextAvailableID(%q) = %q, ожидали отказ", backend, got)
 		}
 	}
 	// OS4: backend не различается — nativewg тоже получает awgm*.
-	got, err := nextAvailableID(awgTunnelsFromIDs([]string{"awgm0"}), "nativewg", false, nil, context.Background())
+	got, err := nextAvailableID(awgTunnelsFromIDs([]string{"awgm0"}), "nativewg", false, 0)
 	if err != nil {
 		t.Fatalf("nextAvailableID(OS4) error = %v", err)
 	}
 	if got != "awgm1" {
 		t.Fatalf("nextAvailableID(OS4, nativewg) = %q, want awgm1", got)
+	}
+}
+
+// Идентификатор awg<N> разбирается тем же разбором, что и имена интерфейсов:
+// собственный принимал бы «awg-5» как −5, потому что это принимает Atoi, а
+// ручка создания такой идентификатор пропускает.
+func TestAWGIdentifierNum(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+		ok   bool
+	}{
+		{"awg10", 10, true},
+		{"awg007", 7, true},
+		{"awg0", 0, true},
+		{"awg-5", 0, false},
+		{"awg+5", 0, false},
+		{"awgm5", 0, false},
+		{"awg", 0, false},
+		{"wdttraw-home", 0, false},
+		{"awg99999999999999999999", 0, false},
+	}
+	for _, c := range cases {
+		got, ok := AWGIdentifierNum(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("AWGIdentifierNum(%q) = %d, %v; want %d, %v", c.in, got, ok, c.want, c.ok)
+		}
 	}
 }
 
@@ -413,5 +412,31 @@ func TestAWGTunnelStoreRefusesMalformedIDs(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "..", "settings.json.json")); err == nil {
 		t.Fatal("Create wrote outside the tunnel directory")
+	}
+}
+
+// Несущий инвариант F317: пространство идентификаторов NativeWG не пересекается
+// с номерами OpkgTun НИ НА ОДНОЙ архитектуре.
+//
+// Пересечение — не чересполосица, а гонка двух выбирающих за один ключ
+// хранилища: номер kernel-туннеля выдаёт пул и держит резервацией до записи, а
+// этот перебор видит только диск и открытой резервации не видит. Проигравший
+// получает «tunnel already exists» без ретрая.
+//
+// Потолок берётся у канонической карты, а не числом: копий карты быть не должно.
+// Потолок ЭТОЙ сборки спрашивается тем же CeilingForHost, которым проводка
+// строит пул, — иначе страж сверял бы карту саму с собой, а разойтись могли бы
+// пул и пол.
+func TestNWGFloorNeverOverlapsOpkgTunRange(t *testing.T) {
+	for _, goarch := range []string{"mips", "mipsle", "mips64", "mips64le", "arm", "arm64", "amd64"} {
+		ceiling := opkgtun.Ceiling(goarch)
+		if got := nwgFloor(ceiling); got <= ceiling {
+			t.Errorf("%s: пол NativeWG = %d, потолок OpkgTun = %d — диапазоны пересекаются",
+				goarch, got, ceiling)
+		}
+	}
+	host := opkgtun.CeilingForHost()
+	if got := nwgFloor(host); got <= host {
+		t.Errorf("этой сборки: пол NativeWG = %d, потолок пула = %d", got, host)
 	}
 }

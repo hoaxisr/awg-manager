@@ -6,22 +6,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instance"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 )
 
-// Стык менеджера с НАСТОЯЩИМИ уборщиком и аллокатором. Тесты выше ходят через
-// fakeSweeper, который аллокатора не спрашивает, а сам Sweeper проверяется без
-// менеджера — и дефект жил ровно между ними: Delete звал уборку ДО возврата
-// пинов, уборщик видел номер закреплённым и пропускал ту самую запись, ради
-// которой вызван (стенд 2026-08-28, OpkgTun0/1 пережили удаление инстанса).
+// Стык менеджера с НАСТОЯЩИМ уборщиком. Тесты выше ходят через fakeSweeper, а
+// сам Sweeper проверяется без менеджера — и дефект жил ровно между ними:
+// Delete звал уборку ДО возврата пинов, уборщик видел номер закреплённым в
+// аллокаторе и пропускал ту самую запись, ради которой вызван (стенд
+// 2026-08-28, OpkgTun0/1 пережили удаление инстанса). Консультации с
+// аллокатором больше нет, и стык стережёт исходы сноса; сам порядок
+// «скан → ведомость → снос» стерегут крючковые тесты в manager_test.go.
 
 // scanOf — сканер NDMS: отдаёт то, что ему положили, с нашей клиентской меткой.
 type scanOf struct{ names []string }
@@ -32,6 +34,26 @@ func (s *scanOf) Scan(context.Context, []string) ([]proxyrt.OwnedResource, error
 		out = append(out, proxyrt.OwnedResource{Label: roles.ClientDescription("Имя"), Name: n})
 	}
 	return out, nil
+}
+
+// recordIfaces — NDMS-имена записи по полю. Копия прод-адаптера
+// (proxyRecordIfaces в cmd/awg-manager): тот живёт в package main, и
+// импортировать его отсюда нечем.
+//
+// СРЕЗ, а не карта, по той же причине, что и в проде: у битой записи сервера
+// оба имени могут совпасть, и победитель на карте определялся бы обходом, то
+// есть менялся от запуска к запуску.
+func recordIfaces(rec instancestore.Record) []struct{ field, iface string } {
+	switch {
+	case rec.WdttClient != nil:
+		return []struct{ field, iface string }{{iface: rec.WdttClient.NdmsIface}}
+	case rec.WdttServer != nil:
+		return []struct{ field, iface string }{
+			{field: "wg", iface: rec.WdttServer.NdmsIface},
+			{field: "raw", iface: rec.WdttServer.RawNdmsIface},
+		}
+	}
+	return nil
 }
 
 // recRemover — снос с записью снесённого и вычёркиванием из скана.
@@ -52,30 +74,15 @@ func (r *recRemover) Remove(_ context.Context, res proxyrt.OwnedResource) error 
 	return nil
 }
 
-// opkgIndexOf — разбор имени в номер. Копия прод-адаптера (opkgTunIndex в
-// cmd/awg-manager): тот живёт в package main, и импортировать его отсюда
-// нечем. Отрицательные отвергаются, как и там.
-func opkgIndexOf(name string) (int, bool) {
-	rest, ok := strings.CutPrefix(name, "OpkgTun")
-	if !ok {
-		return 0, false
-	}
-	idx, err := strconv.Atoi(rest)
-	if err != nil || idx < 0 {
-		return 0, false
-	}
-	return idx, true
-}
-
 // liveEnv — окружение со сквозной связкой аллокатор → пины → уборщик.
 type liveEnv struct {
-	m     *Manager
-	st    *instancestore.Store
-	dir   string
-	sc    *scanOf
-	rm    *recRemover
-	alloc *proxyrt.Allocator
-	j     *recJournal
+	m    *Manager
+	st   *instancestore.Store
+	dir  string
+	sc   *scanOf
+	rm   *recRemover
+	pool *opkgtun.Pool
+	j    *recJournal
 	// changed — причины уведомлений о смене состава записей.
 	changed []string
 }
@@ -85,14 +92,32 @@ func newLiveEnv(t *testing.T) *liveEnv {
 	dir := t.TempDir()
 	sc := &scanOf{}
 	rm := &recRemover{sc: sc}
-	alloc := proxyrt.NewAllocator(proxyrt.IndexRange{Min: roles.OpkgIndexMin, Max: roles.OpkgIndexMax})
-	e := &liveEnv{st: instancestore.New(dir), dir: dir, sc: sc, rm: rm, alloc: alloc, j: &recJournal{}}
+	// Пул поверх ЖИВЫХ записей стора: именно он отвечает на вопрос, вернулся
+	// ли номер удалённого инстанса в оборот.
+	pool := opkgtun.NewPool(49, opkgtun.Source{
+		Name: "записи прокси",
+		Read: func(context.Context) (opkgtun.Taken, error) {
+			st, err := instancestore.New(dir).Load()
+			if err != nil {
+				return nil, err
+			}
+			out := opkgtun.Taken{}
+			for _, rec := range st.Records {
+				for _, half := range recordIfaces(rec) {
+					if idx, ok := opkgtun.IndexOf(half.iface); ok {
+						out[idx] = opkgtun.ProxyHolder(rec.Key(), half.field, rec.Name)
+					}
+				}
+			}
+			return out, nil
+		},
+	})
+	e := &liveEnv{st: instancestore.New(dir), dir: dir, sc: sc, rm: rm, pool: pool, j: &recJournal{}}
 	e.m = New(Deps{
 		Store:    e.st,
 		Registry: &fakeRegistry{},
-		Sweeper: proxyrt.NewSweeper(sc, rm, alloc,
-			instance.SweepLabels(), opkgIndexOf),
-		Journal: e.j,
+		Sweeper:  proxyrt.NewSweeper(sc, rm, instance.SweepLabels()),
+		Journal:  e.j,
 		Factory: func(instancestore.Record, *Live) (RunningInstance, error) {
 			return &fakeInstance{}, nil
 		},
@@ -103,26 +128,17 @@ func newLiveEnv(t *testing.T) *liveEnv {
 			}
 			return instancestore.SeedResult{State: st, SeededNow: !st.Seeded}, nil
 		},
-		PostSeed: func(context.Context, instancestore.SeedResult, map[string]bool) error { return nil },
-		AllocIndex: func(owner string, pinned int, havePin bool) (int, error) {
-			if !havePin {
-				pinned = -1
-			}
-			// Занятость снаружи аллокатора тесту не нужна: интерфейсов роутера
-			// здесь нет, а пины владельцев держит сам аллокатор.
-			return alloc.AllocIndex(owner, pinned, nil)
-		},
+		PostSeed:    func(context.Context, instancestore.SeedResult, map[string]bool) error { return nil },
+		OpkgTunPool: pool,
 		AllocListen: func(_ string, _ instancestore.Kind, _, current string) (string, error) {
 			if current != "" {
 				return current, nil
 			}
 			return "127.0.0.1:9007", nil
 		},
-		ReleasePins: func(keys ...string) {
-			for _, k := range keys {
-				alloc.Release(k)
-			}
-		},
+		// Номера в ведомость возврата больше не входят: их держит резервация
+		// пула, а занятость считается по ЖИВЫМ записям стора.
+		ReleasePins:    func(...string) {},
 		WaitDisabled:   func(string, time.Duration) bool { return true },
 		RecordsChanged: func(reason string) { e.changed = append(e.changed, reason) },
 	})
@@ -161,11 +177,13 @@ func TestDeleteSweepsInterfaceOfDeletedInstance(t *testing.T) {
 			e.rm.removed, c.NdmsIface)
 	}
 	// Индекс обязан вернуться в оборот: следующий владелец получает тот же.
-	idx, err := e.alloc.AllocIndex("другой", -1, nil)
+	res, err := e.pool.Reserve(context.Background(),
+		opkgtun.Want(opkgtun.ProxyHolder("wdtt-client:другой", "", "другой")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fmt.Sprintf("OpkgTun%d", idx); got != c.NdmsIface {
+	defer res.Close()
+	if got := fmt.Sprintf("OpkgTun%d", res.Numbers()[0]); got != c.NdmsIface {
 		t.Fatalf("следующий номер %s, ждали освободившийся %s", got, c.NdmsIface)
 	}
 }
@@ -533,5 +551,35 @@ func TestDeleteCallsRemoveRuntime(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != "wdtt-server:srv" {
 		t.Fatalf("хук уборки рантайма получил %v, ждали ровно [wdtt-server:srv]", got)
+	}
+}
+
+// Уборка на БООТЕ сквозь настоящий уборщик. Остальные тесты этого файла — про
+// удаление, а фейковый уборщик найденное игнорирует: без этого теста боот мог
+// бы передавать в снос пустоту, уборка молча перестала бы сносить, и сироты
+// копились бы вечно без единого сигнала — ровно тот класс, ради которого
+// уборщик и написан.
+func TestBootSweepsOrphansThroughRealSweeper(t *testing.T) {
+	e := newLiveEnv(t)
+	rec := instancestore.Record{ID: "de", Kind: instancestore.KindWdttClient,
+		Name: "Имя", Enabled: true,
+		WdttClient: &roles.WdttClientConfig{Mode: "raw", Peer: "1.1.1.1:1", VKHashes: "h",
+			NdmsIface: "OpkgTun18", RawIface: "opkgtun18"}}
+	if _, err := e.st.Replace(func(st *instancestore.State) error {
+		st.Records = append(st.Records, rec)
+		st.SeededFrom = []string{"test"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// На роутере живут интерфейс объявленного инстанса и сирота.
+	e.sc.names = []string{"OpkgTun18", "OpkgTun19"}
+
+	if err := e.m.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.rm.removed) != 1 || e.rm.removed[0] != "OpkgTun19" {
+		t.Fatalf("снесено %v, ждали [OpkgTun19]: объявленный обязан уцелеть, сирота — уйти",
+			e.rm.removed)
 	}
 }

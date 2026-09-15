@@ -5,13 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
@@ -57,22 +60,44 @@ func itoa(n int) string { return string(rune('0' + n)) } // n < 10 в теста
 type fakeSweeper struct {
 	mu    sync.Mutex
 	calls []map[string]bool
-	// owned — что сканер видит на роутере. Отдельно от calls: ведомость
-	// удаления при незаверенном посеве строится ИЗ НЕГО, а не из записей.
-	owned    []string
-	ownedErr error
+	// gotFound — что дошло до сноса. Без этого вызывающий мог бы передавать
+	// в снос пустоту, и уборка молча перестала бы сносить что-либо.
+	gotFound [][]string
+	scans    int
+	// found — что скан видит на роутере. Отдельно от calls: при незаверенном
+	// посеве ведомость удаления строится из НЕГО, а не только из записей.
+	found   []string
+	scanErr error
+	// onScan — крючок «что произошло между сканом и ведомостью»: порядок
+	// шагов иначе не проверить. Одноразовый: снимается ПОД локом фикстуры,
+	// иначе тест с параллельным удалением дал бы гонку на самом крючке.
+	onScan func()
 }
 
-func (f *fakeSweeper) OwnedNames(context.Context) ([]string, error) {
+// Sweep повторяет порядок настоящего уборщика: скан, ведомость, снос. Снос
+// фейковый — записываем, что дошло до него.
+func (f *fakeSweeper) Sweep(_ context.Context,
+	declare func(found []string) (map[string]bool, error)) ([]string, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.owned, f.ownedErr
-}
-
-func (f *fakeSweeper) Sweep(_ context.Context, declared map[string]bool) ([]string, error) {
+	found, err := f.found, f.scanErr
+	hook := f.onScan
+	f.onScan = nil
+	f.scans++
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	if err != nil {
+		return nil, err
+	}
+	declared, derr := declare(found)
+	if derr != nil {
+		return nil, derr
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, declared)
+	f.gotFound = append(f.gotFound, found)
 	return nil, nil
 }
 
@@ -186,8 +211,10 @@ type env struct {
 	// объявленных интерфейсов).
 	postSeedNDMS []map[string]bool
 	factoryErr   error // отказ сборки инстанса (I-2 ревью)
+	listenErr    error // отказ выдачи listen-порта
 	waited       []string
 	waitHook     func() // срабатывает внутри WaitDisabled (нужен тесту воскрешения)
+	factoryHook  func() // срабатывает ВНУТРИ Factory (страж «запись раньше воркера»)
 	seedHook     func() // срабатывает ВНУТРИ посева (нужен тесту сериализации Boot)
 	// listenTaken — подмена занятости: адрес → чем его заменит аллокатор.
 	listenTaken map[string]string
@@ -195,8 +222,6 @@ type env struct {
 	// бооте обязан доехать до сборки, иначе процесс сядет на занятый порт.
 	factoryRecs map[string]instancestore.Record
 	released    [][]string
-	allocN      int
-	allocKeys   []string
 
 	ensureErr   error                  // отказ ворот бута (F98)
 	ensureRecs  []instancestore.Record // список, дошедший до ворот
@@ -218,6 +243,9 @@ func newEnv(t *testing.T) *env {
 		Factory: func(rec instancestore.Record, live *Live) (RunningInstance, error) {
 			if e.factoryErr != nil {
 				return nil, e.factoryErr
+			}
+			if e.factoryHook != nil {
+				e.factoryHook()
 			}
 			fi := &fakeInstance{}
 			e.instances[rec.Key()] = fi
@@ -255,18 +283,17 @@ func newEnv(t *testing.T) *env {
 			}
 			return nil
 		},
-		AllocIndex: func(key string, pinned int, havePin bool) (int, error) {
-			if havePin {
-				return pinned, nil
-			}
-			e.allocN++
-			// Ключ запоминаем, а индексы выдаём РАЗНЫЕ: у сервера две
-			// половины, и общий индекс на обе — тот самый дефект, который
-			// константа 30 скрывала бы от любого теста.
-			e.allocKeys = append(e.allocKeys, key)
-			return 30 + e.allocN - 1, nil
-		},
+		// Пул с ПУСТОЙ занятостью: номера выдаются подряд с первого
+		// свободного, и у сервера половины получают РАЗНЫЕ — общий номер на
+		// обе был бы тем самым дефектом, который константа скрыла бы.
+		OpkgTunPool: opkgtun.NewPool(16, opkgtun.Source{
+			Name: "тест",
+			Read: func(context.Context) (opkgtun.Taken, error) { return nil, nil },
+		}),
 		AllocListen: func(_ string, _ instancestore.Kind, _, current string) (string, error) {
+			if e.listenErr != nil {
+				return "", e.listenErr
+			}
 			if next, taken := e.listenTaken[current]; taken {
 				return next, nil
 			}
@@ -590,7 +617,10 @@ func TestCreateAllocatesMissingPinsAndListen(t *testing.T) {
 	}
 	st, _ := e.st.Load()
 	c, _ := st.Records[0].WdttClientConfig()
-	if c.NdmsIface != "OpkgTun30" || c.RawIface != "opkgtun30" {
+	// Конкретный номер задаёт порядок обхода пула; проверяется свойство:
+	// номер выдан и оба имени собраны из одного числа.
+	idx, ok := opkgtun.NDMSIndexOf(c.NdmsIface)
+	if !ok || c.RawIface != "opkgtun"+strconv.Itoa(idx) {
 		t.Fatalf("пины не выделены: %+v", c)
 	}
 	if c.Listen != "127.0.0.1:9007" {
@@ -759,22 +789,42 @@ func TestDeclarationsSeeNormalizedModeAndPins(t *testing.T) {
 }
 
 func TestCreateReleasesPinsOnRefusal(t *testing.T) {
-	// Н6: отказ реестра после выделения пинов не должен оставлять их в held.
+	// Н6: отказ реестра после выделения не должен оставлять номер и порт
+	// занятыми. Порт возвращается явно; номер — закрытием резервации, поэтому
+	// проверяется он ИСХОДОМ: следующее создание получает тот же номер.
 	e := newEnv(t)
 	seedState(t, e)
 	boot(t, e)
+	newRec := func(id string) instancestore.Record {
+		return instancestore.Record{ID: id, Kind: instancestore.KindWdttClient,
+			Name: "N", Enabled: true,
+			WdttClient: &roles.WdttClientConfig{Mode: "raw", Peer: "1.1.1.1:1",
+				Password: "pw", VKHashes: "h"}}
+	}
+
 	e.reg.failSet = errors.New("отказ")
-	rec := instancestore.Record{ID: "np", Kind: instancestore.KindWdttClient,
-		Name: "N", Enabled: true,
-		WdttClient: &roles.WdttClientConfig{Mode: "raw", Peer: "1.1.1.1:1",
-			Password: "pw", VKHashes: "h"}}
-	if err := e.m.Create(context.Background(), rec); err == nil {
+	if err := e.m.Create(context.Background(), newRec("np")); err == nil {
 		t.Fatal("ждали отказ")
 	}
-	if len(e.released) != 1 || e.released[0][0] != "wdtt-client:np" {
-		t.Fatalf("свежие пины обязаны вернуться: %v", e.released)
+	if len(e.released) != 1 || len(e.released[0]) != 1 || e.released[0][0] != "wdtt-client:np/listen" {
+		t.Fatalf("порт обязан вернуться, и только он: %v", e.released)
+	}
+
+	e.reg.failSet = nil
+	if err := e.m.Create(context.Background(), newRec("ok")); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := e.st.Load()
+	c, _ := st.Records[0].WdttClientConfig()
+	idx, ok := opkgtun.NDMSIndexOf(c.NdmsIface)
+	if !ok || idx != kernelWindowFirst {
+		t.Fatalf("номер не вернулся в оборот: %+v", c)
 	}
 }
+
+// kernelWindowFirst — первый номер обхода у всех, кроме режимов роутера.
+// Держится здесь, а не литералом по тестам: порядок задаёт пул.
+const kernelWindowFirst = 10
 
 func TestMutationsRefusedBeforeBoot(t *testing.T) {
 	e := newEnv(t)
@@ -964,7 +1014,7 @@ func TestDeleteSweepLedgerFollowsCertification(t *testing.T) {
 	setup := func(t *testing.T, certified bool) *env {
 		t.Helper()
 		e := newEnv(t)
-		e.sw.owned = []string{"OpkgTun18", "OpkgTun19", "OpkgTun20"}
+		e.sw.found = []string{"OpkgTun18", "OpkgTun19", "OpkgTun20"}
 		seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"), rawRec("dv", "OpkgTun19", "opkgtun19"))
 		if !certified {
 			st, err := e.st.Load()
@@ -996,9 +1046,24 @@ func TestDeleteSweepLedgerFollowsCertification(t *testing.T) {
 		}
 	})
 
+	// Обе ветки сертификации: на заверенной ведомость строится из стора и
+	// найденного не читает вовсе, поэтому отказ скана там легко проглядеть —
+	// уборка собралась бы и снесла ноль, то есть выключилась бы молча.
+	t.Run("отказ скана отменяет уборку, заверенный", func(t *testing.T) {
+		e := setup(t, true)
+		e.sw.calls = nil // уборка боота к делу не относится
+		e.sw.scanErr = errors.New("rci down")
+		if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.sw.calls) != 0 {
+			t.Fatalf("уборка при упавшем скане: %v", e.sw.calls)
+		}
+	})
+
 	t.Run("отказ скана отменяет уборку", func(t *testing.T) {
 		e := setup(t, false)
-		e.sw.ownedErr = errors.New("rci down")
+		e.sw.scanErr = errors.New("rci down")
 		if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
 			t.Fatal(err)
 		}
@@ -1098,13 +1163,17 @@ func TestDeleteReleasesEveryOwnerKey(t *testing.T) {
 	// Круг 2: у Delete записи под рукой уже нет, поэтому он возвращает всех
 	// владельцев вслепую. Забытый key+"/listen" тёк бы до перезапуска — а
 	// свидетеля на состав списка не было (прежний тест считал только вызовы).
+	//
+	// Ключей ДВА, а не четыре: номера OpkgTun своего аллокатора не имеют, их
+	// держат записи, и запись к этому моменту снята. Голый ключ кормит
+	// ведомость INPUT-портов, key+"/listen" — порт.
 	e := newEnv(t)
 	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
 	boot(t, e)
 	if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"wdtt-client:de", "wdtt-client:de/wg", "wdtt-client:de/raw", "wdtt-client:de/listen"}
+	want := []string{"wdtt-client:de", "wdtt-client:de/listen"}
 	if len(e.released) != 1 || len(e.released[0]) != len(want) {
 		t.Fatalf("владельцы на возврате: %v (ждали %v)", e.released, want)
 	}
@@ -1777,8 +1846,10 @@ func TestEnsurePins_ServerAllocatesBothHalves(t *testing.T) {
 	if saved.NdmsIface == saved.RawNdmsIface {
 		t.Fatalf("половины делят один интерфейс %q", saved.NdmsIface)
 	}
-	if !slices.Contains(e.allocKeys, "wdtt-server:srv/wg") || !slices.Contains(e.allocKeys, "wdtt-server:srv/raw") {
-		t.Fatalf("пины выделены не на обе половины: %v", e.allocKeys)
+	// Обе половины получили СВОИ номера: ключи владельцев у них разные, и
+	// общий номер на обе означал бы, что заявка ушла одна.
+	if saved.WgIface == saved.RawIface {
+		t.Fatalf("половины делят одно kernel-имя %q", saved.WgIface)
 	}
 }
 
@@ -1867,5 +1938,351 @@ func TestBootWithoutBinariesHookBootsAsBefore(t *testing.T) {
 	boot(t, e)
 	if len(e.instances) != 1 {
 		t.Fatal("без хука бут обязан идти как раньше")
+	}
+}
+
+// Ведомость собирается ПОСЛЕ скана и по живому стору. Между сбором списка
+// боота и уборкой стоит m.booted = true, и с этого мгновения ручка создания
+// принимает новый инстанс: ведомость, взятая раньше, о нём не знает, а его
+// свежий интерфейс уже виден скану — уборка снесла бы его вместе с permit'ами
+// политик.
+//
+// Крючок пишет запись ВНУТРИ скана — то есть в самый узкий момент, какой
+// вообще возможен.
+func TestBootLedgerCollectedAfterScan(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	e.sw.found = []string{"OpkgTun18", "OpkgTun19"}
+	e.sw.onScan = func() {
+		if _, err := e.st.Replace(func(st *instancestore.State) error {
+			st.Records = append(st.Records, rawRec("new", "OpkgTun19", "opkgtun19"))
+			return nil
+		}); err != nil {
+			t.Errorf("запись появившегося инстанса: %v", err)
+		}
+	}
+	boot(t, e)
+
+	if len(e.sw.calls) != 1 {
+		t.Fatalf("вызовов уборки: %d, ждали 1", len(e.sw.calls))
+	}
+	if !sameNames(e.sw.calls[0], "OpkgTun18", "OpkgTun19") {
+		t.Fatalf("ведомость = %v; запись, появившаяся во время скана, обязана быть в ней, "+
+			"иначе её свежий интерфейс сносится вместе с permit'ами", e.sw.calls[0])
+	}
+	// Найденное обязано дойти до сноса целиком: пустой список означал бы, что
+	// уборка перестала сносить что-либо, и заметить это было бы нечем.
+	if len(e.sw.gotFound) != 1 || len(e.sw.gotFound[0]) != 2 {
+		t.Fatalf("до сноса дошло %v, ждали оба найденных имени", e.sw.gotFound)
+	}
+	if e.sw.scans != 1 {
+		t.Fatalf("сканов %d, ждали ровно один", e.sw.scans)
+	}
+}
+
+// Отказ скана — это «не знаем»: уборка пропускается целиком, а не идёт с
+// пустым найденным (что означало бы «сносить нечего» и тихо её выключило).
+func TestBootSkipsSweepWhenScanFails(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	e.sw.scanErr = errors.New("rci недоступен")
+	boot(t, e)
+	if len(e.sw.calls) != 0 {
+		t.Fatalf("уборка шла при упавшем скане: %v", e.sw.calls)
+	}
+}
+
+// То же на удалении: инстанс, созданный во время скана, в ведомость попадает и
+// уборкой не приговаривается.
+func TestDeleteLedgerCollectedAfterScan(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"),
+		rawRec("keep", "OpkgTun20", "opkgtun20"))
+	boot(t, e)
+	e.sw.found = []string{"OpkgTun18", "OpkgTun19", "OpkgTun20"}
+	e.sw.onScan = func() {
+		if _, err := e.st.Replace(func(st *instancestore.State) error {
+			st.Records = append(st.Records, rawRec("new", "OpkgTun19", "opkgtun19"))
+			return nil
+		}); err != nil {
+			t.Errorf("запись появившегося инстанса: %v", err)
+		}
+	}
+
+	if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
+		t.Fatal(err)
+	}
+	last := e.sw.calls[len(e.sw.calls)-1]
+	if !sameNames(last, "OpkgTun19", "OpkgTun20") {
+		t.Fatalf("ведомость удаления = %v; ждали соседа и запись, появившуюся во время скана, "+
+			"без интерфейса удаляемого", last)
+	}
+}
+
+// Незаверенный посев: ведомость удаления строится как «всё найденное минус
+// имена удаляемого», записей она не читает. Значит имя, которое ПЕРЕХВАТИЛ
+// новый инстанс, пока шло удаление, попадает под снос — вместе с permit'ами
+// его политик. Раньше этот класс закрывала консультация с аллокатором: номер
+// был закреплён за перехватившим, и уборка его пропускала.
+//
+// Перехват тут не выдуман: Delete отдаёт пины ДО уборки, а аллокатор выдаёт
+// низший свободный — то есть ровно освободившийся номер.
+func TestDeleteUncertifiedKeepsNameTakenOverByNewInstance(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	st, err := e.st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SkippedSources = []instancestore.SkippedSource{{File: "wdtt.json", Reason: "поле не того типа"}}
+	e.seedRes = instancestore.SeedResult{State: st}
+	e.seedResSet = true
+	boot(t, e)
+	if info := e.m.SeedInfo(); info.Certified {
+		t.Fatal("фикстура: посев обязан быть незаверенным")
+	}
+
+	e.sw.found = []string{"OpkgTun18"}
+	e.sw.onScan = func() {
+		// Пока идёт скан, номер перехвачен новым инстансом и его запись легла.
+		if _, err := e.st.Replace(func(state *instancestore.State) error {
+			state.Records = append(state.Records, rawRec("new", "OpkgTun18", "opkgtun18"))
+			return nil
+		}); err != nil {
+			t.Errorf("запись перехватившего инстанса: %v", err)
+		}
+	}
+
+	if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.sw.calls) == 0 {
+		t.Fatal("уборка не звана: незаверенная ветка обязана убирать, иначе интерфейс удалённого живёт вечно")
+	}
+	last := e.sw.calls[len(e.sw.calls)-1]
+	if !last["OpkgTun18"] {
+		t.Fatal("OpkgTun18 приговорён, хотя его уже держит живой инстанс: " +
+			"снос унесёт и интерфейс, и permit'ы его политик")
+	}
+}
+
+// Отказ ЧТЕНИЯ СТОРА на сборке ведомости — отдельный от скана способ отказа,
+// появившийся вместе с перечитыванием. Ответ тот же: уборка пропускается
+// целиком. Неполная ведомость означала бы снос живых интерфейсов.
+func TestSweepSkippedWhenLedgerUnreadable(t *testing.T) {
+	corrupt := func(t *testing.T, dir string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "proxy-instances.json"),
+			[]byte("{не json"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Исчезнувший файл — отдельный случай: Load отдаёт пустое состояние БЕЗ
+	// ошибки, и наивная ведомость приговорила бы всё найденное разом.
+	vanish := func(t *testing.T, dir string) {
+		t.Helper()
+		if err := os.Remove(filepath.Join(dir, "proxy-instances.json")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("боот", func(t *testing.T) {
+		e := newEnv(t)
+		seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+		e.sw.found = []string{"OpkgTun18", "OpkgTun19"}
+		e.sw.onScan = func() { corrupt(t, e.dir) }
+		boot(t, e)
+		if len(e.sw.calls) != 0 {
+			t.Fatalf("уборка шла при нечитаемой ведомости: %v", e.sw.calls)
+		}
+	})
+
+	t.Run("боот, файл исчез", func(t *testing.T) {
+		e := newEnv(t)
+		seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+		e.sw.found = []string{"OpkgTun18", "OpkgTun19"}
+		e.sw.onScan = func() { vanish(t, e.dir) }
+		boot(t, e)
+		if len(e.sw.calls) != 0 {
+			t.Fatalf("уборка шла по пустой ведомости из исчезнувшего стора: %v — "+
+				"это снос ВСЕХ наших интерфейсов", e.sw.calls)
+		}
+	})
+
+	t.Run("удаление", func(t *testing.T) {
+		e := newEnv(t)
+		seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+		boot(t, e)
+		e.sw.calls = nil // уборка боота к делу не относится
+		e.sw.found = []string{"OpkgTun18"}
+		e.sw.onScan = func() { corrupt(t, e.dir) }
+		if err := e.m.Delete(context.Background(), "wdtt-client:de"); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.sw.calls) != 0 {
+			t.Fatalf("уборка шла при нечитаемой ведомости: %v", e.sw.calls)
+		}
+	})
+}
+
+// Инвариант, на котором держится безопасность уборки без консультации с
+// аллокатором: запись ложится РАНЬШЕ, чем появляется интерфейс. Воркер
+// собирается и стартует только после mutateStoreLocked, поэтому инстанс, чей
+// интерфейс попал в скан, к моменту сбора ведомости уже имеет запись.
+//
+// Страж на порядок, а не на исход: перестановка этих двух блоков в Create
+// компилируется, тесты исходов остаются зелёными, а уборка начинает сносить
+// свежесозданные интерфейсы вместе с permit'ами политик.
+func TestCreateWritesRecordBeforeStartingWorker(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e)
+	boot(t, e)
+
+	// Снимок на ПЕРВОМ вызове фабрики: последующие ничего не доказывают —
+	// к ним запись уже легла в любом случае.
+	seen := false
+	recordAtFactory := false
+	e.factoryHook = func() {
+		if seen {
+			return
+		}
+		seen = true
+		st, err := e.st.Load()
+		if err != nil {
+			t.Errorf("чтение стора из фабрики: %v", err)
+			return
+		}
+		for _, r := range st.Records {
+			if r.Key() == "wdtt-client:de" {
+				recordAtFactory = true
+			}
+		}
+	}
+	if err := e.m.Create(context.Background(), rawRec("de", "", "")); err != nil {
+		t.Fatal(err)
+	}
+	if !recordAtFactory {
+		t.Fatal("воркер собран раньше, чем запись легла на диск: интерфейс появится " +
+			"до записи, и уборка снесёт его как сироту")
+	}
+}
+
+// Схлопнутый на посеве дубль печатается на КАЖДОМ бооте: инстанс пропал
+// навсегда, повторного посева не будет, и молчание после первого же
+// перезапуска оставило бы пользователя без единого следа.
+func TestBootWarnsAboutDroppedDuplicatesEveryBoot(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun18", "opkgtun18"))
+	st, err := e.st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.DroppedDuplicates = []string{"wdtt-client:z («Второй»)"}
+	e.seedRes = instancestore.SeedResult{State: st}
+	e.seedResSet = true
+
+	boot(t, e)
+
+	found := false
+	for _, m := range e.j.msgs {
+		if strings.Contains(m, "wdtt-client:z") && strings.Contains(m, "дубликат") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("о схлопнутом дубле не сказано: %v", e.j.msgs)
+	}
+}
+
+// Идемпотентность выдачи — несущий инвариант: заполненное имя не трогается, и
+// правка записи (включая включение-выключение) номер не двигает. Сломайся он —
+// номер уезжает на КАЖДОЙ правке, а permit'ы пользователя в политиках повисают
+// молча.
+func TestUpdateKeepsAlreadyIssuedNumber(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e, rawRec("de", "OpkgTun12", "opkgtun12"))
+	boot(t, e)
+
+	if err := e.m.Update(context.Background(), "wdtt-client:de", func(r *instancestore.Record) error {
+		r.Name = "другое"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	st, _ := e.st.Load()
+	c, _ := st.Records[0].WdttClientConfig()
+	if c.NdmsIface != "OpkgTun12" || c.RawIface != "opkgtun12" {
+		t.Fatalf("номер уехал на правке: %+v", c)
+	}
+}
+
+// Половина пары имён потерялась — номер берётся из уцелевшей половины ПИНОМ,
+// а не выдаётся заново. Уехать нельзя: имя стоит в permit'ах пользователя, а
+// permit пересозданием одноимённого интерфейса не воскресает.
+//
+// Проверяется сама выдача, а не путь правки: на диске полупустая запись жить
+// не может (её отвергает валидация стора), а вот мутатор, обнуливший одно поле,
+// доводит её до выдачи — и та обязана удержать номер.
+func TestEnsurePinsKeepsNumberOfHalfFilledRecord(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		ndms, kernel string
+	}{
+		{"потеряно kernel-имя", "OpkgTun12", ""},
+		{"потеряно NDMS-имя", "", "opkgtun12"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			seedState(t, e)
+			boot(t, e)
+			rec := rawRec("de", c.ndms, c.kernel)
+
+			pins, err := e.m.ensurePins(context.Background(), &rec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pins.res.Close()
+
+			cfg := rec.WdttClient
+			if cfg.NdmsIface != "OpkgTun12" || cfg.RawIface != "opkgtun12" {
+				t.Fatalf("полузаполненная запись уехала с номера: %+v", cfg)
+			}
+		})
+	}
+}
+
+// Отказ выдачи порта отдаёт НОМЕРА: их держит резервация, и её закрывает
+// вызывающий. Порядок «номера, потом порт» выбран потому, что номера дороже —
+// проверяется тем, что после отказа номер снова выдаётся.
+func TestCreateReturnsNumbersWhenListenFails(t *testing.T) {
+	e := newEnv(t)
+	seedState(t, e)
+	boot(t, e)
+	rec := func(id string) instancestore.Record {
+		return instancestore.Record{ID: id, Kind: instancestore.KindWdttClient,
+			Name: "N", Enabled: true,
+			WdttClient: &roles.WdttClientConfig{Mode: "raw", Peer: "1.1.1.1:1",
+				Password: "pw", VKHashes: "h"}}
+	}
+
+	e.listenErr = errors.New("портов нет")
+	if err := e.m.Create(context.Background(), rec("np")); err == nil {
+		t.Fatal("ждали отказ выдачи порта")
+	}
+	// Порт не выделялся — возвращать нечего.
+	if len(e.released) != 0 {
+		t.Fatalf("на отказе порта возвращён порт: %v", e.released)
+	}
+
+	e.listenErr = nil
+	if err := e.m.Create(context.Background(), rec("ok")); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := e.st.Load()
+	c, _ := st.Records[0].WdttClientConfig()
+	idx, ok := opkgtun.NDMSIndexOf(c.NdmsIface)
+	if !ok || idx != kernelWindowFirst {
+		t.Fatalf("номер не вернулся после отказа порта: %+v", c)
 	}
 }

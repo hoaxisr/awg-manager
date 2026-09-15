@@ -3,16 +3,23 @@ package router
 import (
 	"fmt"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 )
 
-// TestFakeIPNames pins the EXACT OpkgTun naming convention for every valid
-// fakeip-tun index 0..9: NDMS name "OpkgTun<i>" (CamelCase, required by NDMS RCI)
-// and kernel iface name "opkgtun<i>" (lowercase). These derive from
-// tunnel.NewNames now, but the wire strings must stay byte-identical — a single
-// character change here previously broke the entire feature (NDMS rejects the
-// lowercase name with "unsupported interface type"). This is the safety net.
+// TestFakeIPNames pins the EXACT OpkgTun naming convention for every номер,
+// который режим роутера может получить: NDMS name "OpkgTun<i>" (CamelCase,
+// required by NDMS RCI) and kernel iface name "opkgtun<i>" (lowercase). These
+// derive from tunnel.NewNames now, but the wire strings must stay
+// byte-identical — a single character change here previously broke the entire
+// feature (NDMS rejects the lowercase name with "unsupported interface type").
+// This is the safety net.
+//
+// Диапазон — весь пул до потолка, а не прежнее окно 0..9: с #891 режим роутера
+// поднимается доверху, и страж, оставшийся на девятке, молча перестал бы
+// охранять имена, которые режим теперь получает.
 func TestFakeIPNames(t *testing.T) {
-	for i := 0; i <= 9; i++ {
+	for i := 0; i <= opkgtun.Ceiling("arm64"); i++ {
 		wantNDMS := fmt.Sprintf("OpkgTun%d", i)
 		wantIface := fmt.Sprintf("opkgtun%d", i)
 		if got := tunNDMSName(i); got != wantNDMS {

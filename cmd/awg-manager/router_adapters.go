@@ -266,11 +266,11 @@ var _ router.OpkgTunIndexLister = (*routerOpkgTunIndexAdapter)(nil)
 // удержанный номер», поэтому запись NDMS без устройства сюда попадать не
 // должна: иначе смерть интерфейса после краха читалась бы как жизнь.
 //
-// NDMSOpkgTunPins — номера, удерживаемые записями NDMS. Проверено на стенде
-// 5.01.C.3.0-1: `ndmc -c "interface OpkgTun12"` создаёт и запись, и устройство,
-// но после `ip link del opkgtun12` запись живёт дальше со `state: error`, а в
-// /sys устройства нет. Такой номер занят — выдать его нельзя, хотя интерфейс
-// мёртв.
+// Номера, удерживаемые ЗАПИСЯМИ NDMS, собирает отдельный поставщик занятости
+// (ndmsHolders) поверх того же store. Проверено на стенде 5.01.C.3.0-1:
+// `ndmc -c "interface OpkgTun12"` создаёт и запись, и устройство, но после
+// `ip link del opkgtun12` запись живёт дальше со `state: error`, а в /sys
+// устройства нет. Такой номер занят — выдать его нельзя, хотя интерфейс мёртв.
 type routerOpkgTunIndexAdapter struct {
 	store *ndmsquery.InterfaceStore
 	// listSys — чтение kernel-половины; поле ради тестируемости отказа.
@@ -289,26 +289,11 @@ func (a *routerOpkgTunIndexAdapter) LiveOpkgTunIndices(context.Context) (map[int
 		// «все номера свободны».
 		return nil, fmt.Errorf("list system interfaces: %w", err)
 	}
-	return router.UnionOpkgTunIndices(sysNums, nil), nil
-}
-
-// NDMSOpkgTunPins — поставщик пинов по записям NDMS.
-//
-// Берётся List, а НЕ ListAll: последний по своему назначению выбрасывает наши
-// интерфейсы (opkgtun*, awgm* — interfaces.go:591), то есть ровно то, ради чего
-// занятость и собирается. Имя берётся из ID и приводится к нижнему регистру:
-// NDMS знает интерфейс только как "OpkgTun10" (поля kernel-имени у него нет —
-// проверено на железе), а ExtractInterfaceNumber заякорен на "^opkgtun\d+$".
-func (a *routerOpkgTunIndexAdapter) NDMSOpkgTunPins(ctx context.Context) (map[int]bool, error) {
-	all, err := a.store.List(ctx)
-	if err != nil {
-		return nil, err
+	live := make(map[int]bool, len(sysNums))
+	for _, n := range sysNums {
+		live[n] = true
 	}
-	names := make([]string, 0, len(all))
-	for _, i := range all {
-		names = append(names, strings.ToLower(i.ID))
-	}
-	return router.UnionOpkgTunIndices(nil, names), nil
+	return live, nil
 }
 
 // opkgTunScanner returns the router Deps.OpkgTunScan hook: NDMS OpkgTun
