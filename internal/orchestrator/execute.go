@@ -208,8 +208,12 @@ func (o *Orchestrator) executeColdStartKernel(ctx context.Context, action Action
 
 	// Check address conflict
 	managedIfaces := collectManagedIfaceNames(o.store)
-	if err := checkSystemAddressConflict(cfg.Address, cfg.AddressIPv6, managedIfaces); err != nil {
-		return fmt.Errorf("start %s: %w", action.Tunnel, err)
+	addrWarnings, addrErr := checkSystemAddressConflict(cfg.Address, cfg.AddressIPv6, managedIfaces)
+	for _, w := range addrWarnings {
+		o.appLog.Warn("address-conflict", action.Tunnel, w)
+	}
+	if addrErr != nil {
+		return fmt.Errorf("start %s: %w", action.Tunnel, addrErr)
 	}
 
 	// ColdStart
@@ -730,15 +734,65 @@ func (o *Orchestrator) executePersistStopped(action Action) error {
 	return nil
 }
 
-// listInterfaces — шов над net.Interfaces: тесты подставляют пустой список,
+// hostIface — интерфейс хоста в том виде, в каком его читает проверка
+// конфликта адресов: имя, состояние и уже разобранные адреса.
+//
+// Шов отдаёт ГОТОВЫЕ адреса, а не net.Interface, и это не украшательство:
+// Addrs() у net.Interface ходит в ядро по индексу, подменить его тестом
+// нечем, поэтому прежний шов умел ровно одно — «пустой список». Обе ветки
+// severity ниже при таком шве непроверяемы, а цена ошибки в них — либо
+// невидимый конфликт адресов, либо туннель, который перестал стартовать.
+type hostIface struct {
+	Name  string
+	Up    bool
+	Addrs []string
+}
+
+// listInterfaces — шов над net.Interfaces: тесты подставляют свой список,
 // иначе проверка конфликта адресов читает интерфейсы хоста разработчика.
-var listInterfaces = net.Interfaces
+var listInterfaces = hostInterfaces
+
+// hostInterfaces — прод-половина шва. Петля отсеивается здесь, чтобы у
+// проверки остался один смысл на функцию.
+func hostInterfaces() ([]hostIface, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]hostIface, 0, len(ifaces))
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		ips := make([]string, 0, len(addrs))
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok {
+				ips = append(ips, ipNet.IP.String())
+			}
+		}
+		out = append(out, hostIface{Name: iface.Name, Up: iface.Flags&net.FlagUp != 0, Addrs: ips})
+	}
+	return out, nil
+}
 
 // checkSystemAddressConflict checks if ipv4 or ipv6 is already assigned to any
 // system network interface. excludeIfaceNames are excluded from the check.
-func checkSystemAddressConflict(ipv4, ipv6 string, excludeIfaceNames []string) error {
+//
+// Severity разведена по состоянию чужого интерфейса, и это не косметика.
+// Погашенный интерфейс адрес ДЕРЖИТ — с точки зрения занятости он ничем не
+// отличается от поднятого, и прежний пропуск не-UP делал конфликт невидимым
+// ровно до момента, когда сирота поднимется (сирота opkgtun10 с адресом живого
+// opkgtun13 в дампе с роутера). Но поднятым он станет не сейчас, а отказать
+// сейчас значит уронить туннель, который до обновления работал. Поэтому:
+// поднятый чужой интерфейс — отказ, погашенный — предупреждение вызывающему,
+// и старт продолжается.
+func checkSystemAddressConflict(ipv4, ipv6 string, excludeIfaceNames []string) (warnings []string, err error) {
 	if ipv4 == "" && ipv6 == "" {
-		return nil
+		return nil, nil
 	}
 
 	excludeSet := make(map[string]struct{}, len(excludeIfaceNames))
@@ -748,40 +802,29 @@ func checkSystemAddressConflict(ipv4, ipv6 string, excludeIfaceNames []string) e
 
 	ifaces, err := listInterfaces()
 	if err != nil {
-		return nil // can't check — don't block start
+		return nil, nil // can't check — don't block start
 	}
 
 	for _, iface := range ifaces {
-		if iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		if iface.Flags&net.FlagUp == 0 {
-			continue
-		}
 		if _, ok := excludeSet[iface.Name]; ok {
 			continue
 		}
-
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-
-		for _, addr := range addrs {
-			ipNet, ok := addr.(*net.IPNet)
-			if !ok {
+		for _, ip := range iface.Addrs {
+			taken := ""
+			switch {
+			case ipv4 != "" && ip == ipv4:
+				taken = ipv4
+			case ipv6 != "" && ip == ipv6:
+				taken = ipv6
+			default:
 				continue
 			}
-			ip := ipNet.IP.String()
-
-			if ipv4 != "" && ip == ipv4 {
-				return fmt.Errorf("%w: address %s already assigned to interface %s", tunnel.ErrAddressInUse, ipv4, iface.Name)
+			if iface.Up {
+				return warnings, fmt.Errorf("%w: address %s already assigned to interface %s", tunnel.ErrAddressInUse, taken, iface.Name)
 			}
-			if ipv6 != "" && ip == ipv6 {
-				return fmt.Errorf("%w: address %s already assigned to interface %s", tunnel.ErrAddressInUse, ipv6, iface.Name)
-			}
+			warnings = append(warnings, fmt.Sprintf("address %s is also assigned to %s (interface is down); it will collide if that interface comes up", taken, iface.Name))
 		}
 	}
 
-	return nil
+	return warnings, nil
 }

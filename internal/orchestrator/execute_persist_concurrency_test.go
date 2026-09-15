@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -100,7 +99,7 @@ func TestExecuteColdStartKernel_ConcurrentUserEditSurvives(t *testing.T) {
 	t.Cleanup(func() { tunnel.ConfDir = oldConfDir })
 
 	prevIfaces := listInterfaces
-	listInterfaces = func() ([]net.Interface, error) { return nil, nil }
+	listInterfaces = func() ([]hostIface, error) { return nil, nil }
 	t.Cleanup(func() { listInterfaces = prevIfaces })
 
 	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
