@@ -383,11 +383,22 @@
         "store_fakeip": {
           "type": "boolean"
         },
-        "rdrc_timeout": {
-          "$ref": "#/$defs/Duration"
-        },
         "store_dns": {
           "type": "boolean"
+        },
+        "buffer_size": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "flush_interval": {
+          "$ref": "#/$defs/Duration"
         }
       },
       "additionalProperties": false
@@ -3958,6 +3969,9 @@
               "items": {
                 "$ref": "#/$defs/OpenConnectFormEntryOptions"
               }
+            },
+            "on_demand": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -4384,6 +4398,9 @@
             },
             "udp_timeout": {
               "$ref": "#/$defs/UDPTimeout"
+            },
+            "on_demand": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -4864,6 +4881,9 @@
             },
             "taildrop_directory": {
               "type": "string"
+            },
+            "on_demand": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -4946,6 +4966,9 @@
             },
             "workers": {
               "type": "integer"
+            },
+            "on_demand": {
+              "type": "boolean"
             },
             "detour": {
               "type": "string",
@@ -8039,6 +8062,18 @@
                 }
               ]
             },
+            "auto_redirect_tproxy_mark": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
             "auto_redirect_nfqueue": {
               "type": "integer",
               "minimum": 0,
@@ -8295,13 +8330,8 @@
               "minimum": 0,
               "maximum": 4294967295
             },
-            "stack": {
-              "type": "string",
-              "enum": [
-                "system",
-                "gvisor",
-                "mixed"
-              ]
+            "multi_queue": {
+              "type": "boolean"
             },
             "platform": {
               "$ref": "#/$defs/TunPlatformOptions"
@@ -18175,5 +18205,5 @@
       ]
     }
   },
-  "x-singbox-version": "1.14.1-awgm.17"
+  "x-singbox-version": "1.15.0-alpha.4-awgm.18"
 }

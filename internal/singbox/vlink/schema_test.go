@@ -262,8 +262,13 @@ func TestMaterializedRouterConfigMatchesSchema(t *testing.T) {
 		Inbounds: []router.Inbound{
 			{Type: "tproxy", Tag: "tproxy-in", Listen: "127.0.0.1", ListenPort: 51281, Network: "udp",
 				UDPFragment: true, UDPTimeout: "5m0s", UDPNATMax: 4096},
+			// Stack намеренно пустой: ключ `stack` помечен в sing-box 1.15
+			// `schema:"omit"` и из схемы ВЫПАЛ, хотя декодер принимает его до
+			// 1.17. Пустой стек — наш дефолт (собственный стек sing-tun), а
+			// legacy-значение уезжает в конфиг только по явному выбору
+			// пользователя — единственный ключ, который мы эмитим вне схемы.
 			{Type: "tun", Tag: "tun-in", InterfaceName: "opkgtun0", Address: []string{"172.18.0.1/30"}, MTU: 1500,
-				AutoRoute: new(bool), AutoRedirect: new(bool), StrictRoute: new(bool), Stack: "gvisor",
+				AutoRoute: new(bool), AutoRedirect: new(bool), StrictRoute: new(bool),
 				UDPTimeout: "5m0s", UDPNATMax: 4096},
 		},
 		Outbounds: []router.Outbound{{Type: "direct", Tag: "direct"}},
