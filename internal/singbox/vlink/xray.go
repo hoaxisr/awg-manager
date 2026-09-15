@@ -375,6 +375,12 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		stream.MergeIntoOutbound(sbOutbound)
 	}
 	if vlessFlow != "" {
+		// Xray-вход раньше ставил flow напрямую и проходил мимо проверки,
+		// которую ссылки и Clash уже получили: подписка в формате Xray несла
+		// чужой flow дальше и роняла применение всей конфигурации.
+		if err := checkVlessFlow(vlessFlow, stream); err != nil {
+			return nil, err
+		}
 		sbOutbound["flow"] = vlessFlow
 	}
 

@@ -13,7 +13,6 @@ func TestMapClashVless_HappyPathTLSWS(t *testing.T) {
 		"server":             "us.example.com",
 		"port":               443,
 		"uuid":               "3a3b1c2e-9999-4321-aaaa-1234567890ab",
-		"flow":               "xtls-rprx-vision",
 		"tls":                true,
 		"servername":         "sni.example.com",
 		"client-fingerprint": "chrome",
@@ -48,8 +47,27 @@ func TestMapClashVless_HappyPathTLSWS(t *testing.T) {
 	if ob["uuid"] != "3a3b1c2e-9999-4321-aaaa-1234567890ab" {
 		t.Errorf("ob.uuid=%v", ob["uuid"])
 	}
-	if ob["flow"] != "xtls-rprx-vision" {
-		t.Errorf("ob.flow=%v", ob["flow"])
+	if ob["flow"] != nil {
+		t.Errorf("ob.flow=%v, want absent", ob["flow"])
+	}
+}
+
+// Vision поверх транспорта не бывает: sing-box отдаёт в него соединение
+// транспорта, а оно не TLS-соединение — падает каждый dial. Фикстура выше
+// несла flow вместе с ws, то есть описывала несуществующую комбинацию.
+func TestMapClashVless_VisionOverWS_Rejected(t *testing.T) {
+	in := map[string]any{
+		"name":    "x",
+		"server":  "us.example.com",
+		"port":    443,
+		"uuid":    "3a3b1c2e-9999-4321-aaaa-1234567890ab",
+		"flow":    "xtls-rprx-vision",
+		"tls":     true,
+		"network": "ws",
+		"ws-opts": map[string]any{"path": "/abc"},
+	}
+	if _, err := mapClashVless(in); err == nil {
+		t.Error("vision поверх ws принят")
 	}
 }
 
@@ -304,5 +322,20 @@ func TestMapClashVless_WSEarlyDataInPath(t *testing.T) {
 	}
 	if _, present := tr["early_data_header_name"]; present {
 		t.Errorf("заголовок навязан там, где mihomo его не задал: %v", tr)
+	}
+}
+
+// Clash network: http + tls: true — та же обфускация внутри TLS. Отказ.
+func TestMapClashVless_HTTPNetworkUnderTLS_Rejected(t *testing.T) {
+	in := map[string]any{
+		"server":    "v.example.com",
+		"port":      443,
+		"uuid":      "3a3b1c2e-9999-4321-aaaa-1234567890ab",
+		"network":   "http",
+		"tls":       true,
+		"http-opts": map[string]any{"path": []any{"/p"}},
+	}
+	if _, err := mapClashVless(in); err == nil {
+		t.Error("принято")
 	}
 }

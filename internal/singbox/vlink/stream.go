@@ -86,6 +86,17 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 	case "grpc":
 		s.Network = "grpc"
 	case "h2", "http":
+		// HTTP/2-транспорт. БЕЗ TLS это h2c — HTTP/2 открытым текстом: v2fly
+		// поднимает под него h2c.NewHandler (transport/internet/http/hub.go),
+		// mihomo просто не оборачивает соединение в TLS. Клиент sing-box h2c
+		// не умеет: выбор HTTP/1.1 против HTTP/2 у него жёстко привязан к
+		// наличию TLS (transport/v2rayhttp/client.go — http2 := tlsConfig != nil),
+		// и молча отдать вместо h2c HTTP/1.1 значит выдать конфиг другого
+		// протокола. Отвергаем (F324). Обфускация заголовком, которая в
+		// sing-box как раз выражается, пишется однозначно — type=tcp&headerType=http.
+		if sec := strings.ToLower(q.Get("security")); sec == "" || sec == "none" {
+			return nil, fmt.Errorf("vlink: transport %q without TLS is h2c, which sing-box cannot dial (header obfuscation is type=tcp&headerType=http)", netRaw)
+		}
 		s.Network = "http"
 	case "httpupgrade":
 		s.Network = "httpupgrade"

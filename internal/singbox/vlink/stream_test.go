@@ -174,6 +174,25 @@ func TestBuildStreamFromQuery_GRPC(t *testing.T) {
 	}
 }
 
+// F324: h2/http без TLS — это h2c, которого клиент sing-box не умеет. Молчать
+// и отдавать вместо него HTTP/1.1 — тот же дефект, что #904.
+func TestBuildStreamFromQuery_HTTP2WithoutTLS_Rejected(t *testing.T) {
+	for _, q := range []string{
+		"type=h2&path=/h",
+		"type=h2&security=none&path=/h",
+		"type=http&host=h.example.com",
+		"type=http&security=none",
+	} {
+		if _, err := BuildStreamFromQuery(parseQuery(t, q), "example.com"); err == nil {
+			t.Errorf("%s: expected error", q)
+		}
+	}
+	// С TLS тот же транспорт — обычный HTTP/2, он поддержан.
+	if _, err := BuildStreamFromQuery(parseQuery(t, "type=h2&security=tls&sni=h"), "example.com"); err != nil {
+		t.Errorf("h2 с TLS: %v", err)
+	}
+}
+
 func TestBuildStreamFromQuery_H2_AliasedToHTTP(t *testing.T) {
 	q := parseQuery(t, "type=h2&security=tls&path=/api&host=h.example.com")
 	s, err := BuildStreamFromQuery(q, "h")

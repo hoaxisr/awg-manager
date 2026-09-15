@@ -103,3 +103,28 @@ func TestParseShadowsocks_FragmentBecomesLabel(t *testing.T) {
 		t.Errorf("Label=%q want %q", got.Label, "SS-Server-01")
 	}
 }
+
+// Ссылочный путь к плагинам обязан быть так же строг, как Clash: имя за
+// пределами двух известных sing-box роняет применение всей конфигурации.
+func TestParseShadowsocks_PluginUnknown_Rejected(t *testing.T) {
+	_, err := ParseLink("ss://YWVzLTI1Ni1nY206c2VjcmV0@example.com:8388?plugin=xray-plugin%3Bmode%3Dwebsocket#x")
+	if err == nil {
+		t.Error("xray-plugin принят")
+	}
+	if _, err := ParseLink("ss://YWVzLTI1Ni1nY206c2VjcmV0@example.com:8388?plugin=obfs-local%3Bobfs%3Dhttp#x"); err != nil {
+		t.Errorf("obfs-local отвергнут: %v", err)
+	}
+}
+
+// obfs-local у sing-box и есть simple-obfs: имя не должно стоить узла.
+func TestParseShadowsocks_SimpleObfsAlias(t *testing.T) {
+	got, err := ParseLink("ss://YWVzLTI1Ni1nY206c2VjcmV0@example.com:8388?plugin=simple-obfs%3Bobfs%3Dhttp#x")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	var ob map[string]any
+	json.Unmarshal(got.Outbound, &ob)
+	if ob["plugin"] != "obfs-local" {
+		t.Errorf("plugin=%v, want obfs-local", ob["plugin"])
+	}
+}

@@ -46,15 +46,20 @@ func mapClashShadowsocks(p map[string]any) (*ParsedOutbound, error) {
 
 	if plugin := asString(p["plugin"]); plugin != "" {
 		opts := nestedMap(p, "plugin-opts")
-		switch plugin {
-		case "obfs":
+		// Сначала отказ (имя вне двух известных валит применение всей
+		// конфигурации — см. checkSSPlugin), затем switch ровно по тем двум,
+		// что остались: ветки default с прокидыванием больше нет.
+		canonical := canonicalSSPlugin(plugin)
+		if err := checkSSPlugin(canonical); err != nil {
+			return nil, err
+		}
+		switch canonical {
+		case "obfs-local":
 			out["plugin"] = "obfs-local"
 			out["plugin_opts"] = serialiseObfsOpts(opts)
 		case "v2ray-plugin":
 			out["plugin"] = "v2ray-plugin"
 			out["plugin_opts"] = serialiseV2rayOpts(opts)
-		default:
-			out["plugin"] = plugin
 		}
 	}
 

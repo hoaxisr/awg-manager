@@ -51,6 +51,10 @@ func parseShadowsocks(input string) (*ParsedOutbound, error) {
 		q, _ := url.ParseQuery(queryStr)
 		if plugin := q.Get("plugin"); plugin != "" {
 			pluginName, opts := splitSSPlugin(plugin)
+			pluginName = canonicalSSPlugin(pluginName)
+			if err := checkSSPlugin(pluginName); err != nil {
+				return nil, err
+			}
 			out["plugin"] = pluginName
 			out["plugin_opts"] = opts
 		}
@@ -145,6 +149,33 @@ func ssSplitHostPort(hp string) (host string, port uint16, err error) {
 		return "", 0, fmt.Errorf("ss: invalid port: %w", err)
 	}
 	return host, uint16(p), nil
+}
+
+// checkSSPlugin отсекает плагины, которых в sing-box нет. Зарегистрированы
+// РОВНО два — obfs-local и v2ray-plugin (transport/sip003: RegisterPlugin), а
+// неизвестное имя валит СОЗДАНИЕ аутбаунда («plugin not found»), то есть и
+// `sing-box check`, то есть применение всей конфигурации целиком. Одна запись
+// чужой подписки (xray-plugin, shadow-tls, kcptun, cloak…) не должна
+// блокировать применение остальных.
+// canonicalSSPlugin приводит имена одного и того же плагина к тому, под которым
+// он зарегистрирован в sing-box: obfs-local И ЕСТЬ simple-obfs
+// (transport/sip003/obfs.go импортирует transport/simple-obfs и регистрирует
+// его как "obfs-local"), а в ссылках ходят оба имени. mihomo нормализует их
+// так же — по подстроке "obfs" (common/convert/converter.go).
+func canonicalSSPlugin(name string) string {
+	switch name {
+	case "simple-obfs", "obfs":
+		return "obfs-local"
+	}
+	return name
+}
+
+func checkSSPlugin(name string) error {
+	switch name {
+	case "obfs-local", "v2ray-plugin":
+		return nil
+	}
+	return fmt.Errorf("vlink: shadowsocks: plugin %q is not supported by sing-box (only obfs-local and v2ray-plugin)", name)
 }
 
 func splitSSPlugin(plugin string) (name, opts string) {

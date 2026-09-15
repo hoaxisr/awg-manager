@@ -248,3 +248,35 @@ func TestParseVless_RealEncryptionRejected(t *testing.T) {
 		t.Fatalf("error must name the culprit, got: %v", err)
 	}
 }
+
+// F324-класс: комбинации, которые sing-box примет конфигом, но не сможет
+// набрать. Чужой flow валит создание аутбаунда, то есть и `sing-box check`,
+// то есть применение всей конфигурации; vision без TLS и vision поверх
+// транспорта падают на каждом dial (см. checkVlessFlow).
+func TestParseVless_FlowCombinations(t *testing.T) {
+	base := "vless://00000000-1111-2222-3333-444444444444@example.com:443?"
+	rejected := map[string]string{
+		"чужой flow":         "type=tcp&security=tls&sni=h&flow=xtls-rprx-direct",
+		"vision без TLS":     "type=tcp&security=none&flow=xtls-rprx-vision",
+		"vision поверх ws":   "type=ws&security=tls&sni=h&path=/p&flow=xtls-rprx-vision",
+		"vision поверх grpc": "type=grpc&security=tls&sni=h&serviceName=s&flow=xtls-rprx-vision",
+	}
+	for name, q := range rejected {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseLink(base + q + "#x"); err == nil {
+				t.Error("принято")
+			}
+		})
+	}
+
+	// Единственная рабочая форма: голый tcp под TLS/Reality.
+	got, err := ParseLink(base + "type=tcp&security=tls&sni=h&flow=xtls-rprx-vision#x")
+	if err != nil {
+		t.Fatalf("tcp+tls+vision: %v", err)
+	}
+	var ob map[string]any
+	json.Unmarshal(got.Outbound, &ob)
+	if ob["flow"] != "xtls-rprx-vision" {
+		t.Errorf("flow=%v", ob["flow"])
+	}
+}

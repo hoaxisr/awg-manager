@@ -293,9 +293,10 @@ func buildSingboxOutbound(ob map[string]any, typ string) (*ParsedOutbound, error
 //   - per-type auth: vless→uuid, trojan→password, shadowsocks→method+password,
 //     hysteria2→password, mieru→transport+username+password+port(s)
 //
-// Anything beyond this (transport/tls/multiplex shape) is left to sing-box
-// itself — if it can't load the outbound at Reload time, the user sees the
-// load error in subscription state.Err.
+// Сверх этого проверяется только то, что бьёт НЕ ПО ОДНОЙ записи (см.
+// checkSingboxFatal). Остальная форма (transport/tls/multiplex) по-прежнему
+// остаётся на усмотрение sing-box: не загрузится — пользователь увидит ошибку
+// в состоянии подписки.
 func validateSingboxOutbound(ob map[string]any, typ string) error {
 	server := asString(ob["server"])
 	if server == "" {
@@ -344,7 +345,78 @@ func validateSingboxOutbound(ob map[string]any, typ string) error {
 			return fmt.Errorf("missing server_port or server_ports")
 		}
 	}
+	return checkSingboxFatal(ob, typ)
+}
+
+// checkSingboxFatal отсекает у готового sing-box-аутбаунда ровно то, что
+// роняет БОЛЬШЕ, чем саму запись: неизвестный плагин и чужой flow валят
+// создание аутбаунда, то есть `sing-box check` и применение ВСЕЙ
+// конфигурации, а нулевой sc-диапазон xhttp — весь процесс уже в рантайме
+// (#908). Подписка в формате sing-box JSON — такой же чужой вход, как ссылка
+// или Clash, и одна её запись не должна стоить остальным работоспособности.
+//
+// Всё прочее здесь намеренно не проверяется: вход уже в семантике sing-box,
+// повторять его валидацию целиком мы не можем и не будем.
+func checkSingboxFatal(ob map[string]any, typ string) error {
+	transport, _ := ob["transport"].(map[string]any)
+	transportType := strings.ToLower(asString(transport["type"]))
+
+	if transport != nil && transportType != "" && !singboxTransportTypes[transportType] {
+		return fmt.Errorf("unsupported transport type %q", transportType)
+	}
+
+	switch typ {
+	case "vless":
+		if flow := asString(ob["flow"]); flow != "" {
+			// Те же правила, что у ссылок и Clash: собираем из готового
+			// аутбаунда минимальный StreamBuilder, чтобы решение принималось
+			// одним кодом, а не вторым его списком.
+			stream := &StreamBuilder{Network: "tcp"}
+			if transportType != "" {
+				stream.Network = transportType
+			}
+			if outboundTLSEnabled(ob) {
+				stream.TLS = &outboundTLS{Enabled: true}
+			}
+			if err := checkVlessFlow(flow, stream); err != nil {
+				return err
+			}
+		}
+	case "shadowsocks":
+		// Имя здесь уже должно быть sing-box'овым, поэтому не переименовываем
+		// (в отличие от ss://-ссылки, где ходят оба написания) — только судим.
+		if plugin := asString(ob["plugin"]); plugin != "" {
+			if err := checkSSPlugin(plugin); err != nil {
+				return err
+			}
+		}
+	}
+
+	if transportType == "xhttp" {
+		// sc_max_each_post_bytes == 0 — паника в рантайме (#908),
+		// x_padding_bytes == 0 — «cannot be disabled», конфигурация не грузится.
+		for _, key := range []string{"sc_max_each_post_bytes", "x_padding_bytes"} {
+			v, present := transport[key]
+			if !present {
+				continue
+			}
+			if lo, _, ok := rangeBounds(v); !ok || lo <= 0 {
+				return fmt.Errorf("%s %v is not usable: the value must start above zero", key, v)
+			}
+		}
+	}
 	return nil
+}
+
+// singboxTransportTypes — транспорты, которые знает наш форк
+// (option/v2ray_transport.go). Незнакомый тип валит загрузку конфигурации.
+var singboxTransportTypes = map[string]bool{
+	"http":        true,
+	"ws":          true,
+	"quic":        true,
+	"grpc":        true,
+	"httpupgrade": true,
+	"xhttp":       true,
 }
 
 // LooksLikeJSON reports whether body parses as a JSON object or array,

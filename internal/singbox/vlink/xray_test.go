@@ -286,6 +286,22 @@ func TestParseXrayBody_TCPHeaderTypes(t *testing.T) {
 	}
 }
 
+// Xray под TLS с обфускацией заголовком невыразим в sing-box — отвергаем, а не
+// подменяем молча на h2.
+func TestParseXrayBody_TCPHeaderHTTPUnderTLS_Rejected(t *testing.T) {
+	body := []byte(`{"outbounds":[{"protocol":"vless","tag":"x","settings":{"vnext":[{` +
+		`"address":"a.example.com","port":443,"users":[{"id":"11111111-2222-3333-4444-555555555555"}]}]},` +
+		`"streamSettings":{"network":"tcp","security":"tls","tlsSettings":{"serverName":"a.example.com"},` +
+		`"tcpSettings":{"header":{"type":"http"}}}}]}`)
+	res := ParseXrayBody(body)
+	if len(res.Outbounds) > 0 {
+		t.Errorf("принят: %s", res.Outbounds[0].Outbound)
+	}
+	if len(res.Errors) == 0 {
+		t.Error("ошибка не сообщена")
+	}
+}
+
 // Современный Xray зовёт ту же сеть "raw" и кладёт заголовок в rawSettings,
 // который ПЕРЕБИВАЕТ tcpSettings (infra/conf/transport_internet.go:18,119).
 // Без этого #904 оставалась незакрытой ровно для свежих конфигов.
@@ -326,6 +342,39 @@ func TestParseXrayBody_RawNetworkAndSettings(t *testing.T) {
 	json.Unmarshal(res.Outbounds[0].Outbound, &ob)
 	if tr, _ := ob["transport"].(map[string]any); tr["path"] != "/raw" {
 		t.Errorf("оба блока: transport=%v, want path=/raw", ob["transport"])
+	}
+}
+
+// Xray-вход раньше ставил flow напрямую, мимо общей проверки: подписка в
+// формате Xray несла чужой flow дальше и роняла применение конфигурации.
+func TestParseXrayBody_FlowGoesThroughSharedCheck(t *testing.T) {
+	body := func(flow, stream string) []byte {
+		return []byte(`{"outbounds":[{"protocol":"vless","tag":"x","settings":{"vnext":[{` +
+			`"address":"a.example.com","port":443,"users":[{"id":"11111111-2222-3333-4444-555555555555",` +
+			`"flow":"` + flow + `"}]}]},"streamSettings":` + stream + `}]}`)
+	}
+	tlsTCP := `{"network":"tcp","security":"tls","tlsSettings":{"serverName":"a.example.com"}}`
+	tlsWS := `{"network":"ws","security":"tls","tlsSettings":{"serverName":"a.example.com"},"wsSettings":{"path":"/w"}}`
+
+	for name, b := range map[string][]byte{
+		"чужой flow":       body("xtls-rprx-direct", tlsTCP),
+		"vision поверх ws": body("xtls-rprx-vision", tlsWS),
+		"vision без TLS":   body("xtls-rprx-vision", `{"network":"tcp"}`),
+	} {
+		res := ParseXrayBody(b)
+		if len(res.Outbounds) > 0 {
+			t.Errorf("%s: принят %s", name, res.Outbounds[0].Outbound)
+		}
+	}
+
+	res := ParseXrayBody(body("xtls-rprx-vision", tlsTCP))
+	if len(res.Outbounds) != 1 {
+		t.Fatalf("tcp+tls+vision: outbounds=%d errors=%v", len(res.Outbounds), res.Errors)
+	}
+	var ob map[string]any
+	json.Unmarshal(res.Outbounds[0].Outbound, &ob)
+	if ob["flow"] != "xtls-rprx-vision" {
+		t.Errorf("flow=%v", ob["flow"])
 	}
 }
 

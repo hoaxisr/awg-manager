@@ -225,14 +225,16 @@ func TestParsedOutboundsMatchSchema(t *testing.T) {
 		"vless reality xhttp + extra": issue797Link,
 		"vless xhttp no extra":        "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=xhttp&mode=stream-up&path=/x&host=h.example.com#h",
 		"vless ws tls":                "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=ws&security=tls&path=/p&host=cdn.example.com&sni=foo.com&fp=chrome&bind_interface=nwg0#a",
-		"vless grpc reality":          "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=grpc&security=reality&serviceName=svc&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=ab12&fp=chrome&flow=xtls-rprx-vision#b",
-		"vless httpupgrade":           "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=httpupgrade&path=/u&host=h.example.com#c",
-		"trojan ws tls":               "trojan://secret@example.com:443?type=ws&security=tls&path=/t&sni=foo.com#d",
-		"shadowsocks":                 "ss://YWVzLTI1Ni1nY206c2VjcmV0@example.com:8388#e",
-		"hysteria2":                   "hysteria2://secret@example.com:443?sni=foo.com&obfs=salamander&obfs-password=p#f",
-		"socks5":                      "socks://user:pass@example.com:1080#g",
-		"mieru":                       "mierus://user:pass@example.com?port=2999&port=3000-3010&protocol=TCP&multiplexing=MULTIPLEXING_LOW&profile=p#i",
-		"naive":                       "naive+https://user:pass@example.com:443#j",
+		"vless grpc reality":          "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=grpc&security=reality&serviceName=svc&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=ab12&fp=chrome#b",
+		// flow живёт только на голом tcp с TLS/Reality — ключ покрывается здесь.
+		"vless tcp reality vision": "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=tcp&security=reality&pbk=jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0&sid=ab12&fp=chrome&flow=xtls-rprx-vision#b2",
+		"vless httpupgrade":        "vless://00000000-1111-2222-3333-444444444444@example.com:443?type=httpupgrade&path=/u&host=h.example.com#c",
+		"trojan ws tls":            "trojan://secret@example.com:443?type=ws&security=tls&path=/t&sni=foo.com#d",
+		"shadowsocks":              "ss://YWVzLTI1Ni1nY206c2VjcmV0@example.com:8388#e",
+		"hysteria2":                "hysteria2://secret@example.com:443?sni=foo.com&obfs=salamander&obfs-password=p#f",
+		"socks5":                   "socks://user:pass@example.com:1080#g",
+		"mieru":                    "mierus://user:pass@example.com?port=2999&port=3000-3010&protocol=TCP&multiplexing=MULTIPLEXING_LOW&profile=p#i",
+		"naive":                    "naive+https://user:pass@example.com:443#j",
 	}
 	for name, link := range links {
 		t.Run(name, func(t *testing.T) {
