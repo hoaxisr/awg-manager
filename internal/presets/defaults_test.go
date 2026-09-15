@@ -104,7 +104,7 @@ func TestDefaultsCatalogCovers(t *testing.T) {
 	}
 	wantParents := map[string]int{
 		"category-ai":    6,
-		"category-games": 10,
+		"category-games": 11,
 		"category-media": 12,
 		"meta":           4,
 		"dev-tools":      3,
