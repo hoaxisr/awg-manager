@@ -133,6 +133,8 @@ func (a *app) setupServer() {
 			SingboxConfigPreview: func() (string, error) {
 				return singboxcfg.MergeDir(a.sbOrch.ConfigDir())
 			},
+			OrphanIfaces:          orphanIfaces(a.opkgPool, a.ndmsQueries.Interfaces),
+			OrphanIfacesExclusive: orphanIfacesExclusive(a.opkgPool, a.ndmsQueries.Interfaces),
 		},
 	)
 

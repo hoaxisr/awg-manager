@@ -35,6 +35,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	singboxorch "github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/external"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
@@ -128,6 +129,8 @@ type Server struct {
 	downloadSvc                *downloader.Service
 	monitoringService          *monitoring.Service
 	singboxSubMembersFn        func() []diagnostics.SingboxSubMember
+	orphanIfacesFn             func(ctx context.Context) ([]external.OrphanIface, error)
+	orphanExclusiveFn          func(ctx context.Context) ([]external.OrphanIface, error)
 	singboxConfigPreviewFn     func() (string, error)
 	dnsCheckService            *dnscheck.Service
 	authMiddleware             *auth.Middleware
@@ -218,6 +221,13 @@ type Deps struct {
 	SingboxSubMembers    func() []diagnostics.SingboxSubMember
 	SingboxConfigPreview func() (string, error)
 
+	// OrphanIfaces — интерфейсы OpkgTun без записи владельца, для списка
+	// внешних туннелей и ручки их удаления. Nil выключает и то, и другое.
+	OrphanIfaces func(ctx context.Context) ([]external.OrphanIface, error)
+	// OrphanIfacesExclusive — то же под семафором выбора, для перепроверки
+	// перед сносом (см. opkgtun.Pool.OrphansExclusive).
+	OrphanIfacesExclusive func(ctx context.Context) ([]external.OrphanIface, error)
+
 	// McpKeys holds the MCP API keys. Nil disables the /mcp endpoint and
 	// its key-management routes entirely (they are never registered).
 	McpKeys *storage.McpKeyStore
@@ -279,6 +289,8 @@ func New(cfg Config, deps Deps) *Server {
 		clashProxy:             deps.ClashProxy,
 		monitoringService:      deps.MonitoringService,
 		singboxSubMembersFn:    deps.SingboxSubMembers,
+		orphanIfacesFn:         deps.OrphanIfaces,
+		orphanExclusiveFn:      deps.OrphanIfacesExclusive,
 		singboxConfigPreviewFn: deps.SingboxConfigPreview,
 		authMiddleware:         auth.NewMiddleware(deps.Sessions, deps.Settings, &authLoggerAdapter{log: appLog}),
 		mcpKeys:                deps.McpKeys,

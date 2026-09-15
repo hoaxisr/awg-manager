@@ -203,6 +203,13 @@ func (a *app) setupServices() {
 
 	// Create external tunnel service
 	a.externalService = external.NewService(a.awgStore, a.settingsStore, a.tunnelService, a.loggingService)
+	// Сироты пула доезжают до списка внешних туннелей: состояние у них одно —
+	// «интерфейс на роутере, которым панель не владеет», и список обязан быть
+	// один (иначе один интерфейс предлагается и принять, и удалить).
+	a.externalService.SetOrphanSource(
+		orphanIfaces(a.opkgPool, a.ndmsQueries.Interfaces),
+		ndmsDescriptionsFn(a.ndmsQueries.Interfaces),
+	)
 
 	// System WireGuard tunnels (read-only + ASC editing) — constructed later,
 	// after ndmsQueries/ndmsCommands are available.

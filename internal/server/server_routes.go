@@ -65,6 +65,7 @@ type routeHandlers struct {
 	dnsRouteHandler      *api.DNSRouteHandler
 	diagRunner           *diagnostics.Runner
 	diagHandler          *api.DiagnosticsHandler
+	orphanIfaceHandler   *api.OrphanIfaceHandler
 	connectionsService   *connections.Service
 	connectionsHandler   *api.ConnectionsHandler
 	signatureHandler     *api.SignatureHandler
@@ -195,6 +196,15 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 		AppLogger:            s.loggingService,
 	})
 	h.diagHandler = api.NewDiagnosticsHandler(h.diagRunner)
+	// Типизированный nil в интерфейсе не равен nil, поэтому проверка тут, а не
+	// в обработчике: иначе его собственный гейт «зависимость не собрана» не
+	// сработал бы и отказ приехал бы паникой на вызове.
+	var orphanNDMS api.OrphanIfaceNDMS
+	if s.ndmsCommands != nil && s.ndmsCommands.Interfaces != nil {
+		orphanNDMS = s.ndmsCommands.Interfaces
+	}
+	h.orphanIfaceHandler = api.NewOrphanIfaceHandler(s.orphanExclusiveFn, orphanNDMS, s.loggingService)
+	h.orphanIfaceHandler.SetTunnelListPublisher(h.tunnelsHandler.PublishTunnelList)
 
 	// Connections viewer
 	h.connectionsService = connections.NewService(s.catalog, s.ndmsTransport, s.dnsRouteService, s.loggingService)
@@ -688,6 +698,7 @@ func (s *Server) registerDiagnosticsRoutes(mux *http.ServeMux, h *routeHandlers)
 	mux.HandleFunc("/api/diagnostics/status", h.guarded(h.diagHandler.Status))
 	mux.HandleFunc("/api/diagnostics/result", h.guarded(h.diagHandler.Result))
 	mux.HandleFunc("/api/diagnostics/stream", h.guarded(h.diagHandler.Stream))
+	mux.HandleFunc("/api/tunnels/orphans/delete", h.guarded(h.orphanIfaceHandler.Delete))
 
 	// DNS proxy info (read-only ndnproxy state). ndmsQueries may be nil on
 	// platforms without NDMS wiring — guard the construction.
