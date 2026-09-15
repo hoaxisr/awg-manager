@@ -219,7 +219,7 @@ var ConfDir = "/opt/etc/awg-manager"
 
 // NewNames creates a Names struct from a tunnel ID.
 // Handles different naming conventions:
-// - OS 5.x: awg10 -> OpkgTun10/opkgtun10 (valid indices: 10-16)
+// - OS 5.x: awg10 -> OpkgTun10/opkgtun10 (номер из пула, см. opkgtun.Ceiling)
 // - OS 4.x: awgm0 -> awgm0 (direct, no NDMS)
 // - Legacy: awg0 -> OpkgTun0/opkgtun0
 func NewNames(tunnelID string) Names {

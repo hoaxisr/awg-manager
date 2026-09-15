@@ -32,8 +32,8 @@ type ExitDecl struct {
 	ID          string // wdttraw-<инстанс>; он же id зеркальной записи
 	InstanceID  string // WdttClientID зеркальной записи
 	Name        string // человеческое имя инстанса, как его дал пользователь
-	NDMSName    string // пин: OpkgTun17..49
-	KernelIface string // пин: opkgtun17..49
+	NDMSName    string // пин: OpkgTunN (номер из общего пула)
+	KernelIface string // пин: opkgtunN
 	Peer        string // адрес сервера — в зеркальную запись, для карточки
 	Enabled     bool   // НАМЕРЕНИЕ, а не факт: бежит ли процесс, знает ядро
 }

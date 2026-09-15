@@ -24,7 +24,7 @@ export interface WdttClientConfig {
 	/** Peer для режима Raw; если пуст — используется peer. */
 	peerRaw?: string;
 	debug?: boolean;
-	/** Raw client: OpkgTun17..49 для маршрутизации LAN (NAT — на wdtt-server) */
+	/** Raw client: OpkgTunN для маршрутизации LAN (NAT — на wdtt-server) */
 	ndmsIface?: string;
 	rawIface?: string;
 	rawClientIp?: string;
@@ -58,7 +58,7 @@ export interface WdttServerConfig {
 	wgIface?: string;
 	/** Kernel raw dev (opkgtunN); пусто → legacy wdttraw0 (`kernelRawIface`) */
 	rawIface?: string;
-	/** NDMS id (OpkgTun17..49) when registered in router */
+	/** NDMS id (OpkgTunN) when registered in router */
 	ndmsIface?: string;
 	/** Открыть DTLS-порт в firewall Keenetic (INPUT). undefined = true */
 	openFirewall?: boolean;
