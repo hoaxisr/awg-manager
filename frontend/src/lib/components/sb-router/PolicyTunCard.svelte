@@ -92,6 +92,16 @@
 
   // Стек — то же поле settings.fakeipStack, что правит панель FakeIP: у бэкенда
   // он один на оба tun-режима. Пустое значение = собственный стек sing-tun.
+  const stackHint = $derived(
+    (() => {
+      const legacy = tunStackHint(cfg.fakeipStack);
+      const first = legacy
+        ? `${legacy[0].toUpperCase()}${legacy.slice(1)}.`
+        : 'Стек sing-tun — самый быстрый; общий с режимом FakeIP.';
+      return `${first} Смена применяется перезапуском движка.`;
+    })(),
+  );
+
   function handleStack(v: TunStack) {
     if (v === (cfg.fakeipStack ?? '')) return;
     void onPatch({ fakeipStack: v });
@@ -142,10 +152,7 @@
     <span class="lbl">TCP/IP-стек</span>
     <Dropdown value={cfg.fakeipStack ?? ''} options={TUN_STACK_OPTIONS} fullWidth onchange={handleStack} />
   </div>
-  <p class="hint">
-    {tunStackHint(cfg.fakeipStack) ?? 'Стек sing-tun — самый быстрый; общий с режимом FakeIP.'}
-    Смена применяется перезапуском движка.
-  </p>
+  <p class="hint">{stackHint}</p>
 
   <div class="field">
     <span class="lbl">Политика доступа</span>

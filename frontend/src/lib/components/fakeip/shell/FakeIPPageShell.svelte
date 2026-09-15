@@ -61,7 +61,7 @@
 		engineState: FakeIPEngineState;
 		wanAutoDetect?: boolean;
 		wanInterface?: string;
-		/** TCP/IP-стек fakeip-tun (gvisor/system) — hero-факт. */
+		/** TCP/IP-стек tun-режимов (пусто = собственный стек sing-tun) — hero-факт. */
 		fakeipStack?: TunStack;
 		/** Активный fakeip tun-интерфейс из статуса (e.g. «opkgtun0»). */
 		fakeipIface?: string;

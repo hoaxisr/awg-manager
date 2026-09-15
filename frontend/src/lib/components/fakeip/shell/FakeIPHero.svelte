@@ -2,8 +2,8 @@
   FakeIPHero — шапка страницы FakeIP (мокап `.hero`): kick-eyebrow + крупный
   title + hsub-факты + панель действий.
 
-  ЧЕСТНОСТЬ субтайтла: показываем только реально известные факты. «gvisor»
-  фиксирован для fakeip-tun (см. EngineSettingsCard), WAN — из settings, состояние
+  ЧЕСТНОСТЬ субтайтла: показываем только реально известные факты. Стек — из
+  настроек (пусто = собственный стек sing-tun), WAN — из settings, состояние
   движка — из engineState. Имя opkgtun-интерфейса и fakeip-пул backend в
   settings/status НЕ отдаёт (DefaultFakeIPTunParams не в DTO) — НЕ выдумываем их,
   как и EngineSettingsCard показывает пул «по умолчанию».
@@ -38,7 +38,7 @@
 		wanAutoDetect?: boolean;
 		/** WAN: явный системный интерфейс (когда не авто). */
 		wanInterface?: string;
-		/** TCP/IP-стек fakeip-tun (gvisor/system) — первый факт субтайтла. */
+		/** TCP/IP-стек tun-режимов (пусто = собственный стек sing-tun) — первый факт субтайтла. */
 		fakeipStack?: TunStack;
 		/** Активный fakeip tun-интерфейс из статуса (e.g. «opkgtun0»); опционально. */
 		fakeipIface?: string;
