@@ -111,13 +111,18 @@ func TestClashFieldsToValues_HTTP(t *testing.T) {
 		"port":    443,
 		"network": "http",
 		"http-opts": map[string]any{
-			"path": "/api",
-			"host": "example.com",
+			"path":    "/api",
+			"headers": map[string]any{"Host": "example.com"},
 		},
 	}
 	got := clashFieldsToValues(in)
-	if got.Get("type") != "http" {
-		t.Errorf("type=%q want http", got.Get("type"))
+	// network: http у mihomo — обфускация заголовком поверх tcp, поэтому
+	// уезжает тем же ключом, что и headerType=http у share-ссылки.
+	if got.Get("type") != "tcp" {
+		t.Errorf("type=%q want tcp", got.Get("type"))
+	}
+	if got.Get("headerType") != "http" {
+		t.Errorf("headerType=%q want http", got.Get("headerType"))
 	}
 	if got.Get("path") != "/api" {
 		t.Errorf("path=%q want /api", got.Get("path"))
@@ -133,8 +138,8 @@ func TestClashFieldsToValues_HTTPListHost(t *testing.T) {
 		"port":    443,
 		"network": "http",
 		"http-opts": map[string]any{
-			"path": []any{"/api"},
-			"host": []any{"cdn.example.com"},
+			"path":    []any{"/api"},
+			"headers": map[string]any{"Host": []any{"cdn.example.com"}},
 		},
 	}
 	got := clashFieldsToValues(in)
@@ -143,6 +148,32 @@ func TestClashFieldsToValues_HTTPListHost(t *testing.T) {
 	}
 	if got.Get("path") != "/api" {
 		t.Errorf("path=%q want /api", got.Get("path"))
+	}
+}
+
+// mihomo несёт метод запроса в http-opts.method — он должен доезжать до
+// транспорта, а не теряться (F323).
+func TestClashFieldsToValues_HTTPMethod(t *testing.T) {
+	in := map[string]any{
+		"server":  "h",
+		"port":    80,
+		"network": "http",
+		"http-opts": map[string]any{
+			"method":  "POST",
+			"path":    []any{"/api"},
+			"headers": map[string]any{"Host": []any{"cdn.example.com"}},
+		},
+	}
+	got := clashFieldsToValues(in)
+	if got.Get("method") != "POST" {
+		t.Errorf("method=%q want POST", got.Get("method"))
+	}
+	s, err := BuildStreamFromQuery(got, "h")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if s.HTTPMethod != "POST" {
+		t.Errorf("stream method=%q want POST", s.HTTPMethod)
 	}
 }
 

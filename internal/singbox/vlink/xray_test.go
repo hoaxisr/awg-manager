@@ -241,3 +241,123 @@ func TestParseXrayBody_RejectsVlessEncryption(t *testing.T) {
 		t.Error("ошибка не сообщена")
 	}
 }
+
+// Тип заголовка tcp уезжает в общий слой как есть: http даёт транспорт,
+// none — обычный tcp, а заголовок mKCP на tcp отвергается ровно так же, как в
+// ссылке (#904, F323). Раньше Xray-путь фильтровал тип у себя и на всём, кроме
+// http, молча отдавал голый tcp.
+func TestParseXrayBody_TCPHeaderTypes(t *testing.T) {
+	body := func(headerType string) []byte {
+		return []byte(`{"outbounds":[{"protocol":"vless","tag":"x","settings":{"vnext":[{` +
+			`"address":"a.example.com","port":80,"users":[{"id":"11111111-2222-3333-4444-555555555555"}]}]},` +
+			`"streamSettings":{"network":"tcp","tcpSettings":{"header":{"type":"` + headerType + `",` +
+			`"request":{"method":"POST","path":["/p"],"headers":{"Host":["h.example.com"]}}}}}}]}`)
+	}
+
+	res := ParseXrayBody(body("http"))
+	if len(res.Outbounds) != 1 {
+		t.Fatalf("http: outbounds=%d errors=%v", len(res.Outbounds), res.Errors)
+	}
+	// json.Unmarshal в непустую карту дописывает ключи, не удаляя чужие, —
+	// поэтому под каждый случай своя.
+	var withHeader map[string]any
+	json.Unmarshal(res.Outbounds[0].Outbound, &withHeader)
+	tr, _ := withHeader["transport"].(map[string]any)
+	if tr["type"] != "http" || tr["path"] != "/p" || tr["method"] != "POST" {
+		t.Errorf("http: transport=%v, want type=http path=/p method=POST", tr)
+	}
+
+	res = ParseXrayBody(body("none"))
+	if len(res.Outbounds) != 1 {
+		t.Fatalf("none: outbounds=%d errors=%v", len(res.Outbounds), res.Errors)
+	}
+	var plain map[string]any
+	json.Unmarshal(res.Outbounds[0].Outbound, &plain)
+	if plain["transport"] != nil {
+		t.Errorf("none: transport=%v, want absent", plain["transport"])
+	}
+
+	res = ParseXrayBody(body("srtp"))
+	if len(res.Outbounds) > 0 {
+		t.Errorf("srtp: принят аутбаунд %s", res.Outbounds[0].Outbound)
+	}
+	if len(res.Errors) == 0 {
+		t.Error("srtp: ошибка не сообщена")
+	}
+}
+
+// Современный Xray зовёт ту же сеть "raw" и кладёт заголовок в rawSettings,
+// который ПЕРЕБИВАЕТ tcpSettings (infra/conf/transport_internet.go:18,119).
+// Без этого #904 оставалась незакрытой ровно для свежих конфигов.
+func TestParseXrayBody_RawNetworkAndSettings(t *testing.T) {
+	body := func(network, key string) []byte {
+		return []byte(`{"outbounds":[{"protocol":"vless","tag":"x","settings":{"vnext":[{` +
+			`"address":"a.example.com","port":80,"users":[{"id":"11111111-2222-3333-4444-555555555555"}]}]},` +
+			`"streamSettings":{"network":"` + network + `","` + key + `":{"header":{"type":"http",` +
+			`"request":{"path":["/p"],"headers":{"Host":["h.example.com"]}}}}}}]}`)
+	}
+	for _, tc := range []struct{ network, key string }{
+		{"raw", "rawSettings"},
+		{"raw", "tcpSettings"},
+		{"tcp", "rawSettings"},
+	} {
+		res := ParseXrayBody(body(tc.network, tc.key))
+		if len(res.Outbounds) != 1 {
+			t.Fatalf("%s/%s: outbounds=%d errors=%v", tc.network, tc.key, len(res.Outbounds), res.Errors)
+		}
+		var ob map[string]any
+		json.Unmarshal(res.Outbounds[0].Outbound, &ob)
+		tr, _ := ob["transport"].(map[string]any)
+		if tr["type"] != "http" || tr["path"] != "/p" {
+			t.Errorf("%s/%s: transport=%v", tc.network, tc.key, tr)
+		}
+	}
+
+	// rawSettings приоритетнее: заголовок берётся из него, а не из tcpSettings.
+	both := []byte(`{"outbounds":[{"protocol":"vless","tag":"x","settings":{"vnext":[{` +
+		`"address":"a.example.com","port":80,"users":[{"id":"11111111-2222-3333-4444-555555555555"}]}]},` +
+		`"streamSettings":{"network":"raw","tcpSettings":{"header":{"type":"none"}},` +
+		`"rawSettings":{"header":{"type":"http","request":{"path":["/raw"]}}}}}]}`)
+	res := ParseXrayBody(both)
+	if len(res.Outbounds) != 1 {
+		t.Fatalf("оба блока: outbounds=%d errors=%v", len(res.Outbounds), res.Errors)
+	}
+	var ob map[string]any
+	json.Unmarshal(res.Outbounds[0].Outbound, &ob)
+	if tr, _ := ob["transport"].(map[string]any); tr["path"] != "/raw" {
+		t.Errorf("оба блока: transport=%v, want path=/raw", ob["transport"])
+	}
+}
+
+// httpSettings.method и строчный headers.host — оба читаются.
+func TestParseXrayBody_HTTPMethodAndLowercaseHost(t *testing.T) {
+	h2 := []byte(`{"outbounds":[{"protocol":"vless","tag":"x","settings":{"vnext":[{` +
+		`"address":"a.example.com","port":443,"users":[{"id":"11111111-2222-3333-4444-555555555555"}]}]},` +
+		`"streamSettings":{"network":"h2","security":"tls","tlsSettings":{"serverName":"a.example.com"},` +
+		`"httpSettings":{"method":"POST","path":"/h","host":["h.example.com"]}}}]}`)
+	res := ParseXrayBody(h2)
+	if len(res.Outbounds) != 1 {
+		t.Fatalf("h2: outbounds=%d errors=%v", len(res.Outbounds), res.Errors)
+	}
+	var ob map[string]any
+	json.Unmarshal(res.Outbounds[0].Outbound, &ob)
+	if tr, _ := ob["transport"].(map[string]any); tr["method"] != "POST" {
+		t.Errorf("h2 method=%v, want POST", ob["transport"])
+	}
+
+	lower := []byte(`{"outbounds":[{"protocol":"vless","tag":"x","settings":{"vnext":[{` +
+		`"address":"a.example.com","port":80,"users":[{"id":"11111111-2222-3333-4444-555555555555"}]}]},` +
+		`"streamSettings":{"network":"tcp","tcpSettings":{"header":{"type":"http",` +
+		`"request":{"headers":{"host":"lower.example.com"}}}}}}]}`)
+	res = ParseXrayBody(lower)
+	if len(res.Outbounds) != 1 {
+		t.Fatalf("host: outbounds=%d errors=%v", len(res.Outbounds), res.Errors)
+	}
+	var ob2 map[string]any
+	json.Unmarshal(res.Outbounds[0].Outbound, &ob2)
+	tr, _ := ob2["transport"].(map[string]any)
+	hosts, _ := tr["host"].([]any)
+	if len(hosts) != 1 || hosts[0] != "lower.example.com" {
+		t.Errorf("host=%v", tr["host"])
+	}
+}
