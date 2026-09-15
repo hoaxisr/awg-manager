@@ -579,7 +579,7 @@ describe('AmneziaPremiumWizard', () => {
 		await fireEvent.input(screen.getByLabelText('Имя туннеля'), { target: { value: 'awg-fx' } });
 		await settle();
 
-		const issue = screen.getByRole('button', { name: 'Создать туннель' }) as HTMLButtonElement;
+		const issue = screen.getByRole<HTMLButtonElement>('button', { name: 'Создать туннель' });
 		expect(issue.disabled).toBe(true);
 
 		// Выбор страны подключения отпирает её — и ничего больше не требуется.
@@ -588,7 +588,7 @@ describe('AmneziaPremiumWizard', () => {
 		await settle();
 		expect(amneziaPremiumSaveDeclaredCountry).toHaveBeenCalledWith('ag');
 		expect(
-			(screen.getByRole('button', { name: 'Создать туннель' }) as HTMLButtonElement).disabled
+			screen.getByRole<HTMLButtonElement>('button', { name: 'Создать туннель' }).disabled
 		).toBe(false);
 	});
 
