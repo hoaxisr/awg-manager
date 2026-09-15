@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion   = 37
+	CurrentSchemaVersion   = 38
 	DefaultPort            = 2222
 	DefaultInterface       = "br0"
 	DefaultPingCheckTarget = "8.8.8.8"
@@ -320,6 +320,9 @@ func (s *SettingsStore) Load() (*Settings, error) {
 		}
 		if settings.SchemaVersion < 37 {
 			s.migrateToV37(&settings)
+		}
+		if settings.SchemaVersion < 38 {
+			s.migrateToV38(&settings)
 		}
 	}
 

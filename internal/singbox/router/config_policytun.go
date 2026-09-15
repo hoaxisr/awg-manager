@@ -8,7 +8,7 @@ type PolicyTunInboundSpec struct {
 	TunAddr4   string // e.g. "172.18.0.1/30"
 	TunAddr6   string // e.g. "fdfe:dcba:9876::1/126" (empty to omit v6)
 	MTU        int    //
-	Stack      string // "gvisor" (default; empty → gvisor) or "system"
+	Stack      string // пусто → ключ не пишется (собственный стек sing-tun); legacy: gvisor/system/mixed
 	UDPTimeout string // empty → DefaultUDPTimeout via resolveUDPTimeout
 	UDPNATMax  int    // 0 → sing-box сам выбирает (авто, ключ не пишется)
 }
@@ -42,11 +42,6 @@ func ensurePolicyTunInbound(in []Inbound, spec PolicyTunInboundSpec) []Inbound {
 	if spec.TunAddr6 != "" {
 		addrs = append(addrs, spec.TunAddr6)
 	}
-	// Stack: empty defaults to gvisor.
-	stack := spec.Stack
-	if stack == "" {
-		stack = "gvisor"
-	}
 	// gso и endpoint_independent_nat здесь больше не выставляются: sing-box
 	// ≥1.13 удалил `gso` (true — фатальная ошибка при старте, false молча
 	// игнорируется; GSO движок теперь включает сам, и только при
@@ -62,7 +57,7 @@ func ensurePolicyTunInbound(in []Inbound, spec PolicyTunInboundSpec) []Inbound {
 		AutoRoute:     boolPtr(false),
 		AutoRedirect:  boolPtr(false),
 		StrictRoute:   boolPtr(false),
-		Stack:         stack,
+		Stack:         spec.Stack,
 		UDPTimeout:    resolveUDPTimeout(spec.UDPTimeout),
 		UDPNATMax:     spec.UDPNATMax,
 	}

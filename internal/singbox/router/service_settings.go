@@ -292,11 +292,14 @@ const (
 // struct is a fixed point.
 func normalizeFakeIPSettings(sr *storage.SingboxRouterSettings) error {
 	def := DefaultFakeIPTunParams()
-	if sr.FakeIPStack == "" {
-		sr.FakeIPStack = "gvisor"
-	}
-	if sr.FakeIPStack != "gvisor" && sr.FakeIPStack != "system" {
-		return fmt.Errorf("fakeipStack must be %q or %q, got %q", "gvisor", "system", sr.FakeIPStack)
+	// Стек НЕ дефолтится намеренно: пустое значение — это «не писать ключ
+	// stack», то есть собственный стек sing-tun (sing-box ≥1.15). Подстановка
+	// "gvisor", как было до 1.15, сделала бы новый стек недостижимым через API.
+	switch sr.FakeIPStack {
+	case "", "gvisor", "system", "mixed":
+	default:
+		return fmt.Errorf("fakeipStack must be empty (sing-tun stack) or one of %q, %q, %q, got %q",
+			"gvisor", "system", "mixed", sr.FakeIPStack)
 	}
 	if sr.FakeIPPool4 == "" {
 		sr.FakeIPPool4 = def.Inet4Range

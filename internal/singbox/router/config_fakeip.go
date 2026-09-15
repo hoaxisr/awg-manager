@@ -20,8 +20,8 @@ type FakeIPTunSpec struct {
 	Inet6Range string // fakeip v6 pool (empty to omit v6)
 	CachePath  string //
 	RealServer string // real upstream resolver, e.g. "1.1.1.1"
-	// Stack selects the sing-tun stack: "gvisor" (default; empty → gvisor) or
-	// "system".
+	// Stack selects the sing-tun stack: пусто → ключ не пишется, движок берёт
+	// собственный стек sing-tun; legacy — "gvisor", "system", "mixed".
 	Stack string
 	// UDPTimeout is the UDP-NAT expiration for the tun inbound (Go duration
 	// string). Empty → DefaultUDPTimeout via resolveUDPTimeout. Without it
@@ -63,10 +63,6 @@ func ensureFakeIPOverlay(cfg *RouterConfig, spec FakeIPTunSpec) {
 	if spec.TunAddr6 != "" {
 		addrs = append(addrs, spec.TunAddr6)
 	}
-	stack := spec.Stack
-	if stack == "" {
-		stack = "gvisor"
-	}
 	udpTimeout := resolveUDPTimeout(spec.UDPTimeout)
 	// gso и endpoint_independent_nat здесь больше не выставляются: sing-box
 	// ≥1.13 удалил `gso` (true — фатальная ошибка при старте, false молча
@@ -83,7 +79,7 @@ func ensureFakeIPOverlay(cfg *RouterConfig, spec FakeIPTunSpec) {
 		AutoRoute:     boolPtr(false),
 		AutoRedirect:  boolPtr(false),
 		StrictRoute:   boolPtr(false),
-		Stack:         stack,
+		Stack:         spec.Stack,
 		UDPTimeout:    udpTimeout,
 		UDPNATMax:     spec.UDPNATMax,
 	}

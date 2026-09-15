@@ -1490,8 +1490,11 @@ func TestNormalizeSingboxRouterSettings_DefaultsFakeIPFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("normalize: %v", err)
 	}
-	if out.FakeIPStack != "gvisor" {
-		t.Errorf("FakeIPStack = %q, want gvisor", out.FakeIPStack)
+	// Стек — ИСКЛЮЧЕНИЕ из дефолтинга (как и pool6): пустое значит «ключ stack
+	// не писать» = собственный стек sing-tun, и подстановка legacy-значения
+	// сделала бы его недостижимым.
+	if out.FakeIPStack != "" {
+		t.Errorf("FakeIPStack = %q, want \"\" (стек не дефолтится)", out.FakeIPStack)
 	}
 	if out.FakeIPPool4 != def.Inet4Range {
 		t.Errorf("FakeIPPool4 = %q, want %q", out.FakeIPPool4, def.Inet4Range)
@@ -1601,9 +1604,11 @@ func TestValidateSingboxRouterSettings_FakeIPFields(t *testing.T) {
 		wantErr bool
 	}{
 		{"defaults ok", func(s *storage.SingboxRouterSettings) {}, false},
+		{"stack empty ok", func(s *storage.SingboxRouterSettings) { s.FakeIPStack = "" }, false},
 		{"stack gvisor", func(s *storage.SingboxRouterSettings) { s.FakeIPStack = "gvisor" }, false},
 		{"stack system", func(s *storage.SingboxRouterSettings) { s.FakeIPStack = "system" }, false},
-		{"stack bad", func(s *storage.SingboxRouterSettings) { s.FakeIPStack = "mixed" }, true},
+		{"stack mixed", func(s *storage.SingboxRouterSettings) { s.FakeIPStack = "mixed" }, false},
+		{"stack bad", func(s *storage.SingboxRouterSettings) { s.FakeIPStack = "lwip" }, true},
 		{"pool4 bad", func(s *storage.SingboxRouterSettings) { s.FakeIPPool4 = "not-a-cidr" }, true},
 		{"pool4 is v6", func(s *storage.SingboxRouterSettings) { s.FakeIPPool4 = "fd00::/8" }, true},
 		{"pool6 empty ok", func(s *storage.SingboxRouterSettings) { s.FakeIPPool6 = "" }, false},

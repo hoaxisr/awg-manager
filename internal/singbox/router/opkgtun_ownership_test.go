@@ -328,8 +328,10 @@ func TestFakeIPEnable_EmptyPool6DisablesV6(t *testing.T) {
 }
 
 // СТРАХОВКА (не красный: на достижимых путях хранимое уже нормализовано):
-// оверлей строится из НОРМАЛИЗОВАННЫХ настроек — сырой пустой FakeIPStack в
-// персисте не должен дать пустой stack в спеке оверлея.
+// оверлей строится из НОРМАЛИЗОВАННЫХ настроек — сырой нулевой FakeIPMTU в
+// персисте не должен уехать в конфиг нулём. Пустой FakeIPStack в той же записи
+// проверяет обратное свойство: его нормализация НЕ заполняет, и ключ `stack`
+// в конфиг не попадает (собственный стек sing-tun).
 func TestFakeIPOverlayFromState_UsesNormalizedSettings(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
 	if err := h.svc.Enable(context.Background()); err != nil {
@@ -341,6 +343,7 @@ func TestFakeIPOverlayFromState_UsesNormalizedSettings(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	all.SingboxRouter.FakeIPStack = ""
+	all.SingboxRouter.FakeIPMTU = 0
 	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -357,8 +360,11 @@ func TestFakeIPOverlayFromState_UsesNormalizedSettings(t *testing.T) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("unmarshal 21-fakeip.json: %v", err)
 	}
-	if len(cfg.Inbounds) == 0 || cfg.Inbounds[0].Stack != "gvisor" {
-		t.Errorf("tun-инбаунд stack = %q, want \"gvisor\" (дефолт нормализации): %s", cfg.Inbounds[0].Stack, data)
+	if len(cfg.Inbounds) == 0 || cfg.Inbounds[0].MTU != 1500 {
+		t.Fatalf("tun-инбаунд MTU = %d, want 1500 (дефолт нормализации): %s", cfg.Inbounds[0].MTU, data)
+	}
+	if cfg.Inbounds[0].Stack != "" || strings.Contains(string(data), `"stack"`) {
+		t.Errorf("tun-инбаунд stack = %q, want пустой и без ключа в файле: %s", cfg.Inbounds[0].Stack, data)
 	}
 }
 
