@@ -106,6 +106,29 @@ type ExternalTunnelInfo struct {
 	LastHandshake string `json:"lastHandshake,omitempty"`
 	RxBytes       int64  `json:"rxBytes"`
 	TxBytes       int64  `json:"txBytes"`
+
+	// Description — описание интерфейса в NDMS. Имена OpkgTun у всех одинаковой
+	// формы, и это единственное, по чему пользователь опознаёт, чей это
+	// интерфейс, прежде чем принять его или удалить.
+	Description string `json:"description,omitempty"`
+
+	// Addresses — адреса устройства в ядре, и ConflictsWith — имя ДЕЙСТВУЮЩЕГО
+	// туннеля, чей адрес совпал. Совпадение делает интерфейс не просто лишним,
+	// а заряженным конфликтом: он выстрелит, когда оба окажутся подняты.
+	Addresses     []string `json:"addresses,omitempty"`
+	ConflictsWith string   `json:"conflictsWith,omitempty"`
+
+	// Removable — интерфейс можно снести: аллокатор номеров не знает за ним ни
+	// одного владельца. Решает ОН, а не факт присутствия строки в списке: номер
+	// может держать владелец, которого стор туннелей не видит (половина прокси,
+	// режим роутера), и кнопка на такой строке врала бы.
+	Removable bool `json:"removable,omitempty"`
+
+	// NDMSRecord / KernelDevice — из каких половин интерфейс состоит. Половины
+	// существуют независимо: после `ip link del` запись NDMS живёт дальше, а
+	// устройство, поднятое мимо NDMS, записи не имеет вовсе.
+	NDMSRecord   bool `json:"ndmsRecord,omitempty"`
+	KernelDevice bool `json:"kernelDevice,omitempty"`
 }
 
 // IsAWGInterface checks if an interface is an AWG tunnel by running awg show.

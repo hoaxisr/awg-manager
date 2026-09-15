@@ -23,6 +23,18 @@ type ExternalTunnelDTO struct {
 	Endpoint      string `json:"endpoint,omitempty" example:"ext.example.com:51820"`
 	RxBytes       int64  `json:"rxBytes" example:"1048576"`
 	TxBytes       int64  `json:"txBytes" example:"524288"`
+
+	// Description — описание интерфейса в NDMS: единственное, по чему видно,
+	// чей это интерфейс, прежде чем принять его или удалить.
+	Description string `json:"description,omitempty" example:"ForeignAWG"`
+	// Addresses / ConflictsWith — адреса устройства и имя ДЕЙСТВУЮЩЕГО туннеля,
+	// чей адрес совпал: такое совпадение выстрелит, когда оба будут подняты.
+	Addresses     []string `json:"addresses,omitempty"`
+	ConflictsWith string   `json:"conflictsWith,omitempty" example:"Germany_AWG_3.1"`
+	// NDMSRecord / KernelDevice — из каких половин состоит интерфейс: они
+	// существуют независимо и снимаются независимо.
+	NDMSRecord   bool `json:"ndmsRecord,omitempty" example:"true"`
+	KernelDevice bool `json:"kernelDevice,omitempty" example:"true"`
 }
 
 // ExternalTunnelsResponse is the envelope for GET /external-tunnels.

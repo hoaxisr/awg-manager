@@ -27,6 +27,9 @@ export interface TunnelPageModalsContext {
 	adoptLoading: boolean;
 	readonly adoptingInterface: string;
 	deleteConfirmId: string | null;
+	confirmExternalDelete: { interfaceName: string; label: string; live: boolean; conflictsWith: string; address: string } | null;
+	confirmExternalDeleteBusy: boolean;
+	confirmExternalDeleteNow(): Promise<void>;
 	unlockConfirmId: string | null;
 	referencedDetails: TunnelReferencedError | null;
 	referencedTunnelName: string;

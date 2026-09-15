@@ -248,12 +248,25 @@ export interface DeleteResult {
 export interface ExternalTunnel {
 	interfaceName: string;
 	tunnelNumber: number;
+	/** Поверх интерфейса работает AWG-туннель — только такой можно принять. */
 	isAWG: boolean;
 	publicKey?: string;
 	endpoint?: string;
 	lastHandshake?: string;
 	rxBytes: number;
 	txBytes: number;
+	/** Описание интерфейса в NDMS: единственное, по чему видно, чей он. */
+	description?: string;
+	addresses?: string[];
+	/** Имя действующего туннеля, чей адрес совпал с адресом этого интерфейса. */
+	conflictsWith?: string;
+	/** Интерфейс можно снести: за номером нет ни одного владельца. Решает
+	 *  сервер — номер может держать владелец, которого список туннелей не
+	 *  видит, и кнопка на такой строке врала бы. */
+	removable?: boolean;
+	/** Из каких половин состоит: запись NDMS и/или устройство в ядре. */
+	ndmsRecord?: boolean;
+	kernelDevice?: boolean;
 }
 
 export interface SystemTunnel {

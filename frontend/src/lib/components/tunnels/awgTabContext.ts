@@ -70,6 +70,7 @@ export interface AwgTabContext {
 	latestRate(id: string): { rx: number; tx: number };
 	sparklineSeries(id: string): { rx: number[]; tx: number[] };
 	handleAdoptClick(interfaceName: string): void;
+	handleExternalDelete(interfaceName: string): void;
 	handleAwgSortChange(key: AwgTunnelSortKey): void;
 	handleDragLeave(): void;
 	handleDragOver(event: DragEvent): void;

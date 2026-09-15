@@ -46,6 +46,7 @@ export interface DashboardFlatContext {
 	flatGridEl: HTMLElement | null;
 	// --- обработчики ---
 	handleAdoptClick(interfaceName: string): void;
+	handleExternalDelete(interfaceName: string): void;
 	handleExportAll(): Promise<void>;
 	handleGripKeydown(index: number, event: KeyboardEvent): void;
 	handleGripPointerDown(index: number, event: PointerEvent): void;

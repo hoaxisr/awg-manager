@@ -859,6 +859,39 @@ const MOCK_EXTERNAL_TUNNELS = [
 		rxBytes: 1_200_000,
 		txBytes: 640_000,
 	},
+	// Интерфейсы OpkgTun, которыми панель не владеет. Расклад повторяет разбор
+	// с роутера: opkgtun13 — чужой AWG-туннель (его МОЖНО принять), opkgtun11 —
+	// устройство, поднятое мимо NDMS, и его адрес совпал с адресом
+	// действующего туннеля (заряженный конфликт, принимать нечего).
+	{
+		interfaceName: 'opkgtun13',
+		removable: true,
+		tunnelNumber: 13,
+		isAWG: true,
+		publicKey: mockPubkey(83),
+		endpoint: '198.51.100.44:51820',
+		lastHandshake: '40 сек назад',
+		rxBytes: 820_000,
+		txBytes: 310_000,
+		description: 'ForeignAWG',
+		addresses: ['10.8.1.7'],
+		ndmsRecord: true,
+		kernelDevice: true,
+	},
+	{
+		interfaceName: 'opkgtun11',
+		removable: true,
+		tunnelNumber: 11,
+		isAWG: false,
+		lastHandshake: '',
+		rxBytes: 0,
+		txBytes: 0,
+		description: '',
+		addresses: ['10.8.1.3'],
+		conflictsWith: 'DE Frankfurt',
+		ndmsRecord: false,
+		kernelDevice: true,
+	},
 ];
 
 const MOCK_SINGBOX_TUNNELS = [
@@ -6666,6 +6699,66 @@ const server = http.createServer(async (req, res) => {
 
 	if (req.method === 'GET' && path === '/diagnostics/dns-proxy') {
 		send(res, 200, { success: true, data: mockDnsProxyInfo });
+		return;
+	}
+
+	// Поток диагностики: короткий детерминированный прогон. На Prism его не
+	// увидеть вовсе — SSE тот не умеет, — а без него вкладка «Проверки» в моке
+	// пустая.
+	if (req.method === 'GET' && path === '/diagnostics/stream') {
+		res.writeHead(200, {
+			'Content-Type': 'text/event-stream',
+			'Cache-Control': 'no-cache',
+			Connection: 'keep-alive',
+		});
+
+		const steps = [
+			['phase', { phase: 'global_tests', label: 'Базовые проверки...' }],
+			['test', { test: { name: 'wan_connectivity', description: 'WAN up с gateway', status: 'pass', detail: 'default via 192.168.1.1 dev eth3', level: 'basic' } }],
+			['test', { test: { name: 'ndms_health', description: 'NDMS отвечает', status: 'pass', detail: '5.1.5', level: 'basic' } }],
+			['test', { test: { name: 'endpoint_reachable', description: 'Ping endpoint', status: 'warn', detail: 'Ping 203.0.113.7: нет ответа (ICMP часто закрыт на VPS — см. awg_handshake)', level: 'basic' } }],
+			['phase', { phase: 'cross_tunnel_tests', label: 'Проверка маршрутов...' }],
+			['test', { test: { name: 'route_leak_check', description: 'Осиротевшие маршруты', status: 'pass', detail: 'Нет осиротевших маршрутов', level: 'detailed' } }],
+			['done', {
+				summary: { total: 5, passed: 3, failed: 0, skipped: 0, hasReport: true },
+			}],
+		];
+
+		let i = 0;
+		const iv = setInterval(() => {
+			if (i >= steps.length) {
+				clearInterval(iv);
+				res.end();
+				return;
+			}
+			const [event, payload] = steps[i++];
+			res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+		}, 350);
+
+		const cleanup = () => clearInterval(iv);
+		req.on('close', cleanup);
+		req.on('error', cleanup);
+		return;
+	}
+
+	// Удаление осиротевшего интерфейса. Сиротство перепроверяется здесь так же,
+	// как на бэкенде: кнопка могла быть нажата по устаревшему отчёту.
+	if (req.method === 'POST' && path === '/tunnels/orphans/delete') {
+		const body = await readJsonBody(req);
+		const iface = String(body?.iface ?? '');
+		const idx = MOCK_EXTERNAL_TUNNELS.findIndex(
+			(t) => t.interfaceName.toLowerCase() === iface.toLowerCase(),
+		);
+		if (idx === -1) {
+			send(res, 409, {
+				error: true,
+				message: `${iface} больше не сирота — у номера есть владелец. Обновите диагностику.`,
+				code: 'NOT_ORPHAN',
+			});
+			return;
+		}
+		MOCK_EXTERNAL_TUNNELS.splice(idx, 1);
+		send(res, 200, { success: true, data: { ok: true } });
 		return;
 	}
 

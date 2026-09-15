@@ -620,9 +620,14 @@ const api_DownloadSettingsDTO: v.GenericSchema = v.looseObject({
 });
 
 const api_ExternalTunnelDTO: v.GenericSchema = v.looseObject({
+	addresses: v.optional(v.nullable(v.array(v.string()))),
+	conflictsWith: v.optional(v.nullable(v.string())),
+	description: v.optional(v.nullable(v.string())),
 	endpoint: v.optional(v.nullable(v.string())),
 	interfaceName: v.optional(v.nullable(v.string())),
 	isAWG: v.optional(v.nullable(v.boolean())),
+	kernelDevice: v.optional(v.nullable(v.boolean())),
+	ndmsRecord: v.optional(v.nullable(v.boolean())),
 	publicKey: v.optional(v.nullable(v.string())),
 	rxBytes: v.optional(v.nullable(v.number())),
 	tunnelNumber: v.optional(v.nullable(v.number())),
@@ -3632,6 +3637,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /terminal/stop": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/delete": v.lazy(() => api_TunnelDeleteResponse),
 	"POST /tunnels/lock": v.lazy(() => api_TunnelLockResponse),
+	"POST /tunnels/orphans/delete": v.lazy(() => api_OkResponse),
 	"POST /tunnels/pingcheck": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/pingcheck/remove": v.lazy(() => api_APIEnvelope),
 	"POST /tunnels/replace": v.lazy(() => api_APIEnvelope),

@@ -563,6 +563,18 @@ export class SystemClient extends TunnelsClient {
 		return this.request('/diagnostics/status');
 	}
 
+	/**
+	 * Удаляет осиротевший интерфейс OpkgTun (проверка orphan_iface_check).
+	 * Сиротство перепроверяется на сервере: отчёт мог устареть, и номер к
+	 * этому моменту мог достаться новому туннелю.
+	 */
+	async deleteOrphanIface(iface: string): Promise<{ ok: boolean }> {
+		return this.request<{ ok: boolean }>('/tunnels/orphans/delete', {
+			method: 'POST',
+			body: JSON.stringify({ iface })
+		});
+	}
+
 	async downloadDiagnosticsReport(environment?: unknown): Promise<void> {
 		const response = await fetch('/api/diagnostics/result', { credentials: 'same-origin' });
 		if (!response.ok) throw new Error('Report not available');

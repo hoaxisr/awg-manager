@@ -1330,6 +1330,12 @@ definitions:
         example: interval
         type: string
     type: object
+  api.DeleteOrphanIfaceRequest:
+    properties:
+      iface:
+        example: opkgtun10
+        type: string
+    type: object
   api.DeleteSubscriptionGroupRequest:
     properties:
       id:
@@ -1856,6 +1862,22 @@ definitions:
     type: object
   api.ExternalTunnelDTO:
     properties:
+      addresses:
+        description: |-
+          Addresses / ConflictsWith — адреса устройства и имя ДЕЙСТВУЮЩЕГО туннеля,
+          чей адрес совпал: такое совпадение выстрелит, когда оба будут подняты.
+        items:
+          type: string
+        type: array
+      conflictsWith:
+        example: Germany_AWG_3.1
+        type: string
+      description:
+        description: |-
+          Description — описание интерфейса в NDMS: единственное, по чему видно,
+          чей это интерфейс, прежде чем принять его или удалить.
+        example: ForeignAWG
+        type: string
       endpoint:
         example: ext.example.com:51820
         type: string
@@ -1863,6 +1885,15 @@ definitions:
         example: Wireguard2
         type: string
       isAWG:
+        example: true
+        type: boolean
+      kernelDevice:
+        example: true
+        type: boolean
+      ndmsRecord:
+        description: |-
+          NDMSRecord / KernelDevice — из каких половин состоит интерфейс: они
+          существуют независимо и снимаются независимо.
         example: true
         type: boolean
       publicKey:
@@ -21037,6 +21068,39 @@ paths:
       security:
       - CookieAuth: []
       summary: Set tunnel lock
+      tags:
+      - tunnels
+  /tunnels/orphans/delete:
+    post:
+      consumes:
+      - application/json
+      description: Removes an OpkgTun interface that belongs to no awg-manager record.
+        The orphan status is re-checked server-side immediately before removal.
+      parameters:
+      - description: Interface name, e.g. opkgtun10
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.DeleteOrphanIfaceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.OkResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Delete an orphaned OpkgTun interface
       tags:
       - tunnels
   /tunnels/pingcheck:

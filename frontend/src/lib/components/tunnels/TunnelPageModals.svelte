@@ -38,6 +38,46 @@
 	</Modal>
 {/if}
 
+{#if ctx.confirmExternalDelete}
+	<Modal
+		open={true}
+		title="Удалить интерфейс"
+		size="sm"
+		onclose={() => (ctx.confirmExternalDelete = null)}
+	>
+		<p class="confirm-text">
+			Удалить интерфейс <strong>{ctx.confirmExternalDelete.interfaceName}{ctx.confirmExternalDelete.label}</strong>?
+		</p>
+		{#if ctx.confirmExternalDelete.live}
+			<p class="confirm-text confirm-warn">
+				Через этот интерфейс прямо сейчас идёт трафик, рукопожатие свежее. Снос оборвёт
+				работающее соединение.
+			</p>
+		{/if}
+		{#if ctx.confirmExternalDelete.conflictsWith}
+			<p class="confirm-text confirm-warn">
+				Его адрес {ctx.confirmExternalDelete.address} совпадает с адресом туннеля
+				«{ctx.confirmExternalDelete.conflictsWith}».
+			</p>
+		{/if}
+		<p class="confirm-text">
+			Вместе с интерфейсом уйдут его адреса, маршруты и разрешения в политиках доступа.
+			Пересоздание одноимённого их не вернёт.
+		</p>
+		{#snippet actions()}
+			<Button variant="secondary" size="md" onclick={() => (ctx.confirmExternalDelete = null)}>Отмена</Button>
+			<Button
+				variant="danger"
+				size="md"
+				loading={ctx.confirmExternalDeleteBusy}
+				onclick={() => ctx.confirmExternalDeleteNow()}
+			>
+				Удалить
+			</Button>
+		{/snippet}
+	</Modal>
+{/if}
+
 {#if ctx.unlockConfirmId}
 	{@const tunnelName = ctx.awgList.find(t => t.id === ctx.unlockConfirmId)?.name ?? ctx.unlockConfirmId}
 	<ConfirmModal

@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"errors"
-	"net"
 	"path/filepath"
 	"testing"
 	"time"
@@ -32,7 +31,7 @@ func lifecycleStore(t *testing.T, recs ...*storage.AWGTunnel) *storage.AWGTunnel
 	t.Helper()
 	prevDir, prevIfaces := tunnel.ConfDir, listInterfaces
 	tunnel.ConfDir = t.TempDir()
-	listInterfaces = func() ([]net.Interface, error) { return nil, nil }
+	listInterfaces = func() ([]hostIface, error) { return nil, nil }
 	t.Cleanup(func() { tunnel.ConfDir, listInterfaces = prevDir, prevIfaces })
 
 	dir := t.TempDir()
