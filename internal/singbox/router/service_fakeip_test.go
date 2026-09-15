@@ -1787,6 +1787,65 @@ func TestEnableFakeIPTun_RollbackOnSlotRouterFlipFailure(t *testing.T) {
 	}
 }
 
+// Смена стека через PUT настроек на РАБОТАЮЩЕМ fakeip обязана дойти до
+// 21-fakeip.json: tun-инбаунд строится на enable, и без отдельного шва селектор
+// в UI сохранял бы значение в стор и молчал до перевключения режима. Швов тут
+// ДВА и они независимы — reapplyFakeIPOverlay в хвосте UpdateSettings и
+// healTunSettings в реконсиляции; проверено глушением: по отдельности каждый
+// держит тест зелёным, вместе выключённые — роняют. Обратный переход проверяет
+// вторую половину контракта: пустое значение обязано СНЯТЬ ключ, а не оставить
+// прежний — именно отсутствие ключа включает собственный стек sing-tun.
+func TestUpdateSettings_StackReachesOverlay(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	ctx := context.Background()
+	if err := h.svc.Enable(ctx); err != nil {
+		t.Fatalf("Enable(fakeip): %v", err)
+	}
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{h.loadFakeIP(t).Index: true}}
+
+	overlayStack := func() (string, string) {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(h.dir, "21-fakeip.json"))
+		if err != nil {
+			t.Fatalf("read 21-fakeip.json: %v", err)
+		}
+		var cfg RouterConfig
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			t.Fatalf("unmarshal 21-fakeip.json: %v", err)
+		}
+		if len(cfg.Inbounds) == 0 {
+			t.Fatalf("нет инбаундов в overlay: %s", data)
+		}
+		return cfg.Inbounds[0].Stack, string(data)
+	}
+
+	if got, data := overlayStack(); got != "" {
+		t.Fatalf("после Enable stack = %q, want пустой: %s", got, data)
+	}
+
+	sr, err := h.svc.GetSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetSettings: %v", err)
+	}
+	sr.FakeIPStack = "gvisor"
+	if err := h.svc.UpdateSettings(ctx, sr); err != nil {
+		t.Fatalf("UpdateSettings(gvisor): %v", err)
+	}
+	if got, data := overlayStack(); got != "gvisor" {
+		t.Errorf("stack в overlay = %q, want gvisor: %s", got, data)
+	}
+
+	sr.FakeIPStack = ""
+	if err := h.svc.UpdateSettings(ctx, sr); err != nil {
+		t.Fatalf("UpdateSettings(пустой): %v", err)
+	}
+	got, data := overlayStack()
+	if got != "" || strings.Contains(data, `"stack"`) {
+		t.Errorf("stack = %q и ключ в файле = %v, want пустой и без ключа: %s",
+			got, strings.Contains(data, `"stack"`), data)
+	}
+}
+
 // PUT с cacheFileLocation=tmp в том же вызове дёргает шов применения к
 // 00-base.json и через reapplyFakeIPOverlay переводит overlay 21-fakeip.json на
 // эффективный путь оператора (issue #842). Живой индекс засеян, чтобы Reconcile в хвосте
