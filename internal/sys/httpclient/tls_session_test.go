@@ -69,23 +69,31 @@ func TestSessionCache_SecondHandshakeResumes(t *testing.T) {
 	}
 }
 
-// Кэш обязан жить в базовом конфиге, а не заводиться на вызов: buildTransport
-// клонирует TLS-конфиг, и Clone() копирует указатель. Свой кэш на каждый вызов
-// молча отключил бы возобновление, оставив тест выше единственным сторожем.
-func TestSessionCache_SharedAcrossPerCallTransports(t *testing.T) {
+// Кэш сессий обязан быть ОБЩИМ между вызовами по одному пути выхода — иначе
+// возобновлять нечего, каждый вызов начинал бы с пустого, — и РАЗНЫМ у разных
+// путей: ключ сессии в crypto/tls это имя хоста, интерфейс в него не входит, и
+// общий кэш предъявлял бы билет туннеля A при выходе через B.
+func TestSessionCache_PerEgressPath(t *testing.T) {
 	c := New()
-	if c.baseTransport.TLSClientConfig.ClientSessionCache == nil {
-		t.Fatal("в базовом конфиге нет кэша сессий")
+
+	same := []CallConfig{
+		{URL: "https://example.org", Interface: "nwg0"},
+		{URL: "https://other.example", Interface: "nwg0"},
 	}
-	want := c.baseTransport.TLSClientConfig.ClientSessionCache
+	first := c.buildTransport(same[0], nil).TLSClientConfig.ClientSessionCache
+	if first == nil {
+		t.Fatal("кэш сессий не проставлен")
+	}
+	if got := c.buildTransport(same[1], nil).TLSClientConfig.ClientSessionCache; got != first {
+		t.Error("два вызова по ОДНОМУ интерфейсу получили разные кэши — возобновлять будет нечего")
+	}
 
 	for _, cfg := range []CallConfig{
-		{URL: "https://example.org"},
-		{URL: "https://example.org", Interface: "nwg0"},
+		{URL: "https://example.org", Interface: "nwg1"},
+		{URL: "https://example.org"}, // прямой выход
 	} {
-		got := c.buildTransport(cfg, nil).TLSClientConfig.ClientSessionCache
-		if got != want {
-			t.Errorf("Interface=%q: клон получил ДРУГОЙ кэш сессий", cfg.Interface)
+		if got := c.buildTransport(cfg, nil).TLSClientConfig.ClientSessionCache; got == first {
+			t.Errorf("Interface=%q делит кэш с nwg0 — билет уедет по чужому пути", cfg.Interface)
 		}
 	}
 }
