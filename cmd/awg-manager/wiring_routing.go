@@ -174,6 +174,9 @@ func (a *app) setupEventWiring() {
 		metricsLogger(a.loggingService),
 		a.loggingService,
 	)
+	// Тот же счётчик зрителей, что у поллера метрик и матрицы: в простое
+	// шаг разрежается, публикация всё равно уходила бы в никуда.
+	a.sysfsTrafficPoller.SetClientCounter(a.eventBus)
 	a.sysfsTrafficPoller.Start()
 
 	a.orch.SetEventBus(a.eventBus)

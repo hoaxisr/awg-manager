@@ -180,3 +180,62 @@ func TestSysfsPoller_DoubleStartStop(t *testing.T) {
 	p.Stop()
 	p.Stop() // must be no-op
 }
+
+// fakeClients — сколько панелей «открыто».
+type fakeClients struct{ n atomic.Int64 }
+
+func (f *fakeClients) ClientCount() int { return int(f.n.Load()) }
+
+// Тик поллера дорогой: RunningTunnels резолвит состояние каждого туннеля мимо
+// кэша, то есть по RCI-запросу на туннель. При закрытой панели публикация уходит
+// в никуда, поэтому шаг разрежается — иначе это круглосуточная нагрузка на
+// роутер ради данных, которых никто не видит.
+func TestSysfsPoller_IdleThrottles(t *testing.T) {
+	root := t.TempDir()
+	writeSysfsIface(t, root, "nwg0", "1000", "100")
+
+	lister := &fakeTunnelLister{}
+	lister.set(RunningTunnel{ID: "awg0", BackendType: "nativewg", IfaceName: "nwg0"})
+	hist := New()
+	t.Cleanup(hist.Stop)
+	pub := &spyPublisher{}
+
+	p := newSysfsPoller(lister, hist, pub, &fakeLog{}, nil, root, 20*time.Millisecond)
+	p.idleInterval = 10 * time.Second // в окне теста недостижим
+	p.SetClientCounter(&fakeClients{}) // ноль зрителей
+	p.Start()
+	defer p.Stop()
+
+	time.Sleep(250 * time.Millisecond)
+
+	if got := pub.len(); got != 1 {
+		t.Errorf("публикаций %d, ожидалась 1 (только стартовый тик)", got)
+	}
+}
+
+// Открытая панель возвращает обычный шаг.
+func TestSysfsPoller_ClientRestoresRate(t *testing.T) {
+	root := t.TempDir()
+	writeSysfsIface(t, root, "nwg0", "1000", "100")
+
+	lister := &fakeTunnelLister{}
+	lister.set(RunningTunnel{ID: "awg0", BackendType: "nativewg", IfaceName: "nwg0"})
+	hist := New()
+	t.Cleanup(hist.Stop)
+	pub := &spyPublisher{}
+
+	clients := &fakeClients{}
+	clients.n.Store(1)
+
+	p := newSysfsPoller(lister, hist, pub, &fakeLog{}, nil, root, 20*time.Millisecond)
+	p.idleInterval = 10 * time.Second
+	p.SetClientCounter(clients)
+	p.Start()
+	defer p.Stop()
+
+	time.Sleep(250 * time.Millisecond)
+
+	if got := pub.len(); got < 3 {
+		t.Errorf("публикаций %d, ожидалось ≥3: с открытой панелью шаг обычный", got)
+	}
+}
