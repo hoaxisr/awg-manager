@@ -135,14 +135,16 @@ type Scheduler struct {
 	// Зонд связности стоит дорого: для метода "http" (умолчание у любого
 	// туннеля, где пользователь ничего не настраивал) это HTTPS с полным
 	// рукопожатием, а на softfloat MIPS оно съедает ~190 мс CPU. При этом
-	// итог прогона уходит ТОЛЬКО в показ: буфер графика, снимок и SSE-пуш;
-	// автоматических действий на нём не висит — перезапуск по отказу делает
-	// NDMS ping-check, другая подсистема.
+	// итог прогона уходит ТОЛЬКО в показ: снимок и SSE-пуш; автоматических
+	// действий на нём не висит — перезапуск по отказу делает NDMS ping-check,
+	// другая подсистема.
 	//
-	// Полностью гасить прогон нельзя: журнал переходов (probe unreachable →
+	// Полностью гасить прогон нельзя из-за ОДНОГО потребителя, который
+	// переживает закрытие панели: журнал переходов (probe unreachable →
 	// reachable again) — единственный след, по которому пользователь видит
-	// проблему задним числом, когда панель была закрыта. Поэтому не «выключить»,
-	// а «разрядить».
+	// проблему задним числом. Буфер history тут ни при чём: Service.History
+	// в проде не читает никто (проверено grep'ом), он живёт под будущий
+	// график. Поэтому не «выключить», а «разрядить».
 	idleInterval time.Duration
 	probeTimeout time.Duration
 	workerLimit  int
@@ -196,10 +198,17 @@ func (s *Scheduler) SetEventBus(bus *events.Bus) {
 // Шины нет (тесты, ранняя проводка) — считаем, что смотрят: разряжать вслепую
 // хуже, чем зондировать лишний раз.
 func (s *Scheduler) nobodyWatching() bool {
-	s.mu.RLock()
-	bus := s.deps.Bus
-	s.mu.RUnlock()
+	bus := s.eventBus()
 	return bus != nil && bus.ClientCount() == 0
+}
+
+// eventBus читает шину под тем же локом, под которым её пишет SetEventBus.
+// Односторонняя защита (лок только у писателя) создавала бы ложное
+// впечатление безопасности: читателей у поля два — этот и Publish в RunOnce.
+func (s *Scheduler) eventBus() *events.Bus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.deps.Bus
 }
 
 // SetSingboxTunnels wires the sing-box tunnel lister after construction so
@@ -399,8 +408,8 @@ func (s *Scheduler) RunOnce(ctx context.Context) {
 	s.history.PruneTunnels(keepIDs)
 	s.transitions.Retain(probed)
 
-	if s.deps.Bus != nil {
-		s.deps.Bus.Publish("monitoring:matrix-update", snap)
+	if bus := s.eventBus(); bus != nil {
+		bus.Publish("monitoring:matrix-update", snap)
 	}
 }
 
