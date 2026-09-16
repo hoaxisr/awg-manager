@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/metrics"
@@ -10,11 +12,13 @@ import (
 )
 
 type stubSystemTunnels struct {
-	list []ndms.SystemWireguardTunnel
-	err  error
+	list  []ndms.SystemWireguardTunnel
+	err   error
+	calls atomic.Int64
 }
 
 func (s *stubSystemTunnels) List(ctx context.Context) ([]ndms.SystemWireguardTunnel, error) {
+	s.calls.Add(1)
 	return s.list, s.err
 }
 
@@ -216,5 +220,34 @@ func TestRunningInterfaces_SkipsManagedNWGNames(t *testing.T) {
 	}
 	if got["Wireguard3"] {
 		t.Errorf("did not expect Wireguard3 in refs (managed NativeWG, polled via sysfs), got: %+v", refs)
+	}
+}
+
+// Единственный потребитель адаптера — поллер метрик, а он тикает раз в 5 с, и
+// каждый его тик тянул полный некэшированный дамп `/show/interface/` плюс
+// чтение всех JSON-ов туннелей с флеша. Состав интерфейсов так часто не
+// меняется, поэтому в пределах мемо-окна повторный вызов не должен ходить
+// в роутер вовсе.
+func TestRunningInterfaces_MemoizesWithinWindow(t *testing.T) {
+	dir := t.TempDir()
+	settings := storage.NewSettingsStore(dir)
+	sys := &stubSystemTunnels{list: []ndms.SystemWireguardTunnel{{ID: "Wireguard7", Status: "up"}}}
+
+	a := newRunningInterfacesAdapter(sys, nil, settings)
+	first := a.RunningInterfaces(context.Background())
+	second := a.RunningInterfaces(context.Background())
+
+	if len(first) != len(second) {
+		t.Fatalf("составы разошлись: %d против %d", len(first), len(second))
+	}
+	if got := sys.calls.Load(); got != 1 {
+		t.Errorf("обращений к роутеру %d, ожидалось 1 в пределах мемо-окна", got)
+	}
+
+	// Окно истекло — состав перечитывается.
+	a.memoAt = time.Now().Add(-2 * runningIfacesMemoTTL)
+	a.RunningInterfaces(context.Background())
+	if got := sys.calls.Load(); got != 2 {
+		t.Errorf("обращений %d, ожидалось 2 после истечения окна", got)
 	}
 }
