@@ -42,7 +42,10 @@ registerStore('deviceproxy.outbounds', deviceProxyOutbounds);
 
 export const deviceProxyRuntime: PollingStore<DeviceProxyRuntime> = createPollingStore<DeviceProxyRuntime>(
 	() => api.getDeviceProxyRuntime(),
-	{ staleTime: 5_000, pollInterval: 0 },
+	// alive здесь — это sb.IsRunning(). Падение sing-box (OOM на 256 МБ — рабочий
+	// сценарий) публикует singbox.status, но не deviceproxy.runtime, поэтому
+	// карточка показывала бы «работает» бессрочно. Таймер медленный, но нужен.
+	{ staleTime: 5_000, pollInterval: 30_000 },
 );
 registerStore('deviceproxy.runtime', deviceProxyRuntime);
 
