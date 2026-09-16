@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"net/netip"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
@@ -135,7 +136,112 @@ func (s *ServiceImpl) computeIssues(cfg *RouterConfig) []Issue {
 	}
 	issues = append(issues, computeDNSDialIssues(cfg)...)
 	issues = append(issues, computeDNSChainIssues(cfg)...)
+	issues = append(issues, computeDNSRuleSetClientMatchIssues(cfg)...)
 	return issues
+}
+
+// computeDNSRuleSetClientMatchIssues предупреждает про inline-набор с
+// подсетью, из которой может прийти сам клиент, прицепленный к DNS-правилу.
+//
+// applyDNSRuleSetMatchSource переводит ip_cidr внутри такого набора на матч по
+// адресу источника — и подсеть, накрывающая клиента, начинает матчить ВСЕ его
+// DNS-запросы, а не только домены набора. Проверено на стенде: набор
+// {domain_suffix: t.me} OR {ip_cidr: 127.0.0.0/8} с клиента 127.0.0.1 ловит и
+// example.com.
+//
+// Только inline: их правила лежат у нас в конфиге и читаются даром. Что внутри
+// remote/local .srs — известно лишь после decompile (минуты на MIPS), на такую
+// цену проверка не тянет.
+func computeDNSRuleSetClientMatchIssues(cfg *RouterConfig) []Issue {
+	clientMatching := make(map[string]struct{})
+	for _, rs := range cfg.Route.RuleSet {
+		if rs.Type == "inline" && inlineRuleSetMatchesClientRange(rs) {
+			clientMatching[rs.Tag] = struct{}{}
+		}
+	}
+	if len(clientMatching) == 0 {
+		return nil
+	}
+	var issues []Issue
+	for i, r := range cfg.DNS.Rules {
+		if r.MatchResponse.IsEnabled() {
+			continue
+		}
+		for _, tag := range r.RuleSet {
+			if _, ok := clientMatching[tag]; !ok {
+				continue
+			}
+			issues = append(issues, Issue{
+				Severity:  "warning",
+				Kind:      "dns-rule-set-client-match",
+				RuleIndex: i,
+				Tag:       tag,
+				Message: fmt.Sprintf("DNS-правило использует набор %q с подсетью локальной сети: "+
+					"его ip_cidr сравнивается с адресом клиента, и правило поймает все запросы "+
+					"из этой подсети. В DNS-правиле IP-часть набора не работает — уберите набор "+
+					"из правила или вынесите домены в отдельный набор", tag),
+			})
+		}
+	}
+	return issues
+}
+
+// clientReachableRanges — диапазоны, из которых может прийти DNS-запрос от
+// устройства сети: приватные сети, loopback, link-local и CGNAT.
+var clientReachableRanges = []netip.Prefix{
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("fc00::/7"),
+	netip.MustParsePrefix("::1/128"),
+	netip.MustParsePrefix("fe80::/10"),
+}
+
+// inlineRuleSetMatchesClientRange сообщает, может ли ip_cidr inline-набора
+// накрыть адрес самого клиента. Считаем ПЕРЕСЕЧЕНИЕ диапазонов, а не
+// принадлежность базового адреса: 0.0.0.0/0 и 128.0.0.0/1 накрывают домашние
+// сети, хотя их базовый адрес приватным не выглядит. Нераспознанный префикс
+// пропускаем — валидацию содержимого делает компиляция набора, не этот обход.
+func inlineRuleSetMatchesClientRange(rs RuleSet) bool {
+	for _, rule := range rs.Rules {
+		for _, cidr := range ruleMapIPCIDRs(rule) {
+			p, err := netip.ParsePrefix(cidr)
+			if err != nil {
+				continue
+			}
+			for _, reachable := range clientReachableRanges {
+				if p.Overlaps(reachable) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// ruleMapIPCIDRs достаёт ip_cidr из правила набора во всех трёх формах, в
+// которых оно у нас бывает: []any после JSON-декода, []string из
+// datLinesToRuleSetRules и скаляр, который принимает сам sing-box. Зеркалит
+// разбор в fakeip_cidr_routes.go.
+func ruleMapIPCIDRs(rule map[string]any) []string {
+	switch arr := rule["ip_cidr"].(type) {
+	case []any:
+		out := make([]string, 0, len(arr))
+		for _, e := range arr {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []string:
+		return arr
+	case string:
+		return []string{arr}
+	}
+	return nil
 }
 
 func (s *ServiceImpl) computeRuleOutboundIssues(r Rule, index int, outboundTags map[string]struct{}) []Issue {
