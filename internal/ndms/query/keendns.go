@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/cache"
@@ -29,6 +30,12 @@ type KeenDNSStore struct {
 	*cache.KeyedStore[string, *KeenDNSInfo]
 	getter Getter
 	log    Logger
+
+	// absent защёлкивается на первом 404: подсистемы /show/ndns на этой
+	// прошивке нет, и в рантайме она не появится — обновление прошивки
+	// перезапускает процесс. Без защёлки TTL кэша гнал заведомо провальный
+	// GET раз в минуту, и каждый писал ERROR в журнал.
+	absent atomic.Bool
 }
 
 func NewKeenDNSStore(g Getter, log Logger) *KeenDNSStore {
@@ -46,10 +53,14 @@ func (s *KeenDNSStore) fetch(ctx context.Context, _ string) (*KeenDNSInfo, error
 	// Только /show/ndns — авторитетный эндпоинт KeenDNS на всех поддерживаемых
 	// прошивках. 404 означает, что подсистема отсутствует на этой OS → KeenDNS
 	// не настроен (а не ошибка), без него поллер сыпал бы ошибками каждый тик.
+	if s.absent.Load() {
+		return nil, nil
+	}
 	raw, err := s.getter.GetRaw(ctx, "/show/ndns")
 	if err != nil {
 		var httpErr *transport.HTTPError
 		if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
+			s.absent.Store(true)
 			return nil, nil
 		}
 		return nil, err

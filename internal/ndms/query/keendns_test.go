@@ -61,3 +61,28 @@ func TestKeenDNSFetch_NotFoundIsNotError(t *testing.T) {
 		t.Fatalf("info=%v want nil", info)
 	}
 }
+
+// После 404 подсистемы на этой прошивке нет, и спрашивать её повторно незачем:
+// истёкший TTL кэша не должен возвращать нас в RCI. Без защёлки заведомо
+// провальный GET уходил раз в минуту и каждый писал ERROR в журнал.
+func TestKeenDNSFetch_NotFoundLatchesOff(t *testing.T) {
+	g := NewFakeGetter()
+	g.SetError("/show/ndns", &transport.HTTPError{Method: "GET", Path: "/show/ndns", Status: http.StatusNotFound})
+	s := NewKeenDNSStore(g, NopLogger())
+
+	if _, err := s.Get(context.Background()); err != nil {
+		t.Fatalf("первый Get: %v", err)
+	}
+	s.InvalidateAll() // эквивалент истёкшего TTL
+
+	info, err := s.Get(context.Background())
+	if err != nil {
+		t.Fatalf("второй Get: %v", err)
+	}
+	if info != nil {
+		t.Fatalf("info=%v want nil", info)
+	}
+	if n := g.Calls("/show/ndns"); n != 1 {
+		t.Errorf("/show/ndns запрошен %d раз, ожидался 1 (защёлка)", n)
+	}
+}
