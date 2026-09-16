@@ -8,6 +8,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/routing"
@@ -15,7 +17,24 @@ import (
 
 // connLine собирает строку conntrack с заданным источником и объёмом.
 func connLine(src string, bytes int) string {
-	return fmt.Sprintf(`ipv4     2 tcp      6 1187 ESTABLISHED src=%s dst=185.199.110.133 sport=49158 dport=443 packets=14 bytes=%d src=185.199.110.133 dst=172.16.0.2 sport=443 dport=49158 packets=12 bytes=6182 [ASSURED] mark=0 nmark=0 sc=0 use=2`, src, bytes)
+	return fmt.Sprintf(`ipv4     2 tcp      6 1187 ESTABLISHED src=%s dst=185.199.110.133 sport=49158 dport=443 packets=14 bytes=%d src=185.199.110.133 dst=172.16.0.2 sport=443 dport=49158 packets=12 bytes=6182 [ASSURED] mark=0 nmark=0 sc=0 ifw=59 ifl=35 mac=b0:4a:b4:74:80:f8 slan attrs= use=2`, src, bytes)
+}
+
+// ctxNDMS отвечает данными, пока контекст жив, и отказом на отменённом —
+// как настоящий RCI-клиент. Нужен, чтобы отмена была НАБЛЮДАЕМА: без него
+// обогащение падает всегда и тест не отличает отвязанный контекст от запросного.
+type ctxNDMS struct{ calls atomic.Int64 }
+
+func (c *ctxNDMS) GetStream(ctx context.Context, path string, fn func(io.Reader) error) error {
+	c.calls.Add(1)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if path != "/show/ip/hotspot" {
+		return errors.New("этот путь тесту не нужен")
+	}
+	const body = `{"host":[{"mac":"b0:4a:b4:74:80:f8","name":"ноутбук","hostname":"laptop"}]}`
+	return fn(strings.NewReader(body))
 }
 
 // withConntrack подменяет путь к conntrack на временный файл и возвращает
@@ -168,10 +187,14 @@ func TestList_ReadFailureIsNotMaskedByStaleCache(t *testing.T) {
 }
 
 // Отменённый контекст запроса не должен обрывать сборку: снимок ложится в кэш и
-// достаётся соседям, а браузер рвёт предыдущий запрос на каждом клике.
-func TestList_CancelledRequestStillBuildsSnapshot(t *testing.T) {
+// достаётся соседям, а браузер рвёт предыдущий запрос на каждом клике по фильтру.
+// Проверяем по НАБЛЮДАЕМОМУ следствию — обогащение именем клиента должно
+// отработать, иначе в кэш лёг бы обеднённый снимок и его получили бы все.
+func TestList_CancelledRequestStillEnriches(t *testing.T) {
 	withConntrack(t, connLine("192.168.1.15", 3389))
-	svc := newCacheTestService(t)
+	ndms := &ctxNDMS{}
+	svc := NewService(emptyCatalog{}, ndms, nil, nil)
+	svc.ifaceAddrs = func(string) ([]net.Addr, error) { return nil, nil }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // отменён ДО вызова
@@ -181,6 +204,12 @@ func TestList_CancelledRequestStillBuildsSnapshot(t *testing.T) {
 		t.Fatalf("List на отменённом контексте: %v", err)
 	}
 	if res.Pagination.Total != 1 {
-		t.Errorf("записей %d, ожидалась 1", res.Pagination.Total)
+		t.Fatalf("записей %d, ожидалась 1", res.Pagination.Total)
+	}
+	if ndms.calls.Load() == 0 {
+		t.Fatal("обогащение вообще не вызывалось — тест ничего не проверяет")
+	}
+	if got := res.Connections[0].ClientName; got != "ноутбук" {
+		t.Errorf("ClientName=%q, ожидалось \"ноутбук\": сборка пошла на контексте запроса и обеднила снимок", got)
 	}
 }
