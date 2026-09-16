@@ -18,13 +18,15 @@ func NewAdapter(lister traffic.TunnelLister) *Adapter {
 	return &Adapter{lister: lister}
 }
 
-// HasHandshake checks if a tunnel has completed WireGuard handshake.
-func (a *Adapter) HasHandshake(ctx context.Context, tunnelID string) bool {
+// Handshaked returns the IDs of running tunnels that already have a handshake.
+// Одна выборка на вызов независимо от того, сколько туннелей ждут.
+func (a *Adapter) Handshaked(ctx context.Context) map[string]bool {
 	running := a.lister.RunningTunnels(ctx)
+	out := make(map[string]bool, len(running))
 	for _, t := range running {
-		if t.ID == tunnelID {
-			return !t.LastHandshake.IsZero()
+		if !t.LastHandshake.IsZero() {
+			out[t.ID] = true
 		}
 	}
-	return false
+	return out
 }

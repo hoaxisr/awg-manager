@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -151,6 +152,13 @@ type Scheduler struct {
 	// каждые 60 секунд журнал не трогают.
 	transitions *logging.TransitionTracker
 
+	// running — страж от параллельного входа в RunOnce. Периодический тик
+	// идёт из loop() последовательно, но триггерный прогон (подъём туннеля)
+	// приходит со стороны и раньше мог наложиться на него: два прохода
+	// зондировали одно и то же вдвое, а workerLimit ограничивает КАЖДЫЙ
+	// проход по отдельности.
+	running atomic.Bool
+
 	mu       sync.RWMutex
 	lastSnap Snapshot
 	stopCh   chan struct{}
@@ -286,6 +294,14 @@ func (s *Scheduler) RunOnceForced(ctx context.Context) {
 // history, replaces lastSnap, prunes deleted-tunnel buffers, publishes to
 // the bus.
 func (s *Scheduler) RunOnce(ctx context.Context) {
+	// Уже идёт — второй проход не нужен: тот, что в полёте, всё равно
+	// обновит снимок целиком. Пропуск, а не ожидание: ждать нечего, данные
+	// вот-вот приедут.
+	if !s.running.CompareAndSwap(false, true) {
+		return
+	}
+	defer s.running.Store(false)
+
 	defer func() {
 		if r := recover(); r != nil && s.deps.Log != nil {
 			s.deps.Log.AppLog(logging.LevelError, logging.GroupSystem, "monitoring",
