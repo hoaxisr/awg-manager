@@ -56,6 +56,8 @@ async function fetchProxies(): Promise<SingboxProxyGroup[]> {
 
 export const singboxProxies: PollingStore<SingboxProxyGroup[]> = createPollingStore<SingboxProxyGroup[]>(
 	fetchProxies,
+	// Таймер сохранён: ключа singbox.proxies в наборе events.Resource* НЕТ,
+	// бэкенд его не публикует — без опроса стор замрёт.
 	{ staleTime: 5_000, pollInterval: 5_000 }
 );
 

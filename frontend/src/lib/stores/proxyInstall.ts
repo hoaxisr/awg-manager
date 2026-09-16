@@ -22,6 +22,9 @@ function storeFor(
 ): PollingStore<ProxyInstallStatus> {
 	const store = createPollingStore<ProxyInstallStatus>(
 		() => api.proxyInstallStatus(subsystem),
+		// wdtt/freeturn сидят на ключе proxyrt.instances, а его НИКТО не публикует
+		// (константа и запись в AllResources есть, вызовов PublishInvalidated нет).
+		// Без таймера эти два стора замерли бы навсегда.
 		{ staleTime: 60_000, pollInterval: 60_000 },
 	);
 	registerStore(resource, store);

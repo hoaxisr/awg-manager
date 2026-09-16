@@ -105,9 +105,15 @@
 				observeInstanceId(data?.instanceId);
 				// SSE may have been down for minutes. Clear connectivity side-channel
 				// (it's stream-only, not included in the polling snapshot) and force a
-				// fresh fetch of tunnel state to catch any drift during the outage.
+				// fresh fetch to catch any drift during the outage.
+				//
+				// invalidateAll(), а не только tunnels: сторы, чей ресурс бэкенд
+				// публикует, живут БЕЗ фонового таймера (pollInterval: 0), и поток
+				// событий — их единственный источник обновлений. Пропущенные за
+				// обрыв подсказки иначе не догнать. Подписанные перечитывают сразу,
+				// остальные помечаются несвежими и перечитают на следующей подписке.
 				tunnels.clearConnectivity();
-				tunnels.invalidate();
+				invalidateAll();
 
 				// Log catch-up: fetch entries we missed during the outage so the
 				// terminal feed has no gap. Per-bucket — each store keeps its

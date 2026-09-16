@@ -54,6 +54,85 @@ type Service struct {
 	rulesMu      sync.Mutex
 	rulesCached  map[string][]RuleHit
 	rulesFetched time.Time
+
+	// snapshots кэширует дорогую часть List: разбор всего conntrack и
+	// обогащение КАЖДОЙ записи. Агрегаты (stats, byTunnel, byClient, byDst)
+	// считаются по всему набору, поэтому «разбирать только страницу» нельзя —
+	// экономить можно лишь на повторах. Вкладка обновляется раз в 30 с, но
+	// каждая смена фильтра, сортировки и страницы шла тем же путём заново:
+	// на роутере с 10k соединений это 10k разборов и 10k структур в мусор
+	// на каждый клик.
+	snapshots *snapshotCache
+}
+
+// snapshotCache — TTL-кэш на один снимок. Свой, а не общий cache.ListStore:
+// у того три свойства, каждое из которых для ЗАПРОСНОГО вызывающего — дефект.
+//
+//  1. При отказе fetch он отдаёт последнее значение БЕЗ срока годности
+//     (cache.TTL.Peek игнорирует TTL). Для conntrack это значит: файл перестал
+//     читаться — вкладка бессрочно показывает снимок произвольной давности
+//     вместо честного 503, который отдавался раньше.
+//  2. Его singleflight замыкается на контексте ПЕРВОГО вызывающего, а здесь это
+//     контекст HTTP-запроса. Пользователь щёлкает фильтры, браузер рвёт
+//     предыдущий запрос — обогащение best-effort вернёт пустое, и такой
+//     обеднённый снимок ляжет в кэш всем остальным.
+//  3. Запись из него не выселяется никогда: снимок на 10k соединений жил бы
+//     в памяти до перезапуска, на устройстве с 256 МБ и флагом isLowMemory.
+type snapshotCache struct {
+	ttl time.Duration
+
+	// Сборка идёт ПОД мьютексом: это и коалесцирование (второй запрос дождётся
+	// и возьмёт готовое), и защита от параллельного разбора всей таблицы.
+	mu  sync.Mutex
+	val *listSnapshot
+	at  time.Time
+}
+
+func (c *snapshotCache) get(ctx context.Context, build func(context.Context) (*listSnapshot, error)) (*listSnapshot, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.val != nil {
+		if time.Since(c.at) < c.ttl {
+			return c.val, nil
+		}
+		c.val, c.at = nil, time.Time{} // протухшее не держим в памяти
+	}
+	v, err := build(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.val, c.at = v, time.Now()
+	return v, nil
+}
+
+func (c *snapshotCache) invalidate() {
+	c.mu.Lock()
+	c.val, c.at = nil, time.Time{}
+	c.mu.Unlock()
+}
+
+// snapshotTTL — окно, в котором повторный запрос берёт готовый разбор.
+// Две секунды: conntrack меняется непрерывно, и снимок такой давности от
+// свежего пользователь не отличит, а листание страниц становится бесплатным.
+const snapshotTTL = 2 * time.Second
+
+// snapshotBuildTimeout ограничивает сборку снимка: чтение /proc плюс
+// best-effort обогащение через RCI.
+const snapshotBuildTimeout = 15 * time.Second
+
+// InvalidateSnapshot сбрасывает кэш разбора. Зовётся после убийства соединения:
+// иначе пользователь жмёт «Убить», список перечитывается — и соединение на месте.
+func (s *Service) InvalidateSnapshot() { s.snapshots.invalidate() }
+
+// listSnapshot — всё, что не зависит от параметров запроса.
+type listSnapshot struct {
+	conns         []Connection
+	stats         ConnectionStats
+	tunnelSummary map[string]TunnelConnectionInfo
+	byTunnel      []Bucket
+	byClient      []Bucket
+	byDst         []Bucket
+	fetchedAt     time.Time
 }
 
 // NewService creates a new connections service.
@@ -62,7 +141,7 @@ type Service struct {
 // attributing connections to rules. Pass nil to disable name resolution
 // (rule attribution still works, just without ListName).
 func NewService(catalog routing.Catalog, ndmsClient ndmsClient, lister DNSListLister, appLogger logging.AppLogger) *Service {
-	return &Service{
+	s := &Service{
 		catalog: catalog,
 		ndms:    ndmsClient,
 		lister:  lister,
@@ -75,6 +154,8 @@ func NewService(catalog routing.Catalog, ndmsClient ndmsClient, lister DNSListLi
 			return ifi.Addrs()
 		},
 	}
+	s.snapshots = &snapshotCache{ttl: snapshotTTL}
+	return s
 }
 
 // SetSingboxMarkProvider wires the sb-router policy-mark source used to
@@ -125,6 +206,69 @@ func (s *Service) List(ctx context.Context, params ListParams) (*ListResponse, e
 		params.Protocol = "all"
 	}
 
+	// Контекст отвязан от запроса: снимок попадёт в кэш и достанется соседям,
+	// а браузер рвёт предыдущий запрос на каждом клике по фильтру — отмена
+	// одного не должна обеднять данные остальным. Тот же приём, что в
+	// internal/tunnel/service/statecache.go.
+	buildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotBuildTimeout)
+	defer cancel()
+
+	snap, err := s.snapshots.get(buildCtx, s.buildSnapshot)
+	if err != nil {
+		return nil, err
+	}
+
+	// 7. Filter
+	filtered := applyFilters(snap.conns, params)
+
+	// 7.5. Optional sort over the filtered set (before pagination so sort
+	// spans the full dataset, not just the current page).
+	//
+	// applyFilters ВСЕГДА строит новый срез, поэтому сортировка на месте не
+	// достаёт до кэшированного snap.conns. Сторож — TestList_CacheNotReordered.
+	applySort(filtered, params.SortBy, params.SortDir)
+
+	// 8. Paginate
+	total := len(filtered)
+	start := params.Offset
+	if start > total {
+		start = total
+	}
+	end := start + params.Limit
+	if end > total {
+		end = total
+	}
+	page := filtered[start:end]
+
+	if page == nil {
+		page = []Connection{}
+	}
+	tunnelSummary := snap.tunnelSummary
+	if tunnelSummary == nil {
+		tunnelSummary = make(map[string]TunnelConnectionInfo)
+	}
+
+	return &ListResponse{
+		Stats:       snap.stats,
+		Tunnels:     tunnelSummary,
+		ByTunnel:    snap.byTunnel,
+		ByClient:    snap.byClient,
+		ByDst:       snap.byDst,
+		Connections: page,
+		Pagination: PaginationInfo{
+			Total:    total,
+			Offset:   start,
+			Limit:    params.Limit,
+			Returned: len(page),
+		},
+		FetchedAt: snap.fetchedAt.Format(time.RFC3339),
+	}, nil
+}
+
+// buildSnapshot делает всё, что не зависит от параметров запроса: читает
+// conntrack, обогащает каждую запись и считает агрегаты. Зовётся через
+// s.snapshots, то есть не чаще раза в snapshotTTL.
+func (s *Service) buildSnapshot(ctx context.Context) (*listSnapshot, error) {
 	// 1. Read conntrack
 	rawConns, err := readConntrackFile()
 	if err != nil {
@@ -186,47 +330,14 @@ func (s *Service) List(ctx context.Context, params ListParams) (*ListResponse, e
 		}
 	}
 
-	// 7. Filter
-	filtered := applyFilters(conns, params)
-
-	// 7.5. Optional sort over the filtered set (before pagination so sort
-	// spans the full dataset, not just the current page).
-	applySort(filtered, params.SortBy, params.SortDir)
-
-	// 8. Paginate
-	total := len(filtered)
-	start := params.Offset
-	if start > total {
-		start = total
-	}
-	end := start + params.Limit
-	if end > total {
-		end = total
-	}
-	page := filtered[start:end]
-
-	// Ensure non-nil slices/maps for JSON
-	if page == nil {
-		page = []Connection{}
-	}
-	if tunnelSummary == nil {
-		tunnelSummary = make(map[string]TunnelConnectionInfo)
-	}
-
-	return &ListResponse{
-		Stats:       stats,
-		Tunnels:     tunnelSummary,
-		ByTunnel:    byTunnel,
-		ByClient:    byClient,
-		ByDst:       byDst,
-		Connections: page,
-		Pagination: PaginationInfo{
-			Total:    total,
-			Offset:   start,
-			Limit:    params.Limit,
-			Returned: len(page),
-		},
-		FetchedAt: time.Now().Format(time.RFC3339),
+	return &listSnapshot{
+		conns:         conns,
+		stats:         stats,
+		tunnelSummary: tunnelSummary,
+		byTunnel:      byTunnel,
+		byClient:      byClient,
+		byDst:         byDst,
+		fetchedAt:     time.Now(),
 	}, nil
 }
 

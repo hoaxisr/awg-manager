@@ -53,7 +53,7 @@ func (h *EventsHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	flusher.Flush()
 
-	_, ch, unsubscribe := h.bus.Subscribe()
+	_, ch, unsubscribe := h.bus.SubscribeClient()
 	defer unsubscribe()
 
 	// Send initial "connected" event so client confirms stream works.

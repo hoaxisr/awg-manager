@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -127,8 +128,24 @@ type SchedulerDeps struct {
 
 // Scheduler runs ICMP probes through running tunnels on a fixed interval.
 type Scheduler struct {
-	deps         SchedulerDeps
-	interval     time.Duration
+	deps     SchedulerDeps
+	interval time.Duration
+	// idleInterval — период тика, когда панель не открыта НИ У КОГО.
+	//
+	// Зонд связности стоит дорого: для метода "http" (умолчание у любого
+	// туннеля, где пользователь ничего не настраивал) это HTTPS с полным
+	// рукопожатием, а на softfloat MIPS оно съедает ~190 мс CPU. При этом
+	// итог прогона уходит ТОЛЬКО в показ: снимок и SSE-пуш; автоматических
+	// действий на нём не висит — перезапуск по отказу делает NDMS ping-check,
+	// другая подсистема.
+	//
+	// Полностью гасить прогон нельзя из-за ОДНОГО потребителя, который
+	// переживает закрытие панели: журнал переходов (probe unreachable →
+	// reachable again) — единственный след, по которому пользователь видит
+	// проблему задним числом. Буфер history тут ни при чём: Service.History
+	// в проде не читает никто (проверено grep'ом), он живёт под будущий
+	// график. Поэтому не «выключить», а «разрядить».
+	idleInterval time.Duration
 	probeTimeout time.Duration
 	workerLimit  int
 	history      *History
@@ -136,6 +153,13 @@ type Scheduler struct {
 	// только переходы ok→fail (Warn) и восстановления (Info) — сами пробы
 	// каждые 60 секунд журнал не трогают.
 	transitions *logging.TransitionTracker
+
+	// running — страж от параллельного входа в RunOnce. Периодический тик
+	// идёт из loop() последовательно, но триггерный прогон (подъём туннеля)
+	// приходит со стороны и раньше мог наложиться на него: два прохода
+	// зондировали одно и то же вдвое, а workerLimit ограничивает КАЖДЫЙ
+	// проход по отдельности.
+	running atomic.Bool
 
 	mu       sync.RWMutex
 	lastSnap Snapshot
@@ -149,6 +173,7 @@ func NewScheduler(deps SchedulerDeps, history *History) *Scheduler {
 	return &Scheduler{
 		deps:         deps,
 		interval:     60 * time.Second,
+		idleInterval: 10 * time.Minute,
 		probeTimeout: 5 * time.Second,
 		workerLimit:  10,
 		history:      history,
@@ -160,7 +185,30 @@ func NewScheduler(deps SchedulerDeps, history *History) *Scheduler {
 // SetEventBus wires the bus after construction so the server bootstrap can
 // build the bus once and inject it later.
 func (s *Scheduler) SetEventBus(bus *events.Bus) {
+	// Под локом: цикл читает шину на каждом тике (nobodyWatching), а проводка
+	// зовёт этот сеттер уже после конструирования.
+	s.mu.Lock()
 	s.deps.Bus = bus
+	s.mu.Unlock()
+}
+
+// nobodyWatching — правда ли, что ни одной панели сейчас не открыто.
+// Считаются только КЛИЕНТСКИЕ подписки: внутренние живут всё время работы
+// процесса и на вопрос «смотрит ли кто-нибудь» ответа не дают (F340).
+// Шины нет (тесты, ранняя проводка) — считаем, что смотрят: разряжать вслепую
+// хуже, чем зондировать лишний раз.
+func (s *Scheduler) nobodyWatching() bool {
+	bus := s.eventBus()
+	return bus != nil && bus.ClientCount() == 0
+}
+
+// eventBus читает шину под тем же локом, под которым её пишет SetEventBus.
+// Односторонняя защита (лок только у писателя) создавала бы ложное
+// впечатление безопасности: читателей у поля два — этот и Publish в RunOnce.
+func (s *Scheduler) eventBus() *events.Bus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.deps.Bus
 }
 
 // SetSingboxTunnels wires the sing-box tunnel lister after construction so
@@ -214,12 +262,21 @@ func (s *Scheduler) History() *History { return s.history }
 
 func (s *Scheduler) loop(ctx context.Context) {
 	s.RunOnce(ctx)
+	lastRun := time.Now()
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
+			// Панель не открыта — держим шаг idleInterval, пропуская
+			// промежуточные тики. Открылась — ближайший тик отработает
+			// как обычно, то есть ждать её придётся не дольше, чем ждали
+			// до этой правки.
+			if s.nobodyWatching() && time.Since(lastRun) < s.idleInterval {
+				continue
+			}
 			s.RunOnce(ctx)
+			lastRun = time.Now()
 		case <-s.stopCh:
 			return
 		case <-ctx.Done():
@@ -246,6 +303,14 @@ func (s *Scheduler) RunOnceForced(ctx context.Context) {
 // history, replaces lastSnap, prunes deleted-tunnel buffers, publishes to
 // the bus.
 func (s *Scheduler) RunOnce(ctx context.Context) {
+	// Уже идёт — второй проход не нужен: тот, что в полёте, всё равно
+	// обновит снимок целиком. Пропуск, а не ожидание: ждать нечего, данные
+	// вот-вот приедут.
+	if !s.running.CompareAndSwap(false, true) {
+		return
+	}
+	defer s.running.Store(false)
+
 	defer func() {
 		if r := recover(); r != nil && s.deps.Log != nil {
 			s.deps.Log.AppLog(logging.LevelError, logging.GroupSystem, "monitoring",
@@ -343,8 +408,8 @@ func (s *Scheduler) RunOnce(ctx context.Context) {
 	s.history.PruneTunnels(keepIDs)
 	s.transitions.Retain(probed)
 
-	if s.deps.Bus != nil {
-		s.deps.Bus.Publish("monitoring:matrix-update", snap)
+	if bus := s.eventBus(); bus != nil {
+		bus.Publish("monitoring:matrix-update", snap)
 	}
 }
 

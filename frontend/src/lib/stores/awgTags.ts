@@ -18,6 +18,8 @@ async function fetchAWGTags(): Promise<AWGTagInfo[]> {
 	return api.getAWGTags();
 }
 
+// Таймер сохранён: стор не зарегистрирован в storeRegistry, подсказки
+// инвалидации до него не доходят.
 export const awgTags: PollingStore<AWGTagInfo[]> = createPollingStore<AWGTagInfo[]>(
 	fetchAWGTags,
 	{ staleTime: 30_000, pollInterval: 30_000 },

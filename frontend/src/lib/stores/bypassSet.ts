@@ -13,7 +13,7 @@ import type { BypassSetStatus } from '$lib/types';
 
 export const bypassSetStatus: PollingStore<BypassSetStatus> = createPollingStore<BypassSetStatus>(
 	() => api.singboxRouterBypassSetStatus(),
-	{ staleTime: 10_000, pollInterval: 60_000 }
+	{ staleTime: 10_000, pollInterval: 0 }
 );
 
 registerStore('bypass-set', bypassSetStatus);

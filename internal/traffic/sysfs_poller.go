@@ -50,6 +50,17 @@ type SysfsPoller struct {
 	started   atomic.Bool
 	stopOnce  sync.Once
 	startOnce sync.Once
+
+	// idleInterval — шаг, когда панель не открыта ни у кого.
+	idleInterval time.Duration
+
+	mu      sync.RWMutex
+	clients ClientCounter
+}
+
+// ClientCounter reports the number of open panels (SSE client subscriptions).
+type ClientCounter interface {
+	ClientCount() int
 }
 
 // NewSysfsPoller wires the production poller. 10 s interval, standard sysfs root.
@@ -70,8 +81,11 @@ func newSysfsPoller(lister TunnelLister, history HistoryFeeder, pub Publisher, l
 		appLog:   logging.NewScopedLogger(appLogger, logging.GroupSystem, logging.SubTraffic),
 		root:     root,
 		interval: interval,
-		stopCh:   make(chan struct{}),
-		doneCh:   make(chan struct{}),
+		// Шесть шагов простоя на точку графика: история агрегирует час
+		// в 60 точек, то есть точку в минуту.
+		idleInterval: 6 * interval,
+		stopCh:       make(chan struct{}),
+		doneCh:       make(chan struct{}),
 	}
 }
 
@@ -93,18 +107,47 @@ func (p *SysfsPoller) Stop() {
 	}
 }
 
+// SetClientCounter wires the source of "сколько панелей сейчас открыто".
+// Optional: без него поллер работает в прежнем темпе всегда.
+func (p *SysfsPoller) SetClientCounter(c ClientCounter) {
+	p.mu.Lock()
+	p.clients = c
+	p.mu.Unlock()
+}
+
+// nobodyWatching — правда ли, что панель не открыта ни у кого. Считаются только
+// клиентские подписки: внутренние живут всё время работы процесса.
+func (p *SysfsPoller) nobodyWatching() bool {
+	p.mu.RLock()
+	c := p.clients
+	p.mu.RUnlock()
+	return c != nil && c.ClientCount() == 0
+}
+
 func (p *SysfsPoller) run() {
 	defer close(p.doneCh)
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 	// Fire once immediately so callers don't wait the full interval on startup.
 	p.tick()
+	lastRun := time.Now()
 	for {
 		select {
 		case <-p.stopCh:
 			return
 		case <-ticker.C:
+			// Тик стоит дорого: RunningTunnels перечисляет туннели с резолвом
+			// состояния, а оно читается мимо кэша (кэш 2 с при шаге 10 с —
+			// промах всегда), то есть по RCI-запросу на туннель. При закрытой
+			// панели публикация уходит в никуда, и единственный уцелевший
+			// потребитель — часовая история трафика. Её разрешение — точка в
+			// минуту, поэтому в простое держим шаг idleInterval: график
+			// остаётся верным, а обращений к роутеру вшестеро меньше.
+			if p.nobodyWatching() && time.Since(lastRun) < p.idleInterval {
+				continue
+			}
 			p.tick()
+			lastRun = time.Now()
 		}
 	}
 }

@@ -217,5 +217,8 @@ func (h *ConnectionsHandler) Kill(w http.ResponseWriter, r *http.Request) {
 			"Failed to kill connection: "+err.Error(), "CONNTRACK_KILL_FAILED")
 		return
 	}
+	// Иначе следующий запрос списка (в пределах TTL снимка) вернёт убитое
+	// соединение как живое.
+	h.svc.InvalidateSnapshot()
 	response.Success(w, ConnectionKillData{OK: true})
 }

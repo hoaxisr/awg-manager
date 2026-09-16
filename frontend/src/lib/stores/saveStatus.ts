@@ -31,7 +31,9 @@ export const saveStatus: PollingStore<SaveStatus> = createPollingStore<SaveStatu
 	fetchSaveStatus,
 	{
 		staleTime: 30_000,
-		pollInterval: 30_000,
+		// Наш координатор публикует каждый свой переход, но несохранённые правки
+		// конфигурации, сделанные из РОДНОЙ веб-морды роутера, идут мимо него.
+		pollInterval: 60_000,
 	},
 );
 

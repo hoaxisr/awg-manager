@@ -39,7 +39,7 @@ function createSection<T>(url: string, resourceKey: ResourceKey): PollingStore<T
 		},
 		{
 			staleTime: 30_000,
-			pollInterval: 30_000,
+			pollInterval: 0,
 		}
 	);
 	registerStore(resourceKey, store);

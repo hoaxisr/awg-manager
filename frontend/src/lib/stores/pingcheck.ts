@@ -18,7 +18,7 @@ async function fetchPingcheck(): Promise<TunnelPingStatus[]> {
 
 export const pingCheckStatus = createPollingStore<TunnelPingStatus[]>(fetchPingcheck, {
 	staleTime: 30_000,
-	pollInterval: 30_000,
+	pollInterval: 0,
 });
 registerStore('pingcheck', pingCheckStatus);
 

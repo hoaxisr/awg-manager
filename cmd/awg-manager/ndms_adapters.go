@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -68,7 +70,24 @@ type runningInterfacesAdapter struct {
 	systemTunnels systemTunnelLister
 	awgStore      awgStoreLister
 	settings      *storage.SettingsStore
+
+	// Мемо на состав интерфейсов. Единственный потребитель адаптера —
+	// поллер метрик, а он тикает раз в 5 с, и КАЖДЫЙ тик тянул полный
+	// некэшированный дамп `/show/interface/` плюс чтение всех JSON-ов
+	// туннелей с флеша. Состав интерфейсов так часто не меняется.
+	//
+	// Мемо стоит здесь, а не в общем WGServerStore, сознательно: тот же
+	// список читает страница системных туннелей, и там задержка была бы
+	// видна пользователю.
+	memoMu   sync.Mutex
+	memoRefs []metrics.InterfaceRef
+	memoAt   time.Time
 }
+
+// runningIfacesMemoTTL — три тика поллера. Появление и исчезновение интерфейса
+// доезжает до метрик с задержкой до 15 с; графики от этого не страдают, а
+// обращений к роутеру втрое меньше.
+const runningIfacesMemoTTL = 15 * time.Second
 
 func newRunningInterfacesAdapter(systemTunnels systemTunnelLister, awgStore awgStoreLister, settings *storage.SettingsStore) *runningInterfacesAdapter {
 	return &runningInterfacesAdapter{
@@ -102,6 +121,12 @@ func (a *runningInterfacesAdapter) managedNWGNames() map[string]bool {
 }
 
 func (a *runningInterfacesAdapter) RunningInterfaces(ctx context.Context) []metrics.InterfaceRef {
+	a.memoMu.Lock()
+	defer a.memoMu.Unlock()
+	if a.memoRefs != nil && time.Since(a.memoAt) < runningIfacesMemoTTL {
+		return a.memoRefs
+	}
+
 	out := make([]metrics.InterfaceRef, 0, 8)
 
 	managedNWG := a.managedNWGNames()
@@ -149,7 +174,8 @@ func (a *runningInterfacesAdapter) RunningInterfaces(ctx context.Context) []metr
 		out = append(out, metrics.InterfaceRef{ID: ms.InterfaceName, IsServer: true})
 	}
 
-	return dedupeRefs(out)
+	a.memoRefs, a.memoAt = dedupeRefs(out), time.Now()
+	return a.memoRefs
 }
 
 // dedupeRefs merges duplicate IDs into a single entry. When an ID is
