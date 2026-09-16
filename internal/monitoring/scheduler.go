@@ -127,8 +127,22 @@ type SchedulerDeps struct {
 
 // Scheduler runs ICMP probes through running tunnels on a fixed interval.
 type Scheduler struct {
-	deps         SchedulerDeps
-	interval     time.Duration
+	deps     SchedulerDeps
+	interval time.Duration
+	// idleInterval — период тика, когда панель не открыта НИ У КОГО.
+	//
+	// Зонд связности стоит дорого: для метода "http" (умолчание у любого
+	// туннеля, где пользователь ничего не настраивал) это HTTPS с полным
+	// рукопожатием, а на softfloat MIPS оно съедает ~190 мс CPU. При этом
+	// итог прогона уходит ТОЛЬКО в показ: буфер графика, снимок и SSE-пуш;
+	// автоматических действий на нём не висит — перезапуск по отказу делает
+	// NDMS ping-check, другая подсистема.
+	//
+	// Полностью гасить прогон нельзя: журнал переходов (probe unreachable →
+	// reachable again) — единственный след, по которому пользователь видит
+	// проблему задним числом, когда панель была закрыта. Поэтому не «выключить»,
+	// а «разрядить».
+	idleInterval time.Duration
 	probeTimeout time.Duration
 	workerLimit  int
 	history      *History
@@ -149,6 +163,7 @@ func NewScheduler(deps SchedulerDeps, history *History) *Scheduler {
 	return &Scheduler{
 		deps:         deps,
 		interval:     60 * time.Second,
+		idleInterval: 10 * time.Minute,
 		probeTimeout: 5 * time.Second,
 		workerLimit:  10,
 		history:      history,
@@ -160,7 +175,23 @@ func NewScheduler(deps SchedulerDeps, history *History) *Scheduler {
 // SetEventBus wires the bus after construction so the server bootstrap can
 // build the bus once and inject it later.
 func (s *Scheduler) SetEventBus(bus *events.Bus) {
+	// Под локом: цикл читает шину на каждом тике (nobodyWatching), а проводка
+	// зовёт этот сеттер уже после конструирования.
+	s.mu.Lock()
 	s.deps.Bus = bus
+	s.mu.Unlock()
+}
+
+// nobodyWatching — правда ли, что ни одной панели сейчас не открыто.
+// Считаются только КЛИЕНТСКИЕ подписки: внутренние живут всё время работы
+// процесса и на вопрос «смотрит ли кто-нибудь» ответа не дают (F340).
+// Шины нет (тесты, ранняя проводка) — считаем, что смотрят: разряжать вслепую
+// хуже, чем зондировать лишний раз.
+func (s *Scheduler) nobodyWatching() bool {
+	s.mu.RLock()
+	bus := s.deps.Bus
+	s.mu.RUnlock()
+	return bus != nil && bus.ClientCount() == 0
 }
 
 // SetSingboxTunnels wires the sing-box tunnel lister after construction so
@@ -214,12 +245,21 @@ func (s *Scheduler) History() *History { return s.history }
 
 func (s *Scheduler) loop(ctx context.Context) {
 	s.RunOnce(ctx)
+	lastRun := time.Now()
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
+			// Панель не открыта — держим шаг idleInterval, пропуская
+			// промежуточные тики. Открылась — ближайший тик отработает
+			// как обычно, то есть ждать её придётся не дольше, чем ждали
+			// до этой правки.
+			if s.nobodyWatching() && time.Since(lastRun) < s.idleInterval {
+				continue
+			}
 			s.RunOnce(ctx)
+			lastRun = time.Now()
 		case <-s.stopCh:
 			return
 		case <-ctx.Done():
