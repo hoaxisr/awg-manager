@@ -54,6 +54,27 @@ describe('createPollingStore', () => {
         u();
     });
 
+    // pollInterval: 0 — стор без фонового таймера: обновляется только по
+    // invalidate() (SSE) и по подписке. Так живут сторы, чей ресурс бэкенд
+    // публикует сам.
+    it('pollInterval 0 disables the background timer', async () => {
+        const fetcher = vi.fn().mockResolvedValue({ v: 1 });
+        const s = createPollingStore(fetcher, { staleTime: 0, pollInterval: 0 });
+
+        const u = s.subscribe(() => {});
+        await vi.advanceTimersByTimeAsync(0);
+        expect(fetcher).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(fetcher).toHaveBeenCalledTimes(1);
+
+        s.invalidate();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(fetcher).toHaveBeenCalledTimes(2);
+
+        u();
+    });
+
     it('stops polling when last subscriber unsubscribes', async () => {
         const fetcher = vi.fn().mockResolvedValue({ v: 1 });
         const s = createPollingStore(fetcher, { staleTime: 0, pollInterval: 1000 });

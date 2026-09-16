@@ -14,13 +14,13 @@ import type { DeviceProxyConfig, DeviceProxyInstance, DeviceProxyOutbound, Devic
 
 export const deviceProxyConfig: PollingStore<DeviceProxyConfig> = createPollingStore<DeviceProxyConfig>(
 	() => api.getDeviceProxyConfig(),
-	{ staleTime: 30_000, pollInterval: 30_000 },
+	{ staleTime: 30_000, pollInterval: 0 },
 );
 registerStore('deviceproxy.config', deviceProxyConfig);
 
 export const deviceProxyInstances: PollingStore<DeviceProxyInstance[]> = createPollingStore<DeviceProxyInstance[]>(
 	() => api.listDeviceProxyInstances(),
-	{ staleTime: 30_000, pollInterval: 30_000 },
+	{ staleTime: 30_000, pollInterval: 0 },
 );
 registerStore('deviceproxy.config', deviceProxyInstances);
 
@@ -31,6 +31,7 @@ registerStore('deviceproxy.config', deviceProxyInstances);
 // класса slow-RCI. Изменения имён доезжают за ≤2 мин или при перезаходе.
 export const deviceProxyOutbounds: PollingStore<DeviceProxyOutbound[]> = createPollingStore<DeviceProxyOutbound[]>(
 	() => api.listDeviceProxyOutbounds(),
+	// Таймер сохранён: публикатора у deviceproxy.outbounds нет (см. ниже).
 	{ staleTime: 60_000, pollInterval: 120_000 },
 );
 // Регистрация нужна НЕ ради SSE — точечной инвалидации у каталога нет и
@@ -41,7 +42,7 @@ registerStore('deviceproxy.outbounds', deviceProxyOutbounds);
 
 export const deviceProxyRuntime: PollingStore<DeviceProxyRuntime> = createPollingStore<DeviceProxyRuntime>(
 	() => api.getDeviceProxyRuntime(),
-	{ staleTime: 5_000, pollInterval: 5_000 },
+	{ staleTime: 5_000, pollInterval: 0 },
 );
 registerStore('deviceproxy.runtime', deviceProxyRuntime);
 

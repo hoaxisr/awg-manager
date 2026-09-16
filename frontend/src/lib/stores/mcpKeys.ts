@@ -11,7 +11,7 @@ import type { McpKey } from '$lib/types';
 
 export const mcpKeys: PollingStore<McpKey[]> = createPollingStore<McpKey[]>(
 	() => api.getMcpKeys(),
-	{ staleTime: 5_000, pollInterval: 60_000 }
+	{ staleTime: 5_000, pollInterval: 0 }
 );
 
 registerStore('mcpKeys', mcpKeys);

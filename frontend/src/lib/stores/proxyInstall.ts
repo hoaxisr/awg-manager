@@ -22,7 +22,7 @@ function storeFor(
 ): PollingStore<ProxyInstallStatus> {
 	const store = createPollingStore<ProxyInstallStatus>(
 		() => api.proxyInstallStatus(subsystem),
-		{ staleTime: 60_000, pollInterval: 60_000 },
+		{ staleTime: 60_000, pollInterval: 0 },
 	);
 	registerStore(resource, store);
 	return store;

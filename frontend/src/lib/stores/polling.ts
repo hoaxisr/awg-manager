@@ -23,6 +23,12 @@ export interface PollingStore<T> extends Readable<PollingState<T>> {
 
 export interface PollingOptions {
     staleTime: number;
+    /**
+     * Период фонового опроса в мс. `0` — таймера нет: стор обновляется
+     * только по инвалидации (SSE `resource:invalidated`), по подписке с
+     * истёкшим staleTime и по возврату фокуса вкладки. Ставить 0 можно
+     * ТОЛЬКО стору, чей ресурс бэкенд реально публикует, иначе он замрёт.
+     */
     pollInterval: number;
     // Error threshold before badge shows (default 3).
     errorThreshold?: number;
@@ -34,7 +40,8 @@ export interface PollingOptions {
  *
  * Semantics:
  *  - First subscribe: immediate fetch unless cache is within staleTime.
- *  - Poll interval: periodic refetch while subscribers > 0 and tab visible.
+ *  - Poll interval: periodic refetch while subscribers > 0 and tab visible;
+ *    `pollInterval: 0` отключает таймер — обновление только по инвалидации.
  *  - Last unsubscribe: stop polling (data preserved in memory).
  *  - Tab hidden: pause polling. On visible: immediate refetch.
  *  - invalidate(): immediate refetch if subscribed, else mark stale.
@@ -101,6 +108,7 @@ export function createPollingStore<T>(
     }
 
     function startPoll() {
+        if (opts.pollInterval <= 0) return;
         if (pollTimer !== null) return;
         pollTimer = setInterval(() => {
             if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;

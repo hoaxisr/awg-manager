@@ -31,7 +31,7 @@ export const saveStatus: PollingStore<SaveStatus> = createPollingStore<SaveStatu
 	fetchSaveStatus,
 	{
 		staleTime: 30_000,
-		pollInterval: 30_000,
+		pollInterval: 0,
 	},
 );
 

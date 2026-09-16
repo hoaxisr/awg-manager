@@ -47,7 +47,7 @@ async function fetchTunnels(): Promise<TunnelsSnapshot> {
 
 const basePolling: PollingStore<TunnelsSnapshot> = createPollingStore<TunnelsSnapshot>(
 	fetchTunnels,
-	{ staleTime: 5_000, pollInterval: 5_000 }
+	{ staleTime: 5_000, pollInterval: 0 }
 );
 
 registerStore('tunnels', basePolling);

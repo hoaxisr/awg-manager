@@ -14,7 +14,7 @@ import type { Awg3Tunnel } from '$lib/types';
 
 export const awg3Tunnels: PollingStore<Awg3Tunnel[]> = createPollingStore<Awg3Tunnel[]>(
 	() => api.awg3List(),
-	{ staleTime: 5_000, pollInterval: 10_000 }
+	{ staleTime: 5_000, pollInterval: 0 }
 );
 
 registerStore('awg3', awg3Tunnels);

@@ -21,7 +21,7 @@ async function fetchSysInfo(): Promise<SystemInfo> {
 
 export const systemInfo: PollingStore<SystemInfo> = createPollingStore<SystemInfo>(fetchSysInfo, {
 	staleTime: 30_000,
-	pollInterval: 30_000,
+	pollInterval: 0,
 });
 
 registerStore('sysInfo', systemInfo);
