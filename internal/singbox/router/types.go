@@ -396,7 +396,15 @@ func (m DNSMatchResponse) MarshalJSON() ([]byte, error) {
 func (m *DNSMatchResponse) IsEnabled() bool { return m != nil && m.Enabled }
 
 type DNSRule struct {
-	RuleSet       []string `json:"rule_set,omitempty"`
+	RuleSet []string `json:"rule_set,omitempty"`
+	// RuleSetIPCIDRMatchSource переводит ip_cidr-правила ВНУТРИ набора на
+	// матч по адресу источника. Форму поля определяет
+	// applyDNSRuleSetMatchSource при каждой материализации — присланное
+	// значение она перезаписывает. В хранимом конфиге поле остаётся
+	// (restoreConfig его не снимает), так что читать его как намерение
+	// пользователя нельзя.
+	RuleSetIPCIDRMatchSource bool `json:"rule_set_ip_cidr_match_source,omitempty"`
+
 	SourceIPCIDR  []string `json:"source_ip_cidr,omitempty"`
 	DomainSuffix  []string `json:"domain_suffix,omitempty"`
 	Domain        []string `json:"domain,omitempty"`

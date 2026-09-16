@@ -134,7 +134,50 @@ func (m ruleSetMaterializer) materializeConfig(cfg *RouterConfig) (*RouterConfig
 		out.Route.RuleSet = append(out.Route.RuleSet, local)
 	}
 	applyHTTPClients(&out)
+	applyDNSRuleSetMatchSource(&out)
 	return &out, nil
+}
+
+// applyDNSRuleSetMatchSource помечает каждое DNS-правило со ссылкой на
+// rule_set флагом rule_set_ip_cidr_match_source.
+//
+// Зачем: набор, чей .srs несёт хоть одно ip_cidr-правило, включает в
+// sing-box 1.15 legacy DNS mode (форк dns/router.go:1504), а тот при старте
+// движка бьёт FATAL'ом «Legacy Address Filter Fields in DNS rules»
+// (dns/router.go:157 → experimental/deprecated/stderr.go: нота Impending
+// ⇒ Fatal). Проверка живёт в dns.Router.Start, поэтому `sing-box check`
+// её НЕ ловит — тот же класс, что циклы outbound'ов в persistConfig.
+// Смешанные наборы у нас штатные: telegram = домены + 9 CIDR,
+// discord-full = домены + 14 CIDR.
+//
+// Что меняется по смыслу: ip_cidr-правила ВНУТРИ набора начинают матчиться
+// против адреса источника вместо адреса назначения. В обычном DNS-правиле
+// адрес назначения — это адрес из ОТВЕТА, которого на момент матча ещё нет,
+// так что IP-часть набора там не работает ни в одном режиме 1.15; теряется
+// только legacy-фильтрация ответа, которую 1.16 удаляет безусловно.
+// Обратная сторона — набор с подсетью, в которую попадает сам клиент,
+// начнёт матчить ВСЕ его запросы: такие наборы ловит
+// computeDNSRuleSetClientMatchIssues.
+//
+// Правила с match_response не трогаем: там ip_cidr набора матчится по
+// ответу (geoip по ответу — рабочий сценарий 1.14+), и флаг его сломал бы.
+func applyDNSRuleSetMatchSource(cfg *RouterConfig) {
+	if len(cfg.DNS.Rules) == 0 {
+		return
+	}
+	// Копия: materializeConfig отдаёт shallow-копию конфига, и запись
+	// в общий слайс просочилась бы в хранимую запись вызывающего.
+	rules := append([]DNSRule(nil), cfg.DNS.Rules...)
+	for i := range rules {
+		r := &rules[i]
+		// Присваиваем всегда, а не только true: флаг может приехать снаружи
+		// (API декодирует тело прямо в DNSRule, хранимый конфиг переживает
+		// restoreConfig), и на match_response-правиле он ломает geoip по
+		// ответу. Так форма правила определяется кодом, а не тем, что
+		// прислали.
+		r.RuleSetIPCIDRMatchSource = len(r.RuleSet) > 0 && !r.MatchResponse.IsEnabled()
+	}
+	cfg.DNS.Rules = rules
 }
 
 // ruleSetHTTPClientTag — тег общего HTTP-клиента загрузки наборов.

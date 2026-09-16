@@ -93,6 +93,10 @@ func buildSingboxCore(d singboxCoreDeps) singboxCore {
 	if err != nil {
 		d.bootLog.Warn("address-or-migration", "", err.Error())
 	}
+	dnsMatchSourceMigrated, err := router.MigrateDNSRuleSetMatchSource(singboxConfigDir)
+	if err != nil {
+		d.bootLog.Warn("dns-matchsource-migration", "", err.Error())
+	}
 	orch := singboxorch.New(singboxConfigDir, op.Process())
 	orch.SetLogger(func(level, msg string) {
 		switch level {
@@ -150,7 +154,7 @@ func buildSingboxCore(d singboxCoreDeps) singboxCore {
 		op:        op,
 		orch:      orch,
 		awg3Store: awg3Store,
-		migrated:  ruleSetURLsMigrated || addressOrMigrated || deviceProxyMigrated,
+		migrated:  ruleSetURLsMigrated || addressOrMigrated || deviceProxyMigrated || dnsMatchSourceMigrated,
 	}
 }
 
