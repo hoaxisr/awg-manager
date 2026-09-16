@@ -2,7 +2,8 @@ package connectivity
 
 import (
 	"context"
-	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -143,14 +144,22 @@ func (m *Monitor) drainTriggers(pending map[string]bool) {
 // каждый зонд — TLS-рукопожатие ценой ~190 мс CPU на softfloat MIPS.
 //
 // Ждём не всю пачку целиком: застрявший туннель не должен задерживать показ
-// поднявшихся. Прогон идёт, когда ждать больше некого либо когда очередной
-// шаг не принёс никого нового, — то есть через шаг после последнего подъёма.
+// поднявшихся. Прогон идёт через шаг после последнего подъёма либо когда ждать
+// больше некого; если кто-то подъедет позже — он получит СВОЙ прогон, а не
+// окажется брошен. Прогонов на пачку выходит один-два вместо N, а не N, как
+// было до коалесцирования.
 func (m *Monitor) awaitAndRun(pending map[string]bool) {
 	if m.matrix == nil {
 		return
 	}
+	// Контекст отменяется по stopCh: прогон матрицы синхронный и учтён в wg,
+	// поэтому без отмены Stop() ждал бы его завершения до 30 секунд, а на
+	// роутере это шанс получить SIGKILL от init-скрипта посреди работы.
+	ctx, cancel := m.stopContext()
+	defer cancel()
+
 	if m.handshake == nil {
-		m.runMatrix(len(pending))
+		m.runMatrix(ctx, keysOf(pending))
 		return
 	}
 
@@ -158,44 +167,71 @@ func (m *Monitor) awaitAndRun(pending map[string]bool) {
 	poll := time.NewTicker(handshakePoll)
 	defer poll.Stop()
 
-	ready := 0
+	var settled []string // подъехали и ещё не попали в прогон
 	for {
 		select {
 		case <-poll.C:
 			m.drainTriggers(pending)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			done := m.handshake.Handshaked(ctx)
-			cancel()
+			qctx, qcancel := context.WithTimeout(ctx, 5*time.Second)
+			done := m.handshake.Handshaked(qctx)
+			qcancel()
 
 			fresh := false
 			for id := range pending {
 				if done[id] {
 					delete(pending, id)
-					ready++
+					settled = append(settled, id)
 					fresh = true
 				}
 			}
-			if ready > 0 && (len(pending) == 0 || !fresh) {
-				m.runMatrix(ready)
-				return
+			if len(settled) > 0 && (len(pending) == 0 || !fresh) {
+				m.runMatrix(ctx, settled)
+				settled = nil
+				if len(pending) == 0 {
+					return
+				}
 			}
 		case <-deadline:
-			if ready > 0 {
-				m.runMatrix(ready)
-				return
+			if len(settled) > 0 {
+				m.runMatrix(ctx, settled)
 			}
-			m.appLog.Debug("await-handshake", "", "рукопожатий не дождались (30с) — прогон матрицы пропущен")
+			if len(pending) > 0 {
+				m.appLog.Debug("await-handshake", strings.Join(keysOf(pending), ","),
+					"рукопожатия не дождались (30с)")
+			}
 			return
-		case <-m.stopCh:
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func (m *Monitor) runMatrix(ready int) {
-	m.appLog.Debug("matrix-tick", "", fmt.Sprintf("рукопожатий получено: %d — прогон матрицы", ready))
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+// stopContext отдаёт контекст, отменяемый вместе с остановкой монитора.
+func (m *Monitor) stopContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		select {
+		case <-m.stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
+}
+
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out) // стабильный порядок в журнале
+	return out
+}
+
+func (m *Monitor) runMatrix(parent context.Context, ids []string) {
+	m.appLog.Debug("matrix-tick", strings.Join(ids, ","), "рукопожатие получено — прогон матрицы")
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	m.matrix.RunOnce(ctx)
 }

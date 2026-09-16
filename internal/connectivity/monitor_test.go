@@ -163,3 +163,112 @@ func TestMonitor_BatchOfTunnelsRunsMatrixOnce(t *testing.T) {
 		t.Errorf("выборок рукопожатий %d, ожидалось ≤2 (по одной на шаг)", got)
 	}
 }
+
+// Туннель, рукопожавший позже остальных (типично после ребута — поднимаются не
+// синхронно), обязан получить СВОЙ прогон, а не оказаться брошенным. Иначе его
+// карточка показывает «нет связи» до планового прогона: минуту при открытой
+// панели, до десяти минут при закрытой.
+func TestMonitor_LateTunnelStillGetsRun(t *testing.T) {
+	bus := events.NewBus()
+	matrix := &mockMatrix{}
+	hs := &mockHandshake{}
+	hs.set("fast") // «slow» рукопожмёт позже
+
+	mon := NewMonitor(bus, matrix, hs, nil)
+	mon.Start()
+	defer mon.Stop()
+
+	deadline := time.After(time.Second)
+	for bus.SubscriberCount() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("подписчик так и не появился")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	bus.Publish("tunnel:state", events.TunnelStateEvent{ID: "fast", State: "running"})
+	bus.Publish("tunnel:state", events.TunnelStateEvent{ID: "slow", State: "running"})
+
+	// Первый прогон — за быстрый.
+	deadline = time.After(8 * time.Second)
+	for matrix.calls.Load() < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("прогона за быстрый туннель не случилось")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	// Медленный подъехал — ожидание должно ещё идти.
+	hs.set("slow")
+
+	deadline = time.After(8 * time.Second)
+	for matrix.calls.Load() < 2 {
+		select {
+		case <-deadline:
+			t.Fatalf("прогонов %d — медленный туннель брошен", matrix.calls.Load())
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+// Stop() не должен ждать окончания прогона матрицы: он синхронный и учтён в wg,
+// а на роутере init-скрипт не станет ждать полминуты и пришлёт SIGKILL.
+func TestMonitor_StopDoesNotBlockOnMatrixRun(t *testing.T) {
+	bus := events.NewBus()
+	release := make(chan struct{})
+	defer close(release)
+	matrix := &blockingMatrix{release: release}
+	hs := &mockHandshake{}
+	hs.set("awg0")
+
+	mon := NewMonitor(bus, matrix, hs, nil)
+	mon.Start()
+
+	deadline := time.After(time.Second)
+	for bus.SubscriberCount() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("подписчик так и не появился")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	bus.Publish("tunnel:state", events.TunnelStateEvent{ID: "awg0", State: "running"})
+
+	deadline = time.After(8 * time.Second)
+	for matrix.entered.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("прогон матрицы не начался")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	stopped := make(chan struct{})
+	go func() { mon.Stop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop() завис на прогоне матрицы")
+	}
+}
+
+// blockingMatrix держит прогон, пока его контекст не отменят.
+type blockingMatrix struct {
+	entered atomic.Int64
+	release chan struct{}
+}
+
+func (b *blockingMatrix) RunOnce(ctx context.Context) {
+	b.entered.Add(1)
+	select {
+	case <-ctx.Done():
+	case <-b.release:
+	}
+}
