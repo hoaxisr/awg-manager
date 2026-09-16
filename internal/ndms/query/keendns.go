@@ -6,7 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/cache"
@@ -31,12 +31,26 @@ type KeenDNSStore struct {
 	getter Getter
 	log    Logger
 
-	// absent защёлкивается на первом 404: подсистемы /show/ndns на этой
-	// прошивке нет, и в рантайме она не появится — обновление прошивки
-	// перезапускает процесс. Без защёлки TTL кэша гнал заведомо провальный
-	// GET раз в минуту, и каждый писал ERROR в журнал.
-	absent atomic.Bool
+	// absentUntil — до какого момента не спрашивать /show/ndns после 404.
+	//
+	// НЕ вечная защёлка: 404 не означает однозначно «подсистемы нет». В окне
+	// старта ndm RCI отвечает 404 на всё подряд, и один такой промах запер бы
+	// KeenDNS до перезапуска демона — а единственные потребители этих данных
+	// (internal/api/server_peers.go) выдают клиентам .conf, и вместо
+	// KeenDNS-имени туда уехал бы WAN-адрес. У пользователя с динамическим
+	// адресом такой конфиг отваливается при смене IP.
+	//
+	// Бэкофф решает обе задачи: заведомо провальный GET больше не уходит раз
+	// в минуту (и не пишет ERROR в журнал каждый раз), но прошивка с живой
+	// подсистемой сама себя вылечит через absentBackoff.
+	absentMu    sync.Mutex
+	absentUntil time.Time
 }
+
+// absentBackoff — пауза после 404. Час: прошивка без KeenDNS не обретёт его
+// за время работы процесса, так что для неё это «практически навсегда», а
+// ложный 404 стартового окна стоит одного часа, а не всей сессии.
+const absentBackoff = time.Hour
 
 func NewKeenDNSStore(g Getter, log Logger) *KeenDNSStore {
 	s := &KeenDNSStore{getter: g, log: log}
@@ -53,14 +67,14 @@ func (s *KeenDNSStore) fetch(ctx context.Context, _ string) (*KeenDNSInfo, error
 	// Только /show/ndns — авторитетный эндпоинт KeenDNS на всех поддерживаемых
 	// прошивках. 404 означает, что подсистема отсутствует на этой OS → KeenDNS
 	// не настроен (а не ошибка), без него поллер сыпал бы ошибками каждый тик.
-	if s.absent.Load() {
+	if s.absentNow() {
 		return nil, nil
 	}
 	raw, err := s.getter.GetRaw(ctx, "/show/ndns")
 	if err != nil {
 		var httpErr *transport.HTTPError
 		if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
-			s.absent.Store(true)
+			s.markAbsent()
 			return nil, nil
 		}
 		return nil, err
@@ -73,6 +87,18 @@ func (s *KeenDNSStore) fetch(ctx context.Context, _ string) (*KeenDNSInfo, error
 // Любой домен Keenetic покрывается автоматически — без allowlist суффиксов.
 // Допущение: domain — это зона, а не уже готовый FQDN (verified на ребренд-OS,
 // для стоковой *.keenetic.pro не перепроверялось).
+func (s *KeenDNSStore) absentNow() bool {
+	s.absentMu.Lock()
+	defer s.absentMu.Unlock()
+	return time.Now().Before(s.absentUntil)
+}
+
+func (s *KeenDNSStore) markAbsent() {
+	s.absentMu.Lock()
+	s.absentUntil = time.Now().Add(absentBackoff)
+	s.absentMu.Unlock()
+}
+
 func parseKeenDNS(raw []byte) *KeenDNSInfo {
 	var v struct {
 		Booked  string `json:"booked"`
