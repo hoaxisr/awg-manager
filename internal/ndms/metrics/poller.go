@@ -91,10 +91,15 @@ type Publisher interface {
 	Publish(eventType string, data any)
 }
 
-// SubscriberCounter reports the current number of SSE subscribers.
+// SubscriberCounter reports the current number of CLIENT (SSE) subscriptions.
 // MetricsPoller skips work when zero.
+//
+// Именно клиентских: events.Bus.SubscriberCount() считает ещё и внутренних
+// подписчиков (failover, statecache, connectivity, awgoutbounds, deviceproxy),
+// которые живут всё время работы процесса, — на нём гейт не срабатывал никогда
+// и поллер ходил в NDMS раз в 5 с круглосуточно (F340).
 type SubscriberCounter interface {
-	SubscriberCount() int
+	ClientCount() int
 }
 
 // ServerSnapshotPublisher publishes a full server:updated snapshot. The
@@ -191,7 +196,7 @@ func (p *Poller) run() {
 }
 
 func (p *Poller) tick() {
-	if p.subscribers != nil && p.subscribers.SubscriberCount() == 0 {
+	if p.subscribers != nil && p.subscribers.ClientCount() == 0 {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), p.interval)

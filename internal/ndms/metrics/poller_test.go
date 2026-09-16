@@ -54,7 +54,7 @@ func (p *fakeMetricsPublisher) Events() []publishedEvent {
 
 type fakeSubs struct{ count int }
 
-func (f *fakeSubs) SubscriberCount() int { return f.count }
+func (f *fakeSubs) ClientCount() int { return f.count }
 
 type fakeSnapshotPub struct {
 	mu    sync.Mutex
