@@ -81,6 +81,23 @@ type Client struct {
 	baseTransport *http.Transport
 }
 
+// sessionCache — ОДИН на процесс кэш TLS-сессий, общий для всех вызовов.
+//
+// Соединения мы намеренно не переиспользуем (DisableKeepAlives ниже): зонд
+// связности обязан каждый раз заново пройти DNS, TCP и рукопожатие — иначе он
+// перестаёт проверять путь, а LatencyMs (httpprobe) считается из времени
+// connect и на тёплом соединении обнулился бы. Но платить за ПРОВЕРКУ ЦЕПОЧКИ
+// на каждом рукопожатии не обязательно: при возобновлении сессии TLS 1.3
+// сервер не шлёт Certificate, и crypto/tls восстанавливает peerCertificates и
+// verifiedChains из кэша, минуя verifyServerCertificate. На softfloat MIPS это
+// самая дорогая часть — профиль стенда отдавал 19% всего CPU панели на
+// x509.Verify с ECDSA P-384.
+//
+// Кэш ДОЛЖЕН лежать в базовом конфиге: Clone() копирует указатель, поэтому
+// per-call клоны в buildTransport разделяют его. Заведёте кэш внутри
+// buildTransport — возобновлять будет нечего, каждый вызов начнёт с пустого.
+var sessionCache = tls.NewLRUClientSessionCache(64)
+
 // New creates a Client with sensible defaults.
 func New() *Client {
 	return &Client{
@@ -95,6 +112,7 @@ func New() *Client {
 			ForceAttemptHTTP2: false,
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: false,
+				ClientSessionCache: sessionCache,
 			},
 		},
 	}
