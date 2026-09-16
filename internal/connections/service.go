@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
-	"github.com/hoaxisr/awg-manager/internal/ndms/cache"
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 )
@@ -63,13 +62,67 @@ type Service struct {
 	// каждая смена фильтра, сортировки и страницы шла тем же путём заново:
 	// на роутере с 10k соединений это 10k разборов и 10k структур в мусор
 	// на каждый клик.
-	snapshots *cache.ListStore[*listSnapshot]
+	snapshots *snapshotCache
+}
+
+// snapshotCache — TTL-кэш на один снимок. Свой, а не общий cache.ListStore:
+// у того три свойства, каждое из которых для ЗАПРОСНОГО вызывающего — дефект.
+//
+//  1. При отказе fetch он отдаёт последнее значение БЕЗ срока годности
+//     (cache.TTL.Peek игнорирует TTL). Для conntrack это значит: файл перестал
+//     читаться — вкладка бессрочно показывает снимок произвольной давности
+//     вместо честного 503, который отдавался раньше.
+//  2. Его singleflight замыкается на контексте ПЕРВОГО вызывающего, а здесь это
+//     контекст HTTP-запроса. Пользователь щёлкает фильтры, браузер рвёт
+//     предыдущий запрос — обогащение best-effort вернёт пустое, и такой
+//     обеднённый снимок ляжет в кэш всем остальным.
+//  3. Запись из него не выселяется никогда: снимок на 10k соединений жил бы
+//     в памяти до перезапуска, на устройстве с 256 МБ и флагом isLowMemory.
+type snapshotCache struct {
+	ttl time.Duration
+
+	// Сборка идёт ПОД мьютексом: это и коалесцирование (второй запрос дождётся
+	// и возьмёт готовое), и защита от параллельного разбора всей таблицы.
+	mu  sync.Mutex
+	val *listSnapshot
+	at  time.Time
+}
+
+func (c *snapshotCache) get(ctx context.Context, build func(context.Context) (*listSnapshot, error)) (*listSnapshot, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.val != nil {
+		if time.Since(c.at) < c.ttl {
+			return c.val, nil
+		}
+		c.val, c.at = nil, time.Time{} // протухшее не держим в памяти
+	}
+	v, err := build(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.val, c.at = v, time.Now()
+	return v, nil
+}
+
+func (c *snapshotCache) invalidate() {
+	c.mu.Lock()
+	c.val, c.at = nil, time.Time{}
+	c.mu.Unlock()
 }
 
 // snapshotTTL — окно, в котором повторный запрос берёт готовый разбор.
 // Две секунды: conntrack меняется непрерывно, и снимок такой давности от
 // свежего пользователь не отличит, а листание страниц становится бесплатным.
 const snapshotTTL = 2 * time.Second
+
+// snapshotBuildTimeout ограничивает сборку снимка: чтение /proc плюс
+// best-effort обогащение через RCI.
+const snapshotBuildTimeout = 15 * time.Second
+
+// InvalidateSnapshot сбрасывает кэш разбора. Зовётся после убийства соединения:
+// иначе пользователь жмёт «Убить», список перечитывается — и соединение на месте.
+func (s *Service) InvalidateSnapshot() { s.snapshots.invalidate() }
 
 // listSnapshot — всё, что не зависит от параметров запроса.
 type listSnapshot struct {
@@ -101,7 +154,7 @@ func NewService(catalog routing.Catalog, ndmsClient ndmsClient, lister DNSListLi
 			return ifi.Addrs()
 		},
 	}
-	s.snapshots = cache.NewListStore(snapshotTTL, nil, "connections", s.buildSnapshot)
+	s.snapshots = &snapshotCache{ttl: snapshotTTL}
 	return s
 }
 
@@ -153,7 +206,14 @@ func (s *Service) List(ctx context.Context, params ListParams) (*ListResponse, e
 		params.Protocol = "all"
 	}
 
-	snap, err := s.snapshots.List(ctx)
+	// Контекст отвязан от запроса: снимок попадёт в кэш и достанется соседям,
+	// а браузер рвёт предыдущий запрос на каждом клике по фильтру — отмена
+	// одного не должна обеднять данные остальным. Тот же приём, что в
+	// internal/tunnel/service/statecache.go.
+	buildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotBuildTimeout)
+	defer cancel()
+
+	snap, err := s.snapshots.get(buildCtx, s.buildSnapshot)
 	if err != nil {
 		return nil, err
 	}

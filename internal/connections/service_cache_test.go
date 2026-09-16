@@ -102,7 +102,7 @@ func TestList_SecondCallServedFromCache(t *testing.T) {
 
 	// Сброс кэша — и та же подмена наконец видна. Без этой проверки тест выше
 	// был бы зелёным и на сломанном разборе второй строки.
-	svc.snapshots.InvalidateAll()
+	svc.InvalidateSnapshot()
 	third, err := svc.List(ctx, ListParams{})
 	if err != nil {
 		t.Fatalf("третий List: %v", err)
@@ -140,5 +140,47 @@ func TestList_CacheNotReordered(t *testing.T) {
 		if got := plain.Connections[i].Src; got != w {
 			t.Errorf("позиция %d: src=%s, ожидался %s — кэш переупорядочен сортировкой", i, got, w)
 		}
+	}
+}
+
+// Отказ чтения conntrack обязан дойти до пользователя как отказ. Прежний общий
+// cache.ListStore отдавал бы последний снимок БЕЗ срока годности, и вкладка
+// бессрочно показывала бы старьё как актуальное — молчаливый отказ вместо 503.
+func TestList_ReadFailureIsNotMaskedByStaleCache(t *testing.T) {
+	rewrite := withConntrack(t, connLine("192.168.1.15", 3389))
+	svc := newCacheTestService(t)
+	ctx := context.Background()
+
+	if _, err := svc.List(ctx, ListParams{}); err != nil {
+		t.Fatalf("первый List: %v", err)
+	}
+
+	// Файл исчез, кэш сброшен — отдать обязаны ошибку, а не прежний снимок.
+	svc.InvalidateSnapshot()
+	_ = rewrite
+	if err := os.Remove(conntrackPath); err != nil {
+		t.Fatalf("удаление conntrack: %v", err)
+	}
+
+	if _, err := svc.List(ctx, ListParams{}); err == nil {
+		t.Error("List вернул успех при нечитаемом conntrack — отказ замаскирован кэшем")
+	}
+}
+
+// Отменённый контекст запроса не должен обрывать сборку: снимок ложится в кэш и
+// достаётся соседям, а браузер рвёт предыдущий запрос на каждом клике.
+func TestList_CancelledRequestStillBuildsSnapshot(t *testing.T) {
+	withConntrack(t, connLine("192.168.1.15", 3389))
+	svc := newCacheTestService(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // отменён ДО вызова
+
+	res, err := svc.List(ctx, ListParams{})
+	if err != nil {
+		t.Fatalf("List на отменённом контексте: %v", err)
+	}
+	if res.Pagination.Total != 1 {
+		t.Errorf("записей %d, ожидалась 1", res.Pagination.Total)
 	}
 }
