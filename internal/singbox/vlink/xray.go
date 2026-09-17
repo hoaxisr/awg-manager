@@ -363,7 +363,7 @@ func ParseXrayBody(body []byte) BatchResult {
 
 					ob, err := decodeXrayOutbound(raw)
 					if err != nil {
-						res.Errors = append(res.Errors, ParseError{LineIdx: thisIdx, Scheme: proto, Message: err.Error()})
+						res.Errors = append(res.Errors, ParseError{LineIdx: thisIdx, Scheme: proto, Message: err.Error(), Node: true})
 						continue
 					}
 
@@ -383,6 +383,7 @@ func ParseXrayBody(body []byte) BatchResult {
 							LineIdx: thisIdx,
 							Scheme:  proto,
 							Message: err.Error(),
+							Node:    true,
 						})
 						continue
 					}
@@ -423,7 +424,7 @@ func ParseXrayBody(body []byte) BatchResult {
 
 		ob, err := decodeXrayOutbound(raw)
 		if err != nil {
-			res.Errors = append(res.Errors, ParseError{LineIdx: idx, Scheme: proto, Message: err.Error()})
+			res.Errors = append(res.Errors, ParseError{LineIdx: idx, Scheme: proto, Message: err.Error(), Node: true})
 			continue
 		}
 
@@ -433,6 +434,7 @@ func ParseXrayBody(body []byte) BatchResult {
 				LineIdx: idx,
 				Scheme:  proto,
 				Message: err.Error(),
+				Node:    true,
 			})
 			continue
 		}

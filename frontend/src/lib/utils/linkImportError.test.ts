@@ -105,6 +105,29 @@ describe('linkImportErrorText', () => {
 	});
 });
 
+describe('номер в причине отказа', () => {
+	it('строка текстовой подписки так и зовётся', () => {
+		expect(linkImportErrorText('line 3 (vless): vlink: vless: missing uuid')).toBe(
+			'Строка 3: Не указан UUID'
+		);
+	});
+
+	it('у подписки в формате JSON или YAML это номер сервера, а не строки', () => {
+		expect(linkImportErrorText('node 3 (hysteria): vlink: hysteria: obfs requires password')).toBe(
+			'Сервер 3: Не указан пароль обфускации'
+		);
+	});
+
+	it('номер участвует в группировке так же, как раньше', () => {
+		expect(
+			groupLinkImportErrors([
+				'node 1 (hysteria): vlink: hysteria: obfs requires password',
+				'node 2 (hysteria): vlink: hysteria: obfs requires password'
+			])
+		).toEqual(['Не указан пароль обфускации (×2)']);
+	});
+});
+
 describe('groupLinkImportErrors', () => {
 	it('одинаковую причину показывает один раз со счётчиком, без номера строки', () => {
 		const errors = [

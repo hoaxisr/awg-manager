@@ -284,6 +284,7 @@ func ParseClashBody(body []byte) BatchResult {
 			LineIdx: 0,
 			Scheme:  "clash",
 			Message: fmt.Sprintf("yaml parse: %s", err.Error()),
+			Node:    true,
 		})
 		return out
 	}
@@ -315,6 +316,7 @@ func ParseClashBody(body []byte) BatchResult {
 				LineIdx: i,
 				Scheme:  "clash:" + t,
 				Message: fmt.Sprintf("unsupported clash type %q", t),
+				Node:    true,
 			})
 			continue
 		}
@@ -323,6 +325,7 @@ func ParseClashBody(body []byte) BatchResult {
 				LineIdx: i,
 				Scheme:  "clash:" + t,
 				Message: err.Error(),
+				Node:    true,
 			})
 			continue
 		}

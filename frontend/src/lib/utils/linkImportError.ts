@@ -12,8 +12,12 @@
  * ошибка той же формы переводится сама.
  */
 
-/** `line 3 (clash:vless): ...` — префикс ошибок подписки (ParseError.Error). */
-const LINE_PREFIX = /^line\s+(\d+)\s+\([^)]*\):\s*/i;
+/**
+ * `line 3 (clash:vless): ...` — префикс ошибок подписки (ParseError.Error).
+ * У подписок в формате JSON и YAML строк нет, и бэкенд пишет там `node N` —
+ * номер сервера по порядку.
+ */
+const LINE_PREFIX = /^(line|node)\s+(\d+)\s+\([^)]*\):\s*/i;
 
 /** Служебные префиксы пакета: пользователю они ничего не говорят. */
 const NOISE_PREFIX = /^(vlink|clash [a-z0-9]+|xray|amnezia|mieru|hysteria):\s*/i;
@@ -273,8 +277,8 @@ const RULES: Rule[] = [
 /** Общая часть: снять префиксы и применить правила. null — правила не подошли. */
 function translate(raw: string): { line: string; rest: string; text: string | null } {
 	let line = '';
-	let rest = raw.replace(LINE_PREFIX, (_, n: string) => {
-		line = `Строка ${n}: `;
+	let rest = raw.replace(LINE_PREFIX, (_, unit: string, n: string) => {
+		line = unit.toLowerCase() === 'node' ? `Сервер ${n}: ` : `Строка ${n}: `;
 		return '';
 	});
 	// Префиксы снимаются по одному: сообщение бывает вложенным

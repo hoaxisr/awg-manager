@@ -65,7 +65,7 @@ func IsMieruClientJSON(body []byte) bool {
 func ParseMieruClientJSON(body []byte) BatchResult {
 	out := BatchResult{}
 	fail := func(msg string) BatchResult {
-		out.Errors = append(out.Errors, ParseError{LineIdx: 0, Scheme: "mieru-json", Message: msg})
+		out.Errors = append(out.Errors, ParseError{LineIdx: 0, Scheme: "mieru-json", Message: msg, Node: true})
 		return out
 	}
 	cfg := &pb.ClientConfig{}
