@@ -210,6 +210,27 @@ func TestFullShowsMoreThanInfo(t *testing.T) {
 	}
 }
 
+// Подсказка в настройках («debug-строки — с FULL, trace — только с DEBUG»,
+// LoggingSettings.svelte) — обещание пользователю. Ни монотонность, ни
+// «FULL подробнее INFO» его не удержат: попроси мы на пороге FULL сразу
+// "trace", оба теста остались бы зелёными, а подсказка стала бы ложью.
+func TestAskedLevelMatchesSettingsHint(t *testing.T) {
+	cases := []struct {
+		threshold logging.Level
+		want      string
+	}{
+		{logging.LevelInfo, "info"},
+		{logging.LevelFull, "debug"},
+		{logging.LevelDebug, "trace"},
+	}
+	for _, c := range cases {
+		f := NewLogForwarder(func() string { return "unused" }, &gateLogger{configured: c.threshold})
+		if got := f.desiredClashLevel(); got != c.want {
+			t.Errorf("порог %v: просим у движка %q, подсказка обещает %q", c.threshold, got, c.want)
+		}
+	}
+}
+
 // Журнал выключен целиком — поток к движку не открываем вовсе. Держать его,
 // принимать каждую строку и выбрасывать её после разбора — ровно та работа,
 // которую эта линия правок убирает.
