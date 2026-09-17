@@ -99,6 +99,11 @@ func (b *Builder) BuildLink(ctx context.Context, rec instancestore.Record, req w
 		return nil, &wdttlink.LinkError{Code: "FREETURN_LINK_ENCODE_FAILED", Msg: err.Error()}
 	}
 
+	// Ссылку эта ручка НЕ сохраняет: запоминает её внесение в список (#919,
+	// F370). Иначе ссылка абонента, которого в список не внесли, оседала бы в
+	// файле навсегда — показать её негде, а приватный ключ пира лежал бы там
+	// до удаления инстанса.
+	//
 	// clientId отдаётся ТАКИМ, КАКИМ пришёл (без трима) — форма старого
 	// ответа; фронт тримит его сам (ServerAllowlist.svelte:72).
 	return map[string]string{"link": link, "peer": peer, "clientId": req.ClientID}, nil

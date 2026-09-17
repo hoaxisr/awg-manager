@@ -17,7 +17,6 @@
 		suggestNextPeerIP,
 	} from '$lib/utils/serverPeerOptions';
 	import type { FreeTurnAllowlistEntry, FreeTurnServerConfig } from '$lib/types';
-	import LinkBox from './LinkBox.svelte';
 	import ServerAllowlistAddModal, { type AddClientValues } from './ServerAllowlistAddModal.svelte';
 	import { NEW_PEER } from './ShareWizardPeer.svelte';
 
@@ -40,7 +39,24 @@
 
 	let addOpen = $state(false);
 	let addError = $state('');
-	let link = $state('');
+	/**
+	 * Выданная ссылка: показывается последним шагом окна (#919), а не блоком
+	 * под списком — там она уезжала за нижнюю границу экрана и терялась
+	 * насовсем при перезагрузке страницы.
+	 */
+	let issued = $state<{ link: string; name: string } | null>(null);
+
+	function closeAdd() {
+		addOpen = false;
+		issued = null;
+	}
+
+	function showLink(entry: FreeTurnAllowlistEntry) {
+		if (!entry.link) return;
+		addError = '';
+		issued = { link: entry.link, name: entry.comment || entry.clientId };
+		addOpen = true;
+	}
 
 	// Пир абоненту заводится на WG-сервере, куда смотрит `-connect` (#871).
 	let snap = $state<ServersSnapshot | null>(null);
@@ -142,7 +158,15 @@
 				});
 				const id = (res.clientId || values.clientId).trim();
 				if (id && values.allow) {
-					const add = await api.addFreeTurnServerAllowlistClient(serverId, id, values.name);
+					// Ссылка едет вместе с записью: её хранит список, а не ручка
+					// выдачи (#919 — иначе в файле оседали бы ссылки абонентов,
+					// которых в список не внесли).
+					const add = await api.addFreeTurnServerAllowlistClient(
+						serverId,
+						id,
+						values.name,
+						res.link ?? '',
+					);
 					entries = add.clients ?? [];
 					enabled = add.enabled;
 					clientsFile = add.clientsFile ?? '';
@@ -158,10 +182,14 @@
 						notifications.success('Client ID внесён в список разрешённых');
 					}
 				}
-				// Окно закрывается только полным успехом: ссылка под списком
-				// иначе относилась бы к невнесённому абоненту.
-				link = res.link ?? '';
-				addOpen = false;
+				// Окно остаётся открытым и показывает ссылку: это последний шаг
+				// формы. Ссылки нет — показывать нечего, окно закрывается.
+				const issuedLink = res.link ?? '';
+				if (issuedLink) {
+					issued = { link: issuedLink, name: values.name || values.clientId };
+				} else {
+					addOpen = false;
+				}
 			} catch (e) {
 				// Отказ остаётся в открытой модалке: он про то, что в полях.
 				addError = errText(e);
@@ -222,6 +250,7 @@
 			disabled={busy}
 			onclick={() => {
 				addError = '';
+				issued = null;
 				addOpen = true;
 			}}
 		>
@@ -242,14 +271,20 @@
 						<span class="row-name">{entry.comment || '—'}</span>
 						<code class="row-id" title={entry.clientId}>{shortId(entry.clientId)}</code>
 					</div>
-					<Button
-						variant="ghost"
-						size="sm"
-						disabled={busy}
-						onclick={() => removeEntry(entry.clientId)}
-					>
-						Удалить
-					</Button>
+					<div class="row-actions">
+						{#if entry.link}
+							<!-- Показ сохранённой ссылки ничего не мутирует: общий замок сервера ему не указ. -->
+							<Button variant="ghost" size="sm" onclick={() => showLink(entry)}>Ссылка</Button>
+						{/if}
+						<Button
+							variant="ghost"
+							size="sm"
+							disabled={busy}
+							onclick={() => removeEntry(entry.clientId)}
+						>
+							Удалить
+						</Button>
+					</div>
 				</li>
 			{/each}
 		</ul>
@@ -269,10 +304,6 @@
 		<!-- SH-89: пустой список — не «ничего не настроено», а «никто не пройдёт». -->
 		<p class="empty">Список пуст — с включённой проверкой сервер не пропустит никого</p>
 	{/if}
-
-	{#if link}
-		<LinkBox {link} freeturn />
-	{/if}
 </div>
 
 <ServerAllowlistAddModal
@@ -280,8 +311,10 @@
 	{busy}
 	error={addError}
 	{serverListenPort}
+	link={issued?.link ?? ''}
+	linkFor={issued?.name ?? ''}
 	onsubmit={addClient}
-	onclose={() => (addOpen = false)}
+	onclose={closeAdd}
 />
 
 <ConfirmModal
@@ -330,6 +363,13 @@
 		border-bottom: none;
 	}
 
+	.row-actions {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		flex-shrink: 0;
+	}
+
 	.row-main {
 		display: flex;
 		flex-direction: column;
@@ -341,6 +381,9 @@
 		font-size: 0.875rem;
 		font-weight: 500;
 		color: var(--color-text-primary);
+		/* Имя пишет пользователь: длинное слитное слово иначе распирает строку
+		   в горизонтальный скролл — колонка узкая, кнопок в ней теперь две. */
+		overflow-wrap: anywhere;
 	}
 
 	.row-id,

@@ -169,6 +169,7 @@ func TestKinds_DataTargetsClassified(t *testing.T) {
 		KindFreeTurnServer: {
 			"/opt/etc/awg-manager/freeturn/clients.json",
 			FreeTurnAllowlistPath(dataDir, "g"),
+			FreeTurnLinksPath(dataDir, "g"),
 		},
 	}
 	for _, k := range AllKinds {

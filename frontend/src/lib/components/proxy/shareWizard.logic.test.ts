@@ -8,6 +8,11 @@ const apiMock = vi.hoisted(() => ({
 	getWdttServerPanelUsers: vi.fn(),
 	startWdttServerInstance: vi.fn(),
 	generateWdttServerLink: vi.fn(),
+	createFreeTurnServer: vi.fn(),
+	updateFreeTurnServerInstance: vi.fn(),
+	addFreeTurnServerAllowlistClient: vi.fn(),
+	startFreeTurnServer: vi.fn(),
+	generateFreeTurnLink: vi.fn(),
 }));
 vi.mock('$lib/api/client', () => ({ api: apiMock }));
 
@@ -357,5 +362,68 @@ describe('commitShareWizard: WDTT — ссылку получает заведё
 		expect(state.calls).toEqual(['put', 'start']);
 		expect(apiMock.addWdttServerPanelUser).not.toHaveBeenCalled();
 		expect(apiMock.generateWdttServerLink.mock.calls[0][1]).toMatchObject({ password: 'gen-1' });
+	});
+});
+
+// #919: ссылку хранит запись списка. Мастер вносит абонента ДО старта сервера,
+// когда ссылки ещё нет, поэтому после выдачи он зовёт ту же ручку второй раз —
+// иначе абонент из мастера остался бы без кнопки «Ссылка».
+describe('commitShareWizard: FreeTurn — выданная ссылка доезжает до записи списка', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		apiMock.createFreeTurnServer.mockResolvedValue({
+			id: 'ft1',
+			config: { listen: '0.0.0.0:56000' } as FreeTurnServerConfig,
+		});
+		apiMock.updateFreeTurnServerInstance.mockImplementation(
+			async (_id: string, cfg: FreeTurnServerConfig) => cfg,
+		);
+		apiMock.addFreeTurnServerAllowlistClient.mockResolvedValue({ enabled: true, clients: [] });
+		apiMock.startFreeTurnServer.mockResolvedValue(undefined);
+		apiMock.generateFreeTurnLink.mockResolvedValue({ link: 'freeturn://x' });
+	});
+
+	const fields = {
+		password: '',
+		port: '56000',
+		firewall: true,
+		connect: '127.0.0.1:51820',
+		obfProfile: 'none' as const,
+		obfKey: '',
+	};
+	const client = {
+		name: 'Второй роутер',
+		password: '',
+		vkHash: '',
+		clientId: 'aabbccddeeff0011',
+		allow: true,
+	};
+
+	it('запись заводится до старта, ссылка дописывается к ней после выдачи', async () => {
+		const res = await commitShareWizard({
+			protocol: 'freeturn',
+			fields,
+			client,
+			withLink: true,
+			peer: '203.0.113.10',
+		});
+
+		expect(res.link).toBe('freeturn://x');
+		const calls = apiMock.addFreeTurnServerAllowlistClient.mock.calls;
+		expect(calls).toHaveLength(2);
+		// Первый — до старта, ссылки ещё нет; второй — с ней.
+		expect(calls[0][3]).toBeUndefined();
+		expect(calls[1]).toEqual(['ft1', 'aabbccddeeff0011', 'Второй роутер', 'freeturn://x']);
+	});
+
+	it('галка снята — в список не пишем вовсе, даже со ссылкой на руках', async () => {
+		await commitShareWizard({
+			protocol: 'freeturn',
+			fields,
+			client: { ...client, allow: false },
+			withLink: true,
+			peer: '203.0.113.10',
+		});
+		expect(apiMock.addFreeTurnServerAllowlistClient).not.toHaveBeenCalled();
 	});
 });

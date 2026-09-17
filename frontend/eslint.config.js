@@ -13,6 +13,10 @@ export default tseslint.config(
 			'node_modules/',
 			'static/',
 			'scripts/',
+			// Рабочий каталог плагина remember: свой .gitignore у него есть, но
+			// eslint идёт не по нему и падал на разборе .ts вне tsconfig — гейт
+			// был красным независимо от правок (F328).
+			'.remember/',
 			'**/*.cjs',
 			// Генерированный вывод npm run gen:api — не линтится, как и любой codegen.
 			'src/lib/api/schemas.gen.ts',

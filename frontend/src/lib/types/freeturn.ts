@@ -157,6 +157,8 @@ export interface FreeTurnGenerateLinkResult {
 export interface FreeTurnAllowlistEntry {
 	clientId: string;
 	comment?: string;
+	/** Выданная абоненту ссылка, если она сохранялась (#919). */
+	link?: string;
 }
 
 export interface FreeTurnAllowlistStatus {

@@ -4,17 +4,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // AllowlistEntry is one authorized freeturn client ID with optional comment.
+//
+// Link — выданная этому абоненту ссылка, если она сохранялась (#919). Живёт в
+// отдельном файле (links.go), а не в файле списка: тот читает форк-сервер.
 type AllowlistEntry struct {
 	ClientID string `json:"clientId"`
 	Comment  string `json:"comment,omitempty"`
+	Link     string `json:"link,omitempty"`
 }
 
 // AllowlistStatus is returned by the allowlist API.
@@ -88,18 +92,15 @@ func writeAllowlistFile(path string, data allowlistFile) error {
 			Comment string `json:"comment,omitempty"`
 		})
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
 	b, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	// Общий помощник: уникальный временный файл и fsync файла и каталога перед
+	// переименованием. Прежняя запись через `path+".tmp"` без sync теряла
+	// список при пропадании питания, а фиксированное имя два писателя
+	// переслаивали (F374).
+	return storage.AtomicWritePerm(path, b, storage.SecretFilePermission)
 }
 
 func allowlistEntriesFromFile(data allowlistFile) []AllowlistEntry {

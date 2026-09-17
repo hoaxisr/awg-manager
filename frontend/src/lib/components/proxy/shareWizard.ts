@@ -369,5 +369,12 @@ export async function commitShareWizard(input: ShareCommitInput): Promise<ShareC
 		peer: peerWithPort(input.peer, port) || undefined,
 		wg: input.peerConf?.trim() || undefined,
 	});
+	// Ссылку хранит запись списка (#919), а она заведена ВЫШЕ — до старта
+	// сервера, когда ссылки ещё не было. Второй вызов той же ручки дописывает
+	// ссылку к уже существующей записи: отдельной ручки ради этого не нужно,
+	// а без него абонент из мастера остался бы без кнопки «Ссылка».
+	if (client.allow && clientId && res.link) {
+		await api.addFreeTurnServerAllowlistClient(id, clientId, client.name.trim(), res.link);
+	}
 	return { id, protocol: 'freeturn', link: res.link ?? '', linkQwdtt: '' };
 }

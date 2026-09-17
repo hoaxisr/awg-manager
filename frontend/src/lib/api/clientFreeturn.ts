@@ -267,14 +267,20 @@ export class FreeturnClient extends SubscriptionsClient {
 		);
 	}
 
+	/**
+	 * link — выданная абоненту ссылка (#919). Её запоминает внесение в список,
+	 * а не выдача: у абонента без записи в списке ссылку негде показать, и в
+	 * хранилище она осталась бы сиротой с приватным ключом пира.
+	 */
 	async addFreeTurnServerAllowlistClient(
 		serverId: string,
 		clientId: string,
-		comment: string
+		comment: string,
+		link = ''
 	): Promise<FreeTurnAllowlistAddResult> {
 		return this.request<FreeTurnAllowlistAddResult>(
 			instancePath('freeturn-server', serverId, '/allowlist'),
-			{ method: 'POST', body: JSON.stringify({ clientId, comment }) }
+			{ method: 'POST', body: JSON.stringify({ clientId, comment, link }) }
 		);
 	}
 
