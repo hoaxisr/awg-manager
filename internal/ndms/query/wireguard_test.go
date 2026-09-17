@@ -671,3 +671,48 @@ func TestIPMaskToPrefix(t *testing.T) {
 		})
 	}
 }
+
+// Состав системных туннелей спрашивает поллер метрик на КАЖДОМ тике, а выборка
+// — это `/show/interface/` целиком. Без кэша при открытой панели мы запрашивали
+// всё дерево интерфейсов четыре раза в минуту, только чтобы решить, что
+// опрашивать (F364).
+func TestWGServerStore_ListSystemTunnels_CachedBetweenCalls(t *testing.T) {
+	fg := newFakeGetter()
+	primeWGFakeGetter(fg)
+	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
+
+	if _, err := s.ListSystemTunnels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Меряем ПРИРОСТ после первого вызова: первый тянет ещё и InterfaceStore,
+	// который резолвит kernel-имена, и его обращения к делу не относятся.
+	base := fg.Calls("/show/interface/")
+	for i := 0; i < 5; i++ {
+		if _, err := s.ListSystemTunnels(context.Background()); err != nil {
+			t.Fatalf("вызов %d: %v", i, err)
+		}
+	}
+	if got := fg.Calls("/show/interface/") - base; got != 0 {
+		t.Errorf("пять повторов дали %d новых обращений к /show/interface/, ожидали 0", got)
+	}
+}
+
+// ...но кэш обязан сбрасываться по хуку NDMS, иначе поднявшийся туннель не
+// попадёт в опрос до истечения TTL.
+func TestWGServerStore_ListSystemTunnels_InvalidateRefetches(t *testing.T) {
+	fg := newFakeGetter()
+	primeWGFakeGetter(fg)
+	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
+
+	if _, err := s.ListSystemTunnels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	base := fg.Calls("/show/interface/")
+	s.InvalidateAll()
+	if _, err := s.ListSystemTunnels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := fg.Calls("/show/interface/") - base; got != 1 {
+		t.Errorf("после сброса новых обращений %d, ожидали 1 — кэш не сбросился", got)
+	}
+}
