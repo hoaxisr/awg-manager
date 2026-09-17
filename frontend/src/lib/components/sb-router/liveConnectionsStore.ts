@@ -33,6 +33,10 @@ const EMPTY: ConnectionsSnapshot = {
 
 const snapshot = writable<ConnectionsSnapshot>(EMPTY);
 const wsStatus = writable<WSStatus>('connecting');
+// Метка последнего кадра: по ней вкладка «Соединения» отличает живой поток от
+// открытого, но замолчавшего. Раньше она держала для этого СВОЙ WebSocket к той
+// же ручке — тот же снимок conntrack сериализовался дважды в секунду (F349 §3).
+const lastMessageAt = writable(0);
 
 let clientsByIP = new Map<string, string>();
 let wsClose: (() => void) | null = null;
@@ -61,7 +65,10 @@ function connect(): void {
 	}
 	wsClose = createClashWS<ClashConnectionsRaw>(
 		'/api/singbox/clash/connections',
-		(raw) => snapshot.set(parseSnapshot(raw, clientsByIP)),
+		(raw) => {
+			snapshot.set(parseSnapshot(raw, clientsByIP));
+			lastMessageAt.set(Date.now());
+		},
 		(s) => wsStatus.set(s),
 	);
 }
@@ -76,6 +83,7 @@ function disconnect(): void {
 	clientsByIP = new Map();
 	snapshot.set(EMPTY);
 	wsStatus.set('connecting');
+	lastMessageAt.set(0);
 }
 
 /** Подписывает store на enabled-состояние движка (идемпотентно). */
@@ -90,6 +98,14 @@ export function bindLiveConnectionsStore(): void {
 
 export const liveConnectionsSnapshot = { subscribe: snapshot.subscribe };
 export const liveConnectionsWsStatus = { subscribe: wsStatus.subscribe };
+export const liveConnectionsLastMessageAt = { subscribe: lastMessageAt.subscribe };
+
+/** Убирает закрытые соединения из снимка, не дожидаясь следующего кадра. */
+export function dropConnections(ids: string[]): void {
+	if (ids.length === 0) return;
+	const gone = new Set(ids);
+	snapshot.update((s) => ({ ...s, connections: s.connections.filter((c) => !gone.has(c.id)) }));
+}
 
 export const liveConnectionsTraffic = derived(
 	[snapshot, wsStatus],
