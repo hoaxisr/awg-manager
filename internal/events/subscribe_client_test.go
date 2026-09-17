@@ -62,3 +62,32 @@ func TestClientCount_IgnoresInternalSubscribers(t *testing.T) {
 		t.Fatalf("SubscriberCount=%d после всех отписок, ожидался 0", got)
 	}
 }
+
+// SubscriberCount считает ВСЕХ подписчиков, включая пятерых внутренних, живущих
+// всё время работы процесса. Как ответ на вопрос «смотрит ли кто-нибудь» он
+// всегда «да» — ровно так гейт поллера метрик молча не работал (F340), выглядя
+// при чтении кода исправным.
+//
+// Шесть фоновых производителей теперь выводят этот ответ самостоятельно
+// (F351). Сводить их в общий хелпер не стали: четверо гасят не публикацию, а
+// саму работу, и в шину это не уносится. Вместо абстракции — сторож ровно на
+// тот способ, которым ошибка уже случалась.
+func TestSubscriberCount_NotUsedOutsideEvents(t *testing.T) {
+	var offenders []string
+	walkGoFiles(t, func(rel string, data []byte) {
+		for i, line := range strings.Split(string(data), "\n") {
+			// Комментарии пропускаем: сторож про ВЫЗОВЫ, а объяснение, почему
+			// этот счётчик не годится, как раз и должно упоминать его по имени.
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
+				continue
+			}
+			if strings.Contains(line, "SubscriberCount()") {
+				offenders = append(offenders, fmt.Sprintf("%s:%d", rel, i+1))
+			}
+		}
+	})
+	for _, o := range offenders {
+		t.Errorf("%s — SubscriberCount() считает и внутренних подписчиков; "+
+			"для вопроса «открыта ли панель» нужен ClientCount()", o)
+	}
+}

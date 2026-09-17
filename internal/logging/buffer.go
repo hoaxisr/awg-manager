@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"hash/fnv"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logbuf"
@@ -56,7 +57,15 @@ func defaultMaxEntriesFor(bucket Bucket) int {
 func (lb *LogBuffer) Bucket() Bucket { return lb.bucket }
 
 // Add adds a new log entry to the buffer.
-func (lb *LogBuffer) Add(entry LogEntry) { lb.inner.Add(entry) }
+// Add кладёт запись без попытки свернуть повтор.
+//
+// Хеш проставляется и здесь: «у записи в буфере всегда есть хеш» — инвариант
+// буфера, а не одного входа. Запись, попавшая мимо него, никогда не совпала бы
+// с повтором, и коалесцирование молча перестало бы работать для неё.
+func (lb *LogBuffer) Add(entry LogEntry) {
+	entry.coalesceHash = coalesceKeyHash(entry)
+	lb.inner.Add(entry)
+}
 
 // GetAll returns all log entries, newest first.
 func (lb *LogBuffer) GetAll() []LogEntry { return lb.inner.GetAll() }
@@ -87,6 +96,21 @@ func (lb *LogBuffer) GetPaginatedMulti(groups, subgroups []string, level string,
 // буфер на каждую запись незачем.
 const coalesceScanLimit = 300
 
+// coalesceKeyHash — хеш полей, по которым сворачивается повтор. Порядок и
+// состав полей ОБЯЗАН совпадать со сравнением в CoalesceOrAdd: хеш только
+// отсеивает заведомо чужих, решение принимает сравнение полей, но поле, забытое
+// в хеше и учтённое в сравнении, сделало бы предфильтр бесполезным, а обратное
+// — пропускало бы коллизии на сравнение (безвредно, но зря).
+func coalesceKeyHash(e LogEntry) uint64 {
+	h := fnv.New64a()
+	for _, s := range []string{e.Level, e.Group, e.Subgroup, e.Action, e.Target, e.Message} {
+		_, _ = h.Write([]byte(s))
+		// Разделитель: без него ("ab","c") и ("a","bc") дали бы один хеш.
+		_, _ = h.Write([]byte{0})
+	}
+	return h.Sum64()
+}
+
 // effectiveTime — время последней активности записи: LastSeen для
 // схлопнутых повторов, иначе Timestamp (первое появление).
 func effectiveTime(e LogEntry) time.Time {
@@ -108,8 +132,15 @@ func (lb *LogBuffer) CoalesceOrAdd(entry LogEntry, window time.Duration) (LogEnt
 		now = time.Now()
 	}
 	cutoff := now.Add(-window)
+	entry.coalesceHash = coalesceKeyHash(entry)
 	return lb.inner.UpsertRecent(coalesceScanLimit,
 		func(e LogEntry) bool {
+			// Предфильтр: одно сравнение uint64 вместо шести сравнений строк,
+			// каждое из которых на потоке движка доходит до различия в хвосте.
+			// Решение всё равно принимают поля ниже — хеш лишь отсеивает.
+			if e.coalesceHash != entry.coalesceHash {
+				return false
+			}
 			if e.Level != entry.Level || e.Group != entry.Group || e.Subgroup != entry.Subgroup ||
 				e.Action != entry.Action || e.Target != entry.Target || e.Message != entry.Message {
 				return false
