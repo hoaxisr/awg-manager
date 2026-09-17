@@ -75,23 +75,33 @@ func parseHysteria2(input string) (*ParsedOutbound, error) {
 
 	// Obfs
 	if obfsType := q.Get("obfs"); obfsType != "" {
-		out["obfs"] = map[string]any{
+		obfs := map[string]any{
 			"type":     obfsType,
 			"password": q.Get("obfs-password"),
 		}
+		// Размеры пакетов есть только у варианта gecko, и совпадать с
+		// серверными они обязаны — без них обфускация не сходится.
+		if strings.EqualFold(obfsType, "gecko") {
+			if n, err := strconv.Atoi(q.Get("obfs-min-packet-size")); err == nil && n > 0 {
+				obfs["min_packet_size"] = n
+			}
+			if n, err := strconv.Atoi(q.Get("obfs-max-packet-size")); err == nil && n > 0 {
+				obfs["max_packet_size"] = n
+			}
+		}
+		out["obfs"] = obfs
 	}
 
-	// Brutal congestion
+	// Brutal congestion. Пропускная способность у аутбаунда hysteria2
+	// выражается ПЛОСКИМИ up_mbps/down_mbps (sing-box option/hysteria2.go);
+	// объекта "brutal" схема движка не знает, а лишний ключ роняет разбор
+	// ВСЕЙ конфигурации, а не одного аутбаунда (F360).
 	if strings.EqualFold(q.Get("congestion"), "brutal") {
-		brutal := map[string]any{}
-		if up, err := strconv.Atoi(q.Get("brutal_up")); err == nil {
-			brutal["up_mbps"] = up
+		if up, err := strconv.Atoi(q.Get("brutal_up")); err == nil && up > 0 {
+			out["up_mbps"] = up
 		}
-		if down, err := strconv.Atoi(q.Get("brutal_down")); err == nil {
-			brutal["down_mbps"] = down
-		}
-		if len(brutal) > 0 {
-			out["brutal"] = brutal
+		if down, err := strconv.Atoi(q.Get("brutal_down")); err == nil && down > 0 {
+			out["down_mbps"] = down
 		}
 	}
 

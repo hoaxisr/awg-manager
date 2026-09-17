@@ -194,13 +194,22 @@ func encodeHysteria2(ob map[string]any, label string) (string, error) {
 		if pw, _ := obfs["password"].(string); pw != "" {
 			q.Set("obfs-password", pw)
 		}
+		if n := intFromAny(obfs["min_packet_size"]); n > 0 {
+			q.Set("obfs-min-packet-size", strconv.Itoa(n))
+		}
+		if n := intFromAny(obfs["max_packet_size"]); n > 0 {
+			q.Set("obfs-max-packet-size", strconv.Itoa(n))
+		}
 	}
-	if brutal, _ := ob["brutal"].(map[string]any); brutal != nil {
+	// Ненулевая пропускная способность у hysteria2 и означает brutal: движок
+	// включает его именно по up_mbps/down_mbps (F360).
+	up, down := intFromAny(ob["up_mbps"]), intFromAny(ob["down_mbps"])
+	if up > 0 || down > 0 {
 		q.Set("congestion", "brutal")
-		if up := intFromAny(brutal["up_mbps"]); up > 0 {
+		if up > 0 {
 			q.Set("brutal_up", strconv.Itoa(up))
 		}
-		if down := intFromAny(brutal["down_mbps"]); down > 0 {
+		if down > 0 {
 			q.Set("brutal_down", strconv.Itoa(down))
 		}
 	}
