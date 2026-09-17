@@ -177,3 +177,43 @@ func TestScheduler_RunOnceForced_WaitsForInFlight(t *testing.T) {
 		t.Errorf("зондов начато %d, ожидалось 2 (обычный + форсированный)", got)
 	}
 }
+
+// Форсированный прогон приходит с бюджетом 10 с и может прождать стража почти
+// весь. Зайти с остатком и прозондировать всё на мёртвом контексте нельзя:
+// runProbeCell отдаст ok=false по каждой ячейке, и это запишется КАК ПРАВДА —
+// «probe unreachable» в журнал, провалы в историю, красная матрица в панель.
+// Пользователь применил настройку — и связь «пропала».
+func TestScheduler_ExpiredContext_DoesNotRecordFalseFailures(t *testing.T) {
+	prober := &fakeProber{ok: true, latency: 12}
+	hist := NewHistory()
+	sched := NewScheduler(SchedulerDeps{
+		TunnelLister: &fakeLister{tunnels: []traffic.RunningTunnel{{ID: "tn-A", IfaceName: "wg0"}}},
+		Prober:       prober,
+	}, hist)
+
+	// Сначала честный прогон — чтобы снимку было что терять.
+	sched.RunOnce(context.Background())
+	before := sched.LatestSnapshot()
+	if len(before.Cells) == 0 {
+		t.Fatal("первый прогон не дал ячеек — тест ничего не проверяет")
+	}
+	probesBefore := prober.calls.Load()
+
+	// Теперь форсированный на уже истёкшем контексте.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	sched.RunOnceForced(ctx)
+
+	if got := prober.calls.Load(); got != probesBefore {
+		t.Errorf("зондов %d против %d — прогон пошёл на мёртвом контексте", got, probesBefore)
+	}
+	after := sched.LatestSnapshot()
+	if !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Error("снимок заменён результатом оборванного прогона")
+	}
+	for _, c := range after.Cells {
+		if !c.OK {
+			t.Errorf("ячейка %s/%s помечена недоступной оборванным прогоном", c.TargetID, c.TunnelID)
+		}
+	}
+}

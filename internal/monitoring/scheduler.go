@@ -298,10 +298,14 @@ func (s *Scheduler) RunOnceForced(ctx context.Context) {
 	s.mu.RLock()
 	cs := s.deps.ClashState
 	s.mu.RUnlock()
-	if cs != nil {
-		cs.Invalidate()
-	}
-	s.runOnce(ctx, true)
+	s.runOnce(ctx, true, func() {
+		// Кэш Clash сбрасываем ПОСЛЕ захвата стража. Раньше — значило бы, что
+		// прогон, идущий в полёте, успеет перезаполнить его данными, собранными
+		// ДО правки настроек, и форсированный прочитал бы именно их.
+		if cs != nil {
+			cs.Invalidate()
+		}
+	})
 }
 
 // RunOnce executes a single tick — exposed for testing. Probes every
@@ -309,12 +313,13 @@ func (s *Scheduler) RunOnceForced(ctx context.Context) {
 // history, replaces lastSnap, prunes deleted-tunnel buffers, publishes to
 // the bus.
 func (s *Scheduler) RunOnce(ctx context.Context) {
-	s.runOnce(ctx, false)
+	s.runOnce(ctx, false, nil)
 }
 
 // runOnce с wait=false пропускает прогон, когда страж занят; с wait=true —
-// дожидается его освобождения (или отмены контекста).
-func (s *Scheduler) runOnce(ctx context.Context, wait bool) {
+// дожидается его освобождения (или отмены контекста). afterAcquire, если задан,
+// выполняется сразу после захвата стража и до первого зонда.
+func (s *Scheduler) runOnce(ctx context.Context, wait bool, afterAcquire func()) {
 	if wait {
 		select {
 		case s.runGate <- struct{}{}:
@@ -329,6 +334,23 @@ func (s *Scheduler) runOnce(ctx context.Context, wait bool) {
 		}
 	}
 	defer func() { <-s.runGate }()
+
+	// Контекст мог истечь, пока мы ждали стража: форсированный прогон приходит
+	// с бюджетом 10 с (internal/api/settings.go), а плановый на лежащем WAN
+	// занимает до 8 с. Пойти дальше значило бы прозондировать всё на мёртвом
+	// контексте, получить ok=false по каждой ячейке и записать это КАК ПРАВДУ:
+	// «probe unreachable» в журнал, провалы в историю графика и красную
+	// матрицу в панель. Пользователь применил настройку — и связь «пропала».
+	//
+	// Та же проверка закрывает и гонку на входе: при свободном страже и уже
+	// отменённом контексте select выше выбрал бы случайный из двух готовых
+	// случаев.
+	if ctx.Err() != nil {
+		return
+	}
+	if afterAcquire != nil {
+		afterAcquire()
+	}
 
 	defer func() {
 		if r := recover(); r != nil && s.deps.Log != nil {
@@ -374,6 +396,14 @@ func (s *Scheduler) runOnce(ctx context.Context, wait bool) {
 				defer func() { <-sem }()
 
 				latency, ok := s.runProbeCell(ctx, t, tn, self)
+				// Контекст истёк ПОСРЕДИ обхода: runProbeCell на отменённом
+				// контексте отдаёт ok=false по каждой оставшейся ячейке, и
+				// записать это как правду значило бы налгать — «probe
+				// unreachable» в журнал, провал в историю и красная ячейка
+				// в панели. Молчим: следующий прогон измерит честно.
+				if ctx.Err() != nil {
+					return
+				}
 				now := time.Now()
 
 				probedMu.Lock()
@@ -408,6 +438,12 @@ func (s *Scheduler) runOnce(ctx context.Context, wait bool) {
 		}
 	}
 	wg.Wait()
+
+	// Оборванный обход снимок не заменяет: он неполон, и подменять им
+	// прежний — то же враньё, только оптом.
+	if ctx.Err() != nil {
+		return
+	}
 
 	snap := Snapshot{
 		Targets:   targets,
