@@ -150,7 +150,11 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	settings, err := s.deps.Settings.Load()
+	// Get, а не Load: реап зовётся планировщиком раз в 30 с — в том числе при
+	// ВЫКЛЮЧЕННОМ движке, где он единственная работа тика. Load читает файл с
+	// флеша под ПИШУЩИМ локом стора; вызывающий (scheduler.go) ради этого уже
+	// перешёл на кэш, а здесь чтение оставалось и обесценивало тот переход.
+	settings, err := s.deps.Settings.Get()
 	if err != nil {
 		return err
 	}
