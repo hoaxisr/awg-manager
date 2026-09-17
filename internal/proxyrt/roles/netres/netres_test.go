@@ -54,6 +54,13 @@ func (f *fakeIPT) Run(_ context.Context, args ...string) error {
 	key := table + "/" + chain
 	switch op {
 	case "-N":
+		// Настоящий iptables на существующей цепочке НЕ трогает её и
+		// возвращает ошибку «Chain already exists». Прежний фейк обнулял
+		// цепочку, то есть вёл себя как `-F`, — и любой тест на повторный
+		// Apply получался холостым: задвоение правил было не видно.
+		if _, ok := f.chains[key]; ok {
+			return iptNotFound{}
+		}
 		f.chains[key] = []string{}
 		return nil
 	case "-F":
@@ -857,5 +864,55 @@ func TestMSSGroupCarriesRulesAndJump(t *testing.T) {
 	}
 	if g := MSSGroup(nil); len(g.Rules) != 0 {
 		t.Errorf("пустой список CIDR дал %d правил", len(g.Rules))
+	}
+}
+
+// Apply обязан быть идемпотентным: ту же цепочку теперь восстанавливает и
+// netfilter.d-хук (F349 §1), а NDM запускает его в произвольный момент.
+// Прежняя форма «флаш + безусловная вставка» при попадании хука между `-F` и
+// вставками ставила правила дважды, и Observe этого не видел бы — `-C` на дубле
+// проходит.
+func TestMSSClampApplyIsIdempotent(t *testing.T) {
+	ipt := newFakeIPT()
+	m := NewMSSClamp("mss", ipt)
+	m.SetDesired([]string{"10.70.0.0/16"})
+
+	step := proxyrt.Step{Resource: "mss", Op: "ensure"}
+	if err := m.Apply(context.Background(), step); err != nil {
+		t.Fatalf("первый Apply: %v", err)
+	}
+	after := append([]string(nil), ipt.chains["mangle/"+MSSChain]...)
+	jumps := append([]string(nil), ipt.chains["mangle/FORWARD"]...)
+
+	// Второй прогон — ничего не должно задвоиться.
+	if err := m.Apply(context.Background(), step); err != nil {
+		t.Fatalf("второй Apply: %v", err)
+	}
+	if got := len(ipt.chains["mangle/"+MSSChain]); got != len(after) {
+		t.Errorf("правил в цепочке %d против %d после первого прогона — задвоились", got, len(after))
+	}
+	if got := len(ipt.chains["mangle/FORWARD"]); got != len(jumps) {
+		t.Errorf("переходов %d против %d — задвоились", got, len(jumps))
+	}
+}
+
+// Apply не должен флашить цепочку: между флашем и вставками в неё пишет хук.
+func TestMSSClampApplyDoesNotFlush(t *testing.T) {
+	ipt := newFakeIPT()
+	m := NewMSSClamp("mss", ipt)
+	m.SetDesired([]string{"10.70.0.0/16"})
+
+	// Изображаем правило, которое поставил хук за мгновение до нас.
+	hookRule := MSSRules([]string{"10.70.0.0/16"})[0]
+	_ = ipt.Run(context.Background(), "-t", "mangle", "-N", MSSChain)
+	_ = ipt.Run(context.Background(), hookRule.InsertArgs()...)
+
+	if err := m.Apply(context.Background(), proxyrt.Step{Resource: "mss", Op: "ensure"}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	want := len(MSSRules([]string{"10.70.0.0/16"}))
+	if got := len(ipt.chains["mangle/"+MSSChain]); got != want {
+		t.Errorf("правил %d, ожидалось %d: правило хука либо смыто флашем, либо задвоено", got, want)
 	}
 }

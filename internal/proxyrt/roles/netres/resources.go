@@ -370,19 +370,32 @@ func (m *MSSClamp) Apply(ctx context.Context, s proxyrt.Step) error {
 		return fmt.Errorf("неизвестный шаг %q", s.Op)
 	}
 	_ = m.ipt.Run(ctx, "-t", "mangle", "-N", MSSChain)
-	_ = m.ipt.Run(ctx, "-t", "mangle", "-F", MSSChain)
+	// Сверка перед вставкой вместо «флаш + безусловная вставка».
+	//
+	// Флаш опасен с тех пор, как эту же цепочку восстанавливает netfilter.d-хук
+	// (F349 §1): NDM запускает его в произвольный момент, и попади он между
+	// нашим `-F` и нашими вставками — правила встали бы дважды. Observe этого
+	// не увидел бы: он проверяет `-C`, а `-C` на дубле проходит. Дубли жили бы
+	// до следующей перезаписи таблиц.
+	//
+	// Идемпотентная форма снимает вопрос: и мы, и хук вставляем только
+	// отсутствующее, порядок прогонов значения не имеет.
 	for _, r := range MSSRules(m.cidrs) {
+		if m.ipt.Run(ctx, r.CheckArgs()...) == nil {
+			continue
+		}
 		if err := m.ipt.Run(ctx, r.InsertArgs()...); err != nil {
 			return err
 		}
 	}
-	// Дубли jump снимаются до трёх раз: `-D` снимает по одному, а вторая
-	// копия появляется от повторной вставки хука. Три — с запасом, точной
-	// величины за числом нет.
-	for i := 0; i < 3; i++ {
-		_ = m.ipt.Run(ctx, m.jump().DeleteArgs()...)
+	// Переход — тоже идемпотентно. Прежняя форма «снять до трёх раз, затем
+	// вставить» сама создавала окно: между последним `-D` и `-I` хук успевал
+	// вставить свою копию, и их становилось две.
+	jump := m.jump()
+	if m.ipt.Run(ctx, jump.CheckArgs()...) == nil {
+		return nil
 	}
-	return m.ipt.Run(ctx, m.jump().InsertArgs()...)
+	return m.ipt.Run(ctx, jump.InsertArgs()...)
 }
 
 func (m *MSSClamp) RecheckAfter() time.Duration {
