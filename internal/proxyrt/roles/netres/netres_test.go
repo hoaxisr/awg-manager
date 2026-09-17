@@ -56,10 +56,11 @@ type iptNotFound struct{}
 
 func (iptNotFound) Error() string { return "iptables: no chain/target/match by that name" }
 
-// iptNoRule — ответ `-C` на СУЩЕСТВУЮЩУЮ цепочку, в которой такого правила нет.
-// Настоящий iptables эти два случая различает, и код на этом различии стоит:
-// «нет цепочки» может означать, что её только что снёс ndm, а «нет правила» —
-// что сносить действительно нечего.
+// iptNoRule — ответ `-C`, когда правило не найдено. ПРОШИВКА ОТВЕЧАЕТ ТАК ЖЕ И
+// НА ОТСУТСТВУЮЩУЮ ЦЕПОЧКУ — проверено пробой на стенде 17.09: оба случая дают
+// дословно «Bad rule (does a matching rule exist in that chain?)». Поэтому фейк
+// обязан быть таким же неразличающим: иначе тест обопрётся на признак, которого
+// на железе нет, и снова окажется холостым.
 type iptNoRule struct{}
 
 func (iptNoRule) Error() string {
@@ -106,15 +107,15 @@ func (f *fakeIPT) Run(_ context.Context, args ...string) error {
 		if f.failCheck {
 			return iptTransient{}
 		}
-		if _, ok := f.chains[key]; !ok {
-			return iptNotFound{} // цепочки нет вовсе
-		}
-		for _, r := range f.chains[key] {
-			if r == rule {
-				return nil
+		// Один и тот же ответ на «нет правила» и «нет цепочки» — как у прошивки.
+		if _, ok := f.chains[key]; ok {
+			for _, r := range f.chains[key] {
+				if r == rule {
+					return nil
+				}
 			}
 		}
-		return iptNoRule{} // цепочка есть, правила в ней нет
+		return iptNoRule{}
 	case "-A":
 		f.chains[key] = append(f.chains[key], rule)
 		return nil
@@ -155,6 +156,11 @@ func (f *fakeIPT) Output(_ context.Context, args ...string) (string, error) {
 		return "", iptNotFound{}
 	}
 	key := args[1] + "/" + args[3]
+	// `-S` несуществующей цепочки на железе выходит с ошибкой — именно этим
+	// признаком код и отличает «цепочки нет» от «правила нет».
+	if _, ok := f.chains[key]; !ok {
+		return "", iptNotFound{}
+	}
 	var b strings.Builder
 	for _, r := range f.chains[key] {
 		if f.quoteComment {

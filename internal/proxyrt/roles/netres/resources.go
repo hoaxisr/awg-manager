@@ -156,14 +156,23 @@ func (r *RuleSet) Observe(ctx context.Context) (proxyrt.Observation, error) {
 		// жизни процесса, и RecheckAfter держал ruleRecheck из-за непустой
 		// ведомости даже при пустом желаемом.
 		//
-		// Предикат УЖЕ: только «такого правила нет», без «нет цепочки».
-		// ruleAbsent считает отсутствием и второе, но цепочку могла только что
-		// снести перезапись таблиц движком ndm — и тогда легаси-правило,
-		// восстановленное потом хуком прежней версии, не было бы сметено уже
-		// никогда: Doom для защёлкнутого ключа — no-op до конца жизни процесса.
-		// Через sweep эта же семантика достигалась только после реального
-		// сноса, здесь окно шире, поэтому сужаем.
-		if noSuchRule(err) {
+		// Защёлкиваем, только если правила нет И ЦЕПОЧКА ПРИ ЭТОМ ЕСТЬ.
+		//
+		// Цепочку могла только что снести перезапись таблиц движком ndm — и
+		// тогда легаси-правило, восстановленное потом хуком прежней версии, не
+		// было бы сметено уже никогда: Doom для защёлкнутого ключа — no-op до
+		// конца жизни процесса.
+		//
+		// Отличить эти случаи ПО ТЕКСТУ ошибки нельзя: на прошивке стенда
+		// (5.01, iptables из entware) `-C` отвечает одинаково и на «нет
+		// правила», и на «нет цепочки» — дословно «Bad rule (does a matching
+		// rule exist in that chain?)». Проверено пробой на железе 17.09.
+		// Поэтому признак берём НАБЛЮДЕНИЕМ: `-S <chain>` на существующей
+		// цепочке успешен, на отсутствующей выходит с ошибкой.
+		//
+		// Цена — один лишний `-S` на запись ведомости, и только в тот раунд,
+		// когда защёлка ставится: дальше ведомость пуста и проверять нечего.
+		if ruleAbsent(err) && r.chainExists(ctx, rule.table(), rule.Chain) {
 			delete(r.doomed, key)
 			r.reaped[key] = true
 		}
@@ -323,15 +332,6 @@ func (r *RuleSet) deleteAll(ctx context.Context, rule Rule) (bool, error) {
 // (sys/iptables.Run → exec.FormatError со stderr), поэтому судим по тексту
 // самого iptables. Всё неопознанное считается транзиентным: цена ошибки
 // несимметрична — лишний проход дешевле правила, потерянного из ведомости.
-// noSuchRule — строго «правила с такой формой в цепочке нет». В отличие от
-// ruleAbsent НЕ считает отсутствием ответ про несуществующую цепочку.
-func noSuchRule(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "does a matching rule exist")
-}
-
 func ruleAbsent(err error) bool {
 	if err == nil {
 		return false
@@ -341,6 +341,14 @@ func ruleAbsent(err error) bool {
 	// несуществующую цепочку или незагруженный матч. Сносить нечего в обоих.
 	return strings.Contains(msg, "does a matching rule exist") ||
 		strings.Contains(msg, "no chain/target/match by that name")
+}
+
+// chainExists — есть ли цепочка, проверено НАБЛЮДЕНИЕМ. Текст ошибки `-C` для
+// этого не годится (см. защёлку в Observe): прошивка отвечает одинаково и на
+// «нет правила», и на «нет цепочки».
+func (r *RuleSet) chainExists(ctx context.Context, table, chain string) bool {
+	_, err := r.ipt.Output(ctx, "-t", table, "-S", chain)
+	return err == nil
 }
 
 func (r *RuleSet) RecheckAfter() time.Duration {
