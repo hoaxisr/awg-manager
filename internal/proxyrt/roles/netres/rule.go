@@ -146,6 +146,18 @@ func hookQuoteIfaces(line string) string {
 	return strings.Join(fields, " ")
 }
 
+// builtinChains — встроенные цепочки iptables. Всё прочее — наша собственная
+// цепочка, а в несуществующую цепочку правило не вставить: и `-C`, и `-I`
+// вернут ошибку. Поэтому тот, кто восстанавливает такие правила (хук
+// netfilter.d), обязан сперва её создать.
+var builtinChains = map[string]bool{
+	"INPUT": true, "OUTPUT": true, "FORWARD": true,
+	"PREROUTING": true, "POSTROUTING": true,
+}
+
+// IsCustomChain — правило адресовано НЕ встроенной цепочке.
+func (r Rule) IsCustomChain() bool { return !builtinChains[r.Chain] }
+
 // Group — группа правил с общим guard-интерфейсом.
 type Group struct {
 	Guard string // имя интерфейса; пусто — без guard

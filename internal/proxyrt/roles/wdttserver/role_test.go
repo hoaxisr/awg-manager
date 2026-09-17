@@ -1039,3 +1039,60 @@ func TestServerResourceOrder_HookBeforeForwardRules(t *testing.T) {
 		t.Errorf("netfilter_hook (%d) обязан идти перед forward_rules (%d)", hook, fwd)
 	}
 }
+
+// MSS clamp обязан попадать в netfilter.d-хук.
+//
+// Пока он был вне хука, он оставался ЕДИНСТВЕННЫМ ресурсом роли, который
+// перезапись таблиц движком NDM оставляла стёртым до подстраховочного таймера:
+// остальные восстанавливает хук, а у input_port свой. Раз клиент с большим MSS
+// в это окно рвёт TCP-сессии, а не просто «видит устаревшее», окно и держало
+// период ruleRecheck.
+func TestHookGroupsCarryMSSClamp(t *testing.T) {
+	r, _, _, _ := newRole(t)
+	groups, err := r.hookGroups(srvCfg())(context.Background())
+	if err != nil {
+		t.Fatalf("hookGroups: %v", err)
+	}
+
+	wantJump := netres.MSSJump().Key()
+	var haveJump, haveClamp bool
+	for _, g := range groups {
+		for _, rule := range g.Rules {
+			if rule.Key() == wantJump {
+				haveJump = true
+			}
+			if rule.Chain == netres.MSSChain {
+				haveClamp = true
+			}
+		}
+	}
+	if !haveClamp {
+		t.Error("в хуке нет правил цепочки clamp — после перезаписи таблиц они не восстановятся")
+	}
+	if !haveJump {
+		t.Error("в хуке нет перехода в цепочку clamp — восстановленная цепочка не участвует в обработке")
+	}
+}
+
+// Форма CIDR у хука и у ресурса одна: разойдясь, хук восстанавливал бы не то,
+// что наблюдает ресурс, и Observe считал бы clamp несобранным вечно.
+func TestHookMSSMatchesResourceDesired(t *testing.T) {
+	r, _, _, _ := newRole(t)
+	groups, err := r.hookGroups(srvCfg())(context.Background())
+	if err != nil {
+		t.Fatalf("hookGroups: %v", err)
+	}
+
+	want := map[string]bool{}
+	for _, rule := range netres.MSSRules([]string{rawPeerCIDR}) {
+		want[rule.Key()] = true
+	}
+	for _, g := range groups {
+		for _, rule := range g.Rules {
+			delete(want, rule.Key())
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("правила ресурса не попали в хук: %v", want)
+	}
+}

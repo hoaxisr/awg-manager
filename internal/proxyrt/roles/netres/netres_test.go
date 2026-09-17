@@ -803,3 +803,59 @@ func TestInputPortHealsStalePortAfterDaemonRestart(t *testing.T) {
 		t.Fatal("новый порт не открыт")
 	}
 }
+
+// В несуществующую цепочку правило не вставить: и `-C`, и `-I` вернут ошибку.
+// После перезаписи таблиц движком NDM собственной цепочки может не быть вовсе,
+// поэтому хук обязан создать её ПЕРЕД вставкой — иначе clamp молча не
+// восстановится, а хук будет выглядеть отработавшим.
+func TestHookScriptCreatesCustomChainBeforeInserting(t *testing.T) {
+	script := HookScript([]Group{MSSGroup([]string{"10.70.0.0/16"})})
+
+	create := "run -t mangle -N " + MSSChain
+	if !strings.Contains(script, create) {
+		t.Fatalf("хук не создаёт цепочку %s:\n%s", MSSChain, script)
+	}
+
+	firstRule := strings.Index(script, "-C "+MSSChain)
+	if firstRule < 0 {
+		t.Fatalf("в хуке нет правил цепочки %s:\n%s", MSSChain, script)
+	}
+	if idx := strings.Index(script, create); idx > firstRule {
+		t.Errorf("создание цепочки идёт ПОСЛЕ вставки правил: %d против %d", idx, firstRule)
+	}
+}
+
+// Встроенные цепочки создавать не надо — `-N INPUT` вернул бы ошибку и мусорил
+// бы в скрипте.
+func TestHookScriptDoesNotCreateBuiltinChains(t *testing.T) {
+	script := HookScript(forwardGroups([]string{"opkgtun19"}))
+	for _, chain := range []string{"INPUT", "OUTPUT", "FORWARD", "PREROUTING", "POSTROUTING"} {
+		if strings.Contains(script, "-N "+chain) {
+			t.Errorf("хук создаёт встроенную цепочку %s:\n%s", chain, script)
+		}
+	}
+}
+
+// Форма перехода одна на ресурс и на хук. Разойдясь, они дали бы хуку правило,
+// которого ресурс не узнаёт: Observe считал бы clamp несобранным вечно.
+func TestMSSJumpIsSingleSource(t *testing.T) {
+	m := NewMSSClamp("mss", nil)
+	if got, want := m.jump(), MSSJump(); got.Key() != want.Key() {
+		t.Errorf("переход ресурса %q != переход хука %q", got.Key(), want.Key())
+	}
+}
+
+// Группа для хука несёт и правила цепочки, и переход в неё: без перехода
+// восстановленная цепочка не участвует в обработке.
+func TestMSSGroupCarriesRulesAndJump(t *testing.T) {
+	g := MSSGroup([]string{"10.70.0.0/16"})
+	if len(g.Rules) != len(MSSRules([]string{"10.70.0.0/16"}))+1 {
+		t.Fatalf("правил в группе %d — переход потерян", len(g.Rules))
+	}
+	if last := g.Rules[len(g.Rules)-1]; last.Key() != MSSJump().Key() {
+		t.Errorf("последнее правило %q, ожидался переход %q", last.Key(), MSSJump().Key())
+	}
+	if g := MSSGroup(nil); len(g.Rules) != 0 {
+		t.Errorf("пустой список CIDR дал %d правил", len(g.Rules))
+	}
+}

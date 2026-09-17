@@ -340,9 +340,7 @@ func (m *MSSClamp) SetDesired(cidrs []string) { m.cidrs = cidrs }
 
 func (m *MSSClamp) ID() proxyrt.ResourceID { return m.id }
 
-func (m *MSSClamp) jump() Rule {
-	return Rule{Table: "mangle", Chain: "FORWARD", Pos: 1, Spec: []string{"-j", MSSChain}}
-}
+func (m *MSSClamp) jump() Rule { return MSSJump() }
 
 func (m *MSSClamp) Observe(ctx context.Context) (proxyrt.Observation, error) {
 	if len(m.cidrs) == 0 {

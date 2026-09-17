@@ -87,6 +87,21 @@ func DNSGroups(specs []DNSHijack) []Group {
 }
 
 // MSSRules — clamp в СВОЕЙ цепочке (append, без позиций).
+// MSSJump — переход из mangle FORWARD в нашу цепочку clamp. Экспортирован,
+// чтобы у ресурса и у netfilter.d-хука был ОДИН источник формы: разойдясь, они
+// дали бы хуку правило, которого ресурс не узнаёт, и наоборот.
+func MSSJump() Rule {
+	return Rule{Table: "mangle", Chain: "FORWARD", Pos: 1, Spec: []string{"-j", MSSChain}}
+}
+
+// MSSGroup — clamp целиком для хука: правила цепочки плюс переход в неё.
+func MSSGroup(cidrs []string) Group {
+	if len(cidrs) == 0 {
+		return Group{}
+	}
+	return Group{Rules: append(MSSRules(cidrs), MSSJump())}
+}
+
 func MSSRules(cidrs []string) []Rule {
 	var out []Rule
 	for _, cidr := range cidrs {

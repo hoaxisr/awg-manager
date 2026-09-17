@@ -49,6 +49,14 @@ func HookScript(groups []Group) string {
 			if g.Guard != "" {
 				fmt.Fprintf(&b, "if has_if %q; then\n", g.Guard)
 			}
+			// Собственные цепочки создаём перед вставкой: после перезаписи
+			// таблиц движком NDM цепочки может не быть вовсе, а в
+			// несуществующую и `-C`, и `-I` вернут ошибку — правило молча не
+			// восстановилось бы. Повтор `-N` на существующей цепочке
+			// безвреден: run глушит ошибку.
+			for _, chain := range customChains(rules) {
+				fmt.Fprintf(&b, "  run -t %s -N %s\n", table, chain)
+			}
 			for _, r := range rules {
 				fmt.Fprintf(&b, "  %s\n", r.HookLine())
 			}
@@ -60,6 +68,21 @@ func HookScript(groups []Group) string {
 	}
 	b.WriteString("esac\nexit 0\n")
 	return b.String()
+}
+
+// customChains — собственные цепочки, встречающиеся в наборе, в порядке
+// первого появления (детерминизм содержимого файла).
+func customChains(rules []Rule) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range rules {
+		if !r.IsCustomChain() || seen[r.Chain] {
+			continue
+		}
+		seen[r.Chain] = true
+		out = append(out, r.Chain)
+	}
+	return out
 }
 
 // сортировка групп по guard — детерминизм содержимого файла.
