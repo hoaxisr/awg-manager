@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import type { ConnectionsResponse, ConnectionBucketAgg, ConntrackConnection } from '$lib/types';
 	import type { DropdownOption } from '$lib/components/ui';
 	import type { PanelBucket } from '$lib/components/connections/ConnectionsBreakdownPanel.svelte';
@@ -29,7 +30,7 @@
 	let sortDir = $state<'asc' | 'desc'>('desc');
 	let selectedKey = $state<string | null>(null);
 	let group = $state<'none' | 'client' | 'host'>('client');
-	let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
+	let stopAutoRefresh: (() => void) | null = null;
 	let progressTimer: ReturnType<typeof setInterval> | null = null;
 	let requestSeq = 0;
 	const refreshProgress = $derived.by(() => {
@@ -163,8 +164,10 @@
 	}
 
 	onMount(() => {
-		fetchData();
-		autoRefreshTimer = setInterval(fetchData, AUTO_REFRESH_MS);
+		// Ручка дорогая: сервер разбирает ВСЮ таблицу conntrack и обогащает
+		// каждую запись (агрегаты считаются по всему набору). В фоновой вкладке
+		// это работа в никуда, поэтому опрос спит и догоняет при возврате.
+		stopAutoRefresh = startVisiblePoll(fetchData, AUTO_REFRESH_MS);
 		progressTimer = setInterval(() => {
 			nowTs = Date.now();
 		}, 200);
@@ -172,7 +175,7 @@
 
 	onDestroy(() => {
 		if (searchTimeout) clearTimeout(searchTimeout);
-		if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+		stopAutoRefresh?.();
 		if (progressTimer) clearInterval(progressTimer);
 	});
 
