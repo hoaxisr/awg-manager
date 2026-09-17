@@ -232,9 +232,13 @@ func TestParsedOutboundsMatchSchema(t *testing.T) {
 		"trojan ws tls":            "trojan://secret@example.com:443?type=ws&security=tls&path=/t&sni=foo.com#d",
 		"shadowsocks":              "ss://YWVzLTI1Ni1nY206c2VjcmV0@example.com:8388#e",
 		"hysteria2":                "hysteria2://secret@example.com:443?sni=foo.com&obfs=salamander&obfs-password=p#f",
-		"socks5":                   "socks://user:pass@example.com:1080#g",
-		"mieru":                    "mierus://user:pass@example.com?port=2999&port=3000-3010&protocol=TCP&multiplexing=MULTIPLEXING_LOW&profile=p#i",
-		"naive":                    "naive+https://user:pass@example.com:443#j",
+		// Пропускная способность, gecko и прыжки по портам — ключи, которых
+		// прежняя выборка не касалась, а ошибка в любом из них роняет разбор
+		// ВСЕЙ конфигурации движка (F360).
+		"hysteria2 brutal + gecko + hop": "hysteria2://secret@example.com:443?sni=foo.com&congestion=brutal&brutal_up=50&brutal_down=100&obfs=gecko&obfs-password=p&obfs-min-packet-size=100&obfs-max-packet-size=1200&mport=20000-30000#f2",
+		"socks5":                         "socks://user:pass@example.com:1080#g",
+		"mieru":                          "mierus://user:pass@example.com?port=2999&port=3000-3010&protocol=TCP&multiplexing=MULTIPLEXING_LOW&profile=p#i",
+		"naive":                          "naive+https://user:pass@example.com:443#j",
 	}
 	for name, link := range links {
 		t.Run(name, func(t *testing.T) {

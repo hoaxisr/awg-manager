@@ -103,9 +103,10 @@ func TestParseHysteria2_BrutalCongestion(t *testing.T) {
 	}
 	var ob map[string]any
 	json.Unmarshal(got.Outbound, &ob)
-	br, _ := ob["brutal"].(map[string]any)
-	if br == nil || br["up_mbps"] != float64(100) || br["down_mbps"] != float64(200) {
-		t.Errorf("brutal=%v", br)
+	// Плоские ключи, а не объект brutal: именно по ним движок включает
+	// brutal, и только их знает схема (F360).
+	if ob["up_mbps"] != float64(100) || ob["down_mbps"] != float64(200) {
+		t.Errorf("up/down = %v/%v", ob["up_mbps"], ob["down_mbps"])
 	}
 }
 

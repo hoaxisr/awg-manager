@@ -9,7 +9,7 @@
 	import { runWithConcurrency } from '$lib/utils/runWithConcurrency';
 	import { singboxDelayHistory, triggerDelayCheck } from '$lib/stores/singbox';
 	import { notifications } from '$lib/stores/notifications';
-	import { linkImportErrorText, translateKnownError } from '$lib/utils/linkImportError';
+	import { translateKnownError, groupLinkImportErrors } from '$lib/utils/linkImportError';
 	import SubscriptionMemberList from './SubscriptionMemberList.svelte';
 	import type { SingboxLayoutMode } from '$lib/constants/singboxLayout';
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
@@ -200,7 +200,7 @@
 			if (parseErrors.length > 0) {
 				// Причины дедуплицируем: у подписки на сотню узлов одного
 				// протокола это одна и та же фраза сто раз.
-				const reasons = [...new Set(parseErrors.map(linkImportErrorText))];
+				const reasons = groupLinkImportErrors(parseErrors);
 				const shown = reasons.slice(0, 3);
 				const rest = reasons.length - shown.length;
 				notifications.warning(

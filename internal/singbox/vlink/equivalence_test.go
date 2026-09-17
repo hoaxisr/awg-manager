@@ -595,6 +595,18 @@ var eqScenarios = []eqScenario{
     obfs: salamander
     obfs-password: obfs-pass
 `,
+		xray: `{"outbounds":[{
+			"tag": "h1",
+			"protocol": "hysteria",
+			"settings": {"address": "h1.example.com", "port": 443, "version": 2},
+			"streamSettings": {
+				"network": "hysteria",
+				"security": "tls",
+				"hysteriaSettings": {"version": 2, "auth": "hy2-secret"},
+				"tlsSettings": {"serverName": "sni.example.com", "alpn": ["h3"]},
+				"finalmask": {"udp": [{"type": "salamander", "settings": {"password": "obfs-pass"}}]}
+			}
+		}]}`,
 	},
 	{
 		name: "hy2-ports",
@@ -620,6 +632,20 @@ var eqScenarios = []eqScenario{
     password: hy2-secret2
     ports: 20000-30000
 `,
+		xray: `{"outbounds":[{
+			"tag": "h2",
+			"protocol": "hysteria",
+			"settings": {"address": "h2host.example.com", "port": 443, "version": 2},
+			"streamSettings": {
+				"network": "hysteria",
+				"security": "tls",
+				"hysteriaSettings": {"version": 2, "auth": "hy2-secret2"},
+				"tlsSettings": {"serverName": "h2host.example.com", "alpn": ["h3"]},
+				"finalmask": {"udp": [{"type": "udphop", "settings": {
+					"mode": "intervalRemote", "interval": 10, "remotePorts": "20000-30000"
+				}}]}
+			}
+		}]}`,
 	},
 	{
 		name: "mieru-tcp",
