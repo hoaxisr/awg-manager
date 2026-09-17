@@ -26,10 +26,21 @@ type ParseError struct {
 	LineIdx int    // 0-based index in the input slice
 	Scheme  string // detected scheme prefix or "" if undetectable
 	Message string
+	// Node помечает индекс как номер УЗЛА, а не строки: у подписок в формате
+	// JSON и YAML строк нет, и звать номер строкой значит посылать искать не
+	// там. Ноль-значение — текстовая подписка, где это действительно строки.
+	Node bool
 }
 
 func (e ParseError) Error() string {
-	return fmt.Sprintf("line %d (%s): %s", e.LineIdx, e.Scheme, e.Message)
+	// Номер человеческий, с единицы: к тому же индексу прибавляет единицу и
+	// одиночное добавление ссылки (internal/singbox/operator_tunnels.go), а
+	// два разных отсчёта в одном интерфейсе читаются как ошибка.
+	unit := "line"
+	if e.Node {
+		unit = "node"
+	}
+	return fmt.Sprintf("%s %d (%s): %s", unit, e.LineIdx+1, e.Scheme, e.Message)
 }
 
 // BatchResult aggregates successful parses with skipped/failed accounting.

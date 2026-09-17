@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { linkImportErrorText, translateKnownError } from './linkImportError';
+import {
+	linkImportErrorText,
+	translateKnownError,
+	groupLinkImportErrors
+} from './linkImportError';
 
 describe('linkImportErrorText', () => {
 	it('объясняет обфускацию внутри TLS (#904) и подсказывает выход', () => {
@@ -98,5 +102,183 @@ describe('linkImportErrorText', () => {
 			'Ссылка не разобрана: something entirely new'
 		);
 		expect(linkImportErrorText('')).toBe('Ссылка не разобрана');
+	});
+});
+
+describe('номер в причине отказа', () => {
+	it('строка текстовой подписки так и зовётся', () => {
+		expect(linkImportErrorText('line 3 (vless): vlink: vless: missing uuid')).toBe(
+			'Строка 3: Не указан UUID'
+		);
+	});
+
+	it('у подписки в формате JSON или YAML это номер сервера, а не строки', () => {
+		expect(linkImportErrorText('node 3 (hysteria): vlink: hysteria: obfs requires password')).toBe(
+			'Сервер 3: Не указан пароль обфускации'
+		);
+	});
+
+	it('номер участвует в группировке так же, как раньше', () => {
+		expect(
+			groupLinkImportErrors([
+				'node 1 (hysteria): vlink: hysteria: obfs requires password',
+				'node 2 (hysteria): vlink: hysteria: obfs requires password'
+			])
+		).toEqual(['Не указан пароль обфускации (×2)']);
+	});
+});
+
+describe('groupLinkImportErrors', () => {
+	it('одинаковую причину показывает один раз со счётчиком, без номера строки', () => {
+		const errors = [
+			'line 0 (hysteria): vlink: unsupported protocol: hysteria',
+			'line 3 (hysteria): vlink: unsupported protocol: hysteria',
+			'line 7 (hysteria): vlink: unsupported protocol: hysteria'
+		];
+		expect(groupLinkImportErrors(errors)).toEqual([
+			'Ссылка не разобрана: unsupported protocol: hysteria (×3)'
+		]);
+	});
+
+	it('единственную причину оставляет с номером строки — по нему её и ищут', () => {
+		expect(groupLinkImportErrors(['line 12 (vless): vlink: vless: missing uuid'])).toEqual([
+			'Строка 12: Не указан UUID'
+		]);
+	});
+
+	it('разные причины не смешивает и сохраняет порядок', () => {
+		expect(
+			groupLinkImportErrors([
+				'line 0 (vless): vlink: vless: missing uuid',
+				'line 1 (trojan): vlink: trojan: missing password',
+				'line 2 (vless): vlink: vless: missing uuid'
+			])
+		).toEqual(['Не указан UUID (×2)', 'Строка 1: Не указан пароль']);
+	});
+});
+
+describe('причины отказа узлов hysteria из Xray-подписки', () => {
+	const cases: Array<[string, string]> = [
+		[
+			'vlink: hysteria: udp mask "sudoku" has no sing-box equivalent',
+			'Маскировка «sudoku» в sing-box не выражается'
+		],
+		[
+			'vlink: hysteria: quicParams congestion force-brutal has no sing-box equivalent',
+			'Настройка QUIC force-brutal в sing-box не выражается'
+		],
+		[
+			'vlink: hysteria: udphop mode perConnRemote has no sing-box equivalent',
+			'Режим прыжков по портам perConnRemote в sing-box не выражается'
+		],
+		[
+			'vlink: hysteria: quicParams maxIdleTimeout 300 is out of the 4..120 range',
+			'Значение maxIdleTimeout = 300 вне допустимого диапазона 4..120'
+		],
+		[
+			'vlink: hysteria: quicParams maxIncomingStreams 4 is below the minimum of 8',
+			'Значение maxIncomingStreams = 4 меньше минимума 8'
+		],
+		[
+			'vlink: hysteria: udphop interval 1s is below the 5s minimum',
+			'Интервал прыжков 1s меньше минимума 5s'
+		],
+		[
+			'vlink: hysteria: quicParams bbrProfile "TURBO" is unknown',
+			'Неизвестное значение bbrProfile: «TURBO»'
+		],
+		[
+			'vlink: hysteria: quicParams congestion "cubic" is unknown',
+			'Неизвестное значение congestion: «cubic»'
+		],
+		[
+			'vlink: hysteria: udphop mode "whatever" is unknown',
+			'Неизвестный режим прыжков по портам: «whatever»'
+		],
+		[
+			'vlink: hysteria: udp mask "salamander" is repeated, sing-box takes only one',
+			'Маскировка «salamander» указана дважды, sing-box принимает одну'
+		],
+		[
+			'vlink: hysteria: version mismatch: settings 2, hysteriaSettings 1',
+			'Версия протокола указана по-разному в двух блоках: settings 2, hysteriaSettings 1'
+		],
+		[
+			'vlink: hysteria: unsupported version 1 (only 2 is supported)',
+			'Поддерживается только Hysteria 2, а здесь версия 1'
+		],
+		[
+			'vlink: hysteria: invalid gecko packet size range 0-1200 (want 1..2048)',
+			'Размеры пакетов обфускации 0-1200 вне допустимого диапазона 1..2048'
+		],
+		[
+			'vlink: hysteria: udphop remotePorts "abc" is not a valid port range',
+			'«abc» — не диапазон портов'
+		],
+		['vlink: hysteria: udphop interval is missing', 'Не указан интервал прыжков'],
+		[
+			'vlink: hysteria: security "none" is not usable, hysteria2 is always over TLS',
+			'Hysteria 2 работает только поверх TLS, а в узле указано «none»'
+		],
+		['vlink: hysteria: obfs requires password', 'Не указан пароль обфускации'],
+		[
+			'vlink: hysteria: quicParams initStreamReceiveWindow and maxStreamReceiveWindow differ, sing-box has a single window',
+			'Стартовое и предельное окно приёма различаются, а в sing-box окно одно'
+		],
+
+		['vlink: xray: outbound is malformed', 'Блок узла не разобран'],
+		[
+			'vlink: xray: finalmask has 2 mask(s) with no sing-box equivalent',
+			'Маскировок в узле: 2 — sing-box их не выражает'
+		],
+		[
+			'vlink: hysteria: realm tlsConfig has no sing-box equivalent',
+			'Настройка реле tlsConfig в sing-box не выражается'
+		],
+		[
+			'vlink: hysteria: realm url scheme "https" is not realm or realm+http',
+			'Ссылка реле начинается не с realm:// или realm+http://, а с «https»'
+		],
+		['vlink: hysteria: realm url has no token', 'В ссылке реле нет токена'],
+		['vlink: hysteria: realm stunServers is empty', 'У реле не указаны STUN-серверы'],
+		[
+			'vlink: hysteria: realm stunServers "x" is not host:port',
+			'STUN-сервер «x» указан не как host:port'
+		],
+		[
+			'vlink: hysteria: udp mask realm cannot be combined with udphop: sing-box takes the address from realm alone',
+			'Реле и прыжки по портам вместе sing-box не принимает'
+		],
+		['vlink: hysteria: invalid finalmask', 'Блок finalmask не разобран'],
+		['vlink: hysteria: invalid realm settings', 'Блок realm не разобран'],
+		['vlink: xray: invalid hysteria settings', 'Блок hysteria не разобран'],
+		[
+			'vlink: hysteria: quicParams brutalUp: "1 b" is below the minimum of 65536 bytes per second',
+			'Значение brutalUp «1 b» меньше минимума 65536 байт в секунду'
+		],
+		[
+			'vlink: hysteria: quicParams brutalDown: unsupported bandwidth unit in "5 zz"',
+			'В значении brutalDown «5 zz» неизвестная единица измерения'
+		],
+		[
+			'vlink: hysteria: quicParams brutalUp: invalid bandwidth "abc"',
+			'Значение brutalUp «abc» не похоже на скорость'
+		],
+		[
+			'vlink: hysteria2: idle_timeout "30" is not a duration like "30s"',
+			'Значение idle_timeout «30» — не длительность, нужна единица (например 30s)'
+		],
+		[
+			'vlink: hysteria2: bbr_profile "TURBO" is unknown',
+			'Неизвестное значение bbr_profile: «TURBO»'
+		],
+		[
+			'vlink: hysteria: realm portMapping requires IPv4, but ipMode is v6',
+			'Проброс порта у реле работает только с IPv4, а указан IPv6'
+		]
+	];
+
+	it.each(cases)('%s', (raw, want) => {
+		expect(linkImportErrorText(raw)).toBe(want);
 	});
 });

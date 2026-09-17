@@ -168,6 +168,7 @@ func ParseSingboxBody(body []byte) BatchResult {
 			LineIdx: 0,
 			Scheme:  "sing-box-json",
 			Message: fmt.Sprintf("json parse: %s", err.Error()),
+			Node:    true,
 		})
 		return out
 	}
@@ -183,6 +184,7 @@ func ParseSingboxBody(body []byte) BatchResult {
 				LineIdx: i,
 				Scheme:  "sing-box-json",
 				Message: "outbound has no type",
+				Node:    true,
 			})
 			continue
 		}
@@ -199,6 +201,7 @@ func ParseSingboxBody(body []byte) BatchResult {
 				LineIdx: i,
 				Scheme:  "sing-box:" + t,
 				Message: fmt.Sprintf("unsupported sing-box outbound type %q", t),
+				Node:    true,
 			})
 			continue
 		}
@@ -208,6 +211,7 @@ func ParseSingboxBody(body []byte) BatchResult {
 				LineIdx: i,
 				Scheme:  "sing-box:" + t,
 				Message: err.Error(),
+				Node:    true,
 			})
 			continue
 		}
