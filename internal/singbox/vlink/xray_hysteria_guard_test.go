@@ -38,28 +38,6 @@ func TestParseXrayHysteria_VersionFromStreamOnly(t *testing.T) {
 	}
 }
 
-// udpIdleTimeout меняет поведение клиента, а у аутбаунда sing-box такого
-// ключа нет. Умолчание Xray (60) терять нечего, остальное — отказ.
-func TestParseXrayHysteria_UdpIdleTimeout(t *testing.T) {
-	mk := func(v string) []byte {
-		return []byte(`[{"remarks":"T","outbounds":[{"protocol":"hysteria",
-			"settings":{"address":"h.example.net","port":443,"version":2},
-			"streamSettings":{"network":"hysteria","security":"tls",
-				"hysteriaSettings":{"version":2,"auth":"pw","udpIdleTimeout":` + v + `}}}]}]`)
-	}
-
-	if sb := firstXrayOutbound(t, mk("60")); sb["type"] != "hysteria2" {
-		t.Errorf("умолчание 60 не должно ронять узел: %v", sb)
-	}
-	res := ParseXrayBody(mk("120"))
-	if len(res.Outbounds) != 0 {
-		t.Fatalf("узел разобран: %s", res.Outbounds[0].Outbound)
-	}
-	if len(res.Errors) != 1 || !strings.Contains(res.Errors[0].Message, "udpIdleTimeout") {
-		t.Errorf("errors = %v", res.Errors)
-	}
-}
-
 // Обязательные поля: без них аутбаунд неработоспособен, а отказ должен
 // называть причину.
 func TestParseXrayHysteria_RequiredFields(t *testing.T) {

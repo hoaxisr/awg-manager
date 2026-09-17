@@ -31,13 +31,14 @@ func xrayHysteriaError(t *testing.T, body []byte) string {
 // Полоса: Xray считает brutalUp/brutalDown в байтах в секунду (Bandwidth.Bps,
 // единицы 1024-кратные, делённые на 8), sing-box — в Mbps по 125000 байт
 // (constant/speed.go). Переносим байты, а не подпись: "100 mbps" Xray — это
-// 13107200 Б/с, то есть 105 Mbps sing-box.
+// 13107200 Б/с, то есть 104.86 Mbps sing-box, и округляем ВНИЗ — завышенный
+// темп brutal шлёт в канал без обратной связи.
 func TestParseXrayHysteria_BrutalBandwidth(t *testing.T) {
 	sb := firstXrayOutbound(t, xrayHysteriaFinalMask(
 		`"quicParams":{"congestion":"brutal","brutalUp":"100 mbps","brutalDown":"200 mbps"}`))
 
-	if sb["up_mbps"] != float64(105) || sb["down_mbps"] != float64(210) {
-		t.Errorf("up/down = %v/%v, want 105/210", sb["up_mbps"], sb["down_mbps"])
+	if sb["up_mbps"] != float64(104) || sb["down_mbps"] != float64(209) {
+		t.Errorf("up/down = %v/%v, want 104/209", sb["up_mbps"], sb["down_mbps"])
 	}
 	if _, ok := sb["brutal"]; ok {
 		t.Errorf("объекта brutal быть не должно: %v", sb["brutal"])

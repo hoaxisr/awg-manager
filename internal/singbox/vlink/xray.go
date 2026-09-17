@@ -128,14 +128,14 @@ type XrayHysteriaSettings struct {
 	Version int    `json:"version"`
 }
 
-// XrayHysteriaStream — streamSettings.hysteriaSettings: версия, пароль и
-// таймаут простоя UDP-сессии. Блок masquerade оттуда сюда не переносится: он
-// серверный (Xray собирает из него ответ маскировки на inbound) и на поведение
-// клиента не влияет.
+// XrayHysteriaStream — streamSettings.hysteriaSettings: версия и пароль.
+// Остальные поля блока серверные и на поведение клиента не влияют, поэтому
+// сюда не переносятся и отказа не вызывают: masquerade Xray читает только в
+// inbound (hysteria/hub.go), udpIdleTimeout — там же, клиентский диалер
+// собирает менеджер UDP-сессий без него.
 type XrayHysteriaStream struct {
-	Version        int    `json:"version"`
-	Auth           string `json:"auth"`
-	UDPIdleTimeout int    `json:"udpIdleTimeout"`
+	Version int    `json:"version"`
+	Auth    string `json:"auth"`
 }
 
 // XrayFinalMask — streamSettings.finalmask: udp-маски (salamander, udphop и
@@ -202,8 +202,40 @@ type ShadowsocksSettings struct {
 }
 
 type XrayConfigItem struct {
-	Remarks   string         `json:"remarks"`
-	Outbounds []XrayOutbound `json:"outbounds"`
+	Remarks string `json:"remarks"`
+	// Сырой список: json.Unmarshal в массив структур — всё или ничего, и
+	// неожиданная форма ОДНОГО поля у ОДНОГО узла унесла бы всю подписку
+	// молча (ноль узлов, ноль причин). Каждый узел разбирается отдельно.
+	Outbounds []json.RawMessage `json:"outbounds"`
+}
+
+// decodeXrayOutbound разбирает один аутбаунд. Ошибка остаётся при своём узле.
+func decodeXrayOutbound(raw json.RawMessage) (XrayOutbound, error) {
+	var ob XrayOutbound
+	if err := json.Unmarshal(raw, &ob); err != nil {
+		return ob, fmt.Errorf("xray: outbound is malformed")
+	}
+	return ob, nil
+}
+
+// isXrayRealOutbound отсеивает служебные аутбаунды Xray: они есть почти в
+// каждой подписке и узлами не являются.
+func isXrayRealOutbound(proto string) bool {
+	switch proto {
+	case "", "freedom", "blackhole", "dns", "loopback":
+		return false
+	}
+	return true
+}
+
+// xrayRawProtocol достаёт только имя протокола. Структура из одного поля
+// переживает любую форму соседних: json игнорирует то, чего в ней нет.
+func xrayRawProtocol(raw json.RawMessage) string {
+	var head struct {
+		Protocol string `json:"protocol"`
+	}
+	_ = json.Unmarshal(raw, &head)
+	return strings.ToLower(head.Protocol)
 }
 
 // IsXrayJSON tests whether body is a valid JSON document structured as Xray/V2Ray configuration.
@@ -217,11 +249,10 @@ func IsXrayJSON(body []byte) bool {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(body, &root); err == nil {
 		if rawOutbounds, ok := root["outbounds"]; ok {
-			var outbounds []XrayOutbound
+			var outbounds []json.RawMessage
 			if err := json.Unmarshal(rawOutbounds, &outbounds); err == nil && len(outbounds) > 0 {
 				for _, ob := range outbounds {
-					proto := strings.ToLower(ob.Protocol)
-					if isXrayProtocol(proto) {
+					if isXrayProtocol(xrayRawProtocol(ob)) {
 						return true
 					}
 				}
@@ -234,8 +265,7 @@ func IsXrayJSON(body []byte) bool {
 	if err := json.Unmarshal(body, &configArr); err == nil && len(configArr) > 0 {
 		for _, item := range configArr {
 			for _, ob := range item.Outbounds {
-				proto := strings.ToLower(ob.Protocol)
-				if isXrayProtocol(proto) {
+				if isXrayProtocol(xrayRawProtocol(ob)) {
 					return true
 				}
 			}
@@ -243,11 +273,17 @@ func IsXrayJSON(body []byte) bool {
 	}
 
 	// 3. Bare array of Xray outbounds
-	var arr []XrayOutbound
+	var arr []json.RawMessage
 	if err := json.Unmarshal(body, &arr); err == nil && len(arr) > 0 {
-		for _, ob := range arr {
-			proto := strings.ToLower(ob.Protocol)
-			if isXrayProtocol(proto) && len(ob.Settings) > 0 {
+		for _, raw := range arr {
+			var head struct {
+				Protocol string          `json:"protocol"`
+				Settings json.RawMessage `json:"settings"`
+			}
+			if json.Unmarshal(raw, &head) != nil {
+				continue
+			}
+			if isXrayProtocol(strings.ToLower(head.Protocol)) && len(head.Settings) > 0 {
 				return true
 			}
 		}
@@ -289,20 +325,25 @@ func ParseXrayBody(body []byte) BatchResult {
 			nodeIdx := 0
 			for _, item := range configArr {
 				remarks := strings.TrimSpace(item.Remarks)
-				var realOutbounds []XrayOutbound
-				for _, ob := range item.Outbounds {
-					proto := strings.ToLower(ob.Protocol)
-					if proto != "" && proto != "freedom" && proto != "blackhole" && proto != "dns" && proto != "loopback" {
-						realOutbounds = append(realOutbounds, ob)
+				var realOutbounds []json.RawMessage
+				for _, raw := range item.Outbounds {
+					if isXrayRealOutbound(xrayRawProtocol(raw)) {
+						realOutbounds = append(realOutbounds, raw)
 					}
 				}
 
-				for idx, ob := range realOutbounds {
-					proto := strings.ToLower(ob.Protocol)
+				for idx, raw := range realOutbounds {
+					proto := xrayRawProtocol(raw)
 					thisIdx := nodeIdx
 					nodeIdx++
 					if proto == "vmess" {
 						res.SkippedVmess++
+						continue
+					}
+
+					ob, err := decodeXrayOutbound(raw)
+					if err != nil {
+						res.Errors = append(res.Errors, ParseError{LineIdx: thisIdx, Scheme: proto, Message: err.Error()})
 						continue
 					}
 
@@ -335,7 +376,7 @@ func ParseXrayBody(body []byte) BatchResult {
 	}
 
 	// Try 2: Single config object or bare array
-	var outbounds []XrayOutbound
+	var outbounds []json.RawMessage
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(body, &root); err == nil {
 		if rawOutbounds, ok := root["outbounds"]; ok {
@@ -350,13 +391,19 @@ func ParseXrayBody(body []byte) BatchResult {
 		return res
 	}
 
-	for idx, ob := range outbounds {
-		proto := strings.ToLower(ob.Protocol)
-		if proto == "" || proto == "freedom" || proto == "blackhole" || proto == "dns" || proto == "loopback" {
+	for idx, raw := range outbounds {
+		proto := xrayRawProtocol(raw)
+		if !isXrayRealOutbound(proto) {
 			continue
 		}
 		if proto == "vmess" {
 			res.SkippedVmess++
+			continue
+		}
+
+		ob, err := decodeXrayOutbound(raw)
+		if err != nil {
+			res.Errors = append(res.Errors, ParseError{LineIdx: idx, Scheme: proto, Message: err.Error()})
 			continue
 		}
 
@@ -536,11 +583,6 @@ func convertXrayHysteria(ob XrayOutbound, tag string) (*ParsedOutbound, error) {
 	if version != 2 {
 		return nil, fmt.Errorf("hysteria: unsupported version %d (only 2 is supported)", version)
 	}
-	// Своего таймаута UDP-сессии у аутбаунда sing-box нет. Умолчание Xray
-	// (60 с) терять нечего, а заданное вручную значение — потеря поведения.
-	if hy != nil && hy.UDPIdleTimeout != 0 && hy.UDPIdleTimeout != 60 {
-		return nil, fmt.Errorf("hysteria: udpIdleTimeout has no sing-box equivalent")
-	}
 	if settings.Address == "" {
 		return nil, fmt.Errorf("hysteria: missing server")
 	}
@@ -708,7 +750,9 @@ func applyXrayUDPHop(raw json.RawMessage, out map[string]any) error {
 		return err
 	}
 	if len(ports) == 0 {
-		return fmt.Errorf("hysteria: udphop remotePorts is empty")
+		// У Xray это законно: прыжок получается вырожденным (новый адрес
+		// равен старому), конфигурация рабочая — прыжков просто нет.
+		return nil
 	}
 	anyPorts := make([]any, len(ports))
 	for i, p := range ports {
@@ -798,8 +842,19 @@ func applyXrayQuicParams(q *XrayQuicParams, out map[string]any) error {
 			out["down_mbps"] = down
 		}
 	case "bbr":
-		// Значения brutal при bbr не работают и у самого Xray (dialer.go):
-		// перенести их значило бы включить в sing-box другой алгоритм.
+		// brutalUp при bbr не работает и у самого Xray (dialer.go выбирает
+		// UseBBR), а в sing-box ненулевой up_mbps ВКЛЮЧИЛ бы brutal — то есть
+		// другой алгоритм. А вот brutalDown уезжает на провод независимо от
+		// алгоритма: Xray кладёт его в заголовок CCRX запроса авторизации до
+		// выбора congestion, и сервер по нему настраивает свою отдачу. В
+		// sing-box это down_mbps, и brutal он не включает.
+		down, err := xrayBandwidthMbps(q.BrutalDown)
+		if err != nil {
+			return fmt.Errorf("hysteria: quicParams brutalDown: %w", err)
+		}
+		if down > 0 {
+			out["down_mbps"] = down
+		}
 	case "force-brutal":
 		// force-brutal шлёт заявленную полосу безусловно, обычный brutal
 		// берёт минимум с объявленной сервером (hysteria/dialer.go).
@@ -929,7 +984,14 @@ func xrayBandwidthMbps(raw string) (int, error) {
 	if bytesPerSec < 65536 {
 		return 0, fmt.Errorf("%q is below the minimum of 65536 bytes per second", raw)
 	}
-	return int(math.Round(bytesPerSec / 125000)), nil
+	// Вниз, а не к ближайшему: brutal шлёт заявленный темп без обратной связи,
+	// и завышение — это лишний поток в канал. Ниже 1 Mbps не опускаемся —
+	// нулём выключился бы сам brutal.
+	mbps := int(math.Floor(bytesPerSec / 125000))
+	if mbps < 1 {
+		mbps = 1
+	}
+	return mbps, nil
 }
 
 // parseXrayInt32Range разбирает Int32Range Xray: строка "10-30" или число.
@@ -952,9 +1014,13 @@ func parseXrayInt32Range(raw json.RawMessage) (from, to int, ok bool) {
 	}
 	to = from
 	if isRange {
-		if v, err := strconv.Atoi(strings.TrimSpace(hi)); err == nil {
-			to = v
+		// Оборванный диапазон Xray отвергает (ParseRangeString): прочитать
+		// "10-" как одиночное значение значило бы потерять верхнюю границу.
+		v, err := strconv.Atoi(strings.TrimSpace(hi))
+		if err != nil {
+			return 0, 0, false
 		}
+		to = v
 	}
 	if from > to {
 		from, to = to, from
@@ -987,7 +1053,6 @@ func xrayPortListString(raw json.RawMessage) string {
 func xrayHysteriaStreamQuery(stream *XrayStream, defaultHost string) url.Values {
 	v := url.Values{}
 	v.Set("security", "tls")
-	v.Set("sni", defaultHost)
 	// h3 движок подставил бы и сам при пустом наборе (sing-quic hysteria2:
 	// SetNextProtos на пустых NextProtos), но ставим явно — так значение видно
 	// в карточке и в экспорте ссылки, а не только внутри процесса.
@@ -996,7 +1061,8 @@ func xrayHysteriaStreamQuery(stream *XrayStream, defaultHost string) url.Values 
 		return v
 	}
 	if ts := stream.TLSSettings; ts != nil {
-		v.Set("sni", firstNonEmpty(ts.ServerName, defaultHost))
+		// Пустое имя общий слой подставит сам из адреса (BuildStreamFromQuery).
+		v.Set("sni", ts.ServerName)
 		if ts.AllowInsecure {
 			v.Set("insecure", "1")
 		}
