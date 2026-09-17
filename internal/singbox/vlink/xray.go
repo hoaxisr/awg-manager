@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -36,7 +37,10 @@ type XrayStream struct {
 	// network "hysteria" транспортом не является: блок несёт версию и пароль
 	// протокола, а не настройки транспорта (issue #916).
 	HysteriaSettings *XrayHysteriaStream `json:"hysteriaSettings"`
-	Sockopt          map[string]any      `json:"sockopt"`
+	// Обфускация и прыжки по портам лежат НЕ в hysteriaSettings, а здесь:
+	// Xray вынес их в общий слой масок (infra/conf/transport_finalmask.go).
+	FinalMask *XrayFinalMask `json:"finalmask"`
+	Sockopt   map[string]any `json:"sockopt"`
 }
 
 type XrayTLSConfig struct {
@@ -123,6 +127,35 @@ type XrayHysteriaSettings struct {
 type XrayHysteriaStream struct {
 	Version int    `json:"version"`
 	Auth    string `json:"auth"`
+}
+
+// XrayFinalMask — streamSettings.finalmask. Нас интересует только udp-список:
+// в нём лежат salamander (обфускация) и udphop (прыжки по портам).
+type XrayFinalMask struct {
+	UDP []XrayMask `json:"udp"`
+}
+
+// XrayMask — элемент списка масок: тип и его собственный блок настроек.
+type XrayMask struct {
+	Type     string          `json:"type"`
+	Settings json.RawMessage `json:"settings"`
+}
+
+// XraySalamander — маска salamander. packetSize — Int32Range: при непустом
+// верхнем значении Xray строит вариант gecko (Salamander.Build).
+type XraySalamander struct {
+	Password   string          `json:"password"`
+	PacketSize json.RawMessage `json:"packetSize"`
+}
+
+// XrayUDPHop — маска udphop. mode перечисляет, ЧТО меняется при прыжке;
+// удалённый порт берётся только при intervalRemote/perConnRemote
+// (udphop/conn.go). interval — Int32Range в секундах, remotePorts — PortList.
+type XrayUDPHop struct {
+	Mode        string          `json:"mode"`
+	Interval    json.RawMessage `json:"interval"`
+	RemotePorts json.RawMessage `json:"remotePorts"`
+	RemoteIPs   []string        `json:"remoteIPs"`
 }
 
 // ShadowsocksSettings represents settings block for Shadowsocks in Xray.
@@ -472,6 +505,10 @@ func convertXrayHysteria(ob XrayOutbound, tag string) (*ParsedOutbound, error) {
 		"tag":         tag,
 	}
 
+	if err := applyXrayHysteriaMasks(ob.StreamSettings, out); err != nil {
+		return nil, err
+	}
+
 	stream, err := BuildStreamFromQuery(xrayHysteriaStreamQuery(ob.StreamSettings, settings.Address), settings.Address)
 	if err != nil {
 		return nil, fmt.Errorf("hysteria: %w", err)
@@ -490,6 +527,144 @@ func convertXrayHysteria(ob XrayOutbound, tag string) (*ParsedOutbound, error) {
 		Outbound: raw,
 		Label:    tag,
 	}, nil
+}
+
+// applyXrayHysteriaMasks переносит в аутбаунд то из слоя масок Xray, что у
+// hysteria2 в sing-box выражается: обфускацию salamander/gecko и прыжки по
+// удалённым портам. Остальные маски (xdns, realm, noise и прочие) молча
+// пропускаются — они относятся к другим транспортам.
+func applyXrayHysteriaMasks(stream *XrayStream, out map[string]any) error {
+	if stream == nil || stream.FinalMask == nil {
+		return nil
+	}
+	for _, mask := range stream.FinalMask.UDP {
+		switch strings.ToLower(mask.Type) {
+		case "salamander":
+			if err := applyXraySalamander(mask.Settings, out); err != nil {
+				return err
+			}
+		case "udphop":
+			if err := applyXrayUDPHop(mask.Settings, out); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func applyXraySalamander(raw json.RawMessage, out map[string]any) error {
+	var s XraySalamander
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return fmt.Errorf("hysteria: invalid salamander obfs settings")
+	}
+	if s.Password == "" {
+		// Пустой пароль обфускации — заведомо неработающая пара с сервером,
+		// тот же отказ даёт разбор Clash.
+		return fmt.Errorf("hysteria: obfs requires password")
+	}
+	obfs := map[string]any{"type": "salamander", "password": s.Password}
+	// packetSize у Xray включает вариант gecko, и размеры обязаны совпадать с
+	// серверными: молча отбросить их значит собрать нерабочий аутбаунд.
+	if from, to, ok := parseXrayInt32Range(s.PacketSize); ok && to > 0 {
+		obfs["type"] = "gecko"
+		obfs["min_packet_size"] = from
+		obfs["max_packet_size"] = to
+	}
+	out["obfs"] = obfs
+	return nil
+}
+
+func applyXrayUDPHop(raw json.RawMessage, out map[string]any) error {
+	var h XrayUDPHop
+	if err := json.Unmarshal(raw, &h); err != nil {
+		return fmt.Errorf("hysteria: invalid udphop settings")
+	}
+	// intervalLocal меняет локальный сокет, а не адресата: удалённый порт
+	// Xray трогает только при intervalRemote/perConnRemote. Перенос списка в
+	// server_ports в этом случае отправил бы трафик на порты, которых сервер
+	// не слушает.
+	remote := false
+	for _, mode := range strings.Split(h.Mode, ",") {
+		switch strings.ToLower(strings.TrimSpace(mode)) {
+		case "intervalremote", "perconnremote":
+			remote = true
+		}
+	}
+	if !remote {
+		return nil
+	}
+	ports := parseMport(xrayPortListString(h.RemotePorts))
+	if len(ports) == 0 {
+		return nil
+	}
+	anyPorts := make([]any, len(ports))
+	for i, p := range ports {
+		anyPorts[i] = p
+	}
+	out["server_ports"] = anyPorts
+
+	// Xray выбирает задержку случайно в диапазоне [min, max]; sing-box
+	// описывает то же парой hop_interval/hop_interval_max.
+	from, to, ok := parseXrayInt32Range(h.Interval)
+	if !ok || from <= 0 {
+		from, to = 10, 0
+	}
+	out["hop_interval"] = strconv.Itoa(from) + "s"
+	if to > from {
+		out["hop_interval_max"] = strconv.Itoa(to) + "s"
+	}
+	// remoteIPs осознанно теряется: sing-box дозванивается на один адрес и
+	// менять его на лету не умеет. Базовый адрес из settings рабочий, так что
+	// аутбаунд остаётся исправным — тише только маскировка.
+	return nil
+}
+
+// parseXrayInt32Range разбирает Int32Range Xray: строка "10-30" или число.
+func parseXrayInt32Range(raw json.RawMessage) (from, to int, ok bool) {
+	if len(raw) == 0 {
+		return 0, 0, false
+	}
+	var n int
+	if err := json.Unmarshal(raw, &n); err == nil {
+		return n, n, true
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return 0, 0, false
+	}
+	lo, hi, isRange := strings.Cut(s, "-")
+	from, err := strconv.Atoi(strings.TrimSpace(lo))
+	if err != nil {
+		return 0, 0, false
+	}
+	to = from
+	if isRange {
+		if v, err := strconv.Atoi(strings.TrimSpace(hi)); err == nil {
+			to = v
+		}
+	}
+	if from > to {
+		from, to = to, from
+	}
+	return from, to, true
+}
+
+// xrayPortListString приводит PortList Xray к строке "a-b,c": он приходит и
+// строкой, и числом. Грамматика совпадает с mport ссылки hy2://, поэтому
+// дальше работает parseMport.
+func xrayPortListString(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var n int
+	if err := json.Unmarshal(raw, &n); err == nil {
+		return strconv.Itoa(n)
+	}
+	return ""
 }
 
 // xrayHysteriaStreamQuery отбирает из streamSettings только то, что у hysteria2
