@@ -1,6 +1,7 @@
 package nwg
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -72,6 +73,26 @@ func TestResolveKoPathFor(t *testing.T) {
 			exists:   have(),
 			wantPath: defaultKoPath,
 		},
+		{
+			// Keenetic, которого нет в карте SoC: NDMS ответил, значит модель
+			// настоящая, а под какое ядро её кормить — неизвестно. Угадывать
+			// здесь и есть F342.
+			name:    "known-model-unknown-SoC — refuse, not arch default",
+			model:   "KN-9999",
+			soc:     kmod.SoCUnknown,
+			exists:  have(),
+			wantErr: "KN-9999",
+		},
+		{
+			// KN-1011 — mt7621 с HIGHMEM: сборка SoC ему не годится, а mt7621
+			// сидит в socsCoveredByArchDefault, так что без своего гейта
+			// провал был бы тихим.
+			name:    "model with its own build, file missing — refuse",
+			model:   "KN-1011",
+			soc:     kmod.SoCMT7621,
+			exists:  have("awg_proxy-mt7621.ko"),
+			wantErr: "KN-1011",
+		},
 	}
 
 	for _, tt := range tests {
@@ -97,26 +118,39 @@ func TestResolveKoPathFor(t *testing.T) {
 }
 
 // Каждый SoC из карты моделей обязан быть либо покрыт arch-default'ом, либо
-// иметь собственную сборку в build-all-awg-proxy.sh. Тест ловит добавление
-// нового SoC, под который сборку завести забыли: выбор тогда молча уедет в
-// отказ на живом роутере.
+// иметь собственную сборку в kmod/awg-proxy/out/. Списки не дублируются: SoC
+// берутся из карты моделей, сборки — с диска, поэтому тест валится и когда в
+// soc.go заводят новый SoC без сборки, и когда сборка пропала из out/.
 func TestEverySoCHasABuild(t *testing.T) {
-	// Имена файлов, которые собирает keenetic-sdk/build-all-awg-proxy.sh
-	// (SoC-сборки; arch-default'ы mips/arm64/mt7621 покрыты картой выше).
-	built := map[kmod.SoC]bool{
-		kmod.SoCMT7628: true,
-		kmod.SoCEN7528: true,
-		kmod.SoCEN7516: true,
-		kmod.SoCMT7622: true,
-		kmod.SoCMT7981: true,
+	const outDir = "../../../kmod/awg-proxy/out"
+
+	files, err := filepath.Glob(filepath.Join(outDir, "awg_proxy-*.ko"))
+	if err != nil {
+		t.Fatalf("glob сборок: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatalf("в %s нет ни одной сборки awg_proxy — проверять нечего", outDir)
 	}
 
-	for _, soc := range []kmod.SoC{
-		kmod.SoCMT7621, kmod.SoCMT7628, kmod.SoCEN7512, kmod.SoCEN7516,
-		kmod.SoCEN7528, kmod.SoCMT7622, kmod.SoCMT7981, kmod.SoCMT7988,
-	} {
-		if !built[soc] && !socsCoveredByArchDefault[soc] {
-			t.Errorf("SoC %s: нет ни своей сборки awg_proxy, ни покрытия arch-default — роутеры на нём останутся без прокси-пути", soc)
+	built := map[string]bool{}
+	for _, f := range files {
+		built[strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), "awg_proxy-"), ".ko")] = true
+	}
+
+	socs := kmod.KnownSoCs()
+	if len(socs) == 0 {
+		t.Fatal("карта моделей пуста — тест ничего не проверяет")
+	}
+	for _, soc := range socs {
+		if !built[string(soc)] && !socsCoveredByArchDefault[soc] {
+			t.Errorf("SoC %s: нет ни сборки awg_proxy-%s.ko в %s, ни покрытия arch-default — роутеры на нём останутся без прокси-пути", soc, soc, outDir)
+		}
+	}
+
+	// Модели со своей сборкой — тот же уговор: файл обязан лежать на месте.
+	for model := range modelsWithOwnBuild {
+		if !built[model] {
+			t.Errorf("модель %s: нет сборки awg_proxy-%s.ko в %s, а сборка её SoC ей не годится", model, model, outDir)
 		}
 	}
 }

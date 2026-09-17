@@ -157,16 +157,29 @@ var socsCoveredByArchDefault = map[kmod.SoC]bool{
 	kmod.SoCMT7988: true,
 }
 
+// modelsWithOwnBuild — модели, которым сборка их SoC НЕ годится и у которых
+// поэтому есть собственная. KN-1011 — тот же mt7621, но с CONFIG_HIGHMEM
+// (55512 Б против 50616 у mt7621), а HIGHMEM в vermagic не входит: молчаливый
+// провал на ярус SoC дал бы здесь ровно тот же чужой модуль, что и F342.
+var modelsWithOwnBuild = map[string]bool{
+	"KN-1011": true,
+}
+
 // resolveKoPathFor — тот же выбор в чистом виде: без обращения к хосту, чтобы
 // тест мог прогнать все ветки. how — чем выбран файл (для лога), пусто для
-// arch-default. Ошибка означает: для этого SoC нет ни своей сборки, ни права
-// взять arch-default.
+// arch-default. Ошибка означает: подходящей сборки в пакете нет, а чужую
+// загружать нельзя.
 func resolveKoPathFor(model string, soc kmod.SoC, exists func(string) bool) (path, how string, err error) {
 	// 1. Per-model override (currently only KN-1011 HIGHMEM is unique)
 	if model != "" {
 		modelPath := fmt.Sprintf(awgProxyDir+"/awg_proxy-%s.ko", model)
 		if exists(modelPath) {
 			return modelPath, model, nil
+		}
+		if modelsWithOwnBuild[model] {
+			return "", "", fmt.Errorf(
+				"в пакете нет сборки awg_proxy.ko под %s (%s отсутствует): сборка её SoC собрана против другой конфигурации ядра, её загрузка перезагружает роутер — обновите пакет awg-manager",
+				model, filepath.Base(modelPath))
 		}
 	}
 
@@ -181,10 +194,21 @@ func resolveKoPathFor(model string, soc kmod.SoC, exists func(string) bool) (pat
 				"в пакете нет сборки awg_proxy.ko под SoC %s (%s отсутствует): arch-default собран против другой конфигурации ядра, его загрузка перезагружает роутер — обновите пакет awg-manager",
 				soc, filepath.Base(socPath))
 		}
+		// 3. Arch default — SoC, чьей конфигурацией он и собран.
+		return defaultKoPath, "", nil
 	}
 
-	// 3. Arch default — только для SoC, чьей конфигурацией он и собран, и для
-	// неопознанного железа (не-Keenetic), где выбора всё равно нет.
+	// Модель есть, а SoC неизвестен — это Keenetic, которого не знает карта
+	// modelToSoC: DetectModel возвращает непустую строку только когда NDMS
+	// ответил. Под какое ядро собран arch-default, для такой модели сказать
+	// нечего, а угадывать здесь и означает F342.
+	if model != "" {
+		return "", "", fmt.Errorf(
+			"модель %s не значится в карте SoC: под какое ядро собирать awg_proxy.ko — неизвестно, а чужая сборка перезагружает роутер — обновите пакет awg-manager",
+			model)
+	}
+
+	// Железо не опознано вовсе (NDMS не ответил, не-Keenetic) — выбора нет.
 	return defaultKoPath, "", nil
 }
 

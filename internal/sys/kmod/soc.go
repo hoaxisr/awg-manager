@@ -2,6 +2,7 @@ package kmod
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
@@ -192,6 +193,25 @@ func ParseModelToSoC(model string) SoC {
 	}
 
 	return SoCUnknown
+}
+
+// KnownSoCs — все SoC, встречающиеся в картах моделей, по возрастанию имени.
+// Источник правды один — сами карты, чтобы список не приходилось дополнять
+// вторым местом и забывать это делать.
+func KnownSoCs() []SoC {
+	seen := make(map[SoC]struct{}, len(modelToSoC))
+	for _, soc := range modelToSoC {
+		seen[soc] = struct{}{}
+	}
+	for _, soc := range legacyHWIDToSoC {
+		seen[soc] = struct{}{}
+	}
+	out := make([]SoC, 0, len(seen))
+	for soc := range seen {
+		out = append(out, soc)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // ModulePath returns the path to the kernel module for this SoC.
