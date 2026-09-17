@@ -1,9 +1,15 @@
 package singbox
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
@@ -76,9 +82,11 @@ func TestLevelForClashType(t *testing.T) {
 		"error": logging.LevelError, "fatal": logging.LevelError, "panic": logging.LevelError,
 		"warn": logging.LevelWarn, "warning": logging.LevelWarn,
 		"info": logging.LevelInfo,
-		// trace подробнее debug у движка, поэтому оба идут в самый подробный
-		// НАШ уровень. Прежнее trace→LevelFull переворачивало подробность.
-		"debug": logging.LevelDebug, "trace": logging.LevelDebug,
+		// Монотонно по подробности: info < debug < trace у движка ложится на
+		// info < full < debug у нас. Оба варианта, которые НЕ монотонны, дают
+		// потерю: trace→Full переворачивает подробность, а debug+trace→Debug
+		// делает порог «полный» тождественным «info» для строк движка.
+		"debug": logging.LevelFull, "trace": logging.LevelDebug,
 		// Неизвестный тип не прячем: движок умеет отдать "unknown", и при
 		// заводском пороге info самый подробный уровень означал бы «скрыть».
 		"unknown": logging.LevelWarn, "": logging.LevelWarn,
@@ -101,7 +109,7 @@ func TestLogForwarder_AsksEngineForNeededLevelOnly(t *testing.T) {
 		want       string
 	}{
 		{logging.LevelDebug, "trace"}, // нужны и debug, и trace движка
-		{logging.LevelFull, "info"},   // подробнее info из движка ничего не видно
+		{logging.LevelFull, "debug"},  // trace на этом пороге не показываем
 		{logging.LevelInfo, "info"},
 		{logging.LevelWarn, "warn"},
 		{logging.LevelError, "warn"}, // error и warn проходят при любом пороге
@@ -158,4 +166,168 @@ func TestDesiredLevelCoversEverythingWePass(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Отображение уровней обязано быть МОНОТОННЫМ: чем подробнее строка у движка,
+// тем подробнее наш уровень. Нарушение монотонности — не абстракция, а потеря
+// содержимого: при пороге «полный» пользователь видел бы trace и не видел
+// debug того же движка (так было до 17.09).
+func TestLevelMappingIsMonotonic(t *testing.T) {
+	// Уровни движка от менее подробного к более подробному.
+	engine := []string{"info", "debug", "trace"}
+	prio := map[logging.Level]int{
+		logging.LevelInfo: 1, logging.LevelFull: 2, logging.LevelDebug: 3,
+	}
+	prev := 0
+	for _, e := range engine {
+		got := prio[levelForClashType(e)]
+		if got == 0 {
+			t.Fatalf("%q отображается в уровень вне шкалы подробности: %q", e, levelForClashType(e))
+		}
+		if got <= prev {
+			t.Errorf("%q даёт приоритет %d, а предыдущий уровень движка — %d: подробность не возрастает",
+				e, got, prev)
+		}
+		prev = got
+	}
+}
+
+// Порог «полный» обязан показывать из движка БОЛЬШЕ, чем «info». Иначе опция в
+// настройках для строк sing-box мертва.
+func TestFullShowsMoreThanInfo(t *testing.T) {
+	var atInfo, atFull int
+	for _, e := range []string{"info", "debug", "trace"} {
+		lvl := levelForClashType(e)
+		if logging.IsVisible(lvl, logging.LevelInfo) {
+			atInfo++
+		}
+		if logging.IsVisible(lvl, logging.LevelFull) {
+			atFull++
+		}
+	}
+	if atFull <= atInfo {
+		t.Errorf("на пороге «полный» видно %d уровней движка, на «info» — %d: опция бесполезна", atFull, atInfo)
+	}
+}
+
+// Журнал выключен целиком — поток к движку не открываем вовсе. Держать его,
+// принимать каждую строку и выбрасывать её после разбора — ровно та работа,
+// которую эта линия правок убирает.
+func TestLogForwarder_DisabledLoggingAsksForNothing(t *testing.T) {
+	// gateLogger с порогом, при котором Visible ложен для ВСЕХ уровней,
+	// изображает выключенный журнал: ровно так ведёт себя logging.Service,
+	// когда IsEnabled() == false.
+	f := NewLogForwarder(func() string { return "unused" }, &disabledLogger{})
+	if got := f.desiredClashLevel(); got != "" {
+		t.Errorf("при выключенном журнале просим %q, ожидали пусто", got)
+	}
+}
+
+type disabledLogger struct{ written atomic.Int64 }
+
+func (d *disabledLogger) AppLog(logging.Level, string, string, string, string, string) {
+	d.written.Add(1)
+}
+func (d *disabledLogger) Visible(logging.Level) bool { return false }
+
+// mutableGate — порог, который можно менять на ходу, как это делает
+// пользователь в настройках.
+type mutableGate struct {
+	mu         sync.Mutex
+	configured logging.Level
+}
+
+func (m *mutableGate) AppLog(logging.Level, string, string, string, string, string) {}
+func (m *mutableGate) Visible(l logging.Level) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return logging.IsVisible(l, m.configured)
+}
+func (m *mutableGate) set(l logging.Level) {
+	m.mu.Lock()
+	m.configured = l
+	m.mu.Unlock()
+}
+
+// Поток к движку обязан открываться с нужным `?level=`, иначе вся экономия
+// (движок не сериализует и не шлёт лишнее) не работает, а проверить это по
+// desiredClashLevel нельзя — тот URL не собирает.
+func TestLogForwarder_RequestCarriesLevel(t *testing.T) {
+	got := make(chan string, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case got <- r.URL.Query().Get("level"):
+		default:
+		}
+		<-r.Context().Done() // держим поток открытым
+	}))
+	defer srv.Close()
+
+	gate := &mutableGate{configured: logging.LevelInfo}
+	f := NewLogForwarder(func() string { return strings.TrimPrefix(srv.URL, "http://") }, gate)
+	f.levelWatch = 20 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go f.Run(ctx)
+	defer cancel()
+
+	select {
+	case lvl := <-got:
+		if lvl != "info" {
+			t.Fatalf("запросили level=%q, ожидали info", lvl)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("форвардер не подключился")
+	}
+
+	// Пользователь поднял подробность — поток обязан переоткрыться с новым
+	// уровнем, иначе он живёт со старым, пока жив sing-box.
+	gate.set(logging.LevelDebug)
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case lvl := <-got:
+			if lvl == "trace" {
+				return // переоткрылся с нужным уровнем
+			}
+		case <-deadline:
+			t.Fatal("после смены порога поток не переоткрылся с новым уровнем")
+		}
+	}
+}
+
+// Горутина-сторож уровня обязана уходить вместе с контекстом: она заводится на
+// КАЖДУЮ попытку соединения, а при лежащем sing-box их по одной каждые 3 с.
+// goleak в пакете этого не видел — Run в тестах не запускался ни разу.
+func TestLogForwarder_WatcherGoroutineStops(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	f := NewLogForwarder(func() string { return strings.TrimPrefix(srv.URL, "http://") },
+		&gateLogger{configured: logging.LevelInfo})
+	f.levelWatch = 10 * time.Millisecond
+
+	before := runtime.NumGoroutine()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { f.Run(ctx); close(done) }()
+
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run не завершился по отмене контекста")
+	}
+
+	// Дать горутинам разойтись.
+	for i := 0; i < 50; i++ {
+		if runtime.NumGoroutine() <= before+2 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("горутин %d против %d до запуска — сторож уровня не ушёл", runtime.NumGoroutine(), before)
 }

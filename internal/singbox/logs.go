@@ -33,6 +33,9 @@ type LogForwarder struct {
 	http *http.Client
 
 	reconnect time.Duration
+	// levelWatch — период сверки запрошенного уровня с нужным. Поле, а не
+	// константа: иначе сторож нечем проверить, тест не станет ждать пять секунд.
+	levelWatch time.Duration
 }
 
 // levelWatchInterval — как часто сверять запрошенный у движка уровень с
@@ -43,15 +46,16 @@ const levelWatchInterval = 5 * time.Second
 func NewLogForwarder(clashAddr func() string, appLogger logging.AppLogger) *LogForwarder {
 	gate, _ := appLogger.(logging.LevelGate)
 	return &LogForwarder{
-		clashAddr: clashAddr,
-		gate:      gate,
-		inbound:   logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBInbound),
-		outbound:  logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBOutbound),
-		dns:       logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBDNS),
-		router:    logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBRouter),
-		runtime:   logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBRuntime),
-		http:      &http.Client{},
-		reconnect: 3 * time.Second,
+		clashAddr:  clashAddr,
+		gate:       gate,
+		inbound:    logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBInbound),
+		outbound:   logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBOutbound),
+		dns:        logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBDNS),
+		router:     logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBRouter),
+		runtime:    logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBRuntime),
+		http:       &http.Client{},
+		reconnect:  3 * time.Second,
+		levelWatch: levelWatchInterval,
 	}
 }
 
@@ -71,6 +75,9 @@ func (f *LogForwarder) Run(ctx context.Context) {
 
 func (f *LogForwarder) runOnce(ctx context.Context) {
 	level := f.desiredClashLevel()
+	if level == "" {
+		return // журнал выключен — поток не открываем
+	}
 
 	// Поток живёт, пока жив sing-box, и сам по себе новый уровень не
 	// подхватит: пользователь поднял бы подробность ради диагностики и не
@@ -79,13 +86,16 @@ func (f *LogForwarder) runOnce(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
-		t := time.NewTicker(levelWatchInterval)
+		t := time.NewTicker(f.levelWatch)
 		defer t.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				// Сюда же попадает включение/выключение журнала: у выключенного
+				// desiredClashLevel пустой, а Run на следующем витке решит, что
+				// поток открывать не надо.
 				if f.desiredClashLevel() != level {
 					cancel()
 					return
@@ -212,11 +222,20 @@ func (f *LogForwarder) forward(line []byte) {
 // худший из возможных исходов — строку, отсеянную проверкой, но нужную
 // пользователю.
 //
-// `trace` идёт в LevelDebug вместе с `debug`, а НЕ в LevelFull, как было
-// раньше. Прежнее отображение переворачивало подробность: у движка trace
-// подробнее debug, а в нашей шкале LevelFull (приоритет 2) МЕНЕЕ подробен, чем
-// LevelDebug (3) — то есть при пороге «full» пользователь видел trace-строки
-// движка и НЕ видел его же debug-строки.
+// Отображение МОНОТОННО по подробности. У движка выше info две ступени
+// (debug, trace), у нас тоже две (full, debug), и ложатся они по порядку:
+//
+//	движок:  info  <  debug  <  trace
+//	у нас:   info  <  full   <  debug     (приоритеты 1 < 2 < 3)
+//
+// Прежнее отображение (trace→LevelFull, debug→LevelDebug) подробность
+// ПЕРЕВОРАЧИВАЛО: при пороге «полный» пользователь видел trace-строки движка и
+// не видел его же debug-строки.
+//
+// Отправить оба — и debug, и trace — в LevelDebug тоже нельзя: тогда порог
+// «полный» не показывал бы из движка НИЧЕГО сверх info, то есть стал бы
+// тождествен «info», а у кого стоит «полный» с движком на trace (умолчание в
+// UI), тот молча потерял бы содержимое.
 //
 // Неизвестный тип — LevelWarn, а не самый подробный уровень. Движок умеет
 // отдать "unknown", и любой новый ярлык будущей версии попадёт сюда же;
@@ -230,7 +249,9 @@ func levelForClashType(clashType string) logging.Level {
 		return logging.LevelWarn
 	case "info":
 		return logging.LevelInfo
-	case "debug", "trace":
+	case "debug":
+		return logging.LevelFull
+	case "trace":
 		return logging.LevelDebug
 	default:
 		return logging.LevelWarn
@@ -246,13 +267,23 @@ func levelForClashType(clashType string) logging.Level {
 // требует Unmarshal у нас. Отсев в forward при этом не лишний: он закрывает
 // промежуток до ближайшего переподключения и работает, если логгер LevelGate
 // не поддержал.
+// Пустая строка означает «журнал не нужен вовсе» — runOnce тогда не открывает
+// поток.
 func (f *LogForwarder) desiredClashLevel() string {
 	if f.gate == nil {
 		return "trace"
 	}
+	// Журнал выключен целиком: Visible возвращает false даже для error. Держать
+	// ради этого постоянное соединение с движком и разбирать каждую строку,
+	// чтобы тут же её выбросить, — ровно та работа, которую эта ветка убирает.
+	if !f.gate.Visible(logging.LevelError) {
+		return ""
+	}
 	switch {
 	case f.gate.Visible(logging.LevelDebug):
 		return "trace"
+	case f.gate.Visible(logging.LevelFull):
+		return "debug"
 	case f.gate.Visible(logging.LevelInfo):
 		return "info"
 	default:
