@@ -207,6 +207,28 @@ describe('причины отказа узлов hysteria из Xray-подпис
 			'Маскировка realm пока не поддерживается: у такого аутбаунда нет адреса сервера'
 		],
 		['vlink: xray: outbound is malformed', 'Блок узла не разобран'],
+		[
+			'vlink: xray: finalmask has 2 mask(s) with no sing-box equivalent',
+			'Маскировок в узле: 2 — sing-box их не выражает'
+		],
+		[
+			'vlink: hysteria: realm tlsConfig has no sing-box equivalent',
+			'Настройка реле tlsConfig в sing-box не выражается'
+		],
+		[
+			'vlink: hysteria: realm url scheme "https" is not realm or realm+http',
+			'Ссылка реле начинается не с realm:// или realm+http://, а с «https»'
+		],
+		['vlink: hysteria: realm url has no token', 'В ссылке реле нет токена'],
+		['vlink: hysteria: realm stunServers is empty', 'У реле не указаны STUN-серверы'],
+		[
+			'vlink: hysteria: realm stunServers "x" is not host:port',
+			'STUN-сервер «x» указан не как host:port'
+		],
+		[
+			'vlink: hysteria: udp mask realm cannot be combined with udphop: sing-box takes the address from realm alone',
+			'Реле и прыжки по портам вместе sing-box не принимает'
+		],
 		['vlink: hysteria: invalid finalmask', 'Блок finalmask не разобран']
 	];
 

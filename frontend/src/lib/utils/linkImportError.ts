@@ -33,12 +33,51 @@ const MISSING: Record<string, string> = {
 	server_port: 'не указан или нечисловой порт',
 };
 
+/** Части ссылки реле: в родительном падеже, как их видит пользователь. */
+const REALM_PART: Record<string, string> = {
+	token: 'токена',
+	id: 'идентификатора',
+	host: 'адреса',
+};
+
 type Rule = { re: RegExp; text: (m: RegExpExecArray) => string };
 
 const RULES: Rule[] = [
 	// Отказы разбора hysteria из Xray-подписки. Подсистемы названы так, как их
 	// видит пользователь: udp mask — маскировка, udphop — прыжки по портам,
 	// quicParams — настройки QUIC.
+	{
+		re: /finalmask has (\d+) mask\(s\) with no sing-box equivalent/i,
+		text: (m) => `маскировок в узле: ${m[1]} — sing-box их не выражает`,
+	},
+	{
+		re: /udp mask realm cannot be combined with udphop/i,
+		text: () => 'реле и прыжки по портам вместе sing-box не принимает',
+	},
+	{
+		re: /realm (\w+) has no sing-box equivalent/i,
+		text: (m) => `настройка реле ${m[1]} в sing-box не выражается`,
+	},
+	{
+		re: /realm url scheme "([^"]*)" is not realm or realm\+http/i,
+		text: (m) => `ссылка реле начинается не с realm:// или realm+http://, а с «${m[1]}»`,
+	},
+	{
+		re: /realm url has no (\w+)/i,
+		text: (m) => `в ссылке реле нет ${REALM_PART[m[1].toLowerCase()] ?? m[1]}`,
+	},
+	{
+		re: /realm url (?:is malformed|port "[^"]*" is not valid)/i,
+		text: () => 'ссылка реле разобрана неверно',
+	},
+	{
+		re: /realm stunServers is empty/i,
+		text: () => 'у реле не указаны STUN-серверы',
+	},
+	{
+		re: /realm stunServers "([^"]*)" is not host:port/i,
+		text: (m) => `STUN-сервер «${m[1]}» указан не как host:port`,
+	},
 	{
 		re: /udp mask "?([\w-]+)"? has no sing-box equivalent/i,
 		text: (m) => `маскировка «${m[1]}» в sing-box не выражается`,
