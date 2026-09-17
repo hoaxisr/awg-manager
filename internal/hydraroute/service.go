@@ -35,6 +35,8 @@ type Service struct {
 	versionCached            string
 	versionFetchedAt         time.Time
 	versionBinaryFingerprint string
+	// probeForTest подменяет наблюдение сторожа (см. watchdog.go). Только тесты.
+	probeForTest func() ProcessState
 }
 
 const versionCacheTTL = 5 * time.Minute

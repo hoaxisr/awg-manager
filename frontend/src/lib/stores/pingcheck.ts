@@ -18,13 +18,14 @@ async function fetchPingcheck(): Promise<TunnelPingStatus[]> {
 
 export const pingCheckStatus = createPollingStore<TunnelPingStatus[]>(fetchPingcheck, {
 	staleTime: 30_000,
-	// Таймер нужен: `pingcheck` публикуется только на СМЕНУ состояния (порог
-	// отказов достигнут / связь восстановилась). Промежуточные проверки — и
-	// успешные, и «2 из 3» — не публикуются, поэтому без таймера таблица
-	// показывала бы lastCheck/failCount/successCount момента открытия страницы.
-	// Цена нулевая вне страницы: опрос привязан к подписчикам, а стор
-	// смонтирован только в MonitoringTab.
-	pollInterval: 30_000,
+	// Таймера нет: бэкенд публикует `pingcheck` по итогу КАЖДОЙ проверки —
+	// и kernel-монитор (на успехе и на отказе), и nativewg-монитор (при
+	// ненулевой дельте, то есть когда NDMS реально проверил). Раньше
+	// публиковалась только СМЕНА состояния, и таблица показывала
+	// lastCheck/failCount/successCount момента открытия страницы — из-за
+	// чего таймер и понадобился (F354). Теперь обновление приходит ровно
+	// тогда, когда есть что показать (F364).
+	pollInterval: 0,
 });
 registerStore('pingcheck', pingCheckStatus);
 

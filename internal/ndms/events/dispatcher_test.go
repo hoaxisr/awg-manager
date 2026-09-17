@@ -376,3 +376,26 @@ func waitDrain(t *testing.T, ch <-chan struct{}) {
 		t.Fatalf("проход диспетчера не завершился за 2 с")
 	}
 }
+
+// Смена уровня интерфейса меняет его Status, а по нему отбирается состав для
+// поллера метрик. Без сброса поднявшийся или упавший системный туннель не
+// попадал бы в опрос до истечения TTL (F364).
+func TestDispatcher_IfLayerChanged_InvalidatesSystemTunnelList(t *testing.T) {
+	q, fg := primedQueries(t)
+	d := NewDispatcher(q, NopLogger())
+	d.Start()
+	defer d.Stop()
+
+	_, _ = q.WGServers.ListSystemTunnels(context.Background())
+	primed := fg.Calls(ifaceListPath)
+
+	d.Enqueue(Event{Type: EventIfLayerChanged, ID: "Wireguard1", Layer: "link", Level: "running"})
+	waitFor(t, 300*time.Millisecond, func() bool {
+		_, _ = q.WGServers.ListSystemTunnels(context.Background())
+		return fg.Calls(ifaceListPath) > primed
+	})
+
+	if fg.Calls(ifaceListPath) <= primed {
+		t.Errorf("состав системных туннелей не перечитан после iflayerchanged")
+	}
+}

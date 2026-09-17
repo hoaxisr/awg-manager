@@ -786,6 +786,11 @@ func (s *Server) wireCrossHandlers(mux *http.ServeMux, h *routeHandlers) {
 			}
 		}
 		s.bus.PublishInvalidated(events.ResourceTunnels, "ndms-hook")
+		// Серверы живут в том же кэше WGServers и в том же дереве
+		// интерфейсов. Появление и исчезновение интерфейса меняет и их
+		// список — без этой публикации страница «Серверы» узнавала бы о
+		// сервере, заведённом мимо панели, только по таймеру опроса (F364).
+		s.bus.PublishInvalidated(events.ResourceServers, "ndms-hook")
 	}
 	h.hookHandler.SetTunnelRefresher(invalidateTunnelsOnHook)
 	// Injects the composite {tunnels, external, system} builder used by

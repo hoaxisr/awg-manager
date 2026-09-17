@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { LegacyTabs, LegacyTab, IconButton } from '$lib/components/ui';
 	import BrandLogoMark from './BrandLogoMark.svelte';
+	import SaveStatusLed from './SaveStatusLed.svelte';
 	import NotificationCenter from './NotificationCenter.svelte';
 	import { usageLevel } from '$lib/stores/settings';
 	import type { ThemeState } from '$lib/stores/theme';
@@ -173,6 +174,10 @@
 				<BrandLogoMark />
 				<span class="wordmark">AWG⋅Manager</span>
 			</a>
+
+			{#if authenticated}
+				<SaveStatusLed />
+			{/if}
 
 			{#if currentVersion || (versionPending && authenticated)}
 				<span class="version-slot">
