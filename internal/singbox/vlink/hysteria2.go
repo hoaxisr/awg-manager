@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
 
 func parseHysteria2(input string) (*ParsedOutbound, error) {
@@ -51,9 +51,9 @@ func parseHysteria2(input string) (*ParsedOutbound, error) {
 			out["server_ports"] = anyPorts
 		}
 	}
-	if hop := q.Get("hop_interval"); hop != "" {
-		out["hop_interval"] = hop
-	} else if _, hasMport := out["server_ports"]; hasMport {
+	// Само значение hop_interval разбирается ниже, вместе с прочими
+	// длительностями; здесь — только умолчание под mport.
+	if _, hasMport := out["server_ports"]; hasMport && q.Get("hop_interval") == "" {
 		out["hop_interval"] = "10s"
 	}
 
@@ -163,19 +163,16 @@ func parseHysteria2(input string) (*ParsedOutbound, error) {
 	}, nil
 }
 
-// isDurationSpec проверяет форму длительности: движок разбирает такие поля как
-// Duration и на голом числе или мусоре отвергает ВСЮ конфигурацию. Сутки sing
-// понимает сверх стандартной библиотеки.
+// durationSpec — грамматика длительности движка: пары «число + единица», как
+// в стандартной библиотеке, плюс сутки, которые sing добавляет в свою копию
+// парсера (my_time). Ровно это выражение объявляет и схема sing-box, поэтому
+// составные вроде "1d12h" законны.
+var durationSpec = regexp.MustCompile(`^[-+]?(((\d+(\.\d*)?|\.\d+)(ns|us|µs|μs|ms|s|m|h|d))+|0)$`)
+
+// isDurationSpec отсеивает значения, на которых движок отвергнет ВСЮ
+// конфигурацию: голое число, мусор, оборванную пару.
 func isDurationSpec(v string) bool {
-	if _, err := time.ParseDuration(v); err == nil {
-		return true
-	}
-	if num, ok := strings.CutSuffix(v, "d"); ok {
-		if _, err := strconv.ParseFloat(num, 64); err == nil {
-			return true
-		}
-	}
-	return false
+	return durationSpec.MatchString(v)
 }
 
 // parseMport accepts "20000-30000" or "20000,21000-22000,30000-31000"

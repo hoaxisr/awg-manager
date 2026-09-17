@@ -152,6 +152,11 @@ func encodeHysteria2(ob map[string]any, label string) (string, error) {
 	}
 	host, _ := ob["server"].(string)
 	if host == "" {
+		// У узла с реле адреса нет по построению, и схема ссылки hysteria2://
+		// не умеет описать ни адрес реле, ни его STUN-серверы.
+		if _, viaRealm := ob["realm"]; viaRealm {
+			return "", errors.New("vlink: hysteria2: realm has no share-link form")
+		}
 		return "", errors.New("vlink: hysteria2: missing server")
 	}
 	port := intFromAny(ob["server_port"])

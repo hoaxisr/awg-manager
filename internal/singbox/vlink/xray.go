@@ -412,11 +412,16 @@ func ParseXrayBody(body []byte) BatchResult {
 		return res
 	}
 
-	for idx, raw := range outbounds {
+	// Номер узла сквозной по рабочим аутбаундам — так же, как в первой форме
+	// тела: служебные freedom/blackhole/dns есть почти в каждой подписке, и
+	// считать их значило бы называть первый же сервер, например, третьим.
+	idx := -1
+	for _, raw := range outbounds {
 		proto := xrayRawProtocol(raw)
 		if !isXrayRealOutbound(proto) {
 			continue
 		}
+		idx++
 		if proto == "vmess" {
 			res.SkippedVmess++
 			continue
@@ -900,11 +905,10 @@ func applyXrayUDPHop(raw json.RawMessage, out map[string]any) error {
 	// perConnRemote — порт выбирается ОДИН раз на соединение, таймера нет;
 	// intervalLocal — пересоздаётся локальный сокет, адресат не меняется.
 	// Последние два в sing-box не выражаются, а отличие видно на проводе.
-	remote := false
 	for _, mode := range strings.Split(h.Mode, ",") {
 		switch strings.ToLower(strings.TrimSpace(mode)) {
 		case "intervalremote":
-			remote = true
+			// Единственный выразимый режим: прыжки по удалённым портам.
 		case "perconnremote":
 			return fmt.Errorf("hysteria: udphop mode perConnRemote has no sing-box equivalent")
 		case "intervallocal":
@@ -914,9 +918,6 @@ func applyXrayUDPHop(raw json.RawMessage, out map[string]any) error {
 			// молча забыть маску значит потерять прыжки без следа.
 			return fmt.Errorf("hysteria: udphop mode %q is unknown", h.Mode)
 		}
-	}
-	if !remote {
-		return nil
 	}
 	ports, err := xrayHopPorts(h.RemotePorts)
 	if err != nil {
@@ -1066,14 +1067,16 @@ func applyXrayQuicParams(q *XrayQuicParams, out map[string]any) error {
 	// Окно приёма у sing-box одно на «стартовое» и «предельное» (sing-quic
 	// ApplyQUICOptions ставит оба), у Xray их два. Точно выражается только
 	// случай, когда они равны.
-	stream, err := xrayReceiveWindow("StreamReceiveWindow", q.InitStreamReceiveWindow, q.MaxStreamReceiveWindow)
+	// Умолчания Xray (hysteria/dialer.go): поток 8 МиБ, соединение — в два с
+	// половиной раза больше.
+	stream, err := xrayReceiveWindow("StreamReceiveWindow", q.InitStreamReceiveWindow, q.MaxStreamReceiveWindow, 8388608)
 	if err != nil {
 		return err
 	}
 	if stream > 0 {
 		out["stream_receive_window"] = stream
 	}
-	conn, err := xrayReceiveWindow("ConnectionReceiveWindow", q.InitConnectionReceiveWindow, q.MaxConnectionReceiveWindow)
+	conn, err := xrayReceiveWindow("ConnectionReceiveWindow", q.InitConnectionReceiveWindow, q.MaxConnectionReceiveWindow, 8388608*5/2)
 	if err != nil {
 		return err
 	}
@@ -1101,16 +1104,28 @@ func applyXrayQuicParams(q *XrayQuicParams, out map[string]any) error {
 // xrayReceiveWindow сводит пару Xray (стартовое и предельное окно) к
 // единственному значению sing-box. Разные значения выразить нечем: sing-box
 // одним ключом ставит оба.
-func xrayReceiveWindow(name string, init, max uint64) (uint64, error) {
+func xrayReceiveWindow(name string, init, max, fallback uint64) (uint64, error) {
 	if init == 0 && max == 0 {
 		return 0, nil
 	}
+	// Нижнюю границу держит Xray — и по каждой границе отдельно.
+	if max != 0 && max < 16384 {
+		return 0, fmt.Errorf("hysteria: quicParams max%s %d is below the minimum of 16384", name, max)
+	}
+	if init != 0 && init < 16384 {
+		return 0, fmt.Errorf("hysteria: quicParams init%s %d is below the minimum of 16384", name, init)
+	}
+	// Незаданную границу Xray подставляет своим умолчанием, и оно у init и max
+	// одно (hysteria/dialer.go). Поэтому «задан только max, равный умолчанию»
+	// — это по смыслу init == max, и одним ключом sing-box оно выражается.
+	if init == 0 {
+		init = fallback
+	}
+	if max == 0 {
+		max = fallback
+	}
 	if init != max {
 		return 0, fmt.Errorf("hysteria: quicParams init%s and max%s differ, sing-box has a single window", name, name)
-	}
-	// Нижнюю границу держит Xray.
-	if max < 16384 {
-		return 0, fmt.Errorf("hysteria: quicParams max%s %d is below the minimum of 16384", name, max)
 	}
 	return max, nil
 }

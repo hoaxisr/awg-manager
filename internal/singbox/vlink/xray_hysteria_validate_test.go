@@ -100,8 +100,10 @@ func TestParseXrayHysteria_ReceiveWindows(t *testing.T) {
 		t.Errorf("connection_receive_window = %v", sb["connection_receive_window"])
 	}
 
+	// Разные границы одним ключом не выражаются: 16 МиБ против умолчания Xray
+	// в 8 МиБ у незаданной второй.
 	msg := xrayHysteriaError(t, xrayHysteriaFinalMask(
-		`"quicParams":{"maxStreamReceiveWindow":8388608}`))
+		`"quicParams":{"initStreamReceiveWindow":8388608,"maxStreamReceiveWindow":16777216}`))
 	if !strings.Contains(msg, "StreamReceiveWindow") {
 		t.Errorf("Message = %q, want отказ на разных окнах", msg)
 	}

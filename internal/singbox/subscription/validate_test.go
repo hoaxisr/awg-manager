@@ -406,3 +406,29 @@ func TestPreFilterOutbounds_DropsHysteria2WithoutServerAndRealm(t *testing.T) {
 		t.Fatalf("kept/dropped = %d/%d, reasons=%v", len(kept), len(dropped), dropped)
 	}
 }
+
+// Блок реле должен быть пригодным: пустой и стоящий рядом с адресом движок
+// отвергает сам, и пропускать такое в конфиг незачем.
+func TestPreFilterOutbounds_DropsUnusableRealm(t *testing.T) {
+	base := func(realm map[string]any, extra map[string]any) map[string]any {
+		ob := map[string]any{"type": "hysteria2", "tag": "r", "password": "p", "realm": realm}
+		for k, v := range extra {
+			ob[k] = v
+		}
+		return ob
+	}
+	good := map[string]any{"server_url": "https://relay.example.net:8443", "realm_id": "i"}
+	cases := map[string]map[string]any{
+		"пустой realm":         base(map[string]any{}, nil),
+		"realm без адреса":     base(map[string]any{"realm_id": "i"}, nil),
+		"realm рядом с server": base(good, map[string]any{"server": "h.example.net", "server_port": float64(443)}),
+	}
+	for name, ob := range cases {
+		t.Run(name, func(t *testing.T) {
+			kept, dropped := preFilterOutbounds([]any{ob}, nil)
+			if len(kept) != 0 || len(dropped) != 1 {
+				t.Fatalf("kept/dropped = %d/%d, reasons=%v", len(kept), len(dropped), dropped)
+			}
+		})
+	}
+}

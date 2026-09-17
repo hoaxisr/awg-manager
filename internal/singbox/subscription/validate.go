@@ -77,6 +77,20 @@ func classifyOutbound(ob map[string]any) string {
 	viaRealm := false
 	if typ == "hysteria2" {
 		if realm, _ := ob["realm"].(map[string]any); realm != nil {
+			// Признак засчитывается только у пригодного блока: пустой realm
+			// и realm рядом с адресом движок отвергает сам
+			// (protocol/hysteria2/outbound.go), и пропускать такое в конфиг
+			// незачем — отказ с внятной причиной честнее.
+			url, _ := realm["server_url"].(string)
+			_, hasServer := ob["server"]
+			_, hasPort := ob["server_port"]
+			_, hasPorts := ob["server_ports"]
+			if url == "" {
+				return "realm without server_url"
+			}
+			if hasServer || hasPort || hasPorts {
+				return "realm conflicts with server/server_port/server_ports"
+			}
 			viaRealm = true
 		}
 	}

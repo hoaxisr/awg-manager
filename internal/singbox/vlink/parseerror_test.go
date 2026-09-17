@@ -47,6 +47,12 @@ func TestStructuredParsers_MarkNodeIndex(t *testing.T) {
 			"streamSettings":{"network":"hysteria","hysteriaSettings":{"version":1,"auth":"p"}}}]}]`)),
 		"sing-box": ParseSingboxBody([]byte(`{"outbounds":[{"type":"vless","server":"h.example.net","server_port":443}]}`)),
 		"clash":    ParseClashBody([]byte("proxies:\n  - name: a\n    type: vless\n    server: h.example.net\n    port: 443\n")),
+		// Битый блок узла — своя точка отказа, и она в каждой из двух форм тела.
+		"xray битый узел в массиве элементов": ParseXrayBody([]byte(
+			`[{"remarks":"a","outbounds":[{"protocol":"vless","streamSettings":{"security":true}}]}]`)),
+		"xray битый узел в голом массиве": ParseXrayBody([]byte(
+			`{"outbounds":[{"protocol":"vless","streamSettings":{"security":true}}]}`)),
+		"mieru": ParseMieruClientJSON([]byte(`{"profiles":[{"profileName":"p"}]}`)),
 	}
 	for name, res := range bodies {
 		t.Run(name, func(t *testing.T) {
@@ -59,5 +65,23 @@ func TestStructuredParsers_MarkNodeIndex(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Служебные аутбаунды есть почти в каждой подписке, и номер узла их не считает:
+// иначе первый же сервер отчитался бы третьим.
+func TestParseXrayBody_NodeNumberSkipsServiceOutbounds(t *testing.T) {
+	body := []byte(`{"outbounds":[
+		{"protocol":"freedom"},
+		{"protocol":"blackhole"},
+		{"protocol":"vless","settings":{}}
+	]}`)
+
+	res := ParseXrayBody(body)
+	if len(res.Errors) != 1 {
+		t.Fatalf("errors = %v", res.Errors)
+	}
+	if got := res.Errors[0].Error(); !strings.HasPrefix(got, "node 1 ") {
+		t.Errorf("Error() = %q, want «node 1»", got)
 	}
 }
