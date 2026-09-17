@@ -625,6 +625,12 @@ func applyXrayHysteriaMasks(stream *XrayStream, out map[string]any) error {
 			if err := applyXrayUDPHop(mask.Settings, out); err != nil {
 				return err
 			}
+		case "realm":
+			// Отдельная формулировка: у sing-box realm ЕСТЬ (Hysteria2Realm),
+			// но он запрещает соседство с server/server_port — адрес берётся
+			// из realm.server_url, а карточка сервера у нас без адреса пока
+			// не живёт. Это наша нехватка, а не отсутствие соответствия.
+			return fmt.Errorf("hysteria: udp mask realm is not supported yet: its outbound has no server address")
 		default:
 			return fmt.Errorf("hysteria: udp mask %q has no sing-box equivalent", mask.Type)
 		}
