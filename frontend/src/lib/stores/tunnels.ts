@@ -127,7 +127,13 @@ function clearConnectivity(): void {
 // Returns null if no match (transient / unrelated iface).
 // ─────────────────────────────────────────────
 function updateTraffic(data: TunnelTrafficEvent): string | null {
-	const snap = get(basePolling).data;
+	// peek, а не get: get(store) подписывается и отписывается, а это на
+	// переходе subCount 0→1 запускает doFetch() по истёкшему staleTime (5 с).
+	// updateTraffic зовётся на КАЖДОЕ событие tunnel:traffic, то есть примерно
+	// раз в 5 с на туннель при любой открытой странице, — и на странице, не
+	// подписанной на этот стор, заглядывание в снимок оборачивалось полным
+	// GET /api/tunnels/all мимо всех гейтов, включая скрытую вкладку.
+	const snap = basePolling.peek().data;
 	const list = snap?.tunnels ?? [];
 	let resolved: string | null = null;
 	let patched = false;
@@ -263,6 +269,7 @@ export interface TunnelsStore extends PollingStore<TunnelsSnapshot> {
 
 export const tunnels: TunnelsStore = {
 	subscribe: basePolling.subscribe,
+	peek: basePolling.peek,
 	refetch: basePolling.refetch,
 	invalidate: basePolling.invalidate,
 	applyMutationResponse: basePolling.applyMutationResponse,

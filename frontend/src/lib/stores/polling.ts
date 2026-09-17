@@ -19,6 +19,16 @@ export interface PollingStore<T> extends Readable<PollingState<T>> {
     refetch: () => Promise<void>;
     invalidate: () => void;
     applyMutationResponse: (data: T) => void;
+    /**
+     * Текущее состояние БЕЗ подписки. Нужен тем, кто заглядывает в снимок из
+     * обработчика события, а не из разметки.
+     *
+     * `get(store)` из svelte/store для этого не годится: он подписывается и
+     * тут же отписывается, а у нас на переходе subCount 0→1 висит `doFetch()`
+     * по истёкшему staleTime плюс запуск и остановка таймера. Заглядывание
+     * превращалось в полный запрос к бэкенду.
+     */
+    peek: () => PollingState<T>;
 }
 
 export interface PollingOptions {
@@ -162,6 +172,9 @@ export function createPollingStore<T>(
                     detachVisibilityHandler();
                 }
             };
+        },
+        peek() {
+            return get(state);
         },
         async refetch() {
             await doFetch();
