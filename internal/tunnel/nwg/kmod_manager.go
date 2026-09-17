@@ -129,29 +129,79 @@ func NewKmodManager(appLogger logging.AppLogger) *KmodManager {
 // the v1.1.1 set showed all other per-model files (KN-1010, KN-1410,
 // KN-2010, KN-3811) were bit-exact duplicates of their SoC defaults, so
 // they are no longer shipped either.
-func (km *KmodManager) resolveKoPath() string {
+func (km *KmodManager) resolveKoPath() (string, error) {
+	path, how, err := resolveKoPathFor(kmod.DetectModel(), kmod.DetectSoC(), func(p string) bool {
+		_, err := os.Stat(p)
+		return err == nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if how != "" {
+		km.appLog.Info("select-binary", how, "using "+filepath.Base(path))
+	}
+	return path, nil
+}
+
+// socsCoveredByArchDefault — SoC, чей kernel-ABI совпадает со сборкой, которую
+// build-ipk.sh кладёт как awg_proxy.ko: mipsel — KN-1810 (mt7621), mips BE —
+// KN-2010 (en7512), aarch64 — KN-1812 (mt7988). Каждому остальному SoC нужен
+// СВОЙ файл: vermagic у этих ядер одинаков, а CONFIG_MODVERSIONS выключен,
+// поэтому insmod принимает модуль от чужой конфигурации молча, и тот ходит по
+// структурам ядра с неверными смещениями. На KN-2112 (en7516) это повесило
+// awg_xmit_dev_create на 27 с, и watchdog перезагрузил роутер — см.
+// docs/issues/F342.md. Отказ загружать заведомо чужой модуль честнее ребута.
+var socsCoveredByArchDefault = map[kmod.SoC]bool{
+	kmod.SoCMT7621: true,
+	kmod.SoCEN7512: true,
+	kmod.SoCMT7988: true,
+}
+
+// resolveKoPathFor — тот же выбор в чистом виде: без обращения к хосту, чтобы
+// тест мог прогнать все ветки. how — чем выбран файл (для лога), пусто для
+// arch-default. Ошибка означает: для этого SoC нет ни своей сборки, ни права
+// взять arch-default.
+func resolveKoPathFor(model string, soc kmod.SoC, exists func(string) bool) (path, how string, err error) {
 	// 1. Per-model override (currently only KN-1011 HIGHMEM is unique)
-	model := kmod.DetectModel()
 	if model != "" {
 		modelPath := fmt.Sprintf(awgProxyDir+"/awg_proxy-%s.ko", model)
-		if _, err := os.Stat(modelPath); err == nil {
-			km.appLog.Info("select-binary", model, "using model-specific awg_proxy")
-			return modelPath
+		if exists(modelPath) {
+			return modelPath, model, nil
 		}
 	}
 
 	// 2. SoC-specific (e.g. awg_proxy-mt7628.ko for non-SMP mipsel)
-	soc := kmod.DetectSoC()
 	if soc != kmod.SoCUnknown {
 		socPath := fmt.Sprintf(awgProxyDir+"/awg_proxy-%s.ko", string(soc))
-		if _, err := os.Stat(socPath); err == nil {
-			km.appLog.Info("select-binary", string(soc), "using SoC-specific awg_proxy")
-			return socPath
+		if exists(socPath) {
+			return socPath, string(soc), nil
+		}
+		if !socsCoveredByArchDefault[soc] {
+			return "", "", fmt.Errorf(
+				"в пакете нет сборки awg_proxy.ko под SoC %s (%s отсутствует): arch-default собран против другой конфигурации ядра, его загрузка перезагружает роутер — обновите пакет awg-manager",
+				soc, filepath.Base(socPath))
 		}
 	}
 
-	// 3. Arch default (fallback)
-	return defaultKoPath
+	// 3. Arch default — только для SoC, чьей конфигурацией он и собран, и для
+	// неопознанного железа (не-Keenetic), где выбора всё равно нет.
+	return defaultKoPath, "", nil
+}
+
+// ensureKoPathLocked резолвит путь к .ko ровно там, где он нужен для insmod.
+// Не в начале EnsureLoaded: уже загруженный и достаточно свежий модуль работает
+// и без нашего файла, отказывать из-за отсутствующей сборки в этом случае
+// значило бы уронить живые туннели.
+func (km *KmodManager) ensureKoPathLocked() error {
+	if km.koPath != "" {
+		return nil
+	}
+	path, err := km.resolveKoPath()
+	if err != nil {
+		return err
+	}
+	km.koPath = path
+	return nil
 }
 
 // EnsureLoaded loads awg_proxy.ko if not already loaded.
@@ -165,10 +215,6 @@ func (km *KmodManager) EnsureLoaded() error {
 
 	ctx := context.Background()
 
-	if km.koPath == "" {
-		km.koPath = km.resolveKoPath()
-	}
-
 	if km.isLoadedLocked() {
 		// Check version — upgrade if loaded version is below expected.
 		loaded := km.readVersionLocked()
@@ -178,6 +224,9 @@ func (km *KmodManager) EnsureLoaded() error {
 			if activeSlots := km.loadedSlotCountLocked(); activeSlots > 0 {
 				km.appLog.Warn("reload", "", fmt.Sprintf("outdated (loaded=%s, want>=%s), %d active slots — upgrade deferred until module is idle", loaded, ExpectedKmodVersion, activeSlots))
 				return nil
+			}
+			if err := km.ensureKoPathLocked(); err != nil {
+				return err
 			}
 			km.appLog.Info("reload", "", fmt.Sprintf("upgrading awg_proxy: loaded=%s, want>=%s, no active slots — rmmod + insmod %s", loaded, ExpectedKmodVersion, km.koPath))
 			_, _ = km.execFn(ctx, "rmmod", "awg_proxy")
@@ -196,6 +245,10 @@ func (km *KmodManager) EnsureLoaded() error {
 	// has CONFIG_IPV6=y/m) and bare insmod resolves no dependencies —
 	// preflight-load them best-effort so v4-only setups don't lose the
 	// module after upgrade.
+	if err := km.ensureKoPathLocked(); err != nil {
+		return err
+	}
+
 	km.preloadDepsLocked(ctx)
 
 	result, err := km.execFn(ctx, "insmod", km.koPath)
