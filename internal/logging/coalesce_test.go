@@ -162,7 +162,9 @@ func TestServiceAppLog_SSETimestampMatchesRESTFormat(t *testing.T) {
 	defer s.Stop()
 	bus := events.NewBus()
 	s.SetEventBus(bus)
-	_, ch, unsub := bus.Subscribe()
+	// Клиентская подписка: она изображает открытую панель, а публикация
+	// log:entry теперь идёт только при живом зрителе.
+	_, ch, unsub := bus.SubscribeClient()
 	defer unsub()
 
 	s.AppLog(LevelWarn, GroupTunnel, SubConnectivity, "http-check", "awg10", "fail")
@@ -189,5 +191,45 @@ func TestServiceAppLog_SSETimestampMatchesRESTFormat(t *testing.T) {
 	}
 	if got[1].Repeats != 1 || got[1].LastSeen != wantLastSeen {
 		t.Fatalf("repeat event: repeats=%d lastSeen=%q, want 1/%q", got[1].Repeats, got[1].LastSeen, wantLastSeen)
+	}
+}
+
+// Публикация log:entry идёт ТОЛЬКО при открытой панели. Цена не в самой
+// отправке: событие строится с двумя форматированиями времени, а Publish идёт
+// веерно ко всем подписчикам шины, включая пять вечных внутренних, — пять
+// пробуждений горутин на строку журнала при нуле зрителей. Буфер при этом
+// наполняется всегда: страница журнала забирает пропущенное ручкой /logs.
+func TestAppLog_PublishesOnlyWhenWatched(t *testing.T) {
+	s := NewService(&mockSettings{enabled: true, maxAge: 2, logLevel: "info", appMaxEntries: 100, sbMaxEntries: 100})
+	defer s.Stop()
+	bus := events.NewBus()
+	s.SetEventBus(bus)
+
+	// Только ВНУТРЕННЯЯ подписка: зрителей нет.
+	_, ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	s.AppLog(LevelWarn, GroupTunnel, SubConnectivity, "http-check", "awg10", "fail")
+
+	select {
+	case ev := <-ch:
+		t.Fatalf("событие %q опубликовано при нуле открытых панелей", ev.Type)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// Буфер наполнен несмотря на отсутствие зрителей.
+	if entries, _ := s.GetLogs(BucketApp, "", "", "", time.Time{}, 10, 0); len(entries) != 1 {
+		t.Fatalf("записей в буфере %d, ожидалась 1: буфер наполняется всегда", len(entries))
+	}
+
+	// Появился зритель — публикация возобновляется.
+	_, clientCh, unsubClient := bus.SubscribeClient()
+	defer unsubClient()
+	s.AppLog(LevelWarn, GroupTunnel, SubConnectivity, "http-check", "awg11", "fail")
+
+	select {
+	case <-clientCh:
+	case <-time.After(time.Second):
+		t.Fatal("с открытой панелью событие не пришло")
 	}
 }

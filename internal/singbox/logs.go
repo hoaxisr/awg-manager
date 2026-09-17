@@ -20,6 +20,11 @@ type LogForwarder struct {
 	clashAddr func() string
 	app       logging.AppLogger
 
+	// gate — необязательная способность логгера сказать, попадёт ли запись
+	// такого уровня в журнал. Есть — отсеиваем ДО разбора; нет — работаем
+	// как раньше.
+	gate logging.LevelGate
+
 	inbound  *logging.ScopedLogger
 	outbound *logging.ScopedLogger
 	dns      *logging.ScopedLogger
@@ -32,9 +37,11 @@ type LogForwarder struct {
 }
 
 func NewLogForwarder(clashAddr func() string, appLogger logging.AppLogger) *LogForwarder {
+	gate, _ := appLogger.(logging.LevelGate)
 	return &LogForwarder{
 		clashAddr: clashAddr,
 		app:       appLogger,
+		gate:      gate,
 		inbound:   logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBInbound),
 		outbound:  logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBOutbound),
 		dns:       logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBDNS),
@@ -154,22 +161,41 @@ func (f *LogForwarder) forward(line []byte) {
 	if payload == "" {
 		return
 	}
+	// Уровень проверяем ДО разбора: classifyPayload гоняет по строке
+	// регулярки, а движок на уровне `info` пишет строку на соединение и на
+	// DNS-запрос. Раньше вся эта работа делалась и выбрасывалась уже внутри
+	// AppLog. Семантика та же: Visible — ровно та проверка, что стоит там
+	// первой (Error и Warn проходят при любом настроенном уровне).
+	level := levelForClashType(e.Type)
+	if f.gate != nil && !f.gate.Visible(level) {
+		return
+	}
+
 	subgroup, target, message := classifyPayload(payload)
 	scoped := f.scopedFor(subgroup)
 	if scoped == nil {
 		return
 	}
-	switch strings.ToLower(strings.TrimSpace(e.Type)) {
+	scoped.At(level, "run", target, message)
+}
+
+// levelForClashType переводит тип строки движка в наш уровень.
+//
+// ОДНА точка соответствия на проверку и на запись: разойдясь, они дали бы
+// худший из возможных исходов — строку, отсеянную проверкой, но нужную
+// пользователю.
+func levelForClashType(clashType string) logging.Level {
+	switch strings.ToLower(strings.TrimSpace(clashType)) {
 	case "error", "fatal", "panic":
-		scoped.Error("run", target, message)
+		return logging.LevelError
 	case "warn", "warning":
-		scoped.Warn("run", target, message)
+		return logging.LevelWarn
 	case "info":
-		scoped.Info("run", target, message)
+		return logging.LevelInfo
 	case "debug":
-		scoped.Debug("run", target, message)
+		return logging.LevelDebug
 	default:
-		scoped.Full("run", target, message)
+		return logging.LevelFull
 	}
 }
 

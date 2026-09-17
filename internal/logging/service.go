@@ -87,6 +87,16 @@ func (s *Service) IsEnabled() bool {
 	return s.settings.IsLoggingEnabled()
 }
 
+// Visible implements LevelGate: попадёт ли запись такого уровня в журнал.
+// Ровно та же проверка, что делает AppLog первым делом, — вынесена, чтобы
+// дорогой поставщик мог спросить ДО подготовки записи.
+func (s *Service) Visible(level Level) bool {
+	if !s.IsEnabled() {
+		return false
+	}
+	return IsVisible(level, Level(s.settings.GetLogLevel()))
+}
+
 // AppLog implements AppLogger. Checks enabled + level filtering, then routes
 // to the correct buffer based on the entry's group.
 func (s *Service) AppLog(level Level, group, subgroup, action, target, message string) {
@@ -115,7 +125,16 @@ func (s *Service) AppLog(level Level, group, subgroup, action, target, message s
 	// вместо новой строки — источник рекуррентного шума (периодические
 	// проверки, зацикленные Warn) не может забить журнал.
 	entry, _ = target_buf.CoalesceOrAdd(entry, repeatCoalesceWindow)
-	if s.bus != nil {
+	// Публикуем, только если панель открыта хоть у кого-то. Буфер выше
+	// наполнен в любом случае, а страница журнала при открытии и при
+	// переподключении SSE забирает пропущенное ручкой /logs по since
+	// (frontend/src/routes/+layout.svelte), так что зритель ничего не теряет.
+	//
+	// Цена публикации не в самой отправке: событие строится с двумя
+	// форматированиями времени, а Publish идёт веерно ко ВСЕМ подписчикам
+	// шины, включая пять вечных внутренних, — пять пробуждений горутин на
+	// строку журнала при нуле открытых панелей.
+	if s.bus != nil && s.bus.ClientCount() > 0 {
 		// Формат должен побайтно совпадать с REST-DTO (api.logEntryDTO):
 		// клиент сопоставляет SSE-повторы с загруженными строками по
 		// составному ключу, включающему timestamp как строку.
