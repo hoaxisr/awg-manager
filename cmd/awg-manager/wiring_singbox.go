@@ -66,7 +66,13 @@ func (a *app) setupSingbox() {
 
 	trafficCtx, trafficCancel := context.WithCancel(context.Background())
 	a.deferOnExit(trafficCancel)
-	go singbox.NewTrafficAggregator(a.singboxOp.Clash().Address, a.eventBus, a.trafficHistory).Run(trafficCtx)
+	// Тот же счётчик зрителей, что у матрицы, поллеров и delay-проверки: при
+	// закрытой панели три SSE-события каждые 2 с уходили бы в никуда, а разбор
+	// всей таблицы соединений шёл бы раз в секунду ради часовой истории,
+	// которой хватает точки в минуту.
+	trafficAgg := singbox.NewTrafficAggregator(a.singboxOp.Clash().Address, a.eventBus, a.trafficHistory)
+	trafficAgg.SetClientCounter(a.eventBus)
+	go trafficAgg.Run(trafficCtx)
 
 	delayCtx, delayCancel := context.WithCancel(context.Background())
 	a.deferOnExit(delayCancel)

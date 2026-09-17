@@ -56,6 +56,8 @@ type DelayChecker struct {
 }
 
 // ClientCounter reports the number of open panels (SSE client subscriptions).
+// Общий для потребителей пакета: по нему delay-проверка и агрегатор трафика
+// решают, нужна ли их работа кому-нибудь прямо сейчас.
 type ClientCounter interface {
 	ClientCount() int
 }

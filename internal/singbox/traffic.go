@@ -40,11 +40,35 @@ type TrafficAggregator struct {
 	feeder    HistoryFeeder
 	interval  time.Duration
 
+	// clients отвечает, открыта ли панель хоть у кого-нибудь. Опционально:
+	// без него агрегатор работает в прежнем темпе всегда.
+	clients ClientCounter
+
 	mu            sync.Mutex
 	tags          map[string]*TrafficSnapshot
 	memory        int64
 	downloadTotal int64
 	uploadTotal   int64
+}
+
+// idleIngestInterval — как часто разбирать таблицу соединений, когда панель не
+// открыта ни у кого. Минута: единственный потребитель в простое — часовая
+// история трафика, а она агрегирует час в 60 точек, то есть точку в минуту.
+const idleIngestInterval = time.Minute
+
+// SetClientCounter wires the source of "сколько панелей сейчас открыто".
+func (t *TrafficAggregator) SetClientCounter(c ClientCounter) {
+	t.mu.Lock()
+	t.clients = c
+	t.mu.Unlock()
+}
+
+// nobodyWatching — правда ли, что панель не открыта ни у кого.
+func (t *TrafficAggregator) nobodyWatching() bool {
+	t.mu.Lock()
+	c := t.clients
+	t.mu.Unlock()
+	return c != nil && c.ClientCount() == 0
 }
 
 func NewTrafficAggregator(clashAddr func() string, pub TrafficPublisher, feeder HistoryFeeder) *TrafficAggregator {
@@ -103,6 +127,9 @@ func (t *TrafficAggregator) runOnce(ctx context.Context) {
 		}
 	}()
 
+	// lastIdleIngest — когда в последний раз разбирали таблицу в простое.
+	var lastIdleIngest time.Time
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -110,8 +137,27 @@ func (t *TrafficAggregator) runOnce(ctx context.Context) {
 		case <-readErr:
 			return
 		case msg := <-readCh:
+			// sing-box шлёт ПОЛНЫЙ снимок таблицы соединений раз в секунду, и
+			// её разбор — самая дорогая часть цикла: на роутере с активным
+			// трафиком это сотни килобайт JSON в секунду. При закрытой панели
+			// результат нужен только часовой истории, поэтому разбираем раз в
+			// минуту, а остальные сообщения выбрасываем НЕ РАЗОБРАВ.
+			if t.nobodyWatching() {
+				if time.Since(lastIdleIngest) < idleIngestInterval {
+					continue
+				}
+				t.ingest(msg)
+				t.feedHistory()
+				lastIdleIngest = time.Now()
+				continue
+			}
 			t.ingest(msg)
 		case <-ticker.C:
+			// Публиковать некому: три SSE-события каждые 2 с уходили бы в
+			// никуда. Историю в этом режиме кормит ветка выше.
+			if t.nobodyWatching() {
+				continue
+			}
 			t.publish()
 		}
 	}
@@ -221,5 +267,21 @@ func (t *TrafficAggregator) publish() {
 		for _, s := range snap {
 			t.feeder.Feed(s.Tag, s.Download, s.Upload)
 		}
+	}
+}
+
+// feedHistory кормит историю без SSE-публикации — путь простоя.
+func (t *TrafficAggregator) feedHistory() {
+	if t.feeder == nil {
+		return
+	}
+	t.mu.Lock()
+	snap := make([]TrafficSnapshot, 0, len(t.tags))
+	for _, s := range t.tags {
+		snap = append(snap, *s)
+	}
+	t.mu.Unlock()
+	for _, s := range snap {
+		t.feeder.Feed(s.Tag, s.Download, s.Upload)
 	}
 }
