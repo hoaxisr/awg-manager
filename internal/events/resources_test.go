@@ -118,39 +118,8 @@ func TestResourceKeys_Inventory(t *testing.T) {
 // конструировать только этот пакет; снаружи допустимо лишь читать их
 // (type assertion скобки `{` не содержит).
 func TestResourceKeys_NoLiteralPublishers(t *testing.T) {
-	root := repoRoot(t)
 	var offenders []string
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(root, path)
-		if info.IsDir() {
-			switch info.Name() {
-			case "vendor", "node_modules", ".git":
-				return filepath.SkipDir
-			}
-			// docs/, frontend/, build/ — не наш код, но только на верхнем
-			// уровне: пакет с таким именем внутри internal/ пропускать нельзя.
-			// .claude/ — рабочие каталоги агентов: там лежат ПОЛНЫЕ копии
-			// дерева (git worktree), и без пропуска любой запущенный агент
-			// ронял этот тест ложно — на своей же копии resources.go.
-			switch rel {
-			case "docs", "frontend", "build", ".claude":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		if strings.HasPrefix(rel, "internal/events/") {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
+	walkGoFiles(t, func(rel string, data []byte) {
 		for i, line := range strings.Split(string(data), "\n") {
 			for _, bad := range []string{`"resource:invalidated"`, "ResourceInvalidatedEvent{", "events.Resource("} {
 				if strings.Contains(line, bad) {
@@ -158,11 +127,7 @@ func TestResourceKeys_NoLiteralPublishers(t *testing.T) {
 				}
 			}
 		}
-		return nil
 	})
-	if err != nil {
-		t.Fatalf("обход дерева: %v", err)
-	}
 	for _, o := range offenders {
 		t.Errorf("%s — публиковать через events.PublishInvalidated(To) с константой events.Resource*; тип события и ключ конструирует только пакет events", o)
 	}

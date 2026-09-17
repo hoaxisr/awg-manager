@@ -2,8 +2,6 @@ package events_test
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,50 +20,22 @@ import (
 func TestSubscribeClient_OnlySSEHandler(t *testing.T) {
 	const allowed = "internal/api/events.go"
 
-	root := repoRoot(t)
 	var offenders []string
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(root, path)
-		if info.IsDir() {
-			switch info.Name() {
-			case "vendor", "node_modules", ".git":
-				return filepath.SkipDir
-			}
-			switch rel {
-			case "docs", "frontend", "build", ".claude":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		if strings.HasPrefix(rel, "internal/events/") || rel == allowed {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
+	walkGoFiles(t, func(rel string, data []byte) {
+		if rel == allowed {
+			return
 		}
 		for i, line := range strings.Split(string(data), "\n") {
 			if strings.Contains(line, "SubscribeClient()") {
 				offenders = append(offenders, fmt.Sprintf("%s:%d", rel, i+1))
 			}
 		}
-		return nil
 	})
-	if err != nil {
-		t.Fatalf("обход дерева: %v", err)
-	}
 	for _, o := range offenders {
 		t.Errorf("%s — SubscribeClient() берёт только %s; внутреннему потребителю нужен Subscribe(), иначе ClientCount перестанет означать «кто-то смотрит»", o, allowed)
 	}
 }
 
-// ClientCount считает клиентские подписки и не считает внутренние.
 func TestClientCount_IgnoresInternalSubscribers(t *testing.T) {
 	b := events.NewBus()
 
