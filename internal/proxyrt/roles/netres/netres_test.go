@@ -56,6 +56,16 @@ type iptNotFound struct{}
 
 func (iptNotFound) Error() string { return "iptables: no chain/target/match by that name" }
 
+// iptNoRule — ответ `-C` на СУЩЕСТВУЮЩУЮ цепочку, в которой такого правила нет.
+// Настоящий iptables эти два случая различает, и код на этом различии стоит:
+// «нет цепочки» может означать, что её только что снёс ndm, а «нет правила» —
+// что сносить действительно нечего.
+type iptNoRule struct{}
+
+func (iptNoRule) Error() string {
+	return "iptables: Bad rule (does a matching rule exist in that chain?)"
+}
+
 // iptTransient — отказ, из которого НЕ следует «правила нет»: занятый
 // xtables-lock, перезапись таблиц движком ndm, не запустившийся exec.
 type iptTransient struct{}
@@ -96,12 +106,15 @@ func (f *fakeIPT) Run(_ context.Context, args ...string) error {
 		if f.failCheck {
 			return iptTransient{}
 		}
+		if _, ok := f.chains[key]; !ok {
+			return iptNotFound{} // цепочки нет вовсе
+		}
 		for _, r := range f.chains[key] {
 			if r == rule {
 				return nil
 			}
 		}
-		return iptNotFound{}
+		return iptNoRule{} // цепочка есть, правила в ней нет
 	case "-A":
 		f.chains[key] = append(f.chains[key], rule)
 		return nil
@@ -1110,5 +1123,38 @@ func TestRuleKeyIgnoresHostPrefixLength(t *testing.T) {
 	net := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "10.70.0.0/16", "-j", "MASQUERADE"}}
 	if net.Key() == host.Key() {
 		t.Error("подсеть /16 и одиночный адрес слились в один ключ")
+	}
+
+	// Длина хостового префикса зависит от семейства: /32 у v4, /128 у v6.
+	// `2001:db8::/32` — законная СЕТЬ; срезав /32 вслепую, мы слили бы её с
+	// хостовым адресом, и снос «сироты» унёс бы живое правило.
+	v6host := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "2001:db8::", "-j", "MASQUERADE"}}
+	v6net := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "2001:db8::/32", "-j", "MASQUERADE"}}
+	if v6net.Key() == v6host.Key() {
+		t.Error("сеть v6 /32 слилась с хостовым адресом")
+	}
+	v6full := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "2001:db8::/128", "-j", "MASQUERADE"}}
+	if v6full.Key() != v6host.Key() {
+		t.Error("формы одного адреса v6 дали разные ключи")
+	}
+}
+
+// «Цепочки нет» — не «правила нет». Цепочку мог только что снести движок ndm,
+// переписывая таблицы; защёлкнув по такому ответу, мы потеряли бы легаси-правило
+// навсегда — Doom для защёлкнутого ключа no-op до конца жизни процесса.
+func TestRuleSetDoomKeepsLedgerWhenChainMissing(t *testing.T) {
+	ipt := newFakeIPT()
+	delete(ipt.chains, "filter/FORWARD") // цепочки нет вовсе
+	rs := NewRuleSet("forward_rules", ipt)
+	for _, r := range forwardGroups([]string{"opkgtun19"})[0].Rules {
+		rs.Doom(r)
+	}
+	want := len(rs.doomed)
+
+	if _, err := rs.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.doomed) != want {
+		t.Errorf("отсутствие ЦЕПОЧКИ выбросило правила из ведомости: было %d, стало %d", want, len(rs.doomed))
 	}
 }

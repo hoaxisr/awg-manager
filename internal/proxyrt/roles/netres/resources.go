@@ -156,10 +156,14 @@ func (r *RuleSet) Observe(ctx context.Context) (proxyrt.Observation, error) {
 		// жизни процесса, и RecheckAfter держал ruleRecheck из-за непустой
 		// ведомости даже при пустом желаемом.
 		//
-		// Транзиентный отказ защёлку НЕ ставит: ruleAbsent считает неопознанное
-		// транзиентным, и цена здесь та же несимметричная — лишний проход
-		// дешевле правила, потерянного из ведомости.
-		if ruleAbsent(err) {
+		// Предикат УЖЕ: только «такого правила нет», без «нет цепочки».
+		// ruleAbsent считает отсутствием и второе, но цепочку могла только что
+		// снести перезапись таблиц движком ndm — и тогда легаси-правило,
+		// восстановленное потом хуком прежней версии, не было бы сметено уже
+		// никогда: Doom для защёлкнутого ключа — no-op до конца жизни процесса.
+		// Через sweep эта же семантика достигалась только после реального
+		// сноса, здесь окно шире, поэтому сужаем.
+		if noSuchRule(err) {
 			delete(r.doomed, key)
 			r.reaped[key] = true
 		}
@@ -319,6 +323,15 @@ func (r *RuleSet) deleteAll(ctx context.Context, rule Rule) (bool, error) {
 // (sys/iptables.Run → exec.FormatError со stderr), поэтому судим по тексту
 // самого iptables. Всё неопознанное считается транзиентным: цена ошибки
 // несимметрична — лишний проход дешевле правила, потерянного из ведомости.
+// noSuchRule — строго «правила с такой формой в цепочке нет». В отличие от
+// ruleAbsent НЕ считает отсутствием ответ про несуществующую цепочку.
+func noSuchRule(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "does a matching rule exist")
+}
+
 func ruleAbsent(err error) bool {
 	if err == nil {
 		return false
