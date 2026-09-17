@@ -222,6 +222,13 @@ func (o *Operator) handleExit(err error, stderrTail string, deliberate bool) {
 		o.restartBackoff.NoteCrash(now)
 	}
 	o.bus.PublishInvalidated(events.ResourceSingboxStatus, "exit")
+	// Снимок туннелей несёт живое `running` и связность, а публиковался только
+	// на НАШИХ мутациях (добавили/правили/переименовали/удалили). Смерть движка
+	// — не наша мутация, поэтому карточки оставались «работает» бессрочно, и
+	// пользователь видел прямое противоречие: движок «остановлен», туннели
+	// «работают». Публикация, а не таймер: дыра закрывается мгновенно и не
+	// стоит ничего в простое.
+	o.bus.PublishInvalidated(events.ResourceSingboxTunnels, "exit")
 }
 
 // exitedBySIGKILL reports whether the cmd.Wait error says the process

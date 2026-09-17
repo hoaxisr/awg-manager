@@ -127,8 +127,11 @@ func (w *Watchdog) runOrphanSweep() {
 
 // publishIfFlipped emits a resource-invalidation hint only when the running
 // state actually changes, so normal ticks don't flood the SSE channel.
-// First-ever tick (prev == -1) is treated as "initial sync" and suppressed
-// — the UI will learn the state from its regular poll of /singbox/status.
+// First-ever tick (prev == -1) is treated as "initial sync" and suppressed:
+// на старте показывать нечего — состояние ещё никто не видел. Прежнее
+// обоснование ссылалось на «регулярный опрос /singbox/status», а его больше
+// нет; подавление держится на том, что стор делает выборку при подписке, то
+// есть панель узнаёт состояние при открытии, а не от этого события.
 func (w *Watchdog) publishIfFlipped(running bool) {
 	cur := int32(0)
 	if running {
@@ -142,4 +145,8 @@ func (w *Watchdog) publishIfFlipped(running bool) {
 		return
 	}
 	events.PublishInvalidatedTo(w.pub, events.ResourceSingboxStatus, "watchdog")
+	// Тот же довод, что у пути exit: смена живости движка меняет `running` в
+	// снимке туннелей, а он публикуется только на наших мутациях. Сюда же
+	// приходит и оживление — карточки возвращаются в «работает» без опроса.
+	events.PublishInvalidatedTo(w.pub, events.ResourceSingboxTunnels, "watchdog")
 }
