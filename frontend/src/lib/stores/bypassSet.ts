@@ -3,8 +3,8 @@
  *
  * Наполнение набора асинхронное: по завершении бэкенд публикует
  * `resource:invalidated` с resource "bypass-set" (storeBypassSetOutcome), и
- * реестр сторов дёргает refetch. Опрос редкий — он лишь страховка на случай
- * пропущенного события.
+ * реестр сторов дёргает refetch. Таймера нет вовсе: состояние меняется
+ * только нашими действиями, о каждом из которых событие и приходит.
  */
 import { api } from '$lib/api/client';
 import { createPollingStore, type PollingStore } from './polling';

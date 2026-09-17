@@ -3,7 +3,7 @@
  * composite that preserves the monolithic shape older pages read as
  * `$routing.dnsRoutes`, `$routing.staticRoutes`, etc.
  *
- * Each section polls its own GET endpoint at 30s (cold tier). Backend
+ * Таймера у секций нет: обновление идёт по событию. Backend
  * mutations publish `resource:invalidated` hints keyed by
  * ResourceRoutingXxx; the storeRegistry wiring triggers an immediate
  * refetch of only the affected section.

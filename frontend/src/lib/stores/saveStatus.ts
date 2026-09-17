@@ -1,5 +1,5 @@
 /**
- * saveStatus — polling store for GET /api/ndms/save-status (cold tier, 30s).
+ * saveStatus — polling store for GET /api/ndms/save-status, шаг 60 с.
  *
  * Mirrors the former save:status SSE event one-for-one. SaveCoordinator
  * now publishes a `resource:invalidated` hint with Resource="saveStatus"
