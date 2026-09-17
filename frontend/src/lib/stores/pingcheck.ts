@@ -18,7 +18,13 @@ async function fetchPingcheck(): Promise<TunnelPingStatus[]> {
 
 export const pingCheckStatus = createPollingStore<TunnelPingStatus[]>(fetchPingcheck, {
 	staleTime: 30_000,
-	pollInterval: 0,
+	// Таймер нужен: `pingcheck` публикуется только на СМЕНУ состояния (порог
+	// отказов достигнут / связь восстановилась). Промежуточные проверки — и
+	// успешные, и «2 из 3» — не публикуются, поэтому без таймера таблица
+	// показывала бы lastCheck/failCount/successCount момента открытия страницы.
+	// Цена нулевая вне страницы: опрос привязан к подписчикам, а стор
+	// смонтирован только в MonitoringTab.
+	pollInterval: 30_000,
 });
 registerStore('pingcheck', pingCheckStatus);
 
