@@ -38,6 +38,12 @@
 
 	async function checkConnectivity() {
 		if (tunnel.status !== 'up' || checking || checkDisabled) return;
+		// Фоновая вкладка индикатор не показывает, а проверка стоит полного
+		// TLS-рукопожатия через интерфейс — на этом железе это дорого.
+		// Матрица мониторинга системные туннели НЕ покрывает (их строки
+		// добавляются без SelfTarget, см. monitoring/scheduler.go), поэтому
+		// заменить эту проверку её данными нельзя — только не гонять впустую.
+		if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
 		checking = true;
 		try {
 			connectivity = await api.checkSystemTunnelConnectivity(tunnel.id);
