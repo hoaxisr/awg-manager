@@ -42,6 +42,9 @@ let clientsByIP = new Map<string, string>();
 let wsClose: (() => void) | null = null;
 let clientsTimer: ReturnType<typeof setInterval> | null = null;
 let bound = false;
+// holders — сколько оболочек страниц сейчас держат поток. Ноль = закрыть.
+let holders = 0;
+let unbindStatus: (() => void) | null = null;
 
 async function refetchClients(): Promise<void> {
 	try {
@@ -86,14 +89,35 @@ function disconnect(): void {
 	lastMessageAt.set(0);
 }
 
-/** Подписывает store на enabled-состояние движка (идемпотентно). */
-export function bindLiveConnectionsStore(): void {
-	if (bound) return;
-	bound = true;
-	singboxRouter.status.subscribe((s) => {
-		if (s?.enabled || isMockDevMode()) connect();
-		else disconnect();
-	});
+/**
+ * Подписывает store на enabled-состояние движка и ВОЗВРАЩАЕТ отпуск.
+ *
+ * Считаем держателей: раньше `bound` ставился один раз навсегда, а `disconnect`
+ * звался только при ВЫКЛЮЧЕННОМ движке — поэтому после одного захода на страницу
+ * поток `/api/singbox/clash/connections` (кадр в секунду, разбор всей таблицы
+ * соединений на бэкенде) жил до конца сессии, на какой бы странице пользователь
+ * ни находился. Теперь последний ушедший держатель закрывает поток.
+ */
+export function bindLiveConnectionsStore(): () => void {
+	holders++;
+	if (!bound) {
+		bound = true;
+		unbindStatus = singboxRouter.status.subscribe((s) => {
+			if (holders > 0 && (s?.enabled || isMockDevMode())) connect();
+			else disconnect();
+		});
+	}
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		holders--;
+		if (holders > 0) return;
+		unbindStatus?.();
+		unbindStatus = null;
+		bound = false;
+		disconnect();
+	};
 }
 
 export const liveConnectionsSnapshot = { subscribe: snapshot.subscribe };

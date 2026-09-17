@@ -238,7 +238,7 @@
 			<!--
 				«Соединения»-чип по мокапу page-connections = ВЕРБАТИМ текущий
 				sb-router connections-вью (футер мокапа: «как в текущем sb-router-вью»).
-				Переиспользуем ConnectionsSubTab — свой Clash WS, totals, разбивка по
+				Переиспользуем ConnectionsSubTab — общий с оболочкой поток Clash, totals, разбивка по
 				outbound/host/client, фильтры/поиск, таблица с kill. Живой блок:
 				при остановленном движке / clash-down — стандартная заглушка.
 			-->

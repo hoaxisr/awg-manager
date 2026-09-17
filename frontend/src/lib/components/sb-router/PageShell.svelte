@@ -33,9 +33,8 @@
   let { subtitle, onOpenInspector, onOpenJson, onOpenConfigEditor, onOpenLogs, logsActive = false, children }: Props = $props();
   let currentMode = $derived($mode);
 
-  onMount(() => {
-    bindLiveConnectionsStore();
-  });
+  // Отпуск на размонтировании: иначе поток соединений живёт до конца сессии.
+  onMount(() => bindLiveConnectionsStore());
 
   function selectMode(next: RouterMode) {
     setMode(next);
