@@ -142,9 +142,26 @@ func (r *RuleSet) Observe(ctx context.Context) (proxyrt.Observation, error) {
 		}
 	}
 	stale := 0
-	for _, rule := range r.doomed {
-		if r.ipt.Run(ctx, rule.CheckArgs()...) == nil {
+	for key, rule := range r.doomed {
+		err := r.ipt.Run(ctx, rule.CheckArgs()...)
+		if err == nil {
 			stale++
+			continue
+		}
+		// Правила в ядре НЕТ — сносить нечего, снос доведён. Без этой защёлки
+		// ведомость не пустела никогда: Doom зовётся из декларации роли каждый
+		// проход, а sweep, который один и чистит ведомость, запускается только
+		// при stale != 0. На роутере, где легаси-правила не заводились ни разу,
+		// stale вечно 0 → `iptables -C` на каждую запись каждый раунд до конца
+		// жизни процесса, и RecheckAfter держал ruleRecheck из-за непустой
+		// ведомости даже при пустом желаемом.
+		//
+		// Транзиентный отказ защёлку НЕ ставит: ruleAbsent считает неопознанное
+		// транзиентным, и цена здесь та же несимметричная — лишний проход
+		// дешевле правила, потерянного из ведомости.
+		if ruleAbsent(err) {
+			delete(r.doomed, key)
+			r.reaped[key] = true
 		}
 	}
 	// Усыновление-по-метке (I-1): помеченные правила прежних запусков демона
@@ -380,22 +397,31 @@ func (m *MSSClamp) Apply(ctx context.Context, s proxyrt.Step) error {
 	//
 	// Идемпотентная форма снимает вопрос: и мы, и хук вставляем только
 	// отсутствующее, порядок прогонов значения не имеет.
-	for _, r := range MSSRules(m.cidrs) {
-		if m.ipt.Run(ctx, r.CheckArgs()...) == nil {
-			continue
+	//
+	// Вставляем ТОЛЬКО на ruleAbsent. Отказ, из которого «правила нет» не
+	// следует (занят xtables-лок, движок ndm переписывает таблицы, exec не
+	// запустился), в форме `err != nil` читался бы как «нет» — и мы вставили бы
+	// дубль, которого Observe не увидит: `-C` на дубле проходит. Ретраи в
+	// sys/iptables это смягчают, но не исключают.
+	ensure := func(r Rule) error {
+		err := m.ipt.Run(ctx, r.CheckArgs()...)
+		if err == nil {
+			return nil
 		}
-		if err := m.ipt.Run(ctx, r.InsertArgs()...); err != nil {
+		if !ruleAbsent(err) {
+			return err
+		}
+		return m.ipt.Run(ctx, r.InsertArgs()...)
+	}
+	for _, r := range MSSRules(m.cidrs) {
+		if err := ensure(r); err != nil {
 			return err
 		}
 	}
 	// Переход — тоже идемпотентно. Прежняя форма «снять до трёх раз, затем
 	// вставить» сама создавала окно: между последним `-D` и `-I` хук успевал
 	// вставить свою копию, и их становилось две.
-	jump := m.jump()
-	if m.ipt.Run(ctx, jump.CheckArgs()...) == nil {
-		return nil
-	}
-	return m.ipt.Run(ctx, jump.InsertArgs()...)
+	return ensure(m.jump())
 }
 
 func (m *MSSClamp) RecheckAfter() time.Duration {

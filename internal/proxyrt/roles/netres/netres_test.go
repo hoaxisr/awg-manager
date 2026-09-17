@@ -23,6 +23,21 @@ type fakeIPT struct {
 	// calls — счётчик обращений к iptables: тесты, где важна ЦЕНА прохода
 	// (лишний exec на роутере — дефект, а не мелочь), считают их.
 	calls int
+	// ops — журнал операций «op table/chain». Счёта правил недостаточно:
+	// `-F` смывает ровно то, что Apply тут же вставляет обратно, поэтому
+	// проверка по количеству не отличает флаш от его отсутствия и тест на
+	// идемпотентность получается холостым (найдено ревью 17.09).
+	ops []string
+}
+
+// did сообщает, была ли операция op применена к table/chain хоть раз.
+func (f *fakeIPT) did(op, tableChain string) bool {
+	for _, o := range f.ops {
+		if o == op+" "+tableChain {
+			return true
+		}
+	}
+	return false
 }
 
 func newFakeIPT() *fakeIPT {
@@ -52,6 +67,7 @@ func (f *fakeIPT) Run(_ context.Context, args ...string) error {
 	op, chain := args[0], args[1]
 	rest := args[2:]
 	key := table + "/" + chain
+	f.ops = append(f.ops, op+" "+key)
 	switch op {
 	case "-N":
 		// Настоящий iptables на существующей цепочке НЕ трогает её и
@@ -313,6 +329,69 @@ func TestRuleSetDoomRemovesRuleWithoutDesired(t *testing.T) {
 	}
 	if d := rs.RecheckAfter(); d != 0 {
 		t.Errorf("ресурс остался волатильным: RecheckAfter=%v", d)
+	}
+}
+
+// Легаси-правила, которых на ЭТОМ роутере не было ни разу: их Doom кладёт в
+// ведомость каждый проход, а sweep — единственный, кто ведомость чистит, —
+// запускается лишь при stale != 0. Раз правил нет, stale вечно 0, и ведомость
+// не пустела никогда: `iptables -C` на запись каждый раунд до конца жизни
+// процесса, плюс RecheckAfter держал 15 с при пустом желаемом (F349 §2).
+func TestRuleSetDoomOfAbsentRuleStopsProbing(t *testing.T) {
+	ipt := newFakeIPT()
+	// Цепочка пуста: правил прежней версии тут не заводили.
+	ipt.chains["filter/FORWARD"] = []string{}
+	rs := NewRuleSet("forward_rules", ipt)
+	doom := func() {
+		for _, r := range forwardGroups([]string{"opkgtun19"})[0].Rules {
+			rs.Doom(r)
+		}
+	}
+	doom()
+
+	if _, err := rs.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.doomed) != 0 {
+		t.Fatalf("ведомость не опустела на отсутствующих правилах: %v", rs.doomed)
+	}
+
+	// Роль объявляет Doom каждый проход — воскрешать снятое он не имеет права.
+	doom()
+	if len(rs.doomed) != 0 {
+		t.Fatalf("отсутствующее правило воскрешено: %v", rs.doomed)
+	}
+	before := ipt.calls
+	if _, err := rs.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if ipt.calls != before {
+		t.Errorf("следующий проход всё ещё ходит в iptables: %d вызовов", ipt.calls-before)
+	}
+	if d := rs.RecheckAfter(); d != 0 {
+		t.Errorf("ресурс остался волатильным при пустом желаемом: RecheckAfter=%v", d)
+	}
+}
+
+// Защёлку ставит ТОЛЬКО «правила нет». Отказ, из которого этого не следует
+// (занятый xtables-lock, перезапись таблиц движком ndm), обязан оставить
+// правило в ведомости: иначе оно потеряно навсегда — разность желаемых его
+// больше не даст, метки оно не несёт.
+func TestRuleSetDoomKeepsLedgerOnTransientError(t *testing.T) {
+	ipt := newFakeIPT()
+	ipt.chains["filter/FORWARD"] = []string{}
+	ipt.failCheck = true
+	rs := NewRuleSet("forward_rules", ipt)
+	for _, r := range forwardGroups([]string{"opkgtun19"})[0].Rules {
+		rs.Doom(r)
+	}
+	want := len(rs.doomed)
+
+	if _, err := rs.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.doomed) != want {
+		t.Errorf("транзиентный отказ выбросил правила из ведомости: было %d, стало %d", want, len(rs.doomed))
 	}
 }
 
@@ -896,8 +975,16 @@ func TestMSSClampApplyIsIdempotent(t *testing.T) {
 	}
 }
 
-// Apply не должен флашить цепочку: между флашем и вставками в неё пишет хук.
-func TestMSSClampApplyDoesNotFlush(t *testing.T) {
+// Apply не должен флашить цепочку и снимать переход: между `-F` и вставками, а
+// равно между `-D` и `-I`, в ту же цепочку пишет netfilter.d-хук — попав в это
+// окно, он оставляет дубль, которого Observe не увидит (`-C` на дубле проходит).
+//
+// Проверяем ЖУРНАЛОМ ОПЕРАЦИЙ, а не числом правил. Счёт правил тут бесполезен:
+// `-F` смывает ровно то, что Apply тут же вставляет обратно, поэтому итог
+// совпадает и со старой, неидемпотентной формой — прежняя редакция этого теста
+// оставалась зелёной под мутацией «вернуть -F и безусловные вставки» (найдено
+// ревью 17.09).
+func TestMSSClampApplyNeverFlushesOrDeletes(t *testing.T) {
 	ipt := newFakeIPT()
 	m := NewMSSClamp("mss", ipt)
 	m.SetDesired([]string{"10.70.0.0/16"})
@@ -906,13 +993,52 @@ func TestMSSClampApplyDoesNotFlush(t *testing.T) {
 	hookRule := MSSRules([]string{"10.70.0.0/16"})[0]
 	_ = ipt.Run(context.Background(), "-t", "mangle", "-N", MSSChain)
 	_ = ipt.Run(context.Background(), hookRule.InsertArgs()...)
+	ipt.ops = nil
 
 	if err := m.Apply(context.Background(), proxyrt.Step{Resource: "mss", Op: "ensure"}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 
+	for _, bad := range []struct{ op, chain string }{
+		{"-F", "mangle/" + MSSChain},
+		{"-D", "mangle/" + MSSChain},
+		{"-D", "mangle/FORWARD"},
+	} {
+		if ipt.did(bad.op, bad.chain) {
+			t.Errorf("Apply выполнил %s %s — открыто окно для дубля от хука\nжурнал: %v",
+				bad.op, bad.chain, ipt.ops)
+		}
+	}
 	want := len(MSSRules([]string{"10.70.0.0/16"}))
 	if got := len(ipt.chains["mangle/"+MSSChain]); got != want {
-		t.Errorf("правил %d, ожидалось %d: правило хука либо смыто флашем, либо задвоено", got, want)
+		t.Errorf("правил %d, ожидалось %d", got, want)
+	}
+}
+
+// Транзиентный отказ `-C` — это НЕ «правила нет». Прочитав его как отсутствие,
+// Apply вставил бы дубль, а Observe его не увидел бы: `-C` на дубле проходит.
+// Дубль дожил бы до следующей перезаписи таблиц движком ndm.
+func TestMSSClampApplyDoesNotInsertOnTransientCheckError(t *testing.T) {
+	ipt := newFakeIPT()
+	m := NewMSSClamp("mss", ipt)
+	m.SetDesired([]string{"10.70.0.0/16"})
+	step := proxyrt.Step{Resource: "mss", Op: "ensure"}
+
+	if err := m.Apply(context.Background(), step); err != nil {
+		t.Fatalf("первый Apply: %v", err)
+	}
+	rules := len(ipt.chains["mangle/"+MSSChain])
+	jumps := len(ipt.chains["mangle/FORWARD"])
+
+	// Теперь `-C` отвечает отказом, из которого «правила нет» не следует.
+	ipt.failCheck = true
+	if err := m.Apply(context.Background(), step); err == nil {
+		t.Error("транзиентный отказ проглочен: раунд отчитался успехом")
+	}
+	if got := len(ipt.chains["mangle/"+MSSChain]); got != rules {
+		t.Errorf("правил %d против %d — вставили поверх непрочитанного состояния", got, rules)
+	}
+	if got := len(ipt.chains["mangle/FORWARD"]); got != jumps {
+		t.Errorf("переходов %d против %d — задвоили переход", got, jumps)
 	}
 }
