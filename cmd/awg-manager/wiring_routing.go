@@ -179,6 +179,15 @@ func (a *app) setupEventWiring() {
 	a.sysfsTrafficPoller.SetClientCounter(a.eventBus)
 	a.sysfsTrafficPoller.Start()
 
+	// Сторож hrneo: за живостью чужого процесса раньше следила ПАНЕЛЬ — стор
+	// опрашивал статус из каждой открытой вкладки по HTTP (F353). Событий о
+	// смерти процесса не бывает ни у кого, поэтому наблюдать надо, но наблюдает
+	// пусть демон, один раз и локально (F364).
+	if a.hydraService != nil {
+		stopHydraWatchdog := a.hydraService.StartWatchdog(context.Background(), a.eventBus)
+		a.deferOnExit(stopHydraWatchdog)
+	}
+
 	a.orch.SetEventBus(a.eventBus)
 	// Refresh the NDMS interface cache when a kernel tunnel is confirmed up:
 	// OpkgTun iflayerchanged hooks are unreliable, so the cache otherwise keeps
