@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // linksFile — выданные ссылки абонентов одного freeturn-сервера: Client ID →
@@ -44,43 +45,19 @@ func readLinksFile(path string) (linksFile, error) {
 // абонента), и параллельные запросы панели без замка теряли бы правку.
 var linksMu sync.Mutex
 
-// writeLinksFile — атомарная запись 0600: в ссылке едет приватный ключ пира.
-// Временный файл создаётся УНИКАЛЬНЫМ (os.CreateTemp), а не `path+".tmp"`:
-// фиксированное имя два писателя переслоили бы, а чужой файл, оставшийся от
-// прежнего отказа, ещё и переиспользовался бы с его правами — os.WriteFile
-// существующему файлу прав не меняет.
+// writeLinksFile — запись общим помощником: уникальный временный файл, права
+// 0600 (в ссылке едет приватный ключ пира) и fsync файла и каталога перед
+// переименованием. Своя копия этого приёма была бы четвёртой в репозитории и
+// без sync — на роутере пропадание питания штатно (F374).
 func writeLinksFile(path string, data linksFile) error {
 	if data.Links == nil {
 		data.Links = map[string]string{}
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
 	}
 	b, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	// Дальше файл либо переедет на место, либо должен исчезнуть: временный
-	// файл с приватным ключом пережить отказ не должен.
-	defer os.Remove(tmp)
-	if err := f.Chmod(0600); err != nil {
-		f.Close()
-		return err
-	}
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return storage.AtomicWritePerm(path, b, storage.SecretFilePermission)
 }
 
 // setClientLink запоминает ссылку абонента. Перевыпуск затирает прежнюю: две
