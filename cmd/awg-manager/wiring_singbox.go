@@ -70,6 +70,9 @@ func (a *app) setupSingbox() {
 
 	delayCtx, delayCancel := context.WithCancel(context.Background())
 	a.deferOnExit(delayCancel)
+	// Тот же счётчик зрителей, что у матрицы и поллеров: результат проверки
+	// уходит только в SSE, при закрытой панели измерять некому.
+	delayChecker.SetClientCounter(a.eventBus)
 	go delayChecker.Run(delayCtx)
 
 	// Forward sing-box runtime logs from clash_api /logs into the app's

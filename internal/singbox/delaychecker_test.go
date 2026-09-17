@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -334,5 +335,63 @@ func TestDelayChecker_ProbeReportsInFlightDistinctly(t *testing.T) {
 	got, err := d.Probe(context.Background(), "A")
 	if err != nil || got != 120 {
 		t.Fatalf("Probe when free = (%d, %v), want (120, nil)", got, err)
+	}
+}
+
+// fakeClients — сколько панелей «открыто».
+type fakeDelayClients struct{ n atomic.Int64 }
+
+func (f *fakeDelayClients) ClientCount() int { return int(f.n.Load()) }
+
+// Тик меряет задержку КАЖДОГО выхода и каждого активного тега подписки — по
+// исходящему запросу через каждый прокси в минуту. Единственный потребитель
+// результата — SSE-событие, поэтому при закрытой панели измерять некому и тик
+// обязан пропускаться целиком.
+func TestDelayChecker_Run_SkipsWhenNobodyWatching(t *testing.T) {
+	clash := &fakeClash{delays: map[string]int{"A": 10, "B": 20}}
+	lister := &fakeDelayLister{tunnels: []TunnelInfo{{Tag: "A"}, {Tag: "B"}}}
+	d := &DelayChecker{
+		clash: clash, lister: lister, publisher: &fakeDelayPublisher{},
+		interval: 20 * time.Millisecond, timeout: time.Second,
+		testURL: "http://example.invalid", inflight: map[string]bool{},
+	}
+	d.SetClientCounter(&fakeDelayClients{}) // ноль зрителей
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go d.Run(ctx)
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	clash.mu.Lock()
+	calls := len(clash.calls)
+	clash.mu.Unlock()
+	if calls != 0 {
+		t.Errorf("проб %d, ожидалось 0 при закрытой панели", calls)
+	}
+}
+
+// Открытая панель возвращает измерения.
+func TestDelayChecker_Run_ProbesWhenWatched(t *testing.T) {
+	clash := &fakeClash{delays: map[string]int{"A": 10}}
+	lister := &fakeDelayLister{tunnels: []TunnelInfo{{Tag: "A"}}}
+	d := &DelayChecker{
+		clash: clash, lister: lister, publisher: &fakeDelayPublisher{},
+		interval: 20 * time.Millisecond, timeout: time.Second,
+		testURL: "http://example.invalid", inflight: map[string]bool{},
+	}
+	clients := &fakeDelayClients{}
+	clients.n.Store(1)
+	d.SetClientCounter(clients)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go d.Run(ctx)
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	clash.mu.Lock()
+	n := clash.calls["A"]
+	clash.mu.Unlock()
+	if n < 2 {
+		t.Errorf("проб %d, ожидалось ≥2 при открытой панели", n)
 	}
 }

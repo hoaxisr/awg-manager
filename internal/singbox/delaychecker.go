@@ -45,10 +45,34 @@ type DelayChecker struct {
 	timeout   time.Duration
 	testURL   string
 
+	// clients отвечает, открыта ли панель хоть у кого-нибудь. Опционально:
+	// без него проверка работает всегда, как и раньше.
+	clients ClientCounter
+
 	// mu protects single-flight per tag to avoid hammering Clash when both
 	// the periodic tick and an on-demand call race.
 	mu       sync.Mutex
 	inflight map[string]bool
+}
+
+// ClientCounter reports the number of open panels (SSE client subscriptions).
+type ClientCounter interface {
+	ClientCount() int
+}
+
+// SetClientCounter wires the source of "сколько панелей сейчас открыто".
+func (d *DelayChecker) SetClientCounter(c ClientCounter) {
+	d.mu.Lock()
+	d.clients = c
+	d.mu.Unlock()
+}
+
+// nobodyWatching — правда ли, что панель не открыта ни у кого.
+func (d *DelayChecker) nobodyWatching() bool {
+	d.mu.Lock()
+	c := d.clients
+	d.mu.Unlock()
+	return c != nil && c.ClientCount() == 0
 }
 
 // NewDelayChecker constructs a checker with sane defaults.
@@ -166,8 +190,16 @@ func (d *DelayChecker) Check(ctx context.Context) {
 // Run blocks until ctx is cancelled, calling Check every `interval`.
 // First tick runs immediately so the UI gets data before the first minute
 // elapses.
+// Здесь гейт ПОЛНЫЙ, а не разрежение (в отличие от матрицы и sysfs-поллера):
+// единственный выход проверки — SSE-событие singbox:delay, ни истории, ни
+// решений на её результате не висит. При закрытой панели тик измерял бы
+// задержку каждого выхода и каждого активного тега подписки — по исходящему
+// запросу через КАЖДЫЙ прокси в минуту — и выбрасывал результат.
+//
+// Задержка появления данных не выросла: свежеоткрытая панель и раньше ждала
+// ближайшего тика, потому что снимка тут нет, только пуш.
 func (d *DelayChecker) Run(ctx context.Context) {
-	if ctx.Err() == nil {
+	if ctx.Err() == nil && !d.nobodyWatching() {
 		d.Check(ctx)
 	}
 	ticker := time.NewTicker(d.interval)
@@ -177,6 +209,9 @@ func (d *DelayChecker) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if d.nobodyWatching() {
+				continue
+			}
 			d.Check(ctx)
 		}
 	}
