@@ -907,7 +907,6 @@ $effect(() => {
 					onrefresh={refreshSystemInfo}
 					refreshing={systemInfoRefreshing}
 					lastUpdated={systemInfoUpdatedAt}
-					autoRefreshMs={30000}
 				/>
 
 				<div id="awgm-update" class="settings-block">

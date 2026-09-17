@@ -11,10 +11,9 @@
 		onrefresh?: () => void;
 		refreshing?: boolean;
 		lastUpdated?: string | null;
-		autoRefreshMs?: number;
 	}
 
-	let { systemInfo, usageLevel, onrefresh, refreshing = false, lastUpdated = null, autoRefreshMs = 0 }: Props = $props();
+	let { systemInfo, usageLevel, onrefresh, refreshing = false, lastUpdated = null }: Props = $props();
 	let detailsOpen = $state(false);
 	const DETAILS_KEY = 'awgm.settings.system.detailsOpen';
 	const COLLAPSED_KEY = 'awgm.settings.system.collapsed';
