@@ -20,6 +20,10 @@ type fakeIPT struct {
 	// кавыченная зафиксирована в этом же репозитории
 	// (internal/singbox/router/iptables.go:1328 и тест рядом с ним).
 	quoteComment bool
+	// expandProtoMatch — сборка iptables, чей `-S` дописывает неявный модуль
+	// матча: `-p udp --dport 53` печатается как `-p udp -m udp --dport 53`.
+	// Форма реальна и именно она взводит мину F347.
+	expandProtoMatch bool
 	// calls — счётчик обращений к iptables: тесты, где важна ЦЕНА прохода
 	// (лишний exec на роутере — дефект, а не мелочь), считают их.
 	calls int
@@ -142,6 +146,9 @@ func (f *fakeIPT) Output(_ context.Context, args ...string) (string, error) {
 	for _, r := range f.chains[key] {
 		if f.quoteComment {
 			r = quoteCommentValue(r)
+		}
+		if f.expandProtoMatch {
+			r = expandProtoMatchTokens(r)
 		}
 		b.WriteString("-A " + args[3] + " " + r + "\n")
 	}
@@ -1040,5 +1047,68 @@ func TestMSSClampApplyDoesNotInsertOnTransientCheckError(t *testing.T) {
 	}
 	if got := len(ipt.chains["mangle/FORWARD"]); got != jumps {
 		t.Errorf("переходов %d против %d — задвоили переход", got, jumps)
+	}
+}
+
+// expandProtoMatchTokens дописывает `-m <proto>` сразу после `-p <proto>` —
+// так печатает `iptables -S`, подгружая модуль матча самостоятельно.
+func expandProtoMatchTokens(rule string) string {
+	fields := strings.Fields(rule)
+	out := make([]string, 0, len(fields)+2)
+	for i := 0; i < len(fields); i++ {
+		out = append(out, fields[i])
+		if fields[i] == "-p" && i+1 < len(fields) {
+			out = append(out, fields[i+1], "-m", fields[i+1])
+			i++
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// Мина F347: помеченное правило с `-p` живо и желаемо, но `iptables -S` печатает
+// его с неявным `-m <proto>`. Сравнение по тексту объявляло бы его сиротой и
+// СНОСИЛО каждый раунд, а ensure ставил бы заново — churn на роутере.
+func TestMarkedOrphansSurvivesImplicitProtoMatch(t *testing.T) {
+	desired := Rule{
+		Table: "filter", Chain: "INPUT",
+		Spec: []string{"-p", "udp", "--dport", "53", "-m", "comment", "--comment", "AWGM_TEST", "-j", "ACCEPT"},
+	}
+	ipt := newFakeIPT()
+	ipt.expandProtoMatch = true
+	if err := ipt.Run(context.Background(), desired.InsertArgs()...); err != nil {
+		t.Fatal(err)
+	}
+
+	rs := NewRuleSet("proto_rules", ipt)
+	rs.AdoptMarked("filter", "INPUT", "AWGM_TEST")
+	rs.SetDesired(StaticGroups([]Group{{Rules: []Rule{desired}}}))
+
+	if _, err := rs.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	orphans, err := rs.markedOrphans(context.Background(), map[string]bool{desired.Key(): true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orphans) != 0 {
+		t.Fatalf("живое желаемое правило объявлено сиротой и будет снесено: %v", orphans)
+	}
+}
+
+// Одиночный адрес: iptables канонизирует его в /32, мы ставим голым.
+func TestRuleKeyIgnoresHostPrefixLength(t *testing.T) {
+	bare := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "10.0.0.1", "-j", "MASQUERADE"}}
+	slash := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "10.0.0.1/32", "-j", "MASQUERADE"}}
+	if bare.Key() != slash.Key() {
+		t.Errorf("формы одного адреса дали разные ключи:\n%s\n%s", bare.Key(), slash.Key())
+	}
+	// База ТА ЖЕ, отличается только длина префикса: если канонизация срежет
+	// любой `/N`, а не только хостовый, подсеть сольётся с одиночным адресом —
+	// и снос «сироты» унесёт живое правило. Ровно та ошибка, от которой
+	// лечимся.
+	host := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "10.70.0.0", "-j", "MASQUERADE"}}
+	net := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "10.70.0.0/16", "-j", "MASQUERADE"}}
+	if net.Key() == host.Key() {
+		t.Error("подсеть /16 и одиночный адрес слились в один ключ")
 	}
 }
