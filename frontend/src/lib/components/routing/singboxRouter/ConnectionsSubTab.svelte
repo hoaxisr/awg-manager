@@ -1,13 +1,14 @@
 <!-- frontend/src/lib/components/routing/singboxRouter/ConnectionsSubTab.svelte -->
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import type {
-		ClashConnectionsRaw,
-		ConnectionFilters,
-		ConnectionsSnapshot,
-	} from '$lib/types/singboxConnections';
-	import { parseSnapshot, matchFilters, aggregateBy } from '$lib/utils/singboxConnections';
-	import { createClashWS, type WSStatus } from '$lib/utils/clashWebSocket';
+	import type { ConnectionFilters } from '$lib/types/singboxConnections';
+	import { matchFilters, aggregateBy } from '$lib/utils/singboxConnections';
+	import {
+		liveConnectionsSnapshot,
+		liveConnectionsWsStatus,
+		liveConnectionsLastMessageAt,
+		dropConnections,
+	} from '$lib/components/sb-router/liveConnectionsStore';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
@@ -19,12 +20,14 @@
 	import ConnectionsTable from './ConnectionsTable.svelte';
 	import ConnectionsBulkBar from './ConnectionsBulkBar.svelte';
 
-	let snapshot = $state<ConnectionsSnapshot>({
-		connections: [], downloadTotal: 0, uploadTotal: 0, connectionsTotal: 0,
-	});
-	let clientsByIP = $state<Map<string, string>>(new Map());
-	let wsStatus = $state<WSStatus>('connecting');
-	let lastMessageAt = $state(0);
+	// Снимок берём из общего стора страницы: свой WebSocket к той же ручке
+	// заставлял бэкенд разбирать и сериализовать одну и ту же таблицу
+	// соединений дважды в секунду, пока открыта эта вкладка (F349 §3).
+	// Оболочка страницы (PageShell / FakeIPPageShell) связывает стор до того,
+	// как вкладка смонтируется, поэтому подписки здесь достаточно.
+	const snapshot = $derived($liveConnectionsSnapshot);
+	const wsStatus = $derived($liveConnectionsWsStatus);
+	const lastMessageAt = $derived($liveConnectionsLastMessageAt);
 	let tick = $state(0);
 	let filters = $state<ConnectionFilters>({ search: '', outbound: '', network: 'all', rule: '' });
 	let sortBy = $state<'' | 'download' | 'upload' | 'start' | 'source' | 'destination' | 'outbound'>('download');
@@ -33,8 +36,6 @@
 	const pageSize = 50;
 	const routerOutboundOptions = singboxRouterStore.options;
 
-	let wsClose: (() => void) | null = null;
-	let clientsTimer: ReturnType<typeof setInterval> | null = null;
 	let staleTimer: ReturnType<typeof setInterval> | null = null;
 
 	function displayOutbound(tag: string): string {
@@ -83,19 +84,6 @@ const emptyStateText = $derived(
 		return { dot: '◯', text: 'Ошибка', cls: 'err' };
 	});
 
-	async function refetchClients(): Promise<void> {
-		try {
-			const data = await api.singboxGetClientsByIP();
-			const m = new Map<string, string>();
-			for (const [ip, name] of Object.entries(data.clientsByIP ?? {})) {
-				m.set(ip.toLowerCase(), name);
-			}
-			clientsByIP = m;
-		} catch {
-			/* best-effort, leave existing map */
-		}
-	}
-
 	function onFilterToggle(kind: 'outbound' | 'host' | 'client', key: string): void {
 		page = 0;
 		if (kind === 'outbound') {
@@ -116,27 +104,21 @@ const emptyStateText = $derived(
 		}
 	}
 
+	// Возврата убранного при отказе больше нет и не нужно: следующий кадр
+	// потока (он приходит раз в секунду) вернёт соединение сам, если оно живо.
+	// Прежний возврат работал по локальной копии снимка, которой больше нет.
 	async function killOne(id: string): Promise<void> {
-		const removed = snapshot.connections.find((c) => c.id === id);
-		snapshot = { ...snapshot, connections: snapshot.connections.filter((c) => c.id !== id) };
-		const ok = await api.singboxKillConnection(id);
-		if (ok) {
+		dropConnections([id]);
+		if (await api.singboxKillConnection(id)) {
 			notifications.success('Соединение закрыто');
 		} else {
-			if (removed) {
-				snapshot = { ...snapshot, connections: [...snapshot.connections, removed] };
-			}
 			notifications.error('Не удалось закрыть соединение');
 		}
 	}
 
 	async function killVisible(): Promise<void> {
 		const ids = filteredConns.map((c) => c.id);
-		const removedSet = new Set(ids);
-		snapshot = {
-			...snapshot,
-			connections: snapshot.connections.filter((c) => !removedSet.has(c.id)),
-		};
+		dropConnections(ids);
 		const { ok, total } = await api.singboxKillConnections(ids);
 		const msg = `Закрыто ${ok} из ${total}`;
 		if (ok === total) notifications.success(msg);
@@ -145,23 +127,11 @@ const emptyStateText = $derived(
 	}
 
 	onMount(() => {
-		void refetchClients();
-		clientsTimer = setInterval(refetchClients, 30_000);
-		wsClose = createClashWS<ClashConnectionsRaw>(
-			'/api/singbox/clash/connections',
-			(raw) => {
-				snapshot = parseSnapshot(raw, clientsByIP);
-				lastMessageAt = Date.now();
-			},
-			(s) => { wsStatus = s; },
-		);
 		// Force statusLabel to re-derive every second so "Stale" can flip.
 		staleTimer = setInterval(() => { tick += 1; }, 1000);
 	});
 
 	onDestroy(() => {
-		wsClose?.();
-		if (clientsTimer !== null) clearInterval(clientsTimer);
 		if (staleTimer !== null) clearInterval(staleTimer);
 	});
 </script>

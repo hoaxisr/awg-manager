@@ -222,6 +222,15 @@ func (o *Operator) handleExit(err error, stderrTail string, deliberate bool) {
 		o.restartBackoff.NoteCrash(now)
 	}
 	o.bus.PublishInvalidated(events.ResourceSingboxStatus, "exit")
+	// ResourceSingboxTunnels отсюда НЕ публикуем, хотя карточки туннелей несут
+	// живое `running` и тоже устаревают. Этот ключ слушают не только сторы
+	// фронта: awgoutbounds перезаписывает файл выходов, а deviceproxy гоняет
+	// полный Reconcile с разбором config.d. Выход процесса случается на КАЖДУЮ
+	// смерть, то есть в крэш-лупе (OOM на 256 МБ — рабочий сценарий) эта
+	// публикация умножала бы дорогую работу ровно тогда, когда памяти и так
+	// нет. Карточки обновляет сторож (watchdog.go): он публикует только на
+	// СМЕНЕ живости, поэтому луп даёт одну публикацию, а не по одной на
+	// перезапуск. Цена — задержка до одного тика сторожа.
 }
 
 // exitedBySIGKILL reports whether the cmd.Wait error says the process

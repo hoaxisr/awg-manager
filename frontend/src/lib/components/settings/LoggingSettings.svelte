@@ -130,7 +130,7 @@
 	<div class="setting-row logging-level-row">
 		<div class="flex flex-col gap-1">
 			<span class="font-medium">Уровень логирования AWGM</span>
-			<span class="setting-description">INFO — результаты операций. FULL — промежуточные шаги. DEBUG — полная информация.</span>
+			<span class="setting-description">INFO — результаты операций. FULL — промежуточные шаги и debug-строки sing-box. DEBUG — полная информация, включая trace движка.</span>
 		</div>
 		<div class="hours-select">
 			<Dropdown
@@ -145,7 +145,7 @@
 	<div class="setting-row logging-level-row">
 		<div class="flex flex-col gap-1">
 			<span class="font-medium">Уровень логирования Sing-box</span>
-			<span class="setting-description">TRACE — максимум деталей от sing-box. INFO/WARN/ERROR уменьшают шум runtime-логов.</span>
+			<span class="setting-description">Задаёт, что пишет сам движок в свой лог. В журнал приложения строки движка отбирает уровень AWGM выше: debug-строки — с FULL, trace — только с DEBUG.</span>
 		</div>
 		<div class="hours-select">
 			<Dropdown

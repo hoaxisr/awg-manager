@@ -87,14 +87,24 @@ func (s *Service) IsEnabled() bool {
 	return s.settings.IsLoggingEnabled()
 }
 
+// Visible implements LevelGate: попадёт ли запись такого уровня в журнал.
+// Ровно та же проверка, что делает AppLog первым делом, — вынесена, чтобы
+// дорогой поставщик мог спросить ДО подготовки записи.
+func (s *Service) Visible(level Level) bool {
+	if !s.IsEnabled() {
+		return false
+	}
+	return IsVisible(level, Level(s.settings.GetLogLevel()))
+}
+
 // AppLog implements AppLogger. Checks enabled + level filtering, then routes
 // to the correct buffer based on the entry's group.
 func (s *Service) AppLog(level Level, group, subgroup, action, target, message string) {
-	if !s.IsEnabled() {
-		return
-	}
-	configuredLevel := Level(s.settings.GetLogLevel())
-	if !IsVisible(level, configuredLevel) {
+	// Через Visible, а не своей копией проверки: тот же принцип, что у
+	// levelForClashType в пересылке журнала движка. Разойдясь, отсев
+	// поставщика и отсев записи дали бы худший исход — строку, отброшенную
+	// поставщиком, но нужную пользователю, и ни один тест этого не показал бы.
+	if !s.Visible(level) {
 		return
 	}
 	bucket := BucketForGroup(group)
@@ -115,7 +125,16 @@ func (s *Service) AppLog(level Level, group, subgroup, action, target, message s
 	// вместо новой строки — источник рекуррентного шума (периодические
 	// проверки, зацикленные Warn) не может забить журнал.
 	entry, _ = target_buf.CoalesceOrAdd(entry, repeatCoalesceWindow)
-	if s.bus != nil {
+	// Публикуем, только если панель открыта хоть у кого-то. Буфер выше
+	// наполнен в любом случае, а страница журнала при открытии и при
+	// переподключении SSE забирает пропущенное ручкой /logs по since
+	// (frontend/src/routes/+layout.svelte), так что зритель ничего не теряет.
+	//
+	// Цена публикации не в самой отправке: событие строится с двумя
+	// форматированиями времени, а Publish идёт веерно ко ВСЕМ подписчикам
+	// шины, включая пять вечных внутренних, — пять пробуждений горутин на
+	// строку журнала при нуле открытых панелей.
+	if s.bus != nil && s.bus.ClientCount() > 0 {
 		// Формат должен побайтно совпадать с REST-DTO (api.logEntryDTO):
 		// клиент сопоставляет SSE-повторы с загруженными строками по
 		// составному ключу, включающему timestamp как строку.
@@ -217,4 +236,10 @@ func capacityFor(settings SettingsGetter, bucket Bucket) int {
 // Len returns the total entry count across both buckets.
 func (s *Service) Len() int { return s.appBuffer.Len() + s.singboxBuffer.Len() }
 
-var _ AppLogger = (*Service)(nil)
+var (
+	_ AppLogger = (*Service)(nil)
+	// Способность необязательна и подхватывается type assertion'ом, поэтому
+	// её потеря была бы МОЛЧАЛИВОЙ: пересылка журнала движка просто перестала
+	// бы отсеивать строки до разбора, и ни один тест не покраснел бы.
+	_ LevelGate = (*Service)(nil)
+)

@@ -201,7 +201,7 @@ func TestSysfsPoller_IdleThrottles(t *testing.T) {
 	pub := &spyPublisher{}
 
 	p := newSysfsPoller(lister, hist, pub, &fakeLog{}, nil, root, 20*time.Millisecond)
-	p.idleInterval = 10 * time.Second // в окне теста недостижим
+	p.idleInterval = 10 * time.Second  // в окне теста недостижим
 	p.SetClientCounter(&fakeClients{}) // ноль зрителей
 	p.Start()
 	defer p.Stop()

@@ -150,7 +150,11 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	settings, err := s.deps.Settings.Load()
+	// Get, а не Load: реап зовётся планировщиком раз в 30 с — в том числе при
+	// ВЫКЛЮЧЕННОМ движке, где он единственная работа тика. Load читает файл с
+	// флеша под ПИШУЩИМ локом стора; вызывающий (scheduler.go) ради этого уже
+	// перешёл на кэш, а здесь чтение оставалось и обесценивало тот переход.
+	settings, err := s.deps.Settings.Get()
 	if err != nil {
 		return err
 	}
@@ -645,7 +649,10 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 
 	// Validate settings first — fail fast with a meaningful error before
 	// attempting any kernel / iptables operations.
-	settings, err := s.deps.Settings.Load()
+	// Get, а не Load: Reconcile зовётся планировщиком раз в 30 с, а Load
+	// читает файл с флеша под пишущим локом. Читаем поле-структуру, map-полей
+	// живого объекта не касаемся.
+	settings, err := s.deps.Settings.Get()
 	if err != nil {
 		return err
 	}
@@ -1699,7 +1706,10 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 		s.appLog.Warn("fakeip-reap", "", err.Error())
 	}
 
-	settings, err := s.deps.Settings.Load()
+	// Get, а не Load: Reconcile зовётся планировщиком раз в 30 с, а Load
+	// читает файл с флеша под пишущим локом. Читаем поле-структуру, map-полей
+	// живого объекта не касаемся.
+	settings, err := s.deps.Settings.Get()
 	if err != nil {
 		return err
 	}
@@ -1709,9 +1719,9 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	}
 	s.syncKeenDNSPreset(ctx, sr)
 	// fakeip-tun installs NO iptables, so the tproxy switch below (keyed on
-	// IPTables.IsInstalled/HasAnyInstalled) would always read "not installed"
-	// and route every tick to Enable. Dispatch by mode FIRST so the tproxy
-	// switch stays byte-for-byte unchanged for RoutingMode=="tproxy".
+	// живом состоянии перехвата) would always read "not installed" and route
+	// every tick to Enable. Dispatch by mode FIRST — ветка tproxy ниже
+	// рассчитана только на этот режим.
 	if sr.RoutingMode == "fakeip-tun" {
 		return s.reconcileFakeIPTun(ctx, sr)
 	}
@@ -1720,8 +1730,36 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	if sr.RoutingMode == statePolicyTun {
 		return s.reconcilePolicyTun(ctx, sr)
 	}
-	installedComplete := s.deps.IPTables.IsInstalled(ctx)
-	installedAny := s.deps.IPTables.HasAnyInstalled(ctx)
+	// Один снимок вместо IsInstalled + HasAnyInstalled. Те делали по паре
+	// `iptables -nL`, но `HasAnyInstalled` был `A == nil || B == nil`, а `||`
+	// короткозамыкается — на любом из трёх состояний выходило РОВНО три
+	// `-nL`, не четыре. Теперь два `-S`, по одному на таблицу.
+	//
+	// Ниже по ветке reconcileInstalled снимает состояние ещё раз (свой
+	// probeAll): передать снимок туда мешает не техника, а цена — у него
+	// шестьдесят тестовых вызовов.
+	//
+	// Итог на горячем пути, посчитан прогоном обоих вариантов:
+	// было 3 `-nL` + 3 `-S`, стало 5 `-S` — на ОДИН fork+exec меньше.
+	// Главное здесь не экономия, а семантика отказа ниже.
+	//
+	// Отказ снятия — это «не знаю», а НЕ «сломано». Прежние IsInstalled и
+	// HasAnyInstalled на ошибке возвращали false, и при включённом роутере это
+	// уводило в enableLocked: транзиентный отказ iptables во время перезаписи
+	// таблиц движком ndm вызывал ненужную переустановку. Пропускаем тик —
+	// следующий через 30 с увидит настоящее состояние.
+	live, err := s.deps.IPTables.probeAll(ctx)
+	if err != nil {
+		// Молчать здесь нельзя. Пропуск тика правилен для транзиентного отказа,
+		// но СТОЙКИЙ (снесённый бинарь, не загруженный модуль, намертво занятый
+		// xtables-lock) превращает Reconcile в вечный no-op: не чинится ни
+		// перехват, ни запаркованный слот, ни Disable. Ошибку наверх не
+		// отдаём — Reconcile ещё и хвост SetEnabled, и она уехала бы
+		// пользователю как провал сохранения настроек.
+		s.appLog.Warn("router-reconcile", "", "состояние перехвата не снято: "+err.Error())
+		return nil
+	}
+	installedComplete, installedAny := live.installed, live.anyChain
 	// Запаркованный слот 20 при живых цепочках — тоже дрейф (issue #523):
 	// rollback провального Enable паркует слот, а netfilter.d-hook
 	// восстанавливает перехват из rules-файла. reconcileInstalled видел
@@ -1775,7 +1813,7 @@ func (s *ServiceImpl) slotSnapshot(slot orchestrator.Slot) (orchestrator.SlotSta
 
 // reconcileInstalled handles the "Enabled && installed" branch:
 // detect mark or WAN-IP changes and re-Install. Extracted from Reconcile
-// to keep the decision tree testable without stubbing IsInstalled.
+// to keep the decision tree testable without stubbing the live probe.
 func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.SingboxRouterSettings) error {
 	sr, err := NormalizeSingboxRouterSettings(sr)
 	if err != nil {
@@ -1911,7 +1949,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// and ip routes may remain from the old process. netfilterStateKnown
 	// starts false on every fresh ServiceImpl, so the very first
 	// reconcileInstalled after startup always forces a full re-install
-	// regardless of what IsInstalled reports.
+	// regardless of what the live probe reports.
 	forceInitialSync := !s.netfilterStateKnown
 	// Self-heal: chains can survive while PREROUTING jumps get wiped (NDMS
 	// rebuilds PREROUTING on reconfig), leaving the engine "installed" but
@@ -1919,7 +1957,8 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// the NDMS reload; this is the slower secondary net. On a probe error treat
 	// the state as unknown and DO NOT reinstall — a transient `-S` failure
 	// during an NDMS reload must not trigger a needless rebuild.
-	_, jumps, blackholeLive, probeErr := s.deps.IPTables.probeAll(ctx)
+	live, probeErr := s.deps.IPTables.probeAll(ctx)
+	jumps, blackholeLive := live.jumps, live.blackhole
 	jumpsMissing := probeErr == nil && !jumps
 	// wantBlackhole: движок мёртв И PREROUTING-джампы снесены (NDMS перестроил
 	// firewall). Раньше здесь перехват просто не восстанавливался в мёртвый порт

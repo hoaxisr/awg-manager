@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, untrack } from 'svelte';
+	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { tunnels } from '$lib/stores/tunnels';
@@ -497,8 +498,13 @@
 		return s ? s.label || s.url : id;
 	});
 
-	// Same as detail page — poll Clash for live "now" pointer this often.
-	const URLTEST_POLL_MS = 5000;
+	// Указатель «сейчас активен» меняет сам sing-box, и не чаще своего
+	// urltest-интервала (IntervalSec, по умолчанию 60 с). Прежние 5 с
+	// опрашивали значение в 12 раз чаще, чем оно способно измениться, —
+	// и это на ГЛАВНОЙ, то есть на вкладке, которую держат открытой.
+	// На странице подписки шаг оставлен прежним: туда заходят осознанно
+	// и ненадолго.
+	const URLTEST_POLL_MS = 30_000;
 
 	let liveActives = $state<Record<string, string>>({});
 
@@ -531,11 +537,10 @@
 				/* ignore — keep last known */
 			}
 		};
-		void tick();
-		const handle = setInterval(() => void tick(), URLTEST_POLL_MS);
+		const stop = startVisiblePoll(tick, URLTEST_POLL_MS);
 		return () => {
 			cancelled = true;
-			clearInterval(handle);
+			stop();
 		};
 	});
 

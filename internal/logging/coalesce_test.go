@@ -162,7 +162,9 @@ func TestServiceAppLog_SSETimestampMatchesRESTFormat(t *testing.T) {
 	defer s.Stop()
 	bus := events.NewBus()
 	s.SetEventBus(bus)
-	_, ch, unsub := bus.Subscribe()
+	// Клиентская подписка: она изображает открытую панель, а публикация
+	// log:entry теперь идёт только при живом зрителе.
+	_, ch, unsub := bus.SubscribeClient()
 	defer unsub()
 
 	s.AppLog(LevelWarn, GroupTunnel, SubConnectivity, "http-check", "awg10", "fail")
@@ -189,5 +191,133 @@ func TestServiceAppLog_SSETimestampMatchesRESTFormat(t *testing.T) {
 	}
 	if got[1].Repeats != 1 || got[1].LastSeen != wantLastSeen {
 		t.Fatalf("repeat event: repeats=%d lastSeen=%q, want 1/%q", got[1].Repeats, got[1].LastSeen, wantLastSeen)
+	}
+}
+
+// Публикация log:entry идёт ТОЛЬКО при открытой панели. Цена не в самой
+// отправке: событие строится с двумя форматированиями времени, а Publish идёт
+// веерно ко всем подписчикам шины, включая пять вечных внутренних, — пять
+// пробуждений горутин на строку журнала при нуле зрителей. Буфер при этом
+// наполняется всегда: страница журнала забирает пропущенное ручкой /logs.
+func TestAppLog_PublishesOnlyWhenWatched(t *testing.T) {
+	s := NewService(&mockSettings{enabled: true, maxAge: 2, logLevel: "info", appMaxEntries: 100, sbMaxEntries: 100})
+	defer s.Stop()
+	bus := events.NewBus()
+	s.SetEventBus(bus)
+
+	// Только ВНУТРЕННЯЯ подписка: зрителей нет.
+	_, ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	s.AppLog(LevelWarn, GroupTunnel, SubConnectivity, "http-check", "awg10", "fail")
+
+	select {
+	case ev := <-ch:
+		t.Fatalf("событие %q опубликовано при нуле открытых панелей", ev.Type)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// Буфер наполнен несмотря на отсутствие зрителей.
+	if entries, _ := s.GetLogs(BucketApp, "", "", "", time.Time{}, 10, 0); len(entries) != 1 {
+		t.Fatalf("записей в буфере %d, ожидалась 1: буфер наполняется всегда", len(entries))
+	}
+
+	// Появился зритель — публикация возобновляется.
+	_, clientCh, unsubClient := bus.SubscribeClient()
+	defer unsubClient()
+	s.AppLog(LevelWarn, GroupTunnel, SubConnectivity, "http-check", "awg11", "fail")
+
+	select {
+	case <-clientCh:
+	case <-time.After(time.Second):
+		t.Fatal("с открытой панелью событие не пришло")
+	}
+}
+
+// Отсев поставщика (Visible) и отсев записи (AppLog) обязаны совпадать на всех
+// уровнях. Разойдясь, они дадут худший исход: строку, отброшенную поставщиком
+// до разбора, но нужную пользователю, — и в журнале её просто не будет.
+func TestVisibleAgreesWithAppLog(t *testing.T) {
+	levels := []Level{LevelError, LevelWarn, LevelInfo, LevelFull, LevelDebug}
+	for _, configured := range levels {
+		s := NewService(&mockSettings{enabled: true, maxAge: 2, logLevel: string(configured),
+			appMaxEntries: 100, sbMaxEntries: 100})
+		for _, entry := range levels {
+			s.Clear(BucketApp)
+			s.AppLog(entry, GroupTunnel, SubConnectivity, "act", "tgt", "msg")
+			_, written := s.GetLogs(BucketApp, "", "", "", time.Time{}, 10, 0)
+
+			if got := s.Visible(entry); got != (written > 0) {
+				t.Errorf("порог %q, запись %q: Visible=%v, а записалось %d — проверки разошлись",
+					configured, entry, got, written)
+			}
+		}
+		s.Stop()
+	}
+}
+
+// Журнал выключен целиком — не пишем и не разрешаем поставщику готовить запись.
+func TestVisibleFalseWhenLoggingDisabled(t *testing.T) {
+	s := NewService(&mockSettings{enabled: false, maxAge: 2, logLevel: "debug",
+		appMaxEntries: 100, sbMaxEntries: 100})
+	defer s.Stop()
+
+	if s.Visible(LevelError) {
+		t.Error("Visible=true при выключенном журнале")
+	}
+	s.AppLog(LevelError, GroupTunnel, SubConnectivity, "act", "tgt", "msg")
+	if _, n := s.GetLogs(BucketApp, "", "", "", time.Time{}, 10, 0); n != 0 {
+		t.Errorf("записей %d при выключенном журнале", n)
+	}
+}
+
+// Хеш — только предфильтр: решение о сворачивании принимает сравнение полей.
+// Поле, учтённое в сравнении, но забытое в хеше, сделало бы предфильтр
+// бесполезным (всё отсеивалось бы); забытое в сравнении, но учтённое в хеше —
+// разъехалось бы со смыслом «идентичный повтор».
+func TestCoalesceKeyHash_CoversEveryComparedField(t *testing.T) {
+	base := LogEntry{
+		Level: string(LevelWarn), Group: GroupTunnel, Subgroup: SubConnectivity,
+		Action: "http-check", Target: "awg10", Message: "fail",
+	}
+	mutations := map[string]func(*LogEntry){
+		"Level":    func(e *LogEntry) { e.Level = string(LevelError) },
+		"Group":    func(e *LogEntry) { e.Group = GroupSystem },
+		"Subgroup": func(e *LogEntry) { e.Subgroup = "other" },
+		"Action":   func(e *LogEntry) { e.Action = "other" },
+		"Target":   func(e *LogEntry) { e.Target = "awg11" },
+		"Message":  func(e *LogEntry) { e.Message = "other" },
+	}
+	h := coalesceKeyHash(base)
+	for name, mutate := range mutations {
+		other := base
+		mutate(&other)
+		if coalesceKeyHash(other) == h {
+			t.Errorf("поле %s не участвует в хеше — предфильтр отсеет повтор, отличающийся только им", name)
+		}
+	}
+}
+
+// Разделитель между полями обязателен: без него ("ab","c") и ("a","bc") дали бы
+// один хеш, и предфильтр пропускал бы чужие записи на дорогое сравнение.
+func TestCoalesceKeyHash_FieldsAreDelimited(t *testing.T) {
+	a := LogEntry{Action: "ab", Target: "c"}
+	b := LogEntry{Action: "a", Target: "bc"}
+	if coalesceKeyHash(a) == coalesceKeyHash(b) {
+		t.Error("склейка полей без разделителя даёт одинаковый хеш")
+	}
+}
+
+// Запись, положенная через Add (минуя CoalesceOrAdd), обязана сворачиваться с
+// последующим повтором: хеш — инвариант буфера, а не одного входа.
+func TestCoalesce_EntryAddedDirectlyStillFolds(t *testing.T) {
+	lb := NewLogBuffer(BucketApp)
+	defer lb.Stop()
+
+	base := time.Now()
+	lb.Add(testEntry("fail", base))
+
+	if _, ok := lb.CoalesceOrAdd(testEntry("fail", base.Add(time.Second)), 5*time.Minute); !ok {
+		t.Error("повтор не свернулся в запись, положенную через Add")
 	}
 }

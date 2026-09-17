@@ -1,5 +1,6 @@
 /**
- * Cold-tier polling store for sing-box composite proxy groups.
+ * Polling store (5 с) for sing-box composite proxy groups. Шаг частый
+ * намеренно: выбранный член urltest меняет сам движок, событий об этом нет.
  * Drives runtime controls in the Outbounds sub-tab — selector member,
  * urltest member, latency display.
  *

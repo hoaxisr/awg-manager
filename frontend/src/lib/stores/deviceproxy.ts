@@ -1,11 +1,13 @@
 // Frontend polling stores for the device proxy feature:
-//   - config (30s poll): reflects persisted Config; SSE-invalidated by
+//   - config (без таймера): reflects persisted Config; SSE-invalidated by
 //     resource:invalidated{resource:"deviceproxy.config"}.
-//   - outbounds (120s poll): available outbound tags for the dropdowns.
-//   - runtime (5s poll): live selector.now + persisted default for
+//   - outbounds (120 с): available outbound tags for the dropdowns — своего
+//     публикатора у каталога нет.
+//   - runtime (30 с): live selector.now + persisted default for
 //     the "Активный туннель" card; SSE-invalidated by
-//     resource:invalidated{resource:"deviceproxy.runtime"}.
-//   - instances (30s poll): list of all proxy instances for multi-instance UI.
+//     resource:invalidated{resource:"deviceproxy.runtime"}. Таймер сохранён:
+//     падение sing-box публикует singbox.status, но не deviceproxy.runtime.
+//   - instances (без таймера): list of all proxy instances for multi-instance UI.
 import { writable } from 'svelte/store';
 import { api } from '$lib/api/client';
 import { createPollingStore, type PollingStore } from './polling';

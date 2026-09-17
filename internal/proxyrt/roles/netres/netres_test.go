@@ -20,9 +20,28 @@ type fakeIPT struct {
 	// кавыченная зафиксирована в этом же репозитории
 	// (internal/singbox/router/iptables.go:1328 и тест рядом с ним).
 	quoteComment bool
+	// expandProtoMatch — сборка iptables, чей `-S` дописывает неявный модуль
+	// матча: `-p udp --dport 53` печатается как `-p udp -m udp --dport 53`.
+	// Форма реальна и именно она взводит мину F347.
+	expandProtoMatch bool
 	// calls — счётчик обращений к iptables: тесты, где важна ЦЕНА прохода
 	// (лишний exec на роутере — дефект, а не мелочь), считают их.
 	calls int
+	// ops — журнал операций «op table/chain». Счёта правил недостаточно:
+	// `-F` смывает ровно то, что Apply тут же вставляет обратно, поэтому
+	// проверка по количеству не отличает флаш от его отсутствия и тест на
+	// идемпотентность получается холостым (найдено ревью 17.09).
+	ops []string
+}
+
+// did сообщает, была ли операция op применена к table/chain хоть раз.
+func (f *fakeIPT) did(op, tableChain string) bool {
+	for _, o := range f.ops {
+		if o == op+" "+tableChain {
+			return true
+		}
+	}
+	return false
 }
 
 func newFakeIPT() *fakeIPT {
@@ -36,6 +55,17 @@ func newFakeIPT() *fakeIPT {
 type iptNotFound struct{}
 
 func (iptNotFound) Error() string { return "iptables: no chain/target/match by that name" }
+
+// iptNoRule — ответ `-C`, когда правило не найдено. ПРОШИВКА ОТВЕЧАЕТ ТАК ЖЕ И
+// НА ОТСУТСТВУЮЩУЮ ЦЕПОЧКУ — проверено пробой на стенде 17.09: оба случая дают
+// дословно «Bad rule (does a matching rule exist in that chain?)». Поэтому фейк
+// обязан быть таким же неразличающим: иначе тест обопрётся на признак, которого
+// на железе нет, и снова окажется холостым.
+type iptNoRule struct{}
+
+func (iptNoRule) Error() string {
+	return "iptables: Bad rule (does a matching rule exist in that chain?)"
+}
 
 // iptTransient — отказ, из которого НЕ следует «правила нет»: занятый
 // xtables-lock, перезапись таблиц движком ndm, не запустившийся exec.
@@ -52,8 +82,16 @@ func (f *fakeIPT) Run(_ context.Context, args ...string) error {
 	op, chain := args[0], args[1]
 	rest := args[2:]
 	key := table + "/" + chain
+	f.ops = append(f.ops, op+" "+key)
 	switch op {
 	case "-N":
+		// Настоящий iptables на существующей цепочке НЕ трогает её и
+		// возвращает ошибку «Chain already exists». Прежний фейк обнулял
+		// цепочку, то есть вёл себя как `-F`, — и любой тест на повторный
+		// Apply получался холостым: задвоение правил было не видно.
+		if _, ok := f.chains[key]; ok {
+			return iptNotFound{}
+		}
 		f.chains[key] = []string{}
 		return nil
 	case "-F":
@@ -69,12 +107,15 @@ func (f *fakeIPT) Run(_ context.Context, args ...string) error {
 		if f.failCheck {
 			return iptTransient{}
 		}
-		for _, r := range f.chains[key] {
-			if r == rule {
-				return nil
+		// Один и тот же ответ на «нет правила» и «нет цепочки» — как у прошивки.
+		if _, ok := f.chains[key]; ok {
+			for _, r := range f.chains[key] {
+				if r == rule {
+					return nil
+				}
 			}
 		}
-		return iptNotFound{}
+		return iptNoRule{}
 	case "-A":
 		f.chains[key] = append(f.chains[key], rule)
 		return nil
@@ -115,10 +156,18 @@ func (f *fakeIPT) Output(_ context.Context, args ...string) (string, error) {
 		return "", iptNotFound{}
 	}
 	key := args[1] + "/" + args[3]
+	// `-S` несуществующей цепочки на железе выходит с ошибкой — именно этим
+	// признаком код и отличает «цепочки нет» от «правила нет».
+	if _, ok := f.chains[key]; !ok {
+		return "", iptNotFound{}
+	}
 	var b strings.Builder
 	for _, r := range f.chains[key] {
 		if f.quoteComment {
 			r = quoteCommentValue(r)
+		}
+		if f.expandProtoMatch {
+			r = expandProtoMatchTokens(r)
 		}
 		b.WriteString("-A " + args[3] + " " + r + "\n")
 	}
@@ -306,6 +355,69 @@ func TestRuleSetDoomRemovesRuleWithoutDesired(t *testing.T) {
 	}
 	if d := rs.RecheckAfter(); d != 0 {
 		t.Errorf("ресурс остался волатильным: RecheckAfter=%v", d)
+	}
+}
+
+// Легаси-правила, которых на ЭТОМ роутере не было ни разу: их Doom кладёт в
+// ведомость каждый проход, а sweep — единственный, кто ведомость чистит, —
+// запускается лишь при stale != 0. Раз правил нет, stale вечно 0, и ведомость
+// не пустела никогда: `iptables -C` на запись каждый раунд до конца жизни
+// процесса, плюс RecheckAfter держал 15 с при пустом желаемом (F349 §2).
+func TestRuleSetDoomOfAbsentRuleStopsProbing(t *testing.T) {
+	ipt := newFakeIPT()
+	// Цепочка пуста: правил прежней версии тут не заводили.
+	ipt.chains["filter/FORWARD"] = []string{}
+	rs := NewRuleSet("forward_rules", ipt)
+	doom := func() {
+		for _, r := range forwardGroups([]string{"opkgtun19"})[0].Rules {
+			rs.Doom(r)
+		}
+	}
+	doom()
+
+	if _, err := rs.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.doomed) != 0 {
+		t.Fatalf("ведомость не опустела на отсутствующих правилах: %v", rs.doomed)
+	}
+
+	// Роль объявляет Doom каждый проход — воскрешать снятое он не имеет права.
+	doom()
+	if len(rs.doomed) != 0 {
+		t.Fatalf("отсутствующее правило воскрешено: %v", rs.doomed)
+	}
+	before := ipt.calls
+	if _, err := rs.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if ipt.calls != before {
+		t.Errorf("следующий проход всё ещё ходит в iptables: %d вызовов", ipt.calls-before)
+	}
+	if d := rs.RecheckAfter(); d != 0 {
+		t.Errorf("ресурс остался волатильным при пустом желаемом: RecheckAfter=%v", d)
+	}
+}
+
+// Защёлку ставит ТОЛЬКО «правила нет». Отказ, из которого этого не следует
+// (занятый xtables-lock, перезапись таблиц движком ndm), обязан оставить
+// правило в ведомости: иначе оно потеряно навсегда — разность желаемых его
+// больше не даст, метки оно не несёт.
+func TestRuleSetDoomKeepsLedgerOnTransientError(t *testing.T) {
+	ipt := newFakeIPT()
+	ipt.chains["filter/FORWARD"] = []string{}
+	ipt.failCheck = true
+	rs := NewRuleSet("forward_rules", ipt)
+	for _, r := range forwardGroups([]string{"opkgtun19"})[0].Rules {
+		rs.Doom(r)
+	}
+	want := len(rs.doomed)
+
+	if _, err := rs.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.doomed) != want {
+		t.Errorf("транзиентный отказ выбросил правила из ведомости: было %d, стало %d", want, len(rs.doomed))
 	}
 }
 
@@ -801,5 +913,254 @@ func TestInputPortHealsStalePortAfterDaemonRestart(t *testing.T) {
 	}
 	if !fw.has(56100, "udp") {
 		t.Fatal("новый порт не открыт")
+	}
+}
+
+// В несуществующую цепочку правило не вставить: и `-C`, и `-I` вернут ошибку.
+// После перезаписи таблиц движком NDM собственной цепочки может не быть вовсе,
+// поэтому хук обязан создать её ПЕРЕД вставкой — иначе clamp молча не
+// восстановится, а хук будет выглядеть отработавшим.
+func TestHookScriptCreatesCustomChainBeforeInserting(t *testing.T) {
+	script := HookScript([]Group{MSSGroup([]string{"10.70.0.0/16"})})
+
+	create := "run -t mangle -N " + MSSChain
+	if !strings.Contains(script, create) {
+		t.Fatalf("хук не создаёт цепочку %s:\n%s", MSSChain, script)
+	}
+
+	firstRule := strings.Index(script, "-C "+MSSChain)
+	if firstRule < 0 {
+		t.Fatalf("в хуке нет правил цепочки %s:\n%s", MSSChain, script)
+	}
+	if idx := strings.Index(script, create); idx > firstRule {
+		t.Errorf("создание цепочки идёт ПОСЛЕ вставки правил: %d против %d", idx, firstRule)
+	}
+}
+
+// Встроенные цепочки создавать не надо — `-N INPUT` вернул бы ошибку и мусорил
+// бы в скрипте.
+func TestHookScriptDoesNotCreateBuiltinChains(t *testing.T) {
+	script := HookScript(forwardGroups([]string{"opkgtun19"}))
+	for _, chain := range []string{"INPUT", "OUTPUT", "FORWARD", "PREROUTING", "POSTROUTING"} {
+		if strings.Contains(script, "-N "+chain) {
+			t.Errorf("хук создаёт встроенную цепочку %s:\n%s", chain, script)
+		}
+	}
+}
+
+// Форма перехода одна на ресурс и на хук. Разойдясь, они дали бы хуку правило,
+// которого ресурс не узнаёт: Observe считал бы clamp несобранным вечно.
+func TestMSSJumpIsSingleSource(t *testing.T) {
+	m := NewMSSClamp("mss", nil)
+	if got, want := m.jump(), MSSJump(); got.Key() != want.Key() {
+		t.Errorf("переход ресурса %q != переход хука %q", got.Key(), want.Key())
+	}
+}
+
+// Группа для хука несёт и правила цепочки, и переход в неё: без перехода
+// восстановленная цепочка не участвует в обработке.
+func TestMSSGroupCarriesRulesAndJump(t *testing.T) {
+	g := MSSGroup([]string{"10.70.0.0/16"})
+	if len(g.Rules) != len(MSSRules([]string{"10.70.0.0/16"}))+1 {
+		t.Fatalf("правил в группе %d — переход потерян", len(g.Rules))
+	}
+	if last := g.Rules[len(g.Rules)-1]; last.Key() != MSSJump().Key() {
+		t.Errorf("последнее правило %q, ожидался переход %q", last.Key(), MSSJump().Key())
+	}
+	if g := MSSGroup(nil); len(g.Rules) != 0 {
+		t.Errorf("пустой список CIDR дал %d правил", len(g.Rules))
+	}
+}
+
+// Apply обязан быть идемпотентным: ту же цепочку теперь восстанавливает и
+// netfilter.d-хук (F349 §1), а NDM запускает его в произвольный момент.
+// Прежняя форма «флаш + безусловная вставка» при попадании хука между `-F` и
+// вставками ставила правила дважды, и Observe этого не видел бы — `-C` на дубле
+// проходит.
+func TestMSSClampApplyIsIdempotent(t *testing.T) {
+	ipt := newFakeIPT()
+	m := NewMSSClamp("mss", ipt)
+	m.SetDesired([]string{"10.70.0.0/16"})
+
+	step := proxyrt.Step{Resource: "mss", Op: "ensure"}
+	if err := m.Apply(context.Background(), step); err != nil {
+		t.Fatalf("первый Apply: %v", err)
+	}
+	after := append([]string(nil), ipt.chains["mangle/"+MSSChain]...)
+	jumps := append([]string(nil), ipt.chains["mangle/FORWARD"]...)
+
+	// Второй прогон — ничего не должно задвоиться.
+	if err := m.Apply(context.Background(), step); err != nil {
+		t.Fatalf("второй Apply: %v", err)
+	}
+	if got := len(ipt.chains["mangle/"+MSSChain]); got != len(after) {
+		t.Errorf("правил в цепочке %d против %d после первого прогона — задвоились", got, len(after))
+	}
+	if got := len(ipt.chains["mangle/FORWARD"]); got != len(jumps) {
+		t.Errorf("переходов %d против %d — задвоились", got, len(jumps))
+	}
+}
+
+// Apply не должен флашить цепочку и снимать переход: между `-F` и вставками, а
+// равно между `-D` и `-I`, в ту же цепочку пишет netfilter.d-хук — попав в это
+// окно, он оставляет дубль, которого Observe не увидит (`-C` на дубле проходит).
+//
+// Проверяем ЖУРНАЛОМ ОПЕРАЦИЙ, а не числом правил. Счёт правил тут бесполезен:
+// `-F` смывает ровно то, что Apply тут же вставляет обратно, поэтому итог
+// совпадает и со старой, неидемпотентной формой — прежняя редакция этого теста
+// оставалась зелёной под мутацией «вернуть -F и безусловные вставки» (найдено
+// ревью 17.09).
+func TestMSSClampApplyNeverFlushesOrDeletes(t *testing.T) {
+	ipt := newFakeIPT()
+	m := NewMSSClamp("mss", ipt)
+	m.SetDesired([]string{"10.70.0.0/16"})
+
+	// Изображаем правило, которое поставил хук за мгновение до нас.
+	hookRule := MSSRules([]string{"10.70.0.0/16"})[0]
+	_ = ipt.Run(context.Background(), "-t", "mangle", "-N", MSSChain)
+	_ = ipt.Run(context.Background(), hookRule.InsertArgs()...)
+	ipt.ops = nil
+
+	if err := m.Apply(context.Background(), proxyrt.Step{Resource: "mss", Op: "ensure"}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	for _, bad := range []struct{ op, chain string }{
+		{"-F", "mangle/" + MSSChain},
+		{"-D", "mangle/" + MSSChain},
+		{"-D", "mangle/FORWARD"},
+	} {
+		if ipt.did(bad.op, bad.chain) {
+			t.Errorf("Apply выполнил %s %s — открыто окно для дубля от хука\nжурнал: %v",
+				bad.op, bad.chain, ipt.ops)
+		}
+	}
+	want := len(MSSRules([]string{"10.70.0.0/16"}))
+	if got := len(ipt.chains["mangle/"+MSSChain]); got != want {
+		t.Errorf("правил %d, ожидалось %d", got, want)
+	}
+}
+
+// Транзиентный отказ `-C` — это НЕ «правила нет». Прочитав его как отсутствие,
+// Apply вставил бы дубль, а Observe его не увидел бы: `-C` на дубле проходит.
+// Дубль дожил бы до следующей перезаписи таблиц движком ndm.
+func TestMSSClampApplyDoesNotInsertOnTransientCheckError(t *testing.T) {
+	ipt := newFakeIPT()
+	m := NewMSSClamp("mss", ipt)
+	m.SetDesired([]string{"10.70.0.0/16"})
+	step := proxyrt.Step{Resource: "mss", Op: "ensure"}
+
+	if err := m.Apply(context.Background(), step); err != nil {
+		t.Fatalf("первый Apply: %v", err)
+	}
+	rules := len(ipt.chains["mangle/"+MSSChain])
+	jumps := len(ipt.chains["mangle/FORWARD"])
+
+	// Теперь `-C` отвечает отказом, из которого «правила нет» не следует.
+	ipt.failCheck = true
+	if err := m.Apply(context.Background(), step); err == nil {
+		t.Error("транзиентный отказ проглочен: раунд отчитался успехом")
+	}
+	if got := len(ipt.chains["mangle/"+MSSChain]); got != rules {
+		t.Errorf("правил %d против %d — вставили поверх непрочитанного состояния", got, rules)
+	}
+	if got := len(ipt.chains["mangle/FORWARD"]); got != jumps {
+		t.Errorf("переходов %d против %d — задвоили переход", got, jumps)
+	}
+}
+
+// expandProtoMatchTokens дописывает `-m <proto>` сразу после `-p <proto>` —
+// так печатает `iptables -S`, подгружая модуль матча самостоятельно.
+func expandProtoMatchTokens(rule string) string {
+	fields := strings.Fields(rule)
+	out := make([]string, 0, len(fields)+2)
+	for i := 0; i < len(fields); i++ {
+		out = append(out, fields[i])
+		if fields[i] == "-p" && i+1 < len(fields) {
+			out = append(out, fields[i+1], "-m", fields[i+1])
+			i++
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// Мина F347: помеченное правило с `-p` живо и желаемо, но `iptables -S` печатает
+// его с неявным `-m <proto>`. Сравнение по тексту объявляло бы его сиротой и
+// СНОСИЛО каждый раунд, а ensure ставил бы заново — churn на роутере.
+func TestMarkedOrphansSurvivesImplicitProtoMatch(t *testing.T) {
+	desired := Rule{
+		Table: "filter", Chain: "INPUT",
+		Spec: []string{"-p", "udp", "--dport", "53", "-m", "comment", "--comment", "AWGM_TEST", "-j", "ACCEPT"},
+	}
+	ipt := newFakeIPT()
+	ipt.expandProtoMatch = true
+	if err := ipt.Run(context.Background(), desired.InsertArgs()...); err != nil {
+		t.Fatal(err)
+	}
+
+	rs := NewRuleSet("proto_rules", ipt)
+	rs.AdoptMarked("filter", "INPUT", "AWGM_TEST")
+	rs.SetDesired(StaticGroups([]Group{{Rules: []Rule{desired}}}))
+
+	if _, err := rs.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	orphans, err := rs.markedOrphans(context.Background(), map[string]bool{desired.Key(): true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orphans) != 0 {
+		t.Fatalf("живое желаемое правило объявлено сиротой и будет снесено: %v", orphans)
+	}
+}
+
+// Одиночный адрес: iptables канонизирует его в /32, мы ставим голым.
+func TestRuleKeyIgnoresHostPrefixLength(t *testing.T) {
+	bare := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "10.0.0.1", "-j", "MASQUERADE"}}
+	slash := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "10.0.0.1/32", "-j", "MASQUERADE"}}
+	if bare.Key() != slash.Key() {
+		t.Errorf("формы одного адреса дали разные ключи:\n%s\n%s", bare.Key(), slash.Key())
+	}
+	// База ТА ЖЕ, отличается только длина префикса: если канонизация срежет
+	// любой `/N`, а не только хостовый, подсеть сольётся с одиночным адресом —
+	// и снос «сироты» унесёт живое правило. Ровно та ошибка, от которой
+	// лечимся.
+	host := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "10.70.0.0", "-j", "MASQUERADE"}}
+	net := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "10.70.0.0/16", "-j", "MASQUERADE"}}
+	if net.Key() == host.Key() {
+		t.Error("подсеть /16 и одиночный адрес слились в один ключ")
+	}
+
+	// Длина хостового префикса зависит от семейства: /32 у v4, /128 у v6.
+	// `2001:db8::/32` — законная СЕТЬ; срезав /32 вслепую, мы слили бы её с
+	// хостовым адресом, и снос «сироты» унёс бы живое правило.
+	v6host := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "2001:db8::", "-j", "MASQUERADE"}}
+	v6net := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "2001:db8::/32", "-j", "MASQUERADE"}}
+	if v6net.Key() == v6host.Key() {
+		t.Error("сеть v6 /32 слилась с хостовым адресом")
+	}
+	v6full := Rule{Table: "nat", Chain: "POSTROUTING", Spec: []string{"-s", "2001:db8::/128", "-j", "MASQUERADE"}}
+	if v6full.Key() != v6host.Key() {
+		t.Error("формы одного адреса v6 дали разные ключи")
+	}
+}
+
+// «Цепочки нет» — не «правила нет». Цепочку мог только что снести движок ndm,
+// переписывая таблицы; защёлкнув по такому ответу, мы потеряли бы легаси-правило
+// навсегда — Doom для защёлкнутого ключа no-op до конца жизни процесса.
+func TestRuleSetDoomKeepsLedgerWhenChainMissing(t *testing.T) {
+	ipt := newFakeIPT()
+	delete(ipt.chains, "filter/FORWARD") // цепочки нет вовсе
+	rs := NewRuleSet("forward_rules", ipt)
+	for _, r := range forwardGroups([]string{"opkgtun19"})[0].Rules {
+		rs.Doom(r)
+	}
+	want := len(rs.doomed)
+
+	if _, err := rs.Observe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.doomed) != want {
+		t.Errorf("отсутствие ЦЕПОЧКИ выбросило правила из ведомости: было %d, стало %d", want, len(rs.doomed))
 	}
 }

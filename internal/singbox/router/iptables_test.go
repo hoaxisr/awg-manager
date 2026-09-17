@@ -1018,110 +1018,6 @@ func TestSplitLines(t *testing.T) {
 		}
 	}
 }
-
-func TestIsInstalled_ChecksBothChains(t *testing.T) {
-	// Both chains present → true.
-	fe := &fakeExec{err: nil}
-	it := newFakeIPTables(fe)
-	if !it.IsInstalled(context.Background()) {
-		t.Error("expected true when both chain checks return nil")
-	}
-
-	// Mangle chain missing → false, nat chain not consulted.
-	fe2 := &fakeExec{err: errors.New("no such chain")}
-	fe2.calls = nil
-	it2 := newFakeIPTables(fe2)
-	if it2.IsInstalled(context.Background()) {
-		t.Error("expected false when mangle chain lookup fails")
-	}
-	foundMangle := false
-	for _, c := range fe2.calls {
-		if c.kind == "iptables" && len(c.args) >= 4 && c.args[0] == "-t" && c.args[1] == "mangle" && c.args[2] == "-nL" && c.args[3] == ChainName {
-			foundMangle = true
-		}
-	}
-	if !foundMangle {
-		t.Errorf("expected mangle chain check call, got: %+v", fe2.calls)
-	}
-
-	// Nat chain missing → false. Mangle must succeed and nat must fail;
-	// IsInstalled short-circuits on the first failure.
-	var natChecked bool
-	it3 := &IPTables{
-		runIPTables: func(_ context.Context, args ...string) error {
-			if len(args) >= 4 && args[0] == "-t" && args[1] == "nat" && args[2] == "-nL" && args[3] == RedirectChain {
-				natChecked = true
-				return errors.New("no such chain")
-			}
-			return nil // mangle and everything else OK
-		},
-	}
-	if it3.IsInstalled(context.Background()) {
-		t.Error("expected false when nat chain lookup fails")
-	}
-	if !natChecked {
-		t.Error("expected nat chain to be consulted")
-	}
-}
-
-func TestHasAnyInstalled_MangleOnly_ReturnsTrue(t *testing.T) {
-	it := &IPTables{
-		runIPTables: func(_ context.Context, args ...string) error {
-			if len(args) >= 4 &&
-				args[0] == "-t" &&
-				args[1] == "mangle" &&
-				args[2] == "-nL" &&
-				args[3] == ChainName {
-				return nil
-			}
-			if len(args) >= 4 &&
-				args[0] == "-t" &&
-				args[1] == "nat" &&
-				args[2] == "-nL" &&
-				args[3] == RedirectChain {
-				return errors.New("no such chain")
-			}
-			return errors.New("unexpected call")
-		},
-	}
-	if !it.HasAnyInstalled(context.Background()) {
-		t.Error("expected true when only mangle chain exists")
-	}
-}
-
-func TestHasAnyInstalled_NatOnly_ReturnsTrue(t *testing.T) {
-	it := &IPTables{
-		runIPTables: func(_ context.Context, args ...string) error {
-			if len(args) >= 4 &&
-				args[0] == "-t" &&
-				args[1] == "mangle" &&
-				args[2] == "-nL" &&
-				args[3] == ChainName {
-				return errors.New("no such chain")
-			}
-			if len(args) >= 4 &&
-				args[0] == "-t" &&
-				args[1] == "nat" &&
-				args[2] == "-nL" &&
-				args[3] == RedirectChain {
-				return nil
-			}
-			return errors.New("unexpected call")
-		},
-	}
-	if !it.HasAnyInstalled(context.Background()) {
-		t.Error("expected true when only nat chain exists")
-	}
-}
-
-func TestHasAnyInstalled_None_ReturnsFalse(t *testing.T) {
-	fe := &fakeExec{err: errors.New("no such chain")}
-	it := newFakeIPTables(fe)
-	if it.HasAnyInstalled(context.Background()) {
-		t.Error("expected false when no chains exist")
-	}
-}
-
 func TestProbe(t *testing.T) {
 	// Builds an IPTables whose `-S <table>` output declares the chain and/or
 	// emits its PREROUTING jump, per table. err short-circuits to the error path.
@@ -2305,7 +2201,8 @@ func TestProbeAll_BlackholeFromSameDump(t *testing.T) {
 				}
 				return out, nil
 			}}
-			installed, jumps, blackhole, err := it.probeAll(context.Background())
+			live, err := it.probeAll(context.Background())
+			installed, jumps, blackhole := live.installed, live.jumps, live.blackhole
 			if err != nil {
 				t.Fatalf("probeAll: %v", err)
 			}
@@ -2374,7 +2271,8 @@ func TestProbeAll_QueryErrorReadsUnknown(t *testing.T) {
 					"-N " + BlackholeChain + "\n" +
 					"-A PREROUTING -m conntrack ! --ctstate INVALID -j " + BlackholeChain + "\n", nil
 			}}
-			installed, jumps, blackhole, err := it.probeAll(context.Background())
+			live, err := it.probeAll(context.Background())
+			installed, jumps, blackhole := live.installed, live.jumps, live.blackhole
 			if err == nil {
 				t.Fatal("ошибка дампа обязана дойти до вызывающего")
 			}
@@ -2394,10 +2292,12 @@ func TestProbeAll_InstalledNeedsBothTables(t *testing.T) {
 		name                  string
 		mangleChain, natChain bool
 		wantInstalled         bool
+		wantAny               bool
 	}{
-		{"обе цепочки", true, true, true},
-		{"только mangle", true, false, false},
-		{"только nat", false, true, false},
+		{"обе цепочки", true, true, true, true},
+		{"только mangle", true, false, false, true},
+		{"только nat", false, true, false, true},
+		{"ни одной", false, false, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			it := &IPTables{runIPTablesOut: func(_ context.Context, args ...string) (string, error) {
@@ -2413,14 +2313,19 @@ func TestProbeAll_InstalledNeedsBothTables(t *testing.T) {
 				}
 				return out, nil
 			}}
-			installed, jumps, _, err := it.probeAll(context.Background())
+			live, err := it.probeAll(context.Background())
 			if err != nil {
 				t.Fatalf("probeAll: %v", err)
 			}
-			if installed != tc.wantInstalled {
-				t.Errorf("installed=%v, want %v", installed, tc.wantInstalled)
+			if live.installed != tc.wantInstalled {
+				t.Errorf("installed=%v, want %v", live.installed, tc.wantInstalled)
 			}
-			if jumps && !tc.wantInstalled {
+			// anyChain — путь уборки: частичная установка обязана попасть в
+			// Uninstall, иначе остатки переживут выключение роутера.
+			if live.anyChain != tc.wantAny {
+				t.Errorf("anyChain=%v, want %v", live.anyChain, tc.wantAny)
+			}
+			if live.jumps && !tc.wantInstalled {
 				t.Error("jumps не может быть true при installed=false")
 			}
 		})

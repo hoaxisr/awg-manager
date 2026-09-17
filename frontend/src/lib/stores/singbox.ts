@@ -2,9 +2,12 @@
  * singbox — split polling stores + stream writables.
  *
  * Split rationale (Task 8 of state-sync redesign):
- *   - singboxStatus  — cold tier (30s): install/running flags rarely change.
- *   - singboxTunnels — hot tier (5s): list changes on CRUD + connectivity
- *     enrichment refreshes via the Clash API on every fetch.
+ *   - singboxStatus  — install/running flags; таймера нет, о смене живости
+ *     движка сообщают выход процесса и сторож (ResourceSingboxStatus).
+ *   - singboxTunnels — список меняется на CRUD плюс обогащение связностью
+ *     через Clash API на каждую выборку; таймера тоже нет. Живость движка
+ *     снимок несёт своим `running`, поэтому те же две точки публикуют и
+ *     ResourceSingboxTunnels — иначе карточки застревали бы в «работает».
  *
  * SSE streams remain streams (writables fed by +layout handlers):
  *   - singbox:traffic — per-tunnel byte counters.
@@ -20,7 +23,7 @@ import { registerStore } from './storeRegistry';
 import type { SingboxStatus, SingboxTunnel, SingboxTraffic } from '$lib/types';
 
 // ─────────────────────────────────────────────
-// Cold tier: sing-box install/run status (30s)
+// Статус установки и работы sing-box — только по событию
 // ─────────────────────────────────────────────
 async function fetchStatus(): Promise<SingboxStatus> {
 	return api.singboxGetStatus();
@@ -34,7 +37,7 @@ export const singboxStatus: PollingStore<SingboxStatus> = createPollingStore<Sin
 registerStore('singbox.status', singboxStatus);
 
 // ─────────────────────────────────────────────
-// Hot tier: sing-box tunnels list (5s)
+// Список туннелей sing-box — только по событию
 // ─────────────────────────────────────────────
 async function fetchTunnels(): Promise<SingboxTunnel[]> {
 	return api.singboxListTunnels();

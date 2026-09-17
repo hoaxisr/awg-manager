@@ -2,8 +2,6 @@ package events_test
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,44 +20,17 @@ import (
 func TestSubscribeClient_OnlySSEHandler(t *testing.T) {
 	const allowed = "internal/api/events.go"
 
-	root := repoRoot(t)
 	var offenders []string
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(root, path)
-		if info.IsDir() {
-			switch info.Name() {
-			case "vendor", "node_modules", ".git":
-				return filepath.SkipDir
-			}
-			switch rel {
-			case "docs", "frontend", "build", ".claude":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		if strings.HasPrefix(rel, "internal/events/") || rel == allowed {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
+	walkGoFiles(t, func(rel string, data []byte) {
+		if rel == allowed {
+			return
 		}
 		for i, line := range strings.Split(string(data), "\n") {
 			if strings.Contains(line, "SubscribeClient()") {
 				offenders = append(offenders, fmt.Sprintf("%s:%d", rel, i+1))
 			}
 		}
-		return nil
 	})
-	if err != nil {
-		t.Fatalf("обход дерева: %v", err)
-	}
 	for _, o := range offenders {
 		t.Errorf("%s — SubscribeClient() берёт только %s; внутреннему потребителю нужен Subscribe(), иначе ClientCount перестанет означать «кто-то смотрит»", o, allowed)
 	}
@@ -89,5 +60,34 @@ func TestClientCount_IgnoresInternalSubscribers(t *testing.T) {
 	unsubInternal()
 	if got := b.SubscriberCount(); got != 0 {
 		t.Fatalf("SubscriberCount=%d после всех отписок, ожидался 0", got)
+	}
+}
+
+// SubscriberCount считает ВСЕХ подписчиков, включая пятерых внутренних, живущих
+// всё время работы процесса. Как ответ на вопрос «смотрит ли кто-нибудь» он
+// всегда «да» — ровно так гейт поллера метрик молча не работал (F340), выглядя
+// при чтении кода исправным.
+//
+// Шесть фоновых производителей теперь выводят этот ответ самостоятельно
+// (F351). Сводить их в общий хелпер не стали: четверо гасят не публикацию, а
+// саму работу, и в шину это не уносится. Вместо абстракции — сторож ровно на
+// тот способ, которым ошибка уже случалась.
+func TestSubscriberCount_NotUsedOutsideEvents(t *testing.T) {
+	var offenders []string
+	walkGoFiles(t, func(rel string, data []byte) {
+		for i, line := range strings.Split(string(data), "\n") {
+			// Комментарии пропускаем: сторож про ВЫЗОВЫ, а объяснение, почему
+			// этот счётчик не годится, как раз и должно упоминать его по имени.
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
+				continue
+			}
+			if strings.Contains(line, "SubscriberCount()") {
+				offenders = append(offenders, fmt.Sprintf("%s:%d", rel, i+1))
+			}
+		}
+	})
+	for _, o := range offenders {
+		t.Errorf("%s — SubscriberCount() считает и внутренних подписчиков; "+
+			"для вопроса «открыта ли панель» нужен ClientCount()", o)
 	}
 }

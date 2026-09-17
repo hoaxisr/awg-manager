@@ -142,9 +142,39 @@ func (r *RuleSet) Observe(ctx context.Context) (proxyrt.Observation, error) {
 		}
 	}
 	stale := 0
-	for _, rule := range r.doomed {
-		if r.ipt.Run(ctx, rule.CheckArgs()...) == nil {
+	for key, rule := range r.doomed {
+		err := r.ipt.Run(ctx, rule.CheckArgs()...)
+		if err == nil {
 			stale++
+			continue
+		}
+		// Правила в ядре НЕТ — сносить нечего, снос доведён. Без этой защёлки
+		// ведомость не пустела никогда: Doom зовётся из декларации роли каждый
+		// проход, а sweep, который один и чистит ведомость, запускается только
+		// при stale != 0. На роутере, где легаси-правила не заводились ни разу,
+		// stale вечно 0 → `iptables -C` на каждую запись каждый раунд до конца
+		// жизни процесса, и RecheckAfter держал ruleRecheck из-за непустой
+		// ведомости даже при пустом желаемом.
+		//
+		// Защёлкиваем, только если правила нет И ЦЕПОЧКА ПРИ ЭТОМ ЕСТЬ.
+		//
+		// Цепочку могла только что снести перезапись таблиц движком ndm — и
+		// тогда легаси-правило, восстановленное потом хуком прежней версии, не
+		// было бы сметено уже никогда: Doom для защёлкнутого ключа — no-op до
+		// конца жизни процесса.
+		//
+		// Отличить эти случаи ПО ТЕКСТУ ошибки нельзя: на прошивке стенда
+		// (5.01, iptables из entware) `-C` отвечает одинаково и на «нет
+		// правила», и на «нет цепочки» — дословно «Bad rule (does a matching
+		// rule exist in that chain?)». Проверено пробой на железе 17.09.
+		// Поэтому признак берём НАБЛЮДЕНИЕМ: `-S <chain>` на существующей
+		// цепочке успешен, на отсутствующей выходит с ошибкой.
+		//
+		// Цена — один лишний `-S` на запись ведомости, и только в тот раунд,
+		// когда защёлка ставится: дальше ведомость пуста и проверять нечего.
+		if ruleAbsent(err) && r.chainExists(ctx, rule.table(), rule.Chain) {
+			delete(r.doomed, key)
+			r.reaped[key] = true
 		}
 	}
 	// Усыновление-по-метке (I-1): помеченные правила прежних запусков демона
@@ -313,6 +343,14 @@ func ruleAbsent(err error) bool {
 		strings.Contains(msg, "no chain/target/match by that name")
 }
 
+// chainExists — есть ли цепочка, проверено НАБЛЮДЕНИЕМ. Текст ошибки `-C` для
+// этого не годится (см. защёлку в Observe): прошивка отвечает одинаково и на
+// «нет правила», и на «нет цепочки».
+func (r *RuleSet) chainExists(ctx context.Context, table, chain string) bool {
+	_, err := r.ipt.Output(ctx, "-t", table, "-S", chain)
+	return err == nil
+}
+
 func (r *RuleSet) RecheckAfter() time.Duration {
 	if len(r.last) == 0 && len(r.doomed) == 0 {
 		return 0
@@ -340,9 +378,7 @@ func (m *MSSClamp) SetDesired(cidrs []string) { m.cidrs = cidrs }
 
 func (m *MSSClamp) ID() proxyrt.ResourceID { return m.id }
 
-func (m *MSSClamp) jump() Rule {
-	return Rule{Table: "mangle", Chain: "FORWARD", Pos: 1, Spec: []string{"-j", MSSChain}}
-}
+func (m *MSSClamp) jump() Rule { return MSSJump() }
 
 func (m *MSSClamp) Observe(ctx context.Context) (proxyrt.Observation, error) {
 	if len(m.cidrs) == 0 {
@@ -372,19 +408,41 @@ func (m *MSSClamp) Apply(ctx context.Context, s proxyrt.Step) error {
 		return fmt.Errorf("неизвестный шаг %q", s.Op)
 	}
 	_ = m.ipt.Run(ctx, "-t", "mangle", "-N", MSSChain)
-	_ = m.ipt.Run(ctx, "-t", "mangle", "-F", MSSChain)
+	// Сверка перед вставкой вместо «флаш + безусловная вставка».
+	//
+	// Флаш опасен с тех пор, как эту же цепочку восстанавливает netfilter.d-хук
+	// (F349 §1): NDM запускает его в произвольный момент, и попади он между
+	// нашим `-F` и нашими вставками — правила встали бы дважды. Observe этого
+	// не увидел бы: он проверяет `-C`, а `-C` на дубле проходит. Дубли жили бы
+	// до следующей перезаписи таблиц.
+	//
+	// Идемпотентная форма снимает вопрос: и мы, и хук вставляем только
+	// отсутствующее, порядок прогонов значения не имеет.
+	//
+	// Вставляем ТОЛЬКО на ruleAbsent. Отказ, из которого «правила нет» не
+	// следует (занят xtables-лок, движок ndm переписывает таблицы, exec не
+	// запустился), в форме `err != nil` читался бы как «нет» — и мы вставили бы
+	// дубль, которого Observe не увидит: `-C` на дубле проходит. Ретраи в
+	// sys/iptables это смягчают, но не исключают.
+	ensure := func(r Rule) error {
+		err := m.ipt.Run(ctx, r.CheckArgs()...)
+		if err == nil {
+			return nil
+		}
+		if !ruleAbsent(err) {
+			return err
+		}
+		return m.ipt.Run(ctx, r.InsertArgs()...)
+	}
 	for _, r := range MSSRules(m.cidrs) {
-		if err := m.ipt.Run(ctx, r.InsertArgs()...); err != nil {
+		if err := ensure(r); err != nil {
 			return err
 		}
 	}
-	// Дубли jump снимаются до трёх раз: `-D` снимает по одному, а вторая
-	// копия появляется от повторной вставки хука. Три — с запасом, точной
-	// величины за числом нет.
-	for i := 0; i < 3; i++ {
-		_ = m.ipt.Run(ctx, m.jump().DeleteArgs()...)
-	}
-	return m.ipt.Run(ctx, m.jump().InsertArgs()...)
+	// Переход — тоже идемпотентно. Прежняя форма «снять до трёх раз, затем
+	// вставить» сама создавала окно: между последним `-D` и `-I` хук успевал
+	// вставить свою копию, и их становилось две.
+	return ensure(m.jump())
 }
 
 func (m *MSSClamp) RecheckAfter() time.Duration {

@@ -75,7 +75,9 @@ func (h *SubscriptionHandler) ActiveNow(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	h.log.Info("subscription-active-now", id, "requested via API")
+	// Debug, не Info: ручку дёргает опрос карточек подписок, то есть запись
+	// уходила бы в журнал по несколько раз в минуту на каждую подписку.
+	h.log.Debug("subscription-active-now", id, "requested via API")
 	now, err := h.svc.GetActiveNow(r.Context(), id)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {

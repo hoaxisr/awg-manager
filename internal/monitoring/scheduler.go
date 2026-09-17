@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -154,12 +153,13 @@ type Scheduler struct {
 	// каждые 60 секунд журнал не трогают.
 	transitions *logging.TransitionTracker
 
-	// running — страж от параллельного входа в RunOnce. Периодический тик
-	// идёт из loop() последовательно, но триггерный прогон (подъём туннеля)
-	// приходит со стороны и раньше мог наложиться на него: два прохода
-	// зондировали одно и то же вдвое, а workerLimit ограничивает КАЖДЫЙ
-	// проход по отдельности.
-	running atomic.Bool
+	// runGate — страж от параллельного входа в прогон (ёмкость 1). Канал, а
+	// не atomic.Bool: у стража два режима. Периодический и триггерный прогоны
+	// при занятом страже ПРОПУСКАЮТСЯ — тот, что в полёте, всё равно обновит
+	// снимок целиком. А форсированный (смена настроек) обязан ДОЖДАТЬСЯ:
+	// его зовут ровно тогда, когда свежие данные и нужны, и молчаливый
+	// пропуск означал бы «настройку применили, а показ остался старым».
+	runGate chan struct{}
 
 	mu       sync.RWMutex
 	lastSnap Snapshot
@@ -171,6 +171,7 @@ type Scheduler struct {
 // 5s probe timeout, worker pool size 10.
 func NewScheduler(deps SchedulerDeps, history *History) *Scheduler {
 	return &Scheduler{
+		runGate:      make(chan struct{}, 1),
 		deps:         deps,
 		interval:     60 * time.Second,
 		idleInterval: 10 * time.Minute,
@@ -285,17 +286,26 @@ func (s *Scheduler) loop(ctx context.Context) {
 	}
 }
 
-// RunOnceForced invalidates the Clash cache (if wired) and runs a
-// fresh tick. Used by /monitoring/matrix?force=1 so the Refresh
-// button delivers fresh ICMP and Clash data in one round-trip.
+// RunOnceForced invalidates the Clash cache (if wired) and runs a fresh tick,
+// ДОЖИДАЯСЬ занятого стража. Зовётся после смены настроек
+// (internal/api/settings.go) и из /monitoring/matrix?force=1.
+//
+// Ждёт, а не пропускает, по двум причинам. Прогон, идущий в полёте, прочитал
+// данные Clash ДО того, как мы сбросили их кэш, — его результат уже устарел.
+// И пропуск был бы молчаливым: пользователь применил настройку, а показ
+// остался прежним, без единого признака отказа.
 func (s *Scheduler) RunOnceForced(ctx context.Context) {
 	s.mu.RLock()
 	cs := s.deps.ClashState
 	s.mu.RUnlock()
-	if cs != nil {
-		cs.Invalidate()
-	}
-	s.RunOnce(ctx)
+	s.runOnce(ctx, true, func() {
+		// Кэш Clash сбрасываем ПОСЛЕ захвата стража. Раньше — значило бы, что
+		// прогон, идущий в полёте, успеет перезаполнить его данными, собранными
+		// ДО правки настроек, и форсированный прочитал бы именно их.
+		if cs != nil {
+			cs.Invalidate()
+		}
+	})
 }
 
 // RunOnce executes a single tick — exposed for testing. Probes every
@@ -303,13 +313,44 @@ func (s *Scheduler) RunOnceForced(ctx context.Context) {
 // history, replaces lastSnap, prunes deleted-tunnel buffers, publishes to
 // the bus.
 func (s *Scheduler) RunOnce(ctx context.Context) {
-	// Уже идёт — второй проход не нужен: тот, что в полёте, всё равно
-	// обновит снимок целиком. Пропуск, а не ожидание: ждать нечего, данные
-	// вот-вот приедут.
-	if !s.running.CompareAndSwap(false, true) {
+	s.runOnce(ctx, false, nil)
+}
+
+// runOnce с wait=false пропускает прогон, когда страж занят; с wait=true —
+// дожидается его освобождения (или отмены контекста). afterAcquire, если задан,
+// выполняется сразу после захвата стража и до первого зонда.
+func (s *Scheduler) runOnce(ctx context.Context, wait bool, afterAcquire func()) {
+	if wait {
+		select {
+		case s.runGate <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+	} else {
+		select {
+		case s.runGate <- struct{}{}:
+		default:
+			return
+		}
+	}
+	defer func() { <-s.runGate }()
+
+	// Контекст мог истечь, пока мы ждали стража: форсированный прогон приходит
+	// с бюджетом 10 с (internal/api/settings.go), а плановый на лежащем WAN
+	// занимает до 8 с. Пойти дальше значило бы прозондировать всё на мёртвом
+	// контексте, получить ok=false по каждой ячейке и записать это КАК ПРАВДУ:
+	// «probe unreachable» в журнал, провалы в историю графика и красную
+	// матрицу в панель. Пользователь применил настройку — и связь «пропала».
+	//
+	// Та же проверка закрывает и гонку на входе: при свободном страже и уже
+	// отменённом контексте select выше выбрал бы случайный из двух готовых
+	// случаев.
+	if ctx.Err() != nil {
 		return
 	}
-	defer s.running.Store(false)
+	if afterAcquire != nil {
+		afterAcquire()
+	}
 
 	defer func() {
 		if r := recover(); r != nil && s.deps.Log != nil {
@@ -355,6 +396,14 @@ func (s *Scheduler) RunOnce(ctx context.Context) {
 				defer func() { <-sem }()
 
 				latency, ok := s.runProbeCell(ctx, t, tn, self)
+				// Контекст истёк ПОСРЕДИ обхода: runProbeCell на отменённом
+				// контексте отдаёт ok=false по каждой оставшейся ячейке, и
+				// записать это как правду значило бы налгать — «probe
+				// unreachable» в журнал, провал в историю и красная ячейка
+				// в панели. Молчим: следующий прогон измерит честно.
+				if ctx.Err() != nil {
+					return
+				}
 				now := time.Now()
 
 				probedMu.Lock()
@@ -389,6 +438,12 @@ func (s *Scheduler) RunOnce(ctx context.Context) {
 		}
 	}
 	wg.Wait()
+
+	// Оборванный обход снимок не заменяет: он неполон, и подменять им
+	// прежний — то же враньё, только оптом.
+	if ctx.Err() != nil {
+		return
+	}
 
 	snap := Snapshot{
 		Targets:   targets,

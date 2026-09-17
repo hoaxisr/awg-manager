@@ -1,5 +1,9 @@
 /**
- * saveStatus — polling store for GET /api/ndms/save-status (cold tier, 30s).
+ * saveStatus — polling store for GET /api/ndms/save-status.
+ *
+ * ВНИМАНИЕ: стор НИКЕМ не импортируется, поэтому registerStore ниже не
+ * выполняется, подписчиков нет и таймер не заводится ни разу. Индикатора
+ * несохранённой конфигурации в панели сейчас НЕТ — см. F358.
  *
  * Mirrors the former save:status SSE event one-for-one. SaveCoordinator
  * now publishes a `resource:invalidated` hint with Resource="saveStatus"

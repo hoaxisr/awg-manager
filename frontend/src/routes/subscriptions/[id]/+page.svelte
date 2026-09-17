@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
 	import type { Subscription, SubscriptionMember } from '$lib/types';
@@ -244,11 +245,10 @@
 				if (!cancelled) liveActiveMember = null;
 			}
 		};
-		void tick();
-		const handle = setInterval(() => void tick(), URLTEST_POLL_MS);
+		const stop = startVisiblePoll(tick, URLTEST_POLL_MS);
 		return () => {
 			cancelled = true;
-			clearInterval(handle);
+			stop();
 		};
 	});
 

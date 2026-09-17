@@ -63,3 +63,37 @@ describe('tunnels.updateTraffic', () => {
 		expect(get(tunnels).data!.tunnels[0].rxBytes).toBe(10);
 	});
 });
+
+// updateTraffic зовётся на КАЖДОЕ событие tunnel:traffic — примерно раз в 5 с на
+// туннель, при ЛЮБОЙ открытой странице. Заглядывать в снимок через
+// `get(store)` нельзя: get подписывается и отписывается, а переход subCount 0→1
+// запускает doFetch() по истёкшему staleTime. На странице без подписки на этот
+// стор каждое событие оборачивалось полным GET /api/tunnels/all — мимо всех
+// гейтов, включая скрытую вкладку.
+describe('tunnels.updateTraffic не ходит в сеть', () => {
+	it('заглядывание в снимок не запускает выборку', async () => {
+		// Стор ходит глобальным fetch по /api/tunnels/all, а не методом api.
+		const spy = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ data: structuredClone(snapshot) }),
+		}));
+		const prev = globalThis.fetch;
+		globalThis.fetch = spy as never;
+		try {
+			tunnels.applyMutationResponse(structuredClone(snapshot) as never);
+			// Снимок заведомо протух: staleTime стора — 5 с.
+			await new Promise((r) => setTimeout(r, 0));
+			const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000);
+			try {
+				for (let i = 0; i < 5; i++) {
+					tunnels.updateTraffic({ id: 'Wireguard0', rxBytes: i, txBytes: i });
+				}
+			} finally {
+				nowSpy.mockRestore();
+			}
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			globalThis.fetch = prev;
+		}
+	});
+});

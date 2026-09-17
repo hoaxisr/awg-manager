@@ -90,10 +90,9 @@
 		children,
 	}: Props = $props();
 
-	onMount(() => {
-		// Тот же WS, что у sb-router LiveConnectionsChip — для счётчика «Соединения».
-		bindLiveConnectionsStore();
-	});
+	// Тот же WS, что у sb-router LiveConnectionsChip — для счётчика «Соединения».
+	// Возврат из onMount = отпуск на размонтировании.
+	onMount(() => bindLiveConnectionsStore());
 
 	const status = singboxRouter.status;
 	const dnsRules = fakeipConfig.dnsRules;

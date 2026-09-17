@@ -294,7 +294,9 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 	// раньше перезаписи файла — и прогон старого хука вернёт правило уже
 	// после того, как ключ попал в `reaped`, то есть навсегда до рестарта
 	// демона. Обратной зависимости нет: хук наблюдает свой файл и тем же
-	// провайдером, что nat_rules, и о forward_rules/mss_clamp ничего не знает.
+	// провайдером, что nat_rules; о forward_rules он по-прежнему не знает, а
+	// mss_clamp с 17.09 несёт (см. hookGroups) — иначе clamp оставался бы
+	// стёртым до подстраховочного таймера.
 	res = append(res, r.access, r.nat, r.hook, r.fwd, r.mss, r.ingress, r.input)
 	// permit_absent — В ХВОСТЕ: миграционный ресурс не гейтит правила. Первый
 	// unknown/failed в цепочке блокирует всё ниже (proxyrt/plan.go:11-15), а
@@ -393,7 +395,18 @@ func (r *Role) natGroups(c roles.WdttServerConfig) netres.GroupProvider {
 
 // hookGroups — хук несёт ТЕ ЖЕ правила, что и ресурсы: MASQUERADE + DNS
 // (метку политики даёт NDMS через ndms_access, см. access.go; FORWARD accept
-// снят — доступ raw-абонента в LAN решают security-level и LAN-ACL).
+// снят — доступ raw-абонента в LAN решают security-level и LAN-ACL) — ПЛЮС
+// MSS clamp.
+//
+// Clamp добавлен сюда потому, что он оставался ЕДИНСТВЕННЫМ ресурсом роли,
+// который перезапись таблиц движком NDM оставляла стёртым до подстраховочного
+// таймера: остальные восстанавливает этот хук (NDM дёргает netfilter.d ровно
+// когда переписывает таблицы), а у input_port свой хук. Пока clamp был вне
+// хука, период `ruleRecheck` нельзя было ослабить, не расширив окно, в котором
+// у raw-абонента рвутся TCP-сессии с большим MSS.
+//
+// Цепочку clamp хук создаёт сам (см. customChains в netres/hook.go): после
+// перезаписи её может не быть, а в несуществующую цепочку правило не вставить.
 func (r *Role) hookGroups(c roles.WdttServerConfig) netres.GroupProvider {
 	nat := r.natGroups(c)
 	return func(ctx context.Context) ([]netres.Group, error) {
@@ -403,6 +416,11 @@ func (r *Role) hookGroups(c roles.WdttServerConfig) netres.GroupProvider {
 		}
 		if len(groups) == 0 {
 			return nil, nil
+		}
+		// Тот же CIDR, что уходит в r.mss.SetDesired выше: форма одна на оба
+		// пути, иначе хук восстанавливал бы не то, что наблюдает ресурс.
+		if g := netres.MSSGroup([]string{rawPeerCIDR}); len(g.Rules) > 0 {
+			groups = append(groups, g)
 		}
 		return groups, nil
 	}

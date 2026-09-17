@@ -242,6 +242,12 @@ func (s *Service) logInfo(action, target, msg string) {
 	}
 }
 
+func (s *Service) logDebug(action, target, msg string) {
+	if s.log != nil {
+		s.log.Debug(action, target, msg)
+	}
+}
+
 func (s *Service) logWarn(action, target, msg string) {
 	if s.log != nil {
 		s.log.Warn(action, target, msg)
@@ -1814,10 +1820,14 @@ func (s *Service) GetActiveNow(_ context.Context, id string) (string, error) {
 		s.logWarn("subscription-active-now", id, "clash query failed: "+err.Error())
 		return "", err
 	}
+	// Debug, не Info: ручку дёргает опрос карточек подписок — раз в 30 с на
+	// главной и раз в 5 с на странице подписки. Парную строку в обработчике
+	// (internal/api/subscription_members.go) понизили, а эту пропустили, и
+	// журнал по-прежнему получал запись на каждый вызов.
 	if now == "" {
-		s.logInfo("subscription-active-now", id, "no live active member (clash unavailable or not selected yet)")
+		s.logDebug("subscription-active-now", id, "no live active member (clash unavailable or not selected yet)")
 	} else {
-		s.logInfo("subscription-active-now", id, "live active member: "+now)
+		s.logDebug("subscription-active-now", id, "live active member: "+now)
 	}
 	return now, nil
 }

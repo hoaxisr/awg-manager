@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { Eye, EyeOff, Server } from 'lucide-svelte';
 	import type { SystemTunnel, ConnectivityResult } from '$lib/types';
 	import { api } from '$lib/api/client';
@@ -48,7 +49,12 @@
 		}
 	}
 
-	// Auto-check connectivity every 60s when up
+	// Проверка раз в 60 с, пока туннель поднят.
+	//
+	// Спит в фоновой вкладке и догоняет при возврате: проверка стоит полного
+	// TLS-рукопожатия через интерфейс, а на этом железе это дорого. Заменить её
+	// данными матрицы нельзя — системные туннели матрица НЕ зондирует вовсе
+	// (их строки добавляются без SelfTarget, см. monitoring/scheduler.go).
 	$effect(() => {
 		const status = tunnel.status;
 		const disabled = checkDisabled;
@@ -56,9 +62,7 @@
 			connectivity = null;
 			return;
 		}
-		untrack(() => checkConnectivity());
-		const interval = setInterval(checkConnectivity, 60000);
-		return () => clearInterval(interval);
+		return untrack(() => startVisiblePoll(checkConnectivity, 60000));
 	});
 
 	let statusDot = $derived.by((): { variant: StatusDotVariant; pulse: boolean; label: string } => {
