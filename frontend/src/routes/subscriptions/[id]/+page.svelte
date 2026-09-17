@@ -237,6 +237,8 @@
 		}
 		let cancelled = false;
 		const tick = async (): Promise<void> => {
+			// Фоновая вкладка ничего не показывает — незачем и спрашивать.
+			if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
 			try {
 				const res = await api.getSubscriptionActiveNow(sub.id);
 				if (!cancelled) liveActiveMember = res.now || null;
