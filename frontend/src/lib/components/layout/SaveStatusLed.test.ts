@@ -18,11 +18,14 @@ describe('SaveStatusLed', () => {
 	// проверку поведения холостой — проверено мутацией «убрать индикатор из
 	// шапки»: она проходила зелёной.
 	it('стор импортирует компонент приложения, а не только тест', async () => {
-		const files = import.meta.glob('/src/lib/components/**/*.svelte', {
+		// Тип задаётся параметром glob, а не утверждением: `as Record<string,
+		// string>` eslint считает лишним (и валит проверку), а без типа
+		// svelte-check видит unknown (F369).
+		const files = import.meta.glob<string>('/src/lib/components/**/*.svelte', {
 			query: '?raw',
 			import: 'default',
 			eager: true,
-		}) as Record<string, string>;
+		});
 		const importers = Object.entries(files)
 			.filter(([, src]) => /from ['"][^'"]*stores\/saveStatus['"]/.test(src))
 			.map(([path]) => path);
@@ -56,13 +59,13 @@ describe('SaveStatusLed', () => {
 	// «Всё сохранено» — состояние покоя: постоянно горящая точка в шапке
 	// сообщала бы ни о чём.
 	it('в состоянии idle ничего не рисует', () => {
-		saveStatus.applyMutationResponse({ state: 'idle', pendingCount: 0 } as never);
+		saveStatus.applyMutationResponse({ state: 'idle', pendingCount: 0 });
 		const { container } = render(SaveStatusLed);
 		expect(container.querySelector('.save-led')).toBeNull();
 	});
 
 	it('при несохранённых правках показывает точку с подсказкой', async () => {
-		saveStatus.applyMutationResponse({ state: 'pending', pendingCount: 3 } as never);
+		saveStatus.applyMutationResponse({ state: 'pending', pendingCount: 3 });
 		const { container } = render(SaveStatusLed);
 		await new Promise((r) => setTimeout(r, 0));
 		const led = container.querySelector('.save-led');
@@ -75,7 +78,7 @@ describe('SaveStatusLed', () => {
 			state: 'failed',
 			pendingCount: 1,
 			lastError: 'boom',
-		} as never);
+		});
 		const { container } = render(SaveStatusLed);
 		await new Promise((r) => setTimeout(r, 0));
 		const led = container.querySelector('.save-led');
