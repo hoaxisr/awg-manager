@@ -687,6 +687,10 @@ func applyXrayHysteriaMasks(stream *XrayStream, out map[string]any) (*xrayEndpoi
 	}
 	var endpoint *xrayEndpoint
 	seen := map[string]bool{}
+	// final.TCP здесь намеренно не смотрим: диалер hysteria держит только
+	// udpmaskManager (hysteria/dialer.go), tcp-масок он не читает вовсе — на
+	// такой узел они не действуют. У остальных протоколов всё наоборот, и там
+	// любая маска — отказ (rejectXrayForeignMasks).
 	for _, mask := range final.UDP {
 		typ := strings.ToLower(mask.Type)
 		// Xray применяет маски по очереди, sing-box умеет одну каждого рода:
@@ -801,6 +805,10 @@ func applyXrayRealm(raw json.RawMessage, out map[string]any) (*xrayEndpoint, err
 		return nil, fmt.Errorf("hysteria: realm stunServers is empty")
 	}
 	for _, srv := range r.StunServers {
+		// sing-box сам подставил бы порт 3478, но Xray требует пару host:port
+		// (Realm.Build проверяет её через SplitHostPort) — значит подписка с
+		// голым хостом не работает и у источника. Проверка здесь именно о
+		// годности исходных данных, а не о выразимости.
 		if _, _, err := net.SplitHostPort(srv); err != nil {
 			return nil, fmt.Errorf("hysteria: realm stunServers %q is not host:port", srv)
 		}
@@ -812,7 +820,10 @@ func applyXrayRealm(raw json.RawMessage, out map[string]any) (*xrayEndpoint, err
 		"realm_id":     id,
 		"stun_servers": r.StunServers,
 	}
-	// dual — умолчание обеих сторон (Xray: Family_Dual, sing-box: 0).
+	// dual — умолчание обеих сторон (Xray: Family_Dual, sing-box: 0). Значение
+	// вне перечня отказа не вызывает намеренно: Xray его тоже молча приводит к
+	// dual (realm/client.go — switch без default), так что узел ведёт себя
+	// ровно так, как повёл бы себя у источника.
 	switch strings.ToLower(r.IPMode) {
 	case "v4":
 		realm["ip_version"] = 4
@@ -820,6 +831,11 @@ func applyXrayRealm(raw json.RawMessage, out map[string]any) (*xrayEndpoint, err
 		realm["ip_version"] = 6
 	}
 	if pm := r.PortMapping; pm != nil && pm.Enabled {
+		// sing-box отказывается поднимать такое реле (sing-quic:
+		// «port mapping requires IPv4»), то есть узел уронил бы весь движок.
+		if realm["ip_version"] == 6 {
+			return nil, fmt.Errorf("hysteria: realm portMapping requires IPv4, but ipMode is v6")
+		}
 		mapping := map[string]any{"enabled": true}
 		if pm.Timeout > 0 {
 			mapping["timeout"] = strconv.FormatInt(pm.Timeout, 10) + "s"

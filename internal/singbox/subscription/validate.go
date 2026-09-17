@@ -70,6 +70,17 @@ func classifyOutbound(ob map[string]any) string {
 	if typ == "selector" || typ == "urltest" {
 		return ""
 	}
+	// Аутбаунд hysteria2 с реле адреса не имеет по построению: sing-box берёт
+	// его из realm.server_url и прямо запрещает соседство с server/server_port
+	// (protocol/hysteria2/outbound.go). Общее требование «есть server» такой
+	// узел отбрасывало бы с причиной «missing server».
+	viaRealm := false
+	if typ == "hysteria2" {
+		if realm, _ := ob["realm"].(map[string]any); realm != nil {
+			viaRealm = true
+		}
+	}
+
 	// Universal required fields for connect-style outbounds.
 	srv, ok := ob["server"].(string)
 	if !ok || srv == "" {
@@ -78,7 +89,9 @@ func classifyOutbound(ob map[string]any) string {
 		case "direct", "block", "dns":
 			// ok
 		default:
-			return "missing server"
+			if !viaRealm {
+				return "missing server"
+			}
 		}
 	}
 	port := portValue(ob["server_port"])
@@ -87,7 +100,9 @@ func classifyOutbound(ob map[string]any) string {
 		case "direct", "block", "dns":
 			// ok
 		default:
-			return "missing or invalid server_port"
+			if !viaRealm {
+				return "missing or invalid server_port"
+			}
 		}
 	}
 	// Type-specific rules.

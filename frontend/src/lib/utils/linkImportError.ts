@@ -47,6 +47,31 @@ const RULES: Rule[] = [
 	// видит пользователь: udp mask — маскировка, udphop — прыжки по портам,
 	// quicParams — настройки QUIC.
 	{
+		// Обёрнутая ошибка полосы: значение в кавычках, поле — до двоеточия.
+		re: /quicParams (brutalUp|brutalDown): "([^"]*)" is below the minimum of (\d+) bytes per second/i,
+		text: (m) => `значение ${m[1]} «${m[2]}» меньше минимума ${m[3]} байт в секунду`,
+	},
+	{
+		re: /quicParams (brutalUp|brutalDown): unsupported bandwidth unit in "([^"]*)"/i,
+		text: (m) => `в значении ${m[1]} «${m[2]}» неизвестная единица измерения`,
+	},
+	{
+		re: /quicParams (brutalUp|brutalDown): invalid bandwidth "([^"]*)"/i,
+		text: (m) => `значение ${m[1]} «${m[2]}» не похоже на скорость`,
+	},
+	{
+		re: /(\w+) "([^"]*)" is not a duration like/i,
+		text: (m) => `значение ${m[1]} «${m[2]}» — не длительность, нужна единица (например 30s)`,
+	},
+	{
+		re: /bbr_profile "([^"]*)" is unknown/i,
+		text: (m) => `неизвестное значение bbr_profile: «${m[1]}»`,
+	},
+	{
+		re: /realm portMapping requires IPv4/i,
+		text: () => 'проброс порта у реле работает только с IPv4, а указан IPv6',
+	},
+	{
 		re: /finalmask has (\d+) mask\(s\) with no sing-box equivalent/i,
 		text: (m) => `маскировок в узле: ${m[1]} — sing-box их не выражает`,
 	},
@@ -87,17 +112,12 @@ const RULES: Rule[] = [
 		text: (m) => `маскировка «${m[1]}» указана дважды, sing-box принимает одну`,
 	},
 	{
-		re: /udp mask realm is not supported yet/i,
-		text: () =>
-			'маскировка realm пока не поддерживается: у такого аутбаунда нет адреса сервера',
-	},
-	{
 		re: /udphop mode (\S+) has no sing-box equivalent/i,
 		text: (m) => `режим прыжков по портам ${m[1]} в sing-box не выражается`,
 	},
 	{
 		re: /udphop (\S+) has no sing-box equivalent/i,
-		text: (m) => `${m[1]} у прыжков по портам в sing-box не выражается`,
+		text: (m) => `настройка ${m[1]} у прыжков по портам в sing-box не выражается`,
 	},
 	{
 		re: /quicParams (?:congestion )?(\S+) has no sing-box equivalent/i,
@@ -160,7 +180,7 @@ const RULES: Rule[] = [
 		text: () => 'блок узла не разобран',
 	},
 	{
-		re: /invalid (finalmask|hysteriaSettings|udphop settings|salamander obfs settings)/i,
+		re: /invalid (finalmask|hysteriaSettings|realm settings|hysteria settings|udphop settings|salamander obfs settings)/i,
 		text: (m) => `блок ${m[1].replace(/ settings$/, '')} не разобран`,
 	},
 	{

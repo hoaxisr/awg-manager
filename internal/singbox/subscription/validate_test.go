@@ -374,3 +374,35 @@ func findByTag(outs []any, tag string) map[string]any {
 	}
 	return nil
 }
+
+// Аутбаунд hysteria2 с реле НЕ имеет адреса: sing-box берёт его из
+// realm.server_url и прямо запрещает соседство с server/server_port
+// (protocol/hysteria2/outbound.go). Общее требование «есть server» такой узел
+// выбрасывало бы с причиной «missing server» ещё до записи в подписку.
+func TestPreFilterOutbounds_AcceptsHysteria2Realm(t *testing.T) {
+	ob := map[string]any{
+		"type":     "hysteria2",
+		"tag":      "relay",
+		"password": "secret",
+		"realm": map[string]any{
+			"server_url":   "https://relay.example.net:8443",
+			"token":        "tok",
+			"realm_id":     "rlm",
+			"stun_servers": []any{"stun.example.net:3478"},
+		},
+		"tls": map[string]any{"enabled": true, "server_name": "relay.example.net"},
+	}
+	kept, dropped := preFilterOutbounds([]any{ob}, nil)
+	if len(kept) != 1 || len(dropped) != 0 {
+		t.Fatalf("kept/dropped = %d/%d, reasons=%v", len(kept), len(dropped), dropped)
+	}
+}
+
+// Но hysteria2 БЕЗ реле и без адреса — по-прежнему брак.
+func TestPreFilterOutbounds_DropsHysteria2WithoutServerAndRealm(t *testing.T) {
+	ob := map[string]any{"type": "hysteria2", "tag": "bad", "password": "secret"}
+	kept, dropped := preFilterOutbounds([]any{ob}, nil)
+	if len(kept) != 0 || len(dropped) != 1 {
+		t.Fatalf("kept/dropped = %d/%d, reasons=%v", len(kept), len(dropped), dropped)
+	}
+}

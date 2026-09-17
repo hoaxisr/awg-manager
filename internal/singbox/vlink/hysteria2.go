@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func parseHysteria2(input string) (*ParsedOutbound, error) {
@@ -96,20 +97,39 @@ func parseHysteria2(input string) (*ParsedOutbound, error) {
 	// выражается ПЛОСКИМИ up_mbps/down_mbps (sing-box option/hysteria2.go);
 	// объекта "brutal" схема движка не знает, а лишний ключ роняет разбор
 	// ВСЕЙ конфигурации, а не одного аутбаунда (F360).
-	if strings.EqualFold(q.Get("congestion"), "brutal") {
-		if up, err := strconv.Atoi(q.Get("brutal_up")); err == nil && up > 0 {
-			out["up_mbps"] = up
-		}
-		if down, err := strconv.Atoi(q.Get("brutal_down")); err == nil && down > 0 {
-			out["down_mbps"] = down
-		}
+	// congestion здесь описательный: brutal движок включает по ненулевому
+	// up_mbps (sing-quic: actualTx > 0 → BrutalSender), а down_mbps — это
+	// объявленная серверу скорость приёма, она работает при любом алгоритме.
+	// Поэтому значения читаются независимо от congestion.
+	if up, err := strconv.Atoi(q.Get("brutal_up")); err == nil && up > 0 {
+		out["up_mbps"] = up
+	}
+	if down, err := strconv.Atoi(q.Get("brutal_down")); err == nil && down > 0 {
+		out["down_mbps"] = down
 	}
 
 	// Настройки QUIC: имена параметров совпадают с ключами аутбаунда — так
 	// ссылка читается обратно без потерь (F363).
-	for _, key := range []string{"hop_interval_max", "bbr_profile", "idle_timeout", "keep_alive_period"} {
-		if v := q.Get(key); v != "" {
-			out[key] = v
+	for _, key := range []string{"hop_interval", "hop_interval_max", "idle_timeout", "keep_alive_period"} {
+		v := q.Get(key)
+		if v == "" {
+			continue
+		}
+		// Движок разбирает эти поля как Duration, и негодное значение роняет
+		// разбор ВСЕЙ конфигурации, а не одного аутбаунда: пускать его внутрь
+		// нельзя (тот же класс, что ключ brutal, F360).
+		if !isDurationSpec(v) {
+			return nil, fmt.Errorf("hysteria2: %s %q is not a duration like \"30s\"", key, v)
+		}
+		out[key] = v
+	}
+	if v := q.Get("bbr_profile"); v != "" {
+		// Закрытый перечень движка: чужое значение валит создание аутбаунда.
+		switch strings.ToLower(v) {
+		case "standard", "conservative", "aggressive":
+			out["bbr_profile"] = strings.ToLower(v)
+		default:
+			return nil, fmt.Errorf("hysteria2: bbr_profile %q is unknown", v)
 		}
 	}
 	for _, key := range []string{"stream_receive_window", "connection_receive_window", "max_concurrent_streams"} {
@@ -141,6 +161,21 @@ func parseHysteria2(input string) (*ParsedOutbound, error) {
 		Outbound: raw,
 		Label:    u.Fragment,
 	}, nil
+}
+
+// isDurationSpec проверяет форму длительности: движок разбирает такие поля как
+// Duration и на голом числе или мусоре отвергает ВСЮ конфигурацию. Сутки sing
+// понимает сверх стандартной библиотеки.
+func isDurationSpec(v string) bool {
+	if _, err := time.ParseDuration(v); err == nil {
+		return true
+	}
+	if num, ok := strings.CutSuffix(v, "d"); ok {
+		if _, err := strconv.ParseFloat(num, 64); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // parseMport accepts "20000-30000" or "20000,21000-22000,30000-31000"

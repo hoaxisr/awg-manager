@@ -202,10 +202,7 @@ describe('причины отказа узлов hysteria из Xray-подпис
 			'vlink: hysteria: quicParams initStreamReceiveWindow and maxStreamReceiveWindow differ, sing-box has a single window',
 			'Стартовое и предельное окно приёма различаются, а в sing-box окно одно'
 		],
-		[
-			'vlink: hysteria: udp mask realm is not supported yet: its outbound has no server address',
-			'Маскировка realm пока не поддерживается: у такого аутбаунда нет адреса сервера'
-		],
+
 		['vlink: xray: outbound is malformed', 'Блок узла не разобран'],
 		[
 			'vlink: xray: finalmask has 2 mask(s) with no sing-box equivalent',
@@ -229,7 +226,33 @@ describe('причины отказа узлов hysteria из Xray-подпис
 			'vlink: hysteria: udp mask realm cannot be combined with udphop: sing-box takes the address from realm alone',
 			'Реле и прыжки по портам вместе sing-box не принимает'
 		],
-		['vlink: hysteria: invalid finalmask', 'Блок finalmask не разобран']
+		['vlink: hysteria: invalid finalmask', 'Блок finalmask не разобран'],
+		['vlink: hysteria: invalid realm settings', 'Блок realm не разобран'],
+		['vlink: xray: invalid hysteria settings', 'Блок hysteria не разобран'],
+		[
+			'vlink: hysteria: quicParams brutalUp: "1 b" is below the minimum of 65536 bytes per second',
+			'Значение brutalUp «1 b» меньше минимума 65536 байт в секунду'
+		],
+		[
+			'vlink: hysteria: quicParams brutalDown: unsupported bandwidth unit in "5 zz"',
+			'В значении brutalDown «5 zz» неизвестная единица измерения'
+		],
+		[
+			'vlink: hysteria: quicParams brutalUp: invalid bandwidth "abc"',
+			'Значение brutalUp «abc» не похоже на скорость'
+		],
+		[
+			'vlink: hysteria2: idle_timeout "30" is not a duration like "30s"',
+			'Значение idle_timeout «30» — не длительность, нужна единица (например 30s)'
+		],
+		[
+			'vlink: hysteria2: bbr_profile "TURBO" is unknown',
+			'Неизвестное значение bbr_profile: «TURBO»'
+		],
+		[
+			'vlink: hysteria: realm portMapping requires IPv4, but ipMode is v6',
+			'Проброс порта у реле работает только с IPv4, а указан IPv6'
+		]
 	];
 
 	it.each(cases)('%s', (raw, want) => {

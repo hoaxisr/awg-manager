@@ -219,17 +219,17 @@ func encodeHysteria2(ob map[string]any, label string) (string, error) {
 			q.Set("obfs-max-packet-size", strconv.Itoa(n))
 		}
 	}
-	// Ненулевая пропускная способность у hysteria2 и означает brutal: движок
-	// включает его именно по up_mbps/down_mbps (F360).
+	// brutal движок включает по ненулевому up_mbps (sing-quic: actualTx > 0 →
+	// BrutalSender); down_mbps — объявленная серверу скорость приёма, она
+	// работает и на BBR. Поэтому congestion=brutal пишется только под up_mbps,
+	// а значения — каждое само по себе (F360, F363).
 	up, down := intFromAny(ob["up_mbps"]), intFromAny(ob["down_mbps"])
-	if up > 0 || down > 0 {
+	if up > 0 {
 		q.Set("congestion", "brutal")
-		if up > 0 {
-			q.Set("brutal_up", strconv.Itoa(up))
-		}
-		if down > 0 {
-			q.Set("brutal_down", strconv.Itoa(down))
-		}
+		q.Set("brutal_up", strconv.Itoa(up))
+	}
+	if down > 0 {
+		q.Set("brutal_down", strconv.Itoa(down))
 	}
 
 	u.RawQuery = q.Encode()
