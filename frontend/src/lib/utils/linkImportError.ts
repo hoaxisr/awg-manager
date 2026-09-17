@@ -151,10 +151,36 @@ function translate(raw: string): { line: string; rest: string; text: string | nu
  * строка не теряется — уезжает внутрь общей фразы.
  */
 export function linkImportErrorText(raw: string): string {
-	const text = (raw ?? '').trim();
-	if (!text) return 'Ссылка не разобрана';
-	const { line, rest, text: translated } = translate(text);
-	return translated ? line + translated : `${line}Ссылка не разобрана: ${rest}`;
+	const { line, text } = errorParts(raw);
+	return line + text;
+}
+
+/** Причина отдельно от номера строки: номер мешает группировать одинаковые. */
+function errorParts(raw: string): { line: string; text: string } {
+	const input = (raw ?? '').trim();
+	if (!input) return { line: '', text: 'Ссылка не разобрана' };
+	const { line, rest, text: translated } = translate(input);
+	return { line, text: translated ?? `Ссылка не разобрана: ${rest}` };
+}
+
+/**
+ * Схлопывает список причин отказа для одного уведомления: одинаковая причина
+ * показывается один раз со счётчиком, единственная сохраняет номер строки — по
+ * нему ссылку и ищут.
+ *
+ * Группировка идёт по причине БЕЗ номера: номер у каждого узла свой, и
+ * дедупликация по готовой фразе не срабатывала вовсе — подписка на сотню узлов
+ * одного неподдерживаемого протокола давала сотню «разных» причин.
+ */
+export function groupLinkImportErrors(errors: string[]): string[] {
+	const groups = new Map<string, { line: string; count: number }>();
+	for (const raw of errors) {
+		const { line, text } = errorParts(raw);
+		const seen = groups.get(text);
+		if (seen) seen.count++;
+		else groups.set(text, { line, count: 1 });
+	}
+	return [...groups].map(([text, g]) => (g.count > 1 ? `${text} (×${g.count})` : g.line + text));
 }
 
 /**

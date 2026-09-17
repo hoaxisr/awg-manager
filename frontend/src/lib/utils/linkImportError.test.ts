@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { linkImportErrorText, translateKnownError } from './linkImportError';
+import {
+	linkImportErrorText,
+	translateKnownError,
+	groupLinkImportErrors
+} from './linkImportError';
 
 describe('linkImportErrorText', () => {
 	it('объясняет обфускацию внутри TLS (#904) и подсказывает выход', () => {
@@ -98,5 +102,34 @@ describe('linkImportErrorText', () => {
 			'Ссылка не разобрана: something entirely new'
 		);
 		expect(linkImportErrorText('')).toBe('Ссылка не разобрана');
+	});
+});
+
+describe('groupLinkImportErrors', () => {
+	it('одинаковую причину показывает один раз со счётчиком, без номера строки', () => {
+		const errors = [
+			'line 0 (hysteria): vlink: unsupported protocol: hysteria',
+			'line 3 (hysteria): vlink: unsupported protocol: hysteria',
+			'line 7 (hysteria): vlink: unsupported protocol: hysteria'
+		];
+		expect(groupLinkImportErrors(errors)).toEqual([
+			'Ссылка не разобрана: unsupported protocol: hysteria (×3)'
+		]);
+	});
+
+	it('единственную причину оставляет с номером строки — по нему её и ищут', () => {
+		expect(groupLinkImportErrors(['line 12 (vless): vlink: vless: missing uuid'])).toEqual([
+			'Строка 12: Не указан UUID'
+		]);
+	});
+
+	it('разные причины не смешивает и сохраняет порядок', () => {
+		expect(
+			groupLinkImportErrors([
+				'line 0 (vless): vlink: vless: missing uuid',
+				'line 1 (trojan): vlink: trojan: missing password',
+				'line 2 (vless): vlink: vless: missing uuid'
+			])
+		).toEqual(['Не указан UUID (×2)', 'Строка 1: Не указан пароль']);
 	});
 });
