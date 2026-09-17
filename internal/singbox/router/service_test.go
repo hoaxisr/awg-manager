@@ -1033,21 +1033,20 @@ func TestReconcile_DeviceModeChanged_ReinstallsImmediately(t *testing.T) {
 // failed upgrade while the nat chain was wiped) triggers Disable/Uninstall
 // so no stale remnants are left behind.
 func TestReconcile_DisabledPartialInstall_CleansUp(t *testing.T) {
-	// Stub IPTables so HasAnyInstalled=true (partial state present) but
-	// IsInstalled=false (incomplete — one chain missing).
+	// Частичное состояние выражаем дампом `-S`, которым Reconcile его и
+	// снимает: в mangle цепочка объявлена, в nat — нет. Отсюда anyChain=true
+	// (остатки есть) при installed=false (целостности нет).
 	uninstallCalled := false
 	ipt := &IPTables{
-		runIPTables: func(_ context.Context, args ...string) error {
-			// mangle chain lookup succeeds → HasAnyInstalled returns true.
-			// nat chain lookup fails → IsInstalled returns false.
-			if len(args) >= 4 && args[0] == "-t" && args[1] == "nat" && args[2] == "-nL" && args[3] == RedirectChain {
-				return errors.New("no such chain")
+		runIPTables: func(_ context.Context, _ ...string) error { return nil },
+		runIPTablesOut: func(_ context.Context, args ...string) (string, error) {
+			if len(args) >= 2 && args[0] == "-t" && args[1] == "mangle" {
+				return "-P PREROUTING ACCEPT\n-N " + ChainName + "\n", nil
 			}
-			return nil
+			return "-P PREROUTING ACCEPT\n", nil
 		},
-		runIPTablesOut: func(_ context.Context, _ ...string) (string, error) { return "", nil },
-		runIP:          func(_ context.Context, args ...string) error { return nil },
-		runIPOut:       func(_ context.Context, _ ...string) (string, error) { return "", nil },
+		runIP:    func(_ context.Context, args ...string) error { return nil },
+		runIPOut: func(_ context.Context, _ ...string) (string, error) { return "", nil },
 		cleanupHook: func() {
 			uninstallCalled = true
 		},
@@ -2404,5 +2403,80 @@ func requireUninstalled(t *testing.T, fe *fakeExec) {
 	}
 	if !flushed {
 		t.Errorf("таблица маршрутов не слита: %v", ip)
+	}
+}
+
+// Горячий путь Reconcile снимает состояние перехвата ДАМПОМ, а не перечислением
+// цепочек: прежние IsInstalled + HasAnyInstalled стоили до четырёх `iptables -nL`
+// на тик, дважды в минуту, поверх дампов, которые reconcileInstalled снимал всё
+// равно (F349 §4).
+func TestReconcile_UsesDumpNotChainListing(t *testing.T) {
+	var listings, dumps int
+	ipt := newStubIPTables(func(context.Context, string) error { return nil })
+	ipt.runIPTables = func(_ context.Context, args ...string) error {
+		for _, a := range args {
+			if a == "-nL" {
+				listings++
+			}
+		}
+		return nil
+	}
+	inner := ipt.runIPTablesOut
+	ipt.runIPTablesOut = func(ctx context.Context, args ...string) (string, error) {
+		dumps++
+		return inner(ctx, args...)
+	}
+
+	svc := newTestService(t, Deps{
+		Settings: newTestSettingsStore(t, storage.SingboxRouterSettings{
+			Enabled: true, PolicyName: "Policy0",
+		}),
+		Policies:       &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+		IPTables:       ipt,
+		Singbox:        newTestSingbox(t),
+		WANIPCollector: &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}},
+	})
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if listings != 0 {
+		t.Errorf("тик всё ещё перечисляет цепочки: %d вызовов `-nL`", listings)
+	}
+	if dumps == 0 {
+		t.Fatal("состояние не снималось вовсе — тест не дошёл до ветки перехвата")
+	}
+	// Пять: `-S PREROUTING` синхронизации KeenDNS (до развилки режимов) плюс
+	// по паре таблиц на два probeAll — здешний и внутри reconcileInstalled.
+	if dumps > 5 {
+		t.Errorf("дампов за тик %d, ожидали не больше пяти", dumps)
+	}
+}
+
+// Отказ снятия — «не знаю», а не «сломано». Прежние IsInstalled/HasAnyInstalled
+// на ошибке отдавали false, и при включённом роутере это уводило в enableLocked:
+// транзиентный отказ iptables во время перезаписи таблиц движком ndm вызывал
+// ненужную полную переустановку.
+func TestReconcile_ProbeErrorDoesNotReinstall(t *testing.T) {
+	restores := 0
+	ipt := newStubIPTables(func(context.Context, string) error { restores++; return nil })
+	ipt.runIPTablesOut = func(_ context.Context, _ ...string) (string, error) {
+		return "", errors.New("iptables: resource temporarily unavailable")
+	}
+
+	svc := newTestService(t, Deps{
+		Settings: newTestSettingsStore(t, storage.SingboxRouterSettings{
+			Enabled: true, PolicyName: "Policy0",
+		}),
+		Policies:       &fakeAccessPolicyProvider{mark: "0xffffaaa"},
+		IPTables:       ipt,
+		Singbox:        newTestSingbox(t),
+		WANIPCollector: &fakeWANIPCollector{ips: []string{"203.0.113.207/32"}},
+	})
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile на непрочитанном состоянии обязан пройти тихо: %v", err)
+	}
+	if restores != 0 {
+		t.Errorf("непрочитанное состояние вызвало переустановку: %d restore", restores)
 	}
 }

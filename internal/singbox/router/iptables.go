@@ -1506,28 +1506,6 @@ func EnsureRouterNetfilterModules(ctx context.Context) []error {
 	return errs
 }
 
-// HasAnyInstalled returns true if at least one of the AWGM chains exists
-// in the kernel. Used for the disabled-cleanup path: even a partial install
-// (e.g. mangle chain present but nat chain missing after a failed upgrade)
-// must trigger Uninstall so no stale remnants survive.
-func (it *IPTables) HasAnyInstalled(ctx context.Context) bool {
-	return it.runIPTables(ctx, "-t", "mangle", "-nL", ChainName) == nil ||
-		it.runIPTables(ctx, "-t", "nat", "-nL", RedirectChain) == nil
-}
-
-// IsInstalled returns true only when both AWGM chains exist. Used for the
-// enabled-reconcile path: if either chain is missing a full re-install is
-// needed to reach a known-good state.
-func (it *IPTables) IsInstalled(ctx context.Context) bool {
-	if it.runIPTables(ctx, "-t", "mangle", "-nL", ChainName) != nil {
-		return false
-	}
-	if it.runIPTables(ctx, "-t", "nat", "-nL", RedirectChain) != nil {
-		return false
-	}
-	return true
-}
-
 // Probe reports the live interception state in two booleans, from a single
 // `iptables -S <table>` per table (one exec each instead of separate -nL +
 // -S PREROUTING calls):
@@ -1544,8 +1522,8 @@ func (it *IPTables) IsInstalled(ctx context.Context) bool {
 // On a query error Probe returns (false, false, err); callers must treat that
 // as "unknown" (do NOT reinstall) rather than "broken".
 func (it *IPTables) Probe(ctx context.Context) (installed, jumps bool, err error) {
-	installed, jumps, _, err = it.probeAll(ctx)
-	return installed, jumps, err
+	st, err := it.probeAll(ctx)
+	return st.installed, st.jumps, err
 }
 
 // probeAll is Probe plus the fail-closed blackhole's liveness. The blackhole
@@ -1562,22 +1540,40 @@ func (it *IPTables) Probe(ctx context.Context) (installed, jumps bool, err error
 // before acting on any of the three, or a transient `-S` failure will read as
 // "nothing is installed". In particular blackhole reads false even when the
 // mangle dump already showed it, because the nat dump failed afterwards.
-func (it *IPTables) probeAll(ctx context.Context) (installed, jumps, blackhole bool, err error) {
+// iptState — живое состояние перехвата, снятое за один `-S` на таблицу.
+// Структурой, а не пятёркой bool: поля называют себя на месте вызова, и
+// добавление наблюдения не переписывает каждый вызывающий.
+type iptState struct {
+	// installed — ОБЕ цепочки AWGM объявлены. Путь «включено и целостно».
+	installed bool
+	// anyChain — объявлена ХОТЯ БЫ ОДНА. Путь уборки: даже частичная
+	// установка (mangle есть, nat не доехал после сбойного обновления)
+	// обязана попасть в Uninstall, иначе остатки переживут выключение.
+	anyChain bool
+	// jumps — обе цепочки действительно входятся из PREROUTING.
+	jumps bool
+	// blackhole — цепочка fail-closed жива И входится.
+	blackhole bool
+}
+
+func (it *IPTables) probeAll(ctx context.Context) (iptState, error) {
 	mangleDump, err := it.runIPTablesOut(ctx, "-t", "mangle", "-S")
 	if err != nil {
-		return false, false, false, err
+		return iptState{}, err
 	}
 	mChain, mJump := scanChain(mangleDump, ChainName)
 	bChain, bJump := scanChain(mangleDump, BlackholeChain)
-	blackhole = bChain && bJump
 	natDump, err := it.runIPTablesOut(ctx, "-t", "nat", "-S")
 	if err != nil {
-		return false, false, false, err
+		return iptState{}, err
 	}
 	nChain, nJump := scanChain(natDump, RedirectChain)
-	installed = mChain && nChain
-	jumps = installed && mJump && nJump
-	return installed, jumps, blackhole, nil
+	return iptState{
+		installed: mChain && nChain,
+		anyChain:  mChain || nChain,
+		jumps:     mChain && nChain && mJump && nJump,
+		blackhole: bChain && bJump,
+	}, nil
 }
 
 // scanChain reports the chain's declaration and its PREROUTING jump in an

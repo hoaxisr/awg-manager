@@ -1730,8 +1730,24 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	if sr.RoutingMode == statePolicyTun {
 		return s.reconcilePolicyTun(ctx, sr)
 	}
-	installedComplete := s.deps.IPTables.IsInstalled(ctx)
-	installedAny := s.deps.IPTables.HasAnyInstalled(ctx)
+	// Один снимок вместо IsInstalled + HasAnyInstalled: те делали по паре
+	// `iptables -nL` каждый — до ЧЕТЫРЁХ fork+exec на тик, дважды в минуту.
+	// Теперь два `-S`, по одному на таблицу. Ниже по ветке reconcileInstalled
+	// снимает состояние ещё раз (свой probeAll): передать снимок туда мешает
+	// не техника, а цена — у него шестьдесят тестовых вызовов, и менять
+	// сигнатуру ради двух exec'ов несоразмерно. Итог на горячем пути:
+	// тик был 4 `-nL` + 3 `-S`, стал 5 `-S` — на два fork+exec меньше.
+	//
+	// Отказ снятия — это «не знаю», а НЕ «сломано». Прежние IsInstalled и
+	// HasAnyInstalled на ошибке возвращали false, и при включённом роутере это
+	// уводило в enableLocked: транзиентный отказ iptables во время перезаписи
+	// таблиц движком ndm вызывал ненужную переустановку. Пропускаем тик —
+	// следующий через 30 с увидит настоящее состояние.
+	live, err := s.deps.IPTables.probeAll(ctx)
+	if err != nil {
+		return nil
+	}
+	installedComplete, installedAny := live.installed, live.anyChain
 	// Запаркованный слот 20 при живых цепочках — тоже дрейф (issue #523):
 	// rollback провального Enable паркует слот, а netfilter.d-hook
 	// восстанавливает перехват из rules-файла. reconcileInstalled видел
@@ -1929,7 +1945,8 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// the NDMS reload; this is the slower secondary net. On a probe error treat
 	// the state as unknown and DO NOT reinstall — a transient `-S` failure
 	// during an NDMS reload must not trigger a needless rebuild.
-	_, jumps, blackholeLive, probeErr := s.deps.IPTables.probeAll(ctx)
+	live, probeErr := s.deps.IPTables.probeAll(ctx)
+	jumps, blackholeLive := live.jumps, live.blackhole
 	jumpsMissing := probeErr == nil && !jumps
 	// wantBlackhole: движок мёртв И PREROUTING-джампы снесены (NDMS перестроил
 	// firewall). Раньше здесь перехват просто не восстанавливался в мёртвый порт
