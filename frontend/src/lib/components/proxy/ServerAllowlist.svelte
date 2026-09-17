@@ -158,7 +158,15 @@
 				});
 				const id = (res.clientId || values.clientId).trim();
 				if (id && values.allow) {
-					const add = await api.addFreeTurnServerAllowlistClient(serverId, id, values.name);
+					// Ссылка едет вместе с записью: её хранит список, а не ручка
+					// выдачи (#919 — иначе в файле оседали бы ссылки абонентов,
+					// которых в список не внесли).
+					const add = await api.addFreeTurnServerAllowlistClient(
+						serverId,
+						id,
+						values.name,
+						res.link ?? '',
+					);
 					entries = add.clients ?? [];
 					enabled = add.enabled;
 					clientsFile = add.clientsFile ?? '';

@@ -120,7 +120,12 @@ func applyLinks(clients []AllowlistEntry, links map[string]string) {
 // заведя путь в конфиге роли, и просит перезапуск: -clients-file читается при
 // старте процесса. Добавление в УЖЕ включённый список перезапуска не требует —
 // сервер перечитывает файл сам.
-func (s *Service) Add(ctx context.Context, key, clientID, comment string) (AddAllowlistResult, error) {
+//
+// link — выданная абоненту ссылка; непустая запоминается вместе с записью и
+// живёт ровно столько же (#919). Сохраняет её именно эта ручка, а не ручка
+// выдачи: у абонента, которого в список не внесли, ссылку всё равно негде
+// показать, и в файле она стала бы сиротой с приватным ключом пира (F370).
+func (s *Service) Add(ctx context.Context, key, clientID, comment, link string) (AddAllowlistResult, error) {
 	rec, clientsFile, err := s.serverConfig(key)
 	if err != nil {
 		return AddAllowlistResult{}, err
@@ -145,15 +150,24 @@ func (s *Service) Add(ctx context.Context, key, clientID, comment string) (AddAl
 		needsRestart = true
 	}
 
-	// Ссылки читаются ДО записи списка: их отказ после неё оставил бы
-	// наполовину сделанную работу — запись в файле есть, а ручка ответила
-	// ошибкой, по которой фронт откатывает созданного абоненту WG-пира.
-	links, err := s.storedLinks(rec.ID)
-	if err != nil {
-		return AddAllowlistResult{}, err
+	// Ссылка пишется ПЕРЕД записью списка, чтобы её отказ не оставлял работу
+	// сделанной наполовину: запись в списке есть, а ручка ответила ошибкой, по
+	// которой фронт откатывает созданного абоненту WG-пира. Обратный порядок
+	// пришлось бы откатывать удалением уже внесённой записи.
+	linkPath := ""
+	if strings.TrimSpace(s.deps.DataDir) != "" {
+		linkPath = instancestore.FreeTurnLinksPath(s.deps.DataDir, rec.ID)
+		if err := setClientLink(linkPath, clientID, link); err != nil {
+			return AddAllowlistResult{}, err
+		}
 	}
 
 	if err := addAllowlistClient(path, clientID, comment); err != nil {
+		// Записи не будет — ссылке без неё в файле делать нечего. Отказ снятия
+		// не заслоняет исходный: он и есть причина отказа ручки.
+		if linkPath != "" && strings.TrimSpace(link) != "" {
+			_ = dropClientLink(linkPath, clientID)
+		}
 		return AddAllowlistResult{}, err
 	}
 	st, err := loadAllowlistStatus(path)
@@ -162,8 +176,11 @@ func (s *Service) Add(ctx context.Context, key, clientID, comment string) (AddAl
 	}
 	// Ответ — тот же состав, что отдаёт List: фронт рисует список по нему, и
 	// без ссылок у только что внесённого абонента не было бы кнопки «Ссылка»
-	// до перезагрузки страницы.
-	applyLinks(st.Clients, links)
+	// до перезагрузки страницы. Чтение здесь уже ничего не ломает: список
+	// записан, и отказ чтения — честный отказ ручки.
+	if err := s.fillLinks(rec.ID, st.Clients); err != nil {
+		return AddAllowlistResult{}, err
+	}
 	return AddAllowlistResult{AllowlistStatus: st, NeedsRestart: needsRestart}, nil
 }
 

@@ -13,6 +13,9 @@ import (
 type addRequest struct {
 	ClientID string `json:"clientId"`
 	Comment  string `json:"comment"`
+	// Link — выданная абоненту ссылка (#919). Необязательна: без неё запись
+	// заводится как прежде, просто показать её потом будет нечем.
+	Link string `json:"link"`
 }
 
 // decodeRequest — тело POST link/decode (api.DecodeLinkRequest).
@@ -51,7 +54,7 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, key string, sub 
 				response.Error(w, "invalid request body", "BAD_REQUEST")
 				return
 			}
-			res, err := s.Add(r.Context(), key, req.ClientID, req.Comment)
+			res, err := s.Add(r.Context(), key, req.ClientID, req.Comment, req.Link)
 			if err != nil {
 				s.fail(w, err, "FREETURN_ALLOWLIST_ADD_FAILED")
 				return

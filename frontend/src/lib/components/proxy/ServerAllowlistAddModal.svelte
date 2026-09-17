@@ -144,6 +144,11 @@
 				checked={allow}
 				onchange={(v) => (allow = v)}
 			/>
+			{#if !allow}
+				<!-- Ссылку хранит запись списка (#919): без записи её негде показать
+				     потом, и владелец должен знать это ДО отправки, а не после. -->
+				<p class="add-note">Без записи в списке ссылку потом не показать — сохраните её сами</p>
+			{/if}
 			{#if error}
 				<p class="add-error" role="alert">{error}</p>
 			{/if}
@@ -190,5 +195,11 @@
 		margin: 0;
 		font-size: 0.8125rem;
 		color: var(--color-error);
+	}
+
+	.add-note {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: var(--color-text-secondary);
 	}
 </style>

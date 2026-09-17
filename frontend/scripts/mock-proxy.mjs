@@ -9143,8 +9143,8 @@ const server = http.createServer(async (req, res) => {
 						...(opts.wg ? { wg: opts.wg } : {}),
 					};
 					const link = 'freeturn://' + Buffer.from(JSON.stringify(payload)).toString('base64');
-					// Ссылку запоминает ручка генерации — как в ftlink.BuildLink (#919).
-					if (opts.clientId) mockFreeturnLinks(inst.id)[String(opts.clientId).toLowerCase()] = link;
+					// Ссылку эта ручка НЕ запоминает — как и ftlink.BuildLink: её
+					// хранит внесение в список (#919, F370).
 					sendData(res, { link, peer, ...(opts.clientId ? { clientId: opts.clientId } : {}) });
 					return;
 				}
@@ -9378,6 +9378,11 @@ const server = http.createServer(async (req, res) => {
 						if (!al.clients.some((c) => c.clientId === cid)) {
 							al.clients.push({ clientId: cid, comment: body.comment?.trim() || undefined });
 						}
+						// Ссылка приходит в теле и живёт столько же, сколько запись
+						// (#919). Пустая прежнюю не стирает: переименование идёт этой
+						// же ручкой и ссылки не несёт.
+						const withLink = String(body.link ?? '').trim();
+						if (withLink) mockFreeturnLinks(inst.id)[cid.toLowerCase()] = withLink;
 						sendData(res, { ...mockFreeturnAllowlistStatus(al, inst.id), needsRestart });
 					} catch (e) {
 						sendInvalidRequest(res, e);
