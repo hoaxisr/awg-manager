@@ -90,10 +90,11 @@ func newGateAggregator(t *testing.T, addr string, pub TrafficPublisher, feeder H
 	return agg
 }
 
-// Панель не открыта: SSE-публикаций быть не должно вовсе, а таблица
-// разбирается не чаще idleIngestInterval — она и есть самая дорогая часть
-// цикла (полный JSON таблицы соединений раз в секунду от sing-box).
-func TestTrafficAggregator_IdleSkipsPublishAndParsing(t *testing.T) {
+// Панель не открыта: SSE-публикаций быть не должно вовсе. А вот историю
+// наполнять обязаны прежним темпом — источник немонотонный (суммы по тегам
+// пересобираются только из открытых соединений), и растянутый шаг терял бы
+// короткие соединения и целые окна на отрицательной дельте.
+func TestTrafficAggregator_IdleSkipsPublishButFeedsHistory(t *testing.T) {
 	addr, sent := clashStub(t, 10*time.Millisecond)
 	pub := &safePublisher{}
 	feeder := &safeFeeder{}
@@ -101,7 +102,7 @@ func TestTrafficAggregator_IdleSkipsPublishAndParsing(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go agg.Run(ctx)
-	time.Sleep(400 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 	cancel()
 
 	if sent.Load() < 5 {
@@ -110,9 +111,8 @@ func TestTrafficAggregator_IdleSkipsPublishAndParsing(t *testing.T) {
 	if got := pub.count(); got != 0 {
 		t.Errorf("SSE-публикаций %d, ожидалось 0 при закрытой панели", got)
 	}
-	// Один разбор на входе в окно простоя; второго за 400 мс быть не может.
-	if got := feeder.count(); got > 1 {
-		t.Errorf("разборов с подачей в историю %d, ожидалось ≤1 за окно теста", got)
+	if got := feeder.count(); got < 3 {
+		t.Errorf("подач в историю %d, ожидалось ≥3: история наполняется и в простое", got)
 	}
 }
 

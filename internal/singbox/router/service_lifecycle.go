@@ -645,7 +645,10 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 
 	// Validate settings first — fail fast with a meaningful error before
 	// attempting any kernel / iptables operations.
-	settings, err := s.deps.Settings.Load()
+	// Get, а не Load: Reconcile зовётся планировщиком раз в 30 с, а Load
+	// читает файл с флеша под пишущим локом. Читаем поле-структуру, map-полей
+	// живого объекта не касаемся.
+	settings, err := s.deps.Settings.Get()
 	if err != nil {
 		return err
 	}
@@ -1699,7 +1702,10 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 		s.appLog.Warn("fakeip-reap", "", err.Error())
 	}
 
-	settings, err := s.deps.Settings.Load()
+	// Get, а не Load: Reconcile зовётся планировщиком раз в 30 с, а Load
+	// читает файл с флеша под пишущим локом. Читаем поле-структуру, map-полей
+	// живого объекта не касаемся.
+	settings, err := s.deps.Settings.Get()
 	if err != nil {
 		return err
 	}

@@ -58,7 +58,15 @@ func (s *Scheduler) run() {
 }
 
 func (s *Scheduler) tickPolicySync(ctx context.Context) {
-	settings, err := s.settings.Load()
+	// Get, а не Load: Load читает файл с флеша и берёт ПИШУЩИЙ лок стора, и
+	// так — дважды за тик (здесь и внутри Reconcile). Тик самолечения ходит
+	// раз в 30 секунд круглосуточно; читать ради него файл незачем, кэш стора
+	// обновляется на каждой записи настроек.
+	//
+	// Живой объект тут безопасен: читаем поле-структуру SingboxRouter, а
+	// оговорка стора (settings.go: «Get возвращает ЖИВОЙ объект») — про
+	// параллельное чтение его map-полей, которых мы не касаемся.
+	settings, err := s.settings.Get()
 	if err != nil {
 		return
 	}
