@@ -12,9 +12,13 @@ import (
 )
 
 // AllowlistEntry is one authorized freeturn client ID with optional comment.
+//
+// Link — выданная этому абоненту ссылка, если она сохранялась (#919). Живёт в
+// отдельном файле (links.go), а не в файле списка: тот читает форк-сервер.
 type AllowlistEntry struct {
 	ClientID string `json:"clientId"`
 	Comment  string `json:"comment,omitempty"`
+	Link     string `json:"link,omitempty"`
 }
 
 // AllowlistStatus is returned by the allowlist API.

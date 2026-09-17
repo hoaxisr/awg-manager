@@ -15,6 +15,9 @@ type BuilderDeps struct {
 	// Записи адрес НЕ помнят: LinkPeer — поле wdtt-сервера, freeturn-ссылка
 	// его никогда не персистила (паритет старого generateLinkCore).
 	ExternalIP func(ctx context.Context) (string, error)
+	// DataDir — каталог данных: рядом со списком разрешённых лежит файл
+	// выданных ссылок (#919). Пустой — ссылки не запоминаются.
+	DataDir string
 }
 
 // Builder — ссылки freeturn:// одного сервера. Реализация
@@ -97,6 +100,18 @@ func (b *Builder) BuildLink(ctx context.Context, rec instancestore.Record, req w
 	})
 	if err != nil {
 		return nil, &wdttlink.LinkError{Code: "FREETURN_LINK_ENCODE_FAILED", Msg: err.Error()}
+	}
+
+	// Выданная ссылка запоминается здесь — это ЕДИНСТВЕННОЕ место, где она
+	// существует целиком (#919). Отказ записи — отказ ручки: отдать ссылку и
+	// промолчать о том, что её не сохранили, значит пообещать кнопку «Ссылка»,
+	// которой потом не будет.
+	if strings.TrimSpace(b.deps.DataDir) != "" {
+		path := instancestore.FreeTurnLinksPath(b.deps.DataDir, rec.ID)
+		if err := setClientLink(path, req.ClientID, link); err != nil {
+			return nil, &wdttlink.LinkError{Code: "FREETURN_LINK_SAVE_FAILED",
+				Msg: "ссылка собрана, но не сохранена: " + err.Error()}
+		}
 	}
 
 	// clientId отдаётся ТАКИМ, КАКИМ пришёл (без трима) — форма старого

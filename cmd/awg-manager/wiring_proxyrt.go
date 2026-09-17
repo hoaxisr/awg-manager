@@ -881,6 +881,7 @@ func (a *app) wireProxyrt() {
 			}),
 			instancestore.KindFreeTurnServer: ftlink.NewBuilder(ftlink.BuilderDeps{
 				ExternalIP: a.proxyExternalIP,
+				DataDir:    a.dataDir,
 			}),
 		},
 	})

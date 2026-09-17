@@ -4,6 +4,7 @@
 	// отправке — у владельца списка.
 	import { RefreshCw } from 'lucide-svelte';
 	import { Button, IconButton, Input, Modal, Toggle } from '$lib/components/ui';
+	import LinkBox from './LinkBox.svelte';
 	import ShareWizardPeer, { NEW_PEER } from './ShareWizardPeer.svelte';
 
 	/** Что уходит владельцу: пир либо NEW_PEER (создать под абонента, #871). */
@@ -26,11 +27,28 @@
 		error?: string;
 		/** listen-порт WG-сервера, на который смотрит `-connect` раздачи. */
 		serverListenPort?: number;
+		/**
+		 * Ссылка абоненту: непустая — окно показывает её вместо формы (#919).
+		 * Так она попадается на глаза там, где владелец и стоит, а не уезжает
+		 * вниз страницы. Тем же экраном открывается «Ссылка» в строке списка.
+		 */
+		link?: string;
+		/** Чья ссылка показана: имя абонента либо его Client ID. */
+		linkFor?: string;
 		onsubmit: (values: AddClientValues) => void;
 		onclose: () => void;
 	}
 
-	let { open, busy = false, error = '', serverListenPort, onsubmit, onclose }: Props = $props();
+	let {
+		open,
+		busy = false,
+		error = '',
+		serverListenPort,
+		link = '',
+		linkFor = '',
+		onsubmit,
+		onclose,
+	}: Props = $props();
 
 	/** Client ID придумывает фронт: бэкенд в ответе лишь возвращает присланный. */
 	function randomClientId(): string {
@@ -73,64 +91,88 @@
 </script>
 
 <!-- Клик по подложке форму не теряет: выход — «Отменить» или Esc. -->
-<Modal {open} title="Новый абонент" size="sm" closeOnBackdrop={false} {onclose}>
-	<div class="add-form">
-		<div class="field-with-btn">
-			<Input label="Client ID" bind:value={clientId} fullWidth />
-			<IconButton
-				size="sm"
-				ariaLabel="Обновить Client ID"
-				onclick={() => (clientId = randomClientId())}
-			>
-				<RefreshCw size={14} />
-			</IconButton>
+<Modal
+	{open}
+	title={link ? 'Ссылка абоненту' : 'Новый абонент'}
+	size="sm"
+	closeOnBackdrop={false}
+	{onclose}
+>
+	{#if link}
+		<div class="issued">
+			<p class="issued-for">Абонент: {linkFor || '—'}</p>
+			<LinkBox {link} freeturn />
 		</div>
-		<Input label="Имя абонента" bind:value={name} fullWidth />
-		<ShareWizardPeer
-			endpointPort={9000}
-			{serverListenPort}
-			createLabel="Создать нового под абонента"
-			onconnect={() => {}}
-			onpeerconf={(conf, err, unknown) => {
-				peerConf = conf;
-				confError = err;
-				portUnknown = unknown;
-			}}
-			onpick={(v, port, loading) => {
-				peer = v;
-				localPort = port;
-				peerLoading = loading;
-			}}
-		/>
-		{#if portUnknown || localPort <= 0}
-			<p class="add-error" role="alert">Укажите локальный порт FreeTurn-клиента абонента</p>
-		{:else if confMissing && !peerLoading}
-			<p class="add-error" role="alert">
-				{confError || 'Конфиг пира не получен — без него ссылка абоненту неполная'}
-			</p>
-		{/if}
-		<Toggle
-			label="Внести в список разрешённых"
-			checked={allow}
-			onchange={(v) => (allow = v)}
-		/>
-		{#if error}
-			<p class="add-error" role="alert">{error}</p>
-		{/if}
-	</div>
+	{:else}
+		<div class="add-form">
+			<div class="field-with-btn">
+				<Input label="Client ID" bind:value={clientId} fullWidth />
+				<IconButton
+					size="sm"
+					ariaLabel="Обновить Client ID"
+					onclick={() => (clientId = randomClientId())}
+				>
+					<RefreshCw size={14} />
+				</IconButton>
+			</div>
+			<Input label="Имя абонента" bind:value={name} fullWidth />
+			<ShareWizardPeer
+				endpointPort={9000}
+				{serverListenPort}
+				createLabel="Создать нового под абонента"
+				onconnect={() => {}}
+				onpeerconf={(conf, err, unknown) => {
+					peerConf = conf;
+					confError = err;
+					portUnknown = unknown;
+				}}
+				onpick={(v, port, loading) => {
+					peer = v;
+					localPort = port;
+					peerLoading = loading;
+				}}
+			/>
+			{#if portUnknown || localPort <= 0}
+				<p class="add-error" role="alert">Укажите локальный порт FreeTurn-клиента абонента</p>
+			{:else if confMissing && !peerLoading}
+				<p class="add-error" role="alert">
+					{confError || 'Конфиг пира не получен — без него ссылка абоненту неполная'}
+				</p>
+			{/if}
+			<Toggle
+				label="Внести в список разрешённых"
+				checked={allow}
+				onchange={(v) => (allow = v)}
+			/>
+			{#if error}
+				<p class="add-error" role="alert">{error}</p>
+			{/if}
+		</div>
+	{/if}
 	{#snippet actions()}
-		<Button variant="secondary" size="md" disabled={busy} onclick={onclose}>Отменить</Button>
-		<Button variant="primary" size="md" disabled={!canSubmit} loading={busy} onclick={submit}>
-			Добавить
-		</Button>
+		{#if link}
+			<Button variant="primary" size="md" onclick={onclose}>Готово</Button>
+		{:else}
+			<Button variant="secondary" size="md" disabled={busy} onclick={onclose}>Отменить</Button>
+			<Button variant="primary" size="md" disabled={!canSubmit} loading={busy} onclick={submit}>
+				Добавить
+			</Button>
+		{/if}
 	{/snippet}
 </Modal>
 
 <style>
-	.add-form {
+	.add-form,
+	.issued {
 		display: flex;
 		flex-direction: column;
 		gap: 0.625rem;
+	}
+
+	.issued-for {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: var(--color-text-secondary);
 	}
 
 	.field-with-btn {

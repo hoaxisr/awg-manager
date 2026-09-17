@@ -3407,6 +3407,8 @@ function createInitialMockFreeturn() {
 		],
 		// serverId -> { enabled, clientsFile, clients: [{clientId, comment}] }
 		allowlists: {},
+		// Выданные ссылки абонентов: serverId → { cid → freeturn://… } (#919).
+		links: {},
 		clientSeq: 2,
 		serverSeq: 1,
 	};
@@ -3454,13 +3456,29 @@ function mockFreeturnAllowlist(serverId) {
 	return mockFreeturn.allowlists[serverId];
 }
 
+/** Выданные ссылки одного сервера: ключ — Client ID в нижнем регистре, как у бэкенда. */
+function mockFreeturnLinks(serverId) {
+	if (!mockFreeturn.links[serverId]) mockFreeturn.links[serverId] = {};
+	return mockFreeturn.links[serverId];
+}
+
 /**
  * Статус списка ровно как у бэкенда (`loadAllowlistStatus`): включённость —
  * это НАЛИЧИЕ пути к файлу, а у выключенного списка состав не отдаётся.
+ * Записям подставляется выданная ссылка — это делает `Service.fillLinks`.
  */
-function mockFreeturnAllowlistStatus(al) {
+function mockFreeturnAllowlistStatus(al, serverId) {
 	const enabled = !!al.clientsFile;
-	return { enabled, clientsFile: al.clientsFile, clients: enabled ? al.clients : [] };
+	const links = mockFreeturnLinks(serverId);
+	const withLink = (c) => {
+		const link = links[c.clientId.toLowerCase()];
+		return link ? { ...c, link } : { ...c };
+	};
+	return {
+		enabled,
+		clientsFile: al.clientsFile,
+		clients: enabled ? al.clients.map(withLink) : [],
+	};
 }
 
 // ── WDTT — клиенты и серверы. Prism отдаёт на wdtt-эндпоинты пустые 200
@@ -9034,7 +9052,10 @@ const server = http.createServer(async (req, res) => {
 			if (req.method === 'DELETE') {
 				const list = proxyListFor(kind);
 				list.splice(list.indexOf(inst), 1);
-				if (kind === 'freeturn-server') delete mockFreeturn.allowlists[inst.id];
+				if (kind === 'freeturn-server') {
+					delete mockFreeturn.allowlists[inst.id];
+					delete mockFreeturn.links[inst.id];
+				}
 				sendData(res, { ok: true });
 				return;
 			}
@@ -9122,6 +9143,8 @@ const server = http.createServer(async (req, res) => {
 						...(opts.wg ? { wg: opts.wg } : {}),
 					};
 					const link = 'freeturn://' + Buffer.from(JSON.stringify(payload)).toString('base64');
+					// Ссылку запоминает ручка генерации — как в ftlink.BuildLink (#919).
+					if (opts.clientId) mockFreeturnLinks(inst.id)[String(opts.clientId).toLowerCase()] = link;
 					sendData(res, { link, peer, ...(opts.clientId ? { clientId: opts.clientId } : {}) });
 					return;
 				}
@@ -9337,7 +9360,7 @@ const server = http.createServer(async (req, res) => {
 			const al = mockFreeturnAllowlist(inst.id);
 			if (clientId === null) {
 				if (req.method === 'GET') {
-					sendData(res, mockFreeturnAllowlistStatus(al));
+					sendData(res, mockFreeturnAllowlistStatus(al, inst.id));
 					return;
 				}
 				if (req.method === 'POST') {
@@ -9355,7 +9378,7 @@ const server = http.createServer(async (req, res) => {
 						if (!al.clients.some((c) => c.clientId === cid)) {
 							al.clients.push({ clientId: cid, comment: body.comment?.trim() || undefined });
 						}
-						sendData(res, { ...mockFreeturnAllowlistStatus(al), needsRestart });
+						sendData(res, { ...mockFreeturnAllowlistStatus(al, inst.id), needsRestart });
 					} catch (e) {
 						sendInvalidRequest(res, e);
 					}
@@ -9375,6 +9398,7 @@ const server = http.createServer(async (req, res) => {
 			}
 			if (req.method === 'DELETE') {
 				al.clients = al.clients.filter((c) => c.clientId !== clientId);
+				delete mockFreeturnLinks(inst.id)[clientId.toLowerCase()];
 				sendData(res, { message: 'removed' });
 				return;
 			}

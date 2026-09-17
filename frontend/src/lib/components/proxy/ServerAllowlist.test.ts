@@ -183,8 +183,51 @@ describe('ServerAllowlist: добавление абонента модалко�
 		});
 		expect(apiMock.addFreeTurnServerAllowlistClient.mock.calls[0][1]).toBe('cid-1');
 		expect(notify.success).toHaveBeenCalledWith('Client ID внесён в список разрешённых');
-		// Успех закрывает окно и показывает ссылку.
-		await waitFor(() => expect(screen.queryByText('Новый абонент')).toBeNull());
+		// #919: успех не закрывает окно, а показывает в нём ссылку — форма
+		// уступает место экрану ссылки. Сверяется исчезновение ПОЛЕЙ, а не
+		// заголовка: заголовок у экрана ссылки свой, и проверка по нему была бы
+		// зелёной при любом поведении окна.
+		await waitFor(() => expect(screen.getByText('freeturn://x')).toBeTruthy());
+		expect(screen.getByRole('dialog')).toBeTruthy();
+		expect(screen.queryByLabelText('Имя абонента')).toBeNull();
+		expect(screen.getByRole('button', { name: 'Готово' })).toBeTruthy();
+	});
+
+	// #919: ссылку надо уметь показать повторно — её отдаёт бэкенд полем записи.
+	it('#919: «Ссылка» в строке открывает сохранённую ссылку, у записи без неё кнопки нет', async () => {
+		apiMock.getFreeTurnServerAllowlist.mockResolvedValue({
+			enabled: true,
+			clientsFile: '/opt/etc/freeturn/clients.json',
+			clients: [
+				{ clientId: 'cid-1', comment: 'С ссылкой', link: 'freeturn://saved' },
+				{ clientId: 'cid-2', comment: 'Без ссылки' },
+			],
+		});
+		render(ServerAllowlist, {
+			props: {
+				serverId: 'ft1',
+				serverName: 'Раздача FreeTurn',
+				server: SERVER,
+				locked: async (fn: () => Promise<void>) => {
+					await fn();
+				},
+			},
+		});
+
+		const withLink = (await screen.findByText('С ссылкой')).closest('li') as HTMLElement;
+		const without = screen.getByText('Без ссылки').closest('li') as HTMLElement;
+		expect(within(without).queryByRole('button', { name: 'Ссылка' })).toBeNull();
+
+		await fireEvent.click(within(withLink).getByRole('button', { name: 'Ссылка' }));
+
+		const modal = await screen.findByRole('dialog');
+		expect(within(modal).getByText('freeturn://saved')).toBeTruthy();
+		expect(within(modal).getByText('Абонент: С ссылкой')).toBeTruthy();
+		// Ссылку показали, а не выдали заново: бэкенд не дёргался.
+		expect(apiMock.generateFreeTurnLink).not.toHaveBeenCalled();
+
+		await fireEvent.click(within(modal).getByRole('button', { name: 'Готово' }));
+		await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 	});
 
 	it('галка снята — ссылка есть, записи в списке нет', async () => {
