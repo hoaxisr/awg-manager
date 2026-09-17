@@ -51,7 +51,15 @@ func TestLogForwarder_LevelMapping(t *testing.T) {
 		{"error", `{"type":"error","payload":"boom"}`, logging.LevelError, "boom"},
 		{"fatal", `{"type":"fatal","payload":"cfg bad"}`, logging.LevelError, "cfg bad"},
 		{"debug", `{"type":"debug","payload":"tick"}`, logging.LevelDebug, "tick"},
-		{"unknown-falls-to-full", `{"type":"trace","payload":"trace msg"}`, logging.LevelFull, "trace msg"},
+		// trace идёт в LevelDebug вместе с debug: у движка trace ПОДРОБНЕЕ
+		// debug, а прежнее trace→LevelFull переворачивало подробность в нашей
+		// шкале (LevelFull приоритет 2, LevelDebug 3) — при пороге «full»
+		// пользователь видел trace и не видел debug того же движка.
+		{"trace-as-debug", `{"type":"trace","payload":"trace msg"}`, logging.LevelDebug, "trace msg"},
+		// Неизвестный ярлык не прячем: движок умеет отдать "unknown", и при
+		// заводском пороге info самый подробный уровень означал бы «скрыть» —
+		// fail-closed там, где журнал существует ради разбора аварий.
+		{"unknown-visible", `{"type":"unknown","payload":"strange"}`, logging.LevelWarn, "strange"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

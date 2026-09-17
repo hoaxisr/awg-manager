@@ -100,11 +100,11 @@ func (s *Service) Visible(level Level) bool {
 // AppLog implements AppLogger. Checks enabled + level filtering, then routes
 // to the correct buffer based on the entry's group.
 func (s *Service) AppLog(level Level, group, subgroup, action, target, message string) {
-	if !s.IsEnabled() {
-		return
-	}
-	configuredLevel := Level(s.settings.GetLogLevel())
-	if !IsVisible(level, configuredLevel) {
+	// Через Visible, а не своей копией проверки: тот же принцип, что у
+	// levelForClashType в пересылке журнала движка. Разойдясь, отсев
+	// поставщика и отсев записи дали бы худший исход — строку, отброшенную
+	// поставщиком, но нужную пользователю, и ни один тест этого не показал бы.
+	if !s.Visible(level) {
 		return
 	}
 	bucket := BucketForGroup(group)
@@ -236,4 +236,10 @@ func capacityFor(settings SettingsGetter, bucket Bucket) int {
 // Len returns the total entry count across both buckets.
 func (s *Service) Len() int { return s.appBuffer.Len() + s.singboxBuffer.Len() }
 
-var _ AppLogger = (*Service)(nil)
+var (
+	_ AppLogger = (*Service)(nil)
+	// Способность необязательна и подхватывается type assertion'ом, поэтому
+	// её потеря была бы МОЛЧАЛИВОЙ: пересылка журнала движка просто перестала
+	// бы отсеивать строки до разбора, и ни один тест не покраснел бы.
+	_ LevelGate = (*Service)(nil)
+)

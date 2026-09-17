@@ -18,7 +18,6 @@ type LogForwarder struct {
 	// рантайме (issue #788), а Run переподключается каждые reconnect секунд,
 	// так что новый адрес подхватывается сам, без перезапуска горутины.
 	clashAddr func() string
-	app       logging.AppLogger
 
 	// gate — необязательная способность логгера сказать, попадёт ли запись
 	// такого уровня в журнал. Есть — отсеиваем ДО разбора; нет — работаем
@@ -36,11 +35,15 @@ type LogForwarder struct {
 	reconnect time.Duration
 }
 
+// levelWatchInterval — как часто сверять запрошенный у движка уровень с
+// нужным. Смена уровня журнала — редкое ручное действие, задержка до
+// levelWatchInterval + reconnect приемлема.
+const levelWatchInterval = 5 * time.Second
+
 func NewLogForwarder(clashAddr func() string, appLogger logging.AppLogger) *LogForwarder {
 	gate, _ := appLogger.(logging.LevelGate)
 	return &LogForwarder{
 		clashAddr: clashAddr,
-		app:       appLogger,
 		gate:      gate,
 		inbound:   logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBInbound),
 		outbound:  logging.NewScopedLogger(appLogger, logging.GroupSingbox, logging.SubSBOutbound),
@@ -67,7 +70,31 @@ func (f *LogForwarder) Run(ctx context.Context) {
 }
 
 func (f *LogForwarder) runOnce(ctx context.Context) {
-	url := fmt.Sprintf("http://%s/logs?level=trace", f.clashAddr())
+	level := f.desiredClashLevel()
+
+	// Поток живёт, пока жив sing-box, и сам по себе новый уровень не
+	// подхватит: пользователь поднял бы подробность ради диагностики и не
+	// увидел бы ничего нового. Сторож рвёт соединение на смене — Run
+	// переподключится с новым `?level=`.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		t := time.NewTicker(levelWatchInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if f.desiredClashLevel() != level {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
+	url := fmt.Sprintf("http://%s/logs?level=%s", f.clashAddr(), level)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return
@@ -184,6 +211,17 @@ func (f *LogForwarder) forward(line []byte) {
 // ОДНА точка соответствия на проверку и на запись: разойдясь, они дали бы
 // худший из возможных исходов — строку, отсеянную проверкой, но нужную
 // пользователю.
+//
+// `trace` идёт в LevelDebug вместе с `debug`, а НЕ в LevelFull, как было
+// раньше. Прежнее отображение переворачивало подробность: у движка trace
+// подробнее debug, а в нашей шкале LevelFull (приоритет 2) МЕНЕЕ подробен, чем
+// LevelDebug (3) — то есть при пороге «full» пользователь видел trace-строки
+// движка и НЕ видел его же debug-строки.
+//
+// Неизвестный тип — LevelWarn, а не самый подробный уровень. Движок умеет
+// отдать "unknown", и любой новый ярлык будущей версии попадёт сюда же;
+// прятать такую строку при заводских настройках (порог info) — fail-closed
+// там, где журнал существует ради разбора аварий.
 func levelForClashType(clashType string) logging.Level {
 	switch strings.ToLower(strings.TrimSpace(clashType)) {
 	case "error", "fatal", "panic":
@@ -192,10 +230,34 @@ func levelForClashType(clashType string) logging.Level {
 		return logging.LevelWarn
 	case "info":
 		return logging.LevelInfo
-	case "debug":
+	case "debug", "trace":
 		return logging.LevelDebug
 	default:
-		return logging.LevelFull
+		return logging.LevelWarn
+	}
+}
+
+// desiredClashLevel — самый подробный уровень, который сейчас нужен журналу, в
+// терминах движка.
+//
+// Просить у движка ровно нужное дешевле любого нашего отсева: `?level=`
+// фильтрует на ЕГО стороне до сериализации в JSON и записи в сокет
+// (experimental/clashapi/server.go), то есть строка не пересекает сокет и не
+// требует Unmarshal у нас. Отсев в forward при этом не лишний: он закрывает
+// промежуток до ближайшего переподключения и работает, если логгер LevelGate
+// не поддержал.
+func (f *LogForwarder) desiredClashLevel() string {
+	if f.gate == nil {
+		return "trace"
+	}
+	switch {
+	case f.gate.Visible(logging.LevelDebug):
+		return "trace"
+	case f.gate.Visible(logging.LevelInfo):
+		return "info"
+	default:
+		// error и warn проходят при любом пороге (IsVisible).
+		return "warn"
 	}
 }
 

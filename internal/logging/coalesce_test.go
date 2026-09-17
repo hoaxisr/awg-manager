@@ -233,3 +233,40 @@ func TestAppLog_PublishesOnlyWhenWatched(t *testing.T) {
 		t.Fatal("с открытой панелью событие не пришло")
 	}
 }
+
+// Отсев поставщика (Visible) и отсев записи (AppLog) обязаны совпадать на всех
+// уровнях. Разойдясь, они дадут худший исход: строку, отброшенную поставщиком
+// до разбора, но нужную пользователю, — и в журнале её просто не будет.
+func TestVisibleAgreesWithAppLog(t *testing.T) {
+	levels := []Level{LevelError, LevelWarn, LevelInfo, LevelFull, LevelDebug}
+	for _, configured := range levels {
+		s := NewService(&mockSettings{enabled: true, maxAge: 2, logLevel: string(configured),
+			appMaxEntries: 100, sbMaxEntries: 100})
+		for _, entry := range levels {
+			s.Clear(BucketApp)
+			s.AppLog(entry, GroupTunnel, SubConnectivity, "act", "tgt", "msg")
+			_, written := s.GetLogs(BucketApp, "", "", "", time.Time{}, 10, 0)
+
+			if got := s.Visible(entry); got != (written > 0) {
+				t.Errorf("порог %q, запись %q: Visible=%v, а записалось %d — проверки разошлись",
+					configured, entry, got, written)
+			}
+		}
+		s.Stop()
+	}
+}
+
+// Журнал выключен целиком — не пишем и не разрешаем поставщику готовить запись.
+func TestVisibleFalseWhenLoggingDisabled(t *testing.T) {
+	s := NewService(&mockSettings{enabled: false, maxAge: 2, logLevel: "debug",
+		appMaxEntries: 100, sbMaxEntries: 100})
+	defer s.Stop()
+
+	if s.Visible(LevelError) {
+		t.Error("Visible=true при выключенном журнале")
+	}
+	s.AppLog(LevelError, GroupTunnel, SubConnectivity, "act", "tgt", "msg")
+	if _, n := s.GetLogs(BucketApp, "", "", "", time.Time{}, 10, 0); n != 0 {
+		t.Errorf("записей %d при выключенном журнале", n)
+	}
+}

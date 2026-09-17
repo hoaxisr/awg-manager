@@ -94,7 +94,14 @@ func (b *Bus) subscribe(client bool) (string, <-chan Event, func()) {
 
 // ClientCount returns the number of active CLIENT (SSE) subscriptions —
 // «сколько человек сейчас смотрит». Внутренние подписчики не считаются.
+//
+// nil-приёмник безопасен, как и у Publish: счётчик спрашивают с горячих путей
+// (журнал, фоновые опросчики), и там нулевая шина должна означать «никто не
+// смотрит», а не панику.
 func (b *Bus) ClientCount() int {
+	if b == nil {
+		return 0
+	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return len(b.clients)
@@ -102,6 +109,9 @@ func (b *Bus) ClientCount() int {
 
 // SubscriberCount returns the number of active subscribers.
 func (b *Bus) SubscriberCount() int {
+	if b == nil {
+		return 0
+	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return len(b.subscribers)
