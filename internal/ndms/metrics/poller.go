@@ -43,7 +43,9 @@ type Poller struct {
 	running     RunningInterfacesProvider
 	subscribers SubscriberCounter
 	interval    time.Duration
-	log         Logger
+	// idleInterval — шаг, когда панель не открыта ни у кого.
+	idleInterval time.Duration
+	log          Logger
 
 	mu   sync.Mutex
 	prev map[string]peerDigest
@@ -135,11 +137,18 @@ func NewWithInterval(peers *query.PeerStore, pub Publisher, running RunningInter
 		running:     running,
 		subscribers: subs,
 		interval:    interval,
-		log:         log,
-		prev:        make(map[string]peerDigest),
-		emptyUntil:  make(map[string]time.Time),
-		stopCh:      make(chan struct{}),
-		doneCh:      make(chan struct{}),
+		// Гейта «никто не смотрит» здесь быть не может: этот же поллер —
+		// единственный кормилец истории трафика для НЕ управляемых системных
+		// туннелей (SetHistoryFeeder в wiring_routing.go). Выключив его, мы
+		// оставляли в графике дыру во всю длину простоя. Разрежаем, как
+		// traffic.SysfsPoller: разрешение часового окна — точка в минуту,
+		// поэтому минутный шаг сохраняет график верным.
+		idleInterval: 12 * interval,
+		log:          log,
+		prev:         make(map[string]peerDigest),
+		emptyUntil:   make(map[string]time.Time),
+		stopCh:       make(chan struct{}),
+		doneCh:       make(chan struct{}),
 	}
 }
 
@@ -181,24 +190,32 @@ func (p *Poller) Stop() {
 	}
 }
 
+// nobodyWatching сообщает, что открытых панелей нет. nil-счётчик считаем
+// «смотрят»: не настроили — не разрежаем.
+func (p *Poller) nobodyWatching() bool {
+	return p.subscribers != nil && p.subscribers.ClientCount() == 0
+}
+
 func (p *Poller) run() {
 	defer close(p.doneCh)
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
+	lastRun := time.Now()
 	for {
 		select {
 		case <-p.stopCh:
 			return
 		case <-ticker.C:
+			if p.nobodyWatching() && time.Since(lastRun) < p.idleInterval {
+				continue
+			}
 			p.tick()
+			lastRun = time.Now()
 		}
 	}
 }
 
 func (p *Poller) tick() {
-	if p.subscribers != nil && p.subscribers.ClientCount() == 0 {
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), p.interval)
 	defer cancel()
 

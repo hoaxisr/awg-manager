@@ -190,23 +190,59 @@ func TestMetricsPoller_EmptyPeersCooldown_SkipsSubsequentTicks(t *testing.T) {
 	}
 }
 
-func TestMetricsPoller_SkipsWhenNoSubscribers(t *testing.T) {
+// При закрытой панели поллер РАЗРЕЖАЕТСЯ, а не выключается: он единственный
+// кормилец истории трафика не управляемых системных туннелей, и полный гейт
+// оставлял в графике дыру во всю длину простоя (F352).
+func TestMetricsPoller_IdleStillFeedsHistory(t *testing.T) {
 	fg := query.NewFakeGetter()
-	fg.SetJSON("/show/interface/Wireguard0", `{"wireguard":{"peer":[]}}`)
-	peers := query.NewPeerStoreWithTTL(fg, query.NopLogger(), 1*time.Second)
+	fg.SetJSON("/show/interface/Wireguard0", `{"wireguard":{"peer":[{"public-key":"k","rxbytes":10,"txbytes":20,"last-handshake":0,"online":true,"enabled":true}]}}`)
+	peers := query.NewPeerStoreWithTTL(fg, query.NopLogger(), 1*time.Millisecond)
 	run := &fakeRunningProvider{}
 	run.Set([]InterfaceRef{{ID: "Wireguard0"}})
-	pub := &fakeMetricsPublisher{}
-	subs := &fakeSubs{count: 0}
+	history := &fakeHistory{}
 
-	p := NewWithInterval(peers, pub, run, subs, NopLogger(), 10*time.Millisecond)
+	// idleInterval = 12×interval = 60 мс. За 250 мс простоя обязано пройти
+	// хотя бы несколько разрежённых тиков.
+	p := NewWithInterval(peers, &fakeMetricsPublisher{}, run, &fakeSubs{count: 0}, NopLogger(), 5*time.Millisecond)
+	p.SetHistoryFeeder(history)
 	p.Start()
 	defer p.Stop()
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(250 * time.Millisecond)
 
-	if len(pub.Events()) != 0 {
-		t.Errorf("published events despite 0 subscribers: %d", len(pub.Events()))
+	if len(history.Entries()) == 0 {
+		t.Fatal("история не пишется при закрытой панели — дыра в графике системных туннелей")
+	}
+}
+
+// Разрежение обязано быть настоящим: без панели тиков должно быть заметно
+// меньше, чем с ней. Иначе экономия, ради которой всё затевалось, исчезает.
+func TestMetricsPoller_IdleIsThinned(t *testing.T) {
+	// Считаем обращения к роутеру, а не записи истории: история кормится только
+	// на смену дайджеста пиров, а он в фейке постоянный.
+	poll := func(clients int) int {
+		fg := query.NewFakeGetter()
+		fg.SetJSON("/show/interface/Wireguard0", `{"wireguard":{"peer":[{"public-key":"k","rxbytes":10,"txbytes":20,"last-handshake":0,"online":true,"enabled":true}]}}`)
+		peers := query.NewPeerStoreWithTTL(fg, query.NopLogger(), 1*time.Millisecond)
+		run := &fakeRunningProvider{}
+		run.Set([]InterfaceRef{{ID: "Wireguard0"}})
+
+		p := NewWithInterval(peers, &fakeMetricsPublisher{}, run, &fakeSubs{count: clients}, NopLogger(), 5*time.Millisecond)
+		p.SetHistoryFeeder(&fakeHistory{})
+		p.Start()
+		defer p.Stop()
+
+		time.Sleep(250 * time.Millisecond)
+		return fg.Calls("/show/interface/Wireguard0")
+	}
+
+	idle, watched := poll(0), poll(1)
+	if idle == 0 {
+		t.Fatal("простой не должен глушить поллер полностью")
+	}
+	// 12-кратное разрежение; берём запас втрое на дрожание планировщика.
+	if idle*4 > watched {
+		t.Errorf("разрежения нет: в простое %d тиков против %d при открытой панели", idle, watched)
 	}
 }
 
