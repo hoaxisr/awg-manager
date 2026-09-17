@@ -12,8 +12,8 @@
 		switchConsequences,
 		type RoutingMode,
 	} from './switchConsequences';
-	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { tunStackLabel } from '$lib/components/sb-router/tunStack';
+	import { singboxRouter } from '$lib/stores/singboxRouter';
 
 	interface Props {
 		open: boolean;
@@ -47,12 +47,10 @@
 	// способности относится к обоим; DoH/DoT-оговорка только к fakeip (свой резолвер).
 	const enablingTun = $derived(to === 'fakeip-tun' || to === 'policy-tun');
 	// Стек берём из настроек: он общий на оба tun-режима. Ориентир «~25 Мбит/с»
-	// мерили на gvisor — для остальных стеков цифру не выдумываем.
+	// мерили на gvisor; gvisor из сборки ушёл, для нынешних стеков цифру не
+	// выдумываем — в оговорке осталось только название стека.
 	const settings = singboxRouter.settings;
 	const stack = $derived($settings?.fakeipStack ?? '');
-	const stackNote = $derived(
-		stack === 'gvisor' ? ' (ориентир ~25 Мбит/с на типовом SoC, меньше на слабых)' : '',
-	);
 	// Cross-activation: enabling X while a DIFFERENT mode Y is active displaces Y.
 	// Derivable from from/to alone — no extra prop.
 	const displacedMode = $derived(to !== 'off' && from !== 'off' && from !== to ? from : null);
@@ -85,7 +83,7 @@
 				{#if enablingTun}
 					<li>
 						Режим обсчитывает TCP/IP в userspace (стек {tunStackLabel(stack)}):
-						пропускная способность ниже TPROXY{stackNote}.
+						пропускная способность ниже TPROXY.
 					</li>
 				{/if}
 			</ul>

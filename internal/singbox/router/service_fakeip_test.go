@@ -1828,12 +1828,12 @@ func TestUpdateSettings_StackReachesOverlay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSettings: %v", err)
 	}
-	sr.FakeIPStack = "gvisor"
+	sr.FakeIPStack = "system"
 	if err := h.svc.UpdateSettings(ctx, sr); err != nil {
-		t.Fatalf("UpdateSettings(gvisor): %v", err)
+		t.Fatalf("UpdateSettings(system): %v", err)
 	}
-	if got, data := overlayStack(); got != "gvisor" {
-		t.Errorf("stack в overlay = %q, want gvisor: %s", got, data)
+	if got, data := overlayStack(); got != "system" {
+		t.Errorf("stack в overlay = %q, want system: %s", got, data)
 	}
 
 	sr.FakeIPStack = ""

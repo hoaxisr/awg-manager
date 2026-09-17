@@ -5,9 +5,10 @@
 /**
  * TCP/IP-стек tun-инбаунда. Пустая строка — не «не задано», а «ключ stack в
  * конфиг не писать»: sing-box берёт собственный стек sing-tun (дефолт с 1.15).
- * Остальные — legacy, удаляются в sing-box 1.17.
+ * 'system' — legacy, удаляется в sing-box 1.17. 'gvisor' и 'mixed' пропали
+ * вместе с тегом with_gvisor в нашей сборке: бэкенд приводит их к пустому.
  */
-export type TunStack = '' | 'gvisor' | 'system' | 'mixed';
+export type TunStack = '' | 'system';
 
 export interface SingboxRouterSettings {
 	enabled: boolean;
