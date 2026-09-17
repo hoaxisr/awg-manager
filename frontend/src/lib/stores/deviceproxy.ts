@@ -3,10 +3,10 @@
 //     resource:invalidated{resource:"deviceproxy.config"}.
 //   - outbounds (120 с): available outbound tags for the dropdowns — своего
 //     публикатора у каталога нет.
-//   - runtime (30 с): live selector.now + persisted default for
+//   - runtime (без таймера): live selector.now + persisted default for
 //     the "Активный туннель" card; SSE-invalidated by
-//     resource:invalidated{resource:"deviceproxy.runtime"}. Таймер сохранён:
-//     падение sing-box публикует singbox.status, но не deviceproxy.runtime.
+//     resource:invalidated{resource:"deviceproxy.runtime"}, в том числе
+//     сторожем движка на смене живости.
 //   - instances (без таймера): list of all proxy instances for multi-instance UI.
 import { writable } from 'svelte/store';
 import { api } from '$lib/api/client';
@@ -44,10 +44,12 @@ registerStore('deviceproxy.outbounds', deviceProxyOutbounds);
 
 export const deviceProxyRuntime: PollingStore<DeviceProxyRuntime> = createPollingStore<DeviceProxyRuntime>(
 	() => api.getDeviceProxyRuntime(),
-	// alive здесь — это sb.IsRunning(). Падение sing-box (OOM на 256 МБ — рабочий
-	// сценарий) публикует singbox.status, но не deviceproxy.runtime, поэтому
-	// карточка показывала бы «работает» бессрочно. Таймер медленный, но нужен.
-	{ staleTime: 5_000, pollInterval: 30_000 },
+	// Таймера нет: сторож движка публикует deviceproxy.runtime на СМЕНЕ
+	// живости (internal/singbox/watchdog.go). Раньше падение sing-box (OOM на
+	// 256 МБ — рабочий сценарий) публиковало только singbox.status, и карточка
+	// показывала бы «работает» бессрочно — ради этого и стоял таймер (F355).
+	// Теперь обновление приходит событием (F364).
+	{ staleTime: 5_000, pollInterval: 0 },
 );
 registerStore('deviceproxy.runtime', deviceProxyRuntime);
 

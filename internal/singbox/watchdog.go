@@ -155,4 +155,10 @@ func (w *Watchdog) publishIfFlipped(running bool) {
 	// срабатывает только на СМЕНЕ живости. В крэш-лупе это даёт одну
 	// публикацию, а не по одной на каждый перезапуск.
 	events.PublishInvalidatedTo(w.pub, events.ResourceSingboxTunnels, "watchdog")
+	// По той же причине — карточка «Активный туннель» прокси для устройств:
+	// её `alive` это живость движка, а ключ deviceproxy.runtime публиковался
+	// только на НАШИХ мутациях. Из-за этого карточке пришлось держать таймер
+	// опроса (F355); публикация отсюда его заменяет и стоит столько же, сколько
+	// соседняя строка — сторож срабатывает только на СМЕНЕ живости (F364).
+	events.PublishInvalidatedTo(w.pub, events.ResourceDeviceProxyRuntime, "watchdog")
 }

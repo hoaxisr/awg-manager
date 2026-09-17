@@ -59,8 +59,8 @@ func TestWatchdog_PublishIfFlipped_FiresOnTransition(t *testing.T) {
 	// `running`, а публиковался только на наших мутациях — карточки оставались
 	// «работает» после смерти движка, пока пилюля статуса показывала
 	// «остановлен». Событие закрывает дыру мгновенно и не стоит опроса.
-	if pub.count() != 4 {
-		t.Fatalf("expected 4 events (2 flips × 2 resources), got %d", pub.count())
+	if pub.count() != 6 {
+		t.Fatalf("expected 6 events (2 flips × 3 resources), got %d", pub.count())
 	}
 	seen := map[events.Resource]int{}
 	for _, e := range pub.evts {
@@ -69,7 +69,11 @@ func TestWatchdog_PublishIfFlipped_FiresOnTransition(t *testing.T) {
 		}
 		seen[e.Resource]++
 	}
-	for _, want := range []events.Resource{events.ResourceSingboxStatus, events.ResourceSingboxTunnels} {
+	for _, want := range []events.Resource{
+		events.ResourceSingboxStatus,
+		events.ResourceSingboxTunnels,
+		events.ResourceDeviceProxyRuntime,
+	} {
 		if seen[want] != 2 {
 			t.Errorf("ключ %s опубликован %d раз, ожидали 2 (по разу на переход)", want, seen[want])
 		}
