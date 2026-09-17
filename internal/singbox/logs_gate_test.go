@@ -4,12 +4,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.uber.org/goleak"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
@@ -244,12 +245,10 @@ func TestLogForwarder_DisabledLoggingAsksForNothing(t *testing.T) {
 	}
 }
 
-type disabledLogger struct{ written atomic.Int64 }
+type disabledLogger struct{}
 
-func (d *disabledLogger) AppLog(logging.Level, string, string, string, string, string) {
-	d.written.Add(1)
-}
-func (d *disabledLogger) Visible(logging.Level) bool { return false }
+func (d *disabledLogger) AppLog(logging.Level, string, string, string, string, string) {}
+func (d *disabledLogger) Visible(logging.Level) bool                                   { return false }
 
 // mutableGate — порог, который можно менять на ходу, как это делает
 // пользователь в настройках.
@@ -317,20 +316,45 @@ func TestLogForwarder_RequestCarriesLevel(t *testing.T) {
 	}
 }
 
-// Горутина-сторож уровня обязана уходить вместе с контекстом: она заводится на
-// КАЖДУЮ попытку соединения, а при лежащем sing-box их по одной каждые 3 с.
-// goleak в пакете этого не видел — Run в тестах не запускался ни разу.
-func TestLogForwarder_WatcherGoroutineStops(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// Ранний выход при выключенном журнале обязан закрывать САМ ПОТОК, а не только
+// вычисление уровня: без него форвардер уходил бы на `GET /logs?level=` с пустым
+// уровнем. Проверка desiredClashLevel() этого не ловит (найдено ревью 17.09).
+func TestLogForwarder_DisabledLoggingOpensNoStream(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
 
 	f := NewLogForwarder(func() string { return strings.TrimPrefix(srv.URL, "http://") },
+		&disabledLogger{})
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+	f.Run(ctx)
+
+	if n := hits.Load(); n != 0 {
+		t.Errorf("при выключенном журнале форвардер сходил к движку %d раз", n)
+	}
+}
+
+// Горутина-сторож уровня обязана уходить вместе с контекстом: она заводится на
+// КАЖДУЮ попытку соединения, а при лежащем sing-box их по одной каждые 3 с.
+//
+// Считать runtime.NumGoroutine с допуском нельзя: любой допуск проглатывает ровно
+// ту одну горутину, ради которой тест написан, — прежняя редакция проходила под
+// мутацией «убрать case <-ctx.Done() из селекта сторожа» (найдено ревью 17.09).
+// goleak сравнивает поимённо и допуска не имеет.
+func TestLogForwarder_WatcherGoroutineStops(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+
+	f := NewLogForwarder(func() string { return strings.TrimPrefix(srv.URL, "http://") },
 		&gateLogger{configured: logging.LevelInfo})
 	f.levelWatch = 10 * time.Millisecond
 
-	before := runtime.NumGoroutine()
+	ignore := goleak.IgnoreCurrent()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { f.Run(ctx); close(done) }()
@@ -342,13 +366,7 @@ func TestLogForwarder_WatcherGoroutineStops(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run не завершился по отмене контекста")
 	}
+	srv.Close()
 
-	// Дать горутинам разойтись.
-	for i := 0; i < 50; i++ {
-		if runtime.NumGoroutine() <= before+2 {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Errorf("горутин %d против %d до запуска — сторож уровня не ушёл", runtime.NumGoroutine(), before)
+	goleak.VerifyNone(t, ignore)
 }
