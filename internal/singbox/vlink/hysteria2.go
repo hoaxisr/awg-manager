@@ -105,6 +105,24 @@ func parseHysteria2(input string) (*ParsedOutbound, error) {
 		}
 	}
 
+	// Настройки QUIC: имена параметров совпадают с ключами аутбаунда — так
+	// ссылка читается обратно без потерь (F363).
+	for _, key := range []string{"hop_interval_max", "bbr_profile", "idle_timeout", "keep_alive_period"} {
+		if v := q.Get(key); v != "" {
+			out[key] = v
+		}
+	}
+	for _, key := range []string{"stream_receive_window", "connection_receive_window", "max_concurrent_streams"} {
+		if n, err := strconv.Atoi(q.Get(key)); err == nil && n > 0 {
+			out[key] = n
+		}
+	}
+	for _, key := range []string{"disable_path_mtu_discovery", "disable_chrome_parrot", "brutal_debug"} {
+		if boolish(q.Get(key)) {
+			out[key] = true
+		}
+	}
+
 	tag := u.Fragment
 	if tag == "" {
 		tag = fmt.Sprintf("hy2-%s-%d", host, port)

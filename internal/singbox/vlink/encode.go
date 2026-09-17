@@ -187,6 +187,24 @@ func encodeHysteria2(ob map[string]any, label string) (string, error) {
 	if hop, _ := ob["hop_interval"].(string); hop != "" {
 		q.Set("hop_interval", hop)
 	}
+	// Ниже — ключи, имена которых совпадают с ключами аутбаунда: у схемы
+	// hysteria2:// своих параметров под них нет, а терять настройки при
+	// экспорте значит отдавать умолчания вместо описанного узла (F363).
+	for _, key := range []string{"hop_interval_max", "bbr_profile", "idle_timeout", "keep_alive_period"} {
+		if v, _ := ob[key].(string); v != "" {
+			q.Set(key, v)
+		}
+	}
+	for _, key := range []string{"stream_receive_window", "connection_receive_window", "max_concurrent_streams"} {
+		if n := intFromAny(ob[key]); n > 0 {
+			q.Set(key, strconv.Itoa(n))
+		}
+	}
+	for _, key := range []string{"disable_path_mtu_discovery", "disable_chrome_parrot", "brutal_debug"} {
+		if ob[key] == true {
+			q.Set(key, "1")
+		}
+	}
 	if obfs, _ := ob["obfs"].(map[string]any); obfs != nil {
 		if t, _ := obfs["type"].(string); t != "" {
 			q.Set("obfs", t)

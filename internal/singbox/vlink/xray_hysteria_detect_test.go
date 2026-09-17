@@ -1,6 +1,9 @@
 package vlink
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Без этого фича не работает вовсе: подписка, где ВСЕ узлы — hysteria, до
 // ParseXrayBody не доходит. service.go выбирает разбор по IsXrayJSON и на
@@ -47,15 +50,22 @@ func TestParseXrayBody_BrokenBlockDoesNotKillBody(t *testing.T) {
 	}
 }
 
-// Тот же класс: чужому протоколу finalmask ничего не должен ломать — Xray
-// кладёт его в streamSettings любого транспорта.
+// Тот же класс у чужого протокола: Xray кладёт finalmask в streamSettings
+// любого транспорта. Битый блок — отказ ЭТОГО узла (что внутри, неизвестно, а
+// маски мы выразить не можем), но подписка целиком уцелеть обязана.
 func TestParseXrayBody_BrokenFinalMaskOnOtherProtocol(t *testing.T) {
-	body := []byte(`[{"remarks":"v","outbounds":[{"protocol":"trojan",
-		"settings":{"servers":[{"address":"198.51.100.2","port":443,"password":"p"}]},
-		"streamSettings":{"network":"tcp","finalmask":"не объект"}}]}]`)
+	body := []byte(`[
+		{"remarks":"ok","outbounds":[{"protocol":"trojan","settings":{"servers":[{"address":"198.51.100.2","port":443,"password":"p"}]}}]},
+		{"remarks":"bad","outbounds":[{"protocol":"trojan",
+			"settings":{"servers":[{"address":"198.51.100.4","port":443,"password":"p"}]},
+			"streamSettings":{"network":"tcp","finalmask":"не объект"}}]}
+	]`)
 
 	res := ParseXrayBody(body)
 	if len(res.Outbounds) != 1 {
 		t.Fatalf("outbounds = %d, want 1 (errors: %v)", len(res.Outbounds), res.Errors)
+	}
+	if len(res.Errors) != 1 || !strings.Contains(res.Errors[0].Message, "finalmask") {
+		t.Errorf("errors = %v", res.Errors)
 	}
 }

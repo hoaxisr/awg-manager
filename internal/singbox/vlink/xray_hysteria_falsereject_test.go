@@ -125,18 +125,6 @@ func TestParseXrayHysteria_UnknownCongestionRejected(t *testing.T) {
 	}
 }
 
-// Причина отказа на realm — своя: у sing-box realm ЕСТЬ, мешает наша модель
-// участника. Общая формулировка «нет эквивалента» тут была бы неправдой.
-func TestParseXrayHysteria_RealmHasItsOwnReason(t *testing.T) {
-	msg := xrayHysteriaError(t, xrayHysteriaFinalMask(`"udp":[{"type":"realm","settings":{}}]`))
-	if !strings.Contains(msg, "no server address") {
-		t.Errorf("Message = %q, want причину про отсутствие адреса", msg)
-	}
-	if strings.Contains(msg, "has no sing-box equivalent") {
-		t.Errorf("Message = %q — у sing-box realm есть, формулировка врёт", msg)
-	}
-}
-
 // Без tlsSettings имя для проверки сертификата берётся из адреса: пустой sni
 // движок не подставит, и проверка сертификата развалится.
 func TestParseXrayHysteria_SNIDefaultsToServer(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -141,6 +142,7 @@ type XrayHysteriaStream struct {
 // XrayFinalMask — streamSettings.finalmask: udp-маски (salamander, udphop и
 // прочие) и настройки QUIC.
 type XrayFinalMask struct {
+	TCP        []XrayMask      `json:"tcp"`
 	UDP        []XrayMask      `json:"udp"`
 	QuicParams *XrayQuicParams `json:"quicParams"`
 }
@@ -178,6 +180,24 @@ type XrayMask struct {
 type XraySalamander struct {
 	Password   string          `json:"password"`
 	PacketSize json.RawMessage `json:"packetSize"`
+}
+
+// XrayRealm — маска realm: реле, через которое узел и доступен. Адрес входа
+// лежит в url, а не в settings.
+type XrayRealm struct {
+	URL         string                `json:"url"`
+	StunServers []string              `json:"stunServers"`
+	TLSConfig   json.RawMessage       `json:"tlsConfig"`
+	IPMode      string                `json:"ipMode"`
+	PortMapping *XrayRealmPortMapping `json:"portMapping"`
+}
+
+// XrayRealmPortMapping — проброс порта у реле. timeout и lifetime у Xray в
+// секундах (realm/client.go умножает их на time.Second).
+type XrayRealmPortMapping struct {
+	Enabled  bool  `json:"enabled"`
+	Timeout  int64 `json:"timeout"`
+	Lifetime int64 `json:"lifetime"`
 }
 
 // XrayUDPHop — маска udphop. mode перечисляет, ЧТО меняется при прыжке;
@@ -516,6 +536,15 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		return nil, fmt.Errorf("%s: missing or invalid port", proto)
 	}
 
+	// Маски finalmask меняют формат на проводе, и Xray навешивает их на любой
+	// транспорт (transport_internet.go: весь FinalMask.Tcp/Udp уходит в
+	// config.Tcpmasks/Udpmasks). Своего такого слоя у sing-box нет, так что
+	// узел с маской подключился бы вхолостую — отказ честнее молчания. Путь
+	// hysteria сюда не попадает: у него свой разбор udp-масок.
+	if err := rejectXrayForeignMasks(ob.StreamSettings); err != nil {
+		return nil, err
+	}
+
 	// Транспорт и TLS собирает общий слой — тот же, что у share-ссылок и
 	// Clash. Своей реализации здесь больше нет.
 	var stream *StreamBuilder
@@ -612,11 +641,18 @@ func convertXrayHysteria(ob XrayOutbound, tag string) (*ParsedOutbound, error) {
 		}
 	}
 
-	if err := applyXrayHysteriaMasks(ob.StreamSettings, out); err != nil {
+	endpoint, err := applyXrayHysteriaMasks(ob.StreamSettings, out)
+	if err != nil {
 		return nil, err
 	}
+	server, port := settings.Address, settings.Port
+	if endpoint != nil {
+		// Точка входа задана реле: в карточке узла показываем её, иначе адрес
+		// узла остался бы от блока settings, которого в аутбаунде уже нет.
+		server, port = endpoint.Server, endpoint.Port
+	}
 
-	stream, err := BuildStreamFromQuery(xrayHysteriaStreamQuery(ob.StreamSettings, settings.Address), settings.Address)
+	stream, err := BuildStreamFromQuery(xrayHysteriaStreamQuery(ob.StreamSettings, server), server)
 	if err != nil {
 		return nil, fmt.Errorf("hysteria: %w", err)
 	}
@@ -629,8 +665,8 @@ func convertXrayHysteria(ob XrayOutbound, tag string) (*ParsedOutbound, error) {
 	return &ParsedOutbound{
 		Tag:      tag,
 		Protocol: "hysteria2",
-		Server:   settings.Address,
-		Port:     settings.Port,
+		Server:   server,
+		Port:     port,
 		Outbound: raw,
 		Label:    tag,
 	}, nil
@@ -641,43 +677,162 @@ func convertXrayHysteria(ob XrayOutbound, tag string) (*ParsedOutbound, error) {
 // FinalMask.Udp уходит в config.Udpmasks независимо от транспорта), поэтому
 // маска, которой в sing-box нет, — это не «чужая настройка», а другой формат
 // на проводе: узел с ней импортировался бы зелёным и молча не работал.
-func applyXrayHysteriaMasks(stream *XrayStream, out map[string]any) error {
+func applyXrayHysteriaMasks(stream *XrayStream, out map[string]any) (*xrayEndpoint, error) {
 	if stream == nil || len(stream.FinalMask) == 0 {
-		return nil
+		return nil, nil
 	}
 	var final XrayFinalMask
 	if err := json.Unmarshal(stream.FinalMask, &final); err != nil {
-		return fmt.Errorf("hysteria: invalid finalmask")
+		return nil, fmt.Errorf("hysteria: invalid finalmask")
 	}
+	var endpoint *xrayEndpoint
 	seen := map[string]bool{}
 	for _, mask := range final.UDP {
 		typ := strings.ToLower(mask.Type)
 		// Xray применяет маски по очереди, sing-box умеет одну каждого рода:
 		// вторая молча затёрла бы первую.
 		if seen[typ] {
-			return fmt.Errorf("hysteria: udp mask %q is repeated, sing-box takes only one", mask.Type)
+			return nil, fmt.Errorf("hysteria: udp mask %q is repeated, sing-box takes only one", mask.Type)
 		}
 		seen[typ] = true
 		switch typ {
 		case "salamander":
 			if err := applyXraySalamander(mask.Settings, out); err != nil {
-				return err
+				return nil, err
 			}
 		case "udphop":
 			if err := applyXrayUDPHop(mask.Settings, out); err != nil {
-				return err
+				return nil, err
 			}
 		case "realm":
-			// Отдельная формулировка: у sing-box realm ЕСТЬ (Hysteria2Realm),
-			// но он запрещает соседство с server/server_port — адрес берётся
-			// из realm.server_url, а карточка сервера у нас без адреса пока
-			// не живёт. Это наша нехватка, а не отсутствие соответствия.
-			return fmt.Errorf("hysteria: udp mask realm is not supported yet: its outbound has no server address")
+			ep, err := applyXrayRealm(mask.Settings, out)
+			if err != nil {
+				return nil, err
+			}
+			endpoint = ep
 		default:
-			return fmt.Errorf("hysteria: udp mask %q has no sing-box equivalent", mask.Type)
+			return nil, fmt.Errorf("hysteria: udp mask %q has no sing-box equivalent", mask.Type)
 		}
 	}
-	return applyXrayQuicParams(final.QuicParams, out)
+	// Порядок масок в списке произвольный, поэтому несовместимость проверяем
+	// после цикла: sing-box отвергает realm рядом с server_ports.
+	if endpoint != nil {
+		if _, hop := out["server_ports"]; hop {
+			return nil, fmt.Errorf("hysteria: udp mask realm cannot be combined with udphop: sing-box takes the address from realm alone")
+		}
+	}
+	if err := applyXrayQuicParams(final.QuicParams, out); err != nil {
+		return nil, err
+	}
+	return endpoint, nil
+}
+
+// rejectXrayForeignMasks отвергает узел, если на его транспорт навешаны маски:
+// выразить их нечем. Пустые списки и одни только quicParams формат на проводе
+// не меняют, поэтому проходят.
+func rejectXrayForeignMasks(stream *XrayStream) error {
+	if stream == nil || len(stream.FinalMask) == 0 {
+		return nil
+	}
+	var final XrayFinalMask
+	if err := json.Unmarshal(stream.FinalMask, &final); err != nil {
+		return fmt.Errorf("xray: invalid finalmask")
+	}
+	if n := len(final.TCP) + len(final.UDP); n > 0 {
+		return fmt.Errorf("xray: finalmask has %d mask(s) with no sing-box equivalent", n)
+	}
+	return nil
+}
+
+// xrayEndpoint — точка входа, заданная не полем settings, а маской.
+type xrayEndpoint struct {
+	Server string
+	Port   uint16
+}
+
+// applyXrayRealm переносит маску realm. Адрес входа у такого аутбаунда живёт
+// внутри realm.server_url, а server/server_port sing-box рядом с ним прямо
+// запрещает (protocol/hysteria2/outbound.go), поэтому они снимаются.
+func applyXrayRealm(raw json.RawMessage, out map[string]any) (*xrayEndpoint, error) {
+	var r XrayRealm
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return nil, fmt.Errorf("hysteria: invalid realm settings")
+	}
+	// TLS реле у sing-box настраивается внутри realm.http_client, и одного
+	// поля под конфигурацию Xray там нет.
+	if len(r.TLSConfig) > 0 && string(r.TLSConfig) != "null" {
+		return nil, fmt.Errorf("hysteria: realm tlsConfig has no sing-box equivalent")
+	}
+
+	u, err := url.Parse(r.URL)
+	if err != nil {
+		return nil, fmt.Errorf("hysteria: realm url is malformed")
+	}
+	var scheme, defaultPort string
+	switch u.Scheme {
+	case "realm":
+		scheme, defaultPort = "https", "443"
+	case "realm+http":
+		scheme, defaultPort = "http", "80"
+	default:
+		return nil, fmt.Errorf("hysteria: realm url scheme %q is not realm or realm+http", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return nil, fmt.Errorf("hysteria: realm url has no host")
+	}
+	port := u.Port()
+	if port == "" {
+		port = defaultPort
+	}
+	portN, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || portN == 0 {
+		return nil, fmt.Errorf("hysteria: realm url port %q is not valid", port)
+	}
+	token, err := url.PathUnescape(u.User.String())
+	if err != nil || token == "" {
+		return nil, fmt.Errorf("hysteria: realm url has no token")
+	}
+	id, err := url.PathUnescape(strings.TrimPrefix(u.EscapedPath(), "/"))
+	if err != nil || id == "" {
+		return nil, fmt.Errorf("hysteria: realm url has no id")
+	}
+	if len(r.StunServers) == 0 {
+		return nil, fmt.Errorf("hysteria: realm stunServers is empty")
+	}
+	for _, srv := range r.StunServers {
+		if _, _, err := net.SplitHostPort(srv); err != nil {
+			return nil, fmt.Errorf("hysteria: realm stunServers %q is not host:port", srv)
+		}
+	}
+
+	realm := map[string]any{
+		"server_url":   scheme + "://" + net.JoinHostPort(host, port),
+		"token":        token,
+		"realm_id":     id,
+		"stun_servers": r.StunServers,
+	}
+	// dual — умолчание обеих сторон (Xray: Family_Dual, sing-box: 0).
+	switch strings.ToLower(r.IPMode) {
+	case "v4":
+		realm["ip_version"] = 4
+	case "v6":
+		realm["ip_version"] = 6
+	}
+	if pm := r.PortMapping; pm != nil && pm.Enabled {
+		mapping := map[string]any{"enabled": true}
+		if pm.Timeout > 0 {
+			mapping["timeout"] = strconv.FormatInt(pm.Timeout, 10) + "s"
+		}
+		if pm.Lifetime > 0 {
+			mapping["lifetime"] = strconv.FormatInt(pm.Lifetime, 10) + "s"
+		}
+		realm["port_mapping"] = mapping
+	}
+	out["realm"] = realm
+	delete(out, "server")
+	delete(out, "server_port")
+	return &xrayEndpoint{Server: host, Port: uint16(portN)}, nil
 }
 
 func applyXraySalamander(raw json.RawMessage, out map[string]any) error {
