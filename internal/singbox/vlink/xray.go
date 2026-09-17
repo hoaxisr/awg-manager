@@ -37,11 +37,15 @@ type XrayStream struct {
 	SplitHTTPSettings json.RawMessage `json:"splithttpSettings"`
 	// network "hysteria" транспортом не является: блок несёт версию и пароль
 	// протокола, а не настройки транспорта (issue #916).
-	HysteriaSettings *XrayHysteriaStream `json:"hysteriaSettings"`
-	// Обфускация и прыжки по портам лежат НЕ в hysteriaSettings, а здесь:
-	// Xray вынес их в общий слой масок (infra/conf/transport_finalmask.go).
-	FinalMask *XrayFinalMask `json:"finalmask"`
-	Sockopt   map[string]any `json:"sockopt"`
+	//
+	// Оба блока ниже — сырые: json.Unmarshal в типизированный массив работает
+	// по принципу «всё или ничего», и неожиданная форма ОДНОГО узла унесла бы
+	// разбор всей подписки без единой ошибки. Разбираются они там, где нужны,
+	// и отказ остаётся при своём узле. Для finalmask это особенно важно: Xray
+	// кладёт его в streamSettings любого транспорта, не только hysteria.
+	HysteriaSettings json.RawMessage `json:"hysteriaSettings"`
+	FinalMask        json.RawMessage `json:"finalmask"`
+	Sockopt          map[string]any  `json:"sockopt"`
 }
 
 type XrayTLSConfig struct {
@@ -216,7 +220,7 @@ func IsXrayJSON(body []byte) bool {
 			if err := json.Unmarshal(rawOutbounds, &outbounds); err == nil && len(outbounds) > 0 {
 				for _, ob := range outbounds {
 					proto := strings.ToLower(ob.Protocol)
-					if proto == "vless" || proto == "trojan" || proto == "shadowsocks" || proto == "vmess" {
+					if isXrayProtocol(proto) {
 						return true
 					}
 				}
@@ -230,7 +234,7 @@ func IsXrayJSON(body []byte) bool {
 		for _, item := range configArr {
 			for _, ob := range item.Outbounds {
 				proto := strings.ToLower(ob.Protocol)
-				if proto == "vless" || proto == "trojan" || proto == "shadowsocks" || proto == "vmess" {
+				if isXrayProtocol(proto) {
 					return true
 				}
 			}
@@ -242,12 +246,24 @@ func IsXrayJSON(body []byte) bool {
 	if err := json.Unmarshal(body, &arr); err == nil && len(arr) > 0 {
 		for _, ob := range arr {
 			proto := strings.ToLower(ob.Protocol)
-			if (proto == "vless" || proto == "trojan" || proto == "shadowsocks" || proto == "vmess") && len(ob.Settings) > 0 {
+			if isXrayProtocol(proto) && len(ob.Settings) > 0 {
 				return true
 			}
 		}
 	}
 
+	return false
+}
+
+// isXrayProtocol — протоколы, по которым тело опознаётся как Xray-конфиг.
+// Список обязан совпадать с тем, что умеет convertXrayOutbound: узел, который
+// разбирается, но не опознаётся, до разбора просто не доходит — подписка из
+// одних только таких узлов пропадает целиком (issue #916).
+func isXrayProtocol(proto string) bool {
+	switch proto {
+	case "vless", "trojan", "shadowsocks", "hysteria", "vmess":
+		return true
+	}
 	return false
 }
 
@@ -499,8 +515,11 @@ func convertXrayHysteria(ob XrayOutbound, tag string) (*ParsedOutbound, error) {
 	}
 
 	var hy *XrayHysteriaStream
-	if ob.StreamSettings != nil {
-		hy = ob.StreamSettings.HysteriaSettings
+	if ob.StreamSettings != nil && len(ob.StreamSettings.HysteriaSettings) > 0 {
+		hy = &XrayHysteriaStream{}
+		if err := json.Unmarshal(ob.StreamSettings.HysteriaSettings, hy); err != nil {
+			return nil, fmt.Errorf("hysteria: invalid hysteriaSettings")
+		}
 	}
 
 	// Версия названа дважды, и Xray требует 2 в обоих местах: hysteria.go
@@ -569,10 +588,14 @@ func convertXrayHysteria(ob XrayOutbound, tag string) (*ParsedOutbound, error) {
 // маска, которой в sing-box нет, — это не «чужая настройка», а другой формат
 // на проводе: узел с ней импортировался бы зелёным и молча не работал.
 func applyXrayHysteriaMasks(stream *XrayStream, out map[string]any) error {
-	if stream == nil || stream.FinalMask == nil {
+	if stream == nil || len(stream.FinalMask) == 0 {
 		return nil
 	}
-	for _, mask := range stream.FinalMask.UDP {
+	var final XrayFinalMask
+	if err := json.Unmarshal(stream.FinalMask, &final); err != nil {
+		return fmt.Errorf("hysteria: invalid finalmask")
+	}
+	for _, mask := range final.UDP {
 		switch strings.ToLower(mask.Type) {
 		case "salamander":
 			if err := applyXraySalamander(mask.Settings, out); err != nil {
@@ -586,7 +609,7 @@ func applyXrayHysteriaMasks(stream *XrayStream, out map[string]any) error {
 			return fmt.Errorf("hysteria: udp mask %q has no sing-box equivalent", mask.Type)
 		}
 	}
-	return applyXrayQuicParams(stream.FinalMask.QuicParams, out)
+	return applyXrayQuicParams(final.QuicParams, out)
 }
 
 func applyXraySalamander(raw json.RawMessage, out map[string]any) error {
