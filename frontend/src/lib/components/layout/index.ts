@@ -8,3 +8,4 @@ export { default as BrandLogoMark } from './BrandLogoMark.svelte';
 export { default as WelcomeBanner } from './WelcomeBanner.svelte';
 export { default as DevelopFeedbackFab } from './DevelopFeedbackFab.svelte';
 export { default as NotificationCenter } from './NotificationCenter.svelte';
+export { default as SaveStatusLed } from './SaveStatusLed.svelte';

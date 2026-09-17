@@ -1,9 +1,10 @@
 /**
  * saveStatus — polling store for GET /api/ndms/save-status.
  *
- * ВНИМАНИЕ: стор НИКЕМ не импортируется, поэтому registerStore ниже не
- * выполняется, подписчиков нет и таймер не заводится ни разу. Индикатора
- * несохранённой конфигурации в панели сейчас НЕТ — см. F358.
+ * Показывает индикатор в шапке (layout/SaveStatusLed.svelte). До 17.09 стор
+ * не импортировал НИКТО: registerStore не выполнялся, и событие координатора
+ * уходило в никуда — индикатора в панели не было вовсе (F358). Сторож на этот
+ * случай — в SaveStatusLed.test.ts.
  *
  * Mirrors the former save:status SSE event one-for-one. SaveCoordinator
  * now publishes a `resource:invalidated` hint with Resource="saveStatus"
