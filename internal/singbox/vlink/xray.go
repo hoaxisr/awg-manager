@@ -33,7 +33,10 @@ type XrayStream struct {
 	// уезжает в разбор целиком.
 	XHTTPSettings     json.RawMessage `json:"xhttpSettings"`
 	SplitHTTPSettings json.RawMessage `json:"splithttpSettings"`
-	Sockopt           map[string]any  `json:"sockopt"`
+	// network "hysteria" транспортом не является: блок несёт версию и пароль
+	// протокола, а не настройки транспорта (issue #916).
+	HysteriaSettings *XrayHysteriaStream `json:"hysteriaSettings"`
+	Sockopt          map[string]any      `json:"sockopt"`
 }
 
 type XrayTLSConfig struct {
@@ -106,6 +109,20 @@ type TrojanSettings struct {
 		Port     uint16 `json:"port"`
 		Password string `json:"password"`
 	} `json:"servers"`
+}
+
+// XrayHysteriaSettings — блок settings протокола "hysteria": адрес и порт
+// лежат плоско, версия дублируется в streamSettings.hysteriaSettings.
+type XrayHysteriaSettings struct {
+	Address string `json:"address"`
+	Port    uint16 `json:"port"`
+	Version int    `json:"version"`
+}
+
+// XrayHysteriaStream — streamSettings.hysteriaSettings: версия и пароль.
+type XrayHysteriaStream struct {
+	Version int    `json:"version"`
+	Auth    string `json:"auth"`
 }
 
 // ShadowsocksSettings represents settings block for Shadowsocks in Xray.
@@ -188,6 +205,10 @@ func ParseXrayBody(body []byte) BatchResult {
 			}
 		}
 		if hasAny {
+			// Сквозной номер узла по всему телу: индекс внутри элемента у
+			// подписок Happ/Remnawave всегда 0 — все отказы схлопывались на
+			// фронте в одну строку «Строка 0» (F359).
+			nodeIdx := 0
 			for _, item := range configArr {
 				remarks := strings.TrimSpace(item.Remarks)
 				var realOutbounds []XrayOutbound
@@ -200,6 +221,8 @@ func ParseXrayBody(body []byte) BatchResult {
 
 				for idx, ob := range realOutbounds {
 					proto := strings.ToLower(ob.Protocol)
+					thisIdx := nodeIdx
+					nodeIdx++
 					if proto == "vmess" {
 						res.SkippedVmess++
 						continue
@@ -218,7 +241,7 @@ func ParseXrayBody(body []byte) BatchResult {
 					parsed, err := convertXrayOutbound(ob)
 					if err != nil {
 						res.Errors = append(res.Errors, ParseError{
-							LineIdx: idx,
+							LineIdx: thisIdx,
 							Scheme:  proto,
 							Message: err.Error(),
 						})
@@ -352,6 +375,11 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 		sbOutbound["method"] = srv.Method
 		sbOutbound["password"] = srv.Password
 
+	case "hysteria":
+		// Свой разбор целиком: транспорта у hysteria2 нет, поэтому общий
+		// слой streamSettings для него неприменим.
+		return convertXrayHysteria(ob, tag)
+
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %s", proto)
 	}
@@ -404,6 +432,94 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 // (BuildStreamFromQuery + MergeIntoOutbound). Без этого Xray-путь пришлось бы
 // держать второй реализацией транспорта и TLS, а она уже разъехалась с общей:
 // теряла xhttp и httpupgrade целиком, early data и bind_interface.
+// convertXrayHysteria собирает hysteria2 из блока Xray (issue #916). Панели
+// отдают его как protocol "hysteria" с версией 2 — отдельного "hysteria2" в
+// формате Xray нет. v1 — другой протокол, в проекте он не поддержан нигде,
+// поэтому отвергается явно, а не молчаливо собирается как v2.
+func convertXrayHysteria(ob XrayOutbound, tag string) (*ParsedOutbound, error) {
+	var settings XrayHysteriaSettings
+	if err := json.Unmarshal(ob.Settings, &settings); err != nil {
+		return nil, fmt.Errorf("invalid hysteria settings")
+	}
+
+	var hy *XrayHysteriaStream
+	if ob.StreamSettings != nil {
+		hy = ob.StreamSettings.HysteriaSettings
+	}
+
+	version := settings.Version
+	if version == 0 && hy != nil {
+		version = hy.Version
+	}
+	if version != 2 {
+		return nil, fmt.Errorf("hysteria: unsupported version %d (only 2 is supported)", version)
+	}
+	if settings.Address == "" {
+		return nil, fmt.Errorf("hysteria: missing server")
+	}
+	if settings.Port == 0 {
+		return nil, fmt.Errorf("hysteria: missing or invalid port")
+	}
+	if hy == nil || hy.Auth == "" {
+		return nil, fmt.Errorf("hysteria: missing password")
+	}
+
+	out := map[string]any{
+		"type":        "hysteria2",
+		"server":      settings.Address,
+		"server_port": int(settings.Port),
+		"password":    hy.Auth,
+		"tag":         tag,
+	}
+
+	stream, err := BuildStreamFromQuery(xrayHysteriaStreamQuery(ob.StreamSettings, settings.Address), settings.Address)
+	if err != nil {
+		return nil, fmt.Errorf("hysteria: %w", err)
+	}
+	stream.MergeIntoOutbound(out)
+
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return nil, err
+	}
+	return &ParsedOutbound{
+		Tag:      tag,
+		Protocol: "hysteria2",
+		Server:   settings.Address,
+		Port:     settings.Port,
+		Outbound: raw,
+		Label:    tag,
+	}, nil
+}
+
+// xrayHysteriaStreamQuery отбирает из streamSettings только то, что у hysteria2
+// есть. Список закрытый — тот же, что у разбора hy2://: транспорт не участвует
+// (network "hysteria" транспортом sing-box не является), fp тоже — uTLS поверх
+// QUIC неприменим, а общий слой добавил бы блок utls.
+func xrayHysteriaStreamQuery(stream *XrayStream, defaultHost string) url.Values {
+	v := url.Values{}
+	v.Set("security", "tls")
+	v.Set("sni", defaultHost)
+	// hysteria2 без ALPN h3 сервер обычно не принимает; движок дефолт не ставит.
+	v.Set("alpn", "h3")
+	if stream == nil {
+		return v
+	}
+	if ts := stream.TLSSettings; ts != nil {
+		v.Set("sni", firstNonEmpty(ts.ServerName, defaultHost))
+		if ts.AllowInsecure {
+			v.Set("insecure", "1")
+		}
+		if len(ts.ALPN) > 0 {
+			v.Set("alpn", strings.Join(ts.ALPN, ","))
+		}
+	}
+	if iface, _ := stream.Sockopt["interface"].(string); iface != "" {
+		v.Set("bind_interface", iface)
+	}
+	return v
+}
+
 func xrayStreamToValues(stream *XrayStream, defaultHost string) url.Values {
 	v := url.Values{}
 	if stream == nil {
