@@ -120,8 +120,10 @@ func TestParseXrayHysteria_MatchesSchema(t *testing.T) {
 		`"udp":[{"type":"salamander","settings":{"password":"obfspw","packetSize":"100-1200"}},`+
 			`{"type":"udphop","settings":{"mode":"intervalRemote","interval":"10-30","remotePorts":"20000-30000"}}],`+
 			`"quicParams":{"congestion":"brutal","brutalUp":"100 mbps","brutalDown":"200 mbps","bbrProfile":"standard",`+
-			`"maxIdleTimeout":30,"keepAlivePeriod":10,"maxStreamReceiveWindow":8388608,`+
-			`"maxConnectionReceiveWindow":16777216,"maxIncomingStreams":16,`+
+			`"maxIdleTimeout":30,"keepAlivePeriod":10,`+
+			`"initStreamReceiveWindow":8388608,"maxStreamReceiveWindow":8388608,`+
+			`"initConnectionReceiveWindow":16777216,"maxConnectionReceiveWindow":16777216,`+
+			`"maxIncomingStreams":16,`+
 			`"disablePathMTUDiscovery":true,"disableChromeParrot":true,"debug":true}`))
 	doc.checkKeys(t, "outbound", itemsNode, sb)
 }

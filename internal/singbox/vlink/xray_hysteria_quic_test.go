@@ -71,7 +71,7 @@ func TestParseXrayHysteria_BBRIgnoresBrutalValues(t *testing.T) {
 func TestParseXrayHysteria_QuicKnobs(t *testing.T) {
 	sb := firstXrayOutbound(t, xrayHysteriaFinalMask(
 		`"quicParams":{"maxIdleTimeout":30,"keepAlivePeriod":10,`+
-			`"maxStreamReceiveWindow":8388608,"maxConnectionReceiveWindow":16777216,`+
+			`"initStreamReceiveWindow":8388608,"maxStreamReceiveWindow":8388608,"initConnectionReceiveWindow":16777216,"maxConnectionReceiveWindow":16777216,`+
 			`"maxIncomingStreams":16,"disablePathMTUDiscovery":true,"disableChromeParrot":true,"debug":true}`))
 
 	checks := map[string]any{
