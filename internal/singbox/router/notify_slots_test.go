@@ -179,7 +179,7 @@ func TestReconcile_ParkedSlotWithLiveChains_RepromotesSlot(t *testing.T) {
 		Enabled:       true,
 	})
 	svc.deps.Singbox = &fakeSingbox{dir: dir, isRunningFn: func() (bool, int) { return true, 1234 }}
-	// jumpsPresentDump в стабе → IsInstalled()=true: ровно состояние
+	// jumpsPresentDump в стабе объявляет обе цепочки AWGM — ровно состояние
 	// «цепочки живы, слот запаркован».
 	var installs int
 	svc.deps.IPTables = newStubIPTables(func(_ context.Context, _ string) error { installs++; return nil })

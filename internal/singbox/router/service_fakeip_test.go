@@ -1590,8 +1590,9 @@ func TestEnableFakeIPTun_NilDepsFailFast(t *testing.T) {
 
 func TestReconcileFakeIPTun_NoReprovision(t *testing.T) {
 	h := newFakeIPEnableHarness(t, "")
-	// Wire an IPTables whose probes always error → IsInstalled/HasAnyInstalled
-	// both false, exactly like the real fakeip-tun path (no chains installed).
+	// Wire an IPTables whose probes always error: диспетчер по режиму стоит
+	// РАНЬШЕ снятия состояния, поэтому до него путь fakeip-tun не доходит
+	// вовсе — ровно как на живом роутере, где цепочек нет.
 	h.svc.deps.IPTables = errProbeIPTables()
 
 	// First Reconcile: Enabled=false initially → nothing. We must first Enable so

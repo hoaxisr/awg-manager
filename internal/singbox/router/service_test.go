@@ -860,7 +860,7 @@ func TestReconcile_WANIPsSame_NoOp(t *testing.T) {
 	}
 }
 
-// Self-heal: chains exist (IsInstalled would be true) and nothing else
+// Self-heal: обе цепочки на месте, и ничего другого
 // changed, but PREROUTING has no jump into our chains — reconcileInstalled
 // must force a reinstall to restore interception.
 func TestReconcile_JumpsMissing_Reinstalls(t *testing.T) {
@@ -2407,7 +2407,7 @@ func requireUninstalled(t *testing.T, fe *fakeExec) {
 }
 
 // Горячий путь Reconcile снимает состояние перехвата ДАМПОМ, а не перечислением
-// цепочек: прежние IsInstalled + HasAnyInstalled стоили до четырёх `iptables -nL`
+// цепочек: прежние IsInstalled + HasAnyInstalled стоили три `iptables -nL`
 // на тик, дважды в минуту, поверх дампов, которые reconcileInstalled снимал всё
 // равно (F349 §4).
 func TestReconcile_UsesDumpNotChainListing(t *testing.T) {
@@ -2446,8 +2446,9 @@ func TestReconcile_UsesDumpNotChainListing(t *testing.T) {
 	if dumps == 0 {
 		t.Fatal("состояние не снималось вовсе — тест не дошёл до ветки перехвата")
 	}
-	// Пять: `-S PREROUTING` синхронизации KeenDNS (до развилки режимов) плюс
-	// по паре таблиц на два probeAll — здешний и внутри reconcileInstalled.
+	// Пять: `-t nat -S PREROUTING` из ReapOrphanedFakeIPTun →
+	// ensureFakeIPIngress (он идёт ПЕРВЫМ) плюс по паре таблиц на два
+	// probeAll — здешний и внутри reconcileInstalled.
 	if dumps > 5 {
 		t.Errorf("дампов за тик %d, ожидали не больше пяти", dumps)
 	}

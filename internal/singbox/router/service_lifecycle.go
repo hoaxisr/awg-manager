@@ -1719,9 +1719,9 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	}
 	s.syncKeenDNSPreset(ctx, sr)
 	// fakeip-tun installs NO iptables, so the tproxy switch below (keyed on
-	// IPTables.IsInstalled/HasAnyInstalled) would always read "not installed"
-	// and route every tick to Enable. Dispatch by mode FIRST so the tproxy
-	// switch stays byte-for-byte unchanged for RoutingMode=="tproxy".
+	// живом состоянии перехвата) would always read "not installed" and route
+	// every tick to Enable. Dispatch by mode FIRST — ветка tproxy ниже
+	// рассчитана только на этот режим.
 	if sr.RoutingMode == "fakeip-tun" {
 		return s.reconcileFakeIPTun(ctx, sr)
 	}
@@ -1730,13 +1730,18 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	if sr.RoutingMode == statePolicyTun {
 		return s.reconcilePolicyTun(ctx, sr)
 	}
-	// Один снимок вместо IsInstalled + HasAnyInstalled: те делали по паре
-	// `iptables -nL` каждый — до ЧЕТЫРЁХ fork+exec на тик, дважды в минуту.
-	// Теперь два `-S`, по одному на таблицу. Ниже по ветке reconcileInstalled
-	// снимает состояние ещё раз (свой probeAll): передать снимок туда мешает
-	// не техника, а цена — у него шестьдесят тестовых вызовов, и менять
-	// сигнатуру ради двух exec'ов несоразмерно. Итог на горячем пути:
-	// тик был 4 `-nL` + 3 `-S`, стал 5 `-S` — на два fork+exec меньше.
+	// Один снимок вместо IsInstalled + HasAnyInstalled. Те делали по паре
+	// `iptables -nL`, но `HasAnyInstalled` был `A == nil || B == nil`, а `||`
+	// короткозамыкается — на любом из трёх состояний выходило РОВНО три
+	// `-nL`, не четыре. Теперь два `-S`, по одному на таблицу.
+	//
+	// Ниже по ветке reconcileInstalled снимает состояние ещё раз (свой
+	// probeAll): передать снимок туда мешает не техника, а цена — у него
+	// шестьдесят тестовых вызовов.
+	//
+	// Итог на горячем пути, посчитан прогоном обоих вариантов:
+	// было 3 `-nL` + 3 `-S`, стало 5 `-S` — на ОДИН fork+exec меньше.
+	// Главное здесь не экономия, а семантика отказа ниже.
 	//
 	// Отказ снятия — это «не знаю», а НЕ «сломано». Прежние IsInstalled и
 	// HasAnyInstalled на ошибке возвращали false, и при включённом роутере это
@@ -1745,6 +1750,13 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	// следующий через 30 с увидит настоящее состояние.
 	live, err := s.deps.IPTables.probeAll(ctx)
 	if err != nil {
+		// Молчать здесь нельзя. Пропуск тика правилен для транзиентного отказа,
+		// но СТОЙКИЙ (снесённый бинарь, не загруженный модуль, намертво занятый
+		// xtables-lock) превращает Reconcile в вечный no-op: не чинится ни
+		// перехват, ни запаркованный слот, ни Disable. Ошибку наверх не
+		// отдаём — Reconcile ещё и хвост SetEnabled, и она уехала бы
+		// пользователю как провал сохранения настроек.
+		s.appLog.Warn("router-reconcile", "", "состояние перехвата не снято: "+err.Error())
 		return nil
 	}
 	installedComplete, installedAny := live.installed, live.anyChain
@@ -1801,7 +1813,7 @@ func (s *ServiceImpl) slotSnapshot(slot orchestrator.Slot) (orchestrator.SlotSta
 
 // reconcileInstalled handles the "Enabled && installed" branch:
 // detect mark or WAN-IP changes and re-Install. Extracted from Reconcile
-// to keep the decision tree testable without stubbing IsInstalled.
+// to keep the decision tree testable without stubbing the live probe.
 func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.SingboxRouterSettings) error {
 	sr, err := NormalizeSingboxRouterSettings(sr)
 	if err != nil {
@@ -1937,7 +1949,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 	// and ip routes may remain from the old process. netfilterStateKnown
 	// starts false on every fresh ServiceImpl, so the very first
 	// reconcileInstalled after startup always forces a full re-install
-	// regardless of what IsInstalled reports.
+	// regardless of what the live probe reports.
 	forceInitialSync := !s.netfilterStateKnown
 	// Self-heal: chains can survive while PREROUTING jumps get wiped (NDMS
 	// rebuilds PREROUTING on reconfig), leaving the engine "installed" but
