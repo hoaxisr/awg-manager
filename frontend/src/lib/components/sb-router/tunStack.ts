@@ -4,17 +4,15 @@
  *
  * Пустая строка ЗНАЧИМА: бэкенд не пишет в конфиг ключ `stack`, и sing-box
  * берёт собственный стек sing-tun (с 1.15 — дефолт, ради него всё и делалось).
- * Остальные значения sing-box 1.15 принимает с deprecation-warning, 1.16
- * потребует ENABLE_DEPRECATED_TUN_STACK=true, 1.17 удалит — держим их как
- * аварийный откат, если новый стек подведёт на конкретном железе.
+ * 'system' sing-box 1.15 принимает с deprecation-warning, 1.16 потребует
+ * ENABLE_DEPRECATED_TUN_STACK=true, 1.17 удалит — держим как аварийный откат.
+ * 'gvisor' и 'mixed' убраны: наш бинарь собирается без тега with_gvisor.
  */
 import type { TunStack } from '$lib/types';
 
 export const TUN_STACK_OPTIONS: { value: TunStack; label: string }[] = [
 	{ value: '', label: 'sing-tun (рекомендуется)' },
-	{ value: 'gvisor', label: 'gvisor (устаревший)' },
 	{ value: 'system', label: 'system (устаревший)' },
-	{ value: 'mixed', label: 'mixed (устаревший)' },
 ];
 
 /** Подпись стека в фактах/карточках: пустое значение показываем именем движка. */

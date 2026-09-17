@@ -5640,12 +5640,10 @@ definitions:
           --- fakeip-tun engine settings (user-editable) ---
           FakeIPStack selects the sing-tun stack for both tun modes (fakeip-tun и
           policy-tun). Empty (default) = собственный стек sing-tun: ключ `stack` в
-          конфиг не пишется. "gvisor", "system", "mixed" — legacy, удаляются в
-          sing-box 1.17.
+          конфиг не пишется. "system" — legacy, удаляется в sing-box 1.17.
+          "gvisor" и "mixed" приводятся к пустому: бинарь собран без with_gvisor.
         enum:
-        - gvisor
         - system
-        - mixed
         example: ""
         type: string
       ingressInterfaces:

@@ -295,11 +295,18 @@ func normalizeFakeIPSettings(sr *storage.SingboxRouterSettings) error {
 	// Стек НЕ дефолтится намеренно: пустое значение — это «не писать ключ
 	// stack», то есть собственный стек sing-tun (sing-box ≥1.15). Подстановка
 	// "gvisor", как было до 1.15, сделала бы новый стек недостижимым через API.
+	//
+	// "gvisor" и "mixed" ПРИВОДЯТСЯ к пустому, а не отвергаются: наш бинарь
+	// собран без with_gvisor, и такой конфиг движок не поднимет вовсе, а отказ
+	// здесь (нормализация зовётся и на загрузке) оставил бы панель без
+	// настроек. Приведение идемпотентно и совпадает с migrateToV39.
 	switch sr.FakeIPStack {
-	case "", "gvisor", "system", "mixed":
+	case "gvisor", "mixed":
+		sr.FakeIPStack = ""
+	case "", "system":
 	default:
-		return fmt.Errorf("fakeipStack must be empty (sing-tun stack) or one of %q, %q, %q, got %q",
-			"gvisor", "system", "mixed", sr.FakeIPStack)
+		return fmt.Errorf("fakeipStack must be empty (sing-tun stack) or %q, got %q",
+			"system", sr.FakeIPStack)
 	}
 	if sr.FakeIPPool4 == "" {
 		sr.FakeIPPool4 = def.Inet4Range

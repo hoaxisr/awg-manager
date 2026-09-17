@@ -491,3 +491,16 @@ func (s *SettingsStore) migrateToV38(settings *Settings) {
 		settings.SingboxRouter.FakeIPStack = ""
 	}
 }
+
+// migrateToV39 снимает стеки, которых в движке больше НЕТ: наш sing-box
+// собирается без тега with_gvisor, и sing-tun на "gvisor" и "mixed" отвечает
+// "gVisor is not included in this build" — туннель просто не поднимется.
+// В отличие от migrateToV38 это касается и осознанного выбора: выбор,
+// который движок не исполнит, дороже сохранённого намерения. "system" жив.
+// Идемпотентна.
+func (s *SettingsStore) migrateToV39(settings *Settings) {
+	switch settings.SingboxRouter.FakeIPStack {
+	case "gvisor", "mixed":
+		settings.SingboxRouter.FakeIPStack = ""
+	}
+}

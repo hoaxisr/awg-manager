@@ -107,9 +107,9 @@ type SingboxRouterSettingsData struct {
 	// --- fakeip-tun engine settings (user-editable) ---
 	// FakeIPStack selects the sing-tun stack for both tun modes (fakeip-tun и
 	// policy-tun). Empty (default) = собственный стек sing-tun: ключ `stack` в
-	// конфиг не пишется. "gvisor", "system", "mixed" — legacy, удаляются в
-	// sing-box 1.17.
-	FakeIPStack string `json:"fakeipStack,omitempty" example:"" enums:"gvisor,system,mixed"`
+	// конфиг не пишется. "system" — legacy, удаляется в sing-box 1.17.
+	// "gvisor" и "mixed" приводятся к пустому: бинарь собран без with_gvisor.
+	FakeIPStack string `json:"fakeipStack,omitempty" example:"" enums:"system"`
 	// FakeIPPool4 is the fakeip v4 pool CIDR (default "198.18.0.0/15").
 	FakeIPPool4 string `json:"fakeipPool4,omitempty" example:"198.18.0.0/15"`
 	// FakeIPPool6 is the fakeip v6 pool CIDR (default "fc00::/18").
