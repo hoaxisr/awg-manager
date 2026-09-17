@@ -3,6 +3,7 @@ package vlink
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -123,16 +124,43 @@ type XrayHysteriaSettings struct {
 	Version int    `json:"version"`
 }
 
-// XrayHysteriaStream — streamSettings.hysteriaSettings: версия и пароль.
+// XrayHysteriaStream — streamSettings.hysteriaSettings: версия, пароль и
+// таймаут простоя UDP-сессии. Блок masquerade оттуда сюда не переносится: он
+// серверный (Xray собирает из него ответ маскировки на inbound) и на поведение
+// клиента не влияет.
 type XrayHysteriaStream struct {
-	Version int    `json:"version"`
-	Auth    string `json:"auth"`
+	Version        int    `json:"version"`
+	Auth           string `json:"auth"`
+	UDPIdleTimeout int    `json:"udpIdleTimeout"`
 }
 
-// XrayFinalMask — streamSettings.finalmask. Нас интересует только udp-список:
-// в нём лежат salamander (обфускация) и udphop (прыжки по портам).
+// XrayFinalMask — streamSettings.finalmask: udp-маски (salamander, udphop и
+// прочие) и настройки QUIC.
 type XrayFinalMask struct {
-	UDP []XrayMask `json:"udp"`
+	UDP        []XrayMask      `json:"udp"`
+	QuicParams *XrayQuicParams `json:"quicParams"`
+}
+
+// XrayQuicParams — finalmask.quicParams (Xray: QuicParamsConfig). Полоса
+// приходит строкой с единицей ("100 mbps"), таймауты — в секундах.
+type XrayQuicParams struct {
+	Congestion                    string `json:"congestion"`
+	Debug                         bool   `json:"debug"`
+	BbrProfile                    string `json:"bbrProfile"`
+	BrutalUp                      string `json:"brutalUp"`
+	BrutalDown                    string `json:"brutalDown"`
+	BrutalDisableLossCompensation bool   `json:"brutalDisableLossCompensation"`
+	InitStreamReceiveWindow       uint64 `json:"initStreamReceiveWindow"`
+	MaxStreamReceiveWindow        uint64 `json:"maxStreamReceiveWindow"`
+	InitConnectionReceiveWindow   uint64 `json:"initConnectionReceiveWindow"`
+	MaxConnectionReceiveWindow    uint64 `json:"maxConnectionReceiveWindow"`
+	MaxIdleTimeout                int64  `json:"maxIdleTimeout"`
+	KeepAlivePeriod               int64  `json:"keepAlivePeriod"`
+	DisablePathMTUDiscovery       bool   `json:"disablePathMTUDiscovery"`
+	DisableChromeParrot           bool   `json:"disableChromeParrot"`
+	DisableGSO                    bool   `json:"disableGSO"`
+	MaxIncomingStreams            int64  `json:"maxIncomingStreams"`
+	DisableStatelessReset         bool   `json:"disableStatelessReset"`
 }
 
 // XrayMask — элемент списка масок: тип и его собственный блок настроек.
@@ -460,11 +488,6 @@ func convertXrayOutbound(ob XrayOutbound) (*ParsedOutbound, error) {
 	}, nil
 }
 
-// xrayStreamToValues переводит streamSettings Xray-конфига в тот же набор
-// query-параметров, что несёт share-ссылка, чтобы дальше работал общий слой
-// (BuildStreamFromQuery + MergeIntoOutbound). Без этого Xray-путь пришлось бы
-// держать второй реализацией транспорта и TLS, а она уже разъехалась с общей:
-// теряла xhttp и httpupgrade целиком, early data и bind_interface.
 // convertXrayHysteria собирает hysteria2 из блока Xray (issue #916). Панели
 // отдают его как protocol "hysteria" с версией 2 — отдельного "hysteria2" в
 // формате Xray нет. v1 — другой протокол, в проекте он не поддержан нигде,
@@ -480,12 +503,23 @@ func convertXrayHysteria(ob XrayOutbound, tag string) (*ParsedOutbound, error) {
 		hy = ob.StreamSettings.HysteriaSettings
 	}
 
+	// Версия названа дважды, и Xray требует 2 в обоих местах: hysteria.go
+	// проверяет settings, transport_method.go — hysteriaSettings. Разнобой
+	// означает конфигурацию, которую сам Xray не соберёт.
 	version := settings.Version
-	if version == 0 && hy != nil {
+	if hy != nil && hy.Version != 0 {
+		if version != 0 && version != hy.Version {
+			return nil, fmt.Errorf("hysteria: version mismatch: settings %d, hysteriaSettings %d", version, hy.Version)
+		}
 		version = hy.Version
 	}
 	if version != 2 {
 		return nil, fmt.Errorf("hysteria: unsupported version %d (only 2 is supported)", version)
+	}
+	// Своего таймаута UDP-сессии у аутбаунда sing-box нет. Умолчание Xray
+	// (60 с) терять нечего, а заданное вручную значение — потеря поведения.
+	if hy != nil && hy.UDPIdleTimeout != 0 && hy.UDPIdleTimeout != 60 {
+		return nil, fmt.Errorf("hysteria: udpIdleTimeout has no sing-box equivalent")
 	}
 	if settings.Address == "" {
 		return nil, fmt.Errorf("hysteria: missing server")
@@ -529,10 +563,11 @@ func convertXrayHysteria(ob XrayOutbound, tag string) (*ParsedOutbound, error) {
 	}, nil
 }
 
-// applyXrayHysteriaMasks переносит в аутбаунд то из слоя масок Xray, что у
-// hysteria2 в sing-box выражается: обфускацию salamander/gecko и прыжки по
-// удалённым портам. Остальные маски (xdns, realm, noise и прочие) молча
-// пропускаются — они относятся к другим транспортам.
+// applyXrayHysteriaMasks переносит в аутбаунд слой масок Xray. Маски
+// навешиваются на ВЕСЬ udp-сокет аутбаунда (transport_internet.go: весь
+// FinalMask.Udp уходит в config.Udpmasks независимо от транспорта), поэтому
+// маска, которой в sing-box нет, — это не «чужая настройка», а другой формат
+// на проводе: узел с ней импортировался бы зелёным и молча не работал.
 func applyXrayHysteriaMasks(stream *XrayStream, out map[string]any) error {
 	if stream == nil || stream.FinalMask == nil {
 		return nil
@@ -547,9 +582,11 @@ func applyXrayHysteriaMasks(stream *XrayStream, out map[string]any) error {
 			if err := applyXrayUDPHop(mask.Settings, out); err != nil {
 				return err
 			}
+		default:
+			return fmt.Errorf("hysteria: udp mask %q has no sing-box equivalent", mask.Type)
 		}
 	}
-	return nil
+	return applyXrayQuicParams(stream.FinalMask.QuicParams, out)
 }
 
 func applyXraySalamander(raw json.RawMessage, out map[string]any) error {
@@ -566,6 +603,12 @@ func applyXraySalamander(raw json.RawMessage, out map[string]any) error {
 	// packetSize у Xray включает вариант gecko, и размеры обязаны совпадать с
 	// серверными: молча отбросить их значит собрать нерабочий аутбаунд.
 	if from, to, ok := parseXrayInt32Range(s.PacketSize); ok && to > 0 {
+		// Границы — Xray (Salamander.Build) и sing-box проверяют их одинаково,
+		// но sing-box только на дозвоне: без проверки здесь узел выглядел бы
+		// исправным и отказывал на каждом соединении.
+		if from <= 0 || to > 2048 {
+			return fmt.Errorf("hysteria: invalid gecko packet size range %d-%d (want 1..2048)", from, to)
+		}
 		obfs["type"] = "gecko"
 		obfs["min_packet_size"] = from
 		obfs["max_packet_size"] = to
@@ -579,15 +622,24 @@ func applyXrayUDPHop(raw json.RawMessage, out map[string]any) error {
 	if err := json.Unmarshal(raw, &h); err != nil {
 		return fmt.Errorf("hysteria: invalid udphop settings")
 	}
-	// intervalLocal меняет локальный сокет, а не адресата: удалённый порт
-	// Xray трогает только при intervalRemote/perConnRemote. Перенос списка в
-	// server_ports в этом случае отправил бы трафик на порты, которых сервер
-	// не слушает.
+	// Прыжки по адресам sing-box не умеет: он дозванивается на один адрес.
+	if len(h.RemoteIPs) > 0 {
+		return fmt.Errorf("hysteria: udphop remoteIPs has no sing-box equivalent")
+	}
+	// mode перечисляет, ЧТО меняется при прыжке (udphop/conn.go):
+	// intervalRemote — удалённый порт по таймеру, ровно server_ports sing-box;
+	// perConnRemote — порт выбирается ОДИН раз на соединение, таймера нет;
+	// intervalLocal — пересоздаётся локальный сокет, адресат не меняется.
+	// Последние два в sing-box не выражаются, а отличие видно на проводе.
 	remote := false
 	for _, mode := range strings.Split(h.Mode, ",") {
 		switch strings.ToLower(strings.TrimSpace(mode)) {
-		case "intervalremote", "perconnremote":
+		case "intervalremote":
 			remote = true
+		case "perconnremote":
+			return fmt.Errorf("hysteria: udphop mode perConnRemote has no sing-box equivalent")
+		case "intervallocal":
+			return fmt.Errorf("hysteria: udphop mode intervalLocal has no sing-box equivalent")
 		}
 	}
 	if !remote {
@@ -609,14 +661,144 @@ func applyXrayUDPHop(raw json.RawMessage, out map[string]any) error {
 	if !ok || from <= 0 {
 		from, to = 10, 0
 	}
+	// Нижнюю границу держат обе стороны, но sing-box — на дозвоне
+	// (sing-quic: hop interval must be at least 5 seconds).
+	if from < 5 {
+		return fmt.Errorf("hysteria: udphop interval %ds is below the 5s minimum", from)
+	}
 	out["hop_interval"] = strconv.Itoa(from) + "s"
 	if to > from {
 		out["hop_interval_max"] = strconv.Itoa(to) + "s"
 	}
-	// remoteIPs осознанно теряется: sing-box дозванивается на один адрес и
-	// менять его на лету не умеет. Базовый адрес из settings рабочий, так что
-	// аутбаунд остаётся исправным — тише только маскировка.
 	return nil
+}
+
+// applyXrayQuicParams переносит настройки QUIC. Всё, чему в аутбаунде sing-box
+// нет соответствия, — отказ с названием поля: у этих ключей есть эффект на
+// проводе, и молчаливая потеря дала бы конфигурацию, которая ведёт себя иначе,
+// чем её описал сервер.
+func applyXrayQuicParams(q *XrayQuicParams, out map[string]any) error {
+	if q == nil {
+		return nil
+	}
+	for _, unsupported := range []struct {
+		name string
+		set  bool
+	}{
+		{"initStreamReceiveWindow", q.InitStreamReceiveWindow > 0},
+		{"initConnectionReceiveWindow", q.InitConnectionReceiveWindow > 0},
+		{"brutalDisableLossCompensation", q.BrutalDisableLossCompensation},
+		{"disableGSO", q.DisableGSO},
+		{"disableStatelessReset", q.DisableStatelessReset},
+	} {
+		if unsupported.set {
+			return fmt.Errorf("hysteria: quicParams %s has no sing-box equivalent", unsupported.name)
+		}
+	}
+
+	// Управление перегрузкой: sing-box включает brutal ровно по ненулевым
+	// up_mbps/down_mbps, иначе работает BBR. Отдельного reno у него нет, а
+	// Xray под reno оставляет умолчание quic-go — другой алгоритм.
+	switch strings.ToLower(q.Congestion) {
+	case "", "brutal", "force-brutal":
+		// Полоса у Xray в байтах в секунду (Bandwidth.Bps), у sing-box — в
+		// Mbps по 125000 байт (constant/speed.go): переносим байты, а не
+		// подпись, иначе изменилась бы заявленная скорость.
+		up, err := xrayBandwidthMbps(q.BrutalUp)
+		if err != nil {
+			return fmt.Errorf("hysteria: quicParams brutalUp: %w", err)
+		}
+		down, err := xrayBandwidthMbps(q.BrutalDown)
+		if err != nil {
+			return fmt.Errorf("hysteria: quicParams brutalDown: %w", err)
+		}
+		if up > 0 {
+			out["up_mbps"] = up
+		}
+		if down > 0 {
+			out["down_mbps"] = down
+		}
+	case "bbr":
+		// Значения brutal при bbr не работают и у самого Xray (dialer.go):
+		// перенести их значило бы включить в sing-box другой алгоритм.
+	case "reno":
+		return fmt.Errorf("hysteria: quicParams congestion reno has no sing-box equivalent")
+	default:
+		return fmt.Errorf("hysteria: quicParams congestion %q is unknown", q.Congestion)
+	}
+
+	if q.BbrProfile != "" {
+		out["bbr_profile"] = strings.ToLower(q.BbrProfile)
+	}
+	if q.MaxIdleTimeout > 0 {
+		out["idle_timeout"] = strconv.FormatInt(q.MaxIdleTimeout, 10) + "s"
+	}
+	if q.KeepAlivePeriod > 0 {
+		out["keep_alive_period"] = strconv.FormatInt(q.KeepAlivePeriod, 10) + "s"
+	}
+	if q.MaxStreamReceiveWindow > 0 {
+		out["stream_receive_window"] = q.MaxStreamReceiveWindow
+	}
+	if q.MaxConnectionReceiveWindow > 0 {
+		out["connection_receive_window"] = q.MaxConnectionReceiveWindow
+	}
+	if q.MaxIncomingStreams > 0 {
+		out["max_concurrent_streams"] = q.MaxIncomingStreams
+	}
+	if q.DisablePathMTUDiscovery {
+		out["disable_path_mtu_discovery"] = true
+	}
+	if q.DisableChromeParrot {
+		out["disable_chrome_parrot"] = true
+	}
+	if q.Debug {
+		out["brutal_debug"] = true
+	}
+	return nil
+}
+
+// xrayBandwidthMbps повторяет Bandwidth.Bps Xray (единицы 1024-кратные, потом
+// деление на 8) и переводит байты в секунду в Mbps sing-box (125000 байт).
+func xrayBandwidthMbps(raw string) (int, error) {
+	s := strings.TrimSpace(strings.ToLower(raw))
+	if s == "" {
+		return 0, nil
+	}
+	idx := len(s)
+	for i, c := range s {
+		if (c < '0' || c > '9') && c != '.' {
+			idx = i
+			break
+		}
+	}
+	val, err := strconv.ParseFloat(s[:idx], 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid bandwidth %q", raw)
+	}
+	var mul float64
+	switch strings.TrimSpace(s[idx:]) {
+	case "", "b", "bps":
+		mul = 1
+	case "k", "kb", "kbps":
+		mul = 1024
+	case "m", "mb", "mbps":
+		mul = 1024 * 1024
+	case "g", "gb", "gbps":
+		mul = 1024 * 1024 * 1024
+	case "t", "tb", "tbps":
+		mul = 1024 * 1024 * 1024 * 1024
+	default:
+		return 0, fmt.Errorf("unsupported bandwidth unit in %q", raw)
+	}
+	bytesPerSec := val * mul / 8
+	if bytesPerSec <= 0 {
+		return 0, nil
+	}
+	mbps := int(math.Round(bytesPerSec / 125000))
+	if mbps == 0 {
+		mbps = 1
+	}
+	return mbps, nil
 }
 
 // parseXrayInt32Range разбирает Int32Range Xray: строка "10-30" или число.
@@ -695,6 +877,11 @@ func xrayHysteriaStreamQuery(stream *XrayStream, defaultHost string) url.Values 
 	return v
 }
 
+// xrayStreamToValues переводит streamSettings Xray-конфига в тот же набор
+// query-параметров, что несёт share-ссылка, чтобы дальше работал общий слой
+// (BuildStreamFromQuery + MergeIntoOutbound). Без этого Xray-путь пришлось бы
+// держать второй реализацией транспорта и TLS, а она уже разъехалась с общей:
+// теряла xhttp и httpupgrade целиком, early data и bind_interface.
 func xrayStreamToValues(stream *XrayStream, defaultHost string) url.Values {
 	v := url.Values{}
 	if stream == nil {

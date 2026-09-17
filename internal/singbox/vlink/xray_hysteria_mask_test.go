@@ -92,16 +92,16 @@ func TestParseXrayHysteria_PortHopping(t *testing.T) {
 // intervalLocal меняет ЛОКАЛЬНЫЙ сокет, удалённый порт остаётся прежним
 // (udphop/conn.go: remotePorts берутся только при remote/remoteOnce). Перенести
 // такой список в server_ports значило бы слать на порты, которых сервер не
-// слушает.
-func TestParseXrayHysteria_LocalOnlyHopIsNotPortHopping(t *testing.T) {
-	sb := firstXrayOutbound(t, xrayHysteriaWithMask(
+// слушает, а пересоздание локального сокета sing-box не умеет — отказ.
+func TestParseXrayHysteria_LocalOnlyHopRejected(t *testing.T) {
+	res := ParseXrayBody(xrayHysteriaWithMask(
 		`{"type":"udphop","settings":{"mode":"intervalLocal","interval":30,"remotePorts":"20000-30000"}}`))
 
-	if _, ok := sb["server_ports"]; ok {
-		t.Errorf("server_ports = %v, а прыжков по удалённым портам тут нет", sb["server_ports"])
+	if len(res.Outbounds) != 0 {
+		t.Fatalf("узел разобран: %s", res.Outbounds[0].Outbound)
 	}
-	if _, ok := sb["hop_interval"]; ok {
-		t.Errorf("hop_interval = %v лишний", sb["hop_interval"])
+	if len(res.Errors) != 1 || !strings.Contains(res.Errors[0].Message, "intervalLocal") {
+		t.Errorf("errors = %v, want отказ про intervalLocal", res.Errors)
 	}
 }
 
@@ -116,8 +116,12 @@ func TestParseXrayHysteria_MatchesSchema(t *testing.T) {
 		t.Fatal("schema has no outbounds.items")
 	}
 
-	sb := firstXrayOutbound(t, xrayHysteriaWithMask(
-		`{"type":"salamander","settings":{"password":"obfspw","packetSize":"100-1200"}},`+
-			`{"type":"udphop","settings":{"mode":"intervalRemote","interval":"10-30","remotePorts":"20000-30000"}}`))
+	sb := firstXrayOutbound(t, xrayHysteriaFinalMask(
+		`"udp":[{"type":"salamander","settings":{"password":"obfspw","packetSize":"100-1200"}},`+
+			`{"type":"udphop","settings":{"mode":"intervalRemote","interval":"10-30","remotePorts":"20000-30000"}}],`+
+			`"quicParams":{"congestion":"brutal","brutalUp":"100 mbps","brutalDown":"200 mbps","bbrProfile":"standard",`+
+			`"maxIdleTimeout":30,"keepAlivePeriod":10,"maxStreamReceiveWindow":8388608,`+
+			`"maxConnectionReceiveWindow":16777216,"maxIncomingStreams":16,`+
+			`"disablePathMTUDiscovery":true,"disableChromeParrot":true,"debug":true}`))
 	doc.checkKeys(t, "outbound", itemsNode, sb)
 }
