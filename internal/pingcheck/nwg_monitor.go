@@ -333,12 +333,18 @@ func (m *nwgMonitor) processDelta(failCount, successCount int, status string, bo
 			RestartDetected: m.restartDetected,
 		})
 	}
-	// Only invalidate when status actually transitioned. processDelta runs
-	// on every poll tick (~5s) per monitored tunnel; firing unconditionally
-	// would trigger excessive refetches. Initial state is published from
-	// the !m.initialized branch above (which returns early).
-	if status != m.prevStatus {
-		m.bus.PublishInvalidated(events.ResourcePingcheck, "state-change")
+	// Инвалидируем, когда изменилось то, ЧТО ПОКАЗАНО: время последней
+	// проверки, задержка и счётчики. Меняются они при ненулевой дельте, то
+	// есть когда NDMS реально выполнил проверку, — а не на каждом нашем тике
+	// (processDelta крутится раз в ~5 с на туннель, и безусловная публикация
+	// была бы расточительной).
+	//
+	// Прежнее условие «сменился статус» было слишком узким: страница
+	// мониторинга показывает «2 из 3» и время проверки, и они обновлялись
+	// только по переходу — из-за чего странице пришлось вернуть таймер
+	// опроса (F354). Теперь он не нужен (F364).
+	if status != m.prevStatus || totalDelta > 0 {
+		m.bus.PublishInvalidated(events.ResourcePingcheck, "check")
 	}
 
 	m.prevFail = failCount

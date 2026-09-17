@@ -93,13 +93,20 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 		// Публикуем на каждом успехе, как NWG-монитор: dnsroute-фейловер
 		// снимает туннель с failedSet только по «pass», а toggle отдаёт «pass»
 		// лишь при рукопожатии в своём окне. Поднялся позже — иначе списки
-		// висят на backup до рестарта демона (#855). Подсказку инвалидации
-		// не шлём: состояние карточки не менялось.
+		// висят на backup до рестарта демона (#855).
 		if s.bus != nil {
 			s.bus.Publish("pingcheck:state", events.PingCheckStateEvent{
 				TunnelID: m.tunnelID,
 				Status:   "pass",
 			})
+			// И подсказку инвалидации — тоже на КАЖДОЙ проверке. Прежний
+			// комментарий «состояние карточки не менялось» был неверен:
+			// страница мониторинга показывает время последней проверки,
+			// задержку и счётчики, а они меняются каждый раз. Из-за этого
+			// странице пришлось вернуть таймер опроса (F354); теперь он не
+			// нужен — обновление приходит ровно тогда, когда есть что
+			// показать (F364).
+			s.bus.PublishInvalidated(events.ResourcePingcheck, "check")
 		}
 
 		s.addLogEntry(LogEntry{
@@ -131,6 +138,14 @@ func (s *Service) sensorTick(m *tunnelMonitor, config *checkConfig) {
 		Threshold:  config.FailThreshold,
 		Backend:    "kernel",
 	})
+
+	// Неудачная проверка меняет ровно те же поля карточки, что и удачная:
+	// время последней проверки, задержку и счётчик отказов «2 из 3».
+	// Публикуем и здесь — иначе странице мониторинга снова понадобился бы
+	// таймер (F364).
+	if s.bus != nil {
+		s.bus.PublishInvalidated(events.ResourcePingcheck, "check")
+	}
 
 	if failCount < config.FailThreshold {
 		return

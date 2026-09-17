@@ -632,3 +632,37 @@ func (c *steppingWGClient) LatestHandshake(context.Context, string) (time.Time, 
 	}
 	return c.stamps[len(c.stamps)-1], nil
 }
+
+// Страница мониторинга показывает время последней проверки, задержку и счётчики
+// — они меняются на КАЖДОЙ проверке, а не только при смене состояния. Пока
+// публиковалась одна смена состояния, странице приходилось держать таймер
+// опроса (F354); теперь таймера нет, и единственный источник свежести —
+// эта публикация (F364).
+func TestSensorTick_PublishesInvalidationOnEveryCheck(t *testing.T) {
+	orig := httpprobe.Client
+	t.Cleanup(func() { httpprobe.Client = orig })
+	httpprobe.Client = alwaysFailDoer{}
+	s, m, config, _ := newKernelSensorService(t)
+
+	bus := events.NewBus()
+	s.bus = bus
+	_, ch, unsub := bus.Subscribe()
+	defer unsub()
+
+	// Две неудачные проверки — до порога лечения, то есть смены состояния НЕТ.
+	s.sensorTick(m, config)
+	s.sensorTick(m, config)
+
+	got := 0
+	deadline := time.After(2 * time.Second)
+	for got < 2 {
+		select {
+		case e := <-ch:
+			if e.Type == "resource:invalidated" {
+				got++
+			}
+		case <-deadline:
+			t.Fatalf("подсказок инвалидации пришло %d из 2: страница мониторинга замрёт", got)
+		}
+	}
+}
