@@ -36,6 +36,7 @@ func TestSubscribeClient_OnlySSEHandler(t *testing.T) {
 	}
 }
 
+// ClientCount считает клиентские подписки и не считает внутренние.
 func TestClientCount_IgnoresInternalSubscribers(t *testing.T) {
 	b := events.NewBus()
 

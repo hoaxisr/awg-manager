@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, untrack } from 'svelte';
+	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { tunnels } from '$lib/stores/tunnels';
@@ -517,8 +518,6 @@
 		}
 		let cancelled = false;
 		const tick = async (): Promise<void> => {
-			// Фоновая вкладка ничего не показывает — незачем и спрашивать.
-			if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
 			try {
 				const results = await Promise.all(
 					urltestSubs.map((s) =>
@@ -538,11 +537,10 @@
 				/* ignore — keep last known */
 			}
 		};
-		void tick();
-		const handle = setInterval(() => void tick(), URLTEST_POLL_MS);
+		const stop = startVisiblePoll(tick, URLTEST_POLL_MS);
 		return () => {
 			cancelled = true;
-			clearInterval(handle);
+			stop();
 		};
 	});
 

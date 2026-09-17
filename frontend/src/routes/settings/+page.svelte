@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from "svelte";
+	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { get } from "svelte/store";
 	import { afterNavigate } from "$app/navigation";
 	import { page } from "$app/stores";
@@ -395,10 +396,7 @@ onMount(() => {
 	// меняет сам пользователь с этой же страницы, и те пути перечитывают
 	// сами — поэтому это страховка, а не источник, и 30 с ей ни к чему.
 	// Фоновая вкладка не спрашивает вовсе.
-	const timer = setInterval(() => {
-		if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-		void fetchSystemInfo(true);
-	}, 120000);
+	const stopSystemInfoPoll = startVisiblePoll(() => fetchSystemInfo(true), 120000);
 
 	void (async () => {
 		try {
@@ -427,7 +425,7 @@ onMount(() => {
 	})();
 
 	return () => {
-		clearInterval(timer);
+		stopSystemInfoPoll();
 	};
 });
 
