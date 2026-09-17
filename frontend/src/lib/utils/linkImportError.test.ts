@@ -133,3 +133,84 @@ describe('groupLinkImportErrors', () => {
 		).toEqual(['Не указан UUID (×2)', 'Строка 1: Не указан пароль']);
 	});
 });
+
+describe('причины отказа узлов hysteria из Xray-подписки', () => {
+	const cases: Array<[string, string]> = [
+		[
+			'vlink: hysteria: udp mask "sudoku" has no sing-box equivalent',
+			'Маскировка «sudoku» в sing-box не выражается'
+		],
+		[
+			'vlink: hysteria: quicParams congestion force-brutal has no sing-box equivalent',
+			'Настройка QUIC force-brutal в sing-box не выражается'
+		],
+		[
+			'vlink: hysteria: udphop mode perConnRemote has no sing-box equivalent',
+			'Режим прыжков по портам perConnRemote в sing-box не выражается'
+		],
+		[
+			'vlink: hysteria: quicParams maxIdleTimeout 300 is out of the 4..120 range',
+			'Значение maxIdleTimeout = 300 вне допустимого диапазона 4..120'
+		],
+		[
+			'vlink: hysteria: quicParams maxIncomingStreams 4 is below the minimum of 8',
+			'Значение maxIncomingStreams = 4 меньше минимума 8'
+		],
+		[
+			'vlink: hysteria: udphop interval 1s is below the 5s minimum',
+			'Интервал прыжков 1s меньше минимума 5s'
+		],
+		[
+			'vlink: hysteria: quicParams bbrProfile "TURBO" is unknown',
+			'Неизвестное значение bbrProfile: «TURBO»'
+		],
+		[
+			'vlink: hysteria: quicParams congestion "cubic" is unknown',
+			'Неизвестное значение congestion: «cubic»'
+		],
+		[
+			'vlink: hysteria: udphop mode "whatever" is unknown',
+			'Неизвестный режим прыжков по портам: «whatever»'
+		],
+		[
+			'vlink: hysteria: udp mask "salamander" is repeated, sing-box takes only one',
+			'Маскировка «salamander» указана дважды, sing-box принимает одну'
+		],
+		[
+			'vlink: hysteria: version mismatch: settings 2, hysteriaSettings 1',
+			'Версия протокола указана по-разному в двух блоках: settings 2, hysteriaSettings 1'
+		],
+		[
+			'vlink: hysteria: unsupported version 1 (only 2 is supported)',
+			'Поддерживается только Hysteria 2, а здесь версия 1'
+		],
+		[
+			'vlink: hysteria: invalid gecko packet size range 0-1200 (want 1..2048)',
+			'Размеры пакетов обфускации 0-1200 вне допустимого диапазона 1..2048'
+		],
+		[
+			'vlink: hysteria: udphop remotePorts "abc" is not a valid port range',
+			'«abc» — не диапазон портов'
+		],
+		['vlink: hysteria: udphop interval is missing', 'Не указан интервал прыжков'],
+		[
+			'vlink: hysteria: security "none" is not usable, hysteria2 is always over TLS',
+			'Hysteria 2 работает только поверх TLS, а в узле указано «none»'
+		],
+		['vlink: hysteria: obfs requires password', 'Не указан пароль обфускации'],
+		[
+			'vlink: hysteria: quicParams initStreamReceiveWindow and maxStreamReceiveWindow differ, sing-box has a single window',
+			'Стартовое и предельное окно приёма различаются, а в sing-box окно одно'
+		],
+		[
+			'vlink: hysteria: udp mask realm is not supported yet: its outbound has no server address',
+			'Маскировка realm пока не поддерживается: у такого аутбаунда нет адреса сервера'
+		],
+		['vlink: xray: outbound is malformed', 'Блок узла не разобран'],
+		['vlink: hysteria: invalid finalmask', 'Блок finalmask не разобран']
+	];
+
+	it.each(cases)('%s', (raw, want) => {
+		expect(linkImportErrorText(raw)).toBe(want);
+	});
+});

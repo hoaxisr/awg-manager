@@ -16,7 +16,7 @@
 const LINE_PREFIX = /^line\s+(\d+)\s+\([^)]*\):\s*/i;
 
 /** Служебные префиксы пакета: пользователю они ничего не говорят. */
-const NOISE_PREFIX = /^(vlink|clash [a-z0-9]+|xray|amnezia|mieru):\s*/i;
+const NOISE_PREFIX = /^(vlink|clash [a-z0-9]+|xray|amnezia|mieru|hysteria):\s*/i;
 
 /** Готовые фразы, а не существительные: род и число у них разные. */
 const MISSING: Record<string, string> = {
@@ -36,6 +36,94 @@ const MISSING: Record<string, string> = {
 type Rule = { re: RegExp; text: (m: RegExpExecArray) => string };
 
 const RULES: Rule[] = [
+	// Отказы разбора hysteria из Xray-подписки. Подсистемы названы так, как их
+	// видит пользователь: udp mask — маскировка, udphop — прыжки по портам,
+	// quicParams — настройки QUIC.
+	{
+		re: /udp mask "?([\w-]+)"? has no sing-box equivalent/i,
+		text: (m) => `маскировка «${m[1]}» в sing-box не выражается`,
+	},
+	{
+		re: /udp mask "?([\w-]+)"? is repeated/i,
+		text: (m) => `маскировка «${m[1]}» указана дважды, sing-box принимает одну`,
+	},
+	{
+		re: /udp mask realm is not supported yet/i,
+		text: () =>
+			'маскировка realm пока не поддерживается: у такого аутбаунда нет адреса сервера',
+	},
+	{
+		re: /udphop mode (\S+) has no sing-box equivalent/i,
+		text: (m) => `режим прыжков по портам ${m[1]} в sing-box не выражается`,
+	},
+	{
+		re: /udphop (\S+) has no sing-box equivalent/i,
+		text: (m) => `${m[1]} у прыжков по портам в sing-box не выражается`,
+	},
+	{
+		re: /quicParams (?:congestion )?(\S+) has no sing-box equivalent/i,
+		text: (m) => `настройка QUIC ${m[1]} в sing-box не выражается`,
+	},
+	{
+		re: /quicParams (\w+) (\d+) is out of the (\S+) range/i,
+		text: (m) => `значение ${m[1]} = ${m[2]} вне допустимого диапазона ${m[3]}`,
+	},
+	{
+		re: /quicParams (\w+) (\d+) is below the minimum of (\d+)/i,
+		text: (m) => `значение ${m[1]} = ${m[2]} меньше минимума ${m[3]}`,
+	},
+	{
+		re: /udphop interval (\S+) is below the (\S+) minimum/i,
+		text: (m) => `интервал прыжков ${m[1]} меньше минимума ${m[2]}`,
+	},
+	{
+		re: /udphop interval is missing/i,
+		text: () => 'не указан интервал прыжков',
+	},
+	{
+		re: /udphop remotePorts "([^"]*)" is not a valid port range/i,
+		text: (m) => `«${m[1]}» — не диапазон портов`,
+	},
+	{
+		re: /quicParams (\w+) "?([\w-]+)"? is unknown/i,
+		text: (m) => `неизвестное значение ${m[1]}: «${m[2]}»`,
+	},
+	{
+		re: /udphop mode "([^"]*)" is unknown/i,
+		text: (m) => `неизвестный режим прыжков по портам: «${m[1]}»`,
+	},
+	{
+		re: /version mismatch: (.+)$/i,
+		text: (m) => `версия протокола указана по-разному в двух блоках: ${m[1]}`,
+	},
+	{
+		re: /unsupported version (\d+) \(only 2 is supported\)/i,
+		text: (m) => `поддерживается только Hysteria 2, а здесь версия ${m[1]}`,
+	},
+	{
+		re: /invalid gecko packet size range (\S+) \(want (\S+)\)/i,
+		text: (m) => `размеры пакетов обфускации ${m[1]} вне допустимого диапазона ${m[2]}`,
+	},
+	{
+		re: /security "([^"]*)" is not usable, hysteria2 is always over TLS/i,
+		text: (m) => `Hysteria 2 работает только поверх TLS, а в узле указано «${m[1]}»`,
+	},
+	{
+		re: /obfs requires password/i,
+		text: () => 'не указан пароль обфускации',
+	},
+	{
+		re: /init\w+ and max\w+ differ, sing-box has a single window/i,
+		text: () => 'стартовое и предельное окно приёма различаются, а в sing-box окно одно',
+	},
+	{
+		re: /outbound is malformed/i,
+		text: () => 'блок узла не разобран',
+	},
+	{
+		re: /invalid (finalmask|hysteriaSettings|udphop settings|salamander obfs settings)/i,
+		text: (m) => `блок ${m[1].replace(/ settings$/, '')} не разобран`,
+	},
 	{
 		re: /tcp headerType=http under \w+/i,
 		text: () =>
