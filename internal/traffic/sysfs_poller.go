@@ -146,8 +146,11 @@ func (p *SysfsPoller) run() {
 			if p.nobodyWatching() && time.Since(lastRun) < p.idleInterval {
 				continue
 			}
-			p.tick()
+			// Отметка ДО тика: тик ограничен контекстом в interval и ждёт
+			// свои горутины, поэтому отметка после него растягивала шаг
+			// простоя на длительность тика — часовой график недобирал точки.
 			lastRun = time.Now()
+			p.tick()
 		}
 	}
 }

@@ -347,3 +347,31 @@ func TestMetricsPoller_Stop_WithoutStart(t *testing.T) {
 		t.Errorf("Stop without Start should return immediately")
 	}
 }
+
+// В простое серверные интерфейсы не опрашиваются: историю трафика они не кормят
+// (её ведёт publishTunnel, и только для не серверных ref), а их единственный
+// выход — подсказка в шину, где при нуле зрителей никого нет. Туннельные при
+// этом опрашиваться ОБЯЗАНЫ — ради них поллер в простое и не выключен.
+func TestMetricsPoller_IdleSkipsServersButNotTunnels(t *testing.T) {
+	fg := query.NewFakeGetter()
+	peerJSON := `{"wireguard":{"peer":[{"public-key":"k","rxbytes":10,"txbytes":20,"last-handshake":0,"online":true,"enabled":true}]}}`
+	fg.SetJSON("/show/interface/Wireguard0", peerJSON)
+	fg.SetJSON("/show/interface/Wireguard10", peerJSON)
+	peers := query.NewPeerStoreWithTTL(fg, query.NopLogger(), 1*time.Millisecond)
+	run := &fakeRunningProvider{}
+	run.Set([]InterfaceRef{{ID: "Wireguard0"}, {ID: "Wireguard10", IsServer: true}})
+
+	p := NewWithInterval(peers, &fakeMetricsPublisher{}, run, &fakeSubs{count: 0}, NopLogger(), 5*time.Millisecond)
+	p.SetHistoryFeeder(&fakeHistory{})
+	p.Start()
+	defer p.Stop()
+
+	time.Sleep(250 * time.Millisecond)
+
+	if got := fg.Calls("/show/interface/Wireguard0"); got == 0 {
+		t.Error("туннель в простое не опрашивается — история трафика встанет")
+	}
+	if got := fg.Calls("/show/interface/Wireguard10"); got != 0 {
+		t.Errorf("сервер в простое опрошен %d раз, потребителя у этого нет", got)
+	}
+}

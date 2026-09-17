@@ -29,7 +29,8 @@ func (nopLogger) Warnf(string, ...any) {}
 func NopLogger() Logger { return nopLogger{} }
 
 // Poller is a ticker that fetches peer metrics for non-managed system
-// WG tunnels and server interfaces at a fixed cadence. Peers come from
+// WG tunnels and server interfaces. Шаг ДВА: interval при открытой панели и
+// idleInterval, когда её не открыл никто (см. run). Peers come from
 // the .wireguard.peer field of /show/interface/<name>; it publishes
 // tunnel:traffic (non-managed system tunnels) and triggers
 // server:updated snapshots (server interfaces).
@@ -94,7 +95,9 @@ type Publisher interface {
 }
 
 // SubscriberCounter reports the current number of CLIENT (SSE) subscriptions.
-// MetricsPoller skips work when zero.
+// На нуле поллер РАЗРЕЖАЕТСЯ, а не останавливается: он единственный кормилец
+// истории трафика не управляемых системных туннелей, и полный гейт оставлял в
+// графике дыру во всю длину простоя (F352). Останавливать его нельзя.
 //
 // Именно клиентских: events.Bus.SubscriberCount() считает ещё и внутренних
 // подписчиков (failover, statecache, connectivity, awgoutbounds, deviceproxy),
@@ -209,10 +212,24 @@ func (p *Poller) run() {
 			if p.nobodyWatching() && time.Since(lastRun) < p.idleInterval {
 				continue
 			}
-			p.tick()
+			// Отметка ДО тика: тик ограничен контекстом в interval и ждёт
+			// свои горутины, поэтому отметка после него растягивала шаг
+			// простоя на длительность тика — часовой график недобирал точки.
 			lastRun = time.Now()
+			p.tick()
 		}
 	}
+}
+
+// tunnelsOnly отбрасывает серверные интерфейсы, сохраняя порядок остальных.
+func tunnelsOnly(refs []InterfaceRef) []InterfaceRef {
+	out := refs[:0:0]
+	for _, r := range refs {
+		if !r.IsServer {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func (p *Poller) tick() {
@@ -220,6 +237,14 @@ func (p *Poller) tick() {
 	defer cancel()
 
 	refs := p.running.RunningInterfaces(ctx)
+	if p.nobodyWatching() {
+		// В простое серверная половина работает вхолостую: историю трафика
+		// кормит только publishTunnel, и только для НЕ серверных ref, а
+		// единственный выход серверной — PublishServerSnapshot, то есть
+		// подсказка в шину, где зрителей нет. Туннельную половину оставляем:
+		// ради неё поллер в простое и не выключен (F352).
+		refs = tunnelsOnly(refs)
+	}
 	if len(refs) == 0 {
 		return
 	}
