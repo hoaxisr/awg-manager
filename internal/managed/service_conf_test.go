@@ -73,7 +73,7 @@ func TestGenerateConf_NoASC_SkipsSignature(t *testing.T) {
 func stubRouterLANIP(t *testing.T, ip string) {
 	t.Helper()
 	old := netif.RouterLANIP
-	netif.RouterLANIP = func() string { return ip }
+	netif.RouterLANIP = func(string) string { return ip }
 	t.Cleanup(func() { netif.RouterLANIP = old })
 }
 

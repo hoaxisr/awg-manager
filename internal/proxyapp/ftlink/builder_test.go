@@ -209,3 +209,25 @@ func TestBuildLink_Rejections(t *testing.T) {
 		}
 	})
 }
+
+// Порт дописывается по разбору адреса, а не по наличию двоеточия: у голого и
+// скобочного IPv6 двоеточий много, и проверка по символу оставляла бы ссылку
+// без порта (F390). Форма без скобок до сборщика не доходит — её отбивает
+// валидация настройки (validateLinkPeer), — но сборщик обязан быть верным сам.
+func TestBuildLink_PortAppendedForIPv6(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"[2001:db8::1]", "[2001:db8::1]:56123"},
+		{"[2001:db8::1]:56000", "[2001:db8::1]:56000"},
+		{"vpn.example.org", "vpn.example.org:56123"},
+		{"vpn.example.org:1", "vpn.example.org:1"},
+	} {
+		b := NewBuilder(BuilderDeps{ExternalIP: (&fakeExternalIP{ip: "1.1.1.1"}).get})
+		rec := ftServerRecord("")
+		rec.FreeTurnServer.Listen = "0.0.0.0:56123"
+		rec.FreeTurnServer.LinkPeer = tc.in
+		body, p := buildLink(t, b, rec, wdttlink.LinkRequest{})
+		if body["peer"] != tc.want || p.Peer != tc.want {
+			t.Errorf("%q → peer=%q payload=%q, want %q", tc.in, body["peer"], p.Peer, tc.want)
+		}
+	}
+}

@@ -7,6 +7,7 @@
 	import { suggestNextPeerIP } from '$lib/utils/serverPeerOptions';
 	import { FieldHint, FormToggle } from '$lib/components/ui';
 	import { routerDnsHint } from './routerDnsHint';
+	import { validateDNSList } from '$lib/utils/peerForm';
 
 	interface Props {
 		open: boolean;
@@ -26,6 +27,9 @@
 	// на его месте стоял зашитый 1.1.1.1, и абонент резолвил мимо роутера.
 	let dns = $state('');
 	let useRouterDNS = $state(false);
+	// Правило то же, что у managed-модалок: отказ показывается у поля, а не
+	// прилетает с бэкенда английской фразой.
+	const dnsError = $derived(validateDNSList(dns));
 	let adding = $state(false);
 	let wasOpen = $state(false);
 
@@ -98,13 +102,23 @@
 					/>
 				</div>
 			{/if}
-			<span class="hint-text">Пусто — DNS роутера</span>
+			{#if dnsError}
+				<span class="hint-text is-error">{dnsError}</span>
+			{:else}
+				<span class="hint-text">Пусто — DNS роутера</span>
+			{/if}
 		</div>
 	</div>
 
 	{#snippet actions()}
 		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
-		<Button variant="primary" size="md" onclick={handleAdd} loading={adding} disabled={!tunnelIP}>
+		<Button
+			variant="primary"
+			size="md"
+			onclick={handleAdd}
+			loading={adding}
+			disabled={!tunnelIP || !!dnsError}
+		>
 			Добавить
 		</Button>
 	{/snippet}
@@ -153,6 +167,10 @@
 	.hint-text {
 		font-size: 0.75rem;
 		color: var(--text-muted, #94a3b8);
+	}
+
+	.hint-text.is-error {
+		color: var(--color-error, #f87171);
 	}
 
 	.input:focus {

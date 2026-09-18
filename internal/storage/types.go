@@ -360,7 +360,7 @@ type ManagedServer struct {
 	Mask          string   `json:"mask"`                  // e.g. "255.255.255.0"
 	ListenPort    int      `json:"listenPort"`
 	Endpoint      string   `json:"endpoint,omitempty"` // custom endpoint (IP or domain); empty = WAN IP
-	DNS           string   `json:"dns,omitempty"`      // custom DNS for client configs; empty = "1.1.1.1, 8.8.8.8"
+	DNS           string   `json:"dns,omitempty"`      // custom DNS for client configs; empty = DNS роутера (#933)
 	MTU           int      `json:"mtu,omitempty"`      // custom MTU for client configs; 0 = 1376
 	NATEnabled    bool     `json:"natEnabled,omitempty"`
 	NATMode       string   `json:"natMode,omitempty"`       // "full" | "internet-only" | "none"; source of truth, NATEnabled — производное

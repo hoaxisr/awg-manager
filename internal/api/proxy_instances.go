@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -821,9 +823,57 @@ func (h *ProxyInstancesHandler) gateCheck(rec instancestore.Record) error {
 				msg: "natMode internet-only: не выбран WAN (natStaticWan)"}
 		}
 	}
+	// Адрес для ссылок абонентам (#933). Проверяется ЗДЕСЬ, а не в
+	// roles.Validate: ошибка оттуда становится cfgErr процесса, то есть
+	// «раздачу не запускать», — косметическое поле не смеет валить сервер.
+	// Отказ 400 на записи пользователь видит сразу и рядом с полем.
+	if rec.Kind == instancestore.KindFreeTurnServer && rec.FreeTurnServer != nil {
+		if err := validateLinkPeer(rec.FreeTurnServer.LinkPeer); err != nil {
+			return &proxyGateError{code: proxyCodeConfigInvalid, msg: err.Error()}
+		}
+	}
 	if proxyNeedsOpkgTun(rec) && !h.opkgTunSupported() {
 		return &proxyGateError{code: proxyCodeOpkgUnsupported,
 			msg: "прошивка не поддерживает интерфейсы OpkgTun: доступны только wg-клиенты"}
+	}
+	return nil
+}
+
+// validateLinkPeer проверяет адрес, который уедет в ссылку абоненту: «host» или
+// «host:port». Пусто — законно (подставится внешний IP роутера).
+//
+// Проверка не косметическая: значение уезжает абоненту, и узнать, что оно
+// нерабочее, владелец может только от него. Поэтому отсекаются и схема
+// («https://vpn.example.org»), и пустой порт, и порт вне диапазона, и мусор с
+// пробелом. Голый IPv6-литерал ОБЯЗАН быть в скобках: без них ни мы, ни клиент
+// не отличим его от «хост с портом» (F390).
+func validateLinkPeer(val string) error {
+	v := strings.TrimSpace(val)
+	if v == "" {
+		return nil
+	}
+	if strings.ContainsAny(v, " \t\r\n,/\\") {
+		return errors.New("адрес сервера для ссылки: один адрес вида host или host:port")
+	}
+	host := v
+	if h, port, err := net.SplitHostPort(v); err == nil {
+		host = h
+		n, perr := strconv.Atoi(port)
+		if perr != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("адрес сервера для ссылки: порт %q вне диапазона 1..65535", port)
+		}
+	} else if strings.HasPrefix(v, "[") && strings.HasSuffix(v, "]") {
+		// IPv6 в скобках без порта: SplitHostPort его не разбирает, но форма
+		// однозначная — порт допишет сборщик ссылки.
+		host = strings.Trim(v, "[]")
+	} else if strings.Count(v, ":") > 1 {
+		// Двоеточий больше одного и SplitHostPort не разобрал — это голый
+		// IPv6 без скобок. Дописывание порта у сборщика ссылки такой адрес
+		// принимает за «порт уже есть» и оставляет без порта.
+		return errors.New("адрес сервера для ссылки: IPv6-адрес нужно писать в скобках — [2001:db8::1] или [2001:db8::1]:56000")
+	}
+	if !isValidServerEndpointHost(strings.Trim(host, "[]")) {
+		return fmt.Errorf("адрес сервера для ссылки: %q не похож на имя хоста или IP", host)
 	}
 	return nil
 }

@@ -566,6 +566,25 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 		};
 		expect('obfKey' in toFreeTurnServerPatch(ftServer)).toBe(false);
 	});
+
+	// Адрес для ссылок абонентам (#933) обязан УЕЗЖАТЬ на бэкенд: без этой
+	// проверки строку маппинга можно было удалить, и настройка стала бы
+	// декоративной при зелёной сюите.
+	it('адрес для ссылок уезжает в патч раздачи FreeTurn', () => {
+		const ftServer: FreeTurnServerConfig = {
+			enabled: true,
+			listen: '0.0.0.0:56000',
+			connect: '',
+			linkPeer: 'vpn.example.org',
+			mode: 'udp',
+			obfProfile: 'none',
+			obfKey: '',
+			debug: false
+		};
+		expect(toFreeTurnServerPatch(ftServer).linkPeer).toBe('vpn.example.org');
+		// Снятое значение обязано уехать пустым, иначе адрес не убрать.
+		expect(toFreeTurnServerPatch({ ...ftServer, linkPeer: '' }).linkPeer).toBe('');
+	});
 });
 
 describe('ключ инстанса и капча', () => {

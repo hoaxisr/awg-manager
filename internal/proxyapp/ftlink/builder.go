@@ -3,6 +3,7 @@ package ftlink
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttlink"
@@ -49,9 +50,7 @@ func (b *Builder) BuildLink(ctx context.Context, rec instancestore.Record, req w
 		}
 		peer = ip
 	}
-	if !strings.Contains(peer, ":") {
-		peer = peer + ":" + listenPortOf(cfg.Listen)
-	}
+	peer = withLinkPort(peer, listenPortOf(cfg.Listen))
 
 	provider := strings.TrimSpace(req.Provider)
 	if provider == "" {
@@ -121,6 +120,17 @@ func (b *Builder) externalIP(ctx context.Context) (string, error) {
 		return "", errors.New("определение внешнего адреса не подключено")
 	}
 	return b.deps.ExternalIP(ctx)
+}
+
+// withLinkPort дописывает порт, если его нет. Признак «есть порт» — разбор
+// net.SplitHostPort, а НЕ наличие двоеточия: у голого IPv6 двоеточий много, и
+// проверка по символу оставляла такой адрес без порта (F390). Форма `[v6]`
+// распознаётся отдельно — SplitHostPort её не разбирает, порта в ней нет.
+func withLinkPort(peer, port string) string {
+	if _, _, err := net.SplitHostPort(peer); err == nil {
+		return peer
+	}
+	return peer + ":" + port
 }
 
 // listenPortOf — хвост после последнего двоеточия: ровно то, что делал старый

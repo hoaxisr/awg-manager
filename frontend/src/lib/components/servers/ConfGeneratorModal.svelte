@@ -8,10 +8,16 @@
 		peer: WireguardServerPeerConfig;
 		ascParams: ASCParams | null;
 		wanIP: string;
+		/**
+		 * LAN-адрес роутера — тот же дефолт DNS, что подставляет бэкенд (#933).
+		 * Пусто — строки DNS в файле не будет: подставлять адрес сервера
+		 * внутри туннеля мы перестали, он давал третий ответ на один вопрос.
+		 */
+		routerIP?: string;
 		onclose: () => void;
 	}
 
-	let { open = $bindable(false), serverConfig, peer, ascParams, wanIP, onclose }: Props = $props();
+	let { open = $bindable(false), serverConfig, peer, ascParams, wanIP, routerIP = '', onclose }: Props = $props();
 
 	let privateKey = $state('');
 
@@ -20,9 +26,11 @@
 			'[Interface]',
 			`PrivateKey = ${privateKey}`,
 			`Address = ${peer.address}/32`,
-			`DNS = ${serverConfig.address}`,
 			`MTU = ${serverConfig.mtu}`,
 		];
+		// DNS — LAN-адрес роутера, ровно как у бэкендовых генераторов (#933).
+		// Не определился — строки нет: пустого значения в файле быть не должно.
+		if (routerIP) lines.splice(3, 0, `DNS = ${routerIP}`);
 
 		// Сигнатуры (I1-I5) здесь нет: она принадлежит пиру (CONTEXT.md
 		// «Сигнатура AWG»), а этот генератор открывается как раз для пиров,

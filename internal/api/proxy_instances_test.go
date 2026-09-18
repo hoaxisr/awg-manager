@@ -1663,3 +1663,37 @@ func TestFakeProxyManager_EveryMethodProbed(t *testing.T) {
 		t.Errorf("в списке probed лишний метод %s — его нет в интерфейсе", name)
 	}
 }
+
+// Адрес для ссылки абонентам (#933). Проверка живёт в gateCheck, а НЕ в
+// roles.Validate: ошибка оттуда становится cfgErr процесса, то есть «раздачу не
+// запускать», и косметическое поле валило бы работающий сервер после
+// перезапуска — с ответом 200 на сохранение.
+func TestValidateLinkPeer(t *testing.T) {
+	for _, ok := range []string{
+		"", "   ",
+		"vpn.example.org",
+		"vpn.example.org:56000",
+		"203.0.113.7",
+		"203.0.113.7:56000",
+		"[2001:db8::1]",
+		"[2001:db8::1]:56000",
+	} {
+		if err := validateLinkPeer(ok); err != nil {
+			t.Errorf("%q обязан приниматься: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{
+		"https://vpn.example.org",    // схема
+		"vpn.example.org:",           // пустой порт
+		"vpn.example.org:99999",      // порт вне диапазона
+		"vpn.example.org:abc",        // порт не число
+		"vpn.example.org (основной)", // пробел: имя с пояснением
+		"1.2.3.4, 5.6.7.8",           // две записи
+		"2001:db8::1",                // голый IPv6 без скобок (F390)
+		"не хост",                    // мусор
+	} {
+		if err := validateLinkPeer(bad); err == nil {
+			t.Errorf("%q обязан быть отвергнут", bad)
+		}
+	}
+}

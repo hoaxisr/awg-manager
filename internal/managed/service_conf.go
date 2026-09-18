@@ -60,7 +60,7 @@ func (s *Service) GenerateConf(ctx context.Context, id, pubkey, endpointHost str
 		dns = server.DNS
 	}
 	if dns == "" {
-		dns = netif.RouterLANIP()
+		dns = netif.RouterLANIP(storage.DefaultInterface)
 	}
 	mtu := effectiveMTU(server.MTU)
 
@@ -75,6 +75,11 @@ func (s *Service) GenerateConf(ctx context.Context, id, pubkey, endpointHost str
 	b.WriteString(fmt.Sprintf("Address = %s\n", peer.TunnelIP))
 	if dns != "" {
 		b.WriteString(fmt.Sprintf("DNS = %s\n", dns))
+	} else {
+		// См. тот же случай в api/server_peers.go: `AllowedIPs` заворачивает
+		// весь трафик, и файл без строки `DNS` оставляет клиента без резолва.
+		s.appLog.Warn("peer-conf", pubkey,
+			"LAN-адрес роутера не определился и свой DNS у пира не задан — в конфигурации не будет строки DNS")
 	}
 	b.WriteString(fmt.Sprintf("MTU = %d\n", mtu))
 

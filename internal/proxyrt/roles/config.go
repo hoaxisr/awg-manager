@@ -442,6 +442,12 @@ type FreeTurnServerConfig struct {
 	Listen  string `json:"listen"`
 	Connect string `json:"connect,omitempty"`
 	// LinkPeer — адрес, который панель кладёт в ссылку абоненту (#933):
+	// ВАЛИДАЦИЯ ЭТОГО ПОЛЯ ЖИВЁТ НЕ ЗДЕСЬ. Ошибка из Validate() уезжает в
+	// cfgErr ресурса процесса (procres/proc.go) и означает «инстанс не
+	// запускать»: косметический адрес ссылки не смеет быть приговором
+	// раздаче. Отказ обязан случиться ДО записи — см. gateCheck
+	// (internal/api/proxy_instances.go), там же и правило.
+	//
 	// DNS-имя роутера или его внешний IP, при желании с портом. Пусто —
 	// сборщик ссылки спросит внешний IP, как делал всегда.
 	//
@@ -462,12 +468,6 @@ type FreeTurnServerConfig struct {
 func (c FreeTurnServerConfig) Validate() error {
 	if strings.TrimSpace(c.Listen) == "" {
 		return fmt.Errorf("не задан listen сервера")
-	}
-	// Адрес для ссылки — один токен «хост[:порт]». Пробел внутри значит, что
-	// пользователь вписал не то (имя с описанием, две записи через запятую), и
-	// ссылка уехала бы абоненту нерабочей: узнал бы об этом он, а не владелец.
-	if p := strings.TrimSpace(c.LinkPeer); strings.ContainsAny(p, " \t\r\n,") {
-		return fmt.Errorf("адрес сервера для ссылки — один адрес вида host или host:port")
 	}
 	return nil
 }

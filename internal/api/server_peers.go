@@ -301,6 +301,14 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		response.Error(w, err.Error(), "INVALID_PEER_DNS")
 		return
 	}
+	// Резолверу негде жить без секрета — ровно как сигнатуре ниже: хранится он
+	// в нём. Отказ ЯВНЫЙ, иначе ручка отвечала бы «обновлено», а значение
+	// оседало в никуда. Пустое значение пропускаем: им правят описание пира,
+	// заведённого вне панели, и снимать нечего.
+	if peerDNS != "" && !hasSecret {
+		response.Error(w, "ключ клиента недоступен (создан вне AWG Manager или через KeenDNS)", "NO_PEER_SECRET")
+		return
+	}
 	// Сигнатуру проверяем ДО обращения к роутеру: отказ обязан быть чистым,
 	// без наполовину применённых изменений на NDMS.
 	sigProfile := ""
@@ -547,10 +555,18 @@ func (h *ServersHandler) generateServerPeerConf(ctx context.Context, server *ndm
 	// значит вернуть ту же дыру под другим адресом.
 	dns := sec.DNS
 	if dns == "" {
-		dns = netif.RouterLANIP()
+		dns = netif.RouterLANIP(storage.DefaultInterface)
 	}
 	if dns != "" {
 		b.WriteString(fmt.Sprintf("DNS = %s\n", dns))
+	} else {
+		// Молчать здесь нельзя: `AllowedIPs` ниже заворачивает в туннель ВЕСЬ
+		// трафик, значит и собственный резолвер клиента, — файл без строки
+		// `DNS` оставит его без резолва, и узнает об этом клиент, а не
+		// владелец. У FreeTurn вдвое хуже: этот `.conf` вшивается в ссылку и
+		// перевыпуску не подлежит (F391).
+		h.log.Warn("peer-conf", pubkey,
+			"LAN-адрес роутера не определился и свой DNS у пира не задан — в конфигурации не будет строки DNS")
 	}
 	b.WriteString(fmt.Sprintf("MTU = %d\n", mtu))
 

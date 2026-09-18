@@ -9130,7 +9130,14 @@ const server = http.createServer(async (req, res) => {
 				if (kind === 'freeturn-server') {
 					const srv = inst.config;
 					const port = Number(String(srv.listen ?? '').split(':').pop()) || 56000;
-					const peer = `203.0.113.10:${port}`;
+					// Цепочка та же, что у бэкенда (#933): запрос → настройка
+					// linkPeer → внешний IP. Мок, не знающий настройки, показывал
+					// бы в окне выдачи один адрес, а в ссылке другой — ровно то
+					// расхождение мок↔бэкенд, что стоило лишних кругов в #919.
+					const chosen = String(opts.peer ?? '').trim() || String(srv.linkPeer ?? '').trim();
+					const peer = chosen
+						? (/:\d+$/.test(chosen) ? chosen : `${chosen}:${port}`)
+						: `203.0.113.10:${port}`;
 					const payload = {
 						v: 1,
 						provider: opts.provider || 'vk',

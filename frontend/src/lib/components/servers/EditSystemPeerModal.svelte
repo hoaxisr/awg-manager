@@ -8,6 +8,7 @@
 	import { servers } from '$lib/stores/servers';
 	import { FieldHint, FormToggle } from '$lib/components/ui';
 	import { routerDnsHint } from './routerDnsHint';
+	import { validateDNSList } from '$lib/utils/peerForm';
 
 	interface Props {
 		open: boolean;
@@ -26,6 +27,9 @@
 	// Резолвер пира (#933): пусто — LAN-адрес роутера, как решает бэкенд.
 	let dns = $state('');
 	let useRouterDNS = $state(false);
+	// Правило то же, что у managed-модалок: отказ у поля, а не английской
+	// фразой с бэкенда.
+	const dnsError = $derived(validateDNSList(dns));
 	let saving = $state(false);
 	let wasOpen = $state(false);
 	let sigProfile = $state<ProtocolKey | ''>('');
@@ -130,7 +134,11 @@
 					/>
 				</div>
 			{/if}
-			<span class="hint-text">Пусто — DNS роутера</span>
+			{#if dnsError}
+				<span class="hint-text is-error">{dnsError}</span>
+			{:else}
+				<span class="hint-text">Пусто — DNS роутера</span>
+			{/if}
 		</div>
 		<!-- Сигнатуре негде жить без локального ключа клиента: пир заведён вне
 		     AWG Manager, и бэкенд такую правку отвергает (NO_PEER_SECRET). -->
@@ -145,7 +153,7 @@
 
 	{#snippet actions()}
 		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
-		<Button variant="primary" size="md" onclick={handleSave} loading={saving} disabled={saving || sigOver}>
+		<Button variant="primary" size="md" onclick={handleSave} loading={saving} disabled={saving || sigOver || !!dnsError}>
 			Сохранить
 		</Button>
 	{/snippet}
@@ -194,6 +202,10 @@
 	.hint-text {
 		font-size: 0.75rem;
 		color: var(--text-muted, #94a3b8);
+	}
+
+	.hint-text.is-error {
+		color: var(--color-error, #f87171);
 	}
 
 	.input:focus {

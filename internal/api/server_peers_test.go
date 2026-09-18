@@ -499,7 +499,7 @@ func TestServersHandler_GenerateServerPeerConf_DNSChain(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			old := netif.RouterLANIP
-			netif.RouterLANIP = func() string { return tc.routerIP }
+			netif.RouterLANIP = func(string) string { return tc.routerIP }
 			t.Cleanup(func() { netif.RouterLANIP = old })
 
 			h := newServerConfHarness(t, `{"jc":"0"}`)
@@ -557,4 +557,41 @@ func TestServersHandler_ServerPeerDNS_StoredValidatedAndSurfaced(t *testing.T) {
 			t.Error("после отказа валидации секрет остался в сторе")
 		}
 	})
+}
+
+// Правка резолвера у пира без секрета обязана быть ОТКАЗОМ, а не тишиной:
+// хранить значение негде, а ответ «обновлено» уверял бы в обратном. Пустое
+// значение при этом законно — им правят описание чужого пира.
+func TestServersHandler_UpdateServerPeer_DNSWithoutSecret(t *testing.T) {
+	h, _, _, _, _ := newServersPeerHarness(t, true)
+
+	rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","dns":"9.9.9.9"}`)
+	if rr.Code != http.StatusBadRequest || decodeJSONBody(t, rr)["code"] != "NO_PEER_SECRET" {
+		t.Fatalf("правка DNS без секрета обязана быть отвергнута: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Пустое значение — законно: им правят описание чужого пира, снимать нечего.
+	if rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"laptop"}`); rr.Code != http.StatusOK {
+		t.Fatalf("PUT без dns: code=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// Резолвер переживает правку соседних полей: семантика «прислали → присвоили»
+// касается ТОЛЬКО присланного значения, а модалка шлёт dns всегда.
+func TestServersHandler_UpdateServerPeer_DNSSurvivesDescriptionEdit(t *testing.T) {
+	h, store, _, _, _ := newServersPeerHarness(t, true)
+	if err := store.SetServerPeerSecret(harnessServerID, peerFixturePubKey, storage.ServerPeerSecret{
+		PrivateKey: "k", TunnelIP: "10.9.0.2/32", DNS: "9.9.9.9",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if rr := putServerPeer(t, h, peerFixturePubKey,
+		`{"description":"laptop","tunnelIP":"10.9.0.2/32","dns":"9.9.9.9"}`); rr.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	sec, _ := store.GetServerPeerSecret(harnessServerID, peerFixturePubKey)
+	if sec.DNS != "9.9.9.9" || sec.Description != "laptop" {
+		t.Fatalf("секрет = %+v", sec)
+	}
 }

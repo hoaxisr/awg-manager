@@ -551,6 +551,7 @@
 		peer={confGeneratorPeer}
 		{ascParams}
 		{wanIP}
+		{routerIP}
 		onclose={() => {
 			confGeneratorOpen = false;
 		}}

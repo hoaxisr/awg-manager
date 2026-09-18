@@ -125,7 +125,10 @@
 			<Input label="Имя абонента" bind:value={name} fullWidth />
 			<p class="link-peer-note">
 				{#if linkPeer.trim()}
-					Ссылка будет собрана на адрес <b>{linkPeer.trim()}</b>
+					Ссылка будет собрана на адрес <b>{linkPeer.trim()}</b>{#if !/:\d+$/.test(linkPeer.trim())}
+						<!-- Порт дописывает бэкенд из listen раздачи: обещать точное
+						     значение ссылки, не зная его, — полуправда. -->
+						с портом раздачи{/if}
 				{:else}
 					Адрес в ссылке — внешний IP роутера. Чтобы отдавать абонентам имя, задайте
 					«Адрес для абонентов» в настройках раздачи
@@ -201,12 +204,6 @@
 		color: var(--color-text-secondary);
 	}
 
-	.field-with-btn {
-		display: flex;
-		align-items: flex-end;
-		gap: 0.375rem;
-		min-width: 0;
-	}
 
 	.field-with-btn :global(svg) {
 		display: block;
