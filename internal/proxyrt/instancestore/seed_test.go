@@ -1394,8 +1394,11 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 	// старый freeturn.json, который переносит посев, его не знал.
 	assertEveryFieldCarried(t, "FreeTurnClientConfig",
 		[]any{*got["freeturn-client:ftc-1"].FreeTurnClient}, "KCP")
+	// LinkPeer — настройка адреса для ссылок абонентам (#933), заведена
+	// панелью; в старом freeturn.json такого поля не было вовсе, переносить
+	// нечего. Та же причина исключения, что у KCP клиента.
 	assertEveryFieldCarried(t, "FreeTurnServerConfig",
-		[]any{*got["freeturn-server:fts-1"].FreeTurnServer}, "OpenFirewall")
+		[]any{*got["freeturn-server:fts-1"].FreeTurnServer}, "OpenFirewall", "LinkPeer")
 
 	// Record и PolicyPermit — те же права. Именно в Record живут Sub,
 	// PeerWg/PeerRaw, Users и link-метаданные: класс, который уже терялся

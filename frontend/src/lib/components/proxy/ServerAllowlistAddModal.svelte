@@ -28,6 +28,12 @@
 		/** listen-порт WG-сервера, на который смотрит `-connect` раздачи. */
 		serverListenPort?: number;
 		/**
+		 * Адрес из настроек раздачи, который уедет в ссылку (#933). Пусто —
+		 * бэкенд подставит внешний IP роутера. Показываем ДО выдачи: узнать,
+		 * что в ссылке не тот адрес, после отправки её абоненту — поздно.
+		 */
+		linkPeer?: string;
+		/**
 		 * Ссылка абоненту: непустая — окно показывает её вместо формы (#919).
 		 * Так она попадается на глаза там, где владелец и стоит, а не уезжает
 		 * вниз страницы. Тем же экраном открывается «Ссылка» в строке списка.
@@ -44,6 +50,7 @@
 		busy = false,
 		error = '',
 		serverListenPort,
+		linkPeer = '',
 		link = '',
 		linkFor = '',
 		onsubmit,
@@ -116,6 +123,14 @@
 				</IconButton>
 			</div>
 			<Input label="Имя абонента" bind:value={name} fullWidth />
+			<p class="link-peer-note">
+				{#if linkPeer.trim()}
+					Ссылка будет собрана на адрес <b>{linkPeer.trim()}</b>
+				{:else}
+					Адрес в ссылке — внешний IP роутера. Чтобы отдавать абонентам имя, задайте
+					«Адрес для абонентов» в настройках раздачи
+				{/if}
+			</p>
 			<ShareWizardPeer
 				endpointPort={9000}
 				{serverListenPort}
@@ -167,6 +182,12 @@
 </Modal>
 
 <style>
+	.link-peer-note {
+		margin: 0;
+		font-size: 0.8rem;
+		color: var(--text-muted, #94a3b8);
+	}
+
 	.add-form,
 	.issued {
 		display: flex;

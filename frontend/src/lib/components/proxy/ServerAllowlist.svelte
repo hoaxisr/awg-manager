@@ -311,6 +311,7 @@
 	{busy}
 	error={addError}
 	{serverListenPort}
+	linkPeer={server.linkPeer ?? ''}
 	link={issued?.link ?? ''}
 	linkFor={issued?.name ?? ''}
 	onsubmit={addClient}

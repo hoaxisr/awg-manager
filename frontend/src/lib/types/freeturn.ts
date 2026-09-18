@@ -30,6 +30,12 @@ export interface FreeTurnServerConfig {
 	enabled: boolean;
 	listen: string;
 	connect: string;
+	/**
+	 * Адрес, который уезжает в ссылку абоненту (#933): DNS-имя роутера или его
+	 * внешний IP, при желании с портом. Пусто — бэкенд подставит внешний IP,
+	 * а он DNS-имя не отдаёт никогда.
+	 */
+	linkPeer?: string;
 	mode: 'udp' | 'tcp';
 	obfProfile: 'none' | 'rtpopus' | 'rtpopus2' | 'rtpopus3';
 	obfKey?: string;

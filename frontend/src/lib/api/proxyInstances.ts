@@ -394,6 +394,9 @@ export function toFreeTurnServerConfig(
     enabled: v.enabled,
     listen: str(c, "listen") ?? "",
     connect: str(c, "connect") ?? "",
+    // НЕ путать с linkPeer wdtt-сервера выше: там это поле ЗАПИСИ (память о
+    // последней выдаче), здесь — настройка в конфиге, которую правит владелец.
+    linkPeer: str(c, "linkPeer") ?? "",
     mode: (str(c, "mode") as FreeTurnServerConfig["mode"]) ?? "udp",
     obfProfile:
       (str(c, "obfProfile") as FreeTurnServerConfig["obfProfile"]) ?? "none",
@@ -716,6 +719,7 @@ export function toFreeTurnServerPatch(cfg: FreeTurnServerConfig): Cfg {
   const out: Cfg = {
     listen: cfg.listen ?? "",
     connect: cfg.connect ?? "",
+    linkPeer: cfg.linkPeer ?? "",
     mode: cfg.mode ?? "udp",
     obfProfile: cfg.obfProfile ?? "none",
     clientsFile: cfg.clientsFile ?? "",

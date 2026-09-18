@@ -439,8 +439,18 @@ func (c FreeTurnClientConfig) NDMSNames() []string { return nil }
 
 // FreeTurnServerConfig — сервер FreeTurn.
 type FreeTurnServerConfig struct {
-	Listen       string `json:"listen"`
-	Connect      string `json:"connect,omitempty"`
+	Listen  string `json:"listen"`
+	Connect string `json:"connect,omitempty"`
+	// LinkPeer — адрес, который панель кладёт в ссылку абоненту (#933):
+	// DNS-имя роутера или его внешний IP, при желании с портом. Пусто —
+	// сборщик ссылки спросит внешний IP, как делал всегда.
+	//
+	// Своё поле конфига, а НЕ общий Record.LinkPeer (как у wdtt-сервера): там
+	// это память о последней выдаче, которую молча перебивает любой
+	// одноразовый peer запроса, и править её снаружи нечем — в теле PATCH
+	// инстанса полей записи пять, linkPeer среди них нет. Здесь нужна
+	// НАСТРОЙКА с одним писателем — пользователем.
+	LinkPeer     string `json:"linkPeer,omitempty"`
 	Mode         string `json:"mode,omitempty"` // udp|tcp — он же протокол INPUT-правила
 	ObfProfile   string `json:"obfProfile,omitempty"`
 	ObfKey       string `json:"obfKey,omitempty"`
@@ -452,6 +462,12 @@ type FreeTurnServerConfig struct {
 func (c FreeTurnServerConfig) Validate() error {
 	if strings.TrimSpace(c.Listen) == "" {
 		return fmt.Errorf("не задан listen сервера")
+	}
+	// Адрес для ссылки — один токен «хост[:порт]». Пробел внутри значит, что
+	// пользователь вписал не то (имя с описанием, две записи через запятую), и
+	// ссылка уехала бы абоненту нерабочей: узнал бы об этом он, а не владелец.
+	if p := strings.TrimSpace(c.LinkPeer); strings.ContainsAny(p, " \t\r\n,") {
+		return fmt.Errorf("адрес сервера для ссылки — один адрес вида host или host:port")
 	}
 	return nil
 }

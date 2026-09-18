@@ -112,6 +112,50 @@ func TestBuildLink_ObfNoneDropsKey(t *testing.T) {
 	}
 }
 
+// Настройка адреса сервера (#933): среднее звено цепочки «запрос → настройка →
+// внешний IP». Оно и было дырой — поле ввода пропало при переезде UI (#814), и
+// каждая ссылка получала внешний IP, а DNS-имя вписать было негде.
+func TestBuildLink_PeerFromServerConfig(t *testing.T) {
+	ext := &fakeExternalIP{ip: "не должен спрашиваться"}
+	b := NewBuilder(BuilderDeps{ExternalIP: ext.get})
+	rec := ftServerRecord("")
+	rec.FreeTurnServer.Listen = "0.0.0.0:56123"
+	rec.FreeTurnServer.LinkPeer = "vpn.example.org"
+
+	body, p := buildLink(t, b, rec, wdttlink.LinkRequest{})
+
+	if body["peer"] != "vpn.example.org:56123" || p.Peer != "vpn.example.org:56123" {
+		t.Fatalf("адрес из настройки не доехал: peer=%q payload=%q", body["peer"], p.Peer)
+	}
+	if ext.calls != 0 {
+		t.Fatalf("при заданной настройке внешний адрес спрашивать незачем, спрошен %d раз", ext.calls)
+	}
+}
+
+// Порядок звеньев: запрос перебивает настройку. Иначе разовый адрес «для этого
+// абонента» молча проигрывал бы сохранённому.
+func TestBuildLink_RequestPeerBeatsConfig(t *testing.T) {
+	b := NewBuilder(BuilderDeps{ExternalIP: (&fakeExternalIP{ip: "9.9.9.9"}).get})
+	rec := ftServerRecord("")
+	rec.FreeTurnServer.LinkPeer = "config.example.org:1"
+	body, _ := buildLink(t, b, rec, wdttlink.LinkRequest{Peer: "request.example.org:2"})
+	if body["peer"] != "request.example.org:2" {
+		t.Fatalf("запрос обязан перебивать настройку: peer=%q", body["peer"])
+	}
+}
+
+// Настройка пуста — прежнее поведение: спрашиваем внешний IP.
+func TestBuildLink_EmptyConfigFallsBackToExternalIP(t *testing.T) {
+	ext := &fakeExternalIP{ip: "203.0.113.7"}
+	b := NewBuilder(BuilderDeps{ExternalIP: ext.get})
+	rec := ftServerRecord("")
+	rec.FreeTurnServer.LinkPeer = "   " // пробелы — та же пустота
+	body, _ := buildLink(t, b, rec, wdttlink.LinkRequest{})
+	if body["peer"] != "203.0.113.7:56000" || ext.calls != 1 {
+		t.Fatalf("peer=%q calls=%d", body["peer"], ext.calls)
+	}
+}
+
 // Адрес без порта добирает порт из listen сервера.
 func TestBuildLink_PeerWithoutPort(t *testing.T) {
 	ext := &fakeExternalIP{ip: "не должен спрашиваться"}
@@ -146,7 +190,9 @@ func TestBuildLink_Rejections(t *testing.T) {
 		if !errors.As(err, &le) || le.Code != "FREETURN_EXTERNAL_IP_FAILED" {
 			t.Fatalf("err=%v", err)
 		}
-		if le.Msg != "Не удалось определить внешний IP: нет WAN. Укажите peer вручную." {
+		// Текст отказа обязан вести туда, где проблему можно решить: поля
+		// «peer» в окне выдачи нет с #814, зато есть настройка адреса (#933).
+		if le.Msg != "Не удалось определить внешний IP: нет WAN. Укажите адрес сервера в настройках раздачи." {
 			t.Fatalf("текст отказа=%q", le.Msg)
 		}
 	})

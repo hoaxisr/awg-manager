@@ -5,6 +5,9 @@
 	import { Badge, Button, ChipMultiSelect, Dropdown, FieldHint, FormRow, Input, SegmentedControl, Toggle } from '$lib/components/ui';
 	import { ServerAccessPolicyDropdown } from '$lib/components/servers';
 	import { servers, type ServersSnapshot } from '$lib/stores/servers';
+	import { api } from '$lib/api/client';
+	import { notifications } from '$lib/stores/notifications';
+	import { errText } from '$lib/utils/errorMessage';
 	import {
 		buildRunningServerDropdownOptions,
 		connectForServerValue,
@@ -66,6 +69,21 @@
 	$effect(() => servers.subscribe((st) => (wgSnap = st.data)));
 	const wgServerOptions = $derived(buildRunningServerDropdownOptions(wgSnap));
 	const wgServer = $derived(serverValueForConnect(wgSnap, ftServer?.connect ?? ''));
+
+	// Адрес для ссылок абонентам (#933). Поле было в прежней карточке FreeTurn и
+	// пропало при переезде на общую поверхность (#814); без него в ссылку
+	// попадал только внешний IP, а он DNS-имени не даёт никогда.
+	let wanBusy = $state(false);
+	async function fillLinkPeerWan() {
+		wanBusy = true;
+		try {
+			if (ftServer) ftServer.linkPeer = await api.getWANIP();
+		} catch (e) {
+			notifications.error(errText(e));
+		} finally {
+			wanBusy = false;
+		}
+	}
 
 	const natMode = $derived((wdttServer?.natMode ?? 'full') as NatMode);
 	/**
@@ -245,6 +263,28 @@
 			>
 				<div class="w-port">
 					<Input id="ft-listen" type="number" value={ftPort} onchange={applyFtPort} fullWidth />
+				</div>
+			</FormRow>
+
+			<FormRow
+				label="Адрес для абонентов"
+				for="ft-link-peer"
+				hint="Что уедет в ссылку: DNS-имя роутера или его внешний IP. Пусто — подставится внешний IP, именем он быть не может"
+			>
+				<div class="field-with-btn">
+					<Input
+						id="ft-link-peer"
+						value={ftServer.linkPeer ?? ''}
+						placeholder="vpn.example.org"
+						disabled={busy}
+						onchange={(v) => {
+							if (ftServer) ftServer.linkPeer = v;
+						}}
+						fullWidth
+					/>
+					<Button variant="secondary" size="sm" loading={wanBusy} disabled={busy} onclick={fillLinkPeerWan}>
+						WAN IP
+					</Button>
 				</div>
 			</FormRow>
 

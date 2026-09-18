@@ -210,11 +210,4 @@
 		gap: 0.5rem;
 		align-items: end;
 	}
-
-	.field-with-btn {
-		display: flex;
-		align-items: flex-end;
-		gap: 0.375rem;
-		min-width: 0;
-	}
 </style>

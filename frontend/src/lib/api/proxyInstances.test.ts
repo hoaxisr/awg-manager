@@ -137,6 +137,7 @@ const ftServerView: ProxyInstanceView = {
 	config: {
 		listen: '0.0.0.0:56000',
 		connect: '10.0.0.1:51820',
+		linkPeer: 'vpn.example.org',
 		mode: 'tcp',
 		obfProfile: 'none',
 		obfKeySet: false,
@@ -379,6 +380,7 @@ describe('toFreeTurnStatus и toFreeTurnConfig: вторая подсистем�
 			enabled: false,
 			listen: '0.0.0.0:56000',
 			connect: '10.0.0.1:51820',
+			linkPeer: 'vpn.example.org',
 			mode: 'tcp',
 			obfProfile: 'none',
 			obfKey: '',

@@ -11,9 +11,10 @@ import (
 
 // BuilderDeps — зависимости сборщика ссылок freeturn-сервера.
 type BuilderDeps struct {
-	// ExternalIP — внешний адрес роутера, когда peer не задан запросом.
-	// Записи адрес НЕ помнят: LinkPeer — поле wdtt-сервера, freeturn-ссылка
-	// его никогда не персистила (паритет старого generateLinkCore).
+	// ExternalIP — внешний адрес роутера, когда адреса нет ни в запросе, ни в
+	// настройках сервера. Этот путь отдаёт ТОЛЬКО IP: DNS-имя роутера он не
+	// вернёт никогда, даже при настроенном KeenDNS, — ради имени и заведена
+	// настройка LinkPeer (#933).
 	ExternalIP func(ctx context.Context) (string, error)
 }
 
@@ -32,18 +33,24 @@ func (b *Builder) BuildLink(ctx context.Context, rec instancestore.Record, req w
 		return nil, &wdttlink.LinkError{Code: "FREETURN_SERVER_NOT_FOUND", Msg: err.Error()}
 	}
 
+	// Адрес: запрос → настройка сервера → внешний IP роутера (#933). Средним
+	// звеном была дыра: поле ввода адреса пропало при переезде UI на общую
+	// поверхность прокси-рантайма (#814), и любая ссылка после этого получала
+	// внешний IP — DNS-имя вписать стало негде, а ExternalIP имён не отдаёт.
 	peer := strings.TrimSpace(req.Peer)
-	if peer != "" {
-		if !strings.Contains(peer, ":") {
-			peer = peer + ":" + listenPortOf(cfg.Listen)
-		}
-	} else {
+	if peer == "" {
+		peer = strings.TrimSpace(cfg.LinkPeer)
+	}
+	if peer == "" {
 		ip, ipErr := b.externalIP(ctx)
 		if ipErr != nil {
 			return nil, &wdttlink.LinkError{Code: "FREETURN_EXTERNAL_IP_FAILED",
-				Msg: "Не удалось определить внешний IP: " + ipErr.Error() + ". Укажите peer вручную."}
+				Msg: "Не удалось определить внешний IP: " + ipErr.Error() + ". Укажите адрес сервера в настройках раздачи."}
 		}
-		peer = ip + ":" + listenPortOf(cfg.Listen)
+		peer = ip
+	}
+	if !strings.Contains(peer, ":") {
+		peer = peer + ":" + listenPortOf(cfg.Listen)
 	}
 
 	provider := strings.TrimSpace(req.Provider)

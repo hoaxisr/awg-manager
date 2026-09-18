@@ -122,9 +122,9 @@ func TestStoreWireFormatCanary(t *testing.T) {
 				"natMode", "natStaticWan", "policy", "lanSegments",
 				"exposeToPolicies", "openFirewall", "debug"}, nil},
 		{"freeturn-server", FreeTurnServerConfig{Listen: "l", Connect: "c",
-			Mode: "udp", ObfProfile: "none", ObfKey: "k", ClientsFile: "f",
-			Debug: true, OpenFirewall: true},
-			[]string{"listen", "connect", "mode", "obfProfile", "obfKey",
+			LinkPeer: "vpn.example.org", Mode: "udp", ObfProfile: "none", ObfKey: "k",
+			ClientsFile: "f", Debug: true, OpenFirewall: true},
+			[]string{"listen", "connect", "linkPeer", "mode", "obfProfile", "obfKey",
 				"clientsFile", "debug", "openFirewall"}, nil},
 	}
 	for _, c := range cases {
