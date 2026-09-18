@@ -15,6 +15,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 )
 
@@ -22,6 +23,9 @@ import (
 type ServerAddPeerRequestDTO struct {
 	Description string `json:"description" example:"My Phone"`
 	TunnelIP    string `json:"tunnelIP" example:"10.0.14.2/32"`
+	// DNS — резолвер пира для `.conf`: список IP через запятую. Пусто —
+	// LAN-адрес роутера (#933).
+	DNS string `json:"dns,omitempty" example:"192.168.1.1"`
 }
 
 // ServerUpdatePeerRequestDTO is the body for PUT /servers/{name}/peers/{pubkey}.
@@ -31,6 +35,9 @@ type ServerUpdatePeerRequestDTO struct {
 	// Signature: nil — сигнатуру пира не трогать; объект — заменить все пять
 	// полей и профиль целиком (пустые поля объекта стирают старые байты).
 	Signature *PeerSignatureDTO `json:"signature,omitempty"`
+	// DNS — резолвер пира: «прислали → присвоили», как у Description. Пусто
+	// снимает свой резолвер и возвращает пира к LAN-адресу роутера (#933).
+	DNS string `json:"dns,omitempty" example:"192.168.1.1"`
 }
 
 // Subtree dispatches /api/servers/{name}/... operations.
@@ -178,6 +185,14 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		response.Error(w, "tunnel IP already in use", "TUNNEL_IP_IN_USE")
 		return
 	}
+	// Правило одно на обе серверные роли — берём его у managed, своей копии не
+	// заводим: разойдясь, две копии дали бы пира, которого одна сторона
+	// принимает, а другая нет.
+	peerDNS, err := managed.ValidatePeerDNS(req.DNS)
+	if err != nil {
+		response.Error(w, err.Error(), "INVALID_PEER_DNS")
+		return
+	}
 
 	// Сигнатура принадлежит пиру: генерируем по дефолтному профилю. Отказ
 	// генератора — отказ создания пира (fail closed), молча выдавать пира
@@ -219,6 +234,7 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		PresharedKey: psk,
 		Description:  req.Description,
 		TunnelIP:     req.TunnelIP,
+		DNS:          peerDNS,
 
 		I1:               sig.Packets.I1,
 		I2:               sig.Packets.I2,
@@ -278,6 +294,13 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 	// Секрет читаем один раз: он же решает судьбу сигнатуры и он же
 	// примиряется с изменением ниже.
 	sec, hasSecret := h.settings.GetServerPeerSecret(name, pubkey)
+	// Резолвер проверяем ДО обращения к роутеру — по той же причине, что и
+	// сигнатуру: отказ обязан быть чистым.
+	peerDNS, err := managed.ValidatePeerDNS(req.DNS)
+	if err != nil {
+		response.Error(w, err.Error(), "INVALID_PEER_DNS")
+		return
+	}
 	// Сигнатуру проверяем ДО обращения к роутеру: отказ обязан быть чистым,
 	// без наполовину применённых изменений на NDMS.
 	sigProfile := ""
@@ -341,6 +364,10 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		}
 		if sec.Description != req.Description {
 			sec.Description = req.Description
+			changed = true
+		}
+		if sec.DNS != peerDNS {
+			sec.DNS = peerDNS
 			changed = true
 		}
 		if req.Signature != nil {
@@ -513,7 +540,18 @@ func (h *ServersHandler) generateServerPeerConf(ctx context.Context, server *ndm
 	b.WriteString("[Interface]\n")
 	b.WriteString(fmt.Sprintf("PrivateKey = %s\n", sec.PrivateKey))
 	b.WriteString(fmt.Sprintf("Address = %s\n", tunnelIP))
-	b.WriteString("DNS = 1.1.1.1, 8.8.8.8\n")
+	// Резолвер: свой у пира → LAN-адрес роутера. Зашитого `1.1.1.1, 8.8.8.8`
+	// здесь больше нет (#933): абонент ходил через туннель, а имена резолвил у
+	// Cloudflare с Google — мимо роутера и мимо всех его правил. Роутер не
+	// определился — строки нет вовсе, подставлять что-то «на всякий случай»
+	// значит вернуть ту же дыру под другим адресом.
+	dns := sec.DNS
+	if dns == "" {
+		dns = netif.RouterLANIP()
+	}
+	if dns != "" {
+		b.WriteString(fmt.Sprintf("DNS = %s\n", dns))
+	}
 	b.WriteString(fmt.Sprintf("MTU = %d\n", mtu))
 
 	if h.queries != nil && h.queries.WGServers != nil {
@@ -680,6 +718,7 @@ func (h *ServersHandler) enrichServerDTO(ctx context.Context, srv ndms.Wireguard
 			dto.Peers[i].I1, dto.Peers[i].I2 = sec.I1, sec.I2
 			dto.Peers[i].I3, dto.Peers[i].I4, dto.Peers[i].I5 = sec.I3, sec.I4, sec.I5
 			dto.Peers[i].SignatureProfile = sec.SignatureProfile
+			dto.Peers[i].DNS = sec.DNS
 		}
 	}
 	return dto

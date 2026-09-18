@@ -2793,6 +2793,7 @@ const api_WireguardServerPeerDTO: v.GenericSchema = v.looseObject({
 	allowedIPs: v.optional(v.nullable(v.array(v.string()))),
 	confAvailable: v.optional(v.nullable(v.boolean())),
 	description: v.optional(v.nullable(v.string())),
+	dns: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
 	endpoint: v.optional(v.nullable(v.string())),
 	i1: v.optional(v.nullable(v.string())),

@@ -434,6 +434,11 @@ type ServerPeerSecret struct {
 	PresharedKey string `json:"presharedKey,omitempty"`
 	Description  string `json:"description,omitempty"`
 	TunnelIP     string `json:"tunnelIP,omitempty"`
+	// DNS — резолвер, который уезжает в `.conf` пира строкой `DNS =`. Пусто —
+	// генератор подставляет LAN-адрес роутера; раньше на его месте стоял
+	// зашитый `1.1.1.1, 8.8.8.8`, и абонент резолвил мимо роутера (#933).
+	// Форма — список IP через запятую, ровно как у пира managed-сервера.
+	DNS string `json:"dns,omitempty"`
 
 	// Сигнатура принадлежит пиру (CONTEXT.md «Сигнатура AWG»): у сервера
 	// своей нет. Профиль пуст у сигнатур, набранных руками.

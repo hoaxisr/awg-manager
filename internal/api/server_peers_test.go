@@ -18,6 +18,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 )
 
 func TestPeerTunnelIPInUse(t *testing.T) {
@@ -478,6 +479,82 @@ func TestServersHandler_GenerateServerPeerConf_SignatureFromPeerAndOnlyWithASC(t
 			if strings.Contains(conf, unwanted) {
 				t.Fatalf("сервер без ASC получил %q:\n%s", unwanted, conf)
 			}
+		}
+	})
+}
+
+// Резолвер пира WG-сервера роутера: свой → LAN-адрес роутера → строки нет.
+// Зашитого `1.1.1.1, 8.8.8.8` тут больше нет (#933): абонент ходил в туннель, а
+// имена резолвил у Cloudflare с Google — мимо роутера и мимо всех его правил.
+func TestServersHandler_GenerateServerPeerConf_DNSChain(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		peerDNS  string
+		routerIP string
+		want     string // "" — строки DNS быть не должно
+	}{
+		{"свой у пира", "9.9.9.9", "192.168.1.1", "DNS = 9.9.9.9"},
+		{"LAN-адрес роутера", "", "192.168.1.1", "DNS = 192.168.1.1"},
+		{"роутер не определился", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := netif.RouterLANIP
+			netif.RouterLANIP = func() string { return tc.routerIP }
+			t.Cleanup(func() { netif.RouterLANIP = old })
+
+			h := newServerConfHarness(t, `{"jc":"0"}`)
+			server := &ndms.WireguardServer{ID: harnessServerID, ListenPort: 51820, MTU: 1420}
+			sec := storage.ServerPeerSecret{PrivateKey: "PRIV", TunnelIP: "10.9.0.2/32", DNS: tc.peerDNS}
+
+			conf, err := h.generateServerPeerConf(context.Background(), server, peerFixturePubKey, sec, "1.2.3.4")
+			if err != nil {
+				t.Fatalf("generateServerPeerConf: %v", err)
+			}
+			if strings.Contains(conf, "1.1.1.1") || strings.Contains(conf, "8.8.8.8") {
+				t.Errorf("зашитый публичный резолвер вернулся в файл:\n%s", conf)
+			}
+			if tc.want == "" {
+				if strings.Contains(conf, "DNS =") {
+					t.Errorf("резолвера нет — строки быть не должно:\n%s", conf)
+				}
+				return
+			}
+			if !strings.Contains(conf, tc.want) {
+				t.Errorf("нет %q:\n%s", tc.want, conf)
+			}
+		})
+	}
+}
+
+// Резолвер пира доезжает до секрета при создании и переживает правку; имя
+// хоста отвергается тем же правилом, что у managed (своей копии правила нет).
+func TestServersHandler_ServerPeerDNS_StoredValidatedAndSurfaced(t *testing.T) {
+	t.Run("создание сохраняет", func(t *testing.T) {
+		h, store, _, _, _ := newServersNATHarness(t)
+		stubPeerKeygen(t)
+		rr := postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32","dns":"192.168.1.1, 9.9.9.9"}`)
+		if rr.Code != 200 {
+			t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+		}
+		sec, ok := store.GetServerPeerSecret("Wireguard0", peerFixturePubKey)
+		if !ok || sec.DNS != "192.168.1.1, 9.9.9.9" {
+			t.Fatalf("DNS в секрете = %q (ok=%v)", sec.DNS, ok)
+		}
+	})
+
+	t.Run("имя хоста отвергается", func(t *testing.T) {
+		h, store, _, _, _ := newServersNATHarness(t)
+		stubPeerKeygen(t)
+		rr := postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32","dns":"dns.example.org"}`)
+		if rr.Code == 200 {
+			t.Fatalf("имя хоста в DNS обязано быть отвергнуто: %s", rr.Body.String())
+		}
+		if !strings.Contains(rr.Body.String(), "INVALID_PEER_DNS") {
+			t.Errorf("код отказа обязан называть причину: %s", rr.Body.String())
+		}
+		// Отказ обязан быть чистым: пира на роутере нет, секрета в сторе нет.
+		if _, ok := store.GetServerPeerSecret("Wireguard0", peerFixturePubKey); ok {
+			t.Error("после отказа валидации секрет остался в сторе")
 		}
 	})
 }

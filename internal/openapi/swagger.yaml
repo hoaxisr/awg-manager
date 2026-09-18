@@ -3916,6 +3916,12 @@ definitions:
       description:
         example: My Phone
         type: string
+      dns:
+        description: |-
+          DNS — резолвер пира для `.conf`: список IP через запятую. Пусто —
+          LAN-адрес роутера (#933).
+        example: 192.168.1.1
+        type: string
       tunnelIP:
         example: 10.0.14.2/32
         type: string
@@ -4040,6 +4046,12 @@ definitions:
     properties:
       description:
         example: My Phone
+        type: string
+      dns:
+        description: |-
+          DNS — резолвер пира: «прислали → присвоили», как у Description. Пусто
+          снимает свой резолвер и возвращает пира к LAN-адресу роутера (#933).
+        example: 192.168.1.1
         type: string
       signature:
         allOf:
@@ -7818,6 +7830,13 @@ definitions:
         type: boolean
       description:
         example: Phone
+        type: string
+      dns:
+        description: |-
+          DNS — резолвер пира для `.conf` (#933). Пусто = «подставить LAN-адрес
+          роутера»; хранится в секрете, поэтому есть только у пиров с локальным
+          секретом — как и сигнатура.
+        example: 192.168.1.1
         type: string
       enabled:
         example: true

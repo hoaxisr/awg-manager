@@ -46,6 +46,11 @@ type WireguardServerPeerDTO struct {
 	I4               string `json:"i4,omitempty"`
 	I5               string `json:"i5,omitempty"`
 	SignatureProfile string `json:"signatureProfile,omitempty" example:"quic_initial"`
+
+	// DNS — резолвер пира для `.conf` (#933). Пусто = «подставить LAN-адрес
+	// роутера»; хранится в секрете, поэтому есть только у пиров с локальным
+	// секретом — как и сигнатура.
+	DNS string `json:"dns,omitempty" example:"192.168.1.1"`
 }
 
 // WireguardServerDTO mirrors frontend WireguardServer.

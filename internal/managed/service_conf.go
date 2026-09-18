@@ -7,6 +7,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 )
 
@@ -49,13 +50,17 @@ func (s *Service) GenerateConf(ctx context.Context, id, pubkey, endpointHost str
 		endpoint = wanIP
 	}
 
-	// Resolve DNS: per-peer → server-level → default
+	// Резолвер: пир → сервер → LAN-адрес роутера. Зашитых публичных адресов
+	// здесь больше нет (#933): абонент, которому мы отдали 1.1.1.1, резолвил
+	// мимо роутера и мимо всех его правил DNS. Роутер не определился — строки
+	// `DNS` в файле не будет вовсе: подставлять что-то «на всякий случай» —
+	// ровно то, от чего уходим.
 	dns := peer.DNS
 	if dns == "" {
 		dns = server.DNS
 	}
 	if dns == "" {
-		dns = "1.1.1.1, 8.8.8.8"
+		dns = netif.RouterLANIP()
 	}
 	mtu := effectiveMTU(server.MTU)
 
@@ -68,7 +73,9 @@ func (s *Service) GenerateConf(ctx context.Context, id, pubkey, endpointHost str
 	b.WriteString("[Interface]\n")
 	b.WriteString(fmt.Sprintf("PrivateKey = %s\n", peer.PrivateKey))
 	b.WriteString(fmt.Sprintf("Address = %s\n", peer.TunnelIP))
-	b.WriteString(fmt.Sprintf("DNS = %s\n", dns))
+	if dns != "" {
+		b.WriteString(fmt.Sprintf("DNS = %s\n", dns))
+	}
 	b.WriteString(fmt.Sprintf("MTU = %d\n", mtu))
 
 	// ASC params

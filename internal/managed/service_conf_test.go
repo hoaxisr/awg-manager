@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 )
 
 // seedASC кладёт в фейковый NDMS числовые ASC-параметры интерфейса. Без них
@@ -64,5 +65,61 @@ func TestGenerateConf_NoASC_SkipsSignature(t *testing.T) {
 	}
 	if strings.Contains(conf, "I1 =") || strings.Contains(conf, "Jc =") {
 		t.Fatalf("plain WG server must not emit AWG params:\n%s", conf)
+	}
+}
+
+// stubRouterLANIP подменяет определение LAN-адреса роутера: без подмены тест
+// зависел бы от сети машины, на которой запущен.
+func stubRouterLANIP(t *testing.T, ip string) {
+	t.Helper()
+	old := netif.RouterLANIP
+	netif.RouterLANIP = func() string { return ip }
+	t.Cleanup(func() { netif.RouterLANIP = old })
+}
+
+// Резолвер пира: свой → серверный → LAN-адрес роутера → строки нет вовсе.
+// Зашитых публичных адресов в цепочке больше нет (#933): абонент, которому мы
+// отдавали 1.1.1.1, резолвил мимо роутера и мимо всех его правил.
+func TestGenerateConf_DNSChain(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		peerDNS   string
+		serverDNS string
+		routerIP  string
+		want      string // "" — строки DNS быть не должно
+	}{
+		{"свой у пира", "9.9.9.9", "8.8.4.4", "192.168.1.1", "DNS = 9.9.9.9"},
+		{"серверный", "", "8.8.4.4", "192.168.1.1", "DNS = 8.8.4.4"},
+		{"LAN-адрес роутера", "", "", "192.168.1.1", "DNS = 192.168.1.1"},
+		{"роутер не определился", "", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubRouterLANIP(t, tc.routerIP)
+			svc, store, _ := newCreateTestService(t)
+			sv := storage.ManagedServer{InterfaceName: "Wireguard1", Address: "10.0.0.1",
+				Mask: "255.255.255.0", ListenPort: 51820, Endpoint: "vpn.example.org",
+				Policy: "none", DNS: tc.serverDNS,
+				Peers: []storage.ManagedPeer{{PublicKey: "PUB", PrivateKey: "PRIV",
+					TunnelIP: "10.0.0.2/32", Enabled: true, DNS: tc.peerDNS}}}
+			if err := store.AddManagedServer(sv); err != nil {
+				t.Fatal(err)
+			}
+			conf, err := svc.GenerateConf(context.Background(), "Wireguard1", "PUB", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(conf, "1.1.1.1") || strings.Contains(conf, "8.8.8.8") {
+				t.Errorf("зашитый публичный резолвер вернулся в файл:\n%s", conf)
+			}
+			if tc.want == "" {
+				if strings.Contains(conf, "DNS =") {
+					t.Errorf("резолвера нет — строки быть не должно:\n%s", conf)
+				}
+				return
+			}
+			if !strings.Contains(conf, tc.want) {
+				t.Errorf("нет %q:\n%s", tc.want, conf)
+			}
+		})
 	}
 }
