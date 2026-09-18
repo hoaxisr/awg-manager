@@ -422,6 +422,7 @@ type ProxyRtSurface struct {
 	WdttLinkDecode     http.HandlerFunc
 	WdttLinkImport     http.HandlerFunc
 	FreeTurnLinkDecode http.HandlerFunc
+	OpenFluxLinkDecode http.HandlerFunc
 	CaptchaStatus      http.HandlerFunc
 	InstallStatus      http.HandlerFunc
 	Install            http.HandlerFunc

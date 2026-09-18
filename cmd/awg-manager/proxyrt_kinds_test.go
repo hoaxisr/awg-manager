@@ -27,10 +27,12 @@ func TestKinds_ProxyLinkedFieldClassified(t *testing.T) {
 	want := map[instancestore.Kind]api.LinkedField{
 		instancestore.KindWdttClient:     api.LinkedWdtt,
 		instancestore.KindFreeTurnClient: api.LinkedFreeTurn,
+		instancestore.KindOpenFluxClient: api.LinkedOpenFlux,
 	}
 	notCaller := map[instancestore.Kind]bool{
 		instancestore.KindWdttServer:     true,
 		instancestore.KindFreeTurnServer: true,
+		instancestore.KindOpenFluxServer: true,
 	}
 	for _, k := range instancestore.AllKinds {
 		exp, isClient := want[k]
@@ -54,6 +56,8 @@ func TestKinds_ProxySubsystemClassified(t *testing.T) {
 		instancestore.KindWdttServer:     install.SubsystemWdtt,
 		instancestore.KindFreeTurnClient: install.SubsystemFreeTurn,
 		instancestore.KindFreeTurnServer: install.SubsystemFreeTurn,
+		instancestore.KindOpenFluxClient: install.SubsystemOpenFlux,
+		instancestore.KindOpenFluxServer: install.SubsystemOpenFlux,
 	}
 	for _, k := range instancestore.AllKinds {
 		exp, ok := want[k]
@@ -85,8 +89,21 @@ func TestKinds_LinkedToSelfClassified(t *testing.T) {
 	notCaller := map[instancestore.Kind]bool{
 		instancestore.KindWdttServer:     true,
 		instancestore.KindFreeTurnServer: true,
+		instancestore.KindOpenFluxServer: true,
+	}
+	noField := map[instancestore.Kind]bool{
+		// Связи с туннелями нет ПОСТРОЕНИЕМ: linkedToSelf обязан отвечать
+		// «всё чужое» явно, а не молчаливым хвостом switch.
+		instancestore.KindOpenFluxClient: true,
 	}
 	for _, k := range instancestore.AllKinds {
+		if noField[k] {
+			o := proxyOccupancy{selfKind: k, selfID: self}
+			if o.linkedToSelf(storage.AWGTunnel{}) {
+				t.Errorf("%s: туннель опознан как свой, хотя поля связи у роли нет", k)
+			}
+			continue
+		}
 		tun, isClient := linkOf[k]
 		if !isClient {
 			if !notCaller[k] {

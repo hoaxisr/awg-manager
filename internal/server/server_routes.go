@@ -1076,6 +1076,9 @@ func (s *Server) registerProxyRtRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.proxyRt.FreeTurnLinkDecode != nil {
 		mux.HandleFunc("/api/proxyrt/freeturn/link/decode", h.guarded(s.proxyRt.FreeTurnLinkDecode))
 	}
+	if s.proxyRt.OpenFluxLinkDecode != nil {
+		mux.HandleFunc("/api/proxyrt/openflux/link/decode", h.guarded(s.proxyRt.OpenFluxLinkDecode))
+	}
 	if s.proxyRt.CaptchaStatus != nil {
 		mux.HandleFunc("/api/proxyrt/freeturn/captcha/status", h.guarded(s.proxyRt.CaptchaStatus))
 	}

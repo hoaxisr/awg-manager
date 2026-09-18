@@ -38,7 +38,7 @@
 	interface Props {
 		row: ProxyInstanceRow;
 		status?: WdttProcessStatus | FreeTurnProcessStatus;
-		/** Конфиг выбранного инстанса на сервере — ровно один из двух. */
+		/** Конфиг выбранного инстанса на сервере — ровно один из трёх. */
 		wdttClient?: WdttClientConfig;
 		ftClient?: FreeTurnClientConfig;
 		routerClock?: string;

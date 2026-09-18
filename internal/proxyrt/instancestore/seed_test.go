@@ -1409,11 +1409,15 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 	// что в старом мире её не было (ClientInstance/ServerInstance — только
 	// ID, Name, Config), взять её неоткуда, а выдумывать «дату создания»
 	// временем апгрейда значило бы соврать.
+	//
+	// OpenFluxClient/OpenFluxServer — второе и третье исключения: legacy-конфига
+	// openflux.json не существовало, посев эту роль не переносит, и в каждой
+	// посеянной записи оба указателя обязаны быть nil.
 	all := make([]any, 0, len(got))
 	for _, r := range got {
 		all = append(all, r)
 	}
-	assertEveryFieldCarried(t, "Record", all, "CreatedAt")
+	assertEveryFieldCarried(t, "Record", all, "CreatedAt", "OpenFluxClient", "OpenFluxServer")
 
 	permits := make([]any, 0, len(rawCli.WdttClient.Policies))
 	for _, p := range rawCli.WdttClient.Policies {

@@ -144,10 +144,10 @@ type RawExiter interface {
 }
 
 // Проверка «метод у каждого» — здесь, а не только у потребителя: удаление
-// метода у любого из ЧЕТЫРЁХ конфигов ломает сборку пакета сразу.
+// метода у любого из ШЕСТИ конфигов ломает сборку пакета сразу.
 //
 // Границу гарантии называем честно: эти строки знают только про уже
-// существующие типы. Пятый конфиг они не поймают — его ловит поле
+// существующие типы. Седьмой конфиг они не поймают — его ловит поле
 // InstanceConfig.Cfg у потребителя (exitreg/declared.go), типизированное этим
 // интерфейсом, и ловит ровно до тех пор, пока конфиг не стёрли в any.
 var (
@@ -155,6 +155,8 @@ var (
 	_ RawExiter = WdttServerConfig{}
 	_ RawExiter = FreeTurnClientConfig{}
 	_ RawExiter = FreeTurnServerConfig{}
+	_ RawExiter = OpenFluxClientConfig{}
+	_ RawExiter = OpenFluxServerConfig{}
 )
 
 // RawExit: выход объявляет ТОЛЬКО raw-клиент. У wg-режима ресурса
@@ -180,6 +182,12 @@ func (c WdttServerConfig) RawExit() (RawExit, bool) { return RawExit{}, false }
 func (c FreeTurnClientConfig) RawExit() (RawExit, bool) { return RawExit{}, false }
 
 func (c FreeTurnServerConfig) RawExit() (RawExit, bool) { return RawExit{}, false }
+
+// RawExit: у OpenFlux NDMS-зеркал нет — клиент слушает SOCKS5 на loopback,
+// выходная нода вообще ничего не слушает (транспорты ходят НАРУЖУ к релею).
+func (c OpenFluxClientConfig) RawExit() (RawExit, bool) { return RawExit{}, false }
+
+func (c OpenFluxServerConfig) RawExit() (RawExit, bool) { return RawExit{}, false }
 
 // WdttServerConfig — сервер WDTT (обе половины: WG + raw).
 type WdttServerConfig struct {
@@ -436,6 +444,208 @@ func (k *FreeTurnKCP) validate() error {
 // Пустая декларация объявлена ЯВНО, а не отсутствием метода: без неё конфиг
 // выпал бы из ведомости неотличимо от забытого.
 func (c FreeTurnClientConfig) NDMSNames() []string { return nil }
+
+// ── OpenFlux ─────────────────────────────────────────────────────
+
+// Транспорты OpenFlux (upstream main.go:90). Клиент и выходная нода обязаны
+// использовать ОДИН И ТОТ ЖЕ транспорт и один канал связи, поэтому список —
+// контракт совместимости, а не украшение.
+const (
+	OpenFluxTransportYandex     = "yandex"     // Yandex.Docs (WS)
+	OpenFluxTransportVyandex    = "vyandex"    // Yandex Volga (HTTP relay + WS)
+	OpenFluxTransportOneme      = "oneme"      // MAX / OneMe (WebRTC DataChannel)
+	OpenFluxTransportCupsOnline = "cupsonline" // Cups.online (Centrifugo)
+	OpenFluxTransportMailru     = "mailru"     // Mail.ru Docs (WS)
+)
+
+// OpenFluxTransports — канонический перечень, порядок = порядок в UI.
+var OpenFluxTransports = []string{
+	OpenFluxTransportYandex,
+	OpenFluxTransportVyandex,
+	OpenFluxTransportOneme,
+	OpenFluxTransportCupsOnline,
+	OpenFluxTransportMailru,
+}
+
+// ValidOpenFluxTransport — транспорт из перечня upstream.
+func ValidOpenFluxTransport(t string) bool {
+	t = strings.ToLower(strings.TrimSpace(t))
+	for _, ok := range OpenFluxTransports {
+		if t == ok {
+			return true
+		}
+	}
+	return false
+}
+
+// openFluxTransportNeedsURL — транспорты, которым нужен документ-канал (-url).
+// cupsonline комнаты выдаёт сам процесс (печатает base64-список), oneme ходит
+// парой токен+uid; остальным нужен публичный документ.
+func openFluxTransportNeedsURL(transport string) bool {
+	switch transport {
+	case OpenFluxTransportCupsOnline, OpenFluxTransportOneme:
+		return false
+	}
+	return true
+}
+
+// OpenFluxCodecBatched/OpenFluxCodecLegacy — кодеки upstream. Провода НЕ
+// совместимы: обе стороны обязаны быть на одном (README, «Выбор кодека»).
+const (
+	OpenFluxCodecBatched = "batched"
+	OpenFluxCodecLegacy  = "legacy"
+)
+
+// OpenFluxClientConfig — клиент OpenFlux на роутере: SOCKS5-вход (на Linux
+// других входов у upstream нет, tun_darwin.go — только macOS) на 127.0.0.1.
+type OpenFluxClientConfig struct {
+	Listen string `json:"listen"` // 127.0.0.1:PORT из пула ListenPortMin..Max
+	// Transport — вид релея; URL — адрес документа-канала; обе стороны
+	// туннеля обязаны сходиться в них (см. OpenFluxTransports).
+	Transport string `json:"transport"`
+	URL       string `json:"url,omitempty"`
+	// MaxToken/MaxUid — учётные данные транспорта oneme (upstream --maxToken,
+	// --maxUid). Не секреты API, но персональные идентификаторы — маскируются
+	// как пароль (proxySecretsOf).
+	MaxToken string `json:"maxToken,omitempty"`
+	MaxUID   string `json:"maxUid,omitempty"`
+	// Codec — batched|legacy; провода несовместимы, значение едет и на
+	// выходную ноду. Пусто = batched (дефолт upstream).
+	Codec string `json:"codec,omitempty"`
+	// EncryptionKey — общий секрет AES-256-GCM (опционально). Едет в argv
+	// форка (-encryption-key): файлов у наших ролей нет, паритет с -obf-key
+	// freeturn и -password wdtt.
+	EncryptionKey string `json:"encryptionKey,omitempty"`
+	Debug         bool   `json:"debug,omitempty"`
+}
+
+func (c OpenFluxClientConfig) Validate() error {
+	if err := localListen(c.Listen); err != nil {
+		return err
+	}
+	if !ValidOpenFluxTransport(c.Transport) {
+		return fmt.Errorf("transport %q: ожидали один из %s", c.Transport, strings.Join(OpenFluxTransports, "|"))
+	}
+	t := strings.ToLower(strings.TrimSpace(c.Transport))
+	if openFluxTransportNeedsURL(t) && strings.TrimSpace(c.URL) == "" {
+		return fmt.Errorf("не задан адрес канала (-url) для транспорта %s", t)
+	}
+	if t == OpenFluxTransportOneme && strings.TrimSpace(c.MaxToken) == "" {
+		return fmt.Errorf("транспорту oneme нужен -maxToken")
+	}
+	switch c.Codec {
+	case "", OpenFluxCodecBatched, OpenFluxCodecLegacy:
+	default:
+		return fmt.Errorf("codec %q: ожидали batched|legacy", c.Codec)
+	}
+	return nil
+}
+
+// NDMSNames — у OpenFlux NDMS-интерфейсов нет.
+func (c OpenFluxClientConfig) NDMSNames() []string { return nil }
+
+// OpenFluxModeL3/OpenFluxModeL4 — бэкенды выходной ноды (upstream --mode).
+// l3 — сырой SNAT/DNAT, только Linux + root; l4 — gVisor proxy, без root.
+const (
+	OpenFluxModeL3 = "l3"
+	OpenFluxModeL4 = "l4"
+)
+
+// OpenFluxServerConfig — выходная нода OpenFlux на роутере. Слушающего сокета
+// у неё НЕТ: клиент и выход соединяются ЧЕРЕЗ релей (документ), входящие
+// порты открывать не нужно.
+type OpenFluxServerConfig struct {
+	Transport string `json:"transport"`
+	URL       string `json:"url,omitempty"`
+	MaxToken  string `json:"maxToken,omitempty"`
+	MaxUID    string `json:"maxUid,omitempty"`
+	// Mode — l3|l4. l3 на роутере требует root и правило против kernel-RST
+	// (README, «l3 и kernel-RST»); правило ставит роль, но адрес выхода
+	// (--local-ip) обязан быть явным — авто-детект меняется при смене WAN.
+	Mode string `json:"mode,omitempty"`
+	// LocalIP — egress IP для l3 (upstream --local-ip). Обязателен в l3:
+	// scoped RST-drop и SNAT строятся по нему.
+	LocalIP string `json:"localIp,omitempty"`
+	Codec   string `json:"codec,omitempty"`
+	// EncryptionKey — общий секрет AES-256-GCM; обязан совпадать у клиента.
+	EncryptionKey string `json:"encryptionKey,omitempty"`
+	// DNS — резолверы процесса через запятую (fork -dns). Системный
+	// 127.0.0.1 на Keenetic отвечает не всегда, и первая же ошибка
+	// транспорта убивает процесс (upstream: log.Fatalf) — поле даёт
+	// пользователю выход без правки resolv.conf.
+	DNS string `json:"dns,omitempty"`
+	// SingboxRoute — «через sing-box»: данные-сокеты ноды (l4) метятся
+	// fwmark'ом (fork -fwmark), и OUTPUT-правило роли направляет их в
+	// цепочку AWGM-REDIRECT sing-box — дальше действует его маршрутизация.
+	// TCP-трафик абонентов; UDP и транспорт до релея идут напрямую.
+	SingboxRoute bool `json:"singboxRoute,omitempty"`
+	Debug        bool `json:"debug,omitempty"`
+}
+
+// OpenFluxSingboxMark — fwmark данных-сокетов при SingboxRoute (roles/args.go
+// кладёт его в -fwmark, singboxJump-ресурс ролей по нему матчит OUTPUT).
+// Значение выбрано в стороне от типовых меток tproxy (1, 0xff) — конфликт
+// означал бы перехват чужого трафика.
+const OpenFluxSingboxMark = 20294
+
+func (c OpenFluxServerConfig) Validate() error {
+	if !ValidOpenFluxTransport(c.Transport) {
+		return fmt.Errorf("transport %q: ожидали один из %s", c.Transport, strings.Join(OpenFluxTransports, "|"))
+	}
+	t := strings.ToLower(strings.TrimSpace(c.Transport))
+	if openFluxTransportNeedsURL(t) && strings.TrimSpace(c.URL) == "" {
+		return fmt.Errorf("не задан адрес канала (-url) для транспорта %s", t)
+	}
+	if t == OpenFluxTransportOneme && strings.TrimSpace(c.MaxToken) == "" {
+		return fmt.Errorf("транспорту oneme нужен -maxToken")
+	}
+	switch c.Mode {
+	case OpenFluxModeL3:
+		if c.SingboxRoute {
+			// В l3 пакеты уходят сырым SOCK_RAW мимо данных-сокетов, метка
+			// на них не действует — тумблер дал бы молчаливое «ниcharger».
+			return fmt.Errorf("mode l3: направление через sing-box работает только в l4")
+		}
+		if strings.TrimSpace(c.LocalIP) == "" {
+			return fmt.Errorf("mode l3: не задан egress-адрес (localIp) — по нему строится RST-drop и SNAT")
+		}
+		if net.ParseIP(strings.TrimSpace(c.LocalIP)) == nil {
+			return fmt.Errorf("localIp %q: не IP-адрес", c.LocalIP)
+		}
+	case OpenFluxModeL4:
+	case "":
+	default:
+		return fmt.Errorf("mode %q: ожидали l3|l4", c.Mode)
+	}
+	switch c.Codec {
+	case "", OpenFluxCodecBatched, OpenFluxCodecLegacy:
+	default:
+		return fmt.Errorf("codec %q: ожидали batched|legacy", c.Codec)
+	}
+	// DNS — только IP-адреса через запятую: форк валидирует тем же правилом,
+	// и расхождение дало бы приговор конфига уже применением.
+	for _, part := range strings.Split(c.DNS, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if net.ParseIP(part) == nil {
+			return fmt.Errorf("dns %q: не IP-адрес", part)
+		}
+	}
+	return nil
+}
+
+// NDMSNames — у OpenFlux NDMS-интерфейсов нет.
+func (c OpenFluxServerConfig) NDMSNames() []string { return nil }
+
+// NormalizedMode — режим с дефолтом l4 (безопасный бэкенд без root).
+func (c OpenFluxServerConfig) NormalizedMode() string {
+	if strings.TrimSpace(c.Mode) == OpenFluxModeL3 {
+		return OpenFluxModeL3
+	}
+	return OpenFluxModeL4
+}
 
 // FreeTurnServerConfig — сервер FreeTurn.
 type FreeTurnServerConfig struct {

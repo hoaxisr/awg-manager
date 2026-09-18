@@ -118,6 +118,43 @@ var FreeTurnEmbeddedBinaries = map[string]ArchSpecs{
 	},
 }
 
+// ── openflux ─────────────────────────────────────────────────────
+
+// OpenFluxPinnedVersion — релиз форка OpenFlux с обвязкой awgmproto, который
+// ставит эта сборка. Порядок бампа — паритет с freeturn: обновить константу,
+// URL, SHA256 (из checksums.txt релиза) и размеры ниже.
+const OpenFluxPinnedVersion = "1.0.0-1"
+
+// openFluxReleaseBase — прод-доставка с зеркала. Канонический источник сборки:
+// релиз форка OpenFlux с обвязкой управляющего протокола (upstream —
+// github.com/p1neappleXpress/OpenFlux; бинарь без обвязки не проходит пробу
+// --awgm-protocol, гейт procres.Gate его не пускает).
+const openFluxReleaseBase = "http://repo.hoaxisr.ru/of/" + OpenFluxPinnedVersion + "/"
+
+// OpenFluxEmbeddedBinaries связывает арку сборки awg-manager с пинами
+// OpenFlux.
+//
+// ВАЖНО: SHA256 и Size пусты до первого релиза форка — их заполняют из
+// checksums.txt релиза (по образцу scripts/update-wdtt-pins.py). childproc
+// отказывается ставить бинарь с пустым ожидаемым SHA256, поэтому до заполнения
+// подсистема отвечает «пина нет»: installInfo отдаёт installUnavailable, а
+// инстансы поднимаются на вручную положенных в /opt/bin бинарях — их гейт
+// проверяет пробой протокола, а не пином.
+var OpenFluxEmbeddedBinaries = map[string]ArchSpecs{
+	"aarch64-3.10": {
+		Client: BinarySpec{Version: OpenFluxPinnedVersion, URL: openFluxReleaseBase + "openflux-client-linux-arm64"},
+		Server: BinarySpec{Version: OpenFluxPinnedVersion, URL: openFluxReleaseBase + "openflux-server-linux-arm64"},
+	},
+	"mipsel-3.4": {
+		Client: BinarySpec{Version: OpenFluxPinnedVersion, URL: openFluxReleaseBase + "openflux-client-linux-mipsle-softfloat"},
+		Server: BinarySpec{Version: OpenFluxPinnedVersion, URL: openFluxReleaseBase + "openflux-server-linux-mipsle-softfloat"},
+	},
+	"mips-3.4": {
+		Client: BinarySpec{Version: OpenFluxPinnedVersion, URL: openFluxReleaseBase + "openflux-client-linux-mips-softfloat"},
+		Server: BinarySpec{Version: OpenFluxPinnedVersion, URL: openFluxReleaseBase + "openflux-server-linux-mips-softfloat"},
+	},
+}
+
 // ── wg-obfuscator ────────────────────────────────────────────────
 
 // Теги в hoaxisr/wg-obfuscator: awgm-phobos-v<ver> (ветка phobos — форк

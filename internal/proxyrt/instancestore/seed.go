@@ -377,6 +377,8 @@ func ClientListen(r *Record) *string {
 		return &r.WdttClient.Listen
 	case r.FreeTurnClient != nil:
 		return &r.FreeTurnClient.Listen
+	case r.OpenFluxClient != nil:
+		return &r.OpenFluxClient.Listen
 	}
 	return nil
 }
