@@ -214,8 +214,12 @@ func localEndpointFromListen(listen string) (string, bool) {
 type LinkedField int
 
 const (
-	LinkedWdtt     LinkedField = iota // storage.AWGTunnel.WdttClientID
-	LinkedFreeTurn                    // storage.AWGTunnel.FreeTurnClientID
+	LinkedWdtt      LinkedField = iota // storage.AWGTunnel.WdttClientID
+	LinkedFreeTurn                     // storage.AWGTunnel.FreeTurnClientID
+	// LinkedOpenFlux — роль без связи с туннелями (openflux-клиент). Поле в
+	// записи не существует, предикат всегда ложный: уборщик честно удаляет
+	// ноль, вместо того чтобы по чужому полю снести туннели соседа.
+	LinkedOpenFlux
 )
 
 // linkedProxyPredicate — предикат связи по полю и clientID. Неизвестное поле —

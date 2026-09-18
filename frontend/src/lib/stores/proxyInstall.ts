@@ -34,6 +34,7 @@ function storeFor(
 export const proxyInstallStatus: Record<ProxySubsystem, PollingStore<ProxyInstallStatus>> = {
 	wdtt: storeFor('wdtt', 'proxyrt.instances'),
 	freeturn: storeFor('freeturn', 'proxyrt.instances'),
+	openflux: storeFor('openflux', 'proxyrt.instances'),
 	'obf-phobos': storeFor('obf-phobos', 'tunnels'),
 	'obf-clusterm': storeFor('obf-clusterm', 'tunnels'),
 };

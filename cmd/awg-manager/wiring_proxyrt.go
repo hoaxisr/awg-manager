@@ -21,6 +21,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/captcha"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/ftlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/install"
+	"github.com/hoaxisr/awg-manager/internal/proxyapp/openfluxlink"
 	proxysub "github.com/hoaxisr/awg-manager/internal/proxyapp/subscription"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttusers"
@@ -31,6 +32,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/manager"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/freeturn"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/openflux"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/procres"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/wdttclient"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/wdttserver"
@@ -215,6 +217,10 @@ func proxyImplRole(kind instancestore.Kind) (impl, role string, ok bool) {
 		return roles.ImplFtClient, roles.RoleClient, true
 	case instancestore.KindFreeTurnServer:
 		return roles.ImplFtServer, roles.RoleServer, true
+	case instancestore.KindOpenFluxClient:
+		return roles.ImplOfClient, roles.RoleClient, true
+	case instancestore.KindOpenFluxServer:
+		return roles.ImplOfServer, roles.RoleServer, true
 	}
 	return "", "", false
 }
@@ -341,9 +347,18 @@ func (c proxyLinkedCleaner) DeleteLinked(ctx context.Context, clientID string) (
 // Одно место на всех потребителей: перепутанное поле не даёт ни ошибки, ни
 // отказа — только ПУСТОЙ список связанных туннелей и вечное молчание, а с
 // четырьмя литералами по проводке спутать их вопрос времени.
+//
+// У openflux-клиента связанных туннелей не бывает по построению (upstream не
+// говорит на WireGuard), и возвращать ему чужое поле запрещено: уборщик по
+// WdttClientID снёс бы туннели WDTT-клиента с тем же ID. Поэтому явный
+// LinkedOpenFlux без поля в записи — предикат всегда ложный, уборка честно
+// «ничего».
 func proxyLinkedField(kind instancestore.Kind) api.LinkedField {
-	if kind == instancestore.KindFreeTurnClient {
+	switch kind {
+	case instancestore.KindFreeTurnClient:
 		return api.LinkedFreeTurn
+	case instancestore.KindOpenFluxClient:
+		return api.LinkedOpenFlux
 	}
 	return api.LinkedWdtt
 }
@@ -895,6 +910,7 @@ func (a *app) wireProxyrt() {
 			instancestore.KindFreeTurnServer: ftlink.NewBuilder(ftlink.BuilderDeps{
 				ExternalIP: a.proxyExternalIP,
 			}),
+			instancestore.KindOpenFluxServer: openfluxlink.NewBuilder(),
 		},
 	})
 	allowlist := ftlink.New(ftlink.Deps{Records: records, Mutator: mutator, DataDir: a.dataDir})
@@ -930,6 +946,7 @@ func (a *app) wireProxyrt() {
 		WdttLinkDecode:     linkHandler.Decode,
 		WdttLinkImport:     linkHandler.Import,
 		FreeTurnLinkDecode: allowlist.Decode,
+		OpenFluxLinkDecode: openfluxlink.Decode,
 		CaptchaStatus:      captchaSvc.ServeStatus,
 		InstallStatus:      installSvc.ServeStatus,
 		Install:            installSvc.ServeInstall,
@@ -1019,7 +1036,8 @@ func proxyServerKeys(store *instancestore.Store) []string {
 	}
 	var keys []string
 	for _, rec := range st.Records {
-		if rec.Kind == instancestore.KindWdttServer || rec.Kind == instancestore.KindFreeTurnServer {
+		switch rec.Kind {
+		case instancestore.KindWdttServer, instancestore.KindFreeTurnServer, instancestore.KindOpenFluxServer:
 			keys = append(keys, rec.Key())
 		}
 	}
@@ -1033,6 +1051,7 @@ func proxyKillBinaries(svc *install.Service) []string {
 	for _, kind := range []instancestore.Kind{
 		instancestore.KindWdttClient, instancestore.KindWdttServer,
 		instancestore.KindFreeTurnClient, instancestore.KindFreeTurnServer,
+		instancestore.KindOpenFluxClient, instancestore.KindOpenFluxServer,
 	} {
 		if path, _ := svc.Binary(kind); path != "" {
 			out = append(out, path)
@@ -1160,6 +1179,30 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 			}
 			role = r
 			cfg = func() any { c, _ := live.Config().FreeTurnServerConfig(); return c }
+		case instancestore.KindOpenFluxClient:
+			r, err := openflux.NewClient(openflux.ClientDeps{
+				Instance: rec.ID, Binary: binary,
+				PinnedSHA256: installSvc.PinnedSHA256(rec.Kind),
+				Link:         link, Runner: runner, Gate: gate,
+				Occ: newProxyOccupancy(store, a.awgStore, rec.Kind, rec.ID),
+			})
+			if err != nil {
+				return nil, err
+			}
+			role = r
+			cfg = func() any { c, _ := live.Config().OpenFluxClientConfig(); return c }
+		case instancestore.KindOpenFluxServer:
+			r, err := openflux.NewServer(openflux.ServerDeps{
+				Instance: rec.ID, Binary: binary,
+				PinnedSHA256: installSvc.PinnedSHA256(rec.Kind),
+				Link:         link, Runner: runner, Gate: gate,
+				IPT: proxyIPT{},
+			})
+			if err != nil {
+				return nil, err
+			}
+			role = r
+			cfg = func() any { c, _ := live.Config().OpenFluxServerConfig(); return c }
 		default:
 			return nil, fmt.Errorf("инстанс %s: неизвестная роль %s", key, rec.Kind)
 		}

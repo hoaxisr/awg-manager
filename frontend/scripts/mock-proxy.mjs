@@ -3416,6 +3416,73 @@ function createInitialMockFreeturn() {
 
 let mockFreeturn = createInitialMockFreeturn();
 
+function createInitialMockOpenFlux() {
+	const sharedKey = 'of-shared-secret-01';
+	return {
+		binaryPresent: true,
+		clients: [
+			{
+				id: 'default',
+				name: 'OpenFlux-клиент',
+				running: true,
+				startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+				lastError: '',
+				config: {
+					enabled: true,
+					listen: '127.0.0.1:9020',
+					transport: 'yandex',
+					url: 'https://docs.example.com/doc',
+					codec: 'batched',
+					encryptionKey: sharedKey,
+					debug: false,
+				},
+			},
+		],
+		servers: [
+			{
+				id: 'default',
+				name: 'OpenFlux-выход',
+				running: false,
+				startedAt: null,
+				lastError: '',
+				config: {
+					enabled: false,
+					transport: 'yandex',
+					url: 'https://docs.example.com/doc',
+					mode: 'l4',
+					localIp: '',
+					codec: 'batched',
+					encryptionKey: sharedKey,
+					debug: false,
+				},
+			},
+		],
+	};
+}
+
+let mockOpenFlux = createInitialMockOpenFlux();
+
+function mockOpenFluxProcessStatus(inst, kind) {
+	const binary = `/opt/bin/openflux-${kind === 'client' ? 'client' : 'server'}`;
+	if (!inst) {
+		return { running: false, log: '', binary, binaryPresent: mockOpenFlux.binaryPresent };
+	}
+	const cfg = inst.config;
+	return {
+		running: !!inst.running,
+		pid: inst.running ? 30000 + Math.floor(Math.random() * 2000) : undefined,
+		startedAt: inst.running ? inst.startedAt : undefined,
+		lastError: inst.lastError || '',
+		mode: kind === 'client' ? cfg.transport : `${cfg.transport}:${cfg.mode ?? 'l4'}`,
+		address: cfg.url || '',
+		log: inst.running
+			? `${new Date().toISOString()} openflux ${kind}: transport=${cfg.transport} codec=${cfg.codec ?? 'batched'}\n${new Date().toISOString()} openflux: relay connected`
+			: '',
+		binary,
+		binaryPresent: mockOpenFlux.binaryPresent,
+	};
+}
+
 function mockFreeturnProcessStatus(inst, kind) {
 	if (!inst) {
 		return {
@@ -3928,6 +3995,8 @@ const PROXY_SECRET_FIELDS = {
 	'wdtt-server': ['password', 'botToken'],
 	'freeturn-client': ['obfKey'],
 	'freeturn-server': ['obfKey'],
+	'openflux-client': ['encryptionKey'],
+	'openflux-server': ['encryptionKey'],
 };
 
 /** Секреты наружу не уходят — только признак `<field>Set` (Н5). */
@@ -3970,6 +4039,10 @@ function proxyListFor(kind) {
 			return mockFreeturn.clients;
 		case 'freeturn-server':
 			return mockFreeturn.servers;
+		case 'openflux-client':
+			return mockOpenFlux.clients;
+		case 'openflux-server':
+			return mockOpenFlux.servers;
 		default:
 			return null;
 	}
@@ -4053,6 +4126,25 @@ function proxyDefaultConfig(kind) {
 				debug: false,
 				openFirewall: true,
 			};
+		case 'openflux-client':
+			return {
+				enabled: false,
+				listen: mockNextLocalListen(mockOpenFlux.clients),
+				transport: 'yandex',
+				url: '',
+				codec: 'batched',
+				debug: false,
+			};
+		case 'openflux-server':
+			return {
+				enabled: false,
+				transport: 'yandex',
+				url: '',
+				mode: 'l4',
+				localIp: '',
+				codec: 'batched',
+				debug: false,
+			};
 		default:
 			return null;
 	}
@@ -4110,6 +4202,19 @@ function proxyRecordExtras(kind, inst) {
 
 /** Старый снимок процесса (mockWdtt…/mockFreeturn…ProcessStatus) → api.ProcessView. */
 function proxyProcessView(kind, inst) {
+	if (kind === 'openflux-client' || kind === 'openflux-server') {
+		const old = mockOpenFluxProcessStatus(inst, kind === 'openflux-client' ? 'client' : 'server');
+		const out = { running: !!old.running, binary: old.binary, binaryPresent: !!old.binaryPresent };
+		if (old.pid !== undefined) out.pid = old.pid;
+		if (old.startedAt) {
+			out.uptimeS = Math.max(0, Math.floor((Date.now() - new Date(old.startedAt).getTime()) / 1000));
+		}
+		if (old.lastError) out.lastError = old.lastError;
+		if (old.log !== undefined) out.log = old.log;
+		if (old.mode) out.mode = old.mode;
+		if (old.address) out.address = old.address;
+		return out;
+	}
 	const old =
 		kind === 'wdtt-client'
 			? mockWdttProcessStatus(inst)
@@ -4159,6 +4264,8 @@ function proxyAllInstances() {
 		...mockWdtt.servers.map((i) => proxyInstanceView('wdtt-server', i)),
 		...mockFreeturn.clients.map((i) => proxyInstanceView('freeturn-client', i)),
 		...mockFreeturn.servers.map((i) => proxyInstanceView('freeturn-server', i)),
+		...mockOpenFlux.clients.map((i) => proxyInstanceView('openflux-client', i)),
+		...mockOpenFlux.servers.map((i) => proxyInstanceView('openflux-server', i)),
 	].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
@@ -8875,6 +8982,17 @@ const server = http.createServer(async (req, res) => {
 			});
 			return;
 		}
+		if (subsystem === 'openflux') {
+			sendData(res, {
+				installAvailable: true,
+				installVersion: '1.0.0-1',
+				installedVersion: mockOpenFlux.binaryPresent ? '1.0.0-1' : undefined,
+				updateAvailable: false,
+				installing: false,
+				routerClock: mockRouterClock(),
+			});
+			return;
+		}
 		// Обфускаторы: «инстансы» подсистемы — туннели этой разновидности.
 		if (subsystem === 'obf-phobos' || subsystem === 'obf-clusterm') {
 			const flavor = subsystem === 'obf-phobos' ? 'phobos' : 'clusterm';
@@ -8892,7 +9010,7 @@ const server = http.createServer(async (req, res) => {
 		}
 		sendBackendError(
 			res,
-			`subsystem "${subsystem}": ожидали wdtt|freeturn|obf-phobos|obf-clusterm`,
+			`subsystem "${subsystem}": ожидали wdtt|freeturn|openflux|obf-phobos|obf-clusterm`,
 			'BAD_REQUEST',
 		);
 		return;
@@ -8911,7 +9029,12 @@ const server = http.createServer(async (req, res) => {
 				sendData(res, { message: 'freeturn installed' });
 				return;
 			}
-			sendBackendError(res, `subsystem "${body.subsystem}": ожидали wdtt|freeturn`, 'BAD_REQUEST');
+			if (body.subsystem === 'openflux') {
+				mockOpenFlux.binaryPresent = true;
+				sendData(res, { message: 'openflux installed' });
+				return;
+			}
+			sendBackendError(res, `subsystem "${body.subsystem}": ожидали wdtt|freeturn|openflux`, 'BAD_REQUEST');
 		} catch (e) {
 			sendInvalidRequest(res, e);
 		}
@@ -8991,6 +9114,19 @@ const server = http.createServer(async (req, res) => {
 			sendData(res, { profile: decoded });
 		} catch (e) {
 			sendInvalidRequest(res, e);
+		}
+		return;
+	}
+
+	if (req.method === 'POST' && path === '/proxyrt/openflux/link/decode') {
+		try {
+			const body = await readJsonBody(req);
+			const raw = String(body.link ?? '').trim().replace(/^openflux:\/\//, '');
+			const json = Buffer.from(raw, 'base64').toString('utf8');
+			const payload = JSON.parse(json);
+			sendData(res, { v: payload.v ?? 1, ...payload });
+		} catch (e) {
+			sendBackendError(res, 'не удалось разобрать openflux:// ссылку', 'OPENFLUX_LINK_DECODE_FAILED');
 		}
 		return;
 	}
@@ -9153,6 +9289,40 @@ const server = http.createServer(async (req, res) => {
 					// Ссылку эта ручка НЕ запоминает — как и ftlink.BuildLink: её
 					// хранит внесение в список (#919, F370).
 					sendData(res, { link, peer, ...(opts.clientId ? { clientId: opts.clientId } : {}) });
+					return;
+				}
+				if (kind === 'openflux-server') {
+					const cfg = inst.config;
+					const payload = {
+						v: 1,
+						role: 'client',
+						transport: cfg.transport,
+						...(cfg.url ? { url: cfg.url } : {}),
+						...(cfg.codec && cfg.codec !== 'batched' ? { codec: cfg.codec } : {}),
+						...(cfg.encryptionKey ? { key: cfg.encryptionKey } : {}),
+					};
+					const b64 = Buffer.from(JSON.stringify(payload))
+						.toString('base64')
+						.replace(/\+/g, '-')
+						.replace(/\//g, '_');
+					const command = [
+						'openflux --role=client --inbound=socks5',
+						`--transport=${cfg.transport}`,
+						cfg.url ? `--url=${cfg.url}` : '',
+						cfg.codec === 'legacy' ? '--codec=legacy' : '',
+						cfg.encryptionKey ? `--encryption-key=${cfg.encryptionKey}` : '',
+					]
+						.filter(Boolean)
+						.join(' ');
+					sendData(res, {
+						link: `openflux://${b64}`,
+						transport: cfg.transport,
+						url: cfg.url ?? '',
+						mode: cfg.mode === 'l3' ? 'l3' : 'l4',
+						codec: cfg.codec ?? 'batched',
+						encrypted: !!cfg.encryptionKey,
+						clientCommand: command,
+					});
 					return;
 				}
 				sendBackendError(res, `инстанс ${key}: ссылки для роли ${kind} не выдаются`, 'BAD_REQUEST');

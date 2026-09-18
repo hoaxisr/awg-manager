@@ -1,7 +1,7 @@
 import type { Awg3Tunnel } from '$lib/types';
-import { WdttClient } from './clientWdtt';
+import { OpenFluxClient } from './clientOpenFlux';
 
-export class Awg3Client extends WdttClient {
+export class Awg3Client extends OpenFluxClient {
 	// ─────────────────────────────────────────────
 	// #region AWG3 imported endpoints
 	// ─────────────────────────────────────────────

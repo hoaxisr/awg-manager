@@ -311,6 +311,14 @@ describe('commitShareWizard: WDTT — ссылку получает заведё
 		connect: '',
 		obfProfile: 'none' as const,
 		obfKey: '',
+		transport: 'yandex',
+		url: '',
+		mode: 'l4',
+		localIp: '',
+		encryptionKey: '',
+		codec: 'batched',
+		dns: '',
+		singboxRoute: false,
 	};
 	const client = { name: 'Ноутбук Пети', password: '', vkHash: '', clientId: '', allow: true };
 
@@ -390,6 +398,14 @@ describe('commitShareWizard: FreeTurn — выданная ссылка доез
 		connect: '127.0.0.1:51820',
 		obfProfile: 'none' as const,
 		obfKey: '',
+		transport: 'yandex',
+		url: '',
+		mode: 'l4',
+		localIp: '',
+		encryptionKey: '',
+		codec: 'batched',
+		dns: '',
+		singboxRoute: false,
 	};
 	const client = {
 		name: 'Второй роутер',

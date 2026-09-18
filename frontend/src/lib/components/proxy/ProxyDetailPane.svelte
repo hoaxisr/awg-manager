@@ -7,6 +7,8 @@
 		AccessPolicy,
 		FreeTurnConfig,
 		FreeTurnStatus,
+		OpenFluxConfig,
+		OpenFluxStatus,
 		TunnelListItem,
 		WdttConfig,
 		WdttStatus,
@@ -32,8 +34,10 @@
 		shareKey: string | null;
 		wdttConfig: WdttConfig | null;
 		ftConfig: FreeTurnConfig | null;
+		ofConfig: OpenFluxConfig | null;
 		wdttStatus: WdttStatus | null;
 		ftStatus: FreeTurnStatus | null;
+		ofStatus: OpenFluxStatus | null;
 		policies: AccessPolicy[];
 		tunnels: TunnelListItem[];
 		busyKeys: string[];
@@ -47,7 +51,7 @@
 		onconfigs: () => Promise<void>;
 		onreload: () => Promise<void>;
 		onexitdone: (protocol: ExitProtocol, id: string) => void;
-		onsharedone: (protocol: ExitProtocol, id: string) => void;
+		onsharedone: (protocol: 'wdtt' | 'freeturn' | 'openflux', id: string) => void;
 	}
 
 	let {
@@ -58,8 +62,10 @@
 		shareKey,
 		wdttConfig,
 		ftConfig,
+		ofConfig,
 		wdttStatus,
 		ftStatus,
+		ofStatus,
 		policies,
 		tunnels,
 		busyKeys,
@@ -101,10 +107,17 @@
 			? ftConfig?.servers.find((s) => s.id === shareRow.id)?.config
 			: undefined,
 	);
+	const shareOfServer = $derived(
+		shareRow?.protocol === 'openflux'
+			? ofConfig?.servers.find((s) => s.id === shareRow.id)?.config
+			: undefined,
+	);
 	const shareStatus = $derived(
 		shareRow?.protocol === 'wdtt'
 			? wdttStatus?.servers?.find((s) => s.id === shareRow.id)?.status
-			: ftStatus?.servers?.find((s) => s.id === shareRow?.id)?.status,
+			: shareRow?.protocol === 'openflux'
+				? ofStatus?.servers?.find((s) => s.id === shareRow?.id)?.status
+				: ftStatus?.servers?.find((s) => s.id === shareRow?.id)?.status,
 	);
 
 	const exitLife = $derived({
@@ -186,7 +199,7 @@
 	 */
 	async function saveShare(config: ShareConfig): Promise<ShareConfig | null> {
 		const row = shareRow;
-		const inst = shareInstance(row, wdttConfig, ftConfig);
+		const inst = shareInstance(row, wdttConfig, ftConfig, ofConfig);
 		if (!row || !inst) return null;
 		savingShare = true;
 		try {
@@ -235,6 +248,7 @@
 			row={shareWizard === 'new' ? null : shareRow}
 			wdttServer={shareWizard === 'new' ? undefined : shareWdttServer}
 			ftServer={shareWizard === 'new' ? undefined : shareFtServer}
+				ofServer={shareWizard === 'new' ? undefined : shareOfServer}
 			onclose={() => (shareWizard = null)}
 			onreload={onconfigs}
 			ondone={onsharedone}
@@ -248,7 +262,7 @@
 			status={exitStatus}
 			wdttClient={exitWdttClient}
 			ftClient={exitFtClient}
-			routerClock={wdttStatus?.routerClock ?? ftStatus?.routerClock}
+			routerClock={wdttStatus?.routerClock ?? ftStatus?.routerClock ?? ofStatus?.routerClock}
 			{policies}
 			{tunnels}
 			saving={savingExit}
@@ -268,7 +282,8 @@
 			status={shareStatus}
 			wdttServer={shareWdttServer}
 			ftServer={shareFtServer}
-			routerClock={wdttStatus?.routerClock ?? ftStatus?.routerClock}
+			ofServer={shareOfServer}
+			routerClock={wdttStatus?.routerClock ?? ftStatus?.routerClock ?? ofStatus?.routerClock}
 			saving={savingShare}
 			busy={busyKeys.includes(shareRow.key)}
 			onstart={() => shareRow && ontoggle(shareRow, true)}
