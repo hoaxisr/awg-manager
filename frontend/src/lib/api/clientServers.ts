@@ -116,7 +116,8 @@ export class ServersClient extends SystemClient {
 
 	async addSystemServerPeer(
 		serverId: string,
-		data: { description: string; tunnelIP: string }
+		// dns — резолвер пира для .conf (#933); пусто = LAN-адрес роутера.
+		data: { description: string; tunnelIP: string; dns?: string }
 	): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request(`/servers/${encodeURIComponent(serverId)}/peers`, {
 			method: 'POST',
@@ -132,6 +133,7 @@ export class ServersClient extends SystemClient {
 		data: {
 			description: string;
 			tunnelIP: string;
+			dns?: string;
 			signature?: { profile: string; i1: string; i2: string; i3: string; i4: string; i5: string };
 		}
 	): Promise<import('$lib/stores/servers').ServersSnapshot> {

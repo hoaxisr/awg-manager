@@ -315,6 +315,7 @@
 					onUnmark={unmarkServer}
 					ingressEnabled={ingressRefs.includes(`iface:${activeServer.interfaceName}`)}
 					onToggleIngress={handleToggleSystemIngress}
+					{routerIP}
 				/>
 				{/if}
 			</main>

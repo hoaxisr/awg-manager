@@ -6,19 +6,26 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
+	import { FieldHint, FormToggle } from '$lib/components/ui';
+	import { routerDnsHint } from './routerDnsHint';
 
 	interface Props {
 		open: boolean;
 		serverId: string;
 		peer: WireguardServerPeer;
+		/** LAN-адрес роутера для тумблера «DNS роутера»; пусто — тумблера нет. */
+		routerIP?: string;
 		onclose: () => void;
 		onUpdated: () => void;
 	}
 
-	let { open = $bindable(false), serverId, peer, onclose, onUpdated }: Props = $props();
+	let { open = $bindable(false), serverId, peer, routerIP = '', onclose, onUpdated }: Props = $props();
 
 	let description = $state('');
 	let tunnelIP = $state('');
+	// Резолвер пира (#933): пусто — LAN-адрес роутера, как решает бэкенд.
+	let dns = $state('');
+	let useRouterDNS = $state(false);
 	let saving = $state(false);
 	let wasOpen = $state(false);
 	let sigProfile = $state<ProtocolKey | ''>('');
@@ -50,6 +57,8 @@
 		if (open && !wasOpen) {
 			description = peer.description;
 			tunnelIP = peerTunnelIP(peer);
+			dns = peer.dns ?? '';
+			useRouterDNS = routerIP !== '' && dns === routerIP;
 			sigProfile = peerProfile();
 			sigPackets = peerPackets();
 		}
@@ -72,6 +81,7 @@
 			const fresh = await api.updateSystemServerPeer(serverId, peer.publicKey, {
 				description,
 				tunnelIP,
+				dns,
 				signature: sigDirty ? { profile: sigProfile, ...sigPackets } : undefined,
 			});
 			servers.applyMutationResponse(fresh);
@@ -95,6 +105,32 @@
 		<div class="form-group">
 			<label class="label" for="esp-ip">Tunnel IP (CIDR)</label>
 			<input type="text" id="esp-ip" class="input" bind:value={tunnelIP} />
+		</div>
+		<div class="form-group">
+			<label class="label" for="esp-dns">DNS серверы</label>
+			<input
+				type="text"
+				id="esp-dns"
+				class="input"
+				bind:value={dns}
+				placeholder="192.168.1.1"
+				disabled={useRouterDNS}
+			/>
+			{#if routerIP}
+				<div class="toggle-row">
+					<span class="toggle-label">
+						DNS роутера ({routerIP})<FieldHint text={routerDnsHint} ariaLabel="Подсказка: DNS роутера" />
+					</span>
+					<FormToggle
+						bind:checked={useRouterDNS}
+						onchange={(val) => {
+							dns = val ? routerIP : '';
+						}}
+						size="sm"
+					/>
+				</div>
+			{/if}
+			<span class="hint-text">Пусто — DNS роутера</span>
 		</div>
 		<!-- Сигнатуре негде жить без локального ключа клиента: пир заведён вне
 		     AWG Manager, и бэкенд такую правку отвергает (NO_PEER_SECRET). -->
@@ -141,6 +177,23 @@
 		border: 1px solid var(--border);
 		border-radius: 6px;
 		color: var(--text-primary);
+	}
+
+	.toggle-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+	}
+
+	.toggle-label {
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
+	}
+
+	.hint-text {
+		font-size: 0.75rem;
+		color: var(--text-muted, #94a3b8);
 	}
 
 	.input:focus {

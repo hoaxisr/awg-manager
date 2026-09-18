@@ -26,11 +26,12 @@ function basePeer(over: Partial<WireguardServerPeer> = {}): WireguardServerPeer 
 	};
 }
 
-function openModal(peer: WireguardServerPeer) {
+function openModal(peer: WireguardServerPeer, over: { routerIP?: string } = {}) {
 	return render(EditSystemPeerModal, {
 		open: true,
 		serverId: 'Wireguard0',
 		peer,
+		routerIP: over.routerIP ?? '',
 		onclose: vi.fn(),
 		onUpdated: vi.fn()
 	});
@@ -56,6 +57,7 @@ describe('EditSystemPeerModal', () => {
 		expect(api.updateSystemServerPeer).toHaveBeenCalledWith('Wireguard0', 'pk', {
 			description: 'client',
 			tunnelIP: '10.9.0.2/32',
+			dns: '',
 			signature: { profile: 'quic_initial', i1: '<b 0xc0ffee>', i2: '', i3: '', i4: '', i5: '' }
 		});
 	});
@@ -72,6 +74,7 @@ describe('EditSystemPeerModal', () => {
 		expect(api.updateSystemServerPeer).toHaveBeenCalledWith('Wireguard0', 'pk', {
 			description: 'laptop',
 			tunnelIP: '10.9.0.2/32',
+			dns: '',
 			signature: undefined
 		});
 	});
@@ -85,5 +88,28 @@ describe('EditSystemPeerModal', () => {
 	it('блокирует сохранение при сигнатуре сверх лимита', () => {
 		const { getByText } = openModal(basePeer({ i1: 'x'.repeat(3501) }));
 		expect((getByText('Сохранить').closest('button') as HTMLButtonElement).disabled).toBe(true);
+	});
+});
+
+// Резолвер пира (#933): значение доезжает в тело правки, а тумблер «DNS
+// роутера» подставляет LAN-адрес. Без этого поле было бы декоративным.
+describe('EditSystemPeerModal: DNS пира', () => {
+	it('отправляет значение поля и предзаполняется из пира', async () => {
+		vi.mocked(api.updateSystemServerPeer).mockResolvedValue(
+			{} as Awaited<ReturnType<typeof api.updateSystemServerPeer>>
+		);
+		const { getByText, getByLabelText } = openModal(basePeer({ dns: '9.9.9.9' }), {
+			routerIP: '192.168.1.1'
+		});
+
+		expect((getByLabelText('DNS серверы') as HTMLInputElement).value).toBe('9.9.9.9');
+		await fireEvent.input(getByLabelText('DNS серверы'), { target: { value: '1.0.0.1' } });
+		await fireEvent.click(getByText('Сохранить'));
+
+		expect(api.updateSystemServerPeer).toHaveBeenCalledWith(
+			'Wireguard0',
+			'pk',
+			expect.objectContaining({ dns: '1.0.0.1' })
+		);
 	});
 });

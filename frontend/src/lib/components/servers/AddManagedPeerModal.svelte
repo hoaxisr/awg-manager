@@ -94,7 +94,7 @@
 		</div>
 		<div class="form-group">
 			<label class="label" for="amp-dns">DNS серверы</label>
-			<input type="text" id="amp-dns" class="input" bind:value={dns} placeholder="1.1.1.1, 8.8.8.8" disabled={useRouterDNS} />
+			<input type="text" id="amp-dns" class="input" bind:value={dns} placeholder="192.168.1.1" disabled={useRouterDNS} />
 			{#if routerIP}
 				<div class="toggle-row">
 					<span class="toggle-label">DNS роутера ({routerIP})<FieldHint text={routerDnsHint} ariaLabel="Подсказка: DNS роутера" /></span>
@@ -104,7 +104,7 @@
 			{#if dnsError}
 				<span class="field-hint is-error">{dnsError}</span>
 			{:else}
-				<span class="hint-text">По умолчанию: 1.1.1.1, 8.8.8.8</span>
+				<span class="hint-text">Пусто — DNS роутера</span>
 			{/if}
 		</div>
 	</div>

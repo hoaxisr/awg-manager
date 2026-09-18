@@ -53,6 +53,8 @@ export interface WireguardServerPeer {
 	i4?: string;
 	i5?: string;
 	signatureProfile?: string;
+	/** Резолвер пира для .conf (#933). Пусто — бэкенд подставит DNS роутера. */
+	dns?: string;
 }
 
 export interface WireguardServerConfig {

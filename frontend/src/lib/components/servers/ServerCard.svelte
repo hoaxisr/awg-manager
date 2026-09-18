@@ -37,6 +37,8 @@
 		onUnmark?: (id: string) => void;
 		ingressEnabled?: boolean;
 		onToggleIngress?: (interfaceName: string, enabled: boolean) => Promise<void>;
+		/** LAN-адрес роутера — для тумблера «DNS роутера» в модалках пира. */
+		routerIP?: string;
 	}
 
 	let {
@@ -45,6 +47,7 @@
 		onUnmark,
 		ingressEnabled = false,
 		onToggleIngress = async () => {},
+		routerIP = '',
 	}: Props = $props();
 
 	let isBuiltIn = $derived(server.builtIn ?? server.description === 'Wireguard VPN Server');
@@ -516,6 +519,7 @@
 	bind:open={addPeerOpen}
 	serverId={server.id}
 	{server}
+	{routerIP}
 	onclose={() => (addPeerOpen = false)}
 	onAdded={() => servers.invalidate()}
 />
@@ -525,6 +529,7 @@
 		bind:open={editPeerOpen}
 		serverId={server.id}
 		peer={selectedPeer}
+		{routerIP}
 		onclose={() => { editPeerOpen = false; selectedPeer = null; }}
 		onUpdated={() => servers.invalidate()}
 	/>
