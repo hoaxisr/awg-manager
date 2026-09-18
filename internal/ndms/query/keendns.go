@@ -23,6 +23,24 @@ type KeenDNSInfo struct {
 	// статической записи у ndnproxy нет, и это единственный источник адреса
 	// для обхода пресета keendns.
 	Address string `json:"address"`
+	// Access — режим доступа по имени. Значение `direct` означает прямой
+	// доступ к белому статическому адресу роутера; ЛЮБОЕ другое значение —
+	// доступ через прокси NDMS, который проксирует HTTP, а не произвольный
+	// порт. Поэтому имя годится как адрес туннеля или ссылки ТОЛЬКО при
+	// `direct` (F389, F392).
+	Access string `json:"access"`
+}
+
+// KeenDNSAccessDirect — единственное значение Access, при котором по имени
+// доступен произвольный порт.
+const KeenDNSAccessDirect = "direct"
+
+// DirectAccess — годится ли имя как адрес для туннеля или ссылки. Пустой info
+// и любой не-direct режим дают false: ошибка в эту сторону оставляет
+// измеренный IP (рабочий), в обратную — молча нерабочую конфигурацию.
+func (i *KeenDNSInfo) DirectAccess() bool {
+	return i != nil && strings.TrimSpace(i.Domain) != "" &&
+		strings.TrimSpace(i.Access) == KeenDNSAccessDirect
 }
 
 // KeenDNSStore caches KeenDNS status from NDMS.
@@ -104,6 +122,7 @@ func parseKeenDNS(raw []byte) *KeenDNSInfo {
 		Booked  string `json:"booked"`
 		Domain  string `json:"domain"`
 		Address string `json:"address"`
+		Access  string `json:"access"`
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return nil
@@ -117,5 +136,6 @@ func parseKeenDNS(raw []byte) *KeenDNSInfo {
 		Domain:  booked + "." + domain,
 		Enabled: true,
 		Address: strings.TrimSpace(v.Address),
+		Access:  strings.TrimSpace(v.Access),
 	}
 }

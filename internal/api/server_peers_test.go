@@ -425,10 +425,14 @@ func TestServersHandler_UpdateServerPeer_SignatureWithoutSecret(t *testing.T) {
 
 // newServerConfHarness — минимальный обработчик для прямых проверок сборщика
 // .conf: из RCI нужен только снимок ASC интерфейса.
-func newServerConfHarness(t *testing.T, ascJSON string) *ServersHandler {
+func newServerConfHarness(t *testing.T, ascJSON string, ndnsJSON ...string) *ServersHandler {
 	t.Helper()
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/rc/interface/"+harnessServerID+"/wireguard/asc", ascJSON)
+	// KeenDNS по умолчанию не настроен: Endpoint собирается по WAN.
+	if len(ndnsJSON) > 0 {
+		fg.SetRaw("/show/ndns", []byte(ndnsJSON[0]))
+	}
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	store := storage.NewSettingsStore(t.TempDir())
 	if _, err := store.Load(); err != nil {
@@ -593,5 +597,36 @@ func TestServersHandler_UpdateServerPeer_DNSSurvivesDescriptionEdit(t *testing.T
 	sec, _ := store.GetServerPeerSecret(harnessServerID, peerFixturePubKey)
 	if sec.DNS != "9.9.9.9" || sec.Description != "laptop" {
 		t.Fatalf("секрет = %+v", sec)
+	}
+}
+
+// Имя KeenDNS годится Endpoint'ом ТОЛЬКО при прямом доступе: в прочих режимах
+// оно ведёт на прокси NDMS, который проксирует HTTP, а не порт WireGuard, —
+// конфигурация выглядит правильной и не подключается (F392).
+func TestServersHandler_ResolveServerEndpoint_KeenDNSOnlyWhenDirect(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ndns string
+		want string
+	}{
+		{"прямой доступ — имя", `{"booked":"router","domain":"keenetic.link","access":"direct"}`, "router.keenetic.link"},
+		{"через прокси — не имя", `{"booked":"router","domain":"keenetic.link","access":"cloud"}`, ""},
+		{"режим не пришёл — не имя", `{"booked":"router","domain":"keenetic.link"}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newServerConfHarness(t, `{"jc":"0"}`, tc.ndns)
+			got, err := h.resolveServerEndpoint(context.Background(), harnessServerID)
+			if tc.want != "" {
+				if err != nil || got != tc.want {
+					t.Fatalf("endpoint=%q err=%v, want %q", got, err, tc.want)
+				}
+				return
+			}
+			// Не-direct обязан уйти на измеренный WAN: в тесте его взять
+			// неоткуда, поэтому важно лишь одно — имя НЕ подставлено.
+			if got == "router.keenetic.link" {
+				t.Fatalf("имя подставлено при access=%q", tc.ndns)
+			}
+		})
 	}
 }

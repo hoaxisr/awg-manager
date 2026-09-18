@@ -592,8 +592,12 @@ func (h *ServersHandler) resolveServerEndpoint(ctx context.Context, serverID str
 	if meta, ok := h.settings.GetServerInterfaceMeta(serverID); ok {
 		storedEndpoint = meta.Endpoint
 	}
+	// Имя KeenDNS годится Endpoint'ом ТОЛЬКО при прямом доступе: в остальных
+	// режимах оно ведёт на прокси NDMS, который проксирует HTTP, а не порт
+	// WireGuard-сервера. Конфигурация с таким Endpoint выглядит правильной и
+	// не подключается, а узнаёт об этом клиент, не владелец (F392).
 	if h.queries != nil && h.queries.KeenDNS != nil {
-		if info, err := h.queries.KeenDNS.Get(ctx); err == nil && info != nil {
+		if info, err := h.queries.KeenDNS.Get(ctx); err == nil && info.DirectAccess() {
 			keenDNSDomain = info.Domain
 		}
 	}

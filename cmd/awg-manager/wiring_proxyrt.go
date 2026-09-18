@@ -562,6 +562,19 @@ func (a *app) proxyTunnels() api.TunnelService {
 func (a *app) proxyExternalIP(ctx context.Context) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	// Имя KeenDNS предпочитается измеренному адресу — ровно так же, как в
+	// Endpoint'е клиентских .conf (internal/api/server_peers.go), иначе на один
+	// вопрос «какой у нас внешний адрес» панель отвечала бы по-разному в
+	// соседних окнах (F389). Имени оно и лучше: переживает смену адреса у
+	// провайдера, а вписанный в ссылку IP — нет.
+	//
+	// ТОЛЬКО при прямом доступе: в прочих режимах имя ведёт на прокси NDMS, а
+	// тот проксирует HTTP, не произвольный порт раздачи.
+	if a.ndmsQueries != nil && a.ndmsQueries.KeenDNS != nil {
+		if info, err := a.ndmsQueries.KeenDNS.Get(ctx); err == nil && info.DirectAccess() {
+			return info.Domain, nil
+		}
+	}
 	var fallback testing.WANIPFallback
 	var wanKernel string
 	if a.ndmsQueries != nil {

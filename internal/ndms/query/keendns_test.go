@@ -105,3 +105,34 @@ func TestKeenDNSFetch_NotFoundBacksOffAndHeals(t *testing.T) {
 		t.Errorf("info=%v — бэкофф не истёк, подсистема заперта навсегда", info)
 	}
 }
+
+// Режим доступа: имя годится как адрес туннеля или ссылки ТОЛЬКО при прямом
+// доступе (F389, F392). Полярность fail-safe — всё, что не `direct`, включая
+// незнакомое и пустое, значит «через прокси NDMS, порт не пройдёт».
+func TestKeenDNS_AccessGate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{"прямой доступ", `{"booked":"example","domain":"crazedns.ru","access":"direct"}`, true},
+		{"через прокси", `{"booked":"example","domain":"crazedns.ru","access":"cloud"}`, false},
+		{"режим не пришёл", `{"booked":"example","domain":"crazedns.ru"}`, false},
+		{"незнакомое значение", `{"booked":"example","domain":"crazedns.ru","access":"whatever"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			info := parseKeenDNS([]byte(tc.raw))
+			if info == nil {
+				t.Fatal("разбор вернул nil")
+			}
+			if got := info.DirectAccess(); got != tc.want {
+				t.Errorf("DirectAccess() = %v, want %v (access=%q)", got, tc.want, info.Access)
+			}
+		})
+	}
+	// nil-приёмник — тот же ответ: вызывающий не обязан проверять сам.
+	var absent *KeenDNSInfo
+	if absent.DirectAccess() {
+		t.Error("у отсутствующего KeenDNS прямого доступа быть не может")
+	}
+}
