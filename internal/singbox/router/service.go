@@ -654,9 +654,36 @@ func (s *ServiceImpl) routerConfigPath() string {
 	return filepath.Join(s.deps.Singbox.ConfigDir(), "20-router.json")
 }
 
+// ingressLinkNames — множество kernel-устройств, существующих ПРЯМО СЕЙЧАС.
+// Один ReadDir на резолв, а не `ip link show` на каждую ссылку (так делает
+// соседний fakeIPLinkPresent): резолв идёт каждым тиком реконсиля, и N
+// fork+exec на MIPS здесь не нужны. Seam var — ради тестов.
+var ingressLinkNames = func() (map[string]bool, error) {
+	ents, err := os.ReadDir("/sys/class/net")
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(ents))
+	for _, e := range ents {
+		out[e.Name()] = true
+	}
+	return out, nil
+}
+
 func (s *ServiceImpl) resolveIngressInterfaces(ctx context.Context, refs []string) []string {
 	out := make([]string, 0, len(refs))
 	seen := map[string]bool{}
+	// Ссылка живёт в настройках, пока пользователь её не снял, а интерфейс под
+	// ней может исчезнуть — туннель удалён, номер OpkgTun переехал. Имя при
+	// этом остаётся валидным с виду, и заворот `ip rule iif <имя>` ставился для
+	// мёртвых устройств вечно: ядро помечает такое правило `[detached]`, а при
+	// появлении ОДНОИМЁННОГО устройства переподцепляет — то есть чужой трафик
+	// уехал бы в нашу таблицу (F381, снято с роутера репортёра 18.09:
+	// `iif opkgtun17 [detached]` и `iif opkgtun18 [detached]`).
+	//
+	// Отказ чтения — «не знаем»: ссылки остаются, иначе икота на /sys снимала
+	// бы заворот у живых интерфейсов.
+	links, linksErr := ingressLinkNames()
 	for _, ref := range refs {
 		var name string
 		switch {
@@ -669,6 +696,11 @@ func (s *ServiceImpl) resolveIngressInterfaces(ctx context.Context, refs []strin
 		}
 		if name == "" {
 			s.appLog.Warn("resolve-ingress", "", fmt.Sprintf("ingress ref %q не резолвится (сервер не поднят / кэш не готов), пропущен", ref))
+			continue
+		}
+		if linksErr == nil && !links[name] {
+			s.appLog.Warn("resolve-ingress", name,
+				fmt.Sprintf("ingress-ссылка %q указывает на несуществующее устройство — пропущена", ref))
 			continue
 		}
 		if seen[name] {

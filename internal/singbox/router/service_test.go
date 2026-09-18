@@ -2115,6 +2115,7 @@ type fakeIngressResolver struct{ m map[string]string }
 func (f fakeIngressResolver) Resolve(_ context.Context, ref string) string { return f.m[ref] }
 
 func TestResolveIngressInterfaces(t *testing.T) {
+	stubIngressLinks(t) // «не знаем» — отсев по /sys проверяет отдельный тест ниже
 	s := &ServiceImpl{deps: Deps{IngressResolver: fakeIngressResolver{m: map[string]string{
 		"managed:Wireguard3": "nwg3",
 		"managed:Wireguard9": "", // удалён/не поднят
@@ -2125,6 +2126,27 @@ func TestResolveIngressInterfaces(t *testing.T) {
 	want := []string{"nwg3", "nwg5"} // dead-ref пропущен, дубль убран
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+// Ссылка на исчезнувшее устройство отсеивается: правило `ip rule iif <имя>`
+// для мёртвого интерфейса ядро помечает `[detached]` и переподцепляет при
+// появлении ОДНОИМЁННОГО — то есть чужой трафик уехал бы в нашу таблицу (F381).
+// Отказ чтения /sys — «не знаем»: ссылки остаются все.
+func TestResolveIngressInterfaces_SkipsMissingDevices(t *testing.T) {
+	s := &ServiceImpl{deps: Deps{IngressResolver: fakeIngressResolver{m: map[string]string{
+		"managed:Wireguard3": "nwg3",
+	}}}}
+	refs := []string{"managed:Wireguard3", "iface:opkgtun17", "iface:nwg5"}
+
+	stubIngressLinks(t, "nwg3", "nwg5")
+	if got, want := s.resolveIngressInterfaces(context.Background(), refs), []string{"nwg3", "nwg5"}; !slices.Equal(got, want) {
+		t.Errorf("мёртвое устройство должно отсеиваться: got %v want %v", got, want)
+	}
+
+	stubIngressLinks(t)
+	if got, want := s.resolveIngressInterfaces(context.Background(), refs), []string{"nwg3", "opkgtun17", "nwg5"}; !slices.Equal(got, want) {
+		t.Errorf("на «не знаем» ссылки не отсеиваются: got %v want %v", got, want)
 	}
 }
 
@@ -2146,6 +2168,8 @@ func TestNormalizeSingboxRouterSettings_IngressRefs(t *testing.T) {
 
 func TestReconcile_IngressChangeTriggersInstall(t *testing.T) {
 	stubNoLANBridges(t)
+	stubIngressLinks(t) // отсев по /sys здесь не проверяется
+
 	restoreCalls := 0
 	var lastRestoreInput string
 	ipt := newStubIPTables(func(_ context.Context, input string) error {

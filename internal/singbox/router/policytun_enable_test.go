@@ -118,6 +118,9 @@ func newPolicyTunEnableHarness(t *testing.T, failAt string) *policyTunEnableHarn
 
 	// Carrier readiness → ready; the addr flush records into the same log.
 	stubTunReadyProbe(t, func(string) bool { return true })
+	// Отсев ingress-ссылок по /sys (F381) в этих тестах не проверяется —
+	// «не знаем», иначе фиктивные имена вроде nwg3 отсеивались бы машиной.
+	stubIngressLinks(t)
 	// Orphan-netdev presence read is host-only (`ip link show`); default absent.
 	stubLinkAbsent(t)
 	old := fakeIPAddrFlush

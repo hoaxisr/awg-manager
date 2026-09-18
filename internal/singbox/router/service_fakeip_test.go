@@ -1066,6 +1066,26 @@ func provisionForDisable(t *testing.T, h *fakeIPEnableHarness) {
 
 // stubLinkAbsent — умолчание обвязок: ТОЛЬКО шов присутствия netdev, без
 // подмены удаления. Без него `ip link show dev opkgtunN` уходит на ХОСТ.
+// stubIngressLinks подменяет чтение /sys/class/net, от которого зависит отсев
+// ingress-ссылок на исчезнувшие устройства (F381). Без имён — «не знаем»: набор
+// не читается, ссылки не отсеиваются, то есть поведение как до отсева. С
+// именами — ровно этот набор существует.
+func stubIngressLinks(t *testing.T, names ...string) {
+	t.Helper()
+	old := ingressLinkNames
+	ingressLinkNames = func() (map[string]bool, error) {
+		if names == nil {
+			return nil, errors.New("stub: /sys/class/net недоступен")
+		}
+		m := make(map[string]bool, len(names))
+		for _, n := range names {
+			m[n] = true
+		}
+		return m, nil
+	}
+	t.Cleanup(func() { ingressLinkNames = old })
+}
+
 func stubLinkAbsent(t *testing.T) {
 	t.Helper()
 	old := fakeIPLinkPresent
