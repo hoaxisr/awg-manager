@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -346,6 +347,13 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 // расхождения: `ip global` (без него интерфейс исчезает из выходов политики) и
 // припаркованный дефолт (v4/v6 раздельно — re-add только отсутствующего).
 //
+// У v4-дефолта конфигом проверка не заканчивается: запись в нём — кандидатура,
+// а не установленный маршрут, поэтому присутствующая запись дополнительно
+// сверяется с рантайм-таблицей политики (policyTunRouteInstalled). У v6 такой
+// сверки НЕТ: в наблюдении по #932 v6-маршрут уцелел, а механизм этой разницы
+// не установлен — рантайм-запрос разбирает только route4
+// (query/policy_marks.go), и симметрия потребовала бы route6 в нём.
+//
 // Кэш running-config (TTL 60 мин) инвалидируется ТОЛЬКО когда по кэшу состояние
 // нездорово: RCI на роутере медленный, а сброс кэша на каждом тике превратил бы
 // проверку в полноценный запрос конфига раз в 30 секунд. Нездоровым считается и
@@ -400,6 +408,10 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 		} else {
 			s.appLog.Info("policy-tun-reconcile", iface, "дефолт-маршрут пропал — переустановлен (drift-heal)")
 		}
+	} else if s.policyTunRouteInstalled(ctx, sr, iface, ndmsName) {
+		s.policyTunRouteStrikes = 0
+	} else {
+		s.reassertPolicyTunDefaultRoute(ctx, sr, iface, ndmsName)
 	}
 	if wantV6 && !v6 {
 		if e := s.deps.DefaultRoute.SetIPv6DefaultRoute(ctx, ndmsName); e != nil {
@@ -408,6 +420,95 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 			s.appLog.Info("policy-tun-reconcile", iface, "v6-дефолт пропал — переустановлен (drift-heal)")
 		}
 	}
+}
+
+// policyTunRouteInstalled сообщает, стоит ли дефолт НА САМОМ ДЕЛЕ в таблице
+// целевой политики. Запись `ip route default <iface>` в running-config этого не
+// доказывает: для v4 она означает КАНДИДАТУРУ, а не назначение (стенд
+// 2026-08-18), и после флапа интерфейса NDMS убирает маршрут из таблицы
+// политики, а запись в конфиге оставляет. Флап случается на каждом перезапуске
+// движка — при живом tun reload это Stop+Start, — и если наш интерфейс в
+// политике единственный разрешённый выход, её таблица остаётся вовсе без
+// дефолта: трафик членов упирается в blackhole-правило их марки. Проверка по
+// тексту конфига видела при этом полное здоровье, и режим висел мёртвым до
+// ручного выключения и включения (#932, снято с роутера репортёра 18.09).
+//
+// Источник — рантайм `/show/ip/policy`, тот же, откуда берутся марки перехвата.
+//
+// «Не знаем» = «стоит», и таких случаев три:
+//   - политика не выбрана. Семантика РАСХОДИТСЯ с соседним policyTunPermitted,
+//     где пустое имя значит «годится любая»: сказать, в чьей таблице обязан
+//     стоять маршрут, тут нечего, а лечить наугад — писать на флеш вслепую.
+//     Цена расхождения названа прямо: режим без выбранной политики этой
+//     починки не получает;
+//   - провайдера нет (вырожденная обвязка);
+//   - RCI отказал. Транзиентный сбой не равен «маршрут пропал».
+//
+// ЛОЖНЫЕ СРАБАТЫВАНИЯ ЗДЕСЬ НЕИЗБЕЖНЫ, и их обуздывает не этот предикат, а
+// ограничитель в reassertPolicyTunDefaultRoute: «дефолта через НАШ интерфейс
+// нет» истинно и там, где постановка бессильна, — выборы в политике выиграл
+// другой разрешённый выход (расстановку пользователя мы сознательно не двигаем,
+// см. ensurePolicyTunPermit), или у политики пустая либо невалидная марка, и
+// ListByDefaultInterface выбрасывает её ДО проверки маршрутов
+// (query/policy_marks.go).
+func (s *ServiceImpl) policyTunRouteInstalled(ctx context.Context, sr storage.SingboxRouterSettings, iface, ndmsName string) bool {
+	if sr.PolicyName == "" || s.deps.Policies == nil {
+		return true
+	}
+	exits, err := s.deps.Policies.ListPolicyExits(ctx, ndmsName)
+	if err != nil {
+		s.appLog.Warn("policy-tun-reconcile", iface, "выходы политик: "+err.Error())
+		return true
+	}
+	for _, e := range exits {
+		if e.Name == sr.PolicyName {
+			return true
+		}
+	}
+	return false
+}
+
+// policyTunRouteHealAttempts — на каком по счёту ПОДРЯД тике «маршрута нет»
+// ставить запись заново. Прямой аналог healDetachedTunAttempts: первый тик
+// лечит быстро, дальше реже, после последнего — молчим и ждём. Счётчик
+// сбрасывается, едва рантайм показал маршрут, поэтому настоящий инцидент (#932)
+// лечится с первой попытки и следующий такой же получит все три снова.
+//
+// Потолок обязателен, а не осторожничание: постановка идёт через save.Request()
+// (mutation.go) и RunningConfig.InvalidateAll (routes.go). Дебаунс сохранения —
+// секунды, тик — 30 с, значит коалесценции НЕТ: без потолка состояние, где
+// постановка бессильна, стоило бы одной записи startup-config и одного полного
+// чтения running-config каждые полминуты, круглосуточно.
+var policyTunRouteHealAttempts = [...]int{1, 3, 8}
+
+// reassertPolicyTunDefaultRoute возвращает дефолт в таблицу политики повторной
+// постановкой существующей записи: роутер отвечает «Renewed static route» и
+// ставит маршрут немедленно, снимать запись не требуется (проверено на живом
+// роутере 18.09).
+//
+// Гейт по carrier — первым: пока движок не поднялся, tun не кандидат, и
+// отсутствие маршрута ЗАКОНОМЕРНО. Постановка записи его не вернёт, а
+// перезапуск движка — работа healDetachedTun и watchdog'а, не наша. Счётчик при
+// этом обнуляется: тики мёртвого движка не должны съедать попытки, нужные после
+// его возврата.
+func (s *ServiceImpl) reassertPolicyTunDefaultRoute(ctx context.Context, sr storage.SingboxRouterSettings, iface, ndmsName string) {
+	if !tunReadyProbe(iface) {
+		s.policyTunRouteStrikes = 0
+		return
+	}
+	s.policyTunRouteStrikes++
+	if !slices.Contains(policyTunRouteHealAttempts[:], s.policyTunRouteStrikes) {
+		return
+	}
+	if e := s.deps.DefaultRoute.SetDefaultRoute(ctx, ndmsName); e != nil {
+		s.appLog.Warn("policy-tun-reconcile", iface, "re-assert default route: "+e.Error())
+		return
+	}
+	msg := "запись дефолта есть, а маршрута в таблице политики " + sr.PolicyName + " нет — переустановлен (drift-heal)"
+	if s.policyTunRouteStrikes == policyTunRouteHealAttempts[len(policyTunRouteHealAttempts)-1] {
+		msg += " (последняя попытка: дальше жду, пока маршрут появится сам)"
+	}
+	s.appLog.Warn("policy-tun-reconcile", iface, msg)
 }
 
 // policyTunInboundPresent сообщает, есть ли tun-инбаунд в applied-конфиге

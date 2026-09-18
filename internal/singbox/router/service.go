@@ -504,6 +504,13 @@ type ServiceImpl struct {
 	// сериализованного transitionMu.
 	tunDownStrikes int
 
+	// policyTunRouteStrikes — сколько тиков подряд рантайм NDMS не показывает
+	// дефолт через наш tun при живой записи в конфиге; по нему
+	// reassertPolicyTunDefaultRoute решает, ставить ли сейчас (см.
+	// policyTunRouteHealAttempts). Тот же владелец и та же сериализация, что у
+	// tunDownStrikes: только reconcile-тик под transitionMu.
+	policyTunRouteStrikes int
+
 	// appliedBlackhole — такой же снимок ВТОРОГО ресурса: fail-closed DROP,
 	// который reconcileInstalled поднимает, пока sing-box мёртв, а
 	// PREROUTING-джампы снесены. nil = блокировки нет. Ресурс отдельный от

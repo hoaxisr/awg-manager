@@ -39,6 +39,18 @@ func (l *callLog) idxOf(want string) int {
 
 func (l *callLog) has(want string) bool { return l.idxOf(want) >= 0 }
 
+// count — сколько раз вызов встретился: нужен там, где сторожится не факт
+// мутации, а её ЧИСЛО (ограничитель повторов).
+func (l *callLog) count(want string) int {
+	n := 0
+	for _, c := range l.calls {
+		if c == want {
+			n++
+		}
+	}
+	return n
+}
+
 // failAt names a single call (by its recorded label) that should return an
 // injected error; "" disables injection.
 type recOpkgTun struct {
