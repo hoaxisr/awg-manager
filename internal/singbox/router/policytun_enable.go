@@ -416,6 +416,11 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	if err = s.deps.DefaultRoute.SetDefaultRoute(ctx, ndmsName); err != nil {
 		return fmt.Errorf("enable policy-tun: set default route: %w", err)
 	}
+	// Жалобы на потерянный маршрут относились к ПРЕЖНЕМУ воплощению режима:
+	// дефолт только что поставлен заново. Выключение счётчик тоже сбрасывает —
+	// вместе эти два места закрывают и ручное off→on (лечение, которое мы сами
+	// советуем при #932), и полный re-provision из drift-heal.
+	s.policyTunRouteStrikes.Store(0)
 	push(func() {
 		if e := s.deps.DefaultRoute.RemoveDefaultRoute(rbCtx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-rollback", iface, "remove default route: "+e.Error())

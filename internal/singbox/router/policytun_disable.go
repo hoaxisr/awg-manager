@@ -31,6 +31,10 @@ import (
 //  6. persist Enabled=false — обязателен, это durable-истина выключения.
 func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Settings) error {
 	st, _ := opkgTunOwned(settings, statePolicyTun)
+	// Счётчик жалоб на маршрут — свойство ПОДНЯТОГО режима: в выключенном
+	// дефолта на tun нет и быть не должно. Сброс первым делом и на всех ветках
+	// выхода, иначе следующее включение стартовало бы с чужой историей.
+	s.policyTunRouteStrikes.Store(0)
 
 	// (0) Хук перехвата DNS сносим ПЕРВЫМ и ДО гарда «нет персиста». Две
 	// причины:

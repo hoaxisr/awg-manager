@@ -1333,6 +1333,11 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	var policyTunLines []string
 	policyTunNDMSName := ""
 	policyTunIfaceName := ""
+	// Снимок счётчика ОДИН на весь статус: между чтением для Active и чтением
+	// для issue лежат computeIssues и пробы iptables, и тик реконсиля успел бы
+	// в это окно. Расходящиеся чтения дали бы «не работает» без единого
+	// замечания — ровно ту слепоту, против которой issue и заведён.
+	policyTunRouteStrikes := s.policyTunRouteStrikes.Load()
 	if policyTunSt, ok := opkgTunOwned(settings, statePolicyTun); sr.RoutingMode == statePolicyTun &&
 		ok && policyTunSt.Provisioned {
 		policyTunNDMSName = tunNDMSName(policyTunSt.Index)
@@ -1375,7 +1380,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 				// здоровья ни было в тексте. Берём вывод последнего тика
 				// реконсиля, а не спрашиваем NDMS сами: статус опрашивают
 				// часто, а /show/ip/policy не кэшируется.
-				active = active && s.policyTunRouteStrikes.Load() == 0
+				active = active && policyTunRouteStrikes == 0
 			}
 		}
 	} else {
@@ -1518,8 +1523,9 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// permit сам, так что issue означает отказ RCI или правку мимо нас.
 	// Без строк running-config (dep не подключён / чтение упало) issue не
 	// собирается: «не знаем» ≠ «не разрешено».
-	if sr.Enabled && policyTunNDMSName != "" && len(policyTunLines) > 0 &&
-		!policyTunPermitted(policyTunLines, policyTunNDMSName, sr.PolicyName) {
+	policyTunUnbound := sr.Enabled && policyTunNDMSName != "" && len(policyTunLines) > 0 &&
+		!policyTunPermitted(policyTunLines, policyTunNDMSName, sr.PolicyName)
+	if policyTunUnbound {
 		where := "ни в одной политике доступа"
 		if sr.PolicyName != "" {
 			where = "в политике " + sr.PolicyName
@@ -1535,21 +1541,29 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// нет — режим мёртв молча (#932). Без этого issue пользователь видел
 	// «работает» и не имел способа отличить «панель уже переставляет» от
 	// «переставили трижды, не помогло»: счётчик даёт оба состояния.
-	if sr.Enabled && policyTunNDMSName != "" {
-		if strikes := s.policyTunRouteStrikes.Load(); strikes > 0 {
-			where := "целевой политики"
-			if sr.PolicyName != "" {
-				where = "политики " + sr.PolicyName
-			}
-			msg := fmt.Sprintf("%s объявлен дефолтом, но в таблице %s маршрута нет — "+
-				"трафик клиентов никуда не идёт; переустанавливаю", policyTunNDMSName, where)
-			if int(strikes) >= policyTunRouteHealAttempts[len(policyTunRouteHealAttempts)-1] {
-				msg = fmt.Sprintf("%s объявлен дефолтом, но в таблице %s маршрута нет — "+
-					"трафик клиентов никуда не идёт; переустановка не помогла, нужна проверка политики в NDMS",
-					policyTunNDMSName, where)
-			}
-			issues = append(issues, Issue{Severity: "error", Kind: issuePolicyTunRouteLost, Message: msg})
+	//
+	// Гейт по policyTunUnbound: без permit'а дефолта через наш интерфейс нет ПО
+	// ОПРЕДЕЛЕНИЮ, и оба замечания описывали бы одну причину — а чинится она
+	// разрешением в политике, о чём и говорит первое.
+	//
+	// Формулировка не обещает «трафик никуда не идёт»: предикат истинен и там,
+	// где выборы в политике выиграл другой её выход, — тогда трафик идёт, но
+	// мимо туннеля. Оба состояния одинаково означают «через sing-box не
+	// ходит», и текст говорит именно это.
+	if sr.Enabled && policyTunNDMSName != "" && !policyTunUnbound && policyTunRouteStrikes > 0 {
+		where := "целевой политики"
+		if sr.PolicyName != "" {
+			where = "политики " + sr.PolicyName
 		}
+		tail := "переустанавливаю"
+		// Строго больше: на последней разрешённой попытке постановка сделана
+		// В ЭТОМ ЖЕ тике, и её результат виден только на следующем.
+		if int(policyTunRouteStrikes) > policyTunRouteHealAttempts[len(policyTunRouteHealAttempts)-1] {
+			tail = "переустановка не помогла, проверьте порядок выходов в политике NDMS"
+		}
+		issues = append(issues, Issue{Severity: "error", Kind: issuePolicyTunRouteLost,
+			Message: fmt.Sprintf("в таблице %s нет дефолта через %s — трафик клиентов идёт мимо sing-box; %s",
+				where, policyTunNDMSName, tail)})
 	}
 	// policy-tun: имена интерфейса нужны пользователю ДО того, как режим станет
 	// active (по ним он ищет выход в политике), поэтому гейт — Enabled+

@@ -1402,6 +1402,10 @@ func TestGetStatus_PolicyTun(t *testing.T) {
 	// Счётчик — вывод последнего тика реконсиля; GetStatus сам NDMS не
 	// спрашивает (его опрашивают часто, а /show/ip/policy не кэшируется).
 	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	// Политика в СТОРЕ, а не только в sr: GetStatus читает настройки сам, и без
+	// неё проверялось бы состояние, которого продакшен не производит — при
+	// пустом PolicyName счётчик не растёт никогда.
+	h.withPolicy(t, "Policy0")
 	h.svc.policyTunRouteStrikes.Store(1)
 	stLost, err := h.svc.GetStatus(context.Background())
 	if err != nil {
@@ -1420,10 +1424,26 @@ func TestGetStatus_PolicyTun(t *testing.T) {
 	if !strings.Contains(lost.Message, "переустанавливаю") {
 		t.Errorf("пока попытки не исчерпаны, сообщение говорит что лечение идёт: %q", lost.Message)
 	}
+	// Сообщение обязано называть ОБА имени: без них пользователю негде искать.
+	if !strings.Contains(lost.Message, "OpkgTun0") || !strings.Contains(lost.Message, "Policy0") {
+		t.Errorf("сообщение должно называть интерфейс и политику: %q", lost.Message)
+	}
 
 	// Попытки исчерпаны — формулировка обязана меняться: «лечится» и «лечение
 	// не помогло» для пользователя разные миры.
+	// На последней РАЗРЕШЁННОЙ попытке постановка сделана в этом же тике, её
+	// результат виден только на следующем — сдаваться рано.
 	h.svc.policyTunRouteStrikes.Store(int64(policyTunRouteHealAttempts[len(policyTunRouteHealAttempts)-1]))
+	stLast, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if last := issueOfKind(stLast.Issues, issuePolicyTunRouteLost); last == nil ||
+		!strings.Contains(last.Message, "переустанавливаю") {
+		t.Errorf("на последней попытке рано объявлять неудачу: %+v", stLast.Issues)
+	}
+
+	h.svc.policyTunRouteStrikes.Store(int64(policyTunRouteHealAttempts[len(policyTunRouteHealAttempts)-1]) + 1)
 	stGaveUp, err := h.svc.GetStatus(context.Background())
 	if err != nil {
 		t.Fatalf("GetStatus: %v", err)
@@ -1449,7 +1469,32 @@ func TestGetStatus_PolicyTun(t *testing.T) {
 		t.Errorf("жалоб нет — issue не нужен: %+v", stOK.Issues)
 	}
 
+	// Интерфейс не разрешён в политике → дефолта через него нет ПО ОПРЕДЕЛЕНИЮ,
+	// и два замечания описывали бы одну причину. Остаётся то, которое говорит,
+	// что чинить.
+	h.svc.policyTunRouteStrikes.Store(1)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: []string{
+		"interface OpkgTun0", "    ip global 65500", "!",
+		"ip route default OpkgTun0",
+		"ipv6 route default OpkgTun0",
+	}}
+	stUnbound, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if issueOfKind(stUnbound.Issues, issuePolicyTunUnbound) == nil {
+		t.Fatalf("ожидался issue %q: %+v", issuePolicyTunUnbound, stUnbound.Issues)
+	}
+	if issueOfKind(stUnbound.Issues, issuePolicyTunRouteLost) != nil {
+		t.Errorf("при отсутствующем permit'е второе замечание — дубль причины: %+v", stUnbound.Issues)
+	}
+	h.svc.policyTunRouteStrikes.Store(0)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+
 	// Выключенный движок не светит ни одного policy-tun поля (урок PE-G).
+	// Счётчик при этом НЕНУЛЕВОЙ: гейт по Enabled обязан быть настоящим, а не
+	// держаться на том, что жалоб не осталось.
+	h.svc.policyTunRouteStrikes.Store(1)
 	all, _ := h.store.Load()
 	all.SingboxRouter.Enabled = false
 	if err := h.store.Update(func(cur *storage.Settings) error { *cur = *all; return nil }); err != nil {
@@ -1464,6 +1509,115 @@ func TestGetStatus_PolicyTun(t *testing.T) {
 	}
 	if issueOfKind(st3.Issues, issuePolicyTunUnbound) != nil {
 		t.Error("выключенный движок не должен ругаться на политику")
+	}
+	if issueOfKind(st3.Issues, issuePolicyTunRouteLost) != nil {
+		t.Error("выключенный движок не должен ругаться на маршрут")
+	}
+}
+
+// «Не знаем» (отказ RCI) счётчик НЕ трогает. Обнуление здесь стоило бы дважды:
+// статус мигал бы на каждом флапе RCI, а лестница попыток не набиралась бы
+// никогда — каждая вторая пропажа шла бы как первая, и постановка (а с ней
+// запись startup-config) повторялась бы вдвое чаще потолка.
+func TestReconcilePolicyTun_UnknownExitsKeepStrikes(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	pol := h.withPolicy(t, "Policy0")
+	sr := provisionPolicyTunForReconcile(t, h)
+	sr.PolicyName = "Policy0"
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	h.svc.deps.IPTables = (&ingressRecorder{natDump: "-P PREROUTING ACCEPT\n"}).tables()
+
+	// Тик с пропавшим маршрутом — счётчик пошёл.
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if got := h.svc.policyTunRouteStrikes.Load(); got != 1 {
+		t.Fatalf("после пропажи счётчик = %d, want 1", got)
+	}
+
+	// Следующий тик — RCI отказал. Ни роста, ни сброса.
+	pol.exitsErr = errors.New("injected: RCI")
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun (отказ RCI): %v", err)
+	}
+	if got := h.svc.policyTunRouteStrikes.Load(); got != 1 {
+		t.Errorf("на «не знаем» счётчик = %d, want 1 (замереть, а не сброситься)", got)
+	}
+}
+
+// Выключение и включение режима — то самое лечение, которое мы советуем при
+// #932. Оно обязано снимать жалобы: иначе пользователь, сделавший ровно то, что
+// сказано, видит в панели «переустановка не помогла».
+func TestPolicyTun_EnableDisableResetStrikes(t *testing.T) {
+	t.Run("выключение", func(t *testing.T) {
+		h := newPolicyTunEnableHarness(t, "")
+		provisionPolicyTunForReconcile(t, h)
+		h.svc.policyTunRouteStrikes.Store(8)
+		if err := h.svc.Disable(context.Background()); err != nil {
+			t.Fatalf("Disable: %v", err)
+		}
+		if got := h.svc.policyTunRouteStrikes.Load(); got != 0 {
+			t.Errorf("после выключения счётчик = %d, want 0", got)
+		}
+	})
+	t.Run("включение", func(t *testing.T) {
+		h := newPolicyTunEnableHarness(t, "")
+		h.svc.policyTunRouteStrikes.Store(8)
+		if err := h.svc.Enable(context.Background()); err != nil {
+			t.Fatalf("Enable: %v", err)
+		}
+		if got := h.svc.policyTunRouteStrikes.Load(); got != 0 {
+			t.Errorf("после включения счётчик = %d, want 0", got)
+		}
+	})
+}
+
+// Сквозная связка продюсера с потребителем: тик реконсиля НЕ находит маршрут в
+// рантайме → статус говорит «не работает» и объясняет. Без этого теста счётчик
+// в тестах всегда ставился руками, и мутация «carrier=0 больше не обнуляет
+// счётчик» оставалась зелёной.
+func TestReconcilePolicyTun_LostRouteSurfacesInStatus(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	h.svc.deps.XtDscpProbe = func(context.Context) bool { return false }
+	pol := h.withPolicy(t, "Policy0")
+	sr := provisionPolicyTunForReconcile(t, h)
+	sr.PolicyName = "Policy0"
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	h.svc.deps.IPTables = (&ingressRecorder{natDump: "-P PREROUTING ACCEPT\n"}).tables()
+
+	// Выходов нет — рантайм маршрута не показывает.
+	pol.exits = nil
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	h.svc.deps.IPTables = errProbeIPTables()
+	st, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st.Active {
+		t.Error("тик не нашёл маршрута — статус обязан сказать «не работает»")
+	}
+	if issueOfKind(st.Issues, issuePolicyTunRouteLost) == nil {
+		t.Errorf("ожидался issue %q: %+v", issuePolicyTunRouteLost, st.Issues)
+	}
+
+	// Маршрут вернулся → следующий тик снимает и поражение, и замечание.
+	pol.exits = []query.PolicyDefaultExit{{Name: "Policy0", Mark: "0xffffaaa"}}
+	h.svc.deps.IPTables = (&ingressRecorder{natDump: "-P PREROUTING ACCEPT\n"}).tables()
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun (маршрут вернулся): %v", err)
+	}
+	h.svc.deps.IPTables = errProbeIPTables()
+	st2, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if !st2.Active {
+		t.Error("маршрут вернулся — статус обязан это увидеть")
+	}
+	if issueOfKind(st2.Issues, issuePolicyTunRouteLost) != nil {
+		t.Errorf("маршрут вернулся — замечание обязано уйти: %+v", st2.Issues)
 	}
 }
 

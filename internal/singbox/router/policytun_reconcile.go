@@ -414,7 +414,13 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 		} else {
 			s.appLog.Info("policy-tun-reconcile", iface, "дефолт-маршрут пропал — переустановлен (drift-heal)")
 		}
-	} else if s.policyTunRouteInstalled(ctx, sr, iface, ndmsName) {
+	} else if installed, known := s.policyTunRouteInstalled(ctx, sr, iface, ndmsName); !known {
+		// «Не знаем» счётчик НЕ трогает — ни увеличивает, ни обнуляет.
+		// Обнуление здесь стоило бы дважды: статус мигал бы между «работает» и
+		// «сломано» на каждом флапе RCI, а лестница попыток {1,3,8} не
+		// набиралась бы никогда — каждая вторая пропажа считалась бы первой, и
+		// постановка (а с ней запись startup-config) шла бы раз в минуту.
+	} else if installed {
 		s.policyTunRouteStrikes.Store(0)
 	} else {
 		s.reassertPolicyTunDefaultRoute(ctx, sr, iface, ndmsName)
@@ -441,14 +447,16 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 //
 // Источник — рантайм `/show/ip/policy`, тот же, откуда берутся марки перехвата.
 //
-// «Не знаем» = «стоит», и таких случаев три:
+// Второе значение — «знаем ли»: на нём вызывающий оставляет счётчик попыток
+// нетронутым. Случаев «не знаем» три:
 //   - политика не выбрана. Семантика РАСХОДИТСЯ с соседним policyTunPermitted,
 //     где пустое имя значит «годится любая»: сказать, в чьей таблице обязан
 //     стоять маршрут, тут нечего, а лечить наугад — писать на флеш вслепую.
 //     Цена расхождения названа прямо: режим без выбранной политики этой
 //     починки не получает;
 //   - провайдера нет (вырожденная обвязка);
-//   - RCI отказал. Транзиентный сбой не равен «маршрут пропал».
+//   - RCI отказал. Транзиентный сбой не равен «маршрут пропал» — но не равен и
+//     «маршрут на месте», поэтому счётчик замирает, а не сбрасывается.
 //
 // ЛОЖНЫЕ СРАБАТЫВАНИЯ ЗДЕСЬ НЕИЗБЕЖНЫ, и их обуздывает не этот предикат, а
 // ограничитель в reassertPolicyTunDefaultRoute: «дефолта через НАШ интерфейс
@@ -457,21 +465,21 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 // см. ensurePolicyTunPermit), или у политики пустая либо невалидная марка, и
 // ListByDefaultInterface выбрасывает её ДО проверки маршрутов
 // (query/policy_marks.go).
-func (s *ServiceImpl) policyTunRouteInstalled(ctx context.Context, sr storage.SingboxRouterSettings, iface, ndmsName string) bool {
+func (s *ServiceImpl) policyTunRouteInstalled(ctx context.Context, sr storage.SingboxRouterSettings, iface, ndmsName string) (installed, known bool) {
 	if sr.PolicyName == "" || s.deps.Policies == nil {
-		return true
+		return true, false
 	}
 	exits, err := s.deps.Policies.ListPolicyExits(ctx, ndmsName)
 	if err != nil {
 		s.appLog.Warn("policy-tun-reconcile", iface, "выходы политик: "+err.Error())
-		return true
+		return true, false
 	}
 	for _, e := range exits {
 		if e.Name == sr.PolicyName {
-			return true
+			return true, true
 		}
 	}
-	return false
+	return false, true
 }
 
 // policyTunRouteHealAttempts — на каком по счёту ПОДРЯД тике «маршрута нет»

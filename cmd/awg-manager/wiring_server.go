@@ -424,9 +424,14 @@ func (a *app) setupRouter() {
 	a.srv.SetSingboxRouterHandler(singboxRouterHandler)
 	// Атрибуция tproxy-потоков на странице соединений: connmark == PolicyMark
 	// активной sb-router-политики. Кэшируется внутри connections.Service (60s).
+	//
+	// Гейт по Enabled, а не по Active: марка политики от того, стоит ли дефолт
+	// в её таблице, не зависит, а Active с #932 учитывает и это. Иначе ровно в
+	// инциденте, который панель теперь показывает, отваливался бы соседний
+	// инструмент наблюдения — страница соединений теряла бы атрибуцию потоков.
 	a.srv.SetConnectionsMarkProvider(func(ctx context.Context) (string, bool) {
 		st, err := routerSvc.GetStatus(ctx)
-		if err != nil || !st.Active || st.PolicyMark == "" {
+		if err != nil || !st.Enabled || st.PolicyMark == "" {
 			return "", false
 		}
 		return st.PolicyMark, true
