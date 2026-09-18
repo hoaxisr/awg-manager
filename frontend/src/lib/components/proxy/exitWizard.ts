@@ -209,6 +209,10 @@ export function applyFtPayload(cfg: FreeTurnClientConfig, p: FreeTurnLinkPayload
 	// рендере argv, а ссылка без kcp обязана снять прежний профиль.
 	cfg.kcp = p.kcp;
 	if (p.dns === 'plain' || p.dns === 'doh' || p.dns === 'auto') cfg.dnsMode = p.dns;
+	// Список резолверов ехал в ссылке (`dnss`), но терялся здесь: клиент
+	// получал режим без адресов, то есть не то, что прислал автор ссылки.
+	// Сами мы эти поля не выдаём, принимать обязаны (#933).
+	if (p.dnss) cfg.dnsServers = p.dnss;
 }
 
 export function applyWdttFields(

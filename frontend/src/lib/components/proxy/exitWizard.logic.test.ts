@@ -6,12 +6,13 @@ import {
 	emptyFields,
 	exitStep1Ready,
 	exitStep2Ready,
+	applyFtPayload,
 	fieldsFromFtPayload,
 	fieldsFromWdttPayload,
 	policyPermitOrder,
 	proxyTunnelName,
 } from './exitWizard';
-import type { AccessPolicy } from '$lib/types';
+import type { AccessPolicy, FreeTurnClientConfig } from '$lib/types';
 
 describe('exitStep1Ready', () => {
 	it('WDTT требует и адрес, и пароль', () => {
@@ -154,5 +155,40 @@ describe('policyPermitOrder', () => {
 		expect(policyPermitOrder(policies, 'Policy0')).toBe(2);
 		expect(policyPermitOrder(policies, 'Policy1')).toBe(0);
 		expect(policyPermitOrder(policies, 'нет такой')).toBe(0);
+	});
+});
+
+// Резолвер из чужой ссылки: режим И список адресов. Список терялся — клиент
+// получал `dns-mode` без `dns-servers`, то есть не то, что прислал автор
+// ссылки. Сами мы эти поля не выдаём, принимать обязаны (#933).
+describe('applyFtPayload: DNS из ссылки', () => {
+	function baseCfg(): FreeTurnClientConfig {
+		return {
+			listen: '127.0.0.1:1080',
+			peer: '',
+			provider: 'vk',
+			links: '',
+			streams: 10,
+			transport: 'tcp',
+			mode: 'udp',
+			obfProfile: 'none',
+			streamsPerCred: 10,
+			dnsMode: 'auto',
+		} as FreeTurnClientConfig;
+	}
+
+	it('доезжают и режим, и список адресов', () => {
+		const cfg = baseCfg();
+		applyFtPayload(cfg, { v: 1, dns: 'plain', dnss: '1.0.0.1,9.9.9.9' });
+		expect(cfg.dnsMode).toBe('plain');
+		expect(cfg.dnsServers).toBe('1.0.0.1,9.9.9.9');
+	});
+
+	it('ссылка без DNS ничего не меняет', () => {
+		const cfg = baseCfg();
+		cfg.dnsServers = '8.8.4.4';
+		applyFtPayload(cfg, { v: 1 });
+		expect(cfg.dnsMode).toBe('auto');
+		expect(cfg.dnsServers).toBe('8.8.4.4');
 	});
 });
