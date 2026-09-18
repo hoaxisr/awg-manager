@@ -4,7 +4,8 @@
 # в который мы собираем конфигурацию: по ней тест ловит поля, исчезнувшие или
 # переименованные при бампе версии.
 #
-# Запускать ПОСЛЕ regen-embedded.sh, из чекаута форка на том же теге.
+# Зовётся из regen-embedded.sh; отдельно — только при ручной правке пина.
+# Нужен чекаут форка на том же теге, что и пин.
 #
 # Usage:
 #   ./scripts/regen-singbox-schema.sh [path-to-fork-checkout]
@@ -26,7 +27,14 @@ pinned="$(sed -n 's/^const RequiredVersion = "\(.*\)"$/\1/p' \
 # молча записанная схема из будущей версии хуже отсутствия схемы.
 forked="$(cd "$FORK" && git describe --tags 2>/dev/null || echo '?')"
 if [ "$pinned" != "$forked" ]; then
-    ahead="$(cd "$FORK" && git log --oneline "${pinned}..HEAD" 2>/dev/null || true)"
+    # "поверх тега" — это только когда тег реально предок HEAD: A..B перечисляет
+    # и коммиты РАЗОШЕДШЕЙСЯ ветки, а на них SCHEMA_ALLOW_AHEAD=1 записал бы
+    # схему от совсем другой версии под текущий пин.
+    if (cd "$FORK" && git merge-base --is-ancestor "$pinned" HEAD 2>/dev/null); then
+        ahead="$(cd "$FORK" && git log --oneline "${pinned}..HEAD" 2>/dev/null || true)"
+    else
+        ahead=""
+    fi
     if [ -z "$ahead" ] || [ "${SCHEMA_ALLOW_AHEAD:-}" != "1" ]; then
         echo "ОШИБКА: пин $pinned, форк на $forked — схема описала бы не тот бинарь." >&2
         if [ -n "$ahead" ]; then

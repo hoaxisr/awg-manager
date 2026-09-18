@@ -11,7 +11,9 @@
 #   SINGBOX_FORK_REPO   (default hoaxisr/amnezia-box)
 #   SINGBOX_URL_BASE    базовый URL для embedded.go (default — GitHub-релиз форка).
 #                       Для прод-зеркала: http://repo.hoaxisr.ru/singbox/<tag>
-# Requires: gh CLI authenticated, sha256sum, stat, python3, gofmt.
+#   SINGBOX_FORK_DIR    чекаут форка на теге <release-tag> — для схемы (см. конец).
+# Requires: gh CLI authenticated, sha256sum, stat, python3, gofmt,
+#           чекаут форка на теге <release-tag>.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -102,5 +104,19 @@ else
 fi
 
 gofmt -w "$EMBEDDED_GO"
+
+# Схема — контракт ТОГО ЖЕ бинаря, что и пин, поэтому едет вместе с ним.
+# Раздельная правка ловится только тестами internal/singbox/vlink, то есть уже
+# после того, как релизный тег поставлен (прогон 35374589257).
+if ! "$SCRIPT_DIR/regen-singbox-schema.sh"; then
+    echo "ОШИБКА: embedded.go обновлён до $VERSION, а схема — нет; тесты vlink упадут." >&2
+    echo "Почините чекаут форка и повторите:" >&2
+    echo "  SINGBOX_FORK_DIR=<checkout> ./scripts/regen-singbox-schema.sh" >&2
+    echo "Если упало на 'relocation target ...http2...connPool not defined' —" >&2
+    echo "это системный Go 1.27, повторите с GOTOOLCHAIN=go1.26.8." >&2
+    exit 1
+fi
+
 echo "Done. Diff:"
-git diff --stat "$EMBEDDED_GO" || true
+git diff --stat "$EMBEDDED_GO" \
+    "$PROJECT_ROOT/internal/singbox/vlink/testdata/singbox-schema.json" || true
