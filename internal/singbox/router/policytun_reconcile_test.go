@@ -1397,6 +1397,58 @@ func TestGetStatus_PolicyTun(t *testing.T) {
 		t.Errorf("сообщение должно называть интерфейс: %q", iss.Message)
 	}
 
+	// Рантайм NDMS маршрута не показывает (#932): статус обязан сказать
+	// «не работает» и объяснить, а не рапортовать здоровье по тексту конфига.
+	// Счётчик — вывод последнего тика реконсиля; GetStatus сам NDMS не
+	// спрашивает (его опрашивают часто, а /show/ip/policy не кэшируется).
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	h.svc.policyTunRouteStrikes.Store(1)
+	stLost, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if stLost.Active {
+		t.Error("маршрута в таблице политики нет — Active обязан быть false")
+	}
+	lost := issueOfKind(stLost.Issues, issuePolicyTunRouteLost)
+	if lost == nil {
+		t.Fatalf("ожидался issue %q: %+v", issuePolicyTunRouteLost, stLost.Issues)
+	}
+	if lost.Severity != "error" {
+		t.Errorf("severity = %q, want error: это полный отказ режима", lost.Severity)
+	}
+	if !strings.Contains(lost.Message, "переустанавливаю") {
+		t.Errorf("пока попытки не исчерпаны, сообщение говорит что лечение идёт: %q", lost.Message)
+	}
+
+	// Попытки исчерпаны — формулировка обязана меняться: «лечится» и «лечение
+	// не помогло» для пользователя разные миры.
+	h.svc.policyTunRouteStrikes.Store(int64(policyTunRouteHealAttempts[len(policyTunRouteHealAttempts)-1]))
+	stGaveUp, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	gaveUp := issueOfKind(stGaveUp.Issues, issuePolicyTunRouteLost)
+	if gaveUp == nil {
+		t.Fatalf("ожидался issue %q: %+v", issuePolicyTunRouteLost, stGaveUp.Issues)
+	}
+	if !strings.Contains(gaveUp.Message, "не помогла") {
+		t.Errorf("после исчерпания попыток сообщение должно это сказать: %q", gaveUp.Message)
+	}
+
+	// Жалоб нет → ни issue, ни поражения в статусе.
+	h.svc.policyTunRouteStrikes.Store(0)
+	stOK, err := h.svc.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if !stOK.Active {
+		t.Error("маршрут на месте — Active")
+	}
+	if issueOfKind(stOK.Issues, issuePolicyTunRouteLost) != nil {
+		t.Errorf("жалоб нет — issue не нужен: %+v", stOK.Issues)
+	}
+
 	// Выключенный движок не светит ни одного policy-tun поля (урок PE-G).
 	all, _ := h.store.Load()
 	all.SingboxRouter.Enabled = false

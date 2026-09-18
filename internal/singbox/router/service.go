@@ -507,9 +507,15 @@ type ServiceImpl struct {
 	// policyTunRouteStrikes — сколько тиков подряд рантайм NDMS не показывает
 	// дефолт через наш tun при живой записи в конфиге; по нему
 	// reassertPolicyTunDefaultRoute решает, ставить ли сейчас (см.
-	// policyTunRouteHealAttempts). Тот же владелец и та же сериализация, что у
-	// tunDownStrikes: только reconcile-тик под transitionMu.
-	policyTunRouteStrikes int
+	// policyTunRouteHealAttempts).
+	//
+	// Пишет только reconcile-тик (сериализован transitionMu), но ЧИТАЕТ ещё и
+	// GetStatus из HTTP-обработчика — отсюда atomic, а не голый int, как у
+	// соседнего tunDownStrikes: тот читается там же, где пишется.
+	//
+	// Ноль — «жалоб нет», и это же значение на старте процесса: до первого тика
+	// статус не должен объявлять режим сломанным.
+	policyTunRouteStrikes atomic.Int64
 
 	// appliedBlackhole — такой же снимок ВТОРОГО ресурса: fail-closed DROP,
 	// который reconcileInstalled поднимает, пока sing-box мёртв, а

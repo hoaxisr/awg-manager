@@ -14,6 +14,12 @@ import (
 // заходит. Настройка политики — ручной шаг пользователя, поэтому warning.
 const issuePolicyTunUnbound = "policy-tun-unbound"
 
+// issuePolicyTunRouteLost — запись дефолта в конфиге есть, а маршрута в таблице
+// политики нет: режим числится включённым, а трафик клиентов уходит в
+// blackhole-правило их марки. Не warning, а error: это полный отказ режима, а
+// не недонастройка (#932).
+const issuePolicyTunRouteLost = "policy-tun-route-lost"
+
 // policyTunDefaultRoutePresent сообщает, припаркован ли NDMS-дефолт (v4/v6) на
 // ndmsName по строкам /show/running-config.
 //
@@ -409,7 +415,7 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 			s.appLog.Info("policy-tun-reconcile", iface, "дефолт-маршрут пропал — переустановлен (drift-heal)")
 		}
 	} else if s.policyTunRouteInstalled(ctx, sr, iface, ndmsName) {
-		s.policyTunRouteStrikes = 0
+		s.policyTunRouteStrikes.Store(0)
 	} else {
 		s.reassertPolicyTunDefaultRoute(ctx, sr, iface, ndmsName)
 	}
@@ -493,11 +499,11 @@ var policyTunRouteHealAttempts = [...]int{1, 3, 8}
 // его возврата.
 func (s *ServiceImpl) reassertPolicyTunDefaultRoute(ctx context.Context, sr storage.SingboxRouterSettings, iface, ndmsName string) {
 	if !tunReadyProbe(iface) {
-		s.policyTunRouteStrikes = 0
+		s.policyTunRouteStrikes.Store(0)
 		return
 	}
-	s.policyTunRouteStrikes++
-	if !slices.Contains(policyTunRouteHealAttempts[:], s.policyTunRouteStrikes) {
+	strikes := s.policyTunRouteStrikes.Add(1)
+	if !slices.Contains(policyTunRouteHealAttempts[:], int(strikes)) {
 		return
 	}
 	if e := s.deps.DefaultRoute.SetDefaultRoute(ctx, ndmsName); e != nil {
@@ -505,7 +511,7 @@ func (s *ServiceImpl) reassertPolicyTunDefaultRoute(ctx context.Context, sr stor
 		return
 	}
 	msg := "запись дефолта есть, а маршрута в таблице политики " + sr.PolicyName + " нет — переустановлен (drift-heal)"
-	if s.policyTunRouteStrikes == policyTunRouteHealAttempts[len(policyTunRouteHealAttempts)-1] {
+	if int(strikes) == policyTunRouteHealAttempts[len(policyTunRouteHealAttempts)-1] {
 		msg += " (последняя попытка: дальше жду, пока маршрут появится сам)"
 	}
 	s.appLog.Warn("policy-tun-reconcile", iface, msg)

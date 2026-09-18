@@ -1370,6 +1370,12 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 			running, _ := s.deps.Singbox.IsRunning()
 			if running && tunReadyProbe(policyTunIfaceName) {
 				active, _ = policyTunDefaultRoutePresent(policyTunLines, policyTunNDMSName)
+				// Запись в конфиге — ещё не установленный маршрут (#932): пока
+				// рантайм NDMS его не показывает, режим мёртв, сколько бы
+				// здоровья ни было в тексте. Берём вывод последнего тика
+				// реконсиля, а не спрашиваем NDMS сами: статус опрашивают
+				// часто, а /show/ip/policy не кэшируется.
+				active = active && s.policyTunRouteStrikes.Load() == 0
 			}
 		}
 	} else {
@@ -1524,6 +1530,26 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 			Message: fmt.Sprintf("%s не разрешён %s — трафик клиентов не направляется; "+
 				"разрешение ставится автоматически, проверьте политику в NDMS", policyTunNDMSName, where),
 		})
+	}
+	// policy-tun: запись дефолта в конфиге есть, а маршрута в таблице политики
+	// нет — режим мёртв молча (#932). Без этого issue пользователь видел
+	// «работает» и не имел способа отличить «панель уже переставляет» от
+	// «переставили трижды, не помогло»: счётчик даёт оба состояния.
+	if sr.Enabled && policyTunNDMSName != "" {
+		if strikes := s.policyTunRouteStrikes.Load(); strikes > 0 {
+			where := "целевой политики"
+			if sr.PolicyName != "" {
+				where = "политики " + sr.PolicyName
+			}
+			msg := fmt.Sprintf("%s объявлен дефолтом, но в таблице %s маршрута нет — "+
+				"трафик клиентов никуда не идёт; переустанавливаю", policyTunNDMSName, where)
+			if int(strikes) >= policyTunRouteHealAttempts[len(policyTunRouteHealAttempts)-1] {
+				msg = fmt.Sprintf("%s объявлен дефолтом, но в таблице %s маршрута нет — "+
+					"трафик клиентов никуда не идёт; переустановка не помогла, нужна проверка политики в NDMS",
+					policyTunNDMSName, where)
+			}
+			issues = append(issues, Issue{Severity: "error", Kind: issuePolicyTunRouteLost, Message: msg})
+		}
 	}
 	// policy-tun: имена интерфейса нужны пользователю ДО того, как режим станет
 	// active (по ним он ищет выход в политике), поэтому гейт — Enabled+
