@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -2504,4 +2505,105 @@ func TestReconcile_ProbeErrorDoesNotReinstall(t *testing.T) {
 	if restores != 0 {
 		t.Errorf("непрочитанное состояние вызвало переустановку: %d restore", restores)
 	}
+}
+
+func loadIngressRefs(t *testing.T, store *storage.SettingsStore) []string {
+	t.Helper()
+	all, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return all.SingboxRouter.IngressInterfaces
+}
+
+func srFromStore(t *testing.T, store *storage.SettingsStore) storage.SingboxRouterSettings {
+	t.Helper()
+	all, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sr, err := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sr
+}
+
+// Мёртвая ingress-ссылка убирается из НАСТРОЕК, а не только пропускается при
+// резолве: список продолжал бы лгать (в UI он показан отмеченным), тик вечно
+// пересобирал бы по нему заворот, а правило `iif <имя>` ядро переподцепило бы
+// к первому тёзке — номера OpkgTun переиспользуются (F381).
+func TestHealIngressRefs(t *testing.T) {
+	t.Run("убирает после порога, не раньше", func(t *testing.T) {
+		store := newTestSettingsStore(t, storage.SingboxRouterSettings{
+			IngressInterfaces: []string{"iface:nwg3", "iface:opkgtun17"},
+		})
+		s := &ServiceImpl{deps: Deps{Settings: store}, appLog: logging.NewScopedLogger(nil, logging.GroupRouting, logging.SubSingboxRouter)}
+		stubIngressLinks(t, "nwg3")
+		sr := srFromStore(t, store)
+
+		for i := 1; i < ingressRefDropAfter; i++ {
+			s.healIngressRefs(sr)
+			if got := len(loadIngressRefs(t, store)); got != 2 {
+				t.Fatalf("тик %d: ссылок %d, убирать рано", i, got)
+			}
+		}
+		s.healIngressRefs(sr)
+		got := loadIngressRefs(t, store)
+		if !slices.Equal(got, []string{"iface:nwg3"}) {
+			t.Fatalf("после порога осталось %v, want [iface:nwg3]", got)
+		}
+	})
+
+	t.Run("появившееся устройство сбрасывает счёт", func(t *testing.T) {
+		store := newTestSettingsStore(t, storage.SingboxRouterSettings{
+			IngressInterfaces: []string{"iface:nwg3"},
+		})
+		s := &ServiceImpl{deps: Deps{Settings: store}, appLog: logging.NewScopedLogger(nil, logging.GroupRouting, logging.SubSingboxRouter)}
+		sr := srFromStore(t, store)
+
+		stubIngressLinks(t) // «не знаем» — не трогаем вовсе
+		for i := 0; i < ingressRefDropAfter+2; i++ {
+			s.healIngressRefs(sr)
+		}
+		if got := len(loadIngressRefs(t, store)); got != 1 {
+			t.Fatalf("на «не знаем» ссылку убирать нельзя, осталось %d", got)
+		}
+
+		stubIngressLinks(t, "lo") // устройства нет
+		s.healIngressRefs(sr)
+		stubIngressLinks(t, "lo", "nwg3") // поднялось
+		s.healIngressRefs(sr)
+		stubIngressLinks(t, "lo") // снова пропало
+		for i := 0; i < ingressRefDropAfter-1; i++ {
+			s.healIngressRefs(sr)
+		}
+		if got := len(loadIngressRefs(t, store)); got != 1 {
+			t.Fatalf("счёт обязан был сброситься появлением устройства, осталось %d", got)
+		}
+	})
+
+	// managed-ссылки не наши: их чистит pruneOrphanIngressRefs при удалении
+	// сервера и при загрузке настроек, а «не резолвится» у них значит «сервер
+	// не поднят» — состояние проходящее. Ссылку подаём ПАРАМЕТРОМ: в сторе она
+	// не доживёт до нас, её снимет та самая уборка при загрузке.
+	t.Run("managed-ссылки не трогает", func(t *testing.T) {
+		store := newTestSettingsStore(t, storage.SingboxRouterSettings{
+			IngressInterfaces: []string{"iface:lo"},
+		})
+		s := &ServiceImpl{deps: Deps{Settings: store}, appLog: logging.NewScopedLogger(nil, logging.GroupRouting, logging.SubSingboxRouter)}
+		stubIngressLinks(t, "lo")
+		sr := srFromStore(t, store)
+		sr.IngressInterfaces = append(sr.IngressInterfaces, "managed:Wireguard9")
+
+		for i := 0; i < ingressRefDropAfter+1; i++ {
+			s.healIngressRefs(sr)
+		}
+		if got := loadIngressRefs(t, store); !slices.Equal(got, []string{"iface:lo"}) {
+			t.Fatalf("настройки тронуты из-за managed-ссылки: %v", got)
+		}
+		if _, counted := s.ingressMissStrikes["managed:Wireguard9"]; counted {
+			t.Error("managed-ссылка попала в счётчик промахов")
+		}
+	})
 }

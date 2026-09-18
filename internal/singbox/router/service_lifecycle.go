@@ -1758,6 +1758,9 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 		return err
 	}
 	s.syncKeenDNSPreset(ctx, sr)
+	// Уборка ingress-ссылок на исчезнувшие устройства — до диспатча по режиму:
+	// список общий на fakeip и policy-tun, и мусор в нём одинаково вреден обоим.
+	s.healIngressRefs(sr)
 	// fakeip-tun installs NO iptables, so the tproxy switch below (keyed on
 	// живом состоянии перехвата) would always read "not installed" and route
 	// every tick to Enable. Dispatch by mode FIRST — ветка tproxy ниже

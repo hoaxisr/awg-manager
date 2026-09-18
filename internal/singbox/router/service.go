@@ -517,6 +517,12 @@ type ServiceImpl struct {
 	// статус не должен объявлять режим сломанным.
 	policyTunRouteStrikes atomic.Int64
 
+	// ingressMissStrikes — сколько тиков подряд ingress-ссылка не резолвится в
+	// существующее устройство; по нему healIngressRefs решает, убирать ли её
+	// из настроек (см. ingressRefDropAfter). Владелец и сериализация те же,
+	// что у tunDownStrikes: только reconcile-тик под transitionMu.
+	ingressMissStrikes map[string]int
+
 	// appliedBlackhole — такой же снимок ВТОРОГО ресурса: fail-closed DROP,
 	// который reconcileInstalled поднимает, пока sing-box мёртв, а
 	// PREROUTING-джампы снесены. nil = блокировки нет. Ресурс отдельный от
@@ -670,6 +676,82 @@ var ingressLinkNames = func() (map[string]bool, error) {
 	return out, nil
 }
 
+// ingressRefDropAfter — сколько тиков подряд ссылка должна не резолвиться,
+// прежде чем её уберут из настроек. Не единица: на старте демона интерфейс
+// может ещё не существовать (порядок поднятия NativeWG/OpkgTun), и уборка «с
+// первого промаха» снесла бы живую настройку пользователя. Три тика — полторы
+// минуты, переживает загрузку с запасом.
+const ingressRefDropAfter = 3
+
+// healIngressRefs убирает из настроек ingress-ссылки вида `iface:<имя>`, под
+// которыми больше нет устройства.
+//
+// Зачем вообще: ссылка на исчезнувший интерфейс — не безобидный мусор. Заворот
+// `ip rule iif <имя>` ставится по имени, ядро помечает правило мёртвого
+// устройства `[detached]` и ПЕРЕПОДЦЕПЛЯЕТ его, как только появится тёзка, — а
+// номера OpkgTun переиспользуются. То есть чужой трафик уехал бы в нашу
+// таблицу. Плюс тик реконсиля вечно пересобирал заворот по мусорному списку
+// (F381, роутер владельца 18.09: `iif opkgtun17 [detached]`, `opkgtun18`).
+//
+// Почему в настройках, а не только в резолве: пропуск при резолве лечит
+// симптом, а список продолжает лгать — и в UI он показан отмеченным.
+//
+// `managed:`-ссылки не трогаем: их чистит pruneOrphanIngressRefs при удалении
+// сервера и при загрузке настроек, и у них своя причина не резолвиться
+// («сервер не поднят»), которая проходит сама.
+func (s *ServiceImpl) healIngressRefs(sr storage.SingboxRouterSettings) {
+	if len(sr.IngressInterfaces) == 0 {
+		return
+	}
+	links, err := ingressLinkNames()
+	if err != nil {
+		return // «не знаем» — ничего не убираем
+	}
+	if s.ingressMissStrikes == nil {
+		s.ingressMissStrikes = map[string]int{}
+	}
+	dead := map[string]bool{}
+	for _, ref := range sr.IngressInterfaces {
+		name, isIface := strings.CutPrefix(ref, "iface:")
+		if !isIface {
+			continue
+		}
+		if links[name] {
+			delete(s.ingressMissStrikes, ref)
+			continue
+		}
+		s.ingressMissStrikes[ref]++
+		if s.ingressMissStrikes[ref] == 1 {
+			s.appLog.Warn("resolve-ingress", name, fmt.Sprintf(
+				"ingress-ссылка %q указывает на несуществующее устройство — уберу из настроек, если не появится", ref))
+		}
+		if s.ingressMissStrikes[ref] >= ingressRefDropAfter {
+			dead[ref] = true
+		}
+	}
+	if len(dead) == 0 {
+		return
+	}
+	if err := s.deps.Settings.Update(func(cur *storage.Settings) error {
+		kept := make([]string, 0, len(cur.SingboxRouter.IngressInterfaces))
+		for _, ref := range cur.SingboxRouter.IngressInterfaces {
+			if !dead[ref] {
+				kept = append(kept, ref)
+			}
+		}
+		cur.SingboxRouter.IngressInterfaces = kept
+		return nil
+	}); err != nil {
+		s.appLog.Warn("resolve-ingress", "", "убрать мёртвые ingress-ссылки: "+err.Error())
+		return
+	}
+	for ref := range dead {
+		delete(s.ingressMissStrikes, ref)
+		s.appLog.Info("resolve-ingress", strings.TrimPrefix(ref, "iface:"),
+			fmt.Sprintf("ingress-ссылка %q убрана из настроек: устройства нет", ref))
+	}
+}
+
 func (s *ServiceImpl) resolveIngressInterfaces(ctx context.Context, refs []string) []string {
 	out := make([]string, 0, len(refs))
 	seen := map[string]bool{}
@@ -698,9 +780,10 @@ func (s *ServiceImpl) resolveIngressInterfaces(ctx context.Context, refs []strin
 			s.appLog.Warn("resolve-ingress", "", fmt.Sprintf("ingress ref %q не резолвится (сервер не поднят / кэш не готов), пропущен", ref))
 			continue
 		}
+		// МОЛЧА: резолв идёт каждым тиком, и постоянное состояние (устройства
+		// нет и не будет) залило бы журнал одной и той же строкой навсегда.
+		// Рассказывает и убирает мёртвую ссылку healIngressRefs — один раз.
 		if linksErr == nil && !links[name] {
-			s.appLog.Warn("resolve-ingress", name,
-				fmt.Sprintf("ingress-ссылка %q указывает на несуществующее устройство — пропущена", ref))
 			continue
 		}
 		if seen[name] {
