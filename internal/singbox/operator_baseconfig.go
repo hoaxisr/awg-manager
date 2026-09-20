@@ -111,6 +111,7 @@ const (
 	stepRemoveRouteFinal      = "remove-route-final"
 	stepRemoveDNSFinal        = "remove-dns-final"
 	stepDerivedDefaults       = "reconcile-derived-defaults"
+	stepStripLegacyTunStack   = "strip-legacy-tun-stack"
 )
 
 // reconcileStep — один шаг примирения config.d, гоняемого каждый бут.
@@ -150,6 +151,7 @@ func reconcileConfigSteps(dir, configPath, desiredLogLevel, desiredBootstrapDNS 
 		{stepRemoveRouteFinal, func() { removeFinalFromBase(base, log) }},
 		{stepRemoveDNSFinal, func() { removeDNSFinalFromBase(base, log) }},
 		{stepDerivedDefaults, func() { reconcileDerivedDefaults(configPath, log) }},
+		{stepStripLegacyTunStack, func() { stripLegacyTunStack(configPath, log) }},
 	}
 }
 
@@ -349,6 +351,10 @@ func ensureLegacyConfigMigrated(dir string, loggers ...*slog.Logger) {
 	// in their own 30-deviceproxy.json slot. Strip leftovers so the user
 	// can re-enable device proxy without tag collisions on next start.
 	inbounds := filterOutDeviceProxyTags(cfg.inbounds())
+	// Тот же стриж, что и у шага пролога: слот рождается здесь уже без
+	// legacy-стека, поэтому порядок двух шагов не значит (см.
+	// stripLegacyTunStackFromInbounds).
+	stripLegacyTunStackFromInbounds(inbounds)
 	outbounds := filterOutDeviceProxyTags(filterOutDirectPlaceholder(cfg.outbounds()))
 	rules := filterOutDeviceProxyRouteRules(cfg.routeRules())
 
@@ -854,6 +860,92 @@ func removeDNSFinalFromBase(basePath string, loggers ...*slog.Logger) {
 // поэтому её отсутствие в merged-конфиге — не «дефолт», а другое поведение;
 // именно поэтому дефолт обязан лежать в слоте, а не отсутствовать вовсе.
 const baseDefaultDNSStrategy = "prefer_ipv4"
+
+// legacyTunStacks — значения `stack`, которых в движке больше НЕТ: sing-box
+// для awg-m собирается без тега with_gvisor, и sing-tun отвечает на них
+// "gVisor is not included in this build" — инбаунд не поднимается, старт
+// движка падает в FATAL.
+// Тот же набор — у санитайзеров слоя настроек: storage.migrateToV39 и
+// router.normalizeFakeIPSettings. Разъедутся молча, поэтому при появлении
+// нового неисполнимого значения править надо все три.
+var legacyTunStacks = map[string]bool{"gvisor": true, "mixed": true}
+
+// stripLegacyTunStack снимает ключ `stack` у tun-инбаундов, чьё значение движок
+// исполнить не может (F396). Значение вмерзает в слотовый файл в момент
+// включения fakeip/policy-tun, а до 2.19.3 пустой стек нормализовался в
+// "gvisor" — то есть лежит в файле у каждой установки тех времён. Настройки
+// чинит migrateToV39, но движок читает ФАЙЛ, и переписывает его только
+// healTunSettings на тике Reconcile: до первого тика каждый старт фатален.
+//
+// Пустое значение — это «ключ не писать», то есть собственный стек sing-tun:
+// ровно то, что даёт нормализованная настройка. Снимаем, не спрашивая теги
+// бинаря: выбрать gvisor через API нельзя с 2.19.3
+// (normalizeFakeIPSettings приводит его к пустому), а сам ключ sing-box удаляет
+// в 1.17.
+// ponytail: гейта по тегам подменённого руками бинаря нет — шаг чисто файловый,
+// exec на пути примирения config.d не делаем; если понадобится щадить чужую
+// сборку с with_gvisor — гейт по detectVersionAndFeaturesCached.
+//
+// Идемпотентна: повторный прогон по своему выходу ничего не меняет.
+func stripLegacyTunStack(configDir string, loggers ...*slog.Logger) {
+	log := firstLogger(loggers)
+	entries, err := os.ReadDir(configDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logConfigPatchWarn(log, "singbox config reconcile: read failed",
+				"step", stepStripLegacyTunStack, "path", configDir, "err", err)
+		}
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		slotPath := filepath.Join(configDir, e.Name())
+		m, ok := readSlotJSON(stepStripLegacyTunStack, slotPath, log)
+		if !ok {
+			continue
+		}
+		inbounds, _ := m["inbounds"].([]any)
+		removed := stripLegacyTunStackFromInbounds(inbounds)
+		if len(removed) == 0 {
+			continue
+		}
+		// Лог — ПОСЛЕ удачной записи: на ro-разделе или ENOSPC строка
+		// «стек снят» рядом с Warn «write failed» врала бы про починку,
+		// а журнал для шагов пролога — единственный свидетель.
+		if writeSlotJSON(stepStripLegacyTunStack, slotPath, m, log) {
+			logConfigPatchInfo(log, "singbox config reconcile: legacy tun stack removed",
+				"step", stepStripLegacyTunStack, "path", slotPath, "stacks", strings.Join(removed, ","))
+		}
+	}
+}
+
+// stripLegacyTunStackFromInbounds снимает legacy-стек у tun-инбаундов списка
+// и возвращает снятые значения (nil — менять нечего). Общий мутатор шага
+// пролога и миграции легаси-моноконфига: без него порядок этих двух шагов
+// начинал бы значить — миграция кладёт инбаунды из config.json уже ПОСЛЕ
+// прохода шага и легаси-стек доживал бы до движка (набор шагов коммутативен,
+// см. reconcileConfigSteps).
+func stripLegacyTunStackFromInbounds(inbounds []any) []string {
+	var removed []string
+	for _, raw := range inbounds {
+		in, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if typ, _ := in["type"].(string); typ != "tun" {
+			continue
+		}
+		stack, _ := in["stack"].(string)
+		if !legacyTunStacks[stack] {
+			continue
+		}
+		delete(in, "stack")
+		removed = append(removed, stack)
+	}
+	return removed
+}
 
 // stripStrayDirectPlaceholder removes the canonical
 // {type:"direct", tag:"direct"} placeholder from every slot file in
@@ -1392,6 +1484,14 @@ func (o *Operator) mutateBase(mutate func(map[string]any) bool) error {
 // `sing-box check` for everything our merge doesn't cover (parse
 // errors, schema violations, unknown option keys, etc.).
 func (o *Operator) preflightConfigDir() error {
+	// Слот мог приехать мимо пролога — из восстановленного бэкапа или правки
+	// руками уже после старта демона. Шаг идемпотентен и на чистом config.d
+	// ничего не пишет (F396). NB: с этой строкой preflight перестал быть
+	// только читающим. Запись атомарна (rename), рваного слота не будет, но
+	// с владельцем слота (router.persistFakeIPConfig) она в теории может
+	// разъехаться по lost update — окно в миллисекунды и только пока в файле
+	// ещё лежит legacy-стек, которого владелец всё равно не пишет.
+	stripLegacyTunStack(o.configPath, o.log)
 	if _, err := configmerge.MergeDir(o.configPath); err != nil {
 		return err
 	}

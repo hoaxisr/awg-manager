@@ -86,6 +86,29 @@ func TestStripStrayDirectPlaceholder_WarnsOnBrokenSlot(t *testing.T) {
 	}
 }
 
+// stripLegacyTunStack тоже каталожный: битый слот — Warn с именем шага,
+// пустой каталог — тишина. Имя шага в Warn проверяется отдельно: подмена
+// константы на чужую (strip-stray-direct) увела бы диагностику к другому шагу.
+func TestStripLegacyTunStack_WarnsOnBrokenSlot(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	dir := t.TempDir()
+
+	stripLegacyTunStack(dir, log)
+	if strings.Contains(buf.String(), "WARN") {
+		t.Fatalf("empty dir must be silent, got: %s", buf.String())
+	}
+
+	buf.Reset()
+	if err := os.WriteFile(filepath.Join(dir, "21-fakeip.json"), []byte("{oops"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stripLegacyTunStack(dir, log)
+	if !strings.Contains(buf.String(), "WARN") || !strings.Contains(buf.String(), "strip-legacy-tun-stack") {
+		t.Fatalf("want WARN with step %q, got: %s", "strip-legacy-tun-stack", buf.String())
+	}
+}
+
 // ensureLegacyConfigMigrated молчит без legacy-файла и предупреждает, когда
 // legacy есть, но распарсить его не удалось (файл при этом остаётся на месте
 // для ретрая — поведение не меняется).
