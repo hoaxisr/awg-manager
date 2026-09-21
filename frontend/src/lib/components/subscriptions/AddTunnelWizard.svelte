@@ -326,6 +326,7 @@
 			const n = isTrustTunnelMultiAddress(e);
 			if (n > 0) {
 				inlineText = singleLinks;
+				singleLinks = '';
 				kind = 'inline';
 				error = `TrustTunnel-конфиг с несколькими адресами (${n}) — это Группа серверов. Текст перенесён, задайте имя группы.`;
 				return;
@@ -492,7 +493,8 @@
 				<code>naive+http://</code>, <code>naive+https://</code>,
 				<code>tt://</code> и connect-ссылки TrustTunnel (<code>…?d=</code>),
 				а также JSON-конфиг mieru целиком (экспорт панелей, формат
-				<code>mieru apply config</code>) и TOML-конфиг TrustTunnel (AdGuard).
+				<code>mieru apply config</code>) и TOML-конфиг TrustTunnel целиком
+				(экспорт endpoint или конфиг клиента).
 				Список через пробел при вставке разбивается на строки автоматически.
 			</p>
 			{#if !singboxInstalled}
