@@ -18,7 +18,7 @@ const (
 	ttTwo    = "AAEBAQ92cG4uZXhhbXBsZS5jb20CCzEuMi4zLjQ6NDQzAhJbMjAwMTpkYjg6OjFdOjg0NDMDD2Nkbi5leGFtcGxlLm9yZwUHcHJlbWl1bQYKczNjcmV0UGFzcwcBAQkBAgoBAQsNYWFiYmNjL2ZmZmZmZgwFTXVsdGkqBmZ1dHVyZQ0IBzEuMS4xLjE"
 	ttV2     = "AAECAQ92cG4uZXhhbXBsZS5jb20CCzEuMi4zLjQ6NDQzBQdwcmVtaXVtBgpzM2NyZXRQYXNzDAZCZXJsaW4"
 	ttNoUser = "AQFoAgsxLjIuMy40OjQ0MwYBcA"
-	ttTrunc  = "AAEBAQ92cG4uZXhhbXBsZS5jb20"
+	ttTrunc  = "AAEBAQ92cG4uZXhh"
 )
 
 func TestDecodeTTPayload_Minimal(t *testing.T) {
@@ -32,7 +32,7 @@ func TestDecodeTTPayload_Minimal(t *testing.T) {
 	if len(ep.Addresses) != 1 || ep.Addresses[0] != "1.2.3.4:443" {
 		t.Fatalf("addresses: %v", ep.Addresses)
 	}
-	if ep.SkipVerification || ep.UpstreamHTTP3 || ep.AntiDPI || ep.CustomSNI != "" || ep.Certificate != "" {
+	if ep.SkipVerification || ep.AntiDPI || ep.CustomSNI != "" || ep.Certificate != "" {
 		t.Fatalf("defaults broken: %+v", ep)
 	}
 }
@@ -45,7 +45,7 @@ func TestDecodeTTPayload_AllTagsAndUnknownSkipped(t *testing.T) {
 	if len(ep.Addresses) != 2 || ep.Addresses[1] != "[2001:db8::1]:8443" {
 		t.Fatalf("addresses: %v", ep.Addresses)
 	}
-	if ep.CustomSNI != "cdn.example.org" || !ep.SkipVerification || !ep.UpstreamHTTP3 || !ep.AntiDPI || ep.Name != "Multi" {
+	if ep.CustomSNI != "cdn.example.org" || !ep.SkipVerification || !ep.AntiDPI || ep.Name != "Multi" {
 		t.Fatalf("fields: %+v", ep)
 	}
 }

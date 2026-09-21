@@ -17,7 +17,6 @@ type ttTOMLEndpoint struct {
 	Password         string   `toml:"password"`
 	SkipVerification bool     `toml:"skip_verification"`
 	Certificate      string   `toml:"certificate"`
-	UpstreamProtocol string   `toml:"upstream_protocol"`
 	AntiDPI          bool     `toml:"anti_dpi"`
 	Name             string   `toml:"name"`
 }
@@ -71,8 +70,7 @@ func ParseTrustTunnelTOML(body []byte) BatchResult {
 	parsed, err := ttEndpointToOutbounds(ttEndpoint{
 		Hostname: e.Hostname, Addresses: e.Addresses, CustomSNI: e.CustomSNI,
 		Username: e.Username, Password: e.Password, SkipVerification: e.SkipVerification,
-		Certificate: e.Certificate, UpstreamHTTP3: e.UpstreamProtocol == "http3",
-		AntiDPI: e.AntiDPI, Name: e.Name,
+		Certificate: e.Certificate, AntiDPI: e.AntiDPI, Name: e.Name,
 	}, "")
 	if err != nil {
 		return fail(fmt.Sprintf("TOML TrustTunnel: %s", err))

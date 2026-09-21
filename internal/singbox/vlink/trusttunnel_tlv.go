@@ -21,10 +21,10 @@ const (
 	ttTagPassword    = 0x06
 	ttTagSkipVerify  = 0x07
 	ttTagCertificate = 0x08
-	ttTagUpstream    = 0x09
 	ttTagAntiDPI     = 0x0A
 	ttTagName        = 0x0C
 	// 0x04 has_ipv6, 0x0B client_random_prefix, 0x0D dns_upstreams — не читаем (спека, Q3/Q9).
+	// 0x09 upstream_protocol не читаем: H2-only, quic всегда false
 )
 
 type ttEndpoint struct {
@@ -35,7 +35,6 @@ type ttEndpoint struct {
 	Password         string
 	SkipVerification bool
 	Certificate      string // PEM-цепочка или ""
-	UpstreamHTTP3    bool
 	AntiDPI          bool
 	Name             string
 }
@@ -112,12 +111,6 @@ func parseTTTLV(data []byte) (ttEndpoint, error) {
 				return ttEndpoint{}, err
 			}
 			ep.Certificate = pemChain
-		case ttTagUpstream:
-			v, _, err := readVarint(val)
-			if err != nil {
-				return ttEndpoint{}, err
-			}
-			ep.UpstreamHTTP3 = v == 2
 		case ttTagAntiDPI:
 			ep.AntiDPI = len(val) == 1 && val[0] == 1
 		case ttTagName:
