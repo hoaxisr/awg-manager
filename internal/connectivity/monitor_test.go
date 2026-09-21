@@ -73,7 +73,10 @@ func TestMonitor_TriggersMatrixOnRunningEvent(t *testing.T) {
 		State: "running",
 	})
 
-	deadline = time.After(2 * time.Second)
+	// Первый опрос рукопожатий идёт на первом тике handshakePoll; равный ему
+	// дедлайн давал гонку двух таймеров и флейк (F364). Свойство теста от
+	// тайминга не зависит — запас с кратным перекрытием.
+	deadline = time.After(3 * handshakePoll)
 	for matrix.calls.Load() == 0 {
 		select {
 		case <-deadline:
