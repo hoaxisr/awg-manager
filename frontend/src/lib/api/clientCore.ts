@@ -268,6 +268,11 @@ export class CoreClient {
 			outbound.password = 'demo-password';
 			outbound.server_ports = ['8443', '1000:2000'];
 			outbound.multiplexing = 'MULTIPLEXING_LOW';
+		} else if (t.protocol === 'trusttunnel') {
+			outbound.username = t.username || 'demo-user';
+			outbound.password = 'demo-password';
+			outbound.quic = false;
+			outbound.tls = { enabled: true, server_name: t.sni || t.server };
 		}
 
 		return outbound;
