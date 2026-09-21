@@ -12,6 +12,15 @@ describe('normalizeSpaceSeparatedShareLinks', () => {
 		);
 	});
 
+	it('splits space-separated tt:// links into lines', () => {
+		expect(normalizeSpaceSeparatedShareLinks('tt://?A tt://?B')).toBe('tt://?A\ntt://?B');
+	});
+
+	it('does not touch a TrustTunnel TOML body (no scheme after the space)', () => {
+		const toml = 'hostname = "vpn.example.com"\naddresses = ["1.2.3.4:443"]\n';
+		expect(normalizeSpaceSeparatedShareLinks(toml)).toBe(toml);
+	});
+
 	it('does not touch multiline JSON (no share schemes inside)', () => {
 		const json = '{\n  "profiles": [ { "profileName": "default" } ]\n}';
 		expect(normalizeSpaceSeparatedShareLinks(json)).toBe(json);
