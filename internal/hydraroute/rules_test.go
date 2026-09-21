@@ -25,6 +25,7 @@ func setupRuleFiles(t *testing.T) (svc *Service, domainPath, ipPath string) {
 
 	svc = &Service{}
 	svc.SetStatusForTest(true)
+	stopRestartTimerOnCleanup(t, svc) // WriteRules планирует neo restart (F410)
 	return svc, domainPath, ipPath
 }
 
