@@ -375,14 +375,18 @@ func TestSingboxHandler_AddTunnels_TrustTunnelMultiAddress(t *testing.T) {
 		t.Fatalf("status = %d, want 422: %s", w.Code, w.Body.String())
 	}
 	var resp struct {
-		Code string         `json:"code"`
-		Data map[string]int `json:"data"`
+		Code    string         `json:"code"`
+		Message string         `json:"message"`
+		Data    map[string]int `json:"data"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
 	if resp.Code != "TRUSTTUNNEL_MULTI_ADDRESS" || resp.Data["addresses"] != 2 {
 		t.Fatalf("resp: %+v", resp)
+	}
+	if !strings.Contains(resp.Message, "несколькими адресами (2)") {
+		t.Fatalf("message = %q, want to contain %q", resp.Message, "несколькими адресами (2)")
 	}
 }
 

@@ -581,10 +581,12 @@ func (h *SingboxHandler) AddTunnels(w http.ResponseWriter, r *http.Request) {
 
 	batch := singbox.ParseTunnelLinksInput(body.Links)
 	// Мульти-адресный TrustTunnel-конфиг — это Группа серверов, не N одиночных
-	// туннелей (spec-manager.md п. 4). Отбиваем ДО записи, фронт переводит в группу.
+	// туннелей (spec-manager.md п. 4). n — число мульти-адресных outbound'ов во
+	// всём батче (может прийти из нескольких склеенных конфигов), не адресов
+	// одного конфига. Отбиваем ДО записи, фронт переводит в группу.
 	if n := trustTunnelAddressCount(batch.Outbounds); n > 1 {
 		response.ErrorWithData(w, http.StatusUnprocessableEntity,
-			fmt.Sprintf("в конфиге TrustTunnel %d адресов — создайте Группу серверов", n),
+			fmt.Sprintf("TrustTunnel-конфиг с несколькими адресами (%d) — создайте Группу серверов", n),
 			"TRUSTTUNNEL_MULTI_ADDRESS", map[string]int{"addresses": n})
 		return
 	}
