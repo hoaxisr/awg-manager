@@ -216,7 +216,10 @@ func TestClientRouteOps_Argv(t *testing.T) {
 	}
 	for _, want := range []string{
 		"/opt/sbin/ip route replace default dev opkgtun10 table 110",
-		"/opt/sbin/ip rule add from 192.168.1.77 lookup 110 priority 110",
+		// F412: страховка kill switch — переживает уход `default dev` при down/del.
+		"/opt/sbin/ip route replace unreachable default metric 4294967295 table 110",
+		// F411: приоритет ниже fwmark-правил NDMS (100+), иначе DNS-маршрут бьёт устройство.
+		"/opt/sbin/ip rule add from 192.168.1.77 lookup 110 priority 50",
 		"/opt/sbin/ip rule del from 192.168.1.77 lookup 110",
 	} {
 		if !hasCall(rec.Calls, want) {
