@@ -713,3 +713,27 @@ func TestResolveClient_RejectsSchemeDowngrade(t *testing.T) {
 		t.Fatalf("переход внутри https отклонён: %v", err)
 	}
 }
+
+// RedirectGuard из запроса ставится на клиента: редирект на адрес, который
+// страж отклоняет, обрывает загрузку.
+func TestReadAll_RedirectGuardApplied(t *testing.T) {
+	final := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("final-body"))
+	}))
+	defer final.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, final.URL, http.StatusFound)
+	}))
+	defer redirect.Close()
+
+	svc := NewService(Deps{})
+	_, _, err := svc.ReadAll(context.Background(), Request{
+		Purpose:       "test-redirect-guard",
+		URL:           redirect.URL,
+		MaxBodyBytes:  128,
+		RedirectGuard: func(string) error { return errors.New("страж хопа отклонил") },
+	})
+	if err == nil || !strings.Contains(err.Error(), "страж хопа отклонил") {
+		t.Fatalf("expected guard rejection, got %v", err)
+	}
+}

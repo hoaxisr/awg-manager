@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 )
 
 type dnsrouteTestDownloader struct{}
@@ -265,4 +267,57 @@ func TestFetchSubscription_ContentType(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+}
+
+// recordingDownloader — запись: доехал ли запрос и с каким стражем хопов.
+type recordingDownloader struct {
+	calls int
+	guard func(string) error
+}
+
+func (d *recordingDownloader) ReadAll(_ context.Context, req SubscriptionDownloadRequest) ([]byte, SubscriptionDownloadMeta, error) {
+	d.calls++
+	d.guard = req.RedirectGuard
+	return []byte("example.com\n"), SubscriptionDownloadMeta{ContentType: "text/plain"}, nil
+}
+
+// F413: адрес списка вводит пользователь — внутренний адрес отклоняется ДО
+// загрузчика, у которого dial-стража нет.
+func TestFetchSubscription_RejectsInternalURL(t *testing.T) {
+	restoreGuard()
+	defer func() { restoreGuard = httpclient.AllowInternalDialForTest() }()
+
+	rec := &recordingDownloader{}
+	svc := NewService(nil, nil, nil, nil, nil)
+	svc.SetDownloader(rec)
+	_, err := svc.fetchSubscription(context.Background(), "http://127.0.0.1:79/rci/show/version")
+	if err == nil || !strings.Contains(err.Error(), "внутренний адрес") {
+		t.Fatalf("expected internal-address rejection, got %v", err)
+	}
+	if rec.calls != 0 {
+		t.Fatalf("запрос доехал до загрузчика %d раз(а) — ранний отказ потерян", rec.calls)
+	}
+}
+
+// Страж хопов уезжает в загрузчик вместе с запросом: редирект с публичного
+// адреса на внутренний должен отклоняться им же.
+func TestFetchSubscription_PassesRedirectGuard(t *testing.T) {
+	restoreGuard()
+	defer func() { restoreGuard = httpclient.AllowInternalDialForTest() }()
+
+	rec := &recordingDownloader{}
+	svc := NewService(nil, nil, nil, nil, nil)
+	svc.SetDownloader(rec)
+	if _, err := svc.fetchSubscription(context.Background(), "https://203.0.113.34/list.txt"); err != nil {
+		t.Fatalf("fetchSubscription: %v", err)
+	}
+	if rec.guard == nil {
+		t.Fatal("RedirectGuard не передан: редирект на внутренний адрес пройдёт")
+	}
+	if err := rec.guard("https://localhost/list.txt"); err == nil {
+		t.Fatal("страж хопов пропустил внутренний адрес")
+	}
+	if err := rec.guard("https://203.0.113.35/list.txt"); err != nil {
+		t.Fatalf("страж хопов отклонил публичный адрес: %v", err)
+	}
 }

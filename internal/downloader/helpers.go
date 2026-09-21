@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/httpdownload"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 )
 
 type Request struct {
@@ -23,6 +25,11 @@ type Request struct {
 	MaxBodyBytes  int64
 	RouteOverride *Route
 	AllowedStatus []int
+	// RedirectGuard проверяет адрес каждого хопа редиректа (см.
+	// httpclient.RedirectPolicy). Нужен там, где URL вводит пользователь:
+	// dial-стража у загрузчика нет (в прокси-режиме он слеп), а проверка URL
+	// хопа от режима не зависит.
+	RedirectGuard func(string) error
 }
 
 type ResponseMeta struct {
@@ -63,6 +70,11 @@ func (s *Service) ReadAll(ctx context.Context, req Request) ([]byte, ResponseMet
 	}
 	defer lease.Close()
 	meta := ResponseMeta{Route: lease.Route}
+	if req.RedirectGuard != nil {
+		// Клиент собран этим ResolveClient и живёт до lease.Close() — правка
+		// политики никого другого не задевает.
+		lease.Client.CheckRedirect = httpclient.RedirectPolicy(httpclient.MaxRedirectHops, req.RedirectGuard)
+	}
 
 	requestCtx := ctx
 	cancel := func() {}

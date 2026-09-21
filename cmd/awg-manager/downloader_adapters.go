@@ -30,6 +30,7 @@ func (a *dnsRouteDownloaderAdapter) ReadAll(
 		Timeout:       req.Timeout,
 		MaxBodyBytes:  req.MaxBodyBytes,
 		AllowedStatus: req.AllowedStatus,
+		RedirectGuard: req.RedirectGuard,
 	})
 	if err != nil {
 		return nil, dnsroute.SubscriptionDownloadMeta{}, err

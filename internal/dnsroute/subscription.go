@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 )
 
 const dnsRouteSubscriptionMaxBodyBytes int64 = 10 * 1024 * 1024
@@ -19,6 +21,7 @@ type SubscriptionDownloadRequest struct {
 	Timeout       time.Duration
 	MaxBodyBytes  int64
 	AllowedStatus []int
+	RedirectGuard func(string) error
 }
 
 type SubscriptionDownloadMeta struct {
@@ -40,11 +43,18 @@ func (s *ServiceImpl) fetchSubscription(ctx context.Context, url string) ([]stri
 		return nil, errors.New("dnsroute: downloader is not configured")
 	}
 	url = normalizeGitHubURL(url)
+	// Адрес вводит пользователь: ранний отказ на внутреннем адресе и тот же
+	// страж на каждом хопе редиректа (F413). Dial-стража у загрузчика нет —
+	// в прокси-режиме он слеп, а проверка URL от режима не зависит.
+	if err := httpclient.ValidatePublicURL(url); err != nil {
+		return nil, err
+	}
 	body, meta, err := dl.ReadAll(ctx, SubscriptionDownloadRequest{
 		URL:           url,
 		Timeout:       30 * time.Second,
 		MaxBodyBytes:  dnsRouteSubscriptionMaxBodyBytes,
 		AllowedStatus: []int{http.StatusOK},
+		RedirectGuard: httpclient.ValidatePublicURL,
 	})
 	if err != nil {
 		return nil, err
