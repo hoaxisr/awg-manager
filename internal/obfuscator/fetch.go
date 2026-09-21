@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 )
 
 // MaxPackageBytes — в пакете пять бинарей; лимит на архив (Q25).
@@ -38,14 +39,12 @@ func PackageURL(installURL string) (string, error) {
 	return u.String(), nil
 }
 
-// insecureClient: панель Phobos обычно на самоподписанном TLS, их скрипт
-// качает с curl -k. Проверку не делаем (Q14), UI об этом предупреждает.
-var insecureClient = &http.Client{
-	Timeout: 60 * time.Second,
-	Transport: &http.Transport{
-		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // Q14: осознанно
-		ForceAttemptHTTP2: false,
-	},
+// Панель Phobos обычно на самоподписанном TLS, их скрипт качает с curl -k.
+// Проверку не делаем (Q14), UI об этом предупреждает. Остальное — общий страж
+// httpclient.NewPublicClient: прямой выход, страж внутренних адресов на dial,
+// политика редиректов.
+func newClient() *http.Client {
+	return httpclient.NewPublicClient(60*time.Second, true) // Q14: осознанно
 }
 
 // FetchPhobosConf качает пакет и достаёт из него ТОЛЬКО клиентский .conf
@@ -56,11 +55,14 @@ func FetchPhobosConf(ctx context.Context, installURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := httpclient.ValidatePublicURL(pkgURL); err != nil {
+		return "", fmt.Errorf("панель Phobos: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pkgURL, nil)
 	if err != nil {
 		return "", err
 	}
-	resp, err := insecureClient.Do(req)
+	resp, err := newClient().Do(req)
 	if err != nil {
 		return "", fmt.Errorf("панель Phobos: %w", err)
 	}

@@ -10,64 +10,6 @@ import (
 	"testing"
 )
 
-func TestValidateSubURL_RejectsInternal(t *testing.T) {
-	for _, u := range []string{
-		"http://localhost:79/x",
-		"http://127.0.0.1/x",
-		"http://[::1]/x",
-		"http://169.254.1.1/x",
-		"http://0.0.0.0/x",
-	} {
-		if err := validateSubURL(u); err == nil {
-			t.Errorf("expected rejection for %s", u)
-		}
-	}
-}
-
-func TestValidateSubURL_RejectsBadScheme(t *testing.T) {
-	if err := validateSubURL("ftp://example.com/x"); err == nil {
-		t.Error("expected scheme rejection")
-	}
-	if err := validateSubURL("http:///x"); err == nil {
-		t.Error("expected hostless rejection")
-	}
-}
-
-func TestValidateSubURL_AcceptsPublic(t *testing.T) {
-	orig := lookupIP
-	defer func() { lookupIP = orig }()
-	lookupIP = func(string) ([]net.IP, error) {
-		return []net.IP{net.ParseIP("203.0.113.34")}, nil
-	}
-	if err := validateSubURL("https://example.com/sub"); err != nil {
-		t.Fatalf("expected public host accepted, got %v", err)
-	}
-}
-
-func TestValidateSubURL_RejectsRebindViaSeam(t *testing.T) {
-	orig := lookupIP
-	defer func() { lookupIP = orig }()
-	lookupIP = func(string) ([]net.IP, error) {
-		return []net.IP{net.ParseIP("127.0.0.1")}, nil
-	}
-	if err := validateSubURL("https://evil.example.com/sub"); err == nil {
-		t.Error("expected rejection for host resolving to loopback")
-	}
-}
-
-func TestBlockInternalDial(t *testing.T) {
-	for _, addr := range []string{"127.0.0.1:443", "[::1]:443", "169.254.1.1:80"} {
-		if err := blockInternalDial("tcp", addr, nil); err == nil {
-			t.Errorf("expected rejection for %s", addr)
-		}
-	}
-	for _, addr := range []string{"203.0.113.8:443", "203.0.113.34:443"} {
-		if err := blockInternalDial("tcp", addr, nil); err != nil {
-			t.Errorf("expected accept for %s, got %v", addr, err)
-		}
-	}
-}
-
 func TestNormalizeSubURL_KeepsQuery(t *testing.T) {
 	in := "https://sub.example.com/wdtt.json?token=abc123"
 	if got := normalizeSubURL(in); got != in {
@@ -197,7 +139,7 @@ func TestDecodeImport_QwdttJSONFile(t *testing.T) {
 }
 
 // Страж SSRF загрузки подписки держится на том, что транспорт диалит САМ ХОСТ
-// подписки: blockInternalDial — Control диалера и видит только реально
+// подписки: httpclient.BlockInternalDial — Control диалера и видит только реально
 // диалимый адрес. С прокси диалится прокси, а внутренний адрес уезжает ему
 // строкой в запросе — защита исчезает молча. Поле Proxy здесь поэтому не
 // умолчание, а часть защиты; тест держит обе половины: и что прокси не
@@ -210,7 +152,7 @@ func TestSubscriptionClientDialsTargetDirectly(t *testing.T) {
 		t.Fatalf("транспорт не *http.Transport, а %T — страж на Control диалера мог потеряться", c.Transport)
 	}
 	if tr.Proxy != nil {
-		t.Fatal("у транспорта задан Proxy: диалится прокси, и blockInternalDial перестаёт закрывать внутренние адреса")
+		t.Fatal("у транспорта задан Proxy: диалится прокси, и BlockInternalDial перестаёт закрывать внутренние адреса")
 	}
 
 	// Вторая половина: страж достижим через клиента целиком, а не только как
@@ -231,67 +173,27 @@ func TestSubscriptionClientDialsTargetDirectly(t *testing.T) {
 	}
 }
 
-// Вторая половина стража подписки — политика редиректов собранного клиента.
-// Без неё 302 уводит загрузку куда угодно: validateSubURL на первом адресе
-// проверяет то, что ввёл пользователь, а не то, куда его перекинули.
+// Политика редиректов живёт в httpclient и проверена там; здесь — граница:
+// subscriptionClient обязан быть собран на ней, а не на голом http.Client.
 func TestSubscriptionClientRedirectPolicy(t *testing.T) {
-	orig := lookupIP
-	defer func() { lookupIP = orig }()
-	lookupIP = func(string) ([]net.IP, error) {
-		return []net.IP{net.ParseIP("203.0.113.34")}, nil
-	}
-
 	c := subscriptionClient()
 	if c.CheckRedirect == nil {
 		t.Fatal("политики редиректов нет: 302 уводит загрузку подписки куда угодно")
 	}
-
-	mkReq := func(t *testing.T, raw string) *http.Request {
-		t.Helper()
+	mkReq := func(raw string) *http.Request {
 		req, err := http.NewRequest(http.MethodGet, raw, nil)
 		if err != nil {
 			t.Fatalf("запрос к %s: %v", raw, err)
 		}
 		return req
 	}
-	chain := func(t *testing.T, urls ...string) []*http.Request {
-		t.Helper()
-		var via []*http.Request
-		for _, u := range urls {
-			via = append(via, mkReq(t, u))
-		}
-		return via
+	const httpsSub = "https://203.0.113.34/sub?token=fixture-token"
+	if err := c.CheckRedirect(mkReq("http://203.0.113.34/sub?token=fixture-token"), []*http.Request{mkReq(httpsSub)}); err == nil {
+		t.Fatal("спуск на http принят — токен подписки уедет открытым текстом")
 	}
-
-	const httpsSub = "https://sub.example.test/sub?token=fixture-token"
-
-	t.Run("спуск с https на http отклонён", func(t *testing.T) {
-		err := c.CheckRedirect(mkReq(t, "http://sub.example.test/sub?token=fixture-token"),
-			chain(t, httpsSub))
-		if err == nil {
-			t.Fatal("спуск на http принят — токен подписки уедет открытым текстом")
-		}
-	})
-
-	t.Run("переход внутри https разрешён", func(t *testing.T) {
-		if err := c.CheckRedirect(mkReq(t, "https://other.example.test/sub?token=fixture-token"),
-			chain(t, httpsSub)); err != nil {
-			t.Fatalf("переход https→https отклонён: %v", err)
-		}
-	})
-
-	t.Run("внутренний адрес отклонён", func(t *testing.T) {
-		if err := c.CheckRedirect(mkReq(t, "https://localhost/sub"), chain(t, httpsSub)); err == nil {
-			t.Fatal("редирект на внутренний адрес принят — validateSubURL на редиректе потерян")
-		}
-	})
-
-	t.Run("предел хопов соблюдён", func(t *testing.T) {
-		if err := c.CheckRedirect(mkReq(t, httpsSub),
-			chain(t, httpsSub, httpsSub, httpsSub)); err == nil {
-			t.Fatal("четвёртый хоп принят — предел редиректов потерян")
-		}
-	})
+	if err := c.CheckRedirect(mkReq("https://localhost/sub"), []*http.Request{mkReq(httpsSub)}); err == nil {
+		t.Fatal("редирект на внутренний адрес принят — страж на редиректе потерян")
+	}
 }
 
 // roundTripFunc — транспорт-запись: подменённый клиент подписки ничего не
@@ -300,17 +202,11 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
-// Стражи подписки (прямой выход, blockInternalDial, политика редиректов)
+// Стражи подписки (прямой выход, BlockInternalDial, политика редиректов)
 // живут в subscriptionClient, поэтому загрузка ОБЯЗАНА идти через него.
 // Клиент, собранный в fetchSubscriptionLink по месту, уносит их все разом, и
 // проверки свойств самой функции subscriptionClient этого не видят.
 func TestFetchSubscriptionLinkGoesThroughSubscriptionClient(t *testing.T) {
-	origLookup := lookupIP
-	defer func() { lookupIP = origLookup }()
-	lookupIP = func(string) ([]net.IP, error) {
-		return []net.IP{net.ParseIP("203.0.113.34")}, nil
-	}
-
 	origClient := subscriptionClient
 	defer func() { subscriptionClient = origClient }()
 	var seen []*http.Request
@@ -326,7 +222,7 @@ func TestFetchSubscriptionLinkGoesThroughSubscriptionClient(t *testing.T) {
 		})}
 	}
 
-	const subURL = "https://sub.example.test/sub?token=fixture-token"
+	const subURL = "https://203.0.113.34/sub?token=fixture-token"
 	res, err := fetchSubscriptionLink(subURL)
 	if err != nil {
 		t.Fatalf("загрузка подписки: %v", err)

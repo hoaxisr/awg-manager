@@ -2,12 +2,13 @@ package subscription
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 )
 
 // FetchOpts tunes the HTTP fetcher. Zero values produce defaults.
@@ -65,18 +66,12 @@ func buildRequest(url string, headers []Header, opts FetchOpts) Request {
 		allowed = append(allowed, code)
 	}
 	return Request{
-		Method:       http.MethodGet,
-		URL:          url,
-		Headers:      reqHeaders,
-		Timeout:      opts.Timeout,
-		MaxBodyBytes: opts.MaxBodyBytes,
-		UserAgent:    ua,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return errors.New("too many redirects")
-			}
-			return nil
-		},
+		Method:        http.MethodGet,
+		URL:           url,
+		Headers:       reqHeaders,
+		Timeout:       opts.Timeout,
+		MaxBodyBytes:  opts.MaxBodyBytes,
+		UserAgent:     ua,
 		AllowedStatus: allowed,
 	}
 }
@@ -88,12 +83,16 @@ type Request struct {
 	Timeout       time.Duration
 	MaxBodyBytes  int64
 	UserAgent     string
-	CheckRedirect func(req *http.Request, via []*http.Request) error
 	AllowedStatus []int
 }
 
 func FetchWithRequest(ctx context.Context, req Request) ([]byte, string, error) {
-	client := &http.Client{Timeout: req.Timeout, CheckRedirect: req.CheckRedirect}
+	// Ранний отказ со внятной строкой (схема, внутренний адрес); сам страж —
+	// на dial внутри клиента и на каждом хопе редиректа.
+	if err := httpclient.ValidatePublicURL(req.URL); err != nil {
+		return nil, "", err
+	}
+	client := httpclient.NewPublicClient(req.Timeout, false)
 	httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL, nil)
 	if err != nil {
 		return nil, "", err

@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 )
 
 func packageTarGz(t *testing.T, files map[string]string) []byte {
@@ -100,5 +102,21 @@ func TestFetchPhobosConf_TooBig(t *testing.T) {
 	_, err := FetchPhobosConf(context.Background(), srv2.URL+"/api/install/tok")
 	if err == nil || !strings.Contains(err.Error(), "слишком большой") {
 		t.Fatalf("want size error, got %v", err)
+	}
+}
+
+// Граница F309: загрузка идёт стражным клиентом — loopback закрыт на dial.
+// TestMain снимает страж ради httptest; здесь он возвращается на время теста.
+func TestFetchPhobosConf_BlocksInternal(t *testing.T) {
+	restoreGuard()
+	defer func() { restoreGuard = httpclient.AllowInternalDialForTest() }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("запрос доехал до внутреннего адреса")
+	}))
+	defer srv.Close()
+	_, err := FetchPhobosConf(context.Background(), srv.URL+"/api/install/tok")
+	if err == nil || !strings.Contains(err.Error(), "внутренний адрес") {
+		t.Fatalf("expected internal-address rejection, got %v", err)
 	}
 }

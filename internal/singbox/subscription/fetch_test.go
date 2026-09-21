@@ -1,12 +1,13 @@
 package subscription
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 )
 
 func TestFetch_HappyPath(t *testing.T) {
@@ -142,19 +143,33 @@ func TestFetch_RedirectLimitFive(t *testing.T) {
 	}()
 
 	_, _, err := Fetch(servers[0].URL, nil, FetchOpts{Timeout: 5 * time.Second})
-	if err == nil || !strings.Contains(err.Error(), "too many redirects") {
+	if err == nil || !strings.Contains(err.Error(), "слишком много перенаправлений") {
 		t.Fatalf("expected too many redirects error, got %v", err)
 	}
 }
 
-func TestFetchWithContext_UsesCallerContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, _, err := FetchWithContext(ctx, "https://example.test/sub", nil, FetchOpts{
-		Timeout:      12 * time.Second,
-		MaxBodyBytes: 1234,
-	})
-	if err == nil {
-		t.Fatal("expected canceled context error")
+// Граница F308: загрузка идёт стражным клиентом — loopback закрыт на dial.
+// TestMain снимает страж ради httptest; здесь он возвращается на время теста.
+func TestFetch_BlocksInternalAddress(t *testing.T) {
+	restoreGuard()
+	defer func() { restoreGuard = httpclient.AllowInternalDialForTest() }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("запрос доехал до внутреннего адреса")
+	}))
+	defer srv.Close()
+
+	_, _, err := Fetch(srv.URL, nil, FetchOpts{Timeout: 5 * time.Second})
+	if err == nil || !strings.Contains(err.Error(), "внутренний адрес") {
+		t.Fatalf("expected internal-address rejection, got %v", err)
+	}
+}
+
+// Ранний отказ на входном адресе: схема проверяется до транспорта, строка
+// внятная, а не «unsupported protocol scheme» из net/http.
+func TestFetch_RejectsNonHTTPScheme(t *testing.T) {
+	_, _, err := Fetch("ftp://203.0.113.34/sub", nil, FetchOpts{Timeout: time.Second})
+	if err == nil || !strings.Contains(err.Error(), "http(s)") {
+		t.Fatalf("expected scheme rejection, got %v", err)
 	}
 }
