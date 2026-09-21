@@ -49,10 +49,12 @@ func (c *ProxyCommands) DeleteProxy(ctx context.Context, name string) error {
 			name: map[string]any{"no": true},
 		},
 	}
+	// InvalidateAll уже убирает удалённый интерфейс из перестроенной карты;
+	// per-name Invalidate делал бы `show interface ProxyN` по только что
+	// снятому имени, и NDMS писал бы в свой лог E «unable to find» (F409).
 	return postMutationCheckedTolerant(ctx, c.poster, c.save, payload, "delete proxy "+name,
 		isMissingInterface,
 		c.queries.Interfaces.InvalidateAll,
-		func() { c.queries.Interfaces.Invalidate(name) },
 		c.queries.RunningConfig.InvalidateAll)
 }
 

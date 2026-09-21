@@ -9,11 +9,17 @@ import (
 )
 
 func newTestProxyCommands(_ *testing.T) (*ProxyCommands, *fakePoster, *SaveCoordinator) {
+	cmds, poster, sc, _ := newTestProxyCommandsWithGetter()
+	return cmds, poster, sc
+}
+
+func newTestProxyCommandsWithGetter() (*ProxyCommands, *fakePoster, *SaveCoordinator, *query.FakeGetter) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
-	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger(), IsOS5: func() bool { return true }})
-	return NewProxyCommands(poster, sc, q), poster, sc
+	g := query.NewFakeGetter()
+	q := query.NewQueries(query.Deps{Getter: g, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	return NewProxyCommands(poster, sc, q), poster, sc, g
 }
 
 func TestProxyCommands_CreateProxy_SOCKS5(t *testing.T) {
@@ -55,6 +61,22 @@ func TestProxyCommands_DeleteProxy(t *testing.T) {
 	iface := p["interface"].(map[string]any)["Proxy0"].(map[string]any)
 	if iface["no"] != true {
 		t.Errorf("no: %v", iface["no"])
+	}
+}
+
+// F409: после `no interface ProxyN` нельзя спрашивать NDMS про это имя —
+// `show interface` по снятому интерфейсу даёт E «unable to find» в ndm-логе.
+// Список целиком перечитать можно, по имени — нет.
+func TestProxyCommands_DeleteProxy_NoShowByNameAfterDelete(t *testing.T) {
+	cmds, _, _, g := newTestProxyCommandsWithGetter()
+	// Список интерфейсов есть — иначе bootstrap кэша падает раньше, чем
+	// доходит до запроса по имени, и тест зелен при любом коде.
+	g.SetJSON("/show/interface/", `{"Proxy0":{"id":"Proxy0","type":"Proxy","state":"up"}}`)
+	if err := cmds.DeleteProxy(context.Background(), "Proxy0"); err != nil {
+		t.Fatalf("DeleteProxy: %v", err)
+	}
+	if n := g.PostInterfaceCalls("Proxy0"); n != 0 {
+		t.Fatalf("после удаления ушло %d запросов show interface Proxy0 — NDMS ответит «unable to find»", n)
 	}
 }
 
