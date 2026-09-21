@@ -41,6 +41,9 @@ func dirtyLegacyFixture(t *testing.T) string {
 		"inbounds": []any{
 			map[string]any{"type": "mixed", "tag": "device-proxy-in", "listen": "127.0.0.1", "listen_port": 1080},
 			map[string]any{"type": "mixed", "tag": "proxy-nv1", "listen": "127.0.0.1", "listen_port": 2080},
+			// tun с legacy-стеком: движок без with_gvisor на нём не стартует (F396).
+			map[string]any{"type": "tun", "tag": "tun-in", "stack": "gvisor",
+				"interface_name": "opkgtun0", "mtu": float64(1500)},
 		},
 		"outbounds": []any{
 			map[string]any{"type": "direct", "tag": "direct"},
@@ -182,9 +185,32 @@ func runReconcile(t *testing.T, dir string, reversed bool) {
 	}
 }
 
+// legacyBesideTreeFixture — config.d уже есть (MigrateLegacyConfigDir no-op),
+// 10-tunnels.json ещё нет, рядом лежит легаси-моноконфиг с tun-инбаундом на
+// legacy-стеке. Слот рождается внутри набора, поэтому фикстура — единственное
+// место, где видно, значит ли порядок шагов (F396).
+func legacyBesideTreeFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeFixtureJSON(t, filepath.Join(dir, "config.d", "00-base.json"), map[string]any{
+		"log": map[string]any{"level": "info"},
+	})
+	writeFixtureJSON(t, filepath.Join(dir, "config.json"), map[string]any{
+		"inbounds": []any{
+			map[string]any{"type": "tun", "tag": "tun-in", "stack": "gvisor",
+				"interface_name": "opkgtun0", "mtu": float64(1500)},
+		},
+		"outbounds": []any{
+			map[string]any{"type": "vless", "tag": "v1", "server": "s", "server_port": 443, "uuid": "u"},
+		},
+	})
+	return dir
+}
+
 var reconcileFixtures = map[string]func(t *testing.T) string{
-	"legacy": dirtyLegacyFixture,
-	"tree":   dirtyTreeFixture,
+	"legacy":             dirtyLegacyFixture,
+	"tree":               dirtyTreeFixture,
+	"legacy-beside-tree": legacyBesideTreeFixture,
 }
 
 // СТРАХОВКА: идемпотентность набора целиком — второй прогон не меняет ни байта.
@@ -386,6 +412,16 @@ func TestReconcileConfigSteps_EachStepIdempotent(t *testing.T) {
 			})
 			writeFixtureJSON(t, filepath.Join(cd, "21-fakeip.json"), map[string]any{
 				"dns": map[string]any{"strategy": "ipv4_only"},
+			})
+			return dir
+		},
+		stepStripLegacyTunStack: func(t *testing.T) string { // 21-fakeip с tun-in на gvisor
+			dir := t.TempDir()
+			writeFixtureJSON(t, filepath.Join(dir, "config.d", "21-fakeip.json"), map[string]any{
+				"inbounds": []any{
+					map[string]any{"type": "tun", "tag": "tun-in", "stack": "gvisor",
+						"interface_name": "opkgtun1", "mtu": float64(1400)},
+				},
 			})
 			return dir
 		},
