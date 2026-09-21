@@ -19,6 +19,9 @@ type ParsedOutbound struct {
 	Port     uint16
 	Outbound json.RawMessage // sing-box outbound JSON
 	Label    string          // human-readable name: Clash "name" field, or URI #fragment for share-links (empty if no fragment)
+	// MultiAddress: outbound — один из N адресов одного TrustTunnel-конфига.
+	// «Один сервер» такой ввод отбивает в Группу серверов (spec-manager.md п. 4).
+	MultiAddress bool
 }
 
 // ParseError describes a single failed link in ParseBatch.
@@ -103,6 +106,10 @@ func ParseLinkMany(input string) ([]ParsedOutbound, error) {
 		return singleOutbound(parseSocks(input))
 	case strings.HasPrefix(lower, "socks://"):
 		return singleOutbound(parseSocks(input))
+	case strings.HasPrefix(lower, "tt://"):
+		return parseTrustTunnelLink(input)
+	case isTrustTunnelConnectURL(input):
+		return parseTrustTunnelConnectURL(input)
 	case strings.HasPrefix(lower, "vmess://"):
 		return nil, ErrSchemeDropped
 	}
