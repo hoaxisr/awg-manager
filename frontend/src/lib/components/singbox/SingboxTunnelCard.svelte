@@ -100,6 +100,8 @@
 				return 'Naive';
 			case 'mieru':
 				return 'Mieru';
+			case 'trusttunnel':
+				return 'TrustTunnel';
 			default:
 				return protocol ? protocol.charAt(0).toUpperCase() + protocol.slice(1) : '—';
 		}

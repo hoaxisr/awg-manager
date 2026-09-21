@@ -580,6 +580,16 @@ func (h *SingboxHandler) AddTunnels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	batch := singbox.ParseTunnelLinksInput(body.Links)
+	// Мульти-адресный TrustTunnel-конфиг — это Группа серверов, не N одиночных
+	// туннелей (spec-manager.md п. 4). n — число мульти-адресных outbound'ов во
+	// всём батче (может прийти из нескольких склеенных конфигов), не адресов
+	// одного конфига. Отбиваем ДО записи, фронт переводит в группу.
+	if n := trustTunnelAddressCount(batch.Outbounds); n > 1 {
+		response.ErrorWithData(w, http.StatusUnprocessableEntity,
+			fmt.Sprintf("TrustTunnel-конфиг с несколькими адресами (%d) — создайте Группу серверов", n),
+			"TRUSTTUNNEL_MULTI_ADDRESS", map[string]int{"addresses": n})
+		return
+	}
 	for _, p := range batch.Outbounds {
 		if err := h.validateOutboundBind(r.Context(), p.Outbound); err != nil {
 			response.BadRequest(w, err.Error())
@@ -618,6 +628,18 @@ func (h *SingboxHandler) AddTunnels(w http.ResponseWriter, r *http.Request) {
 		resp.Errors = append(resp.Errors, errItem{Line: e.Line, Input: e.Input, Error: e.Err.Error()})
 	}
 	response.Success(w, resp)
+}
+
+// trustTunnelAddressCount returns how many parsed outbounds came from a
+// multi-address TrustTunnel config (Task 2 marks each of them).
+func trustTunnelAddressCount(parsed []vlink.ParsedOutbound) int {
+	n := 0
+	for _, p := range parsed {
+		if p.MultiAddress {
+			n++
+		}
+	}
+	return n
 }
 
 // GetTunnel handles GET /api/singbox/tunnels/get?tag={tag}. The response

@@ -97,6 +97,20 @@ describe('linkImportErrorText', () => {
 		);
 	});
 
+	it('не ломает сообщение гейта сборки sing-box о слове sing', () => {
+		const got = linkImportErrorText(
+			'trusttunnel: missing sing-box build tag "with_trusttunnel", update sing-box to a version supporting trusttunnel'
+		);
+		expect(got).toContain('with_trusttunnel');
+		expect(got).not.toContain('Нет поля');
+	});
+
+	it('снимает служебный префикс trusttunnel вместе с остальными', () => {
+		expect(linkImportErrorText('trusttunnel: нет hostname')).toBe(
+			'Ссылка не разобрана: нет hostname'
+		);
+	});
+
 	it('незнакомую строку не теряет, а показывает внутри общей фразы', () => {
 		expect(linkImportErrorText('vlink: something entirely new')).toBe(
 			'Ссылка не разобрана: something entirely new'

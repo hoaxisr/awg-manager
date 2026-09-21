@@ -21,6 +21,7 @@
 			case 'hysteria2': return 'Hysteria2';
 			case 'naive': return 'Naive';
 			case 'mieru': return 'Mieru';
+			case 'trusttunnel': return 'TrustTunnel';
 			default: return p;
 		}
 	}

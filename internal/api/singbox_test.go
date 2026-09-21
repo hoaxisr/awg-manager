@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -360,6 +361,32 @@ func TestSingboxHandler_AddTunnels_BindValidation(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "invalid bind_interface") {
 		t.Fatalf("expected error message to contain invalid bind_interface, got %s", w.Body.String())
+	}
+}
+
+func TestSingboxHandler_AddTunnels_TrustTunnelMultiAddress(t *testing.T) {
+	h := NewSingboxHandler(nil, nil, nil, nil)
+	body := `{"links":"tt://?AAEBAQ92cG4uZXhhbXBsZS5jb20CCzEuMi4zLjQ6NDQzAhJbMjAwMTpkYjg6OjFdOjg0NDMDD2Nkbi5leGFtcGxlLm9yZwUHcHJlbWl1bQYKczNjcmV0UGFzcwcBAQkBAgoBAQsNYWFiYmNjL2ZmZmZmZgwFTXVsdGkqBmZ1dHVyZQ0IBzEuMS4xLjE"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/tunnels", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	h.AddTunnels(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Code    string         `json:"code"`
+		Message string         `json:"message"`
+		Data    map[string]int `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != "TRUSTTUNNEL_MULTI_ADDRESS" || resp.Data["addresses"] != 2 {
+		t.Fatalf("resp: %+v", resp)
+	}
+	if !strings.Contains(resp.Message, "несколькими адресами (2)") {
+		t.Fatalf("message = %q, want to contain %q", resp.Message, "несколькими адресами (2)")
 	}
 }
 

@@ -540,10 +540,10 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 		case isSbJSON && emptyClean:
 			errMsg = "subscription: подписка пуста (outbounds: []). Возможно, истекла или ещё не активирована — проверь на стороне провайдера."
 		case len(parseRes.Errors) > 0:
-			hint := "ни одной валидной ссылки. Поддерживаются: base64-encoded share-links, HTML с share-link якорями, plain text со ссылками vless://, trojan://, ss://, hysteria2://, mieru://, mierus://, Clash YAML / mihomo, sing-box JSON (одиночный, массив конфигов, или массив outbounds; типы vless, trojan, ss, hysteria2, mieru), а также mieru JSON config (формат mieru apply config, экспорт панелей). Записи vmess пропускаются."
+			hint := "ни одной валидной ссылки. Поддерживаются: base64-encoded share-links, HTML с share-link якорями, plain text со ссылками vless://, trojan://, ss://, hysteria2://, mieru://, mierus://, tt:// (TrustTunnel), Clash YAML / mihomo, sing-box JSON (одиночный, массив конфигов, или массив outbounds; типы vless, trojan, ss, hysteria2, mieru), а также mieru JSON config (формат mieru apply config, экспорт панелей), TOML-конфиг TrustTunnel (экспорт endpoint или конфиг клиента). Записи vmess пропускаются."
 			errMsg = fmt.Sprintf("subscription: %s Первая ошибка парсера: %s", hint, parseRes.Errors[0].Error())
 		default:
-			hint := "ни одной валидной ссылки. Поддерживаются: base64-encoded share-links, HTML с share-link якорями, plain text со ссылками vless://, trojan://, ss://, hysteria2://, mieru://, mierus://, Clash YAML / mihomo, sing-box JSON (одиночный, массив конфигов, или массив outbounds; типы vless, trojan, ss, hysteria2, mieru), а также mieru JSON config (формат mieru apply config, экспорт панелей). Записи vmess пропускаются."
+			hint := "ни одной валидной ссылки. Поддерживаются: base64-encoded share-links, HTML с share-link якорями, plain text со ссылками vless://, trojan://, ss://, hysteria2://, mieru://, mierus://, tt:// (TrustTunnel), Clash YAML / mihomo, sing-box JSON (одиночный, массив конфигов, или массив outbounds; типы vless, trojan, ss, hysteria2, mieru), а также mieru JSON config (формат mieru apply config, экспорт панелей), TOML-конфиг TrustTunnel (экспорт endpoint или конфиг клиента). Записи vmess пропускаются."
 			if len(parts.Info) > 0 {
 				hint += fmt.Sprintf(" (инфо-строк провайдера: %d — не являются серверами)", len(parts.Info))
 			}
@@ -1622,6 +1622,8 @@ func parseSubscriptionBody(body []byte, ct string) vlink.BatchResult {
 		return vlink.ParseXrayBody(body)
 	case vlink.IsMieruClientJSON(body):
 		return vlink.ParseMieruClientJSON(body)
+	case vlink.IsTrustTunnelTOML(body):
+		return vlink.ParseTrustTunnelTOML(body)
 	default:
 		return vlink.ParseBatch(NormalizeBody(body, ct))
 	}

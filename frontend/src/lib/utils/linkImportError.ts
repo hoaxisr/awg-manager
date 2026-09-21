@@ -20,7 +20,7 @@
 const LINE_PREFIX = /^(line|node)\s+(\d+)\s+\([^)]*\):\s*/i;
 
 /** Служебные префиксы пакета: пользователю они ничего не говорят. */
-const NOISE_PREFIX = /^(vlink|clash [a-z0-9]+|xray|amnezia|mieru|hysteria):\s*/i;
+const NOISE_PREFIX = /^(vlink|clash [a-z0-9]+|xray|amnezia|mieru|hysteria|trusttunnel):\s*/i;
 
 /** Готовые фразы, а не существительные: род и число у них разные. */
 const MISSING: Record<string, string> = {
@@ -258,6 +258,12 @@ const RULES: Rule[] = [
 		// "missing <что-то> prefix" — это не отсутствующее поле, а не та схема.
 		re: /missing (\S+) prefix/i,
 		text: (m) => `ссылка не похожа на «${m[1]}»`,
+	},
+	{
+		// Гейт сборки sing-box, а не отсутствующее поле: общее правило ниже
+		// оборвало бы «sing-box» на дефисе и выдало «Нет поля «sing»».
+		re: /missing sing-box build tag "([^"]+)"/i,
+		text: (m) => `sing-box собран без тега «${m[1]}» — обновите sing-box`,
 	},
 	{
 		// Хвост после missing бывает разный: "or invalid", "or non-numeric".

@@ -606,7 +606,7 @@ func detectTransport(ob map[string]any) string {
 	switch strOr(ob["type"], "") {
 	case "hysteria2":
 		return "quic"
-	case "naive":
+	case "naive", "trusttunnel":
 		return "https"
 	case "mieru":
 		return strings.ToLower(strOr(ob["transport"], "tcp"))
@@ -650,8 +650,11 @@ func detectFingerprint(ob map[string]any) string {
 // рабочие mieru-подключения. Здесь только теги, подтверждённые файлом
 // include/<type>_outbound.go в исходниках sing-box.
 func outboundRequiresFeature(obType string) string {
-	if obType == "naive" {
+	switch obType {
+	case "naive":
 		return "with_naive_outbound"
+	case "trusttunnel":
+		return "with_trusttunnel"
 	}
 	return ""
 }

@@ -4,7 +4,7 @@
  * Space/tab only before a scheme — not full `\\s`, so multiline YAML/JSON indents are not touched.
  */
 const SPACE_BEFORE_SCHEME_PATTERN =
-	'[ \\t]+(naive\\+https://|naive\\+http://|hysteria2://|vless://|hy2://|trojan://|ss://|mierus://|mieru://)';
+	'[ \\t]+(naive\\+https://|naive\\+http://|hysteria2://|vless://|hy2://|trojan://|ss://|mierus://|mieru://|tt://)';
 
 const spaceBeforeShareSchemeRe = new RegExp(SPACE_BEFORE_SCHEME_PATTERN, 'g');
 

@@ -3,6 +3,7 @@
 	import { Modal, Button, Dropdown } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { linkImportErrorText } from '$lib/utils/linkImportError';
+	import { isTrustTunnelMultiAddress } from '$lib/utils/trustTunnelImport';
 	import { singboxStatus, singboxTunnels } from '$lib/stores/singbox';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
@@ -322,6 +323,14 @@
 				goto('/?tab=singbox');
 			}
 		} catch (e) {
+			const n = isTrustTunnelMultiAddress(e);
+			if (n > 0) {
+				inlineText = singleLinks;
+				singleLinks = '';
+				kind = 'inline';
+				error = `TrustTunnel-конфиг с несколькими адресами (${n}) — это Группа серверов. Текст перенесён, задайте имя группы.`;
+				return;
+			}
 			error = e instanceof Error ? e.message : 'Не удалось импортировать';
 		} finally {
 			submitting = false;
@@ -482,9 +491,10 @@
 				<code>trojan://</code>, <code>ss://</code>, <code>hysteria2://</code>,
 				<code>mieru://</code>, <code>mierus://</code>,
 				<code>naive+http://</code>, <code>naive+https://</code>,
-				<code>trusttunnel://</code>, <code>tt://</code>,
+				<code>tt://</code> и connect-ссылки TrustTunnel (<code>…?d=</code>),
 				а также JSON-конфиг mieru целиком (экспорт панелей, формат
-				<code>mieru apply config</code>) и TOML-конфиг TrustTunnel (AdGuard).
+				<code>mieru apply config</code>) и TOML-конфиг TrustTunnel целиком
+				(экспорт endpoint или конфиг клиента).
 				Список через пробел при вставке разбивается на строки автоматически.
 			</p>
 			{#if !singboxInstalled}
@@ -494,7 +504,7 @@
 			{/if}
 			<ShareLinksTextarea
 				bind:value={singleLinks}
-				placeholder={`vless://uuid@host:443?...#Germany\nhysteria2://pass@host:8443#Finland\nmierus://user:pass@host?profile=default&port=443&protocol=TCP\ntrusttunnel://user:pass@host:443?sni=...#Moscow`}
+				placeholder={`vless://uuid@host:443?...#Germany\nhysteria2://pass@host:8443#Finland\nmierus://user:pass@host?profile=default&port=443&protocol=TCP\ntt://?AQ92cG4uZXhh...`}
 				rows={6}
 				disabled={!singboxInstalled || submitting}
 				onpaste={(e) => onShareListPaste(e, () => singleLinks, (v) => (singleLinks = v))}
@@ -608,14 +618,14 @@
 					<span class="lbl">Ссылки на серверы (по одной на строку)</span>
 					<ShareLinksTextarea
 						bind:value={inlineText}
-						placeholder={`vless://...\ntrojan://...\nhysteria2://...\nnaive+https://\nss://...\nmieru://...\ntrusttunnel://...\ntt://...`}
+						placeholder={`vless://...\ntrojan://...\nhysteria2://...\nnaive+https://\nss://...\nmieru://...\ntt://...`}
 						rows={6}
 						onpaste={(e) => onShareListPaste(e, () => inlineText, (v) => (inlineText = v))}
 					/>
 					<span class="hint">
 						Поддерживаются share-link'и, Clash YAML, sing-box JSON,
 						JSON-конфиг mieru (экспорт панелей, формат mieru apply config)
-						и TOML-конфиг TrustTunnel (AdGuard).
+						и TOML-конфиг TrustTunnel целиком (экспорт endpoint или конфиг клиента).
 						Список ссылок через пробел при вставке разбивается на строки.
 						Авто-обновления нет — список замораживается на момент создания,
 						редактируется во вкладке «Серверы».

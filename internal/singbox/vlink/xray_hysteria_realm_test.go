@@ -127,7 +127,7 @@ func TestParseXrayHysteria_RealmRejections(t *testing.T) {
 
 // Аутбаунд с realm обязан состоять из ключей, которые знает вшитый sing-box.
 func TestParseXrayHysteria_RealmMatchesSchema(t *testing.T) {
-	doc, root := loadSchema(t)
+	doc, root, _ := loadSchema(t)
 	outboundsNode, _ := root["properties"].(map[string]any)
 	arrayNode, _ := outboundsNode["outbounds"].(map[string]any)
 	itemsNode, _ := arrayNode["items"].(map[string]any)
