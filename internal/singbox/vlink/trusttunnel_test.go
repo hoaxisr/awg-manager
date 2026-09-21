@@ -71,16 +71,21 @@ func TestParseTrustTunnelLink_MultiAddressSNIFragment(t *testing.T) {
 }
 
 func TestParseTrustTunnel_ConnectURL_AnyHost(t *testing.T) {
-	for _, u := range []string{
-		"https://trustunnel.ru/connect/?d=" + ttOne + "&name=Berlin",
-		"http://panel.example.net/x?foo=1&d=" + ttOne,
-	} {
-		parsed, err := ParseLinkMany(u)
+	// name= в connect-URL перебивает Name из TLV ("Berlin"); без name= берётся TLV.
+	cases := []struct{ url, wantName string }{
+		{"https://trustunnel.ru/connect/?d=" + ttOne + "&name=Other", "Other"},
+		{"http://panel.example.net/x?foo=1&d=" + ttOne, "Berlin"},
+	}
+	for _, c := range cases {
+		parsed, err := ParseLinkMany(c.url)
 		if err != nil {
-			t.Fatalf("%s: %v", u, err)
+			t.Fatalf("%s: %v", c.url, err)
 		}
 		if len(parsed) != 1 || parsed[0].Protocol != "trusttunnel" {
-			t.Fatalf("%s: %+v", u, parsed)
+			t.Fatalf("%s: %+v", c.url, parsed)
+		}
+		if parsed[0].Tag != c.wantName || parsed[0].Label != c.wantName {
+			t.Fatalf("%s: tag=%q label=%q, want %q", c.url, parsed[0].Tag, parsed[0].Label, c.wantName)
 		}
 	}
 	if _, err := ParseLinkMany("https://panel.example.net/x?foo=1"); err != ErrUnsupportedScheme {
@@ -102,5 +107,31 @@ func TestParseBatch_TrustTunnelThreeLineExport(t *testing.T) {
 	res := ParseBatch([]string{"tt://?" + ttOne, "", "To connect on mobile, you can scan QR code on the page: https://trusttunnel.org/qr.html#tt=" + ttOne})
 	if len(res.Outbounds) != 1 {
 		t.Fatalf("want 1 outbound, got %d (errors %v)", len(res.Outbounds), res.Errors)
+	}
+}
+
+func TestTTEndpointToOutbounds_CertificatePEM(t *testing.T) {
+	const pemChain = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"
+	ep := ttEndpoint{
+		Hostname:    "vpn.example.com",
+		Addresses:   []string{"1.2.3.4:443"},
+		Username:    "u",
+		Password:    "p",
+		Certificate: pemChain,
+	}
+	parsed, err := ttEndpointToOutbounds(ep, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed) != 1 {
+		t.Fatalf("want 1 outbound, got %d", len(parsed))
+	}
+	tls := ttOutboundMap(t, parsed[0])["tls"].(map[string]any)
+	certs, ok := tls["certificate"].([]any)
+	if !ok {
+		t.Fatalf("certificate must be a JSON array, got %T (%v)", tls["certificate"], tls["certificate"])
+	}
+	if len(certs) != 1 || certs[0] != pemChain {
+		t.Fatalf("certificate: %v", certs)
 	}
 }
