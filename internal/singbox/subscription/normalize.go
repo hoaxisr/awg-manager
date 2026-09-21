@@ -8,7 +8,7 @@ import (
 )
 
 // shareSchemeCore matches supported share-link scheme names (no ://).
-const shareSchemeCore = `(?:vless|trojan|ss|hysteria2|hy2|naive\+\w+|vpn|mieru|mierus)`
+const shareSchemeCore = `(?:vless|trojan|ss|hysteria2|hy2|naive\+\w+|vpn|mieru|mierus|tt)`
 
 // shareURLStartPlain finds share URLs in plain text: after line start or ASCII whitespace.
 // Used so fragments may contain spaces (e.g. "#📆 Осталось: 28 дней") and space-separated
