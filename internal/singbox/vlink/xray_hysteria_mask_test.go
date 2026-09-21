@@ -108,7 +108,7 @@ func TestParseXrayHysteria_LocalOnlyHopRejected(t *testing.T) {
 // Аутбаунд с обфускацией и прыжками обязан состоять из ключей, которые знает
 // вшитый sing-box: лишний ключ роняет ВСЮ конфигурацию, а не один аутбаунд.
 func TestParseXrayHysteria_MatchesSchema(t *testing.T) {
-	doc, root := loadSchema(t)
+	doc, root, _ := loadSchema(t)
 	outboundsNode, _ := root["properties"].(map[string]any)
 	arrayNode, _ := outboundsNode["outbounds"].(map[string]any)
 	itemsNode, _ := arrayNode["items"].(map[string]any)

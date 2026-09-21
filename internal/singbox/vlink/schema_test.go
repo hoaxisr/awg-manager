@@ -1,6 +1,7 @@
 package vlink
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -21,7 +22,7 @@ type schemaDoc struct {
 	defs map[string]any
 }
 
-func loadSchema(t *testing.T) (*schemaDoc, map[string]any) {
+func loadSchema(t *testing.T) (*schemaDoc, map[string]any, []byte) {
 	t.Helper()
 	raw, err := os.ReadFile(schemaPath)
 	if err != nil {
@@ -43,7 +44,7 @@ func loadSchema(t *testing.T) (*schemaDoc, map[string]any) {
 	if len(defs) == 0 {
 		t.Fatal("schema has no $defs")
 	}
-	return &schemaDoc{defs: defs}, doc
+	return &schemaDoc{defs: defs}, doc, raw
 }
 
 // resolve follows a $ref chain to the node it names.
@@ -213,7 +214,7 @@ func (d *schemaDoc) checkKeys(t *testing.T, path string, node map[string]any, va
 // declares. A key we invent, or one the fork renamed under us, fails here
 // instead of on the router.
 func TestParsedOutboundsMatchSchema(t *testing.T) {
-	doc, root := loadSchema(t)
+	doc, root, rawSchema := loadSchema(t)
 	outboundsNode, _ := root["properties"].(map[string]any)
 	arrayNode, _ := outboundsNode["outbounds"].(map[string]any)
 	itemsNode, _ := arrayNode["items"].(map[string]any)
@@ -239,9 +240,13 @@ func TestParsedOutboundsMatchSchema(t *testing.T) {
 		"socks5":                         "socks://user:pass@example.com:1080#g",
 		"mieru":                          "mierus://user:pass@example.com?port=2999&port=3000-3010&protocol=TCP&multiplexing=MULTIPLEXING_LOW&profile=p#i",
 		"naive":                          "naive+https://user:pass@example.com:443#j",
+		"trusttunnel":                    "tt://?AQ92cG4uZXhhbXBsZS5jb20CCzEuMi4zLjQ6NDQzBQdwcmVtaXVtBgpzM2NyZXRQYXNzDAZCZXJsaW4",
 	}
 	for name, link := range links {
 		t.Run(name, func(t *testing.T) {
+			if name == "trusttunnel" && !bytes.Contains(rawSchema, []byte(`"trusttunnel"`)) {
+				t.Skip("схема пина без trusttunnel — включится при пине релиза форка с with_trusttunnel")
+			}
 			p, err := ParseLink(link)
 			if err != nil {
 				t.Fatalf("ParseLink: %v", err)
@@ -259,7 +264,7 @@ func TestParsedOutboundsMatchSchema(t *testing.T) {
 // которые объявляет вшитый sing-box. Раньше проверялись только outbounds, и
 // пропажа download_detour из схемы 1.14 прошла незамеченной.
 func TestMaterializedRouterConfigMatchesSchema(t *testing.T) {
-	doc, root := loadSchema(t)
+	doc, root, _ := loadSchema(t)
 	rootProps, _ := root["properties"].(map[string]any)
 
 	sample := router.RouterConfig{
@@ -328,7 +333,7 @@ func TestMaterializedRouterConfigMatchesSchema(t *testing.T) {
 // который checkKeys вызывает перед Errorf, — так тест не зависит от
 // намеренно проваленного sub-теста.
 func TestCheckKeys_ScalarAgainstAnyOf(t *testing.T) {
-	doc, _ := loadSchema(t)
+	doc, _, _ := loadSchema(t)
 
 	ref := map[string]any{"$ref": "#/$defs/HTTPClientReference"}
 	doc.checkKeys(t, "http_client", ref, "rs-direct:direct") // не должен звать t.Errorf

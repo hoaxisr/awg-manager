@@ -815,7 +815,7 @@ func parseVia(t *testing.T, format, input string) map[string]any {
 
 // TestPathEquivalence — см. комментарий пакета в шапке файла.
 func TestPathEquivalence(t *testing.T) {
-	doc, root := loadSchema(t)
+	doc, root, _ := loadSchema(t)
 	outboundsNode, _ := root["properties"].(map[string]any)
 	arrayNode, _ := outboundsNode["outbounds"].(map[string]any)
 	itemsNode, _ := arrayNode["items"].(map[string]any)
