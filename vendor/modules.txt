@@ -1,3 +1,7 @@
+# github.com/BurntSushi/toml v1.6.0
+## explicit; go 1.18
+github.com/BurntSushi/toml
+github.com/BurntSushi/toml/internal
 # github.com/coder/websocket v1.8.14
 ## explicit; go 1.23
 github.com/coder/websocket

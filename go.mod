@@ -16,6 +16,7 @@ require (
 )
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/hoaxisr/awg-manager/awgmproto v0.1.2
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	go.uber.org/goleak v1.3.0
