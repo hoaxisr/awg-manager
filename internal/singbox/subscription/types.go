@@ -57,13 +57,14 @@ func DefaultURLTestConfig() URLTestConfig {
 }
 
 // Subscription is the persisted shape of a VPN subscription. A
-// subscription is either URL-backed (Inline == "") or inline (URL == "");
-// IsInline is the canonical predicate.
+// subscription is either URL-backed, inline, or file-backed; IsInline
+// and IsFile are the canonical predicates.
 type Subscription struct {
 	ID               string                 `json:"id"`               // uuid
 	Label            string                 `json:"label"`            // user-facing
 	URL              string                 `json:"url"`              // subscription URL ("" when inline)
 	Inline           string                 `json:"inline,omitempty"` // raw paste of share-links / clash YAML / sing-box JSON
+	Path             string                 `json:"path,omitempty"`   // absolute path on the router; "" unless file-backed
 	Headers          []Header               `json:"headers"`          // custom HTTP headers for fetch (URL-backed only)
 	RefreshHours     int                    `json:"refreshHours"`     // 0 = manual only; ignored for inline
 	LastFetched      time.Time              `json:"lastFetched"`
@@ -97,6 +98,12 @@ type Subscription struct {
 // lifetime of the subscription (Update rejects switching).
 func (s Subscription) IsInline() bool {
 	return s.URL == "" && s.Inline != ""
+}
+
+// IsFile reports whether the subscription's content is read from a file
+// on the router rather than fetched from a remote URL or pasted inline.
+func (s Subscription) IsFile() bool {
+	return s.URL == "" && s.Inline == "" && s.Path != ""
 }
 
 // EffectiveMode returns the subscription's mode with the empty-string
@@ -142,6 +149,7 @@ type CreateInput struct {
 	Label         string
 	URL           string
 	Inline        string
+	Path          string
 	Headers       []Header
 	RefreshHours  int
 	Enabled       bool

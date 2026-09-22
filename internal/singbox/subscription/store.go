@@ -189,6 +189,7 @@ func (s *Store) Create(in CreateInput) (*Subscription, error) {
 		Label:            in.Label,
 		URL:              in.URL,
 		Inline:           in.Inline,
+		Path:             strings.TrimSpace(in.Path),
 		Headers:          in.Headers,
 		RefreshHours:     in.RefreshHours,
 		Enabled:          in.Enabled,
@@ -566,6 +567,10 @@ func (s *Store) MaybeRefresh(now time.Time) []Subscription {
 		// would just re-parse the same paste. Skip; user can still
 		// trigger a manual refresh from the UI if they want a re-parse.
 		if sub.IsInline() {
+			continue
+		}
+		// file source refreshes only on user action (Q5, #710)
+		if sub.IsFile() {
 			continue
 		}
 		if sub.LastFetched.IsZero() ||
