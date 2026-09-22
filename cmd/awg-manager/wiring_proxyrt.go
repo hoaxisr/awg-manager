@@ -36,6 +36,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/wdttserver"
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 	"github.com/hoaxisr/awg-manager/internal/testing"
@@ -483,7 +484,8 @@ func (d proxyBinaryDownloader) DownloadFile(ctx context.Context, url, destPath s
 	}
 	_, err := d.svc.DownloadFile(ctx, downloader.FileRequest{
 		Request: downloader.Request{
-			Purpose: "proxy-binary", URL: url, Timeout: 5 * time.Minute,
+			Purpose: "proxy-binary", UserAgent: appver.UA(),
+			URL: url, Timeout: 5 * time.Minute,
 		},
 		DestPath: destPath, TempPath: destPath,
 		MaxFileBytes: maxBytes, Mode: 0o644, Atomic: false,

@@ -6,6 +6,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 )
 
 const (
@@ -90,6 +91,7 @@ func fetchLatestPackageWithDownloader(ctx context.Context, dl Downloader, pkgsUR
 	}
 	body, _, err := dl.ReadAll(ctx, downloader.Request{
 		Purpose:      "awgm-update-check",
+		UserAgent:    appver.UA(),
 		URL:          pkgsURL,
 		MaxBodyBytes: packagesMaxBytes,
 		Timeout:      repoTimeout,

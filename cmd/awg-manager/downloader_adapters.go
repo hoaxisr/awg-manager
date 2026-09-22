@@ -7,6 +7,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/singbox/installer"
+	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 )
 
 type installerDownloaderAdapter struct {
@@ -45,9 +46,10 @@ func (a *installerDownloaderAdapter) DownloadFile(ctx context.Context, req insta
 
 	res, err := a.svc.DownloadFile(ctx, downloader.FileRequest{
 		Request: downloader.Request{
-			Purpose: "singbox-binary",
-			URL:     req.URL,
-			Timeout: req.Timeout,
+			Purpose:   "singbox-binary",
+			UserAgent: appver.UA(),
+			URL:       req.URL,
+			Timeout:   req.Timeout,
 		},
 		// Intentional: req.DestPath is already "<binary>.tmp" from installer.
 		// We keep temp == dest here, and activation of live binary is done

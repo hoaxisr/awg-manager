@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 )
 
@@ -169,5 +170,30 @@ func TestResolveAddr_SeamDefaults(t *testing.T) {
 	}
 	if reflect.ValueOf(routerHTTPPort).Pointer() != reflect.ValueOf(getHTTPPort).Pointer() {
 		t.Fatal("routerHTTPPort != getHTTPPort")
+	}
+}
+
+// Запросы к роутеру представляются: без заголовка они уходят как
+// "Go-http-client/1.1" и в журнале роутера неотличимы от чужих.
+func TestAuthenticate_SendsAppUserAgent(t *testing.T) {
+	seen := make(chan string, 2)
+	c := newAuthClient(t, func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.Header.Get("User-Agent")
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("X-NDM-Challenge", "c0ffee")
+			w.Header().Set("X-NDM-Realm", "Keenetic")
+			w.WriteHeader(http.StatusUnauthorized)
+		case http.MethodPost:
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+	if err := c.Authenticate(context.Background(), "admin", "pw"); err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if got := <-seen; got != appver.UA() {
+			t.Errorf("request %d User-Agent = %q, want %q", i, got, appver.UA())
+		}
 	}
 }

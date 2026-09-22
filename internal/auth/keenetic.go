@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
+	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 	"github.com/hoaxisr/awg-manager/internal/sys/netif"
 )
 
@@ -186,6 +187,7 @@ func (c *KeeneticClient) getChallenge(ctx context.Context, authURL string) (chal
 	if err != nil {
 		return "", "", nil, err
 	}
+	req.Header.Set("User-Agent", appver.UA())
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -247,6 +249,7 @@ func (c *KeeneticClient) postAuth(ctx context.Context, authURL, login, hashedPas
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", appver.UA())
 
 	// Add cookies from GET response
 	for _, cookie := range cookies {

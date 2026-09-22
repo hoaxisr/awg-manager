@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/downloader"
+	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 	"github.com/hoaxisr/awg-manager/internal/sys/semver"
 )
 
@@ -141,6 +142,7 @@ func upgradeWithDownloader(ctx context.Context, downloadURL, wantSHA256 string, 
 	_, err = dl.DownloadFile(ctx, downloader.FileRequest{
 		Request: downloader.Request{
 			Purpose:      "awgm-update-ipk",
+			UserAgent:    appver.UA(),
 			URL:          downloadURL,
 			Method:       http.MethodGet,
 			Timeout:      downloadTimeout,

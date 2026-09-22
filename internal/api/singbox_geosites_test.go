@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -277,4 +278,18 @@ func TestGeositesList_StaleWhileRevalidate(t *testing.T) {
 	}
 	close(release)
 	<-refreshDone
+}
+
+// Каталог берётся с GitHub API: запрос обязан представляться версией панели,
+// иначе API отвечает 403 на безымянные запросы.
+func TestGeositesList_SendsAppUserAgent(t *testing.T) {
+	seen := make(chan string, 1)
+	h, _ := newGeositesTestHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.Header.Get("User-Agent")
+		_, _ = w.Write([]byte(geositeTreeJSON(false, "geosite-ru.srs")))
+	})
+	geositesList(t, h, "/api/singbox/router/geosites/list")
+	if got := <-seen; got != appver.UA() {
+		t.Errorf("User-Agent = %q, want %q", got, appver.UA())
+	}
 }

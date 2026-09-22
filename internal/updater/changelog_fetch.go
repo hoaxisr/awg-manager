@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/downloader"
+	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 )
 
 // changelogURLForChannel возвращает URL CHANGELOG.md для канала. develop
@@ -111,6 +112,7 @@ func (c *changelogFetcher) download(ctx context.Context) (string, error) {
 	c.mu.RUnlock()
 	body, meta, err := dl.ReadAll(ctx, downloader.Request{
 		Purpose:       "awgm-changelog",
+		UserAgent:     appver.UA(),
 		URL:           url,
 		Method:        http.MethodGet,
 		Timeout:       repoTimeout,

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
 )
 
@@ -169,6 +170,7 @@ func (c *Client) postJSON(ctx context.Context, payload any) (json.RawMessage, er
 		return nil, fmt.Errorf("rci POST: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", appver.UA())
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -238,6 +240,7 @@ func (c *Client) getRawDirect(ctx context.Context, path string) ([]byte, error) 
 		c.appLog.Error("GET", path, fmt.Sprintf("build request: %v", err))
 		return nil, fmt.Errorf("rci GET %s: %w", path, err)
 	}
+	req.Header.Set("User-Agent", appver.UA())
 	resp, err := c.http.Do(req)
 	if err != nil {
 		c.appLog.Error("GET", path, fmt.Sprintf("transport: %v", err))
@@ -273,6 +276,7 @@ func (c *Client) GetStream(ctx context.Context, path string, fn func(io.Reader) 
 		c.appLog.Error("GET", path, fmt.Sprintf("build request: %v", err))
 		return fmt.Errorf("rci GET %s: %w", path, err)
 	}
+	req.Header.Set("User-Agent", appver.UA())
 	resp, err := c.http.Do(req)
 	if err != nil {
 		c.appLog.Error("GET", path, fmt.Sprintf("transport: %v", err))

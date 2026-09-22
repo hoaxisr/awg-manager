@@ -30,6 +30,11 @@ type Request struct {
 	// dial-стража у загрузчика нет (в прокси-режиме он слеп), а проверка URL
 	// хопа от режима не зависит.
 	RedirectGuard func(string) error
+	// UserAgent называет нас хосту. Заполняется ТОЛЬКО для наших адресов
+	// (сервер обновлений, зеркала бинарей): загрузчик общий, и через него
+	// же идут подписки по введённому пользователем URL — туда версия и
+	// арка панели уходить не должны. Пусто = заголовка нет вовсе.
+	UserAgent string
 }
 
 type ResponseMeta struct {
@@ -94,6 +99,9 @@ func (s *Service) ReadAll(ctx context.Context, req Request) ([]byte, ResponseMet
 	httpReq, err := http.NewRequestWithContext(requestCtx, method, req.URL, requestBody)
 	if err != nil {
 		return nil, meta, fmt.Errorf("download via %s: build request: %w", lease.Route.DisplayName(), err)
+	}
+	if req.UserAgent != "" {
+		httpReq.Header.Set("User-Agent", req.UserAgent)
 	}
 	if strings.EqualFold(httpReq.Header.Get("Connection"), "close") {
 		httpReq.Close = true
@@ -161,6 +169,9 @@ func (s *Service) DownloadFile(ctx context.Context, req FileRequest) (FileResult
 	httpReq, err := http.NewRequestWithContext(requestCtx, method, req.URL, requestBody)
 	if err != nil {
 		return result, fmt.Errorf("download via %s: build request: %w", lease.Route.DisplayName(), err)
+	}
+	if req.UserAgent != "" {
+		httpReq.Header.Set("User-Agent", req.UserAgent)
 	}
 	if strings.EqualFold(httpReq.Header.Get("Connection"), "close") {
 		httpReq.Close = true

@@ -13,6 +13,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/response"
+	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 )
 
 // Каталог SagerNet sing-geosite: полный список geosite-наборов из ветки
@@ -202,7 +203,7 @@ func (h *SingboxGeositesHandler) fetch(r *http.Request) ([]string, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "awg-manager")
+	req.Header.Set("User-Agent", appver.UA())
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
 	resp, err := lease.Client.Do(req)

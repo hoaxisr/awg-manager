@@ -122,3 +122,12 @@ func ensureServiceEnv() {
 		os.Setenv("PATH", "/opt/bin:/opt/sbin:/bin:/sbin:/usr/bin:/usr/sbin:"+path)
 	}
 }
+
+// uaArch returns the arch tag for the User-Agent: the build key when ldflags
+// set it, otherwise the Go arch so a dev binary is still identifiable.
+func uaArch() string {
+	if a := detectArch(); a != "" {
+		return a
+	}
+	return runtime.GOARCH
+}

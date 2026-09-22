@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 )
 
@@ -216,6 +217,7 @@ func rciGetJSON(path string, dst any) error {
 	if err != nil {
 		return err
 	}
+	req.Header.Set("User-Agent", appver.UA())
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -237,6 +239,7 @@ func rciGetRaw(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("User-Agent", appver.UA())
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

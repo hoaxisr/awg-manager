@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
 
@@ -23,6 +24,10 @@ func main() {
 	pprofListen := flag.String("pprof-listen", "", "Dedicated TCP address for Go /debug/pprof only (recommended: 127.0.0.1:6060); empty disables standalone pprof")
 	slowReqMS := flag.Int("slow-request-ms", 0, "Log HTTP handlers slower than this (ms) to stderr via slog (0 disables); long-lived SSE/WS routes are excluded")
 	flag.Parse()
+
+	// User-Agent исходящих запросов (сервер обновлений, RCI, /auth роутера).
+	// Ставим до первого HTTP-вызова — ниже по main уже ходят и RCI, и загрузки.
+	appver.Set(version, uaArch())
 
 	// `-data-dir` обязан соблюдаться целиком: иначе демон в песочнице пишет
 	// .conf туннелей, файлы релея, модули и скрипты роутера в БОЕВОЙ каталог

@@ -11,6 +11,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 )
 
 type fakeDownloader struct {
@@ -85,6 +86,9 @@ func TestCheckWithDownloader_UsesDownloaderRequest(t *testing.T) {
 	}
 	if seen.Purpose != "awgm-update-check" {
 		t.Fatalf("purpose = %q, want awgm-update-check", seen.Purpose)
+	}
+	if seen.UserAgent != appver.UA() {
+		t.Fatalf("user-agent = %q, want %q", seen.UserAgent, appver.UA())
 	}
 	if seen.Timeout != repoTimeout {
 		t.Fatalf("timeout = %s, want %s", seen.Timeout, repoTimeout)
@@ -246,6 +250,9 @@ func TestChangelogFetcher_UsesDownloaderRequest(t *testing.T) {
 	if seen.Purpose != "awgm-changelog" {
 		t.Fatalf("purpose = %q, want awgm-changelog", seen.Purpose)
 	}
+	if seen.UserAgent != appver.UA() {
+		t.Fatalf("user-agent = %q, want %q", seen.UserAgent, appver.UA())
+	}
 	if seen.MaxBodyBytes != changelogMaxBytes {
 		t.Fatalf("max body bytes = %d, want %d", seen.MaxBodyBytes, changelogMaxBytes)
 	}
@@ -271,6 +278,9 @@ func TestUpgradeWithDownloader_UsesFileRequest(t *testing.T) {
 	}
 	if seen.Request.Purpose != "awgm-update-ipk" {
 		t.Fatalf("purpose = %q, want awgm-update-ipk", seen.Request.Purpose)
+	}
+	if seen.Request.UserAgent != appver.UA() {
+		t.Fatalf("user-agent = %q, want %q", seen.Request.UserAgent, appver.UA())
 	}
 	if seen.Request.Timeout != downloadTimeout {
 		t.Fatalf("timeout = %s, want %s", seen.Request.Timeout, downloadTimeout)
