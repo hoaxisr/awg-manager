@@ -2273,6 +2273,42 @@ func TestService_Create_FromFile_Materializes(t *testing.T) {
 	}
 }
 
+// Пустой label у файловой подписки заменяется именем файла: карточки рисуют
+// label || url, а url у файлового источника пуст — иначе заголовок пустой.
+func TestService_Create_FromFile_EmptyLabelDefaultsToBasename(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "  ", Path: p, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if want := filepath.Base(p); sub.Label != want {
+		t.Fatalf("Label=%q, want %q", sub.Label, want)
+	}
+}
+
+func TestService_Create_FromFile_KeepsExplicitLabel(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "мой список", Path: p, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if sub.Label != "мой список" {
+		t.Fatalf("Label=%q, want %q", sub.Label, "мой список")
+	}
+}
+
 func TestService_Create_FileOutsideSandbox_NoSideEffects(t *testing.T) {
 	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
 	mutator := &fakeMutator{}

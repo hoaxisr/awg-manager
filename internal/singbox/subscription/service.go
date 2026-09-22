@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -312,6 +313,12 @@ func (s *Service) lockSub(id string) *sync.Mutex {
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, error) {
 	in.Path = strings.TrimSpace(in.Path)
+	// Файловая подписка без label рисует пустые заголовки карточек (везде
+	// label || url, а url у неё пуст), а мастер создания label не принуждает —
+	// подставляем имя файла здесь, до лога и до записи в store.
+	if strings.TrimSpace(in.Label) == "" && in.Path != "" {
+		in.Label = filepath.Base(in.Path)
+	}
 	source := "url"
 	switch {
 	case in.Inline != "":
