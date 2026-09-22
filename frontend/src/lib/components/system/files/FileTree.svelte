@@ -13,7 +13,7 @@
 </script>
 
 <aside class="side-tree">
-	<div class="tree-head">Структура /opt</div>
+	<div class="tree-head">Структура</div>
 	<ul class="tree-root">
 		{#each nodes as node (node.path)}
 			<li>
