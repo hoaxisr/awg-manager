@@ -328,7 +328,13 @@
 	}
 
 	function standardDatRuleSetTag(kind: 'geosite' | 'geoip', pickedTags: string[]): string {
-		return `${kind}-${pickedTags.join('-')}`.toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
+		// Краевые дефисы срезаны: без этого geo-тег, схлопнувшийся санитайзингом
+		// в пустоту, дал бы «geosite--», который validateRuleSetTag отвергает
+		// как лоссовый (F434, #941) — форма из нашего же генератора.
+		return `${kind}-${pickedTags.join('-')}`
+			.toLowerCase()
+			.replace(/[^a-z0-9._-]+/g, '-')
+			.replace(/^-+|-+$/g, '');
 	}
 
 	function savedRuleSetType(t: RuleSetFormType): SingboxRouterRuleSet['type'] {
@@ -340,7 +346,7 @@
 		error = '';
 		try {
 			const cleanTag = tag.trim();
-			const tagErr = validateRuleSetTag(cleanTag);
+			const tagErr = validateRuleSetTag(cleanTag, savedRuleSetType(type));
 			if (tagErr) {
 				error = tagErr;
 				busy = false;

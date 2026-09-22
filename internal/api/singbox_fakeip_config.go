@@ -54,6 +54,10 @@ func (h *SingboxFakeIPConfigHandler) handleErr(w http.ResponseWriter, action str
 		errors.Is(err, router.ErrRuleSetNotFound),
 		errors.Is(err, router.ErrOutboundNotFound):
 		response.Error(w, err.Error(), "NOT_FOUND")
+	case errors.Is(err, router.ErrRuleSetTagUnsafe):
+		// 400: тег inline-набора именует файл его артефакта — иначе два набора
+		// делят один файл и затирают правила друг друга (F434, #941).
+		response.Error(w, err.Error(), "RULE_SET_TAG_UNSAFE")
 	case errors.Is(err, router.ErrInvalidMatchers),
 		errors.Is(err, router.ErrDNSInvalidServer):
 		response.Error(w, err.Error(), "INVALID_MATCHERS")

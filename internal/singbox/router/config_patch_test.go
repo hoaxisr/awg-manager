@@ -130,6 +130,89 @@ func TestRuleSetTagReservedSRSSuffix(t *testing.T) {
 	}
 }
 
+// F434 (#941): тег обязан совпадать со своим именем файла — иначе два набора
+// материализуются в один rule-sets/inline/<base>.{json,srs} и затирают друг
+// друга. Лоссовые не только кириллица и пробелы, но и краевые дефисы.
+func TestRuleSetTagMustEqualArtifactFilename(t *testing.T) {
+	// Краевые пробелы в bad: сравнение дословное, без нормализации. Иначе
+	// " custom-1 " хранился бы с пробелами и делил файл с "custom-1".
+	bad := []string{"\u041c\u043e\u0451", "\u0412\u0442\u043e\u0440\u043e\u0439", "My set", "-foo", "foo-", "geosite/example", " custom-1 ", "custom-1 "}
+	for _, tag := range bad {
+		cfg := NewEmptyConfig()
+		err := cfg.AddRuleSet(RuleSet{Tag: tag, Type: "inline", Rules: []map[string]any{
+			{"domain_suffix": []any{".example.com"}},
+		}})
+		if err == nil || !errors.Is(err, ErrRuleSetTagUnsafe) {
+			t.Errorf("AddRuleSet(%q): expected ErrRuleSetTagUnsafe, got %v", tag, err)
+		}
+	}
+
+	// Заглавная латиница годна: санитайзинг её не трогает. Кейс сторожит
+	// расхождение с фронтовым зеркалом, где легко написать [^a-z0-9._-].
+	// Литерал fallbackRuleSetFilename занят файлами легаси-наборов с лоссовым
+	// тегом: набор с таким именем разделил бы файл с любым из них.
+	cfgReserved := NewEmptyConfig()
+	if err := cfgReserved.AddRuleSet(RuleSet{Tag: fallbackRuleSetFilename, Type: "inline", Rules: []map[string]any{
+		{"domain_suffix": []any{".example.com"}},
+	}}); !errors.Is(err, ErrRuleSetTagUnsafe) {
+		t.Errorf("AddRuleSet(%q): expected ErrRuleSetTagUnsafe, got %v", fallbackRuleSetFilename, err)
+	}
+	// Но только сам литерал: производные от него теги свободны.
+	if err := cfgReserved.AddRuleSet(RuleSet{Tag: "ruleset-1", Type: "inline", Rules: []map[string]any{
+		{"domain_suffix": []any{".example.com"}},
+	}}); err != nil {
+		t.Errorf(`AddRuleSet("ruleset-1"): %v`, err)
+	}
+
+	good := []string{"custom-1", "geosite-telegram", "a.b_c-1", "MyCustomSet"}
+	for _, tag := range good {
+		cfg := NewEmptyConfig()
+		if err := cfg.AddRuleSet(RuleSet{Tag: tag, Type: "inline", Rules: []map[string]any{
+			{"domain_suffix": []any{".example.com"}},
+		}}); err != nil {
+			t.Errorf("AddRuleSet(%q): %v", tag, err)
+		}
+	}
+
+	// Правка существующего набора проходит через ту же проверку: переименование
+	// в годный тег разрешено, правка содержимого под лоссовым тегом — нет.
+	cfg := NewEmptyConfig()
+	cfg.Route.RuleSet = []RuleSet{{Tag: "\u041c\u043e\u0451", Type: "inline", Rules: []map[string]any{
+		{"domain_suffix": []any{".example.com"}},
+	}}}
+	err := cfg.UpdateRuleSet("\u041c\u043e\u0451", RuleSet{Tag: "\u041c\u043e\u0451", Type: "inline", Rules: []map[string]any{
+		{"domain_suffix": []any{".example.org"}},
+	}})
+	if err == nil || !errors.Is(err, ErrRuleSetTagUnsafe) {
+		t.Errorf("UpdateRuleSet in place: expected ErrRuleSetTagUnsafe, got %v", err)
+	}
+	if err := cfg.UpdateRuleSet("\u041c\u043e\u0451", RuleSet{Tag: "moyo", Type: "inline", Rules: []map[string]any{
+		{"domain_suffix": []any{".example.org"}},
+	}}); err != nil {
+		t.Errorf("rename to a valid tag: %v", err)
+	}
+
+	// Remote-набор проверку НЕ проходит: его тег файл не именует, а в каталоге
+	// SagerNet теги со спецсимволами штатные (geolocation-!cn лежит и в наших
+	// пресетах — internal/presets/defaults.json).
+	cfg = NewEmptyConfig()
+	if err := cfg.AddRuleSet(RuleSet{Tag: "geosite-geolocation-!cn", Type: "remote", URL: "https://example.com/x.srs"}); err != nil {
+		t.Errorf("remote rule_set with a catalog tag: %v", err)
+	}
+	// Local тоже свободен: файл артефакта именует не тег.
+	if err := cfg.AddRuleSet(RuleSet{Tag: "\u041c\u043e\u0451 \u043b\u043e\u043a\u0430\u043b\u044c\u043d\u043e\u0435", Type: "local", Path: "/opt/etc/rs.srs"}); err != nil {
+		t.Errorf("local rule_set with a lossy tag: %v", err)
+	}
+	// Но смена типа такого набора на inline — упирается в проверку.
+	if err := cfg.UpdateRuleSet("geosite-geolocation-!cn", RuleSet{
+		Tag:   "geosite-geolocation-!cn",
+		Type:  "inline",
+		Rules: []map[string]any{{"domain_suffix": []any{".example.com"}}},
+	}); !errors.Is(err, ErrRuleSetTagUnsafe) {
+		t.Errorf("remote→inline with a lossy tag: expected ErrRuleSetTagUnsafe, got %v", err)
+	}
+}
+
 func TestRuleSetInlineValidation(t *testing.T) {
 	cfg := NewEmptyConfig()
 

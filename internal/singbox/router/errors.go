@@ -22,8 +22,11 @@ var (
 	ErrBulkInvalidSelection = errors.New("invalid bulk selection")
 	ErrRuleSetTagConflict   = errors.New("rule set with this tag already exists")
 	ErrRuleSetNotFound      = errors.New("rule set not found")
-	ErrDatRuleSetForbidden  = errors.New("dat rule set token is invalid")
-	ErrOutboundTagConflict  = errors.New("outbound with this tag already exists")
+	// ErrRuleSetTagUnsafe — тег inline-набора не совпадает со своим именем
+	// файла артефакта (F434, #941). Ошибка ввода, API отвечает 400.
+	ErrRuleSetTagUnsafe    = errors.New("inline rule set tag must equal its artifact file name")
+	ErrDatRuleSetForbidden = errors.New("dat rule set token is invalid")
+	ErrOutboundTagConflict = errors.New("outbound with this tag already exists")
 	// ErrCompositeMemberUnknown — член selector/urltest ссылается на несуществующий выход (#567).
 	ErrCompositeMemberUnknown   = errors.New("неизвестный член композита")
 	ErrOutboundNotFound         = errors.New("outbound not found")

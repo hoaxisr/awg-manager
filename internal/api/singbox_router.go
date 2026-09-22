@@ -247,6 +247,10 @@ func (h *SingboxRouterHandler) handleErr(w http.ResponseWriter, action string, e
 		errors.Is(err, router.ErrRuleSetNotFound),
 		errors.Is(err, router.ErrOutboundNotFound):
 		response.Error(w, err.Error(), "NOT_FOUND")
+	case errors.Is(err, router.ErrRuleSetTagUnsafe):
+		// 400: тег inline-набора именует файл его артефакта — иначе два набора
+		// делят один файл и затирают правила друг друга (F434, #941).
+		response.Error(w, err.Error(), "RULE_SET_TAG_UNSAFE")
 	case errors.Is(err, router.ErrBulkEmptyIndices),
 		errors.Is(err, router.ErrBulkEmptyTags):
 		// 400: empty selection for a bulk rule/ruleset mutation — nothing to do.

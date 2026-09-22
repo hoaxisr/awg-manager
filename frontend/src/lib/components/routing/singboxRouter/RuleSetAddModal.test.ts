@@ -185,3 +185,55 @@ describe('RuleSetAddModal', () => {
 		}));
 	});
 });
+
+// F434 (#941): проводка валидатора тега. Без этих двух кейсов вызов
+// validateRuleSetTag из save() можно выкинуть, и тесты остаются зелёными.
+describe('RuleSetAddModal tag validation wiring', () => {
+	it('refuses to save an inline rule_set whose tag is not its file name', async () => {
+		const onSave = vi.fn().mockResolvedValue(undefined);
+		render(RuleSetAddModal, {
+			props: {
+				ruleSet: {
+					tag: 'Моё',
+					type: 'inline',
+					rules: [{ domain_suffix: ['.example.com'] }],
+				},
+				outboundOptions: [],
+				onClose: vi.fn(),
+				onSave,
+			},
+		});
+
+		await fireEvent.click(screen.getByRole('button', { name: /сохранить/i }));
+
+		expect(onSave).not.toHaveBeenCalled();
+		expect(screen.getByText(/имя его файла/i)).toBeTruthy();
+	});
+
+	it('saves a remote rule_set whose catalog tag carries a special character', async () => {
+		const onSave = vi.fn().mockResolvedValue(undefined);
+		render(RuleSetAddModal, {
+			props: {
+				ruleSet: {
+					tag: 'geosite-geolocation-!cn',
+					type: 'remote',
+					format: 'binary',
+					url: 'https://example.com/geosite-geolocation-!cn.srs',
+					update_interval: '24h',
+				},
+				outboundOptions: [],
+				onClose: vi.fn(),
+				onSave,
+			},
+		});
+
+		await fireEvent.input(screen.getByPlaceholderText<HTMLInputElement>('geosite-example'), {
+			target: { value: 'geosite-category-ai-!cn' },
+		});
+		await fireEvent.click(screen.getByRole('button', { name: /сохранить/i }));
+
+		expect(onSave).toHaveBeenCalledWith(
+			expect.objectContaining({ tag: 'geosite-category-ai-!cn' }),
+		);
+	});
+});

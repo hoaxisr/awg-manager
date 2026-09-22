@@ -3,11 +3,14 @@ package router
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
 func withFakeRuleSetCompiler(t *testing.T, fn func(binary string, args []string) (string, string, error)) {
@@ -56,7 +59,7 @@ func TestInlineRuleSetMaterializer_CompilesLocalBinary(t *testing.T) {
 			{"domain_suffix": []any{"example.org"}},
 		},
 	}
-	got, err := m.materializeRuleSet(rs)
+	got, err := m.materializeRuleSet(orchestrator.SlotRouter, rs)
 	if err != nil {
 		t.Fatalf("materializeRuleSet: %v", err)
 	}
@@ -64,7 +67,7 @@ func TestInlineRuleSetMaterializer_CompilesLocalBinary(t *testing.T) {
 	if got.Tag != wantTag || got.Type != "local" || got.Format != "binary" {
 		t.Fatalf("unexpected materialized ruleset: %+v", got)
 	}
-	wantPath := filepath.Join(dir, "rule-sets", "inline", "geosite-example.srs")
+	wantPath := filepath.Join(dir, "rule-sets", "inline", "router-geosite-example.srs")
 	if got.Path != wantPath {
 		t.Fatalf("path = %q, want %q", got.Path, wantPath)
 	}
@@ -87,7 +90,7 @@ func TestInlineRuleSetMaterializer_CompilesLocalBinary(t *testing.T) {
 		t.Fatalf("deduped rules len = %d, rules=%v", len(source.Rules), source.Rules)
 	}
 
-	again, err := m.materializeRuleSet(rs)
+	again, err := m.materializeRuleSet(orchestrator.SlotRouter, rs)
 	if err != nil {
 		t.Fatalf("second materializeRuleSet: %v", err)
 	}
@@ -107,7 +110,7 @@ func TestInlineRuleSetMaterializer_CompileErrorDoesNotPublishBinary(t *testing.T
 	})
 
 	m := ruleSetMaterializer{configDir: dir, binary: "/opt/bin/sing-box"}
-	_, err := m.materializeRuleSet(RuleSet{
+	_, err := m.materializeRuleSet(orchestrator.SlotRouter, RuleSet{
 		Tag:   "bad",
 		Type:  "inline",
 		Rules: []map[string]any{{"domain_suffix": []any{"example.com"}}},
@@ -136,7 +139,7 @@ func TestInlineRuleSetMaterializer_RestoresManagedLocalAsInline(t *testing.T) {
 		Type:  "inline",
 		Rules: []map[string]any{{"domain_suffix": []any{"example.com"}}},
 	}
-	local, err := m.materializeRuleSet(inline)
+	local, err := m.materializeRuleSet(orchestrator.SlotRouter, inline)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +164,7 @@ func TestInlineRuleSetMaterializer_RestoreConfigHidesSRSCompanion(t *testing.T) 
 		Type:  "inline",
 		Rules: []map[string]any{{"domain_suffix": []any{"example.com"}}},
 	}
-	local, err := m.materializeRuleSet(inline)
+	local, err := m.materializeRuleSet(orchestrator.SlotRouter, inline)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +192,7 @@ func TestInlineRuleSetMaterializer_MaterializeConfigWritesSRSCompanion(t *testin
 		Type:  "inline",
 		Rules: []map[string]any{{"domain_suffix": []any{".example.com"}}},
 	}}
-	out, err := m.materializeConfig(cfg)
+	out, err := m.materializeConfig(orchestrator.SlotRouter, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +211,7 @@ func TestInlineRuleSetMaterializer_RemoveInlineArtifacts(t *testing.T) {
 		return "", "", nil
 	})
 	m := ruleSetMaterializer{configDir: dir, binary: "/opt/bin/sing-box"}
-	_, err := m.materializeRuleSet(RuleSet{
+	_, err := m.materializeRuleSet(orchestrator.SlotRouter, RuleSet{
 		Tag:   "gone",
 		Type:  "inline",
 		Rules: []map[string]any{{"domain_suffix": []any{".x"}}},
@@ -216,9 +219,9 @@ func TestInlineRuleSetMaterializer_RemoveInlineArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.removeInlineArtifacts("gone")
+	m.removeInlineArtifacts(orchestrator.SlotRouter, "gone")
 	for _, ext := range []string{".json", ".srs"} {
-		if _, err := os.Stat(filepath.Join(dir, "rule-sets", "inline", "gone"+ext)); !os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(dir, "rule-sets", "inline", "router-gone"+ext)); !os.IsNotExist(err) {
 			t.Fatalf("expected gone%s removed, stat err=%v", ext, err)
 		}
 	}
@@ -238,7 +241,7 @@ func TestInlineRuleSetMaterializer_RewritesRuleRefsOnMaterialize(t *testing.T) {
 		Rules: []map[string]any{{"domain_suffix": []any{".example.com"}}},
 	}}
 	cfg.Route.Rules = []Rule{{RuleSet: []string{"foo"}, Action: "route", Outbound: "direct"}}
-	out, err := m.materializeConfig(cfg)
+	out, err := m.materializeConfig(orchestrator.SlotRouter, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +257,7 @@ func TestInlineRuleSetMaterializer_RestoreRewritesSRSRefsToInline(t *testing.T) 
 		return "", "", nil
 	})
 	m := ruleSetMaterializer{configDir: dir, binary: "/opt/bin/sing-box"}
-	local, err := m.materializeRuleSet(RuleSet{
+	local, err := m.materializeRuleSet(orchestrator.SlotRouter, RuleSet{
 		Tag:   "foo",
 		Type:  "inline",
 		Rules: []map[string]any{{"domain_suffix": []any{".example.com"}}},
@@ -279,7 +282,7 @@ func TestInlineRuleSetMaterializer_RestoreRewritesSRSRefsWithoutManagedEntryInOu
 		Tag:    "geosite-samsung-srs",
 		Type:   "local",
 		Format: "binary",
-		Path:   filepath.Join(m.configDir, "rule-sets", "inline", "geosite-samsung.srs"),
+		Path:   filepath.Join(m.configDir, "rule-sets", "inline", "router-geosite-samsung.srs"),
 	}}
 	cfg.Route.Rules = []Rule{{RuleSet: []string{"geosite-samsung-srs"}, Action: "route", Outbound: "direct"}}
 	out := m.restoreConfig(cfg)
@@ -343,7 +346,7 @@ func TestInspectRuleSetsWithInlineAliases(t *testing.T) {
 	})
 	m := ruleSetMaterializer{configDir: dir, binary: "/opt/bin/sing-box"}
 
-	local, err := m.materializeRuleSet(RuleSet{
+	local, err := m.materializeRuleSet(orchestrator.SlotRouter, RuleSet{
 		Tag:   "geo-telegram",
 		Type:  "inline",
 		Rules: []map[string]any{{"domain_suffix": []any{"t.me"}}},
@@ -395,7 +398,7 @@ func TestInspectRuleSetsWithInlineAliases_DoesNotShadowGenuineSet(t *testing.T) 
 		return "", "", nil
 	})
 	m := ruleSetMaterializer{configDir: dir, binary: "/opt/bin/sing-box"}
-	local, err := m.materializeRuleSet(RuleSet{
+	local, err := m.materializeRuleSet(orchestrator.SlotRouter, RuleSet{
 		Tag:   "geo-x",
 		Type:  "inline",
 		Rules: []map[string]any{{"domain_suffix": []any{"x.example"}}},
@@ -448,7 +451,7 @@ func TestMaterializeConfig_RewritesNestedRuleRefs(t *testing.T) {
 		Outbound: "vpn",
 	}}
 
-	persisted, err := m.materializeConfig(cfg)
+	persisted, err := m.materializeConfig(orchestrator.SlotRouter, cfg)
 	if err != nil {
 		t.Fatalf("materializeConfig: %v", err)
 	}
@@ -490,7 +493,7 @@ func TestMaterializeConfig_HTTPClients(t *testing.T) {
 			},
 		},
 	}
-	out, err := m.materializeConfig(cfg)
+	out, err := m.materializeConfig(orchestrator.SlotRouter, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -554,7 +557,7 @@ func TestMaterializeConfig_HTTPClients(t *testing.T) {
 
 	// (b) непустой final — общий клиент получает detour.
 	cfg.Route.Final = "vpn"
-	out, err = m.materializeConfig(cfg)
+	out, err = m.materializeConfig(orchestrator.SlotRouter, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -601,7 +604,7 @@ func TestMaterializeConfig_HTTPClients_Idempotent(t *testing.T) {
 		},
 	}
 
-	first, err := m.materializeConfig(cfg)
+	first, err := m.materializeConfig(orchestrator.SlotRouter, cfg)
 	if err != nil {
 		t.Fatalf("materializeConfig (1): %v", err)
 	}
@@ -611,7 +614,7 @@ func TestMaterializeConfig_HTTPClients_Idempotent(t *testing.T) {
 	}
 
 	restored := m.restoreConfig(first)
-	second, err := m.materializeConfig(restored)
+	second, err := m.materializeConfig(orchestrator.SlotRouter, restored)
 	if err != nil {
 		t.Fatalf("materializeConfig (после restore): %v", err)
 	}
@@ -624,7 +627,7 @@ func TestMaterializeConfig_HTTPClients_Idempotent(t *testing.T) {
 	}
 
 	// Двойная материализация БЕЗ restore между вызовами.
-	twice, err := m.materializeConfig(first)
+	twice, err := m.materializeConfig(orchestrator.SlotRouter, first)
 	if err != nil {
 		t.Fatalf("materializeConfig(materializeConfig(cfg)): %v", err)
 	}
@@ -668,20 +671,20 @@ func TestMaterializeConfig_SkipsRecompileWhenRuleSetUnchanged(t *testing.T) {
 		},
 	}
 
-	if _, err := m.materializeConfig(cfg); err != nil {
+	if _, err := m.materializeConfig(orchestrator.SlotRouter, cfg); err != nil {
 		t.Fatalf("materializeConfig (1): %v", err)
 	}
 	if compileCalls != 1 {
 		t.Fatalf("compileCalls после первой материализации = %d, want 1", compileCalls)
 	}
-	srsPath := filepath.Join(dir, "rule-sets", "inline", "geo-telegram.srs")
+	srsPath := filepath.Join(dir, "rule-sets", "inline", "router-geo-telegram.srs")
 	before, err := os.Stat(srsPath)
 	if err != nil {
 		t.Fatalf("stat srs: %v", err)
 	}
 	time.Sleep(10 * time.Millisecond)
 
-	if _, err := m.materializeConfig(cfg); err != nil {
+	if _, err := m.materializeConfig(orchestrator.SlotRouter, cfg); err != nil {
 		t.Fatalf("materializeConfig (2, без изменений): %v", err)
 	}
 	if compileCalls != 1 {
@@ -697,10 +700,171 @@ func TestMaterializeConfig_SkipsRecompileWhenRuleSetUnchanged(t *testing.T) {
 
 	// Изменение правила → компиляция снова.
 	cfg.Route.RuleSet[0].Rules = []map[string]any{{"domain_suffix": []any{"other.example"}}}
-	if _, err := m.materializeConfig(cfg); err != nil {
+	if _, err := m.materializeConfig(orchestrator.SlotRouter, cfg); err != nil {
 		t.Fatalf("materializeConfig (3, изменено): %v", err)
 	}
 	if compileCalls != 2 {
 		t.Errorf("compileCalls после изменённой материализации = %d, want 2", compileCalls)
+	}
+}
+
+// F435: слоты router и fakeip материализуются в ОДИН каталог, а уникальность
+// тега проверяется только внутри конфига слота — одноимённые наборы обязаны
+// получить разные файлы, иначе правила одного слота читаются в другом (класс
+// #941, но уже на латинице: тег custom-1 генерирует визард в обоих слотах).
+func TestMaterializeConfig_SameTagInBothSlotsKeepsRulesApart(t *testing.T) {
+	dir := t.TempDir()
+	withFakeRuleSetCompiler(t, func(binary string, args []string) (string, string, error) {
+		writeCompiledOutput(t, args, "compiled")
+		return "", "", nil
+	})
+	m := ruleSetMaterializer{configDir: dir, binary: "/opt/bin/sing-box"}
+
+	mk := func(domain string) *RouterConfig {
+		cfg := NewEmptyConfig()
+		cfg.Route.RuleSet = []RuleSet{{
+			Tag:   "custom-1",
+			Type:  "inline",
+			Rules: []map[string]any{{"domain_suffix": []any{domain}}},
+		}}
+		return cfg
+	}
+
+	routerOut, err := m.materializeConfig(orchestrator.SlotRouter, mk(".router.example"))
+	if err != nil {
+		t.Fatalf("materialize router: %v", err)
+	}
+	fakeipOut, err := m.materializeConfig(orchestrator.SlotFakeIP, mk(".fakeip.example"))
+	if err != nil {
+		t.Fatalf("materialize fakeip: %v", err)
+	}
+	if routerOut.Route.RuleSet[0].Path == fakeipOut.Route.RuleSet[0].Path {
+		t.Fatalf("slots share one artifact: %s", routerOut.Route.RuleSet[0].Path)
+	}
+
+	// Порядок важен: fakeip материализовался ПОСЛЕ router — при общем файле
+	// правила router'а читались бы как fakeip'овские.
+	got := m.restoreConfig(routerOut).Route.RuleSet[0].Rules
+	want := ".router.example"
+	if len(got) != 1 || fmt.Sprint(got[0]["domain_suffix"]) != "["+want+"]" {
+		t.Errorf("router slot rules = %v, want domain_suffix [%s]", got, want)
+	}
+}
+
+// F435: артефакт, названный ПРЕЖНЕЙ схемой (без префикса слота), переживает
+// стартовый sweep, пока на него ссылается запись конфига. Правила inline-набора
+// живут только в этом файле — удали его раньше первой новой материализации, и
+// набор станет пустым.
+func TestGCArtifacts_LegacyFlatArtifactPinnedByPath(t *testing.T) {
+	dir := t.TempDir()
+	inlineDir := filepath.Join(dir, "rule-sets", "inline")
+	if err := os.MkdirAll(inlineDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"custom-1.json", "custom-1.srs"} {
+		if err := os.WriteFile(filepath.Join(inlineDir, name), []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg := NewEmptyConfig()
+	cfg.Route.RuleSet = []RuleSet{{
+		Tag:    "custom-1-srs",
+		Type:   "local",
+		Format: "binary",
+		Path:   filepath.Join(inlineDir, "custom-1.srs"),
+	}}
+
+	referenced := map[string]struct{}{}
+	addRuleSetArtifactBases(referenced, orchestrator.SlotRouter, cfg)
+	ruleSetMaterializer{configDir: dir}.gcArtifacts(referenced)
+
+	for _, name := range []string{"custom-1.json", "custom-1.srs"} {
+		if _, err := os.Stat(filepath.Join(inlineDir, name)); err != nil {
+			t.Errorf("legacy artifact %s must survive while the config points at it: %v", name, err)
+		}
+	}
+}
+
+// F435: базис inline-записи БЕЗ пути (черновик, ещё не материализованный)
+// считается из тега — и обязан считаться с префиксом СВОЕГО слота, иначе sweep
+// сносит чужой файл и оставляет свой сиротой.
+func TestGCArtifacts_PendingInlineBaseUsesOwnSlot(t *testing.T) {
+	dir := t.TempDir()
+	inlineDir := filepath.Join(dir, "rule-sets", "inline")
+	if err := os.MkdirAll(inlineDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"fakeip-draft.json", "fakeip-draft.srs", "router-draft.json", "router-draft.srs"} {
+		if err := os.WriteFile(filepath.Join(inlineDir, name), []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg := NewEmptyConfig()
+	cfg.Route.RuleSet = []RuleSet{{
+		Tag:   "draft",
+		Type:  "inline",
+		Rules: []map[string]any{{"domain_suffix": []any{".draft.example"}}},
+	}}
+
+	referenced := map[string]struct{}{}
+	addRuleSetArtifactBases(referenced, orchestrator.SlotFakeIP, cfg)
+	ruleSetMaterializer{configDir: dir}.gcArtifacts(referenced)
+
+	for _, name := range []string{"fakeip-draft.json", "fakeip-draft.srs"} {
+		if _, err := os.Stat(filepath.Join(inlineDir, name)); err != nil {
+			t.Errorf("own-slot artifact %s must survive: %v", name, err)
+		}
+	}
+	for _, name := range []string{"router-draft.json", "router-draft.srs"} {
+		if _, err := os.Stat(filepath.Join(inlineDir, name)); err == nil {
+			t.Errorf("other-slot artifact %s must not be pinned by this config", name)
+		}
+	}
+}
+
+// F435/находка ревью: .json артефакта потерян (или битый) — правила набора
+// живут только в уже скомпилированном .srs. Материализация обязана оставить
+// managed-local запись как есть: иначе поверх .srs ляжет пустышка, ссылка
+// переедет на неё, пин GC по rs.Path пропадёт и последняя копия правил уйдёт.
+func TestMaterializeConfig_UnreadableInlineSourceKeepsCompiledArtifact(t *testing.T) {
+	dir := t.TempDir()
+	inlineDir := filepath.Join(dir, "rule-sets", "inline")
+	if err := os.MkdirAll(inlineDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	srsPath := filepath.Join(inlineDir, "legacy.srs")
+	if err := os.WriteFile(srsPath, []byte("compiled"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	compiles := 0
+	withFakeRuleSetCompiler(t, func(binary string, args []string) (string, string, error) {
+		compiles++
+		writeCompiledOutput(t, args, "compiled")
+		return "", "", nil
+	})
+	m := ruleSetMaterializer{configDir: dir, binary: "/opt/bin/sing-box"}
+
+	cfg := NewEmptyConfig()
+	cfg.Route.RuleSet = []RuleSet{managedLocalRuleSet("legacy-srs", srsPath)}
+	cfg.Route.Rules = []Rule{{RuleSet: []string{"legacy-srs"}, Action: "route", Outbound: "proxy"}}
+
+	out, err := m.materializeConfig(orchestrator.SlotRouter, cfg)
+	if err != nil {
+		t.Fatalf("materializeConfig: %v", err)
+	}
+	if compiles != 0 {
+		t.Errorf("compiled %d time(s); a lost source must not be recompiled", compiles)
+	}
+	if len(out.Route.RuleSet) != 1 || out.Route.RuleSet[0].Path != srsPath {
+		t.Fatalf("rule_set = %+v, want the original artifact %s", out.Route.RuleSet, srsPath)
+	}
+	if out.Route.Rules[0].RuleSet[0] != "legacy-srs" {
+		t.Errorf("rule ref = %q, want legacy-srs", out.Route.Rules[0].RuleSet[0])
+	}
+	if data, err := os.ReadFile(srsPath); err != nil || string(data) != "compiled" {
+		t.Errorf("compiled artifact must stay untouched, got %q (%v)", data, err)
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
 // ---------------------------------------------------------------------------
@@ -195,7 +197,7 @@ func (s *ServiceImpl) FakeIPDeleteRuleSet(ctx context.Context, tag string, force
 			return err
 		}
 		if s.deps.Orch == nil {
-			s.ruleSetMaterializer().removeInlineArtifacts(inlineTag)
+			s.ruleSetMaterializer().removeInlineArtifacts(orchestrator.SlotFakeIP, inlineTag)
 		}
 		return nil
 	})

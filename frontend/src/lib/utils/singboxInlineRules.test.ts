@@ -388,16 +388,55 @@ describe('analyzeInlineRuleListLossy', () => {
 
 describe('validateRuleSetTag', () => {
 	it('rejects empty tag', () => {
-		expect(validateRuleSetTag('')).toMatch(/обязателен/i);
+		expect(validateRuleSetTag('', 'inline')).toMatch(/обязателен/i);
 	});
 
 	it('rejects reserved -srs suffix', () => {
-		expect(validateRuleSetTag('geosite-samsung-srs')).toMatch(/-srs/);
+		expect(validateRuleSetTag('geosite-samsung-srs', 'remote')).toMatch(/-srs/);
 	});
 
 	it('allows base tag', () => {
-		expect(validateRuleSetTag('geosite-samsung')).toBeNull();
+		expect(validateRuleSetTag('geosite-samsung', 'remote')).toBeNull();
 	});
+
+	// F434 (#941): тег = имя файла артефакта, иначе два набора делят один файл.
+	it.each(['Моё', 'Второй', 'My set', '-foo', 'foo-', 'geosite/example'])(
+		'rejects lossy inline tag %s',
+		(tag) => {
+			expect(validateRuleSetTag(tag, 'inline')).toMatch(/имя его файла/i);
+		},
+	);
+
+	// Заглавная латиница годна — кейс сторожит расхождение с бэкендом, где
+	// класс символов [A-Za-z0-9._-].
+	it.each(['custom-1', 'geosite-telegram', 'a.b_c-1', 'MyCustomSet'])(
+		'allows file-safe inline tag %s',
+		(tag) => {
+			expect(validateRuleSetTag(tag, 'inline')).toBeNull();
+		},
+	);
+
+	// Литерал имени файла легаси-наборов занят — но только он сам.
+	it('rejects the reserved fallback file name as an inline tag', () => {
+		expect(validateRuleSetTag('ruleset', 'inline')).toMatch(/занято/i);
+		expect(validateRuleSetTag('ruleset-1', 'inline')).toBeNull();
+		expect(validateRuleSetTag('ruleset', 'remote')).toBeNull();
+	});
+
+	// Пробелы по краям срезаются до сравнения — иначе годный тег отбивался бы
+	// на ровном месте.
+	it('trims before comparing', () => {
+		expect(validateRuleSetTag('  custom-1  ', 'inline')).toBeNull();
+	});
+
+	// У remote тег файл не именует: теги каталога SagerNet со спецсимволами
+	// штатные (geolocation-!cn лежит и в наших пресетах).
+	it.each(['geosite-geolocation-!cn', 'geosite-xiaomi@cn'])(
+		'allows catalog tag %s for remote',
+		(tag) => {
+			expect(validateRuleSetTag(tag, 'remote')).toBeNull();
+		},
+	);
 });
 
 describe('displayRuleSetTag', () => {

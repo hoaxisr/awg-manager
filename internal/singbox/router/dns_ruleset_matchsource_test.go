@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
 // Смешанный набор (домены + CIDR) в dns.rules включает в sing-box 1.15
@@ -22,7 +24,7 @@ func TestMaterializeConfigSetsDNSRuleSetMatchSource(t *testing.T) {
 		{RuleSet: []string{"telegram"}, MatchResponse: &DNSMatchResponse{Enabled: true}, Action: "route", Server: "dns-direct"},
 	}
 
-	out, err := m.materializeConfig(cfg)
+	out, err := m.materializeConfig(orchestrator.SlotRouter, cfg)
 	if err != nil {
 		t.Fatalf("materializeConfig: %v", err)
 	}
@@ -53,7 +55,7 @@ func TestMaterializeConfigOverridesIncomingMatchSource(t *testing.T) {
 		{DomainSuffix: []string{"example.com"}, RuleSetIPCIDRMatchSource: true},
 		{RuleSet: []string{"tg"}, RuleSetIPCIDRMatchSource: true},
 	}
-	out, err := m.materializeConfig(cfg)
+	out, err := m.materializeConfig(orchestrator.SlotRouter, cfg)
 	if err != nil {
 		t.Fatalf("materializeConfig: %v", err)
 	}

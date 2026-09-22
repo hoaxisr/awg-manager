@@ -1168,6 +1168,31 @@ func validateRuleSet(rs RuleSet) error {
 	}
 	switch rs.Type {
 	case "inline":
+		// F434 (#941): имя файла артефакта — это сам тег, пропущенный через
+		// safeRuleSetFilename (ruleset_materializer.go). Санитайзинг лоссовый:
+		// «Моё» и «Второй» дают один базис "ruleset", "-foo" и "foo" — один
+		// "foo", а файл хранит ПРАВИЛА набора (конфиг держит только путь), так
+		// что второй набор молча затирал первый. Требуем тег, равный своему
+		// имени файла, — тогда разные теги = разные файлы по построению.
+		//
+		// Только для inline: у remote тег файл не именует (у dat-наборов базис
+		// считается из kind+tags URL, у обычных remote артефакта нет вовсе), а
+		// в каталоге SagerNet теги со спецсимволами штатные — geolocation-!cn,
+		// category-ai-!cn лежат и в наших пресетах (internal/presets).
+		// UpdateRuleSet валидирует next, поэтому смена типа на inline тоже
+		// упирается в эту проверку.
+		if rs.Tag == fallbackRuleSetFilename {
+			return fmt.Errorf(
+				"%w: %q: reserved as the artifact file name of inline rule sets created before this check",
+				ErrRuleSetTagUnsafe, rs.Tag,
+			)
+		}
+		if safeRuleSetFilename(rs.Tag) != rs.Tag {
+			return fmt.Errorf(
+				"%w: %q: latin letters, digits, dot, underscore, dash, no leading or trailing dash",
+				ErrRuleSetTagUnsafe, rs.Tag,
+			)
+		}
 		if len(rs.Rules) == 0 {
 			return fmt.Errorf("rule_set %q: rules required for type=inline", rs.Tag)
 		}

@@ -54,8 +54,8 @@ func TestApplyStaging_DeletedRuleSetArtifactsRemoved(t *testing.T) {
 	if res, err := svc.ApplyStaging(context.Background()); err != nil || !res.Ok() {
 		t.Fatalf("ApplyStaging: err=%v res=%s", err, res.Error())
 	}
-	jsonPath := filepath.Join(dir, "rule-sets", "inline", "to-delete.json")
-	srsPath := filepath.Join(dir, "rule-sets", "inline", "to-delete.srs")
+	jsonPath := filepath.Join(dir, "rule-sets", "inline", "router-to-delete.json")
+	srsPath := filepath.Join(dir, "rule-sets", "inline", "router-to-delete.srs")
 	if !statExists(t, jsonPath) || !statExists(t, srsPath) {
 		t.Fatal("artifacts must exist after apply of the added rule-set")
 	}
@@ -107,17 +107,17 @@ func TestApplyStaging_RenamedRuleSetOldArtifactsRemoved(t *testing.T) {
 		t.Fatalf("UpdateRuleSet rename: %v", err)
 	}
 	// Staged rename: old artifacts still on disk (active still references them).
-	if !statExists(t, filepath.Join(dir, "rule-sets", "inline", "old-name.srs")) {
+	if !statExists(t, filepath.Join(dir, "rule-sets", "inline", "router-old-name.srs")) {
 		t.Fatal("staged rename must keep the old artifacts until apply")
 	}
 	if res, err := svc.ApplyStaging(context.Background()); err != nil || !res.Ok() {
 		t.Fatalf("ApplyStaging rename: err=%v res=%s", err, res.Error())
 	}
 	for _, ext := range []string{".json", ".srs"} {
-		if statExists(t, filepath.Join(dir, "rule-sets", "inline", "old-name"+ext)) {
+		if statExists(t, filepath.Join(dir, "rule-sets", "inline", "router-old-name"+ext)) {
 			t.Fatalf("applied rename must remove old-name%s", ext)
 		}
-		if !statExists(t, filepath.Join(dir, "rule-sets", "inline", "new-name"+ext)) {
+		if !statExists(t, filepath.Join(dir, "rule-sets", "inline", "router-new-name"+ext)) {
 			t.Fatalf("applied rename must keep new-name%s", ext)
 		}
 	}
@@ -193,18 +193,24 @@ func TestGCRuleSetArtifacts_KeepsPendingAndFakeIPReferences(t *testing.T) {
 		t.Fatalf("AddRuleSet: %v", err)
 	}
 	// FakeIP active config references a materialized inline rule-set.
+	// Вторая запись — inline БЕЗ пути (черновик слота): её базис считается из
+	// тега, и обязан считаться с префиксом fakeip, а не router (F435).
 	if err := os.WriteFile(filepath.Join(dir, "21-fakeip.json"), []byte(`{
 		"route": {"rule_set": [{
 			"tag": "fakeip-set-srs",
 			"type": "local",
 			"format": "binary",
-			"path": "`+filepath.ToSlash(filepath.Join(dir, "rule-sets", "inline", "fakeip-set.srs"))+`"
+			"path": "`+filepath.ToSlash(filepath.Join(dir, "rule-sets", "inline", "fakeip-fakeip-set.srs"))+`"
+		}, {
+			"tag": "fakeip-draft",
+			"type": "inline",
+			"rules": [{"domain_suffix": [".fakeip-draft.example"]}]
 		}]}
 	}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 	inlineDir := filepath.Join(dir, "rule-sets", "inline")
-	for _, name := range []string{"fakeip-set.json", "fakeip-set.srs"} {
+	for _, name := range []string{"fakeip-fakeip-set.json", "fakeip-fakeip-set.srs", "fakeip-fakeip-draft.json", "fakeip-fakeip-draft.srs"} {
 		if err := os.WriteFile(filepath.Join(inlineDir, name), []byte("x"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -218,7 +224,7 @@ func TestGCRuleSetArtifacts_KeepsPendingAndFakeIPReferences(t *testing.T) {
 
 	svc.GCRuleSetArtifacts()
 
-	for _, name := range []string{"draft-only.json", "draft-only.srs", "fakeip-set.json", "fakeip-set.srs"} {
+	for _, name := range []string{"router-draft-only.json", "router-draft-only.srs", "fakeip-fakeip-set.json", "fakeip-fakeip-set.srs", "fakeip-fakeip-draft.json", "fakeip-fakeip-draft.srs"} {
 		if !statExists(t, filepath.Join(inlineDir, name)) {
 			t.Errorf("%s must survive (pending draft / fakeip reference)", name)
 		}
@@ -226,6 +232,90 @@ func TestGCRuleSetArtifacts_KeepsPendingAndFakeIPReferences(t *testing.T) {
 	for _, name := range []string{"orphan.json", "orphan.srs"} {
 		if statExists(t, filepath.Join(inlineDir, name)) {
 			t.Errorf("%s must be removed", name)
+		}
+	}
+}
+
+// F435: одинаковый тег в обоих слотах — единственная сцена, где перепутанный
+// слот в проводке GC виден. Пока теги разные, базисы не пересекаются и ошибка
+// маскируется; здесь же чужой слот сносит половину файлов.
+func TestGCRuleSetArtifacts_SameTagInBothSlotsBothSurvive(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+	svc.deps.Singbox.(*fakeSingbox).binary = "/opt/bin/sing-box"
+	withFakeRuleSetCompiler(t, func(binary string, args []string) (string, string, error) {
+		writeCompiledOutput(t, args, "compiled")
+		return "", "", nil
+	})
+
+	// Router: набор custom-1 в черновике слота.
+	if err := svc.AddRuleSet(context.Background(), RuleSet{
+		Tag:   "custom-1",
+		Type:  "inline",
+		Rules: []map[string]any{{"domain_suffix": []any{".router.example"}}},
+	}); err != nil {
+		t.Fatalf("AddRuleSet: %v", err)
+	}
+	// FakeIP: набор с ТЕМ ЖЕ тегом в активном конфиге слота.
+	if err := os.WriteFile(filepath.Join(dir, "21-fakeip.json"), []byte(`{
+		"route": {"rule_set": [{
+			"tag": "custom-1",
+			"type": "inline",
+			"rules": [{"domain_suffix": [".fakeip.example"]}]
+		}]}
+	}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	inlineDir := filepath.Join(dir, "rule-sets", "inline")
+	for _, name := range []string{"fakeip-custom-1.json", "fakeip-custom-1.srs"} {
+		if err := os.WriteFile(filepath.Join(inlineDir, name), []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc.GCRuleSetArtifacts()
+
+	for _, name := range []string{
+		"router-custom-1.json", "router-custom-1.srs",
+		"fakeip-custom-1.json", "fakeip-custom-1.srs",
+	} {
+		if !statExists(t, filepath.Join(inlineDir, name)) {
+			t.Errorf("%s must survive: both slots reference the tag custom-1", name)
+		}
+	}
+}
+
+// Ссылка ТОЛЬКО из применённого конфига держит артефакт: набор применён, а в
+// черновике удалён — до применения удаления файл сносить нельзя (иначе Discard
+// восстанавливать нечего). Сторожит участие applied-конфига в объединении.
+func TestGCRuleSetArtifacts_AppliedOnlyReferenceSurvives(t *testing.T) {
+	svc, dir := newOrchedTestService(t)
+	svc.deps.Singbox.(*fakeSingbox).binary = "/opt/bin/sing-box"
+	withFakeRuleSetCompiler(t, func(binary string, args []string) (string, string, error) {
+		writeCompiledOutput(t, args, "compiled")
+		return "", "", nil
+	})
+	registerBaseSlot(t, svc, dir)
+
+	if err := svc.AddRuleSet(context.Background(), RuleSet{
+		Tag:   "applied-only",
+		Type:  "inline",
+		Rules: []map[string]any{{"domain_suffix": []any{".applied.example"}}},
+	}); err != nil {
+		t.Fatalf("AddRuleSet: %v", err)
+	}
+	if res, err := svc.ApplyStaging(context.Background()); err != nil || !res.Ok() {
+		t.Fatalf("ApplyStaging: err=%v res=%s", err, res.Error())
+	}
+	if err := svc.DeleteRuleSet(context.Background(), "applied-only", false); err != nil {
+		t.Fatalf("DeleteRuleSet: %v", err)
+	}
+
+	svc.GCRuleSetArtifacts()
+
+	for _, ext := range []string{".json", ".srs"} {
+		p := filepath.Join(dir, "rule-sets", "inline", "router-applied-only"+ext)
+		if !statExists(t, p) {
+			t.Errorf("%s must survive: the applied router config still references it", p)
 		}
 	}
 }

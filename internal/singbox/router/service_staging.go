@@ -67,6 +67,6 @@ func (s *ServiceImpl) restoreEffectiveRuleSetArtifacts() error {
 		return err
 	}
 	m := s.ruleSetMaterializer()
-	_, err = m.materializeConfig(m.restoreConfig(cfg))
+	_, err = m.materializeConfig(orchestrator.SlotRouter, m.restoreConfig(cfg))
 	return err
 }

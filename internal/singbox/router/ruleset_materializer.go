@@ -11,11 +11,19 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
 const (
 	inlineRuleSetSourceVersion = 5
 	inlineSRSSuffix            = "-srs"
+
+	// fallbackRuleSetFilename — имя файла для тега, от которого после
+	// санитайзинга не осталось ничего (тег целиком из кириллицы и т.п.).
+	// Такие теги validateRuleSet больше не пропускает, но заведённые ДО
+	// запрета живут дальше и держат этот файл, поэтому сам литерал занят:
+	// набор с тегом "ruleset" разделил бы файл с любым из них (F434, #941).
+	fallbackRuleSetFilename = "ruleset"
 )
 
 var safeRuleSetTagRe = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
@@ -105,7 +113,7 @@ func ruleSetTagsWithCompanion(tag string) []string {
 	return []string{tag, inlineSRSTag(tag)}
 }
 
-func (m ruleSetMaterializer) materializeConfig(cfg *RouterConfig) (*RouterConfig, error) {
+func (m ruleSetMaterializer) materializeConfig(slot orchestrator.Slot, cfg *RouterConfig) (*RouterConfig, error) {
 	if cfg == nil {
 		return nil, nil
 	}
@@ -126,7 +134,26 @@ func (m ruleSetMaterializer) materializeConfig(cfg *RouterConfig) (*RouterConfig
 		out.Route.RuleSet = append(out.Route.RuleSet, rs)
 	}
 	for _, rs := range inlineSets {
-		local, err := m.materializeRuleSet(rs)
+		// Источник не прочитался (файл потерян, битый JSON) — expandManagedToInline
+		// отдал набор БЕЗ правил, и компиляция такого набора записала бы поверх
+		// живого артефакта пустышку, а GC следом унёс бы последнюю копию правил:
+		// конфиг хранит только путь. Поэтому managed-local запись остаётся как
+		// есть — набор продолжает работать по уже скомпилированному .srs, а пин
+		// GC по rs.Path держит файл. Fail-safe: валидация CRUD пустой inline не
+		// пропускает (validateRuleSet: rules required), значит сюда приходит
+		// только потерянный источник.
+		if len(rs.Rules) == 0 {
+			if prev, ok := m.managedLocalByInlineTag(cfg, rs.Tag); ok {
+				out.Route.RuleSet = append(out.Route.RuleSet, prev)
+				m.rewriteRuleSetRefs(&out, rs.Tag, prev.Tag)
+				if m.log != nil {
+					m.log.Warn("materialize", rs.Tag,
+						fmt.Sprintf("inline rule-set %q has no readable source — keeping the compiled artifact %s", rs.Tag, prev.Path))
+				}
+				continue
+			}
+		}
+		local, err := m.materializeRuleSet(slot, rs)
 		if err != nil {
 			return nil, err
 		}
@@ -438,6 +465,22 @@ func rewriteRuleSetSlice(tags []string, from, to string) []string {
 	})
 }
 
+// managedLocalByInlineTag находит в ИСХОДНОМ конфиге managed-local запись
+// материализованного набора с тегом inlineTag (её компаньон зовётся
+// "<tag>-srs"). Нужна там, где материализация решает не трогать артефакт.
+func (m ruleSetMaterializer) managedLocalByInlineTag(cfg *RouterConfig, inlineTag string) (RuleSet, bool) {
+	if cfg == nil {
+		return RuleSet{}, false
+	}
+	want := inlineSRSTag(inlineTag)
+	for _, rs := range cfg.Route.RuleSet {
+		if rs.Tag == want && m.isManagedLocalRuleSet(rs) {
+			return rs, true
+		}
+	}
+	return RuleSet{}, false
+}
+
 func (m ruleSetMaterializer) hasManagedSRSCompanion(cfg *RouterConfig, inlineTag string) bool {
 	want := inlineSRSTag(inlineTag)
 	for _, rs := range cfg.Route.RuleSet {
@@ -448,7 +491,7 @@ func (m ruleSetMaterializer) hasManagedSRSCompanion(cfg *RouterConfig, inlineTag
 	return false
 }
 
-func (m ruleSetMaterializer) materializeRuleSet(rs RuleSet) (RuleSet, error) {
+func (m ruleSetMaterializer) materializeRuleSet(slot orchestrator.Slot, rs RuleSet) (RuleSet, error) {
 	if m.configDir == "" {
 		return RuleSet{}, fmt.Errorf("rule_set %q: config dir is required to compile inline rules", rs.Tag)
 	}
@@ -459,7 +502,7 @@ func (m ruleSetMaterializer) materializeRuleSet(rs RuleSet) (RuleSet, error) {
 	if err != nil {
 		return RuleSet{}, fmt.Errorf("rule_set %q: %w", rs.Tag, err)
 	}
-	base := safeRuleSetFilename(rs.Tag)
+	base := inlineArtifactBase(slot, rs.Tag)
 	dir := filepath.Join(m.configDir, "rule-sets", "inline")
 	jsonPath := filepath.Join(dir, base+".json")
 	srsPath := filepath.Join(dir, base+".srs")
@@ -538,11 +581,11 @@ func (m ruleSetMaterializer) materializeRuleSet(rs RuleSet) (RuleSet, error) {
 	return managedLocalRuleSet(inlineSRSTag(rs.Tag), srsPath), nil
 }
 
-func (m ruleSetMaterializer) removeInlineArtifacts(tag string) {
+func (m ruleSetMaterializer) removeInlineArtifacts(slot orchestrator.Slot, tag string) {
 	if m.configDir == "" || tag == "" {
 		return
 	}
-	base := safeRuleSetFilename(tag)
+	base := inlineArtifactBase(slot, tag)
 	dir := filepath.Join(m.configDir, "rule-sets", "inline")
 	for _, name := range []string{base + ".json", base + ".srs"} {
 		path := filepath.Join(dir, name)
@@ -682,10 +725,21 @@ func buildInlineRuleSetSource(rules []map[string]any) (inlineRuleSetSource, []by
 	return source, append(raw, '\n'), nil
 }
 
+// inlineArtifactBase — имя файлов артефакта inline-набора: префикс слота плюс
+// имя, полученное из тега. Префикс обязателен: оба слота материализуются в
+// ОДИН каталог rule-sets/inline, а уникальность тега проверяется только внутри
+// конфига слота, поэтому набор "custom-1" в router и одноимённый в fakeip
+// делили один файл и затирали правила друг друга (F435, класс #941).
+// Пространство имён остаётся инъективным: ни "router", ни "fakeip" не является
+// префиксом другого, так что <slot>-<base> однозначно разбирается обратно.
+func inlineArtifactBase(slot orchestrator.Slot, tag string) string {
+	return string(slot) + "-" + safeRuleSetFilename(tag)
+}
+
 func safeRuleSetFilename(tag string) string {
 	safe := strings.Trim(safeRuleSetTagRe.ReplaceAllString(tag, "-"), "-")
 	if safe == "" {
-		return "ruleset"
+		return fallbackRuleSetFilename
 	}
 	return safe
 }

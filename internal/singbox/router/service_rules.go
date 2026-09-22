@@ -3,6 +3,8 @@ package router
 import (
 	"context"
 	"fmt"
+
+	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
 
 func (s *ServiceImpl) ListRules(ctx context.Context) ([]Rule, error) {
@@ -224,7 +226,7 @@ func (s *ServiceImpl) DeleteRuleSet(ctx context.Context, tag string, force bool)
 			return err
 		}
 		if s.deps.Orch == nil {
-			s.ruleSetMaterializer().removeInlineArtifacts(inlineTag)
+			s.ruleSetMaterializer().removeInlineArtifacts(orchestrator.SlotRouter, inlineTag)
 		}
 		return nil
 	})

@@ -30,7 +30,7 @@ func TestPersistConfigDirect_NoOpWhenActiveMatches(t *testing.T) {
 	// Active file pre-exists with what materializing+marshalling NewEmptyConfig
 	// would produce — Bootstrap below sees it and marks the slot enabled.
 	cfg := NewEmptyConfig()
-	materialized, err := svc.ruleSetMaterializer().materializeConfig(cfg)
+	materialized, err := svc.ruleSetMaterializer().materializeConfig(orchestrator.SlotRouter, cfg)
 	if err != nil {
 		t.Fatalf("materializeConfig: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestPersistConfigDirect_WritesActiveWhenDifferent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read active: %v", err)
 	}
-	materialized, err := svc.ruleSetMaterializer().materializeConfig(cfg)
+	materialized, err := svc.ruleSetMaterializer().materializeConfig(orchestrator.SlotRouter, cfg)
 	if err != nil {
 		t.Fatalf("materializeConfig: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestPersistConfigDirect_WritesActiveWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read active: %v", err)
 	}
-	materialized, err := svc.ruleSetMaterializer().materializeConfig(cfg)
+	materialized, err := svc.ruleSetMaterializer().materializeConfig(orchestrator.SlotRouter, cfg)
 	if err != nil {
 		t.Fatalf("materializeConfig: %v", err)
 	}

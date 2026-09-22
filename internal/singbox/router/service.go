@@ -924,7 +924,7 @@ func (s *ServiceImpl) persistConfigDirect(ctx context.Context, cfg *RouterConfig
 // guard before writing. Orch must be non-nil; the caller must have arranged for
 // the slot to be enabled. Shared by persistConfigDirect and persistFakeIPConfig.
 func (s *ServiceImpl) persistSlotDirect(slot orchestrator.Slot, cfg *RouterConfig, checkCycles bool) error {
-	materialized, err := s.ruleSetMaterializer().materializeConfig(cfg)
+	materialized, err := s.ruleSetMaterializer().materializeConfig(slot, cfg)
 	if err != nil {
 		return err
 	}
@@ -966,7 +966,7 @@ func (s *ServiceImpl) orchestratorApplyNow() error {
 }
 
 func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) error {
-	materialized, err := s.ruleSetMaterializer().materializeConfig(cfg)
+	materialized, err := s.ruleSetMaterializer().materializeConfig(orchestrator.SlotRouter, cfg)
 	if err != nil {
 		return err
 	}

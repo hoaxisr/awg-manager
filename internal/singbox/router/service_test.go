@@ -1853,7 +1853,7 @@ func TestUpdateRuleSet_InlineRulesEditOnAppliedSet_NoPhantomDraft(t *testing.T) 
 		t.Fatalf("expected recompile of .srs, calls %d -> %d", callsBefore, compileCalls)
 	}
 	// The source sidecar reflects the new rule content.
-	srcRaw, err := os.ReadFile(filepath.Join(dir, "rule-sets", "inline", "custom-inline.json"))
+	srcRaw, err := os.ReadFile(filepath.Join(dir, "rule-sets", "inline", "router-custom-inline.json"))
 	if err != nil {
 		t.Fatalf("source sidecar missing: %v", err)
 	}
@@ -1934,7 +1934,7 @@ func TestDeleteRuleSet_StagedInlineKeepsSRSCompanionFiles(t *testing.T) {
 		t.Fatalf("expected no rule sets after delete, got %+v", cfg.Route.RuleSet)
 	}
 	for _, ext := range []string{".json", ".srs"} {
-		p := filepath.Join(dir, "rule-sets", "inline", "to-delete"+ext)
+		p := filepath.Join(dir, "rule-sets", "inline", "router-to-delete"+ext)
 		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("expected staged delete to keep %s, stat err=%v", p, err)
 		}

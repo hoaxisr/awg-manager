@@ -327,3 +327,22 @@ func TestFakeIPConfigHandler_BulkSetRuleSetDetour_EmptyTags_Returns400(t *testin
 		t.Fatalf("want 400, got %d (body: %s)", rr.Code, rr.Body.String())
 	}
 }
+
+// F434 (#941): у слота fakeip свой handleErr — небезопасный тег inline-набора
+// обязан отвечать 400 с тем же кодом, что и в слоте router, а не 500.
+func TestFakeIPConfigHandler_AddRuleSet_UnsafeTag_Returns400(t *testing.T) {
+	fh := newTestFakeIPConfigHandler(t)
+
+	body := `{"tag":"Моё","type":"inline","rules":[{"domain_suffix":[".example.com"]}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/fakeip/config/rulesets/add", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	fh.AddRuleSet(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "RULE_SET_TAG_UNSAFE") {
+		t.Errorf("want code RULE_SET_TAG_UNSAFE in body: %s", rr.Body.String())
+	}
+}

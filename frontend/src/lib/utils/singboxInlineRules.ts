@@ -553,6 +553,9 @@ function isValidSimpleIpv6(addr: string): boolean {
 
 /** Reserved for AWG-compiled inline → local .srs companion (see ruleset_materializer). */
 export const INLINE_RULE_SET_SRS_SUFFIX = '-srs';
+/** Имя файла артефакта для inline-набора, чей тег санитайзинг схлопнул в пустоту
+ *  (зеркало fallbackRuleSetFilename на бэкенде, F434 #941). */
+const FALLBACK_RULE_SET_FILENAME = 'ruleset';
 
 /** Strip compiled companion suffix; mirrors backend rewriteSRSSuffixRuleSetRefs. */
 export function inlineTagFromSRSTag(tag: string): string | null {
@@ -651,12 +654,29 @@ export function collectPortFromInlineRules(rules: Record<string, unknown>[]): bo
 	return rules.some((r) => asNumberArray(r['port']).length > 0);
 }
 
-/** Returns a user-facing error, or null when the tag is allowed. */
-export function validateRuleSetTag(tag: string): string | null {
+/** Returns a user-facing error, or null when the tag is allowed.
+ *  `type` обязателен: правило про имя файла касается только inline-наборов
+ *  (F434, #941), и необязательный параметр молча пропускал бы проверку. */
+export function validateRuleSetTag(
+	tag: string,
+	type: SingboxRouterRuleSet['type'],
+): string | null {
 	const t = tag.trim();
 	if (!t) return 'Tag обязателен';
 	if (t.endsWith(INLINE_RULE_SET_SRS_SUFFIX)) {
 		return `Суффикс «${INLINE_RULE_SET_SRS_SUFFIX}» зарезервирован для скомпилированного набора — укажите имя без него (например geosite-samsung, не geosite-samsung-srs)`;
+	}
+	// F434 (#941): зеркало validateRuleSet на бэкенде. Файл артефакта набора
+	// назван самим тегом, пропущенным через лоссовый санитайзинг, поэтому
+	// «Моё» и «Второй» (как и «-foo» с «foo») схлопывались в один файл и
+	// затирали правила друг друга. Годен только тег, равный своему имени файла.
+	// Только inline: у remote тег файл не именует, а теги каталога SagerNet
+	// со спецсимволами (geolocation-!cn) штатные.
+	if (type === 'inline' && t === FALLBACK_RULE_SET_FILENAME) {
+		return `Имя «${FALLBACK_RULE_SET_FILENAME}» занято: так называется файл наборов, заведённых с кириллическим именем до запрета — набор с этим именем разделил бы файл с ними`;
+	}
+	if (type === 'inline' && t.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') !== t) {
+		return 'Имя набора — это имя его файла: латиница, цифры, точка, подчёркивание и дефис (дефис не с краю). Кириллица и пробелы не годятся: два таких имени дают один файл и затирают друг друга';
 	}
 	return null;
 }

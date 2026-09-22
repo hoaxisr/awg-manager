@@ -22,6 +22,7 @@ import (
 
 // mockRouterSvc satisfies router.Service with controllable return values.
 type mockRouterSvc struct {
+	addRuleSetErr error
 	bindMAC       string
 	bindPolicy    string
 	bindErr       error
@@ -112,7 +113,9 @@ func (m *mockRouterSvc) BulkSetRuleOutbound(ctx context.Context, indices []int, 
 func (m *mockRouterSvc) MoveRule(ctx context.Context, from, to int) error           { return nil }
 func (m *mockRouterSvc) SetRouteFinal(ctx context.Context, tag string) error        { return nil }
 func (m *mockRouterSvc) ListRuleSets(ctx context.Context) ([]router.RuleSet, error) { return nil, nil }
-func (m *mockRouterSvc) AddRuleSet(ctx context.Context, rs router.RuleSet) error    { return nil }
+func (m *mockRouterSvc) AddRuleSet(ctx context.Context, rs router.RuleSet) error {
+	return m.addRuleSetErr
+}
 func (m *mockRouterSvc) UpdateRuleSet(ctx context.Context, tag string, rs router.RuleSet) error {
 	return nil
 }
@@ -1090,5 +1093,22 @@ func TestRouterPutSettings_ExplicitEmptyPool6Passes(t *testing.T) {
 	}
 	if svc.settings.FakeIPPool6 != "" {
 		t.Errorf("fakeipPool6 = %q, want \"\" (подстановки быть не должно)", svc.settings.FakeIPPool6)
+	}
+}
+
+// F434 (#941): отказ по небезопасному тегу inline-набора — ошибка ввода, а не
+// сбой демона: 400 с кодом, который фронт покажет пользователю, вместо 500.
+func TestRouterAddRuleSet_UnsafeTag_Returns400(t *testing.T) {
+	svc := &mockRouterSvc{addRuleSetErr: fmt.Errorf("%w: %q: latin letters, digits", router.ErrRuleSetTagUnsafe, "\u041c\u043e\u0451")}
+	h := newMockRouterHandler(svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/singbox/router/rulesets/add",
+		strings.NewReader(`{"tag":"\u041c\u043e\u0451","type":"inline","rules":[{"domain_suffix":[".example.com"]}]}`))
+	rr := httptest.NewRecorder()
+	h.AddRuleSet(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "RULE_SET_TAG_UNSAFE") {
+		t.Errorf("want code RULE_SET_TAG_UNSAFE in body: %s", rr.Body.String())
 	}
 }
