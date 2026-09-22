@@ -46,6 +46,12 @@ type SingboxCleaner interface {
 	Cleanup(ctx context.Context) error
 }
 
+// ProbeHostCleaner removes the DNS-check probe record (ip host
+// awgm-dnscheck.test) from NDMS. Shape follows dnscheck.Service.RemoveProbeHost.
+type ProbeHostCleaner interface {
+	RemoveProbeHost(ctx context.Context) error
+}
+
 // ConfigSaver persists NDMS configuration.
 type ConfigSaver interface {
 	Save(ctx context.Context) error
@@ -60,6 +66,7 @@ type Service struct {
 	policies      PolicyCleaner
 	clientRoutes  ClientRouteCleaner
 	singbox       SingboxCleaner
+	probeHost     ProbeHostCleaner
 	saver         ConfigSaver
 }
 
@@ -72,6 +79,7 @@ func New(
 	policies PolicyCleaner,
 	clientRoutes ClientRouteCleaner,
 	singbox SingboxCleaner,
+	probeHost ProbeHostCleaner,
 	saver ConfigSaver,
 ) *Service {
 	return &Service{
@@ -82,6 +90,7 @@ func New(
 		policies:      policies,
 		clientRoutes:  clientRoutes,
 		singbox:       singbox,
+		probeHost:     probeHost,
 		saver:         saver,
 	}
 }
@@ -152,6 +161,17 @@ func (s *Service) CleanupAll(ctx context.Context) error {
 		fmt.Println("  Cleaning access policies...")
 		if err := s.policies.CleanupAll(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "    Warning: access policies: %v\n", err)
+		}
+	}
+
+	// 4.5. Remove the DNS-check probe record. Normally it is already gone —
+	// it only lives for the seconds a check runs — but a daemon killed inside
+	// that window, or an upgrade from a version that kept it permanently,
+	// leaves it behind. Runs BEFORE the save below: that save is the only one
+	// that makes the removal outlive package removal (#942).
+	if s.probeHost != nil {
+		if err := s.probeHost.RemoveProbeHost(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "    Warning: DNS check probe record: %v\n", err)
 		}
 	}
 

@@ -127,18 +127,37 @@
 			resolveCheck = { ...resolveCheck, status: 'pending', message: 'Запрос к awgm-dnscheck.test...' };
 			policyCheck = null;
 
-			const startPromise = api.startDnsCheck().catch(() => null);
-			const probePromise = doResolveProbe();
-
-			const start = await startPromise;
+			// При работающем sing-box пробы не будет (DNS обрабатывает он), значит
+			// и запись awgm-dnscheck.test заводить незачем — лёгкая ручка её не
+			// трогает и отдаёт всё, что здесь нужно: клиента и его политику.
+			const singboxOn = $singboxStatus.data?.running ?? false;
+			// Проба строго ПОСЛЕ start, не параллельно с ним: запись
+			// awgm-dnscheck.test заводится на время проверки и до ответа start
+			// ещё не существует.
+			const start = singboxOn
+				? await api.getDnsCheckClient().catch(() => null)
+				: await api.startDnsCheck().catch(() => null);
 			if (start) {
 				clientIP = start.clientIP;
 				const policy = start.checks.find((c) => c.id === 'client_policy');
 				if (policy) policyCheck = toRow(policy);
 			}
 
-			const probe = await probePromise;
-			resolveCheck = probe;
+			// Бэкенд сообщил, что записи завести не вышло — пробовать нечего,
+			// её провал прочитался бы как «клиент ходит мимо роутера».
+			const armIssue = start?.checks.find((c) => c.id === 'dns_probe' && c.status !== 'pending');
+			if (armIssue) {
+				resolveCheck = toRow(armIssue);
+			} else if (!singboxOn && !start) {
+				resolveCheck = {
+					id: 'dns_probe',
+					title: 'Резолв через клиентский DNS',
+					status: 'fail',
+					message: 'Проверку не удалось запустить — панель не ответила',
+				};
+			} else {
+				resolveCheck = await doResolveProbe();
+			}
 		} finally {
 			running = false;
 			runInFlight = false;

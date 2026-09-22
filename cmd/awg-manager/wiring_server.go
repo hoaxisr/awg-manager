@@ -579,7 +579,10 @@ func (a *app) setupListen() {
 		&runningTunnelAdapter{svc: a.tunnelService},
 		a.loggingService,
 	)
-	dnsCheckService.EnsureIPHost(context.Background())
+	// Запись пробы живёт только на время проверки (её заводит Start). Здесь
+	// снимаем остаток: от демона, убитого внутри этого окна, и от прежних
+	// версий, которые держали её постоянно (#942).
+	_ = dnsCheckService.RemoveProbeHost(context.Background())
 	a.srv.SetDnsCheckService(dnsCheckService)
 
 	logStartup(a.bootLog, version, string(osdetect.Get()),
