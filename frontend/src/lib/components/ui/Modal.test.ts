@@ -36,6 +36,25 @@ describe('Modal: Esc', () => {
 		expect(closeHidden).not.toHaveBeenCalled();
 	});
 
+	// Браузерную причину пометки (доверенный Esc флашится синхронно, и
+	// поднятое подтверждение успевает стать верхним внутри того же диспатча)
+	// jsdom не воспроизводит: там флаш уходит в микрозадачу. Проверяем сам
+	// инвариант пометки — одно событие обрабатывается не больше одного раза;
+	// браузерный сценарий сторожит мок-прогон, не этот тест.
+	it('одно и то же событие Esc обрабатывается один раз', async () => {
+		const onclose = vi.fn();
+
+		render(Modal, { props: { open: true, title: 'Мастер', onclose } });
+		await tick();
+
+		const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
+		window.dispatchEvent(esc);
+		window.dispatchEvent(esc);
+		await tick();
+
+		expect(onclose).toHaveBeenCalledTimes(1);
+	});
+
 	it('после закрытия верхней Esc снова достаётся нижней', async () => {
 		const closeLower = vi.fn();
 

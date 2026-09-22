@@ -4,6 +4,13 @@
     // и событие приходит КАЖДОЙ смонтированной модалке разом: без стека
     // Esc поверх пикера закрывал бы и пикер, и мастер под ним.
     const openStack: symbol[] = [];
+
+    // Последний Esc, который уже обработала какая-то модалка. Доверенное
+    // событие Svelte флашит СИНХРОННО, прямо внутри диспатча: подтверждение,
+    // поднятое верхней модалкой, успевает смонтироваться и само стать верхним
+    // раньше, чем событие дойдёт до его window-слушателя, — и закрывает себя
+    // тем же нажатием (F426). Пометка события обрывает эту цепочку.
+    let handledEscape: Event | null = null;
 </script>
 
 <script lang="ts">
@@ -83,8 +90,10 @@
 
     function handleKeydown(e: KeyboardEvent) {
         if (e.key === 'Escape') {
+            if (handledEscape === e) return; // этот Esc уже обработан
             if (openStack[openStack.length - 1] !== instanceId) return; // не верхняя
             if (confirmOpen) return; // ConfirmModal owns Esc while open
+            handledEscape = e;
             attemptClose();
         }
     }
