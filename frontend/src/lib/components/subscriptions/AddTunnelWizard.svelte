@@ -918,6 +918,10 @@
 	.inp.mono { font-family: var(--font-mono, ui-monospace, monospace); }
 	.path-line { display: flex; align-items: stretch; gap: 0.4rem; }
 	.path-line .inp { flex: 1; min-width: 0; }
+	/* size="sm" жёстко фиксирует высоту кнопки (height/min/max: 28px), поэтому
+	   align-items: stretch её не растягивает и низ кнопки не совпадает с низом
+	   поля. Снимаем фиксацию — высоту задаёт строка. */
+	.path-line :global(.btn) { height: auto; min-height: 0; max-height: none; }
 	.hint {
 		font-size: 0.74rem;
 		color: var(--color-text-muted);
