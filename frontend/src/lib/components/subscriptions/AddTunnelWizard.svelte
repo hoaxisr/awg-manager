@@ -641,26 +641,33 @@
 					/>
 				</div>
 			{:else if kind === 'file'}
-				<label class="row">
-					<span class="lbl">Путь к файлу на роутере</span>
-					<input
-						class="inp mono"
-						type="text"
-						bind:value={filePath}
-						placeholder="/opt/etc/awg-manager/sub.txt"
-						autocomplete="off"
-						spellcheck="false"
-					/>
+				<!-- «Выбрать…» стоит в одной строке с полем: снаружи .row кнопка
+				     отрывалась от поля и читалась как отдельный раздел формы.
+				     Строка — <div> с <label for>, потому что <button> внутри
+				     <label> нарушает его модель содержимого (labelable element). -->
+				<div class="row">
+					<label class="lbl" for="sub-file-path">Путь к файлу на роутере</label>
+					<div class="path-line">
+						<input
+							id="sub-file-path"
+							class="inp mono"
+							type="text"
+							bind:value={filePath}
+							placeholder="/opt/etc/awg-manager/sub.txt"
+							autocomplete="off"
+							spellcheck="false"
+						/>
+						{#if $usageLevel === 'expert'}
+							<Button variant="secondary" size="sm" onclick={() => (showFilePicker = true)}>
+								Выбрать…
+							</Button>
+						{/if}
+					</div>
 					<span class="hint">
 						Абсолютный путь внутри /opt или /tmp. Обновление — кнопкой
 						«Обновить» во вкладке «Серверы».
 					</span>
-				</label>
-				{#if $usageLevel === 'expert'}
-					<Button variant="secondary" size="sm" onclick={() => (showFilePicker = true)}>
-						Выбрать…
-					</Button>
-				{/if}
+				</div>
 			{:else}
 				<label class="row">
 					<span class="lbl">Ссылки на серверы (по одной на строку)</span>
@@ -849,7 +856,11 @@
 	}
 	@media (min-width: 820px) {
 		.kind-grid {
-			grid-template-columns: repeat(4, minmax(12rem, 1fr));
+			/* auto-fit, а не repeat(4): с AWG3 видов пять, и на жёстких четырёх
+			   колонках пятая карточка уходила на вторую строку одна. Пустые
+			   треки auto-fit схлопывает, поэтому без AWG3 остаётся ровно
+			   четыре колонки во всю ширину. */
+			grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
 		}
 	}
 	.kind-card {
@@ -905,6 +916,8 @@
 		color: var(--color-text-primary);
 	}
 	.inp.mono { font-family: var(--font-mono, ui-monospace, monospace); }
+	.path-line { display: flex; align-items: stretch; gap: 0.4rem; }
+	.path-line .inp { flex: 1; min-width: 0; }
 	.hint {
 		font-size: 0.74rem;
 		color: var(--color-text-muted);
