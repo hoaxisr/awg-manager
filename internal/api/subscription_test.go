@@ -637,3 +637,50 @@ func TestSubscriptionHandler_PreviewPath(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
+
+// TestSubscriptionHandler_Create_TwoSources_400 фиксирует класс ошибки:
+// два источника в одном теле — ввод пользователя (400 INVALID_INPUT),
+// а не внутренний сбой (500 + Warn со свободным вводом в app-лог).
+func TestSubscriptionHandler_Create_TwoSources_400(t *testing.T) {
+	h, _, dir := fileSourceHandler(t)
+	p := writeLinkFile(t, dir, "sub.txt")
+
+	rr := postJSON(t, h.Create, "/api/singbox/subscriptions/create",
+		CreateSubscriptionRequest{Label: "f", URL: "https://example.com/sub", Path: p, Enabled: true})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400, body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "INVALID_INPUT") {
+		t.Fatalf("body=%s want INVALID_INPUT", rr.Body.String())
+	}
+}
+
+// TestSubscriptionHandler_Update_URLOnInline_400 — та же граница на PUT:
+// смена источника у созданной подписки отбивается как ввод, не как 500.
+func TestSubscriptionHandler_Update_URLOnInline_400(t *testing.T) {
+	h, _, _ := fileSourceHandler(t)
+
+	rr := postJSON(t, h.Create, "/api/singbox/subscriptions/create",
+		CreateSubscriptionRequest{Label: "i", Inline: oneVlessLink, Enabled: true})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var created SubscriptionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	newURL := "https://example.com/sub"
+	body, _ := json.Marshal(UpdateSubscriptionRequest{URL: &newURL})
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/singbox/subscriptions/update?id="+created.Data.ID, strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "INVALID_INPUT") {
+		t.Fatalf("body=%s want INVALID_INPUT", rec.Body.String())
+	}
+}
