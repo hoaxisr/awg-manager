@@ -40,6 +40,8 @@ type SubscriptionDTO struct {
 	Label           string                    `json:"label" example:"Demo Provider"`
 	URL             string                    `json:"url" example:"https://example.com/subscriptions/demo.txt"`
 	IsInline        bool                      `json:"isInline" example:"false"`
+	Path            string                    `json:"path,omitempty" example:"/opt/etc/awg-manager/sub.txt"`
+	IsFile          bool                      `json:"isFile" example:"false"`
 	Headers         []SubscriptionHeader      `json:"headers"`
 	RefreshHours    int                       `json:"refreshHours" example:"24"`
 	LastFetched     string                    `json:"lastFetched" example:"2026-05-14T21:30:00Z"`
@@ -84,10 +86,11 @@ type SubscriptionResponse struct {
 }
 
 // CreateSubscriptionRequest is the body for POST /api/singbox/subscriptions/create.
-// Exactly one of URL or Inline must be provided.
+// Exactly one of URL, Inline or Path must be provided.
 type CreateSubscriptionRequest struct {
 	Label         string                  `json:"label" example:"Demo Provider"`
 	URL           string                  `json:"url,omitempty" example:"https://example.com/subscriptions/demo.txt"`
+	Path          string                  `json:"path,omitempty" example:"/opt/etc/awg-manager/sub.txt"`
 	Inline        string                  `json:"inline,omitempty" example:"vless://11111111-2222-3333-4444-555555555555@demo.example.com:443?type=tcp&encryption=none&security=reality&pbk=EXAMPLE_PUBLIC_KEY&fp=chrome&sni=cdn.example.com&sid=abcd1234&spx=%2F&flow=xtls-rprx-vision#Demo-vless-reality"`
 	Headers       []SubscriptionHeader    `json:"headers"`
 	RefreshHours  int                     `json:"refreshHours" example:"24"`
@@ -188,9 +191,12 @@ type RestoreMembersRequest struct {
 }
 
 // PreviewURLRequest is the body for POST /api/singbox/subscriptions/preview.
-// Read-only fetch + parse of a subscription URL without creating anything.
+// Read-only fetch + parse of a subscription source without creating
+// anything. Path reads a file on the router instead of fetching URL;
+// when set it wins over URL and Headers are ignored.
 type PreviewURLRequest struct {
 	URL     string               `json:"url" example:"https://example.com/subscriptions/demo.txt"`
+	Path    string               `json:"path,omitempty" example:"/opt/etc/awg-manager/sub.txt"`
 	Headers []SubscriptionHeader `json:"headers"`
 }
 
@@ -268,6 +274,8 @@ func toSubscriptionDTO(s subscription.Subscription, ndmsProxyEnabled bool) Subsc
 		Label:           s.Label,
 		URL:             s.URL,
 		IsInline:        s.IsInline(),
+		Path:            s.Path,
+		IsFile:          s.IsFile(),
 		Headers:         hh,
 		RefreshHours:    s.RefreshHours,
 		LastFetched:     last,
@@ -303,6 +311,8 @@ type SubscriptionMetaDTO struct {
 	Label           string                    `json:"label"`
 	URL             string                    `json:"url"`
 	IsInline        bool                      `json:"isInline"`
+	Path            string                    `json:"path,omitempty"`
+	IsFile          bool                      `json:"isFile"`
 	Headers         []SubscriptionHeader      `json:"headers"`
 	RefreshHours    int                       `json:"refreshHours"`
 	LastFetched     string                    `json:"lastFetched" example:"2026-05-14T21:30:00Z"`
@@ -375,6 +385,8 @@ func buildSubscriptionMetaDTO(s subscription.Subscription, ndmsProxyEnabled bool
 		Label:           s.Label,
 		URL:             s.URL,
 		IsInline:        s.IsInline(),
+		Path:            s.Path,
+		IsFile:          s.IsFile(),
 		Headers:         hh,
 		RefreshHours:    s.RefreshHours,
 		LastFetched:     last,

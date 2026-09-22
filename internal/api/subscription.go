@@ -7,6 +7,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
+	sysfiles "github.com/hoaxisr/awg-manager/internal/sys/files"
 	tunnelservice "github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
 
@@ -87,7 +88,8 @@ func (h *SubscriptionHandler) respondServiceError(w http.ResponseWriter, action 
 		!errors.Is(err, subscription.ErrExcludeOnInline) &&
 		!errors.Is(err, subscription.ErrAllMembersExcluded) &&
 		!errors.Is(err, subscription.ErrAllMembersFiltered) &&
-		!errors.Is(err, subscription.ErrMemberNotFound)
+		!errors.Is(err, subscription.ErrMemberNotFound) &&
+		!errors.Is(err, sysfiles.ErrPathDenied)
 	if isInternal {
 		h.log.Warn(action, "", err.Error())
 	} else {
@@ -106,6 +108,8 @@ func (h *SubscriptionHandler) respondServiceError(w http.ResponseWriter, action 
 		response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "ALL_MEMBERS_FILTERED")
 	case errors.Is(err, subscription.ErrMemberNotFound):
 		response.ErrorWithStatus(w, http.StatusNotFound, err.Error(), "MEMBER_NOT_FOUND")
+	case errors.Is(err, sysfiles.ErrPathDenied):
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "PATH_DENIED")
 	default:
 		response.InternalError(w, err.Error())
 	}
@@ -135,7 +139,7 @@ func (h *SubscriptionHandler) List(w http.ResponseWriter, r *http.Request) {
 // Create handles POST /api/singbox/subscriptions/create
 //
 //	@Summary		Create sing-box subscription
-//	@Description	Creates subscription from URL or inline share links. Returns 422 VALIDATION_FAILED when the merged sing-box config is rejected by `sing-box check` (e.g. reality outbound without uTLS).
+//	@Description	Creates subscription from URL, inline share links or a file on the router. Returns 422 VALIDATION_FAILED when the merged sing-box config is rejected by `sing-box check` (e.g. reality outbound without uTLS).
 //	@Tags			subscriptions
 //	@Accept			json
 //	@Produce		json
@@ -177,6 +181,7 @@ func (h *SubscriptionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Label:         req.Label,
 		URL:           req.URL,
 		Inline:        req.Inline,
+		Path:          req.Path,
 		Headers:       fromSubscriptionHeaders(req.Headers),
 		RefreshHours:  req.RefreshHours,
 		Enabled:       req.Enabled,

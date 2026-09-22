@@ -2243,6 +2243,10 @@ func fileSandbox(t *testing.T, svc *Service) string {
 const twoLinks = "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?security=tls&sni=h\n" +
 	"trojan://p@example.com:444?security=tls&sni=h\n"
 
+// thirdLink дописывается в файл-источник между созданием и refresh —
+// свой UUID и хост, иначе StableTag схлопнул бы его с первым участником.
+const thirdLink = "vless://3a3b1c2e-9999-4321-aaaa-1234567890ac@example.net:445?security=tls&sni=h2\n"
+
 func writeFileSource(t *testing.T, dir, name string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -2323,8 +2327,9 @@ func TestService_Create_RejectsTwoSources(t *testing.T) {
 	dir := fileSandbox(t, svc)
 	p := writeFileSource(t, dir, "sub.txt")
 
-	if _, err := svc.Create(context.Background(), CreateInput{Label: "f", URL: "https://x", Path: p, Enabled: true}); err == nil {
-		t.Fatal("want error for URL+Path")
+	_, err := svc.Create(context.Background(), CreateInput{Label: "f", URL: "https://x", Path: p, Enabled: true})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("want mutual-exclusion error, got %v", err)
 	}
 	if n := len(store.List()); n != 0 {
 		t.Fatalf("store row leaked: %d", n)
@@ -2343,8 +2348,39 @@ func TestService_Update_RejectsURLOnFileSub(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	u := "https://x"
-	if _, err := svc.Update(sub.ID, UpdatePatch{URL: &u}); err == nil {
-		t.Fatal("want error: URL cannot be added to a file subscription")
+	_, err = svc.Update(sub.ID, UpdatePatch{URL: &u})
+	if err == nil || !strings.Contains(err.Error(), "cannot add URL to a file subscription") {
+		t.Fatalf("want URL-on-file-subscription error, got %v", err)
+	}
+}
+
+// TestService_Refresh_FileChanged_PicksUpNewMembers: файловый источник —
+// не inline. Файл на роутере живёт своей жизнью, поэтому refresh обязан
+// перечитывать его каждый раз, а не коротить по уже заполненным
+// MemberTags, как это делает inline-ветка.
+func TestService_Refresh_FileChanged_PicksUpNewMembers(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	svc := NewService(store, &fakeMutator{})
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "f", Path: p, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := os.WriteFile(p, []byte(twoLinks+thirdLink), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := svc.Refresh(context.Background(), sub.ID); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	got, err := store.Get(sub.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.MemberTags) != 3 {
+		t.Fatalf("members=%d want 3", len(got.MemberTags))
 	}
 }
 
