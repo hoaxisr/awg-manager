@@ -1306,6 +1306,9 @@ definitions:
       mode:
         description: '"selector" (default) | "urltest"'
         type: string
+      path:
+        example: /opt/etc/awg-manager/sub.txt
+        type: string
       refreshHours:
         example: 24
         type: integer
@@ -3278,6 +3281,9 @@ definitions:
         items:
           $ref: '#/definitions/api.SubscriptionHeader'
         type: array
+      path:
+        example: /opt/etc/awg-manager/sub.txt
+        type: string
       url:
         example: https://example.com/subscriptions/demo.txt
         type: string
@@ -6271,6 +6277,9 @@ definitions:
         items:
           $ref: '#/definitions/api.SubscriptionInfoItemDTO'
         type: array
+      isFile:
+        example: false
+        type: boolean
       isInline:
         example: false
         type: boolean
@@ -6307,6 +6316,9 @@ definitions:
         items:
           type: string
         type: array
+      path:
+        example: /opt/etc/awg-manager/sub.txt
+        type: string
       proxyIndex:
         example: 1
         type: integer
@@ -17968,9 +17980,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates subscription from URL or inline share links. Returns 422
-        VALIDATION_FAILED when the merged sing-box config is rejected by `sing-box
-        check` (e.g. reality outbound without uTLS).
+      description: Creates subscription from URL, inline share links or a file on
+        the router. Returns 422 VALIDATION_FAILED when the merged sing-box config
+        is rejected by `sing-box check` (e.g. reality outbound without uTLS).
       parameters:
       - description: create request
         in: body
@@ -18582,11 +18594,12 @@ paths:
       consumes:
       - application/json
       description: |-
-        Read-only fetch + parse of a subscription URL. Returns the
+        Read-only fetch + parse of a subscription URL, or of a file
+        on the router when `path` is set instead of `url`. Returns the
         parsed members (with subID-independent keys) so the import
         wizard can offer per-server exclusion before creation.
       parameters:
-      - description: URL and optional headers
+      - description: URL or router file path, plus optional headers
         in: body
         name: body
         required: true
@@ -18600,7 +18613,7 @@ paths:
           schema:
             $ref: '#/definitions/api.APIEnvelope'
         "400":
-          description: Bad Request
+          description: path outside the allowed roots (PATH_DENIED)
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "502":
@@ -18609,7 +18622,7 @@ paths:
             $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
-      summary: Preview a subscription URL without creating it
+      summary: Preview a subscription source without creating it
       tags:
       - subscriptions
   /singbox/subscriptions/refresh:
