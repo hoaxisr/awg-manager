@@ -58,7 +58,7 @@
 		color: var(--color-text-primary);
 	}
 	.pick-row.active {
-		background: var(--color-accent-tint, rgba(122, 162, 247, 0.18));
+		background: var(--color-accent-tint);
 		color: var(--color-accent);
 		font-weight: 600;
 	}

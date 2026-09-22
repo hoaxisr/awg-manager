@@ -29,6 +29,10 @@
 	});
 
 	async function loadRoots() {
+		// Прошлый снимок гасим до запроса: иначе при переоткрытии видны строки
+		// старого каталога, а «Выбрать» остаётся живой с прежним путём.
+		entries = [];
+		selected = '';
 		try {
 			const roots = await api.systemFilesRoots();
 			treeRoots = roots.map((r) => ({
@@ -38,7 +42,10 @@
 				loading: false,
 				children: [],
 			}));
-			if (roots.length > 0) await loadDir(roots[0].path);
+			if (roots.length > 0) {
+				currentPath = roots[0].path;
+				await loadDir(currentPath);
+			}
 		} catch (e) {
 			notifications.error(errorMessage(e, 'Не удалось загрузить корневые папки'));
 		}
