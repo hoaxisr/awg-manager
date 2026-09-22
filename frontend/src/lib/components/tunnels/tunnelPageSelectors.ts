@@ -351,6 +351,7 @@ export function sortFilterSubscriptionsActiveCards(
 			[
 				subscription.label,
 				subscription.url,
+				subscription.path,
 				subscription.inboundTag,
 				subscription.selectorTag,
 				activeMember.tag,
@@ -404,6 +405,7 @@ export function sortFilterSubscriptionsListRows(
 			[
 				subscription.label,
 				subscription.url,
+				subscription.path,
 				subscription.inboundTag,
 				subscription.selectorTag,
 				member?.tag,

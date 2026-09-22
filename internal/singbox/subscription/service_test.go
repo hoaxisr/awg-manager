@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
+	sysfiles "github.com/hoaxisr/awg-manager/internal/sys/files"
 )
 
 func withLegacySetupNoop(svc *Service) {
@@ -768,7 +769,7 @@ func TestService_Create_RejectsNoSource(t *testing.T) {
 	svc := NewService(store, &fakeMutator{})
 	withLegacySetupNoop(svc)
 	_, err := svc.Create(context.Background(), CreateInput{Label: "empty", Enabled: true})
-	if err == nil || !strings.Contains(err.Error(), "either URL or inline") {
+	if err == nil || !strings.Contains(err.Error(), "URL, inline content or file path is required") {
 		t.Errorf("expected source-required error, got %v", err)
 	}
 }
@@ -2227,5 +2228,214 @@ func TestService_Update_BindAndMode_SingleReload(t *testing.T) {
 	}
 	if got := mut.reloads - before; got != 1 {
 		t.Fatalf("reloads=%d, want exactly 1 (bind and mode must share one transaction)", got)
+	}
+}
+
+// fileSandbox ограничивает файловый источник сервиса свежим TempDir и
+// возвращает этот каталог. Всё, что снаружи, отбивается ErrPathDenied.
+func fileSandbox(t *testing.T, svc *Service) string {
+	t.Helper()
+	dir := t.TempDir()
+	svc.SetFileSandbox(sysfiles.NewSandbox([]sysfiles.Root{{Path: dir, Label: "t"}}))
+	return dir
+}
+
+const twoLinks = "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?security=tls&sni=h\n" +
+	"trojan://p@example.com:444?security=tls&sni=h\n"
+
+// thirdLink дописывается в файл-источник между созданием и refresh —
+// свой UUID и хост, иначе StableTag схлопнул бы его с первым участником.
+const thirdLink = "vless://3a3b1c2e-9999-4321-aaaa-1234567890ac@example.net:445?security=tls&sni=h2\n"
+
+func writeFileSource(t *testing.T, dir, name string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte(twoLinks), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	return p
+}
+
+func TestService_Create_FromFile_Materializes(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "f", Path: p, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !sub.IsFile() || len(sub.MemberTags) != 2 {
+		t.Fatalf("IsFile=%v members=%d", sub.IsFile(), len(sub.MemberTags))
+	}
+}
+
+// Пустой label у файловой подписки заменяется именем файла: карточки рисуют
+// label || url, а url у файлового источника пуст — иначе заголовок пустой.
+func TestService_Create_FromFile_EmptyLabelDefaultsToBasename(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "  ", Path: p, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if want := filepath.Base(p); sub.Label != want {
+		t.Fatalf("Label=%q, want %q", sub.Label, want)
+	}
+}
+
+func TestService_Create_FromFile_KeepsExplicitLabel(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "мой список", Path: p, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if sub.Label != "мой список" {
+		t.Fatalf("Label=%q, want %q", sub.Label, "мой список")
+	}
+}
+
+func TestService_Create_FileOutsideSandbox_NoSideEffects(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+	withLegacySetupNoop(svc)
+	fileSandbox(t, svc)
+	outside := writeFileSource(t, t.TempDir(), "x.txt")
+
+	_, err := svc.Create(context.Background(), CreateInput{Label: "f", Path: outside, Enabled: true})
+	if !errors.Is(err, sysfiles.ErrPathDenied) {
+		t.Fatalf("want ErrPathDenied, got %v", err)
+	}
+	if n := len(store.List()); n != 0 {
+		t.Fatalf("store row leaked: %d", n)
+	}
+	if len(mutator.ensuredProxies) != 0 {
+		t.Fatalf("ProxyN allocated for rejected path")
+	}
+}
+
+func TestService_Refresh_FileMissing_KeepsMembers(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "f", Path: p, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, err := svc.Refresh(context.Background(), sub.ID); err == nil {
+		t.Fatal("want read error")
+	}
+	got, err := store.Get(sub.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.MemberTags) != 2 || got.LastError == "" {
+		t.Fatalf("members=%d lastError=%q", len(got.MemberTags), got.LastError)
+	}
+}
+
+func TestService_Create_RejectsTwoSources(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	svc := NewService(store, &fakeMutator{})
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	_, err := svc.Create(context.Background(), CreateInput{Label: "f", URL: "https://x", Path: p, Enabled: true})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("want mutual-exclusion error, got %v", err)
+	}
+	if n := len(store.List()); n != 0 {
+		t.Fatalf("store row leaked: %d", n)
+	}
+}
+
+func TestService_Update_RejectsURLOnFileSub(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	svc := NewService(store, &fakeMutator{})
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "f", Path: p, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	u := "https://x"
+	_, err = svc.Update(sub.ID, UpdatePatch{URL: &u})
+	if err == nil || !strings.Contains(err.Error(), "cannot add URL to a file subscription") {
+		t.Fatalf("want URL-on-file-subscription error, got %v", err)
+	}
+}
+
+// TestService_Refresh_FileChanged_PicksUpNewMembers: файловый источник —
+// не inline. Файл на роутере живёт своей жизнью, поэтому refresh обязан
+// перечитывать его каждый раз, а не коротить по уже заполненным
+// MemberTags, как это делает inline-ветка.
+func TestService_Refresh_FileChanged_PicksUpNewMembers(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	svc := NewService(store, &fakeMutator{})
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "f", Path: p, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := os.WriteFile(p, []byte(twoLinks+thirdLink), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := svc.Refresh(context.Background(), sub.ID); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	got, err := store.Get(sub.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.MemberTags) != 3 {
+		t.Fatalf("members=%d want 3", len(got.MemberTags))
+	}
+}
+
+func TestService_PreviewPath(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	svc := NewService(store, &fakeMutator{})
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	members, err := svc.PreviewPath(context.Background(), p)
+	if err != nil {
+		t.Fatalf("PreviewPath: %v", err)
+	}
+	if len(members) != 2 {
+		t.Fatalf("members=%d want 2", len(members))
+	}
+	outside := writeFileSource(t, t.TempDir(), "x.txt")
+	if _, err := svc.PreviewPath(context.Background(), outside); !errors.Is(err, sysfiles.ErrPathDenied) {
+		t.Fatalf("want ErrPathDenied, got %v", err)
 	}
 }

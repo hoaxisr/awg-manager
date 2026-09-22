@@ -4,6 +4,7 @@ export { default as FileContextMenu } from './FileContextMenu.svelte';
 export { default as FileCopyButton } from './FileCopyButton.svelte';
 export { default as FileEditorModal } from './FileEditorModal.svelte';
 export { default as FileModals } from './FileModals.svelte';
+export { default as FilePickerModal } from './FilePickerModal.svelte';
 export { default as FilePropsModal } from './FilePropsModal.svelte';
 export { default as FilePropsChecksums } from './FilePropsChecksums.svelte';
 export { default as FilePropsPermissions } from './FilePropsPermissions.svelte';

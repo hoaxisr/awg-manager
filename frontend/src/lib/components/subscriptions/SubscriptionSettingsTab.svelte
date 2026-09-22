@@ -126,7 +126,7 @@
 				filterExclude: filterExclude.trim(),
 				bindInterface: bindInterface.trim(),
 			};
-			if (!subscription.isInline) {
+			if (!subscription.isInline && !subscription.isFile) {
 				patch.url = url;
 				patch.headers = parseHeadersText(headersText);
 				patch.refreshHours = refreshHours;
@@ -290,7 +290,9 @@
 					<span class="summary-label">серверов</span>
 				</div>
 				<div class="summary-item">
-					<span class="summary-value">{subscription.isInline ? 'ручной список' : 'URL'}</span>
+					<span class="summary-value">
+						{subscription.isFile ? 'файл' : subscription.isInline ? 'ручной список' : 'URL'}
+					</span>
 					<span class="summary-label">источник</span>
 				</div>
 				<div class="summary-item">
@@ -301,15 +303,17 @@
 					<span class="summary-value">
 						{subscription.isInline
 							? 'не требуется'
-							: refreshHours > 0
-								? `${refreshHours} ч`
-								: 'вручную'}
+							: subscription.isFile
+								? 'вручную'
+								: refreshHours > 0
+									? `${refreshHours} ч`
+									: 'вручную'}
 					</span>
 					<span class="summary-label">обновление</span>
 				</div>
 				<div class="summary-item">
 					<span class="summary-value">
-						{subscription.isInline
+						{subscription.isInline || subscription.isFile
 							? '—'
 							: parseHeadersText(headersText).length > 0
 								? `${parseHeadersText(headersText).length}`
@@ -350,6 +354,11 @@
 							: `${subscription.members.length} серверов`}
 					· редактирование во вкладке «Серверы»
 				</div>
+			</div>
+		{:else if subscription.isFile}
+			<div class="inline-info">
+				<div class="inline-badge">Файл на роутере</div>
+				<div class="inline-summary mono">{subscription.path}</div>
 			</div>
 		{:else}
 			<label class="row">

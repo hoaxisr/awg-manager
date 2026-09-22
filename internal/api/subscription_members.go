@@ -9,6 +9,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
+	sysfiles "github.com/hoaxisr/awg-manager/internal/sys/files"
 )
 
 // ActiveMember handles POST /api/singbox/subscriptions/active-member?id=
@@ -450,17 +451,18 @@ func (h *SubscriptionHandler) RestoreMembers(w http.ResponseWriter, r *http.Requ
 
 // PreviewURL handles POST /api/singbox/subscriptions/preview
 //
-//	@Summary		Preview a subscription URL without creating it
-//	@Description	Read-only fetch + parse of a subscription URL. Returns the
+//	@Summary		Preview a subscription source without creating it
+//	@Description	Read-only fetch + parse of a subscription URL, or of a file
+//	@Description	on the router when `path` is set instead of `url`. Returns the
 //	@Description	parsed members (with subID-independent keys) so the import
 //	@Description	wizard can offer per-server exclusion before creation.
 //	@Tags			subscriptions
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			body	body		PreviewURLRequest	true	"URL and optional headers"
+//	@Param			body	body		PreviewURLRequest	true	"URL or router file path, plus optional headers"
 //	@Success		200		{object}	APIEnvelope
-//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		400		{object}	APIErrorEnvelope	"path outside the allowed roots (PATH_DENIED)"
 //	@Failure		502		{object}	APIErrorEnvelope	"fetch or parse failed"
 //	@Router			/singbox/subscriptions/preview [post]
 func (h *SubscriptionHandler) PreviewURL(w http.ResponseWriter, r *http.Request) {
@@ -473,8 +475,20 @@ func (h *SubscriptionHandler) PreviewURL(w http.ResponseWriter, r *http.Request)
 		response.ErrorWithStatus(w, http.StatusBadRequest, "bad request body", "INVALID_JSON")
 		return
 	}
-	members, err := h.svc.PreviewURL(r.Context(), req.URL, fromSubscriptionHeaders(req.Headers))
+	var members []subscription.PreviewMember
+	var err error
+	if req.Path != "" {
+		members, err = h.svc.PreviewPath(r.Context(), req.Path)
+	} else {
+		members, err = h.svc.PreviewURL(r.Context(), req.URL, fromSubscriptionHeaders(req.Headers))
+	}
 	if err != nil {
+		// Путь вне корней — ввод пользователя, а не сбой апстрима: 502
+		// увёл бы UI в «провайдер недоступен».
+		if errors.Is(err, sysfiles.ErrPathDenied) {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "PATH_DENIED")
+			return
+		}
 		response.ErrorWithStatus(w, http.StatusBadGateway, err.Error(), "PREVIEW_FAILED")
 		return
 	}

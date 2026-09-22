@@ -143,7 +143,8 @@ export class SubscriptionsClient extends SbRouterClient {
 	}
 
 	async previewSubscription(input: {
-		url: string;
+		url?: string;
+		path?: string;
 		headers: SubscriptionHeader[];
 	}): Promise<SubscriptionPreviewMember[]> {
 		return this.request<SubscriptionPreviewMember[]>('/singbox/subscriptions/preview', {

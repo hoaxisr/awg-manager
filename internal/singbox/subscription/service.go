@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
+	sysfiles "github.com/hoaxisr/awg-manager/internal/sys/files"
 )
 
 // ConfigMutator is the narrow contract for committing subscription state to
@@ -99,6 +101,10 @@ type Service struct {
 	// happKeys — RSA-ключи расшифровки happ://crypt… ссылок. Живут рядом с
 	// файлом подписок, состояние принадлежит сервису, не пакету.
 	happKeys *happKeys
+	// files — песочница чтения файлового источника подписки (#710). Корни
+	// те же, что у файлового менеджера (DefaultRoots): путь вне их отбивается
+	// ещё до создания строки в store.
+	files *sysfiles.Sandbox
 }
 
 func NewService(store *Store, mutator ConfigMutator) *Service {
@@ -110,6 +116,7 @@ func NewService(store *Store, mutator ConfigMutator) *Service {
 		store:    store,
 		mutator:  mutator,
 		happKeys: newHappKeys(happKeysPath(storePath)),
+		files:    sysfiles.NewSandbox(nil),
 	}
 }
 
@@ -121,6 +128,21 @@ func (s *Service) SetNDMSProxyEnabled(fn func() bool) { s.ndmsProxyEnabled = fn 
 
 // SetBindInterfaceValidator wires router bindable-interface validation.
 func (s *Service) SetBindInterfaceValidator(v BindInterfaceValidator) { s.bindValidator = v }
+
+// SetFileSandbox overrides the roots a file-backed subscription may read
+// from. Production uses the DefaultRoots sandbox wired in NewService.
+func (s *Service) SetFileSandbox(sb *sysfiles.Sandbox) { s.files = sb }
+
+// readFileBody reads a file-backed subscription body through the sandbox.
+// Корни, лимит размера, «is a directory» и бинарник — забота ReadFile;
+// ошибка приходит наружу как есть, содержимое файла в неё не попадает.
+func (s *Service) readFileBody(path string) ([]byte, string, error) {
+	content, _, err := s.files.ReadFile(path)
+	if err != nil {
+		return nil, "", fmt.Errorf("subscription: %w", err)
+	}
+	return []byte(content), "text/plain; charset=utf-8", nil
+}
 
 func (s *Service) proxyEnabled() bool {
 	if s.ndmsProxyEnabled == nil {
@@ -290,16 +312,40 @@ func (s *Service) lockSub(id string) *sync.Mutex {
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, error) {
+	in.Path = strings.TrimSpace(in.Path)
+	// Файловая подписка без label рисует пустые заголовки карточек (везде
+	// label || url, а url у неё пуст), а мастер создания label не принуждает —
+	// подставляем имя файла здесь, до лога и до записи в store.
+	if strings.TrimSpace(in.Label) == "" && in.Path != "" {
+		in.Label = filepath.Base(in.Path)
+	}
 	source := "url"
-	if in.Inline != "" {
+	switch {
+	case in.Inline != "":
 		source = "inline"
+	case in.Path != "":
+		source = "file"
 	}
 	s.logInfo("subscription-create", in.Label, fmt.Sprintf("start source=%s refresh_hours=%d enabled=%v", source, in.RefreshHours, in.Enabled))
-	switch {
-	case in.URL == "" && in.Inline == "":
-		return nil, errors.New("subscription: either URL or inline content is required")
-	case in.URL != "" && in.Inline != "":
-		return nil, errors.New("subscription: URL and inline content are mutually exclusive")
+	sources := 0
+	for _, v := range []string{in.URL, in.Inline, in.Path} {
+		if v != "" {
+			sources++
+		}
+	}
+	switch sources {
+	case 0:
+		return nil, errors.New("subscription: URL, inline content or file path is required")
+	case 1:
+	default:
+		return nil, errors.New("subscription: URL, inline content and file path are mutually exclusive")
+	}
+	// Путь проверяется ДО createMu и store: отказ по корням не должен
+	// доходить до аллокации listen_port / ProxyN.
+	if in.Path != "" {
+		if _, _, err := s.files.Resolve(in.Path); err != nil {
+			return nil, fmt.Errorf("subscription: %w", err)
+		}
 	}
 	// Regex-фильтры валидируются до создания строки в store: битый шаблон
 	// не должен попасть на диск (refreshLocked падал бы на каждом refresh).
@@ -470,6 +516,17 @@ func (s *Service) refreshLockedOpts(ctx context.Context, id string, forceInlineR
 		}
 		body = []byte(sub.Inline)
 		ct = "text/plain; charset=utf-8"
+	} else if sub.IsFile() {
+		// Файловый источник: тело — содержимое файла на роутере. MaskURL
+		// не нужен (маскировать нечего, URL у такой подписки нет), само
+		// содержимое в ошибку не попадает — это ошибки os и лимитов.
+		b, fileCT, readErr := s.readFileBody(sub.Path)
+		if readErr != nil {
+			s.store.UpdateState(id, RefreshResult{When: time.Now(), Err: readErr})
+			s.logWarn("subscription-refresh", id, "read failed: "+readErr.Error())
+			return nil, readErr
+		}
+		body, ct = b, fileCT
 	} else {
 		// Rewrite well-known git-hosting web-view URLs (github blob /
 		// gitlab /-/blob/ / gitea src/branch/) to the raw-content URL.
@@ -957,11 +1014,14 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	// Source-type guard: URL-backed and inline subscriptions stay on
 	// their original source for life. Reject patches that would clear
 	// a URL (would make a URL-backed sub source-less) or that would
-	// add a URL to an inline sub (would dual-source it). Inline body
+	// add a URL to an inline or file sub (would dual-source it). Inline body
 	// is not in UpdatePatch at all, so the reverse direction is
 	// unreachable from API.
 	if patch.URL != nil {
 		newURL := *patch.URL
+		if current.IsFile() {
+			return nil, errors.New("subscription: cannot add URL to a file subscription")
+		}
 		if current.IsInline() {
 			return nil, errors.New("subscription: cannot add URL to an inline subscription")
 		}
@@ -1646,6 +1706,24 @@ func (s *Service) PreviewURL(ctx context.Context, url string, headers []Header) 
 	if err != nil {
 		return nil, fmt.Errorf("%s", MaskURL(err.Error(), url))
 	}
+	return s.previewBody(body, ct)
+}
+
+// PreviewPath is PreviewURL for a file-backed source: the body comes from
+// the sandbox instead of the network (#710).
+func (s *Service) PreviewPath(ctx context.Context, path string) ([]PreviewMember, error) {
+	if path == "" {
+		return nil, errors.New("subscription: preview requires a file path")
+	}
+	body, ct, err := s.readFileBody(path)
+	if err != nil {
+		return nil, err
+	}
+	return s.previewBody(body, ct)
+}
+
+// previewBody — общий хвост превью: разбор тела в список участников.
+func (s *Service) previewBody(body []byte, ct string) ([]PreviewMember, error) {
 	parseRes := parseSubscriptionBody(body, ct)
 	parts := partitionParsedOutbounds("preview", parseRes.Outbounds)
 

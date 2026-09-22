@@ -2108,13 +2108,19 @@ let mockSubID = mockSubscriptions.length;
 
 /** Align list/get payloads with production SubscriptionDTO (incl. isInline). */
 function toMockSubscriptionDTO(sub) {
-	const url = sub.url ?? '';
-	const isInline = sub.isInline ?? !String(url).trim();
+	// Источник — ровно один: путь к файлу вытесняет url и снимает isInline,
+	// как в Go (subscription.Subscription.IsFile).
+	const path = sub.path ?? '';
+	const isFile = !!String(path).trim();
+	const url = isFile ? '' : (sub.url ?? '');
+	const isInline = isFile ? false : (sub.isInline ?? !String(url).trim());
 	const mode = sub.mode ?? 'selector';
 	const dto = {
 		...sub,
 		url,
 		isInline,
+		path,
+		isFile,
 		mode,
 		enabled: sub.enabled !== false,
 		headers: sub.headers ?? [],
@@ -2133,13 +2139,17 @@ function newSub(input) {
 	const id = `sub-${mockSubID.toString().padStart(8, '0')}`;
 	const shortID = id.slice(0, 8);
 	const memberTags = [`sub-${shortID}-aaaa`, `sub-${shortID}-bbbb`];
-	const url = input.url ?? (input.inline ? '' : 'https://test');
-	const isInline = !!input.inline || !String(url).trim();
+	const path = String(input.path ?? '').trim();
+	const isFile = !!path;
+	const url = isFile ? '' : (input.url ?? (input.inline ? '' : 'https://test'));
+	const isInline = isFile ? false : !!input.inline || !String(url).trim();
 	return {
 		id,
 		label: input.label || 'Test',
 		url,
 		isInline,
+		path,
+		isFile,
 		headers: input.headers || [],
 		refreshHours: input.refreshHours || 0,
 		lastFetched: new Date().toISOString(),
@@ -2767,6 +2777,25 @@ const mockHydraRouteStatusAbsent = {
 };
 
 let hydraRouteInstalled = process.env.MOCK_HYDRAROUTE_ABSENT !== '1';
+
+// Каталоги файлового менеджера: ключ — путь, значение — ответ /system/files/list.
+// Запись «..» ведёт себя как у бэкенда (internal/sys/files.List): она есть в
+// каждом каталоге, а прыжок за пределы корня отбивается уже на листинге.
+const MOCK_FILE_TREE = {
+	'/opt/etc': [
+		{ name: '..', path: '/opt', isDir: true, size: 0, mode: '', modTime: '' },
+		{ name: 'awg-manager', path: '/opt/etc/awg-manager', isDir: true, size: 0, mode: 'drwxr-xr-x', modTime: '2026-09-20T10:00:00Z' },
+		{ name: 'sub.txt', path: '/opt/etc/sub.txt', isDir: false, size: 512, mode: '-rw-r--r--', modTime: '2026-09-20T10:05:00Z' },
+	],
+	'/opt/etc/awg-manager': [
+		{ name: '..', path: '/opt/etc', isDir: true, size: 0, mode: '', modTime: '' },
+		{ name: 'subscription.txt', path: '/opt/etc/awg-manager/subscription.txt', isDir: false, size: 1024, mode: '-rw-r--r--', modTime: '2026-09-21T18:30:00Z' },
+	],
+	'/tmp': [
+		{ name: '..', path: '/', isDir: true, size: 0, mode: '', modTime: '' },
+		{ name: 'servers.txt', path: '/tmp/servers.txt', isDir: false, size: 256, mode: '-rw-r--r--', modTime: '2026-09-22T08:00:00Z' },
+	],
+};
 
 const mockRoutingDnsRoutes = [
 	{
@@ -6421,6 +6450,30 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// Файловый менеджер: Prism отдаёт по этим ручкам один синтетический пример
+	// без каталогов, поэтому пикер файла подписки на нём не проверить.
+	if (req.method === 'GET' && path === '/system/files/roots') {
+		send(res, 200, {
+			success: true,
+			data: [
+				{ path: '/opt/etc', label: 'Entware /opt/etc', readOnly: false },
+				{ path: '/tmp', label: 'Временные /tmp', readOnly: false },
+			],
+		});
+		return;
+	}
+
+	if (req.method === 'GET' && path === '/system/files/list') {
+		const dir = new URL(req.url, 'http://x').searchParams.get('path') || '/opt/etc';
+		const entries = MOCK_FILE_TREE[dir];
+		if (!entries) {
+			send(res, 400, { success: false, error: { code: 'PATH_DENIED', message: 'path outside the allowed roots' } });
+			return;
+		}
+		send(res, 200, { success: true, data: { path: dir, entries } });
+		return;
+	}
+
 	if (req.method === 'GET' && path === '/system/hydraroute-status') {
 		send(res, 200, {
 			success: true,
@@ -7817,6 +7870,36 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// Превью источника подписки (url или файл на роутере): Prism отдаёт по этой
+	// ручке пустой APIEnvelope, а мастеру нужен список членов с уникальными key.
+	if (req.method === 'POST' && path === '/singbox/subscriptions/preview') {
+		let raw = '';
+		req.on('data', (c) => (raw += c));
+		req.on('end', () => {
+			let body = {};
+			try {
+				body = JSON.parse(raw || '{}');
+			} catch (e) {
+				send(res, 400, { success: false, error: { code: 'INVALID_REQUEST', message: String(e) } });
+				return;
+			}
+			const src = String(body.path || body.url || '').trim();
+			if (!src) {
+				send(res, 400, { success: false, error: { code: 'MISSING_SOURCE', message: 'url or path required' } });
+				return;
+			}
+			send(res, 200, {
+				success: true,
+				data: [
+					{ key: 'prev01', label: '🇺🇸 LA-1 (mock)', protocol: 'vless', server: 'la1.mock.local', port: 443, sni: 'la1.mock.local', transport: 'ws', security: 'tls' },
+					{ key: 'prev02', label: '🇩🇪 FRA-1 (mock)', protocol: 'vless', server: 'fra1.mock.local', port: 443, sni: 'fra1.mock.local', transport: 'tcp', security: 'tls' },
+					{ key: 'prev03', label: '🇯🇵 TYO-1 (mock)', protocol: 'trojan', server: 'tyo1.mock.local', port: 443, sni: 'tyo1.mock.local', transport: 'tcp', security: 'tls' },
+				],
+			});
+		});
+		return;
+	}
+
 	if (req.method === 'POST' && path === '/singbox/subscriptions/create') {
 		let raw = '';
 		req.on('data', (c) => (raw += c));
@@ -7876,7 +7959,9 @@ const server = http.createServer(async (req, res) => {
 			id: sub.id,
 			label: sub.label,
 			url: sub.url,
-			isInline: !sub.url,
+			isInline: !sub.url && !sub.path,
+			path: sub.path ?? '',
+			isFile: !!sub.path,
 			headers: sub.headers ?? [],
 			refreshHours: sub.refreshHours ?? 0,
 			lastFetched: sub.lastFetched ?? '',

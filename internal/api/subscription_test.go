@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
+	sysfiles "github.com/hoaxisr/awg-manager/internal/sys/files"
 )
 
 // noopMutator implements subscription.ConfigMutator with all-zero responses.
@@ -527,5 +529,111 @@ func TestSubscriptionHandler_GetStream_DoneIncludesExcluded(t *testing.T) {
 	}
 	if !memberDTOHasTag(done.ExcludedMembers, excludeTag) {
 		t.Fatalf("excludedMembers missing %s: %v", excludeTag, memberDTOTags(done.ExcludedMembers))
+	}
+}
+
+// oneVlessLink — одна валидная share-ссылка: тело файлового источника
+// в тестах ниже (один участник → проверяемое len(...) == 1).
+const oneVlessLink = "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443?security=tls&sni=a#A\n"
+
+// fileSourceHandler собирает хендлер, чей файловый источник ограничен
+// свежим TempDir, и возвращает сервис и этот каталог. Всё, что снаружи
+// каталога, сервис отбивает sysfiles.ErrPathDenied.
+func fileSourceHandler(t *testing.T) (*SubscriptionHandler, *subscription.Service, string) {
+	t.Helper()
+	store, err := subscription.NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	svc := subscription.NewService(store, noopMutator{})
+	dir := t.TempDir()
+	svc.SetFileSandbox(sysfiles.NewSandbox([]sysfiles.Root{{Path: dir, Label: "t"}}))
+	return NewSubscriptionHandler(svc, &fakePresenceProbe{installed: true}), svc, dir
+}
+
+func writeLinkFile(t *testing.T, dir, name string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte(oneVlessLink), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	return p
+}
+
+// TestSubscriptionHandler_Create_FileSource сторожит проводку третьего
+// источника через границу API: path из тела должен дойти до CreateInput,
+// а оба конвертера — вернуть path/isFile наружу.
+func TestSubscriptionHandler_Create_FileSource(t *testing.T) {
+	h, svc, dir := fileSourceHandler(t)
+	p := writeLinkFile(t, dir, "sub.txt")
+
+	rr := postJSON(t, h.Create, "/api/singbox/subscriptions/create",
+		CreateSubscriptionRequest{Label: "f", Path: p, Enabled: true})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp SubscriptionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !resp.Data.IsFile || resp.Data.Path != p || len(resp.Data.MemberTags) != 1 {
+		t.Fatalf("isFile=%v path=%q members=%d", resp.Data.IsFile, resp.Data.Path, len(resp.Data.MemberTags))
+	}
+
+	// Второй конвертер — meta-событие /get-stream. Он собирается отдельно
+	// от toSubscriptionDTO, поэтому забытое поле там ловится только здесь:
+	// карточка, отрисованная стримом, иначе теряет «источник — файл».
+	all := svc.List()
+	if len(all) != 1 {
+		t.Fatalf("subscriptions=%d want 1", len(all))
+	}
+	meta := buildSubscriptionMetaDTO(all[0], true)
+	if !meta.IsFile || meta.Path != p {
+		t.Fatalf("meta isFile=%v path=%q", meta.IsFile, meta.Path)
+	}
+}
+
+// TestSubscriptionHandler_Create_PathDenied_400 фиксирует класс ошибки:
+// путь вне разрешённых корней — ввод пользователя (400 PATH_DENIED),
+// а не внутренний сбой (500).
+func TestSubscriptionHandler_Create_PathDenied_400(t *testing.T) {
+	h, _, _ := fileSourceHandler(t)
+	outside := writeLinkFile(t, t.TempDir(), "x.txt")
+
+	rr := postJSON(t, h.Create, "/api/singbox/subscriptions/create",
+		CreateSubscriptionRequest{Label: "f", Path: outside, Enabled: true})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400, body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "PATH_DENIED") {
+		t.Fatalf("body=%s want PATH_DENIED", rr.Body.String())
+	}
+}
+
+func TestSubscriptionHandler_PreviewPath(t *testing.T) {
+	h, _, dir := fileSourceHandler(t)
+	p := writeLinkFile(t, dir, "sub.txt")
+
+	rr := postJSON(t, h.PreviewURL, "/api/singbox/subscriptions/preview",
+		PreviewURLRequest{Path: p})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Data []subscription.PreviewMember `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].Server != "a.example" {
+		t.Fatalf("members=%+v", resp.Data)
+	}
+
+	// Отказ по корням — ввод пользователя (400), а не сбой апстрима (502).
+	outside := writeLinkFile(t, t.TempDir(), "x.txt")
+	rr = postJSON(t, h.PreviewURL, "/api/singbox/subscriptions/preview",
+		PreviewURLRequest{Path: outside})
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "PATH_DENIED") {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }

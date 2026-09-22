@@ -175,7 +175,9 @@ export interface Subscription {
 	id: string;
 	label: string;
 	url: string;
+	path: string; // пусто, если не файл
 	isInline: boolean;
+	isFile: boolean;
 	headers: SubscriptionHeader[];
 	refreshHours: number;
 	lastFetched: string; // RFC 3339, "" when never fetched
@@ -223,6 +225,7 @@ export interface SubscriptionActiveNowResponse {
 export interface CreateSubscriptionInput {
 	label: string;
 	url?: string;
+	path?: string;
 	inline?: string;
 	headers: SubscriptionHeader[];
 	refreshHours: number;

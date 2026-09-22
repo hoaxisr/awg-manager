@@ -121,7 +121,9 @@
     );
     const isURLTest = $derived(subscription.mode === 'urltest');
     /** URL feed vs inline server list (wizard: «Подписка» / «Группа серверов»). */
-    const isInlineGroup = $derived(subscription.isInline || !subscription.url?.trim());
+    const isInlineGroup = $derived(
+        subscription.isInline || (!subscription.isFile && !subscription.url?.trim()),
+    );
     const sourceKindLabel = $derived(isInlineGroup ? 'группа' : 'подписка');
     const lastFetchedHuman = $derived(
         subscription.lastFetched ? formatRelativeTime(subscription.lastFetched) : '—',
@@ -725,7 +727,7 @@
     }}
 >
     <p>
-        Подписка <strong>{subscription.label || subscription.url}</strong> будет
+        Подписка <strong>{subscription.label || subscription.url || subscription.path}</strong> будет
         удалена вместе с её sing-box outbound'ами и NDMS Proxy
         <code class="mono">Proxy{subscription.proxyIndex}</code>.
     </p>

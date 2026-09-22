@@ -189,6 +189,17 @@ func TestStore_MaybeRefresh(t *testing.T) {
 	}
 }
 
+func TestStore_MaybeRefresh_SkipsFile(t *testing.T) {
+	s, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	sub, _ := s.Create(CreateInput{Label: "f", Path: "/opt/etc/s.txt", RefreshHours: 24, Enabled: true})
+	if sub.Path != "/opt/etc/s.txt" {
+		t.Fatalf("Create dropped Path: %q", sub.Path)
+	}
+	if picked := s.MaybeRefresh(time.Now().Add(48 * time.Hour)); len(picked) != 0 {
+		t.Fatalf("file sub must not be scheduled, got %d", len(picked))
+	}
+}
+
 func TestStore_Load_SanitizesLegacyDownloadViaSubscriptionError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "subscriptions.json")
