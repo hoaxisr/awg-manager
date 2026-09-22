@@ -368,9 +368,15 @@ func ParseXrayBody(body []byte) BatchResult {
 					}
 
 					tag := ob.Tag
+					// Без remarks имя взять неоткуда: в теге лежит «proxy»
+					// или заглушка «<proto>-node» — такое имя уступает даже
+					// грубому «<remarks> #i» из сводного профиля.
+					rank := LabelRankNone
 					if remarks != "" {
+						rank = 0
 						if len(realOutbounds) > 1 {
 							tag = fmt.Sprintf("%s #%d", remarks, idx+1)
+							rank = len(realOutbounds)
 						} else {
 							tag = remarks
 						}
@@ -388,6 +394,7 @@ func ParseXrayBody(body []byte) BatchResult {
 						continue
 					}
 					if parsed != nil {
+						parsed.LabelRank = rank
 						res.Outbounds = append(res.Outbounds, *parsed)
 					}
 				}

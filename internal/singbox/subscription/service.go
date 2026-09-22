@@ -1764,13 +1764,20 @@ func (s *Service) previewBody(body []byte, ct string) ([]PreviewMember, error) {
 	// the preview must not list it twice either. Issue #428: duplicate keys
 	// also crash the frontend's keyed list (each_key_duplicate) and freeze
 	// the add-subscription wizard on «Загрузка...».
-	seen := make(map[string]struct{}, len(parts.Valid))
+	seen := make(map[string]int, len(parts.Valid))
+	labelRank := make([]int, 0, len(parts.Valid))
 	for i, p := range parts.Valid {
 		key := suffixOf(keys[i])
-		if _, dup := seen[key]; dup {
+		if j, dup := seen[key]; dup {
+			// Как в ApplyDiff: имя дубликата вытесняет выдуманное
+			// «<профиль> #N» из сводного профиля подписки.
+			if betterLabel(p.LabelRank, labelRank[j]) {
+				out[j].Label, labelRank[j] = p.Label, p.LabelRank
+			}
 			continue
 		}
-		seen[key] = struct{}{}
+		seen[key] = len(out)
+		labelRank = append(labelRank, p.LabelRank)
 		mi := toMemberInfo(StableTag("preview00", p), p) // tag игнорируется, берём поля
 		out = append(out, PreviewMember{
 			Key: key, Label: mi.Label, Protocol: mi.Protocol,

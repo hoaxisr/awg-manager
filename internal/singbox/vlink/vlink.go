@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -19,10 +20,26 @@ type ParsedOutbound struct {
 	Port     uint16
 	Outbound json.RawMessage // sing-box outbound JSON
 	Label    string          // human-readable name: Clash "name" field, or URI #fragment for share-links (empty if no fragment)
+	// LabelRank: насколько имя в Label принадлежит именно этому узлу.
+	// 0 — имя дал провайдер (фрагмент share-link, name у Clash, remarks
+	// одиночного профиля Xray). N>1 — имя выведено из профиля на N узлов
+	// (узлы самого профиля, включая пропущенные при разборе)
+	// («<remarks> #i», у всех узлов профиля один remarks), и чем крупнее
+	// профиль, тем грубее имя. LabelRankNone — имени нет вовсе, в Label
+	// лежит технический тег конфига («proxy») или заглушка разбора
+	// («trojan-node»). Ранг решает, чьё имя останется у сервера, который
+	// пришёл в подписке дважды: Happ/Remnawave отдают его и в сводном
+	// профиле («Авто» на 13 узлов), и отдельной записью со своим именем —
+	// имя берётся от второй (internal/singbox/subscription/diff.go).
+	LabelRank int
 	// MultiAddress: outbound — один из N адресов одного TrustTunnel-конфига.
 	// «Один сервер» такой ввод отбивает в Группу серверов (spec-manager.md п. 4).
 	MultiAddress bool
 }
+
+// LabelRankNone — ранг имени, которого провайдер не давал: технический тег
+// конфига или заглушка разбора. Хуже любого выведенного имени.
+const LabelRankNone = math.MaxInt
 
 // ParseError describes a single failed link in ParseBatch.
 type ParseError struct {

@@ -200,6 +200,17 @@ func assignTags(subID string, parsed []vlink.ParsedOutbound) []string {
 	return tags
 }
 
+// betterLabel: точнее ли имя кандидата, чем имя уже принятого дубликата.
+// Ранг — vlink.LabelRank: 0 (имя дал провайдер) лучше любого другого, а среди
+// выведенных лучше пришедшее из меньшего профиля — сводный профиль подписки
+// крупнее любого частного.
+func betterLabel(cand, prev int) bool {
+	if prev == 0 {
+		return false
+	}
+	return cand == 0 || cand < prev
+}
+
 // ApplyDiff classifies parsed outbounds against the stored MemberTags slice.
 func ApplyDiff(subID string, current []string, parsed []vlink.ParsedOutbound) DiffResult {
 	currSet := make(map[string]bool, len(current))
@@ -208,15 +219,33 @@ func ApplyDiff(subID string, current []string, parsed []vlink.ParsedOutbound) Di
 	}
 	out := DiffResult{}
 	tags := assignTags(subID, parsed)
-	parsedSet := make(map[string]bool, len(parsed))
+	// Представитель дубликата выбирается ДО классификации: подписки
+	// Happ/Remnawave отдают один и тот же сервер дважды — в сводном профиле
+	// («Авто», имя выдумано как «Авто #N») и отдельной записью с человеческим
+	// именем. Побеждает первый встреченный, поэтому у него переписывается имя,
+	// если своего он не имел. Берём ТОЛЬКО имя: тело аутбаунда остаётся от
+	// победителя, иначе дубликат молча подменил бы конфиг выхода полями,
+	// которых нет в ключе (flow, alpn, utls, multiplex).
+	winner := make(map[string]vlink.ParsedOutbound, len(parsed))
+	order := make([]string, 0, len(parsed))
 	for i, p := range parsed {
 		t := tags[i]
-		if parsedSet[t] {
-			out.SkippedDuplicate++
+		prev, dup := winner[t]
+		if !dup {
+			winner[t] = p
+			order = append(order, t)
 			continue
 		}
+		out.SkippedDuplicate++
+		if betterLabel(p.LabelRank, prev.LabelRank) {
+			prev.Label, prev.LabelRank = p.Label, p.LabelRank
+			winner[t] = prev
+		}
+	}
+	parsedSet := make(map[string]bool, len(order))
+	for _, t := range order {
 		parsedSet[t] = true
-		tagged := TaggedOutbound{Tag: t, Out: p}
+		tagged := TaggedOutbound{Tag: t, Out: winner[t]}
 		if currSet[t] {
 			out.Existing = append(out.Existing, tagged)
 		} else {
