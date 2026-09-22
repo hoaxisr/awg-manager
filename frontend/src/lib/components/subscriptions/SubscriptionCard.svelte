@@ -146,7 +146,9 @@
 		!subscription.enabled ? 'Выключена' : subscription.lastError ? 'Ошибка' : 'OK',
 	);
 	const modeLabel = $derived(subscription.mode === 'urltest' ? 'URLTest' : 'Selector');
-	const isInlineGroup = $derived(subscription.isInline || !subscription.url?.trim());
+	const isInlineGroup = $derived(
+		subscription.isInline || (!subscription.isFile && !subscription.url?.trim()),
+	);
 	const sourceKindLabel = $derived(isInlineGroup ? 'группа' : 'подписка');
 	const lastFetchedHuman = $derived(
 		subscription.lastFetched ? formatRelative(subscription.lastFetched) : '—',
