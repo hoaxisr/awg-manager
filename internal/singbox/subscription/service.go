@@ -854,8 +854,19 @@ func (s *Service) applyDiff(ctx context.Context, sub *Subscription, diff DiffRes
 
 	// Selector / urltest — remove old (idempotent) then add fresh.
 	// BuildGroupOutbound dispatches by sub.Mode.
+	// default = сохранённый активный член (remapStaleTags выше уже перенёс его
+	// на текущую схему тегов): иначе selector стартовал бы с memberTags[0],
+	// то есть с нового сервера, и refresh молча переключал бы пользователя
+	// на другой выход (F424). Выпавший из состава актив → "" (первый член).
+	defaultTag := ""
+	for _, t := range memberTags {
+		if t == sub.ActiveMember {
+			defaultTag = t
+			break
+		}
+	}
 	s.mutator.RemoveOutbound(sub.SelectorTag)
-	if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, memberTags, "")); err != nil {
+	if err := s.mutator.AddOutbound(sub.SelectorTag, BuildGroupOutbound(*sub, memberTags, defaultTag)); err != nil {
 		return err
 	}
 
@@ -1243,10 +1254,11 @@ func (s *Service) SetActiveMember(ctx context.Context, id, memberTag string) err
 	}
 
 	// Persist the choice in the store — the source of truth for the active
-	// member. The config slot is deliberately NOT rewritten: selector.default
-	// is rebuilt as first-member on every refresh, so persisting it here buys
-	// nothing, and a slot write without Reload would only leave an uncommitted
-	// batch open in the adapter.
+	// member. The config slot is deliberately NOT rewritten: refresh rebuilds
+	// selector.default from the stored active member (F424), and a slot write
+	// without Reload would only leave an uncommitted batch open in the
+	// adapter. Trade-off: until the next refresh/rebuild the slot still holds
+	// the previous default, so a sing-box restart starts from it.
 	if err := s.store.SetActiveMember(id, memberTag); err != nil {
 		return err
 	}
