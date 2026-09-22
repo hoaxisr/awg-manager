@@ -335,10 +335,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, er
 	}
 	switch sources {
 	case 0:
-		return nil, errors.New("subscription: URL, inline content or file path is required")
+		return nil, fmt.Errorf("%w: URL, inline content or file path is required", ErrInvalidInput)
 	case 1:
 	default:
-		return nil, errors.New("subscription: URL, inline content and file path are mutually exclusive")
+		return nil, fmt.Errorf("%w: URL, inline content and file path are mutually exclusive", ErrInvalidInput)
 	}
 	// Путь проверяется ДО createMu и store: отказ по корням не должен
 	// доходить до аллокации listen_port / ProxyN.
@@ -1031,14 +1031,22 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 	if patch.URL != nil {
 		newURL := *patch.URL
 		if current.IsFile() {
-			return nil, errors.New("subscription: cannot add URL to a file subscription")
+			return nil, fmt.Errorf("%w: cannot add URL to a file subscription", ErrInvalidInput)
 		}
 		if current.IsInline() {
-			return nil, errors.New("subscription: cannot add URL to an inline subscription")
+			return nil, fmt.Errorf("%w: cannot add URL to an inline subscription", ErrInvalidInput)
 		}
 		if newURL == "" {
-			return nil, errors.New("subscription: cannot clear URL after creation")
+			return nil, fmt.Errorf("%w: cannot clear URL after creation", ErrInvalidInput)
 		}
+	}
+	// Тот же дефолт, что в Create: файловая подписка без label рисует пустой
+	// заголовок карточки (везде label || url, а url у неё пуст), а инпут
+	// настроек стирание не запрещает. Для URL/inline пустой label допустим —
+	// там фолбэк на url работает.
+	if patch.Label != nil && strings.TrimSpace(*patch.Label) == "" && current.IsFile() {
+		base := filepath.Base(current.Path)
+		patch.Label = &base
 	}
 	// Валидация regex-фильтров ДО записи в store: битый шаблон не должен
 	// сохраниться (refresh падал бы на каждом цикле). Компилируем итоговую
@@ -1226,9 +1234,9 @@ func (s *Service) stageGroupRebuild(sub *Subscription) error {
 var ErrActiveMemberOnURLTest = errors.New("subscription: SetActiveMember not supported in urltest mode")
 
 // SetActiveMember updates the selector's "default" pointer to memberTag.
-// It updates the config slot for restart persistence and persists the active
-// member in the store, then hits the Clash API for an instant runtime switch
-// — no SIGHUP, no connection drop.
+// It persists the active member in the store, then hits the Clash API for an
+// instant runtime switch — no SIGHUP, no connection drop. The config slot is
+// deliberately left alone (see the comment at the store write below).
 func (s *Service) SetActiveMember(ctx context.Context, id, memberTag string) error {
 	s.logInfo("subscription-active-member", id, "set requested: "+memberTag)
 	mu := s.lockSub(id)
@@ -1298,6 +1306,12 @@ var ErrAllMembersExcluded = errors.New("subscription: cannot exclude all members
 // (батч остаётся чистым); HTTP-обработчики маппят через errors.Is на 409
 // ALL_MEMBERS_FILTERED — зеркально ErrAllMembersExcluded.
 var ErrAllMembersFiltered = errors.New("subscription: фильтр и исключения скрывают все серверы подписки; ослабьте фильтр в настройках")
+
+// ErrInvalidInput wraps refusals caused by the caller's payload: a create
+// without a source or with two of them, a patch that would add a URL to a
+// non-URL subscription or clear the URL of a URL-backed one. HTTP handlers
+// map it via errors.Is to 400 INVALID_INPUT instead of 500 (F425).
+var ErrInvalidInput = errors.New("subscription: invalid input")
 
 // ErrValidation wraps subscription-save failures produced by the Pass-2
 // `sing-box check` gate when the merged config is rejected. Callers can

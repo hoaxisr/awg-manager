@@ -2390,6 +2390,82 @@ func TestService_Update_RejectsURLOnFileSub(t *testing.T) {
 	}
 }
 
+// TestService_SourceErrors_WrapErrInvalidInput: отказы по источнику —
+// ошибки ввода пользователя, а не внутренний сбой. API маппит их на 400
+// по sentinel'у (F425), поэтому каждая обязана оборачиваться через %w:
+// потеря обёртки у одной строки возвращает её в 500 INTERNAL_ERROR.
+func TestService_SourceErrors_WrapErrInvalidInput(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	svc := NewService(store, &fakeMutator{})
+	withLegacySetupNoop(svc)
+	// Строки в store заводятся напрямую: все проверяемые отказы Update
+	// срабатывают до материализации, сервис до неё не доходит.
+	fileSub, _ := store.Create(CreateInput{Label: "f", Path: "/opt/etc/sub.txt", Enabled: true})
+	inlineSub, _ := store.Create(CreateInput{Label: "i", Inline: twoLinks, Enabled: true})
+	urlSub, _ := store.Create(CreateInput{Label: "u", URL: "http://x", Enabled: true})
+	newURL, empty := "https://x", ""
+
+	cases := []struct {
+		name string
+		call func() error
+	}{
+		{"create without source", func() error {
+			_, err := svc.Create(context.Background(), CreateInput{Label: "n"})
+			return err
+		}},
+		{"create with two sources", func() error {
+			_, err := svc.Create(context.Background(), CreateInput{Label: "n", URL: newURL, Inline: twoLinks})
+			return err
+		}},
+		{"url on file sub", func() error {
+			_, err := svc.Update(fileSub.ID, UpdatePatch{URL: &newURL})
+			return err
+		}},
+		{"url on inline sub", func() error {
+			_, err := svc.Update(inlineSub.ID, UpdatePatch{URL: &newURL})
+			return err
+		}},
+		{"clear url", func() error {
+			_, err := svc.Update(urlSub.ID, UpdatePatch{URL: &empty})
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("err=%v, want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
+// Стирание label у файловой подписки повторяет дефолт Create: карточки
+// рисуют label || url, а url у файлового источника пуст — иначе после
+// сохранения с пустым полем заголовок снова пропадает.
+func TestService_Update_FromFile_EmptyLabelDefaultsToBasename(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	svc := NewService(store, &fakeMutator{})
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "мой список", Path: p, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	blank := "  "
+	if _, err := svc.Update(sub.ID, UpdatePatch{Label: &blank}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	got, err := store.Get(sub.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if want := filepath.Base(p); got.Label != want {
+		t.Fatalf("Label=%q, want %q", got.Label, want)
+	}
+}
+
 // TestService_Refresh_FileChanged_PicksUpNewMembers: файловый источник —
 // не inline. Файл на роутере живёт своей жизнью, поэтому refresh обязан
 // перечитывать его каждый раз, а не коротить по уже заполненным

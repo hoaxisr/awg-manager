@@ -84,6 +84,7 @@ func (h *SubscriptionHandler) respondServiceError(w http.ResponseWriter, action 
 	// внутренних сбоев (default → 500).
 	var filterErr *subscription.FilterError
 	isInternal := !errors.As(err, &filterErr) &&
+		!errors.Is(err, subscription.ErrInvalidInput) &&
 		!errors.Is(err, subscription.ErrValidation) &&
 		!errors.Is(err, subscription.ErrExcludeOnInline) &&
 		!errors.Is(err, subscription.ErrAllMembersExcluded) &&
@@ -98,6 +99,8 @@ func (h *SubscriptionHandler) respondServiceError(w http.ResponseWriter, action 
 	switch {
 	case errors.As(err, &filterErr):
 		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_FILTER")
+	case errors.Is(err, subscription.ErrInvalidInput):
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_INPUT")
 	case errors.Is(err, subscription.ErrValidation):
 		response.ErrorWithStatus(w, http.StatusUnprocessableEntity, err.Error(), "VALIDATION_FAILED")
 	case errors.Is(err, subscription.ErrExcludeOnInline):
