@@ -7,17 +7,19 @@
 	import { singboxStatus, singboxTunnels } from '$lib/stores/singbox';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
+	import { usageLevel } from '$lib/stores/settings';
 	import {
 		DEFAULT_SUBSCRIPTION_URLTEST,
 		type SubscriptionMode,
 		type SubscriptionPreviewMember,
 	} from '$lib/types';
-	import { Check, LayoutGrid, Link, Globe, Waypoints } from 'lucide-svelte';
+	import { Check, LayoutGrid, Link, Globe, Waypoints, FileText } from 'lucide-svelte';
 	import HeadersTextarea from './HeadersTextarea.svelte';
 	import HappKeysModal from './HappKeysModal.svelte';
 	import ShareLinksTextarea from './ShareLinksTextarea.svelte';
 	import SubscriptionImportPreview from './SubscriptionImportPreview.svelte';
 	import RoutingImportDropZone from '$lib/components/routing/RoutingImportDropZone.svelte';
+	import { FilePickerModal } from '$lib/components/system/files';
 	import {
 		DEFAULT_PRESET,
 		parseHeadersText,
@@ -28,7 +30,7 @@
 		normalizeSpaceSeparatedShareLinks,
 	} from '$lib/utils/shareLinkListInput';
 
-	type WizardKind = 'single' | 'inline' | 'url';
+	type WizardKind = 'single' | 'inline' | 'url' | 'file';
 
 	interface Props {
 		open: boolean;
@@ -56,6 +58,8 @@
 	// "Группа серверов" / "Подписка" — shared subscription create state.
 	let label = $state('');
 	let url = $state('');
+	let filePath = $state('');
+	let showFilePicker = $state(false);
 	let inlineText = $state('');
 	let headersText = $state(DEFAULT_PRESET);
 	let refreshHoursStr = $state('24');
@@ -87,6 +91,8 @@
 	];
 
 	const singboxInstalled = $derived($singboxStatus.data?.installed ?? false);
+	// URL- и файловая подписки делят двухшаговый поток «форма → выбор серверов».
+	const hasPreviewStep = $derived(kind === 'url' || kind === 'file');
 	// Compare every form field against its reset() default. The previous
 	// `kind !== 'choose'` heuristic mis-fired the moment the user picked
 	// a step (or arrived with a preselect), claiming dirty without any
@@ -94,10 +100,11 @@
 	const isDirty = $derived.by(() => {
 		if (kind === 'choose') return false;
 		if (kind === 'single') return singleLinks.trim() !== '';
-		// 'inline' and 'url' share the subscription form below.
+		// 'inline', 'url' and 'file' share the subscription form below.
 		return (
 			label.trim() !== '' ||
 			url.trim() !== '' ||
+			filePath.trim() !== '' ||
 			inlineText.trim() !== '' ||
 			headersText !== DEFAULT_PRESET ||
 			refreshHoursStr !== '24' ||
@@ -198,6 +205,7 @@
 		singleResult = null;
 		label = '';
 		url = '';
+		filePath = '';
 		inlineText = '';
 		headersText = DEFAULT_PRESET;
 		refreshHoursStr = '24';
@@ -302,6 +310,7 @@
 		single: 'Один сервер',
 		inline: 'Группа серверов',
 		url: 'Подписка по URL',
+		file: 'Подписка из файла',
 	};
 
 	async function submitSingle(): Promise<void> {
@@ -338,17 +347,21 @@
 	}
 
 	async function fetchPreview(): Promise<void> {
-		if (previewing || !url.trim()) {
-			error = 'Укажите URL подписки';
+		const isFile = kind === 'file';
+		if (previewing || (isFile ? !filePath.trim() : !url.trim())) {
+			error = isFile ? 'Укажите путь к файлу' : 'Укажите URL подписки';
 			return;
 		}
 		previewing = true;
 		error = '';
 		try {
-			const members = await api.previewSubscription({
-				url,
-				headers: parseHeadersText(headersText),
-			});
+			// Превью файла читает тот же путь, что уйдёт в создание, — потому
+			// и здесь trim(), иначе превью и submit разошлись бы по строке.
+			const members = await api.previewSubscription(
+				isFile
+					? { path: filePath.trim(), headers: [] }
+					: { url, headers: parseHeadersText(headersText) },
+			);
 			// Дедуп по key обязателен: список рендерится keyed each'ем по
 			// member.key, и дубликат ключа роняет рендер (each_key_duplicate) —
 			// модалка замирает на «Загрузка...» (issue #428). Бэкенд уже
@@ -386,6 +399,7 @@
 	async function submitSubscription(): Promise<void> {
 		if (submitting) return;
 		const isInline = kind === 'inline';
+		const isFile = kind === 'file';
 		if (isInline) {
 			inlineText = normalizeSpaceSeparatedShareLinks(inlineText);
 		}
@@ -393,7 +407,11 @@
 			error = 'Вставьте хотя бы одну ссылку';
 			return;
 		}
-		if (!isInline && !url.trim()) {
+		if (isFile && !filePath.trim()) {
+			error = 'Укажите путь к файлу';
+			return;
+		}
+		if (!isInline && !isFile && !url.trim()) {
 			error = 'Укажите URL подписки';
 			return;
 		}
@@ -402,10 +420,11 @@
 		try {
 			const sub = await api.createSubscription({
 				label,
-				url: isInline ? undefined : url,
+				url: kind === 'url' ? url : undefined,
+				path: isFile ? filePath.trim() : undefined,
 				inline: isInline ? inlineText : undefined,
-				headers: isInline ? [] : parseHeadersText(headersText),
-				refreshHours: isInline ? 0 : refreshHours,
+				headers: kind === 'url' ? parseHeadersText(headersText) : [],
+				refreshHours: kind === 'url' ? refreshHours : 0,
 				enabled,
 				mode,
 				urlTest:
@@ -466,6 +485,14 @@
 					автоматически по расписанию.
 				</div>
 			</button>
+			<button type="button" class="kind-card" onclick={() => (kind = 'file')}>
+				<FileText size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
+				<div class="kind-title">Подписка из файла</div>
+				<div class="kind-desc">
+					Файл со ссылками или конфигом на роутере
+					(USB, /opt). Обновляется только вручную.
+				</div>
+			</button>
 			{#if onAwg3}
 				<button type="button" class="kind-card" onclick={pickAwg3}>
 					<Waypoints size={28} strokeWidth={1.6} style="color: var(--color-primary, #3b82f6)" aria-hidden="true" />
@@ -524,9 +551,9 @@
 				</div>
 			{/if}
 		</form>
-	{:else if kind === 'url' && urlStep === 'preview'}
+	{:else if hasPreviewStep && urlStep === 'preview'}
 		<div class="steps" aria-hidden="true">
-			<span class="step done">URL и заголовки</span>
+			<span class="step done">{kind === 'file' ? 'Файл' : 'URL и заголовки'}</span>
 			<span class="step-sep">›</span>
 			<span class="step current">Выбор серверов</span>
 			<span class="step-sep">›</span>
@@ -545,13 +572,13 @@
 			class="form"
 			onsubmit={(e) => {
 				e.preventDefault();
-				if (kind === 'url') void fetchPreview();
+				if (hasPreviewStep) void fetchPreview();
 				else void submitSubscription();
 			}}
 		>
-			{#if kind === 'url'}
+			{#if hasPreviewStep}
 				<div class="steps" aria-hidden="true">
-					<span class="step current">URL и заголовки</span>
+					<span class="step current">{kind === 'file' ? 'Файл' : 'URL и заголовки'}</span>
 					<span class="step-sep">›</span>
 					<span class="step">Выбор серверов</span>
 					<span class="step-sep">›</span>
@@ -613,6 +640,27 @@
 						fullWidth
 					/>
 				</div>
+			{:else if kind === 'file'}
+				<label class="row">
+					<span class="lbl">Путь к файлу на роутере</span>
+					<input
+						class="inp mono"
+						type="text"
+						bind:value={filePath}
+						placeholder="/opt/etc/awg-manager/sub.txt"
+						autocomplete="off"
+						spellcheck="false"
+					/>
+					<span class="hint">
+						Абсолютный путь внутри /opt или /tmp. Обновление — кнопкой
+						«Обновить» во вкладке «Серверы».
+					</span>
+				</label>
+				{#if $usageLevel === 'expert'}
+					<Button variant="secondary" size="sm" onclick={() => (showFilePicker = true)}>
+						Выбрать…
+					</Button>
+				{/if}
 			{:else}
 				<label class="row">
 					<span class="lbl">Ссылки на серверы (по одной на строку)</span>
@@ -713,7 +761,7 @@
 	{/if}
 
 	{#snippet actions()}
-		{#if kind === 'url' && urlStep === 'preview'}
+		{#if hasPreviewStep && urlStep === 'preview'}
 			<Button variant="ghost" onclick={() => (urlStep = 'form')} disabled={submitting}>← Назад</Button>
 		{:else if kind !== 'choose'}
 			<Button variant="ghost" onclick={backToChoose} disabled={submitting}>← Назад</Button>
@@ -728,16 +776,16 @@
 			>
 				{submitting ? 'Импорт...' : 'Импортировать'}
 			</Button>
-		{:else if kind === 'url' && urlStep === 'form'}
+		{:else if hasPreviewStep && urlStep === 'form'}
 			<Button
 				variant="primary"
 				onclick={fetchPreview}
-				disabled={previewing || !url.trim()}
+				disabled={previewing || (kind === 'file' ? !filePath.trim() : !url.trim())}
 				loading={previewing}
 			>
 				{previewing ? 'Загрузка...' : 'Далее'}
 			</Button>
-		{:else if kind === 'url' && urlStep === 'preview'}
+		{:else if hasPreviewStep && urlStep === 'preview'}
 			<Button
 				variant="primary"
 				onclick={submitSubscription}
@@ -767,6 +815,15 @@
 	onsaved={() => {
 		showHappKeysModal = false;
 		if (url) triggerDetectHeaders(url, true);
+	}}
+/>
+
+<FilePickerModal
+	open={showFilePicker}
+	onclose={() => (showFilePicker = false)}
+	onpick={(p) => {
+		filePath = p;
+		showFilePicker = false;
 	}}
 />
 
@@ -847,6 +904,7 @@
 		border-radius: 4px;
 		color: var(--color-text-primary);
 	}
+	.inp.mono { font-family: var(--font-mono, ui-monospace, monospace); }
 	.hint {
 		font-size: 0.74rem;
 		color: var(--color-text-muted);
