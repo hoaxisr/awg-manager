@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
+	sysfiles "github.com/hoaxisr/awg-manager/internal/sys/files"
 )
 
 func withLegacySetupNoop(svc *Service) {
@@ -768,7 +769,7 @@ func TestService_Create_RejectsNoSource(t *testing.T) {
 	svc := NewService(store, &fakeMutator{})
 	withLegacySetupNoop(svc)
 	_, err := svc.Create(context.Background(), CreateInput{Label: "empty", Enabled: true})
-	if err == nil || !strings.Contains(err.Error(), "either URL or inline") {
+	if err == nil || !strings.Contains(err.Error(), "URL, inline content or file path is required") {
 		t.Errorf("expected source-required error, got %v", err)
 	}
 }
@@ -2227,5 +2228,142 @@ func TestService_Update_BindAndMode_SingleReload(t *testing.T) {
 	}
 	if got := mut.reloads - before; got != 1 {
 		t.Fatalf("reloads=%d, want exactly 1 (bind and mode must share one transaction)", got)
+	}
+}
+
+// fileSandbox ограничивает файловый источник сервиса свежим TempDir и
+// возвращает этот каталог. Всё, что снаружи, отбивается ErrPathDenied.
+func fileSandbox(t *testing.T, svc *Service) string {
+	t.Helper()
+	dir := t.TempDir()
+	svc.SetFileSandbox(sysfiles.NewSandbox([]sysfiles.Root{{Path: dir, Label: "t"}}))
+	return dir
+}
+
+const twoLinks = "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?security=tls&sni=h\n" +
+	"trojan://p@example.com:444?security=tls&sni=h\n"
+
+func writeFileSource(t *testing.T, dir, name string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte(twoLinks), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	return p
+}
+
+func TestService_Create_FromFile_Materializes(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "f", Path: p, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !sub.IsFile() || len(sub.MemberTags) != 2 {
+		t.Fatalf("IsFile=%v members=%d", sub.IsFile(), len(sub.MemberTags))
+	}
+}
+
+func TestService_Create_FileOutsideSandbox_NoSideEffects(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+	withLegacySetupNoop(svc)
+	fileSandbox(t, svc)
+	outside := writeFileSource(t, t.TempDir(), "x.txt")
+
+	_, err := svc.Create(context.Background(), CreateInput{Label: "f", Path: outside, Enabled: true})
+	if !errors.Is(err, sysfiles.ErrPathDenied) {
+		t.Fatalf("want ErrPathDenied, got %v", err)
+	}
+	if n := len(store.List()); n != 0 {
+		t.Fatalf("store row leaked: %d", n)
+	}
+	if len(mutator.ensuredProxies) != 0 {
+		t.Fatalf("ProxyN allocated for rejected path")
+	}
+}
+
+func TestService_Refresh_FileMissing_KeepsMembers(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	mutator := &fakeMutator{}
+	svc := NewService(store, mutator)
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "f", Path: p, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, err := svc.Refresh(context.Background(), sub.ID); err == nil {
+		t.Fatal("want read error")
+	}
+	got, err := store.Get(sub.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.MemberTags) != 2 || got.LastError == "" {
+		t.Fatalf("members=%d lastError=%q", len(got.MemberTags), got.LastError)
+	}
+}
+
+func TestService_Create_RejectsTwoSources(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	svc := NewService(store, &fakeMutator{})
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	if _, err := svc.Create(context.Background(), CreateInput{Label: "f", URL: "https://x", Path: p, Enabled: true}); err == nil {
+		t.Fatal("want error for URL+Path")
+	}
+	if n := len(store.List()); n != 0 {
+		t.Fatalf("store row leaked: %d", n)
+	}
+}
+
+func TestService_Update_RejectsURLOnFileSub(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	svc := NewService(store, &fakeMutator{})
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	sub, err := svc.Create(context.Background(), CreateInput{Label: "f", Path: p, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	u := "https://x"
+	if _, err := svc.Update(sub.ID, UpdatePatch{URL: &u}); err == nil {
+		t.Fatal("want error: URL cannot be added to a file subscription")
+	}
+}
+
+func TestService_PreviewPath(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	svc := NewService(store, &fakeMutator{})
+	withLegacySetupNoop(svc)
+	dir := fileSandbox(t, svc)
+	p := writeFileSource(t, dir, "sub.txt")
+
+	members, err := svc.PreviewPath(context.Background(), p)
+	if err != nil {
+		t.Fatalf("PreviewPath: %v", err)
+	}
+	if len(members) != 2 {
+		t.Fatalf("members=%d want 2", len(members))
+	}
+	outside := writeFileSource(t, t.TempDir(), "x.txt")
+	if _, err := svc.PreviewPath(context.Background(), outside); !errors.Is(err, sysfiles.ErrPathDenied) {
+		t.Fatalf("want ErrPathDenied, got %v", err)
 	}
 }

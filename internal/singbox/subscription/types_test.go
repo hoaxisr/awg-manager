@@ -12,6 +12,7 @@ func TestSubscription_IsFile(t *testing.T) {
 		{"inline", Subscription{Inline: "vless://x"}, false, true},
 		{"file", Subscription{Path: "/opt/etc/s.txt"}, true, false},
 		{"file+url", Subscription{Path: "/opt/etc/s.txt", URL: "https://x"}, false, false},
+		{"file+inline", Subscription{Path: "/opt/etc/s.txt", Inline: "vless://x"}, false, true},
 	}
 	for _, c := range cases {
 		if got := c.s.IsFile(); got != c.file {

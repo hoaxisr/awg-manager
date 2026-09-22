@@ -143,8 +143,8 @@ type Header struct {
 	Value string `json:"value"`
 }
 
-// CreateInput is the input to Service.Create. Exactly one of URL or
-// Inline must be set; setting both or neither is rejected.
+// CreateInput is the input to Service.Create. Exactly one of URL, Inline
+// or Path must be set; setting several or none is rejected.
 type CreateInput struct {
 	Label         string
 	URL           string
