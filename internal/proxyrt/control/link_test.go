@@ -479,6 +479,11 @@ func TestLinkRetriesStateOnce(t *testing.T) {
 	if _, err := l.State(context.Background()); err == nil {
 		t.Fatal("молчащий процесс обязан давать отказ")
 	}
+	// Второй запрос ушёл на провод до возврата State, но читатель процесса
+	// мог ещё не донести его до канала: под нагрузкой горутина стоит дольше
+	// CallTimeout. Ждём прихода, а не смотрим сразу; лишних после возврата
+	// State связь не шлёт, так что ожидание не маскирует третий запрос.
+	waitUntil(t, "второй запрос state не дошёл до процесса", func() bool { return len(p.requests) >= 2 })
 	if got := len(p.requests); got != 2 {
 		t.Fatalf("запросов state %d, ожидали 2 (первый и один повторный)", got)
 	}
@@ -492,13 +497,24 @@ func TestLinkRetriesStateOnce(t *testing.T) {
 // никогда, и инстанс тихо застревает.
 func TestLinkDropsConnectionAfterDoubleTimeout(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.sock")
-	p := startMuteProcess(t, path)
+	startMuteProcess(t, path)
 	sink := &eventSink{}
 
+	// Считаются УСПЕШНЫЕ дозвоны, а не accept на стороне процесса: CallTimeout
+	// в 100 мс ограничивает и ожидание hello, и под нагрузкой дозвон может
+	// сорваться по сроку уже после accept — лишний accept краснил бы тест.
+	var dials atomic.Int32
 	l := NewLink(LinkOpts{
 		Path: path, Instance: "default",
-		Post:        sink.post,
-		Alive:       func(int, string) bool { return true },
+		Post:  sink.post,
+		Alive: func(int, string) bool { return true },
+		Dial: func(ctx context.Context, p string) (*Client, error) {
+			c, err := Dial(ctx, p)
+			if err == nil {
+				dials.Add(1)
+			}
+			return c, err
+		},
 		RetryEvery:  10 * time.Millisecond,
 		CallTimeout: 100 * time.Millisecond,
 	})
@@ -511,7 +527,7 @@ func TestLinkDropsConnectionAfterDoubleTimeout(t *testing.T) {
 	sink.waitFor(t, proxyrt.EventProcessState)
 	// …и следующее наблюдение подключается заново, а не сидит на трупе.
 	_, _ = l.State(context.Background())
-	if got := len(p.accepts); got != 2 {
+	if got := dials.Load(); got != 2 {
 		t.Fatalf("подключений %d, ожидали 2: мёртвое соединение не сброшено", got)
 	}
 }
@@ -688,8 +704,11 @@ func TestLinkRejectsProtocolVersionWithoutRetries(t *testing.T) {
 	serveRaw(t, path, []byte(
 		`{"v":2,"event":"hello","impl":"wt-client","role":"client","instance":"default"}`+"\n"))
 
-	l := newLink(t, path, &eventSink{}, func(int, string) bool { return true })
-	start := time.Now()
+	var dials atomic.Int32
+	l := newDialCountingLink(t, path, &eventSink{}, func(ctx context.Context, p string) (*Client, error) {
+		dials.Add(1)
+		return Dial(ctx, p)
+	})
 	_, err := l.State(context.Background())
 	if !errors.Is(err, ErrProtocolVersion) {
 		t.Fatalf("ожидали отказ по версии протокола, получили %v", err)
@@ -697,10 +716,10 @@ func TestLinkRejectsProtocolVersionWithoutRetries(t *testing.T) {
 	if errors.Is(err, ErrNoSocket) {
 		t.Fatal("несовпадение мажора уехало как временная неготовность связи")
 	}
-	// Окно ретраев у теста 300 мс: без терминальной ветки отказ пришёл бы
-	// позже него, а не сразу.
-	if el := time.Since(start); el > 100*time.Millisecond {
-		t.Fatalf("отказ занял %v: несовпадение мажора ретраилось", el)
+	// «Без ретраев» — число дозвонов, а не прошедшее время: порог в
+	// миллисекундах краснел бы на медленном раннере и без ретрая.
+	if n := dials.Load(); n != 1 {
+		t.Fatalf("дозвонов %d: несовпадение мажора ретраилось", n)
 	}
 }
 
@@ -955,15 +974,11 @@ func TestDialRejectsOverlongFrame(t *testing.T) {
 // muteProcess — процесс, который здоровается и молчит в ответ на команды.
 type muteProcess struct {
 	requests chan awgmproto.Request
-	accepts  chan struct{}
 }
 
 func startMuteProcess(t *testing.T, path string) *muteProcess {
 	t.Helper()
-	p := &muteProcess{
-		requests: make(chan awgmproto.Request, 8),
-		accepts:  make(chan struct{}, 8),
-	}
+	p := &muteProcess{requests: make(chan awgmproto.Request, 8)}
 	requests := p.requests
 	ln, err := net.Listen("unix", path)
 	if err != nil {
@@ -975,10 +990,6 @@ func startMuteProcess(t *testing.T, path string) *muteProcess {
 			conn, err := ln.Accept()
 			if err != nil {
 				return
-			}
-			select {
-			case p.accepts <- struct{}{}:
-			default:
 			}
 			go func() {
 				defer conn.Close()
@@ -1184,12 +1195,17 @@ func TestLinkKeepsPIDOfLivingIncarnation(t *testing.T) {
 	sink := &eventSink{}
 	var alive atomic.Bool
 	alive.Store(true)
+	var dials atomic.Int32
 	l := NewLink(LinkOpts{
 		Path: path, Impl: "wt-client", Role: "client", Instance: "default",
-		Binary:          "/opt/bin/wt-client",
-		Post:            sink.post,
-		Log:             sink.log,
-		Alive:           func(int, string) bool { return alive.Load() },
+		Binary: "/opt/bin/wt-client",
+		Post:   sink.post,
+		Log:    sink.log,
+		Alive:  func(int, string) bool { return alive.Load() },
+		Dial: func(ctx context.Context, p string) (*Client, error) {
+			dials.Add(1)
+			return Dial(ctx, p)
+		},
 		RetryEvery:      10 * time.Millisecond,
 		ConnectDeadline: 3 * time.Second,
 		CallTimeout:     time.Second,
@@ -1211,12 +1227,13 @@ func TestLinkKeepsPIDOfLivingIncarnation(t *testing.T) {
 	alive.Store(false)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	start := time.Now()
+	dials.Store(0)
 	_, err := l.State(ctx)
 	if !errors.Is(err, ErrNoSocket) || !strings.Contains(err.Error(), "мёртв") {
 		t.Fatalf("ожидали приговор по мёртвому pid, получили %v", err)
 	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("вердикт занял %v: pid забыт, приговор ждал окна ретраев", elapsed)
+	// «Сразу» — первым же неудачным дозвоном, а не порогом по часам.
+	if n := dials.Load(); n != 1 {
+		t.Fatalf("дозвонов %d: pid забыт, приговор ждал окна ретраев", n)
 	}
 }
