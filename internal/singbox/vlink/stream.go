@@ -41,6 +41,9 @@ type outboundTLS struct {
 type outboundRTLS struct {
 	PublicKey string
 	ShortID   string
+	// SupportMLKEM — support-x25519mlkem768 из ссылки (ключ mihomo): без него
+	// форк вырезает X25519MLKEM768, а Xray v26.9.8+ без этой шары не пускает.
+	SupportMLKEM bool
 }
 
 // BuildStreamFromQuery parses transport+security parameters from a URL
@@ -212,8 +215,9 @@ func BuildStreamFromQuery(q url.Values, defaultHost string) (*StreamBuilder, err
 			ServerName:      q.Get("sni"),
 			UTLSFingerprint: firstNonEmpty(q.Get("fp"), q.Get("fingerprint"), "chrome"),
 			Reality: &outboundRTLS{
-				PublicKey: q.Get("pbk"),
-				ShortID:   sid,
+				PublicKey:    q.Get("pbk"),
+				ShortID:      sid,
+				SupportMLKEM: boolish(q.Get("support-x25519mlkem768")),
 			},
 		}
 		if s.TLS.ServerName == "" {
@@ -376,11 +380,15 @@ func (s *StreamBuilder) MergeIntoOutbound(out map[string]any) {
 			}
 		}
 		if s.TLS.Reality != nil {
-			tls["reality"] = map[string]any{
+			reality := map[string]any{
 				"enabled":    true,
 				"public_key": s.TLS.Reality.PublicKey,
 				"short_id":   s.TLS.Reality.ShortID,
 			}
+			if s.TLS.Reality.SupportMLKEM {
+				reality["support_x25519mlkem768"] = true
+			}
+			tls["reality"] = reality
 		}
 		out["tls"] = tls
 	}

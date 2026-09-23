@@ -156,6 +156,9 @@ func clashFieldsToValues(p map[string]any) url.Values {
 		if sid := asString(reality["short-id"]); sid != "" {
 			v.Set("sid", sid)
 		}
+		if asBool(reality["support-x25519mlkem768"]) {
+			v.Set("support-x25519mlkem768", "true")
+		}
 	case asBool(p["tls"]):
 		v.Set("security", "tls")
 	}

@@ -463,6 +463,9 @@ func streamQueryFromOutbound(ob map[string]any) (url.Values, error) {
 				if sid, _ := reality["short_id"].(string); sid != "" {
 					q.Set("sid", sid)
 				}
+				if reality["support_x25519mlkem768"] == true {
+					q.Set("support-x25519mlkem768", "true")
+				}
 			} else {
 				q.Set("security", "tls")
 			}

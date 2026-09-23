@@ -259,3 +259,32 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// Флаг переживает экспорт в ссылку и обратный импорт; без флага ключа в
+// ссылке нет.
+func TestEncodeOutbound_RealitySupportMLKEM_RoundTrip(t *testing.T) {
+	const on = `{"type":"vless","server":"h.com","server_port":443,"uuid":"3a3b1c2e-9999-4321-aaaa-1234567890ab","tls":{"enabled":true,"reality":{"enabled":true,"public_key":"PK","short_id":"ab12","support_x25519mlkem768":true},"server_name":"h.com","utls":{"enabled":true,"fingerprint":"chrome"}}}`
+	link, err := EncodeOutbound([]byte(on), "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(link, "support-x25519mlkem768=true") {
+		t.Fatalf("flag lost on export: %q", link)
+	}
+	back, err := ParseLink(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := realityMLKEM(t, back.Outbound); v != true {
+		t.Fatalf("flag lost on re-import: %v", v)
+	}
+
+	off := strings.Replace(on, `,"support_x25519mlkem768":true`, "", 1)
+	link, err = EncodeOutbound([]byte(off), "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(link, "support-x25519mlkem768") {
+		t.Fatalf("flag appeared without request: %q", link)
+	}
+}

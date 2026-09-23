@@ -280,3 +280,62 @@ func TestParseVless_FlowCombinations(t *testing.T) {
 		t.Errorf("flow=%v", ob["flow"])
 	}
 }
+
+// realityMLKEM достаёт tls.reality.support_x25519mlkem768 из outbound: nil —
+// ключа нет вовсе.
+func realityMLKEM(t *testing.T, raw json.RawMessage) any {
+	t.Helper()
+	var ob struct {
+		TLS struct {
+			Reality map[string]any `json:"reality"`
+		} `json:"tls"`
+	}
+	if err := json.Unmarshal(raw, &ob); err != nil {
+		t.Fatal(err)
+	}
+	if ob.TLS.Reality == nil {
+		t.Fatal("expected reality block")
+	}
+	return ob.TLS.Reality["support_x25519mlkem768"]
+}
+
+// Флаг mihomo support-x25519mlkem768 доходит до outbound из ссылки и из
+// Clash и не появляется, когда его не просили: без него форк вырезает
+// X25519MLKEM768 (#944), с ним — пускает Xray v26.9.8+.
+func TestReality_SupportMLKEM_LinkAndClash(t *testing.T) {
+	const base = "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@example.com:443?security=reality&type=tcp&pbk=PBK&sid=ab12&fp=chrome&sni=foo.com"
+	clash := func(flag any) map[string]any {
+		opts := map[string]any{"public-key": "PBK", "short-id": "ab12"}
+		if flag != nil {
+			opts["support-x25519mlkem768"] = flag
+		}
+		return map[string]any{
+			"name": "n", "type": "vless", "server": "example.com", "port": 443,
+			"uuid": "3a3b1c2e-9999-4321-aaaa-1234567890ab", "tls": true,
+			"servername": "foo.com", "client-fingerprint": "chrome",
+			"reality-opts": opts,
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		want any
+		run  func() (*ParsedOutbound, error)
+	}{
+		{"link on", true, func() (*ParsedOutbound, error) { return ParseLink(base + "&support-x25519mlkem768=true#n") }},
+		{"link off", nil, func() (*ParsedOutbound, error) { return ParseLink(base + "#n") }},
+		{"link false", nil, func() (*ParsedOutbound, error) { return ParseLink(base + "&support-x25519mlkem768=false#n") }},
+		{"clash on", true, func() (*ParsedOutbound, error) { return mapClashVless(clash(true)) }},
+		{"clash off", nil, func() (*ParsedOutbound, error) { return mapClashVless(clash(nil)) }},
+		{"clash false", nil, func() (*ParsedOutbound, error) { return mapClashVless(clash(false)) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.run()
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if v := realityMLKEM(t, got.Outbound); v != tc.want {
+				t.Errorf("support_x25519mlkem768=%v, want %v", v, tc.want)
+			}
+		})
+	}
+}
