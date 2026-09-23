@@ -300,7 +300,7 @@ func (a *app) setupRouter() {
 		AppLog:                 a.loggingService,
 		Settings:               a.settingsStore,
 		Singbox:                a.singboxOp,
-		Policies:               &routerAccessPolicyAdapter{svc: a.accessPolicySvc, wan: a.wanModel},
+		Policies:               &routerAccessPolicyAdapter{svc: a.accessPolicySvc},
 		Events:                 a.eventBus,
 		Bus:                    a.eventBus,
 		AWGTags:                &routerAWGTagAdapter{src: a.awgoutboundsSvc, awg3: a.awg3Svc},

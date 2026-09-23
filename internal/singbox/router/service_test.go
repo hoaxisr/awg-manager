@@ -36,6 +36,8 @@ type fakeAccessPolicyProvider struct {
 	exitsErr      error
 	permits       []string // "<политика>:<интерфейс>:<order>" в порядке вызовов
 	permitErr     error
+	denies        []string // "<политика>:<интерфейс>" в порядке вызовов
+	denyErr       error
 }
 
 func (f *fakeAccessPolicyProvider) GetPolicyMark(_ context.Context, _ string) (string, error) {
@@ -61,6 +63,10 @@ func (f *fakeAccessPolicyProvider) CreatePolicy(_ context.Context, _ string) (Po
 }
 func (f *fakeAccessPolicyProvider) ListPolicyExits(_ context.Context, _ string) ([]query.PolicyDefaultExit, error) {
 	return f.exits, f.exitsErr
+}
+func (f *fakeAccessPolicyProvider) DenyInterface(_ context.Context, name, iface string) error {
+	f.denies = append(f.denies, name+":"+iface)
+	return f.denyErr
 }
 func (f *fakeAccessPolicyProvider) PermitInterface(_ context.Context, name, iface string, order int) error {
 	f.permits = append(f.permits, fmt.Sprintf("%s:%s:%d", name, iface, order))

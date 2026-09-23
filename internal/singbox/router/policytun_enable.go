@@ -445,12 +445,13 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// Откат уже поставленный permit НЕ снимает (осознанно: DenyInterface мог бы
 	// снять разрешение, поставленное пользователем).
 	permitted := false
-	if s.deps.RunningConfig != nil {
-		if lines, e := s.deps.RunningConfig.Lines(ctx); e == nil {
-			permitted = policyTunPermitted(lines, ndmsName, sr.PolicyName)
-		}
+	lines := s.runningConfigLines(ctx, "policy-tun")
+	if lines != nil {
+		permitted = policyTunPermitted(lines, ndmsName, sr.PolicyName)
 	}
 	s.ensurePolicyTunPermit(ctx, sr, iface, ndmsName, permitted)
+	// WAN в политике — обход туннеля: снимаем (F440).
+	s.denyPolicyWAN(ctx, sr, lines)
 
 	// Ingress-заворот интерфейсов с галкой «Маршрутизация через sing-box» плюс
 	// перехват DNS у членов политики: тот же механизм, что у fakeip (issue

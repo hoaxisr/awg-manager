@@ -387,6 +387,7 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 		// каждый тик переставляла бы уже стоящие маршруты.
 		s.deps.RunningConfig.InvalidateAll()
 		if fresh, ferr := s.deps.RunningConfig.Lines(ctx); ferr == nil {
+			lines = fresh
 			v4, v6 = policyTunDefaultRoutePresent(fresh, ndmsName)
 			global = policyTunIPGlobalPresent(fresh, ndmsName)
 			permitted = policyTunPermitted(fresh, ndmsName, sr.PolicyName)
@@ -405,6 +406,9 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 	// по гарду provisioned+live, поэтому отказ RCI при включении и смена
 	// PolicyName на работающем режиме чинятся только здесь.
 	s.ensurePolicyTunPermit(ctx, sr, iface, ndmsName, permitted)
+	// WAN, разрешённый в политике мимо нас (веб-морда, прежний tproxy), снова
+	// стал бы обходом туннеля — снимаем на тике (F440).
+	s.denyPolicyWAN(ctx, sr, lines)
 	if s.deps.DefaultRoute == nil {
 		return
 	}

@@ -705,6 +705,9 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		if err != nil || mark == "" {
 			return fmt.Errorf("policy %q: %w", sr.PolicyName, ErrPolicyMissing)
 		}
+		// Трафик членов мимо sing-box маршрутизирует NDMS по таблице политики:
+		// без WAN в ней он уходит в blackhole (F440).
+		s.ensurePolicyWAN(ctx, sr, s.runningConfigLines(ctx, "tproxy"))
 	}
 
 	if err := s.prepareNetfilter(ctx); err != nil {
@@ -1902,6 +1905,7 @@ func (s *ServiceImpl) reconcileInstalled(ctx context.Context, sr storage.Singbox
 				"политика не найдена в NDMS — движок маршрутизации выключается (fail-safe)")
 			return s.Disable(ctx)
 		}
+		s.ensurePolicyWAN(ctx, sr, s.runningConfigLines(ctx, "tproxy"))
 	}
 	wanIPs, err := s.deps.WANIPCollector.Collect(ctx)
 	if err != nil {

@@ -249,6 +249,9 @@ type AccessPolicyProvider interface {
 	// дефолтным выходом политики (в непустой политике order=0 вставляет в
 	// начало и сдвигает прежние — это цель, а не побочный эффект).
 	PermitInterface(ctx context.Context, policyName, iface string, order int) error
+	// DenyInterface снимает интерфейс из выходов политики (policy-tun убирает
+	// WAN — обход туннеля, F440).
+	DenyInterface(ctx context.Context, policyName, iface string) error
 }
 
 // AWGTagCatalog returns the canonical AWG-direct outbound tags owned

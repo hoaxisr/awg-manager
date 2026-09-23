@@ -15,7 +15,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/dnsrewrite"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
 
 // Compile-time guarantees that the adapters satisfy their router-side
@@ -31,7 +30,6 @@ var (
 // router doesn't import accesspolicy types directly.
 type routerAccessPolicyAdapter struct {
 	svc accesspolicy.Service
-	wan *wan.Model
 }
 
 func (a *routerAccessPolicyAdapter) GetPolicyMark(ctx context.Context, name string) (string, error) {
@@ -44,6 +42,10 @@ func (a *routerAccessPolicyAdapter) ListPolicyExits(ctx context.Context, iface s
 
 func (a *routerAccessPolicyAdapter) PermitInterface(ctx context.Context, name, iface string, order int) error {
 	return a.svc.PermitInterface(ctx, name, iface, order)
+}
+
+func (a *routerAccessPolicyAdapter) DenyInterface(ctx context.Context, name, iface string) error {
+	return a.svc.DenyInterface(ctx, name, iface)
 }
 
 func (a *routerAccessPolicyAdapter) AssignDevice(ctx context.Context, mac, name string) error {
@@ -98,33 +100,14 @@ func (a *routerAccessPolicyAdapter) ListPolicies(ctx context.Context) ([]router.
 }
 
 func (a *routerAccessPolicyAdapter) CreatePolicy(ctx context.Context, description string) (router.PolicyInfo, error) {
-	// NDMS won't issue a fwmark for a policy that has no permitted
-	// interface, so we MUST resolve a default WAN before creating the
-	// policy. Failing fast here yields a clean diagnostic for the user
-	// instead of a half-broken policy that later fails on Enable with
-	// the cryptic ErrPolicyMissing.
-	if a.wan == nil {
-		return router.PolicyInfo{}, fmt.Errorf("WAN model unavailable; cannot auto-permit a default WAN for new policy")
-	}
-	iface, ok := a.wan.PreferredUp()
-	if !ok {
-		return router.PolicyInfo{}, fmt.Errorf("no WAN interface is up; bring up a WAN connection before creating a router policy")
-	}
-	ndmsID := a.wan.IDFor(iface)
-	if ndmsID == "" {
-		return router.PolicyInfo{}, fmt.Errorf("WAN interface %q has no NDMS id; cannot auto-permit", iface)
-	}
-
+	// Выходы политике здесь не выдаются: они зависят от режима захвата и
+	// ставятся при его включении (router/policy_wan.go). Прежний permit WAN с
+	// order 100 на 5.01 отвергался (order — позиция в списке, на пустой
+	// политике допустим только 0) и оставлял политику-сироту, а в policy-tun
+	// WAN вторым выходом — обход туннеля (F440). Метку NDMS выдаёт и без permit.
 	p, err := a.svc.Create(ctx, description)
 	if err != nil {
 		return router.PolicyInfo{}, err
-	}
-	if err := a.svc.PermitInterface(ctx, p.Name, ndmsID, 100); err != nil {
-		// Best-effort cleanup: the policy was created but is now stuck
-		// without a permit. Surface the error so the user knows; the
-		// orphaned policy stays in NDMS for them to clean up via the
-		// Access Policies UI.
-		return router.PolicyInfo{}, fmt.Errorf("permit WAN %s on policy %s: %w", ndmsID, p.Name, err)
 	}
 	mark, _ := a.svc.GetPolicyMark(ctx, p.Name)
 	return router.PolicyInfo{
