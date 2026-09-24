@@ -43,7 +43,7 @@
 		'@Dervart', '@chrp07', '@Павел', '@ToDDiiN', '@vumaximov', '@pagik53', '@Punk', '@matweykus',
 		'@lapin18151', '@Yurrel', '@viint', '@desel7', '@John Doe', '@vk_damistic',
 		'@Sparkle AS', '@sana***********com', '@msu', '@vipcross',
-		'@shkipper_zero', '@vipcross', '@kiruha*********', '@vpach*********com',
+		'@shkipper_zero', '@vipcross', '@kiruha*********', '@vpach*********com'
 	];
 
 	let open = $state(false);
