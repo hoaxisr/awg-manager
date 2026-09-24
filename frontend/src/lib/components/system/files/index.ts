@@ -11,7 +11,6 @@ export { default as FilePropsPermissions } from './FilePropsPermissions.svelte';
 export { default as FilePropsScript } from './FilePropsScript.svelte';
 export { default as FileRowActions } from './FileRowActions.svelte';
 export { default as FileTable } from './FileTable.svelte';
-export { default as FileTerminalDrawer } from './FileTerminalDrawer.svelte';
 export { default as FileToolbar } from './FileToolbar.svelte';
 export { default as FileTree } from './FileTree.svelte';
 export { getFileTypeInfo, type FileTypeInfo } from './fileIcons';

@@ -7,7 +7,6 @@
 		FilePlus,
 		Upload,
 		Download,
-		Terminal,
 		Search,
 	} from 'lucide-svelte';
 
@@ -15,28 +14,24 @@
 		loading: boolean;
 		readOnly: boolean;
 		selected: SystemFileEntry | null;
-		showTerminal: boolean;
 		searchQuery: string;
 		onRefresh: () => void;
 		onMkdir: () => void;
 		onNewFile: () => void;
 		onUploadClick: () => void;
 		onDownload: (entry: SystemFileEntry) => void;
-		onToggleTerminal: () => void;
 	}
 
 	let {
 		loading,
 		readOnly,
 		selected,
-		showTerminal,
 		searchQuery = $bindable(''),
 		onRefresh,
 		onMkdir,
 		onNewFile,
 		onUploadClick,
 		onDownload,
-		onToggleTerminal,
 	}: Props = $props();
 </script>
 
@@ -69,11 +64,6 @@
 				Скачать
 			</Button>
 		{/if}
-
-		<Button size="sm" variant={showTerminal ? 'secondary' : 'ghost'} onclick={onToggleTerminal}>
-			{#snippet iconBefore()}<Terminal size={14} />{/snippet}
-			Терминал
-		</Button>
 	</div>
 
 	<!-- Search box -->

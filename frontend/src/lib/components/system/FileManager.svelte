@@ -12,7 +12,6 @@
 		FileTree,
 		FileTable,
 		FileContextMenu,
-		FileTerminalDrawer,
 		clampMenuPosition,
 		createScriptStatuses,
 		type TreeDir,
@@ -32,8 +31,6 @@
 	// Script statuses (path -> status) + текущее выполняемое действие
 	const scripts = createScriptStatuses();
 
-	// Terminal
-	let showTerminal = $state(false);
 	let uploadInput: HTMLInputElement | undefined = $state();
 
 	// Modals state
@@ -256,14 +253,12 @@
 			{loading}
 			{readOnly}
 			{selected}
-			{showTerminal}
 			bind:searchQuery
 			onRefresh={() => void loadDir(currentPath)}
 			onMkdir={() => (showMkdir = true)}
 			onNewFile={() => (showNewFile = true)}
 			onUploadClick={() => uploadInput?.click()}
 			onDownload={downloadEntry}
-			onToggleTerminal={() => (showTerminal = !showTerminal)}
 		/>
 
 		<!-- Breadcrumbs Navigation -->
@@ -301,11 +296,6 @@
 			/>
 		</div>
 	</Card>
-
-	<!-- Collapsible Terminal Console -->
-	{#if showTerminal}
-		<FileTerminalDrawer {currentPath} onHide={() => (showTerminal = false)} />
-	{/if}
 </div>
 
 <!-- Modal windows: properties, editor, mkdir / new file / rename / copy / move / delete -->
