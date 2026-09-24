@@ -57,23 +57,26 @@
 {/snippet}
 
 {#if isClickable}
-  <button type="button" class="chip is-clickable" {title} aria-label={title} {onclick}>
+  <button type="button" class="matcher-chip is-clickable" {title} aria-label={title} {onclick}>
     {@render chipPrefix()}
     <span class="chip-val" class:is-mono={mono}>{label}</span>
   </button>
 {:else}
-  <span class="chip">
+  <span class="matcher-chip">
     {@render chipPrefix()}
     <span class="chip-val" class:is-mono={mono}>{label}</span>
   </span>
 {/if}
 
 <style>
-  .chip {
+  /* Не .chip: имя занято утилитой Skeleton и app.css — их свойства протекали сюда. */
+  .matcher-chip {
     display: inline-flex;
     align-items: center;
     gap: 4px;
+    font-family: var(--font-mono);
     font-size: 11px;
+    font-weight: 600;
     padding: 2px 7px;
     border-radius: 4px;
     background: var(--bg-tertiary);
@@ -85,7 +88,7 @@
     min-width: 0;
     overflow: hidden;
   }
-  button.chip {
+  button.matcher-chip {
     margin: 0;
     cursor: pointer;
     transition:
@@ -93,12 +96,12 @@
       background var(--t-fast),
       color var(--t-fast);
   }
-  button.chip:hover {
+  button.matcher-chip:hover {
     border-color: var(--border-hover);
     background: color-mix(in srgb, var(--accent) 8%, var(--bg-tertiary));
     color: var(--text-primary);
   }
-  button.chip:focus-visible {
+  button.matcher-chip:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }

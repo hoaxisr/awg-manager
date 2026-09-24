@@ -46,7 +46,7 @@
 
 <div class="tunnel-tag-chips">
 	{#each tags as tag (tag)}
-		<span class="chip" class:active={tag === activeTag}>
+		<span class="tag-chip" class:active={tag === activeTag}>
 			<button
 				type="button"
 				class="chip-label"
@@ -113,17 +113,32 @@
 		min-width: 0;
 	}
 
-	.chip {
+	/* Не .chip: имя занято утилитой Skeleton и app.css — их свойства протекали сюда. */
+	.tag-chip {
 		display: inline-flex;
 		align-items: center;
+		gap: 0.5rem;
+		padding: 0.25rem 0.625rem;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		font-weight: 600;
+		line-height: calc(1 / 0.75);
+		color: var(--color-text-muted);
+		white-space: nowrap;
 		max-width: 100%;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-sm);
 		background: var(--color-bg-tertiary);
 		overflow: hidden;
+		transition: background var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
 	}
 
-	.chip.active {
+	.tag-chip:hover {
+		color: var(--color-text-primary);
+		border-color: var(--color-border-hover);
+	}
+
+	.tag-chip.active {
 		border-color: var(--color-accent);
 		background: var(--color-accent-tint);
 	}
@@ -144,7 +159,7 @@
 		cursor: pointer;
 	}
 
-	.chip.active .chip-label {
+	.tag-chip.active .chip-label {
 		color: var(--color-accent);
 	}
 

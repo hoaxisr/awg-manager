@@ -17,13 +17,14 @@
   let { label, value, active, count, onclick }: Props = $props();
 </script>
 
-<button type="button" class="chip" class:active aria-pressed={active} {onclick} data-value={value}>
+<button type="button" class="filter-chip" class:active aria-pressed={active} {onclick} data-value={value}>
   <span class="label">{label}</span>
   <span class="count">{count}</span>
 </button>
 
 <style>
-  .chip {
+  /* Не .chip: имя занято утилитой Skeleton и app.css — их свойства протекали сюда. */
+  .filter-chip {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -34,10 +35,17 @@
     color: var(--text-secondary);
     font-size: 11.5px;
     font-weight: 500;
+    line-height: calc(1 / 0.75);
+    white-space: nowrap;
     cursor: pointer;
     font-family: inherit;
+    transition: background var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
   }
-  .chip.active {
+  .filter-chip:hover {
+    color: var(--text-primary);
+    border-color: var(--border-hover);
+  }
+  .filter-chip.active {
     background: var(--accent-soft);
     border-color: var(--accent-line);
     color: var(--accent);
@@ -48,7 +56,7 @@
     font-family: var(--font-mono);
     font-size: 10px;
   }
-  .chip.active .count {
+  .filter-chip.active .count {
     color: var(--accent);
   }
 </style>

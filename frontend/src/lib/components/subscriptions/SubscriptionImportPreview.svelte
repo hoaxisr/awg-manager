@@ -68,7 +68,7 @@
 		<div class="chips" role="group" aria-label="Фильтр по протоколу">
 			<button
 				type="button"
-				class="chip"
+				class="proto-chip"
 				class:active={activeProtocol === ''}
 				onclick={() => (activeProtocol = '')}
 			>
@@ -77,7 +77,7 @@
 			{#each protocolCounts as [proto, count] (proto)}
 				<button
 					type="button"
-					class="chip"
+					class="proto-chip"
 					class:active={activeProtocol === proto}
 					onclick={() => (activeProtocol = activeProtocol === proto ? '' : proto)}
 				>
@@ -174,7 +174,11 @@
 		flex-wrap: wrap;
 		gap: 0.4rem;
 	}
-	.chip {
+	/* Не .chip: имя занято утилитой Skeleton и app.css — их свойства протекали сюда. */
+	.proto-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
 		padding: 0.2rem 0.6rem;
 		border: 1px solid var(--color-border);
 		border-radius: 999px;
@@ -183,12 +187,14 @@
 		cursor: pointer;
 		font: inherit;
 		font-size: 0.78rem;
+		white-space: nowrap;
 		transition: border-color 120ms, background 120ms, color 120ms;
 	}
-	.chip:hover {
+	.proto-chip:hover {
 		border-color: var(--color-text-muted);
+		color: var(--color-text-primary);
 	}
-	.chip.active {
+	.proto-chip.active {
 		border-color: var(--color-accent);
 		background: rgba(88, 166, 255, 0.12);
 		color: var(--color-accent);

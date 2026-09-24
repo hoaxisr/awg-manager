@@ -54,7 +54,7 @@
 {#if visible}
   <button
     type="button"
-    class="chip"
+    class="live-chip"
     class:active={isActive}
     aria-pressed={isActive}
     onclick={toggleConnections}
@@ -67,7 +67,8 @@
 {/if}
 
 <style>
-  .chip {
+  /* Не .chip: имя занято утилитой Skeleton и app.css — их свойства протекали сюда. */
+  .live-chip {
     display: inline-flex; align-items: center; gap: 6px;
     height: 32px;
     padding: 0 10px;
@@ -77,20 +78,23 @@
     border: 1px solid var(--color-border, var(--border));
     color: var(--color-text-secondary, var(--text-secondary));
     font-size: 12px;
+    font-weight: 600;
+    line-height: calc(1 / 0.75);
     font-family: inherit;
     cursor: pointer;
     white-space: nowrap;
+    transition: background var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
   }
-  .chip:hover { border-color: var(--accent); }
-  .chip.active {
+  .live-chip:hover { border-color: var(--accent); color: var(--color-text-primary); }
+  .live-chip.active {
     background: color-mix(in srgb, var(--color-success, #22c55e) 12%, var(--bg-primary));
     border-color: color-mix(in srgb, var(--color-success, #22c55e) 45%, var(--border));
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-success, #22c55e) 20%, transparent);
   }
-  .chip.active:hover {
+  .live-chip.active:hover {
     border-color: var(--color-success, #22c55e);
   }
-  .chip.active .label { color: var(--color-success, #22c55e); }
+  .live-chip.active .label { color: var(--color-success, #22c55e); }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-success, #22c55e); flex-shrink: 0; }
   .dot[data-stale='true'] { background: var(--color-warning, #dab856); }
   .label { color: var(--text-primary); font-weight: 500; }

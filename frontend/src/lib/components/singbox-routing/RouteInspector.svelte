@@ -554,7 +554,7 @@
 				{#each examples as ex (ex)}
 					<button
 						type="button"
-						class="chip"
+						class="example-chip"
 						onclick={() => quickTest(ex)}
 						disabled={testing}
 					>
@@ -908,7 +908,11 @@
 		color: var(--color-text-muted);
 	}
 
-	.chip {
+	/* Не .chip: имя занято утилитой Skeleton и app.css — их свойства протекали сюда. */
+	.example-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
 		padding: 0.25rem 0.55rem;
 		font-size: 12px;
 		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -916,15 +920,20 @@
 		color: var(--color-text-secondary);
 		border: 1px solid var(--color-border);
 		border-radius: 999px;
+		font-weight: 600;
+		line-height: calc(1 / 0.75);
+		white-space: nowrap;
 		cursor: pointer;
+		transition: background var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
 	}
 
-	.chip:hover:not(:disabled) {
+	.example-chip:hover:not(:disabled) {
 		background: var(--color-bg-hover);
 		color: var(--color-text-primary);
+		border-color: var(--color-border-hover);
 	}
 
-	.chip:disabled {
+	.example-chip:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
 	}

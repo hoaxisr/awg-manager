@@ -505,12 +505,12 @@
       <!-- Исключения: порт-пресеты + IP-пресеты (keendns) + ручные порты/подсети -->
       <section class="sec">
         <div class="sec-cap">Исключения</div>
-        <div class="chips">
+        <div class="bypass-presets">
           {#each BYPASS_PRESETS as p (p.id)}
             {@const active = (cfg.bypassPresets ?? []).includes(p.id)}
-            <button type="button" class="chip" class:active onclick={() => togglePreset(p.id)}>
-              <span class="chip-label">{p.label}</span>
-              <span class="chip-desc">{p.desc}</span>
+            <button type="button" class="bypass-preset" class:active onclick={() => togglePreset(p.id)}>
+              <span class="preset-label">{p.label}</span>
+              <span class="preset-desc">{p.desc}</span>
             </button>
           {/each}
         </div>
@@ -662,15 +662,18 @@
   .udp-timeout-row { display: flex; gap: 6px; }
   .udp-timeout-row .inp { flex: 1; }
   .hint { margin: 0; font-size: 11.5px; color: var(--text-muted); line-height: 1.4; }
-  .chips { display: flex; flex-direction: column; gap: 6px; }
-  .chip {
+  .bypass-presets { display: flex; flex-direction: column; gap: 6px; }
+  /* Не .chip: имя занято утилитой Skeleton и app.css (nowrap + центровка). */
+  .bypass-preset {
     text-align: left; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg-tertiary);
     border: 1px solid var(--border); cursor: pointer; font-family: inherit; color: inherit;
     display: flex; flex-direction: column; gap: 2px;
+    transition: background var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
   }
-  .chip.active { background: var(--accent-soft); border-color: var(--accent); }
-  .chip-label { font-size: 12.5px; font-weight: 600; }
-  .chip-desc { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+  .bypass-preset:hover { color: var(--color-text-primary); border-color: var(--color-border-hover); }
+  .bypass-preset.active { background: var(--accent-soft); border-color: var(--accent); }
+  .preset-label { font-size: 12.5px; font-weight: 600; }
+  .preset-desc { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
 
   .footer-actions { display: flex; flex-direction: column; gap: 6px; width: 100%; }
   .footer-btns {

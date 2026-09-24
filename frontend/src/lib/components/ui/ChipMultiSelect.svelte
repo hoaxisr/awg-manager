@@ -206,7 +206,7 @@
             <span class="placeholder">{placeholder}</span>
         {/if}
         {#each knownChips as opt (opt.value)}
-            <span class="chip">
+            <span class="value-chip">
                 <span class="chip-label">{opt.label ?? opt.value}</span>
                 <button
                     type="button"
@@ -218,7 +218,7 @@
             </span>
         {/each}
         {#each orphanValues as v (v)}
-            <span class="chip chip-orphan" title="Набор не найден в текущем конфиге">
+            <span class="value-chip chip-orphan" title="Набор не найден в текущем конфиге">
                 <span class="chip-label">{v}</span>
                 <span class="chip-orphan-badge">сирота / orphaned</span>
                 <button
@@ -321,7 +321,8 @@
         font-size: 0.85rem;
         padding: 0 0.25rem;
     }
-    .chip {
+    /* Не .chip: имя занято утилитой Skeleton и app.css — их свойства протекали сюда. */
+    .value-chip {
         display: inline-flex;
         align-items: center;
         gap: 0.25rem;
@@ -331,7 +332,10 @@
         border-radius: 999px;
         font-family: ui-monospace, monospace;
         font-size: 0.78rem;
+        font-weight: 600;
+        line-height: calc(1 / 0.75);
         color: var(--text);
+        white-space: nowrap;
     }
     .chip-orphan {
         border-color: var(--warning, #e0af68);

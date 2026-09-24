@@ -61,8 +61,8 @@
     <div class="chips">
       {#each items as it (it.id)}
         {#if it.kind === 'svc'}
-          <span class="chip chip-svc">
-            <span class="chip-icon">
+          <span class="tpl-chip chip-svc">
+            <span class="tpl-icon">
               <PresetIcon slug={it.iconSlug ?? it.presetId} label={it.label} size={18} />
             </span>
             <span class="chip-label">{it.label}</span>
@@ -71,7 +71,7 @@
             </button>
           </span>
         {:else}
-          <span class="chip chip-rs">
+          <span class="tpl-chip chip-rs">
             <span class="chip-tag">{it.label}</span>
             {#if it.rsType}
               <RuleSetTypeBadge type={it.rsType} size="xs" />
@@ -121,7 +121,8 @@
     flex-wrap: wrap;
     gap: 6px;
   }
-  .chip {
+  /* Не .chip: имя занято утилитой Skeleton и app.css — их свойства протекали сюда. */
+  .tpl-chip {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -129,6 +130,12 @@
     border-radius: 999px;
     background: var(--bg-primary);
     border: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: calc(1 / 0.75);
+    color: var(--color-text-muted);
+    white-space: nowrap;
   }
   .chip-rs {
     padding: 3px 6px 3px 10px;
@@ -136,7 +143,13 @@
     background: var(--accent-soft);
     border-color: var(--accent-line);
   }
-  .chip-icon {
+  .tpl-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: content-box;
+    padding: 0.375rem;
+    border-radius: 0.25rem;
     width: 18px;
     height: 18px;
     flex-shrink: 0;

@@ -255,7 +255,7 @@
                         <div class="chips">
                             <button
                                 type="button"
-                                class="chip"
+                                class="cat-chip"
                                 class:active={categoryFilter === 'all'}
                                 aria-pressed={categoryFilter === 'all'}
                                 onclick={() => (categoryFilter = 'all')}
@@ -266,7 +266,7 @@
                             {#each catalogCategories as cat (cat)}
                                 <button
                                     type="button"
-                                    class="chip"
+                                    class="cat-chip"
                                     class:active={categoryFilter === cat}
                                     aria-pressed={categoryFilter === cat}
                                     onclick={() => (categoryFilter = cat)}
@@ -498,7 +498,8 @@
         gap: 6px;
     }
 
-    .chip {
+    /* Не .chip: имя занято утилитой Skeleton и app.css — их свойства протекали сюда. */
+    .cat-chip {
         display: inline-flex;
         align-items: center;
         gap: 6px;
@@ -509,11 +510,19 @@
         color: var(--color-text-secondary);
         font-size: 11.5px;
         font-weight: 500;
+        line-height: calc(1 / 0.75);
+        white-space: nowrap;
         cursor: pointer;
         font-family: inherit;
+        transition: background var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
     }
 
-    .chip.active {
+    .cat-chip:hover {
+        color: var(--color-text-primary);
+        border-color: var(--color-border-hover);
+    }
+
+    .cat-chip.active {
         background: var(--accent-soft, rgba(59, 130, 246, 0.12));
         border-color: var(--accent-line, var(--color-accent));
         color: var(--color-accent);
@@ -526,7 +535,7 @@
         font-size: 10px;
     }
 
-    .chip.active .chip-count {
+    .cat-chip.active .chip-count {
         color: var(--color-accent);
     }
 
