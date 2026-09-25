@@ -365,6 +365,9 @@ func TestExportSkipsDeviceKey(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDir, storage.RCITokenFile), []byte("tok\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dataDir, storage.RCITokenFile+".tmp"), []byte("tok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	var buf bytes.Buffer
 	if err := Export(dataDir, "2.18.2", &buf); err != nil {
@@ -374,7 +377,7 @@ func TestExportSkipsDeviceKey(t *testing.T) {
 	names := tarNames(t, buf.Bytes())
 	settingsFound := false
 	for _, name := range names {
-		if name == storage.DeviceKeyFile || name == storage.RCITokenFile {
+		if name == storage.DeviceKeyFile || strings.HasPrefix(name, storage.RCITokenFile) {
 			t.Fatalf("секрет попал в архив: %v", names)
 		}
 		if name == "settings.json" {

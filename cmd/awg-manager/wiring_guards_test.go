@@ -84,3 +84,12 @@ func TestShutdownWiring_PassesBaseContextToOrchestrator(t *testing.T) {
 		t.Error("контекст жизни демона не передан оркестратору — отложенный бут пойдёт под дедлайном хука")
 	}
 }
+
+// Токены RCI включаются по версии прошивки: подмена гейта на заглушку молча
+// оставила бы демон без токена на 5.2 или с вызовами ndmc на 4.x/5.01.
+func TestTokenWiring_GatedBySupportsRCIToken(t *testing.T) {
+	src := readSource(t, "paths.go")
+	if !strings.Contains(src, "ndmstransport.SetTokenFile(filepath.Join(dataDir, storage.RCITokenFile), ndmsinfo.SupportsRCIToken)") {
+		t.Fatal("SetTokenFile обязан получать ndmsinfo.SupportsRCIToken")
+	}
+}

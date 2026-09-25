@@ -180,6 +180,21 @@ func SupportsWireguardASC3() bool {
 	return isAtLeast502A11(info.Release)
 }
 
+// SupportsRCIToken сообщает, есть ли у прошивки токены доступа к RCI: они
+// появились в 5.2 (NDM-4515, 5.2 Alpha 1), до 5.02 их нет вовсе. Версия
+// неизвестна — false: до ndmsinfo.Init ходим без токена.
+func SupportsRCIToken() bool {
+	info := Get()
+	if info == nil || info.Release == "" {
+		return false
+	}
+	return isAtLeast502(info.Release)
+}
+
+func isAtLeast502(release string) bool {
+	return releaseAtLeast(release, 2, 0)
+}
+
 func isAtLeast502A11(release string) bool {
 	return releaseAtLeast(release, 2, 11)
 }

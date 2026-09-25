@@ -39,8 +39,9 @@ var tokenRejected = []string{"0x2312", "0x1218"}
 var errNoTokenCommand = errors.New("ndmc: no authentication token command")
 
 type tokenTransport struct {
-	base http.RoundTripper
-	ndmc func(cmd string) (string, error)
+	base      http.RoundTripper
+	ndmc      func(cmd string) (string, error)
+	supported func() bool // прошивка 5.02+; до неё токенов нет, ndmc не трогаем
 
 	mu        sync.Mutex
 	path      string // "" — токен не используется (до SetTokenFile)
@@ -52,11 +53,18 @@ type tokenTransport struct {
 var tokens = &tokenTransport{base: baseTransport, ndmc: runNdmc}
 
 // SetTokenFile задаёт файл токена (в каталоге данных — его делят демон и
-// --cleanup). Вызывать до первого запроса к RCI.
-func SetTokenFile(path string) {
+// --cleanup) и признак прошивки с токенами (ndmsinfo.SupportsRCIToken —
+// функцией: ndmsinfo сам ходит через этот транспорт). Вызывать до первого
+// запроса к RCI.
+func SetTokenFile(path string, supported func() bool) {
 	tokens.mu.Lock()
 	defer tokens.mu.Unlock()
-	tokens.path, tokens.token, tokens.loaded = path, "", false
+	tokens.path, tokens.supported, tokens.token, tokens.loaded = path, supported, "", false
+}
+
+// enabled — под t.mu.
+func (t *tokenTransport) enabled() bool {
+	return t.path != "" && t.supported != nil && t.supported()
 }
 
 // RevokeToken удаляет токены awg-manager на роутере и файл — для деинсталляции.
@@ -65,6 +73,9 @@ func RevokeToken() error { return tokens.revoke() }
 func (t *tokenTransport) revoke() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// Гейт по версии здесь не смотрим: при неизвестной версии (все каналы
+	// молчат) отказ от отзыва оставил бы на роутере бессрочный admin-токен.
+	// До 5.02 это один вызов ndmc с «no such command».
 	if t.path == "" {
 		return nil
 	}
@@ -73,10 +84,12 @@ func (t *tokenTransport) revoke() error {
 	if err := t.deleteOurs(""); err != nil && !errors.Is(err, errNoTokenCommand) {
 		return err
 	}
-	t.token, t.loaded = "", true
 	if err := os.Remove(t.path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	// Конечное состояние: запрос после отзыва не выпустит токен заново — снять
+	// его после удаления пакета было бы некому.
+	t.path, t.token = "", ""
 	return nil
 }
 
@@ -87,9 +100,10 @@ func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return resp, err
 	}
 	// 403 отбит до исполнения команды, повтор безопасен и для POST — если
-	// тело можно переиграть.
+	// тело можно переиграть. fresh == "" — перевыпуска не было (пауза, сбой):
+	// повтор без заголовка, 5.2 пока пускает и так.
 	fresh := t.regenerate(tok)
-	if fresh == "" || fresh == tok || (req.Body != nil && req.GetBody == nil) {
+	if fresh == tok || (req.Body != nil && req.GetBody == nil) {
 		return resp, nil
 	}
 	retry := req.Clone(req.Context())
@@ -132,7 +146,10 @@ func withToken(req *http.Request, tok string) *http.Request {
 func (t *tokenTransport) current() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.path == "" || t.token != "" {
+	if !t.enabled() {
+		return ""
+	}
+	if t.token != "" {
 		return t.token
 	}
 	if !t.loaded {
@@ -151,17 +168,19 @@ func (t *tokenTransport) current() string {
 }
 
 // regenerate перевыпускает токен после 403 на stale. Уже перевыпущенный
-// другим запросом токен отдаётся как есть; чаще tokenRegenPause — "".
+// другим запросом токен отдаётся как есть; чаще tokenRegenPause — "", и
+// мёртвый токен забывается: до перевыпуска ходим без него.
 func (t *tokenTransport) regenerate(stale string) string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.path == "" {
+	if !t.enabled() {
 		return ""
 	}
 	if t.token != stale {
 		return t.token
 	}
 	if time.Since(t.lastRegen) < tokenRegenPause {
+		t.token = ""
 		return ""
 	}
 	t.token = t.issue()
@@ -179,10 +198,16 @@ func (t *tokenTransport) issue() string {
 	}
 	id, tok := parseGeneratedToken(out)
 	if tok == "" {
+		// Выпущен, но не разобран: снять, иначе каждый повтор оставлял бы на
+		// роутере ещё один бессрочный admin-токен.
+		_ = t.deleteOurs("")
 		return ""
 	}
-	// Не снялись старые — снимутся при следующем выпуске.
-	_ = t.deleteOurs(id)
+	// Без id не отличить новый токен от старых — снимать нечем, снимутся при
+	// следующем выпуске. Не снялись старые — тоже.
+	if id != "" {
+		_ = t.deleteOurs(id)
+	}
 	// Секрет: 0600. Не записался — токен живёт до перезапуска, дальше перевыпуск.
 	_ = writeFileAtomic(t.path, []byte(tok+"\n"), 0o600)
 	return tok
@@ -208,6 +233,7 @@ func (t *tokenTransport) deleteOurs(keep string) error {
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, perm); err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {

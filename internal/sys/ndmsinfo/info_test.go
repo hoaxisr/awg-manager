@@ -32,6 +32,18 @@ func TestIsAtLeast501A3(t *testing.T) {
 	}
 }
 
+// Токены RCI — с 5.2 (любая 5.02), до неё их нет.
+func TestIsAtLeast502(t *testing.T) {
+	for release, want := range map[string]bool{
+		"4.03.C.6.3-9": false, "5.01.C.3.0-1": false, "5.01.03.0-0": false,
+		"5.02.A.1.0-0": true, "5.02.A.11.0-1": true, "5.02.02.0-0": true, "6.00.A.1.0-0": true,
+	} {
+		if got := isAtLeast502(release); got != want {
+			t.Errorf("isAtLeast502(%q) = %v, want %v", release, got, want)
+		}
+	}
+}
+
 // Порог ASC 3.x — 5.02.A.11 (стенд 5.02.A.11.0-1, 25.09.2026).
 func TestIsAtLeast502A11(t *testing.T) {
 	tests := []struct {

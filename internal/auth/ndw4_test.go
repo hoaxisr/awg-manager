@@ -95,8 +95,13 @@ func (s *ndw4FakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	default:
 		s.phases = append(s.phases, "P1")
+		if b["login"] != "admin" {
+			// Неизвестный логин: 401 без X-NDM-Data (стенд 5.02.A.11).
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		s.cnonce = b["nonce"]
-		if raw, err := base64.StdEncoding.DecodeString(s.cnonce); err != nil || len(raw) != 16 || b["login"] != "admin" {
+		if raw, err := base64.StdEncoding.DecodeString(s.cnonce); err != nil || len(raw) != 16 {
 			s.t.Errorf("фаза 1: тело %v", b)
 		}
 		s.data(w, map[string]any{"salt": s.salt, "nonce": s.snonce, "iter": 2, "memcost": 8})
@@ -151,5 +156,34 @@ func TestGetChallenge_NDW4Offer(t *testing.T) {
 		if err != nil || ndw4 != tc.ndw4 {
 			t.Errorf("%q: ndw4=%v err=%v, want %v", tc.hdr, ndw4, err, tc.ndw4)
 		}
+	}
+}
+
+// Неизвестный логин — неверные креды, а не сбой роутера: иначе API отвечал бы
+// 503 вместо 401 и выдавал, какие логины существуют.
+func TestAuthenticate_NDW4UnknownLogin(t *testing.T) {
+	srv := newNDW4FakeServer(t, "s3cret-pw")
+	c := newAuthClient(t, srv.ServeHTTP)
+	if err := c.Authenticate(context.Background(), "nosuch", "x"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// 401 без данных на фазе 2 — сбой протокола, а не неверный пароль (тот
+// приходит подписью): иначе поломка протокола засчитывалась бы в троттл
+// входа и блокировала пользователя с верным паролем.
+func TestAuthenticate_NDW4Phase2NoDataIsNotCredentials(t *testing.T) {
+	srv := newNDW4FakeServer(t, "s3cret-pw")
+	c := newAuthClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && len(srv.phases) == 2 {
+			srv.phases = append(srv.phases, "P2")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		srv.ServeHTTP(w, r)
+	})
+	err := c.Authenticate(context.Background(), "admin", "s3cret-pw")
+	if err == nil || errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("err = %v", err)
 	}
 }

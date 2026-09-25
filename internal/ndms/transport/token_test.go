@@ -88,8 +88,9 @@ type fakeNdmc struct {
 	mu     sync.Mutex
 	cmds   []string
 	gen    []string
-	genErr bool // выпуск падает (таймаут ndmc)
-	noop   bool // прошивка до 5.2
+	genErr bool   // выпуск падает (таймаут ndmc)
+	genRaw string // вывод generate как есть, вместо gen
+	noop   bool   // прошивка до 5.2
 }
 
 func (f *fakeNdmc) run(cmd string) (string, error) {
@@ -105,6 +106,9 @@ func (f *fakeNdmc) run(cmd string) (string, error) {
 	case strings.HasPrefix(cmd, "authentication token generate "):
 		if f.genErr {
 			return "", errors.New("ndmc: timeout")
+		}
+		if f.genRaw != "" {
+			return f.genRaw, nil
 		}
 		v := f.gen[0]
 		f.gen = f.gen[1:]
@@ -140,6 +144,7 @@ func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r)
 // (как на стенде — «0x2312, not identified»). Тела принятых запросов копит.
 type rci struct {
 	valid, detail string
+	allowNone     bool // запрос без токена пускается (5.2 пока так)
 	bodies        []string
 	seen          []string
 }
@@ -151,7 +156,8 @@ func (r *rci) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	r.seen = append(r.seen, req.Header.Get(tokenHeader))
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: req}
-	if r.valid != "" && req.Header.Get(tokenHeader) != r.valid {
+	hdr := req.Header.Get(tokenHeader)
+	if r.valid != "" && hdr != r.valid && !(r.allowNone && hdr == "") {
 		resp.StatusCode = http.StatusForbidden
 		resp.Header.Set("X-Detail", r.detail)
 		return resp, nil
@@ -162,7 +168,7 @@ func (r *rci) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func newTestTokens(t *testing.T, f *fakeNdmc, base http.RoundTripper) (*tokenTransport, string) {
 	path := filepath.Join(t.TempDir(), "rci-token")
-	return &tokenTransport{base: base, ndmc: f.run, path: path}, path
+	return &tokenTransport{base: base, ndmc: f.run, path: path, supported: func() bool { return true }}, path
 }
 
 func get(t *testing.T, rt http.RoundTripper) int {
@@ -304,7 +310,7 @@ func TestToken_Revoke(t *testing.T) {
 		t.Fatalf("файл остался: %v", err)
 	}
 
-	failing := &tokenTransport{path: path, ndmc: func(string) (string, error) { return "", errors.New("ndm busy") }}
+	failing := &tokenTransport{path: path, supported: func() bool { return true }, ndmc: func(string) (string, error) { return "", errors.New("ndm busy") }}
 	os.WriteFile(path, []byte(tokA), 0o600)
 	if err := failing.revoke(); err == nil {
 		t.Fatal("ошибка ndmc проглочена")
@@ -314,18 +320,107 @@ func TestToken_Revoke(t *testing.T) {
 	}
 }
 
-func TestToken_PreFiveTwoAndUnset(t *testing.T) {
+// Без файла токена (до SetTokenFile, после отзыва) — ни ndmc, ни заголовка.
+func TestToken_Unset(t *testing.T) {
 	r := &rci{}
-	f := &fakeNdmc{noop: true}
+	f := &fakeNdmc{}
+	unset := &tokenTransport{base: r, ndmc: f.run, supported: func() bool { return true }}
+	get(t, unset)
+	if r.seen[0] != "" || len(f.cmds) != 0 {
+		t.Fatalf("заголовок %q, ndmc %v", r.seen[0], f.cmds)
+	}
+}
+
+// Без id в выводе generate не снимаем ничего: deleteOurs("") снял бы и только
+// что выпущенный токен.
+func TestToken_NoIDNoDelete(t *testing.T) {
+	f := &fakeNdmc{genRaw: "value: \n   " + tokA + "\n"}
+	tt, _ := newTestTokens(t, f, &rci{valid: tokA})
+	if code := get(t, tt); code != 200 {
+		t.Fatalf("GET: %d", code)
+	}
+	if got := strings.Join(f.cmds, "|"); got != "authentication token generate awg-manager" {
+		t.Fatalf("ndmc: %s", got)
+	}
+}
+
+// Выпущен, но не разобран — снимаем свои, иначе каждый повтор оставлял бы
+// бессрочный admin-токен.
+func TestToken_UnparsedIssueCleansUp(t *testing.T) {
+	f := &fakeNdmc{genRaw: "id: 9\nvalue: \n   short\n"}
+	tt, _ := newTestTokens(t, f, &rci{})
+	get(t, tt)
+	if got := strings.Join(f.cmds, "|"); got != "authentication token generate awg-manager|show authentication token|authentication token delete 2|authentication token delete 4" {
+		t.Fatalf("ndmc: %s", got)
+	}
+}
+
+// В паузе перевыпуска мёртвый токен забывается, запрос повторяется без
+// заголовка и проходит (5.2 пока пускает без токена).
+func TestToken_DeadTokenInPauseFallsBackToNone(t *testing.T) {
+	r := &rci{valid: tokB, detail: "0x2312, not identified", allowNone: true}
+	f := &fakeNdmc{}
+	tt, path := newTestTokens(t, f, r)
+	os.WriteFile(path, []byte(tokA), 0o600)
+	tt.lastRegen = time.Now()
+	if code := get(t, tt); code != 200 {
+		t.Fatalf("GET: %d", code)
+	}
+	// Следующий запрос уже без мёртвого токена, без лишнего 403.
+	get(t, tt)
+	if got := strings.Join(r.seen, ","); got != tokA+",," {
+		t.Fatalf("заголовки: %q", got)
+	}
+	if len(f.cmds) != 0 {
+		t.Fatalf("в паузе ndmc не зовётся: %v", f.cmds)
+	}
+}
+
+// После отзыва запросы токен заново не выпускают.
+func TestToken_RevokeIsFinal(t *testing.T) {
+	r := &rci{}
+	f := &fakeNdmc{gen: []string{tokA}}
 	tt, _ := newTestTokens(t, f, r)
-	unset := &tokenTransport{base: r, ndmc: f.run}
-	for _, rt := range []http.RoundTripper{tt, tt, unset} {
-		get(t, rt)
+	if err := tt.revoke(); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Join(r.seen, ",") != ",," {
-		t.Fatalf("заголовок без токена: %q", r.seen)
+	n := len(f.cmds)
+	get(t, tt)
+	if len(f.cmds) != n || r.seen[0] != "" {
+		t.Fatalf("после отзыва: ndmc %v, заголовок %q", f.cmds[n:], r.seen[0])
 	}
-	if len(f.cmds) != 1 {
-		t.Fatalf("до 5.2 ndmc спрашивается раз в паузу, без пути — ни разу: %v", f.cmds)
+}
+
+// До 5.02 токенов нет: ни ndmc, ни заголовка, ни отзыва — пока версия
+// неизвестна, тоже. Узнали 5.02+ — выпуск на следующем запросе.
+func TestToken_GatedByFirmware(t *testing.T) {
+	r := &rci{}
+	f := &fakeNdmc{gen: []string{tokA}}
+	tt, _ := newTestTokens(t, f, r)
+	is52 := false
+	tt.supported = func() bool { return is52 }
+
+	get(t, tt)
+	if len(f.cmds) != 0 || r.seen[0] != "" {
+		t.Fatalf("до 5.02: ndmc %v, заголовок %q", f.cmds, r.seen[0])
+	}
+	is52 = true
+	get(t, tt)
+	if r.seen[1] != tokA {
+		t.Fatalf("на 5.02+ заголовок %q", r.seen[1])
+	}
+}
+
+// Отзыв гейт не смотрит: при неизвестной версии (все каналы молчат) отказ
+// оставил бы на роутере бессрочный admin-токен.
+func TestToken_RevokeIgnoresGate(t *testing.T) {
+	f := &fakeNdmc{}
+	tt, _ := newTestTokens(t, f, nil)
+	tt.supported = func() bool { return false }
+	if err := tt.revoke(); err != nil {
+		t.Fatal(err)
+	}
+	if f.count("authentication token delete") != 2 {
+		t.Fatalf("ndmc: %v", f.cmds)
 	}
 }

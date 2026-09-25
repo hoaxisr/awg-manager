@@ -8,6 +8,7 @@ import (
 	"crypto/sha3"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"net/http"
@@ -22,6 +23,8 @@ import (
 // Протокол восстановлен по веб-интерфейсу 5.2 Alpha 11 и проверен на стенде.
 // На 5.2 пароль хранится как ns3, поэтому x-ndw2 с верным паролем отвечает
 // 401, хотя роутер его ещё объявляет, — при объявленном ndw4 только он.
+
+var errNDW4NoData = errors.New("401 without " + ndw4DataHeader)
 
 const (
 	ndw4ClientKeyLabel = "NDW4 Interactive Client Key"
@@ -44,7 +47,16 @@ func (c *KeeneticClient) authenticateNDW4(ctx context.Context, url, login, passw
 	cnonceB64 := base64.StdEncoding.EncodeToString(cnonce)
 
 	var p ndw4Params
-	if err := c.ndw4Post(ctx, url, cookies, map[string]string{"login": login, "nonce": cnonceB64}, &p); err != nil {
+	err := c.ndw4Post(ctx, url, cookies, map[string]string{"login": login, "nonce": cnonceB64}, &p)
+	// Неизвестный логин — 401 без X-NDM-Data (стенд 5.02.A.11): это неверные
+	// креды, а не сбой — иначе 401 против 503 по коду выдавал бы, какие логины
+	// есть (по времени разница остаётся: у известного логина ещё Argon2 и
+	// фаза 2). На фазе 2 то же — сбой протокола: неверный пароль там приходит
+	// подписью.
+	if errors.Is(err, errNDW4NoData) {
+		return ErrInvalidCredentials
+	}
+	if err != nil {
 		return fmt.Errorf("ndw4 phase 1: %w", err)
 	}
 	salt, err := base64.StdEncoding.DecodeString(p.Salt)
@@ -117,6 +129,9 @@ func (c *KeeneticClient) ndw4Post(ctx context.Context, url string, cookies []*ht
 	}
 	if resp.StatusCode != http.StatusUnauthorized {
 		return fmt.Errorf("unexpected response status: %d", resp.StatusCode)
+	}
+	if resp.Header.Get(ndw4DataHeader) == "" {
+		return errNDW4NoData
 	}
 	raw, err := base64.StdEncoding.DecodeString(resp.Header.Get(ndw4DataHeader))
 	if err != nil {
