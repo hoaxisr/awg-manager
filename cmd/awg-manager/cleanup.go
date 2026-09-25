@@ -206,7 +206,7 @@ func runCleanup(dataDir string) {
 	// повторить его некому, демона после удаления пакета уже нет.
 	ptCtx, ptCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer ptCancel()
-	if err := router.ReleasePolicyTunForRemoval(ptCtx, router.Deps{
+	tunDeps := router.Deps{
 		AppLog:       loggingService,
 		Settings:     settingsStore,
 		OpkgTun:      cleanupNDMSCommands.Interfaces,
@@ -216,8 +216,20 @@ func runCleanup(dataDir string) {
 		// Скан по описанию: без него снятие шло бы по индексу вслепую и на
 		// удалении пакета разобрало бы ЧУЖОЙ OpkgTun, занявший наш номер.
 		OpkgTunScan: opkgTunScanner(cleanupNDMSQueries.Interfaces),
-	}); err != nil {
+	}
+	if err := router.ReleasePolicyTunForRemoval(ptCtx, tunDeps); err != nil {
 		fmt.Fprintf(os.Stderr, "policy-tun cleanup error: %v\n", err)
+	}
+	// Запись владения одна на оба режима: сработает ровно один из двух снятий.
+	if err := router.ReleaseFakeIPTunForRemoval(ptCtx, tunDeps); err != nil {
+		fmt.Fprintf(os.Stderr, "fakeip-tun cleanup error: %v\n", err)
+	}
+	// Снятия выше только ставят сохранение конфигурации в очередь (debounce),
+	// а процесс сейчас завершится: без явного сброса удаление интерфейса не
+	// доехало бы до startup-config и вернулось бы после перезагрузки роутера.
+	// CleanupAll свой сброс уже сделал — до этих снятий.
+	if err := (configSaver{sc: cleanupNDMSSave}).Save(ptCtx); err != nil {
+		fmt.Fprintf(os.Stderr, "save config after tun cleanup: %v\n", err)
 	}
 
 	// Remove all config/runtime files

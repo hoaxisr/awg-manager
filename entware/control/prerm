@@ -38,12 +38,22 @@ if [ -f "$POLICYTUN_HOOK" ]; then
     echo "Removing policy-tun DNS hook..."
     rm -f "$POLICYTUN_HOOK"
 fi
+# Тот же перехват режима fakeip (свой тег) — без него у клиентов сегментов с
+# заворотом DNS уходил бы на адрес удалённого туннеля до перезагрузки (F450).
 if [ -x /opt/sbin/iptables ]; then
     /opt/sbin/iptables -w -t nat -S PREROUTING 2>/dev/null \
-        | grep -- 'AWGM-POLICYTUN-DNS' \
+        | grep -E -- 'AWGM-POLICYTUN-DNS|AWGM-FAKEIP-INGRESS' \
         | sed 's/-A PREROUTING/-D PREROUTING/' \
         | tr -d '"' \
         | while IFS= read -r line; do /opt/sbin/iptables -w -t nat $line 2>/dev/null; done
+fi
+
+# Маршрутная половина заворота (ip rule iif … lookup 700, таблица 700) —
+# internal/singbox/router/fakeip_ingress.go, fakeIPIngressTable.
+if [ -x /opt/sbin/ip ]; then
+    i=0
+    while [ $i -lt 64 ] && /opt/sbin/ip rule del table 700 2>/dev/null; do i=$((i+1)); done
+    /opt/sbin/ip route flush table 700 2>/dev/null || true
 fi
 
 # Хук туннельного firewall (static-NAT на все ip global выходы) гейтится
