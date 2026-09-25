@@ -1062,6 +1062,43 @@ func TestReload_RestartsWhenTunRemoved(t *testing.T) {
 	}
 }
 
+// TestReload_TunToggleHotReload: пиннутый бинарь добавляет и убирает
+// tun-инбаунд по SIGHUP (стенд 25.09.2026) — рестарт не нужен ни на добавлении,
+// ни на снятии, и журнал называет SIGHUP.
+func TestReload_TunToggleHotReload(t *testing.T) {
+	fp := &fakeProc{running: true}
+	dir := t.TempDir()
+	o := newFakeOrch(t, dir, fp)
+	o.SetTunHotReload(func() bool { return true })
+	var lines []string
+	o.SetLogger(func(_, msg string) { lines = append(lines, msg) })
+	_ = o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"})
+	if err := o.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Save(SlotRouter, []byte(tunInboundConfig)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Reload(); err != nil { // добавление tun
+		t.Fatalf("reload: %v", err)
+	}
+	if err := o.Save(SlotRouter, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Reload(); err != nil { // снятие tun
+		t.Fatalf("reload: %v", err)
+	}
+	if got := fp.calls(); !equalStrs(got, []string{"reload", "reload"}) {
+		t.Errorf("ожидался SIGHUP на оба переключения, получено %v", got)
+	}
+	if joined := strings.Join(lines, "\n"); strings.Contains(joined, "restarting") {
+		t.Errorf("журнал не должен называть рестарт; строки: %v", lines)
+	}
+}
+
 // TestReload_SighupWhenNoTunEither: no tun before, no tun now, running —
 // the unchanged classic SIGHUP path. Guards against regressing normal
 // (tproxy/router) reloads into a full restart.

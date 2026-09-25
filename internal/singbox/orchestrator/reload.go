@@ -129,7 +129,10 @@ func (o *Orchestrator) Reload() error {
 	shouldRun := o.shouldRun
 	prevHasTun := o.prevHasTun
 	newHasTun := res.HasTun
+	tunHotReloadFn := o.tunHotReload
 	o.mu.Unlock()
+	// Вне o.mu: предикат может спавнить пробу версии бинаря.
+	tunHotReload := tunHotReloadFn != nil && tunHotReloadFn()
 	for _, m := range pruneLogs {
 		o.log("warn", m) // см. комментарий на warn-логировании prune выше
 	}
@@ -182,21 +185,21 @@ func (o *Orchestrator) Reload() error {
 			}
 			saveApplied = err == nil
 		case needRunning && running:
-			if newHasTun != prevHasTun {
-				// sing-box cannot add/remove a tun inbound via SIGHUP — the
-				// tun device never gets carrier and readiness times out. A
-				// presence toggle therefore requires a full restart.
+			if newHasTun != prevHasTun && !tunHotReload {
+				// Не пиннутый бинарь не умеет добавить/убрать tun-инбаунд по
+				// SIGHUP — the tun device never gets carrier and readiness
+				// times out. A presence toggle therefore requires a full restart.
 				o.log("info", "orchestrator: restarting sing-box (tun inbound toggled)")
 				if e := proc.Stop(); e != nil {
 					o.log("warn", "orchestrator: stop before tun-restart: "+e.Error())
 				}
 				err = proc.Start()
 			} else {
-				// При живом tun proc.Reload делает Stop+Start (SIGHUP пересоздал
-				// бы tun под удерживаемым fd → FATAL, см. process.go), поэтому
-				// строка обязана называть то, что произойдёт на самом деле:
-				// «SIGHUP» здесь сбивал с толку при разборе простоя.
-				if prevHasTun {
+				// При живом tun на не пиннутом бинаре proc.Reload делает
+				// Stop+Start (см. process.go), поэтому строка обязана называть
+				// то, что произойдёт на самом деле: «SIGHUP» здесь сбивал с
+				// толку при разборе простоя.
+				if prevHasTun && !tunHotReload {
 					o.log("info", "orchestrator: restarting sing-box (config changed, tun active)")
 				} else {
 					o.log("info", "orchestrator: SIGHUP sing-box (config changed)")

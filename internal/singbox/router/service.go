@@ -149,6 +149,25 @@ type SingboxController interface {
 	// crashes within the recent window, the reason of the newest one,
 	// and until when auto-restart is suppressed (zero = not suppressed).
 	CrashStats() (recentCrashes int, lastCrashReason string, restartSuppressedUntil time.Time)
+	// TunExternalConfig: want — писать ли `external_configuration` (бинарь
+	// пиннутый и знает ключ); known=false — версия бинаря пока не определена.
+	TunExternalConfig() (want, known bool)
+}
+
+// tunExternalConfig — писать ли `external_configuration` в tun-инбаунд:
+// ключ знает только пиннутый бинарь, чужой отверг бы весь конфиг. Неизвестная
+// версия даёт false — годится для включения режима (старого инстанса tun ещё
+// нет), но не для heal: см. healTunSettings.
+func (s *ServiceImpl) tunExternalWant() bool {
+	want, _ := s.tunExternalConfig()
+	return want
+}
+
+func (s *ServiceImpl) tunExternalConfig() (want, known bool) {
+	if s.deps.Singbox == nil {
+		return false, true
+	}
+	return s.deps.Singbox.TunExternalConfig()
 }
 
 // GeoTagExpander is the narrow contract used by dat→SRS rule-set export.

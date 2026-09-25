@@ -15,14 +15,14 @@ import (
 // but a half-removed teardown can leave a DOWN orphan opkgtunN behind that would
 // collide with the index allocator on the next Enable. `ip link show dev <iface>`
 // exits non-zero when the device is absent → we treat any error as "absent" (no
-// delete attempted). Seam var for tests. Mirrors fakeIPAddrFlush's sysexec seam.
+// delete attempted). Seam var for tests.
 var fakeIPLinkPresent = func(ctx context.Context, iface string) bool {
 	_, err := sysexec.Run(ctx, ipBinary, "link", "show", "dev", iface)
 	return err == nil
 }
 
 // fakeIPLinkDelete removes a lingering kernel netdev (`ip link delete <iface>`).
-// Seam var for tests. Mirrors fakeIPAddrFlush's sysexec seam.
+// Seam var for tests.
 var fakeIPLinkDelete = func(ctx context.Context, iface string) error {
 	_, err := sysexec.Run(ctx, ipBinary, "link", "delete", iface)
 	return err

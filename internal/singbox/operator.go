@@ -86,6 +86,44 @@ func normalizeSingboxLogLevel(v string) string {
 // определена или не pinned.
 func (o *Operator) SingboxFeatures() []string { return o.singboxFeaturesCached() }
 
+// TunExternalConfig — для router: писать ли external_configuration (want) и
+// определилась ли версия бинаря вообще (known). Пустая версия — не «чужой
+// бинарь», а «пока неизвестно»: флаг в этом случае трогать нельзя.
+func (o *Operator) TunExternalConfig() (want, known bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), singboxVersionProbeTimeout)
+	defer cancel()
+	if v, _ := o.detectVersionAndFeaturesCached(ctx); v == "" {
+		// «Неизвестно» имеет смысл только пока процесс из этого файла жив, то
+		// есть бинарь конфиг с флагом принял. Не запущен — возможно, как раз
+		// потому, что отверг незнакомый ключ: тогда флаг обязан сняться, иначе
+		// движок так и не поднимется.
+		if running, pid := o.proc.IsRunning(); running && o.exeIs(pid, o.binary) {
+			return false, false
+		}
+		return false, true
+	}
+	return o.TunHotReload(), true
+}
+
+// TunHotReload: установлен пиннутый бинарь. Он знает `external_configuration`
+// (адрес tun'а держит NDMS) и переживает SIGHUP с tun-инбаундом, в том числе
+// добавление/удаление инбаунда (стенд 25.09.2026). Чужой или старый бинарь —
+// false: для него остаётся Stop+Start (на 1.14 SIGHUP падал в TUNSETIFF busy).
+//
+// Гейт двойной: пиннутый файл на диске И запущенный процесс — из этого же
+// файла. Иначе при подмене файла под живым чужим процессом SIGHUP получил бы
+// процесс, не знающий ключа: он отверг бы конфиг, а оркестратор счёл бы его
+// применённым.
+func (o *Operator) TunHotReload() bool {
+	if len(o.singboxFeaturesCached()) == 0 {
+		return false
+	}
+	if running, pid := o.proc.IsRunning(); running && !o.exeIs(pid, o.binary) {
+		return false
+	}
+	return true
+}
+
 func (o *Operator) singboxFeaturesCached() []string {
 	ctx, cancel := context.WithTimeout(context.Background(), singboxVersionProbeTimeout)
 	defer cancel()
@@ -171,6 +209,10 @@ type Operator struct {
 	versionProbeMu          sync.Mutex
 	versionProbeValue       string
 	versionProbeFingerprint string
+	// versionProbeRetryAt — пустая версия не кэшируется навсегда (она бывает
+	// временной: Clash ещё не поднялся), но и не перепробуется на каждом
+	// вызове: TunHotReload зовут тик reconcile и каждый Process.Reload.
+	versionProbeRetryAt time.Time
 	// exeMatches — шов для тестов поверх processExeIs (nil = processExeIs).
 	exeMatches func(pid int, binary string) bool
 
@@ -379,12 +421,13 @@ func NewOperator(d OperatorDeps) *Operator {
 	if adopted, pid := op.proc.AttachIfRunning(); adopted {
 		op.log.Info("reconnected to running sing-box", "pid", pid)
 	}
-	// A tun inbound cannot survive SIGHUP — every reload path (scheduler
-	// rule-set refresh, tunnel ApplyConfig, orchestrator) routes through
-	// proc.Reload, which consults this to restart instead. o.orch is wired
-	// later via SetOrch; the closure reads it at reload time, so nil-now is fine.
+	// Не пиннутый бинарь не переживает SIGHUP с tun-инбаундом — every reload
+	// path (scheduler rule-set refresh, tunnel ApplyConfig, orchestrator) routes
+	// through proc.Reload, which consults this to restart instead. o.orch is
+	// wired later via SetOrch; the closure reads it at reload time, so nil-now
+	// is fine.
 	op.proc.ReloadNeedsRestart = func() bool {
-		return op.orch != nil && op.orch.CurrentHasTun()
+		return op.orch != nil && op.orch.CurrentHasTun() && !op.TunHotReload()
 	}
 	return op
 }
@@ -397,7 +440,12 @@ func (o *Operator) Process() *Process { return o.proc }
 // SetOrch wires the config.d orchestrator after construction. ApplyConfig
 // uses it (when non-nil) to write 10-tunnels.json through the slot
 // writer instead of the legacy direct-write path.
-func (o *Operator) SetOrch(orch *orchestrator.Orchestrator) { o.orch = orch }
+func (o *Operator) SetOrch(orch *orchestrator.Orchestrator) {
+	o.orch = orch
+	if orch != nil {
+		orch.SetTunHotReload(o.TunHotReload)
+	}
+}
 
 // SetActiveWorkFn wires the orchestrator's "has active work" predicate
 // (wired in main.go after both Operator and orchestrator exist — the

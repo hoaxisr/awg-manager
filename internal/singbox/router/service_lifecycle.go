@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"slices"
@@ -100,7 +101,7 @@ func (s *ServiceImpl) prepareNetfilter(ctx context.Context) error {
 // (fakeip-tun и policy-tun, а также реап) from its allocated index (e.g. index
 // 3 → "opkgtun3"). Use this ONLY where the
 // kernel sees the iface: the sing-box tun inbound interface_name, the
-// "ip addr flush dev <iface>" exec, /sys/class/net/<iface>/carrier, the
+// /sys/class/net/<iface>/carrier, the
 // /proc/net/route iface match, and the /sys index scan. For NDMS RCI calls use
 // tunNDMSName instead — NDMS rejects the lowercase kernel name.
 func tunIfaceName(index int) string {
@@ -417,9 +418,9 @@ var healDetachedTunAttempts = [...]int{2, 4, 8}
 // NDMS создал интерфейс — carrier 0; sing-box привязался — 1; движок убит —
 // снова 0, а устройство осталось.
 //
-// Лечение — Reload движка: при живом tun он выполняется как Stop+Start
-// (см. process.go) и пересоздаёт привязку. Через оркестратор идти нельзя —
-// его skip-gate по хешу увидит неизменный конфиг и не сделает ничего.
+// Лечение — Reload движка: при живом tun это SIGHUP (пиннутый бинарь) или
+// Stop+Start (см. process.go); оба пересоздают привязку. Через оркестратор
+// идти нельзя — его skip-gate по хешу увидит неизменный конфиг и не сделает ничего.
 //
 // Вызывается из reconcile-тика, сериализованного transitionMu, — им же
 // защищено поле tunDownStrikes.
@@ -484,6 +485,121 @@ func (s *ServiceImpl) healDetachedTun(iface, scope string, slot orchestrator.Slo
 	s.appLog.Warn(scope, iface, msg)
 	if err := s.deps.Singbox.Reload(); err != nil {
 		s.appLog.Warn(scope, iface, "перезапуск движка не удался: "+err.Error())
+	}
+}
+
+// tunKernelAddrs — адреса интерфейса в ядре. Шов для тестов.
+var tunKernelAddrs = func(iface string) ([]netip.Addr, error) {
+	ifi, err := net.InterfaceByName(iface)
+	if err != nil {
+		return nil, err
+	}
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]netip.Addr, 0, len(addrs))
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok {
+			if ip, ok := netip.AddrFromSlice(n.IP); ok {
+				out = append(out, ip.Unmap())
+			}
+		}
+	}
+	return out, nil
+}
+
+// healTunAddress возвращает в ядро адрес tun'а, если его там нет. Адрес ставит
+// и держит NDMS (SetAddress при включении), sing-box с external_configuration
+// его не трогает. Но ядро теряет его мимо NDMS: прежний sing-tun снимает адрес
+// при Close — переход на external_configuration SIGHUP'ом, стоп не пиннутого
+// бинаря, — а NDMS сам его не возвращает (стенд 25.09.2026). Повтор той же
+// команды NDMS возвращает (там же). Сравнение по адресу, не по префиксу:
+// v6 NDMS ставит как /128. Возвращает true, если адрес пропадал и все
+// пропавшие вернулись (при отказе RCI опрос перехода пробует снова).
+func (s *ServiceImpl) healTunAddress(ctx context.Context, sr storage.SingboxRouterSettings, iface, ndmsName, scope string) bool {
+	if s.deps.OpkgTun == nil {
+		return false
+	}
+	have, err := tunKernelAddrs(iface)
+	if err != nil {
+		return false // интерфейса нет — это забота re-provision, не наша
+	}
+	p := s.resolveFakeIPParams(sr)
+	missing := func(cidr string) bool {
+		want, err := netip.ParsePrefix(cidr)
+		return err == nil && !slices.Contains(have, want.Addr())
+	}
+	miss4, miss6 := missing(p.TunAddr4), p.TunAddr6 != "" && missing(p.TunAddr6)
+	restored := true
+	if miss4 {
+		addr4, mask4, err := splitCIDRToAddrMask(p.TunAddr4)
+		if err == nil {
+			err = s.deps.OpkgTun.SetAddress(ctx, ndmsName, addr4, mask4)
+		}
+		if err != nil {
+			restored = false
+			s.appLog.Warn(scope, iface, "вернуть IPv4-адрес tun: "+err.Error())
+		} else {
+			s.appLog.Warn(scope, iface, "IPv4-адрес пропал из ядра — возвращён через NDMS (drift-heal)")
+		}
+	}
+	if miss6 {
+		addr6, err := bareAddrFromCIDR(p.TunAddr6)
+		if err == nil {
+			err = s.deps.OpkgTun.SetIPv6Address(ctx, ndmsName, addr6)
+		}
+		if err != nil {
+			restored = false
+			s.appLog.Warn(scope, iface, "вернуть IPv6-адрес tun: "+err.Error())
+		} else {
+			s.appLog.Warn(scope, iface, "IPv6-адрес пропал из ядра — возвращён через NDMS (drift-heal)")
+		}
+	}
+	return (miss4 || miss6) && restored
+}
+
+// Опрос адреса после перехода на external_configuration. Шов для тестов.
+var (
+	externalFlipApply = (*ServiceImpl).orchestratorApplyNow
+	// 15 с: до Close старого инстанса sing-box гоняет check() нового конфига,
+	// на MIPS с наборами правил это секунды. Опрос выходит на первом возврате.
+	externalFlipPolls    = 75
+	externalFlipInterval = 200 * time.Millisecond
+)
+
+// completeExternalFlip закрывает переход на external_configuration при живом
+// tun. Старый инстанс (без флага) на SIGHUP снимает IPv4 в Close, новый его не
+// ставит, NDMS сам не возвращает (стенд 25.09.2026). Ждать тика (до 30 с)
+// нельзя: интерфейс с настроенным `ip address` без адреса в ядре вгоняет ndm
+// в nginx-цикл (см. teardownOpkgTun), а стек system без адреса не стартует.
+// Поэтому применяем сразу и возвращаем адрес, как только старый инстанс его
+// снимет. Разово: следующий тик флаг уже застанет.
+//
+// Опрос только если SIGHUP действительно ушёл: при провале применения (напр.
+// висячая ссылка в чужом слоте) или остановленном движке снимать адрес некому,
+// а 15 с под transitionMu задержали бы смену режима. ОСТАТОЧНЫЙ РИСК: такой
+// переход доедет позже чужим reload'ом без опроса — адрес тогда вернёт
+// healTunAddress ближайшего тика (до 30 с).
+func (s *ServiceImpl) completeExternalFlip(ctx context.Context, sr storage.SingboxRouterSettings, iface, ndmsName, scope string) {
+	if s.deps.Singbox != nil {
+		if running, _ := s.deps.Singbox.IsRunning(); !running {
+			return
+		}
+	}
+	if err := externalFlipApply(s); err != nil {
+		s.appLog.Warn(scope, iface, "применить external_configuration: "+err.Error())
+		return
+	}
+	for range externalFlipPolls {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(externalFlipInterval):
+		}
+		if s.healTunAddress(ctx, sr, iface, ndmsName, scope) {
+			return
+		}
 	}
 }
 
@@ -641,7 +757,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 
 	// Hold на всю транзакцию: провижининг пишет слоты по нескольку раз и
 	// дольше окна debounce, и без него чужой продюсер (подписки, device-proxy)
-	// выстреливает reload'ом посреди — при живом tun это полный Stop+Start.
+	// выстреливает reload'ом посреди — при живом tun это перезапуск стека tun.
 	// SwitchRoutingMode держит свой hold снаружи; счётчик вложенность терпит.
 	if s.deps.Orch != nil {
 		defer s.deps.Orch.HoldReloads()()
@@ -946,16 +1062,21 @@ func (s *ServiceImpl) healTProxyInbound(ctx context.Context, udpTimeout string, 
 // селектор стека в карточке режима молча не применялся бы до перевключения.
 // Значение берётся из настроек как есть, ничего не выводится.
 //
-// Address/iface по-прежнему НЕ трогаем: они — решение пути enable (выделение
-// индекса, carrier), и пересчёт их на каждом тике гонялся бы с этим решением
-// вместо лечения дрейфа.
+// external_configuration лечится здесь же: он зависит от бинаря, а бинарь
+// меняется обновлением без перевключения режима. true — флаг только что
+// включён, вызывающий обязан закрыть переход (completeExternalFlip).
+//
+// Address/iface инбаунда по-прежнему НЕ трогаем: они — решение пути enable
+// (выделение индекса, carrier), и пересчёт их на каждом тике гонялся бы с этим
+// решением вместо лечения дрейфа. Адрес в ядре — другое: его держит NDMS, а
+// возвращает healTunAddress.
 //
 // Steady-state guard BEFORE persisting, mirroring healTProxyInbound: skip the
 // marshal/write only when BOTH carriers already match — the inbound's fields
 // AND the system route-options rule (systemUDPTimeoutRuleOK). Checking the
 // inbound alone would leave a missing/stale rule unhealed forever once the
 // inbound fields happen to already be correct (fix round 1, review finding).
-func (s *ServiceImpl) healTunSettings(ctx context.Context, slot orchestrator.Slot, sr storage.SingboxRouterSettings) {
+func (s *ServiceImpl) healTunSettings(ctx context.Context, slot orchestrator.Slot, sr storage.SingboxRouterSettings) (externalFlipped bool) {
 	var (
 		cfg *RouterConfig
 		err error
@@ -992,14 +1113,23 @@ func (s *ServiceImpl) healTunSettings(ctx context.Context, slot orchestrator.Slo
 
 	effective := resolveUDPTimeout(sr.UDPTimeout)
 	in := &cfg.Inbounds[idx]
+	external, known := s.tunExternalConfig()
+	if !known {
+		// Версия временно не определилась (Clash не поднялся, проба упала) —
+		// не «чужой бинарь». Снять флаг здесь значило бы перезапустить стек
+		// tun, а через минуту вернуть флаг вторым переходом.
+		external = in.ExternalConfiguration
+	}
 	inboundOK := in.UDPTimeout == effective && in.UDPNATMax == sr.UDPNATMax &&
-		in.Stack == sr.FakeIPStack
+		in.Stack == sr.FakeIPStack && in.ExternalConfiguration == external
 	if inboundOK && systemUDPTimeoutRuleOK(cfg.Route.Rules, effective) {
 		return
 	}
 	in.UDPTimeout = effective
 	in.UDPNATMax = sr.UDPNATMax
 	in.Stack = sr.FakeIPStack
+	flip := external && !in.ExternalConfiguration
+	in.ExternalConfiguration = external
 	cfg.EnsureUDPTimeoutRule(effective)
 
 	switch slot {
@@ -1010,7 +1140,9 @@ func (s *ServiceImpl) healTunSettings(ctx context.Context, slot orchestrator.Slo
 	}
 	if err != nil {
 		s.appLog.Warn("heal-tun", "", err.Error())
+		return false
 	}
+	return flip
 }
 
 // systemUDPTimeoutRuleOK reports whether rules already contain the system

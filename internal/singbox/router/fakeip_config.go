@@ -238,6 +238,19 @@ func (s *ServiceImpl) ensureFakeIPOverlayFromState(cfg *RouterConfig) error {
 		return fmt.Errorf("fakeip overlay: normalize settings: %w", err)
 	}
 	p := s.fakeIPParamsWithCache(sr)
+	// Флаг external_configuration переносится из слота как есть: переключает
+	// его только тик (healTunSettings → completeExternalFlip). Иначе правка
+	// пользователя включила бы флаг под живым инстансом без флага, тот снял
+	// бы адрес на SIGHUP, а вернуть его было бы некому до следующего тика.
+	external, found := false, false
+	for _, in := range cfg.Inbounds {
+		if in.Tag == "tun-in" {
+			external, found = in.ExternalConfiguration, true
+		}
+	}
+	if !found { // проба версии дорогая на холодном пути — только когда нужна
+		external = s.tunExternalWant()
+	}
 	spec := FakeIPTunSpec{
 		Iface:      tunIfaceName(st.Index),
 		TunAddr4:   p.TunAddr4,
@@ -250,6 +263,8 @@ func (s *ServiceImpl) ensureFakeIPOverlayFromState(cfg *RouterConfig) error {
 		Stack:      sr.FakeIPStack,
 		UDPTimeout: sr.UDPTimeout,
 		UDPNATMax:  sr.UDPNATMax,
+
+		ExternalConfiguration: external,
 	}
 	ensureFakeIPOverlay(cfg, spec)
 	return nil

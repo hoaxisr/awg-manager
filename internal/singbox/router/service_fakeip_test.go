@@ -236,21 +236,11 @@ func newFakeIPEnableHarness(t *testing.T, failAt string) *fakeIPEnableHarness {
 	svc.deps.FakeIPTun = DefaultFakeIPTunParams()
 	svc.deps.CacheDBPath = func() string { return filepath.Join(dir, "cache.db") }
 
-	// fakeip readiness probes → ready; flush records into the log.
+	// fakeip readiness probes → ready.
 	stubTunReadyProbe(t, func(string) bool { return true })
 	stubFakeIPDNSProbe(t, func(context.Context, string, netip.Prefix) bool { return true })
 	// Pool-route presence read is host-only (/proc/net/route); default absent.
 	stubFakeIPPoolRoutePresent(t, func(string, netip.Prefix) bool { return false })
-	old := fakeIPAddrFlush
-	fakeIPAddrFlush = func(_ context.Context, iface string) error {
-		log.add("Flush:" + iface)
-		if failAt == "Flush" {
-			return errors.New("injected: Flush")
-		}
-		return nil
-	}
-	t.Cleanup(func() { fakeIPAddrFlush = old })
-
 	return &fakeIPEnableHarness{
 		svc: svc, log: log, opkg: opkg, routes: routes, store: store, dir: dir,
 	}
@@ -314,10 +304,6 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	if h.log.has("Create:" + iface + ":private") {
 		t.Fatalf("Create used the lowercase kernel name (NDMS would reject it): %v", h.log.calls)
 	}
-	// sing-box / kernel sites use the lowercase kernel name (flush).
-	if !h.log.has("Flush:" + iface) {
-		t.Fatalf("Flush must use the lowercase kernel name %q: %v", iface, h.log.calls)
-	}
 	// The pool route Interface is the NDMS name.
 	if !h.log.has("AddRoute:198.18.0.0:255.254.0.0:" + ndmsName) {
 		t.Fatalf("pool route Interface must be the NDMS name %q: %v", ndmsName, h.log.calls)
@@ -336,13 +322,10 @@ func TestEnable_DispatchesFakeIPTun(t *testing.T) {
 	// v6 pool route is added (defaults carry Inet6Range) after the v4 pool route.
 	mustOrder("AddRoute:198.18.0.0:255.254.0.0:"+ndmsName, "AddRoute6:fc00::/18:"+ndmsName)
 	mustOrder("SetMTU:"+ndmsName+":1500", "InterfaceUp:"+ndmsName)
-	// Flush runs PRE-start (right after iface up + config build), clearing stale
-	// addrs before sing-box attaches the gvisor tun.
-	mustOrder("InterfaceUp:"+ndmsName, "Flush:"+iface)
-	// The pool route is installed POST-readiness (after the flush and the stubbed
+	// The pool route is installed POST-readiness (after the stubbed
 	// waitForSingbox). No tun default route is installed — pool/CIDR traffic reaches
 	// the tun via specific routes; everything else egresses the normal WAN default.
-	mustOrder("Flush:"+iface, "AddRoute:198.18.0.0:255.254.0.0:"+ndmsName)
+	mustOrder("InterfaceUp:"+ndmsName, "AddRoute:198.18.0.0:255.254.0.0:"+ndmsName)
 	mustOrder("AddRoute:198.18.0.0:255.254.0.0:"+ndmsName, "AddRoute6:fc00::/18:"+ndmsName)
 
 	// The v6 pool route must be the LAST provisioning call (no DHCP advertise).
@@ -577,9 +560,8 @@ func TestEnableFakeIPTun_UsesPersistedEngineSettings(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
-	// Execution order: provision → Flush (pre-start) → [waitForSingbox] →
-	// AddRoute → AddRoute6.
-	steps := []string{"Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "Flush", "AddRoute", "AddRoute6"}
+	// Execution order: provision → [waitForSingbox] → AddRoute → AddRoute6.
+	steps := []string{"Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "AddRoute", "AddRoute6"}
 	for _, step := range steps {
 		t.Run(step, func(t *testing.T) {
 			h := newFakeIPEnableHarness(t, step)
@@ -618,10 +600,10 @@ func TestEnableFakeIPTun_RollbackOnFailure(t *testing.T) {
 					t.Errorf("Create-fail must not run iface teardown: %v", h.log.calls)
 				}
 			}
-			// Order: Flush (pre-start) → [waitForSingbox] → AddRoute → AddRoute6.
+			// Order: [waitForSingbox] → AddRoute → AddRoute6.
 			// A failure rolls back exactly what landed before it (LIFO).
 			switch step {
-			case "Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp", "Flush":
+			case "Create", "SetAddress", "SetIPv6Address", "SetMTU", "InterfaceUp":
 				// Failure at/before the v4 pool route: no pool route added.
 				if h.log.has("AddRoute:198.18.0.0:255.254.0.0:" + ndmsName) {
 					t.Errorf("%s: pool route should not have been added", step)

@@ -31,6 +31,9 @@ type FakeIPTunSpec struct {
 	// UDPNATMax is the udp_nat_max cap for the tun inbound (sing-box 1.14).
 	// 0 → engine auto (4096-16384 by memory), key omitted.
 	UDPNATMax int
+	// ExternalConfiguration — см. Inbound.ExternalConfiguration; false для
+	// бинаря, который ключа не знает (не пиннутый).
+	ExternalConfiguration bool
 }
 
 // boolPtr returns a pointer to v. The tun inbound's auto_route / auto_redirect /
@@ -82,6 +85,8 @@ func ensureFakeIPOverlay(cfg *RouterConfig, spec FakeIPTunSpec) {
 		Stack:         spec.Stack,
 		UDPTimeout:    udpTimeout,
 		UDPNATMax:     spec.UDPNATMax,
+
+		ExternalConfiguration: spec.ExternalConfiguration,
 	}
 	upsertInbound(cfg, in)
 

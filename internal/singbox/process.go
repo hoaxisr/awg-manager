@@ -56,13 +56,12 @@ type Process struct {
 	// it to keep crash counters honest (issue #456).
 	OnExit func(err error, stderrTail string, deliberate bool)
 
-	// ReloadNeedsRestart reports whether the currently-running config has a
-	// tun inbound. When it returns true, Reload does a full Stop+Start instead
-	// of SIGHUP: sing-box cannot hot-reload a tun inbound — on SIGHUP it tries
-	// to re-open the tun while the old instance still holds the fd, failing
-	// with "TUNSETIFF: device or resource busy" and exiting FATAL (stand-
-	// verified 2026-06-17). Nil = always SIGHUP (legacy / no-tun). Set by
-	// Operator construction to the orchestrator's CurrentHasTun.
+	// ReloadNeedsRestart reports whether the running config has a tun inbound
+	// AND the binary is not the pinned one. When true, Reload does a full
+	// Stop+Start instead of SIGHUP: older sing-box re-opened the tun while the
+	// old instance still held the fd — "TUNSETIFF: device or resource busy",
+	// FATAL (stand 2026-06-17). The pinned build closes first and survives
+	// SIGHUP (stand 2026-09-25). Nil = always SIGHUP. Set by Operator.
 	ReloadNeedsRestart func() bool
 
 	// startMu serialises Start and Stop so concurrent callers (watchdog tick
@@ -591,11 +590,10 @@ func (p *Process) Reload() error {
 		_, err := p.startLocked() // no process, start fresh
 		return err
 	}
-	// A tun inbound cannot survive SIGHUP (sing-box re-opens the tun while the
-	// old instance still holds it → "TUNSETIFF: device or resource busy" →
-	// FATAL exit, stand-verified 2026-06-17). Full restart instead. Covers every
-	// reload path (scheduler rule-set refresh, tunnel ApplyConfig, orchestrator)
-	// since they all funnel through here.
+	// Не пиннутый бинарь не переживает SIGHUP с tun-инбаундом (см.
+	// ReloadNeedsRestart) — full restart instead. Covers every reload path
+	// (scheduler rule-set refresh, tunnel ApplyConfig, orchestrator) since they
+	// all funnel through here.
 	if p.ReloadNeedsRestart != nil && p.ReloadNeedsRestart() {
 		_ = p.stopLocked()
 		_, err := p.startLocked()

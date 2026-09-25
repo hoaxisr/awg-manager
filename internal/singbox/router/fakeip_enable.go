@@ -10,7 +10,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
-	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
 // fakeIPTunDescription is the NDMS interface description stamped on the
@@ -24,16 +23,8 @@ const fakeIPTunDescription = "awgm fakeip-tun"
 // recognizable in NDMS running-config and reap.
 const fakeIPPoolRouteComment = "awgm fakeip pool"
 
-// fakeIPAddrFlush clears the kernel addresses on the tun iface right before
-// sing-box starts and assigns the tun address from its own config (PoC-derived
-// ordering; stand-verified in 1F.1). Seam var for tests.
-var fakeIPAddrFlush = func(ctx context.Context, iface string) error {
-	_, err := sysexec.Run(ctx, ipBinary, "addr", "flush", "dev", iface)
-	return err
-}
-
 // enableFakeIPTun provisions the full fakeip-tun path: persist index → create
-// OpkgTun → addr/mtu/up → write+start sing-box slot → flush+wait readiness →
+// OpkgTun → addr/mtu/up → write+start sing-box slot → wait readiness →
 // pool routes → persist enabled. Called with s.mu held by Enable. Honors the
 // persist-before-create invariant (the startup reap only sees orphans by
 // persisted index) and rolls back ALL partial work in reverse on any failure so
@@ -315,19 +306,10 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 		Stack:      sr.FakeIPStack,
 		UDPTimeout: sr.UDPTimeout,
 		UDPNATMax:  sr.UDPNATMax,
+
+		ExternalConfiguration: s.tunExternalWant(),
 	}
 	ensureFakeIPOverlay(fcfg, spec)
-
-	// Flush stale kernel addresses on the tun BEFORE sing-box starts, while the
-	// tun is still bare (NDMS assigned its address above via SetAddress; we drop
-	// it here so sing-box's gvisor attach re-adds its own configured inet4_address
-	// cleanly). Doing the flush PRE-start closes the 1F.1 race: the old post-start
-	// placement could flush right as the debounced (~250ms) orchestrator reload
-	// made sing-box attach to the tun, killing the just-attached address and the
-	// process. HARD fail: a flush error rolls the whole thing back.
-	if err = fakeIPAddrFlush(ctx, iface); err != nil {
-		return fmt.Errorf("enable fakeip-tun: addr flush: %w", err)
-	}
 
 	// D. Slot XOR: enable SlotFakeIP, disable SlotRouter (fakeip and tproxy router
 	// slots are mutually exclusive — sing-box must load exactly one routing config).
@@ -394,9 +376,8 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	}
 
 	// Wait for sing-box to be truly ready (process + tun carrier + live fakeip
-	// DNS). The address flush already ran PRE-start (above), so the tun keeps the
-	// address sing-box assigns on attach. HARD fail: an unready sing-box means the
-	// tun and its hijack-dns path never come up, so we roll the whole thing back.
+	// DNS). HARD fail: an unready sing-box means the tun and its hijack-dns path
+	// never come up, so we roll the whole thing back.
 	bootWait := bootWaitWithFloor()
 	if err = s.waitForSingbox(ctx, bootWait); err != nil {
 		return fmt.Errorf("enable fakeip-tun: %w: waited %s (%v)", ErrSingboxNotReady, bootWait, err)

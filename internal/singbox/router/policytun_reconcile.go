@@ -296,6 +296,11 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	// Интерфейс наш и на месте — но стек мог отцепиться от tun. Это состояние
 	// не ловит ни один другой heal, см. healDetachedTun. Слот он проверяет сам.
 	s.healDetachedTun(iface, "policy-tun-reconcile", orchestrator.SlotRouter)
+	// Гейт probeErr == nil: без скана чужой интерфейс на нашем индексе не
+	// отсечён (needsReprovision на ошибке пробы молчит) — адрес ушёл бы ему.
+	if probeErr == nil {
+		s.healTunAddress(ctx, sr, iface, ndmsName, "policy-tun-reconcile")
+	}
 
 	// One-shot (до первого УСПЕХА) ассерт permit-ACL: покрывает апгрейд поверх
 	// уже включённого режима и удаление списка мимо нас. Гейт probeErr == nil —
@@ -333,7 +338,9 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	// строится только на enable, поэтому без heal'а изменение не доезжало до
 	// живого режима (F114). После миграции слота — актуальный tun-in уже в
 	// форме 1.14.
-	s.healTunSettings(ctx, orchestrator.SlotRouter, sr)
+	if s.healTunSettings(ctx, orchestrator.SlotRouter, sr) {
+		s.completeExternalFlip(ctx, sr, iface, ndmsName, "policy-tun-reconcile")
+	}
 
 	// Ingress-заворот: и drift-heal после сброса firewall NDMS, и применение
 	// смены состава ingress-интерфейсов (UpdateSettings завершается Reconcile'ом).

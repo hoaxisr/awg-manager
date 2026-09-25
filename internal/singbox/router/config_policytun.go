@@ -11,6 +11,8 @@ type PolicyTunInboundSpec struct {
 	Stack      string // пусто → ключ не пишется (собственный стек sing-tun); legacy: gvisor/system/mixed
 	UDPTimeout string // empty → DefaultUDPTimeout via resolveUDPTimeout
 	UDPNATMax  int    // 0 → sing-box сам выбирает (авто, ключ не пишется)
+	// ExternalConfiguration — см. Inbound.ExternalConfiguration.
+	ExternalConfiguration bool
 }
 
 // ensurePolicyTunInbound replaces the tproxy/redirect inbound pair of slot 20
@@ -60,6 +62,8 @@ func ensurePolicyTunInbound(in []Inbound, spec PolicyTunInboundSpec) []Inbound {
 		Stack:         spec.Stack,
 		UDPTimeout:    resolveUDPTimeout(spec.UDPTimeout),
 		UDPNATMax:     spec.UDPNATMax,
+
+		ExternalConfiguration: spec.ExternalConfiguration,
 	}
 	return append([]Inbound{tun}, out...)
 }

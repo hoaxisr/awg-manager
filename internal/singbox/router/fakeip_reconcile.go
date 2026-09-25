@@ -127,6 +127,10 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// Движок может быть жив, а его стек отцепиться от tun — это состояние не
 	// лечит никто другой, см. healDetachedTun. Слот он проверяет сам.
 	s.healDetachedTun(iface, "fakeip-reconcile", orchestrator.SlotFakeIP)
+	// Гейт probeErr == nil — см. reconcilePolicyTun.
+	if probeErr == nil {
+		s.healTunAddress(ctx, sr, iface, ndmsName, "fakeip-reconcile")
+	}
 
 	// Разовая миграция слота на форму sing-box 1.14 (см. reconcileInstalled) —
 	// для 21-fakeip.json. В устоявшемся состоянии это одно чтение файла,
@@ -136,7 +140,9 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// Смена udpTimeout/udpNatMax через UpdateSettings — tun-in fakeip строится
 	// только на enable, поэтому без heal'а изменение не доезжало до живого
 	// режима (F114). После миграции слота — актуальный tun-in уже в форме 1.14.
-	s.healTunSettings(ctx, orchestrator.SlotFakeIP, sr)
+	if s.healTunSettings(ctx, orchestrator.SlotFakeIP, sr) {
+		s.completeExternalFlip(ctx, sr, iface, ndmsName, "fakeip-reconcile")
+	}
 
 	// One-shot (до первого УСПЕХА) ассерт permit-ACL: покрывает апгрейд
 	// awg-manager поверх уже включённого fakeip (ACL появился в этой версии)

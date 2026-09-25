@@ -278,13 +278,6 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable policy-tun: iface up: %w", err)
 	}
 
-	// Flush stale kernel addresses PRE-start, while the tun is still bare, so
-	// sing-box's attach re-adds its own configured address cleanly (the fakeip
-	// 1F.1 ordering — a post-start flush kills the just-attached address).
-	if err = fakeIPAddrFlush(ctx, iface); err != nil {
-		return fmt.Errorf("enable policy-tun: addr flush: %w", err)
-	}
-
 	// Slot 20 keeps its user rules/outbounds; only the ingress changes — the
 	// tproxy/redirect pair is replaced by a single tun inbound.
 	cfg, err := s.loadAppliedRouterConfig()
@@ -299,6 +292,8 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		Stack:      sr.FakeIPStack,
 		UDPTimeout: sr.UDPTimeout,
 		UDPNATMax:  sr.UDPNATMax,
+
+		ExternalConfiguration: s.tunExternalWant(),
 	})
 	cfg.Outbounds = stripAutoManagedDirect(cfg.Outbounds)
 	cfg.EnsureSystemRules(sr.SnifferEnabled)

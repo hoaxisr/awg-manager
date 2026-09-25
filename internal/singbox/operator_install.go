@@ -90,10 +90,14 @@ func detectVersion(ctx context.Context, binary string) string {
 	return parseSingboxVersionOutput(string(out))
 }
 
+// versionProbeEmptyRetry — как долго пустой результат пробы отдаётся из кэша.
+var versionProbeEmptyRetry = time.Minute
+
 // detectVersionAndFeaturesCached возвращает (version, features) для managed
 // sing-box. Источники версии по убыванию дешевизны (resolveVersionLocked):
 //
-//  1. In-memory кэш по отпечатку "<mtime>_<size>" бинаря (stat, ~10 µс).
+//  1. In-memory кэш по отпечатку "<mtime>_<size>" бинаря (stat, ~10 µс);
+//     пустой результат держится versionProbeEmptyRetry, потом проба снова.
 //  2. Sidecar <binary>.meta.json с mtime ≥ mtime бинаря — переживает
 //     перезапуски демона и роутера.
 //  3. SHA256 бинаря равен pinned ⇒ версия = pinned (SHA уже кэширован
@@ -121,12 +125,18 @@ func (o *Operator) detectVersionAndFeaturesCached(ctx context.Context) (string, 
 	o.versionProbeMu.Lock()
 	defer o.versionProbeMu.Unlock()
 
-	if o.versionProbeFingerprint == fingerprint && o.versionProbeValue != "" {
-		return o.versionProbeValue, o.featuresForVersion(o.versionProbeValue)
+	if o.versionProbeFingerprint == fingerprint {
+		if o.versionProbeValue != "" {
+			return o.versionProbeValue, o.featuresForVersion(o.versionProbeValue)
+		}
+		if time.Now().Before(o.versionProbeRetryAt) {
+			return "", nil
+		}
 	}
 	v := o.resolveVersionLocked(ctx)
 	o.versionProbeValue = v
 	o.versionProbeFingerprint = fingerprint
+	o.versionProbeRetryAt = time.Now().Add(versionProbeEmptyRetry)
 	return v, o.featuresForVersion(v)
 }
 

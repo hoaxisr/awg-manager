@@ -226,10 +226,10 @@ func TestProcess_StartIsConcurrencySafe(t *testing.T) {
 	_ = p.Stop()
 }
 
-// When ReloadNeedsRestart reports a tun inbound, Reload must do a full
-// Stop+Start (SIGTERM + respawn) instead of SIGHUP — sing-box cannot
-// hot-reload a tun inbound (TUNSETIFF busy → FATAL, stand-verified
-// 2026-06-17). Asserts: no SIGHUP, and a fresh spawn happened.
+// When ReloadNeedsRestart reports a tun inbound on a non-pinned binary,
+// Reload must do a full Stop+Start (SIGTERM + respawn) instead of SIGHUP —
+// older sing-box could not hot-reload a tun inbound (TUNSETIFF busy → FATAL,
+// stand-verified 2026-06-17). Asserts: no SIGHUP, and a fresh spawn happened.
 func TestProcess_ReloadRestartsWhenTunPresent(t *testing.T) {
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "sing-box.pid")

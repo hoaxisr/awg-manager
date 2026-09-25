@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -2033,4 +2034,358 @@ func TestReconcilePolicyTun_SkipsPermitACLWhenProbeFailed(t *testing.T) {
 			t.Error("v6-флаг one-shot не взведён после успешной постановки ACL")
 		}
 	})
+}
+
+// stubTunKernelAddrs подменяет чтение адресов интерфейса из ядра.
+func stubTunKernelAddrs(t *testing.T, addrs ...string) {
+	t.Helper()
+	old := tunKernelAddrs
+	tunKernelAddrs = func(string) ([]netip.Addr, error) {
+		out := make([]netip.Addr, 0, len(addrs))
+		for _, a := range addrs {
+			out = append(out, netip.MustParseAddr(a))
+		}
+		return out, nil
+	}
+	t.Cleanup(func() { tunKernelAddrs = old })
+}
+
+// Адрес tun'а держит NDMS, а прежний sing-tun снимает его при Close, и NDMS
+// сам не возвращает (стенд 25.09.2026) — reconcile повторяет адрес через NDMS.
+func TestReconcilePolicyTun_ReassertsMissingTunAddress(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	stubTunKernelAddrs(t, "fe80::1") // только link-local: оба наших адреса сняты
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if !h.log.has("SetAddress:OpkgTun0:172.18.0.1:255.255.255.252") {
+		t.Errorf("IPv4 не повторён через NDMS: %v", h.log.calls)
+	}
+	if !h.log.has("SetIPv6Address:OpkgTun0:fdfe:dcba:9876::1") {
+		t.Errorf("IPv6 не повторён через NDMS: %v", h.log.calls)
+	}
+}
+
+// Адреса на месте — RCI не трогаем: reconcile тикает каждые 30 с.
+func TestReconcilePolicyTun_NoAddressCallWhenPresent(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	stubTunKernelAddrs(t, "172.18.0.1", "fdfe:dcba:9876::1")
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	for _, c := range h.log.calls {
+		if strings.HasPrefix(c, "SetAddress:") || strings.HasPrefix(c, "SetIPv6Address:") {
+			t.Errorf("адрес на месте, но был вызов %q", c)
+		}
+	}
+}
+
+// stubExternalFlipFast убирает паузы опроса адреса после перехода на флаг.
+func stubExternalFlipFast(t *testing.T) {
+	t.Helper()
+	old := externalFlipInterval
+	externalFlipInterval = 0
+	t.Cleanup(func() { externalFlipInterval = old })
+}
+
+// external_configuration зависит от бинаря, а бинарь меняется обновлением без
+// перевключения режима — heal доводит флаг в обе стороны.
+func TestReconcilePolicyTun_HealsExternalConfiguration(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	stubExternalFlipFast(t)
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	sb := h.svc.deps.Singbox.(*fakeSingbox)
+
+	if policyTunInbound(t, h).ExternalConfiguration {
+		t.Fatal("фикстура: не пиннутый бинарь — флага быть не должно")
+	}
+	sb.tunHotReload = true
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if !policyTunInbound(t, h).ExternalConfiguration {
+		t.Error("пиннутый бинарь: флаг не выставлен")
+	}
+	sb.tunHotReload = false
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if policyTunInbound(t, h).ExternalConfiguration {
+		t.Error("чужой бинарь: флаг обязан сняться, иначе check отвергнет конфиг")
+	}
+}
+
+// Включение сразу пишет флаг по бинарю — иначе первый же тик переписал бы слот
+// и дёрнул лишний reload.
+func TestPolicyTunEnable_WritesExternalConfiguration(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	h.svc.deps.Singbox.(*fakeSingbox).tunHotReload = true
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	if !policyTunInbound(t, h).ExternalConfiguration {
+		t.Error("включение не записало external_configuration")
+	}
+}
+
+// Переход на флаг при живом tun: старый инстанс снимает IPv4 на SIGHUP, NDMS
+// его не возвращает — ждать следующего тика (30 с) нельзя. Тик, включивший
+// флаг, применяет конфиг сразу и возвращает адрес, как только тот пропал.
+func TestReconcilePolicyTun_ExternalFlipRestoresAddressSameTick(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	stubExternalFlipFast(t)
+	calls := 0
+	old := tunKernelAddrs
+	tunKernelAddrs = func(string) ([]netip.Addr, error) {
+		calls++
+		if calls <= 2 { // тиковый healTunAddress и первый опрос: адрес ещё на месте
+			return []netip.Addr{netip.MustParseAddr("172.18.0.1"), netip.MustParseAddr("fdfe:dcba:9876::1")}, nil
+		}
+		return []netip.Addr{netip.MustParseAddr("fdfe:dcba:9876::1")}, nil // старый инстанс снял v4
+	}
+	t.Cleanup(func() { tunKernelAddrs = old })
+	h.svc.deps.Singbox.(*fakeSingbox).tunHotReload = true
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if !h.log.has("SetAddress:OpkgTun0:172.18.0.1:255.255.255.252") {
+		t.Errorf("адрес не возвращён в том же тике: %v", h.log.calls)
+	}
+	if calls != 3 {
+		t.Errorf("опрос обязан остановиться на возврате адреса: calls=%d", calls)
+	}
+
+	// Флаг уже стоит — следующий тик не опрашивает.
+	calls = 0
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun (2): %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("без перехода опроса быть не должно: calls=%d", calls)
+	}
+
+	// Heal по другому полю при уже стоящем флаге — тоже не переход.
+	calls = 0
+	sr.UDPTimeout = "7m0s"
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun (3): %v", err)
+	}
+	if got := policyTunInbound(t, h).UDPTimeout; got != "7m0s" {
+		t.Fatalf("фикстура: heal udp_timeout не прошёл, %q", got)
+	}
+	if calls != 1 {
+		t.Errorf("heal без смены флага не должен опрашивать адрес: calls=%d", calls)
+	}
+}
+
+// Версия бинаря временно не определилась — это не «чужой бинарь»: снять флаг
+// значило бы перезапустить стек tun, а через минуту вернуть его вторым
+// переходом. Флаг остаётся, каким был.
+func TestReconcilePolicyTun_UnknownVersionKeepsExternalConfiguration(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sb := h.svc.deps.Singbox.(*fakeSingbox)
+	sb.tunHotReload = true
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	if !policyTunInbound(t, h).ExternalConfiguration {
+		t.Fatal("фикстура: включение на пиннутом бинаре пишет флаг")
+	}
+
+	sb.tunHotReload, sb.versionUnknown = false, true
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if !policyTunInbound(t, h).ExternalConfiguration {
+		t.Error("неизвестная версия сняла флаг")
+	}
+
+	sb.versionUnknown = false // версия известна и не пиннутая — снимаем
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun (2): %v", err)
+	}
+	if policyTunInbound(t, h).ExternalConfiguration {
+		t.Error("известная чужая версия обязана снять флаг")
+	}
+}
+
+// stubExternalFlipApply считает применения конфига при переходе на флаг.
+func stubExternalFlipApply(t *testing.T, err error) *int {
+	t.Helper()
+	n := 0
+	old := externalFlipApply
+	externalFlipApply = func(*ServiceImpl) error { n++; return err }
+	t.Cleanup(func() { externalFlipApply = old })
+	return &n
+}
+
+// stubAddrsSequence: первые present вызовов адреса на месте, дальше v4 снят.
+func stubAddrsSequence(t *testing.T, present int, onCall func(n int)) *int {
+	t.Helper()
+	calls := 0
+	old := tunKernelAddrs
+	tunKernelAddrs = func(string) ([]netip.Addr, error) {
+		calls++
+		if onCall != nil {
+			onCall(calls)
+		}
+		if calls <= present {
+			return []netip.Addr{netip.MustParseAddr("172.18.0.1"), netip.MustParseAddr("fdfe:dcba:9876::1")}, nil
+		}
+		return []netip.Addr{netip.MustParseAddr("fdfe:dcba:9876::1")}, nil
+	}
+	t.Cleanup(func() { tunKernelAddrs = old })
+	return &calls
+}
+
+// Переход обязан применить конфиг сразу (иначе SIGHUP придёт debounce'ом уже
+// после опроса), а без ушедшего SIGHUP — не опрашивать: адрес снимать некому,
+// а 15 с под transitionMu задержали бы смену режима.
+func TestReconcilePolicyTun_ExternalFlipAppliesOrSkipsPolling(t *testing.T) {
+	cases := []struct {
+		name      string
+		applyErr  error
+		running   bool
+		wantApply int
+		wantCalls int
+	}{
+		{"применено — опрос до возврата", nil, true, 1, 3},
+		{"применение отвергнуто — без опроса", errors.New("validation failed"), true, 1, 1},
+		{"движок остановлен — без применения и опроса", nil, false, 0, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newPolicyTunEnableHarness(t, "")
+			sr := provisionPolicyTunForReconcile(t, h)
+			h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+			stubExternalFlipFast(t)
+			applies := stubExternalFlipApply(t, tc.applyErr)
+			calls := stubAddrsSequence(t, 2, nil)
+			sb := h.svc.deps.Singbox.(*fakeSingbox)
+			sb.tunHotReload = true
+			running := tc.running
+			sb.isRunningFn = func() (bool, int) { return running, 1234 }
+
+			if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+				t.Fatalf("reconcilePolicyTun: %v", err)
+			}
+			if *applies != tc.wantApply {
+				t.Errorf("применений = %d, want %d", *applies, tc.wantApply)
+			}
+			if *calls != tc.wantCalls {
+				t.Errorf("чтений адреса = %d, want %d", *calls, tc.wantCalls)
+			}
+		})
+	}
+}
+
+// Снятие флага (бинарь известен и не пиннутый) — не переход: старый инстанс с
+// флагом адрес не снимает, опрашивать нечего.
+func TestReconcilePolicyTun_ExternalUnflipDoesNotPoll(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sb := h.svc.deps.Singbox.(*fakeSingbox)
+	sb.tunHotReload = true
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	stubExternalFlipFast(t)
+	applies := stubExternalFlipApply(t, nil)
+	calls := stubAddrsSequence(t, 1000, nil)
+
+	sb.tunHotReload = false
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	if policyTunInbound(t, h).ExternalConfiguration {
+		t.Fatal("фикстура: флаг обязан сняться")
+	}
+	if *applies != 0 || *calls != 1 {
+		t.Errorf("снятие флага запустило переход: применений %d, чтений %d", *applies, *calls)
+	}
+}
+
+// Отказ RCI при возврате адреса не заканчивает опрос: адрес пробуется снова,
+// а не ждёт следующего тика.
+func TestReconcilePolicyTun_ExternalFlipRetriesFailedRestore(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	stubExternalFlipFast(t)
+	stubExternalFlipApply(t, nil)
+	stubAddrsSequence(t, 2, func(n int) {
+		if n == 3 {
+			h.opkg.failAt = "SetAddress" // первая попытка возврата падает
+		} else if n == 4 {
+			h.opkg.failAt = ""
+		}
+	})
+	h.svc.deps.Singbox.(*fakeSingbox).tunHotReload = true
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	n := 0
+	for _, c := range h.log.calls {
+		if c == "SetAddress:OpkgTun0:172.18.0.1:255.255.255.252" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("попыток возврата = %d, want 2 (повтор после отказа): %v", n, h.log.calls)
+	}
+}
+
+// Проба живости упала — чужой интерфейс на нашем индексе не отсечён, адрес не
+// трогаем (needsReprovision на ошибке пробы молчит).
+func TestReconcilePolicyTun_NoAddressHealWhenProbeFails(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	sr := provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	h.svc.deps.OpkgTunIndices = &recIndices{err: errors.New("rci timeout")}
+	stubTunKernelAddrs(t) // адресов нет вовсе
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	for _, c := range h.log.calls {
+		if strings.HasPrefix(c, "SetAddress:") || strings.HasPrefix(c, "SetIPv6Address:") {
+			t.Errorf("адрес ставился без подтверждённой живости: %q", c)
+		}
+	}
+}
+
+// Устаревший черновик слота 20 несёт снимок флага на момент создания —
+// применение черновика не должно перекидывать флаг мимо тика.
+func TestApplyStaging_KeepsAppliedTunExternalConfiguration(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	h.svc.deps.Singbox.(*fakeSingbox).tunHotReload = true
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	if !policyTunInbound(t, h).ExternalConfiguration {
+		t.Fatal("фикстура: флаг после включения")
+	}
+	raw, err := h.svc.deps.Orch.LoadApplied(orchestrator.SlotRouter)
+	if err != nil {
+		t.Fatalf("LoadApplied: %v", err)
+	}
+	stale := strings.Replace(string(raw), `"external_configuration": true`, `"external_configuration": false`, 1)
+	if err := h.svc.deps.Orch.SaveDraft(orchestrator.SlotRouter, []byte(stale)); err != nil {
+		t.Fatalf("SaveDraft: %v", err)
+	}
+
+	if _, err := h.svc.ApplyStaging(context.Background()); err != nil {
+		t.Fatalf("ApplyStaging: %v", err)
+	}
+	if !policyTunInbound(t, h).ExternalConfiguration {
+		t.Error("черновик перекинул флаг мимо тика")
+	}
 }

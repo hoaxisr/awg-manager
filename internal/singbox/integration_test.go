@@ -167,6 +167,7 @@ func (s *integrationSingbox) AutoRestartIfCrashed(_ context.Context) (bool, bool
 	return false, false, nil // integration env: никаких сайд-эффектов от reconcile
 }
 func (s *integrationSingbox) CrashStats() (int, string, time.Time) { return 0, "", time.Time{} }
+func (s *integrationSingbox) TunExternalConfig() (bool, bool)      { return false, true }
 
 // noopWANIPCollector is a test double that returns no WAN IPs. Wired
 // into router.Deps so NewService doesn't fall back to the production

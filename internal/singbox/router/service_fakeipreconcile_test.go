@@ -798,3 +798,147 @@ func TestReconcileFakeIPTun_HealsMissingUDPTimeoutRule(t *testing.T) {
 		t.Errorf("второй тик без изменений переписал слот (before=%v after=%v)", before.ModTime(), afterStat.ModTime())
 	}
 }
+
+// fakeip: адрес tun'а, снятый мимо NDMS, повторяется через NDMS, а флаг
+// external_configuration доводится до пиннутого бинаря (см. policy-tun-близнецы).
+func TestReconcileFakeIPTun_HealsTunAddressAndExternalConfiguration(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	provisionForDisable(t, h)
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	h.svc.deps.Singbox.(*fakeSingbox).tunHotReload = true
+	stubTunKernelAddrs(t)
+	stubExternalFlipFast(t)
+	h.log.calls = nil
+
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+	if !h.log.has("SetAddress:OpkgTun0:172.18.0.1:255.255.255.252") {
+		t.Errorf("IPv4 не повторён через NDMS: %v", h.log.calls)
+	}
+	raw, err := os.ReadFile(filepath.Join(h.dir, "21-fakeip.json"))
+	if err != nil {
+		t.Fatalf("read active: %v", err)
+	}
+	cfg, err := parseRouterConfigBytes(raw)
+	if err != nil {
+		t.Fatalf("parse active: %v", err)
+	}
+	ok := false
+	for _, in := range cfg.Inbounds {
+		if in.Tag == "tun-in" {
+			ok = in.ExternalConfiguration
+		}
+	}
+	if !ok {
+		t.Error("флаг external_configuration не доведён до tun-in слота 21")
+	}
+}
+
+// fakeipTunExternal читает флаг external_configuration tun-in из слота 21.
+func fakeipTunExternal(t *testing.T, h *fakeIPEnableHarness) bool {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(h.dir, "21-fakeip.json"))
+	if err != nil {
+		t.Fatalf("read active: %v", err)
+	}
+	cfg, err := parseRouterConfigBytes(raw)
+	if err != nil {
+		t.Fatalf("parse active: %v", err)
+	}
+	for _, in := range cfg.Inbounds {
+		if in.Tag == "tun-in" {
+			return in.ExternalConfiguration
+		}
+	}
+	t.Fatal("tun-in отсутствует в слоте 21")
+	return false
+}
+
+// Правка конфига fakeip пользователем не переключает флаг: переход на него под
+// живым инстансом без флага снимает адрес, и закрывает этот переход только тик
+// (completeExternalFlip). Overlay переносит флаг из слота как есть.
+func TestFakeIPWithConfig_OverlayKeepsExternalConfiguration(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	provisionForDisable(t, h) // бинарь не пиннутый — флаг false
+	sb := h.svc.deps.Singbox.(*fakeSingbox)
+	sb.tunHotReload = true // бинарь обновили, тик ещё не прошёл
+
+	noop := func(*RouterConfig) error { return nil }
+	if err := h.svc.fakeipWithConfig(context.Background(), "test", noop); err != nil {
+		t.Fatalf("fakeipWithConfig: %v", err)
+	}
+	if fakeipTunExternal(t, h) {
+		t.Error("правка пользователя включила флаг мимо тика")
+	}
+
+	// Флаг уже стоит (тик прошёл) — правка его не снимает.
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	stubTunKernelAddrs(t, "172.18.0.1", "fdfe:dcba:9876::1")
+	stubExternalFlipFast(t)
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+	if !fakeipTunExternal(t, h) {
+		t.Fatal("фикстура: тик обязан включить флаг")
+	}
+	sb.tunHotReload = false
+	if err := h.svc.fakeipWithConfig(context.Background(), "test", noop); err != nil {
+		t.Fatalf("fakeipWithConfig (2): %v", err)
+	}
+	if !fakeipTunExternal(t, h) {
+		t.Error("правка пользователя сняла флаг мимо тика")
+	}
+}
+
+func TestFakeIPEnable_WritesExternalConfiguration(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	h.svc.deps.Singbox.(*fakeSingbox).tunHotReload = true
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(h.dir, "21-fakeip.json"))
+	if err != nil {
+		t.Fatalf("read active: %v", err)
+	}
+	cfg, err := parseRouterConfigBytes(raw)
+	if err != nil {
+		t.Fatalf("parse active: %v", err)
+	}
+	found := false
+	for _, in := range cfg.Inbounds {
+		if in.Tag == "tun-in" {
+			found = in.ExternalConfiguration
+		}
+	}
+	if !found {
+		t.Error("включение не записало external_configuration в tun-in")
+	}
+}
+
+// Тиковый heal адреса в fakeip — без перехода (флаг уже стоит).
+func TestReconcileFakeIPTun_HealsTunAddressWithoutFlip(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	h.svc.deps.Singbox.(*fakeSingbox).tunHotReload = true
+	provisionForDisable(t, h)
+	if !fakeipTunExternal(t, h) {
+		t.Fatal("фикстура: флаг после включения")
+	}
+	all, _ := h.store.Load()
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	stubTunKernelAddrs(t, "fdfe:dcba:9876::1")
+	applies := stubExternalFlipApply(t, nil)
+	h.log.calls = nil
+
+	if err := h.svc.reconcileFakeIPTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcileFakeIPTun: %v", err)
+	}
+	if !h.log.has("SetAddress:OpkgTun0:172.18.0.1:255.255.255.252") {
+		t.Errorf("IPv4 не возвращён тиком: %v", h.log.calls)
+	}
+	if *applies != 0 {
+		t.Errorf("без перехода применять нечего, применений %d", *applies)
+	}
+}

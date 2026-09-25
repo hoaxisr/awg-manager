@@ -64,8 +64,9 @@ type Orchestrator struct {
 
 	// holds > 0 подавляет debounce-reload: продюсер, записавший слот во время
 	// перехода режима, не должен дёргать движок посреди чужой транзакции (при
-	// живом tun каждый такой reload — полный Stop+Start). Подавленная запись
-	// помечается в pendingReload и применяется одним reload'ом на release.
+	// живом tun на не пиннутом бинаре каждый такой reload — полный
+	// Stop+Start). Подавленная запись помечается в pendingReload и
+	// применяется одним reload'ом на release.
 	// ReloadNow под hold НЕ подавляется: он явный и сам применяет всё
 	// накопленное, поэтому сбрасывает pendingReload.
 	holds         int
@@ -73,9 +74,13 @@ type Orchestrator struct {
 
 	// prevHasTun records whether the LAST applied config had a tun
 	// inbound. Reload compares it against the new config's tun presence:
-	// a toggle (added or removed) forces a restart because sing-box
-	// cannot add/remove a tun inbound via SIGHUP. Guarded by o.mu.
+	// a toggle (added or removed) forces a restart unless tunHotReload says
+	// the binary handles it via SIGHUP. Guarded by o.mu.
 	prevHasTun bool
+
+	// tunHotReload, when non-nil and true, lets a tun toggle go through
+	// SIGHUP (пиннутый бинарь, стенд 25.09.2026). Guarded by o.mu.
+	tunHotReload func() bool
 
 	// lastReloadValidation stores the ValidationResult of the most
 	// recent Reload that was SKIPPED because validateLocked failed
@@ -101,6 +106,14 @@ func (o *Orchestrator) SetLogger(fn func(level string, msg string)) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.logf = fn
+}
+
+// SetTunHotReload registers the predicate that lets a tun inbound toggle be
+// applied by SIGHUP instead of Stop+Start.
+func (o *Orchestrator) SetTunHotReload(fn func() bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.tunHotReload = fn
 }
 
 // SetShouldRun registers a predicate consulted before Reload starts a
@@ -130,8 +143,8 @@ func (o *Orchestrator) LastReloadValidation() *ValidationResult {
 }
 
 // CurrentHasTun reports whether the LAST applied config had a tun inbound.
-// Consumers (the Process reload path) use it to choose restart-over-SIGHUP:
-// sing-box cannot hot-reload a tun inbound. Safe for concurrent callers.
+// Consumers (the Process reload path) use it to choose restart-over-SIGHUP
+// for a binary that cannot hot-reload a tun inbound. Safe for concurrent callers.
 func (o *Orchestrator) CurrentHasTun() bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()

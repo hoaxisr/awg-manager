@@ -138,7 +138,8 @@ func (s *ServiceImpl) SwitchRoutingMode(ctx context.Context, target string) erro
 	// Переход пишет слоты по нескольку раз (teardown, провижининг, примирение
 	// базы на выходе из Disable/Enable) и длится дольше окна debounce, поэтому
 	// без hold чужой reload прилетает посреди транзакции — а при живом tun
-	// каждый reload это полный Stop+Start движка. Явные applyConfigNow внутри
+	// каждый reload перезапускает стек tun (SIGHUP или, для не пиннутого
+	// бинаря, Stop+Start). Явные applyConfigNow внутри
 	// Enable/Disable под hold работают как раньше; накопленное применяется
 	// одним reload'ом на выходе.
 	if s.deps.Orch != nil {

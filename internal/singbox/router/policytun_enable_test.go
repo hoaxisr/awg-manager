@@ -116,23 +116,13 @@ func newPolicyTunEnableHarness(t *testing.T, failAt string) *policyTunEnableHarn
 	svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{}}
 	svc.deps.FakeIPTun = DefaultFakeIPTunParams()
 
-	// Carrier readiness → ready; the addr flush records into the same log.
+	// Carrier readiness → ready.
 	stubTunReadyProbe(t, func(string) bool { return true })
 	// Отсев ingress-ссылок по /sys (F381) в этих тестах не проверяется —
 	// «не знаем», иначе фиктивные имена вроде nwg3 отсеивались бы машиной.
 	stubIngressLinks(t)
 	// Orphan-netdev presence read is host-only (`ip link show`); default absent.
 	stubLinkAbsent(t)
-	old := fakeIPAddrFlush
-	fakeIPAddrFlush = func(_ context.Context, iface string) error {
-		log.add("Flush:" + iface)
-		if failAt == "Flush" {
-			return errors.New("injected: Flush")
-		}
-		return nil
-	}
-	t.Cleanup(func() { fakeIPAddrFlush = old })
-
 	return &policyTunEnableHarness{svc: svc, log: log, opkg: opkg, store: store, dir: dir}
 }
 
@@ -216,9 +206,8 @@ func TestPolicyTunEnable_ProvisionOrder(t *testing.T) {
 	mustOrderCalls(t, h.log, "SetPermitACL:"+ndmsName, "SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252")
 	mustOrderCalls(t, h.log, "SetAddress:"+ndmsName+":172.18.0.1:255.255.255.252", "SetMTU:"+ndmsName+":1500")
 	mustOrderCalls(t, h.log, "SetMTU:"+ndmsName+":1500", "InterfaceUp:"+ndmsName)
-	mustOrderCalls(t, h.log, "InterfaceUp:"+ndmsName, "Flush:"+iface)
 	// Default route lands only AFTER the slot write + carrier readiness.
-	mustOrderCalls(t, h.log, "Flush:"+iface, "SetDefaultRoute:"+ndmsName)
+	mustOrderCalls(t, h.log, "InterfaceUp:"+ndmsName, "SetDefaultRoute:"+ndmsName)
 	mustOrderCalls(t, h.log, "SetDefaultRoute:"+ndmsName, "SetIPv6DefaultRoute:"+ndmsName)
 
 	// Slot 20 stays the active routing slot and carries the tun inbound.
@@ -391,7 +380,7 @@ func TestPolicyTunEnable_IdempotentWhenLive(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPolicyTunEnable_RollbackOnFailure(t *testing.T) {
-	steps := []string{"Create", "SetIPGlobal", "SetPermitACL", "SetAddress", "SetMTU", "InterfaceUp", "Flush", "SetDefaultRoute", "SetIPv6DefaultRoute"}
+	steps := []string{"Create", "SetIPGlobal", "SetPermitACL", "SetAddress", "SetMTU", "InterfaceUp", "SetDefaultRoute", "SetIPv6DefaultRoute"}
 	for _, step := range steps {
 		t.Run(step, func(t *testing.T) {
 			h := newPolicyTunEnableHarness(t, step)

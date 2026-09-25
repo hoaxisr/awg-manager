@@ -145,6 +145,9 @@ func newTestIPTables(fe *fakeExec) *IPTables {
 // comes up after a few polls" or "sing-box never comes up" can supply
 // their own callback without touching the rest of the stub.
 type fakeSingbox struct {
+	tunHotReload   bool
+	versionUnknown bool
+
 	dir         string
 	binary      string
 	lastErr     string
@@ -220,6 +223,10 @@ func (f *fakeSingbox) AutoRestartIfCrashed(_ context.Context) (bool, bool, error
 
 func (f *fakeSingbox) CrashStats() (int, string, time.Time) {
 	return f.crashCount, f.lastCrashReason, f.restartSuppressedUntil
+}
+
+func (f *fakeSingbox) TunExternalConfig() (bool, bool) {
+	return f.tunHotReload, !f.versionUnknown
 }
 
 // newTestSingbox creates a fakeSingbox backed by a temp directory.
