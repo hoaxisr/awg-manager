@@ -369,7 +369,7 @@
 
 	{#if !readonly && tunTouched}
 		<div class="feedback warn">
-			Изменение tun-inbound вызовет полный перезапуск sing-box (SIGHUP его не подхватывает).
+			Изменение tun-inbound перезагрузит sing-box — соединения через этот tun оборвутся.
 		</div>
 	{/if}
 

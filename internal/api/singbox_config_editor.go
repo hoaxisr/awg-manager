@@ -373,7 +373,7 @@ func (h *SingboxConfigEditorHandler) CheckUserConfig(w http.ResponseWriter, r *h
 // ApplyUserConfig commits the pending draft.
 //
 //	@Summary		Apply user config slot draft
-//	@Description	Валидирует черновик (кросс-слот + sing-box check) и атомарно коммитит pending → active. Отключённый слот включается ПОСЛЕ успешного apply (провал валидации оставляет слот припаркованным, старый конфиг не воскресает). В 200-ответе могут быть advisory-предупреждения (warnings). Применение — debounced SIGHUP; добавление/удаление tun-inbound вызовет полный рестарт sing-box.
+//	@Description	Валидирует черновик (кросс-слот + sing-box check) и атомарно коммитит pending → active. Отключённый слот включается ПОСЛЕ успешного apply (провал валидации оставляет слот припаркованным, старый конфиг не воскресает). В 200-ответе могут быть advisory-предупреждения (warnings). Применение — debounced SIGHUP; при tun-inbound на бинаре, отличном от пиннутого, — полный рестарт sing-box.
 //	@Tags			singbox-config
 //	@Produce		json
 //	@Security		CookieAuth
