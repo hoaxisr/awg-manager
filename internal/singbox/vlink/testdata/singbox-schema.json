@@ -9090,6 +9090,9 @@
             "multi_queue": {
               "type": "boolean"
             },
+            "external_configuration": {
+              "type": "boolean"
+            },
             "platform": {
               "$ref": "#/$defs/TunPlatformOptions"
             }
@@ -19574,5 +19577,5 @@
       ]
     }
   },
-  "x-singbox-version": "1.15.0-alpha.8-awgm.27"
+  "x-singbox-version": "1.15.0-alpha.8-awgm.29"
 }
