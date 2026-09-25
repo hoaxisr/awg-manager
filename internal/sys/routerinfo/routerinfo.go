@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 )
@@ -212,7 +213,7 @@ func fetchRCIVersion() *rciVersionWire {
 }
 
 func rciGetJSON(path string, dst any) error {
-	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	client := &http.Client{Timeout: 1500 * time.Millisecond, Transport: transport.SharedTransport()}
 	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:79/rci"+path, nil)
 	if err != nil {
 		return err
@@ -234,7 +235,7 @@ func rciGetJSON(path string, dst any) error {
 }
 
 func rciGetRaw(path string) ([]byte, error) {
-	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	client := &http.Client{Timeout: 1500 * time.Millisecond, Transport: transport.SharedTransport()}
 	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:79/rci"+path, nil)
 	if err != nil {
 		return nil, err

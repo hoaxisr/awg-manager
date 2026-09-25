@@ -3,8 +3,10 @@ package main
 import (
 	"path/filepath"
 
+	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
@@ -33,6 +35,7 @@ func applyDataDir(dataDir string) {
 	obfuscator.ConfDir = filepath.Join(dataDir, "obfuscator")
 	kmod.ModulesDir = filepath.Join(dataDir, "modules")
 	router.SetDataDir(dataDir)
+	ndmstransport.SetTokenFile(filepath.Join(dataDir, storage.RCITokenFile))
 
 	if dataDir == defaultDataDir {
 		return

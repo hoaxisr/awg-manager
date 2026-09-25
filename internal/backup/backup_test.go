@@ -348,7 +348,7 @@ func tarNames(t *testing.T, archive []byte) []string {
 	}
 }
 
-// Секрет устройства в бэкап не едет: архив уходит в поддержку и в облако.
+// Секрет устройства и токен RCI в бэкап не едут: архив уходит в поддержку и в облако.
 // settings.json проверяется тем же тестом намеренно — иначе shouldSkip,
 // отсеивающий вообще всё, оставил бы тест зелёным.
 func TestExportSkipsDeviceKey(t *testing.T) {
@@ -362,6 +362,9 @@ func TestExportSkipsDeviceKey(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dataDir, storage.DeviceKeyFile)); err != nil {
 		t.Fatalf("секрет не создан, тест бессмысленен: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(dataDir, storage.RCITokenFile), []byte("tok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	var buf bytes.Buffer
 	if err := Export(dataDir, "2.18.2", &buf); err != nil {
@@ -371,8 +374,8 @@ func TestExportSkipsDeviceKey(t *testing.T) {
 	names := tarNames(t, buf.Bytes())
 	settingsFound := false
 	for _, name := range names {
-		if name == storage.DeviceKeyFile {
-			t.Fatalf("секрет устройства попал в архив: %v", names)
+		if name == storage.DeviceKeyFile || name == storage.RCITokenFile {
+			t.Fatalf("секрет попал в архив: %v", names)
 		}
 		if name == "settings.json" {
 			settingsFound = true

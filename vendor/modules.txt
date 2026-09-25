@@ -56,6 +56,10 @@ github.com/yosida95/uritemplate/v3
 ## explicit; go 1.20
 go.uber.org/goleak
 go.uber.org/goleak/internal/stack
+# golang.org/x/crypto v0.52.0
+## explicit; go 1.25.0
+golang.org/x/crypto/argon2
+golang.org/x/crypto/blake2b
 # golang.org/x/net v0.55.0
 ## explicit; go 1.25.0
 golang.org/x/net/bpf

@@ -321,6 +321,9 @@ func shouldSkip(rel string) bool {
 	if rel == storage.DeviceKeyFile || strings.HasPrefix(rel, storage.DeviceKeyFile+".") {
 		return true
 	}
+	if rel == storage.RCITokenFile {
+		return true
+	}
 	if rel == "run" || strings.HasPrefix(rel, "run/") {
 		return true
 	}

@@ -19,6 +19,10 @@ import (
 // должен, а совпадение имени по литералу в двух пакетах развалится молча.
 const DeviceKeyFile = ".device-key"
 
+// RCITokenFile — токен доступа к RCI (KeeneticOS 5.2+), см. ndms/transport/token.go.
+// Привязан к выпустившему роутеру и даёт права admin: в бэкап не едет.
+const RCITokenFile = "rci-token"
+
 // DeviceKeyLen — длина секрета, AES-256.
 const DeviceKeyLen = 32
 

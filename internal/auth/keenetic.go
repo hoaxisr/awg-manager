@@ -154,13 +154,22 @@ func (c *KeeneticClient) Authenticate(ctx context.Context, login, password strin
 	authURL := fmt.Sprintf("http://%s%s", addr, authEndpoint)
 
 	// Step 1: GET /auth to get challenge, realm and cookies
-	challenge, realm, cookies, err := c.getChallenge(ctx, authURL)
+	challenge, realm, ndw4, cookies, err := c.getChallenge(ctx, authURL)
 	if err != nil {
 		// If we get 200 on GET, auth is disabled or already authenticated
 		if errors.Is(err, errAuthDisabled) {
 			return nil
 		}
 		return fmt.Errorf("get challenge from %s: %w", authURL, err)
+	}
+	if ndw4 {
+		if err := c.authenticateNDW4(ctx, authURL, login, password, cookies); err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
+		}
+		return nil
+	}
+	if challenge == "" || realm == "" {
+		return fmt.Errorf("get challenge from %s: missing challenge or realm headers", authURL)
 	}
 
 	// Step 2: Calculate hashed password
@@ -181,41 +190,46 @@ var errAuthDisabled = fmt.Errorf("auth disabled")
 var ErrInvalidCredentials = fmt.Errorf("invalid credentials")
 
 // getChallenge performs GET /auth and extracts challenge/realm from 401 response.
+// ndw4 reports that the router offers x-ndw4-interactive (5.2+).
 // Also returns cookies that must be sent with POST request.
-func (c *KeeneticClient) getChallenge(ctx context.Context, authURL string) (challenge, realm string, cookies []*http.Cookie, err error) {
+func (c *KeeneticClient) getChallenge(ctx context.Context, authURL string) (challenge, realm string, ndw4 bool, cookies []*http.Cookie, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, authURL, nil)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", false, nil, err
 	}
 	req.Header.Set("User-Agent", appver.UA())
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("request failed: %w", err)
+		return "", "", false, nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// 200 means auth is disabled or user already authenticated
 	if resp.StatusCode == http.StatusOK {
-		return "", "", nil, errAuthDisabled
+		return "", "", false, nil, errAuthDisabled
 	}
 
 	// 401 is expected - extract challenge and realm
 	if resp.StatusCode != http.StatusUnauthorized {
-		return "", "", nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		return "", "", false, nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 
 	challenge = strings.TrimSpace(resp.Header.Get("X-NDM-Challenge"))
 	realm = strings.TrimSpace(resp.Header.Get("X-NDM-Realm"))
-
-	if challenge == "" || realm == "" {
-		return "", "", nil, fmt.Errorf("missing challenge or realm headers")
+	// Endpoint из предложения («endpoint="/auth"») не разбираем: на стенде он
+	// всегда /auth, а адрес из заголовка — лишний путь увести креды не туда.
+	for _, v := range resp.Header.Values("WWW-Authenticate") {
+		scheme, _, _ := strings.Cut(strings.TrimSpace(v), " ")
+		if strings.EqualFold(scheme, "x-ndw4-interactive") {
+			ndw4 = true
+		}
 	}
 
 	// Get cookies from response (needed for POST)
 	cookies = resp.Cookies()
 
-	return challenge, realm, cookies, nil
+	return challenge, realm, ndw4, cookies, nil
 }
 
 // hashPassword calculates the Keenetic password hash.

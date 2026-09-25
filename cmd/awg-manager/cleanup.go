@@ -232,6 +232,11 @@ func runCleanup(dataDir string) {
 		fmt.Fprintf(os.Stderr, "save config after tun cleanup: %v\n", err)
 	}
 
+	// Токен RCI — последним: всё выше ходит в RCI с ним.
+	if err := ndmstransport.RevokeToken(); err != nil {
+		fmt.Fprintf(os.Stderr, "revoke rci token: %v\n", err)
+	}
+
 	// Remove all config/runtime files
 	fmt.Println("Cleaning up files...")
 	os.RemoveAll(filepath.Join(dataDir, "tunnels"))
