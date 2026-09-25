@@ -137,8 +137,9 @@ var modelToSoC = map[string]SoC{
 	"4110": SoCMT7981, // WBR3000UAX (uses KN-3811 module)
 	"4410": SoCMT7981, // Buddy 6 SE
 
-	// MT7988 — AARCH64 (1 model)
+	// MT7988 — AARCH64 (2 models)
 	"1812": SoCMT7988, // Ultra / Titan
+	"4210": SoCMT7988, // Titan SE (uses KN-1812 module)
 }
 
 // modelNumberRegex extracts digits from KN-xxxx or NC-xxxx format.

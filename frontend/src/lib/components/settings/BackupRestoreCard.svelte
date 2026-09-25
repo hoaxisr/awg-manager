@@ -90,8 +90,10 @@
 	<SettingsSectionLabel label="Резервное копирование" icon={Database} tone="blue" header />
 
 	<p class="backup-lead">
-		Полная копия каталога данных awg-manager: туннели, WDTT/FreeTurn, sing-box, маршруты и настройки.
-		Кэш sing-box, pid-файлы и служебный каталог run/ не включаются.
+		Копия данных awg-manager: туннели, WDTT/FreeTurn, конфигурация sing-box, маршруты и настройки.
+		Не включаются файлы, собранные под этот роутер (модули ядра, бинарь sing-box), кэш sing-box,
+		pid-файлы и служебный каталог run/: при восстановлении остаются свои, а на новом роутере
+		sing-box нужно поставить заново кнопкой.
 		Перед созданием или восстановлением кратковременно останавливаются связанные процессы;
 		после восстановления выполняется холодный перезапуск с синхронизацией портов linked-туннелей.
 	</p>
@@ -124,8 +126,8 @@
 		<div class="flex flex-col gap-1">
 			<span class="font-medium">Восстановление</span>
 			<span class="setting-description">
-				Заменит текущие данные; перед применением старый каталог сохранится как
-				<code>awg-manager.pre-restore-*</code>
+				Заменит текущие данные. Чтобы можно было вернуться, сначала сохраните резервную
+				копию.
 			</span>
 		</div>
 		<Button variant="danger" size="sm" loading={restoring} onclick={openRestorePicker}>
@@ -186,11 +188,6 @@
 	/* File input is the last child — keep row padding like other cards. */
 	.backup-card > .setting-row:last-of-type {
 		padding-bottom: 0;
-	}
-
-	.setting-description code {
-		font-family: var(--font-mono);
-		font-size: 0.6875rem;
 	}
 
 	.sr-only {

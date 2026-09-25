@@ -51,8 +51,10 @@ curl -sL https://raw.githubusercontent.com/hoaxisr/awg-manager/develop/scripts/i
 
 ```sh
 opkg remove awg-manager
-rm -rf /opt/etc/awg-manager
+rm -rf /opt/etc/awg-manager /opt/etc/awg-manager.pre-restore-*
 ```
+
+`awg-manager.pre-restore-*` — копии каталога данных, которые оставляло восстановление из бэкапа в версиях до 2.19.10.
 
 ---
 

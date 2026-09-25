@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/backup"
 	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 )
@@ -72,6 +73,10 @@ func main() {
 	// Deferred cleanups collected by the setup phases run when the HTTP
 	// server returns — same LIFO order the original in-main defers had.
 	defer a.runOnExit()
+
+	// Остатки восстановлений бэкапа — до выбора модуля: откатные копии прежних
+	// версий могли съесть место на /opt, и свой модуль из пакета не встал бы.
+	a.prunedRestoreDirs = backup.PruneRestoreLeftovers(a.dataDir)
 
 	a.setupCore()
 	a.setupNDMS()

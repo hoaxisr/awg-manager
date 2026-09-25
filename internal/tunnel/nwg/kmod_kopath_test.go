@@ -67,6 +67,16 @@ func TestResolveKoPathFor(t *testing.T) {
 			wantErr: "mt7981",
 		},
 		{
+			// #953: Titan SE не было в карте SoC — NativeWG отказывал с
+			// «не значится в карте SoC». Его сборка совпадает с KN-1812, под
+			// которую и собран aarch64 arch-default. SoC — из настоящей карты.
+			name:     "Titan SE (NC-4210) gets the mt7988 arch default",
+			model:    "KN-4210",
+			soc:      kmod.ParseModelToSoC("NC-4210"),
+			exists:   have(),
+			wantPath: defaultKoPath,
+		},
+		{
 			name:     "unknown hardware still gets the arch default",
 			model:    "",
 			soc:      kmod.SoCUnknown,

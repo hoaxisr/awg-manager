@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -130,122 +132,186 @@ func Export(dataDir, appVersion string, w io.Writer) error {
 	})
 }
 
-// Restore replaces dataDir contents from r (gzip tar). Current dir is renamed aside first.
+// restoreTmpDir — каталог распаковки архива ВНУТРИ каталога данных: всё
+// временное живёт там же, где данные, и уходит вместе с ними при удалении
+// каталога. В архив не попадает и при очистке не трогается (shouldSkip).
+const restoreTmpDir = ".restore-tmp"
+
+var restoreMu sync.Mutex
+
+// Restore заменяет данные из архива r (gzip tar) на месте, не подменяя каталог:
+//  1. архив распаковывается в <dataDir>/.restore-tmp и проверяется манифест —
+//     при отказе текущие данные не тронуты;
+//  2. из каталога данных удаляется всё, что несёт бэкап; то, чего он не несёт
+//     (секрет устройства, модули ядра, бинарь sing-box, run/, кеши —
+//     shouldSkip), остаётся на месте и не переносится;
+//  3. содержимое архива переносится на место, временный каталог удаляется.
+//
+// Откатной копии нет: откат — бэкап, выгруженный пользователем через UI.
+// Прежняя схема (подмена всего каталога и отложенная копия
+// <dataDir>.pre-restore-* рядом) оставляла копию данных, которую не удалял ни
+// opkg remove, ни rm -rf каталога, — с чужим модулем ядра внутри (#953).
+// Оборванное на шаге 2–3 восстановление оставляет каталог частично
+// заменённым; лечится повторным восстановлением того же файла.
 func Restore(dataDir string, r io.Reader) error {
+	// Временный каталог один на каталог данных — два одновременных
+	// восстановления сносили бы распаковку друг друга.
+	restoreMu.Lock()
+	defer restoreMu.Unlock()
 	dataDir = filepath.Clean(strings.TrimSpace(dataDir))
 	if dataDir == "" {
 		return fmt.Errorf("data-dir не задан")
 	}
-	parent := filepath.Dir(dataDir)
-	staging := filepath.Join(parent, ".awg-manager-restore-"+time.Now().UTC().Format("20060102-150405"))
-	previous := filepath.Join(parent, filepath.Base(dataDir)+".pre-restore-"+time.Now().UTC().Format("20060102-150405"))
-
-	if err := extractArchive(r, staging); err != nil {
-		_ = os.RemoveAll(staging)
+	_, statErr := os.Stat(dataDir)
+	created := os.IsNotExist(statErr)
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return err
+	}
+	staging := filepath.Join(dataDir, restoreTmpDir)
+	_ = os.RemoveAll(staging) // остаток прерванного восстановления
+	defer os.RemoveAll(staging)
+
+	// Отвергнутый архив не оставляет следов: каталог, созданный под него,
+	// удаляется вместе с распакованным.
+	reject := func(err error) error {
+		if created {
+			_ = os.RemoveAll(dataDir)
+		}
+		return err
+	}
+	if err := extractArchive(r, staging); err != nil {
+		return reject(err)
 	}
 	if err := validateStaging(staging); err != nil {
-		_ = os.RemoveAll(staging)
-		return err
+		return reject(err)
 	}
-
-	hadPrevious := false
-	if _, err := os.Stat(dataDir); err == nil {
-		if err := os.Rename(dataDir, previous); err != nil {
-			_ = os.RemoveAll(staging)
-			return fmt.Errorf("не удалось сохранить текущие данные: %w", err)
-		}
-		hadPrevious = true
-	} else if !os.IsNotExist(err) {
-		_ = os.RemoveAll(staging)
-		return err
+	// С этого места данные меняются: отказ оставляет их частично
+	// заменёнными, и об этом надо сказать прямо — лечится повтором.
+	if _, err := clearBackedUp(dataDir, ""); err != nil {
+		return fmt.Errorf("данные заменены частично, повторите восстановление тем же файлом: %w", err)
 	}
-
-	if err := os.Rename(staging, dataDir); err != nil {
-		// Best-effort rollback.
-		_ = os.Rename(previous, dataDir)
-		_ = os.RemoveAll(staging)
-		return fmt.Errorf("не удалось применить резервную копию: %w", err)
+	if err := moveInto(staging, dataDir, ""); err != nil {
+		return fmt.Errorf("данные заменены частично, повторите восстановление тем же файлом: %w", err)
 	}
-	if hadPrevious {
-		// Секрет устройства в архив не попадает по построению (shouldSkip),
-		// поэтому после восстановления СВОЕГО бэкапа на СВОЁМ роутере его
-		// берём из отложенного каталога — иначе зашифрованный им ключ
-		// подписки перестанет читаться.
-		//
-		// Копия, а не переименование: отложенный каталог остаётся на диске
-		// как путь ручного отката (prunePreviousRestores), а после переноса
-		// в нём лежал бы settings.json с шифротекстом и НЕ лежал бы секрет,
-		// которым он зашифрован, — откат возвращал бы нечитаемый ключ
-		// подписки. Почему именно копия, а не жёсткая ссылка — в
-		// carryDeviceKey.
-		//
-		// Ошибка намеренно молчит и восстановление НЕ отменяет: данные уже
-		// на месте и валидны, а единственное следствие — ключ подписки
-		// станет нерасшифровываемым, и этот случай спроектирован (наружу
-		// уходит usable:false). Ронять из-за него удавшийся restore хуже.
-		_ = carryDeviceKey(previous, dataDir)
-	}
-	prunePreviousRestores(parent, filepath.Base(dataDir), previous)
 	if err := WritePostRestoreMarker(dataDir); err != nil {
 		return fmt.Errorf("не удалось записать маркер post-restore: %w", err)
 	}
 	return nil
 }
 
-// carryDeviceKey копирует секрет устройства из prev в next. Копия, а не
-// жёсткая ссылка: под ссылкой это один inode, и правка файла НА МЕСТЕ портила
-// бы обе копии разом — карантин унёс бы имя из каталога данных и завёл там
-// новый секрет, а в откатной копии остался бы мусор, то есть откат вернул бы
-// нерасшифровываемый ключ подписки. Цена — 32 байта секрета в памяти этого
-// пакета; тот же секрет и так живёт в памяти у storage.DeviceCipher, а
-// независимость откатной копии дороже.
-//
-// Пишет не этот пакет, а storage.PublishDeviceKey: дисциплина записи файла
-// секрета одна на всех владельцев. Своя запись здесь (O_CREATE|O_EXCL прямо
-// на целевом имени) при отказе — например, кончилось место — оставляла под
-// именем файл нулевой длины, и ближайшее шифрование уносило эту пустышку в
-// карантин с сообщением «ключ подписки расшифровать больше нечем».
-// PublishDeviceKey при отказе не оставляет ничего, а занятое целевое имя для
-// него ошибка: если секрет в целевом каталоге почему-то уже есть, остаётся
-// ОН — свой секрет старше архива, и именно им зашифровано всё, что
-// пользователь сохранит дальше.
-func carryDeviceKey(prev, next string) error {
-	f, err := os.Open(filepath.Join(prev, storage.DeviceKeyFile))
+// clearBackedUp удаляет из root/rel всё, что несёт бэкап, и оставляет то, что
+// он не несёт (shouldSkip). Возвращает, осталось ли что-то внутри: каталог,
+// в котором лежит оставляемое (singbox/ с бинарём), удалять нельзя.
+func clearBackedUp(root, rel string) (kept bool, err error) {
+	entries, err := os.ReadDir(filepath.Join(root, rel))
 	if err != nil {
-		return err
+		return false, err
 	}
-	defer f.Close()
-	// С границей, а не os.ReadFile: под именем секрета в откатном каталоге
-	// мог оказаться раздувшийся файл, и в память он уехал бы целиком — панель
-	// живёт на роутере со 128 МБ. Байт сверх годной длины оставлен нарочно:
-	// обрежь чтение ровно по 32, и 33-байтовый файл стал бы неотличим от
-	// годного секрета, то есть опубликовался бы как секрет.
-	raw, err := io.ReadAll(io.LimitReader(f, storage.DeviceKeyLen+1))
-	if err != nil {
-		return err
-	}
-	return storage.PublishDeviceKey(next, raw)
-}
-
-// prunePreviousRestores оставляет только последнюю копию `<name>.pre-restore-*`.
-// Без этого каждое восстановление добавляло бы ещё один полный каталог данных
-// на /opt, где места мало и чистить их некому.
-func prunePreviousRestores(parent, name, keep string) {
-	matches, err := filepath.Glob(filepath.Join(parent, name+".pre-restore-*"))
-	if err != nil {
-		return
-	}
-	for _, path := range matches {
-		if path == keep {
+	for _, e := range entries {
+		r := path.Join(rel, e.Name())
+		if r == restoreTmpDir || shouldSkip(r) {
+			kept = true
 			continue
 		}
-		_ = os.RemoveAll(path)
+		p := filepath.Join(root, r)
+		if e.IsDir() {
+			k, err := clearBackedUp(root, r)
+			if err != nil {
+				return kept, err
+			}
+			if k {
+				kept = true
+				continue
+			}
+		}
+		if err := os.RemoveAll(p); err != nil {
+			return kept, err
+		}
 	}
+	return kept, nil
+}
+
+// moveInto переносит содержимое src/rel в dst/rel. Каталоги, уже существующие
+// в dst (в них лежит оставленное), сливаются; манифест архива не переносится.
+func moveInto(src, dst, rel string) error {
+	entries, err := os.ReadDir(filepath.Join(src, rel))
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		r := path.Join(rel, e.Name())
+		if r == ManifestName {
+			continue
+		}
+		from, to := filepath.Join(src, r), filepath.Join(dst, r)
+		if e.IsDir() {
+			if info, err := os.Lstat(to); err == nil && info.IsDir() {
+				if err := moveInto(src, dst, r); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		if err := os.Rename(from, to); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PruneRestoreLeftovers удаляет остатки восстановлений: рядом с dataDir —
+// откатные копии `<name>.pre-restore-*` и временные `.awg-manager-restore-*`
+// прежних версий, внутри — `.restore-tmp` оборванного Restore. Зовётся на
+// старте демона. Без условий: оборванное восстановление — это файл бэкапа в
+// руках пользователя, прежние данные он и так заменял, а новые — в этом файле;
+// лечится повторным восстановлением. Возвращает число удалённых каталогов.
+func PruneRestoreLeftovers(dataDir string) int {
+	dataDir = filepath.Clean(strings.TrimSpace(dataDir))
+	parent := filepath.Dir(dataDir)
+	n := 0
+	for _, pattern := range []string{
+		filepath.Join(parent, filepath.Base(dataDir)+".pre-restore-*"),
+		filepath.Join(parent, ".awg-manager-restore-*"),
+		filepath.Join(dataDir, restoreTmpDir),
+	} {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		for _, path := range matches {
+			if os.RemoveAll(path) == nil {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// hardwareBound — файлы, собранные под конкретное железо: модули ядра (под
+// модель и SoC) и бинарь sing-box (под архитектуру). В архив не едут, а при
+// восстановлении остаются свои: Restore их не трогает.
+// Иначе бэкап с другого роутера сажает чужой модуль, который ядро принимает
+// молча и который вешает роутер (#953: amneziawg KN-1811 на NC-4210).
+var hardwareBound = []string{
+	"modules",
+	"singbox/sing-box",
+	"singbox/sing-box.meta.json",
+}
+
+func isHardwareBound(rel string) bool {
+	for _, p := range hardwareBound {
+		if rel == p || strings.HasPrefix(rel, p+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func shouldSkip(rel string) bool {
 	if rel == ManifestName {
+		return true
+	}
+	if isHardwareBound(rel) {
 		return true
 	}
 	// Секрет устройства привязан к установке и в бэкап не едет: архив
@@ -272,6 +338,9 @@ func shouldSkip(rel string) bool {
 		return true
 	}
 	if strings.HasSuffix(rel, ".lock") || strings.HasSuffix(rel, ".lock.d") {
+		return true
+	}
+	if rel == restoreTmpDir || strings.HasPrefix(rel, restoreTmpDir+"/") {
 		return true
 	}
 	if strings.Contains(rel, ".pre-restore-") || strings.HasPrefix(rel, ".awg-manager-restore-") {

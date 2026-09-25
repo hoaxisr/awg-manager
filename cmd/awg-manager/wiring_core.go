@@ -137,6 +137,11 @@ func (a *app) setupNDMS() {
 			"RCI не ответил, версия получена каналом "+src+": "+osdetect.ReleaseString())
 	}
 
+	// Остатки восстановлений удалены в main — здесь только след в журнале.
+	if n := a.prunedRestoreDirs; n > 0 {
+		a.bootLog.Info("startup", "", fmt.Sprintf("removed %d leftover backup-restore dir(s) of %s", n, a.dataDir))
+	}
+
 	// Load kernel module if available (before backend detection).
 	// kmod.New() reads model/SoC from ndmsinfo, so it must run after Init above.
 	a.kmodLoader = kmod.New()

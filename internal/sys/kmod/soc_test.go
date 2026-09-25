@@ -5,7 +5,7 @@ import "testing"
 func TestParseModelToSoC_Table(t *testing.T) {
 	cases := map[string]SoC{
 		"KN-1810": "mt7621", "NC-1810": "mt7621", "kn-1810": "mt7621",
-		"KN-1811": "mt7622", "KN-2710": "mt7622", "KN-1812": "mt7988",
+		"KN-1811": "mt7622", "KN-2710": "mt7622", "KN-1812": "mt7988", "NC-4210": "mt7988",
 		"ki_rb": "mt7628", "kng_re": "mt7621", "ku_rd": "mt7621",
 		"KI_RB": "", "KN-9999": "", "": "", "Keenetic Giga": "",
 		// две записи из больших групп — по одной на MT7628/MT7981

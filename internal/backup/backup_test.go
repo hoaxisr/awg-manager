@@ -9,7 +9,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -78,13 +77,14 @@ func TestExportRestoreRoundtrip(t *testing.T) {
 		t.Fatalf("fresh restore should not create pre-restore dir, got %v", matches)
 	}
 
-	// Second restore replaces existing dir and keeps pre-restore snapshot.
+	// Второе восстановление заменяет существующий каталог и откатной копии
+	// рядом не оставляет: откат — выгруженный через UI бэкап (#953).
 	if err := Restore(target, bytes.NewReader(buf.Bytes())); err != nil {
 		t.Fatalf("Restore again: %v", err)
 	}
 	matches, _ = filepath.Glob(filepath.Join(root, "restored.pre-restore-*"))
-	if len(matches) != 1 {
-		t.Fatalf("expected one pre-restore dir after overwrite, got %v", matches)
+	if len(matches) != 0 {
+		t.Fatalf("после восстановления осталась откатная копия: %v", matches)
 	}
 }
 
@@ -120,9 +120,10 @@ func TestExtractRejectsPathTraversal(t *testing.T) {
 	}
 }
 
-// Каждое восстановление оставляло полный каталог данных на /opt; ротации не
-// было. Держим только последнюю копию.
-func TestRestorePrunesOlderPreRestoreCopies(t *testing.T) {
+// Восстановление ничего не создаёт рядом с каталогом данных и не оставляет
+// в нём временного каталога: всё, что после него останется, удалит `rm -rf`
+// каталога данных (#953 — отложенная копия переживала удаление пакета).
+func TestRestoreLeavesNothingOutsideDataDir(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "awg-manager")
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
@@ -131,11 +132,6 @@ func TestRestorePrunesOlderPreRestoreCopies(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dataDir, "settings.json"), []byte(`{"version":32}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stale := filepath.Join(root, "awg-manager.pre-restore-20200101-000000")
-	if err := os.MkdirAll(stale, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
 	var buf bytes.Buffer
 	if err := Export(dataDir, "2.16.3", &buf); err != nil {
 		t.Fatal(err)
@@ -143,16 +139,38 @@ func TestRestorePrunesOlderPreRestoreCopies(t *testing.T) {
 	if err := Restore(dataDir, bytes.NewReader(buf.Bytes())); err != nil {
 		t.Fatal(err)
 	}
-
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Fatalf("старая копия не удалена: %v", err)
-	}
-	kept, err := filepath.Glob(filepath.Join(root, "awg-manager.pre-restore-*"))
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(kept) != 1 {
-		t.Fatalf("ожидали ровно одну копию, получили %v", kept)
+	if len(entries) != 1 || entries[0].Name() != "awg-manager" {
+		t.Fatalf("рядом с каталогом данных что-то осталось: %v", entries)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, restoreTmpDir)); !os.IsNotExist(err) {
+		t.Fatalf("временный каталог не удалён: %v", err)
+	}
+}
+
+// Старт демона чистит те же остатки и ничего не трогает в самом каталоге данных.
+func TestPruneRestoreLeftovers(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "awg-manager")
+	keep := filepath.Join(dataDir, "settings.json")
+	for _, d := range []string{dataDir, filepath.Join(root, "awg-manager.pre-restore-1"), filepath.Join(root, ".awg-manager-restore-1"), filepath.Join(dataDir, restoreTmpDir), filepath.Join(root, "other")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(keep, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if n := PruneRestoreLeftovers(dataDir); n != 3 {
+		t.Errorf("удалено %d, want 3", n)
+	}
+	for _, p := range []string{keep, filepath.Join(root, "other")} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("задето лишнее %s: %v", p, err)
+		}
 	}
 }
 
@@ -366,8 +384,8 @@ func TestExportSkipsDeviceKey(t *testing.T) {
 }
 
 // Восстановление СВОЕГО бэкапа на СВОЁМ роутере не должно ронять ключ
-// подписки: секрета в архиве нет по построению, поэтому Restore переносит
-// существующий из отложенного каталога.
+// подписки: секрета в архиве нет по построению, и Restore оставляет
+// существующий на месте.
 func TestRestoreCarriesDeviceKey(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "awg-manager")
@@ -392,7 +410,7 @@ func TestRestoreCarriesDeviceKey(t *testing.T) {
 
 	info, err := os.Stat(filepath.Join(dataDir, storage.DeviceKeyFile))
 	if err != nil {
-		t.Fatalf("секрет не перенесён: %v", err)
+		t.Fatalf("секрет не сохранился: %v", err)
 	}
 	if perm := info.Mode().Perm(); perm != 0o600 {
 		t.Fatalf("права перенесённого секрета %o, want 600", perm)
@@ -406,7 +424,7 @@ func TestRestoreCarriesDeviceKey(t *testing.T) {
 	}
 }
 
-// Восстановление в каталог, где секрета не было: переносить нечего, и это не
+// Восстановление в каталог, где секрета не было: сохранять нечего, и это не
 // повод уронить восстановление.
 func TestRestoreWithoutDeviceKeySucceeds(t *testing.T) {
 	root := t.TempDir()
@@ -560,55 +578,6 @@ func TestRestoreIgnoresDeviceKeyFromArchive(t *testing.T) {
 	})
 }
 
-// Отложенная копия <dir>.pre-restore-* оставляется на диске как путь ручного
-// отката, значит она обязана быть самодостаточной: шифротекст в её
-// settings.json должен читаться лежащим рядом секретом. Перенос секрета
-// (os.Rename) опустошал её — откат возвращал нерасшифровываемый ключ.
-func TestRestoreKeepsRollbackCopySelfSufficient(t *testing.T) {
-	root := t.TempDir()
-	dataDir := filepath.Join(root, "awg-manager")
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	token, err := storage.NewDeviceCipher(dataDir).Encrypt("vpn://test-key-rollback")
-	if err != nil {
-		t.Fatalf("Encrypt: %v", err)
-	}
-	settingsWithKey(t, dataDir, token)
-
-	var buf bytes.Buffer
-	if err := Export(dataDir, "2.18.2", &buf); err != nil {
-		t.Fatalf("Export: %v", err)
-	}
-	if err := Restore(dataDir, bytes.NewReader(buf.Bytes())); err != nil {
-		t.Fatalf("Restore: %v", err)
-	}
-
-	matches, err := filepath.Glob(filepath.Join(root, "awg-manager.pre-restore-*"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(matches) != 1 {
-		t.Fatalf("ожидали одну откатную копию, получили %v", matches)
-	}
-	previous := matches[0]
-	if _, err := os.Stat(filepath.Join(previous, storage.DeviceKeyFile)); err != nil {
-		t.Fatalf("в откатной копии нет секрета: %v", err)
-	}
-	got, err := storage.NewDeviceCipher(previous).Decrypt(keyFromSettings(t, previous))
-	if err != nil {
-		t.Fatalf("ключ подписки в откатной копии не расшифровывается: %v", err)
-	}
-	if got != "vpn://test-key-rollback" {
-		t.Fatalf("Decrypt в откатной копии = %q", got)
-	}
-	// Восстановленный каталог при этом секрет тоже видит — иначе «откат
-	// работает» куплено ценой сломанного основного пути.
-	if _, err := storage.NewDeviceCipher(dataDir).Decrypt(keyFromSettings(t, dataDir)); err != nil {
-		t.Fatalf("ключ подписки после восстановления не расшифровывается: %v", err)
-	}
-}
-
 // Карантинная копия секрета (.device-key.corrupt, куда QuarantineCorrupt
 // уносит файл негодной длины) несёт настоящий секрет и в архив не едет.
 // settings.json проверяется тем же тестом намеренно: без этого shouldSkip,
@@ -741,72 +710,6 @@ func TestRestoreRejectsAbsoluteNamesInArchive(t *testing.T) {
 	}
 }
 
-// Отложенная копия <dir>.pre-restore-* — путь ручного отката, поэтому её
-// секрет обязан быть отдельным файлом, а не вторым именем того же inode.
-// Жёсткая ссылка давала «оба имени видят секрет» сразу после Restore (что и
-// проверял TestRestoreKeepsRollbackCopySelfSufficient), но правка файла НА
-// МЕСТЕ портила обе копии разом: карантин уносил имя из dataDir, заводил там
-// новый секрет, а в откатной копии оставался мусор.
-func TestRestoreRollbackCopyIsIndependentOfDataDir(t *testing.T) {
-	root := t.TempDir()
-	dataDir := filepath.Join(root, "awg-manager")
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	token, err := storage.NewDeviceCipher(dataDir).Encrypt("vpn://test-key-independent")
-	if err != nil {
-		t.Fatalf("Encrypt: %v", err)
-	}
-	settingsWithKey(t, dataDir, token)
-	original, err := os.ReadFile(filepath.Join(dataDir, storage.DeviceKeyFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var buf bytes.Buffer
-	if err := Export(dataDir, "2.18.2", &buf); err != nil {
-		t.Fatalf("Export: %v", err)
-	}
-	if err := Restore(dataDir, bytes.NewReader(buf.Bytes())); err != nil {
-		t.Fatalf("Restore: %v", err)
-	}
-	matches, err := filepath.Glob(filepath.Join(root, "awg-manager.pre-restore-*"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(matches) != 1 {
-		t.Fatalf("ожидали одну откатную копию, получили %v", matches)
-	}
-	previous := matches[0]
-
-	// Правка НА МЕСТЕ (без O_TRUNC и без временного файла) — ровно то, что
-	// видит второе имя жёсткой ссылки и не видит копия.
-	overwriteInPlace(t, filepath.Join(dataDir, storage.DeviceKeyFile), strings.Repeat("X", len(original)))
-	if got := mustRead(t, filepath.Join(previous, storage.DeviceKeyFile)); !bytes.Equal(got, original) {
-		t.Fatalf("правка секрета в каталоге данных видна в откатной копии: копии не независимы")
-	}
-
-	overwriteInPlace(t, filepath.Join(previous, storage.DeviceKeyFile), strings.Repeat("Y", len(original)))
-	if got := mustRead(t, filepath.Join(dataDir, storage.DeviceKeyFile)); !bytes.Equal(got, []byte(strings.Repeat("X", len(original)))) {
-		t.Fatalf("правка секрета в откатной копии видна в каталоге данных: копии не независимы")
-	}
-}
-
-func overwriteInPlace(t *testing.T, path, body string) {
-	t.Helper()
-	f, err := os.OpenFile(path, os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatalf("открыть %s: %v", path, err)
-	}
-	if _, err := f.Write([]byte(body)); err != nil {
-		f.Close()
-		t.Fatalf("запись %s: %v", path, err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func mustRead(t *testing.T, path string) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(path)
@@ -814,65 +717,6 @@ func mustRead(t *testing.T, path string) []byte {
 		t.Fatalf("чтение %s: %v", path, err)
 	}
 	return raw
-}
-
-// Перенос секрета в восстановленный каталог не имеет права затереть уже
-// лежащий там секрет: свой секрет старше архива, и именно им зашифровано всё,
-// что пользователь сохранит дальше.
-func TestCarryDeviceKeyKeepsExistingTarget(t *testing.T) {
-	root := t.TempDir()
-	from := filepath.Join(root, "from")
-	to := filepath.Join(root, "to")
-	for _, dir := range []string{from, to} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(from, storage.DeviceKeyFile), []byte(strings.Repeat("A", 32)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	own := []byte(strings.Repeat("B", 32))
-	if err := os.WriteFile(filepath.Join(to, storage.DeviceKeyFile), own, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := carryDeviceKey(from, to); err == nil {
-		t.Fatal("перенос поверх существующего секрета прошёл молча")
-	}
-	if got := mustRead(t, filepath.Join(to, storage.DeviceKeyFile)); !bytes.Equal(got, own) {
-		t.Fatal("свой секрет затёрт переносом")
-	}
-}
-
-// Перенос в каталог без секрета: копия байт в байт и права 0600 — секрет не
-// имеет права стать доступным на чтение кому-то ещё.
-func TestCarryDeviceKeyCopiesBytesAndMode(t *testing.T) {
-	root := t.TempDir()
-	from := filepath.Join(root, "from")
-	to := filepath.Join(root, "to")
-	for _, dir := range []string{from, to} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	secret := []byte(strings.Repeat("S", 32))
-	if err := os.WriteFile(filepath.Join(from, storage.DeviceKeyFile), secret, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := carryDeviceKey(from, to); err != nil {
-		t.Fatalf("carryDeviceKey: %v", err)
-	}
-	if got := mustRead(t, filepath.Join(to, storage.DeviceKeyFile)); !bytes.Equal(got, secret) {
-		t.Fatalf("скопированы не те байты: %q", got)
-	}
-	info, err := os.Stat(filepath.Join(to, storage.DeviceKeyFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("права копии %o, want 600", perm)
-	}
 }
 
 // Тип и версия архива — то немногое, что отличает наш бэкап от чужого tar.gz
@@ -1096,130 +940,152 @@ func inotifyCreated(t *testing.T, fd int) []string {
 	}
 }
 
-// Т1. Отказ записи во время переноса секрета не оставляет под целевым именем
-// ни пустого, ни короткого файла. Прежняя, вторая реализация записи жила
-// здесь же (O_CREATE|O_EXCL прямо на целевом имени + Write): после EFBIG под
-// именем оставался файл нулевой длины, и ближайшее шифрование уносило эту
-// пустышку в карантин, сообщая пользователю, что прежний ключ подписки
-// расшифровать больше нечем, — из-за ВРЕМЕННОЙ нехватки места, после которой
-// повтор ещё мог сработать. Проверяется путь, который менялся: сам перенос,
-// а не соседний storage (там свойство держалось и до правки).
-func TestCarryDeviceKeyWriteFailureLeavesNothing(t *testing.T) {
-	root := t.TempDir()
-	from := filepath.Join(root, "from")
-	to := filepath.Join(root, "to")
-	for _, dir := range []string{from, to} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+// #953: модули ядра и бинарь sing-box собраны под конкретное железо — в архив
+// не едут, иначе бэкап с другого роутера сажает чужой модуль.
+func TestExportSkipsHardwareBound(t *testing.T) {
+	dataDir := t.TempDir()
+	for name, body := range map[string]string{
+		"settings.json":              `{"version":32}`,
+		"modules/amneziawg.ko":       "ko",
+		"modules/amneziawg.model":    "KN-1811",
+		"singbox/sing-box":           "elf",
+		"singbox/sing-box.meta.json": `{"version":"x"}`,
+		"singbox/config.d/20.json":   `{}`,
+	} {
+		p := filepath.Join(dataDir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	secret := bytes.Repeat([]byte("s"), storage.DeviceKeyLen)
-	if err := os.WriteFile(filepath.Join(from, storage.DeviceKeyFile), secret, 0o600); err != nil {
+	var buf bytes.Buffer
+	if err := Export(dataDir, "2.19.9", &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	names := strings.Join(tarNames(t, buf.Bytes()), " ")
+	for _, bad := range []string{"modules", "singbox/sing-box ", "sing-box.meta.json"} {
+		if strings.Contains(names+" ", bad) {
+			t.Errorf("в архиве %q: %s", bad, names)
+		}
+	}
+	if !strings.Contains(names, "singbox/config.d/20.json") {
+		t.Errorf("конфиг sing-box обязан остаться в архиве: %s", names)
+	}
+}
+
+// Бэкап старой версии уже несёт чужой модуль: при восстановлении он
+// отбрасывается, а на роутере остаются свои модуль и бинарь sing-box.
+func TestRestoreKeepsOwnHardwareBound(t *testing.T) {
+	archive := forgedArchive(t, map[string]string{
+		ManifestName:              validManifestJSON,
+		"settings.json":           `{"version":32}`,
+		"modules/amneziawg.ko":    "foreign-ko",
+		"modules/amneziawg.model": "KN-1811",
+		"singbox/sing-box":        "foreign-elf",
+	})
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "awg-manager")
+	for name, body := range map[string]string{
+		"settings.json":           `{"version":31}`,
+		"modules/amneziawg.ko":    "own-ko",
+		"modules/amneziawg.model": "KN-4210",
+		"singbox/sing-box":        "own-elf",
+	} {
+		p := filepath.Join(dataDir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Restore(dataDir, bytes.NewReader(archive)); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	for name, want := range map[string]string{
+		"settings.json":           `{"version":32}`,
+		"modules/amneziawg.ko":    "own-ko",
+		"modules/amneziawg.model": "KN-4210",
+		"singbox/sing-box":        "own-elf",
+	} {
+		if got := string(mustRead(t, filepath.Join(dataDir, name))); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// Восстановление на месте: то, что появилось после бэкапа, уходит; вложенный
+// каталог с оставляемым (singbox/ с бинарём) сливается — его конфиги
+// заменяются архивными, бинарь и run/ остаются.
+func TestRestoreReplacesInPlace(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "awg-manager")
+	write := func(files map[string]string) {
+		for name, body := range files {
+			p := filepath.Join(dataDir, name)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	write(map[string]string{
+		"settings.json":            `{"version":32}`,
+		"tunnels/awg1.json":        `{"id":"awg1"}`,
+		"singbox/config.d/20.json": `{"archived":true}`,
+	})
+	var buf bytes.Buffer
+	if err := Export(dataDir, "2.19.9", &buf); err != nil {
 		t.Fatal(err)
 	}
-
-	allow := forbidFileWrites(t)
-	err := carryDeviceKey(from, to)
-	allow()
-
-	if err == nil {
-		t.Fatal("перенос прошёл при запрете записи — отказ не смоделирован, проверка не состоялась")
+	write(map[string]string{
+		"tunnels/awg2.json":        `{"id":"awg2"}`,
+		"singbox/config.d/20.json": `{"edited":true}`,
+		"singbox/config.d/30.json": `{}`,
+		"singbox/sing-box":         "elf",
+		"run/x.pid":                "1",
+	})
+	if err := Restore(dataDir, bytes.NewReader(buf.Bytes())); err != nil {
+		t.Fatalf("Restore: %v", err)
 	}
-	entries, readErr := os.ReadDir(to)
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	for _, e := range entries {
-		info, statErr := e.Info()
-		size := int64(-1)
-		if statErr == nil {
-			size = info.Size()
+	for name, want := range map[string]string{
+		"tunnels/awg1.json":        `{"id":"awg1"}`,
+		"singbox/config.d/20.json": `{"archived":true}`,
+		"singbox/sing-box":         "elf",
+		"run/x.pid":                "1",
+	} {
+		if got := string(mustRead(t, filepath.Join(dataDir, name))); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
 		}
-		t.Fatalf("после отказа записи в целевом каталоге остался %s (%d байт): %v", e.Name(), size, err)
+	}
+	for _, gone := range []string{"tunnels/awg2.json", "singbox/config.d/30.json", ManifestName} {
+		if _, err := os.Stat(filepath.Join(dataDir, gone)); !os.IsNotExist(err) {
+			t.Errorf("%s должен исчезнуть: %v", gone, err)
+		}
 	}
 }
 
-// forbidFileWrites запрещает процессу писать в обычные файлы: RLIMIT_FSIZE=0
-// разрешает создать файл, но любая запись в него отдаёт EFBIG — так же, как
-// при кончившемся месте на флеше. Лимит процессный и снимается возвращённой
-// функцией сразу после проверяемого вызова; на stdout тестового процесса он
-// не влияет — это канал, а не обычный файл. SIGXFSZ, который ядро шлёт вместе
-// с EFBIG, перехватывается, чтобы тестовый процесс не умер от него, и
-// перехват снимается ПОСЛЕ возврата лимита: в обратном порядке любая запись,
-// попавшая в зазор, убила бы тестовый бинарь. Близнец живёт в
-// internal/storage (devicecipher_test.go): помощник тестовый и в обоих
-// пакетах неэкспортируемый.
-func forbidFileWrites(t *testing.T) func() {
-	t.Helper()
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGXFSZ)
-	var saved syscall.Rlimit
-	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &saved); err != nil {
-		t.Fatalf("getrlimit: %v", err)
-	}
-	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &syscall.Rlimit{Cur: 0, Max: saved.Max}); err != nil {
-		t.Fatalf("setrlimit: %v", err)
-	}
-	done := false
-	allow := func() {
-		if done {
-			return
+// Остаток прерванного восстановления в архив не уезжает.
+func TestExportSkipsRestoreTmp(t *testing.T) {
+	dataDir := t.TempDir()
+	for name, body := range map[string]string{"settings.json": "{}", restoreTmpDir + "/settings.json": "{}"} {
+		p := filepath.Join(dataDir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
 		}
-		done = true
-		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &saved); err != nil {
-			t.Fatalf("вернуть RLIMIT_FSIZE: %v", err)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
 		}
-		signal.Stop(sig)
 	}
-	t.Cleanup(allow)
-	return allow
-}
-
-// Т3. Секрет негодной длины из откатного каталога не публикуется под целевым
-// именем. Байты там берутся из файла как есть, и опубликованная пустышка (или
-// раздувшийся файл) прожила бы до ближайшего шифрования, которое унесло бы её
-// в карантин со словами «ключ подписки расшифровать больше нечем». Отказ
-// переноса молчит по построению — восстановление он не отменяет, — поэтому
-// проверяется не ошибка, а то, что под именем ничего не появилось.
-func TestRestoreDoesNotCarryBadLengthDeviceKey(t *testing.T) {
-	cases := []struct {
-		name string
-		size int
-	}{
-		{"пустой", 0},
-		{"раздувшийся", storage.DeviceKeyLen + 1},
+	var buf bytes.Buffer
+	if err := Export(dataDir, "2.19.9", &buf); err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			dataDir := filepath.Join(root, "awg-manager")
-			if err := os.MkdirAll(dataDir, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(dataDir, "settings.json"), []byte(`{"version":32}`), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			var buf bytes.Buffer
-			if err := Export(dataDir, "2.18.2", &buf); err != nil {
-				t.Fatalf("Export: %v", err)
-			}
-			// Секрет кладётся после выгрузки нарочно: в архив он всё равно не
-			// едет, а в откатном каталоге оказаться обязан.
-			if err := os.WriteFile(filepath.Join(dataDir, storage.DeviceKeyFile), bytes.Repeat([]byte("x"), tc.size), 0o600); err != nil {
-				t.Fatal(err)
-			}
-
-			if err := Restore(dataDir, bytes.NewReader(buf.Bytes())); err != nil {
-				t.Fatalf("Restore: %v", err)
-			}
-
-			info, err := os.Stat(filepath.Join(dataDir, storage.DeviceKeyFile))
-			if err == nil {
-				t.Fatalf("негодный секрет (%d байт) опубликован под целевым именем: %d байт", tc.size, info.Size())
-			}
-			if !os.IsNotExist(err) {
-				t.Fatalf("под именем секрета: %v", err)
-			}
-		})
+	if names := strings.Join(tarNames(t, buf.Bytes()), " "); strings.Contains(names, restoreTmpDir) {
+		t.Errorf("временный каталог в архиве: %s", names)
 	}
 }

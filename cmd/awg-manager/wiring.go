@@ -72,6 +72,10 @@ type app struct {
 	pprofListen string
 	slowReqMS   int
 
+	// prunedRestoreDirs — сколько остатков восстановлений удалено до
+	// setupCore (пишется в журнал, когда он появится).
+	prunedRestoreDirs int
+
 	// process state
 	uptime   float64
 	bootDone int32 // 0 = booting, 1 = done (atomic; /api/system/info)
