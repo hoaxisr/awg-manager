@@ -178,7 +178,7 @@ func (o *OperatorNativeWG) createViaImport(ctx context.Context, stored *storage.
 	// I1-I5 are split here: NDMS parses the file with the strict AmneziaWG
 	// parser and rejects the whole import otherwise (see
 	// signature_normalize.go).
-	confData, splitNote := ndmsImportConf(stored)
+	confData, splitNote := ndmsImportConf(stored, o.useASC(&stored.Interface))
 	o.logSplitNote("create", stored.Name, splitNote)
 
 	// NDMS RCI-импорт отвергает IPv6-endpoint в .conf («"WireguardN": invalid
@@ -1370,9 +1370,6 @@ func buildASCJSON(iface *storage.AWGInterface) (json.RawMessage, error) {
 	iface = &split
 
 	ver := config.ClassifyAWGVersion(iface)
-	// awg3 is included here so the extended block (S3/S4, I1-I5) still reaches
-	// NDMS. Firmware ASC does not model the awg3-specific device params, so
-	// those are simply not sent — the kernel backend (awg setconf) applies them.
 	if ver == "awg1.5" || ver == "awg2.0" || ver == "awg3" || ver == "awg3.1" {
 		params := ndms.ASCParamsExtended{
 			ASCParams: ndms.ASCParams{
@@ -1383,6 +1380,11 @@ func buildASCJSON(iface *storage.AWGInterface) (json.RawMessage, error) {
 			S3: iface.S3, S4: iface.S4,
 			I1: iface.I1, I2: iface.I2, I3: iface.I3, I4: iface.I4, I5: iface.I5,
 		}
+		// Конфиг 3.x доходит сюда только при ASC 3.x у прошивки: все вызовы
+		// стоят за useASC, а без ASC3 такой конфиг уходит на awg_proxy.
+		if ver == "awg3" || ver == "awg3.1" {
+			return ascAWG3JSON(params, iface)
+		}
 		return json.Marshal(params)
 	}
 
@@ -1392,6 +1394,45 @@ func buildASCJSON(iface *storage.AWGInterface) (json.RawMessage, error) {
 		H1: iface.H1, H2: iface.H2, H3: iface.H3, H4: iface.H4,
 	}
 	return json.Marshal(params)
+}
+
+// ascAWG3JSON дополняет ASC параметрами устройства 3.0/3.1. Значения уже
+// прошли валидацию формата ("N" или "N-M"); незаданное — ноль.
+func ascAWG3JSON(base ndms.ASCParamsExtended, iface *storage.AWGInterface) (json.RawMessage, error) {
+	p := ndms.ASCParamsAWG3{ASCParamsExtended: base, HeaderProtectionKey: iface.HeaderProtectionKey}
+	for _, f := range []struct {
+		name       string
+		v          string
+		start, end *int
+	}{
+		{"ContentPaddingAddition", iface.ContentPaddingAddition, &p.ContentPaddingStart, &p.ContentPaddingEnd},
+		{"RekeyAfterTime", iface.RekeyAfterTime, &p.RekeyAfterTimeStart, &p.RekeyAfterTimeEnd},
+		{"RekeyTimeout", iface.RekeyTimeout, &p.RekeyTimeoutStart, &p.RekeyTimeoutEnd},
+		{"RejectAfterTime", iface.RejectAfterTime, &p.RejectAfterTimeStart, &p.RejectAfterTimeEnd},
+		{"KeepaliveTimeout", iface.KeepaliveTimeout, &p.KeepaliveTimeoutStart, &p.KeepaliveTimeoutEnd},
+		{"MaxHandshakeAttempts", iface.MaxHandshakeAttempts, &p.MaxHandshakeAttemptsStart, &p.MaxHandshakeAttemptsEnd},
+	} {
+		if f.v == "" {
+			continue
+		}
+		lo, hi, isRange := strings.Cut(f.v, "-")
+		if !isRange {
+			hi = lo
+		}
+		var err1, err2 error
+		*f.start, err1 = strconv.Atoi(strings.TrimSpace(lo))
+		*f.end, err2 = strconv.Atoi(strings.TrimSpace(hi))
+		if err1 != nil || err2 != nil {
+			return nil, fmt.Errorf("%s: неверное значение %q", f.name, f.v)
+		}
+	}
+	if iface.RandomTrailers {
+		p.RandomTrailers = 1
+	}
+	if iface.DisableCookies {
+		p.DisableCookies = 1
+	}
+	return json.Marshal(p)
 }
 
 // clientPubKeyFromPrivate derives WireGuard public key from a base64 private key.

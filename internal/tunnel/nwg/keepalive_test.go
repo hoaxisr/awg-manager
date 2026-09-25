@@ -104,7 +104,7 @@ func TestCreateViaBatch_KeepaliveGoesToNDMSAsNumber(t *testing.T) {
 func TestNDMSImportConf_KeepaliveRangeCollapsedToLowerBound(t *testing.T) {
 	stored := importConfTunnel("40-50")
 
-	conf, _ := ndmsImportConf(stored)
+	conf, _ := ndmsImportConf(stored, false)
 	if got := confKeepalive(t, conf); got != "40" {
 		t.Fatalf("PersistentKeepalive в .conf = %q, ждали \"40\":\n%s", got, conf)
 	}
@@ -125,7 +125,7 @@ func TestNDMSImportConf_KeepaliveRangeCollapsedToLowerBound(t *testing.T) {
 func TestNDMSImportConf_ZeroLowerBoundRangeNotInConf(t *testing.T) {
 	for _, ka := range []storage.Keepalive{"0-80", "0-0"} {
 		t.Run(string(ka), func(t *testing.T) {
-			conf, _ := ndmsImportConf(importConfTunnel(ka))
+			conf, _ := ndmsImportConf(importConfTunnel(ka), false)
 			got := confKeepalive(t, conf)
 			if _, err := strconv.ParseUint(got, 10, 16); err != nil {
 				t.Fatalf("прошивка не примет PersistentKeepalive = %q:\n%s", got, conf)

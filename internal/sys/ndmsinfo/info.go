@@ -168,13 +168,20 @@ func SupportsWireguardASC() bool {
 }
 
 // SupportsWireguardASC3 сообщает, понимает ли ASC прошивки параметры
-// AmneziaWG 3.0/3.1 (защита заголовков, случайные хвосты). Ни одна выпущенная
-// прошивка их не понимает: ASC на 5.01 останавливается на 2.0, и конфиг 3.x
-// уезжает в NDMS обрезанным. Поддержку Keenetic ведёт в своём wireguard и
-// обещает в одной из 5.02.A — как станет известен конкретный релиз, здесь
-// появится проверка рядом с isAtLeast501A3.
+// AmneziaWG 3.0/3.1 (защита заголовков, случайные хвосты). Появилось в
+// 5.02.A.11: импорт .conf 3.1 проходит без «skipping unrecognized parameter»,
+// метод ASC принимает и отдаёт header-protection-key, пары *-start/*-end,
+// random-trailers и disable-cookies (стенд 5.02.A.11.0-1, 25.09.2026).
 func SupportsWireguardASC3() bool {
-	return false
+	info := Get()
+	if info == nil || info.Release == "" {
+		return false
+	}
+	return isAtLeast502A11(info.Release)
+}
+
+func isAtLeast502A11(release string) bool {
+	return releaseAtLeast(release, 2, 11)
 }
 
 // SupportsHRanges returns true if the current NDMS release supports
@@ -192,6 +199,12 @@ func SupportsHRanges() bool {
 // 5.01.B+ (beta+), 5.01.03+ (release), or any 5.02+ / 6.x+. Both ASC
 // support and H-range support landed in that cut; share one check.
 func isAtLeast501A3(release string) bool {
+	return releaseAtLeast(release, 1, 3)
+}
+
+// releaseAtLeast — релиз 5.<minor>.A.<alpha> или новее: любая бета/релиз
+// той же 5.<minor>, любая следующая 5.x и 6.x+.
+func releaseAtLeast(release string, minMinor, minAlpha int) bool {
 	parts := strings.Split(release, ".")
 	if len(parts) < 3 {
 		return false
@@ -201,10 +214,10 @@ func isAtLeast501A3(release string) bool {
 	if major > 5 {
 		return true
 	}
-	if major < 5 || minor < 1 {
+	if major < 5 || minor < minMinor {
 		return false
 	}
-	if minor > 1 {
+	if minor > minMinor {
 		return true
 	}
 	stage := parts[2]
@@ -213,7 +226,7 @@ func isAtLeast501A3(release string) bool {
 			return false
 		}
 		alphaNum, _ := strconv.Atoi(parts[3])
-		return alphaNum >= 3
+		return alphaNum >= minAlpha
 	}
 	return true
 }

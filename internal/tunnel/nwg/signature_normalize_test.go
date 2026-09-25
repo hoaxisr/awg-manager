@@ -81,7 +81,7 @@ func TestNDMSImportConf_SplitsOversizedSignatureTag(t *testing.T) {
 	stored.Interface.PrivateKey = "wMvstfyVWYn6WGn5CjVlSsGj/9tzCvdNoIjPB/Vsc1w="
 	stored.Interface.Address = "10.13.14.5"
 
-	conf, note := ndmsImportConf(stored)
+	conf, note := ndmsImportConf(stored, false)
 	if note == "" {
 		t.Error("split of an oversized tag must be reported for the log")
 	}

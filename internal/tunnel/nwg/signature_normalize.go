@@ -65,7 +65,8 @@ func (o *OperatorNativeWG) logSplitNote(stage, name, note string) {
 // tokens split, and a description of what was split for the log ("" if
 // nothing). Byte-identical to config.GenerateForExport for any config the
 // router would have accepted anyway.
-func ndmsImportConf(stored *storage.AWGTunnel) (string, string) {
+// keepAWG3 — прошивка понимает параметры 3.x (ASC3): тогда импорт их несёт.
+func ndmsImportConf(stored *storage.AWGTunnel, keepAWG3 bool) (string, string) {
 	safe := *stored
 	iface, note := splitSignatureTags(&stored.Interface)
 	safe.Interface = iface
@@ -87,41 +88,27 @@ func ndmsImportConf(stored *storage.AWGTunnel) (string, string) {
 			safe.Peer.PersistentKeepalive = storage.Keepalive(strconv.Itoa(n))
 		}
 	}
-	stripAWG3Params(&safe.Interface)
+	if !keepAWG3 {
+		stripAWG3Params(&safe.Interface)
+	}
 	return config.GenerateForExport(&safe), note
 }
 
 // stripAWG3Params убирает из ИМПОРТИРУЕМОГО в NDMS файла параметры устройства
-// AWG 3.0/3.1. Пользовательской выгрузки это не касается: она идёт мимо этой
-// проекции, прямо через config.GenerateForExport.
+// AWG 3.0/3.1 — только на прошивках без ASC3 (до 5.02.A.11). Пользовательской
+// выгрузки это не касается: она идёт мимо этой проекции, прямо через
+// config.GenerateForExport.
 //
-// У этих параметров НЕТ адресата в NDMS ни на одной прошивке. Канал у прошивки
-// ровно один — метод ASC, и он их не несёт: ndms.ASCParamsExtended
-// заканчивается на S3/S4 и I1-I5, а buildASCJSON не шлёт их сознательно
-// («firmware ASC does not model the awg3-specific device params»). Импорт
-// каналом не является тем более: файл разбирает строгий парсер AmneziaWG, и
-// каждый такой ключ он выбрасывает со строкой уровня W в системном журнале
-// («skipping unrecognized parameter»). На стенде 12.09.2026 (5.01.C.3.0-1) это
-// семь строк W на КАЖДЫЙ импорт premium-туннеля; kernel-бэкенд на том же
-// конфиге не дал ни одной.
-//
-// Потерять нечего, но не потому, что применяет их кто-то другой, — а потому,
-// что терять было нечего изначально. Из девяти на пути NativeWG доезжают ДВА:
-// HeaderProtectionKey и RandomTrailers, их берёт awg_proxy.ko через
-// buildKmodConfig из ЗАПИСИ туннеля (operator.go), а не из этого файла.
-// Остальные семь на этом пути не применяет никто — см. F311. Все девять
-// работают на kernel-бэкенде через `awg setconf`, который читает свой .conf
-// (config.WriteFile), тоже собранный из записи. Конфиг с любым из них на сегодняшних
-// прошивках вообще уходит на проксирующий путь: ASC 3.0 не умеет ни одна
-// (ndmsinfo.SupportsWireguardASC3), а на проксирующем пути startProxy ещё и
+// На таких прошивках у этих параметров нет адресата в NDMS: строгий парсер
+// AmneziaWG выбрасывает каждый ключ со строкой W в журнале («skipping
+// unrecognized parameter» — семь строк на импорт premium-туннеля, стенд
+// 12.09.2026, 5.01.C.3.0-1). Туннель 3.x там идёт через awg_proxy.ko, который
+// берёт HeaderProtectionKey и RandomTrailers из ЗАПИСИ туннеля (buildKmodConfig),
+// остальные семь на этом пути не применяет никто (F311); startProxy ещё и
 // снимает принятые прошивкой параметры ASC, иначе обфускация ляжет дважды.
 //
-// Флаги 3.1 (RandomTrailers, DisableCookies) снимаются вместе с остальными:
-// канал у них ровно такой же, то есть никакой.
-//
-// Когда ASC научится 3.0 (Keenetic обещает в одной из 5.02.A), нести их будет
-// метод ASC — правка ляжет в ASCParamsExtended и buildASCJSON, а импорт
-// останется чистым. Сцепку сторожит TestASC3FlagAndPayloadMoveTogether.
+// С 5.02.A.11 (ndmsinfo.SupportsWireguardASC3) импорт несёт все девять, а на
+// старте их довозит buildASCJSON. Сцепку сторожит TestASC3FlagAndPayloadMoveTogether.
 func stripAWG3Params(iface *storage.AWGInterface) {
 	iface.HeaderProtectionKey = ""
 	iface.ContentPaddingAddition = ""

@@ -353,3 +353,27 @@ type ASCParamsExtended struct {
 	I4 string `json:"i4"`
 	I5 string `json:"i5"`
 }
+
+// ASCParamsAWG3 — ASC с параметрами устройства AmneziaWG 3.0/3.1 (5.02.A.11+).
+// Набор прошивка принимает только целиком: без любого из полей запрос молча
+// игнорируется (пустой ответ, ничего не применено — стенд 5.02.A.11), поэтому
+// omitempty нет. Ноль — «не задано»: так же пишет незаданное и импорт .conf.
+// Диапазоны идут парами start/end, одиночное значение — start=end.
+type ASCParamsAWG3 struct {
+	ASCParamsExtended
+	HeaderProtectionKey       string `json:"header-protection-key"`
+	ContentPaddingStart       int    `json:"content-padding-addition-start"`
+	ContentPaddingEnd         int    `json:"content-padding-addition-end"`
+	RekeyAfterTimeStart       int    `json:"rekey-after-time-start"`
+	RekeyAfterTimeEnd         int    `json:"rekey-after-time-end"`
+	RekeyTimeoutStart         int    `json:"rekey-timeout-start"`
+	RekeyTimeoutEnd           int    `json:"rekey-timeout-end"`
+	RejectAfterTimeStart      int    `json:"reject-after-time-start"`
+	RejectAfterTimeEnd        int    `json:"reject-after-time-end"`
+	KeepaliveTimeoutStart     int    `json:"keepalive-timeout-start"`
+	KeepaliveTimeoutEnd       int    `json:"keepalive-timeout-end"`
+	MaxHandshakeAttemptsStart int    `json:"max-handshake-attempts-start"`
+	MaxHandshakeAttemptsEnd   int    `json:"max-handshake-attempts-end"`
+	RandomTrailers            int    `json:"random-trailers"`
+	DisableCookies            int    `json:"disable-cookies"`
+}
