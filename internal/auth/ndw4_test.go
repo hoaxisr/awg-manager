@@ -167,6 +167,10 @@ func TestAuthenticate_NDW4UnknownLogin(t *testing.T) {
 	if err := c.Authenticate(context.Background(), "nosuch", "x"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("err = %v", err)
 	}
+	// Ни фазы 2, ни отката на x-ndw2 (тот засчитал бы ещё одну неудачу в lockout).
+	if got := fmt.Sprint(srv.phases); got != "[GET P1]" {
+		t.Fatalf("фазы %s", got)
+	}
 }
 
 // 401 без данных на фазе 2 — сбой протокола, а не неверный пароль (тот

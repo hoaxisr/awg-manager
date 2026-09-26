@@ -67,3 +67,11 @@ func TestIsAtLeast502A11(t *testing.T) {
 		}
 	}
 }
+
+// Версия неизвестна (до Init) — токенов нет: ndmc не трогаем на любой прошивке.
+func TestSupportsRCIToken_UnknownVersion(t *testing.T) {
+	Reset()
+	if SupportsRCIToken() {
+		t.Fatal("версия неизвестна, а токены включены")
+	}
+}

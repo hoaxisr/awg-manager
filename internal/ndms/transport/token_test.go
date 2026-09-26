@@ -424,3 +424,29 @@ func TestToken_RevokeIgnoresGate(t *testing.T) {
 		t.Fatalf("ndmc: %v", f.cmds)
 	}
 }
+
+// На 4.x/5.01 отзыв (он гейт не смотрит) получает «no such command» — это не
+// ошибка: файл снят, отзыв окончательный.
+func TestToken_RevokeToleratesNoCommand(t *testing.T) {
+	f := &fakeNdmc{noop: true}
+	tt, path := newTestTokens(t, f, nil)
+	os.WriteFile(path, []byte(tokA), 0o600)
+	if err := tt.revoke(); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) || tt.path != "" {
+		t.Fatalf("файл %v, path %q", err, tt.path)
+	}
+}
+
+// SetTokenFile обязан сохранить гейт: без него enabled() ложен всегда, и на
+// 5.2 токенов не было бы вовсе.
+func TestSetTokenFile_KeepsGate(t *testing.T) {
+	saved := tokens
+	tokens = &tokenTransport{}
+	t.Cleanup(func() { tokens = saved })
+	SetTokenFile(filepath.Join(t.TempDir(), "rci-token"), func() bool { return true })
+	if !tokens.enabled() {
+		t.Fatal("гейт потерян")
+	}
+}

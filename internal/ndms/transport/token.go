@@ -189,7 +189,10 @@ func (t *tokenTransport) regenerate(stale string) string {
 
 // issue выпускает новый токен и только потом снимает прежние токены
 // awg-manager: упавший выпуск не оставляет роутер без рабочего токена. Под t.mu.
-// Отказ — "" (ходим без токена, пока прошивка это терпит).
+// Отказ — "" (ходим без токена, пока прошивка это терпит). Не запоминаем:
+// 5.02 без команды токенов не встречали, а ложное «нет команды» (ndm ещё
+// грузится) выключило бы токены до перезапуска; цена — вызов ndmc раз в
+// tokenRegenPause под t.mu.
 func (t *tokenTransport) issue() string {
 	t.lastRegen = time.Now()
 	out, err := t.ndmc("authentication token generate " + tokenDescription)
