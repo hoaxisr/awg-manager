@@ -820,7 +820,7 @@ func (a *app) wireProxyrt() {
 	lastOops := a.settingsStore.ObfuscatorKmodOopsHash()
 	reason, hash := obfuscator.WatchdogCheck(lastOops)
 	applyObfWatchdog(reason, hash, lastOops, a.settingsStore.TripObfuscatorKmod,
-		a.settingsStore.SetObfuscatorKmodOopsHash, &a.obfKmodTripped, journal)
+		a.settingsStore.SetObfuscatorKmodOopsHash, &a.obfKmodTripped, obfLog)
 	relayKmod.ReconcileVersion(context.Background())
 	kernelRelay := obfuscator.NewKernelRunner(obfuscator.KernelDeps{
 		Ensure: relayKmod.Ensure, ProcWrite: func(p string, b []byte) error { return os.WriteFile(p, b, 0) },
