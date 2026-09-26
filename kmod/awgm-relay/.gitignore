@@ -1,0 +1,11 @@
+tests/test_phobos
+tests/test_config
+tests/compat_phobos
+out/
+src/*.o
+src/*.ko
+src/*.mod.c
+src/.*.cmd
+src/modules.order
+src/Module.symvers
+src/.tmp_versions/
