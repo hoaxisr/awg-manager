@@ -69,7 +69,7 @@ func obf() *storage.Obfuscator {
 
 func TestRunner_StartStop(t *testing.T) {
 	r, spy := newTestRunner(t)
-	if err := r.Start(context.Background(), "awg20", obf()); err != nil {
+	if err := r.Start(context.Background(), "awg20", obf(), "203.0.113.5"); err != nil {
 		t.Fatal(err)
 	}
 	if !r.Alive("awg20") {
@@ -102,18 +102,18 @@ func TestRunner_StartStop(t *testing.T) {
 func TestRunner_StartIsIdempotentAndRestartsOnConfChange(t *testing.T) {
 	r, _ := newTestRunner(t)
 	o := obf()
-	if err := r.Start(context.Background(), "awg20", o); err != nil {
+	if err := r.Start(context.Background(), "awg20", o, "203.0.113.5"); err != nil {
 		t.Fatal(err)
 	}
 	pid1 := r.pid("awg20")
-	if err := r.Start(context.Background(), "awg20", o); err != nil {
+	if err := r.Start(context.Background(), "awg20", o, "203.0.113.5"); err != nil {
 		t.Fatal(err)
 	}
 	if r.pid("awg20") != pid1 {
 		t.Fatal("same conf must not respawn")
 	}
 	o.Key = "changed"
-	if err := r.Start(context.Background(), "awg20", o); err != nil {
+	if err := r.Start(context.Background(), "awg20", o, "203.0.113.5"); err != nil {
 		t.Fatal(err)
 	}
 	if r.pid("awg20") == pid1 {
@@ -123,12 +123,12 @@ func TestRunner_StartIsIdempotentAndRestartsOnConfChange(t *testing.T) {
 
 func TestRunner_AdoptAll(t *testing.T) {
 	r, _ := newTestRunner(t)
-	if err := r.Start(context.Background(), "awg20", obf()); err != nil {
+	if err := r.Start(context.Background(), "awg20", obf(), "203.0.113.5"); err != nil {
 		t.Fatal(err)
 	}
 	o2 := obf()
 	o2.LocalPort = 39051
-	if err := r.Start(context.Background(), "awg21", o2); err != nil {
+	if err := r.Start(context.Background(), "awg21", o2, "203.0.113.5"); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = r.Stop("awg21") })
@@ -177,7 +177,7 @@ func TestRunner_StartRefusesBusyPort(t *testing.T) {
 		t.Skip("cannot bind loopback in this sandbox")
 	}
 	defer c.Close()
-	err = r.Start(context.Background(), "awg20", o)
+	err = r.Start(context.Background(), "awg20", o, "203.0.113.5")
 	if err == nil || !strings.Contains(err.Error(), "занят") {
 		t.Fatalf("err = %v", err)
 	}
@@ -190,7 +190,7 @@ func TestRunner_StartRefusesBusyPort(t *testing.T) {
 // процесса остаётся навсегда на живом раннере.
 func TestRunner_AdoptAllDropsTailOfDeadProcess(t *testing.T) {
 	r, _ := newTestRunner(t)
-	if err := r.Start(context.Background(), "awg20", obf()); err != nil {
+	if err := r.Start(context.Background(), "awg20", obf(), "203.0.113.5"); err != nil {
 		t.Fatal(err)
 	}
 	pid := r.pid("awg20")
@@ -209,7 +209,7 @@ func TestRunner_AdoptAllDropsTailOfDeadProcess(t *testing.T) {
 
 func TestRunner_AliveRequiresOurBinary(t *testing.T) {
 	r, _ := newTestRunner(t)
-	if err := r.Start(context.Background(), "awg20", obf()); err != nil {
+	if err := r.Start(context.Background(), "awg20", obf(), "203.0.113.5"); err != nil {
 		t.Fatal(err)
 	}
 	// Вернуть шов до Cleanup раннера (LIFO): иначе Stop не погасит sh-скрипт.

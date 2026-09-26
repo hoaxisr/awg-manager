@@ -26,9 +26,10 @@ const obfRouteDetailsPrefix = "маршрут до сервера не пост�
 
 // ObfuscatorRunner — процесс wg-obfuscator на туннель (internal/obfuscator.Runner).
 type ObfuscatorRunner interface {
-	Start(ctx context.Context, tunnelID string, o *storage.Obfuscator) error
+	Start(ctx context.Context, tunnelID string, o *storage.Obfuscator, ip string) error
 	Stop(tunnelID string) error
 	Alive(tunnelID string) bool
+	Backend(tunnelID string) string // "kernel" | "process" | "" (не запущен)
 }
 
 func (o *OperatorNativeWG) SetObfuscator(r ObfuscatorRunner) { o.obf = r }
@@ -63,8 +64,8 @@ func (o *OperatorNativeWG) removeObfHostRoute(ctx context.Context, tunnelID, ip,
 }
 
 // startObfuscated — путь Start для туннеля через релей:
-//  1. процесс релея на 127.0.0.1:LocalPort (Runner.Start идемпотентен);
-//  2. резолв target (retry + кэш ResolvedEndpointIP);
+//  1. резолв target (retry + кэш ResolvedEndpointIP);
+//  2. процесс релея на 127.0.0.1:LocalPort на этот адрес (Runner.Start идемпотентен);
 //  3. NDMS: peer endpoint = loopback, connect via, interface up — но только
 //     если интерфейс ещё НЕ поднят на этот самый релей: Start прилетает на
 //     каждый WAN-up и на рестарт демона, а батч по живому интерфейсу — churn;
@@ -86,15 +87,16 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 	// соседние start-пути: оставшаяся запись переписала бы loopback-endpoint
 	// реальным адресом сервера.
 	o.guardUnregister(stored.ID)
-	if err := o.obf.Start(ctx, stored.ID, stored.Obfuscator); err != nil {
-		return err
-	}
-	// Адрес прежнего маршрута берём ДО резолва: успешный резолв кладёт новый
-	// IP в trackedIP, и разницу уже было бы не увидеть.
+	// Адрес прежнего маршрута — до резолва: успешный резолв кладёт новый IP
+	// в trackedIP, и разницу уже было бы не увидеть.
 	prevIP := o.obfRouteIP(stored)
+	// Резолв один раз и ДО релея: релей и host-route обязаны смотреть на один
+	// адрес (F469; раньше релей резолвил имя сам, независимо от нас).
 	targetIP, err := o.resolveTarget(stored)
 	if err != nil {
-		_ = o.obf.Stop(stored.ID)
+		return err
+	}
+	if err := o.obf.Start(ctx, stored.ID, stored.Obfuscator, targetIP); err != nil {
 		return err
 	}
 	loopback := "127.0.0.1:" + strconv.Itoa(stored.Obfuscator.LocalPort)
@@ -126,7 +128,7 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 		}
 	}
 	o.moveObfHostRoute(ctx, stored, prevIP, targetIP)
-	// Страж следит за target'ом: релей резолвит имя один раз при старте, и
+	// Страж следит за target'ом: адрес релею резолвится один раз при старте, и
 	// без присмотра смена A-записи оставила бы туннель мёртвым до перезапуска.
 	o.guardRegisterRelay(stored, targetIP)
 	o.appLog.Info("start", names.NDMSName, fmt.Sprintf("obfuscator %s %s -> %s (%s)",
@@ -179,7 +181,7 @@ func (o *OperatorNativeWG) SyncObfuscator(ctx context.Context, stored *storage.A
 	}
 	// Порядок тот же, что в startObfuscated и у стража: сначала релей, потом
 	// маршрут. Иначе отказ запуска стоил бы команды в NDMS на пустом месте.
-	if err := o.obf.Start(ctx, stored.ID, stored.Obfuscator); err != nil {
+	if err := o.obf.Start(ctx, stored.ID, stored.Obfuscator, targetIP); err != nil {
 		// Адрес наружу не отдаём: вызывающий по нему персистит
 		// ResolvedEndpointIP, а маршрут на этот адрес мы не поставили —
 		// прежняя запись осталась бы на роутере, и снимать её было бы не по
@@ -271,6 +273,7 @@ func (o *OperatorNativeWG) overlayObfuscatorState(stored *storage.AWGTunnel, inf
 	if stored.Obfuscator == nil || o.obf == nil {
 		return
 	}
+	info.RelayBackend = o.obf.Backend(stored.ID)
 	switch info.State {
 	case tunnel.StateRunning, tunnel.StateStarting, tunnel.StateBroken:
 	default:

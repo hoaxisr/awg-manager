@@ -23,6 +23,12 @@ const (
 	DetailsNotRunning = "обфускатор не запущен"
 )
 
+// Бэкенд релея для StateInfo.RelayBackend: модуль ядра awgm_relay.ko или процесс.
+const (
+	BackendKernel  = "kernel"
+	BackendProcess = "process"
+)
+
 var (
 	ConfDir = "/opt/etc/awg-manager/obfuscator"
 	RunDir  = "/var/run/awg-manager/obfuscator"

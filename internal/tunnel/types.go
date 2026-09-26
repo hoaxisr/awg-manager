@@ -133,6 +133,9 @@ type StateInfo struct {
 	// PeerVia is the NDMS WAN name the peer routes through (e.g. "PPPoE0").
 	// Populated for NativeWG tunnels from RCI show interface peer "via" field.
 	PeerVia string `json:"peerVia,omitempty"`
+	// RelayBackend — где работает релей обфускатора: "kernel" (awgm_relay.ko)
+	// или "process"; пусто — туннель без обфускатора или релей не запущен.
+	RelayBackend string `json:"relayBackend,omitempty"`
 
 	// Diagnostics
 	Error   error  `json:"error"`             // Error encountered during state detection

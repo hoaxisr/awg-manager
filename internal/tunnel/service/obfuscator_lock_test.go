@@ -92,15 +92,16 @@ func TestUpdate_NativeWGDiffTakesTunnelLock(t *testing.T) {
 // дошёл до резолва target'а и положил адрес в трекер оператора.
 type fakeRelay struct{ alive map[string]bool }
 
-func (f *fakeRelay) Start(_ context.Context, id string, _ *storage.Obfuscator) error {
+func (f *fakeRelay) Start(_ context.Context, id string, _ *storage.Obfuscator, _ string) error {
 	if f.alive == nil {
 		f.alive = map[string]bool{}
 	}
 	f.alive[id] = true
 	return nil
 }
-func (f *fakeRelay) Stop(id string) error { delete(f.alive, id); return nil }
-func (f *fakeRelay) Alive(id string) bool { return f.alive[id] }
+func (f *fakeRelay) Stop(id string) error  { delete(f.alive, id); return nil }
+func (f *fakeRelay) Alive(id string) bool  { return f.alive[id] }
+func (f *fakeRelay) Backend(string) string { return "" }
 
 // Замена конфигурации у работающего обфусцированного туннеля обязана оставить
 // в записи адрес target'а: по нему после рестарта демона снимается host-route.

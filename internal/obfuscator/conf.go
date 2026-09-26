@@ -11,12 +11,14 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
-// RenderConf — конфиг релея (формат wg-obfuscator.conf, одна секция).
+// RenderConf — конфиг релея (формат wg-obfuscator.conf, одна секция); target —
+// уже резолвнутый адрес ip (F469): релей больше не резолвит имя сам.
 // verbose наш: INFO даёт строки старта/подключения в app-журнал (Q18).
-func RenderConf(o *storage.Obfuscator) string {
+func RenderConf(o *storage.Obfuscator, ip string) string {
+	_, port, _ := net.SplitHostPort(o.Target)
 	var b strings.Builder
 	fmt.Fprintf(&b, "[main]\nsource-if = 127.0.0.1\nsource-lport = %d\ntarget = %s\nkey = %s\nmasking = %s\nmax-dummy = %d\n",
-		o.LocalPort, o.Target, o.Key, o.Masking, o.MaxDummy)
+		o.LocalPort, net.JoinHostPort(ip, port), o.Key, o.Masking, o.MaxDummy)
 	if o.IdleTimeout > 0 {
 		fmt.Fprintf(&b, "idle-timeout = %d\n", o.IdleTimeout)
 	}
@@ -37,11 +39,11 @@ func RenderConf(o *storage.Obfuscator) string {
 func ConfPath(tunnelID string) string { return filepath.Join(ConfDir, tunnelID+".conf") }
 
 // WriteConf пишет конфиг с ключом: 0600, каталог 0700.
-func WriteConf(tunnelID string, o *storage.Obfuscator) error {
+func WriteConf(tunnelID string, o *storage.Obfuscator, ip string) error {
 	if err := os.MkdirAll(ConfDir, 0o700); err != nil {
 		return fmt.Errorf("obfuscator conf dir: %w", err)
 	}
-	return os.WriteFile(ConfPath(tunnelID), []byte(RenderConf(o)), 0o600)
+	return os.WriteFile(ConfPath(tunnelID), []byte(RenderConf(o, ip)), 0o600)
 }
 
 // RemoveConf — отсутствие файла не ошибка.

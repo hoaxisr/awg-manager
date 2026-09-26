@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -54,10 +55,10 @@ func errPath(id string) string { return filepath.Join(RunDir, id+".err.log") }
 // Start пишет конфиг и поднимает процесс. Живой процесс с тем же конфигом
 // не трогает; с другим — перезапускает (Q21: правка параметров = рестарт
 // только релея).
-func (r *Runner) Start(ctx context.Context, tunnelID string, o *storage.Obfuscator) error {
+func (r *Runner) Start(ctx context.Context, tunnelID string, o *storage.Obfuscator, ip string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	want := RenderConf(o)
+	want := RenderConf(o, ip)
 	if cur, err := os.ReadFile(ConfPath(tunnelID)); err == nil && string(cur) == want && r.alive(tunnelID) {
 		return nil
 	}
@@ -69,7 +70,7 @@ func (r *Runner) Start(ctx context.Context, tunnelID string, o *storage.Obfuscat
 	if err != nil {
 		return fmt.Errorf("бинарь обфускатора %s: %w", o.Flavor, err)
 	}
-	if err := WriteConf(tunnelID, o); err != nil {
+	if err := WriteConf(tunnelID, o, ip); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(RunDir, 0o755); err != nil {
@@ -95,7 +96,8 @@ func (r *Runner) Start(ctx context.Context, tunnelID string, o *storage.Obfuscat
 		return err
 	}
 	r.startTailLocked(tunnelID, false)
-	r.deps.Log.Info("obfuscator", tunnelID, fmt.Sprintf("%s запущен, 127.0.0.1:%d -> %s (%s)", o.Flavor, o.LocalPort, o.Target, o.Masking))
+	_, port, _ := net.SplitHostPort(o.Target)
+	r.deps.Log.Info("obfuscator", tunnelID, fmt.Sprintf("%s запущен, 127.0.0.1:%d -> %s (%s)", o.Flavor, o.LocalPort, net.JoinHostPort(ip, port), o.Masking))
 	return nil
 }
 
@@ -139,6 +141,14 @@ func (r *Runner) Alive(tunnelID string) bool { return r.alive(tunnelID) }
 func (r *Runner) alive(tunnelID string) bool {
 	pid, ok := readPID(tunnelID)
 	return ok && childproc.IsAlive(pid) && r.matchFn(pid)
+}
+
+// Backend — для StateInfo: процессный бэкенд.
+func (r *Runner) Backend(tunnelID string) string {
+	if r.alive(tunnelID) {
+		return BackendProcess
+	}
+	return ""
 }
 
 func (r *Runner) pid(tunnelID string) int { p, _ := readPID(tunnelID); return p }
