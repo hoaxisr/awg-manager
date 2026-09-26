@@ -194,6 +194,13 @@ static int c2s_thread_fn(void *data)
 		else if (r->cfg.phobos.mask == AWGMR_MASK_MEDIA)
 			hdr = awgmr_rtp_frame(payload - AWGMR_RTP_HDR, &r->rtp);
 		relay_send_remote(r, payload - hdr, out + hdr);
+		/*
+		 * Ядро Keenetic без вытеснения (PREEMPT_NONE): при непрерывном входе
+		 * поток не доходит до точки планирования, softirq ушёл в ksoftirqd,
+		 * а тот не получает CPU — backlog loopback (netdev_max_backlog) молча
+		 * переполняется. F472: без уступки 135 885 drops за 10 с, с ней 0.
+		 */
+		cond_resched();
 	}
 	return 0;
 }
@@ -279,6 +286,7 @@ static int s2c_thread_fn(void *data)
 			atomic_inc(&r->parse_err);
 			break;
 		}
+		cond_resched(); /* F472, см. c2s */
 	}
 	return 0;
 }
