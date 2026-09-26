@@ -619,6 +619,28 @@ func TestStartObfuscated_ResolveFailure_LeavesNDMSUntouched(t *testing.T) {
 	}
 }
 
+// RestartObfuscatorRelay — смена выключателя «ядро/процесс»: перезапуск идёт
+// под тем же per-tunnel замком, что и действия оркестратора.
+func TestRestartObfuscatorRelay_RestartsUnderLock(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+	stored := obfStored()
+	op.tunnelLookup = func(id string) (*storage.AWGTunnel, error) { return stored, nil }
+	var owners []string
+	op.tunnelLock = func(ctx context.Context, id, owner string, work func() error) error {
+		owners = append(owners, owner)
+		return work()
+	}
+	if err := op.RestartObfuscatorRelay(context.Background(), stored.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(owners) != 1 || owners[0] != "obfuscator-backend" || fr.starts[stored.ID] != 1 {
+		t.Fatalf("owners=%v starts=%v", owners, fr.starts)
+	}
+}
+
 func TestSyncKmodSlot_NoopForObfuscated(t *testing.T) {
 	op := &OperatorNativeWG{appLog: logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps)}
 	t.Cleanup(op.Close)

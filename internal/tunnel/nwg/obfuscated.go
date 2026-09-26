@@ -195,6 +195,30 @@ func (o *OperatorNativeWG) SyncObfuscator(ctx context.Context, stored *storage.A
 	return targetIP, nil
 }
 
+// RestartObfuscatorRelay — смена выключателя «ядро/процесс» (спека §4.8):
+// перезапустить релей туннеля на бэкенде, который теперь выберет диспетчер
+// (он же гасит прежний). Под per-tunnel замком, как страж target'а.
+func (o *OperatorNativeWG) RestartObfuscatorRelay(ctx context.Context, tunnelID string) error {
+	work := func() error {
+		if o.tunnelLookup == nil {
+			return nil
+		}
+		stored, err := o.tunnelLookup(tunnelID)
+		if err != nil || stored == nil || stored.Obfuscator == nil {
+			return err
+		}
+		ip, err := o.SyncObfuscator(ctx, stored)
+		if err == nil && ip != "" && o.persistResolvedIP != nil {
+			o.persistResolvedIP(tunnelID, ip)
+		}
+		return err
+	}
+	if o.tunnelLock == nil {
+		return work()
+	}
+	return o.tunnelLock(ctx, tunnelID, "obfuscator-backend", work)
+}
+
 // restoreTrackedIP возвращает трекер к адресу, под которым стоит маршрут:
 // resolveTarget уже положил туда новый IP, а маршрут на него не встал (релей
 // отказал). Иначе следующий старт взял бы новый IP за прежний и не снял бы
