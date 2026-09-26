@@ -136,7 +136,8 @@ func (a *app) setupServer() {
 			OrphanIfaces:          orphanIfaces(a.opkgPool, a.ndmsQueries.Interfaces),
 			OrphanIfacesExclusive: orphanIfacesExclusive(a.opkgPool, a.ndmsQueries.Interfaces),
 			ObfuscatorRelayChanged: obfuscatorRelayChanged(a.settingsStore, a.awgStore, a.nwgOp.RestartObfuscatorRelay,
-				logging.NewScopedLogger(a.loggingService, logging.GroupTunnel, logging.SubOps)),
+				func(id string) bool { return a.obfDispatcher != nil && a.obfDispatcher.Alive(id) },
+				&a.obfKmodTripped, logging.NewScopedLogger(a.loggingService, logging.GroupTunnel, logging.SubOps)),
 		},
 	)
 
@@ -146,13 +147,16 @@ func (a *app) setupServer() {
 
 // obfuscatorRelayChanged — хук выключателя ядро/процесс (спека §4.8): живые
 // Phobos-релеи переезжают на новый бэкенд сразу, не дожидаясь следующего
-// Start. Возврат к ядру снимает отметку сторожа (§4.9) — пользователь сам
-// решил попробовать снова. Зовётся обработчиком настроек в горутине; restart
+// Start; неподнятым бэкенд выберет их Start. Возврат к ядру снимает отметку
+// сторожа (§4.9) — и в настройках, и в памяти: пользователь сам решил
+// попробовать снова. Зовётся обработчиком настроек в горутине; restart
 // берёт лок туннеля сам.
 func obfuscatorRelayChanged(settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore,
-	restart func(ctx context.Context, tunnelID string) error, log *logging.ScopedLogger) func(process bool) {
+	restart func(ctx context.Context, tunnelID string) error, alive func(tunnelID string) bool,
+	tripped *atomic.Bool, log *logging.ScopedLogger) func(process bool) {
 	return func(process bool) {
 		if !process {
+			tripped.Store(false)
 			if err := settings.ClearObfuscatorKmodTripped(); err != nil {
 				log.Warn("obfuscator", "", "отметка сторожа не снята: "+err.Error())
 			}
@@ -164,7 +168,7 @@ func obfuscatorRelayChanged(settings *storage.SettingsStore, tunnels *storage.AW
 		}
 		for i := range list {
 			t := &list[i]
-			if t.Enabled && t.Obfuscator != nil && t.Obfuscator.Flavor == storage.ObfuscatorFlavorPhobos {
+			if t.Enabled && t.Obfuscator != nil && t.Obfuscator.Flavor == storage.ObfuscatorFlavorPhobos && alive(t.ID) {
 				if err := restart(context.Background(), t.ID); err != nil {
 					log.Warn("obfuscator", t.ID, "смена бэкенда релея: "+err.Error())
 				}

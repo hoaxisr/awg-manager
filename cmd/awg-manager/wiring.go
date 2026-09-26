@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/api"
@@ -22,6 +23,7 @@ import (
 	ndmsmetrics "github.com/hoaxisr/awg-manager/internal/ndms/metrics"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
+	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
@@ -114,6 +116,14 @@ type app struct {
 	nwgOp         *nwg.OperatorNativeWG
 	wanModel      *wan.Model
 	tunnelService *service.ServiceImpl
+
+	// obfDispatcher — выбор бэкенда релея обфускатора (ядро/процесс); ставит
+	// wireProxyrt, читает хук выключателя (только после srv.Start).
+	obfDispatcher *obfuscator.Dispatcher
+	// obfKmodTripped — сторож выключил kernel-релей в этой жизни демона
+	// (§4.9); снимается только явным возвратом пользователя к ядру.
+	obfKmodTripped atomic.Bool
+
 	// opkgTunOwners — пять поставщиков занятости пула OpkgTun. Состав общий на
 	// всех, кто выдаёт номера, и потому собирается один раз (opkgTunOwners).
 	opkgTunOwners opkgTunOwners

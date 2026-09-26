@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -819,32 +818,17 @@ func (a *app) wireProxyrt() {
 	// первого Start: сторож → сверка версии модуля → уборка сирот.
 	relayKmod := nwg.NewRelayKmod(a.loggingService, obfuscator.Arm, obfuscator.DisarmAfter)
 	lastOops := a.settingsStore.ObfuscatorKmodOopsHash()
-	if reason, hash := obfuscator.WatchdogCheck(lastOops); hash != "" || reason != "" {
-		// Тот же hash не пишем: запись в /proc/mtdoops переживает рестарты,
-		// и сохранение на каждом старте было бы записью на флеш впустую.
-		if hash != "" && hash != lastOops {
-			if err := a.settingsStore.SetObfuscatorKmodOopsHash(hash); err != nil {
-				journal.Warn("obfuscator", "", "hash oops не сохранён: "+err.Error())
-			}
-		}
-		if reason != "" {
-			journal.Error("obfuscator", "", "kernel-релей выключен сторожем: "+reason)
-			if err := a.settingsStore.TripObfuscatorKmod(reason); err != nil {
-				journal.Error("obfuscator", "", "выключатель kernel-релея не сохранён: "+err.Error())
-			}
-		}
-	}
+	reason, hash := obfuscator.WatchdogCheck(lastOops)
+	applyObfWatchdog(reason, hash, lastOops, a.settingsStore.TripObfuscatorKmod,
+		a.settingsStore.SetObfuscatorKmodOopsHash, &a.obfKmodTripped, journal)
 	relayKmod.ReconcileVersion(context.Background())
 	kernelRelay := obfuscator.NewKernelRunner(obfuscator.KernelDeps{
 		Ensure: relayKmod.Ensure, ProcWrite: func(p string, b []byte) error { return os.WriteFile(p, b, 0) },
 		ProcRead: kmod.ReadProc, Log: obfLog,
 	})
-	useKernel := func(o *storage.Obfuscator, ip string) bool {
-		p := net.ParseIP(ip)
-		return o.Flavor == storage.ObfuscatorFlavorPhobos && p != nil && p.To4() != nil &&
-			!a.settingsStore.IsObfuscatorRelayProcess() && relayKmod.Available()
-	}
-	a.nwgOp.SetObfuscator(obfuscator.NewDispatcher(obfRunner, kernelRelay, useKernel, obfLog))
+	useKernel := obfUseKernel(a.settingsStore.IsObfuscatorRelayProcess, relayKmod.Available, &a.obfKmodTripped)
+	a.obfDispatcher = obfuscator.NewDispatcher(obfRunner, kernelRelay, useKernel, obfLog)
+	a.nwgOp.SetObfuscator(a.obfDispatcher)
 	// Два туннеля могут смотреть на один IP сервера: host-route до него общий,
 	// и Stop одного не имеет права обрубить второй. Бэкенд значения не имеет —
 	// обфусцированный nativewg ставит ту же запись `ip route host`, что и
