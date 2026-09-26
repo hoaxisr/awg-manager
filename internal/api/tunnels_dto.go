@@ -48,6 +48,8 @@ type ObfuscatorItemDTO struct {
 	Flavor    string `json:"flavor" example:"phobos" enums:"phobos,clusterm"`
 	Target    string `json:"target" example:"1.2.3.4:51824"`
 	LocalPort int    `json:"localPort" example:"39000"`
+	// Relay — бэкенд релея: "kernel" (awgm_relay.ko) или "process".
+	Relay string `json:"relay,omitempty" example:"kernel" enums:"kernel,process"`
 }
 
 // TunnelListResponse is the envelope for GET /tunnels/list.

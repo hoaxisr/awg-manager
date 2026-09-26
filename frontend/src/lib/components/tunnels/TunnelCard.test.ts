@@ -58,6 +58,32 @@ describe('TunnelCard: разновидность обфускатора', () => 
 	});
 });
 
+describe('TunnelCard: бэкенд релея обфускатора', () => {
+	it('бейдж «ядро» при relay=kernel', () => {
+		render(TunnelCard, {
+			props: {
+				tunnel: {
+					...base,
+					obfuscator: { flavor: 'phobos', target: 'vpn.example:51824', localPort: 39000, relay: 'kernel' },
+				},
+			},
+		});
+		expect(screen.getByText('ядро')).toBeTruthy();
+	});
+
+	it('без бейджа при relay=process', () => {
+		render(TunnelCard, {
+			props: {
+				tunnel: {
+					...base,
+					obfuscator: { flavor: 'phobos', target: 'vpn.example:51824', localPort: 39000, relay: 'process' },
+				},
+			},
+		});
+		expect(screen.queryByText('ядро')).toBeNull();
+	});
+});
+
 describe('TunnelCard: причина состояния broken', () => {
 	it('причина вытесняет общее «Сломан»', () => {
 		render(TunnelCard, {

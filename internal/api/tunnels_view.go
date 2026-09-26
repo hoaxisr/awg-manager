@@ -253,9 +253,12 @@ type obfuscatorItem struct {
 	Flavor    string `json:"flavor"`
 	Target    string `json:"target"`
 	LocalPort int    `json:"localPort"`
+	// Relay — бэкенд релея из StateInfo.RelayBackend ("kernel"/"process"),
+	// чтобы карточка красила бейджем «ядро» без захода во вкладку.
+	Relay string `json:"relay,omitempty"`
 }
 
-func obfItem(stored *storage.AWGTunnel) *obfuscatorItem {
+func obfItem(stored *storage.AWGTunnel, relay string) *obfuscatorItem {
 	if stored == nil || stored.Obfuscator == nil {
 		return nil
 	}
@@ -263,6 +266,7 @@ func obfItem(stored *storage.AWGTunnel) *obfuscatorItem {
 		Flavor:    stored.Obfuscator.Flavor,
 		Target:    stored.Obfuscator.Target,
 		LocalPort: stored.Obfuscator.LocalPort,
+		Relay:     relay,
 	}
 }
 
@@ -416,7 +420,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 			WdttClientID:              wdttClientID,
 			FreeTurnClientID:          freeTurnClientID,
 			AmneziaCountry:            amneziaCountry,
-			Obfuscator:                obfItem(stored),
+			Obfuscator:                obfItem(stored, t.StateInfo.RelayBackend),
 		}
 		if item.Obfuscator != nil {
 			// Только у обфусцированных: причины оттуда пишет nwg/obfuscated.go

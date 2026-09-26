@@ -29,6 +29,7 @@
 		PukhososPatrol,
 		SettingsSectionLabel,
 		McpCard,
+		ObfuscatorRelayCard,
 	} from "$lib/components/settings";
 	import HappKeysModal from "$lib/components/subscriptions/HappKeysModal.svelte";
 	import { setSettings as setGlobalSettings } from "$lib/stores/settings";
@@ -500,6 +501,20 @@ $effect(() => {
 			settings = await api.updateSettings({ ...settings, mcpEnabled: enabled });
 			setGlobalSettings(settings);
 			notifications.success(enabled ? "MCP-сервер включён" : "MCP-сервер выключен");
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : "Ошибка сохранения настроек");
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function toggleObfuscatorRelay(process: boolean) {
+		if (!settings) return;
+		saving = true;
+		try {
+			settings = await api.updateSettings({ ...settings, obfuscatorRelayProcess: process });
+			setGlobalSettings(settings);
+			notifications.success(process ? "Phobos: userspace-процесс" : "Phobos: модуль ядра");
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : "Ошибка сохранения настроек");
 		} finally {
@@ -1196,6 +1211,13 @@ $effect(() => {
 					ontoggle={toggleMcp}
 					oncreate={createMcpKey}
 					onrevoke={revokeMcpKey}
+				/>
+
+				<ObfuscatorRelayCard
+					process={settings.obfuscatorRelayProcess ?? false}
+					tripped={settings.obfuscatorKmodTripped ?? ''}
+					{saving}
+					ontoggle={toggleObfuscatorRelay}
 				/>
 
 				{#if $experimentalSettingsUnlocked}

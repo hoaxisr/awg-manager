@@ -230,7 +230,7 @@ export interface TunnelListItem {
 	/** При true туннель защищён от изменений: выключить, изменить и удалить нельзя (#818). */
 	locked?: boolean;
 	statusDetails?: string;
-	obfuscator?: { flavor: ObfuscatorFlavor; target: string; localPort: number };
+	obfuscator?: { flavor: ObfuscatorFlavor; target: string; localPort: number; relay?: 'kernel' | 'process' };
 }
 
 export interface DeleteResult {

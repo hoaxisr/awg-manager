@@ -2997,6 +2997,13 @@ definitions:
       localPort:
         example: 39000
         type: integer
+      relay:
+        description: 'Relay — бэкенд релея: "kernel" (awgm_relay.ko) или "process".'
+        enum:
+        - kernel
+        - process
+        example: kernel
+        type: string
       target:
         example: 1.2.3.4:51824
         type: string

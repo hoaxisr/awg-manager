@@ -74,6 +74,23 @@ func TestTunnelList_ObfuscatorItem(t *testing.T) {
 	}
 }
 
+// Список показывает бэкенд релея (ядро/процесс) — карточка красит бейджем
+// «ядро», не дожидаясь захода во вкладку «Обфускатор».
+func TestTunnelList_ObfuscatorRelayBackend(t *testing.T) {
+	h := newObfViewHarness(t)
+	h.svc.(*obfViewSvc).item.StateInfo.RelayBackend = "kernel"
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/tunnels/list", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"relay":"kernel"`) {
+		t.Fatalf("нет relay=kernel в ответе списка: %s", body)
+	}
+}
+
 // Details у kernel-туннелей заполняет классификатор состояния английскими
 // строками для журнала («Tunnel is running (RX…)»); в контракт списка они
 // уехать не должны — statusDetails только у обфусцированных.

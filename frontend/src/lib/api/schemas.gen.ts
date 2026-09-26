@@ -1074,6 +1074,7 @@ const api_ObfuscatorDTO: v.GenericSchema = v.looseObject({
 const api_ObfuscatorItemDTO: v.GenericSchema = v.looseObject({
 	flavor: v.optional(v.nullable(v.string())),
 	localPort: v.optional(v.nullable(v.number())),
+	relay: v.optional(v.nullable(v.string())),
 	target: v.optional(v.nullable(v.string())),
 });
 

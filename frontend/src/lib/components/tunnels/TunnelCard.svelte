@@ -308,6 +308,9 @@
 					<ProxyOwnedBadge {tunnel} />
 					{#if tunnel.obfuscator}
 						<Badge variant="info" size="sm">{tunnel.obfuscator.flavor === 'phobos' ? 'Phobos' : 'ClusterM'}</Badge>
+						{#if tunnel.obfuscator.relay === 'kernel'}
+							<Badge variant="success" size="sm">ядро</Badge>
+						{/if}
 					{/if}
 				</div>
 			</div>
@@ -379,6 +382,9 @@
 						<ProxyOwnedBadge {tunnel} />
 						{#if tunnel.obfuscator}
 							<Badge variant="info" size="sm">{tunnel.obfuscator.flavor === 'phobos' ? 'Phobos' : 'ClusterM'}</Badge>
+							{#if tunnel.obfuscator.relay === 'kernel'}
+								<Badge variant="success" size="sm">ядро</Badge>
+							{/if}
 						{/if}
 					</div>
 					{#if view === 'compact' && headerStatusHint}
