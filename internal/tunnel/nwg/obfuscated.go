@@ -97,6 +97,7 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 		return err
 	}
 	if err := o.obf.Start(ctx, stored.ID, stored.Obfuscator, targetIP); err != nil {
+		o.restoreTrackedIP(stored.ID, prevIP)
 		return err
 	}
 	loopback := "127.0.0.1:" + strconv.Itoa(stored.Obfuscator.LocalPort)
@@ -182,6 +183,7 @@ func (o *OperatorNativeWG) SyncObfuscator(ctx context.Context, stored *storage.A
 	// Порядок тот же, что в startObfuscated и у стража: сначала релей, потом
 	// маршрут. Иначе отказ запуска стоил бы команды в NDMS на пустом месте.
 	if err := o.obf.Start(ctx, stored.ID, stored.Obfuscator, targetIP); err != nil {
+		o.restoreTrackedIP(stored.ID, prevIP)
 		// Адрес наружу не отдаём: вызывающий по нему персистит
 		// ResolvedEndpointIP, а маршрут на этот адрес мы не поставили —
 		// прежняя запись осталась бы на роутере, и снимать её было бы не по
@@ -191,6 +193,20 @@ func (o *OperatorNativeWG) SyncObfuscator(ctx context.Context, stored *storage.A
 	o.moveObfHostRoute(ctx, stored, prevIP, targetIP)
 	o.guardRegisterRelay(stored, targetIP)
 	return targetIP, nil
+}
+
+// restoreTrackedIP возвращает трекер к адресу, под которым стоит маршрут:
+// resolveTarget уже положил туда новый IP, а маршрут на него не встал (релей
+// отказал). Иначе следующий старт взял бы новый IP за прежний и не снял бы
+// host-route под настоящим прежним — сирота навсегда.
+func (o *OperatorNativeWG) restoreTrackedIP(tunnelID, prevIP string) {
+	if prevIP != "" {
+		o.trackEndpointIP(tunnelID, prevIP)
+		return
+	}
+	o.trackedMu.Lock()
+	defer o.trackedMu.Unlock()
+	delete(o.trackedIP, tunnelID)
 }
 
 // moveObfHostRoute переставляет host-route с прежнего адреса target'а на новый.

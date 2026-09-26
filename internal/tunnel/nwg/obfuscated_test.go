@@ -287,6 +287,46 @@ func TestStartObfuscated_SameIPForRelayAndRoute(t *testing.T) {
 	}
 }
 
+// Отказ релея после резолва не должен сдвигать трекер на новый адрес: иначе
+// на следующем старте prevIP == новому, и host-route под прежним адресом
+// остаётся на роутере сиротой навсегда.
+func TestStartObfuscated_RelayFailureKeepsPrevRouteIP(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		start func(op *OperatorNativeWG, st *storage.AWGTunnel) error
+	}{
+		{"Start", func(op *OperatorNativeWG, st *storage.AWGTunnel) error {
+			return op.startObfuscated(context.Background(), st)
+		}},
+		{"SyncObfuscator", func(op *OperatorNativeWG, st *storage.AWGTunnel) error {
+			_, err := op.SyncObfuscator(context.Background(), st)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withObfDirs(t)
+			n := newCaptureNDMS(t)
+			fr := newFakeObfRunner()
+			op := newObfOperator(t, n, fr)
+			op.resolveFn = sequenceResolver("198.51.100.1", "198.51.100.2")
+			if err := tc.start(op, obfStored()); err != nil {
+				t.Fatal(err)
+			}
+			fr.setFailStart(errors.New("порт занят"))
+			if err := tc.start(op, obfStored()); err == nil {
+				t.Fatal("ждали отказ релея")
+			}
+			fr.setFailStart(nil)
+			if err := tc.start(op, obfStored()); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(n.joined(), `"host":"198.51.100.1","interface":"ISP0","no":true`) {
+				t.Fatalf("host-route под прежним адресом не снят:\n%s", n.joined())
+			}
+		})
+	}
+}
+
 // sequenceResolver — каждый вызов отдаёт следующий адрес (последний — дальше
 // повторяется): так ведёт себя round-robin/DDNS между двумя резолвами.
 func sequenceResolver(ips ...string) func(string) (string, int, error) {
