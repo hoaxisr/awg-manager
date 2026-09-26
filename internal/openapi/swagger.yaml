@@ -14344,7 +14344,8 @@ paths:
         atomically. ApiKey preserved when omitted (rotate via /settings/regenerate-api-key).
         singboxRouter.routingMode and singboxRouter.enabled are ignored: the routing
         mode changes only via POST /singbox/router/mode, enable/disable only via the
-        dedicated endpoints.'
+        dedicated endpoints. obfuscatorRelayProcess is ignored: switch it via POST
+        /settings/obfuscator-relay.'
       parameters:
       - description: Settings patch — any subset of fields
         in: body
