@@ -132,6 +132,7 @@ type Server struct {
 	orphanIfacesFn             func(ctx context.Context) ([]external.OrphanIface, error)
 	orphanExclusiveFn          func(ctx context.Context) ([]external.OrphanIface, error)
 	singboxConfigPreviewFn     func() (string, error)
+	obfuscatorRelayChanged     func(process bool)
 	dnsCheckService            *dnscheck.Service
 	authMiddleware             *auth.Middleware
 	mcpKeys                    *storage.McpKeyStore
@@ -231,6 +232,10 @@ type Deps struct {
 	// McpKeys holds the MCP API keys. Nil disables the /mcp endpoint and
 	// its key-management routes entirely (they are never registered).
 	McpKeys *storage.McpKeyStore
+
+	// ObfuscatorRelayChanged — смена выключателя ядро/процесс релея Phobos
+	// (спека §4.8); nil — смена вступит в силу со следующим Start туннеля.
+	ObfuscatorRelayChanged func(process bool)
 }
 
 // authLoggerAdapter narrows ScopedLogger to the AuthLogger interface
@@ -292,6 +297,7 @@ func New(cfg Config, deps Deps) *Server {
 		orphanIfacesFn:         deps.OrphanIfaces,
 		orphanExclusiveFn:      deps.OrphanIfacesExclusive,
 		singboxConfigPreviewFn: deps.SingboxConfigPreview,
+		obfuscatorRelayChanged: deps.ObfuscatorRelayChanged,
 		authMiddleware:         auth.NewMiddleware(deps.Sessions, deps.Settings, &authLoggerAdapter{log: appLog}),
 		mcpKeys:                deps.McpKeys,
 		instanceID:             id,

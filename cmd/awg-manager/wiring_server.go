@@ -135,11 +135,42 @@ func (a *app) setupServer() {
 			},
 			OrphanIfaces:          orphanIfaces(a.opkgPool, a.ndmsQueries.Interfaces),
 			OrphanIfacesExclusive: orphanIfacesExclusive(a.opkgPool, a.ndmsQueries.Interfaces),
+			ObfuscatorRelayChanged: obfuscatorRelayChanged(a.settingsStore, a.awgStore, a.nwgOp.RestartObfuscatorRelay,
+				logging.NewScopedLogger(a.loggingService, logging.GroupTunnel, logging.SubOps)),
 		},
 	)
 
 	a.srv.SetSingboxOperator(a.singboxOp)
 
+}
+
+// obfuscatorRelayChanged — хук выключателя ядро/процесс (спека §4.8): живые
+// Phobos-релеи переезжают на новый бэкенд сразу, не дожидаясь следующего
+// Start. Возврат к ядру снимает отметку сторожа (§4.9) — пользователь сам
+// решил попробовать снова. Зовётся обработчиком настроек в горутине; restart
+// берёт лок туннеля сам.
+func obfuscatorRelayChanged(settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore,
+	restart func(ctx context.Context, tunnelID string) error, log *logging.ScopedLogger) func(process bool) {
+	return func(process bool) {
+		if !process {
+			if err := settings.ClearObfuscatorKmodTripped(); err != nil {
+				log.Warn("obfuscator", "", "отметка сторожа не снята: "+err.Error())
+			}
+		}
+		list, err := tunnels.List()
+		if err != nil {
+			log.Warn("obfuscator", "", "смена бэкенда релея: "+err.Error())
+			return
+		}
+		for i := range list {
+			t := &list[i]
+			if t.Enabled && t.Obfuscator != nil && t.Obfuscator.Flavor == storage.ObfuscatorFlavorPhobos {
+				if err := restart(context.Background(), t.ID); err != nil {
+					log.Warn("obfuscator", t.ID, "смена бэкенда релея: "+err.Error())
+				}
+			}
+		}
+	}
 }
 
 // setupDeviceProxy wires awg-outbounds, the device-proxy service and the

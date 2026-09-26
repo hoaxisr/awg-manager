@@ -35,6 +35,7 @@ func applyDataDir(dataDir string) {
 	tunnel.ConfDir = dataDir
 	obfuscator.ConfDir = filepath.Join(dataDir, "obfuscator")
 	kmod.ModulesDir = filepath.Join(dataDir, "modules")
+	obfuscator.ArmPath = filepath.Join(kmod.ModulesDir, "awgm_relay.arming")
 	router.SetDataDir(dataDir)
 	ndmstransport.SetTokenFile(filepath.Join(dataDir, storage.RCITokenFile), ndmsinfo.SupportsRCIToken)
 

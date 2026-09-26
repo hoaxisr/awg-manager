@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
+	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -127,13 +129,26 @@ func runCleanup(dataDir string) {
 
 	nwgOp := nwg.NewOperator(cleanupNDMSQueries, cleanupNDMSCommands, cleanupNDMSTransport, nil)
 	// Без раннера снос туннеля не гасит релей: процесс пережил бы удаление
-	// пакета. Бинарь тут только с диска — качать на удалении нечего.
-	nwgOp.SetObfuscator(obfuscator.NewRunner(obfuscator.RunnerDeps{
-		BinaryFor: func(_ context.Context, flavor string) (string, error) {
-			return filepath.Join(obfuscator.BinDir, obfuscator.BinaryName(flavor)), nil
-		},
-		Log: logging.NewScopedLogger(loggingService, logging.GroupTunnel, logging.SubOps),
-	}))
+	// пакета. Бинарь тут только с диска — качать на удалении нечего. Ядро
+	// диспетчер не выбирает никогда: Stop без выбора гасит оба бэкенда, а
+	// модуль на удалении грузить незачем.
+	cleanupRelayKmod := nwg.NewRelayKmod(loggingService, nil, nil)
+	cleanupKernel := obfuscator.NewKernelRunner(obfuscator.KernelDeps{
+		Ensure:    func(context.Context) error { return errors.New("cleanup: модуль не грузим") },
+		ProcWrite: func(p string, b []byte) error { return os.WriteFile(p, b, 0) },
+		ProcRead:  kmod.ReadProc,
+	})
+	nwgOp.SetObfuscator(obfuscator.NewDispatcher(
+		obfuscator.NewRunner(obfuscator.RunnerDeps{
+			BinaryFor: func(_ context.Context, flavor string) (string, error) {
+				return filepath.Join(obfuscator.BinDir, obfuscator.BinaryName(flavor)), nil
+			},
+			Log: logging.NewScopedLogger(loggingService, logging.GroupTunnel, logging.SubOps),
+		}),
+		cleanupKernel,
+		func(*storage.Obfuscator, string) bool { return false },
+		nil,
+	))
 	tunnelService := service.New(awgStore, nwgOp, operator, stateMgr, wan.NewModel(), nil)
 
 	// Wire orchestrator for lifecycle operations (Delete needs it)
@@ -196,6 +211,15 @@ func runCleanup(dataDir string) {
 	cleanupSvc := cleanup.New(tunnelService, awgStore, dnsSvc, managedSvc, accessPolicySvc, clientRouteSvc, singboxOp, probeHostSvc, configSaver{sc: cleanupNDMSSave})
 	if err := cleanupSvc.CleanupAll(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Cleanup error: %v\n", err)
+	}
+
+	// Слоты awgm_relay и сам модуль переживают удаление файлов пакета (§4.6).
+	// Свой бюджет: CleanupAll мог съесть общие 60 с целиком, а с истёкшим
+	// контекстом rmmod не запустился бы — повторить снятие некому.
+	kmodCtx, kmodCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer kmodCancel()
+	if err := cleanupRelayKmod.Unload(kmodCtx); err != nil {
+		fmt.Fprintf(os.Stderr, "awgm_relay unload: %v\n", err)
 	}
 
 	// Интерфейс policy-tun живёт в NDMS и переживает удаление файлов: снимаем

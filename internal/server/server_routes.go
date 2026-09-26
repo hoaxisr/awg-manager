@@ -170,6 +170,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 		}
 		return s.singboxOp.ApplyClashPort(port)
 	})
+	h.settingsHandler.SetOnObfuscatorRelayChanged(s.obfuscatorRelayChanged)
 	h.settingsHandler.SetClashPortInspector(sysports.NewScanner())
 	h.settingsHandler.SetApplySingboxLogSettings(func() error {
 		if s.singboxOp == nil || s.settings == nil {

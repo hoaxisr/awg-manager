@@ -27,6 +27,7 @@ func TestApplyDataDir_RedirectsDerivedPaths(t *testing.T) {
 		"obfuscator.ConfDir": {obfuscator.ConfDir, filepath.Join(dir, "obfuscator")},
 		"kmod.ModulesDir":    {kmod.ModulesDir, filepath.Join(dir, "modules")},
 		"kmod.BundledDir":    {kmod.BundledDir(), filepath.Join(dir, "modules", "bundled")},
+		"obfuscator.ArmPath": {obfuscator.ArmPath, filepath.Join(dir, "modules", "awgm_relay.arming")},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("%s = %q, ждали %q", name, pair[0], pair[1])
@@ -88,9 +89,11 @@ func TestApplyDataDir_ProductionKeepsHook(t *testing.T) {
 func restorePaths(t *testing.T) {
 	t.Helper()
 	conf, obf, mod, hook := tunnel.ConfDir, obfuscator.ConfDir, kmod.ModulesDir, router.NetfilterHookPath()
+	arm := obfuscator.ArmPath
 	routerPaths := router.DataDirPaths()
 	t.Cleanup(func() {
 		tunnel.ConfDir, obfuscator.ConfDir, kmod.ModulesDir = conf, obf, mod
+		obfuscator.ArmPath = arm
 		router.SetNetfilterHookPath(hook)
 		router.RestoreDataDirPaths(routerPaths)
 	})

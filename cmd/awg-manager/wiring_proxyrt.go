@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,9 +39,11 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/appver"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
+	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 	"github.com/hoaxisr/awg-manager/internal/sys/routerclock"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ops"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
@@ -803,15 +806,45 @@ func (a *app) wireProxyrt() {
 		Installed: func(install.Subsystem) { go a.proxyRuntimeNudge("install", proxyrt.EventBoot) },
 	})
 
+	obfLog := logging.NewScopedLogger(a.loggingService, logging.GroupTunnel, logging.SubOps)
 	// Релей wg-obfuscator: один процесс на туннель, бинарь докачивается тем
 	// же установщиком, что и прокси.
 	obfRunner := obfuscator.NewRunner(obfuscator.RunnerDeps{
 		BinaryFor: func(ctx context.Context, flavor string) (string, error) {
 			return installSvc.EnsureInstalled(ctx, "obf-"+flavor)
 		},
-		Log: logging.NewScopedLogger(a.loggingService, logging.GroupTunnel, logging.SubOps),
+		Log: obfLog,
 	})
-	a.nwgOp.SetObfuscator(obfRunner)
+	// Kernel-релей awgm_relay.ko для Phobos (спека §4). Старт демона до
+	// первого Start: сторож → сверка версии модуля → уборка сирот.
+	relayKmod := nwg.NewRelayKmod(a.loggingService, obfuscator.Arm, obfuscator.DisarmAfter)
+	lastOops := a.settingsStore.ObfuscatorKmodOopsHash()
+	if reason, hash := obfuscator.WatchdogCheck(lastOops); hash != "" || reason != "" {
+		// Тот же hash не пишем: запись в /proc/mtdoops переживает рестарты,
+		// и сохранение на каждом старте было бы записью на флеш впустую.
+		if hash != "" && hash != lastOops {
+			if err := a.settingsStore.SetObfuscatorKmodOopsHash(hash); err != nil {
+				journal.Warn("obfuscator", "", "hash oops не сохранён: "+err.Error())
+			}
+		}
+		if reason != "" {
+			journal.Error("obfuscator", "", "kernel-релей выключен сторожем: "+reason)
+			if err := a.settingsStore.TripObfuscatorKmod(reason); err != nil {
+				journal.Error("obfuscator", "", "выключатель kernel-релея не сохранён: "+err.Error())
+			}
+		}
+	}
+	relayKmod.ReconcileVersion(context.Background())
+	kernelRelay := obfuscator.NewKernelRunner(obfuscator.KernelDeps{
+		Ensure: relayKmod.Ensure, ProcWrite: func(p string, b []byte) error { return os.WriteFile(p, b, 0) },
+		ProcRead: kmod.ReadProc, Log: obfLog,
+	})
+	useKernel := func(o *storage.Obfuscator, ip string) bool {
+		p := net.ParseIP(ip)
+		return o.Flavor == storage.ObfuscatorFlavorPhobos && p != nil && p.To4() != nil &&
+			!a.settingsStore.IsObfuscatorRelayProcess() && relayKmod.Available()
+	}
+	a.nwgOp.SetObfuscator(obfuscator.NewDispatcher(obfRunner, kernelRelay, useKernel, obfLog))
 	// Два туннеля могут смотреть на один IP сервера: host-route до него общий,
 	// и Stop одного не имеет права обрубить второй. Бэкенд значения не имеет —
 	// обфусцированный nativewg ставит ту же запись `ip route host`, что и
@@ -846,6 +879,23 @@ func (a *app) wireProxyrt() {
 	}
 	if adopted := obfRunner.AdoptAll(keep); len(adopted) > 0 {
 		journal.Info("obfuscator", "", "усыновлены процессы: "+strings.Join(adopted, ", "))
+	}
+	// Слоты awgm_relay — по тому же критерию, но ключ слота — локальный порт.
+	keepPort := func(port int) bool {
+		list, err := a.awgStore.List()
+		if err != nil {
+			return true // не знаем — не трогаем
+		}
+		for i := range list {
+			t := &list[i]
+			if t.Enabled && t.Obfuscator != nil && t.Obfuscator.LocalPort == port {
+				return true
+			}
+		}
+		return false
+	}
+	if removed := kernelRelay.Sweep(keepPort); len(removed) > 0 {
+		journal.Info("obfuscator", "", fmt.Sprintf("сняты сироты awgm_relay: %v", removed))
 	}
 
 	records := proxyRecords{ref: ref}
