@@ -42,11 +42,10 @@ func NewRelayKmod(appLogger logging.AppLogger, arm func() error, disarmAfter fun
 		arm:         arm,
 		disarmAfter: disarmAfter,
 		resolve: func() (string, error) {
-			p, _, err := resolveKoPathFor("awgm_relay", kmod.DetectModel(), kmod.DetectSoC(), func(p string) bool {
+			return relayKoPath(kmod.DetectModel(), kmod.DetectSoC(), func(p string) bool {
 				_, err := os.Stat(p)
 				return err == nil
 			})
-			return p, err
 		},
 		execFn:      exec.Run,
 		isLoadedFn:  func() bool { _, err := os.Stat("/proc/awgm_relay/version"); return err == nil },
@@ -56,8 +55,23 @@ func NewRelayKmod(appLogger logging.AppLogger, arm func() error, disarmAfter fun
 	}
 }
 
+// relayKoPath — файл awgm_relay.ko под модель/SoC. resolveKoPathFor отдаёт
+// arch-default, не проверяя файл (awg_proxy так и нужно), а сборки релея под
+// SoC может не быть — без проверки отказ всплыл бы только ошибкой insmod.
+func relayKoPath(model string, soc kmod.SoC, exists func(string) bool) (string, error) {
+	p, _, err := resolveKoPathFor("awgm_relay", model, soc, exists)
+	if err != nil {
+		return "", err
+	}
+	if !exists(p) {
+		return "", fmt.Errorf("нет сборки awgm_relay.ko под %s/%s", model, soc)
+	}
+	return p, nil
+}
+
 // Available — ядро можно предлагать диспетчеру: модуль загружен или его файл
-// под этот SoC есть и загрузка ещё не отказывала.
+// под этот SoC есть и загрузка ещё не отказывала. Отказ resolve запоминается
+// и пишется в журнал один раз: Available зовётся на каждый Start.
 func (m *RelayKmod) Available() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -67,8 +81,12 @@ func (m *RelayKmod) Available() bool {
 	if m.isLoadedFn() {
 		return true
 	}
-	_, err := m.resolve()
-	return err == nil
+	if _, err := m.resolve(); err != nil {
+		m.failed = err
+		m.appLog.Info("awgm-relay", "", err.Error()+" — Phobos-туннели работают процессом")
+		return false
+	}
+	return true
 }
 
 // Ensure грузит модуль, если он не загружен. Отказ запоминается: иначе insmod

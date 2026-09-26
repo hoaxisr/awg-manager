@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
+	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 )
 
 type relayKmodFixture struct {
@@ -96,5 +98,43 @@ func TestRelayKmod_ReconcileVersionKeepsCurrent(t *testing.T) {
 	f.m.ReconcileVersion(context.Background())
 	if !f.loaded || len(f.calls) != 0 {
 		t.Fatalf("актуальный модуль тронут: %v", f.calls)
+	}
+}
+
+type relayLogSpy struct{ lines []string }
+
+func (s *relayLogSpy) AppLog(_ logging.Level, _, _, _, _, msg string) { s.lines = append(s.lines, msg) }
+
+// Нет сборки под модель/SoC: Available — false, причина в журнале ОДИН раз,
+// повторного resolve нет (отказ запомнен до рестарта демона, §4.5).
+func TestRelayKmod_AvailableResolveFailLoggedOnce(t *testing.T) {
+	spy := &relayLogSpy{}
+	m := NewRelayKmod(spy, nil, nil)
+	resolves := 0
+	m.resolve = func() (string, error) { resolves++; return "", errors.New("нет сборки awgm_relay.ko под KN-1010/mt7628") }
+	m.isLoadedFn = func() bool { return false }
+	if m.Available() || m.Available() {
+		t.Fatal("Available без сборки")
+	}
+	if resolves != 1 {
+		t.Fatalf("resolve вызван %d раз, ждали 1", resolves)
+	}
+	if len(spy.lines) != 1 || !strings.Contains(spy.lines[0], "нет сборки awgm_relay.ko") ||
+		!strings.Contains(spy.lines[0], "Phobos-туннели работают процессом") {
+		t.Fatalf("журнал: %q", spy.lines)
+	}
+}
+
+// relayKoPath: arch-default resolveKoPathFor отдаёт без проверки файла —
+// отсутствие ловится здесь, а не insmod-ошибкой.
+func TestRelayKoPath(t *testing.T) {
+	none := func(string) bool { return false }
+	if _, err := relayKoPath("KN-1810", kmod.SoCMT7621, none); err == nil ||
+		!strings.Contains(err.Error(), "нет сборки awgm_relay.ko под KN-1810/mt7621") {
+		t.Fatalf("arch-default без файла: %v", err)
+	}
+	all := func(string) bool { return true }
+	if p, err := relayKoPath("KN-1810", kmod.SoCMT7621, all); err != nil || p == "" {
+		t.Fatalf("файл есть: %q %v", p, err)
 	}
 }
