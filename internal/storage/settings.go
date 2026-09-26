@@ -1161,6 +1161,28 @@ func (s *SettingsStore) IsObfuscatorRelayProcess() bool {
 	return settings.ObfuscatorRelayProcess
 }
 
+// SetObfuscatorRelayProcess — пользовательский выключатель ядро/процесс
+// Phobos-релея (ручка POST /settings/obfuscator-relay; общий PATCH поле не
+// пишет). Атомарно под локом стора, как SetSingboxManuallyStopped; возвращает,
+// изменилось ли значение (по образцу SetAuthEnabled) — от этого зависит хук.
+func (s *SettingsStore) SetObfuscatorRelayProcess(v bool) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return false, fmt.Errorf("settings not loaded")
+	}
+	if s.settings.ObfuscatorRelayProcess == v {
+		return false, nil
+	}
+	if err := s.updateUnlocked(func(cp *Settings) error {
+		cp.ObfuscatorRelayProcess = v
+		return nil
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // TripObfuscatorKmod switches the Phobos relay backend to userspace and
 // records why — called by the oops watchdog (§4.9) after it detects a
 // kernel-relay crash. Mirrors SetSingboxManuallyStopped: atomic under the
@@ -1180,7 +1202,7 @@ func (s *SettingsStore) TripObfuscatorKmod(reason string) error {
 
 // ClearObfuscatorKmodTripped снимает записанную причину срабатывания
 // сторожа, не трогая сам выключатель ObfuscatorRelayProcess (его снимает
-// пользователь отдельно, через PATCH). Мирроит SetSingboxManuallyStopped.
+// пользователь отдельно, через SetObfuscatorRelayProcess). Мирроит SetSingboxManuallyStopped.
 func (s *SettingsStore) ClearObfuscatorKmodTripped() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

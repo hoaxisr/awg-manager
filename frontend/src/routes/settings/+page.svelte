@@ -512,7 +512,7 @@ $effect(() => {
 		if (!settings) return;
 		saving = true;
 		try {
-			settings = await api.updateSettings({ ...settings, obfuscatorRelayProcess: process });
+			settings = await api.setObfuscatorRelay(process);
 			setGlobalSettings(settings);
 			notifications.success(process ? "Phobos: userspace-процесс" : "Phobos: модуль ядра");
 		} catch (e) {

@@ -618,12 +618,6 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			h.log.Info("mcp", "", "MCP endpoint disabled")
 		}
 	}
-	if oldSettings.ObfuscatorRelayProcess != want.ObfuscatorRelayProcess {
-		h.log.Info("obfuscator", "", fmt.Sprintf("Phobos relay backend: process=%v", want.ObfuscatorRelayProcess))
-		if h.onObfuscatorRelayChanged != nil {
-			go h.onObfuscatorRelayChanged(want.ObfuscatorRelayProcess)
-		}
-	}
 	if oldSettings.SessionTtlHours != want.SessionTtlHours {
 		h.log.Info("auth", "", fmt.Sprintf("Session TTL changed: %dh -> %dh", oldSettings.SessionTtlHours, want.SessionTtlHours))
 	}
@@ -730,6 +724,62 @@ func (h *SettingsHandler) RegenerateApiKey(w http.ResponseWriter, r *http.Reques
 	h.log.Info("api-key", "", "API key regenerated")
 	response.Success(w, settingsResponse(settings))
 	h.bus.PublishInvalidated(events.ResourceSettings, "api-key-rotated")
+}
+
+// ObfuscatorRelayRequest — тело POST /settings/obfuscator-relay. Process —
+// указатель: отсутствующее поле — отказ, а не молчаливый возврат к ядру
+// (соседние DTO берут голый bool; здесь его false — небезопасный дефолт).
+type ObfuscatorRelayRequest struct {
+	// true — Phobos-релей процессом, false — модулем ядра awgm_relay.
+	Process *bool `json:"process" example:"true"`
+}
+
+// SetObfuscatorRelay — выключатель ядро/процесс Phobos-релея (спека §4.8).
+// Отдельная ручка, а не поле общего update: страница настроек шлёт тело
+// целиком, и устаревшее false с другой вкладки снимало бы срабатывание
+// сторожа (§4.9) и возвращало ядро.
+//
+//	@Summary		Switch Phobos relay backend
+//	@Description	Sets the Phobos relay backend: process=true forces the userspace relay, process=false returns to the awgm_relay kernel module (and clears the watchdog trip). Live Phobos relays are restarted on the new backend. Returns the updated Settings.
+//	@Tags			settings
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body		ObfuscatorRelayRequest	true	"Relay backend"
+//	@Success		200		{object}	SettingsResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		405		{object}	APIErrorEnvelope
+//	@Failure		500		{object}	APIErrorEnvelope
+//	@Router			/settings/obfuscator-relay [post]
+func (h *SettingsHandler) SetObfuscatorRelay(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[ObfuscatorRelayRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	if req.Process == nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, "process is required", "INVALID_BODY")
+		return
+	}
+	changed, err := h.store.SetObfuscatorRelayProcess(*req.Process)
+	if err != nil {
+		response.Error(w, err.Error(), "SETTINGS_SAVE_ERROR")
+		return
+	}
+	if changed {
+		h.log.Info("obfuscator", "", fmt.Sprintf("Phobos relay backend: process=%v", *req.Process))
+		if h.onObfuscatorRelayChanged != nil {
+			go h.onObfuscatorRelayChanged(*req.Process)
+		}
+	}
+	settings, err := h.store.Snapshot()
+	if err != nil {
+		response.Error(w, err.Error(), "SETTINGS_LOAD_ERROR")
+		return
+	}
+	response.Success(w, settingsResponse(settings))
+	if changed {
+		h.bus.PublishInvalidated(events.ResourceSettings, "updated")
+	}
 }
 
 // generateUUIDv4 produces an RFC 4122 v4 UUID using crypto/rand.

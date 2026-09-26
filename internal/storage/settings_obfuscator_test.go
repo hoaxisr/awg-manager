@@ -48,3 +48,21 @@ func TestSettingsStore_ObfuscatorKmodOopsHash(t *testing.T) {
 		t.Fatalf("ObfuscatorKmodOopsHash() = %q, want abc123", got)
 	}
 }
+
+// SetObfuscatorRelayProcess — единственный пользовательский писатель
+// выключателя: пишет и сообщает, изменилось ли значение.
+func TestSettingsStore_SetObfuscatorRelayProcess(t *testing.T) {
+	s := NewSettingsStore(t.TempDir())
+	if _, err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := s.SetObfuscatorRelayProcess(true); err != nil || !changed || !s.IsObfuscatorRelayProcess() {
+		t.Fatalf("включение: changed=%v err=%v process=%v", changed, err, s.IsObfuscatorRelayProcess())
+	}
+	if changed, err := s.SetObfuscatorRelayProcess(true); err != nil || changed {
+		t.Fatalf("то же значение: changed=%v err=%v", changed, err)
+	}
+	if changed, err := s.SetObfuscatorRelayProcess(false); err != nil || !changed || s.IsObfuscatorRelayProcess() {
+		t.Fatalf("выключение: changed=%v err=%v", changed, err)
+	}
+}

@@ -385,8 +385,12 @@ var nonPatchableSettings = map[string]struct{}{
 	// ClearObfuscatorKmodTripped/SetObfuscatorKmodOopsHash — та же
 	// single-writer логика, что у fakeip/opkgTun: общий PATCH не должен
 	// уметь подделать причину срабатывания или сбить дедуп по hash.
-	// obfuscatorRelayProcess (сам выключатель) в патче остаётся — им может
-	// управлять и пользователь через страницу настроек.
+	// obfuscatorRelayProcess (сам выключатель) — тоже вне патча: страница шлёт
+	// тело настроек целиком, и устаревшее false с другой вкладки через общий
+	// PATCH снимало бы срабатывание сторожа и возвращало ядро. Пишется ТОЛЬКО
+	// ручкой POST /settings/obfuscator-relay (SetObfuscatorRelayProcess) и
+	// сторожем (TripObfuscatorKmod).
+	"obfuscatorRelayProcess": {},
 	"obfuscatorKmodTripped":  {},
 	"obfuscatorKmodOopsHash": {},
 }

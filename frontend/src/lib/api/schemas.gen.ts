@@ -3498,6 +3498,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /servers/enabled": v.lazy(() => api_ServersAllResponse),
 	"POST /servers/mark": v.lazy(() => api_ServersAllResponse),
 	"POST /servers/restart": v.lazy(() => api_APIEnvelope),
+	"POST /settings/obfuscator-relay": v.lazy(() => api_SettingsResponse),
 	"POST /settings/regenerate-api-key": v.lazy(() => api_SettingsResponse),
 	"POST /settings/update": v.lazy(() => api_SettingsResponse),
 	"POST /signature/generate": v.lazy(() => api_SignatureGenerateResponse),

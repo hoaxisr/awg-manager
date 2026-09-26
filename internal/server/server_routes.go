@@ -462,6 +462,7 @@ func (s *Server) registerSettingsRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// Settings (protected + boot guarded)
 	mux.HandleFunc("/api/settings/get", h.guarded(h.settingsHandler.Get))
 	mux.HandleFunc("/api/settings/update", h.guarded(h.settingsHandler.Update))
+	mux.HandleFunc("/api/settings/obfuscator-relay", h.guarded(h.settingsHandler.SetObfuscatorRelay))
 	mux.HandleFunc("/api/settings/regenerate-api-key", h.guarded(h.settingsHandler.RegenerateApiKey))
 
 	// Ping check (protected + boot guarded)

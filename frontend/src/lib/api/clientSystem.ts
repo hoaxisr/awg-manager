@@ -302,6 +302,13 @@ export class SystemClient extends TunnelsClient {
 		return this.request('/settings/regenerate-api-key', { method: 'POST' });
 	}
 
+	// Выключатель ядро/процесс Phobos-релея — отдельной ручкой: общий
+	// /settings/update поле не пишет (устаревшее тело с другой вкладки
+	// снимало бы срабатывание сторожа).
+	async setObfuscatorRelay(process: boolean): Promise<Settings> {
+		return this.request('/settings/obfuscator-relay', { method: 'POST', body: JSON.stringify({ process }) });
+	}
+
 	// #endregion
 
 

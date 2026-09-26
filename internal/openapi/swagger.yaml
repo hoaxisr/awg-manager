@@ -3008,6 +3008,13 @@ definitions:
         example: 1.2.3.4:51824
         type: string
     type: object
+  api.ObfuscatorRelayRequest:
+    properties:
+      process:
+        description: true — Phobos-релей процессом, false — модулем ядра awgm_relay.
+        example: true
+        type: boolean
+    type: object
   api.OkData:
     properties:
       ok:
@@ -14261,6 +14268,45 @@ paths:
       security:
       - CookieAuth: []
       summary: Get settings
+      tags:
+      - settings
+  /settings/obfuscator-relay:
+    post:
+      consumes:
+      - application/json
+      description: 'Sets the Phobos relay backend: process=true forces the userspace
+        relay, process=false returns to the awgm_relay kernel module (and clears the
+        watchdog trip). Live Phobos relays are restarted on the new backend. Returns
+        the updated Settings.'
+      parameters:
+      - description: Relay backend
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.ObfuscatorRelayRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SettingsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Switch Phobos relay backend
       tags:
       - settings
   /settings/regenerate-api-key:
