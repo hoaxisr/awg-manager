@@ -105,6 +105,8 @@ export interface SystemInfo {
 	awgProxyVersion?: string;
 	/** awg_proxy version shipped with this build (in /opt/etc/awg-manager/modules). */
 	awgProxyExpectedVersion?: string;
+	/** Firmware ASC knows AWG 3.x (5.02.A.11+): NativeWG carries all 3.x params itself, no awg_proxy. */
+	supportsWireguardASC3?: boolean;
 	isAarch64: boolean;
 	activeBackend: string;
 	routerIP: string;

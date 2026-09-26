@@ -2,6 +2,7 @@ package nwg
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -180,4 +181,97 @@ func TestStart_DispatchesByASCCoverage(t *testing.T) {
 			t.Fatalf("3.0 не пошёл через прокси: %v", poster.list())
 		}
 	})
+}
+
+// Туннель 3.x переехал с awg_proxy на нативный ASC 3.x (обновление прошивки
+// или пакета): слот-сирота в ядре, карта менеджера пуста. startNative на
+// ASC3-прошивке его снимает; на ASC2 — не трогает (там легитимны proxy-слоты
+// соседних туннелей 3.x).
+func TestStartNative_DropsOrphanSlotOnASC3(t *testing.T) {
+	awg30 := storage.AWGInterface{AWGObfuscation: storage.AWGObfuscation{Jc: 4, H1: "1", H2: "2", H3: "3", H4: "4",
+		HeaderProtectionKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}}
+	awg20 := storage.AWGInterface{AWGObfuscation: storage.AWGObfuscation{Jc: 4, H1: "10-20", H2: "2", H3: "3", H4: "4"}}
+	for _, tc := range []struct {
+		name  string
+		asc3  bool
+		iface storage.AWGInterface
+		want  int
+	}{
+		{"asc3", true, awg30, 1},
+		{"asc2", false, awg20, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, stub, _ := newLifecycleOperator(t, true, tc.asc3)
+			stub.setListSlot("203.0.113.10", 5060, 51820)
+			_ = o.Start(context.Background(), nwgStored(tc.iface))
+			if got := stub.countWritesTo("/proc/awg_proxy/del"); got != tc.want {
+				t.Fatalf("снятий слота %d, ждали %d: %+v", got, tc.want, stub.writes)
+			}
+		})
+	}
+}
+
+// Импорт несёт параметры 3.x ровно тогда, когда туннель идёт нативно (ASC3):
+// без ASC3 они дали бы строки W на каждый импорт, с ASC3 без них туннель
+// встал бы как 2.0.
+func TestCreateViaImport_AWG3ParamsFollowASC3(t *testing.T) {
+	for _, asc3 := range []bool{false, true} {
+		o, _, poster := newLifecycleOperator(t, true, asc3)
+		_, _ = o.createViaImport(context.Background(), awg3Tunnel())
+		var conf string
+		for _, p := range poster.list() {
+			var body struct {
+				Interface struct {
+					Wireguard struct {
+						Import string `json:"import"`
+					} `json:"wireguard"`
+				} `json:"interface"`
+			}
+			if json.Unmarshal([]byte(p), &body) == nil && body.Interface.Wireguard.Import != "" {
+				raw, _ := base64.StdEncoding.DecodeString(body.Interface.Wireguard.Import)
+				conf = string(raw)
+			}
+		}
+		if conf == "" {
+			t.Fatalf("asc3=%v: импорт не отправлен: %v", asc3, poster.list())
+		}
+		if got := strings.Contains(conf, "HeaderProtectionKey"); got != asc3 {
+			t.Errorf("asc3=%v: HeaderProtectionKey в импорте = %v:\n%s", asc3, got, conf)
+		}
+	}
+}
+
+// На ASC3-прошивке старт и синхронизация туннеля 3.x обязаны отправить ASC с
+// параметрами 3.x: без них прошивка поднимет его как 2.0 против сервера 3.1,
+// и туннель молча не заработает. Создание на ASC3 идёт импортом (см.
+// TestCreateViaImport_AWG3ParamsFollowASC3); createViaBatch — путь прошивок
+// до 5.01.A.3, ASC3 там не бывает.
+func TestASC3PayloadReachesNDMS(t *testing.T) {
+	iface := awg3Tunnel().Interface
+	for _, tc := range []struct {
+		name string
+		call func(o *OperatorNativeWG, st *storage.AWGTunnel)
+	}{
+		{"Start", func(o *OperatorNativeWG, st *storage.AWGTunnel) { _ = o.Start(context.Background(), st) }},
+		{"SyncAWGParams", func(o *OperatorNativeWG, st *storage.AWGTunnel) { _ = o.SyncAWGParams(context.Background(), st) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, _, poster := newLifecycleOperator(t, true, true)
+			tc.call(o, nwgStored(iface))
+			if !poster.has(`"header-protection-key":"YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="`) {
+				t.Fatalf("ASC 3.x не отправлен: %v", poster.list())
+			}
+		})
+	}
+}
+
+// Не собрался ASC (мусор в поле 3.x, сохранённый до валидации) — старт
+// падает, а не поднимает туннель с прежним ASC из NDMS.
+func TestStartNative_FailsOnBadASC(t *testing.T) {
+	iface := awg3Tunnel().Interface
+	iface.RekeyAfterTime = "abc"
+	o, _, _ := newLifecycleOperator(t, true, true)
+	if err := o.Start(context.Background(), nwgStored(iface)); err == nil || !strings.Contains(err.Error(), "RekeyAfterTime") {
+		t.Fatalf("err = %v", err)
+	}
 }

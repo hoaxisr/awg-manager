@@ -58,13 +58,18 @@
 	// Модуль в ядре старее того, что принёс IPK: awg_proxy не перезагружается,
 	// пока у него есть живые слоты, поэтому при поднятом туннеле апгрейд ждёт
 	// перезагрузки роутера — и до неё AWG 3.1 недоступен без видимой причины.
+	// С 5.02.A.11 ASC прошивки сам несёт все параметры 3.x: awg_proxy
+	// NativeWG-туннелю не нужен, и его версия ничего не решает.
+	let nativeASC3 = $derived(tunnel?.backend === 'nativewg' && !!systemInfo?.supportsWireguardASC3);
 	let proxyOutdated = $derived(
 		tunnel?.backend === 'nativewg' &&
+			!nativeASC3 &&
 			awgProxyOutdated(systemInfo?.awgProxyVersion, systemInfo?.awgProxyExpectedVersion),
 	);
 	let awg3Available = $derived(
 		tunnel?.backend === 'nativewg'
-			? supportsAwg31OnNativeWG(systemInfo?.awgProxyVersion, systemInfo?.awgProxyExpectedVersion)
+			? nativeASC3 ||
+					supportsAwg31OnNativeWG(systemInfo?.awgProxyVersion, systemInfo?.awgProxyExpectedVersion)
 			: supportsAwg3(systemInfo?.kernelModuleLoadedVersion),
 	);
 	let loading = $state(true);
@@ -497,7 +502,7 @@
 						errors={$errors}
 						{hints}
 						awg3={awg3Available}
-						awg3Limited={tunnel?.backend === 'nativewg'}
+						awg3Limited={tunnel?.backend === 'nativewg' && !nativeASC3}
 					/>
 				</div>
 

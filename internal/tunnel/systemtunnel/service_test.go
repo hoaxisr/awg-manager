@@ -51,7 +51,15 @@ func (m markedServers) IsServerInterface(id string) bool { return m[id] }
 // встроенного сервера или пометка в сторе.
 func newASCHarness(t *testing.T, name, description string, marked bool) (*ServiceImpl, *capturingPoster) {
 	t.Helper()
+	return newASCHarnessWith(t, name, description, marked, `{"jc": 4}`)
+}
+
+// newASCHarnessWith — то же, но с текущим ASC интерфейса на роутере
+// (/show/rc/.../wireguard/asc): форма 5.02.A.11 — числа и ключи 3.x.
+func newASCHarnessWith(t *testing.T, name, description string, marked bool, currentASC string) (*ServiceImpl, *capturingPoster) {
+	t.Helper()
 	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/rc/interface/"+name+"/wireguard/asc", currentASC)
 	fg.SetPostInterface(name, `{"show":{"interface":{"id":"`+name+`","interface-name":"nwg0","type":"Wireguard",`+
 		`"state":"up","description":"`+description+`","wireguard":{"public-key":"PUB=","listen-port":43328}}}}`)
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
@@ -116,5 +124,30 @@ func TestSetASCParams_KeepsSignatureForClientTunnel(t *testing.T) {
 	// json.Marshal фейкового постера экранирует <> — сверяем по полезной части.
 	if got := poster.last(); !strings.Contains(got, `"i1"`) || !strings.Contains(got, `0x01`) {
 		t.Fatalf("сигнатура туннеля-клиента потеряна:\n%s", got)
+	}
+}
+
+// Редактор системного туннеля шлёт только поля 2.0, а запись без 3.x снимает
+// их с интерфейса (стенд 5.02.A.11): стоящие на интерфейсе 3.x обязаны уйти
+// в запись как есть. Запись с ключами 3.x — осознанная, её не трогаем.
+func TestSetASCParams_KeepsASC3OfInterface(t *testing.T) {
+	const current = `{"jc": 4, "header-protection-key": "K", "rekey-after-time-start": 120,
+		"rekey-after-time-end": 150, "random-trailers": 1}`
+	svc, poster := newASCHarnessWith(t, "Wireguard1", "client", false, current)
+	if err := svc.SetASCParams(context.Background(), "Wireguard1", json.RawMessage(`{"jc":5}`)); err != nil {
+		t.Fatalf("SetASCParams: %v", err)
+	}
+	got := poster.last()
+	for _, want := range []string{`"jc":5`, `"header-protection-key":"K"`, `"rekey-after-time-end":150`, `"random-trailers":1`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("нет %s в %s", want, got)
+		}
+	}
+
+	if err := svc.SetASCParams(context.Background(), "Wireguard1", json.RawMessage(`{"jc":5,"header-protection-key":""}`)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(poster.last(), "rekey-after-time") {
+		t.Errorf("запись с ключом 3.x дополнена: %s", poster.last())
 	}
 }

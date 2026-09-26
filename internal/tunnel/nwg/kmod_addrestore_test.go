@@ -387,3 +387,25 @@ func (p *procStub) countWrites(path string) int {
 	}
 	return n
 }
+
+// Сироты после переезда на нативный ASC 3.x: карта пуста (демон перезапущен)
+// или слот заведён под прежним адресом — DropAllSlots снимает все живые слоты
+// из /proc/awg_proxy/list, служебные строки пропускает, карту чистит.
+func TestDropAllSlots(t *testing.T) {
+	km, stub := newKmodManagerForTest()
+	if _, err := km.AddTunnel("awg0", defaultCfg()); err != nil {
+		t.Fatal(err)
+	}
+	stub.mu.Lock()
+	stub.listBody = "(proxy slots)\n" + stub.listBody + "1.2.3.4:443 listen=127.0.0.1:51821 rx=0 tx=0\nbad-line\n"
+	stub.mu.Unlock()
+
+	km.DropAllSlots()
+
+	if got := stub.countWritesTo("/proc/awg_proxy/del"); got != 2 {
+		t.Fatalf("снятий %d, ждали 2: %+v", got, stub.writes)
+	}
+	if strings.Contains(stub.listBody, "listen=") || len(km.tunnels) != 0 {
+		t.Fatalf("остались слоты %q или записи %v", stub.listBody, km.tunnels)
+	}
+}

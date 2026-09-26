@@ -6732,6 +6732,9 @@ definitions:
       supportsPingCheck:
         example: true
         type: boolean
+      supportsWireguardASC3:
+        example: false
+        type: boolean
       totalMemoryMB:
         example: 512
         type: integer

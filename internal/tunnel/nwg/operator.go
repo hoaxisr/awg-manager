@@ -337,7 +337,9 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	// Non-fatal: kmod proxy handles actual obfuscation regardless.
 	if o.useASC(&stored.Interface) {
 		o.logSignatureSplit("create", stored.Name, &stored.Interface)
-		if ascJSON, err := buildASCJSON(&stored.Interface); err == nil && ascJSON != nil {
+		if ascJSON, err := buildASCJSON(&stored.Interface, o.asc3()); err != nil {
+			o.appLog.Warn("set-asc-params", stored.Name, err.Error())
+		} else if ascJSON != nil {
 			if err := o.commands.Wireguard.SetASCParams(ctx, ndmsName, ascJSON); err != nil {
 				o.appLog.Warn("set-asc-params", "", "RCI failed (non-fatal): "+err.Error())
 			}
@@ -356,15 +358,20 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 
 // useASC сообщает, идёт ли ИМЕННО ЭТОТ туннель нативным путём ASC.
 //
-// Прошивочный ASC на 5.01 останавливается на AWG 2.0: параметры 3.0/3.1
-// (защита заголовков, случайные хвосты) он не моделирует, и buildASCJSON их
-// не отправляет — туннель встаёт как 2.0 против сервера, который ждёт 3.1, и
-// молча не поднимается. Такие туннели идут через awg_proxy.ko, который эти
-// параметры умеет, даже если прошивка ASC-способная.
+// Прошивочный ASC до 5.02.A.11 останавливается на AWG 2.0: параметры 3.0/3.1
+// (защита заголовков, случайные хвосты) он не моделирует — туннель встал бы
+// как 2.0 против сервера, который ждёт 3.1, и молча не поднялся. Такие
+// туннели идут через awg_proxy.ko, который эти параметры умеет, даже если
+// прошивка ASC-способная.
 func (o *OperatorNativeWG) useASC(iface *storage.AWGInterface) bool {
 	// Без явного признака ASC 3.x считаем, что прошивка их не умеет, и уходим
 	// на kmod: там параметры хотя бы применяются.
-	return ascCoversConfig(iface, o.supportsASC(), o.supportsASC3 != nil && o.supportsASC3())
+	return ascCoversConfig(iface, o.supportsASC(), o.asc3())
+}
+
+// asc3 — ASC прошивки понимает параметры AWG 3.x (ndmsinfo.SupportsWireguardASC3).
+func (o *OperatorNativeWG) asc3() bool {
+	return o.supportsASC3 != nil && o.supportsASC3()
 }
 
 // UsesProxyPath сообщает, идёт ли туннель через awg_proxy.ko на ТЕКУЩЕЙ
@@ -434,7 +441,13 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 	// via the edit form after the initial Create (e.g. imported as plain WG, then edited).
 	o.appLog.Full("start", stored.Name, "Syncing ASC params to NDMS")
 	o.logSignatureSplit("start", stored.Name, &stored.Interface)
-	if ascJSON, err := buildASCJSON(&stored.Interface); err == nil && ascJSON != nil {
+	// Не собрался ASC — не стартуем: туннель встал бы с прежним ASC из NDMS
+	// («запущен, но не работает»).
+	ascJSON, err := buildASCJSON(&stored.Interface, o.asc3())
+	if err != nil {
+		return fmt.Errorf("build ASC params: %w", err)
+	}
+	if ascJSON != nil {
 		if err := o.commands.Wireguard.SetASCParams(ctx, names.NDMSName, ascJSON); err != nil {
 			o.appLog.Warn("sync-asc", names.NDMSName, err.Error())
 		}
@@ -446,6 +459,11 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 		return err
 	}
 	o.appLog.Full("start", stored.Name, fmt.Sprintf("Resolving endpoint %s -> %s:%d", stored.Peer.Endpoint, endpointIP, endpointPort))
+
+	// На ASC3-прошивке законных слотов awg_proxy нет (KmodManager.DropAllSlots).
+	if o.kmod != nil && o.asc3() {
+		o.kmod.DropAllSlots()
+	}
 
 	// v4 — исторический "%s:%d" через RCI байт-в-байт. v6 через RCI NDMS не
 	// принимает вовсе (ни импорт, ни peer-команды — подтверждено автором на
@@ -1360,7 +1378,9 @@ func hasIPv6AllowedIPs(allowedIPs []string) bool {
 
 // buildASCJSON builds a json.RawMessage for SetASCParams from stored interface fields.
 // Returns nil if the config is plain WireGuard (no obfuscation).
-func buildASCJSON(iface *storage.AWGInterface) (json.RawMessage, error) {
+// asc3 — прошивка понимает ASC 3.x: только тогда конфиг 3.x несёт параметры
+// устройства (без ASC3 они ушли бы на прошивку, которая их не знает).
+func buildASCJSON(iface *storage.AWGInterface, asc3 bool) (json.RawMessage, error) {
 	if !config.IsAWGObfuscated(iface) {
 		return nil, nil
 	}
@@ -1380,9 +1400,7 @@ func buildASCJSON(iface *storage.AWGInterface) (json.RawMessage, error) {
 			S3: iface.S3, S4: iface.S4,
 			I1: iface.I1, I2: iface.I2, I3: iface.I3, I4: iface.I4, I5: iface.I5,
 		}
-		// Конфиг 3.x доходит сюда только при ASC 3.x у прошивки: все вызовы
-		// стоят за useASC, а без ASC3 такой конфиг уходит на awg_proxy.
-		if ver == "awg3" || ver == "awg3.1" {
+		if asc3 && (ver == "awg3" || ver == "awg3.1") {
 			return ascAWG3JSON(params, iface)
 		}
 		return json.Marshal(params)
@@ -1396,8 +1414,8 @@ func buildASCJSON(iface *storage.AWGInterface) (json.RawMessage, error) {
 	return json.Marshal(params)
 }
 
-// ascAWG3JSON дополняет ASC параметрами устройства 3.0/3.1. Значения уже
-// прошли валидацию формата ("N" или "N-M"); незаданное — ноль.
+// ascAWG3JSON дополняет ASC параметрами устройства 3.0/3.1: "N" или "N-M"
+// (config.ValidateObfuscation), незаданное — ноль.
 func ascAWG3JSON(base ndms.ASCParamsExtended, iface *storage.AWGInterface) (json.RawMessage, error) {
 	p := ndms.ASCParamsAWG3{ASCParamsExtended: base, HeaderProtectionKey: iface.HeaderProtectionKey}
 	for _, f := range []struct {

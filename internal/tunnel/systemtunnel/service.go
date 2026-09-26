@@ -77,5 +77,13 @@ func (s *ServiceImpl) SetASCParams(ctx context.Context, name string, params json
 	if note != "" {
 		s.appLog.Info("set-asc", name, signature.RewriteLogMessage(note))
 	}
+	// Редактор шлёт только поля 2.0, а запись без 3.x их снимает (5.02.A.11).
+	current, err := s.queries.WGServers.ASC3Fields(ctx, name)
+	if err != nil {
+		return err
+	}
+	if params, err = ndms.KeepASC3(params, current); err != nil {
+		return err
+	}
 	return s.commands.Wireguard.SetASCParams(ctx, name, params)
 }

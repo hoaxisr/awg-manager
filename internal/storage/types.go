@@ -656,7 +656,9 @@ type AWGObfuscation struct {
 	I5   string `json:"i5,omitempty"`
 	// AWG 3.0 device parameters (AmneziaWG kernel module feat/awg3). All kept
 	// as strings: HeaderProtectionKey is a base64 key; the timing/padding
-	// params are int-or-"min-max" ranges (u16_range_t) applied via awg setconf.
+	// params are int-or-"min-max" ranges (u16_range_t): kernel backend applies
+	// them via awg setconf, NativeWG — via firmware ASC on 5.02.A.11+ or
+	// awg_proxy (HeaderProtectionKey only) before it.
 	HeaderProtectionKey    string `json:"headerProtectionKey,omitempty"`
 	ContentPaddingAddition string `json:"contentPaddingAddition,omitempty"`
 	RekeyAfterTime         string `json:"rekeyAfterTime,omitempty"`

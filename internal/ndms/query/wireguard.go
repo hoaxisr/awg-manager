@@ -453,10 +453,20 @@ func (s *WGServerStore) fetchConfig(ctx context.Context, name string) (*ndms.Wir
 }
 
 func (s *WGServerStore) fetchASC(ctx context.Context, name string, extended bool) (json.RawMessage, error) {
-	var raw map[string]string
+	var fields map[string]json.RawMessage
 	path := "/show/rc/interface/" + name + "/wireguard/asc"
-	if err := s.getter.Get(ctx, path, &raw); err != nil {
+	if err := s.getter.Get(ctx, path, &fields); err != nil {
 		return nil, fmt.Errorf("get ASC params %s: %w", name, err)
+	}
+	// 5.02.A.11 отдаёт числа ("jc": 4), а не строки: разбор в map[string]string
+	// падал целиком. Принимаем обе формы.
+	raw := make(map[string]string, len(fields))
+	for k, v := range fields {
+		var str string
+		if json.Unmarshal(v, &str) != nil {
+			str = string(v)
+		}
+		raw[k] = str
 	}
 	if extended {
 		params := struct {
@@ -501,6 +511,22 @@ func (s *WGServerStore) fetchASC(ctx context.Context, name string, extended bool
 		H1: raw["h1"], H2: raw["h2"], H3: raw["h3"], H4: raw["h4"],
 	}
 	return json.Marshal(params)
+}
+
+// ASC3Fields читает с роутера (мимо кэша) параметры ASC 3.x интерфейса —
+// ключи ndms.ASC3Keys, какие есть; до 5.02.A.11 их нет вовсе.
+func (s *WGServerStore) ASC3Fields(ctx context.Context, name string) (map[string]json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := s.getter.Get(ctx, "/show/rc/interface/"+name+"/wireguard/asc", &fields); err != nil {
+		return nil, fmt.Errorf("get ASC params %s: %w", name, err)
+	}
+	out := make(map[string]json.RawMessage)
+	for _, k := range ndms.ASC3Keys {
+		if v, ok := fields[k]; ok {
+			out[k] = v
+		}
+	}
+	return out, nil
 }
 
 // resolveSystemName delegates to InterfaceStore so kernel-name resolution

@@ -22,7 +22,7 @@ func TestBuildASCJSON_AWG3_KeepsExtendedParams(t *testing.T) {
 		},
 	}
 
-	raw, err := buildASCJSON(iface)
+	raw, err := buildASCJSON(iface, true)
 	if err != nil {
 		t.Fatalf("buildASCJSON error = %v", err)
 	}

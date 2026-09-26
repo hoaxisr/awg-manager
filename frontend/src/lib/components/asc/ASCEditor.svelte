@@ -28,8 +28,8 @@
 		params: ASCParams;
 		extended?: boolean;
 		awg3?: boolean;
-		// NativeWG (awg_proxy) can only do header protection + random trailers —
-		// not the kernel-only timers / content padding. Hide those when true.
+		// NativeWG through awg_proxy (firmware before 5.02.A.11) can only do header
+		// protection + random trailers — not timers / content padding. Hide those when true.
 		awg3Limited?: boolean;
 		errors?: ASCErrorFields;
 		hints?: Record<string, string>;
@@ -330,7 +330,7 @@
 					Через NativeWG (awg_proxy) работает защита заголовков — её ключ задаётся здесь.
 					Таймеры и content-padding доступны лишь в режиме kernel.
 				{:else}
-					Параметры ядра AWG 3.0 (только режим kernel). Таймеры — число или диапазон
+					Параметры AWG 3.0. Таймеры — число или диапазон
 					<code>min-max</code> в секундах; пусто = значение по умолчанию.
 				{/if}
 			</p>
@@ -376,7 +376,7 @@
 			<SettingsSectionLabel label="AmneziaWG 3.1" icon={Shuffle} tone="purple" header />
 			<p class="group-desc">
 				Параметры версии 3.1 включены в конфигурационном файле туннеля. Отсюда их не
-				поменять: они требуют модуля ядра 3.1 и на этом роутере, и на стороне сервера,
+				поменять: они требуют поддержки 3.1 и на этом роутере, и на стороне сервера,
 				а снятие RandomTrailers на одной стороне рвёт туннель.
 			</p>
 

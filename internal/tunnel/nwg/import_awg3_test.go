@@ -124,7 +124,7 @@ func TestStripAWG3Params_LeavesNothingOfVersion3(t *testing.T) {
 // неполный молча игнорирует (пустой ответ, стенд 5.02.A.11). Поэтому сверка
 // идёт по всему набору ключей и значениям — они сняты со стенда
 // (`show/rc/interface/<имя>/wireguard/asc` после импорта того же конфига).
-func TestASC3FlagAndPayloadMoveTogether(t *testing.T) {
+func TestASC3PathAndPayload(t *testing.T) {
 	iface := awg3Tunnel().Interface
 	if ascCoversConfig(&iface, true, false) {
 		t.Fatal("ASC 3.x нет, а конфиг 3.x не уходит на проксирующий путь: параметры устройства не применит никто")
@@ -133,7 +133,12 @@ func TestASC3FlagAndPayloadMoveTogether(t *testing.T) {
 		t.Fatal("ASC 3.x есть, а конфиг 3.x всё ещё уходит на awg_proxy")
 	}
 
-	raw, err := buildASCJSON(&iface)
+	// Без ASC3 полей 3.x нет даже при конфиге 3.x: прошивка их не знает.
+	if raw, _ := buildASCJSON(&iface, false); strings.Contains(string(raw), "header-protection-key") {
+		t.Fatalf("без ASC3 ушли поля 3.x: %s", raw)
+	}
+
+	raw, err := buildASCJSON(&iface, true)
 	if err != nil {
 		t.Fatalf("buildASCJSON: %v", err)
 	}
@@ -161,9 +166,11 @@ func TestASC3FlagAndPayloadMoveTogether(t *testing.T) {
 	// Конфиг 3.0 без флагов 3.1: нулевые флаги обязаны уйти явными нулями —
 	// без поля прошивка проигнорирует весь запрос.
 	iface.RandomTrailers, iface.DisableCookies = false, false
-	raw, _ = buildASCJSON(&iface)
+	raw, err = buildASCJSON(&iface, true)
 	var got30 map[string]any
-	json.Unmarshal(raw, &got30)
+	if err != nil || json.Unmarshal(raw, &got30) != nil {
+		t.Fatalf("ASC 3.0: %v %s", err, raw)
+	}
 	want["random-trailers"], want["disable-cookies"] = 0.0, 0.0
 	if !reflect.DeepEqual(got30, want) {
 		t.Fatalf("payload ASC 3.0:\n got %v\nwant %v", got30, want)
@@ -174,7 +181,7 @@ func TestASC3FlagAndPayloadMoveTogether(t *testing.T) {
 	iface.HeaderProtectionKey, iface.ContentPaddingAddition, iface.RekeyAfterTime = "", "", ""
 	iface.RekeyTimeout, iface.RejectAfterTime, iface.KeepaliveTimeout, iface.MaxHandshakeAttempts = "", "", "", ""
 	iface.RandomTrailers, iface.DisableCookies = false, false
-	raw, _ = buildASCJSON(&iface)
+	raw, _ = buildASCJSON(&iface, true)
 	if strings.Contains(string(raw), "header-protection-key") {
 		t.Fatalf("конфиг 2.0 несёт поля 3.x: %s", raw)
 	}
@@ -183,7 +190,7 @@ func TestASC3FlagAndPayloadMoveTogether(t *testing.T) {
 func TestASCAWG3JSON_BadValue(t *testing.T) {
 	iface := awg3Tunnel().Interface
 	iface.RekeyAfterTime = "abc"
-	if _, err := buildASCJSON(&iface); err == nil || !strings.Contains(err.Error(), "RekeyAfterTime") {
+	if _, err := buildASCJSON(&iface, true); err == nil || !strings.Contains(err.Error(), "RekeyAfterTime") {
 		t.Fatalf("err = %v", err)
 	}
 }

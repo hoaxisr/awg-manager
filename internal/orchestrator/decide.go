@@ -72,7 +72,7 @@ func decideBoot(event Event, state *State) []Action {
 				// without our kmod proxy → conf=running but no handshake).
 				actions = append(actions, Action{Type: ActionReconcileNativeWG, Tunnel: t.ID})
 				actions = appendPostStartActions(actions, t)
-			} else if t.EndpointMayV6 {
+			} else if t.EndpointMayV6 || t.AWG3 {
 				// На ASC-прошивке NDMS сам поднимает интерфейс из своего
 				// конфига, и для v4-литерала это самодостаточно (boot ничего
 				// не делает намеренно). Для v6-литерала и hostname'а (мог
@@ -82,6 +82,9 @@ func decideBoot(event Event, state *State) []Action {
 				// Start возвращает его (wg set) и заново регистрирует
 				// endpoint-страж; для hostname→v4 Start безвреден — тот же
 				// resync, что decideReconnect делает для работающих.
+				// Конфиг 3.x — то же: до обновления прошивки на ASC3 он мог
+				// идти через awg_proxy, и в конфиге NDMS остались снятый ASC и
+				// endpoint 127.0.0.1 слота (tunnelState.AWG3).
 				actions = append(actions, Action{Type: ActionStartNativeWG, Tunnel: t.ID})
 				actions = appendPostStartActions(actions, t)
 			}

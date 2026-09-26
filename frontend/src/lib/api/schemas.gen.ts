@@ -2345,6 +2345,7 @@ const api_SystemInfoData: v.GenericSchema = v.looseObject({
 	supportsHRanges: v.optional(v.nullable(v.boolean())),
 	supportsOpkgTun: v.optional(v.nullable(v.boolean())),
 	supportsPingCheck: v.optional(v.nullable(v.boolean())),
+	supportsWireguardASC3: v.optional(v.nullable(v.boolean())),
 	totalMemoryMB: v.optional(v.nullable(v.number())),
 	version: v.optional(v.nullable(v.string())),
 });

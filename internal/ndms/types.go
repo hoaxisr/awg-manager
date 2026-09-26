@@ -1,6 +1,10 @@
 package ndms
 
-import "time"
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
 
 // BuiltInVPNServerDescription — описание встроенного WG-сервера Keenetic.
 // Единственный признак «этот интерфейс — встроенный сервер»: NDMS ставит его
@@ -376,4 +380,43 @@ type ASCParamsAWG3 struct {
 	MaxHandshakeAttemptsEnd   int    `json:"max-handshake-attempts-end"`
 	RandomTrailers            int    `json:"random-trailers"`
 	DisableCookies            int    `json:"disable-cookies"`
+}
+
+// ASC3Keys — JSON-ключи параметров 3.x в ASCParamsAWG3 (стенд 5.02.A.11).
+var ASC3Keys = []string{
+	"header-protection-key",
+	"content-padding-addition-start", "content-padding-addition-end",
+	"rekey-after-time-start", "rekey-after-time-end",
+	"rekey-timeout-start", "rekey-timeout-end",
+	"reject-after-time-start", "reject-after-time-end",
+	"keepalive-timeout-start", "keepalive-timeout-end",
+	"max-handshake-attempts-start", "max-handshake-attempts-end",
+	"random-trailers", "disable-cookies",
+}
+
+// KeepASC3 дописывает в запись ASC параметры 3.x, уже стоящие на интерфейсе
+// (current — WGServerStore.ASC3Fields), если сама запись их не несёт. Запись
+// без ключей 3.x прошивка понимает как «снять 3.x» (стенд 5.02.A.11): редактор
+// ASC 2.0 системного или managed-туннеля молча превращал бы 3.1 в 2.0. Запись
+// с любым ключом 3.x — осознанный полный набор, её не трогаем.
+func KeepASC3(params json.RawMessage, current map[string]json.RawMessage) (json.RawMessage, error) {
+	if len(current) == 0 {
+		return params, nil
+	}
+	var asc map[string]json.RawMessage
+	if err := json.Unmarshal(params, &asc); err != nil {
+		return nil, fmt.Errorf("parse ASC params: %w", err)
+	}
+	if asc == nil {
+		return nil, fmt.Errorf("parse ASC params: ожидается объект")
+	}
+	for _, k := range ASC3Keys {
+		if _, ok := asc[k]; ok {
+			return params, nil
+		}
+	}
+	for k, v := range current {
+		asc[k] = v
+	}
+	return json.Marshal(asc)
 }

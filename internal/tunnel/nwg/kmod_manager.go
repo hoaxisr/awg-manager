@@ -661,6 +661,32 @@ func (km *KmodManager) RemoveTunnel(tunnelID string) error {
 	return nil
 }
 
+// DropAllSlots снимает все слоты awg_proxy. Нужен на прошивке с ASC 3.x
+// (5.02.A.11+), где законных слотов нет: живой — остаток туннеля 3.x, шедшего
+// через kmod до обновления прошивки или пакета. После перезапуска демона карта
+// пуста, RemoveTunnel такой слот не находит, а искать по endpoint нельзя —
+// слот мог заводиться под прежним адресом (DDNS). Модуль не загружен — no-op.
+func (km *KmodManager) DropAllSlots() {
+	km.mu.Lock()
+	defer km.mu.Unlock()
+	data, err := km.procReadFn("/proc/awg_proxy/list")
+	if err != nil {
+		return
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || !strings.HasPrefix(f[1], "listen=") {
+			continue
+		}
+		if err := km.procWriteFn("/proc/awg_proxy/del", []byte(f[0])); err != nil {
+			km.appLog.Warn("drop-orphan-slot", f[0], err.Error())
+			continue
+		}
+		km.appLog.Info("drop-orphan-slot", f[0], "слот awg_proxy снят: на прошивке с ASC 3.x он не нужен")
+	}
+	clear(km.tunnels)
+}
+
 // HasSlotListening reports whether a live kmod proxy slot is listening on
 // 127.0.0.1:listenPort (read from /proc/awg_proxy/list).
 func (km *KmodManager) HasSlotListening(listenPort int) bool {

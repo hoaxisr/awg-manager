@@ -404,3 +404,39 @@ func TestSetASCParams_StripsSignatureAndPersistsNothing(t *testing.T) {
 		t.Fatalf("server must not store a signature, got: %+v", got)
 	}
 }
+
+// Форма managed шлёт только поля 2.0, а запись без ключей 3.x снимает их с
+// интерфейса (стенд 5.02.A.11): стоящие на интерфейсе 3.x обязаны уйти в
+// запись как есть.
+func TestSetASCParams_KeepsASC3OfInterface(t *testing.T) {
+	svc, _, getter := newCreateTestService(t)
+	server, err := svc.Create(context.Background(), CreateServerRequest{
+		Address:    "10.43.0.1",
+		Mask:       "255.255.255.0",
+		ListenPort: 52043,
+	})
+	if err != nil {
+		t.Fatalf("seed Create: %v", err)
+	}
+	getter.mu.Lock()
+	getter.asc[server.InterfaceName] = map[string]string{
+		"jc": "0", "jmin": "0", "jmax": "0", "s1": "0", "s2": "0",
+		"h1": "", "h2": "", "h3": "", "h4": "", "s3": "0", "s4": "0",
+		"header-protection-key": "K", "random-trailers": "1",
+	}
+	getter.mu.Unlock()
+
+	raw := json.RawMessage(`{
+		"jc":3,"jmin":64,"jmax":256,"s1":15,"s2":16,
+		"h1":"100000001","h2":"1200000002","h3":"2400000003","h4":"3600000004"
+	}`)
+	if err := svc.SetASCParams(context.Background(), server.InterfaceName, raw); err != nil {
+		t.Fatalf("SetASCParams: %v", err)
+	}
+	getter.mu.Lock()
+	got := getter.asc[server.InterfaceName]
+	getter.mu.Unlock()
+	if got["header-protection-key"] != "K" || got["random-trailers"] != "1" || got["jc"] != "3" {
+		t.Fatalf("после записи на интерфейсе: %v", got)
+	}
+}

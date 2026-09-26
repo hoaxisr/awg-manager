@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 )
@@ -267,6 +268,17 @@ func (s *Service) applyASCParams(ctx context.Context, ifaceName string, raw json
 
 	stripped, err := stripASCSignatures(raw)
 	if err != nil {
+		return err
+	}
+	// Форма managed шлёт только поля 2.0, а запись без 3.x их снимает (5.02.A.11).
+	if s.queries == nil || s.queries.WGServers == nil {
+		return fmt.Errorf("cannot read ASC params: WGServers query store is not initialized")
+	}
+	current, err := s.queries.WGServers.ASC3Fields(ctx, ifaceName)
+	if err != nil {
+		return err
+	}
+	if stripped, err = ndms.KeepASC3(stripped, current); err != nil {
 		return err
 	}
 	if err := s.rciSetASCParams(ctx, ifaceName, stripped); err != nil {

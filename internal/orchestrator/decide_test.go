@@ -94,6 +94,38 @@ func TestDecide_Boot_StartsNativeWGWithASCAndV6Endpoint(t *testing.T) {
 	assertNoActionForTunnel(t, actions, "awg1", ActionStartNativeWG)
 }
 
+// Туннель 3.x на ASC-пути: до обновления прошивки до A11 он шёл через
+// awg_proxy, конфиг NDMS остался с 127.0.0.1 и без ASC 3.x — бут обязан
+// стартовать его полностью. Конфиг 2.0 с v4-endpoint бут не трогает.
+func TestDecide_Boot_StartsNativeWGForAWG3(t *testing.T) {
+	s := newState()
+	s.supportsASC = true
+	s.tunnels["awg0"] = &tunnelState{ID: "awg0", Backend: "nativewg", Enabled: true, NWGIndex: 0, AWG3: true}
+	s.tunnels["awg1"] = &tunnelState{ID: "awg1", Backend: "nativewg", Enabled: true, NWGIndex: 1}
+
+	actions := decide(Event{Type: EventBoot, WANUp: true}, &s)
+
+	starts := filterActions(actions, ActionStartNativeWG)
+	if len(starts) != 1 || starts[0].Tunnel != "awg0" {
+		t.Fatalf("StartNativeWG: %v", starts)
+	}
+}
+
+func TestTunnelStateFromStored_AWG3(t *testing.T) {
+	st := tunnelStateFromStored(&storage.AWGTunnel{ID: "a", Backend: "nativewg",
+		Interface: storage.AWGInterface{AWGObfuscation: storage.AWGObfuscation{HeaderProtectionKey: "k"}}})
+	if !st.AWG3 {
+		t.Fatal("конфиг с HeaderProtectionKey обязан считаться 3.x")
+	}
+	if !tunnelStateFromStored(&storage.AWGTunnel{ID: "c", Backend: "nativewg",
+		Interface: storage.AWGInterface{AWGObfuscation: storage.AWGObfuscation{RandomTrailers: true}}}).AWG3 {
+		t.Fatal("конфиг 3.1 (RandomTrailers) обязан считаться 3.x")
+	}
+	if tunnelStateFromStored(&storage.AWGTunnel{ID: "b", Backend: "nativewg"}).AWG3 {
+		t.Fatal("пустой конфиг — не 3.x")
+	}
+}
+
 func TestDecide_Boot_IncludesMonitoring(t *testing.T) {
 	s := newState()
 	s.tunnels["awg0"] = &tunnelState{

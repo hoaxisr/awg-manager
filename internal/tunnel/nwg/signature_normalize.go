@@ -108,7 +108,7 @@ func ndmsImportConf(stored *storage.AWGTunnel, keepAWG3 bool) (string, string) {
 // снимает принятые прошивкой параметры ASC, иначе обфускация ляжет дважды.
 //
 // С 5.02.A.11 (ndmsinfo.SupportsWireguardASC3) импорт несёт все девять, а на
-// старте их довозит buildASCJSON. Сцепку сторожит TestASC3FlagAndPayloadMoveTogether.
+// старте их довозит buildASCJSON. Сцепку сторожат TestASC3PathAndPayload и TestCreateViaImport_AWG3ParamsFollowASC3.
 func stripAWG3Params(iface *storage.AWGInterface) {
 	iface.HeaderProtectionKey = ""
 	iface.ContentPaddingAddition = ""

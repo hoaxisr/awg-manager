@@ -716,3 +716,30 @@ func TestWGServerStore_ListSystemTunnels_InvalidateRefetches(t *testing.T) {
 		t.Errorf("после сброса новых обращений %d, ожидали 1 — кэш не сбросился", got)
 	}
 }
+
+// 5.02.A.11 отдаёт rc ASC числами ("jc": 4), а не строками: разбор в
+// map[string]string падал целиком, и редактор ASC системного туннеля не
+// читался. ASC3Fields возвращает только ключи 3.x.
+func TestWGServerStore_GetASCParams_NumericForm(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON("/show/rc/interface/Wireguard1/wireguard/asc", `{
+		"jc": 4, "jmin": 40, "jmax": 70, "s1": 87, "s2": 118,
+		"h1": "100000-100100", "h2": "2", "h3": "3", "h4": "4",
+		"s3": 36, "s4": 12, "i1": "<r 32>", "i2": "", "i3": "", "i4": "", "i5": "",
+		"header-protection-key": "K", "random-trailers": 1
+	}`)
+	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
+	raw, err := s.GetASCParams(context.Background(), "Wireguard1", true)
+	if err != nil {
+		t.Fatalf("GetASCParams: %v", err)
+	}
+	var got map[string]any
+	json.Unmarshal(raw, &got)
+	if got["jc"] != 4.0 || got["s3"] != 36.0 || got["h1"] != "100000-100100" || got["i1"] != "<r 32>" {
+		t.Fatalf("разбор: %s", raw)
+	}
+	asc3, err := s.ASC3Fields(context.Background(), "Wireguard1")
+	if err != nil || len(asc3) != 2 || string(asc3["random-trailers"]) != "1" {
+		t.Fatalf("ASC3Fields: %v %v", asc3, err)
+	}
+}

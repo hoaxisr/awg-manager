@@ -31,7 +31,7 @@ func oversizedIface() *storage.AWGInterface {
 // buildASCJSON feeds the NDMS ASC RCI payload on the batch path. An oversized
 // token must be split before it gets there.
 func TestBuildASCJSON_SplitsOversizedSignatureTag(t *testing.T) {
-	raw, err := buildASCJSON(oversizedIface())
+	raw, err := buildASCJSON(oversizedIface(), true)
 	if err != nil {
 		t.Fatalf("buildASCJSON error = %v", err)
 	}
@@ -58,7 +58,7 @@ func ascI1(t *testing.T, raw []byte) string {
 func TestBuildASCJSON_LeavesCompliantSignatureAlone(t *testing.T) {
 	iface := oversizedIface()
 	iface.I1 = "<b 0x170303><r 32><t>"
-	raw, err := buildASCJSON(iface)
+	raw, err := buildASCJSON(iface, true)
 	if err != nil {
 		t.Fatalf("buildASCJSON error = %v", err)
 	}

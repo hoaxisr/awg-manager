@@ -135,3 +135,23 @@ func TestValidateAWG3FlagsStillEnforceSxFloor(t *testing.T) {
 		t.Fatal("expected S1 = 11 to be refused next to a header protection key")
 	}
 }
+
+// Форма полей 3.x — как у фронта (isU16Range): иначе импорт и прямой API
+// пропускали мусор, а старт туннеля молча не слал ASC (nwg.ascAWG3JSON).
+func TestValidateAWG3_RangeFields(t *testing.T) {
+	for v, ok := range map[string]bool{
+		"": true, "0": true, "80": true, "0-80": true, "65535": true, "120-120": true,
+		"abc": false, "5-": false, "-5": false, "120-150-180": false, "65536": false,
+		"150-120": false, " 5": false, "5 - 7": false, "000001": false,
+	} {
+		for name, o := range map[string]storage.AWGObfuscation{
+			"ContentPaddingAddition": {ContentPaddingAddition: v}, "RekeyAfterTime": {RekeyAfterTime: v},
+			"RekeyTimeout": {RekeyTimeout: v}, "RejectAfterTime": {RejectAfterTime: v},
+			"KeepaliveTimeout": {KeepaliveTimeout: v}, "MaxHandshakeAttempts": {MaxHandshakeAttempts: v},
+		} {
+			if err := ValidateAWG3(&o); (err == nil) != ok {
+				t.Errorf("%s=%q: err=%v, want ok=%v", name, v, err, ok)
+			}
+		}
+	}
+}
