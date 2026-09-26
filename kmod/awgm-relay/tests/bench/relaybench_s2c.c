@@ -4,7 +4,8 @@
 //   type 2 (открывает гейт userspace-релея) и флудит закодированными type 4.
 //   Клиент считает, что дошло. RELAY_PORT = 0 — без релея, сервер шлёт
 //   клиенту напрямую (ёмкость самой loopback-доставки).
-// usage: relaybench_s2c RELAY_PORT SERVER_PORT SECONDS SIZE [pps]
+// usage: relaybench_s2c RELAY_PORT SERVER_PORT SECONDS SIZE [pps] [plain]
+//   plain — сервер шлёт чистый WG без Phobos (для awg_proxy с H1..H4=1..4, S=0: F473).
 // Ключ/режим как у run.sh: benchkey-0123456789, masking none, max-dummy 4.
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -60,6 +61,7 @@ int main(int c, char **v)
 {
 	int rp = atoi(v[1]), sp = atoi(v[2]), secs = atoi(v[3]), size = atoi(v[4]);
 	long pps = c > 5 ? atol(v[5]) : 0, sent = 0;
+	int plain = c > 6 && !strcmp(v[6], "plain");
 	struct awgmr_phobos_cfg cfg = { .key_len = 19, .max_dummy = 4, .mask = AWGMR_MASK_NONE };
 	int sfd = socket(AF_INET, SOCK_DGRAM, 0), rcv = 4 << 20, i;
 	struct sockaddr_in sa = lo(sp), ca = lo(0), to;
@@ -87,7 +89,7 @@ int main(int c, char **v)
 		sendto(cfd, hs, sizeof(hs), 0, (void *)&ra, sizeof(ra));
 		if (recvfrom(sfd, tmp, sizeof(tmp), 0, (void *)&to, &tl) < 0) { fprintf(stderr, "нет handshake от релея\n"); return 1; }
 		memset(tmp, 0, 92); tmp[0] = 2;
-		out = awgmr_encode(&cfg, tmp, 92, sizeof(tmp), &rng);
+		out = plain ? 92 : awgmr_encode(&cfg, tmp, 92, sizeof(tmp), &rng);
 		sendto(sfd, tmp, out, 0, (void *)&to, tl);
 		usleep(300000);
 	} else {
@@ -98,7 +100,7 @@ int main(int c, char **v)
 		memset(d[i], 0, size); d[i][0] = 4;
 		iv[i].iov_base = d[i];
 		iv[i].iov_len = awgmr_encode(&cfg, d[i], size, sizeof(d[i]), &rng);
-		if (!rp) { /* напрямую — клиенту незакодированный type 4 */
+		if (!rp || plain) { /* напрямую или plain — незакодированный type 4 */
 			memset(d[i], 0, size); d[i][0] = 4; iv[i].iov_len = size;
 		}
 		memset(&h[i], 0, sizeof(h[i]));
