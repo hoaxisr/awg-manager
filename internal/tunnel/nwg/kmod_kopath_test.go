@@ -50,7 +50,7 @@ func TestResolveKoPathFor(t *testing.T) {
 			model:    "KN-1810",
 			soc:      kmod.SoCMT7621,
 			exists:   have(),
-			wantPath: defaultKoPath,
+			wantPath: awgProxyDir + "/awg_proxy.ko",
 		},
 		{
 			name:    "no SoC build and arch default is foreign — refuse",
@@ -74,14 +74,14 @@ func TestResolveKoPathFor(t *testing.T) {
 			model:    "KN-4210",
 			soc:      kmod.ParseModelToSoC("NC-4210"),
 			exists:   have(),
-			wantPath: defaultKoPath,
+			wantPath: awgProxyDir + "/awg_proxy.ko",
 		},
 		{
 			name:     "unknown hardware still gets the arch default",
 			model:    "",
 			soc:      kmod.SoCUnknown,
 			exists:   have(),
-			wantPath: defaultKoPath,
+			wantPath: awgProxyDir + "/awg_proxy.ko",
 		},
 		{
 			// Keenetic, которого нет в карте SoC: NDMS ответил, значит модель

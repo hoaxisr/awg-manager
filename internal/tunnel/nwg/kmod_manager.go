@@ -24,8 +24,7 @@ import (
 )
 
 const (
-	awgProxyDir   = "/opt/etc/awg-manager/modules"
-	defaultKoPath = awgProxyDir + "/awg_proxy.ko"
+	awgProxyDir = "/opt/etc/awg-manager/modules"
 	// ExpectedKmodVersion — минимальная версия awg_proxy.ko, которую несёт IPK
 	// в /opt/etc/awg-manager/modules. Экспортирована, чтобы system/info мог
 	// показать «в комплекте новее, чем загружено».
