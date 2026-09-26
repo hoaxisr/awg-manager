@@ -1498,6 +1498,8 @@ const api_SettingsData: v.GenericSchema = v.looseObject({
 	logging: v.optional(v.nullable(v.lazy(() => api_LoggingSettingsDTO))),
 	mcpEnabled: v.optional(v.nullable(v.boolean())),
 	monitoringExcludedTunnels: v.optional(v.nullable(v.array(v.string()))),
+	obfuscatorKmodTripped: v.optional(v.nullable(v.string())),
+	obfuscatorRelayProcess: v.optional(v.nullable(v.boolean())),
 	pingCheck: v.optional(v.nullable(v.lazy(() => api_PingCheckSettingsDTO))),
 	schemaVersion: v.optional(v.nullable(v.number())),
 	server: v.optional(v.nullable(v.lazy(() => api_ServerSettingsDTO))),

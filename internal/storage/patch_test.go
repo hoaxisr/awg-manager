@@ -380,6 +380,15 @@ var nonPatchableSettings = map[string]struct{}{
 	// тело ответа целиком.
 	"managedServers": {},
 	"managedServer":  {},
+	// obfuscatorKmodTripped/obfuscatorKmodOopsHash — состояние сторожа ядро/
+	// процесс Phobos (§4.9), пишется ТОЛЬКО TripObfuscatorKmod/
+	// ClearObfuscatorKmodTripped/SetObfuscatorKmodOopsHash — та же
+	// single-writer логика, что у fakeip/opkgTun: общий PATCH не должен
+	// уметь подделать причину срабатывания или сбить дедуп по hash.
+	// obfuscatorRelayProcess (сам выключатель) в патче остаётся — им может
+	// управлять и пользователь через страницу настроек.
+	"obfuscatorKmodTripped":  {},
+	"obfuscatorKmodOopsHash": {},
 }
 
 // TestSettingsPatch_ExcludesServerSecrets pins the intentional exclusion: a

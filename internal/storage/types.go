@@ -26,18 +26,25 @@ type Settings struct {
 	// Off by default; /mcp answers 404 while disabled. Access requires an
 	// MCP key from McpKeyStore regardless of AuthEnabled. Keys live in
 	// mcp_keys.json, not here, so hashes never leave via /settings/get.
-	McpEnabled           bool              `json:"mcpEnabled"`
-	Server               ServerSettings    `json:"server"`
-	PingCheck            PingCheckSettings `json:"pingCheck"`
-	Logging              LoggingSettings   `json:"logging"`
-	DisableMemorySaving  bool              `json:"disableMemorySaving"` // false = auto, true = soft mode
-	Updates              UpdateSettings    `json:"updates"`
-	Download             DownloadSettings  `json:"download"`
-	DNSRoute             DNSRouteSettings  `json:"dnsRoute"`
-	GeoFile              GeoFileSettings   `json:"geoFile"`
-	ConnectivityCheckURL string            `json:"connectivityCheckUrl"`
-	UsageLevel           string            `json:"usageLevel"`
-	ServerInterfaces     []string          `json:"serverInterfaces,omitempty"`
+	McpEnabled bool `json:"mcpEnabled"`
+	// ObfuscatorRelayProcess — принудительно userspace-релей для Phobos
+	// (выключатель kernel-релея awgm_relay, спека §4.8); false — ядро, если есть.
+	ObfuscatorRelayProcess bool `json:"obfuscatorRelayProcess,omitempty"`
+	// ObfuscatorKmodTripped — почему сторож выключил ядро (§4.9); пусто — не срабатывал.
+	ObfuscatorKmodTripped string `json:"obfuscatorKmodTripped,omitempty"`
+	// ObfuscatorKmodOopsHash — hash последней обработанной записи /proc/mtdoops/oops.
+	ObfuscatorKmodOopsHash string            `json:"obfuscatorKmodOopsHash,omitempty"`
+	Server                 ServerSettings    `json:"server"`
+	PingCheck              PingCheckSettings `json:"pingCheck"`
+	Logging                LoggingSettings   `json:"logging"`
+	DisableMemorySaving    bool              `json:"disableMemorySaving"` // false = auto, true = soft mode
+	Updates                UpdateSettings    `json:"updates"`
+	Download               DownloadSettings  `json:"download"`
+	DNSRoute               DNSRouteSettings  `json:"dnsRoute"`
+	GeoFile                GeoFileSettings   `json:"geoFile"`
+	ConnectivityCheckURL   string            `json:"connectivityCheckUrl"`
+	UsageLevel             string            `json:"usageLevel"`
+	ServerInterfaces       []string          `json:"serverInterfaces,omitempty"`
 	// ServerInterfaceMeta stores AWG Manager bookkeeping for built-in/marked
 	// servers (NAT static-WAN for internet-only teardown). map[serverID].
 	ServerInterfaceMeta map[string]ServerInterfaceMeta `json:"serverInterfaceMeta,omitempty"`

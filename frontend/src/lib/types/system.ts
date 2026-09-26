@@ -274,6 +274,13 @@ export interface Settings {
 	 * управляются через /mcp/keys*. Optional — legacy backends omit it.
 	 */
 	mcpEnabled?: boolean;
+	/**
+	 * Phobos-релей принудительно процессом (выключатель kernel-релея
+	 * awgm_relay). Optional — legacy backends omit it.
+	 */
+	obfuscatorRelayProcess?: boolean;
+	/** Причина, по которой сторож выключил kernel-релей (пусто — не срабатывал). */
+	obfuscatorKmodTripped?: string;
 	apiKey?: string;
 	server: ServerSettings;
 	pingCheck: PingCheckSettings;

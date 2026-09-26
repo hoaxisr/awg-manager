@@ -19,6 +19,7 @@ type SettingsPatch struct {
 	ApiKey                      *string                `json:"apiKey,omitempty"`
 	SessionTtlHours             *int                   `json:"sessionTtlHours,omitempty"`
 	McpEnabled                  *bool                  `json:"mcpEnabled,omitempty"`
+	ObfuscatorRelayProcess      *bool                  `json:"obfuscatorRelayProcess,omitempty"`
 	Server                      *ServerSettings        `json:"server,omitempty"`
 	PingCheck                   *PingCheckSettings     `json:"pingCheck,omitempty"`
 	Logging                     *LoggingSettingsPatch  `json:"logging,omitempty"`

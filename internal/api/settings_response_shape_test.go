@@ -34,6 +34,8 @@ var settingsResponseKeys = []string{
 	"authEnabled",
 	"sessionTtlHours",
 	"mcpEnabled",
+	"obfuscatorRelayProcess",
+	"obfuscatorKmodTripped",
 	"apiKey",
 	"server",
 	"pingCheck",
@@ -57,6 +59,7 @@ func seedAllResponseFields(t *testing.T, store *storage.SettingsStore) {
 	t.Helper()
 	if err := store.Update(func(cur *storage.Settings) error {
 		cur.ApiKey = "apikey-test-0000-0000"
+		cur.ObfuscatorKmodTripped = "oops-test"
 		cur.MonitoringExcludedTunnels = []string{"tn-1"}
 		cur.SingboxBootstrapDNS = "8.8.8.8"
 		cur.SingboxClashPort = 9099
@@ -152,7 +155,8 @@ func TestSettingsResponse_CoversHandwrittenFrontendType(t *testing.T) {
 	// settingsResponseKeys).
 	frontendFields := []string{
 		"schemaVersion", "authEnabled", "sessionTtlHours",
-		"mcpEnabled", "apiKey", "server", "pingCheck", "logging",
+		"mcpEnabled", "obfuscatorRelayProcess", "obfuscatorKmodTripped",
+		"apiKey", "server", "pingCheck", "logging",
 		"disableMemorySaving", "updates", "download", "dnsRoute", "geoFile",
 		"connectivityCheckUrl", "usageLevel", "monitoringExcludedTunnels",
 		"singboxBootstrapDNS", "singboxClashPort",

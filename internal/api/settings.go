@@ -118,6 +118,10 @@ type SettingsData struct {
 	// McpEnabled turns on the Model Context Protocol endpoint at /mcp.
 	// Off by default; keys are managed via /mcp/keys*.
 	McpEnabled bool `json:"mcpEnabled" example:"false"`
+	// ObfuscatorRelayProcess — Phobos-релей принудительно процессом (выключатель ядра).
+	ObfuscatorRelayProcess bool `json:"obfuscatorRelayProcess" example:"false"`
+	// ObfuscatorKmodTripped — причина, по которой сторож выключил kernel-релей.
+	ObfuscatorKmodTripped string `json:"obfuscatorKmodTripped,omitempty" example:""`
 	// ApiKey is the opaque secret accepted in place of a session cookie via
 	// `Authorization: Bearer <key>`. Отдаётся сознательно: панель настроек
 	// показывает его и даёт скопировать — ключ для того и заводится. Ротация
@@ -173,21 +177,22 @@ type MonitoringRefreshService interface {
 
 // SettingsHandler handles settings API endpoints.
 type SettingsHandler struct {
-	store                   *storage.SettingsStore
-	tunnels                 *storage.AWGTunnelStore
-	pingCheck               PingCheckToggleService
-	monitoring              MonitoringRefreshService
-	pingCheckSnapshot       func()
-	logsSnapshot            func()
-	applyLogSettings        func()
-	applySingboxLogSettings func() error
-	applyBootstrapDNS       func(string) error
-	applyClashPort          func(int) error
-	clashPorts              clashPortInspector
-	downloadSvc             *downloader.Service
-	log                     *logging.ScopedLogger
-	bus                     *events.Bus
-	exposure                exposureChecker
+	store                    *storage.SettingsStore
+	tunnels                  *storage.AWGTunnelStore
+	pingCheck                PingCheckToggleService
+	monitoring               MonitoringRefreshService
+	pingCheckSnapshot        func()
+	logsSnapshot             func()
+	applyLogSettings         func()
+	applySingboxLogSettings  func() error
+	applyBootstrapDNS        func(string) error
+	applyClashPort           func(int) error
+	clashPorts               clashPortInspector
+	onObfuscatorRelayChanged func(process bool)
+	downloadSvc              *downloader.Service
+	log                      *logging.ScopedLogger
+	bus                      *events.Bus
+	exposure                 exposureChecker
 }
 
 // exposureChecker re-runs the "are we exposed without a password" check
@@ -264,6 +269,12 @@ func (h *SettingsHandler) SetClashPortInspector(insp clashPortInspector) {
 	h.clashPorts = insp
 }
 
+// SetOnObfuscatorRelayChanged — смена выключателя ядро/процесс: перезапуск
+// Phobos-релеев на новом бэкенде (спека §4.8).
+func (h *SettingsHandler) SetOnObfuscatorRelayChanged(fn func(process bool)) {
+	h.onObfuscatorRelayChanged = fn
+}
+
 func (h *SettingsHandler) SetDownloadService(svc *downloader.Service) {
 	h.downloadSvc = svc
 }
@@ -301,11 +312,13 @@ func (h *SettingsHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 // подавшего сюда store.Get().
 func settingsResponse(s *storage.Settings) SettingsData {
 	return SettingsData{
-		SchemaVersion:   s.SchemaVersion,
-		AuthEnabled:     s.AuthEnabled,
-		SessionTtlHours: s.SessionTtlHours,
-		McpEnabled:      s.McpEnabled,
-		ApiKey:          s.ApiKey,
+		SchemaVersion:          s.SchemaVersion,
+		AuthEnabled:            s.AuthEnabled,
+		SessionTtlHours:        s.SessionTtlHours,
+		McpEnabled:             s.McpEnabled,
+		ObfuscatorRelayProcess: s.ObfuscatorRelayProcess,
+		ObfuscatorKmodTripped:  s.ObfuscatorKmodTripped,
+		ApiKey:                 s.ApiKey,
 		Server: ServerSettingsDTO{
 			Port:       s.Server.Port,
 			Interface:  s.Server.Interface,
@@ -603,6 +616,12 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			h.log.Warn("mcp", "", "MCP endpoint enabled")
 		} else {
 			h.log.Info("mcp", "", "MCP endpoint disabled")
+		}
+	}
+	if oldSettings.ObfuscatorRelayProcess != want.ObfuscatorRelayProcess {
+		h.log.Info("obfuscator", "", fmt.Sprintf("Phobos relay backend: process=%v", want.ObfuscatorRelayProcess))
+		if h.onObfuscatorRelayChanged != nil {
+			go h.onObfuscatorRelayChanged(want.ObfuscatorRelayProcess)
 		}
 	}
 	if oldSettings.SessionTtlHours != want.SessionTtlHours {

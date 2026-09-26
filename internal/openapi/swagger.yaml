@@ -4199,6 +4199,15 @@ definitions:
         items:
           type: string
         type: array
+      obfuscatorKmodTripped:
+        description: ObfuscatorKmodTripped — причина, по которой сторож выключил kernel-релей.
+        example: ""
+        type: string
+      obfuscatorRelayProcess:
+        description: ObfuscatorRelayProcess — Phobos-релей принудительно процессом
+          (выключатель ядра).
+        example: false
+        type: boolean
       pingCheck:
         $ref: '#/definitions/api.PingCheckSettingsDTO'
       schemaVersion:
