@@ -65,3 +65,16 @@ func TestOopsOurs_ModulesLinkedInOnly(t *testing.T) {
 		t.Fatal("arm64-кадр не пойман")
 	}
 }
+
+// Каталога метки может не быть — Arm обязан его создать, иначе метка не
+// пишется и сторож слеп к перезагрузке в окне (M1).
+func TestArm_CreatesMissingDir(t *testing.T) {
+	dir := setWatchdogPaths(t, "boot-1")
+	ArmPath = filepath.Join(dir, "modules", "awgm_relay.arming")
+	if err := Arm(); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(ArmPath); err != nil || strings.TrimSpace(string(b)) != "boot-1" {
+		t.Fatalf("метка: %q %v", b, err)
+	}
+}

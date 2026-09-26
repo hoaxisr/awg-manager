@@ -3,6 +3,7 @@ package obfuscator
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +27,12 @@ func bootID() string {
 }
 
 // Arm — метка перед insmod: «модуль загружается в этой загрузке роутера».
-func Arm() error { return os.WriteFile(ArmPath, []byte(bootID()), 0o644) }
+func Arm() error {
+	if err := os.MkdirAll(filepath.Dir(ArmPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(ArmPath, []byte(bootID()), 0o644)
+}
 
 // DisarmAfter снимает метку через d (0 — сразу). Повторный вызов перевзводит.
 func DisarmAfter(d time.Duration) {
