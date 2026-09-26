@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ type Report struct {
 	WAN             WANInfo              `json:"wan"`
 	BootHealth      BootHealth           `json:"bootHealth"`
 	AWGProxyModule  AWGProxyModule       `json:"awgProxyModule"`
+	AWGMRelay       AWGMRelayModule      `json:"awgmRelay"`
 	SingboxConfig   *SingboxConfigInfo   `json:"singboxConfig,omitempty"`
 	JournalWarnings *JournalWarningsInfo `json:"journalWarnings,omitempty"`
 	Tunnels         []TunnelInfo         `json:"tunnels"`
@@ -114,6 +116,15 @@ type AWGProxyModule struct {
 	EndpointCount int      `json:"endpointCount"`
 	RawList       string   `json:"rawList,omitempty"`
 	DmesgLines    []string `json:"dmesgLines,omitempty"`
+}
+
+// AWGMRelayModule — состояние kernel-релея обфускатора Phobos (модуль
+// awgm_relay, спека §4.10). Заполняется collectAWGMRelayModule.
+type AWGMRelayModule struct {
+	Loaded  bool   `json:"loaded"`
+	Version string `json:"version,omitempty"`
+	RawList string `json:"rawList,omitempty"`
+	Slots   int    `json:"slots"`
 }
 
 // SingboxConfigInfo holds the merged sing-box config (sanitized) in the report.
@@ -449,14 +460,24 @@ type Runner struct {
 	result      *Report
 	subscribers []chan DiagEvent
 	opts        RunOptions
+
+	// readAWGMRelayVersion / readAWGMRelayList — шов для теста
+	// collectAWGMRelayModule: реальные /proc-файлы недоступны в CI.
+	// NewRunner задаёт боевые реализации; поле nil означает, что Runner
+	// собран напрямую литералом (как в других тестах пакета) и эти два
+	// коллектора не вызываются.
+	readAWGMRelayVersion func() ([]byte, error)
+	readAWGMRelayList    func() ([]byte, error)
 }
 
 // NewRunner creates a new diagnostics runner.
 func NewRunner(deps Deps) *Runner {
 	return &Runner{
-		deps:   deps,
-		appLog: logging.NewScopedLogger(deps.AppLogger, logging.GroupSystem, logging.SubDiagnostics),
-		status: RunStatus{Status: "idle"},
+		deps:                 deps,
+		appLog:               logging.NewScopedLogger(deps.AppLogger, logging.GroupSystem, logging.SubDiagnostics),
+		status:               RunStatus{Status: "idle"},
+		readAWGMRelayVersion: func() ([]byte, error) { return os.ReadFile("/proc/awgm_relay/version") },
+		readAWGMRelayList:    func() ([]byte, error) { return kmod.ReadProc("/proc/awgm_relay/list") },
 	}
 }
 
@@ -649,6 +670,9 @@ func (r *Runner) executeStream(ctx context.Context) {
 
 		r.emitPhase("collect_proxy_module", "Состояние awg-proxy...")
 		report.AWGProxyModule = r.collectAWGProxyModule(ctx)
+
+		r.emitPhase("collect_awgm_relay", "Состояние awgm_relay...")
+		report.AWGMRelay = r.collectAWGMRelayModule()
 
 		r.emitPhase("collect_singbox_config", "Сбор sing-box config...")
 		report.SingboxConfig = r.collectSingboxConfig()

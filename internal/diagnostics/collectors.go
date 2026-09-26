@@ -624,6 +624,28 @@ func (r *Runner) collectAWGProxyModule(ctx context.Context) AWGProxyModule {
 	return mod
 }
 
+// collectAWGMRelayModule reads kernel-релей обфускатора Phobos (awgm_relay,
+// спека §4.10). Никогда не паникует на отсутствующих /proc-файлах (relay
+// выключен настройкой или модуль не собран) — в этом случае Loaded=false.
+func (r *Runner) collectAWGMRelayModule() AWGMRelayModule {
+	mod := AWGMRelayModule{}
+
+	if v, err := r.readAWGMRelayVersion(); err == nil {
+		mod.Loaded = true
+		mod.Version = strings.TrimSpace(string(v))
+	}
+	if list, err := r.readAWGMRelayList(); err == nil {
+		mod.RawList = string(list)
+		for _, line := range strings.Split(mod.RawList, "\n") {
+			if strings.HasPrefix(line, "127.0.0.1:") {
+				mod.Slots++
+			}
+		}
+	}
+
+	return mod
+}
+
 // bootHealthInput is the per-tunnel slice needed by computeBootHealth.
 // Extracted from awgStore + stateMgr; isolated into its own struct so
 // computeBootHealth can be tested without mocks.

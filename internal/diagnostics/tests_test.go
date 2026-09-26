@@ -156,6 +156,49 @@ func TestAnonymize_AWGProxyModule_MasksRawListIPs(t *testing.T) {
 	}
 }
 
+func TestCollectAWGMRelayModule_ParsesVersionAndSlots(t *testing.T) {
+	r := &Runner{
+		readAWGMRelayVersion: func() ([]byte, error) { return []byte("0.1.1\n"), nil },
+		readAWGMRelayList: func() ([]byte, error) {
+			return []byte("127.0.0.1:41000 1.2.3.4:51000 transform=phobos masking=none rx=0 tx=0 rx_pkt=0 tx_pkt=0 parse_err=0 rxq_drop=0 trunc=0\n" +
+				"127.0.0.1:41001 5.6.7.8:51001 transform=phobos masking=none rx=0 tx=0 rx_pkt=0 tx_pkt=0 parse_err=0 rxq_drop=0 trunc=0\n"), nil
+		},
+	}
+
+	mod := r.collectAWGMRelayModule()
+
+	if !mod.Loaded {
+		t.Fatal("Loaded=false, want true")
+	}
+	if mod.Version != "0.1.1" {
+		t.Errorf("Version=%q, want %q", mod.Version, "0.1.1")
+	}
+	if mod.Slots != 2 {
+		t.Errorf("Slots=%d, want 2", mod.Slots)
+	}
+	// Модуль не выводит ключ обфускации — проверка страхует от регресса
+	// модуля (если он вдруг начнёт писать key= в /proc/awgm_relay/list).
+	if strings.Contains(mod.RawList, "key=") {
+		t.Errorf("RawList contains %q, kernel module must never expose keys: %q", "key=", mod.RawList)
+	}
+}
+
+func TestCollectAWGMRelayModule_NotLoadedOnMissingProc(t *testing.T) {
+	r := &Runner{
+		readAWGMRelayVersion: func() ([]byte, error) { return nil, errors.New("no such file") },
+		readAWGMRelayList:    func() ([]byte, error) { return nil, errors.New("no such file") },
+	}
+
+	mod := r.collectAWGMRelayModule()
+
+	if mod.Loaded {
+		t.Error("Loaded=true, want false when /proc/awgm_relay/version is absent")
+	}
+	if mod.Slots != 0 || mod.RawList != "" {
+		t.Errorf("expected zero-value module, got %+v", mod)
+	}
+}
+
 func TestRouteDevFromIPRouteGet(t *testing.T) {
 	tests := []struct {
 		name string
