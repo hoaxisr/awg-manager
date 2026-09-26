@@ -192,6 +192,49 @@ build_ipk_one() {
 
     echo "Total awg_proxy modules bundled: $AWG_PROXY_COUNT"
 
+    # awgm_relay — та же раскладка, что у awg_proxy: arch-default + файлы SoC.
+    local AWGM_RELAY_COUNT=0
+    local AWGM_RELAY_DEFAULT
+
+    case "$ENTWARE_ARCH" in
+        mipsel-3.4) AWGM_RELAY_DEFAULT="kmod/awgm-relay/out/awgm_relay-mt7621.ko" ;;
+        mips-3.4)   AWGM_RELAY_DEFAULT="kmod/awgm-relay/out/awgm_relay-mips.ko" ;;
+        aarch64-3.10) AWGM_RELAY_DEFAULT="kmod/awgm-relay/out/awgm_relay-arm64.ko" ;;
+    esac
+    if [[ -f "$AWGM_RELAY_DEFAULT" ]]; then
+        mkdir -p "$AWG_PROXY_DIR"
+        cp "$AWGM_RELAY_DEFAULT" "$AWG_PROXY_DIR/awgm_relay.ko"
+        AWGM_RELAY_COUNT=$((AWGM_RELAY_COUNT + 1))
+        echo "Bundled awgm_relay.ko default ($(basename "$AWGM_RELAY_DEFAULT"))"
+    else
+        echo "WARNING: $AWGM_RELAY_DEFAULT not found, IPK will have no awgm_relay module"
+    fi
+
+    for EXTRA_KO in kmod/awgm-relay/out/awgm_relay-*.ko; do
+        [[ -f "$EXTRA_KO" ]] || continue
+        case "$(basename "$EXTRA_KO")" in
+            awgm_relay-mips.ko|awgm_relay-arm64.ko) continue ;;
+        esac
+        local filetype
+        filetype=$(file -b "$EXTRA_KO")
+        local match=false
+        case "$ENTWARE_ARCH" in
+            mipsel-3.4)   [[ "$filetype" == *"LSB"*"MIPS"* ]] && match=true ;;
+            mips-3.4)     [[ "$filetype" == *"MSB"*"MIPS"* ]] && match=true ;;
+            aarch64-3.10) [[ "$filetype" == *"aarch64"* ]]     && match=true ;;
+        esac
+        if $match; then
+            local KONAME
+            KONAME=$(basename "$EXTRA_KO" .ko | sed 's/awgm_relay-//')
+            mkdir -p "$AWG_PROXY_DIR"
+            cp "$EXTRA_KO" "$AWG_PROXY_DIR/awgm_relay-${KONAME}.ko"
+            AWGM_RELAY_COUNT=$((AWGM_RELAY_COUNT + 1))
+            echo "Bundled awgm_relay override: ${KONAME}"
+        fi
+    done
+
+    echo "Total awgm_relay modules bundled: $AWGM_RELAY_COUNT"
+
     cp entware/files/etc/init.d/* "$IPK_ROOT/opt/etc/init.d/"
 
     for hook in iflayerchanged ifcreated ifdestroyed ifipchanged; do

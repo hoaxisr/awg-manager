@@ -1,0 +1,9 @@
+OK   KN-1812 -> awgm_relay-arm64.ko  31528b  v0.1.1  sha=85a15615ed30
+OK   KN-1811 -> awgm_relay-mt7622.ko  31528b  v0.1.1  sha=89731ae9eac4
+OK   KN-3811 -> awgm_relay-mt7981.ko  31528b  v0.1.1  sha=89731ae9eac4
+OK   KN-1810 -> awgm_relay-mt7621.ko  24612b  v0.1.1  sha=9d7deca03ad1
+OK   KN-1212 -> awgm_relay-mt7628.ko  24052b  v0.1.1  sha=8784e8d461ac
+OK   KN-1912 -> awgm_relay-en7528.ko  24612b  v0.1.1  sha=9d7deca03ad1
+OK   KN-2010 -> awgm_relay-mips.ko  24580b  v0.1.1  sha=99a2380ded3f
+OK   KN-2112 -> awgm_relay-en7516.ko  24580b  v0.1.1  sha=3929581182c2
+OK   KN-1011 -> awgm_relay-KN-1011.ko  26684b  v0.1.1  sha=c8d50396a8b4

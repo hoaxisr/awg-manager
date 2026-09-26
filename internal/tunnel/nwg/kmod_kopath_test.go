@@ -137,18 +137,13 @@ func TestEverySoCHasABuild(t *testing.T) {
 		name   string
 		outDir string
 		prefix string
-		skip   string // непусто — сборок под все SoC ещё нет, подтест пропускается
 	}{
 		{name: "awg_proxy", outDir: "../../../kmod/awg-proxy/out", prefix: "awg_proxy-"},
-		{name: "awgm_relay", outDir: "../../../kmod/awgm-relay/out", prefix: "awgm_relay-", skip: "сборки awgm_relay — задача 9"},
+		{name: "awgm_relay", outDir: "../../../kmod/awgm-relay/out", prefix: "awgm_relay-"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.skip != "" {
-				t.Skip(tc.skip)
-			}
-
 			files, err := filepath.Glob(filepath.Join(tc.outDir, tc.prefix+"*.ko"))
 			if err != nil {
 				t.Fatalf("glob сборок: %v", err)
