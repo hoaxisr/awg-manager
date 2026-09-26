@@ -23,6 +23,13 @@ func RenderConf(o *storage.Obfuscator) string {
 	if o.Flavor == storage.ObfuscatorFlavorPhobos && o.ObfuscateBytes > 0 {
 		fmt.Fprintf(&b, "obfuscate-bytes = %d\n", o.ObfuscateBytes)
 	}
+	// Дефолт Phobos — воркер на каждый CPU, а поток у туннеля один: лишние
+	// воркеры жгут CPU вхолостую. Два дешевле авто на 20–25 % и не срезают
+	// потолок, а один на MT7621 упирается в ~90 Мбит/с (замер 26.09, F468).
+	// ClusterM ключа threads не знает.
+	if o.Flavor == storage.ObfuscatorFlavorPhobos {
+		b.WriteString("threads = 2\n")
+	}
 	b.WriteString("verbose = INFO\n")
 	return b.String()
 }

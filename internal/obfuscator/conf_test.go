@@ -13,13 +13,13 @@ import (
 func TestRenderConf(t *testing.T) {
 	o := &storage.Obfuscator{Flavor: "phobos", Target: "h:1", Key: "k", Masking: "MEDIA", MaxDummy: 4, IdleTimeout: 60, ObfuscateBytes: 16, LocalPort: 39001}
 	got := RenderConf(o)
-	for _, want := range []string{"[main]", "source-if = 127.0.0.1", "source-lport = 39001", "target = h:1", "key = k", "masking = MEDIA", "max-dummy = 4", "idle-timeout = 60", "obfuscate-bytes = 16", "verbose = INFO"} {
+	for _, want := range []string{"[main]", "source-if = 127.0.0.1", "source-lport = 39001", "target = h:1", "key = k", "masking = MEDIA", "max-dummy = 4", "idle-timeout = 60", "obfuscate-bytes = 16", "threads = 2", "verbose = INFO"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in\n%s", want, got)
 		}
 	}
 	c := RenderConf(&storage.Obfuscator{Flavor: "clusterm", Target: "h:1", Key: "k", Masking: "STUN", LocalPort: 39002})
-	if strings.Contains(c, "obfuscate-bytes") || strings.Contains(c, "idle-timeout") {
+	if strings.Contains(c, "obfuscate-bytes") || strings.Contains(c, "idle-timeout") || strings.Contains(c, "threads") {
 		t.Fatalf("clusterm/zero fields leaked:\n%s", c)
 	}
 }
