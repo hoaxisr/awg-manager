@@ -3,6 +3,8 @@ package obfuscator
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -93,6 +95,22 @@ func TestKernelRunner_NewIPRecreatesSlot(t *testing.T) {
 	}
 	if !strings.Contains(p.slots[39001], "198.51.100.2:51900") || p.adds != 2 {
 		t.Fatalf("слот не пересоздан: %v adds=%d", p.slots, p.adds)
+	}
+}
+
+// Review-находка: отказ подготовки RunDir не должен создавать слот в ядре.
+func TestKernelRunner_Start_MkdirAllFailsNoAdd(t *testing.T) {
+	k, p := newKernelFixture(t)
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	RunDir = filepath.Join(blocker, "sub") // MkdirAll под обычным файлом — ENOTDIR
+	if err := k.Start(context.Background(), "awg30", phobosObf, "198.51.100.1"); err == nil {
+		t.Fatal("ожидалась ошибка")
+	}
+	if p.adds != 0 {
+		t.Fatalf("add вызван при отказе подготовки RunDir: adds=%d slots=%v", p.adds, p.slots)
 	}
 }
 

@@ -57,11 +57,11 @@ func (k *KernelRunner) Start(ctx context.Context, tunnelID string, o *storage.Ob
 	if k.live(o.LocalPort) { // слот прошлого поколения на том же порту
 		_ = k.d.ProcWrite(procRelayDel, listen(o.LocalPort))
 	}
-	if err := k.d.ProcWrite(procRelayAdd, []byte(line)); err != nil {
-		return fmt.Errorf("awgm_relay add 127.0.0.1:%d: %w", o.LocalPort, err)
-	}
 	if err := os.MkdirAll(RunDir, 0o755); err != nil {
 		return err
+	}
+	if err := k.d.ProcWrite(procRelayAdd, []byte(line)); err != nil {
+		return fmt.Errorf("awgm_relay add 127.0.0.1:%d: %w", o.LocalPort, err)
 	}
 	if err := os.WriteFile(kmodLinePath(tunnelID), []byte(line), 0o600); err != nil {
 		_ = k.d.ProcWrite(procRelayDel, listen(o.LocalPort))
