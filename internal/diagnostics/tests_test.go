@@ -199,6 +199,26 @@ func TestCollectAWGMRelayModule_NotLoadedOnMissingProc(t *testing.T) {
 	}
 }
 
+func TestAnonymize_AWGMRelay_MasksRawListIPs(t *testing.T) {
+	report := &Report{
+		AWGMRelay: AWGMRelayModule{
+			Loaded:  true,
+			Version: "0.1.1",
+			RawList: "127.0.0.1:41000 176.109.110.182:51000 transform=phobos masking=none rx=0 tx=0 rx_pkt=0 tx_pkt=0 parse_err=0 rxq_drop=0 trunc=0\n",
+			Slots:   1,
+		},
+	}
+	anonymize(report)
+
+	if strings.Contains(report.AWGMRelay.RawList, "176.109.110.182") {
+		t.Errorf("RawList still contains public IP: %q", report.AWGMRelay.RawList)
+	}
+	// Private IP (127.0.0.1, локальный listen-сокет релея) MUST remain.
+	if !strings.Contains(report.AWGMRelay.RawList, "127.0.0.1") {
+		t.Errorf("expected 127.0.0.1 to remain in RawList (private IPs must not be masked): %q", report.AWGMRelay.RawList)
+	}
+}
+
 func TestRouteDevFromIPRouteGet(t *testing.T) {
 	tests := []struct {
 		name string
