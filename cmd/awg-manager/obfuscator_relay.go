@@ -2,9 +2,11 @@ package main
 
 import (
 	"net"
+	"strings"
 	"sync/atomic"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -13,16 +15,20 @@ import (
 // оставить его выбираемым в этой жизни демона. Hash oops сохраняется только
 // после записанного trip (или для чужого oops): при сбое записи следующий
 // старт увидит тот же oops и сработает снова. Сработавшая метка boot_id
-// WatchdogCheck уже снята — её при сбое записи повторить нечем, о чём и
-// говорит журнал.
+// WatchdogCheck уже снята — её при сбое записи повторить нечем. Журнал
+// различает оба случая по OopsReasonPrefix.
 func applyObfWatchdog(reason, hash, lastOops string, trip, saveHash func(string) error,
 	tripped *atomic.Bool, log *logging.ScopedLogger) {
 	if reason != "" {
 		tripped.Store(true)
 		log.Error("obfuscator", "", "kernel-релей выключен сторожем: "+reason)
 		if err := trip(reason); err != nil {
+			after := "срабатывание по метке загрузки после рестарта не повторится"
+			if strings.HasPrefix(reason, obfuscator.OopsReasonPrefix) {
+				after = "hash oops не сохранён — после рестарта сторож сработает снова"
+			}
 			log.Error("obfuscator", "", "выключатель kernel-релея не сохранён: "+err.Error()+
-				" — ядро выключено до рестарта демона; срабатывание по метке загрузки после рестарта не повторится")
+				" — ядро выключено до рестарта демона; "+after)
 			return
 		}
 	}

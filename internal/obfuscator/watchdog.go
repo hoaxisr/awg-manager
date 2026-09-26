@@ -18,6 +18,10 @@ var (
 	OopsPath   = "/proc/mtdoops/oops"
 )
 
+// OopsReasonPrefix — начало причины срабатывания по oops (в отличие от метки
+// boot_id): по нему applyObfWatchdog различает, повторится ли сигнал.
+const OopsReasonPrefix = "oops в awgm_relay: "
+
 var disarmMu sync.Mutex
 var disarmTimer *time.Timer
 
@@ -72,7 +76,7 @@ func WatchdogCheck(lastHash string) (reason, hash string) {
 		return reason, ""
 	}
 	if rec.Hash != lastHash && OopsOurs(rec.Content) && reason == "" {
-		reason = "oops в awgm_relay: " + firstOurFrame(rec.Content)
+		reason = OopsReasonPrefix + firstOurFrame(rec.Content)
 	}
 	return reason, rec.Hash
 }

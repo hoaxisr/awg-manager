@@ -5,10 +5,12 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -110,6 +112,35 @@ func TestApplyObfWatchdog(t *testing.T) {
 			useKernel := obfUseKernel(func() bool { return false }, func() bool { return true }, &tripped)
 			if got := useKernel(phobos, "192.0.2.1"); got != tc.wantKernel {
 				t.Errorf("useKernel=%v, ждали %v", got, tc.wantKernel)
+			}
+		})
+	}
+}
+
+type obfLogSpy struct{ lines []string }
+
+func (s *obfLogSpy) AppLog(_ logging.Level, _, _, _, _, msg string) { s.lines = append(s.lines, msg) }
+
+// Сбой записи trip: для oops сигнал не теряется (hash не сохранён — сторож
+// сработает на следующем старте), для метки boot_id — теряется. Журнал
+// обязан говорить правду для обоих случаев.
+func TestApplyObfWatchdog_TripSaveFailMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason, want, notWant string
+	}{
+		{"oops", obfuscator.OopsReasonPrefix + "epc relay_stop", "сработает снова", "не повторится"},
+		{"метка загрузки", "роутер перезагрузился в первые 5 минут после загрузки awgm_relay", "не повторится", "сработает снова"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spy := &obfLogSpy{}
+			var tripped atomic.Bool
+			applyObfWatchdog(tc.reason, "h2", "h1",
+				func(string) error { return errors.New("диск") },
+				func(string) error { return nil },
+				&tripped, logging.NewScopedLogger(spy, logging.GroupTunnel, logging.SubOps))
+			all := strings.Join(spy.lines, "\n")
+			if !strings.Contains(all, tc.want) || strings.Contains(all, tc.notWant) {
+				t.Fatalf("журнал: %q", spy.lines)
 			}
 		})
 	}
