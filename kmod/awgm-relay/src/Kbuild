@@ -1,0 +1,5 @@
+# awgm_relay — kernel-релей обфускатора (спека 2026-09-26-kernel-obfuscator-relay-design.md)
+obj-m := awgm_relay.o
+awgm_relay-objs := main.o relay.o config.o phobos.o
+
+ccflags-y := -DAWGM_RELAY_VERSION=\"$(AWGM_RELAY_VERSION)\"
