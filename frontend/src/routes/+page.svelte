@@ -35,7 +35,7 @@
 	import { Awg3TunnelsSection, Awg3ImportModal } from '$lib/components/awg3';
 	import { AmneziaPremiumWizard } from '$lib/components/amneziapremium';
 	import type { PremiumWizardResult } from '$lib/components/amneziapremium';
-	import { feedTraffic, getTrafficRates, getTrafficSparklineSeries, subscribeTraffic } from '$lib/stores/traffic';
+	import { getTrafficRates, getTrafficSparklineSeries, subscribeTraffic } from '$lib/stores/traffic';
 	import { usageLevel } from '$lib/stores/settings';
 	import { isSectionVisible, isTunnelDashboardAvailable } from '$lib/types/usageLevel';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
@@ -164,25 +164,6 @@
 		tunnelSnap.status === 'idle' ||
 		tunnelSnap.status === 'loading',
 	);
-
-	// System tunnels don't emit tunnel:traffic stream events (no awg-manager
-	// peer entry tracks them) — feed the traffic store from the polled
-	// snapshot so the per-system-tunnel rate chart stays alive. Runs on
-	// every snapshot refresh (~5s).
-	$effect(() => {
-		// Skip system tunnels that are ALSO tracked as managed — they receive
-		// tunnel:traffic stream events via +layout. Double-feeding doubles
-		// the rate sample and produces a spurious chart spike.
-		for (const st of systemList) {
-			const isManaged = awgList.some((m) =>
-				(m.ndmsName && m.ndmsName === st.id) || (m.interfaceName && m.interfaceName === st.id)
-			);
-			if (isManaged) continue;
-			if (st.status === 'up' && st.peer) {
-				feedTraffic(st.id, st.peer.rxBytes, st.peer.txBytes);
-			}
-		}
-	});
 
 	const goArch = $derived(sysInfo?.goArch ?? '');
 	let singboxStatusState = $derived($singboxStatus);

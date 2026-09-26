@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -163,6 +164,9 @@ func (f *FakeGetter) Get(ctx context.Context, path string, dst any) error {
 
 	if haveErr {
 		return err
+	}
+	if !haveBody {
+		body, haveBody = f.interfaceFromList(path)
 	}
 	if !haveBody {
 		if defaultErr != nil {
@@ -396,4 +400,26 @@ func extractShowInterfaceName(payload any) string {
 	}
 	name, _ := iface["name"].(string)
 	return name
+}
+
+// interfaceFromList отвечает на `/show/interface/<name>` записью из заданного
+// полного списка, как настоящий NDMS (ответы побайтно совпадают, стенд
+// 5.02.A.11). Явный SetJSON на точечный путь имеет приоритет.
+func (f *FakeGetter) interfaceFromList(path string) (string, bool) {
+	name, ok := strings.CutPrefix(path, "/show/interface/")
+	if !ok || name == "" || strings.ContainsAny(name, "/?") {
+		return "", false
+	}
+	f.mu.Lock()
+	list, ok := f.jsonResp["/show/interface/"]
+	f.mu.Unlock()
+	if !ok {
+		return "", false
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal([]byte(list), &m) != nil {
+		return "", false
+	}
+	entry, ok := m[name]
+	return string(entry), ok
 }

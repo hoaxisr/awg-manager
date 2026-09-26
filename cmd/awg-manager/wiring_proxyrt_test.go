@@ -22,6 +22,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/install"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttusers"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/control"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/exitreg"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instance"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
@@ -1288,5 +1289,27 @@ func TestUpdateRunsMutatorExactlyOnce(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("мутатор исполнен %d раз(а), want 1", calls)
+	}
+}
+
+// F465: аптайм снимка стареет вместе со снимком, иначе страница «Прокси»
+// показывает застывшее значение последнего наблюдения.
+func TestAgedState_UptimeGrowsWithSnapshotAge(t *testing.T) {
+	at := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	now := at.Add(90 * time.Second)
+	cases := []struct {
+		name string
+		st   awgmproto.State
+		want int64
+	}{
+		{"наблюдение сразу после старта", awgmproto.State{PID: 7, UptimeS: 0}, 90},
+		{"наблюдение живого процесса", awgmproto.State{PID: 7, UptimeS: 600}, 690},
+		{"процесса нет — аптайма нет", awgmproto.State{PID: 0, UptimeS: 0}, 0},
+	}
+	for _, c := range cases {
+		got := agedState(control.Snapshot{State: c.st, At: at}, now)
+		if got.UptimeS != c.want {
+			t.Errorf("%s: UptimeS = %d, want %d", c.name, got.UptimeS, c.want)
+		}
 	}
 }

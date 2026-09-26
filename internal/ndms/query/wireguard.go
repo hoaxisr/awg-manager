@@ -146,10 +146,8 @@ type WGServerStore struct {
 	// ASC params (raw JSON, per-name, keyed by name+shape).
 	asc *cache.KeyedStore[string, json.RawMessage]
 	// Список СИСТЕМНЫХ (не наших) WG-туннелей. Кэш тут не украшение:
-	// поллер метрик спрашивает состав на КАЖДОМ тике, а выборка — это
-	// `/show/interface/` целиком, самый тяжёлый RCI-запрос. Без кэша при
-	// открытой панели мы запрашивали всё дерево интерфейсов четыре раза в
-	// минуту, только чтобы решить, что опрашивать (F364).
+	// поллер метрик спрашивает состав на КАЖДОМ тике (F364). Выборка —
+	// точечные чтения WG-интерфейсов одним POST (см. wireguardInterfaces).
 	sysList *cache.ListStore[[]ndms.SystemWireguardTunnel]
 }
 
@@ -242,9 +240,17 @@ func (s *WGServerStore) ListSystemTunnels(ctx context.Context) ([]ndms.SystemWir
 	return s.sysList.List(ctx)
 }
 
+// ListSystemTunnelsFresh — список, прочитанный с роутера сейчас, для показа.
+// Кэш выше годится только тем, кому нужен СОСТАВ (поллер метрик, мониторинг):
+// rx/tx, рукопожатие и uptime в нём стоят до 5 минут (F467, #950). Выборка
+// заодно освежает кэш для них, а при сбое RCI отдаёт прежний список.
+func (s *WGServerStore) ListSystemTunnelsFresh(ctx context.Context) ([]ndms.SystemWireguardTunnel, error) {
+	return s.sysList.Refresh(ctx)
+}
+
 func (s *WGServerStore) fetchSystemTunnels(ctx context.Context) ([]ndms.SystemWireguardTunnel, error) {
-	var raw map[string]json.RawMessage
-	if err := s.getter.Get(ctx, "/show/interface/", &raw); err != nil {
+	raw, err := s.wireguardInterfaces(ctx)
+	if err != nil {
 		return nil, fmt.Errorf("list system wireguard: %w", err)
 	}
 	var tunnels []ndms.SystemWireguardTunnel
@@ -317,9 +323,63 @@ func (s *WGServerStore) InvalidateAll() {
 
 // --- fetchers ---------------------------------------------------------------
 
+// wireguardInterfaces — WG-интерфейсы роутера, каждый прочитан точечно.
+//
+// Состав берётся из InterfaceStore (держится хуками NDMS), а не из
+// `/show/interface/` целиком: полный список — это все порты, точки доступа и
+// мосты (стенд KN-1810: 30 интерфейсов, 34 КБ, ~15 тиков ndm), а нужны из
+// него только WG. Параллельные чтения батчер склеивает в один POST (~3 тика
+// + 0.8 на имя).
+//
+// Интерфейс, пропавший между составом и чтением, ошибкой не приходит: NDMS
+// отвечает конвертом `unable to find`, без type — вызывающий его отсеет.
+// Любая другая ошибка возвращается целиком: неполный список закэшировался бы
+// на TTL, а ошибка отдаёт прежний полный (stale-on-error ListStore) — иначе
+// живой сервер пропадал бы из /servers и из опроса метрик.
+func (s *WGServerStore) wireguardInterfaces(ctx context.Context) (map[string]json.RawMessage, error) {
+	ifaces, err := s.interfaces.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	type res struct {
+		id   string
+		data json.RawMessage
+		err  error
+	}
+	results := make(chan res)
+	n := 0
+	for _, iface := range ifaces {
+		if !strings.EqualFold(iface.Type, "Wireguard") {
+			continue
+		}
+		n++
+		go func(id string) {
+			var data json.RawMessage
+			err := s.getter.Get(ctx, "/show/interface/"+id, &data)
+			results <- res{id, data, err}
+		}(iface.ID)
+	}
+	out := make(map[string]json.RawMessage, n)
+	var firstErr error
+	for i := 0; i < n; i++ {
+		r := <-results
+		if r.err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%s: %w", r.id, r.err)
+			}
+			continue
+		}
+		out[r.id] = r.data
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return out, nil
+}
+
 func (s *WGServerStore) fetchAll(ctx context.Context) ([]ndms.WireguardServer, error) {
-	var raw map[string]json.RawMessage
-	if err := s.getter.Get(ctx, "/show/interface/", &raw); err != nil {
+	raw, err := s.wireguardInterfaces(ctx)
+	if err != nil {
 		return nil, fmt.Errorf("list wireguard servers: %w", err)
 	}
 	var servers []ndms.WireguardServer

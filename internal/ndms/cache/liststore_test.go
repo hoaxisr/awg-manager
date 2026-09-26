@@ -160,3 +160,30 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// Refresh ходит мимо TTL, но сбой выборки отдаёт прежнее значение, а не ошибку:
+// InvalidateAll+List этот запас терял (ревью F467).
+func TestListStore_RefreshBypassesTTLAndServesStaleOnError(t *testing.T) {
+	var fetches int32
+	fail := false
+	s := NewListStore(time.Minute, nil, "test", func(ctx context.Context) ([]int, error) {
+		n := atomic.AddInt32(&fetches, 1)
+		if fail {
+			return nil, errors.New("rci down")
+		}
+		return []int{int(n)}, nil
+	})
+
+	if _, err := s.List(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Refresh(context.Background())
+	if err != nil || len(got) != 1 || got[0] != 2 {
+		t.Fatalf("Refresh = %v, %v; want [2] — мимо TTL", got, err)
+	}
+	fail = true
+	got, err = s.Refresh(context.Background())
+	if err != nil || len(got) != 1 || got[0] != 2 {
+		t.Fatalf("Refresh при сбое = %v, %v; want прежний [2] без ошибки", got, err)
+	}
+}

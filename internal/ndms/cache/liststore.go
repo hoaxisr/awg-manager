@@ -68,6 +68,13 @@ func (s *ListStore[T]) List(ctx context.Context) (T, error) {
 	if v, ok := s.ttl.Get(struct{}{}); ok {
 		return v, nil
 	}
+	return s.Refresh(ctx)
+}
+
+// Refresh fetches past the TTL and stores the result. Unlike
+// InvalidateAll+List it keeps the stale-on-error fallback: a failed fetch
+// serves the previous value instead of erroring.
+func (s *ListStore[T]) Refresh(ctx context.Context) (T, error) {
 	return s.sf.Do(struct{}{}, func() (T, error) {
 		v, err := s.fetch(ctx)
 		if err != nil {

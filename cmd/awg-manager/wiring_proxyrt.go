@@ -105,7 +105,20 @@ func (b *proxyLinkBook) snapshot(key string) (awgmproto.State, bool) {
 	if !ok {
 		return awgmproto.State{}, false
 	}
-	return snap.State, true
+	return agedState(snap, time.Now()), true
+}
+
+// agedState — состояние снимка с аптаймом на момент now. Снимок обновляет
+// только прогон реконсиляции: у серверов он идёт раз в 15 с (перепроверка
+// правил), у клиентов — лишь в окне старта, дальше наблюдений нет. Без
+// поправки аптайм клиента застывал на последнем наблюдении, а наблюдение
+// сразу после старта (uptime_s=0) и вовсе стирало его из ответа (F465, #950).
+func agedState(snap control.Snapshot, now time.Time) awgmproto.State {
+	st := snap.State
+	if st.PID > 0 {
+		st.UptimeS += int64(now.Sub(snap.At) / time.Second)
+	}
+	return st
 }
 
 // ── занятость номеров OpkgTun ────────────────────────────────────

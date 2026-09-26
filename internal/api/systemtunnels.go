@@ -87,7 +87,7 @@ func (h *SystemTunnelsHandler) validateName(w http.ResponseWriter, name string) 
 
 // listSystemTunnels builds the filtered system tunnel list for API response and SSE snapshots.
 func (h *SystemTunnelsHandler) listSystemTunnels(ctx context.Context) ([]ndms.SystemWireguardTunnel, error) {
-	tunnels, err := h.svc.List(ctx)
+	tunnels, err := h.svc.ListFresh(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +277,7 @@ func (h *SystemTunnelsHandler) CheckConnectivity(w http.ResponseWriter, r *http.
 	if !h.validateName(w, name) {
 		return
 	}
-	tunnel, err := h.svc.Get(r.Context(), name)
+	tunnel, err := h.cachedTunnel(r.Context(), name)
 	if err != nil {
 		response.Error(w, err.Error(), "GET_FAILED")
 		return
@@ -308,6 +308,22 @@ func (h *SystemTunnelsHandler) CheckConnectivity(w http.ResponseWriter, r *http.
 		h.appLog.Debug("connectivity-check", name, fmt.Sprintf("Connectivity check passed%s", latency))
 	}
 	response.Success(w, result)
+}
+
+// cachedTunnel — туннель из кэша состава, а при промахе — с роутера.
+// Проверке связности нужны только статус и системное имя, а они держатся в
+// кэше хуками NDMS (iflayerchanged сбрасывает его на смене уровня). Карточка
+// зовёт проверку раз в минуту на каждый туннель, и отдельное чтение
+// `show interface` на каждый вызов было лишним.
+func (h *SystemTunnelsHandler) cachedTunnel(ctx context.Context, name string) (*ndms.SystemWireguardTunnel, error) {
+	if list, err := h.svc.List(ctx); err == nil {
+		for i := range list {
+			if list[i].ID == name {
+				return &list[i], nil
+			}
+		}
+	}
+	return h.svc.Get(ctx, name)
 }
 
 func (h *SystemTunnelsHandler) connectivityCheckURL() string {

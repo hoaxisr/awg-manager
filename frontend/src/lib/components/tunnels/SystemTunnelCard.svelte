@@ -55,10 +55,16 @@
 	// TLS-рукопожатия через интерфейс, а на этом железе это дорого. Заменить её
 	// данными матрицы нельзя — системные туннели матрица НЕ зондирует вовсе
 	// (их строки добавляются без SelfTarget, см. monitoring/scheduler.go).
+	//
+	// Эффект зависит от `isUp`, а не от `tunnel.status`: объект `tunnel` новый
+	// на каждом обновлении снимка (событие трафика раз в ~10 с), и чтение поля
+	// пропа перезапускало эффект, а с ним и немедленную проверку — на стенде
+	// 114 проверок за 7 минут вместо 14.
+	const isUp = $derived(tunnel.status === 'up');
 	$effect(() => {
-		const status = tunnel.status;
+		const up = isUp;
 		const disabled = checkDisabled;
-		if (status !== 'up' || disabled) {
+		if (!up || disabled) {
 			connectivity = null;
 			return;
 		}

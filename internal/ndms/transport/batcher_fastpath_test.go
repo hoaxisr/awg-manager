@@ -215,3 +215,51 @@ func TestBatch_UnwrapsPathTreeToInnerValue(t *testing.T) {
 		t.Errorf("show/system отдан обёрнутым: %s", got["show/system"])
 	}
 }
+
+// F470: одиночный интерфейс уходит batch-POST, а не прямым GET — форма пути
+// `/show/interface/<name>` у NDMS стоит как весь список интерфейсов.
+func TestFastPath_SingleInterfaceGoesPOST(t *testing.T) {
+	var mu sync.Mutex
+	var methods []string
+	b, done := newFastPathBatcher(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		methods = append(methods, r.Method)
+		mu.Unlock()
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`[{"show":{"interface":{"id":"Wireguard0"}}}]`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"Wireguard0"}`))
+	}, 5*time.Millisecond)
+	defer done()
+
+	body, err := b.Submit(context.Background(), "/show/interface/Wireguard0")
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if got := strings.TrimSpace(string(body)); got != `{"id":"Wireguard0"}` {
+		t.Fatalf("тело %q — ждали распакованный объект интерфейса", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(methods) != 1 || methods[0] != http.MethodPost {
+		t.Fatalf("методы %v — одиночный интерфейс обязан идти POST", methods)
+	}
+}
+
+func TestIsInterfaceDetail(t *testing.T) {
+	cases := map[string]bool{
+		"/show/interface/Wireguard0":               true,
+		"show/interface/Wireguard0":                true,
+		"/show/interface/":                         false,
+		"/show/interface/system-name?name=Wg0":     false,
+		"/show/interface/WifiMaster0/AccessPoint0": false,
+		"/show/version":                            false,
+		"/show/ip/hotspot":                         false,
+	}
+	for in, want := range cases {
+		if got := isInterfaceDetail(in); got != want {
+			t.Errorf("isInterfaceDetail(%q) = %v, want %v", in, got, want)
+		}
+	}
+}

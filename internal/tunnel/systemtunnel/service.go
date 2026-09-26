@@ -16,7 +16,10 @@ import (
 
 // Service defines operations on system WireGuard tunnels.
 type Service interface {
+	// List — из кэша: состав верен, живые поля (rx/tx, рукопожатие, uptime)
+	// могут отставать до TTL. Для показа — ListFresh.
 	List(ctx context.Context) ([]ndms.SystemWireguardTunnel, error)
+	ListFresh(ctx context.Context) ([]ndms.SystemWireguardTunnel, error)
 	Get(ctx context.Context, name string) (*ndms.SystemWireguardTunnel, error)
 	GetASCParams(ctx context.Context, name string) (json.RawMessage, error)
 	SetASCParams(ctx context.Context, name string, params json.RawMessage) error
@@ -57,6 +60,10 @@ func (s *ServiceImpl) isServerInterface(ctx context.Context, name string) bool {
 
 func (s *ServiceImpl) List(ctx context.Context) ([]ndms.SystemWireguardTunnel, error) {
 	return s.queries.WGServers.ListSystemTunnels(ctx)
+}
+
+func (s *ServiceImpl) ListFresh(ctx context.Context) ([]ndms.SystemWireguardTunnel, error) {
+	return s.queries.WGServers.ListSystemTunnelsFresh(ctx)
 }
 
 func (s *ServiceImpl) Get(ctx context.Context, name string) (*ndms.SystemWireguardTunnel, error) {

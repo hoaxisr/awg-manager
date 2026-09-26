@@ -129,15 +129,15 @@ func TestDispatcher_IfDestroyed_InvalidatesWGServers(t *testing.T) {
 	defer d.Stop()
 
 	_, _ = q.WGServers.List(context.Background())
-	primed := fg.Calls(ifaceListPath)
+	primed := fg.Calls(peersPath)
 
 	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard1"})
 	waitFor(t, 200*time.Millisecond, func() bool {
 		_, _ = q.WGServers.List(context.Background())
-		return fg.Calls(ifaceListPath) > primed
+		return fg.Calls(peersPath) > primed
 	})
 
-	if fg.Calls(ifaceListPath) <= primed {
+	if fg.Calls(peersPath) <= primed {
 		t.Errorf("WGServer list not re-fetched after IfDestroyed")
 	}
 }
@@ -149,15 +149,15 @@ func TestDispatcher_IfCreated_InvalidatesWGServers(t *testing.T) {
 	defer d.Stop()
 
 	_, _ = q.WGServers.List(context.Background())
-	primed := fg.Calls(ifaceListPath)
+	primed := fg.Calls(peersPath)
 
 	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard5"})
 	waitFor(t, 200*time.Millisecond, func() bool {
 		_, _ = q.WGServers.List(context.Background())
-		return fg.Calls(ifaceListPath) > primed
+		return fg.Calls(peersPath) > primed
 	})
 
-	if fg.Calls(ifaceListPath) <= primed {
+	if fg.Calls(peersPath) <= primed {
 		t.Errorf("WGServer list not re-fetched after IfCreated")
 	}
 }
@@ -206,6 +206,9 @@ func TestDispatcher_Stop_WithoutStart_ReturnsImmediately(t *testing.T) {
 
 // === Порядок пакета, слушатель маршрутизации, соседние кэши ===
 
+// peersPath — точечное чтение WG-интерфейса. Им же читают пиров и списки
+// серверов/системных туннелей (состав — из InterfaceStore), поэтому сброс их
+// кэша виден по этому пути, а не по полному списку.
 const peersPath = ifaceListPath + "Wireguard0"
 
 const samplePeers = `{"wireguard":{"peer":[{"public-key":"KEY","online":true}]}}`
@@ -387,15 +390,15 @@ func TestDispatcher_IfLayerChanged_InvalidatesSystemTunnelList(t *testing.T) {
 	defer d.Stop()
 
 	_, _ = q.WGServers.ListSystemTunnels(context.Background())
-	primed := fg.Calls(ifaceListPath)
+	primed := fg.Calls(peersPath)
 
 	d.Enqueue(Event{Type: EventIfLayerChanged, ID: "Wireguard1", Layer: "link", Level: "running"})
 	waitFor(t, 300*time.Millisecond, func() bool {
 		_, _ = q.WGServers.ListSystemTunnels(context.Background())
-		return fg.Calls(ifaceListPath) > primed
+		return fg.Calls(peersPath) > primed
 	})
 
-	if fg.Calls(ifaceListPath) <= primed {
+	if fg.Calls(peersPath) <= primed {
 		t.Errorf("состав системных туннелей не перечитан после iflayerchanged")
 	}
 }

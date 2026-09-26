@@ -21,6 +21,59 @@ const snapshot = {
 	system: [],
 };
 
+const systemPeer = {
+	publicKey: 'k',
+	endpoint: '1.2.3.4:51820',
+	rxBytes: 1,
+	txBytes: 2,
+	lastHandshake: '2026-09-26T10:00:00Z',
+	online: true,
+};
+
+// F466: метрик-поллер шлёт tunnel:traffic и для СИСТЕМНЫХ туннелей (под
+// NDMS-именем). Раньше событие выбрасывалось, и карточка с графиком жили
+// только фоновым опросом раз в 30 с.
+describe('tunnels.updateTraffic — системные туннели', () => {
+	beforeEach(() => {
+		tunnels.applyMutationResponse({
+			...structuredClone(snapshot),
+			system: [{ id: 'Wireguard3', interfaceName: 'nwg3', status: 'up', peer: { ...systemPeer } }],
+		} as never);
+	});
+
+	it('вносит rx/tx и штамп в peer и отдаёт id для графика', () => {
+		const resolved = tunnels.updateTraffic({
+			id: 'Wireguard3',
+			rxBytes: 70,
+			txBytes: 80,
+			lastHandshake: '2026-09-26T11:00:00Z',
+		});
+
+		expect(resolved).toBe('Wireguard3');
+		const peer = get(tunnels).data!.system[0].peer!;
+		expect(peer.rxBytes).toBe(70);
+		expect(peer.txBytes).toBe(80);
+		expect(peer.lastHandshake).toBe('2026-09-26T11:00:00Z');
+		expect(peer.endpoint).toBe('1.2.3.4:51820');
+	});
+
+	it('не затирает штамп, когда поле отсутствует', () => {
+		tunnels.updateTraffic({ id: 'Wireguard3', rxBytes: 5, txBytes: 6 });
+
+		expect(get(tunnels).data!.system[0].peer!.lastHandshake).toBe('2026-09-26T10:00:00Z');
+	});
+
+	it('наш туннель под тем же именем не трогает системную запись', () => {
+		tunnels.applyMutationResponse({
+			...structuredClone(snapshot),
+			system: [{ id: 'Wireguard0', interfaceName: 'nwg0', status: 'up', peer: { ...systemPeer } }],
+		} as never);
+
+		expect(tunnels.updateTraffic({ id: 'Wireguard0', rxBytes: 9, txBytes: 9 })).toBe('tn-A');
+		expect(get(tunnels).data!.system[0].peer!.rxBytes).toBe(1);
+	});
+});
+
 describe('tunnels.updateTraffic', () => {
 	beforeEach(() => {
 		tunnels.applyMutationResponse(structuredClone(snapshot) as never);

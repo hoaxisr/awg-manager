@@ -87,7 +87,10 @@ func (s *PeerStore) fetch(ctx context.Context, name string) ([]ndms.Peer, error)
 		// 404 means the interface itself doesn't exist (e.g. torn down) —
 		// treat as zero peers so the poller doesn't log warnings on every
 		// tick. A live interface with no peers returns an empty
-		// .wireguard.peer instead.
+		// .wireguard.peer instead. Only the direct-GET path form answers
+		// 404 (AWG_NDMS_BATCH=0); the batch POST used in production answers
+		// an `unable to find` envelope, which decodes to zero peers with no
+		// error — same outcome.
 		var httpErr *transport.HTTPError
 		if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
 			return []ndms.Peer{}, nil
