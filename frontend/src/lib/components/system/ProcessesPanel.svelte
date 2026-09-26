@@ -19,7 +19,7 @@
 	let snapshot = $state<SystemProcSnapshot | null>(null);
 	let loading = $state(false);
 	let initialLoaded = $state(false);
-	let autoRefreshInterval = $state<number>(2); // seconds, 0 = paused
+	let autoRefreshInterval = $state<number>(5); // seconds, 0 = paused
 	let timer = $state<ReturnType<typeof setInterval> | null>(null);
 
 	// Search and filter
@@ -196,6 +196,7 @@
 		{showKernelThreads}
 		{searchQuery}
 		processCount={filteredProcesses.length}
+		snapshotAt={snapshot?.timestamp}
 		ontoggleenabled={toggleMasterEnabled}
 		onrefresh={() => fetchSnapshot(true)}
 		onintervalchange={setRefreshInterval}

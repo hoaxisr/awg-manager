@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Button, Card } from '$lib/components/ui';
 	import { RefreshCw, Search, Pause, Power, Check } from 'lucide-svelte';
+	import { formatTime } from '$lib/utils/format';
 
 	interface Props {
 		enabled: boolean;
@@ -9,6 +10,9 @@
 		showKernelThreads: boolean;
 		searchQuery: string;
 		processCount: number;
+		/** Время замера: сервер пересчитывает не чаще раза в 4 с, и «Обновить»
+		 * раньше отдаёт тот же снимок — время показывает, что данные те же. */
+		snapshotAt?: string;
 		ontoggleenabled: () => void;
 		onrefresh: () => void;
 		onintervalchange: (sec: number) => void;
@@ -23,6 +27,7 @@
 		showKernelThreads,
 		searchQuery,
 		processCount,
+		snapshotAt,
 		ontoggleenabled,
 		onrefresh,
 		onintervalchange,
@@ -49,26 +54,14 @@
 					{#snippet iconBefore()}<RefreshCw size={14} class={loading ? 'spin' : ''} />{/snippet}
 					Обновить
 				</Button>
+				{#if snapshotAt}
+					<span class="snapshot-at">обновлено {formatTime(snapshotAt)}</span>
+				{/if}
 
 				<!-- Auto refresh interval picker -->
 				<div class="interval-picker">
 					<span class="picker-label">Интервал:</span>
-					<button
-						type="button"
-						class="interval-btn"
-						class:active={interval === 1}
-						onclick={() => onintervalchange(1)}
-					>
-						1с
-					</button>
-					<button
-						type="button"
-						class="interval-btn"
-						class:active={interval === 2}
-						onclick={() => onintervalchange(2)}
-					>
-						2с
-					</button>
+					<!-- Не чаще 5 с: каждый замер — полный проход по /proc на роутере. -->
 					<button
 						type="button"
 						class="interval-btn"
@@ -76,6 +69,14 @@
 						onclick={() => onintervalchange(5)}
 					>
 						5с
+					</button>
+					<button
+						type="button"
+						class="interval-btn"
+						class:active={interval === 30}
+						onclick={() => onintervalchange(30)}
+					>
+						30с
 					</button>
 					<button
 						type="button"
@@ -200,6 +201,13 @@
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-sm, 6px);
 		padding: 0.15rem;
+	}
+
+	.snapshot-at {
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
 	}
 
 	.picker-label {

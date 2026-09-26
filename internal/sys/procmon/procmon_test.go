@@ -2,8 +2,10 @@ package procmon
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestParseProcStat(t *testing.T) {
@@ -95,5 +97,47 @@ intr 1234567
 	}
 	if cpus["cpu0"].idle != 7500 {
 		t.Errorf("expected idle 7500, got %d", cpus["cpu0"].idle)
+	}
+}
+
+// Замер не чаще minSampleInterval, как кнопки интервала в панели (5с/30с):
+// повторный запрос раньше получает тот же снимок, без прохода по /proc.
+func TestSnapshot_NotMoreOftenThanMinInterval(t *testing.T) {
+	s := NewSampler()
+	s.procDir = t.TempDir()
+
+	first, err := s.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, _ := s.Snapshot()
+	if again != first {
+		t.Fatal("повторный замер раньше 5 с должен вернуть прошлый снимок")
+	}
+
+	s.lastSample = time.Now().Add(-minSampleInterval)
+	fresh, _ := s.Snapshot()
+	if fresh == first {
+		t.Fatal("по истечении интервала ждали новый замер")
+	}
+}
+
+// Снятие процесса сбрасывает снимок: панель обновляет список сразу после
+// kill, и снятый процесс не должен висеть живым до конца интервала.
+func TestKillProcess_DropsCachedSnapshot(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Skip("нет sleep: " + err.Error())
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+
+	s := NewSampler()
+	s.procDir = t.TempDir()
+	first, _ := s.Snapshot()
+	if err := s.KillProcess(cmd.Process.Pid, "SIGKILL"); err != nil {
+		t.Fatalf("KillProcess: %v", err)
+	}
+	if after, _ := s.Snapshot(); after == first {
+		t.Fatal("после снятия процесса ждали новый замер, а не прошлый снимок")
 	}
 }

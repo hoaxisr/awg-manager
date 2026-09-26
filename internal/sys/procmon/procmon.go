@@ -103,10 +103,18 @@ func (s cpuSample) active() uint64 {
 	return s.user + s.nice + s.system + s.irq + s.softirq + s.steal
 }
 
+// minSampleInterval — замер не чаще кнопок интервала в панели (самая частая —
+// 5 с): каждый замер — полный проход по /proc на роутере. Частые запросы (две
+// вкладки, ручное «Обновить») получают прошлый снимок. Порог на секунду меньше
+// кнопки: при равных 5 с дрожание сети и таймера браузера отдавало бы кэш
+// примерно каждому второму штатному тику.
+const minSampleInterval = 4 * time.Second
+
 // Sampler collects snapshots from /proc.
 type Sampler struct {
 	mu           sync.Mutex
 	procDir      string
+	last         *SystemSnapshot // отдаётся наружу общим указателем — после публикации не менять
 	lastSample   time.Time
 	lastCPUs     map[string]cpuSample
 	lastProcCPUs map[int]uint64 // PID -> (utime + stime)
@@ -129,6 +137,9 @@ func (s *Sampler) Snapshot() (*SystemSnapshot, error) {
 	defer s.mu.Unlock()
 
 	now := time.Now()
+	if s.last != nil && now.Sub(s.lastSample) < minSampleInterval {
+		return s.last, nil
+	}
 	procDir := s.procDir
 	if procDir == "" {
 		procDir = "/proc"
@@ -196,6 +207,7 @@ func (s *Sampler) Snapshot() (*SystemSnapshot, error) {
 	}
 
 	s.lastSample = now
+	s.last = snap
 	return snap, nil
 }
 
@@ -370,6 +382,11 @@ func (s *Sampler) KillProcess(pid int, sigName string) error {
 		return fmt.Errorf("find process %d: %w", pid, err)
 	}
 
+	// Панель обновляет список сразу после снятия процесса — прошлый снимок
+	// показал бы его живым ещё до minSampleInterval.
+	s.mu.Lock()
+	s.last = nil
+	s.mu.Unlock()
 	return proc.Signal(sig)
 }
 
