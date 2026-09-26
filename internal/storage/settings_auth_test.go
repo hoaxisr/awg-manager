@@ -28,9 +28,6 @@ func TestSettingsMigrationV29_DefaultsSessionTTL(t *testing.T) {
 	if settings.SessionTtlHours != DefaultSessionTTLHours {
 		t.Errorf("SessionTtlHours = %d, want %d (historical 24h default)", settings.SessionTtlHours, DefaultSessionTTLHours)
 	}
-	if settings.EntwareAuthEnabled {
-		t.Error("EntwareAuthEnabled = true, want false (upgrade keeps NDMS-only login)")
-	}
 }
 
 func TestSettingsMigrationV29_PreservesExplicitValue(t *testing.T) {
@@ -38,6 +35,8 @@ func TestSettingsMigrationV29_PreservesExplicitValue(t *testing.T) {
 	store := NewSettingsStore(tmpDir)
 
 	// A file that (somehow) already carries a value must not be reset.
+	// entwareAuthEnabled — поле удалённого тумблера: оставлено нарочно,
+	// старый settings.json с ним обязан читаться.
 	v28 := `{"schemaVersion":28,"sessionTtlHours":72,"entwareAuthEnabled":true,"server":{"port":2222,"interface":"br0"},"pingCheck":{},"logging":{},"updates":{}}`
 	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), []byte(v28), 0644); err != nil {
 		t.Fatal(err)
@@ -49,9 +48,6 @@ func TestSettingsMigrationV29_PreservesExplicitValue(t *testing.T) {
 	}
 	if settings.SessionTtlHours != 72 {
 		t.Errorf("SessionTtlHours = %d, want 72 (preserved)", settings.SessionTtlHours)
-	}
-	if !settings.EntwareAuthEnabled {
-		t.Error("EntwareAuthEnabled = false, want true (preserved)")
 	}
 }
 
@@ -125,9 +121,6 @@ func TestSettingsFreshInstall_SessionTTLDefault(t *testing.T) {
 	if settings.SessionTtlHours != DefaultSessionTTLHours {
 		t.Errorf("fresh install SessionTtlHours = %d, want %d", settings.SessionTtlHours, DefaultSessionTTLHours)
 	}
-	if settings.EntwareAuthEnabled {
-		t.Error("fresh install EntwareAuthEnabled = true, want false")
-	}
 }
 
 func TestGetSessionTTL(t *testing.T) {
@@ -156,23 +149,5 @@ func TestGetSessionTTL(t *testing.T) {
 	}
 	if got := store.GetSessionTTL(); got != 24*time.Hour {
 		t.Errorf("GetSessionTTL() with zero value = %v, want 24h fallback", got)
-	}
-}
-
-func TestIsEntwareAuthEnabled(t *testing.T) {
-	store := NewSettingsStore(t.TempDir())
-	settings, err := store.Load()
-	if err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-	if store.IsEntwareAuthEnabled() {
-		t.Error("IsEntwareAuthEnabled() = true on defaults, want false")
-	}
-	settings.EntwareAuthEnabled = true
-	if err := store.save(settings); err != nil {
-		t.Fatalf("Save failed: %v", err)
-	}
-	if !store.IsEntwareAuthEnabled() {
-		t.Error("IsEntwareAuthEnabled() = false after enabling, want true")
 	}
 }

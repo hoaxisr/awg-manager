@@ -477,24 +477,6 @@ $effect(() => {
 		}
 	}
 
-	async function toggleEntwareAuth(enabled: boolean) {
-		if (!settings) return;
-		saving = true;
-		try {
-			settings = await api.updateSettings({ ...settings, entwareAuthEnabled: enabled });
-			setGlobalSettings(settings);
-			notifications.success(
-				enabled
-					? "Вход по учётным данным Entware включён"
-					: "Вход по учётным данным Entware отключён",
-			);
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : "Ошибка сохранения настроек");
-		} finally {
-			saving = false;
-		}
-	}
-
 	// Ключи запрашиваются только пока MCP включён; SSE «mcpKeys» обновляет
 	// список через стор, поэтому после create/revoke руками ничего не грузим.
 	let mcpKeysState = $state<PollingState<McpKey[]> | null>(null);
@@ -995,19 +977,6 @@ $effect(() => {
 									</Button>
 								{/if}
 							</div>
-						</div>
-						<div class="setting-row toggle-inline-row">
-							<div class="flex flex-col gap-1">
-								<span class="font-medium">Вход по учётным данным Entware</span>
-								<span class="setting-description">
-									Проверять логин и пароль по /opt/etc/shadow. Вход без обращения к роутеру — не создаёт уведомлений в журнале Keenetic.
-								</span>
-							</div>
-							<Toggle
-								checked={settings.entwareAuthEnabled ?? false}
-								onchange={toggleEntwareAuth}
-								disabled={saving}
-							/>
 						</div>
 					{/if}
 					<HttpServerCard />

@@ -284,7 +284,8 @@ func (s *SettingsStore) migrateToV28(settings *Settings) {
 // migrateToV29 introduces SessionTtlHours (issue #441), defaulting to the
 // historical fixed 24h session lifetime, and EntwareAuthEnabled, whose zero
 // value (false — keep NDMS-only login) is the intended default so no
-// explicit action is needed beyond the version stamp.
+// explicit action is needed beyond the version stamp. EntwareAuthEnabled
+// removed 26.09.2026 (способ входа выбирается на форме логина).
 func (s *SettingsStore) migrateToV29(settings *Settings) {
 	if settings.SessionTtlHours == 0 {
 		settings.SessionTtlHours = DefaultSessionTTLHours

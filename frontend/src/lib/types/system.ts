@@ -270,12 +270,6 @@ export interface Settings {
 	 */
 	sessionTtlHours?: number;
 	/**
-	 * Allow login with Entware credentials (/opt/etc/shadow) in addition
-	 * to router admin credentials. Optional — legacy backends omit it;
-	 * UI treats absence as false.
-	 */
-	entwareAuthEnabled?: boolean;
-	/**
 	 * MCP-эндпоинт /mcp включён. По умолчанию выключен; ключи доступа
 	 * управляются через /mcp/keys*. Optional — legacy backends omit it.
 	 */
@@ -320,12 +314,10 @@ export interface AuthStatus {
 	authDisabled?: boolean;
 	login?: string;
 	expiresIn?: number;
-	/**
-	 * True when login via Entware credentials (/opt/etc/shadow) is enabled.
-	 * Present regardless of auth state; optional — legacy backends omit it.
-	 */
-	entwareAuthEnabled?: boolean;
 }
+
+/** Чем проверять логин: учётка роутера или Entware (/opt/etc/shadow). */
+export type LoginMethod = 'router' | 'entware';
 
 export interface LoginResult {
 	success: boolean;

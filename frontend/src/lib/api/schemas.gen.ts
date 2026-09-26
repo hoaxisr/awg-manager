@@ -180,7 +180,6 @@ const api_AmneziaPremiumRevokeResponse: v.GenericSchema = v.looseObject({
 const api_AuthStatusResponse: v.GenericSchema = v.looseObject({
 	authDisabled: v.optional(v.nullable(v.boolean())),
 	authenticated: v.optional(v.nullable(v.boolean())),
-	entwareAuthEnabled: v.optional(v.nullable(v.boolean())),
 	expiresIn: v.optional(v.nullable(v.number())),
 	login: v.optional(v.nullable(v.string())),
 });
@@ -1495,7 +1494,6 @@ const api_SettingsData: v.GenericSchema = v.looseObject({
 	disableMemorySaving: v.optional(v.nullable(v.boolean())),
 	dnsRoute: v.optional(v.nullable(v.lazy(() => api_DNSRouteSettingsDTO))),
 	download: v.optional(v.nullable(v.lazy(() => api_DownloadSettingsDTO))),
-	entwareAuthEnabled: v.optional(v.nullable(v.boolean())),
 	geoFile: v.optional(v.nullable(v.lazy(() => api_GeoFileSettingsDTO))),
 	logging: v.optional(v.nullable(v.lazy(() => api_LoggingSettingsDTO))),
 	mcpEnabled: v.optional(v.nullable(v.boolean())),

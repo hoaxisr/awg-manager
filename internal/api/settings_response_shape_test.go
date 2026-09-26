@@ -33,7 +33,6 @@ var settingsResponseKeys = []string{
 	"schemaVersion",
 	"authEnabled",
 	"sessionTtlHours",
-	"entwareAuthEnabled",
 	"mcpEnabled",
 	"apiKey",
 	"server",
@@ -152,7 +151,7 @@ func TestSettingsResponse_CoversHandwrittenFrontendType(t *testing.T) {
 	// hiddenSystemTunnels: у него нет ни хранилища, ни читателя (см. шапку
 	// settingsResponseKeys).
 	frontendFields := []string{
-		"schemaVersion", "authEnabled", "sessionTtlHours", "entwareAuthEnabled",
+		"schemaVersion", "authEnabled", "sessionTtlHours",
 		"mcpEnabled", "apiKey", "server", "pingCheck", "logging",
 		"disableMemorySaving", "updates", "download", "dnsRoute", "geoFile",
 		"connectivityCheckUrl", "usageLevel", "monitoringExcludedTunnels",

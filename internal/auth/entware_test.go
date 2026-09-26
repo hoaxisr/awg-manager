@@ -104,6 +104,21 @@ func TestEntwareVerify_DummyKDFRunsForAbsentUser(t *testing.T) {
 	}
 }
 
+// Неподдерживаемый ($y$) и битый хэш тоже прогоняют холостой KDF: иначе
+// быстрый 401 отличал бы такой логин от несуществующего (там KDF есть).
+func TestEntwareVerify_DummyKDFRunsForUnsupportedHash(t *testing.T) {
+	v := writeShadow(t, "yes:$y$j9T$salt$hash:19000:0:99999:7:::\nbroken:$6$:19000:0:99999:7:::\n")
+	for _, login := range []string{"yes", "broken"} {
+		dummyKDFSink = nil
+		if err := v.Verify(login, "some-password"); !errors.Is(err, ErrUnsupportedHash) {
+			t.Fatalf("Verify(%s) = %v, want ErrUnsupportedHash", login, err)
+		}
+		if !errors.Is(dummyKDFSink, shadowcrypt.ErrMismatch) {
+			t.Fatalf("Verify(%s): dummyKDFSink = %v, want a completed KDF (ErrMismatch)", login, dummyKDFSink)
+		}
+	}
+}
+
 // TestEntwareVerify_AbsentAndWrongPasswordTakeComparableTime is a coarse,
 // non-flaky guard that the absent-user path is no longer a fast early return:
 // it must take a KDF-sized amount of time, not microseconds. A wide margin
@@ -172,6 +187,28 @@ func TestEntwareVerify_PasswdFallbackWithoutShadowFile(t *testing.T) {
 	v := &EntwareVerifier{ShadowPath: filepath.Join(dir, "no-shadow"), PasswdPath: pp}
 	if err := v.Verify("root", "Hello world!"); err != nil {
 		t.Fatalf("Verify(root via passwd, no shadow) = %v, want nil", err)
+	}
+}
+
+// Без shadow база учёток — passwd, и её ответ окончательный: нет логина
+// в passwd — «нет пользователя», а не «Entware недоступен». Иначе ответ
+// различал бы существующие логины (401) и несуществующие (503), и перебор
+// логинов не засчитывался бы (стенд 26.09: shadow нет, root в passwd).
+func TestEntwareVerify_NoShadowPasswdAnswers(t *testing.T) {
+	dir := t.TempDir()
+	pp := filepath.Join(dir, "passwd")
+	if err := os.WriteFile(pp, []byte("root:$5$saltstring$5B8vYYiY.CVt1RlTTf8KbXBH3hsxY/GNooZaBBGWEc5:0:0::/:/bin/sh\nnobody:*:65534:65534::/:/bin/false\nshadowed:x:1:1::/:/bin/sh\n"), 0644); err != nil {
+		t.Fatalf("write passwd: %v", err)
+	}
+	v := &EntwareVerifier{ShadowPath: filepath.Join(dir, "no-shadow"), PasswdPath: pp}
+	for login, want := range map[string]error{
+		"ghost":    ErrEntwareUserNotFound,
+		"shadowed": ErrEntwareUserNotFound, // "x" при отсутствующем shadow — хэша нет нигде
+		"nobody":   ErrEntwareAccountLocked,
+	} {
+		if err := v.Verify(login, "x"); !errors.Is(err, want) {
+			t.Errorf("Verify(%s) = %v, want %v", login, err, want)
+		}
 	}
 }
 

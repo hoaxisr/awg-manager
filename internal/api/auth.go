@@ -29,9 +29,6 @@ type AuthStatusResponse struct {
 	AuthDisabled  bool   `json:"authDisabled" example:"false"`
 	Login         string `json:"login,omitempty" example:"admin"`
 	ExpiresIn     int    `json:"expiresIn,omitempty" example:"3600"`
-	// EntwareAuthEnabled tells the (unauthenticated) login form that
-	// Entware system credentials are accepted in addition to Keenetic ones.
-	EntwareAuthEnabled bool `json:"entwareAuthEnabled" example:"false"`
 }
 
 // KeeneticAuthenticator verifies credentials against the Keenetic router
@@ -78,29 +75,47 @@ func NewAuthHandler(keenetic KeeneticAuthenticator, sessions *auth.SessionStore,
 	}
 }
 
+// Способы входа (LoginRequest.Method).
+const (
+	loginMethodRouter  = "router"
+	loginMethodEntware = "entware"
+)
+
+// weakEntwarePassword — пароль root из инструкции по установке Entware на
+// Keenetic. Способ входа выбирается на форме без тумблера в настройках, и
+// с этим паролем панель (а в ней веб-терминал с root) открылась бы любому,
+// кто её видит, — перебирать нечего, пароль известен заранее.
+const weakEntwarePassword = "keenetic"
+
+// errWeakEntwarePassword — пароль верный, но вход им запрещён. Наружу
+// уходит без слов «по умолчанию»: это подсказка, какую учётку пробовать по SSH.
+var errWeakEntwarePassword = errors.New("weak entware password")
+
 // LoginRequest is the request body for login.
 type LoginRequest struct {
 	Login    string `json:"login"`
 	Password string `json:"password"`
+	// Method — чем проверять: "router" (по умолчанию) или "entware".
+	Method string `json:"method,omitempty" enums:"router,entware" example:"router"`
 }
 
 // Login authenticates the user and sets the session cookie.
 //
-// When Entware auth is enabled, credentials are first verified locally
-// against /opt/etc/shadow — a success creates the session WITHOUT calling
-// the router (no NDMS auth notifications). Any local failure falls back to
-// the Keenetic challenge/response path, so router admin credentials keep
-// working regardless of the toggle.
+// Credentials are checked strictly by the chosen method, with no fallback:
+// "router" — the Keenetic challenge/response on the router /auth; "entware" —
+// /opt/etc/shadow locally, without the NDMS /auth call (no router-side
+// notifications and no router lockout).
 //
 //	@Summary		Login
-//	@Description	Authenticates with Keenetic credentials (or, when entwareAuthEnabled, Entware system credentials verified locally first); sets HttpOnly session cookie awg_session. Every failed attempt in which credentials were checked (including a local Entware check while the router is unreachable) is delayed 300ms and counted; after 5 such failures per client IP the endpoint responds 429 for 30 seconds. Router-unavailable failures without any credential check are not counted.
+//	@Description	Authenticates by the chosen method (router — Keenetic credentials, the default; entware — Entware system credentials verified locally); sets HttpOnly session cookie awg_session. Every failed attempt in which credentials were checked is delayed 300ms and counted; after 5 such failures per client IP the endpoint responds 429 for 30 seconds. Unavailable router or Entware shadow db is not counted (503). A correct Entware password that is too weak is refused with 403.
 //	@Tags			auth
 //	@Accept			json
 //	@Produce		json
-//	@Param			body	body		LoginRequest	true	"Router (or Entware) login and password"
+//	@Param			body	body		LoginRequest	true	"Login, password and method"
 //	@Success		200		{object}	LoginResponseRaw
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		401		{object}	APIErrorEnvelope
+//	@Failure		403		{object}	APIErrorEnvelope
 //	@Failure		429		{object}	APIErrorEnvelope
 //	@Failure		503		{object}	APIErrorEnvelope
 //	@Router			/auth/login [post]
@@ -139,36 +154,24 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try Entware system credentials first when enabled — a local match
-	// avoids the NDMS /auth call entirely (the whole point: no router
-	// notifications). Any failure falls back to the Keenetic path; the
-	// entware error is kept so the failure accounting below can tell
-	// whether a real credential check already happened.
-	authSource := ""
-	var entwareErr error
-	if h.settings != nil && h.settings.IsEntwareAuthEnabled() && h.entware != nil {
-		if entwareErr = h.entware.Verify(req.Login, req.Password); entwareErr == nil {
-			authSource = "entware"
-		} else if errors.Is(entwareErr, auth.ErrEntwareUnavailable) || errors.Is(entwareErr, auth.ErrUnsupportedHash) {
-			// Конфигурационная проблема — тумблер включён, а вход через
-			// Entware невозможен в принципе (нет shadow/passwd, неподдер-
-			// живаемая схема хэша). Warn, чтобы причину было видно в
-			// Журнале; HTTP-ответ остаётся единым — без энумерации.
-			h.log.Warn("login", req.Login, "Entware-вход невозможен ("+entwareErr.Error()+") — продолжаем через Keenetic")
-		} else {
-			// Обычный фолбэк (нет такого пользователя / не тот пароль /
-			// учётка заблокирована) — Debug, чтобы вход админа через
-			// Keenetic не шумел в журнале. Пароль не логируется никогда.
-			h.log.Debug("login", req.Login, "Entware verification failed, falling back to Keenetic: "+entwareErr.Error())
+	var err error
+	switch req.Method {
+	case "", loginMethodRouter:
+		req.Method = loginMethodRouter
+		err = h.keenetic.Authenticate(r.Context(), req.Login, req.Password)
+	case loginMethodEntware:
+		err = h.entware.Verify(req.Login, req.Password)
+		// После проверки, а не до: чужому логину с этим паролем — обычный 401.
+		if err == nil && req.Password == weakEntwarePassword {
+			err = errWeakEntwarePassword
 		}
+	default:
+		response.BadRequest(w, "unknown login method")
+		return
 	}
-
-	if authSource == "" {
-		if err := h.keenetic.Authenticate(r.Context(), req.Login, req.Password); err != nil {
-			h.finishFailedLogin(w, req.Login, clientIP, err, entwareErr)
-			return
-		}
-		authSource = "keenetic"
+	if err != nil {
+		h.finishFailedLogin(w, req.Login, req.Method, clientIP, err)
+		return
 	}
 
 	h.throttle.Success(clientIP)
@@ -192,7 +195,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   int(h.sessions.TTL().Seconds()),
 	})
 
-	h.log.Info("login", req.Login, "User logged in (source: "+authSource+")")
+	h.log.Info("login", req.Login, "User logged in (source: "+req.Method+")")
 
 	response.JSON(w, map[string]interface{}{
 		"success": true,
@@ -201,42 +204,30 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 // finishFailedLogin maps a failed login to its HTTP response and decides
-// whether the attempt counts toward the per-IP throttle. keeneticErr is the
-// (non-nil) Keenetic outcome; entwareErr is the local verification outcome
-// when Entware auth ran (nil if it succeeded or never ran — a success never
-// reaches here).
-//
-// Accounting rules (issue #441 hardening):
-//   - Keenetic rejected the credentials → 401, counted + delayed.
-//   - Keenetic failed non-credentially, but the Entware check already
-//     definitively rejected the password for an existing user → the
-//     credentials WERE checked and are wrong: 401, counted + delayed.
-//   - Keenetic failed non-credentially after any other Entware credential
-//     check (user not found / locked account / unsupported hash — all of
-//     which burn a full KDF, see EntwareVerifier.Verify) → 503 toward the
-//     client, but still counted + delayed: with NDMS down, an uncounted
-//     shadow-KDF check would be a free full-speed offline-guessing oracle.
-//   - No credential check happened at all (Entware toggle off, or its
-//     shadow db unavailable, and the router unreachable) → 503, NOT
-//     counted and NOT delayed — pure infrastructure failure, unchanged
-//     pre-#441 behavior.
-func (h *AuthHandler) finishFailedLogin(w http.ResponseWriter, login, clientIP string, keeneticErr, entwareErr error) {
+// whether the attempt counts toward the per-IP throttle: counted (and
+// delayed) only when credentials were actually checked and the login refused.
+// Entware errors other than an unavailable shadow db (no such user, locked
+// account, unsupported hash, wrong password) all collapse into the same 401
+// so the response does not reveal which logins exist; the reason goes to
+// the log only.
+func (h *AuthHandler) finishFailedLogin(w http.ResponseWriter, login, method, clientIP string, err error) {
 	switch {
-	case errors.Is(keeneticErr, auth.ErrInvalidCredentials):
+	case errors.Is(err, errWeakEntwarePassword):
+		// Засчитывается: 403 подтверждает верную пару, и без счётчика по нему
+		// бесплатно перебирались бы логины с этим паролем.
 		h.registerFailure(clientIP)
-		h.log.Warn("login", login, "Login failed: invalid credentials")
+		h.log.Warn("login", login, "Login refused: Entware password too weak")
+		response.ErrorWithStatus(w, http.StatusForbidden, "Пароль слишком слабый, такая авторизация невозможна", "WEAK_PASSWORD")
+	case errors.Is(err, auth.ErrEntwareUnavailable):
+		h.log.Warn("login", login, "Login failed: "+err.Error())
+		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "Вход через Entware недоступен", "ENTWARE_UNAVAILABLE")
+	case method == loginMethodEntware || errors.Is(err, auth.ErrInvalidCredentials):
+		h.registerFailure(clientIP)
+		h.log.Warn("login", login, "Login failed ("+method+"): "+err.Error())
 		response.ErrorWithStatus(w, http.StatusUnauthorized, "Неверный логин или пароль", "AUTH_FAILED")
-	case errors.Is(entwareErr, auth.ErrInvalidCredentials):
-		h.registerFailure(clientIP)
-		h.log.Warn("login", login, "Login failed: invalid Entware credentials (router also unavailable: "+keeneticErr.Error()+")")
-		response.ErrorWithStatus(w, http.StatusUnauthorized, "Неверный логин или пароль", "AUTH_FAILED")
-	case entwareErr != nil && !errors.Is(entwareErr, auth.ErrEntwareUnavailable):
-		h.registerFailure(clientIP)
-		h.log.Warn("login", login, "Login failed: router unavailable after Entware credential check: "+keeneticErr.Error())
-		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "Не удалось подключиться к роутеру: "+keeneticErr.Error(), "ROUTER_UNAVAILABLE")
 	default:
-		h.log.Warn("login", login, "Login failed: router unavailable: "+keeneticErr.Error())
-		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "Не удалось подключиться к роутеру: "+keeneticErr.Error(), "ROUTER_UNAVAILABLE")
+		h.log.Warn("login", login, "Login failed: router unavailable: "+err.Error())
+		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "Не удалось подключиться к роутеру: "+err.Error(), "ROUTER_UNAVAILABLE")
 	}
 }
 
@@ -293,7 +284,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // Status returns whether the client is authenticated and optional session metadata.
 //
 //	@Summary		Auth status
-//	@Description	Unauthenticated endpoint. Also reports entwareAuthEnabled so the login form can adjust its copy.
+//	@Description	Unauthenticated endpoint.
 //	@Tags			auth
 //	@Produce		json
 //	@Success		200	{object}	AuthStatusResponse
@@ -306,14 +297,11 @@ func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entwareEnabled := h.settings != nil && h.settings.IsEntwareAuthEnabled()
-
 	// If auth is disabled, always return authenticated
 	if h.settings != nil && !h.settings.IsAuthEnabled() {
 		response.JSON(w, map[string]interface{}{
-			"authenticated":      true,
-			"authDisabled":       true,
-			"entwareAuthEnabled": entwareEnabled,
+			"authenticated": true,
+			"authDisabled":  true,
 		})
 		return
 	}
@@ -321,8 +309,7 @@ func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie(auth.SessionCookie)
 	if err != nil {
 		response.JSON(w, map[string]interface{}{
-			"authenticated":      false,
-			"entwareAuthEnabled": entwareEnabled,
+			"authenticated": false,
 		})
 		return
 	}
@@ -330,16 +317,14 @@ func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 	session := h.sessions.Get(cookie.Value)
 	if session == nil {
 		response.JSON(w, map[string]interface{}{
-			"authenticated":      false,
-			"entwareAuthEnabled": entwareEnabled,
+			"authenticated": false,
 		})
 		return
 	}
 
 	response.JSON(w, map[string]interface{}{
-		"authenticated":      true,
-		"login":              session.Login,
-		"expiresIn":          int(h.sessions.TTL().Seconds() - time.Since(session.LastSeen).Seconds()),
-		"entwareAuthEnabled": entwareEnabled,
+		"authenticated": true,
+		"login":         session.Login,
+		"expiresIn":     int(h.sessions.TTL().Seconds() - time.Since(session.LastSeen).Seconds()),
 	})
 }

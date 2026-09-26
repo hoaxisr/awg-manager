@@ -115,9 +115,6 @@ type SettingsData struct {
 	// sliding window; server-side expiry applies immediately, browser
 	// cookie Max-Age of existing sessions updates on next login).
 	SessionTtlHours int `json:"sessionTtlHours" example:"24" minimum:"1" maximum:"720"`
-	// EntwareAuthEnabled allows login with Entware system credentials
-	// (/opt/etc/shadow) verified locally, without the NDMS /auth call.
-	EntwareAuthEnabled bool `json:"entwareAuthEnabled" example:"false"`
 	// McpEnabled turns on the Model Context Protocol endpoint at /mcp.
 	// Off by default; keys are managed via /mcp/keys*.
 	McpEnabled bool `json:"mcpEnabled" example:"false"`
@@ -304,12 +301,11 @@ func (h *SettingsHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 // подавшего сюда store.Get().
 func settingsResponse(s *storage.Settings) SettingsData {
 	return SettingsData{
-		SchemaVersion:      s.SchemaVersion,
-		AuthEnabled:        s.AuthEnabled,
-		SessionTtlHours:    s.SessionTtlHours,
-		EntwareAuthEnabled: s.EntwareAuthEnabled,
-		McpEnabled:         s.McpEnabled,
-		ApiKey:             s.ApiKey,
+		SchemaVersion:   s.SchemaVersion,
+		AuthEnabled:     s.AuthEnabled,
+		SessionTtlHours: s.SessionTtlHours,
+		McpEnabled:      s.McpEnabled,
+		ApiKey:          s.ApiKey,
 		Server: ServerSettingsDTO{
 			Port:       s.Server.Port,
 			Interface:  s.Server.Interface,
@@ -600,13 +596,6 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			h.log.Info("auth", "", "Authentication enabled")
 		} else {
 			h.log.Warn("auth", "", "Authentication disabled")
-		}
-	}
-	if oldSettings.EntwareAuthEnabled != want.EntwareAuthEnabled {
-		if want.EntwareAuthEnabled {
-			h.log.Info("auth", "", "Entware authentication enabled")
-		} else {
-			h.log.Info("auth", "", "Entware authentication disabled")
 		}
 	}
 	if oldSettings.McpEnabled != want.McpEnabled {

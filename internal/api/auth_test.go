@@ -201,7 +201,7 @@ func TestAuthLogout_DeletesSessionAndClearsCookie(t *testing.T) {
 	}
 }
 
-// ── Login flow (entware-first, fallback, throttle) ───────────────
+// ── Login flow (method choice, throttle) ─────────────────────────
 
 type fakeKeenetic struct {
 	err   error
@@ -224,9 +224,9 @@ func (f *fakeEntware) Verify(_, _ string) error {
 }
 
 // newLoginHandlerForTest builds an AuthHandler with fake verifiers, an
-// isolated settings store (entwareAuthEnabled per flag) and no failure
-// sleep, so throttle tests run instantly.
-func newLoginHandlerForTest(t *testing.T, entwareEnabled bool, ke *fakeKeenetic, en *fakeEntware) (*AuthHandler, *storage.SettingsStore) {
+// isolated settings store and no failure sleep, so throttle tests run
+// instantly.
+func newLoginHandlerForTest(t *testing.T, ke *fakeKeenetic, en *fakeEntware) (*AuthHandler, *storage.SettingsStore) {
 	t.Helper()
 	settings := storage.NewSettingsStore(t.TempDir())
 	s, err := settings.Load()
@@ -234,7 +234,6 @@ func newLoginHandlerForTest(t *testing.T, entwareEnabled bool, ke *fakeKeenetic,
 		t.Fatalf("Load() error = %v", err)
 	}
 	s.AuthEnabled = true
-	s.EntwareAuthEnabled = entwareEnabled
 	if err := settings.Update(func(cur *storage.Settings) error { *cur = *s; return nil }); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -260,8 +259,19 @@ func doLogin(t *testing.T, h *AuthHandler) *httptest.ResponseRecorder {
 // защиту: у каждого нового соединения свой эфемерный порт).
 func doLoginFrom(t *testing.T, h *AuthHandler, addr string) *httptest.ResponseRecorder {
 	t.Helper()
-	body := strings.NewReader(`{"login":"admin","password":"secret"}`)
-	req := httptest.NewRequest(http.MethodPost, "/auth/login", body)
+	return doLoginBody(t, h, addr, `{"login":"admin","password":"secret"}`)
+}
+
+// doLoginAs — попытка входа выбранным способом с заданным паролем.
+func doLoginAs(t *testing.T, h *AuthHandler, method, password string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(LoginRequest{Login: "root", Password: password, Method: method})
+	return doLoginBody(t, h, "", string(body))
+}
+
+func doLoginBody(t *testing.T, h *AuthHandler, addr, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(body))
 	if addr != "" {
 		req.RemoteAddr = addr
 	}
@@ -270,135 +280,149 @@ func doLoginFrom(t *testing.T, h *AuthHandler, addr string) *httptest.ResponseRe
 	return rr
 }
 
-func TestAuthLogin_EntwareSuccessSkipsKeenetic(t *testing.T) {
+// Без поля method — вход через роутер: так ходят старые клиенты и скрипты.
+func TestAuthLogin_DefaultMethodIsRouter(t *testing.T) {
 	ke := &fakeKeenetic{}
-	en := &fakeEntware{} // err == nil → local verification succeeds
-	h, _ := newLoginHandlerForTest(t, true, ke, en)
+	en := &fakeEntware{}
+	h, _ := newLoginHandlerForTest(t, ke, en)
 
-	rr := doLogin(t, h)
-	if rr.Code != http.StatusOK {
+	if rr := doLogin(t, h); rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body=%s", rr.Code, rr.Body.String())
 	}
-	if en.calls != 1 {
-		t.Fatalf("entware calls = %d, want 1", en.calls)
-	}
-	if ke.calls != 0 {
-		t.Fatalf("keenetic calls = %d, want 0 (NDMS must not be contacted)", ke.calls)
+	if ke.calls != 1 || en.calls != 0 {
+		t.Fatalf("calls keenetic=%d entware=%d, want 1 and 0", ke.calls, en.calls)
 	}
 }
 
-func TestAuthLogin_EntwareFailureFallsBackToKeenetic(t *testing.T) {
-	ke := &fakeKeenetic{}
-	en := &fakeEntware{err: auth.ErrEntwareUnavailable}
-	h, _ := newLoginHandlerForTest(t, true, ke, en)
-
-	rr := doLogin(t, h)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (keenetic fallback), body=%s", rr.Code, rr.Body.String())
+// Выбранный способ — единственный: ни на успехе, ни на отказе второй не
+// трогается. Entware-вход не должен порождать попыток входа на роутере
+// (уведомления и lockout ndm), а отказ роутера — не открывать shadow.
+func TestAuthLogin_MethodIsStrict(t *testing.T) {
+	cases := []struct {
+		method         string
+		keErr, enErr   error
+		wantCode       int
+		wantKe, wantEn int
+	}{
+		{"entware", nil, nil, http.StatusOK, 0, 1},
+		{"entware", nil, auth.ErrInvalidCredentials, http.StatusUnauthorized, 0, 1},
+		{"router", nil, nil, http.StatusOK, 1, 0},
+		{"router", auth.ErrInvalidCredentials, nil, http.StatusUnauthorized, 1, 0},
 	}
-	if en.calls != 1 || ke.calls != 1 {
-		t.Fatalf("calls entware=%d keenetic=%d, want 1 and 1 (entware first, then fallback)", en.calls, ke.calls)
-	}
-}
-
-func TestAuthLogin_ToggleOffUsesKeeneticOnly(t *testing.T) {
-	ke := &fakeKeenetic{}
-	en := &fakeEntware{} // would succeed, but the toggle is off
-	h, _ := newLoginHandlerForTest(t, false, ke, en)
-
-	rr := doLogin(t, h)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200, body=%s", rr.Code, rr.Body.String())
-	}
-	if en.calls != 0 {
-		t.Fatalf("entware calls = %d, want 0 (toggle off = old behavior)", en.calls)
-	}
-	if ke.calls != 1 {
-		t.Fatalf("keenetic calls = %d, want 1", ke.calls)
-	}
-}
-
-func TestAuthLogin_BothFail_Returns401(t *testing.T) {
-	ke := &fakeKeenetic{err: auth.ErrInvalidCredentials}
-	en := &fakeEntware{err: auth.ErrInvalidCredentials}
-	h, _ := newLoginHandlerForTest(t, true, ke, en)
-
-	rr := doLogin(t, h)
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401, body=%s", rr.Code, rr.Body.String())
-	}
-	if !strings.Contains(rr.Body.String(), "AUTH_FAILED") {
-		t.Fatalf("missing AUTH_FAILED code, body=%s", rr.Body.String())
-	}
-}
-
-// ── Failure accounting across the entware/keenetic branches (S1) ─
-
-// A definitive Entware password rejection for an existing user is a
-// credential failure even when the Keenetic fallback then fails
-// non-credentially (router down): the client gets 401, not 503, and the
-// attempt is counted.
-func TestAuthLogin_EntwareRejectedRouterDown_Returns401AndCounts(t *testing.T) {
-	ke := &fakeKeenetic{err: errors.New("dial tcp: connection refused")}
-	en := &fakeEntware{err: auth.ErrInvalidCredentials}
-	h, _ := newLoginHandlerForTest(t, true, ke, en)
-
-	for i := 0; i < 5; i++ {
-		rr := doLogin(t, h)
-		if rr.Code != http.StatusUnauthorized {
-			t.Fatalf("attempt %d: status = %d, want 401, body=%s", i+1, rr.Code, rr.Body.String())
+	for _, c := range cases {
+		ke := &fakeKeenetic{err: c.keErr}
+		en := &fakeEntware{err: c.enErr}
+		h, _ := newLoginHandlerForTest(t, ke, en)
+		rr := doLoginAs(t, h, c.method, "secret")
+		if rr.Code != c.wantCode {
+			t.Errorf("%s keErr=%v enErr=%v: status = %d, want %d", c.method, c.keErr, c.enErr, rr.Code, c.wantCode)
 		}
-		if !strings.Contains(rr.Body.String(), "AUTH_FAILED") {
-			t.Fatalf("attempt %d: missing AUTH_FAILED code, body=%s", i+1, rr.Body.String())
+		if ke.calls != c.wantKe || en.calls != c.wantEn {
+			t.Errorf("%s keErr=%v enErr=%v: calls keenetic=%d entware=%d, want %d and %d",
+				c.method, c.keErr, c.enErr, ke.calls, en.calls, c.wantKe, c.wantEn)
 		}
 	}
-	if rr := doLogin(t, h); rr.Code != http.StatusTooManyRequests {
-		t.Fatalf("6th attempt: status = %d, want 429 (rejections must count), body=%s", rr.Code, rr.Body.String())
+}
+
+// Любой отказ Entware, кроме недоступного shadow, — один и тот же 401 и
+// засчитывается: по ответу нельзя узнать, какие логины есть.
+func TestAuthLogin_EntwareRejectionsCollapseTo401AndCount(t *testing.T) {
+	var firstBody string
+	for _, enErr := range []error{
+		auth.ErrInvalidCredentials,
+		auth.ErrEntwareUserNotFound,
+		auth.ErrEntwareAccountLocked,
+		fmt.Errorf("%w: схема $y$ (yescrypt)", auth.ErrUnsupportedHash),
+	} {
+		h, _ := newLoginHandlerForTest(t, &fakeKeenetic{}, &fakeEntware{err: enErr})
+		for i := 0; i < 5; i++ {
+			rr := doLoginAs(t, h, "entware", "secret")
+			if rr.Code != http.StatusUnauthorized || !strings.Contains(rr.Body.String(), "AUTH_FAILED") {
+				t.Fatalf("%v, attempt %d: status = %d, want 401 AUTH_FAILED, body=%s", enErr, i+1, rr.Code, rr.Body.String())
+			}
+			// Тело побайтно одно на все причины: причина — только в журнал.
+			if body := rr.Body.String(); firstBody == "" {
+				firstBody = body
+			} else if body != firstBody {
+				t.Fatalf("%v: body %q differs from %q — reveals the rejection reason", enErr, body, firstBody)
+			}
+		}
+		if rr := doLoginAs(t, h, "entware", "secret"); rr.Code != http.StatusTooManyRequests {
+			t.Fatalf("%v, 6th attempt: status = %d, want 429 (rejections must count)", enErr, rr.Code)
+		}
 	}
 }
 
-// Entware attempted a credential check (user not found — a full dummy KDF
-// ran) and the router is down: the client keeps the 503, but the attempt
-// is counted so a router outage is not a free offline-guessing window.
-func TestAuthLogin_EntwareCheckedRouterDown_503Counted(t *testing.T) {
-	ke := &fakeKeenetic{err: errors.New("dial tcp: connection refused")}
-	en := &fakeEntware{err: auth.ErrEntwareUserNotFound}
-	h, _ := newLoginHandlerForTest(t, true, ke, en)
-
-	for i := 0; i < 5; i++ {
-		rr := doLogin(t, h)
-		if rr.Code != http.StatusServiceUnavailable {
-			t.Fatalf("attempt %d: status = %d, want 503, body=%s", i+1, rr.Code, rr.Body.String())
-		}
-		if !strings.Contains(rr.Body.String(), "ROUTER_UNAVAILABLE") {
-			t.Fatalf("attempt %d: missing ROUTER_UNAVAILABLE code, body=%s", i+1, rr.Body.String())
-		}
-	}
-	if rr := doLogin(t, h); rr.Code != http.StatusTooManyRequests {
-		t.Fatalf("6th attempt: status = %d, want 429 (KDF-consuming 503s must count), body=%s", rr.Code, rr.Body.String())
-	}
-}
-
-// Toggle off + router down: no credential check ever happened — the 503 is
-// a pure infrastructure failure and must NOT count (pre-#441 behavior).
-func TestAuthLogin_ToggleOffRouterDown_NotCounted(t *testing.T) {
-	ke := &fakeKeenetic{err: errors.New("dial tcp: connection refused")}
-	h, _ := newLoginHandlerForTest(t, false, ke, &fakeEntware{})
+// Нет shadow — проверки не было: 503 и не засчитывается.
+func TestAuthLogin_EntwareUnavailable_503NotCounted(t *testing.T) {
+	h, _ := newLoginHandlerForTest(t, &fakeKeenetic{}, &fakeEntware{err: auth.ErrEntwareUnavailable})
 
 	for i := 0; i < 10; i++ {
-		rr := doLogin(t, h)
-		if rr.Code != http.StatusServiceUnavailable {
-			t.Fatalf("attempt %d: status = %d, want 503 (never 429), body=%s", i+1, rr.Code, rr.Body.String())
+		rr := doLoginAs(t, h, "entware", "secret")
+		if rr.Code != http.StatusServiceUnavailable || !strings.Contains(rr.Body.String(), "ENTWARE_UNAVAILABLE") {
+			t.Fatalf("attempt %d: status = %d, want 503 ENTWARE_UNAVAILABLE (never 429), body=%s", i+1, rr.Code, rr.Body.String())
 		}
 	}
 }
 
-// Entware enabled but its shadow db unavailable + router down: again no
-// credential check happened, so the 503s stay uncounted.
-func TestAuthLogin_EntwareUnavailableRouterDown_NotCounted(t *testing.T) {
+// Верный, но слабый пароль Entware — 403 без сессии. Проверяется ПОСЛЕ
+// верификации: неверная пара с тем же паролем получает обычный 401.
+func TestAuthLogin_WeakEntwarePasswordRefused(t *testing.T) {
+	h, _ := newLoginHandlerForTest(t, &fakeKeenetic{}, &fakeEntware{})
+	rr := doLoginAs(t, h, "entware", weakEntwarePassword)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403, body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Пароль слишком слабый, такая авторизация невозможна") {
+		t.Fatalf("unexpected message, body=%s", rr.Body.String())
+	}
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == auth.SessionCookie {
+			t.Fatal("session cookie set for a refused weak password")
+		}
+	}
+
+	// 403 подтверждает верную пару — перебор логинов с этим паролем
+	// обязан упираться в троттлинг, как и обычные отказы.
+	for i := 0; i < 4; i++ {
+		if rr := doLoginAs(t, h, "entware", weakEntwarePassword); rr.Code != http.StatusForbidden {
+			t.Fatalf("attempt %d: status = %d, want 403", i+2, rr.Code)
+		}
+	}
+	if rr := doLoginAs(t, h, "entware", weakEntwarePassword); rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("6th weak-password attempt: status = %d, want 429 (403 must count)", rr.Code)
+	}
+
+	h, _ = newLoginHandlerForTest(t, &fakeKeenetic{}, &fakeEntware{err: auth.ErrInvalidCredentials})
+	if rr := doLoginAs(t, h, "entware", weakEntwarePassword); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong credentials with the weak password: status = %d, want 401", rr.Code)
+	}
+
+	// Через роутер тот же пароль — забота роутера, не наша.
+	h, _ = newLoginHandlerForTest(t, &fakeKeenetic{}, &fakeEntware{})
+	if rr := doLoginAs(t, h, "router", weakEntwarePassword); rr.Code != http.StatusOK {
+		t.Fatalf("router login with the same password: status = %d, want 200", rr.Code)
+	}
+}
+
+func TestAuthLogin_UnknownMethod400(t *testing.T) {
+	ke := &fakeKeenetic{}
+	en := &fakeEntware{}
+	h, _ := newLoginHandlerForTest(t, ke, en)
+
+	if rr := doLoginAs(t, h, "ldap", "secret"); rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+	if ke.calls != 0 || en.calls != 0 {
+		t.Fatalf("calls keenetic=%d entware=%d, want 0 and 0", ke.calls, en.calls)
+	}
+}
+
+// Router down: no credential check ever happened — the 503 is a pure
+// infrastructure failure and must NOT count (pre-#441 behavior).
+func TestAuthLogin_RouterDown_NotCounted(t *testing.T) {
 	ke := &fakeKeenetic{err: errors.New("dial tcp: connection refused")}
-	en := &fakeEntware{err: auth.ErrEntwareUnavailable}
-	h, _ := newLoginHandlerForTest(t, true, ke, en)
+	h, _ := newLoginHandlerForTest(t, ke, &fakeEntware{})
 
 	for i := 0; i < 10; i++ {
 		rr := doLogin(t, h)
@@ -412,7 +436,7 @@ func TestAuthLogin_EntwareUnavailableRouterDown_NotCounted(t *testing.T) {
 // consume throttle attempts.
 func TestAuthLogin_MalformedBodyNotCounted(t *testing.T) {
 	ke := &fakeKeenetic{err: auth.ErrInvalidCredentials}
-	h, _ := newLoginHandlerForTest(t, false, ke, &fakeEntware{})
+	h, _ := newLoginHandlerForTest(t, ke, &fakeEntware{})
 
 	for i := 0; i < 10; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader("{not json"))
@@ -431,7 +455,7 @@ func TestAuthLogin_MalformedBodyNotCounted(t *testing.T) {
 
 func TestAuthLogin_Throttle429AfterFiveFailures(t *testing.T) {
 	ke := &fakeKeenetic{err: auth.ErrInvalidCredentials}
-	h, _ := newLoginHandlerForTest(t, false, ke, &fakeEntware{})
+	h, _ := newLoginHandlerForTest(t, ke, &fakeEntware{})
 
 	for i := 0; i < 5; i++ {
 		rr := doLogin(t, h)
@@ -466,7 +490,7 @@ func TestAuthLogin_Throttle429AfterFiveFailures(t *testing.T) {
 // имя и срок, но не на защитные признаки.
 func TestAuthLogin_SessionCookieIsProtected(t *testing.T) {
 	ke := &fakeKeenetic{}
-	h, _ := newLoginHandlerForTest(t, false, ke, &fakeEntware{})
+	h, _ := newLoginHandlerForTest(t, ke, &fakeEntware{})
 
 	rr := doLogin(t, h)
 	if rr.Code != http.StatusOK {
@@ -494,7 +518,7 @@ func TestAuthLogin_SessionCookieIsProtected(t *testing.T) {
 // а тест «шестая попытка = 429» этого не заметит — он ходит с одного адреса.
 func TestAuthLogin_ThrottleIsPerClientIP(t *testing.T) {
 	ke := &fakeKeenetic{err: auth.ErrInvalidCredentials}
-	h, _ := newLoginHandlerForTest(t, false, ke, &fakeEntware{})
+	h, _ := newLoginHandlerForTest(t, ke, &fakeEntware{})
 
 	const attacker = "203.0.113.7:40001"
 	for i := 0; i < 5; i++ {
@@ -517,7 +541,7 @@ func TestAuthLogin_ThrottleIsPerClientIP(t *testing.T) {
 // никогда: переподключился — и перебирай дальше.
 func TestAuthLogin_ThrottleIgnoresSourcePort(t *testing.T) {
 	ke := &fakeKeenetic{err: auth.ErrInvalidCredentials}
-	h, _ := newLoginHandlerForTest(t, false, ke, &fakeEntware{})
+	h, _ := newLoginHandlerForTest(t, ke, &fakeEntware{})
 
 	for i := 0; i < 5; i++ {
 		addr := fmt.Sprintf("198.51.100.4:%d", 40000+i) // каждый раз новый порт
@@ -532,7 +556,7 @@ func TestAuthLogin_ThrottleIgnoresSourcePort(t *testing.T) {
 
 func TestAuthLogin_ThrottleResetsOnSuccess(t *testing.T) {
 	ke := &fakeKeenetic{err: auth.ErrInvalidCredentials}
-	h, _ := newLoginHandlerForTest(t, false, ke, &fakeEntware{})
+	h, _ := newLoginHandlerForTest(t, ke, &fakeEntware{})
 
 	for i := 0; i < 4; i++ {
 		doLogin(t, h)
@@ -552,7 +576,7 @@ func TestAuthLogin_ThrottleResetsOnSuccess(t *testing.T) {
 
 func TestAuthLogin_CookieMaxAgeUsesConfiguredTTL(t *testing.T) {
 	ke := &fakeKeenetic{}
-	h, settings := newLoginHandlerForTest(t, false, ke, &fakeEntware{})
+	h, settings := newLoginHandlerForTest(t, ke, &fakeEntware{})
 	s, _ := settings.Get()
 	s.SessionTtlHours = 48
 	if err := settings.Update(func(cur *storage.Settings) error { *cur = *s; return nil }); err != nil {
@@ -574,37 +598,5 @@ func TestAuthLogin_CookieMaxAgeUsesConfiguredTTL(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("session cookie not set")
-	}
-}
-
-func TestAuthStatus_ReportsEntwareAuthEnabled(t *testing.T) {
-	sessions := auth.NewSessionStore(nil)
-	t.Cleanup(sessions.Stop)
-	settings := storage.NewSettingsStore(t.TempDir())
-	s, err := settings.Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	s.AuthEnabled = true
-	s.EntwareAuthEnabled = true
-	if err := settings.Update(func(cur *storage.Settings) error { *cur = *s; return nil }); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	h := NewAuthHandler(nil, sessions, settings, silentAppLogger{})
-
-	// Unauthenticated request — the login form relies on this field.
-	req := httptest.NewRequest(http.MethodGet, "/auth/status", nil)
-	rr := httptest.NewRecorder()
-	h.Status(rr, req)
-
-	var body map[string]interface{}
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
-	if body["authenticated"] != false {
-		t.Fatalf("authenticated = %#v, want false", body["authenticated"])
-	}
-	if body["entwareAuthEnabled"] != true {
-		t.Fatalf("entwareAuthEnabled = %#v, want true", body["entwareAuthEnabled"])
 	}
 }

@@ -544,12 +544,6 @@ definitions:
       authenticated:
         example: true
         type: boolean
-      entwareAuthEnabled:
-        description: |-
-          EntwareAuthEnabled tells the (unauthenticated) login form that
-          Entware system credentials are accepted in addition to Keenetic ones.
-        example: false
-        type: boolean
       expiresIn:
         example: 3600
         type: integer
@@ -2373,6 +2367,13 @@ definitions:
     properties:
       login:
         type: string
+      method:
+        description: 'Method — чем проверять: "router" (по умолчанию) или "entware".'
+        enum:
+        - router
+        - entware
+        example: router
+        type: string
       password:
         type: string
     type: object
@@ -4181,12 +4182,6 @@ definitions:
         $ref: '#/definitions/api.DNSRouteSettingsDTO'
       download:
         $ref: '#/definitions/api.DownloadSettingsDTO'
-      entwareAuthEnabled:
-        description: |-
-          EntwareAuthEnabled allows login with Entware system credentials
-          (/opt/etc/shadow) verified locally, without the NDMS /auth call.
-        example: false
-        type: boolean
       geoFile:
         $ref: '#/definitions/api.GeoFileSettingsDTO'
       logging:
@@ -9455,15 +9450,15 @@ paths:
     post:
       consumes:
       - application/json
-      description: Authenticates with Keenetic credentials (or, when entwareAuthEnabled,
-        Entware system credentials verified locally first); sets HttpOnly session
-        cookie awg_session. Every failed attempt in which credentials were checked
-        (including a local Entware check while the router is unreachable) is delayed
-        300ms and counted; after 5 such failures per client IP the endpoint responds
-        429 for 30 seconds. Router-unavailable failures without any credential check
-        are not counted.
+      description: Authenticates by the chosen method (router — Keenetic credentials,
+        the default; entware — Entware system credentials verified locally); sets
+        HttpOnly session cookie awg_session. Every failed attempt in which credentials
+        were checked is delayed 300ms and counted; after 5 such failures per client
+        IP the endpoint responds 429 for 30 seconds. Unavailable router or Entware
+        shadow db is not counted (503). A correct Entware password that is too weak
+        is refused with 403.
       parameters:
-      - description: Router (or Entware) login and password
+      - description: Login, password and method
         in: body
         name: body
         required: true
@@ -9482,6 +9477,10 @@ paths:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "429":
@@ -9517,8 +9516,7 @@ paths:
       - auth
   /auth/status:
     get:
-      description: Unauthenticated endpoint. Also reports entwareAuthEnabled so the
-        login form can adjust its copy.
+      description: Unauthenticated endpoint.
       produces:
       - application/json
       responses:

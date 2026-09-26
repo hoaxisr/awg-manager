@@ -18,6 +18,7 @@ import type {
 	IPCheckService,
 	IPResult,
 	IpsetUsage,
+	LoginMethod,
 	LoginResult,
 	LogsResponse,
 	McpKey,
@@ -328,13 +329,13 @@ export class SystemClient extends TunnelsClient {
 	// #region Auth — login, logout, status
 	// ─────────────────────────────────────────────
 
-	async login(login: string, password: string): Promise<LoginResult> {
+	async login(login: string, password: string, method: LoginMethod): Promise<LoginResult> {
 		const url = `${this.baseUrl}/auth/login`;
 		const response = await fetch(url, {
 			method: 'POST',
 			credentials: 'same-origin',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ login, password })
+			body: JSON.stringify({ login, password, method })
 		});
 
 		let data: (LoginResult & { error?: unknown; message?: string }) | null = null;

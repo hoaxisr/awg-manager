@@ -1,21 +1,33 @@
 <script lang="ts">
 	import { auth } from '$lib/stores/auth';
-	import { Button } from '$lib/components/ui';
+	import { createPersistedStore } from '$lib/stores/persisted';
+	import { Button, SegmentedControl } from '$lib/components/ui';
+	import type { SegmentedOption } from '$lib/components/ui/segmentedControl';
 	import BrandLogoMark from '$lib/components/layout/BrandLogoMark.svelte';
+	import type { LoginMethod } from '$lib/types';
 
 	let login = $state('');
 	let password = $state('');
 	let submitting = $state(false);
 
-	// Бэкенд с Entware-авторизацией сообщает об этом в /auth/status
-	// (auth.checkStatus); на легаси-бэкендах флага нет → false.
-	const entwareAuthEnabled = $derived($auth.entwareAuthEnabled);
+	const METHOD_OPTIONS: SegmentedOption<LoginMethod>[] = [
+		{ value: 'router', label: 'Роутер' },
+		{ value: 'entware', label: 'Entware' }
+	];
+
+	// Выбор способа входа помнит браузер; мусор в хранилище → роутер.
+	const method = createPersistedStore<LoginMethod>('awgm-login-method', {
+		defaultValue: 'router',
+		deserialize: (raw) => (raw === 'entware' ? 'entware' : 'router'),
+		serialize: (value) => value
+	});
+	const isEntware = $derived($method === 'entware');
 
 	async function handleSubmit() {
 		if (!login || !password) return;
 
 		submitting = true;
-		await auth.login(login, password);
+		await auth.login(login, password, $method);
 		submitting = false;
 	}
 
@@ -34,8 +46,8 @@
 			</div>
 			<h1>AWG Manager</h1>
 			<p class="login-subtitle">
-				{entwareAuthEnabled
-					? 'Данные роутера или учётной записи Entware'
+				{isEntware
+					? 'Введите данные учётной записи Entware'
 					: 'Введите данные от входа в админ-панель роутера'}
 			</p>
 		</div>
@@ -47,6 +59,20 @@
 		{/if}
 
 		<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="login-form">
+			<div class="login-method">
+				<SegmentedControl
+					value={$method}
+					options={METHOD_OPTIONS}
+					ariaLabel="Способ входа"
+					disabled={submitting}
+					fullWidth
+					onchange={(v) => {
+						method.set(v);
+						auth.clearError();
+					}}
+				/>
+			</div>
+
 			<div class="form-group">
 				<label for="login">Логин</label>
 				<input
@@ -55,7 +81,7 @@
 					bind:value={login}
 					oninput={() => auth.clearError()}
 					onkeydown={handleKeydown}
-					placeholder="admin"
+					placeholder={isEntware ? 'root' : 'admin'}
 					autocomplete="username"
 					disabled={submitting}
 				/>
@@ -69,7 +95,7 @@
 					bind:value={password}
 					oninput={() => auth.clearError()}
 					onkeydown={handleKeydown}
-					placeholder="Пароль от роутера"
+					placeholder={isEntware ? 'Пароль Entware' : 'Пароль от роутера'}
 					autocomplete="current-password"
 					disabled={submitting}
 				/>
@@ -91,8 +117,8 @@
 		</form>
 
 	<p class="login-hint">
-		{entwareAuthEnabled
-			? 'Используйте логин и пароль администратора роутера или учётной записи Entware'
+		{isEntware
+			? 'Используйте логин и пароль учётной записи Entware'
 			: 'Используйте логин и пароль администратора роутера'}
 	</p>
 
@@ -174,6 +200,10 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0rem;
+	}
+
+	.login-method {
+		margin-bottom: 1rem;
 	}
 
 	.form-group {

@@ -163,24 +163,3 @@ func TestUpdate_ExplicitTTLOutOfRangeStillRejected(t *testing.T) {
 		})
 	}
 }
-
-func TestUpdate_EntwareAuthEnabledPersisted(t *testing.T) {
-	h, store := newSettingsHandlerForTest(t)
-	rec := postSettingsUpdate(t, h, `{"entwareAuthEnabled":true}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	got, _ := store.Get()
-	if !got.EntwareAuthEnabled {
-		t.Fatal("entwareAuthEnabled not persisted")
-	}
-
-	rec = postSettingsUpdate(t, h, `{"entwareAuthEnabled":false}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	got, _ = store.Get()
-	if got.EntwareAuthEnabled {
-		t.Fatal("entwareAuthEnabled=false not persisted")
-	}
-}

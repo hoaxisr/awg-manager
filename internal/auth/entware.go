@@ -92,12 +92,16 @@ func (v *EntwareVerifier) Verify(login, password string) error {
 	case errors.Is(err, shadowcrypt.ErrMismatch):
 		return ErrInvalidCredentials
 	case errors.Is(err, shadowcrypt.ErrUnsupported):
+		// shadowcrypt отказывает до всякого вычисления — выравниваем время
+		// с неверным паролем, как для отсутствующей учётки.
+		runDummyKDF(password)
 		// Name the scheme in the log-visible error — «$y$ (yescrypt)» tells
 		// the user immediately why the login cannot work and that re-running
 		// `passwd` in Entware (writes $5$) fixes it.
 		return fmt.Errorf("%w: схема %s (login %q)", ErrUnsupportedHash, hashSchemeLabel(hash), login)
 	default:
 		// Malformed hash — treat like an unsupported entry.
+		runDummyKDF(password)
 		return fmt.Errorf("%w: %v", ErrUnsupportedHash, err)
 	}
 }
@@ -134,8 +138,17 @@ func (v *EntwareVerifier) lookupHash(login string) (string, error) {
 		(errors.Is(shadowErr, ErrEntwareUserNotFound) || errors.Is(shadowErr, ErrEntwareUnavailable)) {
 		// "x"/"*"/"!" в passwd — не хэш (учётка shadow-managed или
 		// заблокирована): остаёмся с исходной shadow-ошибкой.
-		if h, err := lookupHashIn(v.PasswdPath, login); err == nil && h != "x" {
+		h, err := lookupHashIn(v.PasswdPath, login)
+		if err == nil && h != "x" {
 			return h, nil
+		}
+		// Без shadow база — passwd, и её ответ окончательный: «недоступно»
+		// для логина, которого там нет, отличало бы его от существующего.
+		if errors.Is(shadowErr, ErrEntwareUnavailable) && !errors.Is(err, ErrEntwareUnavailable) {
+			if err == nil { // "x" — хэш в shadow, а shadow нет
+				err = ErrEntwareUserNotFound
+			}
+			return "", err
 		}
 	}
 	return "", shadowErr

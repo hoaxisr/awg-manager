@@ -1140,16 +1140,6 @@ func (s *SettingsStore) GetSessionTTL() time.Duration {
 	return time.Duration(settings.SessionTtlHours) * time.Hour
 }
 
-// IsEntwareAuthEnabled returns whether login via Entware system
-// credentials (/opt/etc/shadow) is enabled. Defaults to false on error.
-func (s *SettingsStore) IsEntwareAuthEnabled() bool {
-	settings, err := s.Get()
-	if err != nil {
-		return false
-	}
-	return settings.EntwareAuthEnabled
-}
-
 // IsMcpEnabled reports whether the MCP endpoint is switched on. Read on
 // every /mcp request, so it uses the cheap Get() path like IsAuthEnabled.
 func (s *SettingsStore) IsMcpEnabled() bool {

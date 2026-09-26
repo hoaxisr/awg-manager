@@ -22,11 +22,6 @@ type Settings struct {
 	// Max-Age of already-issued sessions updates on next login (the
 	// server-side expiry check is authoritative either way).
 	SessionTtlHours int `json:"sessionTtlHours"`
-	// EntwareAuthEnabled allows login with Entware system credentials
-	// (/opt/etc/shadow) verified locally, without the NDMS /auth call
-	// that generates router-side notifications. When the local check
-	// fails for any reason, login falls back to the Keenetic path.
-	EntwareAuthEnabled bool `json:"entwareAuthEnabled"`
 	// McpEnabled turns on the Model Context Protocol endpoint at /mcp.
 	// Off by default; /mcp answers 404 while disabled. Access requires an
 	// MCP key from McpKeyStore regardless of AuthEnabled. Keys live in
