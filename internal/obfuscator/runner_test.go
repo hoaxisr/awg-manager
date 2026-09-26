@@ -121,6 +121,23 @@ func TestRunner_StartIsIdempotentAndRestartsOnConfChange(t *testing.T) {
 	}
 }
 
+// Тот же конфиг, другой IP сервера — перезапуск: на этом держится доставка
+// нового DDNS-адреса процессному релею.
+func TestRunner_StartRestartsOnIPChange(t *testing.T) {
+	r, _ := newTestRunner(t)
+	o := obf()
+	if err := r.Start(context.Background(), "awg20", o, "203.0.113.5"); err != nil {
+		t.Fatal(err)
+	}
+	pid1 := r.pid("awg20")
+	if err := r.Start(context.Background(), "awg20", o, "203.0.113.6"); err != nil {
+		t.Fatal(err)
+	}
+	if r.pid("awg20") == pid1 {
+		t.Fatal("changed ip must respawn")
+	}
+}
+
 func TestRunner_AdoptAll(t *testing.T) {
 	r, _ := newTestRunner(t)
 	if err := r.Start(context.Background(), "awg20", obf(), "203.0.113.5"); err != nil {
