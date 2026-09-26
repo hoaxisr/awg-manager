@@ -1,0 +1,100 @@
+package nwg
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/sys/exec"
+)
+
+type relayKmodFixture struct {
+	m       *RelayKmod
+	loaded  bool
+	calls   []string
+	insmod  error
+	version string
+	armed   int
+	writes  []string
+}
+
+func newRelayKmodFixture(t *testing.T) *relayKmodFixture {
+	f := &relayKmodFixture{version: ExpectedRelayKmodVersion + "\n"}
+	m := NewRelayKmod(nil, func() error { f.armed++; return nil }, func(time.Duration) {})
+	m.resolve = func() (string, error) { return "/opt/etc/awg-manager/modules/awgm_relay-mt7621.ko", nil }
+	m.isLoadedFn = func() bool { return f.loaded }
+	m.modLoadedFn = func(string) bool { return true }
+	m.execFn = func(_ context.Context, name string, args ...string) (*exec.Result, error) {
+		f.calls = append(f.calls, name+" "+strings.Join(args, " "))
+		switch name {
+		case "insmod":
+			if f.insmod != nil {
+				return &exec.Result{ExitCode: 1, Stderr: f.insmod.Error()}, nil
+			}
+			f.loaded = true
+		case "rmmod":
+			f.loaded = false
+		}
+		return &exec.Result{}, nil
+	}
+	m.procReadFn = func(p string) ([]byte, error) {
+		if strings.HasSuffix(p, "version") {
+			return []byte(f.version), nil
+		}
+		return []byte("127.0.0.1:39001 1.2.3.4:5 transform=phobos masking=none rx=0\n"), nil
+	}
+	m.procWriteFn = func(p string, b []byte) error { f.writes = append(f.writes, p+" "+string(b)); return nil }
+	f.m = m
+	return f
+}
+
+func TestRelayKmod_EnsureArmsBeforeInsmod(t *testing.T) {
+	f := newRelayKmodFixture(t)
+	if err := f.m.Ensure(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f.armed != 1 || !f.loaded {
+		t.Fatalf("armed=%d loaded=%v", f.armed, f.loaded)
+	}
+	if err := f.m.Ensure(context.Background()); err != nil || len(f.calls) != 1 {
+		t.Fatalf("повторный Ensure не должен звать insmod: %v %v", err, f.calls)
+	}
+}
+
+func TestRelayKmod_FailureRemembered(t *testing.T) {
+	f := newRelayKmodFixture(t)
+	f.insmod = errors.New("Unknown symbol")
+	if err := f.m.Ensure(context.Background()); err == nil {
+		t.Fatal("ждали ошибку insmod")
+	}
+	n := len(f.calls)
+	if err := f.m.Ensure(context.Background()); err == nil || len(f.calls) != n {
+		t.Fatalf("отказ должен запоминаться до рестарта демона: calls=%v", f.calls)
+	}
+	if f.m.Available() {
+		t.Fatal("Available после отказа")
+	}
+}
+
+func TestRelayKmod_ReconcileVersionReloads(t *testing.T) {
+	f := newRelayKmodFixture(t)
+	f.loaded, f.version = true, "0.0.9\n"
+	f.m.ReconcileVersion(context.Background())
+	if f.loaded {
+		t.Fatal("устаревший модуль не выгружен")
+	}
+	if len(f.writes) != 1 || !strings.Contains(f.writes[0], "/proc/awgm_relay/del 127.0.0.1:39001") {
+		t.Fatalf("слоты не сняты перед rmmod: %v", f.writes)
+	}
+}
+
+func TestRelayKmod_ReconcileVersionKeepsCurrent(t *testing.T) {
+	f := newRelayKmodFixture(t)
+	f.loaded = true
+	f.m.ReconcileVersion(context.Background())
+	if !f.loaded || len(f.calls) != 0 {
+		t.Fatalf("актуальный модуль тронут: %v", f.calls)
+	}
+}

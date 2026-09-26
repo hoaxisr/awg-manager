@@ -107,7 +107,7 @@ func TestResolveKoPathFor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path, _, err := resolveKoPathFor(tt.model, tt.soc, tt.exists)
+			path, _, err := resolveKoPathFor("awg_proxy", tt.model, tt.soc, tt.exists)
 			if tt.wantErr != "" {
 				if err == nil {
 					t.Fatalf("ожидался отказ, получен путь %q", path)
@@ -128,39 +128,56 @@ func TestResolveKoPathFor(t *testing.T) {
 }
 
 // Каждый SoC из карты моделей обязан быть либо покрыт arch-default'ом, либо
-// иметь собственную сборку в kmod/awg-proxy/out/. Списки не дублируются: SoC
-// берутся из карты моделей, сборки — с диска, поэтому тест валится и когда в
-// soc.go заводят новый SoC без сборки, и когда сборка пропала из out/.
+// иметь собственную сборку в out/ модуля. Списки не дублируются: SoC берутся
+// из карты моделей, сборки — с диска, поэтому тест валится и когда в soc.go
+// заводят новый SoC без сборки, и когда сборка пропала из out/. Один и тот же
+// набор SoC проверяется для обоих модулей — awg_proxy и awgm_relay.
 func TestEverySoCHasABuild(t *testing.T) {
-	const outDir = "../../../kmod/awg-proxy/out"
-
-	files, err := filepath.Glob(filepath.Join(outDir, "awg_proxy-*.ko"))
-	if err != nil {
-		t.Fatalf("glob сборок: %v", err)
-	}
-	if len(files) == 0 {
-		t.Fatalf("в %s нет ни одной сборки awg_proxy — проверять нечего", outDir)
-	}
-
-	built := map[string]bool{}
-	for _, f := range files {
-		built[strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), "awg_proxy-"), ".ko")] = true
+	cases := []struct {
+		name   string
+		outDir string
+		prefix string
+		skip   string // непусто — сборок под все SoC ещё нет, подтест пропускается
+	}{
+		{name: "awg_proxy", outDir: "../../../kmod/awg-proxy/out", prefix: "awg_proxy-"},
+		{name: "awgm_relay", outDir: "../../../kmod/awgm-relay/out", prefix: "awgm_relay-", skip: "сборки awgm_relay — задача 9"},
 	}
 
-	socs := kmod.KnownSoCs()
-	if len(socs) == 0 {
-		t.Fatal("карта моделей пуста — тест ничего не проверяет")
-	}
-	for _, soc := range socs {
-		if !built[string(soc)] && !socsCoveredByArchDefault[soc] {
-			t.Errorf("SoC %s: нет ни сборки awg_proxy-%s.ko в %s, ни покрытия arch-default — роутеры на нём останутся без прокси-пути", soc, soc, outDir)
-		}
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.skip != "" {
+				t.Skip(tc.skip)
+			}
 
-	// Модели со своей сборкой — тот же уговор: файл обязан лежать на месте.
-	for model := range modelsWithOwnBuild {
-		if !built[model] {
-			t.Errorf("модель %s: нет сборки awg_proxy-%s.ko в %s, а сборка её SoC ей не годится", model, model, outDir)
-		}
+			files, err := filepath.Glob(filepath.Join(tc.outDir, tc.prefix+"*.ko"))
+			if err != nil {
+				t.Fatalf("glob сборок: %v", err)
+			}
+			if len(files) == 0 {
+				t.Fatalf("в %s нет ни одной сборки %s — проверять нечего", tc.outDir, tc.prefix)
+			}
+
+			built := map[string]bool{}
+			for _, f := range files {
+				built[strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), tc.prefix), ".ko")] = true
+			}
+
+			socs := kmod.KnownSoCs()
+			if len(socs) == 0 {
+				t.Fatal("карта моделей пуста — тест ничего не проверяет")
+			}
+			for _, soc := range socs {
+				if !built[string(soc)] && !socsCoveredByArchDefault[soc] {
+					t.Errorf("SoC %s: нет ни сборки %s%s.ko в %s, ни покрытия arch-default — роутеры на нём останутся без прокси-пути", soc, tc.prefix, soc, tc.outDir)
+				}
+			}
+
+			// Модели со своей сборкой — тот же уговор: файл обязан лежать на месте.
+			for model := range modelsWithOwnBuild {
+				if !built[model] {
+					t.Errorf("модель %s: нет сборки %s%s.ko в %s, а сборка её SoC ей не годится", model, tc.prefix, model, tc.outDir)
+				}
+			}
+		})
 	}
 }

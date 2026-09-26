@@ -130,7 +130,7 @@ func NewKmodManager(appLogger logging.AppLogger) *KmodManager {
 // KN-2010, KN-3811) were bit-exact duplicates of their SoC defaults, so
 // they are no longer shipped either.
 func (km *KmodManager) resolveKoPath() (string, error) {
-	path, how, err := resolveKoPathFor(kmod.DetectModel(), kmod.DetectSoC(), func(p string) bool {
+	path, how, err := resolveKoPathFor("awg_proxy", kmod.DetectModel(), kmod.DetectSoC(), func(p string) bool {
 		_, err := os.Stat(p)
 		return err == nil
 	})
@@ -166,36 +166,37 @@ var modelsWithOwnBuild = map[string]bool{
 }
 
 // resolveKoPathFor — тот же выбор в чистом виде: без обращения к хосту, чтобы
-// тест мог прогнать все ветки. how — чем выбран файл (для лога), пусто для
-// arch-default. Ошибка означает: подходящей сборки в пакете нет, а чужую
-// загружать нельзя.
-func resolveKoPathFor(model string, soc kmod.SoC, exists func(string) bool) (path, how string, err error) {
+// тест мог прогнать все ветки. base — имя модуля без расширения (awg_proxy,
+// awgm_relay): выбор файла по модели/SoC общий для обоих модулей. how — чем
+// выбран файл (для лога), пусто для arch-default. Ошибка означает: подходящей
+// сборки в пакете нет, а чужую загружать нельзя.
+func resolveKoPathFor(base, model string, soc kmod.SoC, exists func(string) bool) (path, how string, err error) {
 	// 1. Per-model override (currently only KN-1011 HIGHMEM is unique)
 	if model != "" {
-		modelPath := fmt.Sprintf(awgProxyDir+"/awg_proxy-%s.ko", model)
+		modelPath := fmt.Sprintf(awgProxyDir+"/%s-%s.ko", base, model)
 		if exists(modelPath) {
 			return modelPath, model, nil
 		}
 		if modelsWithOwnBuild[model] {
 			return "", "", fmt.Errorf(
-				"в пакете нет сборки awg_proxy.ko под %s (%s отсутствует): сборка её SoC собрана против другой конфигурации ядра, её загрузка перезагружает роутер — обновите пакет awg-manager",
-				model, filepath.Base(modelPath))
+				"в пакете нет сборки %s.ko под %s (%s отсутствует): сборка её SoC собрана против другой конфигурации ядра, её загрузка перезагружает роутер — обновите пакет awg-manager",
+				base, model, filepath.Base(modelPath))
 		}
 	}
 
 	// 2. SoC-specific (e.g. awg_proxy-mt7628.ko for non-SMP mipsel)
 	if soc != kmod.SoCUnknown {
-		socPath := fmt.Sprintf(awgProxyDir+"/awg_proxy-%s.ko", string(soc))
+		socPath := fmt.Sprintf(awgProxyDir+"/%s-%s.ko", base, string(soc))
 		if exists(socPath) {
 			return socPath, string(soc), nil
 		}
 		if !socsCoveredByArchDefault[soc] {
 			return "", "", fmt.Errorf(
-				"в пакете нет сборки awg_proxy.ko под SoC %s (%s отсутствует): arch-default собран против другой конфигурации ядра, его загрузка перезагружает роутер — обновите пакет awg-manager",
-				soc, filepath.Base(socPath))
+				"в пакете нет сборки %s.ko под SoC %s (%s отсутствует): arch-default собран против другой конфигурации ядра, его загрузка перезагружает роутер — обновите пакет awg-manager",
+				base, soc, filepath.Base(socPath))
 		}
 		// 3. Arch default — SoC, чьей конфигурацией он и собран.
-		return defaultKoPath, "", nil
+		return awgProxyDir + "/" + base + ".ko", "", nil
 	}
 
 	// Модель есть, а SoC неизвестен — это Keenetic, которого не знает карта
@@ -204,12 +205,12 @@ func resolveKoPathFor(model string, soc kmod.SoC, exists func(string) bool) (pat
 	// нечего, а угадывать здесь и означает F342.
 	if model != "" {
 		return "", "", fmt.Errorf(
-			"модель %s не значится в карте SoC: под какое ядро собирать awg_proxy.ko — неизвестно, а чужая сборка перезагружает роутер — обновите пакет awg-manager",
-			model)
+			"модель %s не значится в карте SoC: под какое ядро собирать %s.ko — неизвестно, а чужая сборка перезагружает роутер — обновите пакет awg-manager",
+			model, base)
 	}
 
 	// Железо не опознано вовсе (NDMS не ответил, не-Keenetic) — выбора нет.
-	return defaultKoPath, "", nil
+	return awgProxyDir + "/" + base + ".ko", "", nil
 }
 
 // ensureKoPathLocked резолвит путь к .ko ровно там, где он нужен для insmod.
