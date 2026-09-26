@@ -1,6 +1,7 @@
 package obfuscator
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -42,6 +43,13 @@ func TestValidate(t *testing.T) {
 	for name, c := range cases {
 		if err := Validate(&c); err == nil {
 			t.Errorf("%s: expected error", name)
+		}
+	}
+	for _, k := range []string{"#secret", "=abc", "   ", strings.Repeat("k", 256)} {
+		bad := ok
+		bad.Key = k
+		if err := Validate(&bad); err == nil {
+			t.Errorf("ключ %q принят", k)
 		}
 	}
 	if Validate(nil) != nil {
