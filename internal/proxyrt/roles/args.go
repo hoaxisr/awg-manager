@@ -2,6 +2,7 @@ package roles
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/awgmproto"
 )
@@ -155,6 +156,63 @@ func FreeTurnServerArgs(c FreeTurnServerConfig) []string {
 		args = append(args, "-debug")
 	}
 	return args
+}
+
+// openFluxTransportNorm — транспорт в канонической форме: нормализация ТОТ ЖЕ,
+// что у Validate (ToLower+TrimSpace), иначе отпечаток поплывёт от того, чьими
+// руками записан конфиг.
+func openFluxTransportNorm(t string) string {
+	return strings.ToLower(strings.TrimSpace(t))
+}
+
+// openFluxCommonArgs — флаги, общие клиенту и выходной ноде: канал связи у
+// сторон ОДИН, и различие ролей живёт только в -role/-mode/-socks5. Форма —
+// -имя=значение для всего со значением: значение ключа или токена может
+// начинаться с дефиса, а раздельная форма такое значение ломает (§5.5 п.3).
+func openFluxCommonArgs(args []string, transport, url, maxToken, maxUID, codec, encKey, dns string, debug bool) []string {
+	str := func(name, val string) {
+		if val != "" {
+			args = append(args, "-"+name+"="+val)
+		}
+	}
+	str("transport", openFluxTransportNorm(transport))
+	str("url", strings.TrimSpace(url))
+	str("maxToken", strings.TrimSpace(maxToken))
+	str("maxUid", strings.TrimSpace(maxUID))
+	if codec == OpenFluxCodecLegacy {
+		str("codec", codec)
+	}
+	str("encryption-key", strings.TrimSpace(encKey))
+	str("dns", strings.TrimSpace(dns))
+	if debug {
+		args = append(args, "-debug")
+	}
+	return args
+}
+
+// OpenFluxClientArgs — клиент OpenFlux: SOCKS5-вход на loopback (единственный
+// вход upstream под Linux, tun_darwin.go — только macOS).
+func OpenFluxClientArgs(c OpenFluxClientConfig) []string {
+	args := []string{"-role=client", "-inbound=socks5"}
+	if c.Listen != "" {
+		args = append(args, "-socks5="+c.Listen)
+	}
+	return openFluxCommonArgs(args, c.Transport, c.URL, c.MaxToken, c.MaxUID, c.Codec, c.EncryptionKey, "", c.Debug)
+}
+
+// OpenFluxServerArgs — выходная нода OpenFlux. Роль upstream называется exit,
+// роль протокола — server (§1 спеки); слушающего порта у ноды нет, поэтому
+// ни -listen, ни INPUT-правил здесь не появляется.
+func OpenFluxServerArgs(c OpenFluxServerConfig) []string {
+	mode := c.NormalizedMode()
+	args := []string{"-role=exit", "-mode=" + mode}
+	if mode == OpenFluxModeL3 && strings.TrimSpace(c.LocalIP) != "" {
+		args = append(args, "-local-ip="+strings.TrimSpace(c.LocalIP))
+	}
+	if c.SingboxRoute {
+		args = append(args, "-fwmark="+strconv.Itoa(OpenFluxSingboxMark))
+	}
+	return openFluxCommonArgs(args, c.Transport, c.URL, c.MaxToken, c.MaxUID, c.Codec, c.EncryptionKey, c.DNS, c.Debug)
 }
 
 // WantHash — отпечаток конфигурации, с которой менеджер запустил БЫ процесс

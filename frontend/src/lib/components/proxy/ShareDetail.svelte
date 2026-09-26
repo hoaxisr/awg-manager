@@ -20,6 +20,9 @@
 	import type {
 		FreeTurnProcessStatus,
 		FreeTurnServerConfig,
+		OpenFluxProcessStatus,
+		OpenFluxServerConfig,
+		OpenFluxShareLink,
 		SingboxRouterSettings,
 		WdttProcessStatus,
 		WdttServerConfig,
@@ -38,6 +41,10 @@
 		wdttServerPorts,
 		type ShareConfig,
 	} from './shareConfig';
+	import LinkBox from './LinkBox.svelte';
+	import DetailSection from './DetailSection.svelte';
+	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
+	import { Input } from '$lib/components/ui';
 	import { ingressOn, nextIngressInterfaces, wdttIngressRefs } from './shareIngress';
 	import InstanceBadges from './InstanceBadges.svelte';
 	import type { ProxyInstanceRow } from './rows';
@@ -45,9 +52,10 @@
 	interface Props {
 		row: ProxyInstanceRow;
 		status?: WdttProcessStatus | FreeTurnProcessStatus;
-		/** Конфиг выбранного сервера на бэкенде — ровно один из двух. */
+		/** Конфиг выбранного сервера на бэкенде — ровно один из трёх. */
 		wdttServer?: WdttServerConfig;
 		ftServer?: FreeTurnServerConfig;
+		ofServer?: OpenFluxServerConfig;
 		routerClock?: string;
 		saving?: boolean;
 		busy?: boolean;
@@ -66,6 +74,7 @@
 		status,
 		wdttServer,
 		ftServer,
+		ofServer,
 		routerClock = '',
 		saving = false,
 		busy = false,
@@ -82,6 +91,7 @@
 	// инстанса ({#key} на странице).
 	let wdttDraft = $state(untrack(() => (wdttServer ? cloneConfig(wdttServer) : undefined)));
 	let ftDraft = $state(untrack(() => (ftServer ? cloneConfig(ftServer) : undefined)));
+	let ofDraft = $state(untrack(() => (ofServer ? cloneConfig(ofServer) : undefined)));
 
 	// Общий замок мутаций сервера: одна операция за раз. Мутации ingress вдобавок
 	// сериализуются своим замком — чтение-правка-запись настроек sing-box иначе
@@ -120,9 +130,20 @@
 	let usableClients = $state<number | undefined>(undefined);
 	let totalClients = $state<number | undefined>(undefined);
 
+	const openFluxTransportOptions = [
+		{ value: 'yandex', label: 'Yandex.Docs' },
+		{ value: 'vyandex', label: 'Yandex Volga' },
+		{ value: 'oneme', label: 'MAX (OneMe)' },
+		{ value: 'cupsonline', label: 'Cups.online' },
+		{ value: 'mailru', label: 'Mail.ru Docs' },
+	];
+
 	const wgServerOptions = $derived(buildRunningServerDropdownOptions(peerSnap));
 	const wgServer = $derived(serverValueForConnect(peerSnap, ftDraft?.connect ?? ''));
 	const wdttStatus = $derived(row.protocol === 'wdtt' ? (status as WdttProcessStatus) : undefined);
+	const ofStatus = $derived(
+		row.protocol === 'openflux' ? (status as OpenFluxProcessStatus) : undefined,
+	);
 	const running = $derived(row.state === 'running');
 	// У работающего сервера подсказки нет: «Запустить» и так заперта состоянием,
 	// а текст про незапускаемый сервер рядом с запущенным — прямая неправда.
@@ -131,6 +152,16 @@
 	);
 	const ports = $derived(
 		wdttDraft ? wdttServerPorts(wdttDraft) : ftDraft ? freeTurnServerPorts(ftDraft) : [],
+	);
+	// У OpenFlux слушающих портов нет — нода ходит наружу к релею. Показываем
+	// транспорт и режим выхода вместо порт-плиток.
+	const ofTiles = $derived(
+		ofDraft
+			? [
+					{ value: ofDraft.transport || '—', label: 'Транспорт' },
+					{ value: ofDraft.mode === 'l3' ? 'l3' : 'l4', label: 'Режим выхода' },
+				]
+			: [],
 	);
 	// Освобождать приходится и внутренний WG-порт: сервер поднимает на нём
 	// WireGuard, а в мете строки состояния (RB-07) его не показывают.
@@ -254,7 +285,7 @@
 	// ─── Сохранение и откат правок.
 
 	async function save() {
-		const draft = wdttDraft ?? ftDraft;
+		const draft = wdttDraft ?? ftDraft ?? ofDraft;
 		if (!draft) return;
 		const sent = cloneConfig(draft);
 		// SH-68: режим server.log бэкенд на живом сервере не применяет —
@@ -268,7 +299,8 @@
 			// поля во время запроса — иначе его правки были бы затёрты.
 			if (JSON.stringify(draft) === JSON.stringify(sent)) {
 				if (wdttDraft) wdttDraft = cloneConfig(stored) as WdttServerConfig;
-				else ftDraft = cloneConfig(stored) as FreeTurnServerConfig;
+				else if (ftDraft) ftDraft = cloneConfig(stored) as FreeTurnServerConfig;
+				else ofDraft = cloneConfig(stored) as OpenFluxServerConfig;
 			}
 			if (logModeChanged && running) await onrestart();
 		});
@@ -278,6 +310,23 @@
 	function revert() {
 		if (wdttServer) wdttDraft = cloneConfig(wdttServer);
 		else if (ftServer) ftDraft = cloneConfig(ftServer);
+		else if (ofServer) ofDraft = cloneConfig(ofServer);
+	}
+
+	// ─── OpenFlux: ссылка абонента.
+
+	let ofLinkBusy = $state(false);
+	let ofLink = $state<OpenFluxShareLink | null>(null);
+
+	async function generateOfLink() {
+		ofLinkBusy = true;
+		try {
+			ofLink = await api.generateOpenFluxLink(row.id);
+		} catch (e) {
+			notifications.error(errText(e));
+		} finally {
+			ofLinkBusy = false;
+		}
 	}
 </script>
 
@@ -287,7 +336,7 @@
 	<div class="head">
 		<h2>{row.name}</h2>
 		<Badge size="sm" variant={row.protocol === 'wdtt' ? 'accent' : 'purple'}>
-			{row.protocol === 'wdtt' ? 'WDTT-сервер' : 'FreeTurn-сервер'}
+			{row.protocol === 'openflux' ? 'OpenFlux-выход' : row.protocol === 'wdtt' ? 'WDTT-сервер' : 'FreeTurn-сервер'}
 		</Badge>
 		<InstanceBadges {row} />
 		<div class="head-actions">
@@ -316,10 +365,17 @@
 	<!-- Состояние: четыре числа, которые смотрят каждый день. -->
 	<StatStrip>
 		<Stat value={running ? 'Запущен' : 'Остановлен'} label="Состояние" sub={uptimeValue} />
-		<Stat value={clientsValue} label="Абоненты" sub="рабочих / всего" />
-		{#each portTiles as p (p.label)}
-			<Stat value={`:${p.port}`} label={p.label} />
-		{/each}
+		{#if row.protocol === 'openflux'}
+			{#each ofTiles as t (t.label)}
+				<Stat value={t.value} label={t.label} />
+			{/each}
+			<Stat value={ofStatus?.address || ofDraft?.url || '—'} label="Канал" />
+		{:else}
+			<Stat value={clientsValue} label="Абоненты" sub="рабочих / всего" />
+			{#each portTiles as p (p.label)}
+				<Stat value={`:${p.port}`} label={p.label} />
+			{/each}
+		{/if}
 	</StatStrip>
 
 	<!-- EX-01: та же форма, что у «Выхода» — ошибка живёт, пока процесс не работает. -->
@@ -329,7 +385,42 @@
 	     правой колонке рядом с формой, и на 1440px ему доставалась половина
 	     экрана, а форма занимала вторую. -->
 	<div id="share-clients" class="clients-block">
-		{#if wdttServer}
+		{#if row.protocol === 'openflux'}
+			<DetailSection title="Ссылка абонента">
+				{#if ofLink}
+					<div class="links">
+						<LinkBox link={ofLink.link} title="Ссылка для клиента OpenFlux" />
+						{#if ofLink.clientCommand}
+							<div class="cmd-box">
+								<div class="cmd-head">
+									<span>Команда клиента (ПК)</span>
+									<Button
+										variant="ghost"
+										size="sm"
+										onclick={() => void navigator.clipboard.writeText(ofLink?.clientCommand ?? '')}
+									>
+										Копировать
+									</Button>
+								</div>
+								<code>{ofLink.clientCommand}</code>
+							</div>
+						{/if}
+						<p class="note">
+							Вставьте ссылку во вкладку «Выход» на другом роутере или укажите параметры в приложении OpenFlux
+						</p>
+					</div>
+				{:else}
+					<p class="note">
+						Ссылка несёт канал связи — транспорт, адрес документа-релея и ключ шифрования из конфига ноды.
+					</p>
+				{/if}
+				<div class="btn-row">
+					<Button variant="secondary" size="sm" loading={ofLinkBusy} onclick={generateOfLink}>
+						{ofLink ? 'Обновить ссылку' : 'Выдать ссылку'}
+					</Button>
+				</div>
+			</DetailSection>
+		{:else if wdttServer}
 			<ServerClients
 				serverId={row.id}
 				serverName={row.name}
@@ -357,11 +448,12 @@
 		log={status?.log}
 		{routerClock}
 		hint="Это вывод процесса, а не файл server.log."
-		showDebug={!!ftDraft}
-		debug={ftDraft?.debug ?? false}
+		showDebug={!!ftDraft || !!ofDraft}
+		debug={ofDraft ? (ofDraft.debug ?? false) : (ftDraft?.debug ?? false)}
 		debugHint="Применяется при старте процесса"
 		ondebug={(on) => {
-			if (ftDraft) ftDraft.debug = on;
+			if (ofDraft) ofDraft.debug = on;
+			else if (ftDraft) ftDraft.debug = on;
 		}}
 	/>
 </Card>
@@ -369,37 +461,108 @@
 <!-- Настройки — одноразовые: сеть, NAT, политика, тумблеры. В ящике они не
      мешают ежедневной работе, но остаются в один клик. -->
 <SideDrawer open={settingsOpen} onClose={() => (settingsOpen = false)} title="Настройки раздачи">
-	{#if wdttDraft}
-		<div class="drawer-toggle">
-			{@render ingressToggle()}
-		</div>
-	{:else if ftDraft}
-		<div class="drawer-toggle">
-			{@render peerSelect()}
-		</div>
+	{#if ofDraft}
+		<DetailSection title="Параметры">
+			<div class="grid">
+				<Dropdown
+					label="Транспорт"
+					bind:value={ofDraft.transport}
+					options={openFluxTransportOptions}
+					fullWidth
+				/>
+				<Input
+					label="Адрес канала (URL)"
+					bind:value={ofDraft.url}
+					hint="Публичный документ-релей; не нужен для Cups.online"
+					fullWidth
+				/>
+				<Dropdown
+					label="Режим выхода"
+					bind:value={ofDraft.mode}
+					options={[
+						{ value: 'l4', label: 'l4 — gVisor, без root' },
+						{ value: 'l3', label: 'l3 — SNAT/DNAT (быстрее)' },
+					]}
+					fullWidth
+				/>
+				{#if ofDraft.mode === 'l3'}
+					<Input
+						label="Egress-адрес (localIp)"
+						bind:value={ofDraft.localIp}
+						hint="Обязателен для l3: по нему строится RST-drop и SNAT"
+						fullWidth
+					/>
+				{/if}
+				<Dropdown
+					label="Кодек"
+					bind:value={ofDraft.codec}
+					options={[
+						{ value: 'batched', label: 'Batched (zstd)' },
+						{ value: 'legacy', label: 'Legacy (LZ4)' },
+					]}
+					fullWidth
+				/>
+				<SensitiveInput label="Ключ шифрования" bind:value={ofDraft.encryptionKey} />
+				<Input label="MAX-токен" bind:value={ofDraft.maxToken} fullWidth />
+				<Input label="MAX user id" bind:value={ofDraft.maxUid} fullWidth />
+				<Input
+					label="DNS-серверы"
+					bind:value={ofDraft.dns}
+					hint="Через запятую; 127.0.0.1 на Keenetic часто молчит — укажите 1.1.1.1,8.8.8.8"
+					fullWidth
+				/>
+				<div class="toggle-cell">
+					<Toggle
+						label="Через sing-box"
+						checked={ofDraft?.singboxRoute === true}
+						onchange={(v) => {
+							if (ofDraft) ofDraft.singboxRoute = v;
+						}}
+					/>
+					<FieldHint
+						text="TCP-трафик абонентов ноды пойдёт по правилам sing-box (WARP и другие исходящие). Только l4 при запущенном sing-box с перехватом; UDP и канал до релея — напрямую. Применяется при перезапуске ноды."
+						ariaLabel="Подсказка: через sing-box"
+					/>
+				</div>
+			</div>
+			<div class="btn-row">
+				<Button variant="primary" loading={saving} onclick={save}>Сохранить</Button>
+				<Button variant="ghost" onclick={revert}>Отменить</Button>
+			</div>
+		</DetailSection>
+	{:else}
+		{#if wdttDraft}
+			<div class="drawer-toggle">
+				{@render ingressToggle()}
+			</div>
+		{:else if ftDraft}
+			<div class="drawer-toggle">
+				{@render peerSelect()}
+			</div>
+		{/if}
+
+		<ShareNetworkSection
+			bind:wdttServer={wdttDraft}
+			bind:ftServer={ftDraft}
+			{lanOptions}
+			{exposeApplied}
+			{foreignAcls}
+			{saving}
+			busy={mutating}
+			onnat={setNat}
+			onlan={setLan}
+			onpolicy={setPolicy}
+			onsave={save}
+			onrevert={revert}
+		/>
+
+		<ShareAdvancedSection
+			bind:wdttServer={wdttDraft}
+			bind:ftServer={ftDraft}
+			ports={killPorts}
+			{wanOptions}
+		/>
 	{/if}
-
-	<ShareNetworkSection
-		bind:wdttServer={wdttDraft}
-		bind:ftServer={ftDraft}
-		{lanOptions}
-		{exposeApplied}
-		{foreignAcls}
-		{saving}
-		busy={mutating}
-		onnat={setNat}
-		onlan={setLan}
-		onpolicy={setPolicy}
-		onsave={save}
-		onrevert={revert}
-	/>
-
-	<ShareAdvancedSection
-		bind:wdttServer={wdttDraft}
-		bind:ftServer={ftDraft}
-		ports={killPorts}
-		{wanOptions}
-	/>
 </SideDrawer>
 
 <!-- RB-12: быстрый выбор WG-сервера зеркалит тумблер RB-09 у WDTT. Тот же
@@ -504,4 +667,59 @@
 		max-width: 16rem;
 	}
 
+	.links {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.cmd-box {
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		padding: 0.625rem 0.75rem;
+		background: var(--color-bg-tertiary);
+	}
+
+	.cmd-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 0.375rem;
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+	}
+
+	.cmd-box code {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		word-break: break-all;
+		color: var(--color-text-secondary);
+	}
+
+	.note {
+		margin: 0;
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+		line-height: 1.6;
+	}
+
+	.btn-row {
+		display: flex;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+		margin-top: 0.75rem;
+	}
+
+	.grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+		gap: 0.75rem;
+	}
+
+	.toggle-cell {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
 </style>

@@ -329,6 +329,7 @@
 	const PROXY_SUBSYSTEMS = [
 		{ key: 'wdtt' as const, label: 'WDTT' },
 		{ key: 'freeturn' as const, label: 'FreeTurn' },
+		{ key: 'openflux' as const, label: 'OpenFlux' },
 		{ key: 'obf-phobos' as const, label: 'wg-obfuscator (Phobos)' },
 		{ key: 'obf-clusterm' as const, label: 'wg-obfuscator (ClusterM)' },
 	];
@@ -338,11 +339,13 @@
 	// store'ы разложены по переменным.
 	const wdttInstallStore = proxyInstallStatus.wdtt;
 	const freeturnInstallStore = proxyInstallStatus.freeturn;
+	const openfluxInstallStore = proxyInstallStatus.openflux;
 	const obfPhobosInstallStore = proxyInstallStatus['obf-phobos'];
 	const obfClusterMInstallStore = proxyInstallStatus['obf-clusterm'];
 	const proxyStatuses = $derived({
 		wdtt: $wdttInstallStore.data,
 		freeturn: $freeturnInstallStore.data,
+		openflux: $openfluxInstallStore.data,
 		'obf-phobos': $obfPhobosInstallStore.data,
 		'obf-clusterm': $obfClusterMInstallStore.data,
 	});

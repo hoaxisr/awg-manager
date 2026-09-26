@@ -9,14 +9,17 @@ import type {
 	FreeTurnConfig,
 	FreeTurnServerConfig,
 	FreeTurnServerInstance,
+	OpenFluxConfig,
+	OpenFluxServerConfig,
+	OpenFluxServerInstance,
 	WdttConfig,
 	WdttServerConfig,
 	WdttServerInstance,
 } from '$lib/types';
 import type { ProxyInstanceRow } from './rows';
 
-export type ShareConfig = WdttServerConfig | FreeTurnServerConfig;
-export type ShareInstance = WdttServerInstance | FreeTurnServerInstance;
+export type ShareConfig = WdttServerConfig | FreeTurnServerConfig | OpenFluxServerConfig;
+export type ShareInstance = WdttServerInstance | FreeTurnServerInstance | OpenFluxServerInstance;
 
 // ─── Плотный конфиг.
 //
@@ -52,10 +55,28 @@ export function normalizeFreeTurnServerConfig(cfg: FreeTurnServerConfig): FreeTu
 	return fillStrings(cfg, FT_SERVER_OPTIONAL_STRINGS);
 }
 
+const OF_SERVER_OPTIONAL_STRINGS: readonly (keyof OpenFluxServerConfig)[] = [
+	'url',
+	'maxToken',
+	'maxUid',
+	'localIp',
+	'encryptionKey',
+	'dns',
+];
+
+export function normalizeOpenFluxServerConfig(cfg: OpenFluxServerConfig): OpenFluxServerConfig {
+	return fillStrings(cfg, OF_SERVER_OPTIONAL_STRINGS);
+}
+
 /** Конфиги серверов страницы — на месте, сразу после загрузки. */
-export function normalizeShareConfigs(wdtt: WdttConfig, ft: FreeTurnConfig): void {
+export function normalizeShareConfigs(
+	wdtt: WdttConfig,
+	ft: FreeTurnConfig,
+	of?: OpenFluxConfig | null,
+): void {
 	for (const inst of wdtt.servers) normalizeWdttServerConfig(inst.config);
 	for (const inst of ft.servers) normalizeFreeTurnServerConfig(inst.config);
+	for (const inst of of?.servers ?? []) normalizeOpenFluxServerConfig(inst.config);
 }
 
 // ─── Режим NAT (SH-48): подписи одни на секцию и на схему.
@@ -176,8 +197,10 @@ export function shareInstance(
 	row: ProxyInstanceRow | null,
 	wdtt: WdttConfig | null,
 	ft: FreeTurnConfig | null,
+	of?: OpenFluxConfig | null,
 ): ShareInstance | undefined {
 	if (!row) return undefined;
+	if (row.protocol === 'openflux') return of?.servers.find((s) => s.id === row.id);
 	return row.protocol === 'wdtt'
 		? wdtt?.servers.find((s) => s.id === row.id)
 		: ft?.servers.find((s) => s.id === row.id);
@@ -192,6 +215,13 @@ export async function saveShareInstance(
 	inst: ShareInstance,
 	config: ShareConfig,
 ): Promise<ShareConfig> {
+	if (row.protocol === 'openflux') {
+		const saved = normalizeOpenFluxServerConfig(
+			await api.updateOpenFluxServerInstance(row.id, config as OpenFluxServerConfig),
+		);
+		(inst as OpenFluxServerInstance).config = saved;
+		return saved;
+	}
 	if (row.protocol === 'wdtt') {
 		const res = await api.updateWdttServerInstance(row.id, config as WdttServerConfig);
 		const saved = normalizeWdttServerConfig(res.config);

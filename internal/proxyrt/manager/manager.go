@@ -678,6 +678,10 @@ func (m *Manager) ensurePins(ctx context.Context, rec *instancestore.Record) (en
 		if rec.FreeTurnClient == nil {
 			return out, fmt.Errorf("инстанс %s: нет конфига", key)
 		}
+	case instancestore.KindOpenFluxClient:
+		if rec.OpenFluxClient == nil {
+			return out, fmt.Errorf("инстанс %s: нет конфига", key)
+		}
 	}
 
 	res, err := m.deps.OpkgTunPool.Reserve(ctx, reqs...)

@@ -92,6 +92,7 @@
 	// WG/Raw относится к выдаваемой ссылке (`row.mode` там пуст).
 	function protocolBadge(row: ProxyInstanceRow): string {
 		if (row.protocol === 'freeturn') return 'FreeTurn';
+		if (row.protocol === 'openflux') return 'OpenFlux';
 		if (!row.mode) return 'WDTT';
 		return row.mode === 'raw' ? 'WDTT · Raw' : 'WDTT · WG';
 	}

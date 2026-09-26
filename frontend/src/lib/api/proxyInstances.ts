@@ -46,6 +46,11 @@
 
 import type {
   FreeTurnCaptchaOverview,
+  OpenFluxClientConfig,
+  OpenFluxConfig,
+  OpenFluxProcessStatus,
+  OpenFluxServerConfig,
+  OpenFluxStatus,
   FreeTurnClientConfig,
   FreeTurnConfig,
   FreeTurnKCP,
@@ -64,7 +69,12 @@ import type {
 // ─────────────────────────────────────────────
 
 export type ProxyKind =
-  "wdtt-client" | "wdtt-server" | "freeturn-client" | "freeturn-server";
+  | "wdtt-client"
+  | "wdtt-server"
+  | "freeturn-client"
+  | "freeturn-server"
+  | "openflux-client"
+  | "openflux-server";
 
 /**
  * Блок процесса инстанса — форма зафиксирована ручкой инстансов
@@ -176,7 +186,7 @@ export interface ProxyListData {
 }
 
 /** Подсистема, которой ставят/снимают бинари ручками /proxyrt/install*. */
-export type ProxySubsystem = 'wdtt' | 'freeturn' | 'obf-phobos' | 'obf-clusterm';
+export type ProxySubsystem = 'wdtt' | 'freeturn' | 'openflux' | 'obf-phobos' | 'obf-clusterm';
 
 /** Ответ GET /proxyrt/install/status — семь полей install-блока старого статуса. */
 export interface ProxyInstallStatus {
@@ -408,6 +418,45 @@ export function toFreeTurnServerConfig(
   };
 }
 
+export function toOpenFluxClientConfig(
+  v: ProxyInstanceView,
+): OpenFluxClientConfig {
+  const c = v.config;
+  return {
+    enabled: v.enabled,
+    listen: str(c, "listen") ?? "",
+    transport: str(c, "transport") ?? "yandex",
+    url: str(c, "url"),
+    maxToken: str(c, "maxToken"),
+    maxUid: str(c, "maxUid"),
+    codec: str(c, "codec") ?? "batched",
+    encryptionKey: "",
+    encryptionKeySet: bool(c, "encryptionKeySet") === true,
+    debug: bool(c, "debug") === true,
+  };
+}
+
+export function toOpenFluxServerConfig(
+  v: ProxyInstanceView,
+): OpenFluxServerConfig {
+  const c = v.config;
+  return {
+    enabled: v.enabled,
+    transport: str(c, "transport") ?? "yandex",
+    url: str(c, "url"),
+    maxToken: str(c, "maxToken"),
+    maxUid: str(c, "maxUid"),
+    mode: str(c, "mode") ?? "l4",
+    localIp: str(c, "localIp"),
+    codec: str(c, "codec") ?? "batched",
+    encryptionKey: "",
+    encryptionKeySet: bool(c, "encryptionKeySet") === true,
+    dns: str(c, "dns"),
+    singboxRoute: bool(c, "singboxRoute") === true,
+    debug: bool(c, "debug") === true,
+  };
+}
+
 export function toWdttConfig(list: ProxyListData): WdttConfig {
   return {
     clients: instancesOf(list, "wdtt-client").map((v) => ({
@@ -438,6 +487,23 @@ export function toFreeTurnConfig(list: ProxyListData): FreeTurnConfig {
       name: v.name,
       seededFrom: v.seededFrom,
       config: toFreeTurnServerConfig(v),
+    })),
+  };
+}
+
+export function toOpenFluxConfig(list: ProxyListData): OpenFluxConfig {
+  return {
+    clients: instancesOf(list, "openflux-client").map((v) => ({
+      id: v.id,
+      name: v.name,
+      seededFrom: v.seededFrom,
+      config: toOpenFluxClientConfig(v),
+    })),
+    servers: instancesOf(list, "openflux-server").map((v) => ({
+      id: v.id,
+      name: v.name,
+      seededFrom: v.seededFrom,
+      config: toOpenFluxServerConfig(v),
     })),
   };
 }
@@ -574,6 +640,46 @@ export function toFreeTurnStatus(
     servers,
     client: clients[0]?.status ?? emptyProcess(),
     server: servers[0]?.status ?? emptyProcess(),
+    binariesPresent: install.binariesPresent === true,
+    installAvailable: install.installAvailable === true,
+    installVersion: install.installVersion,
+    installedVersion: install.installedVersion,
+    updateAvailable: install.updateAvailable === true,
+    installing: install.installing === true,
+    routerClock: install.routerClock,
+  };
+}
+
+export function toOpenFluxStatus(
+  list: ProxyListData,
+  install: ProxyInstallStatus,
+  nowMs: number = Date.now(),
+): OpenFluxStatus {
+  const ofStatus = (v: ProxyInstanceView): OpenFluxProcessStatus => {
+    const p = v.process;
+    return {
+      running: p.running === true,
+      pid: p.pid,
+      startedAt: p.running ? startedAtFromUptime(p.uptimeS, nowMs) : undefined,
+      lastError: p.lastError,
+      log: p.log,
+      address: p.address,
+      mode: p.mode,
+      binary: p.binary ?? "",
+      binaryPresent: p.binaryPresent === true,
+    };
+  };
+  return {
+    clients: instancesOf(list, "openflux-client").map((v) => ({
+      id: v.id,
+      name: v.name,
+      status: ofStatus(v),
+    })),
+    servers: instancesOf(list, "openflux-server").map((v) => ({
+      id: v.id,
+      name: v.name,
+      status: ofStatus(v),
+    })),
     binariesPresent: install.binariesPresent === true,
     installAvailable: install.installAvailable === true,
     installVersion: install.installVersion,
@@ -731,3 +837,32 @@ export function toFreeTurnServerPatch(cfg: FreeTurnServerConfig): Cfg {
 }
 
 // #endregion
+export function toOpenFluxClientPatch(cfg: OpenFluxClientConfig): Cfg {
+  const out: Cfg = {
+    transport: cfg.transport ?? "yandex",
+    url: cfg.url ?? "",
+    maxToken: cfg.maxToken ?? "",
+    maxUid: cfg.maxUid ?? "",
+    codec: cfg.codec === "legacy" ? "legacy" : "batched",
+    debug: cfg.debug === true,
+  };
+  putSecret(out, "encryptionKey", cfg.encryptionKey);
+  return out;
+}
+
+export function toOpenFluxServerPatch(cfg: OpenFluxServerConfig): Cfg {
+  const out: Cfg = {
+    transport: cfg.transport ?? "yandex",
+    url: cfg.url ?? "",
+    maxToken: cfg.maxToken ?? "",
+    maxUid: cfg.maxUid ?? "",
+    mode: cfg.mode === "l3" ? "l3" : "l4",
+    localIp: cfg.localIp ?? "",
+    codec: cfg.codec === "legacy" ? "legacy" : "batched",
+    dns: cfg.dns ?? "",
+    singboxRoute: cfg.singboxRoute === true,
+    debug: cfg.debug === true,
+  };
+  putSecret(out, "encryptionKey", cfg.encryptionKey);
+  return out;
+}

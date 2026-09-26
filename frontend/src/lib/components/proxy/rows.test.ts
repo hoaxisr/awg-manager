@@ -31,6 +31,8 @@ function sources(status: WdttInstanceStatus[], config: WdttClientInstance[]) {
 			installing: false,
 		},
 		wdttConfig: { clients: config, servers: [] } as unknown as WdttConfig,
+		ofStatus: null,
+		ofConfig: null,
 		ftStatus: null,
 		ftConfig: null,
 	};

@@ -17,6 +17,17 @@ import (
 // подтверждены — менять только по измерению на железе.
 const ruleRecheck = 15 * time.Second
 
+// SingboxRedirectChain — имя nat-цепочки sing-box-роутера awg-manager
+// (internal/singbox/router/iptables.go, RedirectChain). Живёт здесь, чтобы
+// роли (openflux/singboxJump) прыгали в неё по одному источнику имени, а не
+// литералом; о содержимом цепочки роли не знают ничего.
+const SingboxRedirectChain = "AWGM-REDIRECT"
+
+// RuleRecheckAfter — экспорт ruleRecheck для ролей за пределами пакета
+// (openflux/rstDrop): вторая копия константы рано или поздно разъехалась бы с
+// этой, а подстраховка у обеих одна.
+const RuleRecheckAfter = ruleRecheck
+
 // RuleSet — ресурс «набор групп правил приведён». Общий для nat_rules и
 // forward_rules: различие — данными (какие группы), не кодом.
 // GroupProvider выдаёт желаемые группы в момент наблюдения. Провайдер, а не
@@ -332,6 +343,10 @@ func (r *RuleSet) deleteAll(ctx context.Context, rule Rule) (bool, error) {
 // (sys/iptables.Run → exec.FormatError со stderr), поэтому судим по тексту
 // самого iptables. Всё неопознанное считается транзиентным: цена ошибки
 // несимметрична — лишний проход дешевле правила, потерянного из ведомости.
+// RuleAbsent — экспорт ruleAbsent: форму «отказ = правила нет» применяют и
+// чужие ресурсы, а вторая копия разбора текста iptables ловила бы не то.
+func RuleAbsent(err error) bool { return ruleAbsent(err) }
+
 func ruleAbsent(err error) bool {
 	if err == nil {
 		return false

@@ -64,9 +64,10 @@
 
 	// Инстанс, созданный этим мастером: после отказа на любом следующем шаге
 	// повторное «Сохранить и запустить» правит его, а не заводит второй.
-	let created = $state<{ id: string; config: WdttClientConfig | FreeTurnClientConfig } | null>(
-		null,
-	);
+	let created = $state<{
+		id: string;
+		config: WdttClientConfig | FreeTurnClientConfig;
+	} | null>(null);
 
 	// ─── Шаг 1: источник.
 
@@ -88,7 +89,10 @@
 
 	// Протокол и режим — состояние мастера: их задаёт разбор ссылки, ручной
 	// выбор или инстанс, ради которого мастер открыли.
-	let protocol = $state<ExitProtocol>(untrack(() => row?.protocol ?? 'wdtt'));
+	// row.protocol — ProxyProtocol; клиента openflux в этом мастере больше нет.
+	let protocol = $state<ExitProtocol>(
+		untrack(() => (row?.protocol === 'freeturn' ? 'freeturn' : 'wdtt')),
+	);
 	let mode = $state<ExitMode>(untrack(() => row?.mode ?? 'wg'));
 
 	// Стартовое значение: дальше поля живут своей жизнью и обновляются разбором
@@ -127,10 +131,10 @@
 			: subscription
 				? 'subscription'
 				: ftPayload
-					? 'freeturn'
-					: wdttPayload
-						? 'wdtt'
-						: 'none',
+						? 'freeturn'
+						: wdttPayload
+							? 'wdtt'
+							: 'none',
 	);
 	const profileOptions = $derived(
 		(subscription?.profiles ?? []).map((p, i) => ({
@@ -142,7 +146,15 @@
 	const step1Ready = $derived(
 		exitStep1Ready({ manual, protocol, peer: fields.peer, password: fields.password }),
 	);
-	const step2Ready = $derived(exitStep2Ready({ protocol, ...fields }));
+	const step2Ready = $derived(
+		exitStep2Ready({
+			protocol,
+			...fields,
+			// Пароль/токен приходят маскированными признаками только в конфиге
+			// инстанса; в мастере судят введённым (WDTT — пароль, OpenFlux — токен).
+			passwordSet: undefined,
+		}),
+	);
 
 	/** Ручку разбора выбирает схема ссылки: wdtt.DecodeLink чужих схем не знает. */
 	async function decode() {
@@ -247,7 +259,7 @@
 
 	const tunnelName = $derived(proxyTunnelName(protocol, fields.name));
 	/** Интерфейс, который можно завести в политику: у Raw — свой, у WG — туннель. */
-	const willHaveIface = $derived(protocol === 'wdtt' || hasWg);
+	const willHaveIface = $derived(protocol === 'wdtt' || (protocol === 'freeturn' && hasWg));
 
 	async function saveAndStart() {
 		busy = true;
