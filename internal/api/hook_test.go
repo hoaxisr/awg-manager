@@ -410,10 +410,16 @@ func TestHookHandler_IPv4Running_CallsHookForAnyInterface(t *testing.T) {
 
 func TestHookHandler_IPv4Disabled_NoHook(t *testing.T) {
 	h := newTestHookHandler(&spyDispatcher{})
-	h.SetIPv4RunningHook(func(string) { t.Error("хук вызван на disabled") })
+	fired := make(chan struct{}, 1)
+	h.SetIPv4RunningHook(func(string) { fired <- struct{}{} })
 	body := strings.NewReader("type=iflayerchanged&id=OpkgTun7&system_name=opkgtun7&layer=ipv4&level=disabled")
 	req := httptest.NewRequest(http.MethodPost, "/api/hook/ndms", body)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	h.HandleNDMS(httptest.NewRecorder(), req)
-	time.Sleep(50 * time.Millisecond)
+
+	select {
+	case <-fired:
+		t.Fatal("хук вызван на disabled")
+	case <-time.After(200 * time.Millisecond):
+	}
 }

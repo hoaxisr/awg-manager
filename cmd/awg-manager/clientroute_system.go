@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
+	"github.com/hoaxisr/awg-manager/internal/logging"
 )
 
 type clientRouteLister interface {
@@ -21,11 +23,13 @@ type clientRouteLister interface {
 type systemClientRoutes struct {
 	routes clientRouteLister
 	kernel func(ctx context.Context, tunnelID string) (string, bool)
+	log    *logging.ScopedLogger // nil-safe (logging.ScopedLogger)
 }
 
 func (s systemClientRoutes) enabledSystemIDs() map[string]bool {
 	list, err := s.routes.List()
 	if err != nil {
+		s.log.Warn("list", "", fmt.Sprintf("client routes list failed: %v", err))
 		return nil
 	}
 	ids := map[string]bool{}
@@ -46,7 +50,11 @@ func (s systemClientRoutes) reconcileAll(ctx context.Context) {
 		}
 	}
 	if len(running) > 0 {
-		_ = s.routes.Reconcile(ctx, running) // ошибки пишет сам Reconcile
+		if err := s.routes.Reconcile(ctx, running); err != nil {
+			// Reconcile пишет причину в журнал сам; здесь фиксируем сам факт
+			// отказа, чтобы вызывающий (reconcileSystemClientRoutes) не терял его молча.
+			s.log.Warn("reconcile", "", fmt.Sprintf("reconcile system client routes failed: %v", err))
+		}
 	}
 }
 
@@ -57,7 +65,9 @@ func (s systemClientRoutes) reapply(ctx context.Context, ndmsID string) {
 		return
 	}
 	if k, ok := s.kernel(ctx, id); ok {
-		_ = s.routes.OnTunnelStart(ctx, id, k)
+		if err := s.routes.OnTunnelStart(ctx, id, k); err != nil {
+			s.log.Warn("reapply", id, fmt.Sprintf("re-apply client routes on %s failed: %v", k, err))
+		}
 	}
 }
 
@@ -76,7 +86,11 @@ func (a *app) kernelIfPresent(ctx context.Context, id string) (string, bool) {
 }
 
 func (a *app) systemClientRoutes() systemClientRoutes {
-	return systemClientRoutes{routes: a.clientRouteService, kernel: a.kernelIfPresent}
+	return systemClientRoutes{
+		routes: a.clientRouteService,
+		kernel: a.kernelIfPresent,
+		log:    logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubClientRoute),
+	}
 }
 
 func (a *app) reconcileSystemClientRoutes() {
