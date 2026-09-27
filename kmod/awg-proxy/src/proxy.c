@@ -813,6 +813,13 @@ static int c2s_thread_fn(void *data)
 				atomic64_add(out_len, &proxy->tx_bytes);
 			}
 		}
+		/*
+		 * Ядро Keenetic без вытеснения (PREEMPT_NONE): при непрерывном
+		 * входе поток не доходит до точки планирования, ksoftirqd голодает,
+		 * backlog loopback молча переполняется. Уступка после пакета — как
+		 * в awgm_relay (F472: 135 885 drops за 10 с → 0), F485.
+		 */
+		cond_resched();
 	}
 
 out:
@@ -1000,6 +1007,7 @@ static int s2c_thread_fn(void *data)
 			proxy_sendmsg(proxy->listen_sock, out, out_len,
 				      &addr);
 		}
+		cond_resched(); /* F485, см. c2s */
 	}
 
 out:

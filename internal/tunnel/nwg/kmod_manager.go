@@ -28,7 +28,7 @@ const (
 	// ExpectedKmodVersion — минимальная версия awg_proxy.ko, которую несёт IPK
 	// в /opt/etc/awg-manager/modules. Экспортирована, чтобы system/info мог
 	// показать «в комплекте новее, чем загружено».
-	ExpectedKmodVersion = "1.4.0" // AWG 3.1: header protection + random trailers
+	ExpectedKmodVersion = "1.4.1" // 1.4.0: AWG 3.1 (HP + RT); 1.4.1: cond_resched (F485)
 	// kmodVersionIPv6 is the first awg_proxy.ko version whose procfs
 	// parser understands "[v6]:port" endpoints. Older parsers run the
 	// legacy strrchr(':')+in_aton path on that string and silently
