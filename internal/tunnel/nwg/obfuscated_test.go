@@ -270,7 +270,7 @@ func TestStartObfuscated_RunnerRouteEndpointUp(t *testing.T) {
 	}
 }
 
-// F469: релей и host-route обязаны смотреть на один и тот же IP — второй
+// F482: релей и host-route обязаны смотреть на один и тот же IP — второй
 // независимый резолв на round-robin/DDNS давал разные адреса и петлю.
 func TestStartObfuscated_SameIPForRelayAndRoute(t *testing.T) {
 	withObfDirs(t)

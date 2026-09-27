@@ -71,7 +71,7 @@ func Validate(o *storage.Obfuscator) error {
 	}
 	// Эффективный ключ — то, что релей реально прочитает из INI (EffectiveKey):
 	// "#secret" или "=abc" процесс отвергает уже после старта
-	// («Invalid configuration line»), модуль получил бы пустой ключ (F470).
+	// («Invalid configuration line»), модуль получил бы пустой ключ (F483).
 	switch k := EffectiveKey(o.Key); {
 	case k == "":
 		return errors.New("key обязателен (после '#' и '=' ключ пуст)")

@@ -5,7 +5,7 @@
 //   Клиент считает, что дошло. RELAY_PORT = 0 — без релея, сервер шлёт
 //   клиенту напрямую (ёмкость самой loopback-доставки).
 // usage: relaybench_s2c RELAY_PORT SERVER_PORT SECONDS SIZE [pps] [plain]
-//   plain — сервер шлёт чистый WG без Phobos (для awg_proxy с H1..H4=1..4, S=0: F473).
+//   plain — сервер шлёт чистый WG без Phobos (для awg_proxy с H1..H4=1..4, S=0: F485).
 // Ключ/режим как у run.sh: benchkey-0123456789, masking none, max-dummy 4.
 #define _GNU_SOURCE
 #include <arpa/inet.h>

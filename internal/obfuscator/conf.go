@@ -12,7 +12,7 @@ import (
 )
 
 // RenderConf — конфиг релея (формат wg-obfuscator.conf, одна секция); target —
-// уже резолвнутый адрес ip (F469): релей больше не резолвит имя сам.
+// уже резолвнутый адрес ip (F482): релей больше не резолвит имя сам.
 // verbose наш: INFO даёт строки старта/подключения в app-журнал (Q18).
 func RenderConf(o *storage.Obfuscator, ip string) string {
 	_, port, _ := net.SplitHostPort(o.Target)

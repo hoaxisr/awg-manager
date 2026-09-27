@@ -91,7 +91,7 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 	// в trackedIP, и разницу уже было бы не увидеть.
 	prevIP := o.obfRouteIP(stored)
 	// Резолв один раз и ДО релея: релей и host-route обязаны смотреть на один
-	// адрес (F469; раньше релей резолвил имя сам, независимо от нас).
+	// адрес (F482; раньше релей резолвил имя сам, независимо от нас).
 	targetIP, err := o.resolveTarget(stored)
 	if err != nil {
 		return err
