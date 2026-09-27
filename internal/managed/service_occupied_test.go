@@ -153,6 +153,36 @@ func TestOccupiedSubnets_MarkedServerGoneIsSkipped(t *testing.T) {
 	}
 }
 
+// Встроенный «Wireguard VPN Server» список серверов показывает и без пометки
+// (listServers: помечен ИЛИ описание встроенного) — его пиры занимают сети так же.
+func TestOccupiedSubnets_UnmarkedBuiltInServerCounts(t *testing.T) {
+	svc, store, _, _ := newPeerSubnetTestService(t, `[]`)
+	if err := store.UnmarkServerInterface("Wireguard0"); err != nil {
+		t.Fatal(err)
+	}
+	occ, err := svc.OccupiedSubnets(context.Background(), PeerRef{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := labels(occ)["172.16.5.0/24"]; got != "пир «office» сервера Wireguard0" {
+		t.Fatalf("сеть пира встроенного сервера не в занятых: %q", got)
+	}
+}
+
+// Managed-сервер входит в набор серверов сам по себе, без пометки: сеть из
+// allow-ips его пира на роутере (записи в хранилище нет) — занята.
+func TestOccupiedSubnets_ManagedServerPeersCount(t *testing.T) {
+	svc, _, _, fg := newPeerSubnetTestService(t, `[]`)
+	fg.SetJSON("/show/rc/interface/Wireguard1", `{"wireguard":{"peer":[{"key":"MPEER=","comment":"lab","allow-ips":[{"address":"10.66.66.2","mask":"255.255.255.255"},{"address":"172.20.0.0","mask":"255.255.255.0"}]}]}}`)
+	occ, err := svc.OccupiedSubnets(context.Background(), PeerRef{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := labels(occ)["172.20.0.0/24"]; got != "пир «lab» сервера Wireguard1" {
+		t.Fatalf("сеть пира managed-сервера не в занятых: %q", got)
+	}
+}
+
 func TestPeerPresets_LANSegmentsAndDNSChain(t *testing.T) {
 	svc, store, _, _ := newPeerSubnetTestService(t, `[]`)
 	old := netif.RouterLANIP

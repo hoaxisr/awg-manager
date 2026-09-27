@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -37,7 +38,8 @@ func peerLabel(desc, pubkey, iface string) string {
 // всех пиров из хранилища. Любой отказ чтения — отказ целиком: «занятых нет»
 // на лежащем RCI пропустило бы пересечение.
 //
-// Сервер = системный, помеченный в панели (ServerInterfaces), или managed.
+// Сервер = системный, помеченный в панели (ServerInterfaces), встроенный
+// (по описанию, как в списке серверов), или managed.
 // Прочие WG-интерфейсы — клиентские туннели: их пир держит 0.0.0.0/0 и
 // занял бы всё. allow-ips читаются по серверу свежо (PeersRCFresh), а не из
 // WGServers.List: тот сбой чтения молча превращает в «сетей у пира нет».
@@ -59,7 +61,14 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 		out = append(out, peersubnet.Occupied{Net: u.cidr, Label: "интерфейс " + u.label})
 		subnetByID[u.id] = u.cidr
 	}
+	// Тот же набор, что показывает список серверов (listServers): помеченные,
+	// встроенный «Wireguard VPN Server» (обычно не помечен) и managed.
 	servers := map[string]bool{}
+	for _, iface := range ifaces {
+		if strings.EqualFold(iface.Type, "Wireguard") && iface.Description == ndms.BuiltInVPNServerDescription {
+			servers[iface.ID] = true
+		}
+	}
 	for _, id := range s.settings.GetServerInterfaces() {
 		servers[id] = true
 	}
