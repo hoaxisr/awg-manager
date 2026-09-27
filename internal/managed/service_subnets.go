@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+
+	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 )
 
 // rfc1918Networks lists the private IPv4 ranges that are valid for a
@@ -150,7 +152,7 @@ func lastIP(cidr *net.IPNet) net.IP {
 // subnetsOverlap is true when either network contains the other's
 // network address.
 func subnetsOverlap(a, b *net.IPNet) bool {
-	return a.Contains(b.IP) || b.Contains(a.IP)
+	return peersubnet.Overlaps(a, b)
 }
 
 // listUsedSubnets queries every router interface and returns the
