@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 )
 
 // Router — узкий срез RCI, который нужен исполнителю. Адаптер живёт в
@@ -22,7 +23,10 @@ type Router interface {
 
 // RollbackError — шаг Apply отказал, и откат сделанного тоже не завершился.
 // Unwrap отдаёт причину (её показывают пользователю); Rollback вызывающий пишет
-// в журнал приложения: хранилище не тронуто, роутер лечится следующим сохранением.
+// в журнал приложения. Хранилище не тронуто, а роутер остаётся расходящимся с
+// ним: сверки нет, Apply работает по разнице хранилища, поэтому следующее
+// сохранение само расхождение не увидит. Лечится вручную (или повторным
+// сохранением той же сети либо её удалением и возвратом).
 type RollbackError struct{ Cause, Rollback error }
 
 func (e *RollbackError) Error() string {
@@ -30,6 +34,11 @@ func (e *RollbackError) Error() string {
 }
 
 func (e *RollbackError) Unwrap() error { return e.Cause }
+
+// rollbackTimeout — бюджет отката. Откат идёт на ctx, отвязанном от отмены
+// вызывающего: самая вероятная причина сбоя посреди Apply — отключение
+// клиента/таймаут запроса, и на том же ctx откат гарантированно не прошёл бы.
+const rollbackTimeout = 30 * time.Second
 
 func parseAll(subnets []string) ([]*net.IPNet, error) {
 	out := make([]*net.IPNet, 0, len(subnets))
@@ -60,6 +69,8 @@ func Apply(ctx context.Context, r Router, iface, pubkey string, added, removed [
 	}
 	var allowAdded, allowRemoved, routesAdded, routesRemoved []*net.IPNet
 	rollback := func(cause error) error {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
+		defer cancel()
 		var errs []error
 		for i := len(routesAdded) - 1; i >= 0; i-- {
 			if _, e := r.RemoveOwnNetworkRoute(ctx, routesAdded[i], iface, comment); e != nil {

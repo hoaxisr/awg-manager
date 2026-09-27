@@ -16,56 +16,72 @@ type fakeRouter struct {
 	routes map[string]string // cidr|iface → comment
 	calls  []string
 	failOn []string
+	// injected — ошибки, выданные по failOn, в порядке выдачи.
+	injected []error
+	// cancelAfter/cancel: после успешного вызова с таким именем отменить ctx
+	// вызывающего (отключение клиента посреди Apply).
+	cancelAfter string
+	cancel      context.CancelFunc
 }
 
 func newFakeRouter() *fakeRouter {
 	return &fakeRouter{allow: map[string]bool{}, routes: map[string]string{}}
 }
 
-func (f *fakeRouter) call(name string) error {
+// call ведёт себя как транспорт RCI: на отменённом ctx каждый вызов падает
+// с ctx.Err().
+func (f *fakeRouter) call(ctx context.Context, name string) error {
 	f.calls = append(f.calls, name)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	for _, s := range f.failOn {
 		if strings.Contains(name, s) {
-			return errors.New("boom: " + name)
+			e := errors.New("boom: " + name)
+			f.injected = append(f.injected, e)
+			return e
 		}
+	}
+	if f.cancel != nil && name == f.cancelAfter {
+		f.cancel()
 	}
 	return nil
 }
 
-func (f *fakeRouter) AddAllowIP(_ context.Context, iface, pub string, n *net.IPNet) error {
-	if err := f.call("allow+ " + n.String()); err != nil {
+func (f *fakeRouter) AddAllowIP(ctx context.Context, iface, pub string, n *net.IPNet) error {
+	if err := f.call(ctx, "allow+ "+n.String()); err != nil {
 		return err
 	}
 	f.allow[iface+"|"+pub+"|"+n.String()] = true
 	return nil
 }
 
-func (f *fakeRouter) RemoveAllowIP(_ context.Context, iface, pub string, n *net.IPNet) error {
-	if err := f.call("allow- " + n.String()); err != nil {
+func (f *fakeRouter) RemoveAllowIP(ctx context.Context, iface, pub string, n *net.IPNet) error {
+	if err := f.call(ctx, "allow- "+n.String()); err != nil {
 		return err
 	}
 	delete(f.allow, iface+"|"+pub+"|"+n.String())
 	return nil
 }
 
-func (f *fakeRouter) NetworkRouteOwner(_ context.Context, n *net.IPNet, iface, comment string) (bool, bool, error) {
-	if err := f.call("owner? " + n.String()); err != nil {
+func (f *fakeRouter) NetworkRouteOwner(ctx context.Context, n *net.IPNet, iface, comment string) (bool, bool, error) {
+	if err := f.call(ctx, "owner? "+n.String()); err != nil {
 		return false, false, err
 	}
 	c, ok := f.routes[n.String()+"|"+iface]
 	return ok, ok && c == comment, nil
 }
 
-func (f *fakeRouter) AddNetworkRoute(_ context.Context, n *net.IPNet, iface, comment string) error {
-	if err := f.call("route+ " + n.String()); err != nil {
+func (f *fakeRouter) AddNetworkRoute(ctx context.Context, n *net.IPNet, iface, comment string) error {
+	if err := f.call(ctx, "route+ "+n.String()); err != nil {
 		return err
 	}
 	f.routes[n.String()+"|"+iface] = comment
 	return nil
 }
 
-func (f *fakeRouter) RemoveOwnNetworkRoute(_ context.Context, n *net.IPNet, iface, comment string) (bool, error) {
-	if err := f.call("route- " + n.String()); err != nil {
+func (f *fakeRouter) RemoveOwnNetworkRoute(ctx context.Context, n *net.IPNet, iface, comment string) (bool, error) {
+	if err := f.call(ctx, "route- "+n.String()); err != nil {
 		return false, err
 	}
 	if c, ok := f.routes[n.String()+"|"+iface]; ok && c == comment {
@@ -197,5 +213,120 @@ func TestRemoveRoutes_OwnOnlyAndFailClosed(t *testing.T) {
 	f.failOn = []string{"route- " + n77}
 	if err := RemoveRoutes(context.Background(), f, iface, pub, []string{n77, n78}); err == nil || len(f.calls) != 1 {
 		t.Fatalf("fail-closed: err=%v calls=%v", err, f.calls)
+	}
+}
+
+func TestApply_CancelledCallerCtxStillRollsBack(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := newFakeRouter()
+	f.allow[iface+"|"+pub+"|"+n79] = true
+	f.routes[n79+"|"+iface] = ours
+	f.cancelAfter, f.cancel = "route+ "+n77, cancel
+	err := Apply(ctx, f, iface, pub, []string{n77, n78}, []string{n79})
+	var rb *RollbackError
+	if !errors.Is(err, context.Canceled) || errors.As(err, &rb) {
+		t.Fatalf("err = %v", err)
+	}
+	tail := f.calls[len(f.calls)-4:]
+	want := []string{"route- " + n77, "allow+ " + n79, "allow- " + n78, "allow- " + n77}
+	if !reflect.DeepEqual(tail, want) {
+		t.Fatalf("rollback = %v", tail)
+	}
+	if len(f.allow) != 1 || !f.allow[iface+"|"+pub+"|"+n79] || len(f.routes) != 1 || f.routes[n79+"|"+iface] != ours {
+		t.Fatalf("состояние не восстановлено: allow=%v routes=%v", f.allow, f.routes)
+	}
+}
+
+func TestApply_AllowIPFailureRollsBackInReverse(t *testing.T) {
+	const n80, n81 = "192.168.80.0/24", "192.168.81.0/24"
+	cases := []struct {
+		name           string
+		failOn         string
+		added, removed []string
+		wantTail       []string
+		wantAllowAfter []string
+	}{
+		{"allow+", "allow+ " + n80, []string{n77, n78, n80}, nil,
+			[]string{"allow- " + n78, "allow- " + n77}, nil},
+		{"allow-", "allow- " + n81, []string{n77, n78}, []string{n79, n80, n81},
+			[]string{"allow+ " + n80, "allow+ " + n79, "allow- " + n78, "allow- " + n77},
+			[]string{n79, n80, n81}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeRouter()
+			for _, n := range tc.removed {
+				f.allow[iface+"|"+pub+"|"+n] = true
+			}
+			f.failOn = []string{tc.failOn}
+			if err := Apply(context.Background(), f, iface, pub, tc.added, tc.removed); err == nil {
+				t.Fatal("нет ошибки")
+			}
+			tail := f.calls[len(f.calls)-len(tc.wantTail):]
+			if !reflect.DeepEqual(tail, tc.wantTail) {
+				t.Fatalf("rollback = %v", f.calls)
+			}
+			if len(f.allow) != len(tc.wantAllowAfter) {
+				t.Fatalf("allow = %v", f.allow)
+			}
+			for _, n := range tc.wantAllowAfter {
+				if !f.allow[iface+"|"+pub+"|"+n] {
+					t.Fatalf("allow = %v", f.allow)
+				}
+			}
+		})
+	}
+}
+
+func TestApply_OwnerCheckFailureRollsBackAllowIPs(t *testing.T) {
+	f := newFakeRouter()
+	f.allow[iface+"|"+pub+"|"+n79] = true
+	f.routes[n79+"|"+iface] = ours
+	f.failOn = []string{"owner? " + n78}
+	if err := Apply(context.Background(), f, iface, pub, []string{n77, n78}, []string{n79}); err == nil {
+		t.Fatal("нет ошибки")
+	}
+	tail := f.calls[len(f.calls)-4:]
+	want := []string{"route- " + n77, "allow+ " + n79, "allow- " + n78, "allow- " + n77}
+	if !reflect.DeepEqual(tail, want) {
+		t.Fatalf("rollback = %v", tail)
+	}
+	if len(f.allow) != 1 || len(f.routes) != 1 || f.routes[n79+"|"+iface] != ours {
+		t.Fatalf("allow=%v routes=%v", f.allow, f.routes)
+	}
+}
+
+// Наш маршрут, стоявший до Apply (сирота прошлого сбоя), пропускается и
+// откатом не снимается: откат возвращает роутер к состоянию ДО вызова.
+func TestApply_PreexistingOwnRouteSurvivesRollback(t *testing.T) {
+	f := newFakeRouter()
+	f.routes[n77+"|"+iface] = ours
+	f.failOn = []string{"route+ " + n78}
+	if err := Apply(context.Background(), f, iface, pub, []string{n77, n78}, nil); err == nil {
+		t.Fatal("нет ошибки")
+	}
+	for _, c := range f.calls {
+		if c == "route+ "+n77 || c == "route- "+n77 {
+			t.Fatalf("наш прежний маршрут тронут: %v", f.calls)
+		}
+	}
+	if f.routes[n77+"|"+iface] != ours {
+		t.Fatalf("routes = %v", f.routes)
+	}
+}
+
+func TestRollbackError_UnwrapsToCause(t *testing.T) {
+	f := newFakeRouter()
+	f.failOn = []string{"route+ ", "allow- "}
+	err := Apply(context.Background(), f, iface, pub, []string{n77}, nil)
+	var rb *RollbackError
+	if !errors.As(err, &rb) || len(f.injected) == 0 || !errors.Is(err, f.injected[0]) {
+		t.Fatalf("err = %v injected = %v", err, f.injected)
+	}
+	for _, e := range f.injected[1:] {
+		if errors.Is(err, e) {
+			t.Fatalf("ошибка отката видна через Unwrap: %v", e)
+		}
 	}
 }
