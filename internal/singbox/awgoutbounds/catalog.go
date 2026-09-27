@@ -43,7 +43,10 @@ type SystemTunnelQuery interface {
 
 // enumerate combines managed and system tunnels into the canonical
 // AWGEntry list, filtering out tunnels whose kernel iface is missing
-// from /sys/class/net (would FATAL sing-box on bind_interface).
+// from /sys/class/net. sing-box (пин awgm.30) на отсутствующем
+// bind_interface не падает — check проходит, dial отвечает
+// «no such device»; исключаем из-за семантики выбора (нет смысла
+// предлагать заведомо неработающий bind), а не падения (F499).
 //
 // Dedup rule: when an iface name appears in both stores, the managed
 // entry wins (it has a stable storage ID; system listing depends on

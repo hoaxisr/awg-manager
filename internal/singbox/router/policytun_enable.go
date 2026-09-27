@@ -295,7 +295,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 
 		ExternalConfiguration: s.tunExternalWant(),
 	})
-	cfg.Outbounds = stripAutoManagedDirect(cfg.Outbounds)
+	cfg.Outbounds = stripAutoManagedDirect(cfg.Outbounds, s.foreignIfaces())
 	cfg.EnsureSystemRules(sr.SnifferEnabled)
 	cfg.EnsureUDPTimeoutRule(resolveUDPTimeout(sr.UDPTimeout))
 	qosClasses := activeQoSClasses(sr.QoSClasses)

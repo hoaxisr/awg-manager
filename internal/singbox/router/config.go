@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -984,11 +985,15 @@ func IsAutoManagedIface(name string) bool {
 // user bind. Keeping them unconditionally avoids a runtime NDMS lookup in the
 // Enable path — a transient lookup error must never silently delete a user's
 // persisted outbound.
-func stripAutoManagedDirect(in []Outbound) []Outbound {
+//
+// foreign — отметки «Сторонний интерфейс» (issue #935, SettingsStore.
+// GetForeignInterfaces); ifaces из этого набора не стрипаются, даже если
+// подпадают под auto-managed префикс.
+func stripAutoManagedDirect(in []Outbound, foreign []string) []Outbound {
 	out := make([]Outbound, 0, len(in))
 	for _, o := range in {
 		if o.Type == "direct" && o.BindInterface != "" &&
-			IsStrippedDirectBind(o.BindInterface) {
+			IsStrippedDirectBind(o.BindInterface, foreign) {
 			continue
 		}
 		out = append(out, o)
@@ -1000,8 +1005,11 @@ func stripAutoManagedDirect(in []Outbound) []Outbound {
 // removed from the effective config by stripAutoManagedDirect (auto-managed
 // AWG/WG/NWG ifaces, excluding proxy t2sN/proxyN which are kept). Exported so
 // the device-proxy outbound catalog can hide non-selectable router directs.
-func IsStrippedDirectBind(iface string) bool {
-	return IsAutoManagedIface(iface) && !isProxyIface(iface)
+//
+// Отмеченные пользователем сторонние интерфейсы (issue #935) не вырезаются —
+// это его выбор, как #323.
+func IsStrippedDirectBind(iface string, foreign []string) bool {
+	return IsAutoManagedIface(iface) && !isProxyIface(iface) && !slices.Contains(foreign, iface)
 }
 
 // isProxyIface reports a Keenetic proxy kernel interface name (tun2socks

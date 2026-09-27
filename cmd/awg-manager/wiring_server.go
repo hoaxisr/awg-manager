@@ -447,7 +447,7 @@ func (a *app) setupRouter() {
 	a.tunnelService.SetRouterRefChecker(routerSvc)
 	a.singboxHandler.SetOutboundRefCheckers(a.deviceProxySvc, routerSvc)
 	a.singboxHandler.SetBindValidator(subscriptionBindValidator{adapter: bindableAdapter}.ValidateBindInterface)
-	a.deviceProxySvc.SetRouterOutbounds(&deviceproxyRouterOutboundsAdapter{src: routerSvc})
+	a.deviceProxySvc.SetRouterOutbounds(&deviceproxyRouterOutboundsAdapter{src: routerSvc, foreign: a.settingsStore.GetForeignInterfaces})
 	// Initial reconcile on boot — idempotent, brings config.json in sync
 	// with storage + current tunnel set. Runs strictly AFTER
 	// SetRouterOutbounds (см. комментарий у SubscribeBus выше): каталог

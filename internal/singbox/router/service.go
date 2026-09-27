@@ -203,6 +203,11 @@ type WANInterfaceInfo struct {
 	Up       bool   `json:"up"`       // current up/down — info-only, never gates selection
 	Priority int    `json:"priority"` // NDMS priority (higher = preferred by user)
 	Type     string `json:"type"`     // NDMS-тип интерфейса: "Wireguard", "Bridge", "PPP", ...
+
+	// Foreign — отмеченный сторонний интерфейс (issue #935); Absent — его
+	// сейчас нет в системе (интерфейс ядра без устройства).
+	Foreign bool `json:"foreign,omitempty"`
+	Absent  bool `json:"absent,omitempty"`
 }
 
 // WANInterfaceLister is the narrow contract the service needs from the
