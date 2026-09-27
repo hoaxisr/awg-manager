@@ -847,6 +847,7 @@ const api_LogsResponseEnvelope: v.GenericSchema = v.looseObject({
 });
 
 const api_ManagedPeerDTO: v.GenericSchema = v.looseObject({
+	clientAllowedIPs: v.optional(v.nullable(v.string())),
 	description: v.optional(v.nullable(v.string())),
 	dns: v.optional(v.nullable(v.string())),
 	enabled: v.optional(v.nullable(v.boolean())),
@@ -858,6 +859,7 @@ const api_ManagedPeerDTO: v.GenericSchema = v.looseObject({
 	presharedKey: v.optional(v.nullable(v.string())),
 	privateKey: v.optional(v.nullable(v.string())),
 	publicKey: v.optional(v.nullable(v.string())),
+	remoteSubnets: v.optional(v.nullable(v.array(v.string()))),
 	signatureProfile: v.optional(v.nullable(v.string())),
 	tunnelIP: v.optional(v.nullable(v.string())),
 });
@@ -1110,6 +1112,16 @@ const api_PeerConfData: v.GenericSchema = v.looseObject({
 
 const api_PeerConfResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_PeerConfData))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_PeerPresetsDTO: v.GenericSchema = v.looseObject({
+	exceptRouter: v.optional(v.nullable(v.string())),
+	routerOnly: v.optional(v.nullable(v.string())),
+});
+
+const api_PeerPresetsResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_PeerPresetsDTO))),
 	success: v.optional(v.nullable(v.boolean())),
 });
 
@@ -2796,6 +2808,7 @@ const api_WireguardServerDTO: v.GenericSchema = v.looseObject({
 
 const api_WireguardServerPeerDTO: v.GenericSchema = v.looseObject({
 	allowedIPs: v.optional(v.nullable(v.array(v.string()))),
+	clientAllowedIPs: v.optional(v.nullable(v.string())),
 	confAvailable: v.optional(v.nullable(v.boolean())),
 	description: v.optional(v.nullable(v.string())),
 	dns: v.optional(v.nullable(v.string())),
@@ -2809,8 +2822,10 @@ const api_WireguardServerPeerDTO: v.GenericSchema = v.looseObject({
 	lastHandshake: v.optional(v.nullable(v.string())),
 	online: v.optional(v.nullable(v.boolean())),
 	publicKey: v.optional(v.nullable(v.string())),
+	remoteSubnets: v.optional(v.nullable(v.array(v.string()))),
 	rxBytes: v.optional(v.nullable(v.number())),
 	signatureProfile: v.optional(v.nullable(v.string())),
+	tunnelIP: v.optional(v.nullable(v.string())),
 	txBytes: v.optional(v.nullable(v.number())),
 });
 
@@ -3259,6 +3274,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /managed-servers/{id}": v.lazy(() => api_ManagedServerResponse),
 	"GET /managed-servers/{id}/asc": v.lazy(() => api_ASCParamsResponse),
 	"GET /managed-servers/{id}/peers/{pubkey}/conf": v.lazy(() => api_PeerConfResponse),
+	"GET /managed-servers/{id}/peers/presets": v.lazy(() => api_PeerPresetsResponse),
 	"GET /managed-servers/{id}/stats": v.lazy(() => api_ManagedServerStatsResponse),
 	"GET /managed-servers/lan-segments": v.lazy(() => api_LANSegmentsListResponse),
 	"GET /managed-servers/policies": v.lazy(() => api_PoliciesListResponse),
@@ -3301,6 +3317,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /routing/tunnels": v.lazy(() => api_RoutingTunnelsResponse),
 	"GET /server/listen": v.lazy(() => api_ServerListenStateResponse),
 	"GET /servers/{name}/peers/{pubkey}/conf": v.lazy(() => api_PeerConfResponse),
+	"GET /servers/{name}/peers/presets": v.lazy(() => api_PeerPresetsResponse),
 	"GET /servers/all": v.lazy(() => api_ServersAllResponse),
 	"GET /servers/marked": v.lazy(() => api_APIEnvelope),
 	"GET /servers/wan-ip": v.lazy(() => api_WANIPResponse),
