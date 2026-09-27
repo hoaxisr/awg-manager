@@ -862,7 +862,7 @@ func (a *app) wireProxyrt() {
 		return err == nil && t != nil && t.Obfuscator != nil && t.Enabled
 	}
 	if adopted := obfRunner.AdoptAll(keep); len(adopted) > 0 {
-		journal.Info("obfuscator", "", "усыновлены процессы: "+strings.Join(adopted, ", "))
+		obfLog.Info("obfuscator", "", "усыновлены процессы: "+strings.Join(adopted, ", "))
 	}
 	// Слоты awgm_relay — по тому же критерию, но ключ слота — локальный порт.
 	keepPort := func(port int) bool {
@@ -879,7 +879,7 @@ func (a *app) wireProxyrt() {
 		return false
 	}
 	if removed := kernelRelay.Sweep(keepPort); len(removed) > 0 {
-		journal.Info("obfuscator", "", fmt.Sprintf("сняты сироты awgm_relay: %v", removed))
+		obfLog.Info("obfuscator", "", fmt.Sprintf("сняты сироты awgm_relay: %v", removed))
 	}
 
 	records := proxyRecords{ref: ref}
