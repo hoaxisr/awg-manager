@@ -52,6 +52,14 @@ type WireguardServerPeerDTO struct {
 	// роутера»; хранится в секрете, поэтому есть только у пиров с локальным
 	// секретом — как и сигнатура.
 	DNS string `json:"dns,omitempty" example:"192.168.1.1"`
+
+	// ClientAllowedIPs / RemoteSubnets — сети клиента (#713); есть только у
+	// пиров с локальным секретом. TunnelIP — адрес из секрета: у пира с
+	// сетями за клиентом в allowedIPs больше одного кандидата, и фронт не
+	// должен угадывать; у чужих пиров пусто — фронт применяет эвристику.
+	ClientAllowedIPs string   `json:"clientAllowedIPs,omitempty" example:"10.0.1.0/24, 192.168.1.0/24"`
+	RemoteSubnets    []string `json:"remoteSubnets,omitempty" example:"192.168.77.0/24"`
+	TunnelIP         string   `json:"tunnelIP,omitempty" example:"10.0.1.2/32"`
 }
 
 // WireguardServerDTO mirrors frontend WireguardServer.

@@ -7,11 +7,15 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -26,6 +30,10 @@ type ServerAddPeerRequestDTO struct {
 	// DNS — резолвер пира для `.conf`: список IP через запятую. Пусто —
 	// LAN-адрес роутера (#933).
 	DNS string `json:"dns,omitempty" example:"192.168.1.1"`
+	// ClientAllowedIPs — строка AllowedIPs в .conf клиента (CIDR через запятую,
+	// пусто — весь трафик). RemoteSubnets — сети за клиентом, IPv4 CIDR (#713).
+	ClientAllowedIPs string   `json:"clientAllowedIPs,omitempty" example:"10.0.14.0/24, 192.168.1.0/24"`
+	RemoteSubnets    []string `json:"remoteSubnets,omitempty" example:"192.168.77.0/24"`
 }
 
 // ServerUpdatePeerRequestDTO is the body for PUT /servers/{name}/peers/{pubkey}.
@@ -38,6 +46,10 @@ type ServerUpdatePeerRequestDTO struct {
 	// DNS — резолвер пира: «прислали → присвоили», как у Description. Пусто
 	// снимает свой резолвер и возвращает пира к LAN-адресу роутера (#933).
 	DNS string `json:"dns,omitempty" example:"192.168.1.1"`
+	// ClientAllowedIPs — строка AllowedIPs в .conf клиента (CIDR через запятую,
+	// пусто — весь трафик). RemoteSubnets — сети за клиентом, IPv4 CIDR (#713).
+	ClientAllowedIPs string   `json:"clientAllowedIPs,omitempty" example:"10.0.14.0/24, 192.168.1.0/24"`
+	RemoteSubnets    []string `json:"remoteSubnets,omitempty" example:"192.168.77.0/24"`
 }
 
 // Subtree dispatches /api/servers/{name}/... operations.
@@ -86,6 +98,10 @@ func (h *ServersHandler) Subtree(w http.ResponseWriter, r *http.Request) {
 		}
 		h.AddServerPeer(w, r, name)
 	case 3:
+		if parts[2] == "presets" {
+			h.ServerPeerPresets(w, r, name)
+			return
+		}
 		pubkey, err := url.PathUnescape(parts[2])
 		if err != nil || !validateWireguardPubkey(pubkey) {
 			response.Error(w, "invalid public key", "INVALID_PUBKEY")
@@ -181,7 +197,7 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		response.Error(w, err.Error(), "INVALID_TUNNEL_IP")
 		return
 	}
-	if peerTunnelIPInUse(server, req.TunnelIP) {
+	if peerTunnelIPInUse(server, req.TunnelIP, h.storedPeerHost(name)) {
 		response.Error(w, "tunnel IP already in use", "TUNNEL_IP_IN_USE")
 		return
 	}
@@ -191,6 +207,16 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 	peerDNS, err := managed.ValidatePeerDNS(req.DNS)
 	if err != nil {
 		response.Error(w, err.Error(), "INVALID_PEER_DNS")
+		return
+	}
+	clientAllowed, err := peersubnet.ValidateClientAllowedIPs(req.ClientAllowedIPs)
+	if err != nil {
+		response.Error(w, err.Error(), "INVALID_CLIENT_ALLOWED_IPS")
+		return
+	}
+	// Чтение роутера — после дешёвых локальных проверок и до ключей.
+	remote, ok := h.validateRemoteSubnets(r.Context(), w, req.RemoteSubnets, managed.PeerRef{Iface: name})
+	if !ok {
 		return
 	}
 
@@ -236,6 +262,9 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		TunnelIP:     req.TunnelIP,
 		DNS:          peerDNS,
 
+		ClientAllowedIPs: clientAllowed,
+		RemoteSubnets:    remote,
+
 		I1:               sig.Packets.I1,
 		I2:               sig.Packets.I2,
 		I3:               sig.Packets.I3,
@@ -252,6 +281,17 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		}
 		response.Error(w, err.Error(), "ADD_PEER_FAILED")
 		return
+	}
+	// Шаги 3–4 спеки. Секрет записан ДО роутера (ключ не теряется), поэтому
+	// откат здесь — снять пира и секрет: запись переживает только полный успех.
+	// Свои allow-ips и маршруты Apply откатывает сам.
+	if len(remote) > 0 {
+		if err := peersubnet.Apply(r.Context(), ndmscommand.NewPeerRouter(h.commands), name, pubKey, remote, nil); err != nil {
+			h.logRollback("add-peer", name, err)
+			h.rollbackAddedServerPeer(r.Context(), name, pubKey)
+			response.Error(w, err.Error(), "ADD_PEER_FAILED")
+			return
+		}
 	}
 	h.bus.PublishInvalidated(events.ResourceServers, "server-peer-added")
 	h.writeAll(w, r)
@@ -309,6 +349,18 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		response.Error(w, "ключ клиента недоступен (создан вне AWG Manager или через KeenDNS)", "NO_PEER_SECRET")
 		return
 	}
+	clientAllowed, err := peersubnet.ValidateClientAllowedIPs(req.ClientAllowedIPs)
+	if err != nil {
+		response.Error(w, err.Error(), "INVALID_CLIENT_ALLOWED_IPS")
+		return
+	}
+	// Обоим полям негде жить без секрета — как DNS и сигнатуре. Пустые
+	// значения пропускаем: фронт шлёт их всегда, в т.ч. правя чужого пира.
+	// Отсутствие remoteSubnets в теле = пусто = снять все (спека 5.4, как у DNS).
+	if (clientAllowed != "" || len(req.RemoteSubnets) > 0) && !hasSecret {
+		response.Error(w, "ключ клиента недоступен (создан вне AWG Manager или через KeenDNS)", "NO_PEER_SECRET")
+		return
+	}
 	// Сигнатуру проверяем ДО обращения к роутеру: отказ обязан быть чистым,
 	// без наполовину применённых изменений на NDMS.
 	sigProfile := ""
@@ -337,7 +389,15 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 	}
 
 	oldIP := peerTunnelHostIP(peer)
+	if hasSecret && sec.TunnelIP != "" {
+		// У пира с записью адрес — из неё: с сетями за клиентом в allow-ips
+		// «первый /32» может оказаться сетью за клиентом, и снялся бы не тот.
+		if ip, _, err := net.ParseCIDR(sec.TunnelIP); err == nil {
+			oldIP = ip.String()
+		}
+	}
 	wantIPChange := req.TunnelIP != "" && req.TunnelIP != oldIP+"/32" && req.TunnelIP != oldIP
+	newIP := ""
 	if wantIPChange {
 		if err := h.validateServerPeerTunnelIP(server, req.TunnelIP); err != nil {
 			response.Error(w, err.Error(), "INVALID_TUNNEL_IP")
@@ -348,13 +408,45 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 			response.Error(w, "invalid tunnel IP", "INVALID_TUNNEL_IP")
 			return
 		}
-		if err := h.commands.Wireguard.UpdatePeerAllowIPs(r.Context(), name, pubkey, oldIP, newHost.String()); err != nil {
+		newIP = newHost.String()
+	}
+	// Чтение роутера — после дешёвых локальных проверок.
+	remote, ok := h.validateRemoteSubnets(r.Context(), w, req.RemoteSubnets, managed.PeerRef{Iface: name, PubKey: pubkey})
+	if !ok {
+		return
+	}
+	// Разница — от записи, не от allow-ips роутера: источник правды здесь.
+	added, removed := peersubnet.Diff(sec.RemoteSubnets, remote)
+
+	if wantIPChange {
+		if err := h.commands.Wireguard.UpdatePeerAllowIPs(r.Context(), name, pubkey, oldIP, newIP); err != nil {
 			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
 			return
 		}
 	}
+	// revertIP — хранилище не пишется, значит /32 на роутере обязан вернуться
+	// к записанному, иначе .conf выдаст адрес, которого у пира нет.
+	revertIP := func() {
+		if !wantIPChange || oldIP == "" {
+			return
+		}
+		rbCtx, cancel := detachedCtx(r.Context())
+		defer cancel()
+		if err := h.commands.Wireguard.UpdatePeerAllowIPs(rbCtx, name, pubkey, newIP, oldIP); err != nil {
+			h.log.Warn("update-peer", name, "tunnel IP не возвращён после отказа: "+err.Error())
+		}
+	}
 	if req.Description != peer.Description {
 		if err := h.commands.Wireguard.SetPeerComment(r.Context(), name, pubkey, strings.TrimSpace(req.Description)); err != nil {
+			revertIP()
+			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
+			return
+		}
+	}
+	if len(added)+len(removed) > 0 {
+		if err := peersubnet.Apply(r.Context(), ndmscommand.NewPeerRouter(h.commands), name, pubkey, added, removed); err != nil {
+			h.logRollback("update-peer", name, err)
+			revertIP()
 			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
 			return
 		}
@@ -378,6 +470,14 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 			sec.DNS = peerDNS
 			changed = true
 		}
+		if sec.ClientAllowedIPs != clientAllowed {
+			sec.ClientAllowedIPs = clientAllowed
+			changed = true
+		}
+		if !slices.Equal(sec.RemoteSubnets, remote) {
+			sec.RemoteSubnets = remote
+			changed = true
+		}
 		if req.Signature != nil {
 			sec.I1, sec.I2 = req.Signature.I1, req.Signature.I2
 			sec.I3, sec.I4, sec.I5 = req.Signature.I3, req.Signature.I4, req.Signature.I5
@@ -388,6 +488,16 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		}
 		if changed {
 			if err := h.settings.SetServerPeerSecret(name, pubkey, sec); err != nil {
+				// Сети, которых нет в записи, никто уже не снимет: удаление
+				// пира снимает маршруты по записи. Возвращаем роутер к ней.
+				if len(added)+len(removed) > 0 {
+					rbCtx, cancel := detachedCtx(r.Context())
+					if rbErr := peersubnet.Apply(rbCtx, ndmscommand.NewPeerRouter(h.commands), name, pubkey, removed, added); rbErr != nil {
+						h.log.Warn("update-peer", name, "сети за клиентом не возвращены к записи после отказа сохранения: "+rbErr.Error())
+					}
+					cancel()
+				}
+				revertIP()
 				response.Error(w, err.Error(), "SAVE_FAILED")
 				return
 			}
@@ -422,6 +532,14 @@ func (h *ServersHandler) DeleteServerPeer(w http.ResponseWriter, r *http.Request
 	if findServerPeer(server, pubkey) == nil {
 		response.Error(w, "peer not found", "NOT_FOUND")
 		return
+	}
+	// Свои маршруты — до снятия пира и fail-closed (11.B/11.6): маршрут-сирота
+	// без записи никто уже не снимет.
+	if sec, ok := h.settings.GetServerPeerSecret(name, pubkey); ok && len(sec.RemoteSubnets) > 0 {
+		if err := peersubnet.RemoveRoutes(r.Context(), ndmscommand.NewPeerRouter(h.commands), name, pubkey, sec.RemoteSubnets); err != nil {
+			response.Error(w, err.Error(), "DELETE_PEER_FAILED")
+			return
+		}
 	}
 	if err := h.commands.Wireguard.RemovePeer(r.Context(), name, pubkey); err != nil {
 		response.Error(w, err.Error(), "DELETE_PEER_FAILED")
@@ -582,7 +700,11 @@ func (h *ServersHandler) generateServerPeerConf(ctx context.Context, server *ndm
 		b.WriteString(fmt.Sprintf("PresharedKey = %s\n", sec.PresharedKey))
 	}
 	b.WriteString(fmt.Sprintf("Endpoint = %s:%d\n", formatWireguardEndpointHost(endpoint), server.ListenPort))
-	b.WriteString("AllowedIPs = 0.0.0.0/0, ::/0\n")
+	allowed := sec.ClientAllowedIPs
+	if allowed == "" {
+		allowed = peersubnet.DefaultClientAllowedIPs
+	}
+	b.WriteString("AllowedIPs = " + allowed + "\n")
 	b.WriteString("PersistentKeepalive = 25\n")
 	return b.String(), nil
 }
@@ -641,17 +763,23 @@ func peerTunnelHostIP(peer *ndms.WireguardServerPeer) string {
 	return ""
 }
 
-// peerTunnelIPInUse reports whether tunnelIP's host address is already
-// assigned to an existing peer. Compares parsed host IPs for equality —
-// a string prefix check (e.g. "10.0.0.2" vs "10.0.0.20") gives false
-// positives and must not be used here.
-func peerTunnelIPInUse(server *ndms.WireguardServer, tunnelIP string) bool {
+// peerTunnelIPInUse: у пира с записью адрес — из неё (storedHost), эвристика
+// «первый /32 в allow-ips» только без записи: с сетями за клиентом в allow-ips
+// кандидатов больше одного (#713). Сравниваются разобранные IP, не префиксы
+// строк: "10.0.0.2" — префикс "10.0.0.20", но другой адрес.
+func peerTunnelIPInUse(server *ndms.WireguardServer, tunnelIP string, storedHost func(pubkey string) string) bool {
 	host, _, err := net.ParseCIDR(tunnelIP)
 	if err != nil {
 		return false
 	}
 	for i := range server.Peers {
-		existing := peerTunnelHostIP(&server.Peers[i])
+		existing := ""
+		if storedHost != nil {
+			existing = storedHost(server.Peers[i].PublicKey)
+		}
+		if existing == "" {
+			existing = peerTunnelHostIP(&server.Peers[i])
+		}
 		if existing != "" && net.ParseIP(existing).Equal(host) {
 			return true
 		}
@@ -739,6 +867,9 @@ func (h *ServersHandler) enrichServerDTO(ctx context.Context, srv ndms.Wireguard
 			dto.Peers[i].I3, dto.Peers[i].I4, dto.Peers[i].I5 = sec.I3, sec.I4, sec.I5
 			dto.Peers[i].SignatureProfile = sec.SignatureProfile
 			dto.Peers[i].DNS = sec.DNS
+			dto.Peers[i].ClientAllowedIPs = sec.ClientAllowedIPs
+			dto.Peers[i].RemoteSubnets = sec.RemoteSubnets
+			dto.Peers[i].TunnelIP = sec.TunnelIP
 		}
 	}
 	return dto
@@ -771,5 +902,136 @@ func toWireguardServerDTO(srv ndms.WireguardServer) WireguardServerDTO {
 		PublicKey:     srv.PublicKey,
 		ListenPort:    srv.ListenPort,
 		Peers:         peers,
+	}
+}
+
+// ServerPeerPresets returns AllowedIPs presets for a peer of a system server.
+// GET /api/servers/{name}/peers/presets
+//
+//	@Summary		Peer AllowedIPs presets
+//	@Description	routerOnly — server subnet plus all LAN bridges; exceptRouter — everything else plus /32 of the resolver and ::/0.
+//	@Tags			servers
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			name	path		string	true	"Interface name (e.g. Wireguard0)"
+//	@Param			dns		query		string	false	"Peer DNS as typed in the form; empty — router LAN IP"
+//	@Success		200		{object}	PeerPresetsResponse
+//	@Failure		400		{object}	APIErrorEnvelope
+//	@Router			/servers/{name}/peers/presets [get]
+func (h *ServersHandler) ServerPeerPresets(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	if h.managedSvc == nil {
+		response.Error(w, "managed service not initialized", "INTERNAL_ERROR")
+		return
+	}
+	server, ok := h.requireListedServer(r.Context(), w, name)
+	if !ok {
+		return
+	}
+	dns, err := managed.ValidatePeerDNS(r.URL.Query().Get("dns"))
+	if err != nil {
+		response.Error(w, err.Error(), "INVALID_PEER_DNS")
+		return
+	}
+	if dns == "" {
+		dns = netif.RouterLANIP(storage.DefaultInterface)
+	}
+	serverNet := serverSubnetOf(server)
+	if serverNet == nil {
+		response.Error(w, "server subnet unknown", "PRESETS_FAILED")
+		return
+	}
+	p, err := h.managedSvc.PresetsFor(r.Context(), serverNet, nil, dns)
+	if err != nil {
+		response.Error(w, err.Error(), "PRESETS_FAILED")
+		return
+	}
+	response.Success(w, PeerPresetsDTO{RouterOnly: p.RouterOnly, ExceptRouter: p.ExceptRouter})
+}
+
+// serverSubnetOf — подсеть системного сервера из Address/Mask (маска точечная).
+func serverSubnetOf(server *ndms.WireguardServer) *net.IPNet {
+	ip := net.ParseIP(server.Address)
+	mask := net.IPMask(net.ParseIP(server.Mask).To4())
+	if ip == nil || mask == nil {
+		return nil
+	}
+	return &net.IPNet{IP: ip.Mask(mask), Mask: mask}
+}
+
+// storedPeerHost — host tunnel IP пира из его секрета; "" без секрета.
+func (h *ServersHandler) storedPeerHost(serverID string) func(pubkey string) string {
+	return func(pubkey string) string {
+		sec, ok := h.settings.GetServerPeerSecret(serverID, pubkey)
+		if !ok || sec.TunnelIP == "" {
+			return ""
+		}
+		ip, _, err := net.ParseCIDR(sec.TunnelIP)
+		if err != nil {
+			return ""
+		}
+		return ip.String()
+	}
+}
+
+// validateRemoteSubnets — шаги 1–2 спеки для системного пути: снимок занятых
+// сетей и валидация до единого обращения к роутеру. Отказ уже записан в w.
+func (h *ServersHandler) validateRemoteSubnets(ctx context.Context, w http.ResponseWriter, subnets []string, exclude managed.PeerRef) ([]string, bool) {
+	if len(subnets) == 0 {
+		return nil, true
+	}
+	if h.managedSvc == nil {
+		response.Error(w, "managed service not initialized", "INTERNAL_ERROR")
+		return nil, false
+	}
+	occupied, err := h.managedSvc.OccupiedSubnets(ctx, exclude)
+	if err != nil {
+		response.Error(w, err.Error(), "GET_FAILED")
+		return nil, false
+	}
+	remote, err := peersubnet.ValidateRemoteSubnets(subnets, occupied)
+	if err != nil {
+		code, ok := peerSubnetErrorCode(err)
+		if !ok {
+			code = "INVALID_REMOTE_SUBNETS"
+		}
+		response.Error(w, err.Error(), code)
+		return nil, false
+	}
+	return remote, true
+}
+
+// peerRollbackTimeout — бюджет отката на роутере: ctx запроса к этому моменту
+// может быть уже отменён (обрыв клиента — самая вероятная причина сбоя), а
+// откат обязан дойти.
+const peerRollbackTimeout = 30 * time.Second
+
+func detachedCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), peerRollbackTimeout)
+}
+
+// rollbackAddedServerPeer снимает с роутера только что добавленного пира и его
+// секрет. Пир не снялся — секрет остаётся: без него пир на роутере — сирота с
+// потерянным ключом, а с ним его видно в панели и можно удалить.
+func (h *ServersHandler) rollbackAddedServerPeer(ctx context.Context, name, pubKey string) {
+	rbCtx, cancel := detachedCtx(ctx)
+	defer cancel()
+	if err := h.commands.Wireguard.RemovePeer(rbCtx, name, pubKey); err != nil {
+		h.log.Warn("add-peer", name, "пир не снят после отказа сетей за клиентом, секрет оставлен: "+err.Error())
+		return
+	}
+	if err := h.settings.DeleteServerPeerSecret(name, pubKey); err != nil {
+		h.log.Warn("add-peer", name, "rollback of stranded secret failed: "+err.Error())
+	}
+}
+
+// logRollback — отказ отката Apply в журнал приложения (хранилище не тронуто).
+func (h *ServersHandler) logRollback(op, name string, err error) {
+	var rb *peersubnet.RollbackError
+	if errors.As(err, &rb) {
+		h.log.Warn(op, name, "откат сетей за клиентом не завершён: "+rb.Rollback.Error())
 	}
 }

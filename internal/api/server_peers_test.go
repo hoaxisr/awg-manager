@@ -43,10 +43,20 @@ func TestPeerTunnelIPInUse(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := peerTunnelIPInUse(server, tt.tunnelIP); got != tt.want {
+			if got := peerTunnelIPInUse(server, tt.tunnelIP, nil); got != tt.want {
 				t.Errorf("peerTunnelIPInUse(%q) = %v, want %v", tt.tunnelIP, got, tt.want)
 			}
 		})
+	}
+	// У пира с записью адрес берётся из неё: allow-ips A= говорят 10.0.0.20, запись — 10.0.0.50.
+	stored := func(pub string) string {
+		if pub == "A=" {
+			return "10.0.0.50"
+		}
+		return ""
+	}
+	if !peerTunnelIPInUse(server, "10.0.0.50/32", stored) || peerTunnelIPInUse(server, "10.0.0.20/32", stored) {
+		t.Fatal("запись пира обязана перекрывать эвристику по allow-ips")
 	}
 }
 
