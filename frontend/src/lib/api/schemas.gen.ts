@@ -638,6 +638,13 @@ const api_ExternalTunnelsResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_ForeignIfaceCandidate: v.GenericSchema = v.looseObject({
+	kind: v.optional(v.nullable(v.string())),
+	label: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	up: v.optional(v.nullable(v.boolean())),
+});
+
 const api_GeoExpandData: v.GenericSchema = v.looseObject({
 	count: v.optional(v.nullable(v.number())),
 	lines: v.optional(v.nullable(v.array(v.string()))),
@@ -3253,6 +3260,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /hydraroute/geo-tags": v.lazy(() => api_GeoTagsResponse),
 	"GET /hydraroute/ipset-usage": v.lazy(() => api_IpsetUsageResponse),
 	"GET /hydraroute/oversized-tags": v.lazy(() => api_OversizedTagsResponse),
+	"GET /interfaces/foreign/candidates": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.array(v.lazy(() => api_ForeignIfaceCandidate)))),
+})]),
 	"GET /logs": v.lazy(() => api_LogsResponseEnvelope),
 	"GET /logs/subgroups": v.lazy(() => api_SubgroupsResponseEnvelope),
 	"GET /managed-servers": v.lazy(() => api_ManagedServersListResponse),
@@ -3460,6 +3470,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /hydraroute/geo-files/update": v.lazy(() => api_GeoFileUpdatedResponse),
 	"POST /hydraroute/policy-order": v.lazy(() => api_PolicyOrderResponse),
 	"POST /import/conf": v.lazy(() => api_APIEnvelope),
+	"POST /interfaces/foreign/mark": v.lazy(() => api_APIEnvelope),
+	"POST /interfaces/foreign/unmark": v.lazy(() => api_APIEnvelope),
 	"POST /logs/clear": v.lazy(() => api_APIEnvelope),
 	"POST /managed-servers": v.lazy(() => api_ManagedServerResponse),
 	"POST /managed-servers/{id}/enabled": v.lazy(() => api_ServersAllResponse),

@@ -138,6 +138,13 @@ func (a *app) setupServer() {
 			},
 			OrphanIfaces:          orphanIfaces(a.opkgPool, a.ndmsQueries.Interfaces),
 			OrphanIfacesExclusive: orphanIfacesExclusive(a.opkgPool, a.ndmsQueries.Interfaces),
+			ForeignIfaces: &foreignIfaces{
+				settings:  a.settingsStore,
+				pool:      a.opkgPool,
+				ndmsNames: ndmsSystemNames(a.ndmsQueries.Interfaces),
+				orphans:   orphanIfaces(a.opkgPool, a.ndmsQueries.Interfaces),
+				sysNet:    "/sys/class/net",
+			},
 			ObfuscatorRelayChanged: obfuscatorRelayChanged(a.settingsStore, a.awgStore, a.nwgOp.RestartObfuscatorRelay,
 				func(id string) bool { return a.obfDispatcher != nil && a.obfDispatcher.Alive(id) },
 				&a.obfKmodTripped, logging.NewScopedLogger(a.loggingService, logging.GroupTunnel, logging.SubOps)),

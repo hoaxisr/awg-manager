@@ -1916,6 +1916,28 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.ForeignIfaceCandidate:
+    properties:
+      kind:
+        enum:
+        - opkgtun
+        - kernel
+        type: string
+      label:
+        example: csqtt
+        type: string
+      name:
+        example: opkgtun7
+        type: string
+      up:
+        type: boolean
+    type: object
+  api.ForeignIfaceRequest:
+    properties:
+      name:
+        example: opkgtun7
+        type: string
+    type: object
   api.GeoExpandData:
     properties:
       count:
@@ -11141,6 +11163,83 @@ paths:
       summary: Import tunnel config
       tags:
       - import
+  /interfaces/foreign/candidates:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.ForeignIfaceCandidate'
+                  type: array
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Кандидаты в сторонние интерфейсы
+      tags:
+      - interfaces
+  /interfaces/foreign/mark:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Имя интерфейса ядра
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.ForeignIfaceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Отметить сторонний интерфейс
+      tags:
+      - interfaces
+  /interfaces/foreign/unmark:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Имя интерфейса ядра
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.ForeignIfaceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Снять отметку стороннего интерфейса
+      tags:
+      - interfaces
   /logs:
     get:
       description: Returns log entries from the selected bucket. `bucket=app` (default)

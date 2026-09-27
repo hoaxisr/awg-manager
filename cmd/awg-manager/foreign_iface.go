@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -124,4 +125,21 @@ func (f *foreignIfaces) Candidates(ctx context.Context) ([]api.ForeignIfaceCandi
 func sysCarrier(sysNet, name string) bool {
 	b, err := os.ReadFile(filepath.Join(sysNet, name, "carrier"))
 	return err == nil && strings.TrimSpace(string(b)) == "1"
+}
+
+// ndmsSystemNames — имена ядра всех интерфейсов, известных NDMS.
+func ndmsSystemNames(store *ndmsquery.InterfaceStore) func(context.Context) (map[string]bool, error) {
+	return func(ctx context.Context) (map[string]bool, error) {
+		all, err := store.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[string]bool, len(all))
+		for _, i := range all {
+			if i.SystemName != "" {
+				out[i.SystemName] = true
+			}
+		}
+		return out, nil
+	}
 }

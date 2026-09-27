@@ -131,6 +131,7 @@ type Server struct {
 	singboxSubMembersFn        func() []diagnostics.SingboxSubMember
 	orphanIfacesFn             func(ctx context.Context) ([]external.OrphanIface, error)
 	orphanExclusiveFn          func(ctx context.Context) ([]external.OrphanIface, error)
+	foreignIfaces              api.ForeignIfaceMarker
 	singboxConfigPreviewFn     func() (string, error)
 	obfuscatorRelayChanged     func()
 	dnsCheckService            *dnscheck.Service
@@ -229,6 +230,10 @@ type Deps struct {
 	// перед сносом (см. opkgtun.Pool.OrphansExclusive).
 	OrphanIfacesExclusive func(ctx context.Context) ([]external.OrphanIface, error)
 
+	// ForeignIfaces — отметка «Сторонний интерфейс» (issue #935). Nil
+	// выключает ручки /api/interfaces/foreign/* целиком.
+	ForeignIfaces api.ForeignIfaceMarker
+
 	// McpKeys holds the MCP API keys. Nil disables the /mcp endpoint and
 	// its key-management routes entirely (they are never registered).
 	McpKeys *storage.McpKeyStore
@@ -296,6 +301,7 @@ func New(cfg Config, deps Deps) *Server {
 		singboxSubMembersFn:    deps.SingboxSubMembers,
 		orphanIfacesFn:         deps.OrphanIfaces,
 		orphanExclusiveFn:      deps.OrphanIfacesExclusive,
+		foreignIfaces:          deps.ForeignIfaces,
 		singboxConfigPreviewFn: deps.SingboxConfigPreview,
 		obfuscatorRelayChanged: deps.ObfuscatorRelayChanged,
 		authMiddleware:         auth.NewMiddleware(deps.Sessions, deps.Settings, &authLoggerAdapter{log: appLog}),
