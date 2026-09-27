@@ -127,6 +127,7 @@ func (a *app) setupTunnels() {
 		exitRegistryAdapter{reg: a.exitRegistry},
 		a.loggingService,
 	)
+	a.catalog.SetOwnedOpkgTun(a.opkgTunOwners.ownedIndices)
 
 	// HydraRoute Neo integration (optional — detected at startup)
 	a.hydraService = hydraroute.NewService(a.catalog, a.loggingService)
