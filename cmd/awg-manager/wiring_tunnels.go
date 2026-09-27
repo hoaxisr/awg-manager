@@ -91,7 +91,7 @@ func (a *app) setupTunnels() {
 	// Create the main tunnel service
 	a.tunnelService = service.New(a.awgStore, a.nwgOp, a.operator, a.stateMgr, a.wanModel, a.loggingService)
 
-	// Пять владельцев пула OpkgTun собираются ЗДЕСЬ и раздаются готовыми:
+	// Шесть владельцев пула OpkgTun собираются ЗДЕСЬ и раздаются готовыми:
 	// состав общий на всех, кто выдаёт номера (opkgTunOwners).
 	opkgIndices := &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces}
 	a.opkgTunOwners = newOpkgTunOwners(ndmsSource(opkgIndices), liveSource(opkgIndices),

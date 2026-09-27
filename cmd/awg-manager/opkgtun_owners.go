@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
@@ -10,8 +11,8 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 )
 
-// opkgTunOwners — пять поставщиков занятости пула OpkgTun и ЕДИНСТВЕННОЕ место,
-// где собирается их состав.
+// opkgTunOwners — шесть поставщиков занятости пула OpkgTun и ЕДИНСТВЕННОЕ
+// место, где собирается их состав.
 //
 // Состав — контракт для всех, кто выдаёт номера, а не деталь одного
 // вызывающего: на mips/mipsel пул общий, и поставщик, выпавший у кого-то
@@ -30,6 +31,7 @@ type opkgTunOwners struct {
 	ndms     opkgtun.Source
 	proxy    opkgtun.Source
 	live     opkgtun.Source
+	foreign  opkgtun.Source
 }
 
 // newOpkgTunOwners. Две половины, зависящие от роутера, приходят готовыми
@@ -42,6 +44,7 @@ func newOpkgTunOwners(ndms, live opkgtun.Source, awg *storage.AWGTunnelStore,
 		tunnels:  opkgtun.Source{Name: "записи туннелей", Read: tunnelHolders(awg)},
 		settings: opkgtun.Source{Name: "запись режима роутера", Read: routerModeHolders(settings)},
 		proxy:    opkgtun.Source{Name: "записи прокси", Read: proxyHolders(store)},
+		foreign:  opkgtun.Source{Name: "сторонние интерфейсы", Read: foreignHolders(settings)},
 		ndms:     ndms,
 		live:     live,
 	}
@@ -56,7 +59,7 @@ func liveSource(a *routerOpkgTunIndexAdapter) opkgtun.Source {
 	return opkgtun.Source{Name: "живые интерфейсы", Read: liveHolders(a)}
 }
 
-// all — состав для тех, кто выдаёт номера: все пятеро, и он ОДИН на всех.
+// all — состав для тех, кто выдаёт номера: все шестеро, и он ОДИН на всех.
 //
 // Вычитать из него собственную запись просителя не нужно: владелец узнаёт свой
 // номер по ключу держателя, и пул отдаёт его пину по совпадению ключа. Прежде
@@ -68,7 +71,23 @@ func liveSource(a *routerOpkgTunIndexAdapter) opkgtun.Source {
 // NDMS), потому что при слиянии заявленный бьёт анонима, а два заявленных на
 // одном номере дают конфликт, и в занятости остаётся первый.
 func (o opkgTunOwners) all() []opkgtun.Source {
-	return []opkgtun.Source{o.tunnels, o.settings, o.proxy, o.ndms, o.live}
+	return []opkgtun.Source{o.tunnels, o.settings, o.proxy, o.foreign, o.ndms, o.live}
+}
+
+// ownedIndices — номера НАШИХ владельцев (туннели, режим роутера, прокси) для
+// каталога маршрутизации (F496). Сторонние и анонимы нашими не считаются.
+func (o opkgTunOwners) ownedIndices(ctx context.Context) (map[int]bool, error) {
+	out := map[int]bool{}
+	for _, s := range []opkgtun.Source{o.tunnels, o.settings, o.proxy} {
+		got, err := s.Read(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", s.Name, err)
+		}
+		for n := range got {
+			out[n] = true
+		}
+	}
+	return out, nil
 }
 
 // tunnelHolders — записи AWG-туннелей. Перечисление СТРОГОЕ: прощающее унесло
@@ -198,6 +217,20 @@ func liveHolders(a *routerOpkgTunIndexAdapter) func(context.Context) (opkgtun.Ta
 		out := make(opkgtun.Taken, len(live))
 		for idx := range live {
 			out[idx] = opkgtun.LiveHolder(idx)
+		}
+		return out, nil
+	}
+}
+
+// foreignHolders — отметки «Сторонний интерфейс» (issue #935). Только
+// opkgtunN: у интерфейса ядра без номера занимать в пуле нечего.
+func foreignHolders(settings *storage.SettingsStore) func(context.Context) (opkgtun.Taken, error) {
+	return func(context.Context) (opkgtun.Taken, error) {
+		out := opkgtun.Taken{}
+		for _, name := range settings.GetForeignInterfaces() {
+			if idx, ok := opkgtun.IndexOf(name); ok {
+				out[idx] = opkgtun.ForeignHolder(name)
+			}
 		}
 		return out, nil
 	}

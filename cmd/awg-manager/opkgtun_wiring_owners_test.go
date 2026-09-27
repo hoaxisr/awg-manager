@@ -48,7 +48,7 @@ func TestOwnersInventory(t *testing.T) {
 		return out
 	}
 	wantAll := []string{"записи туннелей", "запись режима роутера", "записи прокси",
-		"записи NDMS", "живые интерфейсы"}
+		"сторонние интерфейсы", "записи NDMS", "живые интерфейсы"}
 	if got := names(owners.all()); !equalStrings(got, wantAll) {
 		t.Errorf("состав all() = %v, want %v", got, wantAll)
 	}
