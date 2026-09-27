@@ -3,6 +3,8 @@ package command
 import (
 	"context"
 	"net"
+
+	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 )
 
 // PeerRouter — адаптер peersubnet.Router над Commands: переводит *net.IPNet в
@@ -10,6 +12,8 @@ import (
 // allow-ips у них одинаковые. /32 уезжает host-формой маршрута, чтобы запись в
 // running-config совпадала с тем, что потом ищет NetworkRouteOwner.
 type PeerRouter struct{ cmds *Commands }
+
+var _ peersubnet.Router = (*PeerRouter)(nil)
 
 func NewPeerRouter(c *Commands) *PeerRouter { return &PeerRouter{cmds: c} }
 
