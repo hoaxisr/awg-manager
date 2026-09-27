@@ -13,10 +13,12 @@ type fakeRelay struct {
 	alive    map[string]bool
 	startErr error
 	stops    int
+	starts   int
 }
 
 func newFake(name string) *fakeRelay { return &fakeRelay{name: name, alive: map[string]bool{}} }
 func (f *fakeRelay) Start(_ context.Context, id string, _ *storage.Obfuscator, _ string) error {
+	f.starts++
 	if f.startErr != nil {
 		return f.startErr
 	}
@@ -52,6 +54,48 @@ func TestDispatcher_FallbackToProcess(t *testing.T) {
 	}
 	if !p.alive["a"] || d.Backend("a") != BackendProcess {
 		t.Fatal("откат на процесс не случился")
+	}
+}
+
+// F488: постоянный отказ ядра (ENOSPC на 17-м туннеле) не должен на каждом
+// Start (WAN-up) гасить живой процессный релей ради заведомо неудачной попытки.
+// Новая попытка — только при смене конфигурации или выключателя.
+func TestDispatcher_RemembersKernelFailure(t *testing.T) {
+	p, k := newFake(BackendProcess), newFake(BackendKernel)
+	k.startErr = errors.New("no space left on device")
+	kernelOn := true
+	d := NewDispatcher(p, k, func(*storage.Obfuscator, string) bool { return kernelOn }, nil)
+	ctx := context.Background()
+	start := func(o *storage.Obfuscator) {
+		t.Helper()
+		if err := d.Start(ctx, "a", o, "198.51.100.1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	start(phobosObf)
+	stopsAfterFirst := p.stops
+	start(phobosObf)
+	if k.starts != 1 {
+		t.Fatalf("ядро пробовали повторно при той же конфигурации: %d", k.starts)
+	}
+	if p.stops != stopsAfterFirst || !p.alive["a"] {
+		t.Fatal("живой процессный релей погашен ради заведомо неудачной попытки ядра")
+	}
+
+	changed := *phobosObf
+	changed.MaxDummy++
+	start(&changed)
+	if k.starts != 2 {
+		t.Fatalf("смена конфигурации не дала новой попытки ядра: %d", k.starts)
+	}
+
+	kernelOn = false
+	start(&changed)
+	kernelOn = true
+	start(&changed)
+	if k.starts != 3 {
+		t.Fatalf("выключатель процесс→ядро не дал новой попытки: %d", k.starts)
 	}
 }
 

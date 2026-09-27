@@ -2,6 +2,7 @@ package obfuscator
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -32,15 +33,30 @@ type Dispatcher struct {
 	log             *logging.ScopedLogger
 	mu              sync.Mutex
 	chosen          map[string]Relay
+	// kernelFailed — снимок (параметры + IP), на котором ядро отказало (F488).
+	// Пока он тот же, ядро не пробуем: иначе каждый Start гасил бы живой
+	// процесс ради заведомо неудачной попытки. Только в памяти.
+	// ponytail: освободившийся слот ядра подхватится лишь при смене
+	// параметров/выключателя или рестарте демона.
+	kernelFailed map[string]string
 }
 
 func NewDispatcher(process, kernel Relay, useKernel func(o *storage.Obfuscator, ip string) bool, log *logging.ScopedLogger) *Dispatcher {
-	return &Dispatcher{process: process, kernel: kernel, useKernel: useKernel, log: log, chosen: map[string]Relay{}}
+	return &Dispatcher{process: process, kernel: kernel, useKernel: useKernel, log: log, chosen: map[string]Relay{}, kernelFailed: map[string]string{}}
 }
 
 func (d *Dispatcher) Start(ctx context.Context, tunnelID string, o *storage.Obfuscator, ip string) error {
 	want, other := d.process, d.kernel
-	if d.kernel != nil && d.useKernel(o, ip) {
+	sig := fmt.Sprintf("%+v|%s", *o, ip)
+	useKernel := d.kernel != nil && d.useKernel(o, ip)
+	d.mu.Lock()
+	if !useKernel {
+		delete(d.kernelFailed, tunnelID) // выключатель на процессе: следующее «ядро» — с чистого листа
+	} else if d.kernelFailed[tunnelID] == sig {
+		useKernel = false
+	}
+	d.mu.Unlock()
+	if useKernel {
 		want, other = d.kernel, d.process
 	}
 	if other != nil {
@@ -52,6 +68,9 @@ func (d *Dispatcher) Start(ctx context.Context, tunnelID string, o *storage.Obfu
 			d.log.Warn("obfuscator", tunnelID, "kernel-релей не поднялся: "+err.Error()+" — работаем процессом")
 		}
 		_ = d.kernel.Stop(tunnelID)
+		d.mu.Lock()
+		d.kernelFailed[tunnelID] = sig
+		d.mu.Unlock()
 		want = d.process
 		err = want.Start(ctx, tunnelID, o, ip)
 	}
@@ -60,6 +79,9 @@ func (d *Dispatcher) Start(ctx context.Context, tunnelID string, o *storage.Obfu
 	}
 	d.mu.Lock()
 	d.chosen[tunnelID] = want
+	if want == d.kernel {
+		delete(d.kernelFailed, tunnelID)
+	}
 	d.mu.Unlock()
 	return nil
 }
