@@ -64,6 +64,16 @@ func (s *Service) rollbackAddedPeer(ctx context.Context, iface, pubKey, name str
 	}
 }
 
+// remoteSubnetsVsLANSegments — ACL сервера с LANSegments пропускает в LAN только
+// источник из подсети сервера (resolveLANSegmentsPlan): трафик из сетей за
+// клиентом роутер отбросит. Отказ до RCI вместо молча неработающей настройки.
+func remoteSubnetsVsLANSegments(server *storage.ManagedServer, remote []string) error {
+	if len(remote) > 0 && len(server.LANSegments) > 0 {
+		return fmt.Errorf("%w: недоступны при ограничении доступа к LAN-сегментам — снимите ограничение", peersubnet.ErrInvalidRemoteSubnets)
+	}
+	return nil
+}
+
 // AddPeer adds a new client peer to the managed server identified by id.
 // Returns the created peer (including private key for .conf generation).
 func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*storage.ManagedPeer, error) {
@@ -97,6 +107,9 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 	req.DNS = dns
 	clientAllowed, err := peersubnet.ValidateClientAllowedIPs(req.ClientAllowedIPs)
 	if err != nil {
+		return nil, err
+	}
+	if err := remoteSubnetsVsLANSegments(server, req.RemoteSubnets); err != nil {
 		return nil, err
 	}
 	// Check tunnel IP not already used
@@ -232,6 +245,9 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 	if err != nil {
 		return err
 	}
+	if err := remoteSubnetsVsLANSegments(server, req.RemoteSubnets); err != nil {
+		return err
+	}
 	sigProfile := ""
 	if req.Signature != nil {
 		var err error
@@ -305,18 +321,23 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		}
 	}
 
+	// Хранилище не пишется — /32 на роутере обязан вернуться к записанному,
+	// иначе .conf выдаст адрес, которого у пира нет.
+	revertTunnelIP := func(rbCtx context.Context, after string) {
+		if !wantTunnelChange || oldIPStr == "" {
+			return
+		}
+		if rbErr := s.rciUpdatePeerAllowIPs(rbCtx, iface, pubkey, newIPStr, oldIPStr); rbErr != nil {
+			s.appLog.Warn("update-peer", req.Description, "tunnel IP не возвращён после "+after+": "+rbErr.Error())
+		}
+	}
+
 	if len(added)+len(removed) > 0 {
 		if err := peersubnet.Apply(ctx, router, iface, pubkey, added, removed); err != nil {
 			s.logRollback("update-peer", req.Description, err)
-			// Хранилище не пишется — /32 на роутере обязан вернуться к записанному,
-			// иначе .conf выдаст адрес, которого у пира нет.
-			if wantTunnelChange && oldIPStr != "" {
-				rbCtx, cancel := detachedCtx(ctx)
-				if rbErr := s.rciUpdatePeerAllowIPs(rbCtx, iface, pubkey, newIPStr, oldIPStr); rbErr != nil {
-					s.appLog.Warn("update-peer", req.Description, "tunnel IP не возвращён после отказа сетей за клиентом: "+rbErr.Error())
-				}
-				cancel()
-			}
+			rbCtx, cancel := detachedCtx(ctx)
+			revertTunnelIP(rbCtx, "отказа сетей за клиентом")
+			cancel()
 			return fmt.Errorf("apply remote subnets: %w", err)
 		}
 	}
@@ -350,6 +371,16 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		}
 		return nil
 	}); err != nil {
+		// Роутер ушёл вперёд записи: вернуть сети и /32 к записанному (паритет с
+		// системным путём), иначе следующий Diff от хранилища их не увидит.
+		rbCtx, cancel := detachedCtx(ctx)
+		if len(added)+len(removed) > 0 {
+			if rbErr := peersubnet.Apply(rbCtx, router, iface, pubkey, removed, added); rbErr != nil {
+				s.appLog.Warn("update-peer", req.Description, "сети за клиентом не возвращены после отказа записи: "+rbErr.Error())
+			}
+		}
+		revertTunnelIP(rbCtx, "отказа записи")
+		cancel()
 		return fmt.Errorf("save to storage: %w", err)
 	}
 

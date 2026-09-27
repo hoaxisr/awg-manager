@@ -319,3 +319,75 @@ func TestAddPeer_StoreFailure_RemovesSubnetsAndPeer(t *testing.T) {
 		t.Fatalf("store = %+v", sv.Peers)
 	}
 }
+
+// Final review I2: ACL сервера с LANSegments пропускает только подсеть сервера —
+// сети за клиентом отвергаются до RCI; снять уже стоящие — можно.
+func TestPeer_RemoteSubnetsRejectedWithLANSegments(t *testing.T) {
+	svc, store, poster, _ := newPeerSubnetTestService(t, rcOurs77)
+	seedPeer(t, store, "192.168.77.0/24")
+	if err := store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
+		sv.LANSegments = []string{"Home"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_, err := svc.AddPeer(ctx, "Wireguard1", AddPeerRequest{Description: "x", TunnelIP: "10.66.66.3/32", RemoteSubnets: []string{"192.168.78.0/24"}})
+	if !errors.Is(err, peersubnet.ErrInvalidRemoteSubnets) || !strings.Contains(err.Error(), "LAN-сегмент") {
+		t.Fatalf("add: err = %v", err)
+	}
+	err = svc.UpdatePeer(ctx, "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: []string{"192.168.78.0/24"}})
+	if !errors.Is(err, peersubnet.ErrInvalidRemoteSubnets) {
+		t.Fatalf("update: err = %v", err)
+	}
+	if posts := postsJSON(poster); len(posts) != 0 {
+		t.Fatalf("RCI дёрнут при отказе:\n%s", strings.Join(posts, "\n"))
+	}
+	if err := svc.UpdatePeer(ctx, "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32"}); err != nil {
+		t.Fatalf("снятие сетей отвергнуто: %v", err)
+	}
+	if sv, _ := store.GetManagedServerByID("Wireguard1"); len(sv.Peers[0].RemoteSubnets) != 0 {
+		t.Fatalf("store = %v", sv.Peers[0].RemoteSubnets)
+	}
+}
+
+// Final review I4: Apply прошёл, запись отказала — сети и /32 на роутере
+// возвращаются к записанному (паритет с системным путём).
+func TestUpdatePeer_StoreFailure_RevertsSubnetsAndTunnelIP(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	seedPeer(t, store)
+	poster.onPost = func(m map[string]interface{}) {
+		b, _ := json.Marshal(m)
+		if !strings.Contains(string(b), `"comment":"awgm-peer:PEER1"`) {
+			return
+		}
+		// Маршрут встал, а пира параллельно удалили из хранилища — мутатор откажет.
+		fg.SetJSON("/show/rc/ip/route", rcOurs77)
+		_ = store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
+			sv.Peers = nil
+			return nil
+		})
+	}
+	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.3/32", RemoteSubnets: []string{"192.168.77.0/24"}})
+	if err == nil || !strings.Contains(err.Error(), "save to storage") {
+		t.Fatalf("err = %v", err)
+	}
+	posts := postsJSON(poster)
+	const (
+		old32    = `"allow-ips":[{"address":"10.66.66.2","mask":"255.255.255.255"}]`
+		new32Off = `"allow-ips":[{"address":"10.66.66.3","mask":"255.255.255.255","no":true}]`
+		routeOff = `"route":{"interface":"Wireguard1","mask":"255.255.255.0","network":"192.168.77.0","no":true}`
+	)
+	iRoute := indexOf(posts, `"comment":"awgm-peer:PEER1"`)
+	after := func(sub string) int {
+		for i := iRoute + 1; i < len(posts); i++ {
+			if strings.Contains(posts[i], sub) {
+				return i
+			}
+		}
+		return -1
+	}
+	if iRoute < 0 || after(allow77Off) < 0 || after(routeOff) < 0 || after(new32Off) < 0 || after(old32) < 0 {
+		t.Fatalf("роутер не возвращён к записанному:\n%s", strings.Join(posts, "\n"))
+	}
+}
