@@ -363,7 +363,8 @@ func (a *app) setupRouter() {
 		logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSingboxRouter).
 			Warn("reserve-ports", "", "зарезервировать порты инбаундов: "+err.Error())
 	}
-	bindableAdapter := &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces, nativeProxies: a.singboxOp.ListNativeProxies}
+	bindableAdapter := &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces, nativeProxies: a.singboxOp.ListNativeProxies,
+		foreign: a.settingsStore.GetForeignInterfaces, sysNet: "/sys/class/net"}
 	routerSvc := router.NewService(router.Deps{
 		AppLog:                 a.loggingService,
 		Settings:               a.settingsStore,
