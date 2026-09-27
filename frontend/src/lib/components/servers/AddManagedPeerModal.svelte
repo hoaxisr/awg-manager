@@ -2,7 +2,8 @@
 	import type { ManagedServer } from '$lib/types';
 	import { Modal, FormToggle, Button, FieldHint } from '$lib/components/ui';
 	import { routerDnsHint } from './routerDnsHint';
-	import { validateTunnelIP, validateDNSList } from '$lib/utils/peerForm';
+	import { validateTunnelIP, validateDNSList, validatePeerNetworks, parseRemoteSubnets } from '$lib/utils/peerForm';
+	import PeerNetworksFields from './PeerNetworksFields.svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { suggestNextPeerIP } from '$lib/utils/serverPeerOptions';
@@ -22,6 +23,8 @@
 	let tunnelIP = $state('');
 	let dns = $state('');
 	let useRouterDNS = $state(false);
+	let clientAllowedIPs = $state('');
+	let remoteSubnets = $state('');
 	let adding = $state(false);
 	let wasOpen = $state(false);
 
@@ -41,18 +44,23 @@
 			initialDns = '';
 			useRouterDNS = false;
 			initialUseRouterDNS = false;
+			clientAllowedIPs = '';
+			remoteSubnets = '';
 		}
 		wasOpen = open;
 	});
 
 	const ipError = $derived(validateTunnelIP(tunnelIP));
 	const dnsError = $derived(validateDNSList(dns));
+	const netError = $derived(validatePeerNetworks(clientAllowedIPs, remoteSubnets));
 
 	const isDirty = $derived(
 		description !== initialDescription ||
 		tunnelIP !== initialTunnelIP ||
 		dns !== initialDns ||
-		useRouterDNS !== initialUseRouterDNS
+		useRouterDNS !== initialUseRouterDNS ||
+		clientAllowedIPs !== '' ||
+		remoteSubnets !== ''
 	);
 
 	function suggestNextIP(): string {
@@ -65,7 +73,13 @@
 	async function handleAdd() {
 		adding = true;
 		try {
-			await api.addManagedPeer(serverId, { description, tunnelIP, dns: dns || undefined });
+			await api.addManagedPeer(serverId, {
+				description,
+				tunnelIP,
+				dns: dns || undefined,
+				clientAllowedIPs,
+				remoteSubnets: parseRemoteSubnets(remoteSubnets)
+			});
 			notifications.success('Клиент добавлен');
 			onclose();
 			onAdded();
@@ -107,11 +121,17 @@
 				<span class="hint-text">Пусто — DNS роутера</span>
 			{/if}
 		</div>
+		<PeerNetworksFields
+			bind:clientAllowedIPs
+			bind:remoteSubnets
+			idPrefix="amp"
+			loadPresets={() => api.getManagedPeerPresets(serverId, dns)}
+		/>
 	</div>
 
 	{#snippet actions()}
 		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
-		<Button variant="primary" size="md" onclick={handleAdd} disabled={adding || !!ipError || !!dnsError} loading={adding}>
+		<Button variant="primary" size="md" onclick={handleAdd} disabled={adding || !!ipError || !!dnsError || !!netError} loading={adding}>
 			Добавить
 		</Button>
 	{/snippet}

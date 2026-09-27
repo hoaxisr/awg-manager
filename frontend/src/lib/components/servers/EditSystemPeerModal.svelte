@@ -8,7 +8,9 @@
 	import { servers } from '$lib/stores/servers';
 	import { FieldHint, FormToggle } from '$lib/components/ui';
 	import { routerDnsHint } from './routerDnsHint';
-	import { validateDNSList } from '$lib/utils/peerForm';
+	import { validateDNSList, validatePeerNetworks, parseRemoteSubnets } from '$lib/utils/peerForm';
+	import { systemPeerTunnelIP } from '$lib/utils/serverPeerOptions';
+	import PeerNetworksFields from './PeerNetworksFields.svelte';
 
 	interface Props {
 		open: boolean;
@@ -30,17 +32,13 @@
 	// Правило то же, что у managed-модалок: отказ у поля, а не английской
 	// фразой с бэкенда.
 	const dnsError = $derived(validateDNSList(dns));
+	let clientAllowedIPs = $state('');
+	let remoteSubnets = $state('');
+	const netError = $derived(validatePeerNetworks(clientAllowedIPs, remoteSubnets));
 	let saving = $state(false);
 	let wasOpen = $state(false);
 	let sigProfile = $state<ProtocolKey | ''>('');
 	let sigPackets = $state<SignaturePackets>({ i1: '', i2: '', i3: '', i4: '', i5: '' });
-
-	function peerTunnelIP(p: WireguardServerPeer): string {
-		const raw = p.allowedIPs?.find((ip) => ip.includes('/32')) || p.allowedIPs?.[0] || '';
-		if (!raw) return '';
-		if (raw.includes('/')) return raw;
-		return `${raw}/32`;
-	}
 
 	function peerProfile(): ProtocolKey | '' {
 		const p = peer.signatureProfile ?? '';
@@ -60,11 +58,13 @@
 	$effect(() => {
 		if (open && !wasOpen) {
 			description = peer.description;
-			tunnelIP = peerTunnelIP(peer);
+			tunnelIP = systemPeerTunnelIP(peer);
 			dns = peer.dns ?? '';
 			useRouterDNS = routerIP !== '' && dns === routerIP;
 			sigProfile = peerProfile();
 			sigPackets = peerPackets();
+			clientAllowedIPs = peer.clientAllowedIPs ?? '';
+			remoteSubnets = (peer.remoteSubnets ?? []).join('\n');
 		}
 		wasOpen = open;
 	});
@@ -86,6 +86,8 @@
 				description,
 				tunnelIP,
 				dns,
+				clientAllowedIPs,
+				remoteSubnets: parseRemoteSubnets(remoteSubnets),
 				signature: sigDirty ? { profile: sigProfile, ...sigPackets } : undefined,
 			});
 			servers.applyMutationResponse(fresh);
@@ -140,6 +142,13 @@
 				<span class="hint-text">Пусто — DNS роутера</span>
 			{/if}
 		</div>
+		<PeerNetworksFields
+			bind:clientAllowedIPs
+			bind:remoteSubnets
+			disabled={!peer.confAvailable}
+			idPrefix="esp"
+			loadPresets={() => api.getSystemServerPeerPresets(serverId, dns)}
+		/>
 		<!-- Сигнатуре негде жить без локального ключа клиента: пир заведён вне
 		     AWG Manager, и бэкенд такую правку отвергает (NO_PEER_SECRET). -->
 		{#if peer.confAvailable}
@@ -153,7 +162,7 @@
 
 	{#snippet actions()}
 		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
-		<Button variant="primary" size="md" onclick={handleSave} loading={saving} disabled={saving || sigOver || !!dnsError}>
+		<Button variant="primary" size="md" onclick={handleSave} loading={saving} disabled={saving || sigOver || !!dnsError || !!netError}>
 			Сохранить
 		</Button>
 	{/snippet}

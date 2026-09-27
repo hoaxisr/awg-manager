@@ -4,10 +4,11 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
-	import { suggestNextPeerIP } from '$lib/utils/serverPeerOptions';
+	import { suggestNextPeerIP, hostIP, systemPeerTunnelIP } from '$lib/utils/serverPeerOptions';
 	import { FieldHint, FormToggle } from '$lib/components/ui';
 	import { routerDnsHint } from './routerDnsHint';
-	import { validateDNSList } from '$lib/utils/peerForm';
+	import { validateDNSList, validatePeerNetworks, parseRemoteSubnets } from '$lib/utils/peerForm';
+	import PeerNetworksFields from './PeerNetworksFields.svelte';
 
 	interface Props {
 		open: boolean;
@@ -30,16 +31,14 @@
 	// Правило то же, что у managed-модалок: отказ показывается у поля, а не
 	// прилетает с бэкенда английской фразой.
 	const dnsError = $derived(validateDNSList(dns));
+	let clientAllowedIPs = $state('');
+	let remoteSubnets = $state('');
+	const netError = $derived(validatePeerNetworks(clientAllowedIPs, remoteSubnets));
 	let adding = $state(false);
 	let wasOpen = $state(false);
 
-	function peerHostIP(p: { allowedIPs?: string[] }): string {
-		const raw = p.allowedIPs?.find((ip) => ip.includes('/32')) || p.allowedIPs?.[0] || '';
-		return raw.replace(/\/(32|128)$/, '');
-	}
-
 	function suggestNextIP(): string {
-		return suggestNextPeerIP(server.address, (server.peers ?? []).map(peerHostIP));
+		return suggestNextPeerIP(server.address, (server.peers ?? []).map((p) => hostIP(systemPeerTunnelIP(p))));
 	}
 
 	$effect(() => {
@@ -48,6 +47,8 @@
 			tunnelIP = suggestNextIP();
 			dns = '';
 			useRouterDNS = false;
+			clientAllowedIPs = '';
+			remoteSubnets = '';
 		}
 		wasOpen = open;
 	});
@@ -55,7 +56,13 @@
 	async function handleAdd() {
 		adding = true;
 		try {
-			const fresh = await api.addSystemServerPeer(serverId, { description, tunnelIP, dns });
+			const fresh = await api.addSystemServerPeer(serverId, {
+				description,
+				tunnelIP,
+				dns,
+				clientAllowedIPs,
+				remoteSubnets: parseRemoteSubnets(remoteSubnets)
+			});
 			servers.applyMutationResponse(fresh);
 			notifications.success('Клиент добавлен');
 			onclose();
@@ -108,6 +115,12 @@
 				<span class="hint-text">Пусто — DNS роутера</span>
 			{/if}
 		</div>
+		<PeerNetworksFields
+			bind:clientAllowedIPs
+			bind:remoteSubnets
+			idPrefix="ssp"
+			loadPresets={() => api.getSystemServerPeerPresets(serverId, dns)}
+		/>
 	</div>
 
 	{#snippet actions()}
@@ -117,7 +130,7 @@
 			size="md"
 			onclick={handleAdd}
 			loading={adding}
-			disabled={!tunnelIP || !!dnsError}
+			disabled={!tunnelIP || !!dnsError || !!netError}
 		>
 			Добавить
 		</Button>

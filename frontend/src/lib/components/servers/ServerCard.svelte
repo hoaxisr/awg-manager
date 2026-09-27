@@ -15,6 +15,7 @@
 	import { peerSort } from '$lib/stores/peerSort';
 	import { maskToPrefix, resolveNatMode } from '$lib/utils/network';
 	import { countActiveSystemPeers } from '$lib/utils/serverPeerActivity';
+	import { systemPeerTunnelIP } from '$lib/utils/serverPeerOptions';
 	import { patchSystemServerEnabledInSnapshot, systemServerIsUp } from '$lib/utils/systemServerState';
 	import {
 		PeerSortControls,
@@ -90,19 +91,13 @@
 	let totalRx = $derived((server.peers ?? []).reduce((sum, p) => sum + p.rxBytes, 0));
 	let totalTx = $derived((server.peers ?? []).reduce((sum, p) => sum + p.txBytes, 0));
 
-	function peerTunnelIP(p: WireguardServerPeer): string {
-		const raw = p.allowedIPs?.find((ip) => ip.includes('/32')) || p.allowedIPs?.[0] || '';
-		if (!raw) return '';
-		return raw.includes('/') ? raw : `${raw}/32`;
-	}
-
 	function toManagedPeer(p: WireguardServerPeer): ManagedPeer {
 		return {
 			publicKey: p.publicKey,
 			privateKey: '',
 			presharedKey: '',
 			description: p.description,
-			tunnelIP: peerTunnelIP(p),
+			tunnelIP: systemPeerTunnelIP(p),
 			enabled: p.enabled,
 		};
 	}
@@ -127,7 +122,7 @@
 			peers = peers.filter(
 				(p) =>
 					(p.description || '').toLowerCase().includes(q) ||
-					peerTunnelIP(p).toLowerCase().includes(q)
+					systemPeerTunnelIP(p).toLowerCase().includes(q)
 			);
 		}
 		const sortBy = $peerSort.sortBy;
@@ -139,7 +134,7 @@
 				return comparePeerFieldsDirected(
 					{
 						name: a.description || a.publicKey,
-						ip: peerTunnelIP(a),
+						ip: systemPeerTunnelIP(a),
 						endpoint: sa?.endpoint || '-',
 						rxBytes: sa?.rxBytes ?? null,
 						txBytes: sa?.txBytes ?? null,
@@ -148,7 +143,7 @@
 					},
 					{
 						name: b.description || b.publicKey,
-						ip: peerTunnelIP(b),
+						ip: systemPeerTunnelIP(b),
 						endpoint: sb?.endpoint || '-',
 						rxBytes: sb?.rxBytes ?? null,
 						txBytes: sb?.txBytes ?? null,

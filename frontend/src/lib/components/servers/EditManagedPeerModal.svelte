@@ -4,7 +4,8 @@
 	import { protocols, calcTotalChars, MAX_SIGNATURE_CHARS, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
 	import PeerSignatureEditor from './PeerSignatureEditor.svelte';
 	import { routerDnsHint } from './routerDnsHint';
-	import { validateTunnelIP, validateDNSList } from '$lib/utils/peerForm';
+	import { validateTunnelIP, validateDNSList, validatePeerNetworks, parseRemoteSubnets } from '$lib/utils/peerForm';
+	import PeerNetworksFields from './PeerNetworksFields.svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
@@ -24,6 +25,8 @@
 	let tunnelIP = $state('');
 	let dns = $state('');
 	let useRouterDNS = $state(false);
+	let clientAllowedIPs = $state('');
+	let remoteSubnets = $state('');
 	let saving = $state(false);
 	let wasOpen = $state(false);
 	let sigProfile = $state<ProtocolKey | ''>('');
@@ -52,6 +55,8 @@
 			useRouterDNS = routerIP !== '' && dns === routerIP;
 			sigProfile = peerProfile();
 			sigPackets = peerPackets();
+			clientAllowedIPs = peer.clientAllowedIPs ?? '';
+			remoteSubnets = (peer.remoteSubnets ?? []).join('\n');
 		}
 		wasOpen = open;
 	});
@@ -67,12 +72,15 @@
 	const sigOver = $derived(calcTotalChars(sigPackets) > MAX_SIGNATURE_CHARS);
 	const ipError = $derived(validateTunnelIP(tunnelIP));
 	const dnsError = $derived(validateDNSList(dns));
+	const netError = $derived(validatePeerNetworks(clientAllowedIPs, remoteSubnets));
 
 	const isDirty = $derived(
 		description !== peer.description ||
 		tunnelIP !== peer.tunnelIP ||
 		dns !== (peer.dns || '') ||
 		useRouterDNS !== (routerIP !== '' && (peer.dns || '') === routerIP) ||
+		clientAllowedIPs !== (peer.clientAllowedIPs ?? '') ||
+		remoteSubnets !== (peer.remoteSubnets ?? []).join('\n') ||
 		sigDirty
 	);
 
@@ -83,6 +91,8 @@
 				description,
 				tunnelIP,
 				dns: dns || undefined,
+				clientAllowedIPs,
+				remoteSubnets: parseRemoteSubnets(remoteSubnets),
 				signature: sigDirty ? { profile: sigProfile, ...sigPackets } : undefined,
 			});
 			servers.applyMutationResponse(fresh);
@@ -123,6 +133,12 @@
 				<span class="field-hint">Используется в конфиге клиента. Пусто — DNS роутера</span>
 			{/if}
 		</div>
+		<PeerNetworksFields
+			bind:clientAllowedIPs
+			bind:remoteSubnets
+			idPrefix="emp"
+			loadPresets={() => api.getManagedPeerPresets(serverId, dns)}
+		/>
 		<PeerSignatureEditor
 			profile={sigProfile}
 			packets={sigPackets}
@@ -132,7 +148,7 @@
 
 	{#snippet actions()}
 		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
-		<Button variant="primary" size="md" onclick={handleSave} loading={saving} disabled={saving || sigOver || !!ipError || !!dnsError}>
+		<Button variant="primary" size="md" onclick={handleSave} loading={saving} disabled={saving || sigOver || !!ipError || !!dnsError || !!netError}>
 			Сохранить
 		</Button>
 	{/snippet}

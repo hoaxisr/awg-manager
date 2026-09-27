@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, fireEvent } from '@testing-library/svelte';
+import { render, fireEvent, waitFor } from '@testing-library/svelte';
 import AddManagedPeerModal from './AddManagedPeerModal.svelte';
+import { api } from '$lib/api/client';
 import type { ManagedServer } from '$lib/types';
 
-vi.mock('$lib/api/client', () => ({ api: { addManagedPeer: vi.fn() } }));
+vi.mock('$lib/api/client', () => ({ api: { addManagedPeer: vi.fn(), getManagedPeerPresets: vi.fn() } }));
 vi.mock('$lib/stores/notifications', () => ({ notifications: { success: vi.fn(), error: vi.fn() } }));
 
 function baseServer(over: Partial<ManagedServer> = {}): ManagedServer {
@@ -38,5 +39,38 @@ describe('AddManagedPeerModal', () => {
 		await fireEvent.input(ipInput, { target: { value: '10.0.0.2/32' } });
 		expect(addButton().disabled).toBe(false);
 		expect(baseElement.querySelector('.field-hint.is-error')).toBeFalsy();
+	});
+});
+
+describe('AddManagedPeerModal: сети клиента', () => {
+	it('пресет «Всё, кроме сетей роутера» подставляет exceptRouter, тело содержит сети', async () => {
+		vi.mocked(api.getManagedPeerPresets).mockResolvedValue({
+			routerOnly: '10.8.0.0/24',
+			exceptRouter: '0.0.0.0/5, 8.0.0.0/7, ::/0'
+		});
+		vi.mocked(api.addManagedPeer).mockResolvedValue(
+			{} as Awaited<ReturnType<typeof api.addManagedPeer>>
+		);
+		const { getByText, getByLabelText } = render(AddManagedPeerModal, {
+			open: true,
+			serverId: 'srv',
+			server: baseServer(),
+			onclose: vi.fn(),
+			onAdded: vi.fn(),
+		});
+
+		await fireEvent.click(getByText('Всё, кроме сетей роутера'));
+		await waitFor(() =>
+			expect((getByLabelText('AllowedIPs клиента') as HTMLInputElement).value).toBe(
+				'0.0.0.0/5, 8.0.0.0/7, ::/0'
+			)
+		);
+		expect(api.getManagedPeerPresets).toHaveBeenCalledWith('srv', '');
+
+		await fireEvent.click(getByText('Добавить'));
+		expect(api.addManagedPeer).toHaveBeenCalledWith(
+			'srv',
+			expect.objectContaining({ clientAllowedIPs: '0.0.0.0/5, 8.0.0.0/7, ::/0', remoteSubnets: [] })
+		);
 	});
 });
