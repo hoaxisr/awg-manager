@@ -3,12 +3,14 @@
 	import { X } from 'lucide-svelte';
 	import type { SegmentedOption } from '$lib/components/ui/segmentedControl';
 	import SingboxSettingsModal from './SingboxSettingsModal.svelte';
+	import ForeignIfacePanel from './ForeignIfacePanel.svelte';
 	import type { SingboxRouterOutbound, SingboxRouterWANInterface } from '$lib/types';
 	import type { OutboundGroup } from './outboundOptions';
 	import { isSubscriptionOutbound } from '$lib/components/sb-router/outboundLabel';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { resolveMemberLabel } from '$lib/utils/memberLabel';
 	import { api } from '$lib/api/client';
+	import { bindInterfaceLabel } from '$lib/utils/bindInterface';
 
 	// Only urltest and selector are offered for new groups — `loadbalance`
 	// was removed in sing-box 1.13+ and FATALs on startup if present. Legacy
@@ -45,15 +47,20 @@
 	let bindInterface = $state(outbound?.bind_interface ?? '');
 	let bindables = $state<SingboxRouterWANInterface[]>([]);
 	let bindablesLoading = $state(true);
-	$effect(() => {
-		void api.singboxRouterListBindableInterfaces()
+	function loadBindables(): Promise<void> {
+		return api.singboxRouterListBindableInterfaces()
 			.then((l) => { bindables = l; })
 			.catch(() => { bindables = []; })
 			.finally(() => { bindablesLoading = false; });
-	});
+	}
+	$effect(() => { void loadBindables(); });
 	const bindableOptions = $derived<DropdownOption[]>(
-		bindables.map((i) => ({ value: i.name, label: `${i.label} · ${i.name}${i.up ? '' : ' (down)'}` }))
+		bindables.map((i) => ({ value: i.name, label: bindInterfaceLabel(i), group: i.foreign ? 'Сторонние' : undefined }))
 	);
+	async function onForeignPicked(name: string): Promise<void> {
+		await loadBindables();
+		bindInterface = name;
+	}
 
 	let busy = $state(false);
 	let error = $state('');
@@ -332,6 +339,7 @@
 					disabled={bindablesLoading || bindables.length === 0}
 					fullWidth
 				/>
+				<ForeignIfacePanel onpicked={onForeignPicked} />
 			</div>
 		{/if}
 
