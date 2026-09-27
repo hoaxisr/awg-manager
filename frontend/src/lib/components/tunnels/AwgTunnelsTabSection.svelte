@@ -648,7 +648,7 @@
 						<div class="awg-list-cell awg-list-cell-actions awg-ext-actions">
 							<!-- Короткая надпись: полная не влезала в колонку действий и
 							     вылезала за неё на узких экранах. Смысл — в title. -->
-							{#if tunnel.isAWG}
+							{#if tunnel.isAWG && !tunnel.foreign}
 								<Button
 									variant="primary"
 									size="sm"

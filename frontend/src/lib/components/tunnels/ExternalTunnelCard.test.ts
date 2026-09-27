@@ -32,6 +32,23 @@ describe('ExternalTunnelCard — сторонний', () => {
 		}
 	});
 
+	// Сервер отказывает в приёме отмеченного (ErrAdoptForeign) — кнопку
+	// не показываем, даже если интерфейс AWG.
+	it('hides adopt for marked AWG, in every view', () => {
+		for (const view of ['cards', 'compact', 'list'] as const) {
+			const { unmount } = render(ExternalTunnelCard, {
+				tunnel: { ...foreign, isAWG: true }, view, onadopt: vi.fn(), onunmark: vi.fn(),
+			});
+			expect(screen.queryByText('Взять под управление')).toBeNull();
+			unmount();
+		}
+	});
+
+	it('unmarked AWG keeps adopt', () => {
+		render(ExternalTunnelCard, { tunnel: { ...foreign, isAWG: true, foreign: false }, onadopt: vi.fn() });
+		expect(screen.getByText('Взять под управление')).toBeTruthy();
+	});
+
 	it('unmarked removable tunnel keeps delete, no badge', () => {
 		render(ExternalTunnelCard, { tunnel: { ...foreign, foreign: false, removable: true }, ondelete: vi.fn() });
 		expect(screen.getByText('Удалить')).toBeTruthy();
