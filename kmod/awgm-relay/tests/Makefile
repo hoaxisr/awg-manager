@@ -10,15 +10,21 @@ SRC    := ../src
 .PHONY: all test compat clean
 all: test
 
-test: test_phobos test_config
+test: test_phobos test_config test_transform
 	./test_phobos
 	./test_config
+	./test_transform
 
 test_phobos: test_phobos.c $(SRC)/phobos.c $(SRC)/phobos.h
 	$(CC) $(CFLAGS) -o $@ test_phobos.c $(SRC)/phobos.c
 
-test_config: test_config.c $(SRC)/config.c $(SRC)/config.h $(SRC)/phobos.c
-	$(CC) $(CFLAGS) -o $@ test_config.c $(SRC)/config.c $(SRC)/phobos.c
+TSRC := $(SRC)/config.c $(SRC)/transform.c $(SRC)/phobos_transform.c $(SRC)/phobos.c
+
+test_config: test_config.c $(TSRC) $(wildcard $(SRC)/*.h)
+	$(CC) $(CFLAGS) -o $@ test_config.c $(TSRC)
+
+test_transform: test_transform.c $(TSRC) $(wildcard $(SRC)/*.h)
+	$(CC) $(CFLAGS) -o $@ test_transform.c $(TSRC)
 
 compat: compat_phobos.c $(SRC)/phobos.c
 	@test -n "$(PHOBOS_SRC)" || { echo "PHOBOS_SRC не задан"; exit 1; }
@@ -26,4 +32,4 @@ compat: compat_phobos.c $(SRC)/phobos.c
 	./compat_phobos
 
 clean:
-	rm -f test_phobos test_config compat_phobos
+	rm -f test_phobos test_config test_transform compat_phobos

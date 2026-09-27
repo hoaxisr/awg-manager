@@ -1,5 +1,6 @@
 tests/test_phobos
 tests/test_config
+tests/test_transform
 tests/compat_phobos
 out/awgm-relay-build.log
 src/*.o

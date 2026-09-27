@@ -8,18 +8,7 @@
 #ifndef AWGMR_PHOBOS_H
 #define AWGMR_PHOBOS_H
 
-#ifdef __KERNEL__
-#include <linux/types.h>
-#include <linux/errno.h>
-#include <linux/string.h>
-#else
-#include <stdint.h>
-#include <errno.h>
-#include <string.h>
-typedef uint8_t u8;
-typedef uint16_t u16;
-typedef uint32_t u32;
-#endif
+#include "common.h"
 
 #define AWGMR_KEY_MAX        255
 #define AWGMR_PAD_TOTAL_MAX  1024
@@ -34,12 +23,6 @@ enum awgmr_mask {
 	AWGMR_MASK_NONE = 0,
 	AWGMR_MASK_STUN,
 	AWGMR_MASK_MEDIA,
-};
-
-/* Источник случайности: в ядре — prandom_u32, в тестах — детерминированный. */
-struct awgmr_rng {
-	u32 (*next)(void *ctx);
-	void *ctx;
 };
 
 struct awgmr_phobos_cfg {

@@ -42,7 +42,7 @@ struct awgmr_relay {
 
 	struct task_struct *c2s_thread;
 	struct task_struct *s2c_thread;
-	u8 *c2s_buf;                  /* AWGMR_FRAME_MAX + AWGMR_PKT_MAX */
+	u8 *c2s_buf;                  /* AWGMR_HEADROOM_MAX + AWGMR_PKT_MAX */
 	u8 *s2c_buf;                  /* AWGMR_PKT_MAX */
 
 	struct sk_buff_head rx_queue;
@@ -50,11 +50,10 @@ struct awgmr_relay {
 
 	struct dst_cache tx_dst_cache;
 
-	struct delayed_work timer;    /* STUN keepalive, process-контекст */
+	struct delayed_work timer;    /* on_timer трансформации, process-контекст */
 	unsigned long timer_period;   /* jiffies; 0 = таймера нет */
-	bool hs_done;                 /* был type 2 в любом направлении */
 
-	struct awgmr_rtp_state rtp;   /* только c2s */
+	struct awgmr_tctx tctx;       /* контекст трансформации (priv = cfg.tpriv) */
 
 	bool active;
 } __aligned(8);

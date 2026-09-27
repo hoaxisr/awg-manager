@@ -119,6 +119,12 @@ static int relay_send_remote(struct awgmr_relay *r, const u8 *buf, int len)
 	return 0;
 }
 
+/* send_remote для трансформации (awgmr_tctx): служебка серверу. */
+static int send_remote_cb(void *relay, const u8 *buf, int len)
+{
+	return relay_send_remote(relay, buf, len);
+}
+
 static void relay_send_client(struct awgmr_relay *r, u8 *buf, int len)
 {
 	struct sockaddr_in to;
@@ -142,13 +148,15 @@ static void relay_send_client(struct awgmr_relay *r, u8 *buf, int len)
 static int c2s_thread_fn(void *data)
 {
 	struct awgmr_relay *r = data;
-	u8 *payload = r->c2s_buf + AWGMR_FRAME_MAX;
+	const struct awgmr_transform *t = r->cfg.t;
+	u8 *payload = r->c2s_buf + AWGMR_HEADROOM_MAX;
 
 	while (!kthread_should_stop()) {
 		struct msghdr msg = {};
 		struct kvec iov = { .iov_base = payload, .iov_len = AWGMR_PKT_MAX };
 		struct sockaddr_in from;
-		int n, out, hdr = 0;
+		int n, out;
+		u8 *start;
 
 		msg.msg_name = &from;
 		msg.msg_namelen = sizeof(from);
@@ -176,24 +184,12 @@ static int c2s_thread_fn(void *data)
 		r->has_client = true;
 		spin_unlock(&r->client_lock);
 
-		if (payload[0] == 2)
-			WRITE_ONCE(r->hs_done, true);   /* сервер инициировал — ответ WG */
-		if (payload[0] == 1 && r->cfg.phobos.mask != AWGMR_MASK_NONE) {
-			u8 req[AWGMR_STUN_REQ_LEN];
-
-			relay_send_remote(r, req, awgmr_stun_binding_request(req, &krng));
-		}
-
-		out = awgmr_encode(&r->cfg.phobos, payload, n, AWGMR_PKT_MAX, &krng);
+		out = t->encode(&r->tctx, payload, n, AWGMR_PKT_MAX, &start);
 		if (out < 0) {
 			atomic_inc(&r->parse_err);
 			continue;
 		}
-		if (r->cfg.phobos.mask == AWGMR_MASK_STUN)
-			hdr = awgmr_stun_frame(payload - AWGMR_STUN_HDR, out, &krng);
-		else if (r->cfg.phobos.mask == AWGMR_MASK_MEDIA)
-			hdr = awgmr_rtp_frame(payload - AWGMR_RTP_HDR, &r->rtp);
-		relay_send_remote(r, payload - hdr, out + hdr);
+		relay_send_remote(r, start, out);
 		/*
 		 * Ядро Keenetic без вытеснения (PREEMPT_NONE): при непрерывном входе
 		 * поток не доходит до точки планирования, softirq ушёл в ksoftirqd,
@@ -241,7 +237,7 @@ static int s2c_thread_fn(void *data)
 
 	while (!kthread_should_stop()) {
 		struct sk_buff *skb;
-		int n, off = 0, plen = 0, wg;
+		int n, off = 0, out;
 
 		wait_event_interruptible(r->rx_wait,
 			!skb_queue_empty(&r->rx_queue) || kthread_should_stop());
@@ -260,38 +256,17 @@ static int s2c_thread_fn(void *data)
 		atomic_inc(&r->rx_pkts);
 		atomic64_add(n, &r->rx_bytes);
 
-		switch (awgmr_unframe(r->cfg.phobos.mask, buf, n, &off, &plen)) {
-		case AWGMR_IN_DATA:
-			wg = awgmr_decode(&r->cfg.phobos, buf + off, plen);
-			if (wg < 0) {
-				atomic_inc(&r->parse_err);
-				break;
-			}
-			if (buf[off] == 2)
-				WRITE_ONCE(r->hs_done, true);
-			relay_send_client(r, buf + off, wg);
-			break;
-		case AWGMR_IN_BIND_REQ: {
-			u8 resp[AWGMR_STUN_OK_LEN];
-			u8 port[2] = { r->cfg.target_port >> 8, r->cfg.target_port & 0xFF };
-			int rl = awgmr_stun_binding_success(resp, buf, n, r->cfg.target_ip, port);
-
-			if (rl > 0)
-				relay_send_remote(r, resp, rl);
-			break;
-		}
-		case AWGMR_IN_BIND_OK:
-			break;
-		case AWGMR_IN_DROP:
+		out = r->cfg.t->decode(&r->tctx, buf, n, &off);
+		if (out < 0)
 			atomic_inc(&r->parse_err);
-			break;
-		}
+		else if (out > 0)
+			relay_send_client(r, buf + off, out);
 		cond_resched(); /* F472, см. c2s */
 	}
 	return 0;
 }
 
-/* ---- keepalive STUN: work взводится в add и перевзводит сам себя (§3.2) ---- */
+/* ---- таймер трансформации: work взводится в add и перевзводит сам себя (§3.2) ---- */
 
 static void timer_fn(struct work_struct *w)
 {
@@ -299,11 +274,8 @@ static void timer_fn(struct work_struct *w)
 
 	if (!READ_ONCE(r->active))
 		return;
-	if (READ_ONCE(r->hs_done)) {
-		u8 req[AWGMR_STUN_REQ_LEN];
-
-		relay_send_remote(r, req, awgmr_stun_binding_request(req, &krng));
-	}
+	if (r->cfg.t->on_timer)
+		r->cfg.t->on_timer(&r->tctx);
 	schedule_delayed_work(&r->timer, r->timer_period);
 }
 
@@ -420,15 +392,20 @@ int awgmr_relay_add(char *line)
 	skb_queue_head_init(&r->rx_queue);
 	init_waitqueue_head(&r->rx_wait);
 	INIT_DELAYED_WORK(&r->timer, timer_fn);
-	if (cfg.phobos.mask == AWGMR_MASK_STUN)
-		r->timer_period = 10 * HZ;
-	else if (cfg.phobos.mask == AWGMR_MASK_MEDIA)
-		r->timer_period = 5 * HZ;
-	if (cfg.phobos.mask == AWGMR_MASK_MEDIA)
-		awgmr_rtp_init(&r->rtp, &krng);
+	r->tctx.priv = r->cfg.tpriv;
+	r->tctx.rng = &krng;
+	r->tctx.send_remote = send_remote_cb;
+	r->tctx.relay = r;
+	memcpy(r->tctx.peer_ip, r->cfg.target_ip, 4);
+	r->tctx.peer_port[0] = r->cfg.target_port >> 8;
+	r->tctx.peer_port[1] = r->cfg.target_port & 0xFF;
+	if (r->cfg.t->timer_ms && r->cfg.t->timer_ms(r->cfg.tpriv))
+		r->timer_period = msecs_to_jiffies(r->cfg.t->timer_ms(r->cfg.tpriv));
+	if (r->cfg.t->init)
+		r->cfg.t->init(&r->tctx);
 
 	/* Буферы здесь, не в потоке: иначе отказ kmalloc — слот-зомби (§3.2). */
-	r->c2s_buf = kmalloc(AWGMR_FRAME_MAX + AWGMR_PKT_MAX, GFP_KERNEL);
+	r->c2s_buf = kmalloc(AWGMR_HEADROOM_MAX + AWGMR_PKT_MAX, GFP_KERNEL);
 	r->s2c_buf = kmalloc(AWGMR_PKT_MAX, GFP_KERNEL);
 	if (!r->c2s_buf || !r->s2c_buf) {
 		ret = -ENOMEM;
@@ -508,14 +485,16 @@ int awgmr_relay_list(char *buf, int buflen)
 	mutex_lock(&relay_mutex);
 	for (i = 0; i < AWGMR_MAX_RELAYS && len < buflen - 256; i++) {
 		struct awgmr_relay *r = &relays[i];
-		static const char *const masks[] = { "none", "stun", "media" };
+		char desc[64] = "";
 
 		if (!r->active)
 			continue;
+		if (r->cfg.t->describe)
+			r->cfg.t->describe(r->cfg.tpriv, desc, sizeof(desc));
 		len += snprintf(buf + len, buflen - len,
-			"127.0.0.1:%u %pI4:%u transform=phobos masking=%s rx=%lld tx=%lld rx_pkt=%d tx_pkt=%d parse_err=%d rxq_drop=%d trunc=%d\n",
+			"127.0.0.1:%u %pI4:%u transform=%s %s rx=%lld tx=%lld rx_pkt=%d tx_pkt=%d parse_err=%d rxq_drop=%d trunc=%d\n",
 			r->cfg.listen_port, r->cfg.target_ip, r->cfg.target_port,
-			masks[r->cfg.phobos.mask],
+			r->cfg.t->name, desc,
 			(long long)atomic64_read(&r->rx_bytes),
 			(long long)atomic64_read(&r->tx_bytes),
 			atomic_read(&r->rx_pkts), atomic_read(&r->tx_pkts),

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "config.h"
 
-static int parse_uint(const char *s, int max, int *out)
+int awgmr_parse_uint(const char *s, int max, int *out)
 {
 	long v = 0;
 
@@ -16,17 +16,6 @@ static int parse_uint(const char *s, int max, int *out)
 	}
 	*out = (int)v;
 	return 0;
-}
-
-static int hexval(char c)
-{
-	if (c >= '0' && c <= '9')
-		return c - '0';
-	if (c >= 'a' && c <= 'f')
-		return c - 'a' + 10;
-	if (c >= 'A' && c <= 'F')
-		return c - 'A' + 10;
-	return -1;
 }
 
 /* "A.B.C.D:PORT" */
@@ -47,7 +36,7 @@ static int parse_ip4_port(const char *s, u8 ip[4], u16 *port)
 		if (*s++ != (i < 3 ? '.' : ':'))
 			return -EINVAL;
 	}
-	if (parse_uint(s, 65535, &p) || p == 0)
+	if (awgmr_parse_uint(s, 65535, &p) || p == 0)
 		return -EINVAL;
 	*port = (u16)p;
 	return 0;
@@ -81,10 +70,16 @@ static char *next_tok(char **p)
 	return t;
 }
 
+#define AWGMR_TOKENS_MAX 16
+
+/*
+ * Позиционные: 127.0.0.1:PORT и A.B.C.D:PORT; затем key=value в любом
+ * порядке. transform= выбирает трансформацию, остальные ключи — её (parse).
+ */
 int awgmr_config_parse(char *line, struct awgmr_cfg *cfg)
 {
-	char *p = line, *tok;
-	int have_transform = 0, have_key = 0, have_mask = 0, v, i;
+	char *p = line, *tok, *toks[AWGMR_TOKENS_MAX];
+	int n = 0, i;
 
 	memset(cfg, 0, sizeof(*cfg));
 	tok = next_tok(&p);
@@ -96,48 +91,24 @@ int awgmr_config_parse(char *line, struct awgmr_cfg *cfg)
 	while ((tok = next_tok(&p))) {
 		char *val = strchr(tok, '=');
 
-		if (!val)
+		if (!val || n == AWGMR_TOKENS_MAX)
 			return -EINVAL;
-		*val++ = '\0';
+		*val = '\0';
 		if (!strcmp(tok, "transform")) {
-			if (strcmp(val, "phobos"))
+			if (cfg->t)
 				return -EINVAL;
-			have_transform = 1;
-		} else if (!strcmp(tok, "key")) {
-			int n = (int)strlen(val);
-
-			if (n == 0 || n % 2 || n / 2 > AWGMR_KEY_MAX)
+			cfg->t = awgmr_transform_find(val + 1);
+			if (!cfg->t)
 				return -EINVAL;
-			for (i = 0; i < n / 2; i++) {
-				int hi = hexval(val[2 * i]), lo = hexval(val[2 * i + 1]);
-
-				if (hi < 0 || lo < 0)
-					return -EINVAL;
-				cfg->phobos.key[i] = (u8)(hi << 4 | lo);
-			}
-			cfg->phobos.key_len = n / 2;
-			have_key = 1;
-		} else if (!strcmp(tok, "masking")) {
-			if (!strcmp(val, "none"))
-				cfg->phobos.mask = AWGMR_MASK_NONE;
-			else if (!strcmp(val, "stun"))
-				cfg->phobos.mask = AWGMR_MASK_STUN;
-			else if (!strcmp(val, "media"))
-				cfg->phobos.mask = AWGMR_MASK_MEDIA;
-			else
-				return -EINVAL;
-			have_mask = 1;
-		} else if (!strcmp(tok, "max-dummy")) {
-			if (parse_uint(val, AWGMR_PAD_TOTAL_MAX, &v))
-				return -EINVAL;
-			cfg->phobos.max_dummy = v;
-		} else if (!strcmp(tok, "obfuscate-bytes")) {
-			if (parse_uint(val, 65535, &v))
-				return -EINVAL;
-			cfg->phobos.obf_bytes = v;
-		} else {
-			return -EINVAL; /* незнакомый ключ — громко, не молча */
+			continue;
 		}
+		toks[n++] = tok;
 	}
-	return (have_transform && have_key && have_mask) ? 0 : -EINVAL;
+	if (!cfg->t || cfg->t->priv_size > AWGMR_TPRIV_MAX ||
+	    cfg->t->headroom > AWGMR_HEADROOM_MAX)
+		return -EINVAL;
+	for (i = 0; i < n; i++)
+		if (cfg->t->parse(cfg->tpriv, toks[i], toks[i] + strlen(toks[i]) + 1))
+			return -EINVAL;
+	return cfg->t->ready(cfg->tpriv);
 }

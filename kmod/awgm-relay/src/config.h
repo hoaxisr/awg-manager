@@ -3,7 +3,7 @@
 #ifndef AWGMR_CONFIG_H
 #define AWGMR_CONFIG_H
 
-#include "phobos.h"
+#include "transform.h"
 
 #define AWGMR_LINE_MAX 1024
 
@@ -11,7 +11,9 @@ struct awgmr_cfg {
 	u16 listen_port;          /* 127.0.0.1:PORT, хостовый порядок */
 	u8 target_ip[4];          /* сетевой порядок */
 	u16 target_port;          /* хостовый порядок */
-	struct awgmr_phobos_cfg phobos;
+	const struct awgmr_transform *t;
+	/* состояние трансформации; в нём может быть ключ — затирать при снятии */
+	u8 tpriv[AWGMR_TPRIV_MAX] __attribute__((aligned(8)));
 };
 
 /* 0 или -EINVAL. line изменяется (токенизация на месте). */

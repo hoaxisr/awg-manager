@@ -123,7 +123,7 @@ static int __init awgmr_init(void)
 {
 	int ret;
 
-	awgmr_crc8_init();
+	awgmr_transforms_init();
 	proc_dir = proc_mkdir("awgm_relay", NULL);
 	if (!proc_dir)
 		return -ENOMEM;
