@@ -867,3 +867,26 @@ func TestWithLivePeers(t *testing.T) {
 		t.Error("исходный срез изменён — список из кэша общий для всех читателей")
 	}
 }
+
+// PeersRCFresh читает мимо кэша и без stale-on-error: после удачного чтения
+// сбой возвращается ошибкой, а смена rc видна сразу (#713, проверка пересечений).
+func TestPeersRCFresh_NoCacheNoStale(t *testing.T) {
+	fg := NewFakeGetter()
+	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"K1=","comment":"office","allow-ips":[{"address":"172.16.5.0","mask":"255.255.255.0"}]}]}}`)
+	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
+	ctx := context.Background()
+
+	peers, err := s.PeersRCFresh(ctx, "Wireguard0")
+	if err != nil || len(peers) != 1 || peers[0].Description != "office" ||
+		len(peers[0].AllowedIPs) != 1 || peers[0].AllowedIPs[0] != "172.16.5.0/24" {
+		t.Fatalf("peers = %+v, err = %v", peers, err)
+	}
+	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[]}}`)
+	if peers, err := s.PeersRCFresh(ctx, "Wireguard0"); err != nil || len(peers) != 0 {
+		t.Fatalf("закэшировано: %+v %v", peers, err)
+	}
+	fg.SetError("/show/rc/interface/Wireguard0", errors.New("rci down"))
+	if _, err := s.PeersRCFresh(ctx, "Wireguard0"); err == nil {
+		t.Fatal("сбой чтения замаскирован")
+	}
+}

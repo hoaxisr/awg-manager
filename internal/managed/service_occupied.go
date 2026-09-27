@@ -32,13 +32,15 @@ func peerLabel(desc, pubkey, iface string) string {
 
 // OccupiedSubnets — снимок занятых IPv4-сетей для peersubnet.ValidateRemoteSubnets
 // (спека 4.2 шаг 1, решение 11.5): сети всех интерфейсов роутера с адресом
-// (подсети WG-серверов и LAN в том числе), allow-ips пиров ВСЕХ WG-серверов
-// роутера (кроме их /32 внутри подсети своего сервера — те покрыты ею),
-// RemoteSubnets всех пиров из хранилища. Любой отказ чтения — отказ целиком:
-// «занятых нет» на лежащем RCI пропустило бы пересечение.
+// (подсети WG-серверов и LAN в том числе), allow-ips пиров всех WG-серверов
+// (кроме их /32 внутри подсети своего сервера — те покрыты ею), RemoteSubnets
+// всех пиров из хранилища. Любой отказ чтения — отказ целиком: «занятых нет»
+// на лежащем RCI пропустило бы пересечение.
 //
-// allow-ips читаются по серверу свежо (PeersRCFresh), а не из WGServers.List:
-// тот сбой чтения allow-ips молча превращает в «сетей у пира нет».
+// Сервер = системный, помеченный в панели (ServerInterfaces), или managed.
+// Прочие WG-интерфейсы — клиентские туннели: их пир держит 0.0.0.0/0 и
+// занял бы всё. allow-ips читаются по серверу свежо (PeersRCFresh), а не из
+// WGServers.List: тот сбой чтения молча превращает в «сетей у пира нет».
 func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peersubnet.Occupied, error) {
 	if s.queries == nil || s.queries.Interfaces == nil || s.queries.WGServers == nil {
 		return nil, fmt.Errorf("ndms queries not wired")
@@ -48,24 +50,26 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 	if err != nil {
 		return nil, fmt.Errorf("list interface subnets: %w", err)
 	}
+	subnetByID := map[string]*net.IPNet{}
 	for _, u := range used {
 		out = append(out, peersubnet.Occupied{Net: u.cidr, Label: "интерфейс " + u.label})
+		subnetByID[u.id] = u.cidr
 	}
-	ifaces, err := s.queries.Interfaces.List(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list interfaces: %w", err)
+	servers := map[string]bool{}
+	for _, id := range s.settings.GetServerInterfaces() {
+		servers[id] = true
 	}
-	for _, iface := range ifaces {
-		if !strings.EqualFold(iface.Type, "Wireguard") {
-			continue
-		}
-		peers, err := s.queries.WGServers.PeersRCFresh(ctx, iface.ID)
+	for _, sv := range s.settings.GetManagedServers() {
+		servers[sv.InterfaceName] = true
+	}
+	for id := range servers {
+		peers, err := s.queries.WGServers.PeersRCFresh(ctx, id)
 		if err != nil {
 			return nil, err
 		}
-		srvNet, _ := parseManagedSubnet(iface.Address, iface.Mask)
+		srvNet := subnetByID[id]
 		for _, p := range peers {
-			if iface.ID == exclude.Iface && p.PublicKey == exclude.PubKey {
+			if id == exclude.Iface && p.PublicKey == exclude.PubKey {
 				continue
 			}
 			for _, a := range p.AllowedIPs {
@@ -76,7 +80,7 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 				if ones, bits := n.Mask.Size(); ones == bits && srvNet != nil && srvNet.Contains(n.IP) {
 					continue
 				}
-				out = append(out, peersubnet.Occupied{Net: n, Label: peerLabel(p.Description, p.PublicKey, iface.ID)})
+				out = append(out, peersubnet.Occupied{Net: n, Label: peerLabel(p.Description, p.PublicKey, id)})
 			}
 		}
 	}

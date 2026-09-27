@@ -30,6 +30,7 @@ func mustParseCIDR(s string) *net.IPNet {
 // usedSubnet is one occupied address space already configured on the
 // router, paired with a label suitable for surfacing in error messages.
 type usedSubnet struct {
+	id    string // NDMS id интерфейса; пуст у синтетических записей
 	label string
 	cidr  *net.IPNet
 }
@@ -185,7 +186,7 @@ func (s *Service) listUsedSubnets(ctx context.Context, excludeIface string) ([]u
 		if label == "" {
 			label = iface.ID
 		}
-		out = append(out, usedSubnet{label: label, cidr: cidr})
+		out = append(out, usedSubnet{id: iface.ID, label: label, cidr: cidr})
 	}
 	return out, nil
 }
