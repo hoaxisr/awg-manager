@@ -75,8 +75,12 @@ static void phobos_init(struct awgmr_tctx *t)
 	struct awgmr_phobos_priv *p = t->priv;
 
 	p->hs_done = false;
-	if (p->cfg.mask == AWGMR_MASK_MEDIA)
+	if (p->cfg.mask == AWGMR_MASK_MEDIA) {
+		/* F480: 0 у MEDIA = умолчание сервера Phobos (16), иначе он молча отбрасывает кадры */
+		if (!p->cfg.obf_bytes)
+			p->cfg.obf_bytes = 16;
 		awgmr_rtp_init(&p->rtp, t->rng);
+	}
 }
 
 static unsigned int phobos_timer_ms(const void *priv)

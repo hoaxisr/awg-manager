@@ -116,6 +116,19 @@ static void test_stun_control(void)
 	assert(cfg.t->encode(&tctx, p, 148, 2048, &start) > 0 && sent_n == 0); /* NONE — без служебки */
 }
 
+/* F480: MEDIA без obfuscate-bytes — 16, как у сервера Phobos (MEDIA_OBFUSCATE_BYTES_DEFAULT). */
+static void test_media_obf_default(void)
+{
+	const struct awgmr_phobos_priv *p = (const void *)cfg.tpriv;
+
+	setup("127.0.0.1:1 1.2.3.4:5 transform=phobos key=6b masking=media");
+	assert(p->cfg.obf_bytes == 16);
+	setup("127.0.0.1:1 1.2.3.4:5 transform=phobos key=6b masking=media obfuscate-bytes=32");
+	assert(p->cfg.obf_bytes == 32);
+	setup("127.0.0.1:1 1.2.3.4:5 transform=phobos key=6b masking=stun");
+	assert(p->cfg.obf_bytes == 0);
+}
+
 /* Мусор от сервера — ошибка разбора, не данные. */
 static void test_decode_rejects(void)
 {
@@ -134,6 +147,7 @@ int main(void)
 	test_roundtrip();
 	test_stun_control();
 	test_decode_rejects();
+	test_media_obf_default();
 	printf("test_transform: OK\n");
 	return 0;
 }

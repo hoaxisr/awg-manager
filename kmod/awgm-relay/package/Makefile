@@ -4,7 +4,8 @@ include $(INCLUDE_DIR)/kernel.mk
 PKG_NAME:=awgm-relay
 # 0.1.1: cond_resched после пакета (F472).
 # 0.2.0: таблица трансформаций (провод и /proc без изменений).
-PKG_VERSION:=0.2.0
+# 0.2.1: MEDIA без obfuscate-bytes = 16, как у сервера Phobos (F480).
+PKG_VERSION:=0.2.1
 PKG_LICENSE:=GPL-2.0
 PKG_LICENSE_FILES:=COPYING
 PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)

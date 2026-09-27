@@ -14,7 +14,7 @@ import (
 )
 
 // ExpectedRelayKmodVersion — PKG_VERSION в kmod/awgm-relay/package/Makefile.
-const ExpectedRelayKmodVersion = "0.2.0"
+const ExpectedRelayKmodVersion = "0.2.1"
 
 const relayKmodDisarmAfter = 5 * time.Minute
 
