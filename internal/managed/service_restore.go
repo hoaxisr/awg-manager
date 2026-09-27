@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -383,7 +384,11 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 			return true, fmt.Errorf("set ASC params: %w", err)
 		}
 	}
-	for _, peer := range sv.Peers {
+	// Пиры клонируем: слайс общий с входным sv, а мы его правим (сети за
+	// клиентом, сигнатуры ниже).
+	peers := slices.Clone(sv.Peers)
+	for i := range peers {
+		peer := &peers[i]
 		ip, _, err := net.ParseCIDR(peer.TunnelIP)
 		if err != nil {
 			return true, fmt.Errorf("peer tunnel IP %q: %w", peer.TunnelIP, err)
@@ -391,15 +396,15 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 		if err := s.rciAddPeer(ctx, target, peer.PublicKey, peer.PresharedKey, peer.Description, ip.String(), peer.Enabled); err != nil {
 			return true, fmt.Errorf("add peer %s: %w", peer.PublicKey, err)
 		}
+		s.restorePeerSubnets(ctx, target, peer)
 	}
 	// Persist to settings.json under the (possibly renamed) target.
 	saved := sv
 	saved.InterfaceName = target
 	saved.ASC = nil
 	// Сигнатура из ASC-снимка старого бэкапа принадлежала серверу — раздаём
-	// её пирам, у которых своей нет, и у сервера не сохраняем (V36). Пиры
-	// клонируем: слайс общий с входным sv, а мы его правим.
-	saved.Peers = slices.Clone(sv.Peers)
+	// её пирам, у которых своей нет, и у сервера не сохраняем (V36).
+	saved.Peers = peers
 	if len(sv.ASC) > 0 {
 		i1, i2, i3, i4, i5, err := extractASCSignatures(sv.ASC)
 		if err != nil {
@@ -444,6 +449,25 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 		s.queries.Interfaces.InvalidateAll()
 	}
 	return true, nil
+}
+
+// restorePeerSubnets ставит сети за клиентом пересозданного из бэкапа пира —
+// best-effort, как соседние шаги восстановления. Не встали — из записи их
+// убираем: иначе карточка показывает сети, которых на роутере нет, а Diff от
+// хранилища при следующем сохранении их уже не поставит.
+func (s *Service) restorePeerSubnets(ctx context.Context, iface string, peer *storage.ManagedPeer) {
+	if len(peer.RemoteSubnets) == 0 {
+		return
+	}
+	router, err := s.peerRouter()
+	if err == nil {
+		err = peersubnet.Apply(ctx, router, iface, peer.PublicKey, peer.RemoteSubnets, nil)
+	}
+	if err != nil {
+		s.appLog.Warn("managed-restore-peer-subnets", iface,
+			fmt.Sprintf("сети за клиентом пира «%s» не восстановлены и сняты с записи: %v", peerName(peer.Description, peer.PublicKey), err))
+		peer.RemoteSubnets = nil
+	}
 }
 
 // preflightMergePeers проверяет входящих пиров merge-пути: пустой и битый
@@ -497,8 +521,15 @@ func (s *Service) applyMergePeers(ctx context.Context, existing storage.ManagedS
 		have[p.PublicKey] = struct{}{}
 	}
 	added := 0
-	var addedKeys []string
 	var missingPeers []storage.ManagedPeer
+	// Откат снимает и сети за клиентом: allow-ips уходят с пиром, а маршруты
+	// с меткой остались бы сиротами.
+	rollback := func() {
+		router, _ := s.peerRouter() // nil — сетей у пиров нет: restorePeerSubnets их снял
+		for _, p := range missingPeers {
+			s.rollbackAddedPeer(ctx, existing.InterfaceName, p.PublicKey, p.Description, router, p.RemoteSubnets)
+		}
+	}
 	for _, peer := range sv.Peers {
 		if _, ok := have[peer.PublicKey]; ok {
 			continue
@@ -508,12 +539,11 @@ func (s *Service) applyMergePeers(ctx context.Context, existing storage.ManagedS
 			return added, fmt.Errorf("peer tunnel IP %q: %w", peer.TunnelIP, err)
 		}
 		if err := s.rciAddPeer(ctx, existing.InterfaceName, peer.PublicKey, peer.PresharedKey, peer.Description, ip.String(), peer.Enabled); err != nil {
-			for _, k := range addedKeys {
-				_ = s.rciRemovePeer(ctx, existing.InterfaceName, k)
-			}
+			rollback()
 			return added, fmt.Errorf("add peer %s: %w", peer.PublicKey, err)
 		}
-		addedKeys = append(addedKeys, peer.PublicKey)
+		// peer — копия элемента sv.Peers: правка сетей входной бэкап не трогает.
+		s.restorePeerSubnets(ctx, existing.InterfaceName, &peer)
 		missingPeers = append(missingPeers, peer)
 		have[peer.PublicKey] = struct{}{}
 		added++
@@ -526,10 +556,8 @@ func (s *Service) applyMergePeers(ctx context.Context, existing storage.ManagedS
 		target.Peers = append(target.Peers, missingPeers...)
 		return nil
 	}); err != nil {
-		s.sysLog().Warn("managed restore merge storage update failed; rolling back peers", "interface", existing.InterfaceName, "addedPeers", len(addedKeys), "error", err)
-		for _, k := range addedKeys {
-			_ = s.rciRemovePeer(ctx, existing.InterfaceName, k)
-		}
+		s.sysLog().Warn("managed restore merge storage update failed; rolling back peers", "interface", existing.InterfaceName, "addedPeers", len(missingPeers), "error", err)
+		rollback()
 		return added, fmt.Errorf("persist merged peer: %w", err)
 	}
 	s.sysLog().Info("managed restore merge persisted", "interface", existing.InterfaceName, "addedPeers", added)

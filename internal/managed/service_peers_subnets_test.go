@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -389,5 +390,91 @@ func TestUpdatePeer_StoreFailure_RevertsSubnetsAndTunnelIP(t *testing.T) {
 	}
 	if iRoute < 0 || after(allow77Off) < 0 || after(routeOff) < 0 || after(new32Off) < 0 || after(old32) < 0 {
 		t.Fatalf("роутер не возвращён к записанному:\n%s", strings.Join(posts, "\n"))
+	}
+}
+
+// driftServerWithSubnetPeer — managed-сервер Wireguard5 есть в хранилище, но не
+// на роутере (дрейф); у пира — сеть за клиентом.
+func driftServerWithSubnetPeer(t *testing.T, store *storage.SettingsStore) {
+	t.Helper()
+	if err := store.AddManagedServer(storage.ManagedServer{InterfaceName: "Wireguard5", Address: "10.77.0.1", Mask: "255.255.255.0", ListenPort: 51825,
+		PrivateKey: validPrivateKey(9), Policy: "none",
+		Peers: []storage.ManagedPeer{{PublicKey: "PEER5", TunnelIP: "10.77.0.2/32", Enabled: true, Description: "site", RemoteSubnets: []string{"192.168.90.0/24"}}}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func restoreDrift(t *testing.T, svc *Service) {
+	t.Helper()
+	drift, err := svc.Drift(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := svc.RestoreDrift(context.Background(), drift, RestoreOptions{})
+	if len(out) != 1 || out[0].Action != "created" {
+		t.Fatalf("outcomes: %+v", out)
+	}
+}
+
+// Final review I3: пир пересоздан из записи — его сети за клиентом ставятся
+// на роутер (allow-ips и маршрут) и остаются в записи.
+func TestRestoreDrift_ReappliesPeerRemoteSubnets(t *testing.T) {
+	svc, store, poster, _ := newPeerSubnetTestService(t, `[]`)
+	driftServerWithSubnetPeer(t, store)
+	restoreDrift(t, svc)
+	posts := postsJSON(poster)
+	iPeer := indexOf(posts, `"key":"PEER5"`)
+	iAllow := indexOf(posts, `"allow-ips":[{"address":"192.168.90.0","mask":"255.255.255.0"}]`)
+	iRoute := indexOf(posts, `"comment":"awgm-peer:PEER5"`)
+	if iPeer < 0 || iAllow < 0 || iRoute < 0 || !(iPeer < iAllow && iAllow < iRoute) {
+		t.Fatalf("сети не восстановлены: peer=%d allow=%d route=%d\n%s", iPeer, iAllow, iRoute, strings.Join(posts, "\n"))
+	}
+	sv, _ := store.GetManagedServerByID("Wireguard5")
+	if len(sv.Peers) != 1 || len(sv.Peers[0].RemoteSubnets) != 1 {
+		t.Fatalf("store = %+v", sv.Peers)
+	}
+}
+
+// Сети не встали — запись их не хранит (иначе неисцелимо через UI), пир и
+// сервер восстановлены.
+func TestRestoreDrift_SubnetFailureClearsStoredSubnets(t *testing.T) {
+	svc, store, poster, _ := newPeerSubnetTestService(t, `[]`)
+	driftServerWithSubnetPeer(t, store)
+	poster.failOn = func(m map[string]interface{}) error {
+		b, _ := json.Marshal(m)
+		if strings.Contains(string(b), `"comment":"awgm-peer:`) {
+			return errors.New("route refused")
+		}
+		return nil
+	}
+	restoreDrift(t, svc)
+	sv, _ := store.GetManagedServerByID("Wireguard5")
+	if len(sv.Peers) != 1 || len(sv.Peers[0].RemoteSubnets) != 0 {
+		t.Fatalf("store = %+v", sv.Peers)
+	}
+}
+
+// Merge-путь: роутер для сетей недоступен (Commands не подключены) — пир
+// добавлен, сети из записи сняты.
+func TestRestore_MergeClearsUnappliedRemoteSubnets(t *testing.T) {
+	store := storage.NewSettingsStore(t.TempDir())
+	_, _ = store.Load()
+	priv := validPrivateKey(58)
+	_ = store.AddManagedServer(storage.ManagedServer{InterfaceName: "Wireguard0", Address: "10.64.0.1", Mask: "255.255.255.0", ListenPort: 51854, PrivateKey: priv, Policy: "none"})
+	getter := &restoreLiveGetter{live: map[string]restoreLiveEntry{"Wireguard0": {Present: true, Address: "10.64.0.1", Mask: "255.255.255.0", PublicKey: mustDerivePublicKey(t, priv)}}}
+	ifaces := query.NewInterfaceStoreWithTTL(getter, query.NopLogger(), 0, 0)
+	queries := &query.Queries{Interfaces: ifaces, WGServers: query.NewWGServerStore(getter, query.NopLogger(), ifaces)}
+	s := &Service{settings: store, transport: &fakePoster{onPost: getter.applyPost}, queries: queries}
+	in := []storage.ManagedPeer{{PublicKey: validPeerKey(59), TunnelIP: "10.64.0.2/32", Enabled: true, RemoteSubnets: []string{"192.168.91.0/24"}}}
+	out := s.Restore(context.Background(), []ManagedServerExport{{InterfaceName: "Wireguard0", Address: "10.64.0.1", Mask: "255.255.255.0", ListenPort: 51854, PrivateKey: priv, Policy: "none", Peers: in}}, RestoreOptions{})
+	if len(out) != 1 || out[0].Action != "merged" || out[0].AddedPeers != 1 {
+		t.Fatalf("outcomes: %+v", out)
+	}
+	sv, _ := store.GetManagedServerByID("Wireguard0")
+	if len(sv.Peers) != 1 || len(sv.Peers[0].RemoteSubnets) != 0 {
+		t.Fatalf("store = %+v", sv.Peers)
+	}
+	if len(in[0].RemoteSubnets) != 1 {
+		t.Fatal("входной бэкап изменён")
 	}
 }
