@@ -285,6 +285,9 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.nwgOp != nil {
 		h.hookHandler.SetEndpointGuardNudge(s.nwgOp.NudgeEndpointGuard)
 	}
+	if s.ipv4RunningHook != nil {
+		h.hookHandler.SetIPv4RunningHook(s.ipv4RunningHook)
+	}
 	mux.HandleFunc("/api/hook/ndms", h.hookHandler.HandleNDMS)
 
 	// WAN status (protected) — event ingress is now /api/hook/ndms.

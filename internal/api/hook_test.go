@@ -384,3 +384,36 @@ func TestHookHandler_LayerChanged_DoesNotNudgeGuard(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+// F497: клиентские маршруты на system:-выходе теряются на down/up
+// интерфейса — ядро снимает default dev. Хук ipv4 running обязан
+// переприменить их для ЛЮБОГО интерфейса, не только ISP.
+func TestHookHandler_IPv4Running_CallsHookForAnyInterface(t *testing.T) {
+	h := newTestHookHandler(&spyDispatcher{})
+	got := make(chan string, 1)
+	h.SetIPv4RunningHook(func(id string) { got <- id })
+
+	body := strings.NewReader("type=iflayerchanged&id=OpkgTun7&system_name=opkgtun7&layer=ipv4&level=running")
+	req := httptest.NewRequest(http.MethodPost, "/api/hook/ndms", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.HandleNDMS(httptest.NewRecorder(), req)
+
+	select {
+	case id := <-got:
+		if id != "OpkgTun7" {
+			t.Fatalf("id = %q", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("хук ipv4 running не вызван для OpkgTun7")
+	}
+}
+
+func TestHookHandler_IPv4Disabled_NoHook(t *testing.T) {
+	h := newTestHookHandler(&spyDispatcher{})
+	h.SetIPv4RunningHook(func(string) { t.Error("хук вызван на disabled") })
+	body := strings.NewReader("type=iflayerchanged&id=OpkgTun7&system_name=opkgtun7&layer=ipv4&level=disabled")
+	req := httptest.NewRequest(http.MethodPost, "/api/hook/ndms", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.HandleNDMS(httptest.NewRecorder(), req)
+	time.Sleep(50 * time.Millisecond)
+}

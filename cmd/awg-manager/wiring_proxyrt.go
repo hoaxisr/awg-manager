@@ -993,6 +993,14 @@ func (a *app) wireProxyrt() {
 		a.proxyRuntimeNudge(reason, proxyrt.EventWANUp)
 	})
 
+	// F497: клиентские маршруты на system:-выходе теряются на down/up
+	// интерфейса — ядро снимает default dev, и переприменить их некому.
+	a.srv.SetIPv4RunningHook(func(ndmsID string) {
+		ctx, cancel := context.WithTimeout(a.shutdownCtx, 30*time.Second)
+		defer cancel()
+		a.systemClientRoutes().reapply(ctx, ndmsID)
+	})
+
 	// (9) Боот — горутиной ПОСЛЕ старта HTTP: на бооте роутера RCI ещё
 	// недоступен, а блокировать здесь значит не поднять веб-морду вовсе.
 	// Ретрай зовут фазы боота и хуки wan-up через proxyRuntimeNudge; Boot
