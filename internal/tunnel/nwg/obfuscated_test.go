@@ -327,6 +327,30 @@ func TestStartObfuscated_RelayFailureKeepsPrevRouteIP(t *testing.T) {
 	}
 }
 
+// F486: то же для отказа RCI-батча — резолв уже сдвинул трекер на новый адрес,
+// а маршрут остался под прежним.
+func TestStartObfuscated_BatchFailureKeepsPrevRouteIP(t *testing.T) {
+	withObfDirs(t)
+	n := newCaptureNDMS(t)
+	fr := newFakeObfRunner()
+	op := newObfOperator(t, n, fr)
+	op.resolveFn = sequenceResolver("198.51.100.1", "198.51.100.2")
+	if err := op.startObfuscated(context.Background(), obfStored()); err != nil {
+		t.Fatal(err)
+	}
+	n.failBatch = true
+	if err := op.startObfuscated(context.Background(), obfStored()); err == nil {
+		t.Fatal("ждали отказ батча")
+	}
+	n.failBatch = false
+	if err := op.startObfuscated(context.Background(), obfStored()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(n.joined(), `"host":"198.51.100.1","interface":"ISP0","no":true`) {
+		t.Fatalf("host-route под прежним адресом не снят:\n%s", n.joined())
+	}
+}
+
 // sequenceResolver — каждый вызов отдаёт следующий адрес (последний — дальше
 // повторяется): так ведёт себя round-robin/DDNS между двумя резолвами.
 func sequenceResolver(ips ...string) func(string) (string, int, error) {

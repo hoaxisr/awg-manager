@@ -125,6 +125,7 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 		}
 		if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 			_ = o.obf.Stop(stored.ID)
+			o.restoreTrackedIP(stored.ID, prevIP) // F486: маршрут остался под prevIP
 			return fmt.Errorf("start obfuscated: %w", err)
 		}
 	}
