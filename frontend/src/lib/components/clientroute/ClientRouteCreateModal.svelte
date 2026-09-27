@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Modal, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import type { ClientRoute, PolicyDevice, RoutingTunnel } from '$lib/types';
+	import { routingTunnelLabel } from '$lib/utils/routingTunnelOptions';
 
 	interface Props {
 		open: boolean;
@@ -33,7 +34,7 @@
 	let availableTunnels = $derived(tunnels.filter(t => t.type !== 'wan' && t.available));
 	let tunnelOpts = $derived<DropdownOption[]>(availableTunnels.map((t) => ({
 		value: t.id,
-		label: t.name,
+		label: t.type === 'system' ? routingTunnelLabel(t) : t.name,
 	})));
 
 	let selectedDevice = $state<{ ip: string; name: string } | null>(null);

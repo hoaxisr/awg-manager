@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { StaticRouteList, RoutingTunnel } from '$lib/types';
+	import { routingTunnelLabel } from '$lib/utils/routingTunnelOptions';
 	import { Modal, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { ServiceIcon, IconPickerModal } from '$lib/components/dnsroutes';
 	import { formatIconUrlHint } from '$lib/utils/custom-icon';
@@ -227,7 +228,7 @@
 	<!-- Tunnel -->
 	{@const tunnelOpts: DropdownOption[] = [
 		...userTunnels.map((t) => ({ value: t.id, label: t.name, group: 'Пользовательские' })),
-		...systemTunnels.map((t) => ({ value: t.id, label: t.name, group: 'Системные' })),
+		...systemTunnels.map((t) => ({ value: t.id, label: routingTunnelLabel(t), group: 'Системные' })),
 		...wanInterfaces.map((t) => ({ value: t.id, label: t.name, group: 'WAN' })),
 	]}
 	<div class="form-group" class:field-error={tunnelError}>
