@@ -10,6 +10,7 @@ import type {
 	DnsProxyInfo,
 	DownloadOutbound,
 	DownloadRoute,
+	ForeignIfaceCandidate,
 	GeoFileEntry,
 	GeoTag,
 	HydraRouteConfig,
@@ -581,6 +582,20 @@ export class SystemClient extends TunnelsClient {
 			method: 'POST',
 			body: JSON.stringify({ iface })
 		});
+	}
+
+	/** Кандидаты в сторонние интерфейсы (issue #935). */
+	async listForeignIfaceCandidates(): Promise<ForeignIfaceCandidate[]> {
+		return this.request<ForeignIfaceCandidate[]>('/interfaces/foreign/candidates');
+	}
+
+	/** Отметить интерфейс другой программы как сторонний. Граница — на сервере. */
+	async markForeignIface(name: string): Promise<{ ok: boolean }> {
+		return this.request<{ ok: boolean }>('/interfaces/foreign/mark', { method: 'POST', body: JSON.stringify({ name }) });
+	}
+
+	async unmarkForeignIface(name: string): Promise<{ ok: boolean }> {
+		return this.request<{ ok: boolean }>('/interfaces/foreign/unmark', { method: 'POST', body: JSON.stringify({ name }) });
 	}
 
 	async downloadDiagnosticsReport(environment?: unknown): Promise<void> {

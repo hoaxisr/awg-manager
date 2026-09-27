@@ -84,6 +84,8 @@ export interface RoutingTunnel {
 	type: 'managed' | 'system' | 'wan';
 	status: string;
 	available: boolean;
+	/** Предупреждение каталога, напр. «нет адреса в NDMS» (issue #935). */
+	warning?: string;
 }
 
 export interface ResolveResult {
