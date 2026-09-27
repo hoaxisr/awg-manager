@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import EditSystemPeerModal from './EditSystemPeerModal.svelte';
 import { api } from '$lib/api/client';
 import type { WireguardServerPeer } from '$lib/types';
@@ -133,13 +134,14 @@ describe('EditSystemPeerModal: сети клиента', () => {
 		const { getByText, getByLabelText } = openModal(
 			basePeer({
 				tunnelIP: '10.9.0.2/32',
-				allowedIPs: ['192.168.77.0/24', '10.9.0.2/32'],
+				// Чужой /32 первым: эвристика «первый /32» выбрала бы его, запись — нет.
+				allowedIPs: ['192.168.77.1/32', '10.9.0.2/32'],
 				clientAllowedIPs: '0.0.0.0/1',
-				remoteSubnets: ['192.168.77.0/24']
+				remoteSubnets: ['192.168.77.1/32']
 			})
 		);
 		expect((getByLabelText('Tunnel IP (CIDR)') as HTMLInputElement).value).toBe('10.9.0.2/32');
-		expect((getByLabelText('Сети за клиентом') as HTMLTextAreaElement).value).toBe('192.168.77.0/24');
+		expect((getByLabelText('Сети за клиентом') as HTMLTextAreaElement).value).toBe('192.168.77.1/32');
 		await fireEvent.click(getByText('Сохранить'));
 		expect(api.updateSystemServerPeer).toHaveBeenCalledWith(
 			'Wireguard0',
@@ -147,8 +149,43 @@ describe('EditSystemPeerModal: сети клиента', () => {
 			expect.objectContaining({
 				tunnelIP: '10.9.0.2/32',
 				clientAllowedIPs: '0.0.0.0/1',
-				remoteSubnets: ['192.168.77.0/24']
+				remoteSubnets: ['192.168.77.1/32']
 			})
 		);
+	});
+
+	// Спека 5.4: отсутствие полей = снять сети; у чужого пира шлём пустые, бэкенд пропускает.
+	it('сохранение чужого пира шлёт пустые сети', async () => {
+		vi.mocked(api.updateSystemServerPeer).mockResolvedValue(
+			{} as Awaited<ReturnType<typeof api.updateSystemServerPeer>>
+		);
+		const { getByText } = openModal(basePeer({ confAvailable: false }));
+		const save = getByText('Сохранить').closest('button') as HTMLButtonElement;
+		expect(save.disabled).toBe(false);
+		await fireEvent.click(save);
+		expect(api.updateSystemServerPeer).toHaveBeenCalledWith(
+			'Wireguard0',
+			'pk',
+			expect.objectContaining({ clientAllowedIPs: '', remoteSubnets: [] })
+		);
+	});
+
+	it('поздний ответ пресета после переоткрытия не затирает новую сессию', async () => {
+		let resolve!: (v: { routerOnly: string; exceptRouter: string }) => void;
+		vi.mocked(api.getSystemServerPeerPresets).mockReturnValue(
+			new Promise((r) => {
+				resolve = r;
+			})
+		);
+		const { getByText, getByLabelText, rerender } = openModal(
+			basePeer({ clientAllowedIPs: '10.0.0.0/8' })
+		);
+		await fireEvent.click(getByText('Только сети роутера'));
+		await rerender({ open: false });
+		await rerender({ open: true });
+		resolve({ routerOnly: '192.168.1.0/24', exceptRouter: '' });
+		await tick();
+		await tick();
+		expect((getByLabelText('AllowedIPs клиента') as HTMLInputElement).value).toBe('10.0.0.0/8');
 	});
 });

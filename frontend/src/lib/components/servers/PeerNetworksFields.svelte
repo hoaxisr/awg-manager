@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { Button } from '$lib/components/ui';
 	import type { PeerPresets } from '$lib/types';
 	import { validateClientAllowedIPs, validateRemoteSubnets } from '$lib/utils/peerForm';
@@ -24,15 +25,22 @@
 	}: Props = $props();
 
 	let loading = $state(false);
+	// Модалка размонтирует содержимое при закрытии: поздний ответ пресета из
+	// закрытой сессии не должен писать в поля уже переоткрытой.
+	let destroyed = $state(false);
+	onDestroy(() => {
+		destroyed = true;
+	});
 	const allowedError = $derived(validateClientAllowedIPs(clientAllowedIPs));
 	const subnetsError = $derived(validateRemoteSubnets(remoteSubnets));
 
 	async function applyPreset(kind: keyof PeerPresets) {
 		loading = true;
 		try {
-			clientAllowedIPs = (await loadPresets())[kind];
+			const presets = await loadPresets();
+			if (!destroyed) clientAllowedIPs = presets[kind];
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось получить пресет');
+			if (!destroyed) notifications.error(e instanceof Error ? e.message : 'Не удалось получить пресет');
 		} finally {
 			loading = false;
 		}
@@ -40,11 +48,11 @@
 </script>
 
 <div class="form-group">
-	<label class="label" for="{idPrefix}-allowed">AllowedIPs клиента</label>
+	<label class="field-label" for="{idPrefix}-allowed">AllowedIPs клиента</label>
 	<input
 		type="text"
 		id="{idPrefix}-allowed"
-		class="input"
+		class="field-input"
 		bind:value={clientAllowedIPs}
 		placeholder="0.0.0.0/0, ::/0"
 		{disabled}
@@ -66,10 +74,10 @@
 	{/if}
 </div>
 <div class="form-group">
-	<label class="label" for="{idPrefix}-subnets">Сети за клиентом</label>
+	<label class="field-label" for="{idPrefix}-subnets">Сети за клиентом</label>
 	<textarea
 		id="{idPrefix}-subnets"
-		class="input"
+		class="field-textarea"
 		rows="2"
 		bind:value={remoteSubnets}
 		placeholder="192.168.77.0/24"
@@ -85,37 +93,26 @@
 </div>
 
 <style>
-	/* Локальные копии стилей модалок пиров: их .form-group/.label/.input scoped и
-	   до этого компонента не доходят. Общие классы (.field-hint) — из app.css. */
+	/* Поля — примитивы app.css (.field-label/.field-input/.field-textarea, там же
+	   :disabled). Поправки ниже — под соседние поля модалки: их .label —
+	   0.8125rem, а input'ы рисует глобальный сброс `input:not(…)` (он перебивает
+	   и .field-input), textarea же он не перебивает — выравниваем руками. */
 	.form-group {
 		display: flex;
 		flex-direction: column;
 		gap: 0.375rem;
 	}
 
-	.label {
+	.field-label {
 		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--text-secondary);
 	}
 
-	.input {
-		padding: 8px 12px;
-		font-size: 13px;
-		background: var(--bg-primary);
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		color: var(--text-primary);
-	}
-
-	.input:focus {
-		outline: none;
-		border-color: var(--accent);
-	}
-
-	textarea.input {
+	.field-textarea {
 		resize: vertical;
 		font-family: inherit;
+		font-size: 0.875rem;
+		padding: 0.5rem 0.75rem;
+		background: var(--bg-secondary);
 	}
 
 	.preset-row {
