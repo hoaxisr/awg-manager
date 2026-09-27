@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
 )
 
 // ErrKernelIPv4Only — модуль awgm_relay только IPv4 (спека §2); диспетчер
@@ -50,15 +51,26 @@ func KernelMasking(o *storage.Obfuscator) string {
 	return "none"
 }
 
+// TargetHostPort — хост и порт сервера из Target через NormalizeEndpoint
+// (F477 M4): голый SplitHostPort отдаёт порт "51900 " без ошибки, а Target из
+// JSON API/MCP хранится как пришёл.
+func TargetHostPort(o *storage.Obfuscator) (host, port string, err error) {
+	target, err := config.NormalizeEndpoint(o.Target)
+	if err != nil {
+		return "", "", fmt.Errorf("target %q: %w", o.Target, err)
+	}
+	return net.SplitHostPort(target)
+}
+
 // AddLine — строка /proc/awgm_relay/add (спека §3.3). Содержит ключ —
 // не логировать.
 func AddLine(o *storage.Obfuscator, ip string) (string, error) {
 	if p := net.ParseIP(ip); p == nil || p.To4() == nil {
 		return "", ErrKernelIPv4Only
 	}
-	_, port, err := net.SplitHostPort(o.Target)
+	_, port, err := TargetHostPort(o)
 	if err != nil {
-		return "", fmt.Errorf("target %q: %w", o.Target, err)
+		return "", err
 	}
 	return fmt.Sprintf("127.0.0.1:%d %s:%s transform=phobos key=%s masking=%s max-dummy=%d obfuscate-bytes=%d",
 		o.LocalPort, ip, port, hex.EncodeToString([]byte(EffectiveKey(o.Key))),

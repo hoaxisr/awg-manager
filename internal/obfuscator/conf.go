@@ -15,7 +15,7 @@ import (
 // уже резолвнутый адрес ip (F482): релей больше не резолвит имя сам.
 // verbose наш: INFO даёт строки старта/подключения в app-журнал (Q18).
 func RenderConf(o *storage.Obfuscator, ip string) string {
-	_, port, _ := net.SplitHostPort(o.Target)
+	_, port, _ := TargetHostPort(o) // Validate уже отверг негодный target
 	var b strings.Builder
 	fmt.Fprintf(&b, "[main]\nsource-if = 127.0.0.1\nsource-lport = %d\ntarget = %s\nkey = %s\nmasking = %s\nmax-dummy = %d\n",
 		o.LocalPort, net.JoinHostPort(ip, port), o.Key, o.Masking, o.MaxDummy)

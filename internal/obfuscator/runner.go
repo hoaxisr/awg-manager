@@ -96,7 +96,7 @@ func (r *Runner) Start(ctx context.Context, tunnelID string, o *storage.Obfuscat
 		return err
 	}
 	r.startTailLocked(tunnelID, false)
-	_, port, _ := net.SplitHostPort(o.Target)
+	_, port, _ := TargetHostPort(o)
 	r.deps.Log.Info("obfuscator", tunnelID, fmt.Sprintf("%s запущен, 127.0.0.1:%d -> %s (%s)", o.Flavor, o.LocalPort, net.JoinHostPort(ip, port), o.Masking))
 	return nil
 }

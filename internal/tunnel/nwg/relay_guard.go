@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -22,7 +23,7 @@ func (o *OperatorNativeWG) guardRegisterRelay(stored *storage.AWGTunnel, ip stri
 		o.guardUnregister(stored.ID)
 		return
 	}
-	host, port, err := net.SplitHostPort(stored.Obfuscator.Target)
+	host, port, err := obfuscator.TargetHostPort(stored.Obfuscator)
 	if err != nil || net.ParseIP(host) != nil {
 		o.guardUnregister(stored.ID)
 		return

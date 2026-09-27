@@ -62,3 +62,19 @@ func TestAddLine(t *testing.T) {
 		t.Fatalf("IPv6: %v", err)
 	}
 }
+
+// F477 M4: Target, пришедший с пробелами (JSON API/MCP), не должен протекать
+// в провод — SplitHostPort отдаёт порт "51900 " без ошибки.
+func TestTargetPort_NormalizesStoredTarget(t *testing.T) {
+	o := &storage.Obfuscator{Flavor: storage.ObfuscatorFlavorPhobos, Target: " vpn.example:51900 ", Key: "k", Masking: "NONE", LocalPort: 39000}
+	line, err := AddLine(o, "198.51.100.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(line, "198.51.100.1:51900 transform=") {
+		t.Fatalf("строка add: %q", line)
+	}
+	if conf := RenderConf(o, "198.51.100.1"); !strings.Contains(conf, "target = 198.51.100.1:51900\n") {
+		t.Fatalf("конфиг релея:\n%s", conf)
+	}
+}
