@@ -4123,7 +4123,7 @@ definitions:
       clientAllowedIPs:
         description: |-
           ClientAllowedIPs — строка AllowedIPs в .conf клиента (CIDR через запятую,
-          пусто — весь трафик). RemoteSubnets — сети за клиентом, IPv4 CIDR (#713).
+          пусто — весь трафик).
         example: 10.0.14.0/24, 192.168.1.0/24
         type: string
       description:
@@ -4136,6 +4136,9 @@ definitions:
         example: 192.168.1.1
         type: string
       remoteSubnets:
+        description: |-
+          RemoteSubnets — сети за клиентом, IPv4 CIDR (#713); полная замена списка:
+          отсутствие поля или пустой список = снять все сети за клиентом.
         example:
         - 192.168.77.0/24
         items:
@@ -7641,7 +7644,7 @@ definitions:
       clientAllowedIPs:
         description: |-
           ClientAllowedIPs — строка AllowedIPs в .conf клиента (CIDR через запятую,
-          пусто — весь трафик). RemoteSubnets — сети за клиентом, IPv4 CIDR (#713).
+          пусто — весь трафик).
         example: 10.10.0.0/24, 192.168.1.0/24
         type: string
       description:
@@ -7651,6 +7654,9 @@ definitions:
         example: 8.8.8.8
         type: string
       remoteSubnets:
+        description: |-
+          RemoteSubnets — сети за клиентом, IPv4 CIDR (#713); полная замена списка:
+          отсутствие поля или пустой список = снять все сети за клиентом.
         example:
         - 192.168.77.0/24
         items:
@@ -11794,6 +11800,7 @@ paths:
       description: |-
         Updates fields (name, allowed-ips, ...) of the peer identified by pubkey on the named managed server.
         The signature field: absent — the peer signature is left untouched; present — it replaces all five packets and the profile.
+        remoteSubnets replaces the whole list: absent or empty removes all subnets behind the client. Rejected (INVALID_REMOTE_SUBNETS) while the server restricts LAN access to segments.
       parameters:
       - description: Server id
         in: path
@@ -14026,8 +14033,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Changes a peer's allowed-IP and/or description on the named WireGuard
-        server. Returns the fresh servers snapshot.
+      description: |-
+        Changes a peer's allowed-IP and/or description on the named WireGuard server. Returns the fresh servers snapshot.
+        remoteSubnets replaces the whole list: absent or empty removes all subnets behind the client.
       parameters:
       - description: Interface name (e.g. Wireguard0)
         in: path

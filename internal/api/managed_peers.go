@@ -32,9 +32,11 @@ type UpdatePeerRequestDTO struct {
 	// полей и профиль целиком (пустые поля объекта стирают старые байты).
 	Signature *PeerSignatureDTO `json:"signature,omitempty"`
 	// ClientAllowedIPs — строка AllowedIPs в .conf клиента (CIDR через запятую,
-	// пусто — весь трафик). RemoteSubnets — сети за клиентом, IPv4 CIDR (#713).
-	ClientAllowedIPs string   `json:"clientAllowedIPs,omitempty" example:"10.10.0.0/24, 192.168.1.0/24"`
-	RemoteSubnets    []string `json:"remoteSubnets,omitempty" example:"192.168.77.0/24"`
+	// пусто — весь трафик).
+	ClientAllowedIPs string `json:"clientAllowedIPs,omitempty" example:"10.10.0.0/24, 192.168.1.0/24"`
+	// RemoteSubnets — сети за клиентом, IPv4 CIDR (#713); полная замена списка:
+	// отсутствие поля или пустой список = снять все сети за клиентом.
+	RemoteSubnets []string `json:"remoteSubnets,omitempty" example:"192.168.77.0/24"`
 }
 
 // peerSubnetErrorCode — коды отказов валидации сетей пира (#713), общие для
@@ -153,6 +155,7 @@ func (h *ManagedServerHandler) AddPeer(w http.ResponseWriter, r *http.Request, i
 //	@Summary		Update managed-server peer
 //	@Description	Updates fields (name, allowed-ips, ...) of the peer identified by pubkey on the named managed server.
 //	@Description	The signature field: absent — the peer signature is left untouched; present — it replaces all five packets and the profile.
+//	@Description	remoteSubnets replaces the whole list: absent or empty removes all subnets behind the client. Rejected (INVALID_REMOTE_SUBNETS) while the server restricts LAN access to segments.
 //	@Tags			managed-servers
 //	@Accept			json
 //	@Produce		json

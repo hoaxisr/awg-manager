@@ -47,9 +47,11 @@ type ServerUpdatePeerRequestDTO struct {
 	// снимает свой резолвер и возвращает пира к LAN-адресу роутера (#933).
 	DNS string `json:"dns,omitempty" example:"192.168.1.1"`
 	// ClientAllowedIPs — строка AllowedIPs в .conf клиента (CIDR через запятую,
-	// пусто — весь трафик). RemoteSubnets — сети за клиентом, IPv4 CIDR (#713).
-	ClientAllowedIPs string   `json:"clientAllowedIPs,omitempty" example:"10.0.14.0/24, 192.168.1.0/24"`
-	RemoteSubnets    []string `json:"remoteSubnets,omitempty" example:"192.168.77.0/24"`
+	// пусто — весь трафик).
+	ClientAllowedIPs string `json:"clientAllowedIPs,omitempty" example:"10.0.14.0/24, 192.168.1.0/24"`
+	// RemoteSubnets — сети за клиентом, IPv4 CIDR (#713); полная замена списка:
+	// отсутствие поля или пустой список = снять все сети за клиентом.
+	RemoteSubnets []string `json:"remoteSubnets,omitempty" example:"192.168.77.0/24"`
 }
 
 // Subtree dispatches /api/servers/{name}/... operations.
@@ -304,6 +306,7 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 //
 //	@Summary		Update server peer
 //	@Description	Changes a peer's allowed-IP and/or description on the named WireGuard server. Returns the fresh servers snapshot.
+//	@Description	remoteSubnets replaces the whole list: absent or empty removes all subnets behind the client.
 //	@Tags			servers
 //	@Accept			json
 //	@Produce		json
