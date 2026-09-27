@@ -409,26 +409,16 @@ func (s *Service) rciRemovePeerDefaultRoute(ctx context.Context, ifaceName, pubK
 	})
 }
 
-// rciUpdatePeerAllowIPs removes old allow-ips and sets new ones.
+// rciUpdatePeerAllowIPs removes old allow-ips and sets new ones. Снятие
+// старого идёт командой с допуском `no such net in peer` (11.A/11.8): /32 уже
+// может не стоять — после отказа отката или правки мимо панели, и такая смена
+// иначе застревала бы навсегда.
 func (s *Service) rciUpdatePeerAllowIPs(ctx context.Context, ifaceName, pubKey, oldIP, newIP string) error {
-	// Remove old
 	if oldIP != "" {
-		if err := s.rciPost(ctx, map[string]interface{}{
-			"interface": map[string]interface{}{
-				ifaceName: map[string]interface{}{
-					"wireguard": map[string]interface{}{
-						"peer": []map[string]interface{}{
-							{
-								"key": pubKey,
-								"allow-ips": []map[string]interface{}{
-									{"no": true, "address": oldIP, "mask": "255.255.255.255"},
-								},
-							},
-						},
-					},
-				},
-			},
-		}); err != nil {
+		if s.commands == nil || s.commands.Wireguard == nil {
+			return fmt.Errorf("ndms commands not wired")
+		}
+		if err := s.commands.Wireguard.RemovePeerAllowIP(ctx, ifaceName, pubKey, oldIP, "255.255.255.255"); err != nil {
 			return fmt.Errorf("remove old allow-ips: %w", err)
 		}
 	}

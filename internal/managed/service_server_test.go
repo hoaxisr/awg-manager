@@ -220,12 +220,25 @@ type recordingPoster struct {
 	err    error
 	onPost func(map[string]interface{})
 	failOn func(map[string]interface{}) error // per-command инъекция ошибки
+	// respond — per-command тело ответа (nil — "{}"): отказы NDMS внутри
+	// вложенного status, которые транспорт ошибкой не считает.
+	respond func(map[string]interface{}) json.RawMessage
+	// honorCtx — отменённый ctx отвергается без записи, как у настоящего транспорта.
+	honorCtx bool
 }
 
 func (p *recordingPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
 	p.mu.Lock()
+	if p.honorCtx && ctx.Err() != nil {
+		p.mu.Unlock()
+		return nil, ctx.Err()
+	}
 	var injected error
+	var resp json.RawMessage
 	if m, ok := payload.(map[string]interface{}); ok {
+		if p.respond != nil {
+			resp = p.respond(m)
+		}
 		p.posts = append(p.posts, m) // запись ДО проверки failOn: тест видит, что было попытано
 		if p.onPost != nil {
 			p.onPost(m)
@@ -241,6 +254,9 @@ func (p *recordingPoster) Post(ctx context.Context, payload any) (json.RawMessag
 	}
 	if err != nil {
 		return nil, err
+	}
+	if resp != nil {
+		return resp, nil
 	}
 	return json.RawMessage("{}"), nil
 }

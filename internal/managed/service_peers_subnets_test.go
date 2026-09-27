@@ -205,3 +205,117 @@ func TestDeletePeer_RemovesOwnRoutesBeforePeer_FailClosed(t *testing.T) {
 		t.Fatal("пир пропал из хранилища")
 	}
 }
+
+// Fix round 1 / IMPORTANT 1: смена tunnel IP и сетей одним запросом, маршрут
+// отвергнут — /32 на роутере возвращается к записанному, хранилище не тронуто.
+func TestUpdatePeer_TunnelIPAndSubnets_RouteFailure_RestoresTunnelIP(t *testing.T) {
+	svc, store, poster, _ := newPeerSubnetTestService(t, `[]`)
+	seedPeer(t, store)
+	poster.failOn = func(m map[string]interface{}) error {
+		b, _ := json.Marshal(m)
+		if strings.Contains(string(b), `"comment":"awgm-peer:`) {
+			return errors.New("route refused")
+		}
+		return nil
+	}
+	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.3/32", RemoteSubnets: []string{"192.168.77.0/24"}})
+	if err == nil || !strings.Contains(err.Error(), "route refused") {
+		t.Fatalf("err = %v", err)
+	}
+	posts := postsJSON(poster)
+	const (
+		old32    = `"allow-ips":[{"address":"10.66.66.2","mask":"255.255.255.255"}]`
+		new32Off = `"allow-ips":[{"address":"10.66.66.3","mask":"255.255.255.255","no":true}]`
+	)
+	iRoute, iNewOff, iOld := indexOf(posts, `"comment":"awgm-peer:PEER1"`), -1, -1
+	for i, p := range posts {
+		if i > iRoute && strings.Contains(p, new32Off) && iNewOff < 0 {
+			iNewOff = i
+		}
+		if i > iRoute && strings.Contains(p, old32) {
+			iOld = i
+		}
+	}
+	if iRoute < 0 || iNewOff < 0 || iOld < 0 || iNewOff > iOld {
+		t.Fatalf("старый /32 не возвращён: route=%d newOff=%d old=%d\n%s", iRoute, iNewOff, iOld, strings.Join(posts, "\n"))
+	}
+	sv, _ := store.GetManagedServerByID("Wireguard1")
+	if sv.Peers[0].TunnelIP != "10.66.66.2/32" || len(sv.Peers[0].RemoteSubnets) != 0 {
+		t.Fatalf("хранилище записано при отказе: %+v", sv.Peers[0])
+	}
+}
+
+// Fix round 1 / IMPORTANT 1(б): старого /32 на роутере уже нет — `no such net
+// in peer` на его снятии смену не валит (11.A/11.8).
+func TestUpdatePeer_TunnelIP_OldAbsentTolerated(t *testing.T) {
+	svc, store, poster, _ := newPeerSubnetTestService(t, `[]`)
+	seedPeer(t, store)
+	poster.respond = func(m map[string]interface{}) json.RawMessage {
+		b, _ := json.Marshal(m)
+		if strings.Contains(string(b), `"address":"10.66.66.2","mask":"255.255.255.255","no":true`) {
+			return json.RawMessage(`{"interface":{"Wireguard1":{"wireguard":{"peer":[{"status":[{"status":"error","message":"\"Wireguard1\": no such net in peer \"PEER1\"."}]}]}}}}`)
+		}
+		return nil
+	}
+	if err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.3/32"}); err != nil {
+		t.Fatal(err)
+	}
+	if sv, _ := store.GetManagedServerByID("Wireguard1"); sv.Peers[0].TunnelIP != "10.66.66.3/32" {
+		t.Fatalf("tunnel IP не записан: %+v", sv.Peers[0])
+	}
+}
+
+// Fix round 1 / IMPORTANT 2: ctx запроса отменён посреди — откат пира всё
+// равно доходит до роутера (отвязанный ctx).
+func TestAddPeer_CancelledCtx_PeerStillRemoved(t *testing.T) {
+	svc, store, poster, _ := newPeerSubnetTestService(t, `[]`)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poster.honorCtx = true
+	poster.failOn = func(m map[string]interface{}) error {
+		b, _ := json.Marshal(m)
+		if strings.Contains(string(b), `"comment":"awgm-peer:`) {
+			cancel()
+			return errors.New("route refused")
+		}
+		return nil
+	}
+	if _, err := svc.AddPeer(ctx, "Wireguard1", AddPeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: []string{"192.168.77.0/24"}}); err == nil {
+		t.Fatal("ожидали отказ")
+	}
+	if posts := postsJSON(poster); indexOf(posts, `{"key":"pub-1","no":true}`) < 0 {
+		t.Fatalf("пир не снят при отменённом ctx:\n%s", strings.Join(posts, "\n"))
+	}
+	if sv, _ := store.GetManagedServerByID("Wireguard1"); len(sv.Peers) != 0 {
+		t.Fatal("пир записан")
+	}
+}
+
+// Fix round 1 / MINOR 3: запись в хранилище отказала (гонка автовыдачи
+// адреса) — сети и пир снимаются с роутера, сирот нет.
+func TestAddPeer_StoreFailure_RemovesSubnetsAndPeer(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	poster.onPost = func(m map[string]interface{}) {
+		b, _ := json.Marshal(m)
+		if !strings.Contains(string(b), `"comment":"awgm-peer:pub-1"`) {
+			return
+		}
+		// Маршрут встал на роутере, а параллельный AddPeer занял тот же адрес.
+		fg.SetJSON("/show/rc/ip/route", `[{"network":"192.168.77.0","mask":"255.255.255.0","interface":"Wireguard1","auto":true,"comment":"awgm-peer:pub-1"}]`)
+		_ = store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
+			sv.Peers = append(sv.Peers, storage.ManagedPeer{PublicKey: "RACE", TunnelIP: "10.66.66.2/32"})
+			return nil
+		})
+	}
+	if _, err := svc.AddPeer(context.Background(), "Wireguard1", AddPeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: []string{"192.168.77.0/24"}}); err == nil {
+		t.Fatal("ожидали отказ записи")
+	}
+	posts := postsJSON(poster)
+	iAllowOff, iRouteOff, iPeerOff := indexOf(posts, allow77Off), indexOf(posts, route77Off), indexOf(posts, `{"key":"pub-1","no":true}`)
+	if iAllowOff < 0 || iRouteOff < 0 || iPeerOff < 0 || iRouteOff > iPeerOff {
+		t.Fatalf("сироты на роутере: allowOff=%d routeOff=%d peerOff=%d\n%s", iAllowOff, iRouteOff, iPeerOff, strings.Join(posts, "\n"))
+	}
+	if sv, _ := store.GetManagedServerByID("Wireguard1"); len(sv.Peers) != 1 || sv.Peers[0].PublicKey != "RACE" {
+		t.Fatalf("store = %+v", sv.Peers)
+	}
+}

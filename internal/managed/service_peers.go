@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/managed/peerip"
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
@@ -37,6 +38,30 @@ func ValidatePeerDNS(dns string) (string, error) {
 		out = append(out, ip.String())
 	}
 	return strings.Join(out, ", "), nil
+}
+
+// rollbackTimeout — бюджет отката на роутере: ctx запроса к этому моменту
+// может быть уже отменён, а откат обязан дойти.
+const rollbackTimeout = 30 * time.Second
+
+func detachedCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
+}
+
+// rollbackAddedPeer снимает с роутера только что добавленного пира, которого
+// не будет в хранилище: сначала его сети (remote, если стоят), потом сам пир.
+// Ошибки — в журнал: вызывающий уже возвращает первичную.
+func (s *Service) rollbackAddedPeer(ctx context.Context, iface, pubKey, name string, router peersubnet.Router, remote []string) {
+	rbCtx, cancel := detachedCtx(ctx)
+	defer cancel()
+	if len(remote) > 0 {
+		if err := peersubnet.Apply(rbCtx, router, iface, pubKey, nil, remote); err != nil {
+			s.appLog.Warn("add-peer", name, "сети за клиентом не сняты при откате: "+err.Error())
+		}
+	}
+	if err := s.rciRemovePeer(rbCtx, iface, pubKey); err != nil {
+		s.appLog.Warn("add-peer", name, "пир не снят при откате: "+err.Error())
+	}
 }
 
 // AddPeer adds a new client peer to the managed server identified by id.
@@ -74,22 +99,6 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	// Сети за клиентом: снимок занятых и валидация ДО ключей и RCI — отказ чистый.
-	var remote []string
-	var router peersubnet.Router
-	if len(req.RemoteSubnets) > 0 {
-		occupied, err := s.OccupiedSubnets(ctx, PeerRef{})
-		if err != nil {
-			return nil, fmt.Errorf("occupied subnets: %w", err)
-		}
-		if remote, err = peersubnet.ValidateRemoteSubnets(req.RemoteSubnets, occupied); err != nil {
-			return nil, err
-		}
-		if router, err = s.peerRouter(); err != nil {
-			return nil, err
-		}
-	}
-
 	// Check tunnel IP not already used
 	for _, p := range server.Peers {
 		if p.TunnelIP == req.TunnelIP {
@@ -124,6 +133,22 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 
 	iface := server.InterfaceName
 
+	// Сети за клиентом: снимок занятых и валидация ДО RCI, после дешёвых локальных проверок — отказ чистый.
+	var remote []string
+	var router peersubnet.Router
+	if len(req.RemoteSubnets) > 0 {
+		occupied, err := s.OccupiedSubnets(ctx, PeerRef{})
+		if err != nil {
+			return nil, fmt.Errorf("occupied subnets: %w", err)
+		}
+		if remote, err = peersubnet.ValidateRemoteSubnets(req.RemoteSubnets, occupied); err != nil {
+			return nil, err
+		}
+		if router, err = s.peerRouter(); err != nil {
+			return nil, err
+		}
+	}
+
 	// Add peer with all parameters in a single RCI call:
 	// key, preshared-key, comment, allow-ips (peer /32 only), connect
 	if err := s.rciAddPeer(ctx, iface, pubKey, psk, strings.TrimSpace(req.Description), ip.String(), true); err != nil {
@@ -135,9 +160,7 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 	if len(remote) > 0 {
 		if err := peersubnet.Apply(ctx, router, iface, pubKey, remote, nil); err != nil {
 			s.logRollback("add-peer", req.Description, err)
-			if rmErr := s.rciRemovePeer(ctx, iface, pubKey); rmErr != nil {
-				s.appLog.Warn("add-peer", req.Description, "пир не снят после отказа сетей за клиентом: "+rmErr.Error())
-			}
+			s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, nil, nil)
 			return nil, fmt.Errorf("apply remote subnets: %w", err)
 		}
 	}
@@ -175,6 +198,8 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		sv.Peers = append(sv.Peers, peer)
 		return nil
 	}); err != nil {
+		// Без записи пир на роутере — сирота, которого никто не снимет.
+		s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, router, remote)
 		return nil, fmt.Errorf("save to storage: %w", err)
 	}
 
@@ -207,24 +232,6 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 	if err != nil {
 		return err
 	}
-	var remote []string
-	if len(req.RemoteSubnets) > 0 {
-		occupied, err := s.OccupiedSubnets(ctx, PeerRef{Iface: iface, PubKey: pubkey})
-		if err != nil {
-			return fmt.Errorf("occupied subnets: %w", err)
-		}
-		if remote, err = peersubnet.ValidateRemoteSubnets(req.RemoteSubnets, occupied); err != nil {
-			return err
-		}
-	}
-	// Diff — от хранилища, не от allow-ips роутера: источник правды здесь.
-	added, removed := peersubnet.Diff(peer.RemoteSubnets, remote)
-	var router peersubnet.Router
-	if len(added)+len(removed) > 0 {
-		if router, err = s.peerRouter(); err != nil {
-			return err
-		}
-	}
 	sigProfile := ""
 	if req.Signature != nil {
 		var err error
@@ -255,19 +262,39 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 			}
 		}
 	}
+	// Чтение роутера — после дешёвых локальных проверок.
+	var remote []string
+	if len(req.RemoteSubnets) > 0 {
+		occupied, err := s.OccupiedSubnets(ctx, PeerRef{Iface: iface, PubKey: pubkey})
+		if err != nil {
+			return fmt.Errorf("occupied subnets: %w", err)
+		}
+		if remote, err = peersubnet.ValidateRemoteSubnets(req.RemoteSubnets, occupied); err != nil {
+			return err
+		}
+	}
+	// Diff — от хранилища, не от allow-ips роутера: источник правды здесь.
+	added, removed := peersubnet.Diff(peer.RemoteSubnets, remote)
+	var router peersubnet.Router
+	if len(added)+len(removed) > 0 {
+		if router, err = s.peerRouter(); err != nil {
+			return err
+		}
+	}
 
 	// Apply RCI changes (tunnel IP, description) before persisting.
+	oldIPStr, newIPStr := "", ""
 	if wantTunnelChange {
 		oldIP, _, _ := net.ParseCIDR(peer.TunnelIP)
 		newIP, _, err := net.ParseCIDR(req.TunnelIP)
 		if err != nil {
 			return fmt.Errorf("invalid tunnel IP: %w", err)
 		}
-		oldIPStr := ""
 		if oldIP != nil {
 			oldIPStr = oldIP.String()
 		}
-		if err := s.rciUpdatePeerAllowIPs(ctx, iface, pubkey, oldIPStr, newIP.String()); err != nil {
+		newIPStr = newIP.String()
+		if err := s.rciUpdatePeerAllowIPs(ctx, iface, pubkey, oldIPStr, newIPStr); err != nil {
 			return fmt.Errorf("update allow-ips: %w", err)
 		}
 	}
@@ -281,6 +308,15 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 	if len(added)+len(removed) > 0 {
 		if err := peersubnet.Apply(ctx, router, iface, pubkey, added, removed); err != nil {
 			s.logRollback("update-peer", req.Description, err)
+			// Хранилище не пишется — /32 на роутере обязан вернуться к записанному,
+			// иначе .conf выдаст адрес, которого у пира нет.
+			if wantTunnelChange && oldIPStr != "" {
+				rbCtx, cancel := detachedCtx(ctx)
+				if rbErr := s.rciUpdatePeerAllowIPs(rbCtx, iface, pubkey, newIPStr, oldIPStr); rbErr != nil {
+					s.appLog.Warn("update-peer", req.Description, "tunnel IP не возвращён после отказа сетей за клиентом: "+rbErr.Error())
+				}
+				cancel()
+			}
 			return fmt.Errorf("apply remote subnets: %w", err)
 		}
 	}
