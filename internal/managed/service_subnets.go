@@ -6,6 +6,7 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 )
 
@@ -167,6 +168,11 @@ func (s *Service) listUsedSubnets(ctx context.Context, excludeIface string) ([]u
 	if err != nil {
 		return nil, err
 	}
+	return usedSubnetsOf(all, excludeIface), nil
+}
+
+// usedSubnetsOf — разбор listUsedSubnets над уже прочитанным списком.
+func usedSubnetsOf(all []ndms.Interface, excludeIface string) []usedSubnet {
 	out := make([]usedSubnet, 0, len(all))
 	for _, iface := range all {
 		if iface.Address == "" || iface.Mask == "" {
@@ -188,7 +194,7 @@ func (s *Service) listUsedSubnets(ctx context.Context, excludeIface string) ([]u
 		}
 		out = append(out, usedSubnet{id: iface.ID, label: label, cidr: cidr})
 	}
-	return out, nil
+	return out
 }
 
 // findConflict returns the first occupied subnet that overlaps with

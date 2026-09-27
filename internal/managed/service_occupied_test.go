@@ -135,6 +135,24 @@ func TestOccupiedSubnets_PeerConfigUnreachableIsError(t *testing.T) {
 	}
 }
 
+// Пометка «сервер» у интерфейса, которого на роутере нет, сбор не ломает:
+// список интерфейсов прочитан успешно и его не содержит.
+func TestOccupiedSubnets_MarkedServerGoneIsSkipped(t *testing.T) {
+	svc, store, _, fg := newPeerSubnetTestService(t, `[]`)
+	if err := store.MarkServerInterface("Wireguard7"); err != nil {
+		t.Fatal(err)
+	}
+	fg.SetError("/show/rc/interface/Wireguard7", errors.New("unable to find Wireguard7"))
+	occ, err := svc.OccupiedSubnets(context.Background(), PeerRef{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := labels(occ)
+	if got["172.16.5.0/24"] == "" || got["10.9.0.0/24"] == "" {
+		t.Fatalf("остальные сети пропали: %v", got)
+	}
+}
+
 func TestPeerPresets_LANSegmentsAndDNSChain(t *testing.T) {
 	svc, store, _, _ := newPeerSubnetTestService(t, `[]`)
 	old := netif.RouterLANIP

@@ -46,12 +46,16 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 		return nil, fmt.Errorf("ndms queries not wired")
 	}
 	var out []peersubnet.Occupied
-	used, err := s.listUsedSubnets(ctx, "")
+	ifaces, err := s.queries.Interfaces.List(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list interface subnets: %w", err)
+		return nil, fmt.Errorf("list interfaces: %w", err)
+	}
+	exists := make(map[string]bool, len(ifaces))
+	for _, iface := range ifaces {
+		exists[iface.ID] = true
 	}
 	subnetByID := map[string]*net.IPNet{}
-	for _, u := range used {
+	for _, u := range usedSubnetsOf(ifaces, "") {
 		out = append(out, peersubnet.Occupied{Net: u.cidr, Label: "интерфейс " + u.label})
 		subnetByID[u.id] = u.cidr
 	}
@@ -63,6 +67,11 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 		servers[sv.InterfaceName] = true
 	}
 	for id := range servers {
+		// Пометка пережила интерфейс (удалён в веб-морде): роутер ответил
+		// списком без него — пиров, занимающих сети, нет. Не fail-open.
+		if !exists[id] {
+			continue
+		}
 		peers, err := s.queries.WGServers.PeersRCFresh(ctx, id)
 		if err != nil {
 			return nil, err
