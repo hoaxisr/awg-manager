@@ -156,7 +156,8 @@ func Exclude(base *net.IPNet, minus []*net.IPNet) []*net.IPNet {
 		walk(lo)
 		walk(&net.IPNet{IP: hiIP, Mask: mask})
 	}
-	walk(&net.IPNet{IP: ip4, Mask: net.CIDRMask(maskOnes(base), 32)})
+	baseMask := net.CIDRMask(maskOnes(base), 32)
+	walk(&net.IPNet{IP: ip4.Mask(baseMask), Mask: baseMask})
 	return out
 }
 
@@ -179,7 +180,13 @@ func BuildPresets(serverSubnet *net.IPNet, lanSubnets []*net.IPNet, dnsIPs []net
 	var router []*net.IPNet
 	seen := map[string]bool{}
 	for _, n := range append([]*net.IPNet{serverSubnet}, lanSubnets...) {
-		if n == nil || n.IP.To4() == nil || seen[n.String()] {
+		if n == nil || n.IP.To4() == nil {
+			continue
+		}
+		// Сети интерфейсов приходят адресом с маской (10.9.0.1/24), а
+		// IPNet.String() хост-биты не сбрасывает.
+		n = &net.IPNet{IP: n.IP.Mask(n.Mask), Mask: n.Mask}
+		if seen[n.String()] {
 			continue
 		}
 		seen[n.String()] = true
@@ -191,11 +198,13 @@ func BuildPresets(serverSubnet *net.IPNet, lanSubnets []*net.IPNet, dnsIPs []net
 	for _, n := range rest {
 		except = append(except, n.String())
 	}
+	seenDNS := map[string]bool{}
 	for _, ip := range dnsIPs {
 		ip4 := ip.To4()
-		if ip4 == nil {
+		if ip4 == nil || seenDNS[ip4.String()] {
 			continue
 		}
+		seenDNS[ip4.String()] = true
 		for _, r := range router {
 			if r.Contains(ip4) {
 				except = append(except, ip4.String()+"/32")

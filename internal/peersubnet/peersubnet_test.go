@@ -150,6 +150,36 @@ func TestBuildPresets(t *testing.T) {
 	}
 }
 
+// Сети интерфейсов приходят адресом с маской (10.9.0.1/24): пресет обязан
+// печатать сеть, а не адрес, и считать дополнение от сети.
+func TestBuildPresets_UnmaskedInput(t *testing.T) {
+	mask := net.CIDRMask(24, 32)
+	p := BuildPresets(&net.IPNet{IP: net.ParseIP("10.9.0.1").To4(), Mask: mask},
+		[]*net.IPNet{{IP: net.ParseIP("192.168.1.1").To4(), Mask: mask}}, nil)
+	if p.RouterOnly != "10.9.0.0/24, 192.168.1.0/24" {
+		t.Fatalf("RouterOnly = %q", p.RouterOnly)
+	}
+	want := BuildPresets(cidr(t, "10.9.0.0/24"), []*net.IPNet{cidr(t, "192.168.1.0/24")}, nil)
+	if p.ExceptRouter != want.ExceptRouter {
+		t.Fatalf("ExceptRouter = %q, want %q", p.ExceptRouter, want.ExceptRouter)
+	}
+}
+
+func TestExclude_UnmaskedBase(t *testing.T) {
+	got := Exclude(&net.IPNet{IP: net.ParseIP("10.9.0.1").To4(), Mask: net.CIDRMask(24, 32)}, nil)
+	if len(got) != 1 || got[0].String() != "10.9.0.0/24" {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestBuildPresets_DuplicateDNS(t *testing.T) {
+	p := BuildPresets(cidr(t, "10.9.0.0/24"), nil,
+		[]net.IP{net.ParseIP("10.9.0.1"), net.ParseIP("10.9.0.1")})
+	if n := strings.Count(p.ExceptRouter, "10.9.0.1/32"); n != 1 {
+		t.Fatalf("10.9.0.1/32 встречается %d раз: %q", n, p.ExceptRouter)
+	}
+}
+
 func TestRouteComment(t *testing.T) {
 	if got := RouteComment("5+0I/P0Vaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa="); got != "awgm-peer:5+0I/P0V" {
 		t.Fatalf("got %q", got)
