@@ -33,6 +33,52 @@ else
     ENTWARE_ARCH="$1"
 fi
 
+# bundle_kmods NAME OUTDIR DEST — модули ядра NAME в IPK: arch-default как
+# NAME.ko + SoC-файлы NAME-<soc>.ko той же разрядности/порядка байт.
+# Общая раскладка awg_proxy и awgm_relay.
+bundle_kmods() {
+    local name="$1" outdir="$2" dest="$3"
+    local count=0 default
+
+    case "$ENTWARE_ARCH" in
+        mipsel-3.4) default="$outdir/${name}-mt7621.ko" ;;
+        mips-3.4)   default="$outdir/${name}-mips.ko" ;;
+        aarch64-3.10) default="$outdir/${name}-arm64.ko" ;;
+    esac
+    if [[ -f "$default" ]]; then
+        mkdir -p "$dest"
+        cp "$default" "$dest/${name}.ko"
+        count=$((count + 1))
+        echo "Bundled ${name}.ko default ($(basename "$default"))"
+    else
+        echo "WARNING: $default not found, IPK will have no ${name} module"
+    fi
+
+    local ko filetype match koname
+    for ko in "$outdir/${name}"-*.ko; do
+        [[ -f "$ko" ]] || continue
+        case "$(basename "$ko")" in
+            "${name}-mips.ko"|"${name}-arm64.ko") continue ;;
+        esac
+        filetype=$(file -b "$ko")
+        match=false
+        case "$ENTWARE_ARCH" in
+            mipsel-3.4)   [[ "$filetype" == *"LSB"*"MIPS"* ]] && match=true ;;
+            mips-3.4)     [[ "$filetype" == *"MSB"*"MIPS"* ]] && match=true ;;
+            aarch64-3.10) [[ "$filetype" == *"aarch64"* ]]     && match=true ;;
+        esac
+        if $match; then
+            koname=$(basename "$ko" .ko | sed "s/${name}-//")
+            mkdir -p "$dest"
+            cp "$ko" "$dest/${name}-${koname}.ko"
+            count=$((count + 1))
+            echo "Bundled ${name} override: ${koname}"
+        fi
+    done
+
+    echo "Total ${name} modules bundled: $count"
+}
+
 build_ipk_one() {
     local ENTWARE_ARCH="$1"
 
@@ -149,91 +195,9 @@ build_ipk_one() {
         echo "WARNING: No prebuilt/kmod/*.ko files found, IPK will have no bundled modules"
     fi
 
-    local AWG_PROXY_DIR="$IPK_ROOT/opt/etc/awg-manager/modules"
-    local AWG_PROXY_COUNT=0
-    local AWG_PROXY_DEFAULT
-
-    case "$ENTWARE_ARCH" in
-        mipsel-3.4) AWG_PROXY_DEFAULT="kmod/awg-proxy/out/awg_proxy-mt7621.ko" ;;
-        mips-3.4)   AWG_PROXY_DEFAULT="kmod/awg-proxy/out/awg_proxy-mips.ko" ;;
-        aarch64-3.10) AWG_PROXY_DEFAULT="kmod/awg-proxy/out/awg_proxy-arm64.ko" ;;
-    esac
-    if [[ -f "$AWG_PROXY_DEFAULT" ]]; then
-        mkdir -p "$AWG_PROXY_DIR"
-        cp "$AWG_PROXY_DEFAULT" "$AWG_PROXY_DIR/awg_proxy.ko"
-        AWG_PROXY_COUNT=$((AWG_PROXY_COUNT + 1))
-        echo "Bundled awg_proxy.ko default ($(basename "$AWG_PROXY_DEFAULT"))"
-    else
-        echo "WARNING: $AWG_PROXY_DEFAULT not found, IPK will have no awg_proxy module"
-    fi
-
-    for EXTRA_KO in kmod/awg-proxy/out/awg_proxy-*.ko; do
-        [[ -f "$EXTRA_KO" ]] || continue
-        case "$(basename "$EXTRA_KO")" in
-            awg_proxy-mips.ko|awg_proxy-arm64.ko) continue ;;
-        esac
-        local filetype
-        filetype=$(file -b "$EXTRA_KO")
-        local match=false
-        case "$ENTWARE_ARCH" in
-            mipsel-3.4)   [[ "$filetype" == *"LSB"*"MIPS"* ]] && match=true ;;
-            mips-3.4)     [[ "$filetype" == *"MSB"*"MIPS"* ]] && match=true ;;
-            aarch64-3.10) [[ "$filetype" == *"aarch64"* ]]     && match=true ;;
-        esac
-        if $match; then
-            local KONAME
-            KONAME=$(basename "$EXTRA_KO" .ko | sed 's/awg_proxy-//')
-            mkdir -p "$AWG_PROXY_DIR"
-            cp "$EXTRA_KO" "$AWG_PROXY_DIR/awg_proxy-${KONAME}.ko"
-            AWG_PROXY_COUNT=$((AWG_PROXY_COUNT + 1))
-            echo "Bundled awg_proxy override: ${KONAME}"
-        fi
-    done
-
-    echo "Total awg_proxy modules bundled: $AWG_PROXY_COUNT"
-
-    # awgm_relay — та же раскладка, что у awg_proxy: arch-default + файлы SoC.
-    local AWGM_RELAY_COUNT=0
-    local AWGM_RELAY_DEFAULT
-
-    case "$ENTWARE_ARCH" in
-        mipsel-3.4) AWGM_RELAY_DEFAULT="kmod/awgm-relay/out/awgm_relay-mt7621.ko" ;;
-        mips-3.4)   AWGM_RELAY_DEFAULT="kmod/awgm-relay/out/awgm_relay-mips.ko" ;;
-        aarch64-3.10) AWGM_RELAY_DEFAULT="kmod/awgm-relay/out/awgm_relay-arm64.ko" ;;
-    esac
-    if [[ -f "$AWGM_RELAY_DEFAULT" ]]; then
-        mkdir -p "$AWG_PROXY_DIR"
-        cp "$AWGM_RELAY_DEFAULT" "$AWG_PROXY_DIR/awgm_relay.ko"
-        AWGM_RELAY_COUNT=$((AWGM_RELAY_COUNT + 1))
-        echo "Bundled awgm_relay.ko default ($(basename "$AWGM_RELAY_DEFAULT"))"
-    else
-        echo "WARNING: $AWGM_RELAY_DEFAULT not found, IPK will have no awgm_relay module"
-    fi
-
-    for EXTRA_KO in kmod/awgm-relay/out/awgm_relay-*.ko; do
-        [[ -f "$EXTRA_KO" ]] || continue
-        case "$(basename "$EXTRA_KO")" in
-            awgm_relay-mips.ko|awgm_relay-arm64.ko) continue ;;
-        esac
-        local filetype
-        filetype=$(file -b "$EXTRA_KO")
-        local match=false
-        case "$ENTWARE_ARCH" in
-            mipsel-3.4)   [[ "$filetype" == *"LSB"*"MIPS"* ]] && match=true ;;
-            mips-3.4)     [[ "$filetype" == *"MSB"*"MIPS"* ]] && match=true ;;
-            aarch64-3.10) [[ "$filetype" == *"aarch64"* ]]     && match=true ;;
-        esac
-        if $match; then
-            local KONAME
-            KONAME=$(basename "$EXTRA_KO" .ko | sed 's/awgm_relay-//')
-            mkdir -p "$AWG_PROXY_DIR"
-            cp "$EXTRA_KO" "$AWG_PROXY_DIR/awgm_relay-${KONAME}.ko"
-            AWGM_RELAY_COUNT=$((AWGM_RELAY_COUNT + 1))
-            echo "Bundled awgm_relay override: ${KONAME}"
-        fi
-    done
-
-    echo "Total awgm_relay modules bundled: $AWGM_RELAY_COUNT"
+    local MODULES_DIR="$IPK_ROOT/opt/etc/awg-manager/modules"
+    bundle_kmods awg_proxy kmod/awg-proxy/out "$MODULES_DIR"
+    bundle_kmods awgm_relay kmod/awgm-relay/out "$MODULES_DIR"
 
     cp entware/files/etc/init.d/* "$IPK_ROOT/opt/etc/init.d/"
 
