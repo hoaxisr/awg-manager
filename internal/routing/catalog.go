@@ -282,7 +282,9 @@ func (c *CatalogImpl) ListAll(ctx context.Context) []TunnelEntry {
 					if idx, ok := opkgtun.IndexOf(iface.ID); ok && owned[idx] {
 						continue
 					}
-					if iface.Connected != "yes" {
+					// Link, а не Connected: события NDMS (OnLayerChanged)
+					// обновляют только Link/State/IPv4.
+					if iface.Link != "up" {
 						entry.Status = "down"
 					}
 					if iface.IPv4 != "running" {

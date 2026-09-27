@@ -555,9 +555,10 @@ func TestListAll_ProviderError(t *testing.T) {
 func TestListAll_OpkgTunOwnedHiddenStatusFromNDMS(t *testing.T) {
 	provider := &mockTunnelProvider{}
 	ndmsClient := &mockNDMSClient{ifaces: []ndms.Interface{
-		{ID: "OpkgTun10", Type: "OpkgTun", Description: "awgm policy-tun", Connected: "yes", IPv4: "running"},
-		{ID: "OpkgTun7", Type: "OpkgTun", Description: "csqtt", Connected: "no", IPv4: ""},
-		{ID: "OpkgTun8", Type: "OpkgTun", Connected: "yes", IPv4: "running"},
+		{ID: "OpkgTun10", Type: "OpkgTun", Description: "awgm policy-tun", Link: "up", IPv4: "running"},
+		// Connected устарел: события NDMS обновляют только Link.
+		{ID: "OpkgTun7", Type: "OpkgTun", Description: "csqtt", Link: "down", Connected: "yes", IPv4: "disabled"},
+		{ID: "OpkgTun8", Type: "OpkgTun", Link: "up", Connected: "no", IPv4: "running"},
 	}}
 	cat := NewCatalog(provider, ndmsClient, &mockStoreClient{entries: map[string]StoreEntry{}}, noExits(), nil)
 	cat.SetOwnedOpkgTun(func(context.Context) (map[int]bool, error) { return map[int]bool{10: true}, nil })

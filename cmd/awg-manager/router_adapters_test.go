@@ -53,16 +53,22 @@ func TestForeignBindable(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(sysNet, "csqtt0"), 0o755)
 	_ = os.WriteFile(filepath.Join(sysNet, "csqtt0", "carrier"), []byte("1\n"), 0o644)
 	list := []ndms.Interface{
-		{ID: "OpkgTun7", SystemName: "", Description: "csqtt", Connected: "no"}, // SystemName пуст — сопоставление по номеру
-		{ID: "OpkgTun9", SystemName: "opkgtun9", Connected: "yes"},
+		// SystemName пуст — сопоставление по номеру. Connected устарел: события
+		// NDMS обновляют только Link (стенд: программа убита, connected "yes").
+		{ID: "OpkgTun7", SystemName: "", Description: "csqtt", Link: "down", Connected: "yes"},
+		{ID: "OpkgTun5", Link: "up", Connected: "no"},
+		{ID: "OpkgTun9", SystemName: "opkgtun9", Link: "up", Connected: "yes"},
 	}
-	got := foreignBindable([]string{"opkgtun7", "csqtt0", "zt9", "busy0"}, list, sysNet, map[string]bool{"busy0": true})
+	got := foreignBindable([]string{"opkgtun7", "opkgtun5", "csqtt0", "zt9", "busy0"}, list, sysNet, map[string]bool{"busy0": true})
 	byName := map[string]router.WANInterfaceInfo{}
 	for _, g := range got {
 		byName[g.Name] = g
 	}
-	if len(got) != 3 {
+	if len(got) != 4 {
 		t.Fatalf("got %+v", got)
+	}
+	if o := byName["opkgtun5"]; !o.Up {
+		t.Errorf("opkgtun5 = %+v, ждали up по Link", o)
 	}
 	if o := byName["opkgtun7"]; !o.Foreign || o.Up || o.Absent || o.Label != "csqtt" {
 		t.Errorf("opkgtun7 = %+v", o)

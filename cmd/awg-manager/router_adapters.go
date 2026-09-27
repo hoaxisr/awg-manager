@@ -377,7 +377,8 @@ func (a *routerWANInterfaceAdapter) withForeign(ctx context.Context, out []route
 // foreignBindable — отмеченные сторонние интерфейсы для списка привязки
 // (issue #935). ListAll их не отдаёт (opkgtun* режет isOwnTunnel, интерфейса
 // ядра NDMS не знает), поэтому добавляем отдельно. Состояние: OpkgTun — по
-// connected из NDMS, интерфейс ядра — по /sys/class/net.
+// link из NDMS (connected события не обновляют — OnLayerChanged ведёт только
+// Link/State/IPv4), интерфейс ядра — по /sys/class/net.
 func foreignBindable(marked []string, list []ndms.Interface, sysNet string, occupied map[string]bool) []router.WANInterfaceInfo {
 	// Запись NDMS для opkgtunN ищется по НОМЕРУ (IndexOf от ID записи):
 	// SystemName бывает пустым — wireToInterface обнуляет непохожее имя, а
@@ -401,7 +402,7 @@ func foreignBindable(marked []string, list []ndms.Interface, sysNet string, occu
 			if rec.Description != "" {
 				info.Label = rec.Description
 			}
-			info.Up = rec.Connected == "yes"
+			info.Up = rec.Link == "up"
 		} else if _, err := os.Stat(filepath.Join(sysNet, name)); err != nil {
 			info.Absent = true
 		} else {
