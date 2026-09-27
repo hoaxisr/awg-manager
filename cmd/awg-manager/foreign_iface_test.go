@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/external"
@@ -175,5 +176,51 @@ func TestForeignCandidates(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("кандидаты = %+v, want %+v", got, want)
+	}
+}
+
+// Стенд 5.02.A.11: `interface-name` в списке — эхо id или метка (Bridge0 →
+// "Home"), настоящее имя ядра даёт только резолвер. Без него br0 проходил
+// отметку.
+func TestNDMSSystemNames_ResolvesLabels(t *testing.T) {
+	fg := ndmsquery.NewFakeGetter()
+	fg.SetJSON("/show/interface/", `{
+  "Bridge0": {"id":"Bridge0","interface-name":"Home","type":"Bridge","state":"up","link":"up"},
+  "GigabitEthernet0": {"id":"GigabitEthernet0","interface-name":"GigabitEthernet0","type":"GigabitEthernet","state":"up","link":"up"}
+}`)
+	fg.SetPostSystemName("Bridge0", `"br0"`)
+	fg.SetPostSystemName("GigabitEthernet0", `"eth2"`)
+	f := newForeignEnv(t, nil, nil)
+	f.ndmsNames = ndmsSystemNames(ndmsquery.NewInterfaceStore(fg, ndmsquery.NopLogger()))
+	for _, name := range []string{"br0", "eth2"} {
+		if err := f.Mark(context.Background(), name); !errors.Is(err, api.ErrForeignIfaceRejected) {
+			t.Errorf("Mark(%q) = %v, ждали отказ «интерфейс роутера»", name, err)
+		}
+	}
+	if got := f.settings.GetForeignInterfaces(); len(got) != 0 {
+		t.Fatalf("отказы записали %v", got)
+	}
+}
+
+// R21: существующий интерфейс ядра без tun_flags — не программа (lo, dummy0,
+// tunl0…); существующий TUN, неизвестный NDMS, отмечается.
+func TestForeignMark_ExistingNonTUNRejected(t *testing.T) {
+	f := newForeignEnv(t, nil, nil)
+	for _, n := range []string{"lo", "zt0"} {
+		if err := os.MkdirAll(filepath.Join(f.sysNet, n), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(f.sysNet, "zt0", "tun_flags"), []byte("0x1001\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Mark(context.Background(), "lo"); !errors.Is(err, api.ErrForeignIfaceRejected) {
+		t.Fatalf("Mark(lo) = %v, ждали отказ «не TUN»", err)
+	}
+	if err := f.Mark(context.Background(), "zt0"); err != nil {
+		t.Fatalf("Mark(zt0): %v", err)
+	}
+	if got := f.settings.GetForeignInterfaces(); !slices.Equal(got, []string{"zt0"}) {
+		t.Fatalf("отметки = %v, ждали zt0", got)
 	}
 }

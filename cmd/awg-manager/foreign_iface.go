@@ -47,7 +47,8 @@ func canonicalForeign(name string) (string, int, bool) {
 
 // Mark — отказы по границе (spec §4): имя; номер OpkgTun с ключевым
 // держателем; наше имя (IsAutoManagedIface — сюда же tun sing-box: режимы
-// роутера живут на opkgtun*); интерфейс ядра, известный NDMS.
+// роутера живут на opkgtun*); существующий не-TUN; интерфейс ядра,
+// известный NDMS.
 func (f *foreignIfaces) Mark(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	switch {
@@ -72,6 +73,14 @@ func (f *foreignIfaces) Mark(ctx context.Context, name string) error {
 	}
 	if router.IsAutoManagedIface(name) {
 		return rejectForeign("%s — имя интерфейсов панели", name)
+	}
+	// Существующий интерфейс ядра без tun_flags — не TUN userland-программы
+	// (lo, dummy0, tunl0, порты и радио роутера). Отсутствующий отмечается:
+	// программа поднимет его позже.
+	if _, err := os.Stat(filepath.Join(f.sysNet, name)); err == nil {
+		if _, err := os.Stat(filepath.Join(f.sysNet, name, "tun_flags")); err != nil {
+			return rejectForeign("%s — не TUN-интерфейс программы", name)
+		}
 	}
 	known, err := f.ndmsNames(ctx)
 	if err != nil {
@@ -142,18 +151,19 @@ func sysCarrier(sysNet, name string) bool {
 	return err == nil && strings.TrimSpace(string(b)) == "1"
 }
 
-// ndmsSystemNames — имена ядра всех интерфейсов, известных NDMS.
+// ndmsSystemNames — имена ядра всех интерфейсов, известных NDMS. Берутся из
+// ListAll: `interface-name` в списке — эхо id или метка (стенд 5.02.A.11:
+// Bridge0 → "Home"), настоящее имя (br0) даёт только резолвер, а ListAll
+// разрешает его пакетом и кэширует.
 func ndmsSystemNames(store *ndmsquery.InterfaceStore) func(context.Context) (map[string]bool, error) {
 	return func(ctx context.Context) (map[string]bool, error) {
-		all, err := store.List(ctx)
+		all, err := store.ListAll(ctx)
 		if err != nil {
 			return nil, err
 		}
 		out := make(map[string]bool, len(all))
 		for _, i := range all {
-			if i.SystemName != "" {
-				out[i.SystemName] = true
-			}
+			out[i.Name] = true
 		}
 		return out, nil
 	}
