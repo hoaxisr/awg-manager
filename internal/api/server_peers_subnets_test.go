@@ -360,8 +360,48 @@ func TestServersHandler_AddServerPeer_RollbackRemoveFails_KeepsSecret(t *testing
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
 	}
-	if _, ok := store.GetServerPeerSecret("Wireguard0", peerFixturePubKey); !ok {
+	sec, ok := store.GetServerPeerSecret("Wireguard0", peerFixturePubKey)
+	if !ok {
 		t.Fatal("секрет удалён, хотя пир остался на роутере")
+	}
+	// Final review M5: Apply свои сети откатил — в оставленном секрете их нет.
+	if len(sec.RemoteSubnets) != 0 {
+		t.Fatalf("в секрете сети, которых нет на роутере: %v", sec.RemoteSubnets)
+	}
+}
+
+// Откат Apply сам не завершился (allow-ips не снялись) — сети на роутере,
+// секрет их держит, чтобы удаление пира сняло метки.
+func TestServersHandler_AddServerPeer_RollbackRemoveFails_ApplyRollbackFails_KeepsSubnets(t *testing.T) {
+	h, store, poster, _, _ := newServersSubnetHarness(t, `[]`, `[]`)
+	stubPeerKeygen(t)
+	poster.setFailOn(func(payload string) error {
+		if strings.Contains(payload, `"comment":"awgm-peer:`) || strings.Contains(payload, sysAllow77Off) ||
+			strings.Contains(payload, `{"key":"`+peerFixturePubKey+`","no":true}`) {
+			return errors.New("refused")
+		}
+		return nil
+	})
+	rr := postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32","remoteSubnets":["192.168.77.0/24"]}`)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if sec, ok := store.GetServerPeerSecret("Wireguard0", peerFixturePubKey); !ok || len(sec.RemoteSubnets) != 1 {
+		t.Fatalf("secret = %+v ok=%v", sec, ok)
+	}
+}
+
+// Final review M6: Commands без Routes — чистый отказ до RCI, не nil-паника в Apply.
+func TestServersHandler_AddServerPeer_NoRoutesCommands_Refused(t *testing.T) {
+	h, _, poster, _, _ := newServersSubnetHarness(t, `[]`, `[]`)
+	stubPeerKeygen(t)
+	h.SetCommands(&ndmscommand.Commands{Wireguard: h.commands.Wireguard})
+	rr := postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32","remoteSubnets":["192.168.77.0/24"]}`)
+	if rr.Code == http.StatusOK || !strings.Contains(rr.Body.String(), "INTERNAL_ERROR") {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if n := len(poster.snapshot()); n != 0 {
+		t.Fatalf("RCI дёрнут: %d", n)
 	}
 }
 

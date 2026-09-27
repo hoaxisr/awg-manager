@@ -159,7 +159,9 @@ func (h *ServersHandler) requireListedServer(ctx context.Context, w http.Respons
 }
 
 func (h *ServersHandler) requireWGCommands(w http.ResponseWriter) bool {
-	if h.commands == nil || h.commands.Wireguard == nil {
+	// Routes — для NewPeerRouter (сети за клиентом): без него Apply упал бы
+	// nil-паникой посреди операции, а не чистым отказом до RCI.
+	if h.commands == nil || h.commands.Wireguard == nil || h.commands.Routes == nil {
 		response.Error(w, "ndms commands not initialized", "INTERNAL_ERROR")
 		return false
 	}
@@ -288,7 +290,7 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 	if len(remote) > 0 {
 		if err := peersubnet.Apply(r.Context(), ndmscommand.NewPeerRouter(h.commands), name, pubKey, remote, nil); err != nil {
 			h.logRollback("add-peer", name, err)
-			h.rollbackAddedServerPeer(r.Context(), name, pubKey)
+			h.rollbackAddedServerPeer(r.Context(), name, pubKey, err)
 			response.Error(w, err.Error(), "ADD_PEER_FAILED")
 			return
 		}
@@ -1016,11 +1018,26 @@ func detachedCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 // rollbackAddedServerPeer снимает с роутера только что добавленного пира и его
 // секрет. Пир не снялся — секрет остаётся: без него пир на роутере — сирота с
 // потерянным ключом, а с ним его видно в панели и можно удалить.
-func (h *ServersHandler) rollbackAddedServerPeer(ctx context.Context, name, pubKey string) {
+// applyErr — отказ Apply, из-за которого откат.
+func (h *ServersHandler) rollbackAddedServerPeer(ctx context.Context, name, pubKey string, applyErr error) {
 	rbCtx, cancel := detachedCtx(ctx)
 	defer cancel()
 	if err := h.commands.Wireguard.RemovePeer(rbCtx, name, pubKey); err != nil {
 		h.log.Warn("add-peer", name, "пир не снят после отказа сетей за клиентом, секрет оставлен: "+err.Error())
+		// Apply свои сети уже откатил — в оставленной записи их быть не должно,
+		// иначе правка с тем же списком даст пустой Diff и сети не встанут.
+		// Откат Apply не завершён — часть сетей на роутере: запись их держит,
+		// чтобы удаление пира сняло метки.
+		var rb *peersubnet.RollbackError
+		if errors.As(applyErr, &rb) {
+			return
+		}
+		if sec, ok := h.settings.GetServerPeerSecret(name, pubKey); ok && len(sec.RemoteSubnets) > 0 {
+			sec.RemoteSubnets = nil
+			if err := h.settings.SetServerPeerSecret(name, pubKey, sec); err != nil {
+				h.log.Warn("add-peer", name, "сети не убраны из оставленного секрета: "+err.Error())
+			}
+		}
 		return
 	}
 	if err := h.settings.DeleteServerPeerSecret(name, pubKey); err != nil {
