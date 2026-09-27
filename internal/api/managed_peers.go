@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/managed"
+	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/signature"
 )
@@ -16,6 +17,10 @@ type AddPeerRequestDTO struct {
 	// server's subnet is allocated.
 	TunnelIP string `json:"tunnelIP,omitempty" example:"10.10.0.2/32"`
 	DNS      string `json:"dns,omitempty" example:"8.8.8.8"`
+	// ClientAllowedIPs — строка AllowedIPs в .conf клиента (CIDR через запятую,
+	// пусто — весь трафик). RemoteSubnets — сети за клиентом, IPv4 CIDR (#713).
+	ClientAllowedIPs string   `json:"clientAllowedIPs,omitempty" example:"10.10.0.0/24, 192.168.1.0/24"`
+	RemoteSubnets    []string `json:"remoteSubnets,omitempty" example:"192.168.77.0/24"`
 }
 
 // UpdatePeerRequestDTO is the swagger-visible body for PUT /managed-servers/{id}/peers/{pubkey}.
@@ -26,6 +31,67 @@ type UpdatePeerRequestDTO struct {
 	// Signature: nil — сигнатуру пира не трогать; объект — заменить все пять
 	// полей и профиль целиком (пустые поля объекта стирают старые байты).
 	Signature *PeerSignatureDTO `json:"signature,omitempty"`
+	// ClientAllowedIPs — строка AllowedIPs в .conf клиента (CIDR через запятую,
+	// пусто — весь трафик). RemoteSubnets — сети за клиентом, IPv4 CIDR (#713).
+	ClientAllowedIPs string   `json:"clientAllowedIPs,omitempty" example:"10.10.0.0/24, 192.168.1.0/24"`
+	RemoteSubnets    []string `json:"remoteSubnets,omitempty" example:"192.168.77.0/24"`
+}
+
+// peerSubnetErrorCode — коды отказов валидации сетей пира (#713), общие для
+// managed и системного путей: фронт различает их по коду и показывает текст
+// пересечения у поля.
+func peerSubnetErrorCode(err error) (string, bool) {
+	switch {
+	case errors.Is(err, peersubnet.ErrInvalidClientAllowedIPs):
+		return "INVALID_CLIENT_ALLOWED_IPS", true
+	case errors.Is(err, peersubnet.ErrRemoteSubnetOverlap):
+		return "REMOTE_SUBNET_OVERLAP", true
+	case errors.Is(err, peersubnet.ErrInvalidRemoteSubnets):
+		return "INVALID_REMOTE_SUBNETS", true
+	}
+	return "", false
+}
+
+// PeerPresetsDTO — пресеты поля «AllowedIPs клиента» в формате поля (#713).
+type PeerPresetsDTO struct {
+	RouterOnly   string `json:"routerOnly" example:"10.10.0.0/24, 192.168.1.0/24"`
+	ExceptRouter string `json:"exceptRouter" example:"0.0.0.0/5, 8.0.0.0/7, 192.168.1.1/32, ::/0"`
+}
+
+// PeerPresetsResponse is the envelope for GET …/peers/presets.
+type PeerPresetsResponse struct {
+	Success bool           `json:"success" example:"true"`
+	Data    PeerPresetsDTO `json:"data"`
+}
+
+// PeerPresets returns AllowedIPs presets for a managed-server peer.
+// GET /api/managed-servers/{id}/peers/presets
+//
+//	@Summary		Peer AllowedIPs presets
+//	@Description	routerOnly — server subnet plus LAN bridges (LANSegments or all); exceptRouter — everything else plus /32 of the resolver and ::/0.
+//	@Tags			managed-servers
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	path		string	true	"Server id"
+//	@Param			dns	query		string	false	"Peer DNS as typed in the form; empty — server DNS, then router LAN IP"
+//	@Success		200	{object}	PeerPresetsResponse
+//	@Failure		400	{object}	APIErrorEnvelope
+//	@Router			/managed-servers/{id}/peers/presets [get]
+func (h *ManagedServerHandler) PeerPresets(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	p, err := h.svc.PeerPresets(r.Context(), id, r.URL.Query().Get("dns"))
+	if err != nil {
+		if errors.Is(err, managed.ErrInvalidPeerDNS) {
+			response.Error(w, err.Error(), "INVALID_PEER_DNS")
+			return
+		}
+		response.Error(w, err.Error(), "PRESETS_FAILED")
+		return
+	}
+	response.Success(w, PeerPresetsDTO{RouterOnly: p.RouterOnly, ExceptRouter: p.ExceptRouter})
 }
 
 // PeerSignatureDTO is the swagger-visible peer signature: five packets plus the
@@ -69,6 +135,10 @@ func (h *ManagedServerHandler) AddPeer(w http.ResponseWriter, r *http.Request, i
 			response.Error(w, err.Error(), "SIGNATURE_GENERATE_FAILED")
 			return
 		}
+		if code, ok := peerSubnetErrorCode(err); ok {
+			response.Error(w, err.Error(), code)
+			return
+		}
 		response.Error(w, err.Error(), "ADD_PEER_FAILED")
 		return
 	}
@@ -101,6 +171,10 @@ func (h *ManagedServerHandler) UpdatePeer(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := h.svc.UpdatePeer(r.Context(), id, pubkey, req); err != nil {
+		if code, ok := peerSubnetErrorCode(err); ok {
+			response.Error(w, err.Error(), code)
+			return
+		}
 		switch {
 		case errors.Is(err, managed.ErrUnknownSignatureProfile):
 			response.Error(w, err.Error(), "INVALID_SIGNATURE_PROFILE")

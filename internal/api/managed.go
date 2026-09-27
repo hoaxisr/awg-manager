@@ -34,6 +34,10 @@ type ManagedPeerDTO struct {
 	I4               string `json:"i4,omitempty"`
 	I5               string `json:"i5,omitempty"`
 	SignatureProfile string `json:"signatureProfile,omitempty" example:"quic_initial"`
+	// ClientAllowedIPs — строка AllowedIPs в .conf клиента (CIDR через запятую,
+	// пусто — весь трафик). RemoteSubnets — сети за клиентом, IPv4 CIDR (#713).
+	ClientAllowedIPs string   `json:"clientAllowedIPs,omitempty" example:"10.10.0.0/24, 192.168.1.0/24"`
+	RemoteSubnets    []string `json:"remoteSubnets,omitempty" example:"192.168.77.0/24"`
 }
 
 // ManagedServerDTO mirrors frontend ManagedServer.
@@ -229,6 +233,10 @@ type managedPeerPublic struct {
 	I4               string `json:"i4,omitempty"`
 	I5               string `json:"i5,omitempty"`
 	SignatureProfile string `json:"signatureProfile,omitempty"`
+	// ClientAllowedIPs — строка AllowedIPs в .conf клиента (CIDR через запятую,
+	// пусто — весь трафик). RemoteSubnets — сети за клиентом, IPv4 CIDR (#713).
+	ClientAllowedIPs string   `json:"clientAllowedIPs,omitempty"`
+	RemoteSubnets    []string `json:"remoteSubnets,omitempty"`
 }
 
 // toManagedServerResponse converts storage model to a safe response DTO.
@@ -247,6 +255,8 @@ func toManagedServerResponse(s *storage.ManagedServer, foreign []string) *manage
 			I4:               p.I4,
 			I5:               p.I5,
 			SignatureProfile: p.SignatureProfile,
+			ClientAllowedIPs: p.ClientAllowedIPs,
+			RemoteSubnets:    p.RemoteSubnets,
 		}
 	}
 	return &managedServerResponse{
@@ -515,6 +525,10 @@ func (h *ManagedServerHandler) Subtree(w http.ResponseWriter, r *http.Request) {
 		// /api/managed-servers/{id}/peers/{pubkey}
 		if parts[1] != "peers" {
 			response.Error(w, "unknown path", "UNKNOWN_PATH")
+			return
+		}
+		if parts[2] == "presets" {
+			h.PeerPresets(w, r, id)
 			return
 		}
 		pubkey := parts[2]
