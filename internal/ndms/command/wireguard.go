@@ -236,48 +236,16 @@ func (c *WireguardCommands) SetPeerComment(ctx context.Context, ifaceName, pubKe
 		func() { c.invalidateServer(ifaceName) })
 }
 
-// UpdatePeerAllowIPs removes old /32 and sets a new one.
+// UpdatePeerAllowIPs removes old /32 and sets a new one. Снятие старого
+// терпит `no such net in peer` (11.A/11.8): /32 уже может не стоять — после
+// отказа отката или правки мимо панели, и смена адреса иначе застревала бы.
 func (c *WireguardCommands) UpdatePeerAllowIPs(ctx context.Context, ifaceName, pubKey, oldIP, newIP string) error {
 	if oldIP != "" {
-		payload := map[string]any{
-			"interface": map[string]any{
-				ifaceName: map[string]any{
-					"wireguard": map[string]any{
-						"peer": []map[string]any{
-							{
-								"key": pubKey,
-								"allow-ips": []map[string]any{
-									{"no": true, "address": oldIP, "mask": "255.255.255.255"},
-								},
-							},
-						},
-					},
-				},
-			},
-		}
-		if err := postMutationChecked(ctx, c.poster, c.save, payload, "remove peer allow-ips "+ifaceName,
-			func() { c.invalidateServer(ifaceName) }); err != nil {
+		if err := c.RemovePeerAllowIP(ctx, ifaceName, pubKey, oldIP, "255.255.255.255"); err != nil {
 			return fmt.Errorf("remove old allow-ips: %w", err)
 		}
 	}
-	payload := map[string]any{
-		"interface": map[string]any{
-			ifaceName: map[string]any{
-				"wireguard": map[string]any{
-					"peer": []map[string]any{
-						{
-							"key": pubKey,
-							"allow-ips": []map[string]any{
-								{"address": newIP, "mask": "255.255.255.255"},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-	return postMutationChecked(ctx, c.poster, c.save, payload, "set peer allow-ips "+ifaceName,
-		func() { c.invalidateServer(ifaceName) })
+	return c.AddPeerAllowIP(ctx, ifaceName, pubKey, newIP, "255.255.255.255")
 }
 
 // AddPeerAllowIP добавляет одну сеть в allow-ips пира. Повтор на уже стоящей

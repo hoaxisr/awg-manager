@@ -53,3 +53,35 @@ func TestRemovePeerAllowIP_ToleratesNoSuchNet(t *testing.T) {
 		t.Fatal("настоящий отказ проглочен")
 	}
 }
+
+// noSuchNetOnRemovePoster отвечает `no such net in peer` на снятие allow-ips и
+// успехом на всё прочее.
+type noSuchNetOnRemovePoster struct{ fakePoster }
+
+func (p *noSuchNetOnRemovePoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	_, _ = p.fakePoster.Post(ctx, payload)
+	if b, _ := json.Marshal(payload); strings.Contains(string(b), `"no":true`) {
+		return json.RawMessage(`{"interface":{"Wireguard9":{"wireguard":{"peer":[{"status":[{"status":"error","message":"\"Wireguard9\": no such net in peer \"K=\"."}]}]}}}}`), nil
+	}
+	return json.RawMessage(`{}`), nil
+}
+
+// Смена адреса пира: старого /32 на роутере уже нет — смена обязана пройти и
+// поставить новый.
+func TestUpdatePeerAllowIPs_ToleratesMissingOldIP(t *testing.T) {
+	poster := &noSuchNetOnRemovePoster{}
+	sc := NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
+	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger()})
+	c := NewWireguardCommands(poster, sc, q)
+	if err := c.UpdatePeerAllowIPs(context.Background(), "Wireguard9", "K=", "10.9.0.2", "10.9.0.9"); err != nil {
+		t.Fatalf("отсутствующий старый /32 уронил смену: %v", err)
+	}
+	payloads := poster.Payloads()
+	if len(payloads) != 2 {
+		t.Fatalf("вызовов %d, ждали 2", len(payloads))
+	}
+	b, _ := json.Marshal(payloads[1])
+	if !strings.Contains(string(b), `{"address":"10.9.0.9","mask":"255.255.255.255"}`) {
+		t.Fatalf("новый /32 не поставлен: %s", b)
+	}
+}
