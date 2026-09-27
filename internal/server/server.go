@@ -132,7 +132,7 @@ type Server struct {
 	orphanIfacesFn             func(ctx context.Context) ([]external.OrphanIface, error)
 	orphanExclusiveFn          func(ctx context.Context) ([]external.OrphanIface, error)
 	singboxConfigPreviewFn     func() (string, error)
-	obfuscatorRelayChanged     func(process bool)
+	obfuscatorRelayChanged     func()
 	dnsCheckService            *dnscheck.Service
 	authMiddleware             *auth.Middleware
 	mcpKeys                    *storage.McpKeyStore
@@ -235,7 +235,7 @@ type Deps struct {
 
 	// ObfuscatorRelayChanged — смена выключателя ядро/процесс релея Phobos
 	// (спека §4.8); nil — смена вступит в силу со следующим Start туннеля.
-	ObfuscatorRelayChanged func(process bool)
+	ObfuscatorRelayChanged func()
 }
 
 // authLoggerAdapter narrows ScopedLogger to the AuthLogger interface

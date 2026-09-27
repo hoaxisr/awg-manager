@@ -188,7 +188,7 @@ type SettingsHandler struct {
 	applyBootstrapDNS        func(string) error
 	applyClashPort           func(int) error
 	clashPorts               clashPortInspector
-	onObfuscatorRelayChanged func(process bool)
+	onObfuscatorRelayChanged func()
 	downloadSvc              *downloader.Service
 	log                      *logging.ScopedLogger
 	bus                      *events.Bus
@@ -271,7 +271,7 @@ func (h *SettingsHandler) SetClashPortInspector(insp clashPortInspector) {
 
 // SetOnObfuscatorRelayChanged — смена выключателя ядро/процесс: перезапуск
 // Phobos-релеев на новом бэкенде (спека §4.8).
-func (h *SettingsHandler) SetOnObfuscatorRelayChanged(fn func(process bool)) {
+func (h *SettingsHandler) SetOnObfuscatorRelayChanged(fn func()) {
 	h.onObfuscatorRelayChanged = fn
 }
 
@@ -768,7 +768,7 @@ func (h *SettingsHandler) SetObfuscatorRelay(w http.ResponseWriter, r *http.Requ
 	if changed {
 		h.log.Info("obfuscator", "", fmt.Sprintf("Phobos relay backend: process=%v", *req.Process))
 		if h.onObfuscatorRelayChanged != nil {
-			go h.onObfuscatorRelayChanged(*req.Process)
+			go h.onObfuscatorRelayChanged() // значение хук читает из стора (F478)
 		}
 	}
 	settings, err := h.store.Snapshot()

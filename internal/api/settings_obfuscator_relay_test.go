@@ -9,9 +9,9 @@ import (
 )
 
 // hookCalls собирает вызовы хука выключателя (обработчик зовёт его горутиной).
-func hookCalls(h *SettingsHandler) chan bool {
-	ch := make(chan bool, 4)
-	h.SetOnObfuscatorRelayChanged(func(process bool) { ch <- process })
+func hookCalls(h *SettingsHandler) chan struct{} {
+	ch := make(chan struct{}, 4)
+	h.SetOnObfuscatorRelayChanged(func() { ch <- struct{}{} })
 	return ch
 }
 
@@ -35,8 +35,8 @@ func TestUpdate_ObfuscatorRelayProcessIgnored(t *testing.T) {
 		t.Fatal("общий update снял выключатель ядра")
 	}
 	select {
-	case p := <-calls:
-		t.Fatalf("общий update позвал хук (process=%v)", p)
+	case <-calls:
+		t.Fatal("общий update позвал хук")
 	case <-time.After(200 * time.Millisecond):
 	}
 }
@@ -62,10 +62,7 @@ func TestSetObfuscatorRelay(t *testing.T) {
 		t.Fatalf("ответ — не актуальные настройки: %s", rec.Body.String())
 	}
 	select {
-	case p := <-calls:
-		if !p {
-			t.Fatal("хук позван с process=false")
-		}
+	case <-calls:
 	case <-time.After(2 * time.Second):
 		t.Fatal("хук не позван")
 	}
@@ -75,8 +72,8 @@ func TestSetObfuscatorRelay(t *testing.T) {
 		t.Fatalf("status=%d", rec.Code)
 	}
 	select {
-	case p := <-calls:
-		t.Fatalf("хук на неизменном значении (process=%v)", p)
+	case <-calls:
+		t.Fatal("хук на неизменном значении")
 	case <-time.After(200 * time.Millisecond):
 	}
 

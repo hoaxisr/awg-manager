@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,6 +33,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
 // setupServer registers routing snapshot providers and constructs the HTTP
@@ -151,11 +154,19 @@ func (a *app) setupServer() {
 // сторожа (§4.9) — и в настройках, и в памяти: пользователь сам решил
 // попробовать снова. Зовётся обработчиком настроек в горутине; restart
 // берёт лок туннеля сам.
+//
+// F478: прогоны сериализованы, а значение выключателя берётся из стора, а не
+// из аргумента — быстрое true→false, отработавшее в обратном порядке, всё
+// равно сходится к последнему записанному. F477 M6: туннель, занятый
+// оркестратором, получает повтор, а не остаётся на старом бэкенде до Start.
 func obfuscatorRelayChanged(settings *storage.SettingsStore, tunnels *storage.AWGTunnelStore,
 	restart func(ctx context.Context, tunnelID string) error, alive func(tunnelID string) bool,
-	tripped *atomic.Bool, log *logging.ScopedLogger) func(process bool) {
-	return func(process bool) {
-		if !process {
+	tripped *atomic.Bool, log *logging.ScopedLogger) func() {
+	var mu sync.Mutex
+	return func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if !settings.IsObfuscatorRelayProcess() {
 			tripped.Store(false)
 			if err := settings.ClearObfuscatorKmodTripped(); err != nil {
 				log.Warn("obfuscator", "", "отметка сторожа не снята: "+err.Error())
@@ -169,13 +180,25 @@ func obfuscatorRelayChanged(settings *storage.SettingsStore, tunnels *storage.AW
 		for i := range list {
 			t := &list[i]
 			if t.Enabled && t.Obfuscator != nil && t.Obfuscator.Flavor == storage.ObfuscatorFlavorPhobos && alive(t.ID) {
-				if err := restart(context.Background(), t.ID); err != nil {
+				err := restart(context.Background(), t.ID)
+				for i := 0; i < obfRelayBusyRetries && errors.Is(err, tunnel.ErrOperationInProgress); i++ {
+					time.Sleep(obfRelayBusyDelay)
+					err = restart(context.Background(), t.ID)
+				}
+				if err != nil {
 					log.Warn("obfuscator", t.ID, "смена бэкенда релея: "+err.Error())
 				}
 			}
 		}
 	}
 }
+
+// ponytail: фиксированный повтор; занятость дольше ~10 с — Warn, бэкенд
+// выберет следующий Start туннеля.
+var (
+	obfRelayBusyRetries = 5
+	obfRelayBusyDelay   = 2 * time.Second
+)
 
 // setupDeviceProxy wires awg-outbounds, the device-proxy service and the
 // shared download service (+ geo/dns refresh schedulers, installer

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
 // Хук выключателя ядро/процесс (спека §4.8/§4.9): перезапуск получают только
@@ -49,6 +51,10 @@ func TestObfuscatorRelayChanged(t *testing.T) {
 		if err := settings.TripObfuscatorKmod("oops"); err != nil {
 			t.Fatal(err)
 		}
+		// Хук читает выключатель из стора (F478), как после записи обработчиком.
+		if _, err := settings.SetObfuscatorRelayProcess(tc.process); err != nil {
+			t.Fatal(err)
+		}
 		var restarted []string
 		var tripped atomic.Bool
 		tripped.Store(true)
@@ -59,7 +65,7 @@ func TestObfuscatorRelayChanged(t *testing.T) {
 			}
 			return nil
 		}, func(id string) bool { return id != "awg6" }, &tripped, logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps))
-		hook(tc.process)
+		hook()
 
 		slices.Sort(restarted)
 		if !slices.Equal(restarted, []string{"awg1", "awg2"}) {
@@ -75,6 +81,37 @@ func TestObfuscatorRelayChanged(t *testing.T) {
 		if cur.ObfuscatorKmodTripped != tc.wantTripped {
 			t.Errorf("process=%v: отметка сторожа %q, ждали %q", tc.process, cur.ObfuscatorKmodTripped, tc.wantTripped)
 		}
+	}
+}
+
+// F477 M6: туннель, занятый оркестратором, получает повтор — иначе он
+// остаётся на прежнем бэкенде до следующего Start.
+func TestObfuscatorRelayChanged_RetriesBusyTunnel(t *testing.T) {
+	retries, delay := obfRelayBusyRetries, obfRelayBusyDelay
+	obfRelayBusyDelay = 0
+	t.Cleanup(func() { obfRelayBusyRetries, obfRelayBusyDelay = retries, delay })
+
+	dir := t.TempDir()
+	settings := storage.NewSettingsStore(dir)
+	if _, err := settings.Get(); err != nil {
+		t.Fatal(err)
+	}
+	tunnels := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	if err := tunnels.Create(&storage.AWGTunnel{ID: "awg1", Enabled: true, Obfuscator: &storage.Obfuscator{Flavor: storage.ObfuscatorFlavorPhobos}}); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	var tripped atomic.Bool
+	hook := obfuscatorRelayChanged(settings, tunnels, func(context.Context, string) error {
+		calls++
+		if calls < 3 {
+			return fmt.Errorf("lock: %w", tunnel.ErrOperationInProgress)
+		}
+		return nil
+	}, func(string) bool { return true }, &tripped, logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps))
+	hook()
+	if calls != 3 {
+		t.Fatalf("перезапусков %d, ждали 3 (два «занят» и успех)", calls)
 	}
 }
 
