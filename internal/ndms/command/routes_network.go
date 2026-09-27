@@ -10,7 +10,13 @@ import (
 // комментарий и записи опущенных интерфейсов, чего у /show/ip/route нет.
 // own — комментарий равен метке ЦЕЛИКОМ. /32 роутер может хранить host-формой
 // (адаптер и ставит её так) — такая запись сопоставляется по host.
+//
+// Читается всегда свежо: снимок кэша внешние правки (веб-морда роутера) не
+// сбрасывают, а List при отказе RCI отдаёт устаревшее значение без ошибки.
+// По такому снимку мы бы «переподписали» чужую запись или сняли её — решение
+// о владении fail-closed (11.B/11.6). После InvalidateAll отказ fetch всплывает.
 func (c *RouteCommands) NetworkRouteOwner(ctx context.Context, network, mask, iface, comment string) (exists, own bool, err error) {
+	c.queries.StaticRoutes.InvalidateAll()
 	entries, err := c.queries.StaticRoutes.List(ctx)
 	if err != nil {
 		return false, false, fmt.Errorf("read static routes: %w", err)

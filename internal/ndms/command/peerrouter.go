@@ -19,7 +19,7 @@ func dotted(n *net.IPNet) (address, mask string) {
 
 func routeSpec(n *net.IPNet, iface, comment string) StaticRouteSpec {
 	address, mask := dotted(n)
-	if ones, bits := n.Mask.Size(); ones == bits {
+	if ones, bits := n.Mask.Size(); bits != 0 && ones == bits {
 		return StaticRouteSpec{Host: address, Interface: iface, Comment: comment}
 	}
 	return StaticRouteSpec{Network: address, Mask: mask, Interface: iface, Comment: comment}

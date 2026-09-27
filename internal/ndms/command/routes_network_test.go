@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -127,5 +128,55 @@ func TestPeerRouter_AddNetworkRouteForms(t *testing.T) {
 		if string(b) != c.want {
 			t.Fatalf("%s:\n got %s\nwant %s", c.cidr, b, c.want)
 		}
+	}
+}
+
+// Владение решается по свежему чтению: правка роутера мимо нас (веб-морда)
+// кэш не сбрасывает, а решать по снимку — переподписать или снять чужое.
+func TestNetworkRouteOwner_ReadsFresh(t *testing.T) {
+	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/rc/ip/route", rcRoutesFixture)
+	poster := &fakePoster{}
+	sc := NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
+	cmds := NewRouteCommands(poster, sc, query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()}))
+	ctx := context.Background()
+	const label = "awgm-peer:5+0I/P0V"
+	if _, own, err := cmds.NetworkRouteOwner(ctx, "192.168.77.0", "255.255.255.0", "Wireguard9", label); err != nil || !own {
+		t.Fatalf("снимок: own=%v err=%v", own, err)
+	}
+	// Пользователь перехватил запись своим комментарием — без нашей мутации.
+	fg.SetJSON("/show/rc/ip/route", `[{"network":"192.168.77.0","mask":"255.255.255.0","interface":"Wireguard9","comment":"mine"}]`)
+	if exists, own, err := cmds.NetworkRouteOwner(ctx, "192.168.77.0", "255.255.255.0", "Wireguard9", label); err != nil || !exists || own {
+		t.Fatalf("после чужой правки: exists=%v own=%v err=%v", exists, own, err)
+	}
+}
+
+// RCI молчит — ошибка, а не устаревший own=true; снятие не уходит.
+func TestNetworkRouteOwner_FetchErrorFailsClosed(t *testing.T) {
+	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/rc/ip/route", rcRoutesFixture)
+	poster := &fakePoster{}
+	sc := NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
+	cmds := NewRouteCommands(poster, sc, query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()}))
+	ctx := context.Background()
+	const label = "awgm-peer:5+0I/P0V"
+	if _, own, err := cmds.NetworkRouteOwner(ctx, "192.168.77.0", "255.255.255.0", "Wireguard9", label); err != nil || !own {
+		t.Fatalf("снимок: own=%v err=%v", own, err)
+	}
+	fg.SetError("/show/rc/ip/route", errors.New("rci timeout"))
+	if _, own, err := cmds.NetworkRouteOwner(ctx, "192.168.77.0", "255.255.255.0", "Wireguard9", label); err == nil || own {
+		t.Fatalf("отказ RCI: own=%v err=%v", own, err)
+	}
+	removed, err := cmds.RemoveOwnNetworkRoute(ctx, StaticRouteSpec{Network: "192.168.77.0", Mask: "255.255.255.0", Interface: "Wireguard9", Comment: label})
+	if err == nil || removed || len(poster.Payloads()) != 0 {
+		t.Fatalf("снятие при отказе RCI: removed=%v err=%v posts=%d", removed, err, len(poster.Payloads()))
+	}
+}
+
+// Пустая маска: Size() даёт (0, 0) — это не /32 и не host-форма.
+func TestRouteSpec_ZeroMaskNotHost(t *testing.T) {
+	spec := routeSpec(&net.IPNet{IP: net.IPv4(192, 168, 77, 0).To4()}, "Wireguard9", "L")
+	if spec.Host != "" {
+		t.Fatalf("пустая маска ушла host-формой: %+v", spec)
 	}
 }
