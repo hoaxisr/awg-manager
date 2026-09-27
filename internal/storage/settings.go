@@ -882,6 +882,54 @@ func (s *SettingsStore) IsServerInterface(id string) bool {
 	return contains(settings.ServerInterfaces, id)
 }
 
+// MarkForeignInterface добавляет имя ядра в список сторонних интерфейсов.
+// Повтор — без записи.
+func (s *SettingsStore) MarkForeignInterface(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	settings := s.settings
+	if settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	next, added := appendUnique(settings.ForeignInterfaces, name)
+	if !added {
+		return nil
+	}
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.ForeignInterfaces = next
+		return nil
+	})
+}
+
+// UnmarkForeignInterface убирает имя из списка; отсутствующее — успех.
+func (s *SettingsStore) UnmarkForeignInterface(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	settings := s.settings
+	if settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	if !contains(settings.ForeignInterfaces, name) {
+		return nil
+	}
+	next := filterOut(settings.ForeignInterfaces, name)
+	return s.updateUnlocked(func(cp *Settings) error {
+		cp.ForeignInterfaces = next
+		return nil
+	})
+}
+
+// GetForeignInterfaces — копия списка сторонних интерфейсов.
+func (s *SettingsStore) GetForeignInterfaces() []string {
+	settings, err := s.Get()
+	if err != nil {
+		return nil
+	}
+	return slices.Clone(settings.ForeignInterfaces)
+}
+
 // GetServerInterfaceMeta returns AWG Manager metadata for a system server.
 func (s *SettingsStore) GetServerInterfaceMeta(serverID string) (ServerInterfaceMeta, bool) {
 	if _, err := s.Get(); err != nil {

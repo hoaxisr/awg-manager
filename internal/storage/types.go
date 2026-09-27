@@ -45,6 +45,10 @@ type Settings struct {
 	ConnectivityCheckURL   string            `json:"connectivityCheckUrl"`
 	UsageLevel             string            `json:"usageLevel"`
 	ServerInterfaces       []string          `json:"serverInterfaces,omitempty"`
+	// ForeignInterfaces — имена ядра интерфейсов других программ, отмеченных
+	// пользователем как сторонние (issue #935): выход sing-box, а номер
+	// стороннего opkgtunN держит пул. Пусто — прежнее поведение.
+	ForeignInterfaces []string `json:"foreignInterfaces,omitempty"`
 	// ServerInterfaceMeta stores AWG Manager bookkeeping for built-in/marked
 	// servers (NAT static-WAN for internet-only teardown). map[serverID].
 	ServerInterfaceMeta map[string]ServerInterfaceMeta `json:"serverInterfaceMeta,omitempty"`
