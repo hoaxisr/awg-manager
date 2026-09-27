@@ -25,6 +25,7 @@ func newForeignEnv(t *testing.T, take opkgtun.Taken, ndms map[string]bool) *fore
 		settings:  settings,
 		pool:      opkgtun.NewPool(16, src),
 		ndmsNames: func(context.Context) (map[string]bool, error) { return ndms, nil },
+		boundBy:   func(context.Context) (map[string]bool, error) { return nil, nil },
 		orphans:   func(context.Context) ([]external.OrphanIface, error) { return nil, nil },
 		sysNet:    t.TempDir(),
 	}
@@ -32,7 +33,8 @@ func newForeignEnv(t *testing.T, take opkgtun.Taken, ndms map[string]bool) *fore
 
 func TestForeignMark_Rejections(t *testing.T) {
 	f := newForeignEnv(t, opkgtun.Taken{12: opkgtun.TunnelHolder("awg12", "дом")}, map[string]bool{"ppp0": true})
-	for _, name := range []string{"", "a-very-long-name-16", "bad name", "a/b", "opkgtun12", "opkgtun17", "awgm0", "t2s0", "nwg1", "ppp0"} {
+	for _, name := range []string{"", "a-very-long-name-16", "bad name", "a/b", "opkgtun12", "opkgtun17", "awgm0", "t2s0", "nwg1", "ppp0",
+		"a\nb", "a:b", ".", "..", "opkgtun", "opkgtun7x", "OPKGTUN7", "opkgtun99999999", "abcdefghijklmnop"} {
 		err := f.Mark(context.Background(), name)
 		if !errors.Is(err, api.ErrForeignIfaceRejected) {
 			t.Errorf("Mark(%q) = %v, ждали отказ", name, err)
@@ -40,6 +42,56 @@ func TestForeignMark_Rejections(t *testing.T) {
 	}
 	if got := f.settings.GetForeignInterfaces(); len(got) != 0 {
 		t.Fatalf("отказы записали %v", got)
+	}
+}
+
+func TestForeignMark_NameLength15Accepted(t *testing.T) {
+	f := newForeignEnv(t, nil, nil)
+	if err := f.Mark(context.Background(), "abcdefghijklmno"); err != nil {
+		t.Fatalf("Mark(15 символов): %v", err)
+	}
+}
+
+func TestForeignUnmark_BoundRefused(t *testing.T) {
+	f := newForeignEnv(t, nil, nil)
+	if err := f.Mark(context.Background(), "opkgtun7"); err != nil {
+		t.Fatal(err)
+	}
+	f.boundBy = func(context.Context) (map[string]bool, error) { return map[string]bool{"opkgtun7": true}, nil }
+	if err := f.Unmark(context.Background(), "OpkgTun7"); !errors.Is(err, api.ErrForeignIfaceRejected) {
+		t.Fatalf("Unmark = %v, ждали отказ", err)
+	}
+	if got := f.settings.GetForeignInterfaces(); !slices.Equal(got, []string{"opkgtun7"}) {
+		t.Fatalf("отметки = %v, ждали opkgtun7", got)
+	}
+}
+
+func TestForeignUnmark_BoundErrorFailsClosed(t *testing.T) {
+	f := newForeignEnv(t, nil, nil)
+	if err := f.Mark(context.Background(), "csqtt0"); err != nil {
+		t.Fatal(err)
+	}
+	f.boundBy = func(context.Context) (map[string]bool, error) { return nil, errors.New("router down") }
+	err := f.Unmark(context.Background(), "csqtt0")
+	if err == nil || errors.Is(err, api.ErrForeignIfaceRejected) {
+		t.Fatalf("Unmark = %v, ждали внутреннюю ошибку", err)
+	}
+	if got := f.settings.GetForeignInterfaces(); !slices.Equal(got, []string{"csqtt0"}) {
+		t.Fatalf("отметки = %v, ждали csqtt0", got)
+	}
+}
+
+func TestForeignUnmark_Unbound(t *testing.T) {
+	f := newForeignEnv(t, nil, nil)
+	if err := f.Mark(context.Background(), "csqtt0"); err != nil {
+		t.Fatal(err)
+	}
+	f.boundBy = func(context.Context) (map[string]bool, error) { return map[string]bool{"zt0": true}, nil }
+	if err := f.Unmark(context.Background(), "csqtt0"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.settings.GetForeignInterfaces(); len(got) != 0 {
+		t.Fatalf("после снятия = %v", got)
 	}
 }
 
@@ -92,18 +144,26 @@ func TestForeignCandidates(t *testing.T) {
 	}
 	mk := func(name string, tun bool, carrier string) {
 		dir := filepath.Join(f.sysNet, name)
-		_ = os.MkdirAll(dir, 0o755)
-		if tun {
-			_ = os.WriteFile(filepath.Join(dir, "tun_flags"), []byte("0x1001\n"), 0o644)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
 		}
-		_ = os.WriteFile(filepath.Join(dir, "carrier"), []byte(carrier+"\n"), 0o644)
+		if tun {
+			if err := os.WriteFile(filepath.Join(dir, "tun_flags"), []byte("0x1001\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(dir, "carrier"), []byte(carrier+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	mk("csqtt0", true, "1")
 	mk("zt0", true, "0")
-	mk("eth3", true, "1")                      // известен NDMS
-	mk("t2s0", true, "1")                      // наше имя
-	mk("gre0", false, "1")                     // не TUN
-	_ = f.settings.MarkForeignInterface("zt0") // уже отмечен — не кандидат
+	mk("eth3", true, "1")                                          // известен NDMS
+	mk("t2s0", true, "1")                                          // наше имя
+	mk("gre0", false, "1")                                         // не TUN
+	if err := f.settings.MarkForeignInterface("zt0"); err != nil { // уже отмечен — не кандидат
+		t.Fatal(err)
+	}
 
 	got, err := f.Candidates(context.Background())
 	if err != nil {

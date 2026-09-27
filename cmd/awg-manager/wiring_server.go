@@ -142,8 +142,13 @@ func (a *app) setupServer() {
 				settings:  a.settingsStore,
 				pool:      a.opkgPool,
 				ndmsNames: ndmsSystemNames(a.ndmsQueries.Interfaces),
-				orphans:   orphanIfaces(a.opkgPool, a.ndmsQueries.Interfaces),
-				sysNet:    "/sys/class/net",
+				// a.routerSvc заводит setupRouter — позже setupServer, но
+				// раньше setupListen, поэтому читаем его в момент вызова.
+				boundBy: func(ctx context.Context) (map[string]bool, error) {
+					return routerDirectBinds(ctx, a.routerSvc)
+				},
+				orphans: orphanIfaces(a.opkgPool, a.ndmsQueries.Interfaces),
+				sysNet:  "/sys/class/net",
 			},
 			ObfuscatorRelayChanged: obfuscatorRelayChanged(a.settingsStore, a.awgStore, a.nwgOp.RestartObfuscatorRelay,
 				func(id string) bool { return a.obfDispatcher != nil && a.obfDispatcher.Alive(id) },
@@ -352,6 +357,21 @@ func (a *app) setupDeviceProxy() {
 
 }
 
+// routerDirectBinds — имена ядра, к которым привязан direct-выход роутера.
+func routerDirectBinds(ctx context.Context, svc *router.ServiceImpl) (map[string]bool, error) {
+	obs, err := svc.ListCompositeOutbounds(ctx)
+	if err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool)
+	for _, o := range obs {
+		if o.Type == "direct" && o.BindInterface != "" {
+			set[o.BindInterface] = true
+		}
+	}
+	return set, nil
+}
+
 // setupRouter builds the sing-box router service with its adapters,
 // the geoip bypass set, subscription scheduler/handler and the remaining
 // sing-box HTTP handlers.
@@ -430,17 +450,7 @@ func (a *app) setupRouter() {
 	// Exclude interfaces already bound by an existing direct outbound from the
 	// bindable picker (#323). Wired post-construction — needs routerSvc.
 	bindableAdapter.occupiedBinds = func(ctx context.Context) (map[string]bool, error) {
-		obs, err := routerSvc.ListCompositeOutbounds(ctx)
-		if err != nil {
-			return nil, err
-		}
-		set := make(map[string]bool)
-		for _, o := range obs {
-			if o.Type == "direct" && o.BindInterface != "" {
-				set[o.BindInterface] = true
-			}
-		}
-		return set, nil
+		return routerDirectBinds(ctx, routerSvc)
 	}
 	a.singboxOp.SetOutboundReferenceRenamer(routerSvc)
 	a.tunnelService.SetAWGSyncer(a.awgoutboundsSvc)

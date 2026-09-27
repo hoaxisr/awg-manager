@@ -442,6 +442,8 @@ func (s *ServiceImpl) validateBindInterface(ctx context.Context, name string) er
 }
 
 // foreignIfaces — отметки «Сторонний интерфейс» из настроек; без NDMS.
+// nil при ошибке Settings.Get допустим только потому, что после Load Get
+// отдаёт кэш из памяти и не ошибается; иначе strip вырезал бы выходы.
 func (s *ServiceImpl) foreignIfaces() []string {
 	if s.deps.Settings == nil {
 		return nil

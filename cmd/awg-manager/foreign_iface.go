@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -24,8 +25,12 @@ type foreignIfaces struct {
 	// ndmsNames — системные имена ядра, известные NDMS. Ошибка — отказ
 	// (500), а не «неизвестен»: иначе отметили бы интерфейс роутера.
 	ndmsNames func(ctx context.Context) (map[string]bool, error)
-	orphans   func(ctx context.Context) ([]external.OrphanIface, error)
-	sysNet    string
+	// boundBy — имена ядра, к которым привязан direct-выход роутера. Снятие
+	// отметки с такого имени отказывается: следующий Enable роутера вырезал
+	// бы выход как автоуправляемый (stripAutoManagedDirect) и записал на диск.
+	boundBy func(ctx context.Context) (map[string]bool, error)
+	orphans func(ctx context.Context) ([]external.OrphanIface, error)
+	sysNet  string
 }
 
 func rejectForeign(format string, a ...any) error {
@@ -50,8 +55,11 @@ func (f *foreignIfaces) Mark(ctx context.Context, name string) error {
 		return rejectForeign("пустое имя")
 	case len(name) > 15:
 		return rejectForeign("имя интерфейса ядра длиннее 15 символов")
-	case strings.ContainsAny(name, " \t/"):
-		return rejectForeign("имя с пробелом или «/»")
+	case name == "." || name == "..",
+		strings.ContainsAny(name, "/:"),
+		strings.ContainsFunc(name, unicode.IsSpace):
+		// Правила ядра (dev_valid_name) плюс «:» — разделитель алиасов.
+		return rejectForeign("недопустимое имя интерфейса ядра: пробелы, «/», «:», «.» и «..» запрещены")
 	}
 	if canon, idx, ok := canonicalForeign(name); ok {
 		err := f.pool.ClaimIfFree(ctx, opkgtun.ForeignHolder(canon), idx, func() error {
@@ -75,8 +83,15 @@ func (f *foreignIfaces) Mark(ctx context.Context, name string) error {
 	return f.settings.MarkForeignInterface(name)
 }
 
-func (f *foreignIfaces) Unmark(_ context.Context, name string) error {
+func (f *foreignIfaces) Unmark(ctx context.Context, name string) error {
 	canon, _, _ := canonicalForeign(strings.TrimSpace(name))
+	bound, err := f.boundBy(ctx)
+	if err != nil {
+		return fmt.Errorf("выходы sing-box: %w", err)
+	}
+	if bound[canon] {
+		return rejectForeign("%s привязан выходом sing-box — сначала удалите или перепривяжите выход", canon)
+	}
 	return f.settings.UnmarkForeignInterface(canon)
 }
 
