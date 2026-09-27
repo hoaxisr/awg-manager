@@ -930,6 +930,22 @@ func (s *SettingsStore) GetServerPeerSecret(serverID, pubkey string) (ServerPeer
 	return sec, ok
 }
 
+// GetServerPeerSecrets — снимок всех секретов пиров системных серверов
+// (map[serverID]map[pubkey]) для обхода занятых сетей (#713). Карты —
+// копии; слайсы внутри записей общие с кэшем, читателям не мутировать.
+func (s *SettingsStore) GetServerPeerSecrets() map[string]map[string]ServerPeerSecret {
+	if _, err := s.Get(); err != nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]map[string]ServerPeerSecret, len(s.settings.ServerPeerSecrets))
+	for id, inner := range s.settings.ServerPeerSecrets {
+		out[id] = maps.Clone(inner)
+	}
+	return out
+}
+
 // SetServerPeerSecret stores key material for a system-server peer.
 func (s *SettingsStore) SetServerPeerSecret(serverID, pubkey string, sec ServerPeerSecret) error {
 	s.mu.Lock()

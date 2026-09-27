@@ -441,6 +441,14 @@ type ServerPeerSecret struct {
 	// зашитый `1.1.1.1, 8.8.8.8`, и абонент резолвил мимо роутера (#933).
 	// Форма — список IP через запятую, ровно как у пира managed-сервера.
 	DNS string `json:"dns,omitempty"`
+	// ClientAllowedIPs — строка `AllowedIPs =` в .conf клиента (#713): CIDR
+	// через ", ", v4/v6. Пусто — peersubnet.DefaultClientAllowedIPs (весь трафик).
+	ClientAllowedIPs string `json:"clientAllowedIPs,omitempty"`
+	// RemoteSubnets — сети за клиентом (site-to-site), канонические IPv4 CIDR:
+	// у пира на роутере они в allow-ips, и на каждую стоит наш маршрут с меткой
+	// peersubnet.RouteComment. Источник правды — эта запись, diff при
+	// сохранении считается от неё, не от allow-ips роутера.
+	RemoteSubnets []string `json:"remoteSubnets,omitempty"`
 
 	// Сигнатура принадлежит пиру (CONTEXT.md «Сигнатура AWG»): у сервера
 	// своей нет. Профиль пуст у сигнатур, набранных руками.
@@ -461,6 +469,14 @@ type ManagedPeer struct {
 	TunnelIP     string `json:"tunnelIP"`      // e.g. "10.0.0.2/32"
 	DNS          string `json:"dns,omitempty"` // per-peer DNS for .conf generation
 	Enabled      bool   `json:"enabled"`
+	// ClientAllowedIPs — строка `AllowedIPs =` в .conf клиента (#713): CIDR
+	// через ", ", v4/v6. Пусто — peersubnet.DefaultClientAllowedIPs (весь трафик).
+	ClientAllowedIPs string `json:"clientAllowedIPs,omitempty"`
+	// RemoteSubnets — сети за клиентом (site-to-site), канонические IPv4 CIDR:
+	// у пира на роутере они в allow-ips, и на каждую стоит наш маршрут с меткой
+	// peersubnet.RouteComment. Источник правды — эта запись, diff при
+	// сохранении считается от неё, не от allow-ips роутера.
+	RemoteSubnets []string `json:"remoteSubnets,omitempty"`
 	// I1..I5 — сигнатура имитации, которую пир получает в своём .conf.
 	I1 string `json:"i1,omitempty"`
 	I2 string `json:"i2,omitempty"`
