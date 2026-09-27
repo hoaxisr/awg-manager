@@ -35,6 +35,10 @@ type ExternalTunnelDTO struct {
 	// существуют независимо и снимаются независимо.
 	NDMSRecord   bool `json:"ndmsRecord,omitempty" example:"true"`
 	KernelDevice bool `json:"kernelDevice,omitempty" example:"true"`
+	// Removable — за номером нет владельца в аллокаторе: строку можно снести.
+	Removable bool `json:"removable,omitempty" example:"true"`
+	// Foreign — отмечен как сторонний (issue #935): не удаляют и не принимают.
+	Foreign bool `json:"foreign,omitempty" example:"false"`
 }
 
 // ExternalTunnelsResponse is the envelope for GET /external-tunnels.

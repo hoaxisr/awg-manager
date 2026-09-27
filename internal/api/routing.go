@@ -19,6 +19,8 @@ type RoutingTunnelDTO struct {
 	Type      string `json:"type" example:"managed"`
 	Status    string `json:"status" example:"connected"`
 	Available bool   `json:"available" example:"true"`
+	// Warning — «нет адреса в NDMS»: маршруты NDMS на такой туннель молча не ставятся.
+	Warning string `json:"warning,omitempty" example:"нет адреса в NDMS"`
 }
 
 // RoutingTunnelsResponse is the envelope for GET /routing/tunnels.

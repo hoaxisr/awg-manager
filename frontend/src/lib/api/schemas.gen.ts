@@ -623,11 +623,13 @@ const api_ExternalTunnelDTO: v.GenericSchema = v.looseObject({
 	conflictsWith: v.optional(v.nullable(v.string())),
 	description: v.optional(v.nullable(v.string())),
 	endpoint: v.optional(v.nullable(v.string())),
+	foreign: v.optional(v.nullable(v.boolean())),
 	interfaceName: v.optional(v.nullable(v.string())),
 	isAWG: v.optional(v.nullable(v.boolean())),
 	kernelDevice: v.optional(v.nullable(v.boolean())),
 	ndmsRecord: v.optional(v.nullable(v.boolean())),
 	publicKey: v.optional(v.nullable(v.string())),
+	removable: v.optional(v.nullable(v.boolean())),
 	rxBytes: v.optional(v.nullable(v.number())),
 	tunnelNumber: v.optional(v.nullable(v.number())),
 	txBytes: v.optional(v.nullable(v.number())),
@@ -1429,6 +1431,7 @@ const api_RoutingTunnelDTO: v.GenericSchema = v.looseObject({
 	name: v.optional(v.nullable(v.string())),
 	status: v.optional(v.nullable(v.string())),
 	type: v.optional(v.nullable(v.string())),
+	warning: v.optional(v.nullable(v.string())),
 });
 
 const api_RoutingTunnelsResponse: v.GenericSchema = v.looseObject({

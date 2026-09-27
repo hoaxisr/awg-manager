@@ -1878,6 +1878,11 @@ definitions:
       endpoint:
         example: ext.example.com:51820
         type: string
+      foreign:
+        description: 'Foreign — отмечен как сторонний (issue #935): не удаляют и не
+          принимают.'
+        example: false
+        type: boolean
       interfaceName:
         example: Wireguard2
         type: string
@@ -1896,6 +1901,11 @@ definitions:
       publicKey:
         example: KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK=
         type: string
+      removable:
+        description: 'Removable — за номером нет владельца в аллокаторе: строку можно
+          снести.'
+        example: true
+        type: boolean
       rxBytes:
         example: 1048576
         type: integer
@@ -3912,6 +3922,11 @@ definitions:
         type: string
       type:
         example: managed
+        type: string
+      warning:
+        description: 'Warning — «нет адреса в NDMS»: маршруты NDMS на такой туннель
+          молча не ставятся.'
+        example: нет адреса в NDMS
         type: string
     type: object
   api.RoutingTunnelsResponse:
