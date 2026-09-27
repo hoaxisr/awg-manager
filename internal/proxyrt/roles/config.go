@@ -403,7 +403,37 @@ func (c FreeTurnClientConfig) Validate() error {
 	if strings.TrimSpace(c.Peer) == "" && strings.TrimSpace(c.Links) == "" && strings.TrimSpace(c.Sub) == "" {
 		return fmt.Errorf("не задан адрес реле (-peer / -links / подписка)")
 	}
+	if err := c.validateBond(); err != nil {
+		return err
+	}
 	return c.KCP.validate()
+}
+
+// validateBond зеркалит validateBond клиента freeturn (internal/config/validate.go):
+// на каждую ссылку-группу не больше 256/групп сессий, иначе клиент не стартует.
+// Вне tcp -bond в argv не уходит (FreeTurnClientArgs) — там и проверять нечего.
+func (c FreeTurnClientConfig) validateBond() error {
+	if !c.Bond || c.Mode != "tcp" {
+		return nil
+	}
+	groups := 1
+	if p := strings.TrimSpace(c.Provider); p == "" || p == "vk" {
+		n := 0
+		for _, l := range strings.Split(c.Links, ",") {
+			if strings.TrimSpace(l) != "" {
+				n++
+			}
+		}
+		groups = max(n, 1)
+	}
+	streams := c.Streams
+	if streams <= 0 {
+		streams = 12 // DefaultStreams бинаря
+	}
+	if limit := 256 / groups; streams > limit {
+		return fmt.Errorf("bond: потоков %d, при %d ссылках допустимо не больше %d", streams, groups, limit)
+	}
+	return nil
 }
 
 // validate зеркалит validateKCP клиента freeturn (internal/config/kcp.go):

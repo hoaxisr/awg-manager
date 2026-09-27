@@ -109,8 +109,9 @@
 		<div class="toggle-row">
 			<Toggle
 				label="Bond"
-				hint="Только в режиме TCP; нужен сервер 4.0+"
+				hint="Только в режиме TCP; в UDP не применяется"
 				checked={ftClient.bond}
+				disabled={ftClient.mode !== 'tcp'}
 				onchange={(v) => {
 					if (ftClient) ftClient.bond = v;
 				}}

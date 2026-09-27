@@ -62,11 +62,11 @@ func (b *Builder) BuildLink(ctx context.Context, rec instancestore.Record, req w
 	}
 	n := req.N
 	if n <= 0 {
-		n = 10
+		n = 12 // DefaultStreams бинаря
 	}
 	spc := req.StreamsPerCred
 	if spc <= 0 {
-		spc = 10
+		spc = 12 // DefaultStreamsPerCred бинаря
 	}
 	transport := strings.TrimSpace(req.Transport)
 	if transport == "" {
