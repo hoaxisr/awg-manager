@@ -32,6 +32,10 @@ func (s *Service) rciPost(ctx context.Context, payload interface{}) error {
 		if s.queries.RunningConfig != nil {
 			s.queries.RunningConfig.InvalidateAll()
 		}
+		// Удаление интерфейса уносит его маршруты — кэш владения обязан это увидеть.
+		if s.queries.StaticRoutes != nil {
+			s.queries.StaticRoutes.InvalidateAll()
+		}
 	}
 	return nil
 }

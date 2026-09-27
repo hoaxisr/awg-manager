@@ -9,6 +9,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
+	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -39,6 +40,9 @@ type ManagedServerService interface {
 	// LAN segments
 	SetLANSegments(ctx context.Context, id string, segments []string) error
 	ListLANSegments(ctx context.Context) ([]LANSegmentDTO, error)
+
+	// Presets AllowedIPs клиента (#713)
+	PeerPresets(ctx context.Context, id, dns string) (peersubnet.Presets, error)
 
 	// Policy
 	SetPolicy(ctx context.Context, id, policy string) error

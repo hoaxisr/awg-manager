@@ -17,6 +17,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -87,6 +88,11 @@ func (s *recManagedSvc) SetLANSegments(_ context.Context, id string, segments []
 
 func (s *recManagedSvc) ListLANSegments(context.Context) ([]managed.LANSegmentDTO, error) {
 	return nil, nil
+}
+
+func (s *recManagedSvc) PeerPresets(_ context.Context, id, dns string) (peersubnet.Presets, error) {
+	s.record("PeerPresets:" + id + ":" + dns)
+	return peersubnet.Presets{}, s.err
 }
 
 func (s *recManagedSvc) SetPolicy(_ context.Context, id, policy string) error {

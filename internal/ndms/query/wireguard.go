@@ -201,6 +201,18 @@ func (s *WGServerStore) GetConfig(ctx context.Context, name string) (*ndms.Wireg
 	return s.rc.Get(ctx, name)
 }
 
+// PeersRCFresh — пиры сервера name из /show/rc/interface/<name>, прочитанные
+// сейчас, мимо кэша и без stale-on-error: для проверки пересечения сетей перед
+// записью (#713). Список серверов (List) обогащение allow-ips при сбое молча
+// пропускает — там пустые allow-ips неотличимы от «сетей нет».
+func (s *WGServerStore) PeersRCFresh(ctx context.Context, name string) ([]ndms.WireguardServerPeerConfig, error) {
+	var rc rciRCInterface
+	if err := s.getter.Get(ctx, "/show/rc/interface/"+name, &rc); err != nil {
+		return nil, fmt.Errorf("get wireguard server config %s: %w", name, err)
+	}
+	return rciRCToServerConfig(rc, "").Peers, nil
+}
+
 // FindFreeIndex returns the next free WireguardN slot in [1,99].
 func (s *WGServerStore) FindFreeIndex(ctx context.Context) (int, error) {
 	var raw map[string]json.RawMessage
