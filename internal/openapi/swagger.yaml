@@ -3014,6 +3014,8 @@ definitions:
         description: true — Phobos-релей процессом, false — модулем ядра awgm_relay.
         example: true
         type: boolean
+    required:
+    - process
     type: object
   api.OkData:
     properties:

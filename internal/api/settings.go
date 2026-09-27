@@ -731,7 +731,7 @@ func (h *SettingsHandler) RegenerateApiKey(w http.ResponseWriter, r *http.Reques
 // (соседние DTO берут голый bool; здесь его false — небезопасный дефолт).
 type ObfuscatorRelayRequest struct {
 	// true — Phobos-релей процессом, false — модулем ядра awgm_relay.
-	Process *bool `json:"process" example:"true"`
+	Process *bool `json:"process" validate:"required" example:"true"`
 }
 
 // SetObfuscatorRelay — выключатель ядро/процесс Phobos-релея (спека §4.8).
