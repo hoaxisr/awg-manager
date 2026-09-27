@@ -15,11 +15,13 @@
 		serverId: string;
 		peer: ManagedPeer;
 		routerIP?: string;
+		/** У сервера ограничен доступ к LAN-сегментам — сети за клиентом недоступны. */
+		lanRestricted?: boolean;
 		onclose: () => void;
 		onUpdated: () => void;
 	}
 
-	let { open = $bindable(false), serverId, peer, routerIP = '', onclose, onUpdated }: Props = $props();
+	let { open = $bindable(false), serverId, peer, routerIP = '', lanRestricted = false, onclose, onUpdated }: Props = $props();
 
 	let description = $state('');
 	let tunnelIP = $state('');
@@ -137,6 +139,7 @@
 			bind:clientAllowedIPs
 			bind:remoteSubnets
 			idPrefix="emp"
+			{lanRestricted}
 			loadPresets={() => api.getManagedPeerPresets(serverId, dns)}
 		/>
 		<PeerSignatureEditor

@@ -125,6 +125,7 @@
 			bind:clientAllowedIPs
 			bind:remoteSubnets
 			idPrefix="amp"
+			lanRestricted={(server.lanSegments ?? []).length > 0}
 			loadPresets={() => api.getManagedPeerPresets(serverId, dns)}
 		/>
 	</div>

@@ -518,6 +518,7 @@
 		{serverId}
 		peer={selectedPeer}
 		{routerIP}
+		lanRestricted={(server.lanSegments ?? []).length > 0}
 		onclose={() => { editPeerOpen = false; selectedPeer = null; }}
 		onUpdated={onUpdated}
 	/>
