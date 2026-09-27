@@ -116,6 +116,13 @@ func isACLRuleAbsent(msg string) bool {
 	return strings.Contains(strings.ToLower(msg), "no rule found to delete")
 }
 
+// isNoSuchNetInPeer: `"WireguardN": no such net in peer "<key>"` — снятие
+// элемента allow-ips, которого у пира уже нет (стенд 5.02.A.11, 27.09.2026).
+// Применять ТОЛЬКО к RemovePeerAllowIP.
+func isNoSuchNetInPeer(msg string) bool {
+	return strings.Contains(strings.ToLower(msg), "no such net in peer")
+}
+
 // toleratesRouteRemoval — безобидные отказы СНЯТИЯ маршрута: интерфейса уже
 // нет, либо netlink ответил «file exists», потому что по тому же адресу в
 // таблице остался ещё один маршрут (стенд 5.01: запись при этом снимается,

@@ -326,7 +326,7 @@ func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRoute
 }
 
 // mutate is a thin wrapper over postMutation with RouteCommands' fixed
-// invalidation set (Routes + RunningConfig). Every route mutation touches
+// invalidation set (Routes + RunningConfig + StaticRoutes). Every route mutation touches
 // both caches identically, so we pin them in one place.
 func (c *RouteCommands) mutate(ctx context.Context, payload any, op string) error {
 	return c.mutateTolerant(ctx, payload, op, nil)
@@ -338,5 +338,6 @@ func (c *RouteCommands) mutate(ctx context.Context, payload any, op string) erro
 func (c *RouteCommands) mutateTolerant(ctx context.Context, payload any, op string, tolerate func(string) bool) error {
 	return postMutationCheckedTolerant(ctx, c.poster, c.save, payload, op, tolerate,
 		c.queries.Routes.InvalidateAll,
-		c.queries.RunningConfig.InvalidateAll)
+		c.queries.RunningConfig.InvalidateAll,
+		c.queries.StaticRoutes.InvalidateAll)
 }

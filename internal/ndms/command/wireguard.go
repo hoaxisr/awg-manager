@@ -279,3 +279,33 @@ func (c *WireguardCommands) UpdatePeerAllowIPs(ctx context.Context, ifaceName, p
 	return postMutationChecked(ctx, c.poster, c.save, payload, "set peer allow-ips "+ifaceName,
 		func() { c.invalidateServer(ifaceName) })
 }
+
+// AddPeerAllowIP добавляет одну сеть в allow-ips пира. Повтор на уже стоящей
+// сети NDMS принимает как успех — вызов идемпотентен (стенд 5.02.A.11, 27.09.2026).
+func (c *WireguardCommands) AddPeerAllowIP(ctx context.Context, ifaceName, pubKey, address, mask string) error {
+	return postMutationChecked(ctx, c.poster, c.save, peerAllowIPPayload(ifaceName, pubKey, address, mask, false),
+		"add peer allow-ips "+ifaceName, func() { c.invalidateServer(ifaceName) })
+}
+
+// RemovePeerAllowIP снимает одну сеть. Отсутствующую NDMS отвергает фразой
+// `no such net in peer` — для снятия и отката это цель, а не отказ.
+func (c *WireguardCommands) RemovePeerAllowIP(ctx context.Context, ifaceName, pubKey, address, mask string) error {
+	return postMutationCheckedTolerant(ctx, c.poster, c.save, peerAllowIPPayload(ifaceName, pubKey, address, mask, true),
+		"remove peer allow-ips "+ifaceName, isNoSuchNetInPeer, func() { c.invalidateServer(ifaceName) })
+}
+
+func peerAllowIPPayload(ifaceName, pubKey, address, mask string, no bool) map[string]any {
+	entry := map[string]any{"address": address, "mask": mask}
+	if no {
+		entry["no"] = true
+	}
+	return map[string]any{
+		"interface": map[string]any{
+			ifaceName: map[string]any{
+				"wireguard": map[string]any{
+					"peer": []map[string]any{{"key": pubKey, "allow-ips": []map[string]any{entry}}},
+				},
+			},
+		},
+	}
+}
