@@ -71,7 +71,7 @@
 			{/each}
 		{/if}
 		<div class="foreign-row">
-			<Input placeholder="имя интерфейса ядра" bind:value={name} />
+			<Input label="Имя интерфейса ядра" placeholder="имя интерфейса ядра" bind:value={name} />
 			<Button size="sm" variant="secondary" disabled={busy || !name.trim()} onclick={() => pick(name.trim())}>
 				Отметить и выбрать
 			</Button>

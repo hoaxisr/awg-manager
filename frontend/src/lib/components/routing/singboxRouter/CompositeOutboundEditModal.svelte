@@ -59,7 +59,11 @@
 	);
 	async function onForeignPicked(name: string): Promise<void> {
 		await loadBindables();
-		bindInterface = name;
+		if (bindables.some((i) => i.name === name)) {
+			bindInterface = name;
+		} else {
+			error = 'Интерфейс отмечен, но не появился в списке — обновите диалог';
+		}
 	}
 
 	let busy = $state(false);

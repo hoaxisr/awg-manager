@@ -24,7 +24,7 @@ describe('ForeignIfacePanel', () => {
 		const onpicked = vi.fn();
 		render(ForeignIfacePanel, { onpicked });
 		await fireEvent.click(screen.getByText(/Интерфейс другой программы/));
-		await fireEvent.input(screen.getByPlaceholderText('имя интерфейса ядра'), { target: { value: 'ppp0' } });
+		await fireEvent.input(screen.getByLabelText('Имя интерфейса ядра'), { target: { value: 'ppp0' } });
 		await fireEvent.click(screen.getByRole('button', { name: 'Отметить и выбрать' }));
 		expect(await screen.findByText(/интерфейс роутера/)).toBeTruthy();
 		expect(onpicked).not.toHaveBeenCalled();
