@@ -53,7 +53,9 @@ func (k *KernelRunner) Start(ctx context.Context, tunnelID string, o *storage.Ob
 	if err := k.d.Ensure(ctx); err != nil {
 		return fmt.Errorf("awgm_relay: %w", err)
 	}
-	k.stopLocked(tunnelID)
+	if err := k.stopLocked(tunnelID); err != nil {
+		return err
+	}
 	if k.live(o.LocalPort) { // слот прошлого поколения на том же порту
 		_ = k.d.ProcWrite(procRelayDel, listen(o.LocalPort))
 	}
@@ -76,18 +78,26 @@ func (k *KernelRunner) Start(ctx context.Context, tunnelID string, o *storage.Ob
 func (k *KernelRunner) Stop(tunnelID string) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	k.stopLocked(tunnelID)
+	return k.stopLocked(tunnelID)
+}
+
+// stopLocked: при отказе del запись слота остаётся — слот в ядре жив, и
+// забыть о нём значит оставить сироту до Sweep (F477).
+func (k *KernelRunner) stopLocked(tunnelID string) error {
+	if port, ok := savedPort(tunnelID); ok && k.live(port) {
+		if err := k.d.ProcWrite(procRelayDel, listen(port)); err != nil {
+			return fmt.Errorf("awgm_relay del 127.0.0.1:%d: %w", port, err)
+		}
+	}
+	_ = os.Remove(kmodLinePath(tunnelID))
 	return nil
 }
 
-func (k *KernelRunner) stopLocked(tunnelID string) {
-	if port, ok := savedPort(tunnelID); ok && k.live(port) {
-		_ = k.d.ProcWrite(procRelayDel, listen(port))
-	}
-	_ = os.Remove(kmodLinePath(tunnelID))
-}
-
+// Alive под k.mu: посреди Start запись слота на миг отсутствует, и опрос
+// показывал бы «релей не запущен» (F477).
 func (k *KernelRunner) Alive(tunnelID string) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
 	port, ok := savedPort(tunnelID)
 	return ok && k.live(port)
 }
@@ -106,8 +116,7 @@ func (k *KernelRunner) Sweep(keepPort func(port int) bool) []int {
 	defer k.mu.Unlock()
 	var removed []int
 	for _, port := range k.ports() {
-		if !keepPort(port) {
-			_ = k.d.ProcWrite(procRelayDel, listen(port))
+		if !keepPort(port) && k.d.ProcWrite(procRelayDel, listen(port)) == nil {
 			removed = append(removed, port)
 		}
 	}

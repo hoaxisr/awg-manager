@@ -8,15 +8,18 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // fakeProc — /proc/awgm_relay: add/del по порту, list по живым слотам.
 type fakeProc struct {
-	mu    sync.Mutex
-	slots map[int]string
-	adds  int
+	mu      sync.Mutex
+	slots   map[int]string
+	adds    int
+	delErr  error
+	addGate chan struct{} // не nil — add ждёт закрытия
 }
 
 func (p *fakeProc) write(path string, b []byte) error {
@@ -27,12 +30,20 @@ func (p *fakeProc) write(path string, b []byte) error {
 	fmt.Sscanf(strings.TrimPrefix(line, "127.0.0.1:"), "%d", &port)
 	switch {
 	case strings.HasSuffix(path, "/add"):
+		if g := p.addGate; g != nil {
+			p.mu.Unlock()
+			<-g
+			p.mu.Lock()
+		}
 		if _, ok := p.slots[port]; ok {
 			return fmt.Errorf("file exists")
 		}
 		p.slots[port] = line
 		p.adds++
 	case strings.HasSuffix(path, "/del"):
+		if p.delErr != nil {
+			return p.delErr
+		}
 		delete(p.slots, port)
 	}
 	return nil
@@ -121,5 +132,50 @@ func TestKernelRunner_Sweep(t *testing.T) {
 	removed := k.Sweep(func(port int) bool { return port == 39001 })
 	if len(removed) != 1 || removed[0] != 39050 || len(p.slots) != 1 {
 		t.Fatalf("sweep: removed=%v slots=%v", removed, p.slots)
+	}
+}
+
+// F477: отказ del не теряется — Stop возвращает ошибку, а запись слота
+// остаётся (слот в ядре жив, забыть о нём = сирота до Sweep).
+func TestKernelRunner_StopDelFailureKeepsRecord(t *testing.T) {
+	k, p := newKernelFixture(t)
+	if err := k.Start(context.Background(), "a", phobosObf, "198.51.100.1"); err != nil {
+		t.Fatal(err)
+	}
+	p.delErr = fmt.Errorf("busy")
+	if err := k.Stop("a"); err == nil {
+		t.Fatal("отказ del проглочен")
+	}
+	if !k.Alive("a") {
+		t.Fatal("запись живого слота удалена")
+	}
+}
+
+// F477: Alive посреди Start (старый слот снят, новый ещё не записан) не
+// должен видеть «релей не запущен» — ждёт завершения Start.
+func TestKernelRunner_AliveWaitsForStart(t *testing.T) {
+	k, p := newKernelFixture(t)
+	if err := k.Start(context.Background(), "a", phobosObf, "198.51.100.1"); err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	p.addGate = make(chan struct{})
+	p.mu.Unlock()
+	done := make(chan error)
+	go func() { done <- k.Start(context.Background(), "a", phobosObf, "198.51.100.2") }()
+	time.Sleep(50 * time.Millisecond) // Start дошёл до add
+	alive := make(chan bool, 1)
+	go func() { alive <- k.Alive("a") }()
+	select {
+	case v := <-alive:
+		t.Fatalf("Alive ответил посреди Start: %v", v)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(p.addGate)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !<-alive {
+		t.Fatal("после Start релей не жив")
 	}
 }
