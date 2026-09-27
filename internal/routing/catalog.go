@@ -287,7 +287,9 @@ func (c *CatalogImpl) ListAll(ctx context.Context) []TunnelEntry {
 					if iface.Link != "up" {
 						entry.Status = "down"
 					}
-					if iface.IPv4 != "running" {
+					// Только "disabled" — адреса в NDMS нет; "pending" —
+					// адрес есть, нет несущей (программа не запущена).
+					if iface.IPv4 == "disabled" {
 						entry.Warning = "нет адреса в NDMS"
 					}
 				}

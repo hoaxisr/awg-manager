@@ -22,7 +22,7 @@ type Interface struct {
 	Link          string `json:"link"`      // "up" | "down"
 	Connected     string `json:"connected"` // "yes" | "no" | ""
 	SecurityLevel string `json:"securityLevel"`
-	IPv4          string `json:"ipv4,omitempty"` // summary.layer.ipv4 — "running" | ""
+	IPv4          string `json:"ipv4,omitempty"` // summary.layer.ipv4 — "running" | "pending" | "disabled" | ""
 	Address       string `json:"address,omitempty"`
 	Mask          string `json:"mask,omitempty"`
 	MTU           int    `json:"mtu,omitempty"`

@@ -559,6 +559,8 @@ func TestListAll_OpkgTunOwnedHiddenStatusFromNDMS(t *testing.T) {
 		// Connected устарел: события NDMS обновляют только Link.
 		{ID: "OpkgTun7", Type: "OpkgTun", Description: "csqtt", Link: "down", Connected: "yes", IPv4: "disabled"},
 		{ID: "OpkgTun8", Type: "OpkgTun", Link: "up", Connected: "no", IPv4: "running"},
+		// Программа убита, адрес в NDMS есть: ipv4 "pending" — это не «нет адреса».
+		{ID: "OpkgTun6", Type: "OpkgTun", Link: "down", IPv4: "pending"},
 	}}
 	cat := NewCatalog(provider, ndmsClient, &mockStoreClient{entries: map[string]StoreEntry{}}, noExits(), nil)
 	cat.SetOwnedOpkgTun(func(context.Context) (map[int]bool, error) { return map[int]bool{10: true}, nil })
@@ -575,6 +577,9 @@ func TestListAll_OpkgTunOwnedHiddenStatusFromNDMS(t *testing.T) {
 	}
 	if e := by["system:OpkgTun8"]; e.Status != "up" || e.Warning != "" {
 		t.Errorf("OpkgTun8 = %+v", e)
+	}
+	if e := by["system:OpkgTun6"]; e.Status != "down" || e.Warning != "" {
+		t.Errorf("OpkgTun6 = %+v, ждали down без предупреждения", e)
 	}
 }
 
