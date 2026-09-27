@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { validateTunnelIP, validateDNSList } from './peerForm';
+import {
+	validateClientAllowedIPs,
+	validateRemoteSubnets,
+	parseRemoteSubnets,
+	validatePeerNetworks
+} from './peerForm';
 
 describe('validateTunnelIP', () => {
 	it('accepts valid IPv4 CIDR with prefix', () => {
@@ -47,5 +53,40 @@ describe('validateDNSList', () => {
 
 	it('rejects a hostname', () => {
 		expect(validateDNSList('dns.google')).not.toBeNull();
+	});
+});
+
+describe('validateClientAllowedIPs', () => {
+	it('принимает пусто и списки v4/v6 CIDR', () => {
+		expect(validateClientAllowedIPs('')).toBeNull();
+		expect(validateClientAllowedIPs('10.0.0.0/24, fd00::/64,0.0.0.0/0')).toBeNull();
+	});
+	it('отвергает хост без префикса и мусор', () => {
+		expect(validateClientAllowedIPs('10.0.0.1')).toMatch(/CIDR/);
+		expect(validateClientAllowedIPs('10.0.0.0/24, x')).toMatch(/x/);
+		expect(validateClientAllowedIPs('fd00::/129')).toMatch(/CIDR/);
+	});
+});
+
+describe('validateRemoteSubnets', () => {
+	it('парсит по строкам и запятым', () => {
+		expect(parseRemoteSubnets(' 192.168.77.0/24\n\n192.168.78.0/24, 10.0.0.0/8 ')).toEqual([
+			'192.168.77.0/24',
+			'192.168.78.0/24',
+			'10.0.0.0/8'
+		]);
+		expect(validateRemoteSubnets('192.168.77.0/24\n192.168.78.0/24')).toBeNull();
+		expect(validateRemoteSubnets('')).toBeNull();
+	});
+	it('отвергает не-IPv4, 0.0.0.0/0 и пересечения', () => {
+		expect(validateRemoteSubnets('fd00::/64')).toMatch(/IPv4/);
+		expect(validateRemoteSubnets('192.168.77.1')).toMatch(/IPv4/);
+		expect(validateRemoteSubnets('0.0.0.0/0')).toMatch(/0\.0\.0\.0\/0/);
+		expect(validateRemoteSubnets('10.0.0.0/8\n10.1.0.0/16')).toMatch(/пересекаются/);
+	});
+	it('validatePeerNetworks объединяет обе проверки', () => {
+		expect(validatePeerNetworks('', '')).toBeNull();
+		expect(validatePeerNetworks('bad', '')).toMatch(/CIDR/);
+		expect(validatePeerNetworks('', '0.0.0.0/0')).toMatch(/0\.0\.0\.0/);
 	});
 });

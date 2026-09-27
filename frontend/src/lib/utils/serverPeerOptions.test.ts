@@ -12,6 +12,7 @@ import {
   buildRunningServerDropdownOptions,
   serverValueForConnect,
   connectForServerValue,
+  systemPeerTunnelIP,
 } from './serverPeerOptions';
 import type { ServersSnapshot } from '$lib/stores/servers';
 import type { ManagedServer, WireguardServer } from '$lib/types';
@@ -191,4 +192,19 @@ describe('findServerByListenPort / suggestNextPeerIP (#871)', () => {
     expect(suggestNextPeerIP(own!.address, own!.peerIPs)).toBe('10.7.0.3/32');
     expect(suggestNextPeerIP('fd00::1', [])).toBe('');
   });
+});
+
+describe('systemPeerTunnelIP', () => {
+	it('запись важнее эвристики по allowedIPs', () => {
+		expect(
+			systemPeerTunnelIP({ tunnelIP: '10.9.0.2/32', allowedIPs: ['192.168.77.1/32', '10.9.0.2/32'] })
+		).toBe('10.9.0.2/32');
+	});
+	it('без записи — первый /32, иначе первый элемент с /32 по умолчанию', () => {
+		expect(systemPeerTunnelIP({ allowedIPs: ['192.168.77.0/24', '10.9.0.3/32'] })).toBe(
+			'10.9.0.3/32'
+		);
+		expect(systemPeerTunnelIP({ allowedIPs: ['10.9.0.4'] })).toBe('10.9.0.4/32');
+		expect(systemPeerTunnelIP({})).toBe('');
+	});
 });

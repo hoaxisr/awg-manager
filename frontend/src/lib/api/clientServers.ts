@@ -8,6 +8,7 @@ import type {
 	ManagedServerDriftResponse,
 	ManagedServerRestoreResponse,
 	ManagedServerStats,
+	PeerPresets,
 	RestoreOptions,
 	UpdateManagedPeerRequest,
 	UpdateManagedServerRequest,
@@ -117,7 +118,14 @@ export class ServersClient extends SystemClient {
 	async addSystemServerPeer(
 		serverId: string,
 		// dns — резолвер пира для .conf (#933); пусто = LAN-адрес роутера.
-		data: { description: string; tunnelIP: string; dns?: string }
+		// clientAllowedIPs/remoteSubnets — сети клиента (#713).
+		data: {
+			description: string;
+			tunnelIP: string;
+			dns?: string;
+			clientAllowedIPs?: string;
+			remoteSubnets?: string[];
+		}
 	): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request(`/servers/${encodeURIComponent(serverId)}/peers`, {
 			method: 'POST',
@@ -135,12 +143,20 @@ export class ServersClient extends SystemClient {
 			tunnelIP: string;
 			dns?: string;
 			signature?: { profile: string; i1: string; i2: string; i3: string; i4: string; i5: string };
+			clientAllowedIPs?: string;
+			remoteSubnets?: string[];
 		}
 	): Promise<import('$lib/stores/servers').ServersSnapshot> {
 		return this.request(`/servers/${encodeURIComponent(serverId)}/peers/${encodeURIComponent(pubkey)}`, {
 			method: 'PUT',
 			body: JSON.stringify(data)
 		});
+	}
+
+	/** Пресеты поля «AllowedIPs клиента»; dns — как введён в форме (пусто — умолчание бэкенда). */
+	async getSystemServerPeerPresets(serverId: string, dns: string): Promise<PeerPresets> {
+		const q = dns ? `?dns=${encodeURIComponent(dns)}` : '';
+		return this.request(`/servers/${encodeURIComponent(serverId)}/peers/presets${q}`);
 	}
 
 	async deleteSystemServerPeer(
@@ -263,6 +279,11 @@ export class ServersClient extends SystemClient {
 			method: 'PUT',
 			body: JSON.stringify(req)
 		});
+	}
+
+	async getManagedPeerPresets(serverId: string, dns: string): Promise<PeerPresets> {
+		const q = dns ? `?dns=${encodeURIComponent(dns)}` : '';
+		return this.request(`/managed-servers/${encodeURIComponent(serverId)}/peers/presets${q}`);
 	}
 
 	async deleteManagedPeer(serverId: string, pubkey: string): Promise<import('$lib/stores/servers').ServersSnapshot> {

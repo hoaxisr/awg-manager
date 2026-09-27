@@ -5,7 +5,7 @@
 // дублируют логику сервера, лишь блокируют явно невалидный ввод раньше.
 // ---------------------------------------------------------------------------
 
-import { isIPv4, isIPv6, isCIDR } from './cidr';
+import { isIPv4, isIPv6, isCIDR, cidrOverlaps } from './cidr';
 
 /**
  * Tunnel IP клиента встроенного сервера: обязан быть IPv4 CIDR с префиксом.
@@ -33,4 +33,52 @@ export function validateDNSList(v: string): string | null {
 		}
 	}
 	return null;
+}
+
+function isAnyCIDR(v: string): boolean {
+	const slash = v.lastIndexOf('/');
+	if (slash === -1) return false;
+	const ip = v.slice(0, slash);
+	const prefixStr = v.slice(slash + 1);
+	const prefix = Number(prefixStr);
+	if (prefixStr === '' || !Number.isInteger(prefix) || prefix < 0) return false;
+	if (isIPv4(ip)) return prefix <= 32;
+	if (isIPv6(ip)) return prefix <= 128;
+	return false;
+}
+
+/** «AllowedIPs клиента»: CIDR через запятую, IPv4/IPv6; пусто — весь трафик. */
+export function validateClientAllowedIPs(v: string): string | null {
+	const value = v.trim();
+	if (value === '') return null;
+	for (const entry of value.split(',').map((s) => s.trim())) {
+		if (entry === '' || !isAnyCIDR(entry)) return `некорректный CIDR: ${entry}`;
+	}
+	return null;
+}
+
+/** «Сети за клиентом» из textarea: по одной в строке или через запятую. */
+export function parseRemoteSubnets(text: string): string[] {
+	return text
+		.split(/[\n,]+/)
+		.map((s) => s.trim())
+		.filter((s) => s !== '');
+}
+
+/** IPv4 CIDR, не 0.0.0.0/0, без пересечений внутри. Пересечения с занятым знает только бэкенд. */
+export function validateRemoteSubnets(text: string): string | null {
+	const list = parseRemoteSubnets(text);
+	for (let i = 0; i < list.length; i++) {
+		const entry = list[i];
+		if (!isCIDR(entry)) return `некорректная IPv4-сеть: ${entry}`;
+		if (entry.endsWith('/0')) return '0.0.0.0/0 задать нельзя';
+		for (let j = 0; j < i; j++) {
+			if (cidrOverlaps(list[j], entry)) return `сети пересекаются: ${list[j]} и ${entry}`;
+		}
+	}
+	return null;
+}
+
+export function validatePeerNetworks(allowed: string, subnets: string): string | null {
+	return validateClientAllowedIPs(allowed) ?? validateRemoteSubnets(subnets);
 }
