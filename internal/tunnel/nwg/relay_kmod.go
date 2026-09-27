@@ -2,6 +2,7 @@ package nwg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -59,6 +60,9 @@ func NewRelayKmod(appLogger logging.AppLogger, arm func() error, disarmAfter fun
 // arch-default, не проверяя файл (awg_proxy так и нужно), а сборки релея под
 // SoC может не быть — без проверки отказ всплыл бы только ошибкой insmod.
 func relayKoPath(model string, soc kmod.SoC, exists func(string) bool) (string, error) {
+	if model == "" || soc == kmod.SoCUnknown {
+		return "", errRelayModelUnknown
+	}
 	p, _, err := resolveKoPathFor("awgm_relay", model, soc, exists)
 	if err != nil {
 		return "", err
@@ -69,8 +73,13 @@ func relayKoPath(model string, soc kmod.SoC, exists func(string) bool) (string, 
 	return p, nil
 }
 
+// errRelayModelUnknown — модель/SoC роутера ещё не определены (ранний старт):
+// не «сборки нет», поэтому не запоминается (F478).
+var errRelayModelUnknown = errors.New("модель роутера ещё не определена")
+
 // Available — ядро можно предлагать диспетчеру: модуль загружен или его файл
-// под этот SoC есть и загрузка ещё не отказывала. Отказ resolve запоминается
+// под этот SoC есть и загрузка ещё не отказывала. Отказ resolve (кроме «модель
+// ещё не определена») запоминается
 // и пишется в журнал один раз: Available зовётся на каждый Start.
 func (m *RelayKmod) Available() bool {
 	m.mu.Lock()
@@ -82,6 +91,9 @@ func (m *RelayKmod) Available() bool {
 		return true
 	}
 	if _, err := m.resolve(); err != nil {
+		if errors.Is(err, errRelayModelUnknown) {
+			return false
+		}
 		m.failed = err
 		m.appLog.Info("awgm-relay", "", err.Error()+" — Phobos-туннели работают процессом")
 		return false
@@ -102,7 +114,9 @@ func (m *RelayKmod) Ensure(ctx context.Context) error {
 	}
 	path, err := m.resolve()
 	if err != nil {
-		m.failed = err
+		if !errors.Is(err, errRelayModelUnknown) {
+			m.failed = err
+		}
 		return err
 	}
 	if !m.modLoadedFn("udp_tunnel") {
@@ -163,11 +177,16 @@ func (m *RelayKmod) Unload(ctx context.Context) error {
 	return m.unloadLocked(ctx)
 }
 
+// unloadLocked: отказ del уходит в ошибку вместе с rmmod — иначе виден был бы
+// только «in use» без причины (F477).
 func (m *RelayKmod) unloadLocked(ctx context.Context) error {
+	var delErrs []error
 	if list, err := m.procReadFn("/proc/awgm_relay/list"); err == nil {
 		for _, line := range strings.Split(string(list), "\n") {
 			if f := strings.Fields(line); len(f) > 0 {
-				_ = m.procWriteFn("/proc/awgm_relay/del", []byte(f[0]))
+				if err := m.procWriteFn("/proc/awgm_relay/del", []byte(f[0])); err != nil {
+					delErrs = append(delErrs, fmt.Errorf("del %s: %w", f[0], err))
+				}
 			}
 		}
 	}
@@ -175,5 +194,5 @@ func (m *RelayKmod) unloadLocked(ctx context.Context) error {
 	if err == nil && res != nil && res.ExitCode != 0 {
 		err = fmt.Errorf("rmmod: exit %d: %s", res.ExitCode, strings.TrimSpace(res.Stderr))
 	}
-	return err
+	return errors.Join(append(delErrs, err)...)
 }

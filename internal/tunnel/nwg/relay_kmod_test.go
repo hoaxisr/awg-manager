@@ -111,7 +111,10 @@ func TestRelayKmod_AvailableResolveFailLoggedOnce(t *testing.T) {
 	spy := &relayLogSpy{}
 	m := NewRelayKmod(spy, nil, nil)
 	resolves := 0
-	m.resolve = func() (string, error) { resolves++; return "", errors.New("нет сборки awgm_relay.ko под KN-1010/mt7628") }
+	m.resolve = func() (string, error) {
+		resolves++
+		return "", errors.New("нет сборки awgm_relay.ko под KN-1010/mt7628")
+	}
 	m.isLoadedFn = func() bool { return false }
 	if m.Available() || m.Available() {
 		t.Fatal("Available без сборки")
@@ -136,5 +139,37 @@ func TestRelayKoPath(t *testing.T) {
 	all := func(string) bool { return true }
 	if p, err := relayKoPath("KN-1810", kmod.SoCMT7621, all); err != nil || p == "" {
 		t.Fatalf("файл есть: %q %v", p, err)
+	}
+}
+
+// F478: модель/SoC ещё не определены (ранний старт) — это не «сборки нет»:
+// отказ не запоминается, следующий Start пробует снова.
+func TestRelayKmod_AvailableModelUnknownNotRemembered(t *testing.T) {
+	m := NewRelayKmod(nil, nil, nil)
+	known := false
+	m.resolve = func() (string, error) {
+		if !known {
+			return "", errRelayModelUnknown
+		}
+		return "/opt/etc/awg-manager/modules/awgm_relay-mt7621.ko", nil
+	}
+	m.isLoadedFn = func() bool { return false }
+	if m.Available() {
+		t.Fatal("Available без модели")
+	}
+	known = true
+	if !m.Available() {
+		t.Fatal("ранний отказ запомнен: ядро не предложится до рестарта демона")
+	}
+}
+
+// F477: отказ del при выгрузке виден в ошибке, а не только «rmmod: in use».
+func TestRelayKmod_UnloadReportsDelFailure(t *testing.T) {
+	f := newRelayKmodFixture(t)
+	f.loaded = true
+	f.m.procWriteFn = func(string, []byte) error { return errors.New("busy") }
+	err := f.m.Unload(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "del 127.0.0.1:39001") {
+		t.Fatalf("ошибка выгрузки: %v", err)
 	}
 }
