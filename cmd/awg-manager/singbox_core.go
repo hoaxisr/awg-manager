@@ -28,7 +28,7 @@ type singboxCoreDeps struct {
 	bus      *events.Bus
 	bootLog  *logging.ScopedLogger
 	dataDir  string // awg3.json
-	// dir — каталог управляемого sing-box; пусто = дефолт оператора
+	// dir — каталог управляемого sing-box; пусто = singboxDataDir (applyDataDir), в проде — дефолт оператора
 	// (каталог рядом с бинарём).
 	dir string
 	// initialManuallyStopped — снимок Settings.SingboxManuallyStopped,
@@ -48,9 +48,13 @@ type singboxCore struct {
 // AWG3-endpoint'ов.
 func buildSingboxCore(d singboxCoreDeps) singboxCore {
 	// Sing-box integration
+	dir := d.dir
+	if dir == "" {
+		dir = singboxDataDir
+	}
 	op := singbox.NewOperator(singbox.OperatorDeps{
 		Log:               slog.Default().With("component", "singbox"),
-		Dir:               d.dir,
+		Dir:               dir,
 		Queries:           d.queries,
 		Commands:          d.commands,
 		AppLogger:         d.appLog,

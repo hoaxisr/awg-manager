@@ -2251,3 +2251,25 @@ func TestNewOperator_WiresEventBus(t *testing.T) {
 		t.Fatalf("bus mismatch: got %p, want %p", op.bus, bus)
 	}
 }
+
+// F487: Cleanup сносит СВОЙ каталог, а не каталог бинаря. В проде это один
+// путь; в песочнице (-data-dir) бинарь боевой, и его каталог не наш.
+func TestCleanup_RemovesOwnDirNotBinaryDir(t *testing.T) {
+	own := t.TempDir()
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "sing-box")
+	if err := os.WriteFile(bin, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(OperatorDeps{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Dir: own, Binary: bin})
+	t.Cleanup(op.Process().Close)
+	if err := op.Cleanup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(bin); err != nil {
+		t.Fatalf("Cleanup снёс чужой каталог бинаря: %v", err)
+	}
+	if _, err := os.Stat(own); !os.IsNotExist(err) {
+		t.Fatalf("свой каталог не снесён: %v", err)
+	}
+}

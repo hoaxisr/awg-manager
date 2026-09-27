@@ -559,12 +559,13 @@ func (o *Operator) Cleanup(ctx context.Context) error {
 		}
 	}
 
-	// Remove our managed binary directory entirely — the user explicitly
-	// asked for cleanup, and our singbox subtree carries the binary, pid,
-	// and any UPX-cached state. /opt/etc/awg-manager/singbox/...
-	binDir := filepath.Dir(o.binary)
-	if err := os.RemoveAll(binDir); err != nil {
-		o.log.Warn("cleanup: remove managed binary dir", "path", binDir, "err", err)
+	// Remove our managed directory entirely — the user explicitly asked for
+	// cleanup, and our singbox subtree carries config.d, pid, and (in
+	// production, where o.dir is the binary's directory) the binary and any
+	// UPX-cached state. Our own dir, not filepath.Dir(o.binary): under
+	// -data-dir the binary stays the production one (F487).
+	if err := os.RemoveAll(o.dir); err != nil {
+		o.log.Warn("cleanup: remove managed dir", "path", o.dir, "err", err)
 	}
 	return nil
 }

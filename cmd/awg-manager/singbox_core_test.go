@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
@@ -38,6 +39,17 @@ func newTestCoreIn(t *testing.T, dir string) singboxCore {
 		dataDir:  dataDir,
 		dir:      dir,
 	})
+}
+
+// F487: без явного dir ядро берёт каталог, розданный applyDataDir.
+func TestBuildSingboxCore_UsesDataDirSingbox(t *testing.T) {
+	restorePaths(t)
+	sb := filepath.Join(t.TempDir(), "singbox")
+	singboxDataDir = sb
+	core := newTestCoreIn(t, "")
+	if got := core.op.ConfigDir(); !strings.HasPrefix(got, sb) {
+		t.Fatalf("config.d = %q, ждали внутри %q", got, sb)
+	}
 }
 
 // Пин на проводку слотов внутри buildSingboxCore: Register + Bootstrap +
