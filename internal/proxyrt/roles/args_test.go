@@ -125,6 +125,23 @@ func TestFreeTurnArgs(t *testing.T) {
 	cl.Mode = "turn"
 	cl.KCP = nil
 
+	// -bond только в tcp, -obf-timing только с профилем: иначе клиент 4.x
+	// отвергает запуск (config/validate.go апстрима).
+	cl.Bond, cl.ObfTimingMs = true, 20
+	if got := strings.Join(FreeTurnClientArgs(cl), " "); strings.Contains(got, "-bond") ||
+		!strings.Contains(got, "-obf-key k -obf-timing 20ms ") {
+		t.Errorf("argv turn с bond и timing: %q", got)
+	}
+	cl.Mode = "tcp"
+	if got := strings.Join(FreeTurnClientArgs(cl), " "); !strings.Contains(got, "-mode tcp -bond -obf-profile") {
+		t.Errorf("tcp обязан получить -bond: %q", got)
+	}
+	cl.Mode, cl.ObfProfile = "turn", "none"
+	if got := strings.Join(FreeTurnClientArgs(cl), " "); strings.Contains(got, "-obf-timing") {
+		t.Errorf("без профиля -obf-timing не передаётся: %q", got)
+	}
+	cl.ObfProfile, cl.Bond, cl.ObfTimingMs = "xor", false, 0
+
 	// -platform уезжает ТОЛЬКО для mobile: у desktop его нет вовсе, и это не
 	// косметика — лишний флаг сдвинул бы отпечаток всем настольным клиентам.
 	cl.Platform = "desktop"

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // LinkPayload is the JSON structure embedded in a freeturn:// share link.
@@ -16,9 +17,9 @@ import (
 //   - The upstream free-turn-proxy format (see docs/uri.md in
 //     samosvalishe/free-turn-proxy): base64url, no padding
 //     (Go base64.RawURLEncoding), fields v/provider/peer/transport/mode/
-//     obf/key/n/spc/cid/listen/dns/dnss/mcap/name. Notably it never
-//     includes the VK call link itself (unique per recipient) — the
-//     receiving client still has to enter -links by hand.
+//     bond/obf/key/timing/n/spc/cid/listen/dns/dnss/mcap/name/vk. The call
+//     link (vk, upstream 4.0+) is optional — without it the receiving
+//     client still has to enter -links by hand.
 //   - The informal freeturn-entware-installer format (install.sh's
 //     generator.cgi): standard base64 alphabet, padding stripped
 //     (JS btoa() с обрезанным хвостом =), fields v/provider/peer/obf/key/mtu/wg.
@@ -36,9 +37,13 @@ type LinkPayload struct {
 
 	Transport string `json:"transport,omitempty"`
 	Mode      string `json:"mode,omitempty"`
+	Bond      bool   `json:"bond,omitempty"` // upstream 4.0+
 
-	Obf string `json:"obf,omitempty"`
-	Key string `json:"key,omitempty"`
+	Obf      string `json:"obf,omitempty"`
+	Key      string `json:"key,omitempty"`
+	TimingMs int    `json:"timing,omitempty"` // upstream 4.0+: -obf-timing в мс
+
+	VK string `json:"vk,omitempty"` // upstream 4.0+: ссылка на звонок, идёт в -links
 
 	N              int    `json:"n,omitempty"`   // -n, parallel TURN streams
 	StreamsPerCred int    `json:"spc,omitempty"` // -streams-per-cred
@@ -206,6 +211,16 @@ func mergeURLFormat(p *LinkPayload, compact string) {
 	if p.MTU == 0 {
 		if mtu, ok := intQuery(vals, "mtu"); ok {
 			p.MTU = mtu
+		}
+	}
+	if !p.Bond {
+		if b, ok := boolQuery(vals, "bond"); ok {
+			p.Bond = b
+		}
+	}
+	if p.TimingMs == 0 {
+		if d, err := time.ParseDuration(strings.TrimSpace(vals.Get("obf-timing"))); err == nil && d > 0 {
+			p.TimingMs = int(d.Milliseconds())
 		}
 	}
 	if !p.ManualCaptcha {

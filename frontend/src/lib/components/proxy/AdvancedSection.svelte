@@ -2,7 +2,7 @@
 	// EX-34..48, EX-58, EX-66..EX-68 — «Дополнительно»: экспертные поля, работа
 	// с WireGuard-конфигом и освобождение портов. Свёрнута: глобального режима
 	// «Эксперт» больше нет (решение Q7 ИА).
-	import { Button, Dropdown, Input } from '$lib/components/ui';
+	import { Button, Dropdown, Input, Toggle } from '$lib/components/ui';
 	import WgConfExportPanel from '../proxy-panel/WgConfExportPanel.svelte';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
 	import { obfOptions } from '../freeturn/options';
@@ -90,9 +90,33 @@
 				options={obfOptions}
 				fullWidth
 			/>
+			<Input
+				label="Задержка обфускации, мс"
+				type="number"
+				hint="0 — выкл.; только с профилем обфускации"
+				value={String(ftClient.obfTimingMs)}
+				onchange={(v) => {
+					// 0 — законное «выкл.», шаблон `Number(v) || прежнее` его не выставит.
+					if (ftClient) ftClient.obfTimingMs = Math.max(0, Math.trunc(Number(v)) || 0);
+				}}
+				fullWidth
+			/>
 			<Input label="URL подписки" bind:value={ftClient.sub} fullWidth />
 		{/if}
 	</div>
+
+	{#if ftClient}
+		<div class="toggle-row">
+			<Toggle
+				label="Bond"
+				hint="Только в режиме TCP; нужен сервер 4.0+"
+				checked={ftClient.bond}
+				onchange={(v) => {
+					if (ftClient) ftClient.bond = v;
+				}}
+			/>
+		</div>
+	{/if}
 
 	{#if !raw}
 		<p class="sub-title">WireGuard-конфиг</p>
@@ -139,5 +163,13 @@
 		font-size: 0.75rem;
 		font-weight: 600;
 		color: var(--color-text-secondary);
+	}
+
+	.toggle-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+		margin-top: 0.875rem;
 	}
 </style>

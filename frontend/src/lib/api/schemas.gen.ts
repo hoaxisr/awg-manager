@@ -2907,6 +2907,7 @@ const ftlink_KCP: v.GenericSchema = v.looseObject({
 });
 
 const ftlink_LinkPayload: v.GenericSchema = v.looseObject({
+	bond: v.optional(v.nullable(v.boolean())),
 	cid: v.optional(v.nullable(v.string())),
 	dns: v.optional(v.nullable(v.string())),
 	dnss: v.optional(v.nullable(v.string())),
@@ -2922,8 +2923,10 @@ const ftlink_LinkPayload: v.GenericSchema = v.looseObject({
 	peer: v.optional(v.nullable(v.string())),
 	provider: v.optional(v.nullable(v.string())),
 	spc: v.optional(v.nullable(v.number())),
+	timing: v.optional(v.nullable(v.number())),
 	transport: v.optional(v.nullable(v.string())),
 	v: v.optional(v.nullable(v.number())),
+	vk: v.optional(v.nullable(v.string())),
 	wg: v.optional(v.nullable(v.string())),
 });
 

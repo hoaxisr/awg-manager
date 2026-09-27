@@ -1391,9 +1391,11 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 	assertEveryFieldCarried(t, "WdttServerConfig", []any{*srv.WdttServer}, "OpenFirewall")
 	assertEveryFieldCarried(t, "ServerUser", []any{srv.Users[0]})
 	// KCP появился в freeturn 3.2 (F144) и приезжает только ссылкой freeturn://;
-	// старый freeturn.json, который переносит посев, его не знал.
+	// старый freeturn.json, который переносит посев, его не знал. ObfTimingMs
+	// (4.0) — та же причина. Bond в старом файле был, но под протокол 2.x
+	// (tcpfwd/smux), с bond 4.x поверх KCP он несовместим — не переносим.
 	assertEveryFieldCarried(t, "FreeTurnClientConfig",
-		[]any{*got["freeturn-client:ftc-1"].FreeTurnClient}, "KCP")
+		[]any{*got["freeturn-client:ftc-1"].FreeTurnClient}, "KCP", "Bond", "ObfTimingMs")
 	// LinkPeer — настройка адреса для ссылок абонентам (#933), заведена
 	// панелью; в старом freeturn.json такого поля не было вовсе, переносить
 	// нечего. Та же причина исключения, что у KCP клиента.

@@ -367,8 +367,10 @@ type FreeTurnClientConfig struct {
 	Streams        int    `json:"streams,omitempty"`
 	Transport      string `json:"transport,omitempty"`
 	Mode           string `json:"mode,omitempty"`
+	Bond           bool   `json:"bond,omitempty"` // upstream 4.0+, только -mode tcp
 	ObfProfile     string `json:"obfProfile,omitempty"`
 	ObfKey         string `json:"obfKey,omitempty"`
+	ObfTimingMs    int    `json:"obfTimingMs,omitempty"` // -obf-timing, только с профилем обфускации
 	StreamsPerCred int    `json:"streamsPerCred,omitempty"`
 	Platform       string `json:"platform,omitempty"` // ""|desktop|mobile
 	DNSMode        string `json:"dnsMode,omitempty"`

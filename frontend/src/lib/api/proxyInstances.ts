@@ -370,10 +370,12 @@ export function toFreeTurnClientConfig(
     transport:
       (str(c, "transport") as FreeTurnClientConfig["transport"]) ?? "tcp",
     mode: (str(c, "mode") as FreeTurnClientConfig["mode"]) ?? "udp",
+    bond: bool(c, "bond") === true,
     obfProfile:
       (str(c, "obfProfile") as FreeTurnClientConfig["obfProfile"]) ?? "none",
     obfKey: "",
     obfKeySet: bool(c, "obfKeySet") === true,
+    obfTimingMs: num(c, "obfTimingMs") ?? 0,
     streamsPerCred: num(c, "streamsPerCred") ?? 0,
     kcp: kcpOf(c),
     platform:
@@ -701,7 +703,9 @@ export function toFreeTurnClientPatch(cfg: FreeTurnClientConfig): Cfg {
     streams: cfg.streams ?? 0,
     transport: cfg.transport ?? "tcp",
     mode: cfg.mode ?? "udp",
+    bond: cfg.bond === true,
     obfProfile: cfg.obfProfile ?? "none",
+    obfTimingMs: cfg.obfTimingMs ?? 0,
     streamsPerCred: cfg.streamsPerCred ?? 0,
     kcp: cfg.kcp ?? null,
     platform: cfg.platform ?? "",

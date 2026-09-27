@@ -107,8 +107,10 @@ const ftClientView: ProxyInstanceView = {
 		streams: 10,
 		transport: 'tcp',
 		mode: 'udp',
+		bond: true,
 		obfProfile: 'rtpopus',
 		obfKeySet: true,
+		obfTimingMs: 20,
 		streamsPerCred: 5,
 		platform: 'mobile',
 		dnsMode: 'doh',
@@ -362,9 +364,11 @@ describe('toFreeTurnStatus и toFreeTurnConfig: вторая подсистем�
 			streams: 10,
 			transport: 'tcp',
 			mode: 'udp',
+			bond: true,
 			obfProfile: 'rtpopus',
 			obfKey: '',
 			obfKeySet: true,
+			obfTimingMs: 20,
 			streamsPerCred: 5,
 			platform: 'mobile',
 			dnsMode: 'doh',
@@ -542,9 +546,11 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 			streams: 10,
 			transport: 'tcp',
 			mode: 'udp',
+			bond: false,
 			obfProfile: 'rtpopus',
 			obfKey: '',
 			obfKeySet: true,
+			obfTimingMs: 0,
 			streamsPerCred: 10,
 			platform: 'desktop',
 			dnsMode: 'auto',
@@ -554,6 +560,9 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 		// Тот же владелец, что у wdtt-клиента: локальный порт выдаёт бэкенд.
 		expect('listen' in toFreeTurnClientPatch(ftClient)).toBe(false);
 		expect(toFreeTurnClientPatch({ ...ftClient, obfKey: 'k1' }).obfKey).toBe('k1');
+		// Поля 4.0 обязаны уезжать на бэкенд, иначе тумблер декоративный.
+		const p40 = toFreeTurnClientPatch({ ...ftClient, bond: true, obfTimingMs: 20 });
+		expect([p40.bond, p40.obfTimingMs]).toEqual([true, 20]);
 
 		const ftServer: FreeTurnServerConfig = {
 			enabled: true,

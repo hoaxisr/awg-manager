@@ -8094,6 +8094,9 @@ definitions:
     type: object
   ftlink.LinkPayload:
     properties:
+      bond:
+        description: upstream 4.0+
+        type: boolean
       cid:
         description: -client-id — owner must allowlist this in clients.json
         type: string
@@ -8131,10 +8134,16 @@ definitions:
       spc:
         description: -streams-per-cred
         type: integer
+      timing:
+        description: 'upstream 4.0+: -obf-timing в мс'
+        type: integer
       transport:
         type: string
       v:
         type: integer
+      vk:
+        description: 'upstream 4.0+: ссылка на звонок, идёт в -links'
+        type: string
       wg:
         description: optional bundled WireGuard client config
         type: string

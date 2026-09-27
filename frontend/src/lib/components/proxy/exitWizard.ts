@@ -147,7 +147,7 @@ export function fieldsFromFtPayload(
 		name: p.name?.trim() ?? '',
 		peer: p.peer ?? '',
 		password: '',
-		vkHashes: '',
+		vkHashes: p.vk?.trim() ?? '',
 		workers: p.n && p.n > 0 ? String(p.n) : DEFAULT_FT_STREAMS,
 	};
 }
@@ -205,6 +205,9 @@ export function applyFtPayload(cfg: FreeTurnClientConfig, p: FreeTurnLinkPayload
 	if (p.cid) cfg.clientId = p.cid;
 	if (p.transport) cfg.transport = p.transport as FreeTurnClientConfig['transport'];
 	if (p.mode) cfg.mode = p.mode as FreeTurnClientConfig['mode'];
+	// Как и kcp, берутся как есть: ссылка без поля обязана снять прежнее значение.
+	cfg.bond = p.bond === true;
+	cfg.obfTimingMs = p.timing && p.timing > 0 ? p.timing : 0;
 	// Профиль берётся как есть, без гейта по режиму: режим гейтит бэкенд при
 	// рендере argv, а ссылка без kcp обязана снять прежний профиль.
 	cfg.kcp = p.kcp;

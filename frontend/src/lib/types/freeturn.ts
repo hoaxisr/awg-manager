@@ -12,10 +12,14 @@ export interface FreeTurnClientConfig {
 	streams: number;
 	transport: 'tcp' | 'udp';
 	mode: 'udp' | 'tcp';
+	/** Upstream 4.0+: объединение сессий под одно TCP-соединение, только mode tcp. */
+	bond: boolean;
 	obfProfile: 'none' | 'rtpopus' | 'rtpopus2' | 'rtpopus3';
 	obfKey?: string;
 	/** Ключ обфускации задан на бэкенде — значение наружу не отдаётся (Н5). */
 	obfKeySet?: boolean;
+	/** -obf-timing в мс, 0 — выкл.; только с профилем обфускации. */
+	obfTimingMs: number;
 	streamsPerCred: number;
 	kcp?: FreeTurnKCP;
 	platform: 'desktop' | 'mobile';
@@ -127,8 +131,10 @@ export interface FreeTurnLinkPayload {
 	peer?: string;
 	transport?: string;
 	mode?: string;
+	bond?: boolean;
 	obf?: string;
 	key?: string;
+	timing?: number;
 	n?: number;
 	spc?: number;
 	cid?: string;
@@ -140,6 +146,8 @@ export interface FreeTurnLinkPayload {
 	mtu?: number;
 	wg?: string;
 	kcp?: FreeTurnKCP;
+	/** Upstream 4.0+: ссылка на звонок, идёт в -links. */
+	vk?: string;
 }
 
 export interface FreeTurnGenerateLinkRequest {

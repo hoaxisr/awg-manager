@@ -1,6 +1,7 @@
 package ftlink
 
 import (
+	"encoding/base64"
 	"reflect"
 	"strings"
 	"testing"
@@ -86,5 +87,26 @@ func TestTunnelNameFromClientTruncatesByRunes(t *testing.T) {
 	}
 	if !utf8.ValidString(got) {
 		t.Fatalf("обрезка порвала UTF-8: %q", got)
+	}
+}
+
+// Ссылка апстрима 4.0: ключи bond/timing/vk пишет его uri.Config, не мы.
+func TestDecodeLink_Upstream40Fields(t *testing.T) {
+	raw := `{"v":1,"peer":"p:1","mode":"tcp","bond":true,"obf":"rtpopus3","key":"k","timing":20,"vk":"https://vk.ru/call/join/X"}`
+	got, err := DecodeLink(LinkScheme + base64.RawURLEncoding.EncodeToString([]byte(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Bond || got.TimingMs != 20 || got.VK != "https://vk.ru/call/join/X" {
+		t.Fatalf("поля 4.0 потеряны: %+v", got)
+	}
+
+	compact := `{"url":"p:1?mode=tcp&bond=1&obf-profile=rtpopus&obf-timing=20ms"}`
+	got, err = DecodeLink(LinkScheme + base64.RawURLEncoding.EncodeToString([]byte(compact)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Bond || got.TimingMs != 20 {
+		t.Fatalf("компактная форма: %+v", got)
 	}
 }
