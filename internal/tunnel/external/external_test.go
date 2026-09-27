@@ -2,12 +2,93 @@ package external
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 )
+
+// validAdoptConf — минимальный .conf, который config.Parse принимает без
+// ошибок (см. internal/tunnel/config/config_test.go). Без него Adopt падал бы
+// на разборе конфига и до новых проверок не доходил бы — тест был бы холостым.
+const validAdoptConf = `[Interface]
+PrivateKey = aPrivateKey123=
+Address = 10.0.0.2/32
+
+[Peer]
+PublicKey = aPublicKey456=
+Endpoint = vpn.example.com:51820
+AllowedIPs = 0.0.0.0/0, ::/0
+`
+
+func withSettings(t *testing.T, s *Service) *storage.SettingsStore {
+	t.Helper()
+	st := storage.NewSettingsStore(t.TempDir())
+	if _, err := st.Load(); err != nil {
+		t.Fatal(err)
+	}
+	s.settingsStore = st
+	return st
+}
+
+func TestList_ForeignOpkgTunShownNotRemovable(t *testing.T) {
+	stubScan(t, []int{7}, nil) // номер 7 есть в системе, AWG на нём нет
+	s := newTestService(t)
+	st := withSettings(t, s)
+	_ = st.MarkForeignInterface("opkgtun7")
+	_ = st.MarkForeignInterface("csqtt0")
+	s.SetOrphanSource(
+		func(context.Context) ([]OrphanIface, error) { return nil, nil }, // отмеченный уже не сирота
+		func(context.Context) map[int]string { return map[int]string{7: "csqtt"} },
+	)
+	got, err := s.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string]TunnelInfo{}
+	for _, g := range got {
+		by[g.InterfaceName] = g
+	}
+	o, ok := by["opkgtun7"]
+	if !ok || !o.Foreign || o.Removable || o.Description != "csqtt" || o.TunnelNumber != 7 {
+		t.Fatalf("opkgtun7 = %+v (ok=%v)", o, ok)
+	}
+	k, ok := by["csqtt0"]
+	if !ok || !k.Foreign || k.Removable || k.TunnelNumber != -1 {
+		t.Fatalf("csqtt0 = %+v (ok=%v)", k, ok)
+	}
+}
+
+func stubLinkExists(t *testing.T, v bool) {
+	t.Helper()
+	prev := linkExists
+	linkExists = func(string) bool { return v }
+	t.Cleanup(func() { linkExists = prev })
+}
+
+func TestAdopt_RefusesLiveNonAWG(t *testing.T) {
+	stubScan(t, nil, nil) // isAWGInterface → не AWG
+	stubLinkExists(t, true)
+	s := newTestService(t)
+	withSettings(t, s)
+	_, err := s.Adopt(context.Background(), AdoptRequest{InterfaceName: "opkgtun7", ConfContent: validAdoptConf})
+	if !errors.Is(err, ErrAdoptNotAWG) {
+		t.Fatalf("err = %v, want ErrAdoptNotAWG", err)
+	}
+}
+
+func TestAdopt_RefusesForeign(t *testing.T) {
+	stubScan(t, nil, nil)
+	stubLinkExists(t, false)
+	s := newTestService(t)
+	withSettings(t, s).MarkForeignInterface("opkgtun8")
+	_, err := s.Adopt(context.Background(), AdoptRequest{InterfaceName: "opkgtun8", ConfContent: validAdoptConf})
+	if !errors.Is(err, ErrAdoptForeign) {
+		t.Fatalf("err = %v, want ErrAdoptForeign", err)
+	}
+}
 
 func newTestService(t *testing.T) *Service {
 	t.Helper()

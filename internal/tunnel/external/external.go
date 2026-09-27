@@ -4,8 +4,11 @@ package external
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -84,6 +87,14 @@ func NewService(
 var (
 	listSystemInterfaces = sysinfo.ListSystemInterfaces
 	isAWGInterface       = sysinfo.IsAWGInterface
+	linkExists           = func(name string) bool { _, err := os.Stat("/sys/class/net/" + name); return err == nil }
+)
+
+// ErrAdoptNotAWG — живой интерфейс не AWG (F492): его старт снёс бы чужой TUN.
+// ErrAdoptForeign — интерфейс отмечен как сторонний (issue #935).
+var (
+	ErrAdoptNotAWG  = errors.New("интерфейс не AWG — принимать нечего")
+	ErrAdoptForeign = errors.New("интерфейс отмечен как интерфейс другой программы")
 )
 
 // List returns tunnels that exist in the system but are not managed by awg-manager.
@@ -142,8 +153,44 @@ func (s *Service) List(ctx context.Context) ([]TunnelInfo, error) {
 	}
 
 	external = s.withOrphans(ctx, external, listed)
+	external = s.withForeign(ctx, external, listed)
 	s.annotate(ctx, external, managedTunnels)
 	return external, nil
+}
+
+// withForeign дописывает отмеченные сторонние интерфейсы: отмеченный OpkgTun
+// перестал быть сиротой и иначе пропал бы из списка, а интерфейса ядра в
+// переборе номеров нет вовсе. Интерфейс ядра — номер -1.
+func (s *Service) withForeign(ctx context.Context, external []TunnelInfo, listed map[int]bool) []TunnelInfo {
+	if s.settingsStore == nil {
+		return external
+	}
+	var desc map[int]string
+	if s.descriptions != nil {
+		desc = s.descriptions(ctx)
+	}
+	for _, name := range s.settingsStore.GetForeignInterfaces() {
+		num, isOpkg := opkgtun.IndexOf(name)
+		if isOpkg && listed[num] {
+			for i := range external {
+				if external[i].TunnelNumber == num {
+					external[i].Foreign = true
+					external[i].Removable = false
+				}
+			}
+			continue
+		}
+		// Половины NDMSRecord/KernelDevice не заполняются: отмеченный не сирота,
+		// источника половин для него нет; Addresses дочитает annotate из ядра.
+		row := TunnelInfo{InterfaceName: name, TunnelNumber: -1, Foreign: true}
+		if isOpkg {
+			row.TunnelNumber = num
+			row.Description = desc[num]
+			listed[num] = true
+		}
+		external = append(external, row)
+	}
+	return external
 }
 
 // appendOrphans дописывает интерфейсы OpkgTun, которые не принадлежат НИ ОДНОЙ
@@ -298,9 +345,16 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (*service.TunnelW
 	}
 
 	// Check if tunnel is still running
-	info, isAWG := sysinfo.IsAWGInterface(ctx, req.InterfaceName)
+	info, isAWG := isAWGInterface(ctx, req.InterfaceName)
 	if isAWG && info != nil && info.PublicKey != "" {
 		return nil, fmt.Errorf("tunnel is still active - stop it in the external application and try again")
+	}
+	if !isAWG && linkExists(req.InterfaceName) {
+		return nil, fmt.Errorf("%w: %s", ErrAdoptNotAWG, req.InterfaceName)
+	}
+	if canon := fmt.Sprintf("opkgtun%d", tunnelNum); s.settingsStore != nil &&
+		slices.Contains(s.settingsStore.GetForeignInterfaces(), canon) {
+		return nil, fmt.Errorf("%w: %s", ErrAdoptForeign, canon)
 	}
 
 	// Check if this number is already managed
