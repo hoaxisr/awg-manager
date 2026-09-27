@@ -2,6 +2,7 @@ package obfuscator
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,17 +26,35 @@ const OopsReasonPrefix = "oops в awgm_relay: "
 var disarmMu sync.Mutex
 var disarmTimer *time.Timer
 
-func bootID() string {
-	b, _ := os.ReadFile(BootIDPath)
-	return strings.TrimSpace(string(b))
+// armStaleAfter — метка старше этого (по часам) не от сбоя: сбой = перезагрузка
+// в первые 5 минут + загрузка + старт демона. Старше — демон не снял метку
+// (упал до таймера), и любая будущая перезагрузка давала бы ложный trip (F477 M7).
+// ponytail: часы после загрузки могут отставать (mtime в будущем) — тогда
+// поведение прежнее, trip.
+const armStaleAfter = 30 * time.Minute
+
+func bootID() (string, error) {
+	b, err := os.ReadFile(BootIDPath)
+	if err != nil {
+		return "", err
+	}
+	id := strings.TrimSpace(string(b))
+	if id == "" {
+		return "", errors.New("пустой boot_id")
+	}
+	return id, nil
 }
 
 // Arm — метка перед insmod: «модуль загружается в этой загрузке роутера».
 func Arm() error {
+	id, err := bootID()
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(ArmPath), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(ArmPath, []byte(bootID()), 0o644)
+	return os.WriteFile(ArmPath, []byte(id), 0o644)
 }
 
 // DisarmAfter снимает метку через d (0 — сразу). Повторный вызов перевзводит.
@@ -57,11 +76,19 @@ func DisarmAfter(d time.Duration) {
 // чтобы старая запись не срабатывала повторно).
 func WatchdogCheck(lastHash string) (reason, hash string) {
 	if b, err := os.ReadFile(ArmPath); err == nil {
-		if armed := strings.TrimSpace(string(b)); armed != "" && armed != bootID() {
-			reason = "роутер перезагрузился в первые 5 минут после загрузки awgm_relay"
-			_ = os.Remove(ArmPath)
-		} else {
+		cur, idErr := bootID()
+		armed := strings.TrimSpace(string(b))
+		switch {
+		case idErr != nil || armed == "":
+			// Без boot_id перезагрузку не доказать; метку оставляем таймеру.
+			DisarmAfter(5 * time.Minute)
+		case armed == cur:
 			DisarmAfter(5 * time.Minute) // рестарт демона внутри окна — перевзвести
+		default:
+			if st, err := os.Stat(ArmPath); err != nil || time.Since(st.ModTime()) <= armStaleAfter {
+				reason = "роутер перезагрузился в первые 5 минут после загрузки awgm_relay"
+			}
+			_ = os.Remove(ArmPath)
 		}
 	}
 	raw, err := os.ReadFile(OopsPath)

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func setWatchdogPaths(t *testing.T, bootID string) string {
@@ -76,5 +77,41 @@ func TestArm_CreatesMissingDir(t *testing.T) {
 	}
 	if b, err := os.ReadFile(ArmPath); err != nil || strings.TrimSpace(string(b)) != "boot-1" {
 		t.Fatalf("метка: %q %v", b, err)
+	}
+}
+
+// F477 M7: метка давнего сеанса (демон не снял её — упал до таймера) не
+// повод выключать ядро при любой будущей перезагрузке.
+func TestWatchdog_StaleMarkDoesNotTrip(t *testing.T) {
+	setWatchdogPaths(t, "boot-1")
+	if err := Arm(); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(ArmPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(BootIDPath, []byte("boot-2\n"), 0o644)
+	if reason, _ := WatchdogCheck(""); reason != "" {
+		t.Fatalf("ложное срабатывание по старой метке: %s", reason)
+	}
+	if _, err := os.Stat(ArmPath); !os.IsNotExist(err) {
+		t.Fatal("старая метка не снята")
+	}
+}
+
+// F477: не прочитанный boot_id — не доказательство перезагрузки; и метку без
+// boot_id писать нельзя.
+func TestWatchdog_UnreadableBootID(t *testing.T) {
+	setWatchdogPaths(t, "boot-1")
+	if err := Arm(); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(BootIDPath)
+	if reason, _ := WatchdogCheck(""); reason != "" {
+		t.Fatalf("срабатывание без boot_id: %s", reason)
+	}
+	if err := Arm(); err == nil {
+		t.Fatal("метка без boot_id записана молча")
 	}
 }
