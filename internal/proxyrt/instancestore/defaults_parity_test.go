@@ -296,11 +296,13 @@ func TestFreeTurnClientDefaultsMatchOldWorld(t *testing.T) {
 			t.Errorf("%s = %q, старый мир подставлял %q", tc.field, tc.got, tc.want)
 		}
 	}
-	if c.Streams != 10 {
-		t.Errorf("streams = %d, старый мир подставлял 10", c.Streams)
+	// Потоки — осознанный отход от старого мира (10): дефолт бинаря с 3.x
+	// равен 12 (config/defaults.go апстрима), держимся его.
+	if c.Streams != 12 {
+		t.Errorf("streams = %d, дефолт бинаря 12", c.Streams)
 	}
-	if c.StreamsPerCred != 10 {
-		t.Errorf("streamsPerCred = %d, старый мир подставлял 10", c.StreamsPerCred)
+	if c.StreamsPerCred != 12 {
+		t.Errorf("streamsPerCred = %d, дефолт бинаря 12", c.StreamsPerCred)
 	}
 }
 
@@ -437,8 +439,8 @@ func TestSeedFillsDefaultsForFieldsAbsentInOldConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fc.Provider != "vk" || fc.Streams != 10 || fc.Transport != "tcp" || fc.Mode != "udp" ||
-		fc.ObfProfile != "none" || fc.StreamsPerCred != 10 || fc.Platform != "desktop" ||
+	if fc.Provider != "vk" || fc.Streams != 12 || fc.Transport != "tcp" || fc.Mode != "udp" ||
+		fc.ObfProfile != "none" || fc.StreamsPerCred != 12 || fc.Platform != "desktop" ||
 		fc.DNSMode != "auto" {
 		t.Errorf("freeturn-клиент из старого конфига без полей: %+v", fc)
 	}

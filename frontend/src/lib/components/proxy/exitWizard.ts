@@ -35,8 +35,8 @@ export interface ExitWizardFields {
 /** WDTT: 24 клиент округляет вниз до 18, 27 — ближайшее кратное (WE-37). */
 export const DEFAULT_WORKERS = '27';
 
-/** FreeTurn: кратности нет, дефолт бинаря (`DefaultClientConfig`, internal/freeturn/types.go). */
-export const DEFAULT_FT_STREAMS = '10';
+/** FreeTurn: кратности нет, дефолт бинаря (`DefaultStreams`, config/defaults.go апстрима). */
+export const DEFAULT_FT_STREAMS = '12';
 
 function defaultWorkers(protocol: ExitProtocol): string {
 	return protocol === 'freeturn' ? DEFAULT_FT_STREAMS : DEFAULT_WORKERS;

@@ -389,8 +389,8 @@ func normalizeRecord(r *Record, dataDir string) {
 		d.Listen = strings.TrimSpace(d.Listen)
 		d.Peer = strings.TrimSpace(d.Peer)
 		d.Sub = strings.TrimSpace(d.Sub)
-		// Дефолты клиента FreeTurn — паритет DefaultClientConfig
-		// (freeturn/types.go:46-58). В старом мире их подставлял CreateClient,
+		// Дефолты клиента FreeTurn — паритет internal/config/defaults.go
+		// апстрима (DefaultStreams, DefaultStreamsPerCred). В старом мире их подставлял CreateClient,
 		// то есть у любого сохранённого клиента поля были заполнены; новая
 		// ручка создания принимает пустой конфиг, и без этих строк инстанс
 		// уезжал бы на встроенных дефолтах бинаря, а форма показывала бы
@@ -399,7 +399,7 @@ func normalizeRecord(r *Record, dataDir string) {
 			d.Provider = "vk"
 		}
 		if d.Streams <= 0 {
-			d.Streams = 10
+			d.Streams = 12
 		}
 		if d.Transport = strings.TrimSpace(d.Transport); d.Transport == "" {
 			d.Transport = "tcp"
@@ -411,7 +411,7 @@ func normalizeRecord(r *Record, dataDir string) {
 			d.ObfProfile = "none"
 		}
 		if d.StreamsPerCred <= 0 {
-			d.StreamsPerCred = 10
+			d.StreamsPerCred = 12
 		}
 		// Паритет migrateClientConfig (freeturn/migrate.go:64-75) —
 		// он приводил и пустое, и неизвестное значение, причём на КАЖДОЙ

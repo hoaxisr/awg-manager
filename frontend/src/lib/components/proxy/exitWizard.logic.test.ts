@@ -130,7 +130,7 @@ describe('поля из ссылки', () => {
 
 	it('дефолт потоков FreeTurn — дефолт бинаря, не wdtt-округление', () => {
 		expect(emptyFields('freeturn').workers).toBe(DEFAULT_FT_STREAMS);
-		expect(DEFAULT_FT_STREAMS).toBe('10');
+		expect(DEFAULT_FT_STREAMS).toBe('12');
 		const f = fieldsFromFtPayload({ v: 1, peer: 'vps:56000' });
 		expect(f.workers).toBe(DEFAULT_FT_STREAMS);
 	});
