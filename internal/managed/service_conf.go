@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/netif"
@@ -94,7 +95,11 @@ func (s *Service) GenerateConf(ctx context.Context, id, pubkey, endpointHost str
 		b.WriteString(fmt.Sprintf("PresharedKey = %s\n", peer.PresharedKey))
 	}
 	b.WriteString(fmt.Sprintf("Endpoint = %s:%d\n", endpoint, server.ListenPort))
-	b.WriteString("AllowedIPs = 0.0.0.0/0, ::/0\n")
+	allowed := peer.ClientAllowedIPs
+	if allowed == "" {
+		allowed = peersubnet.DefaultClientAllowedIPs
+	}
+	b.WriteString("AllowedIPs = " + allowed + "\n")
 	b.WriteString("PersistentKeepalive = 25\n")
 
 	return b.String(), nil

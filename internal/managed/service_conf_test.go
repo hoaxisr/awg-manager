@@ -123,3 +123,20 @@ func TestGenerateConf_DNSChain(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerateConf_ClientAllowedIPs(t *testing.T) {
+	svc, store, _ := newCreateTestService(t)
+	_ = store.AddManagedServer(storage.ManagedServer{InterfaceName: "Wireguard1", Address: "10.0.0.1", Mask: "255.255.255.0", ListenPort: 51820, Endpoint: "vpn.example.org", Policy: "none",
+		Peers: []storage.ManagedPeer{
+			{PublicKey: "PUB", PrivateKey: "PRIV", TunnelIP: "10.0.0.2/32", Enabled: true},
+			{PublicKey: "PUB2", PrivateKey: "PRIV2", TunnelIP: "10.0.0.3/32", Enabled: true, ClientAllowedIPs: "10.0.0.0/24, 192.168.1.0/24"},
+		}})
+	conf, err := svc.GenerateConf(context.Background(), "Wireguard1", "PUB", "")
+	if err != nil || !strings.Contains(conf, "\nAllowedIPs = 0.0.0.0/0, ::/0\n") {
+		t.Fatalf("default: %v\n%s", err, conf)
+	}
+	conf, err = svc.GenerateConf(context.Background(), "Wireguard1", "PUB2", "")
+	if err != nil || !strings.Contains(conf, "\nAllowedIPs = 10.0.0.0/24, 192.168.1.0/24\n") || strings.Contains(conf, "0.0.0.0/0") {
+		t.Fatalf("custom: %v\n%s", err, conf)
+	}
+}

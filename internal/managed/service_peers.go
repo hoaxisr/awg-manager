@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/managed/peerip"
+	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -69,6 +70,25 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		return nil, err
 	}
 	req.DNS = dns
+	clientAllowed, err := peersubnet.ValidateClientAllowedIPs(req.ClientAllowedIPs)
+	if err != nil {
+		return nil, err
+	}
+	// Сети за клиентом: снимок занятых и валидация ДО ключей и RCI — отказ чистый.
+	var remote []string
+	var router peersubnet.Router
+	if len(req.RemoteSubnets) > 0 {
+		occupied, err := s.OccupiedSubnets(ctx, PeerRef{})
+		if err != nil {
+			return nil, fmt.Errorf("occupied subnets: %w", err)
+		}
+		if remote, err = peersubnet.ValidateRemoteSubnets(req.RemoteSubnets, occupied); err != nil {
+			return nil, err
+		}
+		if router, err = s.peerRouter(); err != nil {
+			return nil, err
+		}
+	}
 
 	// Check tunnel IP not already used
 	for _, p := range server.Peers {
@@ -110,6 +130,18 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		return nil, fmt.Errorf("add peer: %w", err)
 	}
 
+	// Шаги 3–4 спеки: allow-ips и маршруты на сети за клиентом. Отказ — снять
+	// только что созданного пира: запись переживает только полный успех.
+	if len(remote) > 0 {
+		if err := peersubnet.Apply(ctx, router, iface, pubKey, remote, nil); err != nil {
+			s.logRollback("add-peer", req.Description, err)
+			if rmErr := s.rciRemovePeer(ctx, iface, pubKey); rmErr != nil {
+				s.appLog.Warn("add-peer", req.Description, "пир не снят после отказа сетей за клиентом: "+rmErr.Error())
+			}
+			return nil, fmt.Errorf("apply remote subnets: %w", err)
+		}
+	}
+
 	// Save to storage
 	peer := storage.ManagedPeer{
 		PublicKey:    pubKey,
@@ -119,6 +151,9 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		TunnelIP:     req.TunnelIP,
 		DNS:          req.DNS,
 		Enabled:      true,
+
+		ClientAllowedIPs: clientAllowed,
+		RemoteSubnets:    remote,
 
 		I1:               sig.Packets.I1,
 		I2:               sig.Packets.I2,
@@ -168,6 +203,28 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		return err
 	}
 	req.DNS = dns
+	clientAllowed, err := peersubnet.ValidateClientAllowedIPs(req.ClientAllowedIPs)
+	if err != nil {
+		return err
+	}
+	var remote []string
+	if len(req.RemoteSubnets) > 0 {
+		occupied, err := s.OccupiedSubnets(ctx, PeerRef{Iface: iface, PubKey: pubkey})
+		if err != nil {
+			return fmt.Errorf("occupied subnets: %w", err)
+		}
+		if remote, err = peersubnet.ValidateRemoteSubnets(req.RemoteSubnets, occupied); err != nil {
+			return err
+		}
+	}
+	// Diff — от хранилища, не от allow-ips роутера: источник правды здесь.
+	added, removed := peersubnet.Diff(peer.RemoteSubnets, remote)
+	var router peersubnet.Router
+	if len(added)+len(removed) > 0 {
+		if router, err = s.peerRouter(); err != nil {
+			return err
+		}
+	}
 	sigProfile := ""
 	if req.Signature != nil {
 		var err error
@@ -221,6 +278,13 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		}
 	}
 
+	if len(added)+len(removed) > 0 {
+		if err := peersubnet.Apply(ctx, router, iface, pubkey, added, removed); err != nil {
+			s.logRollback("update-peer", req.Description, err)
+			return fmt.Errorf("apply remote subnets: %w", err)
+		}
+	}
+
 	// Persist mutations atomically.
 	if err := s.settings.UpdateManagedServer(id, func(sv *storage.ManagedServer) error {
 		// Re-resolve under the storage lock — the index from the pre-lock copy
@@ -234,6 +298,10 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		}
 		sv.Peers[i].Description = req.Description
 		sv.Peers[i].DNS = req.DNS
+		// Новый слайс, не append по месту: UpdateManagedServer клонирует только
+		// Peers, внутренние слайсы элементов делятся с кэшем.
+		sv.Peers[i].ClientAllowedIPs = clientAllowed
+		sv.Peers[i].RemoteSubnets = remote
 		if req.Signature != nil {
 			sv.Peers[i].I1 = req.Signature.I1
 			sv.Peers[i].I2 = req.Signature.I2
@@ -268,6 +336,18 @@ func (s *Service) DeletePeer(ctx context.Context, id, pubkey string) error {
 
 	peerName := server.Peers[idx].Description
 	iface := server.InterfaceName
+
+	// Свои маршруты — до снятия пира и fail-closed (11.B/11.6): маршрут-сирота
+	// без записи никто уже не снимет.
+	if subs := server.Peers[idx].RemoteSubnets; len(subs) > 0 {
+		router, err := s.peerRouter()
+		if err != nil {
+			return err
+		}
+		if err := peersubnet.RemoveRoutes(ctx, router, iface, pubkey, subs); err != nil {
+			return fmt.Errorf("remove peer routes: %w", err)
+		}
+	}
 
 	// Remove via RCI — fail-closed: a peer that stayed on the router while the
 	// card says "revoked" keeps the client connected. No tolerance for "already

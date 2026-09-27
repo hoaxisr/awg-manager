@@ -60,6 +60,11 @@ type AddPeerRequest struct {
 	Description string `json:"description"`
 	TunnelIP    string `json:"tunnelIP"` // e.g. "10.0.0.2/32"; empty — AddPeer allocates the first free one
 	DNS         string `json:"dns,omitempty"`
+	// ClientAllowedIPs — строка AllowedIPs в .conf клиента, CIDR через запятую;
+	// пусто — весь трафик (#713). RemoteSubnets — сети за клиентом (IPv4 CIDR):
+	// allow-ips пира и маршруты на роутере; отсутствие поля = пусто = снять все.
+	ClientAllowedIPs string   `json:"clientAllowedIPs,omitempty"`
+	RemoteSubnets    []string `json:"remoteSubnets,omitempty"`
 }
 
 // UpdatePeerRequest contains parameters for updating a peer.
@@ -70,6 +75,11 @@ type UpdatePeerRequest struct {
 	TunnelIP    string         `json:"tunnelIP"`
 	DNS         string         `json:"dns,omitempty"`
 	Signature   *PeerSignature `json:"signature,omitempty"`
+	// ClientAllowedIPs — строка AllowedIPs в .conf клиента, CIDR через запятую;
+	// пусто — весь трафик (#713). RemoteSubnets — сети за клиентом (IPv4 CIDR):
+	// allow-ips пира и маршруты на роутере; отсутствие поля = пусто = снять все.
+	ClientAllowedIPs string   `json:"clientAllowedIPs,omitempty"`
+	RemoteSubnets    []string `json:"remoteSubnets,omitempty"`
 }
 
 // PeerSignature — сигнатура имитации пира: пять пакетов и профиль, по
