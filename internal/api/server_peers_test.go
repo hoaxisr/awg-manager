@@ -644,3 +644,26 @@ func TestServersHandler_ResolveServerEndpoint_KeenDNSOnlyWhenDirect(t *testing.T
 		})
 	}
 }
+
+// W2-P5 п.10: проверка адреса и serverSubnetOf считают подсеть из одного места.
+func TestValidateServerPeerTunnelIP(t *testing.T) {
+	h := &ServersHandler{}
+	srv := &ndms.WireguardServer{Address: "10.9.0.1", Mask: "255.255.255.0"}
+	for ip, want := range map[string]string{
+		"10.9.0.2/32":   "",
+		"10.9.1.2/32":   "not in server subnet 10.9.0.0/24",
+		"10.9.0.1/32":   "server's own address",
+		"10.9.0.0/32":   "network address",
+		"10.9.0.255/32": "broadcast address",
+		"10.9.0.2":      "invalid tunnel IP",
+	} {
+		err := h.validateServerPeerTunnelIP(srv, ip)
+		if want == "" && err != nil || want != "" && (err == nil || !strings.Contains(err.Error(), want)) {
+			t.Errorf("%s: err = %v, want %q", ip, err, want)
+		}
+	}
+	// Подсеть неизвестна — проверять не с чем.
+	if err := h.validateServerPeerTunnelIP(&ndms.WireguardServer{}, "10.9.1.2/32"); err != nil {
+		t.Errorf("unknown subnet: %v", err)
+	}
+}
