@@ -71,13 +71,7 @@ func TestOS5DeleteSkipsNDMSForOS4Tunnel(t *testing.T) {
 		t.Fatalf("Delete обязан пройти без NDMS, got: %v", err)
 	}
 
-	var deletedLink bool
-	for _, call := range rec.Calls {
-		if strings.Contains(call, "link del dev awgm5") {
-			deletedLink = true
-		}
-	}
-	if !deletedLink {
-		t.Errorf("kernel-интерфейс должен быть снят, вызовы: %v", rec.Calls)
+	if be := o.backend.(*MockBackend); len(be.StopCalls) != 1 || be.StopCalls[0] != "awgm5" {
+		t.Errorf("kernel-интерфейс должен быть снят через backend.Stop: %v", be.StopCalls)
 	}
 }

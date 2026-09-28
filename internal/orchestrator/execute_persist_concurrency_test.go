@@ -171,6 +171,7 @@ type fakeKernelOp struct {
 	coldStartErr error
 	deleteErr    error
 	stops        atomic.Int64
+	stopName     atomic.Value // имя туннеля, с которым звали Stop
 	coldStarts   atomic.Int64
 
 	// resumes/endpointRoutes — для проверки того, что возврат линка приводит
@@ -197,7 +198,11 @@ func (f *fakeKernelOp) ColdStart(context.Context, tunnel.Config) error {
 	park(f.entered, f.release)
 	return f.coldStartErr
 }
-func (f *fakeKernelOp) Stop(context.Context, string) error { f.stops.Add(1); return nil }
+func (f *fakeKernelOp) Stop(_ context.Context, _, name string) error {
+	f.stops.Add(1)
+	f.stopName.Store(name)
+	return nil
+}
 func (f *fakeKernelOp) Delete(context.Context, *storage.AWGTunnel) error {
 	return f.deleteErr
 }

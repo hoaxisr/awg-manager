@@ -229,3 +229,18 @@ func TestExecuteGroup_RespectsTunnelLock(t *testing.T) {
 	}
 	o.unlockTunnel("awg10")
 }
+
+// Stop получает имя туннеля из карточки: по нему OS5 отличает свою запись
+// OpkgTun от чужой (F517) и не ставит чужой `conf: disabled`.
+func TestExecuteStopKernel_PassesTunnelName(t *testing.T) {
+	store := lifecycleStore(t, &storage.AWGTunnel{ID: "awg10", Name: "Germany"})
+	op := &fakeKernelOp{}
+	o := &Orchestrator{state: newState(), store: store, kernelOp: op, wanModel: wan.NewModel()}
+
+	if err := o.executeStopKernel(context.Background(), Action{Type: ActionStopKernel, Tunnel: "awg10"}); err != nil {
+		t.Fatalf("executeStopKernel: %v", err)
+	}
+	if got, _ := op.stopName.Load().(string); got != "Germany" {
+		t.Fatalf("Stop получил имя %q, want «Germany»", got)
+	}
+}

@@ -152,7 +152,7 @@ func TestOperatorOS4_Stop_Success(t *testing.T) {
 	ip := &scriptedIPRun{linkShowErr: errors.New("device \"awg0\" does not exist")}
 	op.ipRun = ip.run
 
-	err := op.Stop(context.Background(), "awg0")
+	err := op.Stop(context.Background(), "awg0", "")
 
 	if err != nil {
 		t.Fatalf("Stop() error = %v", err)
@@ -252,7 +252,7 @@ func TestOperatorOS4_UsesDirectTunnelID(t *testing.T) {
 
 	// ip is mocked, so Start succeeds fully; WG and Firewall calls do
 	// happen here, but this test only checks the Stop behavior below.
-	_ = op.Stop(context.Background(), "awg1")
+	_ = op.Stop(context.Background(), "awg1", "")
 
 	if len(backendMock.StopCalls) == 0 {
 		t.Fatal("Backend.Stop not called")

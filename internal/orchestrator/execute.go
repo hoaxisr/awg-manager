@@ -450,7 +450,11 @@ func (o *Orchestrator) executeReconcileNativeWG(ctx context.Context, action Acti
 
 // executeStopKernel stops a kernel tunnel.
 func (o *Orchestrator) executeStopKernel(ctx context.Context, action Action) error {
-	if err := o.kernelOp.Stop(ctx, action.Tunnel); err != nil {
+	var name string
+	if stored, err := o.store.Get(action.Tunnel); err == nil {
+		name = stored.Name
+	}
+	if err := o.kernelOp.Stop(ctx, action.Tunnel, name); err != nil {
 		return err
 	}
 

@@ -165,7 +165,7 @@ func (o *OperatorOS4Impl) Start(ctx context.Context, cfg tunnel.Config) error {
 }
 
 // Stop stops a tunnel on OS 4.x.
-func (o *OperatorOS4Impl) Stop(ctx context.Context, tunnelID string) error {
+func (o *OperatorOS4Impl) Stop(ctx context.Context, tunnelID, _ string) error {
 	ifaceName := tunnelID
 
 	// Remove firewall rules
@@ -205,7 +205,7 @@ func (o *OperatorOS4Impl) RemoveDefaultRoute(ctx context.Context, tunnelID strin
 // Delete completely removes a tunnel.
 func (o *OperatorOS4Impl) Delete(ctx context.Context, stored *storage.AWGTunnel) error {
 	// On OS4, stop and delete are the same
-	return o.Stop(ctx, stored.ID)
+	return o.Stop(ctx, stored.ID, stored.Name)
 }
 
 // Suspend on OS4 is a no-op — OS4 has no NDMS layer.

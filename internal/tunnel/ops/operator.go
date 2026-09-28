@@ -19,8 +19,9 @@ type Operator interface {
 	ColdStart(ctx context.Context, cfg tunnel.Config) error
 
 	// Stop brings down a tunnel: kills backend process + removes firewall rules.
-	// Used for: user Stop, PingCheck dead.
-	Stop(ctx context.Context, tunnelID string) error
+	// Used for: user Stop, PingCheck dead. name — имя туннеля из карточки
+	// (пусто, если её нет): по нему OS5 узнаёт свою запись OpkgTun (F517).
+	Stop(ctx context.Context, tunnelID, name string) error
 
 	// Delete completely removes a tunnel.
 	// Receives the full stored tunnel for reliable cleanup (persisted endpoint IP, etc.).

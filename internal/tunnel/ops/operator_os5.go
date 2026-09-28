@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/firewall"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wg"
@@ -423,16 +425,34 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 // ip link set down + InterfaceDown (conf: disabled) + Save.
 // NDMS handles routing/failover automatically when link goes down.
 // Interface stays as amneziawg with WG config and address loaded.
-func (o *OperatorOS5Impl) Stop(ctx context.Context, tunnelID string) error {
+//
+// Только своё (F500/F517): устройство опускаем, лишь если оно наше amneziawg
+// — на номере может стоять чужой tun (csqtt, #935); `conf: disabled` ставим
+// лишь нашей записи — по правилу recordIsOurs с именем туннеля name. Пустое
+// name (карточки нет) описанием не совпадает ни с чем: без живого amneziawg
+// запись не трогаем.
+func (o *OperatorOS5Impl) Stop(ctx context.Context, tunnelID, name string) error {
 	names := tunnel.NewNames(tunnelID)
 
-	// Bring link down at kernel level.
-	if _, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", names.IfaceName); err != nil {
-		o.logWarn("stop", tunnelID, "ip link set down: "+err.Error())
+	running, _ := o.backend.IsRunning(ctx, names.IfaceName)
+	if running {
+		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", names.IfaceName); err != nil {
+			o.logWarn("stop", tunnelID, "ip link set down: "+err.Error())
+		}
+		// InterfaceDown sets conf: disabled — NDMS won't bring it up on its own.
+		o.interfaceDownBestEffort(ctx, tunnelID, names.NDMSName)
+	} else {
+		o.logInfo("stop", tunnelID, "kernel interface is not our amneziawg — link left untouched")
+		rec, err := opkgTunRecord(ctx, o.queries, names.NDMSName)
+		switch {
+		case err != nil:
+			o.logWarn("stop", tunnelID, "read OpkgTun record: "+err.Error()+" — conf: disabled not set")
+		case rec != nil && name != "" && o.recordIsOurs(ctx, rec, name, names.IfaceName):
+			o.interfaceDownBestEffort(ctx, tunnelID, names.NDMSName)
+		case rec != nil:
+			o.logInfo("stop", tunnelID, fmt.Sprintf("record %s is not ours (description %q) — conf: disabled not set", names.NDMSName, rec.Description))
+		}
 	}
-
-	// InterfaceDown sets conf: disabled — NDMS won't bring it up on its own.
-	o.interfaceDownBestEffort(ctx, tunnelID, names.NDMSName)
 
 	// Остановленному туннелю host-route не нужен, а карта маршрутов обязана
 	// означать «маршрут стоит», а не «туннель когда-то стартовал»: иначе
@@ -515,8 +535,16 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 		}
 	}
 
-	// 3. Remove kernel interface (our amneziawg — NDMS can't delete what we created)
-	o.ipRun(ctx, "/opt/sbin/ip", "link", "del", "dev", names.IfaceName)
+	// 3. Remove kernel interface (our amneziawg — NDMS can't delete what we created).
+	//    Через backend.Stop — с гейтом держателя (F500): устройство, открытое
+	//    чужой программой, не наше — его не сносим, а удаление нашей записи
+	//    туннеля продолжаем. Прочие ошибки (устройства уже нет) — как прежде,
+	//    без шума.
+	var held *backend.HeldError
+	if err := o.backend.Stop(ctx, names.IfaceName); errors.As(err, &held) {
+		o.logWarn("delete", stored.ID, "kernel interface kept: "+err.Error())
+		o.appLog.Warn("delete", stored.ID, "Интерфейс "+names.IfaceName+" не удалён: "+err.Error())
+	}
 
 	// 4. Clear in-memory tracking (endpointRoutes уже забыт на шаге 1).
 	//    Сохранения конфигурации среди шагов нет: его ведёт SaveCoordinator,

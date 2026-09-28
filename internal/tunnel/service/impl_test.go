@@ -73,7 +73,7 @@ func (m *MockOperator) ColdStart(ctx context.Context, cfg tunnel.Config) error {
 	return m.startError
 }
 
-func (m *MockOperator) Stop(ctx context.Context, tunnelID string) error {
+func (m *MockOperator) Stop(ctx context.Context, tunnelID, _ string) error {
 	m.StopCalls = append(m.StopCalls, tunnelID)
 	return m.stopError
 }

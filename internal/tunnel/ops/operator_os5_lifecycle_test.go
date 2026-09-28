@@ -290,8 +290,9 @@ func TestReconcile_KernelAddressCarriesUserPrefix(t *testing.T) {
 // interfaceDownBestEffort не исполняется (шва у сна нет — реальный тест
 // его не пинует).
 func TestStop_DownsKernelAndNDMS(t *testing.T) {
-	o, poster, rec := newOS5Lifecycle(t)
-	if err := o.Stop(context.Background(), "awg10"); err != nil {
+	poster := &recordingPoster{}
+	o, rec := newOS5LifecycleOn(t, poster, ndmsquery.NewFakeGetter(), &MockBackend{running: true}, false)
+	if err := o.Stop(context.Background(), "awg10", "Germany"); err != nil {
 		t.Fatal(err)
 	}
 	if !hasCall(rec.Calls, "/opt/sbin/ip link set down dev opkgtun10") {
@@ -300,6 +301,69 @@ func TestStop_DownsKernelAndNDMS(t *testing.T) {
 	if !hasPayload(poster.payloads, `{"interface":{"OpkgTun10":{"up":false}}}`) {
 		t.Fatalf("NDMS не получил up:false:\n%v", poster.payloads)
 	}
+}
+
+// F500/F517: на номере чужой plain tun (устройство не amneziawg) под чужой
+// записью — Stop не опускает чужое устройство и не ставит чужой записи
+// `conf: disabled`. Наша запись без нашего устройства (plain tun после
+// ребута) по-прежнему получает `conf: disabled`, но устройство не трогаем.
+func TestStop_NotOurDevice(t *testing.T) {
+	for _, tc := range []struct {
+		name, description string
+		stopName          string
+		wantDisabled      bool
+	}{
+		{"чужая запись", "csqtt", "Germany", false},
+		{"наша запись", "Germany", "Germany", true},
+		{"карточки нет, запись без описания", "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			poster := &recordingPoster{}
+			getter := ndmsquery.NewFakeGetter()
+			getter.SetJSON("/show/interface/", fmt.Sprintf(
+				`{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","description":%q}}`, tc.description))
+			o, rec := newOS5LifecycleOn(t, poster, getter, &MockBackend{}, true)
+
+			if err := o.Stop(context.Background(), "awg10", tc.stopName); err != nil {
+				t.Fatal(err)
+			}
+			if hasCall(rec.Calls, "/opt/sbin/ip link set down dev opkgtun10") {
+				t.Fatalf("опущено не наше устройство:\n%s", strings.Join(rec.Calls, "\n"))
+			}
+			if got := hasPayload(poster.payloads, `{"interface":{"OpkgTun10":{"up":false}}}`); got != tc.wantDisabled {
+				t.Fatalf("conf: disabled = %v, want %v: %v", got, tc.wantDisabled, poster.payloads)
+			}
+		})
+	}
+}
+
+// F500: Delete сносит устройство через backend.Stop с гейтом держателя.
+// Устройство держит чужая программа — не сносим, удаление не падает;
+// наше amneziawg — сносится.
+func TestDelete_DeviceGoesThroughHolderGate(t *testing.T) {
+	t.Run("чужой держатель", func(t *testing.T) {
+		be := &MockBackend{stopError: &backend.HeldError{Iface: "opkgtun10", PID: 42, Comm: "csqtt"}}
+		o, rec := newOS5LifecycleOn(t, &recordingPoster{}, ndmsquery.NewFakeGetter(), be, false)
+		if err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"}); err != nil {
+			t.Fatalf("HeldError не должен валить удаление: %v", err)
+		}
+		if hasCall(rec.Calls, "/opt/sbin/ip link del dev opkgtun10") {
+			t.Fatalf("ip link del мимо гейта:\n%s", strings.Join(rec.Calls, "\n"))
+		}
+		if len(be.StopCalls) != 1 || be.StopCalls[0] != "opkgtun10" {
+			t.Fatalf("backend.Stop: %v", be.StopCalls)
+		}
+	})
+	t.Run("наше amneziawg", func(t *testing.T) {
+		be := &MockBackend{running: true}
+		o, _ := newOS5LifecycleOn(t, &recordingPoster{}, ndmsquery.NewFakeGetter(), be, false)
+		if err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"}); err != nil {
+			t.Fatal(err)
+		}
+		if len(be.StopCalls) != 1 || be.StopCalls[0] != "opkgtun10" || be.running {
+			t.Fatalf("наше устройство не снесено: stop=%v running=%v", be.StopCalls, be.running)
+		}
+	})
 }
 
 // Пять команд ip rule/route policy-routing — литералами; при готовом
@@ -780,7 +844,7 @@ func TestStop_RemovesEndpointRoute(t *testing.T) {
 			t.Fatalf("RestoreEndpointTracking: %v", err)
 		}
 
-		if err := o.Stop(context.Background(), "awg10"); err != nil {
+		if err := o.Stop(context.Background(), "awg10", "Germany"); err != nil {
 			t.Fatalf("Stop: %v", err)
 		}
 
@@ -807,7 +871,7 @@ func TestStop_RemovesEndpointRoute(t *testing.T) {
 			}
 		}
 
-		if err := o.Stop(context.Background(), "awg10"); err != nil {
+		if err := o.Stop(context.Background(), "awg10", "Germany"); err != nil {
 			t.Fatalf("Stop: %v", err)
 		}
 
@@ -834,7 +898,7 @@ func TestStop_NeighbourWithOtherAddressDoesNotHold(t *testing.T) {
 		t.Fatalf("RestoreEndpointTracking awg11: %v", err)
 	}
 
-	if err := o.Stop(context.Background(), "awg10"); err != nil {
+	if err := o.Stop(context.Background(), "awg10", "Germany"); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 
@@ -861,7 +925,7 @@ func TestStop_KeepsRouteHeldByOtherBackend(t *testing.T) {
 		t.Fatalf("RestoreEndpointTracking: %v", err)
 	}
 
-	if err := o.Stop(context.Background(), "awg10"); err != nil {
+	if err := o.Stop(context.Background(), "awg10", "Germany"); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 

@@ -105,7 +105,7 @@ func (m *mockOp) GetResolvedISP(tunnelID string) string {
 	return m.resolvedISPs[tunnelID]
 }
 
-func (m *mockOp) Stop(ctx context.Context, tunnelID string) error {
+func (m *mockOp) Stop(ctx context.Context, tunnelID, _ string) error {
 	m.StopCalls = append(m.StopCalls, tunnelID)
 	// Simulate real operator: Stop removes the process, state becomes Stopped
 	if m.stateMgr != nil {
