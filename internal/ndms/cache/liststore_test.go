@@ -187,3 +187,74 @@ func TestListStore_RefreshBypassesTTLAndServesStaleOnError(t *testing.T) {
 		t.Fatalf("Refresh при сбое = %v, %v; want прежний [2] без ошибки", got, err)
 	}
 }
+
+// Fetch не присоединяется к выборке, начатой до вызова: та вернула бы данные
+// старше решения (InvalidateAll+List так и делал).
+func TestListStore_FetchSkipsInFlightSingleflight(t *testing.T) {
+	var fetches int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	s := NewListStore(time.Minute, nil, "test", func(ctx context.Context) ([]int, error) {
+		n := atomic.AddInt32(&fetches, 1)
+		if n == 1 {
+			close(started)
+			<-release // старая выборка висит, пока идёт свежее чтение
+		}
+		return []int{int(n)}, nil
+	})
+
+	old := make(chan []int, 1)
+	go func() {
+		v, _ := s.List(context.Background())
+		old <- v
+	}()
+	<-started
+
+	type result struct {
+		v   []int
+		err error
+	}
+	res := make(chan result, 1)
+	go func() {
+		v, err := s.Fetch(context.Background())
+		res <- result{v, err}
+	}()
+	var r result
+	select {
+	case r = <-res:
+		close(release)
+	case <-time.After(2 * time.Second):
+		close(release)
+		r = <-res
+		t.Fatalf("Fetch ждал выборку, начатую до вызова: %v, %v", r.v, r.err)
+	}
+	if r.err != nil || len(r.v) != 1 || r.v[0] != 2 {
+		t.Fatalf("Fetch = %v, %v; want [2] — своя выборка, не начатая до вызова", r.v, r.err)
+	}
+	if v := <-old; len(v) != 1 || v[0] != 1 {
+		t.Fatalf("старая выборка = %v", v)
+	}
+}
+
+// Fetch: успех кладётся в кэш, ошибка — как есть, без прежнего значения.
+func TestListStore_FetchStoresSuccessAndSurfacesError(t *testing.T) {
+	var fetches int32
+	fail := false
+	s := NewListStore(time.Minute, nil, "test", func(ctx context.Context) ([]int, error) {
+		n := atomic.AddInt32(&fetches, 1)
+		if fail {
+			return nil, errors.New("rci down")
+		}
+		return []int{int(n)}, nil
+	})
+	if got, err := s.Fetch(context.Background()); err != nil || got[0] != 1 {
+		t.Fatalf("Fetch = %v, %v", got, err)
+	}
+	if got, err := s.List(context.Background()); err != nil || got[0] != 1 || atomic.LoadInt32(&fetches) != 1 {
+		t.Fatalf("List после Fetch = %v, %v, fetches=%d — успех Fetch обязан лечь в кэш", got, err, fetches)
+	}
+	fail = true
+	if got, err := s.Fetch(context.Background()); err == nil || got != nil {
+		t.Fatalf("Fetch при сбое = %v, %v; want ошибку без прежнего значения", got, err)
+	}
+}

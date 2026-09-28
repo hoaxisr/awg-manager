@@ -90,5 +90,20 @@ func (s *ListStore[T]) Refresh(ctx context.Context) (T, error) {
 	})
 }
 
+// Fetch — чтение с роутера сейчас, для решений о наличии/владении: мимо TTL
+// и мимо singleflight. InvalidateAll+List свежести не гарантирует — List на
+// промахе присоединяется к выборке, начатой ДО сброса, и отдаёт данные старше
+// решения. Успех кладётся в кэш; ошибка возвращается как есть, прежнего
+// значения вместо неё нет.
+func (s *ListStore[T]) Fetch(ctx context.Context) (T, error) {
+	v, err := s.fetch(ctx)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	s.ttl.Set(struct{}{}, v)
+	return v, nil
+}
+
 // InvalidateAll drops the cached value, forcing the next List to fetch.
 func (s *ListStore[T]) InvalidateAll() { s.ttl.InvalidateAll() }

@@ -43,6 +43,15 @@ func (s *DNSProxyStore) List(ctx context.Context) ([]ndms.DNSRouteRule, error) {
 	return s.ListStore.List(ctx)
 }
 
+// Fetch — свежее чтение мимо кэша и singleflight (cache.ListStore.Fetch) с
+// тем же гейтом OS4, что у List.
+func (s *DNSProxyStore) Fetch(ctx context.Context) ([]ndms.DNSRouteRule, error) {
+	if !s.isOS5() {
+		return nil, ErrNotSupportedOnOS4
+	}
+	return s.ListStore.Fetch(ctx)
+}
+
 // dnsProxyRouteWire is the populated-entry shape. NDMS returns it either
 // as a JSON array of these objects (legacy shape: group as a field) or
 // as a JSON object keyed by group name (group as the key, no "group"
