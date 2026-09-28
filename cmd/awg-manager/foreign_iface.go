@@ -67,51 +67,57 @@ func isFirmwareServiceIface(name string) bool {
 // Mark — отказы по границе (spec §4): имя; номер OpkgTun с ключевым
 // держателем; имя панели (isPanelIfaceName — сюда же tun sing-box: режимы
 // роутера живут на opkgtun*); служебный ezcfg*; существующий не-TUN;
-// интерфейс ядра, известный NDMS.
-func (f *foreignIfaces) Mark(ctx context.Context, name string) error {
+// интерфейс ядра, известный NDMS. Возвращает записанное (каноническое) имя.
+func (f *foreignIfaces) Mark(ctx context.Context, name string) (string, error) {
 	name = strings.TrimSpace(name)
 	switch {
 	case name == "":
-		return rejectForeign("пустое имя")
+		return "", rejectForeign("пустое имя")
 	case len(name) > 15:
-		return rejectForeign("имя интерфейса ядра длиннее 15 символов")
+		return "", rejectForeign("имя интерфейса ядра длиннее 15 символов")
 	case name == "." || name == "..",
 		strings.ContainsAny(name, "/:"),
 		strings.ContainsFunc(name, unicode.IsSpace):
 		// Правила ядра (dev_valid_name) плюс «:» — разделитель алиасов.
-		return rejectForeign("недопустимое имя интерфейса ядра: пробелы, «/», «:», «.» и «..» запрещены")
+		return "", rejectForeign("недопустимое имя интерфейса ядра: пробелы, «/», «:», «.» и «..» запрещены")
 	}
 	if canon, idx, ok := canonicalForeign(name); ok {
 		err := f.pool.ClaimIfFree(ctx, opkgtun.ForeignHolder(canon), idx, func() error {
 			return f.settings.MarkForeignInterface(canon)
 		})
 		if errors.Is(err, opkgtun.ErrClaimed) || errors.Is(err, opkgtun.ErrOutOfRange) {
-			return rejectForeign("%v", err)
+			return "", rejectForeign("%v", err)
 		}
-		return err
+		if err != nil {
+			return "", err
+		}
+		return canon, nil
 	}
 	if isPanelIfaceName(name) {
-		return rejectForeign("%s — имя интерфейсов панели", name)
+		return "", rejectForeign("%s — имя интерфейсов панели", name)
 	}
 	if isFirmwareServiceIface(name) {
-		return rejectForeign("%s — служебный интерфейс прошивки", name)
+		return "", rejectForeign("%s — служебный интерфейс прошивки", name)
 	}
 	// Существующий интерфейс ядра без tun_flags — не TUN userland-программы
 	// (lo, dummy0, tunl0, порты и радио роутера). Отсутствующий отмечается:
 	// программа поднимет его позже.
 	if _, err := os.Stat(filepath.Join(f.sysNet, name)); err == nil {
 		if _, err := os.Stat(filepath.Join(f.sysNet, name, "tun_flags")); err != nil {
-			return rejectForeign("%s — не TUN-интерфейс программы", name)
+			return "", rejectForeign("%s — не TUN-интерфейс программы", name)
 		}
 	}
 	known, err := f.ndmsNames(ctx)
 	if err != nil {
-		return fmt.Errorf("интерфейсы NDMS: %w", err)
+		return "", fmt.Errorf("интерфейсы NDMS: %w", err)
 	}
 	if known[name] {
-		return rejectForeign("%s — интерфейс роутера, он и так доступен как выход", name)
+		return "", rejectForeign("%s — интерфейс роутера, он и так доступен как выход", name)
 	}
-	return f.settings.MarkForeignInterface(name)
+	if err := f.settings.MarkForeignInterface(name); err != nil {
+		return "", err
+	}
+	return name, nil
 }
 
 func (f *foreignIfaces) Unmark(ctx context.Context, name string) error {

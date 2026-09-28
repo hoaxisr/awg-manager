@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -14,12 +15,12 @@ type fakeMarker struct {
 	marked  []string
 }
 
-func (f *fakeMarker) Mark(_ context.Context, n string) error {
+func (f *fakeMarker) Mark(_ context.Context, n string) (string, error) {
 	if f.markErr != nil {
-		return f.markErr
+		return "", f.markErr
 	}
 	f.marked = append(f.marked, n)
-	return nil
+	return strings.ToLower(n), nil // как канонизация opkgtunN
 }
 func (f *fakeMarker) Unmark(context.Context, string) error { return nil }
 func (f *fakeMarker) Candidates(context.Context) ([]ForeignIfaceCandidate, error) {
@@ -57,8 +58,18 @@ func TestForeignMark_OKPublishes(t *testing.T) {
 	h := NewForeignIfaceHandler(m)
 	published := false
 	h.SetTunnelListPublisher(func(context.Context) { published = true })
-	rr := foreignPost(h.Mark, `{"name":"csqtt0"}`)
+	rr := foreignPost(h.Mark, `{"name":"OpkgTun7"}`)
 	if rr.Code != 200 || !published || len(m.marked) != 1 {
 		t.Fatalf("code=%d published=%v marked=%v", rr.Code, published, m.marked)
+	}
+	// R19: ответ несёт записанное имя — фронт выбирает его, а не набранное.
+	var env struct {
+		Data ForeignIfaceMarkResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Data != (ForeignIfaceMarkResponse{OK: true, Name: "opkgtun7"}) {
+		t.Fatalf("data = %+v, body=%s", env.Data, rr.Body.String())
 	}
 }

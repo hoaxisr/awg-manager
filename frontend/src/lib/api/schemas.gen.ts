@@ -647,6 +647,11 @@ const api_ForeignIfaceCandidate: v.GenericSchema = v.looseObject({
 	up: v.optional(v.nullable(v.boolean())),
 });
 
+const api_ForeignIfaceMarkResponse: v.GenericSchema = v.looseObject({
+	name: v.optional(v.nullable(v.string())),
+	ok: v.optional(v.nullable(v.boolean())),
+});
+
 const api_GeoExpandData: v.GenericSchema = v.looseObject({
 	count: v.optional(v.nullable(v.number())),
 	lines: v.optional(v.nullable(v.array(v.string()))),
@@ -3473,7 +3478,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /hydraroute/geo-files/update": v.lazy(() => api_GeoFileUpdatedResponse),
 	"POST /hydraroute/policy-order": v.lazy(() => api_PolicyOrderResponse),
 	"POST /import/conf": v.lazy(() => api_APIEnvelope),
-	"POST /interfaces/foreign/mark": v.lazy(() => api_APIEnvelope),
+	"POST /interfaces/foreign/mark": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_ForeignIfaceMarkResponse))),
+})]),
 	"POST /interfaces/foreign/unmark": v.lazy(() => api_APIEnvelope),
 	"POST /logs/clear": v.lazy(() => api_APIEnvelope),
 	"POST /managed-servers": v.lazy(() => api_ManagedServerResponse),

@@ -1942,6 +1942,14 @@ definitions:
       up:
         type: boolean
     type: object
+  api.ForeignIfaceMarkResponse:
+    properties:
+      name:
+        example: opkgtun7
+        type: string
+      ok:
+        type: boolean
+    type: object
   api.ForeignIfaceRequest:
     properties:
       name:
@@ -11218,7 +11226,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.APIEnvelope'
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ForeignIfaceMarkResponse'
+              type: object
         "400":
           description: Bad Request
           schema:

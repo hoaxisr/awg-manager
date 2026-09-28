@@ -37,7 +37,7 @@ func TestForeignMark_Rejections(t *testing.T) {
 	for _, name := range []string{"", "a-very-long-name-16", "bad name", "a/b", "opkgtun12", "opkgtun17", "awgm0", "t2s0", "nwg1", "ppp0",
 		"a\nb", "a:b", ".", "..", "opkgtun", "opkgtun7x", "OPKGTUN7", "opkgtun99999999", "abcdefghijklmnop",
 		"proxy3", "opkgtunx", "AWGM0", "ezcfg0", "EZCFG1"} {
-		err := f.Mark(context.Background(), name)
+		_, err := f.Mark(context.Background(), name)
 		if !errors.Is(err, api.ErrForeignIfaceRejected) {
 			t.Errorf("Mark(%q) = %v, ждали отказ", name, err)
 		}
@@ -58,7 +58,7 @@ func TestForeignMark_UserlandWGNamesAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"wg0", "awg0"} {
-		if err := f.Mark(context.Background(), name); err != nil {
+		if _, err := f.Mark(context.Background(), name); err != nil {
 			t.Fatalf("Mark(%q): %v", name, err)
 		}
 	}
@@ -69,14 +69,14 @@ func TestForeignMark_UserlandWGNamesAccepted(t *testing.T) {
 
 func TestForeignMark_NameLength15Accepted(t *testing.T) {
 	f := newForeignEnv(t, nil, nil)
-	if err := f.Mark(context.Background(), "abcdefghijklmno"); err != nil {
+	if _, err := f.Mark(context.Background(), "abcdefghijklmno"); err != nil {
 		t.Fatalf("Mark(15 символов): %v", err)
 	}
 }
 
 func TestForeignUnmark_BoundRefused(t *testing.T) {
 	f := newForeignEnv(t, nil, nil)
-	if err := f.Mark(context.Background(), "opkgtun7"); err != nil {
+	if _, err := f.Mark(context.Background(), "opkgtun7"); err != nil {
 		t.Fatal(err)
 	}
 	f.boundBy = func(context.Context) (map[string]bool, error) { return map[string]bool{"opkgtun7": true}, nil }
@@ -90,7 +90,7 @@ func TestForeignUnmark_BoundRefused(t *testing.T) {
 
 func TestForeignUnmark_BoundErrorFailsClosed(t *testing.T) {
 	f := newForeignEnv(t, nil, nil)
-	if err := f.Mark(context.Background(), "csqtt0"); err != nil {
+	if _, err := f.Mark(context.Background(), "csqtt0"); err != nil {
 		t.Fatal(err)
 	}
 	f.boundBy = func(context.Context) (map[string]bool, error) { return nil, errors.New("router down") }
@@ -105,7 +105,7 @@ func TestForeignUnmark_BoundErrorFailsClosed(t *testing.T) {
 
 func TestForeignUnmark_Unbound(t *testing.T) {
 	f := newForeignEnv(t, nil, nil)
-	if err := f.Mark(context.Background(), "csqtt0"); err != nil {
+	if _, err := f.Mark(context.Background(), "csqtt0"); err != nil {
 		t.Fatal(err)
 	}
 	f.boundBy = func(context.Context) (map[string]bool, error) { return map[string]bool{"zt0": true}, nil }
@@ -120,7 +120,7 @@ func TestForeignUnmark_Unbound(t *testing.T) {
 func TestForeignMark_AcceptsFreeAndAbsent(t *testing.T) {
 	f := newForeignEnv(t, opkgtun.Taken{7: opkgtun.AnonHolder("запись NDMS OpkgTun7")}, nil)
 	for _, name := range []string{"opkgtun7", "csqtt0", "csqtt0"} {
-		if err := f.Mark(context.Background(), name); err != nil {
+		if _, err := f.Mark(context.Background(), name); err != nil {
 			t.Fatalf("Mark(%q): %v", name, err)
 		}
 	}
@@ -132,15 +132,24 @@ func TestForeignMark_AcceptsFreeAndAbsent(t *testing.T) {
 func TestForeignMark_CanonicalName(t *testing.T) {
 	f := newForeignEnv(t, nil, nil)
 	for _, name := range []string{"OpkgTun7", "opkgtun07"} {
-		if err := f.Mark(context.Background(), name); err != nil {
+		got, err := f.Mark(context.Background(), name)
+		if err != nil {
 			t.Fatal(err)
 		}
+		if got != "opkgtun7" { // R19: фронт выбирает ровно записанное имя
+			t.Fatalf("Mark(%q) вернул %q, ждали opkgtun7", name, got)
+		}
 	}
-	if got := f.settings.GetForeignInterfaces(); !slices.Equal(got, []string{"opkgtun7"}) {
-		t.Fatalf("отметки = %v, ждали одну opkgtun7", got)
+	if got, err := f.Mark(context.Background(), " csqtt0 "); err != nil || got != "csqtt0" {
+		t.Fatalf("Mark(csqtt0) = %q, %v", got, err)
 	}
-	if err := f.Unmark(context.Background(), "OpkgTun7"); err != nil {
-		t.Fatal(err)
+	if got := f.settings.GetForeignInterfaces(); !slices.Equal(got, []string{"opkgtun7", "csqtt0"}) {
+		t.Fatalf("отметки = %v, ждали opkgtun7 и csqtt0", got)
+	}
+	for _, name := range []string{"OpkgTun7", "csqtt0"} {
+		if err := f.Unmark(context.Background(), name); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if got := f.settings.GetForeignInterfaces(); len(got) != 0 {
 		t.Fatalf("после снятия = %v", got)
@@ -150,7 +159,7 @@ func TestForeignMark_CanonicalName(t *testing.T) {
 func TestForeignMark_NDMSErrorFailsClosed(t *testing.T) {
 	f := newForeignEnv(t, nil, nil)
 	f.ndmsNames = func(context.Context) (map[string]bool, error) { return nil, errors.New("rci down") }
-	err := f.Mark(context.Background(), "csqtt0")
+	_, err := f.Mark(context.Background(), "csqtt0")
 	if err == nil || errors.Is(err, api.ErrForeignIfaceRejected) {
 		t.Fatalf("err = %v, ждали внутреннюю ошибку", err)
 	}
@@ -217,7 +226,7 @@ func TestNDMSSystemNames_ResolvesLabels(t *testing.T) {
 	f := newForeignEnv(t, nil, nil)
 	f.ndmsNames = ndmsSystemNames(ndmsquery.NewInterfaceStore(fg, ndmsquery.NopLogger()))
 	for _, name := range []string{"br0", "eth2"} {
-		if err := f.Mark(context.Background(), name); !errors.Is(err, api.ErrForeignIfaceRejected) {
+		if _, err := f.Mark(context.Background(), name); !errors.Is(err, api.ErrForeignIfaceRejected) {
 			t.Errorf("Mark(%q) = %v, ждали отказ «интерфейс роутера»", name, err)
 		}
 	}
@@ -238,10 +247,10 @@ func TestForeignMark_ExistingNonTUNRejected(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.sysNet, "zt0", "tun_flags"), []byte("0x1001\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.Mark(context.Background(), "lo"); !errors.Is(err, api.ErrForeignIfaceRejected) {
+	if _, err := f.Mark(context.Background(), "lo"); !errors.Is(err, api.ErrForeignIfaceRejected) {
 		t.Fatalf("Mark(lo) = %v, ждали отказ «не TUN»", err)
 	}
-	if err := f.Mark(context.Background(), "zt0"); err != nil {
+	if _, err := f.Mark(context.Background(), "zt0"); err != nil {
 		t.Fatalf("Mark(zt0): %v", err)
 	}
 	if got := f.settings.GetForeignInterfaces(); !slices.Equal(got, []string{"zt0"}) {

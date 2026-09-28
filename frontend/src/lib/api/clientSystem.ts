@@ -589,9 +589,10 @@ export class SystemClient extends TunnelsClient {
 		return this.request<ForeignIfaceCandidate[]>('/interfaces/foreign/candidates');
 	}
 
-	/** Отметить интерфейс другой программы как сторонний. Граница — на сервере. */
-	async markForeignIface(name: string): Promise<{ ok: boolean }> {
-		return this.request<{ ok: boolean }>('/interfaces/foreign/mark', { method: 'POST', body: JSON.stringify({ name }) });
+	/** Отметить интерфейс другой программы как сторонний. Граница — на сервере;
+	 * name в ответе — записанное (каноническое) имя. */
+	async markForeignIface(name: string): Promise<{ ok: boolean; name: string }> {
+		return this.request<{ ok: boolean; name: string }>('/interfaces/foreign/mark', { method: 'POST', body: JSON.stringify({ name }) });
 	}
 
 	async unmarkForeignIface(name: string): Promise<{ ok: boolean }> {

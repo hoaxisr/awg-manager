@@ -5,7 +5,7 @@ import ForeignIfacePanel from './ForeignIfacePanel.svelte';
 vi.mock('$lib/api/client', () => ({
 	api: {
 		listForeignIfaceCandidates: vi.fn(async () => [{ name: 'opkgtun7', label: 'csqtt', kind: 'opkgtun', up: true }]),
-		markForeignIface: vi.fn(async () => ({ ok: true })),
+		markForeignIface: vi.fn(async (name: string) => ({ ok: true, name: name.toLowerCase() })),
 	},
 }));
 
@@ -15,6 +15,15 @@ describe('ForeignIfacePanel', () => {
 		render(ForeignIfacePanel, { onpicked });
 		await fireEvent.click(screen.getByText(/Интерфейс другой программы/));
 		await fireEvent.click(await screen.findByRole('button', { name: /Отметить и выбрать «csqtt»/ }));
+		await waitFor(() => expect(onpicked).toHaveBeenCalledWith('opkgtun7'));
+	});
+
+	it('picks the canonical name returned by the server', async () => {
+		const onpicked = vi.fn();
+		render(ForeignIfacePanel, { onpicked });
+		await fireEvent.click(screen.getByText(/Интерфейс другой программы/));
+		await fireEvent.input(screen.getByLabelText('Имя интерфейса ядра'), { target: { value: 'OpkgTun7' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Отметить и выбрать' }));
 		await waitFor(() => expect(onpicked).toHaveBeenCalledWith('opkgtun7'));
 	});
 

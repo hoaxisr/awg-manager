@@ -33,10 +33,11 @@
 		busy = true;
 		error = '';
 		try {
-			await api.markForeignIface(target);
+			const res = await api.markForeignIface(target);
 			name = '';
 			open = false;
-			onpicked(target);
+			// Сервер пишет каноническое имя (OpkgTun7 → opkgtun7) — выбираем его.
+			onpicked(res.name || target);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {

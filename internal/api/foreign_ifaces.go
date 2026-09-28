@@ -20,9 +20,17 @@ type ForeignIfaceCandidate struct {
 	Up    bool   `json:"up"`
 }
 
+// ForeignIfaceMarkResponse — ответ отметки: записанное имя (opkgtunN в
+// каноническом написании), его и выбирает фронт.
+type ForeignIfaceMarkResponse struct {
+	OK   bool   `json:"ok"`
+	Name string `json:"name" example:"opkgtun7"`
+}
+
 // ForeignIfaceMarker — сервис отметки (cmd/awg-manager/foreign_iface.go).
+// Mark возвращает записанное (каноническое) имя.
 type ForeignIfaceMarker interface {
-	Mark(ctx context.Context, name string) error
+	Mark(ctx context.Context, name string) (string, error)
 	Unmark(ctx context.Context, name string) error
 	Candidates(ctx context.Context) ([]ForeignIfaceCandidate, error)
 }
@@ -74,12 +82,15 @@ func (h *ForeignIfaceHandler) Candidates(w http.ResponseWriter, r *http.Request)
 //	@Accept			json
 //	@Produce		json
 //	@Param			body	body		ForeignIfaceRequest	true	"Имя интерфейса ядра"
-//	@Success		200		{object}	APIEnvelope
+//	@Success		200		{object}	APIEnvelope{data=ForeignIfaceMarkResponse}
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/interfaces/foreign/mark [post]
 func (h *ForeignIfaceHandler) Mark(w http.ResponseWriter, r *http.Request) {
-	h.apply(w, r, h.m.Mark)
+	h.apply(w, r, func(ctx context.Context, name string) (any, error) {
+		canon, err := h.m.Mark(ctx, name)
+		return ForeignIfaceMarkResponse{OK: true, Name: canon}, err
+	})
 }
 
 // Unmark — снять отметку; выходы и маршруты не трогаются.
@@ -93,15 +104,19 @@ func (h *ForeignIfaceHandler) Mark(w http.ResponseWriter, r *http.Request) {
 //	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/interfaces/foreign/unmark [post]
 func (h *ForeignIfaceHandler) Unmark(w http.ResponseWriter, r *http.Request) {
-	h.apply(w, r, h.m.Unmark)
+	h.apply(w, r, func(ctx context.Context, name string) (any, error) {
+		return map[string]bool{"ok": true}, h.m.Unmark(ctx, name)
+	})
 }
 
-func (h *ForeignIfaceHandler) apply(w http.ResponseWriter, r *http.Request, op func(context.Context, string) error) {
+// apply — op отдаёт тело успешного ответа; при ошибке оно не отправляется.
+func (h *ForeignIfaceHandler) apply(w http.ResponseWriter, r *http.Request, op func(context.Context, string) (any, error)) {
 	req, ok := parseJSON[ForeignIfaceRequest](w, r, http.MethodPost)
 	if !ok {
 		return
 	}
-	if err := op(r.Context(), req.Name); err != nil {
+	body, err := op(r.Context(), req.Name)
+	if err != nil {
 		if errors.Is(err, ErrForeignIfaceRejected) {
 			response.Error(w, err.Error(), "FOREIGN_REJECTED")
 			return
@@ -109,7 +124,7 @@ func (h *ForeignIfaceHandler) apply(w http.ResponseWriter, r *http.Request, op f
 		response.InternalError(w, err.Error())
 		return
 	}
-	response.Success(w, map[string]bool{"ok": true})
+	response.Success(w, body)
 	if h.publishTunnelList != nil {
 		h.publishTunnelList(r.Context())
 	}
