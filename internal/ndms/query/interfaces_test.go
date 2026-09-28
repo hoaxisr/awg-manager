@@ -1338,3 +1338,28 @@ func TestInterfaceStore_ListAll_DedupDeterministic(t *testing.T) {
 		t.Errorf("порт резолвится в ListAll (%d раз) — его там быть не должно", got)
 	}
 }
+
+// F515: резолвер не ответил — имя из `interface-name`, которого нет в ядре,
+// не годится в «имя ядра»: все потребители ListAll требуют настоящее. Эхо
+// вида `Home`/`GigabitEthernet0` сюда не доходит — его режет wireToInterface.
+func TestInterfaceStore_ListAll_SkipsUnresolvedName(t *testing.T) {
+	orig := kernelIfaceExists
+	kernelIfaceExists = func(name string) bool { return name == "ppp0" }
+	t.Cleanup(func() { kernelIfaceExists = orig })
+
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, `{
+		"GigabitEthernet0": {"id":"GigabitEthernet0","interface-name":"eth9","type":"GigabitEthernet","state":"up"},
+		"PPPoE0": {"id":"PPPoE0","interface-name":"PPPoE0","type":"PPPoE","state":"up"}
+	}`)
+	fg.SetPostSystemName("PPPoE0", `"ppp0"`)
+	s := NewInterfaceStore(fg, NopLogger())
+
+	all, err := s.ListAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].Name != "ppp0" {
+		t.Fatalf("ListAll = %+v, ждали только ppp0", all)
+	}
+}

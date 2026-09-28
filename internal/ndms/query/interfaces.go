@@ -692,10 +692,10 @@ func (s *InterfaceStore) ListAll(ctx context.Context) ([]ndms.AllInterface, erro
 	seen := make(map[string]ndms.AllInterface, len(all))
 	winnerID := make(map[string]string, len(all))
 	for _, iface := range all {
+		// Без имени ядра запись пропускается: подставить iface.SystemName
+		// нельзя — это непроверенное `interface-name`, а потребители
+		// (привязка sing-box, сторонний интерфейс) требуют настоящее имя.
 		kernelName := s.ResolveSystemName(ctx, iface.ID)
-		if kernelName == "" {
-			kernelName = iface.SystemName
-		}
 		if kernelName == "" {
 			continue
 		}
@@ -823,10 +823,8 @@ func (s *InterfaceStore) OnDestroyed(id string) {
 //     ctrl layer the same way: running=up, anything else=down. ctrl
 //     also gates startedAt (the uptime clock).
 //
-// IPv4 / IPv6 layer events are accepted but currently produce no
-// field updates — the existing summary-layer fields aren't part of
-// any read path's hot loop yet. If they become hot, mirror the
-// running→up mapping.
+//   - IPv4 layer events store the level as-is into the IPv4 field (it
+//     is layer-state, not up/down). IPv6 events produce no updates.
 func (s *InterfaceStore) OnLayerChanged(id, layer, level string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
