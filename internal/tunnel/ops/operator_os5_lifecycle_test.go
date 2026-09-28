@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -20,7 +21,7 @@ import (
 )
 
 // newOS5Lifecycle — OS5-оператор над записывающим RCI-постером и записывающим
-// ip: ни один вызов не уходит на хост. queries=nil: opkgTunExists отвечает
+// ip: ни один вызов не уходит на хост. queries=nil: opkgTunRecord отвечает
 // «нет», и ColdStart идёт по ветке CreateOpkgTun (это тоже RCI в poster).
 func newOS5Lifecycle(t *testing.T) (*OperatorOS5Impl, *recordingPoster, *ipRunRecorder) {
 	t.Helper()
@@ -30,7 +31,7 @@ func newOS5Lifecycle(t *testing.T) (*OperatorOS5Impl, *recordingPoster, *ipRunRe
 }
 
 // newOS5LifecycleOn — та же сборка с подставными постером, снимком NDMS и
-// бэкендом; withQueries=true отдаёт оператору queries, и opkgTunExists
+// бэкендом; withQueries=true отдаёт оператору queries, и opkgTunRecord
 // отвечает по снимку getter'а (`/show/interface/`).
 func newOS5LifecycleOn(t *testing.T, poster ndmscommand.Poster, getter *ndmsquery.FakeGetter,
 	backend *MockBackend, withQueries bool) (*OperatorOS5Impl, *ipRunRecorder) {
@@ -84,7 +85,7 @@ func TestColdStart_ExistingRecordWithoutDevice_BackendBeforeAddress(t *testing.T
 	backend := &MockBackend{}
 	poster := &deviceGatedPoster{backend: backend}
 	getter := ndmsquery.NewFakeGetter()
-	getter.SetJSON("/show/interface/", `{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","state":"error","link":"down"}}`)
+	getter.SetJSON("/show/interface/", `{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","state":"error","link":"down","description":"Germany"}}`)
 	o, _ := newOS5LifecycleOn(t, poster, getter, backend, true)
 
 	if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err != nil {
@@ -95,6 +96,100 @@ func TestColdStart_ExistingRecordWithoutDevice_BackendBeforeAddress(t *testing.T
 	}
 	if !hasPayload(poster.payloads, `{"interface":{"OpkgTun10":{"ip":{"address":{"address":"10.9.7.2","mask":"255.255.255.192"}}}}}`) {
 		t.Fatalf("адрес не поставлен:\n%v", poster.payloads)
+	}
+}
+
+// F517: запись OpkgTun10 в NDMS есть. Наша — описание равно имени туннеля
+// (так её создаёт CreateOpkgTun и так же NDMS восстанавливает сохранённую
+// запись после ребута) — старт идёт дальше. Чужое описание без живого
+// amneziawg — отказ ДО backend.Start и до любой RCI-записи, без отката. Чужое
+// описание под живым amneziawg — запись наша (описание разошлось), Warn и дальше.
+func TestColdStart_ExistingRecordOwnership(t *testing.T) {
+	cases := []struct {
+		name        string
+		description string
+		running     bool
+		wantForeign bool
+	}{
+		{"описание = имя туннеля", "Germany", false, false},
+		{"чужое описание, устройства нет", "csqtt", false, true},
+		{"пустое описание, устройства нет", "", false, true},
+		{"чужое описание, живое amneziawg", "csqtt", true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			be := &MockBackend{running: tc.running}
+			poster := &recordingPoster{}
+			getter := ndmsquery.NewFakeGetter()
+			getter.SetJSON("/show/interface/", fmt.Sprintf(
+				`{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","state":"up","link":"down","description":%q}}`, tc.description))
+			o, rec := newOS5LifecycleOn(t, poster, getter, be, true)
+
+			err := o.ColdStart(context.Background(), lifecycleCfg(t))
+
+			var foreign *ForeignRecordError
+			if got := errors.As(err, &foreign); got != tc.wantForeign {
+				t.Fatalf("err = %v, want ForeignRecordError = %v", err, tc.wantForeign)
+			}
+			if !tc.wantForeign {
+				if err != nil {
+					t.Fatalf("ColdStart: %v", err)
+				}
+				return
+			}
+			if foreign.NDMSName != "OpkgTun10" || foreign.Description != tc.description || foreign.Want != "Germany" {
+				t.Fatalf("ForeignRecordError = %+v", foreign)
+			}
+			if len(poster.payloads) != 0 {
+				t.Fatalf("RCI тронут при чужой записи: %v", poster.payloads)
+			}
+			if len(be.StartCalls) != 0 || len(be.StopCalls) != 0 {
+				t.Fatalf("бэкенд тронут при чужой записи (откат?): start=%v stop=%v", be.StartCalls, be.StopCalls)
+			}
+			if len(rec.Calls) != 0 {
+				t.Fatalf("ip вызван при чужой записи:\n%s", strings.Join(rec.Calls, "\n"))
+			}
+		})
+	}
+}
+
+// Тот же гейт в Reconcile (рестарт демона, устройство исчезло, на номере чужая
+// запись): ни своего ip link del, ни backend.Start. Текст доходит до человека.
+func TestReconcile_ForeignRecord_Refused(t *testing.T) {
+	be := &MockBackend{}
+	getter := ndmsquery.NewFakeGetter()
+	getter.SetJSON("/show/interface/", `{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","state":"up","link":"down","description":"csqtt"}}`)
+	o, rec := newOS5LifecycleOn(t, &recordingPoster{}, getter, be, true)
+
+	err := o.Reconcile(context.Background(), lifecycleCfg(t))
+
+	var foreign *ForeignRecordError
+	if !errors.As(err, &foreign) {
+		t.Fatalf("err = %v, want *ForeignRecordError", err)
+	}
+	if !strings.Contains(err.Error(), "запись OpkgTun10 в NDMS не принадлежит туннелю «Germany»: её описание — «csqtt»") {
+		t.Fatalf("текст отказа не для человека: %q", err.Error())
+	}
+	if len(be.StartCalls) != 0 || hasCall(rec.Calls, "/opt/sbin/ip link del dev opkgtun10") {
+		t.Fatalf("чужая запись тронута: start=%v\n%s", be.StartCalls, strings.Join(rec.Calls, "\n"))
+	}
+}
+
+// Кэш записей NDMS не поднялся — «не знаем», а не «записи нет»: Create поверх
+// существующей записи переписал бы её описание. Отказ без единой RCI-записи;
+// оркестратор повторит старт следующим decide.
+func TestColdStart_RecordReadError_RefusesWithoutCreate(t *testing.T) {
+	poster := &recordingPoster{}
+	getter := ndmsquery.NewFakeGetter()
+	getter.SetError("/show/interface/", errors.New("injected: ndms"))
+	o, _ := newOS5LifecycleOn(t, poster, getter, &MockBackend{}, true)
+
+	err := o.ColdStart(context.Background(), lifecycleCfg(t))
+	if err == nil || !strings.Contains(err.Error(), "read OpkgTun record") {
+		t.Fatalf("err = %v, want отказ чтения записи", err)
+	}
+	if len(poster.payloads) != 0 {
+		t.Fatalf("RCI тронут при недоступном кэше NDMS: %v", poster.payloads)
 	}
 }
 

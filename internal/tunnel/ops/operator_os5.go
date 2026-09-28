@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -22,14 +23,62 @@ import (
 // interfaceReadyTimeout and socketReadyTimeout are defined in operator_os4.go
 // (shared between OS4 and OS5 implementations).
 
-// opkgTunExists reports whether an OpkgTun interface with this NDMS name
-// exists in NDMS. Wraps Queries.Interfaces.Get with a typed-nil check.
-func opkgTunExists(ctx context.Context, q *query.Queries, name string) bool {
+// opkgTunRecord — запись OpkgTun по NDMS-имени: (nil, nil) — записи нет,
+// ошибка — «не знаем» (кэш InterfaceStore не поднялся). q == nil — обвязка
+// без NDMS (тесты): записи нет.
+func opkgTunRecord(ctx context.Context, q *query.Queries, name string) (*ndms.Interface, error) {
 	if q == nil {
-		return false
+		return nil, nil
 	}
-	iface, err := q.Interfaces.Get(ctx, name)
-	return err == nil && iface != nil
+	return q.Interfaces.Get(ctx, name)
+}
+
+// ForeignRecordError — запись OpkgTunN в NDMS есть, но её описание не наше и
+// живого amneziawg под ней нет: номер занят записью сторонней программы
+// (F517). Фаза 3 (ip address, mtu, ip global) переписала бы её настройки.
+// Типизирована: оператор и тесты отличают её от провала RCI.
+type ForeignRecordError struct {
+	NDMSName    string
+	Description string // что стоит в записи
+	Want        string // имя туннеля — то, что ставит CreateOpkgTun
+}
+
+func (e *ForeignRecordError) Error() string {
+	return fmt.Sprintf("запись %s в NDMS не принадлежит туннелю «%s»: её описание — «%s»", e.NDMSName, e.Want, e.Description)
+}
+
+// ensureOpkgTunRecord — Фаза 1 ColdStart/Reconcile: запись OpkgTunN обязана
+// быть НАШЕЙ, а не любой. Наша — описание равно имени туннеля (так её ставит
+// CreateOpkgTun и переименование через UpdateDescription; так же NDMS
+// восстанавливает сохранённую запись после ребута) либо под ней живое
+// amneziawg — такие устройства создаём только мы, а описание разошлось
+// (переименование без сохранения конфигурации). Иначе — ForeignRecordError
+// ДО любой RCI-записи, до backend.Start и без rollbackStart: сторонняя
+// программа завела запись на нашем номере (F517), её устройство не наше.
+// Ошибка чтения — тоже отказ: «не знаем» ≠ «записи нет», Create поверх
+// существующей записи переписал бы её описание.
+func (o *OperatorOS5Impl) ensureOpkgTunRecord(ctx context.Context, op string, cfg tunnel.Config, names tunnel.Names) (justCreated bool, err error) {
+	rec, err := opkgTunRecord(ctx, o.queries, names.NDMSName)
+	if err != nil {
+		return false, tunnel.NewOpError(op, cfg.ID, "ndms", fmt.Errorf("read OpkgTun record: %w", err))
+	}
+	if rec == nil {
+		if err := o.commands.Interfaces.CreateOpkgTun(ctx, names.NDMSName, cfg.Name); err != nil {
+			return false, tunnel.NewOpError(op, cfg.ID, "ndms", fmt.Errorf("create OpkgTun: %w", err))
+		}
+		o.logInfo(op, cfg.ID, "Created OpkgTun in NDMS")
+		return true, nil
+	}
+	if rec.Description == cfg.Name {
+		return false, nil
+	}
+	if running, _ := o.backend.IsRunning(ctx, names.IfaceName); running {
+		o.logWarn(op, cfg.ID, fmt.Sprintf("описание записи %s %q ≠ имени туннеля %q; под записью живое amneziawg — запись наша, описание не правим",
+			names.NDMSName, rec.Description, cfg.Name))
+		return false, nil
+	}
+	return false, tunnel.NewOpError(op, cfg.ID, "ndms",
+		&ForeignRecordError{NDMSName: names.NDMSName, Description: rec.Description, Want: cfg.Name})
 }
 
 // errOS4Tunnel — отказ обслуживать запись, оставшуюся от KeeneticOS 4.x.
@@ -193,14 +242,10 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 		return tunnel.NewOpError("start", cfg.ID, "", err)
 	}
 
-	// === Phase 1: Ensure OpkgTun exists ===
-	justCreated := false
-	if !opkgTunExists(ctx, o.queries, names.NDMSName) {
-		if err := o.commands.Interfaces.CreateOpkgTun(ctx, names.NDMSName, cfg.Name); err != nil {
-			return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("create OpkgTun: %w", err))
-		}
-		justCreated = true
-		o.logInfo("start", cfg.ID, "Created OpkgTun in NDMS")
+	// === Phase 1: Ensure OpkgTun exists — and is OURS (F517) ===
+	justCreated, err := o.ensureOpkgTunRecord(ctx, "start", cfg, names)
+	if err != nil {
+		return err // без rollbackStart: чужую запись и её устройство не трогаем
 	}
 
 	// === Phase 2: kernel device (ip link add type amneziawg) ===
@@ -487,14 +532,10 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	o.logInfo("reconcile", cfg.ID, "Reconciling NDMS state around running process")
 	o.appLog.Info("reconcile", cfg.ID, "Восстановление конфигурации NDMS")
 
-	// === Phase 1: Ensure OpkgTun exists ===
-	justCreated := false
-	if !opkgTunExists(ctx, o.queries, names.NDMSName) {
-		if err := o.commands.Interfaces.CreateOpkgTun(ctx, names.NDMSName, cfg.Name); err != nil {
-			return tunnel.NewOpError("reconcile", cfg.ID, "ndms", fmt.Errorf("create OpkgTun: %w", err))
-		}
-		justCreated = true
-		o.logInfo("reconcile", cfg.ID, "Created OpkgTun in NDMS")
+	// === Phase 1: Ensure OpkgTun exists — and is OURS (F517) ===
+	justCreated, err := o.ensureOpkgTunRecord(ctx, "reconcile", cfg, names)
+	if err != nil {
+		return err // без rollbackStart: чужую запись и её устройство не трогаем
 	}
 
 	// === Phase 2: Ensure kernel interface is amneziawg type ===
