@@ -165,10 +165,6 @@ func (s *Service) withForeign(ctx context.Context, external []TunnelInfo, listed
 	if s.settingsStore == nil {
 		return external
 	}
-	var desc map[int]string
-	if s.descriptions != nil {
-		desc = s.descriptions(ctx)
-	}
 	for _, name := range s.settingsStore.GetForeignInterfaces() {
 		num, isOpkg := opkgtun.IndexOf(name)
 		if isOpkg && listed[num] {
@@ -185,7 +181,6 @@ func (s *Service) withForeign(ctx context.Context, external []TunnelInfo, listed
 		row := TunnelInfo{InterfaceName: name, TunnelNumber: -1, Foreign: true}
 		if isOpkg {
 			row.TunnelNumber = num
-			row.Description = desc[num]
 			listed[num] = true
 		}
 		external = append(external, row)
