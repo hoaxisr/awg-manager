@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/managed/peerip"
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
@@ -40,12 +39,10 @@ func ValidatePeerDNS(dns string) (string, error) {
 	return strings.Join(out, ", "), nil
 }
 
-// rollbackTimeout — бюджет отката на роутере: ctx запроса к этому моменту
-// может быть уже отменён, а откат обязан дойти.
-const rollbackTimeout = 30 * time.Second
-
+// detachedCtx — ctx отката: запрос к этому моменту может быть уже отменён,
+// а откат обязан дойти.
 func detachedCtx(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
+	return context.WithTimeout(context.WithoutCancel(ctx), peersubnet.RollbackTimeout)
 }
 
 // rollbackAddedPeer снимает с роутера только что добавленного пира, которого

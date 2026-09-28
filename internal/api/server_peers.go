@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/managed"
@@ -1133,13 +1132,10 @@ func (h *ServersHandler) peerOnRouter(ctx context.Context, name, pubkey string) 
 	return true, nil
 }
 
-// peerRollbackTimeout — бюджет отката на роутере: ctx запроса к этому моменту
-// может быть уже отменён (обрыв клиента — самая вероятная причина сбоя), а
-// откат обязан дойти.
-const peerRollbackTimeout = 30 * time.Second
-
+// detachedCtx — ctx отката: запрос к этому моменту может быть уже отменён
+// (обрыв клиента — самая вероятная причина сбоя), а откат обязан дойти.
 func detachedCtx(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), peerRollbackTimeout)
+	return context.WithTimeout(context.WithoutCancel(ctx), peersubnet.RollbackTimeout)
 }
 
 // rollbackAddedServerPeer снимает с роутера только что добавленного пира и его

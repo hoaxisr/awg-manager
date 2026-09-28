@@ -53,10 +53,11 @@ func (e *RollbackError) Error() string {
 
 func (e *RollbackError) Unwrap() error { return e.Cause }
 
-// rollbackTimeout — бюджет отката. Откат идёт на ctx, отвязанном от отмены
-// вызывающего: самая вероятная причина сбоя посреди Reconcile — отключение
-// клиента/таймаут запроса, и на том же ctx откат гарантированно не прошёл бы.
-const rollbackTimeout = 30 * time.Second
+// RollbackTimeout — бюджет отката на роутере, общий для правок пира (здесь,
+// managed и api). Откат идёт на ctx, отвязанном от отмены вызывающего: самая
+// вероятная причина сбоя посреди правки — отключение клиента/таймаут
+// запроса, и на том же ctx откат гарантированно не прошёл бы.
+const RollbackTimeout = 30 * time.Second
 
 func parseAll(subnets []string) ([]*net.IPNet, error) {
 	out := make([]*net.IPNet, 0, len(subnets))
@@ -151,7 +152,7 @@ func Reconcile(ctx context.Context, r Router, iface, pubkey string, tunnelHosts 
 
 	var allowAdded, allowRemoved, routesAdded, routesRemoved []*net.IPNet
 	rollback := func(cause error) error {
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), RollbackTimeout)
 		defer cancel()
 		var errs []error
 		for i := len(routesAdded) - 1; i >= 0; i-- {
