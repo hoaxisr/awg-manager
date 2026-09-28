@@ -51,8 +51,7 @@ func (s systemClientRoutes) reconcileAll(ctx context.Context) {
 	}
 	if len(running) > 0 {
 		if err := s.routes.Reconcile(ctx, running); err != nil {
-			// Reconcile пишет причину в журнал сам; здесь фиксируем сам факт
-			// отказа, чтобы вызывающий (reconcileSystemClientRoutes) не терял его молча.
+			// Reconcile сегодня всегда возвращает nil; проверка на случай, если контракт изменится.
 			s.log.Warn("reconcile", "", fmt.Sprintf("reconcile system client routes failed: %v", err))
 		}
 	}
