@@ -148,12 +148,6 @@ func (s *ServiceImpl) teardownGate(ctx context.Context, ndmsName, description, s
 	return true, nil
 }
 
-// skipForeignTeardown — переходная обёртка; снимается в Task 5.
-func (s *ServiceImpl) skipForeignTeardown(ctx context.Context, ndmsName, description, scope string) bool {
-	proceed, _ := s.teardownGate(ctx, ndmsName, description, scope)
-	return !proceed
-}
-
 // releaseForeignOpkgTun освобождает запись владения ЧУЖОГО режима перед её
 // перезаписью (handover в enable) или снятием (персист-реап): для policy-tun
 // сперва восстановить записанный NAT сегментов (best-effort, Warn — как в

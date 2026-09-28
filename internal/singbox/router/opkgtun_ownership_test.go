@@ -681,12 +681,19 @@ func TestReleasePolicyTunForRemoval_SparesForeignInterface(t *testing.T) {
 			opkg := &recordingOpkgTunProvisioner{}
 			log := &callLog{}
 
-			if err := ReleasePolicyTunForRemoval(context.Background(), Deps{
+			err := ReleasePolicyTunForRemoval(context.Background(), Deps{
 				Settings:     store,
 				OpkgTun:      opkg,
 				DefaultRoute: &recDefaultRoute{log: log},
 				OpkgTunScan:  tc.scan,
-			}); err != nil {
+			})
+			// Скан упал — снятие отказывает ошибкой: `--cleanup` печатает её в
+			// stderr (cmd/awg-manager/cleanup.go), а интерфейс не трогается.
+			if tc.unknown {
+				if !errors.Is(err, errOpkgTunOwnershipUnknown) {
+					t.Fatalf("err = %v, want errOpkgTunOwnershipUnknown", err)
+				}
+			} else if err != nil {
 				t.Fatalf("ReleasePolicyTunForRemoval: %v", err)
 			}
 

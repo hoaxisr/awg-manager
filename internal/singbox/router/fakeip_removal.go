@@ -36,8 +36,9 @@ func ReleaseFakeIPTunForRemoval(ctx context.Context, d Deps) error {
 	}
 	ndmsName := tunNDMSName(st.Index)
 	// Индекс из записи мог занять ЧУЖОЙ OpkgTun — см. ReleasePolicyTunForRemoval.
-	if s.skipForeignTeardown(ctx, ndmsName, fakeIPTunDescription, "fakeip-remove") {
-		return nil
+	// Скан упал — отказ ошибкой (F493): `--cleanup` печатает её, интерфейс живёт.
+	if proceed, err := s.teardownGate(ctx, ndmsName, fakeIPTunDescription, "fakeip-remove"); !proceed {
+		return err
 	}
 	return s.teardownOpkgTun(ctx, ndmsName, "fakeip-remove")
 }
