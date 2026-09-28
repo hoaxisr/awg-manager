@@ -41,10 +41,14 @@ func (e *HeldError) Error() string {
 	return fmt.Sprintf("интерфейс %s занят сторонней программой %s (pid %d)", e.Iface, e.Comm, e.PID)
 }
 
-// Швы для тестов: бэкенд зовёт ip и читает /proc напрямую.
+// Швы для тестов: бэкенд зовёт ip и читает /proc и /sys напрямую.
 var (
-	kernelRun = exec.Run
-	tunHolder = func(iface string) *HeldError { return findTunHolder("/proc", iface) }
+	kernelRun   = exec.Run
+	tunHolder   = func(iface string) *HeldError { return findTunHolder("/proc", iface) }
+	ifaceExists = func(iface string) bool {
+		_, err := os.Stat("/sys/class/net/" + iface)
+		return err == nil
+	}
 )
 
 // findTunHolder ищет процесс, держащий tun-устройство iface открытым: у него
@@ -73,8 +77,13 @@ func findTunHolder(procRoot, iface string) *HeldError {
 				continue
 			}
 			pid, _ := strconv.Atoi(filepath.Base(pidDir))
-			comm, _ := os.ReadFile(filepath.Join(pidDir, "comm"))
-			return &HeldError{Iface: iface, PID: pid, Comm: strings.TrimSpace(string(comm))}
+			name := "?" // comm не прочитался — процесс ушёл или чужой uid
+			if comm, err := os.ReadFile(filepath.Join(pidDir, "comm")); err == nil {
+				if c := strings.TrimSpace(string(comm)); c != "" {
+					name = c
+				}
+			}
+			return &HeldError{Iface: iface, PID: pid, Comm: name}
 		}
 	}
 	return nil
@@ -93,8 +102,11 @@ func (b *KernelBackend) Start(ctx context.Context, ifaceName string) error {
 	// Не-amneziawg устройство на нашем имени — обычно plain tun, который NDMS
 	// пересоздал после ребута по сохранённой записи OpkgTun (держателя нет):
 	// его сносим. Держатель есть — номер занят чужой программой, отказ.
-	if held := tunHolder(ifaceName); held != nil {
-		return held
+	// Устройства нет — держать нечего, обход /proc не нужен.
+	if ifaceExists(ifaceName) {
+		if held := tunHolder(ifaceName); held != nil {
+			return held
+		}
 	}
 	_, _ = kernelRun(ctx, "/opt/sbin/ip", "link", "del", "dev", ifaceName)
 
@@ -108,9 +120,17 @@ func (b *KernelBackend) Start(ctx context.Context, ifaceName string) error {
 // Stop removes the kernel AmneziaWG interface. Тот же гард держателя, что в
 // Start: Stop зовёт и откат неудавшегося старта (ops.rollbackStart), и
 // остановка туннеля, чей номер тем временем занял чужой tun.
+//
+// Обход /proc — только существующему не-amneziawg устройству: отсутствующее
+// держать некому, наше amneziawg чужая программа через /dev/net/tun не
+// открывает.
 func (b *KernelBackend) Stop(ctx context.Context, ifaceName string) error {
-	if held := tunHolder(ifaceName); held != nil {
-		return held
+	if ifaceExists(ifaceName) {
+		if running, _ := b.IsRunning(ctx, ifaceName); !running {
+			if held := tunHolder(ifaceName); held != nil {
+				return held
+			}
+		}
 	}
 	result, err := kernelRun(ctx, "/opt/sbin/ip", "link", "del", "dev", ifaceName)
 	if err != nil {
@@ -123,7 +143,7 @@ func (b *KernelBackend) Stop(ctx context.Context, ifaceName string) error {
 // Returns (running, pid) where pid is always 0 for kernel backend.
 // At boot NDMS recreates opkgtun* devices as plain "tun" — we must verify the type.
 func (b *KernelBackend) IsRunning(ctx context.Context, ifaceName string) (bool, int) {
-	if _, err := os.Stat("/sys/class/net/" + ifaceName); err != nil {
+	if !ifaceExists(ifaceName) {
 		return false, 0
 	}
 

@@ -1055,21 +1055,24 @@ func TestUpdateDescription_OnlyOurRecord(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name, snapshot string
+		prevName       string
 		running        bool
 		wantPost       bool
 		wantForeign    bool
 	}{
-		{"наша: описание = прежнему имени", rec("Germany"), false, true, false},
-		{"наша: чужое описание, живое amneziawg", rec("csqtt"), true, true, false},
-		{"чужая: описание не наше, устройства нет", rec("csqtt"), false, false, true},
-		{"записи нет", `{}`, false, false, false},
+		{"наша: описание = прежнему имени", rec("Germany"), "Germany", false, true, false},
+		{"наша: чужое описание, живое amneziawg", rec("csqtt"), "Germany", true, true, false},
+		{"чужая: описание не наше, устройства нет", rec("csqtt"), "Germany", false, false, true},
+		{"записи нет", `{}`, "Germany", false, false, false},
+		{"пустое прежнее имя, запись без описания", rec(""), "", false, false, true},
+		{"пустое прежнее имя, живое amneziawg", rec(""), "", true, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			poster := &recordingPoster{}
 			getter := ndmsquery.NewFakeGetter()
 			getter.SetJSON("/show/interface/", tc.snapshot)
 			o, _ := newOS5LifecycleOn(t, poster, getter, &MockBackend{running: tc.running}, true)
-			err := o.UpdateDescription(context.Background(), "awg10", "Germany", "Norway")
+			err := o.UpdateDescription(context.Background(), "awg10", tc.prevName, "Norway")
 			var foreign *ForeignRecordError
 			if errors.As(err, &foreign) != tc.wantForeign || (!tc.wantForeign && err != nil) {
 				t.Fatalf("err = %v, want ForeignRecordError = %v", err, tc.wantForeign)

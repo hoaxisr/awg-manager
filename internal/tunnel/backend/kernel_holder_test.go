@@ -25,17 +25,29 @@ func stubKernelRun(t *testing.T) *[]string {
 	return &calls
 }
 
-func stubTunHolder(t *testing.T, held *HeldError) {
+// stubTunHolder подменяет детектор держателя и отдаёт счётчик сканов.
+func stubTunHolder(t *testing.T, held *HeldError) *int {
 	t.Helper()
 	old := tunHolder
-	tunHolder = func(string) *HeldError { return held }
+	scans := 0
+	tunHolder = func(string) *HeldError { scans++; return held }
 	t.Cleanup(func() { tunHolder = old })
+	return &scans
+}
+
+// stubIfaceExists подменяет проверку /sys/class/net/<iface>.
+func stubIfaceExists(t *testing.T, exists bool) {
+	t.Helper()
+	old := ifaceExists
+	ifaceExists = func(string) bool { return exists }
+	t.Cleanup(func() { ifaceExists = old })
 }
 
 // F500: устройство на нашем номере держит чужая программа — старт отказывает
 // ДО единственного `ip link del`, типизированной ошибкой с pid и именем.
 func TestStart_HeldByForeignProcess_RefusesWithoutDelete(t *testing.T) {
 	calls := stubKernelRun(t)
+	stubIfaceExists(t, true)
 	stubTunHolder(t, &HeldError{Iface: "opkgtun7", PID: 4242, Comm: "csqtt"})
 
 	err := NewKernel().Start(context.Background(), "opkgtun7")
@@ -47,8 +59,8 @@ func TestStart_HeldByForeignProcess_RefusesWithoutDelete(t *testing.T) {
 	if !strings.Contains(err.Error(), "занят сторонней программой") {
 		t.Fatalf("текст отказа не для человека: %q", err.Error())
 	}
-	if len(*calls) != 0 {
-		t.Fatalf("ip вызван при чужом держателе: %v", *calls)
+	if want := []string{"/opt/sbin/ip -d link show dev opkgtun7"}; !slices.Equal(*calls, want) {
+		t.Fatalf("ip calls = %v, want только проверку типа %v", *calls, want)
 	}
 }
 
@@ -56,12 +68,14 @@ func TestStart_HeldByForeignProcess_RefusesWithoutDelete(t *testing.T) {
 // лечение: снести и создать amneziawg.
 func TestStart_UnheldTun_DeletesAndRecreates(t *testing.T) {
 	calls := stubKernelRun(t)
+	stubIfaceExists(t, true)
 	stubTunHolder(t, nil)
 
 	if err := NewKernel().Start(context.Background(), "opkgtun7"); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
+		"/opt/sbin/ip -d link show dev opkgtun7",
 		"/opt/sbin/ip link del dev opkgtun7",
 		"/opt/sbin/ip link add dev opkgtun7 type amneziawg",
 	}
@@ -75,6 +89,7 @@ func TestStart_UnheldTun_DeletesAndRecreates(t *testing.T) {
 // отказал.
 func TestStop_HeldByForeignProcess_Refuses(t *testing.T) {
 	calls := stubKernelRun(t)
+	stubIfaceExists(t, true)
 	stubTunHolder(t, &HeldError{Iface: "opkgtun7", PID: 4242, Comm: "csqtt"})
 
 	err := NewKernel().Stop(context.Background(), "opkgtun7")
@@ -83,9 +98,42 @@ func TestStop_HeldByForeignProcess_Refuses(t *testing.T) {
 	if !errors.As(err, &held) {
 		t.Fatalf("err = %v, want *HeldError", err)
 	}
-	if len(*calls) != 0 {
-		t.Fatalf("ip вызван при чужом держателе: %v", *calls)
+	if want := []string{"/opt/sbin/ip -d link show dev opkgtun7"}; !slices.Equal(*calls, want) {
+		t.Fatalf("ip calls = %v, want только проверку типа %v", *calls, want)
 	}
+}
+
+// Скан /proc нужен только существующему не-amneziawg устройству: устройства
+// нет — держать нечего; наше amneziawg чужая программа не открывает.
+func TestHolderScan_OnlyForExistingForeignTypedDevice(t *testing.T) {
+	ctx := context.Background()
+	t.Run("устройства нет", func(t *testing.T) {
+		stubKernelRun(t)
+		stubIfaceExists(t, false)
+		scans := stubTunHolder(t, nil)
+		_ = NewKernel().Start(ctx, "opkgtun7")
+		_ = NewKernel().Stop(ctx, "opkgtun7")
+		if *scans != 0 {
+			t.Fatalf("сканов /proc %d, want 0", *scans)
+		}
+	})
+	t.Run("наше amneziawg", func(t *testing.T) {
+		old := kernelRun
+		var calls []string
+		kernelRun = func(_ context.Context, name string, args ...string) (*exec.Result, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return &exec.Result{Stdout: "7: opkgtun7: <POINTOPOINT,NOARP,UP> mtu 1420\n    amneziawg"}, nil
+		}
+		t.Cleanup(func() { kernelRun = old })
+		stubIfaceExists(t, true)
+		scans := stubTunHolder(t, &HeldError{Iface: "opkgtun7", PID: 1, Comm: "x"})
+		if err := NewKernel().Stop(ctx, "opkgtun7"); err != nil {
+			t.Fatalf("Stop нашего amneziawg: %v", err)
+		}
+		if *scans != 0 || !slices.Contains(calls, "/opt/sbin/ip link del dev opkgtun7") {
+			t.Fatalf("сканов %d (want 0), calls %v", *scans, calls)
+		}
+	})
 }
 
 // Детектор по дереву /proc: fd на /dev/net/tun + строка `iff:\t<имя>` в
@@ -112,6 +160,9 @@ func TestFindTunHolder_ProcTree(t *testing.T) {
 		}
 	}
 	mk("100", "3", "/dev/null", "pos:\t0\nflags:\t0100002\nmnt_id:\t20\n", "sh\n")
+	// fd не на /dev/net/tun, но с той же строкой iff: — не держатель
+	// (сторожит проверку readlink; pid раньше настоящего держателя в обходе).
+	mk("150", "6", "/dev/null", "pos:\t0\nflags:\t0100002\nmnt_id:\t20\niff:\topkgtun7\n", "decoy\n")
 	mk("200", "5", "/dev/net/tun", "pos:\t0\nflags:\t0100002\nmnt_id:\t20\niff:\topkgtun70\n", "other\n")
 	mk("300", "4", "/dev/net/tun", "pos:\t0\nflags:\t0100002\nmnt_id:\t20\niff:\topkgtun7\n", "csqtt\n")
 
@@ -121,5 +172,15 @@ func TestFindTunHolder_ProcTree(t *testing.T) {
 	}
 	if h := findTunHolder(root, "opkgtun8"); h != nil {
 		t.Fatalf("ложный держатель: %+v", h)
+	}
+
+	// comm не прочитался (процесс ушёл) — «?», без двойного пробела в тексте.
+	mk("400", "4", "/dev/net/tun", "iff:\topkgtun9\n", "")
+	if err := os.Remove(filepath.Join(root, "400", "comm")); err != nil {
+		t.Fatal(err)
+	}
+	h := findTunHolder(root, "opkgtun9")
+	if h == nil || h.Comm != "?" || !strings.Contains(h.Error(), "программой ? (pid 400)") {
+		t.Fatalf("holder = %+v, want Comm «?»", h)
 	}
 }

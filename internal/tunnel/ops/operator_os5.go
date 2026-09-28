@@ -863,9 +863,17 @@ func (o *OperatorOS5Impl) setDescription(ctx context.Context, tunnelID, prevName
 	if rec == nil && o.queries != nil {
 		return nil
 	}
-	if rec != nil && !capture && !o.recordIsOurs(ctx, rec, prevName, names.IfaceName) {
-		return tunnel.NewOpError("update_description", tunnelID, "ndms",
-			&ForeignRecordError{NDMSName: names.NDMSName, Description: rec.Description, Want: prevName})
+	if rec != nil && !capture {
+		// Пустое прежнее имя с описанием не сверяем: "" == "" признало бы
+		// нашей любую запись без описания. Остаётся живое amneziawg.
+		ours, _ := o.backend.IsRunning(ctx, names.IfaceName)
+		if prevName != "" {
+			ours = o.recordIsOurs(ctx, rec, prevName, names.IfaceName)
+		}
+		if !ours {
+			return tunnel.NewOpError("update_description", tunnelID, "ndms",
+				&ForeignRecordError{NDMSName: names.NDMSName, Description: rec.Description, Want: prevName})
+		}
 	}
 	if err := o.commands.Interfaces.SetDescription(ctx, names.NDMSName, description); err != nil {
 		return tunnel.NewOpError("update_description", tunnelID, "ndms", err)
