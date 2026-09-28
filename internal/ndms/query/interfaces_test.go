@@ -590,6 +590,78 @@ func TestInterfaceStore_Invalidate_OnHTTPErrorLeavesMapUntouched(t *testing.T) {
 	}
 }
 
+// === Refresh (F532: freshness for ownership decisions — bypasses the
+// event-sourced cache, which an out-of-band description edit never
+// invalidates via a hook) ===
+
+func TestInterfaceStore_Refresh_SeesChangeWithoutHook(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, sampleIfaceList)
+	s := NewInterfaceStore(fg, NopLogger())
+
+	// Кэш поднят на старом описании — как будто хука ifcreated/ifdestroyed
+	// на смену описания снаружи никогда не было.
+	cached, _ := s.Get(context.Background(), "Wireguard0")
+	if cached == nil || cached.Description != "my tunnel" {
+		t.Fatalf("precondition: cached = %#v", cached)
+	}
+
+	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{
+		"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","description":"csqtt-probe"
+	}}}`)
+
+	got, err := s.Refresh(context.Background(), "Wireguard0")
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if got == nil || got.Description != "csqtt-probe" {
+		t.Errorf("Refresh: want fresh description, got %#v", got)
+	}
+	if again, _ := s.Get(context.Background(), "Wireguard0"); again == nil || again.Description != "csqtt-probe" {
+		t.Errorf("Refresh must patch the cache: Get = %#v", again)
+	}
+}
+
+// Форма, которую реально отдаёт NDMS на отсутствующую запись через POST
+// (стенд KN-1810, 5.02.A.11: `unable to find`, код 6553619) — см.
+// TestFetchSummary_NoDataMeansNilDetails и
+// TestWGServerStore_List_SkipsVanishedInterface для того же конверта.
+func TestInterfaceStore_Refresh_AbsentGivesNilNotError(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, sampleIfaceList)
+	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{
+		"status":[{"status":"error","code":"6553619","ident":"Network::Interface::Base","message":"unable to find \"Wireguard0\"."}]
+	}}}`)
+	s := NewInterfaceStore(fg, NopLogger())
+
+	_, _ = s.Get(context.Background(), "Wireguard0")
+
+	got, err := s.Refresh(context.Background(), "Wireguard0")
+	if err != nil || got != nil {
+		t.Fatalf("Refresh на отсутствующей записи: want (nil, nil), got (%#v, %v)", got, err)
+	}
+	if again, _ := s.Get(context.Background(), "Wireguard0"); again != nil {
+		t.Errorf("Refresh must drop the absent entry from the cache, got %#v", again)
+	}
+}
+
+func TestInterfaceStore_Refresh_ErrorLeavesCacheUntouched(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, sampleIfaceList)
+	fg.SetPostInterfaceError("Wireguard0", errors.New("ndms flake"))
+	s := NewInterfaceStore(fg, NopLogger())
+
+	_, _ = s.Get(context.Background(), "Wireguard0")
+
+	got, err := s.Refresh(context.Background(), "Wireguard0")
+	if err == nil {
+		t.Fatalf("Refresh: want error, got nil (got=%#v)", got)
+	}
+	if again, _ := s.Get(context.Background(), "Wireguard0"); again == nil || again.Description != "my tunnel" {
+		t.Errorf("Refresh error must leave the cache untouched, got %#v", again)
+	}
+}
+
 // === Hook-side write API: OnCreated / OnDestroyed / OnLayerChanged / OnIPChanged ===
 
 func TestInterfaceStore_OnCreated_FetchesOnce(t *testing.T) {

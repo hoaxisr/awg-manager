@@ -948,31 +948,28 @@ func layerLevelToUpDown(level string) string {
 
 // === Command-side write API (proactive refresh after a successful POST) ===
 
-// Invalidate is called by command-side code AFTER a successful NDMS
-// write to ensure the next read sees the new state without waiting
-// for the eventual hook. Issues ONE HTTP (/show/interface/<name>) and
-// patches the map. If the interface no longer exists in NDMS (200 +
-// empty body), it is removed from the map.
+// Refresh issues ONE fresh /show/interface/<name> read regardless of what
+// the cache holds, patches the cache with the result the same way
+// Invalidate does, and returns it. Use this instead of Get when the
+// decision must reflect what NDMS holds RIGHT NOW rather than the last
+// hook-driven snapshot: NDMS hooks (ifcreated/ifdestroyed/…) don't fire
+// for an out-of-band edit like `interface OpkgTunN description …`, so
+// Get can stay stale indefinitely (F532).
 //
-// 404 is not expected here — command callers invoke this only after
-// a successful POST, so the interface exists. If a 404 does arrive
-// (e.g. a different actor deleted the interface concurrently), the
-// HTTPError propagates as a logged warning and the map is left
-// untouched (next bootstrap or hook will reconcile).
-func (s *InterfaceStore) Invalidate(name string) {
+// Absent record (200 + empty body, or the "unable to find" status
+// envelope NDMS returns for this POST form) → (nil, nil), and the entry
+// is removed from the cache. Transport/parse error → error returned,
+// cache left untouched — same contract Invalidate already had.
+func (s *InterfaceStore) Refresh(ctx context.Context, name string) (*ndms.Interface, error) {
 	if name == "" {
-		return
+		return nil, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	if err := s.ensureBootstrap(ctx); err != nil {
-		s.log.Warnf("Invalidate %s: bootstrap failed: %v", name, err)
-		return
+		return nil, err
 	}
 	iface, err := s.fetchOne(ctx, name)
 	if err != nil {
-		s.log.Warnf("Invalidate %s: refresh failed: %v", name, err)
-		return
+		return nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -980,13 +977,38 @@ func (s *InterfaceStore) Invalidate(name string) {
 		// NDMS confirms absent — remove from map.
 		delete(s.byID, name)
 		delete(s.startedAt, name)
-		return
+		return nil, nil
 	}
 	s.byID[name] = iface
 	if iface.Uptime > 0 && iface.ConfLayer == "running" {
 		if _, exists := s.startedAt[name]; !exists {
 			s.startedAt[name] = time.Now().Add(-time.Duration(iface.Uptime) * time.Second)
 		}
+	}
+	cp := *iface
+	return &cp, nil
+}
+
+// Invalidate is called by command-side code AFTER a successful NDMS
+// write to ensure the next read sees the new state without waiting
+// for the eventual hook. Thin wrapper over Refresh (5s timeout, own
+// background context) that swallows the error into a Warn log — this
+// is a fire-and-forget call, callers don't check the outcome.
+//
+// 404/"unable to find" is not expected here — command callers invoke
+// this only after a successful POST, so the interface exists. If it
+// does arrive anyway (e.g. a different actor deleted the interface
+// concurrently), Refresh already treats it as "absent" and removes the
+// entry; any other error is logged and the map is left untouched (next
+// bootstrap or hook will reconcile).
+func (s *InterfaceStore) Invalidate(name string) {
+	if name == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := s.Refresh(ctx, name); err != nil {
+		s.log.Warnf("Invalidate %s: refresh failed: %v", name, err)
 	}
 }
 
