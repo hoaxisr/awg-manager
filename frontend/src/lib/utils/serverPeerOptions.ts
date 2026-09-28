@@ -163,7 +163,8 @@ export function findServerByListenPort(
 		kind: 'system',
 		serverId: s.id,
 		address: hostIP(s.address),
-		peerIPs: (s.peers ?? []).flatMap((p) => (p.allowedIPs ?? []).map(hostIP)),
+		// Сети за клиентом (#713) тоже лежат в allowedIPs — занят только туннельный адрес.
+		peerIPs: (s.peers ?? []).map((p) => hostIP(systemPeerTunnelIP(p))).filter(Boolean),
 	};
 }
 

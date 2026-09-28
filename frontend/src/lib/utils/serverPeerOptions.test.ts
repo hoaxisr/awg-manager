@@ -192,6 +192,24 @@ describe('findServerByListenPort / suggestNextPeerIP (#871)', () => {
     expect(suggestNextPeerIP(own!.address, own!.peerIPs)).toBe('10.7.0.3/32');
     expect(suggestNextPeerIP('fd00::1', [])).toBe('');
   });
+
+  it('сеть за клиентом не занимает адреса сервера, туннельный /32 — занимает (F513)', () => {
+    const s = snap({
+      servers: [
+        {
+          id: 'wg0', listenPort: 51820, address: '10.7.0.1', status: 'up',
+          peers: [
+            // Сеть за клиентом (10.7.0.3/32) стоит в allowedIPs раньше туннельного /32.
+            { publicKey: 'A', tunnelIP: '10.7.0.2/32', allowedIPs: ['10.7.0.3/32', '10.7.0.2/32'] },
+            { publicKey: 'B', allowedIPs: ['10.7.0.4/32'] },
+          ],
+        } as unknown as WireguardServer,
+      ],
+    });
+    const own = findServerByListenPort(s, 51820)!;
+    expect(own.peerIPs).toEqual(['10.7.0.2', '10.7.0.4']);
+    expect(suggestNextPeerIP(own.address, own.peerIPs)).toBe('10.7.0.3/32');
+  });
 });
 
 describe('systemPeerTunnelIP', () => {

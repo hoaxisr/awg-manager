@@ -12,6 +12,7 @@
 	import {
 		findServerByListenPort,
 		hostIP,
+		systemPeerTunnelIP,
 		parseLocalListenPort,
 		patchWgConfEndpoint,
 		suggestNextPeerIP,
@@ -90,7 +91,7 @@
 			const want = hostIP(tunnelIP);
 			const found = fresh.servers
 				?.find((s) => s.id === own.serverId)
-				?.peers?.find((p) => (p.allowedIPs ?? []).some((a) => hostIP(a) === want))?.publicKey;
+				?.peers?.find((p) => hostIP(systemPeerTunnelIP(p)) === want)?.publicKey;
 			if (!found) throw new Error('Пир создан, но в ответе сервера не найден');
 			pubkey = found;
 			conf = await api.getSystemServerPeerConf(own.serverId, pubkey, '127.0.0.1');
