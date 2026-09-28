@@ -419,3 +419,51 @@ func TestServersHandler_AddServerPeer_TunnelIPInUse_FromSecret(t *testing.T) {
 		t.Fatal("RCI при занятом адресе")
 	}
 }
+
+// W2-P1 (решение владельца 28.09): поля сетей отсутствуют или null — сети
+// пира не трогаются ни на роутере, ни в записи.
+func TestServersHandler_UpdateServerPeer_AbsentOrNullNetworksUntouched(t *testing.T) {
+	for _, body := range []string{
+		`{"description":"renamed","tunnelIP":"10.9.0.2/32"}`,
+		`{"description":"renamed","tunnelIP":"10.9.0.2/32","clientAllowedIPs":null,"remoteSubnets":null}`,
+	} {
+		h, store, poster, _, _ := newServersSubnetHarness(t, `[{"address":"10.9.0.2","mask":"255.255.255.255"},{"address":"192.168.77.0","mask":"255.255.255.0"}]`, sysRcOurs77)
+		_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", TunnelIP: "10.9.0.2/32", ClientAllowedIPs: "0.0.0.0/1", RemoteSubnets: []string{"192.168.77.0/24"}})
+		if rr := putServerPeer(t, h, peerFixturePubKey, body); rr.Code != 200 {
+			t.Fatalf("%s: code=%d body=%s", body, rr.Code, rr.Body.String())
+		}
+		if joined := strings.Join(poster.snapshot(), "\n"); strings.Contains(joined, "allow-ips") || strings.Contains(joined, `"route"`) {
+			t.Fatalf("%s: сети тронуты:\n%s", body, joined)
+		}
+		sec, _ := store.GetServerPeerSecret("Wireguard0", peerFixturePubKey)
+		if sec.Description != "renamed" || sec.ClientAllowedIPs != "0.0.0.0/1" || len(sec.RemoteSubnets) != 1 || sec.RemoteSubnets[0] != "192.168.77.0/24" {
+			t.Fatalf("%s: secret = %+v", body, sec)
+		}
+	}
+}
+
+// Явные "" и [] — очистить: сети снимаются, запись пустеет.
+func TestServersHandler_UpdateServerPeer_EmptyNetworksClear(t *testing.T) {
+	h, store, poster, _, _ := newServersSubnetHarness(t, `[{"address":"10.9.0.2","mask":"255.255.255.255"},{"address":"192.168.77.0","mask":"255.255.255.0"}]`, sysRcOurs77)
+	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", TunnelIP: "10.9.0.2/32", ClientAllowedIPs: "0.0.0.0/1", RemoteSubnets: []string{"192.168.77.0/24"}})
+	rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.2/32","clientAllowedIPs":"","remoteSubnets":[]}`)
+	if rr.Code != 200 {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	posts := poster.snapshot()
+	if idx(posts, sysAllow77Off) < 0 || idx(posts, sysRoute77Off) < 0 {
+		t.Fatalf("сети не сняты:\n%s", strings.Join(posts, "\n"))
+	}
+	sec, _ := store.GetServerPeerSecret("Wireguard0", peerFixturePubKey)
+	if sec.ClientAllowedIPs != "" || len(sec.RemoteSubnets) != 0 {
+		t.Fatalf("secret = %+v", sec)
+	}
+}
+
+// Чужой пир (без записи): правка без полей сетей проходит.
+func TestServersHandler_UpdateServerPeer_ForeignPeer_AbsentNetworksPass(t *testing.T) {
+	h, _, _, _, _ := newServersSubnetHarness(t, `[{"address":"10.9.0.2","mask":"255.255.255.255"}]`, `[]`)
+	if rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"laptop","tunnelIP":"10.9.0.2/32"}`); rr.Code != 200 {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+}

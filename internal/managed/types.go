@@ -77,9 +77,10 @@ type UpdatePeerRequest struct {
 	Signature   *PeerSignature `json:"signature,omitempty"`
 	// ClientAllowedIPs — строка AllowedIPs в .conf клиента, CIDR через запятую;
 	// пусто — весь трафик (#713). RemoteSubnets — сети за клиентом (IPv4 CIDR):
-	// allow-ips пира и маршруты на роутере; отсутствие поля = пусто = снять все.
-	ClientAllowedIPs string   `json:"clientAllowedIPs,omitempty"`
-	RemoteSubnets    []string `json:"remoteSubnets,omitempty"`
+	// allow-ips пира и маршруты на роутере. Оба поля: nil (поле отсутствует
+	// или null) — значение пира не менять; ""/[] — очистить (снять все сети).
+	ClientAllowedIPs *string   `json:"clientAllowedIPs,omitempty"`
+	RemoteSubnets    *[]string `json:"remoteSubnets,omitempty"`
 }
 
 // PeerSignature — сигнатура имитации пира: пять пакетов и профиль, по

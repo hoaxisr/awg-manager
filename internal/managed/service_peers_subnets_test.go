@@ -121,7 +121,7 @@ func TestAddPeer_RouteFailure_RollsBackAllowIPsAndPeer(t *testing.T) {
 func TestUpdatePeer_DiffAddsAndRemoves(t *testing.T) {
 	svc, store, poster, _ := newPeerSubnetTestService(t, rcOurs77)
 	seedPeer(t, store, "192.168.77.0/24")
-	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: []string{"192.168.78.0/24"}})
+	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.78.0/24"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestUpdatePeer_DiffAddsAndRemoves(t *testing.T) {
 func TestUpdatePeer_EmptyRemoteSubnetsRemovesAll(t *testing.T) {
 	svc, store, poster, _ := newPeerSubnetTestService(t, rcOurs77)
 	seedPeer(t, store, "192.168.77.0/24")
-	if err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32"}); err != nil {
+	if err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{}}); err != nil {
 		t.Fatal(err)
 	}
 	posts := postsJSON(poster)
@@ -161,10 +161,10 @@ func TestUpdatePeer_ForeignRouteNeverTouched(t *testing.T) {
 	rc := `[{"network":"192.168.78.0","mask":"255.255.255.0","interface":"Wireguard1","auto":true,"comment":"manual"}]`
 	svc, store, poster, _ := newPeerSubnetTestService(t, rc)
 	seedPeer(t, store)
-	if err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: []string{"192.168.78.0/24"}}); err != nil {
+	if err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.78.0/24"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32"}); err != nil {
+	if err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{}}); err != nil {
 		t.Fatal(err)
 	}
 	if posts := postsJSON(poster); indexOf(posts, `"route"`) >= 0 {
@@ -219,7 +219,7 @@ func TestUpdatePeer_TunnelIPAndSubnets_RouteFailure_RestoresTunnelIP(t *testing.
 		}
 		return nil
 	}
-	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.3/32", RemoteSubnets: []string{"192.168.77.0/24"}})
+	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.3/32", RemoteSubnets: &[]string{"192.168.77.0/24"}})
 	if err == nil || !strings.Contains(err.Error(), "route refused") {
 		t.Fatalf("err = %v", err)
 	}
@@ -337,14 +337,14 @@ func TestPeer_RemoteSubnetsRejectedWithLANSegments(t *testing.T) {
 	if !errors.Is(err, peersubnet.ErrInvalidRemoteSubnets) || !strings.Contains(err.Error(), "LAN-сегмент") {
 		t.Fatalf("add: err = %v", err)
 	}
-	err = svc.UpdatePeer(ctx, "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: []string{"192.168.78.0/24"}})
+	err = svc.UpdatePeer(ctx, "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.78.0/24"}})
 	if !errors.Is(err, peersubnet.ErrInvalidRemoteSubnets) {
 		t.Fatalf("update: err = %v", err)
 	}
 	if posts := postsJSON(poster); len(posts) != 0 {
 		t.Fatalf("RCI дёрнут при отказе:\n%s", strings.Join(posts, "\n"))
 	}
-	if err := svc.UpdatePeer(ctx, "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32"}); err != nil {
+	if err := svc.UpdatePeer(ctx, "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{}}); err != nil {
 		t.Fatalf("снятие сетей отвергнуто: %v", err)
 	}
 	if sv, _ := store.GetManagedServerByID("Wireguard1"); len(sv.Peers[0].RemoteSubnets) != 0 {
@@ -369,7 +369,7 @@ func TestUpdatePeer_StoreFailure_RevertsSubnetsAndTunnelIP(t *testing.T) {
 			return nil
 		})
 	}
-	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.3/32", RemoteSubnets: []string{"192.168.77.0/24"}})
+	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.3/32", RemoteSubnets: &[]string{"192.168.77.0/24"}})
 	if err == nil || !strings.Contains(err.Error(), "save to storage") {
 		t.Fatalf("err = %v", err)
 	}
@@ -476,5 +476,76 @@ func TestRestore_MergeClearsUnappliedRemoteSubnets(t *testing.T) {
 	}
 	if len(in[0].RemoteSubnets) != 1 {
 		t.Fatal("входной бэкап изменён")
+	}
+}
+
+// W2-P1 (решение владельца 28.09): в правке пира поле сетей отсутствует или
+// null — значение пира не меняется ни на роутере, ни в хранилище.
+// Запрос декодируется из JSON — различие absent/null/[] живёт только там.
+func updatePeerJSON(t *testing.T, svc *Service, body string) error {
+	t.Helper()
+	var req UpdatePeerRequest
+	if err := json.Unmarshal([]byte(body), &req); err != nil {
+		t.Fatal(err)
+	}
+	return svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", req)
+}
+
+func seedPeerAllowed(t *testing.T, store *storage.SettingsStore, allowed string) {
+	t.Helper()
+	if err := store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
+		sv.Peers[0].ClientAllowedIPs = allowed
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpdatePeer_AbsentOrNullNetworksUntouched(t *testing.T) {
+	for _, body := range []string{
+		`{"description":"renamed","tunnelIP":"10.66.66.2/32"}`,
+		`{"description":"renamed","tunnelIP":"10.66.66.2/32","clientAllowedIPs":null,"remoteSubnets":null}`,
+	} {
+		svc, store, poster, _ := newPeerSubnetTestService(t, rcOurs77)
+		seedPeer(t, store, "192.168.77.0/24")
+		seedPeerAllowed(t, store, "10.66.66.0/24")
+		if err := updatePeerJSON(t, svc, body); err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if posts := postsJSON(poster); indexOf(posts, `"allow-ips"`) >= 0 || indexOf(posts, `"route"`) >= 0 {
+			t.Fatalf("%s: сети тронуты:\n%s", body, strings.Join(posts, "\n"))
+		}
+		p := func() storage.ManagedPeer { sv, _ := store.GetManagedServerByID("Wireguard1"); return sv.Peers[0] }()
+		if p.Description != "renamed" || p.ClientAllowedIPs != "10.66.66.0/24" || len(p.RemoteSubnets) != 1 || p.RemoteSubnets[0] != "192.168.77.0/24" {
+			t.Fatalf("%s: peer = %+v", body, p)
+		}
+	}
+}
+
+func TestUpdatePeer_EmptyClientAllowedIPsClears(t *testing.T) {
+	svc, store, _, _ := newPeerSubnetTestService(t, `[]`)
+	seedPeer(t, store)
+	seedPeerAllowed(t, store, "10.66.66.0/24")
+	if err := updatePeerJSON(t, svc, `{"description":"branch","tunnelIP":"10.66.66.2/32","clientAllowedIPs":""}`); err != nil {
+		t.Fatal(err)
+	}
+	if sv, _ := store.GetManagedServerByID("Wireguard1"); sv.Peers[0].ClientAllowedIPs != "" {
+		t.Fatalf("clientAllowedIPs = %q", sv.Peers[0].ClientAllowedIPs)
+	}
+}
+
+// Отсутствие сетей не упирается в ограничение LAN-сегментов: править
+// описание пира на таком сервере можно.
+func TestUpdatePeer_AbsentRemoteSubnets_LANSegmentsPass(t *testing.T) {
+	svc, store, _, _ := newPeerSubnetTestService(t, `[]`)
+	seedPeer(t, store)
+	if err := store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
+		sv.LANSegments = []string{"Bridge0"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := updatePeerJSON(t, svc, `{"description":"x","tunnelIP":"10.66.66.2/32"}`); err != nil {
+		t.Fatal(err)
 	}
 }

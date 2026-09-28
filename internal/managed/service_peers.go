@@ -241,12 +241,18 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		return err
 	}
 	req.DNS = dns
-	clientAllowed, err := peersubnet.ValidateClientAllowedIPs(req.ClientAllowedIPs)
-	if err != nil {
-		return err
+	// Поля сетей: nil — не присланы, значение пира не меняется (решение
+	// владельца 28.09, перекрывает спеку 5.4). Проверки — только присланного.
+	clientAllowed := ""
+	if req.ClientAllowedIPs != nil {
+		if clientAllowed, err = peersubnet.ValidateClientAllowedIPs(*req.ClientAllowedIPs); err != nil {
+			return err
+		}
 	}
-	if err := remoteSubnetsVsLANSegments(server, req.RemoteSubnets); err != nil {
-		return err
+	if req.RemoteSubnets != nil {
+		if err := remoteSubnetsVsLANSegments(server, *req.RemoteSubnets); err != nil {
+			return err
+		}
 	}
 	sigProfile := ""
 	if req.Signature != nil {
@@ -279,18 +285,20 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		}
 	}
 	// Чтение роутера — после дешёвых локальных проверок.
-	var remote []string
-	if len(req.RemoteSubnets) > 0 {
-		occupied, err := s.OccupiedSubnets(ctx, PeerRef{Iface: iface, PubKey: pubkey})
-		if err != nil {
-			return fmt.Errorf("occupied subnets: %w", err)
+	var remote, added, removed []string
+	if req.RemoteSubnets != nil {
+		if len(*req.RemoteSubnets) > 0 {
+			occupied, err := s.OccupiedSubnets(ctx, PeerRef{Iface: iface, PubKey: pubkey})
+			if err != nil {
+				return fmt.Errorf("occupied subnets: %w", err)
+			}
+			if remote, err = peersubnet.ValidateRemoteSubnets(*req.RemoteSubnets, occupied); err != nil {
+				return err
+			}
 		}
-		if remote, err = peersubnet.ValidateRemoteSubnets(req.RemoteSubnets, occupied); err != nil {
-			return err
-		}
+		// Diff — от хранилища, не от allow-ips роутера: источник правды здесь.
+		added, removed = peersubnet.Diff(peer.RemoteSubnets, remote)
 	}
-	// Diff — от хранилища, не от allow-ips роутера: источник правды здесь.
-	added, removed := peersubnet.Diff(peer.RemoteSubnets, remote)
 	var router peersubnet.Router
 	if len(added)+len(removed) > 0 {
 		if router, err = s.peerRouter(); err != nil {
@@ -357,8 +365,12 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		sv.Peers[i].DNS = req.DNS
 		// Новый слайс, не append по месту: UpdateManagedServer клонирует только
 		// Peers, внутренние слайсы элементов делятся с кэшем.
-		sv.Peers[i].ClientAllowedIPs = clientAllowed
-		sv.Peers[i].RemoteSubnets = remote
+		if req.ClientAllowedIPs != nil {
+			sv.Peers[i].ClientAllowedIPs = clientAllowed
+		}
+		if req.RemoteSubnets != nil {
+			sv.Peers[i].RemoteSubnets = remote
+		}
 		if req.Signature != nil {
 			sv.Peers[i].I1 = req.Signature.I1
 			sv.Peers[i].I2 = req.Signature.I2

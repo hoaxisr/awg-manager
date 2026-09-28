@@ -47,11 +47,11 @@ type ServerUpdatePeerRequestDTO struct {
 	// снимает свой резолвер и возвращает пира к LAN-адресу роутера (#933).
 	DNS string `json:"dns,omitempty" example:"192.168.1.1"`
 	// ClientAllowedIPs — строка AllowedIPs в .conf клиента (CIDR через запятую,
-	// пусто — весь трафик).
-	ClientAllowedIPs string `json:"clientAllowedIPs,omitempty" example:"10.0.14.0/24, 192.168.1.0/24"`
+	// пусто — весь трафик). Отсутствие поля или null — не менять.
+	ClientAllowedIPs *string `json:"clientAllowedIPs,omitempty" example:"10.0.14.0/24, 192.168.1.0/24"`
 	// RemoteSubnets — сети за клиентом, IPv4 CIDR (#713); полная замена списка:
-	// отсутствие поля или пустой список = снять все сети за клиентом.
-	RemoteSubnets []string `json:"remoteSubnets,omitempty" example:"192.168.77.0/24"`
+	// отсутствие поля или null — не менять; пустой список — снять все.
+	RemoteSubnets *[]string `json:"remoteSubnets,omitempty" example:"192.168.77.0/24"`
 }
 
 // Subtree dispatches /api/servers/{name}/... operations.
@@ -306,7 +306,7 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 //
 //	@Summary		Update server peer
 //	@Description	Changes a peer's allowed-IP and/or description on the named WireGuard server. Returns the fresh servers snapshot.
-//	@Description	remoteSubnets replaces the whole list: absent or empty removes all subnets behind the client.
+//	@Description	clientAllowedIPs and remoteSubnets: absent or null keeps the stored value; "" / [] clears it (removes all subnets behind the client).
 //	@Tags			servers
 //	@Accept			json
 //	@Produce		json
@@ -354,15 +354,22 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		response.Error(w, "ключ клиента недоступен (создан вне AWG Manager или через KeenDNS)", "NO_PEER_SECRET")
 		return
 	}
-	clientAllowed, err := peersubnet.ValidateClientAllowedIPs(req.ClientAllowedIPs)
-	if err != nil {
-		response.Error(w, err.Error(), "INVALID_CLIENT_ALLOWED_IPS")
-		return
+	// Поля сетей: nil (отсутствие или null) — значение пира не меняется
+	// (решение владельца 28.09, перекрывает спеку 5.4); ""/[] — очистить.
+	clientAllowed := ""
+	if req.ClientAllowedIPs != nil {
+		if clientAllowed, err = peersubnet.ValidateClientAllowedIPs(*req.ClientAllowedIPs); err != nil {
+			response.Error(w, err.Error(), "INVALID_CLIENT_ALLOWED_IPS")
+			return
+		}
+	}
+	var reqRemote []string
+	if req.RemoteSubnets != nil {
+		reqRemote = *req.RemoteSubnets
 	}
 	// Обоим полям негде жить без секрета — как DNS и сигнатуре. Пустые
 	// значения пропускаем: фронт шлёт их всегда, в т.ч. правя чужого пира.
-	// Отсутствие remoteSubnets в теле = пусто = снять все (спека 5.4, как у DNS).
-	if (clientAllowed != "" || len(req.RemoteSubnets) > 0) && !hasSecret {
+	if (clientAllowed != "" || len(reqRemote) > 0) && !hasSecret {
 		response.Error(w, "ключ клиента недоступен (создан вне AWG Manager или через KeenDNS)", "NO_PEER_SECRET")
 		return
 	}
@@ -416,12 +423,14 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		newIP = newHost.String()
 	}
 	// Чтение роутера — после дешёвых локальных проверок.
-	remote, ok := h.validateRemoteSubnets(r.Context(), w, req.RemoteSubnets, managed.PeerRef{Iface: name, PubKey: pubkey})
-	if !ok {
-		return
+	var remote, added, removed []string
+	if req.RemoteSubnets != nil {
+		if remote, ok = h.validateRemoteSubnets(r.Context(), w, reqRemote, managed.PeerRef{Iface: name, PubKey: pubkey}); !ok {
+			return
+		}
+		// Разница — от записи, не от allow-ips роутера: источник правды здесь.
+		added, removed = peersubnet.Diff(sec.RemoteSubnets, remote)
 	}
-	// Разница — от записи, не от allow-ips роутера: источник правды здесь.
-	added, removed := peersubnet.Diff(sec.RemoteSubnets, remote)
 
 	if wantIPChange {
 		if err := h.commands.Wireguard.UpdatePeerAllowIPs(r.Context(), name, pubkey, oldIP, newIP); err != nil {
@@ -475,11 +484,11 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 			sec.DNS = peerDNS
 			changed = true
 		}
-		if sec.ClientAllowedIPs != clientAllowed {
+		if req.ClientAllowedIPs != nil && sec.ClientAllowedIPs != clientAllowed {
 			sec.ClientAllowedIPs = clientAllowed
 			changed = true
 		}
-		if !slices.Equal(sec.RemoteSubnets, remote) {
+		if req.RemoteSubnets != nil && !slices.Equal(sec.RemoteSubnets, remote) {
 			sec.RemoteSubnets = remote
 			changed = true
 		}
