@@ -9,6 +9,7 @@
     import RoutingTabBodySkeleton from './RoutingTabBodySkeleton.svelte';
     import RoutingCreateButton from '$lib/components/routing/RoutingCreateButton.svelte';
     import { ERROR_WORDS, pluralForm, pluralize, RULE_WORDS } from '$lib/utils/pluralize';
+    import { routingTunnelLabel } from '$lib/utils/routingTunnelOptions';
 
     interface Props {
         clientRoutes: ClientRoute[];
@@ -194,7 +195,7 @@
             {:else}
                 {@const bulkTunnelOpts: DropdownOption[] = [
                     ...routingTunnels.filter(t => t.type === 'managed' && t.available).map((t) => ({ value: t.id, label: t.name })),
-                    ...routingTunnels.filter(t => t.type === 'system' && t.available).map((t) => ({ value: t.id, label: t.name })),
+                    ...routingTunnels.filter(t => t.type === 'system' && t.available).map((t) => ({ value: t.id, label: routingTunnelLabel(t) })),
                 ]}
                 <div class="bulk-tunnel-bar">
                     <span class="bulk-tunnel-label">Туннель:</span>
