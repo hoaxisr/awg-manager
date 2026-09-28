@@ -2,10 +2,11 @@
 	import { onDestroy } from 'svelte';
 	import { Button } from '$lib/components/ui';
 	import type { PeerPresets } from '$lib/types';
-	import { validateClientAllowedIPs, validateRemoteSubnets } from '$lib/utils/peerForm';
+	import { validateClientAllowedIPs, validateRemoteSubnets, formatClientAllowedIPs } from '$lib/utils/peerForm';
 	import { notifications } from '$lib/stores/notifications';
 
 	interface Props {
+		/** Текст textarea: CIDR через запятую и/или с новой строки; в API — normalizeClientAllowedIPs. */
 		clientAllowedIPs: string;
 		/** Текст textarea: по CIDR в строке (или через запятую). */
 		remoteSubnets: string;
@@ -38,7 +39,7 @@
 		loading = true;
 		try {
 			const presets = await loadPresets();
-			if (!destroyed) clientAllowedIPs = presets[kind];
+			if (!destroyed) clientAllowedIPs = formatClientAllowedIPs(presets[kind]);
 		} catch (e) {
 			if (!destroyed) notifications.error(e instanceof Error ? e.message : 'Не удалось получить пресет');
 		} finally {
@@ -49,19 +50,19 @@
 
 <div class="form-group">
 	<label class="field-label" for="{idPrefix}-allowed">AllowedIPs клиента</label>
-	<input
-		type="text"
+	<textarea
 		id="{idPrefix}-allowed"
-		class="field-input"
+		class="field-textarea"
+		rows="4"
 		bind:value={clientAllowedIPs}
 		placeholder="0.0.0.0/0, ::/0"
 		{disabled}
-	/>
+	></textarea>
 	<div class="preset-row">
-		<Button variant="ghost" size="sm" onclick={() => applyPreset('routerOnly')} disabled={disabled || loading}>
+		<Button variant="secondary" size="sm" onclick={() => applyPreset('routerOnly')} disabled={disabled || loading}>
 			Только сети роутера
 		</Button>
-		<Button variant="ghost" size="sm" onclick={() => applyPreset('exceptRouter')} disabled={disabled || loading}>
+		<Button variant="secondary" size="sm" onclick={() => applyPreset('exceptRouter')} disabled={disabled || loading}>
 			Всё, кроме сетей роутера
 		</Button>
 	</div>

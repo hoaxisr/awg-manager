@@ -2,7 +2,7 @@
 	import type { ManagedServer } from '$lib/types';
 	import { Modal, FormToggle, Button, FieldHint } from '$lib/components/ui';
 	import { routerDnsHint } from './routerDnsHint';
-	import { validateTunnelIP, validateDNSList, validatePeerNetworks, parseRemoteSubnets } from '$lib/utils/peerForm';
+	import { validateTunnelIP, validateDNSList, validatePeerNetworks, parseRemoteSubnets, normalizeClientAllowedIPs } from '$lib/utils/peerForm';
 	import PeerNetworksFields from './PeerNetworksFields.svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -77,7 +77,7 @@
 				description,
 				tunnelIP,
 				dns: dns || undefined,
-				clientAllowedIPs,
+				clientAllowedIPs: normalizeClientAllowedIPs(clientAllowedIPs),
 				remoteSubnets: parseRemoteSubnets(remoteSubnets)
 			});
 			notifications.success('Клиент добавлен');

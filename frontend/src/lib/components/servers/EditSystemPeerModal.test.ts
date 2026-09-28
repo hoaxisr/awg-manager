@@ -123,7 +123,7 @@ describe('EditSystemPeerModal: DNS пира', () => {
 describe('EditSystemPeerModal: сети клиента', () => {
 	it('без локальной записи оба поля недоступны', () => {
 		const { getByLabelText } = openModal(basePeer({ confAvailable: false }));
-		expect((getByLabelText('AllowedIPs клиента') as HTMLInputElement).disabled).toBe(true);
+		expect((getByLabelText('AllowedIPs клиента') as HTMLTextAreaElement).disabled).toBe(true);
 		expect((getByLabelText('Сети за клиентом') as HTMLTextAreaElement).disabled).toBe(true);
 	});
 
@@ -186,6 +186,6 @@ describe('EditSystemPeerModal: сети клиента', () => {
 		resolve({ routerOnly: '192.168.1.0/24', exceptRouter: '' });
 		await tick();
 		await tick();
-		expect((getByLabelText('AllowedIPs клиента') as HTMLInputElement).value).toBe('10.0.0.0/8');
+		expect((getByLabelText('AllowedIPs клиента') as HTMLTextAreaElement).value).toBe('10.0.0.0/8');
 	});
 });

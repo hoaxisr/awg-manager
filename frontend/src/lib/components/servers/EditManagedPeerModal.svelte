@@ -4,7 +4,7 @@
 	import { protocols, calcTotalChars, MAX_SIGNATURE_CHARS, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
 	import PeerSignatureEditor from './PeerSignatureEditor.svelte';
 	import { routerDnsHint } from './routerDnsHint';
-	import { validateTunnelIP, validateDNSList, validatePeerNetworks, parseRemoteSubnets } from '$lib/utils/peerForm';
+	import { validateTunnelIP, validateDNSList, validatePeerNetworks, parseRemoteSubnets, normalizeClientAllowedIPs, formatClientAllowedIPs } from '$lib/utils/peerForm';
 	import PeerNetworksFields from './PeerNetworksFields.svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -55,7 +55,7 @@
 			useRouterDNS = routerIP !== '' && dns === routerIP;
 			sigProfile = peerProfile();
 			sigPackets = peerPackets();
-			clientAllowedIPs = peer.clientAllowedIPs ?? '';
+			clientAllowedIPs = formatClientAllowedIPs(peer.clientAllowedIPs ?? '');
 			remoteSubnets = (peer.remoteSubnets ?? []).join('\n');
 		}
 		wasOpen = open;
@@ -79,7 +79,7 @@
 		tunnelIP !== peer.tunnelIP ||
 		dns !== (peer.dns || '') ||
 		useRouterDNS !== (routerIP !== '' && (peer.dns || '') === routerIP) ||
-		clientAllowedIPs !== (peer.clientAllowedIPs ?? '') ||
+		normalizeClientAllowedIPs(clientAllowedIPs) !== (peer.clientAllowedIPs ?? '') ||
 		remoteSubnets !== (peer.remoteSubnets ?? []).join('\n') ||
 		sigDirty
 	);
@@ -91,7 +91,7 @@
 				description,
 				tunnelIP,
 				dns: dns || undefined,
-				clientAllowedIPs,
+				clientAllowedIPs: normalizeClientAllowedIPs(clientAllowedIPs),
 				remoteSubnets: parseRemoteSubnets(remoteSubnets),
 				signature: sigDirty ? { profile: sigProfile, ...sigPackets } : undefined,
 			});

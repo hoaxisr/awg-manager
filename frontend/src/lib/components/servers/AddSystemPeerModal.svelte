@@ -7,7 +7,7 @@
 	import { suggestNextPeerIP, hostIP, systemPeerTunnelIP } from '$lib/utils/serverPeerOptions';
 	import { FieldHint, FormToggle } from '$lib/components/ui';
 	import { routerDnsHint } from './routerDnsHint';
-	import { validateDNSList, validatePeerNetworks, parseRemoteSubnets } from '$lib/utils/peerForm';
+	import { validateDNSList, validatePeerNetworks, parseRemoteSubnets, normalizeClientAllowedIPs } from '$lib/utils/peerForm';
 	import PeerNetworksFields from './PeerNetworksFields.svelte';
 
 	interface Props {
@@ -60,7 +60,7 @@
 				description,
 				tunnelIP,
 				dns,
-				clientAllowedIPs,
+				clientAllowedIPs: normalizeClientAllowedIPs(clientAllowedIPs),
 				remoteSubnets: parseRemoteSubnets(remoteSubnets)
 			});
 			servers.applyMutationResponse(fresh);

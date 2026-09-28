@@ -32,8 +32,8 @@ describe('AddSystemPeerModal: сети клиента', () => {
 		await fireEvent.input(getByLabelText('DNS серверы'), { target: { value: '9.9.9.9' } });
 		await fireEvent.click(getByText('Только сети роутера'));
 		await waitFor(() =>
-			expect((getByLabelText('AllowedIPs клиента') as HTMLInputElement).value).toBe(
-				'10.9.0.0/24, 192.168.1.0/24'
+			expect((getByLabelText('AllowedIPs клиента') as HTMLTextAreaElement).value).toBe(
+				'10.9.0.0/24,\n192.168.1.0/24'
 			)
 		);
 		expect(api.getSystemServerPeerPresets).toHaveBeenCalledWith('Wireguard0', '9.9.9.9');

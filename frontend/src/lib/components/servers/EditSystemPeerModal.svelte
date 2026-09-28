@@ -8,7 +8,7 @@
 	import { servers } from '$lib/stores/servers';
 	import { FieldHint, FormToggle } from '$lib/components/ui';
 	import { routerDnsHint } from './routerDnsHint';
-	import { validateDNSList, validatePeerNetworks, parseRemoteSubnets } from '$lib/utils/peerForm';
+	import { validateDNSList, validatePeerNetworks, parseRemoteSubnets, normalizeClientAllowedIPs, formatClientAllowedIPs } from '$lib/utils/peerForm';
 	import { systemPeerTunnelIP } from '$lib/utils/serverPeerOptions';
 	import PeerNetworksFields from './PeerNetworksFields.svelte';
 
@@ -63,7 +63,7 @@
 			useRouterDNS = routerIP !== '' && dns === routerIP;
 			sigProfile = peerProfile();
 			sigPackets = peerPackets();
-			clientAllowedIPs = peer.clientAllowedIPs ?? '';
+			clientAllowedIPs = formatClientAllowedIPs(peer.clientAllowedIPs ?? '');
 			remoteSubnets = (peer.remoteSubnets ?? []).join('\n');
 		}
 		wasOpen = open;
@@ -86,7 +86,7 @@
 				description,
 				tunnelIP,
 				dns,
-				clientAllowedIPs,
+				clientAllowedIPs: normalizeClientAllowedIPs(clientAllowedIPs),
 				remoteSubnets: parseRemoteSubnets(remoteSubnets),
 				signature: sigDirty ? { profile: sigProfile, ...sigPackets } : undefined,
 			});

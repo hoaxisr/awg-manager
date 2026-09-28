@@ -61,8 +61,8 @@ describe('AddManagedPeerModal: сети клиента', () => {
 
 		await fireEvent.click(getByText('Всё, кроме сетей роутера'));
 		await waitFor(() =>
-			expect((getByLabelText('AllowedIPs клиента') as HTMLInputElement).value).toBe(
-				'0.0.0.0/5, 8.0.0.0/7, ::/0'
+			expect((getByLabelText('AllowedIPs клиента') as HTMLTextAreaElement).value).toBe(
+				'0.0.0.0/5,\n8.0.0.0/7,\n::/0'
 			)
 		);
 		expect(api.getManagedPeerPresets).toHaveBeenCalledWith('srv', '');

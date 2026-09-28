@@ -83,7 +83,7 @@ describe('EditManagedPeerModal: сети клиента', () => {
 			onUpdated: vi.fn(),
 		});
 
-		expect((getByLabelText('AllowedIPs клиента') as HTMLInputElement).value).toBe('10.8.0.0/24');
+		expect((getByLabelText('AllowedIPs клиента') as HTMLTextAreaElement).value).toBe('10.8.0.0/24');
 		await fireEvent.input(getByLabelText('Сети за клиентом'), { target: { value: '' } });
 		await fireEvent.click(getByText('Сохранить'));
 
@@ -91,6 +91,30 @@ describe('EditManagedPeerModal: сети клиента', () => {
 			'srv',
 			'pk',
 			expect.objectContaining({ clientAllowedIPs: '10.8.0.0/24', remoteSubnets: [] })
+		);
+	});
+
+	it('список AllowedIPs — по строке на CIDR, в запрос уходит «, »-список', async () => {
+		vi.mocked(api.updateManagedPeer).mockResolvedValue(
+			{} as Awaited<ReturnType<typeof api.updateManagedPeer>>
+		);
+		const { getByText, getByLabelText } = render(EditManagedPeerModal, {
+			open: true,
+			serverId: 'srv',
+			peer: basePeer({ clientAllowedIPs: '10.8.0.0/24, 10.9.0.0/24' }),
+			onclose: vi.fn(),
+			onUpdated: vi.fn(),
+		});
+
+		const field = getByLabelText('AllowedIPs клиента') as HTMLTextAreaElement;
+		expect(field.value).toBe('10.8.0.0/24,\n10.9.0.0/24');
+		await fireEvent.input(field, { target: { value: '10.8.0.0/24,\n10.9.0.0/24,\n' } });
+		await fireEvent.click(getByText('Сохранить'));
+
+		expect(api.updateManagedPeer).toHaveBeenCalledWith(
+			'srv',
+			'pk',
+			expect.objectContaining({ clientAllowedIPs: '10.8.0.0/24, 10.9.0.0/24' })
 		);
 	});
 });
