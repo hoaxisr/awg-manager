@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -20,6 +21,15 @@ type KeyedStore[K comparable, V any] struct {
 	fetch func(ctx context.Context, key K) (V, error)
 	log   Logger
 	label string
+
+	// Поколения: all — у InvalidateAll, keyGen[key] — у Invalidate(key).
+	// Полёт кладёт результат, только если оба не сменились с его старта:
+	// иначе выборка, начатая до сброса, записала бы старое на весь TTL (та
+	// же гонка, что закрыта в ListStore). mu делает «проверка + Set» и
+	// «++ + сброс» атомарными друг относительно друга.
+	mu     sync.Mutex
+	all    uint64
+	keyGen map[K]uint64
 }
 
 // NewKeyedStore constructs a KeyedStore. A nil log falls back to NopLogger.
@@ -35,11 +45,12 @@ func NewKeyedStore[K comparable, V any](
 		log = NopLogger()
 	}
 	return &KeyedStore[K, V]{
-		ttl:   NewTTL[K, V](ttl),
-		sf:    NewSingleFlight[K, V](),
-		fetch: fetch,
-		log:   log,
-		label: label,
+		ttl:    NewTTL[K, V](ttl),
+		sf:     NewSingleFlight[K, V](),
+		fetch:  fetch,
+		log:    log,
+		label:  label,
+		keyGen: map[K]uint64{},
 	}
 }
 
@@ -52,6 +63,7 @@ func (s *KeyedStore[K, V]) Get(ctx context.Context, key K) (V, error) {
 		return v, nil
 	}
 	return s.sf.Do(key, func() (V, error) {
+		all, kg := s.generation(key)
 		v, err := s.fetch(ctx, key)
 		if err != nil {
 			if stale, ok := s.ttl.Peek(key); ok {
@@ -61,11 +73,38 @@ func (s *KeyedStore[K, V]) Get(ctx context.Context, key K) (V, error) {
 			var zero V
 			return zero, err
 		}
-		s.ttl.Set(key, v)
+		// Присоединившиеся к полёту получат v в любом случае; в кэш — только
+		// если сброса с его старта не было.
+		s.mu.Lock()
+		if s.all == all && s.keyGen[key] == kg {
+			s.ttl.Set(key, v)
+		}
+		s.mu.Unlock()
 		return v, nil
 	})
 }
 
+func (s *KeyedStore[K, V]) generation(key K) (all, kg uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.all, s.keyGen[key]
+}
+
 // Invalidate drops the cached value for key. InvalidateAll drops everything.
-func (s *KeyedStore[K, V]) Invalidate(key K) { s.ttl.Invalidate(key) }
-func (s *KeyedStore[K, V]) InvalidateAll()   { s.ttl.InvalidateAll() }
+// Полёты, начатые до сброса, свой результат в кэш уже не положат.
+func (s *KeyedStore[K, V]) Invalidate(key K) {
+	s.mu.Lock()
+	s.keyGen[key]++
+	s.ttl.Invalidate(key)
+	s.mu.Unlock()
+}
+
+func (s *KeyedStore[K, V]) InvalidateAll() {
+	s.mu.Lock()
+	s.all++
+	// Поколения ключей обнуляются вместе с кэшем: смена all и так отсекает
+	// все начатые полёты, а карта не растёт без предела.
+	s.keyGen = map[K]uint64{}
+	s.ttl.InvalidateAll()
+	s.mu.Unlock()
+}
