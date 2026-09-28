@@ -26,9 +26,10 @@ var (
 
 // ValidateClientAllowedIPs канонизирует список CIDR через запятую (v4 и v6
 // вперемешку); "" → "". Пустые элементы пропускаются — как у
-// ValidateRemoteSubnets («10.0.0.0/24,» валиден). Пересечения внутри списка допустимы: WireGuard берёт
-// самый длинный префикс. Значение уезжает в .conf строкой — поэтому ничего,
-// кроме разобранных CIDR, наружу не выходит (та же причина, что у ValidatePeerDNS).
+// ValidateRemoteSubnets («10.0.0.0/24,» валиден). Пересечения внутри списка
+// допустимы: WireGuard берёт самый длинный префикс. Значение уезжает в .conf
+// строкой — поэтому ничего, кроме разобранных CIDR, наружу не выходит (та же
+// причина, что у ValidatePeerDNS).
 func ValidateClientAllowedIPs(s string) (string, error) {
 	if strings.TrimSpace(s) == "" {
 		return "", nil
