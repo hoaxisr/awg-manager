@@ -764,11 +764,16 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 		if !commandsWired {
 			return nil
 		}
-		if err := s.commands.Interfaces.ACLUnbind(ctx, iface, acl); err != nil {
-			s.log.Debug("unbind ACL (teardown)", "error", err, "iface", iface)
-		}
-		if err := s.commands.Interfaces.ACLRemove(ctx, acl); err != nil {
-			s.log.Debug("remove ACL (teardown)", "error", err, "iface", iface)
+		// Состояние не прочитано — снимаем вслепую, как раньше: teardown
+		// обязан убрать доступ, лишняя E в журнале роутера дешевле.
+		if err := s.clearLANACL(ctx, iface); err != nil {
+			s.appLog.Warn("lan-acl", iface, "состояние списка "+acl+" не прочитано, снятие вслепую: "+err.Error())
+			if err := s.commands.Interfaces.ACLUnbind(ctx, iface, acl); err != nil {
+				s.log.Debug("unbind ACL (teardown)", "error", err, "iface", iface)
+			}
+			if err := s.commands.Interfaces.ACLRemove(ctx, acl); err != nil {
+				s.log.Debug("remove ACL (teardown)", "error", err, "iface", iface)
+			}
 		}
 		return nil
 	}
@@ -790,15 +795,10 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 		return err // старый ACL не тронут
 	}
 
-	// Apply — destroy → rebuild. unbind/remove best-effort (ACL может ещё не
-	// существовать), но больше не глушим молча. С auto-delete unbind может
-	// унести список сам (стенд 2026-09-05) — remove после него no-op или
-	// отказ, он и так best-effort.
-	if err := aclCmd.ACLUnbind(ctx, iface, acl); err != nil {
-		s.log.Debug("unbind ACL before rebuild", "error", err, "iface", iface)
-	}
-	if err := aclCmd.ACLRemove(ctx, acl); err != nil {
-		s.log.Debug("remove ACL before rebuild", "error", err, "iface", iface)
+	// Apply — destroy → rebuild. Состояние не прочитано — отказ до первой
+	// мутации: рабочий ACL не тронут.
+	if err := s.clearLANACL(ctx, iface); err != nil {
+		return err
 	}
 	for _, r := range plan {
 		// Дубль толерируем (как SetPermitAllACL): best-effort remove выше мог
@@ -820,6 +820,36 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 	// список привязан и работает, остаток лишь переживёт интерфейс.
 	if err := aclCmd.ACLAutoDelete(ctx, acl); err != nil {
 		s.appLog.Warn("lan-acl", iface, "auto-delete списка "+acl+" не включён: "+err.Error())
+	}
+	return nil
+}
+
+// clearLANACL снимает привязку и список AWGM_<iface> — только то, что есть:
+// unbind без привязки и `no access-list` без списка NDMS отвергает
+// `argument parse error`, и это E в журнале роутера (стенд 05.09, 28.09).
+// С auto-delete unbind уносит список сам (стенд 05.09), поэтому после него
+// наличие списка читается заново. Отказы самих команд — Debug, как раньше:
+// пересборка идёт дальше. Ошибка — только чтение running-config.
+func (s *Service) clearLANACL(ctx context.Context, iface string) error {
+	acl := "AWGM_" + iface
+	exists, bound, err := s.lanACLState(ctx, iface)
+	if err != nil {
+		return err
+	}
+	if bound {
+		if err := s.commands.Interfaces.ACLUnbind(ctx, iface, acl); err != nil {
+			s.log.Debug("unbind ACL", "error", err, "iface", iface)
+		}
+		if exists {
+			if exists, _, err = s.lanACLState(ctx, iface); err != nil {
+				return err
+			}
+		}
+	}
+	if exists {
+		if err := s.commands.Interfaces.ACLRemove(ctx, acl); err != nil {
+			s.log.Debug("remove ACL", "error", err, "iface", iface)
+		}
 	}
 	return nil
 }

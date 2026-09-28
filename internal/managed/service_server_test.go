@@ -1029,10 +1029,14 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 		}
 	}
 
+	// Живой привязанный список — прежняя последовательность.
+	ourACL := []string{"access-list AWGM_Wireguard0", "    permit ip 10.66.66.0 255.255.255.0 10.10.10.0 255.255.255.0", "    auto-delete", "!",
+		"interface Wireguard0", "    security-level private", "    ip access-group AWGM_Wireguard0 in", "!"}
+
 	t.Run("non-empty segments", func(t *testing.T) {
 		svc, store, poster := newLANSegmentsTestService(t)
 		ctx := context.Background()
-		withRunningConfig(svc, "interface Wireguard0", "    security-level private", "!")
+		withRunningConfig(svc, ourACL...)
 		seedServer(t, store, ifaceName)
 		resetPosts(poster)
 
@@ -1064,10 +1068,27 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 		}
 	})
 
+	// Стенд 28.09: первое включение — привязки и списка нет; unbind и
+	// `no access-list` вслепую дали бы E «argument parse error» в журнале роутера.
+	t.Run("first enable without list: no unbind/remove", func(t *testing.T) {
+		svc, store, poster := newLANSegmentsTestService(t)
+		withRunningConfig(svc, "interface Wireguard0", "    security-level private", "!")
+		seedServer(t, store, ifaceName)
+		resetPosts(poster)
+		if err := svc.SetLANSegments(context.Background(), ifaceName, []string{"Home"}); err != nil {
+			t.Fatalf("SetLANSegments: %v", err)
+		}
+		assertParses(t, parseStrings(poster), []string{
+			fmt.Sprintf("access-list %s permit ip 10.66.66.0 255.255.255.0 10.10.10.0 255.255.255.0", acl),
+			fmt.Sprintf("interface %s ip access-group %s in", ifaceName, acl),
+			fmt.Sprintf("access-list %s auto-delete", acl),
+		})
+	})
+
 	t.Run("empty segments unbinds and removes only", func(t *testing.T) {
 		svc, store, poster := newLANSegmentsTestService(t)
 		ctx := context.Background()
-		withRunningConfig(svc, "interface Wireguard0", "    security-level private", "!")
+		withRunningConfig(svc, ourACL...)
 		seedServer(t, store, ifaceName)
 		resetPosts(poster)
 
@@ -1105,6 +1126,23 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 			t.Fatalf("SetLANSegments(empty): %v", err)
 		}
 
+		// Нашего списка нет — снимать нечего; чужой не тронут.
+		assertParses(t, parseStrings(poster), nil)
+	})
+
+	// running-config не прочитан: teardown снимает вслепую (доступ обязан
+	// уйти), пересборка отказывает до первой мутации.
+	t.Run("running-config unavailable", func(t *testing.T) {
+		svc, store, poster := newLANSegmentsTestService(t) // stateAwareGetter: running-config = ошибка
+		seedServer(t, store, ifaceName)
+		resetPosts(poster)
+		if err := svc.SetLANSegments(context.Background(), ifaceName, []string{"Home"}); err == nil {
+			t.Fatal("пересборка без чтения состояния обязана отказать")
+		}
+		assertParses(t, parseStrings(poster), nil)
+		if err := svc.SetLANSegments(context.Background(), ifaceName, []string{}); err != nil {
+			t.Fatalf("teardown: %v", err)
+		}
 		assertParses(t, parseStrings(poster), []string{
 			fmt.Sprintf("no interface %s ip access-group %s in", ifaceName, acl),
 			"no access-list " + acl,
@@ -1163,6 +1201,7 @@ func TestUpdate_SubnetChange_RebuildsLANACL(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	withRunningConfig(svc)
 	poster.mu.Lock()
 	poster.posts = nil
 	poster.mu.Unlock()

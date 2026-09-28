@@ -67,29 +67,29 @@ func (s *Service) planPeerSubnetsACL(ctx context.Context, server *storage.Manage
 	if len(addRules)+len(removeRules) == 0 {
 		return peerACLEdit{}, nil
 	}
-	bound, err := s.lanACLBound(ctx, server.InterfaceName)
+	exists, bound, err := s.lanACLState(ctx, server.InterfaceName)
 	if err != nil {
 		return peerACLEdit{}, err
 	}
-	if !bound {
+	if !exists || !bound {
 		return peerACLEdit{rebuild: true, newNets: newNets, oldNets: serverPeerSubnets(server.Peers)}, nil
 	}
 	return peerACLEdit{add: addRules, remove: removeRules}, nil
 }
 
-// lanACLBound — список AWGM_<iface> есть в running-config и привязан к
-// интерфейсу. Чтение свежее (Fetch, мимо кэша): список мог снять кто угодно
-// мимо нас, а хук ndm на такую правку к нам не приходит.
-func (s *Service) lanACLBound(ctx context.Context, iface string) (bool, error) {
+// lanACLState — есть ли список AWGM_<iface> в running-config и привязан ли
+// он к интерфейсу. Чтение свежее (Fetch, мимо кэша): список мог снять кто
+// угодно мимо нас, а хук ndm на такую правку к нам не приходит.
+func (s *Service) lanACLState(ctx context.Context, iface string) (exists, bound bool, err error) {
 	if s.queries == nil || s.queries.RunningConfig == nil {
-		return false, fmt.Errorf("running-config store not wired")
+		return false, false, fmt.Errorf("running-config store not wired")
 	}
 	lines, err := s.queries.RunningConfig.Fetch(ctx)
 	if err != nil {
-		return false, fmt.Errorf("read running-config: %w", err)
+		return false, false, fmt.Errorf("read running-config: %w", err)
 	}
 	acl := "AWGM_" + iface
-	return slices.Contains(lines, "access-list "+acl) && slices.Contains(query.InterfaceAccessGroupsOf(lines, iface), acl), nil
+	return slices.Contains(lines, "access-list "+acl), slices.Contains(query.InterfaceAccessGroupsOf(lines, iface), acl), nil
 }
 
 // applyPeerSubnetsACL применяет правку: permit добавленных сетей в каждый

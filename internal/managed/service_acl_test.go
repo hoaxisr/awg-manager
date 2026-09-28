@@ -3,27 +3,44 @@ package managed
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
 
-// Running-config недоступен → сегменты всё равно применяются (4 прежние
-// команды + auto-delete), и никакого Warn: ради ACL мы в running-config
-// больше не ходим — чужой `_WEBADMIN_` не снимается (#879).
-func TestApplyLANSegments_RunningConfigUnavailable_ProceedsSilently(t *testing.T) {
+// Running-config недоступен → пересборка отказывает до первой мутации (стенд
+// 28.09: снимать вслепую = E в журнале роутера, а решить, что снимать, без
+// чтения нечем); рабочий ACL не тронут, запись не изменена.
+func TestApplyLANSegments_RunningConfigUnavailable_FailsClosed(t *testing.T) {
 	svc, store, poster := newLANSegmentsTestService(t) // stateAwareGetter: running-config = ошибка
+	seedServer(t, store, "Wireguard0")
+	resetPosts(poster)
+	if err := svc.SetLANSegments(context.Background(), "Wireguard0", []string{"Home"}); err == nil {
+		t.Fatal("ждали отказ")
+	}
+	if got := parseStrings(poster); len(got) != 0 {
+		t.Fatalf("команды без чтения состояния: %v", got)
+	}
+	if sv, _ := store.GetManagedServerByID("Wireguard0"); len(sv.LANSegments) != 0 {
+		t.Fatalf("запись изменена: %v", sv.LANSegments)
+	}
+}
+
+// Teardown при недоступном running-config — снятие вслепую с Warn.
+func TestApplyLANSegments_TeardownRunningConfigUnavailable_BlindWithWarn(t *testing.T) {
+	svc, store, poster := newLANSegmentsTestService(t)
 	spy := &recAppLog{}
 	svc.appLog = logging.NewScopedLogger(spy, logging.GroupServer, logging.SubManaged)
 	seedServer(t, store, "Wireguard0")
 	resetPosts(poster)
-	if err := svc.SetLANSegments(context.Background(), "Wireguard0", []string{"Home"}); err != nil {
+	if err := svc.SetLANSegments(context.Background(), "Wireguard0", nil); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(parseStrings(poster)); n != 5 {
-		t.Fatalf("команд %d, ждали 5", n)
+	if got := parseStrings(poster); !slices.Equal(got, []string{"no interface Wireguard0 ip access-group AWGM_Wireguard0 in", "no access-list AWGM_Wireguard0"}) {
+		t.Fatalf("got %v", got)
 	}
-	if len(spy.entries) != 1 || spy.entries[0] != "info|lan-segments|Wireguard0|LAN segments changed: Home" {
+	if len(spy.entries) == 0 || !strings.HasPrefix(spy.entries[0], "warn|lan-acl|Wireguard0|") {
 		t.Fatalf("журнал = %v", spy.entries)
 	}
 }
@@ -48,8 +65,6 @@ func TestForeignAccessGroups_ExcludesOurs(t *testing.T) {
 // после каждой перезагрузки роутера.
 func TestApplyLANSegments_NeverTouchesForeignPermitAll(t *testing.T) {
 	want := []string{
-		"no interface Wireguard0 ip access-group AWGM_Wireguard0 in",
-		"no access-list AWGM_Wireguard0",
 		"access-list AWGM_Wireguard0 permit ip 10.66.66.0 255.255.255.0 10.10.10.0 255.255.255.0",
 		"interface Wireguard0 ip access-group AWGM_Wireguard0 in",
 		"access-list AWGM_Wireguard0 auto-delete",
