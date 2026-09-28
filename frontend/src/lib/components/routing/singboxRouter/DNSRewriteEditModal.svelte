@@ -52,7 +52,7 @@
 			<div class="lbl">IP-адреса (через запятую)</div>
 			<input class="mono" bind:value={ipsStr} placeholder="104.25.158.178, fd00::5" />
 		</label>
-		{#if error}<div class="error">{error}</div>{/if}
+		{#if error}<div class="error-text visible">{error}</div>{/if}
 	</div>
 
 	{#snippet actions()}

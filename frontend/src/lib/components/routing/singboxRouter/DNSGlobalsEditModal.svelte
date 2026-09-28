@@ -119,7 +119,7 @@
 			</div>
 		</label>
 
-		{#if error}<div class="error">{error}</div>{/if}
+		{#if error}<div class="error-text visible">{error}</div>{/if}
 	</div>
 
 	{#snippet actions()}

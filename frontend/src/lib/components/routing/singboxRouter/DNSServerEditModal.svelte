@@ -452,7 +452,7 @@
 					</Button>
 					<span>Подставит первый IP и SHA-256 pins; домен сохранится как SNI.</span>
 				</div>
-				{#if lookupError}<div class="error">{lookupError}</div>{/if}
+				{#if lookupError}<div class="error-text visible">{lookupError}</div>{/if}
 				{#if lookupIPs.length}
 					<div class="hint">Найденные IP: {lookupIPs.join(', ')}</div>
 				{/if}
@@ -490,7 +490,7 @@
 			</section>
 		{/if}
 
-		{#if error}<div class="error">{error}</div>{/if}
+		{#if error}<div class="error-text visible">{error}</div>{/if}
 	</div>
 
 	{#snippet actions()}
