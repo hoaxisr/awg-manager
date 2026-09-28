@@ -30,11 +30,15 @@ func (s *Service) MigratePrivateKeys(ctx context.Context) {
 // firmware rejects multiple peers sharing it ("subnet overlaps with the other
 // peer"). Gated by a persisted flag so it runs once.
 //
-// Per-peer best-effort. The flag is set only when at least one removal
-// succeeded (or there was nothing to do): if every attempt failed, NDMS is
-// likely unreachable, so we leave the flag unset and retry on the next boot.
-// Legacy peers all carry 0.0.0.0/0, so a reachable NDMS removes it cleanly;
-// fresh installs default the flag to true and never enter this path.
+// Флаг встаёт, только если прочиталось всё: список интерфейсов и rc каждого
+// сервера с пирами. Сбой чтения = состояние неизвестно → флаг не ставится,
+// проход повторится на следующей загрузке. Сервер, чьего интерфейса нет в
+// прочитанном списке (удалён вне панели), — обработан: снимать не у кого.
+//
+// Снятия — best-effort по пиру: флаг не встаёт, только если отказали ВСЕ
+// попытки снятия (NDMS, вероятно, недоступен). Если хоть одно прошло, флаг
+// встаёт и пиры с отказавшим снятием больше не повторяются — как и до #713.
+// Fresh installs default the flag to true and never enter this path.
 //
 // Called from the daemon boot path after the NDMS interface cache is ready.
 func (s *Service) MigratePeerAllowIPs(ctx context.Context) {
@@ -46,28 +50,37 @@ func (s *Service) MigratePeerAllowIPs(ctx context.Context) {
 	// воскресило бы. Наличие — свежим чтением rc сервера, под блокировкой,
 	// которую берёт и удаление пира.
 	defer s.LockPeerSubnets()()
+	var exists map[string]bool
+	readFailed := false
 	attempted, failures := 0, 0
 	for _, sv := range s.settings.GetManagedServers() {
 		if len(sv.Peers) == 0 {
 			continue
 		}
-		onRouter, readErr := s.routerPeerKeys(ctx, sv.InterfaceName)
-		if readErr != nil && s.log != nil {
-			s.log.Warn("migrate-peer-allow-ips: peers not read, server skipped",
-				"interface", sv.InterfaceName, "error", readErr)
+		if exists == nil {
+			var err error
+			if exists, err = s.routerInterfaceIDs(ctx); err != nil {
+				if s.log != nil {
+					s.log.Warn("migrate-peer-allow-ips: interfaces not read, retry next boot", "error", err)
+				}
+				return
+			}
+		}
+		if !exists[sv.InterfaceName] {
+			continue // интерфейс удалён вне панели — пиров на роутере нет
+		}
+		onRouter, err := s.routerPeerKeys(ctx, sv.InterfaceName)
+		if err != nil {
+			// Не знаем, есть ли пиры, — не шлём и не ставим флаг.
+			readFailed = true
+			if s.log != nil {
+				s.log.Warn("migrate-peer-allow-ips: peers not read, server skipped",
+					"interface", sv.InterfaceName, "error", err)
+			}
+			continue
 		}
 		for _, peer := range sv.Peers {
-			if peer.PublicKey == "" {
-				continue
-			}
-			if readErr != nil {
-				// Не знаем, есть ли пир, — не шлём; попытка неудачная, чтобы
-				// флаг не встал и проход повторился на следующей загрузке.
-				attempted++
-				failures++
-				continue
-			}
-			if !onRouter[peer.PublicKey] {
+			if peer.PublicKey == "" || !onRouter[peer.PublicKey] {
 				continue // пира на роутере нет — снимать нечего
 			}
 			attempted++
@@ -80,8 +93,8 @@ func (s *Service) MigratePeerAllowIPs(ctx context.Context) {
 			}
 		}
 	}
-	if attempted > 0 && failures == attempted {
-		// NDMS unreachable / transient — do not mark done; retry next boot.
+	if readFailed || (attempted > 0 && failures == attempted) {
+		// Состояние не прочитано или NDMS не принял ни одного снятия — повтор.
 		return
 	}
 	if err := s.settings.SetManagedPeerAllowIPsMigrated(true); err != nil {
@@ -93,6 +106,22 @@ func (s *Service) MigratePeerAllowIPs(ctx context.Context) {
 	if s.log != nil {
 		s.log.Info("migrate-peer-allow-ips: completed", "peers", attempted)
 	}
+}
+
+// routerInterfaceIDs — id интерфейсов по свежему списку роутера.
+func (s *Service) routerInterfaceIDs(ctx context.Context) (map[string]bool, error) {
+	if s.queries == nil || s.queries.Interfaces == nil {
+		return nil, fmt.Errorf("interface store not wired")
+	}
+	ifaces, err := s.queries.Interfaces.ListFresh(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[string]bool, len(ifaces))
+	for _, i := range ifaces {
+		ids[i.ID] = true
+	}
+	return ids, nil
 }
 
 // routerPeerKeys — ключи пиров интерфейса по свежему rc.
