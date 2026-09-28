@@ -91,11 +91,18 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 
 	// Имя адресует ИНДЕКС из записи владения, а не сам объект: наш интерфейс мог
 	// умереть, и номер занял посторонний OpkgTun. Тогда шаги (2) и (5) сняли бы
-	// ЕГО дефолт и адреса. Один скан на всё выключение; «недоступный скан ≠
-	// чужой» — без скана и на его ошибке разбираем как раньше.
-	foreign := s.provenForeignOpkgTun(ctx, ndmsName, policyTunDescription)
-	if foreign {
+	// ЕГО дефолт и адреса. Один скан на всё выключение, три исхода (F493/F518):
+	// наш или скана нет — удерживаем; доказанно чужой — не трогаем, запись
+	// снимаем (шаг 5); скан упал — не трогаем, запись ОСТАВЛЯЕМ: Provisioned при
+	// Enabled=false заставит reconcilePolicyTun звать Disable следующим тиком —
+	// тот же повтор, что при провале holdOpkgTun.
+	ownership := s.opkgTunOwnership(ctx, ndmsName, policyTunDescription)
+	touch := ownership == ownershipOurs || ownership == ownershipNoScan
+	switch ownership {
+	case ownershipForeign:
 		s.appLog.Warn("policy-tun-disable", ndmsName, "на этом номере нет нашего OpkgTun — интерфейс не трогаем")
+	case ownershipUnknown:
+		s.appLog.Warn("policy-tun-disable", ndmsName, "скан владения NDMS недоступен — интерфейс не трогаем, повтор следующим тиком")
 	}
 
 	// (1) Вернуть сегментам записанный NAT ПЕРВЫМ шагом: пока дефолт ещё на tun,
@@ -112,7 +119,7 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 
 	// (2) Снять дефолт с tun. v6 снимаем безусловно: персист не хранит,
 	// был ли настроен v6-адрес, а remove-форма NDMS (`no:true`) идемпотентна.
-	if !foreign && s.deps.DefaultRoute != nil {
+	if touch && s.deps.DefaultRoute != nil {
 		if err := s.deps.DefaultRoute.RemoveDefaultRoute(ctx, ndmsName); err != nil {
 			s.appLog.Warn("policy-tun-disable", iface, "remove default route: "+err.Error())
 		}
@@ -215,17 +222,24 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	// значило бы навсегда запретить себе аллокацию. Индекс не течёт: аллокатор
 	// live-sourced. Профиль потерь тот же, что у персист-реапа (там запись тоже
 	// снимается на пропуске чужого).
-	if foreign {
+	// Скан упал — ни удержания, ни снятия: запись остаётся Provisioned, и
+	// следующий тик повторит выключение с новым вердиктом (F518).
+	switch {
+	case ownership == ownershipForeign:
 		if err := s.deps.Settings.SetOpkgTunState(nil); err != nil {
 			s.appLog.Warn("policy-tun-disable", iface, "clear policy-tun persist: "+err.Error())
 		}
-	} else if err := s.holdOpkgTun(ctx, ndmsName, "policy-tun-disable"); err == nil {
-		held := &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: st.Index}
-		if !natRestored {
-			held.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: natSegmentsOf(st)}
-		}
-		if err := s.deps.Settings.SetOpkgTunState(held); err != nil {
-			s.appLog.Warn("policy-tun-disable", iface, "hold policy-tun persist: "+err.Error())
+	case ownership == ownershipUnknown:
+		// Запись не трогаем: Provisioned=true — сигнал повтора (см. вердикт).
+	default:
+		if err := s.holdOpkgTun(ctx, ndmsName, "policy-tun-disable"); err == nil {
+			held := &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: st.Index}
+			if !natRestored {
+				held.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: natSegmentsOf(st)}
+			}
+			if err := s.deps.Settings.SetOpkgTunState(held); err != nil {
+				s.appLog.Warn("policy-tun-disable", iface, "hold policy-tun persist: "+err.Error())
+			}
 		}
 	}
 

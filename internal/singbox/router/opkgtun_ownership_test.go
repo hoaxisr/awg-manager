@@ -681,9 +681,6 @@ func TestFakeipWithConfig_SparesForeignInterfaceCIDRRoutes(t *testing.T) {
 func TestPolicyTunDisable_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
 	for _, tc := range foreignTeardownCases(policyTunDescription, "OpkgTun0") {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.unknown {
-				t.Skip("F518: выключение на упавшем скане — снимается в Task 3")
-			}
 			h := newPolicyTunEnableHarness(t, "")
 			// hold мутирует интерфейс (down/clear) и потому гейтится его наличием:
 			// NDMS создаёт интерфейс по любой мутации имени, а delete за ним не идёт.
@@ -718,6 +715,54 @@ func TestPolicyTunDisable_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
 				t.Errorf("запись = %+v, want nil (удерживать чужой индекс нечем)", st)
 			}
 		})
+	}
+}
+
+// F518: скан упал в момент выключения — интерфейс по номеру из записи не
+// трогаем (чей он — неизвестно): ни дефолт, ни down, ни clear. Запись остаётся
+// Provisioned, Enabled=false персистится. Следующий тик reconcile при ожившем
+// скане зовёт Disable снова и доводит удержание.
+func TestPolicyTunDisable_ScanUnavailable_RetriesNextTick(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	stubOrphanNetdev(t, true)
+	provisionPolicyTunForDisable(t, h)
+	h.svc.deps.OpkgTunScan = scanFails()
+
+	if err := h.svc.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable(policy-tun): %v", err)
+	}
+	holdCalls := []string{"RemoveDefaultRoute:OpkgTun0", "InterfaceDown:OpkgTun0", "ClearAddress:OpkgTun0"}
+	for _, call := range holdCalls {
+		if h.log.has(call) {
+			t.Fatalf("%s при недоступном скане: %v", call, h.log.calls)
+		}
+	}
+	all, err := h.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.SingboxRouter.Enabled {
+		t.Fatal("Enabled=true после Disable: durable-истина выключения не записана")
+	}
+	if st := all.OpkgTun; st == nil || !st.Provisioned || st.Index != 0 {
+		t.Fatalf("запись = %+v, want {Provisioned:true, Index:0}: повтор следующим тиком", st)
+	}
+
+	// Скан ожил: тик при Enabled=false и Provisioned=true зовёт Disable снова —
+	// теперь интерфейс наш, удержание доводится до конца.
+	h.log.calls = nil
+	h.svc.deps.OpkgTunScan = scanOurs(policyTunDescription, "OpkgTun0")
+	sr, _ := NormalizeSingboxRouterSettings(all.SingboxRouter)
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	for _, call := range holdCalls {
+		if !h.log.has(call) {
+			t.Fatalf("повтор не довёл удержание, нет %s: %v", call, h.log.calls)
+		}
+	}
+	if st := h.loadPolicyTun(t); st == nil || st.Provisioned {
+		t.Fatalf("запись = %+v, want удержание {Provisioned:false}", st)
 	}
 }
 
