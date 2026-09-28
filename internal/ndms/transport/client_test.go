@@ -168,6 +168,31 @@ func TestClient_Post_RoundTrip(t *testing.T) {
 	}
 }
 
+// F532: NDMS отвечает на POST show.interface по отсутствующей записи
+// HTTP 200 с конвертом статус-ошибки, ВЛОЖЕННЫМ в show.interface, а не
+// верхнеуровневым {"status":"error",...}, который проверяет ExtractError
+// (стенд KN-1810, 5.02.A.11 — дословное тело). postJSON обязан пропустить
+// его как обычный успех: разбор "unable to find" — забота
+// internal/ndms/query.fetchOne; «доучи» ExtractError смотреть и во
+// вложенные объекты — и первый же старт туннеля (записи ещё нет) поймает
+// поддельный NDMSAppError.
+func TestClient_Post_NestedStatusError_IsNotNDMSAppError(t *testing.T) {
+	const body = `{"show":{"interface":{"status":[{"status":"error","code":"6553619","ident":"Network::Interface::Base","message":"unable to find \"OpkgTun99\"."}]}}}`
+	c, _ := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+
+	resp, err := c.Post(context.Background(), map[string]any{
+		"show": map[string]any{"interface": map[string]any{"name": "OpkgTun99"}},
+	})
+	if err != nil {
+		t.Fatalf("Post: want nil error (вложенный статус — не верхнеуровневый конверт), got %v", err)
+	}
+	if string(resp) != body {
+		t.Errorf("resp body: got %s, want %s", resp, body)
+	}
+}
+
 func TestClient_PostBatch_ReturnsArray(t *testing.T) {
 	c, _ := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
