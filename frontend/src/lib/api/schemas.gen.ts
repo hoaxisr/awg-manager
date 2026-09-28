@@ -2017,10 +2017,13 @@ const api_SingboxRouterStatusResponse: v.GenericSchema = v.looseObject({
 });
 
 const api_SingboxRouterWANInterfaceDTO: v.GenericSchema = v.looseObject({
+	absent: v.optional(v.nullable(v.boolean())),
+	foreign: v.optional(v.nullable(v.boolean())),
 	id: v.optional(v.nullable(v.string())),
 	label: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
 	priority: v.optional(v.nullable(v.number())),
+	type: v.optional(v.nullable(v.string())),
 	up: v.optional(v.nullable(v.boolean())),
 });
 

@@ -6014,6 +6014,15 @@ definitions:
     type: object
   api.SingboxRouterWANInterfaceDTO:
     properties:
+      absent:
+        example: false
+        type: boolean
+      foreign:
+        description: |-
+          Foreign — отмеченный сторонний интерфейс (issue #935); Absent — его
+          сейчас нет в системе (интерфейс ядра без устройства).
+        example: false
+        type: boolean
       id:
         example: PPPoE0
         type: string
@@ -6026,6 +6035,9 @@ definitions:
       priority:
         example: 700000
         type: integer
+      type:
+        example: PPP
+        type: string
       up:
         example: true
         type: boolean
@@ -11261,6 +11273,10 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:

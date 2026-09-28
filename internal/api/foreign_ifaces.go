@@ -101,6 +101,7 @@ func (h *ForeignIfaceHandler) Mark(w http.ResponseWriter, r *http.Request) {
 //	@Produce		json
 //	@Param			body	body		ForeignIfaceRequest	true	"Имя интерфейса ядра"
 //	@Success		200		{object}	APIEnvelope
+//	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/interfaces/foreign/unmark [post]
 func (h *ForeignIfaceHandler) Unmark(w http.ResponseWriter, r *http.Request) {
