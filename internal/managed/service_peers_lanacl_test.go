@@ -555,7 +555,7 @@ func TestDeletePeer_ACLRemovalSurvivesCancelledCtx(t *testing.T) {
 func TestSetLANSegments_UnknownSegment_NoResaveHint(t *testing.T) {
 	svc, _, poster, _ := newPeerSubnetTestService(t, `[]`)
 	err := svc.SetLANSegments(context.Background(), "Wireguard1", []string{"Nope"})
-	if !errors.Is(err, ErrUnknownLANSegment) || err.Error() != `LAN-сегмент "Nope" не найден на роутере` {
+	if !errors.Is(err, ErrUnknownLANSegment) || err.Error() != `LAN-сегмент не найден на роутере: "Nope"` {
 		t.Fatalf("err = %v", err)
 	}
 	if len(aclParses(poster)) != 0 {
