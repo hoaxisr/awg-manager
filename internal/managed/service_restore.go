@@ -409,6 +409,7 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 	// Пиры клонируем: слайс общий с входным sv, а мы его правим (сети за
 	// клиентом, сигнатуры ниже).
 	peers := slices.Clone(sv.Peers)
+	var taken []peersubnet.Occupied
 	for i := range peers {
 		peer := &peers[i]
 		ip, _, err := net.ParseCIDR(peer.TunnelIP)
@@ -418,7 +419,7 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 		if err := s.rciAddPeer(ctx, target, peer.PublicKey, peer.PresharedKey, peer.Description, ip.String(), peer.Enabled); err != nil {
 			return true, fmt.Errorf("add peer %s: %w", peer.PublicKey, err)
 		}
-		s.restorePeerSubnets(ctx, target, peer)
+		s.restorePeerSubnets(ctx, target, peer, &taken)
 	}
 	// Persist to settings.json under the (possibly renamed) target.
 	saved := sv
@@ -479,7 +480,12 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 // конфликтующие не ставятся и из записи убираются с предупреждением. Не
 // встали — из записи убираем все: карточка не должна показывать сети,
 // которых на роутере нет. Вызывающий держит LockPeerSubnets.
-func (s *Service) restorePeerSubnets(ctx context.Context, iface string, peer *storage.ManagedPeer) {
+//
+// taken — сети, уже принятые у предыдущих пиров этого сервера в этом же
+// восстановлении: новый сервер ещё не в записи, и OccupiedSubnets allow-ips
+// его пиров не видит, а RemoteSubnets соседей пишутся после цикла. Принятые
+// здесь сети дописываются в taken.
+func (s *Service) restorePeerSubnets(ctx context.Context, iface string, peer *storage.ManagedPeer, taken *[]peersubnet.Occupied) {
 	if len(peer.RemoteSubnets) == 0 {
 		return
 	}
@@ -491,7 +497,9 @@ func (s *Service) restorePeerSubnets(ctx context.Context, iface string, peer *st
 		peer.RemoteSubnets = nil
 		return
 	}
+	occupied = append(occupied, *taken...)
 	var accepted []string
+	var acceptedNets []peersubnet.Occupied
 	for _, sn := range peer.RemoteSubnets {
 		v, err := peersubnet.ValidateRemoteSubnets([]string{sn}, occupied)
 		if err != nil {
@@ -501,7 +509,9 @@ func (s *Service) restorePeerSubnets(ctx context.Context, iface string, peer *st
 		}
 		for _, c := range v {
 			_, n, _ := net.ParseCIDR(c)
-			occupied = append(occupied, peersubnet.Occupied{Net: n, Label: peerLabel(peer.Description, peer.PublicKey, iface)})
+			o := peersubnet.Occupied{Net: n, Label: peerLabel(peer.Description, peer.PublicKey, iface)}
+			occupied = append(occupied, o)
+			acceptedNets = append(acceptedNets, o)
 		}
 		accepted = append(accepted, v...)
 	}
@@ -521,7 +531,9 @@ func (s *Service) restorePeerSubnets(ctx context.Context, iface string, peer *st
 		s.appLog.Warn("managed-restore-peer-subnets", iface,
 			fmt.Sprintf("сети за клиентом пира «%s» не восстановлены и сняты с записи: %v", name, err))
 		peer.RemoteSubnets = nil
+		return
 	}
+	*taken = append(*taken, acceptedNets...)
 }
 
 // preflightMergePeers проверяет входящих пиров merge-пути: пустой и битый
@@ -576,6 +588,7 @@ func (s *Service) applyMergePeers(ctx context.Context, existing storage.ManagedS
 	}
 	added := 0
 	var missingPeers []storage.ManagedPeer
+	var taken []peersubnet.Occupied
 	// Откат снимает и маршруты сетей за клиентом: allow-ips уходят с пиром, а
 	// маршруты с меткой остались бы сиротами. Метки ищутся на роутере у каждого
 	// пира — и у того, чьи сети restorePeerSubnets снял с записи после
@@ -599,7 +612,7 @@ func (s *Service) applyMergePeers(ctx context.Context, existing storage.ManagedS
 			return added, fmt.Errorf("add peer %s: %w", peer.PublicKey, err)
 		}
 		// peer — копия элемента sv.Peers: правка сетей входной бэкап не трогает.
-		s.restorePeerSubnets(ctx, existing.InterfaceName, &peer)
+		s.restorePeerSubnets(ctx, existing.InterfaceName, &peer, &taken)
 		missingPeers = append(missingPeers, peer)
 		have[peer.PublicKey] = struct{}{}
 		added++

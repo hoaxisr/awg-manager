@@ -1130,3 +1130,29 @@ func TestUpdatePeer_EmptyList_RecheckedUnderLock(t *testing.T) {
 		t.Fatalf("запись: %v", sv.Peers[0].RemoteSubnets)
 	}
 }
+
+// Fix round 4 (N3): два пира нового сервера в одном бэкапе с пересекающимися
+// сетями. Сервера ещё нет в записи — OccupiedSubnets allow-ips его пиров не
+// видит, поэтому второй пир сверяется с уже принятыми сетями первого:
+// конфликтующая сеть отбрасывается, свободная — ставится.
+func TestRestore_NewServerPeersSeeEachOther(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
+	k1, k2 := validPeerKey(71), validPeerKey(72)
+	out := svc.Restore(context.Background(), []ManagedServerExport{{InterfaceName: "Wireguard5", Address: "10.77.0.1", Mask: "255.255.255.0", ListenPort: 51825,
+		PrivateKey: validPrivateKey(9), Policy: "none",
+		Peers: []storage.ManagedPeer{
+			{PublicKey: k1, TunnelIP: "10.77.0.2/32", Enabled: true, RemoteSubnets: []string{"192.168.90.0/24"}},
+			{PublicKey: k2, TunnelIP: "10.77.0.3/32", Enabled: true, RemoteSubnets: []string{"192.168.90.0/25", "192.168.91.0/24"}},
+		}}}, RestoreOptions{})
+	if len(out) != 1 || out[0].Action != "created" {
+		t.Fatalf("outcomes: %+v", out)
+	}
+	sv, _ := store.GetManagedServerByID("Wireguard5")
+	if len(sv.Peers) != 2 || !slices.Equal(sv.Peers[0].RemoteSubnets, []string{"192.168.90.0/24"}) || !slices.Equal(sv.Peers[1].RemoteSubnets, []string{"192.168.91.0/24"}) {
+		t.Fatalf("store = %+v", sv.Peers)
+	}
+	if allow, _ := sim.state("Wireguard5", k2, ""); !slices.Equal(allow, []string{"10.77.0.3/255.255.255.255", "192.168.91.0/255.255.255.0"}) {
+		t.Fatalf("allow второго пира = %v", allow)
+	}
+}
