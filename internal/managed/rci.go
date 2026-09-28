@@ -167,7 +167,9 @@ func (s *Service) rciUpdateServer(ctx context.Context, ifaceName string, c updat
 	})
 }
 
-// rciSetNAT enables or disables NAT for an interface.
+// rciSetNAT enables or disables NAT for an interface. `no ip nat` на
+// интерфейсе без NAT — успех («a NAT rule removed», стенд 5.02.A.11), допуск
+// снятию не нужен.
 func (s *Service) rciSetNAT(ctx context.Context, ifaceName string, enabled bool) error {
 	if enabled {
 		return s.rciPost(ctx, map[string]interface{}{
@@ -352,9 +354,12 @@ func (s *Service) rciAddPeer(ctx context.Context, ifaceName, pubKey, psk, commen
 	})
 }
 
-// rciRemovePeer removes a peer by public key.
+// rciRemovePeer removes a peer by public key. Снятие отсутствующего пира NDMS
+// отвергает вложенным `no input […]` (стенд 5.02.A.11) — фраза общая, по ней
+// не терпим. Решает свежее чтение rc мимо кэша: пира с этим ключом нет —
+// цель достигнута (пир удалён в веб-морде); есть или чтение упало — отказ.
 func (s *Service) rciRemovePeer(ctx context.Context, ifaceName, pubKey string) error {
-	return s.rciPost(ctx, map[string]interface{}{
+	err := s.rciPost(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			ifaceName: map[string]interface{}{
 				"wireguard": map[string]interface{}{
@@ -365,6 +370,20 @@ func (s *Service) rciRemovePeer(ctx context.Context, ifaceName, pubKey string) e
 			},
 		},
 	})
+	if err == nil || s.queries == nil || s.queries.WGServers == nil {
+		return err
+	}
+	peers, rerr := s.queries.WGServers.PeersRCFresh(ctx, ifaceName)
+	if rerr != nil {
+		return err
+	}
+	for _, p := range peers {
+		if p.PublicKey == pubKey {
+			return err
+		}
+	}
+	s.sysLog().Info("managed rci: peer already absent, removal treated as done", "interface", ifaceName)
+	return nil
 }
 
 // rciSetPeerConnect enables or disables a peer. comment must carry the peer's

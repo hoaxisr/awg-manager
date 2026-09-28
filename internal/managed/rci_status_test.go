@@ -3,6 +3,7 @@ package managed
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -82,6 +83,11 @@ func TestAddPeer_NestedErrorIsFailureAndNotStored(t *testing.T) {
 	if len(sv.Peers) != 0 {
 		t.Fatalf("пир записан при отказе роутера: %+v", sv.Peers)
 	}
+	// Ключ/PSK могли встать поэлементно — откат снимает свежий ключ.
+	last := peerPayload(poster.posts[len(poster.posts)-1], "Wireguard1")
+	if last == nil || last["no"] != true || last["key"] != "pub-1" {
+		t.Fatalf("нет отката добавленного пира: %v", poster.posts)
+	}
 }
 
 func TestUpdatePeer_AllowIPsNestedErrorIsFailureAndNotStored(t *testing.T) {
@@ -103,6 +109,12 @@ func TestUpdatePeer_AllowIPsNestedErrorIsFailureAndNotStored(t *testing.T) {
 	if sv.Peers[0].TunnelIP != "10.66.66.2/32" {
 		t.Fatalf("tunnel IP записан при отказе роутера: %q", sv.Peers[0].TunnelIP)
 	}
+	// Старый /32 снят до отказа — обязан вернуться: иначе у пира нет адреса
+	// из записи, а .conf его выдаёт.
+	ips, _ := peerPayload(poster.posts[len(poster.posts)-1], "Wireguard1")["allow-ips"].([]map[string]interface{})
+	if len(ips) != 1 || ips[0]["no"] != nil || ips[0]["address"] != "10.66.66.2" {
+		t.Fatalf("старый /32 не восстановлен последним шагом: %v", poster.posts)
+	}
 }
 
 func TestSetPeerComment_NestedErrorIsFailure(t *testing.T) {
@@ -116,8 +128,10 @@ func TestSetPeerComment_NestedErrorIsFailure(t *testing.T) {
 }
 
 func TestDeletePeer_NestedErrorKeepsPeerInStorage(t *testing.T) {
-	svc, store, poster, _ := newPeerSubnetTestService(t, `[]`)
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
 	seedPeer(t, store)
+	// Пир на роутере есть — отказ настоящий.
+	fg.SetJSON("/show/rc/interface/Wireguard1", `{"wireguard":{"peer":[{"key":"PEER1","allow-ips":[{"address":"10.66.66.2","mask":"255.255.255.255"}]}]}}`)
 	poster.respond = func(m map[string]interface{}) json.RawMessage {
 		if p := peerPayload(m, "Wireguard1"); p != nil && p["no"] == true {
 			return nestedError("Wireguard1", "peer is busy")
@@ -197,5 +211,69 @@ func TestMigratePeerAllowIPs_NoSuchNetTolerated(t *testing.T) {
 		if got := store.IsManagedPeerAllowIPsMigrated(); got != tc.wantMigrated {
 			t.Errorf("%q: флаг миграции %v, want %v", tc.msg, got, tc.wantMigrated)
 		}
+	}
+}
+
+// Пир снят мимо панели (веб-морда): NDMS отвечает на снятие `no input […]`
+// (стенд 5.02.A.11). Фраза общая — решает свежее чтение rc: пира нет → успех.
+func TestDeletePeer_AbsentOnRouterIsRemoved(t *testing.T) {
+	svc, store, poster, _ := newPeerSubnetTestService(t, `[]`) // rc Wireguard1 = {} — пиров нет
+	seedPeer(t, store)
+	poster.respond = func(m map[string]interface{}) json.RawMessage {
+		if p := peerPayload(m, "Wireguard1"); p != nil && p["no"] == true {
+			return nestedError("Wireguard1", "no input [http/rci 127.0.0.1].")
+		}
+		return nil
+	}
+	if err := svc.DeletePeer(context.Background(), "Wireguard1", "PEER1"); err != nil {
+		t.Fatalf("пир уже снят на роутере — удаление обязано пройти: %v", err)
+	}
+	sv, _ := store.GetManagedServerByID("Wireguard1")
+	if len(sv.Peers) != 0 {
+		t.Fatalf("запись пира осталась: %+v", sv.Peers)
+	}
+}
+
+// Чтение rc упало — отсутствие пира не доказано, отказ остаётся отказом.
+func TestDeletePeer_RereadFailureKeepsError(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	seedPeer(t, store)
+	fg.SetError("/show/rc/interface/Wireguard1", errors.New("rci down"))
+	poster.respond = func(m map[string]interface{}) json.RawMessage {
+		if p := peerPayload(m, "Wireguard1"); p != nil && p["no"] == true {
+			return nestedError("Wireguard1", "no input [http/rci 127.0.0.1].")
+		}
+		return nil
+	}
+	if err := svc.DeletePeer(context.Background(), "Wireguard1", "PEER1"); err == nil {
+		t.Fatal("отказ принят за успех без доказательства отсутствия пира")
+	}
+	sv, _ := store.GetManagedServerByID("Wireguard1")
+	if len(sv.Peers) != 1 {
+		t.Fatalf("запись пира снята: %+v", sv.Peers)
+	}
+}
+
+// На отказе роутера save и инвалидация всё равно идут: NDMS применяет payload
+// поэлементно, отказ может приехать вместе с применённым.
+func TestRciPost_FailureStillSavesAndInvalidates(t *testing.T) {
+	svc, _, poster, fg := newPeerSubnetTestService(t, `[]`)
+	ctx := context.Background()
+	if _, err := svc.queries.WGServers.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before := fg.Calls("/show/rc/interface/Wireguard1")
+	poster.respond = func(map[string]interface{}) json.RawMessage { return nestedError("Wireguard1", "boom") }
+	if err := svc.rciSetPeerComment(ctx, "Wireguard1", "PEER1", "x"); err == nil {
+		t.Fatal("отказ принят за успех")
+	}
+	if got := svc.saveCoord.Status().PendingCount; got != 1 {
+		t.Errorf("save не запрошен на отказе: pending=%d", got)
+	}
+	if _, err := svc.queries.WGServers.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if fg.Calls("/show/rc/interface/Wireguard1") == before {
+		t.Error("кэш списка WG-серверов не инвалидирован на отказе")
 	}
 }

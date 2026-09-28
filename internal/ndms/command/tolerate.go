@@ -12,7 +12,7 @@ import "strings"
 // «unable to find», но означает совсем другое — см. isMissingInterface).
 
 // isMissingInterface: `unable to find interface "OpkgTun9"` — снос интерфейса
-// (OpkgTun, Proxy), которого уже нет.
+// (OpkgTun, Proxy, managed Wireguard — стенд 5.02.A.11), которого уже нет.
 func isMissingInterface(msg string) bool {
 	return strings.Contains(strings.ToLower(msg), "unable to find interface")
 }
@@ -118,7 +118,8 @@ func isACLRuleAbsent(msg string) bool {
 
 // isNoSuchNetInPeer: `"WireguardN": no such net in peer "<key>"` — снятие
 // элемента allow-ips, которого у пира уже нет (стенд 5.02.A.11, 27.09.2026).
-// Применять ТОЛЬКО к RemovePeerAllowIP.
+// Применять ТОЛЬКО к снятию allow-ips: RemovePeerAllowIP и миграция managed
+// (снятие 0.0.0.0/0 у пира, TolerateNoSuchNetInPeer).
 func isNoSuchNetInPeer(msg string) bool {
 	return strings.Contains(strings.ToLower(msg), "no such net in peer")
 }

@@ -165,6 +165,10 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 	// Add peer with all parameters in a single RCI call:
 	// key, preshared-key, comment, allow-ips (peer /32 only), connect
 	if err := s.rciAddPeer(ctx, iface, pubKey, psk, strings.TrimSpace(req.Description), ip.String(), true); err != nil {
+		// NDMS применяет payload поэлементно: при вложенном отказе ключ/PSK
+		// могли встать — без отката это невидимый сирота. Ключ свежий, чужого
+		// пира снятие не заденет.
+		s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, nil, nil)
 		return nil, fmt.Errorf("add peer: %w", err)
 	}
 
@@ -308,6 +312,18 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 
 	// Apply RCI changes (tunnel IP, description) before persisting.
 	oldIPStr, newIPStr := "", ""
+
+	// Хранилище не пишется — /32 на роутере обязан вернуться к записанному,
+	// иначе .conf выдаст адрес, которого у пира нет.
+	revertTunnelIP := func(rbCtx context.Context, after string) {
+		if !wantTunnelChange || oldIPStr == "" {
+			return
+		}
+		if rbErr := s.rciUpdatePeerAllowIPs(rbCtx, iface, pubkey, newIPStr, oldIPStr); rbErr != nil {
+			s.appLog.Warn("update-peer", req.Description, "tunnel IP не возвращён после "+after+": "+rbErr.Error())
+		}
+	}
+
 	if wantTunnelChange {
 		oldIP, _, _ := net.ParseCIDR(peer.TunnelIP)
 		newIP, _, err := net.ParseCIDR(req.TunnelIP)
@@ -319,6 +335,10 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		}
 		newIPStr = newIP.String()
 		if err := s.rciUpdatePeerAllowIPs(ctx, iface, pubkey, oldIPStr, newIPStr); err != nil {
+			// Старый /32 уже мог сняться до отказа добавления нового.
+			rbCtx, cancel := detachedCtx(ctx)
+			revertTunnelIP(rbCtx, "отказа смены адреса")
+			cancel()
 			return fmt.Errorf("update allow-ips: %w", err)
 		}
 	}
@@ -326,17 +346,6 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 	if req.Description != peer.Description {
 		if err := s.rciSetPeerComment(ctx, iface, pubkey, strings.TrimSpace(req.Description)); err != nil {
 			s.log.Warn("failed to set peer comment", "error", err)
-		}
-	}
-
-	// Хранилище не пишется — /32 на роутере обязан вернуться к записанному,
-	// иначе .conf выдаст адрес, которого у пира нет.
-	revertTunnelIP := func(rbCtx context.Context, after string) {
-		if !wantTunnelChange || oldIPStr == "" {
-			return
-		}
-		if rbErr := s.rciUpdatePeerAllowIPs(rbCtx, iface, pubkey, newIPStr, oldIPStr); rbErr != nil {
-			s.appLog.Warn("update-peer", req.Description, "tunnel IP не возвращён после "+after+": "+rbErr.Error())
 		}
 	}
 
@@ -429,9 +438,9 @@ func (s *Service) DeletePeer(ctx context.Context, id, pubkey string) error {
 	}
 
 	// Remove via RCI — fail-closed: a peer that stayed on the router while the
-	// card says "revoked" keeps the client connected. No tolerance for "already
-	// gone" (owner decision 2026-09-05): the NDMS reply form for that case has
-	// not been captured on a live router yet.
+	// card says "revoked" keeps the client connected. «Уже снят» распознаётся
+	// не по фразе отказа (`no input […]` — общая), а свежим чтением rc в
+	// rciRemovePeer.
 	if err := s.rciRemovePeer(ctx, iface, pubkey); err != nil {
 		return fmt.Errorf("remove peer via RCI: %w", err)
 	}
