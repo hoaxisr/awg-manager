@@ -168,9 +168,7 @@ func (h *ManagedServerHandler) AddPeer(w http.ResponseWriter, r *http.Request, i
 //	@Param			pubkey	path		string						true	"Peer public key (URL-encoded)"
 //	@Param			body	body		UpdatePeerRequestDTO	true	"Peer update payload"
 //	@Success		200		{object}	ServersAllResponse
-//	@Failure		400		{object}	APIErrorEnvelope
-//	@Failure		404		{object}	APIErrorEnvelope
-//	@Failure		500		{object}	APIErrorEnvelope
+//	@Failure		400		{object}	APIErrorEnvelope	"Any failure, including a peer missing on the router (code NOT_FOUND)"
 //	@Router			/managed-servers/{id}/peers/{pubkey} [put]
 func (h *ManagedServerHandler) UpdatePeer(w http.ResponseWriter, r *http.Request, id, pubkey string) {
 	req, ok := parseJSON[managed.UpdatePeerRequest](w, r, http.MethodPut)

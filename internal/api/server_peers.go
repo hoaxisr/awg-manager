@@ -323,9 +323,7 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 //	@Param			pubkey	path		string							true	"Peer public key"
 //	@Param			body	body		ServerUpdatePeerRequestDTO	true	"New description and tunnel IP"
 //	@Success		200		{object}	ServersAllResponse
-//	@Failure		400		{object}	APIErrorEnvelope
-//	@Failure		404		{object}	APIErrorEnvelope
-//	@Failure		500		{object}	APIErrorEnvelope
+//	@Failure		400		{object}	APIErrorEnvelope	"Any failure, including a peer missing on the router (code NOT_FOUND)"
 //	@Router			/servers/{name}/peers/{pubkey} [put]
 func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request, name, pubkey string) {
 	req, ok := parseJSON[ServerUpdatePeerRequestDTO](w, r, http.MethodPut)
