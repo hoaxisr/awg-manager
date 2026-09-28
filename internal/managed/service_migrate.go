@@ -2,6 +2,7 @@ package managed
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -40,11 +41,34 @@ func (s *Service) MigratePeerAllowIPs(ctx context.Context) {
 	if s.settings.IsManagedPeerAllowIPsMigrated() {
 		return
 	}
+	// Любая операция allow-ips на отсутствующем ключе NDMS создаёт пира (стенд
+	// 5.02.A.11, 28.09): пира из записи, снятого в веб-морде, снятие 0/0
+	// воскресило бы. Наличие — свежим чтением rc сервера, под блокировкой,
+	// которую берёт и удаление пира.
+	defer s.LockPeerSubnets()()
 	attempted, failures := 0, 0
 	for _, sv := range s.settings.GetManagedServers() {
+		if len(sv.Peers) == 0 {
+			continue
+		}
+		onRouter, readErr := s.routerPeerKeys(ctx, sv.InterfaceName)
+		if readErr != nil && s.log != nil {
+			s.log.Warn("migrate-peer-allow-ips: peers not read, server skipped",
+				"interface", sv.InterfaceName, "error", readErr)
+		}
 		for _, peer := range sv.Peers {
 			if peer.PublicKey == "" {
 				continue
+			}
+			if readErr != nil {
+				// Не знаем, есть ли пир, — не шлём; попытка неудачная, чтобы
+				// флаг не встал и проход повторился на следующей загрузке.
+				attempted++
+				failures++
+				continue
+			}
+			if !onRouter[peer.PublicKey] {
+				continue // пира на роутере нет — снимать нечего
 			}
 			attempted++
 			if err := s.rciRemovePeerDefaultRoute(ctx, sv.InterfaceName, peer.PublicKey); err != nil {
@@ -69,6 +93,22 @@ func (s *Service) MigratePeerAllowIPs(ctx context.Context) {
 	if s.log != nil {
 		s.log.Info("migrate-peer-allow-ips: completed", "peers", attempted)
 	}
+}
+
+// routerPeerKeys — ключи пиров интерфейса по свежему rc.
+func (s *Service) routerPeerKeys(ctx context.Context, iface string) (map[string]bool, error) {
+	if s.queries == nil || s.queries.WGServers == nil {
+		return nil, fmt.Errorf("wireguard server store not wired")
+	}
+	peers, err := s.queries.WGServers.PeersRCFresh(ctx, iface)
+	if err != nil {
+		return nil, err
+	}
+	keys := make(map[string]bool, len(peers))
+	for _, p := range peers {
+		keys[p.PublicKey] = true
+	}
+	return keys, nil
 }
 
 func (s *Service) migratePrivateKeysWith(ctx context.Context, resolve resolveFn, run wgRunner) {

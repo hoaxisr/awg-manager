@@ -79,6 +79,9 @@ func (r *simRouter) seed(iface, key string, cidrs ...string) {
 	if r.peers[iface] == nil {
 		r.peers[iface] = map[string][]string{}
 	}
+	if _, ok := r.peers[iface][key]; !ok {
+		r.peers[iface][key] = []string{} // пир есть и без адресов
+	}
 	for _, c := range cidrs {
 		_, n, _ := net.ParseCIDR(c)
 		r.peers[iface][key] = append(r.peers[iface][key], n.IP.String()+"/"+net.IP(n.Mask).String())
@@ -141,10 +144,9 @@ func (r *simRouter) apply(orig map[string]interface{}) {
 				if r.peers[iface] == nil {
 					r.peers[iface] = map[string][]string{}
 				}
-				cur, exists := r.peers[iface][key]
-				if !exists && !addsAllow(allow) {
-					continue // снятие на отсутствующем ключе пира не создаёт
-				}
+				// Как настоящий NDMS (стенд 5.02.A.11, 28.09): ЛЮБАЯ операция
+				// allow-ips на неизвестном ключе создаёт пира — и снятие тоже.
+				cur := r.peers[iface][key]
 				for _, av := range allow {
 					a := av.(map[string]any)
 					e := a["address"].(string) + "/" + a["mask"].(string)
@@ -419,8 +421,10 @@ func TestUpdatePeer_TunnelIPAndSubnets_RouteFailure_RestoresTunnelIP(t *testing.
 // Fix round 1 / IMPORTANT 1(б): старого /32 на роутере уже нет — `no such net
 // in peer` на его снятии смену не валит (11.A/11.8).
 func TestUpdatePeer_TunnelIP_OldAbsentTolerated(t *testing.T) {
-	svc, store, poster, _ := newPeerSubnetTestService(t, `[]`)
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
 	seedPeer(t, store)
+	sim.seed("Wireguard1", "PEER1") // пир есть, старого /32 у него нет
 	poster.respond = func(m map[string]interface{}) json.RawMessage {
 		b, _ := json.Marshal(m)
 		if strings.Contains(string(b), `"address":"10.66.66.2","mask":"255.255.255.255","no":true`) {
@@ -1020,9 +1024,15 @@ func TestUpdatePeer_TunnelRevert_PeerDeleted_NoGhost(t *testing.T) {
 		t.Fatalf("err=%v vanishedAt=%d", err, vanishedAt)
 	}
 	for _, p := range postsJSON(poster)[vanishedAt:] {
-		if strings.Contains(p, `"allow-ips":[{"address":"10.66.66.2","mask":"255.255.255.255"}]`) {
-			t.Fatalf("старый /32 отправлен удалённому пиру: %s", p)
+		if strings.Contains(p, `"allow-ips"`) {
+			t.Fatalf("allow-ips отправлены удалённому пиру: %s", p)
 		}
+	}
+	sim.mu.Lock()
+	_, ghost := sim.peers["Wireguard1"]["PEER1"]
+	sim.mu.Unlock()
+	if ghost {
+		t.Fatal("пир-призрак создан")
 	}
 }
 
@@ -1037,18 +1047,6 @@ func TestUpdatePeer_TunnelChange_TakesPeerSubnetsLock(t *testing.T) {
 	}) {
 		t.Fatal("смена адреса прошла мимо блокировки")
 	}
-}
-
-// addsAllow — в посте allow-ips есть добавление (не только снятия). NDMS
-// создаёт пира на добавлении к неизвестному ключу (стенд 5.02.A.11); снятие
-// на неизвестном ключе стендом не проверено — симулятор пира не создаёт.
-func addsAllow(allow []any) bool {
-	for _, av := range allow {
-		if av.(map[string]any)["no"] != true {
-			return true
-		}
-	}
-	return false
 }
 
 // Fix round 2: наличие пира перед откатом адреса не прочиталось — старый /32
@@ -1077,5 +1075,24 @@ func TestUpdatePeer_TunnelRevert_PresenceReadFails_NoAdd(t *testing.T) {
 		if strings.Contains(p, `"allow-ips":[{"address":"10.66.66.2","mask":"255.255.255.255"}]`) {
 			t.Fatalf("старый /32 отправлен без проверки наличия пира: %s", p)
 		}
+	}
+}
+
+// Fix round 3: пир в записи есть, на роутере нет (снят в веб-морде) — смена
+// адреса отказывает до единого поста: allow-ips на неизвестный ключ создали
+// бы призрака.
+func TestUpdatePeer_TunnelChange_PeerAbsentOnRouter_NoPosts(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
+	seedPeer(t, store)
+	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.3/32"})
+	if !errors.Is(err, peersubnet.ErrPeerNotFound) || len(postsJSON(poster)) != 0 {
+		t.Fatalf("err=%v posts=%v", err, postsJSON(poster))
+	}
+	sim.mu.Lock()
+	_, ghost := sim.peers["Wireguard1"]["PEER1"]
+	sim.mu.Unlock()
+	if ghost {
+		t.Fatal("пир-призрак создан")
 	}
 }

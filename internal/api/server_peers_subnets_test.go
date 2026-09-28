@@ -142,6 +142,7 @@ func newSysSimRouter(t *testing.T, fg *query.FakeGetter, poster *natPoster, rcRo
 		t.Fatal(err)
 	}
 	poster.setFailOn(r.post)
+	r.render()
 	return r
 }
 
@@ -204,10 +205,9 @@ func (r *sysSimRouter) post(payload string) error {
 				delete(r.peers, key)
 				continue
 			}
-			cur, exists := r.peers[key]
-			if !exists && !addsAllow(allow) {
-				continue // снятие на отсутствующем ключе пира не создаёт
-			}
+			// Как настоящий NDMS (стенд 5.02.A.11, 28.09): ЛЮБАЯ операция
+			// allow-ips на неизвестном ключе создаёт пира — и снятие тоже.
+			cur := r.peers[key]
 			for _, av := range allow {
 				a := av.(map[string]any)
 				e := a["address"].(string) + "/" + a["mask"].(string)
@@ -232,6 +232,14 @@ func (r *sysSimRouter) post(payload string) error {
 	}
 	r.render()
 	return nil
+}
+
+// has — есть ли пир с ключом на симуляторе (в т.ч. призрак без адресов).
+func (r *sysSimRouter) has(key string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.peers[key]
+	return ok
 }
 
 // state — allow-ips пира и сети маршрутов с меткой comment.
@@ -1065,6 +1073,7 @@ func TestServersHandler_UpdateServerPeer_PeerVanished_NoGhost(t *testing.T) {
 	sim.fail = func(payload string) error {
 		if vanishedAt < 0 && strings.Contains(payload, `"comment":"awgm-peer:`) {
 			delete(sim.peers, peerFixturePubKey) // под sim.mu: post держит его
+			sim.render()
 			vanishedAt = len(poster.snapshot())
 		}
 		return nil
@@ -1076,8 +1085,8 @@ func TestServersHandler_UpdateServerPeer_PeerVanished_NoGhost(t *testing.T) {
 	if posts := poster.snapshot(); len(posts) != vanishedAt {
 		t.Fatalf("после исчезновения пира ушли посты:\n%s", strings.Join(posts[vanishedAt:], "\n"))
 	}
-	if allow, _ := sim.state(peerFixturePubKey, ""); len(allow) != 0 {
-		t.Fatalf("пир-призрак: %v", allow)
+	if sim.has(peerFixturePubKey) {
+		t.Fatal("пир-призрак создан")
 	}
 }
 
@@ -1093,6 +1102,7 @@ func TestServersHandler_UpdateServerPeer_TunnelRevert_PeerDeleted_NoGhost(t *tes
 	sim.fail = func(payload string) error {
 		if vanishedAt < 0 && strings.Contains(payload, `"comment":"renamed"`) {
 			delete(sim.peers, peerFixturePubKey) // под sim.mu: post держит его
+			sim.render()
 			vanishedAt = len(poster.snapshot())
 			return errors.New("no such peer")
 		}
@@ -1107,21 +1117,9 @@ func TestServersHandler_UpdateServerPeer_TunnelRevert_PeerDeleted_NoGhost(t *tes
 			t.Fatalf("старый /32 отправлен удалённому пиру: %s", p)
 		}
 	}
-	if allow, _ := sim.state(peerFixturePubKey, ""); len(allow) != 0 {
-		t.Fatalf("пир-призрак: %v", allow)
+	if sim.has(peerFixturePubKey) {
+		t.Fatal("пир-призрак создан")
 	}
-}
-
-// addsAllow — в посте allow-ips есть добавление (не только снятия). NDMS
-// создаёт пира на добавлении к неизвестному ключу (стенд 5.02.A.11); снятие
-// на неизвестном ключе стендом не проверено — симулятор пира не создаёт.
-func addsAllow(allow []any) bool {
-	for _, av := range allow {
-		if av.(map[string]any)["no"] != true {
-			return true
-		}
-	}
-	return false
 }
 
 // Fix round 2: наличие пира перед откатом адреса не прочиталось — старый /32
@@ -1147,5 +1145,21 @@ func TestServersHandler_UpdateServerPeer_TunnelRevert_PresenceReadFails_NoAdd(t 
 		if strings.Contains(p, `"allow-ips":[{"address":"10.9.0.2","mask":"255.255.255.255"}]`) {
 			t.Fatalf("старый /32 отправлен без проверки наличия пира: %s", p)
 		}
+	}
+}
+
+// Fix round 3: пир в списке сервера (снимок) есть, в свежем rc нет — смена
+// адреса отказывает до единого поста: allow-ips на неизвестный ключ создали
+// бы призрака.
+func TestServersHandler_UpdateServerPeer_TunnelChange_PeerAbsentOnRouter_NoPosts(t *testing.T) {
+	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
+	sim := newSysSimRouter(t, fg.FakeGetter, poster, `[]`) // пира на «роутере» нет
+	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "phone", TunnelIP: "10.9.0.2/32"})
+	rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.9/32"}`)
+	if rr.Code != http.StatusBadRequest || decodeJSONBody(t, rr)["code"] != "NOT_FOUND" {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if posts := poster.snapshot(); len(posts) != 0 || sim.has(peerFixturePubKey) {
+		t.Fatalf("posts=%v ghost=%v", posts, sim.has(peerFixturePubKey))
 	}
 }

@@ -356,17 +356,18 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 			warn("ndms commands not wired")
 			return
 		}
-		if err := s.commands.Wireguard.RemovePeerAllowIP(rbCtx, iface, pubkey, newIPStr, "255.255.255.255"); err != nil {
-			warn(err.Error())
-			return
-		}
-		// allow-ips на отсутствующий ключ NDMS СОЗДАЁТ пира (стенд 5.02.A.11):
-		// пира, удалённого посреди правки, возврат адреса воскресил бы.
+		// Любая операция allow-ips (и снятие тоже) на отсутствующем ключе NDMS
+		// СОЗДАЁТ пира (стенд 5.02.A.11, 28.09): пира, удалённого посреди
+		// правки, откат адреса воскресил бы. Поэтому наличие — до первого поста.
 		if present, err := s.peerPresent(rbCtx, iface, pubkey); err != nil {
 			warn("наличие пира не прочитано: " + err.Error())
 			return
 		} else if !present {
 			s.appLog.Info("update-peer", req.Description, "пир удалён, откат адреса не нужен")
+			return
+		}
+		if err := s.commands.Wireguard.RemovePeerAllowIP(rbCtx, iface, pubkey, newIPStr, "255.255.255.255"); err != nil {
+			warn(err.Error())
 			return
 		}
 		if err := s.commands.Wireguard.AddPeerAllowIP(rbCtx, iface, pubkey, oldIPStr, "255.255.255.255"); err != nil {
@@ -384,6 +385,14 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 			oldIPStr = oldIP.String()
 		}
 		newIPStr = newIP.String()
+		// Пир в записи ещё не значит пир на роутере (удалён в веб-морде):
+		// allow-ips на отсутствующий ключ создали бы призрака. Проверка — под
+		// блокировкой, которую берёт и удаление.
+		if present, err := s.peerPresent(ctx, iface, pubkey); err != nil {
+			return fmt.Errorf("check peer on router: %w", err)
+		} else if !present {
+			return fmt.Errorf("peer %s: %w", shortKey(pubkey), peersubnet.ErrPeerNotFound)
+		}
 		if err := s.rciUpdatePeerAllowIPs(ctx, iface, pubkey, oldIPStr, newIPStr); err != nil {
 			// Старый /32 уже мог сняться до отказа добавления нового.
 			rbCtx, cancel := detachedCtx(ctx)

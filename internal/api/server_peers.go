@@ -486,19 +486,20 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		}
 		rbCtx, cancel := detachedCtx(r.Context())
 		defer cancel()
+		// Любая операция allow-ips (и снятие тоже) на отсутствующем ключе NDMS
+		// СОЗДАЁТ пира (стенд 5.02.A.11, 28.09): пира, удалённого посреди
+		// правки, откат адреса воскресил бы. Поэтому наличие — до первого поста.
+		if present, err := h.peerOnRouter(rbCtx, name, pubkey); err != nil {
+			h.log.Warn("update-peer", name, "tunnel IP не возвращён: наличие пира не прочитано: "+err.Error())
+			return
+		} else if !present {
+			h.log.Info("update-peer", name, "пир удалён, откат адреса не нужен")
+			return
+		}
 		if err := h.commands.Wireguard.RemovePeerAllowIP(rbCtx, name, pubkey, newIP, "255.255.255.255"); err != nil {
 			h.log.Warn("update-peer", name, "новый tunnel IP не снят после отказа: "+err.Error())
 		}
 		if oldIP == "" {
-			return
-		}
-		// allow-ips на отсутствующий ключ NDMS СОЗДАЁТ пира (стенд 5.02.A.11):
-		// пира, удалённого посреди правки, возврат адреса воскресил бы.
-		if _, err := ndmscommand.NewPeerRouter(h.commands).PeerAllowIPs(rbCtx, name, pubkey); errors.Is(err, peersubnet.ErrPeerNotFound) {
-			h.log.Info("update-peer", name, "пир удалён, откат адреса не нужен")
-			return
-		} else if err != nil {
-			h.log.Warn("update-peer", name, "tunnel IP не возвращён: наличие пира не прочитано: "+err.Error())
 			return
 		}
 		if err := h.commands.Wireguard.AddPeerAllowIP(rbCtx, name, pubkey, oldIP, "255.255.255.255"); err != nil {
@@ -506,6 +507,16 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if wantIPChange {
+		// Пир в списке сервера — снимок (кэш), а allow-ips на отсутствующий
+		// ключ создали бы призрака. Проверка — под блокировкой, которую
+		// берёт и удаление.
+		if present, err := h.peerOnRouter(r.Context(), name, pubkey); err != nil {
+			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
+			return
+		} else if !present {
+			response.Error(w, "peer not found on router", "NOT_FOUND")
+			return
+		}
 		if err := h.commands.Wireguard.UpdatePeerAllowIPs(r.Context(), name, pubkey, oldIP, newIP); err != nil {
 			// Старый /32 уже мог сняться до отказа добавления нового.
 			revertIP()
@@ -1102,6 +1113,19 @@ func (h *ServersHandler) lockPeerSubnets() (unlock func()) {
 	u := h.managedSvc.LockPeerSubnets()
 	var once sync.Once
 	return func() { once.Do(u) }
+}
+
+// peerOnRouter — есть ли пир на интерфейсе по свежему rc. Перед allow-ips
+// вне сверки: любая операция allow-ips на отсутствующем ключе NDMS создаёт
+// пира (стенд 5.02.A.11).
+func (h *ServersHandler) peerOnRouter(ctx context.Context, name, pubkey string) (bool, error) {
+	if _, err := ndmscommand.NewPeerRouter(h.commands).PeerAllowIPs(ctx, name, pubkey); err != nil {
+		if errors.Is(err, peersubnet.ErrPeerNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // peerRollbackTimeout — бюджет отката на роутере: ctx запроса к этому моменту

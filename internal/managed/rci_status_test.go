@@ -208,7 +208,7 @@ func TestMigratePeerAllowIPs_NoSuchNetTolerated(t *testing.T) {
 		poster := &recordingPoster{respond: func(map[string]interface{}) json.RawMessage {
 			return nestedError("Wireguard0", tc.msg)
 		}}
-		s := &Service{settings: store, transport: poster}
+		s := &Service{settings: store, transport: poster, queries: routerWithPeers(t, "PEER_A")}
 		s.MigratePeerAllowIPs(context.Background())
 		if got := store.IsManagedPeerAllowIPsMigrated(); got != tc.wantMigrated {
 			t.Errorf("%q: флаг миграции %v, want %v", tc.msg, got, tc.wantMigrated)

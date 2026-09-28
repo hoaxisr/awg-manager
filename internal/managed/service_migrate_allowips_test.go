@@ -7,8 +7,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+// routerWithPeers — Queries над FakeGetter: на Wireguard0 роутера стоят пиры
+// keys (миграция шлёт allow-ips только им — свежее чтение rc).
+func routerWithPeers(t *testing.T, keys ...string) *query.Queries {
+	t.Helper()
+	fg := query.NewFakeGetter()
+	var peers []string
+	for _, k := range keys {
+		peers = append(peers, `{"key":"`+k+`"}`)
+	}
+	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[`+strings.Join(peers, ",")+`]}}`)
+	return query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
+}
 
 func seedAllowIPsStore(t *testing.T, peers []storage.ManagedPeer, migrated bool) (*storage.SettingsStore, *fakePoster) {
 	t.Helper()
@@ -33,7 +47,7 @@ func TestMigratePeerAllowIPs_StripsDefaultRoute(t *testing.T) {
 		{PublicKey: "PEER_A", TunnelIP: "10.0.0.2/32"},
 		{PublicKey: "PEER_B", TunnelIP: "10.0.0.3/32"},
 	}, false)
-	s := &Service{settings: store, transport: poster}
+	s := &Service{settings: store, transport: poster, queries: routerWithPeers(t, "PEER_A", "PEER_B")}
 
 	s.MigratePeerAllowIPs(context.Background())
 
@@ -56,7 +70,7 @@ func TestMigratePeerAllowIPs_SkipsWhenMigrated(t *testing.T) {
 	store, poster := seedAllowIPsStore(t, []storage.ManagedPeer{
 		{PublicKey: "PEER_A", TunnelIP: "10.0.0.2/32"},
 	}, true)
-	s := &Service{settings: store, transport: poster}
+	s := &Service{settings: store, transport: poster, queries: routerWithPeers(t, "PEER_A", "PEER_B")}
 
 	s.MigratePeerAllowIPs(context.Background())
 
@@ -70,11 +84,45 @@ func TestMigratePeerAllowIPs_RetriesWhenAllFail(t *testing.T) {
 		{PublicKey: "PEER_A", TunnelIP: "10.0.0.2/32"},
 	}, false)
 	poster.err = errors.New("ndms unreachable")
-	s := &Service{settings: store, transport: poster}
+	s := &Service{settings: store, transport: poster, queries: routerWithPeers(t, "PEER_A", "PEER_B")}
 
 	s.MigratePeerAllowIPs(context.Background())
 
 	if store.IsManagedPeerAllowIPsMigrated() {
 		t.Error("flag must stay false when every removal fails (retry next boot)")
+	}
+}
+
+// Fix round 3: пира из записи на роутере нет (снят в веб-морде) — снятие 0/0
+// ему не шлётся: любая операция allow-ips на неизвестном ключе создаёт пира.
+// Остальным — шлётся; флаг встаёт.
+func TestMigratePeerAllowIPs_AbsentPeerSkipped(t *testing.T) {
+	store, poster := seedAllowIPsStore(t, []storage.ManagedPeer{
+		{PublicKey: "PEER_A", TunnelIP: "10.0.0.2/32"},
+		{PublicKey: "GONE", TunnelIP: "10.0.0.3/32"},
+	}, false)
+	s := &Service{settings: store, transport: poster, queries: routerWithPeers(t, "PEER_A")}
+	s.MigratePeerAllowIPs(context.Background())
+	if len(poster.posts) != 1 {
+		t.Fatalf("posts = %v", poster.posts)
+	}
+	if raw, _ := json.Marshal(poster.posts[0]); !strings.Contains(string(raw), `"key":"PEER_A"`) {
+		t.Fatalf("post = %s", raw)
+	}
+	if !store.IsManagedPeerAllowIPsMigrated() {
+		t.Error("флаг не встал")
+	}
+}
+
+// Fix round 3: список пиров не прочитался — ничего не шлём, флаг не ставим
+// (повтор на следующей загрузке).
+func TestMigratePeerAllowIPs_PeerReadFailure_NoPostsRetry(t *testing.T) {
+	store, poster := seedAllowIPsStore(t, []storage.ManagedPeer{{PublicKey: "PEER_A", TunnelIP: "10.0.0.2/32"}}, false)
+	fg := query.NewFakeGetter()
+	fg.SetError("/show/rc/interface/Wireguard0", errors.New("rci down"))
+	s := &Service{settings: store, transport: poster, queries: query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})}
+	s.MigratePeerAllowIPs(context.Background())
+	if len(poster.posts) != 0 || store.IsManagedPeerAllowIPsMigrated() {
+		t.Fatalf("posts=%v migrated=%v", poster.posts, store.IsManagedPeerAllowIPsMigrated())
 	}
 }
