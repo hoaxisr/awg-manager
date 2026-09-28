@@ -562,3 +562,31 @@ func TestSetLANSegments_UnknownSegment_NoResaveHint(t *testing.T) {
 		t.Fatalf("RCI при отказе: %q", aclParses(poster))
 	}
 }
+
+// W2-P5 п.19: running-config не читается — есть ли список AWGM_, неизвестно;
+// правка сетей отказывает целиком до первого RCI (fail-closed), запись не
+// тронута. И добавление, и правка.
+func TestPeerSubnets_LANACLRunningConfigFails_RefusesBeforeRCI(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, rcOurs77)
+	sim := newSimRouter(t, fg, poster, rcOurs77)
+	seedSimPeer(t, store, sim, "192.168.77.0/24")
+	setLANSegments(t, store, "Wireguard1", "Bridge0")
+	fg.SetError("/show/running-config", errors.New("rc down"))
+	ctx := context.Background()
+
+	err := svc.UpdatePeer(ctx, "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.78.0/24"}})
+	if err == nil || !strings.Contains(err.Error(), "rc down") {
+		t.Fatalf("update: err = %v", err)
+	}
+	_, err = svc.AddPeer(ctx, "Wireguard1", AddPeerRequest{Description: "x", TunnelIP: "10.66.66.3/32", RemoteSubnets: []string{"192.168.79.0/24"}})
+	if err == nil || !strings.Contains(err.Error(), "rc down") {
+		t.Fatalf("add: err = %v", err)
+	}
+	if posts := postsJSON(poster); len(posts) != 0 {
+		t.Fatalf("RCI при отказе чтения running-config:\n%s", strings.Join(posts, "\n"))
+	}
+	sv, _ := store.GetManagedServerByID("Wireguard1")
+	if len(sv.Peers) != 1 || !slices.Equal(sv.Peers[0].RemoteSubnets, []string{"192.168.77.0/24"}) {
+		t.Fatalf("запись тронута: %+v", sv.Peers)
+	}
+}
