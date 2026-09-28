@@ -626,9 +626,9 @@ func (s *Service) applyMergePeers(ctx context.Context, existing storage.ManagedS
 	// Сети за клиентом добавленных пиров — в ACL LAN-сегментов, best-effort,
 	// как и сами сети при восстановлении.
 	undoACL := func(context.Context) {}
-	if aclEdit, err := s.planPeerSubnetsACL(ctx, &existing, serverPeerSubnets(missingPeers), nil); err != nil {
+	if aclEdit, err := s.planPeerSubnetsACL(ctx, &existing, serverPeerSubnets(missingPeers), nil, append(serverPeerSubnets(existing.Peers), serverPeerSubnets(missingPeers)...)); err != nil {
 		s.appLog.Warn("managed-restore-peer-subnets", existing.InterfaceName, "сети за клиентом не открыты в LAN-сегменты: "+err.Error())
-	} else if undoACL, err = s.applyPeerSubnetsACL(ctx, existing.InterfaceName, aclEdit); err != nil {
+	} else if undoACL, err = s.applyPeerSubnetsACL(ctx, &existing, aclEdit); err != nil {
 		undoACL = func(context.Context) {}
 		s.appLog.Warn("managed-restore-peer-subnets", existing.InterfaceName, "сети за клиентом не открыты в LAN-сегменты: "+err.Error())
 	}

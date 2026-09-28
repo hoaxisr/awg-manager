@@ -150,7 +150,7 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		if remote, err = peersubnet.ValidateRemoteSubnets(req.RemoteSubnets, occupied); err != nil {
 			return nil, err
 		}
-		if aclEdit, err = s.planPeerSubnetsACL(ctx, server, remote, nil); err != nil {
+		if aclEdit, err = s.planPeerSubnetsACL(ctx, server, remote, nil, append(serverPeerSubnets(server.Peers), remote...)); err != nil {
 			return nil, err
 		}
 		if router, err = s.peerRouter(); err != nil {
@@ -178,7 +178,7 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 			s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, router)
 			return nil, fmt.Errorf("apply remote subnets: %w", err)
 		}
-		if undoACL, err = s.applyPeerSubnetsACL(ctx, iface, aclEdit); err != nil {
+		if undoACL, err = s.applyPeerSubnetsACL(ctx, server, aclEdit); err != nil {
 			s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, router)
 			return nil, fmt.Errorf("apply remote subnets: %w", err)
 		}
@@ -330,7 +330,7 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 			}
 		}
 		// «Было» для ACL — запись: её правила ставил этот же путь.
-		if aclEdit, err = s.planPeerSubnetsACL(ctx, server, subnetDiff(remote, peer.RemoteSubnets), subnetDiff(peer.RemoteSubnets, remote)); err != nil {
+		if aclEdit, err = s.planPeerSubnetsACL(ctx, server, subnetDiff(remote, peer.RemoteSubnets), subnetDiff(peer.RemoteSubnets, remote), peerNetsWith(server.Peers, pubkey, remote)); err != nil {
 			return err
 		}
 		if router, err = s.peerRouter(); err != nil {
@@ -425,7 +425,7 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 			cancel()
 			return fmt.Errorf("apply remote subnets: %w", err)
 		}
-		if undoACL, err = s.applyPeerSubnetsACL(ctx, iface, aclEdit); err != nil {
+		if undoACL, err = s.applyPeerSubnetsACL(ctx, server, aclEdit); err != nil {
 			rbCtx, cancel := detachedCtx(ctx)
 			if rbErr := peersubnet.Reconcile(rbCtx, router, iface, pubkey, tunnelHosts, peer.RemoteSubnets); rbErr != nil {
 				s.appLog.Warn("update-peer", req.Description, "сети за клиентом не возвращены после отказа ACL: "+rbErr.Error())
@@ -539,8 +539,11 @@ func (s *Service) DeletePeer(ctx context.Context, id, pubkey string) error {
 	}); err != nil {
 		return fmt.Errorf("save to storage: %w", err)
 	}
-	// Правила ACL сетей пира — после того, как пира не стало: best-effort.
-	s.removePeerSubnetsACL(ctx, server, peerNets)
+	// Правила ACL сетей пира — после того, как пира не стало: best-effort, на
+	// отвязанном ctx, как остальная работа после коммита записи.
+	rbCtx, cancel := detachedCtx(ctx)
+	s.removePeerSubnetsACL(rbCtx, server, peerNets)
+	cancel()
 
 	s.log.Info("peer deleted", "interface", iface, "pubkey", shortKey(pubkey))
 	s.appLog.Info("delete-peer", peerName, fmt.Sprintf("Peer %s deleted", peerName))

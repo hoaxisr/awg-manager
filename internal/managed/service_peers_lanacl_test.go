@@ -36,6 +36,18 @@ func setLANSegments(t *testing.T, store *storage.SettingsStore, iface string, se
 	}
 }
 
+// bindLANACL — список AWGM_<iface> есть в running-config и привязан:
+// точечная правка. Без него правка сетей идёт полной пересборкой.
+func bindLANACL(fg *query.FakeGetter, iface string) {
+	setRunningConfig(fg, "access-list AWGM_"+iface, "    permit ip 10.66.66.0 255.255.255.0 "+segBr0, "!",
+		"interface "+iface, "    ip access-group AWGM_"+iface+" in", "!")
+}
+
+func setRunningConfig(fg *query.FakeGetter, lines ...string) {
+	b, _ := json.Marshal(map[string]any{"message": lines})
+	fg.SetJSON("/show/running-config", string(b))
+}
+
 // aclParses — parse-строки ACL в порядке отправки.
 func aclParses(p *recordingPoster) []string {
 	var out []string
@@ -88,6 +100,7 @@ func TestAddPeer_LANSegments_PermitsEachSegment(t *testing.T) {
 	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
 	newSimRouter(t, fg, poster, `[]`)
 	setLANSegments(t, store, "Wireguard1", "Bridge0", "Bridge1")
+	bindLANACL(fg, "Wireguard1")
 	if _, err := svc.AddPeer(context.Background(), "Wireguard1", AddPeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: []string{"192.168.77.0/24"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -105,6 +118,7 @@ func TestUpdatePeer_LANSegments_AddsAndRemovesRules(t *testing.T) {
 	sim := newSimRouter(t, fg, poster, rcOurs77)
 	seedSimPeer(t, store, sim, "192.168.77.0/24")
 	setLANSegments(t, store, "Wireguard1", "Bridge0", "Bridge1")
+	bindLANACL(fg, "Wireguard1")
 	if err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.78.0/24"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +162,7 @@ func TestUpdatePeer_LANACLFailure_RollsBack(t *testing.T) {
 	sim := newSimRouter(t, fg, poster, rcOurs77)
 	seedSimPeer(t, store, sim, "192.168.77.0/24")
 	setLANSegments(t, store, "Wireguard1", "Bridge0", "Bridge1")
+	bindLANACL(fg, "Wireguard1")
 	poster.failOn = failParse(acl1 + net78 + segBr1)
 	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.77.0/24", "192.168.78.0/24"}})
 	if err == nil || !strings.Contains(err.Error(), "acl refused") {
@@ -172,6 +187,7 @@ func TestUpdatePeer_LANACLRemoveFailure_RestoresRemovedRules(t *testing.T) {
 	sim := newSimRouter(t, fg, poster, rcOurs77)
 	seedSimPeer(t, store, sim, "192.168.77.0/24")
 	setLANSegments(t, store, "Wireguard1", "Bridge0", "Bridge1")
+	bindLANACL(fg, "Wireguard1")
 	poster.failOn = failParse(acl1Off + net77 + segBr1)
 	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.78.0/24"}})
 	if err == nil {
@@ -190,6 +206,7 @@ func TestAddPeer_LANACLFailure_RollsBack(t *testing.T) {
 	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
 	sim := newSimRouter(t, fg, poster, `[]`)
 	setLANSegments(t, store, "Wireguard1", "Bridge0", "Bridge1")
+	bindLANACL(fg, "Wireguard1")
 	poster.failOn = failParse(acl1 + net77 + segBr1)
 	_, err := svc.AddPeer(context.Background(), "Wireguard1", AddPeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: []string{"192.168.77.0/24"}})
 	if err == nil || !strings.Contains(err.Error(), "acl refused") {
@@ -212,6 +229,7 @@ func TestUpdatePeer_StoreFailure_UndoesACL(t *testing.T) {
 	sim := newSimRouter(t, fg, poster, `[]`)
 	seedSimPeer(t, store, sim)
 	setLANSegments(t, store, "Wireguard1", "Bridge0")
+	bindLANACL(fg, "Wireguard1")
 	sim.after = func(m map[string]interface{}) {
 		if s, _ := m["parse"].(string); s == acl1+net77+segBr0 {
 			_ = store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
@@ -320,6 +338,7 @@ func TestRestoreMerge_PermitsMergedPeerSubnets(t *testing.T) {
 		t.Fatal(err)
 	}
 	pub := mustDerivePublicKey(t, priv)
+	bindLANACL(fg, "Wireguard1")
 	fg.SetPostInterface("Wireguard1", `{"show":{"interface":{"id":"Wireguard1","type":"Wireguard","address":"10.66.66.1","mask":"255.255.255.0","wireguard":{"public-key":"`+pub+`"}}}}`)
 	sv, _ := store.GetManagedServerByID("Wireguard1")
 	in := []storage.ManagedPeer{{PublicKey: validPeerKey(59), TunnelIP: "10.66.66.2/32", Enabled: true, RemoteSubnets: []string{"192.168.77.0/24"}}}
@@ -338,6 +357,7 @@ func TestUpdatePeer_LANACLFailure_KeepsPreexistingRule(t *testing.T) {
 	sim := newSimRouter(t, fg, poster, `[]`)
 	seedSimPeer(t, store, sim)
 	setLANSegments(t, store, "Wireguard1", "Bridge0", "Bridge1")
+	bindLANACL(fg, "Wireguard1")
 	poster.respond = func(m map[string]interface{}) json.RawMessage {
 		if s, _ := m["parse"].(string); s == acl1+net77+segBr0 {
 			return json.RawMessage(`[{"parse":{"prompt":"(config)","status":[{"status":"error","ident":"Network::Acl","message":"a duplicate was found for the rule being set."}]}}]`)
@@ -357,6 +377,7 @@ func TestAddPeer_StoreFailure_UndoesACL(t *testing.T) {
 	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
 	sim := newSimRouter(t, fg, poster, `[]`)
 	setLANSegments(t, store, "Wireguard1", "Bridge0")
+	bindLANACL(fg, "Wireguard1")
 	sim.after = func(m map[string]interface{}) {
 		if s, _ := m["parse"].(string); s == acl1+net77+segBr0 {
 			// Параллельное добавление заняло адрес — мутатор записи откажет.
@@ -371,6 +392,160 @@ func TestAddPeer_StoreFailure_UndoesACL(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	if got, want := aclParses(poster), []string{acl1 + net77 + segBr0, acl1Off + net77 + segBr0}; !slices.Equal(got, want) {
+		t.Fatalf("acl = %q, want %q", got, want)
+	}
+}
+
+// Fix round 1: списка AWGM_ на роутере нет или он не привязан — вместо
+// точечной правки полная пересборка по сетям всех пиров (у правимого — новый
+// список): итог привязан и держит правила соседей.
+
+func addStorePeer(t *testing.T, store *storage.SettingsStore, key, tunnelIP string, subnets ...string) {
+	t.Helper()
+	if err := store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
+		sv.Peers = append(sv.Peers, storage.ManagedPeer{PublicKey: key, TunnelIP: tunnelIP, Enabled: true, RemoteSubnets: subnets})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func rebuildParses(permits ...string) []string {
+	out := []string{aclRebind, "no access-list AWGM_Wireguard1", acl1 + "10.66.66.0 255.255.255.0 " + segBr0}
+	for _, p := range permits {
+		out = append(out, acl1+p+segBr0)
+	}
+	return append(out, "interface Wireguard1 ip access-group AWGM_Wireguard1 in", "access-list AWGM_Wireguard1 auto-delete")
+}
+
+func TestUpdatePeer_LANACLMissing_RemoveOnly_FullRebuild(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		prep func(svc *Service, fg *query.FakeGetter)
+	}{
+		{"списка нет", func(*Service, *query.FakeGetter) {}},
+		{"привязка без списка", func(_ *Service, fg *query.FakeGetter) {
+			setRunningConfig(fg, "interface Wireguard1", "    ip access-group AWGM_Wireguard1 in", "!")
+		}},
+		// Кэш running-config помнит живой список, а на роутере его уже сняли:
+		// решение — по свежему чтению.
+		{"устаревший кэш", func(svc *Service, fg *query.FakeGetter) {
+			bindLANACL(fg, "Wireguard1")
+			_, _ = svc.queries.RunningConfig.Lines(context.Background())
+			setRunningConfig(fg)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, store, poster, fg := newPeerSubnetTestService(t, rcOurs77)
+			sim := newSimRouter(t, fg, poster, rcOurs77)
+			seedSimPeer(t, store, sim, "192.168.77.0/24")
+			addStorePeer(t, store, "PEER2", "10.66.66.3/32", "192.168.78.0/24")
+			setLANSegments(t, store, "Wireguard1", "Bridge0")
+			tc.prep(svc, fg)
+			if err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{}}); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := aclParses(poster), rebuildParses(net78); !slices.Equal(got, want) {
+				t.Fatalf("acl = %q\nwant %q", got, want)
+			}
+			if sv, _ := store.GetManagedServerByID("Wireguard1"); len(sv.Peers[0].RemoteSubnets) != 0 {
+				t.Fatalf("store = %v", sv.Peers[0].RemoteSubnets)
+			}
+		})
+	}
+}
+
+func TestAddPeer_LANACLUnbound_FullRebuild(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	newSimRouter(t, fg, poster, `[]`)
+	addStorePeer(t, store, "PEER2", "10.66.66.3/32", "192.168.78.0/24")
+	setLANSegments(t, store, "Wireguard1", "Bridge0")
+	// Список есть, но не привязан: permit в него дал бы голый список.
+	setRunningConfig(fg, "access-list AWGM_Wireguard1", "    permit ip 10.66.66.0 255.255.255.0 "+segBr0, "!", "interface Wireguard1", "!")
+	if _, err := svc.AddPeer(context.Background(), "Wireguard1", AddPeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: []string{"192.168.77.0/24"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := aclParses(poster), rebuildParses(net78, net77); !slices.Equal(got, want) {
+		t.Fatalf("acl = %q\nwant %q", got, want)
+	}
+}
+
+// Отказ полной пересборки — та же цепочка отката: сверка к записи, запись не тронута.
+func TestUpdatePeer_LANACLRebuildFailure_RollsBack(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, rcOurs77)
+	sim := newSimRouter(t, fg, poster, rcOurs77)
+	seedSimPeer(t, store, sim, "192.168.77.0/24")
+	setLANSegments(t, store, "Wireguard1", "Bridge0")
+	poster.failOn = failParse("interface Wireguard1 ip access-group AWGM_Wireguard1 in")
+	if err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.78.0/24"}}); err == nil {
+		t.Fatal("ждали отказ")
+	}
+	allow, routes := sim.state("Wireguard1", "PEER1", "awgm-peer:PEER1")
+	if !slices.Equal(allow, []string{"10.66.66.2/255.255.255.255", "192.168.77.0/255.255.255.0"}) || !slices.Equal(routes, []string{"192.168.77.0"}) {
+		t.Fatalf("сверка не возвращена: allow=%v routes=%v", allow, routes)
+	}
+	if sv, _ := store.GetManagedServerByID("Wireguard1"); !slices.Equal(sv.Peers[0].RemoteSubnets, []string{"192.168.77.0/24"}) {
+		t.Fatalf("store = %v", sv.Peers[0].RemoteSubnets)
+	}
+}
+
+// Отказ записи после пересборки — список пересобирается по прежним сетям.
+func TestUpdatePeer_LANACLRebuild_StoreFailure_RebuildsOld(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
+	seedSimPeer(t, store, sim)
+	addStorePeer(t, store, "PEER2", "10.66.66.3/32", "192.168.78.0/24")
+	setLANSegments(t, store, "Wireguard1", "Bridge0")
+	sim.after = func(m map[string]interface{}) {
+		if s, _ := m["parse"].(string); s == "access-list AWGM_Wireguard1 auto-delete" {
+			_ = store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
+				sv.Peers = sv.Peers[1:] // PEER1 удалён параллельно — мутатор откажет
+				return nil
+			})
+			sim.after = nil
+		}
+	}
+	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.77.0/24"}})
+	if err == nil || !strings.Contains(err.Error(), "save to storage") {
+		t.Fatalf("err = %v", err)
+	}
+	if got, want := aclParses(poster), append(rebuildParses(net77, net78), rebuildParses(net78)...); !slices.Equal(got, want) {
+		t.Fatalf("acl = %q\nwant %q", got, want)
+	}
+}
+
+// Server Update пересобирает ACL под блокировкой правок сетей пиров.
+func TestUpdateServer_SubnetChange_TakesPeerSubnetsLock(t *testing.T) {
+	svc, store, _ := newLANSegmentsTestService(t)
+	if err := store.AddManagedServer(storage.ManagedServer{InterfaceName: "Wireguard0", Address: "10.66.66.1", Mask: "255.255.255.0", ListenPort: 51820, LANSegments: []string{"Home"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !waitsForLock(t, svc, func() {
+		if err := svc.Update(context.Background(), "Wireguard0", UpdateServerRequest{Address: "10.77.77.1", Mask: "255.255.255.0", ListenPort: 51820}); err != nil {
+			t.Error(err)
+		}
+	}) {
+		t.Fatal("пересборка ACL при смене подсети прошла мимо блокировки")
+	}
+}
+
+// Удаление пира: правила снимаются и тогда, когда ctx запроса отменён после
+// коммита записи (отвязанный ctx).
+func TestDeletePeer_ACLRemovalSurvivesCancelledCtx(t *testing.T) {
+	svc, store, poster, _ := newPeerSubnetTestService(t, rcOurs77)
+	seedPeer(t, store, "192.168.77.0/24")
+	setLANSegments(t, store, "Wireguard1", "Bridge0")
+	ctx, cancel := context.WithCancel(context.Background())
+	poster.honorCtx = true
+	poster.onPost = func(m map[string]interface{}) {
+		if b, _ := json.Marshal(m); strings.Contains(string(b), `{"key":"PEER1","no":true}`) {
+			cancel()
+		}
+	}
+	if err := svc.DeletePeer(ctx, "Wireguard1", "PEER1"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := aclParses(poster), []string{acl1Off + net77 + segBr0}; !slices.Equal(got, want) {
 		t.Fatalf("acl = %q, want %q", got, want)
 	}
 }

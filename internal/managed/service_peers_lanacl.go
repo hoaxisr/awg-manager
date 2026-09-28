@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -30,14 +31,25 @@ func (s *Service) peerSubnetACLRules(ctx context.Context, server *storage.Manage
 	return segmentRules(srcs, server.LANSegments, bridges)
 }
 
-// peerACLEdit — точечная правка AWGM_<iface> под смену сетей пира.
+// peerACLEdit — правка AWGM_<iface> под смену сетей пира: точечная (add,
+// remove) или, когда списка на роутере нет либо он не привязан, полная
+// пересборка (rebuild) по сетям всех пиров после правки (newNets); oldNets —
+// сети всех пиров до неё, для отката.
 type peerACLEdit struct {
-	add, remove []permitRule
+	add, remove      []permitRule
+	rebuild          bool
+	newNets, oldNets []string
 }
 
-// planPeerSubnetsACL резолвит правила правки без мутаций на роутере — до
-// первого RCI, чтобы неизвестный сегмент отказал чисто.
-func (s *Service) planPeerSubnetsACL(ctx context.Context, server *storage.ManagedServer, add, remove []string) (peerACLEdit, error) {
+// planPeerSubnetsACL решает, как править список, без мутаций на роутере — до
+// первого RCI, чтобы неизвестный сегмент и нечитаемый running-config отказали
+// чисто. newNets — сети всех пиров сервера после правки.
+//
+// Точечная правка годится только для живого привязанного списка: снятие
+// правила из несуществующего отказывает `argument parse error` (стенд 12.09),
+// а permit молча создал бы НЕпривязанный список с одними правилами пира и без
+// auto-delete. Тогда — полная пересборка applyLANSegmentsRaw.
+func (s *Service) planPeerSubnetsACL(ctx context.Context, server *storage.ManagedServer, add, remove, newNets []string) (peerACLEdit, error) {
 	addRules, err := s.peerSubnetACLRules(ctx, server, add)
 	if err != nil {
 		return peerACLEdit{}, err
@@ -46,18 +58,57 @@ func (s *Service) planPeerSubnetsACL(ctx context.Context, server *storage.Manage
 	if err != nil {
 		return peerACLEdit{}, err
 	}
+	if len(addRules)+len(removeRules) == 0 {
+		return peerACLEdit{}, nil
+	}
+	bound, err := s.lanACLBound(ctx, server.InterfaceName)
+	if err != nil {
+		return peerACLEdit{}, err
+	}
+	if !bound {
+		return peerACLEdit{rebuild: true, newNets: newNets, oldNets: serverPeerSubnets(server.Peers)}, nil
+	}
 	return peerACLEdit{add: addRules, remove: removeRules}, nil
 }
 
+// lanACLBound — список AWGM_<iface> есть в running-config и привязан к
+// интерфейсу. Кэш сбрасывается: список мог снять кто угодно мимо нас, а хук
+// ndm на такую правку к нам не приходит.
+func (s *Service) lanACLBound(ctx context.Context, iface string) (bool, error) {
+	if s.queries == nil || s.queries.RunningConfig == nil {
+		return false, fmt.Errorf("running-config store not wired")
+	}
+	s.queries.RunningConfig.InvalidateAll()
+	lines, err := s.queries.RunningConfig.Lines(ctx)
+	if err != nil {
+		return false, fmt.Errorf("read running-config: %w", err)
+	}
+	acl := "AWGM_" + iface
+	return slices.Contains(lines, "access-list "+acl) && slices.Contains(query.InterfaceAccessGroupsOf(lines, iface), acl), nil
+}
+
 // applyPeerSubnetsACL применяет правку: permit добавленных сетей в каждый
-// сегмент, затем снятие правил убранных.
-// Не пересборка: unbind→bind переставил бы наш список за чужой permit-all
-// (порядок джампов = порядок привязки) и на миг снял бы доступ.
+// сегмент, затем снятие правил убранных (или полную пересборку, см.
+// planPeerSubnetsACL). Точечно, а не пересборкой всегда: unbind→bind
+// переставил бы наш список за чужой permit-all (порядок джампов = порядок
+// привязки) и на миг снял бы доступ.
 //
-// Отказ — сделанное этим вызовом откатывается (на отвязанном ctx), ошибка
-// наверх. Успех — undo для отката при отказе следующего шага: снять
-// добавленное, вернуть снятое. Вызывающий держит LockPeerSubnets.
-func (s *Service) applyPeerSubnetsACL(ctx context.Context, iface string, e peerACLEdit) (undo func(context.Context), err error) {
+// Отказ точечной правки — сделанное этим вызовом откатывается (на отвязанном
+// ctx), ошибка наверх; отказ пересборки — ошибка наверх (списка до неё не
+// было или он не работал). Успех — undo для отката при отказе следующего
+// шага. Вызывающий держит LockPeerSubnets.
+func (s *Service) applyPeerSubnetsACL(ctx context.Context, server *storage.ManagedServer, e peerACLEdit) (undo func(context.Context), err error) {
+	iface := server.InterfaceName
+	if e.rebuild {
+		if err := s.applyLANSegmentsRaw(ctx, iface, server.Address, server.Mask, server.LANSegments, e.newNets); err != nil {
+			return nil, fmt.Errorf("LAN ACL rebuild: %w", err)
+		}
+		return func(ctx context.Context) {
+			if err := s.applyLANSegmentsRaw(ctx, iface, server.Address, server.Mask, server.LANSegments, e.oldNets); err != nil {
+				s.appLog.Warn("lan-acl", iface, "список не пересобран при откате: "+err.Error())
+			}
+		}, nil
+	}
 	if len(e.add)+len(e.remove) == 0 {
 		return func(context.Context) {}, nil
 	}
@@ -124,6 +175,19 @@ func subnetDiff(a, b []string) []string {
 	for _, n := range a {
 		if !slices.Contains(b, n) {
 			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// peerNetsWith — сети всех пиров, где у пира pubkey список заменён на nets.
+func peerNetsWith(peers []storage.ManagedPeer, pubkey string, nets []string) []string {
+	var out []string
+	for _, p := range peers {
+		if p.PublicKey == pubkey {
+			out = append(out, nets...)
+		} else {
+			out = append(out, p.RemoteSubnets...)
 		}
 	}
 	return out
