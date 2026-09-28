@@ -26,13 +26,18 @@ import (
 // (shared between OS4 and OS5 implementations).
 
 // opkgTunRecord — запись OpkgTun по NDMS-имени: (nil, nil) — записи нет,
-// ошибка — «не знаем» (кэш InterfaceStore не поднялся). q == nil — обвязка
-// без NDMS (тесты): записи нет.
+// ошибка — «не знаем» (свежее чтение не удалось). q == nil — обвязка без
+// NDMS (тесты): записи нет.
+//
+// Свежее чтение (Refresh), не кэш (Get): решения о владении зависят от
+// текущего описания записи, а внешняя правка (`interface OpkgTunN
+// description …`) не даёт NDMS-хука — кэш InterfaceStore может годами
+// хранить устаревшее описание (F532).
 func opkgTunRecord(ctx context.Context, q *query.Queries, name string) (*ndms.Interface, error) {
 	if q == nil {
 		return nil, nil
 	}
-	return q.Interfaces.Get(ctx, name)
+	return q.Interfaces.Refresh(ctx, name)
 }
 
 // ForeignRecordError — запись OpkgTunN в NDMS есть, но её описание не наше и

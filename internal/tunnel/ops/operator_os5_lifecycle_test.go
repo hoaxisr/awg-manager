@@ -169,6 +169,64 @@ func TestColdStart_ExistingRecordOwnership(t *testing.T) {
 	}
 }
 
+// F532: смена описания записи снаружи (`interface OpkgTunN description …`)
+// не даёт NDMS-хука, и кэш InterfaceStore может годами помнить прежнее
+// значение. Гейт Фазы 1 обязан решать по свежему ответу NDMS, а не по
+// кэшу: устарел кэш — «чужая» → старт идёт.
+func TestColdStart_GateUsesFreshReadNotStaleCache(t *testing.T) {
+	getter := ndmsquery.NewFakeGetter()
+	// Кэш (bootstrap-снимок) считает запись чужой.
+	getter.SetJSON("/show/interface/", `{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","state":"up","link":"down","description":"csqtt"}}`)
+	o, rec := newOS5LifecycleOn(t, &recordingPoster{}, getter, &MockBackend{}, true)
+
+	// Поднимаем кэш на устаревшем значении — как будто он уже был прочитан
+	// до внешней правки.
+	if _, err := o.queries.Interfaces.Get(context.Background(), "OpkgTun10"); err != nil {
+		t.Fatalf("precondition Get: %v", err)
+	}
+
+	// NDMS сейчас (снаружи awg-manager описание переписали на имя туннеля)
+	// отвечает по-другому — хука на это не было, кэш остался «csqtt».
+	getter.SetPostInterface("OpkgTun10", `{"show":{"interface":{
+		"id":"OpkgTun10","type":"OpkgTun","state":"up","link":"down","description":"Germany"
+	}}}`)
+
+	if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err != nil {
+		t.Fatalf("ColdStart должен был пройти по свежему ответу (наша запись): %v", err)
+	}
+	if len(rec.Calls) == 0 {
+		t.Fatalf("старт не тронул ip — гейт отказал по устаревшему кэшу")
+	}
+}
+
+// Обратный случай F532: кэш ещё помнит нашу запись, а NDMS сейчас отвечает
+// про чужую (например номер вернулся другой программе) — гейт обязан
+// отказать по свежему ответу, а не пропустить по кэшу.
+func TestColdStart_GateRefusesOnFreshForeignRecord(t *testing.T) {
+	getter := ndmsquery.NewFakeGetter()
+	// Кэш (bootstrap-снимок) считает запись нашей.
+	getter.SetJSON("/show/interface/", `{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","state":"up","link":"down","description":"Germany"}}`)
+	o, rec := newOS5LifecycleOn(t, &recordingPoster{}, getter, &MockBackend{}, true)
+
+	if _, err := o.queries.Interfaces.Get(context.Background(), "OpkgTun10"); err != nil {
+		t.Fatalf("precondition Get: %v", err)
+	}
+
+	// NDMS сейчас отвечает про чужую запись — кэш этого не видел.
+	getter.SetPostInterface("OpkgTun10", `{"show":{"interface":{
+		"id":"OpkgTun10","type":"OpkgTun","state":"up","link":"down","description":"csqtt"
+	}}}`)
+
+	err := o.ColdStart(context.Background(), lifecycleCfg(t))
+	var foreign *ForeignRecordError
+	if !errors.As(err, &foreign) {
+		t.Fatalf("err = %v, want *ForeignRecordError (свежая запись чужая)", err)
+	}
+	if len(rec.Calls) != 0 {
+		t.Fatalf("ip вызван при свежей чужой записи:\n%s", strings.Join(rec.Calls, "\n"))
+	}
+}
+
 // Тот же гейт в Reconcile (рестарт демона, устройство исчезло, на номере чужая
 // запись): ни своего ip link del, ни backend.Start. Текст доходит до человека.
 func TestReconcile_ForeignRecord_Refused(t *testing.T) {
