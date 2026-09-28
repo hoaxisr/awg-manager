@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -411,7 +412,7 @@ func (s *ServiceImpl) ListIngressEligibleInterfaces(ctx context.Context) ([]WANI
 	}
 	out := make([]WANInterfaceInfo, 0, len(bindable))
 	for _, i := range bindable {
-		if wanNames[i.Name] || strings.EqualFold(i.Type, "Bridge") {
+		if i.Foreign || wanNames[i.Name] || strings.EqualFold(i.Type, "Bridge") {
 			continue
 		}
 		out = append(out, i)
@@ -425,6 +426,9 @@ func (s *ServiceImpl) validateBindInterface(ctx context.Context, name string) er
 	if s.deps.BindableInterfaces == nil {
 		return nil
 	}
+	if slices.Contains(s.foreignIfaces(), name) {
+		return nil // отмеченный сторонний — выбор пользователя, даже если его сейчас нет
+	}
 	ifaces, err := s.deps.BindableInterfaces.ListBindable(ctx)
 	if err != nil {
 		return err
@@ -435,4 +439,14 @@ func (s *ServiceImpl) validateBindInterface(ctx context.Context, name string) er
 		}
 	}
 	return fmt.Errorf("bind_interface %q is not a selectable interface", name)
+}
+
+// foreignIfaces — отметки «Сторонний интерфейс» из настроек; без NDMS.
+// nil при ошибке Settings.Get допустим только потому, что после Load Get
+// отдаёт кэш из памяти и не ошибается; иначе strip вырезал бы выходы.
+func (s *ServiceImpl) foreignIfaces() []string {
+	if s.deps.Settings == nil {
+		return nil
+	}
+	return s.deps.Settings.GetForeignInterfaces()
 }

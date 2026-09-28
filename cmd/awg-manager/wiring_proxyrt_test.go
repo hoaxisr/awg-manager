@@ -1313,3 +1313,40 @@ func TestAgedState_UptimeGrowsWithSnapshotAge(t *testing.T) {
 		}
 	}
 }
+
+// Отметка «Сторонний интерфейс» держит номер в пуле (issue #935): без
+// шестого поставщика туннель мог бы получить номер, который пользователь
+// явно закрепил за чужой программой.
+func TestOwners_ForeignMarkHoldsNumber(t *testing.T) {
+	e := newOccEnv(t)
+	if err := e.settings.MarkForeignInterface("opkgtun12"); err != nil {
+		t.Fatal(err)
+	}
+	noPins := func(context.Context) (map[int]string, error) { return nil, nil }
+	pool := e.pool(t, nil, noPins)
+	res, err := pool.Reserve(context.Background(), opkgtun.WantPinned(opkgtun.TunnelHolder("awg12", "дом"), 12))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Close()
+	if res.Numbers()[0] == 12 {
+		t.Fatal("номер отмеченного opkgtun12 выдан туннелю")
+	}
+}
+
+// ownedIndices отдаёт номера ТОЛЬКО наших владельцев (туннели, режим
+// роутера, прокси): сторонние отметки и анонимы (записи NDMS, живые
+// интерфейсы) каталогу маршрутизации не наши (F496).
+func TestOwners_OwnedIndicesExcludeForeignAndAnon(t *testing.T) {
+	e := newOccEnv(t)
+	_ = e.settings.MarkForeignInterface("opkgtun12")
+	e.putRecord(t, rawClientRecord("vk", "OpkgTun13", "opkgtun13"))
+	noPins := func(context.Context) (map[int]string, error) { return map[int]string{14: "запись NDMS OpkgTun14"}, nil }
+	got, err := e.owners(map[int]bool{15: true}, noPins).ownedIndices(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got[13] || got[12] || got[14] || got[15] {
+		t.Fatalf("ownedIndices = %v, ждали только 13", got)
+	}
+}

@@ -1009,6 +1009,16 @@
 		};
 	}
 
+	async function handleForeignUnmark(interfaceName: string): Promise<void> {
+		try {
+			await api.unmarkForeignIface(interfaceName);
+			notifications.success(`Отметка с ${interfaceName} снята`);
+			await tunnels.refetch();
+		} catch (e) {
+			notifications.error(`Не удалось снять отметку с ${interfaceName}: ${e instanceof Error ? e.message : e}`);
+		}
+	}
+
 	async function confirmExternalDeleteNow(): Promise<void> {
 		const target = confirmExternalDelete;
 		if (!target) return;
@@ -1647,7 +1657,7 @@
 		set selectedBackend(v) { selectedBackend = v; },
 		get fileInput() { return fileInput; },
 		set fileInput(v) { fileInput = v; },
-		endpointHost, endpointPort, endpointVisible, toggleEndpointVisible, externalStatusLabel, externalStatusVariant, systemStatusLabel, systemStatusVariant, isManagedTunnelOn, managedRouteMeta, showManagedPing, latestRate, sparklineSeries, handleAdoptClick, handleExternalDelete, handleAwgSortChange, handleDragLeave, handleDragOver, handleDrop, handleFileSelect, openAwgDiagnostics, openConnectivitySettings, openDetail, requestDelete, handleLockClick, markAsServer, handleToggleOnOff, checkPing, handleExportAll,
+		endpointHost, endpointPort, endpointVisible, toggleEndpointVisible, externalStatusLabel, externalStatusVariant, systemStatusLabel, systemStatusVariant, isManagedTunnelOn, managedRouteMeta, showManagedPing, latestRate, sparklineSeries, handleAdoptClick, handleExternalDelete, handleForeignUnmark, handleAwgSortChange, handleDragLeave, handleDragOver, handleDrop, handleFileSelect, openAwgDiagnostics, openConnectivitySettings, openDetail, requestDelete, handleLockClick, markAsServer, handleToggleOnOff, checkPing, handleExportAll,
 	};
 
 	// Live-контекст flat-дашборда (см. dashboardFlatContext.ts).
@@ -1685,7 +1695,7 @@
 		set dashboardTagFilter(v) { dashboardTagFilter = v; },
 		get flatGridEl() { return flatGridEl; },
 		set flatGridEl(v) { flatGridEl = v; },
-		handleAdoptClick, handleExternalDelete, handleExportAll, handleGripKeydown, handleGripPointerDown, handleToggleOnOff, markAsServer, openAwg3Import, openAwgDiagnostics, openDetail, openSingboxDetail, openWizard, requestDelete, handleLockClick, requestSubscriptionDelete,
+		handleAdoptClick, handleExternalDelete, handleForeignUnmark, handleExportAll, handleGripKeydown, handleGripPointerDown, handleToggleOnOff, markAsServer, openAwg3Import, openAwgDiagnostics, openDetail, openSingboxDetail, openWizard, requestDelete, handleLockClick, requestSubscriptionDelete,
 	};
 
 	// Live-контекст модалок страницы (см. tunnelPageModalsContext.ts).

@@ -30,6 +30,16 @@ describe('routingTunnelLabel', () => {
 	it('returns name only when iface missing', () => {
 		expect(routingTunnelLabel(t({ id: 'awg1', name: 'VPN', type: 'managed' }))).toBe('VPN');
 	});
+
+	it('marks system opkgtun without carrier and NDMS address', () => {
+		expect(
+			routingTunnelLabel(t({ id: 'system:OpkgTun7', name: 'csqtt', iface: 'OpkgTun7', type: 'system', status: 'down', available: true, warning: 'нет адреса в NDMS' })),
+		).toBe('csqtt (OpkgTun7) — нет несущей (нет адреса в NDMS)');
+	});
+
+	it('managed stopped tunnel label unchanged', () => {
+		expect(routingTunnelLabel(t({ id: 'awg10', name: 'WARP', iface: 'opkgtun10', type: 'managed', status: 'down', available: true }))).toBe('WARP (opkgtun10)');
+	});
 });
 
 describe('routingTunnelGroup', () => {

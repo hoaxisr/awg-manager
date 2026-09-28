@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/singbox/dnsrewrite"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
@@ -137,6 +140,10 @@ type routerWANInterfaceAdapter struct {
 	// occupiedBinds returns kernel names already bound by an existing direct
 	// outbound, excluded from the bindable list. Bindable-instance only (#323).
 	occupiedBinds func(context.Context) (map[string]bool, error)
+	// foreign — отметки «Сторонний интерфейс»; sysNet — /sys/class/net.
+	// Только у экземпляра списка привязки (issue #935).
+	foreign func() []string
+	sysNet  string
 }
 
 func (a *routerWANInterfaceAdapter) ListWAN(ctx context.Context) ([]router.WANInterfaceInfo, error) {
@@ -327,7 +334,7 @@ func (a *routerWANInterfaceAdapter) ListBindable(ctx context.Context) ([]router.
 			occupied = set
 		}
 	}
-	return filterBindable(ifaces, native, occupied), nil
+	return a.withForeign(ctx, filterBindable(ifaces, native, occupied), occupied), nil
 }
 
 // ListAllBindable returns all egress-capable router interfaces (security-level "public"
@@ -346,7 +353,64 @@ func (a *routerWANInterfaceAdapter) ListAllBindable(ctx context.Context) ([]rout
 			}
 		}
 	}
-	return filterBindable(ifaces, native, nil), nil
+	return a.withForeign(ctx, filterBindable(ifaces, native, nil), nil), nil
+}
+
+// withForeign дописывает отмеченные сторонние интерфейсы (issue #935) в
+// список привязки: foreign задан только у экземпляра списка привязки, ошибка
+// NDMS не прячет отметки — они показываются без подписи.
+func (a *routerWANInterfaceAdapter) withForeign(ctx context.Context, out []router.WANInterfaceInfo, occupied map[string]bool) []router.WANInterfaceInfo {
+	if a.foreign == nil {
+		return out
+	}
+	marked := a.foreign()
+	if len(marked) == 0 {
+		return out
+	}
+	list, err := a.store.List(ctx)
+	if err != nil {
+		list = nil // отмеченные всё равно показываем — без подписи NDMS
+	}
+	return append(out, foreignBindable(marked, list, a.sysNet, occupied)...)
+}
+
+// foreignBindable — отмеченные сторонние интерфейсы для списка привязки
+// (issue #935). ListAll их не отдаёт (opkgtun* режет isOwnTunnel, интерфейса
+// ядра NDMS не знает), поэтому добавляем отдельно. Состояние: OpkgTun — по
+// link из NDMS (connected события не обновляют — OnLayerChanged ведёт только
+// Link/State/IPv4), интерфейс ядра — по /sys/class/net.
+func foreignBindable(marked []string, list []ndms.Interface, sysNet string, occupied map[string]bool) []router.WANInterfaceInfo {
+	// Запись NDMS для opkgtunN ищется по НОМЕРУ (IndexOf от ID записи):
+	// SystemName бывает пустым — wireToInterface обнуляет непохожее имя, а
+	// батч-резолвер молча пропускает сбои.
+	byIdx := make(map[int]ndms.Interface, len(list))
+	for _, i := range list {
+		if n, ok := opkgtun.IndexOf(i.ID); ok {
+			byIdx[n] = i
+		}
+	}
+	out := make([]router.WANInterfaceInfo, 0, len(marked))
+	for _, name := range marked {
+		if occupied[name] {
+			continue
+		}
+		info := router.WANInterfaceInfo{Name: name, Label: name, Foreign: true}
+		n, isOpkg := opkgtun.IndexOf(name)
+		if rec, ok := byIdx[n]; isOpkg && ok {
+			info.ID = rec.ID
+			info.Type = rec.Type
+			if rec.Description != "" {
+				info.Label = rec.Description
+			}
+			info.Up = rec.Link == "up"
+		} else if _, err := os.Stat(filepath.Join(sysNet, name)); err != nil {
+			info.Absent = true
+		} else {
+			info.Up = sysCarrier(sysNet, name)
+		}
+		out = append(out, info)
+	}
+	return out
 }
 
 // filterBindable keeps egress interfaces (security-level "public") minus our

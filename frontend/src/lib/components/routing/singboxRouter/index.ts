@@ -4,6 +4,7 @@ export { default as RuleEditModal } from './RuleEditModal.svelte';
 export { default as RuleSetAddModal } from './RuleSetAddModal.svelte';
 export { default as InlineRuleListEditor } from './InlineRuleListEditor.svelte';
 export { default as CompositeOutboundEditModal } from './CompositeOutboundEditModal.svelte';
+export { default as ForeignIfacePanel } from './ForeignIfacePanel.svelte';
 export { default as PresetIcon } from './PresetIcon.svelte';
 export { default as DNSServerEditModal } from './DNSServerEditModal.svelte';
 export { default as DNSRuleEditModal } from './DNSRuleEditModal.svelte';

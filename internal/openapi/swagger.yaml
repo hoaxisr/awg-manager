@@ -1890,6 +1890,11 @@ definitions:
       endpoint:
         example: ext.example.com:51820
         type: string
+      foreign:
+        description: 'Foreign — отмечен как сторонний (issue #935): не удаляют и не
+          принимают.'
+        example: false
+        type: boolean
       interfaceName:
         example: Wireguard2
         type: string
@@ -1908,6 +1913,11 @@ definitions:
       publicKey:
         example: KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK=
         type: string
+      removable:
+        description: 'Removable — за номером нет владельца в аллокаторе: строку можно
+          снести.'
+        example: true
+        type: boolean
       rxBytes:
         example: 1048576
         type: integer
@@ -1927,6 +1937,36 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.ForeignIfaceCandidate:
+    properties:
+      kind:
+        enum:
+        - opkgtun
+        - kernel
+        type: string
+      label:
+        example: csqtt
+        type: string
+      name:
+        example: opkgtun7
+        type: string
+      up:
+        type: boolean
+    type: object
+  api.ForeignIfaceMarkResponse:
+    properties:
+      name:
+        example: opkgtun7
+        type: string
+      ok:
+        type: boolean
+    type: object
+  api.ForeignIfaceRequest:
+    properties:
+      name:
+        example: opkgtun7
+        type: string
     type: object
   api.GeoExpandData:
     properties:
@@ -3931,6 +3971,11 @@ definitions:
         type: string
       type:
         example: managed
+        type: string
+      warning:
+        description: 'Warning — «нет адреса в NDMS»: маршруты NDMS на такой туннель
+          молча не ставятся.'
+        example: нет адреса в NDMS
         type: string
     type: object
   api.RoutingTunnelsResponse:
@@ -6037,6 +6082,15 @@ definitions:
     type: object
   api.SingboxRouterWANInterfaceDTO:
     properties:
+      absent:
+        example: false
+        type: boolean
+      foreign:
+        description: |-
+          Foreign — отмеченный сторонний интерфейс (issue #935); Absent — его
+          сейчас нет в системе (интерфейс ядра без устройства).
+        example: false
+        type: boolean
       id:
         example: PPPoE0
         type: string
@@ -6049,6 +6103,9 @@ definitions:
       priority:
         example: 700000
         type: integer
+      type:
+        example: PPP
+        type: string
       up:
         example: true
         type: boolean
@@ -11241,6 +11298,92 @@ paths:
       summary: Import tunnel config
       tags:
       - import
+  /interfaces/foreign/candidates:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.ForeignIfaceCandidate'
+                  type: array
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Кандидаты в сторонние интерфейсы
+      tags:
+      - interfaces
+  /interfaces/foreign/mark:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Имя интерфейса ядра
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.ForeignIfaceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ForeignIfaceMarkResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Отметить сторонний интерфейс
+      tags:
+      - interfaces
+  /interfaces/foreign/unmark:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Имя интерфейса ядра
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.ForeignIfaceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Снять отметку стороннего интерфейса
+      tags:
+      - interfaces
   /logs:
     get:
       description: Returns log entries from the selected bucket. `bucket=app` (default)

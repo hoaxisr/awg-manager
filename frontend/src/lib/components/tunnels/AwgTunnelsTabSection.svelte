@@ -573,17 +573,22 @@
 								{:else}
 									<span class="awg-inline-badge awg-inline-badge--muted">только интерфейс</span>
 								{/if}
+								{#if tunnel.foreign}<Badge variant="accent" size="sm">сторонний</Badge>{/if}
 							</div>
 							<div class="awg-list-sub">
+								<!-- У интерфейса ядра нет номера OpkgTun (tunnelNumber < 0) —
+								     «#-1» не показываем, разделители ставим только между частями. -->
 								{#if tunnel.description}
 									«{tunnel.description}»
-									<span class="awg-list-dot">·</span>
 								{/if}
 								{#if tunnel.publicKey}
+									{#if tunnel.description}<span class="awg-list-dot">·</span>{/if}
 									{tunnel.publicKey.slice(0, 16)}…
-									<span class="awg-list-dot">·</span>
 								{/if}
-								#{tunnel.tunnelNumber}
+								{#if tunnel.tunnelNumber >= 0}
+									{#if tunnel.description || tunnel.publicKey}<span class="awg-list-dot">·</span>{/if}
+									#{tunnel.tunnelNumber}
+								{/if}
 							</div>
 						</div>
 						<div class="awg-list-cell awg-list-cell-status">
@@ -643,7 +648,7 @@
 						<div class="awg-list-cell awg-list-cell-actions awg-ext-actions">
 							<!-- Короткая надпись: полная не влезала в колонку действий и
 							     вылезала за неё на узких экранах. Смысл — в title. -->
-							{#if tunnel.isAWG}
+							{#if tunnel.isAWG && !tunnel.foreign}
 								<Button
 									variant="primary"
 									size="sm"
@@ -653,7 +658,17 @@
 									Взять
 								</Button>
 							{/if}
-							{#if tunnel.removable}
+							{#if tunnel.foreign}
+								<Button
+									variant="ghost"
+									size="sm"
+									title="Снять отметку «интерфейс другой программы»: {tunnel.interfaceName}"
+									onclick={() => ctx.handleForeignUnmark(tunnel.interfaceName)}
+								>
+									Снять отметку
+								</Button>
+							{/if}
+							{#if tunnel.removable && !tunnel.foreign}
 								<Button
 									variant="outline-danger"
 									size="sm"
@@ -733,6 +748,7 @@
 							view={awgGridView}
 							onadopt={(name) => ctx.handleAdoptClick(name)}
 							ondelete={(name) => ctx.handleExternalDelete(name)}
+							onunmark={(name) => ctx.handleForeignUnmark(name)}
 						/>
 					{/each}
 				</div>

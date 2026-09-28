@@ -267,6 +267,16 @@ export interface ExternalTunnel {
 	/** Из каких половин состоит: запись NDMS и/или устройство в ядре. */
 	ndmsRecord?: boolean;
 	kernelDevice?: boolean;
+	/** Интерфейс сторонней программы, отмеченный вручную (issue #935). */
+	foreign?: boolean;
+}
+
+/** Кандидат в сторонние интерфейсы для ручной отметки (issue #935). */
+export interface ForeignIfaceCandidate {
+	name: string;
+	label: string;
+	kind: 'opkgtun' | 'kernel';
+	up: boolean;
 }
 
 export interface SystemTunnel {

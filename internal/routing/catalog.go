@@ -8,6 +8,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
@@ -15,12 +16,13 @@ import (
 
 // TunnelEntry represents a tunnel or interface available for routing.
 type TunnelEntry struct {
-	ID        string `json:"id"`        // "awgm0", "system:Wireguard0", "wan:apcli1"
-	Name      string `json:"name"`      // "WARPm2_88", "Wireguard0", "gpon5G_2"
-	Iface     string `json:"iface"`     // kernel interface name ("nwg0", "opkgtun10", "ppp0", "Wireguard0")
-	Type      string `json:"type"`      // "managed", "system", "wan"
-	Status    string `json:"status"`    // "running", "stopped", "disabled", "up", "down"
-	Available bool   `json:"available"` // can route traffic right now
+	ID        string `json:"id"`                // "awgm0", "system:Wireguard0", "wan:apcli1"
+	Name      string `json:"name"`              // "WARPm2_88", "Wireguard0", "gpon5G_2"
+	Iface     string `json:"iface"`             // kernel interface name ("nwg0", "opkgtun10", "ppp0", "Wireguard0")
+	Type      string `json:"type"`              // "managed", "system", "wan"
+	Status    string `json:"status"`            // "running", "stopped", "disabled", "up", "down"
+	Available bool   `json:"available"`         // can route traffic right now
+	Warning   string `json:"warning,omitempty"` // "нет адреса в NDMS" — маршруты NDMS молча не ставятся
 }
 
 // RoutingSnapshot holds all routing data for SSE snapshots.
@@ -150,6 +152,9 @@ type CatalogImpl struct {
 	exits    ExitRegistry
 	appLog   *logging.ScopedLogger
 
+	// ownedOpkgTun — номера OpkgTun наших владельцев (F496). Set via SetOwnedOpkgTun.
+	ownedOpkgTun func(ctx context.Context) (map[int]bool, error)
+
 	// Snapshot providers (nil-safe). Set via SetSnapshotProvider.
 	snapDnsRoutes        SnapshotFunc
 	snapStaticRoutes     SnapshotFunc
@@ -175,6 +180,12 @@ func NewCatalog(provider TunnelProvider, ifaces interfaceQueries, store StoreCli
 		exits:    exits,
 		appLog:   logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubRoutingCatalog),
 	}
+}
+
+// SetOwnedOpkgTun — номера OpkgTun наших владельцев (F496): их записи NDMS
+// не показываются как системные интерфейсы.
+func (c *CatalogImpl) SetOwnedOpkgTun(fn func(ctx context.Context) (map[int]bool, error)) {
+	c.ownedOpkgTun = fn
 }
 
 // lookupExit — единственная точка, где каталог узнаёт про выход прокси.
@@ -238,6 +249,12 @@ func (c *CatalogImpl) ListAll(ctx context.Context) []TunnelEntry {
 	if c.ifaces != nil {
 		all, err := c.ifaces.List(ctx)
 		if err == nil {
+			var owned map[int]bool
+			if c.ownedOpkgTun != nil {
+				// Ошибка — не повод прятать весь список: хуже показать
+				// лишнее, чем отобрать у пользователя его выходы.
+				owned, _ = c.ownedOpkgTun(ctx)
+			}
 			for _, iface := range all {
 				t := strings.ToLower(iface.Type)
 				if t != "wireguard" && t != "proxy" && t != "opkgtun" {
@@ -250,14 +267,33 @@ func (c *CatalogImpl) ListAll(ctx context.Context) []TunnelEntry {
 				if iface.Description != "" {
 					name = iface.Description
 				}
-				result = append(result, TunnelEntry{
+				entry := TunnelEntry{
 					ID:        "system:" + iface.ID,
 					Name:      name,
 					Iface:     iface.ID,
 					Type:      "system",
 					Status:    "up",
 					Available: true,
-				})
+				}
+				if t == "opkgtun" {
+					// Наш собственный OpkgTun (F496): владелец уже показан
+					// как managed-туннель или запись прокси/режима роутера —
+					// вторая, системная, карточка того же интерфейса лишняя.
+					if idx, ok := opkgtun.IndexOf(iface.ID); ok && owned[idx] {
+						continue
+					}
+					// Link, а не Connected: события NDMS (OnLayerChanged)
+					// обновляют только Link/State/IPv4.
+					if iface.Link != "up" {
+						entry.Status = "down"
+					}
+					// Только "disabled" — адреса в NDMS нет; "pending" —
+					// адрес есть, нет несущей (программа не запущена).
+					if iface.IPv4 == "disabled" {
+						entry.Warning = "нет адреса в NDMS"
+					}
+				}
+				result = append(result, entry)
 			}
 		}
 	}

@@ -741,3 +741,91 @@ func TestReserve_NeverIssuesAboveCeiling(t *testing.T) {
 		}
 	}
 }
+
+func TestClaimIfFree(t *testing.T) {
+	self := ForeignHolder("opkgtun12")
+	cases := []struct {
+		name    string
+		take    Taken
+		n       int
+		wantErr error
+	}{
+		{"свободен", nil, 12, nil},
+		{"анонимы не мешают", Taken{12: AnonHolder("запись NDMS OpkgTun12")}, 12, nil},
+		{"свой ключ", Taken{12: ForeignHolder("opkgtun12")}, 12, nil},
+		{"чужой туннель", Taken{12: TunnelHolder("awg12", "дом")}, 12, ErrClaimed},
+		{"режим роутера", Taken{12: RouterModeHolder("policy-tun")}, 12, ErrClaimed},
+		{"выше потолка", nil, 17, ErrOutOfRange},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			committed := false
+			err := poolOf(t, 16, c.take).ClaimIfFree(context.Background(), self, c.n, func() error {
+				committed = true
+				return nil
+			})
+			if c.wantErr == nil {
+				if err != nil || !committed {
+					t.Fatalf("err=%v committed=%v, ждали успех", err, committed)
+				}
+				return
+			}
+			if !errors.Is(err, c.wantErr) || committed {
+				t.Fatalf("err=%v committed=%v, ждали %v без commit", err, committed, c.wantErr)
+			}
+		})
+	}
+}
+
+func TestClaimIfFree_OpenReservationBlocks(t *testing.T) {
+	p := poolOf(t, 16, nil)
+	res := mustReserve(t, p, WantPinned(TunnelHolder("awg12", "дом"), 12))
+	defer res.Close()
+	if res.Numbers()[0] != 12 {
+		t.Fatalf("резервация получила %d, тест холостой", res.Numbers()[0])
+	}
+	err := p.ClaimIfFree(context.Background(), ForeignHolder("opkgtun12"), 12, func() error {
+		t.Fatal("commit под открытой резервацией")
+		return nil
+	})
+	if !errors.Is(err, ErrClaimed) {
+		t.Fatalf("err = %v, want ErrClaimed", err)
+	}
+}
+
+func TestForeignHolder_ProtectsNumber(t *testing.T) {
+	take := Taken{12: ForeignHolder("opkgtun12")}
+	for _, r := range []Request{
+		WantPinned(TunnelHolder("awg12", "дом"), 12),
+		WantPinned(ProxyHolder("wdtt:x", "raw", "x"), 12),
+		WantPinnedStrict(TunnelHolder("awg12", "дом"), 12),
+		Want(TunnelHolder("", "новый")),
+	} {
+		if got := mustReserve(t, poolOf(t, 16, take), r).Numbers()[0]; got == 12 {
+			t.Fatalf("номер стороннего интерфейса выдан %v", r.self)
+		}
+	}
+	orphans, err := poolOf(t, 16, take).Orphans(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range orphans {
+		if o.Index == 12 {
+			t.Fatal("сторонний интерфейс посчитан сиротой")
+		}
+	}
+}
+
+// Спека §11: отметка и туннель на одном номере — конфликт, номер никому.
+func TestForeignHolder_ConflictWithTunnelGrantedToNobody(t *testing.T) {
+	a := &src{name: "записи", take: Taken{12: TunnelHolder("awg12", "дом")}}
+	b := &src{name: "сторонние", take: Taken{12: ForeignHolder("opkgtun12")}}
+	p := NewPool(16, a.source(), b.source())
+	res := mustReserve(t, p, WantPinned(ProxyHolder("wdtt:x", "raw", "x"), 12))
+	if res.Numbers()[0] == 12 {
+		t.Fatal("спорный номер выдан")
+	}
+	if cf := res.Conflicts(); len(cf) != 1 || cf[0].Index != 12 {
+		t.Fatalf("конфликты = %v", cf)
+	}
+}

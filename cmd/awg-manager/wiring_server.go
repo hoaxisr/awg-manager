@@ -138,6 +138,18 @@ func (a *app) setupServer() {
 			},
 			OrphanIfaces:          orphanIfaces(a.opkgPool, a.ndmsQueries.Interfaces),
 			OrphanIfacesExclusive: orphanIfacesExclusive(a.opkgPool, a.ndmsQueries.Interfaces),
+			ForeignIfaces: &foreignIfaces{
+				settings:  a.settingsStore,
+				pool:      a.opkgPool,
+				ndmsNames: ndmsSystemNames(a.ndmsQueries.Interfaces),
+				// a.routerSvc заводит setupRouter — позже setupServer, но
+				// раньше setupListen, поэтому читаем его в момент вызова.
+				boundBy: func(ctx context.Context) (map[string]bool, error) {
+					return routerDirectBinds(ctx, a.routerSvc)
+				},
+				orphans: orphanIfaces(a.opkgPool, a.ndmsQueries.Interfaces),
+				sysNet:  "/sys/class/net",
+			},
 			ObfuscatorRelayChanged: obfuscatorRelayChanged(a.settingsStore, a.awgStore, a.nwgOp.RestartObfuscatorRelay,
 				func(id string) bool { return a.obfDispatcher != nil && a.obfDispatcher.Alive(id) },
 				&a.obfKmodTripped, logging.NewScopedLogger(a.loggingService, logging.GroupTunnel, logging.SubOps)),
@@ -345,6 +357,21 @@ func (a *app) setupDeviceProxy() {
 
 }
 
+// routerDirectBinds — имена ядра, к которым привязан direct-выход роутера.
+func routerDirectBinds(ctx context.Context, svc *router.ServiceImpl) (map[string]bool, error) {
+	obs, err := svc.ListCompositeOutbounds(ctx)
+	if err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool)
+	for _, o := range obs {
+		if o.Type == "direct" && o.BindInterface != "" {
+			set[o.BindInterface] = true
+		}
+	}
+	return set, nil
+}
+
 // setupRouter builds the sing-box router service with its adapters,
 // the geoip bypass set, subscription scheduler/handler and the remaining
 // sing-box HTTP handlers.
@@ -356,7 +383,8 @@ func (a *app) setupRouter() {
 		logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSingboxRouter).
 			Warn("reserve-ports", "", "зарезервировать порты инбаундов: "+err.Error())
 	}
-	bindableAdapter := &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces, nativeProxies: a.singboxOp.ListNativeProxies}
+	bindableAdapter := &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces, nativeProxies: a.singboxOp.ListNativeProxies,
+		foreign: a.settingsStore.GetForeignInterfaces, sysNet: "/sys/class/net"}
 	routerSvc := router.NewService(router.Deps{
 		AppLog:                 a.loggingService,
 		Settings:               a.settingsStore,
@@ -422,17 +450,7 @@ func (a *app) setupRouter() {
 	// Exclude interfaces already bound by an existing direct outbound from the
 	// bindable picker (#323). Wired post-construction — needs routerSvc.
 	bindableAdapter.occupiedBinds = func(ctx context.Context) (map[string]bool, error) {
-		obs, err := routerSvc.ListCompositeOutbounds(ctx)
-		if err != nil {
-			return nil, err
-		}
-		set := make(map[string]bool)
-		for _, o := range obs {
-			if o.Type == "direct" && o.BindInterface != "" {
-				set[o.BindInterface] = true
-			}
-		}
-		return set, nil
+		return routerDirectBinds(ctx, routerSvc)
 	}
 	a.singboxOp.SetOutboundReferenceRenamer(routerSvc)
 	a.tunnelService.SetAWGSyncer(a.awgoutboundsSvc)
@@ -440,7 +458,7 @@ func (a *app) setupRouter() {
 	a.tunnelService.SetRouterRefChecker(routerSvc)
 	a.singboxHandler.SetOutboundRefCheckers(a.deviceProxySvc, routerSvc)
 	a.singboxHandler.SetBindValidator(subscriptionBindValidator{adapter: bindableAdapter}.ValidateBindInterface)
-	a.deviceProxySvc.SetRouterOutbounds(&deviceproxyRouterOutboundsAdapter{src: routerSvc})
+	a.deviceProxySvc.SetRouterOutbounds(&deviceproxyRouterOutboundsAdapter{src: routerSvc, foreign: a.settingsStore.GetForeignInterfaces})
 	// Initial reconcile on boot — idempotent, brings config.json in sync
 	// with storage + current tunnel set. Runs strictly AFTER
 	// SetRouterOutbounds (см. комментарий у SubscribeBus выше): каталог

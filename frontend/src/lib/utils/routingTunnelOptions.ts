@@ -114,8 +114,10 @@ export function groupPolicyGlobalInterfaces(items: PolicyGlobalInterface[]): Pol
 /** Human-readable option label with kernel/NDMS iface suffix (like sing-box outbound dropdown). */
 export function routingTunnelLabel(t: RoutingTunnel): string {
 	const iface = t.iface?.trim();
-	if (iface) return `${t.name} (${iface})`;
-	return t.name;
+	let label = iface ? `${t.name} (${iface})` : t.name;
+	if (t.type === 'system' && t.status === 'down') label += ' — нет несущей';
+	if (t.warning) label += ` (${t.warning})`;
+	return label;
 }
 
 /** Resolves the dropdown group for one routing catalog entry. */

@@ -623,11 +623,13 @@ const api_ExternalTunnelDTO: v.GenericSchema = v.looseObject({
 	conflictsWith: v.optional(v.nullable(v.string())),
 	description: v.optional(v.nullable(v.string())),
 	endpoint: v.optional(v.nullable(v.string())),
+	foreign: v.optional(v.nullable(v.boolean())),
 	interfaceName: v.optional(v.nullable(v.string())),
 	isAWG: v.optional(v.nullable(v.boolean())),
 	kernelDevice: v.optional(v.nullable(v.boolean())),
 	ndmsRecord: v.optional(v.nullable(v.boolean())),
 	publicKey: v.optional(v.nullable(v.string())),
+	removable: v.optional(v.nullable(v.boolean())),
 	rxBytes: v.optional(v.nullable(v.number())),
 	tunnelNumber: v.optional(v.nullable(v.number())),
 	txBytes: v.optional(v.nullable(v.number())),
@@ -636,6 +638,18 @@ const api_ExternalTunnelDTO: v.GenericSchema = v.looseObject({
 const api_ExternalTunnelsResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.array(v.lazy(() => api_ExternalTunnelDTO)))),
 	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_ForeignIfaceCandidate: v.GenericSchema = v.looseObject({
+	kind: v.optional(v.nullable(v.string())),
+	label: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+	up: v.optional(v.nullable(v.boolean())),
+});
+
+const api_ForeignIfaceMarkResponse: v.GenericSchema = v.looseObject({
+	name: v.optional(v.nullable(v.string())),
+	ok: v.optional(v.nullable(v.boolean())),
 });
 
 const api_GeoExpandData: v.GenericSchema = v.looseObject({
@@ -1434,6 +1448,7 @@ const api_RoutingTunnelDTO: v.GenericSchema = v.looseObject({
 	name: v.optional(v.nullable(v.string())),
 	status: v.optional(v.nullable(v.string())),
 	type: v.optional(v.nullable(v.string())),
+	warning: v.optional(v.nullable(v.string())),
 });
 
 const api_RoutingTunnelsResponse: v.GenericSchema = v.looseObject({
@@ -2014,10 +2029,13 @@ const api_SingboxRouterStatusResponse: v.GenericSchema = v.looseObject({
 });
 
 const api_SingboxRouterWANInterfaceDTO: v.GenericSchema = v.looseObject({
+	absent: v.optional(v.nullable(v.boolean())),
+	foreign: v.optional(v.nullable(v.boolean())),
 	id: v.optional(v.nullable(v.string())),
 	label: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
 	priority: v.optional(v.nullable(v.number())),
+	type: v.optional(v.nullable(v.string())),
 	up: v.optional(v.nullable(v.boolean())),
 });
 
@@ -3268,6 +3286,9 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /hydraroute/geo-tags": v.lazy(() => api_GeoTagsResponse),
 	"GET /hydraroute/ipset-usage": v.lazy(() => api_IpsetUsageResponse),
 	"GET /hydraroute/oversized-tags": v.lazy(() => api_OversizedTagsResponse),
+	"GET /interfaces/foreign/candidates": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.array(v.lazy(() => api_ForeignIfaceCandidate)))),
+})]),
 	"GET /logs": v.lazy(() => api_LogsResponseEnvelope),
 	"GET /logs/subgroups": v.lazy(() => api_SubgroupsResponseEnvelope),
 	"GET /managed-servers": v.lazy(() => api_ManagedServersListResponse),
@@ -3477,6 +3498,10 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /hydraroute/geo-files/update": v.lazy(() => api_GeoFileUpdatedResponse),
 	"POST /hydraroute/policy-order": v.lazy(() => api_PolicyOrderResponse),
 	"POST /import/conf": v.lazy(() => api_APIEnvelope),
+	"POST /interfaces/foreign/mark": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_ForeignIfaceMarkResponse))),
+})]),
+	"POST /interfaces/foreign/unmark": v.lazy(() => api_APIEnvelope),
 	"POST /logs/clear": v.lazy(() => api_APIEnvelope),
 	"POST /managed-servers": v.lazy(() => api_ManagedServerResponse),
 	"POST /managed-servers/{id}/enabled": v.lazy(() => api_ServersAllResponse),

@@ -266,6 +266,7 @@ func (a *app) startBootSequence() {
 			// терялся, а отложенный бут потом ждал второго фронта.
 			a.orch.HandleEvent(a.shutdownCtx, bootEvent(err))
 			a.restorePingMonitors()
+			go a.reconcileSystemClientRoutes() // F497: system:-выходы после ребута
 
 			// Маркер надо снять и здесь: холодный старт и так поднимается из
 			// восстановленного конфига, а невынутый маркер на всех последующих
@@ -321,6 +322,7 @@ func (a *app) startBootSequence() {
 				WANUp: true,
 			})
 			a.restorePingMonitors()
+			go a.reconcileSystemClientRoutes() // F497: system:-выходы после ребута
 			go a.proxyRuntimeNudge("post-restore", proxyrt.EventBoot)
 			return
 		}
@@ -331,6 +333,7 @@ func (a *app) startBootSequence() {
 		a.orch.LoadState(context.Background())
 		a.orch.HandleEvent(context.Background(), orchestrator.Event{Type: orchestrator.EventReconnect})
 		a.restorePingMonitors()
+		go a.reconcileSystemClientRoutes() // F497: system:-выходы после ребута
 		// Как на cold-boot: посев мог не состояться, если RCI ещё не отвечал
 		// сразу после opkg upgrade.
 		go a.proxyRuntimeNudge("daemon-restart", proxyrt.EventBoot)

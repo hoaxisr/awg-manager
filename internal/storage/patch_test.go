@@ -393,6 +393,12 @@ var nonPatchableSettings = map[string]struct{}{
 	"obfuscatorRelayProcess": {},
 	"obfuscatorKmodTripped":  {},
 	"obfuscatorKmodOopsHash": {},
+	// foreignInterfaces (#935) пишется ТОЛЬКО MarkForeignInterface/
+	// UnmarkForeignInterface под семафором пула OpkgTun (spec §4): ручка
+	// проверяет, что номер не занят туннелем, прежде чем отметить его как
+	// сторонний. Общий PATCH дал бы аутентифицированному клиенту обойти эту
+	// проверку границы — та же single-writer логика, что у fakeip/opkgTun.
+	"foreignInterfaces": {},
 }
 
 // TestSettingsPatch_ExcludesServerSecrets pins the intentional exclusion: a

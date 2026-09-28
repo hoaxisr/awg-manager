@@ -128,6 +128,11 @@ export interface SingboxRouterWANInterface {
 	label: string;
 	up: boolean;
 	priority: number;
+	/** Интерфейс сторонней программы, не наш (issue #935). */
+	foreign?: boolean;
+	/** Сторонний интерфейс отмечен, но в системе сейчас отсутствует. */
+	absent?: boolean;
+	type?: string;
 }
 
 export interface SingboxRouterIssue {

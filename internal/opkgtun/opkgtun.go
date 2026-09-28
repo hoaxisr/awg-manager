@@ -83,6 +83,7 @@ const (
 	kindSystemTunnel
 	kindProxy
 	kindRouterMode
+	kindForeign
 )
 
 func (k kind) String() string {
@@ -95,6 +96,8 @@ func (k kind) String() string {
 		return "прокси"
 	case kindRouterMode:
 		return "режим роутера"
+	case kindForeign:
+		return "сторонний интерфейс"
 	default:
 		return "прочее"
 	}
@@ -172,6 +175,13 @@ func RouterModeHolder(mode string) Holder {
 		name += " " + mode
 	}
 	return Holder{k: "router-mode", name: name, kind: kindRouterMode}
+}
+
+// ForeignHolder — интерфейс другой программы, отмеченный пользователем
+// (issue #935). Ключ по имени ядра: номер держит отметка, даже пока
+// устройства нет, и ни один чужой пин его не получит.
+func ForeignHolder(kernel string) Holder {
+	return Holder{k: "foreign:" + kernel, name: kindForeign.String() + " " + kernel, kind: kindForeign}
 }
 
 // AnonHolder — держатель без ключа: живое устройство в ядре, запись NDMS.

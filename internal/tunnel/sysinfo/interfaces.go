@@ -129,6 +129,10 @@ type ExternalTunnelInfo struct {
 	// устройство, поднятое мимо NDMS, записи не имеет вовсе.
 	NDMSRecord   bool `json:"ndmsRecord,omitempty"`
 	KernelDevice bool `json:"kernelDevice,omitempty"`
+
+	// Foreign — пользователь отметил интерфейс как сторонний (issue #935):
+	// его не удаляют и не принимают, отметку снимают кнопкой в строке.
+	Foreign bool `json:"foreign,omitempty"`
 }
 
 // IsAWGInterface checks if an interface is an AWG tunnel by running awg show.

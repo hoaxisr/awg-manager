@@ -131,6 +131,7 @@ type Server struct {
 	singboxSubMembersFn        func() []diagnostics.SingboxSubMember
 	orphanIfacesFn             func(ctx context.Context) ([]external.OrphanIface, error)
 	orphanExclusiveFn          func(ctx context.Context) ([]external.OrphanIface, error)
+	foreignIfaces              api.ForeignIfaceMarker
 	singboxConfigPreviewFn     func() (string, error)
 	obfuscatorRelayChanged     func()
 	dnsCheckService            *dnscheck.Service
@@ -159,6 +160,7 @@ type Server struct {
 	bootStatusFn func() bool // returns true if boot still in progress
 
 	proxyRuntimeNudge api.ProxyRuntimeNudge
+	ipv4RunningHook   func(string)
 
 	// proxyRuntime — менеджер прокси-рантайма за узким срезом: тумблер
 	// намерения инстанса (карточка зеркальной записи wdtt-raw) и глушение
@@ -229,6 +231,10 @@ type Deps struct {
 	// перед сносом (см. opkgtun.Pool.OrphansExclusive).
 	OrphanIfacesExclusive func(ctx context.Context) ([]external.OrphanIface, error)
 
+	// ForeignIfaces — отметка «Сторонний интерфейс» (issue #935). Nil
+	// выключает ручки /api/interfaces/foreign/* целиком.
+	ForeignIfaces api.ForeignIfaceMarker
+
 	// McpKeys holds the MCP API keys. Nil disables the /mcp endpoint and
 	// its key-management routes entirely (they are never registered).
 	McpKeys *storage.McpKeyStore
@@ -296,6 +302,7 @@ func New(cfg Config, deps Deps) *Server {
 		singboxSubMembersFn:    deps.SingboxSubMembers,
 		orphanIfacesFn:         deps.OrphanIfaces,
 		orphanExclusiveFn:      deps.OrphanIfacesExclusive,
+		foreignIfaces:          deps.ForeignIfaces,
 		singboxConfigPreviewFn: deps.SingboxConfigPreview,
 		obfuscatorRelayChanged: deps.ObfuscatorRelayChanged,
 		authMiddleware:         auth.NewMiddleware(deps.Sessions, deps.Settings, &authLoggerAdapter{log: appLog}),
@@ -515,6 +522,12 @@ func (s *Server) SetBootStatusFunc(fn func() bool) {
 // (seed retry plus worker wake-up).
 func (s *Server) SetProxyRuntimeNudge(fn api.ProxyRuntimeNudge) {
 	s.proxyRuntimeNudge = fn
+}
+
+// SetIPv4RunningHook wires the callback for iflayerchanged layer=ipv4
+// level=running (F497: переприменение клиентских маршрутов system:-выхода).
+func (s *Server) SetIPv4RunningHook(fn func(string)) {
+	s.ipv4RunningHook = fn
 }
 
 // ProxyRuntime — то, что серверу нужно от менеджера прокси-рантайма:

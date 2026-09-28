@@ -48,6 +48,7 @@ type HookHandler struct {
 	refreshTunnels TunnelHookInvalidator
 	proxyNudge     ProxyRuntimeNudge
 	endpointNudge  func()
+	ipv4Running    func(ndmsID string)
 	log            *logging.ScopedLogger
 	wanLog         *logging.ScopedLogger
 	// selfCreateGate counts in-flight awg-manager-initiated NDMS interface
@@ -117,6 +118,13 @@ func (h *HookHandler) SetProxyRuntimeNudge(fn ProxyRuntimeNudge) {
 // незачем — лишний проход дёшев, адрес он меняет только на смену резолва.
 func (h *HookHandler) SetEndpointGuardNudge(fn func()) {
 	h.endpointNudge = fn
+}
+
+// SetIPv4RunningHook — колбэк на iflayerchanged layer=ipv4 level=running для
+// ЛЮБОГО интерфейса: переприменение клиентских маршрутов system:-выхода
+// (F497; ядро снимает `default dev` на down/up интерфейса).
+func (h *HookHandler) SetIPv4RunningHook(fn func(ndmsID string)) {
+	h.ipv4Running = fn
 }
 
 // HandleNDMS is the unified hook endpoint. The shared forwarder script
@@ -218,6 +226,9 @@ func (h *HookHandler) HandleNDMS(w http.ResponseWriter, r *http.Request) {
 	//    - layer=conf → NDMS hook path (tunnel lifecycle)
 	//    - layer=ipv4 → WAN model update + EventWANUp/Down
 	if event.Type == events.EventIfLayerChanged {
+		if event.Layer == "ipv4" && event.Level == "running" && h.ipv4Running != nil {
+			go h.ipv4Running(event.ID)
+		}
 		if event.Layer == "ipv4" {
 			h.handleWANLayerEvent(event)
 		} else if h.orch != nil {

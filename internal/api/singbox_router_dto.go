@@ -320,6 +320,12 @@ type SingboxRouterWANInterfaceDTO struct {
 	Label    string `json:"label" example:"Резервный канал"`
 	Up       bool   `json:"up" example:"true"`
 	Priority int    `json:"priority" example:"700000"`
+	Type     string `json:"type" example:"PPP"`
+
+	// Foreign — отмеченный сторонний интерфейс (issue #935); Absent — его
+	// сейчас нет в системе (интерфейс ядра без устройства).
+	Foreign bool `json:"foreign,omitempty" example:"false"`
+	Absent  bool `json:"absent,omitempty" example:"false"`
 }
 
 // SingboxRouterWANInterfacesListResponse is the envelope for

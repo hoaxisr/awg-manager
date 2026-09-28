@@ -2,7 +2,7 @@
 	import { ShieldCheck, Trash2, TriangleAlert } from 'lucide-svelte';
 	import type { ExternalTunnel } from '$lib/types';
 	import { formatBytes } from '$lib/utils/format';
-	import { Button } from '$lib/components/ui';
+	import { Badge, Button } from '$lib/components/ui';
 	import TunnelTitleRow from '$lib/components/tunnels/TunnelTitleRow.svelte';
 
 	interface Props {
@@ -10,9 +10,10 @@
 		view?: 'cards' | 'compact' | 'list';
 		onadopt?: (interfaceName: string) => void;
 		ondelete?: (interfaceName: string) => void;
+		onunmark?: (interfaceName: string) => void;
 	}
 
-	let { tunnel, view = 'cards', onadopt, ondelete }: Props = $props();
+	let { tunnel, view = 'cards', onadopt, ondelete, onunmark }: Props = $props();
 
 	let isListCard = $derived(view === 'list');
 	let statusDot = $derived(
@@ -22,11 +23,13 @@
 	);
 
 	// Принять можно только то, поверх чего работает туннель. Без него принимать
-	// нечего: интерфейс есть, конфигурации нет.
-	let canAdopt = $derived(tunnel.isAWG);
+	// нечего: интерфейс есть, конфигурации нет. Отмеченный «сторонним» сервер
+	// не примет (ErrAdoptForeign).
+	let canAdopt = $derived(tunnel.isAWG && !tunnel.foreign);
 	// Удалять предлагаем только то, что сервер примет: за номером может стоять
-	// владелец, которого список туннелей не видит.
-	let canDelete = $derived(tunnel.removable === true);
+	// владелец, которого список туннелей не видит. Отмеченный «сторонним»
+	// принадлежит другой программе — его не удаляем, даже если сервер позволил бы.
+	let canDelete = $derived(tunnel.removable === true && !tunnel.foreign);
 	// Подпись о составе: «только устройство» — интерфейс, поднятый мимо NDMS.
 	let kindLabel = $derived(
 		tunnel.isAWG
@@ -44,6 +47,10 @@
 
 	function handleDelete(): void {
 		ondelete?.(tunnel.interfaceName);
+	}
+
+	function handleUnmark(): void {
+		onunmark?.(tunnel.interfaceName);
 	}
 </script>
 
@@ -64,6 +71,7 @@
 				/>
 				<div class="meta-tags-dense">
 					<span class="iface-chip-dense">{kindLabel}</span>
+					{#if tunnel.foreign}<Badge variant="accent" size="sm">сторонний</Badge>{/if}
 					{#if tunnel.description}
 						<span class="iface-chip-dense descr-chip">«{tunnel.description}»</span>
 					{/if}
@@ -86,6 +94,16 @@
 					Взять под управление
 				</Button>
 			{/if}
+			{#if tunnel.foreign}
+				<Button
+					variant="ghost"
+					size="sm"
+					title="Снять отметку «интерфейс другой программы»: {tunnel.interfaceName}"
+					onclick={handleUnmark}
+				>
+					Снять отметку
+				</Button>
+			{/if}
 			{#if canDelete}
 				<Button variant="outline-danger" onclick={handleDelete}>
 					{#snippet iconBefore()}
@@ -101,6 +119,7 @@
 				<h3 class="tunnel-name">{tunnel.interfaceName}</h3>
 				<div class="flex items-center gap-2 flex-wrap">
 					<span class="iface-name">{kindLabel}</span>
+					{#if tunnel.foreign}<Badge variant="accent" size="sm">сторонний</Badge>{/if}
 					{#if tunnel.description}
 						<span class="iface-name descr-chip">«{tunnel.description}»</span>
 					{/if}
@@ -167,6 +186,16 @@
 						<ShieldCheck size={16} aria-hidden="true" />
 					{/snippet}
 					Взять под управление
+				</Button>
+			{/if}
+			{#if tunnel.foreign}
+				<Button
+					variant="ghost"
+					size="sm"
+					title="Снять отметку «интерфейс другой программы»: {tunnel.interfaceName}"
+					onclick={handleUnmark}
+				>
+					Снять отметку
 				</Button>
 			{/if}
 			{#if canDelete}

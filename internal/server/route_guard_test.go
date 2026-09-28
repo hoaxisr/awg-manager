@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -192,6 +193,17 @@ func (testAuthChecker) GetApiKey() string   { return "" }
 
 func stub(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) }
 
+// stubForeignIfaces — нулевая реализация api.ForeignIfaceMarker: снимает
+// nil-гейт секции /api/interfaces/foreign/* в фикстуре, гард сам хендлер не
+// вызывает.
+type stubForeignIfaces struct{}
+
+func (stubForeignIfaces) Mark(_ context.Context, n string) (string, error) { return n, nil }
+func (stubForeignIfaces) Unmark(context.Context, string) error             { return nil }
+func (stubForeignIfaces) Candidates(context.Context) ([]api.ForeignIfaceCandidate, error) {
+	return nil, nil
+}
+
 // newGuardServer — минимальный Server, на котором registerRoutes регистрирует
 // ВСЕ маршруты. Гард срабатывает до вызова хендлера, поэтому хендлерам
 // хватает нулевых значений; секции с гейтом `s.x != nil` получают нулевые
@@ -241,6 +253,7 @@ func newGuardServer(t *testing.T) (*Server, *auth.SessionStore) {
 		managedServiceImpl: &managed.Service{},
 		presetCatalog:      &presets.Catalog{},
 		ndmsQueries:        &ndmsquery.Queries{DNSProxyStatus: &ndmsquery.DNSProxyStatusStore{}},
+		foreignIfaces:      stubForeignIfaces{},
 		proxyRt: ProxyRtSurface{
 			Instances: stub, ListenMoves: stub, WdttLinkDecode: stub, WdttLinkImport: stub,
 			FreeTurnLinkDecode: stub, CaptchaStatus: stub, InstallStatus: stub, Install: stub, Uninstall: stub,

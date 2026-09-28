@@ -837,7 +837,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 		return err
 	}
 	cfg.Inbounds = ensureTProxyInbound(cfg.Inbounds, sr.UDPTimeout, sr.UDPNATMax)
-	cfg.Outbounds = stripAutoManagedDirect(cfg.Outbounds)
+	cfg.Outbounds = stripAutoManagedDirect(cfg.Outbounds, s.foreignIfaces())
 	cfg.EnsureSystemRules(sr.SnifferEnabled)
 	// Neutralize sing-box's short per-protocol UDP timeouts (QUIC/DTLS 30s,
 	// STUN/DNS 10s) applied on sniff/port inference — they ignore the inbound

@@ -66,6 +66,7 @@ type routeHandlers struct {
 	diagRunner           *diagnostics.Runner
 	diagHandler          *api.DiagnosticsHandler
 	orphanIfaceHandler   *api.OrphanIfaceHandler
+	foreignIfaceHandler  *api.ForeignIfaceHandler
 	connectionsService   *connections.Service
 	connectionsHandler   *api.ConnectionsHandler
 	signatureHandler     *api.SignatureHandler
@@ -206,6 +207,10 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	}
 	h.orphanIfaceHandler = api.NewOrphanIfaceHandler(s.orphanExclusiveFn, orphanNDMS, s.loggingService)
 	h.orphanIfaceHandler.SetTunnelListPublisher(h.tunnelsHandler.PublishTunnelList)
+	if s.foreignIfaces != nil {
+		h.foreignIfaceHandler = api.NewForeignIfaceHandler(s.foreignIfaces)
+		h.foreignIfaceHandler.SetTunnelListPublisher(h.tunnelsHandler.PublishTunnelList)
+	}
 
 	// Connections viewer
 	h.connectionsService = connections.NewService(s.catalog, s.ndmsTransport, s.dnsRouteService, s.loggingService)
@@ -279,6 +284,9 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 	}
 	if s.nwgOp != nil {
 		h.hookHandler.SetEndpointGuardNudge(s.nwgOp.NudgeEndpointGuard)
+	}
+	if s.ipv4RunningHook != nil {
+		h.hookHandler.SetIPv4RunningHook(s.ipv4RunningHook)
 	}
 	mux.HandleFunc("/api/hook/ndms", h.hookHandler.HandleNDMS)
 
@@ -701,6 +709,11 @@ func (s *Server) registerDiagnosticsRoutes(mux *http.ServeMux, h *routeHandlers)
 	mux.HandleFunc("/api/diagnostics/result", h.guarded(h.diagHandler.Result))
 	mux.HandleFunc("/api/diagnostics/stream", h.guarded(h.diagHandler.Stream))
 	mux.HandleFunc("/api/tunnels/orphans/delete", h.guarded(h.orphanIfaceHandler.Delete))
+	if h.foreignIfaceHandler != nil {
+		mux.HandleFunc("/api/interfaces/foreign/candidates", h.guarded(h.foreignIfaceHandler.Candidates))
+		mux.HandleFunc("/api/interfaces/foreign/mark", h.guarded(h.foreignIfaceHandler.Mark))
+		mux.HandleFunc("/api/interfaces/foreign/unmark", h.guarded(h.foreignIfaceHandler.Unmark))
+	}
 
 	// DNS proxy info (read-only ndnproxy state). ndmsQueries may be nil on
 	// platforms without NDMS wiring — guard the construction.

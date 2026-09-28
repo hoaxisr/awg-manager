@@ -185,6 +185,13 @@ func (r *Reservation) holderOf(n int) Holder {
 // поля отказа читает человек, а не программа.
 var ErrExhausted = errors.New("нет свободного номера OpkgTun")
 
+// ErrClaimed — у номера есть чужой заявленный владелец или открытая
+// резервация. ErrOutOfRange — номер вне окна роутера.
+var (
+	ErrClaimed    = errors.New("у номера OpkgTun есть владелец")
+	ErrOutOfRange = errors.New("номер OpkgTun вне диапазона роутера")
+)
+
 // Reserve выдаёт по номеру на заявку — все или ни одного.
 //
 // Ноль заявок — пустая резервация БЕЗ ввода-вывода, pick не берётся: штатный
@@ -285,6 +292,45 @@ func (p *Pool) Reserve(ctx context.Context, reqs ...Request) (*Reservation, erro
 	}
 	p.mu.Unlock()
 	return res, nil
+}
+
+// ClaimIfFree выполняет commit под семафором выбора, если номер n не держит
+// ни один ЧУЖОЙ заявленный владелец и он не выдан открытой резервацией.
+// Анонимы (запись NDMS, живое устройство) не мешают: это и есть след
+// сторонней программы. Под семафором ни одна выдача не проскочит между
+// проверкой и commit.
+func (p *Pool) ClaimIfFree(ctx context.Context, self Holder, n int, commit func() error) error {
+	if self.anonymous() {
+		panic("opkgtun: ClaimIfFree у держателя без ключа")
+	}
+	if n < 0 || n > p.ceiling {
+		return fmt.Errorf("%w: OpkgTun%d, окно 0..%d", ErrOutOfRange, n, p.ceiling)
+	}
+	select {
+	case p.pick <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-p.pick }()
+
+	if _, held := p.earlySnapshot()[n]; held {
+		return fmt.Errorf("%w: OpkgTun%d сейчас выдаётся", ErrClaimed, n)
+	}
+	parts := make([]Taken, 0, len(p.src))
+	for _, s := range p.src {
+		got, err := s.Read(ctx)
+		if err != nil {
+			return fmt.Errorf("занятость OpkgTun (%s): %w", s.Name, err)
+		}
+		parts = append(parts, got)
+	}
+	occ, _ := mergeAll(parts)
+	for _, h := range occ[n] {
+		if !h.anonymous() && !h.sameOwner(self) {
+			return fmt.Errorf("%w: OpkgTun%d — %s", ErrClaimed, n, h)
+		}
+	}
+	return commit()
 }
 
 // pinGranted — годен ли заявленный номер.

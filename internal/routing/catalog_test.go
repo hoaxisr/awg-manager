@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -548,5 +549,45 @@ func TestListAll_ProviderError(t *testing.T) {
 	}
 	if result[0].ID != "system:Wireguard0" {
 		t.Errorf("expected system entry, got %s", result[0].ID)
+	}
+}
+
+func TestListAll_OpkgTunOwnedHiddenStatusFromNDMS(t *testing.T) {
+	provider := &mockTunnelProvider{}
+	ndmsClient := &mockNDMSClient{ifaces: []ndms.Interface{
+		{ID: "OpkgTun10", Type: "OpkgTun", Description: "awgm policy-tun", Link: "up", IPv4: "running"},
+		// Connected устарел: события NDMS обновляют только Link.
+		{ID: "OpkgTun7", Type: "OpkgTun", Description: "csqtt", Link: "down", Connected: "yes", IPv4: "disabled"},
+		{ID: "OpkgTun8", Type: "OpkgTun", Link: "up", Connected: "no", IPv4: "running"},
+		// Программа убита, адрес в NDMS есть: ipv4 "pending" — это не «нет адреса».
+		{ID: "OpkgTun6", Type: "OpkgTun", Link: "down", IPv4: "pending"},
+	}}
+	cat := NewCatalog(provider, ndmsClient, &mockStoreClient{entries: map[string]StoreEntry{}}, noExits(), nil)
+	cat.SetOwnedOpkgTun(func(context.Context) (map[int]bool, error) { return map[int]bool{10: true}, nil })
+
+	by := map[string]TunnelEntry{}
+	for _, e := range cat.ListAll(context.Background()) {
+		by[e.ID] = e
+	}
+	if _, ok := by["system:OpkgTun10"]; ok {
+		t.Error("наш OpkgTun10 показан как системный (F496)")
+	}
+	if e := by["system:OpkgTun7"]; e.Status != "down" || e.Warning != "нет адреса в NDMS" || !e.Available {
+		t.Errorf("OpkgTun7 = %+v", e)
+	}
+	if e := by["system:OpkgTun8"]; e.Status != "up" || e.Warning != "" {
+		t.Errorf("OpkgTun8 = %+v", e)
+	}
+	if e := by["system:OpkgTun6"]; e.Status != "down" || e.Warning != "" {
+		t.Errorf("OpkgTun6 = %+v, ждали down без предупреждения", e)
+	}
+}
+
+func TestListAll_OwnedLookupErrorKeepsList(t *testing.T) {
+	ndmsClient := &mockNDMSClient{ifaces: []ndms.Interface{{ID: "OpkgTun7", Type: "OpkgTun", Connected: "yes", IPv4: "running"}}}
+	cat := NewCatalog(&mockTunnelProvider{}, ndmsClient, &mockStoreClient{entries: map[string]StoreEntry{}}, noExits(), nil)
+	cat.SetOwnedOpkgTun(func(context.Context) (map[int]bool, error) { return nil, errors.New("boom") })
+	if len(cat.ListAll(context.Background())) != 1 {
+		t.Fatal("ошибка владельцев обнулила список")
 	}
 }

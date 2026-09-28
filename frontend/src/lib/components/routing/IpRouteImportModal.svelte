@@ -2,6 +2,7 @@
 	import { Modal, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { parseStaticRouteImport, type PortableStaticRoute } from '$lib/utils/staticroute-export';
 	import type { RoutingTunnel } from '$lib/types';
+	import { routingTunnelLabel } from '$lib/utils/routingTunnelOptions';
 	import { pluralize, ROUTE_WORDS } from '$lib/utils/pluralize';
 	import RoutingImportDropZone from './RoutingImportDropZone.svelte';
 
@@ -51,7 +52,7 @@
 	let noTunnels = $derived(tunnels.filter(t => t.available).length === 0);
 	let tunnelOpts = $derived<DropdownOption[]>([
 		...userTunnels.map((t) => ({ value: t.id, label: t.name, group: 'Пользовательские' })),
-		...systemTunnels.map((t) => ({ value: t.id, label: t.name, group: 'Системные' })),
+		...systemTunnels.map((t) => ({ value: t.id, label: routingTunnelLabel(t), group: 'Системные' })),
 	]);
 
 	function isDuplicate(name: string): boolean {
