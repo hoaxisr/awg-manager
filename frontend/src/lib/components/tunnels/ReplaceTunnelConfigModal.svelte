@@ -7,6 +7,7 @@
     import { api } from '$lib/api/client';
     import { notifications } from '$lib/stores/notifications';
     import { isVpnLink } from '$lib/utils/vpnlink';
+    import { tunnelNameError } from '$lib/utils/tunnelName';
 
     interface Props {
         open: boolean;
@@ -41,6 +42,7 @@
     let linkPreview = $state('');
     let wasOpen = $state(false);
     let premiumOpen = $state(false);
+    let nameError = $derived(tunnelNameError(newName));
 
     // Reset state when modal opens (only once per open cycle so polling-tick
     // re-runs don't wipe user edits).
@@ -66,6 +68,10 @@
      * страной, к которой новая конфигурация отношения не имеет.
      */
     async function replaceFromPremium(result: PremiumWizardResult) {
+        if (nameError) {
+            notifications.error(nameError);
+            return;
+        }
         loading = true;
         try {
             const replaced = await api.replaceConfig(
@@ -89,7 +95,7 @@
 
     async function handleReplace() {
         let content = importContent.trim();
-        if (!content) return;
+        if (!content || nameError) return;
 
         // Auto-detect vpn:// in paste tab (vpn tab already decodes via VpnLinkPasteImport)
         if (activeTab === 'paste' && isVpnLink(content)) {
@@ -149,11 +155,12 @@
         <label class="field-label" for="replace-name">Имя туннеля</label>
         <input type="text" id="replace-name" class="name-input" bind:value={newName} placeholder={tunnelName}>
         <div class="field-hint">Оставьте без изменений чтобы сохранить текущее имя</div>
+        <p class="error-text" class:visible={!!nameError}>{nameError}</p>
     </div>
 
     {#snippet actions()}
         <Button variant="secondary" onclick={onclose} disabled={loading}>Отмена</Button>
-        <Button variant="primary" onclick={handleReplace} disabled={!importContent.trim()} loading={loading}>
+        <Button variant="primary" onclick={handleReplace} disabled={!importContent.trim() || !!nameError} loading={loading}>
             Заменить
         </Button>
     {/snippet}

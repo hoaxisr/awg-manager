@@ -12,6 +12,7 @@
 	import { decodeVpnLink, isVpnLink, vpnLinkUnsupportedPortalReason } from '$lib/utils/vpnlink';
 	import { nativewgUnavailableHint } from '$lib/utils/backendAvailability';
 	import { api } from '$lib/api/client';
+	import { tunnelNameError } from '$lib/utils/tunnelName';
 	import type { SystemInfo } from '$lib/types';
 
 	function normalizeTunnelImportTab(raw: string | null): TunnelImportTab {
@@ -41,6 +42,7 @@
 	});
 
 	let isObf = $derived(activeTab === 'phobos' || activeTab === 'clusterm');
+	let nameError = $derived(tunnelNameError(importName));
 
 	let nativewgHint = $derived(
 		systemInfo !== null && !systemInfo.backendAvailability?.nativewg
@@ -82,6 +84,7 @@
 	/** Импорт из сырого текста (.conf или vpn:// с клиентским конфигом). Обновляет importContent после успешного декода vpn:// */
 	async function executeImport(rawContent: string) {
 		let content = rawContent.trim();
+		if (nameError) return;
 		if (!content && !(activeTab === 'phobos' && obfInstallUrl.trim())) {
 			notifications.error(
 				isObf
@@ -161,11 +164,12 @@
 	<div class="top-row">
 		<input type="text" id="import-name" class="name-input" bind:value={importName} placeholder="Мой VPN">
 		<div class="btn-import-wrap">
-			<Button variant="primary" size="md" onclick={handleImport} disabled={!importContent.trim() && !(activeTab === 'phobos' && obfInstallUrl.trim())} loading={loading}>
+			<Button variant="primary" size="md" onclick={handleImport} disabled={!!nameError || (!importContent.trim() && !(activeTab === 'phobos' && obfInstallUrl.trim()))} loading={loading}>
 				Импортировать
 			</Button>
 		</div>
 	</div>
+	<p class="error-text" class:visible={!!nameError}>{nameError}</p>
 
 	{#if !isObf || nativewgHint}
 	<div class="backend-selector">

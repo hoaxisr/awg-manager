@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { TriangleAlert, CircleX } from 'lucide-svelte';
 	import { Modal, Button } from '$lib/components/ui';
+	import { tunnelNameError } from '$lib/utils/tunnelName';
 
 	interface Props {
 		interfaceName: string;
@@ -51,7 +52,8 @@
 			localError = 'Загрузите файл конфигурации';
 			return;
 		}
-		localError = '';
+		localError = tunnelNameError(tunnelName);
+		if (localError) return;
 		step = 'instructions';
 	}
 
