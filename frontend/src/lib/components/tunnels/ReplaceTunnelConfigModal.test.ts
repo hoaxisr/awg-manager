@@ -120,4 +120,21 @@ describe('ReplaceTunnelConfigModal', () => {
 		expect(screen.getByRole('button', { name: /Вставить ссылку/ })).toBeTruthy();
 		expect(screen.queryByRole('button', { name: 'Amnezia Premium' })).toBeNull();
 	});
+
+	it('неизменённое длинное имя не показывает ошибку 256 байт', async () => {
+		const longName = 'ф'.repeat(200); // 2 байта UTF-8 на символ → 400 байт
+		render(ReplaceTunnelConfigModal, { props: { ...PROPS, tunnelName: longName } });
+
+		expect(screen.queryByText(/длиннее 256 байт/)).toBeNull();
+	});
+
+	it('изменённое длинное имя показывает ошибку 256 байт', async () => {
+		const longName = 'ф'.repeat(200);
+		render(ReplaceTunnelConfigModal, { props: { ...PROPS } });
+
+		const field = screen.getByLabelText('Имя туннеля');
+		await fireEvent.input(field, { target: { value: longName } });
+
+		expect(screen.getByText(/длиннее 256 байт/)).toBeTruthy();
+	});
 });
