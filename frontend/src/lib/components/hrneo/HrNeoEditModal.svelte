@@ -35,7 +35,7 @@
 		geoipFiles: string[];
 		maxelem: number;
 		saving: boolean;
-		initialTarget?: { kind: 'interface' | 'policy'; name: string };
+		initialTarget?: { kind: 'interface' | 'policy'; name: string; tunnelId?: string };
 		initialPreset?: CatalogPreset | null;
 		onpickcatalog?: () => void;
 		onsave: (payload: Partial<DnsRoute>) => void;
@@ -179,7 +179,11 @@
 			} else if (initialTarget?.kind === 'interface') {
 				mode = 'interface';
 				const t = tunnels.find(
-					(x) => x.id === initialTarget.name || x.name === initialTarget.name || x.iface === initialTarget.name,
+					(x) =>
+						x.id === initialTarget.tunnelId ||
+						x.id === initialTarget.name ||
+						x.name === initialTarget.name ||
+						x.iface === initialTarget.name,
 				);
 				tunnelId = t?.id ?? tunnels[0]?.id ?? '';
 			} else {

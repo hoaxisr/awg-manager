@@ -438,17 +438,28 @@ func (c *CatalogImpl) GetKernelIface(ctx context.Context, tunnelID string) (stri
 // GetKernelIfaceName resolves tunnelID to the kernel-level interface name
 // for HydraRoute DirectRoute (not NDMS name).
 //
-// Returns an error if tunnelID doesn't resolve to any known tunnel — the
+// Returns an error if tunnelID doesn't resolve to a kernel name — the
 // caller must handle it (skip the rule, surface to the user) rather than
 // silently write a garbage interface name into HydraRoute's domain.conf.
+// This includes a system: interface whose kernel name NDMS doesn't report:
+// HR Neo matches the target against /sys/class/net and treats anything else
+// as an ip policy name, so the NDMS id would be a broken route (F498).
 func (c *CatalogImpl) GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error) {
 	// WAN: "wan:ppp0" → "ppp0"
 	if strings.HasPrefix(tunnelID, "wan:") {
 		return strings.TrimPrefix(tunnelID, "wan:"), nil
 	}
-	// System: "system:Wireguard0" → "Wireguard0"
+	// System: "system:Wireguard0" → kernel name ("nwg0")
 	if tunnel.IsSystemTunnel(tunnelID) {
-		return tunnel.SystemTunnelName(tunnelID), nil
+		ndmsName := tunnel.SystemTunnelName(tunnelID)
+		kernelName := ""
+		if c.ifaces != nil {
+			kernelName = c.ifaces.ResolveSystemName(ctx, ndmsName)
+		}
+		if kernelName == "" || kernelName == ndmsName {
+			return "", fmt.Errorf("интерфейс %q: имя ядра не определено", ndmsName)
+		}
+		return kernelName, nil
 	}
 	if e, _, ok := c.lookupExit(tunnelID); ok {
 		if e.KernelIface == "" {
@@ -537,6 +548,29 @@ func (c *CatalogImpl) fillSection(ctx context.Context, key string, fn SnapshotFu
 	if v != nil {
 		*dst = v
 	}
+}
+
+// SystemTunnelsByIface maps HydraRoute targets back to system: tunnel IDs:
+// the kernel name of every system entry of ListAll, plus its NDMS id — files
+// written before F498 carry that instead, and must still show (and be
+// rewritten on next save) as the same system tunnel. Managed tunnels are not
+// in ListAll's system entries, so their targets are left alone.
+func (c *CatalogImpl) SystemTunnelsByIface(ctx context.Context) map[string]string {
+	out := map[string]string{}
+	if c.ifaces == nil {
+		return out
+	}
+	for _, e := range c.ListAll(ctx) {
+		if e.Type != "system" {
+			continue
+		}
+		ndmsName := tunnel.SystemTunnelName(e.ID)
+		out[ndmsName] = e.ID
+		if k := c.ifaces.ResolveSystemName(ctx, ndmsName); k != "" && k != ndmsName {
+			out[k] = e.ID
+		}
+	}
+	return out
 }
 
 // resolveNDMSName returns the NDMS or kernel interface name for a managed tunnel.

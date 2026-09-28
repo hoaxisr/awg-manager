@@ -4,6 +4,8 @@
 	export interface TargetEntry {
 		name: string;
 		kind: 'policy' | 'interface';
+		/** TunnelID цели interface-правила (у системных — system:<id>, F498). */
+		tunnelId?: string;
 		ruleCount: number;
 		displayName?: string;
 		broken?: boolean;

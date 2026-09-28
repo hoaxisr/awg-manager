@@ -25,6 +25,7 @@
 	import HrNeoSettingsView from './HrNeoSettingsView.svelte';
 	import HrNeoDisabledTagsView from './HrNeoDisabledTagsView.svelte';
 	import HrNeoEditModal from './HrNeoEditModal.svelte';
+	import { hrTargetTunnel } from './hrTargetTunnel';
 	import { IconPickerModal, ServiceCatalogModal } from '$lib/components/dnsroutes';
 	import type { CatalogPreset } from '$lib/types';
 	import { hrNeoCatalogPresetFilter } from '$lib/utils/catalog-preset';
@@ -79,7 +80,7 @@
 
 	let editOpen = $state(false);
 	let editingRule = $state<DnsRoute | null>(null);
-	let editInitialTarget = $state<{ kind: 'interface' | 'policy'; name: string } | undefined>(
+	let editInitialTarget = $state<{ kind: 'interface' | 'policy'; name: string; tunnelId?: string } | undefined>(
 		undefined,
 	);
 	let editInitialPreset = $state<CatalogPreset | null>(null);
@@ -200,42 +201,40 @@
 		pendingToggleTimers.clear();
 	});
 
-	function targetOf(r: DnsRoute): { name: string; kind: 'policy' | 'interface' } | null {
+	function targetOf(
+		r: DnsRoute,
+	): { name: string; kind: 'policy' | 'interface'; tunnelId?: string } | null {
 		if (r.hrRouteMode === 'policy' && r.hrPolicyName) {
 			return { name: r.hrPolicyName, kind: 'policy' };
 		}
 		const first = r.routes?.[0];
 		if (!first) return null;
-		return { name: first.interface || first.tunnelId, kind: 'interface' };
+		return { name: first.interface || first.tunnelId, kind: 'interface', tunnelId: first.tunnelId };
 	}
 
-	function isBroken(t: { name: string; kind: 'policy' | 'interface' }): boolean {
+	function isBroken(t: { name: string; kind: 'policy' | 'interface'; tunnelId?: string }): boolean {
 		if (t.kind === 'policy') {
 			return !policies.some((p) => p.name === t.name);
 		}
-		// HR files store kernel iface names (nwg0, opkgtun10, ppp0). The tunnel
-		// list exposes the same under `iface`. id/name never match a kernel name,
-		// so comparing against those would flag every managed target broken.
-		return !tunnels.some((tn) => tn.iface === t.name);
+		// HR files store kernel iface names (nwg0, opkgtun10, ppp0); see
+		// hrTargetTunnel for how they map onto the tunnel list.
+		return !hrTargetTunnel(tunnels, t.name, t.tunnelId);
 	}
 
 	let targets = $derived.by<TargetEntry[]>(() => {
-		const tunnelNameByIface = new Map(
-			tunnels
-				.filter((tn) => !!tn.iface)
-				.map((tn) => [tn.iface as string, tn.name]),
-		);
 		const byName = new Map<string, TargetEntry>();
 		for (const r of hrRules) {
 			const t = targetOf(r);
 			if (!t) continue;
-			const tunnelName = t.kind === 'interface' ? tunnelNameByIface.get(t.name) : undefined;
+			const tunnelName =
+				t.kind === 'interface' ? hrTargetTunnel(tunnels, t.name, t.tunnelId)?.name : undefined;
 			const existing = byName.get(t.name);
 			if (existing) existing.ruleCount++;
 			else
 				byName.set(t.name, {
 					name: t.name,
 					kind: t.kind,
+					tunnelId: t.tunnelId,
 					ruleCount: 1,
 					displayName: tunnelName,
 					broken: isBroken(t),
@@ -296,7 +295,11 @@
 	function openNewRuleForSelectedTarget(preset: CatalogPreset | null = null) {
 		editingRule = null;
 		if (selection?.type === 'target' && selectedTargetEntry) {
-			editInitialTarget = { kind: selectedTargetEntry.kind, name: selection.name };
+			editInitialTarget = {
+				kind: selectedTargetEntry.kind,
+				name: selection.name,
+				tunnelId: selectedTargetEntry.tunnelId,
+			};
 		} else {
 			editInitialTarget = undefined;
 		}

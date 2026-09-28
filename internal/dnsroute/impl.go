@@ -16,9 +16,12 @@ import (
 // InterfaceResolver resolves tunnel IDs to router interface names.
 // ResolveInterface returns the NDMS name (for RCI commands).
 // GetKernelIfaceName returns the kernel-level interface name (for HR Neo).
+// SystemTunnelsByIface maps an HR Neo target (kernel name, or the NDMS id
+// left by older files) back to its "system:<NDMS id>" tunnel ID.
 type InterfaceResolver interface {
 	ResolveInterface(ctx context.Context, tunnelID string) (string, error)
 	GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error)
+	SystemTunnelsByIface(ctx context.Context) map[string]string
 }
 
 // ServiceImpl implements the Service interface.

@@ -79,9 +79,10 @@ func (s *ServiceImpl) listHydraRoute(ctx context.Context) ([]DomainList, error) 
 		icons = data.HRRuleIcons
 	}
 
+	systemByIface := s.systemTunnelsByIface(ctx)
 	result := make([]DomainList, 0, len(rules))
 	for _, r := range rules {
-		dl := hrRuleToDomainList(r, policySet)
+		dl := hrRuleToDomainList(r, policySet, systemByIface)
 		if iconURL := strings.TrimSpace(icons[r.Name]); iconURL != "" {
 			dl.IconURL = iconURL
 		}
@@ -112,7 +113,11 @@ func isHRID(id string) bool { return strings.HasPrefix(id, hrIDPrefix) }
 // contract shared with NDMS. Subscriptions/dedup don't exist at this layer.
 // Enabled reflects whether the rule's content lines are commented with '#'
 // in domain.conf / ip.list.
-func hrRuleToDomainList(r hydraroute.HRRule, policySet map[string]bool) DomainList {
+//
+// systemByIface turns the target of a system interface back into its
+// "system:<NDMS id>" tunnel ID (F498); other targets (managed tunnels, WAN)
+// keep the kernel name as TunnelID, as before.
+func hrRuleToDomainList(r hydraroute.HRRule, policySet map[string]bool, systemByIface map[string]string) DomainList {
 	domains := append([]string(nil), r.Domains...)
 	domains = append(domains, r.Subnets...)
 
@@ -131,8 +136,21 @@ func hrRuleToDomainList(r hydraroute.HRRule, policySet map[string]bool) DomainLi
 		return dl
 	}
 	dl.HRRouteMode = "interface"
-	dl.Routes = []RouteTarget{{Interface: r.Target, TunnelID: r.Target}}
+	tunnelID := r.Target
+	if id, ok := systemByIface[r.Target]; ok {
+		tunnelID = id
+	}
+	dl.Routes = []RouteTarget{{Interface: r.Target, TunnelID: tunnelID}}
 	return dl
+}
+
+// systemTunnelsByIface — best-effort, like currentPolicySet: without the map
+// system targets read back as bare interface names.
+func (s *ServiceImpl) systemTunnelsByIface(ctx context.Context) map[string]string {
+	if s.resolver == nil {
+		return nil
+	}
+	return s.resolver.SystemTunnelsByIface(ctx)
 }
 
 // createHydraRoute validates the input, resolves the target tunnel, and
@@ -189,7 +207,7 @@ func (s *ServiceImpl) createHydraRoute(ctx context.Context, list DomainList) (*D
 
 	s.appLog.Info("hydraroute-create", created.Name, "dns-route created")
 
-	dl := hrRuleToDomainList(*created, s.currentPolicySet(ctx))
+	dl := hrRuleToDomainList(*created, s.currentPolicySet(ctx), s.systemTunnelsByIface(ctx))
 	if iconURL != "" {
 		dl.IconURL = iconURL
 	}
@@ -246,7 +264,7 @@ func (s *ServiceImpl) updateHydraRoute(ctx context.Context, id string, list Doma
 	}
 	s.appLog.Info("hydraroute-update", updated.Name, "was "+originalName)
 
-	dl := hrRuleToDomainList(*updated, s.currentPolicySet(ctx))
+	dl := hrRuleToDomainList(*updated, s.currentPolicySet(ctx), s.systemTunnelsByIface(ctx))
 	if iconURL != "" {
 		dl.IconURL = iconURL
 	}

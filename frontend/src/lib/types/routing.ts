@@ -80,7 +80,7 @@ export interface StaticRouteList {
 export interface RoutingTunnel {
 	id: string;
 	name: string;
-	iface?: string; // kernel interface name ("nwg0", "opkgtun10", "ppp0"); used to match HR file targets
+	iface?: string; // kernel interface name ("nwg0", "opkgtun10", "ppp0"); у system-записей — NDMS-id (см. hrTargetTunnel)
 	type: 'managed' | 'system' | 'wan';
 	status: string;
 	available: boolean;

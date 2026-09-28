@@ -55,6 +55,11 @@ func (a *kernelResolverAdapter) GetKernelIfaceName(ctx context.Context, tunnelID
 // known-tunnel resolver stub
 type stubResolver struct {
 	kernelByTunnel map[string]string
+	systemByIface  map[string]string
+}
+
+func (s *stubResolver) SystemTunnelsByIface(context.Context) map[string]string {
+	return s.systemByIface
 }
 
 func (s *stubResolver) ResolveInterface(ctx context.Context, tunnelID string) (string, error) {
@@ -328,4 +333,55 @@ func (f *failingOrchestrator) WaitForPolicy(_ context.Context, _ string, _ time.
 
 func (f *failingOrchestrator) EnsurePolicyInterfaces(_ context.Context, _ string, _ []string) error {
 	return errors.New("should not be called if wait failed")
+}
+
+// F498: цель system: в domain.conf — имя ядра, а читается обратно она как
+// system:-id. Старый файл с NDMS-id показывается тем же туннелем; цель
+// managed-туннеля читается как раньше.
+func TestHRRoundTrip_SystemTargetIsKernelName(t *testing.T) {
+	resolver := &stubResolver{
+		kernelByTunnel: map[string]string{"system:Wireguard0": "nwg1", "awg10": "nwg0"},
+		systemByIface:  map[string]string{"nwg1": "system:Wireguard0", "Wireguard0": "system:Wireguard0"},
+	}
+	svc, hydra := newHRTestSvc(t, resolver)
+	ctx := context.Background()
+
+	created, err := svc.Create(ctx, DomainList{
+		Name: "Sys", Backend: "hydraroute", ManualDomains: []string{"sys.com"},
+		HRRouteMode: "interface", Routes: []RouteTarget{{TunnelID: "system:Wireguard0"}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := created.Routes; len(got) != 1 || got[0].TunnelID != "system:Wireguard0" || got[0].Interface != "nwg1" {
+		t.Errorf("ответ Create: routes = %+v", got)
+	}
+	_, _ = hydra.CreateRule(hydraroute.HRRule{Name: "Legacy", Domains: []string{"old.com"}, Target: "Wireguard0"})
+	_, _ = hydra.CreateRule(hydraroute.HRRule{Name: "Managed", Domains: []string{"m.com"}, Target: "nwg0"})
+
+	rules, _, _ := hydra.ListRules()
+	for _, r := range rules {
+		if r.Name == "Sys" && r.Target != "nwg1" {
+			t.Errorf("в domain.conf ушло %q, ждали имя ядра nwg1", r.Target)
+		}
+	}
+
+	lists, err := svc.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"Sys": "system:Wireguard0", "Legacy": "system:Wireguard0", "Managed": "nwg0"}
+	for _, l := range lists {
+		w, ok := want[l.Name]
+		if !ok {
+			continue
+		}
+		if len(l.Routes) != 1 || l.Routes[0].TunnelID != w {
+			t.Errorf("%s: routes = %+v, ждали TunnelID %q", l.Name, l.Routes, w)
+		}
+		delete(want, l.Name)
+	}
+	if len(want) != 0 {
+		t.Errorf("не прочитаны: %v", want)
+	}
 }
