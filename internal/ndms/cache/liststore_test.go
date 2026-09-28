@@ -258,3 +258,66 @@ func TestListStore_FetchStoresSuccessAndSurfacesError(t *testing.T) {
 		t.Fatalf("Fetch при сбое = %v, %v; want ошибку без прежнего значения", got, err)
 	}
 }
+
+// Выборка, начатая до InvalidateAll и завершившаяся после него, в кэш не
+// ложится: иначе старое жило бы весь TTL. Вызывающему результат отдаётся.
+func TestListStore_FetchBeforeInvalidateNotCached(t *testing.T) {
+	var fetches int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	s := NewListStore(time.Minute, nil, "test", func(ctx context.Context) ([]int, error) {
+		n := atomic.AddInt32(&fetches, 1)
+		if n == 1 {
+			close(started)
+			<-release
+		}
+		return []int{int(n)}, nil
+	})
+
+	done := make(chan []int, 1)
+	go func() {
+		v, _ := s.List(context.Background())
+		done <- v
+	}()
+	<-started
+	s.InvalidateAll()
+	close(release)
+	if v := <-done; len(v) != 1 || v[0] != 1 {
+		t.Fatalf("вызывающий старой выборки = %v, want [1]", v)
+	}
+	got, err := s.List(context.Background())
+	if err != nil || len(got) != 1 || got[0] != 2 {
+		t.Fatalf("List после сброса = %v, %v; want [2] — старое закэшировано", got, err)
+	}
+}
+
+// Медленный Refresh, начатый до быстрого Fetch, не затирает свежее.
+func TestListStore_SlowRefreshDoesNotOverwriteFetch(t *testing.T) {
+	var fetches int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	s := NewListStore(time.Minute, nil, "test", func(ctx context.Context) ([]int, error) {
+		n := atomic.AddInt32(&fetches, 1)
+		if n == 1 {
+			close(started)
+			<-release
+		}
+		return []int{int(n)}, nil
+	})
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = s.Refresh(context.Background())
+		close(done)
+	}()
+	<-started
+	if v, err := s.Fetch(context.Background()); err != nil || v[0] != 2 {
+		t.Fatalf("Fetch = %v, %v", v, err)
+	}
+	close(release)
+	<-done
+	got, err := s.List(context.Background())
+	if err != nil || len(got) != 1 || got[0] != 2 || atomic.LoadInt32(&fetches) != 2 {
+		t.Fatalf("кэш = %v, %v, fetches=%d; want свежее [2] без новой выборки", got, err, fetches)
+	}
+}
