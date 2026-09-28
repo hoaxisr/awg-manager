@@ -11781,12 +11781,8 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/api.ServersAllResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
+        "400":
+          description: Any failure (code DELETE_PEER_FAILED)
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       security:
@@ -11900,11 +11896,7 @@ paths:
           schema:
             $ref: '#/definitions/api.ServersAllResponse'
         "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
+          description: Any failure, including a peer missing on the router (code NOT_FOUND)
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       security:
@@ -14009,12 +14001,8 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/api.ServersAllResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
+        "400":
+          description: Any failure, including an unknown peer (code NOT_FOUND)
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       security:
@@ -14131,12 +14119,8 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/api.ServersAllResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
+        "400":
+          description: Any failure, including a peer missing on the router (code NOT_FOUND)
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
       security:

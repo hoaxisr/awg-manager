@@ -215,8 +215,7 @@ func (h *ManagedServerHandler) UpdatePeer(w http.ResponseWriter, r *http.Request
 //	@Param			pubkey	path		string	true	"Peer public key (URL-encoded)"
 //	@Param			endpoint	query		string	false	"Хост для [Peer] Endpoint вместо WAN/KeenDNS (прокси-обвязки шлют 127.0.0.1)"
 //	@Success		200		{object}	ServersAllResponse
-//	@Failure		404		{object}	APIErrorEnvelope
-//	@Failure		500		{object}	APIErrorEnvelope
+//	@Failure		400		{object}	APIErrorEnvelope	"Any failure (code DELETE_PEER_FAILED)"
 //	@Router			/managed-servers/{id}/peers/{pubkey} [delete]
 func (h *ManagedServerHandler) DeletePeer(w http.ResponseWriter, r *http.Request, id, pubkey string) {
 	if r.Method != http.MethodDelete {
@@ -245,8 +244,7 @@ func (h *ManagedServerHandler) DeletePeer(w http.ResponseWriter, r *http.Request
 //	@Param			pubkey	path		string					true	"Peer public key (URL-encoded)"
 //	@Param			body	body		EnabledToggleRequest	true	"Enabled flag"
 //	@Success		200		{object}	ServersAllResponse
-//	@Failure		400		{object}	APIErrorEnvelope
-//	@Failure		500		{object}	APIErrorEnvelope
+//	@Failure		400		{object}	APIErrorEnvelope	"Any failure, including a peer missing on the router (code NOT_FOUND)"
 //	@Router			/managed-servers/{id}/peers/{pubkey}/toggle [post]
 func (h *ManagedServerHandler) TogglePeer(w http.ResponseWriter, r *http.Request, id, pubkey string) {
 	req, ok := parseJSON[EnabledToggleRequest](w, r, http.MethodPost)

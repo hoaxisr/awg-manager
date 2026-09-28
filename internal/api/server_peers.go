@@ -615,8 +615,7 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 //	@Param			name	path		string	true	"Interface name (e.g. Wireguard0)"
 //	@Param			pubkey	path		string	true	"Peer public key"
 //	@Success		200		{object}	ServersAllResponse
-//	@Failure		404		{object}	APIErrorEnvelope
-//	@Failure		500		{object}	APIErrorEnvelope
+//	@Failure		400		{object}	APIErrorEnvelope	"Any failure, including an unknown peer (code NOT_FOUND)"
 //	@Router			/servers/{name}/peers/{pubkey} [delete]
 func (h *ServersHandler) DeleteServerPeer(w http.ResponseWriter, r *http.Request, name, pubkey string) {
 	if !h.requireWGCommands(w) {
@@ -674,8 +673,7 @@ func (h *ServersHandler) DeleteServerPeer(w http.ResponseWriter, r *http.Request
 //	@Param			pubkey	path		string					true	"Peer public key"
 //	@Param			body	body		EnabledToggleRequest	true	"Enabled flag"
 //	@Success		200		{object}	ServersAllResponse
-//	@Failure		404		{object}	APIErrorEnvelope
-//	@Failure		500		{object}	APIErrorEnvelope
+//	@Failure		400		{object}	APIErrorEnvelope	"Any failure, including a peer missing on the router (code NOT_FOUND)"
 //	@Router			/servers/{name}/peers/{pubkey}/toggle [post]
 func (h *ServersHandler) ToggleServerPeer(w http.ResponseWriter, r *http.Request, name, pubkey string) {
 	req, ok := parseJSON[EnabledToggleRequest](w, r, http.MethodPost)
