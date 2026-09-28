@@ -1350,3 +1350,37 @@ func TestOwners_OwnedIndicesExcludeForeignAndAnon(t *testing.T) {
 		t.Fatalf("ownedIndices = %v, ждали только 13", got)
 	}
 }
+
+// F494: пул видит и kernel-половину. Клиент wg-режима, сохранённый с одним
+// RawIface, при переходе в raw пинится менеджером на этот номер (halfIndex);
+// без kernel-половины в занятости номер 13 ушёл бы чужому.
+func TestProxyRecordIfacesSeesKernelHalf(t *testing.T) {
+	client := instancestore.Record{ID: "de", Kind: instancestore.KindWdttClient,
+		WdttClient: &roles.WdttClientConfig{Mode: "wg", RawIface: "opkgtun13"}}
+	server := serverRecord("srv", "", "opkgtun4", "OpkgTun5", "opkgtun5")
+	corrupt := serverRecord("bad", "OpkgTun6", "opkgtun7", "", "")
+
+	cases := []struct {
+		rec  instancestore.Record
+		want []recordHalf
+	}{
+		{client, []recordHalf{{iface: "opkgtun13"}}},
+		{server, []recordHalf{{field: "wg", iface: "opkgtun4"}, {field: "raw", iface: "OpkgTun5"}}},
+		// Половины разошлись: один номер на ключ, NDMS-имя главнее (как halfIndex).
+		{corrupt, []recordHalf{{field: "wg", iface: "OpkgTun6"}, {field: "raw", iface: ""}}},
+	}
+	for _, c := range cases {
+		got := proxyRecordIfaces(c.rec)
+		if len(got) != len(c.want) {
+			t.Fatalf("%s: got %v, want %v", c.rec.ID, got, c.want)
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Fatalf("%s: got %v, want %v", c.rec.ID, got, c.want)
+			}
+		}
+	}
+	if idx, _ := opkgtun.IndexOf(proxyRecordIfaces(client)[0].iface); idx != 13 {
+		t.Fatalf("клиент: номер %d, want 13", idx)
+	}
+}

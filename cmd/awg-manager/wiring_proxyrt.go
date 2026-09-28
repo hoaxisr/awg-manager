@@ -18,6 +18,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
+	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/captcha"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/ftlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/install"
@@ -125,21 +126,38 @@ func agedState(snap control.Snapshot, now time.Time) awgmproto.State {
 
 // ── занятость номеров OpkgTun ────────────────────────────────────
 
-// proxyRecordIfaces — NDMS-имена, которые держит запись, по ПОЛЮ записи.
+// proxyRecordIfaces — имена, которые держит запись, по ПОЛЮ записи.
 // Поле — вторая половина ключа владельца (opkgtun.ProxyHolder):
 // у сервера половин две, и номер каждой закреплён за своим ключом, иначе
 // освобождение одной снимало бы пин другой. У клиента поле пустое.
+//
+// Имя каждой пары (NDMS + kernel) выбирается как в halfIndex менеджера
+// (internal/proxyrt/manager): NDMS-имя, а если оно не разбирается — kernel.
+// Иначе запись с одной kernel-половиной (wg-клиент, позже ушедший в raw)
+// пинилась бы менеджером на номер, которого занятость не видит (F494).
+// Половины битой пары с РАЗНЫМИ номерами дают одно NDMS-имя: два номера
+// под одним ключом владельца конфликтовали бы.
 func proxyRecordIfaces(rec instancestore.Record) []recordHalf {
 	switch {
 	case rec.WdttClient != nil:
-		return []recordHalf{{iface: rec.WdttClient.NdmsIface}}
+		c := rec.WdttClient
+		return []recordHalf{{iface: pairName(c.NdmsIface, c.RawIface)}}
 	case rec.WdttServer != nil:
+		s := rec.WdttServer
 		return []recordHalf{
-			{field: "wg", iface: rec.WdttServer.NdmsIface},
-			{field: "raw", iface: rec.WdttServer.RawNdmsIface},
+			{field: "wg", iface: pairName(s.NdmsIface, s.WgIface)},
+			{field: "raw", iface: pairName(s.RawNdmsIface, s.RawIface)},
 		}
 	}
 	return nil
+}
+
+// pairName — разбираемое имя пары: NDMS, иначе kernel (порядок halfIndex).
+func pairName(ndms, kernel string) string {
+	if _, ok := opkgtun.IndexOf(ndms); ok {
+		return ndms
+	}
+	return kernel
 }
 
 // recordHalf — половина записи: поле ключа владельца и её NDMS-имя. Срез, а не
