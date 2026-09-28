@@ -645,6 +645,33 @@ func TestInterfaceStore_Refresh_AbsentGivesNilNotError(t *testing.T) {
 	}
 }
 
+// Ревью F532: вложенный конверт статус-ошибки с ЛЮБЫМ кодом, кроме
+// "unable to find" (6553619), — это «не знаем», а не «записи нет». До
+// правки fetchOne путал их: отсутствие id/interface-name трактовалось как
+// абсент независимо от кода, и гейт Фазы 1 создал бы запись поверх уже
+// существующей, а Refresh выкинул бы верный кэш.
+func TestInterfaceStore_Refresh_OtherStatusErrorIsErrorNotAbsent(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, sampleIfaceList)
+	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{
+		"status":[{"status":"error","code":"6553601","ident":"Network::Interface::Base","message":"internal error"}]
+	}}}`)
+	s := NewInterfaceStore(fg, NopLogger())
+
+	_, _ = s.Get(context.Background(), "Wireguard0")
+
+	got, err := s.Refresh(context.Background(), "Wireguard0")
+	if err == nil {
+		t.Fatalf("Refresh на непонятной вложенной ошибке: want error, got %#v", got)
+	}
+	if !strings.Contains(err.Error(), "6553601") || !strings.Contains(err.Error(), "internal error") {
+		t.Errorf("ошибка должна нести код/сообщение NDMS, got %q", err.Error())
+	}
+	if again, _ := s.Get(context.Background(), "Wireguard0"); again == nil || again.Description != "my tunnel" {
+		t.Errorf("Refresh на непонятной ошибке должен оставить кэш прежним, got %#v", again)
+	}
+}
+
 func TestInterfaceStore_Refresh_ErrorLeavesCacheUntouched(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleIfaceList)

@@ -1090,6 +1090,17 @@ func (s *InterfaceStore) fetchListMap(ctx context.Context) (map[string]ndms.Inte
 // to be a 404 in the GET form; now the POST may return an empty envelope
 // for the same case). HTTPError 404 (rare race condition on POST) is
 // returned as-is.
+//
+// F532: NDMS answers this POST form with HTTP 200 even for a record that
+// doesn't exist — a nested `{"status":[{"status":"error","code":...}]}`
+// envelope, NOT the top-level `{"status":"error",...}` shape
+// transport.Client.postJSON's ExtractError checks for (stand: KN-1810,
+// 5.02.A.11). Only code 6553619 ("unable to find") means "no such
+// record" → (nil, nil). Any OTHER code inside that envelope is a real
+// NDMS-side failure ("don't know", not "doesn't exist") and must not be
+// silently treated as absence — a Phase-1 ownership gate acting on a
+// false (nil, nil) would create a record on top of one that already
+// exists, and Refresh would evict a perfectly good cache entry.
 func (s *InterfaceStore) fetchOne(ctx context.Context, name string) (*ndms.Interface, error) {
 	raw, err := s.getter.Post(ctx, transport.ShowInterface(name, nil))
 	if err != nil {
@@ -1101,6 +1112,12 @@ func (s *InterfaceStore) fetchOne(ctx context.Context, name string) (*ndms.Inter
 	}
 	if len(inner) == 0 {
 		return nil, nil
+	}
+	if statusErr := parseNestedStatusError(inner); statusErr != nil {
+		if statusErr.Code == ndmsUnableToFindCode {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("fetch interface %s: ndms status error %s: %s", name, statusErr.Code, statusErr.Message)
 	}
 	var w ifaceWire
 	if err := json.Unmarshal(inner, &w); err != nil {
@@ -1114,6 +1131,43 @@ func (s *InterfaceStore) fetchOne(ctx context.Context, name string) (*ndms.Inter
 	}
 	iface := wireToInterface(w)
 	return &iface, nil
+}
+
+// ndmsUnableToFindCode — код NDMS-конверта "unable to find" (стенд
+// KN-1810, 5.02.A.11): единственное значение code, которое означает
+// «записи нет», а не «запрос не удался».
+const ndmsUnableToFindCode = "6553619"
+
+// ndmsStatusError is one `{"status":"error",...}` element of a nested
+// NDMS status array — the shape this POST form wraps into `show.interface`
+// on failure, distinct from the top-level status envelope
+// transport.ExtractError checks.
+type ndmsStatusError struct {
+	Code    string
+	Message string
+}
+
+// parseNestedStatusError reports the first `status: "error"` entry of a
+// `{"status":[...]}` array at the top of inner, or nil if inner isn't
+// that shape (a normal interface object has no top-level "status" field
+// of this form, so this never misfires on a real record).
+func parseNestedStatusError(inner []byte) *ndmsStatusError {
+	var w struct {
+		Status []struct {
+			Status  string `json:"status"`
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"status"`
+	}
+	if json.Unmarshal(inner, &w) != nil {
+		return nil
+	}
+	for _, s := range w.Status {
+		if s.Status == "error" {
+			return &ndmsStatusError{Code: s.Code, Message: s.Message}
+		}
+	}
+	return nil
 }
 
 // === Wire format ===
