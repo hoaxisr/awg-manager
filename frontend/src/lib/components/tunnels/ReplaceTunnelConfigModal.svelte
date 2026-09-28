@@ -42,7 +42,10 @@
     let linkPreview = $state('');
     let wasOpen = $state(false);
     let premiumOpen = $state(false);
-    let nameError = $derived(tunnelNameError(newName));
+    // Сервер валидирует длину имени только при его изменении
+    // (internal/api/tunnels_crud.go) — иначе неизменённое старое длинное имя
+    // ловилось бы полем, хотя запрос его даже не тронет.
+    let nameError = $derived(newName !== tunnelName ? tunnelNameError(newName) : '');
 
     // Reset state when modal opens (only once per open cycle so polling-tick
     // re-runs don't wipe user edits).
