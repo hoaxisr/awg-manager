@@ -46,6 +46,8 @@ const (
 	route77Off = `"route":{"interface":"Wireguard1","mask":"255.255.255.0","network":"192.168.77.0","no":true}`
 	route78    = `"route":{"auto":true,"comment":"awgm-peer:PEER1","interface":"Wireguard1","mask":"255.255.255.0","network":"192.168.78.0"}`
 	rcOurs77   = `[{"network":"192.168.77.0","mask":"255.255.255.0","interface":"Wireguard1","auto":true,"comment":"awgm-peer:PEER1"}]`
+	// rcPeer1 — rc Wireguard1 с пиром PEER1 (без allow-ips).
+	rcPeer1 = `{"wireguard":{"peer":[{"key":"PEER1"}]}}`
 )
 
 // simRouter — роутер в памяти поверх FakeGetter для сверки (#713): применяет
@@ -145,8 +147,11 @@ func (r *simRouter) apply(orig map[string]interface{}) {
 				if r.peers[iface] == nil {
 					r.peers[iface] = map[string][]string{}
 				}
-				// Как настоящий NDMS (стенд 5.02.A.11, 28.09): ЛЮБАЯ операция
-				// allow-ips на неизвестном ключе создаёт пира — и снятие тоже.
+				// Как настоящий NDMS (стенд 5.02.A.11, 28.09): ЛЮБАЯ операция по
+				// неизвестному ключу, кроме снятия пира, создаёт пира — allow-ips
+				// (и снятие тоже), comment, connect, preshared-key. Отказ снятия
+				// отсутствующего (`no input`) sim не воспроизводит: onPost ответа
+				// не меняет, тесты задают его через poster.respond.
 				cur := r.peers[iface][key]
 				for _, av := range allow {
 					a := av.(map[string]any)
@@ -733,8 +738,9 @@ func TestUpdatePeer_AbsentOrNullNetworksUntouched(t *testing.T) {
 		`{"description":"renamed","tunnelIP":"10.66.66.2/32"}`,
 		`{"description":"renamed","tunnelIP":"10.66.66.2/32","clientAllowedIPs":null,"remoteSubnets":null}`,
 	} {
-		svc, store, poster, _ := newPeerSubnetTestService(t, rcOurs77)
+		svc, store, poster, fg := newPeerSubnetTestService(t, rcOurs77)
 		seedPeer(t, store, "192.168.77.0/24")
+		fg.SetJSON("/show/rc/interface/Wireguard1", rcPeer1) // переименование проверяет наличие
 		seedPeerAllowed(t, store, "10.66.66.0/24")
 		if err := updatePeerJSON(t, svc, body); err != nil {
 			t.Fatalf("%s: %v", body, err)
@@ -764,8 +770,9 @@ func TestUpdatePeer_EmptyClientAllowedIPsClears(t *testing.T) {
 // Отсутствие сетей не упирается в ограничение LAN-сегментов: править
 // описание пира на таком сервере можно.
 func TestUpdatePeer_AbsentRemoteSubnets_LANSegmentsPass(t *testing.T) {
-	svc, store, _, _ := newPeerSubnetTestService(t, `[]`)
+	svc, store, _, fg := newPeerSubnetTestService(t, `[]`)
 	seedPeer(t, store)
+	fg.SetJSON("/show/rc/interface/Wireguard1", rcPeer1)
 	if err := store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
 		sv.LANSegments = []string{"Bridge0"}
 		return nil

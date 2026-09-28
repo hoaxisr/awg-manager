@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"fmt"
 	"net"
 
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
@@ -42,29 +41,19 @@ func (r *PeerRouter) RemoveAllowIP(ctx context.Context, iface, pubkey string, n 
 }
 
 func (r *PeerRouter) PeerAllowIPs(ctx context.Context, iface, pubkey string) ([]*net.IPNet, error) {
-	q := r.cmds.Wireguard.queries
-	if q == nil || q.WGServers == nil {
-		return nil, fmt.Errorf("wireguard server store not wired")
-	}
-	peers, err := q.WGServers.PeersRCFresh(ctx, iface)
+	// allow-ips на отсутствующий ключ NDMS создаёт пира — сверка обязана
+	// остановиться на ErrPeerNotFound.
+	p, err := r.cmds.Wireguard.freshPeer(ctx, iface, pubkey)
 	if err != nil {
 		return nil, err
 	}
-	for _, p := range peers {
-		if p.PublicKey != pubkey {
-			continue
+	var out []*net.IPNet
+	for _, a := range p.AllowedIPs {
+		if _, n, err := net.ParseCIDR(a); err == nil {
+			out = append(out, n)
 		}
-		var out []*net.IPNet
-		for _, a := range p.AllowedIPs {
-			if _, n, err := net.ParseCIDR(a); err == nil {
-				out = append(out, n)
-			}
-		}
-		return out, nil
 	}
-	// allow-ips на отсутствующий ключ NDMS создаёт пира — сверка обязана
-	// остановиться здесь.
-	return nil, fmt.Errorf("%s %s: %w", iface, pubkey, peersubnet.ErrPeerNotFound)
+	return out, nil
 }
 
 // InterfaceRoutes — записи /show/rc/ip/route на iface; host-форма — /32.

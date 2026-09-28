@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 )
 
 // respPoster returns a fixed body, mimicking a real NDMS POST response.
@@ -151,7 +152,9 @@ func TestWireguardCommands_SetPeerConnect_PreservesComment(t *testing.T) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
-	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger()})
+	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"KEY="}]}}`)
+	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	cmds := NewWireguardCommands(poster, sc, q)
 
 	if err := cmds.SetPeerConnect(context.Background(), "Wireguard0", "KEY=", false, "dacha"); err != nil {
@@ -173,7 +176,9 @@ func TestWireguardCommands_SetPeerConnect_OmitsEmptyComment(t *testing.T) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
-	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger()})
+	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"KEY="}]}}`)
+	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	cmds := NewWireguardCommands(poster, sc, q)
 
 	if err := cmds.SetPeerConnect(context.Background(), "Wireguard0", "KEY=", true, ""); err != nil {
@@ -200,5 +205,60 @@ func TestWireguardCommands_SetASCParams_InvalidJSON(t *testing.T) {
 	}
 	if poster.Calls() != 0 {
 		t.Errorf("POST must not be called on parse error, got %d", poster.Calls())
+	}
+}
+
+// Снятие пира отвергнуто (`no input` — общая фраза, стенд 5.02.A.11): исход
+// решает свежее чтение rc. Пира нет — успех; есть — исходный отказ; чтение
+// упало — отказ с ErrPeerPresenceUnknown.
+func TestWireguardCommands_RemovePeer_RefusalDecidedByFreshRead(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		rc          string // "" — чтение rc падает
+		wantErr     bool
+		wantUnknown bool
+	}{
+		{"absent", `{"wireguard":{"peer":[{"key":"OTHER="}]}}`, false, false},
+		{"present", `{"wireguard":{"peer":[{"key":"KEY="}]}}`, true, false},
+		{"read fails", "", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fg := query.NewFakeGetter()
+			if tc.rc != "" {
+				fg.SetJSON("/show/rc/interface/Wireguard0", tc.rc)
+			} else {
+				fg.SetError("/show/rc/interface/Wireguard0", errors.New("rci down"))
+			}
+			q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
+			poster := &errPoster{err: errors.New("no input [http/rci 127.0.0.1].")}
+			sc := NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
+			err := NewWireguardCommands(poster, sc, q).RemovePeer(context.Background(), "Wireguard0", "KEY=")
+			if (err != nil) != tc.wantErr || errors.Is(err, ErrPeerPresenceUnknown) != tc.wantUnknown {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+// Правка по ключу на отсутствующем пире: ErrPeerNotFound и ни одного поста —
+// NDMS создал бы пира.
+func TestWireguardCommands_KeyedEdits_PeerAbsent_NoPost(t *testing.T) {
+	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"OTHER="}]}}`)
+	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
+	poster := &fakePoster{}
+	sc := NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
+	cmds := NewWireguardCommands(poster, sc, q)
+	ctx := context.Background()
+	for name, err := range map[string]error{
+		"connect": cmds.SetPeerConnect(ctx, "Wireguard0", "KEY=", false, "dacha"),
+		"comment": cmds.SetPeerComment(ctx, "Wireguard0", "KEY=", "dacha"),
+	} {
+		if !errors.Is(err, peersubnet.ErrPeerNotFound) {
+			t.Errorf("%s: err = %v, want ErrPeerNotFound", name, err)
+		}
+	}
+	if n := len(poster.Payloads()); n != 0 {
+		t.Fatalf("посты при отсутствующем пире: %d", n)
 	}
 }

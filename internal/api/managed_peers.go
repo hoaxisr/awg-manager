@@ -254,6 +254,11 @@ func (h *ManagedServerHandler) TogglePeer(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := h.svc.TogglePeer(r.Context(), id, pubkey, req.Enabled); err != nil {
+		if errors.Is(err, peersubnet.ErrPeerNotFound) {
+			// Пир есть в записи, но снят с роутера мимо панели.
+			response.Error(w, err.Error(), "NOT_FOUND")
+			return
+		}
 		response.Error(w, err.Error(), "TOGGLE_FAILED")
 		return
 	}

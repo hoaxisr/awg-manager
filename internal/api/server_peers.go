@@ -372,9 +372,9 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 	}
 	reconcile := needsReconcile()
 	unlock := func() {}
-	// Смена адреса — под той же блокировкой: удаление пира её берёт, и откат
-	// адреса не встретит пира, снятого посреди правки.
-	if (reconcile || ipChange()) && h.managedSvc != nil {
+	// Смена адреса и имени — под той же блокировкой: удаление пира её берёт,
+	// и проверка наличия пира перед постом по ключу не устареет посреди правки.
+	if (reconcile || ipChange() || req.Description != peer.Description) && h.managedSvc != nil {
 		unlock = h.lockPeerSubnets()
 		sec, hasSecret = h.settings.GetServerPeerSecret(name, pubkey)
 		reconcile = needsReconcile()
@@ -524,6 +524,10 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 	if req.Description != peer.Description {
 		if err := h.commands.Wireguard.SetPeerComment(r.Context(), name, pubkey, strings.TrimSpace(req.Description)); err != nil {
 			revertIP()
+			if errors.Is(err, peersubnet.ErrPeerNotFound) {
+				response.Error(w, "peer not found on router", "NOT_FOUND")
+				return
+			}
 			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
 			return
 		}
@@ -622,7 +626,9 @@ func (h *ServersHandler) DeleteServerPeer(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if findServerPeer(server, pubkey) == nil {
+	// Пира нет в списке, но есть секрет — пир снят мимо панели: удаление
+	// обязано пройти, иначе секрет с сетями за клиентом навсегда занимает их.
+	if _, hasSecret := h.settings.GetServerPeerSecret(name, pubkey); findServerPeer(server, pubkey) == nil && !hasSecret {
 		response.Error(w, "peer not found", "NOT_FOUND")
 		return
 	}
@@ -641,6 +647,8 @@ func (h *ServersHandler) DeleteServerPeer(w http.ResponseWriter, r *http.Request
 		response.Error(w, err.Error(), "DELETE_PEER_FAILED")
 		return
 	}
+	// Пир, уже снятый мимо панели, — успех (свежее чтение rc в RemovePeer):
+	// паритет с managed.
 	if err := h.commands.Wireguard.RemovePeer(r.Context(), name, pubkey); err != nil {
 		response.Error(w, err.Error(), "DELETE_PEER_FAILED")
 		return
@@ -686,10 +694,22 @@ func (h *ServersHandler) ToggleServerPeer(w http.ResponseWriter, r *http.Request
 		response.Error(w, "peer not found", "NOT_FOUND")
 		return
 	}
+	// Под блокировкой удаления: проверка наличия пира в SetPeerConnect не
+	// устареет до поста (connect на отсутствующий ключ NDMS создаёт пира).
+	unlock := func() {}
+	if h.managedSvc != nil {
+		unlock = h.lockPeerSubnets()
+	}
+	defer unlock()
 	if err := h.commands.Wireguard.SetPeerConnect(r.Context(), name, pubkey, req.Enabled, peer.Description); err != nil {
+		if errors.Is(err, peersubnet.ErrPeerNotFound) {
+			response.Error(w, "peer not found on router", "NOT_FOUND")
+			return
+		}
 		response.Error(w, err.Error(), "TOGGLE_FAILED")
 		return
 	}
+	unlock()
 	h.bus.PublishInvalidated(events.ResourceServers, "server-peer-toggled")
 	h.writeAll(w, r)
 }
@@ -1120,13 +1140,7 @@ func (h *ServersHandler) lockPeerSubnets() (unlock func()) {
 // вне сверки: любая операция allow-ips на отсутствующем ключе NDMS создаёт
 // пира (стенд 5.02.A.11).
 func (h *ServersHandler) peerOnRouter(ctx context.Context, name, pubkey string) (bool, error) {
-	if _, err := ndmscommand.NewPeerRouter(h.commands).PeerAllowIPs(ctx, name, pubkey); err != nil {
-		if errors.Is(err, peersubnet.ErrPeerNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
+	return h.commands.Wireguard.PeerPresent(ctx, name, pubkey)
 }
 
 // detachedCtx — ctx отката: запрос к этому моменту может быть уже отменён

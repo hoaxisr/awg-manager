@@ -24,6 +24,11 @@ type stubPeerSvc struct {
 	addErr     error
 	presets    peersubnet.Presets
 	presetsErr error
+	toggleErr  error
+}
+
+func (s *stubPeerSvc) TogglePeer(context.Context, string, string, bool) error {
+	return s.toggleErr
 }
 
 func (s *stubPeerSvc) UpdatePeer(context.Context, string, string, managed.UpdatePeerRequest) error {
@@ -62,6 +67,23 @@ func TestUpdatePeerHandler_SignatureErrorCodes(t *testing.T) {
 				t.Fatalf("нет кода %s в теле: %s", c.want, rec.Body.String())
 			}
 		})
+	}
+}
+
+// M2: пир снят с роутера мимо панели — вкл/выкл отвечает NOT_FOUND, прочие
+// отказы — TOGGLE_FAILED.
+func TestTogglePeerHandler_ErrorCodes(t *testing.T) {
+	for want, err := range map[string]error{
+		`"code":"NOT_FOUND"`:     fmt.Errorf("toggle peer: %w", peersubnet.ErrPeerNotFound),
+		`"code":"TOGGLE_FAILED"`: errors.New("rci down"),
+	} {
+		h := &ManagedServerHandler{svc: &stubPeerSvc{toggleErr: err}}
+		rec := httptest.NewRecorder()
+		h.TogglePeer(rec, httptest.NewRequest(http.MethodPost, "/managed-servers/Wireguard0/peers/PUB/toggle",
+			strings.NewReader(`{"enabled":false}`)), "Wireguard0", "PUB")
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("want %s: code=%d body=%s", want, rec.Code, rec.Body.String())
+		}
 	}
 }
 

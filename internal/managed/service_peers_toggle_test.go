@@ -3,7 +3,10 @@ package managed
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -18,6 +21,11 @@ func TestTogglePeer_CarriesCommentToRCI(t *testing.T) {
 		},
 	}
 	svc, poster, store := newTestService(t, server, nil, `{}`)
+	// Пир на роутере есть: connect по ключу проверяет наличие свежим чтением.
+	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"`+pubkey+`"}]}}`)
+	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
+	svc.commands = command.NewCommands(command.Deps{Poster: poster, Save: command.NewSaveCoordinator(poster, nil, time.Hour, time.Hour, 0, nil), Queries: q})
 
 	if err := svc.TogglePeer(context.Background(), "Wireguard0", pubkey, false); err != nil {
 		t.Fatalf("TogglePeer: %v", err)

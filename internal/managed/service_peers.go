@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/managed/peerip"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -59,7 +60,7 @@ func (s *Service) rollbackAddedPeer(ctx context.Context, op, iface, pubKey, name
 		}
 	}
 	if err := s.rciRemovePeer(rbCtx, iface, pubKey); err != nil {
-		if errors.Is(err, errPeerPresenceUnknown) {
+		if errors.Is(err, command.ErrPeerPresenceUnknown) {
 			// Ключ мог и не встать (отказ самого добавления): «не снят» было бы ложью.
 			s.appLog.Warn(op, name, "снятие пира при откате отказало, есть ли он на роутере — неизвестно: "+err.Error())
 			return
@@ -259,10 +260,11 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		return req.RemoteSubnets != nil && (len(*req.RemoteSubnets) > 0 || len(server.Peers[idx].RemoteSubnets) > 0)
 	}
 	reconcile := needsReconcile()
-	// Смена адреса — под той же блокировкой: удаление пира её берёт, и откат
-	// адреса не встретит пира, снятого посреди правки.
+	// Смена адреса и имени — под той же блокировкой: удаление пира её берёт,
+	// и проверка наличия пира перед постом по ключу не устареет посреди правки.
 	tunnelChange := req.TunnelIP != "" && req.TunnelIP != server.Peers[idx].TunnelIP
-	if reconcile || tunnelChange {
+	descChange := req.Description != server.Peers[idx].Description
+	if reconcile || tunnelChange || descChange {
 		defer s.LockPeerSubnets()()
 		if server, idx, err = load(); err != nil {
 			return err
@@ -418,6 +420,11 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 
 	if req.Description != peer.Description {
 		if err := s.rciSetPeerComment(ctx, iface, pubkey, strings.TrimSpace(req.Description)); err != nil {
+			// Пира нет на роутере — не «косметика»: запись о нём не пишется,
+			// откатывать адрес не у кого.
+			if errors.Is(err, peersubnet.ErrPeerNotFound) {
+				return fmt.Errorf("set peer comment: %w", err)
+			}
 			s.log.Warn("failed to set peer comment", "error", err)
 		}
 	}
@@ -572,6 +579,9 @@ func (s *Service) TogglePeer(ctx context.Context, id, pubkey string, enabled boo
 
 	iface := server.InterfaceName
 
+	// Под блокировкой удаления: проверка наличия пира в rciSetPeerConnect не
+	// устареет до поста (connect на отсутствующий ключ NDMS создаёт пира).
+	defer s.LockPeerSubnets()()
 	peerName := server.Peers[idx].Description
 	if err := s.rciSetPeerConnect(ctx, iface, pubkey, enabled, peerName); err != nil {
 		return fmt.Errorf("toggle peer: %w", err)

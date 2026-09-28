@@ -120,12 +120,13 @@ func TestUpdatePeer_AllowIPsNestedErrorIsFailureAndNotStored(t *testing.T) {
 }
 
 func TestSetPeerComment_NestedErrorIsFailure(t *testing.T) {
-	svc, _, poster, _ := newPeerSubnetTestService(t, `[]`)
+	svc, _, poster, fg := newPeerSubnetTestService(t, `[]`)
+	fg.SetJSON("/show/rc/interface/Wireguard1", rcPeer1) // пир есть — отказ приходит от поста
 	poster.respond = func(map[string]interface{}) json.RawMessage {
 		return nestedError("Wireguard1", "no such peer")
 	}
-	if err := svc.rciSetPeerComment(context.Background(), "Wireguard1", "PEER1", "x"); err == nil {
-		t.Fatal("отказ роутера во вложенном status принят за успех")
+	if err := svc.rciSetPeerComment(context.Background(), "Wireguard1", "PEER1", "x"); err == nil || !strings.Contains(err.Error(), "no such peer") {
+		t.Fatalf("отказ роутера во вложенном status принят за успех: %v", err)
 	}
 }
 
@@ -266,7 +267,7 @@ func TestRciPost_FailureStillSavesAndInvalidates(t *testing.T) {
 	}
 	before := fg.Calls("/show/rc/interface/Wireguard1")
 	poster.respond = func(map[string]interface{}) json.RawMessage { return nestedError("Wireguard1", "boom") }
-	if err := svc.rciSetPeerComment(ctx, "Wireguard1", "PEER1", "x"); err == nil {
+	if err := svc.rciInterfaceUp(ctx, "Wireguard1"); err == nil {
 		t.Fatal("отказ принят за успех")
 	}
 	if got := svc.saveCoord.Status().PendingCount; got != 1 {

@@ -225,17 +225,11 @@ func (s *Service) peerRouter() (peersubnet.Router, error) {
 // peerPresent — есть ли пир на интерфейсе по свежему rc. Перед allow-ips в
 // откатах: на отсутствующий ключ NDMS их принимает, создавая пира.
 func (s *Service) peerPresent(ctx context.Context, iface, pubkey string) (bool, error) {
-	router, err := s.peerRouter()
+	wg, err := s.peerCommands()
 	if err != nil {
 		return false, err
 	}
-	if _, err := router.PeerAllowIPs(ctx, iface, pubkey); err != nil {
-		if errors.Is(err, peersubnet.ErrPeerNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
+	return wg.PeerPresent(ctx, iface, pubkey)
 }
 
 // logRollback — отказ отката Reconcile не должен тонуть: хранилище не тронуто, но

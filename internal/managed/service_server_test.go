@@ -59,9 +59,21 @@ func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error 
 			}
 			return json.Unmarshal(raw, out)
 		}
-		// rc интерфейса без пиров: обогащение WGServers.Get без него — ошибка (F510).
+		// rc интерфейса: обогащение WGServers.Get без него — ошибка (F510).
+		// Пиры — записанные в хранилище (роутер совпадает с записью): правка
+		// по ключу проверяет наличие пира свежим чтением.
 		if strings.HasPrefix(path, "/show/rc/interface/") && !strings.Contains(strings.TrimPrefix(path, "/show/rc/interface/"), "/") {
-			return json.Unmarshal([]byte(`{}`), out)
+			var peers []map[string]any
+			if sv, ok := g.store.GetManagedServerByID(strings.TrimPrefix(path, "/show/rc/interface/")); ok {
+				for _, p := range sv.Peers {
+					peers = append(peers, map[string]any{"key": p.PublicKey})
+				}
+			}
+			raw, err := json.Marshal(map[string]any{"wireguard": map[string]any{"peer": peers}})
+			if err != nil {
+				return err
+			}
+			return json.Unmarshal(raw, out)
 		}
 		return fmt.Errorf("stateAwareGetter: path not faked: %s", path)
 	}

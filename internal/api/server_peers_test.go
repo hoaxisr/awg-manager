@@ -246,14 +246,16 @@ func TestServersHandler_AddServerPeer_RejectsMalformedGeneratedKey(t *testing.T)
 // статичен, пир, добавленный через AddServerPeer, в списке не появится.
 func newServersPeerHarness(t *testing.T, seedPeer bool) (*ServersHandler, *storage.SettingsStore, *natPoster, *busProbe, *appLogSpy) {
 	t.Helper()
-	peers := ""
+	peers, rc := "", `{}`
 	if seedPeer {
 		peers = `,"wireguard":{"peer":[{"public-key":"` + peerFixturePubKey + `","comment":"phone"}]}`
+		// Правка по ключу проверяет наличие пира свежим rc.
+		rc = `{"wireguard":{"peer":[{"key":"` + peerFixturePubKey + `","comment":"phone"}]}}`
 	}
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard","description":"Wireguard VPN Server","state":"up","link":"up","address":"10.9.0.1","mask":"255.255.255.0"`+peers+`}}`)
 	// Обогащение списка серверов читает rc каждого: без него List — ошибка (F510).
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{}`)
+	fg.SetJSON("/show/rc/interface/Wireguard0", rc)
 	// Удаление пира снимает маршруты с его меткой по свежему чтению (#713).
 	fg.SetJSON("/show/rc/ip/route", `[]`)
 	fg.SetJSON("/show/running-config", `{"message":["interface PPPoE0","    ip global 32767","!"]}`)
@@ -280,6 +282,18 @@ func deleteServerPeer(t *testing.T, h *ServersHandler, pubkey string) *httptest.
 	req := httptest.NewRequest(http.MethodDelete, "/api/servers/Wireguard0/peers/"+pubkey, nil)
 	rr := httptest.NewRecorder()
 	h.DeleteServerPeer(rr, req, "Wireguard0", pubkey)
+	return rr
+}
+
+func toggleServerPeer(t *testing.T, h *ServersHandler, pubkey string, enabled bool) *httptest.ResponseRecorder {
+	t.Helper()
+	body := `{"enabled":false}`
+	if enabled {
+		body = `{"enabled":true}`
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/servers/Wireguard0/peers/"+pubkey+"/toggle", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ToggleServerPeer(rr, req, "Wireguard0", pubkey)
 	return rr
 }
 

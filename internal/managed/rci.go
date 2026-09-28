@@ -3,7 +3,6 @@ package managed
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
@@ -355,74 +354,46 @@ func (s *Service) rciAddPeer(ctx context.Context, ifaceName, pubKey, psk, commen
 	})
 }
 
-// rciRemovePeer removes a peer by public key. Снятие отсутствующего пира NDMS
-// отвергает вложенным `no input […]` (стенд 5.02.A.11) — фраза общая, по ней
-// не терпим. Решает свежее чтение rc мимо кэша: пира с этим ключом нет —
-// цель достигнута (пир удалён в веб-морде); есть или чтение упало — отказ.
-func (s *Service) rciRemovePeer(ctx context.Context, ifaceName, pubKey string) error {
-	err := s.rciPost(ctx, map[string]interface{}{
-		"interface": map[string]interface{}{
-			ifaceName: map[string]interface{}{
-				"wireguard": map[string]interface{}{
-					"peer": []map[string]interface{}{
-						{"no": true, "key": pubKey},
-					},
-				},
-			},
-		},
-	})
-	if err == nil || s.queries == nil || s.queries.WGServers == nil {
-		return err
+// peerCommands — команды пира, общие с системным путём: снятие пира
+// («уже снят» — по свежему rc) и проверка наличия перед правкой по ключу
+// живут в одном месте, command.WireguardCommands.
+func (s *Service) peerCommands() (*command.WireguardCommands, error) {
+	if s.commands == nil || s.commands.Wireguard == nil {
+		return nil, fmt.Errorf("ndms commands not wired")
 	}
-	peers, rerr := s.queries.WGServers.PeersRCFresh(ctx, ifaceName)
-	if rerr != nil {
-		return fmt.Errorf("%w; %w: %v", err, errPeerPresenceUnknown, rerr)
-	}
-	for _, p := range peers {
-		if p.PublicKey == pubKey {
-			return err
-		}
-	}
-	s.sysLog().Info("managed rci: peer already absent, removal treated as done", "interface", ifaceName)
-	return nil
+	return s.commands.Wireguard, nil
 }
 
-// errPeerPresenceUnknown — снятие пира отказало, а перечитать список пиров не
-// удалось: остался ли пир, неизвестно.
-var errPeerPresenceUnknown = errors.New("peer presence unknown")
+// rciRemovePeer removes a peer by public key; пир, уже снятый мимо панели, —
+// успех (см. command.WireguardCommands.RemovePeer).
+func (s *Service) rciRemovePeer(ctx context.Context, ifaceName, pubKey string) error {
+	wg, err := s.peerCommands()
+	if err != nil {
+		return err
+	}
+	return wg.RemovePeer(ctx, ifaceName, pubKey)
+}
 
 // rciSetPeerConnect enables or disables a peer. comment must carry the peer's
 // current name: a partial peer update without it makes NDMS wipe the stored
-// comment (psk/allow-ips survive, comment does not).
+// comment (psk/allow-ips survive, comment does not). Пира на роутере нет —
+// peersubnet.ErrPeerNotFound без поста.
 func (s *Service) rciSetPeerConnect(ctx context.Context, ifaceName, pubKey string, connect bool, comment string) error {
-	peer := map[string]interface{}{"key": pubKey, "connect": connect}
-	if comment != "" {
-		peer["comment"] = comment
+	wg, err := s.peerCommands()
+	if err != nil {
+		return err
 	}
-	return s.rciPost(ctx, map[string]interface{}{
-		"interface": map[string]interface{}{
-			ifaceName: map[string]interface{}{
-				"wireguard": map[string]interface{}{
-					"peer": []map[string]interface{}{peer},
-				},
-			},
-		},
-	})
+	return wg.SetPeerConnect(ctx, ifaceName, pubKey, connect, comment)
 }
 
-// rciSetPeerComment sets the description/comment for a peer.
+// rciSetPeerComment sets the description/comment for a peer. Пира на роутере
+// нет — peersubnet.ErrPeerNotFound без поста.
 func (s *Service) rciSetPeerComment(ctx context.Context, ifaceName, pubKey, comment string) error {
-	return s.rciPost(ctx, map[string]interface{}{
-		"interface": map[string]interface{}{
-			ifaceName: map[string]interface{}{
-				"wireguard": map[string]interface{}{
-					"peer": []map[string]interface{}{
-						{"key": pubKey, "comment": comment},
-					},
-				},
-			},
-		},
-	})
+	wg, err := s.peerCommands()
+	if err != nil {
+		return err
+	}
+	return wg.SetPeerComment(ctx, ifaceName, pubKey, comment)
 }
 
 // rciRemovePeerDefaultRoute strips the legacy 0.0.0.0/0 entry from a peer's

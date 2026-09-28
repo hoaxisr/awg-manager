@@ -203,11 +203,17 @@ func (r *sysSimRouter) post(payload string) error {
 			key, _ := p["key"].(string)
 			allow, hasAllow := p["allow-ips"].([]any)
 			if p["no"] == true && !hasAllow {
+				// Снятие отсутствующего пира NDMS отвергает общей фразой
+				// (стенд 5.02.A.11, 28.09).
+				if _, ok := r.peers[key]; !ok {
+					return errors.New("no input [http/rci 127.0.0.1].")
+				}
 				delete(r.peers, key)
 				continue
 			}
-			// Как настоящий NDMS (стенд 5.02.A.11, 28.09): ЛЮБАЯ операция
-			// allow-ips на неизвестном ключе создаёт пира — и снятие тоже.
+			// Как настоящий NDMS (стенд 5.02.A.11, 28.09): ЛЮБАЯ операция по
+			// неизвестному ключу, кроме снятия пира, создаёт пира — allow-ips
+			// (и снятие тоже), comment, connect, preshared-key.
 			cur := r.peers[key]
 			for _, av := range allow {
 				a := av.(map[string]any)
@@ -874,12 +880,20 @@ func TestServersHandler_PeerSubnets_SharedLockWithManaged(t *testing.T) {
 			return putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.2/32","remoteSubnets":["192.168.77.0/24"]}`)
 		}, true},
 		{"update without subnets", func(h *ServersHandler) *httptest.ResponseRecorder {
-			return putServerPeer(t, h, peerFixturePubKey, `{"description":"renamed","tunnelIP":"10.9.0.2/32"}`)
+			return putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.2/32","dns":"9.9.9.9"}`)
 		}, false},
 		// M2: [] у пира без сетей — не сверка, блокировка не нужна.
 		{"update empty to empty", func(h *ServersHandler) *httptest.ResponseRecorder {
-			return putServerPeer(t, h, peerFixturePubKey, `{"description":"renamed","tunnelIP":"10.9.0.2/32","remoteSubnets":[]}`)
+			return putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.2/32","remoteSubnets":[]}`)
 		}, false},
+		// Переименование и connect — пост по ключу после проверки наличия:
+		// под блокировкой удаления.
+		{"rename", func(h *ServersHandler) *httptest.ResponseRecorder {
+			return putServerPeer(t, h, peerFixturePubKey, `{"description":"renamed","tunnelIP":"10.9.0.2/32"}`)
+		}, true},
+		{"toggle", func(h *ServersHandler) *httptest.ResponseRecorder {
+			return toggleServerPeer(t, h, peerFixturePubKey, false)
+		}, true},
 		// Fix round 2: смена адреса без сетей — под той же блокировкой.
 		{"update tunnel ip", func(h *ServersHandler) *httptest.ResponseRecorder {
 			return putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.9/32"}`)
