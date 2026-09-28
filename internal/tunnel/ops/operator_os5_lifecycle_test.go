@@ -927,3 +927,46 @@ func TestRestoreEndpointTracking_SkipsUnroutableEndpoint(t *testing.T) {
 		})
 	}
 }
+
+// Описание ставится только СУЩЕСТВУЮЩЕЙ записи: RCI `interface OpkgTunN
+// description` на отсутствующей записи её создал бы — без security-level, и
+// Фаза 1 потом не завела бы её сама (запись «есть и наша»). Отсутствующую
+// запись создаст Фаза 1 с правильным описанием.
+func TestUpdateDescription_OnlyExistingRecord(t *testing.T) {
+	const want = `{"interface":{"OpkgTun10":{"description":"Norway"}}}`
+	for _, tc := range []struct {
+		name, snapshot string
+		wantPost       bool
+	}{
+		{"запись есть", `{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","description":"Germany"}}`, true},
+		{"записи нет", `{}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			poster := &recordingPoster{}
+			getter := ndmsquery.NewFakeGetter()
+			getter.SetJSON("/show/interface/", tc.snapshot)
+			o, _ := newOS5LifecycleOn(t, poster, getter, &MockBackend{}, true)
+			if err := o.UpdateDescription(context.Background(), "awg10", "Norway"); err != nil {
+				t.Fatalf("UpdateDescription: %v", err)
+			}
+			if got := hasPayload(poster.payloads, want); got != tc.wantPost {
+				t.Fatalf("описание отправлено = %v, want %v: %v", got, tc.wantPost, poster.payloads)
+			}
+		})
+	}
+}
+
+// Кэш записей не поднялся — «не знаем»: отказ, а не молчаливый пропуск
+// (вызывающий пишет Warn — после ребута F517 откажет) и не слепая запись.
+func TestUpdateDescription_RecordReadError(t *testing.T) {
+	poster := &recordingPoster{}
+	getter := ndmsquery.NewFakeGetter()
+	getter.SetError("/show/interface/", errors.New("injected: ndms"))
+	o, _ := newOS5LifecycleOn(t, poster, getter, &MockBackend{}, true)
+	if err := o.UpdateDescription(context.Background(), "awg10", "Norway"); err == nil {
+		t.Fatal("ошибка чтения записи проглочена")
+	}
+	if len(poster.payloads) != 0 {
+		t.Fatalf("RCI тронут при недоступном кэше: %v", poster.payloads)
+	}
+}

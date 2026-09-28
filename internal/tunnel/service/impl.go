@@ -391,15 +391,7 @@ func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.
 
 	// Description rename — cheap, dispatch on change.
 	if oldStored.Name != newStored.Name {
-		if s.isNativeWG(newStored) && s.nwgOperator != nil {
-			if err := s.nwgOperator.UpdateDescription(ctx, newStored, newStored.Name); err != nil {
-				s.logWarn("update", tunnelID, "Failed to update description: "+err.Error())
-			}
-		} else {
-			if err := s.legacyOperator.UpdateDescription(ctx, tunnelID, newStored.Name); err != nil {
-				s.logWarn("update", tunnelID, "Failed to update description: "+err.Error())
-			}
-		}
+		s.syncDescription(ctx, "update", newStored, newStored.Name)
 	}
 
 	// Below this point we only act on the running interface. Skip if not.
@@ -450,6 +442,34 @@ func shouldSyncRuntime(stored *storage.AWGTunnel, stateInfo tunnel.StateInfo) bo
 	}
 	return stored.Obfuscator != nil &&
 		(stateInfo.State == tunnel.StateStarting || stateInfo.State == tunnel.StateBroken)
+}
+
+// syncDescription ставит описание записи туннеля в NDMS = name. Инвариант
+// F517: запись kernel-туннеля признаётся нашей по равенству её описания имени
+// туннеля, поэтому КАЖДЫЙ путь, меняющий имя, обязан звать это. Провал — Warn,
+// как у переименования всегда: запись остаётся со старым описанием, и после
+// ребута (живого amneziawg под ней нет) F517 откажет туннелю в старте.
+func (s *ServiceImpl) syncDescription(ctx context.Context, scope string, stored *storage.AWGTunnel, name string) {
+	var err error
+	if s.isNativeWG(stored) && s.nwgOperator != nil {
+		err = s.nwgOperator.UpdateDescription(ctx, stored, name)
+	} else if s.legacyOperator != nil {
+		err = s.legacyOperator.UpdateDescription(ctx, stored.ID, name)
+	}
+	if err != nil {
+		s.logWarn(scope, stored.ID, "Failed to update description: "+err.Error())
+	}
+}
+
+// SyncDescription — syncDescription для путей, меняющих имя мимо Update:
+// взятие стороннего туннеля, переименование волной wdttlink.
+func (s *ServiceImpl) SyncDescription(ctx context.Context, tunnelID, name string) {
+	stored, err := s.store.Get(tunnelID)
+	if err != nil {
+		s.logWarn("update_description", tunnelID, "Failed to update description: "+err.Error())
+		return
+	}
+	s.syncDescription(ctx, "update_description", stored, name)
 }
 
 // applyDiffKernel applies field-level diffs to a running kernel-backend
@@ -1228,6 +1248,12 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 		if stored.Obfuscator != nil && wasNativeRunning {
 			s.persistObfuscatorTargetIP(tunnelID, s.nwgOperator.GetTrackedEndpointIP(tunnelID))
 		}
+	}
+
+	// Имя у kernel-туннеля — описание его записи OpkgTun (F517); у nativewg
+	// описание переписано выше, между синхронизациями пира.
+	if newName != "" && !s.isNativeWG(stored) {
+		s.syncDescription(ctx, "replace-config", stored, newName)
 	}
 
 	// Kernel-backend tunnels: hot-apply the new conf to a running interface

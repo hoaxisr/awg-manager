@@ -9,6 +9,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 )
 
@@ -244,5 +245,42 @@ func TestAdopt_RefusesNameOverByteLimit(t *testing.T) {
 	}
 	if list, _ := s.store.List(); len(list) != 0 {
 		t.Fatalf("запись заведена при отказе: %d", len(list))
+	}
+}
+
+// fakeTunnelSvc — служба туннелей для Adopt: записывает порядок вызовов.
+// Остальные методы интерфейса Adopt не зовёт (встроенный nil уронил бы тест).
+type fakeTunnelSvc struct {
+	service.Service
+	calls []string
+}
+
+func (f *fakeTunnelSvc) SyncDescription(_ context.Context, id, name string) {
+	f.calls = append(f.calls, "describe:"+id+":"+name)
+}
+func (f *fakeTunnelSvc) Start(_ context.Context, id string) error {
+	f.calls = append(f.calls, "start:"+id)
+	return nil
+}
+func (f *fakeTunnelSvc) Get(_ context.Context, id string) (*service.TunnelWithStatus, error) {
+	return &service.TunnelWithStatus{}, nil
+}
+
+// Взятая запись OpkgTunN несёт описание сторонней программы. F517 признаёт
+// запись своей по равенству описания имени туннеля — без переписывания
+// описания до первого старта туннель без живого устройства не стартовал бы
+// никогда (а с устройством — до первого ребута).
+func TestAdopt_SyncsDescriptionBeforeStart(t *testing.T) {
+	stubScan(t, nil, nil)
+	stubLinkExists(t, false)
+	s := newTestService(t)
+	svc := &fakeTunnelSvc{}
+	s.tunnelService = svc
+	if _, err := s.Adopt(context.Background(), AdoptRequest{InterfaceName: "opkgtun9", ConfContent: validAdoptConf,
+		TunnelName: "Германия"}); err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	if strings.Join(svc.calls, ",") != "describe:awg9:Германия,start:awg9" {
+		t.Fatalf("вызовы: %v", svc.calls)
 	}
 }

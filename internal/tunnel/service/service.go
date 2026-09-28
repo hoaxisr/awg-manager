@@ -76,6 +76,11 @@ type Service interface {
 	// мутатором (см. ReplaceOptions).
 	ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string, opts ReplaceOptions) error
 
+	// SyncDescription ставит описание записи туннеля в NDMS = name — для
+	// путей, меняющих имя мимо Update (F517: запись kernel-туннеля наша по
+	// равенству описания имени). Провал — только Warn в журнале.
+	SyncDescription(ctx context.Context, tunnelID, name string)
+
 	// Validation
 
 	// CheckAddressConflicts returns warnings if the tunnel's address

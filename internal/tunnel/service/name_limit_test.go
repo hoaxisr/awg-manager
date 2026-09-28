@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -93,5 +94,51 @@ func TestReplaceConfig_RenameByteLimit(t *testing.T) {
 				t.Fatalf("имя сменилось при отказе: %q", got.Name)
 			}
 		})
+	}
+}
+
+// F517 признаёт запись OpkgTun своей по равенству её описания имени туннеля.
+// Замена конфигурации с новым именем у kernel-туннеля обязана переписать
+// описание — раньше это делалось только для nativewg, и после ребута
+// переименованный туннель не стартовал бы. Без нового имени NDMS не трогается.
+func TestReplaceConfig_KernelRenameSyncsDescription(t *testing.T) {
+	for _, tc := range []struct {
+		name, newName string
+		want          []struct{ ID, Desc string }
+	}{
+		{"новое имя", "Norway", []struct{ ID, Desc string }{{"awg10", "Norway"}}},
+		{"имя не меняли", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := serviceWithStore(t)
+			op := &MockOperator{}
+			s.legacyOperator = op
+			if err := s.store.Create(&storage.AWGTunnel{ID: "awg10", Name: "Germany", Backend: "kernel"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ReplaceConfig(context.Background(), "awg10", sampleConf, tc.newName, ReplaceOptions{}); err != nil {
+				t.Fatalf("ReplaceConfig: %v", err)
+			}
+			if !reflect.DeepEqual(op.UpdateDescriptionCalls, tc.want) {
+				t.Fatalf("UpdateDescription = %+v, want %+v", op.UpdateDescriptionCalls, tc.want)
+			}
+		})
+	}
+}
+
+// SyncDescription — вход для путей, меняющих имя мимо Update (взятие
+// стороннего туннеля, переименование волной wdttlink): kernel-туннель — через
+// legacy-оператор, с именем, которое передали.
+func TestSyncDescription_Kernel(t *testing.T) {
+	s, _ := serviceWithStore(t)
+	op := &MockOperator{}
+	s.legacyOperator = op
+	if err := s.store.Create(&storage.AWGTunnel{ID: "awg10", Name: "Germany", Backend: "kernel"}); err != nil {
+		t.Fatal(err)
+	}
+	s.SyncDescription(context.Background(), "awg10", "Germany wdtt")
+	want := []struct{ ID, Desc string }{{"awg10", "Germany wdtt"}}
+	if !reflect.DeepEqual(op.UpdateDescriptionCalls, want) {
+		t.Fatalf("UpdateDescription = %+v, want %+v", op.UpdateDescriptionCalls, want)
 	}
 }

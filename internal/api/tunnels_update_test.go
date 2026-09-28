@@ -356,6 +356,8 @@ func (s *stubTunnelSvc) ReplaceConfig(_ context.Context, _, _, newName string, o
 	s.replaceNames = append(s.replaceNames, newName)
 	return s.replaceErr
 }
+func (s *stubTunnelSvc) SyncDescription(context.Context, string, string) {}
+
 func (s *stubTunnelSvc) WANModel() *wan.Model                     { return nil }
 func (s *stubTunnelSvc) GetResolvedISP(string) string             { return "" }
 func (s *stubTunnelSvc) SetSelfCreateGate(tunnel.SelfCreateGater) {}

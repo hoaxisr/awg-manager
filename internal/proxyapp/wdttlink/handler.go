@@ -65,6 +65,10 @@ type TunnelImporter interface {
 	// OpkgTun с тем же /32, поэтому импорт с конфликтом отказывается (#869).
 	AddressConflicts(address string) []string
 	Start(ctx context.Context, tunnelID string) error
+	// SyncDescription ставит описание записи туннеля в NDMS = name: F517
+	// признаёт запись kernel-туннеля своей только по равенству описания
+	// имени. Провал — Warn в журнале службы (после ребута F517 откажет).
+	SyncDescription(ctx context.Context, tunnelID, name string)
 	// ForgetTraffic снимает историю трафика удалённого туннеля: id
 	// переиспользуется, и чужая история подмешалась бы к новому туннелю.
 	ForgetTraffic(tunnelID string)
@@ -443,7 +447,7 @@ func (h *Handler) EnsureWGTunnel(w http.ResponseWriter, r *http.Request, key str
 	}
 
 	if match := MatchingAWGTunnel(tunnels, patched); match != nil {
-		changed := false
+		changed, renamed := false, false
 		// Решение «менять или нет» принимается по свежей записи внутри
 		// мутатора: List выше — только выбор кандидата.
 		err := h.deps.Tunnels.Update(match.ID, func(stored *storage.AWGTunnel) error {
@@ -453,7 +457,7 @@ func (h *Handler) EnsureWGTunnel(w http.ResponseWriter, r *http.Request, key str
 			}
 			if wantName != "" && stored.Name != wantName {
 				stored.Name = wantName
-				changed = true
+				changed, renamed = true, true
 			}
 			if strings.TrimSpace(stored.Peer.Endpoint) != wantEndpoint {
 				stored.Peer.Endpoint = wantEndpoint
@@ -470,6 +474,10 @@ func (h *Handler) EnsureWGTunnel(w http.ResponseWriter, r *http.Request, key str
 		}
 		if changed {
 			mutated = true
+		}
+		if renamed {
+			// До Start: F517 сверяет описание записи с именем уже на старте.
+			h.deps.Tunnels.SyncDescription(r.Context(), match.ID, wantName)
 		}
 		if running {
 			_ = h.deps.Tunnels.Start(r.Context(), match.ID)

@@ -794,6 +794,16 @@ func (o *OperatorOS5Impl) SyncAddress(ctx context.Context, tunnelID string, addr
 // UpdateDescription updates the NDMS interface description for a tunnel.
 func (o *OperatorOS5Impl) UpdateDescription(ctx context.Context, tunnelID, description string) error {
 	names := tunnel.NewNames(tunnelID)
+	// Только существующей записи: та же RCI-форма на отсутствующей запись
+	// СОЗДАЁТ — без security-level, и Фаза 1 сочла бы её готовой. Записи нет —
+	// её заведёт Фаза 1 с описанием = имени туннеля (F517).
+	rec, err := opkgTunRecord(ctx, o.queries, names.NDMSName)
+	if err != nil {
+		return tunnel.NewOpError("update_description", tunnelID, "ndms", fmt.Errorf("read OpkgTun record: %w", err))
+	}
+	if rec == nil && o.queries != nil {
+		return nil
+	}
 	if err := o.commands.Interfaces.SetDescription(ctx, names.NDMSName, description); err != nil {
 		return tunnel.NewOpError("update_description", tunnelID, "ndms", err)
 	}
