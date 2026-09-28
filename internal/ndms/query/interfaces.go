@@ -692,10 +692,13 @@ func (s *InterfaceStore) ListAll(ctx context.Context) ([]ndms.AllInterface, erro
 	seen := make(map[string]ndms.AllInterface, len(all))
 	winnerID := make(map[string]string, len(all))
 	for _, iface := range all {
-		// Без имени ядра запись пропускается: подставить iface.SystemName
-		// нельзя — это непроверенное `interface-name`, а потребители
-		// (привязка sing-box, сторонний интерфейс) требуют настоящее имя.
 		kernelName := s.ResolveSystemName(ctx, iface.ID)
+		// Запасной путь оставлен намеренно: эхо метки (`Home`,
+		// `GigabitEthernet0`) wireToInterface уже вычистил, сюда доходит
+		// имя ядра отсутствующего сейчас устройства (выдернутый usb0).
+		if kernelName == "" {
+			kernelName = iface.SystemName
+		}
 		if kernelName == "" {
 			continue
 		}
@@ -822,7 +825,6 @@ func (s *InterfaceStore) OnDestroyed(id string) {
 //   - State field is the overall interface-up flag and tracks the
 //     ctrl layer the same way: running=up, anything else=down. ctrl
 //     also gates startedAt (the uptime clock).
-//
 //   - IPv4 layer events store the level as-is into the IPv4 field (it
 //     is layer-state, not up/down). IPv6 events produce no updates.
 func (s *InterfaceStore) OnLayerChanged(id, layer, level string) {
