@@ -20,10 +20,26 @@ import (
 // матчат IsACLDuplicate.
 func (c *InterfaceCommands) ACLPermitIP(ctx context.Context, acl, srcSub, srcMask, dstSub, dstMask string) error {
 	return postMutationChecked(ctx, c.poster, c.save,
-		map[string]any{"parse": fmt.Sprintf("access-list %s permit ip %s %s %s %s", acl, srcSub, srcMask, dstSub, dstMask)},
+		map[string]any{"parse": aclPermitIPRule(acl, srcSub, srcMask, dstSub, dstMask)},
 		"acl permit "+acl,
 		c.queries.RunningConfig.InvalidateAll,
 	)
+}
+
+// ACLRemovePermitIP снимает одно правило, поставленное ACLPermitIP, оставляя
+// список и привязку (`no access-list <acl> permit ip …`, стенд 5.01, 12.09).
+// Правила уже нет (`no rule found to delete.`) — цель достигнута.
+func (c *InterfaceCommands) ACLRemovePermitIP(ctx context.Context, acl, srcSub, srcMask, dstSub, dstMask string) error {
+	return postMutationCheckedTolerant(ctx, c.poster, c.save,
+		map[string]any{"parse": "no " + aclPermitIPRule(acl, srcSub, srcMask, dstSub, dstMask)},
+		"acl permit remove "+acl,
+		isACLRuleAbsent,
+		c.queries.RunningConfig.InvalidateAll,
+	)
+}
+
+func aclPermitIPRule(acl, srcSub, srcMask, dstSub, dstMask string) string {
+	return fmt.Sprintf("access-list %s permit ip %s %s %s %s", acl, srcSub, srcMask, dstSub, dstMask)
 }
 
 // ACLRemove удаляет список целиком (`no access-list`). Идемпотентно на

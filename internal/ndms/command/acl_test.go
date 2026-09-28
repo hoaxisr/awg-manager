@@ -355,3 +355,21 @@ func TestRemovePermitAllACL_RunningConfigUnreadable_TouchesNothing(t *testing.T)
 		t.Fatalf("ни одной команды быть не должно, got %v", poster.parses)
 	}
 }
+
+// Точечное снятие одного permit ip: форма `no access-list <acl> permit ip …`
+// (стенд 5.01, 12.09); правила уже нет — цель достигнута, прочие отказы всплывают.
+func TestACLRemovePermitIP(t *testing.T) {
+	cmds, poster := newACLTestCommands(json.RawMessage(`{}`), nestedACLError("no rule found to delete."), nestedACLError("argument parse error."))
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		if err := cmds.ACLRemovePermitIP(ctx, "AWGM_X", "192.168.77.0", "255.255.255.0", "10.0.1.0", "255.255.255.0"); err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+	}
+	if err := cmds.ACLRemovePermitIP(ctx, "AWGM_X", "192.168.77.0", "255.255.255.0", "10.0.1.0", "255.255.255.0"); err == nil || !strings.Contains(err.Error(), "argument parse error") {
+		t.Fatalf("прочий отказ обязан всплыть, got %v", err)
+	}
+	if want := "no access-list AWGM_X permit ip 192.168.77.0 255.255.255.0 10.0.1.0 255.255.255.0"; poster.parses[0] != want {
+		t.Fatalf("parse = %q, want %q", poster.parses[0], want)
+	}
+}
