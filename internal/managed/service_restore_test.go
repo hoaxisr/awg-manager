@@ -40,6 +40,10 @@ func (g *restoreLiveGetter) Get(ctx context.Context, path string, out any) error
 		b, _ := json.Marshal(src)
 		return json.Unmarshal(b, out)
 	}
+	// rc интерфейса без пиров: обогащение WGServers.Get без него — ошибка (F510).
+	if strings.HasPrefix(path, "/show/rc/interface/") && !strings.Contains(strings.TrimPrefix(path, "/show/rc/interface/"), "/") {
+		return json.Unmarshal([]byte(`{}`), out)
+	}
 	if path != "/show/interface/" {
 		return errors.New("unsupported path: " + path)
 	}

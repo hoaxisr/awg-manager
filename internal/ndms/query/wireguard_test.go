@@ -912,3 +912,24 @@ func TestWGServerStore_List_EnrichmentErrorNotCached(t *testing.T) {
 		t.Fatalf("неполный список: %+v", servers)
 	}
 }
+
+// Тот же класс, что F510, у одиночного Get: сбой rc — ошибка, а не элемент без
+// allow-ips в кэше на TTL.
+func TestWGServerStore_Get_EnrichmentErrorNotCached(t *testing.T) {
+	fg := newFakeGetter()
+	primeWGFakeGetter(fg)
+	fg.SetError("/show/rc/interface/Wireguard1", errors.New("rci down"))
+	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
+
+	if srv, err := s.Get(context.Background(), "Wireguard1"); err == nil {
+		t.Fatalf("сбой обогащения замаскирован: %+v", srv)
+	}
+	fg.SetError("/show/rc/interface/Wireguard1", nil)
+	srv, err := s.Get(context.Background(), "Wireguard1")
+	if err != nil {
+		t.Fatalf("Get после починки: %v", err)
+	}
+	if len(srv.Peers) != 1 || len(srv.Peers[0].AllowedIPs) == 0 {
+		t.Fatalf("неполный элемент: %+v", srv)
+	}
+}

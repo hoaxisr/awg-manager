@@ -58,6 +58,10 @@ func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error 
 			}
 			return json.Unmarshal(raw, out)
 		}
+		// rc интерфейса без пиров: обогащение WGServers.Get без него — ошибка (F510).
+		if strings.HasPrefix(path, "/show/rc/interface/") && !strings.Contains(strings.TrimPrefix(path, "/show/rc/interface/"), "/") {
+			return json.Unmarshal([]byte(`{}`), out)
+		}
 		return fmt.Errorf("stateAwareGetter: path not faked: %s", path)
 	}
 	m := map[string]json.RawMessage{}

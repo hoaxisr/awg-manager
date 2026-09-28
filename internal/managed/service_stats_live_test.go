@@ -28,6 +28,7 @@ func TestGetStats_OverlaysLivePeers(t *testing.T) {
 	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{"id":"Wireguard0","type":"Wireguard","state":"up","wireguard":{"peer":[{"rxbytes":10,`+peer+`}]}}}}`)
 	fg.SetJSON("/show/interface/Wireguard0", `{"id":"Wireguard0","type":"Wireguard","state":"up","wireguard":{"peer":[{"rxbytes":99,`+peer+`}]}}`)
 	fg.SetJSON("/show/interface/", `{}`)
+	fg.SetJSON("/show/rc/interface/Wireguard0", `{}`) // обогащение Get без rc — ошибка (F510)
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	svc := New(&fakePoster{}, nil, queries, nil, store, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 

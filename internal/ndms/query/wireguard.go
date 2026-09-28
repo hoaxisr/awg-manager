@@ -467,11 +467,15 @@ func (s *WGServerStore) fetchItem(ctx context.Context, name string) (*ndms.Wireg
 	srv := rciToWireguardServer(detail)
 	srv.ID = name
 	srv.InterfaceName = s.resolveSystemName(ctx, name)
-	if rcByKey, err := s.fetchPeerRCByKey(ctx, name); err == nil {
-		for j := range srv.Peers {
-			if rc, ok := rcByKey[srv.Peers[j].PublicKey]; ok {
-				applyPeerRCFields(&srv.Peers[j], rc)
-			}
+	// Сбой обогащения — ошибка, как у fetchAll (F510): элемент без allow-ips
+	// иначе лёг бы в кэш на TTL.
+	rcByKey, err := s.fetchPeerRCByKey(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("enrich wireguard server %s: %w", name, err)
+	}
+	for j := range srv.Peers {
+		if rc, ok := rcByKey[srv.Peers[j].PublicKey]; ok {
+			applyPeerRCFields(&srv.Peers[j], rc)
 		}
 	}
 	return &srv, nil
