@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
@@ -58,7 +59,10 @@ func ReleasePolicyTunForRemoval(ctx context.Context, d Deps) error {
 	// интерфейс. Скан упал — отказ ошибкой (F493): дефолт и интерфейс не
 	// трогаем, `--cleanup` печатает причину.
 	if proceed, err := s.teardownGate(ctx, ndmsName, policyTunDescription, "policy-tun-remove"); !proceed {
-		return err
+		if err != nil {
+			return fmt.Errorf("%s: %w", ndmsName, err)
+		}
+		return nil
 	}
 
 	// Дефолт снимаем до сноса интерфейса: переживший маршрут остался бы в

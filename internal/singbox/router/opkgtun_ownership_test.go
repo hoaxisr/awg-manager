@@ -690,8 +690,8 @@ func TestReleasePolicyTunForRemoval_SparesForeignInterface(t *testing.T) {
 			// Скан упал — снятие отказывает ошибкой: `--cleanup` печатает её в
 			// stderr (cmd/awg-manager/cleanup.go), а интерфейс не трогается.
 			if tc.unknown {
-				if !errors.Is(err, errOpkgTunOwnershipUnknown) {
-					t.Fatalf("err = %v, want errOpkgTunOwnershipUnknown", err)
+				if !errors.Is(err, errOpkgTunOwnershipUnknown) || !strings.HasPrefix(err.Error(), "OpkgTun1: ") {
+					t.Fatalf("err = %v, want «OpkgTun1: » + errOpkgTunOwnershipUnknown", err)
 				}
 			} else if err != nil {
 				t.Fatalf("ReleasePolicyTunForRemoval: %v", err)

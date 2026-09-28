@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -122,8 +123,8 @@ func TestReleaseFakeIPTunForRemoval_DeletesOwnSparesForeign(t *testing.T) {
 			// Скан упал — отказ ошибкой, как у policy-tun (F493): после `opkg
 			// remove` реапить некому, молчаливый nil оставил бы интерфейс навсегда.
 			if tc.unknown {
-				if !errors.Is(err, errOpkgTunOwnershipUnknown) {
-					t.Fatalf("err = %v, want errOpkgTunOwnershipUnknown", err)
+				if !errors.Is(err, errOpkgTunOwnershipUnknown) || !strings.HasPrefix(err.Error(), "OpkgTun2: ") {
+					t.Fatalf("err = %v, want «OpkgTun2: » + errOpkgTunOwnershipUnknown", err)
 				}
 			} else if err != nil {
 				t.Fatalf("ReleaseFakeIPTunForRemoval: %v", err)
