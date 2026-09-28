@@ -26,6 +26,9 @@ type stubProvider struct{}
 func (stubProvider) ListTunnels(context.Context) ([]routing.TunnelWithStatus, error) {
 	return nil, nil
 }
+func (stubProvider) ListStored(context.Context) ([]routing.TunnelWithStatus, error) {
+	return nil, nil
+}
 func (stubProvider) GetState(context.Context, string) tunnel.StateInfo { return tunnel.StateInfo{} }
 func (stubProvider) WANModel() *wan.Model                              { return nil }
 

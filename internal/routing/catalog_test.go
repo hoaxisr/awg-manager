@@ -18,9 +18,16 @@ type mockTunnelProvider struct {
 	err     error
 	states  map[string]tunnel.StateInfo
 	wan     *wan.Model
+	// listCalls — число вызовов ListTunnels (опрос состояния всех туннелей).
+	listCalls int
 }
 
 func (m *mockTunnelProvider) ListTunnels(_ context.Context) ([]TunnelWithStatus, error) {
+	m.listCalls++
+	return m.tunnels, m.err
+}
+
+func (m *mockTunnelProvider) ListStored(_ context.Context) ([]TunnelWithStatus, error) {
 	return m.tunnels, m.err
 }
 

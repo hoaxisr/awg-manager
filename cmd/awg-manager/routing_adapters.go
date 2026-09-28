@@ -45,6 +45,24 @@ func (a *tunnelProviderAdapter) ListTunnels(ctx context.Context) ([]routing.Tunn
 	return result, nil
 }
 
+// ListStored — туннели из записей без опроса состояния: Backend как у
+// service.backendLabel, NWGIndex — для NDMS-имени nativewg.
+func (a *tunnelProviderAdapter) ListStored(context.Context) ([]routing.TunnelWithStatus, error) {
+	stored, err := a.store.List()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]routing.TunnelWithStatus, len(stored))
+	for i, t := range stored {
+		backend := t.Backend
+		if backend == "" {
+			backend = "kernel"
+		}
+		result[i] = routing.TunnelWithStatus{ID: t.ID, Name: t.Name, Backend: backend, NWGIndex: t.NWGIndex}
+	}
+	return result, nil
+}
+
 func (a *tunnelProviderAdapter) GetState(ctx context.Context, tunnelID string) tunnel.StateInfo {
 	return a.svc.GetState(ctx, tunnelID)
 }

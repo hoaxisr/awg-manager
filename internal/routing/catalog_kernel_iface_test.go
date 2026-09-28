@@ -133,4 +133,9 @@ func TestSystemTunnelsByIface(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
+	// Карта нужна на каждом List/Create/Update правил HR: опрос состояния
+	// всех туннелей (ListTunnels) ей не нужен — managed-имена берутся из записей.
+	if provider.listCalls != 0 {
+		t.Fatalf("ListTunnels вызван %d раз, want 0", provider.listCalls)
+	}
 }

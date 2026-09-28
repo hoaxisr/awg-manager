@@ -80,6 +80,9 @@ type TunnelWithStatus struct {
 // TunnelProvider abstracts the tunnel service for Catalog.
 type TunnelProvider interface {
 	ListTunnels(ctx context.Context) ([]TunnelWithStatus, error)
+	// ListStored — те же туннели из записей, без опроса состояния (State
+	// нулевой): для случаев, где нужны только имена.
+	ListStored(ctx context.Context) ([]TunnelWithStatus, error)
 	GetState(ctx context.Context, tunnelID string) tunnel.StateInfo
 	WANModel() *wan.Model
 }
@@ -256,62 +259,7 @@ func (c *CatalogImpl) ListAll(ctx context.Context) []TunnelEntry {
 	}
 
 	// 2. System interfaces (unmanaged WireGuard/Proxy/OpkgTun)
-	if c.ifaces != nil {
-		all, err := c.ifaces.List(ctx)
-		if err == nil {
-			var owned map[int]bool
-			if c.ownedOpkgTun != nil {
-				// Ошибка — не повод прятать весь список: хуже показать
-				// лишнее, чем отобрать у пользователя его выходы.
-				owned, _ = c.ownedOpkgTun(ctx)
-			}
-			var servers map[string]bool
-			if c.serverIfaces != nil {
-				servers = c.serverIfaces(ctx)
-			}
-			for _, iface := range all {
-				t := strings.ToLower(iface.Type)
-				if t != "wireguard" && t != "proxy" && t != "opkgtun" {
-					continue
-				}
-				if managed[iface.ID] {
-					continue
-				}
-				name := iface.ID
-				if iface.Description != "" {
-					name = iface.Description
-				}
-				entry := TunnelEntry{
-					ID:        "system:" + iface.ID,
-					Name:      name,
-					Iface:     iface.ID,
-					Type:      "system",
-					Status:    "up",
-					Available: true,
-					Server:    servers[iface.ID] || iface.Description == ndms.BuiltInVPNServerDescription,
-				}
-				if t == "opkgtun" {
-					// Наш собственный OpkgTun (F496): владелец уже показан
-					// как managed-туннель или запись прокси/режима роутера —
-					// вторая, системная, карточка того же интерфейса лишняя.
-					if idx, ok := opkgtun.IndexOf(iface.ID); ok && owned[idx] {
-						continue
-					}
-					// Link, а не Connected: события NDMS (OnLayerChanged)
-					// обновляют только Link/State/IPv4.
-					if iface.Link != "up" {
-						entry.Status = "down"
-					}
-					// Только "disabled" — адреса в NDMS нет; "pending" —
-					// адрес есть, нет несущей (программа не запущена).
-					if iface.IPv4 == "disabled" {
-						entry.Warning = "нет адреса в NDMS"
-					}
-				}
-				result = append(result, entry)
-			}
-		}
-	}
+	result = append(result, c.systemEntries(ctx, managed)...)
 
 	// 3. WAN interfaces
 	wanModel := c.provider.WANModel()
@@ -550,20 +498,96 @@ func (c *CatalogImpl) fillSection(ctx context.Context, key string, fn SnapshotFu
 	}
 }
 
+// systemEntries — системная секция ListAll: интерфейсы WireGuard/Proxy/OpkgTun
+// NDMS, кроме managed (по NDMS-имени) и наших собственных OpkgTun. Одна
+// функция на ListAll и SystemTunnelsByIface, чтобы фильтр у них не разошёлся.
+func (c *CatalogImpl) systemEntries(ctx context.Context, managed map[string]bool) []TunnelEntry {
+	if c.ifaces == nil {
+		return nil
+	}
+	all, err := c.ifaces.List(ctx)
+	if err != nil {
+		return nil
+	}
+	var owned map[int]bool
+	if c.ownedOpkgTun != nil {
+		// Ошибка — не повод прятать весь список: хуже показать
+		// лишнее, чем отобрать у пользователя его выходы.
+		owned, _ = c.ownedOpkgTun(ctx)
+	}
+	var servers map[string]bool
+	if c.serverIfaces != nil {
+		servers = c.serverIfaces(ctx)
+	}
+	var result []TunnelEntry
+	for _, iface := range all {
+		t := strings.ToLower(iface.Type)
+		if t != "wireguard" && t != "proxy" && t != "opkgtun" {
+			continue
+		}
+		if managed[iface.ID] {
+			continue
+		}
+		name := iface.ID
+		if iface.Description != "" {
+			name = iface.Description
+		}
+		entry := TunnelEntry{
+			ID:        "system:" + iface.ID,
+			Name:      name,
+			Iface:     iface.ID,
+			Type:      "system",
+			Status:    "up",
+			Available: true,
+			Server:    servers[iface.ID] || iface.Description == ndms.BuiltInVPNServerDescription,
+		}
+		if t == "opkgtun" {
+			// Наш собственный OpkgTun (F496): владелец уже показан
+			// как managed-туннель или запись прокси/режима роутера —
+			// вторая, системная, карточка того же интерфейса лишняя.
+			if idx, ok := opkgtun.IndexOf(iface.ID); ok && owned[idx] {
+				continue
+			}
+			// Link, а не Connected: события NDMS (OnLayerChanged)
+			// обновляют только Link/State/IPv4.
+			if iface.Link != "up" {
+				entry.Status = "down"
+			}
+			// Только "disabled" — адреса в NDMS нет; "pending" —
+			// адрес есть, нет несущей (программа не запущена).
+			if iface.IPv4 == "disabled" {
+				entry.Warning = "нет адреса в NDMS"
+			}
+		}
+		result = append(result, entry)
+	}
+	return result
+}
+
 // SystemTunnelsByIface maps HydraRoute targets back to system: tunnel IDs:
 // the kernel name of every system entry of ListAll, plus its NDMS id — files
 // written before F498 carry that instead, and must still show (and be
 // rewritten on next save) as the same system tunnel. Managed tunnels are not
-// in ListAll's system entries, so their targets are left alone.
+// system entries, so their targets are left alone.
+//
+// Зовётся на каждом List/Create/Update правил HR, поэтому ListAll не берётся:
+// managed-имена — из записей (ListStored, без опроса состояния туннелей), а
+// WAN здесь не нужен вовсе. Ошибка ListStored, как у ListAll, оставляет
+// managed-множество пустым.
 func (c *CatalogImpl) SystemTunnelsByIface(ctx context.Context) map[string]string {
 	out := map[string]string{}
 	if c.ifaces == nil {
 		return out
 	}
-	for _, e := range c.ListAll(ctx) {
-		if e.Type != "system" {
-			continue
+	managed := make(map[string]bool)
+	if stored, err := c.provider.ListStored(ctx); err == nil {
+		for _, t := range stored {
+			if n := c.resolveNDMSName(t); n != "" {
+				managed[n] = true
+			}
 		}
+	}
+	for _, e := range c.systemEntries(ctx, managed) {
 		ndmsName := tunnel.SystemTunnelName(e.ID)
 		out[ndmsName] = e.ID
 		if k := c.ifaces.ResolveSystemName(ctx, ndmsName); k != "" && k != ndmsName {
