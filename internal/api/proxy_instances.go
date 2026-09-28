@@ -962,10 +962,12 @@ func proxyApplyConfig(rec *instancestore.Record, raw json.RawMessage) error {
 	if err := json.Unmarshal(raw, &keys); err != nil {
 		return fmt.Errorf("невалидный конфиг роли %s: %w", rec.Kind, err)
 	}
+	restorePins := proxyKeepPins(rec)
 	proxyResetPresentSlices(proxyConfigPtr(rec), keys)
 	if err := json.Unmarshal(raw, proxyConfigPtr(rec)); err != nil {
 		return fmt.Errorf("невалидный конфиг роли %s: %w", rec.Kind, err)
 	}
+	restorePins()
 	// natStaticWan и natStaticWans — две формы одного поля, и присланная
 	// форма обязана стать источником правды целиком. Иначе выбор WAN в UI
 	// (фронт говорит ТОЛЬКО на одиночку) молча не вступал бы в силу:
@@ -979,6 +981,25 @@ func proxyApplyConfig(rec *instancestore.Record, raw json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+// proxyKeepPins запоминает пины интерфейсов записи и возвращает функцию,
+// которая кладёт их обратно после декодирования присланного конфига (F494).
+// Пины — поля сервера: их выделяет менеджер (ensurePins) из общего пула,
+// а присланная половина пары ушла бы туда пином номера, которого пул не видит.
+// У новой записи пины пусты — и остаются пустыми до менеджера.
+func proxyKeepPins(rec *instancestore.Record) func() {
+	switch {
+	case rec.WdttClient != nil:
+		c := rec.WdttClient
+		ndms, kernel := c.NdmsIface, c.RawIface
+		return func() { c.NdmsIface, c.RawIface = ndms, kernel }
+	case rec.WdttServer != nil:
+		c := rec.WdttServer
+		ndms, wg, rawNdms, rawKernel := c.NdmsIface, c.WgIface, c.RawNdmsIface, c.RawIface
+		return func() { c.NdmsIface, c.WgIface, c.RawNdmsIface, c.RawIface = ndms, wg, rawNdms, rawKernel }
+	}
+	return func() {}
 }
 
 // proxyResetPresentSlices обнуляет срезы конфига, чьи ключи есть в присланном

@@ -1697,3 +1697,75 @@ func TestValidateLinkPeer(t *testing.T) {
 		}
 	}
 }
+
+// F494: пины интерфейсов — поля сервера. Присланная половина пары ушла бы в
+// ensurePins пином номера, которого пул (он видит только NDMS-имена) не
+// учитывает. Клиентские значения пинов игнорируются на создании и правке.
+func TestProxyInstancesCreate_IgnoresClientPins(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"client", `{"id":"nl","kind":"wdtt-client","name":"x",
+			"config":{"connMode":"raw","peer":"1.2.3.4:56000","password":"pw","vkHashes":"vk","ndmsIface":"OpkgTun7"}}`},
+		{"server", `{"kind":"wdtt-server","name":"x",
+			"config":{"ndmsIface":"OpkgTun7","wgIface":"opkgtun8","rawNdmsIface":"OpkgTun9","rawIface":"opkgtun9"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr := &fakeProxyManager{seed: manager.SeedInfo{Booted: true, Certified: true}}
+			h := newProxyHandler(t, mgr, fakeProxyStates{})
+			rr := doProxy(t, h, http.MethodPost, "/api/proxyrt/instances", tc.body)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("код = %d, ждали 200: %s", rr.Code, rr.Body.String())
+			}
+			if len(mgr.created) != 1 {
+				t.Fatalf("Create вызван %d раз", len(mgr.created))
+			}
+			rec := mgr.created[0]
+			if c := rec.WdttClient; c != nil && (c.NdmsIface != "" || c.RawIface != "") {
+				t.Fatalf("пины клиента приняты от клиента: %+v", c)
+			}
+			if c := rec.WdttServer; c != nil && (c.NdmsIface != "" || c.WgIface != "" ||
+				c.RawNdmsIface != "" || c.RawIface != "") {
+				t.Fatalf("пины сервера приняты от клиента: %+v", c)
+			}
+		})
+	}
+}
+
+func TestProxyInstancesPatch_IgnoresClientPins(t *testing.T) {
+	// Фабрика, а не значение: конфиг лежит за указателем, и запись, отданная
+	// фейку, делила бы его с эталоном — сравнение прошло бы на любой правке.
+	rawClient := func() instancestore.Record {
+		r := fullClientRecord()
+		r.WdttClient.Mode = "raw"
+		r.WdttClient.NdmsIface, r.WdttClient.RawIface = "OpkgTun3", "opkgtun3"
+		return r
+	}
+	for _, tc := range []struct {
+		name string
+		rec  func() instancestore.Record
+		body string
+	}{
+		{"client", rawClient, `{"config":{"connMode":"raw","ndmsIface":"OpkgTun7","rawIface":""}}`},
+		{"server", fullServerRecord, `{"config":{"ndmsIface":"OpkgTun7","wgIface":"","rawNdmsIface":"OpkgTun9","rawIface":"opkgtun9"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			want := tc.rec()
+			mgr := &fakeProxyManager{
+				records: []instancestore.Record{tc.rec()},
+				seed:    manager.SeedInfo{Booted: true, Certified: true},
+			}
+			h := newProxyHandler(t, mgr, fakeProxyStates{})
+			rr := doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/"+want.Key(), tc.body)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("код = %d, ждали 200: %s", rr.Code, rr.Body.String())
+			}
+			if len(mgr.mutated) == 0 {
+				t.Fatal("запись не сохранена")
+			}
+			got := mgr.mutated[len(mgr.mutated)-1]
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("пины изменены клиентом:\n%+v %+v\nждали\n%+v %+v",
+					got.WdttClient, got.WdttServer, want.WdttClient, want.WdttServer)
+			}
+		})
+	}
+}
