@@ -72,7 +72,10 @@ func labels(occ []peersubnet.Occupied) map[string]string {
 }
 
 func TestOccupiedSubnets_CollectsAllSources(t *testing.T) {
-	svc, store, _, _ := newPeerSubnetTestService(t, `[]`)
+	svc, store, _, fg := newPeerSubnetTestService(t, `[]`)
+	// Пиры записей есть на роутере — их сети заняты.
+	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"`+foreignKey+`","comment":"office","allow-ips":[{"address":"10.9.0.2","mask":"255.255.255.255"},{"address":"172.16.5.0","mask":"255.255.255.0"}]},{"key":"SYS1="}]}}`)
+	fg.SetJSON("/show/rc/interface/Wireguard1", rcPeer1)
 	_ = store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
 		sv.Peers = append(sv.Peers, storage.ManagedPeer{PublicKey: "PEER1", Description: "branch", RemoteSubnets: []string{"192.168.50.0/24"}})
 		return nil

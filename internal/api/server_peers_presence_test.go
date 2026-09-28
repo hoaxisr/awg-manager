@@ -147,3 +147,28 @@ func TestServersHandler_AddServerPeer_OverlapWithOtherIfaceRoute(t *testing.T) {
 		t.Fatalf("posts=%v", posts)
 	}
 }
+
+// Секрет пира, снятого в веб-морде, сети не занимает: новый пир берёт её.
+// Пир на роутере есть — сеть занята. Секрет не удаляется.
+func TestServersHandler_AddServerPeer_SubnetOfPeerGoneFromRouterIsFree(t *testing.T) {
+	for _, onRouter := range []bool{false, true} {
+		other := ""
+		if onRouter {
+			other = `[]`
+		}
+		h, store, _, _, _ := newServersSubnetHarnessWithOther(t, `[]`, `[]`, other)
+		stubPeerKeygen(t)
+		_ = store.SetServerPeerSecret("Wireguard0", otherPeerPubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "tablet", RemoteSubnets: []string{"192.168.77.0/24"}})
+		rr := postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32","remoteSubnets":["192.168.77.0/24"]}`)
+		if onRouter {
+			if rr.Code != http.StatusBadRequest || decodeJSONBody(t, rr)["code"] != "REMOTE_SUBNET_OVERLAP" {
+				t.Fatalf("пир на роутере: code=%d body=%s", rr.Code, rr.Body.String())
+			}
+		} else if rr.Code != http.StatusOK {
+			t.Fatalf("пир снят: code=%d body=%s", rr.Code, rr.Body.String())
+		}
+		if _, ok := store.GetServerPeerSecret("Wireguard0", otherPeerPubKey); !ok {
+			t.Fatal("секрет удалён")
+		}
+	}
+}

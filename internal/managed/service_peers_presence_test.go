@@ -179,3 +179,34 @@ func TestAddPeer_RouteOnOwnInterfaceNotOccupied(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Сети записи пира занимают сеть, только пока пир есть на роутере: пир снят в
+// веб-морде — его RemoteSubnets на роутере не стоят, другой пир может взять
+// сеть. Запись при этом не трогается. Системный секрет и managed-пир — одинаково.
+func TestOccupiedSubnets_StoredSubnetsOnlyWhilePeerOnRouter(t *testing.T) {
+	for _, onRouter := range []bool{false, true} {
+		svc, store, _, fg := newPeerSubnetTestService(t, `[]`)
+		_ = store.SetServerPeerSecret("Wireguard0", "SYS1=", storage.ServerPeerSecret{PrivateKey: "p", Description: "home", RemoteSubnets: []string{"192.168.60.0/24"}})
+		seedPeer(t, store, "192.168.50.0/24")
+		if onRouter {
+			fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"`+foreignKey+`"},{"key":"SYS1="}]}}`)
+			fg.SetJSON("/show/rc/interface/Wireguard1", rcPeer1)
+		}
+		occ, err := svc.OccupiedSubnets(context.Background(), PeerRef{Iface: "Wireguard1", PubKey: "OTHER"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := labels(occ)
+		for _, cidr := range []string{"192.168.60.0/24", "192.168.50.0/24"} {
+			if _, taken := got[cidr]; taken != onRouter {
+				t.Errorf("onRouter=%v: %s занята=%v", onRouter, cidr, taken)
+			}
+		}
+		if _, err := peersubnet.ValidateRemoteSubnets([]string{"192.168.60.0/24"}, occ); (err == nil) == onRouter {
+			t.Errorf("onRouter=%v: другой пир взять сеть секрета: err=%v", onRouter, err)
+		}
+		if _, ok := store.GetServerPeerSecret("Wireguard0", "SYS1="); !ok {
+			t.Fatal("секрет удалён")
+		}
+	}
+}

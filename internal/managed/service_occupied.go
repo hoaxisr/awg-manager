@@ -35,7 +35,8 @@ func peerLabel(desc, pubkey, iface string) string {
 // (спека 4.2 шаг 1, решение 11.5): сети всех интерфейсов роутера с адресом
 // (подсети WG-серверов и LAN в том числе), allow-ips пиров всех WG-серверов
 // (кроме их /32 внутри подсети своего сервера — те покрыты ею), статические
-// маршруты через другие интерфейсы, RemoteSubnets всех пиров из хранилища.
+// маршруты через другие интерфейсы, RemoteSubnets пиров из хранилища, которые
+// есть на роутере.
 // Любой отказ чтения — отказ целиком: «занятых нет» на лежащем RCI
 // пропустило бы пересечение.
 //
@@ -84,6 +85,9 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 	for _, sv := range s.settings.GetManagedServers() {
 		servers[sv.InterfaceName] = true
 	}
+	// onRouter — ключи пиров прочитанных серверов (тот же свежий снимок):
+	// сети записи пира, снятого с роутера, на роутере не стоят.
+	onRouter := map[string]map[string]bool{}
 	for id := range servers {
 		// Пометка пережила интерфейс (удалён в веб-морде): роутер ответил
 		// списком без него — пиров, занимающих сети, нет. Не fail-open.
@@ -95,7 +99,9 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 			return nil, err
 		}
 		srvNet := subnetByID[id]
+		onRouter[id] = make(map[string]bool, len(peers))
 		for _, p := range peers {
+			onRouter[id][p.PublicKey] = true
 			if id == exclude.Iface && p.PublicKey == exclude.PubKey {
 				continue
 			}
@@ -146,9 +152,21 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 			}
 		}
 	}
+	// Пир записи, которого нет на роутере (снят в веб-морде), сетей не
+	// занимает: его RemoteSubnets на роутере не стоят, а запись остаётся —
+	// удалить её вправе только владелец. Решение — по снимку выше: интерфейса
+	// нет — пиров нет; сервер прочитан и ключа в нём нет — пира нет; сервер
+	// не читался (интерфейс есть, но не в наборе серверов) — считаем занятым.
+	stored := func(iface, pub string) bool {
+		if !exists[iface] {
+			return false
+		}
+		keys, read := onRouter[iface]
+		return !read || keys[pub]
+	}
 	for _, sv := range s.settings.GetManagedServers() {
 		for _, p := range sv.Peers {
-			if sv.InterfaceName == exclude.Iface && p.PublicKey == exclude.PubKey {
+			if sv.InterfaceName == exclude.Iface && p.PublicKey == exclude.PubKey || !stored(sv.InterfaceName, p.PublicKey) {
 				continue
 			}
 			appendStored(p.RemoteSubnets, peerLabel(p.Description, p.PublicKey, sv.InterfaceName))
@@ -156,7 +174,7 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 	}
 	for serverID, peers := range s.settings.GetServerPeerSecrets() {
 		for pub, sec := range peers {
-			if serverID == exclude.Iface && pub == exclude.PubKey {
+			if serverID == exclude.Iface && pub == exclude.PubKey || !stored(serverID, pub) {
 				continue
 			}
 			appendStored(sec.RemoteSubnets, peerLabel(sec.Description, pub, serverID))
