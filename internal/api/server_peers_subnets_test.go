@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -519,21 +520,28 @@ func TestServersHandler_UpdateServerPeer_TunnelIPAndSubnets_ApplyFails_RestoresI
 	}
 }
 
+// breakSettingsSave — следующая запись настроек отказывает, в т.ч. под root
+// (CI): chmod root не останавливает, а rename файла поверх непустого каталога
+// на месте settings.json отказывает любому пользователю. Кэш стора загружен.
+func breakSettingsSave(t *testing.T, store *storage.SettingsStore) {
+	t.Helper()
+	path := filepath.Join(store.DataDir(), "settings.json")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(path, "busy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Отказ записи секрета после успеха на роутере: сети снимаются, /32
 // возвращается — иначе маршрут без записи никто уже не снимет.
 func TestServersHandler_UpdateServerPeer_SaveFails_UndoesRouter(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("под root chmod не запрещает запись")
-	}
 	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
 	sim := newSysSimRouter(t, fg.FakeGetter, poster, `[]`)
 	sim.seed(peerFixturePubKey, "10.9.0.2/32")
 	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", TunnelIP: "10.9.0.2/32"})
-	dir := store.DataDir()
-	if err := os.Chmod(dir, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	breakSettingsSave(t, store)
 	rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.9/32","remoteSubnets":["192.168.77.0/24"]}`)
 	if rr.Code != http.StatusBadRequest || decodeJSONBody(t, rr)["code"] != "SAVE_FAILED" {
 		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
@@ -1057,18 +1065,11 @@ func TestServersHandler_UpdateServerPeer_EmptyToEmpty_NoReads(t *testing.T) {
 // I1: сверка прошла, пира на роутере не стало, запись секрета отказала —
 // компенсация видит «пир не найден» и не создаёт пира-призрака.
 func TestServersHandler_UpdateServerPeer_PeerVanished_NoGhost(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("под root chmod не запрещает запись")
-	}
 	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
 	sim := newSysSimRouter(t, fg.FakeGetter, poster, `[]`)
 	sim.seed(peerFixturePubKey, "10.9.0.2/32")
 	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "phone", TunnelIP: "10.9.0.2/32"})
-	dir := store.DataDir()
-	if err := os.Chmod(dir, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	breakSettingsSave(t, store)
 	vanishedAt := -1
 	sim.fail = func(payload string) error {
 		if vanishedAt < 0 && strings.Contains(payload, `"comment":"awgm-peer:`) {
