@@ -77,8 +77,14 @@ func (a *deviceproxySubscriptionOutboundsAdapter) ListDeviceProxyOutbounds() []d
 // SubscriptionOutboundsCatalog). Directs that stripAutoManagedDirect removes
 // from the effective config are hidden — they are not selectable.
 type deviceproxyRouterOutboundsAdapter struct {
-	src     *router.ServiceImpl
+	src     compositeOutboundLister
 	foreign func() []string
+}
+
+// compositeOutboundLister — единственный метод *router.ServiceImpl, нужный
+// адаптеру; шов для теста фильтра по отметкам.
+type compositeOutboundLister interface {
+	ListCompositeOutbounds(ctx context.Context) ([]router.CompositeOutboundView, error)
 }
 
 // foreignList — отметки «Сторонний интерфейс» (issue #935); без настроек —

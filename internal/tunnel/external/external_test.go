@@ -61,6 +61,27 @@ func TestList_ForeignOpkgTunShownNotRemovable(t *testing.T) {
 	}
 }
 
+// Отмеченный OpkgTun, который источник сирот ещё отдаёт (кэш с TTL), уже
+// дописан withOrphans с Removable=true — withForeign обязан снять кнопку.
+func TestList_ForeignOverridesOrphanRemovable(t *testing.T) {
+	stubScan(t, []int{7}, nil)
+	s := newTestService(t)
+	_ = withSettings(t, s).MarkForeignInterface("opkgtun7")
+	s.SetOrphanSource(
+		func(context.Context) ([]OrphanIface, error) {
+			return []OrphanIface{{Iface: "opkgtun7", KernelDevice: true}}, nil
+		},
+		nil,
+	)
+	got, err := s.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].InterfaceName != "opkgtun7" || !got[0].Foreign || got[0].Removable {
+		t.Fatalf("список = %+v, ждали одну opkgtun7: Foreign, не Removable", got)
+	}
+}
+
 func stubLinkExists(t *testing.T, v bool) {
 	t.Helper()
 	prev := linkExists
