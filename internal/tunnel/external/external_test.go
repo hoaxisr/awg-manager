@@ -255,8 +255,8 @@ type fakeTunnelSvc struct {
 	calls []string
 }
 
-func (f *fakeTunnelSvc) SyncDescription(_ context.Context, id, name string) {
-	f.calls = append(f.calls, "describe:"+id+":"+name)
+func (f *fakeTunnelSvc) CaptureDescription(_ context.Context, id, name string) {
+	f.calls = append(f.calls, "capture:"+id+":"+name)
 }
 func (f *fakeTunnelSvc) Start(_ context.Context, id string) error {
 	f.calls = append(f.calls, "start:"+id)
@@ -269,7 +269,8 @@ func (f *fakeTunnelSvc) Get(_ context.Context, id string) (*service.TunnelWithSt
 // Взятая запись OpkgTunN несёт описание сторонней программы. F517 признаёт
 // запись своей по равенству описания имени туннеля — без переписывания
 // описания до первого старта туннель без живого устройства не стартовал бы
-// никогда (а с устройством — до первого ребута).
+// никогда (а с устройством — до первого ребута). Запись чужая по построению,
+// поэтому явный захват, а не проверяющее переименование.
 func TestAdopt_SyncsDescriptionBeforeStart(t *testing.T) {
 	stubScan(t, nil, nil)
 	stubLinkExists(t, false)
@@ -280,7 +281,7 @@ func TestAdopt_SyncsDescriptionBeforeStart(t *testing.T) {
 		TunnelName: "Германия"}); err != nil {
 		t.Fatalf("Adopt: %v", err)
 	}
-	if strings.Join(svc.calls, ",") != "describe:awg9:Германия,start:awg9" {
+	if strings.Join(svc.calls, ",") != "capture:awg9:Германия,start:awg9" {
 		t.Fatalf("вызовы: %v", svc.calls)
 	}
 }

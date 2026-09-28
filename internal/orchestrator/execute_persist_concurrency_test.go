@@ -201,19 +201,22 @@ func (f *fakeKernelOp) Stop(context.Context, string) error { f.stops.Add(1); ret
 func (f *fakeKernelOp) Delete(context.Context, *storage.AWGTunnel) error {
 	return f.deleteErr
 }
-func (f *fakeKernelOp) Reconcile(context.Context, tunnel.Config) error          { return nil }
-func (f *fakeKernelOp) Suspend(context.Context, string) error                   { return nil }
-func (f *fakeKernelOp) Resume(context.Context, string) error                    { f.resumes.Add(1); return nil }
-func (f *fakeKernelOp) ApplyConfig(context.Context, string, string) error       { return nil }
-func (f *fakeKernelOp) SetDefaultRoute(context.Context, string) error           { return nil }
-func (f *fakeKernelOp) RemoveDefaultRoute(context.Context, string) error        { return nil }
-func (f *fakeKernelOp) CleanupEndpointRoute(context.Context, string) error      { return nil }
-func (f *fakeKernelOp) GetTrackedEndpointIP(string) string                      { return "" }
-func (f *fakeKernelOp) SetMTU(context.Context, string, int) error               { return nil }
-func (f *fakeKernelOp) SyncDNS(context.Context, string, []string) error         { return nil }
-func (f *fakeKernelOp) UpdateDescription(context.Context, string, string) error { return nil }
-func (f *fakeKernelOp) GetSystemName(context.Context, string) string            { return "" }
-func (f *fakeKernelOp) SetAppLogger(logging.AppLogger)                          {}
+func (f *fakeKernelOp) Reconcile(context.Context, tunnel.Config) error           { return nil }
+func (f *fakeKernelOp) Suspend(context.Context, string) error                    { return nil }
+func (f *fakeKernelOp) Resume(context.Context, string) error                     { f.resumes.Add(1); return nil }
+func (f *fakeKernelOp) ApplyConfig(context.Context, string, string) error        { return nil }
+func (f *fakeKernelOp) SetDefaultRoute(context.Context, string) error            { return nil }
+func (f *fakeKernelOp) RemoveDefaultRoute(context.Context, string) error         { return nil }
+func (f *fakeKernelOp) CleanupEndpointRoute(context.Context, string) error       { return nil }
+func (f *fakeKernelOp) GetTrackedEndpointIP(string) string                       { return "" }
+func (f *fakeKernelOp) SetMTU(context.Context, string, int) error                { return nil }
+func (f *fakeKernelOp) SyncDNS(context.Context, string, []string) error          { return nil }
+func (f *fakeKernelOp) GetSystemName(context.Context, string) string             { return "" }
+func (f *fakeKernelOp) SetAppLogger(logging.AppLogger)                           {}
+func (f *fakeKernelOp) CaptureDescription(context.Context, string, string) error { return nil }
+func (f *fakeKernelOp) UpdateDescription(context.Context, string, string, string) error {
+	return nil
+}
 func (f *fakeKernelOp) SetupEndpointRoute(_ context.Context, tunnelID, endpoint, kernelDevice, ispName string) (string, error) {
 	f.routesMu.Lock()
 	f.endpointRoutes = append(f.endpointRoutes, endpointRouteCall{

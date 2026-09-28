@@ -69,16 +69,26 @@ func (o *OperatorOS5Impl) ensureOpkgTunRecord(ctx context.Context, op string, cf
 		o.logInfo(op, cfg.ID, "Created OpkgTun in NDMS")
 		return true, nil
 	}
-	if rec.Description == cfg.Name {
-		return false, nil
+	if !o.recordIsOurs(ctx, rec, cfg.Name, names.IfaceName) {
+		return false, tunnel.NewOpError(op, cfg.ID, "ndms",
+			&ForeignRecordError{NDMSName: names.NDMSName, Description: rec.Description, Want: cfg.Name})
 	}
-	if running, _ := o.backend.IsRunning(ctx, names.IfaceName); running {
+	if rec.Description != cfg.Name {
 		o.logWarn(op, cfg.ID, fmt.Sprintf("описание записи %s %q ≠ имени туннеля %q; под записью живое amneziawg — запись наша, описание не правим",
 			names.NDMSName, rec.Description, cfg.Name))
-		return false, nil
 	}
-	return false, tunnel.NewOpError(op, cfg.ID, "ndms",
-		&ForeignRecordError{NDMSName: names.NDMSName, Description: rec.Description, Want: cfg.Name})
+	return false, nil
+}
+
+// recordIsOurs — единственное правило владения записью OpkgTunN (F517): её
+// описание равно имени туннеля либо под ней живое amneziawg (такие устройства
+// создаём только мы). Им пользуются и гейт старта, и переименование.
+func (o *OperatorOS5Impl) recordIsOurs(ctx context.Context, rec *ndms.Interface, name, iface string) bool {
+	if rec.Description == name {
+		return true
+	}
+	running, _ := o.backend.IsRunning(ctx, iface)
+	return running
 }
 
 // errOS4Tunnel — отказ обслуживать запись, оставшуюся от KeeneticOS 4.x.
@@ -792,17 +802,35 @@ func (o *OperatorOS5Impl) SyncAddress(ctx context.Context, tunnelID string, addr
 }
 
 // UpdateDescription updates the NDMS interface description for a tunnel.
-func (o *OperatorOS5Impl) UpdateDescription(ctx context.Context, tunnelID, description string) error {
+func (o *OperatorOS5Impl) UpdateDescription(ctx context.Context, tunnelID, prevName, description string) error {
+	return o.setDescription(ctx, tunnelID, prevName, description, false)
+}
+
+// CaptureDescription — описание записи без проверки владения: взятие
+// стороннего туннеля забирает его запись осознанно. Только для Adopt.
+func (o *OperatorOS5Impl) CaptureDescription(ctx context.Context, tunnelID, description string) error {
+	return o.setDescription(ctx, tunnelID, "", description, true)
+}
+
+// setDescription пишет описание только существующей записи: та же RCI-форма на
+// отсутствующей запись СОЗДАЁТ — без security-level, и Фаза 1 сочла бы её
+// готовой; записи нет — её заведёт Фаза 1 с описанием = имени туннеля. Без
+// capture запись обязана быть нашей по правилу гейта старта (recordIsOurs с
+// ПРЕЖНИМ именем): иначе туннель, которому старт отказал на чужой записи,
+// переименованием перезаписал бы её описание, и следующий старт взял бы
+// чужую запись как свою (F517).
+func (o *OperatorOS5Impl) setDescription(ctx context.Context, tunnelID, prevName, description string, capture bool) error {
 	names := tunnel.NewNames(tunnelID)
-	// Только существующей записи: та же RCI-форма на отсутствующей запись
-	// СОЗДАЁТ — без security-level, и Фаза 1 сочла бы её готовой. Записи нет —
-	// её заведёт Фаза 1 с описанием = имени туннеля (F517).
 	rec, err := opkgTunRecord(ctx, o.queries, names.NDMSName)
 	if err != nil {
 		return tunnel.NewOpError("update_description", tunnelID, "ndms", fmt.Errorf("read OpkgTun record: %w", err))
 	}
 	if rec == nil && o.queries != nil {
 		return nil
+	}
+	if rec != nil && !capture && !o.recordIsOurs(ctx, rec, prevName, names.IfaceName) {
+		return tunnel.NewOpError("update_description", tunnelID, "ndms",
+			&ForeignRecordError{NDMSName: names.NDMSName, Description: rec.Description, Want: prevName})
 	}
 	if err := o.commands.Interfaces.SetDescription(ctx, names.NDMSName, description); err != nil {
 		return tunnel.NewOpError("update_description", tunnelID, "ndms", err)

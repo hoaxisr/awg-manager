@@ -420,8 +420,9 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (*service.TunnelW
 
 	// Запись OpkgTunN несёт описание сторонней программы, а F517 признаёт её
 	// нашей только с описанием = имени туннеля: без этого туннель без живого
-	// устройства не стартовал бы никогда. Записи нет — её заведёт Фаза 1.
-	s.tunnelService.SyncDescription(ctx, t.ID, t.Name)
+	// устройства не стартовал бы никогда. Взятие забирает запись осознанно —
+	// поэтому захват без проверки владения. Записи нет — её заведёт Фаза 1.
+	s.tunnelService.CaptureDescription(ctx, t.ID, t.Name)
 
 	// Start the tunnel under awg-manager control
 	if err := s.tunnelService.Start(ctx, t.ID); err != nil {

@@ -356,7 +356,7 @@ func (s *stubTunnelSvc) ReplaceConfig(_ context.Context, _, _, newName string, o
 	s.replaceNames = append(s.replaceNames, newName)
 	return s.replaceErr
 }
-func (s *stubTunnelSvc) SyncDescription(context.Context, string, string) {}
+func (s *stubTunnelSvc) SyncDescription(context.Context, string, string, string) {}
 
 func (s *stubTunnelSvc) WANModel() *wan.Model                     { return nil }
 func (s *stubTunnelSvc) GetResolvedISP(string) string             { return "" }
@@ -1117,5 +1117,24 @@ func TestTunnelReplaceConf_NameOverByteLimitRefusedBeforeStop(t *testing.T) {
 	}
 	if stopped != 0 || stub.replaceCalls != 0 {
 		t.Fatalf("туннель тронут: stop=%d replace=%d", stopped, stub.replaceCalls)
+	}
+}
+
+// Предел — только при смене имени: прислали прежнее (заведённое до предела)
+// имя — замена конфигурации идёт.
+func TestTunnelReplaceConf_SameLongNameNotRefused(t *testing.T) {
+	long := strings.Repeat("ж", 128) + "a"
+	stub := &stubTunnelSvc{}
+	h, store := newTunnelsUpdateHarness(t, stub)
+	if err := store.Create(&storage.AWGTunnel{ID: "awg11", Name: long}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	body, _ := json.Marshal(map[string]string{"content": "[Interface]\nAddress = 10.0.0.2/32\n", "name": long})
+
+	rec := httptest.NewRecorder()
+	h.ReplaceConf(rec, httptest.NewRequest(http.MethodPost, "/tunnels/replace?id=awg11", bytes.NewReader(body)))
+
+	if stub.replaceCalls != 1 || strings.Contains(rec.Body.String(), "длиннее 256 байт") {
+		t.Fatalf("замена с прежним именем отвергнута: replace=%d, тело: %s", stub.replaceCalls, rec.Body.String())
 	}
 }

@@ -135,6 +135,12 @@ func TestColdStart_ExistingRecordOwnership(t *testing.T) {
 				if err != nil {
 					t.Fatalf("ColdStart: %v", err)
 				}
+				// Описание разошлось, но запись наша — старт его не правит.
+				for _, p := range poster.payloads {
+					if js, _ := json.Marshal(p); strings.Contains(string(js), `"description"`) {
+						t.Fatalf("описание записи переписано на старте: %s", js)
+					}
+				}
 				return
 			}
 			if foreign.NDMSName != "OpkgTun10" || foreign.Description != tc.description || foreign.Want != "Germany" {
@@ -928,17 +934,54 @@ func TestRestoreEndpointTracking_SkipsUnroutableEndpoint(t *testing.T) {
 	}
 }
 
-// Описание ставится только СУЩЕСТВУЮЩЕЙ записи: RCI `interface OpkgTunN
-// description` на отсутствующей записи её создал бы — без security-level, и
-// Фаза 1 потом не завела бы её сама (запись «есть и наша»). Отсутствующую
-// запись создаст Фаза 1 с правильным описанием.
-func TestUpdateDescription_OnlyExistingRecord(t *testing.T) {
+// Переименование переписывает описание только НАШЕЙ записи — по тому же
+// правилу, что и гейт старта (F517): описание = прежнему имени туннеля или под
+// записью живое amneziawg. Иначе туннель, которому старт отказал на чужой
+// записи, после переименования перезаписал бы её описание — и следующий старт
+// взял бы чужую запись как свою. Отсутствующую запись не создаём: RCI-форма
+// описания на ней создала бы запись без security-level; её заведёт Фаза 1.
+func TestUpdateDescription_OnlyOurRecord(t *testing.T) {
+	const want = `{"interface":{"OpkgTun10":{"description":"Norway"}}}`
+	rec := func(descr string) string {
+		return fmt.Sprintf(`{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","description":%q}}`, descr)
+	}
+	for _, tc := range []struct {
+		name, snapshot string
+		running        bool
+		wantPost       bool
+		wantForeign    bool
+	}{
+		{"наша: описание = прежнему имени", rec("Germany"), false, true, false},
+		{"наша: чужое описание, живое amneziawg", rec("csqtt"), true, true, false},
+		{"чужая: описание не наше, устройства нет", rec("csqtt"), false, false, true},
+		{"записи нет", `{}`, false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			poster := &recordingPoster{}
+			getter := ndmsquery.NewFakeGetter()
+			getter.SetJSON("/show/interface/", tc.snapshot)
+			o, _ := newOS5LifecycleOn(t, poster, getter, &MockBackend{running: tc.running}, true)
+			err := o.UpdateDescription(context.Background(), "awg10", "Germany", "Norway")
+			var foreign *ForeignRecordError
+			if errors.As(err, &foreign) != tc.wantForeign || (!tc.wantForeign && err != nil) {
+				t.Fatalf("err = %v, want ForeignRecordError = %v", err, tc.wantForeign)
+			}
+			if got := hasPayload(poster.payloads, want); got != tc.wantPost || (!tc.wantPost && len(poster.payloads) != 0) {
+				t.Fatalf("описание отправлено = %v, want %v: %v", got, tc.wantPost, poster.payloads)
+			}
+		})
+	}
+}
+
+// Взятие стороннего туннеля (Adopt) забирает запись ОСОЗНАННО: описание
+// переписывается без проверки владения. Отсутствующую запись не создаём.
+func TestCaptureDescription_TakesForeignRecord(t *testing.T) {
 	const want = `{"interface":{"OpkgTun10":{"description":"Norway"}}}`
 	for _, tc := range []struct {
 		name, snapshot string
 		wantPost       bool
 	}{
-		{"запись есть", `{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","description":"Germany"}}`, true},
+		{"чужая запись", `{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","description":"csqtt"}}`, true},
 		{"записи нет", `{}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -946,10 +989,10 @@ func TestUpdateDescription_OnlyExistingRecord(t *testing.T) {
 			getter := ndmsquery.NewFakeGetter()
 			getter.SetJSON("/show/interface/", tc.snapshot)
 			o, _ := newOS5LifecycleOn(t, poster, getter, &MockBackend{}, true)
-			if err := o.UpdateDescription(context.Background(), "awg10", "Norway"); err != nil {
-				t.Fatalf("UpdateDescription: %v", err)
+			if err := o.CaptureDescription(context.Background(), "awg10", "Norway"); err != nil {
+				t.Fatalf("CaptureDescription: %v", err)
 			}
-			if got := hasPayload(poster.payloads, want); got != tc.wantPost {
+			if got := hasPayload(poster.payloads, want); got != tc.wantPost || (!tc.wantPost && len(poster.payloads) != 0) {
 				t.Fatalf("описание отправлено = %v, want %v: %v", got, tc.wantPost, poster.payloads)
 			}
 		})
@@ -959,14 +1002,23 @@ func TestUpdateDescription_OnlyExistingRecord(t *testing.T) {
 // Кэш записей не поднялся — «не знаем»: отказ, а не молчаливый пропуск
 // (вызывающий пишет Warn — после ребута F517 откажет) и не слепая запись.
 func TestUpdateDescription_RecordReadError(t *testing.T) {
-	poster := &recordingPoster{}
-	getter := ndmsquery.NewFakeGetter()
-	getter.SetError("/show/interface/", errors.New("injected: ndms"))
-	o, _ := newOS5LifecycleOn(t, poster, getter, &MockBackend{}, true)
-	if err := o.UpdateDescription(context.Background(), "awg10", "Norway"); err == nil {
-		t.Fatal("ошибка чтения записи проглочена")
-	}
-	if len(poster.payloads) != 0 {
-		t.Fatalf("RCI тронут при недоступном кэше: %v", poster.payloads)
+	for name, call := range map[string]func(o *OperatorOS5Impl) error{
+		"update": func(o *OperatorOS5Impl) error {
+			return o.UpdateDescription(context.Background(), "awg10", "Germany", "Norway")
+		},
+		"capture": func(o *OperatorOS5Impl) error { return o.CaptureDescription(context.Background(), "awg10", "Norway") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			poster := &recordingPoster{}
+			getter := ndmsquery.NewFakeGetter()
+			getter.SetError("/show/interface/", errors.New("injected: ndms"))
+			o, _ := newOS5LifecycleOn(t, poster, getter, &MockBackend{}, true)
+			if err := call(o); err == nil {
+				t.Fatal("ошибка чтения записи проглочена")
+			}
+			if len(poster.payloads) != 0 {
+				t.Fatalf("RCI тронут при недоступном кэше: %v", poster.payloads)
+			}
+		})
 	}
 }

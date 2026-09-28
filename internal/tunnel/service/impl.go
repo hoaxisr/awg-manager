@@ -391,7 +391,7 @@ func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.
 
 	// Description rename — cheap, dispatch on change.
 	if oldStored.Name != newStored.Name {
-		s.syncDescription(ctx, "update", newStored, newStored.Name)
+		s.syncDescription(ctx, "update", newStored, oldStored.Name, newStored.Name)
 	}
 
 	// Below this point we only act on the running interface. Skip if not.
@@ -446,30 +446,45 @@ func shouldSyncRuntime(stored *storage.AWGTunnel, stateInfo tunnel.StateInfo) bo
 
 // syncDescription ставит описание записи туннеля в NDMS = name. Инвариант
 // F517: запись kernel-туннеля признаётся нашей по равенству её описания имени
-// туннеля, поэтому КАЖДЫЙ путь, меняющий имя, обязан звать это. Провал — Warn,
+// туннеля, поэтому КАЖДЫЙ путь, меняющий имя, обязан звать это. Оператор
+// пишет только в НАШУ запись — по тому же правилу, проверенному с prevName
+// (имя до переименования); чужую не трогает. Провал или чужая запись — Warn,
 // как у переименования всегда: запись остаётся со старым описанием, и после
 // ребута (живого amneziawg под ней нет) F517 откажет туннелю в старте.
-func (s *ServiceImpl) syncDescription(ctx context.Context, scope string, stored *storage.AWGTunnel, name string) {
+func (s *ServiceImpl) syncDescription(ctx context.Context, scope string, stored *storage.AWGTunnel, prevName, name string) {
 	var err error
 	if s.isNativeWG(stored) && s.nwgOperator != nil {
 		err = s.nwgOperator.UpdateDescription(ctx, stored, name)
 	} else if s.legacyOperator != nil {
-		err = s.legacyOperator.UpdateDescription(ctx, stored.ID, name)
+		err = s.legacyOperator.UpdateDescription(ctx, stored.ID, prevName, name)
 	}
 	if err != nil {
 		s.logWarn(scope, stored.ID, "Failed to update description: "+err.Error())
 	}
 }
 
-// SyncDescription — syncDescription для путей, меняющих имя мимо Update:
-// взятие стороннего туннеля, переименование волной wdttlink.
-func (s *ServiceImpl) SyncDescription(ctx context.Context, tunnelID, name string) {
+// SyncDescription — syncDescription для путей, меняющих имя мимо Update
+// (переименование волной wdttlink).
+func (s *ServiceImpl) SyncDescription(ctx context.Context, tunnelID, prevName, name string) {
 	stored, err := s.store.Get(tunnelID)
 	if err != nil {
 		s.logWarn("update_description", tunnelID, "Failed to update description: "+err.Error())
 		return
 	}
-	s.syncDescription(ctx, "update_description", stored, name)
+	s.syncDescription(ctx, "update_description", stored, prevName, name)
+}
+
+// CaptureDescription — описание записи kernel-туннеля без проверки владения:
+// взятие стороннего туннеля (Adopt) забирает его запись осознанно. Больше его
+// не зовёт никто: любой другой путь переписал бы описание чужой записи, и
+// F517 взял бы её как свою. Провал — Warn (после ребута F517 откажет).
+func (s *ServiceImpl) CaptureDescription(ctx context.Context, tunnelID, name string) {
+	if s.legacyOperator == nil {
+		return
+	}
+	if err := s.legacyOperator.CaptureDescription(ctx, tunnelID, name); err != nil {
+		s.logWarn("adopt", tunnelID, "Failed to set description: "+err.Error())
+	}
 }
 
 // applyDiffKernel applies field-level diffs to a running kernel-backend
@@ -1057,15 +1072,21 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 // ReplaceConfig replaces a tunnel's Interface and Peer from a parsed .conf,
 // preserving identity, routing, monitoring, and all other metadata.
 func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string, opts ReplaceOptions) error {
-	if err := tunnel.ValidateName(newName); err != nil {
-		return err
-	}
 	s.lockTunnel(tunnelID)
 	defer s.unlockTunnel(tunnelID)
 
 	stored, err := s.store.Get(tunnelID)
 	if err != nil {
 		return tunnel.ErrNotFound
+	}
+	// Имя до замены: ниже stored.Name перезаписывается. Предел и описание
+	// записи — только если имя действительно меняют (как в Update).
+	prevName := stored.Name
+	renamed := newName != "" && newName != prevName
+	if renamed {
+		if err := tunnel.ValidateName(newName); err != nil {
+			return err
+		}
 	}
 
 	// Секция [instance] читается ДО Strip: дальше config.Parse видит чистый
@@ -1252,8 +1273,8 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 
 	// Имя у kernel-туннеля — описание его записи OpkgTun (F517); у nativewg
 	// описание переписано выше, между синхронизациями пира.
-	if newName != "" && !s.isNativeWG(stored) {
-		s.syncDescription(ctx, "replace-config", stored, newName)
+	if renamed && !s.isNativeWG(stored) {
+		s.syncDescription(ctx, "replace-config", stored, prevName, newName)
 	}
 
 	// Kernel-backend tunnels: hot-apply the new conf to a running interface

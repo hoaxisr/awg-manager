@@ -75,8 +75,14 @@ type Operator interface {
 	// prefix — длина префикса IPv4 (0 = не задана, оператор ставит /32).
 	SyncAddress(ctx context.Context, tunnelID string, address string, prefix int, ipv6 string) error
 
-	// UpdateDescription updates the tunnel description in RCI.
-	UpdateDescription(ctx context.Context, tunnelID, description string) error
+	// UpdateDescription updates the tunnel description in RCI — only on a
+	// record that is ours by the F517 rule, checked against prevName (the
+	// tunnel's name before the rename).
+	UpdateDescription(ctx context.Context, tunnelID, prevName, description string) error
+
+	// CaptureDescription sets the description without the ownership check:
+	// adopting an external tunnel takes its record deliberately. Adopt only.
+	CaptureDescription(ctx context.Context, tunnelID, description string) error
 
 	// GetDefaultGatewayInterface returns the current default gateway interface name.
 	// Used by resolveWAN for auto-mode tunnels.

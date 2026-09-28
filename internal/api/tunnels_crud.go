@@ -861,18 +861,21 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 		response.BadRequest(w, "missing config content")
 		return
 	}
-	// Тот же предел проверяет ReplaceConfig, но уже после Stop ниже: отказ там
-	// оставил бы работающий туннель выключенным.
-	if err := tunnel.ValidateName(req.Name); err != nil {
-		response.BadRequest(w, err.Error())
-		return
-	}
 
 	// Check tunnel exists
 	stored, err := h.store.Get(id)
 	if err != nil {
 		response.ErrorWithStatus(w, http.StatusNotFound, "tunnel not found", "NOT_FOUND")
 		return
+	}
+	// Тот же предел проверяет ReplaceConfig, но уже после Stop ниже: отказ там
+	// оставил бы работающий туннель выключенным. Как и там — только при смене
+	// имени.
+	if req.Name != "" && req.Name != stored.Name {
+		if err := tunnel.ValidateName(req.Name); err != nil {
+			response.BadRequest(w, err.Error())
+			return
+		}
 	}
 
 	// Защита (#818) отвергает замену конфига до всякого побочного действия:

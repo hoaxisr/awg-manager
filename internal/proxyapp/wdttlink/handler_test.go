@@ -77,12 +77,14 @@ type fakeTunnels struct {
 
 	conflicts      []string
 	conflictsAsked []string
-	described      []importCall // SyncDescription: ClientID = id туннеля
-	order          []string     // «describe:<id>» / «start:<id>» по порядку
+	described      []describeCall
+	order          []string // «describe:<id>» / «start:<id>» по порядку
 }
 
-func (f *fakeTunnels) SyncDescription(_ context.Context, id, name string) {
-	f.described = append(f.described, importCall{Name: name, ClientID: id})
+type describeCall struct{ ID, Prev, Name string }
+
+func (f *fakeTunnels) SyncDescription(_ context.Context, id, prevName, name string) {
+	f.described = append(f.described, describeCall{id, prevName, name})
 	f.order = append(f.order, "describe:"+id)
 }
 
@@ -726,7 +728,7 @@ func TestEnsureWG_RenameSyncsDescriptionBeforeStart(t *testing.T) {
 
 	h.EnsureWGTunnel(httptest.NewRecorder(), post(t, ``), rec.Key())
 
-	if len(tunnels.described) != 1 || tunnels.described[0] != (importCall{Name: "Германия wdtt", ClientID: "old"}) {
+	if len(tunnels.described) != 1 || tunnels.described[0] != (describeCall{"old", "Старое имя", "Германия wdtt"}) {
 		t.Fatalf("описание записи: %+v", tunnels.described)
 	}
 	if strings.Join(tunnels.order, ",") != "describe:old,start:old" {

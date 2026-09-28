@@ -326,7 +326,11 @@ func (o *OperatorOS4Impl) SyncAddress(ctx context.Context, tunnelID string, addr
 }
 
 // UpdateDescription is a no-op on OS4 (no NDMS interface descriptions).
-func (o *OperatorOS4Impl) UpdateDescription(ctx context.Context, tunnelID, description string) error {
+func (o *OperatorOS4Impl) UpdateDescription(ctx context.Context, tunnelID, prevName, description string) error {
+	return nil
+}
+
+func (o *OperatorOS4Impl) CaptureDescription(ctx context.Context, tunnelID, description string) error {
 	return nil
 }
 

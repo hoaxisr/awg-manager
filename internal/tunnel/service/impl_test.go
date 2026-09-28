@@ -58,12 +58,14 @@ type MockOperator struct {
 		ID  string
 		MTU int
 	}
-	UpdateDescriptionCalls []struct{ ID, Desc string }
+	UpdateDescriptionCalls []descCall
 	SyncDNSCalls           [][]string
 	SyncAddressCalls       []struct {
 		ID, Addr, IPv6 string
 		Prefix         int
 	}
+
+	CaptureDescriptionCalls []descCall
 }
 
 func (m *MockOperator) ColdStart(ctx context.Context, cfg tunnel.Config) error {
@@ -137,8 +139,17 @@ func (m *MockOperator) RemoveDefaultRoute(ctx context.Context, tunnelID string) 
 	return nil
 }
 
-func (m *MockOperator) UpdateDescription(ctx context.Context, tunnelID, description string) error {
-	m.UpdateDescriptionCalls = append(m.UpdateDescriptionCalls, struct{ ID, Desc string }{tunnelID, description})
+// descCall — вызов записи описания: Prev — имя до переименования (по нему
+// оператор проверяет владение записью), у захвата пусто.
+type descCall struct{ ID, Prev, Desc string }
+
+func (m *MockOperator) UpdateDescription(ctx context.Context, tunnelID, prevName, description string) error {
+	m.UpdateDescriptionCalls = append(m.UpdateDescriptionCalls, descCall{tunnelID, prevName, description})
+	return nil
+}
+
+func (m *MockOperator) CaptureDescription(ctx context.Context, tunnelID, description string) error {
+	m.CaptureDescriptionCalls = append(m.CaptureDescriptionCalls, descCall{ID: tunnelID, Desc: description})
 	return nil
 }
 

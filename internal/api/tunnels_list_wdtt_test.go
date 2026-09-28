@@ -49,7 +49,7 @@ func (s *listSvcStub) WANModel() *wan.Model                     { return nil }
 func (s *listSvcStub) GetResolvedISP(string) string             { return "" }
 func (s *listSvcStub) SetSelfCreateGate(tunnel.SelfCreateGater) {}
 
-func (s *listSvcStub) SyncDescription(context.Context, string, string) {}
+func (s *listSvcStub) SyncDescription(context.Context, string, string, string) {}
 
 // TestList_ExposesWdttClientID pins the list response contract: the WDTT link
 // is carried by wdttClientId, so clients need not guess it from the endpoint.

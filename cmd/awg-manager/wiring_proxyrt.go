@@ -454,8 +454,8 @@ func (t proxyTunnelImporter) Start(ctx context.Context, tunnelID string) error {
 	return t.svc.Start(ctx, tunnelID)
 }
 
-func (t proxyTunnelImporter) SyncDescription(ctx context.Context, tunnelID, name string) {
-	t.svc.SyncDescription(ctx, tunnelID, name)
+func (t proxyTunnelImporter) SyncDescription(ctx context.Context, tunnelID, prevName, name string) {
+	t.svc.SyncDescription(ctx, tunnelID, prevName, name)
 }
 
 func (t proxyTunnelImporter) AddressConflicts(address string) []string {
