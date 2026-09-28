@@ -672,6 +672,24 @@ func TestInterfaceStore_Refresh_OtherStatusErrorIsErrorNotAbsent(t *testing.T) {
 	}
 }
 
+// Код во вложенном конверте числом: сбой разбора не должен тихо превращаться
+// в «записи нет» — 6553619 остаётся отсутствием, прочее — ошибкой.
+func TestInterfaceStore_Refresh_NumericStatusCode(t *testing.T) {
+	for _, tc := range []struct {
+		code    string
+		wantErr bool
+	}{{"6553601", true}, {"6553619", false}} {
+		fg := newFakeGetter()
+		fg.SetJSON(ifaceListPath, sampleIfaceList)
+		fg.SetPostInterface("Wireguard0", `{"show":{"interface":{"status":[{"status":"error","code":`+tc.code+`,"message":"x"}]}}}`)
+		s := NewInterfaceStore(fg, NopLogger())
+		got, err := s.Refresh(context.Background(), "Wireguard0")
+		if (err != nil) != tc.wantErr || got != nil {
+			t.Errorf("code %s: got (%#v, %v), wantErr %v", tc.code, got, err, tc.wantErr)
+		}
+	}
+}
+
 func TestInterfaceStore_Refresh_ErrorLeavesCacheUntouched(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleIfaceList)

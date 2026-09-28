@@ -1154,9 +1154,9 @@ type ndmsStatusError struct {
 func parseNestedStatusError(inner []byte) *ndmsStatusError {
 	var w struct {
 		Status []struct {
-			Status  string `json:"status"`
-			Code    string `json:"code"`
-			Message string `json:"message"`
+			Status  string          `json:"status"`
+			Code    json.RawMessage `json:"code"` // строка у стенда; число тоже принимаем
+			Message string          `json:"message"`
 		} `json:"status"`
 	}
 	if json.Unmarshal(inner, &w) != nil {
@@ -1164,7 +1164,7 @@ func parseNestedStatusError(inner []byte) *ndmsStatusError {
 	}
 	for _, s := range w.Status {
 		if s.Status == "error" {
-			return &ndmsStatusError{Code: s.Code, Message: s.Message}
+			return &ndmsStatusError{Code: strings.Trim(string(s.Code), `"`), Message: s.Message}
 		}
 	}
 	return nil
