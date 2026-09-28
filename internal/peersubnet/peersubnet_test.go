@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func cidr(t *testing.T, s string) *net.IPNet {
@@ -90,6 +91,24 @@ func TestExclude_SingleNetExactCover(t *testing.T) {
 	}
 	if got := Exclude(cidr(t, "0.0.0.0/0"), []*net.IPNet{cidr(t, "0.0.0.0/0")}); len(got) != 0 {
 		t.Fatalf("вычитание всего: %v", strs(got))
+	}
+}
+
+// Бюджет: 0.0.0.0/0 минус 10.0.0.0/8 — O(32) шагов деления. Без раннего выхода
+// («целиком в minus» или «не задевает») обход спускается до /32 — миллионы
+// шагов. Шаги считаются по аллокациям (каждый шаг — новая сеть), обход
+// ограничен по времени, чтобы сломанная версия не повесила прогон.
+func TestExclude_StepBudget(t *testing.T) {
+	base, minus := cidr(t, "0.0.0.0/0"), []*net.IPNet{cidr(t, "10.0.0.0/8")}
+	done := make(chan float64, 1)
+	go func() { done <- testing.AllocsPerRun(1, func() { Exclude(base, minus) }) }()
+	select {
+	case allocs := <-done:
+		if allocs > 200 {
+			t.Fatalf("аллокаций %v — ранний выход обхода потерян", allocs)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Exclude не уложился в 5 с — ранний выход обхода потерян")
 	}
 }
 
