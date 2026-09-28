@@ -1339,9 +1339,13 @@ func TestInterfaceStore_ListAll_DedupDeterministic(t *testing.T) {
 	}
 }
 
-// SystemNames — имена ядра для обратной карты (SystemTunnelsByIface): имя из
-// кэша берётся, даже если устройства сейчас нет (карте нужно имя, а не
-// живость), остальные — одним пакетом; повтор в резолвер не ходит.
+// SystemNames — имена ядра для обратной карты (SystemTunnelsByIface):
+// `interface-name` из списка (byID.SystemName) сам по себе резолвером не
+// подтверждён, поэтому проходит ту же проверку kernelIfaceExists, что и
+// trustedSystemName — устройства нет ни у одного из трёх, все идут в один
+// пакетный запрос; итог резолвера (s.sysNames) кэшируется и трудится дальше
+// даже без живого устройства (карте нужно имя, а не живость) — повтор в
+// резолвер не ходит.
 func TestInterfaceStore_SystemNames_CachedOrOneBatch(t *testing.T) {
 	orig := kernelIfaceExists
 	kernelIfaceExists = func(string) bool { return false } // устройств нет
@@ -1369,13 +1373,36 @@ func TestInterfaceStore_SystemNames_CachedOrOneBatch(t *testing.T) {
 			t.Fatalf("круг %d: пакетных POST %d, ждали 1", round, n)
 		}
 		for _, id := range ids {
-			wantCalls := 1
-			if id == "Wireguard0" {
-				wantCalls = 0 // имя из кэша
-			}
-			if n := fg.PostSystemNameCalls(id); n != wantCalls {
-				t.Fatalf("круг %d: %s спрошен %d раз, ждали %d", round, id, n, wantCalls)
+			// Wireguard0 тоже без device — его byID-имя "nwg0" не резолвером
+			// подтверждено, поэтому и оно должно уйти в пакет один раз, а не
+			// быть взято из списка вслепую.
+			if n := fg.PostSystemNameCalls(id); n != 1 {
+				t.Fatalf("круг %d: %s спрошен %d раз, ждали 1", round, id, n)
 			}
 		}
+	}
+}
+
+// SystemNames: byID.SystemName, прошедший синтаксическую форму
+// (looksLikeKernelIfname), но не kernelIfaceExists — НЕ берётся из кэша, а
+// уходит в резолвер (защита от лейбла NDMS, похожего на имя ядра, на 5.02).
+func TestInterfaceStore_SystemNames_ByIDNameFailsExistenceCheck(t *testing.T) {
+	orig := kernelIfaceExists
+	kernelIfaceExists = func(string) bool { return false }
+	defer func() { kernelIfaceExists = orig }()
+
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, `{
+		"Wireguard0": {"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","state":"down"}
+	}`)
+	fg.SetPostSystemName("Wireguard0", `"nwg0"`)
+	s := NewInterfaceStore(fg, NopLogger())
+
+	got := s.SystemNames(context.Background(), []string{"Wireguard0"})
+	if got["Wireguard0"] != "nwg0" {
+		t.Fatalf("got %v, want nwg0 через резолвер", got)
+	}
+	if n := fg.PostSystemNameCalls("Wireguard0"); n != 1 {
+		t.Fatalf("byID-имя взято из кэша без проверки существования: резолвер спрошен %d раз, ждали 1", n)
 	}
 }
