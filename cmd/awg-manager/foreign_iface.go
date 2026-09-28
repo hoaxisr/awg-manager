@@ -13,7 +13,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/api"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
-	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/external"
 )
@@ -45,10 +44,30 @@ func canonicalForeign(name string) (string, int, bool) {
 	return name, 0, false
 }
 
+// isPanelIfaceName — имена, которые создают панель и прошивка: awgm*, nwg*,
+// t2s*, proxy* и opkgtun*, не разобранный opkgtun.IndexOf (разобранный идёт
+// через пул). Короче списка router.IsAutoManagedIface намеренно: wg*/awg* — имена
+// userland-программ (wireguard-go, amneziawg-go), их обязаны отмечать —
+// отметка и спасает такой direct-выход от stripAutoManagedDirect.
+func isPanelIfaceName(name string) bool {
+	n := strings.ToLower(name)
+	for _, p := range []string{"opkgtun", "awgm", "nwg", "t2s", "proxy"} {
+		if strings.HasPrefix(n, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isFirmwareServiceIface — ezcfg*: служебный TUN прошивки (F514).
+func isFirmwareServiceIface(name string) bool {
+	return strings.HasPrefix(strings.ToLower(name), "ezcfg")
+}
+
 // Mark — отказы по границе (spec §4): имя; номер OpkgTun с ключевым
-// держателем; наше имя (IsAutoManagedIface — сюда же tun sing-box: режимы
-// роутера живут на opkgtun*); существующий не-TUN; интерфейс ядра,
-// известный NDMS.
+// держателем; имя панели (isPanelIfaceName — сюда же tun sing-box: режимы
+// роутера живут на opkgtun*); служебный ezcfg*; существующий не-TUN;
+// интерфейс ядра, известный NDMS.
 func (f *foreignIfaces) Mark(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	switch {
@@ -71,8 +90,11 @@ func (f *foreignIfaces) Mark(ctx context.Context, name string) error {
 		}
 		return err
 	}
-	if router.IsAutoManagedIface(name) {
+	if isPanelIfaceName(name) {
 		return rejectForeign("%s — имя интерфейсов панели", name)
+	}
+	if isFirmwareServiceIface(name) {
+		return rejectForeign("%s — служебный интерфейс прошивки", name)
 	}
 	// Существующий интерфейс ядра без tun_flags — не TUN userland-программы
 	// (lo, dummy0, tunl0, порты и радио роутера). Отсутствующий отмечается:
@@ -134,7 +156,7 @@ func (f *foreignIfaces) Candidates(ctx context.Context) ([]api.ForeignIfaceCandi
 	}
 	for _, e := range entries {
 		n := e.Name()
-		if known[n] || router.IsAutoManagedIface(n) || slices.Contains(marked, n) {
+		if known[n] || isPanelIfaceName(n) || isFirmwareServiceIface(n) || slices.Contains(marked, n) {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(f.sysNet, n, "tun_flags")); err != nil {

@@ -35,7 +35,8 @@ func newForeignEnv(t *testing.T, take opkgtun.Taken, ndms map[string]bool) *fore
 func TestForeignMark_Rejections(t *testing.T) {
 	f := newForeignEnv(t, opkgtun.Taken{12: opkgtun.TunnelHolder("awg12", "дом")}, map[string]bool{"ppp0": true})
 	for _, name := range []string{"", "a-very-long-name-16", "bad name", "a/b", "opkgtun12", "opkgtun17", "awgm0", "t2s0", "nwg1", "ppp0",
-		"a\nb", "a:b", ".", "..", "opkgtun", "opkgtun7x", "OPKGTUN7", "opkgtun99999999", "abcdefghijklmnop"} {
+		"a\nb", "a:b", ".", "..", "opkgtun", "opkgtun7x", "OPKGTUN7", "opkgtun99999999", "abcdefghijklmnop",
+		"proxy3", "opkgtunx", "AWGM0", "ezcfg0", "EZCFG1"} {
 		err := f.Mark(context.Background(), name)
 		if !errors.Is(err, api.ErrForeignIfaceRejected) {
 			t.Errorf("Mark(%q) = %v, ждали отказ", name, err)
@@ -43,6 +44,26 @@ func TestForeignMark_Rejections(t *testing.T) {
 	}
 	if got := f.settings.GetForeignInterfaces(); len(got) != 0 {
 		t.Fatalf("отказы записали %v", got)
+	}
+}
+
+// R15: wg*/awg* — имена userland-программ (wireguard-go, amneziawg-go), а не
+// панели; отметка их спасает от strip. Отсутствующий и существующий TUN.
+func TestForeignMark_UserlandWGNamesAccepted(t *testing.T) {
+	f := newForeignEnv(t, nil, nil)
+	if err := os.MkdirAll(filepath.Join(f.sysNet, "awg0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.sysNet, "awg0", "tun_flags"), []byte("0x1001\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"wg0", "awg0"} {
+		if err := f.Mark(context.Background(), name); err != nil {
+			t.Fatalf("Mark(%q): %v", name, err)
+		}
+	}
+	if got := f.settings.GetForeignInterfaces(); !slices.Equal(got, []string{"wg0", "awg0"}) {
+		t.Fatalf("отметки = %v, ждали wg0 и awg0", got)
 	}
 }
 
@@ -162,6 +183,8 @@ func TestForeignCandidates(t *testing.T) {
 	mk("eth3", true, "1")                                          // известен NDMS
 	mk("t2s0", true, "1")                                          // наше имя
 	mk("gre0", false, "1")                                         // не TUN
+	mk("ezcfg0", true, "1")                                        // служебный TUN прошивки
+	mk("wg0", true, "0")                                           // userland-программа
 	if err := f.settings.MarkForeignInterface("zt0"); err != nil { // уже отмечен — не кандидат
 		t.Fatal(err)
 	}
@@ -173,6 +196,7 @@ func TestForeignCandidates(t *testing.T) {
 	want := []api.ForeignIfaceCandidate{
 		{Name: "opkgtun7", Label: "csqtt", Kind: "opkgtun", Up: true},
 		{Name: "csqtt0", Label: "csqtt0", Kind: "kernel", Up: true},
+		{Name: "wg0", Label: "wg0", Kind: "kernel", Up: false},
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("кандидаты = %+v, want %+v", got, want)
