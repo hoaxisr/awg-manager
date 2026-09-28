@@ -67,3 +67,50 @@ describe('HrNeoEditModal: цель не найдена в каталоге', () 
 		);
 	});
 });
+
+function openCreate(initialTarget: { kind: 'interface'; name: string; tunnelId?: string }, onsave = vi.fn()) {
+	const { container } = render(HrNeoEditModal, {
+		props: {
+			open: true, rule: null, tunnels, policies: [], policyInterfaces: [],
+			geositeFiles: [], geoipFiles: [], maxelem: 0, saving: false,
+			initialTarget, onsave, onclose: vi.fn(),
+		},
+	});
+	return { onsave, container };
+}
+
+describe('HrNeoEditModal: создание из сайдбара с незнакомой целью', () => {
+	it('не подставляет первый туннель, держит сохранение до выбора', async () => {
+		const { onsave } = openCreate({ kind: 'interface', name: 'nwg9' });
+
+		expect(screen.getByText(/nwg9 \(не найдена в списке\)/)).toBeTruthy();
+		await fireEvent.input(screen.getByLabelText('Название'), { target: { value: 'yt' } });
+		const domains = document.querySelector<HTMLTextAreaElement>('textarea')!;
+		await fireEvent.input(domains, { target: { value: 'youtube.com' } });
+		const save = screen.getByRole<HTMLButtonElement>('button', { name: 'Сохранить' });
+		expect(save.disabled).toBe(true);
+
+		await fireEvent.click(screen.getByText('— выбрать —'));
+		await fireEvent.click(screen.getByRole('option', { name: /Wireguard2/ }));
+		expect(save.disabled).toBe(false);
+		await fireEvent.click(save);
+		expect(onsave).toHaveBeenCalledWith(
+			expect.objectContaining({ routes: [{ tunnelId: 'system:Wireguard2', interface: '', fallback: '' }] }),
+		);
+	});
+});
+
+describe('HrNeoEditModal: у правила нет цели', () => {
+	it('показывает причину, а не молча выключенное сохранение', () => {
+		render(HrNeoEditModal, {
+			props: {
+				open: true, rule: { ...rule, routes: [{ tunnelId: '', interface: '', fallback: '' }] },
+				tunnels, policies: [], policyInterfaces: [],
+				geositeFiles: [], geoipFiles: [], maxelem: 0, saving: false,
+				onsave: vi.fn(), onclose: vi.fn(),
+			},
+		});
+		expect(screen.getByText(/Цель правила не задана — выберите туннель/)).toBeTruthy();
+		expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Сохранить' }).disabled).toBe(true);
+	});
+});

@@ -69,7 +69,8 @@
 	// Цель правила, не найденная в каталоге: показывается как есть, другой
 	// туннель вместо неё не подставляется (иначе сохранение молча перенесло
 	// бы правило, а снимок для isDirty совпал бы с подставленным).
-	let unknownTarget = $state('');
+	// null — цель найдена; '' — цели у правила нет вовсе.
+	let unknownTarget = $state<string | null>(null);
 	let policyChoice = $state<'existing' | 'new'>('existing');
 	let existingPolicyName = $state('');
 	let newPolicyName = $state('');
@@ -109,7 +110,7 @@
 		geositePickerOpen = false;
 		geoipPickerOpen = false;
 		iconPickerOpen = false;
-		unknownTarget = '';
+		unknownTarget = null;
 		if (rule) {
 			name = rule.name;
 			iconUrl = rule.iconUrl;
@@ -192,7 +193,9 @@
 						x.name === initialTarget.name ||
 						x.iface === initialTarget.name,
 				);
-				tunnelId = t?.id ?? tunnels[0]?.id ?? '';
+				// Незнакомая цель — как при редактировании: без подстановки.
+				tunnelId = t?.id ?? '';
+				if (!t) unknownTarget = initialTarget.name;
 			} else {
 				mode = 'interface';
 				tunnelId = tunnels[0]?.id ?? '';
@@ -489,8 +492,10 @@
 
 		{#if mode === 'interface'}
 			<Dropdown bind:value={tunnelId} options={interfaceTunnelOpts} fullWidth />
-			{#if unknownTarget && !tunnelId}
-				<div class="warn-text">Цель: {unknownTarget} (не найдена в списке) — выберите туннель</div>
+			{#if unknownTarget !== null && !tunnelId}
+				<div class="warn-text">
+					{unknownTarget ? `Цель: ${unknownTarget} (не найдена в списке)` : 'Цель правила не задана'} — выберите туннель
+				</div>
 			{/if}
 		{:else}
 			<div class="radio-block">
