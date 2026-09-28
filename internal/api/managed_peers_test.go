@@ -103,7 +103,7 @@ func TestPeerHandlers_SubnetErrorCodes(t *testing.T) {
 		{fmt.Errorf("x: %w", peersubnet.ErrInvalidRemoteSubnets), "INVALID_REMOTE_SUBNETS"},
 		{fmt.Errorf("x: %w", peersubnet.ErrRemoteSubnetOverlap), "REMOTE_SUBNET_OVERLAP"},
 		// W2-P6: сегмент сервера пропал с роутера — ошибка конфигурации сегментов.
-		{fmt.Errorf("LAN-сегмент \"Home\" не найден; %w", managed.ErrUnknownLANSegment), `"code":"LAN_SEGMENTS_FAILED"`},
+		{fmt.Errorf("LAN-сегмент \"Home\" %w", managed.ErrUnknownLANSegment), `"code":"LAN_SEGMENTS_FAILED"`},
 	}
 	for _, c := range cases {
 		h := &ManagedServerHandler{svc: &stubPeerSvc{updateErr: c.err, addErr: c.err}}

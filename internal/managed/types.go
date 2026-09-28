@@ -115,7 +115,9 @@ var ErrSignatureGenerate = errors.New("signature generation failed")
 
 // ErrUnknownLANSegment — сегмента из LANSegments сервера нет среди бриджей
 // роутера (бридж удалён или переименован): ошибка конфигурации сервера.
-var ErrUnknownLANSegment = errors.New("пересохраните LAN-сегменты сервера")
+// Текст — хвост «LAN-сегмент "X" не найден на роутере» (segmentRules);
+// подсказку пересохранить сегменты добавляют только пути правки пира.
+var ErrUnknownLANSegment = errors.New("не найден на роутере")
 
 // TogglePeerRequest contains parameters for enabling/disabling a peer.
 type TogglePeerRequest struct {

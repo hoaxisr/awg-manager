@@ -558,11 +558,12 @@ func TestPeer_RemoteSubnets_UnknownLANSegmentRejectedBeforeRCI(t *testing.T) {
 	}
 	ctx := context.Background()
 	_, err := svc.AddPeer(ctx, "Wireguard1", AddPeerRequest{Description: "x", TunnelIP: "10.66.66.3/32", RemoteSubnets: []string{"192.168.78.0/24"}})
-	if !errors.Is(err, ErrUnknownLANSegment) || !strings.Contains(err.Error(), `LAN-сегмент "Home" не найден`) {
+	// Путь правки пира — с подсказкой, где чинить (W2-P5 п.18).
+	if !errors.Is(err, ErrUnknownLANSegment) || !strings.Contains(err.Error(), `LAN-сегмент "Home" не найден на роутере; пересохраните LAN-сегменты сервера`) {
 		t.Fatalf("add: err = %v", err)
 	}
 	err = svc.UpdatePeer(ctx, "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.78.0/24"}})
-	if !errors.Is(err, ErrUnknownLANSegment) {
+	if !errors.Is(err, ErrUnknownLANSegment) || !strings.Contains(err.Error(), "пересохраните LAN-сегменты") {
 		t.Fatalf("update: err = %v", err)
 	}
 	if posts := postsJSON(poster); len(posts) != 0 {

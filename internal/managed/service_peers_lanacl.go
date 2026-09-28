@@ -2,6 +2,7 @@ package managed
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -28,7 +29,12 @@ func (s *Service) peerSubnetACLRules(ctx context.Context, server *storage.Manage
 	if err != nil {
 		return nil, fmt.Errorf("list LAN bridges: %w", err)
 	}
-	return segmentRules(srcs, server.LANSegments, bridges)
+	rules, err := segmentRules(srcs, server.LANSegments, bridges)
+	if errors.Is(err, ErrUnknownLANSegment) {
+		// Правка пира упёрлась в сегмент сервера — чинится не здесь.
+		return nil, fmt.Errorf("%w; пересохраните LAN-сегменты сервера", err)
+	}
+	return rules, err
 }
 
 // peerACLEdit — правка AWGM_<iface> под смену сетей пира: точечная (add,

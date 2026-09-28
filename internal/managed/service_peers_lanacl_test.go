@@ -549,3 +549,16 @@ func TestDeletePeer_ACLRemovalSurvivesCancelledCtx(t *testing.T) {
 		t.Fatalf("acl = %q, want %q", got, want)
 	}
 }
+
+// W2-P5 п.18: пользователь как раз сохраняет сегменты — подсказка
+// «пересохраните» тут неуместна, текст только называет пропавший сегмент.
+func TestSetLANSegments_UnknownSegment_NoResaveHint(t *testing.T) {
+	svc, _, poster, _ := newPeerSubnetTestService(t, `[]`)
+	err := svc.SetLANSegments(context.Background(), "Wireguard1", []string{"Nope"})
+	if !errors.Is(err, ErrUnknownLANSegment) || err.Error() != `LAN-сегмент "Nope" не найден на роутере` {
+		t.Fatalf("err = %v", err)
+	}
+	if len(aclParses(poster)) != 0 {
+		t.Fatalf("RCI при отказе: %q", aclParses(poster))
+	}
+}
