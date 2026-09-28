@@ -15,8 +15,10 @@ import (
 )
 
 type restoreLiveGetter struct {
-	live map[string]restoreLiveEntry
-	asc  map[string]map[string]string
+	live  map[string]restoreLiveEntry
+	asc   map[string]map[string]string
+	rcErr error // сбой чтения /show/rc/interface/<X>
+	ifErr error // сбой чтения /show/interface/
 }
 
 type restoreLiveEntry struct {
@@ -42,10 +44,16 @@ func (g *restoreLiveGetter) Get(ctx context.Context, path string, out any) error
 	}
 	// rc интерфейса без пиров: обогащение WGServers.Get без него — ошибка (F510).
 	if strings.HasPrefix(path, "/show/rc/interface/") && !strings.Contains(strings.TrimPrefix(path, "/show/rc/interface/"), "/") {
+		if g.rcErr != nil {
+			return g.rcErr
+		}
 		return json.Unmarshal([]byte(`{}`), out)
 	}
 	if path != "/show/interface/" {
 		return errors.New("unsupported path: " + path)
+	}
+	if g.ifErr != nil {
+		return g.ifErr
 	}
 	m := map[string]json.RawMessage{}
 	for name, ent := range g.live {
@@ -1483,5 +1491,48 @@ func TestRestore_InternetOnly_PersistsNATStaticWANs(t *testing.T) {
 	}
 	if got.NATStaticWAN != "" {
 		t.Errorf("legacy NATStaticWAN must be cleared, got %q", got.NATStaticWAN)
+	}
+}
+
+// Сбой чтения живого слота — ошибка восстановления сервера, а не «слот занят
+// другим сервером»: ложный конфликт уводил в перенумерацию живого сервера.
+func TestRestore_LiveReadFailureIsErrorNotConflict(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		rcErr, ifErr error
+	}{
+		{"rc", errors.New("rci down"), nil},
+		{"interfaces", nil, errors.New("rci down")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := storage.NewSettingsStore(t.TempDir())
+			_, _ = store.Load()
+			priv := validPrivateKey(61)
+			_ = store.AddManagedServer(storage.ManagedServer{InterfaceName: "Wireguard0", Address: "10.64.0.1", Mask: "255.255.255.0", ListenPort: 51854, PrivateKey: priv, Policy: "none"})
+			getter := &restoreLiveGetter{live: map[string]restoreLiveEntry{"Wireguard0": {Present: true, Address: "10.64.0.1", Mask: "255.255.255.0", PublicKey: mustDerivePublicKey(t, priv)}}, rcErr: tc.rcErr, ifErr: tc.ifErr}
+			ifaces := query.NewInterfaceStoreWithTTL(getter, query.NopLogger(), 0, 0)
+			queries := &query.Queries{Interfaces: ifaces, WGServers: query.NewWGServerStore(getter, query.NopLogger(), ifaces)}
+			poster := &fakePoster{onPost: getter.applyPost}
+			s := &Service{settings: store, transport: poster, queries: queries}
+			out := s.Restore(context.Background(), []ManagedServerExport{{InterfaceName: "Wireguard0", Address: "10.64.0.1", Mask: "255.255.255.0", ListenPort: 51854, PrivateKey: priv, Policy: "none"}}, RestoreOptions{AllowRenumber: true})
+			if len(out) != 1 || out[0].Action != "failed" || !strings.Contains(out[0].Error, "не удалось прочитать конфигурацию Wireguard0") {
+				t.Fatalf("outcomes: %+v", out)
+			}
+			if len(poster.posts) != 0 {
+				t.Fatalf("RCI после сбоя чтения: %v", poster.posts)
+			}
+		})
+	}
+}
+
+// Интерфейса нет — прежнее поведение: слот свободен, без ошибки, даже если
+// чтение rc сломано (до него дело не доходит).
+func TestLiveInterfaceIdentity_AbsentIsNotError(t *testing.T) {
+	getter := &restoreLiveGetter{live: map[string]restoreLiveEntry{}, rcErr: errors.New("rci down")}
+	ifaces := query.NewInterfaceStoreWithTTL(getter, query.NopLogger(), 0, 0)
+	s := &Service{queries: &query.Queries{Interfaces: ifaces, WGServers: query.NewWGServerStore(getter, query.NopLogger(), ifaces)}}
+	exists, same, err := s.liveInterfaceIdentity(context.Background(), ManagedServerExport{InterfaceName: "Wireguard0", PrivateKey: validPrivateKey(62)})
+	if exists || same || err != nil {
+		t.Fatalf("exists=%v same=%v err=%v", exists, same, err)
 	}
 }

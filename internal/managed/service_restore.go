@@ -113,7 +113,16 @@ func (s *Service) restoreOne(ctx context.Context, sv ManagedServerExport, opts R
 	}
 
 	existingStorage, hasStorage := s.findStorageOccupant(sv.InterfaceName)
-	liveExists, liveSameIdentity := s.liveInterfaceIdentity(ctx, sv)
+	liveExists, liveSameIdentity, err := s.liveInterfaceIdentity(ctx, sv)
+	if err != nil {
+		// Сбой чтения — не «слот занят другим сервером»: ложный конфликт увёл
+		// бы пользователя в перенумерацию живого сервера.
+		outcome.Action = "failed"
+		outcome.Error = fmt.Sprintf("не удалось прочитать конфигурацию %s: %v", sv.InterfaceName, err)
+		s.sysLog().Error("managed restore live read failed", "interface", sv.InterfaceName, "error", err)
+		s.appLog.Error("managed-restore-read-failed", sv.InterfaceName, outcome.Error)
+		return outcome
+	}
 	storageSameIdentity := hasStorage && samePubKey(existingStorage, sv)
 	// Same-server identity + live interface → merge missing peers.
 	if storageSameIdentity && liveSameIdentity {
@@ -290,32 +299,41 @@ func (s *Service) findStorageOccupant(ifaceName string) (storage.ManagedServer, 
 	return *existing, true
 }
 
-func (s *Service) liveInterfaceIdentity(ctx context.Context, sv ManagedServerExport) (exists bool, same bool) {
+// liveInterfaceIdentity: есть ли живой интерфейс в слоте и тот ли это сервер.
+// err — сбой чтения (список интерфейсов или конфигурация существующего
+// Wireguard); отсутствие интерфейса ошибкой не считается.
+func (s *Service) liveInterfaceIdentity(ctx context.Context, sv ManagedServerExport) (exists bool, same bool, err error) {
 	if s.queries == nil || s.queries.Interfaces == nil {
-		return false, false
+		return false, false, nil
 	}
 	iface, err := s.queries.Interfaces.Get(ctx, sv.InterfaceName)
-	if err != nil || iface == nil {
-		return false, false
+	if err != nil {
+		return false, false, err // сбой чтения — не «слот свободен»
+	}
+	if iface == nil { // Get: (nil, nil) — интерфейса нет
+		return false, false, nil
 	}
 	if !strings.EqualFold(iface.Type, "wireguard") {
-		return true, false
+		return true, false, nil
 	}
 	if s.queries.WGServers == nil {
-		return true, false
+		return true, false, nil
 	}
 	liveWG, err := s.queries.WGServers.Get(ctx, sv.InterfaceName)
-	if err != nil || liveWG == nil {
-		return true, false
+	if err != nil {
+		return true, false, err
+	}
+	if liveWG == nil {
+		return true, false, nil
 	}
 	backupPub, err := derivePublicKeyFromPrivate(sv.PrivateKey)
 	if err != nil {
-		return true, false
+		return true, false, nil
 	}
 	if backupPub == "" || strings.TrimSpace(liveWG.PublicKey) == "" {
-		return true, false
+		return true, false, nil
 	}
-	return true, strings.TrimSpace(liveWG.PublicKey) == backupPub
+	return true, strings.TrimSpace(liveWG.PublicKey) == backupPub, nil
 }
 
 func derivePublicKeyFromPrivate(privateKey string) (string, error) {
