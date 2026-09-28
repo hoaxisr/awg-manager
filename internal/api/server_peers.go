@@ -226,7 +226,7 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 	}
 	defer unlock()
 	// Чтение роутера — после дешёвых локальных проверок и до ключей.
-	remote, ok := h.validateRemoteSubnets(r.Context(), w, req.RemoteSubnets, managed.PeerRef{Iface: name})
+	remote, ok := h.validateRemoteSubnets(r.Context(), w, req.RemoteSubnets, managed.PeerRef{Iface: name}, "ADD_PEER_FAILED")
 	if !ok {
 		return
 	}
@@ -467,7 +467,7 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 	// Чтение роутера — после дешёвых локальных проверок.
 	var remote []string
 	if reconcile {
-		if remote, ok = h.validateRemoteSubnets(r.Context(), w, reqRemote, managed.PeerRef{Iface: name, PubKey: pubkey}); !ok {
+		if remote, ok = h.validateRemoteSubnets(r.Context(), w, reqRemote, managed.PeerRef{Iface: name, PubKey: pubkey}, "UPDATE_PEER_FAILED"); !ok {
 			return
 		}
 	}
@@ -891,16 +891,15 @@ func peerTunnelIPInUse(server *ndms.WireguardServer, tunnelIP string, storedHost
 }
 
 func (h *ServersHandler) validateServerPeerTunnelIP(server *ndms.WireguardServer, tunnelIP string) error {
-	ip, ipNet, err := net.ParseCIDR(tunnelIP)
+	ip, _, err := net.ParseCIDR(tunnelIP)
 	if err != nil {
 		return fmt.Errorf("invalid tunnel IP (must be CIDR, e.g. 10.0.0.2/32): %w", err)
 	}
-	serverIP := net.ParseIP(server.Address)
-	serverMask := net.IPMask(net.ParseIP(server.Mask).To4())
-	if serverIP == nil || serverMask == nil {
+	serverNet := serverSubnetOf(server)
+	if serverNet == nil {
 		return nil
 	}
-	serverNet := &net.IPNet{IP: serverIP.Mask(serverMask), Mask: serverMask}
+	serverIP := net.ParseIP(server.Address)
 	if !serverNet.Contains(ip) {
 		return fmt.Errorf("tunnel IP %s is not in server subnet %s", ip, serverNet)
 	}
@@ -920,7 +919,6 @@ func (h *ServersHandler) validateServerPeerTunnelIP(server *ndms.WireguardServer
 			return fmt.Errorf("tunnel IP %s is the broadcast address", ip)
 		}
 	}
-	_ = ipNet
 	return nil
 }
 
@@ -1081,8 +1079,9 @@ func (h *ServersHandler) storedPeerHost(serverID string) func(pubkey string) str
 }
 
 // validateRemoteSubnets — шаги 1–2 спеки для системного пути: снимок занятых
-// сетей и валидация до единого обращения к роутеру. Отказ уже записан в w.
-func (h *ServersHandler) validateRemoteSubnets(ctx context.Context, w http.ResponseWriter, subnets []string, exclude managed.PeerRef) ([]string, bool) {
+// сетей и валидация до единого обращения к роутеру. Отказ уже записан в w;
+// ошибка без кода валидации сетей уходит под opCode — как в managed-пути.
+func (h *ServersHandler) validateRemoteSubnets(ctx context.Context, w http.ResponseWriter, subnets []string, exclude managed.PeerRef, opCode string) ([]string, bool) {
 	if len(subnets) == 0 {
 		return nil, true
 	}
@@ -1097,11 +1096,11 @@ func (h *ServersHandler) validateRemoteSubnets(ctx context.Context, w http.Respo
 	}
 	remote, err := peersubnet.ValidateRemoteSubnets(subnets, occupied)
 	if err != nil {
-		code, ok := peerSubnetErrorCode(err)
-		if !ok {
-			code = "INVALID_REMOTE_SUBNETS"
+		if code, ok := peerSubnetErrorCode(err); ok {
+			response.Error(w, err.Error(), code)
+			return nil, false
 		}
-		response.Error(w, err.Error(), code)
+		response.Error(w, err.Error(), opCode)
 		return nil, false
 	}
 	return remote, true
