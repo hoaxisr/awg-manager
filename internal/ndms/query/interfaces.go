@@ -497,6 +497,47 @@ func (s *InterfaceStore) resolveSystemNames(ctx context.Context, ids []string) {
 	}
 }
 
+// SystemNames — имена ядра для ids (id → имя; неразрешённых в карте нет)
+// без запроса на каждый id. В отличие от ResolveSystemName имени из кэша
+// достаточно, даже если устройства сейчас нет: обратной карте целей
+// (routing.SystemTunnelsByIface) нужно имя, а не живость устройства, — а
+// ResolveSystemName на отсутствующем устройстве каждый раз шёл бы в резолвер.
+// Прочие разрешаются одним пакетом (resolveSystemNames), одиночный — одним
+// запросом.
+func (s *InterfaceStore) SystemNames(ctx context.Context, ids []string) map[string]string {
+	out := make(map[string]string, len(ids))
+	if len(ids) == 0 || s.ensureBootstrap(ctx) != nil {
+		return out
+	}
+	cached := func(id string) string {
+		if name := s.cachedSystemName(id); name != id && looksLikeKernelIfname(name) {
+			return name
+		}
+		return ""
+	}
+	var todo []string
+	for _, id := range ids {
+		if name := cached(id); name != "" {
+			out[id] = name
+		} else {
+			todo = append(todo, id)
+		}
+	}
+	if len(todo) == 1 {
+		if name := s.fetchSystemName(ctx, todo[0]); name != "" {
+			s.rememberSystemName(todo[0], name)
+		}
+	} else {
+		s.resolveSystemNames(ctx, todo)
+	}
+	for _, id := range todo {
+		if name := cached(id); name != "" {
+			out[id] = name
+		}
+	}
+	return out
+}
+
 // fetchSystemName resolves an NDMS interface id to its kernel name via
 // {"show":{"interface":{"system-name":{"name":X}}}} POST payload.
 //

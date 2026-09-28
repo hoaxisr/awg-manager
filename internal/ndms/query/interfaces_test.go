@@ -1338,3 +1338,44 @@ func TestInterfaceStore_ListAll_DedupDeterministic(t *testing.T) {
 		t.Errorf("порт резолвится в ListAll (%d раз) — его там быть не должно", got)
 	}
 }
+
+// SystemNames — имена ядра для обратной карты (SystemTunnelsByIface): имя из
+// кэша берётся, даже если устройства сейчас нет (карте нужно имя, а не
+// живость), остальные — одним пакетом; повтор в резолвер не ходит.
+func TestInterfaceStore_SystemNames_CachedOrOneBatch(t *testing.T) {
+	orig := kernelIfaceExists
+	kernelIfaceExists = func(string) bool { return false } // устройств нет
+	defer func() { kernelIfaceExists = orig }()
+
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, `{
+		"Wireguard0": {"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","state":"down"},
+		"Wireguard1": {"id":"Wireguard1","interface-name":"Wireguard1","type":"Wireguard","state":"down"},
+		"Wireguard2": {"id":"Wireguard2","interface-name":"Wireguard2","type":"Wireguard","state":"down"}
+	}`)
+	fg.SetPostSystemName("Wireguard0", `"nwg0"`)
+	fg.SetPostSystemName("Wireguard1", `"nwg1"`)
+	fg.SetPostSystemName("Wireguard2", `"nwg2"`)
+	s := NewInterfaceStore(fg, NopLogger())
+	ids := []string{"Wireguard0", "Wireguard1", "Wireguard2"}
+	want := map[string]string{"Wireguard0": "nwg0", "Wireguard1": "nwg1", "Wireguard2": "nwg2"}
+
+	for round := 1; round <= 2; round++ {
+		got := s.SystemNames(context.Background(), ids)
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("круг %d: %v, want %v", round, got, want)
+		}
+		if n := fg.BatchPostCalls(); n != 1 {
+			t.Fatalf("круг %d: пакетных POST %d, ждали 1", round, n)
+		}
+		for _, id := range ids {
+			wantCalls := 1
+			if id == "Wireguard0" {
+				wantCalls = 0 // имя из кэша
+			}
+			if n := fg.PostSystemNameCalls(id); n != wantCalls {
+				t.Fatalf("круг %d: %s спрошен %d раз, ждали %d", round, id, n, wantCalls)
+			}
+		}
+	}
+}

@@ -52,13 +52,28 @@ type mockNDMSClient struct {
 	// input as-is when no mapping is found (mimics "not found"). When
 	// false (default), returns "".
 	sysNamesDefaultIdentity bool
+	// Счётчики обращений за именами ядра: SystemTunnelsByIface обязан
+	// обходиться одним пакетным SystemNames.
+	resolveCalls, systemNamesCalls int
 }
 
 func (m *mockNDMSClient) List(_ context.Context) ([]ndms.Interface, error) {
 	return m.ifaces, m.err
 }
 
+func (m *mockNDMSClient) SystemNames(_ context.Context, ids []string) map[string]string {
+	m.systemNamesCalls++
+	out := map[string]string{}
+	for _, id := range ids {
+		if n, ok := m.sysNames[id]; ok {
+			out[id] = n
+		}
+	}
+	return out
+}
+
 func (m *mockNDMSClient) ResolveSystemName(_ context.Context, ndmsName string) string {
+	m.resolveCalls++
 	if m.sysNames != nil {
 		if n, ok := m.sysNames[ndmsName]; ok {
 			return n

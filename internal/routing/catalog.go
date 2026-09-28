@@ -92,6 +92,7 @@ type TunnelProvider interface {
 type interfaceQueries interface {
 	List(ctx context.Context) ([]ndms.Interface, error)
 	ResolveSystemName(ctx context.Context, ndmsName string) string
+	SystemNames(ctx context.Context, ids []string) map[string]string
 }
 
 // StoreClient is the subset of storage used by Catalog.
@@ -573,7 +574,8 @@ func (c *CatalogImpl) systemEntries(ctx context.Context, managed map[string]bool
 // Зовётся на каждом List/Create/Update правил HR, поэтому ListAll не берётся:
 // managed-имена — из записей (ListStored, без опроса состояния туннелей), а
 // WAN здесь не нужен вовсе. Ошибка ListStored, как у ListAll, оставляет
-// managed-множество пустым.
+// managed-множество пустым. Имена ядра — одним SystemNames: резолвер на
+// каждую запись шёл бы в RCI всякий раз, когда устройства сейчас нет.
 func (c *CatalogImpl) SystemTunnelsByIface(ctx context.Context) map[string]string {
 	out := map[string]string{}
 	if c.ifaces == nil {
@@ -587,10 +589,15 @@ func (c *CatalogImpl) SystemTunnelsByIface(ctx context.Context) map[string]strin
 			}
 		}
 	}
-	for _, e := range c.systemEntries(ctx, managed) {
-		ndmsName := tunnel.SystemTunnelName(e.ID)
-		out[ndmsName] = e.ID
-		if k := c.ifaces.ResolveSystemName(ctx, ndmsName); k != "" && k != ndmsName {
+	entries := c.systemEntries(ctx, managed)
+	ids := make([]string, len(entries))
+	for i, e := range entries {
+		ids[i] = tunnel.SystemTunnelName(e.ID)
+	}
+	kernel := c.ifaces.SystemNames(ctx, ids)
+	for i, e := range entries {
+		out[ids[i]] = e.ID
+		if k := kernel[ids[i]]; k != "" && k != ids[i] {
 			out[k] = e.ID
 		}
 	}

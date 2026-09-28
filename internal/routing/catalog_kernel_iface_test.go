@@ -138,4 +138,8 @@ func TestSystemTunnelsByIface(t *testing.T) {
 	if provider.listCalls != 0 {
 		t.Fatalf("ListTunnels вызван %d раз, want 0", provider.listCalls)
 	}
+	// Имена ядра — одним пакетом, не резолвером на каждую запись.
+	if ifaces.systemNamesCalls != 1 || ifaces.resolveCalls != 0 {
+		t.Fatalf("SystemNames=%d ResolveSystemName=%d, want 1 и 0", ifaces.systemNamesCalls, ifaces.resolveCalls)
+	}
 }
