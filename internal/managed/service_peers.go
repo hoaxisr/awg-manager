@@ -65,16 +65,6 @@ func (s *Service) rollbackAddedPeer(ctx context.Context, iface, pubKey, name str
 	}
 }
 
-// remoteSubnetsVsLANSegments — ACL сервера с LANSegments пропускает в LAN только
-// источник из подсети сервера (resolveLANSegmentsPlan): трафик из сетей за
-// клиентом роутер отбросит. Отказ до RCI вместо молча неработающей настройки.
-func remoteSubnetsVsLANSegments(server *storage.ManagedServer, remote []string) error {
-	if len(remote) > 0 && len(server.LANSegments) > 0 {
-		return fmt.Errorf("%w: недоступны при ограничении доступа к LAN-сегментам — снимите ограничение", peersubnet.ErrInvalidRemoteSubnets)
-	}
-	return nil
-}
-
 // AddPeer adds a new client peer to the managed server identified by id.
 // Returns the created peer (including private key for .conf generation).
 func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*storage.ManagedPeer, error) {
@@ -114,9 +104,6 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	if err := remoteSubnetsVsLANSegments(server, req.RemoteSubnets); err != nil {
-		return nil, err
-	}
 	// Check tunnel IP not already used
 	for _, p := range server.Peers {
 		if p.TunnelIP == req.TunnelIP {
@@ -154,12 +141,16 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 	// Сети за клиентом: снимок занятых и валидация ДО RCI, после дешёвых локальных проверок — отказ чистый.
 	var remote []string
 	var router peersubnet.Router
+	var aclEdit peerACLEdit
 	if len(req.RemoteSubnets) > 0 {
 		occupied, err := s.OccupiedSubnets(ctx, PeerRef{})
 		if err != nil {
 			return nil, fmt.Errorf("occupied subnets: %w", err)
 		}
 		if remote, err = peersubnet.ValidateRemoteSubnets(req.RemoteSubnets, occupied); err != nil {
+			return nil, err
+		}
+		if aclEdit, err = s.planPeerSubnetsACL(ctx, server, remote, nil); err != nil {
 			return nil, err
 		}
 		if router, err = s.peerRouter(); err != nil {
@@ -177,11 +168,17 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		return nil, fmt.Errorf("add peer: %w", err)
 	}
 
-	// Шаги 3–4 спеки: allow-ips и маршруты на сети за клиентом. Отказ — снять
-	// только что созданного пира: запись переживает только полный успех.
+	// Шаги 3–4 спеки: allow-ips и маршруты на сети за клиентом, затем их
+	// permit в LAN-сегменты. Отказ — снять только что созданного пира: запись
+	// переживает только полный успех.
+	undoACL := func(context.Context) {}
 	if len(remote) > 0 {
 		if err := peersubnet.Reconcile(ctx, router, iface, pubKey, []net.IP{ip}, remote); err != nil {
 			s.logRollback("add-peer", req.Description, err)
+			s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, router)
+			return nil, fmt.Errorf("apply remote subnets: %w", err)
+		}
+		if undoACL, err = s.applyPeerSubnetsACL(ctx, iface, aclEdit); err != nil {
 			s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, router)
 			return nil, fmt.Errorf("apply remote subnets: %w", err)
 		}
@@ -221,6 +218,9 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		return nil
 	}); err != nil {
 		// Без записи пир на роутере — сирота, которого никто не снимет.
+		rbCtx, cancel := detachedCtx(ctx)
+		undoACL(rbCtx)
+		cancel()
 		s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, router)
 		return nil, fmt.Errorf("save to storage: %w", err)
 	}
@@ -285,11 +285,6 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 			return err
 		}
 	}
-	if req.RemoteSubnets != nil {
-		if err := remoteSubnetsVsLANSegments(server, *req.RemoteSubnets); err != nil {
-			return err
-		}
-	}
 	sigProfile := ""
 	if req.Signature != nil {
 		var err error
@@ -323,6 +318,7 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 	// Чтение роутера — после дешёвых локальных проверок.
 	var remote []string
 	var router peersubnet.Router
+	var aclEdit peerACLEdit
 	if reconcile {
 		if len(*req.RemoteSubnets) > 0 {
 			occupied, err := s.OccupiedSubnets(ctx, PeerRef{Iface: iface, PubKey: pubkey})
@@ -332,6 +328,10 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 			if remote, err = peersubnet.ValidateRemoteSubnets(*req.RemoteSubnets, occupied); err != nil {
 				return err
 			}
+		}
+		// «Было» для ACL — запись: её правила ставил этот же путь.
+		if aclEdit, err = s.planPeerSubnetsACL(ctx, server, subnetDiff(remote, peer.RemoteSubnets), subnetDiff(peer.RemoteSubnets, remote)); err != nil {
+			return err
 		}
 		if router, err = s.peerRouter(); err != nil {
 			return err
@@ -416,11 +416,21 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 
 	// Сверка с роутером, не разница с хранилищем (F509): «было» читается с
 	// роутера, и расхождение прошлых сбоев это сохранение снимает.
+	undoACL := func(context.Context) {}
 	if reconcile {
 		if err := peersubnet.Reconcile(ctx, router, iface, pubkey, tunnelHosts, remote); err != nil {
 			s.logRollback("update-peer", req.Description, err)
 			rbCtx, cancel := detachedCtx(ctx)
 			revertTunnelIP(rbCtx, "отказа сетей за клиентом")
+			cancel()
+			return fmt.Errorf("apply remote subnets: %w", err)
+		}
+		if undoACL, err = s.applyPeerSubnetsACL(ctx, iface, aclEdit); err != nil {
+			rbCtx, cancel := detachedCtx(ctx)
+			if rbErr := peersubnet.Reconcile(rbCtx, router, iface, pubkey, tunnelHosts, peer.RemoteSubnets); rbErr != nil {
+				s.appLog.Warn("update-peer", req.Description, "сети за клиентом не возвращены после отказа ACL: "+rbErr.Error())
+			}
+			revertTunnelIP(rbCtx, "отказа ACL LAN-сегментов")
 			cancel()
 			return fmt.Errorf("apply remote subnets: %w", err)
 		}
@@ -462,6 +472,7 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		// Роутер ушёл вперёд записи: вернуть сети и /32 к записанному (паритет с
 		// системным путём) — карточка и .conf показывают запись.
 		rbCtx, cancel := detachedCtx(ctx)
+		undoACL(rbCtx)
 		if reconcile {
 			if rbErr := peersubnet.Reconcile(rbCtx, router, iface, pubkey, tunnelHosts, peer.RemoteSubnets); rbErr != nil {
 				s.appLog.Warn("update-peer", req.Description, "сети за клиентом не возвращены после отказа записи: "+rbErr.Error())
@@ -493,6 +504,7 @@ func (s *Service) DeletePeer(ctx context.Context, id, pubkey string) error {
 	}
 
 	peerName := server.Peers[idx].Description
+	peerNets := server.Peers[idx].RemoteSubnets
 	iface := server.InterfaceName
 
 	// Свои маршруты — до снятия пира и fail-closed (11.B/11.6): маршрут-сирота
@@ -527,6 +539,8 @@ func (s *Service) DeletePeer(ctx context.Context, id, pubkey string) error {
 	}); err != nil {
 		return fmt.Errorf("save to storage: %w", err)
 	}
+	// Правила ACL сетей пира — после того, как пира не стало: best-effort.
+	s.removePeerSubnetsACL(ctx, server, peerNets)
 
 	s.log.Info("peer deleted", "interface", iface, "pubkey", shortKey(pubkey))
 	s.appLog.Info("delete-peer", peerName, fmt.Sprintf("Peer %s deleted", peerName))

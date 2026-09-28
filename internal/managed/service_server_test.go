@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1105,13 +1106,13 @@ func TestResolveLANSegmentsPlan(t *testing.T) {
 		{Name: "Guest", Address: "10.10.20.1", Mask: "255.255.255.0"},
 	}
 	t.Run("valid segments → network-subnet permit rules", func(t *testing.T) {
-		rules, err := resolveLANSegmentsPlan("10.66.66.1", "255.255.255.0", []string{"Home", "Guest"}, bridges)
+		rules, err := resolveLANSegmentsPlan("10.66.66.1", "255.255.255.0", nil, []string{"Home", "Guest"}, bridges)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		want := []permitRule{
-			{srcSub: "10.66.66.0", srcMask: "255.255.255.0", dstSub: "10.10.10.0", dstMask: "255.255.255.0"},
-			{srcSub: "10.66.66.0", srcMask: "255.255.255.0", dstSub: "10.10.20.0", dstMask: "255.255.255.0"},
+			{srcSub: "10.66.66.0", srcMask: "255.255.255.0", dstSub: "10.10.10.0", dstMask: "255.255.255.0", seg: "Home"},
+			{srcSub: "10.66.66.0", srcMask: "255.255.255.0", dstSub: "10.10.20.0", dstMask: "255.255.255.0", seg: "Guest"},
 		}
 		if len(rules) != len(want) {
 			t.Fatalf("got %d rules, want %d: %+v", len(rules), len(want), rules)
@@ -1123,17 +1124,17 @@ func TestResolveLANSegmentsPlan(t *testing.T) {
 		}
 	})
 	t.Run("unknown segment errors", func(t *testing.T) {
-		if _, err := resolveLANSegmentsPlan("10.66.66.1", "255.255.255.0", []string{"Ghost"}, bridges); err == nil {
+		if _, err := resolveLANSegmentsPlan("10.66.66.1", "255.255.255.0", nil, []string{"Ghost"}, bridges); err == nil {
 			t.Fatal("expected error for unknown segment")
 		}
 	})
 	t.Run("bad peer subnet errors", func(t *testing.T) {
-		if _, err := resolveLANSegmentsPlan("not-an-ip", "255.255.255.0", []string{"Home"}, bridges); err == nil {
+		if _, err := resolveLANSegmentsPlan("not-an-ip", "255.255.255.0", nil, []string{"Home"}, bridges); err == nil {
 			t.Fatal("expected error for bad peer subnet")
 		}
 	})
 	t.Run("empty catalog with requested segments errors", func(t *testing.T) {
-		if _, err := resolveLANSegmentsPlan("10.66.66.1", "255.255.255.0", []string{"Home"}, nil); err == nil {
+		if _, err := resolveLANSegmentsPlan("10.66.66.1", "255.255.255.0", nil, []string{"Home"}, nil); err == nil {
 			t.Fatal("expected error when catalog empty")
 		}
 	})
@@ -1146,6 +1147,7 @@ func TestUpdate_SubnetChange_RebuildsLANACL(t *testing.T) {
 	if err := store.AddManagedServer(storage.ManagedServer{
 		InterfaceName: ifaceName, Address: "10.66.66.1", Mask: "255.255.255.0",
 		ListenPort: 51820, LANSegments: []string{"Home"},
+		Peers: []storage.ManagedPeer{{PublicKey: "PEER1", TunnelIP: "10.66.66.2/32", RemoteSubnets: []string{"192.168.77.0/24"}}},
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -1177,6 +1179,10 @@ func TestUpdate_SubnetChange_RebuildsLANACL(t *testing.T) {
 	}
 	if !foundNew {
 		t.Errorf("expected permit with new source subnet 10.77.77.0; posts=%v", posts)
+	}
+	// Сети за клиентом пиров пересборка сохраняет (#713).
+	if !slices.Contains(parseStrings(poster), "access-list AWGM_Wireguard0 permit ip 192.168.77.0 255.255.255.0 10.10.10.0 255.255.255.0") {
+		t.Errorf("пересборка потеряла сеть за клиентом; posts=%v", parseStrings(poster))
 	}
 }
 

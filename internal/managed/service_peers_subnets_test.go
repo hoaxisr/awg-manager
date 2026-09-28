@@ -500,9 +500,9 @@ func TestAddPeer_StoreFailure_RemovesSubnetsAndPeer(t *testing.T) {
 	}
 }
 
-// Final review I2: ACL сервера с LANSegments пропускает только подсеть сервера —
-// сети за клиентом отвергаются до RCI; снять уже стоящие — можно.
-func TestPeer_RemoteSubnetsRejectedWithLANSegments(t *testing.T) {
+// W2-P6: запрета сетей на сервере с LANSegments больше нет (правила ACL
+// ставятся точечно), но неизвестный сегмент отказывает до RCI.
+func TestPeer_RemoteSubnets_UnknownLANSegmentRejectedBeforeRCI(t *testing.T) {
 	svc, store, poster, fg := newPeerSubnetTestService(t, rcOurs77)
 	sim := newSimRouter(t, fg, poster, rcOurs77)
 	seedSimPeer(t, store, sim, "192.168.77.0/24")
@@ -514,21 +514,15 @@ func TestPeer_RemoteSubnetsRejectedWithLANSegments(t *testing.T) {
 	}
 	ctx := context.Background()
 	_, err := svc.AddPeer(ctx, "Wireguard1", AddPeerRequest{Description: "x", TunnelIP: "10.66.66.3/32", RemoteSubnets: []string{"192.168.78.0/24"}})
-	if !errors.Is(err, peersubnet.ErrInvalidRemoteSubnets) || !strings.Contains(err.Error(), "LAN-сегмент") {
+	if err == nil || !strings.Contains(err.Error(), "LAN-сегмент") {
 		t.Fatalf("add: err = %v", err)
 	}
 	err = svc.UpdatePeer(ctx, "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.78.0/24"}})
-	if !errors.Is(err, peersubnet.ErrInvalidRemoteSubnets) {
+	if err == nil || !strings.Contains(err.Error(), "LAN-сегмент") {
 		t.Fatalf("update: err = %v", err)
 	}
 	if posts := postsJSON(poster); len(posts) != 0 {
 		t.Fatalf("RCI дёрнут при отказе:\n%s", strings.Join(posts, "\n"))
-	}
-	if err := svc.UpdatePeer(ctx, "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{}}); err != nil {
-		t.Fatalf("снятие сетей отвергнуто: %v", err)
-	}
-	if sv, _ := store.GetManagedServerByID("Wireguard1"); len(sv.Peers[0].RemoteSubnets) != 0 {
-		t.Fatalf("store = %v", sv.Peers[0].RemoteSubnets)
 	}
 }
 

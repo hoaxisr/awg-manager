@@ -18,7 +18,7 @@ func (s *Service) ApplyNATModeToInterface(ctx context.Context, ifaceName, mode s
 
 // ApplyLANSegmentsToInterface sets LAN segment ACL for any WireGuard-like interface.
 func (s *Service) ApplyLANSegmentsToInterface(ctx context.Context, iface, addr, mask string, segments []string) error {
-	return s.applyLANSegmentsRaw(ctx, iface, addr, mask, segments)
+	return s.applyLANSegmentsRaw(ctx, iface, addr, mask, segments, nil)
 }
 
 // ApplyPolicyToInterface sets or clears the ip hotspot policy on an interface.

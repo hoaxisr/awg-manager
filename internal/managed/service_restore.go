@@ -395,9 +395,6 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 	}
 	sv.NATStaticWANs = wans
 	sv.NATStaticWAN = ""
-	if err := s.applyLANSegmentsRaw(ctx, target, sv.Address, sv.Mask, sv.LANSegments); err != nil {
-		return true, fmt.Errorf("set LAN segments: %w", err)
-	}
 	if err := s.applyPolicy(ctx, target, sv.Policy); err != nil {
 		return true, fmt.Errorf("set policy: %w", err)
 	}
@@ -420,6 +417,11 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 			return true, fmt.Errorf("add peer %s: %w", peer.PublicKey, err)
 		}
 		s.restorePeerSubnets(ctx, target, peer, &taken)
+	}
+	// ACL сегментов — после пиров: план берёт сети за клиентом, принятые
+	// restorePeerSubnets, а не все из бэкапа.
+	if err := s.applyLANSegmentsRaw(ctx, target, sv.Address, sv.Mask, sv.LANSegments, serverPeerSubnets(peers)); err != nil {
+		return true, fmt.Errorf("set LAN segments: %w", err)
 	}
 	// Persist to settings.json under the (possibly renamed) target.
 	saved := sv
@@ -621,11 +623,23 @@ func (s *Service) applyMergePeers(ctx context.Context, existing storage.ManagedS
 		s.sysLog().Debug("managed restore merge found no missing peers", "interface", existing.InterfaceName)
 		return 0, nil
 	}
+	// Сети за клиентом добавленных пиров — в ACL LAN-сегментов, best-effort,
+	// как и сами сети при восстановлении.
+	undoACL := func(context.Context) {}
+	if aclEdit, err := s.planPeerSubnetsACL(ctx, &existing, serverPeerSubnets(missingPeers), nil); err != nil {
+		s.appLog.Warn("managed-restore-peer-subnets", existing.InterfaceName, "сети за клиентом не открыты в LAN-сегменты: "+err.Error())
+	} else if undoACL, err = s.applyPeerSubnetsACL(ctx, existing.InterfaceName, aclEdit); err != nil {
+		undoACL = func(context.Context) {}
+		s.appLog.Warn("managed-restore-peer-subnets", existing.InterfaceName, "сети за клиентом не открыты в LAN-сегменты: "+err.Error())
+	}
 	if err := s.settings.UpdateManagedServer(existing.InterfaceName, func(target *storage.ManagedServer) error {
 		target.Peers = append(target.Peers, missingPeers...)
 		return nil
 	}); err != nil {
 		s.sysLog().Warn("managed restore merge storage update failed; rolling back peers", "interface", existing.InterfaceName, "addedPeers", len(missingPeers), "error", err)
+		rbCtx, cancel := detachedCtx(ctx)
+		undoACL(rbCtx)
+		cancel()
 		rollback()
 		return added, fmt.Errorf("persist merged peer: %w", err)
 	}
