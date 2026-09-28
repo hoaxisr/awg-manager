@@ -252,6 +252,8 @@ func newServersPeerHarness(t *testing.T, seedPeer bool) (*ServersHandler, *stora
 	}
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard","description":"Wireguard VPN Server","state":"up","link":"up","address":"10.9.0.1","mask":"255.255.255.0"`+peers+`}}`)
+	// Обогащение списка серверов читает rc каждого: без него List — ошибка (F510).
+	fg.SetJSON("/show/rc/interface/Wireguard0", `{}`)
 	fg.SetJSON("/show/running-config", `{"message":["interface PPPoE0","    ip global 32767","!"]}`)
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	poster := &natPoster{}

@@ -23,6 +23,8 @@ func liveServerEntry(rx int) string {
 func TestServersGetAll_OverlaysLivePeers(t *testing.T) {
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/interface/", `{"Wireguard0":`+liveServerEntry(10)+`}`)
+	// Обогащение списка серверов читает rc каждого: без него List — ошибка (F510).
+	fg.SetJSON("/show/rc/interface/Wireguard0", `{}`)
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	store := storage.NewSettingsStore(t.TempDir())
 	if _, err := store.Load(); err != nil {

@@ -203,8 +203,8 @@ func (s *WGServerStore) GetConfig(ctx context.Context, name string) (*ndms.Wireg
 
 // PeersRCFresh — пиры сервера name из /show/rc/interface/<name>, прочитанные
 // сейчас, мимо кэша и без stale-on-error: для проверки пересечения сетей перед
-// записью (#713). Список серверов (List) обогащение allow-ips при сбое молча
-// пропускает — там пустые allow-ips неотличимы от «сетей нет».
+// записью (#713). List на сбое обогащения тоже ошибка (F510), но отдаёт
+// прежний список из кэша (stale-on-error) — для проверки пересечений мало.
 func (s *WGServerStore) PeersRCFresh(ctx context.Context, name string) ([]ndms.WireguardServerPeerConfig, error) {
 	var rc rciRCInterface
 	if err := s.getter.Get(ctx, "/show/rc/interface/"+name, &rc); err != nil {
@@ -418,6 +418,10 @@ func (s *WGServerStore) fetchAll(ctx context.Context) ([]ndms.WireguardServer, e
 
 	// Enrich peers with RC fields (allowed-ips, comment) in parallel.
 	// Transport-layer semaphore bounds concurrency; we only coordinate completion.
+	// Сбой обогащения любого сервера — ошибка всего списка: пиры без allow-ips
+	// неотличимы от «сетей нет», а неполный список лёг бы в кэш на TTL.
+	// ListStore на ошибке отдаёт прежний полный (stale-on-error), если он есть.
+	var firstErr error
 	if len(servers) > 0 {
 		var wg sync.WaitGroup
 		type enrichResult struct {
@@ -437,6 +441,9 @@ func (s *WGServerStore) fetchAll(ctx context.Context) ([]ndms.WireguardServer, e
 		go func() { wg.Wait(); close(results) }()
 		for r := range results {
 			if r.err != nil {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("enrich wireguard server %s: %w", servers[r.idx].ID, r.err)
+				}
 				continue
 			}
 			for j := range servers[r.idx].Peers {
@@ -445,6 +452,9 @@ func (s *WGServerStore) fetchAll(ctx context.Context) ([]ndms.WireguardServer, e
 				}
 			}
 		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
 	}
 	return servers, nil
 }

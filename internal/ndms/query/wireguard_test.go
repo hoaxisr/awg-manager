@@ -890,3 +890,25 @@ func TestPeersRCFresh_NoCacheNoStale(t *testing.T) {
 		t.Fatal("сбой чтения замаскирован")
 	}
 }
+
+// F510: сбой чтения rc одного сервера — ошибка List, а не список с пирами без
+// allow-ips: неполный список лёг бы в кэш на TTL. После починки чтения
+// следующий List полный — неполный результат не закэширован.
+func TestWGServerStore_List_EnrichmentErrorNotCached(t *testing.T) {
+	fg := newFakeGetter()
+	primeWGFakeGetter(fg)
+	fg.SetError("/show/rc/interface/Wireguard1", errors.New("rci down"))
+	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
+
+	if servers, err := s.List(context.Background()); err == nil {
+		t.Fatalf("сбой обогащения замаскирован: %+v", servers)
+	}
+	fg.SetError("/show/rc/interface/Wireguard1", nil)
+	servers, err := s.List(context.Background())
+	if err != nil {
+		t.Fatalf("List после починки: %v", err)
+	}
+	if len(servers) != 2 || len(servers[1].Peers) != 1 || len(servers[1].Peers[0].AllowedIPs) == 0 {
+		t.Fatalf("неполный список: %+v", servers)
+	}
+}
