@@ -373,3 +373,27 @@ func TestACLRemovePermitIP(t *testing.T) {
 		t.Fatalf("parse = %q, want %q", poster.parses[0], want)
 	}
 }
+
+// v4-снятие нашей строки «нет такой команды» не глотает: команды v4-ACL есть
+// на всех прошивках, отказ — настоящая поломка (терпимость isACLUnsupported
+// только у v6).
+func TestRemovePermitAllACL_V4NoSuchCommandSurfaces(t *testing.T) {
+	cmds, _ := newACLTestCommandsRC([]string{"access-list _WEBADMIN_OpkgTun0",
+		"    permit tcp 10.77.0.2 255.255.255.255 0.0.0.0 0.0.0.0",
+		"    permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0", "!"},
+		nestedACLError("no such command: access-list."))
+	if err := cmds.RemovePermitAllACL(context.Background(), "OpkgTun0"); err == nil || !strings.Contains(err.Error(), "no such command") {
+		t.Fatalf("err = %v, ждали отказ", err)
+	}
+}
+
+// v6-снятие нашей строки на прошивке без v6-ACL (#828) по-прежнему терпимо.
+func TestRemovePermitAllACLv6_ForeignRules_UnsupportedTolerated(t *testing.T) {
+	cmds, _ := newACLTestCommandsRC([]string{"ipv6 access-list _WEBADMIN_OpkgTun0",
+		"    permit ipv6 2001:db8::/32 ::/0",
+		"    permit ipv6 ::/0 ::/0", "!"},
+		nestedACLError("no such command: access-list."))
+	if err := cmds.RemovePermitAllACLv6(context.Background(), "OpkgTun0"); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+}

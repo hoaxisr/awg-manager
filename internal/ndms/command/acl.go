@@ -167,7 +167,8 @@ func (c *InterfaceCommands) RemovePermitAllACLv6(ctx context.Context, name strin
 	}
 	if foreign {
 		return c.removeOurPermitRule(ctx,
-			fmt.Sprintf("no ipv6 access-list %s %s", acl, permitAllRuleV6), "acl6 permit remove "+acl)
+			fmt.Sprintf("no ipv6 access-list %s %s", acl, permitAllRuleV6), "acl6 permit remove "+acl,
+			func(msg string) bool { return isACLRuleAbsent(msg) || isACLUnsupported(msg) })
 	}
 	unbindErr := postMutationCheckedTolerant(ctx, c.poster, c.save,
 		map[string]any{"parse": fmt.Sprintf("no interface %s ipv6 access-group %s in", name, acl)},
@@ -215,11 +216,13 @@ func (c *InterfaceCommands) hasForeignACLRules(ctx context.Context, header, ours
 
 // removeOurPermitRule снимает ТОЛЬКО нашу строку, оставляя список и привязку
 // пользователю (`no rule found to delete.` — цель достигнута, стенд 5.01).
-func (c *InterfaceCommands) removeOurPermitRule(ctx context.Context, cmd, label string) error {
+// tolerate — от вызывающего: isACLUnsupported законен только у v6 (на v4
+// «нет такой команды» — настоящая поломка, см. предикат).
+func (c *InterfaceCommands) removeOurPermitRule(ctx context.Context, cmd, label string, tolerate func(string) bool) error {
 	return postMutationCheckedTolerant(ctx, c.poster, c.save,
 		map[string]any{"parse": cmd},
 		label,
-		func(msg string) bool { return isACLRuleAbsent(msg) || isACLUnsupported(msg) },
+		tolerate,
 		c.queries.RunningConfig.InvalidateAll,
 	)
 }
@@ -248,7 +251,7 @@ func (c *InterfaceCommands) RemovePermitAllACL(ctx context.Context, name string)
 	}
 	if foreign {
 		return c.removeOurPermitRule(ctx,
-			fmt.Sprintf("no access-list %s %s", acl, permitAllRuleV4), "acl permit remove "+acl)
+			fmt.Sprintf("no access-list %s %s", acl, permitAllRuleV4), "acl permit remove "+acl, isACLRuleAbsent)
 	}
 	unbindErr := postMutationCheckedTolerant(ctx, c.poster, c.save,
 		map[string]any{"parse": fmt.Sprintf("no interface %s ip access-group %s in", name, acl)},
