@@ -76,15 +76,15 @@ describe('AddManagedPeerModal: сети клиента', () => {
 });
 
 describe('AddManagedPeerModal: сервер с LAN-сегментами', () => {
-	it('поле «Сети за клиентом» недоступно с подсказкой', () => {
-		const { getByLabelText, getByText } = render(AddManagedPeerModal, {
+	it('поле «Сети за клиентом» доступно: ACL сервера пропускает эти сети', () => {
+		const { getByLabelText, queryByText } = render(AddManagedPeerModal, {
 			open: true,
 			serverId: 'srv',
 			server: baseServer({ lanSegments: ['Home'] }),
 			onclose: vi.fn(),
 			onAdded: vi.fn(),
 		});
-		expect((getByLabelText('Сети за клиентом') as HTMLTextAreaElement).disabled).toBe(true);
-		expect(getByText(/ограничении доступа к LAN-сегментам/)).toBeTruthy();
+		expect((getByLabelText('Сети за клиентом') as HTMLTextAreaElement).disabled).toBe(false);
+		expect(queryByText(/LAN-сегментам/)).toBeNull();
 	});
 });

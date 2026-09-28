@@ -11,9 +11,6 @@
 		remoteSubnets: string;
 		/** Пир без локальной записи: полям негде храниться (NO_PEER_SECRET у бэкенда). */
 		disabled?: boolean;
-		/** Managed-сервер с LANSegments: его ACL не пропустит трафик из сетей за
-		 *  клиентом, бэкенд такие сети отвергает. Уже стоящие можно только снять. */
-		lanRestricted?: boolean;
 		/** Пресеты с бэкенда под текущий DNS формы: сети роутера знает только он. */
 		loadPresets: () => Promise<PeerPresets>;
 		idPrefix: string;
@@ -23,7 +20,6 @@
 		clientAllowedIPs = $bindable(''),
 		remoteSubnets = $bindable(''),
 		disabled = false,
-		lanRestricted = false,
 		loadPresets,
 		idPrefix
 	}: Props = $props();
@@ -37,7 +33,6 @@
 	});
 	const allowedError = $derived(validateClientAllowedIPs(clientAllowedIPs));
 	const subnetsError = $derived(validateRemoteSubnets(remoteSubnets));
-	const subnetsLocked = $derived(lanRestricted && !remoteSubnets.trim());
 
 	async function applyPreset(kind: keyof PeerPresets) {
 		loading = true;
@@ -86,14 +81,10 @@
 		rows="2"
 		bind:value={remoteSubnets}
 		placeholder="192.168.77.0/24"
-		disabled={disabled || subnetsLocked}
+		{disabled}
 	></textarea>
 	{#if disabled}
 		<span class="field-hint">Недоступно: клиент создан вне AWG Manager</span>
-	{:else if subnetsLocked}
-		<span class="field-hint">Недоступно при ограничении доступа к LAN-сегментам — снимите ограничение в настройках сервера</span>
-	{:else if lanRestricted}
-		<span class="field-hint is-error">Недоступно при ограничении доступа к LAN-сегментам — очистите поле или снимите ограничение</span>
 	{:else if subnetsError}
 		<span class="field-hint is-error">{subnetsError}</span>
 	{:else}

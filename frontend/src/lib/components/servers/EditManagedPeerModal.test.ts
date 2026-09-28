@@ -95,20 +95,18 @@ describe('EditManagedPeerModal: сети клиента', () => {
 	});
 });
 
-describe('EditManagedPeerModal: сервер с LAN-сегментами', () => {
-	it('стоящие сети можно только снять: после очистки поле блокируется', async () => {
+describe('EditManagedPeerModal: сети за клиентом', () => {
+	it('после очистки поле остаётся доступным', async () => {
 		const { getByLabelText, baseElement } = render(EditManagedPeerModal, {
 			open: true,
 			serverId: 'srv',
 			peer: basePeer({ remoteSubnets: ['192.168.77.0/24'] }),
-			lanRestricted: true,
 			onclose: vi.fn(),
 			onUpdated: vi.fn(),
 		});
 		const field = () => getByLabelText('Сети за клиентом') as HTMLTextAreaElement;
-		expect(field().disabled).toBe(false);
-		expect(baseElement.querySelector('.field-hint.is-error')?.textContent).toMatch(/LAN-сегментам/);
 		await fireEvent.input(field(), { target: { value: '' } });
-		expect(field().disabled).toBe(true);
+		expect(field().disabled).toBe(false);
+		expect(baseElement.querySelector('.field-hint.is-error')).toBeFalsy();
 	});
 });
