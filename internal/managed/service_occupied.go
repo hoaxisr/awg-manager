@@ -203,6 +203,16 @@ func (s *Service) PeerPresets(ctx context.Context, id, dns string) (peersubnet.P
 	return s.PresetsFor(ctx, serverNet, server.LANSegments, dns)
 }
 
+// LockPeerSubnets — F508: правки сетей за клиентом идут по одной на оба пути
+// (системный сервер берёт её через managedSvc). Иначе два параллельных
+// сохранения собирают занятые сети до записи друг друга и оба проходят с
+// пересекающимися сетями. Держится на всё «занятые → валидация → сверка с
+// роутером → запись»; правки без сетей её не берут. Возвращает unlock.
+func (s *Service) LockPeerSubnets() (unlock func()) {
+	s.peerSubnetsMu.Lock()
+	return s.peerSubnetsMu.Unlock
+}
+
 // peerRouter — адаптер RCI для peersubnet.Reconcile. Ошибка вместо nil-паники, когда
 // Commands не подключены (харнессы без них сети за клиентом не трогают).
 func (s *Service) peerRouter() (peersubnet.Router, error) {

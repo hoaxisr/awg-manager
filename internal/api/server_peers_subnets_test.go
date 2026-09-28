@@ -804,3 +804,95 @@ func TestServersHandler_AddServerPeer_RollbackSweepsOrphanRoute(t *testing.T) {
 		t.Fatal("секрет пережил откат")
 	}
 }
+
+// F508: блокировка общая с managed-путём — пока она взята, правка сетей
+// системного пира (создание и изменение) не начинается; правка без сетей её
+// не ждёт.
+func TestServersHandler_PeerSubnets_SharedLockWithManaged(t *testing.T) {
+	cases := []struct {
+		name  string
+		call  func(h *ServersHandler) *httptest.ResponseRecorder
+		waits bool
+	}{
+		{"add", func(h *ServersHandler) *httptest.ResponseRecorder {
+			return postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32","remoteSubnets":["192.168.77.0/24"]}`)
+		}, true},
+		{"update", func(h *ServersHandler) *httptest.ResponseRecorder {
+			return putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.2/32","remoteSubnets":["192.168.77.0/24"]}`)
+		}, true},
+		{"update without subnets", func(h *ServersHandler) *httptest.ResponseRecorder {
+			return putServerPeer(t, h, peerFixturePubKey, `{"description":"renamed","tunnelIP":"10.9.0.2/32"}`)
+		}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, store, _, _, _ := newServersSubnetHarness(t, `[{"address":"10.9.0.2","mask":"255.255.255.255"}]`, `[]`)
+			stubPeerKeygen(t)
+			_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", TunnelIP: "10.9.0.2/32"})
+			unlock := h.managedSvc.LockPeerSubnets()
+			done := make(chan int)
+			go func() { done <- tc.call(h).Code }()
+			select {
+			case code := <-done:
+				unlock()
+				if tc.waits {
+					t.Fatalf("правка прошла мимо общей блокировки: code=%d", code)
+				}
+				return
+			case <-time.After(150 * time.Millisecond):
+			}
+			unlock()
+			code := <-done
+			if !tc.waits {
+				t.Fatal("правка без сетей ждала блокировку")
+			}
+			if code != 200 {
+				t.Fatalf("code=%d", code)
+			}
+		})
+	}
+}
+
+// F508: две параллельные правки разных пиров с пересекающимися сетями —
+// ровно одна проходит, вторая получает REMOTE_SUBNET_OVERLAP. Первая, дойдя
+// до роутера, медлит: без блокировки вторая за это время собрала бы занятые
+// до записи первой и прошла бы тоже.
+func TestServersHandler_UpdateServerPeer_ConcurrentOverlap_OneWins(t *testing.T) {
+	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, `[]`)
+	sim := newSysSimRouter(t, fg, poster, `[]`)
+	sim.seed(peerFixturePubKey, "10.9.0.2/32")
+	sim.seed(otherPeerPubKey, "10.9.0.3/32")
+	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "phone", TunnelIP: "10.9.0.2/32"})
+	_ = store.SetServerPeerSecret("Wireguard0", otherPeerPubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "tablet", TunnelIP: "10.9.0.3/32"})
+	var once sync.Once
+	sim.fail = func(payload string) error {
+		if strings.Contains(payload, "allow-ips") {
+			once.Do(func() { time.Sleep(200 * time.Millisecond) })
+		}
+		return nil
+	}
+	var wg sync.WaitGroup
+	codes := make([]string, 2)
+	for i, c := range []struct{ key, desc, ip, net string }{
+		{peerFixturePubKey, "phone", "10.9.0.2/32", "192.168.77.0/24"},
+		{otherPeerPubKey, "tablet", "10.9.0.3/32", "192.168.77.0/25"},
+	} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rr := putServerPeer(t, h, c.key, `{"description":"`+c.desc+`","tunnelIP":"`+c.ip+`","remoteSubnets":["`+c.net+`"]}`)
+			if rr.Code == 200 {
+				codes[i] = "ok"
+				return
+			}
+			var body map[string]any
+			_ = json.Unmarshal(rr.Body.Bytes(), &body)
+			codes[i], _ = body["code"].(string)
+		}()
+	}
+	wg.Wait()
+	slices.Sort(codes)
+	if !slices.Equal(codes, []string{"REMOTE_SUBNET_OVERLAP", "ok"}) {
+		t.Fatalf("codes = %v", codes)
+	}
+}

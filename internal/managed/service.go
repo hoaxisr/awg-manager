@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
@@ -99,6 +100,8 @@ type Service struct {
 	// keyGen is the peer key-generation seam. Production uses realKeyGen
 	// (execs /opt/sbin/awg); tests inject deterministic keys.
 	keyGen keyGenerator
+	// peerSubnetsMu — см. LockPeerSubnets.
+	peerSubnetsMu sync.Mutex
 }
 
 // keyGenerator produces WireGuard key material for a new peer.

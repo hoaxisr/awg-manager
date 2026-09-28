@@ -218,6 +218,11 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		response.Error(w, err.Error(), "INVALID_CLIENT_ALLOWED_IPS")
 		return
 	}
+	// F508: занятые → валидация → запись → роутер под одной блокировкой,
+	// общей с managed-путём.
+	if len(req.RemoteSubnets) > 0 && h.managedSvc != nil {
+		defer h.managedSvc.LockPeerSubnets()()
+	}
 	// Чтение роутера — после дешёвых локальных проверок и до ключей.
 	remote, ok := h.validateRemoteSubnets(r.Context(), w, req.RemoteSubnets, managed.PeerRef{Iface: name})
 	if !ok {
@@ -326,6 +331,12 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 	}
 	if !h.requireWGCommands(w) {
 		return
+	}
+	// F508: занятые → валидация → сверка → запись под одной блокировкой, общей
+	// с managed-путём; секрет ниже читается уже под ней, поэтому возврат «к
+	// записанному» верен.
+	if req.RemoteSubnets != nil && h.managedSvc != nil {
+		defer h.managedSvc.LockPeerSubnets()()
 	}
 	server, ok := h.requireListedServer(r.Context(), w, name)
 	if !ok {

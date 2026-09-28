@@ -78,6 +78,10 @@ func remoteSubnetsVsLANSegments(server *storage.ManagedServer, remote []string) 
 // AddPeer adds a new client peer to the managed server identified by id.
 // Returns the created peer (including private key for .conf generation).
 func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*storage.ManagedPeer, error) {
+	// F508: занятые → валидация → роутер → запись под одной блокировкой.
+	if len(req.RemoteSubnets) > 0 {
+		defer s.LockPeerSubnets()()
+	}
 	server, ok := s.settings.GetManagedServerByID(id)
 	if !ok {
 		return nil, fmt.Errorf("managed server not found: %s", id)
@@ -228,6 +232,11 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 
 // UpdatePeer updates an existing peer's description and/or tunnel IP.
 func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdatePeerRequest) error {
+	// F508: занятые → валидация → сверка → запись под одной блокировкой; снимок
+	// ниже читается уже под ней, поэтому возврат «к записанному» верен.
+	if req.RemoteSubnets != nil {
+		defer s.LockPeerSubnets()()
+	}
 	server, ok := s.settings.GetManagedServerByID(id)
 	if !ok {
 		return fmt.Errorf("managed server not found: %s", id)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
@@ -812,5 +813,60 @@ func TestUpdatePeer_RouterReadFailure_NoMutation(t *testing.T) {
 		if sv, _ := store.GetManagedServerByID("Wireguard1"); len(sv.Peers[0].RemoteSubnets) != 1 {
 			t.Fatalf("%s: запись тронута: %v", path, sv.Peers[0].RemoteSubnets)
 		}
+	}
+}
+
+// F508: две параллельные правки разных пиров с пересекающимися сетями — ровно
+// одна проходит, вторая получает пересечение. Первая, дойдя до роутера, ждёт,
+// пока вторая соберёт занятые (без блокировки та собрала бы их до записи
+// первой и прошла бы тоже); с блокировкой вторая ждёт на ней, и ожидание
+// кончается таймаутом.
+func TestUpdatePeer_ConcurrentOverlap_OneWins(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
+	seedSimPeer(t, store, sim)
+	if err := store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
+		sv.Peers = append(sv.Peers, storage.ManagedPeer{PublicKey: "PEER2", PrivateKey: "p", Description: "branch2", TunnelIP: "10.66.66.3/32", Enabled: true})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sim.seed("Wireguard1", "PEER2", "10.66.66.3/32")
+	const occupiedScan = "/show/rc/interface/Wireguard0" // читает только OccupiedSubnets
+	var once sync.Once
+	sim.after = func(m map[string]interface{}) {
+		once.Do(func() {
+			deadline := time.Now().Add(300 * time.Millisecond)
+			for fg.Calls(occupiedScan) < 2 && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+		})
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i, c := range []struct{ key, desc, ip, net string }{
+		{"PEER1", "branch", "10.66.66.2/32", "192.168.77.0/24"},
+		{"PEER2", "branch2", "10.66.66.3/32", "192.168.77.0/25"},
+	} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = svc.UpdatePeer(context.Background(), "Wireguard1", c.key, UpdatePeerRequest{Description: c.desc, TunnelIP: c.ip, RemoteSubnets: &[]string{c.net}})
+		}()
+	}
+	wg.Wait()
+	ok, overlap := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, peersubnet.ErrRemoteSubnetOverlap):
+			overlap++
+		default:
+			t.Fatalf("err = %v", err)
+		}
+	}
+	if ok != 1 || overlap != 1 {
+		t.Fatalf("ok=%d overlap=%d errs=%v", ok, overlap, errs)
 	}
 }
