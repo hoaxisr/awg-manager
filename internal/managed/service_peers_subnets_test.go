@@ -141,7 +141,10 @@ func (r *simRouter) apply(orig map[string]interface{}) {
 				if r.peers[iface] == nil {
 					r.peers[iface] = map[string][]string{}
 				}
-				cur := r.peers[iface][key]
+				cur, exists := r.peers[iface][key]
+				if !exists && !addsAllow(allow) {
+					continue // снятие на отсутствующем ключе пира не создаёт
+				}
 				for _, av := range allow {
 					a := av.(map[string]any)
 					e := a["address"].(string) + "/" + a["mask"].(string)
@@ -986,5 +989,93 @@ func TestRestoreDrift_OccupiedSubnetDropped(t *testing.T) {
 	}
 	if allow, _ := sim.state("Wireguard5", "PEER5", ""); !slices.Equal(allow, []string{"10.77.0.2/255.255.255.255", "192.168.90.0/255.255.255.0"}) {
 		t.Fatalf("allow = %v", allow)
+	}
+}
+
+// Fix round 2: пир удалён посреди смены адреса (мимо панели), запись
+// отказала — откат адреса видит «пира нет» и старый /32 не шлёт: allow-ips на
+// отсутствующий ключ NDMS создал бы пира-призрака.
+func TestUpdatePeer_TunnelRevert_PeerDeleted_NoGhost(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
+	seedSimPeer(t, store, sim)
+	vanishedAt := -1
+	sim.after = func(m map[string]interface{}) {
+		b, _ := json.Marshal(m)
+		if vanishedAt >= 0 || !strings.Contains(string(b), `"allow-ips":[{"address":"10.66.66.3","mask":"255.255.255.255"}]`) {
+			return
+		}
+		sim.mu.Lock()
+		delete(sim.peers["Wireguard1"], "PEER1")
+		sim.renderLocked()
+		sim.mu.Unlock()
+		vanishedAt = len(poster.posts)
+		_ = store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
+			sv.Peers = nil
+			return nil
+		})
+	}
+	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.3/32"})
+	if err == nil || vanishedAt < 0 {
+		t.Fatalf("err=%v vanishedAt=%d", err, vanishedAt)
+	}
+	for _, p := range postsJSON(poster)[vanishedAt:] {
+		if strings.Contains(p, `"allow-ips":[{"address":"10.66.66.2","mask":"255.255.255.255"}]`) {
+			t.Fatalf("старый /32 отправлен удалённому пиру: %s", p)
+		}
+	}
+}
+
+// Fix round 2: смена адреса без сетей берёт блокировку правок сетей (её же
+// берёт удаление пира).
+func TestUpdatePeer_TunnelChange_TakesPeerSubnetsLock(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
+	seedSimPeer(t, store, sim)
+	if !waitsForLock(t, svc, func() {
+		_ = svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.3/32"})
+	}) {
+		t.Fatal("смена адреса прошла мимо блокировки")
+	}
+}
+
+// addsAllow — в посте allow-ips есть добавление (не только снятия). NDMS
+// создаёт пира на добавлении к неизвестному ключу (стенд 5.02.A.11); снятие
+// на неизвестном ключе стендом не проверено — симулятор пира не создаёт.
+func addsAllow(allow []any) bool {
+	for _, av := range allow {
+		if av.(map[string]any)["no"] != true {
+			return true
+		}
+	}
+	return false
+}
+
+// Fix round 2: наличие пира перед откатом адреса не прочиталось — старый /32
+// не шлётся (не знаем, не создадим ли пира).
+func TestUpdatePeer_TunnelRevert_PresenceReadFails_NoAdd(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
+	seedSimPeer(t, store, sim)
+	brokeAt := -1
+	sim.after = func(m map[string]interface{}) {
+		b, _ := json.Marshal(m)
+		if brokeAt >= 0 || !strings.Contains(string(b), `"allow-ips":[{"address":"10.66.66.3","mask":"255.255.255.255"}]`) {
+			return
+		}
+		fg.SetError("/show/rc/interface/Wireguard1", errors.New("rci down"))
+		brokeAt = len(poster.posts)
+		_ = store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
+			sv.Peers = nil
+			return nil
+		})
+	}
+	if err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.3/32"}); err == nil || brokeAt < 0 {
+		t.Fatalf("err=%v brokeAt=%d", err, brokeAt)
+	}
+	for _, p := range postsJSON(poster)[brokeAt:] {
+		if strings.Contains(p, `"allow-ips":[{"address":"10.66.66.2","mask":"255.255.255.255"}]`) {
+			t.Fatalf("старый /32 отправлен без проверки наличия пира: %s", p)
+		}
 	}
 }

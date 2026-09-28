@@ -253,7 +253,10 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 	// одной блокировкой, и запись перечитывается уже под ней — возврат «к
 	// записанному» при сбое записи верен.
 	reconcile := req.RemoteSubnets != nil && (len(*req.RemoteSubnets) > 0 || len(server.Peers[idx].RemoteSubnets) > 0)
-	if reconcile {
+	// Смена адреса — под той же блокировкой: удаление пира её берёт, и откат
+	// адреса не встретит пира, снятого посреди правки.
+	tunnelChange := req.TunnelIP != "" && req.TunnelIP != server.Peers[idx].TunnelIP
+	if reconcile || tunnelChange {
 		defer s.LockPeerSubnets()()
 		if server, idx, err = load(); err != nil {
 			return err
@@ -346,8 +349,28 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		if !wantTunnelChange || oldIPStr == "" {
 			return
 		}
-		if rbErr := s.rciUpdatePeerAllowIPs(rbCtx, iface, pubkey, newIPStr, oldIPStr); rbErr != nil {
-			s.appLog.Warn("update-peer", req.Description, "tunnel IP не возвращён после "+after+": "+rbErr.Error())
+		warn := func(msg string) {
+			s.appLog.Warn("update-peer", req.Description, "tunnel IP не возвращён после "+after+": "+msg)
+		}
+		if s.commands == nil || s.commands.Wireguard == nil {
+			warn("ndms commands not wired")
+			return
+		}
+		if err := s.commands.Wireguard.RemovePeerAllowIP(rbCtx, iface, pubkey, newIPStr, "255.255.255.255"); err != nil {
+			warn(err.Error())
+			return
+		}
+		// allow-ips на отсутствующий ключ NDMS СОЗДАЁТ пира (стенд 5.02.A.11):
+		// пира, удалённого посреди правки, возврат адреса воскресил бы.
+		if present, err := s.peerPresent(rbCtx, iface, pubkey); err != nil {
+			warn("наличие пира не прочитано: " + err.Error())
+			return
+		} else if !present {
+			s.appLog.Info("update-peer", req.Description, "пир удалён, откат адреса не нужен")
+			return
+		}
+		if err := s.commands.Wireguard.AddPeerAllowIP(rbCtx, iface, pubkey, oldIPStr, "255.255.255.255"); err != nil {
+			warn(err.Error())
 		}
 	}
 

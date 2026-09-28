@@ -358,9 +358,26 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 	needsReconcile := func() bool {
 		return req.RemoteSubnets != nil && hasSecret && (len(*req.RemoteSubnets) > 0 || len(sec.RemoteSubnets) > 0)
 	}
+	// tunnelHost — текущий /32 пира: у пира с записью — из неё (с сетями за
+	// клиентом в allow-ips «первый /32» может оказаться сетью за клиентом, и
+	// снялся бы не тот), иначе эвристика по allow-ips.
+	tunnelHost := func() string {
+		if hasSecret && sec.TunnelIP != "" {
+			if ip, _, err := net.ParseCIDR(sec.TunnelIP); err == nil {
+				return ip.String()
+			}
+		}
+		return peerTunnelHostIP(peer)
+	}
+	ipChange := func() bool {
+		old := tunnelHost()
+		return req.TunnelIP != "" && req.TunnelIP != old+"/32" && req.TunnelIP != old
+	}
 	reconcile := needsReconcile()
 	unlock := func() {}
-	if reconcile && h.managedSvc != nil {
+	// Смена адреса — под той же блокировкой: удаление пира её берёт, и откат
+	// адреса не встретит пира, снятого посреди правки.
+	if (reconcile || ipChange()) && h.managedSvc != nil {
 		unlock = h.lockPeerSubnets()
 		sec, hasSecret = h.settings.GetServerPeerSecret(name, pubkey)
 		reconcile = needsReconcile()
@@ -427,15 +444,8 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	oldIP := peerTunnelHostIP(peer)
-	if hasSecret && sec.TunnelIP != "" {
-		// У пира с записью адрес — из неё: с сетями за клиентом в allow-ips
-		// «первый /32» может оказаться сетью за клиентом, и снялся бы не тот.
-		if ip, _, err := net.ParseCIDR(sec.TunnelIP); err == nil {
-			oldIP = ip.String()
-		}
-	}
-	wantIPChange := req.TunnelIP != "" && req.TunnelIP != oldIP+"/32" && req.TunnelIP != oldIP
+	oldIP := tunnelHost()
+	wantIPChange := ipChange()
 	newIP := ""
 	if wantIPChange {
 		if err := h.validateServerPeerTunnelIP(server, req.TunnelIP); err != nil {
@@ -480,6 +490,15 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 			h.log.Warn("update-peer", name, "новый tunnel IP не снят после отказа: "+err.Error())
 		}
 		if oldIP == "" {
+			return
+		}
+		// allow-ips на отсутствующий ключ NDMS СОЗДАЁТ пира (стенд 5.02.A.11):
+		// пира, удалённого посреди правки, возврат адреса воскресил бы.
+		if _, err := ndmscommand.NewPeerRouter(h.commands).PeerAllowIPs(rbCtx, name, pubkey); errors.Is(err, peersubnet.ErrPeerNotFound) {
+			h.log.Info("update-peer", name, "пир удалён, откат адреса не нужен")
+			return
+		} else if err != nil {
+			h.log.Warn("update-peer", name, "tunnel IP не возвращён: наличие пира не прочитано: "+err.Error())
 			return
 		}
 		if err := h.commands.Wireguard.AddPeerAllowIP(rbCtx, name, pubkey, oldIP, "255.255.255.255"); err != nil {

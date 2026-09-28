@@ -91,8 +91,10 @@ func TestAddPeer_NestedErrorIsFailureAndNotStored(t *testing.T) {
 }
 
 func TestUpdatePeer_AllowIPsNestedErrorIsFailureAndNotStored(t *testing.T) {
-	svc, store, poster, _ := newPeerSubnetTestService(t, `[]`)
-	seedPeer(t, store)
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	// Пир есть на роутере: откат адреса проверяет его наличие свежим чтением.
+	sim := newSimRouter(t, fg, poster, `[]`)
+	seedSimPeer(t, store, sim)
 	poster.respond = func(m map[string]interface{}) json.RawMessage {
 		p := peerPayload(m, "Wireguard1")
 		ips, _ := p["allow-ips"].([]map[string]interface{})

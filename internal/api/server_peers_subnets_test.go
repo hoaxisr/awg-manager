@@ -204,7 +204,10 @@ func (r *sysSimRouter) post(payload string) error {
 				delete(r.peers, key)
 				continue
 			}
-			cur := r.peers[key]
+			cur, exists := r.peers[key]
+			if !exists && !addsAllow(allow) {
+				continue // снятие на отсутствующем ключе пира не создаёт
+			}
 			for _, av := range allow {
 				a := av.(map[string]any)
 				e := a["address"].(string) + "/" + a["mask"].(string)
@@ -861,6 +864,10 @@ func TestServersHandler_PeerSubnets_SharedLockWithManaged(t *testing.T) {
 		{"update empty to empty", func(h *ServersHandler) *httptest.ResponseRecorder {
 			return putServerPeer(t, h, peerFixturePubKey, `{"description":"renamed","tunnelIP":"10.9.0.2/32","remoteSubnets":[]}`)
 		}, false},
+		// Fix round 2: смена адреса без сетей — под той же блокировкой.
+		{"update tunnel ip", func(h *ServersHandler) *httptest.ResponseRecorder {
+			return putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.9/32"}`)
+		}, true},
 		// I1: удаление — под той же блокировкой.
 		{"delete", func(h *ServersHandler) *httptest.ResponseRecorder { return deleteServerPeer(t, h, peerFixturePubKey) }, true},
 	}
@@ -1071,5 +1078,74 @@ func TestServersHandler_UpdateServerPeer_PeerVanished_NoGhost(t *testing.T) {
 	}
 	if allow, _ := sim.state(peerFixturePubKey, ""); len(allow) != 0 {
 		t.Fatalf("пир-призрак: %v", allow)
+	}
+}
+
+// Fix round 2: пир удалён посреди смены адреса (мимо панели), следующий шаг
+// отказал — откат адреса видит «пира нет» и старый /32 не шлёт: allow-ips на
+// отсутствующий ключ NDMS создал бы пира-призрака.
+func TestServersHandler_UpdateServerPeer_TunnelRevert_PeerDeleted_NoGhost(t *testing.T) {
+	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
+	sim := newSysSimRouter(t, fg.FakeGetter, poster, `[]`)
+	sim.seed(peerFixturePubKey, "10.9.0.2/32")
+	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "phone", TunnelIP: "10.9.0.2/32"})
+	vanishedAt := -1
+	sim.fail = func(payload string) error {
+		if vanishedAt < 0 && strings.Contains(payload, `"comment":"renamed"`) {
+			delete(sim.peers, peerFixturePubKey) // под sim.mu: post держит его
+			vanishedAt = len(poster.snapshot())
+			return errors.New("no such peer")
+		}
+		return nil
+	}
+	rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"renamed","tunnelIP":"10.9.0.9/32"}`)
+	if rr.Code != http.StatusBadRequest || vanishedAt < 0 {
+		t.Fatalf("code=%d body=%s vanishedAt=%d", rr.Code, rr.Body.String(), vanishedAt)
+	}
+	for _, p := range poster.snapshot()[vanishedAt:] {
+		if strings.Contains(p, `"allow-ips":[{"address":"10.9.0.2","mask":"255.255.255.255"}]`) {
+			t.Fatalf("старый /32 отправлен удалённому пиру: %s", p)
+		}
+	}
+	if allow, _ := sim.state(peerFixturePubKey, ""); len(allow) != 0 {
+		t.Fatalf("пир-призрак: %v", allow)
+	}
+}
+
+// addsAllow — в посте allow-ips есть добавление (не только снятия). NDMS
+// создаёт пира на добавлении к неизвестному ключу (стенд 5.02.A.11); снятие
+// на неизвестном ключе стендом не проверено — симулятор пира не создаёт.
+func addsAllow(allow []any) bool {
+	for _, av := range allow {
+		if av.(map[string]any)["no"] != true {
+			return true
+		}
+	}
+	return false
+}
+
+// Fix round 2: наличие пира перед откатом адреса не прочиталось — старый /32
+// не шлётся.
+func TestServersHandler_UpdateServerPeer_TunnelRevert_PresenceReadFails_NoAdd(t *testing.T) {
+	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
+	sim := newSysSimRouter(t, fg.FakeGetter, poster, `[]`)
+	sim.seed(peerFixturePubKey, "10.9.0.2/32")
+	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "phone", TunnelIP: "10.9.0.2/32"})
+	brokeAt := -1
+	sim.fail = func(payload string) error {
+		if brokeAt < 0 && strings.Contains(payload, `"comment":"renamed"`) {
+			fg.SetError("/show/rc/interface/Wireguard0", errors.New("rci down"))
+			brokeAt = len(poster.snapshot())
+			return errors.New("comment refused")
+		}
+		return nil
+	}
+	if rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"renamed","tunnelIP":"10.9.0.9/32"}`); rr.Code != http.StatusBadRequest || brokeAt < 0 {
+		t.Fatalf("code=%d brokeAt=%d", rr.Code, brokeAt)
+	}
+	for _, p := range poster.snapshot()[brokeAt:] {
+		if strings.Contains(p, `"allow-ips":[{"address":"10.9.0.2","mask":"255.255.255.255"}]`) {
+			t.Fatalf("старый /32 отправлен без проверки наличия пира: %s", p)
+		}
 	}
 }
