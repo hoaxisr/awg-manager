@@ -317,12 +317,12 @@ func newCreateTestService(t *testing.T) (*Service, *storage.SettingsStore, *stat
 	svc.wgRun = func(_ context.Context, _ string, _ ...string) (string, error) {
 		return "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n", nil
 	}
-	// AddPeer иначе форкает /opt/sbin/awg — на машине разработчика его нет.
+	// AddPeer иначе форкает /opt/bin/wg — на машине разработчика его нет.
 	svc.keyGen = &fakeKeyGen{}
 	return svc, store, getter
 }
 
-// fakeKeyGen выдаёт детерминированные ключи вместо awg genkey/pubkey/genpsk.
+// fakeKeyGen выдаёт детерминированные ключи вместо wg genkey/pubkey/genpsk.
 type fakeKeyGen struct{ n int }
 
 func (f *fakeKeyGen) next() int {

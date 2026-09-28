@@ -98,7 +98,7 @@ type Service struct {
 	// tests inject a stub to avoid forking real binaries.
 	wgRun wgRunner
 	// keyGen is the peer key-generation seam. Production uses realKeyGen
-	// (execs /opt/sbin/awg); tests inject deterministic keys.
+	// (execs /opt/bin/wg); tests inject deterministic keys.
 	keyGen keyGenerator
 	// peerSubnetsMu — см. LockPeerSubnets.
 	peerSubnetsMu sync.Mutex
@@ -110,7 +110,7 @@ type keyGenerator interface {
 	GeneratePresharedKey(ctx context.Context) (string, error)
 }
 
-// realKeyGen is the production keyGenerator over keys.go (awg genkey/pubkey/genpsk).
+// realKeyGen is the production keyGenerator over keys.go (wg genkey/pubkey/genpsk).
 type realKeyGen struct{}
 
 func (realKeyGen) GenerateKeyPair(ctx context.Context) (string, string, error) {

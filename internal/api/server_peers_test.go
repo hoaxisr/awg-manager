@@ -66,7 +66,7 @@ func TestPeerTunnelIPInUse(t *testing.T) {
 const peerFixturePubKey = "AB/CD+EF" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" + "="
 
 // stubPeerKeygen подменяет швы генерации ключей: без этого AddServerPeer
-// зовёт /opt/sbin/awg на хосте.
+// зовёт /opt/bin/wg на хосте.
 func stubPeerKeygen(t *testing.T) {
 	t.Helper()
 	oldPair, oldPSK := genKeyPair, genPSK

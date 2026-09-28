@@ -8,12 +8,10 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
-var wgShowBins = []string{
-	awgBin,
-	"/opt/sbin/wg",
-	"/opt/bin/awg",
-	"/opt/bin/wg",
-}
+// wgBin is wireguard-tools' wg, the only tool that speaks to NDMS-native
+// WireguardN/nwgN interfaces (genl family "wireguard"; our bundled
+// amneziawg-tools awg only knows family "amneziawg" and fails against them).
+const wgBin = "/opt/bin/wg"
 
 // wgRunner is the indirection seam for tests. Production wires
 // realWgRunner (which calls internal/sys/exec.Run on wgBin); tests pass
@@ -32,29 +30,14 @@ func readKernelPrivateKeyWith(ctx context.Context, kernelName string, run wgRunn
 	if kernelName == "" {
 		return "", fmt.Errorf("readKernelPrivateKey: empty kernel name")
 	}
-	var firstNonMissingErr error
-	var sawMissing bool
-	for _, bin := range wgShowBins {
-		out, err := run(ctx, bin, "show", kernelName, "private-key")
-		if err == nil {
-			return strings.TrimSpace(out), nil
-		}
-		if isBinaryMissingError(err) {
-			sawMissing = true
-			continue
-		}
-		if firstNonMissingErr == nil {
-			firstNonMissingErr = err
-		}
-		continue
+	out, err := run(ctx, wgBin, "show", kernelName, "private-key")
+	if err == nil {
+		return strings.TrimSpace(out), nil
 	}
-	if firstNonMissingErr != nil {
-		return "", firstNonMissingErr
+	if isBinaryMissingError(err) {
+		return "", fmt.Errorf("wireguard-tools (%s) is required: %w", wgBin, err)
 	}
-	if sawMissing {
-		return "", fmt.Errorf("wireguard tools not found: tried %s", strings.Join(wgShowBins, ", "))
-	}
-	return "", fmt.Errorf("readKernelPrivateKey: failed for %s", kernelName)
+	return "", err
 }
 
 func isBinaryMissingError(err error) bool {

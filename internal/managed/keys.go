@@ -8,44 +8,42 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
-const awgBin = "/opt/sbin/awg"
-
-// GeneratePrivateKey generates a WireGuard private key via awg genkey.
+// GeneratePrivateKey generates a WireGuard private key via wg genkey.
 func GeneratePrivateKey(ctx context.Context) (string, error) {
-	result, err := exec.Run(ctx, awgBin, "genkey")
+	result, err := exec.Run(ctx, wgBin, "genkey")
 	if err != nil {
-		return "", fmt.Errorf("awg genkey: %w", exec.FormatError(result, err))
+		return "", fmt.Errorf("wg genkey: %w", exec.FormatError(result, err))
 	}
 	key := strings.TrimSpace(result.Stdout)
 	if key == "" {
-		return "", fmt.Errorf("awg genkey: empty output")
+		return "", fmt.Errorf("wg genkey: empty output")
 	}
 	return key, nil
 }
 
-// DerivePublicKey derives a public key from a private key via awg pubkey.
+// DerivePublicKey derives a public key from a private key via wg pubkey.
 func DerivePublicKey(ctx context.Context, privateKey string) (string, error) {
-	result, err := exec.RunWithOptions(ctx, awgBin, []string{"pubkey"},
+	result, err := exec.RunWithOptions(ctx, wgBin, []string{"pubkey"},
 		exec.Options{Stdin: strings.NewReader(privateKey + "\n")})
 	if err != nil {
-		return "", fmt.Errorf("awg pubkey: %w", exec.FormatError(result, err))
+		return "", fmt.Errorf("wg pubkey: %w", exec.FormatError(result, err))
 	}
 	key := strings.TrimSpace(result.Stdout)
 	if key == "" {
-		return "", fmt.Errorf("awg pubkey: empty output")
+		return "", fmt.Errorf("wg pubkey: empty output")
 	}
 	return key, nil
 }
 
-// GeneratePresharedKey generates a WireGuard preshared key via awg genpsk.
+// GeneratePresharedKey generates a WireGuard preshared key via wg genpsk.
 func GeneratePresharedKey(ctx context.Context) (string, error) {
-	result, err := exec.Run(ctx, awgBin, "genpsk")
+	result, err := exec.Run(ctx, wgBin, "genpsk")
 	if err != nil {
-		return "", fmt.Errorf("awg genpsk: %w", exec.FormatError(result, err))
+		return "", fmt.Errorf("wg genpsk: %w", exec.FormatError(result, err))
 	}
 	key := strings.TrimSpace(result.Stdout)
 	if key == "" {
-		return "", fmt.Errorf("awg genpsk: empty output")
+		return "", fmt.Errorf("wg genpsk: empty output")
 	}
 	return key, nil
 }

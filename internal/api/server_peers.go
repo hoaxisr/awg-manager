@@ -137,7 +137,7 @@ func (h *ServersHandler) Subtree(w http.ResponseWriter, r *http.Request) {
 }
 
 // genKeyPair и genPSK — швы генерации ключей пира: подменяются в тестах,
-// чтобы путь добавления пира не звал /opt/sbin/awg на хосте.
+// чтобы путь добавления пира не звал /opt/bin/wg на хосте.
 var (
 	genKeyPair = managed.GenerateKeyPair
 	genPSK     = managed.GeneratePresharedKey
