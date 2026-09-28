@@ -1130,24 +1130,6 @@ func TestSetLANSegments_RebuildOrder(t *testing.T) {
 		assertParses(t, parseStrings(poster), nil)
 	})
 
-	// running-config не прочитан: teardown снимает вслепую (доступ обязан
-	// уйти), пересборка отказывает до первой мутации.
-	t.Run("running-config unavailable", func(t *testing.T) {
-		svc, store, poster := newLANSegmentsTestService(t) // stateAwareGetter: running-config = ошибка
-		seedServer(t, store, ifaceName)
-		resetPosts(poster)
-		if err := svc.SetLANSegments(context.Background(), ifaceName, []string{"Home"}); err == nil {
-			t.Fatal("пересборка без чтения состояния обязана отказать")
-		}
-		assertParses(t, parseStrings(poster), nil)
-		if err := svc.SetLANSegments(context.Background(), ifaceName, []string{}); err != nil {
-			t.Fatalf("teardown: %v", err)
-		}
-		assertParses(t, parseStrings(poster), []string{
-			fmt.Sprintf("no interface %s ip access-group %s in", ifaceName, acl),
-			"no access-list " + acl,
-		})
-	})
 }
 
 func TestResolveLANSegmentsPlan(t *testing.T) {

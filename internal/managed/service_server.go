@@ -764,17 +764,7 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 		if !commandsWired {
 			return nil
 		}
-		// Состояние не прочитано — снимаем вслепую, как раньше: teardown
-		// обязан убрать доступ, лишняя E в журнале роутера дешевле.
-		if err := s.clearLANACL(ctx, iface); err != nil {
-			s.appLog.Warn("lan-acl", iface, "состояние списка "+acl+" не прочитано, снятие вслепую: "+err.Error())
-			if err := s.commands.Interfaces.ACLUnbind(ctx, iface, acl); err != nil {
-				s.log.Debug("unbind ACL (teardown)", "error", err, "iface", iface)
-			}
-			if err := s.commands.Interfaces.ACLRemove(ctx, acl); err != nil {
-				s.log.Debug("remove ACL (teardown)", "error", err, "iface", iface)
-			}
-		}
+		s.clearLANACL(ctx, iface)
 		return nil
 	}
 	if !commandsWired {
@@ -795,11 +785,8 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 		return err // старый ACL не тронут
 	}
 
-	// Apply — destroy → rebuild. Состояние не прочитано — отказ до первой
-	// мутации: рабочий ACL не тронут.
-	if err := s.clearLANACL(ctx, iface); err != nil {
-		return err
-	}
+	// Apply — destroy → rebuild.
+	s.clearLANACL(ctx, iface)
 	for _, r := range plan {
 		// Дубль толерируем (как SetPermitAllACL): best-effort remove выше мог
 		// транзиентно не удалить старый идентичный список — состояние роутера
@@ -824,25 +811,29 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 	return nil
 }
 
-// clearLANACL снимает привязку и список AWGM_<iface> — только то, что есть:
-// unbind без привязки и `no access-list` без списка NDMS отвергает
-// `argument parse error`, и это E в журнале роутера (стенд 05.09, 28.09).
-// С auto-delete unbind уносит список сам (стенд 05.09), поэтому после него
-// наличие списка читается заново. Отказы самих команд — Debug, как раньше:
-// пересборка идёт дальше. Ошибка — только чтение running-config.
-func (s *Service) clearLANACL(ctx context.Context, iface string) error {
+// clearLANACL снимает привязку и список AWGM_<iface> перед пересборкой или
+// при teardown — только то, что есть: unbind без привязки и `no access-list`
+// без списка NDMS отвергает `argument parse error`, и это E в журнале роутера
+// (стенд 05.09, 28.09). С auto-delete unbind уносит список сам (стенд 05.09),
+// поэтому после него наличие списка читается заново.
+//
+// Состояние не прочитано — снимаем вслепую, как до этой правки: ради ACL в
+// running-config не ходим обязательно (#879), слепое снятие вредно лишь E в
+// журнале. Отказы команд — Debug: пересборка идёт дальше.
+func (s *Service) clearLANACL(ctx context.Context, iface string) {
 	acl := "AWGM_" + iface
 	exists, bound, err := s.lanACLState(ctx, iface)
 	if err != nil {
-		return err
+		s.log.Debug("ACL state unreadable, clearing blindly", "error", err, "iface", iface)
+		exists, bound = true, true
 	}
 	if bound {
 		if err := s.commands.Interfaces.ACLUnbind(ctx, iface, acl); err != nil {
 			s.log.Debug("unbind ACL", "error", err, "iface", iface)
 		}
 		if exists {
-			if exists, _, err = s.lanACLState(ctx, iface); err != nil {
-				return err
+			if e, _, err := s.lanACLState(ctx, iface); err == nil {
+				exists = e
 			}
 		}
 	}
@@ -851,7 +842,6 @@ func (s *Service) clearLANACL(ctx context.Context, iface string) error {
 			s.log.Debug("remove ACL", "error", err, "iface", iface)
 		}
 	}
-	return nil
 }
 
 // ListLANSegments returns the router's LAN bridge catalog for the UI picker.

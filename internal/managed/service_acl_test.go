@@ -3,45 +3,35 @@ package managed
 import (
 	"context"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 )
 
-// Running-config недоступен → пересборка отказывает до первой мутации (стенд
-// 28.09: снимать вслепую = E в журнале роутера, а решить, что снимать, без
-// чтения нечем); рабочий ACL не тронут, запись не изменена.
-func TestApplyLANSegments_RunningConfigUnavailable_FailsClosed(t *testing.T) {
+// Running-config недоступен → сегменты всё равно применяются (снятие
+// вслепую + permit, bind, auto-delete), и никакого Warn: ради ACL в
+// running-config обязательно не ходим (#879).
+func TestApplyLANSegments_RunningConfigUnavailable_ProceedsSilently(t *testing.T) {
 	svc, store, poster := newLANSegmentsTestService(t) // stateAwareGetter: running-config = ошибка
-	seedServer(t, store, "Wireguard0")
-	resetPosts(poster)
-	if err := svc.SetLANSegments(context.Background(), "Wireguard0", []string{"Home"}); err == nil {
-		t.Fatal("ждали отказ")
-	}
-	if got := parseStrings(poster); len(got) != 0 {
-		t.Fatalf("команды без чтения состояния: %v", got)
-	}
-	if sv, _ := store.GetManagedServerByID("Wireguard0"); len(sv.LANSegments) != 0 {
-		t.Fatalf("запись изменена: %v", sv.LANSegments)
-	}
-}
-
-// Teardown при недоступном running-config — снятие вслепую с Warn.
-func TestApplyLANSegments_TeardownRunningConfigUnavailable_BlindWithWarn(t *testing.T) {
-	svc, store, poster := newLANSegmentsTestService(t)
 	spy := &recAppLog{}
 	svc.appLog = logging.NewScopedLogger(spy, logging.GroupServer, logging.SubManaged)
 	seedServer(t, store, "Wireguard0")
+	resetPosts(poster)
+	if err := svc.SetLANSegments(context.Background(), "Wireguard0", []string{"Home"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(parseStrings(poster)); n != 5 {
+		t.Fatalf("команд %d, ждали 5", n)
+	}
+	if len(spy.entries) != 1 || spy.entries[0] != "info|lan-segments|Wireguard0|LAN segments changed: Home" {
+		t.Fatalf("журнал = %v", spy.entries)
+	}
 	resetPosts(poster)
 	if err := svc.SetLANSegments(context.Background(), "Wireguard0", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := parseStrings(poster); !slices.Equal(got, []string{"no interface Wireguard0 ip access-group AWGM_Wireguard0 in", "no access-list AWGM_Wireguard0"}) {
-		t.Fatalf("got %v", got)
-	}
-	if len(spy.entries) == 0 || !strings.HasPrefix(spy.entries[0], "warn|lan-acl|Wireguard0|") {
-		t.Fatalf("журнал = %v", spy.entries)
+		t.Fatalf("teardown: %v", got)
 	}
 }
 
