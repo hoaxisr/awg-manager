@@ -418,6 +418,49 @@ func TestUpdatePeer_TunnelIPAndSubnets_RouteFailure_RestoresTunnelIP(t *testing.
 	}
 }
 
+// W2-P5 п.8: в записи адреса не было — откат всё равно снимает новый /32
+// (паритет с revertIP системного пути), старого не добавляет.
+func TestUpdatePeer_NoStoredTunnelIP_RouteFailure_RemovesNewTunnelIP(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
+	seedSimPeer(t, store, sim)
+	if err := store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
+		sv.Peers[0].TunnelIP = ""
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	poster.failOn = func(m map[string]interface{}) error {
+		b, _ := json.Marshal(m)
+		if strings.Contains(string(b), `"comment":"awgm-peer:`) {
+			return errors.New("route refused")
+		}
+		return nil
+	}
+	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.3/32", RemoteSubnets: &[]string{"192.168.77.0/24"}})
+	if err == nil || !strings.Contains(err.Error(), "route refused") {
+		t.Fatalf("err = %v", err)
+	}
+	posts := postsJSON(poster)
+	iRoute := indexOf(posts, `"comment":"awgm-peer:PEER1"`)
+	iNewOff := -1
+	for i, p := range posts {
+		if i > iRoute && strings.Contains(p, `"allow-ips":[{"address":"10.66.66.3","mask":"255.255.255.255","no":true}]`) {
+			iNewOff = i
+		}
+	}
+	if iRoute < 0 || iNewOff < 0 {
+		t.Fatalf("новый /32 не снят при откате: route=%d newOff=%d\n%s", iRoute, iNewOff, strings.Join(posts, "\n"))
+	}
+	if indexOf(posts, `"address":""`) >= 0 {
+		t.Fatalf("откат добавил пустой адрес:\n%s", strings.Join(posts, "\n"))
+	}
+	sv, _ := store.GetManagedServerByID("Wireguard1")
+	if sv.Peers[0].TunnelIP != "" {
+		t.Fatalf("хранилище записано при отказе: %+v", sv.Peers[0])
+	}
+}
+
 // Fix round 1 / IMPORTANT 1(б): старого /32 на роутере уже нет — `no such net
 // in peer` на его снятии смену не валит (11.A/11.8).
 func TestUpdatePeer_TunnelIP_OldAbsentTolerated(t *testing.T) {

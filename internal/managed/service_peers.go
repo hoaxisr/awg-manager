@@ -350,9 +350,11 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 	oldIPStr, newIPStr := "", ""
 
 	// Хранилище не пишется — /32 на роутере обязан вернуться к записанному,
-	// иначе .conf выдаст адрес, которого у пира нет.
+	// иначе .conf выдаст адрес, которого у пира нет. Новый снимается всегда
+	// (отсутствующий — не отказ), в т.ч. когда старого в записи не было —
+	// паритет с revertIP системного пути (api/server_peers.go).
 	revertTunnelIP := func(rbCtx context.Context, after string) {
-		if !wantTunnelChange || oldIPStr == "" {
+		if !wantTunnelChange {
 			return
 		}
 		warn := func(msg string) {
@@ -374,6 +376,9 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		}
 		if err := s.commands.Wireguard.RemovePeerAllowIP(rbCtx, iface, pubkey, newIPStr, "255.255.255.255"); err != nil {
 			warn(err.Error())
+			return
+		}
+		if oldIPStr == "" {
 			return
 		}
 		if err := s.commands.Wireguard.AddPeerAllowIP(rbCtx, iface, pubkey, oldIPStr, "255.255.255.255"); err != nil {
