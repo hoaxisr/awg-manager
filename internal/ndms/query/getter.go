@@ -383,10 +383,22 @@ func (f *FakeGetter) Post(ctx context.Context, payload any) (json.RawMessage, er
 			return nil, err
 		}
 		if !haveBody {
+			// Не заскриптован явно (SetPostInterface): отвечаем тем же
+			// снимком `/show/interface/`, что и GET-путь (interfaceFromList)
+			// — так пишущие только SetJSON("/show/interface/", …) фикстуры
+			// продолжают работать и на свежем чтении (InterfaceStore.Refresh),
+			// не только на кэше (Get/bootstrap).
+			if entry, ok := f.interfaceListEntry(name); ok {
+				return []byte(`{"show":{"interface":` + entry + `}}`), nil
+			}
 			if defaultErr != nil {
 				return nil, defaultErr
 			}
-			return nil, errNoFakeResponse("POST show.interface name=" + name)
+			// Имени нет и в снимке списка — настоящий NDMS такой POST не
+			// 404-ит, а отвечает конвертом `unable to find` (стенд KN-1810,
+			// 5.02.A.11, код 6553619); fetchOne разбирает именно эту форму
+			// в (nil, nil). Синтезируем тот же конверт вместо ошибки фикстуры.
+			return []byte(`{"show":{"interface":{"status":[{"status":"error","code":"6553619","message":"unable to find"}]}}}`), nil
 		}
 		out := make([]byte, len(body))
 		copy(out, body)
@@ -434,6 +446,14 @@ func (f *FakeGetter) interfaceFromList(path string) (string, bool) {
 	if !ok || name == "" || strings.ContainsAny(name, "/?") {
 		return "", false
 	}
+	return f.interfaceListEntry(name)
+}
+
+// interfaceListEntry возвращает сырой JSON записи `name` из заданного
+// SetJSON("/show/interface/", …) снимка. Общий поиск для GET-пути
+// (interfaceFromList, по URL-пути) и POST-формы ShowInterface (по имени из
+// тела запроса).
+func (f *FakeGetter) interfaceListEntry(name string) (string, bool) {
 	f.mu.Lock()
 	list, ok := f.jsonResp["/show/interface/"]
 	f.mu.Unlock()
