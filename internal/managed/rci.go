@@ -3,6 +3,7 @@ package managed
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
@@ -375,7 +376,7 @@ func (s *Service) rciRemovePeer(ctx context.Context, ifaceName, pubKey string) e
 	}
 	peers, rerr := s.queries.WGServers.PeersRCFresh(ctx, ifaceName)
 	if rerr != nil {
-		return err
+		return fmt.Errorf("%w; %w: %v", err, errPeerPresenceUnknown, rerr)
 	}
 	for _, p := range peers {
 		if p.PublicKey == pubKey {
@@ -385,6 +386,10 @@ func (s *Service) rciRemovePeer(ctx context.Context, ifaceName, pubKey string) e
 	s.sysLog().Info("managed rci: peer already absent, removal treated as done", "interface", ifaceName)
 	return nil
 }
+
+// errPeerPresenceUnknown — снятие пира отказало, а перечитать список пиров не
+// удалось: остался ли пир, неизвестно.
+var errPeerPresenceUnknown = errors.New("peer presence unknown")
 
 // rciSetPeerConnect enables or disables a peer. comment must carry the peer's
 // current name: a partial peer update without it makes NDMS wipe the stored

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -1191,5 +1192,38 @@ func TestRestore_NewServerPeersSeeEachOther(t *testing.T) {
 	}
 	if allow, _ := sim.state("Wireguard5", k2, ""); !slices.Equal(allow, []string{"10.77.0.3/255.255.255.255", "192.168.91.0/255.255.255.0"}) {
 		t.Fatalf("allow второго пира = %v", allow)
+	}
+}
+
+// W2-P5 п.11–12: журнал отката — под op вызывающего; «пир не снят» — только
+// когда перечитывание видит пира, иначе «неизвестно».
+func TestRollbackAddedPeer_LogOpAndPresence(t *testing.T) {
+	refuse := func(m map[string]interface{}) error {
+		b, _ := json.Marshal(m)
+		if strings.Contains(string(b), `{"key":"PEER1","no":true}`) {
+			return errors.New("remove refused")
+		}
+		return nil
+	}
+
+	svc, _, poster, fg := newPeerSubnetTestService(t, `[]`)
+	spy := &recAppLog{}
+	svc.appLog = logging.NewScopedLogger(spy, logging.GroupServer, logging.SubManaged)
+	poster.failOn = refuse
+	fg.SetError("/show/rc/interface/Wireguard1", errors.New("rc down"))
+	svc.rollbackAddedPeer(context.Background(), "managed-restore-merge", "Wireguard1", "PEER1", "branch", nil)
+	if len(spy.entries) != 1 || !strings.HasPrefix(spy.entries[0], "warn|managed-restore-merge|branch|") ||
+		!strings.Contains(spy.entries[0], "неизвестно") || strings.Contains(spy.entries[0], "пир не снят") {
+		t.Fatalf("перечитывание упало: %v", spy.entries)
+	}
+
+	svc, _, poster, fg = newPeerSubnetTestService(t, `[]`)
+	spy = &recAppLog{}
+	svc.appLog = logging.NewScopedLogger(spy, logging.GroupServer, logging.SubManaged)
+	poster.failOn = refuse
+	fg.SetJSON("/show/rc/interface/Wireguard1", `{"wireguard":{"peer":[{"key":"PEER1"}]}}`)
+	svc.rollbackAddedPeer(context.Background(), "add-peer", "Wireguard1", "PEER1", "branch", nil)
+	if len(spy.entries) != 1 || !strings.HasPrefix(spy.entries[0], "warn|add-peer|branch|пир не снят при откате") {
+		t.Fatalf("пир на роутере: %v", spy.entries)
 	}
 }

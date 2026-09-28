@@ -48,17 +48,23 @@ func detachedCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 // rollbackAddedPeer снимает с роутера только что добавленного пира, которого
 // не будет в хранилище: сначала все маршруты с его меткой, найденные на
 // роутере (router != nil — у пира были сети), потом сам пир; allow-ips уходят
-// вместе с ним. Ошибки — в журнал: вызывающий уже возвращает первичную.
-func (s *Service) rollbackAddedPeer(ctx context.Context, iface, pubKey, name string, router peersubnet.Router) {
+// вместе с ним. Ошибки — в журнал под op вызывающего: он уже возвращает
+// первичную.
+func (s *Service) rollbackAddedPeer(ctx context.Context, op, iface, pubKey, name string, router peersubnet.Router) {
 	rbCtx, cancel := detachedCtx(ctx)
 	defer cancel()
 	if router != nil {
 		if err := peersubnet.RemoveRoutes(rbCtx, router, iface, pubKey); err != nil {
-			s.appLog.Warn("add-peer", name, "маршруты сетей за клиентом не сняты при откате: "+err.Error())
+			s.appLog.Warn(op, name, "маршруты сетей за клиентом не сняты при откате: "+err.Error())
 		}
 	}
 	if err := s.rciRemovePeer(rbCtx, iface, pubKey); err != nil {
-		s.appLog.Warn("add-peer", name, "пир не снят при откате: "+err.Error())
+		if errors.Is(err, errPeerPresenceUnknown) {
+			// Ключ мог и не встать (отказ самого добавления): «не снят» было бы ложью.
+			s.appLog.Warn(op, name, "снятие пира при откате отказало, есть ли он на роутере — неизвестно: "+err.Error())
+			return
+		}
+		s.appLog.Warn(op, name, "пир не снят при откате: "+err.Error())
 	}
 }
 
@@ -161,7 +167,7 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		// NDMS применяет payload поэлементно: при вложенном отказе ключ/PSK
 		// могли встать — без отката это невидимый сирота. Ключ свежий, чужого
 		// пира снятие не заденет.
-		s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, nil)
+		s.rollbackAddedPeer(ctx, "add-peer", iface, pubKey, req.Description, nil)
 		return nil, fmt.Errorf("add peer: %w", err)
 	}
 
@@ -172,11 +178,11 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 	if len(remote) > 0 {
 		if err := peersubnet.Reconcile(ctx, router, iface, pubKey, []net.IP{ip}, remote); err != nil {
 			s.logRollback("add-peer", req.Description, err)
-			s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, router)
+			s.rollbackAddedPeer(ctx, "add-peer", iface, pubKey, req.Description, router)
 			return nil, fmt.Errorf("apply remote subnets: %w", err)
 		}
 		if undoACL, err = s.applyPeerSubnetsACL(ctx, server, aclEdit); err != nil {
-			s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, router)
+			s.rollbackAddedPeer(ctx, "add-peer", iface, pubKey, req.Description, router)
 			return nil, fmt.Errorf("apply remote subnets: %w", err)
 		}
 	}
@@ -218,7 +224,7 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		rbCtx, cancel := detachedCtx(ctx)
 		undoACL(rbCtx)
 		cancel()
-		s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, router)
+		s.rollbackAddedPeer(ctx, "add-peer", iface, pubKey, req.Description, router)
 		return nil, fmt.Errorf("save to storage: %w", err)
 	}
 

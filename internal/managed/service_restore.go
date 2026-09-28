@@ -598,7 +598,7 @@ func (s *Service) applyMergePeers(ctx context.Context, existing storage.ManagedS
 	rollback := func() {
 		router, _ := s.peerRouter()
 		for _, p := range missingPeers {
-			s.rollbackAddedPeer(ctx, existing.InterfaceName, p.PublicKey, p.Description, router)
+			s.rollbackAddedPeer(ctx, "managed-restore-merge", existing.InterfaceName, p.PublicKey, p.Description, router)
 		}
 	}
 	for _, peer := range sv.Peers {
