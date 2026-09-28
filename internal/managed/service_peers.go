@@ -252,7 +252,10 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 	// Решение — по снимку; F508: занятые → валидация → сверка → запись под
 	// одной блокировкой, и запись перечитывается уже под ней — возврат «к
 	// записанному» при сбое записи верен.
-	reconcile := req.RemoteSubnets != nil && (len(*req.RemoteSubnets) > 0 || len(server.Peers[idx].RemoteSubnets) > 0)
+	needsReconcile := func() bool {
+		return req.RemoteSubnets != nil && (len(*req.RemoteSubnets) > 0 || len(server.Peers[idx].RemoteSubnets) > 0)
+	}
+	reconcile := needsReconcile()
 	// Смена адреса — под той же блокировкой: удаление пира её берёт, и откат
 	// адреса не встретит пира, снятого посреди правки.
 	tunnelChange := req.TunnelIP != "" && req.TunnelIP != server.Peers[idx].TunnelIP
@@ -261,6 +264,9 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		if server, idx, err = load(); err != nil {
 			return err
 		}
+		// Снимок мог устареть, пока ждали блокировку: соседняя правка
+		// записала пиру сети — тогда присланный [] обязан их снять.
+		reconcile = needsReconcile()
 	}
 	peer := &server.Peers[idx]
 	iface := server.InterfaceName

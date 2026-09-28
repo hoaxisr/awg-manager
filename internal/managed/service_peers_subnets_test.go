@@ -1096,3 +1096,37 @@ func TestUpdatePeer_TunnelChange_PeerAbsentOnRouter_NoPosts(t *testing.T) {
 		t.Fatal("пир-призрак создан")
 	}
 }
+
+// Fix round 4 (N2): решение о сверке — по снимку, но пока правка ждала
+// блокировку, соседняя записала пиру сеть. Присланный [] обязан её снять:
+// решение пересчитывается по записи, перечитанной под блокировкой.
+func TestUpdatePeer_EmptyList_RecheckedUnderLock(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, rcOurs77)
+	seedSimPeer(t, store, sim)
+	unlock := svc.LockPeerSubnets()
+	done := make(chan error, 1)
+	go func() {
+		// Смена адреса берёт блокировку; снимок — «сетей у пира нет».
+		done <- svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.3/32", RemoteSubnets: &[]string{}})
+	}()
+	time.Sleep(150 * time.Millisecond) // снимок снят, правка ждёт блокировку
+	// Конкурентная правка сетей завершилась: роутер и запись с 192.168.77.0/24.
+	sim.seed("Wireguard1", "PEER1", "192.168.77.0/24")
+	if err := store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
+		sv.Peers[0].RemoteSubnets = []string{"192.168.77.0/24"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if err := <-done; err != nil {
+		t.Fatalf("UpdatePeer: %v", err)
+	}
+	if allow, routes := sim.state("Wireguard1", "PEER1", "awgm-peer:PEER1"); len(allow) != 1 || len(routes) != 0 {
+		t.Fatalf("[] проигнорирован: allow=%v routes=%v", allow, routes)
+	}
+	if sv, _ := store.GetManagedServerByID("Wireguard1"); len(sv.Peers[0].RemoteSubnets) != 0 {
+		t.Fatalf("запись: %v", sv.Peers[0].RemoteSubnets)
+	}
+}
