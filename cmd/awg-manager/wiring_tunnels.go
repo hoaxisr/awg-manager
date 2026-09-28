@@ -128,6 +128,22 @@ func (a *app) setupTunnels() {
 		a.loggingService,
 	)
 	a.catalog.SetOwnedOpkgTun(a.opkgTunOwners.ownedIndices)
+	// F503: WG-серверы — managed (страница /servers) и помеченные. Managed
+	// берутся из настроек напрямую, как в systemtunnels: managed.Service.List
+	// читает то же самое, а ждать его проводки незачем.
+	settings := a.settingsStore
+	a.catalog.SetServerInterfaces(func(context.Context) map[string]bool {
+		out := make(map[string]bool)
+		for _, id := range settings.GetServerInterfaces() {
+			out[id] = true
+		}
+		for _, ms := range settings.GetManagedServers() {
+			if ms.InterfaceName != "" {
+				out[ms.InterfaceName] = true
+			}
+		}
+		return out
+	})
 
 	// HydraRoute Neo integration (optional — detected at startup)
 	a.hydraService = hydraroute.NewService(a.catalog, a.loggingService)

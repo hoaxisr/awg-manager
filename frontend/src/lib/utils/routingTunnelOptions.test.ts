@@ -54,6 +54,17 @@ describe('routingTunnelGroup', () => {
 		expect(routingTunnelGroup(t({ id: 'system:Proxy0', name: 'P', type: 'system' }))).toBe('Прокси');
 	});
 
+	it('puts WireGuard servers into their own group after system WireGuard', () => {
+		const server = t({ id: 'system:Wireguard1', name: 'S', type: 'system', server: true });
+		expect(routingTunnelGroup(server)).toBe('Серверы WireGuard');
+		const opts = buildRoutingTunnelDropdownOptions([
+			server,
+			t({ id: 'system:Proxy0', name: 'P', type: 'system' }),
+			t({ id: 'system:Wireguard0', name: 'WG', type: 'system' }),
+		]);
+		expect(opts.map((o) => o.group)).toEqual(['Системные WireGuard', 'Серверы WireGuard', 'Прокси']);
+	});
+
 	it('classifies ISP WAN as Провайдер', () => {
 		expect(
 			routingTunnelGroup(t({ id: 'wan:ppp0', name: 'Provider', type: 'wan', iface: 'ppp0' })),

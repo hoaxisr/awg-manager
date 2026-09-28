@@ -86,6 +86,8 @@ export interface RoutingTunnel {
 	available: boolean;
 	/** Предупреждение каталога, напр. «нет адреса в NDMS» (issue #935). */
 	warning?: string;
+	/** Системный WireGuard-сервер (managed, помеченный или встроенный), F503. */
+	server?: boolean;
 }
 
 export interface ResolveResult {

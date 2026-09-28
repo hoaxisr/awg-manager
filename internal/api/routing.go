@@ -21,6 +21,8 @@ type RoutingTunnelDTO struct {
 	Available bool   `json:"available" example:"true"`
 	// Warning — «нет адреса в NDMS»: маршруты NDMS на такой туннель молча не ставятся.
 	Warning string `json:"warning,omitempty" example:"нет адреса в NDMS"`
+	// Server — системный WireGuard-сервер (managed, помеченный или встроенный).
+	Server bool `json:"server,omitempty" example:"false"`
 }
 
 // RoutingTunnelsResponse is the envelope for GET /routing/tunnels.

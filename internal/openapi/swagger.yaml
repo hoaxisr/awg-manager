@@ -3925,6 +3925,11 @@ definitions:
       name:
         example: My VPN
         type: string
+      server:
+        description: Server — системный WireGuard-сервер (managed, помеченный или
+          встроенный).
+        example: false
+        type: boolean
       status:
         example: connected
         type: string

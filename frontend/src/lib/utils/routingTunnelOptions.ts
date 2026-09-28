@@ -6,6 +6,7 @@ const GROUP_ORDER = [
 	'Провайдер',
 	'AWG туннели',
 	'Системные WireGuard',
+	'Серверы WireGuard',
 	'Прокси',
 	'OpkgTun',
 	'Системные',
@@ -130,6 +131,7 @@ export function routingTunnelGroup(t: RoutingTunnel): string {
 function systemGroup(t: RoutingTunnel): string {
 	const ndmsId = t.id.startsWith('system:') ? t.id.slice('system:'.length) : t.id;
 	const lower = ndmsId.toLowerCase();
+	if (t.server) return 'Серверы WireGuard';
 	if (lower.startsWith('wireguard')) return 'Системные WireGuard';
 	if (lower.startsWith('proxy')) return 'Прокси';
 	if (lower.startsWith('opkgtun')) return 'OpkgTun';

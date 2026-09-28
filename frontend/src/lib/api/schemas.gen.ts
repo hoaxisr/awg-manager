@@ -1434,6 +1434,7 @@ const api_RoutingTunnelDTO: v.GenericSchema = v.looseObject({
 	id: v.optional(v.nullable(v.string())),
 	iface: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
+	server: v.optional(v.nullable(v.boolean())),
 	status: v.optional(v.nullable(v.string())),
 	type: v.optional(v.nullable(v.string())),
 	warning: v.optional(v.nullable(v.string())),

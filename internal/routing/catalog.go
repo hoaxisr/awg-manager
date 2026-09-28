@@ -23,6 +23,7 @@ type TunnelEntry struct {
 	Status    string `json:"status"`            // "running", "stopped", "disabled", "up", "down"
 	Available bool   `json:"available"`         // can route traffic right now
 	Warning   string `json:"warning,omitempty"` // "нет адреса в NDMS" — маршруты NDMS молча не ставятся
+	Server    bool   `json:"server,omitempty"`  // system: WireGuard-сервер (managed, помеченный или встроенный)
 }
 
 // RoutingSnapshot holds all routing data for SSE snapshots.
@@ -155,6 +156,9 @@ type CatalogImpl struct {
 	// ownedOpkgTun — номера OpkgTun наших владельцев (F496). Set via SetOwnedOpkgTun.
 	ownedOpkgTun func(ctx context.Context) (map[int]bool, error)
 
+	// serverIfaces — NDMS id WireGuard-серверов (F503). Set via SetServerInterfaces.
+	serverIfaces func(ctx context.Context) map[string]bool
+
 	// Snapshot providers (nil-safe). Set via SetSnapshotProvider.
 	snapDnsRoutes        SnapshotFunc
 	snapStaticRoutes     SnapshotFunc
@@ -186,6 +190,12 @@ func NewCatalog(provider TunnelProvider, ifaces interfaceQueries, store StoreCli
 // не показываются как системные интерфейсы.
 func (c *CatalogImpl) SetOwnedOpkgTun(fn func(ctx context.Context) (map[int]bool, error)) {
 	c.ownedOpkgTun = fn
+}
+
+// SetServerInterfaces — NDMS id WireGuard-серверов (managed и помеченных):
+// их системные записи помечаются Server (F503).
+func (c *CatalogImpl) SetServerInterfaces(fn func(ctx context.Context) map[string]bool) {
+	c.serverIfaces = fn
 }
 
 // lookupExit — единственная точка, где каталог узнаёт про выход прокси.
@@ -255,6 +265,10 @@ func (c *CatalogImpl) ListAll(ctx context.Context) []TunnelEntry {
 				// лишнее, чем отобрать у пользователя его выходы.
 				owned, _ = c.ownedOpkgTun(ctx)
 			}
+			var servers map[string]bool
+			if c.serverIfaces != nil {
+				servers = c.serverIfaces(ctx)
+			}
 			for _, iface := range all {
 				t := strings.ToLower(iface.Type)
 				if t != "wireguard" && t != "proxy" && t != "opkgtun" {
@@ -274,6 +288,7 @@ func (c *CatalogImpl) ListAll(ctx context.Context) []TunnelEntry {
 					Type:      "system",
 					Status:    "up",
 					Available: true,
+					Server:    servers[iface.ID] || iface.Description == ndms.BuiltInVPNServerDescription,
 				}
 				if t == "opkgtun" {
 					// Наш собственный OpkgTun (F496): владелец уже показан

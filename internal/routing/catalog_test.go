@@ -591,3 +591,28 @@ func TestListAll_OwnedLookupErrorKeepsList(t *testing.T) {
 		t.Fatal("ошибка владельцев обнулила список")
 	}
 }
+
+// F503: WG-сервер (managed или помеченный — id из сеттера — и встроенный по
+// описанию) помечается Server; обычный WireguardN — нет.
+func TestListAll_SystemServerFlag(t *testing.T) {
+	ndmsClient := &mockNDMSClient{
+		ifaces: []ndms.Interface{
+			{ID: "Wireguard0", Type: "wireguard", Description: "Обычный"},
+			{ID: "Wireguard1", Type: "wireguard", Description: "Managed-сервер"},
+			{ID: "Wireguard2", Type: "wireguard", Description: ndms.BuiltInVPNServerDescription},
+		},
+	}
+	cat := NewCatalog(&mockTunnelProvider{}, ndmsClient, nil, noExits(), nil)
+	cat.SetServerInterfaces(func(context.Context) map[string]bool { return map[string]bool{"Wireguard1": true} })
+
+	got := map[string]bool{}
+	for _, e := range cat.ListAll(context.Background()) {
+		got[e.ID] = e.Server
+	}
+	want := map[string]bool{"system:Wireguard0": false, "system:Wireguard1": true, "system:Wireguard2": true}
+	for id, w := range want {
+		if got[id] != w {
+			t.Errorf("%s: Server=%v, ждали %v (все: %v)", id, got[id], w, got)
+		}
+	}
+}
