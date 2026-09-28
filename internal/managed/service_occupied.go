@@ -34,9 +34,10 @@ func peerLabel(desc, pubkey, iface string) string {
 // OccupiedSubnets — снимок занятых IPv4-сетей для peersubnet.ValidateRemoteSubnets
 // (спека 4.2 шаг 1, решение 11.5): сети всех интерфейсов роутера с адресом
 // (подсети WG-серверов и LAN в том числе), allow-ips пиров всех WG-серверов
-// (кроме их /32 внутри подсети своего сервера — те покрыты ею), RemoteSubnets
-// всех пиров из хранилища. Любой отказ чтения — отказ целиком: «занятых нет»
-// на лежащем RCI пропустило бы пересечение.
+// (кроме их /32 внутри подсети своего сервера — те покрыты ею), статические
+// маршруты через другие интерфейсы, RemoteSubnets всех пиров из хранилища.
+// Любой отказ чтения — отказ целиком: «занятых нет» на лежащем RCI
+// пропустило бы пересечение.
 //
 // Сервер = системный, помеченный в панели (ServerInterfaces), встроенный
 // (по описанию, как в списке серверов), или managed.
@@ -44,7 +45,7 @@ func peerLabel(desc, pubkey, iface string) string {
 // занял бы всё. allow-ips читаются по серверу свежо (PeersRCFresh), а не из
 // WGServers.List: тот сбой чтения молча превращает в «сетей у пира нет».
 func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peersubnet.Occupied, error) {
-	if s.queries == nil || s.queries.Interfaces == nil || s.queries.WGServers == nil {
+	if s.queries == nil || s.queries.Interfaces == nil || s.queries.WGServers == nil || s.queries.StaticRoutes == nil {
 		return nil, fmt.Errorf("ndms queries not wired")
 	}
 	// Записи читаются геттерами, которые отказ чтения настроек глотают
@@ -109,6 +110,34 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 				out = append(out, peersubnet.Occupied{Net: n, Label: peerLabel(p.Description, p.PublicKey, id)})
 			}
 		}
+	}
+	// Статические маршруты через другие интерфейсы: сеть за клиентом поверх
+	// такой записи молча дала бы второй маршрут на ту же сеть. Интерфейс
+	// правимого пира не в счёт — чужую запись (N, I) на нём сверка и так не
+	// перекрывает и своей не считает. Свои (метка awgm-peer:) учтены ниже,
+	// через RemoteSubnets пиров, — второй раз не считаются. Маршрут по
+	// умолчанию пересекался бы с любой сетью — пропускается.
+	routes, err := s.queries.StaticRoutes.Fetch(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read static routes: %w", err)
+	}
+	for _, e := range routes {
+		if e.Interface == exclude.Iface || strings.HasPrefix(e.Comment, peersubnet.RouteCommentPrefix) {
+			continue
+		}
+		n := e.IPv4Net()
+		if n == nil {
+			continue
+		}
+		if ones, _ := n.Mask.Size(); ones == 0 {
+			continue
+		}
+		label := "маршрут через " + e.Interface
+		if e.Interface == "" {
+			// Запись без интерфейса (через шлюз) — допущение, на стенде не видели.
+			label = "статический маршрут через шлюз"
+		}
+		out = append(out, peersubnet.Occupied{Net: n, Label: label})
 	}
 	appendStored := func(subnets []string, label string) {
 		for _, sn := range subnets {

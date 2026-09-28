@@ -68,18 +68,7 @@ func (r *PeerRouter) InterfaceRoutes(ctx context.Context, iface string) ([]peers
 		if e.Interface != iface {
 			continue
 		}
-		var n *net.IPNet
-		if e.Host != "" {
-			if ip := net.ParseIP(e.Host).To4(); ip != nil {
-				n = &net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}
-			}
-		} else if ip, m := net.ParseIP(e.Network).To4(), net.ParseIP(e.Mask).To4(); ip != nil && m != nil {
-			mask := net.IPMask(m)
-			if ones, bits := mask.Size(); bits != 0 || ones != 0 {
-				n = &net.IPNet{IP: ip.Mask(mask), Mask: mask}
-			}
-		}
-		if n != nil {
+		if n := e.IPv4Net(); n != nil {
 			out = append(out, peersubnet.Route{Net: n, Comment: e.Comment})
 		}
 	}

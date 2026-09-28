@@ -132,3 +132,18 @@ func TestServersHandler_AddServerPeer_KeygenOutsideLock(t *testing.T) {
 		t.Fatal("ключи генерируются под блокировкой F508")
 	}
 }
+
+// M3: сеть за клиентом поверх статического маршрута через другой интерфейс —
+// отказ с его названием, а не молча второй маршрут.
+func TestServersHandler_AddServerPeer_OverlapWithOtherIfaceRoute(t *testing.T) {
+	h, _, poster, _, _ := newServersSubnetHarness(t, `[]`, `[{"network":"192.168.77.0","mask":"255.255.255.0","interface":"PPPoE0","auto":true}]`)
+	stubPeerKeygen(t)
+	rr := postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32","remoteSubnets":["192.168.77.0/24"]}`)
+	body := decodeJSONBody(t, rr)
+	if rr.Code != http.StatusBadRequest || body["code"] != "REMOTE_SUBNET_OVERLAP" || !strings.Contains(body["message"].(string), "маршрут через PPPoE0") {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if posts := poster.snapshot(); len(posts) != 0 {
+		t.Fatalf("posts=%v", posts)
+	}
+}

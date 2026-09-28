@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/cache"
@@ -20,6 +21,26 @@ type StaticRouteEntry struct {
 	Host      string `json:"host"`
 	Interface string `json:"interface"`
 	Comment   string `json:"comment"`
+}
+
+// IPv4Net — сеть записи; host-форма — /32. Записи без читаемой IPv4-сети
+// (неканоническая маска, не IPv4) — nil.
+func (e StaticRouteEntry) IPv4Net() *net.IPNet {
+	if e.Host != "" {
+		if ip := net.ParseIP(e.Host).To4(); ip != nil {
+			return &net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}
+		}
+		return nil
+	}
+	ip, m := net.ParseIP(e.Network).To4(), net.ParseIP(e.Mask).To4()
+	if ip == nil || m == nil {
+		return nil
+	}
+	mask := net.IPMask(m)
+	if ones, bits := mask.Size(); bits == 0 && ones == 0 {
+		return nil
+	}
+	return &net.IPNet{IP: ip.Mask(mask), Mask: mask}
 }
 
 const staticRouteTTL = 30 * time.Second

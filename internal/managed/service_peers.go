@@ -151,7 +151,7 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		if server, ok = s.settings.GetManagedServerByID(id); !ok {
 			return nil, fmt.Errorf("managed server not found: %s", id)
 		}
-		occupied, err := s.OccupiedSubnets(ctx, PeerRef{})
+		occupied, err := s.OccupiedSubnets(ctx, PeerRef{Iface: iface})
 		if err != nil {
 			return nil, fmt.Errorf("occupied subnets: %w", err)
 		}

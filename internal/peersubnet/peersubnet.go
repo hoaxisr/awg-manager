@@ -203,11 +203,14 @@ func BuildPresets(serverSubnet *net.IPNet, lanSubnets []*net.IPNet, dnsIPs []net
 	return Presets{RouterOnly: strings.Join(routerStrs, ", "), ExceptRouter: strings.Join(except, ", ")}
 }
 
+// RouteCommentPrefix — начало метки наших маршрутов.
+const RouteCommentPrefix = "awgm-peer:"
+
 // RouteComment — метка нашего маршрута: первые 8 символов ключа как есть
 // (`+` и `/` роутер хранит, стенд 5.02.A.11, 27.09.2026).
 func RouteComment(pubkey string) string {
 	if len(pubkey) > 8 {
 		pubkey = pubkey[:8]
 	}
-	return "awgm-peer:" + pubkey
+	return RouteCommentPrefix + pubkey
 }

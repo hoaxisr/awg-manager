@@ -122,3 +122,60 @@ func TestAddPeer_KeygenOutsideLock(t *testing.T) {
 		t.Fatal("ключи генерируются под блокировкой F508")
 	}
 }
+
+// M3: статический маршрут через другой интерфейс занимает сеть; маршрут на
+// интерфейсе правимого пира, наш (awgm-peer:) и маршрут по умолчанию — нет.
+func TestOccupiedSubnets_OtherInterfaceStaticRoutes(t *testing.T) {
+	rc := `[{"network":"192.168.80.0","mask":"255.255.255.0","interface":"PPPoE0","auto":true},
+		{"host":"192.168.81.7","interface":"Wireguard0"},
+		{"network":"192.168.82.0","mask":"255.255.255.0","interface":"Wireguard1","comment":"manual"},
+		{"network":"192.168.83.0","mask":"255.255.255.0","interface":"Wireguard0","comment":"awgm-peer:SYS1=aaa"},
+		{"network":"0.0.0.0","mask":"0.0.0.0","interface":"PPPoE0"}]`
+	svc, _, _, _ := newPeerSubnetTestService(t, rc)
+	occ, err := svc.OccupiedSubnets(context.Background(), PeerRef{Iface: "Wireguard1", PubKey: "PEER1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := labels(occ)
+	if got["192.168.80.0/24"] != "маршрут через PPPoE0" || got["192.168.81.7/32"] != "маршрут через Wireguard0" {
+		t.Fatalf("маршрут через другой интерфейс не занял сеть: %v", got)
+	}
+	for _, cidr := range []string{"192.168.82.0/24", "192.168.83.0/24", "0.0.0.0/0"} {
+		if l, ok := got[cidr]; ok {
+			t.Errorf("%s не должен быть занят: %q", cidr, l)
+		}
+	}
+}
+
+// M3: маршруты не прочитались — отказ, а не «маршрутов нет».
+func TestOccupiedSubnets_StaticRoutesUnreadableIsError(t *testing.T) {
+	svc, _, _, fg := newPeerSubnetTestService(t, `[]`)
+	fg.SetError("/show/rc/ip/route", errors.New("rci down"))
+	if _, err := svc.OccupiedSubnets(context.Background(), PeerRef{Iface: "Wireguard1"}); err == nil {
+		t.Fatal("ожидали ошибку")
+	}
+}
+
+// M3: добавление пира с сетью поверх маршрута через другой интерфейс —
+// отказ с названием маршрута до единого поста.
+func TestAddPeer_OverlapWithOtherIfaceRoute_NoRCI(t *testing.T) {
+	svc, _, poster, _ := newPeerSubnetTestService(t, `[{"network":"192.168.77.0","mask":"255.255.255.0","interface":"PPPoE0"}]`)
+	_, err := svc.AddPeer(context.Background(), "Wireguard1", AddPeerRequest{Description: "branch", RemoteSubnets: []string{"192.168.77.0/24"}})
+	if !errors.Is(err, peersubnet.ErrRemoteSubnetOverlap) || !strings.Contains(err.Error(), "маршрут через PPPoE0") {
+		t.Fatalf("err = %v", err)
+	}
+	if posts := postsJSON(poster); len(posts) != 0 {
+		t.Fatalf("посты:\n%s", strings.Join(posts, "\n"))
+	}
+}
+
+// M3: маршрут на ту же сеть через интерфейс самого сервера — не занятость:
+// поверх чужой записи (N, I) сверка маршрут не ставит, пир добавляется.
+func TestAddPeer_RouteOnOwnInterfaceNotOccupied(t *testing.T) {
+	rc := `[{"network":"192.168.77.0","mask":"255.255.255.0","interface":"Wireguard1","comment":"manual"}]`
+	svc, _, poster, fg := newPeerSubnetTestService(t, rc)
+	newSimRouter(t, fg, poster, rc)
+	if _, err := svc.AddPeer(context.Background(), "Wireguard1", AddPeerRequest{Description: "branch", RemoteSubnets: []string{"192.168.77.0/24"}}); err != nil {
+		t.Fatal(err)
+	}
+}
