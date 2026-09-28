@@ -509,9 +509,26 @@ func (s *InterfaceStore) SystemNames(ctx context.Context, ids []string) map[stri
 	if len(ids) == 0 || s.ensureBootstrap(ctx) != nil {
 		return out
 	}
+	// Имя из s.sysNames уже прошло через резолвер — доверяем ему без
+	// kernelIfaceExists (сюда и приходят за именем отсутствующего сейчас
+	// устройства). Имя из byID.SystemName — сырое `interface-name` из
+	// списка, резолвером не подтверждено, поэтому проверяем его так же,
+	// как ResolveSystemName: trustedSystemName (включая kernelIfaceExists).
+	// Без этой проверки лейбл NDMS, похожий на имя ядра (5.02.A.11),
+	// использовался бы вечно, а реальное имя так и не запрашивалось.
 	cached := func(id string) string {
-		if name := s.cachedSystemName(id); name != id && looksLikeKernelIfname(name) {
-			return name
+		s.mu.RLock()
+		resolverName, viaResolver := s.sysNames[id]
+		iface, hasIface := s.byID[id]
+		s.mu.RUnlock()
+		if viaResolver {
+			if resolverName != id && looksLikeKernelIfname(resolverName) {
+				return resolverName
+			}
+			return ""
+		}
+		if hasIface && trustedSystemName(id, iface.SystemName) {
+			return iface.SystemName
 		}
 		return ""
 	}
