@@ -130,3 +130,17 @@ func isNoSuchNetInPeer(msg string) bool {
 func toleratesRouteRemoval(msg string) bool {
 	return isNoSuchInterface(msg) || isNetlinkFileExists(msg)
 }
+
+// Предикаты для PostChecked вне пакета: managed шлёт свои payload'ы той же
+// формы, что и команды здесь, и терпит те же отказы на тех же сносах.
+
+// TolerateMissingInterface — isMissingInterface: снос интерфейса, которого нет.
+func TolerateMissingInterface(msg string) bool { return isMissingInterface(msg) }
+
+// TolerateUnknownInterface — isUnknownInterface: снятие Static NAT, когда
+// сегмента или выхода уже нет (как RemoveStaticNAT).
+func TolerateUnknownInterface(msg string) bool { return isUnknownInterface(msg) }
+
+// TolerateNoSuchNetInPeer — isNoSuchNetInPeer: снятие элемента allow-ips,
+// которого у пира нет (как RemovePeerAllowIP).
+func TolerateNoSuchNetInPeer(msg string) bool { return isNoSuchNetInPeer(msg) }
