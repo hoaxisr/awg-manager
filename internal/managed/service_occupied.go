@@ -47,8 +47,16 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 	if s.queries == nil || s.queries.Interfaces == nil || s.queries.WGServers == nil {
 		return nil, fmt.Errorf("ndms queries not wired")
 	}
+	// Записи читаются геттерами, которые отказ чтения настроек глотают
+	// (GetServerInterfaces → nil): «серверов и сетей в записях нет» пропустило
+	// бы пересечение. Отказ — здесь, до них (T6).
+	if _, err := s.settings.Get(); err != nil {
+		return nil, fmt.Errorf("read settings: %w", err)
+	}
 	var out []peersubnet.Occupied
-	ifaces, err := s.queries.Interfaces.List(ctx)
+	// Свежий список, не карта событий: пропущенный хук выкинул бы
+	// существующий сервер из проверки (T6).
+	ifaces, err := s.queries.Interfaces.ListFresh(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list interfaces: %w", err)
 	}

@@ -87,6 +87,26 @@ func TestInterfaceStore_Bootstrap_PopulatesFromList(t *testing.T) {
 	}
 }
 
+// ListFresh — чтение мимо кэша для проверок перед записью (#713): интерфейс,
+// появившийся без хука, виден; отказ RCI — ошибка, а не прежний снимок.
+func TestInterfaceStore_ListFresh(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, `{}`)
+	s := NewInterfaceStore(fg, NopLogger())
+	if got, err := s.List(context.Background()); err != nil || len(got) != 0 {
+		t.Fatalf("List: %v %v", got, err)
+	}
+	fg.SetJSON(ifaceListPath, sampleIfaceList)
+	got, err := s.ListFresh(context.Background())
+	if err != nil || len(got) != 2 {
+		t.Fatalf("ListFresh: %v %v", got, err)
+	}
+	fg.SetError(ifaceListPath, errors.New("rci down"))
+	if _, err := s.ListFresh(context.Background()); err == nil {
+		t.Fatal("отказ чтения проглочен")
+	}
+}
+
 func TestInterfaceStore_Bootstrap_Concurrent_OneFetch(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleIfaceList)

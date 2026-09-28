@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -132,6 +134,44 @@ func TestOccupiedSubnets_PeerConfigUnreachableIsError(t *testing.T) {
 	fg.SetError("/show/rc/interface/Wireguard0", errors.New("rci down"))
 	if _, err := svc.OccupiedSubnets(context.Background(), PeerRef{}); err == nil {
 		t.Fatal("ожидали ошибку")
+	}
+}
+
+// T6(а): настройки не читаются — отказ, а не «серверов и сетей в записях нет».
+func TestOccupiedSubnets_SettingsUnreadableIsError(t *testing.T) {
+	svc, _, _, _ := newPeerSubnetTestService(t, `[]`)
+	dir := t.TempDir()
+	// settings.json — каталог: чтение падает не «файла нет».
+	if err := os.Mkdir(filepath.Join(dir, "settings.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	svc.settings = storage.NewSettingsStore(dir)
+	if _, err := svc.OccupiedSubnets(context.Background(), PeerRef{}); err == nil {
+		t.Fatal("ожидали ошибку")
+	}
+}
+
+// T6(б): список интерфейсов — свежий. Сервер, появившийся без хука (карта
+// событий о нём не знает), обязан попасть в проверку.
+func TestOccupiedSubnets_FreshInterfaceList(t *testing.T) {
+	svc, store, _, fg := newPeerSubnetTestService(t, `[]`)
+	if _, err := svc.queries.Interfaces.List(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fg.SetJSON("/show/interface/", `{
+		"Wireguard0":{"id":"Wireguard0","type":"Wireguard","description":"Wireguard VPN Server","address":"10.9.0.1","mask":"255.255.255.0"},
+		"Wireguard5":{"id":"Wireguard5","type":"Wireguard","description":"new","address":"10.55.0.1","mask":"255.255.255.0"}}`)
+	fg.SetJSON("/show/rc/interface/Wireguard5", `{"wireguard":{"peer":[{"key":"NEWPEER=","allow-ips":[{"address":"172.20.0.0","mask":"255.255.255.0"}]}]}}`)
+	if err := store.MarkServerInterface("Wireguard5"); err != nil {
+		t.Fatal(err)
+	}
+	occ, err := svc.OccupiedSubnets(context.Background(), PeerRef{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := labels(occ)
+	if got["172.20.0.0/24"] == "" || got["10.55.0.0/24"] == "" {
+		t.Fatalf("новый сервер не учтён: %v", got)
 	}
 }
 

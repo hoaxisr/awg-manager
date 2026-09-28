@@ -597,6 +597,22 @@ func (s *InterfaceStore) List(ctx context.Context) ([]ndms.Interface, error) {
 	return out, nil
 }
 
+// ListFresh — список интерфейсов, прочитанный с роутера сейчас, мимо карты
+// событий и без её обновления. Для проверок перед записью (занятые сети #713):
+// карта держится хуками NDMS, и пропущенный хук выкинул бы существующий
+// интерфейс из проверки. Отказ RCI — ошибка.
+func (s *InterfaceStore) ListFresh(ctx context.Context) ([]ndms.Interface, error) {
+	raw, err := s.fetchListMap(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ndms.Interface, 0, len(raw))
+	for _, iface := range raw {
+		out = append(out, iface)
+	}
+	return out, nil
+}
+
 // LANBridge — LAN-сегмент (бридж) с подсетью, для выбора в LAN-forward.
 // Description — человекочитаемое имя сегмента (NDMS description, напр. "LAN").
 type LANBridge struct{ Name, Description, Address, Mask string }
