@@ -421,6 +421,12 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 			return
 		}
 		newIP = newHost.String()
+		// F512: занятость — как в Add. Правимый пир сам себе не мешает: его
+		// адрес здесь считается так же, как oldIP выше, а oldIP != newIP.
+		if peerTunnelIPInUse(server, req.TunnelIP, h.storedPeerHost(name)) {
+			response.Error(w, "tunnel IP already in use", "TUNNEL_IP_IN_USE")
+			return
+		}
 	}
 	// Чтение роутера — после дешёвых локальных проверок.
 	var remote, added, removed []string
@@ -432,22 +438,32 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		added, removed = peersubnet.Diff(sec.RemoteSubnets, remote)
 	}
 
-	if wantIPChange {
-		if err := h.commands.Wireguard.UpdatePeerAllowIPs(r.Context(), name, pubkey, oldIP, newIP); err != nil {
-			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
-			return
-		}
-	}
 	// revertIP — хранилище не пишется, значит /32 на роутере обязан вернуться
-	// к записанному, иначе .conf выдаст адрес, которого у пира нет.
+	// к записанному, иначе .conf выдаст адрес, которого у пира нет. Новый
+	// снимается всегда (отсутствующий — не отказ): и когда старого не было
+	// (чужая форма allow-ips), и когда добавление нового само отказало.
 	revertIP := func() {
-		if !wantIPChange || oldIP == "" {
+		if !wantIPChange {
 			return
 		}
 		rbCtx, cancel := detachedCtx(r.Context())
 		defer cancel()
-		if err := h.commands.Wireguard.UpdatePeerAllowIPs(rbCtx, name, pubkey, newIP, oldIP); err != nil {
+		if err := h.commands.Wireguard.RemovePeerAllowIP(rbCtx, name, pubkey, newIP, "255.255.255.255"); err != nil {
+			h.log.Warn("update-peer", name, "новый tunnel IP не снят после отказа: "+err.Error())
+		}
+		if oldIP == "" {
+			return
+		}
+		if err := h.commands.Wireguard.AddPeerAllowIP(rbCtx, name, pubkey, oldIP, "255.255.255.255"); err != nil {
 			h.log.Warn("update-peer", name, "tunnel IP не возвращён после отказа: "+err.Error())
+		}
+	}
+	if wantIPChange {
+		if err := h.commands.Wireguard.UpdatePeerAllowIPs(r.Context(), name, pubkey, oldIP, newIP); err != nil {
+			// Старый /32 уже мог сняться до отказа добавления нового.
+			revertIP()
+			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
+			return
 		}
 	}
 	if req.Description != peer.Description {

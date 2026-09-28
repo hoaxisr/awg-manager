@@ -36,11 +36,27 @@ const (
 // пресеты). Пир всегда в списке роутера.
 func newServersSubnetHarness(t *testing.T, peerAllowIPs, rcRoutes string) (*ServersHandler, *storage.SettingsStore, *natPoster, *busProbe, *appLogSpy) {
 	t.Helper()
+	return newServersSubnetHarnessWithOther(t, peerAllowIPs, rcRoutes, "")
+}
+
+// otherPeerPubKey — второй пир Wireguard0 в newServersSubnetHarnessWithOther.
+const otherPeerPubKey = "OTHERaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa="
+
+// newServersSubnetHarnessWithOther — newServersSubnetHarness плюс второй пир
+// otherPeerPubKey с allow-ips otherAllowIPs (пусто — второго пира нет).
+func newServersSubnetHarnessWithOther(t *testing.T, peerAllowIPs, rcRoutes, otherAllowIPs string) (*ServersHandler, *storage.SettingsStore, *natPoster, *busProbe, *appLogSpy) {
+	t.Helper()
+	listPeers := `{"public-key":"` + peerFixturePubKey + `","comment":"phone"}`
+	rcPeers := `{"key":"` + peerFixturePubKey + `","comment":"phone","allow-ips":` + peerAllowIPs + `}`
+	if otherAllowIPs != "" {
+		listPeers += `,{"public-key":"` + otherPeerPubKey + `","comment":"tablet"}`
+		rcPeers += `,{"key":"` + otherPeerPubKey + `","comment":"tablet","allow-ips":` + otherAllowIPs + `}`
+	}
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/interface/", `{
-		"Wireguard0":{"id":"Wireguard0","type":"Wireguard","description":"Wireguard VPN Server","state":"up","link":"up","address":"10.9.0.1","mask":"255.255.255.0","wireguard":{"peer":[{"public-key":"`+peerFixturePubKey+`","comment":"phone"}]}},
+		"Wireguard0":{"id":"Wireguard0","type":"Wireguard","description":"Wireguard VPN Server","state":"up","link":"up","address":"10.9.0.1","mask":"255.255.255.0","wireguard":{"peer":[`+listPeers+`]}},
 		"Bridge0":{"id":"Bridge0","type":"Bridge","description":"Home","address":"192.168.1.1","mask":"255.255.255.0"}}`)
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"`+peerFixturePubKey+`","comment":"phone","allow-ips":`+peerAllowIPs+`}]}}`)
+	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[`+rcPeers+`]}}`)
 	fg.SetJSON("/show/rc/ip/route", rcRoutes)
 	fg.SetJSON("/show/running-config", `{"message":["interface PPPoE0","    ip global 32767","!"]}`)
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
@@ -310,6 +326,9 @@ func TestServersHandler_UpdateServerPeer_TunnelIPAndSubnets_ApplyFails_RestoresI
 	if iRoute < 0 || restore < 0 {
 		t.Fatalf("старый /32 не возвращён:\n%s", strings.Join(posts, "\n"))
 	}
+	if i := idx(posts[iRoute+1:], new9Off); i < 0 {
+		t.Fatalf("новый /32 не снят при откате:\n%s", strings.Join(posts, "\n"))
+	}
 	sec, _ := store.GetServerPeerSecret("Wireguard0", peerFixturePubKey)
 	if sec.TunnelIP != "10.9.0.2/32" || len(sec.RemoteSubnets) != 0 {
 		t.Fatalf("запись тронута: %+v", sec)
@@ -465,5 +484,99 @@ func TestServersHandler_UpdateServerPeer_ForeignPeer_AbsentNetworksPass(t *testi
 	h, _, _, _, _ := newServersSubnetHarness(t, `[{"address":"10.9.0.2","mask":"255.255.255.255"}]`, `[]`)
 	if rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"laptop","tunnelIP":"10.9.0.2/32"}`); rr.Code != 200 {
 		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+const (
+	old2On  = `{"address":"10.9.0.2","mask":"255.255.255.255"}`
+	new9On  = `{"address":"10.9.0.9","mask":"255.255.255.255"}`
+	new9Off = `{"address":"10.9.0.9","mask":"255.255.255.255","no":true}`
+)
+
+// T9: старый /32 снят, новый роутер не принял — старый возвращается, запись
+// не тронута. Иначе пир без адреса, а повтор со старым IP — пустой diff.
+func TestServersHandler_UpdateServerPeer_NewIPAddFails_RestoresOld(t *testing.T) {
+	h, store, poster, p, _ := newServersSubnetHarness(t, `[{"address":"10.9.0.2","mask":"255.255.255.255"}]`, `[]`)
+	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", TunnelIP: "10.9.0.2/32"})
+	poster.setFailOn(func(payload string) error {
+		if strings.Contains(payload, new9On) {
+			return errors.New("add refused")
+		}
+		return nil
+	})
+	rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.9/32"}`)
+	if rr.Code != http.StatusBadRequest || decodeJSONBody(t, rr)["code"] != "UPDATE_PEER_FAILED" {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	posts := poster.snapshot()
+	iAdd := idx(posts, new9On)
+	if iAdd < 0 || idx(posts[iAdd+1:], new9Off) < 0 || !strings.Contains(posts[len(posts)-1], old2On) {
+		t.Fatalf("после отказа нужны снятие нового и возврат старого последним:\n%s", strings.Join(posts, "\n"))
+	}
+	sec, _ := store.GetServerPeerSecret("Wireguard0", peerFixturePubKey)
+	if sec.TunnelIP != "10.9.0.2/32" {
+		t.Fatalf("запись тронута: %+v", sec)
+	}
+	if len(p.invalidated()) != 0 {
+		t.Fatal("публикация при отказе")
+	}
+}
+
+// T9: у пира не было /32 (чужая форма allow-ips), следующий шаг отказал —
+// откат снимает новый /32, возвращать нечего.
+func TestServersHandler_UpdateServerPeer_NoOldIP_LaterFails_RemovesNew(t *testing.T) {
+	h, _, poster, _, _ := newServersSubnetHarness(t, `[]`, `[]`)
+	poster.setFailOn(func(payload string) error {
+		if strings.Contains(payload, `"comment":"renamed"`) {
+			return errors.New("comment refused")
+		}
+		return nil
+	})
+	rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"renamed","tunnelIP":"10.9.0.9/32"}`)
+	if rr.Code != http.StatusBadRequest || decodeJSONBody(t, rr)["code"] != "UPDATE_PEER_FAILED" {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	posts := poster.snapshot()
+	iComment := idx(posts, `"comment":"renamed"`)
+	if iComment < 0 || idx(posts[iComment+1:], new9Off) < 0 {
+		t.Fatalf("новый /32 не снят после отказа:\n%s", strings.Join(posts, "\n"))
+	}
+}
+
+// F512: новый tunnel IP занят другим пиром — по записи или по эвристике
+// «первый /32» у пира без записи. Отказ как в Add, ни одного RCI.
+func TestServersHandler_UpdateServerPeer_TunnelIPInUse(t *testing.T) {
+	for _, tc := range []struct {
+		name, otherAllow, otherSecretIP, body string
+		wantCode                              string
+	}{
+		{"занят по записи", `[{"address":"192.168.77.0","mask":"255.255.255.0"}]`, "10.9.0.5/32", `{"description":"phone","tunnelIP":"10.9.0.5/32"}`, "TUNNEL_IP_IN_USE"},
+		{"занят по эвристике", `[{"address":"10.9.0.6","mask":"255.255.255.255"}]`, "", `{"description":"phone","tunnelIP":"10.9.0.6/32"}`, "TUNNEL_IP_IN_USE"},
+		{"свой же адрес", `[{"address":"10.9.0.6","mask":"255.255.255.255"}]`, "", `{"description":"phone","tunnelIP":"10.9.0.2/32"}`, ""},
+		{"свободный", `[{"address":"10.9.0.6","mask":"255.255.255.255"}]`, "10.9.0.5/32", `{"description":"phone","tunnelIP":"10.9.0.9/32"}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, store, poster, _, _ := newServersSubnetHarnessWithOther(t, `[{"address":"10.9.0.2","mask":"255.255.255.255"}]`, `[]`, tc.otherAllow)
+			_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", TunnelIP: "10.9.0.2/32"})
+			if tc.otherSecretIP != "" {
+				_ = store.SetServerPeerSecret("Wireguard0", otherPeerPubKey, storage.ServerPeerSecret{PrivateKey: "Q", TunnelIP: tc.otherSecretIP})
+			}
+			rr := putServerPeer(t, h, peerFixturePubKey, tc.body)
+			if tc.wantCode == "" {
+				if rr.Code != 200 {
+					t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+				}
+				return
+			}
+			if rr.Code != http.StatusBadRequest || decodeJSONBody(t, rr)["code"] != tc.wantCode {
+				t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+			}
+			if n := len(poster.snapshot()); n != 0 {
+				t.Fatalf("RCI при занятом адресе: %d", n)
+			}
+			if sec, _ := store.GetServerPeerSecret("Wireguard0", peerFixturePubKey); sec.TunnelIP != "10.9.0.2/32" {
+				t.Fatalf("запись тронута: %+v", sec)
+			}
+		})
 	}
 }
