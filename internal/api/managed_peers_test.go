@@ -49,6 +49,8 @@ func TestUpdatePeerHandler_SignatureErrorCodes(t *testing.T) {
 		{"unknown profile", managed.ErrUnknownSignatureProfile, "INVALID_SIGNATURE_PROFILE"},
 		{"too large", managed.ErrSignatureTooLarge, "SIGNATURE_TOO_LARGE"},
 		{"anything else", errors.New("peer not found"), "UPDATE_PEER_FAILED"},
+		// Fix round 4: пир снят с роутера мимо панели — понятный код, не «сбой».
+		{"peer gone from router", fmt.Errorf("apply remote subnets: %w", peersubnet.ErrPeerNotFound), `"code":"NOT_FOUND"`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

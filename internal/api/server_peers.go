@@ -537,6 +537,11 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		if err := peersubnet.Reconcile(r.Context(), ndmscommand.NewPeerRouter(h.commands), name, pubkey, tunnelHosts, remote); err != nil {
 			h.logRollback("update-peer", name, err)
 			revertIP()
+			if errors.Is(err, peersubnet.ErrPeerNotFound) {
+				// Пир снят мимо панели — тот же ответ, что у смены адреса выше.
+				response.Error(w, "peer not found on router", "NOT_FOUND")
+				return
+			}
 			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
 			return
 		}

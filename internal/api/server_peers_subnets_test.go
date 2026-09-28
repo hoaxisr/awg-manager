@@ -1163,3 +1163,18 @@ func TestServersHandler_UpdateServerPeer_TunnelChange_PeerAbsentOnRouter_NoPosts
 		t.Fatalf("posts=%v ghost=%v", posts, sim.has(peerFixturePubKey))
 	}
 }
+
+// Fix round 4: пир в списке сервера есть, на роутере нет (снят в веб-морде) —
+// сверка сетей отказывает до мутаций, ответ — NOT_FOUND, а не «сбой правки».
+func TestServersHandler_UpdateServerPeer_Reconcile_PeerAbsent_NotFound(t *testing.T) {
+	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
+	sim := newSysSimRouter(t, fg.FakeGetter, poster, `[]`) // пира на «роутере» нет
+	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "phone", TunnelIP: "10.9.0.2/32"})
+	rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","remoteSubnets":["192.168.77.0/24"]}`)
+	if rr.Code != http.StatusBadRequest || decodeJSONBody(t, rr)["code"] != "NOT_FOUND" {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if posts := poster.snapshot(); len(posts) != 0 || sim.has(peerFixturePubKey) {
+		t.Fatalf("posts=%v ghost=%v", posts, sim.has(peerFixturePubKey))
+	}
+}

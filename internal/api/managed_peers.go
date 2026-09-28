@@ -185,6 +185,9 @@ func (h *ManagedServerHandler) UpdatePeer(w http.ResponseWriter, r *http.Request
 			response.Error(w, err.Error(), "SIGNATURE_TOO_LARGE")
 		case errors.Is(err, managed.ErrInvalidSignatureTag):
 			response.Error(w, err.Error(), "SIGNATURE_INVALID_TAG")
+		case errors.Is(err, peersubnet.ErrPeerNotFound):
+			// Пир есть в записи, но снят с роутера мимо панели.
+			response.Error(w, err.Error(), "NOT_FOUND")
 		default:
 			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
 		}
