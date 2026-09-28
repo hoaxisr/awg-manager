@@ -103,7 +103,8 @@ func TestColdStart_ExistingRecordWithoutDevice_BackendBeforeAddress(t *testing.T
 // (так её создаёт CreateOpkgTun и так же NDMS восстанавливает сохранённую
 // запись после ребута) — старт идёт дальше. Чужое описание без живого
 // amneziawg — отказ ДО backend.Start и до любой RCI-записи, без отката. Чужое
-// описание под живым amneziawg — запись наша (описание разошлось), Warn и дальше.
+// описание под живым amneziawg — запись наша (описание разошлось): старт
+// переписывает описание на имя туннеля и идёт дальше.
 func TestColdStart_ExistingRecordOwnership(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -135,11 +136,20 @@ func TestColdStart_ExistingRecordOwnership(t *testing.T) {
 				if err != nil {
 					t.Fatalf("ColdStart: %v", err)
 				}
-				// Описание разошлось, но запись наша — старт его не правит.
+				// Запись наша. Описание разошлось (живое amneziawg) — старт
+				// лечит его на имя туннеля; совпало — не пишет ничего.
+				var descr []string
 				for _, p := range poster.payloads {
 					if js, _ := json.Marshal(p); strings.Contains(string(js), `"description"`) {
-						t.Fatalf("описание записи переписано на старте: %s", js)
+						descr = append(descr, string(js))
 					}
+				}
+				want := 0
+				if tc.description != "Germany" {
+					want = 1
+				}
+				if len(descr) != want || (want == 1 && descr[0] != `{"interface":{"OpkgTun10":{"description":"Germany"}}}`) {
+					t.Fatalf("описание на старте = %v, want %d запись с «Germany»", descr, want)
 				}
 				return
 			}
@@ -179,6 +189,40 @@ func TestReconcile_ForeignRecord_Refused(t *testing.T) {
 	if len(be.StartCalls) != 0 || hasCall(rec.Calls, "/opt/sbin/ip link del dev opkgtun10") {
 		t.Fatalf("чужая запись тронута: start=%v\n%s", be.StartCalls, strings.Join(rec.Calls, "\n"))
 	}
+}
+
+// Рестарт демона (opkg upgrade → Reconcile) лечит разошедшееся описание
+// работающего туннеля; провал записи описания старт не валит — запись наша.
+func TestReconcile_HealsDriftedDescription(t *testing.T) {
+	const want = `{"interface":{"OpkgTun10":{"description":"Germany"}}}`
+	for name, fail := range map[string]bool{"запись прошла": false, "запись отвергнута": true} {
+		t.Run(name, func(t *testing.T) {
+			poster := &descriptionPoster{fail: fail}
+			getter := ndmsquery.NewFakeGetter()
+			getter.SetJSON("/show/interface/", `{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","state":"up","link":"up","description":"old"}}`)
+			o, _ := newOS5LifecycleOn(t, poster, getter, &MockBackend{running: true}, true)
+			if err := o.Reconcile(context.Background(), lifecycleCfg(t)); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			if !hasPayload(poster.payloads, want) {
+				t.Fatalf("описание не вылечено: %v", poster.payloads)
+			}
+		})
+	}
+}
+
+// descriptionPoster — recordingPoster, который при fail отвергает запись описания.
+type descriptionPoster struct {
+	recordingPoster
+	fail bool
+}
+
+func (p *descriptionPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	p.payloads = append(p.payloads, payload)
+	if js, _ := json.Marshal(payload); p.fail && strings.Contains(string(js), `"description"`) {
+		return nil, errors.New("injected: description")
+	}
+	return json.RawMessage(`[{"status":[{"status":"ok"}]}]`), nil
 }
 
 // Кэш записей NDMS не поднялся — «не знаем», а не «записи нет»: Create поверх

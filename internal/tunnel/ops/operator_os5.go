@@ -54,7 +54,8 @@ func (e *ForeignRecordError) Error() string {
 // CreateOpkgTun и переименование через UpdateDescription; так же NDMS
 // восстанавливает сохранённую запись после ребута) либо под ней живое
 // amneziawg — такие устройства создаём только мы, а описание разошлось
-// (переименование без сохранения конфигурации). Иначе — ForeignRecordError
+// (переименование без сохранения конфигурации); такое описание переписываем
+// на имя туннеля. Иначе — ForeignRecordError
 // ДО любой RCI-записи, до backend.Start и без rollbackStart: сторонняя
 // программа завела запись на нашем номере (F517), её устройство не наше.
 // Ошибка чтения — тоже отказ: «не знаем» ≠ «записи нет», Create поверх
@@ -76,8 +77,14 @@ func (o *OperatorOS5Impl) ensureOpkgTunRecord(ctx context.Context, op string, cf
 			&ForeignRecordError{NDMSName: names.NDMSName, Description: rec.Description, Want: cfg.Name})
 	}
 	if rec.Description != cfg.Name {
-		o.logWarn(op, cfg.ID, fmt.Sprintf("описание записи %s %q ≠ имени туннеля %q; под записью живое amneziawg — запись наша, описание не правим",
+		// Запись наша по живому amneziawg, описание разошлось — лечим: иначе
+		// после ребута (устройства ещё нет) гейт счёл бы её чужой. Провал
+		// записи старт не валит — запись всё равно наша.
+		o.logWarn(op, cfg.ID, fmt.Sprintf("описание записи %s %q ≠ имени туннеля %q; под записью живое amneziawg — запись наша, описание переписываем",
 			names.NDMSName, rec.Description, cfg.Name))
+		if err := o.commands.Interfaces.SetDescription(ctx, names.NDMSName, cfg.Name); err != nil {
+			o.logWarn(op, cfg.ID, "set description: "+err.Error())
+		}
 	}
 	return false, nil
 }
