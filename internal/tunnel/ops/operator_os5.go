@@ -509,7 +509,15 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	if running && !justCreated {
 		o.logInfo("reconcile", cfg.ID, "Kernel interface alive, kept")
 	} else {
-		o.ipRun(ctx, "/opt/sbin/ip", "link", "del", "dev", names.IfaceName)
+		// Живое amneziawg под только что созданной записью: backend.Start его
+		// не тронул бы (IsRunning=true), а SetAddress ниже требует свежее —
+		// сносим здесь. Отсутствующее или не-amneziawg устройство (plain tun
+		// после ребута) сносит сам backend.Start — и отказывает HeldError,
+		// если устройство держит чужая программа (F500). Сносить его тут
+		// значило бы обойти этот гейт.
+		if running {
+			o.ipRun(ctx, "/opt/sbin/ip", "link", "del", "dev", names.IfaceName)
+		}
 		if err := o.backend.Start(ctx, names.IfaceName); err != nil {
 			return tunnel.NewOpError("reconcile", cfg.ID, "backend", err)
 		}

@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 )
 
 // newOS5Lifecycle — OS5-оператор над записывающим RCI-постером и записывающим
@@ -489,14 +491,17 @@ func TestReconcile_KeepsRunningKernelInterface(t *testing.T) {
 
 // Устройство пересоздаётся, если его нет (rmmod, ручной ip link del) — и если
 // записи OpkgTun в NDMS не было: на живом kernel-устройстве NDMS отвергает
-// ip address (exit 122), запись надо ставить на свежее.
+// ip address (exit 122), запись надо ставить на свежее. `ip link del` из
+// Reconcile — только для живого amneziawg под свежей записью; отсутствующее
+// или не-amneziawg устройство сносит сам backend.Start (там гейт F500).
 func TestReconcile_RecreatesKernelInterface(t *testing.T) {
 	cases := []struct {
 		name    string
 		backend *MockBackend
+		wantDel bool
 	}{
-		{"устройства нет", &MockBackend{}},
-		{"устройство живо, записи OpkgTun нет", &MockBackend{running: true, pid: 1}},
+		{"устройства нет", &MockBackend{}, false},
+		{"устройство живо, записи OpkgTun нет", &MockBackend{running: true, pid: 1}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -504,10 +509,60 @@ func TestReconcile_RecreatesKernelInterface(t *testing.T) {
 			if err := o.Reconcile(context.Background(), lifecycleCfg(t)); err != nil {
 				t.Fatal(err)
 			}
-			if !hasCall(rec.Calls, "/opt/sbin/ip link del dev opkgtun10") || !slices.Equal(tc.backend.StartCalls, []string{"opkgtun10"}) {
-				t.Fatalf("устройство не пересоздано: start=%v\n%s", tc.backend.StartCalls, strings.Join(rec.Calls, "\n"))
+			if got := hasCall(rec.Calls, "/opt/sbin/ip link del dev opkgtun10"); got != tc.wantDel {
+				t.Fatalf("ip link del = %v, want %v:\n%s", got, tc.wantDel, strings.Join(rec.Calls, "\n"))
+			}
+			if !slices.Equal(tc.backend.StartCalls, []string{"opkgtun10"}) {
+				t.Fatalf("устройство не пересоздано: start=%v", tc.backend.StartCalls)
 			}
 		})
+	}
+}
+
+// F500: на номере туннеля plain tun, который держит чужая программа (запись
+// OpkgTun10 в NDMS есть — стенд 27.09: запись раньше процесса). Reconcile не
+// сносит его ни своим `ip link del`, ни через backend.Start — наружу
+// HeldError с pid и именем программы.
+func TestReconcile_ForeignHeldDevice_RefusedWithoutDelete(t *testing.T) {
+	held := &backend.HeldError{Iface: "opkgtun10", PID: 4242, Comm: "csqtt"}
+	be := &MockBackend{startError: held}
+	getter := ndmsquery.NewFakeGetter()
+	getter.SetJSON("/show/interface/", `{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","state":"up","link":"down","description":"Germany"}}`)
+	o, rec := newOS5LifecycleOn(t, &recordingPoster{}, getter, be, true)
+
+	err := o.Reconcile(context.Background(), lifecycleCfg(t))
+
+	var got *backend.HeldError
+	if !errors.As(err, &got) || got.PID != 4242 {
+		t.Fatalf("err = %v, want *backend.HeldError{PID:4242}", err)
+	}
+	if hasCall(rec.Calls, "/opt/sbin/ip link del dev opkgtun10") {
+		t.Fatalf("чужое устройство снесено оператором:\n%s", strings.Join(rec.Calls, "\n"))
+	}
+}
+
+// Тот же сценарий на ColdStart (boot / ручной старт). Откат идёт через
+// backend.Stop — реальный бэкенд отказывает и там (backend.TestStop_Held…),
+// здесь проверяется, что оператор сам `ip link del` не зовёт и ошибку не
+// прячет за откатом.
+func TestColdStart_ForeignHeldDevice_RefusedWithoutDelete(t *testing.T) {
+	held := &backend.HeldError{Iface: "opkgtun10", PID: 4242, Comm: "csqtt"}
+	be := &MockBackend{startError: held}
+	getter := ndmsquery.NewFakeGetter()
+	getter.SetJSON("/show/interface/", `{"OpkgTun10":{"id":"OpkgTun10","type":"OpkgTun","state":"up","link":"down","description":"Germany"}}`)
+	o, rec := newOS5LifecycleOn(t, &recordingPoster{}, getter, be, true)
+
+	err := o.ColdStart(context.Background(), lifecycleCfg(t))
+
+	var got *backend.HeldError
+	if !errors.As(err, &got) || got.Comm != "csqtt" {
+		t.Fatalf("err = %v, want *backend.HeldError{Comm:csqtt}", err)
+	}
+	if !strings.Contains(err.Error(), "занят сторонней программой csqtt (pid 4242)") {
+		t.Fatalf("текст отказа не дошёл до пользователя: %q", err.Error())
+	}
+	if hasCall(rec.Calls, "/opt/sbin/ip link del dev opkgtun10") {
+		t.Fatalf("чужое устройство снесено оператором:\n%s", strings.Join(rec.Calls, "\n"))
 	}
 }
 
