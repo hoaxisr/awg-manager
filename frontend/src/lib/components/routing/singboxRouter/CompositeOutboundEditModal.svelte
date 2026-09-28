@@ -61,6 +61,7 @@
 		await loadBindables();
 		if (bindables.some((i) => i.name === name)) {
 			bindInterface = name;
+			error = '';
 		} else {
 			error = 'Интерфейс отмечен, но не появился в списке — обновите диалог';
 		}
@@ -347,7 +348,7 @@
 			</div>
 		{/if}
 
-		{#if error}<div class="error">{error}</div>{/if}
+		{#if error}<div class="error-text visible">{error}</div>{/if}
 	</div>
 
 	{#snippet actions()}
