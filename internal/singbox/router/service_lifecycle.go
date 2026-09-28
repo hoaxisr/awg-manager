@@ -229,8 +229,11 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 		// живут в персисте, который очищается только при успешном delete).
 		removed, err := s.releaseForeignOpkgTun(ctx, st, "policy-tun-reap")
 		if err != nil {
-			// Персист остаётся — следующий тик/бут повторит.
-			s.appLog.Warn("policy-tun-reap", ownedPolicy, "reap opkgtun: "+err.Error())
+			// Персист остаётся — следующий тик/бут повторит (в т.ч.
+			// errOpkgTunOwnershipUnknown: скан упал, F493; Warn уже дал гейт).
+			if !errors.Is(err, errOpkgTunOwnershipUnknown) {
+				s.appLog.Warn("policy-tun-reap", ownedPolicy, "reap opkgtun: "+err.Error())
+			}
 		} else {
 			// Info — только на реальном сносе: на пропуске чужого интерфейса
 			// сносить было нечего, а запись всё равно снимается (скан успешен,
@@ -307,8 +310,14 @@ func (s *ServiceImpl) ReapOrphanedFakeIPTun(ctx context.Context) error {
 	}
 	// Доказанно чужой интерфейс на нашем индексе не сносим (нашего там нет);
 	// запись при этом снимается как отработанная — гоняться за чужим индексом
-	// каждый тик значило бы churn без шанса на успех.
-	if !s.skipForeignTeardown(ctx, owned, fakeIPTunDescription, "fakeip-reap") {
+	// каждый тик значило бы churn без шанса на успех. Скан упал — ни сноса, ни
+	// снятия записи: следующий тик/бут повторит (F493); Warn уже дал гейт,
+	// поэтому наружу nil — иначе планировщик писал бы второе предупреждение.
+	proceed, gateErr := s.teardownGate(ctx, owned, fakeIPTunDescription, "fakeip-reap")
+	if gateErr != nil {
+		return nil
+	}
+	if proceed {
 		if err := s.teardownOpkgTun(ctx, owned, "fakeip-reap"); err != nil {
 			// Keep the persist on failure: the next tick/boot retries the reap
 			// rather than leaking the orphan forever. teardownOpkgTun has already

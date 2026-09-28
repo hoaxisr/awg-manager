@@ -133,6 +133,60 @@ func scanNone() func(context.Context, string) ([]string, error) {
 	return func(context.Context, string) ([]string, error) { return nil, nil }
 }
 
+// scanFails — скан подключён, но упал: «не знаем» (ни наш, ни чужой).
+func scanFails() func(context.Context, string) ([]string, error) {
+	return func(context.Context, string) ([]string, error) { return nil, errors.New("injected: scan") }
+}
+
+// Четыре вердикта скана владения: отсутствие скана и его ошибка — разные
+// состояния, и только ошибка означает «не знаем» (F493).
+func TestOpkgTunOwnership_FourStates(t *testing.T) {
+	cases := []struct {
+		name string
+		scan func(context.Context, string) ([]string, error)
+		want opkgTunOwnership
+	}{
+		{"скана нет", nil, ownershipNoScan},
+		{"скан упал", scanFails(), ownershipUnknown},
+		{"наш", scanOurs(fakeIPTunDescription, "OpkgTun3"), ownershipOurs},
+		{"чужой", scanNone(), ownershipForeign},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newTestService(t, Deps{OpkgTunScan: tc.scan})
+			if got := svc.opkgTunOwnership(context.Background(), "OpkgTun3", fakeIPTunDescription); got != tc.want {
+				t.Fatalf("ownership = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// Гейт сноса: наш и «скана нет» — сносим; чужой — пропуск без ошибки (запись
+// отработана); скан упал — пропуск с errOpkgTunOwnershipUnknown (запись
+// остаётся, повтор следующим тиком).
+func TestTeardownGate_UnknownIsAnError(t *testing.T) {
+	cases := []struct {
+		name    string
+		scan    func(context.Context, string) ([]string, error)
+		proceed bool
+		wantErr error
+	}{
+		{"скана нет", nil, true, nil},
+		{"наш", scanOurs(policyTunDescription, "OpkgTun2"), true, nil},
+		{"чужой", scanNone(), false, nil},
+		{"скан упал", scanFails(), false, errOpkgTunOwnershipUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newTestService(t, Deps{OpkgTunScan: tc.scan})
+			proceed, err := svc.teardownGate(context.Background(), "OpkgTun2", policyTunDescription, "test")
+			if proceed != tc.proceed || !errors.Is(err, tc.wantErr) {
+				t.Fatalf("gate = (%v, %v), want (%v, %v)", proceed, err, tc.proceed, tc.wantErr)
+			}
+		})
+	}
+}
+
 // Д1: индекс из записи fakeip жив, но интерфейс на нём — ЧУЖОЙ (скан по нашему
 // описанию его не видит). Гард идемпотентности принимал live[Index] за «наш
 // жив» и no-op'ился: чужой интерфейс «усыновлён». Ожидание: доказанно чужой →
@@ -419,22 +473,25 @@ func scanOurs(description, id string) func(context.Context, string) ([]string, e
 }
 
 // foreignTeardownCases — общая раскладка для всех точек сноса по индексу из
-// записи владения: чужой не сносится, свой сносится, недоступный скан сносится
-// (страховочный подкейс — «не знаем» ≠ «чужой», иначе обвязки без скана
-// перестали бы убирать собственные сироты).
+// записи владения: чужой не сносится, свой сносится, скана нет — сносится
+// (обвязки без скана убирают свои сироты), скан упал — НЕ сносится и запись
+// остаётся (unknown, F493).
 func foreignTeardownCases(description, id string) []struct {
 	name    string
 	scan    func(context.Context, string) ([]string, error)
 	wantDel bool
+	unknown bool
 } {
 	return []struct {
 		name    string
 		scan    func(context.Context, string) ([]string, error)
 		wantDel bool
+		unknown bool
 	}{
-		{"чужой на нашем индексе", scanNone(), false},
-		{"наш", scanOurs(description, id), true},
-		{"скан недоступен", nil, true},
+		{"чужой на нашем индексе", scanNone(), false, false},
+		{"наш", scanOurs(description, id), true, false},
+		{"скана нет", nil, true, false},
+		{"скан упал", scanFails(), false, true},
 	}
 }
 
@@ -485,9 +542,14 @@ func TestReapOrphaned_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
 			if got := len(opkg.deleted) == 1 && opkg.deleted[0] == "OpkgTun3"; got != tc.wantDel {
 				t.Errorf("deleted = %v, want снос = %v", opkg.deleted, tc.wantDel)
 			}
-			// Запись снимается в обоих исходах: нашего интерфейса на индексе
-			// доказанно нет, а погоня за чужим индексом каждый тик — churn.
-			if got := loadFakeIP(t, store); got != nil {
+			// Запись снимается, когда вердикт есть (наш снесён / нашего доказанно
+			// нет). Скан упал — запись ОСТАЁТСЯ: следующий тик повторит (F493).
+			got := loadFakeIP(t, store)
+			if tc.unknown {
+				if got == nil || got.Index != 3 {
+					t.Errorf("запись = %+v, want сохранена {Index:3} при недоступном скане", got)
+				}
+			} else if got != nil {
 				t.Errorf("запись = %+v, want nil после реапа", got)
 			}
 		})
@@ -514,6 +576,17 @@ func TestPolicyTunReap_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
 
 			if got := len(opkg.deleted) == 1 && opkg.deleted[0] == "OpkgTun2"; got != tc.wantDel {
 				t.Errorf("deleted = %v, want снос = %v", opkg.deleted, tc.wantDel)
+			}
+			all, err := store.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.unknown {
+				if all.OpkgTun == nil || all.OpkgTun.Mode != storage.OpkgTunModePolicyTun || all.OpkgTun.Index != 2 {
+					t.Errorf("запись = %+v, want сохранена policy-tun{Index:2} при недоступном скане", all.OpkgTun)
+				}
+			} else if all.OpkgTun != nil {
+				t.Errorf("запись = %+v, want nil после реапа", all.OpkgTun)
 			}
 		})
 	}
@@ -588,8 +661,12 @@ func TestFakeipWithConfig_SparesForeignInterfaceCIDRRoutes(t *testing.T) {
 				t.Fatalf("fakeipWithConfig: %v", err)
 			}
 
-			if got := log.has("AddRoute:149.154.160.0:255.255.240.0:OpkgTun3"); got != tc.wantDel {
-				t.Errorf("правка CIDR-маршрутов = %v, want %v: %v", got, tc.wantDel, log.calls)
+			// Правка маршрутов — гард присвоения (provenForeignOpkgTun), не снос:
+			// «не знаем ≠ чужой», поэтому на упавшем скане правка выполняется,
+			// как и до F493.
+			want := tc.wantDel || tc.unknown
+			if got := log.has("AddRoute:149.154.160.0:255.255.240.0:OpkgTun3"); got != want {
+				t.Errorf("правка CIDR-маршрутов = %v, want %v: %v", got, want, log.calls)
 			}
 		})
 	}
@@ -604,6 +681,9 @@ func TestFakeipWithConfig_SparesForeignInterfaceCIDRRoutes(t *testing.T) {
 func TestPolicyTunDisable_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
 	for _, tc := range foreignTeardownCases(policyTunDescription, "OpkgTun0") {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.unknown {
+				t.Skip("F518: выключение на упавшем скане — снимается в Task 3")
+			}
 			h := newPolicyTunEnableHarness(t, "")
 			// hold мутирует интерфейс (down/clear) и потому гейтится его наличием:
 			// NDMS создаёт интерфейс по любой мутации имени, а delete за ним не идёт.
@@ -621,11 +701,20 @@ func TestPolicyTunDisable_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
 				}
 			}
 			st := h.loadPolicyTun(t)
-			if tc.wantDel {
+			switch {
+			case tc.unknown:
+				// Скан упал — интерфейс не тронут (проверено выше: wantDel=false),
+				// а запись ОСТАЁТСЯ Provisioned: reconcilePolicyTun при
+				// Enabled=false зовёт Disable снова, тик с ожившим сканом доводит
+				// удержание (F518).
+				if st == nil || !st.Provisioned || st.Index != 0 {
+					t.Errorf("запись = %+v, want сохранена {Provisioned:true, Index:0}", st)
+				}
+			case tc.wantDel:
 				if st == nil || st.Provisioned {
 					t.Errorf("запись = %+v, want удержание {Provisioned:false}", st)
 				}
-			} else if st != nil {
+			case st != nil:
 				t.Errorf("запись = %+v, want nil (удерживать чужой индекс нечем)", st)
 			}
 		})

@@ -296,8 +296,10 @@ func TestReapOrphaned_ScanDeleteFailureStillClearsAddress(t *testing.T) {
 	}
 }
 
-// A scanner error is logged and skipped — the persist-based reap still runs.
-func TestReapOrphaned_ScanErrorFallsBackToPersistReap(t *testing.T) {
+// Упавший скан: владение интерфейса из записи не установлено — персист-реап
+// ничего не сносит и запись держит, повтор следующим тиком (F493). Ошибку
+// наружу не отдаёт: Warn уже дал гейт.
+func TestReapOrphaned_ScanErrorDefersPersistReap(t *testing.T) {
 	store := newReapSettingsStore(t, "tproxy", 3, true)
 	opkg := &recordingOpkgTunProvisioner{}
 	svc := newTestService(t, Deps{Settings: store, OpkgTun: opkg, OpkgTunScan: scanReturning(nil, errors.New("rci down"))})
@@ -305,8 +307,11 @@ func TestReapOrphaned_ScanErrorFallsBackToPersistReap(t *testing.T) {
 	if err := svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
 		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
 	}
-	if len(opkg.deleted) != 1 || opkg.deleted[0] != "OpkgTun3" {
-		t.Errorf("deleted = %v, want [OpkgTun3] via persist-based reap", opkg.deleted)
+	if len(opkg.deleted) != 0 {
+		t.Errorf("deleted = %v, want [] при недоступном скане", opkg.deleted)
+	}
+	if got := loadFakeIP(t, store); got == nil || got.Index != 3 {
+		t.Errorf("запись = %+v, want сохранена {Index:3}", got)
 	}
 }
 

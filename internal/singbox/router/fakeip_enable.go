@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -121,7 +122,8 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	pin := noPin
 	if prevRecord != nil && prevRecord.Mode != storage.OpkgTunModeFakeIP {
 		removed, rerr := s.releaseForeignOpkgTun(ctx, prevRecord, "fakeip-enable")
-		if rerr != nil {
+		// Скан упал — Warn уже дал teardownGate, второй не нужен.
+		if rerr != nil && !errors.Is(rerr, errOpkgTunOwnershipUnknown) {
 			s.appLog.Warn("fakeip-enable", tunNDMSName(prevRecord.Index), "release foreign opkgtun: "+rerr.Error())
 		}
 		// live после сноса НЕ перечитывается: занятость собирает пул сам, а

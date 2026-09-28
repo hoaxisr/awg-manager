@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"slices"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -51,18 +52,42 @@ func setPolicyPayload(st *storage.OpkgTunState, segs []storage.PolicyTunNATSegme
 	st.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: segs}
 }
 
-// ownsOpkgTun сообщает, несёт ли живой NDMS-интерфейс наше описание.
-// Скана нет или он упал — false: «не знаем» ≠ «наш», а Create по чужому живому
-// интерфейсу переписал бы его настройки (fail-closed, reuse-путь policy-tun).
-func (s *ServiceImpl) ownsOpkgTun(ctx context.Context, ndmsName, description string) bool {
+// opkgTunOwnership — вердикт скана владения по NDMS-имени из записи.
+type opkgTunOwnership uint8
+
+const (
+	// ownershipNoScan — deps.OpkgTunScan не подключён. Прод подключает скан
+	// всегда (wiring_server.go, cleanup.go); без него живут только тесты и
+	// обвязки без NDMS — каждый потребитель ведёт себя как до появления скана.
+	ownershipNoScan opkgTunOwnership = iota
+	// ownershipUnknown — скан подключён, но упал: «не знаем» ≠ «наш» и ≠ «чужой»
+	// (F493). Снос по имени из записи откладывается, запись не снимается.
+	ownershipUnknown
+	ownershipOurs
+	ownershipForeign
+)
+
+// opkgTunOwnership — один скан на вердикт; отличие ошибки скана от его
+// отсутствия принципиально (см. константы).
+func (s *ServiceImpl) opkgTunOwnership(ctx context.Context, ndmsName, description string) opkgTunOwnership {
 	if s.deps.OpkgTunScan == nil {
-		return false
+		return ownershipNoScan
 	}
 	ids, err := s.deps.OpkgTunScan(ctx, description)
 	if err != nil {
-		return false
+		return ownershipUnknown
 	}
-	return slices.Contains(ids, ndmsName)
+	if slices.Contains(ids, ndmsName) {
+		return ownershipOurs
+	}
+	return ownershipForeign
+}
+
+// ownsOpkgTun сообщает, несёт ли живой NDMS-интерфейс наше описание. Скана
+// нет или он упал — false: «не знаем» ≠ «наш», а Create по чужому живому
+// интерфейсу переписал бы его настройки (fail-closed, reuse-путь policy-tun).
+func (s *ServiceImpl) ownsOpkgTun(ctx context.Context, ndmsName, description string) bool {
+	return s.opkgTunOwnership(ctx, ndmsName, description) == ownershipOurs
 }
 
 // provenForeignOpkgTun — «доказанно чужой»: скан по нашему описанию УСПЕШЕН и
@@ -70,14 +95,7 @@ func (s *ServiceImpl) ownsOpkgTun(ctx context.Context, ndmsName, description str
 // (fail-closed для reuse), здесь «не знаем ≠ чужой» — недоступный скан не
 // должен ронять идемпотентность в вечный re-provision.
 func (s *ServiceImpl) provenForeignOpkgTun(ctx context.Context, ndmsName, description string) bool {
-	if s.deps.OpkgTunScan == nil {
-		return false
-	}
-	ids, err := s.deps.OpkgTunScan(ctx, description)
-	if err != nil {
-		return false
-	}
-	return !slices.Contains(ids, ndmsName)
+	return s.opkgTunOwnership(ctx, ndmsName, description) == ownershipForeign
 }
 
 // needsReprovision — общий предикат обоих reconcile: провижининга нет, наш
@@ -103,19 +121,37 @@ func (s *ServiceImpl) needsReprovision(ctx context.Context, st *storage.OpkgTunS
 	return s.provenForeignOpkgTun(ctx, tunNDMSName(st.Index), desc)
 }
 
-// skipForeignTeardown отвечает, надо ли ПРОПУСТИТЬ снос интерфейса, на который
-// указывает запись владения: индекс мог занять посторонний OpkgTun после смерти
-// нашего, и снос по имени убил бы чужое. Зеркало provenForeignOpkgTun-гарда на
-// присвоении: тот запрещает БРАТЬ чужой интерфейс, этот — УДАЛЯТЬ его.
-// Семантика та же — «недоступный скан ≠ чужой»: без скана и на его ошибке
-// сносим как раньше, иначе обвязки без скана перестали бы убирать собственные
-// сироты. Пропуск логируется.
-func (s *ServiceImpl) skipForeignTeardown(ctx context.Context, ndmsName, description, scope string) bool {
-	if !s.provenForeignOpkgTun(ctx, ndmsName, description) {
-		return false
+// errOpkgTunOwnershipUnknown — скан владения подключён, но недоступен:
+// интерфейс по имени из записи не трогаем и запись не снимаем; повтор —
+// следующим тиком или бутом, а persist-less хвост с нашим описанием добирает
+// reapOrphansByDescription, когда скан заработает (F493).
+var errOpkgTunOwnershipUnknown = errors.New("владение OpkgTun не установлено: скан NDMS недоступен")
+
+// teardownGate решает, можно ли сносить интерфейс по имени из записи владения:
+// индекс мог занять посторонний OpkgTun после смерти нашего, и снос по имени
+// убил бы чужое. Зеркало provenForeignOpkgTun-гарда на присвоении: тот
+// запрещает БРАТЬ чужой интерфейс, этот — УДАЛЯТЬ его.
+//
+// proceed=true — наш, либо скана нет вовсе (обвязка без скана убирает свои
+// сироты как раньше). Доказанно чужой — (false, nil): сносить нечего, запись
+// отработана. Скан упал — (false, errOpkgTunOwnershipUnknown): не сносим и не
+// снимаем запись. Оба пропуска логируются здесь, вызывающие не дублируют.
+func (s *ServiceImpl) teardownGate(ctx context.Context, ndmsName, description, scope string) (proceed bool, err error) {
+	switch s.opkgTunOwnership(ctx, ndmsName, description) {
+	case ownershipForeign:
+		s.appLog.Warn(scope, ndmsName, "на этом номере нет нашего OpkgTun — снос пропущен")
+		return false, nil
+	case ownershipUnknown:
+		s.appLog.Warn(scope, ndmsName, "скан владения NDMS недоступен — снос отложен до следующего тика")
+		return false, errOpkgTunOwnershipUnknown
 	}
-	s.appLog.Warn(scope, ndmsName, "на этом номере нет нашего OpkgTun — снос пропущен")
-	return true
+	return true, nil
+}
+
+// skipForeignTeardown — переходная обёртка; снимается в Task 5.
+func (s *ServiceImpl) skipForeignTeardown(ctx context.Context, ndmsName, description, scope string) bool {
+	proceed, _ := s.teardownGate(ctx, ndmsName, description, scope)
+	return !proceed
 }
 
 // releaseForeignOpkgTun освобождает запись владения ЧУЖОГО режима перед её
@@ -139,8 +175,12 @@ func (s *ServiceImpl) releaseForeignOpkgTun(ctx context.Context, st *storage.Opk
 	if st.Mode == storage.OpkgTunModePolicyTun {
 		desc = policyTunDescription
 	}
-	if s.skipForeignTeardown(ctx, ndmsName, desc, scope) {
-		return false, nil
+	// Чужой → (false, nil): сносить нечего, запись отработана. Скан упал →
+	// (false, errOpkgTunOwnershipUnknown): реап держит запись до следующего
+	// тика, handover в enable идёт дальше как при провале release — хвост с
+	// прежним описанием добирает description-реап.
+	if proceed, gerr := s.teardownGate(ctx, ndmsName, desc, scope); !proceed {
+		return false, gerr
 	}
 	if err := s.teardownOpkgTun(ctx, ndmsName, scope); err != nil {
 		return false, err
