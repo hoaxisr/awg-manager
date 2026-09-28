@@ -12,6 +12,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
 
@@ -242,7 +243,9 @@ func (h *ImportHandler) resolveObfuscatorImport(ctx context.Context, req *Import
 		}
 		req.Content = conf
 		if req.Name == "" {
-			req.Name = name
+			// Имя подставил производитель ссылки, не человек: обрезаем до
+			// предела описания NDMS, а не отвергаем импорт.
+			req.Name = tunnel.TruncateName(name)
 		}
 	}
 	// `= none` дописывает только производитель phobos://-ссылки; обычный .conf

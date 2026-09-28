@@ -362,6 +362,13 @@ func (s *ServiceImpl) Update(ctx context.Context, oldStored, newStored *storage.
 	if newStored.Interface.MTU <= 0 {
 		return fmt.Errorf("MTU must be > 0")
 	}
+	// Только на переименовании: имя, заведённое до предела, не должно
+	// блокировать правку остальных полей карточки.
+	if oldStored.Name != newStored.Name {
+		if err := tunnel.ValidateName(newStored.Name); err != nil {
+			return err
+		}
+	}
 
 	// Block address change in kernel mode once OpkgTun or the backend process
 	// exists — NDMS/kernel cannot rename the live interface. Before first
@@ -779,6 +786,9 @@ func (s *ServiceImpl) Import(ctx context.Context, confContent, name, backend str
 	if parsed.Name == "" {
 		parsed.Name = "Imported Tunnel"
 	}
+	if err := tunnel.ValidateName(parsed.Name); err != nil {
+		return nil, err
+	}
 
 	// Determine backend
 	if backend == "" {
@@ -1027,6 +1037,9 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 // ReplaceConfig replaces a tunnel's Interface and Peer from a parsed .conf,
 // preserving identity, routing, monitoring, and all other metadata.
 func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string, opts ReplaceOptions) error {
+	if err := tunnel.ValidateName(newName); err != nil {
+		return err
+	}
 	s.lockTunnel(tunnelID)
 	defer s.unlockTunnel(tunnelID)
 

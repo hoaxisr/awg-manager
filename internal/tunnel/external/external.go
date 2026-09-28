@@ -372,6 +372,9 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (*service.TunnelW
 	if t.Name == "" {
 		t.Name = fmt.Sprintf("Imported %s", req.InterfaceName)
 	}
+	if err := tunnel.ValidateName(t.Name); err != nil {
+		return nil, err
+	}
 
 	// Set defaults
 	t.Type = "awg"

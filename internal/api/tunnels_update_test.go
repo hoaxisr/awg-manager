@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -1087,5 +1089,31 @@ func TestUpdate_BusyTunnelAnswersConflict(t *testing.T) {
 	}
 	if saved.Name != "t" {
 		t.Fatalf("карточка переписана вопреки отказу: %q", saved.Name)
+	}
+}
+
+// Имя длиннее предела описания NDMS (256 байт) отвергается ДО Stop: отказ
+// сервиса после остановки оставил бы работающий туннель выключенным.
+func TestTunnelReplaceConf_NameOverByteLimitRefusedBeforeStop(t *testing.T) {
+	stopped := 0
+	stub := &stubTunnelSvc{
+		stateFn: func(string) tunnel.StateInfo { return tunnel.StateInfo{State: tunnel.StateRunning} },
+		stopFn:  func(context.Context, string) error { stopped++; return nil },
+	}
+	h, store := newTunnelsUpdateHarness(t, stub)
+	if err := store.Create(&storage.AWGTunnel{ID: "awg11", Name: "NL_CHIS"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	body, _ := json.Marshal(map[string]string{"content": "[Interface]\nAddress = 10.0.0.2/32\n",
+		"name": strings.Repeat("ж", 128) + "a"})
+
+	rec := httptest.NewRecorder()
+	h.ReplaceConf(rec, httptest.NewRequest(http.MethodPost, "/tunnels/replace?id=awg11", bytes.NewReader(body)))
+
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "длиннее 256 байт") {
+		t.Fatalf("код = %d, тело: %s", rec.Code, rec.Body.String())
+	}
+	if stopped != 0 || stub.replaceCalls != 0 {
+		t.Fatalf("туннель тронут: stop=%d replace=%d", stopped, stub.replaceCalls)
 	}
 }

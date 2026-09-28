@@ -3,10 +3,12 @@ package external
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/sysinfo"
 )
 
@@ -226,5 +228,21 @@ func TestAnnotate_MarksAddressCollisionWithManagedTunnel(t *testing.T) {
 
 	if list[0].ConflictsWith != "Germany_AWG_3.1" {
 		t.Fatalf("ConflictsWith = %q, ждали имя туннеля", list[0].ConflictsWith)
+	}
+}
+
+// Взятие стороннего туннеля — тоже создание записи: имя упирается в тот же
+// предел описания NDMS, что и у импорта (256 байт).
+func TestAdopt_RefusesNameOverByteLimit(t *testing.T) {
+	stubScan(t, nil, nil)
+	stubLinkExists(t, false)
+	s := newTestService(t)
+	_, err := s.Adopt(context.Background(), AdoptRequest{InterfaceName: "opkgtun9", ConfContent: validAdoptConf,
+		TunnelName: strings.Repeat("ж", 128) + "a"})
+	if !errors.Is(err, tunnel.ErrNameTooLong) {
+		t.Fatalf("err = %v, want ErrNameTooLong", err)
+	}
+	if list, _ := s.store.List(); len(list) != 0 {
+		t.Fatalf("запись заведена при отказе: %d", len(list))
 	}
 }

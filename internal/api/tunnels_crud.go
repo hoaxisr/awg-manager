@@ -861,6 +861,12 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 		response.BadRequest(w, "missing config content")
 		return
 	}
+	// Тот же предел проверяет ReplaceConfig, но уже после Stop ниже: отказ там
+	// оставил бы работающий туннель выключенным.
+	if err := tunnel.ValidateName(req.Name); err != nil {
+		response.BadRequest(w, err.Error())
+		return
+	}
 
 	// Check tunnel exists
 	stored, err := h.store.Get(id)

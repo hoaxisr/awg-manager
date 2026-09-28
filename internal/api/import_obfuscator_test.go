@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -118,6 +119,20 @@ func TestImportConf_PhobosLinkDecoded(t *testing.T) {
 	}
 	if strings.HasPrefix(svc.content, "phobos://") {
 		t.Error("ссылка не декодирована")
+	}
+}
+
+// Имя из фрагмента ссылки подставил не человек: длиннее предела описания
+// NDMS (256 байт) оно обрезается по границе руны, а не валит импорт.
+func TestImportConf_PhobosLinkNameTruncated(t *testing.T) {
+	h, svc, _ := importObfHarness(t)
+	long := strings.Repeat("ж", 200) // 400 байт
+	link := "phobos://" + base64.RawURLEncoding.EncodeToString([]byte(phobosConfFixture)) + "#" + url.PathEscape(long)
+
+	postImport(t, h, ImportConfRequest{Content: link})
+
+	if svc.name != strings.Repeat("ж", 128) {
+		t.Fatalf("имя = %d байт, want обрезанное до 256 по руне", len(svc.name))
 	}
 }
 
