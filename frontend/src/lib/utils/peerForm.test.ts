@@ -4,7 +4,9 @@ import {
 	validateClientAllowedIPs,
 	validateRemoteSubnets,
 	parseRemoteSubnets,
-	validatePeerNetworks
+	validatePeerNetworks,
+	normalizeClientAllowedIPs,
+	formatClientAllowedIPs
 } from './peerForm';
 
 describe('validateTunnelIP', () => {
@@ -65,6 +67,21 @@ describe('validateClientAllowedIPs', () => {
 		expect(validateClientAllowedIPs('10.0.0.1')).toMatch(/CIDR/);
 		expect(validateClientAllowedIPs('10.0.0.0/24, x')).toMatch(/x/);
 		expect(validateClientAllowedIPs('fd00::/129')).toMatch(/CIDR/);
+	});
+	it('принимает переводы строк и пропускает пустые элементы', () => {
+		expect(validateClientAllowedIPs('10.0.0.0/24,\nfd00::/64')).toBeNull();
+		expect(validateClientAllowedIPs('10.0.0.0/24,')).toBeNull();
+		expect(validateClientAllowedIPs(' ,\n , 10.0.0.0/24')).toBeNull();
+	});
+});
+
+describe('normalize/formatClientAllowedIPs', () => {
+	it('textarea ↔ формат хранения «, »', () => {
+		const stored = '10.0.0.0/24, fd00::/64';
+		expect(formatClientAllowedIPs(stored)).toBe('10.0.0.0/24,\nfd00::/64');
+		expect(normalizeClientAllowedIPs('10.0.0.0/24,\n fd00::/64,\n')).toBe(stored);
+		expect(normalizeClientAllowedIPs(formatClientAllowedIPs(stored))).toBe(stored);
+		expect(normalizeClientAllowedIPs(' \n ')).toBe('');
 	});
 });
 

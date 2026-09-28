@@ -47,12 +47,28 @@ function isAnyCIDR(v: string): boolean {
 	return false;
 }
 
-/** «AllowedIPs клиента»: CIDR через запятую, IPv4/IPv6; пусто — весь трафик. */
+/** Элементы «AllowedIPs клиента»: через запятую и/или с новой строки; пустые пропускаются. */
+function splitClientAllowedIPs(text: string): string[] {
+	return text
+		.split(/[\n,]+/)
+		.map((s) => s.trim())
+		.filter((s) => s !== '');
+}
+
+/** Формат хранения и API: CIDR через «, ». */
+export function normalizeClientAllowedIPs(text: string): string {
+	return splitClientAllowedIPs(text).join(', ');
+}
+
+/** Для textarea: перенос строки после каждой запятой — длинный пресет читаем. */
+export function formatClientAllowedIPs(text: string): string {
+	return splitClientAllowedIPs(text).join(',\n');
+}
+
+/** «AllowedIPs клиента»: CIDR IPv4/IPv6; пусто — весь трафик. */
 export function validateClientAllowedIPs(v: string): string | null {
-	const value = v.trim();
-	if (value === '') return null;
-	for (const entry of value.split(',').map((s) => s.trim())) {
-		if (entry === '' || !isAnyCIDR(entry)) return `некорректный CIDR: ${entry}`;
+	for (const entry of splitClientAllowedIPs(v)) {
+		if (!isAnyCIDR(entry)) return `некорректный CIDR: ${entry}`;
 	}
 	return null;
 }

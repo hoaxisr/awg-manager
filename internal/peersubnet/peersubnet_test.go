@@ -26,6 +26,13 @@ func TestValidateClientAllowedIPs(t *testing.T) {
 	if got, err := ValidateClientAllowedIPs("  "); err != nil || got != "" {
 		t.Fatalf("empty: %q %v", got, err)
 	}
+	// Пустые элементы пропускаются, как у ValidateRemoteSubnets.
+	if got, err := ValidateClientAllowedIPs("10.0.0.0/24,"); err != nil || got != "10.0.0.0/24" {
+		t.Fatalf("trailing comma: %q %v", got, err)
+	}
+	if got, err := ValidateClientAllowedIPs(" , \n,"); err != nil || got != "" {
+		t.Fatalf("only separators: %q %v", got, err)
+	}
 	for _, bad := range []string{"10.0.0.1", "10.0.0.0/24, host", "10.0.0.0/33", "PostUp = rm -rf /"} {
 		if _, err := ValidateClientAllowedIPs(bad); !errors.Is(err, ErrInvalidClientAllowedIPs) {
 			t.Errorf("%q: err = %v", bad, err)
@@ -50,7 +57,7 @@ func TestValidateRemoteSubnets(t *testing.T) {
 		label   string
 	}{
 		{"ok+canon", []string{"192.168.77.5/24", " 172.16.0.0/12 "}, nil, []string{"192.168.77.0/24", "172.16.0.0/12"}, ""},
-		{"empty skipped", []string{"", "192.168.77.0/24"}, nil, []string{"192.168.77.0/24"}, ""},
+		{"empty skipped", []string{"", " \t", "192.168.77.0/24"}, nil, []string{"192.168.77.0/24"}, ""},
 		{"no prefix", []string{"192.168.77.0"}, ErrInvalidRemoteSubnets, nil, ""},
 		{"ipv6", []string{"fd00::/64"}, ErrInvalidRemoteSubnets, nil, ""},
 		{"default", []string{"0.0.0.0/0"}, ErrInvalidRemoteSubnets, nil, ""},
