@@ -215,7 +215,11 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	// выполнив второе, мы убили бы посторонний туннель наполовину. Цена гейта
 	// честная: kernel-сироту без NDMS-объекта скан тоже не видит, поэтому её
 	// уборка здесь пропускается (индекс не течёт — аллокатор live-sourced).
-	if !s.skipForeignTeardown(ctx, ndmsName, fakeIPTunDescription, "fakeip-disable") {
+	// Скан упал — тоже пропуск (F493): запись всё равно снимается на шаге (5),
+	// а интерфейс с нашим описанием добирает reapOrphansByDescription, когда
+	// скан заработает. Ошибку гейта не возвращаем: выключение обязано дойти
+	// до персиста.
+	if proceed, _ := s.teardownGate(ctx, ndmsName, fakeIPTunDescription, "fakeip-disable"); proceed {
 		// (4c) Уборку осиротевшего kernel-netdev делает сам teardownOpkgTun —
 		// он же нужен откатам и реап-ретраям, которые ходят туда напрямую.
 		_ = s.teardownOpkgTun(ctx, ndmsName, "fakeip-disable")

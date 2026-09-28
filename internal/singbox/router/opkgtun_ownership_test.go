@@ -461,6 +461,73 @@ func TestFakeIPEnable_KeepsForeignNATPayloadWhenReleaseFails(t *testing.T) {
 	}
 }
 
+// F493, handover: fakeip включают при живой записи policy-tun, а скан NDMS
+// упал. Прежний интерфейс НЕ сносится (мы не знаем, наш ли он), включение
+// идёт дальше на другом номере — как при провале release. Хвост с описанием
+// policy-tun добирает description-реап, когда скан заработает: у записи теперь
+// режим fakeip, и OpkgTun2 для реапа — persist-less сирота policy-tun.
+func TestFakeIPEnable_HandoverScanUnavailable_LeavesPreviousInterface(t *testing.T) {
+	h := newFakeIPEnableHarness(t, "")
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{2: true}}
+	natState := &fakeNATState{}
+	h.svc.deps.NATState = natState
+	h.svc.deps.SegmentNAT = &recSegmentNAT{log: h.log, state: natState}
+	h.svc.deps.OpkgTunScan = scanFails()
+	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{
+		Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 2,
+	}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(fakeip) при упавшем скане: %v", err)
+	}
+	if h.log.has("Delete:OpkgTun2") {
+		t.Fatalf("прежний интерфейс снесён при недоступном скане: %v", h.log.calls)
+	}
+	all, err := h.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.OpkgTun == nil || all.OpkgTun.Mode != storage.OpkgTunModeFakeIP || all.OpkgTun.Index == 2 {
+		t.Fatalf("итоговая запись = %+v, want fakeip на номере ≠ 2", all.OpkgTun)
+	}
+
+	// Скан ожил и видит наше policy-описание на OpkgTun2 → реап убирает хвост.
+	h.log.calls = nil
+	h.svc.deps.OpkgTunScan = scanOurs(policyTunDescription, "OpkgTun2")
+	if err := h.svc.ReapOrphanedFakeIPTun(context.Background()); err != nil {
+		t.Fatalf("ReapOrphanedFakeIPTun: %v", err)
+	}
+	if !h.log.has("Delete:OpkgTun2") {
+		t.Fatalf("хвост handover'а не добран description-реапом: %v", h.log.calls)
+	}
+}
+
+// Зеркало для обратного handover'а: policy-tun включают при живой записи
+// fakeip, скан упал. Прежний интерфейс не сносится, включение не падает и
+// уезжает на другой номер (removed=false → пина на отобранный номер нет).
+func TestPolicyTunEnable_HandoverScanUnavailable_LeavesPreviousInterface(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	h.svc.deps.OpkgTunIndices = &recIndices{live: map[int]bool{4: true}}
+	h.svc.deps.OpkgTunScan = scanFails()
+	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{
+		Mode: storage.OpkgTunModeFakeIP, Provisioned: true, Index: 4,
+	}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
+	}
+
+	if err := h.svc.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable(policy-tun) при упавшем скане: %v", err)
+	}
+	if h.log.has("Delete:OpkgTun4") {
+		t.Fatalf("прежний интерфейс снесён при недоступном скане: %v", h.log.calls)
+	}
+	if st := h.loadPolicyTun(t); st == nil || st.Index == 4 {
+		t.Fatalf("запись = %+v, want policy-tun на номере ≠ 4", st)
+	}
+}
+
 // scanOurs — успешный скан, отдающий наше имя по ЗАДАННОМУ описанию: «доказанно
 // наш» (симметрия к scanNone).
 func scanOurs(description, id string) func(context.Context, string) ([]string, error) {
@@ -522,6 +589,13 @@ func TestFakeIPDisable_SparesForeignInterfaceOnPersistedIndex(t *testing.T) {
 			}
 			if got := deletes(); got != wantLink {
 				t.Errorf("ip link delete calls = %d, want %d", got, wantLink)
+			}
+			// Выключение — долговечная правда «режим выключен»: запись снимается
+			// при ЛЮБОМ вердикте, иначе следующий Enable увидел бы
+			// Provisioned+live и no-op'нулся на разобранных маршрутах. Хвост
+			// при упавшем скане добирает description-реап (см. handover-тест).
+			if got := loadFakeIP(t, h.store); got != nil {
+				t.Errorf("запись после Disable = %+v, want nil", got)
 			}
 		})
 	}
