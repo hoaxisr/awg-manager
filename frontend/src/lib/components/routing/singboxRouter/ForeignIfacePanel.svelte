@@ -2,6 +2,7 @@
 	import { api } from '$lib/api/client';
 	import { Button, Input, StatusDot } from '$lib/components/ui';
 	import type { ForeignIfaceCandidate } from '$lib/types';
+	import { ChevronDown, ChevronRight } from 'lucide-svelte';
 
 	interface Props {
 		onpicked: (name: string) => void;
@@ -47,7 +48,7 @@
 </script>
 
 <button type="button" class="foreign-toggle" onclick={toggle}>
-	{open ? '▾' : '▸'} Нужного нет? Интерфейс другой программы…
+	{#if open}<ChevronDown size={15} strokeWidth={2.5} />{:else}<ChevronRight size={15} strokeWidth={2.5} />{/if} Нужного нет? Интерфейс другой программы…
 </button>
 {#if open}
 	<div class="foreign-panel">
