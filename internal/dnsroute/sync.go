@@ -148,14 +148,11 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 	}
 	target := buildTargetState(data, failedSet)
 
-	// Force-refresh caches: router state may have been mutated since the
-	// last fetch (60-minute TTL is too long for reconcile-time freshness).
-	if s.queries != nil {
-		s.queries.ObjectGroups.InvalidateAll()
-		s.queries.DNSProxy.InvalidateAll()
-	}
-
-	allRoutes, err := s.queries.DNSProxy.List(ctx)
+	// Fresh reads (Fetch — past the TTL and the singleflight): router state
+	// may have been mutated since the last fetch (60-minute TTL is too long
+	// for reconcile-time freshness), and InvalidateAll+List could join a
+	// fetch started before the mutation.
+	allRoutes, err := s.queries.DNSProxy.Fetch(ctx)
 	if errors.Is(err, query.ErrNotSupportedOnOS4) {
 		// OS4 has no NDMS dns-proxy; dnsroute is a no-op on this platform.
 		// HR Neo handles DNS routing on OS4 via the hr_delegate path.
@@ -166,7 +163,7 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 		return fmt.Errorf("show dns-proxy route: %w", err)
 	}
 
-	allGroups, err := s.queries.ObjectGroups.List(ctx)
+	allGroups, err := s.queries.ObjectGroups.Fetch(ctx)
 	if err != nil {
 		s.logError("reconcile", "", "Failed to read object-groups", err.Error())
 		return fmt.Errorf("show object-group fqdn: %w", err)
@@ -592,8 +589,7 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff) error {
 	}
 
 	if len(written) > 0 {
-		s.queries.DNSProxy.InvalidateAll()
-		fresh, err := s.queries.DNSProxy.List(ctx)
+		fresh, err := s.queries.DNSProxy.Fetch(ctx)
 		if err != nil {
 			s.logError("applyDiff", "", "Phase5a: refetch dns-proxy after rewrite", err.Error())
 			// Non-fatal: the next reconcile will catch up.

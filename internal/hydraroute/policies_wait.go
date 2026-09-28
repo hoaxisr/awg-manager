@@ -32,8 +32,7 @@ func (s *Service) WaitForPolicy(ctx context.Context, policyName string, timeout 
 	start := time.Now()
 
 	for {
-		queries.Policies.InvalidateAll()
-		list, err := queries.Policies.List(ctx)
+		list, err := queries.Policies.Fetch(ctx)
 		if err == nil {
 			for _, p := range list {
 				if p.Name == policyName {

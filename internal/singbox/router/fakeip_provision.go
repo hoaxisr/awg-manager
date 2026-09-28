@@ -75,12 +75,12 @@ type SegmentNATProvider interface {
 }
 
 // RunningConfigReader читает строки /show/running-config. TTL-кэша 60 мин
-// хватает всему остальному, но policy-tun-reconcile обязан звать InvalidateAll
-// перед чтением: дрейф permit/route, внесённый пользователем мимо нас, иначе
-// невидим до часа.
+// хватает всему остальному, но policy-tun-reconcile решает по свежему чтению
+// (Fetch — мимо кэша и singleflight): дрейф permit/route, внесённый
+// пользователем мимо нас, иначе невидим до часа.
 type RunningConfigReader interface {
 	Lines(ctx context.Context) ([]string, error)
-	InvalidateAll()
+	Fetch(ctx context.Context) ([]string, error)
 }
 
 // NATStateReader — структурированное состояние NAT (вместо текстового парсинга

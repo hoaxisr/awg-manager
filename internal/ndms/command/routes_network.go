@@ -9,14 +9,14 @@ import (
 
 // freshStaticRoutes — /show/rc/ip/route, прочитанный сейчас. Снимок кэша
 // внешние правки (веб-морда роутера) не сбрасывают, а List при отказе RCI
-// отдаёт устаревшее значение без ошибки; после InvalidateAll отказ fetch
-// всплывает — решения о владении по нему fail-closed (11.B/11.6).
+// отдаёт устаревшее значение без ошибки; Fetch ходит мимо кэша и
+// singleflight, и отказ всплывает — решения о владении по нему fail-closed
+// (11.B/11.6).
 func (c *RouteCommands) freshStaticRoutes(ctx context.Context) ([]query.StaticRouteEntry, error) {
 	if c.queries == nil || c.queries.StaticRoutes == nil {
 		return nil, fmt.Errorf("static route store not wired")
 	}
-	c.queries.StaticRoutes.InvalidateAll()
-	entries, err := c.queries.StaticRoutes.List(ctx)
+	entries, err := c.queries.StaticRoutes.Fetch(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read static routes: %w", err)
 	}

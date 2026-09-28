@@ -22,10 +22,10 @@ import (
 // ---------------------------------------------------------------------------
 
 type fakeRunningConfig struct {
-	lines       []string
-	fresh       []string // если задано — что отдаёт чтение ПОСЛЕ инвалидации (протухший кэш)
-	reads       int
-	invalidated int
+	lines   []string
+	fresh   []string // если задано — что отдаёт свежее чтение (протухший кэш)
+	reads   int
+	fetched int
 }
 
 func (f *fakeRunningConfig) Lines(context.Context) ([]string, error) {
@@ -33,11 +33,12 @@ func (f *fakeRunningConfig) Lines(context.Context) ([]string, error) {
 	return f.lines, nil
 }
 
-func (f *fakeRunningConfig) InvalidateAll() {
-	f.invalidated++
+func (f *fakeRunningConfig) Fetch(context.Context) ([]string, error) {
+	f.fetched++
 	if f.fresh != nil {
 		f.lines = f.fresh
 	}
+	return f.lines, nil
 }
 
 // healthyPolicyTunRC — running-config провижининга «всё на месте»: дефолты
@@ -290,10 +291,10 @@ func TestReconcilePolicyTun_ReaddsMissingDefaultRoute(t *testing.T) {
 	if h.log.has("SetIPv6DefaultRoute:OpkgTun0") {
 		t.Errorf("присутствующий v6-дефолт трогать не нужно: %v", h.log.calls)
 	}
-	// Нездоровое состояние → кэш running-config сбрасывается, чтобы решение
+	// Нездоровое состояние → running-config перечитывается, чтобы решение
 	// принималось по свежим данным.
-	if rc.invalidated == 0 {
-		t.Error("при дрейфе кэш running-config обязан инвалидироваться")
+	if rc.fetched == 0 {
+		t.Error("при дрейфе running-config обязан перечитываться свежим")
 	}
 }
 
@@ -557,8 +558,8 @@ func TestReconcilePolicyTun_NoMutationWhenNoDrift(t *testing.T) {
 	if len(h.log.calls) != 0 {
 		t.Errorf("здоровый тик обязан быть без мутаций NDMS, получено %v", h.log.calls)
 	}
-	if rc.invalidated != 0 {
-		t.Errorf("здоровое состояние не должно сбрасывать кэш running-config (invalidated=%d)", rc.invalidated)
+	if rc.fetched != 0 {
+		t.Errorf("здоровое состояние не должно перечитывать running-config (fetched=%d)", rc.fetched)
 	}
 }
 

@@ -72,14 +72,13 @@ func (s *Service) planPeerSubnetsACL(ctx context.Context, server *storage.Manage
 }
 
 // lanACLBound — список AWGM_<iface> есть в running-config и привязан к
-// интерфейсу. Кэш сбрасывается: список мог снять кто угодно мимо нас, а хук
-// ndm на такую правку к нам не приходит.
+// интерфейсу. Чтение свежее (Fetch, мимо кэша): список мог снять кто угодно
+// мимо нас, а хук ndm на такую правку к нам не приходит.
 func (s *Service) lanACLBound(ctx context.Context, iface string) (bool, error) {
 	if s.queries == nil || s.queries.RunningConfig == nil {
 		return false, fmt.Errorf("running-config store not wired")
 	}
-	s.queries.RunningConfig.InvalidateAll()
-	lines, err := s.queries.RunningConfig.Lines(ctx)
+	lines, err := s.queries.RunningConfig.Fetch(ctx)
 	if err != nil {
 		return false, fmt.Errorf("read running-config: %w", err)
 	}

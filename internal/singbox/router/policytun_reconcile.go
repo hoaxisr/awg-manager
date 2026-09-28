@@ -392,8 +392,7 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 		// По кэшу всё плохо — перечитываем и решаем по свежим данным: иначе
 		// починка мимо нас (пользователь в веб-морде) выглядела бы дрейфом и
 		// каждый тик переставляла бы уже стоящие маршруты.
-		s.deps.RunningConfig.InvalidateAll()
-		if fresh, ferr := s.deps.RunningConfig.Lines(ctx); ferr == nil {
+		if fresh, ferr := s.deps.RunningConfig.Fetch(ctx); ferr == nil {
 			lines = fresh
 			v4, v6 = policyTunDefaultRoutePresent(fresh, ndmsName)
 			global = policyTunIPGlobalPresent(fresh, ndmsName)
