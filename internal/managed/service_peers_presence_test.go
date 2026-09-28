@@ -91,3 +91,34 @@ func TestPeerKeyedEdits_TakePeerSubnetsLock(t *testing.T) {
 		})
 	}
 }
+
+// lockProbeKeyGen — fakeKeyGen, который запоминает, была ли занята блокировка
+// F508 в момент генерации ключей.
+type lockProbeKeyGen struct {
+	fakeKeyGen
+	svc       *Service
+	underLock bool
+}
+
+func (k *lockProbeKeyGen) GenerateKeyPair(ctx context.Context) (string, string, error) {
+	if k.svc.peerSubnetsMu.TryLock() {
+		k.svc.peerSubnetsMu.Unlock()
+	} else {
+		k.underLock = true
+	}
+	return k.fakeKeyGen.GenerateKeyPair(ctx)
+}
+
+// M1: генерация ключей (exec awg) — не под блокировкой F508.
+func TestAddPeer_KeygenOutsideLock(t *testing.T) {
+	svc, _, poster, fg := newPeerSubnetTestService(t, `[]`)
+	newSimRouter(t, fg, poster, `[]`)
+	kg := &lockProbeKeyGen{svc: svc}
+	svc.keyGen = kg
+	if _, err := svc.AddPeer(context.Background(), "Wireguard1", AddPeerRequest{Description: "branch", RemoteSubnets: []string{"192.168.77.0/24"}}); err != nil {
+		t.Fatal(err)
+	}
+	if kg.underLock {
+		t.Fatal("ключи генерируются под блокировкой F508")
+	}
+}

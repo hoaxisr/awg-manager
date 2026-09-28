@@ -72,10 +72,6 @@ func (s *Service) rollbackAddedPeer(ctx context.Context, op, iface, pubKey, name
 // AddPeer adds a new client peer to the managed server identified by id.
 // Returns the created peer (including private key for .conf generation).
 func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*storage.ManagedPeer, error) {
-	// F508: занятые → валидация → роутер → запись под одной блокировкой.
-	if len(req.RemoteSubnets) > 0 {
-		defer s.LockPeerSubnets()()
-	}
 	server, ok := s.settings.GetManagedServerByID(id)
 	if !ok {
 		return nil, fmt.Errorf("managed server not found: %s", id)
@@ -147,6 +143,14 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 	var router peersubnet.Router
 	var aclEdit peerACLEdit
 	if len(req.RemoteSubnets) > 0 {
+		// F508: занятые → валидация → роутер → запись под одной блокировкой.
+		// Берётся после генерации ключей и сигнатуры (exec awg — не под ней),
+		// а запись сервера перечитывается уже под ней: план ACL строится по
+		// сетям соседей, которые параллельная правка могла сменить.
+		defer s.LockPeerSubnets()()
+		if server, ok = s.settings.GetManagedServerByID(id); !ok {
+			return nil, fmt.Errorf("managed server not found: %s", id)
+		}
 		occupied, err := s.OccupiedSubnets(ctx, PeerRef{})
 		if err != nil {
 			return nil, fmt.Errorf("occupied subnets: %w", err)

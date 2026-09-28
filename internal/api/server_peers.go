@@ -218,19 +218,6 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		response.Error(w, err.Error(), "INVALID_CLIENT_ALLOWED_IPS")
 		return
 	}
-	// F508: занятые → валидация → запись → роутер под одной блокировкой,
-	// общей с managed-путём. Отпускается до публикации и writeAll (I2).
-	unlock := func() {}
-	if len(req.RemoteSubnets) > 0 && h.managedSvc != nil {
-		unlock = h.lockPeerSubnets()
-	}
-	defer unlock()
-	// Чтение роутера — после дешёвых локальных проверок и до ключей.
-	remote, ok := h.validateRemoteSubnets(r.Context(), w, req.RemoteSubnets, managed.PeerRef{Iface: name}, "ADD_PEER_FAILED")
-	if !ok {
-		return
-	}
-
 	// Сигнатура принадлежит пиру: генерируем по дефолтному профилю. Отказ
 	// генератора — отказ создания пира (fail closed), молча выдавать пира
 	// без имитации нельзя.
@@ -257,6 +244,19 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 	ip, _, err := net.ParseCIDR(req.TunnelIP)
 	if err != nil {
 		response.Error(w, "invalid tunnel IP", "INVALID_TUNNEL_IP")
+		return
+	}
+
+	// F508: занятые → валидация → запись → роутер под одной блокировкой,
+	// общей с managed-путём. Берётся после генерации ключей и сигнатуры (exec
+	// awg — не под ней); отпускается до публикации и writeAll (I2).
+	unlock := func() {}
+	if len(req.RemoteSubnets) > 0 && h.managedSvc != nil {
+		unlock = h.lockPeerSubnets()
+	}
+	defer unlock()
+	remote, ok := h.validateRemoteSubnets(r.Context(), w, req.RemoteSubnets, managed.PeerRef{Iface: name}, "ADD_PEER_FAILED")
+	if !ok {
 		return
 	}
 

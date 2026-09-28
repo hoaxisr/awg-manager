@@ -1,10 +1,13 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -100,5 +103,32 @@ func TestServersHandler_ToggleServerPeer_PeerAbsent_NoGhost(t *testing.T) {
 	}
 	if posts := poster.snapshot(); len(posts) != 0 || sim.has(peerFixturePubKey) {
 		t.Fatalf("posts=%v ghost=%v", posts, sim.has(peerFixturePubKey))
+	}
+}
+
+// M1: генерация ключей (exec awg) — не под блокировкой F508.
+func TestServersHandler_AddServerPeer_KeygenOutsideLock(t *testing.T) {
+	h, _, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
+	newSysSimRouter(t, fg.FakeGetter, poster, `[]`)
+	stubPeerKeygen(t)
+	var underLock atomic.Bool
+	genKeyPair = func(context.Context) (string, string, error) {
+		acquired := make(chan func(), 1)
+		go func() { acquired <- h.managedSvc.LockPeerSubnets() }()
+		select {
+		case unlock := <-acquired:
+			unlock()
+		case <-time.After(100 * time.Millisecond):
+			underLock.Store(true)
+			go func() { (<-acquired)() }()
+		}
+		return "PRIV-fixture", peerFixturePubKey, nil
+	}
+	rr := postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32","remoteSubnets":["192.168.77.0/24"]}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if underLock.Load() {
+		t.Fatal("ключи генерируются под блокировкой F508")
 	}
 }
