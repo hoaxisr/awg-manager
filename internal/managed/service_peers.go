@@ -232,19 +232,32 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 
 // UpdatePeer updates an existing peer's description and/or tunnel IP.
 func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdatePeerRequest) error {
-	// F508: занятые → валидация → сверка → запись под одной блокировкой; снимок
-	// ниже читается уже под ней, поэтому возврат «к записанному» верен.
-	if req.RemoteSubnets != nil {
+	load := func() (*storage.ManagedServer, int, error) {
+		server, ok := s.settings.GetManagedServerByID(id)
+		if !ok {
+			return nil, -1, fmt.Errorf("managed server not found: %s", id)
+		}
+		idx := s.findPeerIndex(server, pubkey)
+		if idx < 0 {
+			return nil, -1, fmt.Errorf("peer not found: %s", pubkey)
+		}
+		return server, idx, nil
+	}
+	server, idx, err := load()
+	if err != nil {
+		return err
+	}
+	// Сверка — только когда сети есть хоть с одной стороны: фронт шлёт [] и у
+	// пира без сетей, такой правке ни блокировка, ни чтения роутера не нужны.
+	// Решение — по снимку; F508: занятые → валидация → сверка → запись под
+	// одной блокировкой, и запись перечитывается уже под ней — возврат «к
+	// записанному» при сбое записи верен.
+	reconcile := req.RemoteSubnets != nil && (len(*req.RemoteSubnets) > 0 || len(server.Peers[idx].RemoteSubnets) > 0)
+	if reconcile {
 		defer s.LockPeerSubnets()()
-	}
-	server, ok := s.settings.GetManagedServerByID(id)
-	if !ok {
-		return fmt.Errorf("managed server not found: %s", id)
-	}
-
-	idx := s.findPeerIndex(server, pubkey)
-	if idx < 0 {
-		return fmt.Errorf("peer not found: %s", pubkey)
+		if server, idx, err = load(); err != nil {
+			return err
+		}
 	}
 	peer := &server.Peers[idx]
 	iface := server.InterfaceName
@@ -301,7 +314,7 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 	// Чтение роутера — после дешёвых локальных проверок.
 	var remote []string
 	var router peersubnet.Router
-	if req.RemoteSubnets != nil {
+	if reconcile {
 		if len(*req.RemoteSubnets) > 0 {
 			occupied, err := s.OccupiedSubnets(ctx, PeerRef{Iface: iface, PubKey: pubkey})
 			if err != nil {
@@ -365,7 +378,7 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 
 	// Сверка с роутером, не разница с хранилищем (F509): «было» читается с
 	// роутера, и расхождение прошлых сбоев это сохранение снимает.
-	if req.RemoteSubnets != nil {
+	if reconcile {
 		if err := peersubnet.Reconcile(ctx, router, iface, pubkey, tunnelHosts, remote); err != nil {
 			s.logRollback("update-peer", req.Description, err)
 			rbCtx, cancel := detachedCtx(ctx)
@@ -393,7 +406,7 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		if req.ClientAllowedIPs != nil {
 			sv.Peers[i].ClientAllowedIPs = clientAllowed
 		}
-		if req.RemoteSubnets != nil {
+		if reconcile {
 			sv.Peers[i].RemoteSubnets = remote
 		}
 		if req.Signature != nil {
@@ -411,7 +424,7 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		// Роутер ушёл вперёд записи: вернуть сети и /32 к записанному (паритет с
 		// системным путём) — карточка и .conf показывают запись.
 		rbCtx, cancel := detachedCtx(ctx)
-		if req.RemoteSubnets != nil {
+		if reconcile {
 			if rbErr := peersubnet.Reconcile(rbCtx, router, iface, pubkey, tunnelHosts, peer.RemoteSubnets); rbErr != nil {
 				s.appLog.Warn("update-peer", req.Description, "сети за клиентом не возвращены после отказа записи: "+rbErr.Error())
 			}
@@ -428,6 +441,9 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 
 // DeletePeer removes a peer from the managed server.
 func (s *Service) DeletePeer(ctx context.Context, id, pubkey string) error {
+	// I1: снятие маршрутов → пира → записи под той же блокировкой, что правка
+	// сетей: иначе сверка параллельной правки легла бы на уходящего пира.
+	defer s.LockPeerSubnets()()
 	server, ok := s.settings.GetManagedServerByID(id)
 	if !ok {
 		return fmt.Errorf("managed server not found: %s", id)

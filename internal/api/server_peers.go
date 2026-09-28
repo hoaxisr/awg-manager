@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -219,10 +220,12 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 	// F508: занятые → валидация → запись → роутер под одной блокировкой,
-	// общей с managed-путём.
+	// общей с managed-путём. Отпускается до публикации и writeAll (I2).
+	unlock := func() {}
 	if len(req.RemoteSubnets) > 0 && h.managedSvc != nil {
-		defer h.managedSvc.LockPeerSubnets()()
+		unlock = h.lockPeerSubnets()
 	}
+	defer unlock()
 	// Чтение роутера — после дешёвых локальных проверок и до ключей.
 	remote, ok := h.validateRemoteSubnets(r.Context(), w, req.RemoteSubnets, managed.PeerRef{Iface: name})
 	if !ok {
@@ -302,6 +305,7 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 			return
 		}
 	}
+	unlock()
 	h.bus.PublishInvalidated(events.ResourceServers, "server-peer-added")
 	h.writeAll(w, r)
 }
@@ -332,12 +336,6 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 	if !h.requireWGCommands(w) {
 		return
 	}
-	// F508: занятые → валидация → сверка → запись под одной блокировкой, общей
-	// с managed-путём; секрет ниже читается уже под ней, поэтому возврат «к
-	// записанному» верен.
-	if req.RemoteSubnets != nil && h.managedSvc != nil {
-		defer h.managedSvc.LockPeerSubnets()()
-	}
 	server, ok := h.requireListedServer(r.Context(), w, name)
 	if !ok {
 		return
@@ -350,6 +348,24 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 	// Секрет читаем один раз: он же решает судьбу сигнатуры и он же
 	// примиряется с изменением ниже.
 	sec, hasSecret := h.settings.GetServerPeerSecret(name, pubkey)
+	// Сверка — только у пира с записью (у чужого сетей за клиентом нет, а его
+	// allow-ips сверка сняла бы как «лишние») и только когда сети есть хоть с
+	// одной стороны: фронт шлёт [] и у пира без сетей — такой правке ни
+	// блокировка, ни чтения роутера не нужны (M2). Решение — по снимку; F508:
+	// занятые → валидация → сверка → запись под одной блокировкой, общей с
+	// managed-путём, и запись перечитывается уже под ней — возврат «к
+	// записанному» верен. Отпускается до публикации и writeAll (I2).
+	needsReconcile := func() bool {
+		return req.RemoteSubnets != nil && hasSecret && (len(*req.RemoteSubnets) > 0 || len(sec.RemoteSubnets) > 0)
+	}
+	reconcile := needsReconcile()
+	unlock := func() {}
+	if reconcile && h.managedSvc != nil {
+		unlock = h.lockPeerSubnets()
+		sec, hasSecret = h.settings.GetServerPeerSecret(name, pubkey)
+		reconcile = needsReconcile()
+	}
+	defer unlock()
 	// Резолвер проверяем ДО обращения к роутеру — по той же причине, что и
 	// сигнатуру: отказ обязан быть чистым.
 	peerDNS, err := managed.ValidatePeerDNS(req.DNS)
@@ -439,10 +455,7 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	// Чтение роутера — после дешёвых локальных проверок. Сверка — только у
-	// пира с записью: у чужого сетей за клиентом нет, а его allow-ips сверка
-	// сняла бы как «лишние».
-	reconcile := req.RemoteSubnets != nil && hasSecret
+	// Чтение роутера — после дешёвых локальных проверок.
 	var remote []string
 	if reconcile {
 		if remote, ok = h.validateRemoteSubnets(r.Context(), w, reqRemote, managed.PeerRef{Iface: name, PubKey: pubkey}); !ok {
@@ -521,7 +534,7 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 			sec.ClientAllowedIPs = clientAllowed
 			changed = true
 		}
-		if req.RemoteSubnets != nil && !slices.Equal(sec.RemoteSubnets, remote) {
+		if reconcile && !slices.Equal(sec.RemoteSubnets, remote) {
 			sec.RemoteSubnets = remote
 			changed = true
 		}
@@ -550,6 +563,7 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
+	unlock()
 	h.bus.PublishInvalidated(events.ResourceServers, "server-peer-updated")
 	h.writeAll(w, r)
 }
@@ -580,6 +594,14 @@ func (h *ServersHandler) DeleteServerPeer(w http.ResponseWriter, r *http.Request
 		response.Error(w, "peer not found", "NOT_FOUND")
 		return
 	}
+	// I1: снятие маршрутов → пира → секрета под той же блокировкой, что правка
+	// сетей: иначе сверка параллельной правки легла бы на уходящего пира.
+	// Отпускается до публикации и writeAll (I2).
+	unlock := func() {}
+	if h.managedSvc != nil {
+		unlock = h.lockPeerSubnets()
+	}
+	defer unlock()
 	// Свои маршруты — до снятия пира и fail-closed (11.B/11.6): маршрут-сирота
 	// без пира никто уже не снимет. Все с меткой пира, найденные на роутере, а
 	// не список записи: сирота прошлого сбоя в записи не значится.
@@ -594,6 +616,7 @@ func (h *ServersHandler) DeleteServerPeer(w http.ResponseWriter, r *http.Request
 	if err := h.settings.DeleteServerPeerSecret(name, pubkey); err != nil {
 		h.log.Warn("delete-peer", name, "peer removed from router but its secret stayed in store: "+err.Error())
 	}
+	unlock()
 	h.bus.PublishInvalidated(events.ResourceServers, "server-peer-deleted")
 	h.writeAll(w, r)
 }
@@ -1048,6 +1071,18 @@ func (h *ServersHandler) validateRemoteSubnets(ctx context.Context, w http.Respo
 		return nil, false
 	}
 	return remote, true
+}
+
+// lockPeerSubnets — блокировка правок сетей за клиентом (F508), общая с
+// managed-путём. unlock идемпотентен: хендлер отпускает её явно сразу после
+// записи и компенсаций — до публикации и writeAll, которые читают RCI и пишут
+// в сокет без WriteTimeout (I2); defer страхует ранние выходы. Ответы-отказы,
+// записанные под блокировкой, ложатся в буфер ответа net/http и уходят в
+// сокет после возврата хендлера — уже без неё.
+func (h *ServersHandler) lockPeerSubnets() (unlock func()) {
+	u := h.managedSvc.LockPeerSubnets()
+	var once sync.Once
+	return func() { once.Do(u) }
 }
 
 // peerRollbackTimeout — бюджет отката на роутере: ctx запроса к этому моменту

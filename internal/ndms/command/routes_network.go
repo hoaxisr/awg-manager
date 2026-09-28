@@ -12,6 +12,9 @@ import (
 // отдаёт устаревшее значение без ошибки; после InvalidateAll отказ fetch
 // всплывает — решения о владении по нему fail-closed (11.B/11.6).
 func (c *RouteCommands) freshStaticRoutes(ctx context.Context) ([]query.StaticRouteEntry, error) {
+	if c.queries == nil || c.queries.StaticRoutes == nil {
+		return nil, fmt.Errorf("static route store not wired")
+	}
 	c.queries.StaticRoutes.InvalidateAll()
 	entries, err := c.queries.StaticRoutes.List(ctx)
 	if err != nil {

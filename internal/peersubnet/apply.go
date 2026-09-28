@@ -8,17 +8,27 @@ import (
 	"time"
 )
 
+// ErrPeerNotFound — пира с ключом на интерфейсе нет (свежее чтение). Отдельная
+// ошибка, а не пустой список: allow-ips на отсутствующий ключ NDMS принимает,
+// СОЗДАВАЯ пира (стенд 5.02.A.11), — сверка на ушедшем пире родила бы призрака.
+var ErrPeerNotFound = errors.New("пир не найден на интерфейсе")
+
 // Router — узкий срез RCI, который нужен исполнителю. Адаптер живёт в
 // ndms/command (PeerRouter); фейк — в тестах этого пакета.
 type Router interface {
 	// PeerAllowIPs — allow-ips пира на iface, прочитанные сейчас, мимо кэша.
 	// Отказ чтения — ошибка: по устаревшему снимку сверка сняла бы не то.
+	// Пира нет — ErrPeerNotFound.
 	PeerAllowIPs(ctx context.Context, iface, pubkey string) ([]*net.IPNet, error)
 	// InterfaceRoutes — статические маршруты на iface с комментариями,
 	// прочитанные сейчас (/show/rc/ip/route, 11.A/11.2).
 	InterfaceRoutes(ctx context.Context, iface string) ([]Route, error)
 	AddAllowIP(ctx context.Context, iface, pubkey string, n *net.IPNet) error
 	RemoveAllowIP(ctx context.Context, iface, pubkey string, n *net.IPNet) error
+	// NetworkRouteOwner: есть ли запись на (n, iface) — свежее чтение прямо
+	// перед добавлением, чтобы не переписать comment записи, поставленной
+	// после снимка (стенд: повторный ip route заменяет comment).
+	NetworkRouteOwner(ctx context.Context, n *net.IPNet, iface, comment string) (exists, own bool, err error)
 	AddNetworkRoute(ctx context.Context, n *net.IPNet, iface, comment string) error
 	// RemoveOwnNetworkRoute снимает только запись с меткой comment; removed —
 	// была ли мутация (откату нужно знать, что возвращать).
@@ -90,7 +100,7 @@ func isHostOf(n *net.IPNet, hosts []net.IP) bool {
 // (добавить недостающие, снять лишние) → маршруты (добавить там, где записи
 // на (N, iface) нет; снять свои лишние). Существующая запись на (N, iface) —
 // не наша: поверх не встаём (стенд: повтор переписал бы комментарий).
-// Отказ чтения — ошибка до единой мутации. Отказ шага откатывает сделанное
+// Отказ чтения (и ErrPeerNotFound) — ошибка до единой мутации. Отказ шага откатывает сделанное
 // ЭТИМ вызовом в обратном порядке: стоявшее до вызова остаётся.
 func Reconcile(ctx context.Context, r Router, iface, pubkey string, tunnelHosts []net.IP, desired []string) error {
 	comment := RouteComment(pubkey)
@@ -182,6 +192,15 @@ func Reconcile(ctx context.Context, r Router, iface, pubkey string, tunnelHosts 
 		allowRemoved = append(allowRemoved, n)
 	}
 	for _, n := range routeAdd {
+		// Снимок старше этой секунды: запись, появившуюся после него, не
+		// трогаем и своей не считаем (правило 2).
+		exists, _, err := r.NetworkRouteOwner(ctx, n, iface, comment)
+		if err != nil {
+			return rollback(fmt.Errorf("route %s: %w", n, err))
+		}
+		if exists {
+			continue
+		}
 		if err := r.AddNetworkRoute(ctx, n, iface, comment); err != nil {
 			return rollback(fmt.Errorf("route %s: %w", n, err))
 		}

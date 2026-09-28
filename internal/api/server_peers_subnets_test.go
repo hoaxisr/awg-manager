@@ -55,9 +55,38 @@ func newServersSubnetHarnessWithOther(t *testing.T, peerAllowIPs, rcRoutes, othe
 	return h, store, poster, p, spy
 }
 
+// hookGetter — FakeGetter с хуком на каждое чтение (GET): видно, что читает
+// хендлер и когда.
+type hookGetter struct {
+	*query.FakeGetter
+	mu   sync.Mutex
+	hook func(path string)
+}
+
+func (g *hookGetter) setHook(f func(path string)) { g.mu.Lock(); g.hook = f; g.mu.Unlock() }
+
+func (g *hookGetter) fire(path string) {
+	g.mu.Lock()
+	f := g.hook
+	g.mu.Unlock()
+	if f != nil {
+		f(path)
+	}
+}
+
+func (g *hookGetter) Get(ctx context.Context, path string, dst any) error {
+	g.fire(path)
+	return g.FakeGetter.Get(ctx, path, dst)
+}
+
+func (g *hookGetter) GetRaw(ctx context.Context, path string) ([]byte, error) {
+	g.fire(path)
+	return g.FakeGetter.GetRaw(ctx, path)
+}
+
 // newServersSubnetHarnessFG — newServersSubnetHarnessWithOther, отдающий и
-// FakeGetter (для sysSimRouter).
-func newServersSubnetHarnessFG(t *testing.T, peerAllowIPs, rcRoutes, otherAllowIPs string) (*ServersHandler, *storage.SettingsStore, *natPoster, *busProbe, *appLogSpy, *query.FakeGetter) {
+// FakeGetter (для sysSimRouter) с хуком чтений.
+func newServersSubnetHarnessFG(t *testing.T, peerAllowIPs, rcRoutes, otherAllowIPs string) (*ServersHandler, *storage.SettingsStore, *natPoster, *busProbe, *appLogSpy, *hookGetter) {
 	t.Helper()
 	listPeers := `{"public-key":"` + peerFixturePubKey + `","comment":"phone"}`
 	rcPeers := `{"key":"` + peerFixturePubKey + `","comment":"phone","allow-ips":` + peerAllowIPs + `}`
@@ -65,7 +94,7 @@ func newServersSubnetHarnessFG(t *testing.T, peerAllowIPs, rcRoutes, otherAllowI
 		listPeers += `,{"public-key":"` + otherPeerPubKey + `","comment":"tablet"}`
 		rcPeers += `,{"key":"` + otherPeerPubKey + `","comment":"tablet","allow-ips":` + otherAllowIPs + `}`
 	}
-	fg := query.NewFakeGetter()
+	fg := &hookGetter{FakeGetter: query.NewFakeGetter()}
 	fg.SetJSON("/show/interface/", `{
 		"Wireguard0":{"id":"Wireguard0","type":"Wireguard","description":"Wireguard VPN Server","state":"up","link":"up","address":"10.9.0.1","mask":"255.255.255.0","wireguard":{"peer":[`+listPeers+`]}},
 		"Bridge0":{"id":"Bridge0","type":"Bridge","description":"Home","address":"192.168.1.1","mask":"255.255.255.0"}}`)
@@ -102,6 +131,8 @@ type sysSimRouter struct {
 	peers  map[string][]string // key → "address/mask"
 	routes []map[string]any
 	fail   func(payload string) error
+	// ignore — пост «принят», но состояние не меняется (роутер не выполнил).
+	ignore func(payload string) bool
 }
 
 func newSysSimRouter(t *testing.T, fg *query.FakeGetter, poster *natPoster, rcRoutes string) *sysSimRouter {
@@ -156,6 +187,9 @@ func (r *sysSimRouter) post(payload string) error {
 		if err := r.fail(payload); err != nil {
 			return err
 		}
+	}
+	if r.ignore != nil && r.ignore(payload) {
+		return nil
 	}
 	var m map[string]any
 	_ = json.Unmarshal([]byte(payload), &m)
@@ -224,7 +258,7 @@ func idx(posts []string, sub string) int {
 
 func TestServersHandler_AddServerPeer_RemoteSubnets_OrderAndSecret(t *testing.T) {
 	h, store, poster, p, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
-	sim := newSysSimRouter(t, fg, poster, `[]`)
+	sim := newSysSimRouter(t, fg.FakeGetter, poster, `[]`)
 	stubPeerKeygen(t)
 	rr := postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32","clientAllowedIPs":"10.9.0.0/24, 192.168.1.0/24","remoteSubnets":["192.168.77.5/24"]}`)
 	if rr.Code != 200 {
@@ -481,7 +515,7 @@ func TestServersHandler_UpdateServerPeer_SaveFails_UndoesRouter(t *testing.T) {
 		t.Skip("под root chmod не запрещает запись")
 	}
 	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
-	sim := newSysSimRouter(t, fg, poster, `[]`)
+	sim := newSysSimRouter(t, fg.FakeGetter, poster, `[]`)
 	sim.seed(peerFixturePubKey, "10.9.0.2/32")
 	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", TunnelIP: "10.9.0.2/32"})
 	dir := store.DataDir()
@@ -730,7 +764,7 @@ func TestServersHandler_UpdateServerPeer_HealsRouterDrift(t *testing.T) {
 	rc := `[{"network":"192.168.77.0","mask":"255.255.255.0","interface":"Wireguard0","comment":"awgm-peer:AB/CD+EF"},
 		{"network":"192.168.78.0","mask":"255.255.255.0","interface":"Wireguard0","comment":"awgm-peer:AB/CD+EF"}]`
 	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, rc, "")
-	sim := newSysSimRouter(t, fg, poster, rc)
+	sim := newSysSimRouter(t, fg.FakeGetter, poster, rc)
 	sim.seed(peerFixturePubKey, "10.9.0.2/32", "192.168.77.0/24", "192.168.78.0/24")
 	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "phone", TunnelIP: "10.9.0.2/32", RemoteSubnets: []string{"192.168.77.0/24"}})
 	rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.2/32","remoteSubnets":["192.168.77.0/24"]}`)
@@ -765,7 +799,7 @@ func TestServersHandler_UpdateServerPeer_ForeignPeer_AllowIPsNotReconciled(t *te
 func TestServersHandler_DeleteServerPeer_SweepsOrphanRoutes(t *testing.T) {
 	rc := `[{"network":"192.168.78.0","mask":"255.255.255.0","interface":"Wireguard0","comment":"awgm-peer:AB/CD+EF"}]`
 	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, rc, "")
-	sim := newSysSimRouter(t, fg, poster, rc)
+	sim := newSysSimRouter(t, fg.FakeGetter, poster, rc)
 	sim.seed(peerFixturePubKey, "10.9.0.2/32")
 	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", TunnelIP: "10.9.0.2/32"})
 	if rr := deleteServerPeer(t, h, peerFixturePubKey); rr.Code != 200 {
@@ -781,7 +815,7 @@ func TestServersHandler_DeleteServerPeer_SweepsOrphanRoutes(t *testing.T) {
 func TestServersHandler_AddServerPeer_RollbackSweepsOrphanRoute(t *testing.T) {
 	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
 	stubPeerKeygen(t)
-	sim := newSysSimRouter(t, fg, poster, `[]`)
+	sim := newSysSimRouter(t, fg.FakeGetter, poster, `[]`)
 	failedOnce := false
 	sim.fail = func(payload string) error {
 		switch {
@@ -823,6 +857,12 @@ func TestServersHandler_PeerSubnets_SharedLockWithManaged(t *testing.T) {
 		{"update without subnets", func(h *ServersHandler) *httptest.ResponseRecorder {
 			return putServerPeer(t, h, peerFixturePubKey, `{"description":"renamed","tunnelIP":"10.9.0.2/32"}`)
 		}, false},
+		// M2: [] у пира без сетей — не сверка, блокировка не нужна.
+		{"update empty to empty", func(h *ServersHandler) *httptest.ResponseRecorder {
+			return putServerPeer(t, h, peerFixturePubKey, `{"description":"renamed","tunnelIP":"10.9.0.2/32","remoteSubnets":[]}`)
+		}, false},
+		// I1: удаление — под той же блокировкой.
+		{"delete", func(h *ServersHandler) *httptest.ResponseRecorder { return deleteServerPeer(t, h, peerFixturePubKey) }, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -859,7 +899,7 @@ func TestServersHandler_PeerSubnets_SharedLockWithManaged(t *testing.T) {
 // до записи первой и прошла бы тоже.
 func TestServersHandler_UpdateServerPeer_ConcurrentOverlap_OneWins(t *testing.T) {
 	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, `[]`)
-	sim := newSysSimRouter(t, fg, poster, `[]`)
+	sim := newSysSimRouter(t, fg.FakeGetter, poster, `[]`)
 	sim.seed(peerFixturePubKey, "10.9.0.2/32")
 	sim.seed(otherPeerPubKey, "10.9.0.3/32")
 	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "phone", TunnelIP: "10.9.0.2/32"})
@@ -894,5 +934,142 @@ func TestServersHandler_UpdateServerPeer_ConcurrentOverlap_OneWins(t *testing.T)
 	slices.Sort(codes)
 	if !slices.Equal(codes, []string{"REMOTE_SUBNET_OVERLAP", "ok"}) {
 		t.Fatalf("codes = %v", codes)
+	}
+}
+
+// lockStateOfReads — хук на чтения роутера после первого поста мутации:
+// для каждого чтения — была ли блокировка занята (ждём её 100 мс).
+func lockStateOfReads(h *ServersHandler, fg *hookGetter, sim *sysSimRouter) func() []bool {
+	var mu sync.Mutex
+	var armed bool
+	var held []bool
+	sim.fail = func(string) error { mu.Lock(); armed = true; mu.Unlock(); return nil }
+	fg.setHook(func(string) {
+		mu.Lock()
+		on := armed
+		mu.Unlock()
+		if !on {
+			return
+		}
+		free := make(chan struct{})
+		go func() { h.managedSvc.LockPeerSubnets()(); close(free) }()
+		busy := false
+		select {
+		case <-free:
+		case <-time.After(100 * time.Millisecond):
+			busy = true
+		}
+		mu.Lock()
+		held = append(held, busy)
+		mu.Unlock()
+	})
+	return func() []bool { mu.Lock(); defer mu.Unlock(); return slices.Clone(held) }
+}
+
+// I2: блокировка отпускается до публикации и writeAll — ответ собирается
+// (чтения RCI) уже без неё. Для всех трёх операций, которые её берут.
+func TestServersHandler_PeerSubnets_LockReleasedBeforeResponse(t *testing.T) {
+	cases := []struct {
+		name string
+		call func(h *ServersHandler) *httptest.ResponseRecorder
+	}{
+		{"add", func(h *ServersHandler) *httptest.ResponseRecorder {
+			return postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32","remoteSubnets":["192.168.77.0/24"]}`)
+		}},
+		{"update", func(h *ServersHandler) *httptest.ResponseRecorder {
+			return putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.2/32","remoteSubnets":["192.168.77.0/24"]}`)
+		}},
+		{"delete", func(h *ServersHandler) *httptest.ResponseRecorder { return deleteServerPeer(t, h, peerFixturePubKey) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
+			stubPeerKeygen(t)
+			sim := newSysSimRouter(t, fg.FakeGetter, poster, `[]`)
+			sim.seed(peerFixturePubKey, "10.9.0.2/32")
+			_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "phone", TunnelIP: "10.9.0.2/32"})
+			reads := lockStateOfReads(h, fg, sim)
+			if rr := tc.call(h); rr.Code != 200 {
+				t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+			}
+			// Сверка читает под блокировкой; последнее чтение — сборка ответа
+			// (writeAll) — обязано идти уже без неё.
+			if got := reads(); len(got) == 0 || got[len(got)-1] {
+				t.Fatalf("ответ собирался под блокировкой: %v", got)
+			}
+		})
+	}
+}
+
+// M5: смена адреса и сети одним запросом — ни старый, ни новый /32 сетью не
+// считаются. Старый роутер «не снял» (остался в allow-ips) — сверка его тоже
+// не трогает.
+func TestServersHandler_UpdateServerPeer_TunnelIPChange_BothHostsNotSubnets(t *testing.T) {
+	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
+	sim := newSysSimRouter(t, fg.FakeGetter, poster, `[]`)
+	sim.seed(peerFixturePubKey, "10.9.0.2/32")
+	ignored := false // только снятие при смене адреса; снятие сверкой — настоящее
+	sim.ignore = func(payload string) bool {
+		if !ignored && strings.Contains(payload, `{"address":"10.9.0.2","mask":"255.255.255.255","no":true}`) {
+			ignored = true
+			return true
+		}
+		return false
+	}
+	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "phone", TunnelIP: "10.9.0.2/32"})
+	rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.9/32","remoteSubnets":["192.168.77.0/24"]}`)
+	if rr.Code != 200 {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	allow, _ := sim.state(peerFixturePubKey, "")
+	if want := []string{"10.9.0.2/255.255.255.255", "10.9.0.9/255.255.255.255", "192.168.77.0/255.255.255.0"}; !slices.Equal(allow, want) {
+		t.Fatalf("allow = %v", allow)
+	}
+}
+
+// M2: [] у пира без сетей — ни чтений роутера, ни постов allow-ips/маршрутов.
+func TestServersHandler_UpdateServerPeer_EmptyToEmpty_NoReads(t *testing.T) {
+	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[{"address":"10.9.0.2","mask":"255.255.255.255"}]`, `[]`, "")
+	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "phone", TunnelIP: "10.9.0.2/32"})
+	if rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.2/32","remoteSubnets":[]}`); rr.Code != 200 {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if n := fg.Calls("/show/rc/ip/route"); n != 0 || len(poster.snapshot()) != 0 {
+		t.Fatalf("route reads=%d posts=%v", n, poster.snapshot())
+	}
+}
+
+// I1: сверка прошла, пира на роутере не стало, запись секрета отказала —
+// компенсация видит «пир не найден» и не создаёт пира-призрака.
+func TestServersHandler_UpdateServerPeer_PeerVanished_NoGhost(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("под root chmod не запрещает запись")
+	}
+	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
+	sim := newSysSimRouter(t, fg.FakeGetter, poster, `[]`)
+	sim.seed(peerFixturePubKey, "10.9.0.2/32")
+	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "phone", TunnelIP: "10.9.0.2/32"})
+	dir := store.DataDir()
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	vanishedAt := -1
+	sim.fail = func(payload string) error {
+		if vanishedAt < 0 && strings.Contains(payload, `"comment":"awgm-peer:`) {
+			delete(sim.peers, peerFixturePubKey) // под sim.mu: post держит его
+			vanishedAt = len(poster.snapshot())
+		}
+		return nil
+	}
+	rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.2/32","remoteSubnets":["192.168.77.0/24"]}`)
+	if rr.Code != http.StatusBadRequest || decodeJSONBody(t, rr)["code"] != "SAVE_FAILED" || vanishedAt < 0 {
+		t.Fatalf("code=%d body=%s vanishedAt=%d", rr.Code, rr.Body.String(), vanishedAt)
+	}
+	if posts := poster.snapshot(); len(posts) != vanishedAt {
+		t.Fatalf("после исчезновения пира ушли посты:\n%s", strings.Join(posts[vanishedAt:], "\n"))
+	}
+	if allow, _ := sim.state(peerFixturePubKey, ""); len(allow) != 0 {
+		t.Fatalf("пир-призрак: %v", allow)
 	}
 }

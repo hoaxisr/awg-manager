@@ -71,6 +71,10 @@ func (s *Service) restoreWithMode(ctx context.Context, in []ManagedServerExport,
 		s.appLog.Warn("managed-restore-preflight-conflict", fmt.Sprintf("%d servers", len(in)), "Batch preflight found conflicts; restore aborted")
 		return batchConflicts
 	}
+	// F508: сети за клиентом из бэкапа проверяются по занятым и ставятся под
+	// той же блокировкой, что правки пиров. Берётся здесь, на весь проход:
+	// мьютекс нерекурсивный, а restorePeerSubnets зовётся из глубины.
+	defer s.LockPeerSubnets()()
 	out := make([]RestoreOutcome, 0, len(in))
 	for _, sv := range in {
 		out = append(out, s.restoreOne(ctx, sv, opts, driftMode))
@@ -470,10 +474,39 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 }
 
 // restorePeerSubnets ставит сети за клиентом пересозданного из бэкапа пира —
-// best-effort, как соседние шаги восстановления. Не встали — из записи их
-// убираем: карточка не должна показывать сети, которых на роутере нет.
+// best-effort, как соседние шаги восстановления. Сети из бэкапа проверяются
+// как при правке (занятые, кроме самого пира; пересечения внутри списка):
+// конфликтующие не ставятся и из записи убираются с предупреждением. Не
+// встали — из записи убираем все: карточка не должна показывать сети,
+// которых на роутере нет. Вызывающий держит LockPeerSubnets.
 func (s *Service) restorePeerSubnets(ctx context.Context, iface string, peer *storage.ManagedPeer) {
 	if len(peer.RemoteSubnets) == 0 {
+		return
+	}
+	name := peerName(peer.Description, peer.PublicKey)
+	occupied, err := s.OccupiedSubnets(ctx, PeerRef{Iface: iface, PubKey: peer.PublicKey})
+	if err != nil {
+		s.appLog.Warn("managed-restore-peer-subnets", iface,
+			fmt.Sprintf("сети за клиентом пира «%s» не проверены и сняты с записи: %v", name, err))
+		peer.RemoteSubnets = nil
+		return
+	}
+	var accepted []string
+	for _, sn := range peer.RemoteSubnets {
+		v, err := peersubnet.ValidateRemoteSubnets([]string{sn}, occupied)
+		if err != nil {
+			s.appLog.Warn("managed-restore-peer-subnets", iface,
+				fmt.Sprintf("сеть за клиентом пира «%s» не восстановлена и снята с записи: %v", name, err))
+			continue
+		}
+		for _, c := range v {
+			_, n, _ := net.ParseCIDR(c)
+			occupied = append(occupied, peersubnet.Occupied{Net: n, Label: peerLabel(peer.Description, peer.PublicKey, iface)})
+		}
+		accepted = append(accepted, v...)
+	}
+	peer.RemoteSubnets = accepted
+	if len(accepted) == 0 {
 		return
 	}
 	router, err := s.peerRouter()
@@ -486,7 +519,7 @@ func (s *Service) restorePeerSubnets(ctx context.Context, iface string, peer *st
 	}
 	if err != nil {
 		s.appLog.Warn("managed-restore-peer-subnets", iface,
-			fmt.Sprintf("сети за клиентом пира «%s» не восстановлены и сняты с записи: %v", peerName(peer.Description, peer.PublicKey), err))
+			fmt.Sprintf("сети за клиентом пира «%s» не восстановлены и сняты с записи: %v", name, err))
 		peer.RemoteSubnets = nil
 	}
 }

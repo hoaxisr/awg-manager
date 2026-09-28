@@ -23,6 +23,11 @@ type fakeRouter struct {
 	// вызывающего (отключение клиента посреди Reconcile).
 	cancelAfter string
 	cancel      context.CancelFunc
+	// absent — пира на интерфейсе нет (PeerAllowIPs → ErrPeerNotFound).
+	absent bool
+	// beforeOwner — хук перед ответом NetworkRouteOwner (запись, появившаяся
+	// после снимка).
+	beforeOwner func(n string)
 }
 
 func newFakeRouter() *fakeRouter {
@@ -60,6 +65,9 @@ func mustNet(s string) *net.IPNet {
 func (f *fakeRouter) PeerAllowIPs(ctx context.Context, iface, pub string) ([]*net.IPNet, error) {
 	if err := f.call(ctx, "read allow"); err != nil {
 		return nil, err
+	}
+	if f.absent {
+		return nil, ErrPeerNotFound
 	}
 	var keys []string
 	for k := range f.allow {
@@ -107,6 +115,17 @@ func (f *fakeRouter) RemoveAllowIP(ctx context.Context, iface, pub string, n *ne
 	}
 	delete(f.allow, iface+"|"+pub+"|"+n.String())
 	return nil
+}
+
+func (f *fakeRouter) NetworkRouteOwner(ctx context.Context, n *net.IPNet, iface, comment string) (bool, bool, error) {
+	if err := f.call(ctx, "read owner "+n.String()); err != nil {
+		return false, false, err
+	}
+	if f.beforeOwner != nil {
+		f.beforeOwner(n.String())
+	}
+	c, ok := f.routes[n.String()+"|"+iface]
+	return ok, ok && c == comment, nil
 }
 
 func (f *fakeRouter) AddNetworkRoute(ctx context.Context, n *net.IPNet, iface, comment string) error {
@@ -453,5 +472,61 @@ func TestRemoveRoutes_FailClosed(t *testing.T) {
 	f.failOn = []string{"route- " + n77}
 	if err := RemoveRoutes(context.Background(), f, iface, pub); err == nil || len(f.mutations()) != 1 {
 		t.Fatalf("снятие: err=%v calls=%v", err, f.calls)
+	}
+}
+
+// M1: запись на (N, iface) появилась после снимка (веб-морда) — перед
+// добавлением владение перечитывается: чужую не переписываем и своей не
+// считаем (последующее снятие её не трогает).
+func TestReconcile_RouteAppearedAfterSnapshot(t *testing.T) {
+	f := newFakeRouter()
+	f.beforeOwner = func(n string) {
+		if n == n77 {
+			f.routes[n77+"|"+iface] = "manual"
+		}
+	}
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"allow+ " + n77}; !reflect.DeepEqual(f.mutations(), want) {
+		t.Fatalf("calls = %v", f.calls)
+	}
+	f.beforeOwner, f.calls = nil, nil
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, nil); err != nil {
+		t.Fatal(err)
+	}
+	if f.routes[n77+"|"+iface] != "manual" {
+		t.Fatalf("чужая запись тронута: %v", f.routes)
+	}
+}
+
+// I1: пира на интерфейсе нет — ErrPeerNotFound до единой мутации: allow-ips
+// на отсутствующий ключ NDMS создал бы пира-призрака.
+func TestReconcile_PeerNotFound_NoMutation(t *testing.T) {
+	f := newFakeRouter()
+	f.absent = true
+	err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77})
+	if !errors.Is(err, ErrPeerNotFound) || len(f.mutations()) != 0 {
+		t.Fatalf("err=%v calls=%v", err, f.calls)
+	}
+}
+
+// Отказ свежей проверки владения перед добавлением — откат сделанного.
+func TestReconcile_OwnerCheckFailureRollsBack(t *testing.T) {
+	f := newFakeRouter()
+	f.setAllow(n79)
+	f.routes[n79+"|"+iface] = ours
+	f.failOn = []string{"read owner " + n78}
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77, n78}); err == nil {
+		t.Fatal("нет ошибки")
+	}
+	m := f.mutations()
+	want := []string{"allow+ " + n77, "allow+ " + n78, "allow- " + n79, "route+ " + n77,
+		"route- " + n77, "allow+ " + n79, "allow- " + n78, "allow- " + n77}
+	if !reflect.DeepEqual(m, want) {
+		t.Fatalf("calls = %v", m)
+	}
+	if len(f.allow) != 1 || len(f.routes) != 1 || f.routes[n79+"|"+iface] != ours {
+		t.Fatalf("allow=%v routes=%v", f.allow, f.routes)
 	}
 }

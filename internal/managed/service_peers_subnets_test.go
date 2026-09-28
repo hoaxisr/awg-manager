@@ -249,7 +249,8 @@ func TestAddPeer_OverlapRejectedBeforeRCI(t *testing.T) {
 }
 
 func TestAddPeer_RouteFailure_RollsBackAllowIPsAndPeer(t *testing.T) {
-	svc, store, poster, _ := newPeerSubnetTestService(t, `[]`)
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	_ = newSimRouter(t, fg, poster, `[]`)
 	poster.failOn = func(m map[string]interface{}) error {
 		b, _ := json.Marshal(m)
 		if strings.Contains(string(b), `"comment":"awgm-peer:`) {
@@ -323,8 +324,9 @@ func TestUpdatePeer_EmptyRemoteSubnetsRemovesAll(t *testing.T) {
 // Правило 2: чужая запись на (N, I) — не добавляем и потом не снимаем.
 func TestUpdatePeer_ForeignRouteNeverTouched(t *testing.T) {
 	rc := `[{"network":"192.168.78.0","mask":"255.255.255.0","interface":"Wireguard1","auto":true,"comment":"manual"}]`
-	svc, store, poster, _ := newPeerSubnetTestService(t, rc)
-	seedPeer(t, store)
+	svc, store, poster, fg := newPeerSubnetTestService(t, rc)
+	sim := newSimRouter(t, fg, poster, rc)
+	seedSimPeer(t, store, sim)
 	if err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.78.0/24"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -374,8 +376,9 @@ func TestDeletePeer_RemovesOwnRoutesBeforePeer_FailClosed(t *testing.T) {
 // Fix round 1 / IMPORTANT 1: смена tunnel IP и сетей одним запросом, маршрут
 // отвергнут — /32 на роутере возвращается к записанному, хранилище не тронуто.
 func TestUpdatePeer_TunnelIPAndSubnets_RouteFailure_RestoresTunnelIP(t *testing.T) {
-	svc, store, poster, _ := newPeerSubnetTestService(t, `[]`)
-	seedPeer(t, store)
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
+	seedSimPeer(t, store, sim)
 	poster.failOn = func(m map[string]interface{}) error {
 		b, _ := json.Marshal(m)
 		if strings.Contains(string(b), `"comment":"awgm-peer:`) {
@@ -433,7 +436,8 @@ func TestUpdatePeer_TunnelIP_OldAbsentTolerated(t *testing.T) {
 // Fix round 1 / IMPORTANT 2: ctx запроса отменён посреди — откат пира всё
 // равно доходит до роутера (отвязанный ctx).
 func TestAddPeer_CancelledCtx_PeerStillRemoved(t *testing.T) {
-	svc, store, poster, _ := newPeerSubnetTestService(t, `[]`)
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	_ = newSimRouter(t, fg, poster, `[]`)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	poster.honorCtx = true
@@ -492,8 +496,9 @@ func TestAddPeer_StoreFailure_RemovesSubnetsAndPeer(t *testing.T) {
 // Final review I2: ACL сервера с LANSegments пропускает только подсеть сервера —
 // сети за клиентом отвергаются до RCI; снять уже стоящие — можно.
 func TestPeer_RemoteSubnetsRejectedWithLANSegments(t *testing.T) {
-	svc, store, poster, _ := newPeerSubnetTestService(t, rcOurs77)
-	seedPeer(t, store, "192.168.77.0/24")
+	svc, store, poster, fg := newPeerSubnetTestService(t, rcOurs77)
+	sim := newSimRouter(t, fg, poster, rcOurs77)
+	seedSimPeer(t, store, sim, "192.168.77.0/24")
 	if err := store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
 		sv.LANSegments = []string{"Home"}
 		return nil
@@ -868,5 +873,118 @@ func TestUpdatePeer_ConcurrentOverlap_OneWins(t *testing.T) {
 	}
 	if ok != 1 || overlap != 1 {
 		t.Fatalf("ok=%d overlap=%d errs=%v", ok, overlap, errs)
+	}
+}
+
+// I1: сверка прошла, пира на роутере не стало (параллельное удаление мимо
+// блокировки — веб-морда), запись отказала. Компенсация видит «пир не
+// найден» и не шлёт ничего: allow-ips на отсутствующий ключ NDMS создал бы
+// пира-призрака.
+func TestUpdatePeer_PeerVanished_CompensationCreatesNoGhost(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
+	seedSimPeer(t, store, sim)
+	vanishedAt := -1
+	sim.after = func(m map[string]interface{}) {
+		b, _ := json.Marshal(m)
+		if vanishedAt >= 0 || !strings.Contains(string(b), `"comment":"awgm-peer:PEER1"`) {
+			return
+		}
+		sim.mu.Lock()
+		delete(sim.peers["Wireguard1"], "PEER1")
+		sim.renderLocked()
+		sim.mu.Unlock()
+		vanishedAt = len(poster.posts)
+		_ = store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
+			sv.Peers = nil
+			return nil
+		})
+	}
+	err := svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.77.0/24"}})
+	if err == nil || vanishedAt < 0 {
+		t.Fatalf("err=%v vanishedAt=%d", err, vanishedAt)
+	}
+	if posts := postsJSON(poster); len(posts) != vanishedAt {
+		t.Fatalf("после исчезновения пира ушли посты:\n%s", strings.Join(posts[vanishedAt:], "\n"))
+	}
+	sim.mu.Lock()
+	_, ghost := sim.peers["Wireguard1"]["PEER1"]
+	sim.mu.Unlock()
+	if ghost {
+		t.Fatal("пир-призрак создан")
+	}
+}
+
+// waitsForLock — call не завершается, пока LockPeerSubnets держат снаружи, и
+// завершается после отпускания.
+func waitsForLock(t *testing.T, svc *Service, call func()) bool {
+	t.Helper()
+	unlock := svc.LockPeerSubnets()
+	done := make(chan struct{})
+	go func() { call(); close(done) }()
+	select {
+	case <-done:
+		unlock()
+		return false
+	case <-time.After(150 * time.Millisecond):
+	}
+	unlock()
+	<-done
+	return true
+}
+
+// I1(а): удаление пира ждёт блокировку правок сетей.
+func TestDeletePeer_TakesPeerSubnetsLock(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
+	seedSimPeer(t, store, sim)
+	if !waitsForLock(t, svc, func() { _ = svc.DeletePeer(context.Background(), "Wireguard1", "PEER1") }) {
+		t.Fatal("удаление прошло мимо блокировки")
+	}
+}
+
+// M2: [] у пира без сетей — ни блокировки, ни чтений роутера; правка
+// с непустым списком её ждёт.
+func TestUpdatePeer_EmptyToEmpty_NoLockNoReads(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
+	seedSimPeer(t, store, sim)
+	routeReads := fg.Calls("/show/rc/ip/route")
+	var err error
+	if waitsForLock(t, svc, func() {
+		err = svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{}})
+	}) || err != nil {
+		t.Fatalf("правка без сетей ждала блокировку или отказала: %v", err)
+	}
+	if fg.Calls("/show/rc/ip/route") != routeReads || len(postsJSON(poster)) != 0 {
+		t.Fatalf("чтения/посты при [] → []: reads=%d posts=%v", fg.Calls("/show/rc/ip/route")-routeReads, postsJSON(poster))
+	}
+	if !waitsForLock(t, svc, func() {
+		_ = svc.UpdatePeer(context.Background(), "Wireguard1", "PEER1", UpdatePeerRequest{Description: "x", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.77.0/24"}})
+	}) {
+		t.Fatal("правка сетей прошла мимо блокировки")
+	}
+}
+
+// I3: сети из бэкапа проверяются по занятым: пересекающаяся с чужим пиром
+// (172.16.5.0/24 у пира Wireguard0) не ставится и из записи убирается,
+// свободная — ставится. Восстановление берёт блокировку правок сетей.
+func TestRestoreDrift_OccupiedSubnetDropped(t *testing.T) {
+	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
+	sim := newSimRouter(t, fg, poster, `[]`)
+	if err := store.AddManagedServer(storage.ManagedServer{InterfaceName: "Wireguard5", Address: "10.77.0.1", Mask: "255.255.255.0", ListenPort: 51825,
+		PrivateKey: validPrivateKey(9), Policy: "none",
+		Peers: []storage.ManagedPeer{{PublicKey: "PEER5", TunnelIP: "10.77.0.2/32", Enabled: true, Description: "site", RemoteSubnets: []string{"172.16.5.0/24", "192.168.90.0/24"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !waitsForLock(t, svc, func() { restoreDrift(t, svc) }) {
+		t.Fatal("восстановление прошло мимо блокировки")
+	}
+	sv, _ := store.GetManagedServerByID("Wireguard5")
+	if len(sv.Peers) != 1 || !slices.Equal(sv.Peers[0].RemoteSubnets, []string{"192.168.90.0/24"}) {
+		t.Fatalf("store = %+v", sv.Peers)
+	}
+	if allow, _ := sim.state("Wireguard5", "PEER5", ""); !slices.Equal(allow, []string{"10.77.0.2/255.255.255.255", "192.168.90.0/255.255.255.0"}) {
+		t.Fatalf("allow = %v", allow)
 	}
 }

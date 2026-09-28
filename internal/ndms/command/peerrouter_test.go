@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 )
 
 func newPeerRouterFixture(t *testing.T) (*PeerRouter, *query.FakeGetter) {
@@ -65,7 +66,9 @@ func TestPeerRouter_PeerAllowIPs(t *testing.T) {
 	if want := []string{"10.9.9.2/32", "192.168.77.0/24"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("allow = %v", got)
 	}
-	if nets, err := r.PeerAllowIPs(context.Background(), "Wireguard9", "ABSENT="); err != nil || len(nets) != 0 {
+	// Пира нет — ErrPeerNotFound, не пустой список: allow-ips на отсутствующий
+	// ключ NDMS создаёт пира.
+	if nets, err := r.PeerAllowIPs(context.Background(), "Wireguard9", "ABSENT="); !errors.Is(err, peersubnet.ErrPeerNotFound) || nets != nil {
 		t.Fatalf("нет пира: %v %v", nets, err)
 	}
 	fg.SetJSON("/show/rc/interface/Wireguard9", `{"wireguard":{"peer":[{"key":"K1=","allow-ips":[{"address":"10.9.9.2","mask":"255.255.255.255"}]}]}}`)
@@ -75,5 +78,15 @@ func TestPeerRouter_PeerAllowIPs(t *testing.T) {
 	fg.SetError("/show/rc/interface/Wireguard9", errors.New("rci down"))
 	if _, err := r.PeerAllowIPs(context.Background(), "Wireguard9", "K1="); err == nil {
 		t.Fatal("отказ чтения проглочен")
+	}
+}
+
+// M6: стор маршрутов не подключён — ошибка, не nil-паника.
+func TestPeerRouter_InterfaceRoutes_NotWired(t *testing.T) {
+	poster := &fakePoster{}
+	sc := NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
+	r := NewPeerRouter(NewCommands(Deps{Poster: poster, Save: sc, Queries: &query.Queries{}}))
+	if _, err := r.InterfaceRoutes(context.Background(), "Wireguard9"); err == nil {
+		t.Fatal("ожидали ошибку")
 	}
 }
