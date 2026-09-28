@@ -161,7 +161,7 @@ func (h *ServersHandler) requireListedServer(ctx context.Context, w http.Respons
 }
 
 func (h *ServersHandler) requireWGCommands(w http.ResponseWriter) bool {
-	// Routes — для NewPeerRouter (сети за клиентом): без него Apply упал бы
+	// Routes — для NewPeerRouter (сети за клиентом): без него сверка упала бы
 	// nil-паникой посреди операции, а не чистым отказом до RCI.
 	if h.commands == nil || h.commands.Wireguard == nil || h.commands.Routes == nil {
 		response.Error(w, "ndms commands not initialized", "INTERNAL_ERROR")
@@ -288,11 +288,11 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 	}
 	// Шаги 3–4 спеки. Секрет записан ДО роутера (ключ не теряется), поэтому
 	// откат здесь — снять пира и секрет: запись переживает только полный успех.
-	// Свои allow-ips и маршруты Apply откатывает сам.
+	// Свои allow-ips и маршруты Reconcile откатывает сам.
 	if len(remote) > 0 {
-		if err := peersubnet.Apply(r.Context(), ndmscommand.NewPeerRouter(h.commands), name, pubKey, remote, nil); err != nil {
+		if err := peersubnet.Reconcile(r.Context(), ndmscommand.NewPeerRouter(h.commands), name, pubKey, []net.IP{ip}, remote); err != nil {
 			h.logRollback("add-peer", name, err)
-			h.rollbackAddedServerPeer(r.Context(), name, pubKey, err)
+			h.rollbackAddedServerPeer(r.Context(), name, pubKey)
 			response.Error(w, err.Error(), "ADD_PEER_FAILED")
 			return
 		}
@@ -428,15 +428,19 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	// Чтение роутера — после дешёвых локальных проверок.
-	var remote, added, removed []string
-	if req.RemoteSubnets != nil {
+	// Чтение роутера — после дешёвых локальных проверок. Сверка — только у
+	// пира с записью: у чужого сетей за клиентом нет, а его allow-ips сверка
+	// сняла бы как «лишние».
+	reconcile := req.RemoteSubnets != nil && hasSecret
+	var remote []string
+	if reconcile {
 		if remote, ok = h.validateRemoteSubnets(r.Context(), w, reqRemote, managed.PeerRef{Iface: name, PubKey: pubkey}); !ok {
 			return
 		}
-		// Разница — от записи, не от allow-ips роутера: источник правды здесь.
-		added, removed = peersubnet.Diff(sec.RemoteSubnets, remote)
 	}
+	prevRemote := sec.RemoteSubnets
+	// Туннельные адреса (старый и новый) — не сети за клиентом.
+	tunnelHosts := []net.IP{net.ParseIP(oldIP), net.ParseIP(newIP)}
 
 	// revertIP — хранилище не пишется, значит /32 на роутере обязан вернуться
 	// к записанному, иначе .conf выдаст адрес, которого у пира нет. Новый
@@ -473,8 +477,10 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	if len(added)+len(removed) > 0 {
-		if err := peersubnet.Apply(r.Context(), ndmscommand.NewPeerRouter(h.commands), name, pubkey, added, removed); err != nil {
+	// Сверка с роутером, не разница с записью (F509): расхождение прошлых
+	// сбоев это сохранение снимает.
+	if reconcile {
+		if err := peersubnet.Reconcile(r.Context(), ndmscommand.NewPeerRouter(h.commands), name, pubkey, tunnelHosts, remote); err != nil {
 			h.logRollback("update-peer", name, err)
 			revertIP()
 			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
@@ -518,11 +524,11 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		}
 		if changed {
 			if err := h.settings.SetServerPeerSecret(name, pubkey, sec); err != nil {
-				// Сети, которых нет в записи, никто уже не снимет: удаление
-				// пира снимает маршруты по записи. Возвращаем роутер к ней.
-				if len(added)+len(removed) > 0 {
+				// Роутер ушёл вперёд записи: возвращаем его к ней — карточка
+				// и .conf показывают запись.
+				if reconcile {
 					rbCtx, cancel := detachedCtx(r.Context())
-					if rbErr := peersubnet.Apply(rbCtx, ndmscommand.NewPeerRouter(h.commands), name, pubkey, removed, added); rbErr != nil {
+					if rbErr := peersubnet.Reconcile(rbCtx, ndmscommand.NewPeerRouter(h.commands), name, pubkey, tunnelHosts, prevRemote); rbErr != nil {
 						h.log.Warn("update-peer", name, "сети за клиентом не возвращены к записи после отказа сохранения: "+rbErr.Error())
 					}
 					cancel()
@@ -564,12 +570,11 @@ func (h *ServersHandler) DeleteServerPeer(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// Свои маршруты — до снятия пира и fail-closed (11.B/11.6): маршрут-сирота
-	// без записи никто уже не снимет.
-	if sec, ok := h.settings.GetServerPeerSecret(name, pubkey); ok && len(sec.RemoteSubnets) > 0 {
-		if err := peersubnet.RemoveRoutes(r.Context(), ndmscommand.NewPeerRouter(h.commands), name, pubkey, sec.RemoteSubnets); err != nil {
-			response.Error(w, err.Error(), "DELETE_PEER_FAILED")
-			return
-		}
+	// без пира никто уже не снимет. Все с меткой пира, найденные на роутере, а
+	// не список записи: сирота прошлого сбоя в записи не значится.
+	if err := peersubnet.RemoveRoutes(r.Context(), ndmscommand.NewPeerRouter(h.commands), name, pubkey); err != nil {
+		response.Error(w, err.Error(), "DELETE_PEER_FAILED")
+		return
 	}
 	if err := h.commands.Wireguard.RemovePeer(r.Context(), name, pubkey); err != nil {
 		response.Error(w, err.Error(), "DELETE_PEER_FAILED")
@@ -1044,22 +1049,20 @@ func detachedCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 }
 
 // rollbackAddedServerPeer снимает с роутера только что добавленного пира и его
-// секрет. Пир не снялся — секрет остаётся: без него пир на роутере — сирота с
-// потерянным ключом, а с ним его видно в панели и можно удалить.
-// applyErr — отказ Apply, из-за которого откат.
-func (h *ServersHandler) rollbackAddedServerPeer(ctx context.Context, name, pubKey string, applyErr error) {
+// секрет: сначала все маршруты с его меткой, найденные на роутере (сироты
+// незавершённого отката), потом пира — allow-ips уходят с ним. Пир не снялся —
+// секрет остаётся: без него пир на роутере — сирота с потерянным ключом, а с
+// ним его видно в панели и можно удалить.
+func (h *ServersHandler) rollbackAddedServerPeer(ctx context.Context, name, pubKey string) {
 	rbCtx, cancel := detachedCtx(ctx)
 	defer cancel()
+	if err := peersubnet.RemoveRoutes(rbCtx, ndmscommand.NewPeerRouter(h.commands), name, pubKey); err != nil {
+		h.log.Warn("add-peer", name, "маршруты сетей за клиентом не сняты при откате: "+err.Error())
+	}
 	if err := h.commands.Wireguard.RemovePeer(rbCtx, name, pubKey); err != nil {
 		h.log.Warn("add-peer", name, "пир не снят после отказа сетей за клиентом, секрет оставлен: "+err.Error())
-		// Apply свои сети уже откатил — в оставленной записи их быть не должно,
-		// иначе правка с тем же списком даст пустой Diff и сети не встанут.
-		// Откат Apply не завершён — часть сетей на роутере: запись их держит,
-		// чтобы удаление пира сняло метки.
-		var rb *peersubnet.RollbackError
-		if errors.As(applyErr, &rb) {
-			return
-		}
+		// Сетей на роутере запись не держит: их увидит и снимет сверка
+		// следующего сохранения, маршруты — удаление пира (оба читают роутер).
 		if sec, ok := h.settings.GetServerPeerSecret(name, pubKey); ok && len(sec.RemoteSubnets) > 0 {
 			sec.RemoteSubnets = nil
 			if err := h.settings.SetServerPeerSecret(name, pubKey, sec); err != nil {
@@ -1073,7 +1076,7 @@ func (h *ServersHandler) rollbackAddedServerPeer(ctx context.Context, name, pubK
 	}
 }
 
-// logRollback — отказ отката Apply в журнал приложения (хранилище не тронуто).
+// logRollback — отказ отката Reconcile в журнал приложения (хранилище не тронуто).
 func (h *ServersHandler) logRollback(op, name string, err error) {
 	var rb *peersubnet.RollbackError
 	if errors.As(err, &rb) {

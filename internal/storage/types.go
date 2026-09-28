@@ -446,8 +446,8 @@ type ServerPeerSecret struct {
 	ClientAllowedIPs string `json:"clientAllowedIPs,omitempty"`
 	// RemoteSubnets — сети за клиентом (site-to-site), канонические IPv4 CIDR:
 	// у пира на роутере они в allow-ips, и на каждую стоит наш маршрут с меткой
-	// peersubnet.RouteComment. Источник правды — эта запись, diff при
-	// сохранении считается от неё, не от allow-ips роутера.
+	// peersubnet.RouteComment. Запись — что пир ДОЛЖЕН иметь; при сохранении
+	// роутер сверяется с ней по своему фактическому состоянию (peersubnet.Reconcile).
 	RemoteSubnets []string `json:"remoteSubnets,omitempty"`
 
 	// Сигнатура принадлежит пиру (CONTEXT.md «Сигнатура AWG»): у сервера
@@ -474,8 +474,8 @@ type ManagedPeer struct {
 	ClientAllowedIPs string `json:"clientAllowedIPs,omitempty"`
 	// RemoteSubnets — сети за клиентом (site-to-site), канонические IPv4 CIDR:
 	// у пира на роутере они в allow-ips, и на каждую стоит наш маршрут с меткой
-	// peersubnet.RouteComment. Источник правды — эта запись, diff при
-	// сохранении считается от неё, не от allow-ips роутера.
+	// peersubnet.RouteComment. Запись — что пир ДОЛЖЕН иметь; при сохранении
+	// роутер сверяется с ней по своему фактическому состоянию (peersubnet.Reconcile).
 	RemoteSubnets []string `json:"remoteSubnets,omitempty"`
 	// I1..I5 — сигнатура имитации, которую пир получает в своём .conf.
 	I1 string `json:"i1,omitempty"`

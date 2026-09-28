@@ -178,6 +178,10 @@ func (g *stateAwareGetter) GetRaw(ctx context.Context, path string) ([]byte, err
 		}
 		return []byte(`""`), nil
 	}
+	// Удаление пира сверяет маршруты с его меткой (#713) — статических нет.
+	if path == "/show/rc/ip/route" {
+		return []byte(`[]`), nil
+	}
 	return nil, errors.New("stateAwareGetter: GetRaw not faked: " + path)
 }
 
@@ -284,6 +288,7 @@ func newCreateTestService(t *testing.T) (*Service, *storage.SettingsStore, *stat
 		Policies:      query.NewPolicyStore(getter, query.NopLogger()),
 		WGServers:     query.NewWGServerStore(getter, query.NopLogger(), ifaces),
 		RunningConfig: query.NewRunningConfigStore(getter, query.NopLogger()),
+		StaticRoutes:  query.NewStaticRouteStore(getter, query.NopLogger()),
 	}
 	poster := &recordingPoster{onPost: getter.applyPost}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -935,6 +940,7 @@ func newLANSegmentsTestService(t *testing.T) (*Service, *storage.SettingsStore, 
 		Policies:      query.NewPolicyStore(getter, query.NopLogger()),
 		WGServers:     query.NewWGServerStore(getter, query.NopLogger(), ifaces),
 		RunningConfig: query.NewRunningConfigStore(getter, query.NopLogger()),
+		StaticRoutes:  query.NewStaticRouteStore(getter, query.NopLogger()),
 	}
 	poster := &recordingPoster{onPost: getter.applyPost}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

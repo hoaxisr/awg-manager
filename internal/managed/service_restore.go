@@ -471,15 +471,18 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 
 // restorePeerSubnets ставит сети за клиентом пересозданного из бэкапа пира —
 // best-effort, как соседние шаги восстановления. Не встали — из записи их
-// убираем: иначе карточка показывает сети, которых на роутере нет, а Diff от
-// хранилища при следующем сохранении их уже не поставит.
+// убираем: карточка не должна показывать сети, которых на роутере нет.
 func (s *Service) restorePeerSubnets(ctx context.Context, iface string, peer *storage.ManagedPeer) {
 	if len(peer.RemoteSubnets) == 0 {
 		return
 	}
 	router, err := s.peerRouter()
 	if err == nil {
-		err = peersubnet.Apply(ctx, router, iface, peer.PublicKey, peer.RemoteSubnets, nil)
+		var hosts []net.IP
+		if ip, _, perr := net.ParseCIDR(peer.TunnelIP); perr == nil {
+			hosts = append(hosts, ip)
+		}
+		err = peersubnet.Reconcile(ctx, router, iface, peer.PublicKey, hosts, peer.RemoteSubnets)
 	}
 	if err != nil {
 		s.appLog.Warn("managed-restore-peer-subnets", iface,
@@ -540,12 +543,14 @@ func (s *Service) applyMergePeers(ctx context.Context, existing storage.ManagedS
 	}
 	added := 0
 	var missingPeers []storage.ManagedPeer
-	// Откат снимает и сети за клиентом: allow-ips уходят с пиром, а маршруты
-	// с меткой остались бы сиротами.
+	// Откат снимает и маршруты сетей за клиентом: allow-ips уходят с пиром, а
+	// маршруты с меткой остались бы сиротами. Метки ищутся на роутере у каждого
+	// пира — и у того, чьи сети restorePeerSubnets снял с записи после
+	// незавершённого отката. Без Commands (nil) сетей поставить было нечем.
 	rollback := func() {
-		router, _ := s.peerRouter() // nil — сетей у пиров нет: restorePeerSubnets их снял
+		router, _ := s.peerRouter()
 		for _, p := range missingPeers {
-			s.rollbackAddedPeer(ctx, existing.InterfaceName, p.PublicKey, p.Description, router, p.RemoteSubnets)
+			s.rollbackAddedPeer(ctx, existing.InterfaceName, p.PublicKey, p.Description, router)
 		}
 	}
 	for _, peer := range sv.Peers {

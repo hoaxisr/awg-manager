@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -19,7 +20,7 @@ type fakeRouter struct {
 	// injected — ошибки, выданные по failOn, в порядке выдачи.
 	injected []error
 	// cancelAfter/cancel: после успешного вызова с таким именем отменить ctx
-	// вызывающего (отключение клиента посреди Apply).
+	// вызывающего (отключение клиента посреди Reconcile).
 	cancelAfter string
 	cancel      context.CancelFunc
 }
@@ -48,6 +49,50 @@ func (f *fakeRouter) call(ctx context.Context, name string) error {
 	return nil
 }
 
+func mustNet(s string) *net.IPNet {
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		panic(err)
+	}
+	return n
+}
+
+func (f *fakeRouter) PeerAllowIPs(ctx context.Context, iface, pub string) ([]*net.IPNet, error) {
+	if err := f.call(ctx, "read allow"); err != nil {
+		return nil, err
+	}
+	var keys []string
+	for k := range f.allow {
+		if strings.HasPrefix(k, iface+"|"+pub+"|") {
+			keys = append(keys, strings.TrimPrefix(k, iface+"|"+pub+"|"))
+		}
+	}
+	sort.Strings(keys)
+	out := make([]*net.IPNet, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, mustNet(k))
+	}
+	return out, nil
+}
+
+func (f *fakeRouter) InterfaceRoutes(ctx context.Context, iface string) ([]Route, error) {
+	if err := f.call(ctx, "read routes"); err != nil {
+		return nil, err
+	}
+	var keys []string
+	for k := range f.routes {
+		if strings.HasSuffix(k, "|"+iface) {
+			keys = append(keys, strings.TrimSuffix(k, "|"+iface))
+		}
+	}
+	sort.Strings(keys)
+	out := make([]Route, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, Route{Net: mustNet(k), Comment: f.routes[k+"|"+iface]})
+	}
+	return out, nil
+}
+
 func (f *fakeRouter) AddAllowIP(ctx context.Context, iface, pub string, n *net.IPNet) error {
 	if err := f.call(ctx, "allow+ "+n.String()); err != nil {
 		return err
@@ -62,14 +107,6 @@ func (f *fakeRouter) RemoveAllowIP(ctx context.Context, iface, pub string, n *ne
 	}
 	delete(f.allow, iface+"|"+pub+"|"+n.String())
 	return nil
-}
-
-func (f *fakeRouter) NetworkRouteOwner(ctx context.Context, n *net.IPNet, iface, comment string) (bool, bool, error) {
-	if err := f.call(ctx, "owner? "+n.String()); err != nil {
-		return false, false, err
-	}
-	c, ok := f.routes[n.String()+"|"+iface]
-	return ok, ok && c == comment, nil
 }
 
 func (f *fakeRouter) AddNetworkRoute(ctx context.Context, n *net.IPNet, iface, comment string) error {
@@ -91,21 +128,41 @@ func (f *fakeRouter) RemoveOwnNetworkRoute(ctx context.Context, n *net.IPNet, if
 	return false, nil
 }
 
+// mutations — журнал без чтений состояния.
+func (f *fakeRouter) mutations() []string {
+	var out []string
+	for _, c := range f.calls {
+		if !strings.HasPrefix(c, "read ") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func (f *fakeRouter) setAllow(nets ...string) {
+	for _, n := range nets {
+		f.allow[iface+"|"+pub+"|"+n] = true
+	}
+}
+
 const (
 	n77, n78, n79 = "192.168.77.0/24", "192.168.78.0/24", "192.168.79.0/24"
 	iface, pub    = "Wireguard9", "5+0I/P0Vaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa="
 	ours          = "awgm-peer:5+0I/P0V"
+	tunnel32      = "10.9.9.2/32"
 )
 
-func TestApply_OrderAllowIPsThenRoutes(t *testing.T) {
+var tunnelHost = []net.IP{net.ParseIP("10.9.9.2")}
+
+func TestReconcile_OrderAllowIPsThenRoutes(t *testing.T) {
 	f := newFakeRouter()
-	f.allow[iface+"|"+pub+"|"+n79] = true
+	f.setAllow(tunnel32, n79)
 	f.routes[n79+"|"+iface] = ours
-	if err := Apply(context.Background(), f, iface, pub, []string{n77, n78}, []string{n79}); err != nil {
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77, n78}); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"allow+ " + n77, "allow+ " + n78, "allow- " + n79, "owner? " + n77, "route+ " + n77, "owner? " + n78, "route+ " + n78, "route- " + n79}
-	if !reflect.DeepEqual(f.calls, want) {
+	want := []string{"allow+ " + n77, "allow+ " + n78, "allow- " + n79, "route+ " + n77, "route+ " + n78, "route- " + n79}
+	if !reflect.DeepEqual(f.mutations(), want) {
 		t.Fatalf("calls = %v", f.calls)
 	}
 	if !f.allow[iface+"|"+pub+"|"+n77] || f.allow[iface+"|"+pub+"|"+n79] || f.routes[n77+"|"+iface] != ours || f.routes[n79+"|"+iface] != "" {
@@ -113,65 +170,151 @@ func TestApply_OrderAllowIPsThenRoutes(t *testing.T) {
 	}
 }
 
-// Правило 2: поверх существующей записи не встаём и своей не считаем —
-// ни при добавлении, ни при последующем удалении сети.
-func TestApply_ExistingRouteSkippedAndNeverOwned(t *testing.T) {
+// F509: расхождение роутера с хранилищем лечится сохранением того же списка.
+// В записи [77], на роутере ещё сирота 78 (allow-ip и наш маршрут): снимается
+// 78, по 77 — ни одного лишнего вызова.
+func TestReconcile_HealsOrphan(t *testing.T) {
 	f := newFakeRouter()
-	f.routes[n77+"|"+iface] = "manual"
-	if err := Apply(context.Background(), f, iface, pub, []string{n77}, nil); err != nil {
+	f.setAllow(tunnel32, n77, n78)
+	f.routes[n77+"|"+iface] = ours
+	f.routes[n78+"|"+iface] = ours
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77}); err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range f.calls {
-		if strings.HasPrefix(c, "route+") {
-			t.Fatalf("маршрут поверх чужого: %v", f.calls)
-		}
+	want := []string{"allow- " + n78, "route- " + n78}
+	if !reflect.DeepEqual(f.mutations(), want) {
+		t.Fatalf("calls = %v", f.calls)
 	}
-	if err := Apply(context.Background(), f, iface, pub, nil, []string{n77}); err != nil {
-		t.Fatal(err)
-	}
-	if f.routes[n77+"|"+iface] != "manual" {
-		t.Fatal("чужая запись снята")
+	if !f.allow[iface+"|"+pub+"|"+n77] || f.routes[n77+"|"+iface] != ours || f.allow[iface+"|"+pub+"|"+n78] || f.routes[n78+"|"+iface] != "" {
+		t.Fatalf("state: allow=%v routes=%v", f.allow, f.routes)
 	}
 }
 
-func TestApply_RouteFailureRollsBackInReverse(t *testing.T) {
+// Роутер потерял сеть (ни allow-ip, ни маршрута) — сохранение того же
+// списка её восстанавливает; частичная потеря — только недостающее.
+func TestReconcile_RestoresLost(t *testing.T) {
 	f := newFakeRouter()
-	f.allow[iface+"|"+pub+"|"+n79] = true
+	f.setAllow(tunnel32, n78)
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77, n78}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"allow+ " + n77, "route+ " + n77, "route+ " + n78}
+	if !reflect.DeepEqual(f.mutations(), want) {
+		t.Fatalf("calls = %v", f.calls)
+	}
+}
+
+// Туннельный /32 (старый и новый при смене адреса) — не сеть за клиентом:
+// ни снятия allow-ip, ни снятия маршрута с меткой. Посторонний /32 — сеть.
+func TestReconcile_TunnelHostsNeverTouched(t *testing.T) {
+	const newTunnel32, hostNet = "10.9.9.3/32", "192.168.50.7/32"
+	f := newFakeRouter()
+	f.setAllow(tunnel32, newTunnel32, hostNet)
+	f.routes[newTunnel32+"|"+iface] = ours
+	hosts := []net.IP{net.ParseIP("10.9.9.2"), net.ParseIP("10.9.9.3")}
+	if err := Reconcile(context.Background(), f, iface, pub, hosts, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"allow- " + hostNet}
+	if !reflect.DeepEqual(f.mutations(), want) {
+		t.Fatalf("calls = %v", f.calls)
+	}
+}
+
+// Вне области сетей за клиентом (IPv6, 0.0.0.0/0) allow-ips не трогаются:
+// в RemoteSubnets их быть не может.
+func TestReconcile_NonSubnetAllowIPsUntouched(t *testing.T) {
+	f := newFakeRouter()
+	f.setAllow(tunnel32, "0.0.0.0/0", "fd00::/64")
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, nil); err != nil {
+		t.Fatal(err)
+	}
+	if m := f.mutations(); len(m) != 0 {
+		t.Fatalf("calls = %v", f.calls)
+	}
+}
+
+// Правило 2: поверх чужой записи не встаём и своей не считаем — ни при
+// добавлении, ни при снятии сети.
+func TestReconcile_ForeignRouteNeverTouched(t *testing.T) {
+	f := newFakeRouter()
+	f.routes[n77+"|"+iface] = "manual"
+	f.routes[n78+"|"+iface] = "awgm-peer:5+0I/P0Vx" // метка сверяется целиком
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"allow+ " + n77}; !reflect.DeepEqual(f.mutations(), want) {
+		t.Fatalf("calls = %v", f.calls)
+	}
+	f.calls = nil
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, nil); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"allow- " + n77}; !reflect.DeepEqual(f.mutations(), want) {
+		t.Fatalf("calls = %v", f.calls)
+	}
+	if f.routes[n77+"|"+iface] != "manual" || f.routes[n78+"|"+iface] != "awgm-peer:5+0I/P0Vx" {
+		t.Fatalf("чужая запись тронута: %v", f.routes)
+	}
+}
+
+// Отказ чтения состояния — ошибка до единой мутации (fail-closed).
+func TestReconcile_ReadFailureNoMutation(t *testing.T) {
+	for _, fail := range []string{"read allow", "read routes"} {
+		f := newFakeRouter()
+		f.setAllow(n79)
+		f.failOn = []string{fail}
+		if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77}); err == nil || len(f.mutations()) != 0 {
+			t.Fatalf("%s: err=%v calls=%v", fail, err, f.calls)
+		}
+	}
+}
+
+// Откат возвращает роутер к состоянию ДО вызова: стоявшее раньше (allow-ip 77,
+// наш маршрут 80) не снимается, снятое (allow-ip и маршрут 79) возвращается.
+func TestReconcile_RollbackUndoesOnlyOwnChanges(t *testing.T) {
+	const n80 = "192.168.80.0/24"
+	f := newFakeRouter()
+	f.setAllow(tunnel32, n77, n79, n80)
 	f.routes[n79+"|"+iface] = ours
+	f.routes[n80+"|"+iface] = ours
 	f.failOn = []string{"route+ " + n78}
-	err := Apply(context.Background(), f, iface, pub, []string{n77, n78}, []string{n79})
+	err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77, n78, n80})
 	var rb *RollbackError
 	if err == nil || errors.As(err, &rb) {
 		t.Fatalf("err = %v", err)
 	}
-	// Отказ на добавлении маршрута 78: до снятия 79-го дело не дошло. Откат —
-	// снять наш 77-й маршрут, вернуть allow 79, снять allow 78 и 77.
-	tail := f.calls[len(f.calls)-4:]
-	want := []string{"route- " + n77, "allow+ " + n79, "allow- " + n78, "allow- " + n77}
-	if !reflect.DeepEqual(tail, want) {
-		t.Fatalf("rollback = %v", tail)
+	// Шаги: allow+78, allow-79, route+77, route+78 (отказ). Откат обратным
+	// порядком: снять маршрут 77, вернуть allow 79, снять allow 78.
+	want := []string{"allow+ " + n78, "allow- " + n79, "route+ " + n77, "route+ " + n78,
+		"route- " + n77, "allow+ " + n79, "allow- " + n78}
+	if !reflect.DeepEqual(f.mutations(), want) {
+		t.Fatalf("calls = %v", f.calls)
 	}
-	if len(f.allow) != 1 || !f.allow[iface+"|"+pub+"|"+n79] || len(f.routes) != 1 || f.routes[n79+"|"+iface] != ours {
+	wantAllow := map[string]bool{}
+	for _, n := range []string{tunnel32, n77, n79, n80} {
+		wantAllow[iface+"|"+pub+"|"+n] = true
+	}
+	wantRoutes := map[string]string{n79 + "|" + iface: ours, n80 + "|" + iface: ours}
+	if !reflect.DeepEqual(f.allow, wantAllow) || !reflect.DeepEqual(f.routes, wantRoutes) {
 		t.Fatalf("состояние не восстановлено: allow=%v routes=%v", f.allow, f.routes)
 	}
 }
 
 // Отказ на последнем шаге (снятие маршрута): откатываются все четыре списка,
-// в том числе уже снятый наш маршрут 79 возвращается.
-func TestApply_RouteRemovalFailureRestoresRemovedRoute(t *testing.T) {
+// в том числе уже снятый наш маршрут возвращается.
+func TestReconcile_RouteRemovalFailureRestoresRemovedRoute(t *testing.T) {
 	const n80 = "192.168.80.0/24"
 	f := newFakeRouter()
-	for _, n := range []string{n79, n80} {
-		f.allow[iface+"|"+pub+"|"+n] = true
-		f.routes[n+"|"+iface] = ours
-	}
+	f.setAllow(n79, n80)
+	f.routes[n79+"|"+iface] = ours
+	f.routes[n80+"|"+iface] = ours
 	f.failOn = []string{"route- " + n80}
-	err := Apply(context.Background(), f, iface, pub, []string{n77, n78}, []string{n79, n80})
-	var rb *RollbackError
-	if err == nil || errors.As(err, &rb) {
-		t.Fatalf("err = %v", err)
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77, n78}); err == nil {
+		t.Fatal("нет ошибки")
 	}
-	tail := f.calls[len(f.calls)-7:]
+	m := f.mutations()
+	tail := m[len(m)-7:]
 	want := []string{"route- " + n78, "route- " + n77, "route+ " + n79, "allow+ " + n80, "allow+ " + n79, "allow- " + n78, "allow- " + n77}
 	if !reflect.DeepEqual(tail, want) {
 		t.Fatalf("rollback = %v", tail)
@@ -181,91 +324,32 @@ func TestApply_RouteRemovalFailureRestoresRemovedRoute(t *testing.T) {
 	}
 }
 
-func TestApply_RollbackFailureIsRollbackError(t *testing.T) {
-	f := newFakeRouter()
-	f.failOn = []string{"route+ ", "allow- "}
-	err := Apply(context.Background(), f, iface, pub, []string{n77}, nil)
-	var rb *RollbackError
-	if !errors.As(err, &rb) || !strings.Contains(rb.Cause.Error(), "route+") || !strings.Contains(rb.Rollback.Error(), "allow-") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestApply_InvalidCIDRBeforeAnyCall(t *testing.T) {
-	f := newFakeRouter()
-	if err := Apply(context.Background(), f, iface, pub, []string{"nonsense"}, nil); err == nil || len(f.calls) != 0 {
-		t.Fatalf("err=%v calls=%v", err, f.calls)
-	}
-}
-
-func TestRemoveRoutes_OwnOnlyAndFailClosed(t *testing.T) {
-	f := newFakeRouter()
-	f.routes[n77+"|"+iface] = ours
-	f.routes[n78+"|"+iface] = "manual"
-	if err := RemoveRoutes(context.Background(), f, iface, pub, []string{n77, n78}); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := f.routes[n77+"|"+iface]; ok || f.routes[n78+"|"+iface] != "manual" {
-		t.Fatalf("routes = %v", f.routes)
-	}
-	f = newFakeRouter()
-	f.routes[n77+"|"+iface] = ours
-	f.failOn = []string{"route- " + n77}
-	if err := RemoveRoutes(context.Background(), f, iface, pub, []string{n77, n78}); err == nil || len(f.calls) != 1 {
-		t.Fatalf("fail-closed: err=%v calls=%v", err, f.calls)
-	}
-}
-
-func TestApply_CancelledCallerCtxStillRollsBack(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	f := newFakeRouter()
-	f.allow[iface+"|"+pub+"|"+n79] = true
-	f.routes[n79+"|"+iface] = ours
-	f.cancelAfter, f.cancel = "route+ "+n77, cancel
-	err := Apply(ctx, f, iface, pub, []string{n77, n78}, []string{n79})
-	var rb *RollbackError
-	if !errors.Is(err, context.Canceled) || errors.As(err, &rb) {
-		t.Fatalf("err = %v", err)
-	}
-	tail := f.calls[len(f.calls)-4:]
-	want := []string{"route- " + n77, "allow+ " + n79, "allow- " + n78, "allow- " + n77}
-	if !reflect.DeepEqual(tail, want) {
-		t.Fatalf("rollback = %v", tail)
-	}
-	if len(f.allow) != 1 || !f.allow[iface+"|"+pub+"|"+n79] || len(f.routes) != 1 || f.routes[n79+"|"+iface] != ours {
-		t.Fatalf("состояние не восстановлено: allow=%v routes=%v", f.allow, f.routes)
-	}
-}
-
-func TestApply_AllowIPFailureRollsBackInReverse(t *testing.T) {
+func TestReconcile_AllowIPFailureRollsBackInReverse(t *testing.T) {
 	const n80, n81 = "192.168.80.0/24", "192.168.81.0/24"
 	cases := []struct {
 		name           string
 		failOn         string
-		added, removed []string
+		have, desired  []string
 		wantTail       []string
 		wantAllowAfter []string
 	}{
-		{"allow+", "allow+ " + n80, []string{n77, n78, n80}, nil,
+		{"allow+", "allow+ " + n80, nil, []string{n77, n78, n80},
 			[]string{"allow- " + n78, "allow- " + n77}, nil},
-		{"allow-", "allow- " + n81, []string{n77, n78}, []string{n79, n80, n81},
+		{"allow-", "allow- " + n81, []string{n79, n80, n81}, []string{n77, n78},
 			[]string{"allow+ " + n80, "allow+ " + n79, "allow- " + n78, "allow- " + n77},
 			[]string{n79, n80, n81}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFakeRouter()
-			for _, n := range tc.removed {
-				f.allow[iface+"|"+pub+"|"+n] = true
-			}
+			f.setAllow(tc.have...)
 			f.failOn = []string{tc.failOn}
-			if err := Apply(context.Background(), f, iface, pub, tc.added, tc.removed); err == nil {
+			if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, tc.desired); err == nil {
 				t.Fatal("нет ошибки")
 			}
-			tail := f.calls[len(f.calls)-len(tc.wantTail):]
-			if !reflect.DeepEqual(tail, tc.wantTail) {
-				t.Fatalf("rollback = %v", f.calls)
+			m := f.mutations()
+			if tail := m[len(m)-len(tc.wantTail):]; !reflect.DeepEqual(tail, tc.wantTail) {
+				t.Fatalf("rollback = %v", m)
 			}
 			if len(f.allow) != len(tc.wantAllowAfter) {
 				t.Fatalf("allow = %v", f.allow)
@@ -279,47 +363,50 @@ func TestApply_AllowIPFailureRollsBackInReverse(t *testing.T) {
 	}
 }
 
-func TestApply_OwnerCheckFailureRollsBackAllowIPs(t *testing.T) {
+func TestReconcile_RollbackFailureIsRollbackError(t *testing.T) {
 	f := newFakeRouter()
-	f.allow[iface+"|"+pub+"|"+n79] = true
-	f.routes[n79+"|"+iface] = ours
-	f.failOn = []string{"owner? " + n78}
-	if err := Apply(context.Background(), f, iface, pub, []string{n77, n78}, []string{n79}); err == nil {
-		t.Fatal("нет ошибки")
+	f.failOn = []string{"route+ ", "allow- "}
+	err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77})
+	var rb *RollbackError
+	if !errors.As(err, &rb) || !strings.Contains(rb.Cause.Error(), "route+") || !strings.Contains(rb.Rollback.Error(), "allow-") {
+		t.Fatalf("err = %v", err)
 	}
-	tail := f.calls[len(f.calls)-4:]
+}
+
+func TestReconcile_InvalidCIDRBeforeAnyCall(t *testing.T) {
+	f := newFakeRouter()
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{"nonsense"}); err == nil || len(f.calls) != 0 {
+		t.Fatalf("err=%v calls=%v", err, f.calls)
+	}
+}
+
+func TestReconcile_CancelledCallerCtxStillRollsBack(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := newFakeRouter()
+	f.setAllow(n79)
+	f.routes[n79+"|"+iface] = ours
+	f.cancelAfter, f.cancel = "route+ "+n77, cancel
+	err := Reconcile(ctx, f, iface, pub, tunnelHost, []string{n77, n78})
+	var rb *RollbackError
+	if !errors.Is(err, context.Canceled) || errors.As(err, &rb) {
+		t.Fatalf("err = %v", err)
+	}
+	m := f.mutations()
+	tail := m[len(m)-4:]
 	want := []string{"route- " + n77, "allow+ " + n79, "allow- " + n78, "allow- " + n77}
 	if !reflect.DeepEqual(tail, want) {
 		t.Fatalf("rollback = %v", tail)
 	}
-	if len(f.allow) != 1 || len(f.routes) != 1 || f.routes[n79+"|"+iface] != ours {
-		t.Fatalf("allow=%v routes=%v", f.allow, f.routes)
-	}
-}
-
-// Наш маршрут, стоявший до Apply (сирота прошлого сбоя), пропускается и
-// откатом не снимается: откат возвращает роутер к состоянию ДО вызова.
-func TestApply_PreexistingOwnRouteSurvivesRollback(t *testing.T) {
-	f := newFakeRouter()
-	f.routes[n77+"|"+iface] = ours
-	f.failOn = []string{"route+ " + n78}
-	if err := Apply(context.Background(), f, iface, pub, []string{n77, n78}, nil); err == nil {
-		t.Fatal("нет ошибки")
-	}
-	for _, c := range f.calls {
-		if c == "route+ "+n77 || c == "route- "+n77 {
-			t.Fatalf("наш прежний маршрут тронут: %v", f.calls)
-		}
-	}
-	if f.routes[n77+"|"+iface] != ours {
-		t.Fatalf("routes = %v", f.routes)
+	if len(f.allow) != 1 || !f.allow[iface+"|"+pub+"|"+n79] || len(f.routes) != 1 || f.routes[n79+"|"+iface] != ours {
+		t.Fatalf("состояние не восстановлено: allow=%v routes=%v", f.allow, f.routes)
 	}
 }
 
 func TestRollbackError_UnwrapsToCause(t *testing.T) {
 	f := newFakeRouter()
 	f.failOn = []string{"route+ ", "allow- "}
-	err := Apply(context.Background(), f, iface, pub, []string{n77}, nil)
+	err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77})
 	var rb *RollbackError
 	if !errors.As(err, &rb) || len(f.injected) == 0 || !errors.Is(err, f.injected[0]) {
 		t.Fatalf("err = %v injected = %v", err, f.injected)
@@ -328,5 +415,43 @@ func TestRollbackError_UnwrapsToCause(t *testing.T) {
 		if errors.Is(err, e) {
 			t.Fatalf("ошибка отката видна через Unwrap: %v", e)
 		}
+	}
+}
+
+// Удаление пира снимает ВСЕ маршруты с его меткой, найденные на роутере, —
+// хранилище о них может не знать (сирота после RollbackError). Чужие и
+// метку-префикс не трогает.
+func TestRemoveRoutes_SweepsAllOwnFromRouter(t *testing.T) {
+	f := newFakeRouter()
+	f.routes[n77+"|"+iface] = ours
+	f.routes["192.168.79.5/32|"+iface] = ours
+	f.routes[n78+"|"+iface] = "manual"
+	f.routes["192.168.81.0/24|"+iface] = "awgm-peer:5+0I/P0Vx"
+	f.routes[n77+"|Wireguard8"] = ours
+	if err := RemoveRoutes(context.Background(), f, iface, pub); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"route- " + n77, "route- 192.168.79.5/32"}
+	if !reflect.DeepEqual(f.mutations(), want) {
+		t.Fatalf("calls = %v", f.calls)
+	}
+	if len(f.routes) != 3 || f.routes[n78+"|"+iface] != "manual" || f.routes[n77+"|Wireguard8"] != ours {
+		t.Fatalf("routes = %v", f.routes)
+	}
+}
+
+func TestRemoveRoutes_FailClosed(t *testing.T) {
+	f := newFakeRouter()
+	f.routes[n77+"|"+iface] = ours
+	f.failOn = []string{"read routes"}
+	if err := RemoveRoutes(context.Background(), f, iface, pub); err == nil || len(f.mutations()) != 0 {
+		t.Fatalf("чтение: err=%v calls=%v", err, f.calls)
+	}
+	f = newFakeRouter()
+	f.routes[n77+"|"+iface] = ours
+	f.routes[n78+"|"+iface] = ours
+	f.failOn = []string{"route- " + n77}
+	if err := RemoveRoutes(context.Background(), f, iface, pub); err == nil || len(f.mutations()) != 1 {
+		t.Fatalf("снятие: err=%v calls=%v", err, f.calls)
 	}
 }

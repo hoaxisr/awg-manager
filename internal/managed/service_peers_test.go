@@ -6,9 +6,20 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+// withPeerRouter — DeletePeer сверяет маршруты с меткой пира на роутере
+// (#713): Commands над пустым /show/rc/ip/route.
+func withPeerRouter(svc *Service, poster *fakePoster) {
+	q := &query.Queries{StaticRoutes: query.NewStaticRouteStore(&fakePolicyGetter{body: []byte(`[]`)}, query.NopLogger())}
+	sc := command.NewSaveCoordinator(poster, nil, time.Hour, time.Hour, 0, nil)
+	svc.commands = command.NewCommands(command.Deps{Poster: poster, Save: sc, Queries: q})
+}
 
 // DeletePeer снимает пира из NDMS (`peer no key`) и из storage; иначе отозванный
 // клиент продолжает ходить через сервер (доступ снят только на бумаге).
@@ -18,6 +29,7 @@ func TestDeletePeer_RemovesPeerFromNDMSAndStorage(t *testing.T) {
 		InterfaceName: "Wireguard0",
 		Peers:         []storage.ManagedPeer{{PublicKey: pub, Description: "phone"}, {PublicKey: "OTHERKEY0123456789=", Description: "laptop"}},
 	}, nil, `{}`)
+	withPeerRouter(svc, poster)
 
 	if err := svc.DeletePeer(context.Background(), "Wireguard0", pub); err != nil {
 		t.Fatalf("DeletePeer: %v", err)
@@ -54,10 +66,11 @@ func TestDeletePeer_UnknownKeyIsErrorWithoutRCI(t *testing.T) {
 // исчезала с карточки, а пир продолжал ходить через сервер (fail-open).
 func TestDeletePeer_RCIFailureKeepsPeerInStorage(t *testing.T) {
 	const pub = "PEERKEY0123456789abcdef="
-	svc, _, store := newTestService(t, &storage.ManagedServer{
+	svc, poster, store := newTestService(t, &storage.ManagedServer{
 		InterfaceName: "Wireguard0",
 		Peers:         []storage.ManagedPeer{{PublicKey: pub, Description: "phone"}},
 	}, errors.New("rci: connection refused"), `{}`)
+	withPeerRouter(svc, poster)
 
 	err := svc.DeletePeer(context.Background(), "Wireguard0", pub)
 	if err == nil || !strings.Contains(err.Error(), "remove peer via RCI: ") {

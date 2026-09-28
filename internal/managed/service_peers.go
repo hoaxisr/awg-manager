@@ -49,14 +49,15 @@ func detachedCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 }
 
 // rollbackAddedPeer снимает с роутера только что добавленного пира, которого
-// не будет в хранилище: сначала его сети (remote, если стоят), потом сам пир.
-// Ошибки — в журнал: вызывающий уже возвращает первичную.
-func (s *Service) rollbackAddedPeer(ctx context.Context, iface, pubKey, name string, router peersubnet.Router, remote []string) {
+// не будет в хранилище: сначала все маршруты с его меткой, найденные на
+// роутере (router != nil — у пира были сети), потом сам пир; allow-ips уходят
+// вместе с ним. Ошибки — в журнал: вызывающий уже возвращает первичную.
+func (s *Service) rollbackAddedPeer(ctx context.Context, iface, pubKey, name string, router peersubnet.Router) {
 	rbCtx, cancel := detachedCtx(ctx)
 	defer cancel()
-	if len(remote) > 0 {
-		if err := peersubnet.Apply(rbCtx, router, iface, pubKey, nil, remote); err != nil {
-			s.appLog.Warn("add-peer", name, "сети за клиентом не сняты при откате: "+err.Error())
+	if router != nil {
+		if err := peersubnet.RemoveRoutes(rbCtx, router, iface, pubKey); err != nil {
+			s.appLog.Warn("add-peer", name, "маршруты сетей за клиентом не сняты при откате: "+err.Error())
 		}
 	}
 	if err := s.rciRemovePeer(rbCtx, iface, pubKey); err != nil {
@@ -168,16 +169,16 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		// NDMS применяет payload поэлементно: при вложенном отказе ключ/PSK
 		// могли встать — без отката это невидимый сирота. Ключ свежий, чужого
 		// пира снятие не заденет.
-		s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, nil, nil)
+		s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, nil)
 		return nil, fmt.Errorf("add peer: %w", err)
 	}
 
 	// Шаги 3–4 спеки: allow-ips и маршруты на сети за клиентом. Отказ — снять
 	// только что созданного пира: запись переживает только полный успех.
 	if len(remote) > 0 {
-		if err := peersubnet.Apply(ctx, router, iface, pubKey, remote, nil); err != nil {
+		if err := peersubnet.Reconcile(ctx, router, iface, pubKey, []net.IP{ip}, remote); err != nil {
 			s.logRollback("add-peer", req.Description, err)
-			s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, nil, nil)
+			s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, router)
 			return nil, fmt.Errorf("apply remote subnets: %w", err)
 		}
 	}
@@ -216,7 +217,7 @@ func (s *Service) AddPeer(ctx context.Context, id string, req AddPeerRequest) (*
 		return nil
 	}); err != nil {
 		// Без записи пир на роутере — сирота, которого никто не снимет.
-		s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, router, remote)
+		s.rollbackAddedPeer(ctx, iface, pubKey, req.Description, router)
 		return nil, fmt.Errorf("save to storage: %w", err)
 	}
 
@@ -289,7 +290,8 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		}
 	}
 	// Чтение роутера — после дешёвых локальных проверок.
-	var remote, added, removed []string
+	var remote []string
+	var router peersubnet.Router
 	if req.RemoteSubnets != nil {
 		if len(*req.RemoteSubnets) > 0 {
 			occupied, err := s.OccupiedSubnets(ctx, PeerRef{Iface: iface, PubKey: pubkey})
@@ -300,13 +302,16 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 				return err
 			}
 		}
-		// Diff — от хранилища, не от allow-ips роутера: источник правды здесь.
-		added, removed = peersubnet.Diff(peer.RemoteSubnets, remote)
-	}
-	var router peersubnet.Router
-	if len(added)+len(removed) > 0 {
 		if router, err = s.peerRouter(); err != nil {
 			return err
+		}
+	}
+	// Туннельные адреса (старый и новый) — не сети за клиентом: сверка их не
+	// снимает, в каком бы состоянии смена адреса ни застала allow-ips.
+	var tunnelHosts []net.IP
+	for _, t := range []string{peer.TunnelIP, req.TunnelIP} {
+		if ip, _, err := net.ParseCIDR(t); err == nil {
+			tunnelHosts = append(tunnelHosts, ip)
 		}
 	}
 
@@ -349,8 +354,10 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		}
 	}
 
-	if len(added)+len(removed) > 0 {
-		if err := peersubnet.Apply(ctx, router, iface, pubkey, added, removed); err != nil {
+	// Сверка с роутером, не разница с хранилищем (F509): «было» читается с
+	// роутера, и расхождение прошлых сбоев это сохранение снимает.
+	if req.RemoteSubnets != nil {
+		if err := peersubnet.Reconcile(ctx, router, iface, pubkey, tunnelHosts, remote); err != nil {
 			s.logRollback("update-peer", req.Description, err)
 			rbCtx, cancel := detachedCtx(ctx)
 			revertTunnelIP(rbCtx, "отказа сетей за клиентом")
@@ -393,10 +400,10 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 		return nil
 	}); err != nil {
 		// Роутер ушёл вперёд записи: вернуть сети и /32 к записанному (паритет с
-		// системным путём), иначе следующий Diff от хранилища их не увидит.
+		// системным путём) — карточка и .conf показывают запись.
 		rbCtx, cancel := detachedCtx(ctx)
-		if len(added)+len(removed) > 0 {
-			if rbErr := peersubnet.Apply(rbCtx, router, iface, pubkey, removed, added); rbErr != nil {
+		if req.RemoteSubnets != nil {
+			if rbErr := peersubnet.Reconcile(rbCtx, router, iface, pubkey, tunnelHosts, peer.RemoteSubnets); rbErr != nil {
 				s.appLog.Warn("update-peer", req.Description, "сети за клиентом не возвращены после отказа записи: "+rbErr.Error())
 			}
 		}
@@ -426,15 +433,14 @@ func (s *Service) DeletePeer(ctx context.Context, id, pubkey string) error {
 	iface := server.InterfaceName
 
 	// Свои маршруты — до снятия пира и fail-closed (11.B/11.6): маршрут-сирота
-	// без записи никто уже не снимет.
-	if subs := server.Peers[idx].RemoteSubnets; len(subs) > 0 {
-		router, err := s.peerRouter()
-		if err != nil {
-			return err
-		}
-		if err := peersubnet.RemoveRoutes(ctx, router, iface, pubkey, subs); err != nil {
-			return fmt.Errorf("remove peer routes: %w", err)
-		}
+	// без записи никто уже не снимет. Все с меткой пира, найденные на роутере,
+	// а не список записи: сирота прошлого сбоя в записи не значится.
+	router, err := s.peerRouter()
+	if err != nil {
+		return err
+	}
+	if err := peersubnet.RemoveRoutes(ctx, router, iface, pubkey); err != nil {
+		return fmt.Errorf("remove peer routes: %w", err)
 	}
 
 	// Remove via RCI — fail-closed: a peer that stayed on the router while the

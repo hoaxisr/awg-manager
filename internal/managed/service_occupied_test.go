@@ -275,7 +275,7 @@ func TestRCIPost_InvalidatesStaticRoutes(t *testing.T) {
 	}
 }
 
-// Отказ отката Apply уходит в журнал приложения текстом Rollback; прочие
+// Отказ отката сверки уходит в журнал приложения текстом Rollback; прочие
 // ошибки (без отката) журнал не трогают.
 func TestLogRollback(t *testing.T) {
 	svc, _, _, _ := newPeerSubnetTestService(t, `[]`)

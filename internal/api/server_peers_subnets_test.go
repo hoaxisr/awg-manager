@@ -2,13 +2,18 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,6 +51,14 @@ const otherPeerPubKey = "OTHERaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa="
 // otherPeerPubKey с allow-ips otherAllowIPs (пусто — второго пира нет).
 func newServersSubnetHarnessWithOther(t *testing.T, peerAllowIPs, rcRoutes, otherAllowIPs string) (*ServersHandler, *storage.SettingsStore, *natPoster, *busProbe, *appLogSpy) {
 	t.Helper()
+	h, store, poster, p, spy, _ := newServersSubnetHarnessFG(t, peerAllowIPs, rcRoutes, otherAllowIPs)
+	return h, store, poster, p, spy
+}
+
+// newServersSubnetHarnessFG — newServersSubnetHarnessWithOther, отдающий и
+// FakeGetter (для sysSimRouter).
+func newServersSubnetHarnessFG(t *testing.T, peerAllowIPs, rcRoutes, otherAllowIPs string) (*ServersHandler, *storage.SettingsStore, *natPoster, *busProbe, *appLogSpy, *query.FakeGetter) {
+	t.Helper()
 	listPeers := `{"public-key":"` + peerFixturePubKey + `","comment":"phone"}`
 	rcPeers := `{"key":"` + peerFixturePubKey + `","comment":"phone","allow-ips":` + peerAllowIPs + `}`
 	if otherAllowIPs != "" {
@@ -76,7 +89,128 @@ func newServersSubnetHarnessWithOther(t *testing.T, peerAllowIPs, rcRoutes, othe
 	h.SetManagedService(managed.New(poster, nil, queries, cmds, store, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	p := newBusProbe(t)
 	h.SetEventBus(p.bus())
-	return h, store, poster, p, spy
+	return h, store, poster, p, spy, fg
+}
+
+// sysSimRouter — роутер в памяти для сверки (#713): применяет посты allow-ips,
+// снятия пира и маршрутов и перерисовывает /show/rc/interface/Wireguard0 и
+// /show/rc/ip/route — Reconcile читает сделанное. Встаёт в natPoster.failOn;
+// fail — отказ NDMS теста: отвергнутый пост состояние не меняет.
+type sysSimRouter struct {
+	mu     sync.Mutex
+	fg     *query.FakeGetter
+	peers  map[string][]string // key → "address/mask"
+	routes []map[string]any
+	fail   func(payload string) error
+}
+
+func newSysSimRouter(t *testing.T, fg *query.FakeGetter, poster *natPoster, rcRoutes string) *sysSimRouter {
+	t.Helper()
+	r := &sysSimRouter{fg: fg, peers: map[string][]string{}}
+	if err := json.Unmarshal([]byte(rcRoutes), &r.routes); err != nil {
+		t.Fatal(err)
+	}
+	poster.setFailOn(r.post)
+	return r
+}
+
+func (r *sysSimRouter) seed(key string, cidrs ...string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.peers[key] = r.peers[key][:0:0]
+	for _, c := range cidrs {
+		_, n, _ := net.ParseCIDR(c)
+		r.peers[key] = append(r.peers[key], n.IP.String()+"/"+net.IP(n.Mask).String())
+	}
+	r.render()
+}
+
+func (r *sysSimRouter) render() {
+	keys := make([]string, 0, len(r.peers))
+	for k := range r.peers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var list []map[string]any
+	for _, k := range keys {
+		var allow []map[string]string
+		for _, a := range r.peers[k] {
+			am := strings.SplitN(a, "/", 2)
+			allow = append(allow, map[string]string{"address": am[0], "mask": am[1]})
+		}
+		list = append(list, map[string]any{"key": k, "allow-ips": allow})
+	}
+	b, _ := json.Marshal(map[string]any{"wireguard": map[string]any{"peer": list}})
+	r.fg.SetJSON("/show/rc/interface/Wireguard0", string(b))
+	b, _ = json.Marshal(r.routes)
+	if r.routes == nil {
+		b = []byte(`[]`)
+	}
+	r.fg.SetJSON("/show/rc/ip/route", string(b))
+}
+
+func (r *sysSimRouter) post(payload string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.fail != nil {
+		if err := r.fail(payload); err != nil {
+			return err
+		}
+	}
+	var m map[string]any
+	_ = json.Unmarshal([]byte(payload), &m)
+	if ifs, ok := m["interface"].(map[string]any); ok {
+		wg, _ := ifs["Wireguard0"].(map[string]any)["wireguard"].(map[string]any)
+		peerList, _ := wg["peer"].([]any)
+		for _, pv := range peerList {
+			p := pv.(map[string]any)
+			key, _ := p["key"].(string)
+			allow, hasAllow := p["allow-ips"].([]any)
+			if p["no"] == true && !hasAllow {
+				delete(r.peers, key)
+				continue
+			}
+			cur := r.peers[key]
+			for _, av := range allow {
+				a := av.(map[string]any)
+				e := a["address"].(string) + "/" + a["mask"].(string)
+				cur = slices.DeleteFunc(cur, func(x string) bool { return x == e })
+				if a["no"] != true {
+					cur = append(cur, e)
+				}
+			}
+			r.peers[key] = cur
+		}
+	}
+	if ip, ok := m["ip"].(map[string]any); ok {
+		if rt, ok := ip["route"].(map[string]any); ok {
+			same := func(x map[string]any) bool {
+				return x["interface"] == rt["interface"] && x["network"] == rt["network"] && x["mask"] == rt["mask"] && x["host"] == rt["host"]
+			}
+			r.routes = slices.DeleteFunc(r.routes, same)
+			if rt["no"] != true {
+				r.routes = append(r.routes, rt)
+			}
+		}
+	}
+	r.render()
+	return nil
+}
+
+// state — allow-ips пира и сети маршрутов с меткой comment.
+func (r *sysSimRouter) state(key, comment string) (allow, routes []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	allow = append(allow, r.peers[key]...)
+	for _, rt := range r.routes {
+		if rt["comment"] == comment {
+			n, _ := rt["network"].(string)
+			routes = append(routes, n)
+		}
+	}
+	sort.Strings(allow)
+	sort.Strings(routes)
+	return allow, routes
 }
 
 func idx(posts []string, sub string) int {
@@ -89,7 +223,8 @@ func idx(posts []string, sub string) int {
 }
 
 func TestServersHandler_AddServerPeer_RemoteSubnets_OrderAndSecret(t *testing.T) {
-	h, store, poster, p, _ := newServersSubnetHarness(t, `[]`, `[]`)
+	h, store, poster, p, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
+	sim := newSysSimRouter(t, fg, poster, `[]`)
 	stubPeerKeygen(t)
 	rr := postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32","clientAllowedIPs":"10.9.0.0/24, 192.168.1.0/24","remoteSubnets":["192.168.77.5/24"]}`)
 	if rr.Code != 200 {
@@ -106,6 +241,10 @@ func TestServersHandler_AddServerPeer_RemoteSubnets_OrderAndSecret(t *testing.T)
 	}
 	if got := p.invalidated(); len(got) != 1 || got[0] != "servers/server-peer-added" {
 		t.Fatalf("публикации = %v", got)
+	}
+	// /32 нового пира сверка сетью не считает и не снимает.
+	if allow, _ := sim.state(peerFixturePubKey, ""); !slices.Equal(allow, []string{"10.9.0.7/255.255.255.255", "192.168.77.0/255.255.255.0"}) {
+		t.Fatalf("allow = %v", allow)
 	}
 }
 
@@ -300,7 +439,7 @@ func TestServersHandler_GenerateServerPeerConf_AllowedIPs(t *testing.T) {
 	}
 }
 
-// Свойство 2: tunnel IP и сети меняются вместе, Apply отказал — старый /32
+// Свойство 2: tunnel IP и сети меняются вместе, сверка отказала — старый /32
 // возвращается на роутер, запись не тронута.
 func TestServersHandler_UpdateServerPeer_TunnelIPAndSubnets_ApplyFails_RestoresIP(t *testing.T) {
 	h, store, poster, _, _ := newServersSubnetHarness(t, `[{"address":"10.9.0.2","mask":"255.255.255.255"}]`, `[]`)
@@ -341,9 +480,9 @@ func TestServersHandler_UpdateServerPeer_SaveFails_UndoesRouter(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("под root chmod не запрещает запись")
 	}
-	// Фейк отдаёт снимок маршрутов статичным: запись с нашей меткой стоит с
-	// начала, иначе снятие по свежему чтению её бы не увидело.
-	h, store, poster, _, _ := newServersSubnetHarness(t, `[{"address":"10.9.0.2","mask":"255.255.255.255"}]`, sysRcOurs77)
+	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
+	sim := newSysSimRouter(t, fg, poster, `[]`)
+	sim.seed(peerFixturePubKey, "10.9.0.2/32")
 	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", TunnelIP: "10.9.0.2/32"})
 	dir := store.DataDir()
 	if err := os.Chmod(dir, 0o555); err != nil {
@@ -361,6 +500,9 @@ func TestServersHandler_UpdateServerPeer_SaveFails_UndoesRouter(t *testing.T) {
 	}
 	if !strings.Contains(posts[len(posts)-1], `{"address":"10.9.0.2","mask":"255.255.255.255"}`) {
 		t.Fatalf("старый /32 не возвращён последним:\n%s", strings.Join(posts, "\n"))
+	}
+	if allow, routes := sim.state(peerFixturePubKey, "awgm-peer:AB/CD+EF"); !slices.Equal(allow, []string{"10.9.0.2/255.255.255.255"}) || len(routes) != 0 {
+		t.Fatalf("роутер не возвращён к записи: allow=%v routes=%v", allow, routes)
 	}
 }
 
@@ -383,15 +525,16 @@ func TestServersHandler_AddServerPeer_RollbackRemoveFails_KeepsSecret(t *testing
 	if !ok {
 		t.Fatal("секрет удалён, хотя пир остался на роутере")
 	}
-	// Final review M5: Apply свои сети откатил — в оставленном секрете их нет.
+	// Final review M5: сверка свои сети откатила — в оставленном секрете их нет.
 	if len(sec.RemoteSubnets) != 0 {
 		t.Fatalf("в секрете сети, которых нет на роутере: %v", sec.RemoteSubnets)
 	}
 }
 
-// Откат Apply сам не завершился (allow-ips не снялись) — сети на роутере,
-// секрет их держит, чтобы удаление пира сняло метки.
-func TestServersHandler_AddServerPeer_RollbackRemoveFails_ApplyRollbackFails_KeepsSubnets(t *testing.T) {
+// Откат Reconcile сам не завершился (allow-ips не снялись) и пир не снялся:
+// секрет остаётся, но сетей не держит — остаток на роутере увидит сверка
+// следующего сохранения, маршруты снимет удаление пира (оба читают роутер).
+func TestServersHandler_AddServerPeer_RollbackRemoveFails_ReconcileRollbackFails(t *testing.T) {
 	h, store, poster, _, _ := newServersSubnetHarness(t, `[]`, `[]`)
 	stubPeerKeygen(t)
 	poster.setFailOn(func(payload string) error {
@@ -405,7 +548,7 @@ func TestServersHandler_AddServerPeer_RollbackRemoveFails_ApplyRollbackFails_Kee
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
 	}
-	if sec, ok := store.GetServerPeerSecret("Wireguard0", peerFixturePubKey); !ok || len(sec.RemoteSubnets) != 1 {
+	if sec, ok := store.GetServerPeerSecret("Wireguard0", peerFixturePubKey); !ok || len(sec.RemoteSubnets) != 0 {
 		t.Fatalf("secret = %+v ok=%v", sec, ok)
 	}
 }
@@ -578,5 +721,86 @@ func TestServersHandler_UpdateServerPeer_TunnelIPInUse(t *testing.T) {
 				t.Fatalf("запись тронута: %+v", sec)
 			}
 		})
+	}
+}
+
+// F509: «было» читается с роутера. В записи [77], на роутере ещё сирота 78
+// (allow-ip и наш маршрут): сохранение [77] снимает 78, по 77 — ни одного вызова.
+func TestServersHandler_UpdateServerPeer_HealsRouterDrift(t *testing.T) {
+	rc := `[{"network":"192.168.77.0","mask":"255.255.255.0","interface":"Wireguard0","comment":"awgm-peer:AB/CD+EF"},
+		{"network":"192.168.78.0","mask":"255.255.255.0","interface":"Wireguard0","comment":"awgm-peer:AB/CD+EF"}]`
+	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, rc, "")
+	sim := newSysSimRouter(t, fg, poster, rc)
+	sim.seed(peerFixturePubKey, "10.9.0.2/32", "192.168.77.0/24", "192.168.78.0/24")
+	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", Description: "phone", TunnelIP: "10.9.0.2/32", RemoteSubnets: []string{"192.168.77.0/24"}})
+	rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.2/32","remoteSubnets":["192.168.77.0/24"]}`)
+	if rr.Code != 200 {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	posts := poster.snapshot()
+	if len(posts) != 2 || idx(posts, `{"address":"192.168.78.0","mask":"255.255.255.0","no":true}`) != 0 || idx(posts, `"network":"192.168.78.0","no":true`) != 1 {
+		t.Fatalf("posts:\n%s", strings.Join(posts, "\n"))
+	}
+	allow, routes := sim.state(peerFixturePubKey, "awgm-peer:AB/CD+EF")
+	if !slices.Equal(allow, []string{"10.9.0.2/255.255.255.255", "192.168.77.0/255.255.255.0"}) || !slices.Equal(routes, []string{"192.168.77.0"}) {
+		t.Fatalf("роутер: allow=%v routes=%v", allow, routes)
+	}
+}
+
+// Пир без записи (заведён в веб-морде): фронт шлёт remoteSubnets:[] всегда —
+// сверки нет, его собственные allow-ips не «лишние».
+func TestServersHandler_UpdateServerPeer_ForeignPeer_AllowIPsNotReconciled(t *testing.T) {
+	h, _, poster, _, _ := newServersSubnetHarness(t, `[{"address":"10.9.0.2","mask":"255.255.255.255"},{"address":"192.168.50.0","mask":"255.255.255.0"}]`, `[]`)
+	rr := putServerPeer(t, h, peerFixturePubKey, `{"description":"phone","tunnelIP":"10.9.0.2/32","remoteSubnets":[]}`)
+	if rr.Code != 200 {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if joined := strings.Join(poster.snapshot(), "\n"); strings.Contains(joined, "allow-ips") {
+		t.Fatalf("allow-ips чужого пира тронуты:\n%s", joined)
+	}
+}
+
+// Удаление пира снимает все маршруты с его меткой, найденные на роутере, —
+// и сироту, которой в записи нет.
+func TestServersHandler_DeleteServerPeer_SweepsOrphanRoutes(t *testing.T) {
+	rc := `[{"network":"192.168.78.0","mask":"255.255.255.0","interface":"Wireguard0","comment":"awgm-peer:AB/CD+EF"}]`
+	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, rc, "")
+	sim := newSysSimRouter(t, fg, poster, rc)
+	sim.seed(peerFixturePubKey, "10.9.0.2/32")
+	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", TunnelIP: "10.9.0.2/32"})
+	if rr := deleteServerPeer(t, h, peerFixturePubKey); rr.Code != 200 {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, routes := sim.state(peerFixturePubKey, "awgm-peer:AB/CD+EF"); len(routes) != 0 {
+		t.Fatalf("сирота осталась: %v", routes)
+	}
+}
+
+// Откат добавления: сверка отказала, и её собственный откат маршрута не
+// прошёл (RollbackError) — маршрут-сироту снимает откат пира по метке с роутера.
+func TestServersHandler_AddServerPeer_RollbackSweepsOrphanRoute(t *testing.T) {
+	h, store, poster, _, _, fg := newServersSubnetHarnessFG(t, `[]`, `[]`, "")
+	stubPeerKeygen(t)
+	sim := newSysSimRouter(t, fg, poster, `[]`)
+	failedOnce := false
+	sim.fail = func(payload string) error {
+		switch {
+		case strings.Contains(payload, `"comment":"awgm-peer:`) && strings.Contains(payload, `"network":"192.168.78.0"`):
+			return errors.New("route refused")
+		case strings.Contains(payload, `"network":"192.168.77.0","no":true`) && !failedOnce:
+			failedOnce = true
+			return errors.New("route stuck")
+		}
+		return nil
+	}
+	rr := postServerPeer(t, h, `{"description":"Phone","tunnelIP":"10.9.0.7/32","remoteSubnets":["192.168.77.0/24","192.168.78.0/24"]}`)
+	if rr.Code != http.StatusBadRequest || !failedOnce {
+		t.Fatalf("code=%d body=%s failedOnce=%v", rr.Code, rr.Body.String(), failedOnce)
+	}
+	if _, routes := sim.state(peerFixturePubKey, "awgm-peer:AB/CD+EF"); len(routes) != 0 {
+		t.Fatalf("маршрут-сирота: %v", routes)
+	}
+	if _, ok := store.GetServerPeerSecret("Wireguard0", peerFixturePubKey); ok {
+		t.Fatal("секрет пережил откат")
 	}
 }

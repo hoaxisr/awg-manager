@@ -11,22 +11,30 @@ import (
 // Router — узкий срез RCI, который нужен исполнителю. Адаптер живёт в
 // ndms/command (PeerRouter); фейк — в тестах этого пакета.
 type Router interface {
+	// PeerAllowIPs — allow-ips пира на iface, прочитанные сейчас, мимо кэша.
+	// Отказ чтения — ошибка: по устаревшему снимку сверка сняла бы не то.
+	PeerAllowIPs(ctx context.Context, iface, pubkey string) ([]*net.IPNet, error)
+	// InterfaceRoutes — статические маршруты на iface с комментариями,
+	// прочитанные сейчас (/show/rc/ip/route, 11.A/11.2).
+	InterfaceRoutes(ctx context.Context, iface string) ([]Route, error)
 	AddAllowIP(ctx context.Context, iface, pubkey string, n *net.IPNet) error
 	RemoveAllowIP(ctx context.Context, iface, pubkey string, n *net.IPNet) error
-	// NetworkRouteOwner: есть ли запись на (n, iface) и наша ли (comment целиком).
-	NetworkRouteOwner(ctx context.Context, n *net.IPNet, iface, comment string) (exists, own bool, err error)
 	AddNetworkRoute(ctx context.Context, n *net.IPNet, iface, comment string) error
 	// RemoveOwnNetworkRoute снимает только запись с меткой comment; removed —
 	// была ли мутация (откату нужно знать, что возвращать).
 	RemoveOwnNetworkRoute(ctx context.Context, n *net.IPNet, iface, comment string) (removed bool, err error)
 }
 
-// RollbackError — шаг Apply отказал, и откат сделанного тоже не завершился.
+// Route — статическая запись маршрута на интерфейсе.
+type Route struct {
+	Net     *net.IPNet
+	Comment string
+}
+
+// RollbackError — шаг Reconcile отказал, и откат сделанного тоже не завершился.
 // Unwrap отдаёт причину (её показывают пользователю); Rollback вызывающий пишет
-// в журнал приложения. Хранилище не тронуто, а роутер остаётся расходящимся с
-// ним: сверки нет, Apply работает по разнице хранилища, поэтому следующее
-// сохранение само расхождение не увидит. Лечится вручную (или повторным
-// сохранением той же сети либо её удалением и возвратом).
+// в журнал приложения. Хранилище не тронуто; роутер расходится с ним до
+// следующего сохранения: оно сверяется с роутером и расхождение снимет.
 type RollbackError struct{ Cause, Rollback error }
 
 func (e *RollbackError) Error() string {
@@ -36,7 +44,7 @@ func (e *RollbackError) Error() string {
 func (e *RollbackError) Unwrap() error { return e.Cause }
 
 // rollbackTimeout — бюджет отката. Откат идёт на ctx, отвязанном от отмены
-// вызывающего: самая вероятная причина сбоя посреди Apply — отключение
+// вызывающего: самая вероятная причина сбоя посреди Reconcile — отключение
 // клиента/таймаут запроса, и на том же ctx откат гарантированно не прошёл бы.
 const rollbackTimeout = 30 * time.Second
 
@@ -52,21 +60,85 @@ func parseAll(subnets []string) ([]*net.IPNet, error) {
 	return out, nil
 }
 
-// Apply — шаги 3–4 спеки: allow-ips (добавить, снять) → маршруты (добавить
-// там, где записи нет; снять свои). Отказ любого шага откатывает сделанное в
-// обратном порядке. Какие маршруты наши, не запоминается: владение сверяется
-// по метке в момент снятия. Существующая запись на (N, I) — чужая: поверх не
-// встаём и своей не считаем (стенд: повтор переписал бы комментарий).
-func Apply(ctx context.Context, r Router, iface, pubkey string, added, removed []string) error {
+// isSubnetScope — сеть из области «сетей за клиентом»: IPv4 не /0 (форма
+// RemoteSubnets, parseV4Subnet). Остальные allow-ips пира (IPv6, 0.0.0.0/0,
+// поставленные мимо панели) сверка не видит и не трогает.
+func isSubnetScope(n *net.IPNet) bool {
+	ones, bits := n.Mask.Size()
+	return n.IP.To4() != nil && bits == 32 && ones > 0
+}
+
+func isHostOf(n *net.IPNet, hosts []net.IP) bool {
+	if ones, bits := n.Mask.Size(); ones != bits {
+		return false
+	}
+	for _, h := range hosts {
+		if h != nil && h.Equal(n.IP) {
+			return true
+		}
+	}
+	return false
+}
+
+// Reconcile приводит сети за клиентом пира на роутере к desired — шаги 3–4
+// спеки, но «было» читается с роутера, а не из хранилища (F509): расхождение
+// после неудачного отката или правки мимо панели следующее сохранение снимает.
+//
+// Было: allow-ips пира в области сетей за клиентом кроме туннельных адресов
+// tunnelHosts (при смене адреса — старый и новый: /32 туннеля сетью не
+// бывает) и маршруты на iface с меткой пира целиком. Шаги: allow-ips
+// (добавить недостающие, снять лишние) → маршруты (добавить там, где записи
+// на (N, iface) нет; снять свои лишние). Существующая запись на (N, iface) —
+// не наша: поверх не встаём (стенд: повтор переписал бы комментарий).
+// Отказ чтения — ошибка до единой мутации. Отказ шага откатывает сделанное
+// ЭТИМ вызовом в обратном порядке: стоявшее до вызова остаётся.
+func Reconcile(ctx context.Context, r Router, iface, pubkey string, tunnelHosts []net.IP, desired []string) error {
 	comment := RouteComment(pubkey)
-	addNets, err := parseAll(added)
+	want, err := parseAll(desired)
 	if err != nil {
 		return err
 	}
-	rmNets, err := parseAll(removed)
+	allow, err := r.PeerAllowIPs(ctx, iface, pubkey)
 	if err != nil {
-		return err
+		return fmt.Errorf("read peer allow-ips: %w", err)
 	}
+	routes, err := r.InterfaceRoutes(ctx, iface)
+	if err != nil {
+		return fmt.Errorf("read routes: %w", err)
+	}
+	wantSet := make(map[string]bool, len(want))
+	for _, n := range want {
+		wantSet[n.String()] = true
+	}
+	haveAllow := map[string]bool{}
+	var allowRm []*net.IPNet
+	for _, n := range allow {
+		if !isSubnetScope(n) || isHostOf(n, tunnelHosts) {
+			continue
+		}
+		haveAllow[n.String()] = true
+		if !wantSet[n.String()] {
+			allowRm = append(allowRm, n)
+		}
+	}
+	taken := map[string]bool{}
+	var routeRm []*net.IPNet
+	for _, rt := range routes {
+		taken[rt.Net.String()] = true
+		if rt.Comment == comment && isSubnetScope(rt.Net) && !isHostOf(rt.Net, tunnelHosts) && !wantSet[rt.Net.String()] {
+			routeRm = append(routeRm, rt.Net)
+		}
+	}
+	var allowAdd, routeAdd []*net.IPNet
+	for _, n := range want {
+		if !haveAllow[n.String()] {
+			allowAdd = append(allowAdd, n)
+		}
+		if !taken[n.String()] {
+			routeAdd = append(routeAdd, n)
+		}
+	}
+
 	var allowAdded, allowRemoved, routesAdded, routesRemoved []*net.IPNet
 	rollback := func(cause error) error {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
@@ -97,32 +169,25 @@ func Apply(ctx context.Context, r Router, iface, pubkey string, added, removed [
 		}
 		return cause
 	}
-	for _, n := range addNets {
+	for _, n := range allowAdd {
 		if err := r.AddAllowIP(ctx, iface, pubkey, n); err != nil {
 			return rollback(fmt.Errorf("allow-ips %s: %w", n, err))
 		}
 		allowAdded = append(allowAdded, n)
 	}
-	for _, n := range rmNets {
+	for _, n := range allowRm {
 		if err := r.RemoveAllowIP(ctx, iface, pubkey, n); err != nil {
 			return rollback(fmt.Errorf("allow-ips %s: %w", n, err))
 		}
 		allowRemoved = append(allowRemoved, n)
 	}
-	for _, n := range addNets {
-		exists, _, err := r.NetworkRouteOwner(ctx, n, iface, comment)
-		if err != nil {
-			return rollback(fmt.Errorf("route %s: %w", n, err))
-		}
-		if exists {
-			continue
-		}
+	for _, n := range routeAdd {
 		if err := r.AddNetworkRoute(ctx, n, iface, comment); err != nil {
 			return rollback(fmt.Errorf("route %s: %w", n, err))
 		}
 		routesAdded = append(routesAdded, n)
 	}
-	for _, n := range rmNets {
+	for _, n := range routeRm {
 		wasOurs, err := r.RemoveOwnNetworkRoute(ctx, n, iface, comment)
 		if err != nil {
 			return rollback(fmt.Errorf("route %s: %w", n, err))
@@ -134,19 +199,23 @@ func Apply(ctx context.Context, r Router, iface, pubkey string, added, removed [
 	return nil
 }
 
-// RemoveRoutes снимает маршруты сетей пира, подписанные его меткой (правила
-// 3–4). Первый отказ — отказ целиком (fail-closed, 11.B/11.6: маршрут-сирота
-// без записи никто уже не снимет). allow-ips не трогаются: вызывающий снимает
-// пира целиком.
-func RemoveRoutes(ctx context.Context, r Router, iface, pubkey string, subnets []string) error {
+// RemoveRoutes снимает все маршруты на iface с меткой пира, найденные на
+// роутере (правила 3–4), — не список из хранилища: сирота после RollbackError
+// снимается тоже. Отказ чтения или первого снятия — отказ целиком (fail-closed,
+// 11.B/11.6: маршрут-сирота без пира никто уже не снимет). allow-ips не
+// трогаются: вызывающий снимает пира целиком.
+func RemoveRoutes(ctx context.Context, r Router, iface, pubkey string) error {
 	comment := RouteComment(pubkey)
-	nets, err := parseAll(subnets)
+	routes, err := r.InterfaceRoutes(ctx, iface)
 	if err != nil {
-		return err
+		return fmt.Errorf("read routes: %w", err)
 	}
-	for _, n := range nets {
-		if _, err := r.RemoveOwnNetworkRoute(ctx, n, iface, comment); err != nil {
-			return fmt.Errorf("remove route %s: %w", n, err)
+	for _, rt := range routes {
+		if rt.Comment != comment {
+			continue
+		}
+		if _, err := r.RemoveOwnNetworkRoute(ctx, rt.Net, iface, comment); err != nil {
+			return fmt.Errorf("remove route %s: %w", rt.Net, err)
 		}
 	}
 	return nil

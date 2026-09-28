@@ -99,28 +99,6 @@ func ValidateRemoteSubnets(subnets []string, occupied []Occupied) ([]string, err
 	return out, nil
 }
 
-// Diff — добавленные и ушедшие сети между двумя каноническими списками,
-// в порядке появления.
-func Diff(old, new []string) (added, removed []string) {
-	oldSet := make(map[string]bool, len(old))
-	for _, s := range old {
-		oldSet[s] = true
-	}
-	newSet := make(map[string]bool, len(new))
-	for _, s := range new {
-		newSet[s] = true
-		if !oldSet[s] {
-			added = append(added, s)
-		}
-	}
-	for _, s := range old {
-		if !newSet[s] {
-			removed = append(removed, s)
-		}
-	}
-	return added, removed
-}
-
 // Exclude — минимальное покрытие IPv4-сети base без сетей minus: сеть делится
 // пополам, пока половина либо не пересекается с minus (в результат), либо
 // целиком лежит в minus (выбрасывается). Результат по возрастанию адресов.

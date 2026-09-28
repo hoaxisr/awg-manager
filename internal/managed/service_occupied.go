@@ -203,7 +203,7 @@ func (s *Service) PeerPresets(ctx context.Context, id, dns string) (peersubnet.P
 	return s.PresetsFor(ctx, serverNet, server.LANSegments, dns)
 }
 
-// peerRouter — адаптер RCI для peersubnet.Apply. Ошибка вместо nil-паники, когда
+// peerRouter — адаптер RCI для peersubnet.Reconcile. Ошибка вместо nil-паники, когда
 // Commands не подключены (харнессы без них сети за клиентом не трогают).
 func (s *Service) peerRouter() (peersubnet.Router, error) {
 	if s.commands == nil || s.commands.Wireguard == nil || s.commands.Routes == nil {
@@ -212,7 +212,7 @@ func (s *Service) peerRouter() (peersubnet.Router, error) {
 	return command.NewPeerRouter(s.commands), nil
 }
 
-// logRollback — отказ отката Apply не должен тонуть: хранилище не тронуто, но
+// logRollback — отказ отката Reconcile не должен тонуть: хранилище не тронуто, но
 // роутер до следующего сохранения может быть в промежуточном состоянии.
 func (s *Service) logRollback(op, subject string, err error) {
 	var rb *peersubnet.RollbackError

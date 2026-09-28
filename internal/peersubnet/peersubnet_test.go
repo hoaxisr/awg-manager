@@ -75,16 +75,6 @@ func TestValidateRemoteSubnets(t *testing.T) {
 	}
 }
 
-func TestDiff(t *testing.T) {
-	added, removed := Diff([]string{"a", "b"}, []string{"b", "c"})
-	if !reflect.DeepEqual(added, []string{"c"}) || !reflect.DeepEqual(removed, []string{"a"}) {
-		t.Fatalf("added %v removed %v", added, removed)
-	}
-	if a, r := Diff(nil, nil); a != nil || r != nil {
-		t.Fatalf("nil diff: %v %v", a, r)
-	}
-}
-
 func TestExclude_SingleNetExactCover(t *testing.T) {
 	got := Exclude(cidr(t, "0.0.0.0/0"), []*net.IPNet{cidr(t, "10.0.0.0/8")})
 	want := []string{"0.0.0.0/5", "8.0.0.0/7", "11.0.0.0/8", "12.0.0.0/6", "16.0.0.0/4", "32.0.0.0/3", "64.0.0.0/2", "128.0.0.0/1"}
