@@ -141,6 +141,10 @@ func (h *ManagedServerHandler) AddPeer(w http.ResponseWriter, r *http.Request, i
 			response.Error(w, err.Error(), code)
 			return
 		}
+		if errors.Is(err, managed.ErrUnknownLANSegment) {
+			response.Error(w, err.Error(), "LAN_SEGMENTS_FAILED")
+			return
+		}
 		response.Error(w, err.Error(), "ADD_PEER_FAILED")
 		return
 	}
@@ -155,7 +159,7 @@ func (h *ManagedServerHandler) AddPeer(w http.ResponseWriter, r *http.Request, i
 //	@Summary		Update managed-server peer
 //	@Description	Updates fields (name, allowed-ips, ...) of the peer identified by pubkey on the named managed server.
 //	@Description	The signature field: absent — the peer signature is left untouched; present — it replaces all five packets and the profile.
-//	@Description	clientAllowedIPs and remoteSubnets: absent or null keeps the stored value; "" / [] clears it (removes all subnets behind the client). Non-empty remoteSubnets are rejected (INVALID_REMOTE_SUBNETS) while the server restricts LAN access to segments.
+//	@Description	clientAllowedIPs and remoteSubnets: absent or null keeps the stored value; "" / [] clears it (removes all subnets behind the client). With LAN segments set, subnets behind the client are permitted into those segments; a segment missing on the router fails with LAN_SEGMENTS_FAILED.
 //	@Tags			managed-servers
 //	@Accept			json
 //	@Produce		json
@@ -188,6 +192,9 @@ func (h *ManagedServerHandler) UpdatePeer(w http.ResponseWriter, r *http.Request
 		case errors.Is(err, peersubnet.ErrPeerNotFound):
 			// Пир есть в записи, но снят с роутера мимо панели.
 			response.Error(w, err.Error(), "NOT_FOUND")
+		case errors.Is(err, managed.ErrUnknownLANSegment):
+			// Сегмент сервера пропал с роутера — чинится пересохранением сегментов.
+			response.Error(w, err.Error(), "LAN_SEGMENTS_FAILED")
 		default:
 			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
 		}

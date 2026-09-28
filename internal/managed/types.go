@@ -113,6 +113,10 @@ var ErrUnknownSignatureProfile = errors.New("unknown signature profile")
 // AddPeer фейлится закрыто: пир без имитации выдавать молча нельзя.
 var ErrSignatureGenerate = errors.New("signature generation failed")
 
+// ErrUnknownLANSegment — сегмента из LANSegments сервера нет среди бриджей
+// роутера (бридж удалён или переименован): ошибка конфигурации сервера.
+var ErrUnknownLANSegment = errors.New("пересохраните LAN-сегменты сервера")
+
 // TogglePeerRequest contains parameters for enabling/disabling a peer.
 type TogglePeerRequest struct {
 	PublicKey string `json:"publicKey"`

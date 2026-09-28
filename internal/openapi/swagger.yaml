@@ -11800,7 +11800,7 @@ paths:
       description: |-
         Updates fields (name, allowed-ips, ...) of the peer identified by pubkey on the named managed server.
         The signature field: absent — the peer signature is left untouched; present — it replaces all five packets and the profile.
-        clientAllowedIPs and remoteSubnets: absent or null keeps the stored value; "" / [] clears it (removes all subnets behind the client). Non-empty remoteSubnets are rejected (INVALID_REMOTE_SUBNETS) while the server restricts LAN access to segments.
+        clientAllowedIPs and remoteSubnets: absent or null keeps the stored value; "" / [] clears it (removes all subnets behind the client). With LAN segments set, subnets behind the client are permitted into those segments; a segment missing on the router fails with LAN_SEGMENTS_FAILED.
       parameters:
       - description: Server id
         in: path

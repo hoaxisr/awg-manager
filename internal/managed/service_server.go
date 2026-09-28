@@ -696,7 +696,7 @@ func segmentRules(srcs []*net.IPNet, segments []string, bridges []query.LANBridg
 	for _, seg := range segments {
 		b, ok := byName[seg]
 		if !ok {
-			return nil, fmt.Errorf("LAN-сегмент %q не найден", seg)
+			return nil, fmt.Errorf("LAN-сегмент %q не найден; %w", seg, ErrUnknownLANSegment)
 		}
 		segCidr, err := parseManagedSubnet(b.Address, b.Mask)
 		if err != nil {

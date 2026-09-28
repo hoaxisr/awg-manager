@@ -514,11 +514,11 @@ func TestPeer_RemoteSubnets_UnknownLANSegmentRejectedBeforeRCI(t *testing.T) {
 	}
 	ctx := context.Background()
 	_, err := svc.AddPeer(ctx, "Wireguard1", AddPeerRequest{Description: "x", TunnelIP: "10.66.66.3/32", RemoteSubnets: []string{"192.168.78.0/24"}})
-	if err == nil || !strings.Contains(err.Error(), "LAN-сегмент") {
+	if !errors.Is(err, ErrUnknownLANSegment) || !strings.Contains(err.Error(), `LAN-сегмент "Home" не найден`) {
 		t.Fatalf("add: err = %v", err)
 	}
 	err = svc.UpdatePeer(ctx, "Wireguard1", "PEER1", UpdatePeerRequest{Description: "branch", TunnelIP: "10.66.66.2/32", RemoteSubnets: &[]string{"192.168.78.0/24"}})
-	if err == nil || !strings.Contains(err.Error(), "LAN-сегмент") {
+	if !errors.Is(err, ErrUnknownLANSegment) {
 		t.Fatalf("update: err = %v", err)
 	}
 	if posts := postsJSON(poster); len(posts) != 0 {
