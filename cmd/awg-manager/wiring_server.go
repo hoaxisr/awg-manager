@@ -447,11 +447,6 @@ func (a *app) setupRouter() {
 	a.geoDataStore.SetOnChange(routerSvc.TriggerBypassSetPopulate)
 	a.srv.SetBypassSetHandler(api.NewBypassSetHandler(routerSvc, a.loggingService))
 
-	// Exclude interfaces already bound by an existing direct outbound from the
-	// bindable picker (#323). Wired post-construction — needs routerSvc.
-	bindableAdapter.occupiedBinds = func(ctx context.Context) (map[string]bool, error) {
-		return routerDirectBinds(ctx, routerSvc)
-	}
 	a.singboxOp.SetOutboundReferenceRenamer(routerSvc)
 	a.tunnelService.SetAWGSyncer(a.awgoutboundsSvc)
 	a.tunnelService.SetDeviceProxyRefChecker(a.deviceProxySvc)

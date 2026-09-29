@@ -386,40 +386,6 @@ func (s *ServiceImpl) ListBindableInterfaces(ctx context.Context) ([]WANInterfac
 	return s.deps.BindableInterfaces.ListBindable(ctx)
 }
 
-// ListAllBindableInterfaces returns every bindable interface, including those
-// already used by a direct outbound. Subscriptions and manual tunnels may
-// share an interface with a direct outbound, so their picker must offer the
-// same set the bind validator accepts (#709).
-func (s *ServiceImpl) ListAllBindableInterfaces(ctx context.Context) ([]WANInterfaceInfo, error) {
-	if s.deps.BindableInterfaces == nil {
-		return []WANInterfaceInfo{}, nil
-	}
-	return s.deps.BindableInterfaces.ListAllBindable(ctx)
-}
-
-// ListIngressEligibleInterfaces возвращает интерфейсы, пригодные для
-// ingress-scope: bindable минус WAN минус LAN-бриджи (по Type). Для UI
-// router-страницы (мультиселект).
-func (s *ServiceImpl) ListIngressEligibleInterfaces(ctx context.Context) ([]WANInterfaceInfo, error) {
-	bindable, err := s.ListBindableInterfaces(ctx)
-	if err != nil {
-		return nil, err
-	}
-	wan, _ := s.ListWANInterfaces(ctx)
-	wanNames := map[string]bool{}
-	for _, w := range wan {
-		wanNames[w.Name] = true
-	}
-	out := make([]WANInterfaceInfo, 0, len(bindable))
-	for _, i := range bindable {
-		if i.Foreign || wanNames[i.Name] || strings.EqualFold(i.Type, "Bridge") {
-			continue
-		}
-		out = append(out, i)
-	}
-	return out, nil
-}
-
 // validateBindInterface ensures name refers to a bindable interface. With
 // no lister wired (tests / minimal deployments) it is permissive.
 func (s *ServiceImpl) validateBindInterface(ctx context.Context, name string) error {

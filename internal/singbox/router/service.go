@@ -41,11 +41,6 @@ type Service interface {
 	// ListBindableInterfaces returns interfaces a user can bind a direct
 	// outbound to (all interfaces minus auto-managed AWG/WG ones).
 	ListBindableInterfaces(ctx context.Context) ([]WANInterfaceInfo, error)
-	ListAllBindableInterfaces(ctx context.Context) ([]WANInterfaceInfo, error)
-
-	// ListIngressEligibleInterfaces returns interfaces eligible for
-	// sing-box ingress-scope (bindable minus WAN minus LAN bridges).
-	ListIngressEligibleInterfaces(ctx context.Context) ([]WANInterfaceInfo, error)
 
 	// PolicyTunNATPreview returns the router segments with their current NAT
 	// mode — the editable "what will change" preview behind the policy-tun
@@ -222,11 +217,10 @@ type WANInterfaceLister interface {
 // direct outbound to (all router interfaces minus our own and the
 // awgoutbounds auto-managed set). Optional dep; nil = no existence check.
 type BindableInterfaceLister interface {
+	// ListBindable не вычитает интерфейсы, уже занятые outbound'ом:
+	// повторная привязка безвредна, а какие прятать — решает пикер по
+	// конфигу, в котором редактируют (#709, #961).
 	ListBindable(ctx context.Context) ([]WANInterfaceInfo, error)
-	// ListAllBindable — то же множество, но БЕЗ вычитания интерфейсов, уже
-	// занятых direct-outbound'ом: подписки и одиночные туннели делят
-	// интерфейс с direct-выходом свободно (#709).
-	ListAllBindable(ctx context.Context) ([]WANInterfaceInfo, error)
 }
 
 // IngressResolver резолвит ref интерфейса ("managed:Wireguard3") в

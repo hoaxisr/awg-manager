@@ -1274,6 +1274,7 @@
 <!-- CompositeOutboundEditModal: add -->
 {#if outboundAddOpen}
   <CompositeOutboundEditModal
+    outbounds={$storeOutbounds}
     outboundOptions={$storeOptions}
     onClose={() => (outboundAddOpen = false)}
     onSave={handleOutboundAddSave}
@@ -1284,6 +1285,7 @@
 {#if outboundEditTag !== null && outboundEditTarget !== undefined}
   <CompositeOutboundEditModal
     outbound={outboundEditTarget}
+    outbounds={$storeOutbounds}
     outboundOptions={$storeOptions}
     onClose={() => (outboundEditTag = null)}
     onSave={handleOutboundEditSave}

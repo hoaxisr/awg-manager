@@ -170,12 +170,11 @@ func (s *ServiceImpl) AddCompositeOutbound(ctx context.Context, o Outbound) erro
 }
 
 func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o Outbound) error {
-	if strings.EqualFold(o.Type, "direct") {
-		if err := s.validateBindInterface(ctx, o.BindInterface); err != nil {
-			return err
-		}
-	}
+	bindErr := s.directBindErr(ctx, o)
 	if err := s.withConfig(ctx, "outbounds", func(c *RouterConfig) error {
+		if bindErr != nil && !keepsBind(c, tag, o) {
+			return bindErr
+		}
 		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
 			return err
 		}
@@ -191,6 +190,28 @@ func (s *ServiceImpl) UpdateCompositeOutbound(ctx context.Context, tag string, o
 		}
 	}
 	return nil
+}
+
+// directBindErr — вердикт проверки bind_interface для direct; nil у прочих
+// типов. Считается ДО мутатора: проверка ходит в NDMS.
+func (s *ServiceImpl) directBindErr(ctx context.Context, o Outbound) error {
+	if !strings.EqualFold(o.Type, "direct") {
+		return nil
+	}
+	return s.validateBindInterface(ctx, o.BindInterface)
+}
+
+// keepsBind — запись tag в c уже direct с тем же bind_interface. Однажды
+// принятую привязку Update не перепроверяет: интерфейс мог пропасть из списка
+// (VPN отключён), и переименование outbound'а от этого ломаться не должно
+// (#961). Решается по конфигу, который мутатор и запишет.
+func keepsBind(c *RouterConfig, tag string, o Outbound) bool {
+	for _, e := range c.Outbounds {
+		if e.Tag == tag {
+			return strings.EqualFold(e.Type, "direct") && e.BindInterface == o.BindInterface
+		}
+	}
+	return false
 }
 
 func (s *ServiceImpl) DeleteCompositeOutbound(ctx context.Context, tag string, force bool) error {

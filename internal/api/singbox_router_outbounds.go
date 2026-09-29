@@ -228,11 +228,10 @@ func (h *SingboxRouterHandler) ListWANInterfaces(w http.ResponseWriter, r *http.
 // ListBindableInterfaces returns interfaces a user can bind a direct outbound to.
 //
 //	@Summary		List bindable interfaces for direct outbounds
-//	@Description	Returns router interfaces (minus our own and AWG/WG auto-covered) that a direct outbound can bind to. With scope=all the interfaces already taken by a direct outbound are kept — subscriptions and manual tunnels may share them. Fields id and priority are not populated for this endpoint (only name, label, up are meaningful).
+//	@Description	Returns router interfaces (minus our own and AWG/WG auto-covered) that a direct outbound can bind to, including those already bound by another outbound — a duplicate bind is harmless, and which binds to hide is the picker's call (#961). Fields id and priority are not populated for this endpoint (only name, label, up are meaningful).
 //	@Tags			singbox-router
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			scope	query		string	false	"all — keep interfaces already bound by a direct outbound"
 //	@Success		200	{object}	SingboxRouterWANInterfacesListResponse
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Router			/singbox/router/bindable-interfaces [get]
@@ -241,37 +240,7 @@ func (h *SingboxRouterHandler) ListBindableInterfaces(w http.ResponseWriter, r *
 		response.MethodNotAllowed(w)
 		return
 	}
-	list := h.svc.ListBindableInterfaces
-	if r.URL.Query().Get("scope") == "all" {
-		list = h.svc.ListAllBindableInterfaces
-	}
-	ifaces, err := list(r.Context())
-	if err != nil {
-		response.InternalError(w, err.Error())
-		return
-	}
-	if ifaces == nil {
-		ifaces = []router.WANInterfaceInfo{}
-	}
-	response.Success(w, ifaces)
-}
-
-// ListIngressEligibleInterfaces returns interfaces eligible for sing-box ingress-scope.
-//
-//	@Summary		List ingress-eligible interfaces
-//	@Description	Returns router interfaces eligible for sing-box ingress-scope (bindable minus WAN minus LAN bridges). Used by the ingress multiselect in singbox-router settings.
-//	@Tags			singbox-router
-//	@Produce		json
-//	@Security		CookieAuth
-//	@Success		200	{object}	SingboxRouterWANInterfacesListResponse
-//	@Failure		500	{object}	APIErrorEnvelope
-//	@Router			/singbox/router/ingress-eligible-interfaces [get]
-func (h *SingboxRouterHandler) ListIngressEligibleInterfaces(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		response.MethodNotAllowed(w)
-		return
-	}
-	ifaces, err := h.svc.ListIngressEligibleInterfaces(r.Context())
+	ifaces, err := h.svc.ListBindableInterfaces(r.Context())
 	if err != nil {
 		response.InternalError(w, err.Error())
 		return

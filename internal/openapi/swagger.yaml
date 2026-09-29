@@ -16123,15 +16123,10 @@ paths:
   /singbox/router/bindable-interfaces:
     get:
       description: Returns router interfaces (minus our own and AWG/WG auto-covered)
-        that a direct outbound can bind to. With scope=all the interfaces already
-        taken by a direct outbound are kept — subscriptions and manual tunnels may
-        share them. Fields id and priority are not populated for this endpoint (only
+        that a direct outbound can bind to, including those already bound by another
+        outbound — a duplicate bind is harmless, and which binds to hide is the picker's
+        call (#961). Fields id and priority are not populated for this endpoint (only
         name, label, up are meaningful).
-      parameters:
-      - description: all — keep interfaces already bound by a direct outbound
-        in: query
-        name: scope
-        type: string
       produces:
       - application/json
       responses:
@@ -16922,27 +16917,6 @@ paths:
       security:
       - CookieAuth: []
       summary: List SagerNet sing-geosite catalog
-      tags:
-      - singbox-router
-  /singbox/router/ingress-eligible-interfaces:
-    get:
-      description: Returns router interfaces eligible for sing-box ingress-scope (bindable
-        minus WAN minus LAN bridges). Used by the ingress multiselect in singbox-router
-        settings.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.SingboxRouterWANInterfacesListResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: List ingress-eligible interfaces
       tags:
       - singbox-router
   /singbox/router/inspect:

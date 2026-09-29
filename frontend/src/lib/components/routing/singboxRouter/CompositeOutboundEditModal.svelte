@@ -10,7 +10,7 @@
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import { resolveMemberLabel } from '$lib/utils/memberLabel';
 	import { api } from '$lib/api/client';
-	import { bindInterfaceLabel } from '$lib/utils/bindInterface';
+	import { bindInterfaceLabel, directBindChoices } from '$lib/utils/bindInterface';
 
 	// Only urltest and selector are offered for new groups — `loadbalance`
 	// was removed in sing-box 1.13+ and FATALs on startup if present. Legacy
@@ -21,11 +21,13 @@
 
 	interface Props {
 		outbound?: SingboxRouterOutbound;
+		/** Outbound'ы того же конфига (tproxy или fakeip) — чьи привязки прятать. */
+		outbounds: SingboxRouterOutbound[];
 		outboundOptions: OutboundGroup[];
 		onClose: () => void;
 		onSave: (o: SingboxRouterOutbound) => Promise<void> | void;
 	}
-	let { outbound, outboundOptions, onClose, onSave }: Props = $props();
+	let { outbound, outbounds, outboundOptions, onClose, onSave }: Props = $props();
 
 	// svelte-ignore state_referenced_locally
 	let type: 'urltest' | 'selector' | 'direct' = $state(
@@ -54,12 +56,15 @@
 			.finally(() => { bindablesLoading = false; });
 	}
 	$effect(() => { void loadBindables(); });
+	// До ответа роутера — пусто: заглушка «нет в системе» для своей привязки
+	// заслонила бы плейсхолдер «Загрузка интерфейсов…».
+	const bindChoices = $derived(bindablesLoading ? [] : directBindChoices(bindables, outbounds, outbound));
 	const bindableOptions = $derived<DropdownOption[]>(
-		bindables.map((i) => ({ value: i.name, label: bindInterfaceLabel(i), group: i.foreign ? 'Сторонние' : undefined }))
+		bindChoices.map((i) => ({ value: i.name, label: bindInterfaceLabel(i), group: i.foreign ? 'Сторонние' : undefined }))
 	);
 	async function onForeignPicked(name: string): Promise<void> {
 		await loadBindables();
-		if (bindables.some((i) => i.name === name)) {
+		if (bindChoices.some((i) => i.name === name)) {
 			bindInterface = name;
 			error = '';
 		} else {
@@ -340,8 +345,8 @@
 				<Dropdown
 					bind:value={bindInterface}
 					options={bindableOptions}
-					placeholder={bindablesLoading ? 'Загрузка интерфейсов…' : bindables.length === 0 ? 'Нет доступных интерфейсов' : '— выбрать интерфейс —'}
-					disabled={bindablesLoading || bindables.length === 0}
+					placeholder={bindablesLoading ? 'Загрузка интерфейсов…' : bindChoices.length === 0 ? 'Нет доступных интерфейсов' : '— выбрать интерфейс —'}
+					disabled={bindablesLoading || bindChoices.length === 0}
 					fullWidth
 				/>
 				<ForeignIfacePanel onpicked={onForeignPicked} />

@@ -267,6 +267,7 @@
 
 {#if addOpen}
 	<CompositeOutboundEditModal
+		outbounds={$storeOutbounds}
 		outboundOptions={$storeOptions}
 		onClose={() => (addOpen = false)}
 		onSave={handleAddSave}
@@ -276,6 +277,7 @@
 {#if editTag !== null && editTarget !== undefined}
 	<CompositeOutboundEditModal
 		outbound={editTarget}
+		outbounds={$storeOutbounds}
 		outboundOptions={$storeOptions}
 		onClose={() => (editTag = null)}
 		onSave={handleEditSave}

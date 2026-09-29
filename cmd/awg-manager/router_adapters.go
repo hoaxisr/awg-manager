@@ -137,9 +137,6 @@ type routerWANInterfaceAdapter struct {
 	// interfaces. Only set on the bindable-interfaces instance; nil on the
 	// WAN instance. Used by ListBindable to surface native SOCKS proxies (#323).
 	nativeProxies func(context.Context) ([]string, error)
-	// occupiedBinds returns kernel names already bound by an existing direct
-	// outbound, excluded from the bindable list. Bindable-instance only (#323).
-	occupiedBinds func(context.Context) (map[string]bool, error)
 	// foreign — отметки «Сторонний интерфейс»; sysNet — /sys/class/net.
 	// Только у экземпляра списка привязки (issue #935).
 	foreign func() []string
@@ -306,10 +303,11 @@ func opkgTunScanner(store *ndmsquery.InterfaceStore) func(ctx context.Context, d
 	}
 }
 
-// ListBindable returns router interfaces a user can bind a direct outbound to:
+// ListBindable returns router interfaces a user can bind an outbound to:
 // egress-capable (security-level "public"), minus our own auto-managed
 // interfaces — except KeenOS-native proxies (kernel t2sN whose NDMS ProxyN is
 // not ours), which are rescued from the auto-managed exclusion (#323).
+// Interfaces already bound by an outbound are kept (#709, #961).
 func (a *routerWANInterfaceAdapter) ListBindable(ctx context.Context) ([]router.WANInterfaceInfo, error) {
 	ifaces, err := a.store.ListAll(ctx)
 	if err != nil {
@@ -325,41 +323,13 @@ func (a *routerWANInterfaceAdapter) ListBindable(ctx context.Context) ([]router.
 			}
 		}
 	}
-	// Interfaces already bound by an existing direct outbound — don't offer
-	// them again. On lookup error treat as none (a duplicate bind is harmless,
-	// so fail toward offering rather than hiding).
-	occupied := map[string]bool{}
-	if a.occupiedBinds != nil {
-		if set, e := a.occupiedBinds(ctx); e == nil {
-			occupied = set
-		}
-	}
-	return a.withForeign(ctx, filterBindable(ifaces, native, occupied), occupied), nil
-}
-
-// ListAllBindable returns all egress-capable router interfaces (security-level "public"
-// minus our own auto-managed ones) without excluding occupied direct binds (#709).
-// Used by subscriptions and manual proxy tunnels which can share interfaces with direct outbounds.
-func (a *routerWANInterfaceAdapter) ListAllBindable(ctx context.Context) ([]router.WANInterfaceInfo, error) {
-	ifaces, err := a.store.ListAll(ctx)
-	if err != nil {
-		return nil, err
-	}
-	native := map[string]bool{}
-	if a.nativeProxies != nil {
-		if names, e := a.nativeProxies(ctx); e == nil {
-			for _, n := range names {
-				native[n] = true
-			}
-		}
-	}
-	return a.withForeign(ctx, filterBindable(ifaces, native, nil), nil), nil
+	return a.withForeign(ctx, filterBindable(ifaces, native)), nil
 }
 
 // withForeign дописывает отмеченные сторонние интерфейсы (issue #935) в
 // список привязки: foreign задан только у экземпляра списка привязки, ошибка
 // NDMS не прячет отметки — они показываются без подписи.
-func (a *routerWANInterfaceAdapter) withForeign(ctx context.Context, out []router.WANInterfaceInfo, occupied map[string]bool) []router.WANInterfaceInfo {
+func (a *routerWANInterfaceAdapter) withForeign(ctx context.Context, out []router.WANInterfaceInfo) []router.WANInterfaceInfo {
 	if a.foreign == nil {
 		return out
 	}
@@ -371,7 +341,7 @@ func (a *routerWANInterfaceAdapter) withForeign(ctx context.Context, out []route
 	if err != nil {
 		list = nil // отмеченные всё равно показываем — без подписи NDMS
 	}
-	return append(out, foreignBindable(marked, list, a.sysNet, occupied)...)
+	return append(out, foreignBindable(marked, list, a.sysNet)...)
 }
 
 // foreignBindable — отмеченные сторонние интерфейсы для списка привязки
@@ -379,7 +349,7 @@ func (a *routerWANInterfaceAdapter) withForeign(ctx context.Context, out []route
 // ядра NDMS не знает), поэтому добавляем отдельно. Состояние: OpkgTun — по
 // link из NDMS (connected события не обновляют — OnLayerChanged ведёт только
 // Link/State/IPv4), интерфейс ядра — по /sys/class/net.
-func foreignBindable(marked []string, list []ndms.Interface, sysNet string, occupied map[string]bool) []router.WANInterfaceInfo {
+func foreignBindable(marked []string, list []ndms.Interface, sysNet string) []router.WANInterfaceInfo {
 	// Запись NDMS для opkgtunN ищется по НОМЕРУ (IndexOf от ID записи):
 	// SystemName бывает пустым — wireToInterface обнуляет непохожее имя, а
 	// батч-резолвер молча пропускает сбои.
@@ -391,9 +361,6 @@ func foreignBindable(marked []string, list []ndms.Interface, sysNet string, occu
 	}
 	out := make([]router.WANInterfaceInfo, 0, len(marked))
 	for _, name := range marked {
-		if occupied[name] {
-			continue
-		}
 		info := router.WANInterfaceInfo{Name: name, Label: name, Foreign: true}
 		n, isOpkg := opkgtun.IndexOf(name)
 		if rec, ok := byIdx[n]; isOpkg && ok {
@@ -414,9 +381,8 @@ func foreignBindable(marked []string, list []ndms.Interface, sysNet string, occu
 }
 
 // filterBindable keeps egress interfaces (security-level "public") minus our
-// own auto-managed ones and minus already-bound interfaces, rescuing
-// KeenOS-native proxies in the native set.
-func filterBindable(ifaces []ndms.AllInterface, native, occupied map[string]bool) []router.WANInterfaceInfo {
+// own auto-managed ones, rescuing KeenOS-native proxies in the native set.
+func filterBindable(ifaces []ndms.AllInterface, native map[string]bool) []router.WANInterfaceInfo {
 	out := make([]router.WANInterfaceInfo, 0, len(ifaces))
 	for _, iface := range ifaces {
 		// Egress only: drops LAN bridges, switch ports, LAN VLANs.
@@ -429,10 +395,6 @@ func filterBindable(ifaces []ndms.AllInterface, native, occupied map[string]bool
 		// бы в список привязки всегда. Wi-Fi-клиент (WifiStation) — выход,
 		// его оставляем.
 		if iface.Type == "AccessPoint" || iface.Type == "WifiMaster" {
-			continue
-		}
-		// Already bound by an existing direct outbound — skip the duplicate.
-		if occupied[iface.Name] {
 			continue
 		}
 		// Our own auto-managed interfaces already have outbounds; exclude them

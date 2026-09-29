@@ -238,12 +238,11 @@ func (s *ServiceImpl) FakeIPAddCompositeOutbound(ctx context.Context, o Outbound
 }
 
 func (s *ServiceImpl) FakeIPUpdateCompositeOutbound(ctx context.Context, tag string, o Outbound) error {
-	if strings.EqualFold(o.Type, "direct") {
-		if err := s.validateBindInterface(ctx, o.BindInterface); err != nil {
-			return err
-		}
-	}
+	bindErr := s.directBindErr(ctx, o)
 	return s.fakeipWithConfig(ctx, "outbounds", func(c *RouterConfig) error {
+		if bindErr != nil && !keepsBind(c, tag, o) {
+			return bindErr
+		}
 		if err := s.validateCompositeMembers(ctx, o, c); err != nil {
 			return err
 		}

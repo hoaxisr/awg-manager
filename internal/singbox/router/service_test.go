@@ -2106,24 +2106,6 @@ type fakeWAN struct{ list []WANInterfaceInfo }
 
 func (f fakeWAN) ListWAN(_ context.Context) ([]WANInterfaceInfo, error) { return f.list, nil }
 
-func TestListIngressEligibleInterfaces_ExcludesWAN(t *testing.T) {
-	s := &ServiceImpl{deps: Deps{
-		BindableInterfaces: fakeBindable{list: []WANInterfaceInfo{
-			{Name: "nwg3", Type: "Wireguard", Up: true},
-			{Name: "br0", Type: "Bridge", Up: true},
-			{Name: "ppp0", Type: "PPP", Up: true},
-		}},
-		WANInterfaces: fakeWAN{list: []WANInterfaceInfo{{Name: "ppp0"}}},
-	}}
-	got, err := s.ListIngressEligibleInterfaces(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0].Name != "nwg3" {
-		t.Fatalf("got %+v", got)
-	}
-}
-
 type fakeIngressResolver struct{ m map[string]string }
 
 func (f fakeIngressResolver) Resolve(_ context.Context, ref string) string { return f.m[ref] }
