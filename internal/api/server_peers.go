@@ -836,7 +836,13 @@ func (h *ServersHandler) generateServerPeerConf(ctx context.Context, server *ndm
 	b.WriteString(fmt.Sprintf("MTU = %d\n", mtu))
 
 	if h.queries != nil && h.queries.WGServers != nil {
-		if ascRaw, err := h.queries.WGServers.GetASCParams(ctx, server.ID, true); err == nil && ascRaw != nil {
+		// Сбой чтения не глотаем: файл без строк Jc/H1… выглядит правильным,
+		// а клиент с обфускацией не подключится (F549).
+		ascRaw, err := h.queries.WGServers.GetASCParams(ctx, server.ID, true)
+		if err != nil {
+			return "", err
+		}
+		if ascRaw != nil {
 			signature.WriteASCConf(&b, ascRaw, secPackets(sec))
 		}
 	}

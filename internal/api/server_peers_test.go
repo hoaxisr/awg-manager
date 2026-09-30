@@ -516,6 +516,30 @@ func TestServersHandler_GenerateServerPeerConf_SignatureFromPeerAndOnlyWithASC(t
 	})
 }
 
+// ASC сервера не прочитались — .conf не отдаётся: файл без строк Jc/H1…
+// выглядит правильным, а клиент с обфускацией не подключится (F549).
+func TestServersHandler_GenerateServerPeerConf_ASCReadFailure(t *testing.T) {
+	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/interface/", `{"`+harnessServerID+`":{"id":"`+harnessServerID+`","type":"Wireguard"}}`)
+	fg.SetError("/show/rc/interface/", errors.New("rci down"))
+	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
+	store := storage.NewSettingsStore(t.TempDir())
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	h := NewServersHandler(queries, store, nil, &appLogSpy{})
+
+	server := &ndms.WireguardServer{ID: harnessServerID, ListenPort: 51820, MTU: 1420}
+	sec := storage.ServerPeerSecret{PrivateKey: "PRIV", TunnelIP: "10.9.0.2/32"}
+	conf, err := h.generateServerPeerConf(context.Background(), server, peerFixturePubKey, sec, "1.2.3.4")
+	if err == nil {
+		t.Fatalf("сбой чтения ASC проглочен, отдан конфиг:\n%s", conf)
+	}
+	if conf != "" {
+		t.Fatalf("при ошибке конфиг не пуст:\n%s", conf)
+	}
+}
+
 // Резолвер пира WG-сервера роутера: свой → LAN-адрес роутера → строки нет.
 // Зашитого `1.1.1.1, 8.8.8.8` тут больше нет (#933): абонент ходил в туннель, а
 // имена резолвил у Cloudflare с Google — мимо роутера и мимо всех его правил.
