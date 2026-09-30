@@ -589,3 +589,112 @@ func TestNotListed_OnlyInConfirmCreated(t *testing.T) {
 		t.Errorf("%s больше не обращается к ErrNotListed — поправить notListedSite", notListedSite)
 	}
 }
+
+// TestRawInterfaceDelete_OnlyConfirmed — снос интерфейса литералом
+// ({"interface":{X:{"no":true}}} или {"interface":{"name":X,"no":true}}) в
+// прод-коде — только по имени из Confirmed: X — вызов `….Name()` или
+// переменная, присвоенная из него в той же функции. Исключение одно —
+// notListedSite (F584): снос неподтверждённого с положительным следом.
+// Формы `{"parse":"no interface X"}` сносом здесь не бывают (снимают
+// настройку) и не проверяются.
+func TestRawInterfaceDelete_OnlyConfirmed(t *testing.T) {
+	used := false
+	for _, f := range prodGoFiles(t, true) {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, f.rel, f.data, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("разбор %s: %v", f.rel, err)
+		}
+		for _, decl := range file.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Body == nil {
+				continue
+			}
+			key := filepath.ToSlash(f.rel) + ":" + fd.Name.Name
+			fromName := map[string]bool{} // переменные := x.Name()
+			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				if as, ok := n.(*ast.AssignStmt); ok && len(as.Lhs) == len(as.Rhs) {
+					for i, r := range as.Rhs {
+						if id, ok := as.Lhs[i].(*ast.Ident); ok && isNameCall(r) {
+							fromName[id.Name] = true
+						}
+					}
+				}
+				return true
+			})
+			ok2 := func(e ast.Expr) bool {
+				if isNameCall(e) {
+					return true
+				}
+				id, ok := e.(*ast.Ident)
+				return ok && fromName[id.Name]
+			}
+			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				kv, ok := n.(*ast.KeyValueExpr)
+				if !ok || !isStringLit(kv.Key, "interface") {
+					return true
+				}
+				inner, ok := kv.Value.(*ast.CompositeLit)
+				if !ok {
+					return true
+				}
+				var names []ast.Expr
+				if hasNoTrue(inner) { // payloads-форма {"name":X,"no":true}
+					for _, el := range inner.Elts {
+						if e, ok := el.(*ast.KeyValueExpr); ok && isStringLit(e.Key, "name") {
+							names = append(names, e.Value)
+						}
+					}
+				}
+				for _, el := range inner.Elts { // command-форма {X:{"no":true}}
+					e, ok := el.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+					if body, ok := e.Value.(*ast.CompositeLit); ok && hasNoTrue(body) {
+						names = append(names, e.Key)
+					}
+				}
+				for _, x := range names {
+					if ok2(x) {
+						continue
+					}
+					if key == notListedSite {
+						used = true
+						continue
+					}
+					t.Errorf("%s: снос интерфейса по имени не из Confirmed — только по query.Confirmed (исключение F584: %s)",
+						fset.Position(x.Pos()), notListedSite)
+				}
+				return true
+			})
+		}
+	}
+	if !used {
+		t.Errorf("%s больше не сносит по голому имени — поправить notListedSite", notListedSite)
+	}
+}
+
+// isNameCall — e есть вызов `….Name()` без аргументов.
+func isNameCall(e ast.Expr) bool {
+	call, ok := e.(*ast.CallExpr)
+	if !ok || len(call.Args) != 0 {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	return ok && sel.Sel.Name == "Name"
+}
+
+// hasNoTrue — в литерале есть "no": true.
+func hasNoTrue(cl *ast.CompositeLit) bool {
+	for _, el := range cl.Elts {
+		kv, ok := el.(*ast.KeyValueExpr)
+		if !ok || !isStringLit(kv.Key, "no") {
+			continue
+		}
+		if id, ok := kv.Value.(*ast.Ident); ok && id.Name == "true" {
+			return true
+		}
+	}
+	return false
+}
