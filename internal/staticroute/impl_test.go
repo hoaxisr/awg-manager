@@ -89,8 +89,8 @@ func TestIsOS4Kernel(t *testing.T) {
 }
 
 func TestOnTunnelStart_NoopForNDMS(t *testing.T) {
-	s := &ServiceImpl{ifaceExists: defaultIfaceExists}
-	// OS5 kernel tunnel без ждущих списков — no-op (NDMS auto flag, R37b)
+	s := &ServiceImpl{ifaceExists: defaultIfaceExists, store: newTestStore(t, nil)}
+	// OS5 kernel tunnel без списков — no-op (R37b)
 	if err := s.OnTunnelStart(nil, "awg10", "opkgtun10"); err != nil {
 		t.Errorf("OnTunnelStart for OS5 tunnel should be no-op, got: %v", err)
 	}

@@ -88,12 +88,6 @@ func (s *ServiceImpl) setPending(id string, on bool) {
 	s.pending[id] = true
 }
 
-func (s *ServiceImpl) isPending(id string) bool {
-	s.pendMu.Lock()
-	defer s.pendMu.Unlock()
-	return s.pending[id]
-}
-
 // List returns all static route lists.
 func (s *ServiceImpl) List() ([]storage.StaticRouteList, error) {
 	return s.store.ListRouteLists()
@@ -326,7 +320,7 @@ func (s *ServiceImpl) Import(ctx context.Context, tunnelID, name, batContent str
 // For OS4 kernel tunnels, routes are applied via ip route using tunnelIface directly.
 func (s *ServiceImpl) OnTunnelStart(ctx context.Context, tunnelID, tunnelIface string) error {
 	if !isOS4Kernel(tunnelID) {
-		return s.applyPendingOnStart(ctx, tunnelID)
+		return s.applyOnStart(ctx, tunnelID)
 	}
 
 	s.mu.Lock()
@@ -344,28 +338,28 @@ func (s *ServiceImpl) OnTunnelStart(ctx context.Context, tunnelID, tunnelIface s
 	return nil
 }
 
-// applyPendingOnStart ставит списки, ждавшие записи OS5-туннеля ядра (R37b):
-// старт её создал — одно подтверждение свежим списком на все. Прочим
-// NDMS-туннелям делать нечего: их маршруты живут в NDMS («auto»), а ждущих у
-// них не бывает. Ждущих нет — ни одного запроса.
-func (s *ServiceImpl) applyPendingOnStart(ctx context.Context, tunnelID string) error {
-	if len(s.PendingIDs()) == 0 {
-		return nil
-	}
+// applyOnStart ставит ВСЕ включённые списки OS5-туннеля ядра при его старте
+// (R37b): запись OpkgTun могла быть создана только что (списки ждали старта)
+// или пересоздана после внешнего снятия — NDMS сносит маршруты вместе с
+// записью, и Reconcile вернул бы их лишь на загрузке или переподключении.
+// Одно подтверждение свежим списком на все. Повторная установка уже стоящего
+// маршрута — та же команда, что Reconcile шлёт на каждой загрузке: NDMS
+// обновляет запись, не дублирует. Прочим NDMS-туннелям делать нечего: их
+// запись живёт и у остановленного, маршруты — в NDMS («auto»).
+func (s *ServiceImpl) applyOnStart(ctx context.Context, tunnelID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var todo []storage.StaticRouteList
-	for _, rl := range s.listsForTunnel(tunnelID) {
-		if s.isPending(rl.ID) {
-			todo = append(todo, rl)
-		}
+	lists := s.listsForTunnel(tunnelID)
+	if len(lists) == 0 {
+		return nil
 	}
-	if len(todo) == 0 {
+	ifaceName, err := s.catalog.ResolveInterface(ctx, tunnelID)
+	if err != nil || !isOS5Kernel(tunnelID, ifaceName) {
 		return nil
 	}
 	confirmed, cerr := s.confirmIfaces(ctx, tunnelID)
-	for _, rl := range todo {
+	for _, rl := range lists {
 		if _, err := s.applyRoutes(ctx, rl, confirmed, cerr); err != nil {
 			s.appLog.Warn("apply-on-start", rl.ID, err.Error())
 		}
