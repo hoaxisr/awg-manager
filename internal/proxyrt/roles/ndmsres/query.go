@@ -4,9 +4,8 @@ package ndmsres
 
 import "context"
 
-// Commands — мутации NDMS. Сигнатуры повторяют wdtt.NDMSOpkgTunCommands
-// (ndms_iface.go:14-27) плюс кандидатура default route: прод-реализация —
-// адаптер cmd/awg-manager (proxyNDMSCommands), подтверждающий интерфейс
+// Commands — мутации NDMS над OpkgTun-интерфейсом роли плюс кандидатура
+// default route: прод-реализация — адаптер cmd/awg-manager (proxyNDMSCommands), подтверждающий интерфейс
 // свежим списком на каждый вызов (F546).
 type Commands interface {
 	CreateOpkgTunWithSecurityLevel(ctx context.Context, name, description, securityLevel string) error
