@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 )
@@ -285,9 +286,9 @@ func desiredTunCIDRs(cfg *RouterConfig) (v4 []string, v6 []string) {
 // addCIDRRoute installs one specific dst route to the tun. v4 routes carry the
 // CIDR comment (recognizable in NDMS config); the v6 form differs — see
 // StaticRouteSpec.V6.
-func (s *ServiceImpl) addCIDRRoute(ctx context.Context, ndmsName, cidr string, v6 bool) error {
+func (s *ServiceImpl) addCIDRRoute(ctx context.Context, rt BoundStaticRoutes, ndmsName, cidr string, v6 bool) error {
 	if v6 {
-		return s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
+		return rt.AddStaticRoute(ctx, StaticRouteSpec{
 			V6: true, Network: cidr, Interface: ndmsName,
 		})
 	}
@@ -295,15 +296,15 @@ func (s *ServiceImpl) addCIDRRoute(ctx context.Context, ndmsName, cidr string, v
 	if err != nil {
 		return err
 	}
-	return s.deps.StaticRoutes.AddStaticRoute(ctx, StaticRouteSpec{
+	return rt.AddStaticRoute(ctx, StaticRouteSpec{
 		Network: net4, Mask: mask4, Interface: ndmsName, Comment: fakeIPCIDRRouteComment,
 	})
 }
 
 // removeCIDRRoute deletes one specific dst route from the tun.
-func (s *ServiceImpl) removeCIDRRoute(ctx context.Context, ndmsName, cidr string, v6 bool) error {
+func (s *ServiceImpl) removeCIDRRoute(ctx context.Context, rt BoundStaticRoutes, ndmsName, cidr string, v6 bool) error {
 	if v6 {
-		return s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
+		return rt.RemoveStaticRoute(ctx, StaticRouteSpec{
 			V6: true, Network: cidr, Interface: ndmsName,
 		})
 	}
@@ -311,9 +312,33 @@ func (s *ServiceImpl) removeCIDRRoute(ctx context.Context, ndmsName, cidr string
 	if err != nil {
 		return err
 	}
-	return s.deps.StaticRoutes.RemoveStaticRoute(ctx, StaticRouteSpec{
+	return rt.RemoveStaticRoute(ctx, StaticRouteSpec{
 		Network: net4, Mask: mask4, Interface: ndmsName,
 	})
+}
+
+// cidrRoutes — ленивое подтверждение tun для серии CIDR-маршрутов одного
+// потока: список NDMS читается при первом вызове (и только если маршрут
+// действительно нужен), дальше — тот же ответ. Отказ (ошибка списка или
+// ErrIfaceAbsent) тоже запоминается: цикл пишет его один раз и выходит.
+// Живёт в пределах функции-потока; в поля не класть.
+func (s *ServiceImpl) cidrRoutes(ctx context.Context, ndmsName string) func() (BoundStaticRoutes, error) {
+	var (
+		rt   BoundStaticRoutes
+		err  error
+		done bool
+	)
+	return func() (BoundStaticRoutes, error) {
+		if !done {
+			done = true
+			var ok bool
+			rt, ok, err = s.deps.StaticRoutes.ForInterface(ctx, ndmsName)
+			if err == nil && !ok {
+				rt, err = nil, fmt.Errorf("интерфейса %s %w", ndmsName, ErrIfaceAbsent)
+			}
+		}
+		return rt, err
+	}
 }
 
 // syncTunCIDRRoutes converges the tun's specific CIDR routes from the previous
@@ -327,11 +352,12 @@ func (s *ServiceImpl) syncTunCIDRRoutes(ctx context.Context, ndmsName string, be
 	}
 	prevV4, prevV6 := desiredTunCIDRs(before)
 	nextV4, nextV6 := desiredTunCIDRs(after)
-	s.applyCIDRRouteDiff(ctx, ndmsName, prevV4, nextV4, false)
-	s.applyCIDRRouteDiff(ctx, ndmsName, prevV6, nextV6, true)
+	routes := s.cidrRoutes(ctx, ndmsName)
+	s.applyCIDRRouteDiff(ctx, routes, ndmsName, prevV4, nextV4, false)
+	s.applyCIDRRouteDiff(ctx, routes, ndmsName, prevV6, nextV6, true)
 }
 
-func (s *ServiceImpl) applyCIDRRouteDiff(ctx context.Context, ndmsName string, prev, next []string, v6 bool) {
+func (s *ServiceImpl) applyCIDRRouteDiff(ctx context.Context, routes func() (BoundStaticRoutes, error), ndmsName string, prev, next []string, v6 bool) {
 	prevSet := make(map[string]bool, len(prev))
 	for _, c := range prev {
 		prevSet[c] = true
@@ -346,7 +372,12 @@ func (s *ServiceImpl) applyCIDRRouteDiff(ctx context.Context, ndmsName string, p
 		if prevSet[c] {
 			continue
 		}
-		if err := s.addCIDRRoute(ctx, ndmsName, c, v6); err != nil {
+		rt, err := routes()
+		if err != nil {
+			s.appLog.Warn("fakeip-cidr", ndmsName, "add cidr routes: "+err.Error())
+			break
+		}
+		if err := s.addCIDRRoute(ctx, rt, ndmsName, c, v6); err != nil {
 			s.appLog.Warn("fakeip-cidr", ndmsName, "add cidr route "+c+": "+err.Error())
 			continue
 		}
@@ -356,7 +387,15 @@ func (s *ServiceImpl) applyCIDRRouteDiff(ctx context.Context, ndmsName string, p
 		if nextSet[c] {
 			continue
 		}
-		if err := s.removeCIDRRoute(ctx, ndmsName, c, v6); err != nil {
+		rt, err := routes()
+		if errors.Is(err, ErrIfaceAbsent) {
+			break // интерфейса нет — снимать нечего
+		}
+		if err != nil {
+			s.appLog.Warn("fakeip-cidr", ndmsName, "remove cidr routes: "+err.Error())
+			break
+		}
+		if err := s.removeCIDRRoute(ctx, rt, ndmsName, c, v6); err != nil {
 			s.appLog.Warn("fakeip-cidr", ndmsName, "remove cidr route "+c+": "+err.Error())
 			continue
 		}

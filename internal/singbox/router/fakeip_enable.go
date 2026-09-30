@@ -424,28 +424,48 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// Specific CIDR routes for proxy-routed dst CIDRs (loop-safe pure-dst rules
 	// only — see desiredTunCIDRs): full apply on enable. Best-effort per CIDR — one
 	// bad entry must not fail the whole enable; rollback removes the ones that succeeded.
+	// Интерфейс подтверждается один раз на оба цикла (F546); откат — одним
+	// своим подтверждением на все поставленные маршруты.
 	enableCIDRV4, enableCIDRV6 := desiredTunCIDRs(fcfg)
-	for _, c := range enableCIDRV4 {
-		if e := s.addCIDRRoute(ctx, ndmsName, c, false); e != nil {
-			s.appLog.Warn("fakeip", iface, "add cidr route "+c+": "+e.Error())
-			continue
-		}
-		cc := c
-		push(func() {
-			if e := s.removeCIDRRoute(rbCtx, ndmsName, cc, false); e != nil {
-				s.appLog.Warn("fakeip-rollback", iface, "remove cidr route "+cc+": "+e.Error())
+	var addedV4, addedV6 []string
+	if len(enableCIDRV4)+len(enableCIDRV6) > 0 {
+		if rt, e := s.cidrRoutes(ctx, ndmsName)(); e != nil {
+			s.appLog.Warn("fakeip", iface, "add cidr routes: "+e.Error())
+		} else {
+			for _, c := range enableCIDRV4 {
+				if e := s.addCIDRRoute(ctx, rt, ndmsName, c, false); e != nil {
+					s.appLog.Warn("fakeip", iface, "add cidr route "+c+": "+e.Error())
+					continue
+				}
+				addedV4 = append(addedV4, c)
 			}
-		})
-	}
-	for _, c := range enableCIDRV6 {
-		if e := s.addCIDRRoute(ctx, ndmsName, c, true); e != nil {
-			s.appLog.Warn("fakeip", iface, "add cidr route v6 "+c+": "+e.Error())
-			continue
+			for _, c := range enableCIDRV6 {
+				if e := s.addCIDRRoute(ctx, rt, ndmsName, c, true); e != nil {
+					s.appLog.Warn("fakeip", iface, "add cidr route v6 "+c+": "+e.Error())
+					continue
+				}
+				addedV6 = append(addedV6, c)
+			}
 		}
-		cc := c
+	}
+	if len(addedV4)+len(addedV6) > 0 {
 		push(func() {
-			if e := s.removeCIDRRoute(rbCtx, ndmsName, cc, true); e != nil {
-				s.appLog.Warn("fakeip-rollback", iface, "remove cidr route v6 "+cc+": "+e.Error())
+			rt, e := s.cidrRoutes(rbCtx, ndmsName)()
+			if e != nil {
+				if !errors.Is(e, ErrIfaceAbsent) {
+					s.appLog.Warn("fakeip-rollback", iface, "remove cidr routes: "+e.Error())
+				}
+				return
+			}
+			for _, cc := range addedV4 {
+				if e := s.removeCIDRRoute(rbCtx, rt, ndmsName, cc, false); e != nil {
+					s.appLog.Warn("fakeip-rollback", iface, "remove cidr route "+cc+": "+e.Error())
+				}
+			}
+			for _, cc := range addedV6 {
+				if e := s.removeCIDRRoute(rbCtx, rt, ndmsName, cc, true); e != nil {
+					s.appLog.Warn("fakeip-rollback", iface, "remove cidr route v6 "+cc+": "+e.Error())
+				}
 			}
 		})
 	}

@@ -26,10 +26,10 @@ var (
 	_ api.OrphanIfaceNDMS         = confirmingOpkgTun{}
 )
 
-// errIfaceAbsent — текст отказа настройки по отсутствующему интерфейсу.
-// router.segmentGone узнаёт его по «нет в NDMS»: исчезнувший сегмент — дрейф.
+// errIfaceAbsent — отказ настройки по отсутствующему интерфейсу. Страж
+// router.ErrIfaceAbsent: router.segmentGone считает исчезнувший сегмент дрейфом.
 func errIfaceAbsent(name string) error {
-	return fmt.Errorf("интерфейса %s нет в NDMS", name)
+	return fmt.Errorf("интерфейса %s %w", name, router.ErrIfaceAbsent)
 }
 
 // confirmSet — настройка существующего: нет — ошибка.

@@ -36,6 +36,9 @@ type fakeStaticRouteProvider struct{}
 
 func (fakeStaticRouteProvider) AddStaticRoute(context.Context, StaticRouteSpec) error    { return nil }
 func (fakeStaticRouteProvider) RemoveStaticRoute(context.Context, StaticRouteSpec) error { return nil }
+func (f fakeStaticRouteProvider) ForInterface(context.Context, string) (BoundStaticRoutes, bool, error) {
+	return f, true, nil
+}
 
 type fakeOpkgTunIndexLister struct{}
 

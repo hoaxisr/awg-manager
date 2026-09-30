@@ -2,6 +2,8 @@ package router
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -263,13 +265,13 @@ func TestAddRemoveCIDRRoute(t *testing.T) {
 	rec := &recStaticRoutes{log: log}
 	s := &ServiceImpl{deps: Deps{StaticRoutes: rec}}
 
-	if err := s.addCIDRRoute(t.Context(), "OpkgTun3", "149.154.160.0/20", false); err != nil {
+	if err := s.addCIDRRoute(t.Context(), rec, "OpkgTun3", "149.154.160.0/20", false); err != nil {
 		t.Fatalf("addCIDRRoute v4: %v", err)
 	}
-	if err := s.addCIDRRoute(t.Context(), "OpkgTun3", "2001:b28::/32", true); err != nil {
+	if err := s.addCIDRRoute(t.Context(), rec, "OpkgTun3", "2001:b28::/32", true); err != nil {
 		t.Fatalf("addCIDRRoute v6: %v", err)
 	}
-	if err := s.removeCIDRRoute(t.Context(), "OpkgTun3", "149.154.160.0/20", false); err != nil {
+	if err := s.removeCIDRRoute(t.Context(), rec, "OpkgTun3", "149.154.160.0/20", false); err != nil {
 		t.Fatalf("removeCIDRRoute v4: %v", err)
 	}
 
@@ -697,5 +699,51 @@ func TestDesiredTunCIDRs_MergedMatchingBeta1(t *testing.T) {
 				t.Errorf("v4 = %v, want %v", gotV4, tt.wantV4)
 			}
 		})
+	}
+}
+
+// cidrRule — proxy-правило на n v4- и m v6-префиксов.
+func cidrRule(n, m int) *RouterConfig {
+	var cidrs []string
+	for i := 0; i < n; i++ {
+		cidrs = append(cidrs, fmt.Sprintf("149.%d.0.0/16", i))
+	}
+	for i := 0; i < m; i++ {
+		cidrs = append(cidrs, fmt.Sprintf("2001:db8:%x::/48", i))
+	}
+	return &RouterConfig{Route: Route{Rules: []Rule{{Action: "route", Outbound: "proxy", IPCIDR: cidrs}}}}
+}
+
+// Правка правил на 100 префиксов подтверждает tun ОДИН раз (у прод-адаптера —
+// одно чтение списка NDMS), а не на каждый префикс (F546, R25).
+func TestSyncTunCIDRRoutes_OneBindForBatch(t *testing.T) {
+	rec := &recStaticRoutes{log: &callLog{}}
+	s := &ServiceImpl{deps: Deps{StaticRoutes: rec}}
+	s.syncTunCIDRRoutes(t.Context(), "OpkgTun3", &RouterConfig{}, cidrRule(60, 40))
+	if rec.binds != 1 || len(rec.log.calls) != 100 {
+		t.Fatalf("binds=%d calls=%d, want 1/100", rec.binds, len(rec.log.calls))
+	}
+	// Снятие всех — тоже одно подтверждение.
+	rec2 := &recStaticRoutes{log: &callLog{}}
+	s.deps.StaticRoutes = rec2
+	s.syncTunCIDRRoutes(t.Context(), "OpkgTun3", cidrRule(60, 40), &RouterConfig{})
+	if rec2.binds != 1 || len(rec2.log.calls) != 100 {
+		t.Fatalf("remove: binds=%d calls=%d, want 1/100", rec2.binds, len(rec2.log.calls))
+	}
+}
+
+// Интерфейса нет или список не прочитан: одно подтверждение на всю пачку и ни
+// одной команды — ни постановки, ни снятия.
+func TestSyncTunCIDRRoutes_AbsentOrListError_NoCommands(t *testing.T) {
+	for name, rec := range map[string]*recStaticRoutes{
+		"absent":     {log: &callLog{}, absent: true},
+		"list error": {log: &callLog{}, bindErr: errors.New("RCI не ответил")},
+	} {
+		s := &ServiceImpl{deps: Deps{StaticRoutes: rec}}
+		s.syncTunCIDRRoutes(t.Context(), "OpkgTun3", cidrRule(3, 2), cidrRule(0, 0))
+		s.syncTunCIDRRoutes(t.Context(), "OpkgTun3", cidrRule(0, 0), cidrRule(3, 2))
+		if rec.binds != 2 || len(rec.log.calls) != 0 {
+			t.Fatalf("%s: binds=%d calls=%v, want 2 (по одному на вызов) и 0 команд", name, rec.binds, rec.log.calls)
+		}
 	}
 }

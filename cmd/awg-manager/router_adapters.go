@@ -241,6 +241,42 @@ func (a *routerStaticRouteAdapter) RemoveStaticRoute(ctx context.Context, r rout
 	return confirmTeardown(ctx, a.ifaces, r.Interface, func(c ndmsquery.Confirmed) error { return a.routes.RemoveStaticRoute(ctx, toNDMSRoute(r, c)) })
 }
 
+// ForInterface — одно подтверждение на серию маршрутов по iface (циклы CIDR
+// fakeip). Подтверждение живёт в замыканиях, не в поле структуры.
+func (a *routerStaticRouteAdapter) ForInterface(ctx context.Context, iface string) (router.BoundStaticRoutes, bool, error) {
+	c, _, ok, err := a.ifaces.Confirm(ctx, iface)
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	do := func(r router.StaticRouteSpec, send func(ndmscommand.StaticRouteSpec) error) error {
+		if r.Interface != c.Name() {
+			return fmt.Errorf("маршрут на %s через подтверждение %s", r.Interface, c.Name())
+		}
+		return send(toNDMSRoute(r, c))
+	}
+	return boundStaticRoutes{
+		add: func(ctx context.Context, r router.StaticRouteSpec) error {
+			return do(r, func(s ndmscommand.StaticRouteSpec) error { return a.routes.AddStaticRoute(ctx, s) })
+		},
+		remove: func(ctx context.Context, r router.StaticRouteSpec) error {
+			return do(r, func(s ndmscommand.StaticRouteSpec) error { return a.routes.RemoveStaticRoute(ctx, s) })
+		},
+	}, true, nil
+}
+
+// boundStaticRoutes — router.BoundStaticRoutes из ForInterface.
+type boundStaticRoutes struct {
+	add, remove func(context.Context, router.StaticRouteSpec) error
+}
+
+func (b boundStaticRoutes) AddStaticRoute(ctx context.Context, r router.StaticRouteSpec) error {
+	return b.add(ctx, r)
+}
+
+func (b boundStaticRoutes) RemoveStaticRoute(ctx context.Context, r router.StaticRouteSpec) error {
+	return b.remove(ctx, r)
+}
+
 var _ router.OpkgTunIndexLister = (*routerOpkgTunIndexAdapter)(nil)
 
 // routerOpkgTunIndexAdapter отвечает на ДВА разных вопроса, и их нельзя

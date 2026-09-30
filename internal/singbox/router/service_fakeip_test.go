@@ -125,6 +125,19 @@ func (r *recOpkgTun) InterfaceDown(_ context.Context, name string) error {
 type recStaticRoutes struct {
 	log    *callLog
 	failAt string
+	// binds — сколько раз подтверждали интерфейс (у прод-адаптера — чтение
+	// списка NDMS); absent/bindErr — ответ ForInterface.
+	binds   int
+	absent  bool
+	bindErr error
+}
+
+func (r *recStaticRoutes) ForInterface(context.Context, string) (BoundStaticRoutes, bool, error) {
+	r.binds++
+	if r.bindErr != nil || r.absent {
+		return nil, false, r.bindErr
+	}
+	return r, true, nil
 }
 
 func (r *recStaticRoutes) AddStaticRoute(_ context.Context, route StaticRouteSpec) error {

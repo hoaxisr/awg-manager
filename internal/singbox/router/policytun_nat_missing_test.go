@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -67,13 +68,13 @@ func TestApplySourcePreserve_SkipsVanishedSegment(t *testing.T) {
 	}
 }
 
-// Адаптер подтверждения (cmd/awg-manager, errIfaceAbsent) не шлёт команду по
+// Адаптер подтверждения (cmd/awg-manager, ErrIfaceAbsent) не шлёт команду по
 // отсутствующему сегменту и отвечает своим текстом — это тот же дрейф.
 func TestApplySourcePreserve_SkipsSegmentAbsentByConfirm(t *testing.T) {
 	svc, _ := newOrchedTestService(t)
 	svc.deps.NATState = &fakeNATState{}
 	svc.deps.DefaultGateway = &fakeGateway{name: "PPPoE0"}
-	svc.deps.SegmentNAT = &errSegmentNAT{err: errors.New("интерфейса Guest нет в NDMS")}
+	svc.deps.SegmentNAT = &errSegmentNAT{err: fmt.Errorf("интерфейса Guest %w", ErrIfaceAbsent)}
 
 	recorded, err := svc.applyPolicyTunSourcePreserve(context.Background(), []string{"Guest"}, nil)
 	if err != nil {

@@ -52,6 +52,17 @@ type OpkgTunProvisioner interface {
 
 // StaticRouteProvider manages NDMS auto static routes for the fakeip pool + reject route.
 type StaticRouteProvider interface {
+	BoundStaticRoutes
+	// ForInterface подтверждает iface ОДНИМ чтением списка NDMS и отдаёт
+	// исполнителя для серии Add/Remove по нему (F546: иначе чтение на каждый
+	// CIDR). ok=false — интерфейса нет. Значение живёт в пределах одного
+	// цикла/потока: в поля не класть, между тиками не держать.
+	ForInterface(ctx context.Context, iface string) (BoundStaticRoutes, bool, error)
+}
+
+// BoundStaticRoutes — Add/Remove статических маршрутов. У значения из
+// ForInterface Interface спеки обязан совпадать с подтверждённым.
+type BoundStaticRoutes interface {
 	AddStaticRoute(ctx context.Context, route StaticRouteSpec) error
 	RemoveStaticRoute(ctx context.Context, route StaticRouteSpec) error
 }

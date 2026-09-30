@@ -234,6 +234,10 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	if s.deps.StaticRoutes != nil {
 		if cfg, cerr := s.loadFakeIPConfig(); cerr == nil {
 			cfg = s.ruleSetMaterializer().restoreConfig(cfg)
+			// Одно подтверждение tun на весь тик и только если маршрут нужен
+			// (steady state — ноль чтений списка, F546). Отказ — одна строка
+			// журнала на цикл, не на префикс.
+			routes := s.cidrRoutes(ctx, ndmsName)
 
 			// Tier 1: re-assert specific CIDR routes (drift-heal, defense-in-depth).
 			// Routes are NDMS-native and durable across reload; this backstops manual
@@ -242,7 +246,12 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 			dV4, dV6 := desiredTunCIDRs(cfg)
 			for _, c := range dV4 {
 				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoutePresent(iface, pfx.Masked()) {
-					if e := s.addCIDRRoute(ctx, ndmsName, c, false); e != nil {
+					rt, e := routes()
+					if e != nil {
+						s.appLog.Warn("fakeip-reconcile", iface, "cidr routes: "+e.Error())
+						break
+					}
+					if e := s.addCIDRRoute(ctx, rt, ndmsName, c, false); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "re-add cidr route "+c+": "+e.Error())
 					} else {
 						s.appLog.Info("fakeip-reconcile", iface, "cidr route "+c+" was absent, re-added (drift-heal)")
@@ -256,7 +265,12 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 			// gave such a config a heal signal.
 			for _, c := range dV6 {
 				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoute6Present(iface, pfx.Masked()) {
-					if e := s.addCIDRRoute(ctx, ndmsName, c, true); e != nil {
+					rt, e := routes()
+					if e != nil {
+						s.appLog.Warn("fakeip-reconcile", iface, "cidr routes: "+e.Error())
+						break
+					}
+					if e := s.addCIDRRoute(ctx, rt, ndmsName, c, true); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "re-add cidr route v6 "+c+": "+e.Error())
 					} else {
 						s.appLog.Info("fakeip-reconcile", iface, "cidr route v6 "+c+" was absent, re-added (drift-heal)")
@@ -285,7 +299,12 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 			added := 0
 			for _, c := range rV4 {
 				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoutePresent(iface, pfx.Masked()) {
-					if e := s.addCIDRRoute(ctx, ndmsName, c, false); e != nil {
+					rt, e := routes()
+					if e != nil {
+						s.appLog.Warn("fakeip-reconcile", iface, "remote cidr routes: "+e.Error())
+						break
+					}
+					if e := s.addCIDRRoute(ctx, rt, ndmsName, c, false); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "add remote cidr "+c+": "+e.Error())
 					} else {
 						added++
@@ -297,7 +316,12 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 			// a remote set with v6 CIDRs but no v4 never self-healed its v6 routes.
 			for _, c := range rV6 {
 				if pfx, perr := netip.ParsePrefix(c); perr == nil && !fakeIPPoolRoute6Present(iface, pfx.Masked()) {
-					if e := s.addCIDRRoute(ctx, ndmsName, c, true); e != nil {
+					rt, e := routes()
+					if e != nil {
+						s.appLog.Warn("fakeip-reconcile", iface, "remote cidr routes: "+e.Error())
+						break
+					}
+					if e := s.addCIDRRoute(ctx, rt, ndmsName, c, true); e != nil {
 						s.appLog.Warn("fakeip-reconcile", iface, "add remote cidr v6 "+c+": "+e.Error())
 					} else {
 						added++

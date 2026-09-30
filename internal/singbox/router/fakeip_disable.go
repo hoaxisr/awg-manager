@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -233,14 +234,24 @@ func (s *ServiceImpl) disableFakeIPTun(ctx context.Context, settings *storage.Se
 	if cfg, cerr := s.loadFakeIPConfig(); cerr == nil {
 		cfg = s.ruleSetMaterializer().restoreConfig(cfg)
 		dV4, dV6 := desiredTunCIDRs(cfg)
-		for _, c := range dV4 {
-			if e := s.removeCIDRRoute(ctx, ndmsName, c, false); e != nil {
-				s.appLog.Warn("fakeip-disable", iface, "remove cidr route "+c+": "+e.Error())
-			}
-		}
-		for _, c := range dV6 {
-			if e := s.removeCIDRRoute(ctx, ndmsName, c, true); e != nil {
-				s.appLog.Warn("fakeip-disable", iface, "remove cidr route v6 "+c+": "+e.Error())
+		// Одно подтверждение на оба цикла (F546); интерфейса нет — снимать нечего.
+		if len(dV4)+len(dV6) > 0 {
+			rt, e := s.cidrRoutes(ctx, ndmsName)()
+			switch {
+			case errors.Is(e, ErrIfaceAbsent):
+			case e != nil:
+				s.appLog.Warn("fakeip-disable", iface, "remove cidr routes: "+e.Error())
+			default:
+				for _, c := range dV4 {
+					if e := s.removeCIDRRoute(ctx, rt, ndmsName, c, false); e != nil {
+						s.appLog.Warn("fakeip-disable", iface, "remove cidr route "+c+": "+e.Error())
+					}
+				}
+				for _, c := range dV6 {
+					if e := s.removeCIDRRoute(ctx, rt, ndmsName, c, true); e != nil {
+						s.appLog.Warn("fakeip-disable", iface, "remove cidr route v6 "+c+": "+e.Error())
+					}
+				}
 			}
 		}
 	}

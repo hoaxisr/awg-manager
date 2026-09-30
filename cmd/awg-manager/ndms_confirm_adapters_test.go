@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -152,7 +153,7 @@ func TestConfirmingOpkgTun_SetAbsentIsError(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS()
 	for name, call := range sets(newConfirmAdapters(t, f)) {
 		err := call(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "OpkgTun5") {
+		if !errors.Is(err, router.ErrIfaceAbsent) || !strings.Contains(err.Error(), "OpkgTun5") {
 			t.Errorf("%s: %v, want ошибку с именем", name, err)
 		}
 	}
@@ -278,4 +279,46 @@ func TestConfirmingAdapters_ProvisionListReads(t *testing.T) {
 			oracleClean(t, f)
 		})
 	}
+}
+
+// Серия CIDR-маршрутов через ForInterface: одно чтение списка на 100
+// маршрутов, E и фантомов нет (F546, R25).
+func TestStaticRoutesForInterface_OneListFor100(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(ndms.Interface{ID: "OpkgTun5", Type: "OpkgTun"})
+	a := newConfirmAdapters(t, f)
+	ctx := context.Background()
+	rt, ok, err := a.static.ForInterface(ctx, "OpkgTun5")
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	for i := 0; i < 100; i++ {
+		if err := rt.AddStaticRoute(ctx, router.StaticRouteSpec{Interface: "OpkgTun5", Network: fmt.Sprintf("149.%d.0.0", i), Mask: "255.255.0.0"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := f.ListCalls(); n != 1 || len(f.Posts) != 100 {
+		t.Fatalf("списков %d, команд %d; want 1/100", n, len(f.Posts))
+	}
+	oracleClean(t, f)
+	// Спека на другой интерфейс через это подтверждение не уходит.
+	if err := rt.AddStaticRoute(ctx, router.StaticRouteSpec{Interface: "OpkgTun6", Network: "149.200.0.0", Mask: "255.255.0.0"}); err == nil || len(f.Posts) != 100 {
+		t.Fatalf("чужой интерфейс: err=%v posts=%d", err, len(f.Posts))
+	}
+}
+
+// Нет — ok=false без ошибки; список не прочитан — ошибка; команд нет.
+func TestStaticRoutesForInterface_AbsentOrListError(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS()
+	a := newConfirmAdapters(t, f)
+	if rt, ok, err := a.static.ForInterface(context.Background(), "OpkgTun5"); rt != nil || ok || err != nil {
+		t.Fatalf("absent: rt=%v ok=%v err=%v", rt, ok, err)
+	}
+	f.FailList(errors.New("RCI не ответил"))
+	if _, ok, err := a.static.ForInterface(context.Background(), "OpkgTun5"); ok || err == nil {
+		t.Fatalf("list error: ok=%v err=%v", ok, err)
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("posts=%v", f.Posts)
+	}
+	oracleClean(t, f)
 }
