@@ -166,3 +166,41 @@ func TestFakeNDMS_PostBranches(t *testing.T) {
 		})
 	}
 }
+
+// F569: живое устройство opkgtunN не даёт NDMS создать запись OpkgTunN —
+// C 0xcffd00a9, а каждый прочий ключ того же тела пишет E по несозданной
+// записи. Голое создание — только C; без устройства — создаётся.
+func TestFakeNDMS_CreateOpkgTunOverDevice_CAndE(t *testing.T) {
+	ctx := context.Background()
+	f := NewFakeNDMS()
+	f.ExpectCreate("OpkgTun3")
+	f.SetNetdev("opkgtun3", true)
+
+	raw, err := f.Post(ctx, map[string]any{"interface": map[string]any{"OpkgTun3": map[string]any{
+		"description": "x", "security-level": map[string]any{"public": true}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "0xcffd00a9") {
+		t.Fatalf("ответ без 0xcffd00a9: %s", raw)
+	}
+	if f.C != 1 || f.E != 2 || f.Has("OpkgTun3") || f.Phantoms != 0 {
+		t.Fatalf("склеенное: C=%d E=%d Has=%v Phantoms=%d, want 1/2/false/0", f.C, f.E, f.Has("OpkgTun3"), f.Phantoms)
+	}
+
+	bare := map[string]any{"interface": map[string]any{"OpkgTun3": map[string]any{}}}
+	if _, err := f.Post(ctx, bare); err != nil {
+		t.Fatal(err)
+	}
+	if f.C != 2 || f.E != 2 || f.Has("OpkgTun3") {
+		t.Fatalf("голое при устройстве: C=%d E=%d Has=%v, want 2/2/false", f.C, f.E, f.Has("OpkgTun3"))
+	}
+
+	f.SetNetdev("opkgtun3", false)
+	if _, err := f.Post(ctx, bare); err != nil {
+		t.Fatal(err)
+	}
+	if !f.Has("OpkgTun3") || len(f.Created) != 1 || f.Created[0] != "OpkgTun3" || f.C != 2 || f.E != 2 || f.Phantoms != 0 {
+		t.Fatalf("без устройства: Has=%v Created=%v C=%d E=%d Phantoms=%d", f.Has("OpkgTun3"), f.Created, f.C, f.E, f.Phantoms)
+	}
+}

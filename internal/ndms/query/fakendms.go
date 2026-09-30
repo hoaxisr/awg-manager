@@ -26,9 +26,11 @@ type FakeNDMS struct {
 	hooks     []FakeHook
 	expect    map[string]bool
 	inList    func()
+	netdev    map[string]bool // kernel-устройства, видимые «прошивке» (SetNetdev)
 
 	E        int      // точечное чтение отсутствующего; ссылка на отсутствующий из ip route/nat/static/name-server/policy/hotspot/dns-proxy
 	Phantoms int      // `interface X …` по отсутствующему X, не объявленному ExpectCreate: X создан
+	C        int      // строки C прошивки от наших действий: создание OpkgTunN при живом opkgtunN (F569)
 	Posts    []string // все payload в JSON, по порядку (пакет — одной строкой)
 	// Created — намеренно созданные: `interface X …` по объявленному через
 	// ExpectCreate X и импорт. Намерение объявляет тест, а не форма payload:
@@ -77,6 +79,17 @@ func (f *FakeNDMS) Remove(name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.remove(name)
+}
+
+// SetNetdev — есть ли kernel-устройство name. Remove запись снимает, а
+// устройство нет (прошивка чужое amneziawg снять не может): тест ведёт его сам.
+func (f *FakeNDMS) SetNetdev(name string, present bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.netdev == nil {
+		f.netdev = make(map[string]bool)
+	}
+	f.netdev[name] = present
 }
 
 func (f *FakeNDMS) Has(name string) bool {
@@ -324,6 +337,18 @@ func (f *FakeNDMS) ifaceCmd(name string, body map[string]any) (json.RawMessage, 
 		return json.RawMessage(`{}`), nil
 	}
 	if !ok {
+		// Создание OpkgTunN при живом opkgtunN: NDMS отказывает (C), запись
+		// не появляется, а каждый прочий ключ того же тела адресован
+		// несозданной записи — E (стенд 5.01.C.6, F569).
+		if kernel, isKernel := ndms.KernelName(name); isKernel && strings.HasPrefix(name, "OpkgTun") && f.netdev[kernel] {
+			f.C++
+			msgs := []string{"Network::Interface::Tun: system failed [0xcffd00a9]"}
+			for k := range body {
+				f.E++
+				msgs = append(msgs, "Base: unable to find "+name+" ("+k+")")
+			}
+			return statusError(msgs...), nil
+		}
 		if f.expect[name] {
 			delete(f.expect, name)
 			f.Created = append(f.Created, name)
