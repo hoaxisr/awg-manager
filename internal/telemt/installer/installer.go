@@ -76,6 +76,7 @@ type Status struct {
 	UpdateAvailable bool   `json:"updateAvailable"`
 	Binary          string `json:"binary,omitempty"`
 	Arch            string `json:"arch,omitempty"`
+	Source          string `json:"source,omitempty"`
 	Error           string `json:"error,omitempty"`
 }
 
@@ -334,6 +335,17 @@ func (i *TelemtInstaller) GetStatus(ctx context.Context) Status {
 		updateAvail = compareVersions(curVer, latestVer)
 	}
 
+	source := ""
+	if installed {
+		if strings.HasPrefix(bin, ManagedTelemtDir) {
+			source = "managed"
+		} else if strings.HasPrefix(bin, "/opt/bin") || strings.HasPrefix(bin, "/opt/usr/bin") {
+			source = "opkg"
+		} else {
+			source = "external"
+		}
+	}
+
 	return Status{
 		Installed:       installed,
 		Running:         running,
@@ -343,6 +355,7 @@ func (i *TelemtInstaller) GetStatus(ctx context.Context) Status {
 		UpdateAvailable: updateAvail,
 		Binary:          bin,
 		Arch:            i.arch,
+		Source:          source,
 	}
 }
 

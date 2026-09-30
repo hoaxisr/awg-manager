@@ -60,9 +60,11 @@
 		telemtStatusLoading?: boolean;
 		telemtInstalling?: boolean;
 		telemtUpdating?: boolean;
+		telemtRestarting?: boolean;
 		telemtUninstalling?: boolean;
 		oninstallTelemt?: () => void;
 		onupdateTelemt?: () => void;
+		onrestartTelemt?: () => void;
 		onuninstallTelemt?: () => void;
 	}
 
@@ -95,15 +97,17 @@
 		telemtStatusLoading = false,
 		telemtInstalling = false,
 		telemtUpdating = false,
+		telemtRestarting = false,
 		telemtUninstalling = false,
 		oninstallTelemt,
 		onupdateTelemt,
+		onrestartTelemt,
 		onuninstallTelemt,
 	}: Props = $props();
 
 	const telemtInstalled = $derived(telemtStatus?.installed ?? false);
 	const telemtRunning = $derived(telemtStatus?.running ?? false);
-	const telemtNeedsUpdate = $derived(telemtStatus?.needs_update ?? false);
+	const telemtNeedsUpdate = $derived(telemtStatus?.updateAvailable ?? false);
 	let confirmUninstallTelemt = $state(false);
 
 	// Подсистема, ожидающая подтверждения удаления.
@@ -427,6 +431,11 @@
 				</div>
 				{#if telemtInstalled}
 					<div class="integration-actions">
+						{#if onrestartTelemt && telemtRunning}
+							<Button variant="secondary" size="sm" onclick={onrestartTelemt} loading={telemtRestarting}>
+								{telemtRestarting ? 'Перезапуск...' : 'Перезапустить'}
+							</Button>
+						{/if}
 						{#if telemtNeedsUpdate && onupdateTelemt}
 							<Button variant="primary" size="sm" onclick={onupdateTelemt} loading={telemtUpdating}>
 								{telemtUpdating ? 'Обновление...' : 'Обновить'}
