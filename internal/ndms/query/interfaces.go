@@ -1180,6 +1180,12 @@ func (s *InterfaceStore) InvalidateAll() {
 	}
 }
 
+// Refresh — InvalidateAll с ответом: ошибка, если список не прочитан
+// (диспетчер повторяет обновление после переполнения очереди, F572).
+func (s *InterfaceStore) Refresh(ctx context.Context) error {
+	return s.refreshAll(ctx)
+}
+
 // Confirmed — «запись name была в свежем полном списке NDMS». Единственная
 // валюта мутаций по существующему интерфейсу: команда `interface X …` по
 // отсутствующему X СОЗДАЁТ X (стенд 5.01/5.02), а ссылка на него из другого

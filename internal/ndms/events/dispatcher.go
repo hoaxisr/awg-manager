@@ -180,12 +180,22 @@ func (d *Dispatcher) drain() {
 // refreshAfterOverflow заменяет отброшенные события: карта интерфейсов
 // перечитывается полным списком (Get/List ведутся хуками, метку «грязно» не
 // видят), прочие сторы сбрасываются целиком — какой id они касались, неизвестно.
+// Список не прочитан — метка переполнения возвращается: следующий проход
+// повторит обновление.
 func (d *Dispatcher) refreshAfterOverflow() {
 	if d.queries == nil {
 		return
 	}
 	if d.queries.Interfaces != nil {
-		d.queries.Interfaces.InvalidateAll()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := d.queries.Interfaces.Refresh(ctx)
+		cancel()
+		if err != nil {
+			d.log.Warnf("после переполнения очереди список не прочитан, повтор на следующем проходе: %v", err)
+			d.mu.Lock()
+			d.overflow = true
+			d.mu.Unlock()
+		}
 	}
 	if d.queries.Peers != nil {
 		d.queries.Peers.InvalidateAll()

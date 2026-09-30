@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 
@@ -154,5 +155,30 @@ func TestDispatcher_QueueBoundBeforeStart_OverflowRefreshes(t *testing.T) {
 	}
 	if f.E != 0 || f.Phantoms != 0 {
 		t.Fatalf("E=%d phantoms=%d", f.E, f.Phantoms)
+	}
+}
+
+// Обновление после переполнения не удалось (список не прочитан) — метка
+// остаётся, и следующий проход повторяет его (F572, раунд 1).
+func TestDispatcher_OverflowRefreshFails_RetriedNextPass(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Bridge0", Type: "Bridge"})
+	q := oracleQueries(t, f)
+	_, _ = q.Interfaces.List(context.Background())
+	f.Remove("Bridge0")
+	d := NewDispatcher(q, &countLogger{})
+	done := drainBarrier(d)
+	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Bridge0"})
+	for range maxQueuedEvents {
+		d.Enqueue(Event{Type: EventType("noop")})
+	}
+	f.FailList(errors.New("rci down"))
+	d.Start()
+	defer d.Stop()
+	waitDrain(t, done)
+	f.FailList(nil)
+	d.Enqueue(Event{Type: EventType("noop")})
+	waitDrain(t, done)
+	if got, _ := q.Interfaces.Get(context.Background(), "Bridge0"); got != nil {
+		t.Fatalf("неудачное обновление не повторено: %#v", got)
 	}
 }
