@@ -25,12 +25,9 @@ func (c *ProxyCommands) CreateProxy(ctx context.Context, name, description, upst
 		c.queries.RunningConfig.InvalidateAll); err != nil {
 		return query.Confirmed{}, err
 	}
-	conf, _, ok, err := c.queries.Interfaces.Confirm(ctx, name)
+	conf, err := confirmCreated(ctx, c.poster, c.save, c.queries, nil, name)
 	if err != nil {
-		return query.Confirmed{}, fmt.Errorf("create proxy: %w", err) // имя уже в ошибке Confirm
-	}
-	if !ok {
-		return query.Confirmed{}, fmt.Errorf("create proxy %s: NDMS принял команду, но записи в списке нет", name)
+		return query.Confirmed{}, fmt.Errorf("create proxy: %w", err) // имя уже в ошибке подтверждения
 	}
 	return conf, nil
 }

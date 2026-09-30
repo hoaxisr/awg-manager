@@ -62,8 +62,8 @@ func (s *Service) rciPostTolerant(ctx context.Context, payload interface{}, tole
 
 // rciCreateInterface creates a new WireGuard interface via RCI и подтверждает
 // его свежим списком: дальше весь поток идёт по этому доказательству (F546).
-// Список не прочитан или записи в нём нет после принятой команды — ошибка без
-// сноса: снести по имени без доказательства нельзя; остаток — в журнал.
+// Записи нет за всё ожидание — command.ConfirmCreated её сносит (F584);
+// список не прочитан — ошибка без сноса, остаток — в журнал.
 func (s *Service) rciCreateInterface(ctx context.Context, name string) (query.Confirmed, error) {
 	if s.queries == nil || s.queries.Interfaces == nil {
 		return query.Confirmed{}, fmt.Errorf("interface store not wired")
@@ -75,12 +75,9 @@ func (s *Service) rciCreateInterface(ctx context.Context, name string) (query.Co
 	}); err != nil {
 		return query.Confirmed{}, err
 	}
-	c, _, ok, err := s.queries.Interfaces.Confirm(ctx, name)
-	if err == nil && !ok {
-		err = fmt.Errorf("interface %s: NDMS принял команду, но записи в списке нет", name)
-	}
+	c, err := command.ConfirmCreated(ctx, s.transport, s.saveCoord, s.queries, name)
 	if err != nil {
-		s.appLog.Warn("create", name, "интерфейс создан, но не подтверждён списком и не снесён: "+err.Error())
+		s.appLog.Warn("create", name, "интерфейс создан, но не подтверждён списком: "+err.Error())
 		return query.Confirmed{}, err
 	}
 	return c, nil

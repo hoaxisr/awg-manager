@@ -546,3 +546,46 @@ func TestKernelNameCommands_OnlyAllowed(t *testing.T) {
 		}
 	}
 }
+
+// notListedSite — единственное место вне query, где ветвятся по
+// query.ErrNotListed: там исключение F584 — снос `no interface X` по имени из
+// нашей же принятой команды создания, без Confirmed (см. command/created.go).
+const notListedSite = "internal/ndms/command/created.go:confirmCreated"
+
+// TestNotListed_OnlyInConfirmCreated — обращение к ErrNotListed в прод-коде
+// вне query — только в notListedSite: иначе второе место могло бы слать
+// команды по неподтверждённому имени.
+func TestNotListed_OnlyInConfirmCreated(t *testing.T) {
+	used := false
+	for _, f := range prodGoFiles(t, false) {
+		file, fset, alias := parseProd(t, f)
+		if alias == "" {
+			continue
+		}
+		for _, decl := range file.Decls {
+			key := filepath.ToSlash(f.rel) + ":"
+			if fd, ok := decl.(*ast.FuncDecl); ok {
+				key += fd.Name.Name
+			}
+			ast.Inspect(decl, func(n ast.Node) bool {
+				sel, ok := n.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "ErrNotListed" {
+					return true
+				}
+				if id, ok := sel.X.(*ast.Ident); !ok || id.Name != alias {
+					return true
+				}
+				if key == notListedSite {
+					used = true
+					return true
+				}
+				t.Errorf("%s: %s.ErrNotListed вне %s — снос по неподтверждённому имени только там (F584)",
+					fset.Position(sel.Pos()), alias, notListedSite)
+				return true
+			})
+		}
+	}
+	if !used {
+		t.Errorf("%s больше не обращается к ErrNotListed — поправить notListedSite", notListedSite)
+	}
+}

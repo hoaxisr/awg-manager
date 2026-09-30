@@ -322,7 +322,9 @@ func TestImportWireguardConfig_LayerHooksDuringConfirm(t *testing.T) {
 // Роутер назвал созданный интерфейс, а в свежем списке его нет — ошибка с
 // именем, не пустое доказательство.
 func TestImportWireguardConfig_CreatedAbsent_Error(t *testing.T) {
-	c := NewWireguardCommands(&respPoster{body: realImportSuccess}, nil, listQueries())
+	q := listQueries()
+	q.Interfaces.SetCreatedBackoff()
+	c := NewWireguardCommands(&respPoster{body: realImportSuccess}, nil, q)
 	res, err := c.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
 	if err == nil || !strings.Contains(err.Error(), "Wireguard3") || res.Created != (query.Confirmed{}) {
 		t.Fatalf("res=%+v err=%v", res, err)

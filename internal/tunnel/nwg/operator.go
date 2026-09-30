@@ -264,12 +264,10 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	if _, err := o.transport.PostBatch(ctx, []any{payloads.CmdInterfaceCreate(ndmsName)}); err != nil {
 		return 0, fmt.Errorf("create %s: %w", ndmsName, err)
 	}
-	iface, _, ok, err := o.queries.Interfaces.Confirm(ctx, ndmsName)
+	// Создание шло без save — и снос неподтверждённого тоже (save = nil).
+	iface, err := command.ConfirmCreated(ctx, o.transport, nil, o.queries, ndmsName)
 	if err != nil {
 		return 0, fmt.Errorf("create: %w", err)
-	}
-	if !ok {
-		return 0, fmt.Errorf("create %s: NDMS принял команду, но записи в списке нет", ndmsName)
 	}
 
 	// Маска — из пользовательского CIDR (голый IP → /32): /24 и т.п. дают

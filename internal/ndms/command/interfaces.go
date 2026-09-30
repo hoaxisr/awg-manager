@@ -50,12 +50,9 @@ func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, 
 		c.queries.RunningConfig.InvalidateAll); err != nil {
 		return query.Confirmed{}, err
 	}
-	conf, _, ok, err := c.queries.Interfaces.Confirm(ctx, name)
+	conf, err := c.ConfirmCreated(ctx, name)
 	if err != nil {
-		return query.Confirmed{}, fmt.Errorf("create opkgtun: %w", err) // имя уже в ошибке Confirm
-	}
-	if !ok {
-		return query.Confirmed{}, fmt.Errorf("create opkgtun %s: NDMS принял команду, но записи в списке нет", name)
+		return query.Confirmed{}, fmt.Errorf("create opkgtun: %w", err) // имя уже в ошибке подтверждения
 	}
 	settings := map[string]any{
 		"interface": map[string]any{
