@@ -359,7 +359,7 @@ func (s *ServiceImpl) applyPolicyTunSourcePreserve(ctx context.Context, segs []s
 		if mode == natModeDynamic {
 			// Снимаем маскарад ТОЛЬКО у динамических: у static его нет, а у
 			// none снимать нечего.
-			if err := s.deps.SegmentNAT.RemoveSegmentNAT(ctx, seg); err != nil {
+			if err := s.deps.SegmentNAT.RemoveSegmentNATLegacy(ctx, seg); err != nil {
 				if segmentGone(err) {
 					recorded = recorded[:len(recorded)-1]
 					continue
@@ -374,7 +374,7 @@ func (s *ServiceImpl) applyPolicyTunSourcePreserve(ctx context.Context, segs []s
 		// Пропускаем вместе с его записью.
 		vanished := false
 		for _, target := range targets {
-			if err := s.deps.SegmentNAT.SetStaticNAT(ctx, seg, target); err != nil {
+			if err := s.deps.SegmentNAT.SetStaticNATLegacy(ctx, seg, target); err != nil {
 				if segmentGone(err) {
 					vanished = true
 					break
@@ -471,20 +471,20 @@ func (s *ServiceImpl) restorePolicyTunNAT(ctx context.Context, recorded []storag
 	var errs []error
 	for _, rec := range recorded {
 		for _, wan := range wans[rec.Name] {
-			if err := s.deps.SegmentNAT.RemoveStaticNAT(ctx, rec.Name, wan); err != nil && !segmentGone(err) {
+			if err := s.deps.SegmentNAT.RemoveStaticNATLegacy(ctx, rec.Name, wan); err != nil && !segmentGone(err) {
 				errs = append(errs, fmt.Errorf("no ip static %s %s: %w", rec.Name, wan, err))
 			}
 		}
 		switch rec.PriorMode {
 		case natModeDynamic:
-			if err := s.deps.SegmentNAT.SetSegmentNAT(ctx, rec.Name); err != nil && !segmentGone(err) {
+			if err := s.deps.SegmentNAT.SetSegmentNATLegacy(ctx, rec.Name); err != nil && !segmentGone(err) {
 				errs = append(errs, fmt.Errorf("ip nat %s: %w", rec.Name, err))
 			}
 		case natModeStatic:
 			if rec.PriorStaticWAN == "" {
 				continue
 			}
-			if err := s.deps.SegmentNAT.SetStaticNAT(ctx, rec.Name, rec.PriorStaticWAN); err != nil && !segmentGone(err) {
+			if err := s.deps.SegmentNAT.SetStaticNATLegacy(ctx, rec.Name, rec.PriorStaticWAN); err != nil && !segmentGone(err) {
 				errs = append(errs, fmt.Errorf("ip static %s %s: %w", rec.Name, rec.PriorStaticWAN, err))
 			}
 		}

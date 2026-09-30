@@ -419,7 +419,7 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 		return
 	}
 	if !v4 {
-		if e := s.deps.DefaultRoute.SetDefaultRoute(ctx, ndmsName); e != nil {
+		if e := s.deps.DefaultRoute.SetDefaultRouteLegacy(ctx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-reconcile", iface, "re-add default route: "+e.Error())
 		} else {
 			s.appLog.Info("policy-tun-reconcile", iface, "дефолт-маршрут пропал — переустановлен (drift-heal)")
@@ -436,7 +436,7 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 		s.reassertPolicyTunDefaultRoute(ctx, sr, iface, ndmsName)
 	}
 	if wantV6 && !v6 {
-		if e := s.deps.DefaultRoute.SetIPv6DefaultRoute(ctx, ndmsName); e != nil {
+		if e := s.deps.DefaultRoute.SetIPv6DefaultRouteLegacy(ctx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-reconcile", iface, "re-add ipv6 default route: "+e.Error())
 		} else {
 			s.appLog.Info("policy-tun-reconcile", iface, "v6-дефолт пропал — переустановлен (drift-heal)")
@@ -524,7 +524,7 @@ func (s *ServiceImpl) reassertPolicyTunDefaultRoute(ctx context.Context, sr stor
 	if !slices.Contains(policyTunRouteHealAttempts[:], int(strikes)) {
 		return
 	}
-	if e := s.deps.DefaultRoute.SetDefaultRoute(ctx, ndmsName); e != nil {
+	if e := s.deps.DefaultRoute.SetDefaultRouteLegacy(ctx, ndmsName); e != nil {
 		s.appLog.Warn("policy-tun-reconcile", iface, "re-assert default route: "+e.Error())
 		return
 	}

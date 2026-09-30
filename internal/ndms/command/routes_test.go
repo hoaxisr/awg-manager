@@ -20,7 +20,7 @@ func newTestRouteCommands(_ *testing.T) (*RouteCommands, *fakePoster) {
 
 func TestRouteCommands_SetDefaultRoute(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
-	_ = cmds.SetDefaultRoute(context.Background(), "PPPoE0")
+	_ = cmds.SetDefaultRoute(context.Background(), confirmed(t, "PPPoE0"))
 	r := poster.Payloads()[0].(map[string]any)["ip"].(map[string]any)["route"].(map[string]any)
 	if r["default"] != true || r["interface"] != "PPPoE0" {
 		t.Errorf("set default: %#v", r)
@@ -32,7 +32,7 @@ func TestRouteCommands_SetDefaultRoute(t *testing.T) {
 
 func TestRouteCommands_RemoveDefaultRoute(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
-	_ = cmds.RemoveDefaultRoute(context.Background(), "PPPoE0")
+	_ = cmds.RemoveDefaultRoute(context.Background(), confirmed(t, "PPPoE0"))
 	r := poster.Payloads()[0].(map[string]any)["ip"].(map[string]any)["route"].(map[string]any)
 	if r["no"] != true {
 		t.Errorf("remove default: %#v", r)
@@ -41,7 +41,7 @@ func TestRouteCommands_RemoveDefaultRoute(t *testing.T) {
 
 func TestRouteCommands_SetIPv6DefaultRoute(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
-	_ = cmds.SetIPv6DefaultRoute(context.Background(), "PPPoE0")
+	_ = cmds.SetIPv6DefaultRoute(context.Background(), confirmed(t, "PPPoE0"))
 	p := poster.Payloads()[0].(map[string]any)
 	if _, ok := p["ipv6"]; !ok {
 		t.Errorf("ipv6 key missing: %#v", p)
@@ -50,7 +50,7 @@ func TestRouteCommands_SetIPv6DefaultRoute(t *testing.T) {
 
 func TestRouteCommands_RemoveIPv6DefaultRoute(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
-	_ = cmds.RemoveIPv6DefaultRoute(context.Background(), "PPPoE0")
+	_ = cmds.RemoveIPv6DefaultRoute(context.Background(), confirmed(t, "PPPoE0"))
 	r := poster.Payloads()[0].(map[string]any)["ipv6"].(map[string]any)["route"].(map[string]any)
 	if r["no"] != true {
 		t.Errorf("remove ipv6 default: %#v", r)
@@ -164,7 +164,7 @@ func TestRouteCommands_RemoveHostRoute_UnparsableStaysV4(t *testing.T) {
 func TestRouteCommands_AddStaticRoute_V6Host(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
 	_ = cmds.AddStaticRoute(context.Background(), StaticRouteSpec{
-		Host: "2001:db8::1", Interface: "PPPoE0", Comment: "awgm-obfuscator awg10", V6: true,
+		Host: "2001:db8::1", Interface: confirmed(t, "PPPoE0"), Comment: "awgm-obfuscator awg10", V6: true,
 	})
 	r := poster.Payloads()[0].(map[string]any)["ipv6"].(map[string]any)["route"].(map[string]any)
 	if r["prefix"] != "2001:db8::1/128" || r["interface"] != "PPPoE0" || r["auto"] != true {
@@ -181,7 +181,7 @@ func TestRouteCommands_AddStaticRoute_V6Host(t *testing.T) {
 func TestRouteCommands_RemoveStaticRoute_V6Host(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
 	_ = cmds.RemoveStaticRoute(context.Background(), StaticRouteSpec{
-		Host: "2001:db8::1", Interface: "PPPoE0", V6: true,
+		Host: "2001:db8::1", Interface: confirmed(t, "PPPoE0"), V6: true,
 	})
 	r := poster.Payloads()[0].(map[string]any)["ipv6"].(map[string]any)["route"].(map[string]any)
 	if r["prefix"] != "2001:db8::1/128" || r["no"] != true {
@@ -196,9 +196,9 @@ func TestRouteCommands_AddStaticRoute_V6Reject(t *testing.T) {
 		spec       StaticRouteSpec
 		wantPrefix string
 	}{
-		{"сеть", StaticRouteSpec{Network: "2001:db8:bb::/48", Interface: "PPPoE0", Reject: true, V6: true}, "2001:db8:bb::/48"},
-		{"хост", StaticRouteSpec{Host: "2001:db8::1", Interface: "PPPoE0", Reject: true, V6: true}, "2001:db8::1/128"},
-		{"с меткой владения", StaticRouteSpec{Network: "2001:db8:bb::/48", Interface: "PPPoE0", Reject: true, Comment: "awgm-drain", V6: true}, "2001:db8:bb::/48"},
+		{"сеть", StaticRouteSpec{Network: "2001:db8:bb::/48", Interface: confirmed(t, "PPPoE0"), Reject: true, V6: true}, "2001:db8:bb::/48"},
+		{"хост", StaticRouteSpec{Host: "2001:db8::1", Interface: confirmed(t, "PPPoE0"), Reject: true, V6: true}, "2001:db8::1/128"},
+		{"с меткой владения", StaticRouteSpec{Network: "2001:db8:bb::/48", Interface: confirmed(t, "PPPoE0"), Reject: true, Comment: "awgm-drain", V6: true}, "2001:db8:bb::/48"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmds, poster := newTestRouteCommands(t)
@@ -255,7 +255,7 @@ func TestRouteCommands_V6WithoutInterface_Refused(t *testing.T) {
 func TestRouteCommands_V6NetworkWinsOverHost(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
 	_ = cmds.AddStaticRoute(context.Background(), StaticRouteSpec{
-		Network: "2001:db8::/64", Host: "2001:db8::1", Interface: "PPPoE0", V6: true,
+		Network: "2001:db8::/64", Host: "2001:db8::1", Interface: confirmed(t, "PPPoE0"), V6: true,
 	})
 	r := poster.Payloads()[0].(map[string]any)["ipv6"].(map[string]any)["route"].(map[string]any)
 	if r["prefix"] != "2001:db8::/64" {
@@ -269,10 +269,10 @@ func TestRouteCommands_V6WithoutPrefix_Refused(t *testing.T) {
 		call func(*RouteCommands) error
 	}{
 		{"add", func(c *RouteCommands) error {
-			return c.AddStaticRoute(context.Background(), StaticRouteSpec{Interface: "PPPoE0", V6: true})
+			return c.AddStaticRoute(context.Background(), StaticRouteSpec{Interface: confirmed(t, "PPPoE0"), V6: true})
 		}},
 		{"remove", func(c *RouteCommands) error {
-			return c.RemoveStaticRoute(context.Background(), StaticRouteSpec{Interface: "PPPoE0", V6: true})
+			return c.RemoveStaticRoute(context.Background(), StaticRouteSpec{Interface: confirmed(t, "PPPoE0"), V6: true})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -290,7 +290,7 @@ func TestRouteCommands_V6WithoutPrefix_Refused(t *testing.T) {
 func TestRouteCommands_AddStaticRoute_Network(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
 	_ = cmds.AddStaticRoute(context.Background(), StaticRouteSpec{
-		Interface: "Wireguard0",
+		Interface: confirmed(t, "Wireguard0"),
 		Network:   "10.0.0.0",
 		Mask:      "255.255.255.0",
 		Reject:    true,
@@ -314,7 +314,7 @@ func TestRouteCommands_AddStaticRoute_Network(t *testing.T) {
 func TestRouteCommands_AddStaticRoute_Host(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
 	_ = cmds.AddStaticRoute(context.Background(), StaticRouteSpec{
-		Interface: "Wireguard0",
+		Interface: confirmed(t, "Wireguard0"),
 		Host:      "8.8.8.8",
 	})
 	r := poster.Payloads()[0].(map[string]any)["ip"].(map[string]any)["route"].(map[string]any)
@@ -329,7 +329,7 @@ func TestRouteCommands_AddStaticRoute_Host(t *testing.T) {
 func TestRouteCommands_RemoveStaticRoute(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
 	_ = cmds.RemoveStaticRoute(context.Background(), StaticRouteSpec{
-		Interface: "Wireguard0",
+		Interface: confirmed(t, "Wireguard0"),
 		Network:   "10.0.0.0",
 		Mask:      "255.255.255.0",
 	})
@@ -375,7 +375,7 @@ func TestRouteCommands_RemoveStaticRoute_RejectPayload(t *testing.T) {
 func TestRouteCommands_AddStaticRoute_V6(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
 	if err := cmds.AddStaticRoute(context.Background(), StaticRouteSpec{
-		V6: true, Network: "3f80::/10", Interface: "OpkgTun10",
+		V6: true, Network: "3f80::/10", Interface: confirmed(t, "OpkgTun10"),
 	}); err != nil {
 		t.Fatalf("add6: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestRouteCommands_AddStaticRoute_V6(t *testing.T) {
 func TestRouteCommands_RemoveStaticRoute_V6(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
 	if err := cmds.RemoveStaticRoute(context.Background(), StaticRouteSpec{
-		V6: true, Network: "3f80::/10", Interface: "OpkgTun10",
+		V6: true, Network: "3f80::/10", Interface: confirmed(t, "OpkgTun10"),
 	}); err != nil {
 		t.Fatalf("rm6: %v", err)
 	}
@@ -438,7 +438,7 @@ func TestRouteCommands_ExactPayloads(t *testing.T) {
 			name: "v4 add (fakeip pool)",
 			run: func(c *RouteCommands) error {
 				return c.AddStaticRoute(context.Background(), StaticRouteSpec{
-					Network: "10.128.0.0", Mask: "255.192.0.0", Interface: "OpkgTun10", Comment: "awgm fakeip pool",
+					Network: "10.128.0.0", Mask: "255.192.0.0", Interface: confirmed(t, "OpkgTun10"), Comment: "awgm fakeip pool",
 				})
 			},
 			want: `{"ip":{"route":{"auto":true,"comment":"awgm fakeip pool","interface":"OpkgTun10","mask":"255.192.0.0","network":"10.128.0.0"}}}`,
@@ -447,7 +447,7 @@ func TestRouteCommands_ExactPayloads(t *testing.T) {
 			name: "v4 remove (drain)",
 			run: func(c *RouteCommands) error {
 				return c.RemoveStaticRoute(context.Background(), StaticRouteSpec{
-					Network: "10.128.0.0", Mask: "255.192.0.0", Interface: "OpkgTun10", Comment: "awgm fakeip drain",
+					Network: "10.128.0.0", Mask: "255.192.0.0", Interface: confirmed(t, "OpkgTun10"), Comment: "awgm fakeip drain",
 				})
 			},
 			want: `{"ip":{"route":{"interface":"OpkgTun10","mask":"255.192.0.0","network":"10.128.0.0","no":true}}}`,
@@ -456,7 +456,7 @@ func TestRouteCommands_ExactPayloads(t *testing.T) {
 			name: "v6 add (pool)",
 			run: func(c *RouteCommands) error {
 				return c.AddStaticRoute(context.Background(), StaticRouteSpec{
-					V6: true, Network: "3f80::/10", Interface: "OpkgTun10",
+					V6: true, Network: "3f80::/10", Interface: confirmed(t, "OpkgTun10"),
 				})
 			},
 			want: `{"ipv6":{"route":{"auto":true,"interface":"OpkgTun10","prefix":"3f80::/10"}}}`,
@@ -465,7 +465,7 @@ func TestRouteCommands_ExactPayloads(t *testing.T) {
 			name: "v6 remove (pool)",
 			run: func(c *RouteCommands) error {
 				return c.RemoveStaticRoute(context.Background(), StaticRouteSpec{
-					V6: true, Network: "3f80::/10", Interface: "OpkgTun10",
+					V6: true, Network: "3f80::/10", Interface: confirmed(t, "OpkgTun10"),
 				})
 			},
 			want: `{"ipv6":{"route":{"interface":"OpkgTun10","no":true,"prefix":"3f80::/10"}}}`,
@@ -494,8 +494,8 @@ func TestRouteCommands_RemoveStaticRoute_ToleratesFileExists(t *testing.T) {
 		name  string
 		route StaticRouteSpec
 	}{
-		{"v4", StaticRouteSpec{Host: "203.0.113.5", Interface: "PPPoE0"}},
-		{"v6", StaticRouteSpec{Host: "2001:db8::5", Interface: "PPPoE0", V6: true}},
+		{"v4", StaticRouteSpec{Host: "203.0.113.5", Interface: confirmed(t, "PPPoE0")}},
+		{"v6", StaticRouteSpec{Host: "2001:db8::5", Interface: confirmed(t, "PPPoE0"), V6: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmds, poster := newTestRouteCommands(t)
@@ -518,7 +518,7 @@ func TestRouteCommands_RemoveStaticRoute_RealErrorSurfaces(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
 	poster.SetResponse(`{"ip":{"route":{"status":[{"status":"error","message":"invalid destination host"}]}}}`)
 
-	err := cmds.RemoveStaticRoute(context.Background(), StaticRouteSpec{Host: "203.0.113.5", Interface: "PPPoE0"})
+	err := cmds.RemoveStaticRoute(context.Background(), StaticRouteSpec{Host: "203.0.113.5", Interface: confirmed(t, "PPPoE0")})
 	if err == nil {
 		t.Fatal("настоящий отказ проглочен")
 	}

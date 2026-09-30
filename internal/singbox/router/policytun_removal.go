@@ -69,10 +69,10 @@ func ReleasePolicyTunForRemoval(ctx context.Context, d Deps) error {
 	// конфигурации на несуществующем имени, а fakeip позже может занять тот же
 	// номер — и чужой дефолт ожил бы на его интерфейсе.
 	if d.DefaultRoute != nil {
-		if e := d.DefaultRoute.RemoveDefaultRoute(ctx, ndmsName); e != nil {
+		if e := d.DefaultRoute.RemoveDefaultRouteLegacy(ctx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-remove", ndmsName, "remove default route: "+e.Error())
 		}
-		if e := d.DefaultRoute.RemoveIPv6DefaultRoute(ctx, ndmsName); e != nil {
+		if e := d.DefaultRoute.RemoveIPv6DefaultRouteLegacy(ctx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-remove", ndmsName, "remove ipv6 default route: "+e.Error())
 		}
 	}

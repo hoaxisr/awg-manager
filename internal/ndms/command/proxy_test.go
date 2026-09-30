@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
@@ -18,13 +19,15 @@ func newTestProxyCommandsWithGetter() (*ProxyCommands, *fakePoster, *SaveCoordin
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
 	g := query.NewFakeGetter()
+	// Созданное подтверждается списком: имена, которые тесты создают, в нём уже есть.
+	g.SetJSON("/show/interface/", `{"Proxy0":{"id":"Proxy0","type":"Proxy"},"Proxy1":{"id":"Proxy1","type":"Proxy"}}`)
 	q := query.NewQueries(query.Deps{Getter: g, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	return NewProxyCommands(poster, sc, q), poster, sc, g
 }
 
 func TestProxyCommands_CreateProxy_SOCKS5(t *testing.T) {
 	cmds, poster, _ := newTestProxyCommands(t)
-	if err := cmds.CreateProxy(context.Background(), "Proxy0", "sing-box", "127.0.0.1", 1080, true); err != nil {
+	if _, err := cmds.CreateProxy(context.Background(), "Proxy0", "sing-box", "127.0.0.1", 1080, true); err != nil {
 		t.Fatalf("CreateProxy: %v", err)
 	}
 	p := poster.Payloads()[0].(map[string]any)
@@ -46,7 +49,7 @@ func TestProxyCommands_CreateProxy_SOCKS5(t *testing.T) {
 
 func TestProxyCommands_CreateProxy_NoUDP(t *testing.T) {
 	cmds, poster, _ := newTestProxyCommands(t)
-	_ = cmds.CreateProxy(context.Background(), "Proxy1", "", "127.0.0.1", 1081, false)
+	_, _ = cmds.CreateProxy(context.Background(), "Proxy1", "", "127.0.0.1", 1081, false)
 	p := poster.Payloads()[0].(map[string]any)
 	proxy := p["interface"].(map[string]any)["Proxy1"].(map[string]any)["proxy"].(map[string]any)
 	if _, ok := proxy["socks5-udp"]; ok {
@@ -56,7 +59,7 @@ func TestProxyCommands_CreateProxy_NoUDP(t *testing.T) {
 
 func TestProxyCommands_DeleteProxy(t *testing.T) {
 	cmds, poster, _ := newTestProxyCommands(t)
-	_ = cmds.DeleteProxy(context.Background(), "Proxy0")
+	_ = cmds.DeleteProxy(context.Background(), confirmed(t, "Proxy0"))
 	p := poster.Payloads()[0].(map[string]any)
 	iface := p["interface"].(map[string]any)["Proxy0"].(map[string]any)
 	if iface["no"] != true {
@@ -72,7 +75,7 @@ func TestProxyCommands_DeleteProxy_NoShowByNameAfterDelete(t *testing.T) {
 	// Список интерфейсов есть — иначе bootstrap кэша падает раньше, чем
 	// доходит до запроса по имени, и тест зелен при любом коде.
 	g.SetJSON("/show/interface/", `{"Proxy0":{"id":"Proxy0","type":"Proxy","state":"up"}}`)
-	if err := cmds.DeleteProxy(context.Background(), "Proxy0"); err != nil {
+	if err := cmds.DeleteProxy(context.Background(), confirmed(t, "Proxy0")); err != nil {
 		t.Fatalf("DeleteProxy: %v", err)
 	}
 	if n := g.PostInterfaceCalls("Proxy0"); n != 0 {
@@ -82,7 +85,7 @@ func TestProxyCommands_DeleteProxy_NoShowByNameAfterDelete(t *testing.T) {
 
 func TestProxyCommands_ProxyUp(t *testing.T) {
 	cmds, poster, _ := newTestProxyCommands(t)
-	_ = cmds.ProxyUp(context.Background(), "Proxy0")
+	_ = cmds.ProxyUp(context.Background(), confirmed(t, "Proxy0"))
 	p := poster.Payloads()[0].(map[string]any)
 	iface := p["interface"].(map[string]any)["Proxy0"].(map[string]any)
 	if iface["up"] != true {
@@ -92,7 +95,7 @@ func TestProxyCommands_ProxyUp(t *testing.T) {
 
 func TestProxyCommands_ProxyDown_UsesDownKey(t *testing.T) {
 	cmds, poster, _ := newTestProxyCommands(t)
-	_ = cmds.ProxyDown(context.Background(), "Proxy0")
+	_ = cmds.ProxyDown(context.Background(), confirmed(t, "Proxy0"))
 	p := poster.Payloads()[0].(map[string]any)
 	iface := p["interface"].(map[string]any)["Proxy0"].(map[string]any)
 	if iface["down"] != true {
@@ -100,5 +103,38 @@ func TestProxyCommands_ProxyDown_UsesDownKey(t *testing.T) {
 	}
 	if _, ok := iface["up"]; ok {
 		t.Errorf("up must be absent")
+	}
+}
+
+func TestCreateProxy_ReturnsConfirmed(t *testing.T) {
+	cmds, f, q := newOracleCommands(t, nil)
+	f.ExpectCreate("Proxy0")
+	c, err := cmds.Proxies.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, false)
+	if err != nil || c.Name() != "Proxy0" {
+		t.Fatalf("c=%v err=%v", c, err)
+	}
+	if _, ok, _ := q.Interfaces.Lookup(context.Background(), "Proxy0"); !ok {
+		t.Fatal("Confirm после создания обязан положить запись в кэш")
+	}
+	if f.Phantoms != 0 || f.E != 0 {
+		t.Fatalf("phantoms=%d E=%d", f.Phantoms, f.E)
+	}
+}
+
+// Снятый ProxyN забывается в кэше сразу, не дожидаясь ifdestroyed.
+func TestDeleteProxy_Forgets(t *testing.T) {
+	cmds, f, q := newOracleCommands(t, nil, ndms.Interface{ID: "Proxy0"})
+	c, _, ok, err := q.Interfaces.Confirm(context.Background(), "Proxy0")
+	if err != nil || !ok {
+		t.Fatalf("confirm: ok=%v err=%v", ok, err)
+	}
+	if err := cmds.Proxies.DeleteProxy(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := q.Interfaces.Lookup(context.Background(), "Proxy0"); ok || f.Has("Proxy0") {
+		t.Fatalf("запись осталась: cache=%v ndms=%v", ok, f.Has("Proxy0"))
+	}
+	if f.Phantoms != 0 || f.E != 0 {
+		t.Fatalf("phantoms=%d E=%d", f.Phantoms, f.E)
 	}
 }

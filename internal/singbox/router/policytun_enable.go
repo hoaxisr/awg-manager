@@ -410,7 +410,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// The NDMS default route goes onto the tun only AFTER carrier — the same
 	// lesson as fakeip's pool routes: an NDMS route-table rebuild racing the
 	// gvisor attach kept the tun from settling.
-	if err = s.deps.DefaultRoute.SetDefaultRoute(ctx, ndmsName); err != nil {
+	if err = s.deps.DefaultRoute.SetDefaultRouteLegacy(ctx, ndmsName); err != nil {
 		return fmt.Errorf("enable policy-tun: set default route: %w", err)
 	}
 	// Жалобы на потерянный маршрут относились к ПРЕЖНЕМУ воплощению режима:
@@ -419,16 +419,16 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// советуем при #932), и полный re-provision из drift-heal.
 	s.policyTunRouteStrikes.Store(0)
 	push(func() {
-		if e := s.deps.DefaultRoute.RemoveDefaultRoute(rbCtx, ndmsName); e != nil {
+		if e := s.deps.DefaultRoute.RemoveDefaultRouteLegacy(rbCtx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-rollback", iface, "remove default route: "+e.Error())
 		}
 	})
 	if p.TunAddr6 != "" {
-		if err = s.deps.DefaultRoute.SetIPv6DefaultRoute(ctx, ndmsName); err != nil {
+		if err = s.deps.DefaultRoute.SetIPv6DefaultRouteLegacy(ctx, ndmsName); err != nil {
 			return fmt.Errorf("enable policy-tun: set ipv6 default route: %w", err)
 		}
 		push(func() {
-			if e := s.deps.DefaultRoute.RemoveIPv6DefaultRoute(rbCtx, ndmsName); e != nil {
+			if e := s.deps.DefaultRoute.RemoveIPv6DefaultRouteLegacy(rbCtx, ndmsName); e != nil {
 				s.appLog.Warn("policy-tun-rollback", iface, "remove ipv6 default route: "+e.Error())
 			}
 		})

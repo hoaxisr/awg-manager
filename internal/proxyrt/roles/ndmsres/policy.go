@@ -121,7 +121,7 @@ type PolicyLister interface {
 
 // Permitter — срез command.PolicyCommands.
 type Permitter interface {
-	PermitInterface(ctx context.Context, name, iface string, order int) error
+	PermitInterfaceLegacy(ctx context.Context, name, iface string, order int) error
 }
 
 // Membership — ресурс policy_membership: намерение членства с единственным
@@ -247,7 +247,7 @@ func (m *Membership) Apply(ctx context.Context, s proxyrt.Step) error {
 		if err != nil {
 			return err
 		}
-		return m.permit.PermitInterface(ctx, s.Args["policy"], m.iface, order)
+		return m.permit.PermitInterfaceLegacy(ctx, s.Args["policy"], m.iface, order)
 	default:
 		return fmt.Errorf("неизвестный шаг %q", s.Op)
 	}

@@ -56,9 +56,9 @@ func (o *OperatorNativeWG) removeObfHostRoute(ctx context.Context, tunnelID, ip,
 		return nil
 	}
 	if wan == "" {
-		return o.commands.Routes.RemoveOwnHostRoute(ctx, ip, obfRouteComment(tunnelID))
+		return o.commands.Routes.RemoveOwnHostRouteLegacy(ctx, ip, obfRouteComment(tunnelID))
 	}
-	return o.commands.Routes.RemoveStaticRoute(ctx, command.StaticRouteSpec{
+	return o.commands.Routes.RemoveStaticRouteLegacy(ctx, command.StaticRouteSpecLegacy{
 		Host: ip, Interface: wan, V6: isV6Literal(ip),
 	})
 }
@@ -393,7 +393,7 @@ func (o *OperatorNativeWG) addObfHostRoute(ctx context.Context, stored *storage.
 	// роутер отвечает «invalid destination host», а host-route до target'а
 	// релея не встаёт вовсе — трафик релея уходит в сам туннель, то есть
 	// в петлю, ради которой маршрут и ставится.
-	return o.commands.Routes.AddStaticRoute(ctx, command.StaticRouteSpec{
+	return o.commands.Routes.AddStaticRouteLegacy(ctx, command.StaticRouteSpecLegacy{
 		Host: ip, Interface: wan, Comment: obfRouteComment(stored.ID),
 		V6: isV6Literal(ip),
 	})

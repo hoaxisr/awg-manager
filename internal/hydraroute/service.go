@@ -319,7 +319,7 @@ func (s *Service) EnsurePolicyInterfaces(ctx context.Context, policyName string,
 
 	for i, iface := range ndmsIfaces {
 		s.appLog.Info("permit-iface", iface, fmt.Sprintf("ip policy %s permit global order %d", policyName, i))
-		if err := policies.PermitInterface(ctx, policyName, iface, i); err != nil {
+		if err := policies.PermitInterfaceLegacy(ctx, policyName, iface, i); err != nil {
 			s.appLog.Warn("permit-iface", iface, fmt.Sprintf("policy %s: %v", policyName, err))
 			return fmt.Errorf("permit %s in policy %s: %w", iface, policyName, err)
 		}

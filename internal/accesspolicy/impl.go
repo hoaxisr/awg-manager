@@ -321,7 +321,7 @@ func (s *ServiceImpl) PermitInterface(ctx context.Context, name, iface string, o
 		return fmt.Errorf("invalid policy name: %s", name)
 	}
 
-	if err := s.policies.PermitInterface(ctx, name, iface, order); err != nil {
+	if err := s.policies.PermitInterfaceLegacy(ctx, name, iface, order); err != nil {
 		s.appLog.Warn("permit", name, fmt.Sprintf("Failed to permit %s: %v", iface, err))
 		return err
 	}
@@ -336,7 +336,7 @@ func (s *ServiceImpl) DenyInterface(ctx context.Context, name, iface string) err
 		return fmt.Errorf("invalid policy name: %s", name)
 	}
 
-	if err := s.policies.DenyInterface(ctx, name, iface); err != nil {
+	if err := s.policies.DenyInterfaceLegacy(ctx, name, iface); err != nil {
 		s.appLog.Warn("deny", name, fmt.Sprintf("Failed to deny %s: %v", iface, err))
 		return err
 	}

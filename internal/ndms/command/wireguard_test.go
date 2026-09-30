@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 )
@@ -40,15 +41,25 @@ const realImportSuccess = `{
   }
 }`
 
+// listQueries — список интерфейсов, где уже есть names: импорт через
+// respPoster до FakeNDMS не доходит, созданное подтверждается этим списком.
+func listQueries(names ...string) *query.Queries {
+	ifaces := make([]ndms.Interface, 0, len(names))
+	for _, n := range names {
+		ifaces = append(ifaces, ndms.Interface{ID: n})
+	}
+	return query.NewQueries(query.Deps{Getter: query.NewFakeNDMS(ifaces...), Logger: query.NopLogger()})
+}
+
 func TestImportWireguardConfig_Success_ReturnsCreated(t *testing.T) {
-	c := NewWireguardCommands(&respPoster{body: realImportSuccess}, nil, nil)
+	c := NewWireguardCommands(&respPoster{body: realImportSuccess}, nil, listQueries("Wireguard3"))
 
 	res, err := c.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if res.Created != "Wireguard3" {
-		t.Errorf("created name: want Wireguard3, got %q", res.Created)
+	if res.Created.Name() != "Wireguard3" {
+		t.Errorf("created name: want Wireguard3, got %q", res.Created.Name())
 	}
 }
 
@@ -57,14 +68,14 @@ func TestImportWireguardConfig_Success_PreservesIntersectAndMessages(t *testing.
 	// creates a new one, but the router reports the collision in intersects.
 	// The caller must not lose that context.
 	body := `{"interface":{"wireguard":{"import":{"intersects":"Wireguard3","created":"Wireguard4","status":[{"status":"message","code":"75507472","ident":"Wireguard::Interface","message":"\"Wireguard4\": imported settings."}]}}}}`
-	c := NewWireguardCommands(&respPoster{body: body}, nil, nil)
+	c := NewWireguardCommands(&respPoster{body: body}, nil, listQueries("Wireguard3", "Wireguard4"))
 
 	res, err := c.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if res.Created != "Wireguard4" {
-		t.Errorf("created: want Wireguard4, got %q", res.Created)
+	if res.Created.Name() != "Wireguard4" {
+		t.Errorf("created: want Wireguard4, got %q", res.Created.Name())
 	}
 	if res.Intersects != "Wireguard3" {
 		t.Errorf("intersects: want Wireguard3, got %q", res.Intersects)
@@ -136,7 +147,7 @@ func TestWireguardCommands_SetASCParams(t *testing.T) {
 	cmds := NewWireguardCommands(poster, sc, q)
 
 	params := json.RawMessage(`{"jc":"5","jmin":"50","jmax":"1000","s1":"10","s2":"20","h1":"aabbcc","h2":"ddeeff","h3":"112233","h4":"445566"}`)
-	if err := cmds.SetASCParams(context.Background(), "Wireguard0", params); err != nil {
+	if err := cmds.SetASCParams(context.Background(), confirmed(t, "Wireguard0"), params); err != nil {
 		t.Fatalf("SetASCParams: %v", err)
 	}
 
@@ -158,7 +169,7 @@ func TestWireguardCommands_SetPeerConnect_PreservesComment(t *testing.T) {
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	cmds := NewWireguardCommands(poster, sc, q)
 
-	if err := cmds.SetPeerConnect(context.Background(), "Wireguard0", "KEY=", false, "dacha"); err != nil {
+	if err := cmds.SetPeerConnect(context.Background(), confirmed(t, "Wireguard0"), "KEY=", false, "dacha"); err != nil {
 		t.Fatalf("SetPeerConnect: %v", err)
 	}
 
@@ -183,7 +194,7 @@ func TestWireguardCommands_SetPeerConnect_OmitsEmptyComment(t *testing.T) {
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	cmds := NewWireguardCommands(poster, sc, q)
 
-	if err := cmds.SetPeerConnect(context.Background(), "Wireguard0", "KEY=", true, ""); err != nil {
+	if err := cmds.SetPeerConnect(context.Background(), confirmed(t, "Wireguard0"), "KEY=", true, ""); err != nil {
 		t.Fatalf("SetPeerConnect: %v", err)
 	}
 
@@ -201,7 +212,7 @@ func TestWireguardCommands_SetASCParams_InvalidJSON(t *testing.T) {
 	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger()})
 	cmds := NewWireguardCommands(poster, sc, q)
 
-	err := cmds.SetASCParams(context.Background(), "Wireguard0", json.RawMessage(`not json`))
+	err := cmds.SetASCParams(context.Background(), confirmed(t, "Wireguard0"), json.RawMessage(`not json`))
 	if err == nil {
 		t.Fatalf("SetASCParams on invalid JSON: want error, got nil")
 	}
@@ -235,7 +246,7 @@ func TestWireguardCommands_RemovePeer_RefusalDecidedByFreshRead(t *testing.T) {
 			q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 			poster := &errPoster{err: errors.New("no input [http/rci 127.0.0.1].")}
 			sc := NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
-			err := NewWireguardCommands(poster, sc, q).RemovePeer(context.Background(), "Wireguard0", "KEY=")
+			err := NewWireguardCommands(poster, sc, q).RemovePeer(context.Background(), confirmed(t, "Wireguard0"), "KEY=")
 			if (err != nil) != tc.wantErr || errors.Is(err, ErrPeerPresenceUnknown) != tc.wantUnknown {
 				t.Fatalf("err = %v", err)
 			}
@@ -255,8 +266,8 @@ func TestWireguardCommands_KeyedEdits_PeerAbsent_NoPost(t *testing.T) {
 	cmds := NewWireguardCommands(poster, sc, q)
 	ctx := context.Background()
 	for name, err := range map[string]error{
-		"connect": cmds.SetPeerConnect(ctx, "Wireguard0", "KEY=", false, "dacha"),
-		"comment": cmds.SetPeerComment(ctx, "Wireguard0", "KEY=", "dacha"),
+		"connect": cmds.SetPeerConnect(ctx, confirmed(t, "Wireguard0"), "KEY=", false, "dacha"),
+		"comment": cmds.SetPeerComment(ctx, confirmed(t, "Wireguard0"), "KEY=", "dacha"),
 	} {
 		if !errors.Is(err, peersubnet.ErrPeerNotFound) {
 			t.Errorf("%s: err = %v, want ErrPeerNotFound", name, err)
@@ -264,5 +275,29 @@ func TestWireguardCommands_KeyedEdits_PeerAbsent_NoPost(t *testing.T) {
 	}
 	if n := len(poster.Payloads()); n != 0 {
 		t.Fatalf("посты при отсутствующем пире: %d", n)
+	}
+}
+
+func TestImportWireguardConfig_CreatedIsConfirmed(t *testing.T) {
+	cmds, f, q := newOracleCommands(t, nil)
+	res, err := cmds.Wireguard.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
+	if err != nil || res.Created.Name() != "Wireguard0" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if _, ok, _ := q.Interfaces.Lookup(context.Background(), "Wireguard0"); !ok {
+		t.Fatal("Confirm после импорта обязан положить запись в кэш")
+	}
+	if f.Phantoms != 0 || f.E != 0 {
+		t.Fatalf("phantoms=%d E=%d", f.Phantoms, f.E)
+	}
+}
+
+// Роутер назвал созданный интерфейс, а в свежем списке его нет — ошибка с
+// именем, не пустое доказательство.
+func TestImportWireguardConfig_CreatedAbsent_Error(t *testing.T) {
+	c := NewWireguardCommands(&respPoster{body: realImportSuccess}, nil, listQueries())
+	res, err := c.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
+	if err == nil || !strings.Contains(err.Error(), "Wireguard3") || res.Created != (query.Confirmed{}) {
+		t.Fatalf("res=%+v err=%v", res, err)
 	}
 }

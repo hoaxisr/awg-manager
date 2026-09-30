@@ -16,7 +16,7 @@ import (
 // Два зеркальных struct'а обязаны совпадать по именам и типам полей — новое поле в
 // одном из них молча не переносится toNDMSRoute.
 func TestToNDMSRoute_FieldInventoryMirrors(t *testing.T) {
-	src, dst := reflect.TypeOf(router.StaticRouteSpec{}), reflect.TypeOf(ndmscommand.StaticRouteSpec{})
+	src, dst := reflect.TypeOf(router.StaticRouteSpec{}), reflect.TypeOf(ndmscommand.StaticRouteSpecLegacy{})
 	if src.NumField() != dst.NumField() {
 		t.Fatalf("router=%d полей, ndms=%d", src.NumField(), dst.NumField())
 	}
@@ -29,7 +29,7 @@ func TestToNDMSRoute_FieldInventoryMirrors(t *testing.T) {
 	}
 	in := router.StaticRouteSpec{Interface: "OpkgTun3", Host: "10.1.1.1", Network: "10.2.0.0", Mask: "255.255.0.0", Reject: true, Comment: "awgm:test", V6: true}
 	got := toNDMSRoute(in)
-	want := ndmscommand.StaticRouteSpec{Interface: "OpkgTun3", Host: "10.1.1.1", Network: "10.2.0.0", Mask: "255.255.0.0", Reject: true, Comment: "awgm:test", V6: true}
+	want := ndmscommand.StaticRouteSpecLegacy{Interface: "OpkgTun3", Host: "10.1.1.1", Network: "10.2.0.0", Mask: "255.255.0.0", Reject: true, Comment: "awgm:test", V6: true}
 	if got != want {
 		t.Fatalf("toNDMSRoute = %+v, want %+v", got, want)
 	}

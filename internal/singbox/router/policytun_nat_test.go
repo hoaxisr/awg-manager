@@ -49,7 +49,7 @@ func (r *recSegmentNAT) maybeFail(label string) error {
 	return nil
 }
 
-func (r *recSegmentNAT) SetSegmentNAT(_ context.Context, seg string) error {
+func (r *recSegmentNAT) SetSegmentNATLegacy(_ context.Context, seg string) error {
 	r.log.add("SetSegmentNAT:" + seg)
 	if err := r.maybeFail("SetSegmentNAT"); err != nil {
 		return err
@@ -60,7 +60,7 @@ func (r *recSegmentNAT) SetSegmentNAT(_ context.Context, seg string) error {
 	return nil
 }
 
-func (r *recSegmentNAT) RemoveSegmentNAT(_ context.Context, seg string) error {
+func (r *recSegmentNAT) RemoveSegmentNATLegacy(_ context.Context, seg string) error {
 	r.log.add("RemoveSegmentNAT:" + seg)
 	if err := r.maybeFail("RemoveSegmentNAT"); err != nil {
 		return err
@@ -77,7 +77,7 @@ func (r *recSegmentNAT) RemoveSegmentNAT(_ context.Context, seg string) error {
 	return nil
 }
 
-func (r *recSegmentNAT) SetStaticNAT(_ context.Context, seg, wan string) error {
+func (r *recSegmentNAT) SetStaticNATLegacy(_ context.Context, seg, wan string) error {
 	r.log.add("SetStaticNAT:" + seg + ":" + wan)
 	if err := r.maybeFail("SetStaticNAT"); err != nil {
 		return err
@@ -95,7 +95,7 @@ func (r *recSegmentNAT) SetStaticNAT(_ context.Context, seg, wan string) error {
 	return nil
 }
 
-func (r *recSegmentNAT) RemoveStaticNAT(_ context.Context, seg, wan string) error {
+func (r *recSegmentNAT) RemoveStaticNATLegacy(_ context.Context, seg, wan string) error {
 	r.log.add("RemoveStaticNAT:" + seg + ":" + wan)
 	if err := r.maybeFail("RemoveStaticNAT"); err != nil {
 		return err

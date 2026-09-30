@@ -22,9 +22,21 @@ func NewPingCheckCommands(p Poster, s *SaveCoordinator, q *query.Queries) *PingC
 // binds it to the given interface. Sequence: best-effort teardown,
 // create profile, bind. Uses ndms.PingCheckConfig — the single domain
 // type shared with tunnel operators and API handlers.
-func (c *PingCheckCommands) ConfigureProfile(ctx context.Context, profile, ifaceName string, cfg ndms.PingCheckConfig) error {
-	c.bestEffortRemove(ctx, profile, ifaceName)
+//
+// Снос прежней привязки — только если она есть (bestEffortRemove), F546.
+func (c *PingCheckCommands) ConfigureProfile(ctx context.Context, profile string, iface query.Confirmed, cfg ndms.PingCheckConfig) error {
+	c.bestEffortRemove(ctx, profile, iface)
+	return c.configure(ctx, profile, iface.Name(), cfg)
+}
 
+// ConfigureProfileLegacy — временно, до Task 19 (F546).
+func (c *PingCheckCommands) ConfigureProfileLegacy(ctx context.Context, profile, ifaceName string, cfg ndms.PingCheckConfig) error {
+	c.bestEffortRemoveLegacy(ctx, profile, ifaceName)
+	return c.configure(ctx, profile, ifaceName, cfg)
+}
+
+// configure — создание профиля и привязка после сноса прежнего.
+func (c *PingCheckCommands) configure(ctx context.Context, profile, ifaceName string, cfg ndms.PingCheckConfig) error {
 	profileInner := map[string]any{
 		"host":            cfg.Host,
 		"mode":            cfg.Mode,
@@ -73,8 +85,30 @@ func (c *PingCheckCommands) ConfigureProfile(ctx context.Context, profile, iface
 
 // RemoveProfile tears down a ping-check profile. Best-effort — partial
 // state is tolerated.
-func (c *PingCheckCommands) RemoveProfile(ctx context.Context, profile, ifaceName string) error {
-	c.bestEffortRemove(ctx, profile, ifaceName)
+func (c *PingCheckCommands) RemoveProfile(ctx context.Context, profile string, iface query.Confirmed) error {
+	c.bestEffortRemove(ctx, profile, iface)
+	c.save.Request()
+	c.queries.PingCheckProfile.InvalidateAll()
+	c.queries.PingCheckStatus.InvalidateAll()
+	c.queries.Interfaces.Invalidate(iface.Name())
+	c.queries.RunningConfig.InvalidateAll()
+	return nil
+}
+
+// RemoveOrphanProfile снимает профиль, когда интерфейса уже нет: только
+// `no ping-check profile <p>`, ни одной команды `interface X …` (F546).
+func (c *PingCheckCommands) RemoveOrphanProfile(ctx context.Context, profile string) error {
+	c.deleteProfile(ctx, profile)
+	c.save.Request()
+	c.queries.PingCheckProfile.InvalidateAll()
+	c.queries.PingCheckStatus.InvalidateAll()
+	c.queries.RunningConfig.InvalidateAll()
+	return nil
+}
+
+// RemoveProfileLegacy — временно, до Task 19 (F546).
+func (c *PingCheckCommands) RemoveProfileLegacy(ctx context.Context, profile, ifaceName string) error {
+	c.bestEffortRemoveLegacy(ctx, profile, ifaceName)
 	c.save.Request()
 	c.queries.PingCheckProfile.InvalidateAll()
 	c.queries.PingCheckStatus.InvalidateAll()
@@ -83,8 +117,38 @@ func (c *PingCheckCommands) RemoveProfile(ctx context.Context, profile, ifaceNam
 	return nil
 }
 
-// bestEffortRemove runs the 3-step teardown, ignoring per-step errors.
-func (c *PingCheckCommands) bestEffortRemove(ctx context.Context, profile, ifaceName string) {
+// bestEffortRemove — снос привязки и профиля, ошибки шагов игнорируются.
+// Команды `interface X ping-check …` уходят, только если у X привязан профиль
+// по свежему статусу: без привязки NDMS пишет E «interface "X" has no assigned
+// profile». Статус не прочитался — шлём всё, как раньше: E в журнале дешевле
+// оставленной привязки.
+func (c *PingCheckCommands) bestEffortRemove(ctx context.Context, profile string, iface query.Confirmed) {
+	name := iface.Name()
+	bound := true
+	if rows, err := c.queries.PingCheckStatus.Fetch(ctx); err == nil {
+		bound = false
+		for _, r := range rows {
+			if r.Interface == name {
+				bound = true
+				break
+			}
+		}
+	}
+	if bound {
+		c.unbind(ctx, profile, name)
+	}
+	c.deleteProfile(ctx, profile)
+}
+
+// bestEffortRemoveLegacy — временно, до Task 19 (F546).
+//
+// bestEffortRemoveLegacy runs the 3-step teardown, ignoring per-step errors.
+func (c *PingCheckCommands) bestEffortRemoveLegacy(ctx context.Context, profile, ifaceName string) {
+	c.unbind(ctx, profile, ifaceName)
+	c.deleteProfile(ctx, profile)
+}
+
+func (c *PingCheckCommands) unbind(ctx context.Context, profile, ifaceName string) {
 	_, _ = c.poster.Post(ctx, map[string]any{
 		"interface": map[string]any{
 			ifaceName: map[string]any{
@@ -101,6 +165,9 @@ func (c *PingCheckCommands) bestEffortRemove(ctx context.Context, profile, iface
 			},
 		},
 	})
+}
+
+func (c *PingCheckCommands) deleteProfile(ctx context.Context, profile string) {
 	_, _ = c.poster.Post(ctx, map[string]any{
 		"ping-check": map[string]any{
 			"profile": map[string]any{profile: map[string]any{"no": true}},

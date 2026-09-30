@@ -388,7 +388,7 @@ func (s *ServiceImpl) addRoute(ctx context.Context, subnet, ifaceName, fallback 
 	if err != nil {
 		return fmt.Errorf("parse CIDR %s: %w", cidr, err)
 	}
-	spec := command.StaticRouteSpec{
+	spec := command.StaticRouteSpecLegacy{
 		Interface: ifaceName,
 		Reject:    fallback == "reject",
 		Comment:   comment,
@@ -399,7 +399,7 @@ func (s *ServiceImpl) addRoute(ctx context.Context, subnet, ifaceName, fallback 
 		spec.Network = network
 		spec.Mask = mask
 	}
-	if err := s.routes.AddStaticRoute(ctx, spec); err != nil {
+	if err := s.routes.AddStaticRouteLegacy(ctx, spec); err != nil {
 		return fmt.Errorf("add route %s via %s: %w", cidr, ifaceName, err)
 	}
 	return nil
@@ -416,14 +416,14 @@ func (s *ServiceImpl) removeRoute(ctx context.Context, subnet, ifaceName string,
 	if err != nil {
 		return err
 	}
-	spec := command.StaticRouteSpec{Interface: ifaceName}
+	spec := command.StaticRouteSpecLegacy{Interface: ifaceName}
 	if mask == "" {
 		spec.Host = network
 	} else {
 		spec.Network = network
 		spec.Mask = mask
 	}
-	if err := s.routes.RemoveStaticRoute(ctx, spec); err != nil {
+	if err := s.routes.RemoveStaticRouteLegacy(ctx, spec); err != nil {
 		return fmt.Errorf("remove route %s via %s: %w", cidr, ifaceName, err)
 	}
 	return nil

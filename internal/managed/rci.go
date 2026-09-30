@@ -371,7 +371,7 @@ func (s *Service) rciRemovePeer(ctx context.Context, ifaceName, pubKey string) e
 	if err != nil {
 		return err
 	}
-	return wg.RemovePeer(ctx, ifaceName, pubKey)
+	return wg.RemovePeerLegacy(ctx, ifaceName, pubKey)
 }
 
 // rciSetPeerConnect enables or disables a peer. comment must carry the peer's
@@ -383,7 +383,7 @@ func (s *Service) rciSetPeerConnect(ctx context.Context, ifaceName, pubKey strin
 	if err != nil {
 		return err
 	}
-	return wg.SetPeerConnect(ctx, ifaceName, pubKey, connect, comment)
+	return wg.SetPeerConnectLegacy(ctx, ifaceName, pubKey, connect, comment)
 }
 
 // rciSetPeerComment sets the description/comment for a peer. Пира на роутере
@@ -393,7 +393,7 @@ func (s *Service) rciSetPeerComment(ctx context.Context, ifaceName, pubKey, comm
 	if err != nil {
 		return err
 	}
-	return wg.SetPeerComment(ctx, ifaceName, pubKey, comment)
+	return wg.SetPeerCommentLegacy(ctx, ifaceName, pubKey, comment)
 }
 
 // rciRemovePeerDefaultRoute strips the legacy 0.0.0.0/0 entry from a peer's
@@ -428,7 +428,7 @@ func (s *Service) rciUpdatePeerAllowIPs(ctx context.Context, ifaceName, pubKey, 
 		if s.commands == nil || s.commands.Wireguard == nil {
 			return fmt.Errorf("ndms commands not wired")
 		}
-		if err := s.commands.Wireguard.RemovePeerAllowIP(ctx, ifaceName, pubKey, oldIP, "255.255.255.255"); err != nil {
+		if err := s.commands.Wireguard.RemovePeerAllowIPLegacy(ctx, ifaceName, pubKey, oldIP, "255.255.255.255"); err != nil {
 			return fmt.Errorf("remove old allow-ips: %w", err)
 		}
 	}

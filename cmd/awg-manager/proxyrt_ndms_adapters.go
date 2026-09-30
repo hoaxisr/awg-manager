@@ -27,7 +27,7 @@ type policyLister interface {
 	List(ctx context.Context) ([]ndms.Policy, error)
 }
 type defaultRouteSetter interface {
-	SetDefaultRoute(ctx context.Context, name string) error
+	SetDefaultRouteLegacy(ctx context.Context, name string) error
 }
 type systemNameResolver interface {
 	ResolveSystemName(ctx context.Context, ndmsName string) string
@@ -46,7 +46,7 @@ type proxyNDMSCommands struct {
 }
 
 func (c proxyNDMSCommands) EnsureDefaultRouteCandidacy(ctx context.Context, name string) error {
-	return c.routes.SetDefaultRoute(ctx, name)
+	return c.routes.SetDefaultRouteLegacy(ctx, name)
 }
 
 var _ ndmsres.Commands = proxyNDMSCommands{}

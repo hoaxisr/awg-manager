@@ -506,14 +506,14 @@ func computeDiff(current currentState, target targetState) rciDiff {
 func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff) error {
 	// Phase 1: Delete routes (before deleting groups they reference)
 	if len(diff.routeDeletes) > 0 {
-		specs := make([]command.DNSRouteSpec, 0, len(diff.routeDeletes))
+		specs := make([]command.DNSRouteSpecLegacy, 0, len(diff.routeDeletes))
 		for _, rd := range diff.routeDeletes {
-			specs = append(specs, command.DNSRouteSpec{
+			specs = append(specs, command.DNSRouteSpecLegacy{
 				Group:     rd.Group,
 				Interface: rd.Iface,
 			})
 		}
-		if err := s.commands.DNSRoutes.DeleteRoutes(ctx, specs); err != nil {
+		if err := s.commands.DNSRoutes.DeleteRoutesLegacy(ctx, specs); err != nil {
 			s.logError("applyDiff", "", fmt.Sprintf("Phase1: DeleteRoutes(%d) failed", len(specs)), err.Error())
 			return fmt.Errorf("delete routes: %w", err)
 		}
@@ -551,19 +551,19 @@ func (s *ServiceImpl) applyDiff(ctx context.Context, diff rciDiff) error {
 	// иначе между POST-ами группа осталась бы без правил (на больших списках —
 	// сотни миллисекунд без DNS-маршрутизации).
 	for _, rb := range diff.routeRebuilds {
-		dels := make([]command.DNSRouteSpec, 0, len(rb.deletes))
+		dels := make([]command.DNSRouteSpecLegacy, 0, len(rb.deletes))
 		for _, iface := range rb.deletes {
-			dels = append(dels, command.DNSRouteSpec{Group: rb.group, Interface: iface})
+			dels = append(dels, command.DNSRouteSpecLegacy{Group: rb.group, Interface: iface})
 		}
-		ups := make([]command.DNSRouteSpec, 0, len(rb.upserts))
+		ups := make([]command.DNSRouteSpecLegacy, 0, len(rb.upserts))
 		for _, ro := range rb.upserts {
-			ups = append(ups, command.DNSRouteSpec{
+			ups = append(ups, command.DNSRouteSpecLegacy{
 				Group:     ro.Group,
 				Interface: ro.Iface,
 				Reject:    ro.Reject,
 			})
 		}
-		if err := s.commands.DNSRoutes.ReplaceRoutes(ctx, dels, ups); err != nil {
+		if err := s.commands.DNSRoutes.ReplaceRoutesLegacy(ctx, dels, ups); err != nil {
 			s.logError("applyDiff", rb.group,
 				fmt.Sprintf("Phase4: ReplaceRoutes(-%d/+%d) failed", len(dels), len(ups)), err.Error())
 			return fmt.Errorf("replace routes for %s: %w", rb.group, err)

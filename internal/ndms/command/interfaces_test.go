@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -66,6 +67,37 @@ func newOracleInterfaceCommands(t *testing.T, ifaces ...ndms.Interface) (*Interf
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	hn := &spyHookNotifier{}
 	return NewInterfaceCommands(f, sc, q, hn), f, sc, q, hn
+}
+
+// oracleGetter — FakeNDMS плюс ответы на пути, которых у него нет
+// (running-config, ping-check): чтение списка и команды идут в оракул.
+type oracleGetter struct {
+	*query.FakeNDMS
+	raw map[string]string
+}
+
+func (g oracleGetter) GetRaw(ctx context.Context, path string) ([]byte, error) {
+	if b, ok := g.raw[path]; ok {
+		return []byte(b), nil
+	}
+	return g.FakeNDMS.GetRaw(ctx, path)
+}
+
+func (g oracleGetter) Get(ctx context.Context, path string, dst any) error {
+	if b, ok := g.raw[path]; ok {
+		return json.Unmarshal([]byte(b), dst)
+	}
+	return g.FakeNDMS.Get(ctx, path, dst)
+}
+
+// newOracleCommands — все группы команд на оракуле; raw — ответы по путям
+// сверх модели FakeNDMS.
+func newOracleCommands(t *testing.T, raw map[string]string, ifaces ...ndms.Interface) (*Commands, *query.FakeNDMS, *query.Queries) {
+	t.Helper()
+	f := query.NewFakeNDMS(ifaces...)
+	sc := NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	q := query.NewQueries(query.Deps{Getter: oracleGetter{FakeNDMS: f, raw: raw}, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	return NewCommands(Deps{Poster: f, Save: sc, Queries: q, IsOS5: func() bool { return true }}), f, q
 }
 
 func TestCreateOpkgTun_ReturnsConfirmedAndFillsCache(t *testing.T) {

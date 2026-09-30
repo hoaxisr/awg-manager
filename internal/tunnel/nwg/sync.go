@@ -71,7 +71,7 @@ func (o *OperatorNativeWG) SyncAWGParams(ctx context.Context, stored *storage.AW
 	if ascJSON == nil {
 		return nil
 	}
-	if err := o.commands.Wireguard.SetASCParams(ctx, names.NDMSName, ascJSON); err != nil {
+	if err := o.commands.Wireguard.SetASCParamsLegacy(ctx, names.NDMSName, ascJSON); err != nil {
 		return fmt.Errorf("set ASC params: %w", err)
 	}
 	return nil

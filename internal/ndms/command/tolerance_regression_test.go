@@ -25,8 +25,12 @@ func TestRemoveDefaultRoute_ToleratesNetlinkLie(t *testing.T) {
 		name string
 		call func(*RouteCommands) error
 	}{
-		{"v4", func(c *RouteCommands) error { return c.RemoveDefaultRoute(context.Background(), "OpkgTun0") }},
-		{"v6", func(c *RouteCommands) error { return c.RemoveIPv6DefaultRoute(context.Background(), "OpkgTun0") }},
+		{"v4", func(c *RouteCommands) error {
+			return c.RemoveDefaultRoute(context.Background(), confirmed(t, "OpkgTun0"))
+		}},
+		{"v6", func(c *RouteCommands) error {
+			return c.RemoveIPv6DefaultRoute(context.Background(), confirmed(t, "OpkgTun0"))
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			poster := &fakePoster{}
@@ -42,7 +46,7 @@ func TestRemoveDefaultRoute_ToleratesNetlinkLie(t *testing.T) {
 func TestSetDefaultRoute_SurfacesError(t *testing.T) {
 	poster := &fakePoster{}
 	poster.SetResponse(respDefaultRouteNetlink)
-	if err := newRouteCommandsWith(poster).SetDefaultRoute(context.Background(), "OpkgTun0"); err == nil {
+	if err := newRouteCommandsWith(poster).SetDefaultRoute(context.Background(), confirmed(t, "OpkgTun0")); err == nil {
 		t.Error("ошибка постановки дефолта проглочена")
 	}
 }
@@ -54,7 +58,7 @@ func TestDeleteDNSRoutes_ToleratesVanishedInterface(t *testing.T) {
 	poster := &fakePoster{}
 	poster.SetResponse(respDNSRouteNoSuchIface)
 	err := newDNSRouteCommandsWith(poster).DeleteRoutes(context.Background(),
-		[]DNSRouteSpec{{Group: "g", Interface: "OpkgTun10"}})
+		[]DNSRouteRef{{Group: "g", Interface: "OpkgTun10"}})
 	if err != nil {
 		t.Errorf("снос маршрута с исчезнувшим интерфейсом считается провалом: %v", err)
 	}
@@ -65,7 +69,7 @@ func TestReplaceDNSRoutes_SurfacesVanishedInterface(t *testing.T) {
 	poster := &fakePoster{}
 	poster.SetResponse(respDNSRouteNoSuchIface)
 	err := newDNSRouteCommandsWith(poster).ReplaceRoutes(context.Background(), nil,
-		[]DNSRouteSpec{{Group: "g", Interface: "OpkgTun10"}})
+		[]DNSRouteSpec{{Group: "g", Interface: confirmed(t, "OpkgTun10")}})
 	if err == nil {
 		t.Error("отказ постановки dns-маршрута проглочен")
 	}
@@ -78,8 +82,8 @@ func TestReplaceDNSRoutes_ToleratesVanishedInterfaceOnDeleteOnly(t *testing.T) {
 	poster := &fakePoster{}
 	poster.SetResponse(respDNSRouteNoSuchIface)
 	err := newDNSRouteCommandsWith(poster).ReplaceRoutes(context.Background(),
-		[]DNSRouteSpec{{Group: "g", Interface: "OpkgTun10"}},
-		[]DNSRouteSpec{{Group: "g", Interface: "OpkgTun11"}})
+		[]DNSRouteRef{{Group: "g", Interface: "OpkgTun10"}},
+		[]DNSRouteSpec{{Group: "g", Interface: confirmed(t, "OpkgTun11")}})
 	if err != nil {
 		t.Errorf("снос исчезнувшего интерфейса считается провалом: %v", err)
 	}
@@ -91,8 +95,8 @@ func TestReplaceDNSRoutes_InterfaceNameMatchedWhole(t *testing.T) {
 	poster := &fakePoster{}
 	poster.SetResponse(respDNSRouteNoSuchIface) // про OpkgTun10
 	err := newDNSRouteCommandsWith(poster).ReplaceRoutes(context.Background(),
-		[]DNSRouteSpec{{Group: "g", Interface: "OpkgTun10"}},
-		[]DNSRouteSpec{{Group: "g", Interface: "OpkgTun1"}})
+		[]DNSRouteRef{{Group: "g", Interface: "OpkgTun10"}},
+		[]DNSRouteSpec{{Group: "g", Interface: confirmed(t, "OpkgTun1")}})
 	if err != nil {
 		t.Errorf("отказ про OpkgTun10 приписан записи OpkgTun1: %v", err)
 	}
@@ -128,7 +132,7 @@ func TestPartialBatchFailure_StillInvalidatesAndSaves(t *testing.T) {
 func TestIsMissingInterfaceError(t *testing.T) {
 	poster := &fakePoster{}
 	poster.SetResponse(respNATNoIface)
-	err := newNATCommandsWith(poster).SetSegmentNAT(context.Background(), "AwgmNoSeg")
+	err := newNATCommandsWith(poster).SetSegmentNAT(context.Background(), confirmed(t, "AwgmNoSeg"))
 	if err == nil {
 		t.Fatal("ожидалась ошибка")
 	}
@@ -137,7 +141,7 @@ func TestIsMissingInterfaceError(t *testing.T) {
 	}
 	other := &fakePoster{}
 	other.SetResponse(`{"ip":{"nat":{"status":[{"status":"error","message":"busy"}]}}}`)
-	if err := newNATCommandsWith(other).SetSegmentNAT(context.Background(), "Seg"); !strings.Contains(err.Error(), "busy") || IsMissingInterfaceError(err) {
+	if err := newNATCommandsWith(other).SetSegmentNAT(context.Background(), confirmed(t, "Seg")); !strings.Contains(err.Error(), "busy") || IsMissingInterfaceError(err) {
 		t.Errorf("предикат сработал на чужой ошибке: %v", err)
 	}
 }

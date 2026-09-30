@@ -27,7 +27,7 @@ type recDefaultRoute struct {
 	failAt string
 }
 
-func (r *recDefaultRoute) SetDefaultRoute(_ context.Context, name string) error {
+func (r *recDefaultRoute) SetDefaultRouteLegacy(_ context.Context, name string) error {
 	r.log.add("SetDefaultRoute:" + name)
 	if r.failAt == "SetDefaultRoute" {
 		return errors.New("injected: SetDefaultRoute")
@@ -35,12 +35,12 @@ func (r *recDefaultRoute) SetDefaultRoute(_ context.Context, name string) error 
 	return nil
 }
 
-func (r *recDefaultRoute) RemoveDefaultRoute(_ context.Context, name string) error {
+func (r *recDefaultRoute) RemoveDefaultRouteLegacy(_ context.Context, name string) error {
 	r.log.add("RemoveDefaultRoute:" + name)
 	return nil
 }
 
-func (r *recDefaultRoute) SetIPv6DefaultRoute(_ context.Context, name string) error {
+func (r *recDefaultRoute) SetIPv6DefaultRouteLegacy(_ context.Context, name string) error {
 	r.log.add("SetIPv6DefaultRoute:" + name)
 	if r.failAt == "SetIPv6DefaultRoute" {
 		return errors.New("injected: SetIPv6DefaultRoute")
@@ -48,7 +48,7 @@ func (r *recDefaultRoute) SetIPv6DefaultRoute(_ context.Context, name string) er
 	return nil
 }
 
-func (r *recDefaultRoute) RemoveIPv6DefaultRoute(_ context.Context, name string) error {
+func (r *recDefaultRoute) RemoveIPv6DefaultRouteLegacy(_ context.Context, name string) error {
 	r.log.add("RemoveIPv6DefaultRoute:" + name)
 	return nil
 }

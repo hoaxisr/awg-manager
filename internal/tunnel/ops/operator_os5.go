@@ -401,12 +401,12 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	// Non-fatal: if NDMS is not ready (e.g. boot race), tunnel starts without
 	// default route. HandleWANUp will retry when WAN stabilizes.
 	if cfg.DefaultRoute {
-		if err := o.commands.Routes.SetDefaultRoute(ctx, names.NDMSName); err != nil {
+		if err := o.commands.Routes.SetDefaultRouteLegacy(ctx, names.NDMSName); err != nil {
 			o.logWarn("start", cfg.ID, "Default route failed (non-fatal): "+err.Error())
 			o.appLog.Warn("start", cfg.ID, "Не удалось установить маршрут по умолчанию — будет повторная попытка при WAN UP")
 		} else {
 			if cfg.AddressIPv6 != "" {
-				if err := o.commands.Routes.SetIPv6DefaultRoute(ctx, names.NDMSName); err != nil {
+				if err := o.commands.Routes.SetIPv6DefaultRouteLegacy(ctx, names.NDMSName); err != nil {
 					o.logWarn("start", cfg.ID, "Failed to set IPv6 default route: "+err.Error())
 				}
 			}
@@ -702,12 +702,12 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 
 	// Default route: only when DefaultRoute is enabled.
 	if cfg.DefaultRoute {
-		if err := o.commands.Routes.SetDefaultRoute(ctx, names.NDMSName); err != nil {
+		if err := o.commands.Routes.SetDefaultRouteLegacy(ctx, names.NDMSName); err != nil {
 			_ = o.CleanupEndpointRoute(ctx, cfg.ID)
 			return tunnel.NewOpError("reconcile", cfg.ID, "ndms", fmt.Errorf("set default route: %w", err))
 		}
 		if cfg.AddressIPv6 != "" {
-			if err := o.commands.Routes.SetIPv6DefaultRoute(ctx, names.NDMSName); err != nil {
+			if err := o.commands.Routes.SetIPv6DefaultRouteLegacy(ctx, names.NDMSName); err != nil {
 				o.logWarn("reconcile", cfg.ID, "Failed to set IPv6 default route: "+err.Error())
 			}
 		}
@@ -734,7 +734,7 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 // SetDefaultRoute adds a default route through the tunnel interface.
 func (o *OperatorOS5Impl) SetDefaultRoute(ctx context.Context, tunnelID string) error {
 	names := tunnel.NewNames(tunnelID)
-	if err := o.commands.Routes.SetDefaultRoute(ctx, names.NDMSName); err != nil {
+	if err := o.commands.Routes.SetDefaultRouteLegacy(ctx, names.NDMSName); err != nil {
 		return err
 	}
 	return nil
@@ -743,8 +743,8 @@ func (o *OperatorOS5Impl) SetDefaultRoute(ctx context.Context, tunnelID string) 
 // RemoveDefaultRoute removes the default route through the tunnel interface.
 func (o *OperatorOS5Impl) RemoveDefaultRoute(ctx context.Context, tunnelID string) error {
 	names := tunnel.NewNames(tunnelID)
-	o.commands.Routes.RemoveIPv6DefaultRoute(ctx, names.NDMSName)
-	if err := o.commands.Routes.RemoveDefaultRoute(ctx, names.NDMSName); err != nil {
+	o.commands.Routes.RemoveIPv6DefaultRouteLegacy(ctx, names.NDMSName)
+	if err := o.commands.Routes.RemoveDefaultRouteLegacy(ctx, names.NDMSName); err != nil {
 		return err
 	}
 	return nil

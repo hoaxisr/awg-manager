@@ -45,7 +45,7 @@ type fakeDefaultRoute struct {
 	err   error
 }
 
-func (f *fakeDefaultRoute) SetDefaultRoute(_ context.Context, name string) error {
+func (f *fakeDefaultRoute) SetDefaultRouteLegacy(_ context.Context, name string) error {
 	f.names = append(f.names, name)
 	return f.err
 }

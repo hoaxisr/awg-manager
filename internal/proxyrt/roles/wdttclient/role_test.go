@@ -96,7 +96,7 @@ func (nilPolicies) List(context.Context) ([]ndms.Policy, error) { return nil, ni
 
 type nilPermit struct{}
 
-func (nilPermit) PermitInterface(context.Context, string, string, int) error { return nil }
+func (nilPermit) PermitInterfaceLegacy(context.Context, string, string, int) error { return nil }
 
 type nilHooks struct{}
 

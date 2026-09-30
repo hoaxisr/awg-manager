@@ -55,6 +55,11 @@ func (c *RouteCommands) NetworkRouteOwner(ctx context.Context, network, mask, if
 // слепой формы нет намеренно: там снималось наследство прежних версий, здесь
 // чужая запись на той же паре — пользовательская.
 func (c *RouteCommands) RemoveOwnNetworkRoute(ctx context.Context, spec StaticRouteSpec) (bool, error) {
+	return c.RemoveOwnNetworkRouteLegacy(ctx, spec.legacy())
+}
+
+// RemoveOwnNetworkRouteLegacy — временно, до Task 19 (F546).
+func (c *RouteCommands) RemoveOwnNetworkRouteLegacy(ctx context.Context, spec StaticRouteSpecLegacy) (bool, error) {
 	network, mask := spec.Network, spec.Mask
 	if spec.Host != "" {
 		network, mask = spec.Host, "255.255.255.255"
@@ -63,5 +68,5 @@ func (c *RouteCommands) RemoveOwnNetworkRoute(ctx context.Context, spec StaticRo
 	if err != nil || !own {
 		return false, err
 	}
-	return true, c.RemoveStaticRoute(ctx, spec)
+	return true, c.RemoveStaticRouteLegacy(ctx, spec)
 }

@@ -25,9 +25,28 @@ func NewRouteCommands(p Poster, s *SaveCoordinator, q *query.Queries) *RouteComm
 	return &RouteCommands{poster: p, save: s, queries: q}
 }
 
-// StaticRouteSpec describes a static route mutation. Exactly one of
-// Host (/32) or Network+Mask must be set.
+// StaticRouteSpec — StaticRouteSpecLegacy с интерфейсом, подтверждённым
+// свежим списком (F546); поля — как там.
 type StaticRouteSpec struct {
+	Interface query.Confirmed
+	Host      string
+	Network   string
+	Mask      string
+	Reject    bool
+	Comment   string
+	V6        bool
+}
+
+func (s StaticRouteSpec) legacy() StaticRouteSpecLegacy {
+	return StaticRouteSpecLegacy{Interface: s.Interface.Name(), Host: s.Host, Network: s.Network,
+		Mask: s.Mask, Reject: s.Reject, Comment: s.Comment, V6: s.V6}
+}
+
+// StaticRouteSpecLegacy — временно, до Task 19 (F546).
+//
+// StaticRouteSpecLegacy describes a static route mutation. Exactly one of
+// Host (/32) or Network+Mask must be set.
+type StaticRouteSpecLegacy struct {
 	Interface string
 	Host      string
 	Network   string
@@ -42,7 +61,12 @@ type StaticRouteSpec struct {
 	V6 bool
 }
 
-func (c *RouteCommands) SetDefaultRoute(ctx context.Context, name string) error {
+func (c *RouteCommands) SetDefaultRoute(ctx context.Context, iface query.Confirmed) error {
+	return c.SetDefaultRouteLegacy(ctx, iface.Name())
+}
+
+// SetDefaultRouteLegacy — временно, до Task 19 (F546).
+func (c *RouteCommands) SetDefaultRouteLegacy(ctx context.Context, name string) error {
 	payload := map[string]any{
 		"ip": map[string]any{
 			"route": map[string]any{"default": true, "interface": name},
@@ -51,7 +75,12 @@ func (c *RouteCommands) SetDefaultRoute(ctx context.Context, name string) error 
 	return c.mutate(ctx, payload, "set default route "+name)
 }
 
-func (c *RouteCommands) RemoveDefaultRoute(ctx context.Context, name string) error {
+func (c *RouteCommands) RemoveDefaultRoute(ctx context.Context, iface query.Confirmed) error {
+	return c.RemoveDefaultRouteLegacy(ctx, iface.Name())
+}
+
+// RemoveDefaultRouteLegacy — временно, до Task 19 (F546).
+func (c *RouteCommands) RemoveDefaultRouteLegacy(ctx context.Context, name string) error {
 	payload := map[string]any{
 		"ip": map[string]any{
 			"route": map[string]any{"default": true, "interface": name, "no": true},
@@ -60,7 +89,12 @@ func (c *RouteCommands) RemoveDefaultRoute(ctx context.Context, name string) err
 	return c.mutateTolerant(ctx, payload, "remove default route "+name, isNetlinkFileExists)
 }
 
-func (c *RouteCommands) SetIPv6DefaultRoute(ctx context.Context, name string) error {
+func (c *RouteCommands) SetIPv6DefaultRoute(ctx context.Context, iface query.Confirmed) error {
+	return c.SetIPv6DefaultRouteLegacy(ctx, iface.Name())
+}
+
+// SetIPv6DefaultRouteLegacy — временно, до Task 19 (F546).
+func (c *RouteCommands) SetIPv6DefaultRouteLegacy(ctx context.Context, name string) error {
 	payload := map[string]any{
 		"ipv6": map[string]any{
 			"route": map[string]any{"default": true, "interface": name},
@@ -69,7 +103,12 @@ func (c *RouteCommands) SetIPv6DefaultRoute(ctx context.Context, name string) er
 	return c.mutate(ctx, payload, "set ipv6 default route "+name)
 }
 
-func (c *RouteCommands) RemoveIPv6DefaultRoute(ctx context.Context, name string) error {
+func (c *RouteCommands) RemoveIPv6DefaultRoute(ctx context.Context, iface query.Confirmed) error {
+	return c.RemoveIPv6DefaultRouteLegacy(ctx, iface.Name())
+}
+
+// RemoveIPv6DefaultRouteLegacy — временно, до Task 19 (F546).
+func (c *RouteCommands) RemoveIPv6DefaultRouteLegacy(ctx context.Context, name string) error {
 	payload := map[string]any{
 		"ipv6": map[string]any{
 			"route": map[string]any{"default": true, "interface": name, "no": true},
@@ -86,7 +125,7 @@ func (c *RouteCommands) RemoveIPv6DefaultRoute(ctx context.Context, name string)
 // запрещает, поэтому проверка стоит здесь, а не у вызывающих.
 // При обоих заполненных полях побеждает Network: у v6 сеть и хост выражаются
 // одним ключом, и «сеть плюс хост» — не запрос, а ошибка вызывающего.
-func v6Prefix(route StaticRouteSpec) (string, error) {
+func v6Prefix(route StaticRouteSpecLegacy) (string, error) {
 	switch {
 	case route.Network != "":
 		return route.Network, nil
@@ -166,6 +205,10 @@ func (c *RouteCommands) RemoveHostRoute(ctx context.Context, host string) error 
 //
 // Конфигурацию прочитать не удалось — падаем на слепую форму: лучше снять
 // лишнее, чем оставить собственный маршрут на роутере.
+//
+// Запись на интерфейс, которого нет в свежем списке, не трогаем: снимать её
+// нечем, команда по отсутствующему — E в журнале ndm (F546). Список не
+// прочитался — ошибка, ни одной команды.
 func (c *RouteCommands) RemoveOwnHostRoute(ctx context.Context, host, comment string) error {
 	if comment == "" || c.queries == nil || c.queries.RunningConfig == nil {
 		return c.RemoveHostRoute(ctx, host)
@@ -180,10 +223,46 @@ func (c *RouteCommands) RemoveOwnHostRoute(ctx context.Context, host, comment st
 	}
 	// Пустой список — снимать нечего, и это успех: записи, за которую отвечает
 	// вызывающий, на роутере нет.
+	names := ownHostRouteIfaces(lines, host, comment, v6)
+	if len(names) == 0 {
+		return nil
+	}
+	present, err := c.queries.Interfaces.ConfirmEach(ctx, names)
+	if err != nil {
+		return fmt.Errorf("remove own host route %s: %w", host, err)
+	}
 	var firstErr error
-	for _, iface := range ownHostRouteIfaces(lines, host, comment, v6) {
+	for _, name := range names {
+		iface, ok := present[name]
+		if !ok {
+			continue
+		}
 		spec := StaticRouteSpec{Host: host, Interface: iface, V6: v6}
 		if rmErr := c.RemoveStaticRoute(ctx, spec); rmErr != nil && firstErr == nil {
+			firstErr = rmErr
+		}
+	}
+	return firstErr
+}
+
+// RemoveOwnHostRouteLegacy — временно, до Task 19 (F546): снимает свои записи
+// без подтверждения интерфейсов списком.
+func (c *RouteCommands) RemoveOwnHostRouteLegacy(ctx context.Context, host, comment string) error {
+	if comment == "" || c.queries == nil || c.queries.RunningConfig == nil {
+		return c.RemoveHostRoute(ctx, host)
+	}
+	lines, err := c.queries.RunningConfig.Lines(ctx)
+	if err != nil {
+		return c.RemoveHostRoute(ctx, host)
+	}
+	v6 := false
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		v6 = true
+	}
+	var firstErr error
+	for _, iface := range ownHostRouteIfaces(lines, host, comment, v6) {
+		spec := StaticRouteSpecLegacy{Host: host, Interface: iface, V6: v6}
+		if rmErr := c.RemoveStaticRouteLegacy(ctx, spec); rmErr != nil && firstErr == nil {
 			firstErr = rmErr
 		}
 	}
@@ -251,6 +330,11 @@ func commentOf(fields []string) string {
 // в ::/0 — то есть в ДЕФОЛТНЫЙ маршрут интерфейса. Форма стенд-проверена
 // 2026-08-24: сам роутер хранит запись как {prefix, interface, auto, comment}.
 func (c *RouteCommands) AddStaticRoute(ctx context.Context, route StaticRouteSpec) error {
+	return c.AddStaticRouteLegacy(ctx, route.legacy())
+}
+
+// AddStaticRouteLegacy — временно, до Task 19 (F546).
+func (c *RouteCommands) AddStaticRouteLegacy(ctx context.Context, route StaticRouteSpecLegacy) error {
 	// Общая часть у обеих форм одна и та же; различаются только ключ
 	// назначения (prefix против host|network+mask) и внешний ключ.
 	inner := map[string]any{
@@ -293,6 +377,11 @@ func (c *RouteCommands) AddStaticRoute(ctx context.Context, route StaticRouteSpe
 // it emits {prefix, interface, no} under "ipv6" — ключ ИМЕННО prefix, см.
 // v6Prefix; for v4 it emits {interface, no, host|network+mask} under "ip".
 func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRouteSpec) error {
+	return c.RemoveStaticRouteLegacy(ctx, route.legacy())
+}
+
+// RemoveStaticRouteLegacy — временно, до Task 19 (F546).
+func (c *RouteCommands) RemoveStaticRouteLegacy(ctx context.Context, route StaticRouteSpecLegacy) error {
 	if route.V6 {
 		prefix, err := v6Prefix(route)
 		if err != nil {

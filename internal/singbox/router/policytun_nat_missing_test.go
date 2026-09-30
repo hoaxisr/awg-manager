@@ -42,10 +42,10 @@ func TestRestorePolicyTunNAT_SurfacesRealError(t *testing.T) {
 
 type errSegmentNAT struct{ err error }
 
-func (e *errSegmentNAT) SetSegmentNAT(context.Context, string) error           { return e.err }
-func (e *errSegmentNAT) RemoveSegmentNAT(context.Context, string) error        { return e.err }
-func (e *errSegmentNAT) SetStaticNAT(context.Context, string, string) error    { return e.err }
-func (e *errSegmentNAT) RemoveStaticNAT(context.Context, string, string) error { return e.err }
+func (e *errSegmentNAT) SetSegmentNATLegacy(context.Context, string) error           { return e.err }
+func (e *errSegmentNAT) RemoveSegmentNATLegacy(context.Context, string) error        { return e.err }
+func (e *errSegmentNAT) SetStaticNATLegacy(context.Context, string, string) error    { return e.err }
+func (e *errSegmentNAT) RemoveStaticNATLegacy(context.Context, string, string) error { return e.err }
 
 // Тот же дрейф на включении: сегмент из желаемого набора исчез с роутера.
 // Он пропускается вместе со своей записью — включение policy-tun не должно

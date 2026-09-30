@@ -77,7 +77,7 @@ func (pm *ProxyManager) EnsureProxy(ctx context.Context, index, port int, descri
 		return ErrProxyComponentMissing
 	}
 	name := fmt.Sprintf("%s%d", proxyIfacePrefix, index)
-	return pm.commands.Proxies.CreateProxy(ctx, name, description, "127.0.0.1", port, true)
+	return pm.commands.Proxies.CreateProxyLegacy(ctx, name, description, "127.0.0.1", port, true)
 }
 
 // NextFreeIndex returns the lowest ProxyN index not occupied on the
@@ -128,8 +128,8 @@ func (pm *ProxyManager) RemoveProxy(ctx context.Context, index int) error {
 	if rec, err := pm.queries.Interfaces.Refresh(ctx, name); err == nil && rec == nil {
 		return nil
 	}
-	_ = pm.commands.Proxies.ProxyDown(ctx, name) // ignore error — may be already down
-	return pm.commands.Proxies.DeleteProxy(ctx, name)
+	_ = pm.commands.Proxies.ProxyDownLegacy(ctx, name) // ignore error — may be already down
+	return pm.commands.Proxies.DeleteProxyLegacy(ctx, name)
 }
 
 // RemoveOrphanSingboxProxies удаляет ProxyN, ассоциированные с sing-box,
@@ -267,7 +267,7 @@ func (pm *ProxyManager) SyncProxies(ctx context.Context, tunnels []TunnelInfo) e
 			continue
 		}
 		if !info.Up {
-			if err := pm.commands.Proxies.ProxyUp(ctx, t.ProxyInterface); err != nil {
+			if err := pm.commands.Proxies.ProxyUpLegacy(ctx, t.ProxyInterface); err != nil {
 				return err
 			}
 		}

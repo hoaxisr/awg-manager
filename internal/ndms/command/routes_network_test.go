@@ -21,6 +21,7 @@ func newRouteCommandsWithRC(t *testing.T, rc string) (*RouteCommands, *fakePoste
 	t.Helper()
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/rc/ip/route", rc)
+	fg.SetJSON("/show/interface/", `{"Wireguard9":{"id":"Wireguard9","type":"Wireguard"}}`) // PeerRouter подтверждает интерфейс
 	poster := &fakePoster{}
 	sc := NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
@@ -61,11 +62,11 @@ func TestNetworkRouteOwner(t *testing.T) {
 func TestRemoveOwnNetworkRoute_OnlyOwn(t *testing.T) {
 	cmds, poster := newRouteCommandsWithRC(t, rcRoutesFixture)
 	ctx := context.Background()
-	removed, err := cmds.RemoveOwnNetworkRoute(ctx, StaticRouteSpec{Network: "192.168.78.0", Mask: "255.255.255.0", Interface: "Wireguard9", Comment: "awgm-peer:5+0I/P0V"})
+	removed, err := cmds.RemoveOwnNetworkRoute(ctx, StaticRouteSpec{Network: "192.168.78.0", Mask: "255.255.255.0", Interface: confirmed(t, "Wireguard9"), Comment: "awgm-peer:5+0I/P0V"})
 	if err != nil || removed || len(poster.Payloads()) != 0 {
 		t.Fatalf("чужая запись: removed=%v err=%v posts=%d", removed, err, len(poster.Payloads()))
 	}
-	removed, err = cmds.RemoveOwnNetworkRoute(ctx, StaticRouteSpec{Network: "192.168.77.0", Mask: "255.255.255.0", Interface: "Wireguard9", Comment: "awgm-peer:5+0I/P0V"})
+	removed, err = cmds.RemoveOwnNetworkRoute(ctx, StaticRouteSpec{Network: "192.168.77.0", Mask: "255.255.255.0", Interface: confirmed(t, "Wireguard9"), Comment: "awgm-peer:5+0I/P0V"})
 	if err != nil || !removed || len(poster.Payloads()) != 1 {
 		t.Fatalf("своя запись: removed=%v err=%v posts=%d", removed, err, len(poster.Payloads()))
 	}
@@ -79,7 +80,7 @@ func TestRemoveOwnNetworkRoute_OnlyOwn(t *testing.T) {
 // мимо записи, которую ставит адаптер.
 func TestRemoveOwnNetworkRoute_HostForm(t *testing.T) {
 	cmds, poster := newRouteCommandsWithRC(t, rcRoutesFixture)
-	removed, err := cmds.RemoveOwnNetworkRoute(context.Background(), StaticRouteSpec{Host: "192.168.79.5", Interface: "Wireguard9", Comment: "awgm-peer:5+0I/P0V"})
+	removed, err := cmds.RemoveOwnNetworkRoute(context.Background(), StaticRouteSpec{Host: "192.168.79.5", Interface: confirmed(t, "Wireguard9"), Comment: "awgm-peer:5+0I/P0V"})
 	if err != nil || !removed || len(poster.Payloads()) != 1 {
 		t.Fatalf("removed=%v err=%v posts=%d", removed, err, len(poster.Payloads()))
 	}
@@ -103,7 +104,7 @@ func TestRouteMutation_InvalidatesStaticRoutes(t *testing.T) {
 		t.Fatalf("до: exists=%v err=%v", exists, err)
 	}
 	fg.SetJSON("/show/rc/ip/route", rcRoutesFixture)
-	if err := cmds.AddStaticRoute(ctx, StaticRouteSpec{Network: "192.168.77.0", Mask: "255.255.255.0", Interface: "Wireguard9", Comment: label}); err != nil {
+	if err := cmds.AddStaticRoute(ctx, StaticRouteSpec{Network: "192.168.77.0", Mask: "255.255.255.0", Interface: confirmed(t, "Wireguard9"), Comment: label}); err != nil {
 		t.Fatal(err)
 	}
 	if exists, own, err := cmds.NetworkRouteOwner(ctx, "192.168.77.0", "255.255.255.0", "Wireguard9", label); err != nil || !exists || !own {
@@ -121,7 +122,7 @@ func TestPeerRouter_AddNetworkRouteForms(t *testing.T) {
 	for _, c := range cases {
 		cmds, poster := newRouteCommandsWithRC(t, `[]`)
 		_, n, _ := net.ParseCIDR(c.cidr)
-		if err := NewPeerRouter(&Commands{Routes: cmds}).AddNetworkRoute(context.Background(), n, "Wireguard9", "L"); err != nil {
+		if err := NewPeerRouter(&Commands{Routes: cmds}, cmds.queries).AddNetworkRoute(context.Background(), n, "Wireguard9", "L"); err != nil {
 			t.Fatal(err)
 		}
 		b, _ := json.Marshal(poster.Payloads()[0])
@@ -167,7 +168,7 @@ func TestNetworkRouteOwner_FetchErrorFailsClosed(t *testing.T) {
 	if _, own, err := cmds.NetworkRouteOwner(ctx, "192.168.77.0", "255.255.255.0", "Wireguard9", label); err == nil || own {
 		t.Fatalf("отказ RCI: own=%v err=%v", own, err)
 	}
-	removed, err := cmds.RemoveOwnNetworkRoute(ctx, StaticRouteSpec{Network: "192.168.77.0", Mask: "255.255.255.0", Interface: "Wireguard9", Comment: label})
+	removed, err := cmds.RemoveOwnNetworkRoute(ctx, StaticRouteSpec{Network: "192.168.77.0", Mask: "255.255.255.0", Interface: confirmed(t, "Wireguard9"), Comment: label})
 	if err == nil || removed || len(poster.Payloads()) != 0 {
 		t.Fatalf("снятие при отказе RCI: removed=%v err=%v posts=%d", removed, err, len(poster.Payloads()))
 	}
@@ -175,7 +176,7 @@ func TestNetworkRouteOwner_FetchErrorFailsClosed(t *testing.T) {
 
 // Пустая маска: Size() даёт (0, 0) — это не /32 и не host-форма.
 func TestRouteSpec_ZeroMaskNotHost(t *testing.T) {
-	spec := routeSpec(&net.IPNet{IP: net.IPv4(192, 168, 77, 0).To4()}, "Wireguard9", "L")
+	spec := routeSpec(&net.IPNet{IP: net.IPv4(192, 168, 77, 0).To4()}, confirmed(t, "Wireguard9"), "L")
 	if spec.Host != "" {
 		t.Fatalf("пустая маска ушла host-формой: %+v", spec)
 	}

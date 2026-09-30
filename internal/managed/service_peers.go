@@ -383,14 +383,14 @@ func (s *Service) UpdatePeer(ctx context.Context, id, pubkey string, req UpdateP
 			s.appLog.Info("update-peer", req.Description, "пир удалён, откат адреса не нужен")
 			return
 		}
-		if err := s.commands.Wireguard.RemovePeerAllowIP(rbCtx, iface, pubkey, newIPStr, "255.255.255.255"); err != nil {
+		if err := s.commands.Wireguard.RemovePeerAllowIPLegacy(rbCtx, iface, pubkey, newIPStr, "255.255.255.255"); err != nil {
 			warn(err.Error())
 			return
 		}
 		if oldIPStr == "" {
 			return
 		}
-		if err := s.commands.Wireguard.AddPeerAllowIP(rbCtx, iface, pubkey, oldIPStr, "255.255.255.255"); err != nil {
+		if err := s.commands.Wireguard.AddPeerAllowIPLegacy(rbCtx, iface, pubkey, oldIPStr, "255.255.255.255"); err != nil {
 			warn(err.Error())
 		}
 	}

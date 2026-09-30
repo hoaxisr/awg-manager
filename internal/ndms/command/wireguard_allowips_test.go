@@ -19,7 +19,7 @@ func newWGCommandsWithResponse(body string) (*WireguardCommands, *fakePoster) {
 
 func TestAddPeerAllowIP_Payload(t *testing.T) {
 	c, poster := newWGCommandsWithResponse(`{}`)
-	if err := c.AddPeerAllowIP(context.Background(), "Wireguard9", "K=", "192.168.77.0", "255.255.255.0"); err != nil {
+	if err := c.AddPeerAllowIP(context.Background(), confirmed(t, "Wireguard9"), "K=", "192.168.77.0", "255.255.255.0"); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := json.Marshal(poster.Payloads()[0])
@@ -32,7 +32,7 @@ func TestAddPeerAllowIP_Payload(t *testing.T) {
 // Добавление ту же фразу НЕ терпит: `no such net` на добавлении — настоящий отказ.
 func TestAddPeerAllowIP_DoesNotTolerateNoSuchNet(t *testing.T) {
 	c, _ := newWGCommandsWithResponse(`{"interface":{"Wireguard9":{"wireguard":{"peer":[{"status":[{"status":"error","message":"\"Wireguard9\": no such net in peer \"K=\"."}]}]}}}}`)
-	if err := c.AddPeerAllowIP(context.Background(), "Wireguard9", "K=", "192.168.77.0", "255.255.255.0"); err == nil {
+	if err := c.AddPeerAllowIP(context.Background(), confirmed(t, "Wireguard9"), "K=", "192.168.77.0", "255.255.255.0"); err == nil {
 		t.Fatal("отказ добавления проглочен")
 	}
 }
@@ -41,7 +41,7 @@ func TestAddPeerAllowIP_DoesNotTolerateNoSuchNet(t *testing.T) {
 // снятия и отката это цель, а не отказ. Прочие отказы всплывают.
 func TestRemovePeerAllowIP_ToleratesNoSuchNet(t *testing.T) {
 	c, poster := newWGCommandsWithResponse(`{"interface":{"Wireguard9":{"wireguard":{"peer":[{"status":[{"status":"error","message":"\"Wireguard9\": no such net in peer \"K=\"."}]}]}}}}`)
-	if err := c.RemovePeerAllowIP(context.Background(), "Wireguard9", "K=", "192.168.77.0", "255.255.255.0"); err != nil {
+	if err := c.RemovePeerAllowIP(context.Background(), confirmed(t, "Wireguard9"), "K=", "192.168.77.0", "255.255.255.0"); err != nil {
 		t.Fatalf("отсутствующая сеть обязана терпеться: %v", err)
 	}
 	b, _ := json.Marshal(poster.Payloads()[0])
@@ -49,7 +49,7 @@ func TestRemovePeerAllowIP_ToleratesNoSuchNet(t *testing.T) {
 		t.Fatalf("payload: %s", b)
 	}
 	c, _ = newWGCommandsWithResponse(`{"status":[{"status":"error","message":"argument parse error"}]}`)
-	if err := c.RemovePeerAllowIP(context.Background(), "Wireguard9", "K=", "192.168.77.0", "255.255.255.0"); err == nil {
+	if err := c.RemovePeerAllowIP(context.Background(), confirmed(t, "Wireguard9"), "K=", "192.168.77.0", "255.255.255.0"); err == nil {
 		t.Fatal("настоящий отказ проглочен")
 	}
 }
@@ -73,7 +73,7 @@ func TestUpdatePeerAllowIPs_ToleratesMissingOldIP(t *testing.T) {
 	sc := NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
 	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger()})
 	c := NewWireguardCommands(poster, sc, q)
-	if err := c.UpdatePeerAllowIPs(context.Background(), "Wireguard9", "K=", "10.9.0.2", "10.9.0.9"); err != nil {
+	if err := c.UpdatePeerAllowIPs(context.Background(), confirmed(t, "Wireguard9"), "K=", "10.9.0.2", "10.9.0.9"); err != nil {
 		t.Fatalf("отсутствующий старый /32 уронил смену: %v", err)
 	}
 	payloads := poster.Payloads()

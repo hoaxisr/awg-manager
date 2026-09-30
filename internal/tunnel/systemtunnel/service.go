@@ -92,5 +92,5 @@ func (s *ServiceImpl) SetASCParams(ctx context.Context, name string, params json
 	if params, err = ndms.KeepASC3(params, current); err != nil {
 		return err
 	}
-	return s.commands.Wireguard.SetASCParams(ctx, name, params)
+	return s.commands.Wireguard.SetASCParamsLegacy(ctx, name, params)
 }

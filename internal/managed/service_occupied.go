@@ -263,10 +263,11 @@ func (s *Service) LockPeerSubnets() (unlock func()) {
 // peerRouter — адаптер RCI для peersubnet.Reconcile. Ошибка вместо nil-паники, когда
 // Commands не подключены (харнессы без них сети за клиентом не трогают).
 func (s *Service) peerRouter() (peersubnet.Router, error) {
-	if s.commands == nil || s.commands.Wireguard == nil || s.commands.Routes == nil {
+	if s.commands == nil || s.commands.Wireguard == nil || s.commands.Routes == nil ||
+		s.queries == nil || s.queries.Interfaces == nil {
 		return nil, fmt.Errorf("ndms commands not wired")
 	}
-	return command.NewPeerRouter(s.commands), nil
+	return command.NewPeerRouter(s.commands, s.queries), nil
 }
 
 // peerPresent — есть ли пир на интерфейсе по свежему rc. Перед allow-ips в
@@ -276,7 +277,7 @@ func (s *Service) peerPresent(ctx context.Context, iface, pubkey string) (bool, 
 	if err != nil {
 		return false, err
 	}
-	return wg.PeerPresent(ctx, iface, pubkey)
+	return wg.PeerPresentLegacy(ctx, iface, pubkey)
 }
 
 // logRollback — отказ отката Reconcile не должен тонуть: хранилище не тронуто, но

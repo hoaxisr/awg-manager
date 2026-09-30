@@ -194,7 +194,7 @@ func (o *OperatorNativeWG) createViaImport(ctx context.Context, stored *storage.
 
 	// Import via RCI — NDMS creates the interface and parses all params.
 	// ImportWireguardConfig is a multipart-upload helper with no new-layer equivalent yet.
-	res, err := o.commands.Wireguard.ImportWireguardConfig(ctx, []byte(confData), stored.Name+".conf")
+	res, err := o.commands.Wireguard.ImportWireguardConfigLegacy(ctx, []byte(confData), stored.Name+".conf")
 	if err != nil {
 		return 0, fmt.Errorf("import wireguard config: %w", err)
 	}
@@ -341,7 +341,7 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 		if ascJSON, err := buildASCJSON(&stored.Interface, o.asc3()); err != nil {
 			o.appLog.Warn("set-asc-params", stored.Name, err.Error())
 		} else if ascJSON != nil {
-			if err := o.commands.Wireguard.SetASCParams(ctx, ndmsName, ascJSON); err != nil {
+			if err := o.commands.Wireguard.SetASCParamsLegacy(ctx, ndmsName, ascJSON); err != nil {
 				o.appLog.Warn("set-asc-params", "", "RCI failed (non-fatal): "+err.Error())
 			}
 		}
@@ -451,7 +451,7 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 		return fmt.Errorf("build ASC params: %w", err)
 	}
 	if ascJSON != nil {
-		if err := o.commands.Wireguard.SetASCParams(ctx, names.NDMSName, ascJSON); err != nil {
+		if err := o.commands.Wireguard.SetASCParamsLegacy(ctx, names.NDMSName, ascJSON); err != nil {
 			o.appLog.Warn("sync-asc", names.NDMSName, err.Error())
 		}
 	}
@@ -590,7 +590,7 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 		// параметрами ASC прошивка обфусцирует сама, а kmod наложит свою
 		// обфускацию поверх; на выходе мусор, который снаружи выглядит как
 		// живой туннель без единого прошедшего пакета.
-		if err := o.commands.Wireguard.ResetASCParams(ctx, names.NDMSName); err != nil {
+		if err := o.commands.Wireguard.ResetASCParamsLegacy(ctx, names.NDMSName); err != nil {
 			return fmt.Errorf("снять параметры ASC перед переходом на awg_proxy: %w", err)
 		}
 	}
@@ -904,7 +904,7 @@ func (o *OperatorNativeWG) ConfigurePingCheck(ctx context.Context, stored *stora
 	profile := pingCheckProfile(stored.ID)
 	ifaceName := NewNWGNames(stored.NWGIndex).NDMSName
 	o.appLog.Info("configure-pingcheck", profile, fmt.Sprintf("iface=%s host=%s mode=%s", ifaceName, cfg.Host, cfg.Mode))
-	if err := o.commands.PingCheck.ConfigureProfile(ctx, profile, ifaceName, cfg); err != nil {
+	if err := o.commands.PingCheck.ConfigureProfileLegacy(ctx, profile, ifaceName, cfg); err != nil {
 		o.appLog.Warn("configure-pingcheck", profile, err.Error())
 		return err
 	}
@@ -915,7 +915,7 @@ func (o *OperatorNativeWG) ConfigurePingCheck(ctx context.Context, stored *stora
 func (o *OperatorNativeWG) RemovePingCheck(ctx context.Context, stored *storage.AWGTunnel) error {
 	profile := pingCheckProfile(stored.ID)
 	ifaceName := NewNWGNames(stored.NWGIndex).NDMSName
-	return o.commands.PingCheck.RemoveProfile(ctx, profile, ifaceName)
+	return o.commands.PingCheck.RemoveProfileLegacy(ctx, profile, ifaceName)
 }
 
 // GetPingCheckStatus returns the current ping-check status for a tunnel.

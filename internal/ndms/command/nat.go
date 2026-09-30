@@ -20,17 +20,32 @@ func NewNATCommands(p Poster, s *SaveCoordinator, q *query.Queries) *NATCommands
 }
 
 // SetSegmentNAT enables dynamic NAT (masquerade) for a segment.
-func (c *NATCommands) SetSegmentNAT(ctx context.Context, seg string) error {
+func (c *NATCommands) SetSegmentNAT(ctx context.Context, seg query.Confirmed) error {
+	return c.SetSegmentNATLegacy(ctx, seg.Name())
+}
+
+// SetSegmentNATLegacy — временно, до Task 19 (F546).
+func (c *NATCommands) SetSegmentNATLegacy(ctx context.Context, seg string) error {
 	return c.mutate(ctx, map[string]any{"ip": map[string]any{"nat": map[string]any{"interface": seg}}}, "ip nat "+seg)
 }
 
 // RemoveSegmentNAT disables dynamic NAT for a segment.
-func (c *NATCommands) RemoveSegmentNAT(ctx context.Context, seg string) error {
+func (c *NATCommands) RemoveSegmentNAT(ctx context.Context, seg query.Confirmed) error {
+	return c.RemoveSegmentNATLegacy(ctx, seg.Name())
+}
+
+// RemoveSegmentNATLegacy — временно, до Task 19 (F546).
+func (c *NATCommands) RemoveSegmentNATLegacy(ctx context.Context, seg string) error {
 	return c.mutate(ctx, map[string]any{"ip": map[string]any{"nat": []map[string]any{{"no": true, "interface": seg}}}}, "no ip nat "+seg)
 }
 
 // SetStaticNAT adds Static NAT (SNAT-only) from a segment to a WAN interface.
-func (c *NATCommands) SetStaticNAT(ctx context.Context, seg, wan string) error {
+func (c *NATCommands) SetStaticNAT(ctx context.Context, seg, wan query.Confirmed) error {
+	return c.SetStaticNATLegacy(ctx, seg.Name(), wan.Name())
+}
+
+// SetStaticNATLegacy — временно, до Task 19 (F546).
+func (c *NATCommands) SetStaticNATLegacy(ctx context.Context, seg, wan string) error {
 	return c.mutate(ctx, map[string]any{"ip": map[string]any{"static": map[string]any{"interface": seg, "to-interface": wan}}}, "ip static "+seg+" "+wan)
 }
 
@@ -38,7 +53,12 @@ func (c *NATCommands) SetStaticNAT(ctx context.Context, seg, wan string) error {
 //
 // Снятие терпит «unknown interface»: сегмент или WAN-выход мог исчезнуть раньше
 // правила (проверено на роутере — NDMS отвечает ошибкой на обе стороны пары).
-func (c *NATCommands) RemoveStaticNAT(ctx context.Context, seg, wan string) error {
+func (c *NATCommands) RemoveStaticNAT(ctx context.Context, seg, wan query.Confirmed) error {
+	return c.RemoveStaticNATLegacy(ctx, seg.Name(), wan.Name())
+}
+
+// RemoveStaticNATLegacy — временно, до Task 19 (F546).
+func (c *NATCommands) RemoveStaticNATLegacy(ctx context.Context, seg, wan string) error {
 	return c.mutateTolerant(ctx, map[string]any{"ip": map[string]any{"static": []map[string]any{{"no": true, "interface": seg, "to-interface": wan}}}}, "no ip static "+seg+" "+wan, isUnknownInterface)
 }
 

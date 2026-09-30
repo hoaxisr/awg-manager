@@ -21,15 +21,44 @@ func NewDNSRouteCommands(p Poster, s *SaveCoordinator, q *query.Queries, isOS5 f
 	return &DNSRouteCommands{poster: p, save: s, queries: q, isOS5: isOS5}
 }
 
-// DNSRouteSpec describes a dns-proxy route entry.
+// DNSRouteSpec — постановка строки dns-proxy route: интерфейс подтверждён
+// свежим списком (F546).
 type DNSRouteSpec struct {
+	Group     string
+	Interface query.Confirmed
+	Reject    bool
+}
+
+// DNSRouteRef — снос строки, взятой из выдачи роутера: интерфейс в ней —
+// строка как есть (строка существует, пока её не снесли).
+type DNSRouteRef struct {
+	Group, Interface string
+}
+
+// DNSRouteSpecLegacy — временно, до Task 19 (F546).
+//
+// DNSRouteSpecLegacy describes a dns-proxy route entry.
+type DNSRouteSpecLegacy struct {
 	Group     string
 	Interface string
 	Reject    bool
 }
 
+func refsLegacy(refs []DNSRouteRef) []DNSRouteSpecLegacy {
+	out := make([]DNSRouteSpecLegacy, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, DNSRouteSpecLegacy{Group: r.Group, Interface: r.Interface})
+	}
+	return out
+}
+
 // DeleteRoutes removes dns-proxy route entries in a single batch.
-func (c *DNSRouteCommands) DeleteRoutes(ctx context.Context, specs []DNSRouteSpec) error {
+func (c *DNSRouteCommands) DeleteRoutes(ctx context.Context, refs []DNSRouteRef) error {
+	return c.DeleteRoutesLegacy(ctx, refsLegacy(refs))
+}
+
+// DeleteRoutesLegacy — временно, до Task 19 (F546).
+func (c *DNSRouteCommands) DeleteRoutesLegacy(ctx context.Context, specs []DNSRouteSpecLegacy) error {
 	if !c.isOS5() {
 		return query.ErrNotSupportedOnOS4
 	}
@@ -107,7 +136,16 @@ func (c *DNSRouteCommands) SetDisabled(ctx context.Context, index string, disabl
 // а на больших списках между сносом и записью успевает пройти обновление
 // object-group — сотни миллисекунд без DNS-маршрутизации. NDMS применяет
 // элементы payload по порядку, поэтому один POST закрывает окно.
-func (c *DNSRouteCommands) ReplaceRoutes(ctx context.Context, deletes, upserts []DNSRouteSpec) error {
+func (c *DNSRouteCommands) ReplaceRoutes(ctx context.Context, deletes []DNSRouteRef, upserts []DNSRouteSpec) error {
+	ups := make([]DNSRouteSpecLegacy, 0, len(upserts))
+	for _, u := range upserts {
+		ups = append(ups, DNSRouteSpecLegacy{Group: u.Group, Interface: u.Interface.Name(), Reject: u.Reject})
+	}
+	return c.ReplaceRoutesLegacy(ctx, refsLegacy(deletes), ups)
+}
+
+// ReplaceRoutesLegacy — временно, до Task 19 (F546).
+func (c *DNSRouteCommands) ReplaceRoutesLegacy(ctx context.Context, deletes, upserts []DNSRouteSpecLegacy) error {
 	if !c.isOS5() {
 		return query.ErrNotSupportedOnOS4
 	}

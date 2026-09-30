@@ -54,11 +54,11 @@ func TestMutators_SurfaceNestedErrors(t *testing.T) {
 		}},
 		{"PermitInterface", respPermitNoIface, func(p *fakePoster) error {
 			c, _, _, _ := newTestPolicyCommandsWith(p)
-			return c.PermitInterface(ctx, "P", "OpkgTun42", 0)
+			return c.PermitInterface(ctx, "P", confirmed(t, "OpkgTun42"), 0)
 		}},
 		{"DenyInterface", respPermitNoIface, func(p *fakePoster) error {
 			c, _, _, _ := newTestPolicyCommandsWith(p)
-			return c.DenyInterface(ctx, "P", "OpkgTun42")
+			return c.DenyInterface(ctx, "P", confirmed(t, "OpkgTun42"))
 		}},
 		{"SetStandalone", respPermitNoIface, func(p *fakePoster) error {
 			c, _, _, _ := newTestPolicyCommandsWith(p)
@@ -78,32 +78,33 @@ func TestMutators_SurfaceNestedErrors(t *testing.T) {
 		}},
 		{"AddStaticRoute", respRouteNoIface, func(p *fakePoster) error {
 			c := newRouteCommandsWith(p)
-			return c.AddStaticRoute(ctx, StaticRouteSpec{Network: "203.0.113.0", Mask: "255.255.255.0", Interface: "OpkgTun42"})
+			return c.AddStaticRoute(ctx, StaticRouteSpec{Network: "203.0.113.0", Mask: "255.255.255.0", Interface: confirmed(t, "OpkgTun42")})
 		}},
 		{"SetSegmentNAT", respNATNoIface, func(p *fakePoster) error {
-			return newNATCommandsWith(p).SetSegmentNAT(ctx, "AwgmNoSeg")
+			return newNATCommandsWith(p).SetSegmentNAT(ctx, confirmed(t, "AwgmNoSeg"))
 		}},
 		{"SetStaticNAT", respStaticNATUnknown, func(p *fakePoster) error {
-			return newNATCommandsWith(p).SetStaticNAT(ctx, "AwgmNoSeg", "ISP")
+			return newNATCommandsWith(p).SetStaticNAT(ctx, confirmed(t, "AwgmNoSeg"), confirmed(t, "ISP"))
 		}},
 		{"ReplaceDNSRoutes", respDNSRouteNoIface, func(p *fakePoster) error {
-			return newDNSRouteCommandsWith(p).ReplaceRoutes(ctx, nil, []DNSRouteSpec{{Group: "g", Interface: "OpkgTun42"}})
+			return newDNSRouteCommandsWith(p).ReplaceRoutes(ctx, nil, []DNSRouteSpec{{Group: "g", Interface: confirmed(t, "OpkgTun42")}})
 		}},
 		{"UpsertFQDNGroup", respGroupNoInput, func(p *fakePoster) error {
 			return newObjectGroupCommandsWith(p).UpsertGroup(ctx, FQDNGroupMutation{Name: "g", AddIncludes: []string{"example.com"}})
 		}},
 		{"CreateProxy", respProxyMissing, func(p *fakePoster) error {
-			return newProxyCommandsWith(p).CreateProxy(ctx, "Proxy9", "d", "127.0.0.1", 1080, false)
+			_, err := newProxyCommandsWith(p).CreateProxy(ctx, "Proxy9", "d", "127.0.0.1", 1080, false)
+			return err
 		}},
 		{"ProxyUp", respProxyMissing, func(p *fakePoster) error {
-			return newProxyCommandsWith(p).ProxyUp(ctx, "Proxy9")
+			return newProxyCommandsWith(p).ProxyUp(ctx, confirmed(t, "Proxy9"))
 		}},
 		{"ProxyDown", respProxyMissing, func(p *fakePoster) error {
-			return newProxyCommandsWith(p).ProxyDown(ctx, "Proxy9")
+			return newProxyCommandsWith(p).ProxyDown(ctx, confirmed(t, "Proxy9"))
 		}},
 		{"SetASCParams", respASCRejected, func(p *fakePoster) error {
 			return NewWireguardCommands(p, newSaveFor(p), testQueries()).
-				SetASCParams(ctx, "Wireguard42", json.RawMessage(`{"jc":"5"}`))
+				SetASCParams(ctx, confirmed(t, "Wireguard42"), json.RawMessage(`{"jc":"5"}`))
 		}},
 	}
 	for _, c := range cases {
@@ -130,17 +131,17 @@ func TestRemovals_TolerateMissingTarget(t *testing.T) {
 			return c.DeletePolicy(ctx, "P")
 		}},
 		{"DeleteProxy", respProxyMissing, func(p *fakePoster) error {
-			return newProxyCommandsWith(p).DeleteProxy(ctx, "Proxy9")
+			return newProxyCommandsWith(p).DeleteProxy(ctx, confirmed(t, "Proxy9"))
 		}},
 		{"RemoveStaticRoute", respRouteNoIface, func(p *fakePoster) error {
 			return newRouteCommandsWith(p).RemoveStaticRoute(ctx, StaticRouteSpec{
-				Network: "203.0.113.0", Mask: "255.255.255.0", Interface: "OpkgTun42"})
+				Network: "203.0.113.0", Mask: "255.255.255.0", Interface: confirmed(t, "OpkgTun42")})
 		}},
 		{"RemoveStaticNAT", respStaticNATUnknown, func(p *fakePoster) error {
-			return newNATCommandsWith(p).RemoveStaticNAT(ctx, "AwgmNoSeg", "ISP")
+			return newNATCommandsWith(p).RemoveStaticNAT(ctx, confirmed(t, "AwgmNoSeg"), confirmed(t, "ISP"))
 		}},
 		{"DeleteDNSRoutes", respDNSRuleMissing, func(p *fakePoster) error {
-			return newDNSRouteCommandsWith(p).DeleteRoutes(ctx, []DNSRouteSpec{{Group: "g", Interface: "OpkgTun10"}})
+			return newDNSRouteCommandsWith(p).DeleteRoutes(ctx, []DNSRouteRef{{Group: "g", Interface: "OpkgTun10"}})
 		}},
 		{"DeleteFQDNGroups", respGroupNoInput, func(p *fakePoster) error {
 			return newObjectGroupCommandsWith(p).DeleteGroups(ctx, []string{"g"})

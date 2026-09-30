@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
@@ -24,6 +25,8 @@ func routeCommandsWithConfig(t *testing.T, lines ...string) (*RouteCommands, *fa
 		quoted = append(quoted, `"`+l+`"`)
 	}
 	fg.SetJSON("/show/running-config", `{"message":[`+strings.Join(quoted, ",")+`]}`)
+	// Снятие подтверждает интерфейсы записей свежим списком (F546).
+	fg.SetJSON("/show/interface/", `{"PPPoE0":{"id":"PPPoE0"},"Bridge0":{"id":"Bridge0"}}`)
 	poster := &fakePoster{}
 	sc := NewSaveCoordinator(poster, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
@@ -231,5 +234,34 @@ func TestRemoveOwnHostRoute_NoCommentIsBlind(t *testing.T) {
 	}
 	if _, hasIface := routePayload(t, posts[0], "ip")["interface"]; hasIface {
 		t.Fatal("при пустой подписи снятие обязано быть слепым")
+	}
+}
+
+// Своя запись на интерфейс, которого нет в свежем списке, не снимается: команда
+// со ссылкой на отсутствующий — E в журнале ndm (F546).
+func TestRemoveOwnHostRoute_ConfirmsEachInterface(t *testing.T) {
+	rc := `{"message":["ip route 203.0.113.5 PPPoE0 auto !` + probeComment + `","ip route 203.0.113.5 Wireguard7 auto !` + probeComment + `"]}`
+	cmds, f, _ := newOracleCommands(t, map[string]string{"/show/running-config": rc}, ndms.Interface{ID: "PPPoE0"})
+	if err := cmds.Routes.RemoveOwnHostRoute(context.Background(), "203.0.113.5", probeComment); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Posts) != 1 || !strings.Contains(f.Posts[0], `"interface":"PPPoE0"`) {
+		t.Fatalf("posts=%v", f.Posts)
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d phantoms=%d", f.E, f.Phantoms)
+	}
+}
+
+// Список не прочитался — ошибка, ни одной команды.
+func TestRemoveOwnHostRoute_ListError_NoCommands(t *testing.T) {
+	rc := `{"message":["ip route 203.0.113.5 PPPoE0 auto !` + probeComment + `"]}`
+	cmds, f, _ := newOracleCommands(t, map[string]string{"/show/running-config": rc}, ndms.Interface{ID: "PPPoE0"})
+	f.FailList(errors.New("rci down"))
+	if err := cmds.Routes.RemoveOwnHostRoute(context.Background(), "203.0.113.5", probeComment); err == nil {
+		t.Fatal("ожидали ошибку")
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("posts=%v", f.Posts)
 	}
 }

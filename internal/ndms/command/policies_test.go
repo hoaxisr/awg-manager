@@ -63,7 +63,7 @@ func TestPolicyCommands_SetStandalone_Disable(t *testing.T) {
 
 func TestPolicyCommands_PermitInterface(t *testing.T) {
 	cmds, poster, _, _ := newTestPolicyCommands(t)
-	_ = cmds.PermitInterface(context.Background(), "Policy0", "Wireguard0", 3)
+	_ = cmds.PermitInterface(context.Background(), "Policy0", confirmed(t, "Wireguard0"), 3)
 	p := poster.Payloads()[0].(map[string]any)
 	permit := p["ip"].(map[string]any)["policy"].(map[string]any)["Policy0"].(map[string]any)["permit"].(map[string]any)
 	if permit["interface"] != "Wireguard0" || permit["order"] != 3 || permit["global"] != true {
@@ -73,7 +73,7 @@ func TestPolicyCommands_PermitInterface(t *testing.T) {
 
 func TestPolicyCommands_DenyInterface(t *testing.T) {
 	cmds, poster, _, _ := newTestPolicyCommands(t)
-	_ = cmds.DenyInterface(context.Background(), "Policy0", "Wireguard0")
+	_ = cmds.DenyInterface(context.Background(), "Policy0", confirmed(t, "Wireguard0"))
 	p := poster.Payloads()[0].(map[string]any)
 	permit := p["ip"].(map[string]any)["policy"].(map[string]any)["Policy0"].(map[string]any)["permit"].(map[string]any)
 	if permit["no"] != true || permit["interface"] != "Wireguard0" {

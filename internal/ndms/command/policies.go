@@ -80,7 +80,12 @@ func (c *PolicyCommands) SetStandalone(ctx context.Context, name string, enabled
 		c.queries.RunningConfig.InvalidateAll)
 }
 
-func (c *PolicyCommands) PermitInterface(ctx context.Context, name, iface string, order int) error {
+func (c *PolicyCommands) PermitInterface(ctx context.Context, name string, iface query.Confirmed, order int) error {
+	return c.PermitInterfaceLegacy(ctx, name, iface.Name(), order)
+}
+
+// PermitInterfaceLegacy — временно, до Task 19 (F546).
+func (c *PolicyCommands) PermitInterfaceLegacy(ctx context.Context, name, iface string, order int) error {
 	payload := map[string]any{
 		"ip": map[string]any{
 			"policy": map[string]any{
@@ -99,7 +104,12 @@ func (c *PolicyCommands) PermitInterface(ctx context.Context, name, iface string
 		c.queries.RunningConfig.InvalidateAll)
 }
 
-func (c *PolicyCommands) DenyInterface(ctx context.Context, name, iface string) error {
+func (c *PolicyCommands) DenyInterface(ctx context.Context, name string, iface query.Confirmed) error {
+	return c.DenyInterfaceLegacy(ctx, name, iface.Name())
+}
+
+// DenyInterfaceLegacy — временно, до Task 19 (F546).
+func (c *PolicyCommands) DenyInterfaceLegacy(ctx context.Context, name, iface string) error {
 	payload := map[string]any{
 		"ip": map[string]any{
 			"policy": map[string]any{

@@ -3,7 +3,9 @@ package command
 import (
 	"context"
 	"errors"
+	"net"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +24,7 @@ func newPeerRouterFixture(t *testing.T) (*PeerRouter, *query.FakeGetter) {
 	poster := &fakePoster{}
 	sc := NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
-	return NewPeerRouter(NewCommands(Deps{Poster: poster, Save: sc, Queries: q})), fg
+	return NewPeerRouter(NewCommands(Deps{Poster: poster, Save: sc, Queries: q}), q), fg
 }
 
 func TestPeerRouter_InterfaceRoutes(t *testing.T) {
@@ -86,8 +88,38 @@ func TestPeerRouter_PeerAllowIPs(t *testing.T) {
 func TestPeerRouter_InterfaceRoutes_NotWired(t *testing.T) {
 	poster := &fakePoster{}
 	sc := NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
-	r := NewPeerRouter(NewCommands(Deps{Poster: poster, Save: sc, Queries: &query.Queries{}}))
+	r := NewPeerRouter(NewCommands(Deps{Poster: poster, Save: sc, Queries: &query.Queries{}}), &query.Queries{})
 	if _, err := r.InterfaceRoutes(context.Background(), "Wireguard9"); err == nil {
 		t.Fatal("ожидали ошибку")
+	}
+}
+
+// Имя строкой подтверждается свежим списком до команды: интерфейса нет —
+// постановка отказывает, снятие успешно; список не прочитался — ошибка.
+// Ни в одном случае команда не уходит.
+func TestPeerRouter_ConfirmsBeforeCommand(t *testing.T) {
+	ctx := context.Background()
+	_, n, _ := net.ParseCIDR("192.168.77.0/24")
+
+	cmds, f, q := newOracleCommands(t, nil)
+	r := NewPeerRouter(cmds, q)
+	if err := r.AddAllowIP(ctx, "Wireguard9", "K=", n); err == nil || !strings.Contains(err.Error(), "Wireguard9") {
+		t.Fatalf("AddAllowIP: %v", err)
+	}
+	if err := r.AddNetworkRoute(ctx, n, "Wireguard9", "L"); err == nil {
+		t.Fatal("AddNetworkRoute: ожидали ошибку")
+	}
+	if err := r.RemoveAllowIP(ctx, "Wireguard9", "K=", n); err != nil {
+		t.Fatalf("RemoveAllowIP: %v", err)
+	}
+	if removed, err := r.RemoveOwnNetworkRoute(ctx, n, "Wireguard9", "L"); removed || err != nil {
+		t.Fatalf("RemoveOwnNetworkRoute: %v %v", removed, err)
+	}
+	f.FailList(errors.New("rci down"))
+	if err := r.RemoveAllowIP(ctx, "Wireguard9", "K=", n); err == nil {
+		t.Fatal("RemoveAllowIP при упавшем списке: ожидали ошибку")
+	}
+	if len(f.Posts) != 0 || f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("posts=%v E=%d phantoms=%d", f.Posts, f.E, f.Phantoms)
 	}
 }

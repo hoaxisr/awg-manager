@@ -59,19 +59,19 @@ type StaticRouteProvider interface {
 // DefaultRouteProvider manages the NDMS default route (v4 + v6) — policy-tun
 // парковка дефолта на tun-интерфейс и снятие при выключении.
 type DefaultRouteProvider interface {
-	SetDefaultRoute(ctx context.Context, name string) error
-	RemoveDefaultRoute(ctx context.Context, name string) error
-	SetIPv6DefaultRoute(ctx context.Context, name string) error
-	RemoveIPv6DefaultRoute(ctx context.Context, name string) error
+	SetDefaultRouteLegacy(ctx context.Context, name string) error
+	RemoveDefaultRouteLegacy(ctx context.Context, name string) error
+	SetIPv6DefaultRouteLegacy(ctx context.Context, name string) error
+	RemoveIPv6DefaultRouteLegacy(ctx context.Context, name string) error
 }
 
 // SegmentNATProvider manages segment NAT (`ip nat`) и Static NAT (`ip static`)
 // для policy-tun сегментов.
 type SegmentNATProvider interface {
-	SetSegmentNAT(ctx context.Context, seg string) error
-	RemoveSegmentNAT(ctx context.Context, seg string) error
-	SetStaticNAT(ctx context.Context, seg, wan string) error
-	RemoveStaticNAT(ctx context.Context, seg, wan string) error
+	SetSegmentNATLegacy(ctx context.Context, seg string) error
+	RemoveSegmentNATLegacy(ctx context.Context, seg string) error
+	SetStaticNATLegacy(ctx context.Context, seg, wan string) error
+	RemoveStaticNATLegacy(ctx context.Context, seg, wan string) error
 }
 
 // RunningConfigReader читает строки /show/running-config. TTL-кэша 60 мин
