@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -377,5 +378,52 @@ func TestCreateOpkgTun_WrongProofName(t *testing.T) {
 	_, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun3", "t", freeFor(t, "opkgtun4"))
 	if err == nil || len(f.Posts) != 0 || f.ListCalls() != 0 {
 		t.Fatalf("err=%v posts=%v lists=%d", err, f.Posts, f.ListCalls())
+	}
+}
+
+// failSettingsPoster — оракул, у которого POST настроек (с description)
+// применяется, но отвечает отказом: так NDMS отвергает ключ целиком.
+type failSettingsPoster struct{ f *query.FakeNDMS }
+
+func (p failSettingsPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	resp, err := p.f.Post(ctx, payload)
+	if b, _ := json.Marshal(payload); err == nil && strings.Contains(string(b), `"description"`) {
+		return json.RawMessage(`{"status":[{"status":"error","code":"1","message":"injected: settings rejected"}]}`), nil
+	}
+	return resp, err
+}
+
+// Создание прошло, настройки отвергнуты — запись без нашего описания стала бы
+// «чужой» (ForeignRecordError у kernel, сирота у sing-box). Команда сносит её
+// сама по тому же Confirmed и ждёт свой ifdestroyed.
+func TestCreateOpkgTun_SettingsFail_RollsBackRecord(t *testing.T) {
+	f := query.NewFakeNDMS()
+	f.ExpectCreate("OpkgTun3")
+	sc := NewSaveCoordinator(f, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
+	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	hn := &spyHookNotifier{}
+	cmds := NewInterfaceCommands(failSettingsPoster{f}, sc, q, hn)
+
+	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun3", "t", freeFor(t, "opkgtun3"))
+	if err == nil || !strings.Contains(err.Error(), "injected: settings rejected") || c != (query.Confirmed{}) {
+		t.Fatalf("c=%v err=%v", c, err)
+	}
+	if f.Has("OpkgTun3") {
+		t.Fatalf("запись без настроек осталась: %v", f.Posts)
+	}
+	var cmdPosts []string // без точечных чтений кэша
+	for _, p := range f.Posts {
+		if !strings.HasPrefix(p, `{"show"`) {
+			cmdPosts = append(cmdPosts, p)
+		}
+	}
+	if len(cmdPosts) != 3 || cmdPosts[0] != `{"interface":{"OpkgTun3":{}}}` || cmdPosts[2] != `{"interface":{"OpkgTun3":{"no":true}}}` {
+		t.Fatalf("posts = %v, want [create, settings, no interface]", f.Posts)
+	}
+	if f.E != 0 || f.Phantoms != 0 || f.C != 0 {
+		t.Fatalf("E=%d Phantoms=%d C=%d", f.E, f.Phantoms, f.C)
+	}
+	if !slices.Contains(hn.calls, hookCall{"OpkgTun3", "destroyed"}) {
+		t.Fatalf("ожидание destroyed не зарегистрировано: %+v", hn.calls)
 	}
 }

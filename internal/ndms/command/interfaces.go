@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -69,7 +70,14 @@ func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, 
 	if err := postMutationChecked(ctx, c.poster, c.save, settings, "configure opkgtun "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		c.queries.RunningConfig.InvalidateAll); err != nil {
-		return query.Confirmed{}, err
+		// Запись без нашего описания — тупик: kernel-старт сочтёт её чужой
+		// (ForeignRecordError), sing-box не найдёт как сироту по описанию, номер
+		// занят навсегда. Сносим её по тому же Confirmed; свой ifdestroyed
+		// оркестратор поглотит. Частичное применение настроек тогда не важно.
+		if c.hookNotifier != nil {
+			c.hookNotifier.ExpectHook(name, "destroyed")
+		}
+		return query.Confirmed{}, errors.Join(err, c.DeleteOpkgTun(ctx, conf))
 	}
 	return conf, nil
 }
