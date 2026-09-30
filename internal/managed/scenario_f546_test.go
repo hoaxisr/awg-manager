@@ -12,7 +12,6 @@ import (
 // nil без команд (как api SetEnabled(false) → 200 у серверов NDMS, Task 17).
 // Включение того же — ошибка: TestSetEnabled_InterfaceGone_ErrorNoCommands.
 func TestScenario_SetEnabledFalse_InterfaceGone_NilNoCommands(t *testing.T) {
-	t.Skip("F546: managed.SetEnabled(false) по снятому интерфейсу отдаёт errServerGone вместо nil — requireServer до ветки enabled (service_server.go:446)")
 	f := query.NewFakeNDMS()
 	s := newServiceWithOracle(t, f, nil, storage.ManagedServer{InterfaceName: "Wireguard3"})
 	if err := s.SetEnabled(context.Background(), "Wireguard3", false); err != nil {

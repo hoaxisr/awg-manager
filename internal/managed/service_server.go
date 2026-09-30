@@ -443,9 +443,15 @@ func (s *Service) SetEnabled(ctx context.Context, id string, enabled bool) error
 		return fmt.Errorf("managed server not found: %s", id)
 	}
 
-	iface, err := s.requireServer(ctx, server.InterfaceName)
+	iface, ok, err := s.confirmServer(ctx, server.InterfaceName)
 	if err != nil {
 		return err
+	}
+	if !ok {
+		if !enabled {
+			return nil // выключение — снос: опускать нечего (R27)
+		}
+		return errServerGone(server.InterfaceName)
 	}
 	if enabled {
 		if err := s.rciInterfaceUp(ctx, iface); err != nil {
