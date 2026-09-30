@@ -552,8 +552,8 @@ func (s *ServiceImpl) confirmIfaces(ctx context.Context, tunnelIDs ...string) (m
 //
 // Возвращает поставленные подсети и отказы (F565): отказ одной подсети
 // остальные не останавливает (Reconcile), а правка списка по нему откатывает
-// поставленное (rollbackApplied) и запись не сохраняет. Интерфейса нет —
-// не ошибка (статус не изменён, NEEDS_DECISION F565).
+// поставленное (rollbackApplied) и запись не сохраняет. Интерфейса
+// NDMS-туннеля нет — ошибка; OS4 не поднят — отложено до старта (R37).
 func (s *ServiceImpl) applyRoutes(ctx context.Context, rl storage.StaticRouteList, confirmed map[string]query.Confirmed, cerr error) ([]string, error) {
 	os4k := isOS4Kernel(rl.TunnelID)
 	if os4k && !s.ifaceExists(rl.TunnelID) {
@@ -572,9 +572,14 @@ func (s *ServiceImpl) applyRoutes(ctx context.Context, rl storage.StaticRouteLis
 			return nil, cerr
 		}
 		var ok bool
+		// Раздел (R37): запись NDMS-туннеля (OS5 OpkgTun, NativeWG) живёт и у
+		// остановленного — нет её в свежем списке, значит туннеля нет, и это
+		// явная ошибка (решение 3). Откладывать некуда: OnTunnelStart для
+		// NDMS-туннелей маршрутов не ставит. OS4-интерфейс существует только у
+		// работающего туннеля — его отложенная установка выше законна.
 		if iface, ok = confirmed[ifaceName]; !ok {
 			s.appLog.Warn("apply", ifaceName, "интерфейса нет в NDMS — маршруты списка "+rl.ID+" не поставлены")
-			return nil, nil
+			return nil, fmt.Errorf("интерфейса %s нет в NDMS", ifaceName)
 		}
 	}
 	var applied []string

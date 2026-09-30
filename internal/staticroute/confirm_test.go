@@ -63,19 +63,49 @@ func TestStaticRoute_RemoveOnAbsent_NoCommand(t *testing.T) {
 	oracleClean(t, f)
 }
 
-// Установка на отсутствующий — ни одной команды, E нет.
+// Интерфейса NDMS-туннеля нет (R37): включение и создание — явная ошибка,
+// ни записи, ни команд, E нет.
 func TestStaticRoute_AddOnAbsent_NoCommand(t *testing.T) {
 	f := query.NewFakeNDMS()
 	s := newOracleStaticRoutes(t, f, []storage.StaticRouteList{
 		{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: []string{"10.20.0.0/16"}, Enabled: false},
 	})
-	if err := s.SetEnabled(context.Background(), "srl1", true); err != nil {
-		t.Fatalf("SetEnabled: %v", err)
+	ctx := context.Background()
+	if err := s.SetEnabled(ctx, "srl1", true); err == nil || !strings.Contains(err.Error(), "OpkgTun10") {
+		t.Fatalf("SetEnabled: %v, want ошибку с именем интерфейса", err)
+	}
+	if got, _ := s.store.GetRouteList("srl1"); got.Enabled {
+		t.Fatal("включение сохранено")
+	}
+	if _, err := s.Create(ctx, storage.StaticRouteList{Name: "b", TunnelID: "awg10", Subnets: []string{"10.30.0.0/16"}, Enabled: true}); err == nil {
+		t.Fatal("Create: ждали ошибку")
+	}
+	if lists, _ := s.store.ListRouteLists(); len(lists) != 1 {
+		t.Fatalf("создание сохранено: %+v", lists)
 	}
 	if len(f.Posts) != 0 {
 		t.Fatalf("команды по отсутствующему: %v", f.Posts)
 	}
 	oracleClean(t, f)
+}
+
+// OS4-туннель не поднят (R37): установка откладывается до старта — успех,
+// запись сохранена, команд нет.
+func TestStaticRoute_OS4NotUp_Deferred(t *testing.T) {
+	f := query.NewFakeNDMS()
+	s := newOracleStaticRoutes(t, f, []storage.StaticRouteList{
+		{ID: "srl1", Name: "a", TunnelID: "awgm0", Subnets: []string{"10.20.0.0/16"}, Enabled: false},
+	})
+	s.ifaceExists = func(string) bool { return false }
+	if err := s.SetEnabled(context.Background(), "srl1", true); err != nil {
+		t.Fatalf("SetEnabled: %v", err)
+	}
+	if got, _ := s.store.GetRouteList("srl1"); !got.Enabled {
+		t.Fatal("включение не сохранено")
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("команды: %v", f.Posts)
+	}
 }
 
 // Reconcile двух списков на двух туннелях и Update со сменой туннеля — ОДИН
