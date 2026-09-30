@@ -22,7 +22,7 @@ const (
 func TestCreateOpkgTun_SurfacesNestedError(t *testing.T) {
 	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
 	poster.SetResponse(respCreateRejected)
-	_, err := cmds.CreateOpkgTunWithSecurityLevel(context.Background(), "OpkgTun20", "d", "private")
+	_, err := cmds.CreateOpkgTunWithSecurityLevel(context.Background(), "OpkgTun20", "d", "private", freeFor(t, "opkgtun20"))
 	if err == nil {
 		t.Fatal("ожидалась ошибка создания")
 	}

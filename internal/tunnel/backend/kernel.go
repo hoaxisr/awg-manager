@@ -51,6 +51,11 @@ var (
 	}
 )
 
+// FindTunHolder — держатель tun-устройства iface или nil (см. findTunHolder).
+// Нужен тем, кто сам решает о судьбе устройства: адаптер создания OpkgTunN
+// называет держателя, когда opkgtunN ещё жив (F569).
+func FindTunHolder(iface string) *HeldError { return tunHolder(iface) }
+
 // findTunHolder ищет процесс, держащий tun-устройство iface открытым: у него
 // есть fd на /dev/net/tun, чей /proc/<pid>/fdinfo/<fd> содержит строку
 // `iff:\t<iface>\n` (drivers/net/tun.c, tun_chr_show_fdinfo; формат и путь fd

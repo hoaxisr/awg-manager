@@ -13,6 +13,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -90,7 +91,11 @@ func (o *OperatorOS5Impl) ensureOpkgTunRecord(ctx context.Context, op string, cf
 		return query.Confirmed{}, false, tunnel.NewOpError(op, cfg.ID, "ndms", fmt.Errorf("read OpkgTun record: %w", err))
 	}
 	if !ok {
-		iface, err := o.commands.Interfaces.CreateOpkgTun(ctx, names.NDMSName, cfg.Name)
+		free, err := netdev.Absent(names.IfaceName)
+		if err != nil {
+			return query.Confirmed{}, false, tunnel.NewOpError(op, cfg.ID, "kernel", err)
+		}
+		iface, err := o.commands.Interfaces.CreateOpkgTun(ctx, names.NDMSName, cfg.Name, free)
 		if err != nil {
 			return query.Confirmed{}, false, tunnel.NewOpError(op, cfg.ID, "ndms", fmt.Errorf("create OpkgTun: %w", err))
 		}

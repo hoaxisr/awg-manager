@@ -10,10 +10,11 @@ import (
 func TestInterfaceCommandsPayloads_CoreOps(t *testing.T) {
 	cmds, poster, _, _, hn := newTestInterfaceCommands(t)
 
-	if _, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun10", "Test tunnel"); err != nil {
+	if _, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun10", "Test tunnel", freeFor(t, "opkgtun10")); err != nil {
 		t.Fatalf("CreateOpkgTun: %v", err)
 	}
-	requireJSONEqual(t, poster.Payloads()[0], `{
+	requireJSONEqual(t, poster.Payloads()[0], `{"interface": {"OpkgTun10": {}}}`)
+	requireJSONEqual(t, poster.Payloads()[1], `{
 		"interface": {
 			"OpkgTun10": {
 				"description": "Test tunnel",
@@ -25,28 +26,28 @@ func TestInterfaceCommandsPayloads_CoreOps(t *testing.T) {
 	if err := cmds.DeleteOpkgTun(context.Background(), confirmed(t, "OpkgTun10")); err != nil {
 		t.Fatalf("DeleteOpkgTun: %v", err)
 	}
-	requireJSONEqual(t, poster.Payloads()[1], `{
+	requireJSONEqual(t, poster.Payloads()[2], `{
 		"interface": {"OpkgTun10": {"no": true}}
 	}`)
 
 	if err := cmds.SetIPGlobal(context.Background(), confirmed(t, "OpkgTun10")); err != nil {
 		t.Fatalf("SetIPGlobal: %v", err)
 	}
-	requireJSONEqual(t, poster.Payloads()[2], `{
+	requireJSONEqual(t, poster.Payloads()[3], `{
 		"interface": {"OpkgTun10": {"ip": {"global": {"auto": true}}}}
 	}`)
 
 	if err := cmds.SetMTU(context.Background(), confirmed(t, "OpkgTun10"), 1420); err != nil {
 		t.Fatalf("SetMTU: %v", err)
 	}
-	requireJSONEqual(t, poster.Payloads()[3], `{
+	requireJSONEqual(t, poster.Payloads()[4], `{
 		"interface": {"OpkgTun10": {"ip": {"mtu": 1420, "tcp": {"adjust-mss": {"pmtu": true}}}}}
 	}`)
 
 	if err := cmds.SetDescription(context.Background(), confirmed(t, "OpkgTun10"), "new desc"); err != nil {
 		t.Fatalf("SetDescription: %v", err)
 	}
-	requireJSONEqual(t, poster.Payloads()[4], `{
+	requireJSONEqual(t, poster.Payloads()[5], `{
 		"interface": {"OpkgTun10": {"description": "new desc"}}
 	}`)
 
@@ -56,8 +57,8 @@ func TestInterfaceCommandsPayloads_CoreOps(t *testing.T) {
 	if err := cmds.InterfaceDown(context.Background(), confirmed(t, "OpkgTun10")); err != nil {
 		t.Fatalf("InterfaceDown: %v", err)
 	}
-	requireJSONEqual(t, poster.Payloads()[5], `{"interface":{"OpkgTun10":{"up":true}}}`)
-	requireJSONEqual(t, poster.Payloads()[6], `{"interface":{"OpkgTun10":{"up":false}}}`)
+	requireJSONEqual(t, poster.Payloads()[6], `{"interface":{"OpkgTun10":{"up":true}}}`)
+	requireJSONEqual(t, poster.Payloads()[7], `{"interface":{"OpkgTun10":{"up":false}}}`)
 	if len(hn.calls) != 2 || hn.calls[0] != (hookCall{"OpkgTun10", "running"}) || hn.calls[1] != (hookCall{"OpkgTun10", "disabled"}) {
 		t.Fatalf("ExpectHook calls = %#v", hn.calls)
 	}

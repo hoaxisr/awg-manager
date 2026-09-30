@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 )
 
 // InterfaceCommands performs write operations on NDMS Interface objects.
@@ -33,18 +35,17 @@ func (c *InterfaceCommands) SetHookNotifier(hn HookNotifier) { c.hookNotifier = 
 //
 // Созданное подтверждается свежим списком (Confirm): он же кладёт запись в
 // кэш, и дальнейшие команды по интерфейсу идут с доказательством (F546).
-func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, name, description, securityLevel string) (query.Confirmed, error) {
-	payload := map[string]any{
-		"interface": map[string]any{
-			name: map[string]any{
-				"description": description,
-				"security-level": map[string]any{
-					securityLevel: true,
-				},
-			},
-		},
+//
+// F569: NDMS не создаёт запись OpkgTunN, пока живо устройство opkgtunN
+// (C 0xcffd00a9), — free доказывает, что его нет (имя сверяется с именем ядра
+// записи). Создание — голое, настройки — отдельным POST по Confirmed: отказ
+// создания не размножается в E по ключам, адресованным несозданной записи.
+func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, name, description, securityLevel string, free netdev.Free) (query.Confirmed, error) {
+	if kernel, ok := ndms.KernelName(name); !ok || free.Name() != kernel {
+		return query.Confirmed{}, fmt.Errorf("create opkgtun %s: нет доказательства отсутствия устройства ядра (есть для %q)", name, free.Name())
 	}
-	if err := postMutationChecked(ctx, c.poster, c.save, payload, "create opkgtun "+name,
+	create := map[string]any{"interface": map[string]any{name: map[string]any{}}}
+	if err := postMutationChecked(ctx, c.poster, c.save, create, "create opkgtun "+name,
 		c.queries.RunningConfig.InvalidateAll); err != nil {
 		return query.Confirmed{}, err
 	}
@@ -55,13 +56,28 @@ func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, 
 	if !ok {
 		return query.Confirmed{}, fmt.Errorf("create opkgtun %s: NDMS принял команду, но записи в списке нет", name)
 	}
+	settings := map[string]any{
+		"interface": map[string]any{
+			conf.Name(): map[string]any{
+				"description": description,
+				"security-level": map[string]any{
+					securityLevel: true,
+				},
+			},
+		},
+	}
+	if err := postMutationChecked(ctx, c.poster, c.save, settings, "configure opkgtun "+name,
+		func() { c.queries.Interfaces.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll); err != nil {
+		return query.Confirmed{}, err
+	}
 	return conf, nil
 }
 
 // CreateOpkgTun creates an OpkgTun interface in NDMS (public by default,
 // preserving existing callers).
-func (c *InterfaceCommands) CreateOpkgTun(ctx context.Context, name, description string) (query.Confirmed, error) {
-	return c.CreateOpkgTunWithSecurityLevel(ctx, name, description, "public")
+func (c *InterfaceCommands) CreateOpkgTun(ctx context.Context, name, description string, free netdev.Free) (query.Confirmed, error) {
+	return c.CreateOpkgTunWithSecurityLevel(ctx, name, description, "public", free)
 }
 
 // DeleteOpkgTun removes an interface (any type — NDMS accepts "no": true for any).

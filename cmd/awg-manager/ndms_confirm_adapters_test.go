@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 )
 
@@ -48,6 +51,10 @@ type confirmAdapters struct {
 
 func newConfirmAdapters(t *testing.T, f *ndmsquery.FakeNDMS) confirmAdapters {
 	t.Helper()
+	// Создание OpkgTun проверяет /sys/class/net (F569) — не хоста, а свой.
+	old := netdev.SysClassNet
+	netdev.SysClassNet = t.TempDir()
+	t.Cleanup(func() { netdev.SysClassNet = old })
 	q := ndmsquery.NewQueries(ndmsquery.Deps{
 		Getter: rcGetter{FakeNDMS: f, raw: map[string]string{"/show/running-config": `{"message":[]}`}},
 		Logger: ndmsquery.NopLogger(),
@@ -195,6 +202,25 @@ func TestConfirmingAdapters_ListErrorNoCommand(t *testing.T) {
 	if len(f.Posts) != 0 {
 		t.Fatalf("команды без подтверждения: %v", f.Posts)
 	}
+}
+
+// F569: живое opkgtunN — создание отказывает без RCI, текст называет
+// устройство; E, C и фантомов нет.
+func TestConfirmingOpkgTun_CreateDevicePresent_NoRCI(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS()
+	f.ExpectCreate("OpkgTun5")
+	a := newConfirmAdapters(t, f)
+	if err := os.Mkdir(filepath.Join(netdev.SysClassNet, "opkgtun5"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := a.opkg.CreateOpkgTunWithSecurityLevel(context.Background(), "OpkgTun5", "awgm policy-tun", "public")
+	if !errors.Is(err, netdev.ErrPresent) || !strings.Contains(err.Error(), "opkgtun5") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.Posts) != 0 || f.ListCalls() != 0 || f.C != 0 || f.Has("OpkgTun5") {
+		t.Fatalf("posts=%v lists=%d C=%d", f.Posts, f.ListCalls(), f.C)
+	}
+	oracleClean(t, f)
 }
 
 // Интерфейс есть: снос уходит и снимает запись; E и фантомов нет.

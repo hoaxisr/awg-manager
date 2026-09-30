@@ -11,6 +11,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 )
 
 type spyHookNotifier struct {
@@ -103,7 +104,7 @@ func newOracleCommands(t *testing.T, raw map[string]string, ifaces ...ndms.Inter
 func TestCreateOpkgTun_ReturnsConfirmedAndFillsCache(t *testing.T) {
 	cmds, f, _, q, _ := newOracleInterfaceCommands(t)
 	f.ExpectCreate("OpkgTun3")
-	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun3", "t")
+	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun3", "t", freeFor(t, "opkgtun3"))
 	if err != nil || c.Name() != "OpkgTun3" || f.Phantoms != 0 || len(f.Created) != 1 {
 		t.Fatalf("c=%v err=%v phantoms=%d created=%v", c, err, f.Phantoms, f.Created)
 	}
@@ -119,7 +120,7 @@ func TestCreateOpkgTun_ReturnsConfirmedAndFillsCache(t *testing.T) {
 // NDMS принял команду, а записи в списке нет — ошибка с именем, не Confirmed.
 func TestCreateOpkgTun_AbsentAfterCreate_Error(t *testing.T) {
 	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
-	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun7", "t")
+	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun7", "t", freeFor(t, "opkgtun7"))
 	if err == nil || !strings.Contains(err.Error(), "OpkgTun7") || c != (query.Confirmed{}) {
 		t.Fatalf("c=%v err=%v", c, err)
 	}
@@ -133,7 +134,7 @@ func TestCreateOpkgTun_ConfirmListError(t *testing.T) {
 	cmds, f, _, _, _ := newOracleInterfaceCommands(t)
 	f.ExpectCreate("OpkgTun3")
 	f.FailList(errors.New("rci down"))
-	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun3", "t")
+	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun3", "t", freeFor(t, "opkgtun3"))
 	if err == nil || !strings.Contains(err.Error(), "rci down") || strings.Count(err.Error(), "OpkgTun3") != 1 || c != (query.Confirmed{}) {
 		t.Fatalf("c=%v err=%v", c, err)
 	}
@@ -184,13 +185,13 @@ func TestInterfaceUp_ExpectHookAfterConfirmed(t *testing.T) {
 
 func TestInterfaceCommands_CreateOpkgTun(t *testing.T) {
 	cmds, poster, sc, _, _ := newTestInterfaceCommands(t)
-	if _, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun0", "test"); err != nil {
+	if _, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun0", "test", freeFor(t, "opkgtun0")); err != nil {
 		t.Fatalf("CreateOpkgTun: %v", err)
 	}
-	if len(poster.Payloads()) != 1 {
-		t.Fatalf("payloads: want 1, got %d", len(poster.Payloads()))
+	if len(poster.Payloads()) != 2 {
+		t.Fatalf("payloads: want 2 (create, settings), got %d", len(poster.Payloads()))
 	}
-	p := poster.Payloads()[0].(map[string]any)
+	p := poster.Payloads()[1].(map[string]any)
 	iface := p["interface"].(map[string]any)["OpkgTun0"].(map[string]any)
 	if iface["description"] != "test" {
 		t.Errorf("description: %v", iface["description"])
@@ -206,10 +207,10 @@ func TestInterfaceCommands_CreateOpkgTun(t *testing.T) {
 
 func TestCreateOpkgTunWithSecurityLevel_Private(t *testing.T) {
 	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
-	if _, err := cmds.CreateOpkgTunWithSecurityLevel(context.Background(), "OpkgTun10", "fakeip-tun", "private"); err != nil {
+	if _, err := cmds.CreateOpkgTunWithSecurityLevel(context.Background(), "OpkgTun10", "fakeip-tun", "private", freeFor(t, "opkgtun10")); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	iface := poster.Payloads()[0].(map[string]any)["interface"].(map[string]any)["OpkgTun10"].(map[string]any)
+	iface := poster.Payloads()[1].(map[string]any)["interface"].(map[string]any)["OpkgTun10"].(map[string]any)
 	sl := iface["security-level"].(map[string]any)
 	if sl["private"] != true {
 		t.Errorf("want security-level.private=true, got %#v", sl)
@@ -318,8 +319,63 @@ func TestInterfaceCommands_ClearDNS_IgnoresErrors(t *testing.T) {
 func TestInterfaceCommands_CreateOpkgTun_PosterError(t *testing.T) {
 	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
 	poster.SetError(errors.New("ndms rejected"))
-	_, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun0", "x")
+	_, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun0", "x", freeFor(t, "opkgtun0"))
 	if err == nil {
 		t.Fatalf("CreateOpkgTun on poster error: want error, got nil")
+	}
+}
+
+// freeFor — доказательство «opkgtunN нет» с временного /sys/class/net:
+// тесты команд проверяют форму и порядок POST, а не ядро роутера.
+func freeFor(t *testing.T, kernel string) netdev.Free {
+	t.Helper()
+	old := netdev.SysClassNet
+	netdev.SysClassNet = t.TempDir()
+	defer func() { netdev.SysClassNet = old }()
+	f, err := netdev.Absent(kernel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+// F569: создание — голое, настройки — отдельным POST по Confirmed.
+func TestCreateOpkgTun_SplitPayload(t *testing.T) {
+	cmds, f, _, _, _ := newOracleInterfaceCommands(t)
+	f.ExpectCreate("OpkgTun3")
+	if _, err := cmds.CreateOpkgTunWithSecurityLevel(context.Background(), "OpkgTun3", "t", "private", freeFor(t, "opkgtun3")); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Posts) < 2 {
+		t.Fatalf("posts: %v", f.Posts)
+	}
+	requireJSONEqual(t, json.RawMessage(f.Posts[0]), `{"interface":{"OpkgTun3":{}}}`)
+	requireJSONEqual(t, json.RawMessage(f.Posts[1]), `{"interface":{"OpkgTun3":{"description":"t","security-level":{"private":true}}}}`)
+	if f.E != 0 || f.C != 0 || f.Phantoms != 0 || len(f.Created) != 1 || f.Created[0] != "OpkgTun3" {
+		t.Fatalf("E=%d C=%d Phantoms=%d Created=%v", f.E, f.C, f.Phantoms, f.Created)
+	}
+}
+
+// Отказ создания (устройство живо) — ни одной команды по несозданной записи.
+func TestCreateOpkgTun_CreateFails_NoSettings(t *testing.T) {
+	cmds, f, _, _, _ := newOracleInterfaceCommands(t)
+	f.ExpectCreate("OpkgTun3")
+	f.SetNetdev("opkgtun3", true)
+	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun3", "t", freeFor(t, "opkgtun3"))
+	if err == nil || c != (query.Confirmed{}) {
+		t.Fatalf("c=%v err=%v", c, err)
+	}
+	if f.C != 1 || f.E != 0 || len(f.Posts) != 1 || f.Has("OpkgTun3") {
+		t.Fatalf("C=%d E=%d posts=%v Has=%v", f.C, f.E, f.Posts, f.Has("OpkgTun3"))
+	}
+}
+
+// Доказательство для чужого имени — отказ до POST.
+func TestCreateOpkgTun_WrongProofName(t *testing.T) {
+	cmds, f, _, _, _ := newOracleInterfaceCommands(t)
+	f.ExpectCreate("OpkgTun3")
+	_, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun3", "t", freeFor(t, "opkgtun4"))
+	if err == nil || len(f.Posts) != 0 || f.ListCalls() != 0 {
+		t.Fatalf("err=%v posts=%v lists=%d", err, f.Posts, f.ListCalls())
 	}
 }

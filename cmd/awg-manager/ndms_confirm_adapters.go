@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/ndmsres"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 )
 
 // Адаптеры строковых провайдеров (router, ndmsres, api) к командам NDMS по
@@ -61,8 +65,26 @@ type confirmingOpkgTun struct {
 	ifaces *ndmsquery.InterfaceStore
 }
 
+// CreateOpkgTunWithSecurityLevel — создание записи только без устройства
+// opkgtunN (F569): живое устройство NDMS отвергнет C 0xcffd00a9. Сносить его
+// здесь некому — у sing-box (fakeip/policy-tun) и прокси-ролей держатель tun
+// свой процесс; отказ называет держателя, RCI не шлётся.
 func (a confirmingOpkgTun) CreateOpkgTunWithSecurityLevel(ctx context.Context, name, description, securityLevel string) error {
-	_, err := a.cmds.CreateOpkgTunWithSecurityLevel(ctx, name, description, securityLevel)
+	kernel, ok := ndms.KernelName(name)
+	if !ok {
+		return fmt.Errorf("create opkgtun %s: имя не OpkgTunN", name)
+	}
+	free, err := netdev.Absent(kernel)
+	if err != nil {
+		if !errors.Is(err, netdev.ErrPresent) {
+			return fmt.Errorf("create opkgtun %s: %w", name, err)
+		}
+		if held := backend.FindTunHolder(kernel); held != nil {
+			return fmt.Errorf("устройство %s ещё существует (держатель %s, pid %d) — запись %s не создать: %w", kernel, held.Comm, held.PID, name, err)
+		}
+		return fmt.Errorf("устройство %s ещё существует — запись %s не создать: %w", kernel, name, err)
+	}
+	_, err = a.cmds.CreateOpkgTunWithSecurityLevel(ctx, name, description, securityLevel, free)
 	return err
 }
 
