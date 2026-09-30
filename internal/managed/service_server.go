@@ -56,8 +56,8 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 		s.cleanupInterface(ctx, iface)
 		return nil, fmt.Errorf("configure interface: %w", err)
 	}
-	// Адрес и порт — в запись кэша точечным чтением: проверка подсети
-	// следующего Create смотрит в карту (П4).
+	// Адрес и порт — в карту: метка «грязно», следующее чтение (проверка
+	// подсети следующего Create) берёт свежий список (П4, F546).
 	s.queries.Interfaces.Invalidate(ifaceName)
 
 	// Enable NAT by default

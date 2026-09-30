@@ -113,7 +113,9 @@ func TestCreateOpkgTun_ReturnsConfirmedAndFillsCache(t *testing.T) {
 	if rec, _ := q.Interfaces.Get(context.Background(), "OpkgTun3"); rec == nil {
 		t.Fatal("Confirm after create must land the record in the cache")
 	}
-	if f.ListCalls() != lists || f.E != 0 {
+	// Настройки после Confirm метят карту грязной: Get берёт не больше одного
+	// свежего списка (F546) и ни одного чтения по имени.
+	if f.ListCalls()-lists > 1 || f.E != 0 || len(f.Posts) == 0 {
 		t.Fatalf("Get after create: lists %d→%d, E=%d", lists, f.ListCalls(), f.E)
 	}
 }

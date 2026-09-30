@@ -219,3 +219,23 @@ func TestOperatorOS4_DNSByKernelName_NoConfirm(t *testing.T) {
 		t.Fatalf("OS4 DNS читает список NDMS (%d раз) — имя ядра в нём не подтвердится", got)
 	}
 }
+
+// Переименование остановленного туннеля, затем Start: хук слоя пришёл, пока
+// список Confirm в полёте. Хук новее только в своих полях — описание берётся
+// из списка, и гейт владения видит запись своей (F517).
+func TestStart_RenameWithLayerHookDuringConfirm_RecordIsOurs(t *testing.T) {
+	ctx := context.Background()
+	f := ndmsquery.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun", Description: "Old"})
+	o, _, _ := newOS5Oracle(t, f, &MockBackend{running: false})
+	if _, err := o.queries.Interfaces.List(ctx); err != nil { // карта тёплая: «Old»
+		t.Fatal(err)
+	}
+	f.Add(opkgTun10()) // наша правка описания → «Germany», хука нет
+	f.InList(func() { o.queries.Interfaces.OnLayerChanged("OpkgTun10", "conf", "running") })
+
+	cfg := lifecycleCfg(t)
+	if _, _, err := o.ensureOpkgTunRecord(ctx, "start", cfg, tunnel.NewNames(cfg.ID)); err != nil {
+		t.Fatalf("ensureOpkgTunRecord: %v", err)
+	}
+	clean(t, f)
+}

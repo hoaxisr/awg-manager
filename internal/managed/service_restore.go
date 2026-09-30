@@ -388,7 +388,8 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 	if err := s.rciConfigureServer(ctx, iface, sv.Description, sv.Address, sv.Mask, sv.ListenPort, effectiveMTU(sv.MTU)); err != nil {
 		return fmt.Errorf("configure interface: %w", err)
 	}
-	// Адрес и порт — в запись кэша точечным чтением (П4).
+	// Адрес и порт — в карту: метка «грязно», следующее чтение берёт свежий
+	// список (П4, F546).
 	s.queries.Interfaces.Invalidate(target)
 	if err := s.rciSetPrivateKey(ctx, iface, sv.PrivateKey); err != nil {
 		return fmt.Errorf("set private key: %w", err)

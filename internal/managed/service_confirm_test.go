@@ -311,8 +311,11 @@ func TestRestore_ListReadsDoNotGrowWithPeers(t *testing.T) {
 				t.Fatalf("n=%d: сети пира не восстановлены: %+v", n, got.Peers)
 			}
 		}
-		if lists != 2 {
-			t.Fatalf("n=%d: list reads = %d, want 2 (Confirm создания + снимок занятых)", n, lists)
+		// Confirm создания + снимок занятых + одно чтение карты по метке
+		// «грязно» после настройки сервера (F546: память после нашей записи
+		// читает свежий список) — от числа пиров не зависит.
+		if lists != 3 {
+			t.Fatalf("n=%d: list reads = %d, want 3", n, lists)
 		}
 		if f.Phantoms != 0 || f.E != 0 {
 			t.Fatalf("n=%d: phantoms=%d E=%d", n, f.Phantoms, f.E)

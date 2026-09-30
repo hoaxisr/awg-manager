@@ -999,9 +999,10 @@ func (o *Orchestrator) updateState(action Action) {
 			// OpkgTun, so the cache invalidate done at InterfaceUp can snapshot
 			// a pre-"running" layer and then never get corrected — leaving
 			// List* readers (policies/WAN/all) with a frozen "down" (#328).
-			// Re-refresh now that the start sequence is fully complete and the
-			// layer has had time to settle. nwg self-invalidates on its own
-			// path (and uses a different NDMS name), so skip it.
+			// Mark the cache dirty now that the start sequence is complete and
+			// the layer has had time to settle: the next List*/Get/snapshot
+			// reader takes one fresh list (F546). nwg marks it itself after its
+			// batches (postIfaceBatch), so skip it.
 			if o.ifaceInvalidator != nil && t.Backend == "kernel" {
 				if ndmsName := tunnel.NewNames(t.ID).NDMSName; ndmsName != "" {
 					o.ifaceInvalidator(ndmsName)

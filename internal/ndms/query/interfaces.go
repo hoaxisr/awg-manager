@@ -172,10 +172,14 @@ type InterfaceStore struct {
 	// flight — список в полёте (последний начатый), к нему присоединяется
 	// Snapshot с maxAge > 0.
 	flight *listFlight
+	// flights — счётчик начатых списков; appliedNo — номер последнего
+	// применённого: ответ, начатый раньше применённого, карту не трогает.
+	flights, appliedNo uint64
 }
 
 // listFlight — один запрос полного списка. err и готовность читаются после done.
 type listFlight struct {
+	no    uint64 // порядковый номер начала: применяется только не старше применённого
 	start uint64
 	done  chan struct{}
 	err   error
@@ -258,12 +262,17 @@ func (s *InterfaceStore) refreshList(ctx context.Context, fl *listFlight) (map[s
 	var todo []string
 	if err == nil {
 		s.mu.Lock()
-		s.applyListLocked(recs, raw, fl.start)
-		if s.dirtyAt <= fl.start {
-			s.dirtyAt = 0
+		// Ответы приходят не по порядку: начатый раньше уже применённого старее
+		// его — карту, метку и возраст не трогает (ответ вызывающему — свой).
+		if fl.no >= s.appliedNo {
+			s.appliedNo = fl.no
+			s.applyListLocked(recs, raw, fl.start)
+			if s.dirtyAt <= fl.start {
+				s.dirtyAt = 0
+			}
+			s.listedAt = time.Now()
+			todo = s.unnamedLocked(recs)
 		}
-		s.listedAt = time.Now()
-		todo = s.unnamedLocked(recs)
 		s.mu.Unlock()
 		s.booted.Store(true)
 		// Единственный вызов резолвера (F570): только id из ответа, который пришёл
@@ -287,7 +296,8 @@ func (s *InterfaceStore) refreshList(ctx context.Context, fl *listFlight) (map[s
 // beginFlightLocked регистрирует новый полёт; start — seq ДО запроса: хуки,
 // пришедшие, пока список в полёте, получают seq > start и ответом не затираются.
 func (s *InterfaceStore) beginFlightLocked() *listFlight {
-	fl := &listFlight{start: s.seq, done: make(chan struct{})}
+	s.flights++
+	fl := &listFlight{no: s.flights, start: s.seq, done: make(chan struct{})}
 	s.flight = fl
 	return fl
 }
@@ -326,6 +336,13 @@ func (s *InterfaceStore) applyListLocked(raw map[string]ndms.Interface, wire map
 	now := time.Now()
 	for id, rec := range raw {
 		if s.touched[id] > start {
+			// Хук новее списка — но только в своих полях. Прочие (описание,
+			// маска, MTU, security-level…) хуки не несут никогда: берём из
+			// списка, иначе переименование, совпавшее с хуком слоя, оставило
+			// бы в карте старое описание (гейт владения OpkgTun, F517).
+			if cur, ok := s.byID[id]; ok {
+				*cur = mergeHookOwned(rec, cur)
+			}
 			continue
 		}
 		cp := rec
@@ -364,6 +381,17 @@ func (s *InterfaceStore) applyListLocked(raw map[string]ndms.Interface, wire map
 	}
 }
 
+// mergeHookOwned — запись списка list с полями, которыми владеют хуки, из cur:
+// OnLayerChanged (ConfLayer, Link, State, IPv4) и OnIPChanged (Address).
+func mergeHookOwned(list ndms.Interface, cur *ndms.Interface) ndms.Interface {
+	list.ConfLayer = cur.ConfLayer
+	list.Link = cur.Link
+	list.State = cur.State
+	list.IPv4 = cur.IPv4
+	list.Address = cur.Address
+	return list
+}
+
 // markTouchedLocked отмечает id как тронутый хуком сейчас.
 func (s *InterfaceStore) markTouchedLocked(id string) {
 	s.seq++
@@ -376,7 +404,7 @@ func (s *InterfaceStore) markTouchedLocked(id string) {
 // Never issues HTTP for absent names — the map is the authoritative
 // source of "what exists". Bootstrap (one HTTP) runs on first call.
 func (s *InterfaceStore) Get(ctx context.Context, name string) (*ndms.Interface, error) {
-	if err := s.ensureBootstrap(ctx); err != nil {
+	if err := s.freshenIfDirty(ctx); err != nil {
 		return nil, err
 	}
 	s.mu.RLock()
@@ -493,7 +521,7 @@ func (s *InterfaceStore) FetchSummary(ctx context.Context, name string) (*ndms.I
 // computed live from the daemon-tracked startedAt timestamp — survives
 // daemon restarts (bootstrap re-derives startedAt from NDMS Uptime).
 func (s *InterfaceStore) GetDetails(ctx context.Context, name string) (*ndms.InterfaceDetails, error) {
-	if err := s.ensureBootstrap(ctx); err != nil {
+	if err := s.freshenIfDirty(ctx); err != nil {
 		return nil, err
 	}
 	s.mu.RLock()
@@ -577,15 +605,29 @@ const (
 // Список не прочитан — ошибка; по имени не спрашиваем (решение 4, F546).
 // Снимок — не доказательство для мутаций: валюта мутаций — Confirmed.
 func (s *InterfaceStore) Snapshot(ctx context.Context, maxAge time.Duration) (*Snapshot, error) {
-	if err := s.ensureBootstrap(ctx); err != nil {
+	if err := s.freshen(ctx, maxAge); err != nil {
 		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.snapshotLocked(), nil
+}
+
+// freshen — правила Snapshot без копии карты: после успешного возврата
+// память не старше maxAge и не грязна (с точностью до записей после вызова).
+//
+// Присоединившийся к чужому полёту не наследует отмену чужого ctx: ведущий —
+// HTTP-запрос панели, вкладку закрыли, его ctx отменён; у присоединившегося
+// ctx жив — он читает свой список, а не отвечает «не прочитано».
+func (s *InterfaceStore) freshen(ctx context.Context, maxAge time.Duration) error {
+	if err := s.ensureBootstrap(ctx); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	if maxAge > 0 {
 		if s.dirtyAt == 0 && time.Since(s.listedAt) < maxAge {
-			snap := s.snapshotLocked()
 			s.mu.Unlock()
-			return snap, nil
+			return nil
 		}
 		if fl := s.flight; fl != nil && fl.start >= s.dirtyAt {
 			s.mu.Unlock()
@@ -593,24 +635,46 @@ func (s *InterfaceStore) Snapshot(ctx context.Context, maxAge time.Duration) (*S
 			select {
 			case <-fl.done:
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return ctx.Err()
 			}
-			if fl.err != nil {
-				return nil, fl.err
+			if fl.err == nil {
+				return nil
 			}
-			s.mu.RLock()
-			defer s.mu.RUnlock()
-			return s.snapshotLocked(), nil
+			if !isCtxErr(fl.err) || ctx.Err() != nil {
+				return fl.err
+			}
+			s.mu.Lock()
 		}
 	}
 	fl := s.beginFlightLocked()
 	s.mu.Unlock()
-	if _, err := s.refreshList(ctx, fl); err != nil {
-		return nil, err
+	_, err := s.refreshList(ctx, fl)
+	return err
+}
+
+// isCtxErr — ошибка вызвана отменой или дедлайном ctx.
+func isCtxErr(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// freshenIfDirty — перед чтением памяти: после нашей записи (метка
+// Invalidate) — один свежий список (или присоединение к полёту), иначе поля,
+// которых хуки не несут (Description, Mask, MTU, SecurityLevel), и link
+// OpkgTun (#328) оставались бы прежними. Сбой списка — Warn и прежняя память,
+// как у прежнего Invalidate с точечным чтением.
+func (s *InterfaceStore) freshenIfDirty(ctx context.Context) error {
+	if err := s.ensureBootstrap(ctx); err != nil {
+		return err
 	}
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.snapshotLocked(), nil
+	dirty := s.dirtyAt != 0
+	s.mu.RUnlock()
+	if dirty {
+		if err := s.freshen(ctx, SnapshotRecent); err != nil {
+			s.log.Warnf("interface list after write: %v", err)
+		}
+	}
+	return nil
 }
 
 // snapshotLocked копирует карту в неизменяемый снимок (под mu, чтение).
@@ -633,23 +697,29 @@ func (s *InterfaceStore) snapshotLocked() *Snapshot {
 	return snap
 }
 
-// DetailsRecent — Details(name) из снимка не старше SnapshotRecent;
+// DetailsRecent — Details(name) по памяти не старше SnapshotRecent;
 // (nil, nil) — записи нет (запроса по имени нет вовсе).
 func (s *InterfaceStore) DetailsRecent(ctx context.Context, name string) (*ndms.InterfaceDetails, error) {
-	snap, err := s.Snapshot(ctx, SnapshotRecent)
-	if err != nil {
-		return nil, err
-	}
-	return snap.Details(name), nil
+	return s.detailsAged(ctx, name, SnapshotRecent)
 }
 
 // DetailsLive — Details(name) из только что прочитанного списка.
 func (s *InterfaceStore) DetailsLive(ctx context.Context, name string) (*ndms.InterfaceDetails, error) {
-	snap, err := s.Snapshot(ctx, SnapshotLive)
-	if err != nil {
+	return s.detailsAged(ctx, name, SnapshotLive)
+}
+
+// detailsAged — одна запись под RLock после freshen, без копии всей карты.
+func (s *InterfaceStore) detailsAged(ctx context.Context, name string, maxAge time.Duration) (*ndms.InterfaceDetails, error) {
+	if err := s.freshen(ctx, maxAge); err != nil {
 		return nil, err
 	}
-	return snap.Details(name), nil
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	iface, ok := s.byID[name]
+	if !ok {
+		return nil, nil
+	}
+	return detailsOf(iface, s.startedAt[name]), nil
 }
 
 // ResolveSystemName returns the kernel interface name (e.g. "nwg0")
@@ -865,7 +935,7 @@ func parseSystemName(raw []byte) string {
 // allocated; callers may mutate it freely. Order is unstable (map
 // iteration order); callers that need ordering must sort.
 func (s *InterfaceStore) List(ctx context.Context) ([]ndms.Interface, error) {
-	if err := s.ensureBootstrap(ctx); err != nil {
+	if err := s.freshenIfDirty(ctx); err != nil {
 		return nil, err
 	}
 	s.mu.RLock()

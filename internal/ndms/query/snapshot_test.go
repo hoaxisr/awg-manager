@@ -3,8 +3,10 @@ package query
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -245,5 +247,113 @@ func TestDetails_FieldsMatchGetDetails(t *testing.T) {
 	got.Uptime = want.Uptime
 	if *got != *want {
 		t.Fatalf("Details = %#v, GetDetails = %#v", *got, *want)
+	}
+}
+
+// ctxGetter держит первый запрос списка до gate и отвечает ошибкой ctx, если
+// ctx вызывающего к тому моменту отменён.
+type ctxGetter struct {
+	Getter
+	gate    chan struct{}
+	entered chan struct{}
+}
+
+func (g *ctxGetter) Get(ctx context.Context, path string, dst any) error {
+	if path == ifaceListPath && g.gate != nil {
+		select {
+		case g.entered <- struct{}{}:
+			<-g.gate
+		default:
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return g.Getter.Get(ctx, path, dst)
+}
+
+// Ведущий — HTTP-запрос панели, вкладку закрыли: его ctx отменён. Живой
+// присоединившийся не наследует «context canceled» — читает свой список.
+func TestSnapshot_JoinerSurvivesLeaderCancel(t *testing.T) {
+	f := snapshotFake()
+	g := &ctxGetter{Getter: f, entered: make(chan struct{})}
+	lg := joinLogger{joined: make(chan struct{}, 4)}
+	s := NewInterfaceStore(g, lg)
+	if _, err := s.Snapshot(context.Background(), SnapshotRecent); err != nil { // bootstrap
+		t.Fatal(err)
+	}
+	s.listedAt = time.Time{}
+	g.gate = make(chan struct{})
+
+	leaderCtx, cancel := context.WithCancel(context.Background())
+	leaderErr := make(chan error, 1)
+	go func() { _, err := s.Snapshot(leaderCtx, SnapshotRecent); leaderErr <- err }()
+	<-g.entered
+	joinerErr := make(chan error, 1)
+	go func() { _, err := s.Snapshot(context.Background(), SnapshotRecent); joinerErr <- err }()
+	select {
+	case <-lg.joined:
+	case <-time.After(time.Second):
+		t.Fatal("не присоединился")
+	}
+	cancel()
+	close(g.gate)
+	if err := <-leaderErr; !errors.Is(err, context.Canceled) {
+		t.Fatalf("ведущий: %v, want context.Canceled", err)
+	}
+	if err := <-joinerErr; err != nil {
+		t.Fatalf("присоединившийся унаследовал отмену ведущего: %v", err)
+	}
+}
+
+// Метка «грязно» (наша запись) — чтение памяти берёт свежий список: поля,
+// которых хуки не несут, после нашей команды не старые.
+func TestList_DirtyReadsFreshFields(t *testing.T) {
+	ctx := context.Background()
+	f := NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun", Description: "old", Mask: "255.255.255.255", MTU: 1420})
+	s := NewInterfaceStore(f, NopLogger())
+	if _, err := s.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.Add(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun", Description: "new", Mask: "255.255.255.0", MTU: 1380}) // наша правка, хука нет
+	s.Invalidate("OpkgTun10")
+	list, err := s.List(ctx)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("List: %v %v", list, err)
+	}
+	if got := list[0]; got.Description != "new" || got.Mask != "255.255.255.0" || got.MTU != 1380 {
+		t.Fatalf("после метки List старый: %+v", got)
+	}
+	if got, _ := s.Get(ctx, "OpkgTun10"); got == nil || got.Description != "new" {
+		t.Fatalf("Get: %+v", got)
+	}
+}
+
+// Ответы списков пришли не по порядку: начатый раньше уже применённого не
+// затирает более свежие данные.
+func TestRefreshList_OlderResponseNotApplied(t *testing.T) {
+	ctx := context.Background()
+	f := NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun", Description: "old"})
+	s := NewInterfaceStore(f, NopLogger())
+	if _, err := s.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+	gate, entered := make(chan struct{}), make(chan struct{})
+	var first atomic.Bool
+	f.InList(func() {
+		if first.CompareAndSwap(false, true) {
+			close(entered)
+			<-gate
+		}
+	})
+	done := make(chan struct{})
+	go func() { s.InvalidateAll(); close(done) }() // A: ответ «old» задержан
+	<-entered
+	f.Add(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun", Description: "new"})
+	s.InvalidateAll() // B: начат позже, применён первым
+	close(gate)
+	<-done
+	if got, _ := s.Get(ctx, "OpkgTun10"); got == nil || got.Description != "new" {
+		t.Fatalf("старый ответ затёр свежий: %+v", got)
 	}
 }
