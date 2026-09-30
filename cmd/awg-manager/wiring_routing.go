@@ -178,19 +178,20 @@ func (a *app) setupEventWiring() {
 	// Refresh the NDMS interface cache when a kernel tunnel is confirmed up:
 	// OpkgTun iflayerchanged hooks are unreliable, so the cache otherwise keeps
 	// a frozen "down" snapshot and policy/WAN/all-interface lists misreport the
-	// tunnel as down (#328). Async — Invalidate does a blocking HTTP.
-	a.orch.SetInterfaceInvalidator(func(name string) { go a.ndmsQueries.Interfaces.Invalidate(name) })
+	// tunnel as down (#328). Invalidate лишь метит карту грязной (RCI нет):
+	// следующий снимок читает свежий список (F546).
+	a.orch.SetInterfaceInvalidator(a.ndmsQueries.Interfaces.Invalidate)
 	// Перепроверка внешней грани conf перед действием — и disabled перед
-	// остановкой, и running перед подъёмом: FetchSummary ходит в NDMS на
-	// каждый вызов, поэтому видит интерфейс таким, каков он сейчас, а не
-	// каким его оставил последний хук (#669).
+	// остановкой, и running перед подъёмом: DetailsLive читает свежий полный
+	// список, поэтому видит интерфейс таким, каков он сейчас, а не каким его
+	// оставил последний хук (#669). По имени NDMS не спрашивают (F546).
 	//
 	// Пустой ответ (интерфейса нет, status-error «unable to find») — это «не
 	// знаем», а НЕ «держит down»: иначе подъём по грани conf=running получал
 	// бы вето от неответившего NDMS, хотя обе проверки обязаны в таком случае
 	// оставлять грань в силе.
 	a.orch.SetConfLayerProbe(func(ctx context.Context, name string) (bool, error) {
-		details, err := a.ndmsQueries.Interfaces.FetchSummary(ctx, name)
+		details, err := a.ndmsQueries.Interfaces.DetailsLive(ctx, name)
 		if err != nil {
 			return false, err
 		}

@@ -54,10 +54,10 @@ func (m *MockNDMSClient) GetDetails(_ context.Context, _ string) (*ndms.Interfac
 	return m.details, nil
 }
 
-// FetchSummary mirrors GetDetails — tests use the same fixture for both
-// the cache-backed and direct-RCI paths. Production: InterfaceStore
-// reaches NDMS via direct GET on every call.
-func (m *MockNDMSClient) FetchSummary(_ context.Context, _ string) (*ndms.InterfaceDetails, error) {
+// DetailsRecent mirrors GetDetails — tests use the same fixture for both
+// the cache-backed and snapshot paths. Production: InterfaceStore answers
+// from a list snapshot no older than SnapshotRecent (F546).
+func (m *MockNDMSClient) DetailsRecent(_ context.Context, _ string) (*ndms.InterfaceDetails, error) {
 	if m.details == nil {
 		return nil, errors.New("show interface failed")
 	}
@@ -292,6 +292,22 @@ func TestManagerImpl_GetState_ShowInterfaceFails(t *testing.T) {
 	// IntentDown (zero value) + no process → Disabled (safe default)
 	if state.State != tunnel.StateDisabled {
 		t.Errorf("State = %v, want StateDisabled (safe fallback)", state.State)
+	}
+}
+
+// Снимок не прочитан (ошибка DetailsRecent) при живом процессе — IntentUp,
+// как прежде при сбое точечного чтения: иначе NeedsStop блокировал бы Stop.
+func TestManagerImpl_GetState_DetailsRecentError_IntentUpIfProcess(t *testing.T) {
+	mgr := newTestManager(t,
+		&MockNDMSClient{opkgTunExists: true, details: nil},
+		&MockWGClient{},
+		&MockBackend{running: true, pid: 42},
+	)
+
+	state := mgr.GetState(context.Background(), "awg0")
+
+	if state.State == tunnel.StateNeedsStop || state.State == tunnel.StateDisabled {
+		t.Errorf("State = %v: сбой снимка при живом процессе принят за IntentDown", state.State)
 	}
 }
 

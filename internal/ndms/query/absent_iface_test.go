@@ -33,17 +33,6 @@ func TestPeers_AbsentInterface_NoQuery(t *testing.T) {
 	}
 }
 
-func TestFetchSummary_AbsentInterface_NoQuery(t *testing.T) {
-	q, f := absentIfaceQueries(t)
-	d, err := q.Interfaces.FetchSummary(context.Background(), "OpkgTun12")
-	if err != nil || d != nil {
-		t.Fatalf("want (nil, nil), got (%#v, %v)", d, err)
-	}
-	if f.E != 0 {
-		t.Fatalf("E = %d, want 0", f.E)
-	}
-}
-
 func TestWGServers_AbsentInterface_NoQuery(t *testing.T) {
 	q, f := absentIfaceQueries(t)
 	ctx := context.Background()

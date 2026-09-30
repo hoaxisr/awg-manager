@@ -18,16 +18,15 @@ import (
 // whole query store.
 //
 // Get reads cached existence (1 HTTP at bootstrap, then in-memory).
-// FetchSummary ходит к роутеру на КАЖДЫЙ вызов по существующему интерфейсу
-// (кэш отвечает только «интерфейса нет», F546; запрос — командой show
-// interface через батчер, а не сырым GET) — состояние
+// DetailsRecent — сводка из снимка полного списка не старше
+// query.SnapshotRecent (по имени NDMS не спрашивают, F546): состояние
 // kernel-туннеля определяется по нему, потому что кэшированный Link
-// протухает: хуки слоёв NDMS для OpkgTun срабатывают не всегда
-// (см. InterfaceStore.FetchSummary).
+// протухает — хуки слоёв NDMS для OpkgTun срабатывают не всегда (#328);
+// после нашей записи (Invalidate) снимок читает свежий список.
 type InterfaceQueries interface {
 	Get(ctx context.Context, name string) (*ndms.Interface, error)
 	GetDetails(ctx context.Context, name string) (*ndms.InterfaceDetails, error)
-	FetchSummary(ctx context.Context, name string) (*ndms.InterfaceDetails, error)
+	DetailsRecent(ctx context.Context, name string) (*ndms.InterfaceDetails, error)
 }
 
 // Backend reports whether the tunnel interface is up.
@@ -88,11 +87,12 @@ func (m *ManagerImpl) GetState(ctx context.Context, tunnelID string) tunnel.Stat
 		}
 
 		if info.OpkgTunExists {
-			// Свежая сводка на каждый вызов, мимо кэша. Кэшированный Link
-			// у OpkgTun протухает после `ip link set up`: хуки слоёв NDMS
-			// не всегда шлют link=running для kernel-AWG туннелей, и
-			// матрица замирала на StateStarting у работающего туннеля.
-			details, err := m.ifaces.FetchSummary(ctx, names.NDMSName)
+			// Сводка из снимка списка (≤ SnapshotRecent), а не из карты хуков.
+			// Кэшированный Link у OpkgTun протухает после `ip link set up`:
+			// хуки слоёв NDMS не всегда шлют link=running для kernel-AWG
+			// туннелей, и матрица замирала на StateStarting у работающего
+			// туннеля. Точечного чтения по имени нет (F546).
+			details, err := m.ifaces.DetailsRecent(ctx, names.NDMSName)
 			if err == nil && details != nil {
 				intent = details.Intent()
 				linkUp = details.LinkUp()
