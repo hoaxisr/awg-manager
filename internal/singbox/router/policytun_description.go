@@ -16,18 +16,27 @@ import (
 // Описание — это и метка владения (скан по точной строке, opkgTunOwnership),
 // поэтому смена настройки держится на двух правилах:
 //   - запись владения помнит описание, ПРИМЕНЁННОЕ к интерфейсу
-//     (OpkgTunState.Description), а владение признаётся по нему И по
-//     желаемому из настроек (policyTunOwnDescriptions). Переименование пишет
-//     сперва NDMS, потом запись: сбой между ними оставляет интерфейс под
-//     желаемым описанием, которое владение уже признаёт. Обратный порядок
-//     оставил бы запись с именем, которого на интерфейсе нет, — «доказанно
-//     чужой» и re-provision поверх собственного живого интерфейса;
+//     (OpkgTunState.Description), и описание, которое переименование
+//     СОБИРАЕТСЯ поставить (OpkgTunState.PendingDescription); владение
+//     признаётся по обоим И по желаемому из настроек (policyTunOwnDescriptions).
+//     Порядок переименования — «запись намерения → NDMS → запись результата»,
+//     как persist-before-create у провижининга: сбой или крах на любом шаге
+//     оставляет интерфейс под именем, которое запись называет. Без записи
+//     намерения окно «NDMS переименован, запись нет» закрывалось бы только
+//     желаемым из настроек — и смена настройки до следующего тика делала бы
+//     собственный интерфейс «доказанно чужим»: re-provision на другом номере
+//     и потеря permit'ов пользователя в политиках;
 //   - description-реап сирот (reapOrphansByDescription) по-прежнему сканирует
 //     ТОЛЬКО штатное policyTunDescription. Пользовательское имя не уникально по
 //     построению: туннели awg-manager и чужие OpkgTun несут в описании имена,
 //     которые пользователь выбирает сам, и реап по такому имени снёс бы чужой
 //     интерфейс. Сирота под пользовательским именем остаётся — удалить её
 //     можно в веб-интерфейсе роутера; это дешевле удалённого чужого туннеля.
+//
+// Версии без этой настройки владение по пользовательскому имени не признают:
+// после отката интерфейс под ним для них «доказанно чужой» — режим поднимется
+// на другом номере, permit'ы в политиках пропадут. Перед откатом имя стоит
+// вернуть штатное (CHANGELOG).
 
 // policyTunDescriptionMaxRunes — предел длины описания. NDMS принимает до 256
 // байт (tunnel.MaxNameBytes), но имя интерфейса в списках роутера длиннее
@@ -97,14 +106,28 @@ func storedPolicyTunDescription(desc string) string {
 }
 
 // policyTunOwnDescriptions — описания, под которыми OpkgTun записи признаётся
-// нашим: применённое (запись) и желаемое (настройки), без повторов. Второе
-// нужно окну «NDMS уже переименован, запись ещё нет» — см. шапку файла.
+// нашим: применённое и ожидаемое (запись) и желаемое (настройки), без
+// повторов. Ожидаемое закрывает окно переименования, желаемое — окно
+// провижининга нового номера (запись ещё под прежним именем, Create уже
+// поставил желаемое) — см. шапку файла.
 func policyTunOwnDescriptions(st *storage.OpkgTunState, sr storage.SingboxRouterSettings) []string {
-	applied, want := policyTunAppliedDescription(st), policyTunWantDescription(sr)
-	if applied == want {
-		return []string{applied}
+	out := []string{policyTunAppliedDescription(st)}
+	add := func(d string) {
+		if d == "" {
+			return
+		}
+		for _, have := range out {
+			if have == d {
+				return
+			}
+		}
+		out = append(out, d)
 	}
-	return []string{applied, want}
+	if st != nil {
+		add(st.PendingDescription)
+	}
+	add(policyTunWantDescription(sr))
+	return out
 }
 
 // policyTunOwnDescriptionsStored — policyTunOwnDescriptions там, где под рукой
@@ -121,32 +144,71 @@ func (s *ServiceImpl) policyTunOwnDescriptionsStored(st *storage.OpkgTunState) [
 	return policyTunOwnDescriptions(st, sr)
 }
 
+// persistPolicyTunDescription пишет описания записи владения, если они
+// отличаются от записанных: повтор после сбоя NDMS не трогает флеш.
+func (s *ServiceImpl) persistPolicyTunDescription(st *storage.OpkgTunState, applied, pending string) error {
+	applied = storedPolicyTunDescription(applied)
+	if st.Description == applied && st.PendingDescription == pending {
+		return nil
+	}
+	return s.deps.Settings.SetOpkgTunDescription(applied, pending)
+}
+
 // healPolicyTunDescription доводит NDMS-описание живого интерфейса до
 // настройки: переименование из панели применяется на ближайшем reconcile
-// (PUT настроек зовёт его сам). Порядок «NDMS → запись» — см. шапку файла.
+// (PUT настроек зовёт его сам). Порядок «намерение → NDMS → результат» — см.
+// шапку файла; каждый шаг идемпотентен, сбой — Warn и повтор следующим тиком.
 //
 // Трогаем только доказанно свой интерфейс: «не знаем» ≠ «наш», и
 // SetDescription по чужому переписал бы его имя. Обвязка без скана — свой по
-// записи, как в teardownGate. Сбой — Warn и повтор следующим тиком: запись
-// при этом называет прежнее описание, а владение признаёт оба.
+// записи, как в teardownGate.
 func (s *ServiceImpl) healPolicyTunDescription(ctx context.Context, st *storage.OpkgTunState,
 	sr storage.SingboxRouterSettings, iface, ndmsName string,
 ) {
+	const scope = "policy-tun-reconcile"
+	if st == nil || s.deps.OpkgTun == nil {
+		return
+	}
 	want := policyTunWantDescription(sr)
-	if st == nil || s.deps.OpkgTun == nil || policyTunAppliedDescription(st) == want {
+	applied, pending := policyTunAppliedDescription(st), st.PendingDescription
+	if applied == want && pending == "" {
 		return
 	}
 	switch s.opkgTunOwnership(ctx, ndmsName, policyTunOwnDescriptions(st, sr)...) {
 	case ownershipForeign, ownershipUnknown:
 		return
 	}
+	// Незакрытое намерение: дошло ли прежнее переименование до NDMS, запись
+	// не знает — спрашиваем роутер. Дошло — применённое теперь оно; нет —
+	// намерение снимается, интерфейс так и стоит под применённым. Скан упал —
+	// не гадаем, повтор следующим тиком. Без скана намерение снимается: без
+	// него владение и так признаёт запись, а переименование ниже идемпотентно.
+	if pending != "" {
+		switch s.opkgTunOwnership(ctx, ndmsName, pending) {
+		case ownershipUnknown:
+			return
+		case ownershipOurs:
+			applied = pending
+		}
+		pending = ""
+	}
+	if applied == want {
+		if err := s.persistPolicyTunDescription(st, applied, ""); err != nil {
+			s.appLog.Warn(scope, iface, "persist description: "+err.Error())
+		}
+		return
+	}
+	if err := s.persistPolicyTunDescription(st, applied, want); err != nil {
+		s.appLog.Warn(scope, iface, "persist pending description: "+err.Error())
+		return
+	}
 	if err := s.deps.OpkgTun.SetDescription(ctx, ndmsName, want); err != nil {
-		s.appLog.Warn("policy-tun-reconcile", iface, "rename: "+err.Error())
+		s.appLog.Warn(scope, iface, "rename: "+err.Error())
 		return
 	}
-	if err := s.deps.Settings.SetOpkgTunDescription(storedPolicyTunDescription(want)); err != nil {
-		s.appLog.Warn("policy-tun-reconcile", iface, "persist description: "+err.Error())
+	if err := s.deps.Settings.SetOpkgTunDescription(storedPolicyTunDescription(want), ""); err != nil {
+		s.appLog.Warn(scope, iface, "persist description: "+err.Error())
 		return
 	}
-	s.appLog.Info("policy-tun-reconcile", iface, "интерфейс переименован: "+want)
+	s.appLog.Info(scope, iface, "интерфейс переименован: "+want)
 }

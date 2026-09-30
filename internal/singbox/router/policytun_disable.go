@@ -233,10 +233,14 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 		// Запись не трогаем: Provisioned=true — сигнал повтора (см. вердикт).
 	default:
 		if err := s.holdOpkgTun(ctx, ndmsName, "policy-tun-disable"); err == nil {
-			// Description переживает удержание: интерфейс остаётся под
-			// применённым именем, и без него владение не признало бы его на
-			// следующем включении, если имя в настройках сменят до того.
-			held := &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: st.Index, Description: st.Description}
+			// Описания переживают удержание: интерфейс остаётся под
+			// применённым (или ожидаемым) именем, и без них владение не
+			// признало бы его на следующем включении, если имя в настройках
+			// сменят до того.
+			held := &storage.OpkgTunState{
+				Mode: storage.OpkgTunModePolicyTun, Index: st.Index,
+				Description: st.Description, PendingDescription: st.PendingDescription,
+			}
 			if !natRestored {
 				held.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: natSegmentsOf(st)}
 			}

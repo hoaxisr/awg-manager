@@ -219,6 +219,15 @@ type OpkgTunState struct {
 	// читаются и записи версий без настройки. Пишется SetOpkgTunState или
 	// узким SetOpkgTunDescription.
 	Description string `json:"description,omitempty"`
+	// PendingDescription — описание, которое переименование СОБИРАЕТСЯ
+	// поставить (или уже поставило, но ещё не подтвердило в Description).
+	// Журнал намерения по образцу persist-before-create: пишется ДО
+	// SetDescription в NDMS, снимается ПОСЛЕ успешной записи Description.
+	// Владение признаётся и по нему, поэтому интерфейс остаётся своим в любом
+	// окне переименования — даже если настройку сменят до того, как запись
+	// догонит NDMS. Хранится дословно (штатное описание — не пустым: пусто
+	// значит «переименования нет»).
+	PendingDescription string `json:"pendingDescription,omitempty"`
 }
 
 type DownloadSettings struct {

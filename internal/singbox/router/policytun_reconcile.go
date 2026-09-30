@@ -271,7 +271,7 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 			"режим включён, но tun-инбаунд пропал из слота — переустановка (недоделанное выключение)")
 		if e := s.deps.Settings.SetOpkgTunState(&storage.OpkgTunState{
 			Mode: storage.OpkgTunModePolicyTun, Index: st.Index, PolicyTun: st.PolicyTun,
-			Description: st.Description,
+			Description: st.Description, PendingDescription: st.PendingDescription,
 		}); e != nil {
 			s.appLog.Warn("policy-tun-reconcile", iface, "reset policy-tun persist: "+e.Error())
 		}

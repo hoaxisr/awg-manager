@@ -125,11 +125,128 @@ func TestPolicyTunOwnDescriptions(t *testing.T) {
 		{"переименование из дефолта", rec(""), custom("Awgmanager"), []string{policyTunDescription, "Awgmanager"}},
 		{"применено", rec("Awgmanager"), custom("Awgmanager"), []string{"Awgmanager"}},
 		{"возврат к дефолту", rec("Awgmanager"), custom(""), []string{"Awgmanager", policyTunDescription}},
+		// Намерение — третье имя: настройку сменили, пока переименование в B
+		// не подтверждено записью.
+		{"намерение и новая настройка", pending("", "B"), custom("C"), []string{policyTunDescription, "B", "C"}},
+		{"намерение совпадает с настройкой", pending("", "B"), custom("B"), []string{policyTunDescription, "B"}},
+		{"намерение — штатное имя", pending("Awgmanager", policyTunDescription), custom(""), []string{"Awgmanager", policyTunDescription}},
 	}
 	for _, c := range cases {
 		if got := policyTunOwnDescriptions(c.st, c.sr); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// pending — запись владения с незакрытым намерением переименования.
+func pending(applied, pend string) *storage.OpkgTunState {
+	return &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Description: applied, PendingDescription: pend}
+}
+
+// Сценарий, ради которого намерение пишется на флеш: переименование A→B дошло
+// до NDMS, запись подтвердить не удалось, и до следующего тика имя в
+// настройках сменили на C. Интерфейс стоит под B — и признаётся своим по
+// намерению, а не объявляется чужим с re-provision на другом номере.
+func TestReconcilePolicyTun_PendingRenameSurvivesSettingChange(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{
+		Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0, PendingDescription: "B",
+	}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
+	}
+	h.svc.deps.OpkgTunScan = scanOurs("B", "OpkgTun0") // NDMS: уже под B
+	sr := setPolicyTunDescription(t, h.store, "C")
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	assertNoReprovision(t, h.log)
+	if !h.log.has("SetDescription:OpkgTun0:C") {
+		t.Errorf("интерфейс под B обязан переименоваться в C: %v", h.log.calls)
+	}
+	if st := h.loadPolicyTun(t); st == nil || st.Index != 0 || st.Description != "C" || st.PendingDescription != "" {
+		t.Errorf("PolicyTun persist = %+v, want index 0, Description=C, намерение снято", st)
+	}
+}
+
+// Намерение, не дошедшее до NDMS (крах до SetDescription): интерфейс так и
+// стоит под применённым именем. Намерение снимается, переименование идёт с
+// применённого — без re-provision.
+func TestReconcilePolicyTun_StalePendingIsDropped(t *testing.T) {
+	cases := []struct {
+		name       string
+		want       string // настройка
+		wantRename string // ожидаемый SetDescription, "" — не должно быть
+	}{
+		{"настройка сменилась", "C", "C"},
+		{"настройка вернулась к штатному", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newPolicyTunEnableHarness(t, "")
+			provisionPolicyTunForReconcile(t, h)
+			h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+			if err := h.store.SetOpkgTunState(&storage.OpkgTunState{
+				Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0, PendingDescription: "B",
+			}); err != nil {
+				t.Fatalf("SetOpkgTunState: %v", err)
+			}
+			// NDMS: всё ещё штатное — и ТОЛЬКО оно (скан по B пуст).
+			h.svc.deps.OpkgTunScan = scanOurs(policyTunDescription, "OpkgTun0")
+			sr := setPolicyTunDescription(t, h.store, c.want)
+
+			if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+				t.Fatalf("reconcilePolicyTun: %v", err)
+			}
+			assertNoReprovision(t, h.log)
+			renamed := false
+			for _, call := range h.log.calls {
+				if strings.HasPrefix(call, "SetDescription:") {
+					renamed = true
+					if c.wantRename == "" || call != "SetDescription:OpkgTun0:"+c.wantRename {
+						t.Errorf("неожиданное переименование %q (want %q)", call, c.wantRename)
+					}
+				}
+			}
+			if c.wantRename != "" && !renamed {
+				t.Errorf("переименование в %q ожидалось: %v", c.wantRename, h.log.calls)
+			}
+			if st := h.loadPolicyTun(t); st == nil || st.Description != c.want || st.PendingDescription != "" {
+				t.Errorf("PolicyTun persist = %+v, want Description=%q, намерение снято", st, c.want)
+			}
+		})
+	}
+}
+
+// Скан упал, пока намерение не закрыто: дошло ли переименование до NDMS,
+// неизвестно — ни мутаций, ни правок записи, повтор следующим тиком.
+func TestReconcilePolicyTun_PendingKeptWhenScanFails(t *testing.T) {
+	h := newPolicyTunEnableHarness(t, "")
+	provisionPolicyTunForReconcile(t, h)
+	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
+	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{
+		Mode: storage.OpkgTunModePolicyTun, Provisioned: true, Index: 0, PendingDescription: "B",
+	}); err != nil {
+		t.Fatalf("SetOpkgTunState: %v", err)
+	}
+	h.svc.deps.OpkgTunScan = func(context.Context, string) ([]string, error) {
+		return nil, errors.New("injected: scan")
+	}
+	sr := setPolicyTunDescription(t, h.store, "C")
+
+	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
+		t.Fatalf("reconcilePolicyTun: %v", err)
+	}
+	assertNoReprovision(t, h.log)
+	for _, call := range h.log.calls {
+		if strings.HasPrefix(call, "SetDescription:") {
+			t.Fatalf("без доказанного владения переименования быть не должно: %v", h.log.calls)
+		}
+	}
+	if st := h.loadPolicyTun(t); st == nil || st.Description != "" || st.PendingDescription != "B" {
+		t.Errorf("PolicyTun persist = %+v, want запись нетронута (намерение B)", st)
 	}
 }
 
@@ -221,11 +338,11 @@ func TestPolicyTunEnable_RenamesHeldOwnInterface(t *testing.T) {
 	if !h.log.has("Create:OpkgTun3:public") {
 		t.Fatalf("удержанный свой индекс 3 обязан переиспользоваться: %v", h.log.calls)
 	}
-	if probe.atCreate == nil || probe.atCreate.Description != "" {
-		t.Errorf("запись в момент Create = %+v, want прежнее (штатное) описание", probe.atCreate)
+	if probe.atCreate == nil || probe.atCreate.Description != "" || probe.atCreate.PendingDescription != "Awgmanager" {
+		t.Errorf("запись в момент Create = %+v, want прежнее (штатное) описание и намерение Awgmanager", probe.atCreate)
 	}
-	if st := h.loadPolicyTun(t); st == nil || st.Index != 3 || st.Description != "Awgmanager" {
-		t.Errorf("PolicyTun persist = %+v, want index 3, Description=Awgmanager", st)
+	if st := h.loadPolicyTun(t); st == nil || st.Index != 3 || st.Description != "Awgmanager" || st.PendingDescription != "" {
+		t.Errorf("PolicyTun persist = %+v, want index 3, Description=Awgmanager, намерение снято", st)
 	}
 }
 
@@ -245,8 +362,8 @@ func TestReconcilePolicyTun_RenamesLiveInterface(t *testing.T) {
 		t.Errorf("живой интерфейс обязан переименоваться: %v", h.log.calls)
 	}
 	assertNoReprovision(t, h.log)
-	if st := h.loadPolicyTun(t); st == nil || !st.Provisioned || st.Index != 0 || st.Description != "Awgmanager" {
-		t.Errorf("PolicyTun persist = %+v, want provisioned index 0, Description=Awgmanager", st)
+	if st := h.loadPolicyTun(t); st == nil || !st.Provisioned || st.Index != 0 || st.Description != "Awgmanager" || st.PendingDescription != "" {
+		t.Errorf("PolicyTun persist = %+v, want provisioned index 0, Description=Awgmanager, намерение снято", st)
 	}
 
 	// Следующий тик: NDMS уже под новым именем — ни одной мутации.
@@ -325,8 +442,9 @@ func TestReconcilePolicyTun_NoRenameWhenScanFails(t *testing.T) {
 	}
 }
 
-// Отказ NDMS на переименовании — запись остаётся прежней (она по-прежнему
-// называет то, что на интерфейсе), режим не пересоздаётся.
+// Отказ NDMS на переименовании — применённое в записи остаётся прежним (оно
+// по-прежнему называет то, что на интерфейсе), а намерение уже записано:
+// оно легло на флеш ДО обращения к NDMS. Режим не пересоздаётся.
 func TestReconcilePolicyTun_RenameFailureKeepsRecord(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "SetDescription")
 	provisionPolicyTunForReconcile(t, h)
@@ -341,8 +459,8 @@ func TestReconcilePolicyTun_RenameFailureKeepsRecord(t *testing.T) {
 		t.Fatalf("попытка переименования ожидалась: %v", h.log.calls)
 	}
 	assertNoReprovision(t, h.log)
-	if st := h.loadPolicyTun(t); st == nil || st.Description != "" {
-		t.Errorf("PolicyTun persist = %+v, want прежнее описание", st)
+	if st := h.loadPolicyTun(t); st == nil || st.Description != "" || st.PendingDescription != "Awgmanager" {
+		t.Errorf("PolicyTun persist = %+v, want прежнее описание и намерение Awgmanager", st)
 	}
 }
 

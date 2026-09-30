@@ -174,11 +174,18 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// переименует интерфейс, и запись догонит его сразу после), на новом номере
 	// интерфейса ещё нет — пишем желаемое. Желаемое в записи раньше Create
 	// оставило бы крах между ними с интерфейсом под именем, которого владение
-	// не признаёт.
+	// не признаёт. Переименование при этом — намерение (PendingDescription,
+	// см. policytun_description.go): крах после Create не оставит интерфейс
+	// под именем, которого запись не называет. Незакрытое намерение прежней
+	// записи сохраняем — интерфейс может стоять под ним.
 	wantDesc := policyTunWantDescription(sr)
 	ptState.Description = storedPolicyTunDescription(wantDesc)
 	if prev != nil && prev.Index == idx {
 		ptState.Description = prev.Description
+		ptState.PendingDescription = prev.PendingDescription
+		if ptState.PendingDescription == "" && policyTunAppliedDescription(prev) != wantDesc {
+			ptState.PendingDescription = wantDesc
+		}
 	}
 	// ГОЧА (re-provision): записи NAT-сегментов ОБЯЗАНЫ пережить повторный
 	// провижининг (heal «интерфейс пропал» → reconcile → enableLocked). Они —
@@ -246,8 +253,9 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// дописывает reconcile (healPolicyTunDescription). Откатывать из-за
 	// описания весь провижининг незачем — откат удаляет интерфейс вместе с
 	// permit'ами пользователя.
-	if d := storedPolicyTunDescription(wantDesc); ptState.Description != d {
+	if d := storedPolicyTunDescription(wantDesc); ptState.Description != d || ptState.PendingDescription != "" {
 		ptState.Description = d
+		ptState.PendingDescription = ""
 		if e := s.deps.Settings.SetOpkgTunState(ptState); e != nil {
 			s.appLog.Warn("policy-tun-enable", iface, "persist description: "+e.Error())
 		}

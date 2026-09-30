@@ -812,13 +812,14 @@ func (s *SettingsStore) SetOpkgTunNATSegments(segs []PolicyTunNATSegment) error 
 	})
 }
 
-// SetOpkgTunDescription пишет ТОЛЬКО применённое NDMS-описание записи
-// владения, не трогая ownership-поля и payload: переименование живого
-// интерфейса (policy-tun reconcile) не должно затирать NAT-записи, которые
-// пишет свой сеттер. Пустая строка — штатное описание режима. Copy-on-write,
-// как в SetOpkgTunNATSegments. Запись отсутствует → ошибка (описания без
-// владельца не бывает).
-func (s *SettingsStore) SetOpkgTunDescription(desc string) error {
+// SetOpkgTunDescription пишет ТОЛЬКО описания записи владения — применённое
+// и ожидаемое (см. OpkgTunState), не трогая ownership-поля и payload:
+// переименование живого интерфейса (policy-tun reconcile) не должно затирать
+// NAT-записи, которые пишет свой сеттер. Пустое applied — штатное описание
+// режима, пустое pending — переименования нет. Copy-on-write, как в
+// SetOpkgTunNATSegments. Запись отсутствует → ошибка (описания без владельца
+// не бывает).
+func (s *SettingsStore) SetOpkgTunDescription(applied, pending string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.settings == nil {
@@ -829,7 +830,8 @@ func (s *SettingsStore) SetOpkgTunDescription(desc string) error {
 	}
 	return s.updateUnlocked(func(cur *Settings) error {
 		rec := *cur.OpkgTun
-		rec.Description = desc
+		rec.Description = applied
+		rec.PendingDescription = pending
 		cur.OpkgTun = &rec
 		return nil
 	})
