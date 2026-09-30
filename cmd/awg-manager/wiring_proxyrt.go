@@ -758,7 +758,7 @@ func (a *app) wireProxyrt() {
 
 	// (4) Уборщик NDMS-интерфейсов без живой декларации.
 	cmds := proxyNDMSCommands{
-		InterfaceCommands: a.ndmsCommands.Interfaces,
+		confirmingOpkgTun: confirmingOpkgTun{a.ndmsCommands.Interfaces, a.ndmsQueries.Interfaces},
 		routes:            a.ndmsCommands.Routes,
 	}
 	sweeper := proxyrt.NewSweeper(
@@ -1173,11 +1173,11 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 				Instance: rec.ID, Binary: binary,
 				PinnedSHA256: installSvc.PinnedSHA256(rec.Kind),
 				Link:         link, Runner: runner, Gate: gate,
-				Cmds:  proxyNDMSCommands{InterfaceCommands: a.ndmsCommands.Interfaces, routes: a.ndmsCommands.Routes},
+				Cmds:  proxyNDMSCommands{confirmingOpkgTun: confirmingOpkgTun{a.ndmsCommands.Interfaces, a.ndmsQueries.Interfaces}, routes: a.ndmsCommands.Routes},
 				Query: proxyNDMSQuery{ifaces: a.ndmsQueries.Interfaces, rc: a.ndmsQueries.RunningConfig},
 				// Policies/Permit — членство raw-клиента в политиках.
 				Policies: a.ndmsQueries.Policies,
-				Permit:   a.ndmsCommands.Policies,
+				Permit:   confirmingPermitter{a.ndmsCommands.Policies, a.ndmsQueries.Interfaces},
 				Hooks:    proxyRouteHooks{svc: a.clientRouteService},
 				Registry: a.exitRegistry,
 				Sync: newProxyEndpointSync(a.awgStore, a.proxyTunnels(),
@@ -1194,7 +1194,7 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 				Instance: rec.ID, Binary: binary,
 				PinnedSHA256: installSvc.PinnedSHA256(rec.Kind),
 				Link:         link, Runner: runner, Gate: gate,
-				Cmds:        proxyNDMSCommands{InterfaceCommands: a.ndmsCommands.Interfaces, routes: a.ndmsCommands.Routes},
+				Cmds:        proxyNDMSCommands{confirmingOpkgTun: confirmingOpkgTun{a.ndmsCommands.Interfaces, a.ndmsQueries.Interfaces}, routes: a.ndmsCommands.Routes},
 				Query:       proxyNDMSQuery{ifaces: a.ndmsQueries.Interfaces, rc: a.ndmsQueries.RunningConfig},
 				IPT:         proxyIPT{},
 				FW:          book.forInstance(key),

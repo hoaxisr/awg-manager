@@ -448,10 +448,10 @@ func TestSeam_PermitAllResidueRemovedFromBothHalves(t *testing.T) {
 	p := newSeamParts(t)
 	ctx := context.Background()
 	for _, name := range []string{"OpkgTun17", "OpkgTun19"} {
-		if err := p.ndms.CreateOpkgTunWithSecurityLevelLegacy(ctx, name, "старый мир", "private"); err != nil {
+		if err := p.ndms.CreateOpkgTunWithSecurityLevel(ctx, name, "старый мир", "private"); err != nil {
 			t.Fatal(err)
 		}
-		if err := p.ndms.SetPermitAllACLLegacy(ctx, name); err != nil {
+		if err := p.ndms.SetPermitAllACL(ctx, name); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -470,10 +470,10 @@ func TestSeam_PermitAllKeptOnExitWhenExposed(t *testing.T) {
 	p := newSeamParts(t)
 	ctx := context.Background()
 	for _, name := range []string{"OpkgTun17", "OpkgTun19"} {
-		if err := p.ndms.CreateOpkgTunWithSecurityLevelLegacy(ctx, name, "старый мир", "private"); err != nil {
+		if err := p.ndms.CreateOpkgTunWithSecurityLevel(ctx, name, "старый мир", "private"); err != nil {
 			t.Fatal(err)
 		}
-		if err := p.ndms.SetPermitAllACLLegacy(ctx, name); err != nil {
+		if err := p.ndms.SetPermitAllACL(ctx, name); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -494,10 +494,10 @@ func TestSeam_PermitAllResidueRemovedWhileDisabled(t *testing.T) {
 	p := newSeamParts(t)
 	ctx := context.Background()
 	for _, name := range []string{"OpkgTun17", "OpkgTun19"} {
-		if err := p.ndms.CreateOpkgTunWithSecurityLevelLegacy(ctx, name, "старый мир", "private"); err != nil {
+		if err := p.ndms.CreateOpkgTunWithSecurityLevel(ctx, name, "старый мир", "private"); err != nil {
 			t.Fatal(err)
 		}
-		if err := p.ndms.SetPermitAllACLLegacy(ctx, name); err != nil {
+		if err := p.ndms.SetPermitAllACL(ctx, name); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -519,10 +519,10 @@ func TestSeam_PermitAllResidueRemovedWhileDisabledAndExposed(t *testing.T) {
 	p := newSeamParts(t)
 	ctx := context.Background()
 	for _, name := range []string{"OpkgTun17", "OpkgTun19"} {
-		if err := p.ndms.CreateOpkgTunWithSecurityLevelLegacy(ctx, name, "старый мир", "private"); err != nil {
+		if err := p.ndms.CreateOpkgTunWithSecurityLevel(ctx, name, "старый мир", "private"); err != nil {
 			t.Fatal(err)
 		}
-		if err := p.ndms.SetPermitAllACLLegacy(ctx, name); err != nil {
+		if err := p.ndms.SetPermitAllACL(ctx, name); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -897,11 +897,11 @@ type createPersistProbe struct {
 	atCreate *storage.OpkgTunState
 }
 
-func (p *createPersistProbe) CreateOpkgTunWithSecurityLevelLegacy(ctx context.Context, name, desc, level string) error {
+func (p *createPersistProbe) CreateOpkgTunWithSecurityLevel(ctx context.Context, name, desc, level string) error {
 	if all, err := p.store.Load(); err == nil {
 		p.atCreate = all.OpkgTun
 	}
-	return p.OpkgTunProvisioner.CreateOpkgTunWithSecurityLevelLegacy(ctx, name, desc, level)
+	return p.OpkgTunProvisioner.CreateOpkgTunWithSecurityLevel(ctx, name, desc, level)
 }
 
 // Инвариант, на который опирается реап: крах между персистом и созданием

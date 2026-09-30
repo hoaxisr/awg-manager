@@ -120,10 +120,10 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	// (2) Снять дефолт с tun. v6 снимаем безусловно: персист не хранит,
 	// был ли настроен v6-адрес, а remove-форма NDMS (`no:true`) идемпотентна.
 	if touch && s.deps.DefaultRoute != nil {
-		if err := s.deps.DefaultRoute.RemoveDefaultRouteLegacy(ctx, ndmsName); err != nil {
+		if err := s.deps.DefaultRoute.RemoveDefaultRoute(ctx, ndmsName); err != nil {
 			s.appLog.Warn("policy-tun-disable", iface, "remove default route: "+err.Error())
 		}
-		if err := s.deps.DefaultRoute.RemoveIPv6DefaultRouteLegacy(ctx, ndmsName); err != nil {
+		if err := s.deps.DefaultRoute.RemoveIPv6DefaultRoute(ctx, ndmsName); err != nil {
 			s.appLog.Warn("policy-tun-disable", iface, "remove ipv6 default route: "+err.Error())
 		}
 	}

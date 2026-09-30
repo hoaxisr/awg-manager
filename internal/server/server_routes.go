@@ -198,14 +198,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 		AppLogger:            s.loggingService,
 	})
 	h.diagHandler = api.NewDiagnosticsHandler(h.diagRunner)
-	// Типизированный nil в интерфейсе не равен nil, поэтому проверка тут, а не
-	// в обработчике: иначе его собственный гейт «зависимость не собрана» не
-	// сработал бы и отказ приехал бы паникой на вызове.
-	var orphanNDMS api.OrphanIfaceNDMS
-	if s.ndmsCommands != nil && s.ndmsCommands.Interfaces != nil {
-		orphanNDMS = s.ndmsCommands.Interfaces
-	}
-	h.orphanIfaceHandler = api.NewOrphanIfaceHandler(s.orphanExclusiveFn, orphanNDMS, s.loggingService)
+	h.orphanIfaceHandler = api.NewOrphanIfaceHandler(s.orphanExclusiveFn, s.orphanNDMS, s.loggingService)
 	h.orphanIfaceHandler.SetTunnelListPublisher(h.tunnelsHandler.PublishTunnelList)
 	if s.foreignIfaces != nil {
 		h.foreignIfaceHandler = api.NewForeignIfaceHandler(s.foreignIfaces)

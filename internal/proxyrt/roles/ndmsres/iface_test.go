@@ -55,7 +55,7 @@ func (f *fakeRouter) cmd(name string) error {
 	return nil
 }
 
-func (f *fakeRouter) CreateOpkgTunWithSecurityLevelLegacy(_ context.Context, name, desc, level string) error {
+func (f *fakeRouter) CreateOpkgTunWithSecurityLevel(_ context.Context, name, desc, level string) error {
 	if err := f.cmd("create"); err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func (f *fakeRouter) CreateOpkgTunWithSecurityLevelLegacy(_ context.Context, nam
 	return nil
 }
 
-func (f *fakeRouter) DeleteOpkgTunLegacy(_ context.Context, name string) error {
+func (f *fakeRouter) DeleteOpkgTun(_ context.Context, name string) error {
 	if err := f.cmd("delete"); err != nil {
 		return err
 	}
@@ -71,7 +71,7 @@ func (f *fakeRouter) DeleteOpkgTunLegacy(_ context.Context, name string) error {
 	return nil
 }
 
-func (f *fakeRouter) SetDescriptionLegacy(_ context.Context, name, d string) error {
+func (f *fakeRouter) SetDescription(_ context.Context, name, d string) error {
 	if err := f.cmd("set-description"); err != nil {
 		return err
 	}
@@ -79,7 +79,7 @@ func (f *fakeRouter) SetDescriptionLegacy(_ context.Context, name, d string) err
 	return nil
 }
 
-func (f *fakeRouter) SetSecurityLevelLegacy(_ context.Context, name, l string) error {
+func (f *fakeRouter) SetSecurityLevel(_ context.Context, name, l string) error {
 	if err := f.cmd("set-security-level"); err != nil {
 		return err
 	}
@@ -87,7 +87,7 @@ func (f *fakeRouter) SetSecurityLevelLegacy(_ context.Context, name, l string) e
 	return nil
 }
 
-func (f *fakeRouter) SetIPGlobalLegacy(_ context.Context, name string) error {
+func (f *fakeRouter) SetIPGlobal(_ context.Context, name string) error {
 	if err := f.cmd("ip-global"); err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (f *fakeRouter) SetIPGlobalLegacy(_ context.Context, name string) error {
 	return nil
 }
 
-func (f *fakeRouter) ClearIPGlobalLegacy(_ context.Context, name string) error {
+func (f *fakeRouter) ClearIPGlobal(_ context.Context, name string) error {
 	if err := f.cmd("clear-ip-global"); err != nil {
 		return err
 	}
@@ -103,7 +103,7 @@ func (f *fakeRouter) ClearIPGlobalLegacy(_ context.Context, name string) error {
 	return nil
 }
 
-func (f *fakeRouter) SetAddressLegacy(_ context.Context, name, addr, mask string) error {
+func (f *fakeRouter) SetAddress(_ context.Context, name, addr, mask string) error {
 	if err := f.cmd("set-address"); err != nil {
 		return err
 	}
@@ -111,7 +111,7 @@ func (f *fakeRouter) SetAddressLegacy(_ context.Context, name, addr, mask string
 	return nil
 }
 
-func (f *fakeRouter) ClearAddressLegacy(_ context.Context, name string) error {
+func (f *fakeRouter) ClearAddress(_ context.Context, name string) error {
 	if err := f.cmd("clear-address"); err != nil {
 		return err
 	}
@@ -119,7 +119,7 @@ func (f *fakeRouter) ClearAddressLegacy(_ context.Context, name string) error {
 	return nil
 }
 
-func (f *fakeRouter) SetMTULegacy(_ context.Context, name string, mtu int) error {
+func (f *fakeRouter) SetMTU(_ context.Context, name string, mtu int) error {
 	if err := f.cmd("set-mtu"); err != nil {
 		return err
 	}
@@ -127,7 +127,7 @@ func (f *fakeRouter) SetMTULegacy(_ context.Context, name string, mtu int) error
 	return nil
 }
 
-func (f *fakeRouter) InterfaceUpLegacy(_ context.Context, name string) error {
+func (f *fakeRouter) InterfaceUp(_ context.Context, name string) error {
 	if err := f.cmd("up"); err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func (f *fakeRouter) InterfaceUpLegacy(_ context.Context, name string) error {
 	return nil
 }
 
-func (f *fakeRouter) InterfaceDownLegacy(_ context.Context, name string) error {
+func (f *fakeRouter) InterfaceDown(_ context.Context, name string) error {
 	if err := f.cmd("down"); err != nil {
 		return err
 	}
@@ -151,7 +151,7 @@ func (f *fakeRouter) InterfaceDownLegacy(_ context.Context, name string) error {
 	return nil
 }
 
-func (f *fakeRouter) SetPermitAllACLLegacy(_ context.Context, name string) error {
+func (f *fakeRouter) SetPermitAllACL(_ context.Context, name string) error {
 	if err := f.cmd("acl"); err != nil {
 		return err
 	}
@@ -159,7 +159,7 @@ func (f *fakeRouter) SetPermitAllACLLegacy(_ context.Context, name string) error
 	return nil
 }
 
-func (f *fakeRouter) RemovePermitAllACLLegacy(_ context.Context, name string) error {
+func (f *fakeRouter) RemovePermitAllACL(_ context.Context, name string) error {
 	if err := f.cmd("acl-remove"); err != nil {
 		return err
 	}

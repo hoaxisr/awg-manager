@@ -223,7 +223,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 
 	// PUBLIC security-level (unlike fakeip's private): NDMS only offers public
 	// interfaces as access-policy exits, and the policy IS the steering here.
-	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevelLegacy(ctx, ndmsName, policyTunDescription, "public"); err != nil {
+	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, policyTunDescription, "public"); err != nil {
 		return fmt.Errorf("enable policy-tun: create opkgtun: %w", err)
 	}
 	// rbCtx: откат обязан доехать и когда Enable упал ИЗ-ЗА отмены ctx (клиент
@@ -249,34 +249,34 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// `ip global` — без него интерфейс не появляется в списке выходов политики
 	// (обратный 76f38fd7: fakeip его снял, потому что там steering идёт
 	// маршрутами, а не политикой).
-	if err = s.deps.OpkgTun.SetIPGlobalLegacy(ctx, ndmsName); err != nil {
+	if err = s.deps.OpkgTun.SetIPGlobal(ctx, ndmsName); err != nil {
 		return fmt.Errorf("enable policy-tun: ip global: %w", err)
 	}
 
 	// NDMS-native разрешение трафика в tun: permit-all access-list + binding.
 	// Без него firewall NDMS (isolate-private и т.п.) режет форвард в tun.
-	if err = s.deps.OpkgTun.SetPermitAllACLLegacy(ctx, ndmsName); err != nil {
+	if err = s.deps.OpkgTun.SetPermitAllACL(ctx, ndmsName); err != nil {
 		return fmt.Errorf("enable policy-tun: permit acl: %w", err)
 	}
 
-	if err = s.deps.OpkgTun.SetAddressLegacy(ctx, ndmsName, addr4, mask4); err != nil {
+	if err = s.deps.OpkgTun.SetAddress(ctx, ndmsName, addr4, mask4); err != nil {
 		return fmt.Errorf("enable policy-tun: set address: %w", err)
 	}
 	if addr6 != "" {
-		if err = s.deps.OpkgTun.SetIPv6AddressLegacy(ctx, ndmsName, addr6); err != nil {
+		if err = s.deps.OpkgTun.SetIPv6Address(ctx, ndmsName, addr6); err != nil {
 			return fmt.Errorf("enable policy-tun: set ipv6 address: %w", err)
 		}
 		// v6-разрешение — ПОСЛЕ адреса: у NDMS под v6 отдельное пространство
 		// списков, и v4-ACL выше его не покрывает. Без него дефолт клиентов
 		// припаркован на tun, а v6 в него режет firewall — уйти в обход некуда.
-		if err = s.deps.OpkgTun.SetPermitAllACLv6Legacy(ctx, ndmsName); err != nil {
+		if err = s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); err != nil {
 			return fmt.Errorf("enable policy-tun: permit acl v6: %w", err)
 		}
 	}
-	if err = s.deps.OpkgTun.SetMTULegacy(ctx, ndmsName, p.MTU); err != nil {
+	if err = s.deps.OpkgTun.SetMTU(ctx, ndmsName, p.MTU); err != nil {
 		return fmt.Errorf("enable policy-tun: set mtu: %w", err)
 	}
-	if err = s.deps.OpkgTun.InterfaceUpLegacy(ctx, ndmsName); err != nil {
+	if err = s.deps.OpkgTun.InterfaceUp(ctx, ndmsName); err != nil {
 		return fmt.Errorf("enable policy-tun: iface up: %w", err)
 	}
 
@@ -410,7 +410,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// The NDMS default route goes onto the tun only AFTER carrier — the same
 	// lesson as fakeip's pool routes: an NDMS route-table rebuild racing the
 	// gvisor attach kept the tun from settling.
-	if err = s.deps.DefaultRoute.SetDefaultRouteLegacy(ctx, ndmsName); err != nil {
+	if err = s.deps.DefaultRoute.SetDefaultRoute(ctx, ndmsName); err != nil {
 		return fmt.Errorf("enable policy-tun: set default route: %w", err)
 	}
 	// Жалобы на потерянный маршрут относились к ПРЕЖНЕМУ воплощению режима:
@@ -419,16 +419,16 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// советуем при #932), и полный re-provision из drift-heal.
 	s.policyTunRouteStrikes.Store(0)
 	push(func() {
-		if e := s.deps.DefaultRoute.RemoveDefaultRouteLegacy(rbCtx, ndmsName); e != nil {
+		if e := s.deps.DefaultRoute.RemoveDefaultRoute(rbCtx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-rollback", iface, "remove default route: "+e.Error())
 		}
 	})
 	if p.TunAddr6 != "" {
-		if err = s.deps.DefaultRoute.SetIPv6DefaultRouteLegacy(ctx, ndmsName); err != nil {
+		if err = s.deps.DefaultRoute.SetIPv6DefaultRoute(ctx, ndmsName); err != nil {
 			return fmt.Errorf("enable policy-tun: set ipv6 default route: %w", err)
 		}
 		push(func() {
-			if e := s.deps.DefaultRoute.RemoveIPv6DefaultRouteLegacy(rbCtx, ndmsName); e != nil {
+			if e := s.deps.DefaultRoute.RemoveIPv6DefaultRoute(rbCtx, ndmsName); e != nil {
 				s.appLog.Warn("policy-tun-rollback", iface, "remove ipv6 default route: "+e.Error())
 			}
 		})

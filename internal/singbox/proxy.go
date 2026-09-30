@@ -77,7 +77,8 @@ func (pm *ProxyManager) EnsureProxy(ctx context.Context, index, port int, descri
 		return ErrProxyComponentMissing
 	}
 	name := fmt.Sprintf("%s%d", proxyIfacePrefix, index)
-	return pm.commands.Proxies.CreateProxyLegacy(ctx, name, description, "127.0.0.1", port, true)
+	_, err := pm.commands.Proxies.CreateProxy(ctx, name, description, "127.0.0.1", port, true)
+	return err
 }
 
 // NextFreeIndex returns the lowest ProxyN index not occupied on the
@@ -122,14 +123,14 @@ func (pm *ProxyManager) RemoveProxy(ctx context.Context, index int) error {
 	// Прокси нет в NDMS — снимать нечего, и слать ничего нельзя: `interface
 	// ProxyN down` по отсутствующему имени NDMS СОЗДАЁТ запись, `no` тут же
 	// её сносит, а запоздалый хук ifcreated читает уже снятую — E «unable to
-	// find» в журнале NDMS (стенд 5.01.C.6, F546). Refresh свежий и по
-	// отсутствующему имени точечно не спрашивает. Ошибка чтения — «не
-	// знаем»: снимаем как раньше, чтобы не оставить сироту.
-	if rec, err := pm.queries.Interfaces.Refresh(ctx, name); err == nil && rec == nil {
-		return nil
+	// find» в журнале NDMS (стенд 5.01.C.6, F546). Список не прочитан — «не
+	// знаем»: ошибка без команд, запись владельца остаётся для повтора.
+	c, _, ok, err := pm.queries.Interfaces.Confirm(ctx, name)
+	if err != nil || !ok {
+		return err
 	}
-	_ = pm.commands.Proxies.ProxyDownLegacy(ctx, name) // ignore error — may be already down
-	return pm.commands.Proxies.DeleteProxyLegacy(ctx, name)
+	_ = pm.commands.Proxies.ProxyDown(ctx, c) // ignore error — may be already down
+	return pm.commands.Proxies.DeleteProxy(ctx, c)
 }
 
 // RemoveOrphanSingboxProxies удаляет ProxyN, ассоциированные с sing-box,
@@ -254,20 +255,37 @@ func nativeProxyKernelNames(proxies []proxyEntry, tunnelTags map[string]bool, ou
 // Creates missing Proxy for each tunnel and brings existing Proxy up if Down.
 // Removal of proxies for absent tunnels is the Operator's responsibility.
 func (pm *ProxyManager) SyncProxies(ctx context.Context, tunnels []TunnelInfo) error {
-	for _, t := range tunnels {
-		var idx int
-		if _, err := fmt.Sscanf(t.ProxyInterface, proxyIfacePrefix+"%d", &idx); err != nil {
+	if len(tunnels) == 0 {
+		return nil
+	}
+	names := make([]string, len(tunnels))
+	idxs := make([]int, len(tunnels))
+	for i, t := range tunnels {
+		if _, err := fmt.Sscanf(t.ProxyInterface, proxyIfacePrefix+"%d", &idxs[i]); err != nil {
 			return fmt.Errorf("bad proxy iface name %q: %w", t.ProxyInterface, err)
 		}
-		info, err := pm.queries.Interfaces.GetProxy(ctx, t.ProxyInterface)
-		if err != nil || !info.Exists {
-			if err := pm.EnsureProxy(ctx, idx, t.ListenPort, t.Tag); err != nil {
+		names[i] = t.ProxyInterface
+	}
+	// Один свежий список на всех (F546); не прочитан — ошибка без команд.
+	confirmed, err := pm.queries.Interfaces.ConfirmEach(ctx, names)
+	if err != nil {
+		return err
+	}
+	for i, t := range tunnels {
+		c, ok := confirmed[t.ProxyInterface]
+		if !ok {
+			if err := pm.EnsureProxy(ctx, idxs[i], t.ListenPort, t.Tag); err != nil {
 				return err
 			}
 			continue
 		}
+		// Состояние — из карты, которую только что положил ConfirmEach.
+		info, err := pm.queries.Interfaces.GetProxy(ctx, t.ProxyInterface)
+		if err != nil {
+			return err
+		}
 		if !info.Up {
-			if err := pm.commands.Proxies.ProxyUpLegacy(ctx, t.ProxyInterface); err != nil {
+			if err := pm.commands.Proxies.ProxyUp(ctx, c); err != nil {
 				return err
 			}
 		}

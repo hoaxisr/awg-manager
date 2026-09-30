@@ -18,12 +18,12 @@ type recordingOpkgTunProvisioner struct {
 	delErr  error
 }
 
-func (r *recordingOpkgTunProvisioner) DeleteOpkgTunLegacy(_ context.Context, name string) error {
+func (r *recordingOpkgTunProvisioner) DeleteOpkgTun(_ context.Context, name string) error {
 	r.deleted = append(r.deleted, name)
 	return r.delErr
 }
 
-func (r *recordingOpkgTunProvisioner) ClearAddressLegacy(_ context.Context, name string) error {
+func (r *recordingOpkgTunProvisioner) ClearAddress(_ context.Context, name string) error {
 	r.cleared = append(r.cleared, name)
 	return nil
 }

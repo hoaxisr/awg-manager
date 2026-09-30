@@ -149,7 +149,7 @@ func (r *PermitAbsent) Apply(ctx context.Context, s proxyrt.Step) error {
 	name := s.Args["name"]
 	switch s.Op {
 	case "remove-acl":
-		if err := r.cmds.RemovePermitAllACLLegacy(ctx, name); err != nil {
+		if err := r.cmds.RemovePermitAllACL(ctx, name); err != nil {
 			// Снятие best-effort по замыслу команды (acl.go: auto-delete мог уже
 			// каскадировать список после unbind). Если привязки больше нет —
 			// цель достигнута, отказ второй половины команды не считается.
@@ -160,7 +160,7 @@ func (r *PermitAbsent) Apply(ctx context.Context, s proxyrt.Step) error {
 		}
 		return nil
 	case "clear-ip-global":
-		return r.cmds.ClearIPGlobalLegacy(ctx, name)
+		return r.cmds.ClearIPGlobal(ctx, name)
 	default:
 		return fmt.Errorf("неизвестный шаг %q", s.Op)
 	}

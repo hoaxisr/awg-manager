@@ -17,7 +17,7 @@ type fakeOrphanNDMS struct {
 	err     error
 }
 
-func (f *fakeOrphanNDMS) DeleteOpkgTunLegacy(_ context.Context, name string) error {
+func (f *fakeOrphanNDMS) DeleteOpkgTun(_ context.Context, name string) error {
 	if f.err != nil {
 		return f.err
 	}

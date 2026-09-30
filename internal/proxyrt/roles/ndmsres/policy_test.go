@@ -64,7 +64,7 @@ func (f *fakePolicies) List(context.Context) ([]ndms.Policy, error) {
 	return f.list, f.listErr
 }
 
-func (f *fakePolicies) PermitInterfaceLegacy(_ context.Context, name, iface string, order int) error {
+func (f *fakePolicies) PermitInterface(_ context.Context, name, iface string, order int) error {
 	f.permits = append(f.permits, name+"/"+iface+"/"+strconv.Itoa(order))
 	return nil
 }

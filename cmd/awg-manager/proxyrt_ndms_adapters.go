@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
-	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
@@ -27,18 +26,18 @@ type policyLister interface {
 	List(ctx context.Context) ([]ndms.Policy, error)
 }
 type defaultRouteSetter interface {
-	SetDefaultRouteLegacy(ctx context.Context, name string) error
+	SetDefaultRoute(ctx context.Context, iface query.Confirmed) error
 }
 type systemNameResolver interface {
 	ResolveSystemName(ctx context.Context, ndmsName string) string
 }
 
-// proxyNDMSCommands — ndmsres.Commands поверх InterfaceCommands (методы
-// совпадают по имени и сигнатуре — сверено) плюс кандидатура default route из
-// RouteCommands. Кандидатура пишется БЕЗ nwg-гарда старого мира: запись —
-// кандидатура, не захват (доказано железом, стендовый гейт волны; Р7).
+// proxyNDMSCommands — ndmsres.Commands поверх confirmingOpkgTun (подтверждение
+// на каждый вызов, F546) плюс кандидатура default route из RouteCommands.
+// Кандидатура пишется БЕЗ nwg-гарда старого мира: запись — кандидатура, не
+// захват (доказано железом, стендовый гейт волны; Р7).
 type proxyNDMSCommands struct {
-	*ndmscommand.InterfaceCommands
+	confirmingOpkgTun
 	// routes — узкий интерфейс, а не *ndmscommand.RouteCommands: у
 	// RemoveDefaultRoute та же сигнатура, и подмена одного на другое собралась
 	// бы молча. Фейк в тесте ловит и метод, и аргумент.
@@ -46,10 +45,8 @@ type proxyNDMSCommands struct {
 }
 
 func (c proxyNDMSCommands) EnsureDefaultRouteCandidacy(ctx context.Context, name string) error {
-	return c.routes.SetDefaultRouteLegacy(ctx, name)
+	return confirmSet(ctx, c.ifaces, name, func(ic query.Confirmed) error { return c.routes.SetDefaultRoute(ctx, ic) })
 }
-
-var _ ndmsres.Commands = proxyNDMSCommands{}
 
 // proxyNDMSQuery — ndmsres.Query. Факты интерфейса — из списка (отсутствие в
 // списке = подтверждённое «нет», без неоднозначной ошибки Get); ip global /
@@ -193,7 +190,7 @@ type proxySweepRemover struct {
 }
 
 func (r proxySweepRemover) Remove(ctx context.Context, res proxyrt.OwnedResource) error {
-	return r.cmds.DeleteOpkgTunLegacy(ctx, res.Name)
+	return r.cmds.DeleteOpkgTun(ctx, res.Name)
 }
 
 // livePermitsFor — LivePermits посева: политики, где ndmsIface разрешён СЕЙЧАС.

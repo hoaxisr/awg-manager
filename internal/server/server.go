@@ -131,6 +131,7 @@ type Server struct {
 	singboxSubMembersFn        func() []diagnostics.SingboxSubMember
 	orphanIfacesFn             func(ctx context.Context) ([]external.OrphanIface, error)
 	orphanExclusiveFn          func(ctx context.Context) ([]external.OrphanIface, error)
+	orphanNDMS                 api.OrphanIfaceNDMS
 	foreignIfaces              api.ForeignIfaceMarker
 	singboxConfigPreviewFn     func() (string, error)
 	obfuscatorRelayChanged     func()
@@ -230,6 +231,8 @@ type Deps struct {
 	// OrphanIfacesExclusive — то же под семафором выбора, для перепроверки
 	// перед сносом (см. opkgtun.Pool.OrphansExclusive).
 	OrphanIfacesExclusive func(ctx context.Context) ([]external.OrphanIface, error)
+	// OrphanNDMS — снятие записи NDMS для той же ручки. Nil выключает ручку.
+	OrphanNDMS api.OrphanIfaceNDMS
 
 	// ForeignIfaces — отметка «Сторонний интерфейс» (issue #935). Nil
 	// выключает ручки /api/interfaces/foreign/* целиком.
@@ -302,6 +305,7 @@ func New(cfg Config, deps Deps) *Server {
 		singboxSubMembersFn:    deps.SingboxSubMembers,
 		orphanIfacesFn:         deps.OrphanIfaces,
 		orphanExclusiveFn:      deps.OrphanIfacesExclusive,
+		orphanNDMS:             deps.OrphanNDMS,
 		foreignIfaces:          deps.ForeignIfaces,
 		singboxConfigPreviewFn: deps.SingboxConfigPreview,
 		obfuscatorRelayChanged: deps.ObfuscatorRelayChanged,

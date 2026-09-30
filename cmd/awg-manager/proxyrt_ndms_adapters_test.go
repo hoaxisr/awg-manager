@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instance"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/ndmsres"
@@ -45,8 +46,8 @@ type fakeDefaultRoute struct {
 	err   error
 }
 
-func (f *fakeDefaultRoute) SetDefaultRouteLegacy(_ context.Context, name string) error {
-	f.names = append(f.names, name)
+func (f *fakeDefaultRoute) SetDefaultRoute(_ context.Context, iface query.Confirmed) error {
+	f.names = append(f.names, iface.Name())
 	return f.err
 }
 
@@ -58,7 +59,7 @@ type fakeSweepCommands struct {
 	err     error
 }
 
-func (f *fakeSweepCommands) DeleteOpkgTunLegacy(_ context.Context, name string) error {
+func (f *fakeSweepCommands) DeleteOpkgTun(_ context.Context, name string) error {
 	f.deleted = append(f.deleted, name)
 	return f.err
 }
@@ -229,15 +230,16 @@ func TestProxySweepScannerPrefixAndLabel(t *testing.T) {
 // Кандидатура пишется ИМЕННО SetDefaultRoute и ИМЕННО именем интерфейса:
 // у RemoveDefaultRoute та же сигнатура, подмена собралась бы молча.
 func TestEnsureDefaultRouteCandidacyArgs(t *testing.T) {
+	opkg := newConfirmAdapters(t, query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun18", Type: "OpkgTun"})).opkg
 	fr := &fakeDefaultRoute{}
-	if err := (proxyNDMSCommands{routes: fr}).EnsureDefaultRouteCandidacy(context.Background(), "OpkgTun18"); err != nil {
+	if err := (proxyNDMSCommands{confirmingOpkgTun: opkg, routes: fr}).EnsureDefaultRouteCandidacy(context.Background(), "OpkgTun18"); err != nil {
 		t.Fatalf("%v", err)
 	}
 	if !reflect.DeepEqual(fr.names, []string{"OpkgTun18"}) {
 		t.Fatalf("SetDefaultRoute позван с %v", fr.names)
 	}
 	fr = &fakeDefaultRoute{err: errRouter}
-	if err := (proxyNDMSCommands{routes: fr}).EnsureDefaultRouteCandidacy(context.Background(), "OpkgTun18"); !errors.Is(err, errRouter) {
+	if err := (proxyNDMSCommands{confirmingOpkgTun: opkg, routes: fr}).EnsureDefaultRouteCandidacy(context.Background(), "OpkgTun18"); !errors.Is(err, errRouter) {
 		t.Fatalf("ошибка записи кандидатуры обязана дойти: %v", err)
 	}
 }

@@ -1,0 +1,207 @@
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/hoaxisr/awg-manager/internal/api"
+	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/proxyrt/roles/ndmsres"
+	"github.com/hoaxisr/awg-manager/internal/singbox/router"
+)
+
+// Адаптеры строковых провайдеров (router, ndmsres, api) к командам NDMS по
+// query.Confirmed: подтверждение свежим списком на КАЖДЫЙ вызов (F546).
+// Правило одно (решение 4): список не прочитан — ошибка, команды нет;
+// интерфейса нет — настройка отвечает ошибкой, снос/опускание — nil (снимать
+// нечего, а `interface X …` по отсутствующему X создаёт X или пишет E).
+
+var (
+	_ router.OpkgTunProvisioner   = confirmingOpkgTun{}
+	_ ndmsres.Commands            = proxyNDMSCommands{}
+	_ router.DefaultRouteProvider = confirmingDefaultRoute{}
+	_ router.SegmentNATProvider   = confirmingSegmentNAT{}
+	_ ndmsres.Permitter           = confirmingPermitter{}
+	_ api.OrphanIfaceNDMS         = confirmingOpkgTun{}
+)
+
+// errIfaceAbsent — текст отказа настройки по отсутствующему интерфейсу.
+// router.segmentGone узнаёт его по «нет в NDMS»: исчезнувший сегмент — дрейф.
+func errIfaceAbsent(name string) error {
+	return fmt.Errorf("интерфейса %s нет в NDMS", name)
+}
+
+// confirmSet — настройка существующего: нет — ошибка.
+func confirmSet(ctx context.Context, ifaces *ndmsquery.InterfaceStore, name string, do func(ndmsquery.Confirmed) error) error {
+	c, _, ok, err := ifaces.Confirm(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errIfaceAbsent(name)
+	}
+	return do(c)
+}
+
+// confirmTeardown — снос/опускание: нет — nil, снимать нечего.
+func confirmTeardown(ctx context.Context, ifaces *ndmsquery.InterfaceStore, name string, do func(ndmsquery.Confirmed) error) error {
+	c, _, ok, err := ifaces.Confirm(ctx, name)
+	if err != nil || !ok {
+		return err
+	}
+	return do(c)
+}
+
+// confirmingOpkgTun — router.OpkgTunProvisioner, командная часть
+// ndmsres.Commands и api.OrphanIfaceNDMS (наборы методов пересекаются,
+// правило одно).
+type confirmingOpkgTun struct {
+	cmds   *ndmscommand.InterfaceCommands
+	ifaces *ndmsquery.InterfaceStore
+}
+
+func (a confirmingOpkgTun) CreateOpkgTunWithSecurityLevel(ctx context.Context, name, description, securityLevel string) error {
+	_, err := a.cmds.CreateOpkgTunWithSecurityLevel(ctx, name, description, securityLevel)
+	return err
+}
+
+func (a confirmingOpkgTun) DeleteOpkgTun(ctx context.Context, name string) error {
+	return confirmTeardown(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.DeleteOpkgTun(ctx, c) })
+}
+
+func (a confirmingOpkgTun) SetDescription(ctx context.Context, name, description string) error {
+	return confirmSet(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.SetDescription(ctx, c, description) })
+}
+
+func (a confirmingOpkgTun) SetSecurityLevel(ctx context.Context, name, level string) error {
+	return confirmSet(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.SetSecurityLevel(ctx, c, level) })
+}
+
+func (a confirmingOpkgTun) SetIPGlobal(ctx context.Context, name string) error {
+	return confirmSet(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.SetIPGlobal(ctx, c) })
+}
+
+func (a confirmingOpkgTun) ClearIPGlobal(ctx context.Context, name string) error {
+	return confirmTeardown(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.ClearIPGlobal(ctx, c) })
+}
+
+func (a confirmingOpkgTun) SetAddress(ctx context.Context, name, address, mask string) error {
+	return confirmSet(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.SetAddress(ctx, c, address, mask) })
+}
+
+func (a confirmingOpkgTun) ClearAddress(ctx context.Context, name string) error {
+	return confirmTeardown(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.ClearAddress(ctx, c) })
+}
+
+func (a confirmingOpkgTun) SetIPv6Address(ctx context.Context, name, address string) error {
+	return confirmSet(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.SetIPv6Address(ctx, c, address) })
+}
+
+func (a confirmingOpkgTun) ClearIPv6Address(ctx context.Context, name string) error {
+	return confirmTeardown(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.ClearIPv6Address(ctx, c) })
+}
+
+func (a confirmingOpkgTun) SetMTU(ctx context.Context, name string, mtu int) error {
+	return confirmSet(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.SetMTU(ctx, c, mtu) })
+}
+
+func (a confirmingOpkgTun) InterfaceUp(ctx context.Context, name string) error {
+	return confirmSet(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.InterfaceUp(ctx, c) })
+}
+
+func (a confirmingOpkgTun) InterfaceDown(ctx context.Context, name string) error {
+	return confirmTeardown(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.InterfaceDown(ctx, c) })
+}
+
+func (a confirmingOpkgTun) SetPermitAllACL(ctx context.Context, name string) error {
+	return confirmSet(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.SetPermitAllACL(ctx, c) })
+}
+
+func (a confirmingOpkgTun) RemovePermitAllACL(ctx context.Context, name string) error {
+	return confirmTeardown(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.RemovePermitAllACL(ctx, c) })
+}
+
+func (a confirmingOpkgTun) SetPermitAllACLv6(ctx context.Context, name string) error {
+	return confirmSet(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.SetPermitAllACLv6(ctx, c) })
+}
+
+func (a confirmingOpkgTun) RemovePermitAllACLv6(ctx context.Context, name string) error {
+	return confirmTeardown(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.RemovePermitAllACLv6(ctx, c) })
+}
+
+// confirmingDefaultRoute — router.DefaultRouteProvider.
+type confirmingDefaultRoute struct {
+	routes *ndmscommand.RouteCommands
+	ifaces *ndmsquery.InterfaceStore
+}
+
+func (a confirmingDefaultRoute) SetDefaultRoute(ctx context.Context, name string) error {
+	return confirmSet(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.routes.SetDefaultRoute(ctx, c) })
+}
+
+func (a confirmingDefaultRoute) RemoveDefaultRoute(ctx context.Context, name string) error {
+	return confirmTeardown(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.routes.RemoveDefaultRoute(ctx, c) })
+}
+
+func (a confirmingDefaultRoute) SetIPv6DefaultRoute(ctx context.Context, name string) error {
+	return confirmSet(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.routes.SetIPv6DefaultRoute(ctx, c) })
+}
+
+func (a confirmingDefaultRoute) RemoveIPv6DefaultRoute(ctx context.Context, name string) error {
+	return confirmTeardown(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.routes.RemoveIPv6DefaultRoute(ctx, c) })
+}
+
+// confirmingSegmentNAT — router.SegmentNATProvider. Static NAT ссылается на
+// два интерфейса — оба подтверждаются одним списком.
+type confirmingSegmentNAT struct {
+	nat    *ndmscommand.NATCommands
+	ifaces *ndmsquery.InterfaceStore
+}
+
+func (a confirmingSegmentNAT) SetSegmentNAT(ctx context.Context, seg string) error {
+	return confirmSet(ctx, a.ifaces, seg, func(c ndmsquery.Confirmed) error { return a.nat.SetSegmentNAT(ctx, c) })
+}
+
+func (a confirmingSegmentNAT) RemoveSegmentNAT(ctx context.Context, seg string) error {
+	return confirmTeardown(ctx, a.ifaces, seg, func(c ndmsquery.Confirmed) error { return a.nat.RemoveSegmentNAT(ctx, c) })
+}
+
+func (a confirmingSegmentNAT) SetStaticNAT(ctx context.Context, seg, wan string) error {
+	m, err := a.ifaces.ConfirmEach(ctx, []string{seg, wan})
+	if err != nil {
+		return err
+	}
+	s, ok := m[seg]
+	if !ok {
+		return errIfaceAbsent(seg)
+	}
+	w, ok := m[wan]
+	if !ok {
+		return errIfaceAbsent(wan)
+	}
+	return a.nat.SetStaticNAT(ctx, s, w)
+}
+
+func (a confirmingSegmentNAT) RemoveStaticNAT(ctx context.Context, seg, wan string) error {
+	m, err := a.ifaces.ConfirmEach(ctx, []string{seg, wan})
+	if err != nil {
+		return err
+	}
+	s, okS := m[seg]
+	w, okW := m[wan]
+	if !okS || !okW {
+		return nil
+	}
+	return a.nat.RemoveStaticNAT(ctx, s, w)
+}
+
+// confirmingPermitter — ndmsres.Permitter: разрешение в политике — настройка.
+type confirmingPermitter struct {
+	policies *ndmscommand.PolicyCommands
+	ifaces   *ndmsquery.InterfaceStore
+}
+
+func (a confirmingPermitter) PermitInterface(ctx context.Context, name, iface string, order int) error {
+	return confirmSet(ctx, a.ifaces, iface, func(c ndmsquery.Confirmed) error { return a.policies.PermitInterface(ctx, name, c, order) })
+}

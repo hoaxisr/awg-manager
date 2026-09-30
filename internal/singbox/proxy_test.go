@@ -2,9 +2,16 @@ package singbox
 
 import (
 	"context"
+	"errors"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 )
 
 // proxyIsOurs decides whether an NDMS ProxyN belongs to awg-manager's sing-box
@@ -100,5 +107,111 @@ func TestProxyManager_NextFreeIndex_SkipsForeignProxyAndReserved(t *testing.T) {
 	}
 	if idx != 3 {
 		t.Fatalf("NextFreeIndex = %d, want 3 (0,1 заняты NDMS, 2 — reserved)", idx)
+	}
+}
+
+// oracleProxyManager — ProxyManager на оракуле: список, чтения и команды — в f.
+func oracleProxyManager(f *query.FakeNDMS) *ProxyManager {
+	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	c := command.NewCommands(command.Deps{
+		Poster:  f,
+		Queries: q,
+		Save:    command.NewSaveCoordinator(f, nil, time.Hour, time.Hour, 0, q.RunningConfig),
+		IsOS5:   func() bool { return true },
+	})
+	return NewProxyManager(q, c)
+}
+
+// withProxyComponent — прошивка с компонентом proxy (EnsureProxy без него
+// отказывает до NDMS).
+func withProxyComponent(t *testing.T) {
+	t.Helper()
+	ndmsinfo.Reset()
+	t.Cleanup(ndmsinfo.Reset)
+	store := query.NewSystemInfoStore(nil, nil)
+	store.Adopt(ndms.Version{Components: []string{"proxy"}}, "test")
+	if err := ndmsinfo.Init(context.Background(), store, time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ProxyN нет — ни одной команды (`interface ProxyN down` создал бы запись), E
+// и фантомов нет; есть — снимается; список не прочитан — ошибка без команд.
+func TestRemoveProxy_AbsentNoCommands(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Proxy0", Type: "Proxy"})
+	pm := oracleProxyManager(f)
+	if err := pm.RemoveProxy(context.Background(), 5); err != nil {
+		t.Fatalf("RemoveProxy(5): %v", err)
+	}
+	if len(f.Posts) != 0 || f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("posts=%v E=%d фантомов=%d", f.Posts, f.E, f.Phantoms)
+	}
+
+	if err := pm.RemoveProxy(context.Background(), 0); err != nil || f.Has("Proxy0") {
+		t.Fatalf("Proxy0 не снят: err=%v posts=%v", err, f.Posts)
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d фантомов=%d", f.E, f.Phantoms)
+	}
+
+	f = query.NewFakeNDMS(ndms.Interface{ID: "Proxy0", Type: "Proxy"})
+	pm = oracleProxyManager(f)
+	f.FailList(errors.New("RCI не ответил"))
+	if err := pm.RemoveProxy(context.Background(), 0); err == nil || len(f.Posts) != 0 {
+		t.Fatalf("сбой списка: err=%v posts=%v", err, f.Posts)
+	}
+}
+
+// Один список на весь набор: Proxy0 поднят — ничего, Proxy1 опущен — up по
+// подтверждённому, Proxy2 нет — создаётся (его подтверждение после создания —
+// второе и последнее чтение списка).
+func TestSyncProxies_OneListForAll(t *testing.T) {
+	withProxyComponent(t)
+	f := query.NewFakeNDMS(
+		ndms.Interface{ID: "Proxy0", Type: "Proxy", State: "up"},
+		ndms.Interface{ID: "Proxy1", Type: "Proxy", State: "down"},
+	)
+	f.ExpectCreate("Proxy2")
+	pm := oracleProxyManager(f)
+
+	err := pm.SyncProxies(context.Background(), []TunnelInfo{
+		{Tag: "a", ListenPort: 1080, ProxyInterface: "Proxy0"},
+		{Tag: "b", ListenPort: 1081, ProxyInterface: "Proxy1"},
+		{Tag: "c", ListenPort: 1082, ProxyInterface: "Proxy2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := f.ListCalls(); n != 2 {
+		t.Fatalf("чтений списка %d, want 2 (один на набор + подтверждение созданного)", n)
+	}
+	if !slices.Equal(f.Created, []string{"Proxy2"}) {
+		t.Fatalf("created=%v", f.Created)
+	}
+	for _, p := range f.Posts {
+		if strings.Contains(p, "Proxy0") {
+			t.Fatalf("команда по поднятому Proxy0: %s", p)
+		}
+	}
+	if !slices.ContainsFunc(f.Posts, func(p string) bool { return strings.Contains(p, `"Proxy1":{"up":true}`) }) {
+		t.Fatalf("Proxy1 не поднят: %v", f.Posts)
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d фантомов=%d posts=%v", f.E, f.Phantoms, f.Posts)
+	}
+}
+
+// Список не прочитан — ошибка без команд: ни создания «на всякий случай», ни up.
+func TestSyncProxies_ListErrorNoCommands(t *testing.T) {
+	withProxyComponent(t)
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Proxy1", Type: "Proxy", State: "down"})
+	pm := oracleProxyManager(f)
+	f.FailList(errors.New("RCI не ответил"))
+	err := pm.SyncProxies(context.Background(), []TunnelInfo{
+		{Tag: "b", ListenPort: 1081, ProxyInterface: "Proxy1"},
+		{Tag: "c", ListenPort: 1082, ProxyInterface: "Proxy2"},
+	})
+	if err == nil || len(f.Posts) != 0 {
+		t.Fatalf("err=%v posts=%v", err, f.Posts)
 	}
 }

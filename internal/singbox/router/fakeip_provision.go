@@ -26,28 +26,28 @@ type StaticRouteSpec struct {
 
 // OpkgTunProvisioner manages the fakeip-tun kernel interface lifecycle via NDMS.
 type OpkgTunProvisioner interface {
-	CreateOpkgTunWithSecurityLevelLegacy(ctx context.Context, name, description, securityLevel string) error
-	SetIPGlobalLegacy(ctx context.Context, name string) error
-	DeleteOpkgTunLegacy(ctx context.Context, name string) error
-	SetAddressLegacy(ctx context.Context, name, address, mask string) error
-	ClearAddressLegacy(ctx context.Context, name string) error
-	SetIPv6AddressLegacy(ctx context.Context, name, address string) error
-	ClearIPv6AddressLegacy(ctx context.Context, name string) error
-	SetMTULegacy(ctx context.Context, name string, mtu int) error
-	InterfaceUpLegacy(ctx context.Context, name string) error
-	InterfaceDownLegacy(ctx context.Context, name string) error
+	CreateOpkgTunWithSecurityLevel(ctx context.Context, name, description, securityLevel string) error
+	SetIPGlobal(ctx context.Context, name string) error
+	DeleteOpkgTun(ctx context.Context, name string) error
+	SetAddress(ctx context.Context, name, address, mask string) error
+	ClearAddress(ctx context.Context, name string) error
+	SetIPv6Address(ctx context.Context, name, address string) error
+	ClearIPv6Address(ctx context.Context, name string) error
+	SetMTU(ctx context.Context, name string, mtu int) error
+	InterfaceUp(ctx context.Context, name string) error
+	InterfaceDown(ctx context.Context, name string) error
 	// SetPermitAllACL / RemovePermitAllACL — NDMS-native разрешение трафика в
 	// интерфейс: permit-all access-list `_WEBADMIN_<name>` + `ip access-group
 	// … in` + auto-delete (как галка доступа в веб-морде). Без него firewall
 	// NDMS (isolate-private и т.п.) режет LAN→tun форвард и DNS на tun-адрес.
-	SetPermitAllACLLegacy(ctx context.Context, name string) error
-	RemovePermitAllACLLegacy(ctx context.Context, name string) error
+	SetPermitAllACL(ctx context.Context, name string) error
+	RemovePermitAllACL(ctx context.Context, name string) error
 	// SetPermitAllACLv6 / RemovePermitAllACLv6 — то же для IPv6: у NDMS под v6
 	// ОТДЕЛЬНОЕ пространство списков (`ipv6 access-list` + `ipv6 access-group`),
 	// и v4-разрешение его не покрывает. Ставится только когда у интерфейса есть
 	// v6-адрес — на интерфейсе без v6 разрешать нечего.
-	SetPermitAllACLv6Legacy(ctx context.Context, name string) error
-	RemovePermitAllACLv6Legacy(ctx context.Context, name string) error
+	SetPermitAllACLv6(ctx context.Context, name string) error
+	RemovePermitAllACLv6(ctx context.Context, name string) error
 }
 
 // StaticRouteProvider manages NDMS auto static routes for the fakeip pool + reject route.
@@ -59,19 +59,19 @@ type StaticRouteProvider interface {
 // DefaultRouteProvider manages the NDMS default route (v4 + v6) — policy-tun
 // парковка дефолта на tun-интерфейс и снятие при выключении.
 type DefaultRouteProvider interface {
-	SetDefaultRouteLegacy(ctx context.Context, name string) error
-	RemoveDefaultRouteLegacy(ctx context.Context, name string) error
-	SetIPv6DefaultRouteLegacy(ctx context.Context, name string) error
-	RemoveIPv6DefaultRouteLegacy(ctx context.Context, name string) error
+	SetDefaultRoute(ctx context.Context, name string) error
+	RemoveDefaultRoute(ctx context.Context, name string) error
+	SetIPv6DefaultRoute(ctx context.Context, name string) error
+	RemoveIPv6DefaultRoute(ctx context.Context, name string) error
 }
 
 // SegmentNATProvider manages segment NAT (`ip nat`) и Static NAT (`ip static`)
 // для policy-tun сегментов.
 type SegmentNATProvider interface {
-	SetSegmentNATLegacy(ctx context.Context, seg string) error
-	RemoveSegmentNATLegacy(ctx context.Context, seg string) error
-	SetStaticNATLegacy(ctx context.Context, seg, wan string) error
-	RemoveStaticNATLegacy(ctx context.Context, seg, wan string) error
+	SetSegmentNAT(ctx context.Context, seg string) error
+	RemoveSegmentNAT(ctx context.Context, seg string) error
+	SetStaticNAT(ctx context.Context, seg, wan string) error
+	RemoveStaticNAT(ctx context.Context, seg, wan string) error
 }
 
 // RunningConfigReader читает строки /show/running-config. TTL-кэша 60 мин

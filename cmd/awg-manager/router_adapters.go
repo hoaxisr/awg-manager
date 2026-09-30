@@ -179,18 +179,11 @@ func (a *routerIngressResolverAdapter) Resolve(ctx context.Context, ref string) 
 	return a.store.ResolveSystemName(ctx, strings.TrimPrefix(ref, prefix))
 }
 
-// Compile-time satisfaction for the directly-wired fakeip provisioner:
-// *InterfaceCommands implements the router interface structurally, so it's
-// injected without an adapter. This assertion surfaces any ndms
-// method-signature drift at this declaration line.
-var _ router.OpkgTunProvisioner = (*ndmscommand.InterfaceCommands)(nil)
-
-// Compile-time satisfaction for the directly-wired policy-tun deps: все три
-// реализуют router-интерфейсы структурно, без адаптера.
+// Compile-time satisfaction for the directly-wired policy-tun deps: оба
+// реализуют router-интерфейсы структурно, без адаптера. OpkgTun, DefaultRoute
+// и SegmentNAT идут через адаптеры подтверждения (ndms_confirm_adapters.go).
 var (
-	_ router.DefaultRouteProvider = (*ndmscommand.RouteCommands)(nil)
-	_ router.SegmentNATProvider   = (*ndmscommand.NATCommands)(nil)
-	_ router.RunningConfigReader  = (*ndmsquery.RunningConfigStore)(nil)
+	_ router.RunningConfigReader = (*ndmsquery.RunningConfigStore)(nil)
 	// WAN-цель static-NAT в source-preserve — интерфейс дефолтного маршрута.
 	_ router.DefaultGatewayResolver = (*ndmsquery.RouteStore)(nil)
 )
@@ -218,14 +211,19 @@ var _ router.StaticRouteProvider = (*routerStaticRouteAdapter)(nil)
 // routerStaticRouteAdapter translates router.StaticRouteSpec (router-local
 // mirror) into ndmscommand.StaticRouteSpec field-for-field. The router keeps
 // its own spec to stay decoupled from concrete ndms command types (DIP), so
-// it's duplicated and bridged here.
-type routerStaticRouteAdapter struct{ routes *ndmscommand.RouteCommands }
+// it's duplicated and bridged here. Интерфейс подтверждается свежим списком
+// (F546): постановка на отсутствующий — ошибка, снятие — nil.
+type routerStaticRouteAdapter struct {
+	routes *ndmscommand.RouteCommands
+	ifaces *ndmsquery.InterfaceStore
+}
 
 // toNDMSRoute translates the router-local StaticRouteSpec mirror into the
-// concrete ndmscommand.StaticRouteSpec field-for-field (including V6).
-func toNDMSRoute(r router.StaticRouteSpec) ndmscommand.StaticRouteSpecLegacy {
-	return ndmscommand.StaticRouteSpecLegacy{
-		Interface: r.Interface,
+// concrete ndmscommand.StaticRouteSpec field-for-field (including V6);
+// Interface — подтверждённый iface с именем r.Interface.
+func toNDMSRoute(r router.StaticRouteSpec, iface ndmsquery.Confirmed) ndmscommand.StaticRouteSpec {
+	return ndmscommand.StaticRouteSpec{
+		Interface: iface,
 		Host:      r.Host,
 		Network:   r.Network,
 		Mask:      r.Mask,
@@ -236,11 +234,11 @@ func toNDMSRoute(r router.StaticRouteSpec) ndmscommand.StaticRouteSpecLegacy {
 }
 
 func (a *routerStaticRouteAdapter) AddStaticRoute(ctx context.Context, r router.StaticRouteSpec) error {
-	return a.routes.AddStaticRouteLegacy(ctx, toNDMSRoute(r))
+	return confirmSet(ctx, a.ifaces, r.Interface, func(c ndmsquery.Confirmed) error { return a.routes.AddStaticRoute(ctx, toNDMSRoute(r, c)) })
 }
 
 func (a *routerStaticRouteAdapter) RemoveStaticRoute(ctx context.Context, r router.StaticRouteSpec) error {
-	return a.routes.RemoveStaticRouteLegacy(ctx, toNDMSRoute(r))
+	return confirmTeardown(ctx, a.ifaces, r.Interface, func(c ndmsquery.Confirmed) error { return a.routes.RemoveStaticRoute(ctx, toNDMSRoute(r, c)) })
 }
 
 var _ router.OpkgTunIndexLister = (*routerOpkgTunIndexAdapter)(nil)

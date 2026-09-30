@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/routing"
@@ -14,22 +15,32 @@ import (
 )
 
 // Два зеркальных struct'а обязаны совпадать по именам и типам полей — новое поле в
-// одном из них молча не переносится toNDMSRoute.
+// одном из них молча не переносится toNDMSRoute. Interface — исключение по типу:
+// у router имя, у ndms подтверждение (F546).
 func TestToNDMSRoute_FieldInventoryMirrors(t *testing.T) {
-	src, dst := reflect.TypeOf(router.StaticRouteSpec{}), reflect.TypeOf(ndmscommand.StaticRouteSpecLegacy{})
+	src, dst := reflect.TypeOf(router.StaticRouteSpec{}), reflect.TypeOf(ndmscommand.StaticRouteSpec{})
 	if src.NumField() != dst.NumField() {
 		t.Fatalf("router=%d полей, ndms=%d", src.NumField(), dst.NumField())
 	}
 	for i := 0; i < src.NumField(); i++ {
 		f := src.Field(i)
 		d, ok := dst.FieldByName(f.Name)
-		if !ok || d.Type != f.Type {
+		if f.Name == "Interface" {
+			ok = ok && d.Type == reflect.TypeOf(ndmsquery.Confirmed{})
+		} else {
+			ok = ok && d.Type == f.Type
+		}
+		if !ok {
 			t.Errorf("поле %s: нет зеркала или тип %v ≠ %v", f.Name, f.Type, d.Type)
 		}
 	}
+	c, _, _, err := ndmsquery.NewInterfaceStore(ndmsquery.NewFakeNDMS(ndms.Interface{ID: "OpkgTun3", Type: "OpkgTun"}), ndmsquery.NopLogger()).Confirm(context.Background(), "OpkgTun3")
+	if err != nil {
+		t.Fatal(err)
+	}
 	in := router.StaticRouteSpec{Interface: "OpkgTun3", Host: "10.1.1.1", Network: "10.2.0.0", Mask: "255.255.0.0", Reject: true, Comment: "awgm:test", V6: true}
-	got := toNDMSRoute(in)
-	want := ndmscommand.StaticRouteSpecLegacy{Interface: "OpkgTun3", Host: "10.1.1.1", Network: "10.2.0.0", Mask: "255.255.0.0", Reject: true, Comment: "awgm:test", V6: true}
+	got := toNDMSRoute(in, c)
+	want := ndmscommand.StaticRouteSpec{Interface: c, Host: "10.1.1.1", Network: "10.2.0.0", Mask: "255.255.0.0", Reject: true, Comment: "awgm:test", V6: true}
 	if got != want {
 		t.Fatalf("toNDMSRoute = %+v, want %+v", got, want)
 	}

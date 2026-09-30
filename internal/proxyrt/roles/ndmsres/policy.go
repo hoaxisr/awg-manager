@@ -100,11 +100,11 @@ func (r *PolicyExit) Plan(obs proxyrt.Observation) []proxyrt.Step {
 func (r *PolicyExit) Apply(ctx context.Context, s proxyrt.Step) error {
 	switch s.Op {
 	case "set-security-level":
-		return r.cmds.SetSecurityLevelLegacy(ctx, r.d.Name, r.d.SecurityLevel)
+		return r.cmds.SetSecurityLevel(ctx, r.d.Name, r.d.SecurityLevel)
 	case "ip-global":
-		return r.cmds.SetIPGlobalLegacy(ctx, r.d.Name)
+		return r.cmds.SetIPGlobal(ctx, r.d.Name)
 	case "acl":
-		return r.cmds.SetPermitAllACLLegacy(ctx, r.d.Name)
+		return r.cmds.SetPermitAllACL(ctx, r.d.Name)
 	case "default-candidacy":
 		return r.cmds.EnsureDefaultRouteCandidacy(ctx, r.d.Name)
 	default:
@@ -121,7 +121,7 @@ type PolicyLister interface {
 
 // Permitter — срез command.PolicyCommands.
 type Permitter interface {
-	PermitInterfaceLegacy(ctx context.Context, name, iface string, order int) error
+	PermitInterface(ctx context.Context, name, iface string, order int) error
 }
 
 // Membership — ресурс policy_membership: намерение членства с единственным
@@ -247,7 +247,7 @@ func (m *Membership) Apply(ctx context.Context, s proxyrt.Step) error {
 		if err != nil {
 			return err
 		}
-		return m.permit.PermitInterfaceLegacy(ctx, s.Args["policy"], m.iface, order)
+		return m.permit.PermitInterface(ctx, s.Args["policy"], m.iface, order)
 	default:
 		return fmt.Errorf("неизвестный шаг %q", s.Op)
 	}

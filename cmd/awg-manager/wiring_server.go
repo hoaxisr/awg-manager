@@ -138,6 +138,7 @@ func (a *app) setupServer() {
 			},
 			OrphanIfaces:          orphanIfaces(a.opkgPool, a.ndmsQueries.Interfaces),
 			OrphanIfacesExclusive: orphanIfacesExclusive(a.opkgPool, a.ndmsQueries.Interfaces),
+			OrphanNDMS:            confirmingOpkgTun{a.ndmsCommands.Interfaces, a.ndmsQueries.Interfaces},
 			ForeignIfaces: &foreignIfaces{
 				settings:  a.settingsStore,
 				pool:      a.opkgPool,
@@ -403,8 +404,8 @@ func (a *app) setupRouter() {
 		PresetCatalog:          a.presetCatalog,
 		GeoData:                a.geoDataStore,
 		GeoTagCounts:           a.geoDataStore,
-		OpkgTun:                a.ndmsCommands.Interfaces, // *InterfaceCommands satisfies OpkgTunProvisioner directly
-		StaticRoutes:           &routerStaticRouteAdapter{routes: a.ndmsCommands.Routes},
+		OpkgTun:                confirmingOpkgTun{a.ndmsCommands.Interfaces, a.ndmsQueries.Interfaces},
+		StaticRoutes:           &routerStaticRouteAdapter{routes: a.ndmsCommands.Routes, ifaces: a.ndmsQueries.Interfaces},
 		OpkgTunIndices:         &routerOpkgTunIndexAdapter{store: a.ndmsQueries.Interfaces},
 		// ОБЩИЙ пул, один на процесс и на все четыре подсистемы. Своя
 		// удерживающая запись из состава НЕ вычитается: режим узнаёт свой
@@ -413,8 +414,8 @@ func (a *app) setupRouter() {
 		// принадлежит ДРУГОМУ режиму, и вычитать было нечего.
 		OpkgTunPool:   a.opkgPool,
 		OpkgTunScan:   opkgTunScanner(a.ndmsQueries.Interfaces),
-		DefaultRoute:  a.ndmsCommands.Routes, // *RouteCommands satisfies DefaultRouteProvider directly
-		SegmentNAT:    a.ndmsCommands.NAT,    // *NATCommands satisfies SegmentNATProvider directly
+		DefaultRoute:  confirmingDefaultRoute{a.ndmsCommands.Routes, a.ndmsQueries.Interfaces},
+		SegmentNAT:    confirmingSegmentNAT{a.ndmsCommands.NAT, a.ndmsQueries.Interfaces},
 		Segments:      &routerSegmentDetailsAdapter{store: a.ndmsQueries.Interfaces},
 		RunningConfig: a.ndmsQueries.RunningConfig,
 		NATState:      &routerNATStateAdapter{nat: a.ndmsQueries.NAT, static: a.ndmsQueries.StaticNAT},
