@@ -67,9 +67,11 @@ func TestDispatcher_ExternalCreate_OneListPerBatch(t *testing.T) {
 
 func TestDispatcher_LateCreatedForKnownID_IsFree(t *testing.T) {
 	// id уже в кэше (мы создали и подтвердили сами) → ifcreated не ведёт ни к чему.
-	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard", Description: "d0", SystemName: "nwg0"})
 	q := oracleQueries(t, f)
 	_, _ = q.Interfaces.List(context.Background())
+	// Запись в NDMS правится без хука: перечитай стор её по ifcreated — кэш бы изменился.
+	f.Add(ndms.Interface{ID: "Wireguard0", Type: "Wireguard", Description: "d1", SystemName: "nwg9"})
 	lists, posts := f.ListCalls(), len(f.Posts)
 	d := NewDispatcher(q, NopLogger())
 	done := drainBarrier(d)
@@ -80,5 +82,8 @@ func TestDispatcher_LateCreatedForKnownID_IsFree(t *testing.T) {
 	if f.ListCalls() != lists || len(f.Posts) != posts || q.Interfaces.HasPending() || f.E != 0 {
 		t.Fatalf("known id must cost nothing: lists=%d posts=%d pending=%v E=%d",
 			f.ListCalls()-lists, len(f.Posts)-posts, q.Interfaces.HasPending(), f.E)
+	}
+	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard0"); got == nil || got.Description != "d0" || got.SystemName != "nwg0" {
+		t.Fatalf("known id record changed by ifcreated: %#v", got)
 	}
 }
