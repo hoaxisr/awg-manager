@@ -305,8 +305,9 @@
 			if (autoSelectFirst && devices.length > 0 && !selectedDeviceIP) {
 				selectedDeviceIP = devices[0].ip;
 			}
-		} catch (err: any) {
-			notifications.error(err?.message || 'Не удалось загрузить список устройств');
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : String(err);
+			notifications.error(message || 'Не удалось загрузить список устройств');
 		} finally {
 			loadingDevices = false;
 		}
@@ -318,7 +319,7 @@
 		try {
 			const data = await api.systemTrafficSnapshot(selectedDeviceIP);
 			snapshot = data;
-		} catch (err: any) {
+		} catch {
 			// silent fallback on interval
 		} finally {
 			loadingSnapshot = false;
@@ -576,6 +577,7 @@
 				{ value: 'sockets', label: 'Все сокеты' },
 			]}
 			value={viewMode}
+			ariaLabel="Режим отображения"
 			onchange={(v) => (viewMode = v as ViewMode)}
 		/>
 
@@ -599,6 +601,7 @@
 					{ value: 'udp', label: 'UDP' },
 				]}
 				value={protocolFilter}
+				ariaLabel="Фильтр по протоколу"
 				onchange={(v) => (protocolFilter = v as 'all' | 'tcp' | 'udp')}
 			/>
 		</div>

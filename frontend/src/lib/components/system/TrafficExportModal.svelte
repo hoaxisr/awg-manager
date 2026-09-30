@@ -53,18 +53,23 @@
 	let availableCatalogPresets = $state<string[]>([]);
 
 	$effect(() => {
-		api.mihomoNativeGroups().then((groups) => {
-			if (groups && groups.length > 0) {
-				const names = groups.map((g) => g.name);
-				if (!names.includes('DIRECT')) names.push('DIRECT');
-				if (!names.includes('REJECT')) names.push('REJECT');
-				availableMihomoGroups = names;
-			} else {
+		const client = api as unknown as { mihomoNativeGroups?: () => Promise<Array<{ name: string }>> };
+		if (typeof client.mihomoNativeGroups === 'function') {
+			client.mihomoNativeGroups().then((groups: Array<{ name: string }>) => {
+				if (groups && groups.length > 0) {
+					const names = groups.map((g: { name: string }) => g.name);
+					if (!names.includes('DIRECT')) names.push('DIRECT');
+					if (!names.includes('REJECT')) names.push('REJECT');
+					availableMihomoGroups = names;
+				} else {
+					availableMihomoGroups = ['DIRECT', 'REJECT'];
+				}
+			}).catch(() => {
 				availableMihomoGroups = ['DIRECT', 'REJECT'];
-			}
-		}).catch(() => {
+			});
+		} else {
 			availableMihomoGroups = ['DIRECT', 'REJECT'];
-		});
+		}
 
 		api.listPresets().then((res) => {
 			if (res?.presets && res.presets.length > 0) {
@@ -260,8 +265,9 @@
 			} else {
 				notifications.error(res.message || 'Ошибка экспорта');
 			}
-		} catch (err: any) {
-			notifications.error(err?.message || 'Не удалось экспортировать');
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : String(err);
+			notifications.error(message || 'Не удалось экспортировать');
 		} finally {
 			saving = false;
 		}
@@ -329,6 +335,7 @@
 				<SegmentedControl
 					options={targetOptions}
 					value={target}
+					ariaLabel="Назначение маршрутизации"
 					onchange={(v) => (target = v as ExportTarget)}
 				/>
 			</div>
@@ -345,6 +352,7 @@
 							{ value: 'create', label: target === 'catalog' ? `Создать новый сервис (${currentDomains.length + currentIPs.length})` : `Создать новое правило (${currentDomains.length + currentIPs.length})` },
 						]}
 						value={mode}
+						ariaLabel="Режим добавления"
 						onchange={(v) => (mode = v as 'append' | 'create')}
 					/>
 				</div>
