@@ -11,6 +11,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/netif"
@@ -43,40 +44,120 @@ func peerLabel(desc, pubkey, iface string) string {
 // Сервер = системный, помеченный в панели (ServerInterfaces), встроенный
 // (по описанию, как в списке серверов), или managed.
 // Прочие WG-интерфейсы — клиентские туннели: их пир держит 0.0.0.0/0 и
-// занял бы всё. allow-ips читаются по серверу свежо (PeersRCFresh), а не из
+// занял бы всё. allow-ips читаются по серверу свежо (rc мимо кэша), а не из
 // WGServers.List: тот сбой чтения молча превращает в «сетей у пира нет».
 func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peersubnet.Occupied, error) {
+	snap, _, _, err := s.occupiedSnapshot(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	return snap.without(exclude), nil
+}
+
+// occupiedEntry — занятая сеть и её владелец: пир (iface, pubkey) или
+// статический маршрут через iface (route); сеть интерфейса — без владельца.
+type occupiedEntry struct {
+	peersubnet.Occupied
+	iface, pubkey string
+	route         bool
+}
+
+// occupiedSnap — все занятые сети роутера и записей; исключение правимого
+// пира — на выдаче (without), поэтому снимок годится на несколько пиров
+// одного потока (восстановление сервера).
+type occupiedSnap []occupiedEntry
+
+// without — занятые сети без собственных сетей пира ex. Статические маршруты
+// через интерфейс правимого пира не в счёт — чужую запись (N, I) на нём сверка
+// и так не перекрывает и своей не считает.
+func (sn occupiedSnap) without(ex PeerRef) []peersubnet.Occupied {
+	var out []peersubnet.Occupied
+	for _, e := range sn {
+		if e.route && e.iface == ex.Iface || !e.route && e.pubkey != "" && e.iface == ex.Iface && e.pubkey == ex.PubKey {
+			continue
+		}
+		out = append(out, e.Occupied)
+	}
+	// Источники — карты: без сортировки текст ошибки о пересечении называл бы
+	// то одну, то другую занятую сеть.
+	sort.SliceStable(out, func(i, j int) bool {
+		if c := bytes.Compare(out[i].Net.IP.To4(), out[j].Net.IP.To4()); c != 0 {
+			return c < 0
+		}
+		return out[i].Label < out[j].Label
+	})
+	return out
+}
+
+// occupiedSnapshot читает всё для OccupiedSubnets ОДНИМ списком интерфейсов
+// (F552: прежде — список плюс по списку на каждый сервер). Серверы
+// подтверждаются ConfirmEach по кандидатам — все id карты и записи панели;
+// сервер, которого карта не знала (потерян ifcreated), виден в списке после
+// этого же чтения и подтверждается вторым — только в этом случае.
+//
+// iface — сервер вызывающего: его доказательство из того же списка
+// (ok=false — интерфейса нет); "" — не нужно.
+func (s *Service) occupiedSnapshot(ctx context.Context, iface string) (occupiedSnap, query.Confirmed, bool, error) {
 	if s.queries == nil || s.queries.Interfaces == nil || s.queries.WGServers == nil || s.queries.StaticRoutes == nil {
-		return nil, fmt.Errorf("ndms queries not wired")
+		return nil, query.Confirmed{}, false, fmt.Errorf("ndms queries not wired")
 	}
 	// Записи читаются геттерами, которые отказ чтения настроек глотают
 	// (GetServerInterfaces → nil): «серверов и сетей в записях нет» пропустило
 	// бы пересечение. Отказ — здесь, до них (T6).
 	if _, err := s.settings.Get(); err != nil {
-		return nil, fmt.Errorf("read settings: %w", err)
+		return nil, query.Confirmed{}, false, fmt.Errorf("read settings: %w", err)
 	}
-	var out []peersubnet.Occupied
-	// Свежий список, не карта событий: пропущенный хук выкинул бы
-	// существующий сервер из проверки (T6).
-	ifaces, err := s.queries.Interfaces.ListFresh(ctx)
+	// Кандидаты — из карты и записей; подтверждение — только свежим списком:
+	// пропущенный хук не выкидывает существующий сервер из проверки (T6).
+	cached, err := s.queries.Interfaces.List(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list interfaces: %w", err)
+		return nil, query.Confirmed{}, false, fmt.Errorf("list interfaces: %w", err)
 	}
-	exists := make(map[string]bool, len(ifaces))
-	for _, iface := range ifaces {
-		exists[iface.ID] = true
+	names := []string{}
+	if iface != "" {
+		names = append(names, iface)
 	}
+	for _, i := range cached {
+		names = append(names, i.ID)
+	}
+	names = append(names, s.settings.GetServerInterfaces()...)
+	for _, sv := range s.settings.GetManagedServers() {
+		names = append(names, sv.InterfaceName)
+	}
+	confirmed, err := s.queries.Interfaces.ConfirmEach(ctx, names)
+	if err != nil {
+		return nil, query.Confirmed{}, false, fmt.Errorf("list interfaces: %w", err)
+	}
+	// Карта только что взята из этого списка.
+	ifaces, err := s.queries.Interfaces.List(ctx)
+	if err != nil {
+		return nil, query.Confirmed{}, false, fmt.Errorf("list interfaces: %w", err)
+	}
+	var out occupiedSnap
 	subnetByID := map[string]*net.IPNet{}
 	for _, u := range usedSubnetsOf(ifaces, "") {
-		out = append(out, peersubnet.Occupied{Net: u.cidr, Label: "интерфейс " + u.label})
+		out = append(out, occupiedEntry{Occupied: peersubnet.Occupied{Net: u.cidr, Label: "интерфейс " + u.label}})
 		subnetByID[u.id] = u.cidr
 	}
 	// Тот же набор, что показывает список серверов (listServers): помеченные,
 	// встроенный «Wireguard VPN Server» (обычно не помечен) и managed.
 	servers := map[string]bool{}
-	for _, iface := range ifaces {
-		if strings.EqualFold(iface.Type, "Wireguard") && iface.Description == ndms.BuiltInVPNServerDescription {
-			servers[iface.ID] = true
+	var late []string
+	for _, i := range ifaces {
+		if strings.EqualFold(i.Type, "Wireguard") && i.Description == ndms.BuiltInVPNServerDescription {
+			servers[i.ID] = true
+			if _, ok := confirmed[i.ID]; !ok {
+				late = append(late, i.ID)
+			}
+		}
+	}
+	if len(late) > 0 {
+		more, err := s.queries.Interfaces.ConfirmEach(ctx, late)
+		if err != nil {
+			return nil, query.Confirmed{}, false, fmt.Errorf("list interfaces: %w", err)
+		}
+		for id, c := range more {
+			confirmed[id] = c
 		}
 	}
 	for _, id := range s.settings.GetServerInterfaces() {
@@ -91,20 +172,18 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 	for id := range servers {
 		// Пометка пережила интерфейс (удалён в веб-морде): роутер ответил
 		// списком без него — пиров, занимающих сети, нет. Не fail-open.
-		if !exists[id] {
+		c, ok := confirmed[id]
+		if !ok {
 			continue
 		}
-		peers, err := s.queries.WGServers.PeersRCFresh(ctx, id)
+		peers, err := s.queries.WGServers.PeersRC(ctx, c)
 		if err != nil {
-			return nil, err
+			return nil, query.Confirmed{}, false, err
 		}
 		srvNet := subnetByID[id]
 		onRouter[id] = make(map[string]bool, len(peers))
 		for _, p := range peers {
 			onRouter[id][p.PublicKey] = true
-			if id == exclude.Iface && p.PublicKey == exclude.PubKey {
-				continue
-			}
 			for _, a := range p.AllowedIPs {
 				_, n, err := net.ParseCIDR(a)
 				if err != nil || n.IP.To4() == nil {
@@ -113,22 +192,21 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 				if ones, bits := n.Mask.Size(); ones == bits && srvNet != nil && srvNet.Contains(n.IP) {
 					continue
 				}
-				out = append(out, peersubnet.Occupied{Net: n, Label: peerLabel(p.Description, p.PublicKey, id)})
+				out = append(out, occupiedEntry{Occupied: peersubnet.Occupied{Net: n, Label: peerLabel(p.Description, p.PublicKey, id)}, iface: id, pubkey: p.PublicKey})
 			}
 		}
 	}
 	// Статические маршруты через другие интерфейсы: сеть за клиентом поверх
-	// такой записи молча дала бы второй маршрут на ту же сеть. Интерфейс
-	// правимого пира не в счёт — чужую запись (N, I) на нём сверка и так не
-	// перекрывает и своей не считает. Свои (метка awgm-peer:) учтены ниже,
-	// через RemoteSubnets пиров, — второй раз не считаются. Маршрут по
-	// умолчанию пересекался бы с любой сетью — пропускается.
+	// такой записи молча дала бы второй маршрут на ту же сеть. Свои (метка
+	// awgm-peer:) учтены ниже, через RemoteSubnets пиров, — второй раз не
+	// считаются. Маршрут по умолчанию пересекался бы с любой сетью —
+	// пропускается.
 	routes, err := s.queries.StaticRoutes.Fetch(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("read static routes: %w", err)
+		return nil, query.Confirmed{}, false, fmt.Errorf("read static routes: %w", err)
 	}
 	for _, e := range routes {
-		if e.Interface == exclude.Iface || strings.HasPrefix(e.Comment, peersubnet.RouteCommentPrefix) {
+		if strings.HasPrefix(e.Comment, peersubnet.RouteCommentPrefix) {
 			continue
 		}
 		n := e.IPv4Net()
@@ -143,12 +221,16 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 			// Запись без интерфейса (через шлюз) — допущение, на стенде не видели.
 			label = "статический маршрут через шлюз"
 		}
-		out = append(out, peersubnet.Occupied{Net: n, Label: label})
+		out = append(out, occupiedEntry{Occupied: peersubnet.Occupied{Net: n, Label: label}, iface: e.Interface, route: true})
 	}
-	appendStored := func(subnets []string, label string) {
+	exists := make(map[string]bool, len(ifaces))
+	for _, i := range ifaces {
+		exists[i.ID] = true
+	}
+	appendStored := func(subnets []string, iface, pub, label string) {
 		for _, sn := range subnets {
 			if _, n, err := net.ParseCIDR(sn); err == nil {
-				out = append(out, peersubnet.Occupied{Net: n, Label: label})
+				out = append(out, occupiedEntry{Occupied: peersubnet.Occupied{Net: n, Label: label}, iface: iface, pubkey: pub})
 			}
 		}
 	}
@@ -166,29 +248,20 @@ func (s *Service) OccupiedSubnets(ctx context.Context, exclude PeerRef) ([]peers
 	}
 	for _, sv := range s.settings.GetManagedServers() {
 		for _, p := range sv.Peers {
-			if sv.InterfaceName == exclude.Iface && p.PublicKey == exclude.PubKey || !stored(sv.InterfaceName, p.PublicKey) {
-				continue
+			if stored(sv.InterfaceName, p.PublicKey) {
+				appendStored(p.RemoteSubnets, sv.InterfaceName, p.PublicKey, peerLabel(p.Description, p.PublicKey, sv.InterfaceName))
 			}
-			appendStored(p.RemoteSubnets, peerLabel(p.Description, p.PublicKey, sv.InterfaceName))
 		}
 	}
 	for serverID, peers := range s.settings.GetServerPeerSecrets() {
 		for pub, sec := range peers {
-			if serverID == exclude.Iface && pub == exclude.PubKey || !stored(serverID, pub) {
-				continue
+			if stored(serverID, pub) {
+				appendStored(sec.RemoteSubnets, serverID, pub, peerLabel(sec.Description, pub, serverID))
 			}
-			appendStored(sec.RemoteSubnets, peerLabel(sec.Description, pub, serverID))
 		}
 	}
-	// Источники — карты: без сортировки текст ошибки о пересечении называл бы
-	// то одну, то другую занятую сеть.
-	sort.SliceStable(out, func(i, j int) bool {
-		if c := bytes.Compare(out[i].Net.IP.To4(), out[j].Net.IP.To4()); c != 0 {
-			return c < 0
-		}
-		return out[i].Label < out[j].Label
-	})
-	return out, nil
+	c, ok := confirmed[iface]
+	return out, c, ok, nil
 }
 
 // PresetsFor — пресеты AllowedIPs клиента. LAN-сети: бриджи из segments,
@@ -272,12 +345,12 @@ func (s *Service) peerRouter() (peersubnet.Router, error) {
 
 // peerPresent — есть ли пир на интерфейсе по свежему rc. Перед allow-ips в
 // откатах: на отсутствующий ключ NDMS их принимает, создавая пира.
-func (s *Service) peerPresent(ctx context.Context, iface, pubkey string) (bool, error) {
+func (s *Service) peerPresent(ctx context.Context, iface query.Confirmed, pubkey string) (bool, error) {
 	wg, err := s.peerCommands()
 	if err != nil {
 		return false, err
 	}
-	return wg.PeerPresentLegacy(ctx, iface, pubkey)
+	return wg.PeerPresent(ctx, iface, pubkey)
 }
 
 // logRollback — отказ отката Reconcile не должен тонуть: хранилище не тронуто, но

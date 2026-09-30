@@ -199,6 +199,10 @@ func (r *simRouter) trackInterfaceLocked(iface string, cfg map[string]any) {
 		delete(list, iface)
 	} else {
 		list[iface] = json.RawMessage(`{"id":"` + iface + `","type":"Wireguard"}`)
+		// rc созданного интерфейса читается сразу, пусть и без пиров.
+		if r.peers[iface] == nil {
+			r.peers[iface] = map[string][]string{}
+		}
 	}
 	b, _ := json.Marshal(list)
 	r.fg.SetJSON("/show/interface/", string(b))
@@ -1242,7 +1246,7 @@ func TestRollbackAddedPeer_LogOpAndPresence(t *testing.T) {
 	svc.appLog = logging.NewScopedLogger(spy, logging.GroupServer, logging.SubManaged)
 	poster.failOn = refuse
 	fg.SetError("/show/rc/interface/Wireguard1", errors.New("rc down"))
-	svc.rollbackAddedPeer(context.Background(), "managed-restore-merge", "Wireguard1", "PEER1", "branch", nil)
+	svc.rollbackAddedPeer(context.Background(), "managed-restore-merge", confirmed(t, "Wireguard1"), "PEER1", "branch", nil)
 	if len(spy.entries) != 1 || !strings.HasPrefix(spy.entries[0], "warn|managed-restore-merge|branch|") ||
 		!strings.Contains(spy.entries[0], "неизвестно") || strings.Contains(spy.entries[0], "пир не снят") {
 		t.Fatalf("перечитывание упало: %v", spy.entries)
@@ -1253,7 +1257,7 @@ func TestRollbackAddedPeer_LogOpAndPresence(t *testing.T) {
 	svc.appLog = logging.NewScopedLogger(spy, logging.GroupServer, logging.SubManaged)
 	poster.failOn = refuse
 	fg.SetJSON("/show/rc/interface/Wireguard1", `{"wireguard":{"peer":[{"key":"PEER1"}]}}`)
-	svc.rollbackAddedPeer(context.Background(), "add-peer", "Wireguard1", "PEER1", "branch", nil)
+	svc.rollbackAddedPeer(context.Background(), "add-peer", confirmed(t, "Wireguard1"), "PEER1", "branch", nil)
 	if len(spy.entries) != 1 || !strings.HasPrefix(spy.entries[0], "warn|add-peer|branch|пир не снят при откате") {
 		t.Fatalf("пир на роутере: %v", spy.entries)
 	}

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -75,6 +76,10 @@ func newTestService(t *testing.T, server *storage.ManagedServer, posterErr error
 	getter := &fakePolicyGetter{body: []byte(policyJSON)}
 	queries := &query.Queries{
 		Policies: query.NewPolicyStore(getter, query.NopLogger()),
+	}
+	// Интерфейс сервера — в списке роутера: команды идут по подтверждению (F546).
+	if server != nil {
+		queries.Interfaces = query.NewInterfaceStore(query.NewFakeNDMS(ndms.Interface{ID: server.InterfaceName, Type: "Wireguard"}), query.NopLogger())
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := New(poster, nil, queries, nil, store, log, nil)

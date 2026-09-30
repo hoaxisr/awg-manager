@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 // rci provides helper methods for building and sending RCI POST payloads.
@@ -17,7 +18,9 @@ import (
 // to a rejected command). Like the command package, it schedules a debounced
 // NDMS config save and invalidates caches an interface/wireguard-peer mutation
 // could affect on BOTH paths: NDMS applies a payload element-wise, so a
-// rejected reply may still carry applied changes.
+// rejected reply may still carry applied changes. Список интерфейсов не
+// перечитывается: запись правят хуки NDMS, создание подтверждает
+// rciCreateInterface, снос — Forget в rciDeleteInterface (F546).
 func (s *Service) rciPost(ctx context.Context, payload interface{}) error {
 	return s.rciPostTolerant(ctx, payload, nil)
 }
@@ -32,9 +35,6 @@ func (s *Service) rciPostTolerant(ctx context.Context, payload interface{}, tole
 	if s.queries != nil {
 		if s.queries.WGServers != nil {
 			after = append(after, s.queries.WGServers.InvalidateAll)
-		}
-		if s.queries.Interfaces != nil {
-			after = append(after, s.queries.Interfaces.InvalidateAll)
 		}
 		if s.queries.RunningConfig != nil {
 			after = append(after, s.queries.RunningConfig.InvalidateAll)
@@ -51,32 +51,56 @@ func (s *Service) rciPostTolerant(ctx context.Context, payload interface{}, tole
 	return nil
 }
 
-// rciCreateInterface creates a new WireGuard interface via RCI.
-func (s *Service) rciCreateInterface(ctx context.Context, name string) error {
-	return s.rciPost(ctx, map[string]interface{}{
+// rciCreateInterface creates a new WireGuard interface via RCI и подтверждает
+// его свежим списком: дальше весь поток идёт по этому доказательству (F546).
+// Список не прочитан или записи в нём нет после принятой команды — ошибка без
+// сноса: снести по имени без доказательства нельзя; остаток — в журнал.
+func (s *Service) rciCreateInterface(ctx context.Context, name string) (query.Confirmed, error) {
+	if s.queries == nil || s.queries.Interfaces == nil {
+		return query.Confirmed{}, fmt.Errorf("interface store not wired")
+	}
+	if err := s.rciPost(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{},
 		},
-	})
+	}); err != nil {
+		return query.Confirmed{}, err
+	}
+	c, _, ok, err := s.queries.Interfaces.Confirm(ctx, name)
+	if err == nil && !ok {
+		err = fmt.Errorf("interface %s: NDMS принял команду, но записи в списке нет", name)
+	}
+	if err != nil {
+		s.appLog.Warn("create", name, "интерфейс создан, но не подтверждён списком и не снесён: "+err.Error())
+		return query.Confirmed{}, err
+	}
+	return c, nil
 }
 
 // rciDeleteInterface removes a WireGuard interface via RCI. Интерфейса уже нет
-// (снесён мимо панели) — цель достигнута: иначе запись сервера не удалить.
-func (s *Service) rciDeleteInterface(ctx context.Context, name string) error {
-	return s.rciPostTolerant(ctx, map[string]interface{}{
+// (снесён мимо панели между подтверждением и командой) — цель достигнута.
+// Снято — запись забывается сразу, не дожидаясь ifdestroyed.
+func (s *Service) rciDeleteInterface(ctx context.Context, iface query.Confirmed) error {
+	if err := s.rciPostTolerant(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
-			name: map[string]interface{}{
+			iface.Name(): map[string]interface{}{
 				"no": true,
 			},
 		},
-	}, command.TolerateMissingInterface)
+	}, command.TolerateMissingInterface); err != nil {
+		return err
+	}
+	if s.queries != nil && s.queries.Interfaces != nil {
+		s.queries.Interfaces.Forget(iface.Name())
+	}
+	return nil
 }
 
 // rciConfigureServer sets all server interface properties in a single RCI call.
-func (s *Service) rciConfigureServer(ctx context.Context, name, description, address, mask string, port, mtu int) error {
+func (s *Service) rciConfigureServer(ctx context.Context, iface query.Confirmed, description, address, mask string, port, mtu int) error {
 	return s.rciPost(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
-			name: map[string]interface{}{
+			iface.Name(): map[string]interface{}{
 				"description": description,
 				"security-level": map[string]interface{}{
 					"private": true,
@@ -132,13 +156,13 @@ type updateServerChanges struct {
 // installation of the new one are sent as an `ip.address` array of two
 // entries; this mirrors the array-of-ops shape NDMS already uses for
 // peers, hotspot policy, and NAT.
-func (s *Service) rciUpdateServer(ctx context.Context, ifaceName string, c updateServerChanges) error {
-	iface := map[string]interface{}{}
+func (s *Service) rciUpdateServer(ctx context.Context, iface query.Confirmed, c updateServerChanges) error {
+	body := map[string]interface{}{}
 	if c.descriptionSet {
-		iface["description"] = c.description
+		body["description"] = c.description
 	}
 	if c.portSet {
-		iface["wireguard"] = map[string]interface{}{
+		body["wireguard"] = map[string]interface{}{
 			"listen-port": map[string]interface{}{
 				"port": c.port,
 			},
@@ -155,14 +179,14 @@ func (s *Service) rciUpdateServer(ctx context.Context, ifaceName string, c updat
 		ip["mtu"] = c.mtu
 	}
 	if len(ip) > 0 {
-		iface["ip"] = ip
+		body["ip"] = ip
 	}
-	if len(iface) == 0 {
+	if len(body) == 0 {
 		return nil
 	}
 	return s.rciPost(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
-			ifaceName: iface,
+			iface.Name(): body,
 		},
 	})
 }
@@ -170,12 +194,12 @@ func (s *Service) rciUpdateServer(ctx context.Context, ifaceName string, c updat
 // rciSetNAT enables or disables NAT for an interface. `no ip nat` на
 // интерфейсе без NAT — успех («a NAT rule removed», стенд 5.02.A.11), допуск
 // снятию не нужен.
-func (s *Service) rciSetNAT(ctx context.Context, ifaceName string, enabled bool) error {
+func (s *Service) rciSetNAT(ctx context.Context, iface query.Confirmed, enabled bool) error {
 	if enabled {
 		return s.rciPost(ctx, map[string]interface{}{
 			"ip": map[string]interface{}{
 				"nat": map[string]interface{}{
-					"interface": ifaceName,
+					"interface": iface.Name(),
 				},
 			},
 		})
@@ -183,21 +207,22 @@ func (s *Service) rciSetNAT(ctx context.Context, ifaceName string, enabled bool)
 	return s.rciPost(ctx, map[string]interface{}{
 		"ip": map[string]interface{}{
 			"nat": []map[string]interface{}{
-				{"no": true, "interface": ifaceName},
+				{"no": true, "interface": iface.Name()},
 			},
 		},
 	})
 }
 
 // rciSetStaticNAT добавляет/снимает Static NAT (`ip static <iface> <wan>`)
-// для интерфейса. wanIface — NDMS-имя WAN (to-interface, трекает динамический адрес).
-func (s *Service) rciSetStaticNAT(ctx context.Context, ifaceName, wanIface string, enabled bool) error {
+// для интерфейса. wan — WAN (to-interface, трекает динамический адрес); оба
+// подтверждены: ссылка на отсутствующий из `ip static` — E в журнале ndm.
+func (s *Service) rciSetStaticNAT(ctx context.Context, iface, wan query.Confirmed, enabled bool) error {
 	if enabled {
 		return s.rciPost(ctx, map[string]interface{}{
 			"ip": map[string]interface{}{
 				"static": map[string]interface{}{
-					"interface":    ifaceName,
-					"to-interface": wanIface,
+					"interface":    iface.Name(),
+					"to-interface": wan.Name(),
 				},
 			},
 		})
@@ -207,7 +232,7 @@ func (s *Service) rciSetStaticNAT(ctx context.Context, ifaceName, wanIface strin
 	return s.rciPostTolerant(ctx, map[string]interface{}{
 		"ip": map[string]interface{}{
 			"static": []map[string]interface{}{
-				{"no": true, "interface": ifaceName, "to-interface": wanIface},
+				{"no": true, "interface": iface.Name(), "to-interface": wan.Name()},
 			},
 		},
 	}, command.TolerateUnknownInterface)
@@ -219,10 +244,10 @@ func (s *Service) rciSetStaticNAT(ctx context.Context, ifaceName, wanIface strin
 // reflects the public key derived from the supplied private key. Used
 // during Restore to install the backup's keypair so previously-distributed
 // client .conf files keep working.
-func (s *Service) rciSetPrivateKey(ctx context.Context, ifaceName, privateKey string) error {
+func (s *Service) rciSetPrivateKey(ctx context.Context, iface query.Confirmed, privateKey string) error {
 	return s.rciPost(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
-			ifaceName: map[string]interface{}{
+			iface.Name(): map[string]interface{}{
 				"wireguard": map[string]interface{}{
 					"private-key": privateKey,
 				},
@@ -234,14 +259,14 @@ func (s *Service) rciSetPrivateKey(ctx context.Context, ifaceName, privateKey st
 // rciSetASCParams sets AWG ASC params on interface wireguard.asc.
 // Caller must pass JSON object shape accepted by NDMS and already stripped
 // from client-only signature fields (i1..i5).
-func (s *Service) rciSetASCParams(ctx context.Context, ifaceName string, params json.RawMessage) error {
+func (s *Service) rciSetASCParams(ctx context.Context, iface query.Confirmed, params json.RawMessage) error {
 	var asc map[string]any
 	if err := json.Unmarshal(params, &asc); err != nil {
 		return fmt.Errorf("parse ASC params: %w", err)
 	}
 	return s.rciPost(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
-			ifaceName: map[string]interface{}{
+			iface.Name(): map[string]interface{}{
 				"wireguard": map[string]interface{}{
 					"asc": asc,
 				},
@@ -251,10 +276,10 @@ func (s *Service) rciSetASCParams(ctx context.Context, ifaceName string, params 
 }
 
 // rciClearASCParams clears ASC settings from interface wireguard.asc.
-func (s *Service) rciClearASCParams(ctx context.Context, ifaceName string) error {
+func (s *Service) rciClearASCParams(ctx context.Context, iface query.Confirmed) error {
 	return s.rciPost(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
-			ifaceName: map[string]interface{}{
+			iface.Name(): map[string]interface{}{
 				"wireguard": map[string]interface{}{
 					"asc": map[string]interface{}{
 						"no": true,
@@ -275,12 +300,12 @@ func (s *Service) rciClearASCParams(ctx context.Context, ifaceName string) error
 // interface ..."):
 //
 //	{"ip":{"hotspot":{"policy":{"interface":"Wireguard0","policy":"Policy0"}}}}
-func (s *Service) rciSetHotspotPolicy(ctx context.Context, ifaceName, policy string) error {
+func (s *Service) rciSetHotspotPolicy(ctx context.Context, iface query.Confirmed, policy string) error {
 	return s.rciPost(ctx, map[string]interface{}{
 		"ip": map[string]interface{}{
 			"hotspot": map[string]interface{}{
 				"policy": map[string]interface{}{
-					"interface": ifaceName,
+					"interface": iface.Name(),
 					"policy":    policy,
 				},
 			},
@@ -295,12 +320,12 @@ func (s *Service) rciSetHotspotPolicy(ctx context.Context, ifaceName, policy str
 // policy cleared."):
 //
 //	{"ip":{"hotspot":{"policy":{"interface":"Wireguard0","no":true}}}}
-func (s *Service) rciClearHotspotPolicy(ctx context.Context, ifaceName string) error {
+func (s *Service) rciClearHotspotPolicy(ctx context.Context, iface query.Confirmed) error {
 	return s.rciPost(ctx, map[string]interface{}{
 		"ip": map[string]interface{}{
 			"hotspot": map[string]interface{}{
 				"policy": map[string]interface{}{
-					"interface": ifaceName,
+					"interface": iface.Name(),
 					"no":        true,
 				},
 			},
@@ -309,10 +334,10 @@ func (s *Service) rciClearHotspotPolicy(ctx context.Context, ifaceName string) e
 }
 
 // rciInterfaceUp brings the interface up.
-func (s *Service) rciInterfaceUp(ctx context.Context, ifaceName string) error {
+func (s *Service) rciInterfaceUp(ctx context.Context, iface query.Confirmed) error {
 	return s.rciPost(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
-			ifaceName: map[string]interface{}{
+			iface.Name(): map[string]interface{}{
 				"up": true,
 			},
 		},
@@ -320,10 +345,10 @@ func (s *Service) rciInterfaceUp(ctx context.Context, ifaceName string) error {
 }
 
 // rciInterfaceDown brings the interface down.
-func (s *Service) rciInterfaceDown(ctx context.Context, ifaceName string) error {
+func (s *Service) rciInterfaceDown(ctx context.Context, iface query.Confirmed) error {
 	return s.rciPost(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
-			ifaceName: map[string]interface{}{
+			iface.Name(): map[string]interface{}{
 				"up": false,
 			},
 		},
@@ -331,7 +356,7 @@ func (s *Service) rciInterfaceDown(ctx context.Context, ifaceName string) error 
 }
 
 // rciAddPeer adds a peer with all parameters in a single RCI call.
-func (s *Service) rciAddPeer(ctx context.Context, ifaceName, pubKey, psk, comment, peerIP string, enabled bool) error {
+func (s *Service) rciAddPeer(ctx context.Context, iface query.Confirmed, pubKey, psk, comment, peerIP string, enabled bool) error {
 	peer := map[string]interface{}{
 		"key":           pubKey,
 		"preshared-key": psk,
@@ -345,7 +370,7 @@ func (s *Service) rciAddPeer(ctx context.Context, ifaceName, pubKey, psk, commen
 	}
 	return s.rciPost(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
-			ifaceName: map[string]interface{}{
+			iface.Name(): map[string]interface{}{
 				"wireguard": map[string]interface{}{
 					"peer": []map[string]interface{}{peer},
 				},
@@ -366,44 +391,44 @@ func (s *Service) peerCommands() (*command.WireguardCommands, error) {
 
 // rciRemovePeer removes a peer by public key; пир, уже снятый мимо панели, —
 // успех (см. command.WireguardCommands.RemovePeer).
-func (s *Service) rciRemovePeer(ctx context.Context, ifaceName, pubKey string) error {
+func (s *Service) rciRemovePeer(ctx context.Context, iface query.Confirmed, pubKey string) error {
 	wg, err := s.peerCommands()
 	if err != nil {
 		return err
 	}
-	return wg.RemovePeerLegacy(ctx, ifaceName, pubKey)
+	return wg.RemovePeer(ctx, iface, pubKey)
 }
 
 // rciSetPeerConnect enables or disables a peer. comment must carry the peer's
 // current name: a partial peer update without it makes NDMS wipe the stored
 // comment (psk/allow-ips survive, comment does not). Пира на роутере нет —
 // peersubnet.ErrPeerNotFound без поста.
-func (s *Service) rciSetPeerConnect(ctx context.Context, ifaceName, pubKey string, connect bool, comment string) error {
+func (s *Service) rciSetPeerConnect(ctx context.Context, iface query.Confirmed, pubKey string, connect bool, comment string) error {
 	wg, err := s.peerCommands()
 	if err != nil {
 		return err
 	}
-	return wg.SetPeerConnectLegacy(ctx, ifaceName, pubKey, connect, comment)
+	return wg.SetPeerConnect(ctx, iface, pubKey, connect, comment)
 }
 
 // rciSetPeerComment sets the description/comment for a peer. Пира на роутере
 // нет — peersubnet.ErrPeerNotFound без поста.
-func (s *Service) rciSetPeerComment(ctx context.Context, ifaceName, pubKey, comment string) error {
+func (s *Service) rciSetPeerComment(ctx context.Context, iface query.Confirmed, pubKey, comment string) error {
 	wg, err := s.peerCommands()
 	if err != nil {
 		return err
 	}
-	return wg.SetPeerCommentLegacy(ctx, ifaceName, pubKey, comment)
+	return wg.SetPeerComment(ctx, iface, pubKey, comment)
 }
 
 // rciRemovePeerDefaultRoute strips the legacy 0.0.0.0/0 entry from a peer's
 // allow-ips, leaving its /32 intact. Used by the one-time MigratePeerAllowIPs
 // sweep over peers created by older builds. `no such net in peer` — 0.0.0.0/0
 // у пира уже нет: цель миграции достигнута, а не отказ.
-func (s *Service) rciRemovePeerDefaultRoute(ctx context.Context, ifaceName, pubKey string) error {
+func (s *Service) rciRemovePeerDefaultRoute(ctx context.Context, iface query.Confirmed, pubKey string) error {
 	return s.rciPostTolerant(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
-			ifaceName: map[string]interface{}{
+			iface.Name(): map[string]interface{}{
 				"wireguard": map[string]interface{}{
 					"peer": []map[string]interface{}{
 						{
@@ -423,12 +448,12 @@ func (s *Service) rciRemovePeerDefaultRoute(ctx context.Context, ifaceName, pubK
 // старого идёт командой с допуском `no such net in peer` (11.A/11.8): /32 уже
 // может не стоять — после отказа отката или правки мимо панели, и такая смена
 // иначе застревала бы навсегда.
-func (s *Service) rciUpdatePeerAllowIPs(ctx context.Context, ifaceName, pubKey, oldIP, newIP string) error {
+func (s *Service) rciUpdatePeerAllowIPs(ctx context.Context, iface query.Confirmed, pubKey, oldIP, newIP string) error {
 	if oldIP != "" {
 		if s.commands == nil || s.commands.Wireguard == nil {
 			return fmt.Errorf("ndms commands not wired")
 		}
-		if err := s.commands.Wireguard.RemovePeerAllowIPLegacy(ctx, ifaceName, pubKey, oldIP, "255.255.255.255"); err != nil {
+		if err := s.commands.Wireguard.RemovePeerAllowIP(ctx, iface, pubKey, oldIP, "255.255.255.255"); err != nil {
 			return fmt.Errorf("remove old allow-ips: %w", err)
 		}
 	}
@@ -436,7 +461,7 @@ func (s *Service) rciUpdatePeerAllowIPs(ctx context.Context, ifaceName, pubKey, 
 	// Add new
 	return s.rciPost(ctx, map[string]interface{}{
 		"interface": map[string]interface{}{
-			ifaceName: map[string]interface{}{
+			iface.Name(): map[string]interface{}{
 				"wireguard": map[string]interface{}{
 					"peer": []map[string]interface{}{
 						{

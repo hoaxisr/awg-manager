@@ -3,6 +3,7 @@ package managed
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 
@@ -164,4 +165,33 @@ func (s *Service) resolveKernelName(ctx context.Context, ndmsName string) string
 		return ""
 	}
 	return s.queries.Interfaces.ResolveSystemName(ctx, ndmsName)
+}
+
+// confirmServer — интерфейс сервера по свежему полному списку: одно чтение в
+// начале потока, дальше все команды идут по этому доказательству. Команда
+// `interface X …` по отсутствующему X создаёт X (фантом), ссылка из другого
+// раздела пишет E в журнал ndm (F546). Список не прочитан — ошибка.
+func (s *Service) confirmServer(ctx context.Context, ifaceName string) (query.Confirmed, bool, error) {
+	if s.queries == nil || s.queries.Interfaces == nil {
+		return query.Confirmed{}, false, fmt.Errorf("interface store not wired")
+	}
+	c, _, ok, err := s.queries.Interfaces.Confirm(ctx, ifaceName)
+	return c, ok, err
+}
+
+// requireServer — confirmServer для действий, которым интерфейс нужен:
+// интерфейса нет — ошибка для человека, ни одной команды.
+func (s *Service) requireServer(ctx context.Context, ifaceName string) (query.Confirmed, error) {
+	c, ok, err := s.confirmServer(ctx, ifaceName)
+	if err != nil {
+		return query.Confirmed{}, err
+	}
+	if !ok {
+		return query.Confirmed{}, errServerGone(ifaceName)
+	}
+	return c, nil
+}
+
+func errServerGone(ifaceName string) error {
+	return fmt.Errorf("интерфейс %s снят в NDMS — удалите сервер и создайте заново", ifaceName)
 }

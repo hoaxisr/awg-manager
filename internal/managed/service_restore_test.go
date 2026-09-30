@@ -1465,7 +1465,8 @@ func TestRestore_InternetOnly_PersistsNATStaticWANs(t *testing.T) {
 	store := storage.NewSettingsStore(dir)
 	_, _ = store.Load()
 
-	getter := &restoreLiveGetter{live: map[string]restoreLiveEntry{"Wireguard0": {Present: false}}}
+	// PPPoE0 — выход static NAT: ссылка на него подтверждается списком (F546).
+	getter := &restoreLiveGetter{live: map[string]restoreLiveEntry{"Wireguard0": {Present: false}, "PPPoE0": {Present: true, Address: "100.64.0.2"}}}
 	ifaces := query.NewInterfaceStoreWithTTL(getter, query.NopLogger(), 0, 0)
 	queries := &query.Queries{
 		Interfaces: ifaces,

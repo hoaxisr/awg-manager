@@ -48,12 +48,16 @@ func (s *Service) SetPolicy(ctx context.Context, id, policy string) error {
 		}
 	}
 
+	iface, err := s.requireServer(ctx, server.InterfaceName)
+	if err != nil {
+		return err
+	}
 	if policy == "none" {
-		if err := s.rciClearHotspotPolicy(ctx, server.InterfaceName); err != nil {
+		if err := s.rciClearHotspotPolicy(ctx, iface); err != nil {
 			return fmt.Errorf("clear policy: %w", err)
 		}
 	} else {
-		if err := s.rciSetHotspotPolicy(ctx, server.InterfaceName, policy); err != nil {
+		if err := s.rciSetHotspotPolicy(ctx, iface, policy); err != nil {
 			return fmt.Errorf("set policy: %w", err)
 		}
 	}

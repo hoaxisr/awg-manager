@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 )
@@ -246,7 +247,8 @@ func (s *Service) generateDefaultASCParams() (json.RawMessage, error) {
 	return generateASCParamsRaw(extended, hRanges, rand.NewSource(time.Now().UnixNano()))
 }
 
-func (s *Service) applyASCParams(ctx context.Context, ifaceName string, raw json.RawMessage) error {
+func (s *Service) applyASCParams(ctx context.Context, iface query.Confirmed, raw json.RawMessage) error {
+	ifaceName := iface.Name()
 	if err := validateASCParamsRequired(raw); err != nil {
 		return err
 	}
@@ -257,7 +259,7 @@ func (s *Service) applyASCParams(ctx context.Context, ifaceName string, raw json
 	}
 
 	if isASCDisabledState(obj) {
-		if err := s.rciClearASCParams(ctx, ifaceName); err != nil {
+		if err := s.rciClearASCParams(ctx, iface); err != nil {
 			return fmt.Errorf("clear ASC params: %w", err)
 		}
 		if err := s.verifyASCParamsApplied(ctx, ifaceName, raw); err != nil {
@@ -281,7 +283,7 @@ func (s *Service) applyASCParams(ctx context.Context, ifaceName string, raw json
 	if stripped, err = ndms.KeepASC3(stripped, current); err != nil {
 		return err
 	}
-	if err := s.rciSetASCParams(ctx, ifaceName, stripped); err != nil {
+	if err := s.rciSetASCParams(ctx, iface, stripped); err != nil {
 		return fmt.Errorf("set ASC params: %w", err)
 	}
 	if err := s.verifyASCParamsApplied(ctx, ifaceName, raw); err != nil {

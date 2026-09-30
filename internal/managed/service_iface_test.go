@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -20,7 +21,10 @@ func TestApplyPolicyToInterface_TwoHalvesOneRCIRead(t *testing.T) {
 	}
 	poster := &fakePoster{}
 	getter := &fakePolicyGetter{body: []byte(`{"Policy0":{"description":"NL"}}`)}
-	queries := &query.Queries{Policies: query.NewPolicyStore(getter, query.NopLogger())}
+	queries := &query.Queries{
+		Policies:   query.NewPolicyStore(getter, query.NopLogger()),
+		Interfaces: query.NewInterfaceStore(query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun17"}, ndms.Interface{ID: "OpkgTun19"}), query.NopLogger()),
+	}
 	svc := New(poster, nil, queries, nil, store, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	ctx := context.Background()
 	for _, iface := range []string{"OpkgTun17", "OpkgTun19"} {

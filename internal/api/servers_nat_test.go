@@ -66,11 +66,16 @@ func newServersNATHarness(t *testing.T) (*ServersHandler, *storage.SettingsStore
 	// БЕЗ поля "system-name"/"interface-name": при непустом SystemName ResolveSystemName
 	// зовёт kernelIfaceExists (interfaces.go:424-426) — хост. Пустой → fetchSystemName
 	// через FakeGetter.Post без скрипта → errNoFakeResponse → имя = ndmsID (терпимо).
+	// PPPoE0 и Wireguard2 — выходы static NAT: ссылка на них подтверждается
+	// списком (F546).
 	fg.SetJSON("/show/interface/", `{
-		"Wireguard0":{"id":"Wireguard0","type":"Wireguard","description":"Wireguard VPN Server","state":"up","link":"up","address":"10.9.0.1","mask":"255.255.255.0"}
+		"Wireguard0":{"id":"Wireguard0","type":"Wireguard","description":"Wireguard VPN Server","state":"up","link":"up","address":"10.9.0.1","mask":"255.255.255.0"},
+		"PPPoE0":{"id":"PPPoE0","type":"PPPoE"},
+		"Wireguard2":{"id":"Wireguard2","type":"Wireguard"}
 	}`)
 	// Обогащение списка серверов читает rc каждого: без него List — ошибка (F510).
 	fg.SetJSON("/show/rc/interface/Wireguard0", `{}`)
+	fg.SetJSON("/show/rc/interface/Wireguard2", `{}`)
 	fg.SetJSON("/show/running-config", `{"message":["interface PPPoE0","    ip global 32767","!","interface Wireguard2","    ip global 32000","!","interface Wireguard1","    ip access-group AWGM_Wireguard1 in","    ip access-group GUEST_ACL in","    ip access-group _WEBADMIN_Wireguard1 in","!"]}`)
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	poster := &natPoster{}

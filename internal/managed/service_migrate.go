@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -50,7 +51,7 @@ func (s *Service) MigratePeerAllowIPs(ctx context.Context) {
 	// воскресило бы. Наличие — свежим чтением rc сервера, под блокировкой,
 	// которую берёт и удаление пира.
 	defer s.LockPeerSubnets()()
-	var exists map[string]bool
+	var exists map[string]query.Confirmed
 	readFailed := false
 	attempted, failures := 0, 0
 	for _, sv := range s.settings.GetManagedServers() {
@@ -59,17 +60,18 @@ func (s *Service) MigratePeerAllowIPs(ctx context.Context) {
 		}
 		if exists == nil {
 			var err error
-			if exists, err = s.routerInterfaceIDs(ctx); err != nil {
+			if exists, err = s.routerServers(ctx); err != nil {
 				if s.log != nil {
 					s.log.Warn("migrate-peer-allow-ips: interfaces not read, retry next boot", "error", err)
 				}
 				return
 			}
 		}
-		if !exists[sv.InterfaceName] {
+		iface, ok := exists[sv.InterfaceName]
+		if !ok {
 			continue // интерфейс удалён вне панели — пиров на роутере нет
 		}
-		onRouter, err := s.routerPeerKeys(ctx, sv.InterfaceName)
+		onRouter, err := s.routerPeerKeys(ctx, iface)
 		if err != nil {
 			// Не знаем, есть ли пиры, — не шлём и не ставим флаг.
 			readFailed = true
@@ -84,7 +86,7 @@ func (s *Service) MigratePeerAllowIPs(ctx context.Context) {
 				continue // пира на роутере нет — снимать нечего
 			}
 			attempted++
-			if err := s.rciRemovePeerDefaultRoute(ctx, sv.InterfaceName, peer.PublicKey); err != nil {
+			if err := s.rciRemovePeerDefaultRoute(ctx, iface, peer.PublicKey); err != nil {
 				failures++
 				if s.log != nil {
 					s.log.Warn("migrate-peer-allow-ips: remove failed",
@@ -108,28 +110,25 @@ func (s *Service) MigratePeerAllowIPs(ctx context.Context) {
 	}
 }
 
-// routerInterfaceIDs — id интерфейсов по свежему списку роутера.
-func (s *Service) routerInterfaceIDs(ctx context.Context) (map[string]bool, error) {
+// routerServers — интерфейсы managed-серверов по одному свежему списку
+// роутера; в ответе только существующие.
+func (s *Service) routerServers(ctx context.Context) (map[string]query.Confirmed, error) {
 	if s.queries == nil || s.queries.Interfaces == nil {
 		return nil, fmt.Errorf("interface store not wired")
 	}
-	ifaces, err := s.queries.Interfaces.ListFresh(ctx)
-	if err != nil {
-		return nil, err
+	var names []string
+	for _, sv := range s.settings.GetManagedServers() {
+		names = append(names, sv.InterfaceName)
 	}
-	ids := make(map[string]bool, len(ifaces))
-	for _, i := range ifaces {
-		ids[i.ID] = true
-	}
-	return ids, nil
+	return s.queries.Interfaces.ConfirmEach(ctx, names)
 }
 
 // routerPeerKeys — ключи пиров интерфейса по свежему rc.
-func (s *Service) routerPeerKeys(ctx context.Context, iface string) (map[string]bool, error) {
+func (s *Service) routerPeerKeys(ctx context.Context, iface query.Confirmed) (map[string]bool, error) {
 	if s.queries == nil || s.queries.WGServers == nil {
 		return nil, fmt.Errorf("wireguard server store not wired")
 	}
-	peers, err := s.queries.WGServers.PeersRCFresh(ctx, iface)
+	peers, err := s.queries.WGServers.PeersRC(ctx, iface)
 	if err != nil {
 		return nil, err
 	}

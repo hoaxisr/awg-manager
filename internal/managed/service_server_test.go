@@ -40,6 +40,12 @@ type stateAwareGetter struct {
 	// created — интерфейсы, созданные POST-ом и ещё не снятые: настоящий NDMS
 	// показывает их в списке сразу, до записи сервера в настройки (F546).
 	created map[string]bool
+	// wans — прочие интерфейсы списка (выходы static NAT): ссылки на них
+	// подтверждаются списком (F546).
+	wans []string
+	// addr — адрес/маска, поставленные POST-ом configure: точечное чтение
+	// после него видит их, как на роутере (П4).
+	addr map[string][2]string
 }
 
 func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error {
@@ -98,6 +104,9 @@ func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error 
 	}
 	g.mu.Lock()
 	brs := g.bridges
+	for _, name := range g.wans {
+		m[name] = json.RawMessage(`{"id":"` + name + `","interface-name":"` + name + `"}`)
+	}
 	for name := range g.created {
 		if _, ok := m[name]; !ok {
 			m[name] = json.RawMessage(`{"id":"` + name + `","interface-name":"` + name + `","type":"Wireguard"}`)
@@ -142,6 +151,14 @@ func (g *stateAwareGetter) applyPost(payload map[string]interface{}) {
 				g.created = map[string]bool{}
 			}
 			g.created[ifaceName] = true
+		}
+		if ip, ok := cfg["ip"].(map[string]interface{}); ok {
+			if a, ok := ip["address"].(map[string]interface{}); ok {
+				if g.addr == nil {
+					g.addr = map[string][2]string{}
+				}
+				g.addr[ifaceName] = [2]string{fmt.Sprint(a["address"]), fmt.Sprint(a["mask"])}
+			}
 		}
 		g.mu.Unlock()
 		wg, ok := cfg["wireguard"].(map[string]interface{})
@@ -232,8 +249,11 @@ func (g *stateAwareGetter) Post(_ context.Context, payload any) (json.RawMessage
 		// {"show":{"interface":{"name":<id>}}} — детальный снимок интерфейса.
 		// Отдаём ровно то, что читает GenerateConf: публичный ключ сервера.
 		if id, ok := iface["name"].(string); ok && id != "" {
+			g.mu.Lock()
+			a := g.addr[id]
+			g.mu.Unlock()
 			return []byte(`{"show":{"interface":{"id":"` + id + `","interface-name":"` + id +
-				`","type":"Wireguard","wireguard":{"public-key":"SRV-` + id + `"}}}}`), nil
+				`","type":"Wireguard","address":"` + a[0] + `","mask":"` + a[1] + `","wireguard":{"public-key":"SRV-` + id + `"}}}}`), nil
 		}
 		return nil, errors.New("stateAwareGetter: Post payload not recognised")
 	}
@@ -595,7 +615,8 @@ func TestService_Create_FailsWhenPrivateKeyUnavailable(t *testing.T) {
 // This is required for TestSetNATMode_InternetOnly_SetsStaticToWAN.
 func newNATModeTestService(t *testing.T) (*Service, *storage.SettingsStore, *recordingPoster) {
 	t.Helper()
-	svc, store, _ := newCreateTestService(t)
+	svc, store, getter := newCreateTestService(t)
+	getter.wans = []string{"PPPoE0", "Wireguard2", "OpkgTun0", "ISP", "WireguardX"}
 
 	// Build a fake Getter that answers /show/ip/route with a default via PPPoE0.
 	routeGetter := query.NewFakeGetter()

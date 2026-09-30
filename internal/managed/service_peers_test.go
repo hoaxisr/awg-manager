@@ -14,13 +14,12 @@ import (
 )
 
 // withPeerRouter — DeletePeer сверяет маршруты с меткой пира на роутере
-// (#713): Commands над пустым /show/rc/ip/route. Interfaces — чтобы PeerRouter
-// был собран (подтверждение имени, F546); при пустом rc до него не доходит.
+// (#713): Commands над пустым /show/rc/ip/route. Интерфейс сервера
+// подтверждается списком из newTestService (F546).
 func withPeerRouter(svc *Service, poster *fakePoster) {
 	q := &query.Queries{StaticRoutes: query.NewStaticRouteStore(&fakePolicyGetter{body: []byte(`[]`)}, query.NopLogger())}
 	sc := command.NewSaveCoordinator(poster, nil, time.Hour, time.Hour, 0, nil)
 	svc.commands = command.NewCommands(command.Deps{Poster: poster, Save: sc, Queries: q})
-	svc.queries.Interfaces = query.NewInterfaceStore(query.NewFakeNDMS(), query.NopLogger())
 }
 
 // DeletePeer снимает пира из NDMS (`peer no key`) и из storage; иначе отозванный
