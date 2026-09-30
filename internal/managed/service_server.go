@@ -2,6 +2,7 @@ package managed
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"slices"
@@ -297,6 +298,8 @@ func (s *Service) applyNATModeRaw(ctx context.Context, iface query.Confirmed, mo
 				// иначе роутер полуприменён, а запись не меняется (F555).
 				if rbErr := s.rciSetNAT(ctx, iface, false); rbErr != nil {
 					s.log.Warn("full rollback: disable NAT failed", "error", rbErr, "interface", ifaceName)
+					s.appLog.Warn("nat", ifaceName, "откат `ip nat` не удался: "+rbErr.Error())
+					return nil, errors.Join(err, fmt.Errorf("откат ip nat: %w", rbErr))
 				}
 				return nil, err
 			}

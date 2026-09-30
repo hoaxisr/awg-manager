@@ -608,6 +608,27 @@ func TestSetNATMode_FullAfterInternetOnly_WANListError_NATRolledBack(t *testing.
 	}
 }
 
+// failNATUndo — failListAfterPost, который вдобавок отвергает `no ip nat`.
+type failNATUndo struct{ f *query.FakeNDMS }
+
+func (p failNATUndo) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	if js, _ := json.Marshal(payload); strings.Contains(string(js), `"nat":[`) {
+		return nil, errors.New("injected: undo")
+	}
+	return failListAfterPost(p).Post(ctx, payload)
+}
+
+// Откат `ip nat` сам не удался — это видно в ответе, а не только в журнале.
+func TestSetNATMode_FullRollbackFails_InError(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"}, ndms.Interface{ID: "PPPoE0"})
+	s := newServiceWithOracle(t, f, nil, storage.ManagedServer{InterfaceName: "Wireguard3", NATMode: "internet-only", NATStaticWANs: []string{"PPPoE0"}})
+	s.transport = failNATUndo{f}
+	err := s.SetNATMode(context.Background(), "Wireguard3", "full")
+	if err == nil || !strings.Contains(err.Error(), "injected: undo") {
+		t.Fatalf("err = %v, want отказ отката в ошибке", err)
+	}
+}
+
 // internet-only → none, список не прочитан: ни одной команды — `no ip nat`
 // не уходит раньше снятия static (F555).
 func TestApplyNATMode_NoneAfterInternetOnly_ListError_NoCommands(t *testing.T) {
