@@ -46,6 +46,9 @@ func newTestNDMS() (*query.Queries, *command.Commands, *fakePoster, *query.FakeG
 	// so List() succeeds and returns no current state.
 	fg.SetJSON("/show/rc/object-group/fqdn", `{}`)
 	fg.SetJSON("/show/sc/dns-proxy/route", `{}`)
+	// Список интерфейсов reconcile читает для подтверждения целей (F548);
+	// пустой — все цели в fallback, строк маршрутов нет.
+	fg.SetJSON("/show/interface/", `{}`)
 
 	q := query.NewQueries(query.Deps{
 		Getter: fg,

@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
@@ -263,9 +264,16 @@ func newServiceWithRouter(t *testing.T, r *fakeRouter) *ServiceImpl {
 	if _, err := store.Load(); err != nil {
 		t.Fatal(err)
 	}
-	q := query.NewQueries(query.Deps{Getter: r, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
-	sc := command.NewSaveCoordinator(r, nopPublisher{}, 10*time.Millisecond, time.Second, 0, nil)
-	c := command.NewCommands(command.Deps{Poster: r, Save: sc, Queries: q, IsOS5: func() bool { return true }})
+	// Интерфейсы целей reconcile подтверждает списком (F548) — их отдаёт оракул.
+	o := &oracleRouter{fakeRouter: r, f: query.NewFakeNDMS(
+		ndms.Interface{ID: "Wireguard0", Type: "Wireguard"},
+		ndms.Interface{ID: "Wireguard1", Type: "Wireguard"},
+		ndms.Interface{ID: "Wireguard2", Type: "Wireguard"},
+		ndms.Interface{ID: "Wireguard3", Type: "Wireguard"},
+	)}
+	q := query.NewQueries(query.Deps{Getter: o, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	sc := command.NewSaveCoordinator(o, nopPublisher{}, 10*time.Millisecond, time.Second, 0, nil)
+	c := command.NewCommands(command.Deps{Poster: o, Save: sc, Queries: q, IsOS5: func() bool { return true }})
 	return &ServiceImpl{store: store, queries: q, commands: c}
 }
 
