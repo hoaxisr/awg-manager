@@ -33,15 +33,28 @@ var byNameAllowed = map[string]string{
 	"internal/sys/routerinfo/routerinfo.go:fetchWiFiTemps": "GET /show/interface — весь список, без имени",
 }
 
+// fullListLiteralAllowed — где может стоять голый литерал пути полного списка
+// ("/show/interface/", "/show/rc/interface/"): чтение ЦЕЛОГО списка/дерева и
+// разбор пути в транспорте и оракуле. В любом другом месте литерал — заготовка
+// пути по имени (path.Join("/show/interface/", x), const p = …; p+x).
+var fullListLiteralAllowed = map[string]string{
+	"internal/ndms/query/interfaces.go:fetchListMap": "GET /show/interface/ — весь список",
+	"internal/ndms/query/rcinterfaces.go:fetch":      "GET /show/rc/interface/ — всё дерево rc",
+	"internal/ndms/query/getter.go:rcTreeLocked":     "FakeGetter: ответ на чтение дерева",
+	"internal/ndms/query/fakendms.go:GetRaw":         "оракул: разбор пути запроса",
+	"internal/ndms/transport/client.go:bypassBatch":  "транспорт: дерево rc мимо батчера (префикс)",
+}
+
 // TestByNameReads_Absent — ни одного запроса интерфейса по имени во ВСЁМ
 // прод-коде, включая internal/ndms/query (F546): ни `show interface name=X`
 // (POST-форма ShowQuery), ни GET `/show/interface/X`, ни `/show/rc/interface/X`.
+// Голые литералы путей полного списка — только в fullListLiteralAllowed.
 // Комментарии не в счёт (go/scanner). ShowQuery с первым элементом пути
 // "interface" и аргументами — только в byNameAllowed и только с "system-name"
 // вторым элементом. Оракул FakeNDMS точечные чтения моделирует, но сам
 // их не шлёт — шаблонов в нём нет.
 func TestByNameReads_Absent(t *testing.T) {
-	used := map[string]bool{}
+	used, usedFull := map[string]bool{}, map[string]bool{}
 	for _, f := range prodGoFiles(t, true) {
 		rel := filepath.ToSlash(f.rel)
 		code := withoutComments(t, f)
@@ -78,6 +91,15 @@ func TestByNameReads_Absent(t *testing.T) {
 			}
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
+			if bl, ok := n.(*ast.BasicLit); ok && (isStringLit(bl, "/show/interface/") || isStringLit(bl, "/show/rc/interface/")) {
+				key := rel + ":" + funcAt(fset.Position(bl.Pos()).Offset)
+				if _, ok := fullListLiteralAllowed[key]; ok {
+					usedFull[key] = true
+				} else {
+					t.Errorf("%s: литерал %s вне чтения полного списка — заготовка пути по имени (F546)", fset.Position(bl.Pos()), bl.Value)
+				}
+				return true
+			}
 			call, ok := n.(*ast.CallExpr)
 			if !ok || len(call.Args) == 0 {
 				return true
@@ -105,6 +127,11 @@ func TestByNameReads_Absent(t *testing.T) {
 	for key := range byNameAllowed {
 		if !used[key] {
 			t.Errorf("исключение %s больше не встречается — убрать из byNameAllowed", key)
+		}
+	}
+	for key := range fullListLiteralAllowed {
+		if !usedFull[key] {
+			t.Errorf("исключение %s больше не встречается — убрать из fullListLiteralAllowed", key)
 		}
 	}
 }
