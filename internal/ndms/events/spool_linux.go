@@ -52,7 +52,9 @@ func (r *SpoolReader) Start() error {
 	return nil
 }
 
-// Stop останавливает чтение и дожидается горутины.
+// Stop останавливает чтение, дожидается горутины и сносит каталог spool:
+// хук-скрипт пишет, только пока каталог есть, так что остановленный демон
+// не копит строки (следующий Start всё равно начал бы с конца файла).
 func (r *SpoolReader) Stop() {
 	if r.done == nil {
 		return
@@ -61,6 +63,9 @@ func (r *SpoolReader) Stop() {
 	<-r.done
 	r.closeFiles()
 	r.done = nil
+	if err := os.RemoveAll(filepath.Dir(r.path)); err != nil {
+		r.log.Warnf("spool: remove %s: %v", filepath.Dir(r.path), err)
+	}
 }
 
 func (r *SpoolReader) loop() {

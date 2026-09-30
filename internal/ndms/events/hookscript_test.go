@@ -9,9 +9,9 @@ import (
 	"testing"
 )
 
-// runHookScript кладёт embed-скрипт в <root>/<hook>.d/ с путём spool,
-// подменённым на spool, и исполняет его настоящим /bin/sh с пустым PATH:
-// любая внешняя утилита в скрипте упадёт «not found».
+// runHookScript кладёт embed-скрипт в <root>/<hook>.d/ с каталогом spool,
+// подменённым на каталог spool (имя файла то же), и исполняет его настоящим
+// /bin/sh с пустым PATH: любая внешняя утилита в скрипте упадёт «not found».
 func runHookScript(t *testing.T, root, hook, spool string, env ...string) (string, error) {
 	t.Helper()
 	if !strings.Contains(hookScriptContent, DefaultSpoolPath) {
@@ -22,7 +22,10 @@ func runHookScript(t *testing.T, root, hook, spool string, env ...string) (strin
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "50-awg-manager.sh")
-	body := strings.Replace(hookScriptContent, DefaultSpoolPath, spool, 1)
+	if filepath.Base(spool) != filepath.Base(DefaultSpoolPath) {
+		t.Fatalf("spool %s: имя файла не %s", spool, filepath.Base(DefaultSpoolPath))
+	}
+	body := strings.ReplaceAll(hookScriptContent, filepath.Dir(DefaultSpoolPath), filepath.Dir(spool))
 	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +37,7 @@ func runHookScript(t *testing.T, root, hook, spool string, env ...string) (strin
 
 func TestHookScript_AppendsOneLine(t *testing.T) {
 	root := t.TempDir()
-	spool := filepath.Join(root, "run", "ndm-hooks")
+	spool := filepath.Join(root, "run", "hooks", "ndm-hooks")
 	if err := os.MkdirAll(filepath.Dir(spool), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -64,16 +67,23 @@ func TestHookScript_AppendsOneLine(t *testing.T) {
 	}
 }
 
-// Демон не запущен, каталога spool нет — хук молча выходит с 0 и не держит
-// очередь NDMS; ничего не создаёт и ничего не пишет в stderr.
+// Демон не запущен — каталога spool нет (Stop его сносит): хук молча выходит
+// с 0, не держит очередь NDMS, ничего не создаёт и ничего не пишет в stderr.
 func TestHookScript_NoSpoolDir_ExitZero(t *testing.T) {
 	root := t.TempDir()
-	spool := filepath.Join(root, "missing", "ndm-hooks")
+	run := filepath.Join(root, "run")
+	if err := os.MkdirAll(run, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spool := filepath.Join(run, "hooks", "ndm-hooks")
 	out, err := runHookScript(t, root, "ifdestroyed", spool, "id=Wireguard1")
 	if err != nil || out != "" {
 		t.Fatalf("exit: %v, вывод: %q", err, out)
 	}
 	if _, err := os.Stat(filepath.Dir(spool)); !os.IsNotExist(err) {
 		t.Fatalf("каталог spool создан: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(run, "ndm-hooks")); !os.IsNotExist(err) {
+		t.Fatalf("spool создан мимо каталога: %v", err)
 	}
 }

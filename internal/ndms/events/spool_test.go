@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -103,7 +104,7 @@ func hookLine(i int) (string, Event) {
 }
 
 func TestSpool_OrderPreserved(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "run", "ndm-hooks")
+	path := filepath.Join(t.TempDir(), "run", "hooks", "ndm-hooks")
 	sink, _ := startSpool(t, path, 0)
 
 	var want []Event
@@ -125,7 +126,10 @@ func TestSpool_OrderPreserved(t *testing.T) {
 
 // Накопленное до старта покрыто бутовым списком — читатель начинает с конца.
 func TestSpool_StartSkipsExisting(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ndm-hooks")
+	path := filepath.Join(t.TempDir(), "hooks", "ndm-hooks")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 5; i++ {
 		line, _ := hookLine(i)
 		appendLine(t, path, line)
@@ -143,7 +147,7 @@ func TestSpool_StartSkipsExisting(t *testing.T) {
 }
 
 func TestSpool_PartialLineBuffered(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ndm-hooks")
+	path := filepath.Join(t.TempDir(), "hooks", "ndm-hooks")
 	sink, log := startSpool(t, path, 0)
 
 	appendLine(t, path, "type=ifcre")
@@ -164,7 +168,7 @@ func TestSpool_PartialLineBuffered(t *testing.T) {
 // Ротация rename'ом: писатель, открывший файл до ротации и записавший после,
 // попадает в .1 — читатель держит его fd до следующей ротации и дочитывает.
 func TestSpool_RotationKeepsOrderAndStraggler(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ndm-hooks")
+	path := filepath.Join(t.TempDir(), "hooks", "ndm-hooks")
 	sink, _ := startSpool(t, path, 1<<10)
 
 	straggler, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
@@ -217,7 +221,7 @@ func TestSpool_RotationKeepsOrderAndStraggler(t *testing.T) {
 }
 
 func TestSpool_BadLineSkipped(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ndm-hooks")
+	path := filepath.Join(t.TempDir(), "hooks", "ndm-hooks")
 	sink, log := startSpool(t, path, 0)
 
 	appendLine(t, path, "type=zzz&id=1\n")
@@ -229,5 +233,76 @@ func TestSpool_BadLineSkipped(t *testing.T) {
 	}
 	if log.count() != 1 {
 		t.Fatalf("предупреждений: want 1, got %d", log.count())
+	}
+}
+
+// Порванная запись без '\n' длиннее maxPendingLine выбрасывается с одним
+// Warn; её хвост до '\n' тоже, следующая строка доставляется.
+func TestSpool_OversizedPartialDropped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks", "ndm-hooks")
+	sink, log := startSpool(t, path, 0)
+
+	appendLine(t, path, strings.Repeat("x", maxPendingLine+1000))
+	// Хвост без '\n' сброшен ДО прихода остатка строки — остаток ("yyy")
+	// обязан быть пропущен до '\n', а не разобран как строка.
+	deadline := time.Now().Add(3 * time.Second)
+	for log.count() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("перебор хвоста не сброшен")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	appendLine(t, path, "yyy\n")
+	line, e := hookLine(0)
+	appendLine(t, path, line)
+	got := sink.waitFor(t, 1)
+	if len(got) != 1 || got[0] != e {
+		t.Fatalf("got %#v, want %#v", got, e)
+	}
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	if len(log.warns) != 1 || !strings.Contains(log.warns[0], "dropped partial line") {
+		t.Fatalf("предупреждения: want одно про сброс хвоста, got %.200q", log.warns)
+	}
+}
+
+// Недописанная строка не держит ротацию: файл дорос до cap — .1 появился,
+// новые строки идут в новый файл и доставляются.
+func TestSpool_RotationNotBlockedByPartial(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks", "ndm-hooks")
+	sink, _ := startSpool(t, path, 1<<10)
+
+	appendLine(t, path, "type=ifcreated&id="+strings.Repeat("A", 2<<10))
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(path + ".1"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("ротации не было: недописанная строка держит её")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	line, e := hookLine(0)
+	appendLine(t, path, line)
+	got := sink.waitFor(t, 1)
+	if got[0] != e {
+		t.Fatalf("got %#v, want %#v", got[0], e)
+	}
+}
+
+// Stop сносит каталог spool: хук-скрипт без каталога ничего не пишет.
+func TestSpool_StopRemovesDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks", "ndm-hooks")
+	r := NewSpoolReader(path, func(Event) {}, NopLogger())
+	if err := r.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("Start не создал spool: %v", err)
+	}
+	r.Stop()
+	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
+		t.Fatalf("каталог spool после Stop: %v", err)
 	}
 }

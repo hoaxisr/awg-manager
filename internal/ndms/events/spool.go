@@ -8,10 +8,18 @@ import (
 
 // DefaultSpoolPath — файл, в который хук-скрипт дописывает по строке на
 // событие NDMS. tmpfs: повторяющаяся запись не должна идти на флеш.
-const DefaultSpoolPath = "/var/run/awg-manager/ndm-hooks"
+// Свой каталог: в /var/run/awg-manager пишет и журнал sing-box, а watch
+// стоит на каталог — чужие записи будили бы читателя. Каталог же служит
+// хук-скрипту признаком «демон читает»: Start его создаёт, Stop сносит.
+const DefaultSpoolPath = "/var/run/awg-manager/hooks/ndm-hooks"
 
 // spoolCap — размер, после которого файл ротируется в path+".1".
 const spoolCap = 256 << 10
+
+// maxPendingLine — потолок недописанной строки (как в singbox/proclog.go).
+// Строка хука ≈100 байт; хвост длиннее — мусор (порванная запись): он
+// выбрасывается с одним Warn, чтение продолжается со следующего '\n'.
+const maxPendingLine = 64 << 10
 
 // SpoolReader читает строки хуков из append-only файла на tmpfs в порядке
 // записи и отдаёт их sink по одной. Один читатель на процесс.
@@ -31,9 +39,10 @@ type SpoolReader struct {
 }
 
 type spoolFile struct {
-	f   *os.File
-	pos int64
-	buf []byte // хвост без '\n' — дочитается на следующем событии
+	f    *os.File
+	pos  int64
+	buf  []byte // хвост без '\n' — дочитается на следующем событии
+	skip bool   // хвост превысил maxPendingLine — пропускать до '\n'
 }
 
 // NewSpoolReader создаёт читателя; читать начинает Start.
@@ -45,7 +54,8 @@ func NewSpoolReader(path string, sink func(Event), log Logger) *SpoolReader {
 }
 
 // drain дочитывает сначала прежний файл, потом текущий, и ротирует текущий,
-// если он дорос до cap и не оборван на полустроке.
+// если он дорос до cap. Недописанная строка ротации не мешает: её хвост
+// допишет тот же процесс в тот же inode (теперь .1), а у prev свой буфер.
 func (r *SpoolReader) drain() {
 	if r.prev != nil {
 		r.drainFile(r.prev)
@@ -59,7 +69,7 @@ func (r *SpoolReader) drain() {
 		r.cur = &spoolFile{f: f}
 	}
 	r.drainFile(r.cur)
-	if r.cur.pos >= r.cap && len(r.cur.buf) == 0 {
+	if r.cur.pos >= r.cap {
 		r.rotate()
 	}
 }
@@ -74,6 +84,9 @@ func (r *SpoolReader) rotate() {
 		return
 	}
 	if r.prev != nil {
+		if len(r.prev.buf) > 0 {
+			r.log.Warnf("spool: dropped partial line (%d bytes) of %s.1", len(r.prev.buf), r.path)
+		}
 		r.prev.f.Close()
 	}
 	r.prev, r.cur = r.cur, nil
@@ -104,8 +117,29 @@ func (r *SpoolReader) drainFile(sf *spoolFile) {
 func (r *SpoolReader) emitLines(sf *spoolFile) {
 	for {
 		i := bytes.IndexByte(sf.buf, '\n')
+		if sf.skip {
+			if i < 0 {
+				sf.buf = sf.buf[:0]
+				return
+			}
+			sf.buf = append(sf.buf[:0], sf.buf[i+1:]...)
+			sf.skip = false
+			continue
+		}
 		if i < 0 {
+			if len(sf.buf) > maxPendingLine {
+				r.log.Warnf("spool: dropped partial line over %d bytes", maxPendingLine)
+				sf.buf = sf.buf[:0]
+				sf.skip = true
+			}
 			return
+		}
+		if i > maxPendingLine {
+			// Хвост дописался в том же чтении, что и перебор: та же порванная
+			// запись, что и в ветке выше.
+			r.log.Warnf("spool: dropped partial line over %d bytes", maxPendingLine)
+			sf.buf = append(sf.buf[:0], sf.buf[i+1:]...)
+			continue
 		}
 		line := string(sf.buf[:i])
 		sf.buf = append(sf.buf[:0], sf.buf[i+1:]...)
