@@ -109,6 +109,32 @@ func TestDelete_DeleteRecordFails_Error(t *testing.T) {
 	clean(t, f)
 }
 
+// Stop снимает DNS, поставленный стартом (как OS4 Stop); записи нет —
+// снимать не с чего, команды нет (F561).
+func TestStop_ClearsAppliedDNS(t *testing.T) {
+	const clear = `{"ip":{"name-server":{"address":"1.1.1.1","interface":"OpkgTun10","no":true}}}`
+	for _, gone := range []bool{false, true} {
+		f := ndmsquery.NewFakeNDMS(opkgTun10())
+		o, _, _ := newOS5Oracle(t, f, &MockBackend{})
+		cfg := lifecycleCfg(t)
+		cfg.DNS = []string{"1.1.1.1"}
+		if err := o.ColdStart(context.Background(), cfg); err != nil {
+			t.Fatalf("ColdStart: %v", err)
+		}
+		if gone {
+			f.Remove("OpkgTun10")
+		}
+		before := len(f.Posts)
+		if err := o.Stop(context.Background(), "awg10", "Germany"); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+		if got := slices.Contains(f.Posts[before:], clear); got == gone {
+			t.Fatalf("gone=%v: снятие DNS=%v; posts=%v", gone, got, f.Posts[before:])
+		}
+		clean(t, f)
+	}
+}
+
 // Список не прочитан — устройство всё равно опущено, NDMS не тронут, ошибка.
 func TestStop_ListError_LinkDownThenError(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS(opkgTun10())

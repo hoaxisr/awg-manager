@@ -530,6 +530,17 @@ func (o *OperatorOS5Impl) Stop(ctx context.Context, tunnelID, name string) error
 			o.logInfo("stop", tunnelID, fmt.Sprintf("record %s is not ours (description %q) — conf: disabled not set", names.NDMSName, rec.Description))
 		}
 	}
+	// DNS, поставленный стартом, снимаем, как OS4 Stop (F561). Записи нет —
+	// снимать не с чего (ссылка на отсутствующий — E), трекинг забываем;
+	// список не прочитан — NDMS не трогаем, трекинг остаётся.
+	switch {
+	case ok:
+		o.clearAppliedDNS(ctx, tunnelID, iface)
+	case confirmErr == nil:
+		o.appliedDNSMu.Lock()
+		delete(o.appliedDNS, tunnelID)
+		o.appliedDNSMu.Unlock()
+	}
 	if confirmErr == nil && !ok {
 		o.logInfo("stop", tunnelID, "OpkgTun record absent in NDMS — conf: disabled not needed")
 	}
