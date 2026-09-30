@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -129,5 +130,64 @@ func TestListAll_NoOwnResolver(t *testing.T) {
 	}
 	if len(all) != 2 || all[0].Name != "eth3" || all[1].Name != "usb0" {
 		t.Fatalf("ListAll = %+v, want eth3, usb0", all)
+	}
+}
+
+// Эхо id из хука в карту имён не ложится: иначе id снят с резолвера вслед за
+// списком навсегда.
+func TestOnSystemName_EchoDoesNotBlockResolver(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, `{
+		"UsbQmi0": {"id":"UsbQmi0","type":"UsbQmi","state":"up"}
+	}`)
+	fg.SetPostSystemName("UsbQmi0", `"usb0"`)
+	s := NewInterfaceStore(fg, NopLogger())
+	s.OnSystemName("UsbQmi0", "UsbQmi0")
+	if got := s.ResolveSystemName(context.Background(), "UsbQmi0"); got != "usb0" {
+		t.Fatalf("ResolveSystemName = %q, want usb0 от резолвера вслед за списком", got)
+	}
+	if got := fg.PostSystemNameCalls("UsbQmi0"); got != 1 {
+		t.Fatalf("резолвер: %d вызовов, want 1", got)
+	}
+}
+
+// Пустой ответ резолвера запоминается: следующий список (Confirm) id без
+// имени не переспрашивает — иначе POST на каждой мутации.
+func TestRefreshList_EmptyAnswerNotReasked(t *testing.T) {
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, `{
+		"UsbQmi0": {"id":"UsbQmi0","type":"UsbQmi","state":"up"}
+	}`)
+	fg.SetPostSystemName("UsbQmi0", `""`)
+	s := NewInterfaceStore(fg, NopLogger())
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		if _, _, _, err := s.Confirm(ctx, "UsbQmi0"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := fg.PostSystemNameCalls("UsbQmi0"); got != 1 {
+		t.Fatalf("резолвер: %d вызовов за два списка, want 1", got)
+	}
+}
+
+// id, снятый хуком, пока список в полёте, резолвер вслед за этим списком не
+// спрашивает: запись уже снята, вопрос по имени — E.
+func TestRefreshList_SkipsIDDestroyedInFlight(t *testing.T) {
+	f := NewFakeNDMS(ndms.Interface{ID: "UsbQmi1", Type: "UsbQmi"})
+	q := NewQueries(Deps{Getter: f, Logger: NopLogger()})
+	f.InList(func() {
+		f.InList(nil)
+		f.Remove("UsbQmi1")
+		q.Interfaces.OnDestroyed("UsbQmi1")
+	})
+	_, _ = q.Interfaces.List(context.Background()) // bootstrap
+	for _, p := range f.Posts {
+		if strings.Contains(p, "UsbQmi1") {
+			t.Fatalf("снятый в полёте id спрошен: %s", p)
+		}
+	}
+	if f.E != 0 {
+		t.Fatalf("E = %d, want 0", f.E)
 	}
 }

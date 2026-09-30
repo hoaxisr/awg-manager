@@ -10,11 +10,21 @@ import (
 	"testing"
 )
 
+// systemNameLiteralAllowed — где в прод-файлах пакета может стоять литерал
+// "system-name" (элемент пути запроса резолвера): сам резолвер и разбор
+// payload в фейках, которые лежат в прод-файлах ради других пакетов.
+var systemNameLiteralAllowed = map[string]bool{
+	"interfaces.go:resolveSystemNames": true,
+	"interfaces.go:fetchSystemName":    true,
+	"fakendms.go:post":                 true,
+	"getter.go:extractShowSystemName":  true,
+}
+
 // TestResolver_OnlyAfterList — резолвер system-name ходит в NDMS только вслед
 // за свежим полным списком (F570): вызов resolveSystemNames ровно один и он в
 // refreshList, fetchSystemName зовётся только из resolveSystemNames. Ленивый
 // резолвер «по требованию» спрашивал имя, которое уже могли снять, — E в
-// журнале ndm.
+// журнале ndm. Литерал "system-name" — только в systemNameLiteralAllowed.
 func TestResolver_OnlyAfterList(t *testing.T) {
 	calls := map[string][]string{} // вызываемая → функции, откуда зовут
 	files, err := filepath.Glob("*.go")
@@ -35,6 +45,16 @@ func TestResolver_OnlyAfterList(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, decl := range file.Decls {
+			where := name + ":"
+			if fd, ok := decl.(*ast.FuncDecl); ok {
+				where += fd.Name.Name
+			}
+			ast.Inspect(decl, func(n ast.Node) bool {
+				if lit, ok := n.(*ast.BasicLit); ok && lit.Value == `"system-name"` && !systemNameLiteralAllowed[where] {
+					t.Errorf("%s: литерал \"system-name\" вне резолвера — запрос имени по требованию (F570)", fset.Position(lit.Pos()))
+				}
+				return true
+			})
 			fd, ok := decl.(*ast.FuncDecl)
 			if !ok {
 				continue

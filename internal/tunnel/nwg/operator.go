@@ -1243,9 +1243,9 @@ func (o *OperatorNativeWG) ResolveActiveWAN(ctx context.Context, stored *storage
 	}
 	sysName := o.queries.Interfaces.ResolveSystemName(ctx, rciState.PeerVia)
 	if sysName == "" || sysName == rciState.PeerVia {
-		// ResolveSystemName failed to translate (e.g. /show/interface/system-name
-		// unavailable on firmware < 4.1). Return "" so the kmod proxy socket
-		// uses the default route instead of crashing with ENODEV.
+		// Имени ядра в памяти нет (класс не из ndms.KernelName, ни хук, ни
+		// резолвер вслед за списком его не назвали). Return "" so the kmod
+		// proxy socket uses the default route instead of crashing with ENODEV.
 		o.appLog.Warn("resolve-wan", names.NDMSName, "peer via "+rciState.PeerVia+": could not resolve kernel name")
 		return ""
 	}

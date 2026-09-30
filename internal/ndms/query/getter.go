@@ -183,7 +183,7 @@ func (f *FakeGetter) GetRaw(ctx context.Context, path string) ([]byte, error) {
 	f.calls[path]++
 	body, haveBody := f.rawResp[path]
 	// Fall back to jsonResp so fixtures primed with SetJSON also satisfy
-	// GetRaw callers (e.g. InterfaceStore.ResolveSystemName).
+	// GetRaw callers.
 	if !haveBody {
 		if jsonBody, haveJSON := f.jsonResp[path]; haveJSON {
 			body = []byte(jsonBody)

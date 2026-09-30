@@ -868,8 +868,13 @@ func (s *InterfaceStore) Forget(id string) {
 // OnSystemName — имя ядра из хука NDMS (`system_name` есть в хуках, стенд
 // 5.01.C.6: модель WAN строится по нему). Пишется всегда, даже для id, которого
 // карта ещё не знает: на создание layer-хуки приходят раньше ifcreated. Снимают
-// Forget и список без этого id (applyListLocked).
+// Forget и список без этого id (applyListLocked). Эхо id или подпись не
+// кладутся: запись в sysNames снимает id с резолвера вслед за списком
+// (unnamedLocked), и мусор закрыл бы ему имя навсегда.
 func (s *InterfaceStore) OnSystemName(id, name string) {
+	if name == id || !looksLikeKernelIfname(name) {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sysNames[id] = name
