@@ -585,6 +585,43 @@ func TestSetNATMode_FullAfterInternetOnly_WANListError_KeepsStored(t *testing.T)
 	}
 }
 
+// internet-only → full, выходы не подтвердились: `ip nat` уже включён —
+// откатывается, роутер не остаётся полуприменённым (F555).
+func TestSetNATMode_FullAfterInternetOnly_WANListError_NATRolledBack(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"}, ndms.Interface{ID: "PPPoE0"})
+	s := newServiceWithOracle(t, f, nil, storage.ManagedServer{InterfaceName: "Wireguard3", NATMode: "internet-only", NATStaticWANs: []string{"PPPoE0"}})
+	s.transport = failListAfterPost{f}
+	if err := s.SetNATMode(context.Background(), "Wireguard3", "full"); err == nil {
+		t.Fatal("сбой чтения выходов принят за успех")
+	}
+	var nat []string
+	for _, p := range f.Posts {
+		if strings.Contains(p, `"nat"`) {
+			nat = append(nat, p)
+		}
+	}
+	if len(nat) == 0 || nat[len(nat)-1] != `{"ip":{"nat":[{"interface":"Wireguard3","no":true}]}}` {
+		t.Fatalf("ip nat не откачен: %v", nat)
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d phantoms=%d", f.E, f.Phantoms)
+	}
+}
+
+// internet-only → none, список не прочитан: ни одной команды — `no ip nat`
+// не уходит раньше снятия static (F555).
+func TestApplyNATMode_NoneAfterInternetOnly_ListError_NoCommands(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"}, ndms.Interface{ID: "PPPoE0"})
+	s := newServiceWithOracle(t, f, nil)
+	f.FailList(errors.New("rci down"))
+	if _, err := s.applyNATModeRaw(context.Background(), confirmed(t, "Wireguard3"), "none", []string{"PPPoE0"}); err == nil {
+		t.Fatal("сбой чтения выходов принят за успех")
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("команды при неизвестном состоянии: %v", f.Posts)
+	}
+}
+
 func TestDelete_PresentInternetOnly_StaticThenNoInterface(t *testing.T) {
 	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"}, ndms.Interface{ID: "PPPoE0"})
 	s := newServiceWithOracle(t, f, nil, storage.ManagedServer{InterfaceName: "Wireguard3", NATMode: "internet-only", NATStaticWANs: []string{"PPPoE0"}})

@@ -292,6 +292,12 @@ func (s *Service) applyNATModeRaw(ctx context.Context, iface query.Confirmed, mo
 		}
 		if len(prevWANs) > 0 { // только если ранее реально ставили static (internet-only)
 			if err := s.removeStaticNATs(ctx, iface, prevWANs); err != nil {
+				// `ip nat` первым — без окна вовсе без подмены источника; static
+				// не снят — откатываем его: прежний internet-only был без `ip nat`,
+				// иначе роутер полуприменён, а запись не меняется (F555).
+				if rbErr := s.rciSetNAT(ctx, iface, false); rbErr != nil {
+					s.log.Warn("full rollback: disable NAT failed", "error", rbErr, "interface", ifaceName)
+				}
 				return nil, err
 			}
 		}
@@ -352,13 +358,15 @@ func (s *Service) applyNATModeRaw(ctx context.Context, iface query.Confirmed, mo
 		}
 		return applied, nil
 	case "none":
-		if err := s.rciSetNAT(ctx, iface, false); err != nil {
-			return nil, fmt.Errorf("disable NAT: %w", err)
-		}
+		// Static снимается ПЕРВЫМ: список выходов не прочитан — ни одной
+		// команды, `no ip nat` не уходит впереди (F555).
 		if len(prevWANs) > 0 { // только если ранее реально ставили static (internet-only)
 			if err := s.removeStaticNATs(ctx, iface, prevWANs); err != nil {
 				return nil, err
 			}
+		}
+		if err := s.rciSetNAT(ctx, iface, false); err != nil {
+			return nil, fmt.Errorf("disable NAT: %w", err)
 		}
 		return nil, nil
 	default:
