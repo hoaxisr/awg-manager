@@ -302,6 +302,9 @@ func TestInterfaceStore_ResolveSystemName_EmptyInputAndUnknownAbsent(t *testing.
 	}
 }
 
+// Тесты резолвера ниже — на недетерминированном классе (UsbQmi): имя
+// Wireguard берётся из таблицы ndms.KernelName и в резолвер не ходит (F570).
+//
 // Critical regression test: NDMS /show/interface/ list response does
 // NOT always populate `interface-name` (notably for Wireguard system
 // tunnels — confirmed on Keenetic OS 5.x). When the cached SystemName
@@ -315,15 +318,15 @@ func TestInterfaceStore_ResolveSystemName_FallbackOnEmptyCachedName(t *testing.T
 	// Bootstrap snapshot WITHOUT interface-name field (mirrors what
 	// NDMS actually returns for system Wireguard tunnels in list view).
 	fg.SetJSON(ifaceListPath, `{
-		"Wireguard0": {"id":"Wireguard0","type":"Wireguard","state":"up"}
+		"UsbQmi0": {"id":"UsbQmi0","type":"UsbQmi","state":"up"}
 	}`)
 	// Fallback resolver returns the kernel name.
-	fg.SetPostSystemName("Wireguard0", `"nwg0"`)
+	fg.SetPostSystemName("UsbQmi0", `"usb0"`)
 
 	s := NewInterfaceStore(fg, NopLogger())
-	got := s.ResolveSystemName(context.Background(), "Wireguard0")
-	if got != "nwg0" {
-		t.Errorf("fallback resolver: want nwg0, got %q", got)
+	got := s.ResolveSystemName(context.Background(), "UsbQmi0")
+	if got != "usb0" {
+		t.Errorf("fallback resolver: want usb0, got %q", got)
 	}
 }
 
@@ -332,16 +335,16 @@ func TestInterfaceStore_ResolveSystemName_FallbackOnEmptyCachedName(t *testing.T
 func TestInterfaceStore_ResolveSystemName_FallbackMemoised(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, `{
-		"Wireguard0": {"id":"Wireguard0","type":"Wireguard","state":"up"}
+		"UsbQmi0": {"id":"UsbQmi0","type":"UsbQmi","state":"up"}
 	}`)
-	fg.SetPostSystemName("Wireguard0", `"nwg0"`)
+	fg.SetPostSystemName("UsbQmi0", `"usb0"`)
 	s := NewInterfaceStore(fg, NopLogger())
 
-	_ = s.ResolveSystemName(context.Background(), "Wireguard0")
-	_ = s.ResolveSystemName(context.Background(), "Wireguard0")
-	_ = s.ResolveSystemName(context.Background(), "Wireguard0")
+	_ = s.ResolveSystemName(context.Background(), "UsbQmi0")
+	_ = s.ResolveSystemName(context.Background(), "UsbQmi0")
+	_ = s.ResolveSystemName(context.Background(), "UsbQmi0")
 
-	if got := fg.PostSystemNameCalls("Wireguard0"); got != 1 {
+	if got := fg.PostSystemNameCalls("UsbQmi0"); got != 1 {
 		t.Errorf("fallback resolver must be probed once and memoised, got %d calls", got)
 	}
 }
@@ -359,21 +362,21 @@ func TestInterfaceStore_ResolveSystemName_FallbackWhenSystemNameEqualsID(t *test
 	fg := newFakeGetter()
 	// Bootstrap WITH garbage interface-name (NDMS id echoed back).
 	fg.SetJSON(ifaceListPath, `{
-		"Wireguard0": {"id":"Wireguard0","interface-name":"Wireguard0","type":"Wireguard","state":"up","link":"up"}
+		"UsbQmi0": {"id":"UsbQmi0","interface-name":"UsbQmi0","type":"UsbQmi","state":"up","link":"up"}
 	}`)
 	// Resolver returns the actual kernel name.
-	fg.SetPostSystemName("Wireguard0", `"nwg0"`)
+	fg.SetPostSystemName("UsbQmi0", `"usb0"`)
 
 	s := NewInterfaceStore(fg, NopLogger())
-	got := s.ResolveSystemName(context.Background(), "Wireguard0")
-	if got != "nwg0" {
-		t.Errorf("garbage SystemName==ID: want fallback to nwg0, got %q", got)
+	got := s.ResolveSystemName(context.Background(), "UsbQmi0")
+	if got != "usb0" {
+		t.Errorf("garbage SystemName==ID: want fallback to usb0, got %q", got)
 	}
 
 	// Subsequent calls memoised — only one resolver probe.
-	_ = s.ResolveSystemName(context.Background(), "Wireguard0")
-	_ = s.ResolveSystemName(context.Background(), "Wireguard0")
-	if calls := fg.PostSystemNameCalls("Wireguard0"); calls != 1 {
+	_ = s.ResolveSystemName(context.Background(), "UsbQmi0")
+	_ = s.ResolveSystemName(context.Background(), "UsbQmi0")
+	if calls := fg.PostSystemNameCalls("UsbQmi0"); calls != 1 {
 		t.Errorf("resolver must be probed once and memoised, got %d calls", calls)
 	}
 }
@@ -382,13 +385,13 @@ func TestInterfaceStore_ResolveSystemName_FallbackWhenSystemNameEqualsID(t *test
 func TestInterfaceStore_ResolveSystemName_FallbackObjectShape(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, `{
-		"Wireguard0": {"id":"Wireguard0","type":"Wireguard","state":"up"}
+		"UsbQmi0": {"id":"UsbQmi0","type":"UsbQmi","state":"up"}
 	}`)
-	fg.SetPostSystemName("Wireguard0", `{"result":"nwg0"}`)
+	fg.SetPostSystemName("UsbQmi0", `{"result":"usb0"}`)
 	s := NewInterfaceStore(fg, NopLogger())
 
-	if got := s.ResolveSystemName(context.Background(), "Wireguard0"); got != "nwg0" {
-		t.Errorf("object-form resolver: want nwg0, got %q", got)
+	if got := s.ResolveSystemName(context.Background(), "UsbQmi0"); got != "usb0" {
+		t.Errorf("object-form resolver: want usb0, got %q", got)
 	}
 }
 
@@ -1243,18 +1246,18 @@ func TestFetchSummary_NoDataMeansNilDetails(t *testing.T) {
 // все интерфейсы.
 func TestInterfaceStore_ResolveSystemName_MemoSurvivesInvalidateAll(t *testing.T) {
 	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, `{"Bridge0": {"id":"Bridge0","interface-name":"Home","type":"Bridge","state":"up"}}`)
-	fg.SetPostSystemName("Bridge0", `"br0"`)
+	fg.SetJSON(ifaceListPath, `{"WifiMaster0": {"id":"WifiMaster0","interface-name":"Home","type":"WifiMaster","state":"up"}}`)
+	fg.SetPostSystemName("WifiMaster0", `"ra0"`)
 	s := NewInterfaceStore(fg, NopLogger())
 
-	if got := s.ResolveSystemName(context.Background(), "Bridge0"); got != "br0" {
-		t.Fatalf("resolve = %q, want br0", got)
+	if got := s.ResolveSystemName(context.Background(), "WifiMaster0"); got != "ra0" {
+		t.Fatalf("resolve = %q, want ra0", got)
 	}
 	s.InvalidateAll()
-	if got := s.ResolveSystemName(context.Background(), "Bridge0"); got != "br0" {
-		t.Fatalf("после сброса resolve = %q, want br0", got)
+	if got := s.ResolveSystemName(context.Background(), "WifiMaster0"); got != "ra0" {
+		t.Fatalf("после сброса resolve = %q, want ra0", got)
 	}
-	if got := fg.PostSystemNameCalls("Bridge0"); got != 1 {
+	if got := fg.PostSystemNameCalls("WifiMaster0"); got != 1 {
 		t.Errorf("резолвер спрошен %d раз, ждали 1 — имя потерялось при InvalidateAll", got)
 	}
 }
@@ -1262,43 +1265,43 @@ func TestInterfaceStore_ResolveSystemName_MemoSurvivesInvalidateAll(t *testing.T
 // Удалённый интерфейс забывает имя: пересозданный под тем же id спрашивается заново.
 func TestInterfaceStore_ResolveSystemName_OnDestroyedForgetsMemo(t *testing.T) {
 	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, `{"Wireguard0": {"id":"Wireguard0","type":"Wireguard","state":"up"}}`)
-	fg.SetPostSystemName("Wireguard0", `"nwg0"`)
+	fg.SetJSON(ifaceListPath, `{"UsbQmi0": {"id":"UsbQmi0","type":"UsbQmi","state":"up"}}`)
+	fg.SetPostSystemName("UsbQmi0", `"usb0"`)
 	s := NewInterfaceStore(fg, NopLogger())
 
 	ctx := context.Background()
-	_ = s.ResolveSystemName(ctx, "Wireguard0")
-	s.OnDestroyed("Wireguard0")
+	_ = s.ResolveSystemName(ctx, "UsbQmi0")
+	s.OnDestroyed("UsbQmi0")
 	// Удалённого нет в кэше: имя не отдаётся и резолвер не спрашивается
 	// (запрос по отсутствующему — E в журнале NDMS, F546).
-	if got := s.ResolveSystemName(ctx, "Wireguard0"); got != "" {
+	if got := s.ResolveSystemName(ctx, "UsbQmi0"); got != "" {
 		t.Fatalf("имя пережило удаление: %q", got)
 	}
-	if got := fg.PostSystemNameCalls("Wireguard0"); got != 1 {
+	if got := fg.PostSystemNameCalls("UsbQmi0"); got != 1 {
 		t.Fatalf("резолвер спрошен %d раз после удаления, ждали 1 (до удаления)", got)
 	}
 	// Пересоздан — резолвер спрашивается заново, а не отдаёт старый memo.
-	s.OnCreated("Wireguard0")
+	s.OnCreated("UsbQmi0")
 	if err := s.ReconcilePending(ctx); err != nil {
 		t.Fatalf("ReconcilePending: %v", err)
 	}
-	_ = s.ResolveSystemName(ctx, "Wireguard0")
-	if got := fg.PostSystemNameCalls("Wireguard0"); got != 2 {
+	_ = s.ResolveSystemName(ctx, "UsbQmi0")
+	if got := fg.PostSystemNameCalls("UsbQmi0"); got != 2 {
 		t.Errorf("резолвер спрошен %d раз, ждали 2 — имя пережило удаление", got)
 	}
 }
 
-// ListAll разрешает ненадёжные имена ОДНИМ пакетным POST (стенд: 22
-// последовательных запроса, ~0.6 с), повторный ListAll в резолвер не ходит.
+// Список разрешает ненадёжные имена ОДНИМ пакетным POST (стенд: 22
+// последовательных запроса, ~0.6 с), ListAll в резолвер не ходит (F570).
 func TestInterfaceStore_ListAll_ResolvesNamesInOneBatch(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, `{
-		"Bridge0": {"id":"Bridge0","interface-name":"Home","type":"Bridge","state":"up"},
-		"PPPoE0": {"id":"PPPoE0","interface-name":"PPPoE0","type":"PPPoE","state":"up"},
+		"GigabitEthernet1": {"id":"GigabitEthernet1","interface-name":"ISP","type":"GigabitEthernet","state":"up"},
+		"UsbQmi0": {"id":"UsbQmi0","interface-name":"UsbQmi0","type":"UsbQmi","state":"up"},
 		"WifiMaster0/AccessPoint6": {"id":"WifiMaster0/AccessPoint6","interface-name":"WifiMaster0/AccessPoint6","type":"AccessPoint","state":"down"}
 	}`)
-	fg.SetPostSystemName("Bridge0", `"br0"`)
-	fg.SetPostSystemName("PPPoE0", `"ppp0"`)
+	fg.SetPostSystemName("GigabitEthernet1", `"eth3"`)
+	fg.SetPostSystemName("UsbQmi0", `"usb0"`)
 	fg.SetPostSystemName("WifiMaster0/AccessPoint6", `"ra6"`)
 	s := NewInterfaceStore(fg, NopLogger())
 
@@ -1309,13 +1312,13 @@ func TestInterfaceStore_ListAll_ResolvesNamesInOneBatch(t *testing.T) {
 	if got := fg.BatchPostCalls(); got != 1 {
 		t.Fatalf("пакетных POST %d, ждали 1", got)
 	}
-	for _, id := range []string{"Bridge0", "PPPoE0", "WifiMaster0/AccessPoint6"} {
+	for _, id := range []string{"GigabitEthernet1", "UsbQmi0", "WifiMaster0/AccessPoint6"} {
 		if got := fg.PostSystemNameCalls(id); got != 1 {
 			t.Errorf("%s: резолвер спрошен %d раз, ждали 1 (в пакете)", id, got)
 		}
 	}
 	// Ответы пакета приписаны своим id, а не переставлены.
-	for id, want := range map[string]string{"Bridge0": "br0", "PPPoE0": "ppp0", "WifiMaster0/AccessPoint6": "ra6"} {
+	for id, want := range map[string]string{"GigabitEthernet1": "eth3", "UsbQmi0": "usb0", "WifiMaster0/AccessPoint6": "ra6"} {
 		if got := s.ResolveSystemName(context.Background(), id); got != want {
 			t.Errorf("%s → %q, want %q", id, got, want)
 		}
@@ -1328,26 +1331,38 @@ func TestInterfaceStore_ListAll_ResolvesNamesInOneBatch(t *testing.T) {
 	}
 }
 
-// ListWAN — тот же пакет, только по публичным интерфейсам.
-func TestInterfaceStore_ListWAN_ResolvesNamesInOneBatch(t *testing.T) {
+// ListWAN берёт имена из памяти: PPPoE0 — из таблицы классов (резолвер не
+// спрашивается), GigabitEthernet1 — от резолвера вслед за списком (F570).
+func TestInterfaceStore_ListWAN_NamesFromMemory(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, `{
 		"PPPoE0": {"id":"PPPoE0","interface-name":"PPPoE0","type":"PPPoE","state":"up","security-level":"public"},
 		"GigabitEthernet1": {"id":"GigabitEthernet1","interface-name":"ISP","type":"GigabitEthernet","state":"up","security-level":"public"},
 		"Bridge0": {"id":"Bridge0","interface-name":"Home","type":"Bridge","state":"up","security-level":"private"}
 	}`)
-	fg.SetPostSystemName("PPPoE0", `"ppp0"`)
 	fg.SetPostSystemName("GigabitEthernet1", `"eth3"`)
 	s := NewInterfaceStore(fg, NopLogger())
 
-	if _, err := s.ListWAN(context.Background()); err != nil {
-		t.Fatal(err)
+	for i := 0; i < 2; i++ {
+		got, err := s.ListWAN(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		names := map[string]bool{}
+		for _, w := range got {
+			names[w.Name] = true
+		}
+		if len(got) != 2 || !names["ppp0"] || !names["eth3"] {
+			t.Fatalf("вызов %d: ListWAN = %+v, want ppp0 и eth3", i, got)
+		}
 	}
-	if got := fg.BatchPostCalls(); got != 1 {
-		t.Fatalf("пакетных POST %d, ждали 1", got)
+	if got := fg.PostSystemNameCalls("GigabitEthernet1"); got != 1 {
+		t.Errorf("GigabitEthernet1 спрошен %d раз, ждали 1 (вслед за списком)", got)
 	}
-	if got := fg.PostSystemNameCalls("Bridge0"); got != 0 {
-		t.Errorf("приватный Bridge0 спрошен %d раз — в пакет ListWAN он не входит", got)
+	for _, id := range []string{"PPPoE0", "Bridge0"} {
+		if got := fg.PostSystemNameCalls(id); got != 0 {
+			t.Errorf("%s спрошен %d раз — имя класса из таблицы", id, got)
+		}
 	}
 }
 
@@ -1355,17 +1370,17 @@ func TestInterfaceStore_ListWAN_ResolvesNamesInOneBatch(t *testing.T) {
 // ifdestroyed мог потеряться.
 func TestInterfaceStore_InvalidateAll_ForgetsVanishedMemo(t *testing.T) {
 	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, `{"Wireguard0": {"id":"Wireguard0","type":"Wireguard","state":"up"}}`)
-	fg.SetPostSystemName("Wireguard0", `"nwg0"`)
+	fg.SetJSON(ifaceListPath, `{"UsbQmi0": {"id":"UsbQmi0","type":"UsbQmi","state":"up"}}`)
+	fg.SetPostSystemName("UsbQmi0", `"usb0"`)
 	s := NewInterfaceStore(fg, NopLogger())
 
-	_ = s.ResolveSystemName(context.Background(), "Wireguard0")
+	_ = s.ResolveSystemName(context.Background(), "UsbQmi0")
 	fg.SetJSON(ifaceListPath, `{}`)
 	s.InvalidateAll()
-	fg.SetJSON(ifaceListPath, `{"Wireguard0": {"id":"Wireguard0","type":"Wireguard","state":"up"}}`)
+	fg.SetJSON(ifaceListPath, `{"UsbQmi0": {"id":"UsbQmi0","type":"UsbQmi","state":"up"}}`)
 	s.InvalidateAll()
-	_ = s.ResolveSystemName(context.Background(), "Wireguard0")
-	if got := fg.PostSystemNameCalls("Wireguard0"); got != 2 {
+	_ = s.ResolveSystemName(context.Background(), "UsbQmi0")
+	if got := fg.PostSystemNameCalls("UsbQmi0"); got != 2 {
 		t.Errorf("резолвер спрошен %d раз, ждали 2 — имя пропавшего интерфейса пережило сброс", got)
 	}
 }
@@ -1380,14 +1395,14 @@ func TestInterfaceStore_RememberSystemName_SkipsUnknownID(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.rememberSystemName("Wireguard9", "nwg9")
-	if got := s.cachedSystemName("Wireguard9"); got != "" {
+	if got := s.sysNames["Wireguard9"]; got != "" {
 		t.Errorf("имя %q запомнено для отсутствующего интерфейса", got)
 	}
 }
 
 // F473, стенд: порты коммутатора лежат в списке под ключами "0".."4", а их id
 // — `GigabitEthernet0/0`… Стор обязан индексировать по id записи, иначе
-// имя порта не запоминается и порты спрашиваются на каждом ListAll.
+// запись порта не находится по своему id.
 func TestInterfaceStore_PortsKeyedByRecordID(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, `{
@@ -1403,12 +1418,17 @@ func TestInterfaceStore_PortsKeyedByRecordID(t *testing.T) {
 	if got, err := s.Get(context.Background(), "GigabitEthernet0/0"); err != nil || got == nil {
 		t.Fatalf("Get(GigabitEthernet0/0) = %v, %v — порт не найден по своему id", got, err)
 	}
-	// Имя порта запоминается: запись находится по id (ListAll порты
-	// пропускает, но прочие читатели резолвят их по id).
+	// Порты резолвер вслед за списком не спрашивает: своего устройства ядра
+	// у них нет (ListAll их пропускает), читателей имени порта нет (F570).
 	_ = s.ResolveSystemName(context.Background(), "GigabitEthernet0/1")
 	_ = s.ResolveSystemName(context.Background(), "GigabitEthernet0/1")
-	if got := fg.PostSystemNameCalls("GigabitEthernet0/1"); got != 1 {
-		t.Errorf("GigabitEthernet0/1 спрошен %d раз, ждали 1", got)
+	for _, id := range []string{"GigabitEthernet0/0", "GigabitEthernet0/1"} {
+		if got := fg.PostSystemNameCalls(id); got != 0 {
+			t.Errorf("%s спрошен %d раз, ждали 0", id, got)
+		}
+	}
+	if got := fg.PostSystemNameCalls("GigabitEthernet0"); got != 1 {
+		t.Errorf("GigabitEthernet0 спрошен %d раз, ждали 1", got)
 	}
 }
 
@@ -1475,16 +1495,16 @@ func TestInterfaceStore_SystemNames_CachedOrOneBatch(t *testing.T) {
 
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, `{
-		"Wireguard0": {"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","state":"down"},
-		"Wireguard1": {"id":"Wireguard1","interface-name":"Wireguard1","type":"Wireguard","state":"down"},
-		"Wireguard2": {"id":"Wireguard2","interface-name":"Wireguard2","type":"Wireguard","state":"down"}
+		"UsbLte0": {"id":"UsbLte0","interface-name":"usb0","type":"UsbLte","state":"down"},
+		"UsbLte1": {"id":"UsbLte1","interface-name":"UsbLte1","type":"UsbLte","state":"down"},
+		"UsbLte2": {"id":"UsbLte2","interface-name":"UsbLte2","type":"UsbLte","state":"down"}
 	}`)
-	fg.SetPostSystemName("Wireguard0", `"nwg0"`)
-	fg.SetPostSystemName("Wireguard1", `"nwg1"`)
-	fg.SetPostSystemName("Wireguard2", `"nwg2"`)
+	fg.SetPostSystemName("UsbLte0", `"usb0"`)
+	fg.SetPostSystemName("UsbLte1", `"usb1"`)
+	fg.SetPostSystemName("UsbLte2", `"usb2"`)
 	s := NewInterfaceStore(fg, NopLogger())
-	ids := []string{"Wireguard0", "Wireguard1", "Wireguard2"}
-	want := map[string]string{"Wireguard0": "nwg0", "Wireguard1": "nwg1", "Wireguard2": "nwg2"}
+	ids := []string{"UsbLte0", "UsbLte1", "UsbLte2"}
+	want := map[string]string{"UsbLte0": "usb0", "UsbLte1": "usb1", "UsbLte2": "usb2"}
 
 	for round := 1; round <= 2; round++ {
 		got := s.SystemNames(context.Background(), ids)
@@ -1495,7 +1515,7 @@ func TestInterfaceStore_SystemNames_CachedOrOneBatch(t *testing.T) {
 			t.Fatalf("круг %d: пакетных POST %d, ждали 1", round, n)
 		}
 		for _, id := range ids {
-			// Wireguard0 тоже без device — его byID-имя "nwg0" не резолвером
+			// UsbLte0 тоже без device — его byID-имя "usb0" не резолвером
 			// подтверждено, поэтому и оно должно уйти в пакет один раз, а не
 			// быть взято из списка вслепую.
 			if n := fg.PostSystemNameCalls(id); n != 1 {
@@ -1515,16 +1535,16 @@ func TestInterfaceStore_SystemNames_ByIDNameFailsExistenceCheck(t *testing.T) {
 
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, `{
-		"Wireguard0": {"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","state":"down"}
+		"UsbLte0": {"id":"UsbLte0","interface-name":"usb0","type":"UsbLte","state":"down"}
 	}`)
-	fg.SetPostSystemName("Wireguard0", `"nwg0"`)
+	fg.SetPostSystemName("UsbLte0", `"usb0"`)
 	s := NewInterfaceStore(fg, NopLogger())
 
-	got := s.SystemNames(context.Background(), []string{"Wireguard0"})
-	if got["Wireguard0"] != "nwg0" {
-		t.Fatalf("got %v, want nwg0 через резолвер", got)
+	got := s.SystemNames(context.Background(), []string{"UsbLte0"})
+	if got["UsbLte0"] != "usb0" {
+		t.Fatalf("got %v, want usb0 через резолвер", got)
 	}
-	if n := fg.PostSystemNameCalls("Wireguard0"); n != 1 {
+	if n := fg.PostSystemNameCalls("UsbLte0"); n != 1 {
 		t.Fatalf("byID-имя взято из кэша без проверки существования: резолвер спрошен %d раз, ждали 1", n)
 	}
 }

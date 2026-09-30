@@ -172,6 +172,11 @@ func (d *Dispatcher) apply(e Event) {
 
 	// === Event-sourced InterfaceStore path ===
 	if d.queries.Interfaces != nil {
+		// Имя ядра приходит в хуке — до разбора типа: ifdestroyed того же
+		// id следом его снимет (F570).
+		if e.SystemName != "" {
+			d.queries.Interfaces.OnSystemName(e.ID, e.SystemName)
+		}
 		switch e.Type {
 		case EventIfCreated:
 			d.queries.Interfaces.OnCreated(e.ID)

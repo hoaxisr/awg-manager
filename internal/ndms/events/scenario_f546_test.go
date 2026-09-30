@@ -179,3 +179,59 @@ func TestScenario_ListErrorDuringPending(t *testing.T) {
 		t.Fatalf("Z не добран из списка: %#v", got)
 	}
 }
+
+// S5 (F570, стенд 30.09): импорт NativeWG, внешнее снятие в первые секунды,
+// ifdestroyed ещё не доехал — панель на /system-tunnels спрашивает имя ядра.
+// Резолвер по имени дал бы E `Base: unable to find`; имя Wireguard — из
+// таблицы классов, без RCI.
+func TestScenario_ResolveAfterExternalRemoval(t *testing.T) {
+	ctx := context.Background()
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Bridge0", Type: "Bridge"})
+	q := oracleQueries(t, f)
+	_, _ = q.Interfaces.List(ctx) // bootstrap
+	if _, err := f.Post(ctx, map[string]any{"interface": map[string]any{"wireguard": map[string]any{"import": "conf"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok, err := q.Interfaces.Confirm(ctx, "Wireguard0"); err != nil || !ok {
+		t.Fatalf("Confirm импортированного: ok=%v err=%v", ok, err)
+	}
+	f.Remove("Wireguard0")
+	_ = f.DrainHooks() // хуки задержаны очередью NDMS
+	posts := len(f.Posts)
+
+	_, _ = q.WGServers.ListSystemTunnels(ctx)
+	_ = q.Interfaces.ResolveSystemName(ctx, "Wireguard0")
+	_ = q.Interfaces.SystemNames(ctx, []string{"Wireguard0"})
+
+	if f.E != 0 {
+		t.Fatalf("E=%d, want 0: имя снятого X спрошено по имени", f.E)
+	}
+	for _, p := range f.Posts[posts:] {
+		if strings.Contains(p, "system-name") {
+			t.Fatalf("резолвер по требованию: %s", p)
+		}
+	}
+}
+
+// system_name из хука ложится в карту имён до разбора типа события: имя
+// недетерминированного класса известно без резолвера.
+func TestScenario_HookSystemName(t *testing.T) {
+	ctx := context.Background()
+	f := query.NewFakeNDMS(ndms.Interface{ID: "UsbQmi0", Type: "UsbQmi", SecurityLevel: "public"})
+	q := oracleQueries(t, f)
+	d := NewDispatcher(q, NopLogger())
+	done := drainBarrier(d)
+	d.Enqueue(Event{Type: EventIfLayerChanged, ID: "UsbQmi0", Layer: "ctrl", Level: "running", SystemName: "usb0"})
+	d.Start()
+	defer d.Stop()
+	waitDrain(t, done)
+
+	if got := q.Interfaces.SystemNames(ctx, []string{"UsbQmi0"}); got["UsbQmi0"] != "usb0" {
+		t.Fatalf("SystemNames = %v, want usb0 из хука", got)
+	}
+	for _, p := range f.Posts {
+		if strings.Contains(p, "system-name") {
+			t.Fatalf("резолвер при имени из хука: %s", p)
+		}
+	}
+}

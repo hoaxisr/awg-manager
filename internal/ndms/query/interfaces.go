@@ -137,12 +137,13 @@ type InterfaceStore struct {
 	mu        sync.RWMutex
 	byID      map[string]*ndms.Interface
 	startedAt map[string]time.Time
-	// sysNames — имена ядра, полученные резолвером, по NDMS-id. Отдельно от
+	// sysNames — имена ядра из хуков (OnSystemName) и от резолвера вслед за
+	// списком (refreshList), по NDMS-id. Отдельно от
 	// byID, потому что InvalidateAll и OnCreated строят записи заново из
 	// ответа RCI, а `interface-name` там не имя ядра (5.02.A.11: NDMS-id
 	// или подпись, `Bridge0` → `Home`). Жило бы в записи — терялось бы при
-	// каждом сбросе, и следующий ListAll снова спрашивал бы все ~20
-	// интерфейсов (F473). Снимается на ifdestroyed.
+	// каждом сбросе, и следующий список снова спрашивал бы все ~20
+	// интерфейсов (F473). Снимается на ifdestroyed и списком без этого id.
 	sysNames map[string]string
 
 	// seq растёт на каждом хуке; touched — seq последнего хука по id.
@@ -222,9 +223,41 @@ func (s *InterfaceStore) refreshList(ctx context.Context) (map[string]ndms.Inter
 	}
 	s.mu.Lock()
 	s.applyListLocked(raw, start)
+	todo := s.unnamedLocked(raw)
 	s.mu.Unlock()
 	s.booted.Store(true)
+	// Единственный вызов резолвера (F570): только id из ответа, который пришёл
+	// миллисекунды назад. По требованию имя не спрашивается никогда — к тому
+	// моменту запись могли снять, и NDMS пишет E «unable to find».
+	s.resolveSystemNames(ctx, todo)
 	return raw, nil
+}
+
+// unnamedLocked — id свежего ответа, имени ядра которых не знает никто:
+// класс не из таблицы ndms.KernelName, ни хук, ни прежний резолвер его не
+// назвали, `interface-name` списка не годится. Порты коммутатора не
+// спрашиваются: у них нет своего устройства ядра (см. ListAll). Снятые хуком,
+// пока список был в полёте, — тоже: спросить их значит получить E.
+func (s *InterfaceStore) unnamedLocked(raw map[string]ndms.Interface) []string {
+	var todo []string
+	for id, rec := range raw {
+		if rec.Type == "Port" {
+			continue
+		}
+		if _, ok := ndms.KernelName(id); ok {
+			continue
+		}
+		if _, ok := s.sysNames[id]; ok {
+			continue
+		}
+		iface, ok := s.byID[id]
+		if !ok || trustedSystemName(id, iface.SystemName) {
+			continue
+		}
+		todo = append(todo, id)
+	}
+	sort.Strings(todo)
+	return todo
 }
 
 // applyListLocked кладёт свежий список поверх карты, не затирая id, тронутые
@@ -256,7 +289,12 @@ func (s *InterfaceStore) applyListLocked(raw map[string]ndms.Interface, start ui
 		}
 		delete(s.byID, id)
 		delete(s.startedAt, id)
-		delete(s.sysNames, id)
+	}
+	// Имена — и тех id, что в карту так и не попали (имя пришло хуком).
+	for id := range s.sysNames {
+		if _, ok := raw[id]; !ok && s.touched[id] <= start {
+			delete(s.sysNames, id)
+		}
 	}
 	for id := range s.pending {
 		if s.touched[id] <= start {
@@ -416,79 +454,67 @@ func (s *InterfaceStore) GetDetails(ctx context.Context, name string) (*ndms.Int
 }
 
 // ResolveSystemName returns the kernel interface name (e.g. "nwg0")
-// for an NDMS id (e.g. "Wireguard0"). Reads from the cached snapshot
-// when possible — no HTTP on the hot path after first resolution.
+// for an NDMS id (e.g. "Wireguard0"). Чтение памяти, RCI — никогда (F570):
+// запись могли снять после последнего списка, ifdestroyed доезжает секундами
+// позже (F571), и вопрос по имени дал бы E «unable to find» в журнале ndm.
 //
-// NDMS list response (`/show/interface/`) populates the
-// `interface-name` field for each entry, but the value is unreliable:
-// for Wireguard system tunnels (and likely other types) NDMS echoes
-// the NDMS id back instead of the kernel name. Verified against
-// production: list-response says `interface-name: "Wireguard0"`,
-// per-name detail says the same, but `/show/interface/system-name?
-// name=Wireguard0` returns the kernel name `"nwg0"`. The resolver is
-// the only authoritative source.
+// NDMS list response (`/show/interface/`) populates the `interface-name`
+// field for each entry, but the value is unreliable: for Wireguard system
+// tunnels NDMS echoes the NDMS id back instead of the kernel name, on
+// 5.02.A.11 it can be a label (`Bridge0` → `Home`, F473). Поэтому источники
+// идут по порядку (systemNameLocked):
+//   - ndms.KernelName — класс, у которого имя ядра задано номером записи
+//     (Wireguard, OpkgTun, Proxy, PPPoE, Bridge); только для записи из кэша;
+//   - sysNames — имя из хука NDMS (`system_name`, OnSystemName) или от
+//     резолвера, который спрашивается один раз вслед за свежим списком
+//     (refreshList → resolveSystemNames);
+//   - `interface-name` списка, если ему можно верить (trustedSystemName).
 //
-// We treat the cached SystemName as garbage when ANY of these hold:
-//   - empty
-//   - equals the NDMS id (NDMS echoed our input back)
-//   - fails the syntactic kernel-name shape check (covers logical NDMS
-//     labels like "ISP" that NDMS occasionally writes into the
-//     `interface-name` field of physical ports)
-//   - passes the shape check but no such device exists in /sys/class/net
-//
-// Garbage triggers a one-shot resolver probe, memoised on the cached
-// entry. Резолвер спрашивается только о записи из списка: пишет ли он E в
-// журнал ndm на отсутствующее имя, на стенде не проверено (пункт 8
-// стенд-листа F546), поэтому отсутствующее имя до него не доходит.
+// Пусто — записи нет в кэше или её имени не знает никто.
 func (s *InterfaceStore) ResolveSystemName(ctx context.Context, ndmsName string) string {
-	if ndmsName == "" {
+	if ndmsName == "" || s.ensureBootstrap(ctx) != nil {
 		return ""
 	}
-	if err := s.ensureBootstrap(ctx); err != nil {
-		return ""
-	}
-	if sysName := s.cachedSystemName(ndmsName); trustedSystemName(ndmsName, sysName) {
-		return sysName
-	}
-	// Интерфейса нет в кэше — резолвер не спрашиваем: на отсутствующее имя
-	// NDMS, возможно, пишет E в свой журнал, как точечное чтение (F546; на
-	// стенде не проверено, пункт 8), а запомнить ответ всё равно негде
-	// (rememberSystemName).
-	if _, ok, err := s.Lookup(ctx, ndmsName); err != nil || !ok {
-		return ""
-	}
-
-	// Fallback: dedicated NDMS resolver endpoint.
-	resolved := s.fetchSystemName(ctx, ndmsName)
-	if resolved == "" {
-		return ""
-	}
-	s.rememberSystemName(ndmsName, resolved)
-	return resolved
-}
-
-// cachedSystemName — запомненное резолвером имя, иначе `interface-name`
-// из ответа RCI.
-func (s *InterfaceStore) cachedSystemName(ndmsName string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if name, ok := s.sysNames[ndmsName]; ok {
+	return s.systemNameLocked(ndmsName)
+}
+
+// systemNameLocked — имя ядра из памяти, см. ResolveSystemName.
+//
+// Для класса из таблицы живость устройства (/sys/class/net) не проверяется:
+// прежний резолвер отвечал именем записи и при опущенном устройстве (ppp0
+// лежащего PPPoE), и вызывающие (правило MASQUERADE на WAN, привязка
+// sing-box) на этом стоят. Имя хука/резолвера — тоже без проверки: оно
+// получено от NDMS для этого id.
+func (s *InterfaceStore) systemNameLocked(id string) string {
+	iface, known := s.byID[id]
+	if name, ok := ndms.KernelName(id); ok {
+		if !known {
+			return ""
+		}
 		return name
 	}
-	if iface, ok := s.byID[ndmsName]; ok {
+	if name := s.sysNames[id]; name != id && looksLikeKernelIfname(name) {
+		return name
+	}
+	if known && trustedSystemName(id, iface.SystemName) {
 		return iface.SystemName
 	}
 	return ""
 }
 
-// rememberSystemName запоминает имя только для интерфейса, который есть в
-// сторе: ifdestroyed между запросом и ответом резолвера иначе оставил бы
-// имя удалённого интерфейса.
+// rememberSystemName запоминает ответ резолвера только для интерфейса, который
+// есть в сторе: ifdestroyed между запросом и ответом резолвера иначе оставил
+// бы имя удалённого интерфейса. Пустой ответ тоже запоминается — следующий
+// список этот id не переспрашивает.
 func (s *InterfaceStore) rememberSystemName(ndmsName, resolved string) {
 	s.mu.Lock()
 	if iface, ok := s.byID[ndmsName]; ok {
 		s.sysNames[ndmsName] = resolved
-		iface.SystemName = resolved
+		if resolved != "" {
+			iface.SystemName = resolved
+		}
 	}
 	s.mu.Unlock()
 }
@@ -504,18 +530,18 @@ func trustedSystemName(ndmsName, sysName string) bool {
 		kernelIfaceExists(sysName)
 }
 
-// resolveSystemNames разрешает ненадёжные имена ОДНИМ пакетным POST —
-// ListAll/ListWAN иначе шли бы резолвером по одному интерфейсу подряд
-// (стенд: 22 запроса, ~0.6 с). Сбой пакета не фатален: ResolveSystemName
-// в цикле вызывающего доспросит по одному.
-func (s *InterfaceStore) resolveSystemNames(ctx context.Context, ids []string) {
-	var todo []string
-	for _, id := range ids {
-		if !trustedSystemName(id, s.cachedSystemName(id)) {
-			todo = append(todo, id)
+// resolveSystemNames спрашивает имена ядра для todo ОДНИМ пакетным POST (по
+// одному — стенд: 22 запроса, ~0.6 с); один id — одиночной формой. Зовётся
+// только из refreshList (TestResolver_OnlyAfterList). Сбой транспорта —
+// ничего не запомнено, спросит следующий список.
+func (s *InterfaceStore) resolveSystemNames(ctx context.Context, todo []string) {
+	switch len(todo) {
+	case 0:
+		return
+	case 1:
+		if name, err := s.fetchSystemName(ctx, todo[0]); err == nil {
+			s.rememberSystemName(todo[0], name)
 		}
-	}
-	if len(todo) < 2 {
 		return
 	}
 	batch := make([]any, len(todo))
@@ -531,64 +557,21 @@ func (s *InterfaceStore) resolveSystemNames(ctx context.Context, ids []string) {
 		return
 	}
 	for i, item := range items {
-		if name := parseSystemName(item); name != "" {
-			s.rememberSystemName(todo[i], name)
-		}
+		s.rememberSystemName(todo[i], parseSystemName(item))
 	}
 }
 
-// SystemNames — имена ядра для ids (id → имя; неразрешённых в карте нет)
-// без запроса на каждый id. В отличие от ResolveSystemName имени из кэша
-// достаточно, даже если устройства сейчас нет: обратной карте целей
-// (routing.SystemTunnelsByIface) нужно имя, а не живость устройства, — а
-// ResolveSystemName на отсутствующем устройстве каждый раз шёл бы в резолвер.
-// Прочие разрешаются одним пакетом (resolveSystemNames), одиночный — одним
-// запросом.
+// SystemNames — имена ядра для ids (id → имя; неизвестных в карте нет). То же,
+// что ResolveSystemName по каждому id, под одним замком; RCI — никогда.
 func (s *InterfaceStore) SystemNames(ctx context.Context, ids []string) map[string]string {
 	out := make(map[string]string, len(ids))
 	if len(ids) == 0 || s.ensureBootstrap(ctx) != nil {
 		return out
 	}
-	// Имя из s.sysNames уже прошло через резолвер — доверяем ему без
-	// kernelIfaceExists (сюда и приходят за именем отсутствующего сейчас
-	// устройства). Имя из byID.SystemName — сырое `interface-name` из
-	// списка, резолвером не подтверждено, поэтому проверяем его так же,
-	// как ResolveSystemName: trustedSystemName (включая kernelIfaceExists).
-	// Без этой проверки лейбл NDMS, похожий на имя ядра (5.02.A.11),
-	// использовался бы вечно, а реальное имя так и не запрашивалось.
-	cached := func(id string) string {
-		s.mu.RLock()
-		resolverName, viaResolver := s.sysNames[id]
-		iface, hasIface := s.byID[id]
-		s.mu.RUnlock()
-		if viaResolver {
-			if resolverName != id && looksLikeKernelIfname(resolverName) {
-				return resolverName
-			}
-			return ""
-		}
-		if hasIface && trustedSystemName(id, iface.SystemName) {
-			return iface.SystemName
-		}
-		return ""
-	}
-	var todo []string
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	for _, id := range ids {
-		if name := cached(id); name != "" {
-			out[id] = name
-		} else if _, ok, err := s.Lookup(ctx, id); err == nil && ok { // отсутствующее — без резолвера (F546)
-			todo = append(todo, id)
-		}
-	}
-	if len(todo) == 1 {
-		if name := s.fetchSystemName(ctx, todo[0]); name != "" {
-			s.rememberSystemName(todo[0], name)
-		}
-	} else {
-		s.resolveSystemNames(ctx, todo)
-	}
-	for _, id := range todo {
-		if name := cached(id); name != "" {
+		if name := s.systemNameLocked(id); name != "" {
 			out[id] = name
 		}
 	}
@@ -613,16 +596,16 @@ func (s *InterfaceStore) SystemNames(ctx context.Context, ids []string) map[stri
 //
 // Older firmware also produced bare "nwg0" or {"result":"nwg0"} for the
 // GET form — kept as fallbacks for safety.
-func (s *InterfaceStore) fetchSystemName(ctx context.Context, ndmsName string) string {
+func (s *InterfaceStore) fetchSystemName(ctx context.Context, ndmsName string) (string, error) {
 	payload := transport.ShowQuery(
 		[]string{"interface", "system-name"},
 		map[string]any{"name": ndmsName},
 	)
 	raw, err := s.getter.Post(ctx, payload)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return parseSystemName(raw)
+	return parseSystemName(raw), nil
 }
 
 // parseSystemName разбирает ответ резолвера (одиночный или элемент пакета).
@@ -733,21 +716,13 @@ func (s *InterfaceStore) ListLANBridges(ctx context.Context) ([]LANBridge, error
 
 // ListWAN returns public-facing WAN interfaces filtered for ISP use.
 // Mirrors the legacy filter logic; reads everything from the cached
-// snapshot. Uses ResolveSystemName for kernel-name lookup so the
-// fallback resolver kicks in when `interface-name` from the list
-// response is unreliable (see ResolveSystemName for details).
+// snapshot. Kernel names come from ResolveSystemName — memory only, the
+// resolver ran right after the list (see ResolveSystemName for details).
 func (s *InterfaceStore) ListWAN(ctx context.Context) ([]wan.Interface, error) {
 	all, err := s.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var public []string
-	for _, iface := range all {
-		if iface.SecurityLevel == "public" {
-			public = append(public, iface.ID)
-		}
-	}
-	s.resolveSystemNames(ctx, public)
 	out := make([]wan.Interface, 0, len(all))
 	for _, iface := range all {
 		if iface.SecurityLevel != "public" {
@@ -798,11 +773,6 @@ func (s *InterfaceStore) ListAll(ctx context.Context) ([]ndms.AllInterface, erro
 			all = append(all, iface)
 		}
 	}
-	ids := make([]string, len(all))
-	for i, iface := range all {
-		ids[i] = iface.ID
-	}
-	s.resolveSystemNames(ctx, ids)
 	seen := make(map[string]ndms.AllInterface, len(all))
 	winnerID := make(map[string]string, len(all))
 	for _, iface := range all {
@@ -886,6 +856,16 @@ func (s *InterfaceStore) Forget(id string) {
 	delete(s.startedAt, id)
 	delete(s.sysNames, id)
 	delete(s.pending, id)
+}
+
+// OnSystemName — имя ядра из хука NDMS (`system_name` есть в хуках, стенд
+// 5.01.C.6: модель WAN строится по нему). Пишется всегда, даже для id, которого
+// карта ещё не знает: на создание layer-хуки приходят раньше ifcreated. Снимают
+// Forget и список без этого id (applyListLocked).
+func (s *InterfaceStore) OnSystemName(id, name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sysNames[id] = name
 }
 
 // OnDestroyed — хук ifdestroyed; то же, что Forget.
