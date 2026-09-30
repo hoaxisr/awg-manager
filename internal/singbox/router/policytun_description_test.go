@@ -162,6 +162,23 @@ func TestOpkgTunOwnership_MultipleDescriptions(t *testing.T) {
 	}
 }
 
+// Без описаний скана не было — «доказанно чужой» недоказуем: вердикт «не
+// знаем», роутер не опрашивается.
+func TestOpkgTunOwnership_NoDescriptionsIsUnknown(t *testing.T) {
+	scans := 0
+	scan := func(context.Context, string) ([]string, error) {
+		scans++
+		return nil, nil
+	}
+	svc := newTestService(t, Deps{OpkgTunScan: scan})
+	if got := svc.opkgTunOwnership(context.Background(), "OpkgTun0"); got != ownershipUnknown {
+		t.Fatalf("ownership = %v, want %v", got, ownershipUnknown)
+	}
+	if scans != 0 {
+		t.Fatalf("scans = %d, want 0", scans)
+	}
+}
+
 // Новый интерфейс получает имя из настроек, и запись владения помнит его уже к
 // моменту Create (persist-before-create).
 func TestPolicyTunEnable_CustomDescription(t *testing.T) {

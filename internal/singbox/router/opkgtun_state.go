@@ -74,9 +74,17 @@ const (
 // переименования своим считается интерфейс и под применённым, и под желаемым
 // (policyTunOwnDescriptions). Имя нашлось хоть в одном скане — наш; иначе
 // хоть один скан упал — «не знаем»; все успешны и пусты — чужой.
+//
+// Пустой список описаний — «не знаем», а не «чужой»: без единого скана
+// «доказанно чужой» был бы не доказан, а вердикт ведёт к re-provision поверх
+// живого интерфейса и к пропуску сноса. Штатно сюда всегда приходит хотя бы
+// одно описание.
 func (s *ServiceImpl) opkgTunOwnership(ctx context.Context, ndmsName string, descriptions ...string) opkgTunOwnership {
 	if s.deps.OpkgTunScan == nil {
 		return ownershipNoScan
+	}
+	if len(descriptions) == 0 {
+		return ownershipUnknown
 	}
 	verdict := ownershipForeign
 	for _, description := range descriptions {
