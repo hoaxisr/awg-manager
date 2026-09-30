@@ -165,28 +165,20 @@ func (h *HookHandler) HandleNDMS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	typeStr := r.PostForm.Get("type")
-	event := events.Event{
-		Type:       events.EventType(typeStr),
-		ID:         r.PostForm.Get("id"),
-		SystemName: r.PostForm.Get("system_name"),
-		Layer:      r.PostForm.Get("layer"),
-		Level:      r.PostForm.Get("level"),
-		Address:    r.PostForm.Get("address"),
-	}
-	// up/connected форвардер тоже присылает, и мы их НЕ разбираем: состояние
-	// линка берётся из iflayerchanged, а этим полям доверять нельзя
-	// (InterfaceStore.OnIPChanged). Лишние поля формы безвредны.
-
-	switch event.Type {
-	case events.EventIfLayerChanged, events.EventIfCreated,
-		events.EventIfDestroyed, events.EventIfIPChanged:
-		// OK
-	default:
-		response.BadRequest(w, "unknown hook type: "+typeStr)
+	event, err := events.ParseHookForm(r.PostForm)
+	if err != nil {
+		response.BadRequest(w, err.Error())
 		return
 	}
+	h.Handle(event)
+	response.Success(w, map[string]interface{}{"ok": true})
+}
 
+// Handle обрабатывает разобранное событие хука: диспетчер (инвалидация
+// кэшей), обновление списка туннелей, WAN-модель и оркестратор.
+// Синхронна только WAN-модель: на незнакомом интерфейсе SetUp
+// перечитывает список WAN (RCI); остальное уходит в горутины.
+func (h *HookHandler) Handle(event events.Event) {
 	// 1) Enqueue into Dispatcher for cache invalidation (async, non-blocking).
 	if h.dispatcher != nil {
 		h.dispatcher.Enqueue(event)
@@ -248,7 +240,6 @@ func (h *HookHandler) HandleNDMS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("hook", event.ID, fmt.Sprintf("ndms: type=%s layer=%s level=%s", event.Type, event.Layer, event.Level))
-	response.Success(w, map[string]interface{}{"ok": true})
 }
 
 // handleWANLayerEvent processes an iflayerchanged hook with layer=ipv4.

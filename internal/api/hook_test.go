@@ -13,6 +13,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/events"
+	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 )
 
 type spyDispatcher struct {
@@ -421,5 +422,55 @@ func TestHookHandler_IPv4Disabled_NoHook(t *testing.T) {
 	case <-fired:
 		t.Fatal("хук вызван на disabled")
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// captureAppLogger собирает записи журнала — по ним видно, что событие дошло
+// до оркестратора.
+type captureAppLogger struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (c *captureAppLogger) AppLog(_ logging.Level, _, _, action, target, message string) {
+	c.mu.Lock()
+	c.lines = append(c.lines, action+"|"+target+"|"+message)
+	c.mu.Unlock()
+}
+
+func (c *captureAppLogger) has(sub string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, l := range c.lines {
+		if strings.Contains(l, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// Handle — единственная точка входа события без HTTP: в диспетчер и, для
+// iflayerchanged conf, в оркестратор. Доход до оркестратора виден по
+// поглощённому ожиданию хука — оно не требует ни хранилища, ни операторов.
+func TestHandle_DirectCall_EnqueuesAndForwards(t *testing.T) {
+	disp := &spyDispatcher{}
+	h := newTestHookHandler(disp)
+	logs := &captureAppLogger{}
+	orch := orchestrator.New(nil, nil, nil, nil, nil, logs)
+	orch.ExpectHook("Wireguard0", "running")
+	h.orch = orch
+
+	ev := events.Event{Type: events.EventIfLayerChanged, ID: "Wireguard0", Layer: "conf", Level: "running"}
+	h.Handle(ev)
+
+	if got := disp.Events(); len(got) != 1 || got[0] != ev {
+		t.Fatalf("dispatcher: %#v", got)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !logs.has("expected-hook consumed") {
+		if time.Now().After(deadline) {
+			t.Fatal("событие не дошло до оркестратора")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
