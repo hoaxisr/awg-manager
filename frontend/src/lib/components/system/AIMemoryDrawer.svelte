@@ -62,7 +62,7 @@
 			memoryData = res;
 			if (res.settings) {
 				sentinelEnabled = res.settings.enabled;
-				sentinelAutonomy = (res.settings.autonomyLevel as any) || 'notify_only';
+				sentinelAutonomy = (res.settings.autonomyLevel as 'disabled' | 'notify_only' | 'safe_auto') || 'notify_only';
 				sentinelInterval = res.settings.intervalSeconds || 60;
 			}
 		} catch (e) {
