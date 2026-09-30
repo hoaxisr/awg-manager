@@ -173,6 +173,8 @@ func newRCIBatchServer(t *testing.T, log *eventLog) *rciBatchServer {
 func newStartTestOperator(t *testing.T, srvURL string, poster *recordingPoster, resolvedIP string, port int) *OperatorNativeWG {
 	t.Helper()
 	o := &OperatorNativeWG{
+		// queries: батч метит карту интерфейсов грязной (postIfaceBatch, F546).
+		queries:     query.NewQueries(query.Deps{Getter: query.NewFakeNDMS(), Logger: query.NopLogger()}),
 		transport:   transport.NewWithURL(srvURL, transport.NewSemaphore(2)),
 		commands:    newStartTestCommands(poster),
 		appLog:      logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps),

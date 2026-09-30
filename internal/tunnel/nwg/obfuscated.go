@@ -133,7 +133,7 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 			payloads.CmdWireguardPeerConnect(iface, stored.Peer.PublicKey, stored.ISPInterface),
 			payloads.CmdInterfaceUp(iface, true),
 		}
-		if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
+		if _, err := o.postIfaceBatch(ctx, iface, cmds); err != nil {
 			_ = o.obf.Stop(stored.ID)
 			o.restoreTrackedIP(stored.ID, prevIP) // F486: маршрут остался под prevIP
 			return fmt.Errorf("start obfuscated: %w", err)
@@ -151,7 +151,7 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 // readObfIfaceState — снимок интерфейса по RCI. false = прочитать не удалось
 // (транспорт или разбор), и решение принимается как при отсутствии данных.
 func (o *OperatorNativeWG) readObfIfaceState(ctx context.Context, names NWGNames) (NWGState, bool) {
-	body, err := o.fetchInterfaceRCI(ctx, names.NDMSName, query.SnapshotLive)
+	body, err := o.fetchInterfaceRCI(ctx, names.NDMSName, query.SnapshotRecent)
 	if err != nil {
 		return NWGState{}, false
 	}

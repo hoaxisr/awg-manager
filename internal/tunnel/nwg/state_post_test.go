@@ -91,8 +91,8 @@ func TestResolveActiveWAN_NoVia_ReturnsEmpty(t *testing.T) {
 	if got := op.ResolveActiveWAN(context.Background(), &storage.AWGTunnel{NWGIndex: 5}); got != "" {
 		t.Fatalf("ResolveActiveWAN = %q, want empty", got)
 	}
-	// Поток старта: bootstrap + свой свежий список (SnapshotLive), без POST.
-	if f.ListCalls() != 2 || len(f.Posts) != 0 {
-		t.Fatalf("ListCalls=%d Posts=%v, want 2/none", f.ListCalls(), f.Posts)
+	// Снимок не старше 2 с (bootstrap), без POST.
+	if f.ListCalls() != 1 || len(f.Posts) != 0 {
+		t.Fatalf("ListCalls=%d Posts=%v, want 1/none", f.ListCalls(), f.Posts)
 	}
 }

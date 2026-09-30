@@ -230,7 +230,7 @@ func (o *OperatorNativeWG) createViaImport(ctx context.Context, stored *storage.
 		payloads.CmdSave(),
 	}
 
-	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
+	if _, err := o.postIfaceBatch(ctx, iface, cmds); err != nil {
 		o.cleanupCreated(ctx, iface)
 		return 0, fmt.Errorf("post-import settings: %w", err)
 	}
@@ -331,7 +331,7 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	}
 	cmds = append(cmds, payloads.CmdWireguardPeer(iface, peerCfg), payloads.CmdSave())
 
-	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
+	if _, err := o.postIfaceBatch(ctx, iface, cmds); err != nil {
 		o.cleanupCreated(ctx, iface)
 		return 0, fmt.Errorf("create batch: %w", err)
 	}
@@ -546,7 +546,7 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 		payloads.CmdWireguardPeerConnect(iface, pubkey, stored.ISPInterface),
 		payloads.CmdInterfaceUp(iface, true),
 	}
-	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
+	if _, err := o.postIfaceBatch(ctx, iface, cmds); err != nil {
 		return fmt.Errorf("start native: %w", err)
 	}
 
@@ -674,7 +674,7 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 		payloads.CmdWireguardPeerConnect(iface, pubkey, stored.ISPInterface),
 		payloads.CmdInterfaceUp(iface, true),
 	}
-	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
+	if _, err := o.postIfaceBatch(ctx, iface, cmds); err != nil {
 		_ = o.kmod.RemoveTunnel(stored.ID)
 		return fmt.Errorf("start proxy: %w", err)
 	}
@@ -724,7 +724,7 @@ func (o *OperatorNativeWG) SuspendProxy(ctx context.Context, stored *storage.AWG
 	cmds := []any{
 		payloads.CmdWireguardPeerDisconnect(iface, pubkey),
 	}
-	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
+	if _, err := o.postIfaceBatch(ctx, iface, cmds); err != nil {
 		o.appLog.Warn("suspend", names.NDMSName, "peer disconnect: "+err.Error())
 		return fmt.Errorf("peer disconnect: %w", err)
 	}
@@ -761,7 +761,7 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 		payloads.CmdInterfaceUp(iface, false),
 		payloads.CmdSave(),
 	}
-	_, _ = o.transport.PostBatch(ctx, cmds)
+	_, _ = o.postIfaceBatch(ctx, iface, cmds)
 
 	// Clear DNS servers from the router's DNS proxy
 	if err := o.SyncDNS(ctx, iface, tunnel.ParseDNSList(stored.Interface.DNS), nil); err != nil {
@@ -920,13 +920,22 @@ func nwgStalled(rci NWGState, now time.Time) bool {
 	return true
 }
 
+// postIfaceBatch — батч команд по интерфейсу iface мимо слоя commands, поэтому
+// карту интерфейсов метит грязной сам — и при ошибке: часть пакета могла
+// примениться. Следующий снимок (GetState, peer.via) читает свежий список, а
+// не состояние до батча (F546).
+func (o *OperatorNativeWG) postIfaceBatch(ctx context.Context, iface query.Confirmed, cmds []any) ([]json.RawMessage, error) {
+	res, err := o.transport.PostBatch(ctx, cmds)
+	o.queries.Interfaces.Invalidate(iface.Name())
+	return res, err
+}
+
 // fetchInterfaceRCI — запись интерфейса из снимка полного списка не старше
 // maxAge: поля те же, что у точечного `show interface`, но по имени NDMS не
 // спрашивают — запрос, долетевший между снятием записи и хуком ifdestroyed,
-// пишет E «unable to find» в журнал ndm (F546, K2). Опрос состояния берёт
-// query.SnapshotRecent; чтения внутри потока старта (решение перед батчем,
-// peer.via после него) — query.SnapshotLive: батч идёт мимо Invalidate, и
-// снимок моложе 2 с отдал бы состояние до него. Записи в снимке нет — `{}`:
+// пишет E «unable to find» в журнал ndm (F546, K2). После наших батчей карта
+// помечена грязной (postIfaceBatch), поэтому query.SnapshotRecent и внутри
+// потока старта видит состояние после батча. Записи в снимке нет — `{}`:
 // parseRCIInterfaceResponse даёт Exists=false → StateNotCreated. Список не
 // прочитан — ошибка (решение 4).
 func (o *OperatorNativeWG) fetchInterfaceRCI(ctx context.Context, ndmsName string, maxAge time.Duration) ([]byte, error) {
@@ -1233,7 +1242,7 @@ func (o *OperatorNativeWG) SyncKmodSlot(ctx context.Context, stored *storage.AWG
 func (o *OperatorNativeWG) ResolveActiveWAN(ctx context.Context, stored *storage.AWGTunnel) string {
 	names := NewNWGNames(stored.NWGIndex)
 
-	body, err := o.fetchInterfaceRCI(ctx, names.NDMSName, query.SnapshotLive)
+	body, err := o.fetchInterfaceRCI(ctx, names.NDMSName, query.SnapshotRecent)
 	if err != nil {
 		return ""
 	}

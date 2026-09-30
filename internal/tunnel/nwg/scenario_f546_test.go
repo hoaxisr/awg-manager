@@ -120,3 +120,53 @@ func deliverHooks(t *testing.T, q *query.Queries, f *query.FakeNDMS) {
 		t.Fatal("проход диспетчера не завершился за 2 с")
 	}
 }
+
+// Батч старта идёт транспортом мимо слоя commands: postIfaceBatch метит карту
+// грязной, и снимок сразу после Start показывает состояние ПОСЛЕ батча — одним
+// списком, без запросов по имени.
+func TestStartStop_BatchMarksDirty_SnapshotAfterBatch(t *testing.T) {
+	ctx := context.Background()
+	o, _, _, f, _ := newLifecycleOperator(t, true, false)
+	st := nwgStored(storage.AWGInterface{AWGObfuscation: storage.AWGObfuscation{Jc: 4, H1: "10-20", H2: "2", H3: "3", H4: "4"}})
+	_ = o.GetState(ctx, st) // карта и снимок тёплые: состояние до старта — down
+	if rec, _ := o.queries.Interfaces.Get(ctx, "Wireguard0"); rec == nil || rec.State == "up" {
+		t.Fatalf("до старта: %+v", rec)
+	}
+	lists := f.ListCalls()
+	if err := o.Start(ctx, st); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Logf("списков за Start: %d", f.ListCalls()-lists)
+	lists = f.ListCalls()
+	snap, err := o.queries.Interfaces.Snapshot(ctx, query.SnapshotRecent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := snap.Record("Wireguard0"); rec.State != "up" {
+		t.Fatalf("снимок после Start — до батча: state=%q", rec.State)
+	}
+	_ = o.GetState(ctx, st)
+	if got := f.ListCalls() - lists; got > 1 {
+		t.Fatalf("после Start списков %d, want ≤1", got)
+	}
+
+	// Stop: батч `up false` — единственная запись потока (DNS пуст), метку
+	// ставит только postIfaceBatch; снимок моложе 2 с иначе отдал бы «up».
+	if err := o.Stop(ctx, st); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	lists = f.ListCalls()
+	snap, err = o.queries.Interfaces.Snapshot(ctx, query.SnapshotRecent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := snap.Record("Wireguard0"); rec.State != "down" {
+		t.Fatalf("снимок после Stop — до батча: state=%q", rec.State)
+	}
+	if got := f.ListCalls() - lists; got > 1 {
+		t.Fatalf("после Stop списков %d, want ≤1", got)
+	}
+	if f.E != 0 {
+		t.Fatalf("E=%d", f.E)
+	}
+}
