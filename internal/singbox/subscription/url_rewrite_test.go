@@ -114,8 +114,8 @@ func TestRewriteForRaw(t *testing.T) {
 		},
 		{
 			name:    "landing page /happ?id= converted to /api/sub?id=",
-			in:      "https://links.clovpn.org/happ?id=1353818979",
-			want:    "https://links.clovpn.org/api/sub?id=1353818979",
+			in:      "https://links.example.org/happ?id=1000000001",
+			want:    "https://links.example.org/api/sub?id=1000000001",
 			rewrote: true,
 		},
 		{
@@ -125,8 +125,8 @@ func TestRewriteForRaw(t *testing.T) {
 		},
 		{
 			name:    "happ://add/https:// stripped cleanly",
-			in:      "happ://add/https://client.infomir.net/sub/bP15x63Sj0B_GjdN",
-			want:    "https://client.infomir.net/sub/bP15x63Sj0B_GjdN",
+			in:      "happ://add/https://client.example.net/sub/testToken_012345",
+			want:    "https://client.example.net/sub/testToken_012345",
 			rewrote: true,
 		},
 		{

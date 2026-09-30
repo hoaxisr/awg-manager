@@ -234,6 +234,9 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 		// boot-reconcile писал бы ложное «выключение движка» в журнал.
 		provisioned := st != nil && st.Provisioned
 		slotActive := s.deps.Orch != nil && s.routerSlotEnabled()
+		if sr.RoutingEngine == "mihomo" {
+			slotActive = false
+		}
 		if !provisioned && !slotActive {
 			return nil
 		}
@@ -266,7 +269,7 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	// Признак взят из НАШЕГО файла (applied-конфиг слота), а не из
 	// running-config: его форму мы задаём сами, и она не зависит от NDMS.
 	// Гасим гард идемпотентности через персист и переустанавливаем режим целиком.
-	if !s.policyTunInboundPresent() {
+	if sr.RoutingEngine != "mihomo" && !s.policyTunInboundPresent() {
 		s.appLog.Warn("policy-tun-reconcile", iface,
 			"режим включён, но tun-инбаунд пропал из слота — переустановка (недоделанное выключение)")
 		if e := s.deps.Settings.SetOpkgTunState(&storage.OpkgTunState{
@@ -278,16 +281,23 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 		return s.enableLocked(ctx, false)
 	}
 
-	// Запаркованный слот 20 — дрейф независимо от жизни процесса: enable
-	// no-op'ится на provisioned+live и слот бы уже не вернул, а без него в
-	// merged-конфиге нет tun-инбаунда.
+	// SlotRouter state:
+	// - sing-box needs SlotRouter active so it binds opkgtun0.
+	// - Mihomo needs SlotRouter parked so sing-box does NOT bind opkgtun0.
 	if s.deps.Orch != nil {
-		if slot, ok := s.slotSnapshot(orchestrator.SlotRouter); !ok || !slot.Enabled {
-			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, true); e != nil {
-				s.appLog.Warn("policy-tun-reconcile", iface, "enable slot: "+e.Error())
+		targetRouterSlot := sr.RoutingEngine != "mihomo"
+		slot, ok := s.slotSnapshot(orchestrator.SlotRouter)
+		if !ok || slot.Enabled != targetRouterSlot {
+			if e := s.deps.Orch.SetEnabled(orchestrator.SlotRouter, targetRouterSlot); e != nil {
+				s.appLog.Warn("policy-tun-reconcile", iface, "set router slot: "+e.Error())
 			} else {
-				s.appLog.Info("policy-tun-reconcile", iface,
-					"слот 20-router был запаркован — возвращён в конфиг (drift-heal)")
+				if targetRouterSlot {
+					s.appLog.Info("policy-tun-reconcile", iface,
+						"слот 20-router был запаркован — возвращён в конфиг (drift-heal)")
+				} else {
+					s.appLog.Info("policy-tun-reconcile", iface,
+						"слот 20-router был активен — запаркован для Mihomo")
+				}
 				s.notifyRoutingSlotsChanged()
 			}
 		}
@@ -621,7 +631,7 @@ func (s *ServiceImpl) reconcilePolicyTunQoS(ctx context.Context, sr storage.Sing
 			s.appLog.Warn("policy-tun-reconcile", "qos", "collect WAN IPs: "+err.Error())
 			return
 		}
-		spec := s.buildPolicyTunSpec(sr, wanIPs, qosSpecs)
+		spec := s.buildPolicyTunSpec(ctx, sr, wanIPs, qosSpecs)
 		want = &spec
 	}
 

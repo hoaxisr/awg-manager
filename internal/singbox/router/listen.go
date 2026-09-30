@@ -61,18 +61,16 @@ var singboxListeningProbe = singboxIntercepting
 // bind would leave iptables handing packets to a dead socket. Reads procfs
 // directly — ss/netstat are not in stock Entware. A read error reports false.
 func singboxIntercepting() bool {
-	tcp, err := os.ReadFile("/proc/net/tcp")
-	if err != nil {
+	tcp, _ := os.ReadFile("/proc/net/tcp")
+	tcp6, _ := os.ReadFile("/proc/net/tcp6")
+	if !localPortInState(string(tcp), RedirectPort, tcpStateListen) &&
+		!localPortInState(string(tcp6), RedirectPort, tcpStateListen) {
 		return false
 	}
-	if !localPortInState(string(tcp), RedirectPort, tcpStateListen) {
-		return false
-	}
-	udp, err := os.ReadFile("/proc/net/udp")
-	if err != nil {
-		return false
-	}
-	return localPortInState(string(udp), TPROXYPort, udpStateBound)
+	udp, _ := os.ReadFile("/proc/net/udp")
+	udp6, _ := os.ReadFile("/proc/net/udp6")
+	return localPortInState(string(udp), TPROXYPort, udpStateBound) ||
+		localPortInState(string(udp6), TPROXYPort, udpStateBound)
 }
 
 // ---------------------------------------------------------------------------

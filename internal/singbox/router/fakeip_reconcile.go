@@ -109,16 +109,22 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// указывают в OpkgTun без читателя, трафик дропается, не утекает.
 	// SetEnabled — только при фактически запаркованном слоте, иначе каждый
 	// тик взводил бы debounced reload.
+	// SlotFakeIP state:
+	// - sing-box needs SlotFakeIP active so it binds opkgtun0.
+	// - Mihomo needs SlotFakeIP parked so sing-box does NOT bind opkgtun0.
 	if s.deps.Orch != nil {
-		if st, ok := s.slotSnapshot(orchestrator.SlotFakeIP); !ok || !st.Enabled {
-			if e := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, true); e != nil {
-				s.appLog.Warn("fakeip-reconcile", iface, "enable slot: "+e.Error())
+		targetFakeIPSlot := sr.RoutingEngine != "mihomo"
+		if st, ok := s.slotSnapshot(orchestrator.SlotFakeIP); !ok || st.Enabled != targetFakeIPSlot {
+			if e := s.deps.Orch.SetEnabled(orchestrator.SlotFakeIP, targetFakeIPSlot); e != nil {
+				s.appLog.Warn("fakeip-reconcile", iface, "set fakeip slot: "+e.Error())
 			} else {
-				s.appLog.Info("fakeip-reconcile", iface,
-					"слот 21-fakeip был запаркован — возвращён в конфиг (drift-heal)")
-				// Слот вернулся в merged-конфиг — device-proxy должен
-				// восстановить композитные ссылки (ветка reprovision покрыта
-				// через enableLocked, эта — нет).
+				if targetFakeIPSlot {
+					s.appLog.Info("fakeip-reconcile", iface,
+						"слот 21-fakeip был запаркован — возвращён в конфиг (drift-heal)")
+				} else {
+					s.appLog.Info("fakeip-reconcile", iface,
+						"слот 21-fakeip был активен — запаркован для Mihomo")
+				}
 				s.notifyRoutingSlotsChanged()
 			}
 		}

@@ -15,7 +15,24 @@
   import { deriveRoutingSummary, resolveDefaultWanLabel } from './flowData';
   import { liveConnectionsTraffic } from './liveConnectionsStore';
   import { pluralize, RULE_WORDS, TUNNEL_WORDS, DEVICE_WORDS } from '$lib/utils/pluralize';
-  import type { RouterPolicy, SingboxRouterWANInterface } from '$lib/types';
+  import type { RouterPolicy, SingboxRouterWANInterface, SingboxRouterDNSServer } from '$lib/types';
+
+  interface Props {
+    isMihomo?: boolean;
+    mihomoRulesCount?: number;
+    mihomoGroupsCount?: number;
+    mihomoTopGroup?: string;
+    mihomoOutbounds?: string[];
+  }
+  let {
+    isMihomo = false,
+    mihomoRulesCount = 0,
+    mihomoGroupsCount = 0,
+    mihomoTopGroup = '',
+    mihomoOutbounds = [],
+  }: Props = $props();
+
+  let dnsPickerTag = $state<string | null>(null);
 
   const status = singboxRouterStore.status;
   const storeSettings = singboxRouterStore.settings;
@@ -23,6 +40,8 @@
   const dnsServersStore = singboxRouterStore.dnsServers;
   const dnsGlobalsStore = singboxRouterStore.dnsGlobals;
   const options = singboxRouterStore.options;
+
+  let engineIsMihomo = $derived(isMihomo || $storeSettings?.routingEngine === 'mihomo');
 
   let policies = $state<RouterPolicy[]>([]);
   let wanInterfaces = $state<SingboxRouterWANInterface[]>([]);
@@ -44,17 +63,29 @@
   }
 
   let s = $derived($status);
-  let engineOn = $derived(s?.enabled ?? false);
+  let engineOn = $derived(s?.enabled ?? true);
   // engineActive = интерцепция реально жива (цепочки + PREROUTING-jump'ы),
   // а не просто «включён в настройках». Узел светится только когда работает.
-  let engineActive = $derived(engineOn && (s?.active ?? false));
-  let engineFatalOpen = $state(false);
-  // Тег DNS-сервера, открытого в пикере. dns-direct правится с выбором
-  // протокола, туннельный — всегда UDP.
-  let dnsPickerTag = $state<string | null>(null);
-  const dnsPickerServer = $derived(
-    dnsPickerTag ? (($dnsServersStore ?? []).find((srv) => srv.tag === dnsPickerTag) ?? null) : null,
+  let engineActive = $derived(
+    engineOn && (Boolean(s?.active) || (Boolean(engineIsMihomo) && ((mihomoRulesCount > 0) || Boolean(s?.ruleCount))))
   );
+  let engineFatalOpen = $state(false);
+  let activeDnsServer = $state<SingboxRouterDNSServer | null>(null);
+
+  function openDirectDnsPicker() {
+    const srv = ($dnsServersStore ?? []).find((s) => s.tag === summary.defaultDnsTag)
+      ?? ($dnsServersStore ?? []).find((s) => s.tag === 'dns-direct')
+      ?? ($dnsServersStore ?? []).find((s) => !s.detour || s.detour === 'direct')
+      ?? { tag: 'dns-direct', type: 'udp', server: summary.defaultDnsLabel !== 'системный' ? summary.defaultDnsLabel : '77.88.8.8', address: summary.defaultDnsLabel !== 'системный' ? summary.defaultDnsLabel : '77.88.8.8' };
+    activeDnsServer = srv;
+  }
+
+  function openTunnelDnsPicker() {
+    const srv = ($dnsServersStore ?? []).find((s) => s.tag === (summary.tunnelDnsTag || 'dns-tunnel'))
+      ?? ($dnsServersStore ?? []).find((s) => !!s.detour)
+      ?? { tag: 'dns-tunnel', type: 'udp', server: summary.tunnelDnsLabel ?? '9.9.9.9', address: summary.tunnelDnsLabel ?? '9.9.9.9', detour: summary.tunnelDnsDetour ?? '' };
+    activeDnsServer = srv;
+  }
   // СБОЙ с захваченной причиной → клик по узлу открывает модалку с ошибкой,
   // иначе — обычные настройки движка (StatusDrawer).
   const engineFatal = $derived(engineOn && !engineActive && !!s?.lastError);
@@ -66,6 +97,8 @@
   onMount(() => {
     void loadPolicies();
     void loadWanInterfaces();
+    void singboxRouterStore.reloadStatus?.();
+    void singboxRouterStore.reloadSettings?.();
   });
 
   let singboxInstallStatus = $derived($singboxStatus.data);
@@ -76,6 +109,9 @@
   let summary = $derived(
     deriveRoutingSummary($rulesStore ?? [], routeFinal, $dnsServersStore ?? [], $dnsGlobalsStore, $options),
   );
+
+  let effectiveRulesCount = $derived(engineIsMihomo ? (mihomoRulesCount || s?.ruleCount || 0) : (s?.ruleCount ?? 0));
+  let engineDisplayName = $derived(engineIsMihomo ? 'Mihomo' : 'sing-box');
 
   let currentPolicy = $derived(policies.find((p) => p.name === policyName));
 
@@ -99,20 +135,38 @@
     if (!engineOn) return 'выключен';
     if (!engineActive) return 'не работает';
     const parts = ['first-match'];
-    if (singboxVersion) parts.push(`v${singboxVersion}`);
+    if (!engineIsMihomo && singboxVersion) parts.push(`v${singboxVersion}`);
     return parts.join(' · ');
   });
 
-  let hasTunnel = $derived(summary.tunnels.length > 0);
-  let tunnelTitle = $derived(
-    summary.tunnels.length <= 1 ? (summary.tunnels[0] ?? '—') : pluralize(summary.tunnels.length, TUNNEL_WORDS),
+  let hasTunnel = $derived(
+    engineIsMihomo
+      ? (mihomoOutbounds.length > 0 || mihomoGroupsCount > 0 || !!mihomoTopGroup)
+      : summary.tunnels.length > 0,
   );
+  let tunnelTitle = $derived.by(() => {
+    if (engineIsMihomo) {
+      if (mihomoOutbounds.length === 1) return mihomoOutbounds[0];
+      if (mihomoOutbounds.length > 1) {
+        return `${mihomoOutbounds.length} ${pluralize(mihomoOutbounds.length, ['выход', 'выхода', 'выходов'])}`;
+      }
+      return mihomoTopGroup || (mihomoGroupsCount > 1 ? pluralize(mihomoGroupsCount, ['группа', 'группы', 'групп']) : 'Proxy Group');
+    }
+    return summary.tunnels.length <= 1 ? (summary.tunnels[0] ?? '—') : pluralize(summary.tunnels.length, TUNNEL_WORDS);
+  });
+  let tunnelTooltip = $derived.by(() => {
+    if (engineIsMihomo && mihomoOutbounds.length > 1) {
+      return mihomoOutbounds.join(', ');
+    }
+    return tunnelTitle;
+  });
 
   let defaultWanLabel = $derived(
     resolveDefaultWanLabel($storeSettings, wanInterfaces, routeFinal),
   );
 
   let defaultRuleHint = $derived.by(() => {
+    if (engineIsMihomo) return 'остальной трафик';
     if (summary.bypassRuleCount > 0) return pluralize(summary.bypassRuleCount, RULE_WORDS);
     if (routeFinal === 'direct' && summary.tunneledRuleCount > 0) return 'остальной трафик';
     return null;
@@ -127,7 +181,13 @@
       type="button"
       class="dns-btn"
       title="Изменить выходной DNS"
-      onclick={() => (dnsPickerTag = tag)}
+      onclick={() => {
+        if (tag === 'direct' || tag === 'dns-direct') {
+          openDirectDnsPicker();
+        } else {
+          openTunnelDnsPicker();
+        }
+      }}
     >{text}</button>
   {:else}
     <div class="dns">{text}</div>
@@ -149,11 +209,11 @@
 
     <div class="arrow">›</div>
 
-    <button type="button" class="node engine" class:glow={engineActive} class:offline={!engineActive} onclick={() => (engineFatal ? (engineFatalOpen = true) : openDrawer())} aria-label="Настройки движка sing-box">
-      <div class="cap acc">Движок sing-box</div>
+    <button type="button" class="node engine" class:glow={engineActive} class:offline={!engineActive} onclick={() => (engineFatal ? (engineFatalOpen = true) : openDrawer())} aria-label={`Настройки движка ${engineDisplayName}`}>
+      <div class="cap acc">Движок {engineDisplayName}</div>
       <div class="node-title">{engineSub}</div>
       <div class="node-sub">
-        {pluralize(rulesCount, RULE_WORDS)}
+        {pluralize(effectiveRulesCount, RULE_WORDS)}
         {#if !policyTunMode && deviceMode === 'all'}
           {' · '}весь роутер
         {/if}
@@ -170,34 +230,48 @@
         <div class="out-line">
           <span class="dot muted"></span>
           <span class="out-prefix"><span class="mut">По умолчанию →</span></span>
-          <span class="out-target" title={summary.defaultLabel}><b>{summary.defaultLabel}</b></span>
+          <span class="out-target" title={engineIsMihomo ? 'DIRECT' : summary.defaultLabel}><b>{engineIsMihomo ? 'Напрямую' : summary.defaultLabel}</b></span>
           {#if defaultRuleHint}
             <span class="out-hint mut">{' · '}{defaultRuleHint}</span>
           {/if}
         </div>
-        {@render dnsLine(
-          defaultWanLabel
-            ? `${defaultWanLabel} · DNS: ${summary.defaultDnsLabel}`
-            : `DNS: ${summary.defaultDnsLabel}`,
-          summary.defaultDnsTag,
-        )}
+        <div class="out-sub-row">
+          {#if defaultWanLabel}
+            <button
+              type="button"
+              class="wan-link-btn"
+              title="Настроить интерфейс провайдера (WAN)"
+              onclick={openDrawer}
+            >{defaultWanLabel}</button>
+            <span class="sub-sep">·</span>
+          {/if}
+          <button
+            type="button"
+            class="dns-link-btn"
+            title="Изменить выходной DNS для прямого подключения"
+            onclick={openDirectDnsPicker}
+          >DNS: {summary.defaultDnsLabel}</button>
+        </div>
       </div>
       {#if hasTunnel}
         <div class="out tun">
           <div class="out-line">
             <span class="dot"></span>
-            <span class="out-prefix"><span class="mut">Через туннель →</span></span>
-            <span class="out-target acc" title={tunnelTitle}>{tunnelTitle}</span>
-            {#if summary.tunneledRuleCount > 0}
-              <span class="out-hint mut">{' · '}{pluralize(summary.tunneledRuleCount, RULE_WORDS)}</span>
-            {/if}
+            <span class="out-prefix"><span class="mut">Через {engineIsMihomo ? 'прокси' : 'туннель'} →</span></span>
+            <span class="out-target acc">
+              {pluralize(engineIsMihomo ? effectiveRulesCount : summary.tunneledRuleCount, RULE_WORDS)}
+            </span>
           </div>
-          {@render dnsLine(
-            summary.tunnelDnsLabel
-              ? `DNS: ${summary.tunnelDnsLabel} (через туннель)`
-              : 'DNS: через туннель',
-            summary.tunnelDnsTag,
-          )}
+          <button
+            type="button"
+            class="dns-btn"
+            title="Изменить выходной DNS для туннелей"
+            onclick={openTunnelDnsPicker}
+          >
+            {summary.tunnelDnsLabel
+              ? `DNS: ${summary.tunnelDnsLabel} (через VPN)`
+              : `DNS: через VPN`}
+          </button>
         </div>
       {/if}
     </div>
@@ -210,12 +284,15 @@
   onclose={() => (engineFatalOpen = false)}
 />
 
-{#if dnsPickerServer}
+{#if activeDnsServer}
   <SimpleDnsPickerModal
-    server={dnsPickerServer}
-    allowProtocol={dnsPickerServer.tag !== summary.tunnelDnsTag}
-    onclose={() => (dnsPickerTag = null)}
-    onsaved={() => (dnsPickerTag = null)}
+    server={activeDnsServer}
+    allowProtocol={true}
+    onclose={() => (activeDnsServer = null)}
+    onsaved={async () => {
+      activeDnsServer = null;
+      await singboxRouterStore.loadAll();
+    }}
   />
 {/if}
 
@@ -289,11 +366,11 @@
   .out-target b {
     font-weight: 600;
   }
-  .dns { font-size: 11px; color: var(--text-muted); margin-top: 5px; padding-top: 5px; border-top: 1px dashed var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dns { font-size: 11px; color: var(--text-muted); margin-top: 6px; padding-top: 5px; border-top: 1px dashed var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dns-btn {
     display: block;
     width: 100%;
-    margin-top: 5px;
+    margin-top: 6px;
     padding: 5px 0 0;
     border: 0;
     border-top: 1px dashed var(--border);
@@ -308,7 +385,53 @@
     cursor: pointer;
   }
   .dns-btn:hover {
-    color: var(--text);
+    color: var(--text-primary);
+  }
+  .out-sub-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    padding-top: 5px;
+    border-top: 1px dashed var(--border);
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 0;
+    overflow: hidden;
+  }
+  .wan-link-btn,
+  .dns-link-btn {
+    background: transparent;
+    border: none;
+    padding: 0;
+    font-family: inherit;
+    font-size: 11px;
+    color: var(--text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    text-decoration: underline;
+    text-decoration-style: dashed;
+    text-underline-offset: 2px;
+  }
+  .wan-link-btn {
+    flex-shrink: 1;
+  }
+  .wan-link-btn:hover,
+  .dns-link-btn:hover {
+    color: var(--accent);
+  }
+  .dns-text {
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .sub-sep {
+    color: var(--text-muted);
+    opacity: 0.6;
+    flex-shrink: 0;
   }
   .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: middle; }
   .dot.muted { background: var(--text-muted); }

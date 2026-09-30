@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 )
@@ -40,6 +41,36 @@ func (s *ServiceImpl) computeIssues(cfg *RouterConfig) []Issue {
 		for _, o := range s.deps.SubscriptionComposites.ListSubscriptionComposites() {
 			if o.Tag != "" {
 				outboundTags[o.Tag] = struct{}{}
+			}
+		}
+	}
+	// Mihomo proxy groups and native proxies / bridges (e.g. "Задний ход", "Самый быстрый", etc.)
+	if s.deps.Settings != nil {
+		if st, err := s.deps.Settings.Get(); err == nil {
+			for _, pg := range st.SingboxRouter.ProxyGroups {
+				if pg.Name != "" {
+					outboundTags[pg.Name] = struct{}{}
+				}
+			}
+		}
+	}
+	if s.deps.MihomoNativeProxies != nil {
+		for _, g := range s.deps.MihomoNativeProxies.ConfigProviderGroups() {
+			if name, ok := g["name"].(string); ok && name != "" {
+				outboundTags[name] = struct{}{}
+			}
+		}
+		for _, p := range s.deps.MihomoNativeProxies.ConfigProxies() {
+			if name, ok := p["name"].(string); ok && name != "" {
+				outboundTags[name] = struct{}{}
+			}
+		}
+		for _, b := range s.deps.MihomoNativeProxies.ListBridges() {
+			if b.Label != "" {
+				outboundTags[b.Label] = struct{}{}
+			}
+			if b.ID != "" {
+				outboundTags[b.ID] = struct{}{}
 			}
 		}
 	}
@@ -262,7 +293,8 @@ func (s *ServiceImpl) computeRuleOutboundIssues(r Rule, index int, outboundTags 
 }
 
 func isKnownOutboundRef(tag string, outboundTags map[string]struct{}) bool {
-	if tag == "direct" || tag == "block" || tag == "dns" {
+	lower := strings.ToLower(tag)
+	if lower == "direct" || lower == "block" || lower == "dns" || lower == "reject" || lower == "global" || lower == "compatible" {
 		return true
 	}
 	_, ok := outboundTags[tag]
@@ -395,6 +427,11 @@ func (s *ServiceImpl) Inspect(ctx context.Context, input InspectInput) (InspectR
 	m := s.ruleSetMaterializer()
 	ruleSets := m.inspectRuleSetsWithInlineAliases(cfg)
 	rules := m.restoreConfig(cfg).Route.Rules
+	if st, err := s.deps.Settings.Load(); err == nil && st.SingboxRouter.KeeneticCloudTunnel && strings.TrimSpace(st.SingboxRouter.KeeneticCloudOutbound) != "" {
+		target := strings.TrimSpace(st.SingboxRouter.KeeneticCloudOutbound)
+		cloudRules := BuildKeeneticCloudRules(target, s.dynamicCloudCIDRs()...)
+		rules = insertCloudRules(rules, cloudRules)
+	}
 	binary := ""
 	if s.deps.Singbox != nil {
 		binary = s.deps.Singbox.Binary()

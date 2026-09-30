@@ -120,3 +120,12 @@ func TestJsonUnescapeURL(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalize_TrustTunnelConnectURLs(t *testing.T) {
+	de := "https://trustunnel.example/connect/?d=AAEBAQ5kZS5leGFtcGxlLmNvbQISZGUuZXhhbXBsZS5jb206NDQzAw5kZS5leGFtcGxlLmNvbQUJdGVzdF91c2VyBgl0ZXN0X3Bhc3MJAQEMB0dlcm1hbnk"
+	fi := "https://trustunnel.example/connect/?d=AAEBAQ5maS5leGFtcGxlLmNvbQISZmkuZXhhbXBsZS5jb206NDQzAw5maS5leGFtcGxlLmNvbQUJdGVzdF91c2VyBgl0ZXN0X3Bhc3MJAQIMB0ZpbmxhbmQ"
+	lines := NormalizeBody([]byte(de+"\n"+fi), "text/plain")
+	if len(lines) != 2 {
+		t.Fatalf("lines=%d %v want 2 trusttunnel URLs", len(lines), lines)
+	}
+}

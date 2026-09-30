@@ -3,6 +3,20 @@ import type {
 	CatalogPreset,
 	PolicyTunNATSegmentInfo,
 	PolicyTunNATPreview,
+	MihomoStatus,
+	MihomoNativeList,
+	MihomoNativeProxy,
+	MihomoNativeSubscription,
+	MihomoEnginePreference,
+	MihomoSubscriptionFormat,
+	MihomoRuntimeProxies,
+	MihomoRuntimeProviders,
+	MihomoNativeGroup,
+	MihomoNativeRule,
+	MihomoNativeRuleProvider,
+	TelemtStatus,
+	XrayStatus,
+	XrayConfigRequest,
 	RouterPolicy,
 	RouterStagingStatusResponse,
 	SingboxGeositesData,
@@ -31,6 +45,17 @@ import type {
 } from '$lib/types';
 import { sanitizeDnsServerForApi } from '$lib/utils/dnsServerDetour';
 import { SingboxClient } from './clientSingbox';
+
+export interface MihomoRuleMutationResponse {
+	reordered?: boolean;
+	item?: MihomoNativeRule;
+	deleted?: boolean;
+	items?: MihomoNativeRule[];
+	revision?: number;
+	generation?: number;
+	applyPath?: string;
+	transactionId?: string;
+}
 
 export class SbRouterClient extends SingboxClient {
 	// ─────────────────────────────────────────────
@@ -430,6 +455,51 @@ export class SbRouterClient extends SingboxClient {
 		return es;
 	}
 
+	mihomoRouterInspectRouteStream(
+		req: SingboxRouterInspectRequest,
+		handlers: {
+			onProgress: (progress: SingboxRouterInspectProgress) => void;
+			onResult: (result: SingboxRouterInspectResult) => void;
+			onInspectError: (message: string) => void;
+			onError: (message: string) => void;
+		},
+	): EventSource {
+		const qs = new URLSearchParams();
+		qs.set('domain', req.domain);
+		if (typeof req.port === 'number') qs.set('port', String(req.port));
+		if (req.protocol) qs.set('protocol', req.protocol);
+		const es = new EventSource(`${this.baseUrl}/mihomo/router/inspect/stream?${qs.toString()}`);
+		es.addEventListener('progress', (e) => {
+			try {
+				const payload = JSON.parse((e).data);
+				if (payload?.progress) handlers.onProgress(payload.progress as SingboxRouterInspectProgress);
+			} catch {}
+		});
+		es.addEventListener('result', (e) => {
+			try {
+				const payload = JSON.parse((e).data);
+				if (payload?.result) handlers.onResult(payload.result as SingboxRouterInspectResult);
+			} catch (err) {
+				handlers.onError(err instanceof Error ? err.message : 'Invalid stream result');
+			}
+			es.close();
+		});
+		es.addEventListener('inspect-error', (e) => {
+			try {
+				const payload = JSON.parse((e).data);
+				handlers.onInspectError(String(payload?.error ?? 'Inspect failed'));
+			} catch {
+				handlers.onInspectError('Inspect failed');
+			}
+			es.close();
+		});
+		es.addEventListener('error', () => {
+			handlers.onError('Stream connection lost');
+			es.close();
+		});
+		return es;
+	}
+
 	async singboxRouterStagingStatus(): Promise<RouterStagingStatusResponse> {
 		return this.request('/singbox/router/staging');
 	}
@@ -444,6 +514,333 @@ export class SbRouterClient extends SingboxClient {
 		await this.request('/singbox/router/staging/discard', {
 			method: 'POST',
 		});
+	}
+
+	// Mihomo API. These methods are kept on the shared client inheritance
+	// chain because routing, subscriptions and tunnel cards all consume them.
+	async mihomoResetConfig(): Promise<{ success: boolean; message?: string }> {
+		return this.request('/mihomo/native/reset', { method: 'POST' });
+	}
+
+	async mihomoGetClashConfigs(): Promise<{ mode: 'rule' | 'global' | 'direct'; [key: string]: unknown }> {
+		return this.request('/mihomo/clash/configs');
+	}
+
+	async mihomoPatchClashConfigs(patch: { mode?: 'rule' | 'global' | 'direct' }): Promise<void> {
+		await this.request('/mihomo/clash/configs', { method: 'PATCH', body: JSON.stringify(patch) });
+	}
+
+	async mihomoGetGlobalProxy(): Promise<{ name: string; now: string; all: string[] }> {
+		return this.request('/mihomo/clash/proxies/GLOBAL');
+	}
+
+	async mihomoSetGlobalProxy(name: string): Promise<void> {
+		await this.request('/mihomo/clash/proxies/GLOBAL', { method: 'PUT', body: JSON.stringify({ name }) });
+	}
+
+	async mihomoStatus(): Promise<MihomoStatus> {
+		return this.request('/mihomo/status');
+	}
+
+	async mihomoInstall(): Promise<MihomoStatus> {
+		return this.request('/mihomo/install', { method: 'POST' });
+	}
+
+	async mihomoUpdate(): Promise<MihomoStatus> {
+		return this.request('/mihomo/update', { method: 'POST' });
+	}
+
+	async mihomoUninstall(): Promise<MihomoStatus> {
+		return this.request('/mihomo/uninstall', { method: 'POST' });
+	}
+
+	async xrayStatus(): Promise<XrayStatus> {
+		return this.request('/xray/status');
+	}
+
+	async xrayInstall(): Promise<XrayStatus> {
+		return this.request('/xray/install', { method: 'POST' });
+	}
+
+	async xrayUninstall(): Promise<void> {
+		await this.request('/xray/uninstall', { method: 'POST' });
+	}
+
+	async mihomoConfig(): Promise<{ yaml: string }> {
+		return this.request('/mihomo/config');
+	}
+
+	async mihomoReload(): Promise<void> {
+		await this.request('/mihomo/reload', { method: 'POST' });
+	}
+
+	async mihomoRestart(): Promise<void> {
+		await this.request('/mihomo/restart', { method: 'POST' });
+	}
+
+	async telemtStatus(): Promise<TelemtStatus> {
+		return this.request<TelemtStatus>('/telemt/status');
+	}
+
+	async telemtInstall(): Promise<TelemtStatus> {
+		return this.request<TelemtStatus>('/telemt/install', { method: 'POST' });
+	}
+
+	async telemtUpdate(): Promise<TelemtStatus> {
+		return this.request<TelemtStatus>('/telemt/update', { method: 'POST' });
+	}
+
+	async telemtRestart(): Promise<TelemtStatus> {
+		return this.request<TelemtStatus>('/telemt/restart', { method: 'POST' });
+	}
+
+	async telemtUninstall(): Promise<TelemtStatus> {
+		return this.request<TelemtStatus>('/telemt/uninstall', { method: 'POST' });
+	}
+
+	async mihomoReconcile(action: 'rollback_to_lkg' | 'regenerate_from_desired', force = false): Promise<{ status: string }> {
+		return this.request('/mihomo/recovery/reconcile', {
+			method: 'POST',
+			body: JSON.stringify({ action, force })
+		});
+	}
+
+	async mihomoRecoveryEvidence(): Promise<Blob> {
+		const res = await fetch('/api/mihomo/recovery/evidence', {
+			headers: { 'Accept': 'application/json' }
+		});
+		if (!res.ok) {
+			throw new Error(`Failed to download evidence: ${res.statusText}`);
+		}
+		return res.blob();
+	}
+
+	async mihomoNativeProxies(): Promise<MihomoNativeProxy[]> {
+		return (await this.request<MihomoNativeList<MihomoNativeProxy>>('/mihomo/native/proxies')).items;
+	}
+
+	async mihomoNativeProxy(id: string): Promise<MihomoNativeProxy> {
+		return this.request(`/mihomo/native/proxies/${encodeURIComponent(id)}`);
+	}
+
+	async mihomoNativeCreateProxy(uri: string, enginePreference: MihomoEnginePreference): Promise<MihomoNativeList<MihomoNativeProxy>> {
+		return this.request('/mihomo/native/proxies', { method: 'POST', body: JSON.stringify({ uri, enginePreference }) });
+	}
+
+	async mihomoNativeCreateManualProxy(input: {
+		name: string; protocol: string; server: string; port: number;
+		enginePreference: MihomoEnginePreference; config: Record<string, unknown>;
+	}): Promise<MihomoNativeList<MihomoNativeProxy>> {
+		const { enginePreference, ...manual } = input;
+		return this.request('/mihomo/native/proxies', { method: 'POST', body: JSON.stringify({ enginePreference, manual }) });
+	}
+
+	async mihomoNativeUpdateProxy(id: string, input: {
+		uri?: string;
+		manual?: { name: string; protocol: string; server: string; port: number; config: Record<string, unknown> };
+		enginePreference: MihomoEnginePreference; enabled: boolean;
+	}): Promise<MihomoNativeProxy> {
+		return this.request(`/mihomo/native/proxies/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) });
+	}
+
+	async mihomoNativeDeleteProxy(id: string, apply = true): Promise<void> {
+		await this.request(`/mihomo/native/proxies/${encodeURIComponent(id)}${apply ? '' : '?apply=false'}`, { method: 'DELETE' });
+	}
+
+	async mihomoNativeSubscriptions(): Promise<MihomoNativeSubscription[]> {
+		return (await this.request<MihomoNativeList<MihomoNativeSubscription>>('/mihomo/native/subscriptions')).items;
+	}
+
+	async mihomoNativeSubscription(id: string): Promise<MihomoNativeSubscription> {
+		return this.request(`/mihomo/native/subscriptions/${encodeURIComponent(id)}`);
+	}
+
+	async mihomoNativeCreateSubscription(input: {
+		name: string; url?: string; inline?: string; format: MihomoSubscriptionFormat;
+		enginePreference: MihomoEnginePreference; refreshHours: number; enabled: boolean;
+		headers?: Array<{ name: string; value: string }>;
+		mode?: string; testUrl?: string; testInterval?: number; testTolerance?: number;
+		filterInclude?: string; filterExclude?: string; bindInterface?: string;
+	}): Promise<MihomoNativeSubscription> {
+		return this.request('/mihomo/native/subscriptions', { method: 'POST', body: JSON.stringify(input) });
+	}
+
+	async mihomoNativeUpdateSubscription(id: string, input: {
+		name: string; url?: string; inline?: string; format: MihomoSubscriptionFormat;
+		enginePreference: MihomoEnginePreference; refreshHours: number; enabled: boolean;
+		headers?: Array<{ name: string; value: string }>;
+		mode?: string; testUrl?: string; testInterval?: number; testTolerance?: number;
+		filterInclude?: string; filterExclude?: string; bindInterface?: string;
+	}): Promise<MihomoNativeSubscription> {
+		return this.request(`/mihomo/native/subscriptions/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) });
+	}
+
+	async mihomoNativeDeleteSubscription(id: string, apply = true): Promise<void> {
+		await this.request(`/mihomo/native/subscriptions/${encodeURIComponent(id)}${apply ? '' : '?apply=false'}`, { method: 'DELETE' });
+	}
+
+	async mihomoNativeRefreshSubscription(id: string): Promise<void> {
+		await this.request(`/mihomo/native/subscriptions/${encodeURIComponent(id)}/refresh`, { method: 'POST' });
+	}
+
+	async mihomoNativeGroups(): Promise<MihomoNativeGroup[]> {
+		return (await this.request<MihomoNativeList<MihomoNativeGroup>>('/mihomo/native/groups')).items;
+	}
+
+	async mihomoNativeSaveGroup(group: Partial<MihomoNativeGroup>, apply = true): Promise<MihomoNativeGroup> {
+		const suffix = apply ? '' : '?apply=false';
+		const path = group.id ? `/mihomo/native/groups/${encodeURIComponent(group.id)}${suffix}` : `/mihomo/native/groups${suffix}`;
+		return this.request(path, { method: group.id ? 'PUT' : 'POST', body: JSON.stringify(group) });
+	}
+
+	async mihomoNativeDeleteGroup(id: string, apply = true): Promise<void> {
+		await this.request(`/mihomo/native/groups/${encodeURIComponent(id)}${apply ? '' : '?apply=false'}`, { method: 'DELETE' });
+	}
+
+	async mihomoGroupReferences(id: string): Promise<Array<{ kind: string; id: string; name: string }>> {
+		const res = await this.request<{ references: Array<{ kind: string; id: string; name: string }> }>(
+			`/mihomo/native/groups/${encodeURIComponent(id)}/references`,
+		);
+		return res.references ?? [];
+	}
+
+	async mihomoSelectProxy(groupName: string, memberName: string): Promise<void> {
+		await this.request(`/mihomo/clash/proxies/${encodeURIComponent(groupName)}`, {
+			method: 'PUT',
+			body: JSON.stringify({ name: memberName }),
+		});
+	}
+
+	async mihomoProxyDelay(name: string, testUrl = 'https://www.gstatic.com/generate_204', timeout = 5000): Promise<number> {
+		return this.mihomoRuntimeDelay(name, testUrl, timeout);
+	}
+
+	async mihomoNativeRules(): Promise<MihomoNativeRule[]> {
+		const res = await this.request<MihomoNativeList<MihomoNativeRule> & { revision?: number }>('/mihomo/native/rules');
+		return res.items;
+	}
+
+	async mihomoNativeRulesWithRevision(): Promise<{ items: MihomoNativeRule[]; revision: number }> {
+		const res = await this.request<MihomoNativeList<MihomoNativeRule> & { revision?: number }>('/mihomo/native/rules');
+		return { items: res.items, revision: res.revision ?? 0 };
+	}
+
+	async mihomoNativeSaveRule(rule: Partial<MihomoNativeRule>, apply = true): Promise<MihomoNativeRule> {
+		const response = await this.mihomoNativeSaveRuleDetailed(rule, apply);
+		if (!response.item) throw new Error('Mihomo rule mutation returned no item');
+		return response.item;
+	}
+
+	async mihomoNativeSaveRuleDetailed(rule: Partial<MihomoNativeRule>, apply = true): Promise<MihomoRuleMutationResponse> {
+		const suffix = apply ? '' : '?apply=false';
+		const path = rule.id ? `/mihomo/native/rules/${encodeURIComponent(rule.id)}${suffix}` : `/mihomo/native/rules${suffix}`;
+		return this.request<MihomoRuleMutationResponse>(path, { method: rule.id ? 'PUT' : 'POST', body: JSON.stringify(rule) });
+	}
+
+	async mihomoNativeDeleteRule(id: string, apply = true): Promise<void> {
+		await this.mihomoNativeDeleteRuleDetailed(id, apply);
+	}
+
+	async mihomoNativeDeleteRuleDetailed(id: string, apply = true): Promise<MihomoRuleMutationResponse> {
+		return this.request<MihomoRuleMutationResponse>(`/mihomo/native/rules/${encodeURIComponent(id)}${apply ? '' : '?apply=false'}`, { method: 'DELETE' });
+	}
+
+	async mihomoNativeReorderRules(
+		ids: string[],
+		baseRevision?: number,
+		apply = true,
+		signal?: AbortSignal,
+		operationId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+			? crypto.randomUUID()
+			: `reorder-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+	): Promise<MihomoRuleMutationResponse> {
+		const suffix = apply ? '' : '?apply=false';
+		return this.request<MihomoRuleMutationResponse>(`/mihomo/native/rules/order${suffix}`, {
+			method: 'PUT',
+			body: JSON.stringify({ ids, order: ids, baseRevision, operationId }),
+			signal,
+		});
+	}
+
+	async mihomoNativeUnsupportedRules(): Promise<{ items: MihomoNativeRule[]; revision: string }> {
+		return this.request<{ items: MihomoNativeRule[]; revision: string }>('/mihomo/native/rules/unsupported');
+	}
+
+	async mihomoNativeDeleteUnsupportedRules(ids: string[], revision: string, apply = true): Promise<{ deleted: boolean; deletedCount: number }> {
+		const suffix = apply ? '' : '?apply=false';
+		return this.request<{ deleted: boolean; deletedCount: number }>(`/mihomo/native/rules/unsupported/delete${suffix}`, {
+			method: 'POST',
+			body: JSON.stringify({ ids, revision }),
+		});
+	}
+
+	async mihomoNativeRuleProviders(): Promise<MihomoNativeRuleProvider[]> {
+		return (await this.request<MihomoNativeList<MihomoNativeRuleProvider>>('/mihomo/native/rule-providers')).items;
+	}
+
+	async mihomoNativeSaveRuleProvider(provider: Partial<MihomoNativeRuleProvider>, apply = true): Promise<MihomoNativeRuleProvider> {
+		const suffix = apply ? '' : '?apply=false';
+		const path = provider.id ? `/mihomo/native/rule-providers/${encodeURIComponent(provider.id)}${suffix}` : `/mihomo/native/rule-providers${suffix}`;
+		return this.request(path, { method: provider.id ? 'PUT' : 'POST', body: JSON.stringify(provider) });
+	}
+
+	async mihomoNativeDeleteRuleProvider(id: string, apply = true): Promise<void> {
+		await this.request(`/mihomo/native/rule-providers/${encodeURIComponent(id)}${apply ? '' : '?apply=false'}`, { method: 'DELETE' });
+	}
+
+	async mihomoRuntimeProxies(): Promise<MihomoRuntimeProxies> {
+		const response = await fetch(`${this.baseUrl}/mihomo/clash/proxies`, { credentials: 'same-origin' });
+		if (!response.ok) throw new Error(`Mihomo Clash API: ${response.status}`);
+		return response.json();
+	}
+
+	async mihomoRuntimeSelect(group: string, proxy: string): Promise<void> {
+		const response = await fetch(`${this.baseUrl}/mihomo/clash/proxies/${encodeURIComponent(group)}`, {
+			method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: proxy }),
+		});
+		if (!response.ok) throw new Error(`Не удалось переключить группу (${response.status})`);
+	}
+
+	async mihomoRuntimeDelay(proxy: string, url = 'https://www.gstatic.com/generate_204', timeout = 5000): Promise<number> {
+		const query = new URLSearchParams({ url, timeout: String(timeout) });
+		const response = await fetch(`${this.baseUrl}/mihomo/clash/proxies/${encodeURIComponent(proxy)}/delay?${query}`, { credentials: 'same-origin' });
+		if (!response.ok) throw new Error(`Mihomo delay test: ${response.status}`);
+		const body = await response.json() as { delay?: number };
+		return body.delay ?? 0;
+	}
+
+	async mihomoRuntimeProviders(): Promise<MihomoRuntimeProviders> {
+		const response = await fetch(`${this.baseUrl}/mihomo/clash/providers/proxies`, { credentials: 'same-origin' });
+		if (!response.ok) throw new Error(`Mihomo providers: ${response.status}`);
+		return response.json();
+	}
+
+	async mihomoRuntimeRefreshProvider(name: string): Promise<void> {
+		const response = await fetch(`${this.baseUrl}/mihomo/clash/providers/proxies/${encodeURIComponent(name)}`, {
+			method: 'PUT', credentials: 'same-origin',
+		});
+		if (!response.ok) throw new Error(`Mihomo provider refresh: ${response.status}`);
+	}
+
+	async mihomoRuntimeProviderHealthcheck(name: string): Promise<void> {
+		const response = await fetch(`${this.baseUrl}/mihomo/clash/providers/proxies/${encodeURIComponent(name)}/healthcheck`, {
+			credentials: 'same-origin',
+		});
+		if (!response.ok) throw new Error(`Mihomo provider healthcheck: ${response.status}`);
+	}
+
+	async mihomoRuntimeRuleProviders(): Promise<MihomoRuntimeProviders> {
+		const response = await fetch(`${this.baseUrl}/mihomo/clash/providers/rules`, { credentials: 'same-origin' });
+		if (!response.ok) throw new Error(`Mihomo rule providers: ${response.status}`);
+		return response.json();
+	}
+
+	async mihomoRuntimeRefreshRuleProvider(name: string): Promise<void> {
+		const response = await fetch(`${this.baseUrl}/mihomo/clash/providers/rules/${encodeURIComponent(name)}`, {
+			method: 'PUT', credentials: 'same-origin',
+		});
+		if (!response.ok) throw new Error(`Mihomo rule provider refresh: ${response.status}`);
 	}
 
 	// #endregion

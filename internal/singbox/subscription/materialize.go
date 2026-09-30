@@ -57,6 +57,17 @@ func BuildURLTest(selectorTag string, memberTags []string, cfg URLTestConfig) js
 // the subscription's effective mode. Centralised so service.go has a
 // single call site for both refresh- and select-time materialisation.
 func BuildGroupOutbound(sub Subscription, memberTags []string, defaultTag string) json.RawMessage {
+	if defaultTag == "" && sub.ActiveMember != "" {
+		defaultTag = sub.ActiveMember
+	}
+	if defaultTag != "" {
+		for i, t := range memberTags {
+			if t == defaultTag && i > 0 {
+				memberTags = append([]string{defaultTag}, append(memberTags[:i], memberTags[i+1:]...)...)
+				break
+			}
+		}
+	}
 	if sub.EffectiveMode() == ModeURLTest {
 		return BuildURLTest(sub.SelectorTag, memberTags, sub.EffectiveURLTest())
 	}

@@ -4,6 +4,11 @@
 
 <script lang="ts">
   import { Shield } from 'lucide-svelte';
+
+  interface Props {
+    isMihomo?: boolean;
+  }
+  let { isMihomo = false }: Props = $props();
 </script>
 
 <section class="hero">
@@ -12,11 +17,21 @@
       <span class="status-dot"></span>
       <span class="status-label">Не настроен</span>
     </div>
-    <h2 class="heading">Направляйте трафик через VPN-туннели по вашим правилам</h2>
+    <h2 class="heading">
+      {isMihomo
+        ? 'Направляйте трафик через прокси-группы и VPN-туннели по вашим правилам'
+        : 'Направляйте трафик через VPN-туннели по вашим правилам'}
+    </h2>
     <p class="body">
-      sing-box — это маршрутизатор внутри роутера. Решает для каждого запроса:
-      пустить напрямую, через туннель или заблокировать.
-      Настройка занимает 3 шага.
+      {#if isMihomo}
+        Mihomo — это маршрутизатор внутри роутера. Решает для каждого запроса:
+        пустить напрямую, через группу прокси / туннель или заблокировать.
+        Настройка занимает 3 шага.
+      {:else}
+        sing-box — это маршрутизатор внутри роутера. Решает для каждого запроса:
+        пустить напрямую, через туннель или заблокировать.
+        Настройка занимает 3 шага.
+      {/if}
     </p>
   </div>
   <div class="icon-wrap">
@@ -58,33 +73,29 @@
   }
   .status-label {
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.08em;
     color: var(--text-muted);
   }
   .heading {
-    margin: 0 0 8px;
+    margin: 0 0 10px;
     font-size: 22px;
-    font-weight: 600;
+    font-weight: 700;
+    line-height: 1.25;
     color: var(--text-primary);
   }
   .body {
     margin: 0;
     font-size: 14px;
     color: var(--text-secondary);
-    max-width: 540px;
-    line-height: 1.55;
+    line-height: 1.5;
   }
   .icon-wrap {
-    width: 140px;
-    height: 140px;
-    border-radius: 16px;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
+    color: var(--accent);
+    opacity: 0.85;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--accent);
   }
 </style>

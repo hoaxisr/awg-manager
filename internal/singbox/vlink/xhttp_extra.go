@@ -31,6 +31,7 @@ const (
 	kindBool
 	kindInt
 	kindHeaders
+	kindString
 )
 
 // extraFields maps the camelCase keys of Xray's xhttpSettings to the
@@ -58,22 +59,80 @@ var extraFields = map[string]struct {
 	"scMinPostsIntervalMs": {"sc_min_posts_interval_ms", kindPositiveRange},
 	"scMaxBufferedPosts":   {"sc_max_buffered_posts", kindInt},
 	"scStreamUpServerSecs": {"sc_stream_up_server_secs", kindPositiveRange},
+	"uplinkHTTPMethod":     {"uplink_http_method", kindString},
+	"seqKey":               {"seq_key", kindString},
+	"seqPlacement":         {"seq_placement", kindString},
+	"sessionIDKey":         {"session_key", kindString},
+	"sessionIdKey":         {"session_key", kindString},
+	"sessionKey":           {"session_key", kindString},
+	"sessionIDPlacement":   {"session_placement", kindString},
+	"sessionIdPlacement":   {"session_placement", kindString},
+	"sessionPlacement":     {"session_placement", kindString},
+	"xPaddingHeader":       {"x_padding_header", kindString},
+	"xPaddingKey":          {"x_padding_key", kindString},
+	"xPaddingMethod":       {"x_padding_method", kindString},
+	"xPaddingObfsMode":     {"x_padding_obfs_mode", kindBool},
+	"xPaddingPlacement":    {"x_padding_placement", kindString},
+	"uplinkDataKey":        {"uplink_data_key", kindString},
+	"uplinkDataPlacement":  {"uplink_data_placement", kindString},
+	"uplinkChunkSize":      {"uplink_chunk_size", kindInt},
+}
+
+// canonicalExtraKeys maps sing-box snake_case transport fields back to the
+// canonical camelCase keys Xray uses inside ?extra=.
+var canonicalExtraKeys = []struct {
+	snake string
+	camel string
+}{
+	{"headers", "headers"},
+	{"x_padding_bytes", "xPaddingBytes"},
+	{"no_grpc_header", "noGRPCHeader"},
+	{"no_sse_header", "noSSEHeader"},
+	{"sc_max_each_post_bytes", "scMaxEachPostBytes"},
+	{"sc_min_posts_interval_ms", "scMinPostsIntervalMs"},
+	{"sc_max_buffered_posts", "scMaxBufferedPosts"},
+	{"sc_stream_up_server_secs", "scStreamUpServerSecs"},
+	{"uplink_http_method", "uplinkHTTPMethod"},
+	{"seq_key", "seqKey"},
+	{"seq_placement", "seqPlacement"},
+	{"session_key", "sessionIDKey"},
+	{"session_placement", "sessionIDPlacement"},
+	{"x_padding_header", "xPaddingHeader"},
+	{"x_padding_key", "xPaddingKey"},
+	{"x_padding_method", "xPaddingMethod"},
+	{"x_padding_obfs_mode", "xPaddingObfsMode"},
+	{"x_padding_placement", "xPaddingPlacement"},
+	{"uplink_data_key", "uplinkDataKey"},
+	{"uplink_data_placement", "uplinkDataPlacement"},
+	{"uplink_chunk_size", "uplinkChunkSize"},
 }
 
 // clashXHTTPFields maps mihomo's kebab-case xhttp-opts keys to the camelCase
 // keys Xray uses inside extra=, so a Clash import goes through exactly the same
-// mapping and validation as a share link. Deliberately partial: mihomo also
-// carries the padding/session/seq/uplink knobs our fork has fields for, but
-// they never travel in a share link, so both import paths stay identical and
-// drop them. session-table / session-length have no field in the fork at all,
-// and download-settings is a whole nested outbound.
+// mapping and validation as a share link.
 // Reference: mihomo adapter/outbound/vless.go (XHTTPOptions).
 var clashXHTTPFields = map[string]string{
 	"headers":                  "headers",
 	"x-padding-bytes":          "xPaddingBytes",
 	"no-grpc-header":           "noGRPCHeader",
+	"no-sse-header":            "noSSEHeader",
 	"sc-max-each-post-bytes":   "scMaxEachPostBytes",
 	"sc-min-posts-interval-ms": "scMinPostsIntervalMs",
+	"uplink-http-method":       "uplinkHTTPMethod",
+	"seq-key":                  "seqKey",
+	"seq-placement":            "seqPlacement",
+	"session-key":              "sessionIDKey",
+	"session-id-key":           "sessionIDKey",
+	"session-placement":        "sessionIDPlacement",
+	"session-id-placement":     "sessionIDPlacement",
+	"x-padding-header":         "xPaddingHeader",
+	"x-padding-key":            "xPaddingKey",
+	"x-padding-method":         "xPaddingMethod",
+	"x-padding-obfs-mode":      "xPaddingObfsMode",
+	"x-padding-placement":      "xPaddingPlacement",
+	"uplink-data-key":          "uplinkDataKey",
+	"uplink-data-placement":    "uplinkDataPlacement",
+	"uplink-chunk-size":        "uplinkChunkSize",
 }
 
 // clashXmuxFields maps mihomo's reuse-settings — its name for xmux — to the
@@ -162,6 +221,10 @@ func parseXHTTPExtra(raw string) map[string]any {
 			if h := stringMap(v); len(h) > 0 {
 				out[f.key] = h
 			}
+		case kindString:
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				out[f.key] = strings.TrimSpace(s)
+			}
 		}
 	}
 	if xmuxRaw, ok := extra["xmux"].(map[string]any); ok {
@@ -199,9 +262,9 @@ func parseXHTTPExtra(raw string) map[string]any {
 // back out. Returns "" when there is nothing worth carrying.
 func xhttpExtraFromTransport(transport map[string]any) string {
 	extra := map[string]any{}
-	for camel, f := range extraFields {
-		if v, ok := transport[f.key]; ok {
-			extra[camel] = v
+	for _, mapping := range canonicalExtraKeys {
+		if v, ok := transport[mapping.snake]; ok {
+			extra[mapping.camel] = v
 		}
 	}
 	if xmuxRaw, ok := transport["xmux"].(map[string]any); ok {

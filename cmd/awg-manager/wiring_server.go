@@ -21,6 +21,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/mihomo"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
 	"github.com/hoaxisr/awg-manager/internal/server"
 	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
@@ -111,6 +112,7 @@ func (a *app) setupServer() {
 			Bus:                 a.eventBus,
 			HydraService:        a.hydraService,
 			SingboxHandler:      a.singboxHandler,
+			MihomoHandler:       a.mihomoHandler,
 			SingboxOrch:         a.sbOrch,
 			ClashProxy:          a.clashProxy,
 			SingboxConnsHandler: a.singboxConnsHandler,
@@ -385,9 +387,40 @@ func (a *app) setupRouter() {
 	}
 	bindableAdapter := &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces, nativeProxies: a.singboxOp.ListNativeProxies,
 		foreign: a.settingsStore.GetForeignInterfaces, sysNet: "/sys/class/net"}
+	dynEngine := NewDynamicEngine(a.singboxOp, a.mihomoOp, a.settingsStore)
+	dynEngine.MihomoSidecarNeeded = a.mihomoSidecarNeeded
+	dynEngine.OnMihomoPrepare = func() error {
+		if a.mihomoBridgeRuntime == nil || a.mihomoNativeStore == nil {
+			return nil
+		}
+		return a.mihomoBridgeRuntime.prepare(context.Background(), a.mihomoNativeStore.ListBridges())
+	}
+	dynEngine.OnMihomoReady = func() error {
+		if a.mihomoBridgeRuntime == nil {
+			return nil
+		}
+		return a.mihomoBridgeRuntime.activate(context.Background())
+	}
+	dynEngine.OnMihomoUnavailable = func() error {
+		if a.mihomoBridgeRuntime == nil {
+			return nil
+		}
+		return a.mihomoBridgeRuntime.deactivate(context.Background())
+	}
+	a.dynamicEngine = dynEngine
+	if a.subAdapter != nil {
+		a.subAdapter.SetOnPostCommit(func() {
+			if a.dynamicEngine != nil && a.settingsStore != nil {
+				if s, err := a.settingsStore.Get(); err == nil && s != nil && s.SingboxRouter.RoutingEngine == "mihomo" {
+					_ = a.dynamicEngine.Reload()
+				}
+			}
+		})
+	}
 	routerSvc := router.NewService(router.Deps{
 		AppLog:                 a.loggingService,
 		Settings:               a.settingsStore,
+		Engine:                 dynEngine,
 		Singbox:                a.singboxOp,
 		Policies:               &routerAccessPolicyAdapter{svc: a.accessPolicySvc},
 		Events:                 a.eventBus,
@@ -396,6 +429,8 @@ func (a *app) setupRouter() {
 		AWGOutboundsRefresh:    a.awgoutboundsSvc.Reconcile,
 		SingboxTunnels:         &routerSingboxTunnelAdapter{src: a.singboxOp},
 		SubscriptionComposites: router.NewSubscriptionCompositesAdapter(a.subAdapter),
+		MihomoNativeProxies:    a.mihomoNativeStore,
+		MihomoConfigDir:        a.mihomoOp.ConfigDir(),
 		Orch:                   a.sbOrch,
 		WANInterfaces:          &routerWANInterfaceAdapter{store: a.ndmsQueries.Interfaces},
 		BindableInterfaces:     bindableAdapter,
@@ -423,6 +458,21 @@ func (a *app) setupRouter() {
 		FakeIPTun:              router.DefaultFakeIPTunParams(),
 		CacheDBPath:            a.singboxOp.CacheDBPath,
 		ApplyCacheFileLocation: a.singboxOp.ApplyCacheFileLocation,
+		DeviceProxyInstances: func() []router.DeviceProxyInstance {
+			if a.deviceProxySvc == nil {
+				return nil
+			}
+			var out []router.DeviceProxyInstance
+			for _, inst := range a.deviceProxySvc.GetSnapshot().Instances {
+				out = append(out, router.DeviceProxyInstance{
+					ID:               inst.ID,
+					Port:             inst.Port,
+					SelectedOutbound: inst.SelectedOutbound,
+					Enabled:          inst.Enabled,
+				})
+			}
+			return out
+		},
 		// Синхронный мост «роутер → device-proxy»: после перепарковки слотов
 		// маршрутизации (Enable/Disable/смена режима) слот 30 перегенерируется
 		// ДО ближайшего reload — селекторы device-proxy деградируют ссылки на
@@ -434,8 +484,42 @@ func (a *app) setupRouter() {
 				logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubDeviceProxy).
 					Warn("router-slots-changed", "", "re-apply device-proxy instances: "+err.Error())
 			}
+			if err := dynEngine.SyncMihomoRuntime(); err != nil {
+				logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubSingboxRouter).
+					Warn("router-slots-changed", "", "sync mihomo runtime: "+err.Error())
+			}
 		},
 	})
+	if a.mihomoOp != nil && a.mihomoNativeStore != nil {
+		validator := mihomo.NewBinaryValidator(a.mihomoOp.Binary())
+		coordinatorCfg := mihomo.CoordinatorConfig{
+			ConfigDir:     a.mihomoOp.ConfigDir(),
+			Operator:      a.mihomoOp,
+			Validator:     validator,
+			BridgeRuntime: a.mihomoBridgeRuntime,
+			StoreTx:       a.mihomoNativeStore.TxAdapter(),
+			Compiler:      routerSvc.CompileMihomoConfig,
+			LogFn: func(level, action, message string) {
+				if a.loggingService != nil {
+					a.loggingService.AppLog(logging.Level(level), logging.GroupMihomo, logging.SubSBProcess, action, "coordinator", message)
+				}
+			},
+		}
+		coordinator := mihomo.NewApplyCoordinator(coordinatorCfg)
+		if a.mihomoBridgeRuntime != nil {
+			a.mihomoBridgeRuntime.SetDurableManifestFile(filepath.Join(a.mihomoOp.ConfigDir(), "config.yaml.txn.json"))
+		}
+		dynEngine.SetCoordinator(coordinator)
+		dynEngine.SetNativeStore(a.mihomoNativeStore)
+		dynEngine.SetCompileFunc(routerSvc.CompileMihomoConfig)
+	}
+	if a.mihomoHandler != nil {
+		a.mihomoHandler.SetRouterService(routerSvc)
+		a.mihomoHandler.SetReloadFunc(dynEngine.Reload)
+		a.mihomoHandler.SetMutationTransaction(dynEngine.nativeMutationTransition, dynEngine.reloadWithinTransition)
+		a.mihomoHandler.SetReloadPublishesNativeBridges(true)
+		a.mihomoHandler.SetMutationApplier(dynEngine)
+	}
 	a.routerSvc = routerSvc
 	a.subSvc.SetBindInterfaceValidator(subscriptionBindValidator{adapter: bindableAdapter})
 	// Health-check бинаря ipset пишет вердикты в журнал (битый Entware-бинарь
@@ -482,7 +566,17 @@ func (a *app) setupRouter() {
 		}
 	}()
 	a.routerScheduler = router.NewScheduler(routerSvc, a.settingsStore)
-	a.routerScheduler.Start()
+	dynEngine.OnReady = func() {
+		a.routerScheduler.Start()
+	}
+	startupRes := dynEngine.Startup(context.Background())
+	if startupRes.Status == StatusDegraded {
+		a.bootLog.Warn("mihomo-coordinator", "startup", fmt.Sprintf("Mihomo coordinator entered degraded mode: %v", startupRes.Error))
+	} else if dynEngine.HasUnallocatedBridges() && a.settingsStore.IsSingboxNDMSProxyEnabled() {
+		if err := dynEngine.SyncMihomoRuntime(); err != nil {
+			a.bootLog.Warn("mihomo-bridges", "boot-heal", err.Error())
+		}
+	}
 
 	// Late-bind sing-box / router / Clash deps into the monitoring scheduler.
 	// monitoringService is constructed early (line ~421) so the matrix can
@@ -577,9 +671,19 @@ func (a *app) setupRouter() {
 
 }
 
+func assertProductionWiring(a *app) error {
+	if a.mihomoHandler != nil && a.mihomoHandler.MutationApplier() == nil {
+		return errors.New("mihomoHandler mutation applier must be configured before serving routes")
+	}
+	return nil
+}
+
 // setupListen wires DNS rewrites, selects the HTTP port, applies the
 // listen spec and logs startup.
 func (a *app) setupListen() {
+	if err := assertProductionWiring(a); err != nil {
+		panic(err)
+	}
 	// DNS Rewrites — sing-box slot 17-dns-rewrites.json.
 	dnsRewriteStorePath := filepath.Join(a.dataDir, "dns_rewrites.json")
 	dnsRewriteStore := storage.NewDNSRewriteStore(dnsRewriteStorePath)

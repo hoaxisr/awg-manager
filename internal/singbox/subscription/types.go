@@ -51,7 +51,7 @@ type URLTestConfig struct {
 func DefaultURLTestConfig() URLTestConfig {
 	return URLTestConfig{
 		URL:         "https://www.gstatic.com/generate_204",
-		IntervalSec: 60,
+		IntervalSec: 300,
 		ToleranceMs: 50,
 	}
 }
@@ -60,34 +60,36 @@ func DefaultURLTestConfig() URLTestConfig {
 // subscription is either URL-backed, inline, or file-backed; IsInline
 // and IsFile are the canonical predicates.
 type Subscription struct {
-	ID               string                 `json:"id"`               // uuid
-	Label            string                 `json:"label"`            // user-facing
-	URL              string                 `json:"url"`              // subscription URL ("" when inline)
-	Inline           string                 `json:"inline,omitempty"` // raw paste of share-links / clash YAML / sing-box JSON
-	Path             string                 `json:"path,omitempty"`   // absolute path on the router; "" unless file-backed
-	Headers          []Header               `json:"headers"`          // custom HTTP headers for fetch (URL-backed only)
-	RefreshHours     int                    `json:"refreshHours"`     // 0 = manual only; ignored for inline
-	LastFetched      time.Time              `json:"lastFetched"`
-	LastError        string                 `json:"lastError,omitempty"`
-	SelectorTag      string                 `json:"selectorTag"`                // "sub-<id-short>"
-	InboundTag       string                 `json:"inboundTag"`                 // "sub-<id-short>-in"
-	ListenPort       uint16                 `json:"listenPort"`                 // localhost port for the mixed inbound
-	ProxyIndex       int                    `json:"proxyIndex"`                 // NDMS ProxyN index, -1 if not yet allocated
-	MemberTags       []string               `json:"memberTags"`                 // every member outbound tag (kept for back-compat)
-	Members          []MemberInfo           `json:"members,omitempty"`          // per-member parsed metadata
-	OrphanTags       []string               `json:"orphanTags"`                 // tags missing on last refresh
-	RejectedMembers  []RejectedMember       `json:"rejectedMembers,omitempty"`  // parsed but not in sing-box / invalid
-	InfoItems        []SubscriptionInfoItem `json:"infoItems,omitempty"`        // provider banners (max 4)
-	DismissedInfoIDs []string               `json:"dismissedInfoIds,omitempty"` // hidden on refresh (user removed from UI)
-	ActiveMember     string                 `json:"activeMember,omitempty"`     // currently-active selector member tag
-	ExcludedTags     []string               `json:"excludedTags,omitempty"`     // полные стабильные теги, исключённые пользователем (источник правды)
-	ExcludedMembers  []MemberInfo           `json:"excludedMembers,omitempty"`  // display-метаданные исключённых (обновляются при refresh)
-	FilterInclude    string                 `json:"filterInclude,omitempty"`    // regex (Go RE2): оставить только серверы с совпадающим именем; "" = без фильтра
-	FilterExclude    string                 `json:"filterExclude,omitempty"`    // regex (Go RE2): скрыть серверы с совпадающим именем; "" = без фильтра
-	FilteredMembers  []MemberInfo           `json:"filteredMembers,omitempty"`  // display-метаданные скрытых фильтром (перестраиваются при refresh)
-	Enabled          bool                   `json:"enabled"`
-	Mode             SubscriptionMode       `json:"mode,omitempty"`    // "" treated as ModeSelector for back-compat
-	URLTest          *URLTestConfig         `json:"urlTest,omitempty"` // populated when Mode == ModeURLTest
+	ID                    string                 `json:"id"`               // uuid
+	Label                 string                 `json:"label"`            // user-facing
+	URL                   string                 `json:"url"`              // subscription URL ("" when inline)
+	Inline                string                 `json:"inline,omitempty"` // raw paste of share-links / clash YAML / sing-box JSON
+	Path                  string                 `json:"path,omitempty"`   // absolute path on the router; "" unless file-backed
+	Headers               []Header               `json:"headers"`          // custom HTTP headers for fetch (URL-backed only)
+	RefreshHours          int                    `json:"refreshHours"`     // 0 = manual only; ignored for inline
+	LastFetched           time.Time              `json:"lastFetched"`
+	LastSuccessfulFetched time.Time              `json:"lastSuccessfulFetched,omitempty"`
+	LastError             string                 `json:"lastError,omitempty"`
+	RefreshError          string                 `json:"refreshError,omitempty"`
+	SelectorTag           string                 `json:"selectorTag"`                // "sub-<id-short>"
+	InboundTag            string                 `json:"inboundTag"`                 // "sub-<id-short>-in"
+	ListenPort            uint16                 `json:"listenPort"`                 // localhost port for the mixed inbound
+	ProxyIndex            int                    `json:"proxyIndex"`                 // NDMS ProxyN index, -1 if not yet allocated
+	MemberTags            []string               `json:"memberTags"`                 // every member outbound tag (kept for back-compat)
+	Members               []MemberInfo           `json:"members,omitempty"`          // per-member parsed metadata
+	OrphanTags            []string               `json:"orphanTags"`                 // tags missing on last refresh
+	RejectedMembers       []RejectedMember       `json:"rejectedMembers,omitempty"`  // parsed but not in sing-box / invalid
+	InfoItems             []SubscriptionInfoItem `json:"infoItems,omitempty"`        // provider banners (max 4)
+	DismissedInfoIDs      []string               `json:"dismissedInfoIds,omitempty"` // hidden on refresh (user removed from UI)
+	ActiveMember          string                 `json:"activeMember,omitempty"`     // currently-active selector member tag
+	ExcludedTags          []string               `json:"excludedTags,omitempty"`     // полные стабильные теги, исключённые пользователем (источник правды)
+	ExcludedMembers       []MemberInfo           `json:"excludedMembers,omitempty"`  // display-метаданные исключённых (обновляются при refresh)
+	FilterInclude         string                 `json:"filterInclude,omitempty"`    // regex (Go RE2): оставить только серверы с совпадающим именем; "" = без фильтра
+	FilterExclude         string                 `json:"filterExclude,omitempty"`    // regex (Go RE2): скрыть серверы с совпадающим именем; "" = без фильтра
+	FilteredMembers       []MemberInfo           `json:"filteredMembers,omitempty"`  // display-метаданные скрытых фильтром (перестраиваются при refresh)
+	Enabled               bool                   `json:"enabled"`
+	Mode                  SubscriptionMode       `json:"mode,omitempty"`    // "" treated as ModeSelector for back-compat
+	URLTest               *URLTestConfig         `json:"urlTest,omitempty"` // populated when Mode == ModeURLTest
 	// BindInterface — kernel iface for dialing all member outbounds (modem/WAN/Wi‑Fi).
 	BindInterface string `json:"bindInterface,omitempty"`
 }

@@ -73,7 +73,7 @@ func TestParseTrustTunnelLink_MultiAddressSNIFragment(t *testing.T) {
 func TestParseTrustTunnel_ConnectURL_AnyHost(t *testing.T) {
 	// name= в connect-URL перебивает Name из TLV ("Berlin"); без name= берётся TLV.
 	cases := []struct{ url, wantName string }{
-		{"https://trustunnel.ru/connect/?d=" + ttOne + "&name=Other", "Other"},
+		{"https://trustunnel.example/connect/?d=" + ttOne + "&name=Other", "Other"},
 		{"http://panel.example.net/x?foo=1&d=" + ttOne, "Berlin"},
 	}
 	for _, c := range cases {

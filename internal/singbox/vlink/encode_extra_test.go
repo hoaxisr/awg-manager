@@ -3,6 +3,7 @@ package vlink
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -186,5 +187,41 @@ func TestXHTTPRoundTrip(t *testing.T) {
 	}
 	if q2.Get("type") != "xhttp" || q2.Get("path") != "/xh" || q2.Get("host") != "cdn.example.com" || q2.Get("mode") != "auto" {
 		t.Errorf("round-trip mismatch: %v", q2.Encode())
+	}
+}
+
+func TestXHTTPExtraRoundTrip_FullObfuscation(t *testing.T) {
+	extra := `{"uplinkHTTPMethod":"GET","seqKey":"chunk_id","seqPlacement":"query","sessionIDKey":"X-Upload-Token","sessionIDPlacement":"header","xPaddingBytes":"100-1000","xPaddingHeader":"X-Client-Version","xPaddingKey":"hash","xPaddingMethod":"tokenish","xPaddingObfsMode":true,"xPaddingPlacement":"queryInHeader"}`
+	q := parseQuery(t, "type=xhttp&security=tls&path=/uploadfiles/&host=cdn.vlbit.online&mode=packet-up&extra="+url.QueryEscape(extra))
+	s, err := BuildStreamFromQuery(q, "cdn.vlbit.online")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if s.XHTTPExtra["uplink_http_method"] != "GET" {
+		t.Fatalf("uplink_http_method=%v", s.XHTTPExtra["uplink_http_method"])
+	}
+	if s.XHTTPExtra["session_key"] != "X-Upload-Token" {
+		t.Fatalf("session_key=%v", s.XHTTPExtra["session_key"])
+	}
+	if s.XHTTPExtra["x_padding_header"] != "X-Client-Version" || s.XHTTPExtra["x_padding_obfs_mode"] != true {
+		t.Fatalf("padding=%#v", s.XHTTPExtra)
+	}
+
+	out := map[string]any{}
+	s.MergeIntoOutbound(out)
+	q2, err := streamQueryFromOutbound(out)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	extraOut := q2.Get("extra")
+	if extraOut == "" {
+		t.Fatal("empty extra in encoded query")
+	}
+	s2, err := BuildStreamFromQuery(q2, "cdn.vlbit.online")
+	if err != nil {
+		t.Fatalf("parse encoded: %v", err)
+	}
+	if s2.XHTTPExtra["uplink_http_method"] != "GET" || s2.XHTTPExtra["session_key"] != "X-Upload-Token" {
+		t.Fatalf("round-trip failed: %#v", s2.XHTTPExtra)
 	}
 }

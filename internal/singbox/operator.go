@@ -357,7 +357,15 @@ func NewOperator(d OperatorDeps) *Operator {
 	}
 	binary := d.Binary
 	if binary == "" {
-		binary = defaultBinary
+		if isExecutable(defaultBinary) {
+			binary = defaultBinary
+		} else if isExecutable("/opt/bin/sing-box") {
+			binary = "/opt/bin/sing-box"
+		} else {
+			binary = defaultBinary
+		}
+	} else if !isExecutable(binary) && isExecutable("/opt/bin/sing-box") {
+		binary = "/opt/bin/sing-box"
 	}
 	log := d.Log
 	if log == nil {
@@ -494,10 +502,15 @@ func (o *Operator) SetInstallProgressReporter(fn InstallProgressFn) {
 // to drop additional config fragments alongside ours).
 func (o *Operator) ConfigDir() string { return o.configPath }
 
-// Binary returns the path to the sing-box executable. Used by the
-// router's Inspect path to shell out to `sing-box rule-set match` when
-// evaluating rule_set matchers in the Route Inspector.
-func (o *Operator) Binary() string { return o.binary }
+func (o *Operator) Binary() string {
+	if isExecutable(o.binary) {
+		return o.binary
+	}
+	if isExecutable("/opt/bin/sing-box") {
+		return "/opt/bin/sing-box"
+	}
+	return o.binary
+}
 
 // isNDMSProxyEnabled returns the current NDMS proxy toggle value.
 // Returns true when no closure is wired (back-compat: callers that

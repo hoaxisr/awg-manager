@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 
+	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -38,7 +39,11 @@ func (s *ServiceImpl) buildTproxySpec(
 		// default DNS up to the sing-box mark would route it via Policy1's
 		// (permit-less) table and DNS would never resolve. Empty result =
 		// no qualifying bridges = skip the DNS-NOPOLICY logic entirely.
-		lanBridges, _ = discoverLANBridges(ctx, mark)
+		// Note: Mihomo does not bind a transparent listener on port 53 (its DNS is on :1053),
+		// so DNS-RESCUE is unnecessary and must be skipped to avoid cross-policy DNS redirection.
+		if sr.RoutingEngine != "mihomo" {
+			lanBridges, _ = discoverLANBridges(ctx, mark)
+		}
 		ingress = s.resolveIngressInterfaces(ctx, sr.IngressInterfaces)
 	}
 	bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
@@ -46,17 +51,20 @@ func (s *ServiceImpl) buildTproxySpec(
 	// появление (первый успешный запрос после старта) или смена не дали бы
 	// переустановки правил, и обход доехал бы только по ручному Enable.
 	bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets, s.keenDNSBypass())
+	hasCloudSet := sr.KeeneticCloudTunnel && bypassset.CloudSetExists(ctx)
 	return RestoreInputSpec{
-		PolicyMark:        mark,
-		MatchAll:          !policyMode,
-		WANIPs:            wanIPs,
-		LANBridges:        lanBridges,
-		BypassUDPPorts:    bypassUDP,
-		BypassTCPPorts:    bypassTCP,
-		BypassCIDRs:       bypassSubnets,
-		BypassGeoIPSet:    len(sr.BypassGeoIPTags) > 0,
-		IngressInterfaces: ingress,
-		QoSClasses:        qosSpecs,
+		PolicyMark:          mark,
+		MatchAll:            !policyMode,
+		WANIPs:              wanIPs,
+		LANBridges:          lanBridges,
+		BypassUDPPorts:      bypassUDP,
+		BypassTCPPorts:      bypassTCP,
+		BypassCIDRs:         bypassSubnets,
+		BypassGeoIPSet:      len(sr.BypassGeoIPTags) > 0,
+		IngressInterfaces:   ingress,
+		QoSClasses:          qosSpecs,
+		KeeneticCloudTunnel: sr.KeeneticCloudTunnel,
+		KeeneticCloudSet:    hasCloudSet,
 	}
 }
 
@@ -67,19 +75,23 @@ func (s *ServiceImpl) buildTproxySpec(
 // WAN-исключения обязательны и здесь: без них DSCP-меченный трафик на
 // собственный адрес роутера ушёл бы в sing-box петлёй.
 func (s *ServiceImpl) buildPolicyTunSpec(
+	ctx context.Context,
 	sr storage.SingboxRouterSettings,
 	wanIPs []string,
 	qosSpecs []QoSClassSpec,
 ) RestoreInputSpec {
 	bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
 	bypassSubnets, _ := resolveBypassCIDRs(sr.BypassPresets, sr.BypassExtraSubnets, s.keenDNSBypass())
+	hasCloudSet := sr.KeeneticCloudTunnel && bypassset.CloudSetExists(ctx)
 	return RestoreInputSpec{
-		DSCPOnly:       true,
-		MatchAll:       true,
-		WANIPs:         wanIPs,
-		BypassUDPPorts: bypassUDP,
-		BypassTCPPorts: bypassTCP,
-		BypassCIDRs:    bypassSubnets,
-		QoSClasses:     qosSpecs,
+		DSCPOnly:            true,
+		MatchAll:            true,
+		WANIPs:              wanIPs,
+		BypassUDPPorts:      bypassUDP,
+		BypassTCPPorts:      bypassTCP,
+		BypassCIDRs:         bypassSubnets,
+		QoSClasses:          qosSpecs,
+		KeeneticCloudTunnel: sr.KeeneticCloudTunnel,
+		KeeneticCloudSet:    hasCloudSet,
 	}
 }

@@ -306,7 +306,7 @@ func reassociateOrphans(diff DiffResult, known []MemberInfo) DiffResult {
 		}
 		match := -1
 		for i, n := range diff.New {
-			if claimed[i] || !sameServer(mi, toMemberInfo(n.Tag, n.Out)) {
+			if claimed[i] || !sameServer(mi, ToMemberInfo(n.Tag, n.Out)) {
 				continue
 			}
 			if match >= 0 {

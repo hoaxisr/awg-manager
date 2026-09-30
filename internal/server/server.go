@@ -108,6 +108,7 @@ type Server struct {
 	exposureGuard              *api.ExposureGuard
 	exposureGuardStop          context.CancelFunc
 	singboxHandler             *api.SingboxHandler
+	mihomoHandler              *api.MihomoHandler
 	singboxConnsHandler        *api.SingboxConnectionsHandler
 	singboxRouterHandler       *api.SingboxRouterHandler
 	connectionsMarkProvider    func(context.Context) (string, bool)
@@ -217,6 +218,7 @@ type Deps struct {
 	Bus                  *events.Bus
 	HydraService         *hydraroute.Service
 	SingboxHandler       *api.SingboxHandler
+	MihomoHandler        *api.MihomoHandler
 	SingboxOrch          *singboxorch.Orchestrator
 	ClashProxy           *api.ClashProxy
 	SingboxConnsHandler  *api.SingboxConnectionsHandler
@@ -295,6 +297,7 @@ func New(cfg Config, deps Deps) *Server {
 		orch:                   deps.Orch,
 		bus:                    deps.Bus,
 		singboxHandler:         deps.SingboxHandler,
+		mihomoHandler:          deps.MihomoHandler,
 		singboxOrch:            deps.SingboxOrch,
 		singboxConnsHandler:    deps.SingboxConnsHandler,
 		clashProxy:             deps.ClashProxy,

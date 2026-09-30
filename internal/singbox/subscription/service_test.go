@@ -243,6 +243,56 @@ type scanMutator struct {
 	live map[int]bool
 }
 
+type ownershipMutator struct {
+	fakeMutator
+	descriptions map[int]string
+}
+
+func (m *ownershipMutator) AllocProxyIndex(_ context.Context) (int, error) {
+	for index := 0; ; index++ {
+		if _, exists := m.descriptions[index]; !exists {
+			return index, nil
+		}
+	}
+}
+
+func (m *ownershipMutator) EnsureProxyIfOwned(_ context.Context, idx, port int, owner string, legacyOwners ...string) (bool, error) {
+	if description, exists := m.descriptions[idx]; exists {
+		owned := description == owner
+		for _, legacy := range legacyOwners {
+			owned = owned || (legacy != "" && description == legacy)
+		}
+		if !owned {
+			return false, nil
+		}
+	}
+	if m.descriptions == nil {
+		m.descriptions = make(map[int]string)
+	}
+	m.descriptions[idx] = owner
+	m.ensuredProxies = append(m.ensuredProxies, ensuredProxyCall{idx: idx, port: port, description: owner})
+	return true, nil
+}
+
+func (m *ownershipMutator) RemoveProxyIfOwnedBy(_ context.Context, idx int, owner string, legacyOwners ...string) (bool, error) {
+	description, exists := m.descriptions[idx]
+	if !exists {
+		return true, nil
+	}
+	owned := description == owner
+	for _, legacy := range legacyOwners {
+		owned = owned || (legacy != "" && description == legacy)
+	}
+	if !owned {
+		return false, nil
+	}
+	delete(m.descriptions, idx)
+	m.removedProxies = append(m.removedProxies, idx)
+	return true, nil
+}
+
+func (m *ownershipMutator) ReleaseProxyIndex(int) {}
+
 func (m *scanMutator) AllocProxyIndex(_ context.Context) (int, error) {
 	for i := 0; ; i++ {
 		if !m.live[i] {
@@ -302,6 +352,48 @@ func TestService_SyncProxies_OffIsNoop(t *testing.T) {
 	}
 	if len(mutator.ensuredProxies) != 0 {
 		t.Errorf("SyncProxies must be a no-op when toggle is off, got %d EnsureProxy", len(mutator.ensuredProxies))
+	}
+}
+
+func TestServiceSyncProxiesReallocatesForeignAndMigratesLegacyOwner(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, _ := store.Create(CreateInput{Label: "foreign slot", URL: "http://foreign", Enabled: true})
+	_ = store.SetListenPort(foreign.ID, 11007)
+	_ = store.SetProxyIndex(foreign.ID, 7)
+	legacy, _ := store.Create(CreateInput{Label: "legacy label", URL: "http://legacy", Enabled: true})
+	_ = store.SetListenPort(legacy.ID, 11008)
+	_ = store.SetProxyIndex(legacy.ID, 8)
+
+	mutator := &ownershipMutator{descriptions: map[int]string{
+		7: "user-created",
+		8: legacy.Label,
+	}}
+	service := NewService(store, mutator)
+	service.SetNDMSProxyEnabled(func() bool { return true })
+	if err := service.SyncProxies(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	gotForeign, _ := store.Get(foreign.ID)
+	if gotForeign.ProxyIndex == 7 {
+		t.Fatalf("foreign Proxy7 was retained instead of reallocating: %+v", gotForeign)
+	}
+	if mutator.descriptions[7] != "user-created" {
+		t.Fatalf("foreign Proxy7 was overwritten: %q", mutator.descriptions[7])
+	}
+	if got := mutator.descriptions[gotForeign.ProxyIndex]; got != ProxyOwnershipDescription("subscription", foreign.ID) {
+		t.Fatalf("reallocated owner=%q", got)
+	}
+
+	gotLegacy, _ := store.Get(legacy.ID)
+	if gotLegacy.ProxyIndex != 8 {
+		t.Fatalf("legacy Proxy8 unnecessarily moved to Proxy%d", gotLegacy.ProxyIndex)
+	}
+	if got := mutator.descriptions[8]; got != ProxyOwnershipDescription("subscription", legacy.ID) {
+		t.Fatalf("legacy owner was not migrated: %q", got)
 	}
 }
 
@@ -1440,8 +1532,9 @@ func TestUpdate_LabelChangeUpdatesProxyDescription(t *testing.T) {
 		t.Fatalf("expected 1 EnsureProxy call, got %d", len(mutator.ensuredProxies))
 	}
 	got := mutator.ensuredProxies[0]
-	if got.description != newLabel {
-		t.Errorf("EnsureProxy description=%q want %q", got.description, newLabel)
+	wantDesc := ProxyOwnershipDescription("subscription", sub.ID)
+	if got.description != wantDesc {
+		t.Errorf("EnsureProxy description=%q want %q", got.description, wantDesc)
 	}
 	if got.idx != sub.ProxyIndex {
 		t.Errorf("EnsureProxy idx=%d want %d", got.idx, sub.ProxyIndex)

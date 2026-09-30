@@ -25,7 +25,7 @@ func wsFeed() (a, b, other vlink.ParsedOutbound) {
 // пользователя его нет. Заполнить его здесь означало бы тестировать
 // несуществующие данные и скрыть поведение грубого сравнения.
 func narrowInfo(p vlink.ParsedOutbound) MemberInfo {
-	mi := toMemberInfo(stableTagFromKey("sub", identityKey(p)), p)
+	mi := ToMemberInfo(stableTagFromKey("sub", identityKey(p)), p)
 	mi.TransportKey = ""
 	return mi
 }
@@ -33,7 +33,7 @@ func narrowInfo(p vlink.ParsedOutbound) MemberInfo {
 // currentInfo — запись, сделанная уже новым кодом: тег полного ключа и
 // заполненный TransportKey.
 func currentInfo(p vlink.ParsedOutbound) MemberInfo {
-	return toMemberInfo(stableTagFromKey("sub", fullKey(p)), p)
+	return ToMemberInfo(stableTagFromKey("sub", fullKey(p)), p)
 }
 
 func TestRemapStaleTags_ExpandsCollapsedGroup(t *testing.T) {
