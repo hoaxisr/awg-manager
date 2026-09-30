@@ -129,12 +129,9 @@ func (s *ServiceImpl) Update(ctx context.Context, rl storage.StaticRouteList) (*
 
 	rl.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
-	if err := s.store.UpdateRouteList(rl); err != nil {
-		return nil, fmt.Errorf("update route list: %w", err)
-	}
-
 	// Reconcile routes: remove old, add new. Интерфейсы обоих туннелей —
-	// одним списком на вызов.
+	// одним списком на вызов. Список не прочитан — маршруты не применить:
+	// отказ ДО записи, иначе хранилище и роутер расходятся (F565).
 	var ids []string
 	if old.Enabled {
 		ids = append(ids, old.TunnelID)
@@ -143,6 +140,14 @@ func (s *ServiceImpl) Update(ctx context.Context, rl storage.StaticRouteList) (*
 		ids = append(ids, rl.TunnelID)
 	}
 	confirmed, cerr := s.confirmIfaces(ctx, ids...)
+	if cerr != nil {
+		return nil, fmt.Errorf("update route list: %w", cerr)
+	}
+
+	if err := s.store.UpdateRouteList(rl); err != nil {
+		return nil, fmt.Errorf("update route list: %w", err)
+	}
+
 	if old.Enabled {
 		s.removeRoutes(ctx, old.TunnelID, old.Subnets, confirmed, cerr)
 	}
@@ -194,6 +199,13 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) e
 		return nil // no change
 	}
 
+	// Список не прочитан — отказ ДО записи (F565), как в Update. И до правки
+	// rl: GetRouteList отдаёт указатель в кэш хранилища.
+	confirmed, cerr := s.confirmIfaces(ctx, rl.TunnelID)
+	if cerr != nil {
+		return fmt.Errorf("set enabled: %w", cerr)
+	}
+
 	rl.Enabled = enabled
 	rl.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
@@ -201,7 +213,6 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) e
 		return fmt.Errorf("set enabled: save: %w", err)
 	}
 
-	confirmed, cerr := s.confirmIfaces(ctx, rl.TunnelID)
 	if enabled {
 		s.applyRoutes(ctx, *rl, confirmed, cerr)
 	} else {

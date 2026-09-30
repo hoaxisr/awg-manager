@@ -128,3 +128,30 @@ func TestStaticRoute_ListError_NoCommand(t *testing.T) {
 		t.Fatalf("команды при ошибке списка: %v", f.Posts)
 	}
 }
+
+// Список не прочитан — маршруты не применить: Update и SetEnabled отвечают
+// ошибкой и НЕ сохраняют запись, иначе хранилище и роутер расходятся (F565).
+func TestStaticRoute_ListError_UpdateAndSetEnabledKeepRecord(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+	f.FailList(errors.New("rci down"))
+	s := newOracleStaticRoutes(t, f, []storage.StaticRouteList{
+		{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: []string{"10.20.0.0/16"}, Enabled: true},
+	})
+	ctx := context.Background()
+	if _, err := s.Update(ctx, storage.StaticRouteList{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: []string{"10.30.0.0/16"}, Enabled: true}); err == nil {
+		t.Fatal("Update при ошибке списка: ждали отказ")
+	}
+	if err := s.SetEnabled(ctx, "srl1", false); err == nil {
+		t.Fatal("SetEnabled при ошибке списка: ждали отказ")
+	}
+	got, err := s.store.GetRouteList("srl1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Enabled || len(got.Subnets) != 1 || got.Subnets[0] != "10.20.0.0/16" {
+		t.Fatalf("запись изменена: %+v", got)
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("команды при ошибке списка: %v", f.Posts)
+	}
+}
