@@ -70,16 +70,26 @@ func TestFakeNDMS_RCAbsentIs404(t *testing.T) {
 	}
 }
 
-// Наша форма создания считается фантомом, но попадает в Created; внешний
-// Remove кладёт ifdestroyed; список читается InterfaceStore, считается и
-// отказывает по FailList.
-func TestFakeNDMS_CreatedRemoveAndList(t *testing.T) {
+// Форма create OpkgTun без ExpectCreate — фантом; с ExpectCreate — намеренное
+// создание; импорт — всегда намеренное. Remove кладёт ifdestroyed; список
+// читается InterfaceStore, считается и отказывает по FailList.
+func TestFakeNDMS_ExpectCreateRemoveAndList(t *testing.T) {
 	ctx := context.Background()
+	createOpkgTun := func(name string) map[string]any {
+		return map[string]any{"interface": map[string]any{name: map[string]any{
+			"description": "d", "security-level": map[string]any{"public": true}}}}
+	}
 	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"})
-	_, _ = f.Post(ctx, map[string]any{"interface": map[string]any{"OpkgTun3": map[string]any{
-		"description": "d", "security-level": map[string]any{"public": true}}}})
-	if f.Phantoms != 1 || len(f.Created) != 1 || f.Created[0] != "OpkgTun3" {
-		t.Fatalf("create: Phantoms=%d Created=%v", f.Phantoms, f.Created)
+	_, _ = f.Post(ctx, createOpkgTun("OpkgTun3"))
+	if f.Phantoms != 1 || len(f.Created) != 0 {
+		t.Fatalf("без ExpectCreate: Phantoms=%d Created=%v", f.Phantoms, f.Created)
+	}
+	f = NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"})
+	f.ExpectCreate("OpkgTun10")
+	_, _ = f.Post(ctx, createOpkgTun("OpkgTun10"))
+	_, _ = f.Post(ctx, map[string]any{"interface": map[string]any{"wireguard": map[string]any{"import": "x"}}})
+	if f.Phantoms != 0 || len(f.Created) != 2 || f.Created[0] != "OpkgTun10" || f.Created[1] != "Wireguard1" {
+		t.Fatalf("ExpectCreate/import: Phantoms=%d Created=%v", f.Phantoms, f.Created)
 	}
 	f.DrainHooks()
 	f.Remove("Wireguard0")
@@ -89,8 +99,11 @@ func TestFakeNDMS_CreatedRemoveAndList(t *testing.T) {
 
 	s := NewInterfaceStore(f, NopLogger())
 	list, err := s.List(ctx)
-	if err != nil || len(list) != 1 || list[0].ID != "OpkgTun3" || list[0].Type != "OpkgTun" || f.ListCalls() != 1 {
+	if err != nil || len(list) != 2 || f.ListCalls() != 1 {
 		t.Fatalf("list=%+v err=%v calls=%d", list, err, f.ListCalls())
+	}
+	if iface, _ := s.Get(ctx, "OpkgTun10"); iface == nil || iface.Type != "OpkgTun" {
+		t.Fatalf("OpkgTun10 из списка: %+v", iface)
 	}
 	f.FailList(errors.New("rci down"))
 	if _, err := f.Post(ctx, map[string]any{"show": map[string]any{"interface": map[string]any{}}}); err == nil || f.ListCalls() != 2 {

@@ -24,15 +24,14 @@ type FakeNDMS struct {
 	listCalls int
 	listErr   error
 	hooks     []FakeHook
+	expect    map[string]bool
 
 	E        int      // точечное чтение отсутствующего; ссылка на отсутствующий из ip route/nat/static/name-server/policy/hotspot/dns-proxy
-	Phantoms int      // `interface X …` по отсутствующему X: X создан
+	Phantoms int      // `interface X …` по отсутствующему X, не объявленному ExpectCreate: X создан
 	Posts    []string // все payload в JSON, по порядку (пакет — одной строкой)
-	// Created — имена, созданные НАШИМИ формами создания через `interface X`
-	// (голое `interface X`, create OpkgTun, create Proxy). Они же посчитаны в
-	// Phantoms, поэтому в сценариях ассерт `Phantoms == len(Created)`: всё
-	// созданное создано намеренно. Импорт фантомом не считается и сюда не
-	// попадает — иначе равенство бы ломалось.
+	// Created — намеренно созданные: `interface X …` по объявленному через
+	// ExpectCreate X и импорт. Намерение объявляет тест, а не форма payload:
+	// по форме создание от правки не отличить. Инвариант сценариев — Phantoms == 0.
 	Created []string
 }
 
@@ -56,6 +55,19 @@ func (f *FakeNDMS) Add(iface ndms.Interface) {
 		f.hooks = append(f.hooks, FakeHook{Type: "ifcreated", ID: iface.ID})
 	}
 	f.ifaces[iface.ID] = iface
+}
+
+// ExpectCreate объявляет имена, которые тест создаёт намеренно: первая
+// команда `interface X …` по отсутствующему X создаёт его без фантома.
+func (f *FakeNDMS) ExpectCreate(names ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.expect == nil {
+		f.expect = make(map[string]bool)
+	}
+	for _, n := range names {
+		f.expect[n] = true
+	}
 }
 
 // Remove — внешнее `no interface`; ifdestroyed в очередь, если имя было.
@@ -185,7 +197,7 @@ func (f *FakeNDMS) post(v any) (json.RawMessage, error) {
 					body[k] = val
 				}
 			}
-			return f.ifaceCmd(name, body, len(body) == 0)
+			return f.ifaceCmd(name, body)
 		}
 		// command-форма {"interface":{X:{…}}}
 		names := make([]string, 0, len(iface))
@@ -196,7 +208,7 @@ func (f *FakeNDMS) post(v any) (json.RawMessage, error) {
 		resp := json.RawMessage(`{}`)
 		for _, name := range names {
 			body, _ := iface[name].(map[string]any)
-			r, err := f.ifaceCmd(name, body, isCreateForm(body))
+			r, err := f.ifaceCmd(name, body)
 			if err != nil {
 				return nil, err
 			}
@@ -276,13 +288,15 @@ func (f *FakeNDMS) importWG() (json.RawMessage, error) {
 		}
 	}
 	f.ifaces[name] = ndms.Interface{ID: name, Type: "Wireguard", State: "down"}
+	f.Created = append(f.Created, name)
 	f.hooks = append(f.hooks, FakeHook{Type: "ifcreated", ID: name})
 	return json.RawMessage(`{"interface":{"wireguard":{"import":{"created":"` + name + `","intersects":"","status":[]}}}}`), nil
 }
 
 // ifaceCmd — `interface name …`. По отсутствующему: `no` — отказ без E (это
-// ответ на снос, не чтение); иначе NDMS создаёт name — фантом.
-func (f *FakeNDMS) ifaceCmd(name string, body map[string]any, create bool) (json.RawMessage, error) {
+// ответ на снос, не чтение); иначе NDMS создаёт name — намеренно, если
+// объявлен ExpectCreate, иначе фантом.
+func (f *FakeNDMS) ifaceCmd(name string, body map[string]any) (json.RawMessage, error) {
 	iface, ok := f.ifaces[name]
 	if no, _ := body["no"].(bool); no {
 		if !ok {
@@ -292,9 +306,11 @@ func (f *FakeNDMS) ifaceCmd(name string, body map[string]any, create bool) (json
 		return json.RawMessage(`{}`), nil
 	}
 	if !ok {
-		f.Phantoms++
-		if create {
+		if f.expect[name] {
+			delete(f.expect, name)
 			f.Created = append(f.Created, name)
+		} else {
+			f.Phantoms++
 		}
 		iface = ndms.Interface{ID: name, Type: typeByPrefix(name), State: "down"}
 		f.hooks = append(f.hooks, FakeHook{Type: "ifcreated", ID: name})
@@ -318,13 +334,13 @@ func (f *FakeNDMS) parseCmd(line string) (json.RawMessage, error) {
 	w := strings.Fields(line)
 	switch {
 	case len(w) >= 3 && w[0] == "no" && w[1] == "interface":
-		return f.ifaceCmd(w[2], map[string]any{"no": true}, false)
+		return f.ifaceCmd(w[2], map[string]any{"no": true})
 	case len(w) >= 2 && w[0] == "interface":
 		body := map[string]any{}
 		if len(w) == 3 && (w[2] == "up" || w[2] == "down") {
 			body["up"] = w[2] == "up"
 		}
-		return f.ifaceCmd(w[1], body, false)
+		return f.ifaceCmd(w[1], body)
 	}
 	return json.RawMessage(`{}`), nil
 }
@@ -335,21 +351,6 @@ func (f *FakeNDMS) remove(name string) {
 	}
 	delete(f.ifaces, name)
 	f.hooks = append(f.hooks, FakeHook{Type: "ifdestroyed", ID: name})
-}
-
-// isCreateForm — тело command-формы, которым мы создаём интерфейс намеренно:
-// голое `interface X` (managed), create Proxy (есть `proxy`), create OpkgTun
-// (ровно description + security-level; одиночный security-level — правка).
-func isCreateForm(body map[string]any) bool {
-	if len(body) == 0 {
-		return true
-	}
-	if _, ok := body["proxy"]; ok {
-		return true
-	}
-	_, desc := body["description"]
-	_, sec := body["security-level"]
-	return len(body) == 2 && desc && sec
 }
 
 func typeByPrefix(name string) string {
