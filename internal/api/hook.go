@@ -229,6 +229,22 @@ func (h *HookHandler) Handle(event events.Event) {
 		}
 	}
 
+	// 3) ifdestroyed — в оркестратор явным событием: реакция на снятие нашей
+	// записи OpkgTun не зависит от layer-хуков (#328, F569). Свой снос
+	// оркестратор поглощает по ожиданию "destroyed".
+	if event.Type == events.EventIfDestroyed && h.orch != nil {
+		go func(e events.Event) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := h.orch.HandleEvent(ctx, orchestrator.Event{
+				Type:     orchestrator.EventNDMSIfDestroyed,
+				NDMSName: e.ID,
+			}); err != nil {
+				h.log.Warn("hook", e.ID, "orchestrator HandleEvent failed: "+err.Error())
+			}
+		}(event)
+	}
+
 	h.log.Info("hook", event.ID, fmt.Sprintf("ndms: type=%s layer=%s level=%s", event.Type, event.Layer, event.Level))
 }
 

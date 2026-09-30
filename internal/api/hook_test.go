@@ -399,3 +399,28 @@ func TestHookSink_BeforeAndAfterPublish(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// F569: ifdestroyed доходит до оркестратора (явная реакция на снятие нашей
+// записи не зависит от layer-хуков, #328). Доход виден по поглощённому
+// ожиданию "destroyed".
+func TestHandle_IfDestroyed_ForwardsToOrchestrator(t *testing.T) {
+	disp := &spyDispatcher{}
+	h := newTestHookHandler(disp)
+	logs := &captureAppLogger{}
+	orch := orchestrator.New(nil, nil, nil, nil, nil, logs)
+	orch.ExpectHook("OpkgTun10", "destroyed")
+	h.orch = orch
+
+	h.Handle(events.Event{Type: events.EventIfDestroyed, ID: "OpkgTun10"})
+
+	if got := disp.Events(); len(got) != 1 || got[0].Type != events.EventIfDestroyed {
+		t.Fatalf("dispatcher: %#v", got)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !logs.has("expected-hook consumed level=destroyed") {
+		if time.Now().After(deadline) {
+			t.Fatal("ifdestroyed не дошёл до оркестратора")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

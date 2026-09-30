@@ -558,13 +558,19 @@ func (o *Orchestrator) decideLocked(event Event) (actions []Action, deferredBoot
 func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 	// Filter self-triggered NDMS hooks before decide.
 	// Our operators register expected hooks before InterfaceUp/Down.
-	if event.Type == EventNDMSHook {
+	// ifdestroyed ждут под уровнем "destroyed": его регистрирует наш Delete
+	// перед `no interface` (F569).
+	if event.Type == EventNDMSHook || event.Type == EventNDMSIfDestroyed {
+		level := event.Level
+		if event.Type == EventNDMSIfDestroyed {
+			level = "destroyed"
+		}
 		o.mu.Lock()
-		consumed := o.consumeExpectedHook(event.NDMSName, event.Level)
+		consumed := o.consumeExpectedHook(event.NDMSName, level)
 		o.mu.Unlock()
 		if consumed {
 			o.appLog.Debug("boot-trace", event.NDMSName,
-				fmt.Sprintf("expected-hook consumed level=%s", event.Level))
+				fmt.Sprintf("expected-hook consumed level=%s", level))
 			return nil
 		}
 	}

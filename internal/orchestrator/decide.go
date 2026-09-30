@@ -26,6 +26,8 @@ func decide(event Event, state *State) []Action {
 		return decideWANDown(event, state)
 	case EventQuiesce:
 		return decideQuiesce(state)
+	case EventNDMSIfDestroyed:
+		return decideNDMSIfDestroyed(event, state)
 	default:
 		return nil
 	}
@@ -289,6 +291,21 @@ func decideNDMSHook(event Event, state *State) []Action {
 	}
 
 	return nil
+}
+
+// decideNDMSIfDestroyed — запись OpkgTunN работающего kernel-туннеля снята
+// снаружи (свой снос поглощён ожиданием "destroyed" в HandleEvent). Внешнее
+// снятие — внешнее намерение, как внешний conf=disabled: остановка (она же
+// сносит наше устройство — записи нет ⇒ устройства нет, F569) и
+// Enabled=false. Окна quiescence нет: снятая запись — не дрожание слоя conf.
+// Автопересоздания нет — только по Start пользователя (решение владельца Q1).
+// NativeWG: устройство снимает сам NDMS, conf=disabled уже обработан.
+func decideNDMSIfDestroyed(event Event, state *State) []Action {
+	t := state.findByNDMSName(event.NDMSName)
+	if t == nil || t.Backend != "kernel" || !t.Running {
+		return nil
+	}
+	return decideStop(Event{Type: EventStop, Tunnel: t.ID}, state)
 }
 
 func decideWANUp(event Event, state *State) []Action {
