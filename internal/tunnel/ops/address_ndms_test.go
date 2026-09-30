@@ -6,15 +6,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
-// recordingPoster ловит то, что уезжает в роутер по RCI.
-type recordingPoster struct{ payloads []any }
+// recordingPoster ловит то, что уезжает в роутер по RCI. С f — пересылает
+// команды в оракул (FakeNDMS) и отвечает его ответом: E и фантомы видны там.
+type recordingPoster struct {
+	payloads []any
+	f        *ndmsquery.FakeNDMS
+}
 
-func (p *recordingPoster) Post(_ context.Context, payload any) (json.RawMessage, error) {
+func (p *recordingPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
 	p.payloads = append(p.payloads, payload)
+	if p.f != nil {
+		return p.f.Post(ctx, payload)
+	}
 	return json.RawMessage(`[{"status":[{"status":"ok"}]}]`), nil
 }
 
@@ -67,7 +75,7 @@ func TestSyncAddressSendsUserMaskToNDMS(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			poster := &recordingPoster{}
 			queries := ndmsquery.NewQueries(ndmsquery.Deps{
-				Getter: ndmsquery.NewFakeGetter(),
+				Getter: ndmsquery.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"}),
 				Logger: ndmsquery.NopLogger(),
 				IsOS5:  func() bool { return true },
 			})
@@ -80,7 +88,7 @@ func TestSyncAddressSendsUserMaskToNDMS(t *testing.T) {
 				Save:  ndmscommand.NewSaveCoordinator(poster, nil, time.Hour, time.Hour, 0, queries.RunningConfig),
 				IsOS5: func() bool { return true },
 			})
-			o := NewOperatorOS5(nil, cmds, &MockWGClient{}, &MockBackend{}, &MockFirewall{})
+			o := NewOperatorOS5(queries, cmds, &MockWGClient{}, &MockBackend{}, &MockFirewall{})
 
 			if err := o.SyncAddress(context.Background(), "awg10", "10.8.0.2", tt.prefix, ""); err != nil {
 				t.Fatalf("SyncAddress: %v", err)

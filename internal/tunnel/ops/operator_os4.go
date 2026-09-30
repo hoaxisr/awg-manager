@@ -151,7 +151,7 @@ func (o *OperatorOS4Impl) Start(ctx context.Context, cfg tunnel.Config) error {
 
 	// Apply DNS servers via NDMS (RCI works on OS4 too)
 	if len(cfg.DNS) > 0 {
-		if err := o.commands.Interfaces.SetDNSLegacy(ctx, ifaceName, cfg.DNS); err != nil {
+		if err := o.dnsByKernelName(ctx, ifaceName, cfg.DNS, true); err != nil {
 			o.logWarn("start", cfg.ID, "Failed to set DNS: "+err.Error())
 		} else {
 			o.appliedDNSMu.Lock()
@@ -162,6 +162,18 @@ func (o *OperatorOS4Impl) Start(ctx context.Context, cfg tunnel.Config) error {
 
 	o.logInfo("start", cfg.ID, "Tunnel started successfully")
 	return nil
+}
+
+// dnsByKernelName ставит (set) или снимает DNS-серверы интерфейса по имени
+// ЯДРА (awgm<N>) — сознательное исключение из правила «команды по интерфейсу
+// только по query.Confirmed» (F546, R17): на OS4 это не запись из списка NDMS,
+// подтверждать её списком нельзя — DNS перестал бы применяться. Поведение
+// прежнее. Task 19 даст …Legacy окончательное имя, исключение остаётся.
+func (o *OperatorOS4Impl) dnsByKernelName(ctx context.Context, ifaceName string, servers []string, set bool) error {
+	if set {
+		return o.commands.Interfaces.SetDNSLegacy(ctx, ifaceName, servers) // R17: имя ядра, см. выше
+	}
+	return o.commands.Interfaces.ClearDNSLegacy(ctx, ifaceName, servers) // R17: имя ядра, см. выше
 }
 
 // Stop stops a tunnel on OS 4.x.
@@ -185,7 +197,7 @@ func (o *OperatorOS4Impl) Stop(ctx context.Context, tunnelID, _ string) error {
 	delete(o.appliedDNS, tunnelID)
 	o.appliedDNSMu.Unlock()
 	if len(dnsServers) > 0 {
-		_ = o.commands.Interfaces.ClearDNSLegacy(ctx, ifaceName, dnsServers)
+		_ = o.dnsByKernelName(ctx, ifaceName, dnsServers, false)
 	}
 
 	o.logInfo("stop", tunnelID, "Tunnel stopped")
@@ -248,7 +260,7 @@ func (o *OperatorOS4Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 
 	// Re-apply DNS servers
 	if len(cfg.DNS) > 0 {
-		if err := o.commands.Interfaces.SetDNSLegacy(ctx, ifaceName, cfg.DNS); err != nil {
+		if err := o.dnsByKernelName(ctx, ifaceName, cfg.DNS, true); err != nil {
 			o.logWarn("reconcile", cfg.ID, "Failed to re-apply DNS: "+err.Error())
 		} else {
 			o.appliedDNSMu.Lock()

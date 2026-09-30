@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
@@ -18,7 +19,7 @@ func os5WithRecorders(t *testing.T) (*OperatorOS5Impl, *recordingPoster, *[][]st
 	t.Helper()
 	poster := &recordingPoster{}
 	queries := ndmsquery.NewQueries(ndmsquery.Deps{
-		Getter: ndmsquery.NewFakeGetter(), Logger: ndmsquery.NopLogger(), IsOS5: func() bool { return true },
+		Getter: ndmsquery.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"}), Logger: ndmsquery.NopLogger(), IsOS5: func() bool { return true },
 	})
 	cmds := ndmscommand.NewCommands(ndmscommand.Deps{
 		Poster:  poster,
@@ -26,7 +27,7 @@ func os5WithRecorders(t *testing.T) (*OperatorOS5Impl, *recordingPoster, *[][]st
 		Save:    ndmscommand.NewSaveCoordinator(poster, nil, time.Hour, time.Hour, 0, queries.RunningConfig),
 		IsOS5:   func() bool { return true },
 	})
-	impl := NewOperatorOS5(nil, cmds, &MockWGClient{}, &MockBackend{}, &MockFirewall{})
+	impl := NewOperatorOS5(queries, cmds, &MockWGClient{}, &MockBackend{}, &MockFirewall{})
 	var calls [][]string
 	impl.ipRun = func(_ context.Context, name string, args ...string) (*exec.Result, error) {
 		calls = append(calls, append([]string{name}, args...))
