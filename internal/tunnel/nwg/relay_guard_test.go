@@ -201,7 +201,7 @@ func waitFor(t *testing.T, limit time.Duration, ok func() bool) {
 func TestSyncPeer_KeepsRelayGuardEntry(t *testing.T) {
 	op, _, _, st := relayGuardFixture(t)
 
-	if err := op.SyncPeer(context.Background(), st, st.Peer.PublicKey); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(st), st, st.Peer.PublicKey); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 

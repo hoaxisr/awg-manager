@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
@@ -23,13 +24,18 @@ import (
 type payloadPoster struct {
 	mu       sync.Mutex
 	payloads []string
+	// f — оракул: payload уходит и в него (фантомы, E), ответ — его.
+	f *query.FakeNDMS
 }
 
-func (p *payloadPoster) Post(_ context.Context, payload any) (json.RawMessage, error) {
+func (p *payloadPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
 	b, _ := json.Marshal(payload)
 	p.mu.Lock()
 	p.payloads = append(p.payloads, string(b))
 	p.mu.Unlock()
+	if p.f != nil {
+		return p.f.Post(ctx, payload)
+	}
 	return json.RawMessage(`{}`), nil
 }
 
@@ -50,15 +56,21 @@ func (p *payloadPoster) list() []string {
 	return append([]string(nil), p.payloads...)
 }
 
-func newLifecycleOperator(t *testing.T, asc, asc3 bool) (*OperatorNativeWG, *procStub, *payloadPoster) {
+// newLifecycleOperator — оператор на оракуле: чтения, команды command-слоя и
+// батчи транспорта (httptest-сервер пересылает тело в f) видит один FakeNDMS.
+// Wireguard0 (туннель nwgStored) в нём есть; тесты «интерфейс снят» его убирают.
+func newLifecycleOperator(t *testing.T, asc, asc3 bool) (*OperatorNativeWG, *procStub, *payloadPoster, *query.FakeNDMS, *rciBatchServer) {
 	t.Helper()
 	km, stub := newKmodManagerForTest()
-	poster := &payloadPoster{}
-	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
+	poster := &payloadPoster{f: f}
+	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	sc := command.NewSaveCoordinator(poster, startNopPublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
 	cmds := command.NewCommands(command.Deps{Poster: poster, Save: sc, Queries: q, IsOS5: func() bool { return true }})
 	srv := newRCIBatchServer(t, &eventLog{})
+	srv.fwd = f
 	o := &OperatorNativeWG{
+		queries:      q,
 		transport:    transport.NewWithURL(srv.srv.URL, transport.NewSemaphore(2)),
 		commands:     cmds,
 		kmod:         km,
@@ -80,7 +92,7 @@ func newLifecycleOperator(t *testing.T, asc, asc3 bool) (*OperatorNativeWG, *pro
 	km.execFn = func(context.Context, string, ...string) (*exec.Result, error) {
 		return nil, errors.New("insmod: стаб теста")
 	}
-	return o, stub, poster
+	return o, stub, poster, f, srv
 }
 
 func nwgStored(iface storage.AWGInterface) *storage.AWGTunnel {
@@ -105,7 +117,7 @@ func TestStopAndSuspend_RemoveKmodSlot(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			o, stub, _ := newLifecycleOperator(t, false, false)
+			o, stub, _, _, _ := newLifecycleOperator(t, false, false)
 			if _, err := o.kmod.AddTunnel("awg0", defaultCfg()); err != nil {
 				t.Fatal(err)
 			}
@@ -137,16 +149,18 @@ func TestSyncAWGParams_SkipsASCForAWG3OnASC2Firmware(t *testing.T) {
 	awg30 := storage.AWGInterface{AWGObfuscation: storage.AWGObfuscation{Jc: 4, H1: "1", H2: "2", H3: "3", H4: "4",
 		HeaderProtectionKey: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}}
 
-	o, _, poster := newLifecycleOperator(t, true, false)
-	if err := o.SyncAWGParams(context.Background(), nwgStored(awg30)); err != nil {
+	o, _, poster, _, _ := newLifecycleOperator(t, true, false)
+	st := nwgStored(awg30)
+	if err := o.SyncAWGParams(context.Background(), ifaceOf(st), st); err != nil {
 		t.Fatal(err)
 	}
 	if poster.has(`"asc"`) {
 		t.Fatalf("ASC-параметры 3.x ушли в NDMS на прошивке ASC 2.0: %v", poster.list())
 	}
 
-	o, _, poster = newLifecycleOperator(t, true, false)
-	if err := o.SyncAWGParams(context.Background(), nwgStored(awg20)); err != nil {
+	o, _, poster, _, _ = newLifecycleOperator(t, true, false)
+	st = nwgStored(awg20)
+	if err := o.SyncAWGParams(context.Background(), ifaceOf(st), st); err != nil {
 		t.Fatal(err)
 	}
 	if !poster.has(`{"interface":{"Wireguard0":{"wireguard":{"asc":`) {
@@ -164,7 +178,7 @@ func TestStart_DispatchesByASCCoverage(t *testing.T) {
 	const reset = `{"parse":"interface Wireguard0 no wireguard asc"}`
 
 	t.Run("2.0 на ASC — нативно", func(t *testing.T) {
-		o, _, poster := newLifecycleOperator(t, true, false)
+		o, _, poster, _, _ := newLifecycleOperator(t, true, false)
 		// Хвост startNative (SyncAddressMTU при пустом Address) может отказать —
 		// это Warn, не отказ Start; нас интересует первый шаг.
 		_ = o.Start(context.Background(), nwgStored(awg20))
@@ -173,7 +187,7 @@ func TestStart_DispatchesByASCCoverage(t *testing.T) {
 		}
 	})
 	t.Run("3.0 на ASC 2.0 — прокси", func(t *testing.T) {
-		o, _, poster := newLifecycleOperator(t, true, false)
+		o, _, poster, _, _ := newLifecycleOperator(t, true, false)
 		// Хвост startProxy упирается в kmod.EnsureLoaded — он застаблен
 		// детерминированным отказом, ошибка Start здесь допустима.
 		_ = o.Start(context.Background(), nwgStored(awg30))
@@ -201,7 +215,7 @@ func TestStartNative_DropsOrphanSlotOnASC3(t *testing.T) {
 		{"asc2", false, awg20, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			o, stub, _ := newLifecycleOperator(t, true, tc.asc3)
+			o, stub, _, _, _ := newLifecycleOperator(t, true, tc.asc3)
 			stub.setListSlot("203.0.113.10", 5060, 51820)
 			_ = o.Start(context.Background(), nwgStored(tc.iface))
 			if got := stub.countWritesTo("/proc/awg_proxy/del"); got != tc.want {
@@ -216,7 +230,7 @@ func TestStartNative_DropsOrphanSlotOnASC3(t *testing.T) {
 // встал бы как 2.0.
 func TestCreateViaImport_AWG3ParamsFollowASC3(t *testing.T) {
 	for _, asc3 := range []bool{false, true} {
-		o, _, poster := newLifecycleOperator(t, true, asc3)
+		o, _, poster, _, _ := newLifecycleOperator(t, true, asc3)
 		_, _ = o.createViaImport(context.Background(), awg3Tunnel())
 		var conf string
 		for _, p := range poster.list() {
@@ -253,10 +267,12 @@ func TestASC3PayloadReachesNDMS(t *testing.T) {
 		call func(o *OperatorNativeWG, st *storage.AWGTunnel)
 	}{
 		{"Start", func(o *OperatorNativeWG, st *storage.AWGTunnel) { _ = o.Start(context.Background(), st) }},
-		{"SyncAWGParams", func(o *OperatorNativeWG, st *storage.AWGTunnel) { _ = o.SyncAWGParams(context.Background(), st) }},
+		{"SyncAWGParams", func(o *OperatorNativeWG, st *storage.AWGTunnel) {
+			_ = o.SyncAWGParams(context.Background(), ifaceOf(st), st)
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			o, _, poster := newLifecycleOperator(t, true, true)
+			o, _, poster, _, _ := newLifecycleOperator(t, true, true)
 			tc.call(o, nwgStored(iface))
 			if !poster.has(`"header-protection-key":"YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="`) {
 				t.Fatalf("ASC 3.x не отправлен: %v", poster.list())
@@ -270,7 +286,7 @@ func TestASC3PayloadReachesNDMS(t *testing.T) {
 func TestStartNative_FailsOnBadASC(t *testing.T) {
 	iface := awg3Tunnel().Interface
 	iface.RekeyAfterTime = "abc"
-	o, _, _ := newLifecycleOperator(t, true, true)
+	o, _, _, _, _ := newLifecycleOperator(t, true, true)
 	if err := o.Start(context.Background(), nwgStored(iface)); err == nil || !strings.Contains(err.Error(), "RekeyAfterTime") {
 		t.Fatalf("err = %v", err)
 	}

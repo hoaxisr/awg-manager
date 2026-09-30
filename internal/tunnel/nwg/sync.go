@@ -2,7 +2,8 @@
 //
 // These are called from service.applyDiffNWG to push specific stored
 // fields (DNS, address/MTU, peer, AWG params, description) to a running
-// NDMS interface without restarting it. They are decoupled from the
+// NDMS interface without restarting it. Интерфейс подтверждает вызывающий —
+// один раз на поток (iface из RequireIface), F546. They are decoupled from the
 // lifecycle (Create/Start/Stop/Delete), which lives in operator.go and
 // owns the heavier orchestration around kmod, peer-via, etc.
 package nwg
@@ -15,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/payloads"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -29,18 +31,17 @@ import (
 // value), so the diff naturally lives at the call site.
 //
 // Use cases:
-//   - Start tunnel: SyncDNS(ctx, stored, nil, tunnel.ParseDNSList(stored.Interface.DNS))
-//   - Stop tunnel:  SyncDNS(ctx, stored, tunnel.ParseDNSList(stored.Interface.DNS), nil)
-//   - Update DNS:   SyncDNS(ctx, stored, oldList, newList)
-func (o *OperatorNativeWG) SyncDNS(ctx context.Context, stored *storage.AWGTunnel, oldDNS, newDNS []string) error {
-	names := NewNWGNames(stored.NWGIndex)
+//   - Start tunnel: SyncDNS(ctx, iface, nil, tunnel.ParseDNSList(stored.Interface.DNS))
+//   - Stop tunnel:  SyncDNS(ctx, iface, tunnel.ParseDNSList(stored.Interface.DNS), nil)
+//   - Update DNS:   SyncDNS(ctx, iface, oldList, newList)
+func (o *OperatorNativeWG) SyncDNS(ctx context.Context, iface query.Confirmed, oldDNS, newDNS []string) error {
 	if len(oldDNS) > 0 {
-		if err := o.commands.Interfaces.ClearDNSLegacy(ctx, names.NDMSName, oldDNS); err != nil {
-			o.appLog.Warn("clear-dns", names.NDMSName, err.Error())
+		if err := o.commands.Interfaces.ClearDNS(ctx, iface, oldDNS); err != nil {
+			o.appLog.Warn("clear-dns", iface.Name(), err.Error())
 		}
 	}
 	if len(newDNS) > 0 {
-		if err := o.commands.Interfaces.SetDNSLegacy(ctx, names.NDMSName, newDNS); err != nil {
+		if err := o.commands.Interfaces.SetDNS(ctx, iface, newDNS); err != nil {
 			return fmt.Errorf("set DNS: %w", err)
 		}
 	}
@@ -52,7 +53,7 @@ func (o *OperatorNativeWG) SyncDNS(ctx context.Context, stored *storage.AWGTunne
 // RCI. Best-effort: if NDMS rejects (some firmware versions require
 // interface down for ASC changes), failures bubble up so the caller
 // can log a Warn and instruct the user to restart the tunnel.
-func (o *OperatorNativeWG) SyncAWGParams(ctx context.Context, stored *storage.AWGTunnel) error {
+func (o *OperatorNativeWG) SyncAWGParams(ctx context.Context, iface query.Confirmed, stored *storage.AWGTunnel) error {
 	if !o.supportsASC() {
 		return fmt.Errorf("ASC not supported by firmware; restart tunnel to apply")
 	}
@@ -62,7 +63,6 @@ func (o *OperatorNativeWG) SyncAWGParams(ctx context.Context, stored *storage.AW
 	if !o.useASC(&stored.Interface) {
 		return nil
 	}
-	names := NewNWGNames(stored.NWGIndex)
 	o.logSignatureSplit("sync-asc", stored.Name, &stored.Interface)
 	ascJSON, err := buildASCJSON(&stored.Interface, o.asc3())
 	if err != nil {
@@ -71,7 +71,7 @@ func (o *OperatorNativeWG) SyncAWGParams(ctx context.Context, stored *storage.AW
 	if ascJSON == nil {
 		return nil
 	}
-	if err := o.commands.Wireguard.SetASCParamsLegacy(ctx, names.NDMSName, ascJSON); err != nil {
+	if err := o.commands.Wireguard.SetASCParams(ctx, iface, ascJSON); err != nil {
 		return fmt.Errorf("set ASC params: %w", err)
 	}
 	return nil
@@ -80,26 +80,26 @@ func (o *OperatorNativeWG) SyncAWGParams(ctx context.Context, stored *storage.AW
 // SyncAddressMTU pushes the stored address and MTU to the NDMS interface.
 // Called on Start (to override any changes made via the router UI)
 // and on Update (to hot-apply changes to a running tunnel).
-func (o *OperatorNativeWG) SyncAddressMTU(ctx context.Context, stored *storage.AWGTunnel) error {
-	ndmsName := NewNWGNames(stored.NWGIndex).NDMSName
+func (o *OperatorNativeWG) SyncAddressMTU(ctx context.Context, iface query.Confirmed, stored *storage.AWGTunnel) error {
+	ndmsName := iface.Name()
 
 	// extractIPv4 сохраняет CIDR-суффикс — маска пользователя доезжает до
 	// RCI, а не заменяется дефолтным /32 (issue #531).
 	addr, mask := splitAddressMask(extractIPv4(stored.Interface.Address))
-	if err := o.commands.Interfaces.SetAddressLegacy(ctx, ndmsName, addr, mask); err != nil {
+	if err := o.commands.Interfaces.SetAddress(ctx, iface, addr, mask); err != nil {
 		return fmt.Errorf("sync address: %w", err)
 	}
 
 	ipv6 := extractIPv6(stored.Interface.Address)
 	if ipv6 != "" {
-		if err := o.commands.Interfaces.SetIPv6AddressLegacy(ctx, ndmsName, ipv6); err != nil {
+		if err := o.commands.Interfaces.SetIPv6Address(ctx, iface, ipv6); err != nil {
 			o.appLog.Warn("sync-address-mtu", ndmsName, "ipv6: "+err.Error())
 		}
 	} else {
-		_ = o.commands.Interfaces.ClearIPv6AddressLegacy(ctx, ndmsName)
+		_ = o.commands.Interfaces.ClearIPv6Address(ctx, iface)
 	}
 
-	if err := o.commands.Interfaces.SetMTULegacy(ctx, ndmsName, stored.Interface.MTU); err != nil {
+	if err := o.commands.Interfaces.SetMTU(ctx, iface, stored.Interface.MTU); err != nil {
 		return fmt.Errorf("sync mtu: %w", err)
 	}
 
@@ -116,10 +116,10 @@ func (o *OperatorNativeWG) SyncAddressMTU(ctx context.Context, stored *storage.A
 // old identity; the new server (whose peer entry expects the public key
 // derived from the NEW private key) silently drops them → handshake never
 // completes. Symptom: tx grows, rx stays at 0, last-handshake never updates.
-func (o *OperatorNativeWG) SyncPrivateKey(ctx context.Context, stored *storage.AWGTunnel) error {
-	ndmsName := NewNWGNames(stored.NWGIndex).NDMSName
+func (o *OperatorNativeWG) SyncPrivateKey(ctx context.Context, iface query.Confirmed, stored *storage.AWGTunnel) error {
+	ndmsName := iface.Name()
 	cmds := []any{
-		payloads.CmdWireguardPrivateKeyLegacy(ndmsName, stored.Interface.PrivateKey),
+		payloads.CmdWireguardPrivateKey(iface, stored.Interface.PrivateKey),
 		payloads.CmdSave(),
 	}
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
@@ -149,8 +149,8 @@ func (o *OperatorNativeWG) SyncPrivateKey(ctx context.Context, stored *storage.A
 // this, NDMS keeps both peers (it indexes by key) and the interface
 // ends up with an orphan from the previous config. Pass "" when there
 // is no previous peer to remove (e.g. fresh tunnel start).
-func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunnel, previousPublicKey string) error {
-	ndmsName := NewNWGNames(stored.NWGIndex).NDMSName
+func (o *OperatorNativeWG) SyncPeer(ctx context.Context, iface query.Confirmed, stored *storage.AWGTunnel, previousPublicKey string) error {
+	ndmsName := iface.Name()
 	o.appLog.Full("replace-config", stored.Name, "Syncing peer parameters to NDMS")
 
 	// NDMS отвергает IPv6-endpoint в peer-командах: в RCI уходит заглушка,
@@ -285,16 +285,16 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 
 	cmds := make([]any, 0, 3)
 	if previousPublicKey != "" && previousPublicKey != stored.Peer.PublicKey {
-		cmds = append(cmds, payloads.CmdWireguardPeerNoLegacy(ndmsName, previousPublicKey))
+		cmds = append(cmds, payloads.CmdWireguardPeerNo(iface, previousPublicKey))
 	}
-	cmds = append(cmds, payloads.CmdWireguardPeerLegacy(ndmsName, peerCfg), payloads.CmdSave())
+	cmds = append(cmds, payloads.CmdWireguardPeer(iface, peerCfg), payloads.CmdSave())
 	_, err := o.transport.PostBatch(ctx, cmds)
 	if err != nil {
 		return fmt.Errorf("sync peer: %w", err)
 	}
 
 	if stored.ISPInterface != "" {
-		if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerConnectLegacy(ndmsName, stored.Peer.PublicKey, stored.ISPInterface)); err != nil {
+		if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerConnect(iface, stored.Peer.PublicKey, stored.ISPInterface)); err != nil {
 			o.appLog.Warn("sync-peer", ndmsName, "peer connect via: "+err.Error())
 		}
 	}
@@ -441,6 +441,6 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 }
 
 // UpdateDescription updates the NDMS interface description.
-func (o *OperatorNativeWG) UpdateDescription(ctx context.Context, stored *storage.AWGTunnel, name string) error {
-	return o.commands.Interfaces.SetDescriptionLegacy(ctx, NewNWGNames(stored.NWGIndex).NDMSName, name)
+func (o *OperatorNativeWG) UpdateDescription(ctx context.Context, iface query.Confirmed, name string) error {
+	return o.commands.Interfaces.SetDescription(ctx, iface, name)
 }

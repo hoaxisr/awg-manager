@@ -9,6 +9,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/payloads"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -56,10 +57,19 @@ func (o *OperatorNativeWG) removeObfHostRoute(ctx context.Context, tunnelID, ip,
 		return nil
 	}
 	if wan == "" {
-		return o.commands.Routes.RemoveOwnHostRouteLegacy(ctx, ip, obfRouteComment(tunnelID))
+		return o.commands.Routes.RemoveOwnHostRoute(ctx, ip, obfRouteComment(tunnelID))
 	}
-	return o.commands.Routes.RemoveStaticRouteLegacy(ctx, command.StaticRouteSpecLegacy{
-		Host: ip, Interface: wan, V6: isV6Literal(ip),
+	w, _, ok, err := o.queries.Interfaces.Confirm(ctx, wan)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// WAN снят: снимать запись нечем — команда по отсутствующему
+		// интерфейсу пишет E в журнал ndm (F546).
+		return nil
+	}
+	return o.commands.Routes.RemoveStaticRoute(ctx, command.StaticRouteSpec{
+		Host: ip, Interface: w, V6: isV6Literal(ip),
 	})
 }
 
@@ -78,7 +88,7 @@ func (o *OperatorNativeWG) removeObfHostRoute(ctx context.Context, tunnelID, ip,
 // бы через уже мёртвый канал. При отказе батча маршрута ещё нет — откат
 // сводится к остановке релея. Ни ASC, ни kmod-слота у такого туннеля нет:
 // WireGuard обычный.
-func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.AWGTunnel) error {
+func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.AWGTunnel, iface query.Confirmed) error {
 	if o.obf == nil {
 		return fmt.Errorf("обфускатор не подключён")
 	}
@@ -109,19 +119,19 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 	if alreadyUp {
 		o.appLog.Info("start", names.NDMSName, "интерфейс уже поднят на "+loopback+", батч пропущен")
 	} else {
-		if err := o.SyncAddressMTU(ctx, stored); err != nil {
+		if err := o.SyncAddressMTU(ctx, iface, stored); err != nil {
 			o.appLog.Warn("sync-address-mtu", names.NDMSName, "on start: "+err.Error())
 		}
-		if err := o.SyncDNS(ctx, stored, nil, tunnel.ParseDNSList(stored.Interface.DNS)); err != nil {
+		if err := o.SyncDNS(ctx, iface, nil, tunnel.ParseDNSList(stored.Interface.DNS)); err != nil {
 			o.appLog.Warn("apply-dns", names.NDMSName, err.Error())
 		}
 		if o.hookNotifier != nil {
 			o.hookNotifier.ExpectHook(names.NDMSName, "running")
 		}
 		cmds := []any{
-			payloads.CmdWireguardPeerEndpointLegacy(names.NDMSName, stored.Peer.PublicKey, loopback),
-			payloads.CmdWireguardPeerConnectLegacy(names.NDMSName, stored.Peer.PublicKey, stored.ISPInterface),
-			payloads.CmdInterfaceUpLegacy(names.NDMSName, true),
+			payloads.CmdWireguardPeerEndpoint(iface, stored.Peer.PublicKey, loopback),
+			payloads.CmdWireguardPeerConnect(iface, stored.Peer.PublicKey, stored.ISPInterface),
+			payloads.CmdInterfaceUp(iface, true),
 		}
 		if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 			_ = o.obf.Stop(stored.ID)
@@ -393,8 +403,15 @@ func (o *OperatorNativeWG) addObfHostRoute(ctx context.Context, stored *storage.
 	// роутер отвечает «invalid destination host», а host-route до target'а
 	// релея не встаёт вовсе — трафик релея уходит в сам туннель, то есть
 	// в петлю, ради которой маршрут и ставится.
-	return o.commands.Routes.AddStaticRouteLegacy(ctx, command.StaticRouteSpecLegacy{
-		Host: ip, Interface: wan, Comment: obfRouteComment(stored.ID),
+	w, _, ok, err := o.queries.Interfaces.Confirm(ctx, wan)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("WAN %s не найден в NDMS", wan)
+	}
+	return o.commands.Routes.AddStaticRoute(ctx, command.StaticRouteSpec{
+		Host: ip, Interface: w, Comment: obfRouteComment(stored.ID),
 		V6: isV6Literal(ip),
 	})
 }

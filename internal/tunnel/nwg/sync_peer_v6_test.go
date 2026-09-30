@@ -49,7 +49,7 @@ func TestSyncPeer_IPv6EndpointUsesPlaceholderAndKernelSet(t *testing.T) {
 			Endpoint:  "[2a02:6b8::feed:ff]:51820",
 		},
 	}
-	if err := op.SyncPeer(context.Background(), stored, "OLDKEY"); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, "OLDKEY"); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 
@@ -96,7 +96,7 @@ func TestSyncPeer_HostnameResolvesV6UsesPlaceholderAndKernelSet(t *testing.T) {
 			Endpoint:  "vpn.example.com:51820",
 		},
 	}
-	if err := op.SyncPeer(context.Background(), stored, "OLDKEY"); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, "OLDKEY"); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 
@@ -132,7 +132,7 @@ func TestSyncPeer_V6ToV4LiteralUnregistersGuard(t *testing.T) {
 		NWGIndex: 5,
 		Peer:     storage.AWGPeer{PublicKey: "NEWKEY", Endpoint: "1.2.3.4:51820"},
 	}
-	if err := op.SyncPeer(context.Background(), stored, "OLDKEY"); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, "OLDKEY"); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 
@@ -167,7 +167,7 @@ func TestSyncPeer_ResolveFailedChangedKeyRejectsSync(t *testing.T) {
 		NWGIndex: 5,
 		Peer:     storage.AWGPeer{PublicKey: "NEWKEY", Endpoint: "vpn.example.com:51820"},
 	}
-	err := op.SyncPeer(context.Background(), stored, "OLDKEY")
+	err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, "OLDKEY")
 	if err == nil {
 		t.Fatal("смена ключа пира без резолвнутого endpoint'а должна отвергаться")
 	}
@@ -207,7 +207,7 @@ func TestSyncPeer_ResolveFailedUnchangedPeerKeepsGuard(t *testing.T) {
 		ResolvedEndpointIP: "1.2.3.4",
 		Peer:               storage.AWGPeer{PublicKey: "KEY", Endpoint: "vpn.example.com:51820", PersistentKeepalive: "25"},
 	}
-	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, ""); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 	if !op.guardHas("awg20") {
@@ -229,7 +229,7 @@ func TestSyncPeer_LiveV4ToV6TransitionRegistersGuard(t *testing.T) {
 		NWGIndex: 6,
 		Peer:     storage.AWGPeer{PublicKey: "K", Endpoint: "[2a02::1]:51820"},
 	}
-	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, ""); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 	if !strings.Contains(strings.Join(cs.bodies, "\n"), ndmsEndpointPlaceholder) {
@@ -260,7 +260,7 @@ func TestSyncPeer_IPv6DeviceMissingStaysUnguarded(t *testing.T) {
 		NWGIndex: 6,
 		Peer:     storage.AWGPeer{PublicKey: "K", Endpoint: "[2a02::1]:51820"},
 	}
-	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, ""); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 	if len(*calls) != 1 {
@@ -287,7 +287,7 @@ func TestSyncPeer_WGSetFailureStillUpdatesGuardRegistry(t *testing.T) {
 		NWGIndex: 5,
 		Peer:     storage.AWGPeer{PublicKey: "NEWKEY", Endpoint: "[2a02:6b8::feed:ff]:51820"},
 	}
-	if err := op.SyncPeer(context.Background(), stored, "OLDKEY"); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, "OLDKEY"); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 	entry, ok := op.guardGet("awg20")
@@ -313,7 +313,7 @@ func TestSyncPeer_V6LiteralWithoutPortIsNotV4(t *testing.T) {
 		NWGIndex: 5,
 		Peer:     storage.AWGPeer{PublicKey: "K", Endpoint: "[2a02::1]"},
 	}
-	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, ""); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 	if resolves != 0 {
@@ -339,7 +339,7 @@ func TestSyncPeer_EmptyEndpointSkipsResolve(t *testing.T) {
 		NWGIndex: 6,
 		Peer:     storage.AWGPeer{PublicKey: "K", Endpoint: ""},
 	}
-	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, ""); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 	if resolves != 0 || len(*calls) != 0 {
@@ -362,7 +362,7 @@ func TestSyncPeer_ProxyFirmwareV6DoesNotBypassKmod(t *testing.T) {
 			Endpoint:  "[2001:db8::1]:51820",
 		},
 	}
-	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, ""); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 
@@ -398,7 +398,7 @@ func TestSyncPeer_V6ToUnresolvableHostnameRejected(t *testing.T) {
 	}
 	stored.ID = "awg10"
 
-	if err := op.SyncPeer(context.Background(), stored, ""); err == nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, ""); err == nil {
 		t.Fatal("смена endpoint при мёртвом резолве и заглушке в NDMS должна отвергаться")
 	}
 	if len(cs.bodies) != 0 {

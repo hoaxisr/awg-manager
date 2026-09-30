@@ -33,6 +33,10 @@ var (
 	// ErrNotObfuscated indicates the tunnel config is plain WireGuard without AWG obfuscation.
 	// The tunnel must be edited to add AWG parameters before it can be started.
 	ErrNotObfuscated = errors.New("конфиг не содержит параметров обфускации AWG — добавьте их в настройках туннеля")
+
+	// ErrInterfaceGone — записи интерфейса туннеля нет в свежем списке NDMS:
+	// команда `interface X …` по ней создала бы X заново (F546).
+	ErrInterfaceGone = errors.New("интерфейс туннеля снят в NDMS — удалите туннель и импортируйте конфиг заново")
 )
 
 // OpError represents an error that occurred during a tunnel operation.

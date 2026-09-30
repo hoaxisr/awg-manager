@@ -98,11 +98,18 @@ func stubWGTool(t *testing.T, log *eventLog, path string, run func(ctx context.C
 }
 
 // rciBatchServer отвечает на батчи, сохраняет последнее тело запроса и
-// пишет каждый батч в лог событий.
+// пишет каждый батч в лог событий. С fwd тело уходит в оракул и отвечает он;
+// bodies/listsAt — все тела и число чтений списка оракула на момент каждого.
 type rciBatchServer struct {
 	srv      *httptest.Server
+	log      *eventLog
 	mu       sync.Mutex
 	lastBody string
+	fwd      *query.FakeNDMS
+	bodies   []string
+	listsAt  []int
+	// respond — подмена ответа по телу (отказ роутера); false — как обычно.
+	respond func(body string) (string, bool)
 }
 
 func (s *rciBatchServer) last() string {
@@ -111,15 +118,52 @@ func (s *rciBatchServer) last() string {
 	return s.lastBody
 }
 
+func (s *rciBatchServer) sent() ([]string, []int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.bodies...), append([]int(nil), s.listsAt...)
+}
+
+// posts — сколько POST принял сервер.
+func (l *eventLog) posts() int {
+	n := 0
+	for _, e := range l.list() {
+		if e == "rci-batch" {
+			n++
+		}
+	}
+	return n
+}
+
 func newRCIBatchServer(t *testing.T, log *eventLog) *rciBatchServer {
 	t.Helper()
-	s := &rciBatchServer{}
+	s := &rciBatchServer{log: log}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		s.mu.Lock()
 		s.lastBody = string(body)
+		f, respond := s.fwd, s.respond
+		if f != nil {
+			s.bodies = append(s.bodies, string(body))
+			s.listsAt = append(s.listsAt, f.ListCalls())
+		}
 		s.mu.Unlock()
 		log.add("rci-batch")
+		if respond != nil {
+			if resp, ok := respond(string(body)); ok {
+				_, _ = w.Write([]byte(resp))
+				return
+			}
+		}
+		if f != nil {
+			resp, err := f.Post(r.Context(), json.RawMessage(body))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write(resp)
+			return
+		}
 		_, _ = w.Write([]byte(`[{}, {}, {}]`))
 	}))
 	t.Cleanup(s.srv.Close)
@@ -183,7 +227,7 @@ func TestStartNative_IPv6EndpointViaWGTool(t *testing.T) {
 	calls := stubWGTool(t, log, "/opt/bin/wg", nil)
 
 	stored := startTestTunnel("[2a02:6b8::feed:ff]:51820")
-	if err := op.startNative(context.Background(), stored); err != nil {
+	if err := op.startNative(context.Background(), stored, ifaceOf(stored)); err != nil {
 		t.Fatalf("startNative: %v", err)
 	}
 
@@ -244,7 +288,7 @@ func TestStartNative_IPv4EndpointViaRCI(t *testing.T) {
 	calls := stubWGTool(t, log, "/opt/bin/wg", nil)
 
 	stored := startTestTunnel("203.0.113.7:51820")
-	if err := op.startNative(context.Background(), stored); err != nil {
+	if err := op.startNative(context.Background(), stored, ifaceOf(stored)); err != nil {
 		t.Fatalf("startNative: %v", err)
 	}
 	cmds := decodeBatchCommands(t, s.last())
@@ -268,7 +312,8 @@ func TestStartNative_IPv6WithoutWGToolFailsFast(t *testing.T) {
 	op := newStartTestOperator(t, s.srv.URL, poster, "2a02:6b8::1", 51820)
 	stubWGTool(t, log, "", nil)
 
-	err := op.startNative(context.Background(), startTestTunnel("[2a02:6b8::1]:51820"))
+	st := startTestTunnel("[2a02:6b8::1]:51820")
+	err := op.startNative(context.Background(), st, ifaceOf(st))
 	if err == nil || !strings.Contains(err.Error(), "wireguard-tools") {
 		t.Fatalf("want wireguard-tools hint error, got %v", err)
 	}
@@ -296,7 +341,8 @@ func TestStartNative_WGSetRetries(t *testing.T) {
 		return nil
 	})
 
-	if err := op.startNative(context.Background(), startTestTunnel("[2a02:6b8::1]:51820")); err != nil {
+	st := startTestTunnel("[2a02:6b8::1]:51820")
+	if err := op.startNative(context.Background(), st, ifaceOf(st)); err != nil {
 		t.Fatalf("startNative must survive transient wg set failures: %v", err)
 	}
 	if len(*calls) != 3 {
@@ -314,7 +360,8 @@ func TestStartNative_WGToolFailurePropagates(t *testing.T) {
 		return context.DeadlineExceeded
 	})
 
-	err := op.startNative(context.Background(), startTestTunnel("[2a02:6b8::1]:51820"))
+	st := startTestTunnel("[2a02:6b8::1]:51820")
+	err := op.startNative(context.Background(), st, ifaceOf(st))
 	if err == nil || !strings.Contains(err.Error(), "wg set") {
 		t.Fatalf("want wg set error, got %v", err)
 	}

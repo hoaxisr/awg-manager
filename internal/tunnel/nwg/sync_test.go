@@ -50,12 +50,13 @@ func newCaptureServer(t *testing.T) *captureServer {
 }
 
 // newSyncTestOperator builds the smallest OperatorNativeWG that SyncPeer
-// needs. queries/commands/kmod/hookNotifier stay nil — SyncPeer never
-// touches them.
+// needs. commands/kmod/hookNotifier stay nil — SyncPeer never touches them.
+// queries — для стража: перед командой в NDMS он подтверждает Wireguard3.
 func newSyncTestOperator(t *testing.T, srvURL string) *OperatorNativeWG {
 	t.Helper()
 	sem := transport.NewSemaphore(2)
 	o := &OperatorNativeWG{
+		queries:     guardQueries(),
 		transport:   transport.NewWithURL(srvURL, sem),
 		appLog:      logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps),
 		supportsASC: func() bool { return true }, // ASC — путь по умолчанию в тестах
@@ -77,7 +78,7 @@ func TestSyncPeer_NoPreviousKey_OnlyAddsPeer(t *testing.T) {
 		},
 	}
 
-	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, ""); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 	if len(cs.bodies) != 1 {
@@ -102,7 +103,7 @@ func TestSyncPeer_HostnameGoesToNDMSResolved(t *testing.T) {
 			Endpoint:  "vpn.example.com:51820",
 		},
 	}
-	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, ""); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 
@@ -130,7 +131,7 @@ func TestSyncPeer_ResolveFailureLeavesEndpointUntouched(t *testing.T) {
 			Endpoint:  "vpn.example.com:51820",
 		},
 	}
-	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, ""); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 
@@ -158,7 +159,7 @@ func TestSyncPeer_ProxyFirmwareLeavesEndpointToKmod(t *testing.T) {
 			Endpoint:  "vpn.example.com:51820",
 		},
 	}
-	if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, ""); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 
@@ -182,7 +183,7 @@ func TestSyncPeer_SameKey_DoesNotRemovePeer(t *testing.T) {
 		},
 	}
 
-	if err := op.SyncPeer(context.Background(), stored, sameKey); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, sameKey); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 	if len(cs.bodies) != 1 {
@@ -217,7 +218,7 @@ func TestSyncPrivateKey_SendsKeyAndSave(t *testing.T) {
 		},
 	}
 
-	if err := op.SyncPrivateKey(context.Background(), stored); err != nil {
+	if err := op.SyncPrivateKey(context.Background(), ifaceOf(stored), stored); err != nil {
 		t.Fatalf("SyncPrivateKey: %v", err)
 	}
 	if len(cs.bodies) != 1 {
@@ -261,7 +262,7 @@ func TestSyncPeer_DifferentPreviousKey_RemovesOldPeer(t *testing.T) {
 		},
 	}
 
-	if err := op.SyncPeer(context.Background(), stored, oldKey); err != nil {
+	if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, oldKey); err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
 	if len(cs.bodies) != 1 {

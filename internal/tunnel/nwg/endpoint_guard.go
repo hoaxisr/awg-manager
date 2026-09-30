@@ -318,7 +318,19 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 			if cur, ok := o.guardGet(id); !ok || cur.pubkey != e.pubkey || cur.iface != e.iface || cur.spec != e.spec {
 				continue
 			}
-			if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerEndpointLegacy(e.name, e.pubkey, expected)); err != nil {
+			// Команда по снятому интерфейсу создала бы его заново (F546).
+			// Список не прочитан — следующий проход; снят — запись стража
+			// бессмысленна, Start зарегистрирует заново.
+			iface, _, present, err := o.queries.Interfaces.Confirm(ctx, e.name)
+			if err != nil {
+				continue
+			}
+			if !present {
+				o.guardUnregister(id)
+				o.appLog.Warn("endpoint-guard", e.name, "интерфейса нет в NDMS — endpoint-страж снят")
+				continue
+			}
+			if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerEndpoint(iface, e.pubkey, expected)); err != nil {
 				o.appLog.Warn("endpoint-guard", e.name, "обновление endpoint в NDMS не удалось: "+err.Error())
 				continue
 			}

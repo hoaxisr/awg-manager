@@ -14,6 +14,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/cache"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/opkgtun"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
@@ -454,7 +455,10 @@ func shouldSyncRuntime(stored *storage.AWGTunnel, stateInfo tunnel.StateInfo) bo
 func (s *ServiceImpl) syncDescription(ctx context.Context, scope string, stored *storage.AWGTunnel, prevName, name string) {
 	var err error
 	if s.isNativeWG(stored) && s.nwgOperator != nil {
-		err = s.nwgOperator.UpdateDescription(ctx, stored, name)
+		var iface query.Confirmed
+		if iface, err = s.nwgOperator.RequireIface(ctx, stored); err == nil {
+			err = s.nwgOperator.UpdateDescription(ctx, iface, name)
+		}
 	} else if s.legacyOperator != nil {
 		err = s.legacyOperator.UpdateDescription(ctx, stored.ID, prevName, name)
 	}
@@ -578,8 +582,25 @@ func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *st
 		return nil
 	}
 
+	// Интерфейс подтверждается один раз на правку и только если в NDMS есть
+	// что слать. Снят — явная ошибка: handler fail-closed не сохранит
+	// карточку, а команды по нему создали бы его заново (F546).
+	var iface query.Confirmed
+	if oldStored.Interface.PrivateKey != newStored.Interface.PrivateKey ||
+		oldStored.Interface.Address != newStored.Interface.Address ||
+		oldStored.Interface.MTU != newStored.Interface.MTU ||
+		oldStored.Interface.DNS != newStored.Interface.DNS ||
+		!awgPeerEqual(oldStored.Peer, newStored.Peer) ||
+		!awgParamsEqual(oldStored.Interface, newStored.Interface) {
+		var err error
+		if iface, err = s.nwgOperator.RequireIface(ctx, newStored); err != nil {
+			s.logWarn("update", tunnelID, "NDMS sync: "+err.Error())
+			return err
+		}
+	}
+
 	if oldStored.Interface.PrivateKey != newStored.Interface.PrivateKey {
-		if err := s.nwgOperator.SyncPrivateKey(ctx, newStored); err != nil {
+		if err := s.nwgOperator.SyncPrivateKey(ctx, iface, newStored); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync NWG private-key: "+err.Error())
 			errs = append(errs, fmt.Errorf("sync private-key: %w", err))
 		}
@@ -587,7 +608,7 @@ func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *st
 
 	if oldStored.Interface.Address != newStored.Interface.Address ||
 		oldStored.Interface.MTU != newStored.Interface.MTU {
-		if err := s.nwgOperator.SyncAddressMTU(ctx, newStored); err != nil {
+		if err := s.nwgOperator.SyncAddressMTU(ctx, iface, newStored); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync NWG address/MTU: "+err.Error())
 			errs = append(errs, fmt.Errorf("sync address/MTU: %w", err))
 		}
@@ -596,21 +617,21 @@ func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *st
 	if oldStored.Interface.DNS != newStored.Interface.DNS {
 		oldList := tunnel.ParseDNSList(oldStored.Interface.DNS)
 		newList := tunnel.ParseDNSList(newStored.Interface.DNS)
-		if err := s.nwgOperator.SyncDNS(ctx, newStored, oldList, newList); err != nil {
+		if err := s.nwgOperator.SyncDNS(ctx, iface, oldList, newList); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync NWG DNS: "+err.Error())
 			errs = append(errs, fmt.Errorf("sync DNS: %w", err))
 		}
 	}
 
 	if !awgPeerEqual(oldStored.Peer, newStored.Peer) {
-		if err := s.nwgOperator.SyncPeer(ctx, newStored, oldStored.Peer.PublicKey); err != nil {
+		if err := s.nwgOperator.SyncPeer(ctx, iface, newStored, oldStored.Peer.PublicKey); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync NWG peer: "+err.Error())
 			errs = append(errs, fmt.Errorf("sync peer: %w", err))
 		}
 	}
 
 	if !awgParamsEqual(oldStored.Interface, newStored.Interface) {
-		if err := s.nwgOperator.SyncAWGParams(ctx, newStored); err != nil {
+		if err := s.nwgOperator.SyncAWGParams(ctx, iface, newStored); err != nil {
 			// AWG params may need restart on some firmware — log Warn but
 			// don't fail the entire Update; user gets the rest of the diff
 			// applied and a restart hint.
@@ -1230,30 +1251,37 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 			if err := s.nwgOperator.Stop(ctx, stored); err != nil {
 				s.logWarn("replace-config", tunnelID, "Stop before peer sync failed: "+err.Error())
 			}
-		} else if oldDNS != stored.Interface.DNS {
-			// Tunnel was not running — handler skipped Stop (which would
-			// clear OLD DNS) and will skip Start (which would set NEW DNS).
-			// Sync DNS here so NDMS doesn't keep orphan entries from the
-			// previous conf.
-			oldList := tunnel.ParseDNSList(oldDNS)
-			newList := tunnel.ParseDNSList(stored.Interface.DNS)
-			if err := s.nwgOperator.SyncDNS(ctx, stored, oldList, newList); err != nil {
-				s.logWarn("replace-config", tunnelID, "SyncDNS failed: "+err.Error())
+		}
+		// Один список на все синхронизации ниже. Интерфейс снят или список
+		// не прочитан — в NDMS не шлём ничего (F546); запись уже сохранена.
+		if iface, err := s.nwgOperator.RequireIface(ctx, stored); err != nil {
+			s.logWarn("replace-config", tunnelID, "NDMS sync skipped: "+err.Error())
+		} else {
+			if !wasNativeRunning && oldDNS != stored.Interface.DNS {
+				// Tunnel was not running — handler skipped Stop (which would
+				// clear OLD DNS) and will skip Start (which would set NEW DNS).
+				// Sync DNS here so NDMS doesn't keep orphan entries from the
+				// previous conf.
+				oldList := tunnel.ParseDNSList(oldDNS)
+				newList := tunnel.ParseDNSList(stored.Interface.DNS)
+				if err := s.nwgOperator.SyncDNS(ctx, iface, oldList, newList); err != nil {
+					s.logWarn("replace-config", tunnelID, "SyncDNS failed: "+err.Error())
+				}
 			}
-		}
-		if err := s.nwgOperator.SyncPrivateKey(ctx, stored); err != nil {
-			s.logWarn("replace-config", tunnelID, "SyncPrivateKey failed: "+err.Error())
-		}
-		if err := s.nwgOperator.SyncPeer(ctx, stored, oldPublicKey); err != nil {
-			s.logWarn("replace-config", tunnelID, "SyncPeer failed: "+err.Error())
-		}
-		if err := s.nwgOperator.SyncAddressMTU(ctx, stored); err != nil {
-			s.logWarn("replace-config", tunnelID, "SyncAddressMTU failed: "+err.Error())
-		}
-		// Update description if name changed
-		if newName != "" {
-			if err := s.nwgOperator.UpdateDescription(ctx, stored, newName); err != nil {
-				s.logWarn("replace-config", tunnelID, "UpdateDescription failed: "+err.Error())
+			if err := s.nwgOperator.SyncPrivateKey(ctx, iface, stored); err != nil {
+				s.logWarn("replace-config", tunnelID, "SyncPrivateKey failed: "+err.Error())
+			}
+			if err := s.nwgOperator.SyncPeer(ctx, iface, stored, oldPublicKey); err != nil {
+				s.logWarn("replace-config", tunnelID, "SyncPeer failed: "+err.Error())
+			}
+			if err := s.nwgOperator.SyncAddressMTU(ctx, iface, stored); err != nil {
+				s.logWarn("replace-config", tunnelID, "SyncAddressMTU failed: "+err.Error())
+			}
+			// Update description if name changed
+			if newName != "" {
+				if err := s.nwgOperator.UpdateDescription(ctx, iface, newName); err != nil {
+					s.logWarn("replace-config", tunnelID, "UpdateDescription failed: "+err.Error())
+				}
 			}
 		}
 		if wasNativeRunning {

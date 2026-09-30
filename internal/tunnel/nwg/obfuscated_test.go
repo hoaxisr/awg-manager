@@ -133,17 +133,11 @@ func newCaptureNDMS(t *testing.T) *captureNDMS {
 			_ = json.NewEncoder(w).Encode(map[string]any{"message": lines})
 			return
 		}
-		// Список интерфейсов согласован с ifaceResp: интерфейс, на который
-		// отвечает show interface, есть и в списке, как на роутере (F546).
+		// Список интерфейсов: туннель и WAN'ы, через которые тесты ставят
+		// host-route, — команды по ним идут только после подтверждения (F546).
 		if r.Method == http.MethodGet && r.URL.Path == "/show/interface/" {
-			c.mu.Lock()
-			has := c.ifaceResp != ""
-			c.mu.Unlock()
-			if has {
-				_, _ = w.Write([]byte(`{"Wireguard3":{"id":"Wireguard3","type":"Wireguard"}}`))
-			} else {
-				_, _ = w.Write([]byte(`{}`))
-			}
+			_, _ = w.Write([]byte(`{"Wireguard3":{"id":"Wireguard3","type":"Wireguard"},
+				"ISP0":{"id":"ISP0"},"ISP1":{"id":"ISP1"},"PPPoE0":{"id":"PPPoE0"}}`))
 			return
 		}
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/show/ip/route") {
@@ -291,7 +285,7 @@ func TestStartObfuscated_SameIPForRelayAndRoute(t *testing.T) {
 	fr := newFakeObfRunner()
 	op := newObfOperator(t, n, fr)
 	op.resolveFn = sequenceResolver("198.51.100.1", "198.51.100.2")
-	if err := op.startObfuscated(context.Background(), obfStored()); err != nil {
+	if err := op.startObfuscated(context.Background(), obfStored(), ifaceOf(obfStored())); err != nil {
 		t.Fatal(err)
 	}
 	route := n.lastRouteHost()
@@ -309,7 +303,7 @@ func TestStartObfuscated_RelayFailureKeepsPrevRouteIP(t *testing.T) {
 		start func(op *OperatorNativeWG, st *storage.AWGTunnel) error
 	}{
 		{"Start", func(op *OperatorNativeWG, st *storage.AWGTunnel) error {
-			return op.startObfuscated(context.Background(), st)
+			return op.startObfuscated(context.Background(), st, ifaceOf(st))
 		}},
 		{"SyncObfuscator", func(op *OperatorNativeWG, st *storage.AWGTunnel) error {
 			_, err := op.SyncObfuscator(context.Background(), st)
@@ -348,15 +342,15 @@ func TestStartObfuscated_BatchFailureKeepsPrevRouteIP(t *testing.T) {
 	fr := newFakeObfRunner()
 	op := newObfOperator(t, n, fr)
 	op.resolveFn = sequenceResolver("198.51.100.1", "198.51.100.2")
-	if err := op.startObfuscated(context.Background(), obfStored()); err != nil {
+	if err := op.startObfuscated(context.Background(), obfStored(), ifaceOf(obfStored())); err != nil {
 		t.Fatal(err)
 	}
 	n.failBatch = true
-	if err := op.startObfuscated(context.Background(), obfStored()); err == nil {
+	if err := op.startObfuscated(context.Background(), obfStored(), ifaceOf(obfStored())); err == nil {
 		t.Fatal("ждали отказ батча")
 	}
 	n.failBatch = false
-	if err := op.startObfuscated(context.Background(), obfStored()); err != nil {
+	if err := op.startObfuscated(context.Background(), obfStored(), ifaceOf(obfStored())); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(n.joined(), `"host":"198.51.100.1","interface":"ISP0","no":true`) {
@@ -898,8 +892,7 @@ func TestStartObfuscated_UnroutableStoredIPIsNotRemoved(t *testing.T) {
 }
 
 func TestStartPlainWG_WithoutObfuscator_StillRejected(t *testing.T) {
-	op := &OperatorNativeWG{appLog: logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps)}
-	t.Cleanup(op.Close)
+	op := newObfOperator(t, newCaptureNDMS(t), newFakeObfRunner())
 	st := obfStored()
 	st.Obfuscator = nil
 	if err := op.Start(context.Background(), st); err != tunnel.ErrNotObfuscated {

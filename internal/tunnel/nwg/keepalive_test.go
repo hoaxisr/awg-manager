@@ -65,7 +65,7 @@ func TestSyncPeer_KeepaliveGoesToNDMSAsNumber(t *testing.T) {
 					PersistentKeepalive: tc.stored,
 				},
 			}
-			if err := op.SyncPeer(context.Background(), stored, ""); err != nil {
+			if err := op.SyncPeer(context.Background(), ifaceOf(stored), stored, ""); err != nil {
 				t.Fatalf("SyncPeer: %v", err)
 			}
 			assertKeepaliveInBatch(t, cs.bodies, tc.want)

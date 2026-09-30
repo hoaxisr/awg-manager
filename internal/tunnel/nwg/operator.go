@@ -194,11 +194,13 @@ func (o *OperatorNativeWG) createViaImport(ctx context.Context, stored *storage.
 
 	// Import via RCI — NDMS creates the interface and parses all params.
 	// ImportWireguardConfig is a multipart-upload helper with no new-layer equivalent yet.
-	res, err := o.commands.Wireguard.ImportWireguardConfigLegacy(ctx, []byte(confData), stored.Name+".conf")
+	// Импорт сам подтверждает созданный WireguardN по свежему списку.
+	res, err := o.commands.Wireguard.ImportWireguardConfig(ctx, []byte(confData), stored.Name+".conf")
 	if err != nil {
 		return 0, fmt.Errorf("import wireguard config: %w", err)
 	}
-	ndmsName := res.Created
+	iface := res.Created
+	ndmsName := iface.Name()
 
 	// The router may create the interface yet report that its config collides
 	// with an existing one (same keys) — surface it so the context is not lost.
@@ -221,26 +223,17 @@ func (o *OperatorNativeWG) createViaImport(ctx context.Context, stored *storage.
 
 	// Post-import settings that aren't in .conf
 	cmds := []any{
-		payloads.CmdInterfaceDescriptionLegacy(ndmsName, stored.Name),
-		payloads.CmdInterfaceSecurityLevelLegacy(ndmsName, "public"),
-		payloads.CmdInterfaceIPGlobalLegacy(ndmsName, true),
-		payloads.CmdInterfaceAdjustMSSLegacy(ndmsName, true),
+		payloads.CmdInterfaceDescription(iface, stored.Name),
+		payloads.CmdInterfaceSecurityLevel(iface, "public"),
+		payloads.CmdInterfaceIPGlobal(iface, true),
+		payloads.CmdInterfaceAdjustMSS(iface, true),
 		payloads.CmdSave(),
 	}
 
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
-		// Cleanup on failure
-		cleanup := []any{
-			payloads.CmdInterfaceDeleteLegacy(ndmsName),
-			payloads.CmdSave(),
-		}
-		_, _ = o.transport.PostBatch(ctx, cleanup)
+		o.cleanupCreated(ctx, iface)
 		return 0, fmt.Errorf("post-import settings: %w", err)
 	}
-
-	// Keep the interface cache coherent with the freshly-imported interface
-	// (same rationale as the batch path — issue #255).
-	o.queries.Interfaces.Invalidate(ndmsName)
 
 	o.appLog.Full("create", stored.Name, fmt.Sprintf("Created NDMS interface %s via import", ndmsName))
 	o.appLog.Info("create", ndmsName, "via import path")
@@ -264,18 +257,32 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 		return 0, fmt.Errorf("resolve endpoint: %w", err)
 	}
 
+	// Создание — отдельной командой, настройки — только по подтверждению из
+	// свежего списка: в одном пакете с созданием они шли бы по имени, которого
+	// никто не видел. Подтверждение же кладёт запись в карту, и следующий
+	// nextFreeIndex видит индекс занятым без хука ifcreated (#255).
+	if _, err := o.transport.PostBatch(ctx, []any{payloads.CmdInterfaceCreate(ndmsName)}); err != nil {
+		return 0, fmt.Errorf("create %s: %w", ndmsName, err)
+	}
+	iface, _, ok, err := o.queries.Interfaces.Confirm(ctx, ndmsName)
+	if err != nil {
+		return 0, fmt.Errorf("create: %w", err)
+	}
+	if !ok {
+		return 0, fmt.Errorf("create %s: NDMS принял команду, но записи в списке нет", ndmsName)
+	}
+
 	// Маска — из пользовательского CIDR (голый IP → /32): /24 и т.п. дают
 	// connected-маршрут на туннельную подсеть (LAN-to-LAN, issue #531).
 	ipv4Addr, ipv4Mask := splitAddressMask(extractIPv4(stored.Interface.Address))
 	cmds := []any{
-		payloads.CmdInterfaceCreate(ndmsName),
-		payloads.CmdInterfaceDescriptionLegacy(ndmsName, stored.Name),
-		payloads.CmdInterfaceSecurityLevelLegacy(ndmsName, "public"),
-		payloads.CmdInterfaceIPAddressLegacy(ndmsName, ipv4Addr, ipv4Mask),
-		payloads.CmdInterfaceMTULegacy(ndmsName, stored.Interface.MTU),
-		payloads.CmdInterfaceAdjustMSSLegacy(ndmsName, true),
-		payloads.CmdInterfaceIPGlobalLegacy(ndmsName, true),
-		payloads.CmdWireguardPrivateKeyLegacy(ndmsName, stored.Interface.PrivateKey),
+		payloads.CmdInterfaceDescription(iface, stored.Name),
+		payloads.CmdInterfaceSecurityLevel(iface, "public"),
+		payloads.CmdInterfaceIPAddress(iface, ipv4Addr, ipv4Mask),
+		payloads.CmdInterfaceMTU(iface, stored.Interface.MTU),
+		payloads.CmdInterfaceAdjustMSS(iface, true),
+		payloads.CmdInterfaceIPGlobal(iface, true),
+		payloads.CmdWireguardPrivateKey(iface, stored.Interface.PrivateKey),
 	}
 
 	// DNS
@@ -287,14 +294,14 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 			}
 		}
 		if len(servers) > 0 {
-			cmds = append(cmds, payloads.CmdInterfaceDNSLegacy(ndmsName, servers))
+			cmds = append(cmds, payloads.CmdInterfaceDNS(iface, servers))
 		}
 	}
 
 	// IPv6 if present
 	ipv6Addr := extractIPv6(stored.Interface.Address)
 	if ipv6Addr != "" {
-		cmds = append(cmds, payloads.CmdInterfaceIPv6AddressLegacy(ndmsName, ipv6Addr))
+		cmds = append(cmds, payloads.CmdInterfaceIPv6Address(iface, ipv6Addr))
 	}
 
 	// Peer. Endpoint на этапе create — временный (Start переставит его на
@@ -322,15 +329,10 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	if stored.Peer.PresharedKey != "" {
 		peerCfg.PresharedKey = stored.Peer.PresharedKey
 	}
-	cmds = append(cmds, payloads.CmdWireguardPeerLegacy(ndmsName, peerCfg), payloads.CmdSave())
+	cmds = append(cmds, payloads.CmdWireguardPeer(iface, peerCfg), payloads.CmdSave())
 
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
-		// Cleanup on failure
-		cleanup := []any{
-			payloads.CmdInterfaceDeleteLegacy(ndmsName),
-			payloads.CmdSave(),
-		}
-		_, _ = o.transport.PostBatch(ctx, cleanup)
+		o.cleanupCreated(ctx, iface)
 		return 0, fmt.Errorf("create batch: %w", err)
 	}
 
@@ -341,22 +343,44 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 		if ascJSON, err := buildASCJSON(&stored.Interface, o.asc3()); err != nil {
 			o.appLog.Warn("set-asc-params", stored.Name, err.Error())
 		} else if ascJSON != nil {
-			if err := o.commands.Wireguard.SetASCParamsLegacy(ctx, ndmsName, ascJSON); err != nil {
+			if err := o.commands.Wireguard.SetASCParams(ctx, iface, ascJSON); err != nil {
 				o.appLog.Warn("set-asc-params", "", "RCI failed (non-fatal): "+err.Error())
 			}
 		}
 	}
 
-	// Refresh the interface cache so the next nextFreeIndex sees this slot
-	// as occupied. Without it, back-to-back creates (no Start in between)
-	// re-read the stale map and allocate the same index — issue #255.
-	if _, err := o.queries.Interfaces.Refresh(ctx, ndmsName); err != nil {
-		o.appLog.Warn("create", ndmsName, "interface cache refresh failed: "+err.Error())
-	}
-
 	o.appLog.Full("create", stored.Name, fmt.Sprintf("Creating NDMS interface %s", ndmsName))
 	o.appLog.Info("create", ndmsName, "interface created")
 	return idx, nil
+}
+
+// cleanupCreated сносит только что созданный интерфейс, чьи настройки NDMS
+// отверг. Снят — запись забывается сразу, не дожидаясь хука ifdestroyed.
+func (o *OperatorNativeWG) cleanupCreated(ctx context.Context, iface query.Confirmed) {
+	if _, err := o.transport.PostBatch(ctx, []any{payloads.CmdInterfaceDelete(iface), payloads.CmdSave()}); err == nil {
+		o.queries.Interfaces.Forget(iface.Name())
+	}
+}
+
+// confirmIface подтверждает интерфейс туннеля по свежему списку NDMS (F546).
+// ok=false — записи нет: любая команда `interface WireguardN …` создала бы
+// его заново.
+func (o *OperatorNativeWG) confirmIface(ctx context.Context, stored *storage.AWGTunnel) (query.Confirmed, bool, error) {
+	c, _, ok, err := o.queries.Interfaces.Confirm(ctx, NewNWGNames(stored.NWGIndex).NDMSName)
+	return c, ok, err
+}
+
+// RequireIface — confirmIface для действий, которым интерфейс нужен: записи
+// нет — tunnel.ErrInterfaceGone с именем. Список не прочитан — ошибка.
+func (o *OperatorNativeWG) RequireIface(ctx context.Context, stored *storage.AWGTunnel) (query.Confirmed, error) {
+	iface, ok, err := o.confirmIface(ctx, stored)
+	if err != nil {
+		return query.Confirmed{}, err
+	}
+	if !ok {
+		return query.Confirmed{}, fmt.Errorf("%s: %w", NewNWGNames(stored.NWGIndex).NDMSName, tunnel.ErrInterfaceGone)
+	}
+	return iface, nil
 }
 
 // useASC сообщает, идёт ли ИМЕННО ЭТОТ туннель нативным путём ASC.
@@ -410,10 +434,18 @@ func ascCoversConfig(iface *storage.AWGInterface, supportsASC, ascKnowsAWG3 bool
 // On older firmware: awg_proxy.ko creates a local UDP proxy, peer endpoint is
 // set to 127.0.0.1:proxy_port, and the proxy forwards obfuscated traffic.
 func (o *OperatorNativeWG) Start(ctx context.Context, stored *storage.AWGTunnel) error {
+	// Ни одной команды и ни одного слота до подтверждения: снятый WireguardN
+	// любая команда создала бы заново, а по непрочитанному списку старт мог
+	// бы уйти поверх живого туннеля вслепую (F546, решение 3).
+	iface, err := o.RequireIface(ctx, stored)
+	if err != nil {
+		return fmt.Errorf("start: %w", err)
+	}
+
 	// Обфускацию делает userspace-релей, WireGuard под ним обычный — гейт
 	// по AWG-параметрам к этому пути не относится.
 	if stored.Obfuscator != nil {
-		return o.startObfuscated(ctx, stored)
+		return o.startObfuscated(ctx, stored, iface)
 	}
 
 	// Block plain WireGuard configs — user must add AWG obfuscation params first
@@ -422,14 +454,14 @@ func (o *OperatorNativeWG) Start(ctx context.Context, stored *storage.AWGTunnel)
 	}
 
 	if o.useASC(&stored.Interface) {
-		return o.startNative(ctx, stored)
+		return o.startNative(ctx, stored, iface)
 	}
-	return o.startProxy(ctx, stored)
+	return o.startProxy(ctx, stored, iface)
 }
 
 // startNative starts a tunnel on firmware with native ASC support (>= 5.01.A.4).
 // No awg_proxy needed — NDMS handles obfuscation via ASC params.
-func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGTunnel) error {
+func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGTunnel, iface query.Confirmed) error {
 	names := NewNWGNames(stored.NWGIndex)
 	pubkey := stored.Peer.PublicKey
 
@@ -451,7 +483,7 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 		return fmt.Errorf("build ASC params: %w", err)
 	}
 	if ascJSON != nil {
-		if err := o.commands.Wireguard.SetASCParamsLegacy(ctx, names.NDMSName, ascJSON); err != nil {
+		if err := o.commands.Wireguard.SetASCParams(ctx, iface, ascJSON); err != nil {
 			o.appLog.Warn("sync-asc", names.NDMSName, err.Error())
 		}
 	}
@@ -487,12 +519,12 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 	}
 
 	// Sync address/MTU from storage
-	if err := o.SyncAddressMTU(ctx, stored); err != nil {
+	if err := o.SyncAddressMTU(ctx, iface, stored); err != nil {
 		o.appLog.Warn("sync-address-mtu", names.NDMSName, "on start: "+err.Error())
 	}
 
 	// Register DNS servers with the router's DNS proxy
-	if err := o.SyncDNS(ctx, stored, nil, tunnel.ParseDNSList(stored.Interface.DNS)); err != nil {
+	if err := o.SyncDNS(ctx, iface, nil, tunnel.ParseDNSList(stored.Interface.DNS)); err != nil {
 		o.appLog.Warn("apply-dns", names.NDMSName, err.Error())
 	}
 
@@ -510,9 +542,9 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 		rciEndpoint = ndmsEndpointPlaceholder
 	}
 	cmds := []any{
-		payloads.CmdWireguardPeerEndpointLegacy(names.NDMSName, pubkey, rciEndpoint),
-		payloads.CmdWireguardPeerConnectLegacy(names.NDMSName, pubkey, stored.ISPInterface),
-		payloads.CmdInterfaceUpLegacy(names.NDMSName, true),
+		payloads.CmdWireguardPeerEndpoint(iface, pubkey, rciEndpoint),
+		payloads.CmdWireguardPeerConnect(iface, pubkey, stored.ISPInterface),
+		payloads.CmdInterfaceUp(iface, true),
 	}
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		return fmt.Errorf("start native: %w", err)
@@ -571,7 +603,7 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 
 // startProxy starts a tunnel on older firmware via awg_proxy.ko.
 // Peer endpoint is redirected to 127.0.0.1:proxy_port.
-func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTunnel) error {
+func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTunnel, iface query.Confirmed) error {
 	names := NewNWGNames(stored.NWGIndex)
 	pubkey := stored.Peer.PublicKey
 
@@ -590,7 +622,7 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 		// параметрами ASC прошивка обфусцирует сама, а kmod наложит свою
 		// обфускацию поверх; на выходе мусор, который снаружи выглядит как
 		// живой туннель без единого прошедшего пакета.
-		if err := o.commands.Wireguard.ResetASCParamsLegacy(ctx, names.NDMSName); err != nil {
+		if err := o.commands.Wireguard.ResetASCParams(ctx, iface); err != nil {
 			return fmt.Errorf("снять параметры ASC перед переходом на awg_proxy: %w", err)
 		}
 	}
@@ -623,12 +655,12 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 	proxyEndpoint := fmt.Sprintf("127.0.0.1:%d", result.ListenPort)
 
 	// Sync address/MTU from storage
-	if err := o.SyncAddressMTU(ctx, stored); err != nil {
+	if err := o.SyncAddressMTU(ctx, iface, stored); err != nil {
 		o.appLog.Warn("sync-address-mtu", names.NDMSName, "on start: "+err.Error())
 	}
 
 	// Register DNS servers with the router's DNS proxy
-	if err := o.SyncDNS(ctx, stored, nil, tunnel.ParseDNSList(stored.Interface.DNS)); err != nil {
+	if err := o.SyncDNS(ctx, iface, nil, tunnel.ParseDNSList(stored.Interface.DNS)); err != nil {
 		o.appLog.Warn("apply-dns", names.NDMSName, err.Error())
 	}
 
@@ -638,9 +670,9 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 
 	// Batch: set proxy endpoint + connect + up
 	cmds := []any{
-		payloads.CmdWireguardPeerEndpointLegacy(names.NDMSName, pubkey, proxyEndpoint),
-		payloads.CmdWireguardPeerConnectLegacy(names.NDMSName, pubkey, stored.ISPInterface),
-		payloads.CmdInterfaceUpLegacy(names.NDMSName, true),
+		payloads.CmdWireguardPeerEndpoint(iface, pubkey, proxyEndpoint),
+		payloads.CmdWireguardPeerConnect(iface, pubkey, stored.ISPInterface),
+		payloads.CmdInterfaceUp(iface, true),
 	}
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		_ = o.kmod.RemoveTunnel(stored.ID)
@@ -678,10 +710,19 @@ func (o *OperatorNativeWG) SuspendProxy(ctx context.Context, stored *storage.AWG
 	// который зарегистрирует запись заново.
 	o.guardUnregister(stored.ID)
 
+	iface, ok, err := o.confirmIface(ctx, stored)
+	if err != nil {
+		return fmt.Errorf("suspend %s: %w", names.NDMSName, err)
+	}
+	if !ok {
+		o.appLog.Info("suspend", names.NDMSName, "интерфейса нет в NDMS — отключать нечего")
+		return nil
+	}
+
 	// 2. Disconnect peer — NDMS sets link: pending, connected: no.
 	// conf stays "running" so NDMS knows the tunnel wants to be up.
 	cmds := []any{
-		payloads.CmdWireguardPeerDisconnectLegacy(names.NDMSName, pubkey),
+		payloads.CmdWireguardPeerDisconnect(iface, pubkey),
 	}
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		o.appLog.Warn("suspend", names.NDMSName, "peer disconnect: "+err.Error())
@@ -698,38 +739,57 @@ func (o *OperatorNativeWG) SuspendProxy(ctx context.Context, stored *storage.AWG
 func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) error {
 	names := NewNWGNames(stored.NWGIndex)
 
+	// Локальные шаги (слот, страж, релей) — всегда; NDMS-часть — только по
+	// подтверждённому интерфейсу (F546, решение 4).
+	iface, ok, err := o.confirmIface(ctx, stored)
+	if err != nil {
+		o.stopLocal(ctx, stored)
+		return fmt.Errorf("stop %s: %w", names.NDMSName, err)
+	}
+	if !ok {
+		o.stopLocal(ctx, stored)
+		o.appLog.Info("stop", names.NDMSName, "интерфейса нет в NDMS — останавливать нечего")
+		return nil
+	}
+
 	o.appLog.Full("stop", stored.Name, "Interface down")
 
 	if o.hookNotifier != nil {
 		o.hookNotifier.ExpectHook(names.NDMSName, "disabled")
 	}
 	cmds := []any{
-		payloads.CmdInterfaceUpLegacy(names.NDMSName, false),
+		payloads.CmdInterfaceUp(iface, false),
 		payloads.CmdSave(),
 	}
 	_, _ = o.transport.PostBatch(ctx, cmds)
 
 	// Clear DNS servers from the router's DNS proxy
-	if err := o.SyncDNS(ctx, stored, tunnel.ParseDNSList(stored.Interface.DNS), nil); err != nil {
+	if err := o.SyncDNS(ctx, iface, tunnel.ParseDNSList(stored.Interface.DNS), nil); err != nil {
 		o.appLog.Warn("clear-dns", names.NDMSName, err.Error())
 	}
 	o.appLog.Full("stop", stored.Name, "DNS cleared")
 
-	// Слот снимаем всегда: на ASC-прошивке туннель мог идти через прокси
-	// (конфиг 3.x, см. useASC), а конфиг с тех пор мог смениться — гейт по
-	// текущему конфигу оставил бы слот-сироту. Для туннеля без слота
-	// RemoveTunnel — безопасный no-op, а брошенный слот держит порт, ест пул
-	// из kmodMaxSlots и навсегда откладывает апгрейд модуля: EnsureLoaded не
-	// делает rmmod, пока в /proc есть живые слоты.
+	o.stopLocal(ctx, stored)
+
+	o.appLog.Info("stop", names.NDMSName, "tunnel stopped")
+	return nil
+}
+
+// stopLocal — шаги остановки вне NDMS: слот kmod, страж, релей.
+//
+// Слот снимаем всегда: на ASC-прошивке туннель мог идти через прокси
+// (конфиг 3.x, см. useASC), а конфиг с тех пор мог смениться — гейт по
+// текущему конфигу оставил бы слот-сироту. Для туннеля без слота
+// RemoveTunnel — безопасный no-op, а брошенный слот держит порт, ест пул
+// из kmodMaxSlots и навсегда откладывает апгрейд модуля: EnsureLoaded не
+// делает rmmod, пока в /proc есть живые слоты.
+func (o *OperatorNativeWG) stopLocal(ctx context.Context, stored *storage.AWGTunnel) {
 	_ = o.kmod.RemoveTunnel(stored.ID)
 	o.guardUnregister(stored.ID)
 
 	if stored.Obfuscator != nil {
 		o.stopObfuscated(ctx, stored)
 	}
-
-	o.appLog.Info("stop", names.NDMSName, "tunnel stopped")
-	return nil
 }
 
 // Delete removes a NativeWG tunnel from NDMS completely.
@@ -746,17 +806,35 @@ func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel
 		obfuscator.RemoveConf(stored.ID)
 	}
 
-	// 2. Remove ping-check profile (before interface deletion)
-	if stored.PingCheck != nil && stored.PingCheck.Enabled {
-		_ = o.RemovePingCheck(ctx, stored)
+	// 2. NDMS-часть — только по подтверждённому интерфейсу. Список не
+	// прочитан — ошибка: запись туннеля остаётся для повтора (решение 4).
+	iface, ok, err := o.confirmIface(ctx, stored)
+	if err != nil {
+		return fmt.Errorf("delete %s: %w", names.NDMSName, err)
+	}
+	pingCheck := stored.PingCheck != nil && stored.PingCheck.Enabled
+	if !ok {
+		// Профиль ping-check живёт отдельно от интерфейса и переживает его.
+		if pingCheck {
+			_ = o.commands.PingCheck.RemoveOrphanProfile(ctx, pingCheckProfile(stored.ID))
+		}
+		o.appLog.Info("delete", names.NDMSName, "интерфейса нет в NDMS — снимать нечего")
+		return nil
 	}
 
-	// 3. Remove NDMS interface — cleans everything:
-	//    peer, DNS (ip + ipv6 name-server), ASC params, kernel Wireguard interface
-	_, _ = o.transport.Post(ctx, payloads.CmdInterfaceDeleteLegacy(names.NDMSName))
+	// 3. Remove ping-check profile (before interface deletion)
+	if pingCheck {
+		_ = o.commands.PingCheck.RemoveProfile(ctx, pingCheckProfile(stored.ID), iface)
+	}
 
-	// 4. Persist
-	_, _ = o.transport.Post(ctx, payloads.CmdSave())
+	// 4. Remove NDMS interface — cleans everything:
+	//    peer, DNS (ip + ipv6 name-server), ASC params, kernel Wireguard interface
+	if _, err := o.transport.PostBatch(ctx, []any{payloads.CmdInterfaceDelete(iface), payloads.CmdSave()}); err != nil && !isMissingInterface(err) {
+		// Живую запись не забываем: освободившийся индекс следующий Create
+		// занял бы поверх неё.
+		o.appLog.Warn("delete", names.NDMSName, "no interface: "+err.Error())
+		return fmt.Errorf("delete %s: %w", names.NDMSName, err)
+	}
 
 	// 5. Free the slot in the interface cache so the index can be reused
 	// without an AWGM restart — issue #255.
@@ -764,6 +842,20 @@ func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel
 
 	o.appLog.Info("delete", names.NDMSName, "tunnel deleted")
 	return nil
+}
+
+// isMissingInterface — NDMS ответил на снос «интерфейса нет»: снят до нас.
+func isMissingInterface(err error) bool {
+	var be *transport.BatchError
+	if !errors.As(err, &be) {
+		return false
+	}
+	for _, f := range be.Failures {
+		if strings.Contains(strings.ToLower(f.Message), "unable to find interface") {
+			return true
+		}
+	}
+	return false
 }
 
 // classifyNWGState decides the tunnel State for a NativeWG interface from parsed
@@ -903,19 +995,31 @@ func pingCheckProfile(tunnelID string) string {
 func (o *OperatorNativeWG) ConfigurePingCheck(ctx context.Context, stored *storage.AWGTunnel, cfg ndms.PingCheckConfig) error {
 	profile := pingCheckProfile(stored.ID)
 	ifaceName := NewNWGNames(stored.NWGIndex).NDMSName
+	iface, err := o.RequireIface(ctx, stored)
+	if err != nil {
+		o.appLog.Warn("configure-pingcheck", profile, err.Error())
+		return err
+	}
 	o.appLog.Info("configure-pingcheck", profile, fmt.Sprintf("iface=%s host=%s mode=%s", ifaceName, cfg.Host, cfg.Mode))
-	if err := o.commands.PingCheck.ConfigureProfileLegacy(ctx, profile, ifaceName, cfg); err != nil {
+	if err := o.commands.PingCheck.ConfigureProfile(ctx, profile, iface, cfg); err != nil {
 		o.appLog.Warn("configure-pingcheck", profile, err.Error())
 		return err
 	}
 	return nil
 }
 
-// RemovePingCheck removes the ping-check profile for a tunnel.
+// RemovePingCheck removes the ping-check profile for a tunnel. Интерфейса
+// нет — снимается только профиль: отвязывать не от чего.
 func (o *OperatorNativeWG) RemovePingCheck(ctx context.Context, stored *storage.AWGTunnel) error {
 	profile := pingCheckProfile(stored.ID)
-	ifaceName := NewNWGNames(stored.NWGIndex).NDMSName
-	return o.commands.PingCheck.RemoveProfileLegacy(ctx, profile, ifaceName)
+	iface, ok, err := o.confirmIface(ctx, stored)
+	if err != nil {
+		return fmt.Errorf("remove ping-check %s: %w", profile, err)
+	}
+	if !ok {
+		return o.commands.PingCheck.RemoveOrphanProfile(ctx, profile)
+	}
+	return o.commands.PingCheck.RemoveProfile(ctx, profile, iface)
 }
 
 // GetPingCheckStatus returns the current ping-check status for a tunnel.
@@ -1006,6 +1110,11 @@ func (o *OperatorNativeWG) RestoreKmodTunnel(ctx context.Context, stored *storag
 	if stored.Obfuscator != nil {
 		return nil // релей вместо kmod-слота; слот на loopback увёл бы WG в awg_proxy
 	}
+	// Слот под снятый интерфейс не собираем: endpoint в NDMS ставить некуда.
+	iface, err := o.RequireIface(ctx, stored)
+	if err != nil {
+		return fmt.Errorf("restore kmod: %w", err)
+	}
 	bindIface := o.ResolveActiveWAN(ctx, stored)
 
 	// Resolve with retry + cached IP fallback — boot DNS on the router may be
@@ -1026,7 +1135,7 @@ func (o *OperatorNativeWG) RestoreKmodTunnel(ctx context.Context, stored *storag
 	// Update NDMS peer endpoint to proxy address
 	names := NewNWGNames(stored.NWGIndex)
 	proxyEndpoint := fmt.Sprintf("127.0.0.1:%d", result.ListenPort)
-	_, err = o.transport.Post(ctx, payloads.CmdWireguardPeerEndpointLegacy(names.NDMSName, stored.Peer.PublicKey, proxyEndpoint))
+	_, err = o.transport.Post(ctx, payloads.CmdWireguardPeerEndpoint(iface, stored.Peer.PublicKey, proxyEndpoint))
 	if err != nil {
 		o.appLog.Warn("restore-kmod", names.NDMSName, "failed to update endpoint to "+proxyEndpoint+": "+err.Error())
 	}
@@ -1055,6 +1164,10 @@ func (o *OperatorNativeWG) SyncKmodSlot(ctx context.Context, stored *storage.AWG
 	}
 	if o.useASC(&stored.Interface) {
 		return nil
+	}
+	iface, err := o.RequireIface(ctx, stored)
+	if err != nil {
+		return fmt.Errorf("sync kmod slot: %w", err)
 	}
 	bindIface := o.ResolveActiveWAN(ctx, stored)
 
@@ -1097,7 +1210,7 @@ func (o *OperatorNativeWG) SyncKmodSlot(ctx context.Context, stored *storage.AWG
 	// listen port likely changed on rebuild — push it to NDMS so the
 	// kernel WG peer points at the new local proxy.
 	proxyEndpoint := fmt.Sprintf("127.0.0.1:%d", result.ListenPort)
-	if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerEndpointLegacy(names.NDMSName, stored.Peer.PublicKey, proxyEndpoint)); err != nil {
+	if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerEndpoint(iface, stored.Peer.PublicKey, proxyEndpoint)); err != nil {
 		o.appLog.Warn("sync-kmod-slot", names.NDMSName, "update peer endpoint to "+proxyEndpoint+": "+err.Error())
 	}
 
