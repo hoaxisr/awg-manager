@@ -435,8 +435,9 @@ func (s *InterfaceStore) GetDetails(ctx context.Context, name string) (*ndms.Int
 //   - passes the shape check but no such device exists in /sys/class/net
 //
 // Garbage triggers a one-shot resolver probe, memoised on the cached
-// entry. The resolver does not 404 on missing names (returns an empty
-// string), so no router-syslog noise is added.
+// entry. Резолвер спрашивается только о записи из списка: пишет ли он E в
+// журнал ndm на отсутствующее имя, на стенде не проверено (пункт 8
+// стенд-листа F546), поэтому отсутствующее имя до него не доходит.
 func (s *InterfaceStore) ResolveSystemName(ctx context.Context, ndmsName string) string {
 	if ndmsName == "" {
 		return ""
@@ -448,8 +449,9 @@ func (s *InterfaceStore) ResolveSystemName(ctx context.Context, ndmsName string)
 		return sysName
 	}
 	// Интерфейса нет в кэше — резолвер не спрашиваем: на отсутствующее имя
-	// NDMS пишет E `unable to find X in "Network::Interface::Base"` в свой
-	// журнал (F546), а запомнить ответ всё равно негде (rememberSystemName).
+	// NDMS, возможно, пишет E в свой журнал, как точечное чтение (F546; на
+	// стенде не проверено, пункт 8), а запомнить ответ всё равно негде
+	// (rememberSystemName).
 	if _, ok, err := s.Lookup(ctx, ndmsName); err != nil || !ok {
 		return ""
 	}
