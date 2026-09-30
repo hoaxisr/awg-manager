@@ -145,8 +145,11 @@ func TestConfirmingOpkgTun_TeardownAbsentIsNil(t *testing.T) {
 
 // Static NAT: снятие при отсутствии ЛЮБОГО из двух — nil без команды.
 func TestConfirmingSegmentNAT_RemoveStaticOneAbsentIsNil(t *testing.T) {
-	f := ndmsquery.NewFakeNDMS(ndms.Interface{ID: "Bridge1", Type: "Bridge"}) // PPPoE0 нет
-	if err := newConfirmAdapters(t, f).nat.RemoveStaticNAT(context.Background(), "Bridge1", "PPPoE0"); err != nil {
+	// Bridge0, а не Bridge1: имя Bridge1 таблица ndms.KernelName не знает
+	// (R32), и резолвер вслед за списком спросил бы его — чтение, не команда,
+	// но len(Posts) его посчитал бы.
+	f := ndmsquery.NewFakeNDMS(ndms.Interface{ID: "Bridge0", Type: "Bridge"}) // PPPoE0 нет
+	if err := newConfirmAdapters(t, f).nat.RemoveStaticNAT(context.Background(), "Bridge0", "PPPoE0"); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.Posts) != 0 {
