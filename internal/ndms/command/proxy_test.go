@@ -2,6 +2,9 @@ package command
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -75,10 +78,17 @@ func TestProxyCommands_DeleteProxy_NoShowByNameAfterDelete(t *testing.T) {
 	// Список интерфейсов есть — иначе bootstrap кэша падает раньше, чем
 	// доходит до запроса по имени, и тест зелен при любом коде.
 	g.SetJSON("/show/interface/", `{"Proxy0":{"id":"Proxy0","type":"Proxy","state":"up"}}`)
+	// Любой POST слоя запросов, кроме резолвера имён, — сюда (точечных
+	// хелперов у FakeGetter нет, F546).
+	var posts atomic.Int32
+	g.SetPostHandler(func(any) (json.RawMessage, error) {
+		posts.Add(1)
+		return nil, errors.New("unexpected query POST")
+	})
 	if err := cmds.DeleteProxy(context.Background(), confirmed(t, "Proxy0")); err != nil {
 		t.Fatalf("DeleteProxy: %v", err)
 	}
-	if n := g.PostInterfaceCalls("Proxy0"); n != 0 {
+	if n := posts.Load(); n != 0 {
 		t.Fatalf("после удаления ушло %d запросов show interface Proxy0 — NDMS ответит «unable to find»", n)
 	}
 }
@@ -113,7 +123,7 @@ func TestCreateProxy_ReturnsConfirmed(t *testing.T) {
 	if err != nil || c.Name() != "Proxy0" {
 		t.Fatalf("c=%v err=%v", c, err)
 	}
-	if _, ok, _ := q.Interfaces.Lookup(context.Background(), "Proxy0"); !ok {
+	if rec, _ := q.Interfaces.Get(context.Background(), "Proxy0"); rec == nil {
 		t.Fatal("Confirm после создания обязан положить запись в кэш")
 	}
 	if f.Phantoms != 0 || f.E != 0 {
@@ -131,8 +141,8 @@ func TestDeleteProxy_Forgets(t *testing.T) {
 	if err := cmds.Proxies.DeleteProxy(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, _ := q.Interfaces.Lookup(context.Background(), "Proxy0"); ok || f.Has("Proxy0") {
-		t.Fatalf("запись осталась: cache=%v ndms=%v", ok, f.Has("Proxy0"))
+	if rec, _ := q.Interfaces.Get(context.Background(), "Proxy0"); rec != nil || f.Has("Proxy0") {
+		t.Fatalf("запись осталась: cache=%v ndms=%v", rec != nil, f.Has("Proxy0"))
 	}
 	if f.Phantoms != 0 || f.E != 0 {
 		t.Fatalf("phantoms=%d E=%d", f.Phantoms, f.E)

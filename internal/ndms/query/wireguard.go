@@ -123,7 +123,7 @@ type WGServerStore struct {
 
 	getter     Getter
 	log        Logger
-	interfaces *InterfaceStore // единый шлюз чтения по имени + ResolveSystemName
+	interfaces *InterfaceStore // снимок полного списка + ResolveSystemName
 
 	// per-name server snapshot (runtime only).
 	items *cache.KeyedStore[string, *ndms.WireguardServer]
@@ -143,10 +143,10 @@ func NewWGServerStore(g Getter, log Logger, ifaces *InterfaceStore) *WGServerSto
 }
 
 // NewWGServerStoreWithTTL is the test-friendly constructor. ifaces обязателен:
-// чтение по имени идёт только через него (F546).
+// runtime серверов — из его снимка списка (F546). rcTTL — возраст дерева rc.
 func NewWGServerStoreWithTTL(g Getter, log Logger, ifaces *InterfaceStore, listTTL, itemTTL, rcTTL time.Duration) *WGServerStore {
 	if ifaces == nil {
-		panic("query.NewWGServerStore: ifaces обязателен — чтение по имени идёт только через InterfaceStore (F546)")
+		panic("query.NewWGServerStore: ifaces обязателен — runtime читается из снимка InterfaceStore (F546)")
 	}
 	if log == nil {
 		log = NopLogger()

@@ -52,7 +52,7 @@ func TestScenario_ExternalRemoveDelayedHook_DeleteThenHook(t *testing.T) {
 		t.Fatalf("поздний ifdestroyed: %d списков, E=%d, pending=%v; want 0, 0, false",
 			got, f.E, o.queries.Interfaces.HasPending())
 	}
-	if _, ok, _ := o.queries.Interfaces.Lookup(ctx, "Wireguard0"); ok {
+	if rec, _ := o.queries.Interfaces.Get(ctx, "Wireguard0"); rec != nil {
 		t.Fatal("снятый Wireguard0 остался в кэше")
 	}
 }

@@ -167,93 +167,16 @@ func (g *restoreLiveGetter) applyPost(payload map[string]interface{}) {
 	}
 }
 
+// GetRaw/Post — точечных чтений интерфейса нет (F546): список — Get, имена
+// ядра — таблица ndms.KernelName.
 func (g *restoreLiveGetter) GetRaw(ctx context.Context, path string) ([]byte, error) {
-	if !strings.HasPrefix(path, "/show/interface/") {
-		return nil, errors.New("unsupported path: " + path)
-	}
-	name := strings.TrimPrefix(path, "/show/interface/")
-	ent, ok := g.live[name]
-	if !ok || !ent.Present {
-		return []byte{}, nil
-	}
-	addr := ent.Address
-	if addr == "" {
-		addr = "10.0.0.1"
-	}
-	mask := ent.Mask
-	if mask == "" {
-		mask = "255.255.255.0"
-	}
-	wire := map[string]any{
-		"id":             name,
-		"interface-name": name,
-		"type":           "Wireguard",
-		"description":    ManagedServerDescription,
-		"address":        addr,
-		"mask":           mask,
-		"state":          "up",
-		"link":           "up",
-		"connected":      "yes",
-		"wireguard": map[string]any{
-			"public-key": ent.PublicKey,
-			"peer":       []map[string]any{},
-		},
-	}
-	return json.Marshal(wire)
+	return nil, errors.New("unsupported path: " + path)
 }
 
 func (g *restoreLiveGetter) Post(ctx context.Context, payload any) (json.RawMessage, error) {
-	top, ok := payload.(map[string]any)
-	if !ok {
-		return nil, errors.New("unsupported payload")
-	}
-	show, ok := top["show"].(map[string]any)
-	if !ok {
-		return nil, errors.New("unsupported payload.show")
-	}
-	ifaceReq, ok := show["interface"].(map[string]any)
-	if !ok {
-		return nil, errors.New("unsupported payload.show.interface")
-	}
-	name, _ := ifaceReq["name"].(string)
-	if name == "" {
-		return nil, errors.New("empty interface name")
-	}
-	ent, ok := g.live[name]
-	if !ok || !ent.Present {
-		return []byte(`{"show":{"interface":{}}}`), nil
-	}
-	addr := ent.Address
-	if addr == "" {
-		addr = "10.0.0.1"
-	}
-	mask := ent.Mask
-	if mask == "" {
-		mask = "255.255.255.0"
-	}
-	wire := map[string]any{
-		"id":             name,
-		"interface-name": name,
-		"type":           "Wireguard",
-		"description":    ManagedServerDescription,
-		"address":        addr,
-		"mask":           mask,
-		"state":          "up",
-		"link":           "up",
-		"connected":      "yes",
-		"wireguard": map[string]any{
-			"public-key": ent.PublicKey,
-			"peer":       []map[string]any{},
-		},
-	}
-	resp := map[string]any{
-		"show": map[string]any{
-			"interface": wire,
-		},
-	}
-	raw, _ := json.Marshal(resp)
-	return raw, nil
+	return nil, errors.New("unsupported payload")
 }
+
 func mustDerivePublicKey(t *testing.T, privateKey string) string {
 	t.Helper()
 	pub, err := derivePublicKeyFromPrivate(privateKey)

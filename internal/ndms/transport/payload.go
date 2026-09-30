@@ -45,22 +45,3 @@ func ShowQuery(path []string, args map[string]any) any {
 	}
 	return map[string]any{"show": cur}
 }
-
-// ShowInterface is shorthand for the by-name interface fetch — by far
-// the most common single-interface RCI query in this codebase.
-//
-//	ShowInterface("GigabitEthernet0/Vlan2", nil)
-//	  => {"show":{"interface":{"name":"GigabitEthernet0/Vlan2"}}}
-//
-//	ShowInterface("Wireguard0", map[string]any{"details": "yes"})
-//	  => {"show":{"interface":{"name":"Wireguard0","details":"yes"}}}
-//
-// extra keys win over the auto-set "name" — pass extra["name"] = "..."
-// to override, though there's no current reason to.
-func ShowInterface(name string, extra map[string]any) any {
-	args := map[string]any{"name": name}
-	for k, v := range extra {
-		args[k] = v
-	}
-	return ShowQuery([]string{"interface"}, args)
-}

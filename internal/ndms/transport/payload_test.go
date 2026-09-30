@@ -17,39 +17,6 @@ func marshal(t *testing.T, v any) string {
 	return string(b)
 }
 
-func TestShowInterface_BareName(t *testing.T) {
-	got := marshal(t, ShowInterface("GigabitEthernet0/Vlan2", nil))
-	want := `{"show":{"interface":{"name":"GigabitEthernet0/Vlan2"}}}`
-	if got != want {
-		t.Errorf("\n  got  %s\n  want %s", got, want)
-	}
-}
-
-func TestShowInterface_WithDetails(t *testing.T) {
-	got := marshal(t, ShowInterface("Wireguard0", map[string]any{"details": "yes"}))
-	// Map iteration order is randomised, so don't assert string-equal;
-	// re-decode and compare shape.
-	var decoded map[string]map[string]map[string]any
-	if err := json.Unmarshal([]byte(got), &decoded); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	iface := decoded["show"]["interface"]
-	if iface["name"] != "Wireguard0" || iface["details"] != "yes" {
-		t.Errorf("unexpected interface payload: %v", iface)
-	}
-	if len(iface) != 2 {
-		t.Errorf("expected exactly 2 keys (name, details), got %d: %v", len(iface), iface)
-	}
-}
-
-func TestShowInterface_NilExtraStillEmitsName(t *testing.T) {
-	got := marshal(t, ShowInterface("Wireguard0", nil))
-	want := `{"show":{"interface":{"name":"Wireguard0"}}}`
-	if got != want {
-		t.Errorf("\n  got  %s\n  want %s", got, want)
-	}
-}
-
 func TestShowQuery_EmptyArgsListingForm(t *testing.T) {
 	got := marshal(t, ShowQuery([]string{"interface"}, nil))
 	want := `{"show":{"interface":{}}}`

@@ -60,9 +60,9 @@ func TestResolveSystemName_AbsentInterface_NoResolver(t *testing.T) {
 	}
 }
 
-// Refresh по неизвестному имени читает список, но соседа, обновлённого хуком,
-// пока шёл запрос, старый снимок не затирает (seq-гард applyListLocked).
-func TestInterfaceStore_Refresh_UnknownKeepsNeighbours(t *testing.T) {
+// Свежий список не затирает соседа, обновлённого хуком, пока шёл запрос
+// (seq-гард applyListLocked).
+func TestInterfaceStore_SnapshotLive_KeepsHookedNeighbour(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleIfaceList)
 	bg := &blockingGetter{Getter: fg, entered: make(chan struct{}, 1)}
@@ -71,7 +71,7 @@ func TestInterfaceStore_Refresh_UnknownKeepsNeighbours(t *testing.T) {
 	_, _ = s.Get(ctx, "Wireguard0") // bootstrap
 	bg.gate = make(chan struct{})
 	done := make(chan error, 1)
-	go func() { _, err := s.Refresh(ctx, "OpkgTun11"); done <- err }()
+	go func() { _, err := s.Snapshot(ctx, SnapshotLive); done <- err }()
 	bg.waitBlocked(t)
 	s.OnLayerChanged("Wireguard0", "conf", "disabled") // хук, пока список в полёте
 	close(bg.gate)

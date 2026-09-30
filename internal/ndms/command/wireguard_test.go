@@ -284,7 +284,7 @@ func TestImportWireguardConfig_CreatedIsConfirmed(t *testing.T) {
 	if err != nil || res.Created.Name() != "Wireguard0" {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
-	if _, ok, _ := q.Interfaces.Lookup(context.Background(), "Wireguard0"); !ok {
+	if rec, _ := q.Interfaces.Get(context.Background(), "Wireguard0"); rec == nil {
 		t.Fatal("Confirm после импорта обязан положить запись в кэш")
 	}
 	if f.Phantoms != 0 || f.E != 0 {

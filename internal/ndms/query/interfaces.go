@@ -34,9 +34,10 @@
 // Snapshot — записи и сырой JSON записей полного списка с возрастом:
 // читатели состояния и счётчиков берут его вместо чтения по имени (F546).
 //
-// Every hook bumps seq and stamps the id in touched; a list or point
-// answer never overwrites an id touched after its request started — the
-// hook is newer than the answer.
+// Every hook bumps seq and stamps the id in touched; a list answer never
+// overwrites an id touched after its request started — the hook is newer
+// than the answer. Чтений по имени (`show interface name=X`,
+// `/show/rc/interface/X`) в пакете нет (F546, TestByNameReads_Absent).
 package query
 
 import (
@@ -45,7 +46,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -57,36 +57,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
 )
-
-// unwrapShowInterface strips the {"show":{"interface":{…}}} envelope that
-// the JSON-payload form of /show/interface returns. The GET path form
-// returned the inner object directly; the POST form (which we use for any
-// name that may contain a slash — Vlan, AccessPoint, numbered ports) wraps
-// it. Callers receive the inner object so their existing decoders work
-// unchanged.
-//
-// Returns nil for an empty body or an absent "interface" field — both map
-// to the same "NDMS-side absence" semantics the previous GET-form
-// already encoded with an empty body.
-func unwrapShowInterface(raw []byte) ([]byte, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 {
-		return nil, nil
-	}
-	var w struct {
-		Show struct {
-			Interface json.RawMessage `json:"interface"`
-		} `json:"show"`
-	}
-	if err := json.Unmarshal(trimmed, &w); err != nil {
-		return nil, fmt.Errorf("decode show.interface envelope: %w", err)
-	}
-	inner := bytes.TrimSpace(w.Show.Interface)
-	if len(inner) == 0 {
-		return nil, nil
-	}
-	return inner, nil
-}
 
 // looksLikeKernelIfname reports whether s is a syntactically valid Linux
 // network interface name. Linux kernel names use a constrained set
@@ -439,83 +409,6 @@ func (s *InterfaceStore) GetProxy(ctx context.Context, name string) (*ndms.Proxy
 	}, nil
 }
 
-// FetchSummary returns InterfaceDetails by issuing a fresh batch-POST
-// show.interface query on every call; an interface absent from NDMS is
-// answered without the point query (F546). Used by
-// state.Manager for kernel-tunnel state determination because NDMS
-// `iflayerchanged link=running` hooks are not reliable for OpkgTun:
-// the cache that GetDetails consults can stay frozen with Link != "up"
-// after `ip link set up`, producing a permanent StateStarting for a
-// working tunnel. The direct query sees the layer truth NDMS reports
-// right now.
-//
-// Uptime is consulted from the same daemon-tracked startedAt map as
-// GetDetails (cache helper, not authoritative).
-func (s *InterfaceStore) FetchSummary(ctx context.Context, name string) (*ndms.InterfaceDetails, error) {
-	// Интерфейса нет в кэше — не спрашиваем: на запрос по отсутствующему
-	// имени NDMS пишет E «unable to find» в свой журнал (F546). nil — тот же
-	// ответ, что давал status-error NDMS.
-	p, ok, err := s.Lookup(ctx, name)
-	if err != nil || !ok {
-		return nil, err
-	}
-	// Batch POST вместо прямого GET /summary: NDMS обрабатывает GET с
-	// фиксированной стоимостью ~115мс независимо от размера ответа, POST
-	// ~10x быстрее и коалесцируется батчером (замеры в спеке
-	// 2026-06-10-getstate-cache-rci-post-design.md). Свежесть сохранена:
-	// это по-прежнему прямой запрос к NDMS на каждый вызов, мимо кеша
-	// снапшота.
-	inner, err := s.showOne(ctx, p)
-	if errors.Is(err, ErrGone) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var resp struct {
-		State     string `json:"state"`
-		Link      string `json:"link"`
-		ConfLayer string `json:"conf-layer"`
-		Summary   struct {
-			Layer struct {
-				Conf string `json:"conf"`
-				Link string `json:"link"`
-				Ctrl string `json:"ctrl"`
-			} `json:"layer"`
-		} `json:"summary"`
-	}
-	if len(inner) > 0 {
-		if err := json.Unmarshal(inner, &resp); err != nil {
-			return nil, err
-		}
-	}
-
-	d := &ndms.InterfaceDetails{
-		ConfLayer: resp.Summary.Layer.Conf,
-		Link:      layerLevelToUpDown(resp.Summary.Layer.Link),
-		State:     layerLevelToUpDown(resp.Summary.Layer.Ctrl),
-	}
-	if resp.Summary.Layer.Conf == "" {
-		// Полный объект без summary-подсекции (или status-error на
-		// отсутствующий интерфейс): берём верхнеуровневые поля.
-		d.ConfLayer = resp.ConfLayer
-		d.Link = resp.Link
-		d.State = resp.State
-	}
-	if d.ConfLayer == "" && d.Link == "" && d.State == "" {
-		// Ни данных, ни ошибки транспорта — интерфейса нет. nil details
-		// = showInterfaceFailed в state-матрице (паритет с прежним 404).
-		return nil, nil
-	}
-
-	s.mu.RLock()
-	if t, ok := s.startedAt[name]; ok && !t.IsZero() {
-		d.Uptime = int(time.Since(t).Seconds())
-	}
-	s.mu.RUnlock()
-	return d, nil
-}
-
 // GetDetails returns InterfaceDetails synthesised from the cached
 // snapshot. Returns (nil, nil) when the interface is absent. Uptime is
 // computed live from the daemon-tracked startedAt timestamp — survives
@@ -854,8 +747,7 @@ func (s *InterfaceStore) SystemNames(ctx context.Context, ids []string) map[stri
 // slashes inside <X> as URL path separators, so names like
 // "WifiMaster0/WifiStation0" or "GigabitEthernet0/Vlan2" came back with
 // 'Core::Configurator: not found: "show/interface/system-name?name=..."'
-// in the router log. Same gotcha that showOne already solves by using
-// POST — see the comment block on that function. The POST form carries
+// in the router log. The POST form carries
 // the name inside the JSON body where the RCI parser handles it
 // regardless of contained slashes.
 //
@@ -943,22 +835,6 @@ func (s *InterfaceStore) List(ctx context.Context) ([]ndms.Interface, error) {
 	out := make([]ndms.Interface, 0, len(s.byID))
 	for _, iface := range s.byID {
 		out = append(out, *iface)
-	}
-	return out, nil
-}
-
-// ListFresh — список интерфейсов, прочитанный с роутера сейчас, мимо карты
-// событий и без её обновления. Для проверок перед записью (занятые сети #713):
-// карта держится хуками NDMS, и пропущенный хук выкинул бы существующий
-// интерфейс из проверки. Отказ RCI — ошибка.
-func (s *InterfaceStore) ListFresh(ctx context.Context) ([]ndms.Interface, error) {
-	raw, _, err := s.fetchListMap(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]ndms.Interface, 0, len(raw))
-	for _, iface := range raw {
-		out = append(out, iface)
 	}
 	return out, nil
 }
@@ -1253,86 +1129,6 @@ func layerLevelToUpDown(level string) string {
 
 // === Command-side write API (proactive refresh after a successful POST) ===
 
-// Refresh reads the record as NDMS holds it RIGHT NOW, updates the cache
-// from that answer (a known record point-wise, an unknown one through the
-// whole fresh list — see below), and returns it. Use this
-// instead of Get when the decision must reflect NDMS now rather than the
-// last hook-driven snapshot: NDMS hooks (ifcreated/ifdestroyed/…) don't
-// fire for an out-of-band edit like `interface OpkgTunN description …`,
-// so Get can stay stale indefinitely (F532).
-//
-// A record the cache knows is read point-wise (`show interface <name>`).
-// A record the cache doesn't know is looked up in a fresh full list
-// instead: on a point read of an absent name NDMS writes E `unable to find
-// "<name>"` into its own log (F546), while the list is silent and just as
-// fresh — a record the cache missed (lost hook) is still found, so the
-// ownership gate never mistakes a foreign record for an absent one (F517).
-//
-// Absent record → (nil, nil), and the entry is removed from the cache.
-// Transport/parse error → error returned, cache left untouched — same
-// contract Invalidate already had.
-func (s *InterfaceStore) Refresh(ctx context.Context, name string) (*ndms.Interface, error) {
-	if name == "" {
-		return nil, nil
-	}
-	// start — до Lookup: хук, пришедший между проверкой кэша и ответом,
-	// ответом не затирается.
-	s.mu.RLock()
-	start := s.seq
-	s.mu.RUnlock()
-	p, known, err := s.Lookup(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	if !known {
-		// Весь список через applyListLocked: соседей, тронутых хуками, пока
-		// шёл запрос, он не затирает.
-		if err := s.refreshAll(ctx); err != nil {
-			return nil, err
-		}
-		s.mu.RLock()
-		defer s.mu.RUnlock()
-		if rec, ok := s.byID[name]; ok {
-			cp := *rec
-			return &cp, nil
-		}
-		return nil, nil
-	}
-	iface, err := s.fetchOne(ctx, p)
-	if err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.touched[name] > start {
-		// Хук по name пришёл, пока шло чтение, — он новее ответа: карту не
-		// трогаем. Записи в карте больше нет (ifdestroyed; ifcreated снова —
-		// в pending) — прочитанное устарело, отвечаем «нет»: снос прокси и
-		// шлюз владения OpkgTun иначе слали бы команды по снятому имени.
-		_, inMap := s.byID[name]
-		_, pending := s.pending[name]
-		if iface == nil || (!inMap && !pending) {
-			return nil, nil
-		}
-		cp := *iface
-		return &cp, nil
-	}
-	if iface == nil {
-		// NDMS confirms absent — remove from map.
-		delete(s.byID, name)
-		delete(s.startedAt, name)
-		return nil, nil
-	}
-	s.byID[name] = iface
-	if iface.Uptime > 0 && iface.ConfLayer == "running" {
-		if _, exists := s.startedAt[name]; !exists {
-			s.startedAt[name] = time.Now().Add(-time.Duration(iface.Uptime) * time.Second)
-		}
-	}
-	cp := *iface
-	return &cp, nil
-}
-
 // Invalidate зовётся командами ПОСЛЕ успешной записи в NDMS: ставит метку
 // «грязно», RCI в момент вызова нет. Следующий Snapshot читает ОДИН свежий
 // список, начатый после метки, — так «следующее чтение видит результат моей
@@ -1360,17 +1156,6 @@ func (s *InterfaceStore) InvalidateAll() {
 		s.log.Warnf("InvalidateAll: refresh failed: %v", err)
 	}
 }
-
-// Present — доказательство, что запись name была в кэше интерфейсов на момент
-// Lookup. Поле неэкспортируемое: вне пакета его не сконструировать, поэтому
-// точечное чтение по имени (showOne/showRC) без проверки кэша не собрать (F546).
-type Present struct{ name string }
-
-// Name — NDMS-имя записи.
-func (p Present) Name() string { return p.name }
-
-// String — имя: %v/%+v печатают запись как `Interface:X`.
-func (p Present) String() string { return p.name }
 
 // Confirmed — «запись name была в свежем полном списке NDMS». Единственная
 // валюта мутаций по существующему интерфейсу: команда `interface X …` по
@@ -1463,90 +1248,10 @@ func (s *InterfaceStore) confirmedLocked(raw map[string]ndms.Interface, name str
 	return nil, false
 }
 
-// ErrGone — записи нет, и по этому имени NDMS не спрашивают. Два источника:
-//   - showOne/showRC: NDMS ответил «записи нет» на точечное чтение записи,
-//     которую кэш считал существующей (потерян ifdestroyed); запись из кэша
-//     уже выселена;
-//   - WGServerStore.present: записи нет в кэше — запроса не было вовсе.
-//
-// Вызывающему оба значат одно: интерфейса нет, читать по имени нельзя.
+// ErrGone — записи нет, и по этому имени NDMS не спрашивают (F546): её нет в
+// снимке полного списка (WGServerStore.fetchItem/fetchConfig) или в дереве rc
+// (PeersRC/PeersRCEach, ASC). Вызывающему — интерфейса нет.
 var ErrGone = errors.New("ndms: interface gone")
-
-// Lookup — есть ли запись в кэше. Ошибка bootstrap — ошибка вызывающему:
-// «не знаем» ≠ «спросим NDMS» (F546).
-func (s *InterfaceStore) Lookup(ctx context.Context, name string) (Present, bool, error) {
-	if name == "" {
-		return Present{}, false, nil
-	}
-	if err := s.ensureBootstrap(ctx); err != nil {
-		return Present{}, false, err
-	}
-	s.mu.RLock()
-	_, ok := s.byID[name]
-	s.mu.RUnlock()
-	if !ok {
-		return Present{}, false, nil
-	}
-	return Present{name: name}, true, nil
-}
-
-// showOne — ЕДИНСТВЕННЫЙ POST `show interface <name>` в демоне. Конверт
-// 6553619 значит «записи нет»: кэш врал (потерян ifdestroyed) — выселяем и
-// возвращаем ErrGone, второго чтения по этому имени уже не будет.
-//
-// POST, а не GET /show/interface/<name>: NDMS считает слэши в <name>
-// разделителями пути — GigabitEthernet0/Vlan2, WifiMaster0/AccessPoint0 и
-// нумерованные порты коммутатора получали бы 404. В теле JSON имя
-// разбирается верно (internal/ndms/transport/payload.go).
-//
-// F532: на отсутствующую запись NDMS отвечает HTTP 200 с вложенным
-// `{"status":[{"status":"error","code":...}]}`, а не верхнеуровневым
-// конвертом, который ловит transport (стенд KN-1810, 5.02.A.11). «Записи нет»
-// значит только код 6553619; любой другой — сбой NDMS («не знаем»), и за
-// отсутствие его не выдаём: шлюз владения создал бы запись поверх
-// существующей, а Refresh выселил бы живую.
-//
-// Пустой ответ — (nil, nil).
-func (s *InterfaceStore) showOne(ctx context.Context, p Present) ([]byte, error) {
-	raw, err := s.getter.Post(ctx, transport.ShowInterface(p.name, nil))
-	if err != nil {
-		return nil, fmt.Errorf("show interface %s: %w", p.name, err)
-	}
-	inner, err := unwrapShowInterface(raw)
-	if err != nil {
-		return nil, fmt.Errorf("show interface %s: %w", p.name, err)
-	}
-	if st := parseNestedStatusError(inner); st != nil {
-		if st.Code == ndmsUnableToFindCode {
-			s.Forget(p.name)
-			return nil, fmt.Errorf("%s: %w", p.name, ErrGone)
-		}
-		return nil, fmt.Errorf("show interface %s: ndms status error %s: %s", p.name, st.Code, st.Message)
-	}
-	return inner, nil
-}
-
-// ShowRaw — ответ `show interface <name>` без конверта (см. showOne).
-func (s *InterfaceStore) ShowRaw(ctx context.Context, p Present) ([]byte, error) {
-	return s.showOne(ctx, p)
-}
-
-// showRC — ЕДИНСТВЕННЫЙ GET `/show/rc/interface/<name>…`. Путь идёт мимо
-// батчера (transport.bypassBatch) и на отсутствующем отвечает 404 + E.
-//
-// Выселяет (ErrGone) только 404 на голом пути (suffix == ""): он значит «нет
-// записи». 404 на поддереве (`/wireguard/asc`) бывает и у живого интерфейса,
-// у которого этой секции нет, — это обычная ошибка, кэш не трогаем, иначе
-// живая запись пропала бы из кэша до следующего списка.
-func (s *InterfaceStore) showRC(ctx context.Context, p Present, suffix string, dst any) error {
-	err := s.getter.Get(ctx, "/show/rc/interface/"+p.name+suffix, dst)
-	var he *transport.HTTPError
-	if suffix == "" && errors.As(err, &he) && he.Status == http.StatusNotFound {
-		s.Forget(p.name)
-		return fmt.Errorf("%s: %w", p.name, ErrGone)
-	}
-	return err
-}
 
 // === Internal helpers ===
 
@@ -1573,70 +1278,6 @@ func (s *InterfaceStore) fetchListMap(ctx context.Context) (map[string]ndms.Inte
 		wire[iface.ID] = data
 	}
 	return out, wire, nil
-}
-
-// fetchOne читает запись p через showOne и разбирает её. Записи нет (пустой
-// ответ или ErrGone — showOne уже выселил) — (nil, nil).
-func (s *InterfaceStore) fetchOne(ctx context.Context, p Present) (*ndms.Interface, error) {
-	inner, err := s.showOne(ctx, p)
-	if errors.Is(err, ErrGone) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if len(inner) == 0 {
-		return nil, nil
-	}
-	var w ifaceWire
-	if err := json.Unmarshal(inner, &w); err != nil {
-		return nil, fmt.Errorf("parse interface %s: %w", p.name, err)
-	}
-	if w.ID == "" && w.InterfaceName == "" {
-		return nil, nil
-	}
-	if w.ID == "" {
-		w.ID = p.name
-	}
-	iface := wireToInterface(w)
-	return &iface, nil
-}
-
-// ndmsUnableToFindCode — код NDMS-конверта "unable to find" (стенд
-// KN-1810, 5.02.A.11): единственное значение code, которое означает
-// «записи нет», а не «запрос не удался».
-const ndmsUnableToFindCode = "6553619"
-
-// ndmsStatusError is one `{"status":"error",...}` element of a nested
-// NDMS status array — the shape this POST form wraps into `show.interface`
-// on failure, distinct from the top-level status envelope
-// transport.ExtractError checks.
-type ndmsStatusError struct {
-	Code    string
-	Message string
-}
-
-// parseNestedStatusError reports the first `status: "error"` entry of a
-// `{"status":[...]}` array at the top of inner, or nil if inner isn't
-// that shape (a normal interface object has no top-level "status" field
-// of this form, so this never misfires on a real record).
-func parseNestedStatusError(inner []byte) *ndmsStatusError {
-	var w struct {
-		Status []struct {
-			Status  string          `json:"status"`
-			Code    json.RawMessage `json:"code"` // строка у стенда; число тоже принимаем
-			Message string          `json:"message"`
-		} `json:"status"`
-	}
-	if json.Unmarshal(inner, &w) != nil {
-		return nil
-	}
-	for _, s := range w.Status {
-		if s.Status == "error" {
-			return &ndmsStatusError{Code: strings.Trim(string(s.Code), `"`), Message: s.Message}
-		}
-	}
-	return nil
 }
 
 // === Wire format ===

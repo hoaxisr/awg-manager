@@ -15,10 +15,6 @@ const sampleList = `{"Wireguard0": {"id":"Wireguard0","interface-name":"nwg0","t
 func primedQueries(_ *testing.T) (*query.Queries, *query.FakeGetter) {
 	fg := query.NewFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleList)
-	// Per-interface fetches go through POST — fixture body must include
-	// the {"show":{"interface":…}} envelope NDMS returns over the wire.
-	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","state":"up"}}}`)
-	fg.SetPostInterface("Wireguard1", `{"show":{"interface":{"id":"Wireguard1","interface-name":"nwg1","type":"Wireguard","state":"up"}}}`)
 	fg.SetJSON("/show/ip/route", `[]`)
 	fg.SetRaw("/show/running-config", []byte(`{"message":["!"]}`))
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
@@ -47,9 +43,6 @@ func TestDispatcher_IfCreated_OneListNoPointRead(t *testing.T) {
 	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1"})
 	waitDrain(t, done)
 
-	if got := fg.PostInterfaceCalls("Wireguard1"); got != 0 {
-		t.Errorf("after IfCreated: want 0 point reads of new id, got %d", got)
-	}
 	if got := fg.Calls(ifaceListPath); got != primeList+1 {
 		t.Errorf("want exactly one list after IfCreated, before=%d after=%d", primeList, got)
 	}
@@ -67,7 +60,6 @@ func TestDispatcher_IfDestroyed_NoHTTP(t *testing.T) {
 
 	_, _ = q.Interfaces.List(context.Background())
 	primeList := fg.Calls(ifaceListPath)
-	primeItem := fg.PostInterfaceCalls("Wireguard0")
 
 	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
 
@@ -84,9 +76,6 @@ func TestDispatcher_IfDestroyed_NoHTTP(t *testing.T) {
 	if got := fg.Calls(ifaceListPath); got != primeList {
 		t.Errorf("list must NOT be re-fetched on IfDestroyed, before=%d after=%d", primeList, got)
 	}
-	if got := fg.PostInterfaceCalls("Wireguard0"); got != primeItem {
-		t.Errorf("item must NOT be re-fetched on IfDestroyed, before=%d after=%d", primeItem, got)
-	}
 }
 
 // IfLayerChanged must patch in place — no HTTP for the InterfaceStore.
@@ -98,7 +87,6 @@ func TestDispatcher_IfLayerChanged_NoHTTPOnInterfaces(t *testing.T) {
 
 	_, _ = q.Interfaces.List(context.Background())
 	primeList := fg.Calls(ifaceListPath)
-	primeItem := fg.PostInterfaceCalls("Wireguard0")
 
 	d.Enqueue(Event{Type: EventIfLayerChanged, ID: "Wireguard0", Layer: "conf", Level: "disabled"})
 
@@ -109,9 +97,6 @@ func TestDispatcher_IfLayerChanged_NoHTTPOnInterfaces(t *testing.T) {
 
 	if got := fg.Calls(ifaceListPath); got != primeList {
 		t.Errorf("list re-fetched on IfLayerChanged, before=%d after=%d", primeList, got)
-	}
-	if got := fg.PostInterfaceCalls("Wireguard0"); got != primeItem {
-		t.Errorf("item re-fetched on IfLayerChanged, before=%d after=%d", primeItem, got)
 	}
 }
 
@@ -208,10 +193,6 @@ func TestDispatcher_Stop_WithoutStart_ReturnsImmediately(t *testing.T) {
 }
 
 // === Порядок пакета, слушатель маршрутизации, соседние кэши ===
-
-// pointReads — точечные чтения Wireguard0 (`show interface`). Им читают
-// пиров, поэтому сброс их кэша виден по нему, а не по полному списку.
-func pointReads(fg *query.FakeGetter) int { return fg.PostInterfaceCalls("Wireguard0") }
 
 const samplePeers = `{"wireguard":{"peer":[{"public-key":"KEY","online":true}]}}`
 
@@ -333,7 +314,8 @@ func TestDispatcher_InvalidatesPeersOnDestroyAndLayerChange(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			q, fg := primedQueries(t)
-			fg.SetPostInterface("Wireguard0", `{"show":{"interface":`+samplePeers+`}}`)
+			// Пиры — в записи полного списка (F546).
+			fg.SetJSON(ifaceListPath, `{"Wireguard0":{"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","state":"up",`+samplePeers[1:]+`}`)
 			d := NewDispatcher(q, NopLogger())
 			drained := drainBarrier(d)
 			d.Start()
@@ -344,6 +326,9 @@ func TestDispatcher_InvalidatesPeersOnDestroyAndLayerChange(t *testing.T) {
 			}
 			d.Enqueue(tc.ev)
 			waitDrain(t, drained)
+			if tc.ev.Type == EventIfDestroyed {
+				fg.SetJSON(ifaceListPath, `{}`) // снятого нет и в NDMS
+			}
 			// Пиры читаются из снимка списка (F546): метим его грязным — тогда
 			// промах кэша пиров виден как один список, попадание — как ноль.
 			q.Interfaces.Invalidate("Wireguard0")

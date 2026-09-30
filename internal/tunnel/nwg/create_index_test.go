@@ -78,28 +78,9 @@ func (f *fakeNDMS) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Single POST: either a fetchOne show query, or CmdInterfaceDelete.
+	// Single POST: CmdInterfaceDelete (по имени интерфейс не читается, F546).
 	var single map[string]any
 	_ = json.Unmarshal(body, &single)
-
-	if showRaw, ok := single["show"]; ok {
-		show, _ := showRaw.(map[string]any)
-		ifaceQ, _ := show["interface"].(map[string]any)
-		name, _ := ifaceQ["name"].(string)
-		f.mu.Lock()
-		exists := f.known[name]
-		f.mu.Unlock()
-		if !exists {
-			_, _ = w.Write([]byte(`{}`)) // NDMS-side absence
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"show": map[string]any{
-				"interface": map[string]any{"id": name, "type": "Wireguard"},
-			},
-		})
-		return
-	}
 
 	f.mu.Lock()
 	f.applyInterfaceCmd(single)

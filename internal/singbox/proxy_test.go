@@ -2,9 +2,11 @@ package singbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,13 +79,20 @@ func TestNativeProxyKernelNames(t *testing.T) {
 func TestProxyManager_RemoveProxy_AbsentSendsNothing(t *testing.T) {
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/interface/", `{"Proxy0":{"id":"Proxy0","type":"Proxy"}}`)
+	// Любой POST слоя запросов, кроме резолвера имён, — сюда (точечных
+	// хелперов у FakeGetter нет, F546).
+	var posts atomic.Int32
+	fg.SetPostHandler(func(any) (json.RawMessage, error) {
+		posts.Add(1)
+		return nil, errors.New("unexpected query POST")
+	})
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	pm := NewProxyManager(q, nil)
 
 	if err := pm.RemoveProxy(context.Background(), 5); err != nil {
 		t.Fatalf("RemoveProxy(5): %v", err)
 	}
-	if n := fg.PostInterfaceCalls("Proxy5"); n != 0 {
+	if n := posts.Load(); n != 0 {
 		t.Fatalf("show interface Proxy5 ушёл %d раз", n)
 	}
 }

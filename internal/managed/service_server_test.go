@@ -255,15 +255,6 @@ func (g *stateAwareGetter) Post(_ context.Context, payload any) (json.RawMessage
 	iface, _ := show["interface"].(map[string]any)
 	sn, ok := iface["system-name"].(map[string]any)
 	if !ok {
-		// {"show":{"interface":{"name":<id>}}} — детальный снимок интерфейса.
-		// Отдаём ровно то, что читает GenerateConf: публичный ключ сервера.
-		if id, ok := iface["name"].(string); ok && id != "" {
-			g.mu.Lock()
-			a := g.addr[id]
-			g.mu.Unlock()
-			return []byte(`{"show":{"interface":{"id":"` + id + `","interface-name":"` + id +
-				`","type":"Wireguard","address":"` + a[0] + `","mask":"` + a[1] + `","wireguard":{"public-key":"SRV-` + id + `"}}}}`), nil
-		}
 		return nil, errors.New("stateAwareGetter: Post payload not recognised")
 	}
 	name, _ := sn["name"].(string)

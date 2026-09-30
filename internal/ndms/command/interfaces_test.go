@@ -154,7 +154,7 @@ func TestDeleteOpkgTun_RealError_KeepsRecord(t *testing.T) {
 	if err := cmds.DeleteOpkgTun(context.Background(), c); err == nil {
 		t.Fatal("ожидалась ошибка сноса")
 	}
-	if _, ok, _ := q.Interfaces.Lookup(context.Background(), "OpkgTun0"); !ok {
+	if rec, _ := q.Interfaces.Get(context.Background(), "OpkgTun0"); rec == nil {
 		t.Fatal("отказ сноса не должен забывать запись")
 	}
 }
@@ -166,7 +166,7 @@ func TestDeleteOpkgTun_ForgetsOnSuccess(t *testing.T) {
 	if err := cmds.DeleteOpkgTun(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, _ := q.Interfaces.Lookup(context.Background(), "OpkgTun3"); ok || f.Has("OpkgTun3") {
+	if rec, _ := q.Interfaces.Get(context.Background(), "OpkgTun3"); rec != nil || f.Has("OpkgTun3") {
 		t.Fatal("record must be forgotten locally and gone on the router")
 	}
 	if f.ListCalls() != lists || f.E != 0 || f.Phantoms != 0 {

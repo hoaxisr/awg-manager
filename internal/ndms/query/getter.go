@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 )
 
@@ -94,15 +93,7 @@ type FakeGetter struct {
 	// картой id → rc, если путь не заскриптован явно.
 	rcTree map[string]json.RawMessage
 
-	// POST-side scripting. POST payloads are not paths, so we key by the
-	// interface name extracted from {"show":{"interface":{"name":...}}}
-	// payloads — the only POST shape currently used in this package.
-	// Non-interface POSTs fall through to postHandler.
-	postIfaceResp  map[string][]byte
-	postIfaceErr   map[string]error
-	postIfaceCalls map[string]int
-
-	// system-name resolver POSTs.
+	// system-name resolver POSTs. Прочие POST — postHandler.
 	postSystemName      map[string][]byte
 	postSystemNameErr   map[string]error
 	postSystemNameCalls map[string]int
@@ -115,13 +106,10 @@ type FakeGetter struct {
 // SetRaw / SetError / SetDefaultError.
 func NewFakeGetter() *FakeGetter {
 	return &FakeGetter{
-		calls:          make(map[string]int),
-		jsonResp:       make(map[string]string),
-		rawResp:        make(map[string][]byte),
-		errFor:         make(map[string]error),
-		postIfaceResp:  make(map[string][]byte),
-		postIfaceErr:   make(map[string]error),
-		postIfaceCalls: make(map[string]int),
+		calls:    make(map[string]int),
+		jsonResp: make(map[string]string),
+		rawResp:  make(map[string][]byte),
+		errFor:   make(map[string]error),
 	}
 }
 
@@ -197,9 +185,6 @@ func (f *FakeGetter) Get(ctx context.Context, path string, dst any) error {
 		return err
 	}
 	if !haveBody {
-		body, haveBody = f.interfaceFromList(path)
-	}
-	if !haveBody {
 		if defaultErr != nil {
 			return defaultErr
 		}
@@ -251,29 +236,8 @@ func (e errNoFakeResp) Error() string { return "FakeGetter: no response for path
 
 func errNoFakeResponse(path string) error { return errNoFakeResp(path) }
 
-// SetPostInterface scripts the Post response for a ShowInterface(name, …)
-// payload. body must include the full {"show":{"interface":{…}}} wrapper,
-// matching what NDMS actually returns over HTTP. The store unwraps it.
-func (f *FakeGetter) SetPostInterface(name, body string) {
-	f.mu.Lock()
-	f.postIfaceResp[name] = []byte(body)
-	f.mu.Unlock()
-}
-
-// SetPostInterfaceError scripts an error for a Post call against the given
-// interface name. nil clears the entry.
-func (f *FakeGetter) SetPostInterfaceError(name string, err error) {
-	f.mu.Lock()
-	if err == nil {
-		delete(f.postIfaceErr, name)
-	} else {
-		f.postIfaceErr[name] = err
-	}
-	f.mu.Unlock()
-}
-
 // SetPostHandler installs a catch-all handler for POST payloads that
-// aren't ShowInterface-shaped (e.g. listings or future commands). Pass
+// aren't system-name resolver payloads (e.g. listings or commands). Pass
 // nil to clear.
 func (f *FakeGetter) SetPostHandler(fn func(payload any) (json.RawMessage, error)) {
 	f.mu.Lock()
@@ -350,17 +314,8 @@ func extractShowSystemName(payload any) string {
 	return name
 }
 
-// PostInterfaceCalls returns how many Post calls targeted the given
-// interface name via a ShowInterface payload.
-func (f *FakeGetter) PostInterfaceCalls(name string) int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.postIfaceCalls[name]
-}
-
-// Post implements Getter.Post. ShowInterface-shaped payloads dispatch on
-// the embedded "name"; system-name resolver payloads dispatch on the
-// embedded id; everything else falls through to postHandler.
+// Post implements Getter.Post. System-name resolver payloads dispatch on
+// the embedded id; everything else falls through to postHandler.
 func (f *FakeGetter) Post(ctx context.Context, payload any) (json.RawMessage, error) {
 	// Пакет команд, как у NDMS: каждый элемент отвечается отдельно, ответ —
 	// массив в том же порядке.
@@ -404,50 +359,6 @@ func (f *FakeGetter) Post(ctx context.Context, payload any) (json.RawMessage, er
 		return wrapped, nil
 	}
 
-	if name := extractShowInterfaceName(payload); name != "" {
-		f.mu.Lock()
-		f.postIfaceCalls[name]++
-		body, haveBody := f.postIfaceResp[name]
-		err, haveErr := f.postIfaceErr[name]
-		defaultErr := f.defaultErr
-		f.mu.Unlock()
-
-		if haveErr {
-			return nil, err
-		}
-		if !haveBody {
-			// Точечный путь, заданный SetJSON("/show/interface/<name>", …), —
-			// тот же ответ `show interface <name>`, что и в POST-форме
-			// (единый шлюз showOne читает только ею): приоритет над списком,
-			// как у interfaceFromList на GET-пути.
-			f.mu.Lock()
-			point, havePoint := f.jsonResp["/show/interface/"+name]
-			f.mu.Unlock()
-			if havePoint {
-				return []byte(`{"show":{"interface":` + point + `}}`), nil
-			}
-			// Не заскриптован явно (SetPostInterface): отвечаем тем же
-			// снимком `/show/interface/`, что и GET-путь (interfaceFromList)
-			// — так пишущие только SetJSON("/show/interface/", …) фикстуры
-			// продолжают работать и на свежем чтении (InterfaceStore.Refresh),
-			// не только на кэше (Get/bootstrap).
-			if entry, ok := f.interfaceListEntry(name); ok {
-				return []byte(`{"show":{"interface":` + entry + `}}`), nil
-			}
-			if defaultErr != nil {
-				return nil, defaultErr
-			}
-			// Имени нет и в снимке списка — настоящий NDMS такой POST не
-			// 404-ит, а отвечает конвертом `unable to find` (стенд KN-1810,
-			// 5.02.A.11, код 6553619); fetchOne разбирает именно эту форму
-			// в (nil, nil). Синтезируем тот же конверт вместо ошибки фикстуры.
-			return []byte(`{"show":{"interface":{"status":[{"status":"error","code":"6553619","message":"unable to find"}]}}}`), nil
-		}
-		out := make([]byte, len(body))
-		copy(out, body)
-		return out, nil
-	}
-
 	f.mu.Lock()
 	handler := f.postHandler
 	defaultErr := f.defaultErr
@@ -459,54 +370,4 @@ func (f *FakeGetter) Post(ctx context.Context, payload any) (json.RawMessage, er
 		return nil, defaultErr
 	}
 	return nil, errNoFakeResponse("POST (unscripted payload)")
-}
-
-// extractShowInterfaceName walks a {"show":{"interface":{"name":X,…}}}
-// payload — the only POST shape this fake recognises by name. Returns ""
-// for any other shape so callers can fall back to the catch-all handler.
-func extractShowInterfaceName(payload any) string {
-	top, ok := payload.(map[string]any)
-	if !ok {
-		return ""
-	}
-	show, ok := top["show"].(map[string]any)
-	if !ok {
-		return ""
-	}
-	iface, ok := show["interface"].(map[string]any)
-	if !ok {
-		return ""
-	}
-	name, _ := iface["name"].(string)
-	return name
-}
-
-// interfaceFromList отвечает на `/show/interface/<name>` записью из заданного
-// полного списка, как настоящий NDMS (ответы побайтно совпадают, стенд
-// 5.02.A.11). Явный SetJSON на точечный путь имеет приоритет.
-func (f *FakeGetter) interfaceFromList(path string) (string, bool) {
-	name, ok := strings.CutPrefix(path, "/show/interface/")
-	if !ok || name == "" || strings.ContainsAny(name, "/?") {
-		return "", false
-	}
-	return f.interfaceListEntry(name)
-}
-
-// interfaceListEntry возвращает сырой JSON записи `name` из заданного
-// SetJSON("/show/interface/", …) снимка. Общий поиск для GET-пути
-// (interfaceFromList, по URL-пути) и POST-формы ShowInterface (по имени из
-// тела запроса).
-func (f *FakeGetter) interfaceListEntry(name string) (string, bool) {
-	f.mu.Lock()
-	list, ok := f.jsonResp["/show/interface/"]
-	f.mu.Unlock()
-	if !ok {
-		return "", false
-	}
-	var m map[string]json.RawMessage
-	if json.Unmarshal([]byte(list), &m) != nil {
-		return "", false
-	}
-	entry, ok := m[name]
-	return string(entry), ok
 }

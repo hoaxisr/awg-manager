@@ -107,8 +107,8 @@ func parseProd(t *testing.T, f prodGoFile) (*ast.File, *token.FileSet, string) {
 	return file, fset, ""
 }
 
-// proofType — имя типа-доказательства (Confirmed/Present), если expr —
-// ровно <alias>.Confirmed или <alias>.Present.
+// proofType — имя типа-доказательства (Confirmed), если expr — ровно
+// <alias>.Confirmed.
 func proofType(expr ast.Expr, alias string) string {
 	sel, ok := expr.(*ast.SelectorExpr)
 	if !ok {
@@ -117,7 +117,7 @@ func proofType(expr ast.Expr, alias string) string {
 	if id, ok := sel.X.(*ast.Ident); !ok || id.Name != alias {
 		return ""
 	}
-	if sel.Sel.Name == "Confirmed" || sel.Sel.Name == "Present" {
+	if sel.Sel.Name == "Confirmed" {
 		return sel.Sel.Name
 	}
 	return ""
@@ -139,16 +139,16 @@ var zeroProofVarExceptions = map[string]int{
 	"internal/tunnel/service/impl.go:ReplaceConfig":   1, // команды — в той же nwg-ветке и только при nwgIfaceErr == nil
 }
 
-// TestProofs_NotForgedOutsideQuery — query.Confirmed и query.Present
-// доказывают «запись была в свежем списке NDMS» и рождаются только внутри
+// TestProofs_NotForgedOutsideQuery — query.Confirmed доказывает «запись была
+// в свежем списке NDMS» и рождается только внутри
 // internal/ndms/query (F546, R18). Неэкспортируемые поля не дают вписать
 // имя, но нулевое значение компилятор пропускает — с ним команда уйдёт по
 // имени "". Вне query запрещены:
-//   - литерал query.Confirmed{} / query.Present{} — кроме результата return
+//   - литерал query.Confirmed{} — кроме результата return
 //     рядом с ошибкой или ok=false (идиома «значения нет»): return с false
 //     среди результатов или с последним результатом не nil; иначе
 //     (`…, nil`, `…, true, nil`, `…, "", nil`) — подделка успеха;
-//   - var x query.Confirmed / query.Present — кроме zeroProofVarExceptions.
+//   - var x query.Confirmed — кроме zeroProofVarExceptions.
 //
 // Алиас импорта (ndmsquery и др.) учитывается.
 func TestProofs_NotForgedOutsideQuery(t *testing.T) {
@@ -195,7 +195,7 @@ func TestProofs_NotForgedOutsideQuery(t *testing.T) {
 				switch n := n.(type) {
 				case *ast.CompositeLit:
 					if name := proofType(n.Type, alias); name != "" && !inFailReturn[n] {
-						t.Errorf("%s: литерал %s.%s{} — доказательство выдаёт только query (Confirm/Lookup)",
+						t.Errorf("%s: литерал %s.%s{} — доказательство выдаёт только query (Confirm)",
 							fset.Position(n.Pos()), alias, name)
 					}
 				case *ast.ValueSpec:
@@ -206,7 +206,7 @@ func TestProofs_NotForgedOutsideQuery(t *testing.T) {
 						key := filepath.ToSlash(f.rel) + ":" + funcName
 						seenVars[key]++
 						if seenVars[key] > zeroProofVarExceptions[key] {
-							t.Errorf("%s: var … %s.%s — нулевое доказательство; получать из query (Confirm/Lookup)",
+							t.Errorf("%s: var … %s.%s — нулевое доказательство; получать из query (Confirm)",
 								fset.Position(n.Pos()), alias, name)
 						}
 					}

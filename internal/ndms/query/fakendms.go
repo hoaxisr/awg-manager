@@ -238,6 +238,10 @@ func (f *FakeNDMS) GetRaw(ctx context.Context, path string) ([]byte, error) {
 	return f.wire(iface)
 }
 
+// ndmsUnableToFindCode — код NDMS-конверта "unable to find" (стенд KN-1810,
+// 5.02.A.11): ответ на точечное чтение отсутствующей записи.
+const ndmsUnableToFindCode = "6553619"
+
 // rcOf — rc интерфейса name; без SetRC — пустой объект.
 func (f *FakeNDMS) rcOf(name string) json.RawMessage {
 	if rc, ok := f.rc[name]; ok {

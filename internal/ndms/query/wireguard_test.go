@@ -125,36 +125,6 @@ const sampleWGRCInterfaceReversedAllowIPsJSON = `{
 	}
 }`
 
-const sampleWGSingleInterfaceJSON = `{
-	"id": "Wireguard1",
-	"interface-name": "nwg1",
-	"type": "Wireguard",
-	"description": "ourserver",
-	"state": "up",
-	"link": "up",
-	"connected": "yes",
-	"address": "10.0.1.1",
-	"mask": "255.255.255.0",
-	"mtu": 1420,
-	"wireguard": {
-		"public-key": "SRVKEY1=",
-		"listen-port": 51821,
-		"peer": [
-			{
-				"public-key": "PEERB=",
-				"description": "bob",
-				"remote-endpoint-address": "5.6.7.8",
-				"remote-port": 51820,
-				"rxbytes": 10,
-				"txbytes": 20,
-				"last-handshake": 3,
-				"online": true,
-				"enabled": true
-			}
-		]
-	}
-}`
-
 func primeWGFakeGetter(fg *FakeGetter) {
 	// Runtime серверов — из снимка полного списка (F546): точечных ответов нет.
 	fg.SetJSON("/show/interface/", sampleWGInterfaceListJSON)
@@ -162,28 +132,6 @@ func primeWGFakeGetter(fg *FakeGetter) {
 	fg.SetRC("Wireguard1", sampleWGRCInterfaceJSON)
 	fg.SetJSON("/show/interface/system-name?name=Wireguard0", `"nwg0"`)
 	fg.SetJSON("/show/interface/system-name?name=Wireguard1", `"nwg1"`)
-}
-
-// wrapShowInterface produces the {"show":{"interface":<obj>}} envelope
-// that NDMS returns from POST {"show":{"interface":{"name":…}}} queries.
-// Test fixture helper — pairs with InterfaceStore.unwrapShowInterface in
-// production.
-func wrapShowInterface(inner string) string {
-	return `{"show":{"interface":` + inner + `}}`
-}
-
-// stripOuterMapEntry extracts one key's JSON object from a map-shaped blob —
-// trivial helper so the single-interface path has matching fixtures.
-func stripOuterMapEntry(blob, key string) string {
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(blob), &m); err != nil {
-		return "{}"
-	}
-	v, ok := m[key]
-	if !ok {
-		return "{}"
-	}
-	return string(v)
 }
 
 func TestWGServerStore_GetAll_ParsesRuntime(t *testing.T) {
@@ -253,8 +201,6 @@ func TestWGServerStore_PeerDescription_FromRCCommentWhenRuntimeEmpty(t *testing.
 		}
 	}`
 	fg.SetJSON("/show/interface/", ifaceList)
-	fg.SetJSON("/show/interface/Wireguard1", stripOuterMapEntry(ifaceList, "Wireguard1"))
-	fg.SetPostInterface("Wireguard1", wrapShowInterface(sampleWGSingleInterfaceJSON))
 	fg.SetRC("Wireguard1", sampleWGRCInterfaceJSON)
 	fg.SetJSON("/show/interface/system-name?name=Wireguard1", `"nwg1"`)
 
@@ -284,9 +230,6 @@ func TestWGServerStore_GetAll_CacheHitSkipsFetch(t *testing.T) {
 	// доступа роутера (F467).
 	if got := fg.Calls("/show/interface/") - base; got != 0 {
 		t.Errorf("/show/interface/ calls on cache hit: want 0, got %d", got)
-	}
-	if got := fg.PostInterfaceCalls("Wireguard1"); got != 0 {
-		t.Errorf("show interface Wireguard1 calls: want 0 (состав из списка, F546 S1), got %d", got)
 	}
 }
 

@@ -2,7 +2,6 @@ package query
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"go.uber.org/goleak"
 
@@ -84,26 +83,6 @@ func TestInterfaceStore_Bootstrap_PopulatesFromList(t *testing.T) {
 	_, _ = s.Get(context.Background(), "Wireguard0")
 	if got := fg.Calls(ifaceListPath); got != 1 {
 		t.Errorf("after reads: want still 1 (cached), got %d", got)
-	}
-}
-
-// ListFresh — чтение мимо кэша для проверок перед записью (#713): интерфейс,
-// появившийся без хука, виден; отказ RCI — ошибка, а не прежний снимок.
-func TestInterfaceStore_ListFresh(t *testing.T) {
-	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, `{}`)
-	s := NewInterfaceStore(fg, NopLogger())
-	if got, err := s.List(context.Background()); err != nil || len(got) != 0 {
-		t.Fatalf("List: %v %v", got, err)
-	}
-	fg.SetJSON(ifaceListPath, sampleIfaceList)
-	got, err := s.ListFresh(context.Background())
-	if err != nil || len(got) != 2 {
-		t.Fatalf("ListFresh: %v %v", got, err)
-	}
-	fg.SetError(ifaceListPath, errors.New("rci down"))
-	if _, err := s.ListFresh(context.Background()); err == nil {
-		t.Fatal("отказ чтения проглочен")
 	}
 }
 
@@ -526,172 +505,49 @@ func TestInterfaceStore_InvalidateAll_RebuildsMap(t *testing.T) {
 	}
 }
 
-// === Refresh (F532: freshness for ownership decisions — bypasses the
-// event-sourced cache, which an out-of-band description edit never
-// invalidates via a hook) ===
+// === Snapshot(SnapshotLive) (F532: свежесть для решений о владении — мимо
+// карты событий, которую правка описания снаружи хуком не сбрасывает) ===
 
-func TestInterfaceStore_Refresh_SeesChangeWithoutHook(t *testing.T) {
+func TestInterfaceStore_SnapshotLive_SeesChangeWithoutHook(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleIfaceList)
 	s := NewInterfaceStore(fg, NopLogger())
 
-	// Кэш поднят на старом описании — как будто хука ifcreated/ifdestroyed
-	// на смену описания снаружи никогда не было.
+	// Кэш поднят на старом описании — как будто хука на смену описания
+	// снаружи никогда не было.
 	cached, _ := s.Get(context.Background(), "Wireguard0")
 	if cached == nil || cached.Description != "my tunnel" {
 		t.Fatalf("precondition: cached = %#v", cached)
 	}
 
-	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{
-		"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","description":"csqtt-probe"
-	}}}`)
-
-	got, err := s.Refresh(context.Background(), "Wireguard0")
+	fg.SetJSON(ifaceListPath, `{"Wireguard0":{"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","description":"csqtt-probe"}}`)
+	snap, err := s.Snapshot(context.Background(), SnapshotLive)
 	if err != nil {
-		t.Fatalf("Refresh: %v", err)
+		t.Fatalf("Snapshot: %v", err)
 	}
-	if got == nil || got.Description != "csqtt-probe" {
-		t.Errorf("Refresh: want fresh description, got %#v", got)
+	if got, ok := snap.Record("Wireguard0"); !ok || got.Description != "csqtt-probe" {
+		t.Errorf("Snapshot: want fresh description, got %#v", got)
 	}
 	if again, _ := s.Get(context.Background(), "Wireguard0"); again == nil || again.Description != "csqtt-probe" {
-		t.Errorf("Refresh must patch the cache: Get = %#v", again)
-	}
-}
-
-// F546: запись, которой нет ни в кэше, ни в NDMS, точечно не спрашивается —
-// на `show interface <name>` по отсутствующему имени NDMS пишет E в журнал.
-func TestInterfaceStore_Refresh_AbsentNoPointQuery(t *testing.T) {
-	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, sampleIfaceList)
-	s := NewInterfaceStore(fg, NopLogger())
-
-	got, err := s.Refresh(context.Background(), "OpkgTun11")
-	if err != nil || got != nil {
-		t.Fatalf("want (nil, nil), got (%#v, %v)", got, err)
-	}
-	if n := fg.PostInterfaceCalls("OpkgTun11"); n != 0 {
-		t.Fatalf("show interface OpkgTun11 ушёл %d раз — NDMS запишет E «unable to find»", n)
+		t.Errorf("Snapshot must patch the cache: Get = %#v", again)
 	}
 }
 
 // Запись, которую кэш пропустил (потерянный хук), находится свежим списком:
 // гейт владения не должен принять чужую запись за отсутствующую (F517).
-func TestInterfaceStore_Refresh_MissedByCacheFoundInList(t *testing.T) {
+func TestInterfaceStore_SnapshotLive_MissedByCacheFoundInList(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleIfaceList)
 	s := NewInterfaceStore(fg, NopLogger())
 	_, _ = s.Get(context.Background(), "Wireguard0") // кэш поднят без OpkgTun11
 
 	fg.SetJSON(ifaceListPath, `{"OpkgTun11":{"id":"OpkgTun11","type":"OpkgTun","description":"csqtt"}}`)
-	got, err := s.Refresh(context.Background(), "OpkgTun11")
-	if err != nil || got == nil || got.Description != "csqtt" {
-		t.Fatalf("want record with description csqtt, got (%#v, %v)", got, err)
+	snap, err := s.Snapshot(context.Background(), SnapshotLive)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if n := fg.PostInterfaceCalls("OpkgTun11"); n != 0 {
-		t.Fatalf("точечный запрос не нужен, ушло %d", n)
-	}
-}
-
-// Известная кэшу запись читается точечно и свежо (F532).
-func TestInterfaceStore_Refresh_KnownReadsFresh(t *testing.T) {
-	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, sampleIfaceList)
-	s := NewInterfaceStore(fg, NopLogger())
-	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{
-		"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","description":"csqtt-probe"
-	}}}`)
-
-	got, err := s.Refresh(context.Background(), "Wireguard0")
-	if err != nil || got == nil || got.Description != "csqtt-probe" {
-		t.Fatalf("want fresh description, got (%#v, %v)", got, err)
-	}
-	if n := fg.PostInterfaceCalls("Wireguard0"); n != 1 {
-		t.Fatalf("want 1 point read, got %d", n)
-	}
-}
-
-// Форма, которую реально отдаёт NDMS на отсутствующую запись через POST
-// (стенд KN-1810, 5.02.A.11: `unable to find`, код 6553619) — см.
-// TestFetchSummary_NoDataMeansNilDetails и
-// TestWGServerStore_List_SkipsVanishedInterface для того же конверта.
-func TestInterfaceStore_Refresh_AbsentGivesNilNotError(t *testing.T) {
-	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, sampleIfaceList)
-	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{
-		"status":[{"status":"error","code":"6553619","ident":"Network::Interface::Base","message":"unable to find \"Wireguard0\"."}]
-	}}}`)
-	s := NewInterfaceStore(fg, NopLogger())
-
-	_, _ = s.Get(context.Background(), "Wireguard0")
-
-	got, err := s.Refresh(context.Background(), "Wireguard0")
-	if err != nil || got != nil {
-		t.Fatalf("Refresh на отсутствующей записи: want (nil, nil), got (%#v, %v)", got, err)
-	}
-	if again, _ := s.Get(context.Background(), "Wireguard0"); again != nil {
-		t.Errorf("Refresh must drop the absent entry from the cache, got %#v", again)
-	}
-}
-
-// Ревью F532: вложенный конверт статус-ошибки с ЛЮБЫМ кодом, кроме
-// "unable to find" (6553619), — это «не знаем», а не «записи нет». До
-// правки fetchOne путал их: отсутствие id/interface-name трактовалось как
-// абсент независимо от кода, и гейт Фазы 1 создал бы запись поверх уже
-// существующей, а Refresh выкинул бы верный кэш.
-func TestInterfaceStore_Refresh_OtherStatusErrorIsErrorNotAbsent(t *testing.T) {
-	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, sampleIfaceList)
-	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{
-		"status":[{"status":"error","code":"6553601","ident":"Network::Interface::Base","message":"internal error"}]
-	}}}`)
-	s := NewInterfaceStore(fg, NopLogger())
-
-	_, _ = s.Get(context.Background(), "Wireguard0")
-
-	got, err := s.Refresh(context.Background(), "Wireguard0")
-	if err == nil {
-		t.Fatalf("Refresh на непонятной вложенной ошибке: want error, got %#v", got)
-	}
-	if !strings.Contains(err.Error(), "6553601") || !strings.Contains(err.Error(), "internal error") {
-		t.Errorf("ошибка должна нести код/сообщение NDMS, got %q", err.Error())
-	}
-	if again, _ := s.Get(context.Background(), "Wireguard0"); again == nil || again.Description != "my tunnel" {
-		t.Errorf("Refresh на непонятной ошибке должен оставить кэш прежним, got %#v", again)
-	}
-}
-
-// Код во вложенном конверте числом: сбой разбора не должен тихо превращаться
-// в «записи нет» — 6553619 остаётся отсутствием, прочее — ошибкой.
-func TestInterfaceStore_Refresh_NumericStatusCode(t *testing.T) {
-	for _, tc := range []struct {
-		code    string
-		wantErr bool
-	}{{"6553601", true}, {"6553619", false}} {
-		fg := newFakeGetter()
-		fg.SetJSON(ifaceListPath, sampleIfaceList)
-		fg.SetPostInterface("Wireguard0", `{"show":{"interface":{"status":[{"status":"error","code":`+tc.code+`,"message":"x"}]}}}`)
-		s := NewInterfaceStore(fg, NopLogger())
-		got, err := s.Refresh(context.Background(), "Wireguard0")
-		if (err != nil) != tc.wantErr || got != nil {
-			t.Errorf("code %s: got (%#v, %v), wantErr %v", tc.code, got, err, tc.wantErr)
-		}
-	}
-}
-
-func TestInterfaceStore_Refresh_ErrorLeavesCacheUntouched(t *testing.T) {
-	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, sampleIfaceList)
-	fg.SetPostInterfaceError("Wireguard0", errors.New("ndms flake"))
-	s := NewInterfaceStore(fg, NopLogger())
-
-	_, _ = s.Get(context.Background(), "Wireguard0")
-
-	got, err := s.Refresh(context.Background(), "Wireguard0")
-	if err == nil {
-		t.Fatalf("Refresh: want error, got nil (got=%#v)", got)
-	}
-	if again, _ := s.Get(context.Background(), "Wireguard0"); again == nil || again.Description != "my tunnel" {
-		t.Errorf("Refresh error must leave the cache untouched, got %#v", again)
+	if got, ok := snap.Record("OpkgTun11"); !ok || got.Description != "csqtt" {
+		t.Fatalf("want record with description csqtt, got (%#v, %v)", got, ok)
 	}
 }
 
@@ -712,9 +568,6 @@ func TestInterfaceStore_OnCreated_UnknownGoesPending(t *testing.T) {
 	}
 	if got, _ := s.Get(context.Background(), "Wireguard5"); got != nil {
 		t.Errorf("OnCreated must not insert a stub, got %#v", got)
-	}
-	if calls := fg.PostInterfaceCalls("Wireguard5"); calls != 0 {
-		t.Errorf("OnCreated must not read point-wise, got %d", calls)
 	}
 }
 
@@ -1134,16 +987,15 @@ func TestInterfaceStore_ListAll_DeduplicatesByKernelName_TieKeepsOne(t *testing.
 	}
 }
 
-func TestFetchSummary_ViaPost(t *testing.T) {
+// Слои и link/state записи — из полного списка: summary.layer, а без него
+// верхние поля записи.
+func TestDetailsLive_SummaryLayer(t *testing.T) {
 	g := NewFakeGetter()
-	g.SetJSON(ifaceListPath, `{"OpkgTun0":{"id":"OpkgTun0","type":"OpkgTun"}}`)
-	g.SetPostInterface("OpkgTun0", `{"show":{"interface":{
-		"id":"OpkgTun0","state":"up","link":"up","conf-layer":"running",
-		"summary":{"layer":{"conf":"running","link":"running","ctrl":"running"}}
-	}}}`)
+	g.SetJSON(ifaceListPath, `{"OpkgTun0":{"id":"OpkgTun0","type":"OpkgTun","state":"up","link":"up","conf-layer":"running",
+		"summary":{"layer":{"conf":"running","link":"running","ctrl":"running"}}}}`)
 	s := NewInterfaceStore(g, NopLogger())
 
-	d, err := s.FetchSummary(context.Background(), "OpkgTun0")
+	d, err := s.DetailsLive(context.Background(), "OpkgTun0")
 	if err != nil || d == nil {
 		t.Fatalf("d=%v err=%v", d, err)
 	}
@@ -1152,34 +1004,17 @@ func TestFetchSummary_ViaPost(t *testing.T) {
 	}
 }
 
-func TestFetchSummary_FallbackTopLevelFields(t *testing.T) {
+func TestDetailsLive_FallbackTopLevelFields(t *testing.T) {
 	g := NewFakeGetter()
-	g.SetJSON(ifaceListPath, `{"OpkgTun0":{"id":"OpkgTun0","type":"OpkgTun"}}`)
-	g.SetPostInterface("OpkgTun0", `{"show":{"interface":{
-		"id":"OpkgTun0","state":"up","link":"up","conf-layer":"running"
-	}}}`)
+	g.SetJSON(ifaceListPath, `{"OpkgTun0":{"id":"OpkgTun0","type":"OpkgTun","state":"up","link":"up","conf-layer":"running"}}`)
 	s := NewInterfaceStore(g, NopLogger())
 
-	d, err := s.FetchSummary(context.Background(), "OpkgTun0")
+	d, err := s.DetailsLive(context.Background(), "OpkgTun0")
 	if err != nil || d == nil {
 		t.Fatalf("d=%v err=%v", d, err)
 	}
 	if d.ConfLayer != "running" || d.Link != "up" || d.State != "up" {
 		t.Fatalf("details = %+v", d)
-	}
-}
-
-func TestFetchSummary_NoDataMeansNilDetails(t *testing.T) {
-	g := NewFakeGetter()
-	g.SetJSON(ifaceListPath, `{"OpkgTun9":{"id":"OpkgTun9","type":"OpkgTun"}}`) // кэш знает, NDMS — нет
-	g.SetPostInterface("OpkgTun9", `{"show":{"interface":{
-		"status":[{"status":"error","code":"6553619","message":"unable to find"}]
-	}}}`)
-	s := NewInterfaceStore(g, NopLogger())
-
-	d, err := s.FetchSummary(context.Background(), "OpkgTun9")
-	if err != nil || d != nil {
-		t.Fatalf("want (nil, nil), got d=%+v err=%v", d, err)
 	}
 }
 

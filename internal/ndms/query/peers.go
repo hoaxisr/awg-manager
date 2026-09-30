@@ -36,7 +36,7 @@ func NewPeerStore(log Logger, ifaces *InterfaceStore) *PeerStore {
 // (снимок списка), своего getter у стора нет.
 func NewPeerStoreWithTTL(log Logger, ifaces *InterfaceStore, ttl time.Duration) *PeerStore {
 	if ifaces == nil {
-		panic("query.NewPeerStore: ifaces обязателен — чтение по имени идёт только через InterfaceStore (F546)")
+		panic("query.NewPeerStore: ifaces обязателен — пиры читаются из снимка InterfaceStore (F546)")
 	}
 	if log == nil {
 		log = NopLogger()

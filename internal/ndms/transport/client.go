@@ -211,11 +211,9 @@ func (c *Client) GetRaw(ctx context.Context, path string) ([]byte, error) {
 // NDMS-ответ в batch-форме не совпадает по shape с direct GET, и
 // unwrapKeys не могут это восстановить.
 //
-// `/show/interface/<name>/summary` здесь БЫЛ и снят: сводку никто не берёт
-// сырым GET'ом — FetchSummary ходит командой show interface через батчер
-// (query/interfaces.go), а ветка не могла сработать с 26079ef4b (FetchSummary
-// переведён на POST). Понадобится снова сырой путь — вернуть вместе с
-// вызывающим.
+// `/show/interface/<name>/summary` здесь БЫЛ и снят: чтений по имени в демоне
+// нет (F546), сводка берётся из полного списка. Понадобится снова сырой путь —
+// вернуть вместе с вызывающим. `/show/rc/interface/` — дерево rc целиком.
 func bypassBatch(path string) bool {
 	if strings.HasPrefix(path, "/show/rc/interface/") {
 		return true

@@ -140,7 +140,7 @@ func TestDelete_Present_NoInterfaceThenForget(t *testing.T) {
 	if f.Has("Wireguard0") {
 		t.Fatalf("Wireguard0 не снят: %v", f.Posts)
 	}
-	if _, ok, _ := o.queries.Interfaces.Lookup(context.Background(), "Wireguard0"); ok {
+	if rec, _ := o.queries.Interfaces.Get(context.Background(), "Wireguard0"); rec != nil {
 		t.Fatal("record must be forgotten after successful delete")
 	}
 	if f.E != 0 || f.Phantoms != 0 || srv.log.posts() != 1 {
@@ -158,7 +158,7 @@ func TestDelete_BatchFailure_KeepsRecord(t *testing.T) {
 	if err := o.Delete(context.Background(), nwgStored(awgObfuscatedIface())); err == nil {
 		t.Fatal("want error on failed delete batch")
 	}
-	if _, ok, _ := o.queries.Interfaces.Lookup(context.Background(), "Wireguard0"); !ok {
+	if rec, _ := o.queries.Interfaces.Get(context.Background(), "Wireguard0"); rec == nil {
 		t.Fatal("record must stay in cache when delete failed")
 	}
 }
@@ -172,7 +172,7 @@ func TestDelete_BatchMissingInterface_Forgets(t *testing.T) {
 	if err := o.Delete(context.Background(), nwgStored(awgObfuscatedIface())); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, _ := o.queries.Interfaces.Lookup(context.Background(), "Wireguard0"); ok {
+	if rec, _ := o.queries.Interfaces.Get(context.Background(), "Wireguard0"); rec != nil {
 		t.Fatal("record must be forgotten when NDMS says it is missing")
 	}
 }

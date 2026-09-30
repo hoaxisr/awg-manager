@@ -2,13 +2,11 @@ package query
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 )
 
-// blockingGetter держит запрос списка и точечное чтение `show interface`,
-// пока тест не откроет gate: так хук приходит, когда запрос уже ушёл, а ответ
+// blockingGetter держит запрос списка, пока тест не откроет gate: так хук приходит, когда запрос уже ушёл, а ответ
 // ещё не применён. gate == nil — ничего не блокируется (бутстрап).
 type blockingGetter struct {
 	Getter
@@ -22,14 +20,6 @@ func (b *blockingGetter) Get(ctx context.Context, path string, dst any) error {
 		<-b.gate
 	}
 	return b.Getter.Get(ctx, path, dst)
-}
-
-func (b *blockingGetter) Post(ctx context.Context, payload any) (json.RawMessage, error) {
-	if b.gate != nil && extractShowInterfaceName(payload) != "" {
-		b.entered <- struct{}{}
-		<-b.gate
-	}
-	return b.Getter.Post(ctx, payload)
 }
 
 func (b *blockingGetter) waitBlocked(t *testing.T) {

@@ -13,14 +13,14 @@ import (
 
 func TestFakeNDMS_PointReadAbsentCountsE(t *testing.T) {
 	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"})
-	raw, err := f.Post(context.Background(), transport.ShowInterface("Wireguard7", nil))
+	raw, err := f.Post(context.Background(), showByName("Wireguard7"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(raw), `"6553619"`) || f.E != 1 {
 		t.Fatalf("want unable-to-find envelope and E=1, got %s E=%d", raw, f.E)
 	}
-	if _, err := f.Post(context.Background(), transport.ShowInterface("Wireguard0", nil)); err != nil || f.E != 1 {
+	if _, err := f.Post(context.Background(), showByName("Wireguard0")); err != nil || f.E != 1 {
 		t.Fatalf("present read must not count: err=%v E=%d", err, f.E)
 	}
 }
@@ -142,7 +142,7 @@ func TestFakeNDMS_PostBranches(t *testing.T) {
 		{"system-name присутствующего", map[string]any{"show": map[string]any{"interface": map[string]any{"system-name": map[string]any{"name": "Wireguard0"}}}}, 0, 0, 0, "Wireguard0", "", `"system-name":"nwg0"`},
 		{"to-interface на отсутствующий", map[string]any{"ip": map[string]any{"static": map[string]any{"interface": "Wireguard0", "to-interface": "OpkgTun9"}}}, 1, 0, 0, "", "OpkgTun9", "no such interface: OpkgTun9."},
 		{"ссылка на присутствующий", map[string]any{"ip": map[string]any{"route": map[string]any{"default": true, "interface": "Wireguard0"}}}, 0, 0, 0, "", "", "{}"},
-		{"пакет", []any{transport.ShowInterface("Wireguard7", nil), iface("Wireguard3", map[string]any{"up": false}),
+		{"пакет", []any{showByName("Wireguard7"), iface("Wireguard3", map[string]any{"up": false}),
 			map[string]any{"ip": map[string]any{"nat": []any{map[string]any{"interface": "OpkgTun4"}}}}}, 2, 1, 3, "Wireguard3", "", `[{"show"`},
 	}
 	for _, r := range rows {
@@ -221,7 +221,7 @@ func TestFakeNDMS_SetDetail_SameBytesInListAndPoint(t *testing.T) {
 	if err := json.Unmarshal(rawList, &list); err != nil {
 		t.Fatal(err)
 	}
-	rawOne, err := f.Post(ctx, transport.ShowInterface("Wireguard0", nil))
+	rawOne, err := f.Post(ctx, showByName("Wireguard0"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,4 +299,10 @@ func TestFakeNDMS_FailRCList(t *testing.T) {
 	if _, err := f.GetRaw(ctx, "/show/rc/interface/"); err != nil || f.RCListCalls() != 2 {
 		t.Fatalf("после снятия: err=%v RCListCalls=%d", err, f.RCListCalls())
 	}
+}
+
+// showByName — точечный `show interface name=X` (в проде его нет, F546):
+// оракул обязан его моделировать и считать E на отсутствующем.
+func showByName(name string) any {
+	return map[string]any{"show": map[string]any{"interface": map[string]any{"name": name}}}
 }

@@ -157,7 +157,7 @@ func TestDelete_Present_NATThenNoInterface_NoDown(t *testing.T) {
 	if f.Phantoms != 0 || f.E != 0 || f.Has("Wireguard3") {
 		t.Fatalf("phantoms=%d E=%d has=%v", f.Phantoms, f.E, f.Has("Wireguard3"))
 	}
-	if _, ok, _ := s.queries.Interfaces.Lookup(context.Background(), "Wireguard3"); ok {
+	if rec, _ := s.queries.Interfaces.Get(context.Background(), "Wireguard3"); rec != nil {
 		t.Fatal("снятый интерфейс остался в кэше")
 	}
 	if _, ok := s.settings.GetManagedServerByID("Wireguard3"); ok {
