@@ -121,6 +121,13 @@ func (c *DNSRouteCommands) ReplaceRoutes(ctx context.Context, deletes []DNSRoute
 	if len(deletes)+len(upserts) == 0 {
 		return nil
 	}
+	// Нулевой Confirmed (поле пропущено в литерале) — отказ всего батча без
+	// POST: постановка по имени "" мимо подтверждения (F546).
+	for _, s := range upserts {
+		if s.Interface.Name() == "" {
+			return fmt.Errorf("replace dns-proxy routes: группа %s без интерфейса", s.Group)
+		}
+	}
 	routes := make([]any, 0, len(deletes)+len(upserts))
 	for _, s := range deletes {
 		routes = append(routes, map[string]any{

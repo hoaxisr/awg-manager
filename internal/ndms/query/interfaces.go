@@ -1111,6 +1111,9 @@ type Present struct{ name string }
 // Name — NDMS-имя записи.
 func (p Present) Name() string { return p.name }
 
+// String — имя: %v/%+v печатают запись как `Interface:X`.
+func (p Present) String() string { return p.name }
+
 // Confirmed — «запись name была в свежем полном списке NDMS». Единственная
 // валюта мутаций по существующему интерфейсу: команда `interface X …` по
 // отсутствующему X СОЗДАЁТ X (стенд 5.01/5.02), а ссылка на него из другого
@@ -1120,6 +1123,9 @@ type Confirmed struct{ name string }
 
 // Name — NDMS-имя записи.
 func (c Confirmed) Name() string { return c.name }
+
+// String — имя: %v/%+v печатают запись как `Interface:X`.
+func (c Confirmed) String() string { return c.name }
 
 // Confirm читает ОДИН полный список (кладёт его в карту) и подтверждает name
 // по нему. Список не прочитан — ошибка: присутствие из кэша подтверждением

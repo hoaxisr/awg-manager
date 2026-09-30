@@ -179,3 +179,17 @@ func TestReplaceRoutes_DeleteByRefUpsertByConfirmed(t *testing.T) {
 		t.Fatalf("E=%d phantoms=%d", f.E, f.Phantoms)
 	}
 }
+
+// Нулевой Confirmed в upsert — отказ всего батча без POST (F546).
+func TestDNSRouteCommands_ReplaceRoutes_ZeroInterface_Refused(t *testing.T) {
+	cmds, poster := newTestDNSRouteCommands(t, true)
+	err := cmds.ReplaceRoutes(context.Background(),
+		[]DNSRouteRef{{Group: "g1", Interface: "Wireguard1"}},
+		[]DNSRouteSpec{{Group: "g1", Interface: confirmed(t, "Wireguard0")}, {Group: "g2"}})
+	if err == nil {
+		t.Fatal("upsert без интерфейса обязан отказывать")
+	}
+	if poster.Calls() != 0 {
+		t.Fatalf("в NDMS ушло %d POST", poster.Calls())
+	}
+}

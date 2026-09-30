@@ -272,6 +272,9 @@ func commentOf(fields []string) string {
 // в ::/0 — то есть в ДЕФОЛТНЫЙ маршрут интерфейса. Форма стенд-проверена
 // 2026-08-24: сам роутер хранит запись как {prefix, interface, auto, comment}.
 func (c *RouteCommands) AddStaticRoute(ctx context.Context, route StaticRouteSpec) error {
+	if err := requireRouteIface(route); err != nil {
+		return err
+	}
 	// Общая часть у обеих форм одна и та же; различаются только ключ
 	// назначения (prefix против host|network+mask) и внешний ключ.
 	inner := map[string]any{
@@ -290,13 +293,6 @@ func (c *RouteCommands) AddStaticRoute(ctx context.Context, route StaticRouteSpe
 		if err != nil {
 			return err
 		}
-		if route.Interface.Name() == "" {
-			// Стенд 5.01: ЛЮБОЙ v6-маршрут без интерфейса роутер отвергает
-			// («no input») — проверено и на host-, и на сетевой форме. Отказ
-			// здесь даёт причину в журнале вместо загадочного отказа RCI, а
-			// для reject это ещё и разница между kill-switch и утечкой.
-			return fmt.Errorf("ipv6 route without interface: %+v", route)
-		}
 		inner["prefix"] = prefix
 		return c.mutate(ctx, map[string]any{"ipv6": map[string]any{"route": inner}}, "add ipv6 static route")
 	}
@@ -314,6 +310,9 @@ func (c *RouteCommands) AddStaticRoute(ctx context.Context, route StaticRouteSpe
 // it emits {prefix, interface, no} under "ipv6" — ключ ИМЕННО prefix, см.
 // v6Prefix; for v4 it emits {interface, no, host|network+mask} under "ip".
 func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRouteSpec) error {
+	if err := requireRouteIface(route); err != nil {
+		return err
+	}
 	if route.V6 {
 		prefix, err := v6Prefix(route)
 		if err != nil {
@@ -344,6 +343,19 @@ func (c *RouteCommands) RemoveStaticRoute(ctx context.Context, route StaticRoute
 		"ip": map[string]any{"route": inner},
 	}
 	return c.mutateTolerant(ctx, payload, "remove static route", toleratesRouteRemoval)
+}
+
+// requireRouteIface — спека без интерфейса (нулевой Confirmed: поле пропущено
+// в литерале, сканер такого не видит) в NDMS не уходит. У v6 это ещё и факт
+// стенда 5.01: ЛЮБОЙ v6-маршрут без интерфейса роутер отвергает («no input»)
+// — и host-, и сетевую форму; для reject отказ здесь — разница между
+// kill-switch и утечкой. У v4 форма без интерфейса адресовала бы маршрут
+// мимо подтверждения (F546).
+func requireRouteIface(route StaticRouteSpec) error {
+	if route.Interface.Name() == "" {
+		return fmt.Errorf("static route without interface: %+v", route)
+	}
+	return nil
 }
 
 // mutate is a thin wrapper over postMutation with RouteCommands' fixed

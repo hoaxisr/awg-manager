@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -354,9 +356,10 @@ func TestRouteCommands_RemoveStaticRoute(t *testing.T) {
 func TestRouteCommands_RemoveStaticRoute_RejectPayload(t *testing.T) {
 	cmds, poster := newTestRouteCommands(t)
 	_ = cmds.RemoveStaticRoute(context.Background(), StaticRouteSpec{
-		Network: "10.128.0.0",
-		Mask:    "255.192.0.0",
-		Reject:  true,
+		Interface: confirmed(t, "OpkgTun0"),
+		Network:   "10.128.0.0",
+		Mask:      "255.192.0.0",
+		Reject:    true,
 	})
 	r := poster.Payloads()[0].(map[string]any)["ip"].(map[string]any)["route"].(map[string]any)
 	if r["network"] != "10.128.0.0" || r["mask"] != "255.192.0.0" {
@@ -521,5 +524,43 @@ func TestRouteCommands_RemoveStaticRoute_RealErrorSurfaces(t *testing.T) {
 	err := cmds.RemoveStaticRoute(context.Background(), StaticRouteSpec{Host: "203.0.113.5", Interface: confirmed(t, "PPPoE0")})
 	if err == nil {
 		t.Fatal("настоящий отказ проглочен")
+	}
+}
+
+// Нулевой Confirmed в спеке (поле Interface пропущено в литерале — сканер
+// этого не видит) — отказ без POST, v4 и v6 одинаково (F546).
+func TestRouteCommands_ZeroInterface_Refused(t *testing.T) {
+	v4 := StaticRouteSpec{Network: "203.0.113.0", Mask: "255.255.255.0", Comment: "awgm"}
+	v6 := StaticRouteSpec{Host: "2001:db8::1", V6: true}
+	for _, tc := range []struct {
+		name string
+		call func(c *RouteCommands) error
+	}{
+		{"AddStaticRoute", func(c *RouteCommands) error { return c.AddStaticRoute(context.Background(), v4) }},
+		{"AddStaticRoute v6", func(c *RouteCommands) error { return c.AddStaticRoute(context.Background(), v6) }},
+		{"RemoveStaticRoute", func(c *RouteCommands) error { return c.RemoveStaticRoute(context.Background(), v4) }},
+		{"RemoveStaticRoute v6", func(c *RouteCommands) error { return c.RemoveStaticRoute(context.Background(), v6) }},
+		{"RemoveOwnNetworkRoute", func(c *RouteCommands) error {
+			_, err := c.RemoveOwnNetworkRoute(context.Background(), v4)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmds, poster := newTestRouteCommands(t)
+			if err := tc.call(cmds); err == nil || !strings.Contains(err.Error(), "without interface") {
+				t.Fatalf("спека без интерфейса обязана отказывать до чтений и POST, err = %v", err)
+			}
+			if n := len(poster.Payloads()); n != 0 {
+				t.Fatalf("в NDMS ушло %d POST: %#v", n, poster.Payloads())
+			}
+		})
+	}
+}
+
+// %+v спеки печатает интерфейс именем (Confirmed.String), как до F546.
+func TestStaticRouteSpec_FormatsInterfaceName(t *testing.T) {
+	got := fmt.Sprintf("%+v", StaticRouteSpec{Interface: confirmed(t, "PPPoE0"), Host: "1.2.3.4"})
+	if !strings.Contains(got, "Interface:PPPoE0 ") {
+		t.Fatalf("got %s", got)
 	}
 }
