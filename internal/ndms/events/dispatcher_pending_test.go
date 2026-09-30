@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -112,5 +113,46 @@ func TestDispatcher_LayerBeforeCreated_OneList(t *testing.T) {
 	}
 	if f.ListCalls() != lists+1 || f.E != 0 || q.Interfaces.HasPending() {
 		t.Fatalf("want one list, E=0, no pending: lists=%d E=%d pending=%v", f.ListCalls()-lists, f.E, q.Interfaces.HasPending())
+	}
+}
+
+// countLogger считает предупреждения.
+type countLogger struct{ n atomic.Int32 }
+
+func (l *countLogger) Warnf(string, ...any) { l.n.Add(1) }
+
+// До Start (spool уже пишет, NDMS ещё не готов) очередь ограничена: старые
+// события отбрасываются с одним предупреждением, а первый проход читает
+// полный список — он покрывает потерянное (F572).
+func TestDispatcher_QueueBoundBeforeStart_OverflowRefreshes(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Bridge0", Type: "Bridge"})
+	q := oracleQueries(t, f)
+	_, _ = q.Interfaces.List(context.Background()) // bootstrap: Bridge0 в карте
+	f.Remove("Bridge0")
+	log := &countLogger{}
+	d := NewDispatcher(q, log)
+	done := drainBarrier(d)
+	// Самое старое — снятие Bridge0; переполнение его отбросит.
+	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Bridge0"})
+	for range maxQueuedEvents + 10 {
+		d.Enqueue(Event{Type: EventType("noop")})
+	}
+	d.mu.Lock()
+	queued := len(d.queue)
+	d.mu.Unlock()
+	if queued > maxQueuedEvents {
+		t.Fatalf("очередь %d > предела %d", queued, maxQueuedEvents)
+	}
+	if got := log.n.Load(); got != 1 {
+		t.Fatalf("предупреждений %d, want 1", got)
+	}
+	d.Start()
+	defer d.Stop()
+	waitDrain(t, done)
+	if got, _ := q.Interfaces.Get(context.Background(), "Bridge0"); got != nil {
+		t.Fatalf("потерянное снятие не покрыто списком: %#v", got)
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d phantoms=%d", f.E, f.Phantoms)
 	}
 }

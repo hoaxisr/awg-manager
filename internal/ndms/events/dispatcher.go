@@ -35,8 +35,9 @@ type Dispatcher struct {
 	queries *query.Queries
 	log     Logger
 
-	mu    sync.Mutex
-	queue []Event
+	mu       sync.Mutex
+	queue    []Event
+	overflow bool // с прошлого прохода отброшены события (F572)
 
 	notify    chan struct{} // cap=1, non-blocking wake
 	stopCh    chan struct{}
@@ -104,12 +105,28 @@ func (d *Dispatcher) Stop() {
 	}
 }
 
+// maxQueuedEvents — предел очереди: spool пишет хуки с загрузки, а воркер
+// стартует лишь после готовности NDMS (F572).
+const maxQueuedEvents = 1024
+
 // Enqueue appends an Event to the FIFO queue and wakes the worker.
 // Non-blocking — safe to call from HTTP handler goroutines.
+//
+// Очередь полна — отбрасывается самое старое событие (одно предупреждение
+// на проход), а проход вместо потерянного перечитывает всё (см. drain).
 func (d *Dispatcher) Enqueue(e Event) {
 	d.mu.Lock()
+	first := false
+	if len(d.queue) >= maxQueuedEvents {
+		d.queue = d.queue[1:]
+		first = !d.overflow
+		d.overflow = true
+	}
 	d.queue = append(d.queue, e)
 	d.mu.Unlock()
+	if first {
+		d.log.Warnf("очередь хуков NDMS переполнена (%d): старые события отброшены, следующий проход перечитает список", maxQueuedEvents)
+	}
 	select {
 	case d.notify <- struct{}{}:
 	default:
@@ -130,8 +147,8 @@ func (d *Dispatcher) run() {
 
 func (d *Dispatcher) drain() {
 	d.mu.Lock()
-	batch := d.queue
-	d.queue = nil
+	batch, overflow := d.queue, d.overflow
+	d.queue, d.overflow = nil, false
 	d.mu.Unlock()
 
 	if len(batch) == 0 {
@@ -140,6 +157,9 @@ func (d *Dispatcher) drain() {
 
 	for _, e := range batch {
 		d.apply(e)
+	}
+	if overflow {
+		d.refreshAfterOverflow()
 	}
 	// Созданные хуком id, которых нет в карте, добираются ОДНИМ списком на
 	// пачку: пара created→destroyed одного id к этому моменту уже схлопнулась
@@ -154,6 +174,30 @@ func (d *Dispatcher) drain() {
 
 	if p := d.onRouting.Load(); p != nil {
 		go (*p)()
+	}
+}
+
+// refreshAfterOverflow заменяет отброшенные события: карта интерфейсов
+// перечитывается полным списком (Get/List ведутся хуками, метку «грязно» не
+// видят), прочие сторы сбрасываются целиком — какой id они касались, неизвестно.
+func (d *Dispatcher) refreshAfterOverflow() {
+	if d.queries == nil {
+		return
+	}
+	if d.queries.Interfaces != nil {
+		d.queries.Interfaces.InvalidateAll()
+	}
+	if d.queries.Peers != nil {
+		d.queries.Peers.InvalidateAll()
+	}
+	if d.queries.WGServers != nil {
+		d.queries.WGServers.InvalidateAll()
+	}
+	if d.queries.Routes != nil {
+		d.queries.Routes.InvalidateAll()
+	}
+	if d.queries.RunningConfig != nil {
+		d.queries.RunningConfig.InvalidateAll()
 	}
 }
 
