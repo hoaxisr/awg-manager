@@ -36,7 +36,11 @@ type SpoolReader struct {
 	cur  *spoolFile // текущий path
 	prev *spoolFile // path+".1" после ротации: живёт до следующей
 	ino  *os.File   // inotify (только linux)
-	done chan struct{}
+	// rotateWarned — отказ ротации уже в журнале. Ротация повторяется на
+	// каждом drain, пока файл больше cap; без флага каждый хук давал бы Warn.
+	// Сбрасывается успешной ротацией.
+	rotateWarned bool
+	done         chan struct{}
 }
 
 type spoolFile struct {
@@ -81,9 +85,14 @@ func (r *SpoolReader) drain() {
 // пишет в .1 — его fd держим и дочитываем до следующей ротации.
 func (r *SpoolReader) rotate() {
 	if err := os.Rename(r.path, r.path+".1"); err != nil {
-		r.log.Warnf("spool: rotate %s: %v", r.path, err)
+		// Читаем текущий файл дальше: он лишь растёт сверх cap.
+		if !r.rotateWarned {
+			r.log.Warnf("spool: rotate %s: %v", r.path, err)
+			r.rotateWarned = true
+		}
 		return
 	}
+	r.rotateWarned = false
 	if r.prev != nil {
 		if len(r.prev.buf) > 0 {
 			r.log.Warnf("spool: dropped partial line (%d bytes) of %s.1", len(r.prev.buf), r.path)

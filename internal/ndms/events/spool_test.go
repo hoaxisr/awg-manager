@@ -340,3 +340,32 @@ func TestSpool_MissingTypeRejected(t *testing.T) {
 		t.Fatalf("предупреждений: want 1, got %d", log.count())
 	}
 }
+
+// M2: отказ ротации пишется в журнал один раз, чтение текущего файла идёт
+// дальше; после успешной ротации флаг сброшен.
+func TestSpool_RotateFailureWarnedOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks", "ndm-hooks")
+	sink, log := startSpool(t, path, 1)
+	// Непустой каталог на месте .1 — rename файла поверх него отказывает.
+	if err := os.MkdirAll(filepath.Join(path+".1", "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		line, _ := hookLine(i)
+		appendLine(t, path, line)
+		sink.waitFor(t, i+1)
+	}
+	if log.count() != 1 {
+		t.Fatalf("предупреждений: want 1, got %d (%v)", log.count(), log.warns)
+	}
+	if err := os.RemoveAll(path + ".1"); err != nil {
+		t.Fatal(err)
+	}
+	line, _ := hookLine(5)
+	appendLine(t, path, line)
+	sink.waitFor(t, 6)
+	if err := os.MkdirAll(filepath.Join(path+".1", "x"), 0o755); err == nil {
+		// .1 теперь занят ротированным файлом — MkdirAll обязан отказать.
+		t.Fatal("ротация после снятия препятствия не прошла")
+	}
+}
