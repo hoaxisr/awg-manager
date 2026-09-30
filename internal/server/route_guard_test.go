@@ -256,7 +256,7 @@ func newGuardServer(t *testing.T) (*Server, *auth.SessionStore) {
 		foreignIfaces:      stubForeignIfaces{},
 		proxyRt: ProxyRtSurface{
 			Instances: stub, ListenMoves: stub, WdttLinkDecode: stub, WdttLinkImport: stub,
-			FreeTurnLinkDecode: stub, CaptchaStatus: stub, InstallStatus: stub, Install: stub, Uninstall: stub,
+			FreeTurnLinkDecode: stub, OpenFluxLinkDecode: stub, CaptchaStatus: stub, InstallStatus: stub, Install: stub, Uninstall: stub,
 		},
 	}
 	return s, sessions

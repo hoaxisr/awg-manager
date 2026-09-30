@@ -19,6 +19,11 @@ const (
 	RLinkedEndpoint   proxyrt.ResourceID = "linked_endpoint"
 	RListenPort       proxyrt.ResourceID = "listen_port"
 	RInputPort        proxyrt.ResourceID = "input_port"
+	// ROutputRule — исходящее правило netfilter роли (сейчас одно: RST-drop
+	// выходной ноды OpenFlux в l3). Отдельный ID, а не Sub(RInputPort): у
+	// INPUT и OUTPUT разные исполнители, и сводить их на один ресурс значило
+	// бы спорить об одном вердикте из двух ведомостей.
+	ROutputRule       proxyrt.ResourceID = "output_rule"
 	RNatRules         proxyrt.ResourceID = "nat_rules"
 	RForwardRules     proxyrt.ResourceID = "forward_rules"
 	RMssClamp         proxyrt.ResourceID = "mss_clamp"
@@ -41,10 +46,12 @@ func Sub(id proxyrt.ResourceID, suffix string) proxyrt.ResourceID {
 // Значения impl и role протокола (§1 спеки протокола): зашиты в бинари,
 // сверяются в hello и в пробе --awgm-protocol.
 const (
-	ImplWtClient   = "wt-client"
-	ImplWdttServer = "wdtt-server"
-	ImplFtClient   = "freeturn-client"
-	ImplFtServer   = "freeturn-server"
+	ImplWtClient     = "wt-client"
+	ImplWdttServer   = "wdtt-server"
+	ImplFtClient     = "freeturn-client"
+	ImplFtServer     = "freeturn-server"
+	ImplOfClient     = "openflux-client"
+	ImplOfServer     = "openflux-server"
 
 	RoleClient = "client"
 	RoleServer = "server"

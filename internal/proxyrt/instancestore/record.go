@@ -17,10 +17,12 @@ import (
 type Kind string
 
 const (
-	KindWdttClient     Kind = "wdtt-client"
-	KindWdttServer     Kind = "wdtt-server"
-	KindFreeTurnClient Kind = "freeturn-client"
-	KindFreeTurnServer Kind = "freeturn-server"
+	KindWdttClient      Kind = "wdtt-client"
+	KindWdttServer      Kind = "wdtt-server"
+	KindFreeTurnClient  Kind = "freeturn-client"
+	KindFreeTurnServer  Kind = "freeturn-server"
+	KindOpenFluxClient  Kind = "openflux-client"
+	KindOpenFluxServer  Kind = "openflux-server"
 )
 
 // AllKinds — канонический перечень ролей. Существует ради тестов полноты:
@@ -41,6 +43,8 @@ var AllKinds = []Kind{
 	KindWdttServer,
 	KindFreeTurnClient,
 	KindFreeTurnServer,
+	KindOpenFluxClient,
+	KindOpenFluxServer,
 }
 
 // IsClient — клиентская ли роль. У клиента бывают связанные AWG-туннели, у
@@ -52,7 +56,7 @@ var AllKinds = []Kind{
 // нечего» вместо уборки: ни ошибки, ни падения, только осиротевшая карточка
 // туннеля навсегда.
 func (k Kind) IsClient() bool {
-	return k == KindWdttClient || k == KindFreeTurnClient
+	return k == KindWdttClient || k == KindFreeTurnClient || k == KindOpenFluxClient
 }
 
 // ClientKinds — клиентские роли перечнем, для тех, кому нужен обход, а не
@@ -118,10 +122,12 @@ type Record struct {
 	LinkVKHashes string       `json:"linkVkHashes,omitempty"`
 	StatsLog     string       `json:"statsLog,omitempty"`
 
-	WdttClient     *roles.WdttClientConfig     `json:"wdttClient,omitempty"`
-	WdttServer     *roles.WdttServerConfig     `json:"wdttServer,omitempty"`
-	FreeTurnClient *roles.FreeTurnClientConfig `json:"freeturnClient,omitempty"`
-	FreeTurnServer *roles.FreeTurnServerConfig `json:"freeturnServer,omitempty"`
+	WdttClient      *roles.WdttClientConfig      `json:"wdttClient,omitempty"`
+	WdttServer      *roles.WdttServerConfig      `json:"wdttServer,omitempty"`
+	FreeTurnClient  *roles.FreeTurnClientConfig  `json:"freeturnClient,omitempty"`
+	FreeTurnServer  *roles.FreeTurnServerConfig  `json:"freeturnServer,omitempty"`
+	OpenFluxClient  *roles.OpenFluxClientConfig  `json:"openfluxClient,omitempty"`
+	OpenFluxServer  *roles.OpenFluxServerConfig  `json:"openfluxServer,omitempty"`
 }
 
 // Key — глобально-уникальный адрес записи. ID уникален только ВНУТРИ роли:
@@ -169,6 +175,20 @@ func (r Record) FreeTurnServerConfig() (roles.FreeTurnServerConfig, error) {
 	return *r.FreeTurnServer, nil
 }
 
+func (r Record) OpenFluxClientConfig() (roles.OpenFluxClientConfig, error) {
+	if r.Kind != KindOpenFluxClient || r.OpenFluxClient == nil {
+		return roles.OpenFluxClientConfig{}, r.kindMismatch(KindOpenFluxClient)
+	}
+	return *r.OpenFluxClient, nil
+}
+
+func (r Record) OpenFluxServerConfig() (roles.OpenFluxServerConfig, error) {
+	if r.Kind != KindOpenFluxServer || r.OpenFluxServer == nil {
+		return roles.OpenFluxServerConfig{}, r.kindMismatch(KindOpenFluxServer)
+	}
+	return *r.OpenFluxServer, nil
+}
+
 // RawExiter — конфиг за интерфейсом ведомости выходов, ТИПИЗИРОВАННЫЙ switch
 // по Kind (требование 16: никаких утверждений к any — шов ред. 1 через
 // interface{ NDMSNames() } снят). После валидации store (Load и Replace)
@@ -186,6 +206,12 @@ func (r Record) RawExiter() roles.RawExiter {
 		return c
 	case KindFreeTurnServer:
 		c, _ := r.FreeTurnServerConfig()
+		return c
+	case KindOpenFluxClient:
+		c, _ := r.OpenFluxClientConfig()
+		return c
+	case KindOpenFluxServer:
+		c, _ := r.OpenFluxServerConfig()
 		return c
 	}
 	return nil
@@ -206,6 +232,12 @@ func (r Record) NDMSNamed() instance.NDMSNamed {
 		return c
 	case KindFreeTurnServer:
 		c, _ := r.FreeTurnServerConfig()
+		return c
+	case KindOpenFluxClient:
+		c, _ := r.OpenFluxClientConfig()
+		return c
+	case KindOpenFluxServer:
+		c, _ := r.OpenFluxServerConfig()
 		return c
 	}
 	return nil

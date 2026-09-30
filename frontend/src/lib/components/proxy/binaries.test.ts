@@ -43,21 +43,22 @@ describe('binaryStripItems: наличие бинарей — признак п�
 		// первого клиентского инстанса. Удалив последнего клиента, он получал
 		// «wdtt не установлен» при живых /opt/bin/wdtt-*, а «Установить»
 		// отрабатывала успешно и молча — признак от неё не зависел.
-		const items = binaryStripItems(wdttNoInstances(true), ftNoInstances(true), null, () => {});
+		const items = binaryStripItems(wdttNoInstances(true), ftNoInstances(true), null, null, () => {});
 		expect(items.map((i) => [i.name, i.binaryPresent])).toEqual([
 			['wdtt', true],
 			['freeturn', true],
+			['openflux', false],
 		]);
 	});
 
 	it('инстансов нет и бинарей нет — продукт не установлен', () => {
-		const items = binaryStripItems(wdttNoInstances(false), ftNoInstances(false), null, () => {});
-		expect(items.map((i) => i.binaryPresent)).toEqual([false, false]);
+		const items = binaryStripItems(wdttNoInstances(false), ftNoInstances(false), null, null, () => {});
+		expect(items.map((i) => i.binaryPresent)).toEqual([false, false, false]);
 	});
 
 	it('статуса ещё нет — не установлен, полоса зовёт поставить', () => {
-		const items = binaryStripItems(null, null, null, () => {});
-		expect(items.map((i) => i.binaryPresent)).toEqual([false, false]);
+		const items = binaryStripItems(null, null, null, null, () => {});
+		expect(items.map((i) => i.binaryPresent)).toEqual([false, false, false]);
 	});
 
 	it('признак живого инстанса на полосу не влияет', () => {
@@ -72,7 +73,7 @@ describe('binaryStripItems: наличие бинарей — признак п�
 				status: { running: false, binary: '/opt/bin/wdtt-client', binaryPresent: true },
 			},
 		];
-		const items = binaryStripItems(wdtt, ftNoInstances(false), null, () => {});
+		const items = binaryStripItems(wdtt, ftNoInstances(false), null, null, () => {});
 		expect(items[0].binaryPresent).toBe(false);
 	});
 });

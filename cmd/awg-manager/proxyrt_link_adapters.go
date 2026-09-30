@@ -175,6 +175,10 @@ func (o proxyOccupancy) linkedToSelf(tun storage.AWGTunnel) bool {
 		return strings.TrimSpace(tun.WdttClientID) == o.selfID
 	case instancestore.KindFreeTurnClient:
 		return strings.TrimSpace(tun.FreeTurnClientID) == o.selfID
+	// У openflux-клиента связанных туннелей не бывает по построению: явная
+	// ветка «всё чужое», а не молчаливый хвост — порт своего не существует.
+	case instancestore.KindOpenFluxClient:
+		return false
 	}
 	return false
 }

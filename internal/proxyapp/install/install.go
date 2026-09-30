@@ -22,6 +22,7 @@ type Subsystem string
 const (
 	SubsystemWdtt        Subsystem = "wdtt"
 	SubsystemFreeTurn    Subsystem = "freeturn"
+	SubsystemOpenFlux    Subsystem = "openflux"
 	SubsystemObfPhobos   Subsystem = "obf-phobos"
 	SubsystemObfClusterM Subsystem = "obf-clusterm"
 )
@@ -148,6 +149,13 @@ func New(d Deps) *Service {
 				versionPath: versionPath(d.DataDir, "freeturn-version.json"),
 				specs:       archSpecs(FreeTurnEmbeddedBinaries, d.Arch),
 			},
+			SubsystemOpenFlux: {
+				name:        SubsystemOpenFlux,
+				clientBin:   filepath.Join(defaultBinDir, "openflux-client"),
+				serverBin:   filepath.Join(defaultBinDir, "openflux-server"),
+				versionPath: versionPath(d.DataDir, "openflux-version.json"),
+				specs:       openFluxSpecs(d.Arch),
+			},
 			SubsystemObfPhobos: {
 				name:        SubsystemObfPhobos,
 				clientBin:   filepath.Join(defaultBinDir, "awgm-wg-obfuscator-phobos"),
@@ -181,12 +189,25 @@ func archSpecs(table map[string]ArchSpecs, arch string) *ArchSpecs {
 	return &specs
 }
 
+// openFluxSpecs — пин OpenFlux для арки; nil, пока в пине не заполнены
+// SHA256 (см. pins.go). Пустой пин прикидывается «пина нет»: иначе кнопка
+// «Установить» была бы доступна и падала на отказе childproc ставить бинарь
+// без ожидаемой суммы. Вручную положенный бинарь работает и без пина: гейт
+// проверяет его пробой --awgm-protocol.
+func openFluxSpecs(arch string) *ArchSpecs {
+	specs := archSpecs(OpenFluxEmbeddedBinaries, arch)
+	if specs == nil || strings.TrimSpace(specs.Client.SHA256) == "" {
+		return nil
+	}
+	return specs
+}
+
 // pick возвращает подсистему по имени. Неизвестное имя — отказ, а не молчаливый
 // нулевой статус: фронт по нему нарисовал бы «ничего не установлено».
 func (s *Service) pick(name string) (*subsys, error) {
 	sub, ok := s.subs[Subsystem(strings.TrimSpace(name))]
 	if !ok {
-		return nil, fmt.Errorf("неизвестная подсистема %q: ожидается wdtt, freeturn, obf-phobos или obf-clusterm", name)
+		return nil, fmt.Errorf("неизвестная подсистема %q: ожидается wdtt, freeturn, openflux, obf-phobos или obf-clusterm", name)
 	}
 	return sub, nil
 }
@@ -204,6 +225,10 @@ func (s *Service) Binary(kind instancestore.Kind) (string, bool) {
 		path = s.subs[SubsystemFreeTurn].clientBin
 	case instancestore.KindFreeTurnServer:
 		path = s.subs[SubsystemFreeTurn].serverBin
+	case instancestore.KindOpenFluxClient:
+		path = s.subs[SubsystemOpenFlux].clientBin
+	case instancestore.KindOpenFluxServer:
+		path = s.subs[SubsystemOpenFlux].serverBin
 	default:
 		return "", false
 	}
@@ -229,6 +254,10 @@ func (s *Service) PinnedSHA256(kind instancestore.Kind) string {
 		sub = s.subs[SubsystemFreeTurn]
 	case instancestore.KindFreeTurnServer:
 		sub, server = s.subs[SubsystemFreeTurn], true
+	case instancestore.KindOpenFluxClient:
+		sub = s.subs[SubsystemOpenFlux]
+	case instancestore.KindOpenFluxServer:
+		sub, server = s.subs[SubsystemOpenFlux], true
 	default:
 		return ""
 	}
@@ -249,6 +278,8 @@ func SubsystemOf(kind instancestore.Kind) Subsystem {
 		return SubsystemWdtt
 	case instancestore.KindFreeTurnClient, instancestore.KindFreeTurnServer:
 		return SubsystemFreeTurn
+	case instancestore.KindOpenFluxClient, instancestore.KindOpenFluxServer:
+		return SubsystemOpenFlux
 	}
 	return ""
 }
@@ -266,7 +297,7 @@ func (s *Service) Stale(records []instancestore.Record) []Subsystem {
 		}
 	}
 	var out []Subsystem
-	for _, name := range []Subsystem{SubsystemWdtt, SubsystemFreeTurn} {
+	for _, name := range []Subsystem{SubsystemWdtt, SubsystemFreeTurn, SubsystemOpenFlux} {
 		sub := s.subs[name]
 		if want[name] && sub.specs != nil && !sub.binariesMatchSpecs() {
 			out = append(out, name)
@@ -453,6 +484,11 @@ func (s *Service) installOne(ctx context.Context, binPath string, spec BinarySpe
 // канала обновлений нет — новый бинарь приходит с новой сборкой awg-manager.
 func (s *Service) installInfo(sub *subsys) (version string, available bool) {
 	if sub.specs == nil || s.deps.Downloader == nil {
+		return "", false
+	}
+	// Пин без SHA256 — недоводка pins.go, а не установка в один клик:
+	// childproc всё равно откажется ставить бинарь без ожидаемой суммы.
+	if strings.TrimSpace(sub.specs.Client.SHA256) == "" {
 		return "", false
 	}
 	return sub.versionLabel(), true

@@ -13,3 +13,4 @@ export * from './types/subscriptions';
 export * from './types/freeturn';
 export * from './types/wdtt';
 export * from './types/awg3';
+export * from './types/openflux';

@@ -438,6 +438,41 @@ func normalizeRecord(r *Record, dataDir string) {
 			d.ObfProfile = "none"
 		}
 	}
+	if r.OpenFluxClient != nil {
+		d := r.OpenFluxClient
+		d.Listen = strings.TrimSpace(d.Listen)
+		d.URL = strings.TrimSpace(d.URL)
+		d.MaxToken = strings.TrimSpace(d.MaxToken)
+		d.MaxUID = strings.TrimSpace(d.MaxUID)
+		d.EncryptionKey = strings.TrimSpace(d.EncryptionKey)
+		// Транспорт в канонической форме: та же нормализация, что у argv
+		// (roles/args.go, openFluxTransportNorm) — иначе отпечаток поплывёт от
+		// того, чьими руками записан конфиг.
+		d.Transport = strings.ToLower(strings.TrimSpace(d.Transport))
+		if d.Codec = strings.TrimSpace(d.Codec); d.Codec == "" {
+			d.Codec = roles.OpenFluxCodecBatched
+		}
+	}
+	if r.OpenFluxServer != nil {
+		d := r.OpenFluxServer
+		d.URL = strings.TrimSpace(d.URL)
+		d.MaxToken = strings.TrimSpace(d.MaxToken)
+		d.MaxUID = strings.TrimSpace(d.MaxUID)
+		d.LocalIP = strings.TrimSpace(d.LocalIP)
+		d.EncryptionKey = strings.TrimSpace(d.EncryptionKey)
+		d.DNS = strings.TrimSpace(d.DNS)
+		d.Transport = strings.ToLower(strings.TrimSpace(d.Transport))
+		// Режим: пустое и неизвестное значат «пользователь не выбирал» —
+		// трактуем как безопасный l4 (gVisor, без root и без правил).
+		switch d.Mode = strings.ToLower(strings.TrimSpace(d.Mode)); d.Mode {
+		case roles.OpenFluxModeL3, roles.OpenFluxModeL4:
+		default:
+			d.Mode = roles.OpenFluxModeL4
+		}
+		if d.Codec = strings.TrimSpace(d.Codec); d.Codec == "" {
+			d.Codec = roles.OpenFluxCodecBatched
+		}
+	}
 }
 
 // validateState — инварианты ХРАНИЛИЩА (граница названа в брифе задачи:
@@ -457,7 +492,8 @@ func validateState(st State) error {
 		seen[r.Key()] = true
 		filled := 0
 		for _, ok := range []bool{r.WdttClient != nil, r.WdttServer != nil,
-			r.FreeTurnClient != nil, r.FreeTurnServer != nil} {
+			r.FreeTurnClient != nil, r.FreeTurnServer != nil,
+			r.OpenFluxClient != nil, r.OpenFluxServer != nil} {
 			if ok {
 				filled++
 			}
@@ -465,7 +501,9 @@ func validateState(st State) error {
 		want := map[Kind]bool{KindWdttClient: r.WdttClient != nil,
 			KindWdttServer:     r.WdttServer != nil,
 			KindFreeTurnClient: r.FreeTurnClient != nil,
-			KindFreeTurnServer: r.FreeTurnServer != nil}[r.Kind]
+			KindFreeTurnServer: r.FreeTurnServer != nil,
+			KindOpenFluxClient: r.OpenFluxClient != nil,
+			KindOpenFluxServer: r.OpenFluxServer != nil}[r.Kind]
 		if filled != 1 || !want {
 			return fmt.Errorf("инстанс %s: конфиг не соответствует роли %s", r.ID, r.Kind)
 		}

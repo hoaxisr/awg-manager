@@ -7,13 +7,17 @@ import type {
   FreeTurnProcessStatus,
   FreeTurnServerConfig,
   FreeTurnStatus,
+  OpenFluxConfig,
+  OpenFluxProcessStatus,
+  OpenFluxServerConfig,
+  OpenFluxStatus,
   WdttConfig,
   WdttProcessStatus,
   WdttServerConfig,
   WdttStatus,
 } from "$lib/types";
 
-export type ProxyProtocol = "wdtt" | "freeturn";
+export type ProxyProtocol = "wdtt" | "freeturn" | "openflux";
 
 export type ProxyRole = "client" | "server";
 
@@ -125,6 +129,7 @@ const INSTANCE_KINDS: Record<string, { protocol: ProxyProtocol; role: ProxyRole 
 	'wdtt-server': { protocol: 'wdtt', role: 'server' },
 	'freeturn-client': { protocol: 'freeturn', role: 'client' },
 	'freeturn-server': { protocol: 'freeturn', role: 'server' },
+	'openflux-server': { protocol: 'openflux', role: 'server' },
 };
 
 /**
@@ -189,11 +194,22 @@ function ftServerFlow(c?: FreeTurnServerConfig): ProxyFlowStep[] {
 	];
 }
 
+/** Поток OpenFlux-выхода: абоненты → релей → роутер → интернет. */
+function ofServerFlow(c?: OpenFluxServerConfig): ProxyFlowStep[] {
+  return [
+    { label: 'Клиенты', detail: c?.transport || 'транспорт' },
+    { label: 'Этот роутер', detail: c?.mode === 'l3' ? `l3 · ${c?.localIp || 'egress'}` : 'l4 · gVisor' },
+    { label: 'Интернет', detail: 'выходная нода' },
+  ];
+}
+
 export interface ProxySources {
   wdttStatus: WdttStatus | null;
   wdttConfig: WdttConfig | null;
   ftStatus: FreeTurnStatus | null;
   ftConfig: FreeTurnConfig | null;
+  ofStatus: OpenFluxStatus | null;
+  ofConfig: OpenFluxConfig | null;
 }
 
 /** Вкладка «Выход»: клиенты обоих протоколов. */
@@ -227,7 +243,7 @@ export function exitRows(src: ProxySources): ProxyInstanceRow[] {
   ];
 }
 
-/** Вкладка «Раздача»: серверы обоих протоколов. */
+/** Вкладка «Раздача»: серверы всех протоколов. */
 export function shareRows(src: ProxySources): ProxyInstanceRow[] {
   return [
     ...(src.wdttStatus?.servers ?? []).map((i) => {
@@ -255,6 +271,18 @@ export function shareRows(src: ProxySources): ProxyInstanceRow[] {
         undefined,
         inst?.seededFrom,
         ftServerFlow(inst?.config),
+      );
+    }),
+    ...(src.ofStatus?.servers ?? []).map((i) => {
+      const inst = src.ofConfig?.servers.find((x) => x.id === i.id);
+      return toRow(
+        "openflux",
+        "server",
+        i,
+        inst?.config.enabled === true,
+        undefined,
+        inst?.seededFrom,
+        ofServerFlow(inst?.config),
       );
     }),
   ];

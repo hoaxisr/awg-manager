@@ -28,7 +28,7 @@
 		type ShareWizardFields,
 	} from './shareWizard';
 	import type { ProxyInstanceRow, ProxyProtocol } from './rows';
-	import type { FreeTurnServerConfig, WdttServerConfig } from '$lib/types';
+	import type { FreeTurnServerConfig, OpenFluxServerConfig, WdttServerConfig } from '$lib/types';
 
 	interface Props {
 		/** WDTT-сервер на роутере уже есть: второй бэкенд не примет (W-10). */
@@ -43,6 +43,7 @@
 		row?: ProxyInstanceRow | null;
 		wdttServer?: WdttServerConfig;
 		ftServer?: FreeTurnServerConfig;
+		ofServer?: OpenFluxServerConfig;
 		/** WS-02: выход из мастера. */
 		onclose: () => void;
 		/**
@@ -52,7 +53,7 @@
 		 */
 		onreload?: () => Promise<void> | void;
 		/** Сервер настроен и запущен — страница уводит в его деталь. */
-		ondone: (protocol: ProxyProtocol, id: string) => Promise<void> | void;
+		ondone: (protocol: 'wdtt' | 'freeturn' | 'openflux', id: string) => Promise<void> | void;
 	}
 
 	let {
@@ -63,6 +64,7 @@
 		row = null,
 		wdttServer,
 		ftServer,
+		ofServer,
 		onclose,
 		onreload,
 		ondone,
@@ -104,6 +106,14 @@
 			connect: ftServer?.connect ?? '',
 			obfProfile: ftServer?.obfProfile ?? 'none',
 			obfKey: ftServer?.obfKey ?? '',
+			transport: ofServer?.transport ?? 'yandex',
+			url: ofServer?.url ?? '',
+			mode: ofServer?.mode ?? 'l4',
+			localIp: ofServer?.localIp ?? '',
+			encryptionKey: ofServer?.encryptionKey ?? '',
+			codec: ofServer?.codec ?? 'batched',
+			dns: ofServer?.dns ?? '',
+			singboxRoute: ofServer?.singboxRoute ?? false,
 		})),
 	);
 
@@ -134,16 +144,27 @@
 	let created = $state<{
 		id: string;
 		protocol: ProxyProtocol;
-		config: WdttServerConfig | FreeTurnServerConfig;
+		config: WdttServerConfig | FreeTurnServerConfig | OpenFluxServerConfig;
 	} | null>(null);
 	let addedClientPassword = $state('');
 
 	let link = $state('');
 	let linkQwdtt = $state('');
+	/** OpenFlux: готовая команда клиента под ссылку. */
+	let clientCommand = $state('');
 	/** WS-44/WS-47: запуск прошёл, ссылки нет — и причины у этого разные. */
 	let linkMissing = $state<ShareLinkGap>('');
 
 	const blocked = $derived(protocol === 'wdtt' && !!wdttBlock);
+	/**
+	 * OpenFlux — однооконный поток (это не WDTT/FreeTurn: абонентов и выдачи
+	 * ссылки в мастере у него нет). Карточка протокола сразу ведёт к единственной
+	 * форме параметров, завершение — одна кнопка «Запустить»; ссылку абонент
+	 * выдаёт потом в детали («Ссылка абонента»).
+	 */
+	const simpleFlow = $derived(protocol === 'openflux');
+	const wizardSteps = $derived(simpleFlow ? ['Параметры сервера'] : STEPS);
+	const wizardStep = $derived(simpleFlow ? 0 : step);
 	const step2Ready = $derived(shareStep2Ready({ protocol, ...fields }));
 	const step3Ready = $derived(shareStep3Ready({ protocol, vkHash: client.vkHash }));
 	const canNext = $derived(
@@ -154,7 +175,8 @@
 	/** Мастер настраивает открытый инстанс, только если протокол не сменили. */
 	function existing() {
 		if (created) return created.protocol === protocol ? created : undefined;
-		const cfg = protocol === 'wdtt' ? wdttServer : ftServer;
+		const cfg =
+			protocol === 'wdtt' ? wdttServer : protocol === 'openflux' ? ofServer : ftServer;
 		if (!row || row.protocol !== protocol || !cfg) return undefined;
 		return { id: row.id, config: cloneConfig(cfg) };
 	}
@@ -164,6 +186,11 @@
 		const orphan = created && created.protocol !== p;
 		protocol = p;
 		fields.port = String(nextSharePort(p, usedPorts));
+		// Однооконный протокол: карточка сразу открывает форму параметров.
+		if (p === 'openflux') {
+			step = 1;
+			return;
+		}
 		// Имя абонента правит пользователь: сбрасываем только нетронутый дефолт.
 		if (!client.name.trim() || client.name === WDTT_CLIENT_NAME) {
 			client.name = p === 'wdtt' ? WDTT_CLIENT_NAME : '';
@@ -246,7 +273,12 @@
 		<Button variant="ghost" onclick={leave}>← К списку</Button>
 	</div>
 
-	<WizardSteps steps={STEPS} current={step} {canNext} ongo={(i) => (step = i)}>
+	<WizardSteps
+		steps={wizardSteps}
+		current={wizardStep}
+		{canNext}
+		ongo={(i) => (step = simpleFlow ? 0 : i)}
+	>
 		{#if step === 0}
 			<div class="choices">
 				<!-- Заблокированная карточка не выбирается: выбрать её означало бы
@@ -279,6 +311,18 @@
 					</span>
 					<span class="choice-text">Абоненты подключаются по Client ID</span>
 				</button>
+
+				<button
+					type="button"
+					class="choice"
+					class:selected={protocol === 'openflux'}
+					onclick={() => pickProtocol('openflux')}
+				>
+					<span class="choice-head">
+						<span class="choice-title">OpenFlux</span>
+					</span>
+					<span class="choice-text">Выходная нода: абоненты через релей-транспорт</span>
+				</button>
 			</div>
 
 			{#if wdttBlock}
@@ -300,7 +344,7 @@
 				peerPortUnknown = portUnknown;
 			}}
 			/>
-		{:else if step === 2}
+		{:else if step === 2 && !simpleFlow}
 			{#if protocol === 'wdtt'}
 				<p class="lead">
 					Ссылку получит этот абонент<FieldHint
@@ -339,7 +383,7 @@
 					/>
 				</div>
 			{/if}
-		{:else}
+		{:else if !simpleFlow}
 			{#if !hasLink}
 				<div class="grid">
 					<Input
@@ -386,7 +430,11 @@
 		{/if}
 
 		{#snippet finish()}
-			{#if !hasLink}
+			{#if simpleFlow}
+				<Button variant="primary" loading={busy} disabled={!step2Ready} onclick={() => run(false)}>
+					Запустить
+				</Button>
+			{:else if !hasLink}
 				<Button variant="secondary" loading={busy} disabled={!step2Ready} onclick={() => run(false)}>
 					Только запустить
 				</Button>
@@ -508,5 +556,28 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
+	}
+
+	.cmd-box {
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		padding: 0.625rem 0.75rem;
+		background: var(--color-bg-tertiary);
+	}
+
+	.cmd-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 0.375rem;
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+	}
+
+	.cmd-box code {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		word-break: break-all;
+		color: var(--color-text-secondary);
 	}
 </style>

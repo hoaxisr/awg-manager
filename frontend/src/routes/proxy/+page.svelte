@@ -24,7 +24,7 @@
 		shareRows,
 		toggleProxyInstance,
 	} from '$lib/components/proxy';
-	import type { ExitProtocol, ProxyInstanceRow } from '$lib/components/proxy';
+	import type { ExitProtocol, ProxyInstanceRow, ProxyProtocol } from '$lib/components/proxy';
 	import { createSelfReschedulingPoll } from '$lib/utils/selfReschedulingPoll';
 	import { errText } from '$lib/utils/errorMessage';
 	import type { ProxySeedView } from '$lib/api/proxyInstances';
@@ -32,6 +32,8 @@
 		AccessPolicy,
 		FreeTurnConfig,
 		FreeTurnStatus,
+		OpenFluxConfig,
+		OpenFluxStatus,
 		TunnelListItem,
 		WdttConfig,
 		WdttStatus,
@@ -51,8 +53,10 @@
 
 	let wdttConfig = $state<WdttConfig | null>(null);
 	let ftConfig = $state<FreeTurnConfig | null>(null);
+	let ofConfig = $state<OpenFluxConfig | null>(null);
 	let wdttStatus = $state<WdttStatus | null>(null);
 	let ftStatus = $state<FreeTurnStatus | null>(null);
+	let ofStatus = $state<OpenFluxStatus | null>(null);
 	let policies = $state<AccessPolicy[]>([]);
 	/**
 	 * Посев прокси-подсистемы. Признака два: `seeded` — она поднялась,
@@ -71,10 +75,10 @@
 	let deleteTarget = $state<ProxyInstanceRow | null>(null);
 	let deleting = $state(false);
 	let busyKeys = $state<string[]>([]);
-	let installing = $state<'wdtt' | 'freeturn' | null>(null);
+	let installing = $state<'wdtt' | 'freeturn' | 'openflux' | null>(null);
 
 	// Строки собираются из статуса (жизнь процесса) и конфига (автоподключение, режим).
-	const sources = $derived({ wdttStatus, wdttConfig, ftStatus, ftConfig });
+	const sources = $derived({ wdttStatus, wdttConfig, ftStatus, ftConfig, ofStatus, ofConfig });
 	const exits = $derived(exitRows(sources));
 	const shares = $derived(shareRows(sources));
 
@@ -98,31 +102,38 @@
 		{ id: 'share', label: 'Раздача' },
 	];
 
-	const binaries = $derived(binaryStripItems(wdttStatus, ftStatus, installing, install));
+	const binaries = $derived(binaryStripItems(wdttStatus, ftStatus, ofStatus, installing, install));
 	const seedWarning = $derived(seedGateWarning(seed));
 	const listenMoveNotice = $derived(seedListenMoveNotice(seed));
 
 	// ─── Загрузка и поллинг.
 
 	async function loadStatuses() {
-		const [w, f, s] = await Promise.all([
+		const [w, f, o, s] = await Promise.all([
 			api.getWdttStatus(),
 			api.getFreeTurnStatus(),
+			api.getOpenFluxStatus(),
 			api.getProxySeed(),
 		]);
 		wdttStatus = w;
 		ftStatus = f;
+		ofStatus = o;
 		seed = s;
 	}
 
 	// Конфиги страницы — это состояние сервера: их правит только загрузка и
 	// ответ на сохранение. Правки пользователя живут в копии внутри детали.
 	async function loadConfigs() {
-		const [w, f] = await Promise.all([api.getWdttConfig(), api.getFreeTurnConfig()]);
+		const [w, f, o] = await Promise.all([
+			api.getWdttConfig(),
+			api.getFreeTurnConfig(),
+			api.getOpenFluxConfig(),
+		]);
 		normalizeExitConfigs(w, f);
-		normalizeShareConfigs(w, f);
+		normalizeShareConfigs(w, f, o);
 		wdttConfig = w;
 		ftConfig = f;
+		ofConfig = o;
 	}
 
 	// Каталог для секции «Куда идёт трафик»: политики (обратное членство) и
@@ -182,10 +193,11 @@
 		}
 	}
 
-	async function install(kind: 'wdtt' | 'freeturn') {
+	async function install(kind: 'wdtt' | 'freeturn' | 'openflux') {
 		installing = kind;
 		try {
 			if (kind === 'wdtt') await api.installWdttClient();
+			else if (kind === 'openflux') await api.installOpenFlux();
 			else await api.installFreeTurn();
 			await loadStatuses();
 		} catch (e) {
@@ -208,7 +220,7 @@
 	}
 
 	/** Мастер раздачи довёл сервер до запуска — уводим в его деталь, к абонентам. */
-	async function shareWizardDone(protocol: ExitProtocol, id: string) {
+	async function shareWizardDone(protocol: ProxyProtocol, id: string) {
 		shareWizard = null;
 		await reloadAll();
 		selectedShareKey = rowKey(protocol, 'server', id);
@@ -322,8 +334,10 @@
 					shareKey={selectedShareKey}
 					{wdttConfig}
 					{ftConfig}
+					{ofConfig}
 					{wdttStatus}
 					{ftStatus}
+					{ofStatus}
 					{policies}
 					{tunnels}
 					{busyKeys}

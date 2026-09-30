@@ -69,9 +69,11 @@ const api = vi.hoisted(() => {
   return {
     getWdttStatus: fn(),
     getFreeTurnStatus: fn(),
+    getOpenFluxStatus: fn(),
     getProxySeed: fn(),
     getWdttConfig: fn(),
     getFreeTurnConfig: fn(),
+    getOpenFluxConfig: fn(),
     listAccessPolicies: fn(),
     getTunnelsAll: fn(),
     listManagedLANSegments: fn(),
@@ -142,6 +144,8 @@ function setDefaults(
     over.wdttCfg ?? { clients: [], servers: [] },
   );
   api.getFreeTurnConfig.mockResolvedValue({ clients: [], servers: [] });
+  api.getOpenFluxStatus.mockResolvedValue(subsystemStatus());
+  api.getOpenFluxConfig.mockResolvedValue({ clients: [], servers: [] });
   api.listAccessPolicies.mockResolvedValue([]);
   api.getTunnelsAll.mockResolvedValue({ tunnels: [] });
   api.listManagedLANSegments.mockResolvedValue([]);

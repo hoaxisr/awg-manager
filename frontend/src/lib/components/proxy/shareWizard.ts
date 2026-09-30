@@ -8,6 +8,7 @@ import { addedPassword } from './serverClients';
 import type { ProxyProtocol } from './rows';
 import type {
 	FreeTurnServerConfig,
+	OpenFluxServerConfig,
 	WdttServerConfig,
 } from '$lib/types';
 
@@ -156,6 +157,17 @@ export interface ShareWizardFields {
 	connect: string;
 	obfProfile: FreeTurnServerConfig['obfProfile'];
 	obfKey: string;
+	/** Только OpenFlux: канал связи и режим выхода. */
+	transport: string;
+	url: string;
+	mode: string;
+	localIp: string;
+	encryptionKey: string;
+	codec: string;
+	/** Резолверы процесса через запятую; пусто — системный. */
+	dns: string;
+	/** TCP-трафик ноды через правила sing-box (l4). */
+	singboxRoute: boolean;
 }
 
 function validPort(port: string, protocol: ProxyProtocol): boolean {
@@ -175,7 +187,23 @@ export function shareStep2Ready(s: {
 	protocol: ProxyProtocol;
 	port: string;
 	connect: string;
+	/** Только OpenFlux. */
+	transport?: string;
+	url?: string;
+	mode?: string;
+	localIp?: string;
 }): boolean {
+	// У OpenFlux слушающего порта нет вовсе: выходная нода ходит наружу к
+	// релею, и поле порта к ней не относится. Транспорт oneme в мастере не
+	// предлагается: ему нужен maxToken, а поле токена здесь не спрашивают
+	// (расширенные поля — в детали инстанса).
+	if (s.protocol === 'openflux') {
+		const transport = (s.transport ?? '').trim();
+		if (!transport || transport === 'oneme') return false;
+		if (transport !== 'cupsonline' && !(s.url ?? '').trim()) return false;
+		if ((s.mode ?? '') === 'l3' && !(s.localIp ?? '').trim()) return false;
+		return true;
+	}
 	if (!validPort(s.port, s.protocol)) return false;
 	return s.protocol === 'wdtt' ? true : !!s.connect.trim();
 }
@@ -199,9 +227,21 @@ export function shareStep3Ready(s: { protocol: ProxyProtocol; vkHash: string }):
 export function shareConfigSetupComplete(
 	wdtt?: WdttServerConfig,
 	ft?: FreeTurnServerConfig,
+	of?: OpenFluxServerConfig,
 ): boolean {
 	if (wdtt) return true;
 	if (ft) return !!ft.connect?.trim();
+	if (of) {
+		return shareStep2Ready({
+			protocol: 'openflux',
+			port: '',
+			connect: '',
+			transport: of.transport,
+			url: of.url ?? '',
+			mode: of.mode,
+			localIp: of.localIp ?? '',
+		});
+	}
 	return false;
 }
 
@@ -248,10 +288,10 @@ export interface ShareCommitInput {
 	 * открытый кнопкой «Мастер», либо созданный прошлой попыткой. Отказ любого
 	 * следующего этапа оставляет сервер на бэкенде — второго не появляется.
 	 */
-	existing?: { id: string; config: WdttServerConfig | FreeTurnServerConfig };
+	existing?: { id: string; config: WdttServerConfig | FreeTurnServerConfig | OpenFluxServerConfig };
 	oncreated?: (created: {
 		id: string;
-		config: WdttServerConfig | FreeTurnServerConfig;
+		config: WdttServerConfig | FreeTurnServerConfig | OpenFluxServerConfig;
 	}) => void;
 	/**
 	 * Пароль абонента, заведённого прошлой попыткой: повтор его не дублирует,
@@ -268,6 +308,8 @@ export interface ShareCommitResult {
 	link: string;
 	/** `qwdtt://` — только у WDTT. */
 	linkQwdtt: string;
+	/** Готовая команда клиента OpenFlux; пусто у остальных. */
+	clientCommand: string;
 }
 
 /**
@@ -321,7 +363,7 @@ export async function commitShareWizard(input: ShareCommitInput): Promise<ShareC
 		input.oncreated?.({ id, config: cfg });
 
 		await api.startWdttServerInstance(id);
-		if (!input.withLink) return { id, protocol: 'wdtt', link: '', linkQwdtt: '' };
+		if (!input.withLink) return { id, protocol: 'wdtt', link: '', linkQwdtt: '', clientCommand: '' };
 
 		const res = await api.generateWdttServerLink(id, {
 			peer: peerWithPort(input.peer, port) || undefined,
@@ -333,6 +375,42 @@ export async function commitShareWizard(input: ShareCommitInput): Promise<ShareC
 			protocol: 'wdtt',
 			link: res.link ?? '',
 			linkQwdtt: res.linkQwdtt ?? '',
+			clientCommand: '',
+		};
+	}
+
+	if (input.protocol === 'openflux') {
+		let id = input.existing?.id ?? '';
+		let cfg = input.existing?.config as OpenFluxServerConfig | undefined;
+		if (!cfg) {
+			const inst = await api.createOpenFluxServer();
+			id = inst.id;
+			cfg = inst.config;
+			input.oncreated?.({ id, config: cfg });
+		}
+		cfg.transport = fields.transport.trim();
+		cfg.url = fields.url.trim();
+		cfg.mode = fields.mode === 'l3' ? 'l3' : 'l4';
+		cfg.localIp = fields.mode === 'l3' ? fields.localIp.trim() : '';
+		cfg.codec = fields.codec === 'legacy' ? 'legacy' : 'batched';
+		// Пустой ключ в PATCH не шлётся (Н5: пусто = «не менять»).
+		cfg.encryptionKey = fields.encryptionKey.trim();
+		cfg.dns = fields.dns.trim();
+		cfg.singboxRoute = fields.singboxRoute;
+		cfg = await api.updateOpenFluxServerInstance(id, cfg);
+		input.oncreated?.({ id, config: cfg });
+
+		await api.startOpenFluxServer(id);
+		if (!input.withLink) {
+			return { id, protocol: 'openflux', link: '', linkQwdtt: '', clientCommand: '' };
+		}
+		const res = await api.generateOpenFluxLink(id);
+		return {
+			id,
+			protocol: 'openflux',
+			link: res.link ?? '',
+			linkQwdtt: '',
+			clientCommand: res.clientCommand ?? '',
 		};
 	}
 
@@ -360,7 +438,7 @@ export async function commitShareWizard(input: ShareCommitInput): Promise<ShareC
 	}
 
 	await api.startFreeTurnServer(id);
-	if (!input.withLink) return { id, protocol: 'freeturn', link: '', linkQwdtt: '' };
+	if (!input.withLink) return { id, protocol: 'freeturn', link: '', linkQwdtt: '', clientCommand: '' };
 
 	const res = await api.generateFreeTurnLink({
 		serverId: id,
@@ -376,5 +454,5 @@ export async function commitShareWizard(input: ShareCommitInput): Promise<ShareC
 	if (client.allow && clientId && res.link) {
 		await api.addFreeTurnServerAllowlistClient(id, clientId, client.name.trim(), res.link);
 	}
-	return { id, protocol: 'freeturn', link: res.link ?? '', linkQwdtt: '' };
+	return { id, protocol: 'freeturn', link: res.link ?? '', linkQwdtt: '', clientCommand: '' };
 }

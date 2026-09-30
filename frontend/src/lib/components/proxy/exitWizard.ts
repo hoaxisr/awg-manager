@@ -72,6 +72,7 @@ export function exitStep2Ready(s: {
 	password: string;
 	vkHashes: string;
 	workers: string;
+
 	/**
 	 * Пароль уже задан на бэкенде. Значение секрета наружу не отдаётся (Н5),
 	 * поэтому у сохранённого конфига поле пустое, а «задан» приходит
@@ -152,7 +153,6 @@ export function fieldsFromFtPayload(
 	};
 }
 
-/** Поля существующего инстанса: мастер, открытый кнопкой «Мастер», правит его. */
 export function fieldsFromWdttConfig(cfg: WdttClientConfig, name: string): ExitWizardFields {
 	return {
 		name,

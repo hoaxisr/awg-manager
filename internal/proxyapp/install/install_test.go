@@ -264,7 +264,7 @@ func TestStatus_UnknownSubsystem(t *testing.T) {
 	if err == nil {
 		t.Fatal("неизвестная подсистема обязана быть отказом, а не нулевым статусом")
 	}
-	if err.Error() != `неизвестная подсистема "singbox": ожидается wdtt, freeturn, obf-phobos или obf-clusterm` {
+	if err.Error() != `неизвестная подсистема "singbox": ожидается wdtt, freeturn, openflux, obf-phobos или obf-clusterm` {
 		t.Fatalf("текст отказа: %q", err.Error())
 	}
 }
@@ -807,6 +807,7 @@ func TestSubsystemOf(t *testing.T) {
 	want := map[instancestore.Kind]Subsystem{
 		instancestore.KindWdttClient: SubsystemWdtt, instancestore.KindWdttServer: SubsystemWdtt,
 		instancestore.KindFreeTurnClient: SubsystemFreeTurn, instancestore.KindFreeTurnServer: SubsystemFreeTurn,
+		instancestore.KindOpenFluxClient: SubsystemOpenFlux, instancestore.KindOpenFluxServer: SubsystemOpenFlux,
 	}
 	for _, k := range instancestore.AllKinds {
 		if got := SubsystemOf(k); got != want[k] || got == "" {

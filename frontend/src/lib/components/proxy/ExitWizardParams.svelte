@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Шаг 2 мастера «Выхода» — параметры (WE-29..WE-37). Поля правятся на месте
 	// в объекте мастера; пароль есть только у WDTT-клиента, у FreeTurn его нет.
-	import { Input } from '$lib/components/ui';
+	import { Dropdown, Input } from '$lib/components/ui';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
 	import type { ExitProtocol, ExitWizardFields } from './exitWizard';
 

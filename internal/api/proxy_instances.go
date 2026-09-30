@@ -901,7 +901,7 @@ func proxyNeedsOpkgTun(rec instancestore.Record) bool {
 
 // proxySecretFields — секретные поля конфигов ролей (json-имена). Значения
 // наружу не уходят, а на входе пустое значение означает «не менять» (Н5).
-var proxySecretFields = []string{"password", "obfKey"}
+var proxySecretFields = []string{"password", "obfKey", "encryptionKey"}
 
 // proxySecretsOf — секреты, объявленные конфигом роли. Список нужен ВЫДАЧЕ:
 // без него признак `passwordSet` пропадал бы вместе с пустым значением
@@ -912,6 +912,11 @@ func proxySecretsOf(kind instancestore.Kind) []string {
 		return []string{"password"}
 	case instancestore.KindFreeTurnClient, instancestore.KindFreeTurnServer:
 		return []string{"obfKey"}
+	case instancestore.KindOpenFluxClient, instancestore.KindOpenFluxServer:
+		// maxToken/maxUid — не секреты, а учётные данные транспорта oneme,
+		// общие для стороны и абонентов ссылки; секрет здесь один — ключ
+		// шифрования канала.
+		return []string{"encryptionKey"}
 	}
 	return nil
 }
@@ -927,6 +932,10 @@ func proxyConfigPtr(rec *instancestore.Record) any {
 		return rec.FreeTurnClient
 	case instancestore.KindFreeTurnServer:
 		return rec.FreeTurnServer
+	case instancestore.KindOpenFluxClient:
+		return rec.OpenFluxClient
+	case instancestore.KindOpenFluxServer:
+		return rec.OpenFluxServer
 	}
 	return nil
 }
@@ -951,6 +960,14 @@ func proxyApplyConfig(rec *instancestore.Record, raw json.RawMessage) error {
 	case instancestore.KindFreeTurnServer:
 		if rec.FreeTurnServer == nil {
 			rec.FreeTurnServer = &roles.FreeTurnServerConfig{}
+		}
+	case instancestore.KindOpenFluxClient:
+		if rec.OpenFluxClient == nil {
+			rec.OpenFluxClient = &roles.OpenFluxClientConfig{}
+		}
+	case instancestore.KindOpenFluxServer:
+		if rec.OpenFluxServer == nil {
+			rec.OpenFluxServer = &roles.OpenFluxServerConfig{}
 		}
 	default:
 		return fmt.Errorf("неизвестная роль %q", rec.Kind)

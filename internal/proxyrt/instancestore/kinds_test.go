@@ -18,6 +18,21 @@ func ftServer(id string) Record {
 			ClientsFile: "/opt/etc/awg-manager/freeturn/clients.json"}}
 }
 
+// ofServer — пятая/шестая фикстуры (OpenFlux) рядом с
+// rawClient/ftClient/wdttServer/ftServer (store_test.go): нужны перечислению
+// по AllKinds.
+func ofClient(id string) Record {
+	return Record{ID: id, Kind: KindOpenFluxClient, Name: "OF-клиент", Enabled: false,
+		OpenFluxClient: &roles.OpenFluxClientConfig{Listen: "127.0.0.1:9020",
+			Transport: roles.OpenFluxTransportYandex, URL: "https://docs.example.com/doc"}}
+}
+
+func ofServer(id string) Record {
+	return Record{ID: id, Kind: KindOpenFluxServer, Name: "OF-выход", Enabled: false,
+		OpenFluxServer: &roles.OpenFluxServerConfig{Transport: roles.OpenFluxTransportYandex,
+			URL: "https://docs.example.com/doc", Mode: roles.OpenFluxModeL4}}
+}
+
 // recordOfKind — запись каждой роли для тестов полноты. Новая роль падает
 // здесь первой, до самих проверок диспатчей.
 func recordOfKind(t *testing.T, k Kind) Record {
@@ -36,6 +51,10 @@ func recordOfKind(t *testing.T, k Kind) Record {
 		return ftClient("f")
 	case KindFreeTurnServer:
 		return ftServer("g")
+	case KindOpenFluxClient:
+		return ofClient("o")
+	case KindOpenFluxServer:
+		return ofServer("p")
 	}
 	t.Fatalf("роль %s не имеет фикстуры — заведите её здесь и классифицируйте во всех TestKinds_*", k)
 	return Record{}
@@ -127,6 +146,8 @@ func TestKinds_NDMSNamedCoversAll(t *testing.T) {
 		KindWdttServer:     {"OpkgTun20", "OpkgTun21"},
 		KindFreeTurnClient: nil,
 		KindFreeTurnServer: nil,
+		KindOpenFluxClient: nil,
+		KindOpenFluxServer: nil,
 	}
 	for _, k := range AllKinds {
 		exp, ok := want[k]
@@ -171,6 +192,10 @@ func TestKinds_DataTargetsClassified(t *testing.T) {
 			FreeTurnAllowlistPath(dataDir, "g"),
 			FreeTurnLinksPath(dataDir, "g"),
 		},
+		// Своих данных на диске у OpenFlux нет: секрет едет в argv, файлы
+		// процесс не пишет.
+		KindOpenFluxClient: nil,
+		KindOpenFluxServer: nil,
 	}
 	for _, k := range AllKinds {
 		exp, ok := want[k]
@@ -203,6 +228,8 @@ func TestKinds_IsClientClassified(t *testing.T) {
 		KindWdttServer:     false,
 		KindFreeTurnClient: true,
 		KindFreeTurnServer: false,
+		KindOpenFluxClient: true,
+		KindOpenFluxServer: false,
 	}
 	for _, k := range AllKinds {
 		exp, ok := want[k]
@@ -222,7 +249,7 @@ func TestKinds_IsClientClassified(t *testing.T) {
 		}
 		n++
 	}
-	if n != 2 {
-		t.Errorf("ClientKinds вернул %d ролей, ждали 2", n)
+	if n != 3 {
+		t.Errorf("ClientKinds вернул %d ролей, ждали 3", n)
 	}
 }

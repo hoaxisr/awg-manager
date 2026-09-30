@@ -42,6 +42,7 @@
 		{ value: 'auto', label: 'auto' },
 		{ value: 'wv', label: 'wv' },
 	];
+
 </script>
 
 <DetailSection title="Параметры">
@@ -184,6 +185,13 @@
 
 	.w-select {
 		width: 220px;
+	}
+
+	.socks {
+		font-family: var(--font-mono);
+		font-size: 0.78em;
+		align-self: center;
+		color: var(--color-text-secondary);
 	}
 
 

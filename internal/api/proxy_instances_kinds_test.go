@@ -27,6 +27,8 @@ func TestKinds_ProxySecretsClassified(t *testing.T) {
 		instancestore.KindWdttServer:     nil,
 		instancestore.KindFreeTurnClient: {"obfKey"},
 		instancestore.KindFreeTurnServer: {"obfKey"},
+		instancestore.KindOpenFluxClient: {"encryptionKey"},
+		instancestore.KindOpenFluxServer: {"encryptionKey"},
 	}
 	// Второй половиной контракта владеет proxyPruneBlankSecrets: поле,
 	// которого нет в proxySecretFields, на входе не получит семантику
@@ -86,12 +88,18 @@ func TestKinds_ProxyNeedsOpkgTunClassified(t *testing.T) {
 			FreeTurnClient: &roles.FreeTurnClientConfig{}},
 		instancestore.KindFreeTurnServer: {Kind: instancestore.KindFreeTurnServer,
 			FreeTurnServer: &roles.FreeTurnServerConfig{}},
+		instancestore.KindOpenFluxClient: {Kind: instancestore.KindOpenFluxClient,
+			OpenFluxClient: &roles.OpenFluxClientConfig{}},
+		instancestore.KindOpenFluxServer: {Kind: instancestore.KindOpenFluxServer,
+			OpenFluxServer: &roles.OpenFluxServerConfig{}},
 	}
 	want := map[instancestore.Kind]bool{
 		instancestore.KindWdttClient:     true,
 		instancestore.KindWdttServer:     true,
 		instancestore.KindFreeTurnClient: false,
 		instancestore.KindFreeTurnServer: false,
+		instancestore.KindOpenFluxClient: false,
+		instancestore.KindOpenFluxServer: false,
 	}
 	for _, k := range instancestore.AllKinds {
 		exp, ok := want[k]
@@ -106,6 +114,19 @@ func TestKinds_ProxyNeedsOpkgTunClassified(t *testing.T) {
 		}
 		if got := proxyNeedsOpkgTun(rec); got != exp {
 			t.Errorf("%s: proxyNeedsOpkgTun=%v, ждали %v", k, got, exp)
+		}
+	}
+}
+
+// TestKinds_ApplyConfigCoversAll — proxyApplyConfig обязан знать каждую роль:
+// ветка «прочее» отдаёт отказ, и инстанс новой роли нельзя ни создать, ни
+// сохранить. Сверка по пустому конфигу: он не трогает поля, а ветку роли
+// проходит ровно та, что прописана в switch.
+func TestKinds_ApplyConfigCoversAll(t *testing.T) {
+	for _, k := range instancestore.AllKinds {
+		rec := instancestore.Record{Kind: k, ID: "probe"}
+		if err := proxyApplyConfig(&rec, nil); err != nil {
+			t.Errorf("%s: proxyApplyConfig = %v — добавьте ветку роли в switch", k, err)
 		}
 	}
 }
