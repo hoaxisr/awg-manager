@@ -156,8 +156,8 @@ type WGServerStore struct {
 	// ASC params (raw JSON, per-name, keyed by name+shape).
 	asc *cache.KeyedStore[string, json.RawMessage]
 	// Список СИСТЕМНЫХ (не наших) WG-туннелей. Кэш тут не украшение:
-	// поллер метрик спрашивает состав на КАЖДОМ тике (F364). Выборка —
-	// точечные чтения WG-интерфейсов одним POST (см. wireguardInterfaces).
+	// поллер метрик спрашивает состав на КАЖДОМ тике (F364), а выборка —
+	// `/show/interface/` целиком (см. wireguardInterfaces).
 	sysList *cache.ListStore[[]ndms.SystemWireguardTunnel]
 }
 
@@ -374,66 +374,34 @@ func (s *WGServerStore) InvalidateAll() {
 
 // --- fetchers ---------------------------------------------------------------
 
-// wireguardInterfaces — WG-интерфейсы роутера, каждый прочитан точечно.
+// wireguardInterfaces — WG-интерфейсы роутера из ОДНОГО чтения
+// `/show/interface/`: записи списка несут те же поля, что и точечное
+// `show interface <name>` (пиры, public-key, listen-port, summary.layer;
+// ответы побайтно совпадают, стенд 5.02.A.11).
 //
-// Состав берётся из InterfaceStore (держится хуками NDMS), а не из
-// `/show/interface/` целиком: полный список — это все порты, точки доступа и
-// мосты (стенд KN-1810: 30 интерфейсов, 34 КБ, ~15 тиков ndm), а нужны из
-// него только WG. Параллельные чтения батчер склеивает в один POST (~3 тика
-// + 0.8 на имя).
+// Точечных чтений по составу из InterfaceStore здесь больше нет (F546 S1):
+// при внешнем сносе NDMS шлёт iflayerchanged РАНЬШЕ ifdestroyed, хук слоя
+// освежает список серверов, а кэш ещё держит имя — точечное чтение доходило
+// до NDMS после сноса и писало E «unable to find» (стенд, 3 из 3). Список
+// дороже (стенд KN-1810: 30 интерфейсов, 34 КБ, ~15 тиков ndm), но по
+// отсутствующему имени не спрашивает никогда.
 //
-// Интерфейс, пропавший между составом и чтением, ошибкой не приходит: showOne
-// отвечает ErrGone и выселяет его из кэша — id пропускается.
-// Любая другая ошибка возвращается целиком: неполный список закэшировался бы
-// на TTL, а ошибка отдаёт прежний полный (stale-on-error ListStore) — иначе
-// живой сервер пропадал бы из /servers и из опроса метрик.
+// Ошибка чтения возвращается целиком: ListStore на ошибке отдаёт прежний
+// полный список (stale-on-error) — иначе живой сервер пропадал бы из
+// /servers и из опроса метрик.
 func (s *WGServerStore) wireguardInterfaces(ctx context.Context) (map[string]json.RawMessage, error) {
-	ifaces, err := s.interfaces.List(ctx)
-	if err != nil {
-		return nil, err
+	var raw map[string]json.RawMessage
+	if err := s.getter.Get(ctx, "/show/interface/", &raw); err != nil {
+		return nil, fmt.Errorf("list interfaces: %w", err)
 	}
-	var known []Present
-	for _, iface := range ifaces {
-		if !strings.EqualFold(iface.Type, "Wireguard") {
-			continue
+	out := make(map[string]json.RawMessage)
+	for id, data := range raw {
+		var typeCheck struct {
+			Type string `json:"type"`
 		}
-		p, ok, err := s.interfaces.Lookup(ctx, iface.ID)
-		if err != nil {
-			return nil, err
+		if json.Unmarshal(data, &typeCheck) == nil && strings.EqualFold(typeCheck.Type, "Wireguard") {
+			out[id] = data
 		}
-		if ok { // !ok — снят хуком после List
-			known = append(known, p)
-		}
-	}
-	type res struct {
-		id   string
-		data json.RawMessage
-		err  error
-	}
-	results := make(chan res, len(known))
-	for _, p := range known {
-		go func(p Present) {
-			data, err := s.interfaces.ShowRaw(ctx, p)
-			results <- res{p.Name(), data, err}
-		}(p)
-	}
-	out := make(map[string]json.RawMessage, len(known))
-	var firstErr error
-	for range known {
-		r := <-results
-		if errors.Is(r.err, ErrGone) {
-			continue
-		}
-		if r.err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("%s: %w", r.id, r.err)
-			}
-			continue
-		}
-		out[r.id] = r.data
-	}
-	if firstErr != nil {
-		return nil, firstErr
 	}
 	return out, nil
 }

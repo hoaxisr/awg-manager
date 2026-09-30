@@ -114,3 +114,36 @@ func TestWGServers_AbsentInterface_NoListPerPoll(t *testing.T) {
 		t.Fatalf("E = %d, want 0", f.E)
 	}
 }
+
+// F546 S1: при внешнем сносе NDMS шлёт iflayerchanged РАНЬШЕ ifdestroyed —
+// хук слоя сбрасывает список серверов, а кэш интерфейсов ещё держит имя.
+// Перечитывание списка серверов не должно спрашивать снятый интерфейс по
+// имени: ровно одно чтение полного списка, E == 0.
+func TestWGServers_RefreshAfterExternalRemoval_NoPointRead(t *testing.T) {
+	f := NewFakeNDMS(
+		ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"},
+		ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"},
+	)
+	q := NewQueries(Deps{Getter: f, Logger: NopLogger()})
+	ctx := context.Background()
+	if _, err := q.WGServers.List(ctx); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+
+	f.Remove("Wireguard1") // ifdestroyed в очереди, не доставлен
+	q.WGServers.InvalidateAll()
+	before := f.ListCalls()
+	servers, err := q.WGServers.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if f.E != 0 {
+		t.Fatalf("E = %d, want 0", f.E)
+	}
+	if n := f.ListCalls() - before; n != 1 {
+		t.Fatalf("чтений списка %d, want 1", n)
+	}
+	if len(servers) != 1 || servers[0].ID != "Wireguard0" {
+		t.Fatalf("servers = %+v, want только Wireguard0", servers)
+	}
+}

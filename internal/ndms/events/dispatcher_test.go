@@ -120,19 +120,20 @@ func TestDispatcher_IfLayerChanged_NoHTTPOnInterfaces(t *testing.T) {
 func TestDispatcher_IfDestroyed_InvalidatesWGServers(t *testing.T) {
 	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
+	drained := drainBarrier(d)
 	d.Start()
 	defer d.Stop()
 
 	_, _ = q.WGServers.List(context.Background())
-	primed := pointReads(fg)
 
 	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard1"})
-	waitFor(t, 200*time.Millisecond, func() bool {
-		_, _ = q.WGServers.List(context.Background())
-		return pointReads(fg) > primed
-	})
+	waitDrain(t, drained)
+	// Отсчёт после прохода: сам диспетчер тоже может читать список
+	// (ifcreated неизвестного id), а проверяется сброс кэша серверов.
+	primed := fg.Calls(ifaceListPath)
+	_, _ = q.WGServers.List(context.Background())
 
-	if pointReads(fg) <= primed {
+	if fg.Calls(ifaceListPath) <= primed {
 		t.Errorf("WGServer list not re-fetched after IfDestroyed")
 	}
 }
@@ -140,19 +141,20 @@ func TestDispatcher_IfDestroyed_InvalidatesWGServers(t *testing.T) {
 func TestDispatcher_IfCreated_InvalidatesWGServers(t *testing.T) {
 	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
+	drained := drainBarrier(d)
 	d.Start()
 	defer d.Stop()
 
 	_, _ = q.WGServers.List(context.Background())
-	primed := pointReads(fg)
 
 	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard5"})
-	waitFor(t, 200*time.Millisecond, func() bool {
-		_, _ = q.WGServers.List(context.Background())
-		return pointReads(fg) > primed
-	})
+	waitDrain(t, drained)
+	// Отсчёт после прохода: сам диспетчер тоже может читать список
+	// (ifcreated неизвестного id), а проверяется сброс кэша серверов.
+	primed := fg.Calls(ifaceListPath)
+	_, _ = q.WGServers.List(context.Background())
 
-	if pointReads(fg) <= primed {
+	if fg.Calls(ifaceListPath) <= primed {
 		t.Errorf("WGServer list not re-fetched after IfCreated")
 	}
 }
@@ -201,9 +203,8 @@ func TestDispatcher_Stop_WithoutStart_ReturnsImmediately(t *testing.T) {
 
 // === Порядок пакета, слушатель маршрутизации, соседние кэши ===
 
-// pointReads — точечные чтения Wireguard0 (`show interface`). Им же читают
-// пиров и списки серверов/системных туннелей (состав — из InterfaceStore),
-// поэтому сброс их кэша виден по нему, а не по полному списку.
+// pointReads — точечные чтения Wireguard0 (`show interface`). Им читают
+// пиров, поэтому сброс их кэша виден по нему, а не по полному списку.
 func pointReads(fg *query.FakeGetter) int { return fg.PostInterfaceCalls("Wireguard0") }
 
 const samplePeers = `{"wireguard":{"peer":[{"public-key":"KEY","online":true}]}}`
@@ -396,19 +397,20 @@ func waitDrain(t *testing.T, ch <-chan struct{}) {
 func TestDispatcher_IfLayerChanged_InvalidatesSystemTunnelList(t *testing.T) {
 	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
+	drained := drainBarrier(d)
 	d.Start()
 	defer d.Stop()
 
 	_, _ = q.WGServers.ListSystemTunnels(context.Background())
-	primed := pointReads(fg)
 
 	d.Enqueue(Event{Type: EventIfLayerChanged, ID: "Wireguard1", Layer: "link", Level: "running"})
-	waitFor(t, 300*time.Millisecond, func() bool {
-		_, _ = q.WGServers.ListSystemTunnels(context.Background())
-		return pointReads(fg) > primed
-	})
+	waitDrain(t, drained)
+	// Отсчёт после прохода: сам диспетчер тоже может читать список
+	// (ifcreated неизвестного id), а проверяется сброс кэша серверов.
+	primed := fg.Calls(ifaceListPath)
+	_, _ = q.WGServers.ListSystemTunnels(context.Background())
 
-	if pointReads(fg) <= primed {
+	if fg.Calls(ifaceListPath) <= primed {
 		t.Errorf("состав системных туннелей не перечитан после iflayerchanged")
 	}
 }
