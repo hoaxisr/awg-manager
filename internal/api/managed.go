@@ -861,7 +861,7 @@ func (h *ManagedServerHandler) NAT(w http.ResponseWriter, r *http.Request, id st
 // POST /api/managed-servers/{id}/enabled
 //
 //	@Summary		Toggle managed-server enabled
-//	@Description	Brings the named managed server interface up or down (and persists the desired state).
+//	@Description	Brings the named managed server interface up or down in NDMS. awg-manager stores nothing for this toggle.
 //	@Tags			managed-servers
 //	@Accept			json
 //	@Produce		json

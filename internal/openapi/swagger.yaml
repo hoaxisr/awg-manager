@@ -11738,8 +11738,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Brings the named managed server interface up or down (and persists
-        the desired state).
+      description: Brings the named managed server interface up or down in NDMS. awg-manager
+        stores nothing for this toggle.
       parameters:
       - description: Server id
         in: path
