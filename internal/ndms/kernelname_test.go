@@ -14,6 +14,9 @@ func TestKernelName(t *testing.T) {
 		{"Proxy0", "t2s0", true},
 		{"PPPoE0", "ppp0", true},
 		{"Bridge0", "br0", true},
+		{"PPPoE1", "", false},
+		{"Bridge1", "", false},
+		{"Bridge10", "", false},
 		{"GigabitEthernet1", "", false},
 		{"WifiMaster0/AccessPoint0", "", false},
 		{"UsbQmi0", "", false},
@@ -44,11 +47,12 @@ func TestKernelName_ExactlyFiveClasses(t *testing.T) {
 		"PPPoE":     "ppp",
 		"Bridge":    "br",
 	}
+	zeroOnly := map[string]bool{"PPPoE": true, "Bridge": true} // стенд: только номер 0
 	if len(kernelNamePrefixes) != len(want) {
 		t.Fatalf("классов %d, ждали %d", len(kernelNamePrefixes), len(want))
 	}
 	for _, p := range kernelNamePrefixes {
-		if want[p.ndms] != p.kernel {
+		if want[p.ndms] != p.kernel || zeroOnly[p.ndms] != p.zeroOnly {
 			t.Fatalf("класс %q → %q не из стенд-таблицы", p.ndms, p.kernel)
 		}
 	}
