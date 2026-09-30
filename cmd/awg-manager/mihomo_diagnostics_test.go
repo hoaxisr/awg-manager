@@ -75,6 +75,24 @@ func TestMihomoDiagnosticResolverUsesVerifiedNDMSAllocation(t *testing.T) {
 	}
 }
 
+func TestMihomoDiagnosticResolverMatchesFormattedDescription(t *testing.T) {
+	const id = "native-1"
+	lookup := &fakeMihomoDiagnosticProxyLookup{
+		description: "My Proxy [awg-manager:mihomo:proxy:native-1]",
+		exists:      true,
+	}
+	kernel := &fakeMihomoDiagnosticKernelResolver{iface: "t2s7"}
+	resolver := testMihomoDiagnosticResolver(lookup, kernel)
+
+	iface, err := resolver.ResolveMihomoDiagnosticInterface(context.Background(), "proxy", id)
+	if err != nil {
+		t.Fatalf("ResolveMihomoDiagnosticInterface() error = %v", err)
+	}
+	if iface != "t2s7" {
+		t.Fatalf("iface = %q, want server-resolved t2s7", iface)
+	}
+}
+
 func TestMihomoDiagnosticResolverRejectsToggleOffBeforeNDMSLookup(t *testing.T) {
 	lookup := &fakeMihomoDiagnosticProxyLookup{}
 	resolver := testMihomoDiagnosticResolver(lookup, &fakeMihomoDiagnosticKernelResolver{iface: "t2s7"})
