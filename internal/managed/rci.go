@@ -21,13 +21,22 @@ import (
 // rejected reply may still carry applied changes. Список интерфейсов не
 // перечитывается: запись правят хуки NDMS, создание подтверждает
 // rciCreateInterface, снос — Forget в rciDeleteInterface (F546).
-func (s *Service) rciPost(ctx context.Context, payload interface{}) error {
-	return s.rciPostTolerant(ctx, payload, nil)
+//
+// ifaces — подтверждения интерфейсов, по которым собран payload: нулевой
+// Confirmed (Name()=="") — отказ без POST, иначе команда ушла бы по имени ""
+// мимо подтверждения (F546).
+func (s *Service) rciPost(ctx context.Context, payload interface{}, ifaces ...query.Confirmed) error {
+	return s.rciPostTolerant(ctx, payload, nil, ifaces...)
 }
 
 // rciPostTolerant — rciPost, который признаёт отказы tolerate безобидными
 // (предикаты command.Tolerate*): идемпотентный снос того, чего уже нет.
-func (s *Service) rciPostTolerant(ctx context.Context, payload interface{}, tolerate func(string) bool) error {
+func (s *Service) rciPostTolerant(ctx context.Context, payload interface{}, tolerate func(string) bool, ifaces ...query.Confirmed) error {
+	for _, c := range ifaces {
+		if c.Name() == "" {
+			return fmt.Errorf("managed rci: команда без подтверждённого интерфейса")
+		}
+	}
 	var after []func()
 	if s.saveCoord != nil {
 		after = append(after, s.saveCoord.Request)
@@ -87,7 +96,7 @@ func (s *Service) rciDeleteInterface(ctx context.Context, iface query.Confirmed)
 				"no": true,
 			},
 		},
-	}, command.TolerateMissingInterface); err != nil {
+	}, command.TolerateMissingInterface, iface); err != nil {
 		return err
 	}
 	if s.queries != nil && s.queries.Interfaces != nil {
@@ -126,7 +135,7 @@ func (s *Service) rciConfigureServer(ctx context.Context, iface query.Confirmed,
 				"up": true,
 			},
 		},
-	})
+	}, iface)
 }
 
 // updateServerChanges holds the optional set of mutations rciUpdateServer
@@ -188,7 +197,7 @@ func (s *Service) rciUpdateServer(ctx context.Context, iface query.Confirmed, c 
 		"interface": map[string]interface{}{
 			iface.Name(): body,
 		},
-	})
+	}, iface)
 }
 
 // rciSetNAT enables or disables NAT for an interface. `no ip nat` на
@@ -202,7 +211,7 @@ func (s *Service) rciSetNAT(ctx context.Context, iface query.Confirmed, enabled 
 					"interface": iface.Name(),
 				},
 			},
-		})
+		}, iface)
 	}
 	return s.rciPost(ctx, map[string]interface{}{
 		"ip": map[string]interface{}{
@@ -210,7 +219,7 @@ func (s *Service) rciSetNAT(ctx context.Context, iface query.Confirmed, enabled 
 				{"no": true, "interface": iface.Name()},
 			},
 		},
-	})
+	}, iface)
 }
 
 // rciSetStaticNAT добавляет/снимает Static NAT (`ip static <iface> <wan>`)
@@ -225,7 +234,7 @@ func (s *Service) rciSetStaticNAT(ctx context.Context, iface, wan query.Confirme
 					"to-interface": wan.Name(),
 				},
 			},
-		})
+		}, iface, wan)
 	}
 	// Снятие терпит «unknown interface», как command.RemoveStaticNAT: выход
 	// мог исчезнуть раньше правила.
@@ -235,7 +244,7 @@ func (s *Service) rciSetStaticNAT(ctx context.Context, iface, wan query.Confirme
 				{"no": true, "interface": iface.Name(), "to-interface": wan.Name()},
 			},
 		},
-	}, command.TolerateUnknownInterface)
+	}, command.TolerateUnknownInterface, iface, wan)
 }
 
 // rciSetPrivateKey installs an explicit WireGuard private key on the
@@ -253,7 +262,7 @@ func (s *Service) rciSetPrivateKey(ctx context.Context, iface query.Confirmed, p
 				},
 			},
 		},
-	})
+	}, iface)
 }
 
 // rciSetASCParams sets AWG ASC params on interface wireguard.asc.
@@ -272,7 +281,7 @@ func (s *Service) rciSetASCParams(ctx context.Context, iface query.Confirmed, pa
 				},
 			},
 		},
-	})
+	}, iface)
 }
 
 // rciClearASCParams clears ASC settings from interface wireguard.asc.
@@ -287,7 +296,7 @@ func (s *Service) rciClearASCParams(ctx context.Context, iface query.Confirmed) 
 				},
 			},
 		},
-	})
+	}, iface)
 }
 
 // rciSetHotspotPolicy applies an ip hotspot policy to the interface.
@@ -310,7 +319,7 @@ func (s *Service) rciSetHotspotPolicy(ctx context.Context, iface query.Confirmed
 				},
 			},
 		},
-	})
+	}, iface)
 }
 
 // rciClearHotspotPolicy removes the ip hotspot policy from the interface
@@ -330,7 +339,7 @@ func (s *Service) rciClearHotspotPolicy(ctx context.Context, iface query.Confirm
 				},
 			},
 		},
-	})
+	}, iface)
 }
 
 // rciInterfaceUp brings the interface up.
@@ -341,7 +350,7 @@ func (s *Service) rciInterfaceUp(ctx context.Context, iface query.Confirmed) err
 				"up": true,
 			},
 		},
-	})
+	}, iface)
 }
 
 // rciInterfaceDown brings the interface down.
@@ -352,7 +361,7 @@ func (s *Service) rciInterfaceDown(ctx context.Context, iface query.Confirmed) e
 				"up": false,
 			},
 		},
-	})
+	}, iface)
 }
 
 // rciAddPeer adds a peer with all parameters in a single RCI call.
@@ -376,7 +385,7 @@ func (s *Service) rciAddPeer(ctx context.Context, iface query.Confirmed, pubKey,
 				},
 			},
 		},
-	})
+	}, iface)
 }
 
 // peerCommands — команды пира, общие с системным путём: снятие пира
@@ -441,7 +450,7 @@ func (s *Service) rciRemovePeerDefaultRoute(ctx context.Context, iface query.Con
 				},
 			},
 		},
-	}, command.TolerateNoSuchNetInPeer)
+	}, command.TolerateNoSuchNetInPeer, iface)
 }
 
 // rciUpdatePeerAllowIPs removes old allow-ips and sets new ones. Снятие
@@ -474,5 +483,5 @@ func (s *Service) rciUpdatePeerAllowIPs(ctx context.Context, iface query.Confirm
 				},
 			},
 		},
-	})
+	}, iface)
 }
