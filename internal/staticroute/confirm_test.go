@@ -2,6 +2,7 @@ package staticroute
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -154,4 +155,92 @@ func TestStaticRoute_ListError_UpdateAndSetEnabledKeepRecord(t *testing.T) {
 	if len(f.Posts) != 0 {
 		t.Fatalf("команды при ошибке списка: %v", f.Posts)
 	}
+}
+
+// rejectPoster — оракул, отвергающий установку маршрута на 10.99.0.0.
+type rejectPoster struct{ f *query.FakeNDMS }
+
+func (p rejectPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	js, _ := json.Marshal(payload)
+	if strings.Contains(string(js), `10.99.0.0`) && !strings.Contains(string(js), `"no":true`) {
+		return nil, errors.New("injected: route rejected")
+	}
+	return p.f.Post(ctx, payload)
+}
+
+func newRejectingStaticRoutes(t *testing.T, f *query.FakeNDMS, lists []storage.StaticRouteList) *ServiceImpl {
+	t.Helper()
+	s := newOracleStaticRoutes(t, f, lists)
+	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	p := rejectPoster{f}
+	s.routes = command.NewRouteCommands(p, command.NewSaveCoordinator(p, nil, time.Hour, time.Hour, 0, nil), q)
+	return s
+}
+
+// removedRoute — снят ли маршрут на network (форма `no` в payload).
+func removedRoute(f *query.FakeNDMS, network string) bool {
+	for _, p := range routePosts(f) {
+		if strings.Contains(p, network) && strings.Contains(p, `"no":true`) {
+			return true
+		}
+	}
+	return false
+}
+
+// Отказ одной подсети: Create/SetEnabled/Update отвечают ошибкой, поставленное
+// снято, запись не сохранена (F565, раунд 1).
+func TestStaticRoute_RouteRejected_ErrorRollbackNoSave(t *testing.T) {
+	bad := []string{"10.20.0.0/16", "10.99.0.0/16"}
+	ctx := context.Background()
+
+	t.Run("Create", func(t *testing.T) {
+		f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+		s := newRejectingStaticRoutes(t, f, nil)
+		if _, err := s.Create(ctx, storage.StaticRouteList{Name: "a", TunnelID: "awg10", Subnets: bad, Enabled: true}); err == nil {
+			t.Fatal("отказ маршрута проглочен")
+		}
+		if lists, _ := s.store.ListRouteLists(); len(lists) != 0 {
+			t.Fatalf("список сохранён: %+v", lists)
+		}
+		if !removedRoute(f, "10.20.0.0") {
+			t.Fatalf("поставленная подсеть не снята: %v", routePosts(f))
+		}
+		oracleClean(t, f)
+	})
+
+	t.Run("SetEnabled", func(t *testing.T) {
+		f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+		s := newRejectingStaticRoutes(t, f, []storage.StaticRouteList{
+			{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: bad, Enabled: false},
+		})
+		if err := s.SetEnabled(ctx, "srl1", true); err == nil {
+			t.Fatal("отказ маршрута проглочен")
+		}
+		if got, _ := s.store.GetRouteList("srl1"); got.Enabled {
+			t.Fatal("включение сохранено при отказе")
+		}
+		if !removedRoute(f, "10.20.0.0") {
+			t.Fatalf("поставленная подсеть не снята: %v", routePosts(f))
+		}
+		oracleClean(t, f)
+	})
+
+	t.Run("Update", func(t *testing.T) {
+		f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
+		s := newRejectingStaticRoutes(t, f, []storage.StaticRouteList{
+			{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: []string{"10.30.0.0/16"}, Enabled: true},
+		})
+		if _, err := s.Update(ctx, storage.StaticRouteList{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: bad, Enabled: true}); err == nil {
+			t.Fatal("отказ маршрута проглочен")
+		}
+		got, _ := s.store.GetRouteList("srl1")
+		if len(got.Subnets) != 1 || got.Subnets[0] != "10.30.0.0/16" {
+			t.Fatalf("правка сохранена при отказе: %+v", got)
+		}
+		posts := routePosts(f)
+		if !removedRoute(f, "10.20.0.0") || !strings.Contains(posts[len(posts)-1], "10.30.0.0") || strings.Contains(posts[len(posts)-1], `"no":true`) {
+			t.Fatalf("прежний список не возвращён: %v", posts)
+		}
+		oracleClean(t, f)
+	})
 }

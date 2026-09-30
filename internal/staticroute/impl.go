@@ -2,6 +2,7 @@ package staticroute
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -80,13 +81,22 @@ func (s *ServiceImpl) Create(ctx context.Context, rl storage.StaticRouteList) (*
 		return nil, err
 	}
 
-	if err := s.store.AddRouteList(rl); err != nil {
-		return nil, fmt.Errorf("create route list: %w", err)
+	// Маршруты — ДО записи: отказ откатывает поставленное, список не
+	// сохраняется (F565).
+	var applied []string
+	var confirmed map[string]query.Confirmed
+	if rl.Enabled {
+		var cerr, err error
+		confirmed, cerr = s.confirmIfaces(ctx, rl.TunnelID)
+		if applied, err = s.applyRoutes(ctx, rl, confirmed, cerr); err != nil {
+			s.rollbackApplied(ctx, rl, applied, confirmed)
+			return nil, fmt.Errorf("create route list: %w", err)
+		}
 	}
 
-	if rl.Enabled {
-		confirmed, cerr := s.confirmIfaces(ctx, rl.TunnelID)
-		s.applyRoutes(ctx, rl, confirmed, cerr)
+	if err := s.store.AddRouteList(rl); err != nil {
+		s.rollbackApplied(ctx, rl, applied, confirmed)
+		return nil, fmt.Errorf("create route list: %w", err)
 	}
 
 	return &rl, nil
@@ -144,15 +154,25 @@ func (s *ServiceImpl) Update(ctx context.Context, rl storage.StaticRouteList) (*
 		return nil, fmt.Errorf("update route list: %w", cerr)
 	}
 
-	if err := s.store.UpdateRouteList(rl); err != nil {
-		return nil, fmt.Errorf("update route list: %w", err)
-	}
-
 	if old.Enabled {
 		s.removeRoutes(ctx, old.TunnelID, old.Subnets, confirmed, cerr)
 	}
+	var applied []string
 	if rl.Enabled {
-		s.applyRoutes(ctx, rl, confirmed, cerr)
+		applied, err = s.applyRoutes(ctx, rl, confirmed, cerr)
+	}
+	if err == nil {
+		err = s.store.UpdateRouteList(rl)
+	}
+	if err != nil {
+		// Откат к прежнему списку: запись не менялась, роутер — тоже (F565).
+		s.rollbackApplied(ctx, rl, applied, confirmed)
+		if old.Enabled {
+			if _, rbErr := s.applyRoutes(ctx, *old, confirmed, cerr); rbErr != nil {
+				err = errors.Join(err, fmt.Errorf("откат к прежнему списку: %w", rbErr))
+			}
+		}
+		return nil, fmt.Errorf("update route list: %w", err)
 	}
 
 	return &rl, nil
@@ -199,24 +219,33 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) e
 		return nil // no change
 	}
 
-	// Список не прочитан — отказ ДО записи (F565), как в Update. И до правки
-	// rl: GetRouteList отдаёт указатель в кэш хранилища.
+	// Список не прочитан — отказ ДО записи (F565), как в Update. Правим
+	// копию: GetRouteList отдаёт указатель в кэш хранилища.
 	confirmed, cerr := s.confirmIfaces(ctx, rl.TunnelID)
 	if cerr != nil {
 		return fmt.Errorf("set enabled: %w", cerr)
 	}
 
-	rl.Enabled = enabled
-	rl.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	next := *rl
+	next.Enabled = enabled
+	next.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
-	if err := s.store.UpdateRouteList(*rl); err != nil {
+	// Включение — маршруты ДО записи: отказ откатывает поставленное (F565).
+	var applied []string
+	if enabled {
+		if applied, err = s.applyRoutes(ctx, next, confirmed, cerr); err != nil {
+			s.rollbackApplied(ctx, next, applied, confirmed)
+			return fmt.Errorf("set enabled: %w", err)
+		}
+	}
+
+	if err := s.store.UpdateRouteList(next); err != nil {
+		s.rollbackApplied(ctx, next, applied, confirmed)
 		return fmt.Errorf("set enabled: save: %w", err)
 	}
 
-	if enabled {
-		s.applyRoutes(ctx, *rl, confirmed, cerr)
-	} else {
-		s.removeRoutes(ctx, rl.TunnelID, rl.Subnets, confirmed, cerr)
+	if !enabled {
+		s.removeRoutes(ctx, next.TunnelID, next.Subnets, confirmed, cerr)
 	}
 
 	return nil
@@ -381,7 +410,7 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 	confirmed, cerr := s.confirmIfaces(ctx, ids...)
 	var totalRoutes int
 	for _, rl := range active {
-		s.applyRoutes(ctx, rl, confirmed, cerr)
+		_, _ = s.applyRoutes(ctx, rl, confirmed, cerr) // отказы уже в журнале
 		totalRoutes += len(rl.Subnets)
 	}
 
@@ -520,33 +549,51 @@ func (s *ServiceImpl) confirmIfaces(ctx context.Context, tunnelIDs ...string) (m
 // (routes will be applied later by OnTunnelStart). NDMS-маршрут ставится
 // только на интерфейс из confirmed (confirmIfaces): ссылка ip route на
 // отсутствующий пишет E в журнал ndm; список не прочитан (cerr) — ничего.
-func (s *ServiceImpl) applyRoutes(ctx context.Context, rl storage.StaticRouteList, confirmed map[string]query.Confirmed, cerr error) {
+//
+// Возвращает поставленные подсети и отказы (F565): отказ одной подсети
+// остальные не останавливает (Reconcile), а правка списка по нему откатывает
+// поставленное (rollbackApplied) и запись не сохраняет. Интерфейса нет —
+// не ошибка (статус не изменён, NEEDS_DECISION F565).
+func (s *ServiceImpl) applyRoutes(ctx context.Context, rl storage.StaticRouteList, confirmed map[string]query.Confirmed, cerr error) ([]string, error) {
 	os4k := isOS4Kernel(rl.TunnelID)
 	if os4k && !s.ifaceExists(rl.TunnelID) {
 		s.appLog.Debug("apply", rl.TunnelID, "skip — interface not up, will apply on start")
-		return
+		return nil, nil
 	}
 	ifaceName, err := s.catalog.ResolveInterface(ctx, rl.TunnelID)
 	if err != nil {
 		s.appLog.Warn("resolve-interface", rl.TunnelID, err.Error())
-		return
+		return nil, err
 	}
 	var iface query.Confirmed
 	if !os4k {
 		if cerr != nil {
 			s.appLog.Warn("apply", ifaceName, cerr.Error())
-			return
+			return nil, cerr
 		}
 		var ok bool
 		if iface, ok = confirmed[ifaceName]; !ok {
 			s.appLog.Warn("apply", ifaceName, "интерфейса нет в NDMS — маршруты списка "+rl.ID+" не поставлены")
-			return
+			return nil, nil
 		}
 	}
+	var applied []string
+	var errs []error
 	for _, subnet := range rl.Subnets {
 		if err := s.addRoute(ctx, subnet, ifaceName, iface, rl.Fallback, os4k); err != nil {
 			s.appLog.Warn("add-route", subnet, err.Error())
+			errs = append(errs, err)
+			continue
 		}
+		applied = append(applied, subnet)
+	}
+	return applied, errors.Join(errs...)
+}
+
+// rollbackApplied снимает подсети, поставленные неудавшейся правкой списка.
+func (s *ServiceImpl) rollbackApplied(ctx context.Context, rl storage.StaticRouteList, applied []string, confirmed map[string]query.Confirmed) {
+	if len(applied) > 0 {
+		s.removeRoutes(ctx, rl.TunnelID, applied, confirmed, nil)
 	}
 }
 
