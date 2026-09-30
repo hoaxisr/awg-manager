@@ -122,7 +122,7 @@ func TestPeerRouter_AddNetworkRouteForms(t *testing.T) {
 	for _, c := range cases {
 		cmds, poster := newRouteCommandsWithRC(t, `[]`)
 		_, n, _ := net.ParseCIDR(c.cidr)
-		if err := NewPeerRouter(&Commands{Routes: cmds}, cmds.queries).AddNetworkRoute(context.Background(), n, "Wireguard9", "L"); err != nil {
+		if err := NewPeerRouter(&Commands{Routes: cmds}, cmds.queries).AddNetworkRoute(context.Background(), n, confirmed(t, "Wireguard9"), "L"); err != nil {
 			t.Fatal(err)
 		}
 		b, _ := json.Marshal(poster.Payloads()[0])

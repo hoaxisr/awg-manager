@@ -109,7 +109,7 @@ func (c *WireguardCommands) ImportWireguardConfig(ctx context.Context, confData 
 	}
 	conf, _, ok, err := c.queries.Interfaces.Confirm(ctx, imp.Created)
 	if err != nil {
-		return ImportResult{}, fmt.Errorf("import wireguard: %w", err) // имя уже в ошибке Confirm
+		return ImportResult{}, fmt.Errorf("import wireguard: создан %s, подтверждение не прочитано: %w", imp.Created, err)
 	}
 	if !ok {
 		return ImportResult{}, fmt.Errorf("import wireguard: импорт принят, но %s нет в списке", imp.Created)
@@ -279,6 +279,23 @@ func (c *WireguardCommands) freshPeer(ctx context.Context, ifaceName, pubKey str
 	if err != nil {
 		return nil, err
 	}
+	return findPeer(peers, ifaceName, pubKey)
+}
+
+// freshPeerIn — freshPeer по подтверждённому интерфейсу: список интерфейсов
+// не перечитывается.
+func (c *WireguardCommands) freshPeerIn(ctx context.Context, iface query.Confirmed, pubKey string) (*ndms.WireguardServerPeerConfig, error) {
+	if c.queries == nil || c.queries.WGServers == nil {
+		return nil, fmt.Errorf("wireguard server store not wired")
+	}
+	peers, err := c.queries.WGServers.PeersRC(ctx, iface)
+	if err != nil {
+		return nil, err
+	}
+	return findPeer(peers, iface.Name(), pubKey)
+}
+
+func findPeer(peers []ndms.WireguardServerPeerConfig, ifaceName, pubKey string) (*ndms.WireguardServerPeerConfig, error) {
 	for i := range peers {
 		if peers[i].PublicKey == pubKey {
 			return &peers[i], nil

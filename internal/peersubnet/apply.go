@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 // ErrPeerNotFound — пира с ключом на интерфейсе нет (свежее чтение). Отдельная
@@ -15,24 +17,30 @@ var ErrPeerNotFound = errors.New("пир не найден на интерфей
 
 // Router — узкий срез RCI, который нужен исполнителю. Адаптер живёт в
 // ndms/command (PeerRouter); фейк — в тестах этого пакета.
+//
+// Мутации и чтение allow-ips принимают интерфейс, подтверждённый свежим
+// списком (F546): Reconcile и RemoveRoutes берут Confirm один раз на вызов, и
+// откат идёт по тому же доказательству — список не перечитывается на каждый шаг.
 type Router interface {
+	// Confirm — iface по свежему списку интерфейсов; ok=false — его нет.
+	Confirm(ctx context.Context, iface string) (c query.Confirmed, ok bool, err error)
 	// PeerAllowIPs — allow-ips пира на iface, прочитанные сейчас, мимо кэша.
 	// Отказ чтения — ошибка: по устаревшему снимку сверка сняла бы не то.
 	// Пира нет — ErrPeerNotFound.
-	PeerAllowIPs(ctx context.Context, iface, pubkey string) ([]*net.IPNet, error)
+	PeerAllowIPs(ctx context.Context, iface query.Confirmed, pubkey string) ([]*net.IPNet, error)
 	// InterfaceRoutes — статические маршруты на iface с комментариями,
 	// прочитанные сейчас (/show/rc/ip/route, 11.A/11.2).
 	InterfaceRoutes(ctx context.Context, iface string) ([]Route, error)
-	AddAllowIP(ctx context.Context, iface, pubkey string, n *net.IPNet) error
-	RemoveAllowIP(ctx context.Context, iface, pubkey string, n *net.IPNet) error
+	AddAllowIP(ctx context.Context, iface query.Confirmed, pubkey string, n *net.IPNet) error
+	RemoveAllowIP(ctx context.Context, iface query.Confirmed, pubkey string, n *net.IPNet) error
 	// NetworkRouteOwner: есть ли запись на (n, iface) — свежее чтение прямо
 	// перед добавлением, чтобы не переписать comment записи, поставленной
 	// после снимка (стенд: повторный ip route заменяет comment).
 	NetworkRouteOwner(ctx context.Context, n *net.IPNet, iface, comment string) (exists, own bool, err error)
-	AddNetworkRoute(ctx context.Context, n *net.IPNet, iface, comment string) error
+	AddNetworkRoute(ctx context.Context, n *net.IPNet, iface query.Confirmed, comment string) error
 	// RemoveOwnNetworkRoute снимает только запись с меткой comment; removed —
 	// была ли мутация (откату нужно знать, что возвращать).
-	RemoveOwnNetworkRoute(ctx context.Context, n *net.IPNet, iface, comment string) (removed bool, err error)
+	RemoveOwnNetworkRoute(ctx context.Context, n *net.IPNet, iface query.Confirmed, comment string) (removed bool, err error)
 }
 
 // Route — статическая запись маршрута на интерфейсе.
@@ -103,17 +111,31 @@ func isHostOf(n *net.IPNet, hosts []net.IP) bool {
 // не наша: поверх не встаём (стенд: повтор переписал бы комментарий).
 // Отказ чтения (и ErrPeerNotFound) — ошибка до единой мутации. Отказ шага откатывает сделанное
 // ЭТИМ вызовом в обратном порядке: стоявшее до вызова остаётся.
-func Reconcile(ctx context.Context, r Router, iface, pubkey string, tunnelHosts []net.IP, desired []string) error {
+//
+// Интерфейс подтверждается свежим списком один раз (F546): список не прочитан —
+// ошибка без мутаций; интерфейса нет — при пустом desired успех (снимать не с
+// чего), иначе ошибка.
+func Reconcile(ctx context.Context, r Router, ifaceName, pubkey string, tunnelHosts []net.IP, desired []string) error {
 	comment := RouteComment(pubkey)
 	want, err := parseAll(desired)
 	if err != nil {
 		return err
 	}
+	iface, ok, err := r.Confirm(ctx, ifaceName)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		if len(want) == 0 {
+			return nil
+		}
+		return fmt.Errorf("интерфейс %s не найден в NDMS", ifaceName)
+	}
 	allow, err := r.PeerAllowIPs(ctx, iface, pubkey)
 	if err != nil {
 		return fmt.Errorf("read peer allow-ips: %w", err)
 	}
-	routes, err := r.InterfaceRoutes(ctx, iface)
+	routes, err := r.InterfaceRoutes(ctx, ifaceName)
 	if err != nil {
 		return fmt.Errorf("read routes: %w", err)
 	}
@@ -195,7 +217,7 @@ func Reconcile(ctx context.Context, r Router, iface, pubkey string, tunnelHosts 
 	for _, n := range routeAdd {
 		// Снимок старше этой секунды: запись, появившуюся после него, не
 		// трогаем и своей не считаем (правило 2).
-		exists, _, err := r.NetworkRouteOwner(ctx, n, iface, comment)
+		exists, _, err := r.NetworkRouteOwner(ctx, n, ifaceName, comment)
 		if err != nil {
 			return rollback(fmt.Errorf("route %s: %w", n, err))
 		}
@@ -223,10 +245,15 @@ func Reconcile(ctx context.Context, r Router, iface, pubkey string, tunnelHosts 
 // роутере (правила 3–4), — не список из хранилища: сирота после RollbackError
 // снимается тоже. Отказ чтения или первого снятия — отказ целиком (fail-closed,
 // 11.B/11.6: маршрут-сирота без пира никто уже не снимет). allow-ips не
-// трогаются: вызывающий снимает пира целиком.
-func RemoveRoutes(ctx context.Context, r Router, iface, pubkey string) error {
+// трогаются: вызывающий снимает пира целиком. Интерфейс подтверждается одним
+// чтением списка (F546): не прочитан — ошибка; интерфейса нет — успех.
+func RemoveRoutes(ctx context.Context, r Router, ifaceName, pubkey string) error {
 	comment := RouteComment(pubkey)
-	routes, err := r.InterfaceRoutes(ctx, iface)
+	iface, ok, err := r.Confirm(ctx, ifaceName)
+	if err != nil || !ok {
+		return err
+	}
+	routes, err := r.InterfaceRoutes(ctx, ifaceName)
 	if err != nil {
 		return fmt.Errorf("read routes: %w", err)
 	}

@@ -173,8 +173,27 @@ func TestConfigureProfile_NoUnbindWhenNotBound(t *testing.T) {
 	if !created || !bound {
 		t.Fatalf("created=%v bound=%v posts=%v", created, bound, f.Posts)
 	}
-	if f.Phantoms != 0 {
-		t.Fatalf("phantoms=%d", f.Phantoms)
+	if f.Phantoms != 0 || f.E != 0 {
+		t.Fatalf("phantoms=%d E=%d", f.Phantoms, f.E)
+	}
+}
+
+// Статус не прочитался — привязка неизвестна: шлются все три команды, как
+// раньше (E в журнале дешевле оставленной привязки).
+func TestRemoveProfile_StatusFetchError_SendsAll(t *testing.T) {
+	cmds, f, q := newOracleCommands(t, nil, ndms.Interface{ID: "Wireguard0"}) // /show/ping-check/ вне модели → ошибка
+	c, _, _, _ := q.Interfaces.Confirm(context.Background(), "Wireguard0")
+	if err := cmds.PingCheck.RemoveProfile(context.Background(), "p", c); err != nil {
+		t.Fatal(err)
+	}
+	var cmdsSent int // без чтений {"show":…} (точечное чтение после Invalidate)
+	for _, p := range f.Posts {
+		if !strings.HasPrefix(p, `{"show":`) {
+			cmdsSent++
+		}
+	}
+	if cmdsSent != 3 || unbindPosts(f.Posts) != 2 {
+		t.Fatalf("posts=%v", f.Posts)
 	}
 }
 

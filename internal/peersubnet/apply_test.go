@@ -8,6 +8,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 // fakeRouter — роутер в памяти: allow-ips, маршруты с комментариями, журнал
@@ -28,6 +31,26 @@ type fakeRouter struct {
 	// beforeOwner — хук перед ответом NetworkRouteOwner (запись, появившаяся
 	// после снимка).
 	beforeOwner func(n string)
+	// confirms — сколько раз подтверждали интерфейс (чтений списка);
+	// confirmErr — отказ чтения списка; gone — интерфейса в списке нет.
+	confirms   int
+	confirmErr error
+	gone       bool
+}
+
+// Confirm — доказательство у настоящего InterfaceStore над FakeNDMS: вне
+// пакета query Confirmed не сконструировать.
+func (f *fakeRouter) Confirm(ctx context.Context, name string) (query.Confirmed, bool, error) {
+	f.confirms++
+	if f.confirmErr != nil {
+		return query.Confirmed{}, false, f.confirmErr
+	}
+	if f.gone {
+		return query.Confirmed{}, false, nil
+	}
+	s := query.NewInterfaceStore(query.NewFakeNDMS(ndms.Interface{ID: name}), query.NopLogger())
+	c, _, ok, err := s.Confirm(ctx, name)
+	return c, ok, err
 }
 
 func newFakeRouter() *fakeRouter {
@@ -62,7 +85,8 @@ func mustNet(s string) *net.IPNet {
 	return n
 }
 
-func (f *fakeRouter) PeerAllowIPs(ctx context.Context, iface, pub string) ([]*net.IPNet, error) {
+func (f *fakeRouter) PeerAllowIPs(ctx context.Context, c query.Confirmed, pub string) ([]*net.IPNet, error) {
+	iface := c.Name()
 	if err := f.call(ctx, "read allow"); err != nil {
 		return nil, err
 	}
@@ -101,7 +125,8 @@ func (f *fakeRouter) InterfaceRoutes(ctx context.Context, iface string) ([]Route
 	return out, nil
 }
 
-func (f *fakeRouter) AddAllowIP(ctx context.Context, iface, pub string, n *net.IPNet) error {
+func (f *fakeRouter) AddAllowIP(ctx context.Context, c query.Confirmed, pub string, n *net.IPNet) error {
+	iface := c.Name()
 	if err := f.call(ctx, "allow+ "+n.String()); err != nil {
 		return err
 	}
@@ -109,7 +134,8 @@ func (f *fakeRouter) AddAllowIP(ctx context.Context, iface, pub string, n *net.I
 	return nil
 }
 
-func (f *fakeRouter) RemoveAllowIP(ctx context.Context, iface, pub string, n *net.IPNet) error {
+func (f *fakeRouter) RemoveAllowIP(ctx context.Context, c query.Confirmed, pub string, n *net.IPNet) error {
+	iface := c.Name()
 	if err := f.call(ctx, "allow- "+n.String()); err != nil {
 		return err
 	}
@@ -128,7 +154,8 @@ func (f *fakeRouter) NetworkRouteOwner(ctx context.Context, n *net.IPNet, iface,
 	return ok, ok && c == comment, nil
 }
 
-func (f *fakeRouter) AddNetworkRoute(ctx context.Context, n *net.IPNet, iface, comment string) error {
+func (f *fakeRouter) AddNetworkRoute(ctx context.Context, n *net.IPNet, c query.Confirmed, comment string) error {
+	iface := c.Name()
 	if err := f.call(ctx, "route+ "+n.String()); err != nil {
 		return err
 	}
@@ -136,7 +163,8 @@ func (f *fakeRouter) AddNetworkRoute(ctx context.Context, n *net.IPNet, iface, c
 	return nil
 }
 
-func (f *fakeRouter) RemoveOwnNetworkRoute(ctx context.Context, n *net.IPNet, iface, comment string) (bool, error) {
+func (f *fakeRouter) RemoveOwnNetworkRoute(ctx context.Context, n *net.IPNet, c query.Confirmed, comment string) (bool, error) {
+	iface := c.Name()
 	if err := f.call(ctx, "route- "+n.String()); err != nil {
 		return false, err
 	}
@@ -528,5 +556,48 @@ func TestReconcile_OwnerCheckFailureRollsBack(t *testing.T) {
 	}
 	if len(f.allow) != 1 || len(f.routes) != 1 || f.routes[n79+"|"+iface] != ours {
 		t.Fatalf("allow=%v routes=%v", f.allow, f.routes)
+	}
+}
+
+// Интерфейс подтверждается один раз на вызов, откат идёт по тому же
+// доказательству (F546, R21).
+func TestReconcile_ConfirmOncePerCall(t *testing.T) {
+	f := newFakeRouter()
+	f.failOn = []string{"route+ " + n78}
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77, n78}); err == nil {
+		t.Fatal("ожидали отказ шага")
+	}
+	if f.confirms != 1 || len(f.mutations()) < 3 {
+		t.Fatalf("confirms=%d calls=%v", f.confirms, f.calls)
+	}
+	f.confirms = 0
+	f.routes[n77+"|"+iface] = ours
+	f.routes[n79+"|"+iface] = ours
+	if err := RemoveRoutes(context.Background(), f, iface, pub); err != nil || f.confirms != 1 {
+		t.Fatalf("RemoveRoutes: err=%v confirms=%d", err, f.confirms)
+	}
+}
+
+// Список не прочитан — ошибка без чтений и мутаций; интерфейса нет — снятие
+// успешно, постановка — ошибка (решение 4).
+func TestReconcile_ConfirmFailureOrGone(t *testing.T) {
+	f := newFakeRouter()
+	f.confirmErr = errors.New("rci down")
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77}); err == nil || len(f.calls) != 0 {
+		t.Fatalf("err=%v calls=%v", err, f.calls)
+	}
+	if err := RemoveRoutes(context.Background(), f, iface, pub); err == nil || len(f.calls) != 0 {
+		t.Fatalf("RemoveRoutes: err=%v calls=%v", err, f.calls)
+	}
+	f = newFakeRouter()
+	f.gone = true
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, []string{n77}); err == nil || len(f.calls) != 0 {
+		t.Fatalf("постановка: err=%v calls=%v", err, f.calls)
+	}
+	if err := Reconcile(context.Background(), f, iface, pub, tunnelHost, nil); err != nil || len(f.calls) != 0 {
+		t.Fatalf("снятие: err=%v calls=%v", err, f.calls)
+	}
+	if err := RemoveRoutes(context.Background(), f, iface, pub); err != nil || len(f.calls) != 0 {
+		t.Fatalf("RemoveRoutes: err=%v calls=%v", err, f.calls)
 	}
 }

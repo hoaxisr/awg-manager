@@ -230,9 +230,15 @@ func (s *WGServerStore) PeersRCFresh(ctx context.Context, name string) ([]ndms.W
 	if !ok {
 		return nil, fmt.Errorf("get wireguard server config %s: interface %s: нет в NDMS: %w", name, name, ErrGone)
 	}
+	return s.PeersRC(ctx, c)
+}
+
+// PeersRC — PeersRCFresh по уже подтверждённому интерфейсу: список не
+// перечитывается (одно чтение списка на всю сверку вызывающего).
+func (s *WGServerStore) PeersRC(ctx context.Context, c Confirmed) ([]ndms.WireguardServerPeerConfig, error) {
 	var rc rciRCInterface
 	if err := s.interfaces.showRC(ctx, Present{name: c.name}, "", &rc); err != nil {
-		return nil, fmt.Errorf("get wireguard server config %s: %w", name, err)
+		return nil, fmt.Errorf("get wireguard server config %s: %w", c.name, err)
 	}
 	return rciRCToServerConfig(rc, "").Peers, nil
 }

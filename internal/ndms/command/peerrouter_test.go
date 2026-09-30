@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"reflect"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 )
@@ -58,7 +60,7 @@ func TestPeerRouter_InterfaceRoutes(t *testing.T) {
 
 func TestPeerRouter_PeerAllowIPs(t *testing.T) {
 	r, fg := newPeerRouterFixture(t)
-	nets, err := r.PeerAllowIPs(context.Background(), "Wireguard9", "K1=")
+	nets, err := r.PeerAllowIPs(context.Background(), confirmed(t, "Wireguard9"), "K1=")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,15 +73,15 @@ func TestPeerRouter_PeerAllowIPs(t *testing.T) {
 	}
 	// Пира нет — ErrPeerNotFound, не пустой список: allow-ips на отсутствующий
 	// ключ NDMS создаёт пира.
-	if nets, err := r.PeerAllowIPs(context.Background(), "Wireguard9", "ABSENT="); !errors.Is(err, peersubnet.ErrPeerNotFound) || nets != nil {
+	if nets, err := r.PeerAllowIPs(context.Background(), confirmed(t, "Wireguard9"), "ABSENT="); !errors.Is(err, peersubnet.ErrPeerNotFound) || nets != nil {
 		t.Fatalf("нет пира: %v %v", nets, err)
 	}
 	fg.SetJSON("/show/rc/interface/Wireguard9", `{"wireguard":{"peer":[{"key":"K1=","allow-ips":[{"address":"10.9.9.2","mask":"255.255.255.255"}]}]}}`)
-	if nets, err := r.PeerAllowIPs(context.Background(), "Wireguard9", "K1="); err != nil || len(nets) != 1 {
+	if nets, err := r.PeerAllowIPs(context.Background(), confirmed(t, "Wireguard9"), "K1="); err != nil || len(nets) != 1 {
 		t.Fatalf("после правки: %v %v", nets, err)
 	}
 	fg.SetError("/show/rc/interface/Wireguard9", errors.New("rci down"))
-	if _, err := r.PeerAllowIPs(context.Background(), "Wireguard9", "K1="); err == nil {
+	if _, err := r.PeerAllowIPs(context.Background(), confirmed(t, "Wireguard9"), "K1="); err == nil {
 		t.Fatal("отказ чтения проглочен")
 	}
 }
@@ -94,30 +96,91 @@ func TestPeerRouter_InterfaceRoutes_NotWired(t *testing.T) {
 	}
 }
 
-// Имя строкой подтверждается свежим списком до команды: интерфейса нет —
-// постановка отказывает, снятие успешно; список не прочитался — ошибка.
-// Ни в одном случае команда не уходит.
-func TestPeerRouter_ConfirmsBeforeCommand(t *testing.T) {
-	ctx := context.Background()
-	_, n, _ := net.ParseCIDR("192.168.77.0/24")
+// failOnPoster — оракул, у которого POST с подстрокой failOn отказывает
+// (шаг сверки падает — откат).
+type failOnPoster struct {
+	*query.FakeNDMS
+	failOn string
+}
 
-	cmds, f, q := newOracleCommands(t, nil)
-	r := NewPeerRouter(cmds, q)
-	if err := r.AddAllowIP(ctx, "Wireguard9", "K=", n); err == nil || !strings.Contains(err.Error(), "Wireguard9") {
-		t.Fatalf("AddAllowIP: %v", err)
+func (p failOnPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	b, _ := json.Marshal(payload)
+	if p.failOn != "" && strings.Contains(string(b), p.failOn) {
+		return nil, errors.New("boom")
 	}
-	if err := r.AddNetworkRoute(ctx, n, "Wireguard9", "L"); err == nil {
-		t.Fatal("AddNetworkRoute: ожидали ошибку")
+	return p.FakeNDMS.Post(ctx, payload)
+}
+
+// peerReconcileOracle — Wireguard9 с пиром K= без сетей за клиентом, таблица
+// маршрутов пуста; Commands пишут в оракул через failOnPoster.
+func peerReconcileOracle(t *testing.T, failOn string) (*PeerRouter, *query.FakeNDMS) {
+	t.Helper()
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard9", Type: "Wireguard"})
+	raw := map[string]string{
+		"/show/rc/interface/Wireguard9": `{"wireguard":{"peer":[{"key":"K=","allow-ips":[{"address":"10.9.9.2","mask":"255.255.255.255"}]}]}}`,
+		"/show/rc/ip/route":             `[]`,
 	}
-	if err := r.RemoveAllowIP(ctx, "Wireguard9", "K=", n); err != nil {
-		t.Fatalf("RemoveAllowIP: %v", err)
+	p := failOnPoster{FakeNDMS: f, failOn: failOn}
+	sc := NewSaveCoordinator(p, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
+	q := query.NewQueries(query.Deps{Getter: oracleGetter{FakeNDMS: f, raw: raw}, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	return NewPeerRouter(NewCommands(Deps{Poster: p, Save: sc, Queries: q}), q), f
+}
+
+// Сверка читает список интерфейсов ОДИН раз на вызов — и откат идёт по тому
+// же доказательству (F546, R21): иначе N+1 полных списков на правку пира.
+func TestReconcile_OneListRead_WithRollback(t *testing.T) {
+	r, f := peerReconcileOracle(t, `"network":"192.168.78.0"`) // второй маршрут падает → откат
+	before := f.ListCalls()
+	err := peersubnet.Reconcile(context.Background(), r, "Wireguard9", "K=",
+		[]net.IP{net.ParseIP("10.9.9.2")}, []string{"192.168.77.0/24", "192.168.78.0/24"})
+	if err == nil {
+		t.Fatal("ожидали отказ шага")
 	}
-	if removed, err := r.RemoveOwnNetworkRoute(ctx, n, "Wireguard9", "L"); removed || err != nil {
-		t.Fatalf("RemoveOwnNetworkRoute: %v %v", removed, err)
+	if n := f.ListCalls() - before; n != 1 {
+		t.Fatalf("чтений списка: %d, want 1", n)
+	}
+	// Откат действительно был: снимались и маршрут, и allow-ips.
+	var rollback int
+	for _, p := range f.Posts {
+		if strings.Contains(p, `"no":true`) {
+			rollback++
+		}
+	}
+	if rollback == 0 || f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("rollback=%d E=%d phantoms=%d posts=%v", rollback, f.E, f.Phantoms, f.Posts)
+	}
+}
+
+func TestRemoveRoutes_OneListRead(t *testing.T) {
+	r, f := peerReconcileOracle(t, "")
+	before := f.ListCalls()
+	if err := peersubnet.RemoveRoutes(context.Background(), r, "Wireguard9", "K="); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.ListCalls() - before; n != 1 {
+		t.Fatalf("чтений списка: %d, want 1", n)
+	}
+}
+
+// Интерфейса нет: сверка к пустому — успех, постановка — ошибка; список не
+// прочитался — ошибка. Ни в одном случае команда не уходит (решение 4).
+func TestReconcile_AbsentOrListError_NoCommands(t *testing.T) {
+	ctx := context.Background()
+	hosts := []net.IP{net.ParseIP("10.9.9.2")}
+	r, f := peerReconcileOracle(t, "")
+	f.Remove("Wireguard9")
+	if err := peersubnet.Reconcile(ctx, r, "Wireguard9", "K=", hosts, []string{"192.168.77.0/24"}); err == nil || !strings.Contains(err.Error(), "Wireguard9") {
+		t.Fatalf("постановка на отсутствующий: %v", err)
+	}
+	if err := peersubnet.Reconcile(ctx, r, "Wireguard9", "K=", hosts, nil); err != nil {
+		t.Fatalf("снятие с отсутствующего: %v", err)
+	}
+	if err := peersubnet.RemoveRoutes(ctx, r, "Wireguard9", "K="); err != nil {
+		t.Fatalf("RemoveRoutes с отсутствующего: %v", err)
 	}
 	f.FailList(errors.New("rci down"))
-	if err := r.RemoveAllowIP(ctx, "Wireguard9", "K=", n); err == nil {
-		t.Fatal("RemoveAllowIP при упавшем списке: ожидали ошибку")
+	if err := peersubnet.RemoveRoutes(ctx, r, "Wireguard9", "K="); err == nil {
+		t.Fatal("упавший список: ожидали ошибку")
 	}
 	if len(f.Posts) != 0 || f.E != 0 || f.Phantoms != 0 {
 		t.Fatalf("posts=%v E=%d phantoms=%d", f.Posts, f.E, f.Phantoms)
