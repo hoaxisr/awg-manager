@@ -15,6 +15,26 @@ func (o *Operator) subscriptionProxies() []SubscriptionProxy {
 	return o.subProxies.SubscriptionProxies()
 }
 
+func subscriptionProxyOwnership(proxies []SubscriptionProxy, includeBindable bool) (map[int]bool, map[int]map[string]bool) {
+	legacyIndices := make(map[int]bool)
+	owners := make(map[int]map[string]bool)
+	for _, proxy := range proxies {
+		if !includeBindable && proxy.Bindable {
+			continue
+		}
+		if proxy.OwnerDescription == "" {
+			legacyIndices[proxy.Index] = true
+			continue
+		}
+		accepted := map[string]bool{proxy.OwnerDescription: true}
+		if proxy.Label != "" {
+			accepted[proxy.Label] = true
+		}
+		owners[proxy.Index] = accepted
+	}
+	return legacyIndices, owners
+}
+
 // MarkNeedsOrphanCleanup поднимает one-shot флаг для Reconcile —
 // при следующем тике он почистит зомби-ProxyN, оставшиеся в NDMS
 // после перехода в disabled-режим. CAS гарантирует ровно один sweep
@@ -40,13 +60,8 @@ func (o *Operator) removeOrphanSingboxProxies(ctx context.Context) error {
 			}
 		}
 	}
-	// Subscription composites are tracked by explicit proxy index (their
-	// description is the user label, not a tunnel tag).
-	subProxyIdx := map[int]bool{}
-	for _, sp := range o.subscriptionProxies() {
-		subProxyIdx[sp.Index] = true
-	}
-	return o.proxyMgr.RemoveOrphanSingboxProxies(ctx, tunnelTags, portSlots, subProxyIdx)
+	legacyProxyIdx, proxyOwners := subscriptionProxyOwnership(o.subscriptionProxies(), true)
+	return o.proxyMgr.RemoveOrphanSingboxProxiesOwned(ctx, tunnelTags, portSlots, legacyProxyIdx, proxyOwners)
 }
 
 // ListNativeProxies returns kernel names of KeenOS-native (non-ours) NDMS
@@ -68,11 +83,10 @@ func (o *Operator) ListNativeProxies(ctx context.Context) ([]string, error) {
 			}
 		}
 	}
-	subProxyIdx := map[int]bool{}
-	for _, sp := range o.subscriptionProxies() {
-		subProxyIdx[sp.Index] = true
-	}
-	return o.proxyMgr.ListNativeProxies(ctx, tunnelTags, portSlots, subProxyIdx)
+	// Bindable managed exports (Mihomo bridges) must remain visible here so
+	// sing-box router direct outbounds and HR Neo can select their t2sN.
+	legacyProxyIdx, proxyOwners := subscriptionProxyOwnership(o.subscriptionProxies(), false)
+	return o.proxyMgr.ListNativeProxiesOwned(ctx, tunnelTags, portSlots, legacyProxyIdx, proxyOwners)
 }
 
 func parseProxyIdx(name string) (int, error) {

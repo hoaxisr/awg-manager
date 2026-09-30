@@ -25,11 +25,12 @@
     onAction?: () => void;
     /** Если задан — заменяет одиночную кнопку (для множественных actions). */
     actions?: Snippet;
+    headerBefore?: Snippet;
     children: Snippet;
   }
 
   let {
-    title, count, section, actionLabel, actionVariant = 'link', actionDisabled = false, actionTitle, onAction, actions, children,
+    title, count, section, actionLabel, actionVariant = 'link', actionDisabled = false, actionTitle, onAction, actions, headerBefore, children,
   }: Props = $props();
 
   let collapsed = $derived(section ? $expertPanelCollapse[section] : false);
@@ -43,6 +44,9 @@
 <div class="panel" class:panel-collapsed={collapsed}>
   <header class="head" class:head-collapsed={collapsed}>
     <div class="left">
+      {#if headerBefore}
+        {@render headerBefore()}
+      {/if}
       {#if section}
         <button
           type="button"

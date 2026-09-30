@@ -208,6 +208,8 @@ describe('syncTunnelDnsRule', () => {
 describe('isDnsAddressFilterRuleSet', () => {
   it('ловит geoip-* тег, dat-srs kind=geoip и inline ip_cidr', () => {
     expect(isDnsAddressFilterRuleSet('geoip-google-v4')).toBe(true);
+    expect(isDnsAddressFilterRuleSet('susanin')).toBe(true);
+    expect(isDnsAddressFilterRuleSet('telegram-cidr')).toBe(true);
     expect(
       isDnsAddressFilterRuleSet('google-ip', [
         {

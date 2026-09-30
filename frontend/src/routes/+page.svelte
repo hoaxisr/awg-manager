@@ -39,8 +39,10 @@
 	import { usageLevel } from '$lib/stores/settings';
 	import { isSectionVisible, isTunnelDashboardAvailable } from '$lib/types/usageLevel';
 	import { subscriptionsStore } from '$lib/stores/subscriptions';
+	import { mihomoNativeResources, mihomoInventoryStore, mihomoRuntimeStore } from '$lib/stores/mihomoNative';
 	import SubscriptionsTabSection from '$lib/components/subscriptions/SubscriptionsTabSection.svelte';
 	import SingboxTunnelsTabSection from '$lib/components/singbox/SingboxTunnelsTabSection.svelte';
+	import ProxyGroupsTabSection from '$lib/components/tunnels/ProxyGroupsTabSection.svelte';
 	import AwgTunnelsTabSection from '$lib/components/tunnels/AwgTunnelsTabSection.svelte';
 	import DashboardFlatSection from '$lib/components/tunnels/DashboardFlatSection.svelte';
 	import TunnelPageModals from '$lib/components/tunnels/TunnelPageModals.svelte';
@@ -116,7 +118,7 @@
 		type SubscriptionSortKey,
 	} from '$lib/stores/tunnelTableSort';
 
-	type TunnelTab = 'awg' | 'singbox' | 'subscriptions' | 'awg3';
+	type TunnelTab = 'awg' | 'singbox' | 'subscriptions' | 'groups' | 'awg3';
 	type AwgTunnelViewMode = 'cards' | 'compact' | 'list';
 	type TunnelSurfaceLayout = SingboxLayoutMode | 'cards';
 
@@ -156,13 +158,10 @@
 	let systemList = $derived(tunnelSnap.data?.system ?? []);
 	const awgConnectivityStore = tunnels.connectivityMap;
 	let awgConnectivityMap = $derived($awgConnectivityStore);
-	// Wait for both system info AND the first tunnels snapshot before leaving
-	// the loading state — otherwise sysInfo arrives first and the empty-state
-	// flashes until /api/tunnels/all lands.
+	// Non-blocking first paint: do not wait for sysInfo to leave loading state.
+	// Only wait for first tunnel snapshot before showing cards.
 	let loading = $derived(
-		!sysInfo ||
-		tunnelSnap.status === 'idle' ||
-		tunnelSnap.status === 'loading',
+		tunnelSnap.data === null && (tunnelSnap.status === 'idle' || tunnelSnap.status === 'loading')
 	);
 
 	const goArch = $derived(sysInfo?.goArch ?? '');
@@ -390,23 +389,93 @@
 		if (id) await setLock(id, false);
 	}
 
-	// Polling-store subscriptions for sing-box status + tunnels list.
-	// First subscribe triggers fetch; last unsubscribe stops polling.
+	// On-demand store subscriptions: only active tab's stores are subscribed.
+	// Switching away unsubscribes them to stop background polling, while keeping cached data in memory.
 	let unsubSingboxStatus: (() => void) | undefined;
 	let unsubSingboxTunnels: (() => void) | undefined;
+	let unsubSubscriptions: (() => void) | undefined;
 	let unsubAwg3Tunnels: (() => void) | undefined;
-	onMount(() => {
-		unsubSingboxStatus = singboxStatus.subscribe(() => {});
-		unsubSingboxTunnels = singboxTunnels.subscribe(() => {});
-		unsubAwg3Tunnels = awg3Tunnels.subscribe(() => {});
+	let unsubMihomoInventory: (() => void) | undefined;
+	let unsubMihomoRuntime: (() => void) | undefined;
+
+	$effect(() => {
+		const tab = activeTab;
+		const dash = dashboardOn;
+
+		// 1. Sing-box: needed for singbox tab, subscriptions tab (for delay/traffic stats), dashboard, or detail view
+		const needSingbox = dash || tab === 'singbox' || tab === 'subscriptions' || Boolean(singboxDetailTag);
+		if (needSingbox && !unsubSingboxStatus) {
+			unsubSingboxStatus = singboxStatus.subscribe(() => {});
+			unsubSingboxTunnels = singboxTunnels.subscribe(() => {});
+		} else if (!needSingbox && unsubSingboxStatus) {
+			unsubSingboxStatus();
+			unsubSingboxTunnels?.();
+			unsubSingboxStatus = undefined;
+			unsubSingboxTunnels = undefined;
+		}
+
+		// 2. Subscriptions: needed for subscriptions tab or dashboard
+		const needSubs = dash || tab === 'subscriptions';
+		if (needSubs && !unsubSubscriptions) {
+			unsubSubscriptions = subscriptionsStore.subscribe(() => {});
+		} else if (!needSubs && unsubSubscriptions) {
+			unsubSubscriptions();
+			unsubSubscriptions = undefined;
+		}
+
+		// 3. AWG3: needed for awg3 tab or dashboard
+		const needAwg3 = dash || tab === 'awg3';
+		if (needAwg3 && !unsubAwg3Tunnels) {
+			unsubAwg3Tunnels = awg3Tunnels.subscribe(() => {});
+		} else if (!needAwg3 && unsubAwg3Tunnels) {
+			unsubAwg3Tunnels();
+			unsubAwg3Tunnels = undefined;
+		}
+
+		// 4. Mihomo Inventory: needed for groups tab, subscriptions, or dashboard
+		const needInventory = dash || tab === 'groups' || tab === 'singbox' || tab === 'subscriptions';
+		if (needInventory && !unsubMihomoInventory) {
+			unsubMihomoInventory = mihomoInventoryStore.subscribe(() => {});
+		} else if (!needInventory && unsubMihomoInventory) {
+			unsubMihomoInventory();
+			unsubMihomoInventory = undefined;
+		}
+
+		// 5. Mihomo Runtime is also needed by native Mihomo cards in dashboard mode.
+		const needRuntime = dash || tab === 'groups';
+		if (needRuntime && !unsubMihomoRuntime) {
+			unsubMihomoRuntime = mihomoRuntimeStore.subscribe(() => {});
+		} else if (!needRuntime && unsubMihomoRuntime) {
+			unsubMihomoRuntime();
+			unsubMihomoRuntime = undefined;
+		}
 	});
+
 	onDestroy(() => {
 		unsubSingboxStatus?.();
 		unsubSingboxTunnels?.();
+		unsubSubscriptions?.();
 		unsubAwg3Tunnels?.();
+		unsubMihomoInventory?.();
+		unsubMihomoRuntime?.();
 	});
 
 	let singboxTunnelsList = $derived($singboxTunnels.data ?? []);
+	let mihomoInventory = $derived($mihomoInventoryStore.data);
+	let mihomoRuntime = $derived($mihomoRuntimeStore.data);
+	let mihomoStandaloneProxies = $derived(
+		(mihomoInventory?.proxies ?? []).filter(
+			(proxy) => !proxy.sourceId && proxy.selectedEngine === 'mihomo',
+		),
+	);
+	let mihomoSubscriptions = $derived(
+		(mihomoInventory?.subscriptions ?? []).filter(
+			(subscription) => subscription.enginePreference !== 'sing-box',
+		),
+	);
+	let mihomoGroups = $derived(mihomoInventory?.groups ?? []);
+	let mihomoRuntimeProxies = $derived(mihomoRuntime?.runtimeProxies ?? {});
+	let mihomoRuntimeProviders = $derived(mihomoRuntime?.runtimeProviders ?? {});
 	let awg3List = $derived($awg3Tunnels.data ?? []);
 	let awg3InitialLoading = $derived(
 		$awg3Tunnels.data === null &&
@@ -694,15 +763,18 @@
 		return value === 'cards' || value === 'compact' || value === 'list';
 	}
 
-	// AWG | Sing-box ▾ (Туннели / Подписки / WG endpoints) | FreeTurn · WDTT
+	// AWG | Прокси ▾ (Туннели / Подписки / WG endpoints)
 	const showSingboxTunnelTabs = $derived(isSectionVisible($usageLevel, 'singboxTunnels'));
 	const singboxMenuChildren = $derived(
 		[
 			showSingboxTunnelTabs
-				? { id: 'singbox', label: 'Туннели', badge: singboxTunnelsList.length }
+				? { id: 'singbox', label: 'Туннели', badge: singboxTunnelsList.length + mihomoStandaloneProxies.length }
 				: null,
 			showSingboxTunnelTabs
-				? { id: 'subscriptions', label: 'Подписки', badge: subscriptionsList.length }
+				? { id: 'subscriptions', label: 'Подписки', badge: subscriptionsList.length + mihomoSubscriptions.length }
+				: null,
+			showSingboxTunnelTabs
+				? { id: 'groups', label: 'Прокси-группы', badge: mihomoGroups.length }
 				: null,
 			awg3Visible ? { id: 'awg3', label: 'WG endpoints', badge: awg3List.length } : null,
 		].filter((c): c is { id: string; label: string; badge: number } => c !== null),
@@ -715,7 +787,7 @@
 				singboxTabCluster
 					? {
 							id: singboxMenuChildren[0].id,
-							label: 'Sing-box',
+							label: 'Прокси',
 							separatorBefore: true,
 							children: singboxMenuChildren,
 						}
@@ -1361,6 +1433,8 @@
 			external: sortedFilteredExternalList,
 			awg3: dashboardAwg3Tunnels,
 			singbox: dashboardSingboxTunnels,
+			mihomoProxies: mihomoStandaloneProxies,
+			mihomoSubscriptions,
 			subscriptionsActive: dashboardSubscriptionsActive,
 			subscriptionsStopped: dashboardSubscriptionsStopped,
 		});
@@ -1502,6 +1576,9 @@
 			dashboardAwg3Tunnels.length === 0 &&
 			dashboardSingboxTunnels.length === 0 &&
 			dashboardSubscriptionsCount === 0 &&
+			mihomoStandaloneProxies.length === 0 &&
+			mihomoSubscriptions.length === 0 &&
+			mihomoGroups.length === 0 &&
 			dashboardSearchQuery.trim() === '',
 	);
 	// Named gates for the three per-kind template blocks. They legitimately
@@ -1516,11 +1593,11 @@
 	);
 	let showSingboxBlock = $derived(
 		(!dashboardOn && activeTab === 'singbox') ||
-			(dashboardTypeSections && dashboardSingboxTunnels.length > 0),
+			(dashboardTypeSections && (dashboardSingboxTunnels.length > 0 || mihomoStandaloneProxies.length > 0)),
 	);
 	let showSubscriptionsBlock = $derived(
 		(!dashboardOn && activeTab === 'subscriptions') ||
-			(dashboardTypeSections && dashboardSubscriptionsCount > 0) ||
+			(dashboardTypeSections && (dashboardSubscriptionsCount > 0 || mihomoSubscriptions.length > 0)) ||
 			(dashboardOn &&
 				dashboardSingboxVisible &&
 				(subscriptionsInitialLoading || subscriptionsFetchFailed)),
@@ -1531,6 +1608,9 @@
 	let showAwg3Block = $derived(
 		(!dashboardOn && activeTab === 'awg3') ||
 			(dashboardTypeSections && dashboardAwg3Tunnels.length > 0),
+	);
+	let showGroupsBlock = $derived(
+		(!dashboardOn && activeTab === 'groups') || (dashboardTypeSections && mihomoGroups.length > 0),
 	);
 
 	// Единый класс сетки для сплошного и тегового карточных видов — классы
@@ -1555,6 +1635,8 @@
 		'awg-external': 'external',
 		awg3: 'AWG3',
 		singbox: 'sing-box',
+		'mihomo-proxy': 'Mihomo',
+		'mihomo-subscription': 'Mihomo subscription',
 		'sub-active': 'подписка',
 		'sub-stopped': 'подписка',
 	};
@@ -1687,6 +1769,8 @@
 		get deleteLoading() { return deleteLoading; },
 		get toggleLoading() { return toggleLoading; },
 		get liveActives() { return liveActives; },
+		get mihomoRuntimeProxies() { return mihomoRuntimeProxies; },
+		get mihomoRuntimeProviders() { return mihomoRuntimeProviders; },
 		get flatDrag() { return flatDrag; },
 		get flatRowEls() { return flatRowEls; },
 		get dashboardSearchQuery() { return dashboardSearchQuery; },
@@ -1758,63 +1842,74 @@
 		{/snippet}
 	</PageHeader>
 	<WelcomeBanner />
-	{#if loading}
-		<div aria-hidden="true">
-			{#if !dashboardOn}
-				<!-- полоса на месте Tabs -->
-				<div class="skeleton" style="height: 2rem; width: 260px; margin-bottom: 14px;"></div>
-			{/if}
-			{#if !dashboardOn && awgViewMode === 'list' && !isAwgMobile}
-				<!-- desktop-таблица: строки-полоски (mobile list рендерится карточками — ветка ниже) -->
-				<div class="skel-table">
-					{#each Array.from({ length: $tunnelsSkeletonCount }) as _, i (i)}
-						<div class="skel-row">
-							{#each ['28%', '18%', '14%', '12%', '10%'] as w, ci (ci)}
-								<span class="skeleton" style="height: 0.75rem; width: {w}"></span>
+	{#if dashboardOn}
+		{#if loading}
+			<div aria-hidden="true" class="tunnel-grid tunnel-grid--compact">
+				{#each Array.from({ length: $tunnelsSkeletonCount }) as _, i (i)}
+					<TunnelCardSkeleton compact={true} />
+				{/each}
+			</div>
+		{:else if tunnelSnap.status === 'error' && !tunnelSnap.data}
+			<EmptyState
+				title="Ошибка загрузки"
+				description={tunnelSnap.error ?? 'Не удалось получить список туннелей'}
+			/>
+		{:else}
+			<DashboardFlatSection ctx={dashboardFlatCtx} />
+		{/if}
+	{:else}
+		<Tabs
+			tabs={tunnelTabs}
+			active={activeTab}
+			onchange={(id) => (activeTab = id as TunnelTab)}
+			urlParam="tab"
+			defaultTab="awg"
+		/>
+
+		{#if activeTab === 'awg'}
+			{#if loading}
+				<div aria-hidden="true">
+					{#if awgViewMode === 'list' && !isAwgMobile}
+						<div class="skel-table">
+							{#each Array.from({ length: $tunnelsSkeletonCount }) as _, i (i)}
+								<div class="skel-row">
+									{#each ['28%', '18%', '14%', '12%', '10%'] as w, ci (ci)}
+										<span class="skeleton" style="height: 0.75rem; width: {w}"></span>
+									{/each}
+								</div>
 							{/each}
 						</div>
-					{/each}
+					{:else}
+						<div
+							class="tunnel-grid"
+							class:tunnel-grid--dense={awgViewMode === 'cards'}
+							class:tunnel-grid--compact={awgViewMode === 'compact'}
+						>
+							{#each Array.from({ length: $tunnelsSkeletonCount }) as _, i (i)}
+								<TunnelCardSkeleton compact={awgViewMode === 'compact'} />
+							{/each}
+						</div>
+					{/if}
 				</div>
-			{:else}
-				<div
-					class="tunnel-grid"
-					class:tunnel-grid--dense={!dashboardOn && awgViewMode === 'cards'}
-					class:tunnel-grid--compact={dashboardOn || awgViewMode === 'compact'}
-				>
-					{#each Array.from({ length: $tunnelsSkeletonCount }) as _, i (i)}
-						<TunnelCardSkeleton compact={dashboardOn || awgViewMode === 'compact'} />
-					{/each}
-				</div>
+			{:else if tunnelSnap.status === 'error' && !tunnelSnap.data}
+				<EmptyState
+					title="Ошибка загрузки"
+					description={tunnelSnap.error ?? 'Не удалось получить список туннелей'}
+				/>
 			{/if}
-		</div>
-	{:else if tunnelSnap.status === 'error' && !tunnelSnap.data}
-		<EmptyState
-			title="Ошибка загрузки"
-			description={tunnelSnap.error ?? 'Не удалось получить список туннелей'}
-		/>
-	{:else}
-		{#if dashboardOn}
-			<DashboardFlatSection ctx={dashboardFlatCtx} />
-		{:else}
-			<Tabs
-				tabs={tunnelTabs}
-				active={activeTab}
-				onchange={(id) => (activeTab = id as TunnelTab)}
-				urlParam="tab"
-				defaultTab="awg"
-			/>
 		{/if}
+	{/if}
 
-		{#if dashboardTypeSections && awgFilteredRowsCount > 0}
-			<TunnelSectionHeader
-				title="Amnezia WireGuard"
-				count={awgFilteredRowsCount}
-				countLabel={pluralForm(awgFilteredRowsCount, TUNNEL_WORDS)}
-			/>
-		{/if}
-		{#if showAwgBlock}
-			<AwgTunnelsTabSection ctx={awgTabCtx} />
-		{/if}
+	{#if dashboardTypeSections && awgFilteredRowsCount > 0}
+		<TunnelSectionHeader
+			title="Amnezia WireGuard"
+			count={awgFilteredRowsCount}
+			countLabel={pluralForm(awgFilteredRowsCount, TUNNEL_WORDS)}
+		/>
+	{/if}
+	{#if showAwgBlock && !loading}
+		<AwgTunnelsTabSection ctx={awgTabCtx} />
+	{/if}
 
 		{#if dashboardTypeSections && dashboardSingboxTunnels.length > 0}
 			<TunnelSectionHeader
@@ -1831,12 +1926,14 @@
 				{sortedFilteredSingboxTunnels}
 				{singboxTunnelListStats}
 				{singboxTunnelsSourceRowCount}
-				{singboxTunnelsSearchEmpty}
 				{singboxAutoDelayCheckNonce}
 				{showSingboxGridListToggle}
 				{effectiveSingboxTunnelsEffectiveLayout}
 				{effectiveSingboxTunnelsRenderMode}
 				{subscriptionsActiveCards}
+				mihomoProxies={mihomoStandaloneProxies}
+				{mihomoRuntimeProxies}
+				{mihomoRuntimeProviders}
 				bind:singboxTunnelsSearchQuery
 				bind:singboxTunnelsLayoutMode
 				{handleSingboxTunnelSortChange}
@@ -1848,7 +1945,7 @@
 
 		{#if dashboardTypeSections && dashboardSubscriptionsCount > 0}
 			<TunnelSectionHeader
-				title="Sing-box подписки"
+				title="Подписки"
 				count={dashboardSubscriptionsCount}
 				countLabel={pluralForm(dashboardSubscriptionsCount, SUBSCRIPTION_WORDS)}
 			/>
@@ -1867,7 +1964,6 @@
 				{sortedFilteredSubscriptionsListRows}
 				{singboxSubscriptionsTrafficStats}
 				{singboxSubscriptionsSourceRowCount}
-				{singboxSubscriptionsSearchEmpty}
 				{singboxInstalled}
 				{singboxStatusLoading}
 				{singboxAutoDelayCheckNonce}
@@ -1875,6 +1971,9 @@
 				{effectiveSingboxSubscriptionsEffectiveLayout}
 				{effectiveSingboxSubscriptionsRenderMode}
 				{liveActives}
+				{mihomoSubscriptions}
+				{mihomoRuntimeProxies}
+				{mihomoRuntimeProviders}
 				bind:singboxSubscriptionsSearchQuery
 				bind:singboxSubscriptionsLayoutMode
 				{handleSubscriptionSortChange}
@@ -1904,7 +2003,19 @@
 				bind:layoutMode={awg3TunnelsLayoutMode}
 			/>
 		{/if}
-	{/if}
+		{#if showGroupsBlock}
+			<ProxyGroupsTabSection
+				groups={mihomoGroups}
+				proxies={mihomoInventory?.proxies ?? []}
+				subscriptions={mihomoSubscriptions}
+				runtimeProxies={mihomoRuntimeProxies}
+				runtimeProviders={mihomoRuntimeProviders}
+				onGroupChanged={() => {
+					void mihomoInventoryStore.refetch();
+					void mihomoRuntimeStore.refetch();
+				}}
+			/>
+		{/if}
 </PageContainer>
 
 {#if flatDrag.ghostVisible && flatDrag.ghostFromIndex !== null && dashboardRenderItems[flatDrag.ghostFromIndex]}

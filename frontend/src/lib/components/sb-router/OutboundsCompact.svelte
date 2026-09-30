@@ -65,9 +65,9 @@
   // «outbound not found»). Редактирование — в своих разделах.
   function editBlockReason(o: SingboxRouterOutbound): string | null {
     if (isGroupOutbound(o, groups))
-      return 'Редактируется в разделе Туннели → Sing-box подписки → Сводные группы';
+      return 'Редактируется в разделе Туннели → Прокси → Подписки → Сводные группы';
     if (isSubscriptionOutbound(o, subscriptions))
-      return 'Редактируется в разделе Туннели → Sing-box подписки';
+      return 'Редактируется в разделе Туннели → Прокси → Подписки';
     return null;
   }
 

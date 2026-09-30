@@ -113,10 +113,18 @@ func buildSingboxCore(d singboxCoreDeps) singboxCore {
 		}
 	})
 	orch.SetValidator(&orchValidatorAdapter{v: singbox.NewValidator(installer.DefaultBinaryPath)})
-	// Propagate the sticky-stop intent so reload-triggered cold-starts
-	// (slot-file writes from router/deviceproxy/subscriptions) respect a
-	// user-pressed Stop in the same way the watchdog does.
-	orch.SetShouldRun(func() bool { return !op.IsManuallyStopped() })
+	// In addition, when Mihomo is the primary routing engine, sing-box must
+	// not be cold-started by orchestrator slots (Mihomo owns transparent proxying).
+	orch.SetShouldRun(func() bool {
+		if d.settings != nil {
+			if st, err := d.settings.Load(); err == nil && st != nil {
+				if st.SingboxRouter.RoutingEngine == "mihomo" {
+					return false
+				}
+			}
+		}
+		return !op.IsManuallyStopped()
+	})
 	// AWG3 imported endpoints — store owns awg3.json, service projects it into
 	// the 16-awg3.json slot. Constructed here so the SlotAwg3 HasContent closure
 	// (below) can read the store, mirroring SlotTunnels' HasUserTunnels gate.
@@ -226,7 +234,8 @@ func (a *app) setupSingboxRuntime() {
 	// reflected after deviceProxySvc is constructed below.
 	if curSettings, err := a.settingsStore.Load(); err == nil && curSettings != nil {
 		mode := curSettings.SingboxRouter.RoutingMode
-		_ = a.sbOrch.SetEnabled(router.RouterSlotForMode(mode), curSettings.SingboxRouter.Enabled)
+		isSingboxRouter := curSettings.SingboxRouter.Enabled && curSettings.SingboxRouter.RoutingEngine != "mihomo"
+		_ = a.sbOrch.SetEnabled(router.RouterSlotForMode(mode), isSingboxRouter)
 		_ = a.sbOrch.SetEnabled(router.OtherRouterSlot(mode), false)
 		// Повторное примирение base здесь больше не нужно: разметка слотов
 		// меняет владельца dns.strategy, но дефолт лежит в 99-defaults.json —
@@ -248,6 +257,7 @@ func (a *app) setupSingboxRuntime() {
 		a.bootLog.Error("subscription-store", "", err.Error())
 	}
 	subProxyMgr := singbox.NewProxyManager(a.ndmsQueries, a.ndmsCommands)
+	a.ndmsProxyMgr = subProxyMgr
 	a.subAdapter = subscription.NewOperatorAdapter(a.sbOrch, subProxyMgr, a.singboxOp.Clash())
 	// Wire the Operator's sing-box build tags into the subscription
 	// adapter so flush() Pass 1 can cheaply pre-filter outbounds whose
@@ -255,6 +265,12 @@ func (a *app) setupSingboxRuntime() {
 	// installer.RequiredTags for the pinned version; the version is cached
 	// by binary mtime+size — common path is ~10µs per call (stat only).
 	a.subAdapter.SetSingboxFeaturesFn(a.singboxOp.SingboxFeatures)
+	if a.settingsStore != nil {
+		a.subAdapter.SetIsMihomoPrimary(func() bool {
+			s, err := a.settingsStore.Get()
+			return err == nil && s != nil && s.SingboxRouter.RoutingEngine == "mihomo"
+		})
+	}
 	if err := a.subAdapter.LoadFromDisk(singboxConfigDir); err != nil {
 		// Не предупреждение: пока слот не прочитан, адаптер отказывает в
 		// записи (иначе первая же операция стёрла бы все подписки), значит

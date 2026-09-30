@@ -8,6 +8,7 @@
   import { mode, setMode, type RouterMode } from "./modeStore";
   import { bindLiveConnectionsStore } from "./liveConnectionsStore";
   import { openDrawer } from "./drawerStore";
+  import { singboxRouter as singboxRouterStore } from "$lib/stores/singboxRouter";
   import StatusDrawer from "./StatusDrawer.svelte";
   import SourceDrawer from "./SourceDrawer.svelte";
   import LiveConnectionsChip from "./LiveConnectionsChip.svelte";
@@ -32,6 +33,9 @@
 
   let { subtitle, onOpenInspector, onOpenJson, onOpenConfigEditor, onOpenLogs, logsActive = false, children }: Props = $props();
   let currentMode = $derived($mode);
+  const routerSettings = singboxRouterStore.settings;
+  let activeEngine = $derived($routerSettings?.routingEngine === 'mihomo' ? 'mihomo' : 'sing-box');
+  let activeEngineLabel = $derived(activeEngine === 'mihomo' ? 'Mihomo' : 'Sing-box');
 
   // Отпуск на размонтировании: иначе поток соединений живёт до конца сессии.
   onMount(() => bindLiveConnectionsStore());
@@ -44,7 +48,7 @@
 <div class="sb-shell">
   <header class="sb-header">
     <div class="title-block">
-      <h1 class="title">Маршрутизация · sing-box</h1>
+      <h1 class="title">Маршрутизация · {activeEngineLabel}</h1>
       {#if subtitle}<div class="subtitle">{subtitle}</div>{/if}
     </div>
 
@@ -55,10 +59,10 @@
         type="button"
         class="params-btn"
         onclick={openDrawer}
-        aria-label="Параметры sing-box"
+        aria-label={`Параметры ${activeEngineLabel}`}
       >
         <Settings size={16} aria-hidden="true" />
-        <span class="params-text">Параметры sing-box</span>
+        <span class="params-text">Параметры {activeEngineLabel}</span>
       </button>
 
       <div class="header-actions">
@@ -105,8 +109,8 @@
             class:icon-btn-active={logsActive}
             onclick={onOpenLogs}
             aria-pressed={logsActive}
-            aria-label={logsActive ? 'Закрыть логи sing-box' : 'Логи sing-box'}
-            title={logsActive ? 'Закрыть логи sing-box' : 'Логи sing-box'}
+            aria-label={logsActive ? `Закрыть логи ${activeEngineLabel}` : `Логи ${activeEngineLabel}`}
+            title={logsActive ? `Закрыть логи ${activeEngineLabel}` : `Логи ${activeEngineLabel}`}
           >
             <span class="action-icon"><ScrollText size={16} /></span>
             <span class="action-text">Логи</span>
