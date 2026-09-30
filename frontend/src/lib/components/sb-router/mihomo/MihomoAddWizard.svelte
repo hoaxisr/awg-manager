@@ -25,7 +25,7 @@
 
   // Step 1: Matcher
   let matcherTab = $state<'catalog' | 'custom'>('catalog');
-  let selectedService = $state<{ name: string; type: string; payload: string; icon: any } | null>(null);
+  let selectedService = $state<{ name: string; type: string; payload: string; icon: unknown } | null>(null);
 
   let customType = $state<'GEOSITE' | 'DOMAIN-SUFFIX' | 'DOMAIN' | 'IP-CIDR' | 'RULE-SET'>('GEOSITE');
   let customPayload = $state('');
@@ -211,6 +211,7 @@
                 { value: 'catalog', label: 'Каталог сервисов' },
                 { value: 'custom', label: 'Вручную (Домен / IP / GeoSite)' }
               ]}
+              ariaLabel="Тип назначения правила"
               onchange={(v) => matcherTab = v as typeof matcherTab}
             />
           </div>

@@ -36,9 +36,13 @@
   import { singboxProxies } from '$lib/stores/singboxProxies';
   import { subscriptionsStore } from '$lib/stores/subscriptions';
   import type { SingboxRouterSettings, SingboxRouterWANInterface, MihomoNativeGroup, MihomoNativeSubscription, MihomoNativeProxy } from '$lib/types';
-  import type { AdaptiveRoutingSettings } from '$lib/types/adaptiveRouting';
   import { lookupIpKnowledge } from '$lib/utils/ipKnowledge';
   import { Globe, Shield, RefreshCw } from 'lucide-svelte';
+
+  type AdaptiveRoutingSettings = {
+    alwaysEntries?: string[];
+    [key: string]: unknown;
+  };
 
   const status = singboxRouterStore.status;
   const storeSettings = singboxRouterStore.settings;
@@ -217,26 +221,40 @@
       : susaninAlwaysList
   );
 
+  type SusaninApi = {
+    getAdaptiveRoutingLearned?: () => Promise<{
+      okTcp?: string[];
+      okUdp?: string[];
+      okNet?: string[];
+      knowledge?: Record<string, { title: string; org?: string; country?: string; cc?: string }>;
+    }>;
+    getAdaptiveRoutingSettings?: () => Promise<AdaptiveRoutingSettings>;
+    clearAdaptiveRoutingCache?: () => Promise<void>;
+    applyAdaptiveRouting?: (settings: AdaptiveRoutingSettings) => Promise<void>;
+  };
+
   async function loadSusaninData() {
     try {
+      const sApi = api as unknown as SusaninApi;
+      if (!sApi.getAdaptiveRoutingLearned) return;
       const [learnedRes, settingsRes] = await Promise.all([
-        api.getAdaptiveRoutingLearned(),
-        api.getAdaptiveRoutingSettings().catch(() => null)
+        sApi.getAdaptiveRoutingLearned(),
+        sApi.getAdaptiveRoutingSettings ? sApi.getAdaptiveRoutingSettings().catch(() => null) : Promise.resolve(null)
       ]);
       const set = new Set<string>();
-      for (const ip of learnedRes.okTcp || []) set.add(ip);
-      for (const ip of learnedRes.okUdp || []) set.add(ip);
-      for (const ip of learnedRes.okNet || []) set.add(ip);
+      for (const ip of learnedRes?.okTcp || []) set.add(ip);
+      for (const ip of learnedRes?.okUdp || []) set.add(ip);
+      for (const ip of learnedRes?.okNet || []) set.add(ip);
       susaninIPList = Array.from(set).sort();
       susaninIPCount = susaninIPList.length;
 
-      if (learnedRes.knowledge) {
+      if (learnedRes?.knowledge) {
         susaninKnowledge = learnedRes.knowledge;
       }
 
       if (settingsRes) {
         susaninSettings = settingsRes;
-        susaninAlwaysList = (settingsRes.alwaysEntries || []).map((e) => e.trim()).filter(Boolean);
+        susaninAlwaysList = (settingsRes.alwaysEntries || []).map((e: string) => e.trim()).filter(Boolean);
         susaninAlwaysText = susaninAlwaysList.join('\n');
       }
     } catch {
@@ -254,7 +272,10 @@
   async function handleClearSusanin() {
     try {
       susaninLoading = true;
-      await api.clearAdaptiveRoutingCache();
+      const sApi = api as unknown as SusaninApi;
+      if (sApi.clearAdaptiveRoutingCache) {
+        await sApi.clearAdaptiveRoutingCache();
+      }
       notifications.success('Накопленные адреса Susanin очищены');
       await loadSusaninData();
     } catch (e) {
@@ -272,9 +293,10 @@
         : susaninAlwaysList
       ));
 
+      const sApi = api as unknown as SusaninApi;
       let currentSettings = susaninSettings;
-      if (!currentSettings) {
-        currentSettings = await api.getAdaptiveRoutingSettings();
+      if (!currentSettings && sApi.getAdaptiveRoutingSettings) {
+        currentSettings = await sApi.getAdaptiveRoutingSettings();
       }
 
       const updated: AdaptiveRoutingSettings = {
@@ -282,7 +304,9 @@
         alwaysEntries: entriesToSave,
       };
 
-      await api.applyAdaptiveRouting(updated);
+      if (sApi.applyAdaptiveRouting) {
+        await sApi.applyAdaptiveRouting(updated);
+      }
       susaninSettings = updated;
       susaninAlwaysList = entriesToSave;
       susaninAlwaysText = entriesToSave.join('\n');
@@ -737,6 +761,7 @@
         <div class="sec-cap mt-4">Режим обработки трафика</div>
         <div class="mode-segmented">
           <SegmentedControl
+            ariaLabel="Режим обработки трафика"
             options={[
               { label: 'По правилам', value: 'rule' },
               { label: 'Глобальный', value: 'global' },
@@ -972,15 +997,15 @@
       <!-- Службы Keenetic / KeenDNS в туннель -->
       <section class="sec">
         <div class="sec-cap">Службы Keenetic в туннель</div>
-        <div class="chips">
-          <button type="button" class="chip" class:active={!!cfg?.keeneticCloudTunnel} onclick={toggleCloudTunnel}>
-            <div class="chip-head">
-              <span class="chip-label">Облако Keenetic & KeenDNS</span>
-              <span class="chip-status-badge" class:active={!!cfg?.keeneticCloudTunnel}>
+        <div class="feature-chips">
+          <button type="button" class="feature-chip" class:active={!!cfg?.keeneticCloudTunnel} onclick={toggleCloudTunnel}>
+            <div class="feature-chip-head">
+              <span class="feature-chip-label">Облако Keenetic & KeenDNS</span>
+              <span class="feature-chip-status-badge" class:active={!!cfg?.keeneticCloudTunnel}>
                 {cfg?.keeneticCloudTunnel ? 'В туннеле' : 'Напрямую'}
               </span>
             </div>
-            <span class="chip-desc">
+            <span class="feature-chip-desc">
               исходящая связь роутера с облаком Keenetic (KeenDNS, SSTP, приложение) идет через туннель
             </span>
           </button>
@@ -1010,15 +1035,15 @@
       <!-- Адаптивное обнаружение блокировок (радар Susanin) -->
       <section class="sec">
         <div class="sec-cap">Адаптивный радар Susanin</div>
-        <div class="chips">
-          <button type="button" class="chip" class:active={!!cfg?.susaninEnabled} onclick={toggleSusanin}>
-            <div class="chip-head">
-              <span class="chip-label">Радар Susanin (автообход блокировок)</span>
-              <span class="chip-status-badge" class:active={!!cfg?.susaninEnabled}>
+        <div class="feature-chips">
+          <button type="button" class="feature-chip" class:active={!!cfg?.susaninEnabled} onclick={toggleSusanin}>
+            <div class="feature-chip-head">
+              <span class="feature-chip-label">Радар Susanin (автообход блокировок)</span>
+              <span class="feature-chip-status-badge" class:active={!!cfg?.susaninEnabled}>
                 {cfg?.susaninEnabled ? 'Включен' : 'Выключен'}
               </span>
             </div>
-            <span class="chip-desc">
+            <span class="feature-chip-desc">
               автоматически обнаруживает заблокированные IP-адреса и накапливает их в правиле susanin
             </span>
           </button>
@@ -1564,8 +1589,8 @@ gemini.google.com"
   .udp-timeout-row { display: flex; gap: 6px; }
   .udp-timeout-row .inp { flex: 1; }
   .hint { margin: 0; font-size: 11.5px; color: var(--text-muted); line-height: 1.4; }
-  .chips { display: flex; flex-direction: column; gap: 8px; }
-  .chip {
+  .feature-chips { display: flex; flex-direction: column; gap: 8px; }
+  .feature-chip {
     text-align: left;
     padding: 9px 12px;
     border-radius: var(--radius-md, 8px);
@@ -1579,26 +1604,26 @@ gemini.google.com"
     gap: 4px;
     transition: all 0.15s ease;
   }
-  .chip:hover {
+  .feature-chip:hover {
     border-color: var(--accent);
     background: var(--bg-tertiary);
   }
-  .chip.active {
+  .feature-chip.active {
     background: var(--accent-soft);
     border-color: var(--accent);
   }
-  .chip-head {
+  .feature-chip-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
   }
-  .chip-label {
+  .feature-chip-label {
     font-size: 12.5px;
     font-weight: 600;
     color: var(--text-primary);
   }
-  .chip-status-badge {
+  .feature-chip-status-badge {
     font-size: 10.5px;
     padding: 1px 6px;
     border-radius: 4px;
@@ -1607,13 +1632,13 @@ gemini.google.com"
     font-weight: 500;
     border: 1px solid var(--border);
   }
-  .chip-status-badge.active {
+  .feature-chip-status-badge.active {
     background: color-mix(in srgb, var(--accent) 18%, transparent);
     color: var(--accent);
     border-color: color-mix(in srgb, var(--accent) 35%, transparent);
     font-weight: 600;
   }
-  .chip-desc {
+  .feature-chip-desc {
     font-size: 11.5px;
     color: var(--text-secondary);
     line-height: 1.35;

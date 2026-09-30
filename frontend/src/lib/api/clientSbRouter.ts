@@ -14,9 +14,6 @@ import type {
 	MihomoNativeGroup,
 	MihomoNativeRule,
 	MihomoNativeRuleProvider,
-	TelemtStatus,
-	XrayStatus,
-	XrayConfigRequest,
 	RouterPolicy,
 	RouterStagingStatusResponse,
 	SingboxGeositesData,
@@ -45,6 +42,10 @@ import type {
 } from '$lib/types';
 import { sanitizeDnsServerForApi } from '$lib/utils/dnsServerDetour';
 import { SingboxClient } from './clientSingbox';
+
+export type TelemtStatus = { installed: boolean; running: boolean; [key: string]: unknown };
+export type XrayStatus = { installed: boolean; running: boolean; [key: string]: unknown };
+export type XrayConfigRequest = Record<string, unknown>;
 
 export interface MihomoRuleMutationResponse {
 	reordered?: boolean;

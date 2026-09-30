@@ -49,24 +49,25 @@ import type {
 	SystemProcessItem,
 	SystemProcSummary,
 	SystemProcSnapshot,
-	TrafficDevice,
-	TrafficSession,
-	TrafficDomainGroup,
-	TrafficSnapshot,
-	TrafficExportRequest,
-	TrafficExportResponse,
-	AIAssistantState,
-	AIModelConfig,
-	AIModelConfigUpdate,
-	AIEmbeddedStatus,
-	AIEmbeddedConfig,
-	AIMemoryData,
-	AIMemoryFact,
-	AISentinelSettings,
-	AISentinelStatus,
 } from '$lib/types';
 import { readDiagnosticsSanitizedPreference } from './clientCore';
 import { TunnelsClient } from './clientTunnels';
+
+export type TrafficDevice = { ip: string; name?: string; mac?: string; [key: string]: unknown };
+export type TrafficSession = Record<string, unknown>;
+export type TrafficDomainGroup = Record<string, unknown>;
+export type TrafficSnapshot = Record<string, unknown>;
+export type TrafficExportRequest = Record<string, unknown>;
+export type TrafficExportResponse = Record<string, unknown>;
+export type AIAssistantState = Record<string, unknown>;
+export type AIModelConfig = Record<string, unknown>;
+export type AIModelConfigUpdate = Record<string, unknown>;
+export type AIEmbeddedStatus = Record<string, unknown>;
+export type AIEmbeddedConfig = Record<string, unknown>;
+export type AIMemoryData = Record<string, unknown>;
+export type AIMemoryFact = Record<string, unknown>;
+export type AISentinelSettings = Record<string, unknown>;
+export type AISentinelStatus = Record<string, unknown>;
 
 // Типы объявлены в $lib/types/systemTools; здесь — реэкспорт для кода,
 // который импортирует их из клиента.
@@ -82,12 +83,6 @@ export type {
 	SystemProcessItem,
 	SystemProcSummary,
 	SystemProcSnapshot,
-	TrafficDevice,
-	TrafficSession,
-	TrafficDomainGroup,
-	TrafficSnapshot,
-	TrafficExportRequest,
-	TrafficExportResponse,
 } from '$lib/types';
 
 export class SystemClient extends TunnelsClient {

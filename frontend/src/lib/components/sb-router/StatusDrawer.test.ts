@@ -62,7 +62,7 @@ describe('#730 простой режим: инфо под выбором реж�
 
 		const toggle = screen.getByRole('checkbox', {
 			name: 'Включить или выключить движок маршрутизации',
-		}) as HTMLInputElement;
+		});
 		expect(toggle.checked).toBe(true);
 		expect(screen.queryByText('Движок работает')).not.toBeNull();
 	});
@@ -74,7 +74,7 @@ describe('#730 простой режим: инфо под выбором реж�
 
 		const toggle = screen.getByRole('checkbox', {
 			name: 'Включить или выключить движок маршрутизации',
-		}) as HTMLInputElement;
+		});
 		expect(toggle.checked).toBe(true);
 	});
 

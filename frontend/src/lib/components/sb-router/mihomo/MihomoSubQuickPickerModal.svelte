@@ -318,6 +318,7 @@
             { value: 'auto', label: 'Автовыбор' },
             { value: 'manual', label: 'Ручной выбор' },
           ]}
+          ariaLabel="Режим выбора сервера"
           onchange={handleModeChange}
         />
       </div>

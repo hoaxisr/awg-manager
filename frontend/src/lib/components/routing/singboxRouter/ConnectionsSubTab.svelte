@@ -1,6 +1,7 @@
 <!-- frontend/src/lib/components/routing/singboxRouter/ConnectionsSubTab.svelte -->
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { get } from 'svelte/store';
 	import type { ConnectionFilters } from '$lib/types/singboxConnections';
 	import { matchFilters, aggregateBy } from '$lib/utils/singboxConnections';
 	import {
@@ -109,7 +110,8 @@ const emptyStateText = $derived(
 	// Прежний возврат работал по локальной копии снимка, которой больше нет.
 	async function killOne(id: string): Promise<void> {
 		dropConnections([id]);
-		if (await api.singboxKillConnection(id)) {
+		const engine = get(singboxRouterStore.settings)?.routingEngine === 'mihomo' ? 'mihomo' : 'sing-box';
+		if (await api.clashKillConnection(engine, id)) {
 			notifications.success('Соединение закрыто');
 		} else {
 			notifications.error('Не удалось закрыть соединение');
@@ -119,7 +121,8 @@ const emptyStateText = $derived(
 	async function killVisible(): Promise<void> {
 		const ids = filteredConns.map((c) => c.id);
 		dropConnections(ids);
-		const { ok, total } = await api.singboxKillConnections(ids);
+		const engine = get(singboxRouterStore.settings)?.routingEngine === 'mihomo' ? 'mihomo' : 'sing-box';
+		const { ok, total } = await api.clashKillConnections(engine, ids);
 		const msg = `Закрыто ${ok} из ${total}`;
 		if (ok === total) notifications.success(msg);
 		else if (ok === 0) notifications.error(msg);

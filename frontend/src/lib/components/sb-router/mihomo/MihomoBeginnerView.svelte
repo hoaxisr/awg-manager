@@ -655,8 +655,10 @@
   function handleStartResize(e: PointerEvent, secKey: SectionKey, dir: 's' | 'e' | 'se', colIndex?: 1 | 2) {
     e.preventDefault();
     e.stopPropagation();
-    const handleEl = e.currentTarget as HTMLElement | null;
-    const sectionEl = handleEl?.closest('.expert-section') as HTMLElement | null;
+    const targetEl = e.currentTarget as HTMLElement | null;
+    if (!targetEl) return;
+    const handleEl: HTMLElement = targetEl;
+    const sectionEl = handleEl.closest('.expert-section') as HTMLElement | null;
     if (!sectionEl) return;
 
     resizingSection = secKey;

@@ -11,7 +11,7 @@
   import { LoadingSpinner } from '$lib/components/layout';
   import StatStrip, { type StatCellData } from '../StatStrip.svelte';
   import SidePanel from '../SidePanel.svelte';
-  import { expertPanelCollapse, type ExpertPanelSection } from '../expertPanelCollapseStore';
+  import { expertPanelCollapse, setExpertPanelSectionCollapsed, type ExpertPanelSection } from '../expertPanelCollapseStore';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
   import { singboxMemory } from '$lib/stores/singboxMemory';
   import { singboxTrafficLive } from '$lib/stores/singboxEngineStats';
@@ -233,7 +233,8 @@
       maximizedSection = null;
     } else {
       maximizedSection = sec;
-      expertPanelCollapse.update((s) => ({ ...s, [sec]: false }));
+      const targetSec: ExpertPanelSection = sec === 'dns' ? 'dnsServers' : sec;
+      setExpertPanelSectionCollapsed(targetSec, false);
     }
   }
 
@@ -439,7 +440,7 @@
 
   function scrollToSection(id: string, sectionKey?: ExpertPanelSection) {
     if (sectionKey) {
-      expertPanelCollapse.update((s) => ({ ...s, [sectionKey]: false }));
+      setExpertPanelSectionCollapsed(sectionKey, false);
     }
     if (typeof document === 'undefined') return;
     setTimeout(() => {

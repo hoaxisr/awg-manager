@@ -27,7 +27,7 @@ describe('Mihomo API client surface', () => {
 	});
 
 	it('dispatches unsupported rules query and deletion payloads correctly', async () => {
-		const requestSpy = vi.spyOn(api as any, 'request').mockImplementation(async () => ({ items: [], revision: 'v1:test' }));
+		const requestSpy = vi.spyOn(api as unknown as { request: (...args: unknown[]) => Promise<unknown> }, 'request').mockImplementation(async () => ({ items: [], revision: 'v1:test' }));
 
 		await api.mihomoNativeUnsupportedRules();
 		expect(requestSpy).toHaveBeenCalledWith('/mihomo/native/rules/unsupported');

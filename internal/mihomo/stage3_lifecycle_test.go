@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -308,6 +309,9 @@ func TestStage3_CacheDbPreservation(t *testing.T) {
 }
 
 func TestStage3_GracefulTerminationSequence(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SIGTERM graceful termination sequence requires POSIX signals, not supported on Windows")
+	}
 	// Case A: Graceful termination via SIGTERM
 	tmpDir := t.TempDir()
 	opGraceful := NewOperator("ignored", tmpDir)

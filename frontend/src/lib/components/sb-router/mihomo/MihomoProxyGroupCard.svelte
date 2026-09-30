@@ -222,7 +222,7 @@
     return false;
   }
 
-  function handleMemberClick(name: string, isSub: boolean, event: MouseEvent) {
+  function handleMemberClick(name: string, isSub: boolean, event: MouseEvent | KeyboardEvent) {
     if (isSub) {
       event.stopPropagation();
       const currentTarget = event.currentTarget as HTMLElement;
@@ -343,7 +343,7 @@
         role="button"
         tabindex={0}
         onclick={(e) => handleMemberClick(name, isSub, e)}
-        onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && handleMemberClick(name, isSub, e as any)}
+        onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && handleMemberClick(name, isSub, e)}
         title={isSub ? `Подписка «${humanLabel}» — нажмите для выбора сервера` : isSelectable ? `Нажмите, чтобы выбрать ${humanLabel}` : isLoadBalance ? `Узел балансировки: ${humanLabel}` : isActive ? `Активный узел: ${humanLabel}` : humanLabel}
       >
         <span class="member-dot" class:active={isActive}></span>

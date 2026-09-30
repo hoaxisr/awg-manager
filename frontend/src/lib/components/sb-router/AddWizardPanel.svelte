@@ -21,6 +21,7 @@
   import { api } from '$lib/api/client';
   import MihomoGroupEditModal from './mihomo/MihomoGroupEditModal.svelte';
   import type { MihomoNativeGroup, MihomoNativeProxy, MihomoNativeSubscription } from '$lib/types';
+  import type { OutboundKind } from './types';
   import StepPill from './StepPill.svelte';
   import WizardStep from './WizardStep.svelte';
   import OutboundOption from './OutboundOption.svelte';
@@ -239,7 +240,7 @@
     outboundCategory: OutboundCategory;
     tunnelTags: string[];
   }): Promise<number> {
-    const operations: Array<(apply: boolean) => Promise<any>> = [];
+    const operations: Array<(apply: boolean) => Promise<unknown>> = [];
 
     let targetOutbound = 'DIRECT';
     if (args.outboundCategory === 'direct') {
@@ -275,7 +276,7 @@
     };
 
     // Expand composite covers and process all selected templates
-    const targetItems: Array<{ id: string; preset?: any }> = [];
+    const targetItems: Array<{ id: string; preset?: unknown }> = [];
     for (const rawId of args.selectedTemplates) {
       const templateId = rawId.replace(/^(svc|rs):/, '');
       const preset = allPresets.find((p) => p.id === templateId) || { id: templateId, name: templateId };
@@ -797,7 +798,7 @@
                 {@const tunnelTone = displayTone(tunnelDisplay)}
                 <button type="button" class="t-chip" class:selected onclick={() => handleSelectTunnel(ob.value)}>
                   <span class="tone-icon {toneClass(tunnelTone)}">
-                    <OutboundToneIcon tone={tunnelTone} kind={(ob.kind as any) || tunnelDisplay.kind} size={12} />
+                    <OutboundToneIcon tone={tunnelTone} kind={(ob.kind as OutboundKind) || tunnelDisplay.kind} size={12} />
                   </span>
                   <span class="tag">{ob.label}</span>
                 </button>
