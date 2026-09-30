@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 )
 
 func TestShowOne_UnableToFind_EvictsAndStopsReading(t *testing.T) {
@@ -52,5 +53,23 @@ func TestLookup_BootstrapError_NoProbe(t *testing.T) {
 	}
 	if fg.PostInterfaceCalls("Wireguard0") != 0 {
 		t.Fatal("no point read on bootstrap failure")
+	}
+}
+
+// 404 на поддереве rc (у живого сервера нет секции asc) — ошибка, но не
+// «записи нет»: живая запись остаётся в кэше (R12).
+func TestShowRC_Suffix404_KeepsRecord(t *testing.T) {
+	const asc = "/show/rc/interface/Wireguard0/wireguard/asc"
+	fg := newFakeGetter()
+	fg.SetJSON(ifaceListPath, `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`)
+	fg.SetError(asc, &transport.HTTPError{Method: "GET", Path: asc, Status: 404})
+	q := NewQueries(Deps{Getter: fg, Logger: NopLogger()})
+	ctx := context.Background()
+	_, err := q.WGServers.ASC3Fields(ctx, "Wireguard0")
+	if err == nil || errors.Is(err, ErrGone) {
+		t.Fatalf("want plain error, got %v", err)
+	}
+	if _, ok, _ := q.Interfaces.Lookup(ctx, "Wireguard0"); !ok {
+		t.Fatal("404 on rc subtree must not evict a live record")
 	}
 }

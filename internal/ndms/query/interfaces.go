@@ -980,8 +980,9 @@ func layerLevelToUpDown(level string) string {
 
 // === Command-side write API (proactive refresh after a successful POST) ===
 
-// Refresh reads the record as NDMS holds it RIGHT NOW, patches the cache
-// with the result the same way Invalidate does, and returns it. Use this
+// Refresh reads the record as NDMS holds it RIGHT NOW, updates the cache
+// from that answer (a known record point-wise, an unknown one through the
+// whole fresh list — see below), and returns it. Use this
 // instead of Get when the decision must reflect NDMS now rather than the
 // last hook-driven snapshot: NDMS hooks (ifcreated/ifdestroyed/…) don't
 // fire for an out-of-band edit like `interface OpkgTunN description …`,
@@ -1102,8 +1103,13 @@ type Present struct{ name string }
 // Name — NDMS-имя записи.
 func (p Present) Name() string { return p.name }
 
-// ErrGone — NDMS ответил «записи нет» на точечное чтение записи, которую кэш
-// считал существующей (потерян ifdestroyed). Запись из кэша уже выселена.
+// ErrGone — записи нет, и по этому имени NDMS не спрашивают. Два источника:
+//   - showOne/showRC: NDMS ответил «записи нет» на точечное чтение записи,
+//     которую кэш считал существующей (потерян ifdestroyed); запись из кэша
+//     уже выселена;
+//   - WGServerStore.present: записи нет в кэше — запроса не было вовсе.
+//
+// Вызывающему оба значат одно: интерфейса нет, читать по имени нельзя.
 var ErrGone = errors.New("ndms: interface gone")
 
 // Lookup — есть ли запись в кэше. Ошибка bootstrap — ошибка вызывающему:
@@ -1167,10 +1173,15 @@ func (s *InterfaceStore) ShowRaw(ctx context.Context, p Present) ([]byte, error)
 
 // showRC — ЕДИНСТВЕННЫЙ GET `/show/rc/interface/<name>…`. Путь идёт мимо
 // батчера (transport.bypassBatch) и на отсутствующем отвечает 404 + E.
+//
+// Выселяет (ErrGone) только 404 на голом пути (suffix == ""): он значит «нет
+// записи». 404 на поддереве (`/wireguard/asc`) бывает и у живого интерфейса,
+// у которого этой секции нет, — это обычная ошибка, кэш не трогаем, иначе
+// живая запись пропала бы из кэша до следующего списка.
 func (s *InterfaceStore) showRC(ctx context.Context, p Present, suffix string, dst any) error {
 	err := s.getter.Get(ctx, "/show/rc/interface/"+p.name+suffix, dst)
 	var he *transport.HTTPError
-	if errors.As(err, &he) && he.Status == http.StatusNotFound {
+	if suffix == "" && errors.As(err, &he) && he.Status == http.StatusNotFound {
 		s.Forget(p.name)
 		return fmt.Errorf("%s: %w", p.name, ErrGone)
 	}
