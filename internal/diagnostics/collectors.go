@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/ndms/types"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -123,6 +124,14 @@ func (r *Runner) collectTunnels(ctx context.Context) []TunnelInfo {
 		}
 	}
 
+	// Состояние NDMS — из ОДНОГО снимка полного списка на отчёт: по имени
+	// NDMS не спрашивают (F546), запрос по снятому без хука интерфейсу писал
+	// бы E. Список не прочитан — состояния в отчёте нет, как при сбое чтения.
+	var snap *query.Snapshot
+	if r.deps.NDMSQueries != nil {
+		snap, _ = r.deps.NDMSQueries.Interfaces.Snapshot(ctx, query.SnapshotRecent)
+	}
+
 	var infos []TunnelInfo
 	for _, t := range tunnels {
 		stored, _ := r.deps.TunnelStore.Get(t.ID)
@@ -167,12 +176,10 @@ func (r *Runner) collectTunnels(ctx context.Context) []TunnelInfo {
 		// NDMS interface state (using resolved ndmsName)
 		// For nativewg, this output is reused for Connection data
 		var ndmsJSON string
-		if r.deps.NDMSQueries != nil {
-			if p, ok, err := r.deps.NDMSQueries.Interfaces.Lookup(ctx, ndmsName); err == nil && ok {
-				if inner, err := r.deps.NDMSQueries.Interfaces.ShowRaw(ctx, p); err == nil {
-					ndmsJSON = string(inner)
-					ti.Interface.NDMSState = ndmsJSON
-				}
+		if snap != nil {
+			if raw, ok := snap.Raw(ndmsName); ok {
+				ndmsJSON = string(raw)
+				ti.Interface.NDMSState = ndmsJSON
 			}
 		}
 
