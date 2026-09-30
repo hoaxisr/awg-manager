@@ -2,39 +2,38 @@ package nwg
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
-// newStateTestOperator — оператор, читающий интерфейс через шлюз query.
-// Wireguard5 есть в списке NDMS; ответ точечного чтения задаёт тест через
-// SetPostInterface/SetPostInterfaceError.
-func newStateTestOperator(t *testing.T) (*OperatorNativeWG, *query.FakeGetter) {
+// newStateTestOperator — оператор, читающий интерфейс из снимка списка.
+// Wireguard5 есть в списке NDMS; поля записи сверх базовых (summary,
+// wireguard) задаёт тест через FakeNDMS.SetDetail.
+func newStateTestOperator(t *testing.T) (*OperatorNativeWG, *query.FakeNDMS) {
 	t.Helper()
-	g := query.NewFakeGetter()
-	g.SetJSON("/show/interface/", `{"Wireguard5":{"id":"Wireguard5"}}`)
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard5", Type: "Wireguard"})
 	o := &OperatorNativeWG{
-		queries:      query.NewQueries(query.Deps{Getter: g, Logger: query.NopLogger(), IsOS5: func() bool { return true }}),
+		queries:      query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }}),
 		appLog:       logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps),
 		supportsASC:  func() bool { return true },
 		hasProxySlot: func(int) bool { return false },
 	}
 	t.Cleanup(o.Close)
-	return o, g
+	return o, f
 }
 
-func TestGetState_ViaPost_Running(t *testing.T) {
-	op, g := newStateTestOperator(t)
-	g.SetPostInterface("Wireguard5", `{"show":{"interface":{
-		"id":"Wireguard5","link":"up",
+func TestGetState_FromSnapshot_Running(t *testing.T) {
+	op, f := newStateTestOperator(t)
+	f.SetDetail("Wireguard5", json.RawMessage(`{"link":"up",
 		"summary":{"layer":{"conf":"running"}},
-		"wireguard":{"status":"up","peer":[{"online":true,"last-handshake":12,"rxbytes":100,"txbytes":200,"via":"PPPoE0"}]}
-	}}}`)
+		"wireguard":{"status":"up","peer":[{"online":true,"last-handshake":12,"rxbytes":100,"txbytes":200,"via":"PPPoE0"}]}}`))
 
 	info := op.GetState(context.Background(), &storage.AWGTunnel{NWGIndex: 5})
 
@@ -44,33 +43,31 @@ func TestGetState_ViaPost_Running(t *testing.T) {
 	if !info.InterfaceUp || info.RxBytes != 100 || info.TxBytes != 200 || !info.HasHandshake {
 		t.Fatalf("unexpected StateInfo: %+v", info)
 	}
-	// Чтение — POST-форма с именем в теле (GET этот счётчик не трогает).
-	if n := g.PostInterfaceCalls("Wireguard5"); n != 1 {
-		t.Fatalf("POST show interface Wireguard5: %d, want 1", n)
+	// Один список (bootstrap), ни одного POST по имени.
+	if f.ListCalls() != 1 || len(f.Posts) != 0 {
+		t.Fatalf("ListCalls=%d Posts=%v, want 1/none", f.ListCalls(), f.Posts)
 	}
 }
 
-func TestGetState_StatusErrorWithoutID_NotCreated(t *testing.T) {
-	// NDMS replies HTTP 200 + status-error object (no "id") for a missing
-	// interface — same semantics the old GET path had with {}.
-	op, g := newStateTestOperator(t)
-	g.SetPostInterface("Wireguard5", `{"show":{"interface":{
-		"status":[{"status":"error","code":"6553619","message":"unable to find"}]
-	}}}`)
+// Записи нет в списке — «не создан», запроса по имени нет.
+func TestGetState_NotInSnapshot_NotCreated(t *testing.T) {
+	op, f := newStateTestOperator(t)
+	f.Remove("Wireguard5")
 
 	info := op.GetState(context.Background(), &storage.AWGTunnel{NWGIndex: 5})
-	if info.State != tunnel.StateNotCreated {
-		t.Fatalf("State = %v, want %v", info.State, tunnel.StateNotCreated)
+	if info.State != tunnel.StateNotCreated || f.E != 0 || len(f.Posts) != 0 {
+		t.Fatalf("State = %v E=%d Posts=%v, want %v/0/none", info.State, f.E, f.Posts, tunnel.StateNotCreated)
 	}
 }
 
-func TestGetState_TransportError_NotCreated(t *testing.T) {
-	op, g := newStateTestOperator(t)
-	g.SetPostInterfaceError("Wireguard5", errors.New("boom"))
+// Список не прочитан — «не создан»; чтения по имени взамен нет (решение 4).
+func TestGetState_ListError_NotCreated(t *testing.T) {
+	op, f := newStateTestOperator(t)
+	f.FailList(errors.New("boom"))
 
 	info := op.GetState(context.Background(), &storage.AWGTunnel{NWGIndex: 5})
-	if info.State != tunnel.StateNotCreated {
-		t.Fatalf("State = %v, want %v", info.State, tunnel.StateNotCreated)
+	if info.State != tunnel.StateNotCreated || len(f.Posts) != 0 {
+		t.Fatalf("State = %v Posts=%v, want %v/none", info.State, f.Posts, tunnel.StateNotCreated)
 	}
 }
 
@@ -87,16 +84,15 @@ func TestGetState_AbsentInterface_NoRCI(t *testing.T) {
 }
 
 func TestResolveActiveWAN_NoVia_ReturnsEmpty(t *testing.T) {
-	op, g := newStateTestOperator(t)
-	g.SetPostInterface("Wireguard5", `{"show":{"interface":{
-		"id":"Wireguard5","link":"up",
-		"wireguard":{"status":"up","peer":[{"online":true}]}
-	}}}`)
+	op, f := newStateTestOperator(t)
+	f.SetDetail("Wireguard5", json.RawMessage(`{"link":"up",
+		"wireguard":{"status":"up","peer":[{"online":true}]}}`))
 
 	if got := op.ResolveActiveWAN(context.Background(), &storage.AWGTunnel{NWGIndex: 5}); got != "" {
 		t.Fatalf("ResolveActiveWAN = %q, want empty", got)
 	}
-	if n := g.PostInterfaceCalls("Wireguard5"); n != 1 {
-		t.Fatalf("POST show interface Wireguard5: %d, want 1", n)
+	// Поток старта: bootstrap + свой свежий список (SnapshotLive), без POST.
+	if f.ListCalls() != 2 || len(f.Posts) != 0 {
+		t.Fatalf("ListCalls=%d Posts=%v, want 2/none", f.ListCalls(), f.Posts)
 	}
 }

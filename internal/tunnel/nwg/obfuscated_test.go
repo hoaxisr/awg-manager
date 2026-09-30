@@ -107,16 +107,16 @@ func (f *fakeObfRunner) Backend(id string) string {
 // который реализует и query.Getter, и command.Poster — поэтому и RCI-батч, и
 // RouteCommands приходят на этот же сервер.
 //
-// Запрос состояния интерфейса (POST {"show":{"interface":…}}) в posts не
-// попадает — там только команды; ответ задаётся ifaceResp, по умолчанию
-// «интерфейса нет».
+// Запрос состояния интерфейса (POST {"show":…}) в posts не попадает — там
+// только команды. Запись Wireguard3 в списке задаёт ifaceResp (состояние
+// читается из снимка списка, F546), по умолчанию — голая запись.
 type captureNDMS struct {
 	srv       *httptest.Server
 	mu        sync.Mutex
 	posts     []string
 	failBatch bool   // RCI-батч (массив команд) отвечает 500
 	failRoute bool   // команды маршрута отвечают отказом во вложенном status
-	ifaceResp string // тело ответа на show interface
+	ifaceResp string // запись Wireguard3 в списке /show/interface/
 	// confLines — строки running-config: по ним снятие host-route находит
 	// СВОИ записи (по метке !awgm-) и снимает их парной формой.
 	confLines []string
@@ -136,7 +136,13 @@ func newCaptureNDMS(t *testing.T) *captureNDMS {
 		// Список интерфейсов: туннель и WAN'ы, через которые тесты ставят
 		// host-route, — команды по ним идут только после подтверждения (F546).
 		if r.Method == http.MethodGet && r.URL.Path == "/show/interface/" {
-			_, _ = w.Write([]byte(`{"Wireguard3":{"id":"Wireguard3","type":"Wireguard"},
+			c.mu.Lock()
+			wg3 := c.ifaceResp
+			c.mu.Unlock()
+			if wg3 == "" {
+				wg3 = `{"id":"Wireguard3","type":"Wireguard"}`
+			}
+			_, _ = w.Write([]byte(`{"Wireguard3":` + wg3 + `,
 				"ISP0":{"id":"ISP0"},"ISP1":{"id":"ISP1"},"PPPoE0":{"id":"PPPoE0"}}`))
 			return
 		}
@@ -146,13 +152,7 @@ func newCaptureNDMS(t *testing.T) *captureNDMS {
 		}
 		b, _ := io.ReadAll(r.Body)
 		if strings.Contains(string(b), `"show"`) {
-			c.mu.Lock()
-			resp := c.ifaceResp
-			c.mu.Unlock()
-			if resp == "" {
-				resp = `{"show":{"interface":{}}}`
-			}
-			_, _ = w.Write([]byte(resp))
+			_, _ = w.Write([]byte(`{"show":{"interface":{}}}`))
 			return
 		}
 		c.mu.Lock()
@@ -199,13 +199,13 @@ func (c *captureNDMS) firstPostWith(sub string) int {
 	return -1
 }
 
-// obfIfaceOnRelay — ответ RCI для интерфейса на нашем релее: conf=running, peer
+// obfIfaceOnRelay — запись интерфейса на нашем релее: conf=running, peer
 // смотрит в 127.0.0.1:39000 (LocalPort из obfStored), online — по аргументу.
 func obfIfaceOnRelay(online bool) string {
-	return `{"show":{"interface":{"id":"Wireguard3","link":"up",
+	return `{"id":"Wireguard3","type":"Wireguard","link":"up",
 		"summary":{"layer":{"conf":"running"}},
 		"wireguard":{"status":"up","peer":[{"online":` + strconv.FormatBool(online) + `,"via":"ISP1",
-			"remote-endpoint-address":"127.0.0.1","remote-port":39000}]}}}}`
+			"remote-endpoint-address":"127.0.0.1","remote-port":39000}]}}`
 }
 
 func newObfOperator(t *testing.T, n *captureNDMS, fr *fakeObfRunner) *OperatorNativeWG {
@@ -437,8 +437,8 @@ func TestStartObfuscated_HostRouteViaFreshPeerVia(t *testing.T) {
 	withObfDirs(t)
 	n := newCaptureNDMS(t)
 	// conf не running → батч уходит, а peer.via читается для маршрута.
-	n.ifaceResp = `{"show":{"interface":{"id":"Wireguard3","link":"up",
-		"wireguard":{"status":"up","peer":[{"online":true,"via":"PPPoE0"}]}}}}`
+	n.ifaceResp = `{"id":"Wireguard3","type":"Wireguard","link":"up",
+		"wireguard":{"status":"up","peer":[{"online":true,"via":"PPPoE0"}]}}`
 	fr := newFakeObfRunner()
 	op := newObfOperator(t, n, fr)
 	st := obfStored()

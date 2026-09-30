@@ -920,25 +920,25 @@ func nwgStalled(rci NWGState, now time.Time) bool {
 	return true
 }
 
-// fetchInterfaceRCI читает объект интерфейса через шлюз query: Lookup по
-// кэшу (держится хуками ifcreated/ifdestroyed), ShowRaw — только по
-// присутствующему. На запрос по отсутствующему имени NDMS пишет E «unable to
-// find» в свой журнал, а состояние читается на каждом опросе (F546).
-// Отсутствие (в кэше или по ответу NDMS) — `{}`: parseRCIInterfaceResponse
-// даёт Exists=false → StateNotCreated.
-func (o *OperatorNativeWG) fetchInterfaceRCI(ctx context.Context, ndmsName string) ([]byte, error) {
-	p, ok, err := o.queries.Interfaces.Lookup(ctx, ndmsName)
+// fetchInterfaceRCI — запись интерфейса из снимка полного списка не старше
+// maxAge: поля те же, что у точечного `show interface`, но по имени NDMS не
+// спрашивают — запрос, долетевший между снятием записи и хуком ifdestroyed,
+// пишет E «unable to find» в журнал ndm (F546, K2). Опрос состояния берёт
+// query.SnapshotRecent; чтения внутри потока старта (решение перед батчем,
+// peer.via после него) — query.SnapshotLive: батч идёт мимо Invalidate, и
+// снимок моложе 2 с отдал бы состояние до него. Записи в снимке нет — `{}`:
+// parseRCIInterfaceResponse даёт Exists=false → StateNotCreated. Список не
+// прочитан — ошибка (решение 4).
+func (o *OperatorNativeWG) fetchInterfaceRCI(ctx context.Context, ndmsName string, maxAge time.Duration) ([]byte, error) {
+	snap, err := o.queries.Interfaces.Snapshot(ctx, maxAge)
 	if err != nil {
 		return nil, err
 	}
+	raw, ok := snap.Raw(ndmsName)
 	if !ok {
 		return []byte("{}"), nil
 	}
-	inner, err := o.queries.Interfaces.ShowRaw(ctx, p)
-	if errors.Is(err, query.ErrGone) || (err == nil && len(inner) == 0) {
-		return []byte("{}"), nil
-	}
-	return inner, err
+	return raw, nil
 }
 
 // GetState returns the state of a NativeWG tunnel via RCI.
@@ -946,7 +946,7 @@ func (o *OperatorNativeWG) fetchInterfaceRCI(ctx context.Context, ndmsName strin
 func (o *OperatorNativeWG) GetState(ctx context.Context, stored *storage.AWGTunnel) tunnel.StateInfo {
 	names := NewNWGNames(stored.NWGIndex)
 
-	body, err := o.fetchInterfaceRCI(ctx, names.NDMSName)
+	body, err := o.fetchInterfaceRCI(ctx, names.NDMSName, query.SnapshotRecent)
 	if err != nil {
 		return tunnel.StateInfo{State: tunnel.StateNotCreated}
 	}
@@ -1233,7 +1233,7 @@ func (o *OperatorNativeWG) SyncKmodSlot(ctx context.Context, stored *storage.AWG
 func (o *OperatorNativeWG) ResolveActiveWAN(ctx context.Context, stored *storage.AWGTunnel) string {
 	names := NewNWGNames(stored.NWGIndex)
 
-	body, err := o.fetchInterfaceRCI(ctx, names.NDMSName)
+	body, err := o.fetchInterfaceRCI(ctx, names.NDMSName, query.SnapshotLive)
 	if err != nil {
 		return ""
 	}

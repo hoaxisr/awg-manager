@@ -151,7 +151,7 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 // readObfIfaceState — снимок интерфейса по RCI. false = прочитать не удалось
 // (транспорт или разбор), и решение принимается как при отсутствии данных.
 func (o *OperatorNativeWG) readObfIfaceState(ctx context.Context, names NWGNames) (NWGState, bool) {
-	body, err := o.fetchInterfaceRCI(ctx, names.NDMSName)
+	body, err := o.fetchInterfaceRCI(ctx, names.NDMSName, query.SnapshotLive)
 	if err != nil {
 		return NWGState{}, false
 	}

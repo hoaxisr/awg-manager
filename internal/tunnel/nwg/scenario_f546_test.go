@@ -2,10 +2,16 @@ package nwg
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/events"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
 // S7 F546: WireguardN снят снаружи, хук ifdestroyed задержан. Карта ещё
@@ -48,5 +54,69 @@ func TestScenario_ExternalRemoveDelayedHook_DeleteThenHook(t *testing.T) {
 	}
 	if _, ok, _ := o.queries.Interfaces.Lookup(ctx, "Wireguard0"); ok {
 		t.Fatal("снятый Wireguard0 остался в кэше")
+	}
+}
+
+// K2 F546 (стенд 30.09): наш WireguardN снят снаружи, ifdestroyed ещё не
+// доставлен, панель опрашивает состояние. Состояние — из снимка списка: ни
+// одного запроса по имени (прежде `show interface name=X` → E «unable to
+// find»), ни одного POST; до хука — Running по снимку, после — NotCreated.
+func TestScenario_ExternalRemoveNoHook_GetStateNoRCI(t *testing.T) {
+	ctx := context.Background()
+	f := query.NewFakeNDMS()
+	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	o := &OperatorNativeWG{queries: q, appLog: logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps),
+		supportsASC: func() bool { return true }, hasProxySlot: func(int) bool { return false }}
+	t.Cleanup(o.Close)
+	st := &storage.AWGTunnel{Name: "n", NWGIndex: 5}
+
+	if _, err := q.Interfaces.List(ctx); err != nil { // карта тёплая, как в проде
+		t.Fatal(err)
+	}
+	f.Add(ndms.Interface{ID: "Wireguard5", Type: "Wireguard"})
+	f.SetDetail("Wireguard5", json.RawMessage(`{"link":"up","summary":{"layer":{"conf":"running"}},
+		"wireguard":{"status":"up","peer":[{"online":true,"last-handshake":5}]}}`))
+	deliverHooks(t, q, f)
+	if s := o.GetState(ctx, st); s.State != tunnel.StateRunning {
+		t.Fatalf("после создания State = %v, want Running", s.State)
+	}
+
+	f.Remove("Wireguard5") // хук в очереди оракула, диспетчеру не доставлен
+	lists, posts := f.ListCalls(), len(f.Posts)
+	for range 3 {
+		s := o.GetState(ctx, st)
+		if f.E != 0 {
+			t.Fatalf("GetState по снятому без хука: E=%d, want 0", f.E)
+		}
+		if s.State != tunnel.StateRunning {
+			t.Fatalf("до ifdestroyed State = %v, want Running (снимок)", s.State)
+		}
+	}
+	if f.E != 0 || len(f.Posts) != posts || f.ListCalls()-lists > 1 {
+		t.Fatalf("GetState по снятому: E=%d POST+%d списков+%d; want 0, 0, ≤1",
+			f.E, len(f.Posts)-posts, f.ListCalls()-lists)
+	}
+
+	deliverHooks(t, q, f)
+	if s := o.GetState(ctx, st); s.State != tunnel.StateNotCreated || f.E != 0 {
+		t.Fatalf("после ifdestroyed State = %v E=%d, want NotCreated/0", s.State, f.E)
+	}
+}
+
+// deliverHooks доставляет очередь хуков оракула диспетчеру и ждёт конца прохода.
+func deliverHooks(t *testing.T, q *query.Queries, f *query.FakeNDMS) {
+	t.Helper()
+	d := events.NewDispatcher(q, events.NopLogger())
+	done := make(chan struct{}, 1)
+	d.SetRoutingChanged(func() { done <- struct{}{} }) // конец прохода
+	d.Start()
+	defer d.Stop()
+	for _, h := range f.DrainHooks() {
+		d.Enqueue(events.Event{Type: events.EventType(h.Type), ID: h.ID, Layer: h.Layer, Level: h.Level})
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("проход диспетчера не завершился за 2 с")
 	}
 }
