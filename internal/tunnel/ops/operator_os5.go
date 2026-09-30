@@ -617,16 +617,23 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 	// отсутствующему — строка E в журнале ndm (F546). Список не прочитан —
 	// NDMS не трогаем, локальные шаги ниже делаем, ошибка наружу: оркестратор
 	// не удалит запись туннеля, повтор возможен.
+	//
+	// Снос отвергнут (отсутствие записи DeleteOpkgTun уже терпит) — тоже
+	// ошибка наружу, как у nwg: иначе запись туннеля уйдёт, а OpkgTunN
+	// останется на роутере без хозяина (F559).
 	iface, _, ok, confirmErr := confirmOpkgTun(ctx, o.queries, names.NDMSName)
+	var ndmsErr error
 	switch {
 	case confirmErr != nil:
 		o.logWarn("delete", stored.ID, "read OpkgTun record: "+confirmErr.Error()+" — NDMS record not deleted")
+		ndmsErr = fmt.Errorf("read OpkgTun record: %w", confirmErr)
 	case ok:
 		o.expectHook(names.NDMSName, "disabled")
 		// Свой снос — не внешнее снятие: оркестратор поглотит этот ifdestroyed.
 		o.expectHook(names.NDMSName, "destroyed")
 		if err := o.commands.Interfaces.DeleteOpkgTun(ctx, iface); err != nil {
 			o.logWarn("delete", stored.ID, "DeleteOpkgTun: "+err.Error())
+			ndmsErr = fmt.Errorf("delete OpkgTun record: %w", err)
 		}
 	case names.NDMSName != "":
 		o.logInfo("delete", stored.ID, "OpkgTun record absent in NDMS — nothing to delete there")
@@ -650,8 +657,8 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 	delete(o.appliedDNS, stored.ID)
 	o.appliedDNSMu.Unlock()
 
-	if confirmErr != nil {
-		return tunnel.NewOpError("delete", stored.ID, "ndms", fmt.Errorf("read OpkgTun record: %w", confirmErr))
+	if ndmsErr != nil {
+		return tunnel.NewOpError("delete", stored.ID, "ndms", ndmsErr)
 	}
 
 	o.logInfo("delete", stored.ID, "Tunnel deleted")

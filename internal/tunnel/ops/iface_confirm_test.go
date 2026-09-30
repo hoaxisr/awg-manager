@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -83,6 +84,29 @@ func TestDelete_ListError_FailsClosed(t *testing.T) {
 	if !f.Has("OpkgTun10") {
 		t.Fatal("запись снята без списка")
 	}
+}
+
+// failDeletePoster — оракул, отвергающий `no interface OpkgTun10`.
+type failDeletePoster struct{ f *ndmsquery.FakeNDMS }
+
+func (p failDeletePoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	if js, _ := json.Marshal(payload); string(js) == `{"interface":{"OpkgTun10":{"no":true}}}` {
+		return nil, errors.New("injected: delete")
+	}
+	return p.f.Post(ctx, payload)
+}
+
+// Снос записи отвергнут — ошибка наружу: оркестратор не удалит запись
+// туннеля, OpkgTun10 не останется на роутере без хозяина (F559, как nwg).
+func TestDelete_DeleteRecordFails_Error(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(opkgTun10())
+	o, _ := newOS5LifecycleOn(t, failDeletePoster{f}, f, &MockBackend{running: true}, true)
+
+	err := o.Delete(context.Background(), &storage.AWGTunnel{ID: "awg10", Name: "Germany"})
+	if err == nil || !strings.Contains(err.Error(), "injected: delete") {
+		t.Fatalf("err = %v, want отказ сноса записи", err)
+	}
+	clean(t, f)
 }
 
 // Список не прочитан — устройство всё равно опущено, NDMS не тронут, ошибка.
