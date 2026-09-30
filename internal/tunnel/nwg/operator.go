@@ -349,7 +349,10 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	// Refresh the interface cache so the next nextFreeIndex sees this slot
 	// as occupied. Without it, back-to-back creates (no Start in between)
 	// re-read the stale map and allocate the same index — issue #255.
-	o.queries.Interfaces.OnCreated(ctx, ndmsName)
+	o.queries.Interfaces.OnCreated(ndmsName)
+	if err := o.queries.Interfaces.ReconcilePending(ctx); err != nil {
+		o.appLog.Warn("create", ndmsName, "interface cache refresh failed: "+err.Error())
+	}
 
 	o.appLog.Full("create", stored.Name, fmt.Sprintf("Creating NDMS interface %s", ndmsName))
 	o.appLog.Info("create", ndmsName, "interface created")

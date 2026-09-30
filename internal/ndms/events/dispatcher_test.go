@@ -27,11 +27,12 @@ func primedQueries(_ *testing.T) (*query.Queries, *query.FakeGetter) {
 
 // === Event-sourced InterfaceStore behaviour ===
 
-// IfCreated must apply via OnCreated which fetches ONLY the new id —
-// it must NOT re-fetch the full list.
-func TestDispatcher_IfCreated_FetchesOnlyNewID(t *testing.T) {
+// IfCreated неизвестного id не читает его точечно (по снятому к этому
+// моменту имени NDMS пишет E, F546) — пачка кончается ОДНИМ полным списком.
+func TestDispatcher_IfCreated_OneListNoPointRead(t *testing.T) {
 	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
+	done := drainBarrier(d)
 	d.Start()
 	defer d.Stop()
 
@@ -39,27 +40,21 @@ func TestDispatcher_IfCreated_FetchesOnlyNewID(t *testing.T) {
 		t.Fatalf("prime: %v", err)
 	}
 	primeList := fg.Calls(ifaceListPath)
+	fg.SetJSON(ifaceListPath, `{
+		"Wireguard0": {"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","state":"up"},
+		"Wireguard1": {"id":"Wireguard1","interface-name":"nwg1","type":"Wireguard","state":"up"}}`)
 
 	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1"})
+	waitDrain(t, done)
 
-	// Ждём ИСХОД (запись видна), а не POST в фейке: счётчик растёт до того,
-	// как OnCreated положит ответ в стор, и под нагрузкой Get ниже видел nil.
-	// Get при промахе HTTP не делает — счётчик fetch'ей не искажает.
-	waitFor(t, 200*time.Millisecond, func() bool {
-		got, _ := q.Interfaces.Get(context.Background(), "Wireguard1")
-		return got != nil
-	})
-
-	if got := fg.PostInterfaceCalls("Wireguard1"); got != 1 {
-		t.Errorf("after IfCreated: want 1 fetch of new id, got %d", got)
+	if got := fg.PostInterfaceCalls("Wireguard1"); got != 0 {
+		t.Errorf("after IfCreated: want 0 point reads of new id, got %d", got)
 	}
-	// Critical: list endpoint must NOT have been re-fetched.
-	if got := fg.Calls(ifaceListPath); got != primeList {
-		t.Errorf("list must NOT be re-fetched after IfCreated, before=%d after=%d", primeList, got)
+	if got := fg.Calls(ifaceListPath); got != primeList+1 {
+		t.Errorf("want exactly one list after IfCreated, before=%d after=%d", primeList, got)
 	}
-	// And the new entry must now be visible from Get without further HTTP.
-	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard1"); got == nil {
-		t.Errorf("Wireguard1 must be queryable after OnCreated")
+	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard1"); got == nil || got.SystemName != "nwg1" {
+		t.Errorf("Wireguard1 must come from the list, got %#v", got)
 	}
 }
 
@@ -218,8 +213,8 @@ const samplePeers = `{"wireguard":{"peer":[{"public-key":"KEY","online":true}]}}
 // слали ОДНО событие, поэтому итерация пакета задом наперёд проходила
 // зелёной. Здесь пара «создан → снесён» приходит одним пакетом: события
 // кладутся в очередь ДО Start, поэтому воркер разгребает их одним проходом.
-// В обратном порядке снос применился бы к ещё отсутствующей записи, и
-// интерфейс остался бы в кэше живым.
+// В обратном порядке создание пришлось бы на конец пакета, id остался бы
+// ждать списка, и пакет стоил бы лишнего чтения списка.
 func TestDispatcher_BatchAppliesInArrivalOrder(t *testing.T) {
 	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
@@ -228,17 +223,18 @@ func TestDispatcher_BatchAppliesInArrivalOrder(t *testing.T) {
 	if _, err := q.Interfaces.List(context.Background()); err != nil {
 		t.Fatalf("prime: %v", err)
 	}
+	primeList := fg.Calls(ifaceListPath)
 	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1"})
 	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard1"})
 
 	d.Start()
 	defer d.Stop()
+	// Барьер взводится только после непустого прохода — «пакет вовсе не
+	// разобран» сюда не доходит.
 	waitDrain(t, drained)
 
-	// Создание действительно применилось: за новым id сходили в NDMS. Без
-	// этой проверки тест был бы зелёным и на «пакет вовсе не разобран».
-	if got := fg.PostInterfaceCalls("Wireguard1"); got != 1 {
-		t.Fatalf("создание не применилось: запросов за Wireguard1 %d, ждали 1", got)
+	if got := fg.Calls(ifaceListPath); got != primeList || q.Interfaces.HasPending() {
+		t.Fatalf("пакет применён не по порядку: списков +%d, pending=%v", got-primeList, q.Interfaces.HasPending())
 	}
 	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard1"); got != nil {
 		t.Errorf("после пары «создан → снесён» записи быть не должно, получили %#v", got)
@@ -250,7 +246,7 @@ func TestDispatcher_BatchAppliesInArrivalOrder(t *testing.T) {
 // (dispatcher.go:146-148) проходил зелёным. Слушатель взводится ПОСЛЕ разбора
 // пакета, поэтому к моменту вызова состояние уже применено — это и проверяем.
 func TestDispatcher_RoutingListenerFiresAfterDrain(t *testing.T) {
-	q, _ := primedQueries(t)
+	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
 
 	seen := make(chan bool, 4)
@@ -264,6 +260,11 @@ func TestDispatcher_RoutingListenerFiresAfterDrain(t *testing.T) {
 	if _, err := q.Interfaces.List(context.Background()); err != nil {
 		t.Fatalf("prime: %v", err)
 	}
+	// Wireguard1 появляется в NDMS; в кэш его кладёт список после пачки —
+	// слушатель обязан сработать уже после него.
+	fg.SetJSON(ifaceListPath, `{
+		"Wireguard0": {"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","state":"up"},
+		"Wireguard1": {"id":"Wireguard1","interface-name":"nwg1","type":"Wireguard","state":"up"}}`)
 	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1"})
 
 	select {

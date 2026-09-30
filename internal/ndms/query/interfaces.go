@@ -11,16 +11,22 @@
 //
 //   - Hook-side (called from events.Dispatcher): OnCreated /
 //     OnDestroyed / OnLayerChanged / OnIPChanged. Pure in-memory
-//     mutators (OnCreated does ONE GET for the just-created interface
-//     to get its initial snapshot — 404 impossible since the hook
-//     fired AFTER NDMS finished creating). No probes for absent names.
+//     mutators, no HTTP. OnCreated only marks an unknown id as pending;
+//     after each hook batch the dispatcher calls ReconcilePending, which
+//     reads ONE full list if anything is pending. No point reads by name
+//     from hooks: by the time the hook is applied the name may already be
+//     gone, and NDMS logs E `unable to find` for it (F546).
 //
 //   - Command-side (called from internal/ndms/command/* and a few
 //     admin handlers after a successful POST to NDMS): Invalidate(name)
-//     and InvalidateAll(). These are now PROACTIVE-REFRESH: they
+//     and InvalidateAll(). These are PROACTIVE-REFRESH: they
 //     immediately re-fetch from NDMS and update the map. Callers use
 //     them after a successful write so write→read consistency is
 //     preserved without waiting for the eventual hook.
+//
+// Every hook bumps seq and stamps the id in touched; a list or point
+// answer never overwrites an id touched after its request started — the
+// hook is newer than the answer.
 package query
 
 import (
@@ -891,65 +897,48 @@ func preferCandidate(c ndms.AllInterface, id string, win ndms.AllInterface, winI
 
 // === Hook-side write API (called from events.Dispatcher) ===
 
-// OnCreated handles ifcreated NDMS events. Issues ONE RCI POST for the
-// just-created interface to capture its initial snapshot.
-//
-// On fetch failure we do NOT overwrite an existing entry with a stub —
-// bootstrap already populated byID from /show/interface/ at startup, and
-// transient per-interface failures (e.g. an RCI quirk we haven't worked
-// around yet) must not erase that data. The previous behaviour clobbered
-// good bootstrap records and was the root cause of the v2.10.0 regression
-// where slashed-name interfaces vanished from the WAN dropdown — fetchOne
-// failed with 404, and the stub overwrote a perfectly valid bootstrap
-// record. The stub fallback is kept only for the truly-absent case
-// (no prior record) so OnLayerChanged / OnIPChanged events have
-// somewhere to land.
-func (s *InterfaceStore) OnCreated(ctx context.Context, id string) {
-	if err := s.ensureBootstrap(ctx); err != nil {
-		s.log.Warnf("OnCreated %s: bootstrap failed: %v", id, err)
-		return
-	}
-	iface, err := s.fetchOne(ctx, id)
-	if err != nil {
-		s.mu.Lock()
-		_, hadPrior := s.byID[id]
-		if !hadPrior {
-			s.byID[id] = &ndms.Interface{ID: id}
-		}
-		s.mu.Unlock()
-		if hadPrior {
-			s.log.Warnf("OnCreated %s: fetch failed, keeping bootstrap entry: %v", id, err)
-		} else {
-			s.log.Warnf("OnCreated %s: fetch failed, inserting stub: %v", id, err)
-		}
-		return
-	}
-	if iface == nil {
-		// NDMS replied empty — race? interface gone before fetch?
-		// Insert a stub only if we have nothing better.
-		s.mu.Lock()
-		if _, hadPrior := s.byID[id]; !hadPrior {
-			s.byID[id] = &ndms.Interface{ID: id}
-		}
-		s.mu.Unlock()
-		return
-	}
+// OnCreated — хук ifcreated. Никаких чтений: известный id — уже в карте;
+// неизвестный ждёт ReconcilePending, который после пачки хуков читает ОДИН
+// полный список. Точечное чтение здесь давало E «unable to find» на паре
+// created→destroyed одного id (F546) и заглушки без Type на любой сбой.
+func (s *InterfaceStore) OnCreated(id string) {
 	s.mu.Lock()
-	s.byID[id] = iface
-	if iface.Uptime > 0 && iface.ConfLayer == "running" {
-		s.startedAt[id] = time.Now().Add(-time.Duration(iface.Uptime) * time.Second)
+	defer s.mu.Unlock()
+	s.markTouchedLocked(id)
+	if _, known := s.byID[id]; known {
+		return
 	}
-	s.mu.Unlock()
+	s.pending[id] = struct{}{}
 }
 
-// OnDestroyed handles ifdestroyed NDMS events. Pure in-memory delete.
-func (s *InterfaceStore) OnDestroyed(id string) {
+// Forget — запись снята (ifdestroyed или наш успешный `no interface`).
+func (s *InterfaceStore) Forget(id string) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.markTouchedLocked(id)
 	delete(s.byID, id)
 	delete(s.startedAt, id)
 	delete(s.sysNames, id)
-	s.mu.Unlock()
+	delete(s.pending, id)
+}
+
+// OnDestroyed — хук ifdestroyed; то же, что Forget.
+func (s *InterfaceStore) OnDestroyed(id string) { s.Forget(id) }
+
+// HasPending — есть созданные хуком id, которых ещё нет в карте.
+func (s *InterfaceStore) HasPending() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.pending) > 0
+}
+
+// ReconcilePending — один полный список на пачку хуков, только если есть
+// неизвестные созданные id.
+func (s *InterfaceStore) ReconcilePending(ctx context.Context) error {
+	if !s.HasPending() {
+		return nil
+	}
+	return s.refreshAll(ctx)
 }
 
 // OnLayerChanged handles iflayerchanged NDMS events. Patches the

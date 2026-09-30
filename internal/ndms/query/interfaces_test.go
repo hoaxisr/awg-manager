@@ -781,46 +781,24 @@ func TestInterfaceStore_Refresh_ErrorLeavesCacheUntouched(t *testing.T) {
 
 // === Hook-side write API: OnCreated / OnDestroyed / OnLayerChanged / OnIPChanged ===
 
-func TestInterfaceStore_OnCreated_FetchesOnce(t *testing.T) {
+// Неизвестный id ждёт списка пачки (ReconcilePending): ни точечного чтения,
+// ни заглушки без Type.
+func TestInterfaceStore_OnCreated_UnknownGoesPending(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleIfaceList)
-	fg.SetPostInterface("Wireguard5", `{"show":{"interface":{
-		"id":"Wireguard5","interface-name":"nwg5","type":"Wireguard","state":"up","link":"up"
-	}}}`)
 	s := NewInterfaceStore(fg, NopLogger())
 
 	_, _ = s.List(context.Background())
-	s.OnCreated(context.Background(), "Wireguard5")
+	s.OnCreated("Wireguard5")
 
-	got, _ := s.Get(context.Background(), "Wireguard5")
-	if got == nil {
-		t.Fatalf("OnCreated: must insert into map")
+	if !s.HasPending() {
+		t.Error("OnCreated unknown id: want pending")
 	}
-	if got.SystemName != "nwg5" {
-		t.Errorf("OnCreated: want systemName nwg5, got %q", got.SystemName)
+	if got, _ := s.Get(context.Background(), "Wireguard5"); got != nil {
+		t.Errorf("OnCreated must not insert a stub, got %#v", got)
 	}
-	// Only ONE POST per OnCreated, exactly to the new id.
-	if calls := fg.PostInterfaceCalls("Wireguard5"); calls != 1 {
-		t.Errorf("OnCreated calls: want 1, got %d", calls)
-	}
-	// Must NOT probe unrelated names.
-	if calls := fg.PostInterfaceCalls("Wireguard0"); calls != 0 {
-		t.Errorf("OnCreated must not probe other interfaces, got %d calls to Wireguard0", calls)
-	}
-}
-
-func TestInterfaceStore_OnCreated_OnFetchFailure_InsertsStub(t *testing.T) {
-	// No bootstrap data for Wireguard5 — fetchOne failure falls through
-	// to the stub fallback, so OnLayerChanged/OnIPChanged can land.
-	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, sampleIfaceList)
-	fg.SetPostInterfaceError("Wireguard5", errors.New("ndms timeout"))
-	s := NewInterfaceStore(fg, NopLogger())
-
-	s.OnCreated(context.Background(), "Wireguard5")
-	got, _ := s.Get(context.Background(), "Wireguard5")
-	if got == nil || got.ID != "Wireguard5" {
-		t.Errorf("OnCreated stub: want minimal entry with ID, got %#v", got)
+	if calls := fg.PostInterfaceCalls("Wireguard5"); calls != 0 {
+		t.Errorf("OnCreated must not read point-wise, got %d", calls)
 	}
 }
 
@@ -842,7 +820,7 @@ func TestInterfaceStore_OnCreated_OnFetchFailure_KeepsBootstrapEntry(t *testing.
 
 	// Prime bootstrap, then receive an ifcreated hook for the same id.
 	_, _ = s.List(context.Background())
-	s.OnCreated(context.Background(), "Wireguard0")
+	s.OnCreated("Wireguard0")
 
 	got, _ := s.Get(context.Background(), "Wireguard0")
 	if got == nil {
@@ -1359,7 +1337,10 @@ func TestInterfaceStore_ResolveSystemName_OnDestroyedForgetsMemo(t *testing.T) {
 		t.Fatalf("резолвер спрошен %d раз после удаления, ждали 1 (до удаления)", got)
 	}
 	// Пересоздан — резолвер спрашивается заново, а не отдаёт старый memo.
-	s.OnCreated(ctx, "Wireguard0")
+	s.OnCreated("Wireguard0")
+	if err := s.ReconcilePending(ctx); err != nil {
+		t.Fatalf("ReconcilePending: %v", err)
+	}
 	_ = s.ResolveSystemName(ctx, "Wireguard0")
 	if got := fg.PostSystemNameCalls("Wireguard0"); got != 2 {
 		t.Errorf("резолвер спрошен %d раз, ждали 2 — имя пережило удаление", got)

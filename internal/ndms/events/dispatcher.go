@@ -19,8 +19,10 @@ type RoutingChangedListener = func()
 //
 // For InterfaceStore — event-sourced: each event is applied directly
 // (OnCreated / OnDestroyed / OnLayerChanged / OnIPChanged) and the
-// store mutates its internal map in place. No probing, no
-// invalidate-then-refetch.
+// store mutates its internal map in place, without HTTP. Ids created
+// by a hook and unknown to the map are fetched after the batch with ONE
+// full list (ReconcilePending); a created→destroyed pair within one
+// batch costs nothing. No point reads by name (F546).
 //
 // For all other stores (Peers, Routes, RunningConfig, WGServers, ...)
 // the legacy invalidate-on-event pattern is preserved — those stores
@@ -136,12 +138,18 @@ func (d *Dispatcher) drain() {
 		return
 	}
 
-	// Time-bound the batch — OnCreated may make ONE HTTP per event.
-	// 30s gives plenty of room even for slow NDMS under burst load.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 	for _, e := range batch {
-		d.apply(ctx, e)
+		d.apply(e)
+	}
+	// Созданные хуком id, которых нет в карте, добираются ОДНИМ списком на
+	// пачку: пара created→destroyed одного id к этому моменту уже схлопнулась
+	// и не стоит ни одного запроса.
+	if d.queries != nil && d.queries.Interfaces != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := d.queries.Interfaces.ReconcilePending(ctx); err != nil {
+			d.log.Warnf("reconcile pending interfaces: %v", err)
+		}
+		cancel()
 	}
 
 	if p := d.onRouting.Load(); p != nil {
@@ -151,13 +159,13 @@ func (d *Dispatcher) drain() {
 
 // apply dispatches a single event to the appropriate store mutator(s).
 //
-// Interfaces — direct event-sourced patch (no HTTP except OnCreated's
-// single targeted fetch).
+// Interfaces — direct event-sourced patch, no HTTP (unknown created ids
+// wait for ReconcilePending in drain).
 //
 // Other stores — legacy InvalidateAll/Invalidate; their state will
 // be re-fetched on the next read. Will be migrated to event-sourcing
 // in follow-up PRs.
-func (d *Dispatcher) apply(ctx context.Context, e Event) {
+func (d *Dispatcher) apply(e Event) {
 	if d.queries == nil {
 		return
 	}
@@ -166,7 +174,7 @@ func (d *Dispatcher) apply(ctx context.Context, e Event) {
 	if d.queries.Interfaces != nil {
 		switch e.Type {
 		case EventIfCreated:
-			d.queries.Interfaces.OnCreated(ctx, e.ID)
+			d.queries.Interfaces.OnCreated(e.ID)
 		case EventIfDestroyed:
 			d.queries.Interfaces.OnDestroyed(e.ID)
 		case EventIfLayerChanged:
