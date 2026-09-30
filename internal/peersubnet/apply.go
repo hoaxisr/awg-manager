@@ -116,7 +116,6 @@ func isHostOf(n *net.IPNet, hosts []net.IP) bool {
 // ошибка без мутаций; интерфейса нет — при пустом desired успех (снимать не с
 // чего), иначе ошибка.
 func Reconcile(ctx context.Context, r Router, ifaceName, pubkey string, tunnelHosts []net.IP, desired []string) error {
-	comment := RouteComment(pubkey)
 	want, err := parseAll(desired)
 	if err != nil {
 		return err
@@ -130,6 +129,19 @@ func Reconcile(ctx context.Context, r Router, ifaceName, pubkey string, tunnelHo
 			return nil
 		}
 		return fmt.Errorf("интерфейс %s не найден в NDMS", ifaceName)
+	}
+	return ReconcileConfirmed(ctx, r, iface, pubkey, tunnelHosts, desired)
+}
+
+// ReconcileConfirmed — Reconcile по интерфейсу, уже подтверждённому
+// вызывающим: тот, кто держит доказательство на весь поток (восстановление
+// сервера, правка пира), не читает список заново на каждого пира.
+func ReconcileConfirmed(ctx context.Context, r Router, iface query.Confirmed, pubkey string, tunnelHosts []net.IP, desired []string) error {
+	ifaceName := iface.Name()
+	comment := RouteComment(pubkey)
+	want, err := parseAll(desired)
+	if err != nil {
+		return err
 	}
 	allow, err := r.PeerAllowIPs(ctx, iface, pubkey)
 	if err != nil {
@@ -248,12 +260,18 @@ func Reconcile(ctx context.Context, r Router, ifaceName, pubkey string, tunnelHo
 // трогаются: вызывающий снимает пира целиком. Интерфейс подтверждается одним
 // чтением списка (F546): не прочитан — ошибка; интерфейса нет — успех.
 func RemoveRoutes(ctx context.Context, r Router, ifaceName, pubkey string) error {
-	comment := RouteComment(pubkey)
 	iface, ok, err := r.Confirm(ctx, ifaceName)
 	if err != nil || !ok {
 		return err
 	}
-	routes, err := r.InterfaceRoutes(ctx, ifaceName)
+	return RemoveRoutesConfirmed(ctx, r, iface, pubkey)
+}
+
+// RemoveRoutesConfirmed — RemoveRoutes по интерфейсу, уже подтверждённому
+// вызывающим (см. ReconcileConfirmed).
+func RemoveRoutesConfirmed(ctx context.Context, r Router, iface query.Confirmed, pubkey string) error {
+	comment := RouteComment(pubkey)
+	routes, err := r.InterfaceRoutes(ctx, iface.Name())
 	if err != nil {
 		return fmt.Errorf("read routes: %w", err)
 	}
