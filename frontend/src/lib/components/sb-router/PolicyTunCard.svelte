@@ -72,11 +72,19 @@
   const DEFAULT_TUN_DESCRIPTION = 'awgm policy-tun';
   const TUN_DESCRIPTION_MAX = 32;
   const descDraft = $state({ v: '' });
+  // Черновик сбрасывается только когда СОХРАНЁННОЕ имя действительно
+  // сменилось. cfg перечитывается после каждого автосохранения дровера, и
+  // сброс на каждый новый объект cfg стирал бы набираемый текст.
+  let lastSavedDesc: string | undefined;
   $effect(() => {
-    descDraft.v = cfg.policyTunDescription ?? '';
+    const saved = cfg.policyTunDescription ?? '';
+    if (saved !== lastSavedDesc) {
+      lastSavedDesc = saved;
+      descDraft.v = saved;
+    }
   });
 
-  function commitDescription(raw: string): void {
+  async function commitDescription(raw: string): Promise<void> {
     const v = raw.trim();
     const next = v === DEFAULT_TUN_DESCRIPTION ? '' : v;
     if (next === (cfg.policyTunDescription ?? '')) {
@@ -93,7 +101,11 @@
       descDraft.v = cfg.policyTunDescription ?? '';
       return;
     }
-    void onPatch({ policyTunDescription: next });
+    await onPatch({ policyTunDescription: next });
+    // Отказ бэкенда (например, управляющий символ, который здесь не
+    // проверяется) applyPatch показывает уведомлением и не пробрасывает —
+    // о нём говорит cfg: сохранилось — там next, нет — прежнее имя.
+    descDraft.v = cfg.policyTunDescription ?? '';
   }
 
   async function openPicker() {

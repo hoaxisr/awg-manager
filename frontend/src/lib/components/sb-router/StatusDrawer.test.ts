@@ -1,6 +1,7 @@
 // #730: под выбором режима захвата новичку должен быть блок и в policy-tun, и в TPROXY.
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import type { SingboxRouterSettings, SingboxRouterStatus } from '$lib/types';
 
 const { status, settings, empty, uiMode } = await vi.hoisted(async () => {
@@ -108,6 +109,31 @@ describe('policy-tun: название интерфейса', () => {
 		await fireEvent.change(input, { target: { value: 'awgm x' } });
 		await fireEvent.change(input, { target: { value: 'x'.repeat(33) } });
 		expect(patchSpy).not.toHaveBeenCalled();
+	});
+
+	it('набираемый текст переживает перечитывание настроек с тем же именем', async () => {
+		render(StatusDrawer);
+		const input = screen.getByLabelText<HTMLInputElement>('Название интерфейса');
+		await fireEvent.input(input, { target: { value: 'Awg' } });
+		// Автосохранение другой настройки: новый объект cfg, имя прежнее.
+		settings.set({ routingMode: 'policy-tun', deviceMode: 'policy', policyName: 'p1' });
+		await tick();
+		expect(input.value).toBe('Awg');
+	});
+
+	it('отвергнутое бэкендом имя возвращается к сохранённому', async () => {
+		patchSpy.mockRejectedValueOnce(new Error('policyTunDescription: control characters are not allowed'));
+		settings.set({
+			routingMode: 'policy-tun',
+			deviceMode: 'policy',
+			policyName: 'p1',
+			policyTunDescription: 'Old',
+		});
+		render(StatusDrawer);
+		const input = screen.getByLabelText<HTMLInputElement>('Название интерфейса');
+		await fireEvent.input(input, { target: { value: 'New' } });
+		await fireEvent.change(input, { target: { value: 'New' } });
+		await waitFor(() => expect(input.value).toBe('Old'));
 	});
 });
 
