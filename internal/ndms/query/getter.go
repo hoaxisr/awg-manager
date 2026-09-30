@@ -383,6 +383,16 @@ func (f *FakeGetter) Post(ctx context.Context, payload any) (json.RawMessage, er
 			return nil, err
 		}
 		if !haveBody {
+			// Точечный путь, заданный SetJSON("/show/interface/<name>", …), —
+			// тот же ответ `show interface <name>`, что и в POST-форме
+			// (единый шлюз showOne читает только ею): приоритет над списком,
+			// как у interfaceFromList на GET-пути.
+			f.mu.Lock()
+			point, havePoint := f.jsonResp["/show/interface/"+name]
+			f.mu.Unlock()
+			if havePoint {
+				return []byte(`{"show":{"interface":` + point + `}}`), nil
+			}
 			// Не заскриптован явно (SetPostInterface): отвечаем тем же
 			// снимком `/show/interface/`, что и GET-путь (interfaceFromList)
 			// — так пишущие только SetJSON("/show/interface/", …) фикстуры

@@ -495,36 +495,6 @@ func TestInterfaceStore_Bootstrap_DropsNonKernelInterfaceName(t *testing.T) {
 	}
 }
 
-// === HasIPv6Global ===
-
-func TestInterfaceStore_HasIPv6Global_TrueForPresent(t *testing.T) {
-	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, `{
-		"PPPoE0": {"id":"PPPoE0","type":"PPPoE","state":"up"}
-	}`)
-	fg.SetPostInterface("PPPoE0", `{"show":{"interface":{
-		"ipv6": {"addresses": [{"address":"2a00::1","global":true}]}
-	}}}`)
-	s := NewInterfaceStore(fg, NopLogger())
-
-	if !s.HasIPv6Global(context.Background(), "PPPoE0") {
-		t.Errorf("want true")
-	}
-}
-
-func TestInterfaceStore_HasIPv6Global_AbsentNoHTTP(t *testing.T) {
-	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, sampleIfaceList)
-	s := NewInterfaceStore(fg, NopLogger())
-
-	if s.HasIPv6Global(context.Background(), "OpkgTun10") {
-		t.Errorf("absent: want false")
-	}
-	if got := fg.PostInterfaceCalls("OpkgTun10"); got != 0 {
-		t.Errorf("absent must not probe, got %d POST calls", got)
-	}
-}
-
 // === Invalidate / InvalidateAll (proactive refresh) ===
 
 func TestInterfaceStore_InvalidateAll_RebuildsMap(t *testing.T) {
@@ -1252,6 +1222,7 @@ func TestInterfaceStore_ListAll_DeduplicatesByKernelName_TieKeepsOne(t *testing.
 
 func TestFetchSummary_ViaPost(t *testing.T) {
 	g := NewFakeGetter()
+	g.SetJSON(ifaceListPath, `{"OpkgTun0":{"id":"OpkgTun0","type":"OpkgTun"}}`)
 	g.SetPostInterface("OpkgTun0", `{"show":{"interface":{
 		"id":"OpkgTun0","state":"up","link":"up","conf-layer":"running",
 		"summary":{"layer":{"conf":"running","link":"running","ctrl":"running"}}
@@ -1269,6 +1240,7 @@ func TestFetchSummary_ViaPost(t *testing.T) {
 
 func TestFetchSummary_FallbackTopLevelFields(t *testing.T) {
 	g := NewFakeGetter()
+	g.SetJSON(ifaceListPath, `{"OpkgTun0":{"id":"OpkgTun0","type":"OpkgTun"}}`)
 	g.SetPostInterface("OpkgTun0", `{"show":{"interface":{
 		"id":"OpkgTun0","state":"up","link":"up","conf-layer":"running"
 	}}}`)
@@ -1285,6 +1257,7 @@ func TestFetchSummary_FallbackTopLevelFields(t *testing.T) {
 
 func TestFetchSummary_NoDataMeansNilDetails(t *testing.T) {
 	g := NewFakeGetter()
+	g.SetJSON(ifaceListPath, `{"OpkgTun9":{"id":"OpkgTun9","type":"OpkgTun"}}`) // кэш знает, NDMS — нет
 	g.SetPostInterface("OpkgTun9", `{"show":{"interface":{
 		"status":[{"status":"error","code":"6553619","message":"unable to find"}]
 	}}}`)

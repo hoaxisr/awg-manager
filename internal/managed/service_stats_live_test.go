@@ -24,15 +24,19 @@ func TestGetStats_OverlaysLivePeers(t *testing.T) {
 	}
 	fg := query.NewFakeGetter()
 	const peer = `"public-key":"PK1","txbytes":5,"last-handshake":30,"online":true,"enabled":true`
-	// Кэш items (POST show interface) — старые цифры; PeerStore (GET) — живые.
-	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{"id":"Wireguard0","type":"Wireguard","state":"up","wireguard":{"peer":[{"rxbytes":10,`+peer+`}]}}}}`)
-	fg.SetJSON("/show/interface/Wireguard0", `{"id":"Wireguard0","type":"Wireguard","state":"up","wireguard":{"peer":[{"rxbytes":99,`+peer+`}]}}`)
 	// Интерфейс есть и в списке, как на роутере: без него кэш счёл бы его
 	// отсутствующим и пиров не спрашивал бы (F546).
 	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`)
 	fg.SetJSON("/show/rc/interface/Wireguard0", `{}`) // обогащение Get без rc — ошибка (F510)
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	svc := New(&fakePoster{}, nil, queries, nil, store, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	// Кэш items заполнен старыми цифрами; к моменту GetStats роутер отвечает
+	// живыми — их и должен принести PeerStore.
+	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{"id":"Wireguard0","type":"Wireguard","state":"up","wireguard":{"peer":[{"rxbytes":10,`+peer+`}]}}}}`)
+	if _, err := queries.WGServers.Get(context.Background(), "Wireguard0"); err != nil {
+		t.Fatal(err)
+	}
+	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{"id":"Wireguard0","type":"Wireguard","state":"up","wireguard":{"peer":[{"rxbytes":99,`+peer+`}]}}}}`)
 
 	stats, err := svc.GetStats(context.Background(), "Wireguard0")
 	if err != nil {

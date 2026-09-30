@@ -5,8 +5,6 @@ import (
 	"errors"
 	"testing"
 	"time"
-
-	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 )
 
 // sampleInterfaceJSON mirrors the unwrapped /show/interface/<name> response:
@@ -35,11 +33,23 @@ const sampleInterfaceJSON = `{
 	}
 }`
 
+// wgList — список интерфейсов для кэша: PeerStore читает только те, что в нём есть.
+const wgList = `{
+	"Wireguard0": {"id":"Wireguard0","type":"Wireguard"},
+	"Wireguard1": {"id":"Wireguard1","type":"Wireguard"},
+	"Wireguard2": {"id":"Wireguard2","type":"Wireguard"}
+}`
+
+func newTestPeerStore(fg *FakeGetter, ttl time.Duration) *PeerStore {
+	fg.SetJSON(ifaceListPath, wgList)
+	return NewPeerStoreWithTTL(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()), ttl)
+}
+
 func TestPeerStore_GetPeers_ParsesInterfacePeerField(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON("/show/interface/Wireguard0", sampleInterfaceJSON)
 
-	s := NewPeerStore(fg, NopLogger(), nil)
+	s := newTestPeerStore(fg, peerTTL)
 
 	peers, err := s.GetPeers(context.Background(), "Wireguard0")
 	if err != nil {
@@ -69,7 +79,7 @@ func TestPeerStore_GetPeers_NoPeerFieldIsEmpty(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON("/show/interface/Wireguard0", `{"type":"Wireguard","wireguard":{}}`)
 
-	s := NewPeerStore(fg, NopLogger(), nil)
+	s := newTestPeerStore(fg, peerTTL)
 
 	peers, err := s.GetPeers(context.Background(), "Wireguard0")
 	if err != nil {
@@ -83,11 +93,11 @@ func TestPeerStore_GetPeers_NoPeerFieldIsEmpty(t *testing.T) {
 func TestPeerStore_GetPeers_CacheHitSkipsFetch(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON("/show/interface/Wireguard0", sampleInterfaceJSON)
-	s := NewPeerStore(fg, NopLogger(), nil)
+	s := newTestPeerStore(fg, peerTTL)
 
 	_, _ = s.GetPeers(context.Background(), "Wireguard0")
 	_, _ = s.GetPeers(context.Background(), "Wireguard0")
-	if got := fg.Calls("/show/interface/Wireguard0"); got != 1 {
+	if got := fg.PostInterfaceCalls("Wireguard0"); got != 1 {
 		t.Errorf("calls: want 1 (cache hit), got %d", got)
 	}
 }
@@ -95,14 +105,14 @@ func TestPeerStore_GetPeers_CacheHitSkipsFetch(t *testing.T) {
 func TestPeerStore_GetPeers_ServesStaleOnError(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON("/show/interface/Wireguard0", sampleInterfaceJSON)
-	s := NewPeerStoreWithTTL(fg, NopLogger(), 20*time.Millisecond)
+	s := newTestPeerStore(fg, 20*time.Millisecond)
 
 	if _, err := s.GetPeers(context.Background(), "Wireguard0"); err != nil {
 		t.Fatalf("prime: %v", err)
 	}
 
 	time.Sleep(30 * time.Millisecond)
-	fg.SetError("/show/interface/Wireguard0", errors.New("ndms down"))
+	fg.SetPostInterfaceError("Wireguard0", errors.New("ndms down"))
 
 	peers, err := s.GetPeers(context.Background(), "Wireguard0")
 	if err != nil {
@@ -113,28 +123,27 @@ func TestPeerStore_GetPeers_ServesStaleOnError(t *testing.T) {
 	}
 }
 
-func TestPeerStore_GetPeers_404IsTreatedAsEmpty(t *testing.T) {
-	// NDMS responds 404 when the interface itself doesn't exist (e.g. torn
-	// down). That's "no peers", not a real error — translate to empty slice
-	// so metrics don't spam warnings.
+func TestPeerStore_GetPeers_GoneIsTreatedAsEmpty(t *testing.T) {
+	// Кэш знает Wireguard1, NDMS — уже нет (потерян ifdestroyed): конверт
+	// `unable to find` — «пиров нет», не ошибка, чтобы метрики не сыпали
+	// предупреждениями.
 	fg := newFakeGetter()
-	fg.SetError("/show/interface/Wireguard1",
-		&transport.HTTPError{Method: "GET", Path: "/show/interface/Wireguard1", Status: 404})
+	fg.SetPostInterface("Wireguard1", `{"show":{"interface":{"status":[{"status":"error","code":"6553619","message":"unable to find"}]}}}`)
 
-	s := NewPeerStore(fg, NopLogger(), nil)
+	s := newTestPeerStore(fg, peerTTL)
 
 	peers, err := s.GetPeers(context.Background(), "Wireguard1")
 	if err != nil {
-		t.Fatalf("404 must not surface as error, got %v", err)
+		t.Fatalf("unable-to-find must not surface as error, got %v", err)
 	}
 	if len(peers) != 0 {
-		t.Errorf("404 must map to empty peers, got %d", len(peers))
+		t.Errorf("unable-to-find must map to empty peers, got %d", len(peers))
 	}
 
-	// Non-404 errors still surface.
-	fg.SetError("/show/interface/Wireguard2", errors.New("ndms timeout"))
+	// Прочие ошибки — наружу.
+	fg.SetPostInterfaceError("Wireguard2", errors.New("ndms timeout"))
 	if _, err := s.GetPeers(context.Background(), "Wireguard2"); err == nil {
-		t.Error("non-404 error must surface")
+		t.Error("transport error must surface")
 	}
 }
 
@@ -142,7 +151,7 @@ func TestPeerStore_InvalidateSingleAffectsOnlyThatName(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON("/show/interface/Wireguard0", sampleInterfaceJSON)
 	fg.SetJSON("/show/interface/Wireguard1", sampleInterfaceJSON)
-	s := NewPeerStore(fg, NopLogger(), nil)
+	s := newTestPeerStore(fg, peerTTL)
 
 	_, _ = s.GetPeers(context.Background(), "Wireguard0")
 	_, _ = s.GetPeers(context.Background(), "Wireguard1")
@@ -151,10 +160,19 @@ func TestPeerStore_InvalidateSingleAffectsOnlyThatName(t *testing.T) {
 	_, _ = s.GetPeers(context.Background(), "Wireguard0")
 	_, _ = s.GetPeers(context.Background(), "Wireguard1")
 
-	if got := fg.Calls("/show/interface/Wireguard0"); got != 2 {
+	if got := fg.PostInterfaceCalls("Wireguard0"); got != 2 {
 		t.Errorf("Wireguard0: want 2, got %d", got)
 	}
-	if got := fg.Calls("/show/interface/Wireguard1"); got != 1 {
+	if got := fg.PostInterfaceCalls("Wireguard1"); got != 1 {
 		t.Errorf("Wireguard1: want 1, got %d", got)
 	}
+}
+
+func TestNewPeerStore_NilIfacesPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("nil ifaces must panic")
+		}
+	}()
+	NewPeerStore(newFakeGetter(), NopLogger(), nil)
 }

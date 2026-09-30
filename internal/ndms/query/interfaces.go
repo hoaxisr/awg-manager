@@ -33,7 +33,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -313,16 +315,12 @@ func (s *InterfaceStore) GetProxy(ctx context.Context, name string) (*ndms.Proxy
 // Uptime is consulted from the same daemon-tracked startedAt map as
 // GetDetails (cache helper, not authoritative).
 func (s *InterfaceStore) FetchSummary(ctx context.Context, name string) (*ndms.InterfaceDetails, error) {
-	if name == "" {
-		return nil, nil
-	}
-	// Интерфейса нет в NDMS — не спрашиваем: на запрос по отсутствующему
+	// Интерфейса нет в кэше — не спрашиваем: на запрос по отсутствующему
 	// имени NDMS пишет E «unable to find» в свой журнал (F546). nil — тот же
 	// ответ, что давал status-error NDMS.
-	if ok, err := s.exists(ctx, name); err != nil {
+	p, ok, err := s.Lookup(ctx, name)
+	if err != nil || !ok {
 		return nil, err
-	} else if !ok {
-		return nil, nil
 	}
 	// Batch POST вместо прямого GET /summary: NDMS обрабатывает GET с
 	// фиксированной стоимостью ~115мс независимо от размера ответа, POST
@@ -330,11 +328,10 @@ func (s *InterfaceStore) FetchSummary(ctx context.Context, name string) (*ndms.I
 	// 2026-06-10-getstate-cache-rci-post-design.md). Свежесть сохранена:
 	// это по-прежнему прямой запрос к NDMS на каждый вызов, мимо кеша
 	// снапшота.
-	raw, err := s.getter.Post(ctx, transport.ShowInterface(name, nil))
-	if err != nil {
-		return nil, err
+	inner, err := s.showOne(ctx, p)
+	if errors.Is(err, ErrGone) {
+		return nil, nil
 	}
-	inner, err := unwrapShowInterface(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -408,49 +405,6 @@ func (s *InterfaceStore) GetDetails(ctx context.Context, name string) (*ndms.Int
 	return d, nil
 }
 
-// HasIPv6Global reports whether the named interface has a global IPv6
-// address. We don't carry the IPv6 addresses array in our cached
-// Interface struct, so this still falls through to a single
-// /show/interface/<name> probe — but ONLY when the interface exists
-// in the map. Absent names short-circuit to false without HTTP, which
-// is the entire reason this function exists in the first place (no
-// 404 spam in router syslog).
-func (s *InterfaceStore) HasIPv6Global(ctx context.Context, name string) bool {
-	if err := s.ensureBootstrap(ctx); err != nil {
-		return false
-	}
-	s.mu.RLock()
-	_, ok := s.byID[name]
-	s.mu.RUnlock()
-	if !ok {
-		return false
-	}
-	raw, err := s.getter.Post(ctx, transport.ShowInterface(name, nil))
-	if err != nil {
-		return false
-	}
-	inner, err := unwrapShowInterface(raw)
-	if err != nil || len(inner) == 0 {
-		return false
-	}
-	var probe struct {
-		IPv6 struct {
-			Addresses []struct {
-				Global bool `json:"global"`
-			} `json:"addresses"`
-		} `json:"ipv6"`
-	}
-	if err := json.Unmarshal(inner, &probe); err != nil {
-		return false
-	}
-	for _, a := range probe.IPv6.Addresses {
-		if a.Global {
-			return true
-		}
-	}
-	return false
-}
-
 // ResolveSystemName returns the kernel interface name (e.g. "nwg0")
 // for an NDMS id (e.g. "Wireguard0"). Reads from the cached snapshot
 // when possible — no HTTP on the hot path after first resolution.
@@ -488,7 +442,7 @@ func (s *InterfaceStore) ResolveSystemName(ctx context.Context, ndmsName string)
 	// Интерфейса нет в кэше — резолвер не спрашиваем: на отсутствующее имя
 	// NDMS пишет E `unable to find X in "Network::Interface::Base"` в свой
 	// журнал (F546), а запомнить ответ всё равно негде (rememberSystemName).
-	if !s.mayExist(ctx, ndmsName) {
+	if _, ok, err := s.Lookup(ctx, ndmsName); err != nil || !ok {
 		return ""
 	}
 
@@ -610,7 +564,7 @@ func (s *InterfaceStore) SystemNames(ctx context.Context, ids []string) map[stri
 	for _, id := range ids {
 		if name := cached(id); name != "" {
 			out[id] = name
-		} else if s.mayExist(ctx, id) { // отсутствующее — без резолвера (F546)
+		} else if _, ok, err := s.Lookup(ctx, id); err == nil && ok { // отсутствующее — без резолвера (F546)
 			todo = append(todo, id)
 		}
 	}
@@ -636,7 +590,7 @@ func (s *InterfaceStore) SystemNames(ctx context.Context, ids []string) map[stri
 // slashes inside <X> as URL path separators, so names like
 // "WifiMaster0/WifiStation0" or "GigabitEthernet0/Vlan2" came back with
 // 'Core::Configurator: not found: "show/interface/system-name?name=..."'
-// in the router log. Same gotcha that fetchOne already solves by using
+// in the router log. Same gotcha that showOne already solves by using
 // POST — see the comment block on that function. The POST form carries
 // the name inside the JSON body where the RCI parser handles it
 // regardless of contained slashes.
@@ -1047,36 +1001,43 @@ func (s *InterfaceStore) Refresh(ctx context.Context, name string) (*ndms.Interf
 	if name == "" {
 		return nil, nil
 	}
-	if err := s.ensureBootstrap(ctx); err != nil {
-		return nil, err
-	}
+	// start — до Lookup: хук, пришедший между проверкой кэша и ответом,
+	// ответом не затирается.
 	s.mu.RLock()
-	_, known := s.byID[name]
 	start := s.seq
 	s.mu.RUnlock()
-	var iface *ndms.Interface
-	if known {
-		var err error
-		if iface, err = s.fetchOne(ctx, name); err != nil {
+	p, known, err := s.Lookup(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if !known {
+		// Весь список через applyListLocked: соседей, тронутых хуками, пока
+		// шёл запрос, он не затирает.
+		if err := s.refreshAll(ctx); err != nil {
 			return nil, err
 		}
-	} else {
-		// Из списка берём только эту запись: подмена всей карты затёрла бы
-		// то, что хуки успели применить к соседям, пока шёл запрос.
-		raw, err := s.fetchListMap(ctx)
-		if err != nil {
-			return nil, err
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		if rec, ok := s.byID[name]; ok {
+			cp := *rec
+			return &cp, nil
 		}
-		if rec, ok := raw[name]; ok {
-			iface = &rec
-		}
+		return nil, nil
+	}
+	iface, err := s.fetchOne(ctx, p)
+	if err != nil {
+		return nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.touched[name] > start {
 		// Хук по name пришёл, пока шло чтение, — он новее ответа: карту не
-		// трогаем, возвращаем прочитанное.
-		if iface == nil {
+		// трогаем. Записи в карте больше нет (ifdestroyed; ifcreated снова —
+		// в pending) — прочитанное устарело, отвечаем «нет»: снос прокси и
+		// шлюз владения OpkgTun иначе слали бы команды по снятому имени.
+		_, inMap := s.byID[name]
+		_, pending := s.pending[name]
+		if iface == nil || (!inMap && !pending) {
 			return nil, nil
 		}
 		cp := *iface
@@ -1133,24 +1094,87 @@ func (s *InterfaceStore) InvalidateAll() {
 	}
 }
 
-// mayExist — false, только если кэш уверен, что записи нет. Ошибка кэша —
-// «не знаем» (true): вызывающий спросит NDMS, как раньше. Для частых опросов:
-// запись, пропущенную кэшем, до ближайшего хука или перечитывания не видно.
-func (s *InterfaceStore) mayExist(ctx context.Context, name string) bool {
-	iface, err := s.Get(ctx, name)
-	return err != nil || iface != nil
+// Present — доказательство, что запись name была в кэше интерфейсов на момент
+// Lookup. Поле неэкспортируемое: вне пакета его не сконструировать, поэтому
+// точечное чтение по имени (showOne/showRC) без проверки кэша не собрать (F546).
+type Present struct{ name string }
+
+// Name — NDMS-имя записи.
+func (p Present) Name() string { return p.name }
+
+// ErrGone — NDMS ответил «записи нет» на точечное чтение записи, которую кэш
+// считал существующей (потерян ifdestroyed). Запись из кэша уже выселена.
+var ErrGone = errors.New("ndms: interface gone")
+
+// Lookup — есть ли запись в кэше. Ошибка bootstrap — ошибка вызывающему:
+// «не знаем» ≠ «спросим NDMS» (F546).
+func (s *InterfaceStore) Lookup(ctx context.Context, name string) (Present, bool, error) {
+	if name == "" {
+		return Present{}, false, nil
+	}
+	if err := s.ensureBootstrap(ctx); err != nil {
+		return Present{}, false, err
+	}
+	s.mu.RLock()
+	_, ok := s.byID[name]
+	s.mu.RUnlock()
+	if !ok {
+		return Present{}, false, nil
+	}
+	return Present{name: name}, true, nil
 }
 
-// exists — есть ли запись name в NDMS, без точечного запроса по отсутствующей
-// (F546): известная кэшу есть; неизвестная проверяется свежим списком
-// (Refresh), который E не пишет и находит запись, пропущенную кэшем. Для
-// путей, где решение обязано опираться на NDMS сейчас.
-func (s *InterfaceStore) exists(ctx context.Context, name string) (bool, error) {
-	if !s.mayExist(ctx, name) {
-		rec, err := s.Refresh(ctx, name)
-		return rec != nil, err
+// showOne — ЕДИНСТВЕННЫЙ POST `show interface <name>` в демоне. Конверт
+// 6553619 значит «записи нет»: кэш врал (потерян ifdestroyed) — выселяем и
+// возвращаем ErrGone, второго чтения по этому имени уже не будет.
+//
+// POST, а не GET /show/interface/<name>: NDMS считает слэши в <name>
+// разделителями пути — GigabitEthernet0/Vlan2, WifiMaster0/AccessPoint0 и
+// нумерованные порты коммутатора получали бы 404. В теле JSON имя
+// разбирается верно (internal/ndms/transport/payload.go).
+//
+// F532: на отсутствующую запись NDMS отвечает HTTP 200 с вложенным
+// `{"status":[{"status":"error","code":...}]}`, а не верхнеуровневым
+// конвертом, который ловит transport (стенд KN-1810, 5.02.A.11). «Записи нет»
+// значит только код 6553619; любой другой — сбой NDMS («не знаем»), и за
+// отсутствие его не выдаём: шлюз владения создал бы запись поверх
+// существующей, а Refresh выселил бы живую.
+//
+// Пустой ответ — (nil, nil).
+func (s *InterfaceStore) showOne(ctx context.Context, p Present) ([]byte, error) {
+	raw, err := s.getter.Post(ctx, transport.ShowInterface(p.name, nil))
+	if err != nil {
+		return nil, fmt.Errorf("show interface %s: %w", p.name, err)
 	}
-	return true, nil
+	inner, err := unwrapShowInterface(raw)
+	if err != nil {
+		return nil, fmt.Errorf("show interface %s: %w", p.name, err)
+	}
+	if st := parseNestedStatusError(inner); st != nil {
+		if st.Code == ndmsUnableToFindCode {
+			s.Forget(p.name)
+			return nil, fmt.Errorf("%s: %w", p.name, ErrGone)
+		}
+		return nil, fmt.Errorf("show interface %s: ndms status error %s: %s", p.name, st.Code, st.Message)
+	}
+	return inner, nil
+}
+
+// ShowRaw — ответ `show interface <name>` без конверта (см. showOne).
+func (s *InterfaceStore) ShowRaw(ctx context.Context, p Present) ([]byte, error) {
+	return s.showOne(ctx, p)
+}
+
+// showRC — ЕДИНСТВЕННЫЙ GET `/show/rc/interface/<name>…`. Путь идёт мимо
+// батчера (transport.bypassBatch) и на отсутствующем отвечает 404 + E.
+func (s *InterfaceStore) showRC(ctx context.Context, p Present, suffix string, dst any) error {
+	err := s.getter.Get(ctx, "/show/rc/interface/"+p.name+suffix, dst)
+	var he *transport.HTTPError
+	if errors.As(err, &he) && he.Status == http.StatusNotFound {
+		s.Forget(p.name)
+		return fmt.Errorf("%s: %w", p.name, ErrGone)
+	}
+	return err
 }
 
 // === Internal helpers ===
@@ -1178,57 +1202,28 @@ func (s *InterfaceStore) fetchListMap(ctx context.Context) (map[string]ndms.Inte
 	return out, nil
 }
 
-// fetchOne POSTs {"show":{"interface":{"name":<name>}}} and parses the
-// response. Uses POST instead of the obvious GET /show/interface/<name>
-// because NDMS treats slashes in <name> as URL path separators —
-// GigabitEthernet0/Vlan2, WifiMaster0/AccessPoint0, and every numbered
-// switch-port (GigabitEthernet0/3, …) would otherwise return 404. The
-// JSON-payload form carries the name in the request body where the RCI
-// parser handles it correctly. See internal/ndms/transport/payload.go for
-// the rationale and helpers.
-//
-// Returns (nil, nil) for an empty/absent body (NDMS-side absence — used
-// to be a 404 in the GET form; now the POST may return an empty envelope
-// for the same case). HTTPError 404 (rare race condition on POST) is
-// returned as-is.
-//
-// F532: NDMS answers this POST form with HTTP 200 even for a record that
-// doesn't exist — a nested `{"status":[{"status":"error","code":...}]}`
-// envelope, NOT the top-level `{"status":"error",...}` shape
-// transport.Client.postJSON's ExtractError checks for (stand: KN-1810,
-// 5.02.A.11). Only code 6553619 ("unable to find") means "no such
-// record" → (nil, nil). Any OTHER code inside that envelope is a real
-// NDMS-side failure ("don't know", not "doesn't exist") and must not be
-// silently treated as absence — a Phase-1 ownership gate acting on a
-// false (nil, nil) would create a record on top of one that already
-// exists, and Refresh would evict a perfectly good cache entry.
-func (s *InterfaceStore) fetchOne(ctx context.Context, name string) (*ndms.Interface, error) {
-	raw, err := s.getter.Post(ctx, transport.ShowInterface(name, nil))
-	if err != nil {
-		return nil, fmt.Errorf("fetch interface %s: %w", name, err)
+// fetchOne читает запись p через showOne и разбирает её. Записи нет (пустой
+// ответ или ErrGone — showOne уже выселил) — (nil, nil).
+func (s *InterfaceStore) fetchOne(ctx context.Context, p Present) (*ndms.Interface, error) {
+	inner, err := s.showOne(ctx, p)
+	if errors.Is(err, ErrGone) {
+		return nil, nil
 	}
-	inner, err := unwrapShowInterface(raw)
 	if err != nil {
-		return nil, fmt.Errorf("fetch interface %s: %w", name, err)
+		return nil, err
 	}
 	if len(inner) == 0 {
 		return nil, nil
 	}
-	if statusErr := parseNestedStatusError(inner); statusErr != nil {
-		if statusErr.Code == ndmsUnableToFindCode {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("fetch interface %s: ndms status error %s: %s", name, statusErr.Code, statusErr.Message)
-	}
 	var w ifaceWire
 	if err := json.Unmarshal(inner, &w); err != nil {
-		return nil, fmt.Errorf("parse interface %s: %w", name, err)
+		return nil, fmt.Errorf("parse interface %s: %w", p.name, err)
 	}
 	if w.ID == "" && w.InterfaceName == "" {
 		return nil, nil
 	}
 	if w.ID == "" {
-		w.ID = name
+		w.ID = p.name
 	}
 	iface := wireToInterface(w)
 	return &iface, nil

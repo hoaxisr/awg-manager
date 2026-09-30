@@ -456,6 +456,7 @@ func TestServersHandler_UpdateServerPeer_SignatureWithoutSecret(t *testing.T) {
 func newServerConfHarness(t *testing.T, ascJSON string, ndnsJSON ...string) *ServersHandler {
 	t.Helper()
 	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/interface/", `{"`+harnessServerID+`":{"id":"`+harnessServerID+`","type":"Wireguard"}}`) // кэш интерфейсов: rc читается только по известным (F546)
 	fg.SetJSON("/show/rc/interface/"+harnessServerID+"/wireguard/asc", ascJSON)
 	// KeenDNS по умолчанию не настроен: Endpoint собирается по WAN.
 	if len(ndnsJSON) > 0 {

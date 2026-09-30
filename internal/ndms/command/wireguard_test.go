@@ -153,6 +153,7 @@ func TestWireguardCommands_SetPeerConnect_PreservesComment(t *testing.T) {
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
 	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`) // кэш интерфейсов: rc читается только по известным (F546)
 	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"KEY="}]}}`)
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	cmds := NewWireguardCommands(poster, sc, q)
@@ -177,6 +178,7 @@ func TestWireguardCommands_SetPeerConnect_OmitsEmptyComment(t *testing.T) {
 	pub := &fakePublisher{}
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
 	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`) // кэш интерфейсов: rc читается только по известным (F546)
 	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"KEY="}]}}`)
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	cmds := NewWireguardCommands(poster, sc, q)
@@ -224,6 +226,7 @@ func TestWireguardCommands_RemovePeer_RefusalDecidedByFreshRead(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fg := query.NewFakeGetter()
+			fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`)
 			if tc.rc != "" {
 				fg.SetJSON("/show/rc/interface/Wireguard0", tc.rc)
 			} else {
@@ -244,6 +247,7 @@ func TestWireguardCommands_RemovePeer_RefusalDecidedByFreshRead(t *testing.T) {
 // NDMS создал бы пира.
 func TestWireguardCommands_KeyedEdits_PeerAbsent_NoPost(t *testing.T) {
 	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`) // кэш интерфейсов: rc читается только по известным (F546)
 	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"OTHER="}]}}`)
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	poster := &fakePoster{}

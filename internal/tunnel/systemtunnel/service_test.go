@@ -59,6 +59,7 @@ func newASCHarness(t *testing.T, name, description string, marked bool) (*Servic
 func newASCHarnessWith(t *testing.T, name, description string, marked bool, currentASC string) (*ServiceImpl, *capturingPoster) {
 	t.Helper()
 	fg := query.NewFakeGetter()
+	fg.SetJSON("/show/interface/", `{"`+name+`":{"id":"`+name+`","type":"Wireguard"}}`) // кэш интерфейсов: rc читается только по известным (F546)
 	fg.SetJSON("/show/rc/interface/"+name+"/wireguard/asc", currentASC)
 	fg.SetPostInterface(name, `{"show":{"interface":{"id":"`+name+`","interface-name":"nwg0","type":"Wireguard",`+
 		`"state":"up","description":"`+description+`","wireguard":{"public-key":"PUB=","listen-port":43328}}}}`)

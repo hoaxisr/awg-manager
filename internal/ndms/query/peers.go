@@ -2,14 +2,13 @@ package query
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/cache"
-	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 )
 
 // peerTTL is short because the MetricsPoller refreshes on its own
@@ -21,28 +20,30 @@ const peerTTL = 8 * time.Second
 // PeerStore caches the .wireguard.peer list of /show/interface/{name} —
 // the per-interface peer metrics. Per-interface key.
 type PeerStore struct {
-	getter Getter
-	log    Logger
-	// interfaces — отсечка по кэшу: пиров отсутствующего интерфейса не
-	// спрашиваем (F546). nil — без отсечки (тесты).
+	log Logger
+	// interfaces — единственный путь чтения по имени: пиров отсутствующего
+	// в кэше интерфейса не спрашиваем (F546).
 	interfaces *InterfaceStore
 
 	store *cache.KeyedStore[string, []ndms.Peer]
 }
 
-// NewPeerStore — PeerStore с отсечкой по кэшу интерфейсов ifaces (nil — без
-// отсечки).
+// NewPeerStore — PeerStore поверх кэша интерфейсов ifaces (обязателен).
 func NewPeerStore(g Getter, log Logger, ifaces *InterfaceStore) *PeerStore {
-	s := NewPeerStoreWithTTL(g, log, peerTTL)
-	s.interfaces = ifaces
-	return s
+	return NewPeerStoreWithTTL(g, log, ifaces, peerTTL)
 }
 
-func NewPeerStoreWithTTL(g Getter, log Logger, ttl time.Duration) *PeerStore {
+// NewPeerStoreWithTTL — то же с заданным TTL. g не используется: чтение идёт
+// через ifaces (единый шлюз showOne); параметр оставлен ради формы
+// конструкторов пакета.
+func NewPeerStoreWithTTL(_ Getter, log Logger, ifaces *InterfaceStore, ttl time.Duration) *PeerStore {
+	if ifaces == nil {
+		panic("query.NewPeerStore: ifaces обязателен — чтение по имени идёт только через InterfaceStore (F546)")
+	}
 	if log == nil {
 		log = NopLogger()
 	}
-	s := &PeerStore{getter: g, log: log}
+	s := &PeerStore{log: log, interfaces: ifaces}
 	s.store = cache.NewKeyedStore(ttl, log, "peers", s.fetch)
 	return s
 }
@@ -89,28 +90,30 @@ func (s *PeerStore) fetch(ctx context.Context, name string) ([]ndms.Peer, error)
 	// Интерфейса нет в кэше — ноль пиров без запроса: на show interface по
 	// отсутствующему имени NDMS пишет E «unable to find» в свой журнал, а
 	// managed-сервер с пропавшим WireguardN опрашивается постоянно (F546).
-	if s.interfaces != nil && !s.interfaces.mayExist(ctx, name) {
+	// ErrGone — то же «нет»: запись уже выселена, следующий опрос не спросит.
+	p, ok, err := s.interfaces.Lookup(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("fetch peers %s: %w", name, err)
+	}
+	if !ok {
 		return []ndms.Peer{}, nil
+	}
+	inner, err := s.interfaces.ShowRaw(ctx, p)
+	if errors.Is(err, ErrGone) {
+		return []ndms.Peer{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("fetch peers %s: %w", name, err)
 	}
 	var wrap struct {
 		Wireguard struct {
 			Peer []peerWire `json:"peer"`
 		} `json:"wireguard"`
 	}
-	path := "/show/interface/" + name
-	if err := s.getter.Get(ctx, path, &wrap); err != nil {
-		// 404 means the interface itself doesn't exist (e.g. torn down) —
-		// treat as zero peers so the poller doesn't log warnings on every
-		// tick. A live interface with no peers returns an empty
-		// .wireguard.peer instead. Only the direct-GET path form answers
-		// 404 (AWG_NDMS_BATCH=0); the batch POST used in production answers
-		// an `unable to find` envelope, which decodes to zero peers with no
-		// error — same outcome.
-		var httpErr *transport.HTTPError
-		if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
-			return []ndms.Peer{}, nil
+	if len(inner) > 0 {
+		if err := json.Unmarshal(inner, &wrap); err != nil {
+			return nil, fmt.Errorf("fetch peers %s: %w", name, err)
 		}
-		return nil, fmt.Errorf("fetch peers %s: %w", name, err)
 	}
 	wire := wrap.Wireguard.Peer
 	out := make([]ndms.Peer, 0, len(wire))

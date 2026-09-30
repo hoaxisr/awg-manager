@@ -15,6 +15,7 @@ func newPeerRouterFixture(t *testing.T) (*PeerRouter, *query.FakeGetter) {
 	t.Helper()
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/rc/ip/route", rcRoutesFixture)
+	fg.SetJSON("/show/interface/", `{"Wireguard9":{"id":"Wireguard9","type":"Wireguard"}}`) // кэш интерфейсов: rc читается только по известным (F546)
 	fg.SetJSON("/show/rc/interface/Wireguard9", `{"wireguard":{"peer":[
 		{"key":"K1=","allow-ips":[{"address":"10.9.9.2","mask":"255.255.255.255"},{"address":"192.168.77.0","mask":"255.255.255.0"}]},
 		{"key":"K2=","allow-ips":[{"address":"10.9.9.3","mask":"255.255.255.255"}]}]}}`)

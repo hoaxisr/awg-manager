@@ -124,15 +124,15 @@ func TestDispatcher_IfDestroyed_InvalidatesWGServers(t *testing.T) {
 	defer d.Stop()
 
 	_, _ = q.WGServers.List(context.Background())
-	primed := fg.Calls(peersPath)
+	primed := pointReads(fg)
 
 	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard1"})
 	waitFor(t, 200*time.Millisecond, func() bool {
 		_, _ = q.WGServers.List(context.Background())
-		return fg.Calls(peersPath) > primed
+		return pointReads(fg) > primed
 	})
 
-	if fg.Calls(peersPath) <= primed {
+	if pointReads(fg) <= primed {
 		t.Errorf("WGServer list not re-fetched after IfDestroyed")
 	}
 }
@@ -144,15 +144,15 @@ func TestDispatcher_IfCreated_InvalidatesWGServers(t *testing.T) {
 	defer d.Stop()
 
 	_, _ = q.WGServers.List(context.Background())
-	primed := fg.Calls(peersPath)
+	primed := pointReads(fg)
 
 	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard5"})
 	waitFor(t, 200*time.Millisecond, func() bool {
 		_, _ = q.WGServers.List(context.Background())
-		return fg.Calls(peersPath) > primed
+		return pointReads(fg) > primed
 	})
 
-	if fg.Calls(peersPath) <= primed {
+	if pointReads(fg) <= primed {
 		t.Errorf("WGServer list not re-fetched after IfCreated")
 	}
 }
@@ -201,10 +201,10 @@ func TestDispatcher_Stop_WithoutStart_ReturnsImmediately(t *testing.T) {
 
 // === Порядок пакета, слушатель маршрутизации, соседние кэши ===
 
-// peersPath — точечное чтение WG-интерфейса. Им же читают пиров и списки
-// серверов/системных туннелей (состав — из InterfaceStore), поэтому сброс их
-// кэша виден по этому пути, а не по полному списку.
-const peersPath = ifaceListPath + "Wireguard0"
+// pointReads — точечные чтения Wireguard0 (`show interface`). Им же читают
+// пиров и списки серверов/системных туннелей (состав — из InterfaceStore),
+// поэтому сброс их кэша виден по нему, а не по полному списку.
+func pointReads(fg *query.FakeGetter) int { return fg.PostInterfaceCalls("Wireguard0") }
 
 const samplePeers = `{"wireguard":{"peer":[{"public-key":"KEY","online":true}]}}`
 
@@ -326,7 +326,7 @@ func TestDispatcher_InvalidatesPeersOnDestroyAndLayerChange(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			q, fg := primedQueries(t)
-			fg.SetJSON(peersPath, samplePeers)
+			fg.SetPostInterface("Wireguard0", `{"show":{"interface":`+samplePeers+`}}`)
 			d := NewDispatcher(q, NopLogger())
 			drained := drainBarrier(d)
 			d.Start()
@@ -335,7 +335,7 @@ func TestDispatcher_InvalidatesPeersOnDestroyAndLayerChange(t *testing.T) {
 			if _, err := q.Peers.GetPeers(context.Background(), "Wireguard0"); err != nil {
 				t.Fatalf("prime peers: %v", err)
 			}
-			primed := fg.Calls(peersPath)
+			primed := pointReads(fg)
 
 			d.Enqueue(tc.ev)
 			waitDrain(t, drained)
@@ -352,7 +352,7 @@ func TestDispatcher_InvalidatesPeersOnDestroyAndLayerChange(t *testing.T) {
 				}
 				return
 			}
-			if after := fg.Calls(peersPath); after <= primed {
+			if after := pointReads(fg); after <= primed {
 				t.Errorf("кэш пиров не сброшен: запросов было %d, стало %d", primed, after)
 			}
 		})
@@ -400,15 +400,15 @@ func TestDispatcher_IfLayerChanged_InvalidatesSystemTunnelList(t *testing.T) {
 	defer d.Stop()
 
 	_, _ = q.WGServers.ListSystemTunnels(context.Background())
-	primed := fg.Calls(peersPath)
+	primed := pointReads(fg)
 
 	d.Enqueue(Event{Type: EventIfLayerChanged, ID: "Wireguard1", Layer: "link", Level: "running"})
 	waitFor(t, 300*time.Millisecond, func() bool {
 		_, _ = q.WGServers.ListSystemTunnels(context.Background())
-		return fg.Calls(peersPath) > primed
+		return pointReads(fg) > primed
 	})
 
-	if fg.Calls(peersPath) <= primed {
+	if pointReads(fg) <= primed {
 		t.Errorf("состав системных туннелей не перечитан после iflayerchanged")
 	}
 }
