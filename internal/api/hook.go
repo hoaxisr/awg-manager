@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"sync/atomic"
 	"time"
 
@@ -11,7 +10,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/events"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
-	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
 // HookDispatcher is the subset of events.Dispatcher that HookHandler
@@ -127,51 +125,45 @@ func (h *HookHandler) SetIPv4RunningHook(fn func(ndmsID string)) {
 	h.ipv4Running = fn
 }
 
-// HandleNDMS is the unified hook endpoint. The shared forwarder script
-// installed into /opt/etc/ndm/{iflayerchanged,ifcreated,ifdestroyed,
-// ifipchanged}.d/ POSTs here with a `type` discriminator. The handler
-// parses the form into a typed events.Event, enqueues it into the
-// Dispatcher for cache invalidation, and (for iflayerchanged only) also
-// forwards to the orchestrator for tunnel-lifecycle decisions.
+// HookSink — приёмник событий spool (events.SpoolReader) с первых секунд
+// жизни демона. Читатель обязан стартовать ДО установки хук-скриптов и до
+// первого чтения списка интерфейсов, а готовый HookHandler появляется только
+// в registerRoutes (srv.Start), заметно позже.
 //
-// POST /api/hook/ndms
-//
-//	  type=iflayerchanged|ifcreated|ifdestroyed|ifipchanged
-//	  id=<ndms-interface-id>
-//	  system_name=<kernel-name>
-//	  layer=<conf|link|ipv4|ipv6|ctrl>      (layerchanged only)
-//	  level=<running|disabled|...>          (layerchanged only)
-//	  address=<ipv4>                        (ipchanged only)
-//	  up=<0|1>
-//	  connected=<0|1>
-//
-//		@Summary		NDMS shell hook
-//		@Description	Called from router scripts (public). Form fields: type, id, system_name, layer, etc.
-//		@Tags			hook
-//		@Accept			x-www-form-urlencoded
-//		@Produce		json
-//		@Param			type	formData	string	true	"Event type (iflayerchanged, ifcreated, ...)"
-//		@Success		200	{object}	APIEnvelope
-//		@Failure		400	{object}	APIErrorEnvelope
-//		@Failure		500	{object}	APIErrorEnvelope
-//		@Router			/hook/ndms [post]
-func (h *HookHandler) HandleNDMS(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		response.BadRequest(w, "parse form: "+err.Error())
-		return
-	}
+// Поэтому «Handle — единственная точка входа» нарушено только на окне
+// старта: пока сервер не опубликовал готовый обработчик, событие идёт лишь
+// в диспетчер (тот же enqueueHook, с которого начинается Handle) — кэш его
+// получает. Реакции оркестратора, WAN-модели и UI на хуки этого окна
+// теряются — ровно как до F571 терялся отказанный HTTP POST, пока листенера
+// не было.
+type HookSink struct {
+	dispatcher HookDispatcher
+	ready      atomic.Pointer[HookHandler]
+}
 
-	event, err := events.ParseHookForm(r.PostForm)
-	if err != nil {
-		response.BadRequest(w, err.Error())
+// NewHookSink создаёт приёмник; до Publish события идут только в d.
+func NewHookSink(d HookDispatcher) *HookSink {
+	return &HookSink{dispatcher: d}
+}
+
+// Publish отдаёт приёмнику ПОЛНОСТЬЮ настроенный обработчик. Звать после
+// всех Set*: читатель spool зовёт Handle из своей горутины.
+func (s *HookSink) Publish(h *HookHandler) { s.ready.Store(h) }
+
+// Handle — sink для SpoolReader.
+func (s *HookSink) Handle(event events.Event) {
+	if h := s.ready.Load(); h != nil {
+		h.Handle(event)
 		return
 	}
-	h.Handle(event)
-	response.Success(w, map[string]interface{}{"ok": true})
+	enqueueHook(s.dispatcher, event)
+}
+
+// enqueueHook ставит событие в диспетчер (инвалидация кэшей, неблокирующе).
+func enqueueHook(d HookDispatcher, event events.Event) {
+	if d != nil {
+		d.Enqueue(event)
+	}
 }
 
 // Handle обрабатывает разобранное событие хука: диспетчер (инвалидация
@@ -180,9 +172,7 @@ func (h *HookHandler) HandleNDMS(w http.ResponseWriter, r *http.Request) {
 // перечитывает список WAN (RCI); остальное уходит в горутины.
 func (h *HookHandler) Handle(event events.Event) {
 	// 1) Enqueue into Dispatcher for cache invalidation (async, non-blocking).
-	if h.dispatcher != nil {
-		h.dispatcher.Enqueue(event)
-	}
+	enqueueHook(h.dispatcher, event)
 
 	// 1a) Смена адреса интерфейса — повод перепроверить DDNS-имена: страж
 	// пройдётся вне очереди. Вызов неблокирующий (будит чужую горутину), так
@@ -193,7 +183,7 @@ func (h *HookHandler) Handle(event events.Event) {
 
 	// 1b) On interface create/destroy, rebroadcast the tunnel list so
 	// every connected UI client drops/adds the card without a browser
-	// refresh. Runs in a goroutine so the hook POST acks immediately.
+	// refresh. Runs in a goroutine so the spool reader is not held.
 	//
 	// Exception: if awg-manager is currently creating an interface itself
 	// (EnterSelfCreate was called), the corresponding ifcreated would fire

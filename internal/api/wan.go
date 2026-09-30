@@ -20,7 +20,7 @@ type WANStatusEnvelope struct {
 }
 
 // WANHandler serves WAN status queries. WAN up/down events are handled
-// by HookHandler (/api/hook/ndms layer=ipv4).
+// by HookHandler (NDMS hook spool, iflayerchanged layer=ipv4).
 type WANHandler struct {
 	svc    TunnelService
 	appLog *logging.ScopedLogger

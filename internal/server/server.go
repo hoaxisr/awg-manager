@@ -151,6 +151,7 @@ type Server struct {
 	listenDoneOnce sync.Once
 
 	ndmsDispatcher api.HookDispatcher
+	hookSink       *api.HookSink
 	ndmsTransport  *ndmstransport.Client
 	ndmsSaveCoord  *ndmscommand.SaveCoordinator
 	metricsPoller  *ndmsmetrics.Poller
@@ -316,10 +317,16 @@ func New(cfg Config, deps Deps) *Server {
 }
 
 // SetNDMSDispatcher wires the NDMS events.Dispatcher into the hook
-// handler so POST /api/hook/ndms invalidates Store caches. Main.go
+// handler so NDMS hooks from the spool invalidate Store caches. Main.go
 // calls this after constructing the new layer.
 func (s *Server) SetNDMSDispatcher(d api.HookDispatcher) {
 	s.ndmsDispatcher = d
+}
+
+// SetHookSink — приёмник spool хуков NDMS; готовый HookHandler ему
+// публикуется в конце registerRoutes.
+func (s *Server) SetHookSink(sink *api.HookSink) {
+	s.hookSink = sink
 }
 
 // SetNDMSTransport wires the new NDMS transport for consumers that need
@@ -721,6 +728,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.registerProxyRtRoutes(mux, h)
 	s.registerMcpRoutes(mux, h)
 	s.registerStaticRoutes(mux, h)
+	// Последней строкой: к этому месту HookHandler настроен всеми Set*
+	// (SetTunnelRefresher — в wireCrossHandlers), а Handle зовётся из
+	// горутины читателя spool — наполовину настроенный он видеть не должен.
+	if s.hookSink != nil {
+		s.hookSink.Publish(h.hookHandler)
+	}
 }
 
 // spaHandler serves static files with SPA fallback to index.html.

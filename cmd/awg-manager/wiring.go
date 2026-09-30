@@ -104,6 +104,7 @@ type app struct {
 	ndmsSaveCoord       *ndmscommand.SaveCoordinator
 	ndmsCommands        *ndmscommand.Commands
 	ndmsDispatcher      *ndmsevents.Dispatcher
+	ndmsHookSink        *api.HookSink
 	ndmsMetricsPoller   *ndmsmetrics.Poller
 
 	// tunnel core

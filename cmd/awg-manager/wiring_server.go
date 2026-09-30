@@ -352,6 +352,7 @@ func (a *app) setupDeviceProxy() {
 	// trigger; the migration tax is at most one stale file fragment that
 	// gets stripped on the next Save/Enable.
 	a.srv.SetNDMSDispatcher(a.ndmsDispatcher)
+	a.srv.SetHookSink(a.ndmsHookSink)
 	a.srv.SetNDMSTransport(a.ndmsTransportClient)
 	a.srv.SetNDMSSaveCoordinator(a.ndmsSaveCoord)
 	a.srv.SetMetricsPoller(a.ndmsMetricsPoller)

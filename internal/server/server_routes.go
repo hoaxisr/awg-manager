@@ -259,8 +259,9 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// SSE event stream (protected)
 	mux.HandleFunc("/api/events", h.guarded(h.eventsHandler.Stream))
 
-	// NDM hooks (public - called from shell scripts). Also carries the
-	// former /api/wan/event traffic via iflayerchanged layer=ipv4.
+	// NDM hooks: приходят через spool (events.SpoolReader → api.HookSink),
+	// HTTP-входа нет. Also carries the former /api/wan/event traffic via
+	// iflayerchanged layer=ipv4.
 	h.hookHandler = api.NewHookHandler(s.tunnelService, s.orch, h.appLog)
 	if s.ndmsDispatcher != nil {
 		h.hookHandler.SetDispatcher(s.ndmsDispatcher)
@@ -281,9 +282,8 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.ipv4RunningHook != nil {
 		h.hookHandler.SetIPv4RunningHook(s.ipv4RunningHook)
 	}
-	mux.HandleFunc("/api/hook/ndms", h.hookHandler.HandleNDMS)
 
-	// WAN status (protected) — event ingress is now /api/hook/ndms.
+	// WAN status (protected) — event ingress is the NDMS hook spool.
 	mux.HandleFunc("/api/wan/status", h.guarded(h.wanHandler.GetStatus))
 
 }

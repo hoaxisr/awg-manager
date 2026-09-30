@@ -142,7 +142,6 @@ var noAuthRoutes = map[string]string{
 	"/api/auth/logout":                     "выход по куке, гард не нужен",
 	"/api/auth/status":                     "фронт спрашивает, включена ли авторизация, до входа",
 	"/api/health":                          "liveness для внешних проверок",
-	"/api/hook/ndms":                       "форма из shell-хуков роутера — сессии быть не может",
 	"/api/server/listen/confirm":           "одноразовый токен подтверждения смены адреса (server_listen.go)",
 	"/api/boot-status":                     "экран загрузки до входа",
 	"/api/dns-check/probe":                 "статический {ok:true} с CORS *, зовётся с origin awgm-dnscheck.test — кука не поедет",

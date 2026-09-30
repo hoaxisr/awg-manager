@@ -8,6 +8,7 @@ import (
 	"log/slog"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
+	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/connectivity"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -140,6 +141,19 @@ func (a *app) setupOrchestrator() {
 	})
 
 	a.ndmsDispatcher.Start()
+
+	// Порядок держит полноту хуков (F571): читатель spool встаёт в конец
+	// файла ДО установки скриптов и до первого чтения списка интерфейсов —
+	// всё раньше покрыто бутовым списком, всё позже прочитано. Готовый
+	// HookHandler появится только в srv.Start; до того HookSink кладёт
+	// события лишь в диспетчер (см. api.HookSink).
+	a.ndmsHookSink = api.NewHookSink(a.ndmsDispatcher)
+	spool := ndmsevents.NewSpoolReader(ndmsevents.DefaultSpoolPath, a.ndmsHookSink.Handle, eventsLogger(a.loggingService))
+	if err := spool.Start(); err != nil {
+		a.bootLog.Warn("ndms-hook-spool", "", err.Error())
+	} else {
+		a.deferOnExit(spool.Stop)
+	}
 
 	ndmsInstaller := ndmsevents.NewInstaller(eventsLogger(a.loggingService))
 	if err := ndmsInstaller.Install(); err != nil {

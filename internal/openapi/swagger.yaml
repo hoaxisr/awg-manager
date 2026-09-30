@@ -10928,36 +10928,6 @@ paths:
       summary: Health / liveness
       tags:
       - system
-  /hook/ndms:
-    post:
-      consumes:
-      - application/x-www-form-urlencoded
-      description: 'Called from router scripts (public). Form fields: type, id, system_name,
-        layer, etc.'
-      parameters:
-      - description: Event type (iflayerchanged, ifcreated, ...)
-        in: formData
-        name: type
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.APIEnvelope'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      summary: NDMS shell hook
-      tags:
-      - hook
   /hydraroute/config:
     get:
       description: Available when HydraRoute service is wired on the device.
