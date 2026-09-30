@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { SingboxStatus, HydraRouteStatus } from '$lib/types';
+	import type { OperationalState } from '$lib/types/adaptiveRouting';
 	import type { ProxySubsystem } from '$lib/api/proxyInstances';
 	import { Button, ConfirmModal, Input, Modal, StatusDot } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
@@ -44,7 +45,7 @@
 		showSingbox?: boolean;
 		showHydra?: boolean;
 		/** Susanin (Адаптивная маршрутизация) */
-		susaninStatus?: any;
+		susaninStatus?: OperationalState | null;
 		susaninStatusLoading?: boolean;
 		susaninInstalling?: boolean;
 		susaninRestarting?: boolean;

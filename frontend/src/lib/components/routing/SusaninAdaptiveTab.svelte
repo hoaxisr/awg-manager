@@ -1452,8 +1452,6 @@
 		open={showLearnedModal}
 		title="База маршрутов и радар Susanin"
 		size="wide"
-		allowMaximize={true}
-		resizable={true}
 		bodyLayout="fill"
 		onclose={() => {
 			showLearnedModal = false;
@@ -1875,8 +1873,6 @@
 		open={showEgressModal}
 		title="Выбор выхода для обхода блокировок"
 		size="wide"
-		allowMaximize={true}
-		resizable={true}
 		bodyLayout="fill"
 		onclose={() => (showEgressModal = false)}
 	>
