@@ -5,6 +5,7 @@ import type {
 	PolicyTunNATPreview,
 	RouterPolicy,
 	RouterStagingStatusResponse,
+	TelemtStatus,
 	SingboxGeositesData,
 	SingboxProxiesListResponse,
 	SingboxProxiesSelectRequest,
@@ -650,6 +651,26 @@ export class SbRouterClient extends SingboxClient {
 			method: 'POST',
 			body: JSON.stringify({ tag, force }),
 		});
+	}
+
+	async telemtStatus(): Promise<TelemtStatus> {
+		return this.request<TelemtStatus>('/telemt/status');
+	}
+
+	async telemtInstall(): Promise<TelemtStatus> {
+		return this.request<TelemtStatus>('/telemt/install', { method: 'POST' });
+	}
+
+	async telemtUpdate(): Promise<TelemtStatus> {
+		return this.request<TelemtStatus>('/telemt/update', { method: 'POST' });
+	}
+
+	async telemtRestart(): Promise<TelemtStatus> {
+		return this.request<TelemtStatus>('/telemt/restart', { method: 'POST' });
+	}
+
+	async telemtUninstall(): Promise<TelemtStatus> {
+		return this.request<TelemtStatus>('/telemt/uninstall', { method: 'POST' });
 	}
 
 	// #endregion

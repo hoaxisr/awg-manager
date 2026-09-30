@@ -1349,6 +1349,10 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 
 // registerStaticRoutes — preset catalog and the SPA static handler (must stay last).
 func (s *Server) registerStaticRoutes(mux *http.ServeMux, h *routeHandlers) {
+	if s.telemtHandler != nil {
+		s.telemtHandler.RegisterRoutes(mux, h.guarded)
+	}
+
 	// Unified preset catalog (protected, read-only in U0)
 	if s.presetCatalog != nil {
 		presetsHandler := api.NewPresetsHandler(s.presetCatalog)

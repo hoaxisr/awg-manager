@@ -1,0 +1,182 @@
+#!/bin/sh
+# MANAGED_BY=awg-manager
+ENABLED=yes
+DESC="Telemt MTProxy Raw"
+if [ -x "/opt/etc/awg-manager/telemt/telemt" ]; then
+    BIN="/opt/etc/awg-manager/telemt/telemt"
+elif [ -x "/opt/bin/telemt" ]; then
+    BIN="/opt/bin/telemt"
+elif [ -x "/opt/usr/bin/telemt" ]; then
+    BIN="/opt/usr/bin/telemt"
+else
+    BIN=$(command -v telemt 2>/dev/null || echo "/opt/etc/awg-manager/telemt/telemt")
+fi
+if [ -f "/opt/etc/awg-manager/telemt/raw.toml" ]; then
+    CONFIG="/opt/etc/awg-manager/telemt/raw.toml"
+else
+    CONFIG="/opt/etc/telemt/raw.toml"
+fi
+PID_FILE="/opt/var/run/telemt-raw.pid"
+START_FILE="/opt/var/run/telemt-raw.pid.start"
+LOG_FILE="/opt/var/log/telemt-raw.log"
+EXPECTED_EXE="telemt"
+EXPECTED_CMDLINE="raw.toml"
+
+get_starttime() {
+    _pid="$1"
+    if [ -f "/proc/$_pid/stat" ]; then
+        sed -e 's/.*) //' "/proc/$_pid/stat" 2>/dev/null | awk '{print $20}'
+    fi
+}
+
+match_proc() {
+    _pid="$1"
+    [ -n "$_pid" ] || return 1
+    [ -d "/proc/$_pid" ] || return 1
+
+    _exe=$(readlink "/proc/$_pid/exe" 2>/dev/null)
+    case "$_exe" in
+        *"$EXPECTED_EXE"*) ;;
+        *) return 1 ;;
+    esac
+
+    if [ -f "/proc/$_pid/cmdline" ]; then
+        if tr '\0' '\n' < "/proc/$_pid/cmdline" 2>/dev/null | grep -F -x -q "$CONFIG"; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+verify_proc() {
+    _pid="$1"
+    match_proc "$_pid" || return 1
+
+    if [ -f "$START_FILE" ]; then
+        _saved_st=$(cat "$START_FILE" 2>/dev/null | tr -d ' \t\n\r')
+        if [ -n "$_saved_st" ]; then
+            _curr_st=$(get_starttime "$_pid")
+            if [ -n "$_curr_st" ] && [ "$_curr_st" != "$_saved_st" ]; then
+                if [ "$_saved_st" -ge 1000000000 ] 2>/dev/null; then
+                    echo "$_curr_st" > "$START_FILE"
+                else
+                    return 1
+                fi
+            fi
+        fi
+    fi
+
+    return 0
+}
+
+start() {
+    [ "$ENABLED" = "yes" ] || { echo "$DESC is disabled in init script"; exit 0; }
+    [ -f "$CONFIG" ] || { echo "Config $CONFIG missing"; exit 1; }
+    [ -x "$BIN" ] || { echo "Binary $BIN missing or not executable"; exit 1; }
+
+    if [ -f "$PID_FILE" ]; then
+        pid=$(cat "$PID_FILE" 2>/dev/null)
+        if verify_proc "$pid"; then
+            echo "$DESC is already running (PID $pid)"
+            return 0
+        fi
+        rm -f "$PID_FILE" "$START_FILE"
+    fi
+
+    for p in $(pidof "$EXPECTED_EXE" 2>/dev/null); do
+        if match_proc "$p"; then
+            echo "$p" > "$PID_FILE"
+            st=$(get_starttime "$p")
+            [ -n "$st" ] && echo "$st" > "$START_FILE"
+            echo "$DESC is already running (PID $p, adopted)"
+            return 0
+        fi
+    done
+
+    mkdir -p "/opt/var/run" "/opt/var/log"
+    chown root:root "/opt/var" "/opt/var/run" 2>/dev/null
+    chmod 755 "/opt/var" "/opt/var/run" 2>/dev/null
+
+    echo "Starting $DESC..."
+    "$BIN" start --pid-file "$PID_FILE" --log-file "$LOG_FILE" "$CONFIG"
+
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        if [ -f "$PID_FILE" ]; then
+            pid=$(cat "$PID_FILE" 2>/dev/null)
+            if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+                st=$(get_starttime "$pid")
+                if [ -n "$st" ]; then
+                    echo "$st" > "$START_FILE"
+                    break
+                fi
+            fi
+        fi
+        sleep 0.2 2>/dev/null || usleep 200000 2>/dev/null || sleep 1
+    done
+}
+
+stop() {
+    echo "Stopping $DESC..."
+    if [ -f "$PID_FILE" ]; then
+        pid=$(cat "$PID_FILE" 2>/dev/null)
+        if verify_proc "$pid"; then
+            "$BIN" stop --pid-file "$PID_FILE" 2>/dev/null
+            for i in 1 2 3 4 5; do
+                if [ ! -d "/proc/$pid" ]; then break; fi
+                sleep 1
+            done
+            if [ -d "/proc/$pid" ]; then
+                if verify_proc "$pid"; then
+                    kill -9 "$pid" 2>/dev/null
+                fi
+            fi
+        else
+            echo "Warning: PID in $PID_FILE is invalid or identity mismatch, skipping kill"
+        fi
+        rm -f "$PID_FILE" "$START_FILE"
+    fi
+
+    for p in $(pidof "$EXPECTED_EXE" 2>/dev/null); do
+        if match_proc "$p"; then
+            kill "$p" 2>/dev/null
+            for i in 1 2 3; do
+                [ ! -d "/proc/$p" ] && break
+                sleep 1
+            done
+            if [ -d "/proc/$p" ] && match_proc "$p"; then
+                kill -9 "$p" 2>/dev/null
+            fi
+        fi
+    done
+    rm -f "$PID_FILE" "$START_FILE"
+}
+
+status() {
+    if [ -f "$PID_FILE" ]; then
+        pid=$(cat "$PID_FILE" 2>/dev/null)
+        if verify_proc "$pid"; then
+            echo "$DESC is running (PID $pid)"
+            return 0
+        fi
+    fi
+    for p in $(pidof "$EXPECTED_EXE" 2>/dev/null); do
+        if match_proc "$p"; then
+            echo "$p" > "$PID_FILE"
+            st=$(get_starttime "$p")
+            [ -n "$st" ] && echo "$st" > "$START_FILE"
+            echo "$DESC is running (PID $p, adopted)"
+            return 0
+        fi
+    done
+    echo "$DESC is not running"
+    return 1
+}
+
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop; sleep 1; start ;;
+    status) status ;;
+    *) echo "Usage: $0 {start|stop|restart|status}" ;;
+esac

@@ -55,6 +55,15 @@
 		clashPortError?: string | null;
 		/** Подсистемы прокси (WDTT, FreeTurn); пусто — блок не рисуется. */
 		proxyBinaries?: ProxyBinaryRow[];
+		showTelemt?: boolean;
+		telemtStatus?: import('$lib/types').TelemtStatus | null;
+		telemtStatusLoading?: boolean;
+		telemtInstalling?: boolean;
+		telemtUpdating?: boolean;
+		telemtUninstalling?: boolean;
+		oninstallTelemt?: () => void;
+		onupdateTelemt?: () => void;
+		onuninstallTelemt?: () => void;
 	}
 
 	let {
@@ -81,7 +90,21 @@
 		clashPortSaving = false,
 		clashPortError = null,
 		proxyBinaries = [],
+		showTelemt = false,
+		telemtStatus = null,
+		telemtStatusLoading = false,
+		telemtInstalling = false,
+		telemtUpdating = false,
+		telemtUninstalling = false,
+		oninstallTelemt,
+		onupdateTelemt,
+		onuninstallTelemt,
 	}: Props = $props();
+
+	const telemtInstalled = $derived(telemtStatus?.installed ?? false);
+	const telemtRunning = $derived(telemtStatus?.running ?? false);
+	const telemtNeedsUpdate = $derived(telemtStatus?.needs_update ?? false);
+	let confirmUninstallTelemt = $state(false);
 
 	// Подсистема, ожидающая подтверждения удаления.
 	let confirmProxy = $state<ProxyBinaryRow | null>(null);
@@ -360,6 +383,76 @@
 			{/if}
 		{/if}
 
+		{#if showTelemt}
+			<div class="setting-row">
+				<div class="integration-item">
+					<StatusDot
+						variant={telemtStatusLoading ? 'muted' : (telemtInstalled && telemtRunning ? 'success' : 'muted')}
+						size="md"
+						ariaLabel={
+							telemtStatusLoading
+								? 'Telemt: получение данных'
+								: telemtInstalled && telemtRunning
+									? 'Telemt работает'
+									: 'Telemt остановлен'
+						}
+					/>
+					<div class="integration-meta">
+						<div class="integration-title-wrap">
+							<span class="font-medium">Telemt (Telegram MTProxy)</span>
+							{#if telemtStatus?.source === 'managed'}
+								<span class="integration-badge">управляется awg-manager</span>
+							{:else if telemtStatus?.source === 'opkg'}
+								<span class="integration-badge">пакет opkg</span>
+							{:else if telemtStatus?.source === 'external'}
+								<span class="integration-badge">внешний бинарник</span>
+							{/if}
+						</div>
+						{#if telemtStatusLoading}
+							<span class="integration-sub">получаю данные…</span>
+						{:else if telemtInstalled && telemtStatus}
+							<span class="integration-sub">
+								v{telemtStatus.version || 'Версия не определена'}
+								{#if telemtRunning}· запущен{:else}· остановлен{/if}
+							</span>
+							<span class="setting-description">
+								Высокопроизводительный MTProxy для Telegram с поддержкой Fake-TLS и raw-проксирования.
+							</span>
+						{:else}
+							<span class="setting-description">
+								Высокопроизводительный MTProxy для Telegram с поддержкой Fake-TLS и raw-проксирования.
+							</span>
+						{/if}
+					</div>
+				</div>
+				{#if telemtInstalled}
+					<div class="integration-actions">
+						{#if telemtNeedsUpdate && onupdateTelemt}
+							<Button variant="primary" size="sm" onclick={onupdateTelemt} loading={telemtUpdating}>
+								{telemtUpdating ? 'Обновление...' : 'Обновить'}
+							</Button>
+						{/if}
+						{#if onuninstallTelemt}
+							<Button
+								variant="outline-danger"
+								size="sm"
+								loading={telemtUninstalling}
+								onclick={() => (confirmUninstallTelemt = true)}
+							>
+								{telemtUninstalling ? 'Удаление...' : 'Удалить'}
+							</Button>
+						{/if}
+					</div>
+				{:else if telemtStatusLoading}
+					<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
+				{:else if oninstallTelemt}
+					<Button variant="primary" size="sm" onclick={oninstallTelemt} loading={telemtInstalling}>
+						{telemtInstalling ? 'Установка...' : 'Установить'}
+					</Button>
+				{/if}
+			</div>
+		{/if}
+
 		{#each proxyBinaries as p (p.key)}
 			<div class="setting-row">
 				<div class="integration-item">
@@ -529,7 +622,40 @@
 	/>
 {/if}
 
+{#if confirmUninstallTelemt}
+	<ConfirmModal
+		open={confirmUninstallTelemt}
+		title="Удалить Telemt?"
+		message="Служба Telemt будет остановлена, а исполняемый файл удален с роутера."
+		secondary="Конфигурационные файлы config.toml и raw.toml сохранятся."
+		confirmLabel="Удалить"
+		variant="danger"
+		busy={telemtUninstalling}
+		onConfirm={() => {
+			confirmUninstallTelemt = false;
+			onuninstallTelemt?.();
+		}}
+		onClose={() => (confirmUninstallTelemt = false)}
+	/>
+{/if}
+
 <style>
+	.integration-title-wrap {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+	.integration-badge {
+		font-size: 0.6875rem;
+		font-weight: 500;
+		padding: 0.1rem 0.4rem;
+		background: rgba(59, 130, 246, 0.12);
+		color: #3b82f6;
+		border-radius: 4px;
+		border: 1px solid rgba(59, 130, 246, 0.25);
+	}
+
 	/* Своя раскладка вместо сетки .setting-row (1fr auto): там колонка с
 	   описанием схлопывалась под ширину поля и текст ломался по слову. */
 	.setting-row.bootstrap-row {
