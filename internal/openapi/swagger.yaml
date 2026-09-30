@@ -5814,6 +5814,15 @@ definitions:
       policyName:
         example: awgm-router
         type: string
+      policyTunDescription:
+        description: |-
+          PolicyTunDescription — имя интерфейса policy-tun в веб-интерфейсе роутера
+          и в политиках доступа (NDMS-описание OpkgTun). Пусто — "awgm policy-tun".
+          До 32 символов; префикс "awgm " зарезервирован. Живой интерфейс
+          переименовывается на ближайшем reconcile, без пересоздания.
+        example: AWGManager
+        maxLength: 32
+        type: string
       policyTunNatSegments:
         description: |-
           PolicyTunNATSegments — выбранные пользователем сегменты для

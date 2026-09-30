@@ -1975,6 +1975,7 @@ const api_SingboxRouterSettingsData: v.GenericSchema = v.looseObject({
 	fakeipStack: v.optional(v.nullable(v.string())),
 	ingressInterfaces: v.optional(v.nullable(v.array(v.string()))),
 	policyName: v.optional(v.nullable(v.string())),
+	policyTunDescription: v.optional(v.nullable(v.string())),
 	policyTunNatSegments: v.optional(v.nullable(v.array(v.string()))),
 	policyTunSourcePreserve: v.optional(v.nullable(v.boolean())),
 	qosClasses: v.optional(v.nullable(v.array(v.lazy(() => api_SingboxRouterQoSClassDTO)))),
