@@ -96,6 +96,33 @@ func TestCreateOpkgTun_AbsentAfterCreate_Error(t *testing.T) {
 	}
 }
 
+// Список не прочитался после создания — ошибка с именем (одним), не Confirmed.
+func TestCreateOpkgTun_ConfirmListError(t *testing.T) {
+	cmds, f, _, _, _ := newOracleInterfaceCommands(t)
+	f.ExpectCreate("OpkgTun3")
+	f.FailList(errors.New("rci down"))
+	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun3", "t")
+	if err == nil || !strings.Contains(err.Error(), "rci down") || strings.Count(err.Error(), "OpkgTun3") != 1 || c != (query.Confirmed{}) {
+		t.Fatalf("c=%v err=%v", c, err)
+	}
+}
+
+// Настоящий отказ сноса (не «интерфейса нет») — ошибка наружу, запись в кэше остаётся.
+func TestDeleteOpkgTun_RealError_KeepsRecord(t *testing.T) {
+	cmds, poster, _, q, _ := newTestInterfaceCommands(t)
+	c, _, _, err := q.Interfaces.Confirm(context.Background(), "OpkgTun0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	poster.SetError(errors.New("interface is busy"))
+	if err := cmds.DeleteOpkgTun(context.Background(), c); err == nil {
+		t.Fatal("ожидалась ошибка сноса")
+	}
+	if _, ok, _ := q.Interfaces.Lookup(context.Background(), "OpkgTun0"); !ok {
+		t.Fatal("отказ сноса не должен забывать запись")
+	}
+}
+
 func TestDeleteOpkgTun_ForgetsOnSuccess(t *testing.T) {
 	cmds, f, _, q, _ := newOracleInterfaceCommands(t, ndms.Interface{ID: "OpkgTun3", Type: "OpkgTun"})
 	c, _, _, _ := q.Interfaces.Confirm(context.Background(), "OpkgTun3")

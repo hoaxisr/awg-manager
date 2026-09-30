@@ -50,7 +50,7 @@ func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, 
 	}
 	conf, _, ok, err := c.queries.Interfaces.Confirm(ctx, name)
 	if err != nil {
-		return query.Confirmed{}, fmt.Errorf("create opkgtun %s: подтверждение: %w", name, err)
+		return query.Confirmed{}, fmt.Errorf("create opkgtun: %w", err) // имя уже в ошибке Confirm
 	}
 	if !ok {
 		return query.Confirmed{}, fmt.Errorf("create opkgtun %s: NDMS принял команду, но записи в списке нет", name)
