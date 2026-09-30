@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
@@ -107,9 +108,10 @@ func TestEnsurePolicyInterfaces_OrderIsZeroBased(t *testing.T) {
 	// Regression: Keenetic rejects 'ip policy permit order N' when N is
 	// out of range. The first permit on a fresh policy MUST be order=0;
 	// previously we sent order=1 and got "invalid order: 1".
-	q, _ := newTestQueries()
+	q, g := newTestQueries()
+	g.SetJSON("/show/interface/", `{"PPPoE0":{"id":"PPPoE0"},"Wireguard0":{"id":"Wireguard0"},"Wireguard1":{"id":"Wireguard1"}}`)
 	cmds, poster := newTestPolicyCommands(q)
-	svc := &Service{policies: cmds}
+	svc := &Service{policies: cmds, queries: q}
 
 	err := svc.EnsurePolicyInterfaces(
 		context.Background(),
@@ -157,4 +159,48 @@ func digPermit(t *testing.T, payload any, policyName string) map[string]any {
 		t.Fatalf("permit object missing from payload: %+v", root)
 	}
 	return permit
+}
+
+// Отсутствующий в NDMS интерфейс пропускается без команды (ссылка на него из
+// ip policy — E), остальные ставятся подряд с order 0,1 — без дыры; все
+// подтверждаются ОДНИМ списком (F546).
+func TestEnsurePolicyInterfaces_SkipsAbsent_OneList(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "PPPoE0"}, ndms.Interface{ID: "Wireguard1"})
+	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	cmds := command.NewPolicyCommands(f, command.NewSaveCoordinator(f, nil, time.Hour, time.Hour, 0, nil), q, nil)
+	svc := &Service{policies: cmds, queries: q}
+
+	if err := svc.EnsurePolicyInterfaces(context.Background(), "HydraRoute", []string{"Wireguard0", "PPPoE0", "Wireguard1"}); err != nil {
+		t.Fatalf("EnsurePolicyInterfaces: %v", err)
+	}
+	want := []string{
+		`{"ip":{"policy":{"HydraRoute":{"permit":{"global":true,"interface":"PPPoE0","order":0}}}}}`,
+		`{"ip":{"policy":{"HydraRoute":{"permit":{"global":true,"interface":"Wireguard1","order":1}}}}}`,
+	}
+	if !reflect.DeepEqual(f.Posts, want) {
+		t.Fatalf("posts:\n got %v\nwant %v", f.Posts, want)
+	}
+	if n := f.ListCalls(); n != 1 {
+		t.Fatalf("чтений списка = %d, want 1", n)
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d фантомов=%d", f.E, f.Phantoms)
+	}
+}
+
+// Список не прочитан (решение 4) — ошибка, ни одной команды.
+func TestEnsurePolicyInterfaces_ListError_NoCommand(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "PPPoE0"})
+	boom := errors.New("rci down")
+	f.FailList(boom)
+	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	cmds := command.NewPolicyCommands(f, command.NewSaveCoordinator(f, nil, time.Hour, time.Hour, 0, nil), q, nil)
+	svc := &Service{policies: cmds, queries: q}
+
+	if err := svc.EnsurePolicyInterfaces(context.Background(), "HydraRoute", []string{"PPPoE0"}); !errors.Is(err, boom) {
+		t.Fatalf("err=%v, want %v", err, boom)
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("команды при ошибке списка: %v", f.Posts)
+	}
 }

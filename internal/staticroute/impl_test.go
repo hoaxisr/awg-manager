@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/routing"
@@ -163,6 +164,15 @@ func newTestRouteCommands() (*command.RouteCommands, *fakePoster) {
 	return command.NewRouteCommands(poster, sc, q), poster
 }
 
+// testIfaces — подтверждение по списку, где есть ровно names (F546).
+func testIfaces(names ...string) *query.InterfaceStore {
+	var list []ndms.Interface
+	for _, n := range names {
+		list = append(list, ndms.Interface{ID: n, Type: "OpkgTun"})
+	}
+	return query.NewQueries(query.Deps{Getter: query.NewFakeNDMS(list...), Logger: query.NopLogger()}).Interfaces
+}
+
 // newTestStore creates a StaticRouteStore backed by a temp file with given lists.
 func newTestStore(t *testing.T, lists []storage.StaticRouteList) *storage.StaticRouteStore {
 	t.Helper()
@@ -198,6 +208,7 @@ func TestUpdate_PartialPayloadPreservesFields(t *testing.T) {
 	svc := &ServiceImpl{
 		store:       store,
 		routes:      routes,
+		ifaces:      testIfaces("OpkgTun10", "OpkgTun11"),
 		catalog:     &mockCatalog{ifaces: map[string]string{"awg10": "OpkgTun10", "awg11": "OpkgTun11"}},
 		ifaceExists: func(string) bool { return false },
 	}
@@ -240,6 +251,7 @@ func TestOnTunnelDelete_NDMS_UninstallsRoutesAndOrphansLists(t *testing.T) {
 	svc := &ServiceImpl{
 		store:       store,
 		routes:      routes,
+		ifaces:      testIfaces("OpkgTun10"),
 		catalog:     &mockCatalog{ifaces: map[string]string{"awg10": "OpkgTun10"}},
 		ifaceExists: defaultIfaceExists,
 	}
@@ -339,6 +351,7 @@ func TestReconcile_SkipsOrphanLists(t *testing.T) {
 	svc := &ServiceImpl{
 		store:       store,
 		routes:      routes,
+		ifaces:      testIfaces("OpkgTun10"),
 		catalog:     &mockCatalog{ifaces: map[string]string{"awg10": "OpkgTun10"}},
 		ifaceExists: defaultIfaceExists,
 	}
@@ -391,6 +404,7 @@ func TestDelete_EnabledListRemovesRoutesViaNDMS(t *testing.T) {
 	svc := &ServiceImpl{
 		store:   store,
 		routes:  routes,
+		ifaces:  testIfaces("OpkgTun10"),
 		catalog: &mockCatalog{ifaces: map[string]string{"awg10": "OpkgTun10"}},
 	}
 
@@ -415,6 +429,7 @@ func TestDelete_DisabledListTouchesNoRoutes(t *testing.T) {
 	svc := &ServiceImpl{
 		store:   store,
 		routes:  routes,
+		ifaces:  testIfaces("OpkgTun10"),
 		catalog: &mockCatalog{ifaces: map[string]string{"awg10": "OpkgTun10"}},
 	}
 	if err := svc.Delete(context.Background(), "srl8"); err != nil {

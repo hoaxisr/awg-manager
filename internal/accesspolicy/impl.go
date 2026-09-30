@@ -321,7 +321,16 @@ func (s *ServiceImpl) PermitInterface(ctx context.Context, name, iface string, o
 		return fmt.Errorf("invalid policy name: %s", name)
 	}
 
-	if err := s.policies.PermitInterfaceLegacy(ctx, name, iface, order); err != nil {
+	// Ссылка на отсутствующий интерфейс пишет E в журнал ndm — подтверждаем
+	// свежим списком (F546); нет — отказ.
+	c, _, ok, err := s.queries.Interfaces.Confirm(ctx, iface)
+	if err == nil && !ok {
+		err = fmt.Errorf("интерфейса %s нет в NDMS", iface)
+	}
+	if err == nil {
+		err = s.policies.PermitInterface(ctx, name, c, order)
+	}
+	if err != nil {
 		s.appLog.Warn("permit", name, fmt.Sprintf("Failed to permit %s: %v", iface, err))
 		return err
 	}
@@ -336,7 +345,16 @@ func (s *ServiceImpl) DenyInterface(ctx context.Context, name, iface string) err
 		return fmt.Errorf("invalid policy name: %s", name)
 	}
 
-	if err := s.policies.DenyInterfaceLegacy(ctx, name, iface); err != nil {
+	// Интерфейса нет в NDMS — permit ушёл вместе с ним, снимать нечего (F546).
+	c, _, ok, err := s.queries.Interfaces.Confirm(ctx, iface)
+	if err == nil && !ok {
+		s.appLog.Info("deny", name, fmt.Sprintf("Policy %s: interface %s нет в NDMS — снимать нечего", name, iface))
+		return nil
+	}
+	if err == nil {
+		err = s.policies.DenyInterface(ctx, name, c)
+	}
+	if err != nil {
 		s.appLog.Warn("deny", name, fmt.Sprintf("Failed to deny %s: %v", iface, err))
 		return err
 	}
@@ -496,11 +514,20 @@ func (s *ServiceImpl) SetInterfaceUp(ctx context.Context, ndmsName string, up bo
 		}
 	}
 
-	var err error
-	if up {
-		err = s.interfaces.InterfaceUpLegacy(ctx, ndmsName)
-	} else {
-		err = s.interfaces.InterfaceDownLegacy(ctx, ndmsName)
+	// `interface X up/down` по отсутствующему X создаёт X (F546): подтверждаем
+	// свежим списком. Нет — поднимать нечего (отказ), опускать нечего (nil).
+	c, _, ok, err := s.queries.Interfaces.Confirm(ctx, ndmsName)
+	switch {
+	case err != nil:
+	case !ok && up:
+		err = fmt.Errorf("интерфейса %s нет в NDMS", ndmsName)
+	case !ok:
+		s.appLog.Info("set-interface", ndmsName, "интерфейса нет в NDMS — опускать нечего")
+		return nil
+	case up:
+		err = s.interfaces.InterfaceUp(ctx, c)
+	default:
+		err = s.interfaces.InterfaceDown(ctx, c)
 	}
 	if err != nil {
 		s.appLog.Warn("set-interface", ndmsName, fmt.Sprintf("Failed to set %s: %v", action, err))

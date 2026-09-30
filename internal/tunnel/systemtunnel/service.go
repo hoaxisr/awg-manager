@@ -5,6 +5,7 @@ package systemtunnel
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndms "github.com/hoaxisr/awg-manager/internal/ndms"
@@ -75,6 +76,15 @@ func (s *ServiceImpl) GetASCParams(ctx context.Context, name string) (json.RawMe
 }
 
 func (s *ServiceImpl) SetASCParams(ctx context.Context, name string, params json.RawMessage) error {
+	// `interface X wireguard asc …` по отсутствующему X создаёт X (F546):
+	// подтверждаем свежим списком до любых чтений по имени.
+	iface, _, ok, err := s.queries.Interfaces.Confirm(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("интерфейса %s нет в NDMS", name)
+	}
 	// У интерфейса-сервера сигнатура — свойство каждого его пира, а не
 	// интерфейса: форма ASC её не задаёт, и до NDMS ключи не доходят.
 	if s.isServerInterface(ctx, name) {
@@ -92,5 +102,5 @@ func (s *ServiceImpl) SetASCParams(ctx context.Context, name string, params json
 	if params, err = ndms.KeepASC3(params, current); err != nil {
 		return err
 	}
-	return s.commands.Wireguard.SetASCParamsLegacy(ctx, name, params)
+	return s.commands.Wireguard.SetASCParams(ctx, iface, params)
 }

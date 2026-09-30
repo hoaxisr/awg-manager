@@ -234,11 +234,7 @@ func (c *WireguardCommands) AddPeerLegacy(ctx context.Context, ifaceName, pubKey
 // цель достигнута (пир удалён в веб-морде); есть — исходный отказ; чтение
 // упало — отказ с ErrPeerPresenceUnknown. Один на оба пути (системный и managed).
 func (c *WireguardCommands) RemovePeer(ctx context.Context, iface query.Confirmed, pubKey string) error {
-	return c.RemovePeerLegacy(ctx, iface.Name(), pubKey)
-}
-
-// RemovePeerLegacy — временно, до Task 19 (F546).
-func (c *WireguardCommands) RemovePeerLegacy(ctx context.Context, ifaceName, pubKey string) error {
+	ifaceName := iface.Name()
 	payload := map[string]any{
 		"interface": map[string]any{
 			ifaceName: map[string]any{
@@ -255,7 +251,7 @@ func (c *WireguardCommands) RemovePeerLegacy(ctx context.Context, ifaceName, pub
 	if err == nil {
 		return nil
 	}
-	present, rerr := c.PeerPresentLegacy(ctx, ifaceName, pubKey)
+	present, rerr := c.PeerPresent(ctx, iface, pubKey)
 	if rerr != nil {
 		return fmt.Errorf("%w; %w: %v", err, ErrPeerPresenceUnknown, rerr)
 	}
@@ -269,21 +265,9 @@ func (c *WireguardCommands) RemovePeerLegacy(ctx context.Context, ifaceName, pub
 // удалось: остался ли пир, неизвестно.
 var ErrPeerPresenceUnknown = errors.New("peer presence unknown")
 
-// freshPeer — пир с ключом на интерфейсе по свежему rc, мимо кэша; нет —
-// peersubnet.ErrPeerNotFound.
-func (c *WireguardCommands) freshPeer(ctx context.Context, ifaceName, pubKey string) (*ndms.WireguardServerPeerConfig, error) {
-	if c.queries == nil || c.queries.WGServers == nil {
-		return nil, fmt.Errorf("wireguard server store not wired")
-	}
-	peers, err := c.queries.WGServers.PeersRCFresh(ctx, ifaceName)
-	if err != nil {
-		return nil, err
-	}
-	return findPeer(peers, ifaceName, pubKey)
-}
-
-// freshPeerIn — freshPeer по подтверждённому интерфейсу: список интерфейсов
-// не перечитывается.
+// freshPeerIn — пир с ключом на подтверждённом интерфейсе по свежему rc, мимо
+// кэша; нет — peersubnet.ErrPeerNotFound. Список интерфейсов не перечитывается:
+// подтверждение у вызывающего одно на весь поток (F546).
 func (c *WireguardCommands) freshPeerIn(ctx context.Context, iface query.Confirmed, pubKey string) (*ndms.WireguardServerPeerConfig, error) {
 	if c.queries == nil || c.queries.WGServers == nil {
 		return nil, fmt.Errorf("wireguard server store not wired")
@@ -306,12 +290,7 @@ func findPeer(peers []ndms.WireguardServerPeerConfig, ifaceName, pubKey string) 
 
 // PeerPresent — есть ли пир с ключом на интерфейсе по свежему rc.
 func (c *WireguardCommands) PeerPresent(ctx context.Context, iface query.Confirmed, pubKey string) (bool, error) {
-	return c.PeerPresentLegacy(ctx, iface.Name(), pubKey)
-}
-
-// PeerPresentLegacy — временно, до Task 19 (F546).
-func (c *WireguardCommands) PeerPresentLegacy(ctx context.Context, ifaceName, pubKey string) (bool, error) {
-	if _, err := c.freshPeer(ctx, ifaceName, pubKey); err != nil {
+	if _, err := c.freshPeerIn(ctx, iface, pubKey); err != nil {
 		if errors.Is(err, peersubnet.ErrPeerNotFound) {
 			return false, nil
 		}
@@ -324,8 +303,8 @@ func (c *WireguardCommands) PeerPresentLegacy(ctx context.Context, ifaceName, pu
 // такую операцию (allow-ips, comment, connect, preshared-key) на ключе,
 // которого на интерфейсе нет, NDMS принимает, СОЗДАВАЯ пира (стенд 5.02.A.11,
 // 28.09). Пира нет — peersubnet.ErrPeerNotFound, ни одного поста.
-func (c *WireguardCommands) requirePeer(ctx context.Context, ifaceName, pubKey string) error {
-	_, err := c.freshPeer(ctx, ifaceName, pubKey)
+func (c *WireguardCommands) requirePeer(ctx context.Context, iface query.Confirmed, pubKey string) error {
+	_, err := c.freshPeerIn(ctx, iface, pubKey)
 	if err != nil && !errors.Is(err, peersubnet.ErrPeerNotFound) {
 		return fmt.Errorf("check peer on router: %w", err)
 	}
@@ -336,12 +315,8 @@ func (c *WireguardCommands) requirePeer(ctx context.Context, ifaceName, pubKey s
 // current name: a partial peer update without it makes NDMS wipe the stored
 // comment (psk/allow-ips survive, comment does not).
 func (c *WireguardCommands) SetPeerConnect(ctx context.Context, iface query.Confirmed, pubKey string, connect bool, comment string) error {
-	return c.SetPeerConnectLegacy(ctx, iface.Name(), pubKey, connect, comment)
-}
-
-// SetPeerConnectLegacy — временно, до Task 19 (F546).
-func (c *WireguardCommands) SetPeerConnectLegacy(ctx context.Context, ifaceName, pubKey string, connect bool, comment string) error {
-	if err := c.requirePeer(ctx, ifaceName, pubKey); err != nil {
+	ifaceName := iface.Name()
+	if err := c.requirePeer(ctx, iface, pubKey); err != nil {
 		return err
 	}
 	peer := map[string]any{"key": pubKey, "connect": connect}
@@ -363,12 +338,8 @@ func (c *WireguardCommands) SetPeerConnectLegacy(ctx context.Context, ifaceName,
 
 // SetPeerComment sets the description/comment for a peer.
 func (c *WireguardCommands) SetPeerComment(ctx context.Context, iface query.Confirmed, pubKey, comment string) error {
-	return c.SetPeerCommentLegacy(ctx, iface.Name(), pubKey, comment)
-}
-
-// SetPeerCommentLegacy — временно, до Task 19 (F546).
-func (c *WireguardCommands) SetPeerCommentLegacy(ctx context.Context, ifaceName, pubKey, comment string) error {
-	if err := c.requirePeer(ctx, ifaceName, pubKey); err != nil {
+	ifaceName := iface.Name()
+	if err := c.requirePeer(ctx, iface, pubKey); err != nil {
 		return err
 	}
 	payload := map[string]any{

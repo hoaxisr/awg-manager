@@ -93,9 +93,12 @@ func newRawFlipService(t *testing.T) (*ServiceImpl, *recPoster) {
 	// time.Hour: Request() ставит AfterFunc-таймер, и 500 мс под -race допишут save-POST в
 	// posts гонкой с чтением в тесте (форма ops/operator_os5_lifecycle_test.go:31).
 	sc := command.NewSaveCoordinator(poster, nil, time.Hour, time.Hour, 0, nil)
-	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	g := query.NewFakeGetter()
+	g.SetJSON("/show/interface/", `{"GigabitEthernet1":{"id":"GigabitEthernet1","type":"GigabitEthernet"}}`) // флип подтверждается списком (F546)
+	q := query.NewQueries(query.Deps{Getter: g, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	return &ServiceImpl{
 		interfaces:     command.NewInterfaceCommands(poster, sc, q, nil),
+		queries:        q,
 		lifecycle:      &fakeLifecycle{},
 		tunnelResolver: &fakeResolver{m: map[string]string{}}, // ничего не managed
 	}, poster

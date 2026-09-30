@@ -15,6 +15,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/signature"
@@ -198,6 +199,11 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 	if !ok {
 		return
 	}
+	// Одно подтверждение на весь хендлер, включая сверку и откат (F546).
+	iface, ok := h.requireServerIface(r.Context(), w, name)
+	if !ok {
+		return
+	}
 	if err := h.validateServerPeerTunnelIP(server, req.TunnelIP); err != nil {
 		response.Error(w, err.Error(), "INVALID_TUNNEL_IP")
 		return
@@ -287,7 +293,7 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 		response.Error(w, err.Error(), "SAVE_FAILED")
 		return
 	}
-	if err := h.commands.Wireguard.AddPeerLegacy(r.Context(), name, pubKey, psk, strings.TrimSpace(req.Description), ip.String(), true); err != nil {
+	if err := h.commands.Wireguard.AddPeer(r.Context(), iface, pubKey, psk, strings.TrimSpace(req.Description), ip.String(), true); err != nil {
 		if derr := h.settings.DeleteServerPeerSecret(name, pubKey); derr != nil {
 			h.log.Warn("add-peer", name, "rollback of stranded secret failed: "+derr.Error())
 		}
@@ -298,9 +304,9 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 	// откат здесь — снять пира и секрет: запись переживает только полный успех.
 	// Свои allow-ips и маршруты Reconcile откатывает сам.
 	if len(remote) > 0 {
-		if err := peersubnet.Reconcile(r.Context(), ndmscommand.NewPeerRouter(h.commands, h.queries), name, pubKey, []net.IP{ip}, remote); err != nil {
+		if err := peersubnet.ReconcileConfirmed(r.Context(), ndmscommand.NewPeerRouter(h.commands, h.queries), iface, pubKey, []net.IP{ip}, remote); err != nil {
 			h.logRollback("add-peer", name, err)
-			h.rollbackAddedServerPeer(r.Context(), name, pubKey)
+			h.rollbackAddedServerPeer(r.Context(), iface, pubKey)
 			response.Error(w, err.Error(), "ADD_PEER_FAILED")
 			return
 		}
@@ -341,6 +347,11 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 	peer := findServerPeer(server, pubkey)
 	if peer == nil {
 		response.Error(w, "peer not found", "NOT_FOUND")
+		return
+	}
+	// Одно подтверждение на весь хендлер, включая сверку и откаты (F546).
+	iface, ok := h.requireServerIface(r.Context(), w, name)
+	if !ok {
 		return
 	}
 	// Секрет читаем один раз: он же решает судьбу сигнатуры и он же
@@ -487,20 +498,20 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		// Любая операция allow-ips (и снятие тоже) на отсутствующем ключе NDMS
 		// СОЗДАЁТ пира (стенд 5.02.A.11, 28.09): пира, удалённого посреди
 		// правки, откат адреса воскресил бы. Поэтому наличие — до первого поста.
-		if present, err := h.peerOnRouter(rbCtx, name, pubkey); err != nil {
+		if present, err := h.peerOnRouter(rbCtx, iface, pubkey); err != nil {
 			h.log.Warn("update-peer", name, "tunnel IP не возвращён: наличие пира не прочитано: "+err.Error())
 			return
 		} else if !present {
 			h.log.Info("update-peer", name, "пир удалён, откат адреса не нужен")
 			return
 		}
-		if err := h.commands.Wireguard.RemovePeerAllowIPLegacy(rbCtx, name, pubkey, newIP, "255.255.255.255"); err != nil {
+		if err := h.commands.Wireguard.RemovePeerAllowIP(rbCtx, iface, pubkey, newIP, "255.255.255.255"); err != nil {
 			h.log.Warn("update-peer", name, "новый tunnel IP не снят после отказа: "+err.Error())
 		}
 		if oldIP == "" {
 			return
 		}
-		if err := h.commands.Wireguard.AddPeerAllowIPLegacy(rbCtx, name, pubkey, oldIP, "255.255.255.255"); err != nil {
+		if err := h.commands.Wireguard.AddPeerAllowIP(rbCtx, iface, pubkey, oldIP, "255.255.255.255"); err != nil {
 			h.log.Warn("update-peer", name, "tunnel IP не возвращён после отказа: "+err.Error())
 		}
 	}
@@ -508,14 +519,14 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		// Пир в списке сервера — снимок (кэш), а allow-ips на отсутствующий
 		// ключ создали бы призрака. Проверка — под блокировкой, которую
 		// берёт и удаление.
-		if present, err := h.peerOnRouter(r.Context(), name, pubkey); err != nil {
+		if present, err := h.peerOnRouter(r.Context(), iface, pubkey); err != nil {
 			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
 			return
 		} else if !present {
 			response.Error(w, "peer not found on router", "NOT_FOUND")
 			return
 		}
-		if err := h.commands.Wireguard.UpdatePeerAllowIPsLegacy(r.Context(), name, pubkey, oldIP, newIP); err != nil {
+		if err := h.commands.Wireguard.UpdatePeerAllowIPs(r.Context(), iface, pubkey, oldIP, newIP); err != nil {
 			// Старый /32 уже мог сняться до отказа добавления нового.
 			revertIP()
 			response.Error(w, err.Error(), "UPDATE_PEER_FAILED")
@@ -523,7 +534,7 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if req.Description != peer.Description {
-		if err := h.commands.Wireguard.SetPeerCommentLegacy(r.Context(), name, pubkey, strings.TrimSpace(req.Description)); err != nil {
+		if err := h.commands.Wireguard.SetPeerComment(r.Context(), iface, pubkey, strings.TrimSpace(req.Description)); err != nil {
 			revertIP()
 			if errors.Is(err, peersubnet.ErrPeerNotFound) {
 				response.Error(w, "peer not found on router", "NOT_FOUND")
@@ -536,7 +547,7 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 	// Сверка с роутером, не разница с записью (F509): расхождение прошлых
 	// сбоев это сохранение снимает.
 	if reconcile {
-		if err := peersubnet.Reconcile(r.Context(), ndmscommand.NewPeerRouter(h.commands, h.queries), name, pubkey, tunnelHosts, remote); err != nil {
+		if err := peersubnet.ReconcileConfirmed(r.Context(), ndmscommand.NewPeerRouter(h.commands, h.queries), iface, pubkey, tunnelHosts, remote); err != nil {
 			h.logRollback("update-peer", name, err)
 			revertIP()
 			if errors.Is(err, peersubnet.ErrPeerNotFound) {
@@ -589,7 +600,7 @@ func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request
 				// и .conf показывают запись.
 				if reconcile {
 					rbCtx, cancel := detachedCtx(r.Context())
-					if rbErr := peersubnet.Reconcile(rbCtx, ndmscommand.NewPeerRouter(h.commands, h.queries), name, pubkey, tunnelHosts, prevRemote); rbErr != nil {
+					if rbErr := peersubnet.ReconcileConfirmed(rbCtx, ndmscommand.NewPeerRouter(h.commands, h.queries), iface, pubkey, tunnelHosts, prevRemote); rbErr != nil {
 						h.log.Warn("update-peer", name, "сети за клиентом не возвращены к записи после отказа сохранения: "+rbErr.Error())
 					}
 					cancel()
@@ -640,18 +651,27 @@ func (h *ServersHandler) DeleteServerPeer(w http.ResponseWriter, r *http.Request
 		unlock = h.lockPeerSubnets()
 	}
 	defer unlock()
-	// Свои маршруты — до снятия пира и fail-closed (11.B/11.6): маршрут-сирота
-	// без пира никто уже не снимет. Все с меткой пира, найденные на роутере, а
-	// не список записи: сирота прошлого сбоя в записи не значится.
-	if err := peersubnet.RemoveRoutes(r.Context(), ndmscommand.NewPeerRouter(h.commands, h.queries), name, pubkey); err != nil {
-		response.Error(w, err.Error(), "DELETE_PEER_FAILED")
+	// Интерфейса нет в NDMS — пир и его маршруты ушли вместе с ним: снимать
+	// нечего, `interface X …` по отсутствующему X создал бы X (F546). Снимается
+	// только секрет — как у пира, снятого мимо панели.
+	iface, present, ok := h.confirmServerIface(r.Context(), w, name)
+	if !ok {
 		return
 	}
-	// Пир, уже снятый мимо панели, — успех (свежее чтение rc в RemovePeer):
-	// паритет с managed.
-	if err := h.commands.Wireguard.RemovePeerLegacy(r.Context(), name, pubkey); err != nil {
-		response.Error(w, err.Error(), "DELETE_PEER_FAILED")
-		return
+	if present {
+		// Свои маршруты — до снятия пира и fail-closed (11.B/11.6): маршрут-сирота
+		// без пира никто уже не снимет. Все с меткой пира, найденные на роутере, а
+		// не список записи: сирота прошлого сбоя в записи не значится.
+		if err := peersubnet.RemoveRoutesConfirmed(r.Context(), ndmscommand.NewPeerRouter(h.commands, h.queries), iface, pubkey); err != nil {
+			response.Error(w, err.Error(), "DELETE_PEER_FAILED")
+			return
+		}
+		// Пир, уже снятый мимо панели, — успех (свежее чтение rc в RemovePeer):
+		// паритет с managed.
+		if err := h.commands.Wireguard.RemovePeer(r.Context(), iface, pubkey); err != nil {
+			response.Error(w, err.Error(), "DELETE_PEER_FAILED")
+			return
+		}
 	}
 	if err := h.settings.DeleteServerPeerSecret(name, pubkey); err != nil {
 		h.log.Warn("delete-peer", name, "peer removed from router but its secret stayed in store: "+err.Error())
@@ -693,6 +713,10 @@ func (h *ServersHandler) ToggleServerPeer(w http.ResponseWriter, r *http.Request
 		response.Error(w, "peer not found", "NOT_FOUND")
 		return
 	}
+	iface, ok := h.requireServerIface(r.Context(), w, name)
+	if !ok {
+		return
+	}
 	// Под блокировкой удаления: проверка наличия пира в SetPeerConnect не
 	// устареет до поста (connect на отсутствующий ключ NDMS создаёт пира).
 	unlock := func() {}
@@ -700,7 +724,7 @@ func (h *ServersHandler) ToggleServerPeer(w http.ResponseWriter, r *http.Request
 		unlock = h.lockPeerSubnets()
 	}
 	defer unlock()
-	if err := h.commands.Wireguard.SetPeerConnectLegacy(r.Context(), name, pubkey, req.Enabled, peer.Description); err != nil {
+	if err := h.commands.Wireguard.SetPeerConnect(r.Context(), iface, pubkey, req.Enabled, peer.Description); err != nil {
 		if errors.Is(err, peersubnet.ErrPeerNotFound) {
 			response.Error(w, "peer not found on router", "NOT_FOUND")
 			return
@@ -1138,8 +1162,8 @@ func (h *ServersHandler) lockPeerSubnets() (unlock func()) {
 // peerOnRouter — есть ли пир на интерфейсе по свежему rc. Перед allow-ips
 // вне сверки: любая операция allow-ips на отсутствующем ключе NDMS создаёт
 // пира (стенд 5.02.A.11).
-func (h *ServersHandler) peerOnRouter(ctx context.Context, name, pubkey string) (bool, error) {
-	return h.commands.Wireguard.PeerPresentLegacy(ctx, name, pubkey)
+func (h *ServersHandler) peerOnRouter(ctx context.Context, iface query.Confirmed, pubkey string) (bool, error) {
+	return h.commands.Wireguard.PeerPresent(ctx, iface, pubkey)
 }
 
 // detachedCtx — ctx отката: запрос к этому моменту может быть уже отменён
@@ -1153,13 +1177,14 @@ func detachedCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 // незавершённого отката), потом пира — allow-ips уходят с ним. Пир не снялся —
 // секрет остаётся: без него пир на роутере — сирота с потерянным ключом, а с
 // ним его видно в панели и можно удалить.
-func (h *ServersHandler) rollbackAddedServerPeer(ctx context.Context, name, pubKey string) {
+func (h *ServersHandler) rollbackAddedServerPeer(ctx context.Context, iface query.Confirmed, pubKey string) {
+	name := iface.Name()
 	rbCtx, cancel := detachedCtx(ctx)
 	defer cancel()
-	if err := peersubnet.RemoveRoutes(rbCtx, ndmscommand.NewPeerRouter(h.commands, h.queries), name, pubKey); err != nil {
+	if err := peersubnet.RemoveRoutesConfirmed(rbCtx, ndmscommand.NewPeerRouter(h.commands, h.queries), iface, pubKey); err != nil {
 		h.log.Warn("add-peer", name, "маршруты сетей за клиентом не сняты при откате: "+err.Error())
 	}
-	if err := h.commands.Wireguard.RemovePeerLegacy(rbCtx, name, pubKey); err != nil {
+	if err := h.commands.Wireguard.RemovePeer(rbCtx, iface, pubKey); err != nil {
 		h.log.Warn("add-peer", name, "пир не снят после отказа сетей за клиентом, секрет оставлен: "+err.Error())
 		// Сетей на роутере запись не держит: их увидит и снимет сверка
 		// следующего сохранения, маршруты — удаление пира (оба читают роутер).

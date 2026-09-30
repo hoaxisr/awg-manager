@@ -9,16 +9,24 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/routing"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
+// ifaceConfirmer — подтверждение NDMS-интерфейсов свежим полным списком
+// (F546); реализует *query.InterfaceStore.
+type ifaceConfirmer interface {
+	ConfirmEach(ctx context.Context, names []string) (map[string]query.Confirmed, error)
+}
+
 // ServiceImpl is the concrete implementation of the static route Service.
 type ServiceImpl struct {
 	store   *storage.StaticRouteStore
 	routes  *command.RouteCommands
+	ifaces  ifaceConfirmer
 	catalog routing.Catalog
 	appLog  *logging.ScopedLogger
 	mu      sync.Mutex
@@ -32,12 +40,14 @@ type ServiceImpl struct {
 func New(
 	store *storage.StaticRouteStore,
 	routes *command.RouteCommands,
+	ifaces ifaceConfirmer,
 	catalog routing.Catalog,
 	appLogger logging.AppLogger,
 ) *ServiceImpl {
 	return &ServiceImpl{
 		store:       store,
 		routes:      routes,
+		ifaces:      ifaces,
 		catalog:     catalog,
 		appLog:      logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubStaticRoute),
 		ifaceExists: defaultIfaceExists,
@@ -75,7 +85,8 @@ func (s *ServiceImpl) Create(ctx context.Context, rl storage.StaticRouteList) (*
 	}
 
 	if rl.Enabled {
-		s.applyRoutes(ctx, rl)
+		confirmed, cerr := s.confirmIfaces(ctx, rl.TunnelID)
+		s.applyRoutes(ctx, rl, confirmed, cerr)
 	}
 
 	return &rl, nil
@@ -122,12 +133,21 @@ func (s *ServiceImpl) Update(ctx context.Context, rl storage.StaticRouteList) (*
 		return nil, fmt.Errorf("update route list: %w", err)
 	}
 
-	// Reconcile routes: remove old, add new.
+	// Reconcile routes: remove old, add new. Интерфейсы обоих туннелей —
+	// одним списком на вызов.
+	var ids []string
 	if old.Enabled {
-		s.removeRoutes(ctx, old.TunnelID, old.Subnets)
+		ids = append(ids, old.TunnelID)
 	}
 	if rl.Enabled {
-		s.applyRoutes(ctx, rl)
+		ids = append(ids, rl.TunnelID)
+	}
+	confirmed, cerr := s.confirmIfaces(ctx, ids...)
+	if old.Enabled {
+		s.removeRoutes(ctx, old.TunnelID, old.Subnets, confirmed, cerr)
+	}
+	if rl.Enabled {
+		s.applyRoutes(ctx, rl, confirmed, cerr)
 	}
 
 	return &rl, nil
@@ -144,7 +164,8 @@ func (s *ServiceImpl) Delete(ctx context.Context, id string) error {
 	}
 
 	if existing.Enabled {
-		s.removeRoutes(ctx, existing.TunnelID, existing.Subnets)
+		confirmed, cerr := s.confirmIfaces(ctx, existing.TunnelID)
+		s.removeRoutes(ctx, existing.TunnelID, existing.Subnets, confirmed, cerr)
 	}
 
 	if err := s.store.DeleteRouteList(id); err != nil {
@@ -175,10 +196,11 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) e
 		return fmt.Errorf("set enabled: save: %w", err)
 	}
 
+	confirmed, cerr := s.confirmIfaces(ctx, rl.TunnelID)
 	if enabled {
-		s.applyRoutes(ctx, *rl)
+		s.applyRoutes(ctx, *rl, confirmed, cerr)
 	} else {
-		s.removeRoutes(ctx, rl.TunnelID, rl.Subnets)
+		s.removeRoutes(ctx, rl.TunnelID, rl.Subnets, confirmed, cerr)
 	}
 
 	return nil
@@ -258,7 +280,7 @@ func (s *ServiceImpl) OnTunnelStop(ctx context.Context, tunnelID string) error {
 		if rl.Fallback == "reject" {
 			continue // keep routes — blackhole via dead interface
 		}
-		s.removeRoutes(ctx, rl.TunnelID, rl.Subnets)
+		s.removeRoutes(ctx, rl.TunnelID, rl.Subnets, nil, nil) // OS4: NDMS не участвует
 	}
 	return nil
 }
@@ -283,9 +305,10 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 	// Uninstall active NDMS routes first (OS4 kernel already cleaned up on
 	// interface destroy).
 	if !isOS4Kernel(tunnelID) {
+		confirmed, cerr := s.confirmIfaces(ctx, tunnelID)
 		for _, rl := range lists {
 			if rl.Enabled {
-				s.removeRoutes(ctx, rl.TunnelID, rl.Subnets)
+				s.removeRoutes(ctx, rl.TunnelID, rl.Subnets, confirmed, cerr)
 			}
 		}
 	}
@@ -320,7 +343,8 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 		return fmt.Errorf("reconcile: list route lists: %w", err)
 	}
 
-	var totalRoutes int
+	var active []storage.StaticRouteList
+	var ids []string
 	for _, rl := range all {
 		if !rl.Enabled {
 			continue
@@ -335,7 +359,13 @@ func (s *ServiceImpl) Reconcile(ctx context.Context) error {
 				continue
 			}
 		}
-		s.applyRoutes(ctx, rl)
+		active = append(active, rl)
+		ids = append(ids, rl.TunnelID)
+	}
+	confirmed, cerr := s.confirmIfaces(ctx, ids...)
+	var totalRoutes int
+	for _, rl := range active {
+		s.applyRoutes(ctx, rl, confirmed, cerr)
 		totalRoutes += len(rl.Subnets)
 	}
 
@@ -378,8 +408,9 @@ func parseCIDR(cidr string) (network, mask string, err error) {
 }
 
 // addRoute adds a single static route.
-// OS4 kernel tunnels use ip route; all others use NDMS RouteCommands.
-func (s *ServiceImpl) addRoute(ctx context.Context, subnet, ifaceName, fallback string, os4kernel bool) error {
+// OS4 kernel tunnels use ip route; all others use NDMS RouteCommands по
+// подтверждённому iface (у OS4 — нулевое, не используется).
+func (s *ServiceImpl) addRoute(ctx context.Context, subnet, ifaceName string, iface query.Confirmed, fallback string, os4kernel bool) error {
 	cidr, comment := ParseSubnetComment(subnet)
 	if os4kernel {
 		return s.ipRouteAdd(ctx, cidr, ifaceName)
@@ -388,8 +419,8 @@ func (s *ServiceImpl) addRoute(ctx context.Context, subnet, ifaceName, fallback 
 	if err != nil {
 		return fmt.Errorf("parse CIDR %s: %w", cidr, err)
 	}
-	spec := command.StaticRouteSpecLegacy{
-		Interface: ifaceName,
+	spec := command.StaticRouteSpec{
+		Interface: iface,
 		Reject:    fallback == "reject",
 		Comment:   comment,
 	}
@@ -399,15 +430,16 @@ func (s *ServiceImpl) addRoute(ctx context.Context, subnet, ifaceName, fallback 
 		spec.Network = network
 		spec.Mask = mask
 	}
-	if err := s.routes.AddStaticRouteLegacy(ctx, spec); err != nil {
+	if err := s.routes.AddStaticRoute(ctx, spec); err != nil {
 		return fmt.Errorf("add route %s via %s: %w", cidr, ifaceName, err)
 	}
 	return nil
 }
 
 // removeRoute removes a single static route.
-// OS4 kernel tunnels use ip route; all others use NDMS RouteCommands.
-func (s *ServiceImpl) removeRoute(ctx context.Context, subnet, ifaceName string, os4kernel bool) error {
+// OS4 kernel tunnels use ip route; all others use NDMS RouteCommands по
+// подтверждённому iface (у OS4 — нулевое, не используется).
+func (s *ServiceImpl) removeRoute(ctx context.Context, subnet, ifaceName string, iface query.Confirmed, os4kernel bool) error {
 	cidr, _ := ParseSubnetComment(subnet)
 	if os4kernel {
 		return s.ipRouteDel(ctx, cidr, ifaceName)
@@ -416,14 +448,14 @@ func (s *ServiceImpl) removeRoute(ctx context.Context, subnet, ifaceName string,
 	if err != nil {
 		return err
 	}
-	spec := command.StaticRouteSpecLegacy{Interface: ifaceName}
+	spec := command.StaticRouteSpec{Interface: iface}
 	if mask == "" {
 		spec.Host = network
 	} else {
 		spec.Network = network
 		spec.Mask = mask
 	}
-	if err := s.routes.RemoveStaticRouteLegacy(ctx, spec); err != nil {
+	if err := s.routes.RemoveStaticRoute(ctx, spec); err != nil {
 		return fmt.Errorf("remove route %s via %s: %w", cidr, ifaceName, err)
 	}
 	return nil
@@ -447,10 +479,32 @@ func (s *ServiceImpl) ipRouteDel(ctx context.Context, subnet, ifaceName string) 
 	return nil
 }
 
+// confirmIfaces подтверждает NDMS-интерфейсы туннелей ОДНИМ свежим списком на
+// весь публичный вызов (F546). OS4-ядерные туннели в NDMS не живут, пустые и
+// нерезолвящиеся пропускаются (applyRoutes/removeRoutes разберутся с ними
+// сами); нет ни одного NDMS-имени — список не читается.
+func (s *ServiceImpl) confirmIfaces(ctx context.Context, tunnelIDs ...string) (map[string]query.Confirmed, error) {
+	var names []string
+	for _, id := range tunnelIDs {
+		if id == "" || isOS4Kernel(id) {
+			continue
+		}
+		if name, err := s.catalog.ResolveInterface(ctx, id); err == nil {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil, nil
+	}
+	return s.ifaces.ConfirmEach(ctx, names)
+}
+
 // applyRoutes adds static routes for a route list.
 // For OS4 kernel tunnels, silently skips if the interface doesn't exist
-// (routes will be applied later by OnTunnelStart).
-func (s *ServiceImpl) applyRoutes(ctx context.Context, rl storage.StaticRouteList) {
+// (routes will be applied later by OnTunnelStart). NDMS-маршрут ставится
+// только на интерфейс из confirmed (confirmIfaces): ссылка ip route на
+// отсутствующий пишет E в журнал ndm; список не прочитан (cerr) — ничего.
+func (s *ServiceImpl) applyRoutes(ctx context.Context, rl storage.StaticRouteList, confirmed map[string]query.Confirmed, cerr error) {
 	os4k := isOS4Kernel(rl.TunnelID)
 	if os4k && !s.ifaceExists(rl.TunnelID) {
 		s.appLog.Debug("apply", rl.TunnelID, "skip — interface not up, will apply on start")
@@ -461,8 +515,20 @@ func (s *ServiceImpl) applyRoutes(ctx context.Context, rl storage.StaticRouteLis
 		s.appLog.Warn("resolve-interface", rl.TunnelID, err.Error())
 		return
 	}
+	var iface query.Confirmed
+	if !os4k {
+		if cerr != nil {
+			s.appLog.Warn("apply", ifaceName, cerr.Error())
+			return
+		}
+		var ok bool
+		if iface, ok = confirmed[ifaceName]; !ok {
+			s.appLog.Warn("apply", ifaceName, "интерфейса нет в NDMS — маршруты списка "+rl.ID+" не поставлены")
+			return
+		}
+	}
 	for _, subnet := range rl.Subnets {
-		if err := s.addRoute(ctx, subnet, ifaceName, rl.Fallback, os4k); err != nil {
+		if err := s.addRoute(ctx, subnet, ifaceName, iface, rl.Fallback, os4k); err != nil {
 			s.appLog.Warn("add-route", subnet, err.Error())
 		}
 	}
@@ -470,7 +536,9 @@ func (s *ServiceImpl) applyRoutes(ctx context.Context, rl storage.StaticRouteLis
 
 // removeRoutes removes static routes for a tunnel.
 // For OS4 kernel tunnels, skips if the interface doesn't exist (kernel already cleaned up).
-func (s *ServiceImpl) removeRoutes(ctx context.Context, tunnelID string, subnets []string) {
+// NDMS: интерфейса нет в confirmed — маршруты ушли вместе с ним, снимать
+// нечего; список не прочитан (cerr) — ничего не шлём.
+func (s *ServiceImpl) removeRoutes(ctx context.Context, tunnelID string, subnets []string, confirmed map[string]query.Confirmed, cerr error) {
 	os4k := isOS4Kernel(tunnelID)
 	if os4k && !s.ifaceExists(tunnelID) {
 		return // kernel already removed routes when interface was destroyed
@@ -480,8 +548,20 @@ func (s *ServiceImpl) removeRoutes(ctx context.Context, tunnelID string, subnets
 		s.appLog.Warn("resolve-interface", tunnelID, err.Error())
 		return
 	}
+	var iface query.Confirmed
+	if !os4k {
+		if cerr != nil {
+			s.appLog.Warn("remove", ifaceName, cerr.Error())
+			return
+		}
+		var ok bool
+		if iface, ok = confirmed[ifaceName]; !ok {
+			s.appLog.Debug("remove", ifaceName, "интерфейса нет в NDMS — снимать нечего")
+			return
+		}
+	}
 	for _, subnet := range subnets {
-		if err := s.removeRoute(ctx, subnet, ifaceName, os4k); err != nil {
+		if err := s.removeRoute(ctx, subnet, ifaceName, iface, os4k); err != nil {
 			s.appLog.Debug("remove-route", subnet, err.Error())
 		}
 	}

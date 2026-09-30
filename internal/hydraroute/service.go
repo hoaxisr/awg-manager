@@ -276,7 +276,8 @@ func (s *Service) SetDnsListProvider(fn func() []DnsListInfo) {
 	s.dnsListProvider = fn
 }
 
-// SetQueries wires the NDMS Queries registry used to read ip policies.
+// SetQueries wires the NDMS Queries registry used to read ip policies and
+// confirm interfaces before permit.
 func (s *Service) SetQueries(q *query.Queries) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -311,18 +312,34 @@ func (s *Service) GetGeoData() *GeoDataStore {
 func (s *Service) EnsurePolicyInterfaces(ctx context.Context, policyName string, ndmsIfaces []string) error {
 	s.mu.Lock()
 	policies := s.policies
+	queries := s.queries
 	s.mu.Unlock()
 
-	if policies == nil {
-		return fmt.Errorf("PolicyCommands not available")
+	if policies == nil || queries == nil {
+		return fmt.Errorf("PolicyCommands/Queries not available")
 	}
 
-	for i, iface := range ndmsIfaces {
-		s.appLog.Info("permit-iface", iface, fmt.Sprintf("ip policy %s permit global order %d", policyName, i))
-		if err := policies.PermitInterfaceLegacy(ctx, policyName, iface, i); err != nil {
+	// Ссылка на отсутствующий интерфейс пишет E в журнал ndm (F546): все
+	// интерфейсы подтверждаются ОДНИМ свежим списком, отсутствующие пропускаются.
+	confirmed, err := queries.Interfaces.ConfirmEach(ctx, ndmsIfaces)
+	if err != nil {
+		return fmt.Errorf("permit in policy %s: %w", policyName, err)
+	}
+	// order — по поставленным, а не по индексу во входе: пропуск не должен
+	// оставить дыру (order=1 без order=0 NDMS отвергает).
+	order := 0
+	for _, iface := range ndmsIfaces {
+		c, ok := confirmed[iface]
+		if !ok {
+			s.appLog.Warn("permit-iface", iface, fmt.Sprintf("policy %s: интерфейса нет в NDMS — пропущен", policyName))
+			continue
+		}
+		s.appLog.Info("permit-iface", iface, fmt.Sprintf("ip policy %s permit global order %d", policyName, order))
+		if err := policies.PermitInterface(ctx, policyName, c, order); err != nil {
 			s.appLog.Warn("permit-iface", iface, fmt.Sprintf("policy %s: %v", policyName, err))
 			return fmt.Errorf("permit %s in policy %s: %w", iface, policyName, err)
 		}
+		order++
 	}
 	return nil
 }

@@ -236,6 +236,29 @@ func (h *ServersHandler) validateName(w http.ResponseWriter, name string) bool {
 	return true
 }
 
+// confirmServerIface — интерфейс сервера по свежему полному списку (F546):
+// `interface X …` по отсутствующему X создаёт X, а список серверов — снимок
+// кэша. ok=false — список не прочитан, отказ уже записан (решение 4: без
+// команды); present=false — интерфейса нет, решает вызывающий (снос — не отказ).
+func (h *ServersHandler) confirmServerIface(ctx context.Context, w http.ResponseWriter, name string) (iface query.Confirmed, present, ok bool) {
+	iface, _, present, err := h.queries.Interfaces.Confirm(ctx, name)
+	if err != nil {
+		response.Error(w, err.Error(), "GET_FAILED")
+		return query.Confirmed{}, false, false
+	}
+	return iface, present, true
+}
+
+// requireServerIface — confirmServerIface для настройки: интерфейса нет —
+// 404 IFACE_GONE.
+func (h *ServersHandler) requireServerIface(ctx context.Context, w http.ResponseWriter, name string) (query.Confirmed, bool) {
+	iface, present, ok := h.confirmServerIface(ctx, w, name)
+	if ok && !present {
+		response.ErrorWithStatus(w, http.StatusNotFound, "интерфейса нет в NDMS", "IFACE_GONE")
+	}
+	return iface, ok && present
+}
+
 func (h *ServersHandler) getListedServer(ctx context.Context, name string) (*ndms.WireguardServer, error) {
 	servers, err := h.listServers(ctx)
 	if err != nil {
@@ -562,13 +585,21 @@ func (h *ServersHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Enabled {
-		if err := h.commands.Interfaces.InterfaceUpLegacy(r.Context(), name); err != nil {
+	iface, present, ok := h.confirmServerIface(r.Context(), w, name)
+	if !ok {
+		return
+	}
+	switch {
+	case req.Enabled && !present:
+		response.ErrorWithStatus(w, http.StatusNotFound, "интерфейса нет в NDMS", "IFACE_GONE")
+		return
+	case req.Enabled:
+		if err := h.commands.Interfaces.InterfaceUp(r.Context(), iface); err != nil {
 			response.Error(w, err.Error(), "INTERFACE_UP_FAILED")
 			return
 		}
-	} else {
-		if err := h.commands.Interfaces.InterfaceDownLegacy(r.Context(), name); err != nil {
+	case present: // нет — опускать нечего
+		if err := h.commands.Interfaces.InterfaceDown(r.Context(), iface); err != nil {
 			response.Error(w, err.Error(), "INTERFACE_DOWN_FAILED")
 			return
 		}
@@ -620,6 +651,12 @@ func (h *ServersHandler) Restart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Подтверждение — до ответа «принято»: фон шлёт down/up по нему же.
+	iface, ok := h.requireServerIface(r.Context(), w, name)
+	if !ok {
+		return
+	}
+
 	wasUp := h.serverIsUp(r.Context(), server)
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 20*time.Second)
 
@@ -631,13 +668,13 @@ func (h *ServersHandler) Restart(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(300 * time.Millisecond)
 
 		if wasUp {
-			if err := h.commands.Interfaces.InterfaceDownLegacy(ctx, name); err != nil {
+			if err := h.commands.Interfaces.InterfaceDown(ctx, iface); err != nil {
 				return
 			}
 			time.Sleep(1200 * time.Millisecond)
 		}
 
-		if err := h.commands.Interfaces.InterfaceUpLegacy(ctx, name); err != nil {
+		if err := h.commands.Interfaces.InterfaceUp(ctx, iface); err != nil {
 			return
 		}
 
