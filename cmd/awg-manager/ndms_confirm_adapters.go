@@ -200,7 +200,9 @@ func (a confirmingSegmentNAT) SetStaticNAT(ctx context.Context, seg, wan string)
 	}
 	w, ok := m[wan]
 	if !ok {
-		return errIfaceAbsent(wan)
+		// Без стража ErrIfaceAbsent: router.segmentGone принял бы снятый WAN
+		// за снятый сегмент и молча пропустил бы его (F563).
+		return fmt.Errorf("WAN %s нет в NDMS", wan)
 	}
 	return a.nat.SetStaticNAT(ctx, s, w)
 }

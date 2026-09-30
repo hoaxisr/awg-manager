@@ -182,6 +182,20 @@ func TestConfirmingOpkgTun_SetAbsentIsError(t *testing.T) {
 	oracleClean(t, f)
 }
 
+// Static NAT: сегмент есть, WAN нет — ошибка с именем WAN, но НЕ
+// ErrIfaceAbsent: router.segmentGone принял бы её за снятый сегмент (F563).
+func TestConfirmingSegmentNAT_SetStaticWANAbsentIsNotSegmentGone(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(ndms.Interface{ID: "Bridge0", Type: "Bridge"}) // PPPoE0 нет
+	err := newConfirmAdapters(t, f).nat.SetStaticNAT(context.Background(), "Bridge0", "PPPoE0")
+	if err == nil || errors.Is(err, router.ErrIfaceAbsent) || !strings.Contains(err.Error(), "PPPoE0") {
+		t.Fatalf("SetStaticNAT: %v, want ошибку с именем WAN без ErrIfaceAbsent", err)
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("команда по отсутствующему WAN: %v", f.Posts)
+	}
+	oracleClean(t, f)
+}
+
 // Список не прочитан: и настройка, и снос — ошибка без команды (решение 4).
 func TestConfirmingAdapters_ListErrorNoCommand(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS(
