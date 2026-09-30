@@ -329,12 +329,16 @@ func (f *FakeNDMS) ifaceCmd(name string, body map[string]any) (json.RawMessage, 
 }
 
 // parseCmd — `{"parse":"…"}`: разбираются только `interface X …` и
-// `no interface X …`; прочее (access-list и т.п.) — `{}`.
+// `no interface X …`; прочее (access-list и т.п.) — `{}`. Снос — только
+// ровно `no interface X`; `no interface X <настройка>` снимает настройку у X
+// (отсутствующий X она создаёт, как `interface X …`).
 func (f *FakeNDMS) parseCmd(line string) (json.RawMessage, error) {
 	w := strings.Fields(line)
 	switch {
-	case len(w) >= 3 && w[0] == "no" && w[1] == "interface":
+	case len(w) == 3 && w[0] == "no" && w[1] == "interface":
 		return f.ifaceCmd(w[2], map[string]any{"no": true})
+	case len(w) > 3 && w[0] == "no" && w[1] == "interface":
+		return f.ifaceCmd(w[2], map[string]any{})
 	case len(w) >= 2 && w[0] == "interface":
 		body := map[string]any{}
 		if len(w) == 3 && (w[2] == "up" || w[2] == "down") {

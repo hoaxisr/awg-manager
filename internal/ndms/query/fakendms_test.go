@@ -133,6 +133,8 @@ func TestFakeNDMS_PostBranches(t *testing.T) {
 		{"parse interface up", map[string]any{"parse": "interface Proxy2 up"}, 0, 1, 1, "Proxy2", "", "{}"},
 		{"parse no interface отсутствующего", map[string]any{"parse": "no interface Proxy2"}, 0, 0, 0, "", "Proxy2", "unable to find interface"},
 		{"parse no interface присутствующего", map[string]any{"parse": "no interface Wireguard0"}, 0, 0, 1, "", "Wireguard0", "{}"},
+		{"parse no interface X настройка присутствующего", map[string]any{"parse": "no interface Wireguard0 ip access-group A in"}, 0, 0, 0, "Wireguard0", "", "{}"},
+		{"parse no interface X настройка отсутствующего", map[string]any{"parse": "no interface Wireguard6 ip access-group A in"}, 0, 1, 1, "Wireguard6", "", "{}"},
 		{"parse access-list", map[string]any{"parse": "access-list _WEBADMIN_x permit ip any any"}, 0, 0, 0, "Wireguard0", "", "{}"},
 		{"system-name отсутствующего", map[string]any{"show": map[string]any{"interface": map[string]any{"system-name": map[string]any{"name": "Wireguard7"}}}}, 1, 0, 0, "", "Wireguard7", "6553619"},
 		{"system-name присутствующего", map[string]any{"show": map[string]any{"interface": map[string]any{"system-name": map[string]any{"name": "Wireguard0"}}}}, 0, 0, 0, "Wireguard0", "", `"system-name":"nwg0"`},
