@@ -53,8 +53,10 @@ func TestServersGetAll_OverlaysLivePeers(t *testing.T) {
 		t.Fatalf("первый ответ rx=%d, want 10", got)
 	}
 	// Роутер насчитал трафик; список серверов в кэше прежний, PeerStore
-	// освежился (его держит поллер, TTL 8 с — здесь сбрасываем явно).
-	fg.SetJSON("/show/interface/Wireguard0", liveServerEntry(99))
+	// освежился (его держит поллер, TTL 8 с — здесь сбрасываем явно; пиры —
+	// из снимка списка, он не старше 2 с — здесь метим его грязным).
+	fg.SetJSON("/show/interface/", `{"Wireguard0":`+liveServerEntry(99)+`}`)
+	queries.Interfaces.Invalidate("Wireguard0")
 	queries.Peers.Invalidate("Wireguard0")
 	if got := rx(); got != 99 {
 		t.Fatalf("rx=%d, want 99 — счётчики взяты из кэша списка, а не живые", got)

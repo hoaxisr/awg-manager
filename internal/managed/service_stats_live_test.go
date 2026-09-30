@@ -37,6 +37,10 @@ func TestGetStats_OverlaysLivePeers(t *testing.T) {
 		t.Fatal(err)
 	}
 	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{"id":"Wireguard0","type":"Wireguard","state":"up","wireguard":{"peer":[{"rxbytes":99,`+peer+`}]}}}}`)
+	// PeerStore читает пиров из снимка списка (F546): роутер отвечает живыми
+	// цифрами и в списке; снимок не старше 2 с — метим его грязным.
+	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard","state":"up","wireguard":{"peer":[{"rxbytes":99,`+peer+`}]}}}`)
+	queries.Interfaces.Invalidate("Wireguard0")
 
 	stats, err := svc.GetStats(context.Background(), "Wireguard0")
 	if err != nil {

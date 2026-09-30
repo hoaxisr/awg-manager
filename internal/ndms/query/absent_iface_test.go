@@ -28,8 +28,8 @@ func TestPeers_AbsentInterface_NoQuery(t *testing.T) {
 	if err != nil || len(peers) != 0 {
 		t.Fatalf("want (0 peers, nil), got (%v, %v)", peers, err)
 	}
-	if f.E != 0 {
-		t.Fatalf("E = %d, want 0", f.E)
+	if f.E != 0 || len(f.Posts) != 0 || f.ListCalls() != 1 {
+		t.Fatalf("E=%d Posts=%v ListCalls=%d, want 0/none/1 (снимок)", f.E, f.Posts, f.ListCalls())
 	}
 }
 

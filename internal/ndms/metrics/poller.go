@@ -32,7 +32,8 @@ func NopLogger() Logger { return nopLogger{} }
 // Poller is a ticker that fetches peer metrics for non-managed system
 // WG tunnels and server interfaces. Шаг ДВА: interval при открытой панели и
 // idleInterval, когда её не открыл никто (см. run). Peers come from
-// the .wireguard.peer field of /show/interface/<name>; it publishes
+// the .wireguard.peer field of the interface record in the list snapshot
+// (PeerStore, F546: one list per tick for all refs); it publishes
 // tunnel:traffic (non-managed system tunnels) and triggers
 // server:updated snapshots (server interfaces).
 //
@@ -68,9 +69,9 @@ type Poller struct {
 }
 
 // emptyCooldown is how long an interface observed with zero peers is
-// skipped before being polled again. One minute keeps RCI load low for
-// idle servers (each poll otherwise refetches the whole interface via
-// /show/interface/<name>) while still bounding how long a freshly-added
+// skipped before being polled again. One minute keeps work low for
+// idle servers (each poll otherwise re-reads the list snapshot) while
+// still bounding how long a freshly-added
 // peer waits to appear in metrics. Newly-added peers also surface via
 // SSE on mutation, so fast polling here is not what drives UI freshness.
 const emptyCooldown = 60 * time.Second
@@ -257,8 +258,8 @@ func (p *Poller) tick() {
 
 	// Drop interfaces that are within their known-empty cooldown. For
 	// a server with zero peers there's nothing useful to poll — its
-	// /show/interface/<name> just returns an empty .wireguard.peer and
-	// we don't want to hammer NDMS every 5s for each idle server.
+	// record just has an empty .wireguard.peer and we don't want to
+	// re-read it every 5s for each idle server.
 	now := time.Now()
 	p.mu.Lock()
 	pollRefs := make([]InterfaceRef, 0, len(refs))
@@ -304,8 +305,8 @@ func (p *Poller) tick() {
 			p.log.Warnf("metrics %s: %v", r.ref.ID, r.err)
 			continue
 		}
-		// Track empty-peer cooldown. PeerStore translates NDMS 404
-		// into an empty slice (no peers configured), so len(peers)==0
+		// Track empty-peer cooldown. PeerStore translates "not in the
+		// snapshot" into an empty slice (no peers configured), so len(peers)==0
 		// reliably means "nothing to measure here" — skip for a bit.
 		if len(r.peers) == 0 {
 			p.emptyUntil[r.ref.ID] = now.Add(emptyCooldown)

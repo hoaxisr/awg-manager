@@ -2,9 +2,12 @@ package query
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 )
 
 // sampleInterfaceJSON mirrors the unwrapped /show/interface/<name> response:
@@ -33,23 +36,22 @@ const sampleInterfaceJSON = `{
 	}
 }`
 
-// wgList — список интерфейсов для кэша: PeerStore читает только те, что в нём есть.
-const wgList = `{
-	"Wireguard0": {"id":"Wireguard0","type":"Wireguard"},
-	"Wireguard1": {"id":"Wireguard1","type":"Wireguard"},
-	"Wireguard2": {"id":"Wireguard2","type":"Wireguard"}
-}`
-
-func newTestPeerStore(fg *FakeGetter, ttl time.Duration) *PeerStore {
-	fg.SetJSON(ifaceListPath, wgList)
-	return NewPeerStoreWithTTL(NopLogger(), NewInterfaceStore(fg, NopLogger()), ttl)
+// newTestPeerStore — PeerStore над оракулом с Wireguard0..2; пиры задаёт тест
+// через SetDetail. Карта интерфейсов возвращается, чтобы метить её грязной
+// (Invalidate): тогда каждое чтение снимка — ровно один список, и ListCalls
+// считает походы PeerStore в NDMS.
+func newTestPeerStore(ttl time.Duration) (*PeerStore, *FakeNDMS, *InterfaceStore) {
+	f := NewFakeNDMS(
+		ndms.Interface{ID: "Wireguard0", Type: "Wireguard"},
+		ndms.Interface{ID: "Wireguard1", Type: "Wireguard"},
+		ndms.Interface{ID: "Wireguard2", Type: "Wireguard"})
+	ifs := NewInterfaceStore(f, NopLogger())
+	return NewPeerStoreWithTTL(NopLogger(), ifs, ttl), f, ifs
 }
 
-func TestPeerStore_GetPeers_ParsesInterfacePeerField(t *testing.T) {
-	fg := newFakeGetter()
-	fg.SetJSON("/show/interface/Wireguard0", sampleInterfaceJSON)
-
-	s := newTestPeerStore(fg, peerTTL)
+func TestPeerStore_FetchFromSnapshot(t *testing.T) {
+	s, f, _ := newTestPeerStore(peerTTL)
+	f.SetDetail("Wireguard0", json.RawMessage(sampleInterfaceJSON))
 
 	peers, err := s.GetPeers(context.Background(), "Wireguard0")
 	if err != nil {
@@ -71,15 +73,16 @@ func TestPeerStore_GetPeers_ParsesInterfacePeerField(t *testing.T) {
 	if !p.Online || !p.Enabled {
 		t.Errorf("flags: online=%v enabled=%v", p.Online, p.Enabled)
 	}
+	if len(f.Posts) != 0 || f.E != 0 {
+		t.Fatalf("Posts=%v E=%d, want none/0: пиры — из списка, не по имени", f.Posts, f.E)
+	}
 }
 
 // A live interface with no peers returns an interface object whose
 // .wireguard.peer is absent/empty — that must map to zero peers, not error.
 func TestPeerStore_GetPeers_NoPeerFieldIsEmpty(t *testing.T) {
-	fg := newFakeGetter()
-	fg.SetJSON("/show/interface/Wireguard0", `{"type":"Wireguard","wireguard":{}}`)
-
-	s := newTestPeerStore(fg, peerTTL)
+	s, f, _ := newTestPeerStore(peerTTL)
+	f.SetDetail("Wireguard0", json.RawMessage(`{"type":"Wireguard","wireguard":{}}`))
 
 	peers, err := s.GetPeers(context.Background(), "Wireguard0")
 	if err != nil {
@@ -91,28 +94,29 @@ func TestPeerStore_GetPeers_NoPeerFieldIsEmpty(t *testing.T) {
 }
 
 func TestPeerStore_GetPeers_CacheHitSkipsFetch(t *testing.T) {
-	fg := newFakeGetter()
-	fg.SetJSON("/show/interface/Wireguard0", sampleInterfaceJSON)
-	s := newTestPeerStore(fg, peerTTL)
+	s, f, ifs := newTestPeerStore(peerTTL)
+	f.SetDetail("Wireguard0", json.RawMessage(sampleInterfaceJSON))
 
 	_, _ = s.GetPeers(context.Background(), "Wireguard0")
+	lists := f.ListCalls()
+	ifs.Invalidate("Wireguard0") // промах кэша пиров стал бы списком
 	_, _ = s.GetPeers(context.Background(), "Wireguard0")
-	if got := fg.PostInterfaceCalls("Wireguard0"); got != 1 {
-		t.Errorf("calls: want 1 (cache hit), got %d", got)
+	if got := f.ListCalls() - lists; got != 0 {
+		t.Errorf("списков на попадание в кэш: %d, want 0", got)
 	}
 }
 
 func TestPeerStore_GetPeers_ServesStaleOnError(t *testing.T) {
-	fg := newFakeGetter()
-	fg.SetJSON("/show/interface/Wireguard0", sampleInterfaceJSON)
-	s := newTestPeerStore(fg, 20*time.Millisecond)
+	s, f, ifs := newTestPeerStore(20 * time.Millisecond)
+	f.SetDetail("Wireguard0", json.RawMessage(sampleInterfaceJSON))
 
 	if _, err := s.GetPeers(context.Background(), "Wireguard0"); err != nil {
 		t.Fatalf("prime: %v", err)
 	}
 
 	time.Sleep(30 * time.Millisecond)
-	fg.SetPostInterfaceError("Wireguard0", errors.New("ndms down"))
+	ifs.Invalidate("Wireguard0")
+	f.FailList(errors.New("ndms down"))
 
 	peers, err := s.GetPeers(context.Background(), "Wireguard0")
 	if err != nil {
@@ -123,48 +127,71 @@ func TestPeerStore_GetPeers_ServesStaleOnError(t *testing.T) {
 	}
 }
 
-func TestPeerStore_GetPeers_GoneIsTreatedAsEmpty(t *testing.T) {
-	// Кэш знает Wireguard1, NDMS — уже нет (потерян ifdestroyed): конверт
-	// `unable to find` — «пиров нет», не ошибка, чтобы метрики не сыпали
-	// предупреждениями.
-	fg := newFakeGetter()
-	fg.SetPostInterface("Wireguard1", `{"show":{"interface":{"status":[{"status":"error","code":"6553619","message":"unable to find"}]}}}`)
+// Записи нет в снимке — «пиров нет», не ошибка и без запроса по имени; список
+// не прочитан — ошибка наружу (решение 4).
+func TestPeerStore_GetPeers_NotInSnapshotIsEmpty(t *testing.T) {
+	s, f, _ := newTestPeerStore(peerTTL)
 
-	s := newTestPeerStore(fg, peerTTL)
+	peers, err := s.GetPeers(context.Background(), "Wireguard7")
+	if err != nil || len(peers) != 0 {
+		t.Fatalf("нет в снимке: want (0 peers, nil), got (%v, %v)", peers, err)
+	}
+	if f.E != 0 || len(f.Posts) != 0 {
+		t.Fatalf("E=%d Posts=%v, want 0/none", f.E, f.Posts)
+	}
 
+	s2, f2, _ := newTestPeerStore(peerTTL)
+	f2.FailList(errors.New("ndms timeout"))
+	if _, err := s2.GetPeers(context.Background(), "Wireguard2"); err == nil {
+		t.Error("list error must surface")
+	}
+}
+
+// Снят снаружи, ifdestroyed не доставлен: пиры — из снимка (прежние) или
+// пусто, но ни одной E и ни одного POST.
+func TestPeerStore_RemovedNoHook_NoRCI(t *testing.T) {
+	s, f, ifs := newTestPeerStore(time.Millisecond)
+	f.SetDetail("Wireguard1", json.RawMessage(sampleInterfaceJSON))
+	if _, err := s.GetPeers(context.Background(), "Wireguard1"); err != nil {
+		t.Fatal(err)
+	}
+	f.Remove("Wireguard1") // хук не доставлен
+	time.Sleep(2 * time.Millisecond)
+	if _, err := s.GetPeers(context.Background(), "Wireguard1"); err != nil {
+		t.Fatal(err)
+	}
+	ifs.Invalidate("Wireguard1") // и через свежий список
+	time.Sleep(2 * time.Millisecond)
 	peers, err := s.GetPeers(context.Background(), "Wireguard1")
-	if err != nil {
-		t.Fatalf("unable-to-find must not surface as error, got %v", err)
+	if err != nil || len(peers) != 0 {
+		t.Fatalf("после свежего списка: want (0 peers, nil), got (%v, %v)", peers, err)
 	}
-	if len(peers) != 0 {
-		t.Errorf("unable-to-find must map to empty peers, got %d", len(peers))
-	}
-
-	// Прочие ошибки — наружу.
-	fg.SetPostInterfaceError("Wireguard2", errors.New("ndms timeout"))
-	if _, err := s.GetPeers(context.Background(), "Wireguard2"); err == nil {
-		t.Error("transport error must surface")
+	if f.E != 0 || len(f.Posts) != 0 {
+		t.Fatalf("E=%d Posts=%v, want 0/none", f.E, f.Posts)
 	}
 }
 
 func TestPeerStore_InvalidateSingleAffectsOnlyThatName(t *testing.T) {
-	fg := newFakeGetter()
-	fg.SetJSON("/show/interface/Wireguard0", sampleInterfaceJSON)
-	fg.SetJSON("/show/interface/Wireguard1", sampleInterfaceJSON)
-	s := newTestPeerStore(fg, peerTTL)
+	s, f, ifs := newTestPeerStore(peerTTL)
+	f.SetDetail("Wireguard0", json.RawMessage(sampleInterfaceJSON))
+	f.SetDetail("Wireguard1", json.RawMessage(sampleInterfaceJSON))
+	ctx := context.Background()
 
-	_, _ = s.GetPeers(context.Background(), "Wireguard0")
-	_, _ = s.GetPeers(context.Background(), "Wireguard1")
+	_, _ = s.GetPeers(ctx, "Wireguard0")
+	_, _ = s.GetPeers(ctx, "Wireguard1")
 
 	s.Invalidate("Wireguard0")
-	_, _ = s.GetPeers(context.Background(), "Wireguard0")
-	_, _ = s.GetPeers(context.Background(), "Wireguard1")
-
-	if got := fg.PostInterfaceCalls("Wireguard0"); got != 2 {
-		t.Errorf("Wireguard0: want 2, got %d", got)
+	lists := f.ListCalls()
+	ifs.Invalidate("Wireguard0")
+	_, _ = s.GetPeers(ctx, "Wireguard0")
+	if got := f.ListCalls() - lists; got != 1 {
+		t.Errorf("Wireguard0 после Invalidate: списков %d, want 1", got)
 	}
-	if got := fg.PostInterfaceCalls("Wireguard1"); got != 1 {
-		t.Errorf("Wireguard1: want 1, got %d", got)
+	lists = f.ListCalls()
+	ifs.Invalidate("Wireguard1")
+	_, _ = s.GetPeers(ctx, "Wireguard1")
+	if got := f.ListCalls() - lists; got != 0 {
+		t.Errorf("Wireguard1 не сброшен: списков %d, want 0", got)
 	}
 }
 

@@ -59,8 +59,9 @@ func TestScenario_PhantomPairFromOwnCommand(t *testing.T) {
 	}
 }
 
-// ifdestroyed потерян: поллер пиров трижды спрашивает X. Первое чтение
-// получает «записи нет» и выселяет X, остальные в NDMS не уходят.
+// ifdestroyed потерян: поллер пиров трижды спрашивает X. Пиры — из снимка
+// списка: ни одного чтения по имени, E нет вовсе (F546); X уходит из карты со
+// следующим свежим списком.
 func TestScenario_LostDestroyThenPoll(t *testing.T) {
 	ctx := context.Background()
 	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"})
@@ -74,15 +75,20 @@ func TestScenario_LostDestroyThenPoll(t *testing.T) {
 		if err != nil || len(peers) != 0 {
 			t.Fatalf("poll %d: peers=%v err=%v, want пусто без ошибки", i, peers, err)
 		}
-		if i == 0 {
-			if got, _ := q.Interfaces.Get(ctx, "Wireguard3"); got != nil {
-				t.Fatalf("X не выселен после первого чтения: %#v", got)
-			}
-		}
 		q.Peers.Invalidate("Wireguard3") // истёк TTL пиров — следующий опрос идёт в fetch
 	}
-	if f.E != 1 {
-		t.Fatalf("E=%d, want 1: только первое чтение по снятому X", f.E)
+	if f.E != 0 || len(f.Posts) != 0 {
+		t.Fatalf("E=%d Posts=%v, want 0/none: опрос по снятому X не спрашивает по имени", f.E, f.Posts)
+	}
+	q.Interfaces.Invalidate("Wireguard3") // наша запись — снимок читает свежий список
+	if _, err := q.Peers.GetPeers(ctx, "Wireguard3"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := q.Interfaces.Get(ctx, "Wireguard3"); got != nil {
+		t.Fatalf("X не выселен свежим списком: %#v", got)
+	}
+	if f.E != 0 {
+		t.Fatalf("E=%d, want 0", f.E)
 	}
 }
 

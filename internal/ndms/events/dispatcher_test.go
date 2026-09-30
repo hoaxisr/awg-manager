@@ -336,10 +336,12 @@ func TestDispatcher_InvalidatesPeersOnDestroyAndLayerChange(t *testing.T) {
 			if _, err := q.Peers.GetPeers(context.Background(), "Wireguard0"); err != nil {
 				t.Fatalf("prime peers: %v", err)
 			}
-			primed := pointReads(fg)
-
 			d.Enqueue(tc.ev)
 			waitDrain(t, drained)
+			// Пиры читаются из снимка списка (F546): метим его грязным — тогда
+			// промах кэша пиров виден как один список, попадание — как ноль.
+			q.Interfaces.Invalidate("Wireguard0")
+			lists := fg.Calls(ifaceListPath)
 
 			peers, err := q.Peers.GetPeers(context.Background(), "Wireguard0")
 			if err != nil {
@@ -353,8 +355,8 @@ func TestDispatcher_InvalidatesPeersOnDestroyAndLayerChange(t *testing.T) {
 				}
 				return
 			}
-			if after := pointReads(fg); after <= primed {
-				t.Errorf("кэш пиров не сброшен: запросов было %d, стало %d", primed, after)
+			if after := fg.Calls(ifaceListPath); after <= lists {
+				t.Errorf("кэш пиров не сброшен: списков было %d, стало %d", lists, after)
 			}
 		})
 	}

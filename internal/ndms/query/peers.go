@@ -3,7 +3,6 @@ package query
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -21,8 +20,8 @@ const peerTTL = 8 * time.Second
 // the per-interface peer metrics. Per-interface key.
 type PeerStore struct {
 	log Logger
-	// interfaces — единственный путь чтения по имени: пиров отсутствующего
-	// в кэше интерфейса не спрашиваем (F546).
+	// interfaces — источник записей: пиры читаются из снимка полного списка,
+	// по имени NDMS не спрашивают (F546).
 	interfaces *InterfaceStore
 
 	store *cache.KeyedStore[string, []ndms.Peer]
@@ -34,7 +33,7 @@ func NewPeerStore(log Logger, ifaces *InterfaceStore) *PeerStore {
 }
 
 // NewPeerStoreWithTTL — то же с заданным TTL. Чтение идёт только через ifaces
-// (единый шлюз showOne), своего getter у стора нет.
+// (снимок списка), своего getter у стора нет.
 func NewPeerStoreWithTTL(log Logger, ifaces *InterfaceStore, ttl time.Duration) *PeerStore {
 	if ifaces == nil {
 		panic("query.NewPeerStore: ifaces обязателен — чтение по имени идёт только через InterfaceStore (F546)")
@@ -77,32 +76,20 @@ type peerWire struct {
 }
 
 func (s *PeerStore) fetch(ctx context.Context, name string) ([]ndms.Peer, error) {
-	// Peers are NOT a standalone RCI command — there is no
-	// "show interface <name> wireguard peer" command. The peer list is a
-	// data sub-field of "show interface <name>" (.wireguard.peer). A direct
-	// GET /show/interface/<name>/wireguard/peer happens to work (the GET
-	// handler descends the response tree by URL segment), but that path is
-	// not expressible as a batch-POST command — NDMS parses wireguard/peer
-	// as a command continuation and answers "not found". Querying the
-	// interface and reading .wireguard.peer works in both the direct-GET and
-	// batch-POST transports. Verified against Keenetic RCI 2026-05-23.
-	// Интерфейса нет в кэше — ноль пиров без запроса: на show interface по
-	// отсутствующему имени NDMS пишет E «unable to find» в свой журнал, а
-	// managed-сервер с пропавшим WireguardN опрашивается постоянно (F546).
-	// ErrGone — то же «нет»: запись уже выселена, следующий опрос не спросит.
-	p, ok, err := s.interfaces.Lookup(ctx, name)
+	// Peers are NOT a standalone RCI command — the peer list is a data
+	// sub-field of the interface record (.wireguard.peer). Берём его из
+	// снимка полного списка (не старше SnapshotRecent): поля записи списка те
+	// же, что у `show interface <name>`, а по имени NDMS не спрашивают —
+	// запрос, долетевший между снятием записи и хуком ifdestroyed, пишет E
+	// «unable to find» (F546). Параллельные GetPeers тика делят один список.
+	// Записи в снимке нет — ноль пиров; список не прочитан — ошибка.
+	snap, err := s.interfaces.Snapshot(ctx, SnapshotRecent)
 	if err != nil {
 		return nil, fmt.Errorf("fetch peers %s: %w", name, err)
 	}
+	inner, ok := snap.Raw(name)
 	if !ok {
 		return []ndms.Peer{}, nil
-	}
-	inner, err := s.interfaces.ShowRaw(ctx, p)
-	if errors.Is(err, ErrGone) {
-		return []ndms.Peer{}, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("fetch peers %s: %w", name, err)
 	}
 	var wrap struct {
 		Wireguard struct {
