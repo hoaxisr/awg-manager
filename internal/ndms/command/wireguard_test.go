@@ -292,6 +292,33 @@ func TestImportWireguardConfig_CreatedIsConfirmed(t *testing.T) {
 	}
 }
 
+// Стенд 5.01.C.6: iflayerchanged ctrl ×2 по новому WireguardN доезжают, пока
+// список подтверждения в полёте, ifcreated — после. Импорт обязан пройти:
+// раньше здесь было «импорт принят, но Wireguard1 нет в списке», а созданный
+// интерфейс оставался сиротой.
+func TestImportWireguardConfig_LayerHooksDuringConfirm(t *testing.T) {
+	cmds, f, q := newOracleCommands(t, nil, ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
+	ctx := context.Background()
+	if _, err := q.Interfaces.List(ctx); err != nil { // карта тёплая, как в проде
+		t.Fatal(err)
+	}
+	f.InList(func() {
+		f.InList(nil)
+		for _, h := range f.DrainHooks() { // до ответа NDMS успел только ctrl ×2
+			if h.Type == "iflayerchanged" {
+				q.Interfaces.OnLayerChanged(h.ID, h.Layer, h.Level)
+			}
+		}
+	})
+	res, err := cmds.Wireguard.ImportWireguardConfig(ctx, []byte("conf"), "x.conf")
+	if err != nil || res.Created.Name() != "Wireguard1" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if f.Phantoms != 0 || f.E != 0 {
+		t.Fatalf("phantoms=%d E=%d", f.Phantoms, f.E)
+	}
+}
+
 // Роутер назвал созданный интерфейс, а в свежем списке его нет — ошибка с
 // именем, не пустое доказательство.
 func TestImportWireguardConfig_CreatedAbsent_Error(t *testing.T) {

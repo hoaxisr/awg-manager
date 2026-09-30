@@ -11,7 +11,9 @@
 //
 //   - Hook-side (called from events.Dispatcher): OnCreated /
 //     OnDestroyed / OnLayerChanged / OnIPChanged. Pure in-memory
-//     mutators, no HTTP. OnCreated only marks an unknown id as pending;
+//     mutators, no HTTP. OnCreated, OnLayerChanged and OnIPChanged only
+//     mark an unknown id as pending (on creation NDMS sends
+//     iflayerchanged ctrl ×2 before ifcreated, stand 5.01.C.6);
 //     after each hook batch the dispatcher calls ReconcilePending, which
 //     reads ONE full list if anything is pending. No point reads by name
 //     from hooks: by the time the hook is applied the name may already be
@@ -209,7 +211,7 @@ func (s *InterfaceStore) refreshAll(ctx context.Context) error {
 
 // refreshList — refreshAll, возвращающий сам ответ NDMS: для подтверждения
 // (Confirm) важен он, а не карта — seq-гард держит в pending имя, чей
-// ifcreated пришёл, пока список в полёте, хотя в ответе оно есть.
+// хук пришёл, пока список в полёте, хотя в ответе оно есть.
 func (s *InterfaceStore) refreshList(ctx context.Context) (map[string]ndms.Interface, error) {
 	s.mu.RLock()
 	start := s.seq
@@ -889,7 +891,7 @@ func (s *InterfaceStore) Forget(id string) {
 // OnDestroyed — хук ifdestroyed; то же, что Forget.
 func (s *InterfaceStore) OnDestroyed(id string) { s.Forget(id) }
 
-// HasPending — есть созданные хуком id, которых ещё нет в карте.
+// HasPending — есть id из хуков, которых ещё нет в карте.
 func (s *InterfaceStore) HasPending() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -897,7 +899,7 @@ func (s *InterfaceStore) HasPending() bool {
 }
 
 // ReconcilePending — один полный список на пачку хуков, только если есть
-// неизвестные созданные id.
+// неизвестные id из хуков.
 func (s *InterfaceStore) ReconcilePending(ctx context.Context) error {
 	if !s.HasPending() {
 		return nil
@@ -931,9 +933,14 @@ func (s *InterfaceStore) OnLayerChanged(id, layer, level string) {
 	s.markTouchedLocked(id)
 	iface, ok := s.byID[id]
 	if !ok {
-		// Event for an interface we don't know — typically means we
-		// missed an ifcreated. Skip; bootstrap or a future command-
-		// side Invalidate will reconcile.
+		// Незнакомый id — запись есть, карта её не знает: на создание NDMS
+		// шлёт iflayerchanged ctrl ×2 раньше ifcreated (~1 с, стенд
+		// 5.01.C.6). В pending, как в OnCreated: ReconcilePending положит её
+		// одним списком, Confirm подтвердит по ответу. Без этого хук,
+		// пришедший, пока список Confirm в полёте, прятал запись: список её
+		// не кладёт (хук новее), pending пуст — «записи нет», интерфейс
+		// осиротел.
+		s.pending[id] = struct{}{}
 		return
 	}
 	switch layer {
@@ -971,6 +978,7 @@ func (s *InterfaceStore) OnIPChanged(id, address string) {
 	s.markTouchedLocked(id)
 	iface, ok := s.byID[id]
 	if !ok {
+		s.pending[id] = struct{}{} // как в OnLayerChanged
 		return
 	}
 	if address != "" {
@@ -1169,8 +1177,9 @@ func (s *InterfaceStore) ConfirmEach(ctx context.Context, names []string) (map[s
 
 // confirmedLocked — копия записи, если name есть в свежем ответе raw и не
 // снята хуком после него. В карте запись новее ответа (хуки её правят); нет в
-// карте, но в pending — ifcreated пришёл, пока список в полёте: карта её ещё
-// не взяла, берём из ответа. Нет ни там, ни там — ifdestroyed новее ответа.
+// карте, но в pending — хук по ней (ifcreated, layer, ip) пришёл, пока список
+// в полёте: карта её ещё не взяла, берём из ответа. Нет ни там, ни там —
+// ifdestroyed новее ответа.
 // Имени нет в ответе — не подтверждено, даже если оно в карте или в pending:
 // доказательство — только свежий список.
 func (s *InterfaceStore) confirmedLocked(raw map[string]ndms.Interface, name string) (*ndms.Interface, bool) {

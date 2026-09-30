@@ -153,3 +153,63 @@ func TestPeersRCFresh_ConfirmsByFreshList(t *testing.T) {
 		t.Fatalf("err=%v E=%d", err, f.E)
 	}
 }
+
+// Стенд 5.01.C.6: на создание NDMS шлёт iflayerchanged ctrl ×2, а ifcreated —
+// ~1 с спустя. Confirm сразу после импорта: оба layer-хука приходят, пока
+// список в полёте, ifcreated — после ответа. Layer-хук по незнакомому id —
+// доказательство записи: имя ждёт в pending, и Confirm подтверждает по ответу.
+// Раньше подтверждения не было — «импорт принят, но WireguardN нет в списке».
+func TestConfirm_StandHookOrder_LayerDuringList_Confirms(t *testing.T) {
+	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
+	s := NewInterfaceStore(f, NopLogger())
+	ctx := context.Background()
+	if _, err := s.Get(ctx, "Wireguard0"); err != nil { // bootstrap
+		t.Fatal(err)
+	}
+	if _, err := f.Post(ctx, map[string]any{"interface": map[string]any{"wireguard": map[string]any{"import": "x"}}}); err != nil {
+		t.Fatal(err)
+	}
+	hooks := f.DrainHooks()
+	if len(hooks) != 3 || hooks[2].Type != "ifcreated" {
+		t.Fatalf("hooks: %+v", hooks)
+	}
+	f.InList(func() {
+		f.InList(nil)
+		for _, h := range hooks[:2] {
+			s.OnLayerChanged(h.ID, h.Layer, h.Level)
+		}
+	})
+	c, rec, ok, err := s.Confirm(ctx, "Wireguard1")
+	if err != nil || !ok || c.Name() != "Wireguard1" || rec == nil {
+		t.Fatalf("created record must be confirmed: ok=%v rec=%#v err=%v", ok, rec, err)
+	}
+	s.OnCreated(hooks[2].ID)
+	if err := s.ReconcilePending(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Get(ctx, "Wireguard1"); got == nil {
+		t.Fatal("record must land in the map after ifcreated")
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d Phantoms=%d", f.E, f.Phantoms)
+	}
+}
+
+// Layer/ip-хук по незнакомому id ставит его в pending, как ifcreated;
+// ifdestroyed (Forget) снимает.
+func TestHooks_UnknownIDPendingUntilDestroyed(t *testing.T) {
+	for name, hook := range map[string]func(*InterfaceStore){
+		"layer": func(s *InterfaceStore) { s.OnLayerChanged("Wireguard3", "ctrl", "") },
+		"ip":    func(s *InterfaceStore) { s.OnIPChanged("Wireguard3", "10.0.0.1") },
+	} {
+		s := NewInterfaceStore(NewFakeNDMS(), NopLogger())
+		hook(s)
+		if !s.HasPending() {
+			t.Fatalf("%s: unknown id must be pending", name)
+		}
+		s.OnDestroyed("Wireguard3")
+		if s.HasPending() {
+			t.Fatalf("%s: ifdestroyed must clear pending", name)
+		}
+	}
+}

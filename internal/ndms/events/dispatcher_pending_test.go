@@ -47,7 +47,7 @@ func TestDispatcher_ExternalCreate_OneListPerBatch(t *testing.T) {
 	d := NewDispatcher(q, NopLogger())
 	done := drainBarrier(d)
 	for _, h := range f.DrainHooks() {
-		d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID})
+		d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID, Layer: h.Layer, Level: h.Level})
 	}
 	d.Start()
 	defer d.Stop()
@@ -85,5 +85,32 @@ func TestDispatcher_LateCreatedForKnownID_IsFree(t *testing.T) {
 	}
 	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard0"); got == nil || got.Description != "d0" || got.SystemName != "nwg0" {
 		t.Fatalf("known id record changed by ifcreated: %#v", got)
+	}
+}
+
+// Стенд 5.01.C.6: ifcreated приходит ~1 с после iflayerchanged ctrl ×2 —
+// в следующей пачке. Пачка из одних layer-хуков по незнакомому id уже
+// добирает запись одним списком.
+func TestDispatcher_LayerBeforeCreated_OneList(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Bridge0", Type: "Bridge"})
+	q := oracleQueries(t, f)
+	_, _ = q.Interfaces.List(context.Background())
+	lists := f.ListCalls()
+	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
+	d := NewDispatcher(q, NopLogger())
+	done := drainBarrier(d)
+	for _, h := range f.DrainHooks() {
+		if h.Type == "iflayerchanged" {
+			d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID, Layer: h.Layer, Level: h.Level})
+		}
+	}
+	d.Start()
+	defer d.Stop()
+	waitDrain(t, done)
+	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard1"); got == nil || got.SystemName != "nwg1" {
+		t.Fatalf("record from the list expected after layer hooks, got %#v", got)
+	}
+	if f.ListCalls() != lists+1 || f.E != 0 || q.Interfaces.HasPending() {
+		t.Fatalf("want one list, E=0, no pending: lists=%d E=%d pending=%v", f.ListCalls()-lists, f.E, q.Interfaces.HasPending())
 	}
 }
