@@ -2,7 +2,6 @@ package transport
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -64,20 +63,6 @@ func TestShowQuery_NestedPath(t *testing.T) {
 	want := `{"show":{"ip":{"route":{"prefix":"0.0.0.0/0"}}}}`
 	if got != want {
 		t.Errorf("\n  got  %s\n  want %s", got, want)
-	}
-}
-
-func TestUnwrapShowInterface(t *testing.T) {
-	inner, err := UnwrapShowInterface([]byte(`{"show":{"interface":{"id":"Wireguard2","link":"up"}}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(inner), `"Wireguard2"`) {
-		t.Fatalf("inner = %s", inner)
-	}
-	empty, err := UnwrapShowInterface([]byte(`{}`))
-	if err != nil || len(empty) != 0 {
-		t.Fatalf("empty case: %s %v", empty, err)
 	}
 }
 

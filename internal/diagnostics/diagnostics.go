@@ -11,7 +11,6 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
-	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/pingcheck"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -438,7 +437,6 @@ type SingboxSubMember struct {
 type Deps struct {
 	TunnelService        TunnelServiceForDiag
 	NDMSQueries          *query.Queries
-	NDMSTransport        *transport.Client
 	KmodLoader           *kmod.Loader
 	TunnelStore          *storage.AWGTunnelStore
 	LogService           LogServiceForDiag

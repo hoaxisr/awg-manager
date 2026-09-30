@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -31,6 +33,16 @@ func newGuardTestOperator(t *testing.T) *OperatorNativeWG {
 	}
 	t.Cleanup(o.Close)
 	return o
+}
+
+// guardQueries — шлюз чтения для kmod-пересборки: SyncKmodSlot читает
+// peer.via через ResolveActiveWAN. Wireguard3 есть в NDMS, via не задан.
+func guardQueries() *query.Queries {
+	return query.NewQueries(query.Deps{
+		Getter: query.NewFakeNDMS(ndms.Interface{ID: "Wireguard3"}),
+		Logger: query.NopLogger(),
+		IsOS5:  func() bool { return true },
+	})
 }
 
 // guardHas — «за туннелем следит страж». Живёт в тестах: прод-код после
@@ -456,6 +468,7 @@ func TestGuardSweep_ViaKmodEntryNeverTouchesKernel(t *testing.T) {
 func TestGuardSweep_KmodRebuildsSlotOnAddressChange(t *testing.T) {
 	cs := newCaptureServer(t)
 	op := newSyncTestOperator(t, cs.srv.URL)
+	op.queries = guardQueries()
 	op.supportsASC = func() bool { return false }
 	op.resolveFn = func(string) (string, int, error) { return "203.0.113.9", 51820, nil }
 	km, stub := newKmodManagerForTest()
@@ -506,6 +519,7 @@ func TestGuardSweep_KmodRebuildsSlotOnAddressChange(t *testing.T) {
 func TestGuardSweep_KmodRetriesAfterFailedRebuild(t *testing.T) {
 	cs := newCaptureServer(t)
 	op := newSyncTestOperator(t, cs.srv.URL)
+	op.queries = guardQueries()
 	op.supportsASC = func() bool { return false }
 	op.resolveFn = func(string) (string, int, error) { return "203.0.113.9", 51820, nil }
 	km, stub := newKmodManagerForTest()
@@ -558,6 +572,7 @@ func TestGuardSweep_KmodNoRebuildWhenAddressStable(t *testing.T) {
 func TestGuardSweep_KmodRebuildsSlotOnV6Address(t *testing.T) {
 	cs := newCaptureServer(t)
 	op := newSyncTestOperator(t, cs.srv.URL)
+	op.queries = guardQueries()
 	op.supportsASC = func() bool { return false }
 	op.resolveFn = func(string) (string, int, error) { return "2001:db8::2", 51820, nil }
 	km, stub := newKmodManagerForTest()
@@ -623,6 +638,7 @@ func TestWGShowHasEndpoint(t *testing.T) {
 func TestGuardSweep_KmodRebuildRespectsCooldown(t *testing.T) {
 	cs := newCaptureServer(t)
 	op := newSyncTestOperator(t, cs.srv.URL)
+	op.queries = guardQueries()
 	op.supportsASC = func() bool { return false }
 	op.resolveFn = func(string) (string, int, error) { return "203.0.113.9", 51820, nil }
 	km, stub := newKmodManagerForTest()

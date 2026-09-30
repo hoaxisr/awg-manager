@@ -187,7 +187,6 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	h.diagRunner = diagnostics.NewRunner(diagnostics.Deps{
 		TunnelService:        s.tunnelService,
 		NDMSQueries:          s.ndmsQueries,
-		NDMSTransport:        s.ndmsTransport,
 		KmodLoader:           s.kmodLoader,
 		TunnelStore:          s.tunnels,
 		LogService:           &diagLogAdapter{svc: s.loggingService},

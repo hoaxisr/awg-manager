@@ -167,10 +167,12 @@ func (r *Runner) collectTunnels(ctx context.Context) []TunnelInfo {
 		// NDMS interface state (using resolved ndmsName)
 		// For nativewg, this output is reused for Connection data
 		var ndmsJSON string
-		if r.deps.NDMSTransport != nil && ndmsName != "" {
-			if raw, err := r.deps.NDMSTransport.GetRaw(ctx, "/show/interface/"+ndmsName); err == nil {
-				ndmsJSON = string(raw)
-				ti.Interface.NDMSState = ndmsJSON
+		if r.deps.NDMSQueries != nil {
+			if p, ok, err := r.deps.NDMSQueries.Interfaces.Lookup(ctx, ndmsName); err == nil && ok {
+				if inner, err := r.deps.NDMSQueries.Interfaces.ShowRaw(ctx, p); err == nil {
+					ndmsJSON = string(inner)
+					ti.Interface.NDMSState = ndmsJSON
+				}
 			}
 		}
 
