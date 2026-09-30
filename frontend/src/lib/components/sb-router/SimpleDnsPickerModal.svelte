@@ -135,9 +135,10 @@
     <div class="proto">
       <SegmentedControl
         options={PROTO_OPTIONS}
-        bind:value={proto}
+        value={proto}
+        onchange={(v) => (proto = v as DnsPresetProto)}
         disabled={choice === CUSTOM}
-        size="sm"
+        ariaLabel="Протокол DNS"
       />
       {#if choice === CUSTOM}
         <span class="hint">Свой адрес доступен только по обычному DNS</span>

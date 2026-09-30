@@ -28,19 +28,144 @@
 		rules?: SingboxRouterDNSRule[];
 		/** Позиция правила в списке; undefined при добавлении (конец списка). */
 		ruleIndex?: number;
+		existingRoutingRules?: Array<{ type?: string; payload?: string; name?: string }>;
 		onClose: () => void;
 		onSave: (rule: SingboxRouterDNSRule) => Promise<void> | void;
 	}
 	let {
 		rule,
 		servers,
-		availableRuleSets,
+		availableRuleSets = [],
 		ruleSetUsage,
 		rules,
 		ruleIndex,
+		existingRoutingRules = [],
 		onClose,
 		onSave,
 	}: Props = $props();
+
+	const GEOSITE_DOMAIN_MAP: Record<string, string[]> = {
+		roblox: [
+			'roblox.com',
+			'rbxcdn.com',
+			'rbxusercontent.com',
+			'robloxlabs.com',
+			'rbx.com',
+			'roblox.cn',
+			'rbximage.com',
+			'rbximages.com',
+		],
+		youtube: [
+			'youtube.com',
+			'youtu.be',
+			'googlevideo.com',
+			'ytimg.com',
+			'yt3.ggpht.com',
+			'youtube-nocookie.com',
+			'youtubei.googleapis.com',
+			'wide-youtube.l.google.com',
+			'ggpht.com',
+		],
+		telegram: [
+			'telegram.org',
+			't.me',
+			'tdesktop.com',
+			'telesco.pe',
+			'telegram.me',
+			'telegram.dog',
+			'contest.dev',
+		],
+		discord: [
+			'discord.com',
+			'discord.gg',
+			'discordapp.com',
+			'discordapp.net',
+			'discord.media',
+			'discordcdn.com',
+			'discord-attachments-uploads-prd.storage.googleapis.com',
+		],
+		instagram: [
+			'instagram.com',
+			'cdninstagram.com',
+			'ig.me',
+			'facebook.com',
+			'fbcdn.net',
+			'threads.net',
+			'meta.com',
+		],
+		twitter: ['twitter.com', 'x.com', 'twimg.com', 't.co', 'x.ai'],
+		openai: [
+			'openai.com',
+			'chatgpt.com',
+			'oaistatic.com',
+			'oaiusercontent.com',
+			'chat.com',
+		],
+		tiktok: [
+			'tiktok.com',
+			'tiktokv.com',
+			'tiktokcdn.com',
+			'byteoversea.com',
+			'ibytedtos.com',
+			'musically.com',
+		],
+		spotify: ['spotify.com', 'scdn.co', 'spoti.fi', 'spotifycdn.com'],
+		twitch: ['twitch.tv', 'ttvnw.net', 'jtvnw.net', 'twitchcdn.net'],
+		steam: [
+			'steampowered.com',
+			'steamcommunity.com',
+			'steamstatic.com',
+			'steamcontent.com',
+			'steamgames.com',
+		],
+		netflix: ['netflix.com', 'nflxvideo.net', 'nflximg.net', 'nflxext.com'],
+		rutracker: ['rutracker.org', 'rutracker.net', 'rutracker.cc'],
+	};
+
+	const domainCapableRules = $derived(
+		existingRoutingRules.filter((r) => {
+			const type = (r.type || '').toUpperCase();
+			if (
+				type.startsWith('GEOIP') ||
+				type.startsWith('IP') ||
+				type.startsWith('SRC-IP') ||
+				type.startsWith('SRC-GEOIP')
+			) {
+				return false;
+			}
+			return true;
+		}),
+	);
+
+	function applyExistingRule(r: { type?: string; payload?: string; name?: string }) {
+		const type = (r.type || '').toUpperCase();
+		const payload = (r.payload || r.name || '').trim();
+		const key = payload.toLowerCase();
+
+		if (type === 'RULE-SET' || type === 'RULE_SET') {
+			if (!ruleSetTags.includes(payload)) {
+				ruleSetTags = [...ruleSetTags, payload];
+			}
+			return;
+		}
+
+		if (GEOSITE_DOMAIN_MAP[key]) {
+			domainSuffixStr = GEOSITE_DOMAIN_MAP[key].join('\n');
+			return;
+		}
+
+		if (type === 'DOMAIN-SUFFIX' || type === 'DOMAIN' || type === 'DOMAIN-KEYWORD') {
+			domainSuffixStr = payload;
+			return;
+		}
+
+		if (type === 'GEOSITE') {
+			domainSuffixStr = `${key}.com\n${key}.net`;
+			return;
+		}
+
+		domainSuffixStr = payload;
+	}
 
 	type ActionKind = 'route' | 'block' | 'evaluate' | 'respond';
 
@@ -466,6 +591,27 @@
 		{:else}
 			<div class="section-label">Matchers (минимум один)</div>
 
+			{#if domainCapableRules && domainCapableRules.length > 0}
+				<div class="template-section">
+					<div class="template-label">Скопировать условия из правил маршрутизации:</div>
+					<div class="rule-import-chips">
+						{#each domainCapableRules as r}
+							{@const label = r.payload || r.name || ''}
+							{#if label}
+								<button
+									type="button"
+									class="rule-chip"
+									onclick={() => applyExistingRule(r)}
+									title={`Импортировать домены из правила ${r.type ? `${r.type}: ` : ''}${label}`}
+								>
+									📋 {r.type ? `${r.type}: ` : ''}{label}
+								</button>
+							{/if}
+						{/each}
+					</div>
+				</div>
+			{/if}
+
 			<!-- div, не label: клик по любой не-интерактивной части label активирует
 			     его первый labelable-элемент — крестик ПЕРВОГО чипа, т.е. клик по
 			     названию любого rule-set удалял первый (bug #446). -->
@@ -591,5 +737,52 @@
 		font-size: 0.85rem;
 		font-weight: 600;
 		color: var(--text-primary, var(--text));
+	}
+
+	.template-section {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 8px 10px;
+		background: var(--bg-tertiary, rgba(255, 255, 255, 0.04));
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		margin-bottom: 8px;
+	}
+	.template-label {
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--text-secondary);
+	}
+	.template-chips, .rule-import-chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 5px;
+	}
+	.tpl-chip, .rule-chip {
+		display: inline-flex;
+		align-items: center;
+		padding: 3px 8px;
+		font-size: 11px;
+		font-weight: 500;
+		border-radius: 4px;
+		border: 1px solid var(--border);
+		background: var(--bg-secondary, rgba(255, 255, 255, 0.06));
+		color: var(--text-primary, var(--text));
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+	.tpl-chip:hover, .rule-chip:hover {
+		border-color: var(--color-primary, #3b82f6);
+		background: var(--color-primary-bg, rgba(59, 130, 246, 0.1));
+		color: var(--color-primary, #3b82f6);
+	}
+	.rule-import-box {
+		margin-top: 4px;
+		padding-top: 4px;
+		border-top: 1px dashed var(--border);
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
 	}
 </style>

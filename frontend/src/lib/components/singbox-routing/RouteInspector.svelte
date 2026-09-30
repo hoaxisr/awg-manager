@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { Modal, Button } from '$lib/components/ui';
+	import { Globe } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { awgTags as awgTagsStore } from '$lib/stores/awgTags';
+	import { subscriptionsStore } from '$lib/stores/subscriptions';
 	import type {
 		SingboxRouterInspectResult,
 		SingboxRouterInspectMatch,
@@ -10,10 +13,40 @@
 
 	interface Props {
 		open: boolean;
+		engine?: 'sing-box' | 'mihomo';
 		onClose: () => void;
 	}
 
-	let { open, onClose }: Props = $props();
+	let { open, engine = 'sing-box', onClose }: Props = $props();
+
+	const nameContext = $derived({
+		awgTags: $awgTagsStore.data,
+		subscriptions: $subscriptionsStore.data,
+	});
+
+	function humanize(text?: string | null): string {
+		if (!text) return '';
+		let out = text;
+		if (nameContext.awgTags) {
+			for (const t of nameContext.awgTags) {
+				if (t.tag && t.label) {
+					out = out.split(`awg-sys-${t.tag}`).join(t.label);
+					out = out.split(`awg-${t.tag}`).join(t.label);
+					out = out.split(t.tag).join(t.label);
+				}
+			}
+		}
+		if (nameContext.subscriptions) {
+			for (const s of nameContext.subscriptions) {
+				if (s.selectorTag && s.label) {
+					out = out.split(s.selectorTag).join(s.label);
+				}
+			}
+		}
+		out = out.replace(/awg-sys-([a-zA-Z0-9_-]+)/g, '$1');
+		out = out.replace(/awg-([a-zA-Z0-9_-]+)/g, '$1');
+		return out;
+	}
 
 	let inputValue = $state('');
 	let port = $state<number | ''>('');
@@ -365,7 +398,10 @@
 			activeRuleSetTag = '';
 			inspectionReport = null;
 			inspectStream?.close();
-			inspectStream = api.singboxRouterInspectRouteStream(
+			const streamFn = engine === 'mihomo'
+				? api.mihomoRouterInspectRouteStream.bind(api)
+				: api.singboxRouterInspectRouteStream.bind(api);
+			inspectStream = streamFn(
 				{
 					domain: trimmed,
 					port: typeof port === 'number' && port > 0 ? port : undefined,
@@ -376,11 +412,11 @@
 						if (runId !== inspectRunId) return;
 						handleProgress(progress);
 					},
-					onResult: (next) => {
+					onResult: (next: SingboxRouterInspectResult) => {
 						if (runId !== inspectRunId) return;
 						if (next.matches?.length) {
 							totalRules = Math.max(totalRules, next.matches.length);
-							checkedRuleIndexes = new Set(next.matches.map((m) => m.index));
+							checkedRuleIndexes = new Set(next.matches.map((m: { index: number }) => m.index));
 						}
 						inspectionReport = buildInspectionReport(next);
 						result = next;
@@ -389,7 +425,7 @@
 						inspectStream?.close();
 						inspectStream = null;
 					},
-					onInspectError: (message) => {
+					onInspectError: (message: string) => {
 						if (runId !== inspectRunId) return;
 						error = message;
 						notifications.error(`Не удалось проверить маршрут: ${message}`);
@@ -398,7 +434,7 @@
 						inspectStream?.close();
 						inspectStream = null;
 					},
-					onError: (message) => {
+					onError: (message: string) => {
 						if (runId !== inspectRunId) return;
 						error = message;
 						notifications.error(`Не удалось проверить маршрут: ${message}`);
@@ -491,7 +527,7 @@
 	const isReject = $derived(result?.destination === 'REJECT');
 </script>
 
-<Modal {open} title="Инспектор маршрутов" size="xl" onclose={close}>
+<Modal {open} title={`Инспектор маршрутов · ${engine === 'mihomo' ? 'Mihomo' : 'Sing-box'}`} size="xl" onclose={close}>
 	<div class="inspector">
 		<!-- Input section -->
 		<section class="card input-section">
@@ -591,7 +627,7 @@
 						<span class="progress-pill">Rule-set: <code>{currentRuleSet}</code></span>
 					{/if}
 				</div>
-				<div class="progress-hint">Инспектор симулирует правила и может проверять rule_set через sing-box.</div>
+				<div class="progress-hint">Инспектор симулирует правила{engine === 'mihomo' ? ' ядра Mihomo.' : ' и может проверять rule_set через sing-box.'}</div>
 				<div class="step-stack" aria-label="Ход проверки">
 					{#if previousStep}
 						<div class="step-card step-{previousStep.status}">
@@ -648,12 +684,12 @@
 						class:dest-reject={isReject}
 						class:dest-final={result.matchedRule < 0 && !isReject}
 					>
-						<div class="dest-value">{result.destination}</div>
+						<div class="dest-value">{humanize(result.destination)}</div>
 						<div class="dest-meta">
 							{#if result.matchedRule >= 0}
 								Сработало правило #{result.matchedRule}
 							{:else}
-								Дефолтный outbound (final: {result.final || 'direct'})
+								Дефолтный outbound (final: {humanize(result.final || 'direct')})
 							{/if}
 						</div>
 					</div>
@@ -667,7 +703,7 @@
 								{actionLabel(matchedRuleData.action)}
 							</span>
 							{#if matchedRuleData.outbound}
-								<span class="match-outbound">→ {matchedRuleData.outbound}</span>
+								<span class="match-outbound">→ {humanize(matchedRuleData.outbound)}</span>
 							{/if}
 						</div>
 						{#if matchedRuleData.reason}
@@ -684,11 +720,46 @@
 					<div class="match-detail no-match">
 						<span>
 							Ни одно правило не сработало — трафик пойдёт через
-							<strong>{result.final || 'direct'}</strong>.
+							<strong>{humanize(result.final || 'direct')}</strong>.
 						</span>
 					</div>
 				{/if}
 			</section>
+
+			{#if result.dns}
+				<section class="card dns-card">
+					<div class="dns-header">
+						<div class="dns-title-group">
+							<Globe size={15} class="dns-icon" />
+							<span class="dns-title">DNS-решение (Nameserver Policy)</span>
+						</div>
+						<span class="badge {result.dns.isRemoteDNS ? 'badge-route' : 'badge-sniff'}">
+							{result.dns.isRemoteDNS ? 'Remote DNS (Туннель)' : 'Локальный / Nameserver'}
+						</span>
+					</div>
+					<div class="dns-grid">
+						<div class="dns-field">
+							<span class="dns-label">Целевой DNS-сервер:</span>
+							<strong class="dns-server-name">{result.dns.server}</strong>
+							{#if result.dns.serverAddress}
+								<span class="dns-server-addr">({result.dns.serverAddress})</span>
+							{/if}
+						</div>
+						{#if result.dns.policy}
+							<div class="dns-field">
+								<span class="dns-label">Политика DNS:</span>
+								<code class="dns-code">{result.dns.policy}</code>
+							</div>
+						{/if}
+						{#if result.dns.reason}
+							<div class="dns-field">
+								<span class="dns-label">Обоснование:</span>
+								<span class="dns-reason-text">{result.dns.reason}</span>
+							</div>
+						{/if}
+					</div>
+				</section>
+			{/if}
 
 			{#if result.note}
 				<div class="note-banner">
@@ -709,14 +780,14 @@
 					<div class="report-grid">
 						<div class="report-item">
 							<span>Решение</span>
-							<strong>{inspectionReport.destination}</strong>
+							<strong>{humanize(inspectionReport.destination)}</strong>
 						</div>
 						<div class="report-item">
 							<span>Сработало</span>
 							<strong>
 								{inspectionReport.matchedRule >= 0
 									? `Правило #${inspectionReport.matchedRule}`
-									: `Final: ${inspectionReport.final}`}
+									: `Final: ${humanize(inspectionReport.final)}`}
 							</strong>
 						</div>
 					</div>
@@ -772,7 +843,7 @@
 										{actionLabel(m.action)}
 									</span>
 									{#if m.outbound}
-										<span class="row-outbound">→ {m.outbound}</span>
+										<span class="row-outbound">→ {humanize(m.outbound)}</span>
 									{/if}
 									<span class="row-status">
 										{#if m.matched}
@@ -798,7 +869,7 @@
 							<div class="row-head">
 								<span class="row-index">∞</span>
 								<span class="badge badge-other">FINAL</span>
-								<span class="row-outbound">→ {result.final || 'direct'}</span>
+								<span class="row-outbound">→ {humanize(result.final || 'direct')}</span>
 								<span class="row-status">используется, если ни одно правило не подходит</span>
 							</div>
 						</li>
@@ -807,8 +878,8 @@
 			{/if}
 		{:else if !error && !testing}
 			<div class="empty-state">
-				Введите домен или IP-адрес — инспектор покажет, через какой outbound пойдёт
-				трафик и какое правило сработает. Это симуляция, sing-box не вызывается.
+				Введите домен или IP-адрес — инспектор покажет, через какой выходной узел пойдёт
+				трафик и какое правило сработает. Это симуляция, ядро {engine === 'mihomo' ? 'Mihomo' : 'sing-box'} не вызывается.
 			</div>
 		{/if}
 	</div>
@@ -1376,6 +1447,85 @@
 		margin-top: 0.15rem;
 		font-size: 10px;
 		color: var(--color-text-muted);
+	}
+
+	.dns-card {
+		padding: 12px 16px;
+		background: var(--color-bg-secondary, #252530);
+		border: 1px solid var(--color-border, #2e2e38);
+		border-radius: var(--radius-md, 8px);
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.dns-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding-bottom: 6px;
+		border-bottom: 1px solid var(--color-border, #2e2e38);
+	}
+
+	.dns-title-group {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	:global(.dns-icon) {
+		color: var(--accent, #3b82f6);
+		flex-shrink: 0;
+	}
+
+	.dns-title {
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--color-text-primary, #ffffff);
+	}
+
+	.dns-grid {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		font-size: 12px;
+	}
+
+	.dns-field {
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
+		flex-wrap: wrap;
+		line-height: 1.4;
+	}
+
+	.dns-label {
+		color: var(--color-text-muted, #9ba1a6);
+		font-weight: 500;
+		min-width: 140px;
+	}
+
+	.dns-server-name {
+		color: var(--color-text-primary, #ffffff);
+		font-weight: 600;
+	}
+
+	.dns-server-addr {
+		color: var(--color-text-muted, #9ba1a6);
+		font-size: 11px;
+	}
+
+	.dns-code {
+		padding: 1px 5px;
+		border-radius: 4px;
+		background: var(--color-bg-primary, #1e1e24);
+		color: var(--accent, #3b82f6);
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 11px;
+	}
+
+	.dns-reason-text {
+		color: var(--color-text-secondary, #9ba1a6);
 	}
 
 	.inspect-report {

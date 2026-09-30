@@ -9,6 +9,7 @@
   import type { MihomoNativeRule, MihomoRuntimeProxy } from '$lib/types';
   import ServiceTile from '../ServiceTile.svelte';
   import MatcherChip from '../MatcherChip.svelte';
+  import type { MatcherKind } from '../types';
 
   export interface MihomoBeginnerGroupedCard {
     id: string;
@@ -98,7 +99,7 @@
       <div class="chips">
         {#each card.chips as chip}
           <MatcherChip
-            kind={chip.kind === 'custom' ? 'ruleset' : (chip.kind as any)}
+            kind={chip.kind === 'custom' ? 'ruleset' : (chip.kind as MatcherKind)}
             label={chip.label}
             rulesetType={chip.rulesetType ? (chip.rulesetType === 'inline' || chip.rulesetType === 'local' || chip.rulesetType === 'dat' ? chip.rulesetType : 'remote') : undefined}
           />

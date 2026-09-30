@@ -2867,6 +2867,14 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.MihomoRecoveryReconcileRequest:
+    properties:
+      action:
+        description: '"rollback_to_lkg" | "regenerate_from_desired"'
+        type: string
+      force:
+        type: boolean
+    type: object
   api.MonitoringCellDTO:
     properties:
       activeForRestart:
@@ -2950,6 +2958,29 @@ definitions:
         example: target_self_tun_abc123
         type: string
     type: object
+  api.NativeDeleteUnsupportedRulesRequest:
+    properties:
+      ids:
+        items:
+          type: string
+        minItems: 1
+        type: array
+        uniqueItems: true
+        x-nullable: "false"
+      revision:
+        minLength: 1
+        type: string
+    required:
+    - ids
+    - revision
+    type: object
+  api.NativeDeleteUnsupportedRulesResponse:
+    properties:
+      deleted:
+        type: boolean
+      deletedCount:
+        type: integer
+    type: object
   api.NativePingCheckStatusDTO:
     properties:
       bound:
@@ -2996,6 +3027,15 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  api.NativeUnsupportedRulesResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/mihomonative.Rule'
+        type: array
+      revision:
+        type: string
     type: object
   api.ObfuscatorDTO:
     properties:
@@ -8415,6 +8455,209 @@ definitions:
       subsystem:
         type: string
     type: object
+  mihomo.AppliedRecordFact:
+    properties:
+      applied_at:
+        type: string
+      applied_config_digest:
+        type: string
+      applied_input_digest:
+        type: string
+      applied_store_digest:
+        type: string
+      generation:
+        type: integer
+      generation_id:
+        type: string
+    type: object
+  mihomo.BridgeFact:
+    properties:
+      generation:
+        type: integer
+      kernel_interface:
+        type: string
+      listen_port:
+        type: integer
+      owner_uuid:
+        type: string
+      proxy_index:
+        type: integer
+      proxy_interface:
+        type: string
+    type: object
+  mihomo.ListenerSpec:
+    properties:
+      address:
+        type: string
+      family:
+        description: '"ipv4" | "ipv6" | "any"'
+        type: string
+      network:
+        description: '"tcp" | "udp"'
+        type: string
+      port:
+        type: integer
+      protocol:
+        description: Backwards compatibility alias for Network
+        type: string
+      purpose:
+        type: string
+    type: object
+  mihomo.ManifestFacts:
+    properties:
+      candidate_digest:
+        type: string
+      created_at:
+        type: string
+      state:
+        $ref: '#/definitions/mihomo.ManifestState'
+      target_digest:
+        type: string
+      tx_id:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  mihomo.ManifestState:
+    enum:
+    - idle
+    - pre_snapshot_write_intent
+    - snapshot_secured
+    - candidate_write_intent
+    - candidate_built
+    - candidate_published
+    - swap_intent
+    - swap_applied
+    - swap_verified
+    - runtime_intent
+    - runtime_applied
+    - runtime_verified
+    - bridges_reconciling
+    - commit_intent
+    - committed
+    - abort_in_progress
+    - rollback_in_progress
+    - rolled_back
+    - terminal_cleanup
+    - recovery_required
+    - recovery_intent
+    - config_promoted
+    - recovery_committed
+    - rollback_intent
+    - rollback_store_restored
+    - rollback_config_promoted
+    - rollback_runtime_verified
+    - rollback_bridges_verified
+    - rollback_committed
+    - migration_intent
+    - candidate_bundle_published
+    - verified_active_write_intent
+    - verified_active_written
+    - pointer_write_intent
+    - pointer_written
+    - migration_committed
+    type: string
+    x-enum-varnames:
+    - StateIdle
+    - StatePreSnapshotWriteIntent
+    - StateSnapshotSecured
+    - StateCandidateWriteIntent
+    - StateCandidateBuilt
+    - StateCandidatePublished
+    - StateSwapIntent
+    - StateSwapApplied
+    - StateSwapVerified
+    - StateRuntimeIntent
+    - StateRuntimeApplied
+    - StateRuntimeVerified
+    - StateBridgesReconciling
+    - StateCommitIntent
+    - StateCommitted
+    - StateAbortInProgress
+    - StateRollbackInProgress
+    - StateRolledBack
+    - StateTerminalCleanup
+    - StateRecoveryRequired
+    - StateRecoveryIntent
+    - StateConfigPromoted
+    - StateRecoveryCommitted
+    - StateRollbackIntent
+    - StateRollbackStoreRestored
+    - StateRollbackConfigPromoted
+    - StateRollbackRuntimeVerified
+    - StateRollbackBridgesVerified
+    - StateRollbackCommitted
+    - StateMigrationIntent
+    - StateMigrationBundlePublished
+    - StateMigrationActiveWriteIntent
+    - StateMigrationActiveWritten
+    - StateMigrationPointerWriteIntent
+    - StateMigrationPointerWritten
+    - StateMigrationCommitted
+  mihomo.ProcessReceiptFact:
+    properties:
+      executable_name:
+        type: string
+      listeners:
+        items:
+          $ref: '#/definitions/mihomo.ListenerSpec'
+        type: array
+      pid:
+        type: integer
+      proc_start_ticks:
+        type: integer
+    type: object
+  mihomo.RecoveryEvidenceDTO:
+    properties:
+      active_tx_id:
+        type: string
+      applied_record:
+        $ref: '#/definitions/mihomo.AppliedRecordFact'
+      bridges:
+        items:
+          $ref: '#/definitions/mihomo.BridgeFact'
+        type: array
+      daemon_epoch:
+        type: string
+      generated_at:
+        type: string
+      manifest_facts:
+        $ref: '#/definitions/mihomo.ManifestFacts'
+      process_receipt:
+        $ref: '#/definitions/mihomo.ProcessReceiptFact'
+      recovery_marker:
+        $ref: '#/definitions/mihomo.RecoveryMarkerFact'
+      recovery_reason:
+        type: string
+      sanitized_logs:
+        items:
+          type: string
+        type: array
+      state:
+        $ref: '#/definitions/mihomo.ManifestState'
+    type: object
+  mihomo.RecoveryMarkerFact:
+    properties:
+      reason:
+        type: string
+      timestamp:
+        type: string
+    type: object
+  mihomonative.Rule:
+    properties:
+      enabled:
+        type: boolean
+      id:
+        type: string
+      noResolve:
+        type: boolean
+      outbound:
+        type: string
+      payload:
+        type: string
+      type:
+        type: string
+    type: object
   opkg.Package:
     properties:
       description:
@@ -12469,6 +12712,131 @@ paths:
       summary: Revoke MCP key
       tags:
       - mcp
+  /mihomo/native/rules/unsupported:
+    get:
+      description: Returns a snapshot of rules with unsupported types and a revision
+        token
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.NativeUnsupportedRulesResponse'
+      summary: List unsupported native Mihomo rules
+      tags:
+      - mihomo
+  /mihomo/native/rules/unsupported/delete:
+    post:
+      consumes:
+      - application/json
+      description: Deletes the specified unsupported rules if the full set and revision
+        match
+      parameters:
+      - description: Apply config immediately
+        in: query
+        name: apply
+        type: boolean
+      - description: Rule IDs and revision token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.NativeDeleteUnsupportedRulesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.NativeDeleteUnsupportedRulesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Delete unsupported native Mihomo rules
+      tags:
+      - mihomo
+  /mihomo/recovery/evidence:
+    get:
+      description: Returns safely redacted coordinator and runtime state for degraded
+        diagnostics
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.APIEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/mihomo.RecoveryEvidenceDTO'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Export redacted diagnostic recovery evidence
+      tags:
+      - mihomo
+  /mihomo/recovery/reconcile:
+    post:
+      consumes:
+      - application/json
+      description: Administratively triggers reconciliation or clears recovery marker
+        for degraded Mihomo state
+      parameters:
+      - description: Reconciliation action and force flag
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.MihomoRecoveryReconcileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Reconcile degraded Mihomo coordinator state
+      tags:
+      - mihomo
+  /mihomo/status:
+    get:
+      description: Returns runtime and installation status of Mihomo engine including
+        degraded state
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.APIEnvelope'
+      summary: Get Mihomo engine status
+      tags:
+      - mihomo
   /monitoring/matrix:
     get:
       description: Returns the latest cross-tunnel × cross-target latency/loss matrix
@@ -19268,9 +19636,8 @@ paths:
       - singbox
   /singbox/tunnels/test/connectivity:
     get:
-      description: Tests connectivity through a sing-box tunnel. Provide either `tag`
-        (resolved to tunnel kernel interface) or `iface` (direct kernel interface
-        override, useful for subscription tests).
+      description: Tests connectivity through a sing-box tunnel, or through a server-resolved
+        native Mihomo bridge when mihomoKind+mihomoId are supplied.
       parameters:
       - description: Tunnel tag (required when iface is not set)
         in: query
@@ -19279,6 +19646,14 @@ paths:
       - description: Kernel interface override (e.g. t2s12)
         in: query
         name: iface
+        type: string
+      - description: 'Native Mihomo resource kind: proxy or subscription'
+        in: query
+        name: mihomoKind
+        type: string
+      - description: Native Mihomo stable resource ID
+        in: query
+        name: mihomoId
         type: string
       produces:
       - application/json
@@ -19295,6 +19670,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
+        "412":
+          description: Mihomo bridge unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
@@ -19306,10 +19685,9 @@ paths:
       - singbox
   /singbox/tunnels/test/ip:
     get:
-      description: Resolves current external IP through a sing-box tunnel. Provide
-        either `tag` (resolved to tunnel kernel interface) or `iface` (direct kernel
-        interface override, useful for subscription tests). Optional `service` overrides
-        IP-check endpoint.
+      description: Resolves current external IP through a sing-box tunnel, or through
+        a server-resolved native Mihomo bridge when mihomoKind+mihomoId are supplied.
+        Optional `service` overrides IP-check endpoint.
       parameters:
       - description: Tunnel tag (required when iface is not set)
         in: query
@@ -19318,6 +19696,14 @@ paths:
       - description: Kernel interface override (e.g. t2s12)
         in: query
         name: iface
+        type: string
+      - description: 'Native Mihomo resource kind: proxy or subscription'
+        in: query
+        name: mihomoKind
+        type: string
+      - description: Native Mihomo stable resource ID
+        in: query
+        name: mihomoId
         type: string
       - description: Custom IP-check service URL
         in: query
@@ -19338,6 +19724,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
+        "412":
+          description: Mihomo bridge unavailable
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
@@ -19353,7 +19743,6 @@ paths:
       - description: Sing-box outbound tag
         in: query
         name: tag
-        required: true
         type: string
       - description: iperf3 server host
         in: query
@@ -19368,6 +19757,14 @@ paths:
       - description: Kernel interface override (NDMS Proxy must be enabled)
         in: query
         name: iface
+        type: string
+      - description: 'Native Mihomo resource kind: proxy or subscription'
+        in: query
+        name: mihomoKind
+        type: string
+      - description: Native Mihomo stable resource ID
+        in: query
+        name: mihomoId
         type: string
       produces:
       - text/event-stream
@@ -19399,8 +19796,8 @@ paths:
       - singbox
   /singbox/uninstall:
     post:
-      description: Останавливает движок и удаляет бинарь с его конфигурацией. Отклоняется,
-        пока включена маршрутизация sing-box.
+      description: Removes the managed sing-box binary and clears its config directory.
+        Rejects when routing is enabled.
       produces:
       - application/json
       responses:

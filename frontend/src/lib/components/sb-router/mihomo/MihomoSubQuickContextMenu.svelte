@@ -304,7 +304,7 @@
 
         const provKey = matchedMihomoSub.providerName;
         const rawProv = (provKey && freshProviders?.providers && typeof freshProviders.providers === 'object')
-          ? (freshProviders.providers as Record<string, any>)[provKey]
+          ? (freshProviders.providers as Record<string, { proxies?: Array<{ name?: string; history?: Array<{ delay?: number }> }> }>)[provKey]
           : null;
         if (rawProv && Array.isArray(rawProv.proxies) && rawProv.proxies.length > 0) {
           for (let i = 0; i < rawProv.proxies.length; i++) {

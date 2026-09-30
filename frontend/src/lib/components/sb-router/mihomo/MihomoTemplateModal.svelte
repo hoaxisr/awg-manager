@@ -239,7 +239,7 @@
       // If replacing existing rules, delete them first (without triggering reload on each deletion)
       if (replaceExisting) {
         const rulesResp = await api.mihomoNativeRules();
-        const currentList = Array.isArray(rulesResp) ? rulesResp : ((rulesResp as any)?.items ?? []);
+        const currentList = Array.isArray(rulesResp) ? rulesResp : ((rulesResp as { items?: MihomoNativeRule[] })?.items ?? []);
         for (const r of currentList) {
           try {
             await api.mihomoNativeDeleteRule(r.id, false);

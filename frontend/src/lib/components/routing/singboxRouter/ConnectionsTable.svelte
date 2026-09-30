@@ -143,9 +143,10 @@
 </div>
 
 <style>
-	.wrap { overflow: auto; max-height: 540px; }
+	.wrap { overflow: auto; max-height: 540px; -webkit-overflow-scrolling: touch; }
 	.t {
 		width: 100%;
+		min-width: 680px;
 		border-collapse: collapse;
 		font-size: 13px;
 		table-layout: auto;
@@ -176,7 +177,7 @@
 	.t .num { text-align: right; font-variant-numeric: tabular-nums; }
 	.sortable { cursor: pointer; user-select: none; }
 	.sortable:hover { color: var(--text-primary, #e8e6e3); }
-	.mono { font-family: ui-monospace, monospace; }
+	.mono { font-family: var(--font-mono, ui-monospace, monospace); }
 	.small { font-size: 11px; }
 	.muted { color: var(--text-tertiary, #6e6e6e); }
 	.proto {
@@ -185,18 +186,18 @@
 		border-radius: 3px;
 		font-size: 10px;
 		font-weight: 600;
-		font-family: ui-monospace, monospace;
+		font-family: var(--font-mono, ui-monospace, monospace);
 	}
 	.proto-tcp { background: rgba(74, 158, 255, 0.15); color: #4a9eff; }
 	.proto-udp { background: rgba(218, 184, 86, 0.15); color: #dab856; }
 	.badge {
 		display: inline-block;
 		padding: 2px 6px;
-		border-radius: 3px;
+		border-radius: 4px;
 		background: rgba(218, 119, 86, 0.12);
 		color: #da7756;
 		font-size: 11px;
-		font-family: ui-monospace, monospace;
+		font-family: var(--font-sans);
 	}
 	.badge.awg {
 		background: rgba(156, 138, 255, 0.14);

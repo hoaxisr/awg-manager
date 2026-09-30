@@ -285,7 +285,7 @@
 		);
 	}
 
-	async function selectDownloadRoute(routeTag: string, routeKind?: 'direct' | 'awg' | 'singbox' | 'subscription') {
+	async function selectDownloadRoute(routeTag: string, routeKind?: import('$lib/types').DownloadRoute['kind']) {
 		if (!settings) return;
 		saving = true;
 		try {

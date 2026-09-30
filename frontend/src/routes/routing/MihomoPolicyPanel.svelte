@@ -236,8 +236,9 @@
 			notifications.success('Неподдерживаемые правила удалены');
 			unsupportedModalOpen = false;
 			await load();
-		} catch (error: any) {
-			const is409 = error?.status === 409 || error?.body?.code === 'MIHOMO_RULES_STALE' || String(error?.message).includes('MIHOMO_RULES_STALE') || String(error?.message).includes('rules have been modified');
+		} catch (error: unknown) {
+			const err = error as { status?: number; body?: { code?: string }; message?: string };
+			const is409 = err?.status === 409 || err?.body?.code === 'MIHOMO_RULES_STALE' || String(err?.message).includes('MIHOMO_RULES_STALE') || String(err?.message).includes('rules have been modified');
 			if (is409) {
 				notifications.warning('Список правил изменился, данные обновлены');
 				try {
@@ -299,11 +300,12 @@
 			} else {
 				confirmedRules = [...rules];
 			}
-		} catch (error: any) {
-			const is409 = error?.status === 409 || error?.code === 'MIHOMO_RULES_STALE' || error?.body?.code === 'MIHOMO_RULES_STALE' || String(error?.message).includes('MIHOMO_RULES_STALE') || String(error?.message).includes('rules have been modified');
+		} catch (error: unknown) {
+			const err = error as { status?: number; code?: string; body?: { code?: string; data?: { items?: MihomoNativeRule[]; revision?: string } }; message?: string; data?: { items?: MihomoNativeRule[]; revision?: string } };
+			const is409 = err?.status === 409 || err?.code === 'MIHOMO_RULES_STALE' || err?.body?.code === 'MIHOMO_RULES_STALE' || String(err?.message).includes('MIHOMO_RULES_STALE') || String(err?.message).includes('rules have been modified');
 			if (is409) {
 				notifications.warning('Список правил изменился, данные обновлены с сервера');
-				const serverData = error?.data || error?.body?.data;
+				const serverData = err?.data || err?.body?.data;
 				if (serverData?.items) {
 					rules = serverData.items;
 					confirmedRules = [...serverData.items];

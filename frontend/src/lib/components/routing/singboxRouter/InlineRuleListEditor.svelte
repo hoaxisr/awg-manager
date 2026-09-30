@@ -15,8 +15,9 @@
 		showPreview?: boolean;
 		/** Компактный geo-picker (половинная высота списка тегов). */
 		compactGeoPicker?: boolean;
+		isMihomo?: boolean;
 	}
-	let { value = $bindable(''), showPreview = true, compactGeoPicker = true }: Props = $props();
+	let { value = $bindable(''), showPreview = true, compactGeoPicker = true, isMihomo = false }: Props = $props();
 
 	// ── constants ────────────────────────────────────────────────
 	const RULES_LIST_PLACEHOLDER = `# Домены и все поддомены
@@ -38,6 +39,23 @@ domain:claude.ai
 # Дополнительно
 keyword:youtube
 geosite:xai`;
+
+	const MIHOMO_RULES_LIST_PLACEHOLDER = `# Домены и все поддомены
+chatgpt.com
+*.openai.com
+https://gemini.google.com/app
+
+# Только точный домен (без поддоменов)
+domain:claude.ai
+
+# IP-адреса и подсети (IPv4 / IPv6)
+1.1.1.1
+8.8.8.0/24
+2606:4700::/32
+
+# Категории гео-баз
+geosite:google-gemini
+geoip:telegram`;
 
 	// ── geo state ────────────────────────────────────────────────
 	let geoFiles = $state<GeoFileEntry[]>([]);
@@ -169,7 +187,7 @@ geosite:xai`;
 				highlight={highlightInlineRuleListContent}
 				wrap="pre-wrap"
 				class="rules-list-ta"
-				placeholder={RULES_LIST_PLACEHOLDER}
+				placeholder={isMihomo ? MIHOMO_RULES_LIST_PLACEHOLDER : RULES_LIST_PLACEHOLDER}
 				onscroll={syncRulesListLineNumbersScroll}
 			/>
 		</div>
@@ -178,78 +196,127 @@ geosite:xai`;
 		<summary>Подсказка по формату списка</summary>
 
 		<div class="inline-help-body">
-			<p class="inline-help-intro">
-				Одна строка — одно значение. Пустые строки игнорируются. <br>
-				В списке можно писать комментарии: <code>#</code>, <code>//</code>, <code>;</code> (целая строка или в конце — после пробела). <br>
-				При сохранении или переходе на вкладку JSON комментарии удаляются и в JSON не сохраняются. Порядок строк в списке не имеет значения и может меняться при сохранении.
-			</p>
+			{#if isMihomo}
+				<p class="inline-help-intro">
+					Одна строка — одно значение. Пустые строки игнорируются. <br>
+					В списке можно писать комментарии: <code>#</code>, <code>//</code>, <code>;</code> (целая строка или в конце — после пробела). <br>
+					Каждая строка автоматически преобразуется в нативное правило маршрутизации Mihomo (Clash).
+				</p>
 
-			<section class="inline-help-section">
-				<div class="help-label">Домены и поддомены</div>
-				<ul>
-					<li><code>domain.com</code>, <code>*.domain.com</code>, <code>domain_suffix:domain.com</code> → хост и его поддомены (в JSON: <code>"domain.com"</code> без точки)</li>
-					<li><code>https://example.domain.com/…</code> — из URL берётся hostname и хранится так же</li>
-					<li><code>*.рф</code> — доменная зона; кириллица будет конвертирована в punycode <code>xn--p1ai</code> без ведущей точки</li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">Домены и поддомены</div>
+					<ul>
+						<li><code>domain.com</code>, <code>*.domain.com</code>, <code>domain_suffix:domain.com</code> → правило <code>DOMAIN-SUFFIX,domain.com</code> (перехватывает хост и любые его поддомены)</li>
+						<li><code>https://example.domain.com/…</code> — из URL автоматически извлекается hostname</li>
+						<li><code>*.рф</code> — кириллические доменные зоны автоматически конвертируются в punycode <code>xn--p1ai</code></li>
+					</ul>
+				</section>
 
-			<section class="inline-help-section">
-				<div class="help-label">Только поддомены (без отдельного <code>domain</code>)</div>
-				<ul>
-					<li><code>.domain.com</code> — суффикс <em>с</em> точкой в JSON: <code>[".domain.com"]</code> (apex не матчится)</li>
-					<li><code>domain_suffix:.domain.com</code> — явная dotted-форма, в JSON будет <code>".domain.com"</code></li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">Только точный хост (без поддоменов)</div>
+					<ul>
+						<li><code>domain:domain.com</code>, <code>exact:domain.com</code> → правило <code>DOMAIN,domain.com</code> (только указанный домен, без поддоменов)</li>
+					</ul>
+				</section>
 
-			<section class="inline-help-section">
-				<div class="help-label">Только точный хост</div>
-				<ul>
-					<li><code>domain:domain.com</code> — только <code>domain</code>, без поддоменов</li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">Ключевые слова в домене</div>
+					<ul>
+						<li><code>keyword:word</code> → правило <code>DOMAIN-KEYWORD,word</code> (любой домен, содержащий данную подстроку)</li>
+					</ul>
+				</section>
 
-			<section class="inline-help-section">
-				<div class="help-label">IP и подсети (только IPv4)</div>
-				<ul>
-					<li><code>1.1.1.1</code> — в JSON как <code>1.1.1.1/32</code>; при обратном переводе снова голый IP</li>
-					<li><code>8.8.8.0/24</code> — CIDR как есть; маски кроме <code>/32</code> не сжимаются</li>
-					<li>префиксы <code>ip:</code>, <code>cidr:</code>, <code>src_ip:</code> — то же правило</li>
-					<li>IPv6 в режиме «Список» не поддерживается — адреса и префиксы IPv6 задавайте в JSON</li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">IP-адреса и подсети (IPv4 и IPv6)</div>
+					<ul>
+						<li><code>1.1.1.1</code> → правило <code>IP-CIDR,1.1.1.1/32,no-resolve</code> (одиночный IP)</li>
+						<li><code>8.8.8.0/24</code> → правило <code>IP-CIDR,8.8.8.0/24,no-resolve</code> (подсеть IPv4)</li>
+						<li><code>2a00:1450::/32</code> → правило <code>IP-CIDR6,2a00:1450::/32,no-resolve</code> (IPv6 поддерживается)</li>
+						<li>префиксы <code>ip:</code>, <code>cidr:</code> — поддерживаются опционально</li>
+					</ul>
+				</section>
 
-			<section class="inline-help-section">
-				<div class="help-label">Geo и прочие matchers</div>
-				<ul>
-					<li><code>geosite:TAG</code> — разворачивается в домены; суффиксы из .dat — <strong>без</strong> ведущей точки (как <code>domain.com</code>)</li>
-					<li><code>geoip:TAG</code> — разворачивается в CIDR; одиночные хосты из geo — в списке без <code>/32</code></li>
-					<li><code>keyword:TAG</code>, <code>regex:…</code> — отдельные поля в JSON</li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">Гео-базы (GeoSite и GeoIP)</div>
+					<ul>
+						<li><code>geosite:TAG</code> — правило <code>GEOSITE,TAG</code> (поиск доменов в <code>GeoSite.dat</code>: <code>youtube</code>, <code>google-gemini</code>, <code>anthropic</code>, <code>openai</code>...)</li>
+						<li><code>geoip:TAG</code> — правило <code>GEOIP,TAG,no-resolve</code> (поиск IP в <code>GeoIP.dat</code>: <code>telegram</code>, <code>netflix</code>, <code>ru</code>...)</li>
+					</ul>
+				</section>
+			{:else}
+				<p class="inline-help-intro">
+					Одна строка — одно значение. Пустые строки игнорируются. <br>
+					В списке можно писать комментарии: <code>#</code>, <code>//</code>, <code>;</code> (целая строка или в конце — после пробела). <br>
+					При сохранении или переходе на вкладку JSON комментарии удаляются и в JSON не сохраняются. Порядок строк в списке не имеет значения и может меняться при сохранении.
+				</p>
 
-			<section class="inline-help-section">
-				<div class="help-label">Расширенные matchers</div>
-				<ul>
-					<li><code>port:443</code>, <code>process:curl</code>, <code>package:…</code>, <code>network:tcp|udp</code></li>
-					<li>каждый тип — отдельная группа правил в JSON (не смешивается с доменами в одной записи)</li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">Домены и поддомены</div>
+					<ul>
+						<li><code>domain.com</code>, <code>*.domain.com</code>, <code>domain_suffix:domain.com</code> → хост и его поддомены (в JSON: <code>"domain.com"</code> без точки)</li>
+						<li><code>https://example.domain.com/…</code> — из URL берётся hostname и хранится так же</li>
+						<li><code>*.рф</code> — доменная зона; кириллица будет конвертирована в punycode <code>xn--p1ai</code> без ведущей точки</li>
+					</ul>
+				</section>
 
-			<section class="inline-help-section">
-				<div class="help-label">Осторожно</div>
-				<ul>
-					<li><code>port:443</code> — отдельное правило на весь HTTPS-трафик</li>
-					<li><code>process:</code> / <code>process_path:</code> на Keenetic/Entware — только локальные процессы роутера, не LAN-клиенты</li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">Только поддомены (без отдельного <code>domain</code>)</div>
+					<ul>
+						<li><code>.domain.com</code> — суффикс <em>с</em> точкой в JSON: <code>[".domain.com"]</code> (apex не матчится)</li>
+						<li><code>domain_suffix:.domain.com</code> — явная dotted-форма, в JSON будет <code>".domain.com"</code></li>
+					</ul>
+				</section>
 
-			<section class="inline-help-section">
-				<div class="help-label">Пока не в режиме «Список»</div>
-				<ul>
-					<li>IPv6, исключения <code>@@</code>, <code>port_range:</code></li>
-					<li>логика <code>and</code> / <code>or</code> и любые лишние поля sing-box — только режим <code>JSON</code></li>
-				</ul>
-			</section>
+				<section class="inline-help-section">
+					<div class="help-label">Только точный хост</div>
+					<ul>
+						<li><code>domain:domain.com</code> — только <code>domain</code>, без поддоменов</li>
+					</ul>
+				</section>
+
+				<section class="inline-help-section">
+					<div class="help-label">IP и подсети (только IPv4)</div>
+					<ul>
+						<li><code>1.1.1.1</code> — в JSON как <code>1.1.1.1/32</code>; при обратном переводе снова голый IP</li>
+						<li><code>8.8.8.0/24</code> — CIDR как есть; маски кроме <code>/32</code> не сжимаются</li>
+						<li>префиксы <code>ip:</code>, <code>cidr:</code>, <code>src_ip:</code> — то же правило</li>
+						<li>IPv6 в режиме «Список» не поддерживается — адреса и префиксы IPv6 задавайте в JSON</li>
+					</ul>
+				</section>
+
+				<section class="inline-help-section">
+					<div class="help-label">Geo и прочие matchers</div>
+					<ul>
+						<li><code>geosite:TAG</code> — разворачивается в домены; суффиксы из .dat — <strong>без</strong> ведущей точки (как <code>domain.com</code>)</li>
+						<li><code>geoip:TAG</code> — разворачивается в CIDR; одиночные хосты из geo — в списке без <code>/32</code></li>
+						<li><code>keyword:TAG</code>, <code>regex:…</code> — отдельные поля в JSON</li>
+					</ul>
+				</section>
+
+				<section class="inline-help-section">
+					<div class="help-label">Расширенные matchers</div>
+					<ul>
+						<li><code>port:443</code>, <code>process:curl</code>, <code>package:…</code>, <code>network:tcp|udp</code></li>
+						<li>каждый тип — отдельная группа правил в JSON (не смешивается с доменами в одной записи)</li>
+					</ul>
+				</section>
+
+				<section class="inline-help-section">
+					<div class="help-label">Осторожно</div>
+					<ul>
+						<li><code>port:443</code> — отдельное правило на весь HTTPS-трафик</li>
+						<li><code>process:</code> / <code>process_path:</code> на Keenetic/Entware — только локальные процессы роутера, не LAN-клиенты</li>
+					</ul>
+				</section>
+
+				<section class="inline-help-section">
+					<div class="help-label">Пока не в режиме «Список»</div>
+					<ul>
+						<li>IPv6, исключения <code>@@</code>, <code>port_range:</code></li>
+						<li>логика <code>and</code> / <code>or</code> и любые лишние поля sing-box — только режим <code>JSON</code></li>
+					</ul>
+				</section>
+			{/if}
 		</div>
 	</details>
 

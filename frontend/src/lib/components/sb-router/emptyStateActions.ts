@@ -172,16 +172,17 @@ export async function syncTunnelDnsRule(): Promise<void> {
     try {
       const mihomoRules = await api.mihomoNativeRules();
       for (const mr of mihomoRules) {
-        if (!mr.enabled || !mr.outbound || mr.outbound === 'DIRECT' || mr.outbound === 'REJECT') continue;
+        if (!mr.enabled || !mr.outbound || !mr.payload || mr.outbound === 'DIRECT' || mr.outbound === 'REJECT') continue;
+        const payload = mr.payload;
         if (mr.type === 'GEOSITE') {
-          const tag = mr.payload.startsWith('geosite-') ? mr.payload : `geosite-${mr.payload}`;
+          const tag = payload.startsWith('geosite-') ? payload : `geosite-${payload}`;
           if (!agg.rule_set.includes(tag)) agg.rule_set.push(tag);
         } else if (mr.type === 'RULE-SET') {
-          if (!isDnsAddressFilterRuleSet(mr.payload, ruleSets)) {
-            if (!agg.rule_set.includes(mr.payload)) agg.rule_set.push(mr.payload);
+          if (!isDnsAddressFilterRuleSet(payload, ruleSets)) {
+            if (!agg.rule_set.includes(payload)) agg.rule_set.push(payload);
           }
         } else if (mr.type === 'DOMAIN-SUFFIX' || mr.type === 'DOMAIN') {
-          if (!agg.domain_suffix.includes(mr.payload)) agg.domain_suffix.push(mr.payload);
+          if (!agg.domain_suffix.includes(payload)) agg.domain_suffix.push(payload);
         }
       }
     } catch {
