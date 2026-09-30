@@ -75,7 +75,10 @@ func (r *mihomoDiagnosticResolver) ResolveMihomoDiagnosticInterface(ctx context.
 	}
 	wantOwner := mihomonative.BridgeOwnershipDescription(kind, resourceID)
 	wantDisplayName := target.Label
-	if !exists || (description != wantOwner && (wantDisplayName == "" || description != wantDisplayName)) {
+	owned := description == wantOwner ||
+		strings.Contains(description, wantOwner) ||
+		(wantDisplayName != "" && (description == wantDisplayName || strings.HasPrefix(description, wantDisplayName)))
+	if !exists || !owned {
 		return "", fmt.Errorf("Mihomo Proxy%d is missing or owned by another resource", target.Bridge.ProxyIndex)
 	}
 
