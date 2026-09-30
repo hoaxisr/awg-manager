@@ -306,6 +306,52 @@ func TestSnapshot_JoinerSurvivesLeaderCancel(t *testing.T) {
 	}
 }
 
+// Отмена ведущего при нескольких присоединившихся: они не читают по списку
+// каждый — один начинает новый полёт, остальные присоединяются к нему (или
+// берут уже свежий снимок). 5 присоединившихся → 1 новый список.
+func TestSnapshot_JoinersAfterLeaderCancel_OneList(t *testing.T) {
+	f := snapshotFake()
+	g := &ctxGetter{Getter: f, entered: make(chan struct{})}
+	lg := joinLogger{joined: make(chan struct{}, 64)}
+	s := NewInterfaceStore(g, lg)
+	if _, err := s.Snapshot(context.Background(), SnapshotRecent); err != nil { // bootstrap
+		t.Fatal(err)
+	}
+	s.listedAt = time.Time{}
+	g.gate = make(chan struct{})
+
+	leaderCtx, cancel := context.WithCancel(context.Background())
+	leaderErr := make(chan error, 1)
+	go func() { _, err := s.Snapshot(leaderCtx, SnapshotRecent); leaderErr <- err }()
+	<-g.entered
+	const joiners = 5
+	errs := make(chan error, joiners)
+	for i := 0; i < joiners; i++ {
+		go func() { _, err := s.Snapshot(context.Background(), SnapshotRecent); errs <- err }()
+	}
+	for i := 0; i < joiners; i++ {
+		select {
+		case <-lg.joined:
+		case <-time.After(time.Second):
+			t.Fatalf("присоединились %d из %d", i, joiners)
+		}
+	}
+	before := f.ListCalls()
+	cancel()
+	close(g.gate)
+	if err := <-leaderErr; !errors.Is(err, context.Canceled) {
+		t.Fatalf("ведущий: %v, want context.Canceled", err)
+	}
+	for i := 0; i < joiners; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("присоединившийся: %v", err)
+		}
+	}
+	if n := f.ListCalls() - before; n != 1 {
+		t.Fatalf("новых списков %d, want 1", n)
+	}
+}
+
 // Метка «грязно» (наша запись) — чтение памяти берёт свежий список: поля,
 // которых хуки не несут, после нашей команды не старые.
 func TestList_DirtyReadsFreshFields(t *testing.T) {

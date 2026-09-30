@@ -517,27 +517,31 @@ func (s *InterfaceStore) freshen(ctx context.Context, maxAge time.Duration) erro
 		return err
 	}
 	s.mu.Lock()
-	if maxAge > 0 {
+	for maxAge > 0 {
 		if s.dirtyAt == 0 && time.Since(s.listedAt) < maxAge {
 			s.mu.Unlock()
 			return nil
 		}
-		if fl := s.flight; fl != nil && fl.start >= s.dirtyAt {
-			s.mu.Unlock()
-			s.log.Debugf("interface snapshot: joined list in flight")
-			select {
-			case <-fl.done:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-			if fl.err == nil {
-				return nil
-			}
-			if !isCtxErr(fl.err) || ctx.Err() != nil {
-				return fl.err
-			}
-			s.mu.Lock()
+		fl := s.flight
+		if fl == nil || fl.start < s.dirtyAt {
+			break
 		}
+		s.mu.Unlock()
+		s.log.Debugf("interface snapshot: joined list in flight")
+		select {
+		case <-fl.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		if fl.err == nil {
+			return nil
+		}
+		if !isCtxErr(fl.err) || ctx.Err() != nil {
+			return fl.err
+		}
+		// Ведущего отменили: заново под mu — свежий снимок или полёт, начатый
+		// другим присоединившимся; иначе полёт начинает этот (один на всех).
+		s.mu.Lock()
 	}
 	fl := s.beginFlightLocked()
 	s.mu.Unlock()
