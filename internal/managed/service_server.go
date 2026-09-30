@@ -291,7 +291,9 @@ func (s *Service) applyNATModeRaw(ctx context.Context, iface query.Confirmed, mo
 			return nil, fmt.Errorf("set NAT: %w", err)
 		}
 		if len(prevWANs) > 0 { // только если ранее реально ставили static (internet-only)
-			s.removeStaticNATs(ctx, iface, prevWANs)
+			if err := s.removeStaticNATs(ctx, iface, prevWANs); err != nil {
+				return nil, err
+			}
 		}
 		return nil, nil
 	case "internet-only":
@@ -354,7 +356,9 @@ func (s *Service) applyNATModeRaw(ctx context.Context, iface query.Confirmed, mo
 			return nil, fmt.Errorf("disable NAT: %w", err)
 		}
 		if len(prevWANs) > 0 { // только если ранее реально ставили static (internet-only)
-			s.removeStaticNATs(ctx, iface, prevWANs)
+			if err := s.removeStaticNATs(ctx, iface, prevWANs); err != nil {
+				return nil, err
+			}
 		}
 		return nil, nil
 	default:
@@ -400,24 +404,25 @@ func (s *Service) confirmWANs(ctx context.Context, names []string) (map[string]q
 
 // removeStaticNATs снимает ip static для интерфейса по сохранённому списку;
 // пустой список — fallback на текущий дефолт-WAN (back-compat для серверов
-// без сохранённых выходов). Best-effort. Выхода нет в NDMS — правило ушло
-// вместе с ним, ссылка на него дала бы E; список не прочитан — не шлём ничего.
-func (s *Service) removeStaticNATs(ctx context.Context, iface query.Confirmed, storedWANs []string) {
+// без сохранённых выходов). Отказ снятия отдельного правила — в журнал.
+// Выхода нет в NDMS — правило ушло вместе с ним, ссылка на него дала бы E.
+// Список не прочитан — ни одной команды и ошибка: состояние неизвестно, и
+// вызывающий не вправе записать «static NAT снят» (иначе правила-сироты).
+func (s *Service) removeStaticNATs(ctx context.Context, iface query.Confirmed, storedWANs []string) error {
 	wans := storedWANs
 	if len(wans) == 0 {
 		if s.queries == nil || s.queries.Routes == nil {
-			return
+			return nil
 		}
 		wan, err := s.queries.Routes.GetDefaultGatewayInterface(ctx)
 		if err != nil || wan == "" {
-			return
+			return nil
 		}
 		wans = []string{wan}
 	}
 	present, err := s.confirmWANs(ctx, wans)
 	if err != nil {
-		s.log.Warn("remove static NAT skipped: interfaces not read", "error", err, "interface", iface.Name())
-		return
+		return fmt.Errorf("remove static NAT: %w", err)
 	}
 	for _, w := range wans {
 		wan, ok := present[w]
@@ -428,6 +433,7 @@ func (s *Service) removeStaticNATs(ctx context.Context, iface query.Confirmed, s
 			s.log.Warn("remove static NAT failed", "error", err, "interface", iface.Name(), "target", w)
 		}
 	}
+	return nil
 }
 
 // SetEnabled brings the managed server interface up or down.
@@ -522,7 +528,9 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 			}
 		}
 		if server.NATMode == "internet-only" {
-			s.removeStaticNATs(ctx, iface, server.StaticNATList())
+			if err := s.removeStaticNATs(ctx, iface, server.StaticNATList()); err != nil {
+				s.appLog.Warn("delete", server.InterfaceName, fmt.Sprintf("Static NAT not removed before delete: %v (continuing)", err))
+			}
 		}
 		if len(server.LANSegments) > 0 {
 			// Teardown-only ветка applyLANSegmentsRaw: unbind + remove ACL (best-effort).

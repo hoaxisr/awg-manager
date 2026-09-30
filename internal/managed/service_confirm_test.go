@@ -481,3 +481,93 @@ func TestUpdate_RecordOnlyFields_InterfaceGone(t *testing.T) {
 		t.Fatalf("posts=%v", f.Posts)
 	}
 }
+
+// failListAfterPost — poster, после первого поста которого список интерфейсов
+// перестаёт читаться: сбой приходится на подтверждение посреди потока.
+type failListAfterPost struct{ f *query.FakeNDMS }
+
+func (p failListAfterPost) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	r, err := p.f.Post(ctx, payload)
+	p.f.FailList(errors.New("rci down"))
+	return r, err
+}
+
+// internet-only → full: выходы не подтвердились — static NAT не снят, и
+// запись не смеет сказать «снят» (иначе правила-сироты на роутере).
+func TestSetNATMode_FullAfterInternetOnly_WANListError_KeepsStored(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"}, ndms.Interface{ID: "PPPoE0"})
+	s := newServiceWithOracle(t, f, nil, storage.ManagedServer{InterfaceName: "Wireguard3", NATMode: "internet-only", NATStaticWANs: []string{"PPPoE0"}})
+	s.transport = failListAfterPost{f}
+	if err := s.SetNATMode(context.Background(), "Wireguard3", "full"); err == nil {
+		t.Fatal("сбой чтения выходов принят за успех")
+	}
+	sv, _ := s.settings.GetManagedServerByID("Wireguard3")
+	if sv.NATMode != "internet-only" || len(sv.NATStaticWANs) != 1 || sv.NATStaticWANs[0] != "PPPoE0" {
+		t.Fatalf("запись изменена: mode=%s wans=%v", sv.NATMode, sv.NATStaticWANs)
+	}
+	for _, p := range f.Posts {
+		if strings.Contains(p, `"static"`) {
+			t.Fatalf("static по неподтверждённому выходу: %s", p)
+		}
+	}
+}
+
+func TestDelete_PresentInternetOnly_StaticThenNoInterface(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"}, ndms.Interface{ID: "PPPoE0"})
+	s := newServiceWithOracle(t, f, nil, storage.ManagedServer{InterfaceName: "Wireguard3", NATMode: "internet-only", NATStaticWANs: []string{"PPPoE0"}})
+	if err := s.Delete(context.Background(), "Wireguard3"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`{"ip":{"static":[{"interface":"Wireguard3","no":true,"to-interface":"PPPoE0"}]}}`,
+		`{"interface":{"Wireguard3":{"no":true}}}`,
+	}
+	if strings.Join(f.Posts, "\n") != strings.Join(want, "\n") || f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("posts:\n%s\nE=%d phantoms=%d", strings.Join(f.Posts, "\n"), f.E, f.Phantoms)
+	}
+}
+
+func TestDelete_PresentLANSegments_ACLThenNoInterface(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"})
+	s := newServiceWithOracle(t, f, map[string]string{
+		"/show/running-config": `{"message":["access-list AWGM_Wireguard3","    permit ip 10.66.66.0 255.255.255.0 192.168.1.0 255.255.255.0","!","interface Wireguard3","    ip access-group AWGM_Wireguard3 in","!"]}`,
+	}, storage.ManagedServer{InterfaceName: "Wireguard3", NATMode: "none", LANSegments: []string{"Bridge0"}})
+	if err := s.Delete(context.Background(), "Wireguard3"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`{"parse":"no interface Wireguard3 ip access-group AWGM_Wireguard3 in"}`,
+		`{"parse":"no access-list AWGM_Wireguard3"}`,
+		`{"interface":{"Wireguard3":{"no":true}}}`,
+	}
+	// Чтения POST-ом (show interface после правки) — не команды.
+	var cmds []string
+	for _, p := range f.Posts {
+		if !strings.HasPrefix(p, `{"show"`) {
+			cmds = append(cmds, p)
+		}
+	}
+	if strings.Join(cmds, "\n") != strings.Join(want, "\n") || f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("commands:\n%s\nE=%d phantoms=%d", strings.Join(cmds, "\n"), f.E, f.Phantoms)
+	}
+}
+
+// Решение 4: список не прочитан — отказ без команд.
+func TestListError_SetEnabledAndDeletePeer_NoCommands(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"})
+	s := newServiceWithOracle(t, f, nil, storage.ManagedServer{InterfaceName: "Wireguard3",
+		Peers: []storage.ManagedPeer{{PublicKey: "K"}}})
+	f.FailList(errors.New("rci down"))
+	if err := s.SetEnabled(context.Background(), "Wireguard3", false); err == nil {
+		t.Fatal("SetEnabled: must fail closed")
+	}
+	if err := s.DeletePeer(context.Background(), "Wireguard3", "K"); err == nil {
+		t.Fatal("DeletePeer: must fail closed")
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("posts=%v", f.Posts)
+	}
+	if sv, _ := s.settings.GetManagedServerByID("Wireguard3"); len(sv.Peers) != 1 {
+		t.Fatal("пир обязан остаться в записи для повтора")
+	}
+}
