@@ -206,6 +206,12 @@ func (a *app) setupEventWiring() {
 		}
 		return up, nil
 	})
+	// ifdestroyed записи работающего туннеля перепроверяется свежим списком:
+	// хук мог опоздать за пересозданием (F569, R31).
+	a.orch.SetRecordPresenceProbe(func(ctx context.Context, name string) (bool, error) {
+		_, _, ok, err := a.ndmsQueries.Interfaces.Confirm(ctx, name)
+		return ok, err
+	})
 	// Full hr-neo restart on tunnel-running — NDMS assigns fwmarks only
 	// during rci_create_policies (hr-neo startup), so tunnels appearing
 	// after startup would miss CONNMARK rules without this.

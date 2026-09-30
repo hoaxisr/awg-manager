@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 
@@ -97,5 +98,59 @@ func TestHandleEvent_IfDestroyed_External_StopsAndDisables(t *testing.T) {
 	}
 	if mustGet(t, store, "awg10").Enabled {
 		t.Fatal("Enabled не снят: туннель пересоздастся без пользователя (Q1)")
+	}
+}
+
+// R31: хук ifdestroyed опоздал, а запись уже пересоздана (Restart в окне
+// опоздания) — свежий список её видит: хук устарел, туннель не трогаем.
+// Записи нет — остановка; список не прочитан — не останавливаем.
+func TestHandleEvent_IfDestroyed_FreshListDecides(t *testing.T) {
+	cases := []struct {
+		name        string
+		present     bool
+		err         error
+		wantStops   int64
+		wantEnabled bool
+	}{
+		{"запись пересоздана — хук устарел", true, nil, 0, true},
+		{"записи нет — остановка", false, nil, 1, false},
+		{"список не прочитан — не останавливаем", false, errors.New("injected: rci"), 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			o, op, store := runningKernelOrch(t)
+			var asked []string
+			o.SetRecordPresenceProbe(func(_ context.Context, name string) (bool, error) {
+				asked = append(asked, name)
+				return tc.present, tc.err
+			})
+			if err := o.HandleEvent(context.Background(), Event{Type: EventNDMSIfDestroyed, NDMSName: "OpkgTun10"}); err != nil {
+				t.Fatalf("HandleEvent: %v", err)
+			}
+			if !slices.Equal(asked, []string{"OpkgTun10"}) {
+				t.Fatalf("проба: %v", asked)
+			}
+			if n := op.stops.Load(); n != tc.wantStops {
+				t.Fatalf("stops=%d, want %d", n, tc.wantStops)
+			}
+			if got := mustGet(t, store, "awg10").Enabled; got != tc.wantEnabled {
+				t.Fatalf("Enabled=%v, want %v", got, tc.wantEnabled)
+			}
+		})
+	}
+}
+
+// Чужое имя — список не читаем (стоимость: только для записи нашего туннеля).
+func TestHandleEvent_IfDestroyed_ForeignName_NoProbe(t *testing.T) {
+	o, op, _ := runningKernelOrch(t)
+	o.SetRecordPresenceProbe(func(context.Context, string) (bool, error) {
+		t.Fatal("список прочитан для чужой записи")
+		return false, nil
+	})
+	if err := o.HandleEvent(context.Background(), Event{Type: EventNDMSIfDestroyed, NDMSName: "OpkgTun11"}); err != nil {
+		t.Fatal(err)
+	}
+	if op.stops.Load() != 0 {
+		t.Fatal("чужая запись остановила туннель")
 	}
 }

@@ -135,6 +135,11 @@ type Orchestrator struct {
 	// Ошибка значит «не знаем» — грань остаётся в силе. nil → check skipped.
 	confLayerRunning func(ctx context.Context, ndmsName string) (bool, error)
 
+	// recordPresent (под o.mu, как confLayerRunning) — есть ли запись
+	// ndmsName в СВЕЖЕМ полном списке NDMS. Им перепроверяется ifdestroyed
+	// перед остановкой (F569, R31). nil → проверка пропущена.
+	recordPresent func(ctx context.Context, ndmsName string) (bool, error)
+
 	// ifaceInvalidator, when set, refreshes the NDMS interface cache for a
 	// kernel tunnel's NDMS name on its confirmed "running" transition (#328).
 	// nil-safe. Production wires an async closure; the orchestrator calls it
@@ -221,6 +226,14 @@ func (o *Orchestrator) SetConfLayerProbe(fn func(ctx context.Context, ndmsName s
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.confLayerRunning = fn
+}
+
+// SetRecordPresenceProbe wires the fresh full-list check of an NDMS record
+// (Interfaces.Confirm). nil-safe: без пробы ifdestroyed принимается как есть.
+func (o *Orchestrator) SetRecordPresenceProbe(fn func(ctx context.Context, ndmsName string) (bool, error)) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.recordPresent = fn
 }
 
 // SetSupportsASC sets the ASC support flag.
@@ -438,6 +451,37 @@ func (o *Orchestrator) settleConfDisabled(ctx context.Context, event Event) bool
 	return false
 }
 
+// settleIfDestroyed — перепроверка ifdestroyed записи нашего работающего
+// kernel-туннеля свежим списком: хук опаздывает (стенд — до ~7 с), и за это
+// окно Restart/ColdStart мог уже пересоздать запись — остановка по устаревшему
+// хуку молча сняла бы Enabled. Запись есть — хук устарел, игнорируем. Список
+// не прочитан — тоже НЕ останавливаем (R31): остановка на неопределённости
+// выключила бы туннель пользователя без его ведома; хуже, чем пропустить
+// снятие, которое вскроет следующий Stop/Start (Stop снесёт устройство, старт
+// пересоздаст запись). Чужие и остановленные туннели — без чтения списка:
+// decide для них всё равно ничего не делает.
+func (o *Orchestrator) settleIfDestroyed(ctx context.Context, event Event) bool {
+	o.mu.Lock()
+	t := o.state.findByNDMSName(event.NDMSName)
+	probe := o.recordPresent
+	o.mu.Unlock()
+	if t == nil || t.Backend != "kernel" || !t.Running || probe == nil {
+		return true
+	}
+	present, err := probe(ctx, event.NDMSName)
+	if err != nil {
+		o.appLog.Warn("ifdestroyed", t.ID,
+			fmt.Sprintf("запись %s: список NDMS не прочитан (%v) — туннель не останавливаем", event.NDMSName, err))
+		return false
+	}
+	if present {
+		o.appLog.Info("ifdestroyed", t.ID,
+			fmt.Sprintf("запись %s уже есть в NDMS — хук ifdestroyed устарел, игнорируем", event.NDMSName))
+		return false
+	}
+	return true
+}
+
 // settleConfRunning — зеркало settleConfDisabled для грани conf=running.
 //
 // NDMS переигрывает конфигурацию сам и шлёт conf=running по интерфейсам,
@@ -573,6 +617,10 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 				fmt.Sprintf("expected-hook consumed level=%s", level))
 			return nil
 		}
+	}
+
+	if event.Type == EventNDMSIfDestroyed && !o.settleIfDestroyed(ctx, event) {
+		return nil
 	}
 
 	if event.Type == EventNDMSHook && event.Layer == "conf" {
