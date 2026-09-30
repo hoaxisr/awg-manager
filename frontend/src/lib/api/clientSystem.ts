@@ -49,6 +49,15 @@ import type {
 	SystemProcessItem,
 	SystemProcSummary,
 	SystemProcSnapshot,
+	AIAssistantState,
+	AIModelConfig,
+	AIModelConfigUpdate,
+	AIEmbeddedStatus,
+	AIEmbeddedConfig,
+	AIMemoryData,
+	AIMemoryFact,
+	AISentinelSettings,
+	AISentinelStatus,
 } from '$lib/types';
 import { readDiagnosticsSanitizedPreference } from './clientCore';
 import { TunnelsClient } from './clientTunnels';
@@ -67,6 +76,15 @@ export type {
 	SystemProcessItem,
 	SystemProcSummary,
 	SystemProcSnapshot,
+	AIAssistantState,
+	AIModelConfig,
+	AIModelConfigUpdate,
+	AIEmbeddedStatus,
+	AIEmbeddedConfig,
+	AIMemoryData,
+	AIMemoryFact,
+	AISentinelSettings,
+	AISentinelStatus,
 } from '$lib/types';
 
 export class SystemClient extends TunnelsClient {
@@ -720,6 +738,93 @@ export class SystemClient extends TunnelsClient {
 	// ─────────────────────────────────────────────
 	// #region System tools (expert)
 	// ─────────────────────────────────────────────
+
+	async systemAIStatus(): Promise<AIAssistantState> {
+		return this.request('/system/ai/status');
+	}
+
+	async systemAIClearChat(): Promise<AIAssistantState> {
+		return this.request('/system/ai/chat/clear', {
+			method: 'POST',
+			body: '{}',
+		});
+	}
+
+	async systemAIDiagnose(question: string): Promise<AIAssistantState> {
+		return this.request('/system/ai/diagnose', {
+			method: 'POST',
+			body: JSON.stringify({ question }),
+		});
+	}
+
+	async systemAIFetchModels(params: {
+		provider: string;
+		apiKey?: string;
+		baseUrl?: string;
+		routeTag?: string;
+		routeKind?: string;
+	}): Promise<Array<{ id: string; name: string; description?: string; contextLength?: number }>> {
+		return this.request('/system/ai/models', {
+			method: 'POST',
+			body: JSON.stringify(params),
+		});
+	}
+
+	async systemAIConfig(): Promise<AIModelConfig> {
+		return this.request('/system/ai/config');
+	}
+
+	async systemAIApplyAction(proposalId: string): Promise<AIAssistantState> {
+		return this.request('/system/ai/action/apply', {
+			method: 'POST',
+			body: JSON.stringify({ proposalId }),
+		});
+	}
+
+	async systemAISaveConfig(config: AIModelConfigUpdate): Promise<AIModelConfig> {
+		return this.request('/system/ai/config', {
+			method: 'PUT',
+			body: JSON.stringify(config),
+		});
+	}
+
+	async systemAIEmbedded(): Promise<AIEmbeddedStatus> {
+		return this.request('/system/ai/embedded');
+	}
+
+	async systemAIEmbeddedStop(): Promise<AIEmbeddedStatus> {
+		return this.request('/system/ai/embedded/stop', { method: 'POST' });
+	}
+
+	async systemAIMemory(): Promise<AIMemoryData> {
+		return this.request('/system/ai/memory');
+	}
+
+	async systemAIAddFact(data: { category: string; content: string; source?: string }): Promise<AIMemoryFact> {
+		return this.request('/system/ai/memory/facts', {
+			method: 'POST',
+			body: JSON.stringify(data),
+		});
+	}
+
+	async systemAIDeleteFact(id: string): Promise<{ deleted: boolean; id: string }> {
+		return this.request(`/system/ai/memory/facts/${encodeURIComponent(id)}`, {
+			method: 'DELETE',
+		});
+	}
+
+	async systemAIDeletePlaybook(id: string): Promise<{ deleted: boolean; id: string }> {
+		return this.request(`/system/ai/memory/playbooks/${encodeURIComponent(id)}`, {
+			method: 'DELETE',
+		});
+	}
+
+	async systemAISaveSentinel(settings: AISentinelSettings): Promise<AISentinelStatus> {
+		return this.request('/system/ai/sentinel', {
+			method: 'POST',
+			body: JSON.stringify(settings),
+		});
+	}
 
 	async systemFilesRoots(): Promise<SystemFileRoot[]> {
 		return this.request('/system/files/roots');

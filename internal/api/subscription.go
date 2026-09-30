@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
@@ -32,6 +34,46 @@ type SubscriptionHandler struct {
 	// composite interfaces those rely on no longer exist. nil ⇒ default
 	// to "enabled" (back-compat / tests).
 	settings ndmsProxyToggler
+}
+
+// AssistantSubscriptionStatus omits remote URLs, inline payloads, headers and
+// endpoint details. It is safe to expose to read-only diagnostics and models.
+type AssistantSubscriptionStatus struct {
+	ID           string    `json:"id"`
+	Label        string    `json:"label"`
+	Enabled      bool      `json:"enabled"`
+	Mode         string    `json:"mode"`
+	MemberCount  int       `json:"memberCount"`
+	ActiveMember string    `json:"activeMember,omitempty"`
+	LastFetched  time.Time `json:"lastFetched,omitempty"`
+	LastError    string    `json:"lastError,omitempty"`
+}
+
+func (h *SubscriptionHandler) AssistantStatus() []AssistantSubscriptionStatus {
+	if h == nil || h.svc == nil {
+		return nil
+	}
+	items := h.svc.List()
+	result := make([]AssistantSubscriptionStatus, 0, len(items))
+	for _, item := range items {
+		result = append(result, AssistantSubscriptionStatus{
+			ID: item.ID, Label: item.Label, Enabled: item.Enabled,
+			Mode: string(item.EffectiveMode()), MemberCount: len(item.Members),
+			ActiveMember: item.ActiveMember, LastFetched: item.LastFetched, LastError: item.LastError,
+		})
+	}
+	return result
+}
+
+// AssistantRefresh refreshes one sing-box subscription through the same
+// service path as the authenticated HTTP API. It is used only after an AI
+// remediation proposal has been explicitly confirmed by the user.
+func (h *SubscriptionHandler) AssistantRefresh(ctx context.Context, id string) error {
+	if h == nil || h.svc == nil {
+		return errors.New("subscription service is unavailable")
+	}
+	_, err := h.svc.Refresh(ctx, id)
+	return err
 }
 
 func NewSubscriptionHandler(svc *subscription.Service, presence SingboxPresenceProbe, appLogger ...logging.AppLogger) *SubscriptionHandler {
