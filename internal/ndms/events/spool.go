@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/url"
 	"os"
+	"strings"
 )
 
 // DefaultSpoolPath — файл, в который хук-скрипт дописывает по строке на
@@ -146,18 +147,26 @@ func (r *SpoolReader) emitLines(sf *spoolFile) {
 		if line == "" {
 			continue
 		}
-		v, err := url.ParseQuery(line)
-		if err != nil {
-			r.log.Warnf("spool: bad line %q: %v", line, err)
-			continue
-		}
-		ev, err := ParseHookForm(v)
+		ev, err := ParseHookForm(spoolValues(line))
 		if err != nil {
 			r.log.Warnf("spool: bad line %q: %v", line, err)
 			continue
 		}
 		r.sink(ev)
 	}
+}
+
+// spoolValues разбирает строку spool: пары через '&', ключ до первого '='.
+// Значения сырые, без percent-декодирования: скрипт пишет их как есть, и
+// url.ParseQuery на `%` в значении (IPv6 с зоной, fe80::1%br0) отверг бы
+// строку целиком — событие пропало бы.
+func spoolValues(line string) url.Values {
+	v := url.Values{}
+	for _, kv := range strings.Split(line, "&") {
+		k, val, _ := strings.Cut(kv, "=")
+		v.Add(k, val)
+	}
+	return v
 }
 
 // closeFiles закрывает файлы после остановки горутины чтения.

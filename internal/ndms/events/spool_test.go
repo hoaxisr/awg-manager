@@ -306,3 +306,37 @@ func TestSpool_StopRemovesDir(t *testing.T) {
 		t.Fatalf("каталог spool после Stop: %v", err)
 	}
 }
+
+// M4: значение с `%` (IPv6 с зоной) — строка не отвергается, адрес доходит
+// как есть, без percent-декодирования.
+func TestSpool_PercentInValueKept(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks", "ndm-hooks")
+	sink, log := startSpool(t, path, 0)
+
+	appendLine(t, path, "type=ifipchanged&id=Bridge0&system_name=br0&layer=&level=&address=fe80::1%br0\n")
+	got := sink.waitFor(t, 1)
+	want := Event{Type: EventIfIPChanged, ID: "Bridge0", SystemName: "br0", Address: "fe80::1%br0"}
+	if got[0] != want {
+		t.Fatalf("got %#v, want %#v", got[0], want)
+	}
+	if log.count() != 0 {
+		t.Fatalf("предупреждений: want 0, got %d", log.count())
+	}
+}
+
+// Строка без type по-прежнему отвергается одним Warn.
+func TestSpool_MissingTypeRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks", "ndm-hooks")
+	sink, log := startSpool(t, path, 0)
+
+	appendLine(t, path, "id=Bridge0&address=x\n")
+	line, e := hookLine(0)
+	appendLine(t, path, line)
+	got := sink.waitFor(t, 1)
+	if len(got) != 1 || got[0] != e {
+		t.Fatalf("got %#v, want %#v", got, e)
+	}
+	if log.count() != 1 {
+		t.Fatalf("предупреждений: want 1, got %d", log.count())
+	}
+}
