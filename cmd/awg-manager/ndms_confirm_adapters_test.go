@@ -187,8 +187,8 @@ func TestConfirmingOpkgTun_SetAbsentIsError(t *testing.T) {
 func TestConfirmingSegmentNAT_SetStaticWANAbsentIsNotSegmentGone(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS(ndms.Interface{ID: "Bridge0", Type: "Bridge"}) // PPPoE0 нет
 	err := newConfirmAdapters(t, f).nat.SetStaticNAT(context.Background(), "Bridge0", "PPPoE0")
-	if err == nil || errors.Is(err, router.ErrIfaceAbsent) || !strings.Contains(err.Error(), "PPPoE0") {
-		t.Fatalf("SetStaticNAT: %v, want ошибку с именем WAN без ErrIfaceAbsent", err)
+	if !errors.Is(err, router.ErrWANAbsent) || errors.Is(err, router.ErrIfaceAbsent) || !strings.Contains(err.Error(), "PPPoE0") {
+		t.Fatalf("SetStaticNAT: %v, want ErrWANAbsent с именем WAN без ErrIfaceAbsent", err)
 	}
 	if len(f.Posts) != 0 {
 		t.Fatalf("команда по отсутствующему WAN: %v", f.Posts)

@@ -484,7 +484,9 @@ func (s *ServiceImpl) restorePolicyTunNAT(ctx context.Context, recorded []storag
 			if rec.PriorStaticWAN == "" {
 				continue
 			}
-			if err := s.deps.SegmentNAT.SetStaticNAT(ctx, rec.Name, rec.PriorStaticWAN); err != nil && !segmentGone(err) {
+			// Прежнего выхода больше нет — возвращать static не на что, запись
+			// снимается как восстановленная (F563).
+			if err := s.deps.SegmentNAT.SetStaticNAT(ctx, rec.Name, rec.PriorStaticWAN); err != nil && !segmentGone(err) && !errors.Is(err, ErrWANAbsent) {
 				errs = append(errs, fmt.Errorf("ip static %s %s: %w", rec.Name, rec.PriorStaticWAN, err))
 			}
 		}
