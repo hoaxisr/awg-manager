@@ -1019,9 +1019,15 @@ func (o *OperatorOS5Impl) rollbackStart(ctx context.Context, tunnelID string, na
 	o.clearAppliedDNS(ctx, tunnelID, iface)
 	_ = o.firewall.RemoveRules(ctx, names.IfaceName)
 	if justCreated {
-		// We created this OpkgTun — clean it up entirely. Commands register
-		// the expected "disabled" hook via HookNotifier.
-		_ = o.commands.Interfaces.InterfaceDown(ctx, iface)
+		// Запись создана этой попыткой — сносим её целиком, а не только
+		// опускаем: иначе OpkgTunN остаётся на роутере после неудачного
+		// первого старта (F560). Свой снос — не внешнее снятие: ifdestroyed
+		// ждём до POST, как в Delete.
+		o.expectHook(names.NDMSName, "disabled")
+		o.expectHook(names.NDMSName, "destroyed")
+		if err := o.commands.Interfaces.DeleteOpkgTun(ctx, iface); err != nil {
+			o.logWarn("rollback", tunnelID, "DeleteOpkgTun: "+err.Error())
+		}
 	}
 	// Don't call InterfaceDown for existing OpkgTun — preserve conf: running.
 	_ = o.backend.Stop(ctx, names.IfaceName)

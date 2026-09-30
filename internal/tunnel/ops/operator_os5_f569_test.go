@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -196,6 +197,28 @@ func TestDelete_RegistersDestroyedExpectation(t *testing.T) {
 	}
 	if !slices.Contains(hn.calls, "OpkgTun10/destroyed@0") || f.Has("OpkgTun10") {
 		t.Fatalf("ожидание destroyed до POST не зарегистрировано: %v; posts=%v", hn.calls, f.Posts)
+	}
+	clean(t, f)
+}
+
+// Первый старт упал после создания записи — откат сносит созданную запись
+// (с ожиданием её ifdestroyed до POST), а не только опускает: иначе
+// OpkgTun10 остаётся на роутере после неудачного старта (F560).
+func TestColdStart_RollbackDeletesJustCreatedRecord(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS()
+	f.ExpectCreate("OpkgTun10")
+	o, _, _ := newOS5Oracle(t, f, &MockBackend{startError: errors.New("injected: backend")})
+	hn := &orderedNotifier{f: f}
+	o.SetHookNotifier(hn)
+
+	if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err == nil {
+		t.Fatal("ColdStart: want ошибку бэкенда")
+	}
+	if f.Has("OpkgTun10") {
+		t.Fatalf("созданная запись осталась после отката: %v", f.Posts)
+	}
+	if !slices.Contains(hn.calls, "OpkgTun10/destroyed@"+strconv.Itoa(len(f.Posts)-1)) {
+		t.Fatalf("ожидание destroyed до POST сноса не зарегистрировано: %v; posts=%v", hn.calls, f.Posts)
 	}
 	clean(t, f)
 }
