@@ -635,6 +635,17 @@ func TestRemoveStaticNATs_LegacyNoWANs_RouteError_Fails(t *testing.T) {
 	}
 }
 
+// Список интерфейсов не прочитан — пересечение подсети не проверить:
+// отказ, а не пропуск проверки (F573, решение 4).
+func TestValidateServerParams_ListError_FailsClosed(t *testing.T) {
+	f := query.NewFakeNDMS()
+	s := newServiceWithOracle(t, f, nil)
+	f.FailList(errors.New("rci down"))
+	if err := s.validateServerParams(context.Background(), "10.66.66.1", "255.255.255.0", 51820, ""); err == nil {
+		t.Fatal("проверка пересечения подсети молча пропущена")
+	}
+}
+
 func TestDelete_PresentInternetOnly_StaticThenNoInterface(t *testing.T) {
 	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"}, ndms.Interface{ID: "PPPoE0"})
 	s := newServiceWithOracle(t, f, nil, storage.ManagedServer{InterfaceName: "Wireguard3", NATMode: "internet-only", NATStaticWANs: []string{"PPPoE0"}})

@@ -683,8 +683,8 @@ func (s *Service) validateServerParams(ctx context.Context, address, mask string
 
 	used, err := s.listUsedSubnets(ctx, excludeIface)
 	if err != nil {
-		s.log.Warn("validateServerParams: cannot read interface list, skipping overlap check", "error", err)
-		return nil
+		// Пересечение не проверить — отказ, а не пропуск (F573, решение 4).
+		return fmt.Errorf("проверка пересечения подсети: список интерфейсов: %w", err)
 	}
 	if conflict := findConflict(cidr, used); conflict != nil {
 		return fmt.Errorf("подсеть %s пересекается с интерфейсом «%s» (%s)", cidr.String(), conflict.label, conflict.cidr.String())
