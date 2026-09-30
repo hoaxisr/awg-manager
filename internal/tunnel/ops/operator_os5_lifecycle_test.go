@@ -45,7 +45,7 @@ func newOS5Oracle(t *testing.T, f *ndmsquery.FakeNDMS, be *MockBackend) (*Operat
 // бэкендом; withQueries=true отдаёт оператору queries, и confirmOpkgTun
 // отвечает по списку getter'а (`/show/interface/`).
 func newOS5LifecycleOn(t *testing.T, poster ndmscommand.Poster, getter ndmsquery.Getter,
-	backend *MockBackend, withQueries bool) (*OperatorOS5Impl, *ipRunRecorder) {
+	backend Backend, withQueries bool) (*OperatorOS5Impl, *ipRunRecorder) {
 	t.Helper()
 	queries := ndmsquery.NewQueries(ndmsquery.Deps{
 		Getter: getter,

@@ -91,9 +91,9 @@ func (o *OperatorOS5Impl) ensureOpkgTunRecord(ctx context.Context, op string, cf
 		return query.Confirmed{}, false, tunnel.NewOpError(op, cfg.ID, "ndms", fmt.Errorf("read OpkgTun record: %w", err))
 	}
 	if !ok {
-		free, err := netdev.Absent(names.IfaceName)
+		free, err := o.freeOpkgTunDevice(ctx, op, cfg.ID, names)
 		if err != nil {
-			return query.Confirmed{}, false, tunnel.NewOpError(op, cfg.ID, "kernel", err)
+			return query.Confirmed{}, false, err
 		}
 		iface, err := o.commands.Interfaces.CreateOpkgTun(ctx, names.NDMSName, cfg.Name, free)
 		if err != nil {
@@ -117,6 +117,29 @@ func (o *OperatorOS5Impl) ensureOpkgTunRecord(ctx context.Context, op string, cf
 		}
 	}
 	return iface, false, nil
+}
+
+// freeOpkgTunDevice — доказательство «устройства opkgtunN нет» перед созданием
+// записи OpkgTunN: при живом устройстве NDMS запись не создаёт (C 0xcffd00a9,
+// стенд 5.01.C.6, F569). Так бывает после внешнего `no interface OpkgTunN` у
+// работающего туннеля — прошивка наше amneziawg не снимает. Устройство
+// сносится backend.Stop с гейтом держателя (F500): tun чужой программы не
+// трогаем — отказ с держателем, создания нет. Сессия WG всё равно потеряна
+// вместе с записью; Фаза 2 поднимет устройство заново.
+func (o *OperatorOS5Impl) freeOpkgTunDevice(ctx context.Context, op, tunnelID string, names tunnel.Names) (netdev.Free, error) {
+	free, err := netdev.Absent(names.IfaceName)
+	if errors.Is(err, netdev.ErrPresent) {
+		o.logInfo(op, tunnelID, fmt.Sprintf("записи %s в NDMS нет, а устройство %s живо — удаляем его перед созданием записи", names.NDMSName, names.IfaceName))
+		if serr := o.backend.Stop(ctx, names.IfaceName); serr != nil {
+			return free, tunnel.NewOpError(op, tunnelID, "kernel",
+				fmt.Errorf("устройство %s не удалено — запись %s не создать: %w", names.IfaceName, names.NDMSName, serr))
+		}
+		free, err = netdev.Absent(names.IfaceName)
+	}
+	if err != nil {
+		return free, tunnel.NewOpError(op, tunnelID, "kernel", err)
+	}
+	return free, nil
 }
 
 // recordIsOurs — единственное правило владения записью OpkgTunN (F517): её
@@ -470,7 +493,8 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 // запись не трогаем.
 //
 // Запись подтверждается одним свежим списком в начале (F546): записи нет —
-// `conf: disabled` ставить некому, команда по имени её СОЗДАЛА бы; список не
+// `conf: disabled` ставить некому, команда по имени её СОЗДАЛА бы, а наше
+// живое amneziawg сносится (записи нет ⇒ нашего устройства нет, F569); список не
 // прочитан — локальные шаги (устройство, host-route) всё равно делаются,
 // NDMS не трогаем, ошибка наружу.
 func (o *OperatorOS5Impl) Stop(ctx context.Context, tunnelID, name string) error {
@@ -478,7 +502,18 @@ func (o *OperatorOS5Impl) Stop(ctx context.Context, tunnelID, name string) error
 	iface, rec, ok, confirmErr := confirmOpkgTun(ctx, o.queries, names.NDMSName)
 
 	running, _ := o.backend.IsRunning(ctx, names.IfaceName)
-	if running {
+	switch {
+	case running && confirmErr == nil && !ok && names.NDMSName != "":
+		// Записи нет, наше amneziawg живо (внешнее `no interface`): устройство
+		// сносим, а не опускаем — живое opkgtunN не даст NDMS создать запись
+		// на следующем старте (C 0xcffd00a9, F569).
+		if err := o.backend.Stop(ctx, names.IfaceName); err != nil {
+			o.logWarn("stop", tunnelID, "delete kernel interface: "+err.Error())
+		} else {
+			o.logInfo("stop", tunnelID, fmt.Sprintf("запись %s снята в NDMS — устройство %s удалено", names.NDMSName, names.IfaceName))
+			o.appLog.Info("stop", tunnelID, fmt.Sprintf("Запись %s снята в NDMS — устройство %s удалено", names.NDMSName, names.IfaceName))
+		}
+	case running:
 		if _, err := o.ipRun(ctx, "/opt/sbin/ip", "link", "set", "down", "dev", names.IfaceName); err != nil {
 			o.logWarn("stop", tunnelID, "ip link set down: "+err.Error())
 		}
@@ -486,7 +521,7 @@ func (o *OperatorOS5Impl) Stop(ctx context.Context, tunnelID, name string) error
 		if ok {
 			o.interfaceDownBestEffort(ctx, tunnelID, iface)
 		}
-	} else {
+	default:
 		o.logInfo("stop", tunnelID, "kernel interface is not our amneziawg — link left untouched")
 		switch {
 		case ok && name != "" && o.recordIsOurs(ctx, rec, name, names.IfaceName):
@@ -588,6 +623,8 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 		o.logWarn("delete", stored.ID, "read OpkgTun record: "+confirmErr.Error()+" — NDMS record not deleted")
 	case ok:
 		o.expectHook(names.NDMSName, "disabled")
+		// Свой снос — не внешнее снятие: оркестратор поглотит этот ifdestroyed.
+		o.expectHook(names.NDMSName, "destroyed")
 		if err := o.commands.Interfaces.DeleteOpkgTun(ctx, iface); err != nil {
 			o.logWarn("delete", stored.ID, "DeleteOpkgTun: "+err.Error())
 		}

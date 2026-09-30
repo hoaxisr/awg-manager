@@ -85,24 +85,6 @@ func TestDelete_ListError_FailsClosed(t *testing.T) {
 	}
 }
 
-// Записи нет — Stop опускает только своё устройство, `conf: disabled`
-// ставить некому (команда по имени создала бы запись).
-func TestStop_RecordGone_LinkDownOnly(t *testing.T) {
-	f := ndmsquery.NewFakeNDMS()
-	o, _, rec := newOS5Oracle(t, f, &MockBackend{running: true})
-
-	if err := o.Stop(context.Background(), "awg10", "Germany"); err != nil {
-		t.Fatalf("Stop: %v", err)
-	}
-	if !hasCall(rec.Calls, "/opt/sbin/ip link set down dev opkgtun10") {
-		t.Fatalf("устройство не опущено:\n%s", strings.Join(rec.Calls, "\n"))
-	}
-	if len(f.Posts) != 0 {
-		t.Fatalf("команды в NDMS при отсутствующей записи: %v", f.Posts)
-	}
-	clean(t, f)
-}
-
 // Список не прочитан — устройство всё равно опущено, NDMS не тронут, ошибка.
 func TestStop_ListError_LinkDownThenError(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS(opkgTun10())
