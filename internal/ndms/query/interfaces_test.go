@@ -526,63 +526,6 @@ func TestInterfaceStore_InvalidateAll_RebuildsMap(t *testing.T) {
 	}
 }
 
-func TestInterfaceStore_Invalidate_RefreshesSingleEntry(t *testing.T) {
-	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, sampleIfaceList)
-	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{
-		"id":"Wireguard0","interface-name":"nwg0","type":"Wireguard","description":"updated"
-	}}}`)
-	s := NewInterfaceStore(fg, NopLogger())
-
-	_, _ = s.Get(context.Background(), "Wireguard0")
-	s.Invalidate("Wireguard0")
-
-	got, _ := s.Get(context.Background(), "Wireguard0")
-	if got == nil || got.Description != "updated" {
-		t.Errorf("Invalidate(name): want refreshed, got %#v", got)
-	}
-	if calls := fg.PostInterfaceCalls("Wireguard0"); calls != 1 {
-		t.Errorf("single-item POST calls: want 1 (the Invalidate refresh), got %d", calls)
-	}
-	if calls := fg.Calls(ifaceListPath); calls != 1 {
-		t.Errorf("list calls: want 1 (boot only), got %d", calls)
-	}
-}
-
-func TestInterfaceStore_Invalidate_RemovesFromMapOnEmptyResponse(t *testing.T) {
-	// Edge case: a different actor deleted the interface concurrently
-	// with our Invalidate refresh. NDMS responds with empty body → we
-	// drop the entry from the map.
-	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, sampleIfaceList)
-	fg.SetPostInterface("Wireguard0", "")
-	s := NewInterfaceStore(fg, NopLogger())
-
-	_, _ = s.Get(context.Background(), "Wireguard0")
-	s.Invalidate("Wireguard0")
-
-	if got, _ := s.Get(context.Background(), "Wireguard0"); got != nil {
-		t.Errorf("Invalidate after empty body: want removed, got %#v", got)
-	}
-}
-
-func TestInterfaceStore_Invalidate_OnHTTPErrorLeavesMapUntouched(t *testing.T) {
-	// HTTP error during refresh should not corrupt the map. The next
-	// hook event or future Invalidate will reconcile.
-	fg := newFakeGetter()
-	fg.SetJSON(ifaceListPath, sampleIfaceList)
-	fg.SetPostInterfaceError("Wireguard0", errors.New("ndms flake"))
-	s := NewInterfaceStore(fg, NopLogger())
-
-	_, _ = s.Get(context.Background(), "Wireguard0")
-	s.Invalidate("Wireguard0")
-
-	got, _ := s.Get(context.Background(), "Wireguard0")
-	if got == nil || got.Description != "my tunnel" {
-		t.Errorf("HTTP-error Invalidate must leave map: got %#v", got)
-	}
-}
-
 // === Refresh (F532: freshness for ownership decisions — bypasses the
 // event-sourced cache, which an out-of-band description edit never
 // invalidates via a hook) ===

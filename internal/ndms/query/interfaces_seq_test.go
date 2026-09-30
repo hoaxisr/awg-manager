@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
-
-	"github.com/hoaxisr/awg-manager/internal/ndms"
 )
 
 // blockingGetter держит запрос списка и точечное чтение `show interface`,
@@ -90,9 +88,9 @@ func TestInterfaceStore_ListRace_LayerHookWins(t *testing.T) {
 	}
 }
 
-// Refresh известной записи: хук слоя, пришедший, пока точечное чтение в
-// полёте, новее ответа — ответ его не затирает.
-func TestInterfaceStore_RefreshKnown_LayerHookWins(t *testing.T) {
+// Snapshot(Live): хук слоя, пришедший, пока список в полёте, новее ответа —
+// ответ его не затирает.
+func TestInterfaceStore_SnapshotLive_LayerHookWins(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleIfaceList) // Wireguard0 conf=running
 	bg := &blockingGetter{Getter: fg, entered: make(chan struct{}, 1)}
@@ -103,21 +101,20 @@ func TestInterfaceStore_RefreshKnown_LayerHookWins(t *testing.T) {
 	}
 	bg.gate = make(chan struct{})
 	done := make(chan struct{})
-	go func() { _, _ = s.Refresh(ctx, "Wireguard0"); close(done) }()
+	go func() { _, _ = s.Snapshot(ctx, SnapshotLive); close(done) }()
 	bg.waitBlocked(t)
 	s.OnLayerChanged("Wireguard0", "conf", "disabled")
 	close(bg.gate)
 	<-done
 	got, err := s.Get(ctx, "Wireguard0")
 	if err != nil || got == nil || got.ConfLayer != "disabled" {
-		t.Fatalf("stale point read overwrote a newer hook: %#v, %v", got, err)
+		t.Fatalf("stale list overwrote a newer hook: %#v, %v", got, err)
 	}
 }
 
-// Refresh известной записи: ifdestroyed, пришедший, пока чтение в полёте, —
-// записи нет; прочитанная до сноса копия не выдаётся за «есть» (снос прокси
-// и шлюз владения OpkgTun послали бы команды по снятому имени).
-func TestInterfaceStore_RefreshKnown_DestroyedMidReadIsAbsent(t *testing.T) {
+// Snapshot(Live): ifdestroyed, пришедший, пока список в полёте, — записи нет
+// ни в карте, ни в снимке; прочитанная до сноса копия не выдаётся за «есть».
+func TestInterfaceStore_SnapshotLive_DestroyedMidListIsAbsent(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleIfaceList)
 	bg := &blockingGetter{Getter: fg, entered: make(chan struct{}, 1)}
@@ -128,19 +125,25 @@ func TestInterfaceStore_RefreshKnown_DestroyedMidReadIsAbsent(t *testing.T) {
 	}
 	bg.gate = make(chan struct{})
 	type res struct {
-		rec *ndms.Interface
-		err error
+		snap *Snapshot
+		err  error
 	}
 	done := make(chan res, 1)
-	go func() { r, err := s.Refresh(ctx, "Wireguard0"); done <- res{r, err} }()
+	go func() { r, err := s.Snapshot(ctx, SnapshotLive); done <- res{r, err} }()
 	bg.waitBlocked(t)
 	s.OnDestroyed("Wireguard0") // ответ NDMS уже ушёл с записью, хук — после
 	close(bg.gate)
 	r := <-done
-	if r.err != nil || r.rec != nil {
-		t.Fatalf("want (nil, nil) after destroy mid-read, got (%#v, %v)", r.rec, r.err)
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if _, ok := r.snap.Record("Wireguard0"); ok {
+		t.Fatal("snapshot has Wireguard0 destroyed mid-list")
+	}
+	if _, ok := r.snap.Raw("Wireguard0"); ok {
+		t.Fatal("snapshot has raw of Wireguard0 destroyed mid-list")
 	}
 	if got, _ := s.Get(ctx, "Wireguard0"); got != nil {
-		t.Fatalf("destroyed Wireguard0 resurrected by the point read: %#v", got)
+		t.Fatalf("destroyed Wireguard0 resurrected by the list: %#v", got)
 	}
 }

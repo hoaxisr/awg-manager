@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/peersubnet"
 )
 
@@ -163,12 +164,16 @@ func subnetsOverlap(a, b *net.IPNet) bool {
 // server's own current subnet without flagging it as a conflict.
 // On RCI failure returns (nil, error); the caller decides whether
 // to degrade gracefully.
+//
+// Снимок, а не карта: адрес/маску нашего только что созданного сервера хуки
+// приносят не целиком (ifipchanged — без маски), а Invalidate после команды
+// лишь метит карту грязной — снимок по метке читает свежий список (F546).
 func (s *Service) listUsedSubnets(ctx context.Context, excludeIface string) ([]usedSubnet, error) {
-	all, err := s.queries.Interfaces.List(ctx)
+	snap, err := s.queries.Interfaces.Snapshot(ctx, query.SnapshotRecent)
 	if err != nil {
 		return nil, err
 	}
-	return usedSubnetsOf(all, excludeIface), nil
+	return usedSubnetsOf(snap.Records(), excludeIface), nil
 }
 
 // usedSubnetsOf — разбор listUsedSubnets над уже прочитанным списком.
