@@ -81,7 +81,7 @@ func TestBatcher_MultipleSubmits_OneBatch(t *testing.T) {
 		"/show/sc/dns-proxy/route",
 		"/show/rc/object-group/fqdn",
 		"/show/running-config",
-		"/show/interface/Wireguard0",
+		"/show/ip/route",
 	} {
 		go func(path string) {
 			_, err := b.Submit(ctx, path)

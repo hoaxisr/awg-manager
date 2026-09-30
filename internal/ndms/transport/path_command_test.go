@@ -21,13 +21,6 @@ func TestPathToCommand(t *testing.T) {
 			false,
 		},
 		{
-			"single iface lookup",
-			"/show/interface/Wireguard0",
-			map[string]any{"show": map[string]any{"interface": map[string]any{"name": "Wireguard0"}}},
-			[]string{"show", "interface"},
-			false,
-		},
-		{
 			"query param",
 			"/show/interface/system-name?name=Wireguard0",
 			map[string]any{"show": map[string]any{"interface": map[string]any{"system-name": map[string]any{"name": "Wireguard0"}}}},

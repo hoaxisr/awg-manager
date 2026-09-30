@@ -20,11 +20,11 @@ package transport
 // the URL parser. Caller supplies the command tree under "show" as a
 // slice of segments; args is merged into the innermost object.
 //
-//	ShowQuery([]string{"interface"}, map[string]any{"name": "GigabitEthernet0/Vlan2"})
-//	  => {"show":{"interface":{"name":"GigabitEthernet0/Vlan2"}}}
+//	ShowQuery([]string{"interface", "system-name"}, map[string]any{"name": "GigabitEthernet0/Vlan2"})
+//	  => {"show":{"interface":{"system-name":{"name":"GigabitEthernet0/Vlan2"}}}}
 //
-//	ShowQuery([]string{"interface"}, map[string]any{"name": "Wireguard0", "details": "yes"})
-//	  => {"show":{"interface":{"name":"Wireguard0","details":"yes"}}}
+// Интерфейс по имени (`show interface name=X`) так не читаем — на снятом
+// NDMS пишет E; данные интерфейса — из полного списка (F546).
 //
 // Empty args yields the bare command (useful for listings):
 //

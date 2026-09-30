@@ -17,15 +17,14 @@ import (
 // Поддерживает формы:
 //
 //	"/show/interface/"                            → cmd {"show":{"interface":{}}}, unwrap ["show","interface"]
-//	"/show/interface/Wireguard0"                  → cmd {"show":{"interface":{"name":"Wireguard0"}}}, unwrap ["show","interface"]
 //	"/show/interface/system-name?name=Wireguard0" → cmd {"show":{"interface":{"system-name":{"name":"Wireguard0"}}}}, unwrap ["show","interface","system-name"]
 //	"/show/sc/dns-proxy/route"                    → cmd {"show":{"sc":{"dns-proxy":{"route":{}}}}}, unwrap ["show","sc","dns-proxy","route"]
 //	"/show/running-config"                        → cmd {"show":{"running-config":{}}}, unwrap ["show","running-config"]
 //
 // Эвристика: последний "содержательный" сегмент это leaf. Если последний
-// сегмент — name-like (без `?`) после трёх и более сегментов — он
-// становится {name: <value>} параметром предыдущего узла. Если последний
-// сегмент содержит `?k=v` — параметры применяются к leaf'у. Leaf без
+// сегмент содержит `?k=v` — параметры применяются к leaf'у. Формы
+// интерфейса по имени (`/show/interface/<name>`) нет: по имени демон не
+// читает (F546). Leaf без
 // параметров получает значение `{}` (empty object) — NDMS требует
 // non-null для batch query, иначе вернёт пустой response.
 func pathToCommand(path string) (any, []string, error) {
@@ -77,15 +76,6 @@ func pathToCommand(path string) (any, []string, error) {
 		leafKey = last
 		leafValue = map[string]any{}
 		segments = segments[:len(segments)-1]
-	} else if len(segments) == 3 && segments[1] == "interface" {
-		// "/show/interface/Wireguard0" — единственный известный 3-сегментный
-		// путь, где последний сегмент это NAME parameter, а не resource leaf.
-		// Все остальные 3-seg пути (/show/ip/hotspot, /show/ip/route,
-		// /show/ip/policy, /show/rc/dns-proxy, /show/wireguard/server, …) —
-		// это путь до leaf'а, last обрабатывается ниже в общей ветке.
-		leafKey = "interface"
-		leafValue = map[string]any{"name": last}
-		segments = segments[:len(segments)-2]
 	} else {
 		// Общий случай: last — leaf endpoint без параметров.
 		// Покрывает 2-seg ("/show/version", "/show/running-config"),
