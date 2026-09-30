@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/events"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
@@ -45,5 +46,26 @@ func TestHookHandler_Handle_SystemNameBeforeWANModel(t *testing.T) {
 
 	if len(wm.names) != 1 || wm.names[0] != "usb0" {
 		t.Fatalf("WAN-модель в том же Handle видит %v, want [usb0]", wm.names)
+	}
+}
+
+// orderLog — общий журнал порядка вызовов карты имён и диспетчера.
+type orderLog struct{ calls []string }
+
+func (o *orderLog) OnSystemName(id, _ string) { o.calls = append(o.calls, "name:"+id) }
+func (o *orderLog) Enqueue(e events.Event)    { o.calls = append(o.calls, "enqueue:"+e.ID) }
+
+// Имя кладётся ДО постановки в очередь: воркер диспетчера, применив
+// ifdestroyed того же события (Forget) раньше синхронного вызова, оставил бы
+// в карте имя снятого id.
+func TestHookHandler_Handle_SystemNameBeforeEnqueue(t *testing.T) {
+	o := &orderLog{}
+	h := newTestHookHandler(o)
+	h.SetSystemNames(o)
+
+	handleForm(t, h, "type=ifdestroyed&id=UsbQmi0&system_name=usb0")
+
+	if len(o.calls) != 2 || o.calls[0] != "name:UsbQmi0" || o.calls[1] != "enqueue:UsbQmi0" {
+		t.Fatalf("порядок %v, want [name:UsbQmi0 enqueue:UsbQmi0]", o.calls)
 	}
 }

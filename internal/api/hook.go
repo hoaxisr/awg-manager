@@ -184,17 +184,19 @@ func enqueueHook(d HookDispatcher, event events.Event) {
 // Синхронна только WAN-модель: на незнакомом интерфейсе SetUp
 // перечитывает список WAN (RCI); остальное уходит в горутины.
 func (h *HookHandler) Handle(event events.Event) {
-	// 1) Enqueue into Dispatcher for cache invalidation (async, non-blocking).
-	enqueueHook(h.dispatcher, event)
-
-	// 1-) Имя ядра из хука — в кэш синхронно (I3, F570): SetUp WAN-модели ниже
+	// 0) Имя ядра из хука — в кэш синхронно (I3, F570): SetUp WAN-модели ниже
 	// на незнакомом имени перечитывает ListWAN, а тот читает только память.
 	// Через одну лишь очередь диспетчера имя горячо подключённого модема
 	// доходило бы позже, и первый WAN up терялся. Диспетчер повторит то же
-	// (идемпотентно).
+	// (идемпотентно). Строго ДО постановки в очередь: иначе воркер успел бы
+	// применить ifdestroyed этого же события (Forget), и имя снятого id
+	// воскресло бы в карте.
 	if event.SystemName != "" && h.systemNames != nil {
 		h.systemNames.OnSystemName(event.ID, event.SystemName)
 	}
+
+	// 1) Enqueue into Dispatcher for cache invalidation (async, non-blocking).
+	enqueueHook(h.dispatcher, event)
 
 	// 1a) Смена адреса интерфейса — повод перепроверить DDNS-имена: страж
 	// пройдётся вне очереди. Вызов неблокирующий (будит чужую горутину), так
