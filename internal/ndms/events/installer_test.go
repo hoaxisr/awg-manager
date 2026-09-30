@@ -26,8 +26,8 @@ func TestInstaller_CreatesAllFourHooks(t *testing.T) {
 			t.Errorf("%s perm: want 0755, got %o", path, info.Mode().Perm())
 		}
 		got, _ := os.ReadFile(path)
-		if !strings.Contains(string(got), "HOOK_TYPE=") {
-			t.Errorf("%s content missing HOOK_TYPE marker", path)
+		if string(got) != hookScriptContent {
+			t.Errorf("%s: содержимое не совпадает со встроенным скриптом", path)
 		}
 	}
 }
@@ -72,16 +72,13 @@ func TestInstaller_RewritesStaleContent(t *testing.T) {
 	}
 }
 
-// Порядок доставки в хуке: curl первым. BusyBox 1.37.0 на прошивке роняет
-// апплет wget с SIGSEGV на ЛЮБОМ запросе (стенд 2026-08-28), и каждое событие
-// NDMS оставляло след в kernel-логе. Ошибка не наша, но зовём его мы.
-func TestHookScriptPrefersCurl(t *testing.T) {
-	curl := strings.Index(hookScriptContent, "/opt/bin/curl -s")
-	wget := strings.Index(hookScriptContent, "/bin/wget -q")
-	if curl < 0 || wget < 0 {
-		t.Fatalf("в хуке нет обеих утилит: curl=%d wget=%d", curl, wget)
-	}
-	if curl > wget {
-		t.Fatal("wget вызывается раньше curl — на прошивке он падает с SIGSEGV")
+// Хук стоит в очереди NDMS: ни одного fork'а и ни одной сетевой утилиты
+// (F571 — блокирующий скрипт задерживал хуки, и NDMS писал E на снятых
+// интерфейсах).
+func TestHookScript_NoForks(t *testing.T) {
+	for _, bad := range []string{"$(", "`", "curl", "wget", "sed", "awk", "/opt/sbin/ip"} {
+		if strings.Contains(hookScriptContent, bad) {
+			t.Errorf("в хук-скрипте %q", bad)
+		}
 	}
 }
