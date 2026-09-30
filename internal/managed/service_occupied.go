@@ -90,10 +90,10 @@ func (sn occupiedSnap) without(ex PeerRef) []peersubnet.Occupied {
 }
 
 // occupiedSnapshot читает всё для OccupiedSubnets ОДНИМ списком интерфейсов
-// (F552: прежде — список плюс по списку на каждый сервер). Серверы
-// подтверждаются ConfirmEach по кандидатам — все id карты и записи панели;
-// сервер, которого карта не знала (потерян ifcreated), виден в списке после
-// этого же чтения и подтверждается вторым — только в этом случае.
+// (F552: прежде — список плюс по списку на каждый сервер) и ОДНИМ деревом rc
+// (F546: прежде — rc по имени на каждый сервер). Кандидаты и подтверждение —
+// из одного списка (ConfirmAll): сервер, которого карта не знала (потерян
+// ifcreated), подтверждается тем же чтением.
 //
 // iface — сервер вызывающего: его доказательство из того же списка
 // (ok=false — интерфейса нет); "" — не нужно.
@@ -107,24 +107,11 @@ func (s *Service) occupiedSnapshot(ctx context.Context, iface string) (occupiedS
 	if _, err := s.settings.Get(); err != nil {
 		return nil, query.Confirmed{}, false, fmt.Errorf("read settings: %w", err)
 	}
-	// Кандидаты — из карты и записей; подтверждение — только свежим списком:
-	// пропущенный хук не выкидывает существующий сервер из проверки (T6).
-	cached, err := s.queries.Interfaces.List(ctx)
-	if err != nil {
-		return nil, query.Confirmed{}, false, fmt.Errorf("list interfaces: %w", err)
-	}
-	names := []string{}
-	if iface != "" {
-		names = append(names, iface)
-	}
-	for _, i := range cached {
-		names = append(names, i.ID)
-	}
-	names = append(names, s.settings.GetServerInterfaces()...)
-	for _, sv := range s.settings.GetManagedServers() {
-		names = append(names, sv.InterfaceName)
-	}
-	confirmed, err := s.queries.Interfaces.ConfirmEach(ctx, names)
+	// Подтверждение — только свежим списком: пропущенный хук не выкидывает
+	// существующий сервер из проверки (T6). Кандидаты — все записи того же
+	// списка: отдельное чтение карты перед ним (по метке «грязно» после нашей
+	// записи) было бы вторым списком подряд.
+	confirmed, err := s.queries.Interfaces.ConfirmAll(ctx)
 	if err != nil {
 		return nil, query.Confirmed{}, false, fmt.Errorf("list interfaces: %w", err)
 	}
@@ -142,22 +129,9 @@ func (s *Service) occupiedSnapshot(ctx context.Context, iface string) (occupiedS
 	// Тот же набор, что показывает список серверов (listServers): помеченные,
 	// встроенный «Wireguard VPN Server» (обычно не помечен) и managed.
 	servers := map[string]bool{}
-	var late []string
 	for _, i := range ifaces {
 		if strings.EqualFold(i.Type, "Wireguard") && i.Description == ndms.BuiltInVPNServerDescription {
 			servers[i.ID] = true
-			if _, ok := confirmed[i.ID]; !ok {
-				late = append(late, i.ID)
-			}
-		}
-	}
-	if len(late) > 0 {
-		more, err := s.queries.Interfaces.ConfirmEach(ctx, late)
-		if err != nil {
-			return nil, query.Confirmed{}, false, fmt.Errorf("list interfaces: %w", err)
-		}
-		for id, c := range more {
-			confirmed[id] = c
 		}
 	}
 	for _, id := range s.settings.GetServerInterfaces() {
@@ -166,20 +140,22 @@ func (s *Service) occupiedSnapshot(ctx context.Context, iface string) (occupiedS
 	for _, sv := range s.settings.GetManagedServers() {
 		servers[sv.InterfaceName] = true
 	}
-	// onRouter — ключи пиров прочитанных серверов (тот же свежий снимок):
-	// сети записи пира, снятого с роутера, на роутере не стоят.
-	onRouter := map[string]map[string]bool{}
+	// onRouter — ключи пиров прочитанных серверов (одно свежее дерево rc на
+	// все): сети записи пира, снятого с роутера, на роутере не стоят.
+	// Пометка пережила интерфейс (удалён в веб-морде): роутер ответил списком
+	// без него — пиров, занимающих сети, нет. Не fail-open.
+	read := map[string]query.Confirmed{}
 	for id := range servers {
-		// Пометка пережила интерфейс (удалён в веб-морде): роутер ответил
-		// списком без него — пиров, занимающих сети, нет. Не fail-open.
-		c, ok := confirmed[id]
-		if !ok {
-			continue
+		if c, ok := confirmed[id]; ok {
+			read[id] = c
 		}
-		peers, err := s.queries.WGServers.PeersRC(ctx, c)
-		if err != nil {
-			return nil, query.Confirmed{}, false, err
-		}
+	}
+	peersByID, err := s.queries.WGServers.PeersRCEach(ctx, read)
+	if err != nil {
+		return nil, query.Confirmed{}, false, err
+	}
+	onRouter := map[string]map[string]bool{}
+	for id, peers := range peersByID {
 		srvNet := subnetByID[id]
 		onRouter[id] = make(map[string]bool, len(peers))
 		for _, p := range peers {

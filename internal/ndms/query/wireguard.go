@@ -206,6 +206,9 @@ func (s *WGServerStore) PeersRC(ctx context.Context, c Confirmed) ([]ndms.Wiregu
 // дереву rc (проверка занятости сетей, миграция). Любого нет в дереве —
 // ErrGone: снят между подтверждением и чтением, решение перечитывается.
 func (s *WGServerStore) PeersRCEach(ctx context.Context, cs map[string]Confirmed) (map[string][]ndms.WireguardServerPeerConfig, error) {
+	if len(cs) == 0 {
+		return map[string][]ndms.WireguardServerPeerConfig{}, nil
+	}
 	tree, err := s.rcTree.Fetch(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get wireguard server config: %w", err)

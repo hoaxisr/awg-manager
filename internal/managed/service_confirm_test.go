@@ -239,6 +239,77 @@ func TestOccupiedSubnets_OneListRead(t *testing.T) {
 	}
 }
 
+// Проверка занятости: пиры всех серверов — одним чтением дерева rc, и после
+// нашей записи (карта помечена грязной) — всё равно один список: подтверждение
+// и карта берутся из одного чтения (F546).
+func TestOccupied_OneRCReadForAllServers(t *testing.T) {
+	f := query.NewFakeNDMS(
+		ndms.Interface{ID: "Wireguard1", Type: "Wireguard", Address: "10.1.0.1", Mask: "255.255.255.0"},
+		ndms.Interface{ID: "Wireguard2", Type: "Wireguard", Address: "10.2.0.1", Mask: "255.255.255.0"},
+		ndms.Interface{ID: "Wireguard3", Type: "Wireguard", Address: "10.3.0.1", Mask: "255.255.255.0"},
+	)
+	for i, id := range []string{"Wireguard1", "Wireguard2", "Wireguard3"} {
+		n := string(rune('1' + i))
+		f.SetRC(id, json.RawMessage(`{"wireguard":{"peer":[{"key":"K`+n+`","allow-ips":[{"address":"192.168.`+n+`0.0","mask":"255.255.255.0"}]}]}}`))
+	}
+	s := newServiceWithOracle(t, f, map[string]string{"/show/rc/ip/route": `[]`},
+		storage.ManagedServer{InterfaceName: "Wireguard1"},
+		storage.ManagedServer{InterfaceName: "Wireguard2"},
+		storage.ManagedServer{InterfaceName: "Wireguard3"},
+	)
+	for round := 1; round <= 2; round++ {
+		rcBefore := f.RCListCalls()
+		lists := listsDuring(t, s, f, func() {
+			s.queries.Interfaces.Invalidate("Wireguard1") // наша запись перед проверкой
+			occ, err := s.OccupiedSubnets(context.Background(), PeerRef{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(occ) != 6 {
+				t.Fatalf("occupied = %v", occ)
+			}
+		})
+		if lists != 1 {
+			t.Fatalf("проверка %d: list reads = %d, want 1", round, lists)
+		}
+		if got := f.RCListCalls() - rcBefore; got != 1 {
+			t.Fatalf("проверка %d: чтений дерева rc = %d, want 1", round, got)
+		}
+	}
+	if f.E != 0 {
+		t.Fatalf("E=%d", f.E)
+	}
+}
+
+// Миграция allow-ips: пиры всех серверов — одно чтение дерева rc.
+func TestMigratePeerAllowIPs_OneRCRead(t *testing.T) {
+	f := query.NewFakeNDMS(
+		ndms.Interface{ID: "Wireguard1", Type: "Wireguard"},
+		ndms.Interface{ID: "Wireguard2", Type: "Wireguard"},
+		ndms.Interface{ID: "Wireguard3", Type: "Wireguard"},
+	)
+	peer := func(k string) []storage.ManagedPeer { return []storage.ManagedPeer{{PublicKey: k}} }
+	f.SetRC("Wireguard1", json.RawMessage(`{"wireguard":{"peer":[{"key":"A"}]}}`))
+	f.SetRC("Wireguard2", json.RawMessage(`{"wireguard":{"peer":[{"key":"B"}]}}`))
+	f.SetRC("Wireguard3", json.RawMessage(`{"wireguard":{"peer":[{"key":"C"}]}}`))
+	s := newServiceWithOracle(t, f, map[string]string{},
+		storage.ManagedServer{InterfaceName: "Wireguard1", Peers: peer("A")},
+		storage.ManagedServer{InterfaceName: "Wireguard2", Peers: peer("B")},
+		storage.ManagedServer{InterfaceName: "Wireguard3", Peers: peer("C")},
+	)
+	if err := s.settings.SetManagedPeerAllowIPsMigrated(false); err != nil {
+		t.Fatal(err)
+	}
+	before := f.RCListCalls()
+	s.MigratePeerAllowIPs(context.Background())
+	if got := f.RCListCalls() - before; got != 1 {
+		t.Fatalf("чтений дерева rc = %d, want 1", got)
+	}
+	if len(f.Posts) != 3 || f.E != 0 || !s.settings.IsManagedPeerAllowIPsMigrated() {
+		t.Fatalf("posts=%v E=%d", f.Posts, f.E)
+	}
+}
+
 // Сервер, которого карта не знала (потерян ifcreated), попадает в проверку:
 // тот же список показывает его, второй подтверждает.
 func TestOccupiedSubnets_BuiltInMissedByCache_StillRead(t *testing.T) {
@@ -311,11 +382,10 @@ func TestRestore_ListReadsDoNotGrowWithPeers(t *testing.T) {
 				t.Fatalf("n=%d: сети пира не восстановлены: %+v", n, got.Peers)
 			}
 		}
-		// Confirm создания + снимок занятых + одно чтение карты по метке
-		// «грязно» после настройки сервера (F546: память после нашей записи
-		// читает свежий список) — от числа пиров не зависит.
-		if lists != 3 {
-			t.Fatalf("n=%d: list reads = %d, want 3", n, lists)
+		// Confirm создания + снимок занятых (кандидаты и подтверждение — одно
+		// чтение, F546) — от числа пиров не зависит.
+		if lists != 2 {
+			t.Fatalf("n=%d: list reads = %d, want 2", n, lists)
 		}
 		if f.Phantoms != 0 || f.E != 0 {
 			t.Fatalf("n=%d: phantoms=%d E=%d", n, f.Phantoms, f.E)

@@ -31,8 +31,8 @@ func (s *Service) MigratePrivateKeys(ctx context.Context) {
 // firmware rejects multiple peers sharing it ("subnet overlaps with the other
 // peer"). Gated by a persisted flag so it runs once.
 //
-// Флаг встаёт, только если прочиталось всё: список интерфейсов и rc каждого
-// сервера с пирами. Сбой чтения = состояние неизвестно → флаг не ставится,
+// Флаг встаёт, только если прочиталось всё: список интерфейсов и дерево rc
+// (одно чтение на все серверы, F546). Сбой чтения = состояние неизвестно → флаг не ставится,
 // проход повторится на следующей загрузке. Сервер, чьего интерфейса нет в
 // прочитанном списке (удалён вне панели), — обработан: снимать не у кого.
 //
@@ -52,7 +52,7 @@ func (s *Service) MigratePeerAllowIPs(ctx context.Context) {
 	// которую берёт и удаление пира.
 	defer s.LockPeerSubnets()()
 	var exists map[string]query.Confirmed
-	readFailed := false
+	var onRouter map[string]map[string]bool
 	attempted, failures := 0, 0
 	for _, sv := range s.settings.GetManagedServers() {
 		if len(sv.Peers) == 0 {
@@ -66,23 +66,20 @@ func (s *Service) MigratePeerAllowIPs(ctx context.Context) {
 				}
 				return
 			}
+			if onRouter, err = s.routerPeerKeys(ctx, exists); err != nil {
+				// Не знаем, есть ли пиры, — не шлём и не ставим флаг.
+				if s.log != nil {
+					s.log.Warn("migrate-peer-allow-ips: peers not read, retry next boot", "error", err)
+				}
+				return
+			}
 		}
 		iface, ok := exists[sv.InterfaceName]
 		if !ok {
 			continue // интерфейс удалён вне панели — пиров на роутере нет
 		}
-		onRouter, err := s.routerPeerKeys(ctx, iface)
-		if err != nil {
-			// Не знаем, есть ли пиры, — не шлём и не ставим флаг.
-			readFailed = true
-			if s.log != nil {
-				s.log.Warn("migrate-peer-allow-ips: peers not read, server skipped",
-					"interface", sv.InterfaceName, "error", err)
-			}
-			continue
-		}
 		for _, peer := range sv.Peers {
-			if peer.PublicKey == "" || !onRouter[peer.PublicKey] {
+			if peer.PublicKey == "" || !onRouter[sv.InterfaceName][peer.PublicKey] {
 				continue // пира на роутере нет — снимать нечего
 			}
 			attempted++
@@ -95,7 +92,7 @@ func (s *Service) MigratePeerAllowIPs(ctx context.Context) {
 			}
 		}
 	}
-	if readFailed || (attempted > 0 && failures == attempted) {
+	if attempted > 0 && failures == attempted {
 		// Состояние не прочитано или NDMS не принял ни одного снятия — повтор.
 		return
 	}
@@ -123,20 +120,24 @@ func (s *Service) routerServers(ctx context.Context) (map[string]query.Confirmed
 	return s.queries.Interfaces.ConfirmEach(ctx, names)
 }
 
-// routerPeerKeys — ключи пиров интерфейса по свежему rc.
-func (s *Service) routerPeerKeys(ctx context.Context, iface query.Confirmed) (map[string]bool, error) {
+// routerPeerKeys — ключи пиров серверов по одному свежему дереву rc.
+func (s *Service) routerPeerKeys(ctx context.Context, ifaces map[string]query.Confirmed) (map[string]map[string]bool, error) {
 	if s.queries == nil || s.queries.WGServers == nil {
 		return nil, fmt.Errorf("wireguard server store not wired")
 	}
-	peers, err := s.queries.WGServers.PeersRC(ctx, iface)
+	byIface, err := s.queries.WGServers.PeersRCEach(ctx, ifaces)
 	if err != nil {
 		return nil, err
 	}
-	keys := make(map[string]bool, len(peers))
-	for _, p := range peers {
-		keys[p.PublicKey] = true
+	out := make(map[string]map[string]bool, len(byIface))
+	for id, peers := range byIface {
+		keys := make(map[string]bool, len(peers))
+		for _, p := range peers {
+			keys[p.PublicKey] = true
+		}
+		out[id] = keys
 	}
-	return keys, nil
+	return out, nil
 }
 
 func (s *Service) migratePrivateKeysWith(ctx context.Context, resolve resolveFn, run wgRunner) {

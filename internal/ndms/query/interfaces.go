@@ -1423,6 +1423,24 @@ func (s *InterfaceStore) ConfirmEach(ctx context.Context, names []string) (map[s
 	return out, nil
 }
 
+// ConfirmAll — Confirm для каждой записи одного свежего списка: кандидаты и
+// доказательство из одного чтения (проверка занятости сетей по всем серверам).
+func (s *InterfaceStore) ConfirmAll(ctx context.Context) (map[string]Confirmed, error) {
+	raw, err := s.refreshList(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("confirm: %w", err)
+	}
+	out := make(map[string]Confirmed, len(raw))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for n := range raw {
+		if _, ok := s.confirmedLocked(raw, n); ok {
+			out[n] = Confirmed{name: n}
+		}
+	}
+	return out, nil
+}
+
 // confirmedLocked — копия записи, если name есть в свежем ответе raw и не
 // снята хуком после него. В карте запись новее ответа (хуки её правят); нет в
 // карте, но в pending — хук по ней (ifcreated, layer, ip) пришёл, пока список
