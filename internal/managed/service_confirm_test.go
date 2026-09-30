@@ -331,9 +331,10 @@ func TestRestoreMerge_OneListRead(t *testing.T) {
 		"/show/rc/ip/route":             `[]`,
 		"/show/rc/interface/Wireguard1": restoreRCPeers(sv),
 		"/show/running-config":          `{"message":[]}`,
-		// WGServers.Get: ключ живого сервера — тот же, что в бэкапе.
-		`POST {"show":{"interface":{"name":"Wireguard1"}}}`: `{"show":{"interface":{"id":"Wireguard1","type":"Wireguard","wireguard":{"public-key":"` + pub + `"}}}}`,
 	}, existing)
+	// WGServers.Get: ключ живого сервера — тот же, что в бэкапе; runtime — из
+	// снимка списка (F546).
+	f.SetDetail("Wireguard1", json.RawMessage(`{"wireguard":{"public-key":"`+pub+`"}}`))
 	if live, err := s.queries.WGServers.Get(context.Background(), "Wireguard1"); err != nil || live.PublicKey != pub {
 		t.Fatalf("живой ключ не читается фикстурой: %+v %v", live, err)
 	}

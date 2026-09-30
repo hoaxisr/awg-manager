@@ -26,19 +26,18 @@ func TestGetStats_OverlaysLivePeers(t *testing.T) {
 	const peer = `"public-key":"PK1","txbytes":5,"last-handshake":30,"online":true,"enabled":true`
 	// Интерфейс есть и в списке, как на роутере: без него кэш счёл бы его
 	// отсутствующим и пиров не спрашивал бы (F546).
-	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`)
+	// Runtime сервера и пиры — из снимка списка (F546).
+	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard","state":"up","wireguard":{"peer":[{"rxbytes":10,`+peer+`}]}}}`)
 	fg.SetJSON("/show/rc/interface/Wireguard0", `{}`) // обогащение Get без rc — ошибка (F510)
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	svc := New(&fakePoster{}, nil, queries, nil, store, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	// Кэш items заполнен старыми цифрами; к моменту GetStats роутер отвечает
 	// живыми — их и должен принести PeerStore.
-	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{"id":"Wireguard0","type":"Wireguard","state":"up","wireguard":{"peer":[{"rxbytes":10,`+peer+`}]}}}}`)
 	if _, err := queries.WGServers.Get(context.Background(), "Wireguard0"); err != nil {
 		t.Fatal(err)
 	}
-	fg.SetPostInterface("Wireguard0", `{"show":{"interface":{"id":"Wireguard0","type":"Wireguard","state":"up","wireguard":{"peer":[{"rxbytes":99,`+peer+`}]}}}}`)
-	// PeerStore читает пиров из снимка списка (F546): роутер отвечает живыми
-	// цифрами и в списке; снимок не старше 2 с — метим его грязным.
+	// Снимок не старше 2 с — метим его грязным: следующий читатель берёт
+	// свежий список с живыми цифрами.
 	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard","state":"up","wireguard":{"peer":[{"rxbytes":99,`+peer+`}]}}}`)
 	queries.Interfaces.Invalidate("Wireguard0")
 

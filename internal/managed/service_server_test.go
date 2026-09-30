@@ -95,6 +95,9 @@ func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error 
 			"description":    ManagedServerDescription,
 			"address":        sv.Address,
 			"mask":           sv.Mask,
+			// Runtime серверов читается из снимка списка (F546): публичный
+			// ключ — в записи списка, как на роутере.
+			"wireguard": map[string]any{"public-key": "SRV-" + sv.InterfaceName},
 		}
 		raw, err := json.Marshal(entry)
 		if err != nil {
@@ -109,7 +112,9 @@ func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error 
 	}
 	for name := range g.created {
 		if _, ok := m[name]; !ok {
-			m[name] = json.RawMessage(`{"id":"` + name + `","interface-name":"` + name + `","type":"Wireguard"}`)
+			a := g.addr[name]
+			m[name] = json.RawMessage(`{"id":"` + name + `","interface-name":"` + name + `","type":"Wireguard","address":"` + a[0] +
+				`","mask":"` + a[1] + `","wireguard":{"public-key":"SRV-` + name + `"}}`)
 		}
 	}
 	g.mu.Unlock()

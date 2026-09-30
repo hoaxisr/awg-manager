@@ -3,7 +3,6 @@ package query
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -35,19 +34,19 @@ func (s *WGServerStore) present(ctx context.Context, name string) (Present, erro
 	return p, nil
 }
 
-// fetchInterfaceDetail читает `show interface` записи p (showOne) и
-// разбирает объект в dst. Пустой ответ оставляет dst нетронутым. ErrGone
-// (запись снята, кэш её уже выселил) возвращается вызывающему: дальше по
-// этому имени читать нельзя.
-func (s *WGServerStore) fetchInterfaceDetail(ctx context.Context, p Present, dst any) error {
-	inner, err := s.interfaces.ShowRaw(ctx, p)
+// snapshotDetail разбирает в dst запись name из снимка полного списка (не
+// старше SnapshotRecent) — те же поля, что у `show interface <name>`, без
+// чтения по имени (F546). false — записи в снимке нет; dst не тронут.
+func (s *WGServerStore) snapshotDetail(ctx context.Context, name string, dst any) (bool, error) {
+	snap, err := s.interfaces.Snapshot(ctx, SnapshotRecent)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if len(inner) == 0 {
-		return nil
+	raw, ok := snap.Raw(name)
+	if !ok {
+		return false, nil
 	}
-	return json.Unmarshal(inner, dst)
+	return true, json.Unmarshal(raw, dst)
 }
 
 const (
@@ -243,16 +242,17 @@ func (s *WGServerStore) PeersRC(ctx context.Context, c Confirmed) ([]ndms.Wiregu
 	return rciRCToServerConfig(rc, "").Peers, nil
 }
 
-// FindFreeIndex returns the next free WireguardN slot in [1,99].
+// FindFreeIndex returns the next free WireguardN slot in [1,99]. Решение
+// перед созданием — по только что прочитанному списку (SnapshotLive).
 func (s *WGServerStore) FindFreeIndex(ctx context.Context) (int, error) {
-	var raw map[string]json.RawMessage
-	if err := s.getter.Get(ctx, "/show/interface/", &raw); err != nil {
+	snap, err := s.interfaces.Snapshot(ctx, SnapshotLive)
+	if err != nil {
 		return 0, fmt.Errorf("list interfaces: %w", err)
 	}
 	used := make(map[int]bool)
-	for name := range raw {
-		if strings.HasPrefix(name, "Wireguard") {
-			if n, err := strconv.Atoi(strings.TrimPrefix(name, "Wireguard")); err == nil {
+	for _, rec := range snap.Records() {
+		if strings.HasPrefix(rec.ID, "Wireguard") {
+			if n, err := strconv.Atoi(strings.TrimPrefix(rec.ID, "Wireguard")); err == nil {
 				used[n] = true
 			}
 		}
@@ -328,17 +328,10 @@ func (s *WGServerStore) fetchSystemTunnels(ctx context.Context) ([]ndms.SystemWi
 
 // GetSystemTunnel returns a single system-tunnel view.
 func (s *WGServerStore) GetSystemTunnel(ctx context.Context, name string) (*ndms.SystemWireguardTunnel, error) {
-	// Интерфейса нет (в кэше или NDMS ответил ErrGone) — пустой снимок без
-	// ошибки, как прежде давал конверт «unable to find».
+	// Интерфейса нет в снимке списка — пустой снимок без ошибки, как прежде
+	// давал конверт «unable to find». По имени NDMS не спрашивают (F546).
 	var detail rciWireguardDetail
-	p, ok, err := s.interfaces.Lookup(ctx, name)
-	if err == nil && ok {
-		err = s.fetchInterfaceDetail(ctx, p, &detail)
-		if errors.Is(err, ErrGone) {
-			err = nil
-		}
-	}
-	if err != nil {
+	if _, err := s.snapshotDetail(ctx, name, &detail); err != nil {
 		return nil, fmt.Errorf("get system wireguard %s: %w", name, err)
 	}
 	t := rciToSystemTunnel(detail)
@@ -374,10 +367,16 @@ func (s *WGServerStore) InvalidateAll() {
 
 // --- fetchers ---------------------------------------------------------------
 
-// wireguardInterfaces — WG-интерфейсы роутера из ОДНОГО чтения
-// `/show/interface/`: записи списка несут те же поля, что и точечное
+// wireguardInterfaces — WG-интерфейсы роутера из только что прочитанного
+// полного списка (InterfaceStore.Snapshot(SnapshotLive): список заодно
+// кладётся в карту): записи списка несут те же поля, что и точечное
 // `show interface <name>` (пиры, public-key, listen-port, summary.layer;
 // ответы побайтно совпадают, стенд 5.02.A.11).
+//
+// SnapshotLive, а не SnapshotRecent, пока обогащение (fetchAll) читает rc по
+// имени: снимок моложе 2 с ещё держит снятый без хука сервер, и его rc
+// спросился бы по имени — E (F546 S1). Когда rc читается полным деревом
+// (Task 44), возраст можно поднять до SnapshotRecent.
 //
 // Точечных чтений по составу из InterfaceStore здесь больше нет (F546 S1):
 // при внешнем сносе NDMS шлёт iflayerchanged РАНЬШЕ ifdestroyed, хук слоя
@@ -390,17 +389,17 @@ func (s *WGServerStore) InvalidateAll() {
 // полный список (stale-on-error) — иначе живой сервер пропадал бы из
 // /servers и из опроса метрик.
 func (s *WGServerStore) wireguardInterfaces(ctx context.Context) (map[string]json.RawMessage, error) {
-	var raw map[string]json.RawMessage
-	if err := s.getter.Get(ctx, "/show/interface/", &raw); err != nil {
+	snap, err := s.interfaces.Snapshot(ctx, SnapshotLive)
+	if err != nil {
 		return nil, fmt.Errorf("list interfaces: %w", err)
 	}
 	out := make(map[string]json.RawMessage)
-	for id, data := range raw {
-		var typeCheck struct {
-			Type string `json:"type"`
+	for _, rec := range snap.Records() {
+		if !strings.EqualFold(rec.Type, "Wireguard") {
+			continue
 		}
-		if json.Unmarshal(data, &typeCheck) == nil && strings.EqualFold(typeCheck.Type, "Wireguard") {
-			out[id] = data
+		if data, ok := snap.Raw(rec.ID); ok {
+			out[rec.ID] = data
 		}
 	}
 	return out, nil
@@ -481,12 +480,17 @@ func (s *WGServerStore) fetchAll(ctx context.Context) ([]ndms.WireguardServer, e
 }
 
 func (s *WGServerStore) fetchItem(ctx context.Context, name string) (*ndms.WireguardServer, error) {
-	p, err := s.present(ctx, name)
+	var detail rciWireguardDetail
+	ok, err := s.snapshotDetail(ctx, name, &detail)
 	if err != nil {
 		return nil, fmt.Errorf("get wireguard server %s: %w", name, err)
 	}
-	var detail rciWireguardDetail
-	if err := s.fetchInterfaceDetail(ctx, p, &detail); err != nil {
+	if !ok {
+		return nil, fmt.Errorf("get wireguard server %s: interface %s: нет в NDMS: %w", name, name, ErrGone)
+	}
+	// rc — пока по имени через кэш (present); полное дерево rc — Task 44.
+	p, err := s.present(ctx, name)
+	if err != nil {
 		return nil, fmt.Errorf("get wireguard server %s: %w", name, err)
 	}
 	srv := rciToWireguardServer(detail)
@@ -550,9 +554,9 @@ func (s *WGServerStore) fetchConfig(ctx context.Context, name string) (*ndms.Wir
 	if err != nil {
 		return nil, fmt.Errorf("get wireguard server %s: %w", name, err)
 	}
-	// Runtime for public key.
+	// Runtime for public key — из снимка списка.
 	var detail rciWireguardDetail
-	if err := s.fetchInterfaceDetail(ctx, p, &detail); err != nil {
+	if _, err := s.snapshotDetail(ctx, name, &detail); err != nil {
 		return nil, fmt.Errorf("get wireguard server %s: %w", name, err)
 	}
 	var publicKey string

@@ -43,6 +43,23 @@ func bindLANACL(fg *query.FakeGetter, iface string) {
 		"interface "+iface, "    ip access-group AWGM_"+iface+" in", "!")
 }
 
+// setListPublicKey кладёт публичный ключ сервера в его запись списка
+// интерфейсов: runtime сервера читается из снимка списка (F546).
+func setListPublicKey(t *testing.T, fg *query.FakeGetter, iface, pub string) {
+	t.Helper()
+	raw, err := fg.GetRaw(context.Background(), "/show/interface/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list map[string]map[string]any
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatal(err)
+	}
+	list[iface]["wireguard"] = map[string]any{"public-key": pub}
+	b, _ := json.Marshal(list)
+	fg.SetJSON("/show/interface/", string(b))
+}
+
 func setRunningConfig(fg *query.FakeGetter, lines ...string) {
 	b, _ := json.Marshal(map[string]any{"message": lines})
 	fg.SetJSON("/show/running-config", string(b))
@@ -338,7 +355,7 @@ func TestRestoreMerge_PermitsMergedPeerSubnets(t *testing.T) {
 	}
 	pub := mustDerivePublicKey(t, priv)
 	bindLANACL(fg, "Wireguard1")
-	fg.SetPostInterface("Wireguard1", `{"show":{"interface":{"id":"Wireguard1","type":"Wireguard","address":"10.66.66.1","mask":"255.255.255.0","wireguard":{"public-key":"`+pub+`"}}}}`)
+	setListPublicKey(t, fg, "Wireguard1", pub)
 	sv, _ := store.GetManagedServerByID("Wireguard1")
 	in := []storage.ManagedPeer{{PublicKey: validPeerKey(59), TunnelIP: "10.66.66.2/32", Enabled: true, RemoteSubnets: []string{"192.168.77.0/24"}}}
 	out := svc.Restore(context.Background(), []ManagedServerExport{{InterfaceName: "Wireguard1", Address: sv.Address, Mask: sv.Mask, ListenPort: sv.ListenPort, PrivateKey: priv, Policy: "none", Peers: in}}, RestoreOptions{})

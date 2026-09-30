@@ -75,6 +75,15 @@ func (g *restoreLiveGetter) Get(ctx context.Context, path string, out any) error
 			"description":    ManagedServerDescription,
 			"address":        addr,
 			"mask":           mask,
+			// Runtime сервера — из снимка списка (F546): поля те же, что у
+			// точечного ответа (GetRaw ниже).
+			"state":     "up",
+			"link":      "up",
+			"connected": "yes",
+			"wireguard": map[string]any{
+				"public-key": ent.PublicKey,
+				"peer":       []map[string]any{},
+			},
 		}
 		raw, _ := json.Marshal(entry)
 		m[name] = raw

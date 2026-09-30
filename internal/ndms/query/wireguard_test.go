@@ -156,12 +156,8 @@ const sampleWGSingleInterfaceJSON = `{
 }`
 
 func primeWGFakeGetter(fg *FakeGetter) {
+	// Runtime серверов — из снимка полного списка (F546): точечных ответов нет.
 	fg.SetJSON("/show/interface/", sampleWGInterfaceListJSON)
-	// Per-interface fetches go through POST (see transport.ShowInterface
-	// rationale) — the fixture body must include the {"show":{"interface":…}}
-	// envelope that NDMS returns over the wire.
-	fg.SetPostInterface("Wireguard0", wrapShowInterface(stripOuterMapEntry(sampleWGInterfaceListJSON, "Wireguard0")))
-	fg.SetPostInterface("Wireguard1", wrapShowInterface(sampleWGSingleInterfaceJSON))
 	fg.SetJSON("/show/rc/interface/Wireguard0", `{"description":"builtin"}`)
 	fg.SetJSON("/show/rc/interface/Wireguard1", sampleWGRCInterfaceJSON)
 	fg.SetJSON("/show/interface/system-name?name=Wireguard0", `"nwg0"`)
@@ -576,6 +572,7 @@ func TestWGServerStore_InvalidateName_DropsListCache(t *testing.T) {
 	primeWGFakeGetter(fg)
 
 	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
+	rcW1 := "/show/rc/interface/Wireguard1"
 
 	// Warm both list and per-item caches.
 	_, _ = s.List(context.Background())
@@ -588,13 +585,11 @@ func TestWGServerStore_InvalidateName_DropsListCache(t *testing.T) {
 	_, _ = s.List(context.Background())
 	_, _ = s.Get(context.Background(), "Wireguard1")
 
-	// Оба кэша сброшены: Get до и после — два точечных чтения, List до и
-	// после — два полных списка плюс бутстрап InterfaceStore.
-	if got := fg.PostInterfaceCalls("Wireguard1"); got != 2 {
-		t.Errorf("show interface Wireguard1: want 2 (item ×2), got %d", got)
-	}
-	if got := fg.Calls("/show/interface/"); got != 3 {
-		t.Errorf("/show/interface/ calls: want 3 (list ×2 + Interfaces bootstrap), got %d", got)
+	// Оба кэша сброшены: runtime берётся из снимка списка (F546), поэтому
+	// пересборку видно по обогащению rc — List и Get читают его по разу до и
+	// после сброса.
+	if got := fg.Calls(rcW1); got != 4 {
+		t.Errorf("%s: want 4 ((list + item) ×2), got %d", rcW1, got)
 	}
 }
 
@@ -603,6 +598,7 @@ func TestWGServerStore_InvalidateAll(t *testing.T) {
 	primeWGFakeGetter(fg)
 
 	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
+	rcW1 := "/show/rc/interface/Wireguard1"
 
 	_, _ = s.List(context.Background())
 	_, _ = s.Get(context.Background(), "Wireguard1")
@@ -614,13 +610,10 @@ func TestWGServerStore_InvalidateAll(t *testing.T) {
 	_, _ = s.Get(context.Background(), "Wireguard1")
 	_, _ = s.GetConfig(context.Background(), "Wireguard1")
 
-	// Get и GetConfig по разу до и после сброса — четыре точечных чтения;
-	// List — полный список до и после плюс бутстрап InterfaceStore.
-	if got := fg.PostInterfaceCalls("Wireguard1"); got != 4 {
-		t.Errorf("show interface Wireguard1: want 4 ((item + config) ×2), got %d", got)
-	}
-	if got := fg.Calls("/show/interface/"); got != 3 {
-		t.Errorf("/show/interface/ calls: want 3 (list ×2 + Interfaces bootstrap), got %d", got)
+	// List, Get и GetConfig по разу до и после сброса читают rc Wireguard1 —
+	// все три кэша сброшены (runtime — из снимка списка, F546).
+	if got := fg.Calls(rcW1); got != 6 {
+		t.Errorf("%s: want 6 ((list + item + config) ×2), got %d", rcW1, got)
 	}
 }
 
@@ -707,13 +700,17 @@ func TestWGServerStore_ListSystemTunnels_CachedBetweenCalls(t *testing.T) {
 func TestWGServerStore_ListSystemTunnels_InvalidateRefetches(t *testing.T) {
 	fg := newFakeGetter()
 	primeWGFakeGetter(fg)
-	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
+	ifs := NewInterfaceStore(fg, NopLogger())
+	s := NewWGServerStore(fg, NopLogger(), ifs)
 
 	if _, err := s.ListSystemTunnels(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	base := fg.Calls("/show/interface/")
 	s.InvalidateAll()
+	// Состав берётся из снимка списка: метим его грязным — пересборка кэша
+	// видна как один список, попадание в кэш — как ноль.
+	ifs.Invalidate("Wireguard1")
 	if _, err := s.ListSystemTunnels(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -755,13 +752,17 @@ func TestWGServerStore_GetASCParams_NumericForm(t *testing.T) {
 func TestWGServerStore_ListSystemTunnelsFresh_BypassesAndRefreshesCache(t *testing.T) {
 	fg := newFakeGetter()
 	primeWGFakeGetter(fg)
-	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
+	ifs := NewInterfaceStore(fg, NopLogger())
+	s := NewWGServerStore(fg, NopLogger(), ifs)
 
 	if _, err := s.ListSystemTunnels(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	// Выборка — из снимка списка (не старше 2 с, F546); грязная метка перед
+	// каждым вызовом делает обращение к снимку видимым как список.
 	base := fg.Calls("/show/interface/")
 	for i := 0; i < 3; i++ {
+		ifs.Invalidate("Wireguard1")
 		if _, err := s.ListSystemTunnelsFresh(context.Background()); err != nil {
 			t.Fatalf("вызов %d: %v", i, err)
 		}
@@ -769,6 +770,7 @@ func TestWGServerStore_ListSystemTunnelsFresh_BypassesAndRefreshesCache(t *testi
 	if got := fg.Calls("/show/interface/") - base; got != 3 {
 		t.Errorf("три свежих выборки дали %d обращений к /show/interface/, ожидали 3", got)
 	}
+	ifs.Invalidate("Wireguard1")
 	if _, err := s.ListSystemTunnels(context.Background()); err != nil {
 		t.Fatal(err)
 	}
