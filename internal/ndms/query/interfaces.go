@@ -134,6 +134,13 @@ type InterfaceStore struct {
 	// каждом сбросе, и следующий ListAll снова спрашивал бы все ~20
 	// интерфейсов (F473). Снимается на ifdestroyed.
 	sysNames map[string]string
+
+	// seq растёт на каждом хуке; touched — seq последнего хука по id.
+	// Ответ списка или точечного чтения не затирает id, тронутый хуком после
+	// начала запроса: хук новее ответа. Всё читается и пишется под mu.
+	seq     uint64
+	touched map[string]uint64
+	pending map[string]struct{}
 }
 
 // NewInterfaceStore constructs a new InterfaceStore. Bootstrap is
@@ -148,6 +155,8 @@ func NewInterfaceStore(g Getter, log Logger) *InterfaceStore {
 		byID:      make(map[string]*ndms.Interface),
 		startedAt: make(map[string]time.Time),
 		sysNames:  make(map[string]string),
+		touched:   make(map[string]uint64),
+		pending:   make(map[string]struct{}),
 	}
 }
 
@@ -176,28 +185,72 @@ func (s *InterfaceStore) ensureBootstrap(ctx context.Context) error {
 		return nil
 	}
 
-	raw, err := s.fetchListMap(ctx)
-	if err != nil {
+	if err := s.refreshAll(ctx); err != nil {
 		return fmt.Errorf("interface bootstrap: %w", err)
 	}
-	now := time.Now()
-	s.mu.Lock()
-	s.byID = make(map[string]*ndms.Interface, len(raw))
-	s.startedAt = make(map[string]time.Time, len(raw))
-	for id, iface := range raw {
-		cp := iface
-		s.byID[id] = &cp
-		// Restore startedAt from NDMS Uptime field for already-running
-		// interfaces. This survives daemon restart: real connection
-		// time is preserved (NDMS knows how long ago the interface
-		// came up).
-		if cp.Uptime > 0 && cp.ConfLayer == "running" {
-			s.startedAt[id] = now.Add(-time.Duration(cp.Uptime) * time.Second)
-		}
+	return nil
+}
+
+// refreshAll читает полный список и кладёт его поверх карты через
+// applyListLocked. start снимается ДО запроса: хуки, пришедшие, пока
+// список в полёте, получают seq > start и ответом не затираются.
+func (s *InterfaceStore) refreshAll(ctx context.Context) error {
+	s.mu.RLock()
+	start := s.seq
+	s.mu.RUnlock()
+	raw, err := s.fetchListMap(ctx)
+	if err != nil {
+		return err
 	}
+	s.mu.Lock()
+	s.applyListLocked(raw, start)
 	s.mu.Unlock()
 	s.booted.Store(true)
 	return nil
+}
+
+// applyListLocked кладёт свежий список поверх карты, не затирая id, тронутые
+// хуками после начала запроса (start): хук новее списка. Отсутствующие в
+// списке и не тронутые — удаляются. pending чистится по тому же правилу.
+func (s *InterfaceStore) applyListLocked(raw map[string]ndms.Interface, start uint64) {
+	now := time.Now()
+	for id, rec := range raw {
+		if s.touched[id] > start {
+			continue
+		}
+		cp := rec
+		s.byID[id] = &cp
+		// Часы аптайма ведёт демон; для уже поднятого интерфейса без них
+		// восстанавливаем старт из Uptime NDMS — переживает рестарт демона.
+		if cp.ConfLayer == "running" {
+			if t, ok := s.startedAt[id]; !ok || t.IsZero() {
+				if cp.Uptime > 0 {
+					s.startedAt[id] = now.Add(-time.Duration(cp.Uptime) * time.Second)
+				}
+			}
+		} else {
+			delete(s.startedAt, id)
+		}
+	}
+	for id := range s.byID {
+		if _, ok := raw[id]; ok || s.touched[id] > start {
+			continue
+		}
+		delete(s.byID, id)
+		delete(s.startedAt, id)
+		delete(s.sysNames, id)
+	}
+	for id := range s.pending {
+		if s.touched[id] <= start {
+			delete(s.pending, id) // в списке — уже положен выше; нет — хук был ложным/поздним, не ждём
+		}
+	}
+}
+
+// markTouchedLocked отмечает id как тронутый хуком сейчас.
+func (s *InterfaceStore) markTouchedLocked(id string) {
+	s.seq++
+	s.touched[id] = s.seq
 }
 
 // === Read paths ===
@@ -892,6 +945,7 @@ func (s *InterfaceStore) OnCreated(ctx context.Context, id string) {
 // OnDestroyed handles ifdestroyed NDMS events. Pure in-memory delete.
 func (s *InterfaceStore) OnDestroyed(id string) {
 	s.mu.Lock()
+	s.markTouchedLocked(id)
 	delete(s.byID, id)
 	delete(s.startedAt, id)
 	delete(s.sysNames, id)
@@ -919,6 +973,9 @@ func (s *InterfaceStore) OnDestroyed(id string) {
 func (s *InterfaceStore) OnLayerChanged(id, layer, level string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Даже для незнакомого id: список в полёте не должен положить запись
+	// старее хука — применится со следующим списком.
+	s.markTouchedLocked(id)
 	iface, ok := s.byID[id]
 	if !ok {
 		// Event for an interface we don't know — typically means we
@@ -958,6 +1015,7 @@ func (s *InterfaceStore) OnLayerChanged(id, layer, level string) {
 func (s *InterfaceStore) OnIPChanged(id, address string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.markTouchedLocked(id)
 	iface, ok := s.byID[id]
 	if !ok {
 		return
@@ -1005,6 +1063,7 @@ func (s *InterfaceStore) Refresh(ctx context.Context, name string) (*ndms.Interf
 	}
 	s.mu.RLock()
 	_, known := s.byID[name]
+	start := s.seq
 	s.mu.RUnlock()
 	var iface *ndms.Interface
 	if known {
@@ -1025,6 +1084,15 @@ func (s *InterfaceStore) Refresh(ctx context.Context, name string) (*ndms.Interf
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.touched[name] > start {
+		// Хук по name пришёл, пока шло чтение, — он новее ответа: карту не
+		// трогаем, возвращаем прочитанное.
+		if iface == nil {
+			return nil, nil
+		}
+		cp := *iface
+		return &cp, nil
+	}
 	if iface == nil {
 		// NDMS confirms absent — remove from map.
 		delete(s.byID, name)
@@ -1065,43 +1133,15 @@ func (s *InterfaceStore) Invalidate(name string) {
 }
 
 // InvalidateAll re-fetches the entire interface list from NDMS and
-// rebuilds the map. Called by command-side code after operations that
-// affect multiple interfaces (e.g. Save, big admin changes).
+// applies it over the map (see applyListLocked). Called by command-side
+// code after operations that affect multiple interfaces (e.g. Save, big
+// admin changes).
 func (s *InterfaceStore) InvalidateAll() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	raw, err := s.fetchListMap(ctx)
-	if err != nil {
+	if err := s.refreshAll(ctx); err != nil {
 		s.log.Warnf("InvalidateAll: refresh failed: %v", err)
-		return
 	}
-	now := time.Now()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Replace map atomically. Preserve startedAt for interfaces still
-	// present and running — uptime clock is daemon-tracked, not NDMS-
-	// tracked. Drop startedAt for interfaces gone or stopped.
-	nextByID := make(map[string]*ndms.Interface, len(raw))
-	nextStartedAt := make(map[string]time.Time, len(raw))
-	for id, iface := range raw {
-		cp := iface
-		nextByID[id] = &cp
-		if cp.ConfLayer == "running" {
-			if existing, ok := s.startedAt[id]; ok && !existing.IsZero() {
-				nextStartedAt[id] = existing
-			} else if cp.Uptime > 0 {
-				nextStartedAt[id] = now.Add(-time.Duration(cp.Uptime) * time.Second)
-			}
-		}
-	}
-	s.byID = nextByID
-	s.startedAt = nextStartedAt
-	for id := range s.sysNames {
-		if _, ok := nextByID[id]; !ok {
-			delete(s.sysNames, id)
-		}
-	}
-	s.booted.Store(true)
 }
 
 // mayExist — false, только если кэш уверен, что записи нет. Ошибка кэша —
