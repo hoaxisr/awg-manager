@@ -8,7 +8,6 @@ import (
 	"log/slog"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
-	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/connectivity"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -121,39 +120,12 @@ func (a *app) setupOrchestrator() {
 	a.hydraService.SetQueries(a.ndmsQueries)
 	a.hydraService.SetPolicies(a.ndmsCommands.Policies)
 
-	a.ndmsDispatcher = ndmsevents.NewDispatcher(a.ndmsQueries, eventsLogger(a.loggingService))
-
-	// NDMS hook fired — invalidate all 7 routing-section polling stores.
-	// Each client's storeRegistry.invalidateResource() triggers a fresh
-	// REST GET for that section. No need to snapshot server-side anymore.
-	a.ndmsDispatcher.SetRoutingChanged(func() {
-		for _, key := range []events.Resource{
-			events.ResourceRoutingDnsRoutes,
-			events.ResourceRoutingStaticRoutes,
-			events.ResourceRoutingAccessPolicies,
-			events.ResourceRoutingPolicyDevices,
-			events.ResourceRoutingPolicyInterfaces,
-			events.ResourceRoutingClientRoutes,
-			events.ResourceRoutingTunnels,
-		} {
-			a.eventBus.PublishInvalidated(key, "ndms-change")
-		}
-	})
-
+	// Диспетчер, HookSink и читатель spool созданы в setupNDMS — до
+	// прогрева списков (см. там); здесь только запуск воркера. События,
+	// пришедшие раньше, лежат в его очереди. Установка скриптов — после
+	// Start читателя (он создаёт каталог spool), это держится тем, что
+	// setupNDMS идёт раньше этой фазы.
 	a.ndmsDispatcher.Start()
-
-	// Порядок держит полноту хуков (F571): читатель spool встаёт в конец
-	// файла ДО установки скриптов и до первого чтения списка интерфейсов —
-	// всё раньше покрыто бутовым списком, всё позже прочитано. Готовый
-	// HookHandler появится только в srv.Start; до того HookSink кладёт
-	// события лишь в диспетчер (см. api.HookSink).
-	a.ndmsHookSink = api.NewHookSink(a.ndmsDispatcher)
-	spool := ndmsevents.NewSpoolReader(ndmsevents.DefaultSpoolPath, a.ndmsHookSink.Handle, eventsLogger(a.loggingService))
-	if err := spool.Start(); err != nil {
-		a.bootLog.Warn("ndms-hook-spool", "", err.Error())
-	} else {
-		a.deferOnExit(spool.Stop)
-	}
 
 	ndmsInstaller := ndmsevents.NewInstaller(eventsLogger(a.loggingService))
 	if err := ndmsInstaller.Install(); err != nil {

@@ -7,8 +7,11 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	ndmsevents "github.com/hoaxisr/awg-manager/internal/ndms/events"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/instancestore"
@@ -106,6 +109,42 @@ func (a *app) setupNDMS() {
 		Logger: queryLogger(a.loggingService),
 		IsOS5:  osdetect.Is5,
 	})
+
+	// Хуки NDMS (F571): читатель spool встаёт в конец файла ДО первого
+	// чтения списка интерфейсов (прогрев ниже) и до установки скриптов
+	// (setupOrchestrator). Всё, что записано раньше, покрыто этим списком;
+	// всё, что позже, прочитано и лежит в очереди диспетчера, пока его воркер
+	// не запущен (Start — в setupOrchestrator). Готовый HookHandler появится
+	// только в srv.Start; до того HookSink кладёт события лишь в диспетчер
+	// (см. api.HookSink).
+	a.ndmsDispatcher = ndmsevents.NewDispatcher(a.ndmsQueries, eventsLogger(a.loggingService))
+
+	// NDMS hook fired — invalidate all 7 routing-section polling stores.
+	// Each client's storeRegistry.invalidateResource() triggers a fresh
+	// REST GET for that section. No need to snapshot server-side anymore.
+	// a.eventBus здесь ещё nil (setupTunnels): колбэк читает поле при вызове,
+	// а зовёт его только воркер диспетчера, запускаемый после setupTunnels.
+	a.ndmsDispatcher.SetRoutingChanged(func() {
+		for _, key := range []events.Resource{
+			events.ResourceRoutingDnsRoutes,
+			events.ResourceRoutingStaticRoutes,
+			events.ResourceRoutingAccessPolicies,
+			events.ResourceRoutingPolicyDevices,
+			events.ResourceRoutingPolicyInterfaces,
+			events.ResourceRoutingClientRoutes,
+			events.ResourceRoutingTunnels,
+		} {
+			a.eventBus.PublishInvalidated(key, "ndms-change")
+		}
+	})
+
+	a.ndmsHookSink = api.NewHookSink(a.ndmsDispatcher)
+	spool := ndmsevents.NewSpoolReader(ndmsevents.DefaultSpoolPath, a.ndmsHookSink.Handle, eventsLogger(a.loggingService))
+	if err := spool.Start(); err != nil {
+		a.bootLog.Warn("ndms-hook-spool", "", err.Error())
+	} else {
+		a.deferOnExit(spool.Stop)
+	}
 
 	// Initialize SystemInfoStore at boot — one-shot fetch of /show/version.
 	// Compute timeout based on system uptime (wait longer at early boot).
