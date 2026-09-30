@@ -147,6 +147,13 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 		}
 	}
 
+	// Отложенный save — до чтения: sc-вид держит снесённые строки до
+	// сохранения, и сверка снесла бы их повторно (F568).
+	if err := s.commands.DNSRoutes.FlushPendingSave(ctx); err != nil {
+		s.logError("reconcile", "", "Failed to save configuration before reading dns-proxy routes", err.Error())
+		return fmt.Errorf("flush pending save: %w", err)
+	}
+
 	// Fresh reads (Fetch — past the TTL and the singleflight): router state
 	// may have been mutated since the last fetch (60-minute TTL is too long
 	// for reconcile-time freshness), and InvalidateAll+List could join a

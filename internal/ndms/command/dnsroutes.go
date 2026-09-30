@@ -35,6 +35,19 @@ type DNSRouteRef struct {
 	Group, Interface string
 }
 
+// FlushPendingSave синхронно сохраняет конфигурацию, если есть несохранённые
+// правки (F568). `/show/sc/dns-proxy/route` показывает снесённую через RCI
+// строку до `system configuration save` (добавленную — сразу; стенд): без
+// сохранения сверка видит уже снесённый маршрут и сносит его повторно — E
+// «unable to find the DNS route» в журнале ndm. Ошибка сохранения —
+// ошибка вызывающему: по устаревшему виду сверка посчитала бы неверные сносы.
+func (c *DNSRouteCommands) FlushPendingSave(ctx context.Context) error {
+	if !c.isOS5() || c.save.Status().PendingCount == 0 {
+		return nil
+	}
+	return c.save.Flush(ctx)
+}
+
 // DeleteRoutes removes dns-proxy route entries in a single batch.
 func (c *DNSRouteCommands) DeleteRoutes(ctx context.Context, refs []DNSRouteRef) error {
 	if !c.isOS5() {
