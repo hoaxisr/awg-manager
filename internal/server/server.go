@@ -46,6 +46,7 @@ import (
 	ndmstransport "github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
+	systraffic "github.com/hoaxisr/awg-manager/internal/sys/traffic"
 	"github.com/hoaxisr/awg-manager/internal/terminal"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
@@ -108,6 +109,7 @@ type Server struct {
 	exposureGuard              *api.ExposureGuard
 	exposureGuardStop          context.CancelFunc
 	singboxHandler             *api.SingboxHandler
+	trafficHandler             *systraffic.Handler
 	singboxConnsHandler        *api.SingboxConnectionsHandler
 	singboxRouterHandler       *api.SingboxRouterHandler
 	connectionsMarkProvider    func(context.Context) (string, bool)
@@ -217,6 +219,7 @@ type Deps struct {
 	Bus                  *events.Bus
 	HydraService         *hydraroute.Service
 	SingboxHandler       *api.SingboxHandler
+	TrafficHandler       *systraffic.Handler
 	SingboxOrch          *singboxorch.Orchestrator
 	ClashProxy           *api.ClashProxy
 	SingboxConnsHandler  *api.SingboxConnectionsHandler
@@ -295,6 +298,7 @@ func New(cfg Config, deps Deps) *Server {
 		orch:                   deps.Orch,
 		bus:                    deps.Bus,
 		singboxHandler:         deps.SingboxHandler,
+		trafficHandler:         deps.TrafficHandler,
 		singboxOrch:            deps.SingboxOrch,
 		singboxConnsHandler:    deps.SingboxConnsHandler,
 		clashProxy:             deps.ClashProxy,

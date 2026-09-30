@@ -49,6 +49,12 @@ import type {
 	SystemProcessItem,
 	SystemProcSummary,
 	SystemProcSnapshot,
+	TrafficDevice,
+	TrafficSession,
+	TrafficDomainGroup,
+	TrafficSnapshot,
+	TrafficExportRequest,
+	TrafficExportResponse,
 } from '$lib/types';
 import { readDiagnosticsSanitizedPreference } from './clientCore';
 import { TunnelsClient } from './clientTunnels';
@@ -67,6 +73,12 @@ export type {
 	SystemProcessItem,
 	SystemProcSummary,
 	SystemProcSnapshot,
+	TrafficDevice,
+	TrafficSession,
+	TrafficDomainGroup,
+	TrafficSnapshot,
+	TrafficExportRequest,
+	TrafficExportResponse,
 } from '$lib/types';
 
 export class SystemClient extends TunnelsClient {
@@ -960,6 +972,21 @@ export class SystemClient extends TunnelsClient {
 		return this.request('/system/proc/kill', {
 			method: 'POST',
 			body: JSON.stringify(params),
+		});
+	}
+
+	async systemTrafficDevices(): Promise<TrafficDevice[]> {
+		return this.request('/system/traffic/devices');
+	}
+
+	async systemTrafficSnapshot(deviceIP: string): Promise<TrafficSnapshot> {
+		return this.request(`/system/traffic/snapshot?device=${encodeURIComponent(deviceIP)}`);
+	}
+
+	async systemTrafficExport(req: TrafficExportRequest): Promise<TrafficExportResponse> {
+		return this.request('/system/traffic/export', {
+			method: 'POST',
+			body: JSON.stringify(req),
 		});
 	}
 
