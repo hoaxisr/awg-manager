@@ -116,8 +116,13 @@ func TestStaticRoute_ListError_NoCommand(t *testing.T) {
 	if err := s.Reconcile(ctx); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if err := s.Delete(ctx, "srl1"); err != nil {
-		t.Fatalf("Delete: %v", err)
+	// Снять маршруты нельзя — запись остаётся для повтора, иначе маршруты в
+	// NDMS остались бы сиротами.
+	if err := s.Delete(ctx, "srl1"); err == nil {
+		t.Fatal("Delete при ошибке списка: ждали отказ")
+	}
+	if _, err := s.store.GetRouteList("srl1"); err != nil {
+		t.Fatalf("запись обязана остаться: %v", err)
 	}
 	if len(f.Posts) != 0 {
 		t.Fatalf("команды при ошибке списка: %v", f.Posts)

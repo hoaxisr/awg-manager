@@ -185,6 +185,7 @@ func (h *ServersHandler) requireWGCommands(w http.ResponseWriter) bool {
 //	@Param			body	body		ServerAddPeerRequestDTO	true	"Peer description and tunnel IP"
 //	@Success		200		{object}	ServersAllResponse
 //	@Failure		400		{object}	APIErrorEnvelope
+//	@Failure		404		{object}	APIErrorEnvelope	"Server interface gone from NDMS (code IFACE_GONE)"
 //	@Failure		500		{object}	APIErrorEnvelope
 //	@Router			/servers/{name}/peers [post]
 func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, name string) {
@@ -331,6 +332,7 @@ func (h *ServersHandler) AddServerPeer(w http.ResponseWriter, r *http.Request, n
 //	@Param			body	body		ServerUpdatePeerRequestDTO	true	"New description and tunnel IP"
 //	@Success		200		{object}	ServersAllResponse
 //	@Failure		400		{object}	APIErrorEnvelope	"Any failure, including a peer missing on the router (code NOT_FOUND)"
+//	@Failure		404		{object}	APIErrorEnvelope	"Server interface gone from NDMS (code IFACE_GONE)"
 //	@Router			/servers/{name}/peers/{pubkey} [put]
 func (h *ServersHandler) UpdateServerPeer(w http.ResponseWriter, r *http.Request, name, pubkey string) {
 	req, ok := parseJSON[ServerUpdatePeerRequestDTO](w, r, http.MethodPut)
@@ -695,6 +697,7 @@ func (h *ServersHandler) DeleteServerPeer(w http.ResponseWriter, r *http.Request
 //	@Param			body	body		EnabledToggleRequest	true	"Enabled flag"
 //	@Success		200		{object}	ServersAllResponse
 //	@Failure		400		{object}	APIErrorEnvelope	"Any failure, including a peer missing on the router (code NOT_FOUND)"
+//	@Failure		404		{object}	APIErrorEnvelope	"Server interface gone from NDMS (code IFACE_GONE)"
 //	@Router			/servers/{name}/peers/{pubkey}/toggle [post]
 func (h *ServersHandler) ToggleServerPeer(w http.ResponseWriter, r *http.Request, name, pubkey string) {
 	req, ok := parseJSON[EnabledToggleRequest](w, r, http.MethodPost)

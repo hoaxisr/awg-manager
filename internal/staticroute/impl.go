@@ -165,6 +165,11 @@ func (s *ServiceImpl) Delete(ctx context.Context, id string) error {
 
 	if existing.Enabled {
 		confirmed, cerr := s.confirmIfaces(ctx, existing.TunnelID)
+		// Список не прочитан — маршруты не сняты; запись остаётся для повтора:
+		// без неё маршруты в NDMS остались бы сиротами (Reconcile только ставит).
+		if cerr != nil {
+			return fmt.Errorf("delete route list: %w", cerr)
+		}
 		s.removeRoutes(ctx, existing.TunnelID, existing.Subnets, confirmed, cerr)
 	}
 
