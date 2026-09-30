@@ -110,3 +110,56 @@ func TestFakeNDMS_ExpectCreateRemoveAndList(t *testing.T) {
 		t.Fatalf("FailList: err=%v calls=%d", err, f.ListCalls())
 	}
 }
+
+// Ветки post, на которые опираются сценарии: формы interface/parse, `no` по
+// отсутствующему (отказ без E), system-name, пакет, to-interface.
+func TestFakeNDMS_PostBranches(t *testing.T) {
+	iface := func(name string, body map[string]any) map[string]any {
+		return map[string]any{"interface": map[string]any{name: body}}
+	}
+	rows := []struct {
+		name        string
+		payload     any
+		e, phantoms int
+		hooks       int
+		has         string // имя, которое обязано быть после вызова ("" — не проверять)
+		gone        string // имя, которого быть не должно
+		wantInResp  string
+	}{
+		{"payloads создаёт фантом", map[string]any{"interface": map[string]any{"name": "Wireguard5", "up": true}}, 0, 1, 1, "Wireguard5", "", "{}"},
+		{"payloads no отсутствующего", map[string]any{"interface": map[string]any{"name": "Wireguard5", "no": true}}, 0, 0, 0, "", "Wireguard5", `unable to find interface \"Wireguard5\"`},
+		{"command no отсутствующего", iface("OpkgTun1", map[string]any{"no": true}), 0, 0, 0, "", "OpkgTun1", "unable to find interface"},
+		{"payloads no присутствующего", map[string]any{"interface": map[string]any{"name": "Wireguard0", "no": true}}, 0, 0, 1, "", "Wireguard0", "{}"},
+		{"parse interface up", map[string]any{"parse": "interface Proxy2 up"}, 0, 1, 1, "Proxy2", "", "{}"},
+		{"parse no interface отсутствующего", map[string]any{"parse": "no interface Proxy2"}, 0, 0, 0, "", "Proxy2", "unable to find interface"},
+		{"parse no interface присутствующего", map[string]any{"parse": "no interface Wireguard0"}, 0, 0, 1, "", "Wireguard0", "{}"},
+		{"parse access-list", map[string]any{"parse": "access-list _WEBADMIN_x permit ip any any"}, 0, 0, 0, "Wireguard0", "", "{}"},
+		{"system-name отсутствующего", map[string]any{"show": map[string]any{"interface": map[string]any{"system-name": map[string]any{"name": "Wireguard7"}}}}, 1, 0, 0, "", "Wireguard7", "6553619"},
+		{"system-name присутствующего", map[string]any{"show": map[string]any{"interface": map[string]any{"system-name": map[string]any{"name": "Wireguard0"}}}}, 0, 0, 0, "Wireguard0", "", `"system-name":"nwg0"`},
+		{"to-interface на отсутствующий", map[string]any{"ip": map[string]any{"static": map[string]any{"interface": "Wireguard0", "to-interface": "OpkgTun9"}}}, 1, 0, 0, "", "OpkgTun9", "no such interface: OpkgTun9."},
+		{"ссылка на присутствующий", map[string]any{"ip": map[string]any{"route": map[string]any{"default": true, "interface": "Wireguard0"}}}, 0, 0, 0, "", "", "{}"},
+		{"пакет", []any{transport.ShowInterface("Wireguard7", nil), iface("Wireguard3", map[string]any{"up": false}),
+			map[string]any{"ip": map[string]any{"nat": []any{map[string]any{"interface": "OpkgTun4"}}}}}, 2, 1, 1, "Wireguard3", "", `[{"show"`},
+	}
+	for _, r := range rows {
+		t.Run(r.name, func(t *testing.T) {
+			f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"})
+			raw, err := f.Post(context.Background(), r.payload)
+			if err != nil || !strings.Contains(string(raw), r.wantInResp) {
+				t.Fatalf("err=%v raw=%s, want substring %s", err, raw, r.wantInResp)
+			}
+			if f.E != r.e || f.Phantoms != r.phantoms {
+				t.Fatalf("E=%d Phantoms=%d, want %d/%d", f.E, f.Phantoms, r.e, r.phantoms)
+			}
+			if hooks := f.DrainHooks(); len(hooks) != r.hooks {
+				t.Fatalf("hooks=%+v, want %d", hooks, r.hooks)
+			}
+			if (r.has != "" && !f.Has(r.has)) || (r.gone != "" && f.Has(r.gone)) {
+				t.Fatalf("has(%s)=%v gone(%s)=%v", r.has, f.Has(r.has), r.gone, f.Has(r.gone))
+			}
+			if strings.HasPrefix(r.name, "system-name отсутствующего") && parseSystemName(raw) != "" {
+				t.Fatalf("parseSystemName(%s) = %q, want \"\"", raw, parseSystemName(raw))
+			}
+		})
+	}
+}
