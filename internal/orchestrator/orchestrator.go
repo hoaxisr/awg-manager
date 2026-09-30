@@ -777,7 +777,15 @@ func (o *Orchestrator) unlockTunnel(tunnelID string) {
 // Updates state cache after each successful action.
 func (o *Orchestrator) executeActions(ctx context.Context, actions []Action) error {
 	var firstErr error
+	// Туннели, чей Start в этом прогоне отказал: их хвост (маршруты на
+	// WireguardN/OpkgTunN, ping-check, PersistRunning) не исполняется — он
+	// адресовал бы команды интерфейсу, которого нет (E в журнале ndm), и
+	// записал бы Enabled/StartedAt не поднятому туннелю (F546, решение 3).
+	failedStart := map[string]bool{}
 	for _, action := range actions {
+		if failedStart[action.Tunnel] {
+			continue
+		}
 		// Abandoned caller (client disconnected / request deadline) — stop
 		// BETWEEN actions, never mid-action, so each executed step is whole.
 		// Any partially-applied sequence is healed by the reconcile loop;
@@ -793,6 +801,9 @@ func (o *Orchestrator) executeActions(ctx context.Context, actions []Action) err
 			o.appLog.Warn("execute-action", action.Tunnel, fmt.Sprintf("action type %d failed: %s", action.Type, err.Error()))
 			if firstErr == nil {
 				firstErr = err
+			}
+			if action.Type == ActionStartNativeWG || action.Type == ActionColdStartKernel {
+				failedStart[action.Tunnel] = true
 			}
 			// Continue for boot/reconnect (best-effort), stop for user actions
 			// TODO: refine error strategy in Phase 2 execute implementation
