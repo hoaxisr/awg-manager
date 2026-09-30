@@ -1,9 +1,9 @@
 package query_test
 
 import (
-	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/scanner"
 	"go/token"
 	"io/fs"
 	"os"
@@ -13,32 +13,140 @@ import (
 	"testing"
 )
 
-// TestPointReads_OnlyInsideQuery — точечное чтение интерфейса по имени
-// (show interface <name>, show rc interface <name>, резолвер system-name)
-// допустимо только в internal/ndms/query: там оно защищено Present и
-// выселением по «unable to find» (F546). Литерал в любом другом пакете —
-// обход шлюза, и NDMS снова пишет E по отсутствующему имени.
-func TestPointReads_OnlyInsideQuery(t *testing.T) {
-	bad := []string{
-		`.ShowInterface(`,
-		`.ShowQuery([]string{"interface"`,
-		`"/show/interface/"+`, `"/show/interface/" +`,
-		`"/show/rc/interface/"+`, `"/show/rc/interface/" +`,
-		`"interface", "system-name"`,
+// byNamePatterns — формы запроса интерфейса ПО ИМЕНИ (F546, решение владельца
+// 30.09 «убрать все чтения по имени»): на снятом интерфейсе NDMS пишет E
+// «unable to find». Ищутся в коде без комментариев.
+var byNamePatterns = []string{
+	`.ShowInterface(`, // хелпер удалён; шаблон — от воскрешения
+	`"/show/interface/"+`, `"/show/interface/" +`, `"/show/interface/%`, `"/show/interface"`,
+	`"/show/rc/interface/"+`, `"/show/rc/interface/" +`, `"/show/rc/interface/%`, `"/show/rc/interface"`,
+	`Present{`, `Interfaces.Lookup(ctx`, `interfaces.Lookup(ctx`,
+}
+
+// byNameAllowed — где форма по имени допустима. Ключ — "<путь файла>:<функция>".
+var byNameAllowed = map[string]string{
+	// Остаток F570 (§3.4): пакетный резолвер system-name вслед за свежим
+	// списком — единственное чтение с именем в теле; под TestResolver_OnlyAfterList.
+	"internal/ndms/query/interfaces.go:resolveSystemNames": "F570: пакет system-name вслед за списком",
+	"internal/ndms/query/interfaces.go:fetchSystemName":    "F570: элемент того же пакета",
+	// Полный список своим клиентом (не по имени; F-n — мимо InterfaceStore).
+	"internal/sys/routerinfo/routerinfo.go:fetchWiFiTemps": "GET /show/interface — весь список, без имени",
+}
+
+// TestByNameReads_Absent — ни одного запроса интерфейса по имени во ВСЁМ
+// прод-коде, включая internal/ndms/query (F546): ни `show interface name=X`
+// (POST-форма ShowQuery), ни GET `/show/interface/X`, ни `/show/rc/interface/X`.
+// Комментарии не в счёт (go/scanner). ShowQuery с первым элементом пути
+// "interface" и аргументами — только в byNameAllowed и только с "system-name"
+// вторым элементом. Оракул FakeNDMS точечные чтения моделирует, но сам
+// их не шлёт — шаблонов в нём нет.
+func TestByNameReads_Absent(t *testing.T) {
+	used := map[string]bool{}
+	for _, f := range prodGoFiles(t, true) {
+		rel := filepath.ToSlash(f.rel)
+		code := withoutComments(t, f)
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, f.rel, f.data, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("разбор %s: %v", f.rel, err)
+		}
+		funcAt := func(off int) string {
+			for _, d := range file.Decls {
+				if fd, ok := d.(*ast.FuncDecl); ok && fset.Position(fd.Pos()).Offset <= off && off < fset.Position(fd.End()).Offset {
+					return fd.Name.Name
+				}
+			}
+			return ""
+		}
+		report := func(off int, what string) {
+			key := rel + ":" + funcAt(off)
+			if _, ok := byNameAllowed[key]; ok {
+				used[key] = true
+				return
+			}
+			line := 1 + strings.Count(string(f.data[:off]), "\n")
+			t.Errorf("%s:%d: %s — запрос интерфейса по имени (F546); данные — из снимка списка или дерева rc", rel, line, what)
+		}
+		for _, pat := range byNamePatterns {
+			for from := 0; ; {
+				k := strings.Index(code[from:], pat)
+				if k < 0 {
+					break
+				}
+				report(from+k, pat)
+				from += k + len(pat)
+			}
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "ShowQuery" {
+				return true
+			}
+			lit, ok := call.Args[0].(*ast.CompositeLit)
+			if !ok || len(lit.Elts) == 0 || !isStringLit(lit.Elts[0], "interface") {
+				return true
+			}
+			if len(lit.Elts) > 1 && isStringLit(lit.Elts[1], "system-name") {
+				report(fset.Position(call.Pos()).Offset, "ShowQuery interface system-name")
+				return true
+			}
+			if len(call.Args) > 1 && !isNilIdent(call.Args[1]) {
+				// Разрешено только в пакете резолвера (выше) — здесь форма по имени.
+				t.Errorf("%s: ShowQuery([]string{\"interface\"…}, аргументы) — запрос интерфейса по имени (F546)",
+					fset.Position(call.Pos()))
+			}
+			return true
+		})
 	}
-	var offenders []string
-	for _, f := range prodGoFiles(t, false) {
-		for i, line := range strings.Split(string(f.data), "\n") {
-			for _, b := range bad {
-				if strings.Contains(line, b) {
-					offenders = append(offenders, fmt.Sprintf("%s:%d: %s", f.rel, i+1, b))
+	for key := range byNameAllowed {
+		if !used[key] {
+			t.Errorf("исключение %s больше не встречается — убрать из byNameAllowed", key)
+		}
+	}
+}
+
+// withoutComments — исходник, где комментарии заменены пробелами (смещения
+// те же): литерал в комментарии не запрос.
+func withoutComments(t *testing.T, f prodGoFile) string {
+	t.Helper()
+	out := []byte(string(f.data))
+	fset := token.NewFileSet()
+	tf := fset.AddFile(f.rel, -1, len(f.data))
+	var sc scanner.Scanner
+	sc.Init(tf, f.data, func(pos token.Position, msg string) { t.Fatalf("%s: %s", pos, msg) }, scanner.ScanComments)
+	for {
+		pos, tok, lit := sc.Scan()
+		if tok == token.EOF {
+			break
+		}
+		if tok == token.COMMENT {
+			off := tf.Offset(pos)
+			for i := off; i < off+len(lit); i++ {
+				if out[i] != '\n' {
+					out[i] = ' '
 				}
 			}
 		}
 	}
-	for _, o := range offenders {
-		t.Errorf("%s — читать по имени только через query.InterfaceStore (Lookup + ShowRaw)", o)
+	return string(out)
+}
+
+func isStringLit(e ast.Expr, want string) bool {
+	bl, ok := e.(*ast.BasicLit)
+	if !ok || bl.Kind != token.STRING {
+		return false
 	}
+	v, err := strconv.Unquote(bl.Value)
+	return err == nil && v == want
+}
+
+func isNilIdent(e ast.Expr) bool {
+	id, ok := e.(*ast.Ident)
+	return ok && id.Name == "nil"
 }
 
 type prodGoFile struct {
