@@ -585,13 +585,16 @@ func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *st
 	// Интерфейс подтверждается один раз на правку и только если в NDMS есть
 	// что слать. Снят — явная ошибка: handler fail-closed не сохранит
 	// карточку, а команды по нему создали бы его заново (F546).
+	// Каждая Sync-ветка ниже гейтится своим флагом, а флаги — вместе с
+	// подтверждением: ветка без флага здесь не получила бы Confirmed.
+	keyChanged := oldStored.Interface.PrivateKey != newStored.Interface.PrivateKey
+	addrChanged := oldStored.Interface.Address != newStored.Interface.Address ||
+		oldStored.Interface.MTU != newStored.Interface.MTU
+	dnsChanged := oldStored.Interface.DNS != newStored.Interface.DNS
+	peerChanged := !awgPeerEqual(oldStored.Peer, newStored.Peer)
+	ascChanged := !awgParamsEqual(oldStored.Interface, newStored.Interface)
 	var iface query.Confirmed
-	if oldStored.Interface.PrivateKey != newStored.Interface.PrivateKey ||
-		oldStored.Interface.Address != newStored.Interface.Address ||
-		oldStored.Interface.MTU != newStored.Interface.MTU ||
-		oldStored.Interface.DNS != newStored.Interface.DNS ||
-		!awgPeerEqual(oldStored.Peer, newStored.Peer) ||
-		!awgParamsEqual(oldStored.Interface, newStored.Interface) {
+	if keyChanged || addrChanged || dnsChanged || peerChanged || ascChanged {
 		var err error
 		if iface, err = s.nwgOperator.RequireIface(ctx, newStored); err != nil {
 			s.logWarn("update", tunnelID, "NDMS sync: "+err.Error())
@@ -599,22 +602,21 @@ func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *st
 		}
 	}
 
-	if oldStored.Interface.PrivateKey != newStored.Interface.PrivateKey {
+	if keyChanged {
 		if err := s.nwgOperator.SyncPrivateKey(ctx, iface, newStored); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync NWG private-key: "+err.Error())
 			errs = append(errs, fmt.Errorf("sync private-key: %w", err))
 		}
 	}
 
-	if oldStored.Interface.Address != newStored.Interface.Address ||
-		oldStored.Interface.MTU != newStored.Interface.MTU {
+	if addrChanged {
 		if err := s.nwgOperator.SyncAddressMTU(ctx, iface, newStored); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync NWG address/MTU: "+err.Error())
 			errs = append(errs, fmt.Errorf("sync address/MTU: %w", err))
 		}
 	}
 
-	if oldStored.Interface.DNS != newStored.Interface.DNS {
+	if dnsChanged {
 		oldList := tunnel.ParseDNSList(oldStored.Interface.DNS)
 		newList := tunnel.ParseDNSList(newStored.Interface.DNS)
 		if err := s.nwgOperator.SyncDNS(ctx, iface, oldList, newList); err != nil {
@@ -623,14 +625,14 @@ func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *st
 		}
 	}
 
-	if !awgPeerEqual(oldStored.Peer, newStored.Peer) {
+	if peerChanged {
 		if err := s.nwgOperator.SyncPeer(ctx, iface, newStored, oldStored.Peer.PublicKey); err != nil {
 			s.logWarn("update", tunnelID, "Failed to sync NWG peer: "+err.Error())
 			errs = append(errs, fmt.Errorf("sync peer: %w", err))
 		}
 	}
 
-	if !awgParamsEqual(oldStored.Interface, newStored.Interface) {
+	if ascChanged {
 		if err := s.nwgOperator.SyncAWGParams(ctx, iface, newStored); err != nil {
 			// AWG params may need restart on some firmware — log Warn but
 			// don't fail the entire Update; user gets the rest of the diff
