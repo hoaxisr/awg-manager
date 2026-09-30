@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,12 @@ type ServiceImpl struct {
 	appLog  *logging.ScopedLogger
 	mu      sync.Mutex
 
+	// pending — включённые списки OS5-туннеля ядра, чьей записи OpkgTun ещё
+	// нет: маршруты встанут в OnTunnelStart (R37b). Память, не хранилище:
+	// после рестарта демона Reconcile на загрузке заполняет её заново.
+	pendMu  sync.Mutex
+	pending map[string]bool
+
 	// ifaceExists checks whether a network interface exists. Defaults to
 	// net.InterfaceByName; override in tests.
 	ifaceExists func(name string) bool
@@ -56,6 +63,36 @@ func New(
 }
 
 // --- CRUD ---
+
+// PendingIDs — списки, ждущие старта туннеля (R37b): статус для API.
+func (s *ServiceImpl) PendingIDs() map[string]bool {
+	s.pendMu.Lock()
+	defer s.pendMu.Unlock()
+	out := make(map[string]bool, len(s.pending))
+	for id := range s.pending {
+		out[id] = true
+	}
+	return out
+}
+
+func (s *ServiceImpl) setPending(id string, on bool) {
+	s.pendMu.Lock()
+	defer s.pendMu.Unlock()
+	if !on {
+		delete(s.pending, id)
+		return
+	}
+	if s.pending == nil {
+		s.pending = map[string]bool{}
+	}
+	s.pending[id] = true
+}
+
+func (s *ServiceImpl) isPending(id string) bool {
+	s.pendMu.Lock()
+	defer s.pendMu.Unlock()
+	return s.pending[id]
+}
 
 // List returns all static route lists.
 func (s *ServiceImpl) List() ([]storage.StaticRouteList, error) {
@@ -95,6 +132,7 @@ func (s *ServiceImpl) Create(ctx context.Context, rl storage.StaticRouteList) (*
 	}
 
 	if err := s.store.AddRouteList(rl); err != nil {
+		s.setPending(rl.ID, false)
 		s.rollbackApplied(ctx, rl, applied, confirmed)
 		return nil, fmt.Errorf("create route list: %w", err)
 	}
@@ -160,6 +198,8 @@ func (s *ServiceImpl) Update(ctx context.Context, rl storage.StaticRouteList) (*
 	var applied []string
 	if rl.Enabled {
 		applied, err = s.applyRoutes(ctx, rl, confirmed, cerr)
+	} else {
+		s.setPending(rl.ID, false)
 	}
 	if err == nil {
 		err = s.store.UpdateRouteList(rl)
@@ -201,6 +241,7 @@ func (s *ServiceImpl) Delete(ctx context.Context, id string) error {
 	if err := s.store.DeleteRouteList(id); err != nil {
 		return fmt.Errorf("delete route list: %w", err)
 	}
+	s.setPending(id, false)
 
 	return nil
 }
@@ -245,6 +286,7 @@ func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) e
 	}
 
 	if !enabled {
+		s.setPending(id, false)
 		s.removeRoutes(ctx, next.TunnelID, next.Subnets, confirmed, cerr)
 	}
 
@@ -284,7 +326,7 @@ func (s *ServiceImpl) Import(ctx context.Context, tunnelID, name, batContent str
 // For OS4 kernel tunnels, routes are applied via ip route using tunnelIface directly.
 func (s *ServiceImpl) OnTunnelStart(ctx context.Context, tunnelID, tunnelIface string) error {
 	if !isOS4Kernel(tunnelID) {
-		return nil // NDMS "auto" flag handles it
+		return s.applyPendingOnStart(ctx, tunnelID)
 	}
 
 	s.mu.Lock()
@@ -297,6 +339,35 @@ func (s *ServiceImpl) OnTunnelStart(ctx context.Context, tunnelID, tunnelIface s
 			if err := s.ipRouteAdd(ctx, cidr, tunnelIface); err != nil {
 				s.appLog.Warn("add-route", cidr, err.Error())
 			}
+		}
+	}
+	return nil
+}
+
+// applyPendingOnStart ставит списки, ждавшие записи OS5-туннеля ядра (R37b):
+// старт её создал — одно подтверждение свежим списком на все. Прочим
+// NDMS-туннелям делать нечего: их маршруты живут в NDMS («auto»), а ждущих у
+// них не бывает. Ждущих нет — ни одного запроса.
+func (s *ServiceImpl) applyPendingOnStart(ctx context.Context, tunnelID string) error {
+	if len(s.PendingIDs()) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var todo []storage.StaticRouteList
+	for _, rl := range s.listsForTunnel(tunnelID) {
+		if s.isPending(rl.ID) {
+			todo = append(todo, rl)
+		}
+	}
+	if len(todo) == 0 {
+		return nil
+	}
+	confirmed, cerr := s.confirmIfaces(ctx, tunnelID)
+	for _, rl := range todo {
+		if _, err := s.applyRoutes(ctx, rl, confirmed, cerr); err != nil {
+			s.appLog.Warn("apply-on-start", rl.ID, err.Error())
 		}
 	}
 	return nil
@@ -361,6 +432,7 @@ func (s *ServiceImpl) OnTunnelDelete(ctx context.Context, tunnelID string) error
 	// Unbind: clear TunnelID but keep the list in storage.
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, rl := range lists {
+		s.setPending(rl.ID, false)
 		rl.TunnelID = ""
 		rl.UpdatedAt = now
 		if err := s.store.UpdateRouteList(rl); err != nil {
@@ -432,6 +504,17 @@ func defaultIfaceExists(ifaceName string) bool {
 func isOS4Kernel(tunnelID string) bool {
 	names := tunnel.NewNames(tunnelID)
 	return names.NDMSName == ""
+}
+
+// isOS5Kernel — туннель ядра OS5 (awgN → OpkgTunN), а не NativeWG, системный
+// туннель или выход прокси: только у него запись OpkgTun может ещё не
+// существовать при живой карточке (R37b).
+func isOS5Kernel(tunnelID, ifaceName string) bool {
+	if tunnel.IsSystemTunnel(tunnelID) || !strings.HasPrefix(tunnelID, "awg") {
+		return false
+	}
+	ndmsName := tunnel.NewNames(tunnelID).NDMSName
+	return ndmsName != "" && ifaceName == ndmsName
 }
 
 // parseCIDR splits a CIDR string into network and mask.
@@ -552,8 +635,8 @@ func (s *ServiceImpl) confirmIfaces(ctx context.Context, tunnelIDs ...string) (m
 //
 // Возвращает поставленные подсети и отказы (F565): отказ одной подсети
 // остальные не останавливает (Reconcile), а правка списка по нему откатывает
-// поставленное (rollbackApplied) и запись не сохраняет. Интерфейса
-// NDMS-туннеля нет — ошибка; OS4 не поднят — отложено до старта (R37).
+// поставленное (rollbackApplied) и запись не сохраняет. Интерфейса нет:
+// NativeWG и прочие — ошибка; OS5 ядра и OS4 — отложено до старта (R37b).
 func (s *ServiceImpl) applyRoutes(ctx context.Context, rl storage.StaticRouteList, confirmed map[string]query.Confirmed, cerr error) ([]string, error) {
 	os4k := isOS4Kernel(rl.TunnelID)
 	if os4k && !s.ifaceExists(rl.TunnelID) {
@@ -572,15 +655,22 @@ func (s *ServiceImpl) applyRoutes(ctx context.Context, rl storage.StaticRouteLis
 			return nil, cerr
 		}
 		var ok bool
-		// Раздел (R37): запись NDMS-туннеля (OS5 OpkgTun, NativeWG) живёт и у
-		// остановленного — нет её в свежем списке, значит туннеля нет, и это
-		// явная ошибка (решение 3). Откладывать некуда: OnTunnelStart для
-		// NDMS-туннелей маршрутов не ставит. OS4-интерфейс существует только у
-		// работающего туннеля — его отложенная установка выше законна.
+		// Раздел (R37b). OS5-туннель ядра: записи OpkgTun нет, пока туннель ни
+		// разу не стартовал или её сняли снаружи (туннель тогда остановлен) —
+		// список ждёт старта, его поставит OnTunnelStart, RCI сейчас нет.
+		// NativeWG и прочие NDMS-интерфейсы живут и у остановленного — нет
+		// записи, значит интерфейс снят: явная ошибка (решение 3). OS4 выше:
+		// интерфейс есть только у работающего, установка тоже отложена.
 		if iface, ok = confirmed[ifaceName]; !ok {
+			if isOS5Kernel(rl.TunnelID, ifaceName) {
+				s.appLog.Info("apply", ifaceName, "записи туннеля ещё нет — маршруты списка "+rl.ID+" встанут при старте туннеля")
+				s.setPending(rl.ID, true)
+				return nil, nil
+			}
 			s.appLog.Warn("apply", ifaceName, "интерфейса нет в NDMS — маршруты списка "+rl.ID+" не поставлены")
 			return nil, fmt.Errorf("интерфейса %s нет в NDMS", ifaceName)
 		}
+		s.setPending(rl.ID, false)
 	}
 	var applied []string
 	var errs []error

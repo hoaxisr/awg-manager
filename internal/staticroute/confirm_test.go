@@ -63,28 +63,81 @@ func TestStaticRoute_RemoveOnAbsent_NoCommand(t *testing.T) {
 	oracleClean(t, f)
 }
 
-// Интерфейса NDMS-туннеля нет (R37): включение и создание — явная ошибка,
-// ни записи, ни команд, E нет.
+// OS5-туннель ядра без записи OpkgTun (R37b): включение и создание —
+// успех, запись сохранена, статус «ждёт старта», ни одной команды, E нет.
 func TestStaticRoute_AddOnAbsent_NoCommand(t *testing.T) {
 	f := query.NewFakeNDMS()
 	s := newOracleStaticRoutes(t, f, []storage.StaticRouteList{
 		{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: []string{"10.20.0.0/16"}, Enabled: false},
 	})
 	ctx := context.Background()
-	if err := s.SetEnabled(ctx, "srl1", true); err == nil || !strings.Contains(err.Error(), "OpkgTun10") {
+	if err := s.SetEnabled(ctx, "srl1", true); err != nil {
+		t.Fatalf("SetEnabled: %v", err)
+	}
+	if got, _ := s.store.GetRouteList("srl1"); !got.Enabled {
+		t.Fatal("включение не сохранено")
+	}
+	created, err := s.Create(ctx, storage.StaticRouteList{Name: "b", TunnelID: "awg10", Subnets: []string{"10.30.0.0/16"}, Enabled: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if p := s.PendingIDs(); !p["srl1"] || !p[created.ID] {
+		t.Fatalf("статус «ждёт старта» не выставлен: %v", p)
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("команды по отсутствующему: %v", f.Posts)
+	}
+	oracleClean(t, f)
+}
+
+// Старт создал запись — ждущие списки встают одним подтверждением, статус
+// снят, E нет (R37b).
+func TestStaticRoute_PendingAppliedOnTunnelStart(t *testing.T) {
+	f := query.NewFakeNDMS()
+	s := newOracleStaticRoutes(t, f, []storage.StaticRouteList{
+		{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: []string{"10.20.0.0/16"}, Enabled: false},
+	})
+	ctx := context.Background()
+	if err := s.SetEnabled(ctx, "srl1", true); err != nil {
+		t.Fatalf("SetEnabled: %v", err)
+	}
+	f.Add(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"}) // старт создал запись
+	if err := s.OnTunnelStart(ctx, "awg10", "opkgtun10"); err != nil {
+		t.Fatalf("OnTunnelStart: %v", err)
+	}
+	posts := routePosts(f)
+	if len(posts) != 1 || !strings.Contains(posts[0], "10.20.0.0") || !strings.Contains(posts[0], "OpkgTun10") {
+		t.Fatalf("маршрут не поставлен при старте: %v", posts)
+	}
+	if s.PendingIDs()["srl1"] {
+		t.Fatal("статус «ждёт старта» не снят")
+	}
+	oracleClean(t, f)
+}
+
+// NativeWG: запись живёт и у остановленного — нет её, значит снята: явная
+// ошибка, ни записи, ни команд (R37b).
+func TestStaticRoute_NativeWGAbsent_Error(t *testing.T) {
+	f := query.NewFakeNDMS()
+	s := newOracleStaticRoutes(t, f, []storage.StaticRouteList{
+		{ID: "srl1", Name: "a", TunnelID: "awg11", Subnets: []string{"10.20.0.0/16"}, Enabled: false},
+	})
+	s.catalog = &mockCatalog{ifaces: map[string]string{"awg11": "Wireguard1"}}
+	ctx := context.Background()
+	if err := s.SetEnabled(ctx, "srl1", true); err == nil || !strings.Contains(err.Error(), "Wireguard1") {
 		t.Fatalf("SetEnabled: %v, want ошибку с именем интерфейса", err)
 	}
 	if got, _ := s.store.GetRouteList("srl1"); got.Enabled {
 		t.Fatal("включение сохранено")
 	}
-	if _, err := s.Create(ctx, storage.StaticRouteList{Name: "b", TunnelID: "awg10", Subnets: []string{"10.30.0.0/16"}, Enabled: true}); err == nil {
+	if _, err := s.Create(ctx, storage.StaticRouteList{Name: "b", TunnelID: "awg11", Subnets: []string{"10.30.0.0/16"}, Enabled: true}); err == nil {
 		t.Fatal("Create: ждали ошибку")
 	}
 	if lists, _ := s.store.ListRouteLists(); len(lists) != 1 {
 		t.Fatalf("создание сохранено: %+v", lists)
 	}
-	if len(f.Posts) != 0 {
-		t.Fatalf("команды по отсутствующему: %v", f.Posts)
+	if len(f.Posts) != 0 || len(s.PendingIDs()) != 0 {
+		t.Fatalf("posts=%v pending=%v", f.Posts, s.PendingIDs())
 	}
 	oracleClean(t, f)
 }
