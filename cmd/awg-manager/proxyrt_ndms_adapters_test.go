@@ -58,7 +58,7 @@ type fakeSweepCommands struct {
 	err     error
 }
 
-func (f *fakeSweepCommands) DeleteOpkgTun(_ context.Context, name string) error {
+func (f *fakeSweepCommands) DeleteOpkgTunLegacy(_ context.Context, name string) error {
 	f.deleted = append(f.deleted, name)
 	return f.err
 }

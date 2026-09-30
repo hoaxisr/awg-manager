@@ -318,12 +318,12 @@ func (s *ServiceImpl) scheduleFakeIPDrain(poolNet4, poolMask4, ndmsName string) 
 // повториться. Отказ на v6 провалом не считается: v6-адреса могло не быть
 // вовсе, а вечный ретрай выключения хуже незакрытого v6.
 func (s *ServiceImpl) holdOpkgTun(ctx context.Context, ndmsName, scope string) error {
-	if err := s.deps.OpkgTun.RemovePermitAllACL(ctx, ndmsName); err != nil {
+	if err := s.deps.OpkgTun.RemovePermitAllACLLegacy(ctx, ndmsName); err != nil {
 		s.appLog.Debug(scope, ndmsName, "remove permit acl: "+err.Error())
 	}
 	// v6-список — отдельная сущность NDMS, каскадом от v4 не снимается. Debug:
 	// у интерфейса без v6 его и не было, «not found» тут норма.
-	if err := s.deps.OpkgTun.RemovePermitAllACLv6(ctx, ndmsName); err != nil {
+	if err := s.deps.OpkgTun.RemovePermitAllACLv6Legacy(ctx, ndmsName); err != nil {
 		s.appLog.Debug(scope, ndmsName, "remove permit acl v6: "+err.Error())
 	}
 	// Гейт существования — обязателен: дальше идут down/clear, а NDMS создаёт
@@ -337,15 +337,15 @@ func (s *ServiceImpl) holdOpkgTun(ctx context.Context, ndmsName, scope string) e
 		s.appLog.Debug(scope, ndmsName, "hold: интерфейса нет, мутации пропущены")
 		return nil
 	}
-	if err := s.deps.OpkgTun.InterfaceDown(ctx, ndmsName); err != nil {
+	if err := s.deps.OpkgTun.InterfaceDownLegacy(ctx, ndmsName); err != nil {
 		s.appLog.Warn(scope, ndmsName, "iface down: "+err.Error())
 	}
-	err := s.deps.OpkgTun.ClearAddress(ctx, ndmsName)
+	err := s.deps.OpkgTun.ClearAddressLegacy(ctx, ndmsName)
 	if err != nil {
 		s.appLog.Warn(scope, ndmsName, "clear address: "+err.Error())
 	}
 	// Снимаем в любом случае: провал v4 не повод оставить v6 висеть.
-	if e := s.deps.OpkgTun.ClearIPv6Address(ctx, ndmsName); e != nil {
+	if e := s.deps.OpkgTun.ClearIPv6AddressLegacy(ctx, ndmsName); e != nil {
 		s.appLog.Debug(scope, ndmsName, "clear ipv6 address: "+e.Error())
 	}
 	return err
@@ -367,12 +367,12 @@ func (s *ServiceImpl) teardownOpkgTun(ctx context.Context, ndmsName, scope strin
 	// интерфейс не должен остаться с висящей привязкой. Debug, не Warn:
 	// «not found» на давно снятом ACL — норма для reap-ретраев (каждый тик
 	// до успеха delete) и сирот от версий без ACL (ревью).
-	if err := s.deps.OpkgTun.RemovePermitAllACL(ctx, ndmsName); err != nil {
+	if err := s.deps.OpkgTun.RemovePermitAllACLLegacy(ctx, ndmsName); err != nil {
 		s.appLog.Debug(scope, ndmsName, "remove permit acl: "+err.Error())
 	}
 	// v6-список — отдельная сущность NDMS, каскадом от v4 не снимается. Debug:
 	// у интерфейса без v6 его и не было, «not found» тут норма.
-	if err := s.deps.OpkgTun.RemovePermitAllACLv6(ctx, ndmsName); err != nil {
+	if err := s.deps.OpkgTun.RemovePermitAllACLv6Legacy(ctx, ndmsName); err != nil {
 		s.appLog.Debug(scope, ndmsName, "remove permit acl v6: "+err.Error())
 	}
 	// БЕЗ предварительного down: NDMS создаёт интерфейс по ЛЮБОЙ мутации его
@@ -384,7 +384,7 @@ func (s *ServiceImpl) teardownOpkgTun(ctx context.Context, ndmsName, scope strin
 	// до «нет свободного OpkgTun-индекса». Удаление в предварительном down не
 	// нуждается — стенд-проверено на живом интерфейсе с адресом, — а на
 	// отсутствующем `no:true` отвечает «unable to find» и ничего не создаёт.
-	err := s.deps.OpkgTun.DeleteOpkgTun(ctx, ndmsName)
+	err := s.deps.OpkgTun.DeleteOpkgTunLegacy(ctx, ndmsName)
 	if err == nil {
 		// NDMS-запись снята — добить kernel-устройство, если оно пережило снос.
 		// Устройство persist и остаётся, когда на момент удаления его держал
@@ -405,13 +405,13 @@ func (s *ServiceImpl) teardownOpkgTun(ctx context.Context, ndmsName, scope strin
 	s.appLog.Warn(scope, ndmsName, "delete opkgtun: "+err.Error())
 	// Down — только здесь: delete провалился, значит интерфейс СУЩЕСТВУЕТ и
 	// create-on-reference не грозит, а погасить его перед снятием адресов надо.
-	if e := s.deps.OpkgTun.InterfaceDown(ctx, ndmsName); e != nil {
+	if e := s.deps.OpkgTun.InterfaceDownLegacy(ctx, ndmsName); e != nil {
 		s.appLog.Warn(scope, ndmsName, "iface down: "+e.Error())
 	}
-	if e := s.deps.OpkgTun.ClearAddress(ctx, ndmsName); e != nil {
+	if e := s.deps.OpkgTun.ClearAddressLegacy(ctx, ndmsName); e != nil {
 		s.appLog.Warn(scope, ndmsName, "clear address: "+e.Error())
 	}
-	if e := s.deps.OpkgTun.ClearIPv6Address(ctx, ndmsName); e != nil {
+	if e := s.deps.OpkgTun.ClearIPv6AddressLegacy(ctx, ndmsName); e != nil {
 		s.appLog.Warn(scope, ndmsName, "clear ipv6 address: "+e.Error())
 	}
 	return err

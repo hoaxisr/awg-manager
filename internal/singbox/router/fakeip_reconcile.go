@@ -156,7 +156,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// веб-морде при живом процессе, НЕ переустанавливаем намеренно — она
 	// видна в UI как правило firewall, и её снятие — решение пользователя.
 	if !s.fakeipACLAsserted && s.deps.OpkgTun != nil && probeErr == nil {
-		if nerr := s.deps.OpkgTun.SetPermitAllACL(ctx, ndmsName); nerr != nil {
+		if nerr := s.deps.OpkgTun.SetPermitAllACLLegacy(ctx, ndmsName); nerr != nil {
 			s.appLog.Warn("fakeip-reconcile", iface, "permit acl: "+nerr.Error())
 		} else {
 			s.fakeipACLAsserted = true
@@ -166,7 +166,7 @@ func (s *ServiceImpl) reconcileFakeIPTun(ctx context.Context, sr storage.Singbox
 	// гасить ретрай упавшего v6. Гейт по адресу: без v6 разрешать нечего.
 	if !s.fakeipACLv6Asserted && s.deps.OpkgTun != nil && probeErr == nil &&
 		s.resolveFakeIPParams(sr).TunAddr6 != "" {
-		if nerr := s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); nerr != nil {
+		if nerr := s.deps.OpkgTun.SetPermitAllACLv6Legacy(ctx, ndmsName); nerr != nil {
 			s.appLog.Warn("fakeip-reconcile", iface, "permit acl v6: "+nerr.Error())
 		} else {
 			s.fakeipACLv6Asserted = true

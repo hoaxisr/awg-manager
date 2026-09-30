@@ -780,7 +780,7 @@ var legacyHookPath = netres.HookPath
 
 // opkgTunDeleter — срез ndmsres.Commands для уборки legacy-интерфейсов.
 type opkgTunDeleter interface {
-	DeleteOpkgTun(ctx context.Context, name string) error
+	DeleteOpkgTunLegacy(ctx context.Context, name string) error
 }
 
 // legacyChain — цепочка, из которой сносим реплеем `-S`: iptables -D требует
@@ -999,7 +999,7 @@ func dropLegacyNDMSIfaces(ctx context.Context, cmds opkgTunDeleter,
 		if !strings.HasSuffix(strings.ToLower(strings.TrimSpace(it.Description)), legacyDescSuffix) {
 			continue
 		}
-		if err := cmds.DeleteOpkgTun(ctx, it.ID); err != nil {
+		if err := cmds.DeleteOpkgTunLegacy(ctx, it.ID); err != nil {
 			errs = append(errs, fmt.Errorf("снять legacy-интерфейс %s: %w", it.ID, err))
 		}
 	}

@@ -100,11 +100,11 @@ func (r *PolicyExit) Plan(obs proxyrt.Observation) []proxyrt.Step {
 func (r *PolicyExit) Apply(ctx context.Context, s proxyrt.Step) error {
 	switch s.Op {
 	case "set-security-level":
-		return r.cmds.SetSecurityLevel(ctx, r.d.Name, r.d.SecurityLevel)
+		return r.cmds.SetSecurityLevelLegacy(ctx, r.d.Name, r.d.SecurityLevel)
 	case "ip-global":
-		return r.cmds.SetIPGlobal(ctx, r.d.Name)
+		return r.cmds.SetIPGlobalLegacy(ctx, r.d.Name)
 	case "acl":
-		return r.cmds.SetPermitAllACL(ctx, r.d.Name)
+		return r.cmds.SetPermitAllACLLegacy(ctx, r.d.Name)
 	case "default-candidacy":
 		return r.cmds.EnsureDefaultRouteCandidacy(ctx, r.d.Name)
 	default:

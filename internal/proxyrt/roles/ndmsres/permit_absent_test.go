@@ -18,10 +18,10 @@ func TestPermitAbsent_RemovesOnlyFromExistingListed(t *testing.T) {
 	ctx := context.Background()
 	n := roletest.NewNDMS()
 	for _, name := range []string{"OpkgTun17", "OpkgTun19"} {
-		if err := n.CreateOpkgTunWithSecurityLevel(ctx, name, "x", "private"); err != nil {
+		if err := n.CreateOpkgTunWithSecurityLevelLegacy(ctx, name, "x", "private"); err != nil {
 			t.Fatal(err)
 		}
-		if err := n.SetPermitAllACL(ctx, name); err != nil {
+		if err := n.SetPermitAllACLLegacy(ctx, name); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -60,7 +60,7 @@ func TestPermitAbsent_RemovesOnlyFromExistingListed(t *testing.T) {
 func TestPermitAbsent_NothingToDoConverges(t *testing.T) {
 	ctx := context.Background()
 	n := roletest.NewNDMS()
-	if err := n.CreateOpkgTunWithSecurityLevel(ctx, "OpkgTun17", "x", "private"); err != nil {
+	if err := n.CreateOpkgTunWithSecurityLevelLegacy(ctx, "OpkgTun17", "x", "private"); err != nil {
 		t.Fatal(err)
 	}
 	r := ndmsres.NewPermitAbsent("permit_absent", n, n)
@@ -84,15 +84,15 @@ func TestPermitAbsent_ClearsIPGlobalOnUnexposed(t *testing.T) {
 	ctx := context.Background()
 	n := roletest.NewNDMS()
 	for _, name := range []string{"OpkgTun0", "OpkgTun1"} {
-		if err := n.CreateOpkgTunWithSecurityLevel(ctx, name, "x", "private"); err != nil {
+		if err := n.CreateOpkgTunWithSecurityLevelLegacy(ctx, name, "x", "private"); err != nil {
 			t.Fatal(err)
 		}
-		if err := n.SetIPGlobal(ctx, name); err != nil {
+		if err := n.SetIPGlobalLegacy(ctx, name); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// OpkgTun1 несёт оба остатка, OpkgTun0 — только ip global.
-	if err := n.SetPermitAllACL(ctx, "OpkgTun1"); err != nil {
+	if err := n.SetPermitAllACLLegacy(ctx, "OpkgTun1"); err != nil {
 		t.Fatal(err)
 	}
 	r := ndmsres.NewPermitAbsent("permit_absent", n, n)
@@ -130,10 +130,10 @@ func TestPermitAbsent_ClearsIPGlobalOnUnexposed(t *testing.T) {
 func TestPermitAbsent_KeepsIPGlobalOutsideGlobalList(t *testing.T) {
 	ctx := context.Background()
 	n := roletest.NewNDMS()
-	if err := n.CreateOpkgTunWithSecurityLevel(ctx, "OpkgTun0", "x", "private"); err != nil {
+	if err := n.CreateOpkgTunWithSecurityLevelLegacy(ctx, "OpkgTun0", "x", "private"); err != nil {
 		t.Fatal(err)
 	}
-	if err := n.SetIPGlobal(ctx, "OpkgTun0"); err != nil {
+	if err := n.SetIPGlobalLegacy(ctx, "OpkgTun0"); err != nil {
 		t.Fatal(err)
 	}
 	r := ndmsres.NewPermitAbsent("permit_absent", n, n)
@@ -162,7 +162,7 @@ type failingNDMS struct {
 	hasErr    error
 }
 
-func (n *failingNDMS) RemovePermitAllACL(context.Context, string) error { return n.removeErr }
+func (n *failingNDMS) RemovePermitAllACLLegacy(context.Context, string) error { return n.removeErr }
 
 func (n *failingNDMS) HasPermitAllACL(context.Context, string) (bool, error) {
 	return n.has, n.hasErr

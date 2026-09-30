@@ -13,24 +13,24 @@ import (
 
 type fakeOpkgTunProvisioner struct{}
 
-func (fakeOpkgTunProvisioner) CreateOpkgTunWithSecurityLevel(context.Context, string, string, string) error {
+func (fakeOpkgTunProvisioner) CreateOpkgTunWithSecurityLevelLegacy(context.Context, string, string, string) error {
 	return nil
 }
-func (fakeOpkgTunProvisioner) SetIPGlobal(context.Context, string) error   { return nil }
-func (fakeOpkgTunProvisioner) DeleteOpkgTun(context.Context, string) error { return nil }
-func (fakeOpkgTunProvisioner) SetAddress(context.Context, string, string, string) error {
+func (fakeOpkgTunProvisioner) SetIPGlobalLegacy(context.Context, string) error   { return nil }
+func (fakeOpkgTunProvisioner) DeleteOpkgTunLegacy(context.Context, string) error { return nil }
+func (fakeOpkgTunProvisioner) SetAddressLegacy(context.Context, string, string, string) error {
 	return nil
 }
-func (fakeOpkgTunProvisioner) SetIPv6Address(context.Context, string, string) error { return nil }
-func (fakeOpkgTunProvisioner) ClearAddress(context.Context, string) error           { return nil }
-func (fakeOpkgTunProvisioner) SetPermitAllACL(context.Context, string) error        { return nil }
-func (fakeOpkgTunProvisioner) RemovePermitAllACL(context.Context, string) error     { return nil }
-func (fakeOpkgTunProvisioner) SetPermitAllACLv6(context.Context, string) error      { return nil }
-func (fakeOpkgTunProvisioner) RemovePermitAllACLv6(context.Context, string) error   { return nil }
-func (fakeOpkgTunProvisioner) ClearIPv6Address(context.Context, string) error       { return nil }
-func (fakeOpkgTunProvisioner) SetMTU(context.Context, string, int) error            { return nil }
-func (fakeOpkgTunProvisioner) InterfaceUp(context.Context, string) error            { return nil }
-func (fakeOpkgTunProvisioner) InterfaceDown(context.Context, string) error          { return nil }
+func (fakeOpkgTunProvisioner) SetIPv6AddressLegacy(context.Context, string, string) error { return nil }
+func (fakeOpkgTunProvisioner) ClearAddressLegacy(context.Context, string) error           { return nil }
+func (fakeOpkgTunProvisioner) SetPermitAllACLLegacy(context.Context, string) error        { return nil }
+func (fakeOpkgTunProvisioner) RemovePermitAllACLLegacy(context.Context, string) error     { return nil }
+func (fakeOpkgTunProvisioner) SetPermitAllACLv6Legacy(context.Context, string) error      { return nil }
+func (fakeOpkgTunProvisioner) RemovePermitAllACLv6Legacy(context.Context, string) error   { return nil }
+func (fakeOpkgTunProvisioner) ClearIPv6AddressLegacy(context.Context, string) error       { return nil }
+func (fakeOpkgTunProvisioner) SetMTULegacy(context.Context, string, int) error            { return nil }
+func (fakeOpkgTunProvisioner) InterfaceUpLegacy(context.Context, string) error            { return nil }
+func (fakeOpkgTunProvisioner) InterfaceDownLegacy(context.Context, string) error          { return nil }
 
 type fakeStaticRouteProvider struct{}
 

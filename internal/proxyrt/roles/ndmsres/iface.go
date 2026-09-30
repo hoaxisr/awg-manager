@@ -89,14 +89,14 @@ func (r *Iface) Apply(ctx context.Context, s proxyrt.Step) error {
 	case "create":
 		// Уровень задаётся сразу при создании — лишняя мутация RCI на
 		// каждом старте не нужна (паритет prepareOpkgTunIface).
-		if err := r.cmds.CreateOpkgTunWithSecurityLevel(ctx, r.d.Name, r.d.Description, r.d.SecurityLevel); err != nil {
+		if err := r.cmds.CreateOpkgTunWithSecurityLevelLegacy(ctx, r.d.Name, r.d.Description, r.d.SecurityLevel); err != nil {
 			return err
 		}
-		return r.cmds.SetMTU(ctx, r.d.Name, r.d.MTU)
+		return r.cmds.SetMTULegacy(ctx, r.d.Name, r.d.MTU)
 	case "set-description":
-		return r.cmds.SetDescription(ctx, r.d.Name, r.d.Description)
+		return r.cmds.SetDescriptionLegacy(ctx, r.d.Name, r.d.Description)
 	case "set-security-level":
-		return r.cmds.SetSecurityLevel(ctx, r.d.Name, r.d.SecurityLevel)
+		return r.cmds.SetSecurityLevelLegacy(ctx, r.d.Name, r.d.SecurityLevel)
 	default:
 		return fmt.Errorf("неизвестный шаг %q", s.Op)
 	}
@@ -205,15 +205,15 @@ func (r *Address) Plan(obs proxyrt.Observation) []proxyrt.Step {
 func (r *Address) Apply(ctx context.Context, s proxyrt.Step) error {
 	switch s.Op {
 	case "set-address":
-		return r.cmds.SetAddress(ctx, r.d.Name, s.Args["address"], s.Args["mask"])
+		return r.cmds.SetAddressLegacy(ctx, r.d.Name, s.Args["address"], s.Args["mask"])
 	case "set-mtu":
 		mtu, err := strconv.Atoi(s.Args["mtu"])
 		if err != nil {
 			return err
 		}
-		return r.cmds.SetMTU(ctx, r.d.Name, mtu)
+		return r.cmds.SetMTULegacy(ctx, r.d.Name, mtu)
 	case "clear-address":
-		return ignoreMissingObject(r.cmds.ClearAddress(ctx, r.d.Name))
+		return ignoreMissingObject(r.cmds.ClearAddressLegacy(ctx, r.d.Name))
 	default:
 		return fmt.Errorf("неизвестный шаг %q", s.Op)
 	}
@@ -284,9 +284,9 @@ func (r *AdminState) Plan(obs proxyrt.Observation) []proxyrt.Step {
 func (r *AdminState) Apply(ctx context.Context, s proxyrt.Step) error {
 	switch s.Op {
 	case "up":
-		return r.cmds.InterfaceUp(ctx, r.d.Name)
+		return r.cmds.InterfaceUpLegacy(ctx, r.d.Name)
 	case "down":
-		return ignoreMissingObject(r.cmds.InterfaceDown(ctx, r.d.Name))
+		return ignoreMissingObject(r.cmds.InterfaceDownLegacy(ctx, r.d.Name))
 	default:
 		return fmt.Errorf("неизвестный шаг %q", s.Op)
 	}

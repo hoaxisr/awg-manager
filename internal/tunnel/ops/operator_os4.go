@@ -151,7 +151,7 @@ func (o *OperatorOS4Impl) Start(ctx context.Context, cfg tunnel.Config) error {
 
 	// Apply DNS servers via NDMS (RCI works on OS4 too)
 	if len(cfg.DNS) > 0 {
-		if err := o.commands.Interfaces.SetDNS(ctx, ifaceName, cfg.DNS); err != nil {
+		if err := o.commands.Interfaces.SetDNSLegacy(ctx, ifaceName, cfg.DNS); err != nil {
 			o.logWarn("start", cfg.ID, "Failed to set DNS: "+err.Error())
 		} else {
 			o.appliedDNSMu.Lock()
@@ -185,7 +185,7 @@ func (o *OperatorOS4Impl) Stop(ctx context.Context, tunnelID, _ string) error {
 	delete(o.appliedDNS, tunnelID)
 	o.appliedDNSMu.Unlock()
 	if len(dnsServers) > 0 {
-		_ = o.commands.Interfaces.ClearDNS(ctx, ifaceName, dnsServers)
+		_ = o.commands.Interfaces.ClearDNSLegacy(ctx, ifaceName, dnsServers)
 	}
 
 	o.logInfo("stop", tunnelID, "Tunnel stopped")
@@ -248,7 +248,7 @@ func (o *OperatorOS4Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 
 	// Re-apply DNS servers
 	if len(cfg.DNS) > 0 {
-		if err := o.commands.Interfaces.SetDNS(ctx, ifaceName, cfg.DNS); err != nil {
+		if err := o.commands.Interfaces.SetDNSLegacy(ctx, ifaceName, cfg.DNS); err != nil {
 			o.logWarn("reconcile", cfg.ID, "Failed to re-apply DNS: "+err.Error())
 		} else {
 			o.appliedDNSMu.Lock()

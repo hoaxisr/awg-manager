@@ -795,7 +795,7 @@ func (s *Service) applyLANSegmentsRaw(ctx context.Context, iface, addr, mask str
 			return fmt.Errorf("permit %s/%s → %s: %w", r.srcSub, r.srcMask, r.seg, err)
 		}
 	}
-	if err := aclCmd.ACLBind(ctx, iface, acl); err != nil {
+	if err := aclCmd.ACLBindLegacy(ctx, iface, acl); err != nil {
 		return err
 	}
 	// auto-delete: NDMS снимает список вместе с последним ссылающимся
@@ -828,7 +828,7 @@ func (s *Service) clearLANACL(ctx context.Context, iface string) {
 		exists, bound = true, true
 	}
 	if bound {
-		if err := s.commands.Interfaces.ACLUnbind(ctx, iface, acl); err != nil {
+		if err := s.commands.Interfaces.ACLUnbindLegacy(ctx, iface, acl); err != nil {
 			s.log.Debug("unbind ACL", "error", err, "iface", iface)
 		}
 		if exists {

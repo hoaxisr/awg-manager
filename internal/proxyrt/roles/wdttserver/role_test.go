@@ -46,22 +46,25 @@ func (nilGate) Check(context.Context, string, string, string, []string) error { 
 // нулём вызовов к роутеру, а не отсутствием шагов в плане.
 type countCmds struct{ n int }
 
-func (c *countCmds) CreateOpkgTunWithSecurityLevel(context.Context, string, string, string) error {
+func (c *countCmds) CreateOpkgTunWithSecurityLevelLegacy(context.Context, string, string, string) error {
 	c.n++
 	return nil
 }
-func (c *countCmds) DeleteOpkgTun(context.Context, string) error              { c.n++; return nil }
-func (c *countCmds) SetDescription(context.Context, string, string) error     { c.n++; return nil }
-func (c *countCmds) SetSecurityLevel(context.Context, string, string) error   { c.n++; return nil }
-func (c *countCmds) SetIPGlobal(context.Context, string) error                { c.n++; return nil }
-func (c *countCmds) ClearIPGlobal(context.Context, string) error              { c.n++; return nil }
-func (c *countCmds) SetAddress(context.Context, string, string, string) error { c.n++; return nil }
-func (c *countCmds) ClearAddress(context.Context, string) error               { c.n++; return nil }
-func (c *countCmds) SetMTU(context.Context, string, int) error                { c.n++; return nil }
-func (c *countCmds) InterfaceUp(context.Context, string) error                { c.n++; return nil }
-func (c *countCmds) InterfaceDown(context.Context, string) error              { c.n++; return nil }
-func (c *countCmds) SetPermitAllACL(context.Context, string) error            { c.n++; return nil }
-func (c *countCmds) RemovePermitAllACL(context.Context, string) error         { c.n++; return nil }
+func (c *countCmds) DeleteOpkgTunLegacy(context.Context, string) error            { c.n++; return nil }
+func (c *countCmds) SetDescriptionLegacy(context.Context, string, string) error   { c.n++; return nil }
+func (c *countCmds) SetSecurityLevelLegacy(context.Context, string, string) error { c.n++; return nil }
+func (c *countCmds) SetIPGlobalLegacy(context.Context, string) error              { c.n++; return nil }
+func (c *countCmds) ClearIPGlobalLegacy(context.Context, string) error            { c.n++; return nil }
+func (c *countCmds) SetAddressLegacy(context.Context, string, string, string) error {
+	c.n++
+	return nil
+}
+func (c *countCmds) ClearAddressLegacy(context.Context, string) error       { c.n++; return nil }
+func (c *countCmds) SetMTULegacy(context.Context, string, int) error        { c.n++; return nil }
+func (c *countCmds) InterfaceUpLegacy(context.Context, string) error        { c.n++; return nil }
+func (c *countCmds) InterfaceDownLegacy(context.Context, string) error      { c.n++; return nil }
+func (c *countCmds) SetPermitAllACLLegacy(context.Context, string) error    { c.n++; return nil }
+func (c *countCmds) RemovePermitAllACLLegacy(context.Context, string) error { c.n++; return nil }
 func (c *countCmds) EnsureDefaultRouteCandidacy(context.Context, string) error {
 	c.n++
 	return nil

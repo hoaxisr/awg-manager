@@ -64,7 +64,7 @@ func (n *NDMS) ExitOf(name string) ExitFlags {
 	return n.Flags[name]
 }
 
-func (n *NDMS) CreateOpkgTunWithSecurityLevel(_ context.Context, name, description, level string) error {
+func (n *NDMS) CreateOpkgTunWithSecurityLevelLegacy(_ context.Context, name, description, level string) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if _, ok := n.Facts[name]; ok {
@@ -74,7 +74,7 @@ func (n *NDMS) CreateOpkgTunWithSecurityLevel(_ context.Context, name, descripti
 	return nil
 }
 
-func (n *NDMS) DeleteOpkgTun(_ context.Context, name string) error {
+func (n *NDMS) DeleteOpkgTunLegacy(_ context.Context, name string) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	delete(n.Facts, name)
@@ -82,47 +82,47 @@ func (n *NDMS) DeleteOpkgTun(_ context.Context, name string) error {
 	return nil
 }
 
-func (n *NDMS) SetDescription(_ context.Context, name, description string) error {
+func (n *NDMS) SetDescriptionLegacy(_ context.Context, name, description string) error {
 	return n.edit(name, func(f *ndmsres.IfaceFacts) { f.Description = description })
 }
 
-func (n *NDMS) SetSecurityLevel(_ context.Context, name, level string) error {
+func (n *NDMS) SetSecurityLevelLegacy(_ context.Context, name, level string) error {
 	return n.edit(name, func(f *ndmsres.IfaceFacts) { f.SecurityLevel = level })
 }
 
-func (n *NDMS) SetAddress(_ context.Context, name, address, mask string) error {
+func (n *NDMS) SetAddressLegacy(_ context.Context, name, address, mask string) error {
 	return n.edit(name, func(f *ndmsres.IfaceFacts) { f.Address, f.Mask = address, mask })
 }
 
-func (n *NDMS) ClearAddress(_ context.Context, name string) error {
+func (n *NDMS) ClearAddressLegacy(_ context.Context, name string) error {
 	return n.edit(name, func(f *ndmsres.IfaceFacts) { f.Address, f.Mask = "", "" })
 }
 
-func (n *NDMS) SetMTU(_ context.Context, name string, mtu int) error {
+func (n *NDMS) SetMTULegacy(_ context.Context, name string, mtu int) error {
 	return n.edit(name, func(f *ndmsres.IfaceFacts) { f.MTU = mtu })
 }
 
-func (n *NDMS) InterfaceUp(_ context.Context, name string) error {
+func (n *NDMS) InterfaceUpLegacy(_ context.Context, name string) error {
 	return n.edit(name, func(f *ndmsres.IfaceFacts) { f.AdminUp = true })
 }
 
-func (n *NDMS) InterfaceDown(_ context.Context, name string) error {
+func (n *NDMS) InterfaceDownLegacy(_ context.Context, name string) error {
 	return n.edit(name, func(f *ndmsres.IfaceFacts) { f.AdminUp = false })
 }
 
-func (n *NDMS) SetIPGlobal(_ context.Context, name string) error {
+func (n *NDMS) SetIPGlobalLegacy(_ context.Context, name string) error {
 	return n.flag(name, func(e *ExitFlags) { e.IPGlobal = true })
 }
 
-func (n *NDMS) ClearIPGlobal(_ context.Context, name string) error {
+func (n *NDMS) ClearIPGlobalLegacy(_ context.Context, name string) error {
 	return n.flag(name, func(e *ExitFlags) { e.IPGlobal = false })
 }
 
-func (n *NDMS) SetPermitAllACL(_ context.Context, name string) error {
+func (n *NDMS) SetPermitAllACLLegacy(_ context.Context, name string) error {
 	return n.flag(name, func(e *ExitFlags) { e.PermitAll = true })
 }
 
-func (n *NDMS) RemovePermitAllACL(_ context.Context, name string) error {
+func (n *NDMS) RemovePermitAllACLLegacy(_ context.Context, name string) error {
 	return n.flag(name, func(e *ExitFlags) { e.PermitAll = false })
 }
 

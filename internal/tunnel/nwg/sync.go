@@ -35,12 +35,12 @@ import (
 func (o *OperatorNativeWG) SyncDNS(ctx context.Context, stored *storage.AWGTunnel, oldDNS, newDNS []string) error {
 	names := NewNWGNames(stored.NWGIndex)
 	if len(oldDNS) > 0 {
-		if err := o.commands.Interfaces.ClearDNS(ctx, names.NDMSName, oldDNS); err != nil {
+		if err := o.commands.Interfaces.ClearDNSLegacy(ctx, names.NDMSName, oldDNS); err != nil {
 			o.appLog.Warn("clear-dns", names.NDMSName, err.Error())
 		}
 	}
 	if len(newDNS) > 0 {
-		if err := o.commands.Interfaces.SetDNS(ctx, names.NDMSName, newDNS); err != nil {
+		if err := o.commands.Interfaces.SetDNSLegacy(ctx, names.NDMSName, newDNS); err != nil {
 			return fmt.Errorf("set DNS: %w", err)
 		}
 	}
@@ -86,20 +86,20 @@ func (o *OperatorNativeWG) SyncAddressMTU(ctx context.Context, stored *storage.A
 	// extractIPv4 сохраняет CIDR-суффикс — маска пользователя доезжает до
 	// RCI, а не заменяется дефолтным /32 (issue #531).
 	addr, mask := splitAddressMask(extractIPv4(stored.Interface.Address))
-	if err := o.commands.Interfaces.SetAddress(ctx, ndmsName, addr, mask); err != nil {
+	if err := o.commands.Interfaces.SetAddressLegacy(ctx, ndmsName, addr, mask); err != nil {
 		return fmt.Errorf("sync address: %w", err)
 	}
 
 	ipv6 := extractIPv6(stored.Interface.Address)
 	if ipv6 != "" {
-		if err := o.commands.Interfaces.SetIPv6Address(ctx, ndmsName, ipv6); err != nil {
+		if err := o.commands.Interfaces.SetIPv6AddressLegacy(ctx, ndmsName, ipv6); err != nil {
 			o.appLog.Warn("sync-address-mtu", ndmsName, "ipv6: "+err.Error())
 		}
 	} else {
-		_ = o.commands.Interfaces.ClearIPv6Address(ctx, ndmsName)
+		_ = o.commands.Interfaces.ClearIPv6AddressLegacy(ctx, ndmsName)
 	}
 
-	if err := o.commands.Interfaces.SetMTU(ctx, ndmsName, stored.Interface.MTU); err != nil {
+	if err := o.commands.Interfaces.SetMTULegacy(ctx, ndmsName, stored.Interface.MTU); err != nil {
 		return fmt.Errorf("sync mtu: %w", err)
 	}
 
@@ -442,5 +442,5 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 
 // UpdateDescription updates the NDMS interface description.
 func (o *OperatorNativeWG) UpdateDescription(ctx context.Context, stored *storage.AWGTunnel, name string) error {
-	return o.commands.Interfaces.SetDescription(ctx, NewNWGNames(stored.NWGIndex).NDMSName, name)
+	return o.commands.Interfaces.SetDescriptionLegacy(ctx, NewNWGNames(stored.NWGIndex).NDMSName, name)
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 // NDMS access-list примитивы — единственная точка ACL-мутаций (SET только
@@ -54,7 +56,12 @@ func (c *InterfaceCommands) ACLRemove(ctx context.Context, acl string) error {
 
 // ACLBind привязывает список `in` к интерфейсу. Повторная привязка
 // идемпотентна (status message, stand-verified).
-func (c *InterfaceCommands) ACLBind(ctx context.Context, iface, acl string) error {
+func (c *InterfaceCommands) ACLBind(ctx context.Context, iface query.Confirmed, acl string) error {
+	return c.ACLBindLegacy(ctx, iface.Name(), acl)
+}
+
+// ACLBindLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) ACLBindLegacy(ctx context.Context, iface, acl string) error {
 	return postMutationChecked(ctx, c.poster, c.save,
 		map[string]any{"parse": fmt.Sprintf("interface %s ip access-group %s in", iface, acl)},
 		"acl bind "+acl,
@@ -64,7 +71,12 @@ func (c *InterfaceCommands) ACLBind(ctx context.Context, iface, acl string) erro
 }
 
 // ACLUnbind снимает привязку списка с интерфейса.
-func (c *InterfaceCommands) ACLUnbind(ctx context.Context, iface, acl string) error {
+func (c *InterfaceCommands) ACLUnbind(ctx context.Context, iface query.Confirmed, acl string) error {
+	return c.ACLUnbindLegacy(ctx, iface.Name(), acl)
+}
+
+// ACLUnbindLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) ACLUnbindLegacy(ctx context.Context, iface, acl string) error {
 	return postMutationChecked(ctx, c.poster, c.save,
 		map[string]any{"parse": fmt.Sprintf("no interface %s ip access-group %s in", iface, acl)},
 		"acl unbind "+acl,
@@ -98,12 +110,17 @@ func IsACLDuplicate(err error) bool {
 // веб-морды Keenetic — UI показывает его как разрешение доступа к
 // интерфейсу), привязывает `in` и включает auto-delete. Идемпотентен: дубль
 // permit толерируется, повторные bind/auto-delete идемпотентны в NDMS.
-func (c *InterfaceCommands) SetPermitAllACL(ctx context.Context, name string) error {
+func (c *InterfaceCommands) SetPermitAllACL(ctx context.Context, iface query.Confirmed) error {
+	return c.SetPermitAllACLLegacy(ctx, iface.Name())
+}
+
+// SetPermitAllACLLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) SetPermitAllACLLegacy(ctx context.Context, name string) error {
 	acl := "_WEBADMIN_" + name
 	if err := c.ACLPermitIP(ctx, acl, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0"); err != nil && !IsACLDuplicate(err) {
 		return err
 	}
-	if err := c.ACLBind(ctx, name, acl); err != nil {
+	if err := c.ACLBindLegacy(ctx, name, acl); err != nil {
 		return err
 	}
 	return c.ACLAutoDelete(ctx, acl)
@@ -127,7 +144,12 @@ func (c *InterfaceCommands) SetPermitAllACL(ctx context.Context, name string) er
 // Дополнительная толерантность против v4: до KeeneticOS 5.01 команд
 // `ipv6 access-list`/`ipv6 access-group` не существует вовсе (isACLUnsupported).
 // Там разрешать нечего, и отказ не должен валить включение режима — issue #828.
-func (c *InterfaceCommands) SetPermitAllACLv6(ctx context.Context, name string) error {
+func (c *InterfaceCommands) SetPermitAllACLv6(ctx context.Context, iface query.Confirmed) error {
+	return c.SetPermitAllACLv6Legacy(ctx, iface.Name())
+}
+
+// SetPermitAllACLv6Legacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) SetPermitAllACLv6Legacy(ctx context.Context, name string) error {
 	acl := "_WEBADMIN_" + name
 	err := postMutationCheckedTolerant(ctx, c.poster, c.save,
 		map[string]any{"parse": fmt.Sprintf("ipv6 access-list %s permit ipv6 ::/0 ::/0", acl)},
@@ -159,7 +181,12 @@ func (c *InterfaceCommands) SetPermitAllACLv6(ctx context.Context, name string) 
 // списке есть чужие правила → снять только нашу строку», та же терпимость к
 // прошивкам без v6-ACL (isACLUnsupported: там блока нет, чужих правил нет,
 // и обе команды чистой ветки отказ терпят).
-func (c *InterfaceCommands) RemovePermitAllACLv6(ctx context.Context, name string) error {
+func (c *InterfaceCommands) RemovePermitAllACLv6(ctx context.Context, iface query.Confirmed) error {
+	return c.RemovePermitAllACLv6Legacy(ctx, iface.Name())
+}
+
+// RemovePermitAllACLv6Legacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) RemovePermitAllACLv6Legacy(ctx context.Context, name string) error {
 	acl := "_WEBADMIN_" + name
 	foreign, err := c.hasForeignACLRules(ctx, "ipv6 access-list "+acl, permitAllRuleV6)
 	if err != nil {
@@ -243,7 +270,12 @@ func (c *InterfaceCommands) removeOurPermitRule(ctx context.Context, cmd, label 
 //
 // Идемпотентность чистой ветки прежняя: «привязки/списка уже нет» (argument
 // parse error — стенд 2026-09-05) не ошибка; прочие отказы всплывают.
-func (c *InterfaceCommands) RemovePermitAllACL(ctx context.Context, name string) error {
+func (c *InterfaceCommands) RemovePermitAllACL(ctx context.Context, iface query.Confirmed) error {
+	return c.RemovePermitAllACLLegacy(ctx, iface.Name())
+}
+
+// RemovePermitAllACLLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) RemovePermitAllACLLegacy(ctx context.Context, name string) error {
 	acl := "_WEBADMIN_" + name
 	foreign, err := c.hasForeignACLRules(ctx, "access-list "+acl, permitAllRuleV4)
 	if err != nil {

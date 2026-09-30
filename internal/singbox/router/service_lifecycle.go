@@ -544,7 +544,7 @@ func (s *ServiceImpl) healTunAddress(ctx context.Context, sr storage.SingboxRout
 	if miss4 {
 		addr4, mask4, err := splitCIDRToAddrMask(p.TunAddr4)
 		if err == nil {
-			err = s.deps.OpkgTun.SetAddress(ctx, ndmsName, addr4, mask4)
+			err = s.deps.OpkgTun.SetAddressLegacy(ctx, ndmsName, addr4, mask4)
 		}
 		if err != nil {
 			restored = false
@@ -556,7 +556,7 @@ func (s *ServiceImpl) healTunAddress(ctx context.Context, sr storage.SingboxRout
 	if miss6 {
 		addr6, err := bareAddrFromCIDR(p.TunAddr6)
 		if err == nil {
-			err = s.deps.OpkgTun.SetIPv6Address(ctx, ndmsName, addr6)
+			err = s.deps.OpkgTun.SetIPv6AddressLegacy(ctx, ndmsName, addr6)
 		}
 		if err != nil {
 			restored = false

@@ -563,12 +563,12 @@ func (h *ServersHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Enabled {
-		if err := h.commands.Interfaces.InterfaceUp(r.Context(), name); err != nil {
+		if err := h.commands.Interfaces.InterfaceUpLegacy(r.Context(), name); err != nil {
 			response.Error(w, err.Error(), "INTERFACE_UP_FAILED")
 			return
 		}
 	} else {
-		if err := h.commands.Interfaces.InterfaceDown(r.Context(), name); err != nil {
+		if err := h.commands.Interfaces.InterfaceDownLegacy(r.Context(), name); err != nil {
 			response.Error(w, err.Error(), "INTERFACE_DOWN_FAILED")
 			return
 		}
@@ -631,13 +631,13 @@ func (h *ServersHandler) Restart(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(300 * time.Millisecond)
 
 		if wasUp {
-			if err := h.commands.Interfaces.InterfaceDown(ctx, name); err != nil {
+			if err := h.commands.Interfaces.InterfaceDownLegacy(ctx, name); err != nil {
 				return
 			}
 			time.Sleep(1200 * time.Millisecond)
 		}
 
-		if err := h.commands.Interfaces.InterfaceUp(ctx, name); err != nil {
+		if err := h.commands.Interfaces.InterfaceUpLegacy(ctx, name); err != nil {
 			return
 		}
 

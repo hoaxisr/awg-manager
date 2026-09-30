@@ -30,7 +30,36 @@ func (c *InterfaceCommands) SetHookNotifier(hn HookNotifier) { c.hookNotifier = 
 // segment→tun forwarding is permitted by default; non-global keeps traffic
 // un-masqueraded only when the segment is in a no-masquerade NAT mode (see
 // fakeip-tun spec §2 fact 3 — source-preservation depends on segment NAT mode).
-func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, name, description, securityLevel string) error {
+//
+// Созданное подтверждается свежим списком (Confirm): он же кладёт запись в
+// кэш, и дальнейшие команды по интерфейсу идут с доказательством (F546).
+func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, name, description, securityLevel string) (query.Confirmed, error) {
+	payload := map[string]any{
+		"interface": map[string]any{
+			name: map[string]any{
+				"description": description,
+				"security-level": map[string]any{
+					securityLevel: true,
+				},
+			},
+		},
+	}
+	if err := postMutationChecked(ctx, c.poster, c.save, payload, "create opkgtun "+name,
+		c.queries.RunningConfig.InvalidateAll); err != nil {
+		return query.Confirmed{}, err
+	}
+	conf, _, ok, err := c.queries.Interfaces.Confirm(ctx, name)
+	if err != nil {
+		return query.Confirmed{}, fmt.Errorf("create opkgtun %s: подтверждение: %w", name, err)
+	}
+	if !ok {
+		return query.Confirmed{}, fmt.Errorf("create opkgtun %s: NDMS принял команду, но записи в списке нет", name)
+	}
+	return conf, nil
+}
+
+// CreateOpkgTunWithSecurityLevelLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevelLegacy(ctx context.Context, name, description, securityLevel string) error {
 	payload := map[string]any{
 		"interface": map[string]any{
 			name: map[string]any{
@@ -48,12 +77,37 @@ func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, 
 
 // CreateOpkgTun creates an OpkgTun interface in NDMS (public by default,
 // preserving existing callers).
-func (c *InterfaceCommands) CreateOpkgTun(ctx context.Context, name, description string) error {
+func (c *InterfaceCommands) CreateOpkgTun(ctx context.Context, name, description string) (query.Confirmed, error) {
 	return c.CreateOpkgTunWithSecurityLevel(ctx, name, description, "public")
 }
 
+// CreateOpkgTunLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) CreateOpkgTunLegacy(ctx context.Context, name, description string) error {
+	return c.CreateOpkgTunWithSecurityLevelLegacy(ctx, name, description, "public")
+}
+
 // DeleteOpkgTun removes an interface (any type — NDMS accepts "no": true for any).
-func (c *InterfaceCommands) DeleteOpkgTun(ctx context.Context, name string) error {
+// Снято (или его уже не было) — запись забывается в кэше сразу, не дожидаясь
+// хука ifdestroyed (F546).
+func (c *InterfaceCommands) DeleteOpkgTun(ctx context.Context, iface query.Confirmed) error {
+	name := iface.Name()
+	payload := map[string]any{
+		"interface": map[string]any{
+			name: map[string]any{"no": true},
+		},
+	}
+	err := postMutationCheckedTolerant(ctx, c.poster, c.save, payload, "delete interface "+name,
+		isMissingInterface,
+		func() { c.queries.Peers.Invalidate(name) },
+		c.queries.RunningConfig.InvalidateAll)
+	if err == nil {
+		c.queries.Interfaces.Forget(name)
+	}
+	return err
+}
+
+// DeleteOpkgTunLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) DeleteOpkgTunLegacy(ctx context.Context, name string) error {
 	payload := map[string]any{
 		"interface": map[string]any{
 			name: map[string]any{"no": true},
@@ -70,7 +124,12 @@ func (c *InterfaceCommands) DeleteOpkgTun(ctx context.Context, name string) erro
 }
 
 // SetSecurityLevel switches interface between public (egress) and private (LAN).
-func (c *InterfaceCommands) SetSecurityLevel(ctx context.Context, name, level string) error {
+func (c *InterfaceCommands) SetSecurityLevel(ctx context.Context, iface query.Confirmed, level string) error {
+	return c.SetSecurityLevelLegacy(ctx, iface.Name(), level)
+}
+
+// SetSecurityLevelLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) SetSecurityLevelLegacy(ctx context.Context, name, level string) error {
 	switch level {
 	case "public", "private":
 	default:
@@ -89,7 +148,12 @@ func (c *InterfaceCommands) SetSecurityLevel(ctx context.Context, name, level st
 }
 
 // SetIPGlobal enables auto-global IP assignment on the interface.
-func (c *InterfaceCommands) SetIPGlobal(ctx context.Context, name string) error {
+func (c *InterfaceCommands) SetIPGlobal(ctx context.Context, iface query.Confirmed) error {
+	return c.SetIPGlobalLegacy(ctx, iface.Name())
+}
+
+// SetIPGlobalLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) SetIPGlobalLegacy(ctx context.Context, name string) error {
 	payload := map[string]any{
 		"interface": map[string]any{
 			name: map[string]any{
@@ -108,7 +172,12 @@ func (c *InterfaceCommands) SetIPGlobal(ctx context.Context, name string) error 
 // Форма и ответ («global priority cleared») сняты со стенда 5.01 2026-09-06;
 // security-level от неё не зависит (private принимается и при стоящем
 // global — и наоборот).
-func (c *InterfaceCommands) ClearIPGlobal(ctx context.Context, name string) error {
+func (c *InterfaceCommands) ClearIPGlobal(ctx context.Context, iface query.Confirmed) error {
+	return c.ClearIPGlobalLegacy(ctx, iface.Name())
+}
+
+// ClearIPGlobalLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) ClearIPGlobalLegacy(ctx context.Context, name string) error {
 	return postMutationChecked(ctx, c.poster, c.save,
 		map[string]any{"parse": fmt.Sprintf("interface %s no ip global", name)},
 		"clear ip global "+name,
@@ -132,7 +201,12 @@ func clearAddressPayload(name string) map[string]any {
 
 // SetAddress sets the IPv4 address on the interface. Composite: clears
 // any existing address first (best-effort), then sets the new one.
-func (c *InterfaceCommands) SetAddress(ctx context.Context, name, address, mask string) error {
+func (c *InterfaceCommands) SetAddress(ctx context.Context, iface query.Confirmed, address, mask string) error {
+	return c.SetAddressLegacy(ctx, iface.Name(), address, mask)
+}
+
+// SetAddressLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) SetAddressLegacy(ctx context.Context, name, address, mask string) error {
 	_, _ = c.poster.Post(ctx, clearAddressPayload(name))
 
 	setPayload := map[string]any{
@@ -152,7 +226,12 @@ func (c *InterfaceCommands) SetAddress(ctx context.Context, name, address, mask 
 
 // ClearAddress removes the configured IPv4 address from the interface.
 // Idempotent: NDMS accepts no:true when no address is set.
-func (c *InterfaceCommands) ClearAddress(ctx context.Context, name string) error {
+func (c *InterfaceCommands) ClearAddress(ctx context.Context, iface query.Confirmed) error {
+	return c.ClearAddressLegacy(ctx, iface.Name())
+}
+
+// ClearAddressLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) ClearAddressLegacy(ctx context.Context, name string) error {
 	return postMutationChecked(ctx, c.poster, c.save, clearAddressPayload(name), "clear address "+name,
 		func() { c.queries.Interfaces.Invalidate(name) },
 		c.queries.Routes.InvalidateAll,
@@ -167,7 +246,12 @@ func (c *InterfaceCommands) ClearAddress(ctx context.Context, name string) error
 // though the address itself was applied. Both forms verified on the stand
 // (KeeneticOS 5.01): `no:true` answers "cleared addresses" and is idempotent
 // on an interface with no addresses.
-func (c *InterfaceCommands) SetIPv6Address(ctx context.Context, name, address string) error {
+func (c *InterfaceCommands) SetIPv6Address(ctx context.Context, iface query.Confirmed, address string) error {
+	return c.SetIPv6AddressLegacy(ctx, iface.Name(), address)
+}
+
+// SetIPv6AddressLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) SetIPv6AddressLegacy(ctx context.Context, name, address string) error {
 	payload := map[string]any{
 		"interface": map[string]any{
 			name: map[string]any{
@@ -186,7 +270,12 @@ func (c *InterfaceCommands) SetIPv6Address(ctx context.Context, name, address st
 }
 
 // ClearIPv6Address removes the IPv6 address from the interface.
-func (c *InterfaceCommands) ClearIPv6Address(ctx context.Context, name string) error {
+func (c *InterfaceCommands) ClearIPv6Address(ctx context.Context, iface query.Confirmed) error {
+	return c.ClearIPv6AddressLegacy(ctx, iface.Name())
+}
+
+// ClearIPv6AddressLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) ClearIPv6AddressLegacy(ctx context.Context, name string) error {
 	payload := map[string]any{
 		"interface": map[string]any{
 			name: map[string]any{
@@ -202,7 +291,12 @@ func (c *InterfaceCommands) ClearIPv6Address(ctx context.Context, name string) e
 }
 
 // SetMTU sets the interface MTU and auto-adjusts TCP MSS.
-func (c *InterfaceCommands) SetMTU(ctx context.Context, name string, mtu int) error {
+func (c *InterfaceCommands) SetMTU(ctx context.Context, iface query.Confirmed, mtu int) error {
+	return c.SetMTULegacy(ctx, iface.Name(), mtu)
+}
+
+// SetMTULegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) SetMTULegacy(ctx context.Context, name string, mtu int) error {
 	payload := map[string]any{
 		"interface": map[string]any{
 			name: map[string]any{
@@ -221,7 +315,12 @@ func (c *InterfaceCommands) SetMTU(ctx context.Context, name string, mtu int) er
 }
 
 // SetDescription updates the NDMS description of the interface.
-func (c *InterfaceCommands) SetDescription(ctx context.Context, name, description string) error {
+func (c *InterfaceCommands) SetDescription(ctx context.Context, iface query.Confirmed, description string) error {
+	return c.SetDescriptionLegacy(ctx, iface.Name(), description)
+}
+
+// SetDescriptionLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) SetDescriptionLegacy(ctx context.Context, name, description string) error {
 	payload := map[string]any{
 		"interface": map[string]any{
 			name: map[string]any{"description": description},
@@ -233,7 +332,12 @@ func (c *InterfaceCommands) SetDescription(ctx context.Context, name, descriptio
 }
 
 // SetDNS sets DNS name-servers for the interface. One POST per server.
-func (c *InterfaceCommands) SetDNS(ctx context.Context, name string, servers []string) error {
+func (c *InterfaceCommands) SetDNS(ctx context.Context, iface query.Confirmed, servers []string) error {
+	return c.SetDNSLegacy(ctx, iface.Name(), servers)
+}
+
+// SetDNSLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) SetDNSLegacy(ctx context.Context, name string, servers []string) error {
 	for _, dns := range servers {
 		payload := map[string]any{
 			"ip": map[string]any{
@@ -253,7 +357,12 @@ func (c *InterfaceCommands) SetDNS(ctx context.Context, name string, servers []s
 }
 
 // ClearDNS removes DNS name-servers for the interface. One best-effort POST per server.
-func (c *InterfaceCommands) ClearDNS(ctx context.Context, name string, servers []string) error {
+func (c *InterfaceCommands) ClearDNS(ctx context.Context, iface query.Confirmed, servers []string) error {
+	return c.ClearDNSLegacy(ctx, iface.Name(), servers)
+}
+
+// ClearDNSLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) ClearDNSLegacy(ctx context.Context, name string, servers []string) error {
 	for _, dns := range servers {
 		payload := map[string]any{
 			"ip": map[string]any{
@@ -276,7 +385,12 @@ func (c *InterfaceCommands) ClearDNS(ctx context.Context, name string, servers [
 // RunningConfig invalidation is deliberately skipped — Plan 4's
 // events.Dispatcher invalidates RunningConfig on iflayerchanged hooks,
 // which fire on every interface up/down.
-func (c *InterfaceCommands) InterfaceUp(ctx context.Context, name string) error {
+func (c *InterfaceCommands) InterfaceUp(ctx context.Context, iface query.Confirmed) error {
+	return c.InterfaceUpLegacy(ctx, iface.Name())
+}
+
+// InterfaceUpLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) InterfaceUpLegacy(ctx context.Context, name string) error {
 	if c.hookNotifier != nil {
 		c.hookNotifier.ExpectHook(name, "running")
 	}
@@ -295,7 +409,12 @@ func (c *InterfaceCommands) InterfaceUp(ctx context.Context, name string) error 
 // RunningConfig invalidation is deliberately skipped — Plan 4's
 // events.Dispatcher invalidates RunningConfig on iflayerchanged hooks,
 // which fire on every interface up/down.
-func (c *InterfaceCommands) InterfaceDown(ctx context.Context, name string) error {
+func (c *InterfaceCommands) InterfaceDown(ctx context.Context, iface query.Confirmed) error {
+	return c.InterfaceDownLegacy(ctx, iface.Name())
+}
+
+// InterfaceDownLegacy — временно, до Task 19 (F546).
+func (c *InterfaceCommands) InterfaceDownLegacy(ctx context.Context, name string) error {
 	if c.hookNotifier != nil {
 		c.hookNotifier.ExpectHook(name, "disabled")
 	}

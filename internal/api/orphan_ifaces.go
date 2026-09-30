@@ -15,7 +15,7 @@ import (
 
 // OrphanIfaceNDMS — снятие записи интерфейса в NDMS.
 type OrphanIfaceNDMS interface {
-	DeleteOpkgTun(ctx context.Context, name string) error
+	DeleteOpkgTunLegacy(ctx context.Context, name string) error
 }
 
 // DeleteOrphanIfaceRequest — тело POST /tunnels/orphans/delete.
@@ -153,7 +153,7 @@ func (h *OrphanIfaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	ndmsName := target.NDMSName
 	iface := fmt.Sprintf("opkgtun%d", idx)
 	if ndmsName != "" {
-		if err := h.ndms.DeleteOpkgTun(r.Context(), ndmsName); err != nil {
+		if err := h.ndms.DeleteOpkgTunLegacy(r.Context(), ndmsName); err != nil {
 			response.Error(w, "не удалось снять запись "+ndmsName+": "+err.Error(), "NDMS_DELETE_FAILED")
 			return
 		}

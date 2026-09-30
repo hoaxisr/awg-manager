@@ -10,7 +10,7 @@ import (
 func TestInterfaceCommandsPayloads_CoreOps(t *testing.T) {
 	cmds, poster, _, _, hn := newTestInterfaceCommands(t)
 
-	if err := cmds.CreateOpkgTun(context.Background(), "OpkgTun10", "Test tunnel"); err != nil {
+	if _, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun10", "Test tunnel"); err != nil {
 		t.Fatalf("CreateOpkgTun: %v", err)
 	}
 	requireJSONEqual(t, poster.Payloads()[0], `{
@@ -22,38 +22,38 @@ func TestInterfaceCommandsPayloads_CoreOps(t *testing.T) {
 		}
 	}`)
 
-	if err := cmds.DeleteOpkgTun(context.Background(), "OpkgTun10"); err != nil {
+	if err := cmds.DeleteOpkgTun(context.Background(), confirmed(t, "OpkgTun10")); err != nil {
 		t.Fatalf("DeleteOpkgTun: %v", err)
 	}
 	requireJSONEqual(t, poster.Payloads()[1], `{
 		"interface": {"OpkgTun10": {"no": true}}
 	}`)
 
-	if err := cmds.SetIPGlobal(context.Background(), "OpkgTun10"); err != nil {
+	if err := cmds.SetIPGlobal(context.Background(), confirmed(t, "OpkgTun10")); err != nil {
 		t.Fatalf("SetIPGlobal: %v", err)
 	}
 	requireJSONEqual(t, poster.Payloads()[2], `{
 		"interface": {"OpkgTun10": {"ip": {"global": {"auto": true}}}}
 	}`)
 
-	if err := cmds.SetMTU(context.Background(), "OpkgTun10", 1420); err != nil {
+	if err := cmds.SetMTU(context.Background(), confirmed(t, "OpkgTun10"), 1420); err != nil {
 		t.Fatalf("SetMTU: %v", err)
 	}
 	requireJSONEqual(t, poster.Payloads()[3], `{
 		"interface": {"OpkgTun10": {"ip": {"mtu": 1420, "tcp": {"adjust-mss": {"pmtu": true}}}}}
 	}`)
 
-	if err := cmds.SetDescription(context.Background(), "OpkgTun10", "new desc"); err != nil {
+	if err := cmds.SetDescription(context.Background(), confirmed(t, "OpkgTun10"), "new desc"); err != nil {
 		t.Fatalf("SetDescription: %v", err)
 	}
 	requireJSONEqual(t, poster.Payloads()[4], `{
 		"interface": {"OpkgTun10": {"description": "new desc"}}
 	}`)
 
-	if err := cmds.InterfaceUp(context.Background(), "OpkgTun10"); err != nil {
+	if err := cmds.InterfaceUp(context.Background(), confirmed(t, "OpkgTun10")); err != nil {
 		t.Fatalf("InterfaceUp: %v", err)
 	}
-	if err := cmds.InterfaceDown(context.Background(), "OpkgTun10"); err != nil {
+	if err := cmds.InterfaceDown(context.Background(), confirmed(t, "OpkgTun10")); err != nil {
 		t.Fatalf("InterfaceDown: %v", err)
 	}
 	requireJSONEqual(t, poster.Payloads()[5], `{"interface":{"OpkgTun10":{"up":true}}}`)
@@ -66,7 +66,7 @@ func TestInterfaceCommandsPayloads_CoreOps(t *testing.T) {
 func TestInterfaceCommandsPayloads_AddressAndIPv6(t *testing.T) {
 	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
 
-	if err := cmds.SetAddress(context.Background(), "OpkgTun10", "10.0.0.2", "255.255.255.255"); err != nil {
+	if err := cmds.SetAddress(context.Background(), confirmed(t, "OpkgTun10"), "10.0.0.2", "255.255.255.255"); err != nil {
 		t.Fatalf("SetAddress: %v", err)
 	}
 	if len(poster.Payloads()) < 2 {
@@ -75,14 +75,14 @@ func TestInterfaceCommandsPayloads_AddressAndIPv6(t *testing.T) {
 	requireJSONEqual(t, poster.Payloads()[0], `{"interface":{"OpkgTun10":{"ip":{"address":{"no":true}}}}}`)
 	requireJSONEqual(t, poster.Payloads()[1], `{"interface":{"OpkgTun10":{"ip":{"address":{"address":"10.0.0.2","mask":"255.255.255.255"}}}}}`)
 
-	if err := cmds.SetIPv6Address(context.Background(), "OpkgTun10", "fd00::1"); err != nil {
+	if err := cmds.SetIPv6Address(context.Background(), confirmed(t, "OpkgTun10"), "fd00::1"); err != nil {
 		t.Fatalf("SetIPv6Address: %v", err)
 	}
 	requireJSONEqual(t, poster.Payloads()[2], `{
 		"interface":{"OpkgTun10":{"ipv6":{"address":[{"no":true},{"block":"fd00::1/128"}]}}}
 	}`)
 
-	if err := cmds.ClearIPv6Address(context.Background(), "OpkgTun10"); err != nil {
+	if err := cmds.ClearIPv6Address(context.Background(), confirmed(t, "OpkgTun10")); err != nil {
 		t.Fatalf("ClearIPv6Address: %v", err)
 	}
 	requireJSONEqual(t, poster.Payloads()[3], `{"interface":{"OpkgTun10":{"ipv6":{"address":{"no":true}}}}}`)
@@ -91,20 +91,20 @@ func TestInterfaceCommandsPayloads_AddressAndIPv6(t *testing.T) {
 func TestInterfaceCommandsPayloads_DNS(t *testing.T) {
 	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
 
-	if err := cmds.SetDNS(context.Background(), "OpkgTun10", []string{"1.1.1.1", "8.8.8.8"}); err != nil {
+	if err := cmds.SetDNS(context.Background(), confirmed(t, "OpkgTun10"), []string{"1.1.1.1", "8.8.8.8"}); err != nil {
 		t.Fatalf("SetDNS: %v", err)
 	}
 	requireJSONEqual(t, poster.Payloads()[0], `{"ip":{"name-server":{"address":"1.1.1.1","interface":"OpkgTun10"}}}`)
 	requireJSONEqual(t, poster.Payloads()[1], `{"ip":{"name-server":{"address":"8.8.8.8","interface":"OpkgTun10"}}}`)
 
 	poster.SetError(errors.New("boom"))
-	err := cmds.SetDNS(context.Background(), "OpkgTun10", []string{"9.9.9.9"})
+	err := cmds.SetDNS(context.Background(), confirmed(t, "OpkgTun10"), []string{"9.9.9.9"})
 	if err == nil || !strings.Contains(err.Error(), "set dns") {
 		t.Fatalf("SetDNS failure err = %v, want contains 'set dns'", err)
 	}
 
 	poster.SetError(errors.New("ignored"))
-	if err := cmds.ClearDNS(context.Background(), "OpkgTun10", []string{"1.1.1.1", "8.8.8.8"}); err != nil {
+	if err := cmds.ClearDNS(context.Background(), confirmed(t, "OpkgTun10"), []string{"1.1.1.1", "8.8.8.8"}); err != nil {
 		t.Fatalf("ClearDNS: %v", err)
 	}
 }
@@ -114,7 +114,7 @@ func TestInterfaceCommandsPayloads_DNS(t *testing.T) {
 func TestClearIPGlobal_ParseForm(t *testing.T) {
 	cmds, poster, _, _, _ := newTestInterfaceCommands(t)
 
-	if err := cmds.ClearIPGlobal(context.Background(), "OpkgTun10"); err != nil {
+	if err := cmds.ClearIPGlobal(context.Background(), confirmed(t, "OpkgTun10")); err != nil {
 		t.Fatalf("ClearIPGlobal: %v", err)
 	}
 	if len(poster.Payloads()) != 1 {

@@ -60,9 +60,9 @@ type recPolicyTunOpkg struct {
 	descs []string
 }
 
-func (r *recPolicyTunOpkg) CreateOpkgTunWithSecurityLevel(ctx context.Context, name, desc, level string) error {
+func (r *recPolicyTunOpkg) CreateOpkgTunWithSecurityLevelLegacy(ctx context.Context, name, desc, level string) error {
 	r.descs = append(r.descs, desc)
-	return r.recOpkgTun.CreateOpkgTunWithSecurityLevel(ctx, name, desc, level)
+	return r.recOpkgTun.CreateOpkgTunWithSecurityLevelLegacy(ctx, name, desc, level)
 }
 
 // ---------------------------------------------------------------------------

@@ -62,13 +62,13 @@ func TestACLPrimitives_ParseForms(t *testing.T) {
 	if err := cmds.ACLPermitIP(ctx, "AWGM_X", "10.0.0.0", "255.255.255.0", "10.0.1.0", "255.255.255.0"); err != nil {
 		t.Fatalf("ACLPermitIP: %v", err)
 	}
-	if err := cmds.ACLBind(ctx, "Wireguard1", "AWGM_X"); err != nil {
+	if err := cmds.ACLBind(ctx, confirmed(t, "Wireguard1"), "AWGM_X"); err != nil {
 		t.Fatalf("ACLBind: %v", err)
 	}
 	if err := cmds.ACLAutoDelete(ctx, "AWGM_X"); err != nil {
 		t.Fatalf("ACLAutoDelete: %v", err)
 	}
-	if err := cmds.ACLUnbind(ctx, "Wireguard1", "AWGM_X"); err != nil {
+	if err := cmds.ACLUnbind(ctx, confirmed(t, "Wireguard1"), "AWGM_X"); err != nil {
 		t.Fatalf("ACLUnbind: %v", err)
 	}
 	if err := cmds.ACLRemove(ctx, "AWGM_X"); err != nil {
@@ -105,7 +105,7 @@ func TestACLPrimitives_NestedErrorSurfaces(t *testing.T) {
 // _WEBADMIN_; дубль permit (идемпотентный re-assert) толерируется.
 func TestSetPermitAllACL_SequenceAndDuplicateTolerance(t *testing.T) {
 	cmds, poster := newACLTestCommands(nestedACLError("a duplicate was found for the rule being set."))
-	if err := cmds.SetPermitAllACL(context.Background(), "OpkgTun0"); err != nil {
+	if err := cmds.SetPermitAllACL(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
 		t.Fatalf("SetPermitAllACL (duplicate permit): %v", err)
 	}
 	want := []string{
@@ -128,7 +128,7 @@ func TestSetPermitAllACL_SequenceAndDuplicateTolerance(t *testing.T) {
 // живого роутера 2026-08-11). Порядок и толерантность к дублю — как у v4.
 func TestSetPermitAllACLv6_SequenceAndDuplicateTolerance(t *testing.T) {
 	cmds, poster := newACLTestCommands(nestedACLError("a duplicate was found for the rule being set."))
-	if err := cmds.SetPermitAllACLv6(context.Background(), "OpkgTun0"); err != nil {
+	if err := cmds.SetPermitAllACLv6(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
 		t.Fatalf("SetPermitAllACLv6 (duplicate permit): %v", err)
 	}
 	want := []string{
@@ -150,7 +150,7 @@ func TestSetPermitAllACLv6_SequenceAndDuplicateTolerance(t *testing.T) {
 // best-effort, и провал unbind не должен оставлять список висеть.
 func TestRemovePermitAllACLv6_UnbindsAndRemoves(t *testing.T) {
 	cmds, poster := newACLTestCommands(nil)
-	if err := cmds.RemovePermitAllACLv6(context.Background(), "OpkgTun0"); err != nil {
+	if err := cmds.RemovePermitAllACLv6(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
 		t.Fatalf("RemovePermitAllACLv6: %v", err)
 	}
 	want := []string{
@@ -171,7 +171,7 @@ func TestRemovePermitAllACLv6_UnbindsAndRemoves(t *testing.T) {
 // толерирует только дубль, реальная ошибка не должна проглатываться (ревью).
 func TestSetPermitAllACL_RealPermitErrorFails(t *testing.T) {
 	cmds, poster := newACLTestCommands(nestedACLError("argument parse error."))
-	err := cmds.SetPermitAllACL(context.Background(), "OpkgTun0")
+	err := cmds.SetPermitAllACL(context.Background(), confirmed(t, "OpkgTun0"))
 	if err == nil || !strings.Contains(err.Error(), "argument parse error") {
 		t.Fatalf("real permit error must surface, got %v", err)
 	}
@@ -184,14 +184,14 @@ func TestSetPermitAllACL_RealPermitErrorFails(t *testing.T) {
 // должен классифицироваться как безвредный дубль.
 func TestIsACLDuplicate_ExactPhraseOnly(t *testing.T) {
 	cmds, _ := newACLTestCommands(nestedACLError("duplicate interface index; argument parse error."))
-	if err := cmds.SetPermitAllACL(context.Background(), "OpkgTun0"); err == nil {
+	if err := cmds.SetPermitAllACL(context.Background(), confirmed(t, "OpkgTun0")); err == nil {
 		t.Fatal("error mentioning 'duplicate' without the NDMS duplicate-rule phrase must surface")
 	}
 }
 
 func TestRemovePermitAllACL_Sequence(t *testing.T) {
 	cmds, poster := newACLTestCommands()
-	if err := cmds.RemovePermitAllACL(context.Background(), "OpkgTun0"); err != nil {
+	if err := cmds.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
 		t.Fatalf("RemovePermitAllACL: %v", err)
 	}
 	want := []string{
@@ -218,7 +218,7 @@ func TestRemovePermitAllACL_ToleratesNotBound(t *testing.T) {
 		nestedACLError("argument parse error."),
 		nestedACLError("argument parse error."),
 	)
-	if err := cmds.RemovePermitAllACL(context.Background(), "OpkgTun0"); err != nil {
+	if err := cmds.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
 		t.Fatalf("«нет привязки» обязано прощаться: %v", err)
 	}
 	if len(poster.parses) != 2 {
@@ -229,7 +229,7 @@ func TestRemovePermitAllACL_ToleratesNotBound(t *testing.T) {
 // Любая другая status-ошибка всплывает как раньше.
 func TestRemovePermitAllACL_OtherErrorSurfaces(t *testing.T) {
 	cmds, _ := newACLTestCommands(nestedACLError("access list is in use"))
-	err := cmds.RemovePermitAllACL(context.Background(), "OpkgTun0")
+	err := cmds.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun0"))
 	if err == nil || !strings.Contains(err.Error(), "router reported error: access list is in use") {
 		t.Fatalf("err = %v", err)
 	}
@@ -245,14 +245,14 @@ func TestSetPermitAllACLv6_UnsupportedFirmwareTolerated(t *testing.T) {
 		nestedACLError("no such command: access-group."),
 		nestedACLError("no such command: access-list."),
 	)
-	if err := cmds.SetPermitAllACLv6(context.Background(), "OpkgTun0"); err != nil {
+	if err := cmds.SetPermitAllACLv6(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
 		t.Fatalf("SetPermitAllACLv6 на прошивке без v6-ACL: %v", err)
 	}
 	cmds, _ = newACLTestCommands(
 		nestedACLError("no such command: access-group."),
 		nestedACLError("no such command: access-list."),
 	)
-	if err := cmds.RemovePermitAllACLv6(context.Background(), "OpkgTun0"); err != nil {
+	if err := cmds.RemovePermitAllACLv6(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
 		t.Fatalf("RemovePermitAllACLv6 на прошивке без v6-ACL: %v", err)
 	}
 }
@@ -260,7 +260,7 @@ func TestSetPermitAllACLv6_UnsupportedFirmwareTolerated(t *testing.T) {
 // Толерантность узкая: настоящий отказ v6-ACL по-прежнему всплывает.
 func TestSetPermitAllACLv6_RealErrorStillFails(t *testing.T) {
 	cmds, _ := newACLTestCommands(nestedACLError("argument parse error."))
-	if err := cmds.SetPermitAllACLv6(context.Background(), "OpkgTun0"); err == nil {
+	if err := cmds.SetPermitAllACLv6(context.Background(), confirmed(t, "OpkgTun0")); err == nil {
 		t.Fatal("ожидался отказ на argument parse error, получен nil")
 	}
 }
@@ -283,7 +283,7 @@ func TestRemovePermitAllACL_ForeignRulesPresent_RemovesOnlyOurRule(t *testing.T)
 				"    permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0",
 				"    auto-delete", "!"},
 			remove: func(c *InterfaceCommands) error {
-				return c.RemovePermitAllACL(context.Background(), "OpkgTun0")
+				return c.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun0"))
 			},
 			want: "no access-list _WEBADMIN_OpkgTun0 permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0",
 		},
@@ -293,7 +293,7 @@ func TestRemovePermitAllACL_ForeignRulesPresent_RemovesOnlyOurRule(t *testing.T)
 				"    permit ipv6 2001:db8::/32 ::/0",
 				"    permit ipv6 ::/0 ::/0", "!"},
 			remove: func(c *InterfaceCommands) error {
-				return c.RemovePermitAllACLv6(context.Background(), "OpkgTun0")
+				return c.RemovePermitAllACLv6(context.Background(), confirmed(t, "OpkgTun0"))
 			},
 			want: "no ipv6 access-list _WEBADMIN_OpkgTun0 permit ipv6 ::/0 ::/0",
 		},
@@ -316,7 +316,7 @@ func TestRemovePermitAllACL_ForeignRulesPresent_RemovesOnlyOurRule(t *testing.T)
 func TestRemovePermitAllACL_OnlyOurRule_RemovesWholeList(t *testing.T) {
 	cmds, poster := newACLTestCommandsRC([]string{"access-list _WEBADMIN_OpkgTun0",
 		"    permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0", "    auto-delete", "!"})
-	if err := cmds.RemovePermitAllACL(context.Background(), "OpkgTun0"); err != nil {
+	if err := cmds.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
 		t.Fatalf("RemovePermitAllACL: %v", err)
 	}
 	want := []string{
@@ -335,7 +335,7 @@ func TestRemovePermitAllACL_RuleAlreadyGone_Tolerated(t *testing.T) {
 		"    permit tcp 10.77.0.2 255.255.255.255 0.0.0.0 0.0.0.0",
 		"    permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0", "!"},
 		nestedACLError("no rule found to delete."))
-	if err := cmds.RemovePermitAllACL(context.Background(), "OpkgTun0"); err != nil {
+	if err := cmds.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
 		t.Fatalf("«правила уже нет» обязано прощаться: %v", err)
 	}
 }
@@ -347,7 +347,7 @@ func TestRemovePermitAllACL_RunningConfigUnreadable_TouchesNothing(t *testing.T)
 	fg := query.NewFakeGetter()
 	fg.SetError("/show/running-config", errors.New("ndms boom"))
 	cmds.queries = query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
-	err := cmds.RemovePermitAllACL(context.Background(), "OpkgTun0")
+	err := cmds.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun0"))
 	if err == nil || !strings.Contains(err.Error(), "ndms boom") {
 		t.Fatalf("err = %v, ждали отказ чтения running-config", err)
 	}
@@ -382,7 +382,7 @@ func TestRemovePermitAllACL_V4NoSuchCommandSurfaces(t *testing.T) {
 		"    permit tcp 10.77.0.2 255.255.255.255 0.0.0.0 0.0.0.0",
 		"    permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0", "!"},
 		nestedACLError("no such command: access-list."))
-	if err := cmds.RemovePermitAllACL(context.Background(), "OpkgTun0"); err == nil || !strings.Contains(err.Error(), "no such command") {
+	if err := cmds.RemovePermitAllACL(context.Background(), confirmed(t, "OpkgTun0")); err == nil || !strings.Contains(err.Error(), "no such command") {
 		t.Fatalf("err = %v, ждали отказ", err)
 	}
 }
@@ -393,7 +393,7 @@ func TestRemovePermitAllACLv6_ForeignRules_UnsupportedTolerated(t *testing.T) {
 		"    permit ipv6 2001:db8::/32 ::/0",
 		"    permit ipv6 ::/0 ::/0", "!"},
 		nestedACLError("no such command: access-list."))
-	if err := cmds.RemovePermitAllACLv6(context.Background(), "OpkgTun0"); err != nil {
+	if err := cmds.RemovePermitAllACLv6(context.Background(), confirmed(t, "OpkgTun0")); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 }

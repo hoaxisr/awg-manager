@@ -226,7 +226,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// steering is via specific pool/CIDR static routes onto the tun, not via an
 	// access-policy exit (the old policy-exit model is abandoned). A private,
 	// non-global tun routes traffic fine (stand-verified).
-	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, fakeIPTunDescription, "private"); err != nil {
+	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevelLegacy(ctx, ndmsName, fakeIPTunDescription, "private"); err != nil {
 		return fmt.Errorf("enable fakeip-tun: create opkgtun: %w", err)
 	}
 	// rbCtx: рулбэк обязан доехать и когда Enable упал ИЗ-ЗА отмены ctx (клиент
@@ -244,11 +244,11 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// него firewall NDMS (isolate-private и т.п.) режет LAN→tun форвард и DNS
 	// на tun-адрес. Снятие — в teardownOpkgTun (rollback идёт через него же);
 	// auto-delete дополнительно каскадит ACL при удалении интерфейса.
-	if err = s.deps.OpkgTun.SetPermitAllACL(ctx, ndmsName); err != nil {
+	if err = s.deps.OpkgTun.SetPermitAllACLLegacy(ctx, ndmsName); err != nil {
 		return fmt.Errorf("enable fakeip-tun: permit acl: %w", err)
 	}
 
-	if err = s.deps.OpkgTun.SetAddress(ctx, ndmsName, addr4, mask4); err != nil {
+	if err = s.deps.OpkgTun.SetAddressLegacy(ctx, ndmsName, addr4, mask4); err != nil {
 		return fmt.Errorf("enable fakeip-tun: set address: %w", err)
 	}
 	if p.TunAddr6 != "" {
@@ -259,20 +259,20 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 			err = fmt.Errorf("enable fakeip-tun: tun addr6: %w", e)
 			return err
 		}
-		if err = s.deps.OpkgTun.SetIPv6Address(ctx, ndmsName, addr6); err != nil {
+		if err = s.deps.OpkgTun.SetIPv6AddressLegacy(ctx, ndmsName, addr6); err != nil {
 			return fmt.Errorf("enable fakeip-tun: set ipv6 address: %w", err)
 		}
 		// v6-разрешение — ПОСЛЕ адреса: v4-ACL выше v6-трафик не покрывает,
 		// у NDMS под него отдельное пространство списков.
-		if err = s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); err != nil {
+		if err = s.deps.OpkgTun.SetPermitAllACLv6Legacy(ctx, ndmsName); err != nil {
 			return fmt.Errorf("enable fakeip-tun: permit acl v6: %w", err)
 		}
 	}
-	if err = s.deps.OpkgTun.SetMTU(ctx, ndmsName, p.MTU); err != nil {
+	if err = s.deps.OpkgTun.SetMTULegacy(ctx, ndmsName, p.MTU); err != nil {
 		return fmt.Errorf("enable fakeip-tun: set mtu: %w", err)
 	}
 
-	if err = s.deps.OpkgTun.InterfaceUp(ctx, ndmsName); err != nil {
+	if err = s.deps.OpkgTun.InterfaceUpLegacy(ctx, ndmsName); err != nil {
 		return fmt.Errorf("enable fakeip-tun: iface up: %w", err)
 	}
 

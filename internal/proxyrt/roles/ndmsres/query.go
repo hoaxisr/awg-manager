@@ -9,20 +9,20 @@ import "context"
 // существующий ndmscommand.InterfaceCommands (адаптер плана 5 добавляет
 // только EnsureDefaultRouteCandidacy).
 type Commands interface {
-	CreateOpkgTunWithSecurityLevel(ctx context.Context, name, description, securityLevel string) error
-	DeleteOpkgTun(ctx context.Context, name string) error
-	SetDescription(ctx context.Context, name, description string) error
-	SetSecurityLevel(ctx context.Context, name, level string) error
-	SetIPGlobal(ctx context.Context, name string) error
+	CreateOpkgTunWithSecurityLevelLegacy(ctx context.Context, name, description, securityLevel string) error
+	DeleteOpkgTunLegacy(ctx context.Context, name string) error
+	SetDescriptionLegacy(ctx context.Context, name, description string) error
+	SetSecurityLevelLegacy(ctx context.Context, name, level string) error
+	SetIPGlobalLegacy(ctx context.Context, name string) error
 	// ClearIPGlobal снимает `ip global` (обратная команда есть: стенд 2026-09-06).
-	ClearIPGlobal(ctx context.Context, name string) error
-	SetAddress(ctx context.Context, name, address, mask string) error
-	ClearAddress(ctx context.Context, name string) error
-	SetMTU(ctx context.Context, name string, mtu int) error
-	InterfaceUp(ctx context.Context, name string) error
-	InterfaceDown(ctx context.Context, name string) error
-	SetPermitAllACL(ctx context.Context, name string) error
-	RemovePermitAllACL(ctx context.Context, name string) error
+	ClearIPGlobalLegacy(ctx context.Context, name string) error
+	SetAddressLegacy(ctx context.Context, name, address, mask string) error
+	ClearAddressLegacy(ctx context.Context, name string) error
+	SetMTULegacy(ctx context.Context, name string, mtu int) error
+	InterfaceUpLegacy(ctx context.Context, name string) error
+	InterfaceDownLegacy(ctx context.Context, name string) error
+	SetPermitAllACLLegacy(ctx context.Context, name string) error
+	RemovePermitAllACLLegacy(ctx context.Context, name string) error
 	// EnsureDefaultRouteCandidacy объявляет интерфейс КАНДИДАТОМ в default
 	// route политики (запись `ip route default interface X`). Семантика
 	// «кандидатура, не захват» — допущение §13 спеки, стендовый гейт волны.

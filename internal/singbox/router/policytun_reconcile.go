@@ -307,7 +307,7 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	// живость интерфейса подтверждена, иначе bind упал бы и осиротевший список
 	// остался бы в конфиге навсегда.
 	if !s.policyTunACLAsserted && s.deps.OpkgTun != nil && probeErr == nil {
-		if e := s.deps.OpkgTun.SetPermitAllACL(ctx, ndmsName); e != nil {
+		if e := s.deps.OpkgTun.SetPermitAllACLLegacy(ctx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-reconcile", iface, "permit acl: "+e.Error())
 		} else {
 			s.policyTunACLAsserted = true
@@ -319,7 +319,7 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	// нечего.
 	if !s.policyTunACLv6Asserted && s.deps.OpkgTun != nil && probeErr == nil &&
 		s.resolveFakeIPParams(sr).TunAddr6 != "" {
-		if e := s.deps.OpkgTun.SetPermitAllACLv6(ctx, ndmsName); e != nil {
+		if e := s.deps.OpkgTun.SetPermitAllACLv6Legacy(ctx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-reconcile", iface, "permit acl v6: "+e.Error())
 		} else {
 			s.policyTunACLv6Asserted = true
@@ -401,7 +401,7 @@ func (s *ServiceImpl) healPolicyTunNDMS(ctx context.Context, sr storage.SingboxR
 	}
 
 	if !global && s.deps.OpkgTun != nil {
-		if e := s.deps.OpkgTun.SetIPGlobal(ctx, ndmsName); e != nil {
+		if e := s.deps.OpkgTun.SetIPGlobalLegacy(ctx, ndmsName); e != nil {
 			s.appLog.Warn("policy-tun-reconcile", iface, "re-assert ip global: "+e.Error())
 		} else {
 			s.appLog.Warn("policy-tun-reconcile", iface,

@@ -71,7 +71,7 @@ func (o *OperatorOS5Impl) ensureOpkgTunRecord(ctx context.Context, op string, cf
 		return false, tunnel.NewOpError(op, cfg.ID, "ndms", fmt.Errorf("read OpkgTun record: %w", err))
 	}
 	if rec == nil {
-		if err := o.commands.Interfaces.CreateOpkgTun(ctx, names.NDMSName, cfg.Name); err != nil {
+		if err := o.commands.Interfaces.CreateOpkgTunLegacy(ctx, names.NDMSName, cfg.Name); err != nil {
 			return false, tunnel.NewOpError(op, cfg.ID, "ndms", fmt.Errorf("create OpkgTun: %w", err))
 		}
 		o.logInfo(op, cfg.ID, "Created OpkgTun in NDMS")
@@ -87,7 +87,7 @@ func (o *OperatorOS5Impl) ensureOpkgTunRecord(ctx context.Context, op string, cf
 		// записи старт не валит — запись всё равно наша.
 		o.logWarn(op, cfg.ID, fmt.Sprintf("описание записи %s %q ≠ имени туннеля %q; под записью живое amneziawg — запись наша, описание переписываем",
 			names.NDMSName, rec.Description, cfg.Name))
-		if err := o.commands.Interfaces.SetDescription(ctx, names.NDMSName, cfg.Name); err != nil {
+		if err := o.commands.Interfaces.SetDescriptionLegacy(ctx, names.NDMSName, cfg.Name); err != nil {
 			o.logWarn(op, cfg.ID, "set description: "+err.Error())
 		}
 	}
@@ -298,12 +298,12 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	// does not re-apply stored config to the new kernel interface.
 	// SetAddress via RCI triggers NDMS to do "ip addr add" on the interface.
 	__addr, __mask := cfg.Address, maskFromPrefix(cfg.AddressPrefix)
-	if err := o.commands.Interfaces.SetAddress(ctx, names.NDMSName, __addr, __mask); err != nil {
+	if err := o.commands.Interfaces.SetAddressLegacy(ctx, names.NDMSName, __addr, __mask); err != nil {
 		o.rollbackStart(ctx, cfg.ID, names, justCreated)
 		return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("set address: %w", err))
 	}
 
-	if err := o.commands.Interfaces.SetMTU(ctx, names.NDMSName, cfg.MTU); err != nil {
+	if err := o.commands.Interfaces.SetMTULegacy(ctx, names.NDMSName, cfg.MTU); err != nil {
 		o.rollbackStart(ctx, cfg.ID, names, justCreated)
 		return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("set MTU: %w", err))
 	}
@@ -324,7 +324,7 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 
 	// Ensure ip global is set — it's not part of CreateOpkgTun anymore
 	// (split out to avoid premature nginx binding), so re-apply on every start.
-	if err := o.commands.Interfaces.SetIPGlobal(ctx, names.NDMSName); err != nil {
+	if err := o.commands.Interfaces.SetIPGlobalLegacy(ctx, names.NDMSName); err != nil {
 		o.logWarn("start", cfg.ID, "Failed to set ip global: "+err.Error())
 	}
 
@@ -332,7 +332,7 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 
 	// Apply DNS servers (idempotent, re-applied on every start)
 	if len(cfg.DNS) > 0 {
-		if err := o.commands.Interfaces.SetDNS(ctx, names.NDMSName, cfg.DNS); err != nil {
+		if err := o.commands.Interfaces.SetDNSLegacy(ctx, names.NDMSName, cfg.DNS); err != nil {
 			o.logWarn("start", cfg.ID, "Failed to set DNS: "+err.Error())
 		} else {
 			o.appliedDNSMu.Lock()
@@ -371,7 +371,7 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	// NDMS InterfaceUp sets conf: running (intent UP). Commands register
 	// the expected hook themselves via the HookNotifier wired at startup.
 	// Always needed in Start: after Stop, InterfaceDown set conf: disabled.
-	if err := o.commands.Interfaces.InterfaceUp(ctx, names.NDMSName); err != nil {
+	if err := o.commands.Interfaces.InterfaceUpLegacy(ctx, names.NDMSName); err != nil {
 		o.rollbackStart(ctx, cfg.ID, names, justCreated)
 		return tunnel.NewOpError("start", cfg.ID, "ndms", fmt.Errorf("interface up: %w", err))
 	}
@@ -485,7 +485,7 @@ func (o *OperatorOS5Impl) clearAppliedDNS(ctx context.Context, tunnelID string, 
 	o.appliedDNSMu.Unlock()
 
 	if len(servers) > 0 {
-		_ = o.commands.Interfaces.ClearDNS(ctx, names.NDMSName, servers)
+		_ = o.commands.Interfaces.ClearDNSLegacy(ctx, names.NDMSName, servers)
 		o.logInfo("stop", tunnelID, "DNS servers removed")
 	}
 }
@@ -497,7 +497,7 @@ func (o *OperatorOS5Impl) interfaceDownBestEffort(ctx context.Context, tunnelID,
 	// Commands register the expected "disabled" hook on each attempt via
 	// the HookNotifier wired at startup.
 	for attempt := 1; attempt <= 3; attempt++ {
-		err := o.commands.Interfaces.InterfaceDown(ctx, ndmsName)
+		err := o.commands.Interfaces.InterfaceDownLegacy(ctx, ndmsName)
 		if err == nil {
 			o.logInfo("stop", tunnelID, "Interface down (conf: disabled)")
 			return
@@ -542,7 +542,7 @@ func (o *OperatorOS5Impl) Delete(ctx context.Context, stored *storage.AWGTunnel)
 	// отказываем — иначе такой туннель нельзя удалить, то есть и пересоздать.
 	if names.NDMSName != "" {
 		o.expectHook(names.NDMSName, "disabled")
-		if err := o.commands.Interfaces.DeleteOpkgTun(ctx, names.NDMSName); err != nil {
+		if err := o.commands.Interfaces.DeleteOpkgTunLegacy(ctx, names.NDMSName); err != nil {
 			o.logWarn("delete", stored.ID, "DeleteOpkgTun: "+err.Error())
 		}
 	}
@@ -641,26 +641,26 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	// causing oversized encrypted packets that degrade upload throughput.
 	if justCreated {
 		__addr, __mask := cfg.Address, maskFromPrefix(cfg.AddressPrefix)
-		if err := o.commands.Interfaces.SetAddress(ctx, names.NDMSName, __addr, __mask); err != nil {
+		if err := o.commands.Interfaces.SetAddressLegacy(ctx, names.NDMSName, __addr, __mask); err != nil {
 			return tunnel.NewOpError("reconcile", cfg.ID, "ndms", fmt.Errorf("set address: %w", err))
 		}
 		// v6 в NDMS не трогаем вовсе (см. ColdStart): адрес кладёт
 		// applyKernelAddresses.
 	}
 	if cfg.MTU > 0 {
-		if err := o.commands.Interfaces.SetMTU(ctx, names.NDMSName, cfg.MTU); err != nil {
+		if err := o.commands.Interfaces.SetMTULegacy(ctx, names.NDMSName, cfg.MTU); err != nil {
 			o.logWarn("reconcile", cfg.ID, "Failed to re-apply NDMS MTU: "+err.Error())
 		}
 	}
 
 	// Ensure ip global is set
-	if err := o.commands.Interfaces.SetIPGlobal(ctx, names.NDMSName); err != nil {
+	if err := o.commands.Interfaces.SetIPGlobalLegacy(ctx, names.NDMSName); err != nil {
 		o.logWarn("reconcile", cfg.ID, "Failed to set ip global: "+err.Error())
 	}
 
 	// Re-apply DNS servers (may have been lost after reboot)
 	if len(cfg.DNS) > 0 {
-		if err := o.commands.Interfaces.SetDNS(ctx, names.NDMSName, cfg.DNS); err != nil {
+		if err := o.commands.Interfaces.SetDNSLegacy(ctx, names.NDMSName, cfg.DNS); err != nil {
 			o.logWarn("reconcile", cfg.ID, "Failed to re-apply DNS: "+err.Error())
 		} else {
 			o.appliedDNSMu.Lock()
@@ -678,7 +678,7 @@ func (o *OperatorOS5Impl) Reconcile(ctx context.Context, cfg tunnel.Config) erro
 	// NDMS InterfaceUp: only when OpkgTun was just created. Commands
 	// register the expected "running" hook via HookNotifier.
 	if justCreated {
-		if err := o.commands.Interfaces.InterfaceUp(ctx, names.NDMSName); err != nil {
+		if err := o.commands.Interfaces.InterfaceUpLegacy(ctx, names.NDMSName); err != nil {
 			return tunnel.NewOpError("reconcile", cfg.ID, "ndms", fmt.Errorf("interface up: %w", err))
 		}
 	}
@@ -789,7 +789,7 @@ func (o *OperatorOS5Impl) ApplyConfig(ctx context.Context, tunnelID, configPath 
 // SetMTU sets MTU on a running tunnel interface via NDMS.
 func (o *OperatorOS5Impl) SetMTU(ctx context.Context, tunnelID string, mtu int) error {
 	names := tunnel.NewNames(tunnelID)
-	if err := o.commands.Interfaces.SetMTU(ctx, names.NDMSName, mtu); err != nil {
+	if err := o.commands.Interfaces.SetMTULegacy(ctx, names.NDMSName, mtu); err != nil {
 		return tunnel.NewOpError("set_mtu", tunnelID, "ndms", err)
 	}
 	o.logInfo("set_mtu", tunnelID, fmt.Sprintf("MTU set to %d", mtu))
@@ -804,14 +804,14 @@ func (o *OperatorOS5Impl) SyncDNS(ctx context.Context, tunnelID string, dns []st
 	oldDNS := o.appliedDNS[tunnelID]
 	o.appliedDNSMu.RUnlock()
 	if len(oldDNS) > 0 {
-		_ = o.commands.Interfaces.ClearDNS(ctx, names.NDMSName, oldDNS)
+		_ = o.commands.Interfaces.ClearDNSLegacy(ctx, names.NDMSName, oldDNS)
 	}
 	if len(dns) == 0 {
 		o.appliedDNSMu.Lock()
 		delete(o.appliedDNS, tunnelID)
 		o.appliedDNSMu.Unlock()
 	} else {
-		if err := o.commands.Interfaces.SetDNS(ctx, names.NDMSName, dns); err != nil {
+		if err := o.commands.Interfaces.SetDNSLegacy(ctx, names.NDMSName, dns); err != nil {
 			return tunnel.NewOpError("sync_dns", tunnelID, "ndms", err)
 		}
 		o.appliedDNSMu.Lock()
@@ -826,7 +826,7 @@ func (o *OperatorOS5Impl) SyncDNS(ctx context.Context, tunnelID string, dns []st
 func (o *OperatorOS5Impl) SyncAddress(ctx context.Context, tunnelID string, address string, prefix int, ipv6 string) error {
 	names := tunnel.NewNames(tunnelID)
 	__addr, __mask := address, maskFromPrefix(prefix)
-	if err := o.commands.Interfaces.SetAddress(ctx, names.NDMSName, __addr, __mask); err != nil {
+	if err := o.commands.Interfaces.SetAddressLegacy(ctx, names.NDMSName, __addr, __mask); err != nil {
 		return tunnel.NewOpError("sync_address", tunnelID, "ndms", err)
 	}
 	// v6 правим прямо на устройстве, через ту же единственную точку записи:
@@ -880,7 +880,7 @@ func (o *OperatorOS5Impl) setDescription(ctx context.Context, tunnelID, prevName
 				&ForeignRecordError{NDMSName: names.NDMSName, Description: rec.Description, Want: prevName})
 		}
 	}
-	if err := o.commands.Interfaces.SetDescription(ctx, names.NDMSName, description); err != nil {
+	if err := o.commands.Interfaces.SetDescriptionLegacy(ctx, names.NDMSName, description); err != nil {
 		return tunnel.NewOpError("update_description", tunnelID, "ndms", err)
 	}
 	o.logInfo("update_description", tunnelID, fmt.Sprintf("Description updated to %q", description))
@@ -904,7 +904,7 @@ func (o *OperatorOS5Impl) rollbackStart(ctx context.Context, tunnelID string, na
 	if justCreated {
 		// We created this OpkgTun — clean it up entirely. Commands register
 		// the expected "disabled" hook via HookNotifier.
-		_ = o.commands.Interfaces.InterfaceDown(ctx, names.NDMSName)
+		_ = o.commands.Interfaces.InterfaceDownLegacy(ctx, names.NDMSName)
 	}
 	// Don't call InterfaceDown for existing OpkgTun — preserve conf: running.
 	_ = o.backend.Stop(ctx, names.IfaceName)

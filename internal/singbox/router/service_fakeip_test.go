@@ -65,59 +65,59 @@ func (r *recOpkgTun) maybeFail(label string) error {
 	return nil
 }
 
-func (r *recOpkgTun) CreateOpkgTunWithSecurityLevel(_ context.Context, name, _, level string) error {
+func (r *recOpkgTun) CreateOpkgTunWithSecurityLevelLegacy(_ context.Context, name, _, level string) error {
 	r.log.add("Create:" + name + ":" + level)
 	return r.maybeFail("Create")
 }
-func (r *recOpkgTun) SetIPGlobal(_ context.Context, name string) error {
+func (r *recOpkgTun) SetIPGlobalLegacy(_ context.Context, name string) error {
 	r.log.add("SetIPGlobal:" + name)
 	return r.maybeFail("SetIPGlobal")
 }
-func (r *recOpkgTun) DeleteOpkgTun(_ context.Context, name string) error {
+func (r *recOpkgTun) DeleteOpkgTunLegacy(_ context.Context, name string) error {
 	r.log.add("Delete:" + name)
 	return r.maybeFail("Delete")
 }
-func (r *recOpkgTun) SetAddress(_ context.Context, name, addr, mask string) error {
+func (r *recOpkgTun) SetAddressLegacy(_ context.Context, name, addr, mask string) error {
 	r.log.add("SetAddress:" + name + ":" + addr + ":" + mask)
 	return r.maybeFail("SetAddress")
 }
-func (r *recOpkgTun) SetIPv6Address(_ context.Context, name, addr string) error {
+func (r *recOpkgTun) SetIPv6AddressLegacy(_ context.Context, name, addr string) error {
 	r.log.add("SetIPv6Address:" + name + ":" + addr)
 	return r.maybeFail("SetIPv6Address")
 }
-func (r *recOpkgTun) ClearAddress(_ context.Context, name string) error {
+func (r *recOpkgTun) ClearAddressLegacy(_ context.Context, name string) error {
 	r.log.add("ClearAddress:" + name)
 	return r.maybeFail("ClearAddress")
 }
-func (r *recOpkgTun) SetPermitAllACL(_ context.Context, name string) error {
+func (r *recOpkgTun) SetPermitAllACLLegacy(_ context.Context, name string) error {
 	r.log.add("SetPermitACL:" + name)
 	return r.maybeFail("SetPermitACL")
 }
-func (r *recOpkgTun) RemovePermitAllACL(_ context.Context, name string) error {
+func (r *recOpkgTun) RemovePermitAllACLLegacy(_ context.Context, name string) error {
 	r.log.add("RemovePermitACL:" + name)
 	return nil
 }
-func (r *recOpkgTun) SetPermitAllACLv6(_ context.Context, name string) error {
+func (r *recOpkgTun) SetPermitAllACLv6Legacy(_ context.Context, name string) error {
 	r.log.add("SetPermitACLv6:" + name)
 	return r.maybeFail("SetPermitACLv6")
 }
-func (r *recOpkgTun) RemovePermitAllACLv6(_ context.Context, name string) error {
+func (r *recOpkgTun) RemovePermitAllACLv6Legacy(_ context.Context, name string) error {
 	r.log.add("RemovePermitACLv6:" + name)
 	return nil
 }
-func (r *recOpkgTun) ClearIPv6Address(_ context.Context, name string) error {
+func (r *recOpkgTun) ClearIPv6AddressLegacy(_ context.Context, name string) error {
 	r.log.add("ClearIPv6Address:" + name)
 	return r.maybeFail("ClearIPv6Address")
 }
-func (r *recOpkgTun) SetMTU(_ context.Context, name string, mtu int) error {
+func (r *recOpkgTun) SetMTULegacy(_ context.Context, name string, mtu int) error {
 	r.log.add("SetMTU:" + name + ":" + strconv.Itoa(mtu))
 	return r.maybeFail("SetMTU")
 }
-func (r *recOpkgTun) InterfaceUp(_ context.Context, name string) error {
+func (r *recOpkgTun) InterfaceUpLegacy(_ context.Context, name string) error {
 	r.log.add("InterfaceUp:" + name)
 	return r.maybeFail("InterfaceUp")
 }
-func (r *recOpkgTun) InterfaceDown(_ context.Context, name string) error {
+func (r *recOpkgTun) InterfaceDownLegacy(_ context.Context, name string) error {
 	r.log.add("InterfaceDown:" + name)
 	return nil
 }
@@ -1265,23 +1265,23 @@ type ctxCancelOpkgTun struct {
 	cancel context.CancelFunc
 }
 
-func (c *ctxCancelOpkgTun) SetMTU(ctx context.Context, name string, mtu int) error {
+func (c *ctxCancelOpkgTun) SetMTULegacy(ctx context.Context, name string, mtu int) error {
 	c.cancel()
 	return ctx.Err()
 }
 
-func (c *ctxCancelOpkgTun) InterfaceDown(ctx context.Context, name string) error {
+func (c *ctxCancelOpkgTun) InterfaceDownLegacy(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return c.recOpkgTun.InterfaceDown(ctx, name)
+	return c.recOpkgTun.InterfaceDownLegacy(ctx, name)
 }
 
-func (c *ctxCancelOpkgTun) DeleteOpkgTun(ctx context.Context, name string) error {
+func (c *ctxCancelOpkgTun) DeleteOpkgTunLegacy(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return c.recOpkgTun.DeleteOpkgTun(ctx, name)
+	return c.recOpkgTun.DeleteOpkgTunLegacy(ctx, name)
 }
 
 func TestEnableFakeIPTun_RollbackSurvivesCtxCancel(t *testing.T) {

@@ -498,9 +498,9 @@ func (s *ServiceImpl) SetInterfaceUp(ctx context.Context, ndmsName string, up bo
 
 	var err error
 	if up {
-		err = s.interfaces.InterfaceUp(ctx, ndmsName)
+		err = s.interfaces.InterfaceUpLegacy(ctx, ndmsName)
 	} else {
-		err = s.interfaces.InterfaceDown(ctx, ndmsName)
+		err = s.interfaces.InterfaceDownLegacy(ctx, ndmsName)
 	}
 	if err != nil {
 		s.appLog.Warn("set-interface", ndmsName, fmt.Sprintf("Failed to set %s: %v", action, err))

@@ -193,7 +193,7 @@ type proxySweepRemover struct {
 }
 
 func (r proxySweepRemover) Remove(ctx context.Context, res proxyrt.OwnedResource) error {
-	return r.cmds.DeleteOpkgTun(ctx, res.Name)
+	return r.cmds.DeleteOpkgTunLegacy(ctx, res.Name)
 }
 
 // livePermitsFor — LivePermits посева: политики, где ndmsIface разрешён СЕЙЧАС.

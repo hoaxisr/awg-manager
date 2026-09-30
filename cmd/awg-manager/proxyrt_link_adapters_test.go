@@ -71,7 +71,7 @@ func (f *fakeIPT) ranWith(sub string) bool {
 
 type fakeOpkgDeleter struct{ deleted []string }
 
-func (f *fakeOpkgDeleter) DeleteOpkgTun(_ context.Context, name string) error {
+func (f *fakeOpkgDeleter) DeleteOpkgTunLegacy(_ context.Context, name string) error {
 	f.deleted = append(f.deleted, name)
 	return nil
 }
