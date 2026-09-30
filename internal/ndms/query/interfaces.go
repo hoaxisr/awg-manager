@@ -145,7 +145,27 @@ type InterfaceStore struct {
 	// flights — счётчик начатых списков; appliedNo — номер последнего
 	// применённого: ответ, начатый раньше применённого, карту не трогает.
 	flights, appliedNo uint64
+
+	// awaiting — ConfirmCreated в ожидании записи по имени (F584); будит
+	// применённый список, начатый после вызова и содержащий имя.
+	awaiting map[string]*createdWait
+	// createdBackoff — паузы между списками ConfirmCreated.
+	createdBackoff []time.Duration
 }
+
+// createdWait — ожидание одной созданной записи.
+type createdWait struct {
+	after uint64        // полёты с номером больше начаты после вызова
+	ch    chan struct{} // закрывает список с записью
+	rec   ndms.Interface
+}
+
+// confirmCreatedBackoff — паузы между списками ConfirmCreated: не больше
+// 4 полных списков (~15 тиков ndm каждый) и ~2,5 с на всё. Под нагрузкой
+// NDMS кладёт созданную запись в список до ~1 с после ответа на создание
+// (ifcreated, стенд 5.01.C.6, F584); обычно её раньше приносит список
+// ReconcilePending по хукам — тогда своих списков после первого нет.
+var confirmCreatedBackoff = []time.Duration{300 * time.Millisecond, 700 * time.Millisecond, 1500 * time.Millisecond}
 
 // listFlight — один запрос полного списка. err и готовность читаются после done.
 type listFlight struct {
@@ -170,7 +190,17 @@ func NewInterfaceStore(g Getter, log Logger) *InterfaceStore {
 		touched:   make(map[string]uint64),
 		pending:   make(map[string]struct{}),
 		raw:       make(map[string]json.RawMessage),
+		awaiting:  make(map[string]*createdWait),
+
+		createdBackoff: confirmCreatedBackoff,
 	}
+}
+
+// SetCreatedBackoff — паузы ConfirmCreated (для тестов других пакетов).
+func (s *InterfaceStore) SetCreatedBackoff(d ...time.Duration) {
+	s.mu.Lock()
+	s.createdBackoff = d
+	s.mu.Unlock()
 }
 
 // NewInterfaceStoreWithTTL exists for backwards-compatible test wiring;
@@ -242,6 +272,7 @@ func (s *InterfaceStore) refreshList(ctx context.Context, fl *listFlight) (map[s
 			}
 			s.listedAt = time.Now()
 			todo = s.unnamedLocked(recs)
+			s.wakeCreatedLocked(recs, fl.no)
 		}
 		s.mu.Unlock()
 		s.booted.Store(true)
@@ -261,6 +292,20 @@ func (s *InterfaceStore) refreshList(ctx context.Context, fl *listFlight) (map[s
 		return nil, err
 	}
 	return recs, nil
+}
+
+// wakeCreatedLocked будит ConfirmCreated, чья запись есть в применённом
+// ответе полёта no, начатого после вызова.
+func (s *InterfaceStore) wakeCreatedLocked(recs map[string]ndms.Interface, no uint64) {
+	for name, w := range s.awaiting {
+		rec, ok := recs[name]
+		if !ok || no <= w.after {
+			continue
+		}
+		w.rec = rec
+		close(w.ch)
+		delete(s.awaiting, name)
+	}
 }
 
 // beginFlightLocked регистрирует новый полёт; start — seq ДО запроса: хуки,
@@ -1217,6 +1262,65 @@ func (s *InterfaceStore) Confirm(ctx context.Context, name string) (Confirmed, *
 		return Confirmed{}, nil, false, nil
 	}
 	return Confirmed{name: name}, rec, true, nil
+}
+
+// ErrNotListed — NDMS принял создание, а записи нет в свежих списках за всё
+// ожидание ConfirmCreated (F584).
+var ErrNotListed = errors.New("NDMS принял создание, но записи нет в списке")
+
+// ConfirmCreated — Confirm только что созданной записи name с ограниченным
+// ожиданием (F584): под нагрузкой NDMS отвечает на создание раньше, чем
+// кладёт запись в список. Первый список — сразу; нет записи — ждёт, пока её
+// принесёт список, начатый после вызова (ReconcilePending по хукам
+// iflayerchanged/ifcreated), или свою паузу из createdBackoff и читает список
+// сам. Доказательство то же, что у Confirm: запись в свежем полном списке.
+// Список не прочитан — ошибка сразу (решение 4); за все попытки записи нет —
+// ErrNotListed.
+func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string) (Confirmed, error) {
+	if name == "" {
+		return Confirmed{}, errors.New("confirm: пустое имя интерфейса")
+	}
+	s.mu.Lock()
+	w := &createdWait{after: s.flights, ch: make(chan struct{})}
+	s.awaiting[name] = w
+	backoff := s.createdBackoff
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		if s.awaiting[name] == w {
+			delete(s.awaiting, name)
+		}
+		s.mu.Unlock()
+	}()
+	wake := w.ch
+	for i := 0; ; i++ {
+		c, _, ok, err := s.Confirm(ctx, name)
+		if err != nil {
+			return Confirmed{}, err
+		}
+		if ok {
+			return c, nil
+		}
+		if i == len(backoff) {
+			return Confirmed{}, fmt.Errorf("%w: %s (%d списков)", ErrNotListed, name, i+1)
+		}
+		t := time.NewTimer(backoff[i])
+		select {
+		case <-wake:
+			t.Stop()
+			wake = nil // будит один раз; дальше — паузы
+			s.mu.RLock()
+			_, ok := s.confirmedLocked(map[string]ndms.Interface{name: w.rec}, name)
+			s.mu.RUnlock()
+			if ok {
+				return Confirmed{name: name}, nil
+			}
+		case <-t.C:
+		case <-ctx.Done():
+			t.Stop()
+			return Confirmed{}, fmt.Errorf("confirm %s: %w", name, ctx.Err())
+		}
+	}
 }
 
 // ConfirmEach — Confirm для нескольких имён по одному списку. В ответе только

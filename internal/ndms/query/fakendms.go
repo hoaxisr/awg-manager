@@ -31,6 +31,9 @@ type FakeNDMS struct {
 	rc          map[string]json.RawMessage // объект rc интерфейса (SetRC)
 	rcListCalls int
 	rcListErr   error
+	// hideNext/hidden — поздняя регистрация созданного в списке (HideCreated).
+	hideNext int
+	hidden   map[string]int
 
 	E        int      // точечное чтение отсутствующего; ссылка на отсутствующий из ip route/nat/static/name-server/policy/hotspot/dns-proxy
 	Phantoms int      // `interface X …` по отсутствующему X, не объявленному ExpectCreate: X создан
@@ -133,6 +136,16 @@ func (f *FakeNDMS) FailRCList(err error) {
 	f.mu.Unlock()
 }
 
+// HideCreated — записи, созданные после вызова (импорт, `interface X`), не
+// видны в полном списке, хотя NDMS их уже знает (снос проходит): n > 0 — n
+// чтений списка, n < 0 — пока их ifcreated не отдан DrainHooks (поздняя
+// регистрация под нагрузкой, стенд 30.09, F584). 0 снимает для следующих.
+func (f *FakeNDMS) HideCreated(n int) {
+	f.mu.Lock()
+	f.hideNext = n
+	f.mu.Unlock()
+}
+
 func (f *FakeNDMS) Has(name string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -145,6 +158,11 @@ func (f *FakeNDMS) DrainHooks() []FakeHook {
 	defer f.mu.Unlock()
 	h := f.hooks
 	f.hooks = nil
+	for _, e := range h {
+		if e.Type == "ifcreated" && f.hidden[e.ID] < 0 {
+			delete(f.hidden, e.ID)
+		}
+	}
 	return h
 }
 
@@ -378,6 +396,12 @@ func (f *FakeNDMS) list() ([]byte, error) {
 	}
 	out := make(map[string]json.RawMessage, len(f.ifaces))
 	for id, iface := range f.ifaces {
+		if n := f.hidden[id]; n != 0 {
+			if n > 0 {
+				f.hidden[id]--
+			}
+			continue
+		}
 		w, err := f.wire(iface)
 		if err != nil {
 			return nil, err
@@ -500,6 +524,12 @@ func (f *FakeNDMS) parseCmd(line string) (json.RawMessage, error) {
 // 5.01.C.6): два iflayerchanged ctrl, затем ifcreated ~1 с спустя. Level
 // стенд не записал — пустой.
 func (f *FakeNDMS) created(name string) {
+	if f.hideNext != 0 {
+		if f.hidden == nil {
+			f.hidden = make(map[string]int)
+		}
+		f.hidden[name] = f.hideNext
+	}
 	f.hooks = append(f.hooks,
 		FakeHook{Type: "iflayerchanged", ID: name, Layer: "ctrl"},
 		FakeHook{Type: "iflayerchanged", ID: name, Layer: "ctrl"},
@@ -511,6 +541,7 @@ func (f *FakeNDMS) remove(name string) {
 		return
 	}
 	delete(f.ifaces, name)
+	delete(f.hidden, name)
 	f.hooks = append(f.hooks, FakeHook{Type: "ifdestroyed", ID: name})
 }
 
