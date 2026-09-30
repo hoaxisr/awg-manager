@@ -20,7 +20,7 @@
   import { Button } from '$lib/components/ui';
   import { api } from '$lib/api/client';
   import MihomoGroupEditModal from './mihomo/MihomoGroupEditModal.svelte';
-  import type { MihomoNativeGroup, MihomoNativeProxy, MihomoNativeSubscription } from '$lib/types';
+  import type { MihomoNativeGroup, MihomoNativeProxy, MihomoNativeSubscription, CatalogPreset } from '$lib/types';
   import type { OutboundKind } from './types';
   import StepPill from './StepPill.svelte';
   import WizardStep from './WizardStep.svelte';
@@ -276,7 +276,7 @@
     };
 
     // Expand composite covers and process all selected templates
-    const targetItems: Array<{ id: string; preset?: unknown }> = [];
+    const targetItems: Array<{ id: string; preset?: CatalogPreset | Partial<CatalogPreset> }> = [];
     for (const rawId of args.selectedTemplates) {
       const templateId = rawId.replace(/^(svc|rs):/, '');
       const preset = allPresets.find((p) => p.id === templateId) || { id: templateId, name: templateId };

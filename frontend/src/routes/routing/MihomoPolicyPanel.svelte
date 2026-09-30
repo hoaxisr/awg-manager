@@ -301,7 +301,7 @@
 				confirmedRules = [...rules];
 			}
 		} catch (error: unknown) {
-			const err = error as { status?: number; code?: string; body?: { code?: string; data?: { items?: MihomoNativeRule[]; revision?: string } }; message?: string; data?: { items?: MihomoNativeRule[]; revision?: string } };
+			const err = error as { status?: number; code?: string; body?: { code?: string; data?: { items?: MihomoNativeRule[]; revision?: number } }; message?: string; data?: { items?: MihomoNativeRule[]; revision?: number } };
 			const is409 = err?.status === 409 || err?.code === 'MIHOMO_RULES_STALE' || err?.body?.code === 'MIHOMO_RULES_STALE' || String(err?.message).includes('MIHOMO_RULES_STALE') || String(err?.message).includes('rules have been modified');
 			if (is409) {
 				notifications.warning('Список правил изменился, данные обновлены с сервера');
