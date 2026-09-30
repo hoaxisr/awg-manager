@@ -34,9 +34,10 @@ func TestShowRC_404_Evicts(t *testing.T) {
 	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
 	q := NewQueries(Deps{Getter: f, Logger: NopLogger()})
 	ctx := context.Background()
-	_, _ = q.Interfaces.List(ctx)
+	p, _, _ := q.Interfaces.Lookup(ctx, "Wireguard0")
 	f.Remove("Wireguard0")
-	if _, err := q.WGServers.PeersRCFresh(ctx, "Wireguard0"); !errors.Is(err, ErrGone) {
+	var rc rciRCInterface
+	if err := q.Interfaces.showRC(ctx, p, "", &rc); !errors.Is(err, ErrGone) {
 		t.Fatalf("want ErrGone, got %v", err)
 	}
 	if _, ok, _ := q.Interfaces.Lookup(ctx, "Wireguard0"); ok {

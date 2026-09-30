@@ -220,20 +220,18 @@ func (s *WGServerStore) GetConfig(ctx context.Context, name string) (*ndms.Wireg
 // записью (#713). List на сбое обогащения тоже ошибка (F510), но отдаёт
 // прежний список из кэша (stale-on-error) — для проверки пересечений мало.
 func (s *WGServerStore) PeersRCFresh(ctx context.Context, name string) ([]ndms.WireguardServerPeerConfig, error) {
-	// Свежее чтение — и отсутствие проверяется свежим списком, не кэшем:
+	// Свежее чтение — и присутствие проверяется свежим списком, не кэшем:
 	// сервер, появившийся без хука, обязан попасть в проверку пересечений.
-	// Refresh по неизвестному имени читает только список — E не пишет (F546).
-	if _, ok, err := s.interfaces.Lookup(ctx, name); err == nil && !ok {
-		if _, err := s.interfaces.Refresh(ctx, name); err != nil {
-			return nil, fmt.Errorf("get wireguard server config %s: %w", name, err)
-		}
-	}
-	p, err := s.present(ctx, name)
+	// Confirm читает только список — E не пишет (F546).
+	c, _, ok, err := s.interfaces.Confirm(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("get wireguard server config %s: %w", name, err)
 	}
+	if !ok {
+		return nil, fmt.Errorf("get wireguard server config %s: interface %s: нет в NDMS: %w", name, name, ErrGone)
+	}
 	var rc rciRCInterface
-	if err := s.interfaces.showRC(ctx, p, "", &rc); err != nil {
+	if err := s.interfaces.showRC(ctx, Present{name: c.name}, "", &rc); err != nil {
 		return nil, fmt.Errorf("get wireguard server config %s: %w", name, err)
 	}
 	return rciRCToServerConfig(rc, "").Peers, nil

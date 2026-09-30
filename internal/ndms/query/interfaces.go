@@ -203,18 +203,26 @@ func (s *InterfaceStore) ensureBootstrap(ctx context.Context) error {
 // applyListLocked. start снимается ДО запроса: хуки, пришедшие, пока
 // список в полёте, получают seq > start и ответом не затираются.
 func (s *InterfaceStore) refreshAll(ctx context.Context) error {
+	_, err := s.refreshList(ctx)
+	return err
+}
+
+// refreshList — refreshAll, возвращающий сам ответ NDMS: для подтверждения
+// (Confirm) важен он, а не карта — seq-гард держит в pending имя, чей
+// ifcreated пришёл, пока список в полёте, хотя в ответе оно есть.
+func (s *InterfaceStore) refreshList(ctx context.Context) (map[string]ndms.Interface, error) {
 	s.mu.RLock()
 	start := s.seq
 	s.mu.RUnlock()
 	raw, err := s.fetchListMap(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	s.mu.Lock()
 	s.applyListLocked(raw, start)
 	s.mu.Unlock()
 	s.booted.Store(true)
-	return nil
+	return raw, nil
 }
 
 // applyListLocked кладёт свежий список поверх карты, не затирая id, тронутые
@@ -1102,6 +1110,75 @@ type Present struct{ name string }
 
 // Name — NDMS-имя записи.
 func (p Present) Name() string { return p.name }
+
+// Confirmed — «запись name была в свежем полном списке NDMS». Единственная
+// валюта мутаций по существующему интерфейсу: команда `interface X …` по
+// отсутствующему X СОЗДАЁТ X (стенд 5.01/5.02), а ссылка на него из другого
+// раздела пишет E в журнал ndm. Получить можно только здесь; в поля структур
+// не класть — доказательство действительно для одного потока действий.
+type Confirmed struct{ name string }
+
+// Name — NDMS-имя записи.
+func (c Confirmed) Name() string { return c.name }
+
+// Confirm читает ОДИН полный список (кладёт его в карту) и подтверждает name
+// по нему. Список не прочитан — ошибка: присутствие из кэша подтверждением
+// не считается (F546). Запись — копия.
+func (s *InterfaceStore) Confirm(ctx context.Context, name string) (Confirmed, *ndms.Interface, bool, error) {
+	if name == "" {
+		return Confirmed{}, nil, false, errors.New("confirm: пустое имя интерфейса")
+	}
+	raw, err := s.refreshList(ctx)
+	if err != nil {
+		return Confirmed{}, nil, false, fmt.Errorf("confirm %s: %w", name, err)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rec, ok := s.confirmedLocked(raw, name)
+	if !ok {
+		return Confirmed{}, nil, false, nil
+	}
+	return Confirmed{name: name}, rec, true, nil
+}
+
+// ConfirmEach — Confirm для нескольких имён по одному списку. В ответе только
+// подтверждённые.
+func (s *InterfaceStore) ConfirmEach(ctx context.Context, names []string) (map[string]Confirmed, error) {
+	raw, err := s.refreshList(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("confirm: %w", err)
+	}
+	out := make(map[string]Confirmed, len(names))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, n := range names {
+		if _, ok := s.confirmedLocked(raw, n); ok {
+			out[n] = Confirmed{name: n}
+		}
+	}
+	return out, nil
+}
+
+// confirmedLocked — копия записи, если name есть в свежем ответе raw и не
+// снята хуком после него. В карте запись новее ответа (хуки её правят); нет в
+// карте, но в pending — ifcreated пришёл, пока список в полёте: карта её ещё
+// не взяла, берём из ответа. Нет ни там, ни там — ifdestroyed новее ответа.
+// Имени нет в ответе — не подтверждено, даже если оно в карте или в pending:
+// доказательство — только свежий список.
+func (s *InterfaceStore) confirmedLocked(raw map[string]ndms.Interface, name string) (*ndms.Interface, bool) {
+	fresh, inList := raw[name]
+	if !inList {
+		return nil, false
+	}
+	if rec, ok := s.byID[name]; ok {
+		cp := *rec
+		return &cp, true
+	}
+	if _, ok := s.pending[name]; ok {
+		return &fresh, true
+	}
+	return nil, false
+}
 
 // ErrGone — записи нет, и по этому имени NDMS не спрашивают. Два источника:
 //   - showOne/showRC: NDMS ответил «записи нет» на точечное чтение записи,
