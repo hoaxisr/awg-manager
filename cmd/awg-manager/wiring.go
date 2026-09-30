@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
+	"github.com/hoaxisr/awg-manager/internal/adaptiverouting"
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
@@ -198,6 +199,13 @@ type app struct {
 	// заводится один раз на процесс: нуджей много (проводка, фазы бута,
 	// WAN-хук), а ждущий загрузки цикл нужен один.
 	binariesRetryOnce sync.Once
+
+	// adaptive routing (Susanin)
+	adaptiveRoutingStore      *adaptiverouting.Store
+	adaptiveRoutingSvc        *adaptiverouting.Service
+	adaptiveRoutingHandler    *api.AdaptiveRoutingHandler
+	adaptiveRoutingMihomoExec *adaptiverouting.MihomoExecutor
+	adaptiveWatchdogOnce      sync.Once
 
 	// HTTP
 	srv *server.Server

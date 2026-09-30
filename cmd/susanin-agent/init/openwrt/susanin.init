@@ -1,0 +1,16 @@
+#!/bin/sh /etc/rc.common
+# OpenWRT (procd) init script for susanin-agent.
+START=95
+USE_PROCD=1
+
+PROG=/usr/sbin/susanin-agent
+CONF=/etc/susanin/susanin.conf
+
+start_service() {
+    procd_open_instance
+    procd_set_param command "$PROG"
+    procd_set_param respawn
+    procd_set_param env SUSANIN_CONF="$CONF"
+    procd_set_param file "$CONF"
+    procd_close_instance
+}

@@ -20,7 +20,7 @@
     import { PageContainer, PageHeader } from '$lib/components/layout';
     import { Search } from 'lucide-svelte';
     import { Tabs, Button, Modal } from '$lib/components/ui';
-    import { RoutingSearch } from '$lib/components/routing';
+    import { RoutingSearch, SusaninAdaptiveTab } from '$lib/components/routing';
     import DnsRoutesTab from './DnsRoutesTab.svelte';
     import IpRoutesTab from './IpRoutesTab.svelte';
     import AccessPoliciesTab from './AccessPoliciesTab.svelte';
@@ -296,6 +296,7 @@
             (hydrarouteInstalled || singboxInstalled)
                 ? { id: 'geodata', label: 'Гео-данные', badge: geoFileCount, separatorBefore: true }
                 : null,
+            { id: 'adaptive', label: 'Сусанин', separatorBefore: true },
         ] as (TabItem | null)[])
             .filter((t): t is TabItem => t !== null)
             .filter((t) => (t.children ? true : tabVisible(t.id)))
@@ -436,6 +437,8 @@
         <SingboxRouterRedesignPage />
     {:else if activeTab === 'fakeip'}
         <FakeIPTab />
+    {:else if activeTab === 'adaptive'}
+        <SusaninAdaptiveTab />
     {/if}
     <ModeSwitchHost />
     </div>

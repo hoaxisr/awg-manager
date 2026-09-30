@@ -1,0 +1,27 @@
+# internal/private working docs (not for publication)
+/PLAN.md
+/STATUS.md
+/docs/RECON.md
+/recon/
+/AGENTS.md
+/readme.html
+/release-notes-*.md
+
+# build intermediates (release binaries ARE committed, see build/)
+*.o
+susanin-agent
+
+# runtime state / logs (never commit secrets)
+*.log
+*.state
+/opt/
+
+# OpenWRT artifacts (built by CI / tools/build-openwrt.sh; not committed)
+/deploy-openwrt/
+/build/susanin-agent.openwrt-*
+
+# editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
