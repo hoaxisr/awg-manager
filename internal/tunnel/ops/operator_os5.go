@@ -41,15 +41,20 @@ func confirmOpkgTun(ctx context.Context, q *query.Queries, name string) (query.C
 }
 
 // requireOpkgTun — Confirm для правки живого туннеля: записи нет —
-// ErrInterfaceGone с именем, команды по ней не шлются (F546).
+// ErrInterfaceGone с именем, команды по ней не шлются (F546). Kernel-туннель
+// запись заводит сам на старте — отсюда совет перезапустить. Запись от
+// KeeneticOS 4.x (NDMS-имени нет) — errOS4Tunnel.
 func (o *OperatorOS5Impl) requireOpkgTun(ctx context.Context, op, tunnelID string) (query.Confirmed, error) {
 	ndmsName := tunnel.NewNames(tunnelID).NDMSName
+	if ndmsName == "" {
+		return query.Confirmed{}, errOS4Tunnel(op, tunnelID)
+	}
 	iface, _, ok, err := confirmOpkgTun(ctx, o.queries, ndmsName)
 	if err != nil {
 		return query.Confirmed{}, tunnel.NewOpError(op, tunnelID, "ndms", fmt.Errorf("read OpkgTun record: %w", err))
 	}
 	if !ok {
-		return query.Confirmed{}, tunnel.NewOpError(op, tunnelID, "ndms", fmt.Errorf("%s: %w", ndmsName, tunnel.ErrInterfaceGone))
+		return query.Confirmed{}, tunnel.NewOpError(op, tunnelID, "ndms", fmt.Errorf("%s: %w — перезапустите туннель, запись будет создана заново", ndmsName, tunnel.ErrInterfaceGone))
 	}
 	return iface, nil
 }

@@ -378,7 +378,7 @@ func (o *OperatorNativeWG) RequireIface(ctx context.Context, stored *storage.AWG
 		return query.Confirmed{}, err
 	}
 	if !ok {
-		return query.Confirmed{}, fmt.Errorf("%s: %w", NewNWGNames(stored.NWGIndex).NDMSName, tunnel.ErrInterfaceGone)
+		return query.Confirmed{}, fmt.Errorf("%s: %w — удалите туннель и импортируйте конфиг заново", NewNWGNames(stored.NWGIndex).NDMSName, tunnel.ErrInterfaceGone)
 	}
 	return iface, nil
 }

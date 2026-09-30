@@ -196,6 +196,14 @@ func TestSetters_RecordGone(t *testing.T) {
 	}
 }
 
+// Туннель от KeeneticOS 4.x на OS5: правка отказывает errOS4Tunnel, не безымянной ErrInterfaceGone.
+func TestSetMTU_OS4Tunnel_RefusedAsOS4(t *testing.T) {
+	o, _, _ := newOS5Oracle(t, ndmsquery.NewFakeNDMS(), &MockBackend{})
+	if err := o.SetMTU(context.Background(), "awgm5", 1400); err == nil || !strings.Contains(err.Error(), "KeeneticOS 4.x") {
+		t.Fatalf("err = %v, want errOS4Tunnel", err)
+	}
+}
+
 // R17: на OS4 DNS адресуется по имени ЯДРА (awgm0), в списке NDMS его нет —
 // подтверждать списком нельзя: команда уходит как прежде, список не читается.
 func TestOperatorOS4_DNSByKernelName_NoConfirm(t *testing.T) {
