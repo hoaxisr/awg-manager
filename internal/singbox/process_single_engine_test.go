@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -228,5 +229,85 @@ func TestProcess_NormalStartStopUnchanged(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("OnExit not called")
+	}
+}
+
+// Fix round 1, п.1: pid-файл не записался — только что заспавненный ребёнок
+// гасится сразу SIGKILL и пожинается до возврата Start (раньше SIGTERM +
+// неограниченный Wait под startMu: ребёнок, не умерший от SIGTERM, вешал Start).
+func TestProcess_WritePIDFailureKillsChild(t *testing.T) {
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "pid-is-a-dir")
+	if err := os.Mkdir(pidPath, 0o755); err != nil { // writePID упадёт с EISDIR
+		t.Fatal(err)
+	}
+	p := NewProcess(writeEngineStub(t), filepath.Join(dir, "config.d"), pidPath)
+	p.logDir = dir
+	t.Cleanup(p.Close)
+	var child *exec.Cmd
+	p.startCmd = func(bin string, args ...string) (*exec.Cmd, error) {
+		child = exec.Command(bin, args...)
+		return child, nil
+	}
+
+	if err := p.Start(); err == nil {
+		t.Fatal("Start = nil, want writePID error")
+	}
+	if child == nil || child.ProcessState == nil {
+		t.Fatal("child not reaped before Start returned")
+	}
+	ws, ok := child.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok || !ws.Signaled() || ws.Signal() != syscall.SIGKILL {
+		t.Fatalf("child exit = %v, want killed by SIGKILL", child.ProcessState)
+	}
+}
+
+// Fix round 1, п.2: ребёнок пережил SIGKILL (D-state; здесь сигналы гасит
+// seam) — Stop возвращает ошибку и оставляет pid-файл, чтобы после рестарта
+// демона не заспавнился второй движок.
+func TestProcess_StopKeepsPidFileWhenChildSurvivesKill(t *testing.T) {
+	p, gens := newStubEngine(t)
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	noteGen(p, gens)
+	p.signalFn = func(int, syscall.Signal) error { return nil }
+
+	err := p.Stop()
+	if err == nil || !strings.Contains(err.Error(), "survived SIGKILL") {
+		t.Fatalf("Stop = %v, want survived SIGKILL error", err)
+	}
+	if _, err := os.Stat(p.pidPath); err != nil {
+		t.Fatalf("pid file removed although engine is alive: %v", err)
+	}
+}
+
+// Fix round 1, п.3: поколение, чей ребёнок уже умер сам (зомби, монитор ещё
+// не пожал — например, упал сразу после SIGHUP в Reload), Stop не метит как
+// «наш» выход: это падение. Живого ребёнка метит (см. NormalStartStopUnchanged).
+func TestProcess_StopDoesNotMarkZombieDeliberate(t *testing.T) {
+	cmd := exec.Command("/bin/true")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Wait() })
+	pid := cmd.Process.Pid
+	deadline := time.Now().Add(5 * time.Second)
+	for !isZombie(pid) {
+		if time.Now().After(deadline) {
+			t.Fatal("child did not become a zombie")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	dir := t.TempDir()
+	p := NewProcess("/bin/true", filepath.Join(dir, "config.d"), filepath.Join(dir, "pid"))
+	p.logDir = dir
+	p.signalFn = func(int, syscall.Signal) error { return nil }
+	gen := &processGen{pid: pid, reaped: make(chan struct{}), proc: cmd.Process}
+	p.curGen = gen
+
+	_ = p.Stop() // ребёнок «не пожат» до конца — ошибка ожидаема
+	if gen.deliberate.Load() {
+		t.Fatal("Stop marked an already-dead (zombie) child as a deliberate exit")
 	}
 }
