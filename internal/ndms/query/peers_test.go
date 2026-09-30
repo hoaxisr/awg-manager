@@ -42,7 +42,7 @@ const wgList = `{
 
 func newTestPeerStore(fg *FakeGetter, ttl time.Duration) *PeerStore {
 	fg.SetJSON(ifaceListPath, wgList)
-	return NewPeerStoreWithTTL(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()), ttl)
+	return NewPeerStoreWithTTL(NopLogger(), NewInterfaceStore(fg, NopLogger()), ttl)
 }
 
 func TestPeerStore_GetPeers_ParsesInterfacePeerField(t *testing.T) {
@@ -174,5 +174,5 @@ func TestNewPeerStore_NilIfacesPanics(t *testing.T) {
 			t.Fatal("nil ifaces must panic")
 		}
 	}()
-	NewPeerStore(newFakeGetter(), NopLogger(), nil)
+	NewPeerStore(NopLogger(), nil)
 }

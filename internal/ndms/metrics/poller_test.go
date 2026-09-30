@@ -32,7 +32,7 @@ func newPeers(fg *query.FakeGetter, ttl time.Duration) *query.PeerStore {
 		"Wireguard1": {"id":"Wireguard1","type":"Wireguard"},
 		"Wireguard10": {"id":"Wireguard10","type":"Wireguard"}
 	}`)
-	return query.NewPeerStoreWithTTL(fg, query.NopLogger(), query.NewInterfaceStore(fg, query.NopLogger()), ttl)
+	return query.NewPeerStoreWithTTL(query.NopLogger(), query.NewInterfaceStore(fg, query.NopLogger()), ttl)
 }
 
 func (f *fakeRunningProvider) Set(refs []InterfaceRef) {

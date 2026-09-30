@@ -71,7 +71,7 @@ func NewQueries(d Deps) *Queries {
 	runningConfig := NewRunningConfigStore(d.Getter, d.Logger)
 	return &Queries{
 		Interfaces:       ifaces,
-		Peers:            NewPeerStore(d.Getter, d.Logger, ifaces),
+		Peers:            NewPeerStore(d.Logger, ifaces),
 		Policies:         NewPolicyStore(d.Getter, d.Logger),
 		Hotspot:          NewHotspotStore(d.Getter, d.Logger),
 		Routes:           NewRouteStore(d.Getter, d.Logger),

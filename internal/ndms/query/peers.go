@@ -29,14 +29,13 @@ type PeerStore struct {
 }
 
 // NewPeerStore — PeerStore поверх кэша интерфейсов ifaces (обязателен).
-func NewPeerStore(g Getter, log Logger, ifaces *InterfaceStore) *PeerStore {
-	return NewPeerStoreWithTTL(g, log, ifaces, peerTTL)
+func NewPeerStore(log Logger, ifaces *InterfaceStore) *PeerStore {
+	return NewPeerStoreWithTTL(log, ifaces, peerTTL)
 }
 
-// NewPeerStoreWithTTL — то же с заданным TTL. g не используется: чтение идёт
-// через ifaces (единый шлюз showOne); параметр оставлен ради формы
-// конструкторов пакета.
-func NewPeerStoreWithTTL(_ Getter, log Logger, ifaces *InterfaceStore, ttl time.Duration) *PeerStore {
+// NewPeerStoreWithTTL — то же с заданным TTL. Чтение идёт только через ifaces
+// (единый шлюз showOne), своего getter у стора нет.
+func NewPeerStoreWithTTL(log Logger, ifaces *InterfaceStore, ttl time.Duration) *PeerStore {
 	if ifaces == nil {
 		panic("query.NewPeerStore: ifaces обязателен — чтение по имени идёт только через InterfaceStore (F546)")
 	}
