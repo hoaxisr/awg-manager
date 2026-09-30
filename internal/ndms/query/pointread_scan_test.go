@@ -222,6 +222,57 @@ func TestProofs_NotForgedOutsideQuery(t *testing.T) {
 	}
 }
 
+const netdevImportPath = "github.com/hoaxisr/awg-manager/internal/netdev"
+
+// TestScanner_NetdevFreeNotForged — netdev.Free доказывает «устройства нет»
+// и рождается только в netdev.Absent (F569). Вне internal/netdev запрещены и
+// литерал netdev.Free{…}, и var x netdev.Free: нулевое значение — имя "",
+// исключений нет (в отличие от Confirmed, отказу Free не нужен вовсе —
+// вызывающий возвращает только ошибку). Алиас импорта учитывается.
+func TestScanner_NetdevFreeNotForged(t *testing.T) {
+	for _, f := range prodGoFiles(t, true) {
+		if filepath.Dir(f.rel) == filepath.Join("internal", "netdev") ||
+			!strings.Contains(string(f.data), netdevImportPath) {
+			continue
+		}
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, f.rel, f.data, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("разбор %s: %v", f.rel, err)
+		}
+		alias := ""
+		for _, imp := range file.Imports {
+			if p, _ := strconv.Unquote(imp.Path.Value); p == netdevImportPath {
+				alias = "netdev"
+				if imp.Name != nil {
+					alias = imp.Name.Name
+				}
+			}
+		}
+		isFree := func(e ast.Expr) bool {
+			sel, ok := e.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Free" {
+				return false
+			}
+			id, ok := sel.X.(*ast.Ident)
+			return ok && id.Name == alias
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.CompositeLit:
+				if isFree(n.Type) {
+					t.Errorf("%s: литерал %s.Free{} — доказательство выдаёт только netdev.Absent", fset.Position(n.Pos()), alias)
+				}
+			case *ast.ValueSpec:
+				if n.Type != nil && isFree(n.Type) {
+					t.Errorf("%s: var … %s.Free — нулевое доказательство; получать из netdev.Absent", fset.Position(n.Pos()), alias)
+				}
+			}
+			return true
+		})
+	}
+}
+
 // confirmedFieldExceptions — поля с query.Confirmed, которые хранить можно:
 // это значения-параметры ОДНОГО вызова, а не долгоживущее состояние.
 // Ключ — "<путь файла>:<Тип>.<Поле>".
