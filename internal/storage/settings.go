@@ -812,6 +812,29 @@ func (s *SettingsStore) SetOpkgTunNATSegments(segs []PolicyTunNATSegment) error 
 	})
 }
 
+// SetOpkgTunDescription пишет ТОЛЬКО применённое NDMS-описание записи
+// владения, не трогая ownership-поля и payload: переименование живого
+// интерфейса (policy-tun reconcile) не должно затирать NAT-записи, которые
+// пишет свой сеттер. Пустая строка — штатное описание режима. Copy-on-write,
+// как в SetOpkgTunNATSegments. Запись отсутствует → ошибка (описания без
+// владельца не бывает).
+func (s *SettingsStore) SetOpkgTunDescription(desc string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return fmt.Errorf("settings not loaded")
+	}
+	if s.settings.OpkgTun == nil {
+		return fmt.Errorf("no OpkgTun ownership record")
+	}
+	return s.updateUnlocked(func(cur *Settings) error {
+		rec := *cur.OpkgTun
+		rec.Description = desc
+		cur.OpkgTun = &rec
+		return nil
+	})
+}
+
 // SetDNSChainPresetState atomically persists the DNS-chain preset state under
 // the store lock (single-writer pattern; the router service is the only
 // writer). Pass nil to clear (preset off). Mirrors SetOpkgTunState.

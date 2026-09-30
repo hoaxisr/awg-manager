@@ -147,6 +147,11 @@ type SingboxRouterSettingsData struct {
 	// source-preserve (см. GET /singbox/router/policy-tun/nat-preview).
 	// Обнуляется бэкендом при policyTunSourcePreserve=false.
 	PolicyTunNATSegments []string `json:"policyTunNatSegments,omitempty" example:"Home"`
+	// PolicyTunDescription — имя интерфейса policy-tun в веб-интерфейсе роутера
+	// и в политиках доступа (NDMS-описание OpkgTun). Пусто — "awgm policy-tun".
+	// До 32 символов; префикс "awgm " зарезервирован. Живой интерфейс
+	// переименовывается на ближайшем reconcile, без пересоздания.
+	PolicyTunDescription string `json:"policyTunDescription,omitempty" example:"AWGManager" maxLength:"32"`
 	// CacheFileLocation — место хранения cache.db sing-box: "flash" —
 	// /opt/etc/awg-manager/singbox/cache.db, "tmp" — /tmp/singbox-cache.db в RAM,
 	// записи кэша перестают изнашивать флеш, но кэш не переживает перезагрузку.

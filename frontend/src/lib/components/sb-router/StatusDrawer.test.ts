@@ -74,6 +74,43 @@ describe('#730 простой режим: инфо под выбором реж�
 	});
 });
 
+describe('policy-tun: название интерфейса', () => {
+	beforeEach(() => {
+		patchSpy.mockClear();
+		uiMode.set('beginner');
+		settings.set({ routingMode: 'policy-tun', deviceMode: 'policy', policyName: 'p1' });
+		openDrawer();
+	});
+
+	it('сохраняет имя по change через applyPatch({ policyTunDescription })', async () => {
+		render(StatusDrawer);
+		const input = screen.getByLabelText('Название интерфейса');
+		await fireEvent.change(input, { target: { value: '  AWGManager ' } });
+		expect(patchSpy).toHaveBeenCalledWith({ policyTunDescription: 'AWGManager' });
+	});
+
+	it('штатное имя сохраняется пустым', async () => {
+		settings.set({
+			routingMode: 'policy-tun',
+			deviceMode: 'policy',
+			policyName: 'p1',
+			policyTunDescription: 'AWGManager',
+		});
+		render(StatusDrawer);
+		const input = screen.getByLabelText('Название интерфейса');
+		await fireEvent.change(input, { target: { value: 'awgm policy-tun' } });
+		expect(patchSpy).toHaveBeenCalledWith({ policyTunDescription: '' });
+	});
+
+	it('служебный префикс и длинное имя не уходят на бэкенд', async () => {
+		render(StatusDrawer);
+		const input = screen.getByLabelText('Название интерфейса');
+		await fireEvent.change(input, { target: { value: 'awgm x' } });
+		await fireEvent.change(input, { target: { value: 'x'.repeat(33) } });
+		expect(patchSpy).not.toHaveBeenCalled();
+	});
+});
+
 describe('Анализ трафика: потолок UDP-NAT', () => {
 	beforeEach(() => {
 		patchSpy.mockClear();

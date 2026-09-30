@@ -6,8 +6,10 @@ package router
 // fakeip_transition.go.
 const statePolicyTun = "policy-tun"
 
-// policyTunDescription — NDMS-описание policy-tun OpkgTun. LOAD-BEARING:
+// policyTunDescription — штатное NDMS-описание policy-tun OpkgTun. LOAD-BEARING:
 // reap-скан по описанию матчит точную строку (см. fakeIPTunDescription).
+// Пользователь может заменить его своим (PolicyTunDescription) — реап такое
+// имя не сканирует, см. policytun_description.go.
 const policyTunDescription = "awgm policy-tun"
 
 // usesTunInbound: режимы, где sing-box слушает через tun (carrier-readiness

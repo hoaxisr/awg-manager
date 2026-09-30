@@ -197,7 +197,8 @@ type OpkgTunPolicyData struct {
 }
 
 // OpkgTunState — ЕДИНАЯ запись владения OpkgTun<N>. Пишется ТОЛЬКО
-// lifecycle'ом через SetOpkgTunState / SetOpkgTunNATSegments. Инварианты:
+// lifecycle'ом через SetOpkgTunState / SetOpkgTunNATSegments /
+// SetOpkgTunDescription. Инварианты:
 //   - Mode ∈ {OpkgTunModeFakeIP, OpkgTunModePolicyTun};
 //   - Provisioned=false при непустой записи — hold (штатно только у
 //     policy-tun: индекс удержан ради permit'а в политике);
@@ -211,6 +212,13 @@ type OpkgTunState struct {
 	Index       int                `json:"index"`
 	FakeIP      *OpkgTunFakeIPData `json:"fakeip,omitempty"`
 	PolicyTun   *OpkgTunPolicyData `json:"policyTun,omitempty"`
+	// Description — NDMS-описание, которое МЫ поставили на интерфейс (только
+	// policy-tun, SingboxRouterSettings.PolicyTunDescription). По нему
+	// признаётся владение, поэтому смена настройки без этой записи сделала бы
+	// собственный интерфейс «чужим». Пусто — штатное описание режима: так
+	// читаются и записи версий без настройки. Пишется SetOpkgTunState или
+	// узким SetOpkgTunDescription.
+	Description string `json:"description,omitempty"`
 }
 
 type DownloadSettings struct {
@@ -323,6 +331,12 @@ type SingboxRouterSettings struct {
 	// PolicyTunNATSegments — выбранные пользователем сегменты для source-preserve
 	// (редактируемый предпоказ в UI). Пусто при выключенной опции.
 	PolicyTunNATSegments []string `json:"policyTunNatSegments,omitempty"`
+	// PolicyTunDescription — NDMS-описание интерфейса policy-tun: под этим
+	// именем OpkgTun виден в веб-интерфейсе роутера и в политиках доступа.
+	// Пусто — штатное "awgm policy-tun". Применённое к интерфейсу описание
+	// хранит запись владения (OpkgTunState.Description), переименование живого
+	// интерфейса доводит reconcile.
+	PolicyTunDescription string `json:"policyTunDescription,omitempty"`
 	// CacheFileLocation — место хранения cache.db sing-box (issue #842):
 	// "flash" — /opt/etc/awg-manager/singbox/cache.db на флеше, "tmp" —
 	// /tmp/singbox-cache.db в RAM, чтобы записи кэша не изнашивали флеш; ""

@@ -96,7 +96,7 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	// снимаем (шаг 5); скан упал — не трогаем, запись ОСТАВЛЯЕМ: Provisioned при
 	// Enabled=false заставит reconcilePolicyTun звать Disable следующим тиком —
 	// тот же повтор, что при провале holdOpkgTun.
-	ownership := s.opkgTunOwnership(ctx, ndmsName, policyTunDescription)
+	ownership := s.opkgTunOwnership(ctx, ndmsName, policyTunOwnDescriptions(st, settings.SingboxRouter)...)
 	touch := ownership == ownershipOurs || ownership == ownershipNoScan
 	switch ownership {
 	case ownershipForeign:
@@ -233,7 +233,10 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 		// Запись не трогаем: Provisioned=true — сигнал повтора (см. вердикт).
 	default:
 		if err := s.holdOpkgTun(ctx, ndmsName, "policy-tun-disable"); err == nil {
-			held := &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: st.Index}
+			// Description переживает удержание: интерфейс остаётся под
+			// применённым именем, и без него владение не признало бы его на
+			// следующем включении, если имя в настройках сменят до того.
+			held := &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: st.Index, Description: st.Description}
 			if !natRestored {
 				held.PolicyTun = &storage.OpkgTunPolicyData{NATSegments: natSegmentsOf(st)}
 			}
