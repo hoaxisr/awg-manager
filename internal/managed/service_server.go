@@ -412,7 +412,7 @@ func (s *Service) confirmWANs(ctx context.Context, names []string) (map[string]q
 
 // removeStaticNATs снимает ip static для интерфейса по сохранённому списку;
 // пустой список — fallback на текущий дефолт-WAN (back-compat для серверов
-// без сохранённых выходов). Отказ снятия отдельного правила — в журнал.
+// без сохранённых выходов; дефолт не прочитан — ошибка). Отказ снятия отдельного правила — в журнал.
 // Выхода нет в NDMS — правило ушло вместе с ним, ссылка на него дала бы E.
 // Список не прочитан — ни одной команды и ошибка: состояние неизвестно, и
 // вызывающий не вправе записать «static NAT снят» (иначе правила-сироты).
@@ -422,9 +422,14 @@ func (s *Service) removeStaticNATs(ctx context.Context, iface query.Confirmed, s
 		if s.queries == nil || s.queries.Routes == nil {
 			return nil
 		}
+		// Маршрут не прочитан — выход неизвестен: ошибка, а не «снимать
+		// нечего», иначе `ip static` остаются сиротами (F556, решение 4).
 		wan, err := s.queries.Routes.GetDefaultGatewayInterface(ctx)
-		if err != nil || wan == "" {
-			return nil
+		if err != nil {
+			return fmt.Errorf("remove static NAT: WAN по умолчанию: %w", err)
+		}
+		if wan == "" {
+			return fmt.Errorf("remove static NAT: WAN по умолчанию не определён")
 		}
 		wans = []string{wan}
 	}

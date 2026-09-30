@@ -622,6 +622,19 @@ func TestApplyNATMode_NoneAfterInternetOnly_ListError_NoCommands(t *testing.T) {
 	}
 }
 
+// Legacy internet-only без сохранённых выходов, маршрут по умолчанию не
+// прочитан: снимать static не на что опереться — ошибка, а не тихий nil (F556).
+func TestRemoveStaticNATs_LegacyNoWANs_RouteError_Fails(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"}) // /show/ip/route вне модели — отказ
+	s := newServiceWithOracle(t, f, nil)
+	if err := s.removeStaticNATs(context.Background(), confirmed(t, "Wireguard3"), nil); err == nil {
+		t.Fatal("непрочитанный маршрут по умолчанию принят за «снимать нечего»")
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("posts=%v", f.Posts)
+	}
+}
+
 func TestDelete_PresentInternetOnly_StaticThenNoInterface(t *testing.T) {
 	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"}, ndms.Interface{ID: "PPPoE0"})
 	s := newServiceWithOracle(t, f, nil, storage.ManagedServer{InterfaceName: "Wireguard3", NATMode: "internet-only", NATStaticWANs: []string{"PPPoE0"}})
