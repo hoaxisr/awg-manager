@@ -24,6 +24,12 @@ type HookWANModel interface {
 	SetUp(kernelName string, up bool) (changed bool)
 }
 
+// HookSystemNames — карта имён ядра кэша интерфейсов (query.InterfaceStore).
+// Эхо id и не похожее на имя ядра она отбрасывает сама.
+type HookSystemNames interface {
+	OnSystemName(id, name string)
+}
+
 // TunnelHookInvalidator is invoked on ifcreated / ifdestroyed hooks so
 // the handler can drop stale NDMS caches and publish a
 // `resource:invalidated` hint for the tunnels resource. Every connected
@@ -43,6 +49,7 @@ type HookHandler struct {
 	orch           *orchestrator.Orchestrator
 	dispatcher     HookDispatcher // may be nil until SetDispatcher is called
 	wanModel       HookWANModel   // may be nil until SetWANModel is called
+	systemNames    HookSystemNames
 	refreshTunnels TunnelHookInvalidator
 	proxyNudge     ProxyRuntimeNudge
 	endpointNudge  func()
@@ -93,6 +100,12 @@ func (h *HookHandler) SetDispatcher(d HookDispatcher) {
 // EventWANUp/Down to the orchestrator.
 func (h *HookHandler) SetWANModel(m HookWANModel) {
 	h.wanModel = m
+}
+
+// SetSystemNames подключает карту имён ядра: system_name хука ложится в неё
+// синхронно, до WAN-модели (см. Handle).
+func (h *HookHandler) SetSystemNames(n HookSystemNames) {
+	h.systemNames = n
 }
 
 // SetTunnelRefresher wires the callback that invalidates NDMS caches
@@ -173,6 +186,15 @@ func enqueueHook(d HookDispatcher, event events.Event) {
 func (h *HookHandler) Handle(event events.Event) {
 	// 1) Enqueue into Dispatcher for cache invalidation (async, non-blocking).
 	enqueueHook(h.dispatcher, event)
+
+	// 1-) Имя ядра из хука — в кэш синхронно (I3, F570): SetUp WAN-модели ниже
+	// на незнакомом имени перечитывает ListWAN, а тот читает только память.
+	// Через одну лишь очередь диспетчера имя горячо подключённого модема
+	// доходило бы позже, и первый WAN up терялся. Диспетчер повторит то же
+	// (идемпотентно).
+	if event.SystemName != "" && h.systemNames != nil {
+		h.systemNames.OnSystemName(event.ID, event.SystemName)
+	}
 
 	// 1a) Смена адреса интерфейса — повод перепроверить DDNS-имена: страж
 	// пройдётся вне очереди. Вызов неблокирующий (будит чужую горутину), так

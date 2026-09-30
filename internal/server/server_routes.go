@@ -266,6 +266,9 @@ func (s *Server) registerCoreRoutes(mux *http.ServeMux, h *routeHandlers) {
 	if s.ndmsDispatcher != nil {
 		h.hookHandler.SetDispatcher(s.ndmsDispatcher)
 	}
+	if s.ndmsQueries != nil && s.ndmsQueries.Interfaces != nil {
+		h.hookHandler.SetSystemNames(s.ndmsQueries.Interfaces)
+	}
 	if s.tunnelService != nil {
 		h.hookHandler.SetWANModel(s.tunnelService.WANModel())
 		// Wire the self-create gate so importNativeWG can suppress the
