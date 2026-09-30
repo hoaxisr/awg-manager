@@ -988,7 +988,8 @@ func (o *OperatorOS5Impl) logWarn(action, target, message string) {
 	o.appLog.Warn(action, target, message)
 }
 
-// GetSystemName resolves an NDMS ID to its kernel interface name via NDMS RCI.
+// GetSystemName resolves an NDMS ID to its kernel interface name from
+// InterfaceStore memory — без RCI (F570).
 func (o *OperatorOS5Impl) GetSystemName(ctx context.Context, ndmsID string) string {
 	return o.queries.Interfaces.ResolveSystemName(ctx, ndmsID)
 }

@@ -7,6 +7,13 @@
 // repolling. Read paths (Get / GetDetails / List / ResolveSystemName
 // / ListWAN / ListAll) answer purely from the cached snapshot.
 //
+// Имя ядра (ResolveSystemName / SystemNames / ListWAN / ListAll) — тоже
+// память, RCI по требованию нет (F570). Источники: таблица ndms.KernelName
+// (Wireguard, OpkgTun, Proxy, PPPoE, Bridge), `system_name` из хуков
+// (OnSystemName) и ОДИН пакетный резолвер `show interface system-name`
+// сразу после каждого свежего списка — только для id из этого ответа, чьё
+// имя ещё не известно.
+//
 // Two write APIs feed the map:
 //
 //   - Hook-side (called from events.Dispatcher): OnCreated /
@@ -87,7 +94,7 @@ func unwrapShowInterface(raw []byte) ([]byte, error) {
 // contain upper-case letters and are rejected — they are not kernel device
 // names and using them for SO_BINDTODEVICE / curl --interface fails with
 // ENODEV. Used as the first-line filter in wireToInterface and as part of
-// the trust-cache check in ResolveSystemName.
+// the trust checks in systemNameLocked / trustedSystemName.
 func looksLikeKernelIfname(s string) bool {
 	if s == "" || len(s) > 15 {
 		return false

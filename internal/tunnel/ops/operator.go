@@ -90,7 +90,9 @@ type Operator interface {
 	GetDefaultGatewayInterface(ctx context.Context) (string, error)
 
 	// GetSystemName resolves a router interface ID (e.g., "PPPoE0") to its kernel
-	// interface name (e.g., "ppp0") via RCI. Returns the ID unchanged if resolution fails.
+	// interface name (e.g., "ppp0"). Без RCI (F570): на OS5 — память
+	// InterfaceStore (таблица ndms.KernelName, имена из хуков, резолвер вслед за
+	// списком), неизвестное — ""; на OS4 — ID без изменений.
 	GetSystemName(ctx context.Context, ndmsID string) string
 
 	// SetAppLogger sets the web UI logger for operator events.

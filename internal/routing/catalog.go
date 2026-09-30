@@ -91,6 +91,9 @@ type TunnelProvider interface {
 // Narrow interface — easy to mock, insulates catalog from query store details.
 type interfaceQueries interface {
 	List(ctx context.Context) ([]ndms.Interface, error)
+	// ResolveSystemName / SystemNames — имя ядра из памяти, RCI никогда (F570):
+	// Wireguard→nwgN по таблице ndms.KernelName, прочие — из хуков и резолвера
+	// вслед за списком. Пусто — записи нет в кэше или имени не знает никто.
 	ResolveSystemName(ctx context.Context, ndmsName string) string
 	SystemNames(ctx context.Context, ids []string) map[string]string
 }
