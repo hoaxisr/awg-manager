@@ -25,6 +25,7 @@ type FakeNDMS struct {
 	listErr   error
 	hooks     []FakeHook
 	expect    map[string]bool
+	inList    func()
 
 	E        int      // точечное чтение отсутствующего; ссылка на отсутствующий из ip route/nat/static/name-server/policy/hotspot/dns-proxy
 	Phantoms int      // `interface X …` по отсутствующему X, не объявленному ExpectCreate: X создан
@@ -37,7 +38,8 @@ type FakeNDMS struct {
 
 // FakeHook — хук NDMS, который тест доставляет в диспетчер сам (с задержкой,
 // в другом порядке или теряет). events.Event сюда не импортировать: events → query.
-type FakeHook struct{ Type, ID string } // "ifcreated" | "ifdestroyed"
+// Layer/Level — только у "iflayerchanged".
+type FakeHook struct{ Type, ID, Layer, Level string } // "ifcreated" | "ifdestroyed" | "iflayerchanged"
 
 func NewFakeNDMS(ifaces ...ndms.Interface) *FakeNDMS {
 	f := &FakeNDMS{ifaces: make(map[string]ndms.Interface, len(ifaces))}
@@ -52,7 +54,7 @@ func (f *FakeNDMS) Add(iface ndms.Interface) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.ifaces[iface.ID]; !ok {
-		f.hooks = append(f.hooks, FakeHook{Type: "ifcreated", ID: iface.ID})
+		f.created(iface.ID)
 	}
 	f.ifaces[iface.ID] = iface
 }
@@ -107,6 +109,15 @@ func (f *FakeNDMS) FailList(err error) {
 	f.mu.Unlock()
 }
 
+// InList — fn вызывается в каждом GET /show/interface/ после снимка списка и
+// до ответа, вне замка фейка: так тест доставляет хуки, пока список в полёте.
+// nil снимает.
+func (f *FakeNDMS) InList(fn func()) {
+	f.mu.Lock()
+	f.inList = fn
+	f.mu.Unlock()
+}
+
 func (f *FakeNDMS) Get(ctx context.Context, path string, dst any) error {
 	raw, err := f.GetRaw(ctx, path)
 	if err != nil {
@@ -118,11 +129,18 @@ func (f *FakeNDMS) Get(ctx context.Context, path string, dst any) error {
 // GetRaw: "/show/interface/" — список; "/show/interface/X" и
 // "/show/rc/interface/X…" — точечные чтения: отсутствующий X → E++ и 404.
 func (f *FakeNDMS) GetRaw(ctx context.Context, path string) ([]byte, error) {
+	if path == "/show/interface/" {
+		f.mu.Lock()
+		raw, err := f.list()
+		fn := f.inList
+		f.mu.Unlock()
+		if fn != nil {
+			fn()
+		}
+		return raw, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if path == "/show/interface/" {
-		return f.list()
-	}
 	rest, ok := strings.CutPrefix(path, "/show/rc/interface/")
 	if !ok {
 		rest, ok = strings.CutPrefix(path, "/show/interface/")
@@ -289,7 +307,7 @@ func (f *FakeNDMS) importWG() (json.RawMessage, error) {
 	}
 	f.ifaces[name] = ndms.Interface{ID: name, Type: "Wireguard", State: "down"}
 	f.Created = append(f.Created, name)
-	f.hooks = append(f.hooks, FakeHook{Type: "ifcreated", ID: name})
+	f.created(name)
 	return json.RawMessage(`{"interface":{"wireguard":{"import":{"created":"` + name + `","intersects":"","status":[]}}}}`), nil
 }
 
@@ -313,7 +331,7 @@ func (f *FakeNDMS) ifaceCmd(name string, body map[string]any) (json.RawMessage, 
 			f.Phantoms++
 		}
 		iface = ndms.Interface{ID: name, Type: typeByPrefix(name), State: "down"}
-		f.hooks = append(f.hooks, FakeHook{Type: "ifcreated", ID: name})
+		f.created(name)
 	}
 	if up, ok := body["up"].(bool); ok {
 		iface.State = "down"
@@ -347,6 +365,16 @@ func (f *FakeNDMS) parseCmd(line string) (json.RawMessage, error) {
 		return f.ifaceCmd(w[1], body)
 	}
 	return json.RawMessage(`{}`), nil
+}
+
+// created ставит в очередь хуки создания в порядке живого NDMS (стенд
+// 5.01.C.6): два iflayerchanged ctrl, затем ifcreated ~1 с спустя. Level
+// стенд не записал — пустой.
+func (f *FakeNDMS) created(name string) {
+	f.hooks = append(f.hooks,
+		FakeHook{Type: "iflayerchanged", ID: name, Layer: "ctrl"},
+		FakeHook{Type: "iflayerchanged", ID: name, Layer: "ctrl"},
+		FakeHook{Type: "ifcreated", ID: name})
 }
 
 func (f *FakeNDMS) remove(name string) {

@@ -34,7 +34,7 @@ func TestScenario_ExternalRemoveDelayedHook_DeleteThenHook(t *testing.T) {
 	d.Start()
 	defer d.Stop()
 	for _, h := range f.DrainHooks() {
-		d.Enqueue(events.Event{Type: events.EventType(h.Type), ID: h.ID})
+		d.Enqueue(events.Event{Type: events.EventType(h.Type), ID: h.ID, Layer: h.Layer, Level: h.Level})
 	}
 	select {
 	case <-done:

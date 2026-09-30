@@ -22,7 +22,7 @@ func deliverHooks(t *testing.T, f *query.FakeNDMS, q *query.Queries) {
 	d := NewDispatcher(q, NopLogger())
 	done := drainBarrier(d)
 	for _, h := range f.DrainHooks() {
-		d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID})
+		d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID, Layer: h.Layer, Level: h.Level})
 	}
 	d.Start()
 	defer d.Stop()
@@ -150,7 +150,7 @@ func TestScenario_ListErrorDuringPending(t *testing.T) {
 	d.Start()
 	defer d.Stop()
 	for _, h := range f.DrainHooks() {
-		d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID})
+		d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID, Layer: h.Layer, Level: h.Level})
 	}
 	waitDrain(t, done)
 

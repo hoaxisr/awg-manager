@@ -31,7 +31,8 @@ func TestFakeNDMS_CommandOnAbsentCreatesPhantom(t *testing.T) {
 		t.Fatalf("phantom expected: Phantoms=%d has=%v", f.Phantoms, f.Has("Wireguard2"))
 	}
 	hooks := f.DrainHooks()
-	if len(hooks) != 1 || hooks[0] != (FakeHook{Type: "ifcreated", ID: "Wireguard2"}) {
+	layer := FakeHook{Type: "iflayerchanged", ID: "Wireguard2", Layer: "ctrl"}
+	if len(hooks) != 3 || hooks[0] != layer || hooks[1] != layer || hooks[2] != (FakeHook{Type: "ifcreated", ID: "Wireguard2"}) {
 		t.Fatalf("hooks: %+v", hooks)
 	}
 	_, _ = f.Post(context.Background(), map[string]any{"interface": map[string]any{"Wireguard2": map[string]any{"no": true}}})
@@ -121,27 +122,27 @@ func TestFakeNDMS_PostBranches(t *testing.T) {
 		name        string
 		payload     any
 		e, phantoms int
-		hooks       int
+		hooks       int    // создание — 3 хука (ctrl ×2 + ifcreated), снос — 1
 		has         string // имя, которое обязано быть после вызова ("" — не проверять)
 		gone        string // имя, которого быть не должно
 		wantInResp  string
 	}{
-		{"payloads создаёт фантом", map[string]any{"interface": map[string]any{"name": "Wireguard5", "up": true}}, 0, 1, 1, "Wireguard5", "", "{}"},
+		{"payloads создаёт фантом", map[string]any{"interface": map[string]any{"name": "Wireguard5", "up": true}}, 0, 1, 3, "Wireguard5", "", "{}"},
 		{"payloads no отсутствующего", map[string]any{"interface": map[string]any{"name": "Wireguard5", "no": true}}, 0, 0, 0, "", "Wireguard5", `unable to find interface \"Wireguard5\"`},
 		{"command no отсутствующего", iface("OpkgTun1", map[string]any{"no": true}), 0, 0, 0, "", "OpkgTun1", "unable to find interface"},
 		{"payloads no присутствующего", map[string]any{"interface": map[string]any{"name": "Wireguard0", "no": true}}, 0, 0, 1, "", "Wireguard0", "{}"},
-		{"parse interface up", map[string]any{"parse": "interface Proxy2 up"}, 0, 1, 1, "Proxy2", "", "{}"},
+		{"parse interface up", map[string]any{"parse": "interface Proxy2 up"}, 0, 1, 3, "Proxy2", "", "{}"},
 		{"parse no interface отсутствующего", map[string]any{"parse": "no interface Proxy2"}, 0, 0, 0, "", "Proxy2", "unable to find interface"},
 		{"parse no interface присутствующего", map[string]any{"parse": "no interface Wireguard0"}, 0, 0, 1, "", "Wireguard0", "{}"},
 		{"parse no interface X настройка присутствующего", map[string]any{"parse": "no interface Wireguard0 ip access-group A in"}, 0, 0, 0, "Wireguard0", "", "{}"},
-		{"parse no interface X настройка отсутствующего", map[string]any{"parse": "no interface Wireguard6 ip access-group A in"}, 0, 1, 1, "Wireguard6", "", "{}"},
+		{"parse no interface X настройка отсутствующего", map[string]any{"parse": "no interface Wireguard6 ip access-group A in"}, 0, 1, 3, "Wireguard6", "", "{}"},
 		{"parse access-list", map[string]any{"parse": "access-list _WEBADMIN_x permit ip any any"}, 0, 0, 0, "Wireguard0", "", "{}"},
 		{"system-name отсутствующего", map[string]any{"show": map[string]any{"interface": map[string]any{"system-name": map[string]any{"name": "Wireguard7"}}}}, 1, 0, 0, "", "Wireguard7", "6553619"},
 		{"system-name присутствующего", map[string]any{"show": map[string]any{"interface": map[string]any{"system-name": map[string]any{"name": "Wireguard0"}}}}, 0, 0, 0, "Wireguard0", "", `"system-name":"nwg0"`},
 		{"to-interface на отсутствующий", map[string]any{"ip": map[string]any{"static": map[string]any{"interface": "Wireguard0", "to-interface": "OpkgTun9"}}}, 1, 0, 0, "", "OpkgTun9", "no such interface: OpkgTun9."},
 		{"ссылка на присутствующий", map[string]any{"ip": map[string]any{"route": map[string]any{"default": true, "interface": "Wireguard0"}}}, 0, 0, 0, "", "", "{}"},
 		{"пакет", []any{transport.ShowInterface("Wireguard7", nil), iface("Wireguard3", map[string]any{"up": false}),
-			map[string]any{"ip": map[string]any{"nat": []any{map[string]any{"interface": "OpkgTun4"}}}}}, 2, 1, 1, "Wireguard3", "", `[{"show"`},
+			map[string]any{"ip": map[string]any{"nat": []any{map[string]any{"interface": "OpkgTun4"}}}}}, 2, 1, 3, "Wireguard3", "", `[{"show"`},
 	}
 	for _, r := range rows {
 		t.Run(r.name, func(t *testing.T) {
