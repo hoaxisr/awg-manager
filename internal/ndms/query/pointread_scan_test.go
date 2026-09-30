@@ -144,8 +144,9 @@ var zeroProofVarExceptions = map[string]int{
 // имя, но нулевое значение компилятор пропускает — с ним команда уйдёт по
 // имени "". Вне query запрещены:
 //   - литерал query.Confirmed{} / query.Present{} — кроме результата return
-//     рядом с ошибкой или ok=false (идиома «значения нет»): return, где все
-//     прочие результаты nil/true, — подделка успеха и тоже нарушение;
+//     рядом с ошибкой или ok=false (идиома «значения нет»): return с false
+//     среди результатов или с последним результатом не nil; иначе
+//     (`…, nil`, `…, true, nil`, `…, "", nil`) — подделка успеха;
 //   - var x query.Confirmed / query.Present — кроме zeroProofVarExceptions.
 //
 // Алиас импорта (ndmsquery и др.) учитывается.
@@ -163,15 +164,19 @@ func TestProofs_NotForgedOutsideQuery(t *testing.T) {
 			if !ok {
 				return true
 			}
+			// Отказ: среди результатов есть false (ok=false) или последний
+			// результат — не nil (ошибка). `return query.Confirmed{}, "", nil`
+			// — подделка успеха.
 			failing := false
 			for _, r := range ret.Results {
-				if id, ok := r.(*ast.Ident); ok && (id.Name == "nil" || id.Name == "true") {
-					continue
+				if id, ok := r.(*ast.Ident); ok && id.Name == "false" {
+					failing = true
 				}
-				if lit, ok := r.(*ast.CompositeLit); ok && proofType(lit.Type, alias) != "" {
-					continue
+			}
+			if n := len(ret.Results); n > 0 {
+				if id, ok := ret.Results[n-1].(*ast.Ident); !ok || id.Name != "nil" {
+					failing = true
 				}
-				failing = true
 			}
 			if failing {
 				for _, r := range ret.Results {
@@ -310,38 +315,47 @@ func TestConfirmed_NotStoredInStructs(t *testing.T) {
 	}
 }
 
-// kernelNameCallers — единственное место, где команда по интерфейсу идёт
-// по голому имени (F546, R17): на OS4 туннель — имя ядра awgm<N>, записи в
-// списке NDMS у него нет, подтверждать нечем.
+// kernelNameCallers — где можно обращаться к Set/ClearDNSByKernelName
+// (команда по голому имени, F546, R17). Ключ — "<путь файла>:<функция>".
 var kernelNameCallers = map[string]string{
-	"internal/tunnel/ops/operator_os4.go": "DNS туннеля OS4 по имени ядра (R17)",
+	"internal/tunnel/ops/operator_os4.go:dnsByKernelName": "DNS туннеля OS4 по имени ядра awgm<N>: записи в списке NDMS нет, подтверждать нечем",
+	"internal/ndms/command/interfaces.go:SetDNS":          "Confirmed-версия делегирует в строковое тело",
+	"internal/ndms/command/interfaces.go:ClearDNS":        "то же для снятия",
 }
 
 // TestKernelNameCommands_OnlyAllowed — Set/ClearDNSByKernelName обходят
-// Confirmed; звать их можно только из перечисленных в kernelNameCallers
-// файлов. Объявление в internal/ndms/command — не вызов.
+// Confirmed; любое обращение к ним (вызов или значение метода) вне функций
+// из kernelNameCallers — нарушение. Объявления обращением не считаются.
 func TestKernelNameCommands_OnlyAllowed(t *testing.T) {
 	used := map[string]bool{}
 	for _, f := range prodGoFiles(t, true) {
-		rel := filepath.ToSlash(f.rel)
-		for i, line := range strings.Split(string(f.data), "\n") {
-			if !strings.Contains(line, "ByKernelName(") || strings.HasPrefix(strings.TrimSpace(line), "//") {
-				continue
+		if !strings.Contains(string(f.data), "ByKernelName") {
+			continue
+		}
+		file, fset, _ := parseProd(t, f)
+		for _, decl := range file.Decls {
+			key := filepath.ToSlash(f.rel) + ":"
+			if fd, ok := decl.(*ast.FuncDecl); ok {
+				key += fd.Name.Name
 			}
-			if rel == "internal/ndms/command/interfaces.go" &&
-				(strings.HasPrefix(line, "func ") || strings.Contains(line, "return c.")) {
-				continue // объявления и делегирование SetDNS/ClearDNS
-			}
-			if _, ok := kernelNameCallers[rel]; ok {
-				used[rel] = true
-				continue
-			}
-			t.Errorf("%s:%d: команда по голому имени — только по query.Confirmed (исключения: kernelNameCallers)", rel, i+1)
+			ast.Inspect(decl, func(n ast.Node) bool {
+				sel, ok := n.(*ast.SelectorExpr)
+				if !ok || (sel.Sel.Name != "SetDNSByKernelName" && sel.Sel.Name != "ClearDNSByKernelName") {
+					return true
+				}
+				if _, ok := kernelNameCallers[key]; ok {
+					used[key] = true
+					return true
+				}
+				t.Errorf("%s: %s — команда по голому имени, только по query.Confirmed (исключения: kernelNameCallers)",
+					fset.Position(sel.Pos()), sel.Sel.Name)
+				return true
+			})
 		}
 	}
-	for rel := range kernelNameCallers {
-		if !used[rel] {
-			t.Errorf("исключение %s больше не используется — убрать из kernelNameCallers", rel)
+	for key := range kernelNameCallers {
+		if !used[key] {
+			t.Errorf("исключение %s больше не используется — убрать из kernelNameCallers", key)
 		}
 	}
 }
