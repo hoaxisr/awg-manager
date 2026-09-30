@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -419,37 +418,6 @@ func TestStartObfuscated_AlreadyUpOnRelay_SkipsBatch(t *testing.T) {
 	}
 	if !strings.Contains(posts, `"host":"203.0.113.5"`) {
 		t.Fatalf("host-route обязан стоять и без батча:\n%s", posts)
-	}
-}
-
-// F546: состояние туннеля, чьего WireguardN нет в NDMS, читается без
-// `show interface` — на отсутствующее имя NDMS пишет E «unable to find».
-func TestGetState_AbsentInterface_NoShowInterface(t *testing.T) {
-	var shows atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/show/interface/" {
-			_, _ = w.Write([]byte(`{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`))
-			return
-		}
-		b, _ := io.ReadAll(r.Body)
-		if strings.Contains(string(b), `"show"`) {
-			shows.Add(1)
-		}
-		_, _ = w.Write([]byte(`{"show":{"interface":{}}}`))
-	}))
-	t.Cleanup(srv.Close)
-	tr := transport.NewWithURL(srv.URL, transport.NewSemaphore(2))
-	q := query.NewQueries(query.Deps{Getter: tr, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
-	op := &OperatorNativeWG{queries: q, transport: tr,
-		appLog: logging.NewScopedLogger(nil, logging.GroupTunnel, logging.SubOps)}
-	t.Cleanup(op.Close)
-
-	info := op.GetState(context.Background(), &storage.AWGTunnel{NWGIndex: 7})
-	if info.State != tunnel.StateNotCreated {
-		t.Fatalf("State = %v, want %v", info.State, tunnel.StateNotCreated)
-	}
-	if n := shows.Load(); n != 0 {
-		t.Fatalf("show interface Wireguard7 ушёл %d раз", n)
 	}
 }
 

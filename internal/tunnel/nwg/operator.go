@@ -350,8 +350,7 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	// Refresh the interface cache so the next nextFreeIndex sees this slot
 	// as occupied. Without it, back-to-back creates (no Start in between)
 	// re-read the stale map and allocate the same index — issue #255.
-	o.queries.Interfaces.OnCreated(ndmsName)
-	if err := o.queries.Interfaces.ReconcilePending(ctx); err != nil {
+	if _, err := o.queries.Interfaces.Refresh(ctx, ndmsName); err != nil {
 		o.appLog.Warn("create", ndmsName, "interface cache refresh failed: "+err.Error())
 	}
 
@@ -761,7 +760,7 @@ func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel
 
 	// 5. Free the slot in the interface cache so the index can be reused
 	// without an AWGM restart — issue #255.
-	o.queries.Interfaces.OnDestroyed(names.NDMSName)
+	o.queries.Interfaces.Forget(names.NDMSName)
 
 	o.appLog.Info("delete", names.NDMSName, "tunnel deleted")
 	return nil

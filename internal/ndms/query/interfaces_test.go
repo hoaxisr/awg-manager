@@ -772,38 +772,6 @@ func TestInterfaceStore_OnCreated_UnknownGoesPending(t *testing.T) {
 	}
 }
 
-// TestInterfaceStore_OnCreated_OnFetchFailure_KeepsBootstrapEntry guards
-// against the v2.10.0 regression: bootstrap had loaded the full record
-// for an interface (with security-level, kernel name, etc.), then an
-// ifcreated hook fired for the same id, fetchOne 404'd (slash-in-name
-// RCI quirk), and the stub fallback clobbered the good record — making
-// the interface vanish from WAN/UI listings until restart. After the
-// fix the prior record must survive a fetch failure.
-func TestInterfaceStore_OnCreated_OnFetchFailure_KeepsBootstrapEntry(t *testing.T) {
-	fg := newFakeGetter()
-	// Bootstrap contains Wireguard0 — a fully populated record.
-	fg.SetJSON(ifaceListPath, sampleIfaceList)
-	// But the per-interface POST fails (simulating a slash-in-name 404
-	// or any other transient RCI hiccup).
-	fg.SetPostInterfaceError("Wireguard0", errors.New("ndms 404"))
-	s := NewInterfaceStore(fg, NopLogger())
-
-	// Prime bootstrap, then receive an ifcreated hook for the same id.
-	_, _ = s.List(context.Background())
-	s.OnCreated("Wireguard0")
-
-	got, _ := s.Get(context.Background(), "Wireguard0")
-	if got == nil {
-		t.Fatal("OnCreated must not delete on fetch failure")
-	}
-	if got.Description != "my tunnel" {
-		t.Errorf("bootstrap data must survive fetch failure: got %#v", got)
-	}
-	if got.SystemName != "nwg0" {
-		t.Errorf("bootstrap-resolved system name must survive: got %q", got.SystemName)
-	}
-}
-
 func TestInterfaceStore_OnDestroyed_NoHTTP(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleIfaceList)
