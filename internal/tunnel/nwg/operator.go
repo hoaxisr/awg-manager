@@ -845,13 +845,14 @@ func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel
 }
 
 // isMissingInterface — NDMS ответил на снос «интерфейса нет»: снят до нас.
+// Фраза — одна на проект, command.TolerateMissingInterface.
 func isMissingInterface(err error) bool {
 	var be *transport.BatchError
 	if !errors.As(err, &be) {
 		return false
 	}
 	for _, f := range be.Failures {
-		if strings.Contains(strings.ToLower(f.Message), "unable to find interface") {
+		if command.TolerateMissingInterface(f.Message) {
 			return true
 		}
 	}
