@@ -1203,6 +1203,19 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 		amneziaCountry = &normalized
 	}
 
+	// Доказательство интерфейса nativewg — ДО сохранения записи (F546): список
+	// не прочитан — отказ, запись прежняя и в NDMS не уходит ничего; иначе
+	// замена молча разошлась бы с роутером под видом успеха. Интерфейс снят —
+	// запись сохраняется, синхронизация ниже пропускается (как и было).
+	var iface query.Confirmed
+	var nwgIfaceErr error
+	if s.nwgOperator != nil && s.isNativeWG(stored) {
+		iface, nwgIfaceErr = s.nwgOperator.RequireIface(ctx, stored)
+		if nwgIfaceErr != nil && !errors.Is(nwgIfaceErr, tunnel.ErrInterfaceGone) {
+			return fmt.Errorf("ndms: %w", nwgIfaceErr)
+		}
+	}
+
 	// Save to storage. Мутатор присваивает уже вычисленные выше поля свежей
 	// записи под локом — сброс runtime-полей здесь осознанная часть замены
 	// конфига, а не затирание чужой параллельной правки.
@@ -1254,10 +1267,10 @@ func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, 
 				s.logWarn("replace-config", tunnelID, "Stop before peer sync failed: "+err.Error())
 			}
 		}
-		// Один список на все синхронизации ниже. Интерфейс снят или список
-		// не прочитан — в NDMS не шлём ничего (F546); запись уже сохранена.
-		if iface, err := s.nwgOperator.RequireIface(ctx, stored); err != nil {
-			s.logWarn("replace-config", tunnelID, "NDMS sync skipped: "+err.Error())
+		// Один список на все синхронизации ниже (взят до сохранения). Интерфейс
+		// снят — в NDMS не шлём ничего (F546); запись уже сохранена.
+		if nwgIfaceErr != nil {
+			s.logWarn("replace-config", tunnelID, "NDMS sync skipped: "+nwgIfaceErr.Error())
 		} else {
 			if !wasNativeRunning && oldDNS != stored.Interface.DNS {
 				// Tunnel was not running — handler skipped Stop (which would
