@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -202,5 +203,100 @@ func TestFakeNDMS_CreateOpkgTunOverDevice_CAndE(t *testing.T) {
 	}
 	if !f.Has("OpkgTun3") || len(f.Created) != 1 || f.Created[0] != "OpkgTun3" || f.C != 2 || f.E != 2 || f.Phantoms != 0 {
 		t.Fatalf("без устройства: Has=%v Created=%v C=%d E=%d Phantoms=%d", f.Has("OpkgTun3"), f.Created, f.C, f.E, f.Phantoms)
+	}
+}
+
+// Поля сверх toWire (SetDetail) отдаются одинаково в списке и в точечном
+// ответе — как у NDMS, где ключи записи идентичны (стенд 30.09).
+func TestFakeNDMS_SetDetail_SameBytesInListAndPoint(t *testing.T) {
+	ctx := context.Background()
+	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"})
+	f.SetDetail("Wireguard0", json.RawMessage(`{"wireguard":{"peer":[{"rxbytes":7}]}}`))
+
+	rawList, err := f.GetRaw(ctx, "/show/interface/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(rawList, &list); err != nil {
+		t.Fatal(err)
+	}
+	rawOne, err := f.Post(ctx, transport.ShowInterface("Wireguard0", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var one struct {
+		Show struct {
+			Interface map[string]json.RawMessage `json:"interface"`
+		} `json:"show"`
+	}
+	if err := json.Unmarshal(rawOne, &one); err != nil {
+		t.Fatal(err)
+	}
+	inList, inOne := string(list["Wireguard0"]["wireguard"]), string(one.Show.Interface["wireguard"])
+	if inList == "" || inList != inOne || !strings.Contains(inList, `"rxbytes":7`) {
+		t.Fatalf("wireguard: список %s, точечно %s", inList, inOne)
+	}
+	if string(list["Wireguard0"]["type"]) != `"Wireguard"` {
+		t.Fatalf("поля toWire потеряны: %s", rawList)
+	}
+}
+
+// Полное дерево rc — карта по присутствующим, без E; по имени отсутствующего — E.
+func TestFakeNDMS_RCList_NoEForAbsentNames(t *testing.T) {
+	ctx := context.Background()
+	f := NewFakeNDMS(
+		ndms.Interface{ID: "Wireguard0", Type: "Wireguard"},
+		ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
+	f.SetRC("Wireguard0", json.RawMessage(`{"wireguard":{"listen-port":51820}}`))
+	f.SetRC("Wireguard9", json.RawMessage(`{"description":"снят"}`))
+
+	raw, err := f.GetRaw(ctx, "/show/rc/interface/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tree map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &tree); err != nil {
+		t.Fatal(err)
+	}
+	if len(tree) != 2 || string(tree["Wireguard1"]) != `{}` || !strings.Contains(string(tree["Wireguard0"]), "51820") {
+		t.Fatalf("дерево: %s", raw)
+	}
+	if f.RCListCalls() != 1 || f.E != 0 {
+		t.Fatalf("RCListCalls=%d E=%d, want 1/0", f.RCListCalls(), f.E)
+	}
+	if _, err := f.GetRaw(ctx, "/show/rc/interface/Nope"); err == nil || f.E != 1 {
+		t.Fatalf("по имени отсутствующего: err=%v E=%d", err, f.E)
+	}
+}
+
+func TestFakeNDMS_RC_ByNameServesSetRC(t *testing.T) {
+	ctx := context.Background()
+	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
+	f.SetRC("Wireguard0", json.RawMessage(`{"description":"d","wireguard":{"asc":{"jc":4}}}`))
+
+	raw, err := f.GetRaw(ctx, "/show/rc/interface/Wireguard0")
+	if err != nil || !strings.Contains(string(raw), `"description":"d"`) {
+		t.Fatalf("rc: err=%v raw=%s", err, raw)
+	}
+	raw, err = f.GetRaw(ctx, "/show/rc/interface/Wireguard0/wireguard/asc")
+	if err != nil || string(raw) != `{"jc":4}` {
+		t.Fatalf("asc: err=%v raw=%s", err, raw)
+	}
+	if f.E != 0 || f.RCListCalls() != 0 {
+		t.Fatalf("E=%d RCListCalls=%d", f.E, f.RCListCalls())
+	}
+}
+
+func TestFakeNDMS_FailRCList(t *testing.T) {
+	ctx := context.Background()
+	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
+	f.FailRCList(errors.New("rci down"))
+	if _, err := f.GetRaw(ctx, "/show/rc/interface/"); err == nil || f.RCListCalls() != 1 {
+		t.Fatalf("err=%v RCListCalls=%d", err, f.RCListCalls())
+	}
+	f.FailRCList(nil)
+	if _, err := f.GetRaw(ctx, "/show/rc/interface/"); err != nil || f.RCListCalls() != 2 {
+		t.Fatalf("после снятия: err=%v RCListCalls=%d", err, f.RCListCalls())
 	}
 }

@@ -19,14 +19,18 @@ import (
 // Реализует Getter и command.Poster. Для тестов этого и других пакетов (тот
 // же приём, что FakeGetter). Поля-счётчики читать после вызовов, не во время.
 type FakeNDMS struct {
-	mu        sync.Mutex
-	ifaces    map[string]ndms.Interface
-	listCalls int
-	listErr   error
-	hooks     []FakeHook
-	expect    map[string]bool
-	inList    func()
-	netdev    map[string]bool // kernel-устройства, видимые «прошивке» (SetNetdev)
+	mu          sync.Mutex
+	ifaces      map[string]ndms.Interface
+	listCalls   int
+	listErr     error
+	hooks       []FakeHook
+	expect      map[string]bool
+	inList      func()
+	netdev      map[string]bool            // kernel-устройства, видимые «прошивке» (SetNetdev)
+	detail      map[string]json.RawMessage // поля записи сверх toWire (SetDetail)
+	rc          map[string]json.RawMessage // объект rc интерфейса (SetRC)
+	rcListCalls int
+	rcListErr   error
 
 	E        int      // точечное чтение отсутствующего; ссылка на отсутствующий из ip route/nat/static/name-server/policy/hotspot/dns-proxy
 	Phantoms int      // `interface X …` по отсутствующему X, не объявленному ExpectCreate: X создан
@@ -92,6 +96,43 @@ func (f *FakeNDMS) SetNetdev(name string, present bool) {
 	f.netdev[name] = present
 }
 
+// SetDetail — поля записи интерфейса сверх toWire (`wireguard`, `summary`…):
+// список и точечный ответ отдают слияние toWire ∪ extra (ключи extra
+// побеждают) — те же байты в обеих формах, как у NDMS.
+func (f *FakeNDMS) SetDetail(name string, extra json.RawMessage) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.detail == nil {
+		f.detail = make(map[string]json.RawMessage)
+	}
+	f.detail[name] = extra
+}
+
+// SetRC — объект rc интерфейса name (форма /show/rc/interface/<name>).
+func (f *FakeNDMS) SetRC(name string, rc json.RawMessage) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.rc == nil {
+		f.rc = make(map[string]json.RawMessage)
+	}
+	f.rc[name] = rc
+}
+
+// RCListCalls — сколько раз читали полное дерево rc (/show/rc/interface/),
+// включая отказанные по FailRCList.
+func (f *FakeNDMS) RCListCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.rcListCalls
+}
+
+// FailRCList — следующие чтения полного дерева rc отвечают err; nil снимает.
+func (f *FakeNDMS) FailRCList(err error) {
+	f.mu.Lock()
+	f.rcListErr = err
+	f.mu.Unlock()
+}
+
 func (f *FakeNDMS) Has(name string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -139,9 +180,23 @@ func (f *FakeNDMS) Get(ctx context.Context, path string, dst any) error {
 	return json.Unmarshal(raw, dst)
 }
 
-// GetRaw: "/show/interface/" — список; "/show/interface/X" и
-// "/show/rc/interface/X…" — точечные чтения: отсутствующий X → E++ и 404.
+// GetRaw: "/show/interface/" — список; "/show/rc/interface/" — полное
+// дерево rc (карта id → rc по присутствующим, E не растёт); "/show/interface/X"
+// и "/show/rc/interface/X…" — точечные чтения: отсутствующий X → E++ и 404.
 func (f *FakeNDMS) GetRaw(ctx context.Context, path string) ([]byte, error) {
+	if path == "/show/rc/interface/" {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.rcListCalls++
+		if f.rcListErr != nil {
+			return nil, f.rcListErr
+		}
+		out := make(map[string]json.RawMessage, len(f.ifaces))
+		for id := range f.ifaces {
+			out[id] = f.rcOf(id)
+		}
+		return json.Marshal(out)
+	}
 	if path == "/show/interface/" {
 		f.mu.Lock()
 		raw, err := f.list()
@@ -161,16 +216,57 @@ func (f *FakeNDMS) GetRaw(ctx context.Context, path string) ([]byte, error) {
 	if !ok {
 		return nil, errors.New("FakeNDMS: нет модели для пути " + path)
 	}
-	name, _, _ := strings.Cut(rest, "/")
+	name, suffix, _ := strings.Cut(rest, "/")
 	iface, present := f.ifaces[name]
 	if !present {
 		f.E++
 		return nil, &transport.HTTPError{Method: "GET", Path: path, Status: 404}
 	}
 	if strings.HasPrefix(path, "/show/rc/") {
-		return []byte(`{}`), nil
+		if suffix == "wireguard/asc" {
+			var rc struct {
+				Wireguard struct {
+					ASC json.RawMessage `json:"asc"`
+				} `json:"wireguard"`
+			}
+			if json.Unmarshal(f.rcOf(name), &rc) == nil && rc.Wireguard.ASC != nil {
+				return rc.Wireguard.ASC, nil
+			}
+		}
+		return f.rcOf(name), nil
 	}
-	return json.Marshal(toWire(iface))
+	return f.wire(iface)
+}
+
+// rcOf — rc интерфейса name; без SetRC — пустой объект.
+func (f *FakeNDMS) rcOf(name string) json.RawMessage {
+	if rc, ok := f.rc[name]; ok {
+		return rc
+	}
+	return json.RawMessage(`{}`)
+}
+
+// wire — запись интерфейса как у NDMS: toWire, поверх — поля SetDetail.
+func (f *FakeNDMS) wire(iface ndms.Interface) (json.RawMessage, error) {
+	b, err := json.Marshal(toWire(iface))
+	if err != nil {
+		return nil, err
+	}
+	extra, ok := f.detail[iface.ID]
+	if !ok {
+		return b, nil
+	}
+	var fields, over map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(extra, &over); err != nil {
+		return nil, err
+	}
+	for k, v := range over {
+		fields[k] = v
+	}
+	return json.Marshal(fields)
 }
 
 func (f *FakeNDMS) Post(ctx context.Context, payload any) (json.RawMessage, error) {
@@ -276,9 +372,13 @@ func (f *FakeNDMS) list() ([]byte, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	out := make(map[string]ifaceWire, len(f.ifaces))
+	out := make(map[string]json.RawMessage, len(f.ifaces))
 	for id, iface := range f.ifaces {
-		out[id] = toWire(iface)
+		w, err := f.wire(iface)
+		if err != nil {
+			return nil, err
+		}
+		out[id] = w
 	}
 	return json.Marshal(out)
 }
@@ -289,7 +389,7 @@ func (f *FakeNDMS) showOne(name string) (json.RawMessage, error) {
 		f.E++
 		return json.RawMessage(`{"show":{"interface":{"status":[{"status":"error","code":"` + ndmsUnableToFindCode + `","message":"unable to find"}]}}}`), nil
 	}
-	w, err := json.Marshal(toWire(iface))
+	w, err := f.wire(iface)
 	if err != nil {
 		return nil, err
 	}
