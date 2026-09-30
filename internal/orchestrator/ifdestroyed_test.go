@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/wan"
@@ -152,5 +153,57 @@ func TestHandleEvent_IfDestroyed_ForeignName_NoProbe(t *testing.T) {
 	}
 	if op.stops.Load() != 0 {
 		t.Fatal("чужая запись остановила туннель")
+	}
+}
+
+// R31, гонка check-then-act: список ответил «записи нет», и до Stop успевает
+// Restart, пересоздающий запись. Проверка и остановка идут под per-tunnel
+// замком, поэтому Restart ждёт: сначала законная остановка по снятой записи,
+// потом Restart поднимает туннель и возвращает Enabled. Проба вне замка дала
+// бы обратный порядок — устаревший хук остановил бы пересозданный туннель.
+func TestHandleEvent_IfDestroyed_ProbeAndStopAtomicWithRestart(t *testing.T) {
+	o, op, store := runningKernelOrch(t)
+	o.state.anyWANUpFn = func() bool { return true }
+	probeEntered, probeRelease := make(chan struct{}), make(chan struct{})
+	o.SetRecordPresenceProbe(func(context.Context, string) (bool, error) {
+		present := op.coldStarts.Load() > 0 // запись есть, если её пересоздал ColdStart
+		close(probeEntered)
+		<-probeRelease
+		return present, nil
+	})
+
+	destroyedDone := make(chan error, 1)
+	go func() {
+		destroyedDone <- o.HandleEvent(context.Background(), Event{Type: EventNDMSIfDestroyed, NDMSName: "OpkgTun10"})
+	}()
+	<-probeEntered
+
+	restartDone := make(chan error, 1)
+	go func() {
+		restartDone <- o.HandleEvent(context.Background(), Event{Type: EventRestart, Tunnel: "awg10"})
+	}()
+	// Замок держит ifdestroyed — Restart обязан ждать. Если он прошёл,
+	// значит проба вне замка; тогда даём ему закончить до ответа пробы.
+	select {
+	case err := <-restartDone:
+		restartDone <- err
+	case <-time.After(time.Second):
+	}
+	close(probeRelease)
+	if err := <-destroyedDone; err != nil {
+		t.Fatalf("ifdestroyed: %v", err)
+	}
+	if err := <-restartDone; err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+
+	if !mustGet(t, store, "awg10").Enabled {
+		t.Fatal("пересозданный туннель остановлен устаревшим ifdestroyed: Enabled=false")
+	}
+	o.mu.Lock()
+	running := o.state.tunnels["awg10"].Running
+	o.mu.Unlock()
+	if !running || op.coldStarts.Load() != 1 {
+		t.Fatalf("running=%v coldStarts=%d, want true/1", running, op.coldStarts.Load())
 	}
 }

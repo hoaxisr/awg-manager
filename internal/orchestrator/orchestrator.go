@@ -451,35 +451,52 @@ func (o *Orchestrator) settleConfDisabled(ctx context.Context, event Event) bool
 	return false
 }
 
-// settleIfDestroyed — перепроверка ifdestroyed записи нашего работающего
-// kernel-туннеля свежим списком: хук опаздывает (стенд — до ~7 с), и за это
-// окно Restart/ColdStart мог уже пересоздать запись — остановка по устаревшему
-// хуку молча сняла бы Enabled. Запись есть — хук устарел, игнорируем. Список
-// не прочитан — тоже НЕ останавливаем (R31): остановка на неопределённости
-// выключила бы туннель пользователя без его ведома; хуже, чем пропустить
-// снятие, которое вскроет следующий Stop/Start (Stop снесёт устройство, старт
-// пересоздаст запись). Чужие и остановленные туннели — без чтения списка:
-// decide для них всё равно ничего не делает.
-func (o *Orchestrator) settleIfDestroyed(ctx context.Context, event Event) bool {
+// handleIfDestroyed — ifdestroyed записи нашего работающего kernel-туннеля.
+// Хук опаздывает (стенд — до ~7 с), и за это окно Restart/ColdStart мог уже
+// пересоздать запись — остановка по устаревшему хуку молча сняла бы Enabled.
+// Поэтому проверка свежим списком, решение и остановка идут ПОД per-tunnel
+// замком — тем же, которым сериализованы Start/Restart/ColdStart: запись не
+// может появиться между проверкой и Stop. Запись есть — хук устарел,
+// игнорируем. Список не прочитан — тоже НЕ останавливаем (R31): остановка на
+// неопределённости выключила бы туннель пользователя без его ведома; хуже,
+// чем пропустить снятие, которое вскроет следующий Stop/Start (Stop снесёт
+// устройство, старт пересоздаст запись). Чужие и остановленные туннели — без
+// замка и без чтения списка: decide для них ничего не делает.
+func (o *Orchestrator) handleIfDestroyed(ctx context.Context, event Event) error {
 	o.mu.Lock()
 	t := o.state.findByNDMSName(event.NDMSName)
+	o.mu.Unlock()
+	if t == nil || t.Backend != "kernel" || !t.Running {
+		return nil
+	}
+	tunnelID := t.ID
+	if err := o.lockTunnel(ctx, tunnelID, event.Type.String()); err != nil {
+		return err
+	}
+	defer o.unlockTunnel(tunnelID)
+
+	o.mu.Lock()
 	probe := o.recordPresent
 	o.mu.Unlock()
-	if t == nil || t.Backend != "kernel" || !t.Running || probe == nil {
-		return true
+	if probe != nil {
+		present, err := probe(ctx, event.NDMSName)
+		if err != nil {
+			o.appLog.Warn("ifdestroyed", tunnelID,
+				fmt.Sprintf("запись %s: список NDMS не прочитан (%v) — туннель не останавливаем", event.NDMSName, err))
+			return nil
+		}
+		if present {
+			o.appLog.Info("ifdestroyed", tunnelID,
+				fmt.Sprintf("запись %s уже есть в NDMS — хук ifdestroyed устарел, игнорируем", event.NDMSName))
+			return nil
+		}
 	}
-	present, err := probe(ctx, event.NDMSName)
-	if err != nil {
-		o.appLog.Warn("ifdestroyed", t.ID,
-			fmt.Sprintf("запись %s: список NDMS не прочитан (%v) — туннель не останавливаем", event.NDMSName, err))
-		return false
+	if event.Now.IsZero() {
+		event.Now = o.nowFn()
 	}
-	if present {
-		o.appLog.Info("ifdestroyed", t.ID,
-			fmt.Sprintf("запись %s уже есть в NDMS — хук ifdestroyed устарел, игнорируем", event.NDMSName))
-		return false
-	}
-	return true
+	// decide — под тем же замком: Running мог смениться, пока ждали замок.
+	actions, _, _ := o.decideLocked(event)
+	return o.executeActions(ctx, actions)
 }
 
 // settleConfRunning — зеркало settleConfDisabled для грани conf=running.
@@ -619,8 +636,8 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 		}
 	}
 
-	if event.Type == EventNDMSIfDestroyed && !o.settleIfDestroyed(ctx, event) {
-		return nil
+	if event.Type == EventNDMSIfDestroyed {
+		return o.handleIfDestroyed(ctx, event)
 	}
 
 	if event.Type == EventNDMSHook && event.Layer == "conf" {
