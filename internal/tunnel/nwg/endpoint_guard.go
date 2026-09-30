@@ -318,7 +318,7 @@ func (o *OperatorNativeWG) guardSweep(ctx context.Context) {
 			if cur, ok := o.guardGet(id); !ok || cur.pubkey != e.pubkey || cur.iface != e.iface || cur.spec != e.spec {
 				continue
 			}
-			if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerEndpoint(e.name, e.pubkey, expected)); err != nil {
+			if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerEndpointLegacy(e.name, e.pubkey, expected)); err != nil {
 				o.appLog.Warn("endpoint-guard", e.name, "обновление endpoint в NDMS не удалось: "+err.Error())
 				continue
 			}

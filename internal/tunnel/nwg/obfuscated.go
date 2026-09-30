@@ -119,9 +119,9 @@ func (o *OperatorNativeWG) startObfuscated(ctx context.Context, stored *storage.
 			o.hookNotifier.ExpectHook(names.NDMSName, "running")
 		}
 		cmds := []any{
-			payloads.CmdWireguardPeerEndpoint(names.NDMSName, stored.Peer.PublicKey, loopback),
-			payloads.CmdWireguardPeerConnect(names.NDMSName, stored.Peer.PublicKey, stored.ISPInterface),
-			payloads.CmdInterfaceUp(names.NDMSName, true),
+			payloads.CmdWireguardPeerEndpointLegacy(names.NDMSName, stored.Peer.PublicKey, loopback),
+			payloads.CmdWireguardPeerConnectLegacy(names.NDMSName, stored.Peer.PublicKey, stored.ISPInterface),
+			payloads.CmdInterfaceUpLegacy(names.NDMSName, true),
 		}
 		if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 			_ = o.obf.Stop(stored.ID)

@@ -119,7 +119,7 @@ func (o *OperatorNativeWG) SyncAddressMTU(ctx context.Context, stored *storage.A
 func (o *OperatorNativeWG) SyncPrivateKey(ctx context.Context, stored *storage.AWGTunnel) error {
 	ndmsName := NewNWGNames(stored.NWGIndex).NDMSName
 	cmds := []any{
-		payloads.CmdWireguardPrivateKey(ndmsName, stored.Interface.PrivateKey),
+		payloads.CmdWireguardPrivateKeyLegacy(ndmsName, stored.Interface.PrivateKey),
 		payloads.CmdSave(),
 	}
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
@@ -285,16 +285,16 @@ func (o *OperatorNativeWG) SyncPeer(ctx context.Context, stored *storage.AWGTunn
 
 	cmds := make([]any, 0, 3)
 	if previousPublicKey != "" && previousPublicKey != stored.Peer.PublicKey {
-		cmds = append(cmds, payloads.CmdWireguardPeerNo(ndmsName, previousPublicKey))
+		cmds = append(cmds, payloads.CmdWireguardPeerNoLegacy(ndmsName, previousPublicKey))
 	}
-	cmds = append(cmds, payloads.CmdWireguardPeer(ndmsName, peerCfg), payloads.CmdSave())
+	cmds = append(cmds, payloads.CmdWireguardPeerLegacy(ndmsName, peerCfg), payloads.CmdSave())
 	_, err := o.transport.PostBatch(ctx, cmds)
 	if err != nil {
 		return fmt.Errorf("sync peer: %w", err)
 	}
 
 	if stored.ISPInterface != "" {
-		if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerConnect(ndmsName, stored.Peer.PublicKey, stored.ISPInterface)); err != nil {
+		if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerConnectLegacy(ndmsName, stored.Peer.PublicKey, stored.ISPInterface)); err != nil {
 			o.appLog.Warn("sync-peer", ndmsName, "peer connect via: "+err.Error())
 		}
 	}

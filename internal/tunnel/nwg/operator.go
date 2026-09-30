@@ -221,17 +221,17 @@ func (o *OperatorNativeWG) createViaImport(ctx context.Context, stored *storage.
 
 	// Post-import settings that aren't in .conf
 	cmds := []any{
-		payloads.CmdInterfaceDescription(ndmsName, stored.Name),
-		payloads.CmdInterfaceSecurityLevel(ndmsName, "public"),
-		payloads.CmdInterfaceIPGlobal(ndmsName, true),
-		payloads.CmdInterfaceAdjustMSS(ndmsName, true),
+		payloads.CmdInterfaceDescriptionLegacy(ndmsName, stored.Name),
+		payloads.CmdInterfaceSecurityLevelLegacy(ndmsName, "public"),
+		payloads.CmdInterfaceIPGlobalLegacy(ndmsName, true),
+		payloads.CmdInterfaceAdjustMSSLegacy(ndmsName, true),
 		payloads.CmdSave(),
 	}
 
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		// Cleanup on failure
 		cleanup := []any{
-			payloads.CmdInterfaceDelete(ndmsName),
+			payloads.CmdInterfaceDeleteLegacy(ndmsName),
 			payloads.CmdSave(),
 		}
 		_, _ = o.transport.PostBatch(ctx, cleanup)
@@ -269,13 +269,13 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	ipv4Addr, ipv4Mask := splitAddressMask(extractIPv4(stored.Interface.Address))
 	cmds := []any{
 		payloads.CmdInterfaceCreate(ndmsName),
-		payloads.CmdInterfaceDescription(ndmsName, stored.Name),
-		payloads.CmdInterfaceSecurityLevel(ndmsName, "public"),
-		payloads.CmdInterfaceIPAddress(ndmsName, ipv4Addr, ipv4Mask),
-		payloads.CmdInterfaceMTU(ndmsName, stored.Interface.MTU),
-		payloads.CmdInterfaceAdjustMSS(ndmsName, true),
-		payloads.CmdInterfaceIPGlobal(ndmsName, true),
-		payloads.CmdWireguardPrivateKey(ndmsName, stored.Interface.PrivateKey),
+		payloads.CmdInterfaceDescriptionLegacy(ndmsName, stored.Name),
+		payloads.CmdInterfaceSecurityLevelLegacy(ndmsName, "public"),
+		payloads.CmdInterfaceIPAddressLegacy(ndmsName, ipv4Addr, ipv4Mask),
+		payloads.CmdInterfaceMTULegacy(ndmsName, stored.Interface.MTU),
+		payloads.CmdInterfaceAdjustMSSLegacy(ndmsName, true),
+		payloads.CmdInterfaceIPGlobalLegacy(ndmsName, true),
+		payloads.CmdWireguardPrivateKeyLegacy(ndmsName, stored.Interface.PrivateKey),
 	}
 
 	// DNS
@@ -287,14 +287,14 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 			}
 		}
 		if len(servers) > 0 {
-			cmds = append(cmds, payloads.CmdInterfaceDNS(ndmsName, servers))
+			cmds = append(cmds, payloads.CmdInterfaceDNSLegacy(ndmsName, servers))
 		}
 	}
 
 	// IPv6 if present
 	ipv6Addr := extractIPv6(stored.Interface.Address)
 	if ipv6Addr != "" {
-		cmds = append(cmds, payloads.CmdInterfaceIPv6Address(ndmsName, ipv6Addr))
+		cmds = append(cmds, payloads.CmdInterfaceIPv6AddressLegacy(ndmsName, ipv6Addr))
 	}
 
 	// Peer. Endpoint на этапе create — временный (Start переставит его на
@@ -322,12 +322,12 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	if stored.Peer.PresharedKey != "" {
 		peerCfg.PresharedKey = stored.Peer.PresharedKey
 	}
-	cmds = append(cmds, payloads.CmdWireguardPeer(ndmsName, peerCfg), payloads.CmdSave())
+	cmds = append(cmds, payloads.CmdWireguardPeerLegacy(ndmsName, peerCfg), payloads.CmdSave())
 
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		// Cleanup on failure
 		cleanup := []any{
-			payloads.CmdInterfaceDelete(ndmsName),
+			payloads.CmdInterfaceDeleteLegacy(ndmsName),
 			payloads.CmdSave(),
 		}
 		_, _ = o.transport.PostBatch(ctx, cleanup)
@@ -510,9 +510,9 @@ func (o *OperatorNativeWG) startNative(ctx context.Context, stored *storage.AWGT
 		rciEndpoint = ndmsEndpointPlaceholder
 	}
 	cmds := []any{
-		payloads.CmdWireguardPeerEndpoint(names.NDMSName, pubkey, rciEndpoint),
-		payloads.CmdWireguardPeerConnect(names.NDMSName, pubkey, stored.ISPInterface),
-		payloads.CmdInterfaceUp(names.NDMSName, true),
+		payloads.CmdWireguardPeerEndpointLegacy(names.NDMSName, pubkey, rciEndpoint),
+		payloads.CmdWireguardPeerConnectLegacy(names.NDMSName, pubkey, stored.ISPInterface),
+		payloads.CmdInterfaceUpLegacy(names.NDMSName, true),
 	}
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		return fmt.Errorf("start native: %w", err)
@@ -638,9 +638,9 @@ func (o *OperatorNativeWG) startProxy(ctx context.Context, stored *storage.AWGTu
 
 	// Batch: set proxy endpoint + connect + up
 	cmds := []any{
-		payloads.CmdWireguardPeerEndpoint(names.NDMSName, pubkey, proxyEndpoint),
-		payloads.CmdWireguardPeerConnect(names.NDMSName, pubkey, stored.ISPInterface),
-		payloads.CmdInterfaceUp(names.NDMSName, true),
+		payloads.CmdWireguardPeerEndpointLegacy(names.NDMSName, pubkey, proxyEndpoint),
+		payloads.CmdWireguardPeerConnectLegacy(names.NDMSName, pubkey, stored.ISPInterface),
+		payloads.CmdInterfaceUpLegacy(names.NDMSName, true),
 	}
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		_ = o.kmod.RemoveTunnel(stored.ID)
@@ -681,7 +681,7 @@ func (o *OperatorNativeWG) SuspendProxy(ctx context.Context, stored *storage.AWG
 	// 2. Disconnect peer — NDMS sets link: pending, connected: no.
 	// conf stays "running" so NDMS knows the tunnel wants to be up.
 	cmds := []any{
-		payloads.CmdWireguardPeerDisconnect(names.NDMSName, pubkey),
+		payloads.CmdWireguardPeerDisconnectLegacy(names.NDMSName, pubkey),
 	}
 	if _, err := o.transport.PostBatch(ctx, cmds); err != nil {
 		o.appLog.Warn("suspend", names.NDMSName, "peer disconnect: "+err.Error())
@@ -704,7 +704,7 @@ func (o *OperatorNativeWG) Stop(ctx context.Context, stored *storage.AWGTunnel) 
 		o.hookNotifier.ExpectHook(names.NDMSName, "disabled")
 	}
 	cmds := []any{
-		payloads.CmdInterfaceUp(names.NDMSName, false),
+		payloads.CmdInterfaceUpLegacy(names.NDMSName, false),
 		payloads.CmdSave(),
 	}
 	_, _ = o.transport.PostBatch(ctx, cmds)
@@ -753,7 +753,7 @@ func (o *OperatorNativeWG) Delete(ctx context.Context, stored *storage.AWGTunnel
 
 	// 3. Remove NDMS interface — cleans everything:
 	//    peer, DNS (ip + ipv6 name-server), ASC params, kernel Wireguard interface
-	_, _ = o.transport.Post(ctx, payloads.CmdInterfaceDelete(names.NDMSName))
+	_, _ = o.transport.Post(ctx, payloads.CmdInterfaceDeleteLegacy(names.NDMSName))
 
 	// 4. Persist
 	_, _ = o.transport.Post(ctx, payloads.CmdSave())
@@ -1026,7 +1026,7 @@ func (o *OperatorNativeWG) RestoreKmodTunnel(ctx context.Context, stored *storag
 	// Update NDMS peer endpoint to proxy address
 	names := NewNWGNames(stored.NWGIndex)
 	proxyEndpoint := fmt.Sprintf("127.0.0.1:%d", result.ListenPort)
-	_, err = o.transport.Post(ctx, payloads.CmdWireguardPeerEndpoint(names.NDMSName, stored.Peer.PublicKey, proxyEndpoint))
+	_, err = o.transport.Post(ctx, payloads.CmdWireguardPeerEndpointLegacy(names.NDMSName, stored.Peer.PublicKey, proxyEndpoint))
 	if err != nil {
 		o.appLog.Warn("restore-kmod", names.NDMSName, "failed to update endpoint to "+proxyEndpoint+": "+err.Error())
 	}
@@ -1097,7 +1097,7 @@ func (o *OperatorNativeWG) SyncKmodSlot(ctx context.Context, stored *storage.AWG
 	// listen port likely changed on rebuild — push it to NDMS so the
 	// kernel WG peer points at the new local proxy.
 	proxyEndpoint := fmt.Sprintf("127.0.0.1:%d", result.ListenPort)
-	if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerEndpoint(names.NDMSName, stored.Peer.PublicKey, proxyEndpoint)); err != nil {
+	if _, err := o.transport.Post(ctx, payloads.CmdWireguardPeerEndpointLegacy(names.NDMSName, stored.Peer.PublicKey, proxyEndpoint)); err != nil {
 		o.appLog.Warn("sync-kmod-slot", names.NDMSName, "update peer endpoint to "+proxyEndpoint+": "+err.Error())
 	}
 
