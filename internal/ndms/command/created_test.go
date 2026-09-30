@@ -52,18 +52,76 @@ func TestCreate_LateRecord_Confirms(t *testing.T) {
 	}
 }
 
-// Записи нет за всё ожидание — ошибка ErrNotListed и снос созданного по
-// имени из ответа импорта: сироты нет, E == 0, фантомов нет.
+// layerHooksInFirstList — хуки слоя по созданному доставляются в стор, пока
+// первый список подтверждения в полёте: след «NDMS знает запись».
+func layerHooksInFirstList(f *query.FakeNDMS, q *query.Queries) {
+	f.InList(func() {
+		f.InList(nil)
+		for _, h := range f.DrainHooks() {
+			if h.Type == "iflayerchanged" {
+				q.Interfaces.OnLayerChanged(h.ID, h.Layer, h.Level)
+			}
+		}
+	})
+}
+
+// След есть, а в списках записи нет за всё ожидание — ErrNotListed и снос
+// созданного по имени из ответа импорта: сироты нет, E == 0, фантомов нет.
 func TestImport_NeverListed_ErrorAndDrop(t *testing.T) {
 	cmds, f, q := newOracleCommands(t, nil)
 	q.Interfaces.SetCreatedBackoff(time.Millisecond)
-	f.HideCreated(-1)
+	f.HideCreated(100)
+	layerHooksInFirstList(f, q)
 	res, err := cmds.Wireguard.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
 	if !errors.Is(err, query.ErrNotListed) || !strings.Contains(err.Error(), "Wireguard0") || res.Created != (query.Confirmed{}) {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
 	if !hasDrop(f.Posts, "Wireguard0") || f.Has("Wireguard0") || f.E != 0 || f.Phantoms != 0 {
 		t.Fatalf("has=%v E=%d phantoms=%d posts=%v", f.Has("Wireguard0"), f.E, f.Phantoms, f.Posts)
+	}
+}
+
+// Ни списка, ни хуков — ошибка без сноса: знает ли NDMS запись, неизвестно,
+// а снос отсутствующего — E. Созданное остаётся, E == 0.
+func TestImport_NoTrace_ErrorNoDrop(t *testing.T) {
+	cmds, f, q := newOracleCommands(t, nil)
+	q.Interfaces.SetCreatedBackoff(time.Millisecond)
+	f.HideCreated(100)
+	res, err := cmds.Wireguard.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
+	if !errors.Is(err, query.ErrNotSeen) || res.Created != (query.Confirmed{}) {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if len(f.Posts) != 1 || !f.Has("Wireguard0") || f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("posts=%v has=%v E=%d phantoms=%d", f.Posts, f.Has("Wireguard0"), f.E, f.Phantoms)
+	}
+}
+
+// Созданное сняли (ifdestroyed) во время ожидания, след был — ошибка без
+// сноса: сносить нечего, `no interface` дал бы E.
+func TestImport_DestroyedDuringWait_NoDrop(t *testing.T) {
+	cmds, f, q := newOracleCommands(t, nil)
+	q.Interfaces.SetCreatedBackoff(time.Millisecond, time.Millisecond)
+	f.HideCreated(100)
+	f.InList(func() {
+		f.InList(nil)
+		for _, h := range f.DrainHooks() {
+			if h.Type == "iflayerchanged" {
+				q.Interfaces.OnLayerChanged(h.ID, h.Layer, h.Level)
+			}
+		}
+		f.Remove("Wireguard0")
+		for _, h := range f.DrainHooks() {
+			if h.Type == "ifdestroyed" {
+				q.Interfaces.OnDestroyed(h.ID)
+			}
+		}
+	})
+	res, err := cmds.Wireguard.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
+	if !errors.Is(err, query.ErrCreatedThenRemoved) || res.Created != (query.Confirmed{}) {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if len(f.Posts) != 1 || f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("posts=%v E=%d phantoms=%d", f.Posts, f.E, f.Phantoms)
 	}
 }
 

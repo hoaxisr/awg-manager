@@ -452,13 +452,15 @@ func (f *FakeNDMS) importWG() (json.RawMessage, error) {
 	return json.RawMessage(`{"interface":{"wireguard":{"import":{"created":"` + name + `","intersects":"","status":[]}}}}`), nil
 }
 
-// ifaceCmd — `interface name …`. По отсутствующему: `no` — отказ без E (это
-// ответ на снос, не чтение); иначе NDMS создаёт name — намеренно, если
+// ifaceCmd — `interface name …`. По отсутствующему: `no` — отказ и E (стенд
+// 5.01.C.6: `Network::Interface::Repository: unable to find interface "X"` в
+// журнале ndm, хотя ответ терпим); иначе NDMS создаёт name — намеренно, если
 // объявлен ExpectCreate, иначе фантом.
 func (f *FakeNDMS) ifaceCmd(name string, body map[string]any) (json.RawMessage, error) {
 	iface, ok := f.ifaces[name]
 	if no, _ := body["no"].(bool); no {
 		if !ok {
+			f.E++
 			return statusError(fmt.Sprintf("unable to find interface %q", name)), nil
 		}
 		f.remove(name)

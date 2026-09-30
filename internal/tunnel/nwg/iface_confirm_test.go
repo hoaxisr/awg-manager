@@ -222,9 +222,9 @@ func TestCreateViaBatch_AbsentAfterCreate_Error(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "Wireguard1") {
 		t.Fatalf("want error naming Wireguard1, got %v", err)
 	}
-	// Настройки не шлются; созданное сносится по имени из команды (F584).
-	if bodies, _ := srv.sent(); len(bodies) != 2 || strings.TrimSpace(bodies[1]) != `{"interface":{"Wireguard1":{"no":true}}}` {
-		t.Fatalf("want create + drop only: %v", bodies)
+	// Ни настроек, ни сноса: следа записи (хуков) нет (F584).
+	if bodies, _ := srv.sent(); len(bodies) != 1 {
+		t.Fatalf("settings/drop must not be sent: %v", bodies)
 	}
 	if f.Phantoms != 0 || f.E != 0 {
 		t.Fatalf("E=%d phantoms=%d", f.E, f.Phantoms)

@@ -146,18 +146,35 @@ type InterfaceStore struct {
 	// применённого: ответ, начатый раньше применённого, карту не трогает.
 	flights, appliedNo uint64
 
-	// awaiting — ConfirmCreated в ожидании записи по имени (F584); будит
-	// применённый список, начатый после вызова и содержащий имя.
+	// awaiting — ConfirmCreated в ожидании записи по имени (F584); будят
+	// применённый список, начатый после вызова и содержащий имя, и снос имени
+	// (Forget/ifdestroyed); хуки создания оставляют след (traced).
 	awaiting map[string]*createdWait
 	// createdBackoff — паузы между списками ConfirmCreated.
 	createdBackoff []time.Duration
 }
 
-// createdWait — ожидание одной созданной записи.
+// createdWait — ожидание одной созданной записи. Поля — под mu.
 type createdWait struct {
 	after uint64        // полёты с номером больше начаты после вызова
-	ch    chan struct{} // закрывает список с записью
-	rec   ndms.Interface
+	ch    chan struct{} // закрывает fire: список с записью или снос имени
+	fired bool
+	// listed/rec — запись из списка, начатого после вызова.
+	listed bool
+	rec    ndms.Interface
+	// traced — NDMS знает запись: по имени пришёл хук создания или слоя
+	// (или имя уже ждало в pending). Без следа сносить нельзя — `no interface`
+	// по отсутствующему пишет E в журнал ndm (стенд 5.01.C.6).
+	traced bool
+	// removed — имя снято (ifdestroyed или Forget) во время ожидания.
+	removed bool
+}
+
+func (w *createdWait) fire() {
+	if !w.fired {
+		w.fired = true
+		close(w.ch)
+	}
 }
 
 // confirmCreatedBackoff — паузы между списками ConfirmCreated: не больше
@@ -299,12 +316,11 @@ func (s *InterfaceStore) refreshList(ctx context.Context, fl *listFlight) (map[s
 func (s *InterfaceStore) wakeCreatedLocked(recs map[string]ndms.Interface, no uint64) {
 	for name, w := range s.awaiting {
 		rec, ok := recs[name]
-		if !ok || no <= w.after {
+		if !ok || no <= w.after || w.listed {
 			continue
 		}
-		w.rec = rec
-		close(w.ch)
-		delete(s.awaiting, name)
+		w.listed, w.rec = true, rec
+		w.fire()
 	}
 }
 
@@ -1054,10 +1070,19 @@ func (s *InterfaceStore) OnCreated(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.markTouchedLocked(id)
+	s.traceCreatedLocked(id)
 	if _, known := s.byID[id]; known {
 		return
 	}
 	s.pending[id] = struct{}{}
+}
+
+// traceCreatedLocked — след для ConfirmCreated: хук по имени пришёл, NDMS
+// запись знает (F584).
+func (s *InterfaceStore) traceCreatedLocked(id string) {
+	if w, ok := s.awaiting[id]; ok {
+		w.traced = true
+	}
 }
 
 // Forget — запись снята (ifdestroyed или наш успешный `no interface`).
@@ -1065,6 +1090,10 @@ func (s *InterfaceStore) Forget(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.markTouchedLocked(id)
+	if w, ok := s.awaiting[id]; ok {
+		w.removed = true
+		w.fire()
+	}
 	delete(s.byID, id)
 	delete(s.startedAt, id)
 	delete(s.sysNames, id)
@@ -1130,6 +1159,7 @@ func (s *InterfaceStore) OnLayerChanged(id, layer, level string) {
 	// Даже для незнакомого id: список в полёте не должен положить запись
 	// старее хука — применится со следующим списком.
 	s.markTouchedLocked(id)
+	s.traceCreatedLocked(id)
 	iface, ok := s.byID[id]
 	if !ok {
 		// Незнакомый id — запись есть, карта её не знает: на создание NDMS
@@ -1175,6 +1205,7 @@ func (s *InterfaceStore) OnIPChanged(id, address string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.markTouchedLocked(id)
+	s.traceCreatedLocked(id)
 	iface, ok := s.byID[id]
 	if !ok {
 		s.pending[id] = struct{}{} // как в OnLayerChanged
@@ -1264,9 +1295,18 @@ func (s *InterfaceStore) Confirm(ctx context.Context, name string) (Confirmed, *
 	return Confirmed{name: name}, rec, true, nil
 }
 
-// ErrNotListed — NDMS принял создание, а записи нет в свежих списках за всё
-// ожидание ConfirmCreated (F584).
+// ErrNotListed — NDMS принял создание, по имени пришёл хук (запись NDMS
+// знает), а в свежих списках её нет за всё ожидание ConfirmCreated (F584).
+// Только в этом случае вызывающий вправе снести имя (command.ConfirmCreated).
 var ErrNotListed = errors.New("NDMS принял создание, но записи нет в списке")
+
+// ErrNotSeen — записи нет ни в списках, ни в хуках: знает ли её NDMS,
+// неизвестно — сносить нельзя (снос отсутствующего — E в журнале ndm).
+var ErrNotSeen = errors.New("NDMS принял создание, но записи нет ни в списке, ни в хуках")
+
+// ErrCreatedThenRemoved — имя снято (ifdestroyed) во время ожидания: сносить
+// нечего.
+var ErrCreatedThenRemoved = errors.New("созданная запись снята до подтверждения")
 
 // ConfirmCreated — Confirm только что созданной записи name с ограниченным
 // ожиданием (F584): под нагрузкой NDMS отвечает на создание раньше, чем
@@ -1274,14 +1314,18 @@ var ErrNotListed = errors.New("NDMS принял создание, но запи
 // принесёт список, начатый после вызова (ReconcilePending по хукам
 // iflayerchanged/ifcreated), или свою паузу из createdBackoff и читает список
 // сам. Доказательство то же, что у Confirm: запись в свежем полном списке.
-// Список не прочитан — ошибка сразу (решение 4); за все попытки записи нет —
-// ErrNotListed.
+// Список не прочитан — ошибка сразу (решение 4). Имя снято во время ожидания —
+// ErrCreatedThenRemoved сразу. За все попытки записи нет — ErrNotListed, если
+// по имени был хук (след), иначе ErrNotSeen.
 func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string) (Confirmed, error) {
 	if name == "" {
 		return Confirmed{}, errors.New("confirm: пустое имя интерфейса")
 	}
 	s.mu.Lock()
 	w := &createdWait{after: s.flights, ch: make(chan struct{})}
+	// Хук мог прийти, пока шёл POST создания: имя ждёт в pending (снос его
+	// оттуда убирает) — это тоже след.
+	_, w.traced = s.pending[name]
 	s.awaiting[name] = w
 	backoff := s.createdBackoff
 	s.mu.Unlock()
@@ -1292,6 +1336,12 @@ func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string) (Confi
 		}
 		s.mu.Unlock()
 	}()
+	// state — снимок полей ожидания под mu.
+	state := func() (removed, traced bool) {
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		return w.removed, w.traced
+	}
 	wake := w.ch
 	for i := 0; ; i++ {
 		c, _, ok, err := s.Confirm(ctx, name)
@@ -1301,8 +1351,15 @@ func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string) (Confi
 		if ok {
 			return c, nil
 		}
-		if i == len(backoff) {
+		removed, traced := state()
+		switch {
+		case removed:
+			return Confirmed{}, fmt.Errorf("%w: %s", ErrCreatedThenRemoved, name)
+		case i < len(backoff):
+		case traced:
 			return Confirmed{}, fmt.Errorf("%w: %s (%d списков)", ErrNotListed, name, i+1)
+		default:
+			return Confirmed{}, fmt.Errorf("%w: %s (%d списков)", ErrNotSeen, name, i+1)
 		}
 		t := time.NewTimer(backoff[i])
 		select {
@@ -1310,9 +1367,13 @@ func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string) (Confi
 			t.Stop()
 			wake = nil // будит один раз; дальше — паузы
 			s.mu.RLock()
+			removed, listed := w.removed, w.listed
 			_, ok := s.confirmedLocked(map[string]ndms.Interface{name: w.rec}, name)
 			s.mu.RUnlock()
-			if ok {
+			if removed {
+				return Confirmed{}, fmt.Errorf("%w: %s", ErrCreatedThenRemoved, name)
+			}
+			if listed && ok {
 				return Confirmed{name: name}, nil
 			}
 		case <-t.C:

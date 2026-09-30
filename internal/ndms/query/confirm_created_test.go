@@ -86,9 +86,26 @@ func TestConfirmCreated_WokenByReconcileList(t *testing.T) {
 	}
 }
 
-// Записи нет за все попытки — ErrNotListed после 1+len(backoff) списков.
+// layerHooksInFirstList — хуки слоя по созданному доставляются, пока первый
+// список ConfirmCreated в полёте (след «NDMS знает запись», F584). ifcreated
+// не отдаётся — запись, скрытая до него, так и остаётся скрытой.
+func layerHooksInFirstList(f *FakeNDMS, s *InterfaceStore) {
+	hooks := f.DrainHooks()
+	f.InList(func() {
+		f.InList(nil)
+		for _, h := range hooks {
+			if h.Type == "iflayerchanged" {
+				s.OnLayerChanged(h.ID, h.Layer, h.Level)
+			}
+		}
+	})
+}
+
+// След есть (хуки слоя), а в списках записи нет за все попытки —
+// ErrNotListed после 1+len(backoff) списков.
 func TestConfirmCreated_NeverListed_ErrNotListed(t *testing.T) {
-	f, s := importLate(t, -1, time.Millisecond, time.Millisecond)
+	f, s := importLate(t, 100, time.Millisecond, time.Millisecond)
+	layerHooksInFirstList(f, s)
 	lists := f.ListCalls()
 	c, err := s.ConfirmCreated(context.Background(), "Wireguard1")
 	if !errors.Is(err, ErrNotListed) || c != (Confirmed{}) {
@@ -96,6 +113,46 @@ func TestConfirmCreated_NeverListed_ErrNotListed(t *testing.T) {
 	}
 	if f.ListCalls()-lists != 3 || f.E != 0 {
 		t.Fatalf("lists=%d E=%d", f.ListCalls()-lists, f.E)
+	}
+}
+
+// Ни списка, ни хуков — ErrNotSeen: знает ли NDMS запись, неизвестно.
+func TestConfirmCreated_NoTrace_ErrNotSeen(t *testing.T) {
+	f, s := importLate(t, -1, time.Millisecond, time.Millisecond)
+	c, err := s.ConfirmCreated(context.Background(), "Wireguard1")
+	if !errors.Is(err, ErrNotSeen) || errors.Is(err, ErrNotListed) || c != (Confirmed{}) {
+		t.Fatalf("c=%v err=%v", c, err)
+	}
+	if f.E != 0 {
+		t.Fatalf("E=%d", f.E)
+	}
+}
+
+// ifdestroyed по имени во время ожидания (после хуков создания) —
+// ErrCreatedThenRemoved сразу, паузу 5 с не ждёт.
+func TestConfirmCreated_DestroyedDuringWait(t *testing.T) {
+	f, s := importLate(t, 100, 5*time.Second)
+	firstListed := make(chan struct{})
+	f.InList(func() {
+		f.InList(nil)
+		close(firstListed)
+	})
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err := s.ConfirmCreated(context.Background(), "Wireguard1")
+		done <- err
+	}()
+	<-firstListed
+	s.OnLayerChanged("Wireguard1", "ctrl", "")
+	f.Remove("Wireguard1")
+	s.OnDestroyed("Wireguard1")
+	err := <-done
+	if !errors.Is(err, ErrCreatedThenRemoved) || errors.Is(err, ErrNotListed) {
+		t.Fatalf("err=%v", err)
+	}
+	if el := time.Since(start); el > time.Second || f.E != 0 {
+		t.Fatalf("elapsed=%v E=%d", el, f.E)
 	}
 }
 

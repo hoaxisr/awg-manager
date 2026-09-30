@@ -120,24 +120,17 @@ func TestCreateOpkgTun_ReturnsConfirmedAndFillsCache(t *testing.T) {
 	}
 }
 
-// NDMS принял команду, а записи в списке нет — ошибка с именем, не Confirmed;
-// созданное сносится по имени (F584), настройки не шлются.
+// NDMS принял команду, а записи нет ни в списке, ни в хуках — ошибка с
+// именем, не Confirmed; ни настроек, ни сноса (снос отсутствующего — E, F584).
 func TestCreateOpkgTun_AbsentAfterCreate_Error(t *testing.T) {
 	cmds, poster, _, q, hn := newTestInterfaceCommands(t)
 	q.Interfaces.SetCreatedBackoff() // один список, без пауз
 	c, err := cmds.CreateOpkgTun(context.Background(), "OpkgTun7", "t", freeFor(t, "opkgtun7"))
-	if err == nil || !errors.Is(err, query.ErrNotListed) || !strings.Contains(err.Error(), "OpkgTun7") || c != (query.Confirmed{}) {
+	if err == nil || !errors.Is(err, query.ErrNotSeen) || !strings.Contains(err.Error(), "OpkgTun7") || c != (query.Confirmed{}) {
 		t.Fatalf("c=%v err=%v", c, err)
 	}
-	p := poster.Payloads()
-	if len(p) != 2 {
-		t.Fatalf("payloads: %v", p)
-	}
-	if b, _ := json.Marshal(p[1]); string(b) != `{"interface":{"OpkgTun7":{"no":true}}}` {
-		t.Fatalf("drop: %s", b)
-	}
-	if len(hn.calls) != 1 || hn.calls[0] != (hookCall{"OpkgTun7", "destroyed"}) {
-		t.Fatalf("ExpectHook: %v", hn.calls)
+	if p := poster.Payloads(); len(p) != 1 || len(hn.calls) != 0 {
+		t.Fatalf("payloads: %v hooks: %v", p, hn.calls)
 	}
 }
 

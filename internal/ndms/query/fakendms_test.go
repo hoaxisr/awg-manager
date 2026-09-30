@@ -114,7 +114,7 @@ func TestFakeNDMS_ExpectCreateRemoveAndList(t *testing.T) {
 }
 
 // Ветки post, на которые опираются сценарии: формы interface/parse, `no` по
-// отсутствующему (отказ без E), system-name, пакет, to-interface.
+// отсутствующему (отказ и E, стенд 5.01.C.6), system-name, пакет, to-interface.
 func TestFakeNDMS_PostBranches(t *testing.T) {
 	iface := func(name string, body map[string]any) map[string]any {
 		return map[string]any{"interface": map[string]any{name: body}}
@@ -129,11 +129,11 @@ func TestFakeNDMS_PostBranches(t *testing.T) {
 		wantInResp  string
 	}{
 		{"payloads создаёт фантом", map[string]any{"interface": map[string]any{"name": "Wireguard5", "up": true}}, 0, 1, 3, "Wireguard5", "", "{}"},
-		{"payloads no отсутствующего", map[string]any{"interface": map[string]any{"name": "Wireguard5", "no": true}}, 0, 0, 0, "", "Wireguard5", `unable to find interface \"Wireguard5\"`},
-		{"command no отсутствующего", iface("OpkgTun1", map[string]any{"no": true}), 0, 0, 0, "", "OpkgTun1", "unable to find interface"},
+		{"payloads no отсутствующего", map[string]any{"interface": map[string]any{"name": "Wireguard5", "no": true}}, 1, 0, 0, "", "Wireguard5", `unable to find interface \"Wireguard5\"`},
+		{"command no отсутствующего", iface("OpkgTun1", map[string]any{"no": true}), 1, 0, 0, "", "OpkgTun1", "unable to find interface"},
 		{"payloads no присутствующего", map[string]any{"interface": map[string]any{"name": "Wireguard0", "no": true}}, 0, 0, 1, "", "Wireguard0", "{}"},
 		{"parse interface up", map[string]any{"parse": "interface Proxy2 up"}, 0, 1, 3, "Proxy2", "", "{}"},
-		{"parse no interface отсутствующего", map[string]any{"parse": "no interface Proxy2"}, 0, 0, 0, "", "Proxy2", "unable to find interface"},
+		{"parse no interface отсутствующего", map[string]any{"parse": "no interface Proxy2"}, 1, 0, 0, "", "Proxy2", "unable to find interface"},
 		{"parse no interface присутствующего", map[string]any{"parse": "no interface Wireguard0"}, 0, 0, 1, "", "Wireguard0", "{}"},
 		{"parse no interface X настройка присутствующего", map[string]any{"parse": "no interface Wireguard0 ip access-group A in"}, 0, 0, 0, "Wireguard0", "", "{}"},
 		{"parse no interface X настройка отсутствующего", map[string]any{"parse": "no interface Wireguard6 ip access-group A in"}, 0, 1, 3, "Wireguard6", "", "{}"},
