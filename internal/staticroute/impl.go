@@ -24,11 +24,18 @@ type ifaceConfirmer interface {
 	ConfirmEach(ctx context.Context, names []string) (map[string]query.Confirmed, error)
 }
 
+// routeReader — свежее чтение /show/rc/ip/route (реализует
+// *query.StaticRouteStore): старт OS5-туннеля ставит только недостающие.
+type routeReader interface {
+	Fetch(ctx context.Context) ([]query.StaticRouteEntry, error)
+}
+
 // ServiceImpl is the concrete implementation of the static route Service.
 type ServiceImpl struct {
 	store   *storage.StaticRouteStore
 	routes  *command.RouteCommands
 	ifaces  ifaceConfirmer
+	rc      routeReader // nil — старт ставит всё (R37b follow-up 2)
 	catalog routing.Catalog
 	appLog  *logging.ScopedLogger
 	mu      sync.Mutex
@@ -49,6 +56,7 @@ func New(
 	store *storage.StaticRouteStore,
 	routes *command.RouteCommands,
 	ifaces ifaceConfirmer,
+	rc routeReader,
 	catalog routing.Catalog,
 	appLogger logging.AppLogger,
 ) *ServiceImpl {
@@ -56,6 +64,7 @@ func New(
 		store:       store,
 		routes:      routes,
 		ifaces:      ifaces,
+		rc:          rc,
 		catalog:     catalog,
 		appLog:      logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubStaticRoute),
 		ifaceExists: defaultIfaceExists,
@@ -342,9 +351,11 @@ func (s *ServiceImpl) OnTunnelStart(ctx context.Context, tunnelID, tunnelIface s
 // (R37b): запись OpkgTun могла быть создана только что (списки ждали старта)
 // или пересоздана после внешнего снятия — NDMS сносит маршруты вместе с
 // записью, и Reconcile вернул бы их лишь на загрузке или переподключении.
-// Одно подтверждение свежим списком на все. Повторная установка уже стоящего
-// маршрута — та же команда, что Reconcile шлёт на каждой загрузке: NDMS
-// обновляет запись, не дублирует. Прочим NDMS-туннелям делать нечего: их
+// Одно подтверждение свежим списком на все. Ставятся только недостающие:
+// старт повторяется (перезапуски ping-check), а каждая команда — запрос
+// сохранения, то есть запись во флеш. Нет недостающих — ни команды, ни
+// сохранения. Маршруты не прочитались — ставим всё (лишнее сохранение
+// дешевле потерянной связности). Прочим NDMS-туннелям делать нечего: их
 // запись живёт и у остановленного, маршруты — в NDMS («auto»).
 func (s *ServiceImpl) applyOnStart(ctx context.Context, tunnelID string) error {
 	s.mu.Lock()
@@ -359,12 +370,63 @@ func (s *ServiceImpl) applyOnStart(ctx context.Context, tunnelID string) error {
 		return nil
 	}
 	confirmed, cerr := s.confirmIfaces(ctx, tunnelID)
+	present, perr := s.presentRoutes(ctx, ifaceName)
+	if perr != nil {
+		s.appLog.Warn("apply-on-start", ifaceName, "маршруты не прочитаны — ставим все: "+perr.Error())
+	}
 	for _, rl := range lists {
+		if present != nil {
+			var missing []string
+			for _, subnet := range rl.Subnets {
+				if !present[subnetKey(subnet)] {
+					missing = append(missing, subnet)
+				}
+			}
+			rl.Subnets = missing // пустой — только подтверждение, без команд
+		}
 		if _, err := s.applyRoutes(ctx, rl, confirmed, cerr); err != nil {
 			s.appLog.Warn("apply-on-start", rl.ID, err.Error())
 		}
 	}
 	return nil
+}
+
+// presentRoutes — ключи маршрутов на ifaceName по свежему чтению; nil без
+// ошибки — читать нечем.
+func (s *ServiceImpl) presentRoutes(ctx context.Context, ifaceName string) (map[string]bool, error) {
+	if s.rc == nil {
+		return nil, nil
+	}
+	entries, err := s.rc.Fetch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, e := range entries {
+		if e.Interface != ifaceName {
+			continue
+		}
+		if e.Host != "" {
+			out["h:"+e.Host] = true
+		} else {
+			out["n:"+e.Network+"/"+e.Mask] = true
+		}
+	}
+	return out, nil
+}
+
+// subnetKey — ключ подсети списка в форме presentRoutes; нечитаемая — "",
+// её не найдёт никто, и applyRoutes отчитается об ошибке как обычно.
+func subnetKey(subnet string) string {
+	cidr, _ := ParseSubnetComment(subnet)
+	network, mask, err := parseCIDR(cidr)
+	if err != nil {
+		return ""
+	}
+	if mask == "" {
+		return "h:" + network
+	}
+	return "n:" + network + "/" + mask
 }
 
 // OnTunnelStop removes or keeps routes when a tunnel stops.

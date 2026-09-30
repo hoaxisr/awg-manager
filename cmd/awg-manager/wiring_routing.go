@@ -81,7 +81,7 @@ func (a *app) setupOrchestrator() {
 	)
 
 	// Static route service — wired to NDMS RouteCommands.
-	a.staticRouteService = staticroute.New(a.staticRouteStore, a.ndmsCommands.Routes, a.ndmsQueries.Interfaces, a.catalog, a.loggingService)
+	a.staticRouteService = staticroute.New(a.staticRouteStore, a.ndmsCommands.Routes, a.ndmsQueries.Interfaces, a.ndmsQueries.StaticRoutes, a.catalog, a.loggingService)
 	a.orch.SetStaticRoute(a.staticRouteService)
 
 	// DNS route service — wired to NDMS CQRS layer.

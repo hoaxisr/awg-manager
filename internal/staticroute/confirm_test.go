@@ -115,23 +115,61 @@ func TestStaticRoute_PendingAppliedOnTunnelStart(t *testing.T) {
 	oracleClean(t, f)
 }
 
-// Запись OpkgTun снята снаружи — NDMS снёс и маршруты. Старт пересоздал
-// запись: маршруты включённого списка встают снова, E нет (R37b).
-func TestStaticRoute_ExternalRemoval_ReappliedOnStart(t *testing.T) {
+// fakeRC — /show/rc/ip/route для старта: записи или отказ чтения.
+type fakeRC struct {
+	entries []query.StaticRouteEntry
+	err     error
+}
+
+func (r fakeRC) Fetch(context.Context) ([]query.StaticRouteEntry, error) { return r.entries, r.err }
+
+// startWithRC — старт OS5-туннеля awg10 с двумя подсетями в списке при
+// заданном чтении маршрутов; возвращает команды маршрутов старта.
+func startWithRC(t *testing.T, rc fakeRC) ([]string, *query.FakeNDMS) {
+	t.Helper()
 	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"})
 	s := newOracleStaticRoutes(t, f, []storage.StaticRouteList{
-		{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: []string{"10.20.0.0/16"}, Enabled: true},
+		{ID: "srl1", Name: "a", TunnelID: "awg10", Subnets: []string{"10.20.0.0/16", "1.2.3.4/32"}, Enabled: true},
 	})
-	ctx := context.Background()
-	f.Remove("OpkgTun10")                                   // внешнее снятие: запись и её маршруты ушли
-	f.Add(ndms.Interface{ID: "OpkgTun10", Type: "OpkgTun"}) // старт пересоздал
-	before := len(routePosts(f))
-	if err := s.OnTunnelStart(ctx, "awg10", "opkgtun10"); err != nil {
+	s.rc = rc
+	if err := s.OnTunnelStart(context.Background(), "awg10", "opkgtun10"); err != nil {
 		t.Fatalf("OnTunnelStart: %v", err)
 	}
-	posts := routePosts(f)[before:]
-	if len(posts) != 1 || !strings.Contains(posts[0], "10.20.0.0") || strings.Contains(posts[0], `"no":true`) {
-		t.Fatalf("маршрут не возвращён при старте: %v", posts)
+	return routePosts(f), f
+}
+
+// Старт OS5-туннеля (R37b follow-up 2): маршруты уже стоят — ни одной
+// команды, значит и запроса сохранения (перезапуски ping-check не пишут флеш).
+func TestStaticRoute_StartAllPresent_NoCommands(t *testing.T) {
+	posts, f := startWithRC(t, fakeRC{entries: []query.StaticRouteEntry{
+		{Network: "10.20.0.0", Mask: "255.255.0.0", Interface: "OpkgTun10"},
+		{Host: "1.2.3.4", Interface: "OpkgTun10"},
+	}})
+	if len(f.Posts) != 0 {
+		t.Fatalf("команды при стоящих маршрутах: %v", posts)
+	}
+	oracleClean(t, f)
+}
+
+// Запись снята снаружи и пересоздана стартом — NDMS снёс маршруты: ставятся
+// только недостающие, E нет (R37b). Маршрут на ЧУЖОМ интерфейсе не в счёт.
+func TestStaticRoute_ExternalRemoval_ReappliedOnStart(t *testing.T) {
+	posts, f := startWithRC(t, fakeRC{entries: []query.StaticRouteEntry{
+		{Host: "1.2.3.4", Interface: "OpkgTun10"},
+		{Network: "10.20.0.0", Mask: "255.255.0.0", Interface: "OpkgTun11"},
+	}})
+	if len(posts) != 1 || !strings.Contains(posts[0], "10.20.0.0") || !strings.Contains(posts[0], "OpkgTun10") {
+		t.Fatalf("want только недостающий 10.20.0.0: %v", posts)
+	}
+	oracleClean(t, f)
+}
+
+// Маршруты не прочитались — ставим все: лишнее сохранение дешевле
+// потерянной связности.
+func TestStaticRoute_StartRouteReadError_FullApply(t *testing.T) {
+	posts, f := startWithRC(t, fakeRC{err: errors.New("rci down")})
+	if len(posts) != 2 {
+		t.Fatalf("want полную установку (2), got %v", posts)
 	}
 	oracleClean(t, f)
 }
