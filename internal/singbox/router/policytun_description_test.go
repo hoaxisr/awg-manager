@@ -127,9 +127,9 @@ func TestPolicyTunOwnDescriptions(t *testing.T) {
 		{"возврат к дефолту", rec("Awgmanager"), custom(""), []string{"Awgmanager", policyTunDescription}},
 		// Намерение — третье имя: настройку сменили, пока переименование в B
 		// не подтверждено записью.
-		{"намерение и новая настройка", pending("", "B"), custom("C"), []string{policyTunDescription, "B", "C"}},
-		{"намерение совпадает с настройкой", pending("", "B"), custom("B"), []string{policyTunDescription, "B"}},
-		{"намерение — штатное имя", pending("Awgmanager", policyTunDescription), custom(""), []string{"Awgmanager", policyTunDescription}},
+		{"намерение и новая настройка", pendingRec("", "B"), custom("C"), []string{policyTunDescription, "B", "C"}},
+		{"намерение совпадает с настройкой", pendingRec("", "B"), custom("B"), []string{policyTunDescription, "B"}},
+		{"намерение — штатное имя", pendingRec("Awgmanager", policyTunDescription), custom(""), []string{"Awgmanager", policyTunDescription}},
 	}
 	for _, c := range cases {
 		if got := policyTunOwnDescriptions(c.st, c.sr); !reflect.DeepEqual(got, c.want) {
@@ -138,8 +138,8 @@ func TestPolicyTunOwnDescriptions(t *testing.T) {
 	}
 }
 
-// pending — запись владения с незакрытым намерением переименования.
-func pending(applied, pend string) *storage.OpkgTunState {
+// pendingRec — запись владения с незакрытым намерением переименования.
+func pendingRec(applied, pend string) *storage.OpkgTunState {
 	return &storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Description: applied, PendingDescription: pend}
 }
 
