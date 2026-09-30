@@ -24,6 +24,9 @@ type StaticRouteDTO struct {
 	Enabled   bool     `json:"enabled" example:"true"`
 	CreatedAt string   `json:"createdAt" example:"2024-01-01T00:00:00Z"`
 	UpdatedAt string   `json:"updatedAt" example:"2024-01-15T12:00:00Z"`
+	// Pending — список включён, но записи OS5-туннеля ещё нет: маршруты
+	// встанут при старте туннеля (R37b). Не хранится — статус службы.
+	Pending bool `json:"pending,omitempty" example:"false"`
 }
 
 // StaticRoutesListResponse is the envelope for GET /static-routes/list.
@@ -41,6 +44,8 @@ type StaticRouteService interface {
 	Delete(ctx context.Context, id string) error
 	SetEnabled(ctx context.Context, id string, enabled bool) error
 	Import(ctx context.Context, tunnelID, name, batContent string) (*storage.StaticRouteList, error)
+	// PendingIDs — списки, ждущие старта туннеля (R37b).
+	PendingIDs() map[string]bool
 }
 
 // StaticRouteHandler handles static route API endpoints.
@@ -92,7 +97,17 @@ func (h *StaticRouteHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.Success(w, lists)
+	pending := h.svc.PendingIDs()
+	out := make([]StaticRouteDTO, 0, len(lists))
+	for _, rl := range lists {
+		out = append(out, StaticRouteDTO{
+			ID: rl.ID, Name: rl.Name, TunnelID: rl.TunnelID, Subnets: rl.Subnets,
+			Fallback: rl.Fallback, IconURL: rl.IconURL, Enabled: rl.Enabled,
+			CreatedAt: rl.CreatedAt, UpdatedAt: rl.UpdatedAt,
+			Pending: pending[rl.ID],
+		})
+	}
+	response.Success(w, out)
 }
 
 // Create creates a new static route list.

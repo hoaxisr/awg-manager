@@ -6,21 +6,25 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 type recStaticRouteSvc struct {
-	calls []string
-	err   error
+	calls   []string
+	err     error
+	lists   []storage.StaticRouteList
+	pending map[string]bool
 }
 
 func (s *recStaticRouteSvc) rec(format string, a ...any) error {
 	s.calls = append(s.calls, fmt.Sprintf(format, a...))
 	return s.err
 }
-func (s *recStaticRouteSvc) List() ([]storage.StaticRouteList, error) { return nil, nil }
+func (s *recStaticRouteSvc) List() ([]storage.StaticRouteList, error) { return s.lists, nil }
+func (s *recStaticRouteSvc) PendingIDs() map[string]bool              { return s.pending }
 func (s *recStaticRouteSvc) Get(id string) (*storage.StaticRouteList, error) {
 	return &storage.StaticRouteList{ID: id}, nil
 }
@@ -105,5 +109,21 @@ func TestStaticRouteHandler_MutationsForwardArgsAndPublish(t *testing.T) {
 				t.Fatalf("на отказе публикаций быть не должно: %v", got)
 			}
 		})
+	}
+}
+
+// Статус «ждёт старта туннеля» доходит до ответа списка (R37b).
+func TestStaticRouteHandler_ListCarriesPending(t *testing.T) {
+	svc := &recStaticRouteSvc{
+		lists:   []storage.StaticRouteList{{ID: "srl1", Enabled: true}, {ID: "srl2", Enabled: true}},
+		pending: map[string]bool{"srl1": true},
+	}
+	rr := perform(NewStaticRouteHandler(svc, nil).List, "GET", "/routing/static-routes", "")
+	if rr.Code != 200 {
+		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `"id":"srl1"`) || strings.Count(body, `"pending":true`) != 1 {
+		t.Fatalf("pending не в ответе или лишний: %s", body)
 	}
 }

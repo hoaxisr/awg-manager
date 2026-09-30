@@ -2142,6 +2142,7 @@ const api_StaticRouteDTO: v.GenericSchema = v.looseObject({
 	iconUrl: v.optional(v.nullable(v.string())),
 	id: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
+	pending: v.optional(v.nullable(v.boolean())),
 	subnets: v.optional(v.nullable(v.array(v.string()))),
 	tunnelID: v.optional(v.nullable(v.string())),
 	updatedAt: v.optional(v.nullable(v.string())),

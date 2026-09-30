@@ -6343,6 +6343,12 @@ definitions:
       name:
         example: Office subnets
         type: string
+      pending:
+        description: |-
+          Pending — список включён, но записи OS5-туннеля ещё нет: маршруты
+          встанут при старте туннеля (R37b). Не хранится — статус службы.
+        example: false
+        type: boolean
       subnets:
         example:
         - 192.168.10.0/24

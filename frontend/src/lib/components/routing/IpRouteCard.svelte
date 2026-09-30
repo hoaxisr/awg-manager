@@ -113,6 +113,16 @@
 					{#if route.fallback === 'reject'}
 						<Badge variant="error" uppercase size="xs">Kill Switch</Badge>
 					{/if}
+					{#if route.pending}
+						<Badge
+							variant="warning"
+							uppercase
+							size="xs"
+							title="Туннель ещё не создан на роутере. Маршруты применятся при его запуске."
+						>
+							Ждёт старта туннеля
+						</Badge>
+					{/if}
 				</div>
 			{:else if isOrphan}
 				<div class="card-route">

@@ -75,6 +75,8 @@ export interface StaticRouteList {
 	updatedAt: string;
 	/** Optional URL for a custom icon (e.g. Qure CDN PNG or user-supplied URL). */
 	iconUrl?: string;
+	/** Включён, но записи туннеля ещё нет: маршруты встанут при его старте. */
+	pending?: boolean;
 }
 
 export interface RoutingTunnel {
