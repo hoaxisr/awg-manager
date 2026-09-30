@@ -35,9 +35,12 @@ func nwgOperatorOnStub(t *testing.T) *nwg.OperatorNativeWG {
 		// длины. Без этого Start падал на разборе, и тест сохранения адреса
 		// зеленел только из-за дефекта F486 (адрес без маршрута).
 		// Список интерфейсов: поднятый интерфейс в нём есть, как на роутере —
-		// без него кэш InterfaceStore счёл бы его отсутствующим (F546).
+		// состояние nativewg читается из снимка списка, по имени не
+		// спрашивают (F546).
 		if r.Method == http.MethodGet && r.URL.Path == "/show/interface/" {
-			_, _ = w.Write([]byte(`{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`))
+			_, _ = w.Write([]byte(`{"Wireguard0":{"id":"Wireguard0","type":"Wireguard","link":"up","state":"up",
+				"summary":{"layer":{"conf":"running","link":"running"}},
+				"wireguard":{"status":"up","peer":[{"online":true}]}}}`))
 			return
 		}
 		if r.Method == http.MethodPost {
