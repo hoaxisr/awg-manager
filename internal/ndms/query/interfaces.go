@@ -487,6 +487,22 @@ const (
 	SnapshotLive   = 0
 )
 
+// SnapshotBackground — допуск возраста для фоновых поллеров в простое (R36):
+// шаг простоя поллеров 60 с (+ дрожание тикера), и два поллера со сдвигом
+// делят один список в минуту вместо своего на тик.
+const SnapshotBackground = 65 * time.Second
+
+type snapshotBackgroundKey struct{}
+
+// WithSnapshotBackground — ctx фонового тика, когда панель не открыта ни у
+// кого (решение владельца R36): чтения «не старше SnapshotRecent» под этим
+// ctx принимают память до SnapshotBackground. Метка «грязно» (наша запись)
+// по-прежнему даёт свежий список; SnapshotLive/Confirm допуском не
+// расширяются — решения о мутациях по нему не принимаются.
+func WithSnapshotBackground(ctx context.Context) context.Context {
+	return context.WithValue(ctx, snapshotBackgroundKey{}, true)
+}
+
 // Snapshot — снимок не старше maxAge. Правила:
 //  1. bootstrap, если карты ещё нет;
 //  2. не грязно и список моложе maxAge → память, 0 RCI;
@@ -515,6 +531,9 @@ func (s *InterfaceStore) Snapshot(ctx context.Context, maxAge time.Duration) (*S
 func (s *InterfaceStore) freshen(ctx context.Context, maxAge time.Duration) error {
 	if err := s.ensureBootstrap(ctx); err != nil {
 		return err
+	}
+	if maxAge > 0 && maxAge < SnapshotBackground && ctx.Value(snapshotBackgroundKey{}) != nil {
+		maxAge = SnapshotBackground
 	}
 	s.mu.Lock()
 	for maxAge > 0 {

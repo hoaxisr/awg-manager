@@ -403,3 +403,68 @@ func TestRefreshList_OlderResponseNotApplied(t *testing.T) {
 		t.Fatalf("старый ответ затёр свежий: %+v", got)
 	}
 }
+
+// R36: зрителей нет — два фоновых поллера (шаг 60 с, сдвиг 30 с) принимают
+// снимок до SnapshotBackground и за 3 минуты делят ≤ 4 списка (без допуска —
+// по списку на тик, 7). Со зрителем (без допуска в ctx) — как прежде.
+// Время виртуальное: возраст памяти задаётся сдвигом listedAt.
+func TestSnapshot_BackgroundPollersShareList(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		viewer bool
+		max    int
+		min    int
+	}{{"без зрителя", false, 4, 1}, {"со зрителем", true, 7, 7}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := snapshotFake()
+			s := NewInterfaceStore(f, NopLogger())
+			if _, err := s.Snapshot(context.Background(), SnapshotRecent); err != nil {
+				t.Fatal(err)
+			}
+			before := f.ListCalls()
+			lastList := -1000 * time.Second // виртуальное время последнего списка
+			for now := time.Duration(0); now <= 180*time.Second; now += 30 * time.Second {
+				s.mu.Lock()
+				s.listedAt = time.Now().Add(-(now - lastList))
+				s.mu.Unlock()
+				ctx := context.Background()
+				if !tc.viewer {
+					ctx = WithSnapshotBackground(ctx)
+				}
+				n := f.ListCalls()
+				if _, err := s.Snapshot(ctx, SnapshotRecent); err != nil {
+					t.Fatal(err)
+				}
+				if f.ListCalls() > n {
+					lastList = now
+				}
+			}
+			got := f.ListCalls() - before
+			if got > tc.max || got < tc.min {
+				t.Fatalf("списков %d, want %d..%d", got, tc.min, tc.max)
+			}
+		})
+	}
+}
+
+// Метка «грязно» (наша запись) сильнее фонового допуска: свежий список.
+func TestSnapshot_BackgroundDirtyReadsList(t *testing.T) {
+	f := snapshotFake()
+	s := NewInterfaceStore(f, NopLogger())
+	ctx := WithSnapshotBackground(context.Background())
+	if _, err := s.Snapshot(ctx, SnapshotRecent); err != nil {
+		t.Fatal(err)
+	}
+	before := f.ListCalls()
+	if _, err := s.Snapshot(ctx, SnapshotRecent); err != nil || f.ListCalls() != before {
+		t.Fatalf("свежая память: списков +%d, %v", f.ListCalls()-before, err)
+	}
+	s.Invalidate("Wireguard0")
+	if _, err := s.Snapshot(ctx, SnapshotRecent); err != nil || f.ListCalls() != before+1 {
+		t.Fatalf("после метки: списков +%d, %v; want +1", f.ListCalls()-before, err)
+	}
+	// SnapshotLive допуском не расширяется.
+	if _, err := s.Snapshot(ctx, SnapshotLive); err != nil || f.ListCalls() != before+2 {
+		t.Fatalf("Live: списков +%d, want +2", f.ListCalls()-before)
+	}
+}

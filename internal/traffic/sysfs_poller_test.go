@@ -8,6 +8,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 type fakeTunnelLister struct {
@@ -237,5 +240,45 @@ func TestSysfsPoller_ClientRestoresRate(t *testing.T) {
 
 	if got := pub.len(); got < 3 {
 		t.Errorf("публикаций %d, ожидалось ≥3: с открытой панелью шаг обычный", got)
+	}
+}
+
+// snapshotLister — состояние туннелей, как у сервиса: из снимка списка «не
+// старше SnapshotRecent» с ctx тика.
+type snapshotLister struct{ ifs *query.InterfaceStore }
+
+func (l snapshotLister) RunningTunnels(ctx context.Context) []RunningTunnel {
+	_, _ = l.ifs.Snapshot(ctx, query.SnapshotRecent)
+	return nil
+}
+
+// R36: зрителей нет — тик берёт снимок до SnapshotBackground; со зрителем —
+// не старше SnapshotRecent. Память старше 2 с: без зрителя 0 списков, со
+// зрителем 1.
+func TestSysfsPoller_IdleTickAcceptsBackgroundSnapshot(t *testing.T) {
+	mk := func(clients int64) (*query.FakeNDMS, *SysfsPoller, int) {
+		f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun0", Type: "OpkgTun"})
+		ifs := query.NewInterfaceStore(f, query.NopLogger())
+		if _, err := ifs.List(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		hist := New()
+		t.Cleanup(hist.Stop)
+		p := newSysfsPoller(snapshotLister{ifs}, hist, &spyPublisher{}, &fakeLog{}, nil, t.TempDir(), time.Second)
+		c := &fakeClients{}
+		c.n.Store(clients)
+		p.SetClientCounter(c)
+		return f, p, f.ListCalls()
+	}
+	fi, pi, bi := mk(0)
+	fv, pv, bv := mk(1)
+	time.Sleep(query.SnapshotRecent + 100*time.Millisecond)
+	pi.tick()
+	pv.tick()
+	if n := fi.ListCalls() - bi; n != 0 {
+		t.Fatalf("без зрителя: списков %d, want 0", n)
+	}
+	if n := fv.ListCalls() - bv; n != 1 {
+		t.Fatalf("со зрителем: списков %d, want 1", n)
 	}
 }

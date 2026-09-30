@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 // Publisher receives SSE events. Implemented by *events.Bus in production.
@@ -163,6 +164,11 @@ func (p *SysfsPoller) run() {
 func (p *SysfsPoller) tick() {
 	ctx, cancel := context.WithTimeout(context.Background(), p.interval)
 	defer cancel()
+	if p.nobodyWatching() {
+		// Зрителей нет: состояние туннелей — из снимка списка до
+		// SnapshotBackground, общего с поллером метрик (R36).
+		ctx = query.WithSnapshotBackground(ctx)
+	}
 
 	items := p.lister.RunningTunnels(ctx)
 	if len(items) == 0 {

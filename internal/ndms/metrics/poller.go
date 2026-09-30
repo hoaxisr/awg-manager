@@ -242,9 +242,15 @@ func tunnelsOnly(refs []InterfaceRef) []InterfaceRef {
 func (p *Poller) tick() {
 	ctx, cancel := context.WithTimeout(context.Background(), p.interval)
 	defer cancel()
+	idle := p.nobodyWatching()
+	if idle {
+		// Зрителей нет: снимок списка до SnapshotBackground — один список в
+		// минуту на всех фоновых поллеров, а не свой на каждый тик (R36).
+		ctx = query.WithSnapshotBackground(ctx)
+	}
 
 	refs := p.running.RunningInterfaces(ctx)
-	if p.nobodyWatching() {
+	if idle {
 		// В простое серверная половина работает вхолостую: историю трафика
 		// кормит только publishTunnel, и только для НЕ серверных ref, а
 		// единственный выход серверной — PublishServerSnapshot, то есть

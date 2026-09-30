@@ -507,3 +507,36 @@ func TestMetricsPoller_UnchangedServerHintsOnce(t *testing.T) {
 		t.Errorf("неизменный сервер: подсказок %d, ждали 1", got)
 	}
 }
+
+// R36: зрителей нет — тик берёт снимок списка до SnapshotBackground (общий
+// с другими фоновыми поллерами); со зрителем — не старше SnapshotRecent.
+// Память старше SnapshotRecent (ожидание 2,1 с): без зрителя 0 списков,
+// со зрителем 1.
+func TestMetricsPoller_IdleTickAcceptsBackgroundSnapshot(t *testing.T) {
+	type rig struct {
+		f     *query.FakeNDMS
+		p     *Poller
+		lists int
+	}
+	mk := func(clients int) *rig {
+		f := newNDMS()
+		f.SetDetail("Wireguard0", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"K","rxbytes":1}]}}`))
+		peers, ifs := newPeers(f, time.Millisecond)
+		if _, err := ifs.List(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		run := &fakeRunningProvider{refs: []InterfaceRef{{ID: "Wireguard0"}}}
+		p := NewWithInterval(peers, &fakeMetricsPublisher{}, run, &fakeSubs{count: clients}, NopLogger(), time.Second)
+		return &rig{f: f, p: p, lists: f.ListCalls()}
+	}
+	idle, viewer := mk(0), mk(1)
+	time.Sleep(query.SnapshotRecent + 100*time.Millisecond)
+	idle.p.tick()
+	viewer.p.tick()
+	if n := idle.f.ListCalls() - idle.lists; n != 0 {
+		t.Fatalf("без зрителя: списков %d, want 0 (снимок до SnapshotBackground)", n)
+	}
+	if n := viewer.f.ListCalls() - viewer.lists; n != 1 {
+		t.Fatalf("со зрителем: списков %d, want 1 (SnapshotRecent)", n)
+	}
+}
