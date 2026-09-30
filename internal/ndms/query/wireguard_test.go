@@ -158,8 +158,8 @@ const sampleWGSingleInterfaceJSON = `{
 func primeWGFakeGetter(fg *FakeGetter) {
 	// Runtime серверов — из снимка полного списка (F546): точечных ответов нет.
 	fg.SetJSON("/show/interface/", sampleWGInterfaceListJSON)
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{"description":"builtin"}`)
-	fg.SetJSON("/show/rc/interface/Wireguard1", sampleWGRCInterfaceJSON)
+	fg.SetRC("Wireguard0", `{"description":"builtin"}`)
+	fg.SetRC("Wireguard1", sampleWGRCInterfaceJSON)
 	fg.SetJSON("/show/interface/system-name?name=Wireguard0", `"nwg0"`)
 	fg.SetJSON("/show/interface/system-name?name=Wireguard1", `"nwg1"`)
 }
@@ -255,7 +255,7 @@ func TestWGServerStore_PeerDescription_FromRCCommentWhenRuntimeEmpty(t *testing.
 	fg.SetJSON("/show/interface/", ifaceList)
 	fg.SetJSON("/show/interface/Wireguard1", stripOuterMapEntry(ifaceList, "Wireguard1"))
 	fg.SetPostInterface("Wireguard1", wrapShowInterface(sampleWGSingleInterfaceJSON))
-	fg.SetJSON("/show/rc/interface/Wireguard1", sampleWGRCInterfaceJSON)
+	fg.SetRC("Wireguard1", sampleWGRCInterfaceJSON)
 	fg.SetJSON("/show/interface/system-name?name=Wireguard1", `"nwg1"`)
 
 	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
@@ -326,7 +326,7 @@ func TestWGServerStore_Get_Single(t *testing.T) {
 func TestWGServerStore_GetAll_AllowedIPsPreservesRCOrderAndCIDR(t *testing.T) {
 	fg := newFakeGetter()
 	primeWGFakeGetter(fg)
-	fg.SetJSON("/show/rc/interface/Wireguard1", sampleWGRCInterfaceReversedAllowIPsJSON)
+	fg.SetRC("Wireguard1", sampleWGRCInterfaceReversedAllowIPsJSON)
 	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
 
 	servers, err := s.List(context.Background())
@@ -351,7 +351,7 @@ func TestWGServerStore_GetAll_AllowedIPsPreservesRCOrderAndCIDR(t *testing.T) {
 func TestWGServerStore_GetAll_SkipsInvalidNonContiguousMask(t *testing.T) {
 	fg := newFakeGetter()
 	primeWGFakeGetter(fg)
-	fg.SetJSON("/show/rc/interface/Wireguard1", `{
+	fg.SetRC("Wireguard1", `{
 		"description": "ourserver",
 		"wireguard": {
 			"peer": [
@@ -485,13 +485,13 @@ func TestWGServerStore_FindFreeIndex_StartsAtZero(t *testing.T) {
 func TestWGServerStore_GetASCParams(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, `{"Wireguard1":{"id":"Wireguard1","type":"Wireguard"}}`)
-	fg.SetJSON("/show/rc/interface/Wireguard1/wireguard/asc", `{
+	fg.SetRC("Wireguard1", `{"wireguard":{"asc":{
 		"jc": "4", "jmin": "40", "jmax": "70",
 		"s1": "100", "s2": "200",
 		"h1": "aaa", "h2": "bbb", "h3": "ccc", "h4": "ddd",
 		"s3": "300", "s4": "400",
 		"i1": "i1v", "i2": "i2v", "i3": "i3v", "i4": "i4v", "i5": "i5v"
-	}`)
+	}}}`)
 
 	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
 
@@ -527,9 +527,9 @@ func TestWGServerStore_GetASCParams(t *testing.T) {
 		t.Errorf("i5: %s", ext["i5"])
 	}
 
-	// Base fetch cached separately from extended → 2 RCI calls total.
-	if got := fg.Calls("/show/rc/interface/Wireguard1/wireguard/asc"); got != 2 {
-		t.Errorf("asc calls: want 2, got %d", got)
+	// Обе формы — из одного дерева rc в кэше.
+	if got := fg.Calls("/show/rc/interface/"); got != 1 {
+		t.Errorf("rc tree calls: want 1, got %d", got)
 	}
 }
 
@@ -572,7 +572,7 @@ func TestWGServerStore_InvalidateName_DropsListCache(t *testing.T) {
 	primeWGFakeGetter(fg)
 
 	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
-	rcW1 := "/show/rc/interface/Wireguard1"
+	rcTree := "/show/rc/interface/"
 
 	// Warm both list and per-item caches.
 	_, _ = s.List(context.Background())
@@ -585,11 +585,11 @@ func TestWGServerStore_InvalidateName_DropsListCache(t *testing.T) {
 	_, _ = s.List(context.Background())
 	_, _ = s.Get(context.Background(), "Wireguard1")
 
-	// Оба кэша сброшены: runtime берётся из снимка списка (F546), поэтому
-	// пересборку видно по обогащению rc — List и Get читают его по разу до и
-	// после сброса.
-	if got := fg.Calls(rcW1); got != 4 {
-		t.Errorf("%s: want 4 ((list + item) ×2), got %d", rcW1, got)
+	// Кэши сброшены вместе с деревом rc: runtime берётся из снимка списка
+	// (F546), поэтому пересборку видно по обогащению — одно дерево на List и
+	// Get до сброса и одно после.
+	if got := fg.Calls(rcTree); got != 2 {
+		t.Errorf("%s: want 2 (дерево ×2), got %d", rcTree, got)
 	}
 }
 
@@ -598,7 +598,7 @@ func TestWGServerStore_InvalidateAll(t *testing.T) {
 	primeWGFakeGetter(fg)
 
 	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
-	rcW1 := "/show/rc/interface/Wireguard1"
+	rcTree := "/show/rc/interface/"
 
 	_, _ = s.List(context.Background())
 	_, _ = s.Get(context.Background(), "Wireguard1")
@@ -610,10 +610,10 @@ func TestWGServerStore_InvalidateAll(t *testing.T) {
 	_, _ = s.Get(context.Background(), "Wireguard1")
 	_, _ = s.GetConfig(context.Background(), "Wireguard1")
 
-	// List, Get и GetConfig по разу до и после сброса читают rc Wireguard1 —
-	// все три кэша сброшены (runtime — из снимка списка, F546).
-	if got := fg.Calls(rcW1); got != 6 {
-		t.Errorf("%s: want 6 ((list + item + config) ×2), got %d", rcW1, got)
+	// List, Get и GetConfig делят одно дерево rc до сброса и одно после —
+	// дерево сброшено вместе с кэшами (runtime — из снимка списка, F546).
+	if got := fg.Calls(rcTree); got != 2 {
+		t.Errorf("%s: want 2 (дерево ×2), got %d", rcTree, got)
 	}
 }
 
@@ -725,12 +725,12 @@ func TestWGServerStore_ListSystemTunnels_InvalidateRefetches(t *testing.T) {
 func TestWGServerStore_GetASCParams_NumericForm(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, `{"Wireguard1":{"id":"Wireguard1","type":"Wireguard"}}`)
-	fg.SetJSON("/show/rc/interface/Wireguard1/wireguard/asc", `{
+	fg.SetRC("Wireguard1", `{"wireguard":{"asc":{
 		"jc": 4, "jmin": 40, "jmax": 70, "s1": 87, "s2": 118,
 		"h1": "100000-100100", "h2": "2", "h3": "3", "h4": "4",
 		"s3": 36, "s4": 12, "i1": "<r 32>", "i2": "", "i3": "", "i4": "", "i5": "",
 		"header-protection-key": "K", "random-trailers": 1
-	}`)
+	}}}`)
 	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
 	raw, err := s.GetASCParams(context.Background(), "Wireguard1", true)
 	if err != nil {
@@ -827,7 +827,7 @@ func TestWithLivePeers(t *testing.T) {
 func TestPeersRCFresh_NoCacheNoStale(t *testing.T) {
 	fg := NewFakeGetter()
 	fg.SetJSON(ifaceListPath, `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`)
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"K1=","comment":"office","allow-ips":[{"address":"172.16.5.0","mask":"255.255.255.0"}]}]}}`)
+	fg.SetRC("Wireguard0", `{"wireguard":{"peer":[{"key":"K1=","comment":"office","allow-ips":[{"address":"172.16.5.0","mask":"255.255.255.0"}]}]}}`)
 	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
 	ctx := context.Background()
 
@@ -836,11 +836,11 @@ func TestPeersRCFresh_NoCacheNoStale(t *testing.T) {
 		len(peers[0].AllowedIPs) != 1 || peers[0].AllowedIPs[0] != "172.16.5.0/24" {
 		t.Fatalf("peers = %+v, err = %v", peers, err)
 	}
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[]}}`)
+	fg.SetRC("Wireguard0", `{"wireguard":{"peer":[]}}`)
 	if peers, err := s.PeersRCFresh(ctx, "Wireguard0"); err != nil || len(peers) != 0 {
 		t.Fatalf("закэшировано: %+v %v", peers, err)
 	}
-	fg.SetError("/show/rc/interface/Wireguard0", errors.New("rci down"))
+	fg.SetError("/show/rc/interface/", errors.New("rci down"))
 	if _, err := s.PeersRCFresh(ctx, "Wireguard0"); err == nil {
 		t.Fatal("сбой чтения замаскирован")
 	}
@@ -852,13 +852,13 @@ func TestPeersRCFresh_NoCacheNoStale(t *testing.T) {
 func TestWGServerStore_List_EnrichmentErrorNotCached(t *testing.T) {
 	fg := newFakeGetter()
 	primeWGFakeGetter(fg)
-	fg.SetError("/show/rc/interface/Wireguard1", errors.New("rci down"))
+	fg.SetError("/show/rc/interface/", errors.New("rci down"))
 	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
 
 	if servers, err := s.List(context.Background()); err == nil {
 		t.Fatalf("сбой обогащения замаскирован: %+v", servers)
 	}
-	fg.SetError("/show/rc/interface/Wireguard1", nil)
+	fg.SetError("/show/rc/interface/", nil)
 	servers, err := s.List(context.Background())
 	if err != nil {
 		t.Fatalf("List после починки: %v", err)
@@ -873,13 +873,13 @@ func TestWGServerStore_List_EnrichmentErrorNotCached(t *testing.T) {
 func TestWGServerStore_Get_EnrichmentErrorNotCached(t *testing.T) {
 	fg := newFakeGetter()
 	primeWGFakeGetter(fg)
-	fg.SetError("/show/rc/interface/Wireguard1", errors.New("rci down"))
+	fg.SetError("/show/rc/interface/", errors.New("rci down"))
 	s := NewWGServerStore(fg, NopLogger(), NewInterfaceStore(fg, NopLogger()))
 
 	if srv, err := s.Get(context.Background(), "Wireguard1"); err == nil {
 		t.Fatalf("сбой обогащения замаскирован: %+v", srv)
 	}
-	fg.SetError("/show/rc/interface/Wireguard1", nil)
+	fg.SetError("/show/rc/interface/", nil)
 	srv, err := s.Get(context.Background(), "Wireguard1")
 	if err != nil {
 		t.Fatalf("Get после починки: %v", err)

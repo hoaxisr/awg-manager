@@ -74,8 +74,8 @@ func newServersNATHarness(t *testing.T) (*ServersHandler, *storage.SettingsStore
 		"Wireguard2":{"id":"Wireguard2","type":"Wireguard"}
 	}`)
 	// Обогащение списка серверов читает rc каждого: без него List — ошибка (F510).
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{}`)
-	fg.SetJSON("/show/rc/interface/Wireguard2", `{}`)
+	fg.SetRC("Wireguard0", `{}`)
+	fg.SetRC("Wireguard2", `{}`)
 	fg.SetJSON("/show/running-config", `{"message":["interface PPPoE0","    ip global 32767","!","interface Wireguard2","    ip global 32000","!","interface Wireguard1","    ip access-group AWGM_Wireguard1 in","    ip access-group GUEST_ACL in","    ip access-group _WEBADMIN_Wireguard1 in","!"]}`)
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	poster := &natPoster{}

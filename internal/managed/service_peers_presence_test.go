@@ -64,7 +64,7 @@ func TestTogglePeer_PeerAbsentOnRouter_NoGhost(t *testing.T) {
 func TestTogglePeer_PresenceReadFails_NoPost(t *testing.T) {
 	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
 	seedPeer(t, store)
-	fg.SetError("/show/rc/interface/Wireguard1", errors.New("rci down"))
+	fg.SetError("/show/rc/interface/", errors.New("rci down"))
 	if err := svc.TogglePeer(context.Background(), "Wireguard1", "PEER1", false); err == nil {
 		t.Fatal("отказ чтения принят за наличие пира")
 	}
@@ -189,8 +189,8 @@ func TestOccupiedSubnets_StoredSubnetsOnlyWhilePeerOnRouter(t *testing.T) {
 		_ = store.SetServerPeerSecret("Wireguard0", "SYS1=", storage.ServerPeerSecret{PrivateKey: "p", Description: "home", RemoteSubnets: []string{"192.168.60.0/24"}})
 		seedPeer(t, store, "192.168.50.0/24")
 		if onRouter {
-			fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"`+foreignKey+`"},{"key":"SYS1="}]}}`)
-			fg.SetJSON("/show/rc/interface/Wireguard1", rcPeer1)
+			fg.SetRC("Wireguard0", `{"wireguard":{"peer":[{"key":"`+foreignKey+`"},{"key":"SYS1="}]}}`)
+			fg.SetRC("Wireguard1", rcPeer1)
 		}
 		occ, err := svc.OccupiedSubnets(context.Background(), PeerRef{Iface: "Wireguard1", PubKey: "OTHER"})
 		if err != nil {

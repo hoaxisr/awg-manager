@@ -38,10 +38,10 @@ func newPeerSubnetTestService(t *testing.T, rcRoutes string) (*Service, *storage
 		"Wireguard2":{"id":"Wireguard2","type":"Wireguard","description":"VPN client","state":"up","link":"up","address":"10.8.1.2","mask":"255.255.255.0"},
 		"Bridge0":{"id":"Bridge0","type":"Bridge","description":"Home","address":"192.168.1.1","mask":"255.255.255.0"},
 		"Bridge1":{"id":"Bridge1","type":"Bridge","description":"Guest","address":"10.1.30.1","mask":"255.255.255.0"}}`)
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"`+foreignKey+`","comment":"office","allow-ips":[{"address":"10.9.0.2","mask":"255.255.255.255"},{"address":"172.16.5.0","mask":"255.255.255.0"}]}]}}`)
-	fg.SetJSON("/show/rc/interface/Wireguard1", `{}`)
+	fg.SetRC("Wireguard0", `{"wireguard":{"peer":[{"key":"`+foreignKey+`","comment":"office","allow-ips":[{"address":"10.9.0.2","mask":"255.255.255.255"},{"address":"172.16.5.0","mask":"255.255.255.0"}]}]}}`)
+	fg.SetRC("Wireguard1", `{}`)
 	// Клиентский туннель (NativeWG): пир с 0.0.0.0/0 — не сервер, занятых не даёт.
-	fg.SetJSON("/show/rc/interface/Wireguard2", `{"wireguard":{"peer":[{"key":"VPNPEER=","allow-ips":[{"address":"0.0.0.0","mask":"0"}]}]}}`)
+	fg.SetRC("Wireguard2", `{"wireguard":{"peer":[{"key":"VPNPEER=","allow-ips":[{"address":"0.0.0.0","mask":"0"}]}]}}`)
 	fg.SetJSON("/show/rc/ip/route", rcRoutes)
 	fg.SetJSON("/show/running-config", `{"message":[]}`)
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
@@ -74,8 +74,8 @@ func labels(occ []peersubnet.Occupied) map[string]string {
 func TestOccupiedSubnets_CollectsAllSources(t *testing.T) {
 	svc, store, _, fg := newPeerSubnetTestService(t, `[]`)
 	// Пиры записей есть на роутере — их сети заняты.
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"`+foreignKey+`","comment":"office","allow-ips":[{"address":"10.9.0.2","mask":"255.255.255.255"},{"address":"172.16.5.0","mask":"255.255.255.0"}]},{"key":"SYS1="}]}}`)
-	fg.SetJSON("/show/rc/interface/Wireguard1", rcPeer1)
+	fg.SetRC("Wireguard0", `{"wireguard":{"peer":[{"key":"`+foreignKey+`","comment":"office","allow-ips":[{"address":"10.9.0.2","mask":"255.255.255.255"},{"address":"172.16.5.0","mask":"255.255.255.0"}]},{"key":"SYS1="}]}}`)
+	fg.SetRC("Wireguard1", rcPeer1)
 	_ = store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
 		sv.Peers = append(sv.Peers, storage.ManagedPeer{PublicKey: "PEER1", Description: "branch", RemoteSubnets: []string{"192.168.50.0/24"}})
 		return nil
@@ -134,7 +134,7 @@ func TestOccupiedSubnets_RouterUnreachableIsError(t *testing.T) {
 // (WGServers.List) такой сбой глотает, и занятых там было бы меньше.
 func TestOccupiedSubnets_PeerConfigUnreachableIsError(t *testing.T) {
 	svc, _, _, fg := newPeerSubnetTestService(t, `[]`)
-	fg.SetError("/show/rc/interface/Wireguard0", errors.New("rci down"))
+	fg.SetError("/show/rc/interface/", errors.New("rci down"))
 	if _, err := svc.OccupiedSubnets(context.Background(), PeerRef{}); err == nil {
 		t.Fatal("ожидали ошибку")
 	}
@@ -164,7 +164,7 @@ func TestOccupiedSubnets_FreshInterfaceList(t *testing.T) {
 	fg.SetJSON("/show/interface/", `{
 		"Wireguard0":{"id":"Wireguard0","type":"Wireguard","description":"Wireguard VPN Server","address":"10.9.0.1","mask":"255.255.255.0"},
 		"Wireguard5":{"id":"Wireguard5","type":"Wireguard","description":"new","address":"10.55.0.1","mask":"255.255.255.0"}}`)
-	fg.SetJSON("/show/rc/interface/Wireguard5", `{"wireguard":{"peer":[{"key":"NEWPEER=","allow-ips":[{"address":"172.20.0.0","mask":"255.255.255.0"}]}]}}`)
+	fg.SetRC("Wireguard5", `{"wireguard":{"peer":[{"key":"NEWPEER=","allow-ips":[{"address":"172.20.0.0","mask":"255.255.255.0"}]}]}}`)
 	if err := store.MarkServerInterface("Wireguard5"); err != nil {
 		t.Fatal(err)
 	}
@@ -181,11 +181,10 @@ func TestOccupiedSubnets_FreshInterfaceList(t *testing.T) {
 // Пометка «сервер» у интерфейса, которого на роутере нет, сбор не ломает:
 // список интерфейсов прочитан успешно и его не содержит.
 func TestOccupiedSubnets_MarkedServerGoneIsSkipped(t *testing.T) {
-	svc, store, _, fg := newPeerSubnetTestService(t, `[]`)
+	svc, store, _, _ := newPeerSubnetTestService(t, `[]`)
 	if err := store.MarkServerInterface("Wireguard7"); err != nil {
 		t.Fatal(err)
 	}
-	fg.SetError("/show/rc/interface/Wireguard7", errors.New("unable to find Wireguard7"))
 	occ, err := svc.OccupiedSubnets(context.Background(), PeerRef{})
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +215,7 @@ func TestOccupiedSubnets_UnmarkedBuiltInServerCounts(t *testing.T) {
 // allow-ips его пира на роутере (записи в хранилище нет) — занята.
 func TestOccupiedSubnets_ManagedServerPeersCount(t *testing.T) {
 	svc, _, _, fg := newPeerSubnetTestService(t, `[]`)
-	fg.SetJSON("/show/rc/interface/Wireguard1", `{"wireguard":{"peer":[{"key":"MPEER=","comment":"lab","allow-ips":[{"address":"10.66.66.2","mask":"255.255.255.255"},{"address":"172.20.0.0","mask":"255.255.255.0"}]}]}}`)
+	fg.SetRC("Wireguard1", `{"wireguard":{"peer":[{"key":"MPEER=","comment":"lab","allow-ips":[{"address":"10.66.66.2","mask":"255.255.255.255"},{"address":"172.20.0.0","mask":"255.255.255.0"}]}]}}`)
 	occ, err := svc.OccupiedSubnets(context.Background(), PeerRef{})
 	if err != nil {
 		t.Fatal(err)

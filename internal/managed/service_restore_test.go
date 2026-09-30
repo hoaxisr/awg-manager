@@ -17,7 +17,7 @@ import (
 type restoreLiveGetter struct {
 	live  map[string]restoreLiveEntry
 	asc   map[string]map[string]string
-	rcErr error // сбой чтения /show/rc/interface/<X>
+	rcErr error // сбой чтения дерева /show/rc/interface/
 	ifErr error // сбой чтения /show/interface/
 }
 
@@ -29,25 +29,29 @@ type restoreLiveEntry struct {
 }
 
 func (g *restoreLiveGetter) Get(ctx context.Context, path string, out any) error {
-	if strings.HasPrefix(path, "/show/rc/interface/") && strings.HasSuffix(path, "/wireguard/asc") {
-		iface := strings.TrimSuffix(strings.TrimPrefix(path, "/show/rc/interface/"), "/wireguard/asc")
-		src, ok := g.asc[iface]
-		if !ok {
-			src = map[string]string{
-				"jc": "0", "jmin": "0", "jmax": "0", "s1": "0", "s2": "0",
-				"h1": "", "h2": "", "h3": "", "h4": "",
-				"s3": "0", "s4": "0",
-			}
-		}
-		b, _ := json.Marshal(src)
-		return json.Unmarshal(b, out)
-	}
-	// rc интерфейса без пиров: обогащение WGServers.Get без него — ошибка (F510).
-	if strings.HasPrefix(path, "/show/rc/interface/") && !strings.Contains(strings.TrimPrefix(path, "/show/rc/interface/"), "/") {
+	// Дерево rc (F546): присутствующие интерфейсы без пиров, ASC — последний
+	// записанный POST-ом.
+	if path == "/show/rc/interface/" {
 		if g.rcErr != nil {
 			return g.rcErr
 		}
-		return json.Unmarshal([]byte(`{}`), out)
+		tree := map[string]any{}
+		for name, ent := range g.live {
+			if !ent.Present {
+				continue
+			}
+			src, ok := g.asc[name]
+			if !ok {
+				src = map[string]string{
+					"jc": "0", "jmin": "0", "jmax": "0", "s1": "0", "s2": "0",
+					"h1": "", "h2": "", "h3": "", "h4": "",
+					"s3": "0", "s4": "0",
+				}
+			}
+			tree[name] = map[string]any{"wireguard": map[string]any{"asc": src}}
+		}
+		b, _ := json.Marshal(tree)
+		return json.Unmarshal(b, out)
 	}
 	if path != "/show/interface/" {
 		return errors.New("unsupported path: " + path)

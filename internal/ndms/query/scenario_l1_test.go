@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -14,9 +15,8 @@ import (
 // слоя уже сбросил список серверов. Runtime — из снимка полного списка: ни
 // одного запроса по имени, E == 0.
 //
-// Task 42 — runtime-половина: GetSystemTunnel и ListSystemTunnelsFresh после
-// сноса. Get и List серверов после сноса ещё обогащаются rc по имени —
-// полный L1 включается вместе с деревом rc (Task 44).
+// Конфигурация (rc) — из полного дерева /show/rc/interface/ (Task 44): Get,
+// List и GetConfig серверов после сноса тоже не спрашивают по имени.
 func TestScenario_ForeignWGRemovedNoHook_PanelReadsNoE(t *testing.T) {
 	ctx := context.Background()
 	f := NewFakeNDMS(ndms.Interface{ID: "Bridge0", Type: "Bridge"})
@@ -43,26 +43,56 @@ func TestScenario_ForeignWGRemovedNoHook_PanelReadsNoE(t *testing.T) {
 	if list, err := q.WGServers.ListSystemTunnelsFresh(ctx); err != nil || len(list) != 1 {
 		t.Fatalf("ListSystemTunnelsFresh до сноса: %+v %v", list, err)
 	}
-	if srv, err := q.WGServers.Get(ctx, "Wireguard19"); err != nil || srv.PublicKey != "PUB19=" {
+	if srv, err := q.WGServers.Get(ctx, "Wireguard19"); err != nil || srv.PublicKey != "PUB19=" ||
+		len(srv.Peers) != 1 || len(srv.Peers[0].AllowedIPs) != 1 {
 		t.Fatalf("Get до сноса: %+v %v", srv, err)
+	}
+	if srvs, err := q.WGServers.List(ctx); err != nil || len(srvs) != 1 {
+		t.Fatalf("List до сноса: %+v %v", srvs, err)
+	}
+	if cfg, err := q.WGServers.GetConfig(ctx, "Wireguard19"); err != nil || len(cfg.Peers) != 1 {
+		t.Fatalf("GetConfig до сноса: %+v %v", cfg, err)
 	}
 
 	f.Remove("Wireguard19") // хук потерян/в очереди
 	q.WGServers.InvalidateAll()
 	posts := len(f.Posts)
 
+	// Снимок моложе SnapshotRecent ещё держит Wireguard19 (так и на стенде:
+	// хук снятия в пути) — все пути панели читают его, но конфигурацию берут
+	// из дерева rc: по имени не спрашивают, ошибок нет.
 	if _, err := q.WGServers.GetSystemTunnel(ctx, "Wireguard19"); err != nil {
 		t.Fatalf("GetSystemTunnel после сноса: %v", err)
 	}
-	if f.E != 0 {
-		t.Fatalf("GetSystemTunnel по снятому: E=%d, want 0", f.E)
-	}
-	list, err := q.WGServers.ListSystemTunnelsFresh(ctx)
-	if err != nil {
+	if _, err := q.WGServers.ListSystemTunnelsFresh(ctx); err != nil {
 		t.Fatalf("ListSystemTunnelsFresh после сноса: %v", err)
 	}
-	if len(list) != 0 {
-		t.Fatalf("снятый Wireguard19 в свежем списке: %+v", list)
+	if _, err := q.WGServers.List(ctx); err != nil {
+		t.Fatalf("List серверов после сноса: %v", err)
+	}
+	if _, err := q.WGServers.Get(ctx, "Wireguard19"); err != nil {
+		t.Fatalf("Get после сноса: %v", err)
+	}
+	if _, err := q.WGServers.GetConfig(ctx, "Wireguard19"); err != nil {
+		t.Fatalf("GetConfig после сноса: %v", err)
+	}
+	if f.E != 0 {
+		t.Fatalf("E=%d, want 0", f.E)
+	}
+
+	// Свежий список снятого уже не несёт.
+	if _, err := q.Interfaces.Snapshot(ctx, SnapshotLive); err != nil {
+		t.Fatal(err)
+	}
+	q.WGServers.InvalidateRuntime()
+	if list, err := q.WGServers.ListSystemTunnelsFresh(ctx); err != nil || len(list) != 0 {
+		t.Fatalf("ListSystemTunnelsFresh по свежему списку: %+v %v", list, err)
+	}
+	if srvs, err := q.WGServers.List(ctx); err != nil || len(srvs) != 0 {
+		t.Fatalf("List серверов по свежему списку: %+v %v", srvs, err)
+	}
+	if _, err := q.WGServers.GetConfig(ctx, "Wireguard19"); !errors.Is(err, ErrGone) {
+		t.Fatalf("GetConfig по свежему списку: %v, want ErrGone", err)
 	}
 	if f.E != 0 {
 		t.Fatalf("E=%d, want 0", f.E)
@@ -97,5 +127,27 @@ func TestFindFreeIndex_FreshList(t *testing.T) {
 	}
 	if f.E != 0 || len(f.Posts) != 0 {
 		t.Fatalf("E=%d Posts=%v", f.E, f.Posts)
+	}
+}
+
+// Список серверов и системные туннели читают один снимок (SnapshotRecent):
+// после нашей записи (метка) оба пересобираются одним списком.
+func TestWGServers_ListSharesSnapshot(t *testing.T) {
+	ctx := context.Background()
+	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", State: "up"})
+	q := NewQueries(Deps{Getter: f, Logger: NopLogger()})
+	if _, err := q.Interfaces.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+	q.Interfaces.Invalidate("Wireguard1")
+	before := f.ListCalls()
+	if _, err := q.WGServers.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.WGServers.ListSystemTunnelsFresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.ListCalls() - before; got != 1 {
+		t.Fatalf("списков %d, want 1", got)
 	}
 }

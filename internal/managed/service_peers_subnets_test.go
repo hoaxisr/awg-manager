@@ -111,7 +111,7 @@ func (r *simRouter) renderLocked() {
 			list = append(list, map[string]any{"key": k, "allow-ips": allow})
 		}
 		b, _ := json.Marshal(map[string]any{"wireguard": map[string]any{"peer": list}})
-		r.fg.SetJSON("/show/rc/interface/"+iface, string(b))
+		r.fg.SetRC(iface, string(b))
 	}
 	b, _ := json.Marshal(r.routes)
 	if r.routes == nil {
@@ -767,7 +767,7 @@ func TestUpdatePeer_AbsentOrNullNetworksUntouched(t *testing.T) {
 	} {
 		svc, store, poster, fg := newPeerSubnetTestService(t, rcOurs77)
 		seedPeer(t, store, "192.168.77.0/24")
-		fg.SetJSON("/show/rc/interface/Wireguard1", rcPeer1) // переименование проверяет наличие
+		fg.SetRC("Wireguard1", rcPeer1) // переименование проверяет наличие
 		seedPeerAllowed(t, store, "10.66.66.0/24")
 		if err := updatePeerJSON(t, svc, body); err != nil {
 			t.Fatalf("%s: %v", body, err)
@@ -799,7 +799,7 @@ func TestUpdatePeer_EmptyClientAllowedIPsClears(t *testing.T) {
 func TestUpdatePeer_AbsentRemoteSubnets_LANSegmentsPass(t *testing.T) {
 	svc, store, _, fg := newPeerSubnetTestService(t, `[]`)
 	seedPeer(t, store)
-	fg.SetJSON("/show/rc/interface/Wireguard1", rcPeer1)
+	fg.SetRC("Wireguard1", rcPeer1)
 	if err := store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
 		sv.LANSegments = []string{"Bridge0"}
 		return nil
@@ -1134,7 +1134,7 @@ func TestUpdatePeer_TunnelRevert_PresenceReadFails_NoAdd(t *testing.T) {
 		if brokeAt >= 0 || !strings.Contains(string(b), `"allow-ips":[{"address":"10.66.66.3","mask":"255.255.255.255"}]`) {
 			return
 		}
-		fg.SetError("/show/rc/interface/Wireguard1", errors.New("rci down"))
+		fg.SetError("/show/rc/interface/", errors.New("rci down"))
 		brokeAt = len(poster.posts)
 		_ = store.UpdateManagedServer("Wireguard1", func(sv *storage.ManagedServer) error {
 			sv.Peers = nil
@@ -1245,7 +1245,7 @@ func TestRollbackAddedPeer_LogOpAndPresence(t *testing.T) {
 	spy := &recAppLog{}
 	svc.appLog = logging.NewScopedLogger(spy, logging.GroupServer, logging.SubManaged)
 	poster.failOn = refuse
-	fg.SetError("/show/rc/interface/Wireguard1", errors.New("rc down"))
+	fg.SetError("/show/rc/interface/", errors.New("rc down"))
 	svc.rollbackAddedPeer(context.Background(), "managed-restore-merge", confirmed(t, "Wireguard1"), "PEER1", "branch", nil)
 	if len(spy.entries) != 1 || !strings.HasPrefix(spy.entries[0], "warn|managed-restore-merge|branch|") ||
 		!strings.Contains(spy.entries[0], "неизвестно") || strings.Contains(spy.entries[0], "пир не снят") {
@@ -1256,7 +1256,7 @@ func TestRollbackAddedPeer_LogOpAndPresence(t *testing.T) {
 	spy = &recAppLog{}
 	svc.appLog = logging.NewScopedLogger(spy, logging.GroupServer, logging.SubManaged)
 	poster.failOn = refuse
-	fg.SetJSON("/show/rc/interface/Wireguard1", `{"wireguard":{"peer":[{"key":"PEER1"}]}}`)
+	fg.SetRC("Wireguard1", `{"wireguard":{"peer":[{"key":"PEER1"}]}}`)
 	svc.rollbackAddedPeer(context.Background(), "add-peer", confirmed(t, "Wireguard1"), "PEER1", "branch", nil)
 	if len(spy.entries) != 1 || !strings.HasPrefix(spy.entries[0], "warn|add-peer|branch|пир не снят при откате") {
 		t.Fatalf("пир на роутере: %v", spy.entries)

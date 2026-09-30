@@ -20,7 +20,7 @@ func newPeerRouterFixture(t *testing.T) (*PeerRouter, *query.FakeGetter) {
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/rc/ip/route", rcRoutesFixture)
 	fg.SetJSON("/show/interface/", `{"Wireguard9":{"id":"Wireguard9","type":"Wireguard"}}`) // кэш интерфейсов: rc читается только по известным (F546)
-	fg.SetJSON("/show/rc/interface/Wireguard9", `{"wireguard":{"peer":[
+	fg.SetRC("Wireguard9", `{"wireguard":{"peer":[
 		{"key":"K1=","allow-ips":[{"address":"10.9.9.2","mask":"255.255.255.255"},{"address":"192.168.77.0","mask":"255.255.255.0"}]},
 		{"key":"K2=","allow-ips":[{"address":"10.9.9.3","mask":"255.255.255.255"}]}]}}`)
 	poster := &fakePoster{}
@@ -76,11 +76,11 @@ func TestPeerRouter_PeerAllowIPs(t *testing.T) {
 	if nets, err := r.PeerAllowIPs(context.Background(), confirmed(t, "Wireguard9"), "ABSENT="); !errors.Is(err, peersubnet.ErrPeerNotFound) || nets != nil {
 		t.Fatalf("нет пира: %v %v", nets, err)
 	}
-	fg.SetJSON("/show/rc/interface/Wireguard9", `{"wireguard":{"peer":[{"key":"K1=","allow-ips":[{"address":"10.9.9.2","mask":"255.255.255.255"}]}]}}`)
+	fg.SetRC("Wireguard9", `{"wireguard":{"peer":[{"key":"K1=","allow-ips":[{"address":"10.9.9.2","mask":"255.255.255.255"}]}]}}`)
 	if nets, err := r.PeerAllowIPs(context.Background(), confirmed(t, "Wireguard9"), "K1="); err != nil || len(nets) != 1 {
 		t.Fatalf("после правки: %v %v", nets, err)
 	}
-	fg.SetError("/show/rc/interface/Wireguard9", errors.New("rci down"))
+	fg.SetError("/show/rc/interface/", errors.New("rci down"))
 	if _, err := r.PeerAllowIPs(context.Background(), confirmed(t, "Wireguard9"), "K1="); err == nil {
 		t.Fatal("отказ чтения проглочен")
 	}
@@ -116,9 +116,9 @@ func (p failOnPoster) Post(ctx context.Context, payload any) (json.RawMessage, e
 func peerReconcileOracle(t *testing.T, failOn string) (*PeerRouter, *query.FakeNDMS) {
 	t.Helper()
 	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard9", Type: "Wireguard"})
+	f.SetRC("Wireguard9", json.RawMessage(`{"wireguard":{"peer":[{"key":"K=","allow-ips":[{"address":"10.9.9.2","mask":"255.255.255.255"}]}]}}`))
 	raw := map[string]string{
-		"/show/rc/interface/Wireguard9": `{"wireguard":{"peer":[{"key":"K=","allow-ips":[{"address":"10.9.9.2","mask":"255.255.255.255"}]}]}}`,
-		"/show/rc/ip/route":             `[]`,
+		"/show/rc/ip/route": `[]`,
 	}
 	p := failOnPoster{FakeNDMS: f, failOn: failOn}
 	sc := NewSaveCoordinator(p, &fakePublisher{}, time.Hour, time.Hour, 0, nil)

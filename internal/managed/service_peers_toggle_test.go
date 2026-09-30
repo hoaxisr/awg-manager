@@ -24,7 +24,7 @@ func TestTogglePeer_CarriesCommentToRCI(t *testing.T) {
 	// Пир на роутере есть: connect по ключу проверяет наличие свежим чтением.
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`) // кэш интерфейсов: rc читается только по известным (F546)
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"`+pubkey+`"}]}}`)
+	fg.SetRC("Wireguard0", `{"wireguard":{"peer":[{"key":"`+pubkey+`"}]}}`)
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	svc.commands = command.NewCommands(command.Deps{Poster: poster, Save: command.NewSaveCoordinator(poster, nil, time.Hour, time.Hour, 0, nil), Queries: q})
 

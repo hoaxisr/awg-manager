@@ -90,6 +90,10 @@ type FakeGetter struct {
 	errFor     map[string]error  // path → error to return
 	defaultErr error             // returned when no specific entry set
 
+	// rcTree — записи дерева rc (SetRC): GET /show/rc/interface/ отдаёт их
+	// картой id → rc, если путь не заскриптован явно.
+	rcTree map[string]json.RawMessage
+
 	// POST-side scripting. POST payloads are not paths, so we key by the
 	// interface name extracted from {"show":{"interface":{"name":...}}}
 	// payloads — the only POST shape currently used in this package.
@@ -143,6 +147,29 @@ func (f *FakeGetter) SetError(path string, err error) {
 	f.mu.Unlock()
 }
 
+// SetRC — rc интерфейса name в дереве /show/rc/interface/ (одно чтение на
+// все интерфейсы, как у NDMS; по имени rc не читается, F546).
+func (f *FakeGetter) SetRC(name, body string) {
+	f.mu.Lock()
+	if f.rcTree == nil {
+		f.rcTree = make(map[string]json.RawMessage)
+	}
+	f.rcTree[name] = json.RawMessage(body)
+	f.mu.Unlock()
+}
+
+// rcTreeLocked — тело дерева rc из SetRC; false — SetRC не звали.
+func (f *FakeGetter) rcTreeLocked(path string) (string, bool) {
+	if path != "/show/rc/interface/" || f.rcTree == nil {
+		return "", false
+	}
+	b, err := json.Marshal(f.rcTree)
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
 func (f *FakeGetter) SetDefaultError(err error) {
 	f.mu.Lock()
 	f.defaultErr = err
@@ -159,6 +186,9 @@ func (f *FakeGetter) Get(ctx context.Context, path string, dst any) error {
 	f.mu.Lock()
 	f.calls[path]++
 	body, haveBody := f.jsonResp[path]
+	if !haveBody {
+		body, haveBody = f.rcTreeLocked(path)
+	}
 	err, haveErr := f.errFor[path]
 	defaultErr := f.defaultErr
 	f.mu.Unlock()
@@ -187,6 +217,9 @@ func (f *FakeGetter) GetRaw(ctx context.Context, path string) ([]byte, error) {
 	if !haveBody {
 		if jsonBody, haveJSON := f.jsonResp[path]; haveJSON {
 			body = []byte(jsonBody)
+			haveBody = true
+		} else if tree, ok := f.rcTreeLocked(path); ok {
+			body = []byte(tree)
 			haveBody = true
 		}
 	}

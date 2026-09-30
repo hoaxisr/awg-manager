@@ -214,9 +214,10 @@ func (d *Dispatcher) apply(e Event) {
 		// Смена уровня меняет Status интерфейса, а по нему отбирается состав
 		// для поллера метрик (`Status == "up"`). Без сброса список системных
 		// туннелей жил бы до TTL, и поллер минутами не видел бы поднявшийся
-		// или упавший туннель (F364).
+		// или упавший туннель (F364). Дерево rc — нет: слой конфигурацию не
+		// меняет, а дерево стоит ~90 тиков ndm на каждый хук (F546).
 		if d.queries.WGServers != nil {
-			d.queries.WGServers.InvalidateAll()
+			d.queries.WGServers.InvalidateRuntime()
 		}
 		if e.Layer == "conf" && d.queries.RunningConfig != nil {
 			d.queries.RunningConfig.InvalidateAll()

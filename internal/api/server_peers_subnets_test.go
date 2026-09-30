@@ -99,7 +99,7 @@ func newServersSubnetHarnessFG(t *testing.T, peerAllowIPs, rcRoutes, otherAllowI
 	fg.SetJSON("/show/interface/", `{
 		"Wireguard0":{"id":"Wireguard0","type":"Wireguard","description":"Wireguard VPN Server","state":"up","link":"up","address":"10.9.0.1","mask":"255.255.255.0","wireguard":{"peer":[`+listPeers+`]}},
 		"Bridge0":{"id":"Bridge0","type":"Bridge","description":"Home","address":"192.168.1.1","mask":"255.255.255.0"}}`)
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[`+rcPeers+`]}}`)
+	fg.SetRC("Wireguard0", `{"wireguard":{"peer":[`+rcPeers+`]}}`)
 	fg.SetJSON("/show/rc/ip/route", rcRoutes)
 	fg.SetJSON("/show/running-config", `{"message":["interface PPPoE0","    ip global 32767","!"]}`)
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
@@ -174,7 +174,7 @@ func (r *sysSimRouter) render() {
 		list = append(list, map[string]any{"key": k, "allow-ips": allow})
 	}
 	b, _ := json.Marshal(map[string]any{"wireguard": map[string]any{"peer": list}})
-	r.fg.SetJSON("/show/rc/interface/Wireguard0", string(b))
+	r.fg.SetRC("Wireguard0", string(b))
 	b, _ = json.Marshal(r.routes)
 	if r.routes == nil {
 		b = []byte(`[]`)
@@ -1147,7 +1147,7 @@ func TestServersHandler_UpdateServerPeer_TunnelRevert_PresenceReadFails_NoAdd(t 
 	brokeAt := -1
 	sim.fail = func(payload string) error {
 		if brokeAt < 0 && strings.Contains(payload, `"comment":"renamed"`) {
-			fg.SetError("/show/rc/interface/Wireguard0", errors.New("rci down"))
+			fg.SetError("/show/rc/interface/", errors.New("rci down"))
 			brokeAt = len(poster.snapshot())
 			return errors.New("comment refused")
 		}

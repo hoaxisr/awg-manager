@@ -28,7 +28,7 @@ func TestGetStats_OverlaysLivePeers(t *testing.T) {
 	// отсутствующим и пиров не спрашивал бы (F546).
 	// Runtime сервера и пиры — из снимка списка (F546).
 	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard","state":"up","wireguard":{"peer":[{"rxbytes":10,`+peer+`}]}}}`)
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{}`) // обогащение Get без rc — ошибка (F510)
+	fg.SetRC("Wireguard0", `{}`) // обогащение Get без rc — ошибка (F510)
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	svc := New(&fakePoster{}, nil, queries, nil, store, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	// Кэш items заполнен старыми цифрами; к моменту GetStats роутер отвечает

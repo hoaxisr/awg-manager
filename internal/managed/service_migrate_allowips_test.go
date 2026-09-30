@@ -26,7 +26,7 @@ func fakeWithPeers(keys ...string) *query.FakeGetter {
 	for _, k := range keys {
 		peers = append(peers, `{"key":"`+k+`"}`)
 	}
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[`+strings.Join(peers, ",")+`]}}`)
+	fg.SetRC("Wireguard0", `{"wireguard":{"peer":[`+strings.Join(peers, ",")+`]}}`)
 	return fg
 }
 
@@ -125,7 +125,7 @@ func TestMigratePeerAllowIPs_AbsentPeerSkipped(t *testing.T) {
 func TestMigratePeerAllowIPs_PeerReadFailure_NoPostsRetry(t *testing.T) {
 	store, poster := seedAllowIPsStore(t, []storage.ManagedPeer{{PublicKey: "PEER_A", TunnelIP: "10.0.0.2/32"}}, false)
 	fg := fakeWithPeers("PEER_A")
-	fg.SetError("/show/rc/interface/Wireguard0", errors.New("rci down"))
+	fg.SetError("/show/rc/interface/", errors.New("rci down"))
 	s := &Service{settings: store, transport: poster, queries: query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})}
 	s.MigratePeerAllowIPs(context.Background())
 	if len(poster.posts) != 0 || store.IsManagedPeerAllowIPsMigrated() {
@@ -143,17 +143,18 @@ func addSecondServer(t *testing.T, store *storage.SettingsStore) {
 	}
 }
 
-// Fix round 4 (N1): rc одного сервера не прочитался, у другого снятие прошло —
-// флаг не встаёт: пиры непрочитанного сервера иначе не мигрируют никогда.
+// Fix round 4 (N1): rc серверов не прочитался — флаг не встаёт: пиры
+// непрочитанного сервера иначе не мигрируют никогда. Дерево rc одно на все
+// серверы (F546): отказ чтения — ни одного снятия.
 func TestMigratePeerAllowIPs_OneServerReadFails_NoFlag(t *testing.T) {
 	store, poster := seedAllowIPsStore(t, []storage.ManagedPeer{{PublicKey: "PEER_A", TunnelIP: "10.0.0.2/32"}}, false)
 	addSecondServer(t, store)
 	fg := fakeWithPeers("PEER_A")
 	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"},"Wireguard1":{"id":"Wireguard1","type":"Wireguard"}}`)
-	fg.SetError("/show/rc/interface/Wireguard1", errors.New("rci down"))
+	fg.SetError("/show/rc/interface/", errors.New("rci down"))
 	s := &Service{settings: store, transport: poster, queries: query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})}
 	s.MigratePeerAllowIPs(context.Background())
-	if len(poster.posts) != 1 {
+	if len(poster.posts) != 0 {
 		t.Fatalf("posts = %v", poster.posts)
 	}
 	if store.IsManagedPeerAllowIPsMigrated() {

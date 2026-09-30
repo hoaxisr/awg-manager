@@ -165,7 +165,7 @@ func TestWireguardCommands_SetPeerConnect_PreservesComment(t *testing.T) {
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`) // кэш интерфейсов: rc читается только по известным (F546)
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"KEY="}]}}`)
+	fg.SetRC("Wireguard0", `{"wireguard":{"peer":[{"key":"KEY="}]}}`)
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	cmds := NewWireguardCommands(poster, sc, q)
 
@@ -190,7 +190,7 @@ func TestWireguardCommands_SetPeerConnect_OmitsEmptyComment(t *testing.T) {
 	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`) // кэш интерфейсов: rc читается только по известным (F546)
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"KEY="}]}}`)
+	fg.SetRC("Wireguard0", `{"wireguard":{"peer":[{"key":"KEY="}]}}`)
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	cmds := NewWireguardCommands(poster, sc, q)
 
@@ -239,9 +239,9 @@ func TestWireguardCommands_RemovePeer_RefusalDecidedByFreshRead(t *testing.T) {
 			fg := query.NewFakeGetter()
 			fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`)
 			if tc.rc != "" {
-				fg.SetJSON("/show/rc/interface/Wireguard0", tc.rc)
+				fg.SetRC("Wireguard0", tc.rc)
 			} else {
-				fg.SetError("/show/rc/interface/Wireguard0", errors.New("rci down"))
+				fg.SetError("/show/rc/interface/", errors.New("rci down"))
 			}
 			q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 			poster := &errPoster{err: errors.New("no input [http/rci 127.0.0.1].")}
@@ -259,7 +259,7 @@ func TestWireguardCommands_RemovePeer_RefusalDecidedByFreshRead(t *testing.T) {
 func TestWireguardCommands_KeyedEdits_PeerAbsent_NoPost(t *testing.T) {
 	fg := query.NewFakeGetter()
 	fg.SetJSON("/show/interface/", `{"Wireguard0":{"id":"Wireguard0","type":"Wireguard"}}`) // кэш интерфейсов: rc читается только по известным (F546)
-	fg.SetJSON("/show/rc/interface/Wireguard0", `{"wireguard":{"peer":[{"key":"OTHER="}]}}`)
+	fg.SetRC("Wireguard0", `{"wireguard":{"peer":[{"key":"OTHER="}]}}`)
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	poster := &fakePoster{}
 	sc := NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil)

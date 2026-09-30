@@ -9,30 +9,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/cache"
 )
-
-// present — Present для name или ошибка без запроса по имени, если интерфейса
-// нет в кэше: на show interface и GET /show/rc/interface/<name> по
-// отсутствующему имени NDMS пишет E в свой журнал (F546). Вызывающие и раньше
-// получали здесь ошибку — 404 чтения rc. Только кэш, без свежего списка:
-// ошибка в KeyedStore не кэшируется, и опрос статистики сервера-сироты читал
-// бы список на каждом вызове; созданные нами интерфейсы кэш видит сразу
-// (InvalidateAll после создания).
-func (s *WGServerStore) present(ctx context.Context, name string) (Present, error) {
-	p, ok, err := s.interfaces.Lookup(ctx, name)
-	if err != nil {
-		return Present{}, err
-	}
-	if !ok {
-		return Present{}, fmt.Errorf("interface %s: нет в NDMS: %w", name, ErrGone)
-	}
-	return p, nil
-}
 
 // snapshotDetail разбирает в dst запись name из снимка полного списка (не
 // старше SnapshotRecent) — те же поля, что у `show interface <name>`, без
@@ -58,10 +39,6 @@ const (
 	// live UI fresh; mutations explicitly Invalidate(id) so this bound
 	// only matters for background traffic / handshake delta detection.
 	wgServerItemTTL = 30 * time.Second
-	// wgServerRCTTL — RC-side config rarely changes but should not lag
-	// the live view. Reduced from 10 min to 2 min.
-	wgServerRCTTL = 2 * time.Minute
-
 	// noHandshakeMarker: RCI sentinel for "no handshake ever".
 	noHandshakeMarker = int64(math.MaxInt32) // 2147483647
 
@@ -108,7 +85,7 @@ type rciWireguardPeer struct {
 	Enabled               bool   `json:"enabled"`
 }
 
-// rciRCInterface is the static config shape of /show/rc/interface/<name>.
+// rciRCInterface — конфигурация интерфейса: запись дерева /show/rc/interface/.
 type rciRCInterface struct {
 	Description string `json:"description"`
 	IP          *struct {
@@ -139,7 +116,7 @@ type rciRCPeer struct {
 // --- store -------------------------------------------------------------------
 
 // WGServerStore caches WG-server views derived from /show/interface/ and
-// /show/rc/interface/<name>. Invalidation comes from NDMS hooks and
+// the /show/rc/interface/ tree. Invalidation comes from NDMS hooks and
 // command-after-write callers.
 type WGServerStore struct {
 	*cache.ListStore[[]ndms.WireguardServer]
@@ -150,10 +127,8 @@ type WGServerStore struct {
 
 	// per-name server snapshot (runtime only).
 	items *cache.KeyedStore[string, *ndms.WireguardServer]
-	// per-name RC config.
-	rc *cache.KeyedStore[string, *ndms.WireguardServerConfig]
-	// ASC params (raw JSON, per-name, keyed by name+shape).
-	asc *cache.KeyedStore[string, json.RawMessage]
+	// Дерево rc всех интерфейсов (конфигурация: пиры, allow-ips, ASC).
+	rcTree *rcInterfaceStore
 	// Список СИСТЕМНЫХ (не наших) WG-туннелей. Кэш тут не украшение:
 	// поллер метрик спрашивает состав на КАЖДОМ тике (F364), а выборка —
 	// `/show/interface/` целиком (см. wireguardInterfaces).
@@ -164,7 +139,7 @@ type WGServerStore struct {
 // InterfaceStore so kernel-name resolution shares a single memo across
 // the query layer.
 func NewWGServerStore(g Getter, log Logger, ifaces *InterfaceStore) *WGServerStore {
-	return NewWGServerStoreWithTTL(g, log, ifaces, wgServerListTTL, wgServerItemTTL, wgServerRCTTL)
+	return NewWGServerStoreWithTTL(g, log, ifaces, wgServerListTTL, wgServerItemTTL, rcInterfaceTTL)
 }
 
 // NewWGServerStoreWithTTL is the test-friendly constructor. ifaces обязателен:
@@ -182,26 +157,10 @@ func NewWGServerStoreWithTTL(g Getter, log Logger, ifaces *InterfaceStore, listT
 		interfaces: ifaces,
 	}
 	s.items = cache.NewKeyedStore(itemTTL, log, "wg server", s.fetchItem)
-	s.rc = cache.NewKeyedStore(rcTTL, log, "wg server config", s.fetchConfig)
-	s.asc = cache.NewKeyedStore(rcTTL, log, "wg asc", s.fetchASCByKey)
+	s.rcTree = newRCInterfaceStore(g, log, rcTTL)
 	s.ListStore = cache.NewListStore(listTTL, log, "wg server list", s.fetchAll)
 	s.sysList = cache.NewListStore(listTTL, log, "system wg list", s.fetchSystemTunnels)
 	return s
-}
-
-// ascKey encodes the (name, shape) pair used as the ASC cache key.
-func ascKey(name string, extended bool) string {
-	if extended {
-		return name + ":ext"
-	}
-	return name + ":base"
-}
-
-// fetchASCByKey adapts fetchASC to the KeyedStore fetch shape, decoding the
-// composite name:shape key.
-func (s *WGServerStore) fetchASCByKey(ctx context.Context, key string) (json.RawMessage, error) {
-	i := strings.LastIndex(key, ":")
-	return s.fetchASC(ctx, key[:i], key[i+1:] == "ext")
 }
 
 // Get returns a single WG server's runtime snapshot.
@@ -211,11 +170,11 @@ func (s *WGServerStore) Get(ctx context.Context, name string) (*ndms.WireguardSe
 
 // GetConfig returns the merged (runtime + RC) WG server config.
 func (s *WGServerStore) GetConfig(ctx context.Context, name string) (*ndms.WireguardServerConfig, error) {
-	return s.rc.Get(ctx, name)
+	return s.fetchConfig(ctx, name)
 }
 
-// PeersRCFresh — пиры сервера name из /show/rc/interface/<name>, прочитанные
-// сейчас, мимо кэша и без stale-on-error: для проверки пересечения сетей перед
+// PeersRCFresh — пиры сервера name из дерева rc, прочитанного сейчас, мимо
+// кэша и без stale-on-error: для проверки пересечения сетей перед
 // записью (#713). List на сбое обогащения тоже ошибка (F510), но отдаёт
 // прежний список из кэша (stale-on-error) — для проверки пересечений мало.
 func (s *WGServerStore) PeersRCFresh(ctx context.Context, name string) ([]ndms.WireguardServerPeerConfig, error) {
@@ -233,13 +192,37 @@ func (s *WGServerStore) PeersRCFresh(ctx context.Context, name string) ([]ndms.W
 }
 
 // PeersRC — PeersRCFresh по уже подтверждённому интерфейсу: список не
-// перечитывается (одно чтение списка на всю сверку вызывающего).
+// перечитывается (одно чтение списка на всю сверку вызывающего), дерево rc —
+// свежее. Интерфейса нет в дереве — ErrGone.
 func (s *WGServerStore) PeersRC(ctx context.Context, c Confirmed) ([]ndms.WireguardServerPeerConfig, error) {
-	var rc rciRCInterface
-	if err := s.interfaces.showRC(ctx, Present{name: c.name}, "", &rc); err != nil {
-		return nil, fmt.Errorf("get wireguard server config %s: %w", c.name, err)
+	out, err := s.PeersRCEach(ctx, map[string]Confirmed{c.name: c})
+	if err != nil {
+		return nil, err
 	}
-	return rciRCToServerConfig(rc, "").Peers, nil
+	return out[c.name], nil
+}
+
+// PeersRCEach — пиры нескольких подтверждённых серверов по ОДНОМУ свежему
+// дереву rc (проверка занятости сетей, миграция). Любого нет в дереве —
+// ErrGone: снят между подтверждением и чтением, решение перечитывается.
+func (s *WGServerStore) PeersRCEach(ctx context.Context, cs map[string]Confirmed) (map[string][]ndms.WireguardServerPeerConfig, error) {
+	tree, err := s.rcTree.Fetch(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get wireguard server config: %w", err)
+	}
+	out := make(map[string][]ndms.WireguardServerPeerConfig, len(cs))
+	for name := range cs {
+		raw, ok := tree[name]
+		if !ok {
+			return nil, fmt.Errorf("get wireguard server config %s: нет в NDMS: %w", name, ErrGone)
+		}
+		var rc rciRCInterface
+		if err := json.Unmarshal(raw, &rc); err != nil {
+			return nil, fmt.Errorf("get wireguard server config %s: %w", name, err)
+		}
+		out[name] = rciRCToServerConfig(rc, "").Peers
+	}
+	return out, nil
 }
 
 // FindFreeIndex returns the next free WireguardN slot in [1,99]. Решение
@@ -271,7 +254,7 @@ func (s *WGServerStore) FindFreeIndex(ctx context.Context) (int, error) {
 // the 9-field ASCParams shape. The caller is responsible for the firmware
 // gate (e.g. osdetect.AtLeast(5, 1)).
 func (s *WGServerStore) GetASCParams(ctx context.Context, name string, extended bool) (json.RawMessage, error) {
-	return s.asc.Get(ctx, ascKey(name, extended))
+	return s.fetchASC(ctx, name, extended)
 }
 
 // ListSystemTunnels returns all system WG tunnels (excluding the built-in VPN
@@ -340,15 +323,13 @@ func (s *WGServerStore) GetSystemTunnel(ctx context.Context, name string) (*ndms
 	return &t, nil
 }
 
-// Invalidate drops caches for a single server name (runtime, rc, asc)
+// Invalidate drops caches for a single server name (runtime), the rc tree
 // AND the aggregate list cache — otherwise GetAll would keep returning
 // a stale peer list after a per-server mutation until the list TTL
-// expires.
+// expires. Дерево rc одно на все интерфейсы — сбрасывается целиком.
 func (s *WGServerStore) Invalidate(name string) {
 	s.items.Invalidate(name)
-	s.rc.Invalidate(name)
-	s.asc.Invalidate(ascKey(name, true))
-	s.asc.Invalidate(ascKey(name, false))
+	s.rcTree.InvalidateAll()
 	s.ListStore.InvalidateAll()
 }
 
@@ -358,25 +339,27 @@ func (s *WGServerStore) Invalidate(name string) {
 // promoted ListStore.InvalidateAll so the per-name keyed caches are
 // reset alongside the list cache.
 func (s *WGServerStore) InvalidateAll() {
+	s.InvalidateRuntime()
+	s.rcTree.InvalidateAll()
+}
+
+// InvalidateRuntime — сброс всего, что зависит от состояния интерфейсов
+// (список серверов, снимки по имени, состав системных туннелей), без дерева
+// rc: iflayerchanged конфигурацию не меняет, а дерево стоит ~90 тиков ndm.
+func (s *WGServerStore) InvalidateRuntime() {
 	s.ListStore.InvalidateAll()
 	s.items.InvalidateAll()
-	s.rc.InvalidateAll()
-	s.asc.InvalidateAll()
 	s.sysList.InvalidateAll()
 }
 
 // --- fetchers ---------------------------------------------------------------
 
-// wireguardInterfaces — WG-интерфейсы роутера из только что прочитанного
-// полного списка (InterfaceStore.Snapshot(SnapshotLive): список заодно
-// кладётся в карту): записи списка несут те же поля, что и точечное
-// `show interface <name>` (пиры, public-key, listen-port, summary.layer;
-// ответы побайтно совпадают, стенд 5.02.A.11).
-//
-// SnapshotLive, а не SnapshotRecent, пока обогащение (fetchAll) читает rc по
-// имени: снимок моложе 2 с ещё держит снятый без хука сервер, и его rc
-// спросился бы по имени — E (F546 S1). Когда rc читается полным деревом
-// (Task 44), возраст можно поднять до SnapshotRecent.
+// wireguardInterfaces — WG-интерфейсы роутера из снимка полного списка не
+// старше SnapshotRecent (общий с остальными читателями показа): записи
+// списка несут те же поля, что и точечное `show interface <name>` (пиры,
+// public-key, listen-port, summary.layer; ответы побайтно совпадают, стенд
+// 5.02.A.11). Снимок может держать снятый без хука сервер — обогащение идёт
+// по дереву rc, не по имени, так что E это не даёт.
 //
 // Точечных чтений по составу из InterfaceStore здесь больше нет (F546 S1):
 // при внешнем сносе NDMS шлёт iflayerchanged РАНЬШЕ ifdestroyed, хук слоя
@@ -389,7 +372,7 @@ func (s *WGServerStore) InvalidateAll() {
 // полный список (stale-on-error) — иначе живой сервер пропадал бы из
 // /servers и из опроса метрик.
 func (s *WGServerStore) wireguardInterfaces(ctx context.Context) (map[string]json.RawMessage, error) {
-	snap, err := s.interfaces.Snapshot(ctx, SnapshotLive)
+	snap, err := s.interfaces.Snapshot(ctx, SnapshotRecent)
 	if err != nil {
 		return nil, fmt.Errorf("list interfaces: %w", err)
 	}
@@ -432,49 +415,26 @@ func (s *WGServerStore) fetchAll(ctx context.Context) ([]ndms.WireguardServer, e
 	}
 	sort.Slice(servers, func(i, j int) bool { return servers[i].ID < servers[j].ID })
 
-	// Enrich peers with RC fields (allowed-ips, comment) in parallel.
-	// Transport-layer semaphore bounds concurrency; we only coordinate completion.
-	// Сбой обогащения любого сервера — ошибка всего списка: пиры без allow-ips
-	// неотличимы от «сетей нет», а неполный список лёг бы в кэш на TTL.
-	// ListStore на ошибке отдаёт прежний полный (stale-on-error), если он есть.
-	var firstErr error
+	// Обогащение пиров полями rc (allow-ips, comment) — из одного дерева rc
+	// на все серверы. Сбой чтения дерева — ошибка всего списка: пиры без
+	// allow-ips неотличимы от «сетей нет», а неполный список лёг бы в кэш на
+	// TTL. Дерево само отдаёт прежнее при сбое (stale-on-error), если было.
 	if len(servers) > 0 {
-		var wg sync.WaitGroup
-		type enrichResult struct {
-			idx int
-			m   map[string]peerRCFields
-			err error
+		tree, err := s.rcTree.List(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("enrich wireguard servers: %w", err)
 		}
-		results := make(chan enrichResult, len(servers))
 		for i := range servers {
-			wg.Add(1)
-			go func(idx int, name string) {
-				defer wg.Done()
-				p, err := s.present(ctx, name)
-				var allowedByKey map[string]peerRCFields
-				if err == nil {
-					allowedByKey, err = s.fetchPeerRCByKey(ctx, p)
-				}
-				results <- enrichResult{idx: idx, m: allowedByKey, err: err}
-			}(i, servers[i].ID)
-		}
-		go func() { wg.Wait(); close(results) }()
-		for r := range results {
-			if r.err != nil {
-				if firstErr == nil {
-					firstErr = fmt.Errorf("enrich wireguard server %s: %w", servers[r.idx].ID, r.err)
-				}
-				continue
+			byKey, err := s.peerRCByKey(servers[i].ID, tree[servers[i].ID])
+			if err != nil {
+				return nil, fmt.Errorf("enrich wireguard server %s: %w", servers[i].ID, err)
 			}
-			for j := range servers[r.idx].Peers {
-				if rc, ok := r.m[servers[r.idx].Peers[j].PublicKey]; ok {
-					applyPeerRCFields(&servers[r.idx].Peers[j], rc)
+			for j := range servers[i].Peers {
+				if rc, ok := byKey[servers[i].Peers[j].PublicKey]; ok {
+					applyPeerRCFields(&servers[i].Peers[j], rc)
 				}
 			}
 		}
-	}
-	if firstErr != nil {
-		return nil, firstErr
 	}
 	return servers, nil
 }
@@ -488,17 +448,16 @@ func (s *WGServerStore) fetchItem(ctx context.Context, name string) (*ndms.Wireg
 	if !ok {
 		return nil, fmt.Errorf("get wireguard server %s: interface %s: нет в NDMS: %w", name, name, ErrGone)
 	}
-	// rc — пока по имени через кэш (present); полное дерево rc — Task 44.
-	p, err := s.present(ctx, name)
-	if err != nil {
-		return nil, fmt.Errorf("get wireguard server %s: %w", name, err)
-	}
 	srv := rciToWireguardServer(detail)
 	srv.ID = name
 	srv.InterfaceName = s.resolveSystemName(ctx, name)
 	// Сбой обогащения — ошибка, как у fetchAll (F510): элемент без allow-ips
 	// иначе лёг бы в кэш на TTL.
-	rcByKey, err := s.fetchPeerRCByKey(ctx, p)
+	rc, _, err := s.rcTree.Get(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("enrich wireguard server %s: %w", name, err)
+	}
+	rcByKey, err := s.peerRCByKey(name, rc)
 	if err != nil {
 		return nil, fmt.Errorf("enrich wireguard server %s: %w", name, err)
 	}
@@ -524,13 +483,18 @@ func applyPeerRCFields(peer *ndms.WireguardServerPeer, rc peerRCFields) {
 	}
 }
 
-func (s *WGServerStore) fetchPeerRCByKey(ctx context.Context, p Present) (map[string]peerRCFields, error) {
-	name := p.Name()
+// peerRCByKey — поля rc пиров сервера name по записи дерева raw. Записи нет
+// (nil: сервер только что снят — список его тоже скоро потеряет) — пустая
+// карта.
+func (s *WGServerStore) peerRCByKey(name string, raw json.RawMessage) (map[string]peerRCFields, error) {
+	out := make(map[string]peerRCFields)
+	if raw == nil {
+		return out, nil
+	}
 	var rc rciRCInterface
-	if err := s.interfaces.showRC(ctx, p, "", &rc); err != nil {
+	if err := json.Unmarshal(raw, &rc); err != nil {
 		return nil, err
 	}
-	out := make(map[string]peerRCFields)
 	if rc.Wireguard == nil {
 		return out, nil
 	}
@@ -550,35 +514,42 @@ func (s *WGServerStore) fetchPeerRCByKey(ctx context.Context, p Present) (map[st
 }
 
 func (s *WGServerStore) fetchConfig(ctx context.Context, name string) (*ndms.WireguardServerConfig, error) {
-	p, err := s.present(ctx, name)
+	// Runtime for public key — из снимка списка; нет в нём — ErrGone.
+	var detail rciWireguardDetail
+	ok, err := s.snapshotDetail(ctx, name, &detail)
 	if err != nil {
 		return nil, fmt.Errorf("get wireguard server %s: %w", name, err)
 	}
-	// Runtime for public key — из снимка списка.
-	var detail rciWireguardDetail
-	if _, err := s.snapshotDetail(ctx, name, &detail); err != nil {
-		return nil, fmt.Errorf("get wireguard server %s: %w", name, err)
+	if !ok {
+		return nil, fmt.Errorf("get wireguard server %s: interface %s: нет в NDMS: %w", name, name, ErrGone)
 	}
 	var publicKey string
 	if detail.Wireguard != nil {
 		publicKey = detail.Wireguard.PublicKey
 	}
-	// Static config for peer details.
-	var rc rciRCInterface
-	if err := s.interfaces.showRC(ctx, p, "", &rc); err != nil {
+	// Static config for peer details — запись дерева rc; нет (дерево старше
+	// создания) — пустая конфигурация.
+	raw, ok, err := s.rcTree.Get(ctx, name)
+	if err != nil {
 		return nil, fmt.Errorf("get wireguard server config %s: %w", name, err)
+	}
+	var rc rciRCInterface
+	if ok {
+		if err := json.Unmarshal(raw, &rc); err != nil {
+			return nil, fmt.Errorf("get wireguard server config %s: %w", name, err)
+		}
 	}
 	cfg := rciRCToServerConfig(rc, publicKey)
 	return &cfg, nil
 }
 
 func (s *WGServerStore) fetchASC(ctx context.Context, name string, extended bool) (json.RawMessage, error) {
-	p, err := s.present(ctx, name)
+	tree, err := s.rcTree.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get ASC params %s: %w", name, err)
 	}
-	var fields map[string]json.RawMessage
-	if err := s.interfaces.showRC(ctx, p, "/wireguard/asc", &fields); err != nil {
+	fields, err := ascOf(tree, name)
+	if err != nil {
 		return nil, fmt.Errorf("get ASC params %s: %w", name, err)
 	}
 	// 5.02.A.11 отдаёт числа ("jc": 4), а не строки: разбор в map[string]string
@@ -636,15 +607,15 @@ func (s *WGServerStore) fetchASC(ctx context.Context, name string, extended bool
 	return json.Marshal(params)
 }
 
-// ASC3Fields читает с роутера (мимо кэша) параметры ASC 3.x интерфейса —
-// ключи ndms.ASC3Keys, какие есть; до 5.02.A.11 их нет вовсе.
+// ASC3Fields читает с роутера (свежее дерево rc, мимо кэша) параметры ASC
+// 3.x интерфейса — ключи ndms.ASC3Keys, какие есть; до 5.02.A.11 их нет вовсе.
 func (s *WGServerStore) ASC3Fields(ctx context.Context, name string) (map[string]json.RawMessage, error) {
-	p, err := s.present(ctx, name)
+	tree, err := s.rcTree.Fetch(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get ASC params %s: %w", name, err)
 	}
-	var fields map[string]json.RawMessage
-	if err := s.interfaces.showRC(ctx, p, "/wireguard/asc", &fields); err != nil {
+	fields, err := ascOf(tree, name)
+	if err != nil {
 		return nil, fmt.Errorf("get ASC params %s: %w", name, err)
 	}
 	out := make(map[string]json.RawMessage)
@@ -654,6 +625,24 @@ func (s *WGServerStore) ASC3Fields(ctx context.Context, name string) (map[string
 		}
 	}
 	return out, nil
+}
+
+// ascOf — поля wireguard.asc записи name дерева rc; записи нет — ErrGone,
+// поля asc нет — пустая карта.
+func ascOf(tree map[string]json.RawMessage, name string) (map[string]json.RawMessage, error) {
+	raw, ok := tree[name]
+	if !ok {
+		return nil, fmt.Errorf("interface %s: нет в NDMS: %w", name, ErrGone)
+	}
+	var rc struct {
+		Wireguard struct {
+			ASC map[string]json.RawMessage `json:"asc"`
+		} `json:"wireguard"`
+	}
+	if err := json.Unmarshal(raw, &rc); err != nil {
+		return nil, err
+	}
+	return rc.Wireguard.ASC, nil
 }
 
 // resolveSystemName delegates to InterfaceStore so kernel-name resolution

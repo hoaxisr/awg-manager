@@ -50,35 +50,39 @@ type stateAwareGetter struct {
 
 func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error {
 	if path != "/show/interface/" {
-		if strings.HasPrefix(path, "/show/rc/interface/") && strings.HasSuffix(path, "/wireguard/asc") {
-			iface := strings.TrimSuffix(strings.TrimPrefix(path, "/show/rc/interface/"), "/wireguard/asc")
+		// Дерево rc (одно чтение на все интерфейсы, F546): серверы из хранилища
+		// и созданные POST-ом. Пиры — записанные в хранилище (роутер совпадает
+		// с записью): правка по ключу проверяет наличие пира свежим чтением;
+		// ASC — последний записанный POST-ом.
+		if path == "/show/rc/interface/" {
+			names := map[string]bool{}
+			for _, sv := range g.store.GetManagedServers() {
+				names[sv.InterfaceName] = true
+			}
 			g.mu.Lock()
-			src, ok := g.asc[iface]
+			for name := range g.created {
+				names[name] = true
+			}
+			tree := map[string]any{}
+			for name := range names {
+				var peers []map[string]any
+				if sv, ok := g.store.GetManagedServerByID(name); ok {
+					for _, p := range sv.Peers {
+						peers = append(peers, map[string]any{"key": p.PublicKey})
+					}
+				}
+				src, ok := g.asc[name]
+				if !ok {
+					src = map[string]string{
+						"jc": "0", "jmin": "0", "jmax": "0", "s1": "0", "s2": "0",
+						"h1": "", "h2": "", "h3": "", "h4": "",
+						"s3": "0", "s4": "0",
+					}
+				}
+				tree[name] = map[string]any{"wireguard": map[string]any{"peer": peers, "asc": src}}
+			}
 			g.mu.Unlock()
-			if !ok {
-				src = map[string]string{
-					"jc": "0", "jmin": "0", "jmax": "0", "s1": "0", "s2": "0",
-					"h1": "", "h2": "", "h3": "", "h4": "",
-					"s3": "0", "s4": "0",
-				}
-			}
-			raw, err := json.Marshal(src)
-			if err != nil {
-				return err
-			}
-			return json.Unmarshal(raw, out)
-		}
-		// rc интерфейса: обогащение WGServers.Get без него — ошибка (F510).
-		// Пиры — записанные в хранилище (роутер совпадает с записью): правка
-		// по ключу проверяет наличие пира свежим чтением.
-		if strings.HasPrefix(path, "/show/rc/interface/") && !strings.Contains(strings.TrimPrefix(path, "/show/rc/interface/"), "/") {
-			var peers []map[string]any
-			if sv, ok := g.store.GetManagedServerByID(strings.TrimPrefix(path, "/show/rc/interface/")); ok {
-				for _, p := range sv.Peers {
-					peers = append(peers, map[string]any{"key": p.PublicKey})
-				}
-			}
-			raw, err := json.Marshal(map[string]any{"wireguard": map[string]any{"peer": peers}})
+			raw, err := json.Marshal(tree)
 			if err != nil {
 				return err
 			}

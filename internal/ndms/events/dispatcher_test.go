@@ -129,7 +129,10 @@ func TestDispatcher_IfDestroyed_InvalidatesWGServers(t *testing.T) {
 	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard1"})
 	waitDrain(t, drained)
 	// Отсчёт после прохода: сам диспетчер тоже может читать список
-	// (ifcreated неизвестного id), а проверяется сброс кэша серверов.
+	// (ifcreated неизвестного id), а проверяется сброс кэша серверов. Метка
+	// «грязно» делает пересборку видимой: снимок моложе SnapshotRecent
+	// иначе отдаётся из памяти без чтения списка.
+	q.Interfaces.Invalidate("Wireguard0")
 	primed := fg.Calls(ifaceListPath)
 	_, _ = q.WGServers.List(context.Background())
 
@@ -150,7 +153,10 @@ func TestDispatcher_IfCreated_InvalidatesWGServers(t *testing.T) {
 	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard5"})
 	waitDrain(t, drained)
 	// Отсчёт после прохода: сам диспетчер тоже может читать список
-	// (ifcreated неизвестного id), а проверяется сброс кэша серверов.
+	// (ifcreated неизвестного id), а проверяется сброс кэша серверов. Метка
+	// «грязно» делает пересборку видимой: снимок моложе SnapshotRecent
+	// иначе отдаётся из памяти без чтения списка.
+	q.Interfaces.Invalidate("Wireguard0")
 	primed := fg.Calls(ifaceListPath)
 	_, _ = q.WGServers.List(context.Background())
 
@@ -408,11 +414,52 @@ func TestDispatcher_IfLayerChanged_InvalidatesSystemTunnelList(t *testing.T) {
 	d.Enqueue(Event{Type: EventIfLayerChanged, ID: "Wireguard1", Layer: "link", Level: "running"})
 	waitDrain(t, drained)
 	// Отсчёт после прохода: сам диспетчер тоже может читать список
-	// (ifcreated неизвестного id), а проверяется сброс кэша серверов.
+	// (ifcreated неизвестного id), а проверяется сброс кэша серверов. Метка
+	// «грязно» делает пересборку видимой (см. выше).
+	q.Interfaces.Invalidate("Wireguard0")
 	primed := fg.Calls(ifaceListPath)
 	_, _ = q.WGServers.ListSystemTunnels(context.Background())
 
 	if fg.Calls(ifaceListPath) <= primed {
 		t.Errorf("состав системных туннелей не перечитан после iflayerchanged")
+	}
+}
+
+// Хук слоя конфигурацию не меняет: дерево rc (~90 тиков ndm) на нём не
+// перечитывается; создание/снятие интерфейса — перечитывается (F546, Task 44).
+func TestDispatcher_LayerHookKeepsRC(t *testing.T) {
+	const rcTree = "/show/rc/interface/"
+	q, fg := primedQueries(t)
+	fg.SetRC("Wireguard0", `{"wireguard":{"peer":[]}}`)
+	d := NewDispatcher(q, NopLogger())
+	drained := drainBarrier(d)
+	d.Start()
+	defer d.Stop()
+
+	ctx := context.Background()
+	if _, err := q.WGServers.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+	primed := fg.Calls(rcTree)
+	if primed != 1 {
+		t.Fatalf("чтений дерева rc при первом List = %d, want 1", primed)
+	}
+
+	d.Enqueue(Event{Type: EventIfLayerChanged, ID: "Wireguard0", Layer: "link", Level: "running"})
+	waitDrain(t, drained)
+	if _, err := q.WGServers.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := fg.Calls(rcTree); got != primed {
+		t.Fatalf("iflayerchanged перечитал дерево rc: %d → %d", primed, got)
+	}
+
+	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard5"})
+	waitDrain(t, drained)
+	if _, err := q.WGServers.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := fg.Calls(rcTree); got != primed+1 {
+		t.Fatalf("ifdestroyed: чтений дерева rc %d, want %d", got, primed+1)
 	}
 }

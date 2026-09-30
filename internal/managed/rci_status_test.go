@@ -121,7 +121,7 @@ func TestUpdatePeer_AllowIPsNestedErrorIsFailureAndNotStored(t *testing.T) {
 
 func TestSetPeerComment_NestedErrorIsFailure(t *testing.T) {
 	svc, _, poster, fg := newPeerSubnetTestService(t, `[]`)
-	fg.SetJSON("/show/rc/interface/Wireguard1", rcPeer1) // пир есть — отказ приходит от поста
+	fg.SetRC("Wireguard1", rcPeer1) // пир есть — отказ приходит от поста
 	poster.respond = func(map[string]interface{}) json.RawMessage {
 		return nestedError("Wireguard1", "no such peer")
 	}
@@ -134,7 +134,7 @@ func TestDeletePeer_NestedErrorKeepsPeerInStorage(t *testing.T) {
 	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
 	seedPeer(t, store)
 	// Пир на роутере есть — отказ настоящий.
-	fg.SetJSON("/show/rc/interface/Wireguard1", `{"wireguard":{"peer":[{"key":"PEER1","allow-ips":[{"address":"10.66.66.2","mask":"255.255.255.255"}]}]}}`)
+	fg.SetRC("Wireguard1", `{"wireguard":{"peer":[{"key":"PEER1","allow-ips":[{"address":"10.66.66.2","mask":"255.255.255.255"}]}]}}`)
 	poster.respond = func(m map[string]interface{}) json.RawMessage {
 		if p := peerPayload(m, "Wireguard1"); p != nil && p["no"] == true {
 			return nestedError("Wireguard1", "peer is busy")
@@ -241,7 +241,7 @@ func TestDeletePeer_AbsentOnRouterIsRemoved(t *testing.T) {
 func TestDeletePeer_RereadFailureKeepsError(t *testing.T) {
 	svc, store, poster, fg := newPeerSubnetTestService(t, `[]`)
 	seedPeer(t, store)
-	fg.SetError("/show/rc/interface/Wireguard1", errors.New("rci down"))
+	fg.SetError("/show/rc/interface/", errors.New("rci down"))
 	poster.respond = func(m map[string]interface{}) json.RawMessage {
 		if p := peerPayload(m, "Wireguard1"); p != nil && p["no"] == true {
 			return nestedError("Wireguard1", "no input [http/rci 127.0.0.1].")
@@ -265,7 +265,7 @@ func TestRciPost_FailureStillSavesAndInvalidates(t *testing.T) {
 	if _, err := svc.queries.WGServers.List(ctx); err != nil {
 		t.Fatal(err)
 	}
-	before := fg.Calls("/show/rc/interface/Wireguard1")
+	before := fg.Calls("/show/rc/interface/")
 	poster.respond = func(map[string]interface{}) json.RawMessage { return nestedError("Wireguard1", "boom") }
 	if err := svc.rciInterfaceUp(ctx, confirmed(t, "Wireguard1")); err == nil {
 		t.Fatal("отказ принят за успех")
@@ -276,7 +276,7 @@ func TestRciPost_FailureStillSavesAndInvalidates(t *testing.T) {
 	if _, err := svc.queries.WGServers.List(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if fg.Calls("/show/rc/interface/Wireguard1") == before {
+	if fg.Calls("/show/rc/interface/") == before {
 		t.Error("кэш списка WG-серверов не инвалидирован на отказе")
 	}
 }

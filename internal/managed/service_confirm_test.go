@@ -243,9 +243,9 @@ func TestOccupiedSubnets_OneListRead(t *testing.T) {
 // тот же список показывает его, второй подтверждает.
 func TestOccupiedSubnets_BuiltInMissedByCache_StillRead(t *testing.T) {
 	f := query.NewFakeNDMS()
+	f.SetRC("Wireguard0", json.RawMessage(`{"wireguard":{"peer":[{"key":"K","allow-ips":[{"address":"192.168.50.0","mask":"255.255.255.0"}]}]}}`))
 	s := newServiceWithOracle(t, f, map[string]string{
-		"/show/rc/ip/route":             `[]`,
-		"/show/rc/interface/Wireguard0": `{"wireguard":{"peer":[{"key":"K","allow-ips":[{"address":"192.168.50.0","mask":"255.255.255.0"}]}]}}`,
+		"/show/rc/ip/route": `[]`,
 	})
 	if _, err := s.queries.Interfaces.List(context.Background()); err != nil {
 		t.Fatal(err)
@@ -293,10 +293,10 @@ func TestRestore_ListReadsDoNotGrowWithPeers(t *testing.T) {
 		sv := restoreServerWithPeers(n)
 		f := query.NewFakeNDMS()
 		f.ExpectCreate("Wireguard1")
+		f.SetRC("Wireguard1", json.RawMessage(restoreRCPeers(sv)))
 		s := newServiceWithOracle(t, f, map[string]string{
-			"/show/rc/ip/route":             `[]`,
-			"/show/rc/interface/Wireguard1": restoreRCPeers(sv),
-			"/show/running-config":          `{"message":[]}`,
+			"/show/rc/ip/route":    `[]`,
+			"/show/running-config": `{"message":[]}`,
 		})
 		var out []RestoreOutcome
 		lists := listsDuring(t, s, f, func() {
@@ -330,10 +330,10 @@ func TestRestoreMerge_OneListRead(t *testing.T) {
 	existing.Peers = nil
 	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", Address: "10.99.0.1", Mask: "255.255.255.0"})
 	pub := mustDerivePublicKey(t, sv.PrivateKey)
+	f.SetRC("Wireguard1", json.RawMessage(restoreRCPeers(sv)))
 	s := newServiceWithOracle(t, f, map[string]string{
-		"/show/rc/ip/route":             `[]`,
-		"/show/rc/interface/Wireguard1": restoreRCPeers(sv),
-		"/show/running-config":          `{"message":[]}`,
+		"/show/rc/ip/route":    `[]`,
+		"/show/running-config": `{"message":[]}`,
 	}, existing)
 	// WGServers.Get: ключ живого сервера — тот же, что в бэкапе; runtime — из
 	// снимка списка (F546).
@@ -363,10 +363,9 @@ func TestMigratePeerAllowIPs_OneListRead(t *testing.T) {
 		ndms.Interface{ID: "Wireguard2", Type: "Wireguard"},
 	)
 	peer := func(k string) []storage.ManagedPeer { return []storage.ManagedPeer{{PublicKey: k}} }
-	s := newServiceWithOracle(t, f, map[string]string{
-		"/show/rc/interface/Wireguard1": `{"wireguard":{"peer":[{"key":"A"}]}}`,
-		"/show/rc/interface/Wireguard2": `{"wireguard":{"peer":[{"key":"B"}]}}`,
-	},
+	f.SetRC("Wireguard1", json.RawMessage(`{"wireguard":{"peer":[{"key":"A"}]}}`))
+	f.SetRC("Wireguard2", json.RawMessage(`{"wireguard":{"peer":[{"key":"B"}]}}`))
+	s := newServiceWithOracle(t, f, map[string]string{},
 		storage.ManagedServer{InterfaceName: "Wireguard1", Peers: peer("A")},
 		storage.ManagedServer{InterfaceName: "Wireguard2", Peers: peer("B")},
 		storage.ManagedServer{InterfaceName: "Wireguard3", Peers: peer("C")}, // снят мимо панели

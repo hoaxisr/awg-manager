@@ -55,15 +55,15 @@ func newASCHarness(t *testing.T, name, description string, marked bool) (*Servic
 }
 
 // newASCHarnessWith — то же, но с текущим ASC интерфейса на роутере
-// (/show/rc/.../wireguard/asc): форма 5.02.A.11 — числа и ключи 3.x.
+// (wireguard.asc в дереве rc): форма 5.02.A.11 — числа и ключи 3.x.
 func newASCHarnessWith(t *testing.T, name, description string, marked bool, currentASC string) (*ServiceImpl, *capturingPoster) {
 	t.Helper()
 	fg := query.NewFakeGetter()
-	// Запись интерфейса — в списке: runtime читается из снимка списка, rc — только
-	// по известным кэшу (F546).
+	// Запись интерфейса — в списке: runtime читается из снимка списка, rc — из
+	// дерева /show/rc/interface/ (F546).
 	fg.SetJSON("/show/interface/", `{"`+name+`":{"id":"`+name+`","interface-name":"nwg0","type":"Wireguard",`+
 		`"state":"up","description":"`+description+`","wireguard":{"public-key":"PUB=","listen-port":43328}}}`)
-	fg.SetJSON("/show/rc/interface/"+name+"/wireguard/asc", currentASC)
+	fg.SetRC(name, `{"wireguard":{"asc":`+currentASC+`}}`)
 	queries := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	poster := &capturingPoster{}
 	cmds := command.NewCommands(command.Deps{

@@ -61,7 +61,7 @@ func TestServersHandler_DeleteServerPeer_RereadFails_KeepsSecret(t *testing.T) {
 	_ = store.SetServerPeerSecret("Wireguard0", peerFixturePubKey, storage.ServerPeerSecret{PrivateKey: "P", TunnelIP: "10.9.0.2/32"})
 	sim.fail = func(payload string) error {
 		if strings.Contains(payload, `{"key":"`+peerFixturePubKey+`","no":true}`) {
-			fg.SetError("/show/rc/interface/Wireguard0", errors.New("rci down"))
+			fg.SetError("/show/rc/interface/", errors.New("rci down"))
 			return errors.New("no input [http/rci 127.0.0.1].")
 		}
 		return nil
