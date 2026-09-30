@@ -35,38 +35,16 @@ type DNSRouteRef struct {
 	Group, Interface string
 }
 
-// DNSRouteSpecLegacy — временно, до Task 19 (F546).
-//
-// DNSRouteSpecLegacy describes a dns-proxy route entry.
-type DNSRouteSpecLegacy struct {
-	Group     string
-	Interface string
-	Reject    bool
-}
-
-func refsLegacy(refs []DNSRouteRef) []DNSRouteSpecLegacy {
-	out := make([]DNSRouteSpecLegacy, 0, len(refs))
-	for _, r := range refs {
-		out = append(out, DNSRouteSpecLegacy{Group: r.Group, Interface: r.Interface})
-	}
-	return out
-}
-
 // DeleteRoutes removes dns-proxy route entries in a single batch.
 func (c *DNSRouteCommands) DeleteRoutes(ctx context.Context, refs []DNSRouteRef) error {
-	return c.DeleteRoutesLegacy(ctx, refsLegacy(refs))
-}
-
-// DeleteRoutesLegacy — временно, до Task 19 (F546).
-func (c *DNSRouteCommands) DeleteRoutesLegacy(ctx context.Context, specs []DNSRouteSpecLegacy) error {
 	if !c.isOS5() {
 		return query.ErrNotSupportedOnOS4
 	}
-	if len(specs) == 0 {
+	if len(refs) == 0 {
 		return nil
 	}
-	routes := make([]any, 0, len(specs))
-	for _, s := range specs {
+	routes := make([]any, 0, len(refs))
+	for _, s := range refs {
 		routes = append(routes, map[string]any{
 			"group":     s.Group,
 			"interface": s.Interface,
@@ -137,15 +115,6 @@ func (c *DNSRouteCommands) SetDisabled(ctx context.Context, index string, disabl
 // object-group — сотни миллисекунд без DNS-маршрутизации. NDMS применяет
 // элементы payload по порядку, поэтому один POST закрывает окно.
 func (c *DNSRouteCommands) ReplaceRoutes(ctx context.Context, deletes []DNSRouteRef, upserts []DNSRouteSpec) error {
-	ups := make([]DNSRouteSpecLegacy, 0, len(upserts))
-	for _, u := range upserts {
-		ups = append(ups, DNSRouteSpecLegacy{Group: u.Group, Interface: u.Interface.Name(), Reject: u.Reject})
-	}
-	return c.ReplaceRoutesLegacy(ctx, refsLegacy(deletes), ups)
-}
-
-// ReplaceRoutesLegacy — временно, до Task 19 (F546).
-func (c *DNSRouteCommands) ReplaceRoutesLegacy(ctx context.Context, deletes, upserts []DNSRouteSpecLegacy) error {
 	if !c.isOS5() {
 		return query.ErrNotSupportedOnOS4
 	}
@@ -164,14 +133,14 @@ func (c *DNSRouteCommands) ReplaceRoutesLegacy(ctx context.Context, deletes, ups
 	for _, s := range upserts {
 		route := map[string]any{
 			"group":     s.Group,
-			"interface": s.Interface,
+			"interface": s.Interface.Name(),
 			"auto":      true,
 		}
 		if s.Reject {
 			route["reject"] = true
 		}
 		routes = append(routes, route)
-		upsertIfaces[s.Interface] = true
+		upsertIfaces[s.Interface.Name()] = true
 	}
 	payload := map[string]any{
 		"dns-proxy": map[string]any{"route": routes},

@@ -168,12 +168,12 @@ func (o *OperatorOS4Impl) Start(ctx context.Context, cfg tunnel.Config) error {
 // ЯДРА (awgm<N>) — сознательное исключение из правила «команды по интерфейсу
 // только по query.Confirmed» (F546, R17): на OS4 это не запись из списка NDMS,
 // подтверждать её списком нельзя — DNS перестал бы применяться. Поведение
-// прежнее. Task 19 даст …Legacy окончательное имя, исключение остаётся.
+// прежнее.
 func (o *OperatorOS4Impl) dnsByKernelName(ctx context.Context, ifaceName string, servers []string, set bool) error {
 	if set {
-		return o.commands.Interfaces.SetDNSLegacy(ctx, ifaceName, servers) // R17: имя ядра, см. выше
+		return o.commands.Interfaces.SetDNSByKernelName(ctx, ifaceName, servers)
 	}
-	return o.commands.Interfaces.ClearDNSLegacy(ctx, ifaceName, servers) // R17: имя ядра, см. выше
+	return o.commands.Interfaces.ClearDNSByKernelName(ctx, ifaceName, servers)
 }
 
 // Stop stops a tunnel on OS 4.x.

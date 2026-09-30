@@ -35,13 +35,6 @@ func (c *ProxyCommands) CreateProxy(ctx context.Context, name, description, upst
 	return conf, nil
 }
 
-// CreateProxyLegacy — временно, до Task 19 (F546).
-func (c *ProxyCommands) CreateProxyLegacy(ctx context.Context, name, description, upstreamHost string, upstreamPort int, socks5UDP bool) error {
-	return postMutationChecked(ctx, c.poster, c.save, proxyPayload(name, description, upstreamHost, upstreamPort, socks5UDP), "create proxy "+name,
-		c.queries.Interfaces.InvalidateAll,
-		c.queries.RunningConfig.InvalidateAll)
-}
-
 func proxyPayload(name, description, upstreamHost string, upstreamPort int, socks5UDP bool) map[string]any {
 	proxy := map[string]any{
 		"protocol": map[string]any{"proto": "socks5"},
@@ -83,28 +76,8 @@ func (c *ProxyCommands) DeleteProxy(ctx context.Context, iface query.Confirmed) 
 	return err
 }
 
-// DeleteProxyLegacy — временно, до Task 19 (F546).
-func (c *ProxyCommands) DeleteProxyLegacy(ctx context.Context, name string) error {
-	payload := map[string]any{
-		"interface": map[string]any{
-			name: map[string]any{"no": true},
-		},
-	}
-	// InvalidateAll уже убирает удалённый интерфейс из перестроенной карты;
-	// per-name Invalidate делал бы `show interface ProxyN` по только что
-	// снятому имени, и NDMS писал бы в свой лог E «unable to find» (F409).
-	return postMutationCheckedTolerant(ctx, c.poster, c.save, payload, "delete proxy "+name,
-		isMissingInterface,
-		c.queries.Interfaces.InvalidateAll,
-		c.queries.RunningConfig.InvalidateAll)
-}
-
 func (c *ProxyCommands) ProxyUp(ctx context.Context, iface query.Confirmed) error {
-	return c.ProxyUpLegacy(ctx, iface.Name())
-}
-
-// ProxyUpLegacy — временно, до Task 19 (F546).
-func (c *ProxyCommands) ProxyUpLegacy(ctx context.Context, name string) error {
+	name := iface.Name()
 	payload := map[string]any{
 		"interface": map[string]any{
 			name: map[string]any{"up": true},
@@ -115,11 +88,7 @@ func (c *ProxyCommands) ProxyUpLegacy(ctx context.Context, name string) error {
 }
 
 func (c *ProxyCommands) ProxyDown(ctx context.Context, iface query.Confirmed) error {
-	return c.ProxyDownLegacy(ctx, iface.Name())
-}
-
-// ProxyDownLegacy — временно, до Task 19 (F546).
-func (c *ProxyCommands) ProxyDownLegacy(ctx context.Context, name string) error {
+	name := iface.Name()
 	payload := map[string]any{
 		"interface": map[string]any{
 			name: map[string]any{"down": true},

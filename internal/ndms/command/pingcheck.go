@@ -29,12 +29,6 @@ func (c *PingCheckCommands) ConfigureProfile(ctx context.Context, profile string
 	return c.configure(ctx, profile, iface.Name(), cfg)
 }
 
-// ConfigureProfileLegacy — временно, до Task 19 (F546).
-func (c *PingCheckCommands) ConfigureProfileLegacy(ctx context.Context, profile, ifaceName string, cfg ndms.PingCheckConfig) error {
-	c.bestEffortRemoveLegacy(ctx, profile, ifaceName)
-	return c.configure(ctx, profile, ifaceName, cfg)
-}
-
 // configure — создание профиля и привязка после сноса прежнего.
 func (c *PingCheckCommands) configure(ctx context.Context, profile, ifaceName string, cfg ndms.PingCheckConfig) error {
 	profileInner := map[string]any{
@@ -106,17 +100,6 @@ func (c *PingCheckCommands) RemoveOrphanProfile(ctx context.Context, profile str
 	return nil
 }
 
-// RemoveProfileLegacy — временно, до Task 19 (F546).
-func (c *PingCheckCommands) RemoveProfileLegacy(ctx context.Context, profile, ifaceName string) error {
-	c.bestEffortRemoveLegacy(ctx, profile, ifaceName)
-	c.save.Request()
-	c.queries.PingCheckProfile.InvalidateAll()
-	c.queries.PingCheckStatus.InvalidateAll()
-	c.queries.Interfaces.Invalidate(ifaceName)
-	c.queries.RunningConfig.InvalidateAll()
-	return nil
-}
-
 // bestEffortRemove — снос привязки и профиля, ошибки шагов игнорируются.
 // Команды `interface X ping-check …` уходят, только если у X привязан профиль
 // по свежему статусу: без привязки NDMS пишет E «interface "X" has no assigned
@@ -137,14 +120,6 @@ func (c *PingCheckCommands) bestEffortRemove(ctx context.Context, profile string
 	if bound {
 		c.unbind(ctx, profile, name)
 	}
-	c.deleteProfile(ctx, profile)
-}
-
-// bestEffortRemoveLegacy — временно, до Task 19 (F546).
-//
-// bestEffortRemoveLegacy runs the 3-step teardown, ignoring per-step errors.
-func (c *PingCheckCommands) bestEffortRemoveLegacy(ctx context.Context, profile, ifaceName string) {
-	c.unbind(ctx, profile, ifaceName)
 	c.deleteProfile(ctx, profile)
 }
 

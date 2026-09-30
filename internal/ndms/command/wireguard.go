@@ -28,11 +28,7 @@ func NewWireguardCommands(p Poster, s *SaveCoordinator, q *query.Queries) *Wireg
 // jc/jmin/jmax/s1/s2 and hex strings for h1/h2/h3/h4 (OS ≥ 5.1 adds
 // s3/s4/i1-i5). Caller is responsible for firmware-appropriate field set.
 func (c *WireguardCommands) SetASCParams(ctx context.Context, iface query.Confirmed, params json.RawMessage) error {
-	return c.SetASCParamsLegacy(ctx, iface.Name(), params)
-}
-
-// SetASCParamsLegacy — временно, до Task 19 (F546).
-func (c *WireguardCommands) SetASCParamsLegacy(ctx context.Context, name string, params json.RawMessage) error {
+	name := iface.Name()
 	var asc map[string]any
 	if err := json.Unmarshal(params, &asc); err != nil {
 		return fmt.Errorf("set asc params %s: parse: %w", name, err)
@@ -63,11 +59,7 @@ func (c *WireguardCommands) SetASCParamsLegacy(ctx context.Context, name string,
 // принимает, а эта строка отвечает «reset ASC parameters» (проверено на
 // 5.01.C.3.0-1).
 func (c *WireguardCommands) ResetASCParams(ctx context.Context, iface query.Confirmed) error {
-	return c.ResetASCParamsLegacy(ctx, iface.Name())
-}
-
-// ResetASCParamsLegacy — временно, до Task 19 (F546).
-func (c *WireguardCommands) ResetASCParamsLegacy(ctx context.Context, name string) error {
+	name := iface.Name()
 	payload := map[string]any{"parse": "interface " + name + " no wireguard asc"}
 	return postMutationChecked(ctx, c.poster, c.save, payload, "reset asc params "+name,
 		func() {
@@ -79,50 +71,23 @@ func (c *WireguardCommands) ResetASCParamsLegacy(ctx context.Context, name strin
 		c.queries.RunningConfig.InvalidateAll)
 }
 
-// ImportResult — итог импорта: созданный интерфейс подтверждён свежим списком
-// (Confirm), остальное как у ImportResultLegacy.
+// ImportResult holds the parsed outcome of a wireguard config import.
+// Created — созданный интерфейс, подтверждённый свежим списком (F546).
+// Intersects names a pre-existing interface the imported config collides
+// with (empty if none); Messages are the human-readable status[] lines the
+// router returned. Both are kept so the caller does not lose context even
+// on a successful import.
 type ImportResult struct {
 	Created    query.Confirmed
 	Intersects string
 	Messages   []string
 }
 
-// ImportResultLegacy — временно, до Task 19 (F546).
-//
-// ImportResultLegacy holds the parsed outcome of a wireguard config import.
-// Intersects names a pre-existing interface the imported config collides
-// with (empty if none); Messages are the human-readable status[] lines the
-// router returned. Both are kept so the caller does not lose context even
-// on a successful import.
-type ImportResultLegacy struct {
-	Created    string
-	Intersects string
-	Messages   []string
-}
-
-// ImportWireguardConfig — ImportWireguardConfigLegacy плюс подтверждение
-// созданного свежим списком: он же кладёт запись в кэш (F546).
-func (c *WireguardCommands) ImportWireguardConfig(ctx context.Context, confData []byte, filename string) (ImportResult, error) {
-	imp, err := c.ImportWireguardConfigLegacy(ctx, confData, filename)
-	if err != nil {
-		return ImportResult{}, err
-	}
-	conf, _, ok, err := c.queries.Interfaces.Confirm(ctx, imp.Created)
-	if err != nil {
-		return ImportResult{}, fmt.Errorf("import wireguard: создан %s, подтверждение не прочитано: %w", imp.Created, err)
-	}
-	if !ok {
-		return ImportResult{}, fmt.Errorf("import wireguard: импорт принят, но %s нет в списке", imp.Created)
-	}
-	return ImportResult{Created: conf, Intersects: imp.Intersects, Messages: imp.Messages}, nil
-}
-
-// ImportWireguardConfigLegacy — временно, до Task 19 (F546).
-//
-// ImportWireguardConfigLegacy uploads a .conf file to NDMS and returns the import
-// result, including the created NDMS interface name (e.g. "Wireguard1").
+// ImportWireguardConfig uploads a .conf file to NDMS and returns the import
+// result, including the created NDMS interface (e.g. "Wireguard1").
 // confData is the raw .conf body (NOT base64 — encoded internally).
-func (c *WireguardCommands) ImportWireguardConfigLegacy(ctx context.Context, confData []byte, filename string) (ImportResultLegacy, error) {
+// Созданное подтверждается свежим списком: он же кладёт запись в кэш (F546).
+func (c *WireguardCommands) ImportWireguardConfig(ctx context.Context, confData []byte, filename string) (ImportResult, error) {
 	encoded := base64.StdEncoding.EncodeToString(confData)
 	payload := map[string]any{
 		"interface": map[string]any{
@@ -135,7 +100,7 @@ func (c *WireguardCommands) ImportWireguardConfigLegacy(ctx context.Context, con
 	}
 	resp, err := c.poster.Post(ctx, payload)
 	if err != nil {
-		return ImportResultLegacy{}, fmt.Errorf("import wireguard: %w", err)
+		return ImportResult{}, fmt.Errorf("import wireguard: %w", err)
 	}
 
 	// Real NDMS response shape (captured on 5.01.A.x):
@@ -157,7 +122,7 @@ func (c *WireguardCommands) ImportWireguardConfigLegacy(ctx context.Context, con
 		} `json:"interface"`
 	}
 	if err := json.Unmarshal(resp, &parsed); err != nil {
-		return ImportResultLegacy{}, fmt.Errorf("import wireguard: decode: %w", err)
+		return ImportResult{}, fmt.Errorf("import wireguard: decode: %w", err)
 	}
 	imp := parsed.Interface.Wireguard.Import
 
@@ -177,9 +142,16 @@ func (c *WireguardCommands) ImportWireguardConfigLegacy(ctx context.Context, con
 		if detail == "" {
 			detail = "no status message"
 		}
-		return ImportResultLegacy{}, fmt.Errorf("import wireguard: router returned no created interface (intersects=%q; status: %s)", imp.Intersects, detail)
+		return ImportResult{}, fmt.Errorf("import wireguard: router returned no created interface (intersects=%q; status: %s)", imp.Intersects, detail)
 	}
-	return ImportResultLegacy{Created: imp.Created, Intersects: imp.Intersects, Messages: msgs}, nil
+	conf, _, ok, err := c.queries.Interfaces.Confirm(ctx, imp.Created)
+	if err != nil {
+		return ImportResult{}, fmt.Errorf("import wireguard: создан %s, подтверждение не прочитано: %w", imp.Created, err)
+	}
+	if !ok {
+		return ImportResult{}, fmt.Errorf("import wireguard: импорт принят, но %s нет в списке", imp.Created)
+	}
+	return ImportResult{Created: conf, Intersects: imp.Intersects, Messages: msgs}, nil
 }
 
 func (c *WireguardCommands) invalidateServer(name string) {
@@ -199,11 +171,7 @@ func (c *WireguardCommands) invalidateServer(name string) {
 
 // AddPeer adds a peer to a WireGuard server interface.
 func (c *WireguardCommands) AddPeer(ctx context.Context, iface query.Confirmed, pubKey, psk, comment, peerIP string, enabled bool) error {
-	return c.AddPeerLegacy(ctx, iface.Name(), pubKey, psk, comment, peerIP, enabled)
-}
-
-// AddPeerLegacy — временно, до Task 19 (F546).
-func (c *WireguardCommands) AddPeerLegacy(ctx context.Context, ifaceName, pubKey, psk, comment, peerIP string, enabled bool) error {
+	ifaceName := iface.Name()
 	peer := map[string]any{
 		"key":           pubKey,
 		"preshared-key": psk,
@@ -361,27 +329,18 @@ func (c *WireguardCommands) SetPeerComment(ctx context.Context, iface query.Conf
 // терпит `no such net in peer` (11.A/11.8): /32 уже может не стоять — после
 // отказа отката или правки мимо панели, и смена адреса иначе застревала бы.
 func (c *WireguardCommands) UpdatePeerAllowIPs(ctx context.Context, iface query.Confirmed, pubKey, oldIP, newIP string) error {
-	return c.UpdatePeerAllowIPsLegacy(ctx, iface.Name(), pubKey, oldIP, newIP)
-}
-
-// UpdatePeerAllowIPsLegacy — временно, до Task 19 (F546).
-func (c *WireguardCommands) UpdatePeerAllowIPsLegacy(ctx context.Context, ifaceName, pubKey, oldIP, newIP string) error {
 	if oldIP != "" {
-		if err := c.RemovePeerAllowIPLegacy(ctx, ifaceName, pubKey, oldIP, "255.255.255.255"); err != nil {
+		if err := c.RemovePeerAllowIP(ctx, iface, pubKey, oldIP, "255.255.255.255"); err != nil {
 			return fmt.Errorf("remove old allow-ips: %w", err)
 		}
 	}
-	return c.AddPeerAllowIPLegacy(ctx, ifaceName, pubKey, newIP, "255.255.255.255")
+	return c.AddPeerAllowIP(ctx, iface, pubKey, newIP, "255.255.255.255")
 }
 
 // AddPeerAllowIP добавляет одну сеть в allow-ips пира. Повтор на уже стоящей
 // сети NDMS принимает как успех — вызов идемпотентен (стенд 5.02.A.11, 27.09.2026).
 func (c *WireguardCommands) AddPeerAllowIP(ctx context.Context, iface query.Confirmed, pubKey, address, mask string) error {
-	return c.AddPeerAllowIPLegacy(ctx, iface.Name(), pubKey, address, mask)
-}
-
-// AddPeerAllowIPLegacy — временно, до Task 19 (F546).
-func (c *WireguardCommands) AddPeerAllowIPLegacy(ctx context.Context, ifaceName, pubKey, address, mask string) error {
+	ifaceName := iface.Name()
 	return postMutationChecked(ctx, c.poster, c.save, peerAllowIPPayload(ifaceName, pubKey, address, mask, false),
 		"add peer allow-ips "+ifaceName, func() { c.invalidateServer(ifaceName) })
 }
@@ -389,11 +348,7 @@ func (c *WireguardCommands) AddPeerAllowIPLegacy(ctx context.Context, ifaceName,
 // RemovePeerAllowIP снимает одну сеть. Отсутствующую NDMS отвергает фразой
 // `no such net in peer` — для снятия и отката это цель, а не отказ.
 func (c *WireguardCommands) RemovePeerAllowIP(ctx context.Context, iface query.Confirmed, pubKey, address, mask string) error {
-	return c.RemovePeerAllowIPLegacy(ctx, iface.Name(), pubKey, address, mask)
-}
-
-// RemovePeerAllowIPLegacy — временно, до Task 19 (F546).
-func (c *WireguardCommands) RemovePeerAllowIPLegacy(ctx context.Context, ifaceName, pubKey, address, mask string) error {
+	ifaceName := iface.Name()
 	return postMutationCheckedTolerant(ctx, c.poster, c.save, peerAllowIPPayload(ifaceName, pubKey, address, mask, true),
 		"remove peer allow-ips "+ifaceName, isNoSuchNetInPeer, func() { c.invalidateServer(ifaceName) })
 }

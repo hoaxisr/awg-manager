@@ -25,111 +25,61 @@ func CmdInterfaceCreate(name string) any {
 }
 
 func CmdInterfaceDelete(c query.Confirmed) any {
-	return CmdInterfaceDeleteLegacy(c.Name())
-}
-
-// CmdInterfaceDeleteLegacy — временно, до Task 19 (F546).
-func CmdInterfaceDeleteLegacy(name string) any {
-	return map[string]any{"interface": map[string]any{"name": name, "no": true}}
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "no": true}}
 }
 
 func CmdInterfaceDescription(c query.Confirmed, desc string) any {
-	return CmdInterfaceDescriptionLegacy(c.Name(), desc)
-}
-
-// CmdInterfaceDescriptionLegacy — временно, до Task 19 (F546).
-func CmdInterfaceDescriptionLegacy(name, desc string) any {
-	return map[string]any{"interface": map[string]any{"name": name, "description": desc}}
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "description": desc}}
 }
 
 func CmdInterfaceSecurityLevel(c query.Confirmed, level string) any {
-	return CmdInterfaceSecurityLevelLegacy(c.Name(), level)
-}
-
-// CmdInterfaceSecurityLevelLegacy — временно, до Task 19 (F546).
-func CmdInterfaceSecurityLevelLegacy(name, level string) any {
-	return map[string]any{"interface": map[string]any{"name": name, "security-level": map[string]any{level: true}}}
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "security-level": map[string]any{level: true}}}
 }
 
 func CmdInterfaceUp(c query.Confirmed, up bool) any {
-	return CmdInterfaceUpLegacy(c.Name(), up)
-}
-
-// CmdInterfaceUpLegacy — временно, до Task 19 (F546).
-func CmdInterfaceUpLegacy(name string, up bool) any {
-	return map[string]any{"interface": map[string]any{"name": name, "up": up}}
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "up": up}}
 }
 
 // --- IP config (#12, #13, #14, #15) ---
 
 func CmdInterfaceIPAddress(c query.Confirmed, address, mask string) any {
-	return CmdInterfaceIPAddressLegacy(c.Name(), address, mask)
-}
-
-// CmdInterfaceIPAddressLegacy — временно, до Task 19 (F546).
-func CmdInterfaceIPAddressLegacy(name, address, mask string) any {
-	return map[string]any{"interface": map[string]any{"name": name, "ip": map[string]any{
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "ip": map[string]any{
 		"address": map[string]any{"address": address, "mask": mask},
 	}}}
 }
 
 func CmdInterfaceMTU(c query.Confirmed, mtu int) any {
-	return CmdInterfaceMTULegacy(c.Name(), mtu)
-}
-
-// CmdInterfaceMTULegacy — временно, до Task 19 (F546).
-func CmdInterfaceMTULegacy(name string, mtu int) any {
-	return map[string]any{"interface": map[string]any{"name": name, "ip": map[string]any{"mtu": mtu}}}
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "ip": map[string]any{"mtu": mtu}}}
 }
 
 func CmdInterfaceAdjustMSS(c query.Confirmed, enable bool) any {
-	return CmdInterfaceAdjustMSSLegacy(c.Name(), enable)
-}
-
-// CmdInterfaceAdjustMSSLegacy — временно, до Task 19 (F546).
-func CmdInterfaceAdjustMSSLegacy(name string, enable bool) any {
-	return map[string]any{"interface": map[string]any{"name": name, "ip": map[string]any{"adjust-mss": enable}}}
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "ip": map[string]any{"adjust-mss": enable}}}
 }
 
 func CmdInterfaceIPGlobal(c query.Confirmed, auto bool) any {
-	return CmdInterfaceIPGlobalLegacy(c.Name(), auto)
-}
-
-// CmdInterfaceIPGlobalLegacy — временно, до Task 19 (F546).
-func CmdInterfaceIPGlobalLegacy(name string, auto bool) any {
 	var global any
 	if auto {
 		global = map[string]any{"auto": true}
 	} else {
 		global = map[string]any{}
 	}
-	return map[string]any{"interface": map[string]any{"name": name, "ip": map[string]any{"global": global}}}
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "ip": map[string]any{"global": global}}}
 }
 
 // --- DNS (#17, #28) ---
 
 func CmdInterfaceDNS(c query.Confirmed, servers []string) any {
-	return CmdInterfaceDNSLegacy(c.Name(), servers)
-}
-
-// CmdInterfaceDNSLegacy — временно, до Task 19 (F546).
-func CmdInterfaceDNSLegacy(name string, servers []string) any {
 	var list []any
 	for _, s := range servers {
 		list = append(list, map[string]any{"name-server": s})
 	}
-	return map[string]any{"interface": map[string]any{"name": name, "ip": map[string]any{"name-server": list}}}
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "ip": map[string]any{"name-server": list}}}
 }
 
 // --- IPv6 (#3, #4, #18) ---
 
 func CmdInterfaceIPv6Address(c query.Confirmed, address string) any {
-	return CmdInterfaceIPv6AddressLegacy(c.Name(), address)
-}
-
-// CmdInterfaceIPv6AddressLegacy — временно, до Task 19 (F546).
-func CmdInterfaceIPv6AddressLegacy(name, address string) any {
-	return map[string]any{"interface": map[string]any{"name": name, "ipv6": map[string]any{
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "ipv6": map[string]any{
 		"address": []any{map[string]any{"block": address + "/128"}},
 	}}}
 }
@@ -137,20 +87,10 @@ func CmdInterfaceIPv6AddressLegacy(name, address string) any {
 // --- WireGuard (#16, #19-23, #24, #27) ---
 
 func CmdWireguardPrivateKey(c query.Confirmed, key string) any {
-	return CmdWireguardPrivateKeyLegacy(c.Name(), key)
-}
-
-// CmdWireguardPrivateKeyLegacy — временно, до Task 19 (F546).
-func CmdWireguardPrivateKeyLegacy(name, key string) any {
-	return map[string]any{"interface": map[string]any{"name": name, "wireguard": map[string]any{"private-key": key}}}
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "wireguard": map[string]any{"private-key": key}}}
 }
 
 func CmdWireguardPeer(c query.Confirmed, peer PeerConfig) any {
-	return CmdWireguardPeerLegacy(c.Name(), peer)
-}
-
-// CmdWireguardPeerLegacy — временно, до Task 19 (F546).
-func CmdWireguardPeerLegacy(name string, peer PeerConfig) any {
 	p := map[string]any{"key": peer.PublicKey}
 	if peer.Endpoint != "" {
 		p["endpoint"] = map[string]any{"address": peer.Endpoint}
@@ -171,38 +111,23 @@ func CmdWireguardPeerLegacy(name string, peer PeerConfig) any {
 	if peer.PresharedKey != "" {
 		p["preshared-key"] = peer.PresharedKey
 	}
-	return map[string]any{"interface": map[string]any{"name": name, "wireguard": map[string]any{"peer": p}}}
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "wireguard": map[string]any{"peer": p}}}
 }
 
 func CmdWireguardPeerEndpoint(c query.Confirmed, publicKey, endpoint string) any {
-	return CmdWireguardPeerEndpointLegacy(c.Name(), publicKey, endpoint)
-}
-
-// CmdWireguardPeerEndpointLegacy — временно, до Task 19 (F546).
-func CmdWireguardPeerEndpointLegacy(name, publicKey, endpoint string) any {
-	return map[string]any{"interface": map[string]any{"name": name, "wireguard": map[string]any{
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "wireguard": map[string]any{
 		"peer": map[string]any{"key": publicKey, "endpoint": map[string]any{"address": endpoint}},
 	}}}
 }
 
 func CmdWireguardPeerConnect(c query.Confirmed, publicKey, viaInterface string) any {
-	return CmdWireguardPeerConnectLegacy(c.Name(), publicKey, viaInterface)
-}
-
-// CmdWireguardPeerConnectLegacy — временно, до Task 19 (F546).
-func CmdWireguardPeerConnectLegacy(name, publicKey, viaInterface string) any {
-	return map[string]any{"interface": map[string]any{"name": name, "wireguard": map[string]any{
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "wireguard": map[string]any{
 		"peer": map[string]any{"key": publicKey, "connect": map[string]any{"via": viaInterface}},
 	}}}
 }
 
 func CmdWireguardPeerDisconnect(c query.Confirmed, publicKey string) any {
-	return CmdWireguardPeerDisconnectLegacy(c.Name(), publicKey)
-}
-
-// CmdWireguardPeerDisconnectLegacy — временно, до Task 19 (F546).
-func CmdWireguardPeerDisconnectLegacy(name, publicKey string) any {
-	return map[string]any{"interface": map[string]any{"name": name, "wireguard": map[string]any{
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "wireguard": map[string]any{
 		"peer": map[string]any{"key": publicKey, "connect": map[string]any{"no": true}},
 	}}}
 }
@@ -212,12 +137,7 @@ func CmdWireguardPeerDisconnectLegacy(name, publicKey string) any {
 // `{"peer": {"key": "...", "no": true}}` returns
 // `Wireguard::Interface: removed peer "..."` from NDMS.
 func CmdWireguardPeerNo(c query.Confirmed, publicKey string) any {
-	return CmdWireguardPeerNoLegacy(c.Name(), publicKey)
-}
-
-// CmdWireguardPeerNoLegacy — временно, до Task 19 (F546).
-func CmdWireguardPeerNoLegacy(name, publicKey string) any {
-	return map[string]any{"interface": map[string]any{"name": name, "wireguard": map[string]any{
+	return map[string]any{"interface": map[string]any{"name": c.Name(), "wireguard": map[string]any{
 		"peer": map[string]any{"key": publicKey, "no": true},
 	}}}
 }

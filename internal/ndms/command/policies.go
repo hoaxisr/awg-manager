@@ -81,49 +81,39 @@ func (c *PolicyCommands) SetStandalone(ctx context.Context, name string, enabled
 }
 
 func (c *PolicyCommands) PermitInterface(ctx context.Context, name string, iface query.Confirmed, order int) error {
-	return c.PermitInterfaceLegacy(ctx, name, iface.Name(), order)
-}
-
-// PermitInterfaceLegacy — временно, до Task 19 (F546).
-func (c *PolicyCommands) PermitInterfaceLegacy(ctx context.Context, name, iface string, order int) error {
 	payload := map[string]any{
 		"ip": map[string]any{
 			"policy": map[string]any{
 				name: map[string]any{
 					"permit": map[string]any{
 						"global":    true,
-						"interface": iface,
+						"interface": iface.Name(),
 						"order":     order,
 					},
 				},
 			},
 		},
 	}
-	return postMutationChecked(ctx, c.poster, c.save, payload, "permit "+iface+" on "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "permit "+iface.Name()+" on "+name,
 		c.queries.Policies.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }
 
 func (c *PolicyCommands) DenyInterface(ctx context.Context, name string, iface query.Confirmed) error {
-	return c.DenyInterfaceLegacy(ctx, name, iface.Name())
-}
-
-// DenyInterfaceLegacy — временно, до Task 19 (F546).
-func (c *PolicyCommands) DenyInterfaceLegacy(ctx context.Context, name, iface string) error {
 	payload := map[string]any{
 		"ip": map[string]any{
 			"policy": map[string]any{
 				name: map[string]any{
 					"permit": map[string]any{
 						"global":    true,
-						"interface": iface,
+						"interface": iface.Name(),
 						"no":        true,
 					},
 				},
 			},
 		},
 	}
-	return postMutationChecked(ctx, c.poster, c.save, payload, "deny "+iface+" on "+name,
+	return postMutationChecked(ctx, c.poster, c.save, payload, "deny "+iface.Name()+" on "+name,
 		c.queries.Policies.InvalidateAll,
 		c.queries.RunningConfig.InvalidateAll)
 }
