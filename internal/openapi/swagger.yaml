@@ -5820,7 +5820,7 @@ definitions:
           и в политиках доступа (NDMS-описание OpkgTun). Пусто — "awgm policy-tun".
           До 32 символов; префикс "awgm " зарезервирован. Живой интерфейс
           переименовывается на ближайшем reconcile, без пересоздания.
-        example: AWGManager
+        example: Awgmanager
         maxLength: 32
         type: string
       policyTunNatSegments:

@@ -85,8 +85,8 @@ describe('policy-tun: название интерфейса', () => {
 	it('сохраняет имя по change через applyPatch({ policyTunDescription })', async () => {
 		render(StatusDrawer);
 		const input = screen.getByLabelText('Название интерфейса');
-		await fireEvent.change(input, { target: { value: '  AWGManager ' } });
-		expect(patchSpy).toHaveBeenCalledWith({ policyTunDescription: 'AWGManager' });
+		await fireEvent.change(input, { target: { value: '  Awgmanager ' } });
+		expect(patchSpy).toHaveBeenCalledWith({ policyTunDescription: 'Awgmanager' });
 	});
 
 	it('штатное имя сохраняется пустым', async () => {
@@ -94,7 +94,7 @@ describe('policy-tun: название интерфейса', () => {
 			routingMode: 'policy-tun',
 			deviceMode: 'policy',
 			policyName: 'p1',
-			policyTunDescription: 'AWGManager',
+			policyTunDescription: 'Awgmanager',
 		});
 		render(StatusDrawer);
 		const input = screen.getByLabelText('Название интерфейса');

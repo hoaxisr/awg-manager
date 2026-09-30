@@ -49,8 +49,8 @@ func TestNormalizePolicyTunDescription(t *testing.T) {
 		wantErr bool
 	}{
 		{in: "", want: ""},
-		{in: "AWGManager", want: "AWGManager"},
-		{in: "  AWGManager  ", want: "AWGManager"},
+		{in: "Awgmanager", want: "Awgmanager"},
+		{in: "  Awgmanager  ", want: "Awgmanager"},
 		// Штатное хранится пустым: одно значение — одно представление.
 		{in: "awgm policy-tun", want: ""},
 		{in: " awgm policy-tun ", want: ""},
@@ -122,9 +122,9 @@ func TestPolicyTunOwnDescriptions(t *testing.T) {
 	}{
 		{"нет записи, дефолт", nil, custom(""), []string{policyTunDescription}},
 		{"запись без описания (старая версия)", rec(""), custom(""), []string{policyTunDescription}},
-		{"переименование из дефолта", rec(""), custom("AWGManager"), []string{policyTunDescription, "AWGManager"}},
-		{"применено", rec("AWGManager"), custom("AWGManager"), []string{"AWGManager"}},
-		{"возврат к дефолту", rec("AWGManager"), custom(""), []string{"AWGManager", policyTunDescription}},
+		{"переименование из дефолта", rec(""), custom("Awgmanager"), []string{policyTunDescription, "Awgmanager"}},
+		{"применено", rec("Awgmanager"), custom("Awgmanager"), []string{"Awgmanager"}},
+		{"возврат к дефолту", rec("Awgmanager"), custom(""), []string{"Awgmanager", policyTunDescription}},
 	}
 	for _, c := range cases {
 		if got := policyTunOwnDescriptions(c.st, c.sr); !reflect.DeepEqual(got, c.want) {
@@ -166,21 +166,21 @@ func TestOpkgTunOwnership_MultipleDescriptions(t *testing.T) {
 // моменту Create (persist-before-create).
 func TestPolicyTunEnable_CustomDescription(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
-	setPolicyTunDescription(t, h.store, "AWGManager")
+	setPolicyTunDescription(t, h.store, "Awgmanager")
 	probe := &createPersistProbe{OpkgTunProvisioner: h.svc.deps.OpkgTun, store: h.store}
 	h.svc.deps.OpkgTun = probe
 
 	if err := h.svc.Enable(context.Background()); err != nil {
 		t.Fatalf("Enable(policy-tun): %v", err)
 	}
-	if len(h.opkg.descs) != 1 || h.opkg.descs[0] != "AWGManager" {
-		t.Errorf("Create description = %v, want [AWGManager]", h.opkg.descs)
+	if len(h.opkg.descs) != 1 || h.opkg.descs[0] != "Awgmanager" {
+		t.Errorf("Create description = %v, want [Awgmanager]", h.opkg.descs)
 	}
-	if probe.atCreate == nil || probe.atCreate.Description != "AWGManager" {
-		t.Errorf("запись в момент Create = %+v, want Description=AWGManager", probe.atCreate)
+	if probe.atCreate == nil || probe.atCreate.Description != "Awgmanager" {
+		t.Errorf("запись в момент Create = %+v, want Description=Awgmanager", probe.atCreate)
 	}
-	if st := h.loadPolicyTun(t); st == nil || st.Description != "AWGManager" {
-		t.Errorf("PolicyTun persist = %+v, want Description=AWGManager", st)
+	if st := h.loadPolicyTun(t); st == nil || st.Description != "Awgmanager" {
+		t.Errorf("PolicyTun persist = %+v, want Description=Awgmanager", st)
 	}
 }
 
@@ -194,7 +194,7 @@ func TestPolicyTunEnable_RenamesHeldOwnInterface(t *testing.T) {
 	if err := h.store.SetOpkgTunState(&storage.OpkgTunState{Mode: storage.OpkgTunModePolicyTun, Index: 3}); err != nil {
 		t.Fatalf("SetOpkgTunState: %v", err)
 	}
-	setPolicyTunDescription(t, h.store, "AWGManager")
+	setPolicyTunDescription(t, h.store, "Awgmanager")
 	probe := &createPersistProbe{OpkgTunProvisioner: h.svc.deps.OpkgTun, store: h.store}
 	h.svc.deps.OpkgTun = probe
 
@@ -207,8 +207,8 @@ func TestPolicyTunEnable_RenamesHeldOwnInterface(t *testing.T) {
 	if probe.atCreate == nil || probe.atCreate.Description != "" {
 		t.Errorf("запись в момент Create = %+v, want прежнее (штатное) описание", probe.atCreate)
 	}
-	if st := h.loadPolicyTun(t); st == nil || st.Index != 3 || st.Description != "AWGManager" {
-		t.Errorf("PolicyTun persist = %+v, want index 3, Description=AWGManager", st)
+	if st := h.loadPolicyTun(t); st == nil || st.Index != 3 || st.Description != "Awgmanager" {
+		t.Errorf("PolicyTun persist = %+v, want index 3, Description=Awgmanager", st)
 	}
 }
 
@@ -219,21 +219,21 @@ func TestReconcilePolicyTun_RenamesLiveInterface(t *testing.T) {
 	provisionPolicyTunForReconcile(t, h)
 	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
 	h.svc.deps.OpkgTunScan = scanOwning("OpkgTun0") // NDMS: пока штатное описание
-	sr := setPolicyTunDescription(t, h.store, "AWGManager")
+	sr := setPolicyTunDescription(t, h.store, "Awgmanager")
 
 	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
 		t.Fatalf("reconcilePolicyTun: %v", err)
 	}
-	if !h.log.has("SetDescription:OpkgTun0:AWGManager") {
+	if !h.log.has("SetDescription:OpkgTun0:Awgmanager") {
 		t.Errorf("живой интерфейс обязан переименоваться: %v", h.log.calls)
 	}
 	assertNoReprovision(t, h.log)
-	if st := h.loadPolicyTun(t); st == nil || !st.Provisioned || st.Index != 0 || st.Description != "AWGManager" {
-		t.Errorf("PolicyTun persist = %+v, want provisioned index 0, Description=AWGManager", st)
+	if st := h.loadPolicyTun(t); st == nil || !st.Provisioned || st.Index != 0 || st.Description != "Awgmanager" {
+		t.Errorf("PolicyTun persist = %+v, want provisioned index 0, Description=Awgmanager", st)
 	}
 
 	// Следующий тик: NDMS уже под новым именем — ни одной мутации.
-	h.svc.deps.OpkgTunScan = scanOurs("AWGManager", "OpkgTun0")
+	h.svc.deps.OpkgTunScan = scanOurs("Awgmanager", "OpkgTun0")
 	h.log.calls = nil
 	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
 		t.Fatalf("reconcilePolicyTun (второй тик): %v", err)
@@ -246,10 +246,10 @@ func TestReconcilePolicyTun_RenamesLiveInterface(t *testing.T) {
 // Возврат к штатному имени — тот же путь, и запись снова хранит его пустым.
 func TestReconcilePolicyTun_RenamesBackToDefault(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
-	setPolicyTunDescription(t, h.store, "AWGManager")
+	setPolicyTunDescription(t, h.store, "Awgmanager")
 	provisionPolicyTunForReconcile(t, h)
 	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
-	h.svc.deps.OpkgTunScan = scanOurs("AWGManager", "OpkgTun0")
+	h.svc.deps.OpkgTunScan = scanOurs("Awgmanager", "OpkgTun0")
 	sr := setPolicyTunDescription(t, h.store, "")
 
 	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
@@ -271,15 +271,15 @@ func TestReconcilePolicyTun_RenamedButNotPersisted(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
 	provisionPolicyTunForReconcile(t, h)
 	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
-	h.svc.deps.OpkgTunScan = scanOurs("AWGManager", "OpkgTun0") // NDMS уже переименован
-	sr := setPolicyTunDescription(t, h.store, "AWGManager")
+	h.svc.deps.OpkgTunScan = scanOurs("Awgmanager", "OpkgTun0") // NDMS уже переименован
+	sr := setPolicyTunDescription(t, h.store, "Awgmanager")
 
 	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
 		t.Fatalf("reconcilePolicyTun: %v", err)
 	}
 	assertNoReprovision(t, h.log)
-	if st := h.loadPolicyTun(t); st == nil || st.Description != "AWGManager" {
-		t.Errorf("PolicyTun persist = %+v, want Description=AWGManager", st)
+	if st := h.loadPolicyTun(t); st == nil || st.Description != "Awgmanager" {
+		t.Errorf("PolicyTun persist = %+v, want Description=Awgmanager", st)
 	}
 }
 
@@ -292,7 +292,7 @@ func TestReconcilePolicyTun_NoRenameWhenScanFails(t *testing.T) {
 	h.svc.deps.OpkgTunScan = func(context.Context, string) ([]string, error) {
 		return nil, errors.New("injected: scan")
 	}
-	sr := setPolicyTunDescription(t, h.store, "AWGManager")
+	sr := setPolicyTunDescription(t, h.store, "Awgmanager")
 
 	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
 		t.Fatalf("reconcilePolicyTun: %v", err)
@@ -315,12 +315,12 @@ func TestReconcilePolicyTun_RenameFailureKeepsRecord(t *testing.T) {
 	provisionPolicyTunForReconcile(t, h)
 	h.svc.deps.RunningConfig = &fakeRunningConfig{lines: healthyPolicyTunRC("OpkgTun0")}
 	h.svc.deps.OpkgTunScan = scanOwning("OpkgTun0")
-	sr := setPolicyTunDescription(t, h.store, "AWGManager")
+	sr := setPolicyTunDescription(t, h.store, "Awgmanager")
 
 	if err := h.svc.reconcilePolicyTun(context.Background(), sr); err != nil {
 		t.Fatalf("reconcilePolicyTun: %v", err)
 	}
-	if !h.log.has("SetDescription:OpkgTun0:AWGManager") {
+	if !h.log.has("SetDescription:OpkgTun0:Awgmanager") {
 		t.Fatalf("попытка переименования ожидалась: %v", h.log.calls)
 	}
 	assertNoReprovision(t, h.log)
@@ -370,15 +370,15 @@ func TestPolicyTunReap_SparesForeignInterfaceWithSameName(t *testing.T) {
 func TestReleasePolicyTunForRemoval_CustomDescription(t *testing.T) {
 	stubLinkAbsent(t)
 	store := newTestSettingsStore(t, storage.SingboxRouterSettings{
-		RoutingMode: statePolicyTun, PolicyTunDescription: "AWGManager",
+		RoutingMode: statePolicyTun, PolicyTunDescription: "Awgmanager",
 	})
 	if err := store.SetOpkgTunState(&storage.OpkgTunState{
-		Mode: storage.OpkgTunModePolicyTun, Index: 2, Description: "AWGManager",
+		Mode: storage.OpkgTunModePolicyTun, Index: 2, Description: "Awgmanager",
 	}); err != nil {
 		t.Fatalf("SetOpkgTunState: %v", err)
 	}
 	opkg := &recordingOpkgTunProvisioner{}
-	scan := &recOpkgTunScan{ids: map[string][]string{"AWGManager": {"OpkgTun2"}}}
+	scan := &recOpkgTunScan{ids: map[string][]string{"Awgmanager": {"OpkgTun2"}}}
 
 	if err := ReleasePolicyTunForRemoval(context.Background(), Deps{
 		Settings:    store,
@@ -396,9 +396,9 @@ func TestReleasePolicyTunForRemoval_CustomDescription(t *testing.T) {
 // описанием его нет, но запись помнит применённое.
 func TestPolicyTunDisable_HoldsRenamedInterface(t *testing.T) {
 	h := newPolicyTunEnableHarness(t, "")
-	setPolicyTunDescription(t, h.store, "AWGManager")
+	setPolicyTunDescription(t, h.store, "Awgmanager")
 	provisionPolicyTunForDisable(t, h)
-	h.svc.deps.OpkgTunScan = scanOurs("AWGManager", "OpkgTun0")
+	h.svc.deps.OpkgTunScan = scanOurs("Awgmanager", "OpkgTun0")
 
 	if err := h.svc.Disable(context.Background()); err != nil {
 		t.Fatalf("Disable(policy-tun): %v", err)
@@ -406,7 +406,7 @@ func TestPolicyTunDisable_HoldsRenamedInterface(t *testing.T) {
 	if !h.log.has("RemoveDefaultRoute:OpkgTun0") {
 		t.Errorf("свой интерфейс обязан разбираться (дефолт снимается): %v", h.log.calls)
 	}
-	if st := h.loadPolicyTun(t); st == nil || st.Index != 0 || st.Description != "AWGManager" {
-		t.Errorf("PolicyTun persist = %+v, want удержание index 0 с Description=AWGManager", st)
+	if st := h.loadPolicyTun(t); st == nil || st.Index != 0 || st.Description != "Awgmanager" {
+		t.Errorf("PolicyTun persist = %+v, want удержание index 0 с Description=Awgmanager", st)
 	}
 }
