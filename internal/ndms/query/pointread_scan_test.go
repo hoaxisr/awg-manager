@@ -136,6 +136,7 @@ var zeroProofVarExceptions = map[string]int{
 	"internal/staticroute/impl.go:removeRoutes":       1, // то же для снятия
 	"internal/tunnel/service/impl.go:syncDescription": 1, // присваивание и команда в одном if
 	"internal/tunnel/service/impl.go:applyDiffNWG":    1, // команды — под флагами, которые и вызвали RequireIface
+	"internal/tunnel/service/impl.go:ReplaceConfig":   1, // команды — в той же nwg-ветке и только при nwgIfaceErr == nil
 }
 
 // TestProofs_NotForgedOutsideQuery — query.Confirmed и query.Present
