@@ -15,15 +15,19 @@ import (
 // выселением по «unable to find» (F546). Литерал в любом другом пакете —
 // обход шлюза, и NDMS снова пишет E по отсутствующему имени.
 func TestPointReads_OnlyInsideQuery(t *testing.T) {
-	root, _ := filepath.Abs("../../..")
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatalf("корень репозитория: %v", err)
+	}
 	bad := []string{
-		`transport.ShowInterface(`,
+		`.ShowInterface(`,
+		`.ShowQuery([]string{"interface"`,
 		`"/show/interface/"+`, `"/show/interface/" +`,
 		`"/show/rc/interface/"+`, `"/show/rc/interface/" +`,
 		`"interface", "system-name"`,
 	}
 	var offenders []string
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -31,6 +35,7 @@ func TestPointReads_OnlyInsideQuery(t *testing.T) {
 		if d.IsDir() {
 			switch {
 			case rel == "vendor", rel == "frontend", rel == "graphify-out", rel == "docs", rel == ".git",
+				rel == ".claude", rel == "build",
 				rel == filepath.Join("internal", "ndms", "query"):
 				return filepath.SkipDir
 			}
@@ -52,6 +57,9 @@ func TestPointReads_OnlyInsideQuery(t *testing.T) {
 		}
 		return nil
 	})
+	if walkErr != nil {
+		t.Fatalf("обход дерева: %v", walkErr)
+	}
 	for _, o := range offenders {
 		t.Errorf("%s — читать по имени только через query.InterfaceStore (Lookup + ShowRaw)", o)
 	}
