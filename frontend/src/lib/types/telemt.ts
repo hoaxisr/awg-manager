@@ -7,5 +7,6 @@ export interface TelemtStatus {
 	updateAvailable: boolean;
 	binary?: string;
 	arch?: string;
+	source?: 'managed' | 'opkg' | 'external' | string;
 	error?: string;
 }
