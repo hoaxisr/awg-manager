@@ -930,17 +930,25 @@ func (o *OperatorOS5Impl) SyncDNS(ctx context.Context, tunnelID string, dns []st
 	if len(oldDNS) > 0 {
 		_ = o.commands.Interfaces.ClearDNS(ctx, iface, oldDNS)
 	}
-	if len(dns) == 0 {
-		o.appliedDNSMu.Lock()
-		delete(o.appliedDNS, tunnelID)
-		o.appliedDNSMu.Unlock()
-	} else {
-		if err := o.commands.Interfaces.SetDNS(ctx, iface, dns); err != nil {
-			return tunnel.NewOpError("sync_dns", tunnelID, "ndms", err)
+	// Трекинг — ровно то, что стоит на роутере: прежние сняты, новые — по
+	// одному, до первого отказа. Иначе Stop снимал бы уже снятое (F561).
+	var set []string
+	var setErr error
+	for _, srv := range dns {
+		if setErr = o.commands.Interfaces.SetDNS(ctx, iface, []string{srv}); setErr != nil {
+			break
 		}
-		o.appliedDNSMu.Lock()
-		o.appliedDNS[tunnelID] = dns
-		o.appliedDNSMu.Unlock()
+		set = append(set, srv)
+	}
+	o.appliedDNSMu.Lock()
+	if len(set) > 0 {
+		o.appliedDNS[tunnelID] = set
+	} else {
+		delete(o.appliedDNS, tunnelID)
+	}
+	o.appliedDNSMu.Unlock()
+	if setErr != nil {
+		return tunnel.NewOpError("sync_dns", tunnelID, "ndms", setErr)
 	}
 	o.logInfo("sync_dns", tunnelID, fmt.Sprintf("DNS synced: %v", dns))
 	return nil

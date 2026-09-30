@@ -135,6 +135,47 @@ func TestStop_ClearsAppliedDNS(t *testing.T) {
 	}
 }
 
+// rejectDNSPoster — оракул, отвергающий установку name-server 8.8.8.8.
+type rejectDNSPoster struct{ f *ndmsquery.FakeNDMS }
+
+func (p rejectDNSPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	js, _ := json.Marshal(payload)
+	if strings.Contains(string(js), `"address":"8.8.8.8","interface"`) && !strings.Contains(string(js), `"no":true`) {
+		return nil, errors.New("injected: dns")
+	}
+	return p.f.Post(ctx, payload)
+}
+
+// SyncDNS упал на середине: трекинг — то, что реально стоит, и Stop снимает
+// ровно это, не прежние (уже снятые) и не отвергнутые (F561, раунд 1).
+func TestSyncDNS_PartialFailure_TrackingTruthful(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(opkgTun10())
+	o, _ := newOS5LifecycleOn(t, rejectDNSPoster{f}, f, &MockBackend{}, true)
+	cfg := lifecycleCfg(t)
+	cfg.DNS = []string{"1.1.1.1"}
+	if err := o.ColdStart(context.Background(), cfg); err != nil {
+		t.Fatalf("ColdStart: %v", err)
+	}
+	if err := o.SyncDNS(context.Background(), "awg10", []string{"9.9.9.9", "8.8.8.8"}); err == nil {
+		t.Fatal("SyncDNS: ждали отказ")
+	}
+	before := len(f.Posts)
+	if err := o.Stop(context.Background(), "awg10", "Germany"); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	var cleared []string
+	for _, p := range f.Posts[before:] {
+		if strings.Contains(p, `"name-server"`) {
+			cleared = append(cleared, p)
+		}
+	}
+	want := `{"ip":{"name-server":{"address":"9.9.9.9","interface":"OpkgTun10","no":true}}}`
+	if len(cleared) != 1 || cleared[0] != want {
+		t.Fatalf("Stop снял %v, want только 9.9.9.9", cleared)
+	}
+	clean(t, f)
+}
+
 // Список не прочитан — устройство всё равно опущено, NDMS не тронут, ошибка.
 func TestStop_ListError_LinkDownThenError(t *testing.T) {
 	f := ndmsquery.NewFakeNDMS(opkgTun10())
