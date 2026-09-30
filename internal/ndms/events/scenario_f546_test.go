@@ -17,9 +17,9 @@ import (
 
 // deliverHooks отдаёт накопленные оракулом хуки диспетчеру одной пачкой и
 // ждёт конца прохода.
-func deliverHooks(t *testing.T, f *query.FakeNDMS, q *query.Queries, log Logger) {
+func deliverHooks(t *testing.T, f *query.FakeNDMS, q *query.Queries) {
 	t.Helper()
-	d := NewDispatcher(q, log)
+	d := NewDispatcher(q, NopLogger())
 	done := drainBarrier(d)
 	for _, h := range f.DrainHooks() {
 		d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID})
@@ -43,7 +43,7 @@ func TestScenario_PhantomPairFromOwnCommand(t *testing.T) {
 			t.Fatalf("post %q: %v", line, err)
 		}
 	}
-	deliverHooks(t, f, q, NopLogger())
+	deliverHooks(t, f, q)
 
 	// Phantoms == 1 здесь ожидаем: команда по отсутствующему пришла снаружи
 	// теста, Фаза 1 её не убирает (это Фаза 2). Фаза 1 убирает E по паре
@@ -98,12 +98,13 @@ func TestScenario_DelayedHooksVsInvalidateAll(t *testing.T) {
 	if got, _ := q.Interfaces.Get(ctx, "Wireguard4"); got == nil {
 		t.Fatal("InvalidateAll не увидел Y")
 	}
-	lists := f.ListCalls()
+	lists, posts := f.ListCalls(), len(f.Posts)
 
-	deliverHooks(t, f, q, NopLogger())
+	deliverHooks(t, f, q)
 
-	if got := f.ListCalls() - lists; got != 0 || f.E != 0 {
-		t.Fatalf("поздний хук известного Y: %d списков, E=%d; want 0 и 0", got, f.E)
+	// Точечное чтение живого Y E не даёт — ловится только счётом POST.
+	if got := f.ListCalls() - lists; got != 0 || len(f.Posts) != posts || f.E != 0 {
+		t.Fatalf("поздний хук известного Y: %d списков, %d POST, E=%d; want 0, 0, 0", got, len(f.Posts)-posts, f.E)
 	}
 	if got, _ := q.Interfaces.Get(ctx, "Wireguard4"); got == nil || got.SystemName != "nwg4" {
 		t.Fatalf("Y потерян или испорчен после позднего хука: %#v", got)
