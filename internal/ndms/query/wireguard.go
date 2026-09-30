@@ -427,6 +427,16 @@ func (s *WGServerStore) fetchAll(ctx context.Context) ([]ndms.WireguardServer, e
 		if err != nil {
 			return nil, fmt.Errorf("enrich wireguard servers: %w", err)
 		}
+		// Сервер из списка, которого нет в дереве из кэша (ifcreated потерян,
+		// R35), — одно свежее чтение дерева на пересбор.
+		for i := range servers {
+			if _, ok := tree[servers[i].ID]; !ok {
+				if tree, err = s.rcTree.Fetch(ctx); err != nil {
+					return nil, fmt.Errorf("enrich wireguard servers: %w", err)
+				}
+				break
+			}
+		}
 		for i := range servers {
 			byKey, err := s.peerRCByKey(servers[i].ID, tree[servers[i].ID])
 			if err != nil {
@@ -456,7 +466,7 @@ func (s *WGServerStore) fetchItem(ctx context.Context, name string) (*ndms.Wireg
 	srv.InterfaceName = s.resolveSystemName(ctx, name)
 	// Сбой обогащения — ошибка, как у fetchAll (F510): элемент без allow-ips
 	// иначе лёг бы в кэш на TTL.
-	rc, _, err := s.rcTree.Get(ctx, name)
+	rc, _, err := s.rcFor(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("enrich wireguard server %s: %w", name, err)
 	}
@@ -530,9 +540,9 @@ func (s *WGServerStore) fetchConfig(ctx context.Context, name string) (*ndms.Wir
 	if detail.Wireguard != nil {
 		publicKey = detail.Wireguard.PublicKey
 	}
-	// Static config for peer details — запись дерева rc; нет (дерево старше
-	// создания) — пустая конфигурация.
-	raw, ok, err := s.rcTree.Get(ctx, name)
+	// Static config for peer details — запись дерева rc; нет и в свежем
+	// дереве — пустая конфигурация.
+	raw, ok, err := s.rcFor(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("get wireguard server config %s: %w", name, err)
 	}
@@ -547,11 +557,23 @@ func (s *WGServerStore) fetchConfig(ctx context.Context, name string) (*ndms.Wir
 }
 
 func (s *WGServerStore) fetchASC(ctx context.Context, name string, extended bool) (json.RawMessage, error) {
-	tree, err := s.rcTree.List(ctx)
+	rc, ok, err := s.rcTree.Get(ctx, name)
+	if err == nil && !ok {
+		// Есть в снимке списка — дерево старше создания (R35): освежить.
+		var snap *Snapshot
+		if snap, err = s.interfaces.Snapshot(ctx, SnapshotRecent); err == nil {
+			if _, inList := snap.Record(name); inList {
+				rc, ok, err = s.rcFor(ctx, name)
+			}
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("get ASC params %s: %w", name, err)
 	}
-	fields, err := ascOf(tree, name)
+	if !ok {
+		return nil, fmt.Errorf("get ASC params %s: interface %s: нет в NDMS: %w", name, name, ErrGone)
+	}
+	fields, err := ascFields(rc)
 	if err != nil {
 		return nil, fmt.Errorf("get ASC params %s: %w", name, err)
 	}
@@ -617,7 +639,11 @@ func (s *WGServerStore) ASC3Fields(ctx context.Context, name string) (map[string
 	if err != nil {
 		return nil, fmt.Errorf("get ASC params %s: %w", name, err)
 	}
-	fields, err := ascOf(tree, name)
+	rc, ok := tree[name]
+	if !ok {
+		return nil, fmt.Errorf("get ASC params %s: interface %s: нет в NDMS: %w", name, name, ErrGone)
+	}
+	fields, err := ascFields(rc)
 	if err != nil {
 		return nil, fmt.Errorf("get ASC params %s: %w", name, err)
 	}
@@ -630,13 +656,24 @@ func (s *WGServerStore) ASC3Fields(ctx context.Context, name string) (map[string
 	return out, nil
 }
 
-// ascOf — поля wireguard.asc записи name дерева rc; записи нет — ErrGone,
-// поля asc нет — пустая карта.
-func ascOf(tree map[string]json.RawMessage, name string) (map[string]json.RawMessage, error) {
-	raw, ok := tree[name]
-	if !ok {
-		return nil, fmt.Errorf("interface %s: нет в NDMS: %w", name, ErrGone)
+// rcFor — запись дерева rc для name, который есть в снимке списка. Нет в
+// дереве из кэша (ifcreated потерян — дерево старше создания, R35) — ОДНО
+// свежее чтение дерева; нет и в нём — false.
+func (s *WGServerStore) rcFor(ctx context.Context, name string) (json.RawMessage, bool, error) {
+	raw, ok, err := s.rcTree.Get(ctx, name)
+	if err != nil || ok {
+		return raw, ok, err
 	}
+	tree, err := s.rcTree.Fetch(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	raw, ok = tree[name]
+	return raw, ok, nil
+}
+
+// ascFields — поля wireguard.asc записи дерева rc; поля asc нет — пустая карта.
+func ascFields(raw json.RawMessage) (map[string]json.RawMessage, error) {
 	var rc struct {
 		Wireguard struct {
 			ASC map[string]json.RawMessage `json:"asc"`

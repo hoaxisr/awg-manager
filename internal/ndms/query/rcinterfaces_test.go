@@ -194,3 +194,92 @@ func TestASC3Fields_Fresh(t *testing.T) {
 		t.Fatalf("E=%d", f.E)
 	}
 }
+
+// R35: ifcreated потерян — сервер уже в свежем списке, а дерево rc в кэше
+// старше его создания. Конфигурация и ASC не пустые/не ErrGone: ОДНО свежее
+// чтение дерева на вызов. Нет и в свежем дереве — прежнее поведение.
+func TestRCInterfaces_MissedCreateRefetchesOnce(t *testing.T) {
+	ctx := context.Background()
+	f, q := rcFixture(t)
+	if _, err := q.WGServers.GetConfig(ctx, "Wireguard1"); err != nil { // дерево в кэше
+		t.Fatal(err)
+	}
+	f.Add(ndms.Interface{ID: "Wireguard5", Type: "Wireguard", State: "up"})
+	f.SetRC("Wireguard5", json.RawMessage(`{"wireguard":{"peer":[{"key":"P5=","allow-ips":[{"address":"10.5.0.2","mask":"255.255.255.255"}]}],"asc":{"jc":7}}}`))
+	f.DrainHooks() // ifcreated потерян: дерево rc не сброшено
+	if _, err := q.Interfaces.Snapshot(ctx, SnapshotLive); err != nil {
+		t.Fatal(err)
+	}
+
+	before := f.RCListCalls()
+	cfg, err := q.WGServers.GetConfig(ctx, "Wireguard5")
+	if err != nil || len(cfg.Peers) != 1 || cfg.Peers[0].PublicKey != "P5=" {
+		t.Fatalf("GetConfig = %+v, %v; want пир P5=", cfg, err)
+	}
+	if n := f.RCListCalls() - before; n != 1 {
+		t.Fatalf("GetConfig: чтений дерева %d, want 1", n)
+	}
+	raw, err := q.WGServers.GetASCParams(ctx, "Wireguard5", false)
+	if err != nil || !strings.Contains(string(raw), `"jc":7`) {
+		t.Fatalf("GetASCParams = %s, %v", raw, err)
+	}
+	if n := f.RCListCalls() - before; n != 1 {
+		t.Fatalf("GetASCParams после освежения: чтений дерева %d, want 1", n)
+	}
+
+	// В снимке есть, в свежем дереве нет (снят без хука) — одно чтение и
+	// прежнее поведение: пустая конфигурация, ASC — ErrGone.
+	f.Remove("Wireguard5")
+	q.WGServers.InvalidateAll()
+	if _, err := q.WGServers.GetConfig(ctx, "Wireguard1"); err != nil { // дерево без Wireguard5 в кэше
+		t.Fatal(err)
+	}
+	before = f.RCListCalls()
+	if cfg, err := q.WGServers.GetConfig(ctx, "Wireguard5"); err != nil || len(cfg.Peers) != 0 {
+		t.Fatalf("GetConfig снятого = %+v, %v", cfg, err)
+	}
+	if _, err := q.WGServers.GetASCParams(ctx, "Wireguard5", false); !errors.Is(err, ErrGone) {
+		t.Fatalf("GetASCParams снятого = %v, want ErrGone", err)
+	}
+	if n := f.RCListCalls() - before; n != 2 {
+		t.Fatalf("чтений дерева %d, want 2 (по одному на вызов)", n)
+	}
+	if f.E != 0 {
+		t.Fatalf("E=%d", f.E)
+	}
+}
+
+// R35 для списка серверов: новый сервер без ifcreated (пересбор по хуку слоя)
+// получает allow-ips из одного свежего дерева, а не «сетей нет».
+func TestRCInterfaces_MissedCreateListRefetchesOnce(t *testing.T) {
+	ctx := context.Background()
+	f, q := rcFixture(t)
+	if _, err := q.WGServers.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.Add(ndms.Interface{ID: "Wireguard6", Type: "Wireguard", State: "up"})
+	f.SetDetail("Wireguard6", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"P6="}]}}`))
+	f.SetRC("Wireguard6", json.RawMessage(`{"wireguard":{"peer":[{"key":"P6=","allow-ips":[{"address":"10.6.0.2","mask":"255.255.255.255"}]}]}}`))
+	f.DrainHooks()
+	if _, err := q.Interfaces.Snapshot(ctx, SnapshotLive); err != nil {
+		t.Fatal(err)
+	}
+	q.WGServers.InvalidateRuntime() // iflayerchanged: дерево rc не сброшено
+	before := f.RCListCalls()
+	srvs, err := q.WGServers.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, s := range srvs {
+		if s.ID == "Wireguard6" && len(s.Peers) == 1 {
+			got = s.Peers[0].AllowedIPs
+		}
+	}
+	if len(got) != 1 || got[0] != "10.6.0.2/32" {
+		t.Fatalf("allow-ips Wireguard6 = %v", got)
+	}
+	if n := f.RCListCalls() - before; n != 1 {
+		t.Fatalf("чтений дерева %d, want 1", n)
+	}
+}
