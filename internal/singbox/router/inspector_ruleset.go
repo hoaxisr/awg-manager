@@ -2,6 +2,7 @@ package router
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -219,7 +220,12 @@ func (c *ruleSetCache) getOrDownload(url, format string, emit InspectProgressFun
 // returns canned stdout/stderr/err. Do not swap from tests using
 // t.Parallel() — there is no mutex protecting the swap.
 var ruleSetMatchExec = func(binary string, args []string) (stdout, stderr string, err error) {
-	cmd := exec.Command(binary, args...)
+	// Без таймаута зависший sing-box держал вызывающего вечно (F583, аудит
+	// короткоживущих вызовов); потолок и WaitDelay — как у decompile.
+	ctx, cancel := context.WithTimeout(context.Background(), ruleSetDecompileTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.WaitDelay = 5 * time.Second
 	var so, se bytes.Buffer
 	cmd.Stdout = &so
 	cmd.Stderr = &se

@@ -2,6 +2,7 @@ package router
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
@@ -40,7 +42,12 @@ type ruleSetMaterializer struct {
 }
 
 var inlineRuleSetCompileExec = func(binary string, args []string) (stdout, stderr string, err error) {
-	cmd := exec.Command(binary, args...)
+	// Без таймаута зависший sing-box держал вызывающего вечно (F583, аудит
+	// короткоживущих вызовов); потолок и WaitDelay — как у decompile.
+	ctx, cancel := context.WithTimeout(context.Background(), ruleSetDecompileTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.WaitDelay = 5 * time.Second
 	var so, se bytes.Buffer
 	cmd.Stdout = &so
 	cmd.Stderr = &se
