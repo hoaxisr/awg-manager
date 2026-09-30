@@ -87,7 +87,7 @@ func TestBuildTargetState(t *testing.T) {
 				Routes:  []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1"}},
 			},
 		}}
-		ts := buildTargetState(data, nil)
+		ts := buildTargetState(data, nil, nil)
 		if len(ts.groups) != 1 {
 			t.Fatalf("expected 1 group, got %d", len(ts.groups))
 		}
@@ -109,7 +109,7 @@ func TestBuildTargetState(t *testing.T) {
 				Routes:  []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1"}},
 			},
 		}}
-		ts := buildTargetState(data, nil)
+		ts := buildTargetState(data, nil, nil)
 		if len(ts.routes) != 1 || ts.routes[0].disabled {
 			t.Errorf("expected 1 enabled route, got %+v", ts.routes)
 		}
@@ -119,7 +119,7 @@ func TestBuildTargetState(t *testing.T) {
 		data := &StoreData{Lists: []DomainList{
 			{ID: "list_1", Enabled: true, Domains: nil, Subnets: nil},
 		}}
-		ts := buildTargetState(data, nil)
+		ts := buildTargetState(data, nil, nil)
 		if len(ts.groups) != 0 {
 			t.Errorf("expected 0 groups, got %d", len(ts.groups))
 		}
@@ -142,7 +142,7 @@ func TestBuildTargetState(t *testing.T) {
 				Routes:  []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1", Fallback: "reject"}},
 			},
 		}}
-		ts := buildTargetState(data, nil)
+		ts := buildTargetState(data, nil, nil)
 		if len(ts.routes) != 2 {
 			t.Fatalf("expected 2 routes, got %d", len(ts.routes))
 		}
@@ -164,7 +164,7 @@ func TestBuildTargetState(t *testing.T) {
 				Routes:  []RouteTarget{{Interface: "OpkgTun0", TunnelID: "t1"}},
 			},
 		}}
-		ts := buildTargetState(data, nil)
+		ts := buildTargetState(data, nil, nil)
 		if len(ts.groups) != 1 {
 			t.Fatalf("expected 1 group, got %d", len(ts.groups))
 		}
@@ -194,7 +194,7 @@ func TestBuildTargetState(t *testing.T) {
 				Routes:   []RouteTarget{{Interface: "OpkgTun0"}},
 			},
 		}}
-		ts := buildTargetState(data, nil)
+		ts := buildTargetState(data, nil, nil)
 		if len(ts.groups) != 2 {
 			t.Fatalf("expected 2 groups, got %d", len(ts.groups))
 		}
@@ -220,7 +220,7 @@ func TestBuildTargetState(t *testing.T) {
 				Routes:  []RouteTarget{{Interface: "OpkgTun0"}},
 			},
 		}}
-		ts := buildTargetState(data, nil)
+		ts := buildTargetState(data, nil, nil)
 		if len(ts.groups) != 1 {
 			t.Fatalf("expected 1 group, got %d", len(ts.groups))
 		}
@@ -246,7 +246,7 @@ func TestBuildTargetState(t *testing.T) {
 				Routes:  []RouteTarget{{Interface: "OpkgTun0"}},
 			},
 		}}
-		ts := buildTargetState(data, nil)
+		ts := buildTargetState(data, nil, nil)
 		if len(ts.groups) != 4 {
 			t.Fatalf("expected 4 groups (1200/300), got %d", len(ts.groups))
 		}
@@ -288,7 +288,7 @@ func TestBuildTargetState(t *testing.T) {
 				Routes:   []RouteTarget{{Interface: "OpkgTun0"}},
 			},
 		}}
-		ts := buildTargetState(data, nil)
+		ts := buildTargetState(data, nil, nil)
 		// 600 items, every chunk budget = 300 - 10 excludes = 290 -> 290 + 290 + 20.
 		if len(ts.groups) != 3 {
 			t.Fatalf("expected 3 groups, got %d: sizes=%d,%d,%d",
@@ -329,7 +329,7 @@ func TestBuildTargetState_SkipsFailedTunnel(t *testing.T) {
 	}
 
 	failed := map[string]struct{}{"tun0": {}}
-	ts := buildTargetState(data, failed)
+	ts := buildTargetState(data, failed, nil)
 
 	if len(ts.routes) != 1 {
 		t.Fatalf("expected 1 route, got %d: %+v", len(ts.routes), ts.routes)
@@ -355,7 +355,7 @@ func TestBuildTargetState_AllTunnelsFailed(t *testing.T) {
 	}
 
 	failed := map[string]struct{}{"tun0": {}, "tun1": {}}
-	ts := buildTargetState(data, failed)
+	ts := buildTargetState(data, failed, nil)
 
 	if len(ts.routes) != 0 {
 		t.Errorf("expected 0 routes, got %d: %+v", len(ts.routes), ts.routes)
@@ -377,7 +377,7 @@ func TestBuildTargetState_NoFailedTunnels(t *testing.T) {
 		}},
 	}
 
-	ts := buildTargetState(data, nil)
+	ts := buildTargetState(data, nil, nil)
 
 	if len(ts.routes) != 2 {
 		t.Fatalf("expected 2 routes, got %d", len(ts.routes))
@@ -398,7 +398,7 @@ func TestBuildTargetState_FallbackReassignedToLastActive(t *testing.T) {
 	}
 
 	failed := map[string]struct{}{"tun1": {}}
-	ts := buildTargetState(data, failed)
+	ts := buildTargetState(data, failed, nil)
 
 	if len(ts.routes) != 2 {
 		t.Fatalf("expected 2 routes, got %d: %+v", len(ts.routes), ts.routes)
@@ -828,7 +828,7 @@ func TestBuildTargetState_SameTunnelInMultipleLists(t *testing.T) {
 	}
 
 	failed := map[string]struct{}{"tun-shared": {}}
-	ts := buildTargetState(data, failed)
+	ts := buildTargetState(data, failed, nil)
 
 	if len(ts.routes) != 2 {
 		t.Fatalf("expected 2 routes, got %d: %+v", len(ts.routes), ts.routes)

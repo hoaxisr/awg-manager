@@ -136,11 +136,14 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 		return nil
 	}
 
-	// Не nil: сюда же confirmTargets дописывает цели без интерфейса.
-	failedSet := make(map[string]struct{})
+	var failedSet map[string]struct{}
 	if s.failover != nil {
-		for _, id := range s.failover.FailedTunnels() {
-			failedSet[id] = struct{}{}
+		failed := s.failover.FailedTunnels()
+		if len(failed) > 0 {
+			failedSet = make(map[string]struct{}, len(failed))
+			for _, id := range failed {
+				failedSet[id] = struct{}{}
+			}
 		}
 	}
 
@@ -168,14 +171,16 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 	// Цель без интерфейса в NDMS (F548): строка dns-proxy route на неё — E в
 	// журнале ndm, и без этой проверки она перезаливалась бы при каждом
 	// применении правил. Такая цель уходит в fallback тем же путём, что и
-	// упавший туннель (решение 3). Все цели подтверждаются ОДНИМ свежим
-	// списком на прогон; список не прочитан — не знаем, куда писать, ошибка.
-	confirmed, err := s.confirmTargets(ctx, data, failedSet)
+	// упавший туннель (решение 3), но решение принимается по интерфейсу, а не
+	// по TunnelID: он бывает пустым (REST его не требует) или общим у строк
+	// с разными интерфейсами. Все цели подтверждаются ОДНИМ свежим списком на
+	// прогон; список не прочитан — не знаем, куда писать, ошибка.
+	confirmed, absent, err := s.confirmTargets(ctx, data)
 	if err != nil {
 		s.logError("reconcile", "", "Failed to read interface list", err.Error())
 		return fmt.Errorf("confirm route targets: %w", err)
 	}
-	target := buildTargetState(data, failedSet)
+	target := buildTargetState(data, failedSet, absent)
 
 	current := filterAWGState(allGroups, allRoutes)
 
@@ -219,9 +224,9 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 }
 
 // confirmTargets подтверждает интерфейсы целей NDMS-списков одним чтением
-// списка и заносит цели без интерфейса в failedSet (по TunnelID). Целей нет —
+// списка; absent — имена интерфейсов целей, которых в списке нет. Целей нет —
 // список не читается.
-func (s *ServiceImpl) confirmTargets(ctx context.Context, data *StoreData, failedSet map[string]struct{}) (map[string]query.Confirmed, error) {
+func (s *ServiceImpl) confirmTargets(ctx context.Context, data *StoreData) (map[string]query.Confirmed, map[string]struct{}, error) {
 	var names []string
 	for _, list := range data.Lists {
 		if !isNDMS(list.Backend) {
@@ -232,29 +237,33 @@ func (s *ServiceImpl) confirmTargets(ctx context.Context, data *StoreData, faile
 		}
 	}
 	if len(names) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	confirmed, err := s.queries.Interfaces.ConfirmEach(ctx, names)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	for _, list := range data.Lists {
-		if !isNDMS(list.Backend) {
+	var absent map[string]struct{}
+	for _, name := range names {
+		if _, ok := confirmed[name]; ok {
 			continue
 		}
-		for _, rt := range list.Routes {
-			if _, ok := confirmed[rt.Interface]; ok {
-				continue
-			}
-			failedSet[rt.TunnelID] = struct{}{}
-			s.appLog.Warn("reconcile", rt.Interface, "интерфейса нет в NDMS — цель в fallback")
+		if _, seen := absent[name]; seen {
+			continue
 		}
+		if absent == nil {
+			absent = make(map[string]struct{})
+		}
+		absent[name] = struct{}{}
+		s.appLog.Warn("reconcile", name, "интерфейса нет в NDMS — цель в fallback")
 	}
-	return confirmed, nil
+	return confirmed, absent, nil
 }
 
 // buildTargetState converts stored domain lists into the desired router state.
-func buildTargetState(data *StoreData, failedTunnels map[string]struct{}) targetState {
+// absentIfaces — интерфейсы целей, которых нет в NDMS (F548): такая цель
+// пропускается так же, как упавший туннель.
+func buildTargetState(data *StoreData, failedTunnels, absentIfaces map[string]struct{}) targetState {
 	var ts targetState
 
 	for _, list := range data.Lists {
@@ -302,6 +311,9 @@ func buildTargetState(data *StoreData, failedTunnels map[string]struct{}) target
 					if _, failed := failedTunnels[rt.TunnelID]; failed {
 						continue
 					}
+				}
+				if _, gone := absentIfaces[rt.Interface]; gone {
+					continue
 				}
 				activeRoutes = append(activeRoutes, rt)
 			}

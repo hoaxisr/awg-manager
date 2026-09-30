@@ -232,3 +232,37 @@ func TestReconcile_StaleLineToAbsentDeletedByRef(t *testing.T) {
 		t.Fatalf("на роутере %v, ожидался [Wireguard0]", got)
 	}
 }
+
+// Отсутствие цели решается по интерфейсу, а не по TunnelID: TunnelID бывает
+// пустым (REST его не требует) или общим у строк с разными интерфейсами
+// (устаревший интерфейс в одном списке, свежий — в другом). Ключ по TunnelID
+// увёл бы в fallback и живую строку второго списка (утечка мимо туннеля).
+func TestReconcile_AbsentDecidedPerInterface(t *testing.T) {
+	cases := map[string]string{"пустой TunnelID": "", "общий TunnelID": "t1"}
+	for name, tunnelID := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"}) // Wireguard9 нет
+			data := StoreData{Lists: []DomainList{
+				{ID: "list_1", Name: "alpha", Enabled: true, Domains: []string{"a.example"},
+					Routes: []RouteTarget{{Interface: "Wireguard9", TunnelID: tunnelID}}},
+				{ID: "list_2", Name: "beta", Enabled: true, Domains: []string{"b.example"},
+					Routes: []RouteTarget{{Interface: "Wireguard0", TunnelID: tunnelID}}},
+			}}
+			s, o := newDNSRouteServiceWithOracle(t, f, data)
+
+			if err := s.Reconcile(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			waitQuiet(t, o.fakeRouter)
+			if f.E != 0 || f.Phantoms != 0 {
+				t.Fatalf("E=%d Phantoms=%d", f.E, f.Phantoms)
+			}
+			if p := upsertsTo(f, "Wireguard9"); len(p) != 0 {
+				t.Fatalf("upsert to absent target: %v", p)
+			}
+			if got := o.ifaceOrder("beta_p"); fmt.Sprint(got) != "[Wireguard0]" {
+				t.Fatalf("живая строка списка beta: %v, ожидалась [Wireguard0]", got)
+			}
+		})
+	}
+}
