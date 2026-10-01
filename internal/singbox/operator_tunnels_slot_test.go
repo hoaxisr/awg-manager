@@ -137,6 +137,9 @@ func TestApplyConfig_WithoutOrchestratorFails(t *testing.T) {
 type fakeProxies struct{ removed []int }
 
 func (f *fakeProxies) EnsureProxy(context.Context, int, int, string, string) error { return nil }
+func (f *fakeProxies) RelabelProxy(context.Context, int, int, string, string) error {
+	return nil
+}
 func (f *fakeProxies) NextFreeIndex(context.Context, map[int]bool) (int, error) {
 	return 0, nil
 }

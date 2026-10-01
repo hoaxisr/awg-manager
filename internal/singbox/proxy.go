@@ -51,6 +51,7 @@ var ErrProxyComponentMissing = fmt.Errorf("NDMS 'proxy' component is not install
 // Queries/Commands разыменовывает nil.
 type ndmsProxies interface {
 	EnsureProxy(ctx context.Context, index, port int, description, ownedDesc string) error
+	RelabelProxy(ctx context.Context, index, port int, description, ownedDesc string) error
 	NextFreeIndex(ctx context.Context, reserved map[int]bool) (int, error)
 	RemoveProxy(ctx context.Context, index int, desc string) error
 	OwnedProxies(ctx context.Context, tunnelProxies, subProxies map[string]string) ([]ProxyMark, error)
@@ -64,6 +65,28 @@ var _ ndmsProxies = (*ProxyManager)(nil)
 type ProxyManager struct {
 	queries  *query.Queries
 	commands *command.Commands
+	marks    proxyMarks // nil — меток нет: голая запись всегда чужая
+}
+
+// proxyMarks — метки отложенного сноса оператора (F562), которые видит
+// ProxyManager (F577): созданное и оставленное на роутере метится здесь же,
+// на любом пути создания; голая запись (description "") наша, только пока
+// есть метка (name, "") — доказательство, что её создали мы.
+type proxyMarks interface {
+	deferLeftProxy(name, desc string, unseen bool)
+	bareMarked(name string) bool
+	clearBareMark(name string)
+}
+
+func (pm *ProxyManager) bareMarked(name string) bool {
+	return pm.marks != nil && pm.marks.bareMarked(name)
+}
+
+// adopted — запись name настроена нами: метка голой записи больше не нужна.
+func (pm *ProxyManager) adopted(name string) {
+	if pm.marks != nil {
+		pm.marks.clearBareMark(name)
+	}
 }
 
 func NewProxyManager(q *query.Queries, c *command.Commands) *ProxyManager {
@@ -84,9 +107,21 @@ var ErrProxyForeign = errors.New("ProxyN занят чужой записью")
 // хранилище переживает выключение режима и сбои, и его мог занять
 // пользовательский KeenOS-прокси (F562). Принятый остаток: пользовательский
 // прокси с ТОЧНО таким же description, как наш тег/Label, считается нашим.
+// Голая запись (description "") с меткой (name, "") — наша сирота:
+// настраивается и метка снимается (F577).
 // Компонента proxy нет — ErrProxyComponentMissing до NDMS.
 func (pm *ProxyManager) EnsureProxy(ctx context.Context, index, port int, description, ownedDesc string) error {
 	defer markProxyMgrDur(fmt.Sprintf("EnsureProxy(%d)", index), time.Now())
+	return pm.ensureProxy(ctx, index, port, description, ownedDesc, true)
+}
+
+// RelabelProxy — EnsureProxy без создания: записи нет — ничего (nil).
+// Возврат description при откате переименования.
+func (pm *ProxyManager) RelabelProxy(ctx context.Context, index, port int, description, ownedDesc string) error {
+	return pm.ensureProxy(ctx, index, port, description, ownedDesc, false)
+}
+
+func (pm *ProxyManager) ensureProxy(ctx context.Context, index, port int, description, ownedDesc string, create bool) error {
 	if !ndmsinfo.HasProxyComponent() {
 		return ErrProxyComponentMissing
 	}
@@ -96,16 +131,29 @@ func (pm *ProxyManager) EnsureProxy(ctx context.Context, index, port int, descri
 		return err
 	}
 	if !ok {
+		if !create {
+			return nil
+		}
 		_, err := pm.CreateProxy(ctx, index, port, description)
 		if errors.Is(err, command.ErrNotCreated) {
 			return fmt.Errorf("%w: %w", ErrProxyForeign, err)
 		}
 		return err
 	}
-	if iface == nil || iface.Description != ownedDesc && iface.Description != description {
+	if iface == nil || iface.Description != ownedDesc && iface.Description != description && !pm.bareOurs(iface) {
 		return foreignProxy(name, iface, ownedDesc)
 	}
-	return pm.commands.Proxies.ConfigureProxy(ctx, c, description, "127.0.0.1", port, true)
+	if err := pm.commands.Proxies.ConfigureProxy(ctx, c, description, "127.0.0.1", port, true); err != nil {
+		return err
+	}
+	pm.adopted(name)
+	return nil
+}
+
+// bareOurs — голая запись с меткой (name, ""): наша сирота (F577). Без метки
+// пустой description чужой.
+func (pm *ProxyManager) bareOurs(iface *ndms.Interface) bool {
+	return iface.Description == "" && pm.bareMarked(iface.ID)
 }
 
 // CreateProxy — создание ProxyN на только что выбранном свободным индексе
@@ -119,6 +167,17 @@ func (pm *ProxyManager) CreateProxy(ctx context.Context, index, port int, descri
 	}
 	name := fmt.Sprintf("%s%d", proxyIfacePrefix, index)
 	_, reply, err := pm.commands.Proxies.CreateProxy(ctx, name, description, "127.0.0.1", port, true)
+	// Созданное и оставленное на роутере — в метку отложенного сноса с
+	// description, который у записи там; на любом пути создания (F577 N1).
+	var left *command.LeftCreatedError
+	if errors.As(err, &left) && pm.marks != nil {
+		pm.marks.deferLeftProxy(left.Name, left.Desc, errors.Is(err, query.ErrNotSeen))
+	}
+	if err == nil {
+		// Создано и настроено заново — прежняя метка голой записи с этим
+		// именем (её уже нет в списке) больше ничего не доказывает.
+		pm.adopted(name)
+	}
 	return reply.Ours(), err
 }
 
@@ -196,7 +255,8 @@ const (
 
 // OwnedProxies — наши ProxyN по СВОЕМУ свежему списку (не память, F562).
 // tunnelProxies — имя ProxyN туннеля → его тег: наш, если description равен
-// тегу или пуст (прошивки без description в списке); subProxies — имя ProxyN
+// тегу или запись голая с меткой (name, "") (F577: без метки пустой
+// description чужой); subProxies — имя ProxyN
 // подписки → её Label: наш, только если description равен Label. Одного
 // имени мало: индекс подписки в store переживает MigrateOff, и
 // пользовательский прокси, занявший освободившееся имя, был бы снесён
@@ -216,7 +276,7 @@ func (pm *ProxyManager) OwnedProxies(ctx context.Context, tunnelProxies, subProx
 		}
 		tag, tunnel := tunnelProxies[iface.ID]
 		label, sub := subProxies[iface.ID]
-		if tunnel && (iface.Description == tag || iface.Description == "") || sub && iface.Description == label {
+		if tunnel && (iface.Description == tag || pm.bareOurs(&iface)) || sub && iface.Description == label {
 			out = append(out, ProxyMark{Name: iface.ID, Desc: iface.Description})
 		}
 	}
@@ -355,11 +415,16 @@ func (pm *ProxyManager) SyncProxies(ctx context.Context, tunnels []TunnelInfo) e
 		if !ok {
 			// Записи нет в только что прочитанном списке — создание.
 			_, err := pm.CreateProxy(ctx, idxs[i], t.ListenPort, t.Tag)
-			if errors.Is(err, command.ErrNotCreated) {
+			var left *command.LeftCreatedError
+			switch {
+			case errors.Is(err, command.ErrNotCreated):
 				slog.Warn("sync proxy: slot taken by foreign record", "tag", t.Tag, "err", err)
 				continue
-			}
-			if err != nil {
+			case errors.As(err, &left):
+				// Метка уже поставлена; следующий туннель обслуживается (F577 R3).
+				slog.Warn("sync proxy: created proxy left on router, deferred", "tag", t.Tag, "err", err)
+				continue
+			case err != nil:
 				return err
 			}
 			continue
@@ -368,6 +433,15 @@ func (pm *ProxyManager) SyncProxies(ctx context.Context, tunnels []TunnelInfo) e
 		info, err := pm.queries.Interfaces.GetProxy(ctx, t.ProxyInterface)
 		if err != nil {
 			return err
+		}
+		if info.Description == "" && pm.bareMarked(t.ProxyInterface) {
+			// Наша голая сирота (метка (name, "")) — настраивается и
+			// становится обычной записью туннеля (F577 R1).
+			if err := pm.commands.Proxies.ConfigureProxy(ctx, c, t.Tag, "127.0.0.1", t.ListenPort, true); err != nil {
+				return err
+			}
+			pm.adopted(t.ProxyInterface)
+			continue
 		}
 		if info.Description != t.Tag {
 			slog.Warn("sync proxy: slot taken by foreign record", "tag", t.Tag, "iface", t.ProxyInterface, "description", info.Description)

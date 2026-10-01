@@ -347,7 +347,6 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 					if errors.Is(err, ErrProxyForeign) || errors.As(err, &left) {
 						unslotted = append(unslotted, t.Tag)
 					}
-					o.deferLeftProxy(err)
 				}
 			}
 		}
@@ -559,12 +558,45 @@ func (o *Operator) RenameTunnel(ctx context.Context, oldTag, newTag string) erro
 		return fmt.Errorf("%w: %q", ErrTunnelTagConflict, newTag)
 	}
 
+	// Роутер — ДО конфига (F577 R2): тег — ключ владения ProxyN
+	// (description), и при отказе роутера локально не меняется ничего —
+	// откатывать нечего. Цена: без RCI в режиме NDMS Proxy туннель не
+	// переименовать (осознанная потеря).
+	proxyIdx := -1
+	if o.isNDMSProxyEnabled() && renamed.ProxyInterface != "" {
+		if idx, err := parseProxyIdx(renamed.ProxyInterface); err == nil && idx >= 0 {
+			proxyIdx = idx
+		}
+	}
+	if proxyIdx >= 0 {
+		if err := o.proxyMgr.EnsureProxy(ctx, proxyIdx, renamed.ListenPort, newTag, oldTag); err != nil {
+			var left *command.LeftCreatedError
+			if !errors.Is(err, ErrProxyForeign) && !errors.As(err, &left) {
+				o.log.Warn("rename proxy description failed, rename aborted", "old", oldTag, "new", newTag, "err", err)
+				o.restoreProxyDesc(ctx, proxyIdx, renamed.ListenPort, oldTag, newTag)
+				return fmt.Errorf("rename proxy %s: %w", renamed.ProxyInterface, err)
+			}
+			// Слот не наш (или нашего там не было и созданное осталось
+			// голой сиротой с меткой — её усыновит Sync) — на роутере
+			// переименовывать и возвращать нечего.
+			o.log.Warn("rename proxy description skipped", "old", oldTag, "new", newTag, "err", err)
+			proxyIdx = -1
+		}
+	}
+	restore := func() {
+		if proxyIdx >= 0 {
+			o.restoreProxyDesc(ctx, proxyIdx, renamed.ListenPort, oldTag, newTag)
+		}
+	}
+
 	if err := cfg.RenameTunnel(oldTag, newTag); err != nil {
+		restore()
 		return err
 	}
 	refsRenamed := false
 	if o.outboundRefs != nil {
 		if err := o.outboundRefs.RenameExternalOutboundTag(ctx, oldTag, newTag); err != nil {
+			restore()
 			return err
 		}
 		refsRenamed = true
@@ -573,29 +605,8 @@ func (o *Operator) RenameTunnel(ctx context.Context, oldTag, newTag string) erro
 		if refsRenamed {
 			_ = o.outboundRefs.RenameExternalOutboundTag(context.Background(), newTag, oldTag)
 		}
+		restore()
 		return err
-	}
-
-	if o.isNDMSProxyEnabled() && renamed.ProxyInterface != "" {
-		if idx, err := parseProxyIdx(renamed.ProxyInterface); err == nil && idx >= 0 {
-			if err := o.proxyMgr.EnsureProxy(ctx, idx, renamed.ListenPort, newTag, oldTag); err != nil {
-				o.deferLeftProxy(err)
-				var left *command.LeftCreatedError
-				if !errors.Is(err, ErrProxyForeign) && !errors.As(err, &left) {
-					// Своя запись не переименована — переименование отменяется:
-					// тег в конфиге остаётся старым, пока роутер не принял
-					// новый, иначе Up/Remove/уборка по тегу сочли бы её чужой
-					// (F577). Частично применённое (на роутере уже новый)
-					// повтор примет: EnsureProxy признаёт и старый, и новый.
-					o.log.Warn("rename proxy description failed, rename reverted", "old", oldTag, "new", newTag, "err", err)
-					return errors.Join(fmt.Errorf("rename proxy %s: %w", renamed.ProxyInterface, err),
-						o.revertRename(ctx, cfg, newTag, oldTag, refsRenamed))
-				}
-				// Слот не наш (или нашего там не было и созданное осталось
-				// сиротой) — переименовывать на роутере нечего.
-				o.log.Warn("rename proxy description skipped", "old", oldTag, "new", newTag, "err", err)
-			}
-		}
 	}
 	if o.bus != nil {
 		o.bus.Publish("singbox:tunnels-changed", nil)
@@ -606,22 +617,15 @@ func (o *Operator) RenameTunnel(ctx context.Context, oldTag, newTag string) erro
 	return nil
 }
 
-// revertRename — откат RenameTunnel после записи конфига: тег, внешние
-// ссылки и слот возвращаются к oldTag.
-func (o *Operator) revertRename(ctx context.Context, cfg *Config, newTag, oldTag string, refsRenamed bool) error {
-	if err := cfg.RenameTunnel(newTag, oldTag); err != nil {
-		return fmt.Errorf("revert rename: %w", err)
+// restoreProxyDesc — одна попытка вернуть ProxyN description oldTag после
+// провала переименования: роутер мог применить новый частично (ответ
+// потерян). Наша запись — с oldTag или newTag; записи нет — ничего. Отказ —
+// Warn и принятый остаток: на роутере newTag, в конфиге oldTag, Sync/Remove
+// сочтут её чужой до повтора переименования (F577 R2).
+func (o *Operator) restoreProxyDesc(ctx context.Context, idx, port int, oldTag, newTag string) {
+	if err := o.proxyMgr.RelabelProxy(ctx, idx, port, oldTag, newTag); err != nil {
+		o.log.Warn("rename: proxy description not restored", "idx", idx, "old", oldTag, "new", newTag, "err", err)
 	}
-	var errs []error
-	if refsRenamed {
-		if err := o.outboundRefs.RenameExternalOutboundTag(ctx, newTag, oldTag); err != nil {
-			errs = append(errs, fmt.Errorf("revert rename refs: %w", err))
-		}
-	}
-	if err := o.ApplyConfig(ctx, cfg); err != nil {
-		errs = append(errs, fmt.Errorf("revert rename: %w", err))
-	}
-	return errors.Join(errs...)
 }
 
 func (o *Operator) loadConfig() (*Config, error) {

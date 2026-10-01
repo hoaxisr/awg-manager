@@ -21,15 +21,22 @@ import (
 
 // refusingPoster — NDMS, отказывающий в `no interface X` (снос), пока refuse;
 // остальное — оракул.
+// lostReplyOn — payload с этой подстрокой применяется оракулом, а ответ
+// теряется (транспортная ошибка): частичное применение (F577 R2).
 type refusingPoster struct {
 	*query.FakeNDMS
-	mu      sync.Mutex
-	refuse  bool
-	refused int
+	mu          sync.Mutex
+	refuse      bool
+	refused     int
+	lostReplyOn string
 }
 
 func (p *refusingPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
 	b, _ := json.Marshal(payload)
+	if p.lostReplyOn != "" && strings.Contains(string(b), p.lostReplyOn) {
+		_, _ = p.FakeNDMS.Post(ctx, payload)
+		return nil, errors.New("reply lost")
+	}
 	p.mu.Lock()
 	if p.refuse && strings.Contains(string(b), `"no":true`) {
 		p.refused++
@@ -82,7 +89,9 @@ func f562Stand(t *testing.T) (*Operator, *Watchdog, *query.FakeNDMS, *refusingPo
 		Save:    command.NewSaveCoordinator(p, nil, time.Hour, time.Hour, 0, q.RunningConfig),
 		IsOS5:   func() bool { return true },
 	})
-	op.proxyMgr = NewProxyManager(q, c)
+	pm := NewProxyManager(q, c)
+	pm.marks = op
+	op.proxyMgr = pm
 	op.manuallyStopped.Store(true)
 	w := NewWatchdog(op, nil, nil)
 	w.swept.Store(true)

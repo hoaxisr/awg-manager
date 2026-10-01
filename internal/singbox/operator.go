@@ -426,6 +426,9 @@ func NewOperator(d OperatorDeps) *Operator {
 	op.manuallyStopped.Store(d.InitialManuallyStopped)
 	op.ndmsProxyEnabledFn = d.IsNDMSProxyEnabled
 	op.loadDeferredProxies()
+	if pm, ok := op.proxyMgr.(*ProxyManager); ok {
+		pm.marks = op
+	}
 	op.proc.OnStderrLine = op.handleStderrLine
 	op.proc.OnStdoutLine = op.handleStdoutLine
 	op.proc.OnExit = op.handleExit

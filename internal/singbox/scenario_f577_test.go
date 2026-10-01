@@ -127,9 +127,9 @@ func TestScenario_MigrateOff_ForeignSlot_Untouched(t *testing.T) {
 }
 
 // F577 (опасение 1): роутер не принял новое description (список не
-// прочитан) — переименование отменено: в конфиге прежний тег. Повтор
+// прочитан) — переименование отказано: в конфиге прежний тег. Повтор
 // проходит.
-func TestScenario_RenameTunnel_RouterFailure_Reverted(t *testing.T) {
+func TestScenario_RenameTunnel_RouterFailure_NoLocalChange(t *testing.T) {
 	withProxy501(t)
 	op, _, f, _ := f562Stand(t)
 	ctx := context.Background()
@@ -164,6 +164,175 @@ func TestScenario_SubscriptionCreateLeft_Marked(t *testing.T) {
 	}
 	if d := op.deferredProxies["Proxy7"]; d == nil || d.desc != "" {
 		t.Fatalf("метка: %+v", op.deferredProxies)
+	}
+	clean(t, f)
+}
+
+// F577 R1: голая сирота на слоте СУЩЕСТВУЮЩЕГО туннеля. Пользователь снял
+// Proxy3 туннеля A; Sync создал запись, но NDMS её не показал (ErrNotSeen) —
+// метка (Proxy3, ""). Тик (имя нужно A) метку держит и ничего не сносит.
+// Запись видна голой — следующий Sync её усыновляет: настраивает с тегом A и
+// снимает метку; RemoveTunnel затем её снимает.
+func TestScenario_BareOrphanOnLiveSlot_AdoptedThenRemoved(t *testing.T) {
+	withProxy501(t)
+	op, w, f, _ := f562Stand(t)
+	ctx := context.Background()
+	pm := op.proxyMgr.(*ProxyManager)
+	pm.queries.Interfaces.SetCreatedBackoff(time.Millisecond)
+	f.Remove("Proxy3")
+	f.DrainHooks()
+	f.ExpectCreate("Proxy3")
+	f.HideCreated(-1)
+	cfg, err := op.loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pm.SyncProxies(ctx, cfg.Tunnels()); err != nil {
+		t.Fatalf("SyncProxies: %v", err)
+	}
+	if d := op.deferredProxies["Proxy3"]; d == nil || d.desc != "" {
+		t.Fatalf("метка: %+v", op.deferredProxies)
+	}
+	f.HideCreated(0)
+	f.DrainHooks() // голый Proxy3 виден
+	posts := len(f.Posts)
+	w.tick(ctx)
+	if len(f.Posts) != posts || !f.Has("Proxy3") || !op.proxyRemovalDeferred("Proxy3") {
+		t.Fatalf("тик: posts=%v метка=%v", f.Posts[posts:], op.deferredProxies)
+	}
+
+	if err := pm.SyncProxies(ctx, cfg.Tunnels()); err != nil {
+		t.Fatalf("SyncProxies: %v", err)
+	}
+	_, rec, ok, _ := pm.queries.Interfaces.Confirm(ctx, "Proxy3")
+	if !ok || rec.Description != "A" || op.proxyRemovalDeferred("Proxy3") {
+		t.Fatalf("не усыновлён: rec=%+v метка=%v", rec, op.deferredProxies)
+	}
+	if err := op.RemoveTunnel(ctx, "A"); err != nil {
+		t.Fatal(err)
+	}
+	if f.Has("Proxy3") {
+		t.Fatalf("Proxy3 не снят: posts=%v", f.Posts)
+	}
+	mustHave(t, f, "Proxy0", "Proxy4", "Proxy5", "Proxy6")
+	clean(t, f)
+}
+
+// F577 R1/R5: голая запись без метки — чужая для EnsureProxy и OwnedProxies
+// (на слоте туннеля тоже); с меткой — наша: EnsureProxy усыновляет и снимает
+// метку.
+func TestEnsureProxy_BareNeedsMark(t *testing.T) {
+	withProxy501(t)
+	op, _, f, _ := f562Stand(t)
+	ctx := context.Background()
+	pm := op.proxyMgr.(*ProxyManager)
+	f.Add(ndms.Interface{ID: "Proxy7", Type: "Proxy", State: "up"})
+	if err := pm.EnsureProxy(ctx, 7, 1087, "sub1", "sub1"); !errors.Is(err, ErrProxyForeign) || len(f.Posts) != 0 {
+		t.Fatalf("без метки: err=%v posts=%v", err, f.Posts)
+	}
+	marks, err := pm.OwnedProxies(ctx, map[string]string{"Proxy6": "X"}, nil)
+	if err != nil || len(marks) != 0 {
+		t.Fatalf("голый Proxy6 на слоте без метки: %v err=%v", marks, err)
+	}
+	op.deferProxyRemoval("Proxy6", "")
+	if marks, _ := pm.OwnedProxies(ctx, map[string]string{"Proxy6": "X"}, nil); len(marks) != 1 {
+		t.Fatalf("голый Proxy6 с меткой: %v", marks)
+	}
+	op.deferProxyRemoval("Proxy7", "")
+	if err := pm.EnsureProxy(ctx, 7, 1087, "sub1", "sub1"); err != nil {
+		t.Fatal(err)
+	}
+	_, rec, _, _ := pm.queries.Interfaces.Confirm(ctx, "Proxy7")
+	if rec == nil || rec.Description != "sub1" || op.proxyRemovalDeferred("Proxy7") {
+		t.Fatalf("rec=%+v метка=%v", rec, op.deferredProxies)
+	}
+	clean(t, f)
+}
+
+// F577 R3: оставленное при создании не обрывает SyncProxies — следующий
+// туннель тоже обслужен (обе записи получили метки).
+func TestSyncProxies_LeftContinues(t *testing.T) {
+	withProxy501(t)
+	op, _, f, _ := f562Stand(t)
+	pm := op.proxyMgr.(*ProxyManager)
+	pm.queries.Interfaces.SetCreatedBackoff(time.Millisecond)
+	f.Remove("Proxy3")
+	f.Remove("Proxy4")
+	f.DrainHooks()
+	f.ExpectCreate("Proxy3", "Proxy4")
+	f.HideCreated(-1)
+	cfg, _ := op.loadConfig()
+	if err := pm.SyncProxies(context.Background(), cfg.Tunnels()); err != nil {
+		t.Fatal(err)
+	}
+	if !op.proxyRemovalDeferred("Proxy3") || !op.proxyRemovalDeferred("Proxy4") {
+		t.Fatalf("метки: %v posts=%v", op.deferredProxies, f.Posts)
+	}
+}
+
+// F577 R4: метка созданного, но не показанного (ErrNotSeen) не снимается как
+// «записи нет» первые 60 с; позже — снимается.
+func TestScenario_UnseenMark_AbsentGrace(t *testing.T) {
+	withProxy501(t)
+	op, w, f, _ := f562Stand(t)
+	ctx := context.Background()
+	clock := time.Unix(1000, 0)
+	op.deferredNow = func() time.Time { return clock }
+	op.proxyMgr.(*ProxyManager).queries.Interfaces.SetCreatedBackoff(time.Millisecond)
+	f.ExpectCreate("Proxy1")
+	f.HideCreated(-1)
+	if _, _, err := op.AddTunnels(ctx, f577Link); err != nil {
+		t.Fatal(err)
+	}
+	clock = clock.Add(59 * time.Second)
+	w.tick(ctx)
+	if !op.proxyRemovalDeferred("Proxy1") {
+		t.Fatal("метка снята в пределах 60 с")
+	}
+	clock = clock.Add(2 * time.Second)
+	w.tick(ctx)
+	if op.proxyRemovalDeferred("Proxy1") {
+		t.Fatal("метка не снята после 60 с")
+	}
+}
+
+// F577 R2: переименование — роутер ДО конфига. Новое description применено,
+// ответ потерян — переименование отказано без локальных изменений, description
+// возвращён к прежнему одной попыткой.
+func TestScenario_RenameTunnel_LostReply_DescriptionRestored(t *testing.T) {
+	withProxy501(t)
+	op, _, f, p := f562Stand(t)
+	ctx := context.Background()
+	p.lostReplyOn = `"description":"A2"`
+	if err := op.RenameTunnel(ctx, "A", "A2"); err == nil {
+		t.Fatal("переименование без ответа роутера прошло")
+	}
+	if tags := tunnelTags(t, op); !slices.Equal(tags, []string{"A", "B"}) {
+		t.Fatalf("туннели: %v", tags)
+	}
+	_, rec, _, _ := op.proxyMgr.(*ProxyManager).queries.Interfaces.Confirm(ctx, "Proxy3")
+	if rec == nil || rec.Description != "A" {
+		t.Fatalf("Proxy3: %+v", rec)
+	}
+	clean(t, f)
+}
+
+// F577 R1: метка голой записи на живом слоте, а записи так и нет — Sync
+// создаёт её заново; метка снимается, а не висит до удаления туннеля.
+func TestScenario_BareMark_RecreatedClears(t *testing.T) {
+	withProxy501(t)
+	op, _, f, _ := f562Stand(t)
+	pm := op.proxyMgr.(*ProxyManager)
+	f.Remove("Proxy3")
+	f.DrainHooks()
+	op.deferProxyRemoval("Proxy3", "")
+	f.ExpectCreate("Proxy3")
+	cfg, _ := op.loadConfig()
+	if err := pm.SyncProxies(context.Background(), cfg.Tunnels()); err != nil {
+		t.Fatal(err)
+	}
+	if !f.Has("Proxy3") || op.proxyRemovalDeferred("Proxy3") {
+		t.Fatalf("has=%v метка=%v", f.Has("Proxy3"), op.deferredProxies)
 	}
 	clean(t, f)
 }
