@@ -13,6 +13,8 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
+var updateSettingsTransitionTimeout = 1 * time.Second
+
 func (s *ServiceImpl) ListPresets() ([]Preset, error) {
 	return listRouterPresets(s.deps.PresetCatalog)
 }
@@ -55,7 +57,25 @@ func (s *ServiceImpl) UpdateSettings(ctx context.Context, sr storage.SingboxRout
 	// нашим локом молча съел бы тик (мьютекс нерекурсивный).
 	var engineChanged bool
 	settings, err := func() (*storage.Settings, error) {
-		if !s.transitionMu.TryLock() {
+		// Окно ожидания transitionMu: не валимся мгновенно при секундном тике Reconcile,
+		// но и не висим бесконечно, если реально идёт долгая смена режима (SwitchRoutingMode).
+		var acquired bool
+		deadline := time.Now().Add(updateSettingsTransitionTimeout)
+		for {
+			if s.transitionMu.TryLock() {
+				acquired = true
+				break
+			}
+			if time.Now().After(deadline) {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+		if !acquired {
 			return nil, ErrTransitionInProgress
 		}
 		defer s.transitionMu.Unlock()
