@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -51,7 +52,7 @@ type ndmsProxies interface {
 	EnsureProxy(ctx context.Context, index, port int, description string) error
 	NextFreeIndex(ctx context.Context, reserved map[int]bool) (int, error)
 	RemoveProxy(ctx context.Context, index int) error
-	OwnedProxies(ctx context.Context, tunnelProxies map[string]string, subProxyIdx map[int]bool) ([]ProxyMark, error)
+	OwnedProxies(ctx context.Context, tunnelProxies, subProxies map[string]string) ([]ProxyMark, error)
 	RemoveMarkedProxy(ctx context.Context, m ProxyMark) (MarkedOutcome, error)
 	ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) ([]string, error)
 	SyncProxies(ctx context.Context, tunnels []TunnelInfo) error
@@ -127,6 +128,10 @@ type ProxyMark struct {
 	Desc string `json:"desc"`
 }
 
+// errProxyListUnread — RemoveMarkedProxy не прочитал список: следующие метки
+// того же тика упрутся в тот же отказ (ре-ревью N2).
+var errProxyListUnread = errors.New("interface list unread")
+
 // MarkedOutcome — чем кончился RemoveMarkedProxy без ошибки.
 type MarkedOutcome int
 
@@ -138,13 +143,15 @@ const (
 
 // OwnedProxies — наши ProxyN по СВОЕМУ свежему списку (не память, F562).
 // tunnelProxies — имя ProxyN туннеля → его тег: наш, если description равен
-// тегу или пуст (прошивки без description в списке); subProxyIdx — индексы
-// подписок (их description — метка пользователя, владение по индексу).
-// Только по description (как proxyIsOurs) не узнаём: пользовательский
-// KeenOS-прокси с description, равным тегу, был бы снесён (ревью F1). Для
+// тегу или пуст (прошивки без description в списке); subProxies — имя ProxyN
+// подписки → её Label: наш, только если description равен Label. Одного
+// имени мало: индекс подписки в store переживает MigrateOff, и
+// пользовательский прокси, занявший освободившееся имя, был бы снесён
+// (ре-ревью N1). Одного description тоже мало: пользовательский KeenOS-прокси
+// с description, равным тегу, был бы снесён (ревью F1). Для
 // уборки режима NDMS Proxy off: найденное уходит в метки отложенного сноса.
 // Список не прочитан — ошибка.
-func (pm *ProxyManager) OwnedProxies(ctx context.Context, tunnelProxies map[string]string, subProxyIdx map[int]bool) ([]ProxyMark, error) {
+func (pm *ProxyManager) OwnedProxies(ctx context.Context, tunnelProxies, subProxies map[string]string) ([]ProxyMark, error) {
 	snap, err := pm.queries.Interfaces.Snapshot(ctx, 0)
 	if err != nil {
 		return nil, err
@@ -154,12 +161,9 @@ func (pm *ProxyManager) OwnedProxies(ctx context.Context, tunnelProxies map[stri
 		if !strings.HasPrefix(iface.ID, proxyIfacePrefix) {
 			continue
 		}
-		var idx int
-		if n, e := fmt.Sscanf(iface.ID, proxyIfacePrefix+"%d", &idx); e != nil || n != 1 {
-			continue
-		}
 		tag, tunnel := tunnelProxies[iface.ID]
-		if subProxyIdx[idx] || tunnel && (iface.Description == tag || iface.Description == "") {
+		label, sub := subProxies[iface.ID]
+		if tunnel && (iface.Description == tag || iface.Description == "") || sub && iface.Description == label {
 			out = append(out, ProxyMark{Name: iface.ID, Desc: iface.Description})
 		}
 	}
@@ -169,12 +173,12 @@ func (pm *ProxyManager) OwnedProxies(ctx context.Context, tunnelProxies map[stri
 // RemoveMarkedProxy снимает m.Name, только если он есть в свежем списке и
 // его description равен m.Desc: по одному description (свободный текст
 // пользователя) чужой KeenOS-прокси не отличить от нашего. Нет записи или
-// description другой — без команд. Список не прочитан или NDMS отказал —
-// ошибка.
+// description другой — без команд. Список не прочитан (errProxyListUnread)
+// или NDMS отказал — ошибка.
 func (pm *ProxyManager) RemoveMarkedProxy(ctx context.Context, m ProxyMark) (MarkedOutcome, error) {
 	c, iface, ok, err := pm.queries.Interfaces.Confirm(ctx, m.Name)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("%w: %w", errProxyListUnread, err)
 	}
 	if !ok {
 		return MarkedAbsent, nil
@@ -191,8 +195,9 @@ func (pm *ProxyManager) RemoveMarkedProxy(ctx context.Context, m ProxyMark) (Mar
 
 // ListNativeProxies returns kernel names (e.g. "t2s0") of NDMS Proxy
 // interfaces NOT created by us — KeenOS-native SOCKS proxies the user may
-// bind a router direct outbound to (#323). Mirrors OwnedProxies'
-// enumeration but inverts the ownership test and resolves kernel names.
+// bind a router direct outbound to (#323). Владение — proxyIsOurs (description
+// ∈ тегов при любом индексе, пустой description на слоте, индекс подписки),
+// шире OwnedProxies: тут оно только скрывает кандидатов, ничего не сносит.
 func (pm *ProxyManager) ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) ([]string, error) {
 	ifaces, err := pm.queries.Interfaces.List(ctx)
 	if err != nil {

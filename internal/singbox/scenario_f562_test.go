@@ -506,3 +506,47 @@ func TestScenario_DeferredMark_DecidesByFreshList(t *testing.T) {
 	}
 	clean(t, f)
 }
+
+// Ре-ревью N1: индекс подписки переживает MigrateOff в store; рестарт в
+// режиме off поднимает флаг. Пользовательский Proxy7 ("Work") на имени
+// подписки sub1 цел — совпадение имени без Label не наше; Proxy9 подписки
+// sub2 с её Label снимается.
+func TestScenario_OrphanCleanupFlag_SubscriptionNeedsLabel(t *testing.T) {
+	op, w, f, _ := f562Stand(t)
+	f.Add(ndms.Interface{ID: "Proxy7", Type: "Proxy", Description: "Work", State: "up"})
+	f.Add(ndms.Interface{ID: "Proxy9", Type: "Proxy", Description: "sub2", State: "up"})
+	_ = f.DrainHooks()
+	op.subProxies = &staticSubProxies{list: []SubscriptionProxy{
+		{Index: 7, Port: 1087, Label: "sub1"},
+		{Index: 9, Port: 1089, Label: "sub2"},
+	}}
+	op.ndmsProxyEnabledFn = func() bool { return false }
+	op.MarkNeedsOrphanCleanup() // как singbox_core на старте в режиме off
+	w.tick(context.Background())
+	if f.Has("Proxy9") {
+		t.Fatalf("Proxy9 подписки не снят: posts=%v", f.Posts)
+	}
+	mustHave(t, f, "Proxy7", "Proxy0", "Proxy5", "Proxy6")
+	if op.deferredProxies["Proxy7"] != nil {
+		t.Fatalf("метка на чужом Proxy7: %v", op.deferredProxies)
+	}
+	clean(t, f)
+}
+
+// Ре-ревью N2: список не читается — на тик одна попытка списка, а не по
+// одной на каждую созревшую метку (все под migrationMu).
+func TestScenario_DeferredSweep_ListErrorOneReadPerTick(t *testing.T) {
+	op, w, f, _ := f562Stand(t)
+	op.ndmsProxyEnabledFn = func() bool { return false }
+	op.deferProxyRemoval("Proxy3", "A")
+	op.deferProxyRemoval("Proxy4", "B")
+	op.deferProxyRemoval("Proxy5", "user")
+	f.FailList(errors.New("rci down"))
+	w.tick(context.Background())
+	if n := f.ListCalls(); n != 1 || len(f.Posts) != 0 {
+		t.Fatalf("списков=%d posts=%v, want 1/пусто", n, f.Posts)
+	}
+	if len(op.deferredProxies) != 3 {
+		t.Fatalf("метки потеряны: %v", op.deferredProxies)
+	}
+}

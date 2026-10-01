@@ -3,6 +3,7 @@ package singbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -54,7 +55,7 @@ func (o *Operator) orphanCleanupIfFlagged(ctx context.Context) {
 }
 
 // ownedProxyMarks — наши ProxyN (туннели конфига по имени+тегу, подписки по
-// индексу) по свежему списку.
+// имени+Label) по свежему списку.
 func (o *Operator) ownedProxyMarks(ctx context.Context) ([]ProxyMark, error) {
 	cfg, err := o.loadConfig()
 	if err != nil && !os.IsNotExist(err) {
@@ -68,11 +69,11 @@ func (o *Operator) ownedProxyMarks(ctx context.Context) ([]ProxyMark, error) {
 			}
 		}
 	}
-	subProxyIdx := map[int]bool{}
+	subProxies := map[string]string{}
 	for _, sp := range o.subscriptionProxies() {
-		subProxyIdx[sp.Index] = true
+		subProxies[proxyName(sp.Index)] = sp.Label
 	}
-	return o.proxyMgr.OwnedProxies(ctx, tunnelProxies, subProxyIdx)
+	return o.proxyMgr.OwnedProxies(ctx, tunnelProxies, subProxies)
 }
 
 // Выдержка повтора отложенного сноса: 30 с, 1 мин, 2 мин … не больше 15 мин
@@ -251,6 +252,9 @@ func (o *Operator) retryDeferredProxyRemovals(ctx context.Context) {
 		out, err := o.proxyMgr.RemoveMarkedProxy(ctx, m.ProxyMark)
 		if err != nil {
 			o.deferredProxyFailed(m.Name, now, err)
+			if errors.Is(err, errProxyListUnread) {
+				break // остальные упрутся в тот же список: один отказ на тик
+			}
 			continue
 		}
 		switch out {
@@ -341,7 +345,7 @@ func (r *SubscriptionProxyRegistrar) RemoveProxy(ctx context.Context, idx int) e
 
 // ListNativeProxies returns kernel names of KeenOS-native (non-ours) NDMS
 // Proxy interfaces — bind targets for router direct outbounds (#323). Assembles
-// the same ownership sets as removeOrphanSingboxProxies and delegates.
+// the proxyIsOurs ownership sets and delegates.
 func (o *Operator) ListNativeProxies(ctx context.Context) ([]string, error) {
 	cfg, err := o.loadConfig()
 	if err != nil && !os.IsNotExist(err) {
