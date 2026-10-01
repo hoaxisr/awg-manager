@@ -418,10 +418,26 @@
 							<span class="integration-sub">
 								v{telemtStatus.version || 'Версия не определена'}
 								{#if telemtRunning}· запущен{:else}· остановлен{/if}
+								{#if telemtStatus.config?.mode === 'web'}
+									· Web-режим
+								{:else}
+									· Fake-TLS
+								{/if}
 							</span>
 							<span class="setting-description">
-								Высокопроизводительный MTProxy для Telegram с поддержкой Fake-TLS.
+								Высокопроизводительный MTProxy для Telegram с поддержкой Fake-TLS и Web-проксирования (HTTP/WS).
 							</span>
+							{#if telemtRunning && telemtStatus.link}
+								<div class="mt-1">
+									<button
+										type="button"
+										class="text-xs text-primary hover:underline cursor-pointer inline-flex items-center gap-1 font-medium"
+										onclick={() => telemtStatus?.link && copyToClipboard(telemtStatus.link)}
+									>
+										Скопировать ссылку для Telegram
+									</button>
+								</div>
+							{/if}
 						{:else if telemtStatus && telemtStatus.archSupported === false}
 							<span class="integration-sub" style="color: var(--color-warning, #f59e0b);">
 								Архитектура {telemtStatus.arch || ''} не поддерживается (доступно только для ARM64)

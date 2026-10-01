@@ -62,7 +62,7 @@ func TestGenerateTOML(t *testing.T) {
 }
 
 func TestGenerateTgLink(t *testing.T) {
-	link := GenerateTgLink("192.168.1.1", 8443, "0123456789abcdef0123456789abcdef", "yandex.ru")
+	link := GenerateTgLink(ModeDirect, "192.168.1.1", 8443, "0123456789abcdef0123456789abcdef", "yandex.ru", "")
 	if !strings.HasPrefix(link, "tg://proxy?") {
 		t.Fatalf("expected tg://proxy? prefix, got: %s", link)
 	}
@@ -77,6 +77,43 @@ func TestGenerateTgLink(t *testing.T) {
 	expectedSecret := "ee0123456789abcdef0123456789abcdef79616e6465782e7275"
 	if !strings.Contains(link, "secret="+expectedSecret) {
 		t.Errorf("expected secret %s in link, got: %s", expectedSecret, link)
+	}
+}
+
+func TestGenerateTOML_Web(t *testing.T) {
+	cfg := Config{
+		Enabled:    true,
+		Mode:       ModeWeb,
+		Port:       8443,
+		ListenIP:   "0.0.0.0",
+		Secret:     "0123456789abcdef0123456789abcdef",
+		WebHost:    "proxy.example.com",
+		WebCarrier: "https-lanes",
+		WebDecoy:   "http://127.0.0.1:80",
+	}
+
+	toml := GenerateTOML(cfg)
+	if !strings.Contains(toml, `transport = "web"`) {
+		t.Errorf("expected transport = web in toml, got: %s", toml)
+	}
+	if !strings.Contains(toml, `host = "proxy.example.com"`) {
+		t.Errorf("expected host in toml, got: %s", toml)
+	}
+	if !strings.Contains(toml, `carrier = "https-lanes"`) {
+		t.Errorf("expected carrier in toml, got: %s", toml)
+	}
+}
+
+func TestGenerateTgLink_Web(t *testing.T) {
+	link := GenerateTgLink(ModeWeb, "192.168.1.1", 8443, "0123456789abcdef0123456789abcdef", "", "proxy.example.com")
+	if !strings.HasPrefix(link, "tg://webproxy?") {
+		t.Fatalf("expected tg://webproxy? prefix, got: %s", link)
+	}
+	if !strings.Contains(link, "server=proxy.example.com") {
+		t.Errorf("expected server in link, got: %s", link)
+	}
+	if !strings.Contains(link, "secret=0123456789abcdef0123456789abcdef") {
+		t.Errorf("expected secret in link, got: %s", link)
 	}
 }
 
