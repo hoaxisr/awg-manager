@@ -997,7 +997,9 @@ func (h *ManagedServerHandler) ASC(w http.ResponseWriter, r *http.Request, id st
 			response.Error(w, err.Error(), "ASC_UNVERIFIED")
 			return
 		}
-		h.svc.InvalidateCache(id)
+		// Без InvalidateCache (F600): кэш сбросила сама запись (rciAfter), а
+		// сверка положила в него дерево rc, прочитанное ПОСЛЕ записи. Сброс
+		// здесь выкинул бы его, и снимок ответа читал бы третье дерево.
 		h.publishServerUpdated()
 		h.writeServersSnapshot(w, r)
 	default:
