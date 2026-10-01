@@ -243,8 +243,9 @@ type Operator struct {
 	// deferredProxies — description (тег туннеля / метка подписки) ProxyN,
 	// который снять не удалось (список не прочитан — решение 4, или отказ
 	// сноса, F562), с выдержкой повтора. Добирает retryDeferredProxyRemovals
-	// с тика сторожа; пусто — ни одного чтения списка. Только в памяти:
-	// рестарт демона метку теряет. deferredNow — шов часов для тестов.
+	// с тика сторожа; пусто — ни одного чтения списка. Набор тегов (не
+	// выдержка) переживает рестарт в deferredProxiesFile (R38).
+	// deferredNow — шов часов для тестов.
 	deferredProxyMu sync.Mutex
 	deferredProxies map[string]*deferredProxy
 	deferredNow     func() time.Time
@@ -424,6 +425,7 @@ func NewOperator(d OperatorDeps) *Operator {
 	}
 	op.manuallyStopped.Store(d.InitialManuallyStopped)
 	op.ndmsProxyEnabledFn = d.IsNDMSProxyEnabled
+	op.loadDeferredProxies()
 	op.proc.OnStderrLine = op.handleStderrLine
 	op.proc.OnStdoutLine = op.handleStdoutLine
 	op.proc.OnExit = op.handleExit

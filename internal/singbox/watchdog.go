@@ -92,6 +92,11 @@ func (w *Watchdog) tick(ctx context.Context) {
 			w.log.Warn("watchdog reconcile failed", "err", err)
 		}
 		running, _ = w.op.proc.IsRunning()
+	} else {
+		// Уборка по флагу живёт в Reconcile, а он зовётся только при
+		// мёртвом движке: отказ при живом sing-box не повторялся бы
+		// никогда (R38). Без флага — ни одного чтения.
+		w.op.orphanCleanupIfFlagged(ctx)
 	}
 	// Отложенный снос ProxyN (F562): без метки — ни одного чтения.
 	w.op.retryDeferredProxyRemovals(ctx)

@@ -2,9 +2,14 @@ package singbox
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // subscriptionProxies returns the current subscription composite proxies, or
@@ -22,6 +27,21 @@ func (o *Operator) subscriptionProxies() []SubscriptionProxy {
 // на сигнал. Вызывается из MigrateOff и из main.go на старте, если
 // settings уже в disabled.
 func (o *Operator) MarkNeedsOrphanCleanup() { o.needsOrphanCleanup.Store(true) }
+
+// orphanCleanupIfFlagged — уборка по флагу needsOrphanCleanup в режиме
+// NDMS Proxy off. CAS берёт сигнал (повторный Mark во время уборки не
+// теряется), отказ возвращает флаг — следующий тик повторит (R38).
+func (o *Operator) orphanCleanupIfFlagged(ctx context.Context) {
+	if o.isNDMSProxyEnabled() || !o.needsOrphanCleanup.CompareAndSwap(true, false) {
+		return
+	}
+	if err := o.removeOrphanSingboxProxies(ctx); err != nil {
+		o.needsOrphanCleanup.Store(true)
+		if o.runtimeLogger != nil {
+			o.runtimeLogger.Warn("reconcile", "", "orphan cleanup: "+err.Error())
+		}
+	}
+}
 
 // removeOrphanSingboxProxies собирает known tunnel tags и port-slots
 // из текущего config.json и делегирует в ProxyManager. Best-effort.
@@ -84,6 +104,59 @@ func (o *Operator) deferProxyRemoval(tag string) {
 	}
 	if o.deferredProxies[tag] == nil {
 		o.deferredProxies[tag] = &deferredProxy{}
+		o.saveDeferredLocked()
+	}
+}
+
+// deferredProxiesFile — набор тегов отложенного сноса на флеше (R38): после
+// рестарта первый тик сторожа добирает их тем же путём. Выдержка не
+// хранится — после рестарта первая попытка сразу.
+const deferredProxiesFile = "deferred-proxy-removals.json"
+
+// saveDeferredLocked пишет набор тегов — зовётся ТОЛЬКО при смене набора
+// (новая метка, снятие), не на каждом отказе: запись = износ флеша. Пустой
+// набор — файла нет. Под deferredProxyMu.
+func (o *Operator) saveDeferredLocked() {
+	path := filepath.Join(o.dir, deferredProxiesFile)
+	if len(o.deferredProxies) == 0 {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			o.log.Warn("deferred proxy removals: remove file", "err", err)
+		}
+		return
+	}
+	tags := make([]string, 0, len(o.deferredProxies))
+	for t := range o.deferredProxies {
+		tags = append(tags, t)
+	}
+	slices.Sort(tags)
+	b, _ := json.Marshal(tags)
+	if err := storage.AtomicWrite(path, b); err != nil {
+		o.log.Warn("deferred proxy removals: write file", "err", err)
+	}
+}
+
+// loadDeferredProxies — на старте. Нет файла — набор пуст (обычное
+// состояние: пустой набор файла не держит); битый — пуст и один Warn.
+func (o *Operator) loadDeferredProxies() {
+	b, err := os.ReadFile(filepath.Join(o.dir, deferredProxiesFile))
+	if os.IsNotExist(err) {
+		return
+	}
+	var tags []string
+	if err == nil {
+		err = json.Unmarshal(b, &tags)
+	}
+	if err != nil {
+		o.log.Warn("deferred proxy removals: file unreadable, starting empty", "err", err)
+		return
+	}
+	o.deferredProxyMu.Lock()
+	defer o.deferredProxyMu.Unlock()
+	o.deferredProxies = make(map[string]*deferredProxy, len(tags))
+	for _, t := range tags {
+		if t != "" {
+			o.deferredProxies[t] = &deferredProxy{}
+		}
 	}
 }
 
@@ -125,6 +198,7 @@ func (o *Operator) retryDeferredProxyRemovals(ctx context.Context) {
 			live[sp.Label] = true
 		}
 	}
+	var done []string
 	for _, t := range due {
 		if !live[t] {
 			if err := o.proxyMgr.RemoveOrphanSingboxProxies(ctx, map[string]bool{t: true}, nil, nil); err != nil {
@@ -132,10 +206,17 @@ func (o *Operator) retryDeferredProxyRemovals(ctx context.Context) {
 				continue
 			}
 		}
-		o.deferredProxyMu.Lock()
-		delete(o.deferredProxies, t)
-		o.deferredProxyMu.Unlock()
+		done = append(done, t)
 	}
+	if len(done) == 0 {
+		return
+	}
+	o.deferredProxyMu.Lock()
+	for _, t := range done {
+		delete(o.deferredProxies, t)
+	}
+	o.saveDeferredLocked()
+	o.deferredProxyMu.Unlock()
 }
 
 // deferredProxyFailed удваивает выдержку тега (до потолка). Warn — только

@@ -536,13 +536,7 @@ func (o *Operator) Reconcile(ctx context.Context) error {
 		return nil
 	}
 	if !o.isNDMSProxyEnabled() {
-		if o.needsOrphanCleanup.CompareAndSwap(true, false) {
-			if err := o.removeOrphanSingboxProxies(ctx); err != nil {
-				if o.runtimeLogger != nil {
-					o.runtimeLogger.Warn("reconcile", "", "orphan cleanup: "+err.Error())
-				}
-			}
-		}
+		o.orphanCleanupIfFlagged(ctx)
 		if o.runtimeLogger != nil {
 			o.runtimeLogger.Info("reconcile", "", fmt.Sprintf("done (ndms-proxy disabled) tunnels=%d", len(tunnels)))
 		}
