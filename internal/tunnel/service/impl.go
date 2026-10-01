@@ -500,6 +500,7 @@ func (s *ServiceImpl) CaptureDescription(ctx context.Context, tunnelID, name str
 // reconciliation of the others. Returns nil only if every dispatch
 // succeeded.
 func (s *ServiceImpl) applyDiffKernel(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error {
+	ctx = query.WithActionList(ctx) // один список на SetMTU/SyncDNS/SyncAddress (F557)
 	tunnelID := newStored.ID
 	confPath := tunnel.NewNames(tunnelID).ConfPath
 	var errs []error
@@ -560,6 +561,7 @@ func (s *ServiceImpl) applyDiffKernel(ctx context.Context, oldStored, newStored 
 // applyDiffNWG applies field-level diffs to a running NativeWG tunnel.
 // See applyDiffKernel for the error-collection contract.
 func (s *ServiceImpl) applyDiffNWG(ctx context.Context, oldStored, newStored *storage.AWGTunnel) error {
+	ctx = query.WithActionList(ctx) // один список на правку, включая SyncKmodSlot и Stop/Start (F557)
 	tunnelID := newStored.ID
 	var errs []error
 
@@ -1097,6 +1099,7 @@ func (s *ServiceImpl) importNativeWG(ctx context.Context, parsed *storage.AWGTun
 func (s *ServiceImpl) ReplaceConfig(ctx context.Context, tunnelID, confContent, newName string, opts ReplaceOptions) error {
 	s.lockTunnel(tunnelID)
 	defer s.unlockTunnel(tunnelID)
+	ctx = query.WithActionList(ctx) // один список на замену: RequireIface, Stop, Start (F557)
 
 	stored, err := s.store.Get(tunnelID)
 	if err != nil {

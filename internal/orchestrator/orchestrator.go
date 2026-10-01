@@ -10,6 +10,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
@@ -672,6 +673,9 @@ func (o *Orchestrator) HandleEvent(ctx context.Context, event Event) error {
 	if deferredBoot && baseCtx != nil {
 		execCtx = baseCtx
 	}
+	// Один список интерфейсов на все подтверждения события, включая бут по
+	// всем туннелям (F557): между действиями событий — заново.
+	execCtx = query.WithActionList(execCtx)
 
 	o.mu.Lock()
 	// conf=disabled detail: тот же резолвер, что decideNDMSHook —
