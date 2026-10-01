@@ -209,16 +209,20 @@ func resolveFakeIPParamsWith(base FakeIPTunParams, sr storage.SingboxRouterSetti
 //     отказ F569, на 5.01+ ещё и ErrNotCreated), поэтому её только
 //     настраиваем;
 //   - есть с чужим description — отказ без единой команды.
-func (s *ServiceImpl) provisionOpkgTun(ctx context.Context, ndmsName, description, securityLevel string) error {
+//
+// reused=true — запись переиспользована, не создана этим включением: откат
+// обязан её удержать (holdOpkgTun), а не снести — сносом умер бы permit
+// пользователя в `ip policy` (M1, решение владельца 01.10).
+func (s *ServiceImpl) provisionOpkgTun(ctx context.Context, ndmsName, description, securityLevel string) (reused bool, err error) {
 	desc, ok, err := s.deps.OpkgTun.OpkgTunRecord(ctx, ndmsName)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !ok {
-		return s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, description, securityLevel)
+		return false, s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, description, securityLevel)
 	}
 	if desc != description {
-		return fmt.Errorf("запись %s уже есть и не наша (description %q)", ndmsName, desc)
+		return false, fmt.Errorf("запись %s уже есть и не наша (description %q)", ndmsName, desc)
 	}
-	return s.deps.OpkgTun.SetSecurityLevel(ctx, ndmsName, securityLevel)
+	return true, s.deps.OpkgTun.SetSecurityLevel(ctx, ndmsName, securityLevel)
 }

@@ -409,7 +409,7 @@ func TestF576_ProvisionForeignRecordRefusesWithoutCommands(t *testing.T) {
 	o := newOracleOpkg(t, f)
 	svc := newTestService(t, Deps{OpkgTun: o})
 
-	err := svc.provisionOpkgTun(context.Background(), "OpkgTun3", policyTunDescription, "public")
+	_, err := svc.provisionOpkgTun(context.Background(), "OpkgTun3", policyTunDescription, "public")
 	if err == nil || !strings.Contains(err.Error(), "чужой") {
 		t.Fatalf("err = %v, want отказ с чужим description", err)
 	}

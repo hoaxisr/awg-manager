@@ -223,7 +223,8 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 
 	// PUBLIC security-level (unlike fakeip's private): NDMS only offers public
 	// interfaces as access-policy exits, and the policy IS the steering here.
-	if err = s.provisionOpkgTun(ctx, ndmsName, policyTunDescription, "public"); err != nil {
+	var reused bool
+	if reused, err = s.provisionOpkgTun(ctx, ndmsName, policyTunDescription, "public"); err != nil {
 		return fmt.Errorf("enable policy-tun: create opkgtun: %w", err)
 	}
 	// rbCtx: откат обязан доехать и когда Enable упал ИЗ-ЗА отмены ctx (клиент
@@ -231,18 +232,21 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// с context.Canceled и OpkgTun остаётся с настроенным адресом (nginx-loop,
 	// см. teardownOpkgTun).
 	//
-	// ОСОЗНАННАЯ ПОТЕРЯ: откат УДАЛЯЕТ интерфейс, даже если включение его не
-	// создавало, а переиспользовало удержанный. Номер не теряется (персист цел,
-	// следующее включение возьмёт его же), а вот permit пользователя теряется
-	// НАВЕРНЯКА: стенд 2026-08-18 (RCI `ip policy`) показал, что удаление
-	// интерфейса вырождает запись permit'а в заглушку-ошибку «unable to find
-	// OpkgTun<N>», а пересоздание ОДНОИМЁННОГО интерфейса убирает её совсем —
-	// разрешение не воскресает. Отсюда же ценность удержания: пока объект жив,
-	// permit валиден; мёртвый наш интерфейс держать незачем. Откат также
+	// Откат сносит запись, только если её создало ЭТО включение. Удержанную
+	// (reused, R45) он удерживает снова — holdOpkgTun, как выключение (M1,
+	// решение владельца 01.10): стенд 2026-08-18 (RCI `ip policy`) показал,
+	// что удаление интерфейса вырождает permit пользователя в заглушку
+	// «unable to find OpkgTun<N>», а пересоздание ОДНОИМЁННОГО интерфейса
+	// убирает её совсем — разрешение не воскресает. Без этого удержание
+	// защищало бы permit только до первого неудачного включения. Откат также
 	// не снимает уже поставленный нами permit: DenyInterface мог бы снять
 	// разрешение, которое пользователь дал интерфейсу сознательно.
 	rbCtx := context.WithoutCancel(ctx)
 	push(func() {
+		if reused {
+			_ = s.holdOpkgTun(rbCtx, ndmsName, "policy-tun-rollback")
+			return
+		}
 		_ = s.teardownOpkgTun(rbCtx, ndmsName, "policy-tun-rollback")
 	})
 

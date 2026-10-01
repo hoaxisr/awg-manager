@@ -226,7 +226,8 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// steering is via specific pool/CIDR static routes onto the tun, not via an
 	// access-policy exit (the old policy-exit model is abandoned). A private,
 	// non-global tun routes traffic fine (stand-verified).
-	if err = s.provisionOpkgTun(ctx, ndmsName, fakeIPTunDescription, "private"); err != nil {
+	var reused bool
+	if reused, err = s.provisionOpkgTun(ctx, ndmsName, fakeIPTunDescription, "private"); err != nil {
 		return fmt.Errorf("enable fakeip-tun: create opkgtun: %w", err)
 	}
 	// rbCtx: рулбэк обязан доехать и когда Enable упал ИЗ-ЗА отмены ctx (клиент
@@ -234,7 +235,13 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// с context.Canceled и OpkgTun остаётся с настроенным адресом (nginx-loop, см.
 	// teardownOpkgTun). Тот же приём, что у scheduleFakeIPDrain.
 	rbCtx := context.WithoutCancel(ctx)
+	// Переиспользованную запись откат удерживает (M1): её создавал не этот
+	// enable, и снос унёс бы привязанные к имени разрешения.
 	push(func() {
+		if reused {
+			_ = s.holdOpkgTun(rbCtx, ndmsName, "fakeip-rollback")
+			return
+		}
 		_ = s.teardownOpkgTun(rbCtx, ndmsName, "fakeip-rollback")
 	})
 
