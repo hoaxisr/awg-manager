@@ -271,7 +271,8 @@ func (s *Service) preflight(ctx context.Context, sv ManagedServerExport, exclude
 	var reasons []string
 
 	// Reuse Create-level server validation.
-	if err := s.validateServerParams(ctx, sv.Address, sv.Mask, sv.ListenPort, excludeIface, s.inflightSubnets()); err != nil {
+	inflight, inflightPorts := s.reservations()
+	if err := s.validateServerParams(ctx, sv.Address, sv.Mask, sv.ListenPort, excludeIface, inflight, inflightPorts); err != nil {
 		reasons = append(reasons, err.Error())
 	}
 
@@ -400,6 +401,9 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 	defer func() {
 		if err != nil && owned {
 			s.sysLog().Warn("managed restore cleanup after failure", "interface", target)
+			// Как в Create: частично применённый configure при несошедшем сносе
+			// виден следующей проверке только свежим списком.
+			s.queries.Interfaces.Invalidate(target)
 			s.cleanupInterface(ctx, iface)
 		}
 	}()

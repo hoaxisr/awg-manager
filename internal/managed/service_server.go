@@ -56,6 +56,10 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 	// Configure all properties in a single RCI call:
 	// description, security-level, listen-port, ip address, mtu, name-servers, tcp adjust-mss, up
 	if err := s.rciConfigureServer(ctx, iface, description, req.Address, mask, req.ListenPort, effectiveMTU(req.MTU)); err != nil {
+		// Configure мог примениться частично (адрес встал), а снос — не пройти:
+		// метка «грязно» до снятия резервации, иначе следующая проверка до 2 с
+		// берёт память без адреса.
+		s.queries.Interfaces.Invalidate(ifaceName)
 		s.cleanupInterface(ctx, iface)
 		return nil, fmt.Errorf("configure interface: %w", err)
 	}
@@ -125,12 +129,14 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateServerRequest
 		return fmt.Errorf("managed server not found: %s", id)
 	}
 
-	if err := s.validateServerParams(ctx, req.Address, req.Mask, req.ListenPort, server.InterfaceName, s.inflightSubnets()); err != nil {
+	// Новые подсеть и порт — за этой правкой до выхода, как у Create (F554).
+	release, err := s.reserveServerSubnet(ctx, req.Address, req.Mask, req.ListenPort, server.InterfaceName)
+	if err != nil {
 		return err
 	}
+	defer release()
 
 	mask := s.resolveMask(req.Mask)
-	var err error
 
 	// Build the set of NDMS-side mutations and send them in a single atomic
 	// RCI POST. Either every change applies or the whole payload is rejected,
@@ -655,11 +661,11 @@ func (s *Service) GetStats(ctx context.Context, id string) (*ManagedServerStats,
 	}, nil
 }
 
-// validateServerParams — проверка параметров сервера. inflight — подсети
-// серверов в создании (F554), снятые ДО чтения списка: создание, завершённое
-// после снятия, к тому моменту уже поставило адрес на роутере (Invalidate), и
-// список его видит.
-func (s *Service) validateServerParams(ctx context.Context, address, mask string, port int, excludeIface string, inflight []usedSubnet) error {
+// validateServerParams — проверка параметров сервера. inflight/inflightPorts —
+// резервации серверов в создании или правке (F554), снятые ДО чтения списка:
+// операция, снявшая резервацию после этого, уже поставила адрес на роутере
+// (Invalidate) и запись в хранилище, и список и хранилище её видят.
+func (s *Service) validateServerParams(ctx context.Context, address, mask string, port int, excludeIface string, inflight []usedSubnet, inflightPorts []usedPort) error {
 	if net.ParseIP(address) == nil {
 		return fmt.Errorf("invalid IP address: %s", address)
 	}
@@ -686,7 +692,7 @@ func (s *Service) validateServerParams(ctx context.Context, address, mask string
 		return err
 	}
 
-	if portConflict := findPortConflict(port, s.listUsedListenPorts(excludeIface)); portConflict != nil {
+	if portConflict := findPortConflict(port, append(s.listUsedListenPorts(excludeIface), inflightPorts...)); portConflict != nil {
 		return fmt.Errorf("listen-port %d уже используется managed-сервером %q", port, portConflict.iface)
 	}
 

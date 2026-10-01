@@ -176,48 +176,65 @@ func (s *Service) listUsedSubnets(ctx context.Context, excludeIface string) ([]u
 	return usedSubnetsOf(snap.Records(), excludeIface), nil
 }
 
-// reserveServerSubnet — validateServerParams и резервация подсети одним шагом
-// (F554): два параллельных создания проверяли подсеть до того, как любое из
-// них ставило адрес на роутере, и оба проходили с одной подсетью. Проверка и
-// резервация — под serverSubnetMu, release снимает резервацию под ним же:
-// создание, снятое с резервации, уже поставило адрес на роутере (или снесло
-// интерфейс), и следующая проверка видит это в свежем списке (Invalidate).
-// release вызвать ровно один раз, после записи в хранилище или отката.
+// reserveServerSubnet — validateServerParams и резервация подсети и порта
+// одним шагом (F554): два параллельных создания (или правка) проверяли
+// параметры до того, как любое из них ставило адрес на роутере и запись в
+// хранилище, и оба проходили с одной подсетью или портом. serverSubnetMu
+// делает «проверка + резервация» атомарными: вторая проверка видит
+// резервацию первой. Снятие безопасно и без него — проверка снимает
+// резервации ДО списка, а release зовётся после Invalidate (адрес на роутере
+// или интерфейс снесён) и после записи в хранилище; лок release берёт только
+// ради карты. excludeIface — сервер правки ("" — создание), он же подпись
+// резервации. release вызвать ровно один раз.
 func (s *Service) reserveServerSubnet(ctx context.Context, address, mask string, port int, excludeIface string) (release func(), err error) {
 	s.serverSubnetMu.Lock()
 	defer s.serverSubnetMu.Unlock()
-	if err := s.validateServerParams(ctx, address, mask, port, excludeIface, s.inflightLocked()); err != nil {
+	subs, ports := s.reservationsLocked()
+	if err := s.validateServerParams(ctx, address, mask, port, excludeIface, subs, ports); err != nil {
 		return nil, err
 	}
 	cidr, err := parseManagedSubnet(address, mask)
 	if err != nil {
 		return nil, err
 	}
-	u := &usedSubnet{label: "создаваемый сервер", cidr: cidr}
+	label := excludeIface
+	if label == "" {
+		label = "создаваемый сервер"
+	}
+	u := &usedSubnet{label: label, cidr: cidr}
+	pt := &usedPort{iface: label, port: port}
 	if s.inflight == nil {
 		s.inflight = make(map[*usedSubnet]struct{})
+		s.inflightPorts = make(map[*usedPort]struct{})
 	}
 	s.inflight[u] = struct{}{}
+	s.inflightPorts[pt] = struct{}{}
 	return func() {
 		s.serverSubnetMu.Lock()
 		delete(s.inflight, u)
+		delete(s.inflightPorts, pt)
 		s.serverSubnetMu.Unlock()
 	}, nil
 }
 
-// inflightSubnets — подсети серверов в создании (см. reserveServerSubnet).
-func (s *Service) inflightSubnets() []usedSubnet {
+// reservations — подсети и порты серверов в создании или правке (см.
+// reserveServerSubnet).
+func (s *Service) reservations() ([]usedSubnet, []usedPort) {
 	s.serverSubnetMu.Lock()
 	defer s.serverSubnetMu.Unlock()
-	return s.inflightLocked()
+	return s.reservationsLocked()
 }
 
-func (s *Service) inflightLocked() []usedSubnet {
-	out := make([]usedSubnet, 0, len(s.inflight))
+func (s *Service) reservationsLocked() ([]usedSubnet, []usedPort) {
+	subs := make([]usedSubnet, 0, len(s.inflight))
 	for u := range s.inflight {
-		out = append(out, *u)
+		subs = append(subs, *u)
 	}
-	return out
+	ports := make([]usedPort, 0, len(s.inflightPorts))
+	for p := range s.inflightPorts {
+		ports = append(ports, *p)
+	}
+	return subs, ports
 }
 
 // usedSubnetsOf — разбор listUsedSubnets над уже прочитанным списком.

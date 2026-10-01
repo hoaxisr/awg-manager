@@ -103,10 +103,12 @@ type Service struct {
 	keyGen keyGenerator
 	// peerSubnetsMu — см. LockPeerSubnets.
 	peerSubnetsMu sync.Mutex
-	// serverSubnetMu — см. reserveServerSubnet; inflight — подсети серверов в
-	// создании (до записи в хранилище), под serverSubnetMu (F554).
+	// serverSubnetMu — см. reserveServerSubnet; inflight/inflightPorts —
+	// подсети и порты серверов в создании или правке (до записи в
+	// хранилище), под serverSubnetMu (F554).
 	serverSubnetMu sync.Mutex
 	inflight       map[*usedSubnet]struct{}
+	inflightPorts  map[*usedPort]struct{}
 }
 
 // keyGenerator produces WireGuard key material for a new peer.

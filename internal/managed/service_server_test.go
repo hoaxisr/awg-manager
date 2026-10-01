@@ -1796,21 +1796,30 @@ func TestNatStaticTargets_DegradationIsInAppLog(t *testing.T) {
 	}
 }
 
-// gatePoster задерживает первый POST создания интерфейса (пустой объект под
-// именем) до закрытия gate — вне замка recordingPoster: создание «в полёте»
-// после проверки подсети, адреса на роутере ещё нет.
+// gatePoster задерживает первый POST, чей объект интерфейса подходит под match
+// (nil — создание: пустой объект под именем), до закрытия gate — вне замка
+// recordingPoster: операция «в полёте» после проверки подсети, адреса на
+// роутере ещё нет.
 type gatePoster struct {
 	rciPoster
+	match   func(cfg map[string]interface{}) bool
 	armed   atomic.Bool // не sync.Once: Do второго создания ждал бы первое
 	entered chan struct{}
 	gate    chan struct{}
+}
+
+func (g *gatePoster) matches(cfg map[string]interface{}) bool {
+	if g.match == nil {
+		return len(cfg) == 0
+	}
+	return g.match(cfg)
 }
 
 func (g *gatePoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
 	if m, ok := payload.(map[string]interface{}); ok {
 		if intf, ok := m["interface"].(map[string]interface{}); ok {
 			for _, v := range intf {
-				if cfg, ok := v.(map[string]interface{}); ok && len(cfg) == 0 {
+				if cfg, ok := v.(map[string]interface{}); ok && g.matches(cfg) {
 					if g.armed.CompareAndSwap(true, false) {
 						close(g.entered)
 						<-g.gate
@@ -1835,7 +1844,13 @@ func createInFlight(t *testing.T, svc *Service, first CreateServerRequest) (fini
 // inFlight — то же для любого создания run.
 func inFlight(t *testing.T, svc *Service, run func() error) (finish func() error) {
 	t.Helper()
-	gp := &gatePoster{rciPoster: svc.transport, entered: make(chan struct{}), gate: make(chan struct{})}
+	return inFlightOn(t, svc, nil, run)
+}
+
+// inFlightOn — inFlight с задержкой на POST, подходящем под match.
+func inFlightOn(t *testing.T, svc *Service, match func(map[string]interface{}) bool, run func() error) (finish func() error) {
+	t.Helper()
+	gp := &gatePoster{rciPoster: svc.transport, match: match, entered: make(chan struct{}), gate: make(chan struct{})}
 	gp.armed.Store(true)
 	svc.transport = gp
 	done := make(chan error, 1)
@@ -1856,8 +1871,18 @@ func TestService_Create_ParallelSameSubnetRejected(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "пересекается") {
 		t.Errorf("same subnet while the first create is in flight: err=%v", err)
 	}
+	// Порт создания в полёте тоже занят (раунд 1, c).
+	_, err = svc.Create(context.Background(), CreateServerRequest{Address: "10.88.88.1", Mask: "255.255.255.0", ListenPort: 51820})
+	if err == nil || !strings.Contains(err.Error(), "listen-port") {
+		t.Errorf("same port while the first create is in flight: err=%v", err)
+	}
 	if err := finish(); err != nil {
 		t.Fatalf("first create: %v", err)
+	}
+	// Шов «резервация снята → список видит»: та же подсеть по-прежнему занята.
+	_, err = svc.Create(context.Background(), CreateServerRequest{Address: "10.66.66.3", Mask: "255.255.255.0", ListenPort: 51823})
+	if err == nil || !strings.Contains(err.Error(), "пересекается") {
+		t.Errorf("same subnet after the first create finished: err=%v", err)
 	}
 	if _, err := svc.Create(context.Background(), CreateServerRequest{Address: "10.77.77.1", Mask: "255.255.255.0", ListenPort: 51822}); err != nil {
 		t.Fatalf("other subnet: %v", err)
@@ -1939,5 +1964,98 @@ func TestRestore_InFlightSubnetReserved(t *testing.T) {
 	}
 	if got := len(store.GetManagedServers()); got != 1 {
 		t.Fatalf("servers in storage: %d", got)
+	}
+}
+
+// Раунд 1 (b, c): правка резервирует новые подсеть и порт так же, как Create.
+func TestUpdate_InFlightSubnetAndPortReserved(t *testing.T) {
+	svc, store, _ := newCreateTestService(t)
+	ctx := context.Background()
+	first, err := svc.Create(ctx, CreateServerRequest{Address: "10.66.66.1", Mask: "255.255.255.0", ListenPort: 51820})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finish := inFlightOn(t, svc, func(cfg map[string]interface{}) bool { _, ok := cfg["ip"]; return ok }, func() error {
+		return svc.Update(ctx, first.InterfaceName, UpdateServerRequest{Address: "10.88.88.1", Mask: "255.255.255.0", ListenPort: 51830})
+	})
+	_, err = svc.Create(ctx, CreateServerRequest{Address: "10.88.88.2", Mask: "255.255.255.0", ListenPort: 51840})
+	if err == nil || !strings.Contains(err.Error(), "пересекается") {
+		t.Errorf("subnet of an update in flight: err=%v", err)
+	}
+	_, err = svc.Create(ctx, CreateServerRequest{Address: "10.99.99.1", Mask: "255.255.255.0", ListenPort: 51830})
+	if err == nil || !strings.Contains(err.Error(), "listen-port") {
+		t.Errorf("port of an update in flight: err=%v", err)
+	}
+	if err := finish(); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(store.GetManagedServers()); got != 1 {
+		t.Fatalf("servers in storage: %d", got)
+	}
+}
+
+// configureFailsDeleteFails: configure применяется на «роутере» и отвергается,
+// снос отвергается и не применяется — интерфейс с адресом остаётся.
+func configureFailsDeleteFails(svc *Service, getter *stateAwareGetter) *recordingPoster {
+	poster := svc.transport.(*recordingPoster)
+	isNo := func(m map[string]interface{}) bool {
+		for _, v := range m["interface"].(map[string]interface{}) {
+			if no, _ := v.(map[string]interface{})["no"].(bool); no {
+				return true
+			}
+		}
+		return false
+	}
+	poster.onPost = func(m map[string]interface{}) {
+		if !isNo(m) {
+			getter.applyPost(m)
+		}
+	}
+	poster.failOn = func(m map[string]interface{}) error {
+		if isNo(m) {
+			return errors.New("delete rejected")
+		}
+		for _, v := range m["interface"].(map[string]interface{}) {
+			if _, ok := v.(map[string]interface{})["description"]; ok {
+				return errors.New("configure rejected")
+			}
+		}
+		return nil
+	}
+	return poster
+}
+
+// Q1: configure применился частично, снос не прошёл — следующая проверка (в
+// пределах SnapshotRecent) видит адрес: метка «грязно» до снятия резервации.
+func TestCreate_ConfigureAndCleanupFail_SubnetStillSeen(t *testing.T) {
+	svc, _, getter := newCreateTestService(t)
+	poster := configureFailsDeleteFails(svc, getter)
+	ctx := context.Background()
+	if _, err := svc.Create(ctx, CreateServerRequest{Address: "10.66.66.1", Mask: "255.255.255.0", ListenPort: 51820}); err == nil {
+		t.Fatal("first create must fail")
+	}
+	poster.failOn = nil
+	_, err := svc.Create(ctx, CreateServerRequest{Address: "10.66.66.2", Mask: "255.255.255.0", ListenPort: 51821})
+	if err == nil || !strings.Contains(err.Error(), "пересекается") {
+		t.Fatalf("leftover address must be seen: err=%v", err)
+	}
+}
+
+// Q1 для restore: тот же откат в applyOne.
+func TestRestore_ConfigureAndCleanupFail_SubnetStillSeen(t *testing.T) {
+	svc, _, getter := newCreateTestService(t)
+	poster := configureFailsDeleteFails(svc, getter)
+	ctx := context.Background()
+	out := svc.Restore(ctx, []ManagedServerExport{{
+		InterfaceName: "Wireguard0", Address: "10.66.66.1", Mask: "255.255.255.0", ListenPort: 51900,
+		PrivateKey: validPrivateKey(1), Peers: []storage.ManagedPeer{},
+	}}, RestoreOptions{})
+	if len(out) != 1 || out[0].Action != "failed" {
+		t.Fatalf("restore must fail: %+v", out)
+	}
+	poster.failOn = nil
+	_, err := svc.Create(ctx, CreateServerRequest{Address: "10.66.66.2", Mask: "255.255.255.0", ListenPort: 51821})
+	if err == nil || !strings.Contains(err.Error(), "пересекается") {
+		t.Fatalf("leftover address must be seen: err=%v", err)
 	}
 }
