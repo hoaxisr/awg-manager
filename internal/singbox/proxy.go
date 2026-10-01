@@ -255,7 +255,7 @@ const (
 	MarkedAdopted                      // голая запись настроена владельцем
 )
 
-// OwnedProxies — наши ProxyN по СВОЕМУ свежему списку (не память, F562).
+// OwnedProxies — наши ProxyN по свежему списку (Confirm, не память, F562).
 // tunnelProxies — имя ProxyN туннеля → его тег: наш, если description равен
 // тегу или запись голая с меткой (name, "") (F577: без метки пустой
 // description чужой); subProxies — имя ProxyN
@@ -267,19 +267,34 @@ const (
 // уборки режима NDMS Proxy off: найденное уходит в метки отложенного сноса.
 // Список не прочитан — ошибка.
 func (pm *ProxyManager) OwnedProxies(ctx context.Context, tunnelProxies, subProxies map[string]string) ([]ProxyMark, error) {
-	snap, err := pm.queries.Interfaces.Snapshot(ctx, 0)
-	if err != nil {
-		return nil, err
+	// Кандидаты — только имена туннелей и подписок, по Confirm, а не по своему
+	// Snapshot: в ctx тика уборки (WithActionList) это тот же список, что у
+	// сноса меток следом (F597).
+	names := make([]string, 0, len(tunnelProxies)+len(subProxies))
+	for n := range tunnelProxies {
+		names = append(names, n)
+	}
+	for n := range subProxies {
+		if _, dup := tunnelProxies[n]; !dup {
+			names = append(names, n)
+		}
 	}
 	var out []ProxyMark
-	for _, iface := range snap.Records() {
-		if !strings.HasPrefix(iface.ID, proxyIfacePrefix) {
+	for _, name := range names {
+		if !strings.HasPrefix(name, proxyIfacePrefix) {
 			continue
 		}
-		tag, tunnel := tunnelProxies[iface.ID]
-		label, sub := subProxies[iface.ID]
-		if tunnel && (iface.Description == tag || pm.bareOurs(&iface)) || sub && iface.Description == label {
-			out = append(out, ProxyMark{Name: iface.ID, Desc: iface.Description})
+		_, iface, ok, err := pm.queries.Interfaces.Confirm(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		if !ok || iface == nil {
+			continue
+		}
+		tag, tunnel := tunnelProxies[name]
+		label, sub := subProxies[name]
+		if tunnel && (iface.Description == tag || pm.bareOurs(iface)) || sub && iface.Description == label {
+			out = append(out, ProxyMark{Name: name, Desc: iface.Description})
 		}
 	}
 	return out, nil

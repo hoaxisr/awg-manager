@@ -478,6 +478,8 @@ func TestScenario_OrphanCleanupFlag_KeptOnFailure(t *testing.T) {
 	op.ndmsProxyEnabledFn = func() bool { return false }
 	op.MarkNeedsOrphanCleanup()
 	ctx := context.Background()
+	clock := time.Unix(0, 0)
+	op.deferredNow = func() time.Time { return clock }
 
 	f.FailList(errors.New("rci down"))
 	w.tick(ctx)
@@ -485,6 +487,7 @@ func TestScenario_OrphanCleanupFlag_KeptOnFailure(t *testing.T) {
 		t.Fatalf("после отказа: флаг=%v posts=%v", op.needsOrphanCleanup.Load(), f.Posts)
 	}
 	f.FailList(nil)
+	clock = clock.Add(deferredProxyBaseDelay) // общая выдержка тика (F597)
 	w.tick(ctx)
 	if op.needsOrphanCleanup.Load() {
 		t.Fatal("флаг не снят после прочитанного списка")

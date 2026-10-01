@@ -249,6 +249,10 @@ type Operator struct {
 	deferredProxyMu sync.Mutex
 	deferredProxies map[string]*deferredProxy
 	deferredNow     func() time.Time
+	// cleanupNext/cleanupDelay — общая выдержка тика уборки ProxyN при
+	// непрочитанном списке (F597, proxyCleanupTick). Под deferredProxyMu.
+	cleanupNext  time.Time
+	cleanupDelay time.Duration
 
 	// installBusy guards Install/Update against interleaving with each
 	// other — manual (UI) and scheduled (auto-update) calls both go

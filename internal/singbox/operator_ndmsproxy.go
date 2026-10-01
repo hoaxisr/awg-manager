@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -29,29 +30,81 @@ func (o *Operator) subscriptionProxies() []SubscriptionProxy {
 // disabled.
 func (o *Operator) MarkNeedsOrphanCleanup() { o.needsOrphanCleanup.Store(true) }
 
+// proxyCleanupTick — уборка ProxyN с тика сторожа (F562): флаг режима off,
+// затем созревшие метки. Один полный список на обе уборки (список действия,
+// F597); неудача его чтения двигает общую выдержку тика (proxyCleanupResult),
+// и до её срока обе уборки не читают ничего. Успех выдержку сбрасывает.
+// Отказ NDMS в сносе — своя выдержка метки (deferredProxyFailed).
+func (o *Operator) proxyCleanupTick(ctx context.Context) {
+	now := o.deferredClock()
+	o.deferredProxyMu.Lock()
+	wait := now.Before(o.cleanupNext)
+	o.deferredProxyMu.Unlock()
+	if wait {
+		return
+	}
+	ctx = query.WithActionList(ctx)
+	err := o.orphanCleanupIfFlagged(ctx)
+	if err == nil {
+		err = o.retryDeferredProxyRemovals(ctx, now)
+	}
+	o.proxyCleanupResult(now, err)
+}
+
+// proxyCleanupResult — итог тика уборки: err (список не прочитан) удваивает
+// общую выдержку до потолка, nil её сбрасывает. Warn — только когда
+// выдержка выросла; на потолке — Debug.
+func (o *Operator) proxyCleanupResult(now time.Time, err error) {
+	o.deferredProxyMu.Lock()
+	if err == nil {
+		o.cleanupDelay, o.cleanupNext = 0, time.Time{}
+		o.deferredProxyMu.Unlock()
+		return
+	}
+	prev := o.cleanupDelay
+	o.cleanupDelay = nextDeferredDelay(prev)
+	o.cleanupNext = now.Add(o.cleanupDelay)
+	delay := o.cleanupDelay
+	o.deferredProxyMu.Unlock()
+	if delay != prev {
+		o.log.Warn("proxy cleanup: interface list unread", "retry_in", delay, "err", err)
+	} else {
+		o.log.Debug("proxy cleanup: interface list unread", "retry_in", delay, "err", err)
+	}
+}
+
+// nextDeferredDelay — следующая ступень выдержки: 30 с, удвоение, потолок.
+func nextDeferredDelay(d time.Duration) time.Duration {
+	if d == 0 {
+		return deferredProxyBaseDelay
+	}
+	return min(2*d, deferredProxyMaxDelay)
+}
+
 // orphanCleanupIfFlagged — уборка по флагу в режиме NDMS Proxy off, с тика
 // сторожа при любом состоянии sing-box (F562 ревью F4). Сама ничего не
 // сносит: наши ProxyN из свежего списка уходят в метки отложенного сноса, и
 // снос идёт тем же путём с той же выдержкой (F2). Флаг снимается только
-// после прочитанного списка; без флага — ни одного чтения.
-func (o *Operator) orphanCleanupIfFlagged(ctx context.Context) {
+// после прочитанного списка; без флага — ни одного чтения. Ошибка — список
+// не прочитан.
+func (o *Operator) orphanCleanupIfFlagged(ctx context.Context) error {
 	if !o.needsOrphanCleanup.Load() || o.isNDMSProxyEnabled() {
-		return
+		return nil
 	}
 	o.migrationMu.Lock()
 	defer o.migrationMu.Unlock()
 	if !o.needsOrphanCleanup.CompareAndSwap(true, false) {
-		return
+		return nil
 	}
 	marks, err := o.ownedProxyMarks(ctx)
 	if err != nil {
 		o.needsOrphanCleanup.Store(true)
-		o.log.Warn("orphan proxy cleanup: list", "err", err)
-		return
+		return fmt.Errorf("orphan proxy cleanup: %w", err)
 	}
 	for _, m := range marks {
 		o.deferProxyRemoval(m.Name, m.Desc)
 	}
+	return nil
 }
 
 // ownedProxyMarks — наши ProxyN (туннели конфига по имени+тегу, подписки по
@@ -234,9 +287,10 @@ func (o *Operator) desiredProxyNames() (map[string]proxyOwner, error) {
 // Подписки migrationMu не берут, но индекс пишут в store ДО EnsureProxy, а
 // перечень читается перед каждым сносом. Решение — по свежему списку:
 // снос только при совпадении имени и description; нет записи или
-// description другой — метка снимается (Info). Отказ — выдержка.
-func (o *Operator) retryDeferredProxyRemovals(ctx context.Context) {
-	now := o.deferredClock()
+// description другой — метка снимается (Info). Отказ NDMS — выдержка метки;
+// список не прочитан — ошибка (общая выдержка тика, proxyCleanupTick), метки
+// без изменений.
+func (o *Operator) retryDeferredProxyRemovals(ctx context.Context, now time.Time) error {
 	type dueMark struct {
 		ProxyMark
 		gen uint64
@@ -250,11 +304,12 @@ func (o *Operator) retryDeferredProxyRemovals(ctx context.Context) {
 	}
 	o.deferredProxyMu.Unlock()
 	if len(due) == 0 {
-		return
+		return nil
 	}
 	o.migrationMu.Lock()
 	defer o.migrationMu.Unlock()
 	var done []dueMark
+	var listErr error
 	for _, m := range due {
 		want, err := o.desiredProxyNames()
 		if err != nil {
@@ -278,11 +333,12 @@ func (o *Operator) retryDeferredProxyRemovals(ctx context.Context) {
 		} else {
 			out, err = o.proxyMgr.RemoveMarkedProxy(ctx, m.ProxyMark)
 		}
+		if errors.Is(err, errProxyListUnread) {
+			listErr = err // остальные упрутся в тот же список: один отказ на тик
+			break
+		}
 		if err != nil {
 			o.deferredProxyFailed(m.Name, now, err)
-			if errors.Is(err, errProxyListUnread) {
-				break // остальные упрутся в тот же список: один отказ на тик
-			}
 			continue
 		}
 		switch out {
@@ -299,7 +355,7 @@ func (o *Operator) retryDeferredProxyRemovals(ctx context.Context) {
 		done = append(done, m)
 	}
 	if len(done) == 0 {
-		return
+		return listErr
 	}
 	o.deferredProxyMu.Lock()
 	defer o.deferredProxyMu.Unlock()
@@ -313,6 +369,7 @@ func (o *Operator) retryDeferredProxyRemovals(ctx context.Context) {
 	if changed {
 		o.saveDeferredLocked()
 	}
+	return listErr
 }
 
 // unseenGraceActive — метка name ещё в сроке unseenAbsentGrace.
@@ -334,12 +391,7 @@ func (o *Operator) deferredProxyFailed(name string, now time.Time, err error) {
 		return
 	}
 	prev := d.delay
-	switch {
-	case d.delay == 0:
-		d.delay = deferredProxyBaseDelay
-	case d.delay < deferredProxyMaxDelay:
-		d.delay = min(2*d.delay, deferredProxyMaxDelay)
-	}
+	d.delay = nextDeferredDelay(prev)
 	d.next = now.Add(d.delay)
 	delay := d.delay
 	o.deferredProxyMu.Unlock()
