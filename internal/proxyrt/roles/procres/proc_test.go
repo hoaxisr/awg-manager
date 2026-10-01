@@ -590,3 +590,46 @@ func TestProcResetStartBackoffIsRaceFree(t *testing.T) {
 		t.Fatalf("первая неудача после сброса: пауза %v, ожидали первую ступень (5s)", got)
 	}
 }
+
+func TestProcRequestRestartLifecycle(t *testing.T) {
+	link := &fakeLink{st: awgmproto.State{PID: 100, ConfigHash: "h1"}}
+	r := &fakeRunner{pid: 100, alive: true}
+	p := newProc(link, r, okGate{}, time.Now)
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.wantHash = "h1"
+
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if steps := p.Plan(obs); len(steps) != 0 {
+		t.Fatalf("до запроса план обязан быть пуст: %v", steps)
+	}
+
+	p.recordFail(time.Now())
+	if p.RecheckAfter() == 0 {
+		t.Fatal("backoff обязан быть взведён")
+	}
+
+	p.RequestRestart("тест")
+	if got := p.RecheckAfter(); got != 0 {
+		t.Fatalf("RequestRestart обязан сбросить backoff, осталось %v", got)
+	}
+
+	steps1 := p.Plan(obs)
+	if len(steps1) != 1 || steps1[0].Op != "restart" || steps1[0].Reason != "тест" {
+		t.Fatalf("первый Plan = %v, ожидали [restart:тест]", steps1)
+	}
+	steps2 := p.Plan(obs)
+	if len(steps2) != 1 || steps2[0].Op != "restart" || steps2[0].Reason != "тест" {
+		t.Fatalf("второй Plan без Apply обязан также вернуть [restart:тест]: %v", steps2)
+	}
+
+	if err := p.Apply(context.Background(), steps1[0]); err != nil {
+		t.Fatalf("Apply(restart) err: %v", err)
+	}
+	if stepsAfter := p.Plan(obs); len(stepsAfter) != 0 {
+		t.Fatalf("после Apply(restart) план обязан быть пуст: %v", stepsAfter)
+	}
+}

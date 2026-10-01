@@ -75,7 +75,7 @@ type e2eInstance struct{}
 func (*e2eInstance) Start(context.Context)       {}
 func (*e2eInstance) Post(proxyrt.EventKind) bool { return true }
 func (*e2eInstance) ResetStartBackoff()          {}
-func (*e2eInstance) Restart(string)              {}
+func (*e2eInstance) Restart(string) bool         { return true }
 func (*e2eInstance) Stop()                       {}
 
 // e2eSweeper — уборщик NDMS-интерфейсов: ходит в RCI, поэтому фейк.
@@ -551,5 +551,5 @@ type e2eStoppable struct{ onStop func() }
 func (*e2eStoppable) Start(context.Context)       {}
 func (*e2eStoppable) Post(proxyrt.EventKind) bool { return true }
 func (*e2eStoppable) ResetStartBackoff()          {}
-func (*e2eStoppable) Restart(string)              {}
+func (*e2eStoppable) Restart(string) bool         { return true }
 func (s *e2eStoppable) Stop()                     { s.onStop() }

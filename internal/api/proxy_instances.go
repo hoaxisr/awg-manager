@@ -42,6 +42,7 @@ const (
 	proxyCodeConfigInvalid   = "PROXY_CONFIG_INVALID"
 	proxyCodeOpkgUnsupported = "PROXY_OPKGTUN_UNSUPPORTED"
 	proxyCodeKindSingleton   = "PROXY_KIND_SINGLETON"
+	proxyCodeConflict        = "CONFLICT"
 )
 
 // ProxyManager — узкий срез *manager.Manager, нужный поверхности.
@@ -679,6 +680,7 @@ func (h *ProxyInstancesHandler) apply(w http.ResponseWriter, key string) {
 //	@Param			key	path		string	true	"Ключ инстанса (роль:id)"
 //	@Success		200	{object}	OkResponse
 //	@Failure		404	{object}	APIErrorEnvelope
+//	@Failure		409	{object}	APIErrorEnvelope
 //	@Failure		500	{object}	APIErrorEnvelope
 //	@Failure		503	{object}	APIErrorEnvelope
 //	@Router			/proxyrt/instances/{key}/restart [post]
@@ -686,14 +688,24 @@ func (h *ProxyInstancesHandler) restart(w http.ResponseWriter, r *http.Request, 
 	if !h.requireSeeded(w) {
 		return
 	}
-	if _, ok := h.recordByKey(key); !ok {
+	rec, ok := h.recordByKey(key)
+	if !ok {
 		h.notFound(w, key)
+		return
+	}
+	if !rec.Enabled {
+		response.ErrorWithStatus(w, http.StatusConflict, "инстанс выключен", proxyCodeConflict)
 		return
 	}
 	if err := h.deps.Manager.Restart(r.Context(), key, "запрос пользователя"); err != nil {
 		if errors.Is(err, manager.ErrInstanceNotFound) {
 			response.ErrorWithStatus(w, http.StatusNotFound,
 				"инстанс "+key+" не запущен", proxyCodeNotFound)
+			return
+		}
+		if errors.Is(err, manager.ErrRestartUnsupported) {
+			response.ErrorWithStatus(w, http.StatusConflict,
+				"перезапуск для этой роли не поддерживается", proxyCodeConflict)
 			return
 		}
 		response.InternalError(w, err.Error())

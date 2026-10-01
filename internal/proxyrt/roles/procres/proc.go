@@ -218,10 +218,6 @@ func (p *Proc) Plan(obs proxyrt.Observation) []proxyrt.Step {
 	p.rmu.Lock()
 	reqRestart := p.restartWanted
 	restartReason := p.restartReason
-	if !p.enabled || !obs.Exists {
-		p.restartWanted = false
-		p.restartReason = ""
-	}
 	p.rmu.Unlock()
 
 	if !p.enabled {
@@ -260,10 +256,6 @@ func (p *Proc) Plan(obs proxyrt.Observation) []proxyrt.Step {
 		return []proxyrt.Step{{Resource: p.c.ID, Op: "start", Reason: "процесс не запущен"}}
 	}
 	if reqRestart {
-		p.rmu.Lock()
-		p.restartWanted = false
-		p.restartReason = ""
-		p.rmu.Unlock()
 		if restartReason == "" {
 			restartReason = "запрос перезапуска"
 		}
@@ -285,8 +277,21 @@ func (p *Proc) Apply(ctx context.Context, s proxyrt.Step) error {
 	case "stop":
 		return p.stop(ctx)
 	case "start":
-		return p.start(ctx)
+		err := p.start(ctx)
+		if err == nil {
+			p.rmu.Lock()
+			p.restartWanted = false
+			p.restartReason = ""
+			p.rmu.Unlock()
+		}
+		return err
 	case "restart":
+		defer func() {
+			p.rmu.Lock()
+			p.restartWanted = false
+			p.restartReason = ""
+			p.rmu.Unlock()
+		}()
 		// Гейт и backoff — ДО stop (I-2 ревью-2): гасить живой (и, возможно,
 		// пропускающий трафик) процесс, когда заменить его нечем — пин на
 		// диске тоже стар — нельзя. При старом пине restart вырождается в

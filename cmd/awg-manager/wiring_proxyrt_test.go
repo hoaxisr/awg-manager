@@ -875,7 +875,7 @@ type fakeRunning struct{}
 func (fakeRunning) Start(context.Context)       {}
 func (fakeRunning) Post(proxyrt.EventKind) bool { return true }
 func (fakeRunning) ResetStartBackoff()          {}
-func (fakeRunning) Restart(string)              {}
+func (fakeRunning) Restart(string) bool         { return true }
 func (fakeRunning) Stop()                       {}
 
 // newProdAllocManager — менеджер с БОЕВЫМИ аллокаторами поверх настоящего

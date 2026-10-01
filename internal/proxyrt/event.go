@@ -20,5 +20,5 @@ const (
 	EventWANDown       EventKind = "wan-down"
 	EventPolicyChanged EventKind = "policy-changed" // accesspolicy через наш API
 	EventRecheck       EventKind = "recheck"        // сработал таймер подстраховки
-	EventReconnect     EventKind = "reconnect"      // автопереподключение или ручной перезапуск
+	EventReconnect     EventKind = "reconnect"      // ручной перезапуск процесса
 )
