@@ -13,6 +13,7 @@
   import { TUN_STACK_OPTIONS, tunStackHint } from './tunStack';
   import { api } from '$lib/api/client';
   import { notifications } from '$lib/stores/notifications';
+  import { untrack } from 'svelte';
   import IssueRow from './IssueRow.svelte';
   import PolicyCombobox from './PolicyCombobox.svelte';
   import { pluralize, DEVICE_WORDS } from '$lib/utils/pluralize';
@@ -75,10 +76,12 @@
   // Черновик сбрасывается только когда СОХРАНЁННОЕ имя действительно
   // сменилось. cfg перечитывается после каждого автосохранения дровера, и
   // сброс на каждый новый объект cfg стирал бы набираемый текст.
-  let lastSavedDesc: string | undefined;
+  // $state, как всё изменяемое в runes-компоненте; untrack — эффект зависит
+  // только от cfg, а не от собственной записи.
+  let lastSavedDesc: string | undefined = $state();
   $effect(() => {
     const saved = cfg.policyTunDescription ?? '';
-    if (saved !== lastSavedDesc) {
+    if (saved !== untrack(() => lastSavedDesc)) {
       lastSavedDesc = saved;
       descDraft.v = saved;
     }
