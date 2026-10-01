@@ -181,9 +181,9 @@ func TestCreateInterface_Created_Confirms(t *testing.T) {
 	}
 }
 
-// Прокси (EnsureProxy шлёт создание и по своей записи) попал в чужую
-// невидимую запись со следом в хуках: подтверждения нет, а сноса по имени
-// нет тоже — ответ не сказал «created» (F574, F584 Minor-1).
+// Создание прокси попало в чужую невидимую запись со следом в хуках:
+// ErrNotCreated, сноса по имени нет — ответ не сказал «created» (F574, F584
+// Minor-1, F577).
 func TestCreateProxy_ExistingUnlisted_NoDrop(t *testing.T) {
 	withFirmware(t, "5.01.C.6.0-0")
 	cmds, f, q := newOracleCommands(t, nil)
