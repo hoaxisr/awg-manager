@@ -208,3 +208,41 @@ func TestUpdateSettings_SusaninDisabledReappliesSlotRouter(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateSettings_SusaninEnabledUnderMihomo(t *testing.T) {
+	h := newTransitionHarness(t)
+	fakeEng := &fakeEngine{running: true, pid: 1234}
+	h.svc.deps.Engine = fakeEng
+
+	_ = h.store.Update(func(cur *storage.Settings) error {
+		cur.SingboxRouter.RoutingEngine = "mihomo"
+		cur.SingboxRouter.Enabled = true
+		return nil
+	})
+
+	sr, err := h.svc.GetSettings(context.Background())
+	if err != nil {
+		t.Fatalf("GetSettings: %v", err)
+	}
+	sr.RoutingEngine = "mihomo"
+	sr.SusaninEnabled = true
+	sr.SusaninOutbound = "awg-awg20"
+
+	err = h.svc.UpdateSettings(context.Background(), sr)
+	if err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+
+	if fakeEng.reloadCalls == 0 {
+		t.Fatal("expected mihomo engine Reload() to be called on susanin toggle")
+	}
+
+	saved, err := h.store.Load()
+	if err != nil {
+		t.Fatalf("store.Load: %v", err)
+	}
+	if !saved.SingboxRouter.SusaninEnabled || saved.SingboxRouter.SusaninOutbound != "awg-awg20" {
+		t.Fatalf("unexpected saved router settings: %+v", saved.SingboxRouter)
+	}
+}
+
