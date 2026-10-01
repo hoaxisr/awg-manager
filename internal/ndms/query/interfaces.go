@@ -1279,14 +1279,64 @@ func (c Confirmed) Name() string { return c.name }
 // String — имя: %v/%+v печатают запись как `Interface:X`.
 func (c Confirmed) String() string { return c.name }
 
+type actionListKey struct{}
+
+// actionList — ответ полного списка, общий для подтверждений одного действия.
+type actionList struct {
+	mu  sync.Mutex
+	raw map[string]ndms.Interface
+}
+
+// WithActionList — ctx одного действия (событие оркестратора, правка туннеля,
+// замена конфига): Confirm и ConfirmEach с ним читают полный список один раз
+// на всё действие, а не на каждое подтверждение (F557). Доказательство то же —
+// запись в списке, прочитанном в этом действии, поверх него применённый новее
+// список и хуки (confirmedFreshLocked): снятое после списка хуком, Forget или
+// новым списком не подтверждается. Между действиями — заново: ctx действия
+// живёт, пока оно идёт. Уже несущий список ctx возвращается как есть —
+// вложенный вызов часть того же действия. ConfirmCreated и FreeIndex списком
+// действия не пользуются: им нужен список, начатый после их вызова.
+func WithActionList(ctx context.Context) context.Context {
+	if _, ok := ctx.Value(actionListKey{}).(*actionList); ok {
+		return ctx
+	}
+	return context.WithValue(ctx, actionListKey{}, &actionList{})
+}
+
+// confirmList — ответ списка для подтверждения: в ctx действия — первый
+// прочитанный в нём (параллельные подтверждения ждут один запрос), иначе свой.
+// Ошибка не запоминается: следующее подтверждение читает заново.
+func (s *InterfaceStore) confirmList(ctx context.Context) (map[string]ndms.Interface, error) {
+	al, _ := ctx.Value(actionListKey{}).(*actionList)
+	if al == nil {
+		return s.refreshList(ctx, nil)
+	}
+	al.mu.Lock()
+	defer al.mu.Unlock()
+	if al.raw == nil {
+		raw, err := s.refreshList(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		al.raw = raw
+	}
+	return al.raw, nil
+}
+
 // Confirm читает ОДИН полный список (кладёт его в карту) и подтверждает name
 // по нему или по вытеснившему его применённому (confirmedFreshLocked). Список не прочитан — ошибка: присутствие из кэша подтверждением
-// не считается (F546). Запись — копия.
+// не считается (F546). Запись — копия. В ctx действия (WithActionList) список
+// один на действие.
 func (s *InterfaceStore) Confirm(ctx context.Context, name string) (Confirmed, *ndms.Interface, bool, error) {
 	if name == "" {
 		return Confirmed{}, nil, false, errors.New("confirm: пустое имя интерфейса")
 	}
-	raw, err := s.refreshList(ctx, nil)
+	raw, err := s.confirmList(ctx)
+	return s.confirmIn(raw, err, name)
+}
+
+// confirmIn — Confirm по ответу списка raw (err — ошибка его чтения).
+func (s *InterfaceStore) confirmIn(raw map[string]ndms.Interface, err error, name string) (Confirmed, *ndms.Interface, bool, error) {
 	if err != nil {
 		return Confirmed{}, nil, false, fmt.Errorf("confirm %s: %w", name, err)
 	}
@@ -1348,7 +1398,9 @@ func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string) (Confi
 	}
 	wake := w.ch
 	for i := 0; ; i++ {
-		c, _, ok, err := s.Confirm(ctx, name)
+		// Свой список, не список действия: запись новее него.
+		raw, err := s.refreshList(ctx, nil)
+		c, _, ok, err := s.confirmIn(raw, err, name)
 		if err != nil {
 			return Confirmed{}, err
 		}
@@ -1390,8 +1442,9 @@ func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string) (Confi
 
 // ConfirmEach — Confirm для нескольких имён по одному чтению списка (и
 // применённому, см. confirmedFreshLocked). В ответе только подтверждённые.
+// В ctx действия (WithActionList) — по списку действия.
 func (s *InterfaceStore) ConfirmEach(ctx context.Context, names []string) (map[string]Confirmed, error) {
-	raw, err := s.refreshList(ctx, nil)
+	raw, err := s.confirmList(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("confirm: %w", err)
 	}
