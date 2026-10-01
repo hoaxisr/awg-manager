@@ -28,9 +28,9 @@ type journalProxies struct {
 	events *[]string
 }
 
-func (j *journalProxies) RemoveProxy(ctx context.Context, index int) error {
+func (j *journalProxies) RemoveProxy(ctx context.Context, index int, desc string) error {
 	*j.events = append(*j.events, fmt.Sprintf("proxy:%d", index))
-	return j.fakeProxies.RemoveProxy(ctx, index)
+	return j.fakeProxies.RemoveProxy(ctx, index, desc)
 }
 
 // fakeSubProxies — минимальный SubscriptionProxySet: MigrateOff должен снять

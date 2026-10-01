@@ -542,6 +542,7 @@ func (o *Operator) Reconcile(ctx context.Context) error {
 		return nil
 	}
 	if err := o.proxyMgr.SyncProxies(ctx, tunnels); err != nil {
+		o.deferLeftProxy(err)
 		if o.runtimeLogger != nil {
 			o.runtimeLogger.Warn("reconcile", "", "proxy sync failed: "+err.Error())
 		}

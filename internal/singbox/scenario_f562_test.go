@@ -290,7 +290,7 @@ func TestScenario_SubscriptionRemoveFailure_DeferredThenSwept(t *testing.T) {
 	reg := op.SubscriptionProxyRegistrar(op.proxyMgr.(*ProxyManager))
 
 	f.FailList(errors.New("rci down"))
-	if err := reg.RemoveProxy(ctx, 7); err == nil {
+	if err := reg.RemoveProxy(ctx, 7, "sub1"); err == nil {
 		t.Fatal("RemoveProxy при непрочитанном списке без ошибки")
 	}
 	if len(f.Posts) != 0 || op.deferredProxies["Proxy7"] == nil || op.deferredProxies["Proxy7"].desc != "sub1" {

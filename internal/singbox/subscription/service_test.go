@@ -56,6 +56,7 @@ type fakeMutator struct {
 	reloadErr        error             // если задан, Reload возвращает эту ошибку
 	createNotOurs    bool              // CreateProxy: индекс занят чужим (ours=false)
 	createErr        error             // CreateProxy возвращает эту ошибку
+	ensureErrs       map[int]error     // EnsureProxy по индексу возвращает эту ошибку
 }
 
 func (m *fakeMutator) reset() {
@@ -179,13 +180,13 @@ func (f *fakeMutator) RemoveRouteRule(inboundTag, outboundTag string) error {
 }
 func (f *fakeMutator) EnsureProxy(_ context.Context, idx, port int, description, ownedDesc string) error {
 	f.ensuredProxies = append(f.ensuredProxies, ensuredProxyCall{idx: idx, port: port, description: description, ownedDesc: ownedDesc})
-	return nil
+	return f.ensureErrs[idx]
 }
 func (f *fakeMutator) CreateProxy(ctx context.Context, idx, port int, description string) (bool, error) {
 	_ = f.EnsureProxy(ctx, idx, port, description, description)
 	return !f.createNotOurs, f.createErr
 }
-func (f *fakeMutator) RemoveProxy(_ context.Context, idx int) error {
+func (f *fakeMutator) RemoveProxy(_ context.Context, idx int, _ string) error {
 	f.removedProxies = append(f.removedProxies, idx)
 	return nil
 }
@@ -2672,8 +2673,8 @@ func (m *ndmsProxyMutator) CreateProxy(ctx context.Context, idx, port int, d str
 func (m *ndmsProxyMutator) EnsureProxy(ctx context.Context, idx, port int, d, owned string) error {
 	return m.pm.EnsureProxy(ctx, idx, port, d, owned)
 }
-func (m *ndmsProxyMutator) RemoveProxy(ctx context.Context, idx int) error {
-	return m.pm.RemoveProxy(ctx, idx)
+func (m *ndmsProxyMutator) RemoveProxy(ctx context.Context, idx int, desc string) error {
+	return m.pm.RemoveProxy(ctx, idx, desc)
 }
 
 // F577 (д), ревью F574 N2: на 5.01+ индекс подписки/группы занят чужим
@@ -2716,5 +2717,59 @@ func TestService_Create_ForeignProxyIndex_NotBound(t *testing.T) {
 				t.Fatalf("Proxy0: rec=%+v ok=%v err=%v E=%d posts=%v", rec, ok, err, f.E, f.Posts)
 			}
 		})
+	}
+}
+
+// F577 (опасение 1): Label подписки пишется в store только после того, как
+// роутер принял description: отказ — Label прежний и ошибка; слот чужой —
+// переименовывать на роутере нечего, Label пишется.
+func TestService_Update_LabelAfterRouter(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		ensureErr error
+		wantErr   bool
+		wantLabel string
+	}{
+		{"отказ роутера", errors.New("rci down"), true, "old"},
+		{"чужой слот", singbox.ErrProxyForeign, false, "new"},
+		{"принято", nil, false, "new"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			svc, mut := newTestService(t)
+			sub := createInlineSubWithTwoMembers(t, svc)
+			old := "old"
+			if _, err := svc.Update(sub.ID, UpdatePatch{Label: &old}); err != nil {
+				t.Fatal(err)
+			}
+			mut.ensureErrs = map[int]error{sub.ProxyIndex: c.ensureErr}
+			label := "new"
+			_, err := svc.Update(sub.ID, UpdatePatch{Label: &label})
+			if (err != nil) != c.wantErr {
+				t.Fatalf("err=%v", err)
+			}
+			got, _ := svc.store.Get(sub.ID)
+			if got.Label != c.wantLabel {
+				t.Fatalf("Label=%q want %q", got.Label, c.wantLabel)
+			}
+		})
+	}
+}
+
+// F577 (опасение 1): чужая запись на индексе первой подписки не обрывает
+// SyncProxies — вторая подписка обслужена, ошибки нет.
+func TestService_SyncProxies_ForeignSkippedContinues(t *testing.T) {
+	svc, mut := newTestService(t)
+	a := createInlineSubWithTwoMembers(t, svc)
+	b, err := svc.Create(context.Background(), CreateInput{Label: "y", Inline: "vless://3a3b1c2e-9999-4321-aaaa-1234567890a3@c.example:443#C"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mut.ensuredProxies = nil
+	mut.ensureErrs = map[int]error{a.ProxyIndex: singbox.ErrProxyForeign, b.ProxyIndex: nil}
+	if err := svc.SyncProxies(context.Background()); err != nil {
+		t.Fatalf("SyncProxies: %v", err)
+	}
+	if len(mut.ensuredProxies) != 2 {
+		t.Fatalf("EnsureProxy: %+v", mut.ensuredProxies)
 	}
 }

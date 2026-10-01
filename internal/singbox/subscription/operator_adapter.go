@@ -47,7 +47,7 @@ type ProxyRegistrar interface {
 	NextFreeIndex(ctx context.Context, reserved map[int]bool) (int, error)
 	EnsureProxy(ctx context.Context, idx, port int, description, ownedDesc string) error
 	CreateProxy(ctx context.Context, idx, port int, description string) (ours bool, err error)
-	RemoveProxy(ctx context.Context, idx int) error
+	RemoveProxy(ctx context.Context, idx int, desc string) error
 }
 
 // ClashSelector is the narrow interface for switching a selector outbound's
@@ -845,12 +845,13 @@ func (a *OperatorAdapter) CreateProxy(ctx context.Context, idx, port int, descri
 	return a.pm.CreateProxy(ctx, idx, port, description)
 }
 
-// RemoveProxy tears down the NDMS ProxyN interface at the given index.
-func (a *OperatorAdapter) RemoveProxy(ctx context.Context, idx int) error {
+// RemoveProxy tears down the NDMS ProxyN interface at the given index when
+// its description is desc (ours, F577).
+func (a *OperatorAdapter) RemoveProxy(ctx context.Context, idx int, desc string) error {
 	if a.pm == nil {
 		return fmt.Errorf("subscription adapter: ProxyRegistrar not configured")
 	}
-	return a.pm.RemoveProxy(ctx, idx)
+	return a.pm.RemoveProxy(ctx, idx, desc)
 }
 
 // toAnyInt extracts an integer from json-decoded interface values (float64, int, int64).

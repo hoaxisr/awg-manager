@@ -140,7 +140,7 @@ func (f *fakeProxies) EnsureProxy(context.Context, int, int, string, string) err
 func (f *fakeProxies) NextFreeIndex(context.Context, map[int]bool) (int, error) {
 	return 0, nil
 }
-func (f *fakeProxies) RemoveProxy(_ context.Context, index int) error {
+func (f *fakeProxies) RemoveProxy(_ context.Context, index int, _ string) error {
 	f.removed = append(f.removed, index)
 	return nil
 }

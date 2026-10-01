@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
@@ -51,7 +52,7 @@ var ErrProxyComponentMissing = fmt.Errorf("NDMS 'proxy' component is not install
 type ndmsProxies interface {
 	EnsureProxy(ctx context.Context, index, port int, description, ownedDesc string) error
 	NextFreeIndex(ctx context.Context, reserved map[int]bool) (int, error)
-	RemoveProxy(ctx context.Context, index int) error
+	RemoveProxy(ctx context.Context, index int, desc string) error
 	OwnedProxies(ctx context.Context, tunnelProxies, subProxies map[string]string) ([]ProxyMark, error)
 	RemoveMarkedProxy(ctx context.Context, m ProxyMark) (MarkedOutcome, error)
 	ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) ([]string, error)
@@ -69,8 +70,9 @@ func NewProxyManager(q *query.Queries, c *command.Commands) *ProxyManager {
 	return &ProxyManager{queries: q, commands: c}
 }
 
-// ErrProxyForeign — на индексе из хранилища стоит ProxyN, который не наш:
-// его description не совпал с ожидаемым (F577). Команд по нему нет.
+// ErrProxyForeign — на индексе стоит ProxyN, который не наш: его description
+// не совпал с ожидаемым, или NDMS не создал запись — имя уже занято
+// (command.ErrNotCreated, тогда обёрнуты оба). Команд по нему нет (F577).
 var ErrProxyForeign = errors.New("ProxyN занят чужой записью")
 
 // EnsureProxy — ProxyN индекса из хранилища, указывающий на 127.0.0.1:port,
@@ -95,14 +97,13 @@ func (pm *ProxyManager) EnsureProxy(ctx context.Context, index, port int, descri
 	}
 	if !ok {
 		_, err := pm.CreateProxy(ctx, index, port, description)
+		if errors.Is(err, command.ErrNotCreated) {
+			return fmt.Errorf("%w: %w", ErrProxyForeign, err)
+		}
 		return err
 	}
 	if iface == nil || iface.Description != ownedDesc && iface.Description != description {
-		got := ""
-		if iface != nil {
-			got = iface.Description
-		}
-		return fmt.Errorf("%w: %s (description %q, ждали %q)", ErrProxyForeign, name, got, ownedDesc)
+		return foreignProxy(name, iface, ownedDesc)
 	}
 	return pm.commands.Proxies.ConfigureProxy(ctx, c, description, "127.0.0.1", port, true)
 }
@@ -141,8 +142,11 @@ func (pm *ProxyManager) NextFreeIndex(ctx context.Context, reserved map[int]bool
 	return 0, fmt.Errorf("no free Proxy slot (scanned %d)", maxProxySlots)
 }
 
-// RemoveProxy tears down ProxyN.
-func (pm *ProxyManager) RemoveProxy(ctx context.Context, index int) error {
+// RemoveProxy снимает ProxyN, только если он наш: description в свежем списке
+// равен desc (тег туннеля / Label подписки), как у RemoveMarkedProxy. Иначе
+// ErrProxyForeign без команд: индекс мог занять пользовательский прокси
+// (F577).
+func (pm *ProxyManager) RemoveProxy(ctx context.Context, index int, desc string) error {
 	defer markProxyMgrDur(fmt.Sprintf("RemoveProxy(%d)", index), time.Now())
 	name := fmt.Sprintf("%s%d", proxyIfacePrefix, index)
 	// Прокси нет в NDMS — снимать нечего, и слать ничего нельзя: `interface
@@ -150,12 +154,23 @@ func (pm *ProxyManager) RemoveProxy(ctx context.Context, index int) error {
 	// её сносит, а запоздалый хук ifcreated читает уже снятую — E «unable to
 	// find» в журнале NDMS (стенд 5.01.C.6, F546). Список не прочитан — «не
 	// знаем»: ошибка без команд, запись владельца остаётся для повтора.
-	c, _, ok, err := pm.queries.Interfaces.Confirm(ctx, name)
+	c, iface, ok, err := pm.queries.Interfaces.Confirm(ctx, name)
 	if err != nil || !ok {
 		return err
 	}
+	if iface == nil || iface.Description != desc {
+		return foreignProxy(name, iface, desc)
+	}
 	_ = pm.commands.Proxies.ProxyDown(ctx, c) // ignore error — may be already down
 	return pm.commands.Proxies.DeleteProxy(ctx, c)
+}
+
+func foreignProxy(name string, iface *ndms.Interface, want string) error {
+	got := ""
+	if iface != nil {
+		got = iface.Description
+	}
+	return fmt.Errorf("%w: %s (description %q, ждали %q)", ErrProxyForeign, name, got, want)
 }
 
 // ProxyMark — ProxyN, который мы создали и не смогли снять: точная пара
@@ -315,6 +330,9 @@ func nativeProxyKernelNames(proxies []proxyEntry, tunnelTags map[string]bool, ou
 // SyncProxies reconciles NDMS Proxy interfaces with current config.json tunnels.
 // Creates missing Proxy for each tunnel and brings existing Proxy up if Down.
 // Removal of proxies for absent tunnels is the Operator's responsibility.
+// Запись на слоте не наша (description ≠ тегу) или NDMS не создал её (имя
+// занято) — Warn и следующий туннель, команд по ней нет (F577). Созданное и
+// оставленное на роутере — *command.LeftCreatedError: вызывающий ставит метку.
 func (pm *ProxyManager) SyncProxies(ctx context.Context, tunnels []TunnelInfo) error {
 	if len(tunnels) == 0 {
 		return nil
@@ -336,7 +354,12 @@ func (pm *ProxyManager) SyncProxies(ctx context.Context, tunnels []TunnelInfo) e
 		c, ok := confirmed[t.ProxyInterface]
 		if !ok {
 			// Записи нет в только что прочитанном списке — создание.
-			if _, err := pm.CreateProxy(ctx, idxs[i], t.ListenPort, t.Tag); err != nil {
+			_, err := pm.CreateProxy(ctx, idxs[i], t.ListenPort, t.Tag)
+			if errors.Is(err, command.ErrNotCreated) {
+				slog.Warn("sync proxy: slot taken by foreign record", "tag", t.Tag, "err", err)
+				continue
+			}
+			if err != nil {
 				return err
 			}
 			continue
@@ -345,6 +368,10 @@ func (pm *ProxyManager) SyncProxies(ctx context.Context, tunnels []TunnelInfo) e
 		info, err := pm.queries.Interfaces.GetProxy(ctx, t.ProxyInterface)
 		if err != nil {
 			return err
+		}
+		if info.Description != t.Tag {
+			slog.Warn("sync proxy: slot taken by foreign record", "tag", t.Tag, "iface", t.ProxyInterface, "description", info.Description)
+			continue
 		}
 		if !info.Up {
 			if err := pm.commands.Proxies.ProxyUp(ctx, c); err != nil {

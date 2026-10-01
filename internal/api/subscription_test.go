@@ -30,7 +30,7 @@ func (noopMutator) RemoveInbound(string) error                                  
 func (noopMutator) AddRouteRule([]byte) error                                   { return nil }
 func (noopMutator) RemoveRouteRule(string, string) error                        { return nil }
 func (noopMutator) EnsureProxy(context.Context, int, int, string, string) error { return nil }
-func (noopMutator) RemoveProxy(context.Context, int) error                      { return nil }
+func (noopMutator) RemoveProxy(context.Context, int, string) error              { return nil }
 func (noopMutator) Reload(context.Context) error                                { return nil }
 func (noopMutator) Rollback()                                                   {}
 func (noopMutator) SelectClashProxy(string, string) error                       { return nil }

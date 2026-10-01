@@ -179,7 +179,7 @@ func (r *recProxies) EnsureProxy(context.Context, int, int, string, string) erro
 func (r *recProxies) CreateProxy(context.Context, int, int, string) (bool, error) {
 	return true, nil
 }
-func (r *recProxies) RemoveProxy(_ context.Context, idx int) error {
+func (r *recProxies) RemoveProxy(_ context.Context, idx int, _ string) error {
 	r.removed = append(r.removed, idx)
 	return nil
 }
@@ -246,11 +246,11 @@ func TestOperatorAdapter_RemoveRouteRule_MatchesPair(t *testing.T) {
 }
 
 func TestOperatorAdapter_RemoveProxy_DelegatesOrErrorsWithoutRegistrar(t *testing.T) {
-	if err := newAdapterForRemoveTests(t, nil).RemoveProxy(context.Background(), 5); err == nil {
+	if err := newAdapterForRemoveTests(t, nil).RemoveProxy(context.Background(), 5, "x"); err == nil {
 		t.Fatal("без ProxyRegistrar обязана быть ошибка")
 	}
 	pm := &recProxies{}
-	if err := newAdapterForRemoveTests(t, pm).RemoveProxy(context.Background(), 5); err != nil {
+	if err := newAdapterForRemoveTests(t, pm).RemoveProxy(context.Background(), 5, "x"); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(pm.removed, []int{5}) {

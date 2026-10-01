@@ -2,6 +2,7 @@ package singbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -79,12 +80,15 @@ func (m *Migrator) MigrateOff(ctx context.Context) error {
 			if m.op.proxyRemovalDeferred(t.ProxyInterface) {
 				continue
 			}
-			if rerr := m.op.proxyMgr.RemoveProxy(ctx, idx); rerr != nil {
+			if rerr := m.op.proxyMgr.RemoveProxy(ctx, idx, t.Tag); rerr != nil {
 				m.log.Warn("MigrateOff: RemoveProxy failed",
 					"tag", t.Tag, "iface", t.ProxyInterface, "err", rerr)
 				m.appLog.Warn("ndms-proxy-migrate", t.Tag, fmt.Sprintf("remove %s failed: %v", t.ProxyInterface, rerr))
-				// Метка добирается тиком сторожа с выдержкой (F562).
-				m.op.deferProxyRemoval(t.ProxyInterface, t.Tag)
+				// Метка добирается тиком сторожа с выдержкой (F562); чужую
+				// запись не метим — сносить её нельзя (F577).
+				if !errors.Is(rerr, ErrProxyForeign) {
+					m.op.deferProxyRemoval(t.ProxyInterface, t.Tag)
+				}
 			}
 		}
 	}
@@ -96,11 +100,13 @@ func (m *Migrator) MigrateOff(ctx context.Context) error {
 		if m.op.proxyRemovalDeferred(proxyName(sp.Index)) {
 			continue
 		}
-		if rerr := m.op.proxyMgr.RemoveProxy(ctx, sp.Index); rerr != nil {
+		if rerr := m.op.proxyMgr.RemoveProxy(ctx, sp.Index, sp.Label); rerr != nil {
 			m.log.Warn("MigrateOff: RemoveProxy (subscription) failed",
 				"label", sp.Label, "idx", sp.Index, "err", rerr)
 			m.appLog.Warn("ndms-proxy-migrate", sp.Label, fmt.Sprintf("remove Proxy%d failed: %v", sp.Index, rerr))
-			m.op.deferProxyRemoval(proxyName(sp.Index), sp.Label)
+			if !errors.Is(rerr, ErrProxyForeign) {
+				m.op.deferProxyRemoval(proxyName(sp.Index), sp.Label)
+			}
 		}
 	}
 
@@ -132,6 +138,7 @@ func (m *Migrator) MigrateOn(ctx context.Context) error {
 		// SyncProxies идемпотентен — создаст недостающие ProxyN.
 		// Tunnels() заполнит ProxyInterface "Proxy<slot>" из listen_port.
 		if serr := m.op.proxyMgr.SyncProxies(ctx, cfg.Tunnels()); serr != nil {
+			m.op.deferLeftProxy(serr)
 			m.log.Warn("MigrateOn: SyncProxies failed", "err", serr)
 			m.appLog.Warn("ndms-proxy-migrate", "", "proxy sync failed: "+serr.Error())
 		}
@@ -150,6 +157,7 @@ func (m *Migrator) MigrateOn(ctx context.Context) error {
 	} else {
 		for _, sp := range m.op.subscriptionProxies() {
 			if eerr := m.op.proxyMgr.EnsureProxy(ctx, sp.Index, sp.Port, sp.Label, sp.Label); eerr != nil {
+				m.op.deferLeftProxy(eerr)
 				m.log.Warn("MigrateOn: EnsureProxy (subscription) failed",
 					"label", sp.Label, "idx", sp.Index, "err", eerr)
 				m.appLog.Warn("ndms-proxy-migrate", sp.Label, fmt.Sprintf("ensure Proxy%d failed: %v", sp.Index, eerr))

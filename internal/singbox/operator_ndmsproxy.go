@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -312,9 +313,10 @@ func (o *Operator) deferredProxyFailed(name string, now time.Time, err error) {
 // SubscriptionProxyRegistrar — pm для адаптера подписок, у которого отказ
 // сноса ProxyN ставит ту же метку отложенного сноса, что у RemoveTunnel
 // (F562): удаление подписки/группы и откаты создания глотают ошибку
-// RemoveProxy. description метки — Label, найденный по индексу в перечне
-// подписок: строка ещё в store, когда сервис зовёт RemoveProxy. Label не
-// найден — метки нет: без description снос по паре невозможен.
+// RemoveProxy. description метки — Label, который передал сервис (он же —
+// условие сноса); чужая запись (ErrProxyForeign) метки не получает. Созданный
+// и оставленный на роутере ProxyN (*command.LeftCreatedError) — тоже метка
+// (F577).
 func (o *Operator) SubscriptionProxyRegistrar(pm *ProxyManager) *SubscriptionProxyRegistrar {
 	return &SubscriptionProxyRegistrar{ProxyManager: pm, op: o}
 }
@@ -325,22 +327,40 @@ type SubscriptionProxyRegistrar struct {
 	op *Operator
 }
 
-func (r *SubscriptionProxyRegistrar) RemoveProxy(ctx context.Context, idx int) error {
-	label, found := "", false
-	for _, sp := range r.op.subscriptionProxies() {
-		if sp.Index == idx {
-			label, found = sp.Label, true
-			break
-		}
-	}
-	err := r.ProxyManager.RemoveProxy(ctx, idx)
+func (r *SubscriptionProxyRegistrar) RemoveProxy(ctx context.Context, idx int, label string) error {
+	err := r.ProxyManager.RemoveProxy(ctx, idx, label)
 	if err != nil {
-		r.op.log.Warn("subscription proxy removal failed", "idx", idx, "label", label, "deferred", found, "err", err)
-		if found {
+		foreign := errors.Is(err, ErrProxyForeign)
+		r.op.log.Warn("subscription proxy removal failed", "idx", idx, "label", label, "deferred", !foreign, "err", err)
+		if !foreign {
 			r.op.deferProxyRemoval(proxyName(idx), label)
 		}
 	}
 	return err
+}
+
+func (r *SubscriptionProxyRegistrar) CreateProxy(ctx context.Context, idx, port int, description string) (bool, error) {
+	ours, err := r.ProxyManager.CreateProxy(ctx, idx, port, description)
+	r.op.deferLeftProxy(err)
+	return ours, err
+}
+
+func (r *SubscriptionProxyRegistrar) EnsureProxy(ctx context.Context, idx, port int, description, ownedDesc string) error {
+	err := r.ProxyManager.EnsureProxy(ctx, idx, port, description, ownedDesc)
+	r.op.deferLeftProxy(err)
+	return err
+}
+
+// deferLeftProxy — созданный и оставленный на роутере ProxyN (подтверждения
+// нет или снос не прошёл) уходит в метку отложенного сноса с description,
+// который у него на роутере ("" у голого): тик снимет его с той же выдержкой
+// (F577 N1). Пока имя нужно туннелю или подписке, тик метку снимает без сноса.
+func (o *Operator) deferLeftProxy(err error) {
+	var left *command.LeftCreatedError
+	if errors.As(err, &left) {
+		o.log.Warn("created proxy left on router, deferred", "name", left.Name, "desc", left.Desc, "err", err)
+		o.deferProxyRemoval(left.Name, left.Desc)
+	}
 }
 
 // ListNativeProxies returns kernel names of KeenOS-native (non-ours) NDMS

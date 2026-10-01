@@ -550,7 +550,7 @@ func (o *Operator) Cleanup(ctx context.Context) error {
 				o.log.Warn("cleanup: bad proxy iface", "tag", t.Tag, "iface", t.ProxyInterface, "err", perr)
 				continue
 			}
-			if err := o.proxyMgr.RemoveProxy(ctx, idx); err != nil {
+			if err := o.proxyMgr.RemoveProxy(ctx, idx, t.Tag); err != nil {
 				o.log.Warn("cleanup: remove proxy failed", "tag", t.Tag, "err", err)
 			}
 		}

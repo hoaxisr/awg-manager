@@ -741,3 +741,27 @@ func TestService_UpdateGroup_LabelOwnedByPrevious(t *testing.T) {
 		t.Fatalf("EnsureProxy: %+v, want %+v", mut.ensuredProxies, want)
 	}
 }
+
+// F577 (опасение 1): Label группы — в store только после роутера.
+func TestService_UpdateGroup_LabelAfterRouter(t *testing.T) {
+	svc, mut, gs := newTestServiceWithGroups(t)
+	g, err := svc.CreateGroup(context.Background(), GroupCreateInput{Label: "grp", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mut.ensureErrs = map[int]error{g.ProxyIndex: errors.New("rci down")}
+	label := "grp2"
+	if _, err := svc.UpdateGroup(context.Background(), g.ID, GroupUpdatePatch{Label: &label}); err == nil {
+		t.Fatal("отказ роутера без ошибки")
+	}
+	if got, _ := gs.Get(g.ID); got.Label != "grp" {
+		t.Fatalf("Label=%q", got.Label)
+	}
+	mut.ensureErrs = nil
+	if _, err := svc.UpdateGroup(context.Background(), g.ID, GroupUpdatePatch{Label: &label}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := gs.Get(g.ID); got.Label != "grp2" {
+		t.Fatalf("Label=%q", got.Label)
+	}
+}

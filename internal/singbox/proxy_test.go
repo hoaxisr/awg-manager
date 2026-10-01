@@ -89,7 +89,7 @@ func TestProxyManager_RemoveProxy_AbsentSendsNothing(t *testing.T) {
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger()})
 	pm := NewProxyManager(q, nil)
 
-	if err := pm.RemoveProxy(context.Background(), 5); err != nil {
+	if err := pm.RemoveProxy(context.Background(), 5, "t"); err != nil {
 		t.Fatalf("RemoveProxy(5): %v", err)
 	}
 	if n := posts.Load(); n != 0 {
@@ -147,26 +147,26 @@ func withProxyComponent(t *testing.T) {
 // ProxyN нет — ни одной команды (`interface ProxyN down` создал бы запись), E
 // и фантомов нет; есть — снимается; список не прочитан — ошибка без команд.
 func TestRemoveProxy_AbsentNoCommands(t *testing.T) {
-	f := query.NewFakeNDMS(ndms.Interface{ID: "Proxy0", Type: "Proxy"})
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Proxy0", Type: "Proxy", Description: "t"})
 	pm := oracleProxyManager(f)
-	if err := pm.RemoveProxy(context.Background(), 5); err != nil {
+	if err := pm.RemoveProxy(context.Background(), 5, "t"); err != nil {
 		t.Fatalf("RemoveProxy(5): %v", err)
 	}
 	if len(f.Posts) != 0 || f.E != 0 || f.Phantoms != 0 {
 		t.Fatalf("posts=%v E=%d фантомов=%d", f.Posts, f.E, f.Phantoms)
 	}
 
-	if err := pm.RemoveProxy(context.Background(), 0); err != nil || f.Has("Proxy0") {
+	if err := pm.RemoveProxy(context.Background(), 0, "t"); err != nil || f.Has("Proxy0") {
 		t.Fatalf("Proxy0 не снят: err=%v posts=%v", err, f.Posts)
 	}
 	if f.E != 0 || f.Phantoms != 0 {
 		t.Fatalf("E=%d фантомов=%d", f.E, f.Phantoms)
 	}
 
-	f = query.NewFakeNDMS(ndms.Interface{ID: "Proxy0", Type: "Proxy"})
+	f = query.NewFakeNDMS(ndms.Interface{ID: "Proxy0", Type: "Proxy", Description: "t"})
 	pm = oracleProxyManager(f)
 	f.FailList(errors.New("RCI не ответил"))
-	if err := pm.RemoveProxy(context.Background(), 0); err == nil || len(f.Posts) != 0 {
+	if err := pm.RemoveProxy(context.Background(), 0, "t"); err == nil || len(f.Posts) != 0 {
 		t.Fatalf("сбой списка: err=%v posts=%v", err, f.Posts)
 	}
 }
@@ -177,8 +177,8 @@ func TestRemoveProxy_AbsentNoCommands(t *testing.T) {
 func TestSyncProxies_OneListForAll(t *testing.T) {
 	withProxyComponent(t)
 	f := query.NewFakeNDMS(
-		ndms.Interface{ID: "Proxy0", Type: "Proxy", State: "up"},
-		ndms.Interface{ID: "Proxy1", Type: "Proxy", State: "down"},
+		ndms.Interface{ID: "Proxy0", Type: "Proxy", Description: "a", State: "up"},
+		ndms.Interface{ID: "Proxy1", Type: "Proxy", Description: "b", State: "down"},
 	)
 	f.ExpectCreate("Proxy2")
 	pm := oracleProxyManager(f)
@@ -321,6 +321,32 @@ func TestEnsureProxy_RenameByOldDescription(t *testing.T) {
 	}
 	if got := f.Posts[posts:]; len(got) != 2 || got[0] != `{"interface":{"Proxy4":{}}}` || !strings.Contains(got[1], `"description":"t"`) {
 		t.Fatalf("команды: %v", got)
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d фантомов=%d", f.E, f.Phantoms)
+	}
+}
+
+// F577 (опасение 3): слот туннеля a занят пользовательским прокси —
+// SyncProxies не поднимает его и идёт дальше: свой Proxy1 поднят. RemoveProxy
+// по чужому description — ErrProxyForeign без команд.
+func TestSyncProxies_ForeignSlot_SkippedContinues(t *testing.T) {
+	withProxyComponent(t)
+	f := query.NewFakeNDMS(
+		ndms.Interface{ID: "Proxy0", Type: "Proxy", Description: "user", State: "down"},
+		ndms.Interface{ID: "Proxy1", Type: "Proxy", Description: "b", State: "down"},
+	)
+	pm := oracleProxyManager(f)
+	err := pm.SyncProxies(context.Background(), []TunnelInfo{
+		{Tag: "a", ListenPort: 1080, ProxyInterface: "Proxy0"},
+		{Tag: "b", ListenPort: 1081, ProxyInterface: "Proxy1"},
+	})
+	if err != nil || !slices.Equal(f.Posts, []string{`{"interface":{"Proxy1":{"up":true}}}`}) {
+		t.Fatalf("err=%v posts=%v", err, f.Posts)
+	}
+	f.Posts = nil
+	if err := pm.RemoveProxy(context.Background(), 0, "a"); !errors.Is(err, ErrProxyForeign) || len(f.Posts) != 0 || !f.Has("Proxy0") {
+		t.Fatalf("err=%v posts=%v", err, f.Posts)
 	}
 	if f.E != 0 || f.Phantoms != 0 {
 		t.Fatalf("E=%d фантомов=%d", f.E, f.Phantoms)
