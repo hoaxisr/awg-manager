@@ -122,6 +122,7 @@ type Server struct {
 	dnsRewritesHandler         *api.DNSRewritesHandler
 	awg3Handler                *api.Awg3Handler
 	clashProxy                 *api.ClashProxy
+	aiAssistantHandler         *api.AIAssistantHandler
 	singboxOp                  *singbox.Operator
 	singboxOrch                *singboxorch.Orchestrator
 	presetCatalog              *presets.Catalog
@@ -219,6 +220,7 @@ type Deps struct {
 	SingboxHandler       *api.SingboxHandler
 	SingboxOrch          *singboxorch.Orchestrator
 	ClashProxy           *api.ClashProxy
+	AIAssistantHandler   *api.AIAssistantHandler
 	SingboxConnsHandler  *api.SingboxConnectionsHandler
 	MonitoringService    *monitoring.Service
 	SingboxSubMembers    func() []diagnostics.SingboxSubMember
@@ -307,6 +309,7 @@ func New(cfg Config, deps Deps) *Server {
 		obfuscatorRelayChanged: deps.ObfuscatorRelayChanged,
 		authMiddleware:         auth.NewMiddleware(deps.Sessions, deps.Settings, &authLoggerAdapter{log: appLog}),
 		mcpKeys:                deps.McpKeys,
+		aiAssistantHandler:     deps.AIAssistantHandler,
 		instanceID:             id,
 	}
 }
@@ -469,6 +472,11 @@ func (s *Server) SetDNSRewritesHandler(h *api.DNSRewritesHandler) {
 // /api/awg3-endpoints[/{id}] routes can be registered.
 func (s *Server) SetAwg3Handler(h *api.Awg3Handler) {
 	s.awg3Handler = h
+}
+
+// SetAIAssistantHandler wires the AI assistant handler.
+func (s *Server) SetAIAssistantHandler(h *api.AIAssistantHandler) {
+	s.aiAssistantHandler = h
 }
 
 // generateInstanceID creates a random 16-byte hex string (32 chars).
