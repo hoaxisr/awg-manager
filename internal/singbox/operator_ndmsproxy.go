@@ -49,6 +49,66 @@ func (o *Operator) removeOrphanSingboxProxies(ctx context.Context) error {
 	return o.proxyMgr.RemoveOrphanSingboxProxies(ctx, tunnelTags, portSlots, subProxyIdx)
 }
 
+// deferProxyRemoval ставит метку «ProxyN туннеля tag не снят» (F562).
+func (o *Operator) deferProxyRemoval(tag string) {
+	o.deferredProxyMu.Lock()
+	defer o.deferredProxyMu.Unlock()
+	if o.deferredProxyTags == nil {
+		o.deferredProxyTags = map[string]bool{}
+	}
+	o.deferredProxyTags[tag] = true
+}
+
+// retryDeferredProxyRemovals добирает ProxyN, снос которых RemoveTunnel
+// отложил (F562). Без метки — ни конфига, ни списка (R36). Владение — то же
+// правило, что у removeOrphanSingboxProxies: description == тег туннеля.
+// Тег, снова занятый туннелем или меткой подписки, снимается с метки без
+// команд: запись с таким description уже не отличить от живой. Снос — через
+// RemoveProxy (свежий список + Confirmed); ошибка — метка остаётся до
+// следующего тика.
+func (o *Operator) retryDeferredProxyRemovals(ctx context.Context) {
+	o.deferredProxyMu.Lock()
+	tags := make(map[string]bool, len(o.deferredProxyTags))
+	for t := range o.deferredProxyTags {
+		tags[t] = true
+	}
+	o.deferredProxyMu.Unlock()
+	if len(tags) == 0 {
+		return
+	}
+	cfg, err := o.loadConfig()
+	if err != nil && !os.IsNotExist(err) {
+		o.log.Warn("deferred proxy removal: load config", "err", err)
+		return
+	}
+	live := map[string]bool{}
+	if cfg != nil {
+		for _, t := range cfg.Tunnels() {
+			live[t.Tag] = true
+		}
+	}
+	for _, sp := range o.subscriptionProxies() {
+		live[sp.Label] = true
+	}
+	sweep := map[string]bool{}
+	for t := range tags {
+		if !live[t] {
+			sweep[t] = true
+		}
+	}
+	if len(sweep) > 0 {
+		if err := o.proxyMgr.RemoveOrphanSingboxProxies(ctx, sweep, nil, nil); err != nil {
+			o.log.Warn("deferred proxy removal failed", "err", err)
+			return
+		}
+	}
+	o.deferredProxyMu.Lock()
+	for t := range tags {
+		delete(o.deferredProxyTags, t)
+	}
+	o.deferredProxyMu.Unlock()
+}
+
 // ListNativeProxies returns kernel names of KeenOS-native (non-ours) NDMS
 // Proxy interfaces — bind targets for router direct outbounds (#323). Assembles
 // the same ownership sets as removeOrphanSingboxProxies and delegates.

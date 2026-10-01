@@ -93,6 +93,8 @@ func (w *Watchdog) tick(ctx context.Context) {
 		}
 		running, _ = w.op.proc.IsRunning()
 	}
+	// Отложенный снос ProxyN (F562): без метки — ни одного чтения.
+	w.op.retryDeferredProxyRemovals(ctx)
 	w.publishIfFlipped(running)
 }
 

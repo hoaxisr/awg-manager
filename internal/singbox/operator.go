@@ -240,6 +240,13 @@ type Operator struct {
 	// в disabled-режиме (предыдущая сессия не успела дочистить).
 	needsOrphanCleanup atomic.Bool
 
+	// deferredProxyTags — теги удалённых туннелей, чей ProxyN RemoveTunnel
+	// снять не смог (список не прочитан — решение 4, или отказ сноса, F562).
+	// Добирает retryDeferredProxyRemovals с тика сторожа; пусто — ни одного
+	// чтения списка. Только в памяти: рестарт демона метку теряет.
+	deferredProxyMu   sync.Mutex
+	deferredProxyTags map[string]bool
+
 	// installBusy guards Install/Update against interleaving with each
 	// other — manual (UI) and scheduled (auto-update) calls both go
 	// through the same Operator, and a second call while one is mid-flight

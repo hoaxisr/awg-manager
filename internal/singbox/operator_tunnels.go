@@ -420,7 +420,8 @@ func (o *Operator) RemoveTunnel(ctx context.Context, tag string) error {
 	// NDMS teardown last — if it fails, Reconcile/retry can clean up later.
 	if proxyIdx >= 0 {
 		if err := o.proxyMgr.RemoveProxy(ctx, proxyIdx); err != nil {
-			o.log.Warn("remove proxy failed", "tag", tag, "err", err)
+			o.log.Warn("remove proxy failed, deferred", "tag", tag, "err", err)
+			o.deferProxyRemoval(tag)
 		}
 	}
 	if o.bus != nil {
