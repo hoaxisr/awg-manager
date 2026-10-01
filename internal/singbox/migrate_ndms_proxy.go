@@ -50,7 +50,7 @@ func NewMigrator(op *Operator, settings SettingsToggler, appLogger logging.AppLo
 //     чтобы при обрыве в шаге 2 next-start подобрал orphan-cleanup.
 //  2. Для каждого туннеля с ненулевым ProxyInterface — RemoveProxy(idx).
 //     Best-effort, ошибки только в лог.
-//  3. MarkNeedsOrphanCleanup — Reconcile дочистит остатки на следующем тике.
+//  3. MarkNeedsOrphanCleanup — тик сторожа дочистит остатки.
 //  4. SSE invalidate.
 //
 // config.json не правится: ProxyInterface/KernelInterface — derived в
@@ -74,13 +74,17 @@ func (m *Migrator) MigrateOff(ctx context.Context) error {
 			if perr != nil || idx < 0 {
 				continue
 			}
+			// Уже ждёт снос — попытку делает тик по выдержке, MigrateOff её
+			// не сбрасывает (F562 ревью F2).
+			if m.op.proxyRemovalDeferred(t.ProxyInterface) {
+				continue
+			}
 			if rerr := m.op.proxyMgr.RemoveProxy(ctx, idx); rerr != nil {
 				m.log.Warn("MigrateOff: RemoveProxy failed",
 					"tag", t.Tag, "iface", t.ProxyInterface, "err", rerr)
 				m.appLog.Warn("ndms-proxy-migrate", t.Tag, fmt.Sprintf("remove %s failed: %v", t.ProxyInterface, rerr))
-				// Флаг ниже — один проход только при мёртвом sing-box;
-				// метка добирается тиком сторожа с выдержкой (F562).
-				m.op.deferProxyRemoval(t.Tag)
+				// Метка добирается тиком сторожа с выдержкой (F562).
+				m.op.deferProxyRemoval(t.ProxyInterface, t.Tag)
 			}
 		}
 	}
@@ -89,11 +93,14 @@ func (m *Migrator) MigrateOff(ctx context.Context) error {
 	// Tunnels() — remove them explicitly so disabling NDMS Proxy also tears
 	// down the ProxyN behind selector/urltest subscriptions.
 	for _, sp := range m.op.subscriptionProxies() {
+		if m.op.proxyRemovalDeferred(proxyName(sp.Index)) {
+			continue
+		}
 		if rerr := m.op.proxyMgr.RemoveProxy(ctx, sp.Index); rerr != nil {
 			m.log.Warn("MigrateOff: RemoveProxy (subscription) failed",
 				"label", sp.Label, "idx", sp.Index, "err", rerr)
 			m.appLog.Warn("ndms-proxy-migrate", sp.Label, fmt.Sprintf("remove Proxy%d failed: %v", sp.Index, rerr))
-			m.op.deferProxyRemoval(sp.Label)
+			m.op.deferProxyRemoval(proxyName(sp.Index), sp.Label)
 		}
 	}
 

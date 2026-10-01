@@ -9,20 +9,50 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
+// refusingPoster — NDMS, отказывающий в `no interface X` (снос), пока refuse;
+// остальное — оракул.
+type refusingPoster struct {
+	*query.FakeNDMS
+	mu      sync.Mutex
+	refuse  bool
+	refused int
+}
+
+func (p *refusingPoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	b, _ := json.Marshal(payload)
+	p.mu.Lock()
+	if p.refuse && strings.Contains(string(b), `"no":true`) {
+		p.refused++
+		p.mu.Unlock()
+		return nil, errors.New("NDMS refused")
+	}
+	p.mu.Unlock()
+	return p.FakeNDMS.Post(ctx, payload)
+}
+
+func (p *refusingPoster) attempts() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.refused
+}
+
 // f562Stand — оператор с туннелями A (Proxy3) и B (Proxy4) в конфиге и
 // оракулом NDMS: Proxy3/Proxy4 наши, Proxy5 и Proxy6 — чужие (description
-// пользователя и пустой). Конфиг пишется через фейк, оракул ставится после —
-// в счётчики оракула попадает только проверяемый путь.
-func f562Stand(t *testing.T) (*Operator, *Watchdog, *query.FakeNDMS) {
+// пользователя и пустой), Proxy0 — пользовательский с description "A", как
+// тег туннеля A. Конфиг пишется через фейк, оракул ставится после — в
+// счётчики оракула попадает только проверяемый путь. sing-box не запущен, и
+// Reconcile в тике выходит сразу (ручной стоп): уборка от него не зависит.
+func f562Stand(t *testing.T) (*Operator, *Watchdog, *query.FakeNDMS, *refusingPoster) {
 	t.Helper()
 	op, _ := newOrchedOperator(t)
 	op.proxyMgr = &fakeProxies{}
@@ -38,23 +68,49 @@ func f562Stand(t *testing.T) (*Operator, *Watchdog, *query.FakeNDMS) {
 		t.Fatalf("ApplyConfig: %v", err)
 	}
 	f := query.NewFakeNDMS(
+		ndms.Interface{ID: "Proxy0", Type: "Proxy", Description: "A", State: "up"},
 		ndms.Interface{ID: "Proxy3", Type: "Proxy", Description: "A", State: "up"},
 		ndms.Interface{ID: "Proxy4", Type: "Proxy", Description: "B", State: "up"},
 		ndms.Interface{ID: "Proxy5", Type: "Proxy", Description: "user", State: "up"},
 		ndms.Interface{ID: "Proxy6", Type: "Proxy", State: "up"},
 	)
-	op.proxyMgr = oracleProxyManager(f)
-	op.manuallyStopped.Store(true) // Reconcile в тике — не предмет теста
+	p := &refusingPoster{FakeNDMS: f}
+	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	c := command.NewCommands(command.Deps{
+		Poster:  p,
+		Queries: q,
+		Save:    command.NewSaveCoordinator(p, nil, time.Hour, time.Hour, 0, q.RunningConfig),
+		IsOS5:   func() bool { return true },
+	})
+	op.proxyMgr = NewProxyManager(q, c)
+	op.manuallyStopped.Store(true)
 	w := NewWatchdog(op, nil, nil)
 	w.swept.Store(true)
-	return op, w, f
+	return op, w, f, p
 }
 
-// F562: список при RemoveTunnel не прочитан — ни одной команды, метка; тик
-// сторожа с читаемым списком снимает ровно наш Proxy3, чужие и живой Proxy4
-// не тронуты; следующий тик без метки списка не читает.
+func mustHave(t *testing.T, f *query.FakeNDMS, names ...string) {
+	t.Helper()
+	for _, n := range names {
+		if !f.Has(n) {
+			t.Fatalf("%s снят: posts=%v", n, f.Posts)
+		}
+	}
+}
+
+func clean(t *testing.T, f *query.FakeNDMS) {
+	t.Helper()
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d фантомов=%d posts=%v", f.E, f.Phantoms, f.Posts)
+	}
+}
+
+// F562: список при RemoveTunnel не прочитан — ни одной команды, метка
+// (Proxy3, "A"); тик снимает ровно Proxy3. Пользовательский Proxy0 с тем же
+// description "A" цел (ревью F1), живой Proxy4 и чужие тоже; следующий тик
+// без меток ничего не читает.
 func TestScenario_RemoveTunnel_ListErrorDeferredThenSwept(t *testing.T) {
-	op, w, f := f562Stand(t)
+	op, w, f, _ := f562Stand(t)
 	ctx := context.Background()
 
 	f.FailList(errors.New("rci down"))
@@ -70,19 +126,13 @@ func TestScenario_RemoveTunnel_ListErrorDeferredThenSwept(t *testing.T) {
 	if f.Has("Proxy3") {
 		t.Fatalf("Proxy3 не снят тиком: posts=%v", f.Posts)
 	}
-	for _, n := range []string{"Proxy4", "Proxy5", "Proxy6"} {
-		if !f.Has(n) {
-			t.Fatalf("%s снят: posts=%v", n, f.Posts)
-		}
-	}
+	mustHave(t, f, "Proxy0", "Proxy4", "Proxy5", "Proxy6")
 	for _, p := range f.Posts {
 		if !strings.Contains(p, "Proxy3") {
 			t.Fatalf("команда не по Proxy3: %s", p)
 		}
 	}
-	if f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("E=%d фантомов=%d posts=%v", f.E, f.Phantoms, f.Posts)
-	}
+	clean(t, f)
 
 	lists := f.ListCalls()
 	w.tick(ctx)
@@ -91,20 +141,32 @@ func TestScenario_RemoveTunnel_ListErrorDeferredThenSwept(t *testing.T) {
 	}
 }
 
-// Без метки тик не читает список (R36).
+// Ревью F1: description записи под именем метки сменился — запись уже не
+// наша; метка снимается без команд.
+func TestScenario_DeferredMark_DescriptionChanged_Untouched(t *testing.T) {
+	op, w, f, _ := f562Stand(t)
+	op.deferProxyRemoval("Proxy5", "old-tag")
+	w.tick(context.Background())
+	mustHave(t, f, "Proxy5")
+	if len(f.Posts) != 0 || len(op.deferredProxies) != 0 {
+		t.Fatalf("posts=%v метки=%v", f.Posts, op.deferredProxies)
+	}
+}
+
+// Без меток и флага тик не читает список (R36, ревью F6).
 func TestScenario_WatchdogTick_NoDeferredNoList(t *testing.T) {
-	_, w, f := f562Stand(t)
+	_, w, f, _ := f562Stand(t)
 	w.tick(context.Background())
 	if n := f.ListCalls(); n != 0 || len(f.Posts) != 0 {
 		t.Fatalf("списков=%d posts=%v, want 0/пусто", n, f.Posts)
 	}
 }
 
-// Тег снова занят туннелем — метка снимается без списка и команд: запись с
-// таким description не отличить от живой.
-func TestScenario_DeferredTagReused_NoCommands(t *testing.T) {
-	op, w, f := f562Stand(t)
-	op.deferProxyRemoval("B")
+// Имя метки нужно живому туннелю (B → Proxy4) — метка снимается без списка
+// и команд (ревью F3: проверка нужности прямо перед сносом).
+func TestScenario_DeferredNameInUse_NoCommands(t *testing.T) {
+	op, w, f, _ := f562Stand(t)
+	op.deferProxyRemoval("Proxy4", "B")
 	w.tick(context.Background())
 	if n := f.ListCalls(); n != 0 || len(f.Posts) != 0 || !f.Has("Proxy4") {
 		t.Fatalf("списков=%d posts=%v", n, f.Posts)
@@ -114,10 +176,32 @@ func TestScenario_DeferredTagReused_NoCommands(t *testing.T) {
 	}
 }
 
+// Ревью F3: тик ждёт migrationMu (его держат AddTunnels/RemoveTunnel/
+// Migrate* через RCI) и до его освобождения ничего не читает и не сносит.
+func TestScenario_DeferredRemoval_WaitsMigrationMu(t *testing.T) {
+	op, w, f, _ := f562Stand(t)
+	op.ndmsProxyEnabledFn = func() bool { return false } // Proxy3 не нужен туннелю
+	op.deferProxyRemoval("Proxy3", "A")
+	op.migrationMu.Lock()
+	done := make(chan struct{})
+	go func() { w.tick(context.Background()); close(done) }()
+	time.Sleep(50 * time.Millisecond)
+	if n := f.ListCalls(); n != 0 || !f.Has("Proxy3") {
+		op.migrationMu.Unlock()
+		<-done
+		t.Fatalf("под чужим migrationMu: списков=%d posts=%v", n, f.Posts)
+	}
+	op.migrationMu.Unlock()
+	<-done
+	if f.Has("Proxy3") {
+		t.Fatalf("после освобождения Proxy3 не снят: posts=%v", f.Posts)
+	}
+}
+
 // Уборка не удалась (список снова не прочитан) — метка остаётся, повтор —
 // по выдержке, на тике, где список читается.
 func TestScenario_DeferredSweepListError_KeepsMark(t *testing.T) {
-	op, w, f := f562Stand(t)
+	op, w, f, _ := f562Stand(t)
 	ctx := context.Background()
 	clock := time.Unix(0, 0)
 	op.deferredNow = func() time.Time { return clock }
@@ -126,12 +210,12 @@ func TestScenario_DeferredSweepListError_KeepsMark(t *testing.T) {
 		t.Fatalf("RemoveTunnel: %v", err)
 	}
 	w.tick(ctx)
-	if len(f.Posts) != 0 || op.deferredProxies["A"] == nil {
+	if len(f.Posts) != 0 || op.deferredProxies["Proxy3"] == nil {
 		t.Fatalf("posts=%v метка=%v", f.Posts, op.deferredProxies)
 	}
 	f.FailList(nil)
 	w.tick(ctx) // выдержка 30 с ещё не вышла — ни списка, ни команд
-	if len(f.Posts) != 0 || op.deferredProxies["A"] == nil {
+	if len(f.Posts) != 0 || op.deferredProxies["Proxy3"] == nil {
 		t.Fatalf("до выдержки: posts=%v", f.Posts)
 	}
 	clock = clock.Add(30 * time.Second)
@@ -139,52 +223,65 @@ func TestScenario_DeferredSweepListError_KeepsMark(t *testing.T) {
 	if f.Has("Proxy3") || len(op.deferredProxies) != 0 {
 		t.Fatalf("Proxy3 не снят: posts=%v метка=%v", f.Posts, op.deferredProxies)
 	}
-	if f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("E=%d фантомов=%d", f.E, f.Phantoms)
-	}
+	clean(t, f)
 }
 
-// failingOrphans — снос отказывает всегда не из-за списка; считает попытки.
-type failingOrphans struct {
-	fakeProxies
-	attempts int
-}
-
-func (f *failingOrphans) RemoveOrphanSingboxProxies(context.Context, map[string]bool, map[int]bool, map[int]bool) error {
-	f.attempts++
-	return errors.New("delete refused")
-}
-
-// Отказ сноса не из-за списка: попытки на ступенях выдержки 30 с, 1, 2, 4,
-// 8 мин, дальше раз в 15 мин, а не на каждом 30-секундном тике.
-func TestScenario_DeferredRemoval_Backoff(t *testing.T) {
-	op, w, _ := f562Stand(t)
-	stub := &failingOrphans{}
-	op.proxyMgr = stub
+// Ревью F2: NDMS отказывает в сносе — `no interface` на ступенях выдержки
+// 30 с, 1, 2, 4, 8 мин, дальше раз в 15 мин, а не на каждом 30-секундном
+// тике.
+func TestScenario_DeferredRemoval_RefusedDeleteBackoff(t *testing.T) {
+	op, w, _, p := f562Stand(t)
+	p.refuse = true
 	clock := time.Unix(0, 0)
 	op.deferredNow = func() time.Time { return clock }
-	op.deferProxyRemoval("Z")
+	op.deferProxyRemoval("Proxy3", "A")
+	if err := op.ApplyConfig(context.Background(), mustConfigWithout(t, op, "A")); err != nil {
+		t.Fatal(err)
+	}
 
 	var at []int
 	for sec := 30; sec <= 3600; sec += 30 {
 		clock = time.Unix(int64(sec), 0)
-		before := stub.attempts
+		before := p.attempts()
 		w.tick(context.Background())
-		if stub.attempts != before {
+		if p.attempts() != before {
 			at = append(at, sec)
 		}
 	}
 	want := []int{30, 60, 120, 240, 480, 960, 1860, 2760}
 	if !slices.Equal(at, want) {
-		t.Fatalf("попытки на секундах %v, want %v", at, want)
+		t.Fatalf("сносы на секундах %v, want %v", at, want)
 	}
 }
 
-// Удаление подписки: снос ProxyN не прошёл (список не прочитан) — метка по
-// Label; строка подписки ушла, тик с читаемым списком снимает Proxy7, живой
-// Proxy4 и чужие не тронуты, E и фантомов нет.
+// Ревью F2: MigrateOff не сбрасывает выдержку — по имени, уже ждущему
+// снос, прямой попытки нет.
+func TestScenario_MigrateOff_KeepsBackoffOfMarked(t *testing.T) {
+	op, w, _, p := f562Stand(t)
+	p.refuse = true
+	op.ndmsProxyEnabledFn = func() bool { return false } // как после MigrateOff
+	clock := time.Unix(0, 0)
+	op.deferredNow = func() time.Time { return clock }
+	op.deferProxyRemoval("Proxy3", "A")
+	clock = clock.Add(30 * time.Second)
+	w.tick(context.Background()) // попытка 1, выдержка 30 с
+	if p.attempts() != 1 {
+		t.Fatalf("попыток=%d, want 1", p.attempts())
+	}
+	m := NewMigrator(op, &fakeToggler{events: new([]string)}, nil)
+	if err := m.MigrateOff(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Proxy4 (B) — свой прямой снос MigrateOff (отказ), Proxy3 — без попытки.
+	if p.attempts() != 2 {
+		t.Fatalf("попыток после MigrateOff=%d, want 2 (только Proxy4)", p.attempts())
+	}
+}
+
+// Удаление подписки: снос ProxyN не прошёл (список не прочитан) — метка
+// (Proxy7, Label); строка подписки ушла, тик снимает Proxy7, остальные целы.
 func TestScenario_SubscriptionRemoveFailure_DeferredThenSwept(t *testing.T) {
-	op, w, f := f562Stand(t)
+	op, w, f, _ := f562Stand(t)
 	ctx := context.Background()
 	f.Add(ndms.Interface{ID: "Proxy7", Type: "Proxy", Description: "sub1", State: "up"})
 	_ = f.DrainHooks()
@@ -196,7 +293,7 @@ func TestScenario_SubscriptionRemoveFailure_DeferredThenSwept(t *testing.T) {
 	if err := reg.RemoveProxy(ctx, 7); err == nil {
 		t.Fatal("RemoveProxy при непрочитанном списке без ошибки")
 	}
-	if len(f.Posts) != 0 || op.deferredProxies["sub1"] == nil {
+	if len(f.Posts) != 0 || op.deferredProxies["Proxy7"] == nil || op.deferredProxies["Proxy7"].desc != "sub1" {
 		t.Fatalf("posts=%v метка=%v", f.Posts, op.deferredProxies)
 	}
 	subs.list = nil // сервис удалил строку подписки
@@ -206,46 +303,34 @@ func TestScenario_SubscriptionRemoveFailure_DeferredThenSwept(t *testing.T) {
 	if f.Has("Proxy7") || len(op.deferredProxies) != 0 {
 		t.Fatalf("Proxy7 не снят: posts=%v метка=%v", f.Posts, op.deferredProxies)
 	}
-	for _, n := range []string{"Proxy3", "Proxy4", "Proxy5", "Proxy6"} {
-		if !f.Has(n) {
-			t.Fatalf("%s снят: posts=%v", n, f.Posts)
-		}
-	}
-	if f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("E=%d фантомов=%d posts=%v", f.E, f.Phantoms, f.Posts)
-	}
+	mustHave(t, f, "Proxy0", "Proxy3", "Proxy4", "Proxy5", "Proxy6")
+	clean(t, f)
 }
 
-// Режим NDMS Proxy выключен (MigrateOff не снял Proxy3): живой тег не
-// защищает — наших ProxyN в этом режиме быть не должно.
-func TestScenario_DeferredRemoval_ModeOffSweepsLiveTag(t *testing.T) {
-	op, w, f := f562Stand(t)
+// Режим NDMS Proxy выключен: имя живого туннеля не защищает — наших ProxyN
+// в этом режиме быть не должно.
+func TestScenario_DeferredRemoval_ModeOffSweepsLiveName(t *testing.T) {
+	op, w, f, _ := f562Stand(t)
 	op.ndmsProxyEnabledFn = func() bool { return false }
-	op.deferProxyRemoval("A")
+	op.deferProxyRemoval("Proxy3", "A")
 	w.tick(context.Background())
-	if f.Has("Proxy3") || !f.Has("Proxy4") || !f.Has("Proxy5") || !f.Has("Proxy6") {
+	if f.Has("Proxy3") {
 		t.Fatalf("posts=%v", f.Posts)
 	}
-	if f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("E=%d фантомов=%d", f.E, f.Phantoms)
-	}
+	mustHave(t, f, "Proxy0", "Proxy4", "Proxy5", "Proxy6")
+	clean(t, f)
 }
 
-type staticSubProxies struct{ list []SubscriptionProxy }
-
-func (s *staticSubProxies) SubscriptionProxies() []SubscriptionProxy { return s.list }
-
 // MigrateOff при непрочитанном списке: снос ProxyN туннелей и подписки
-// отложен, первый тик сторожа (режим выключен) снимает все три, чужие
-// Proxy5/Proxy6 не тронуты.
+// отложен, первый тик (режим выключен) снимает все три; чужие и
+// пользовательский Proxy0 с description "A" целы.
 func TestScenario_MigrateOffListError_DeferredThenSwept(t *testing.T) {
-	op, w, f := f562Stand(t)
+	op, w, f, _ := f562Stand(t)
 	ctx := context.Background()
 	f.Add(ndms.Interface{ID: "Proxy7", Type: "Proxy", Description: "sub1", State: "up"})
 	_ = f.DrainHooks()
 	op.subProxies = &staticSubProxies{list: []SubscriptionProxy{{Index: 7, Port: 1087, Label: "sub1"}}}
-	var events []string
-	m := NewMigrator(op, &fakeToggler{events: &events}, nil)
+	m := NewMigrator(op, &fakeToggler{events: new([]string)}, nil)
 	op.ndmsProxyEnabledFn = func() bool { return false }
 
 	f.FailList(errors.New("rci down"))
@@ -255,6 +340,7 @@ func TestScenario_MigrateOffListError_DeferredThenSwept(t *testing.T) {
 	if len(f.Posts) != 0 || len(op.deferredProxies) != 3 {
 		t.Fatalf("posts=%v метки=%v", f.Posts, op.deferredProxies)
 	}
+	op.needsOrphanCleanup.Store(false) // флаг — свой тест
 	f.FailList(nil)
 
 	w.tick(ctx)
@@ -263,15 +349,48 @@ func TestScenario_MigrateOffListError_DeferredThenSwept(t *testing.T) {
 			t.Fatalf("%s не снят: posts=%v", n, f.Posts)
 		}
 	}
-	if !f.Has("Proxy5") || !f.Has("Proxy6") || f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("posts=%v E=%d фантомов=%d", f.Posts, f.E, f.Phantoms)
+	mustHave(t, f, "Proxy0", "Proxy5", "Proxy6")
+	clean(t, f)
+}
+
+// Ревью F5: метка того же имени, поставленная, пока попытка сноса в полёте,
+// не теряется её успехом.
+func TestScenario_DeferredMark_ReMarkDuringRetryKept(t *testing.T) {
+	op, w, f, _ := f562Stand(t)
+	op.ndmsProxyEnabledFn = func() bool { return false }
+	op.deferProxyRemoval("Proxy3", "A")
+	f.InList(func() { op.deferProxyRemoval("Proxy3", "A") })
+	w.tick(context.Background())
+	f.InList(nil)
+	if f.Has("Proxy3") {
+		t.Fatalf("Proxy3 не снят: posts=%v", f.Posts)
 	}
+	if op.deferredProxies["Proxy3"] == nil {
+		t.Fatal("новая метка потеряна успехом устаревшей попытки")
+	}
+}
+
+type staticSubProxies struct{ list []SubscriptionProxy }
+
+func (s *staticSubProxies) SubscriptionProxies() []SubscriptionProxy { return s.list }
+
+// mustConfigWithout — текущий конфиг без туннеля tag.
+func mustConfigWithout(t *testing.T, op *Operator, tag string) *Config {
+	t.Helper()
+	cfg, err := op.loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.RemoveTunnel(tag); err != nil {
+		t.Fatal(err)
+	}
+	return cfg
 }
 
 // R38: метки переживают рестарт — новый Operator на том же каталоге грузит
 // файл, первый тик снимает сироту, опустевший набор убирает файл.
 func TestScenario_DeferredMarks_SurviveRestart(t *testing.T) {
-	op, _, f := f562Stand(t)
+	op, _, f, _ := f562Stand(t)
 	ctx := context.Background()
 	f.FailList(errors.New("rci down"))
 	if err := op.RemoveTunnel(ctx, "A"); err != nil {
@@ -289,12 +408,11 @@ func TestScenario_DeferredMarks_SurviveRestart(t *testing.T) {
 	w2 := NewWatchdog(op2, nil, nil)
 	w2.swept.Store(true)
 	w2.tick(ctx)
-	if f.Has("Proxy3") || !f.Has("Proxy4") || !f.Has("Proxy5") || !f.Has("Proxy6") {
+	if f.Has("Proxy3") {
 		t.Fatalf("после рестарта: posts=%v", f.Posts)
 	}
-	if f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("E=%d фантомов=%d", f.E, f.Phantoms)
-	}
+	mustHave(t, f, "Proxy0", "Proxy4", "Proxy5", "Proxy6")
+	clean(t, f)
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("пустой набор, а файл есть: %v", err)
 	}
@@ -319,16 +437,20 @@ func TestScenario_DeferredMarks_CorruptFile(t *testing.T) {
 // R38: набор не менялся (повторная метка, отказ с ростом выдержки) — файл
 // не переписан (тот же inode: AtomicWrite кладёт новый через rename).
 func TestScenario_DeferredMarks_NoWriteWhenUnchanged(t *testing.T) {
-	op, w, _ := f562Stand(t)
-	op.proxyMgr = &failingOrphans{}
-	op.deferProxyRemoval("Z")
+	op, w, _, p := f562Stand(t)
+	p.refuse = true
+	op.ndmsProxyEnabledFn = func() bool { return false }
+	op.deferProxyRemoval("Proxy3", "A")
 	path := filepath.Join(op.dir, deferredProxiesFile)
 	before, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	op.deferProxyRemoval("Z")
+	op.deferProxyRemoval("Proxy3", "A")
 	w.tick(context.Background()) // отказ сноса, выдержка 30 с
+	if p.attempts() != 1 {
+		t.Fatalf("попыток=%d, want 1", p.attempts())
+	}
 	after, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
@@ -338,43 +460,49 @@ func TestScenario_DeferredMarks_NoWriteWhenUnchanged(t *testing.T) {
 	}
 }
 
-// flakyOrphans — уборка отказывает fails раз, потом проходит.
-type flakyOrphans struct {
-	fakeProxies
-	fails, attempts int
-}
-
-func (f *flakyOrphans) RemoveOrphanSingboxProxies(context.Context, map[string]bool, map[int]bool, map[int]bool) error {
-	f.attempts++
-	if f.attempts <= f.fails {
-		return errors.New("list interfaces: rci down")
-	}
-	return nil
-}
-
-// R38: неудачная уборка по needsOrphanCleanup флаг не снимает; при живом
-// sing-box её повторяет тик сторожа (Reconcile туда не ходит), после успеха
-// — больше ни одной попытки.
+// R38 + ревью F4: флаг уборки режима off снимается только после
+// прочитанного списка; тик делает её при мёртвом sing-box и раннем выходе
+// Reconcile (ручной стоп). Найденное — наши Proxy3/Proxy4 — сносится тем
+// же тиком через метки; чужие и Proxy0 целы.
 func TestScenario_OrphanCleanupFlag_KeptOnFailure(t *testing.T) {
-	op, w, _ := f562Stand(t)
-	stub := &flakyOrphans{fails: 1}
-	op.proxyMgr = stub
+	op, w, f, _ := f562Stand(t)
 	op.ndmsProxyEnabledFn = func() bool { return false }
-	op.manuallyStopped.Store(false)
-	if err := os.WriteFile(op.pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+	op.MarkNeedsOrphanCleanup()
+	ctx := context.Background()
+
+	f.FailList(errors.New("rci down"))
+	w.tick(ctx)
+	if !op.needsOrphanCleanup.Load() || len(f.Posts) != 0 {
+		t.Fatalf("после отказа: флаг=%v posts=%v", op.needsOrphanCleanup.Load(), f.Posts)
+	}
+	f.FailList(nil)
+	w.tick(ctx)
+	if op.needsOrphanCleanup.Load() {
+		t.Fatal("флаг не снят после прочитанного списка")
+	}
+	if f.Has("Proxy3") || f.Has("Proxy4") {
+		t.Fatalf("наши не сняты: posts=%v", f.Posts)
+	}
+	mustHave(t, f, "Proxy0", "Proxy5", "Proxy6")
+	clean(t, f)
+}
+
+// Ревью F6: с меткой решение — по свежему списку, не по памяти. Память
+// тёплая и не знает Proxy8 (хук создания потерян), NDMS его знает — снос
+// идёт.
+func TestScenario_DeferredMark_DecidesByFreshList(t *testing.T) {
+	op, w, f, _ := f562Stand(t)
+	op.ndmsProxyEnabledFn = func() bool { return false }
+	pm := op.proxyMgr.(*ProxyManager)
+	if _, err := pm.queries.Interfaces.List(context.Background()); err != nil { // память тёплая
 		t.Fatal(err)
 	}
-	op.proc.matchBinaryFn = func(int) bool { return true }
-	op.MarkNeedsOrphanCleanup()
-
-	ctx := context.Background()
-	w.tick(ctx)
-	if stub.attempts != 1 || !op.needsOrphanCleanup.Load() {
-		t.Fatalf("после отказа: попыток=%d флаг=%v", stub.attempts, op.needsOrphanCleanup.Load())
+	f.Add(ndms.Interface{ID: "Proxy8", Type: "Proxy", Description: "gone", State: "up"})
+	_ = f.DrainHooks()
+	op.deferProxyRemoval("Proxy8", "gone")
+	w.tick(context.Background())
+	if f.Has("Proxy8") {
+		t.Fatalf("Proxy8 не снят: posts=%v", f.Posts)
 	}
-	w.tick(ctx)
-	w.tick(ctx)
-	if stub.attempts != 2 || op.needsOrphanCleanup.Load() {
-		t.Fatalf("после успеха: попыток=%d флаг=%v", stub.attempts, op.needsOrphanCleanup.Load())
-	}
+	clean(t, f)
 }

@@ -73,8 +73,8 @@ func buildSingboxCore(d singboxCoreDeps) singboxCore {
 		Bus:                    d.bus,
 	})
 	// Если на старте флаг disabled — orphan-cleanup (после возможного
-	// обрыва прошлой MigrateOff в любой момент). Reconcile подберёт
-	// сигнал на первом тике watchdog'а.
+	// обрыва прошлой MigrateOff в любой момент). Сигнал подберёт первый
+	// тик watchdog'а.
 	if !d.settings.IsSingboxNDMSProxyEnabled() {
 		op.MarkNeedsOrphanCleanup()
 	}

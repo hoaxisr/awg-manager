@@ -421,7 +421,7 @@ func (o *Operator) RemoveTunnel(ctx context.Context, tag string) error {
 	if proxyIdx >= 0 {
 		if err := o.proxyMgr.RemoveProxy(ctx, proxyIdx); err != nil {
 			o.log.Warn("remove proxy failed, deferred", "tag", tag, "err", err)
-			o.deferProxyRemoval(tag)
+			o.deferProxyRemoval(proxyName(proxyIdx), tag)
 		}
 	}
 	if o.bus != nil {

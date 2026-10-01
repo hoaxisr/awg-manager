@@ -51,7 +51,8 @@ type ndmsProxies interface {
 	EnsureProxy(ctx context.Context, index, port int, description string) error
 	NextFreeIndex(ctx context.Context, reserved map[int]bool) (int, error)
 	RemoveProxy(ctx context.Context, index int) error
-	RemoveOrphanSingboxProxies(ctx context.Context, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) error
+	OwnedProxies(ctx context.Context, tunnelProxies map[string]string, subProxyIdx map[int]bool) ([]ProxyMark, error)
+	RemoveMarkedProxy(ctx context.Context, m ProxyMark) (MarkedOutcome, error)
 	ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) ([]string, error)
 	SyncProxies(ctx context.Context, tunnels []TunnelInfo) error
 }
@@ -118,27 +119,38 @@ func (pm *ProxyManager) RemoveProxy(ctx context.Context, index int) error {
 	return pm.commands.Proxies.DeleteProxy(ctx, c)
 }
 
-// RemoveOrphanSingboxProxies удаляет ProxyN, ассоциированные с sing-box,
-// которые остались в NDMS после перехода в режим "NDMS Proxy disabled"
-// (или после кривого middle-of-MigrateOff обрыва). Безопасно сохраняет
-// Proxy, созданные пользователем вручную.
-//
-// Критерии "ours":
-//  1. iface.Description совпадает с одним из tunnelTags (наш ProxyManager
-//     пишет tunnel tag в description — proxy.go:47, operator.go:1292).
-//  2. iface.Description пустой И idx попадает в ourPortSlots (некоторые
-//     версии прошивки могут не возвращать description в List).
-//
-// Прочие ProxyN остаются нетронутыми — это пользовательские интерфейсы.
-// Best-effort: при ошибке удаления одного proxy переходит к следующему,
-// возвращает первую ошибку.
-func (pm *ProxyManager) RemoveOrphanSingboxProxies(ctx context.Context, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) error {
-	ifaces, err := pm.queries.Interfaces.List(ctx)
+// ProxyMark — ProxyN, который мы создали и не смогли снять: точная пара
+// (имя, description) на момент метки (F562). Снос — только записи, у которой
+// в свежем списке совпадает и то и другое.
+type ProxyMark struct {
+	Name string `json:"name"`
+	Desc string `json:"desc"`
+}
+
+// MarkedOutcome — чем кончился RemoveMarkedProxy без ошибки.
+type MarkedOutcome int
+
+const (
+	MarkedRemoved MarkedOutcome = iota // снят
+	MarkedAbsent                       // записи нет — снимать нечего
+	MarkedForeign                      // description другой — запись уже не наша
+)
+
+// OwnedProxies — наши ProxyN по СВОЕМУ свежему списку (не память, F562).
+// tunnelProxies — имя ProxyN туннеля → его тег: наш, если description равен
+// тегу или пуст (прошивки без description в списке); subProxyIdx — индексы
+// подписок (их description — метка пользователя, владение по индексу).
+// Только по description (как proxyIsOurs) не узнаём: пользовательский
+// KeenOS-прокси с description, равным тегу, был бы снесён (ревью F1). Для
+// уборки режима NDMS Proxy off: найденное уходит в метки отложенного сноса.
+// Список не прочитан — ошибка.
+func (pm *ProxyManager) OwnedProxies(ctx context.Context, tunnelProxies map[string]string, subProxyIdx map[int]bool) ([]ProxyMark, error) {
+	snap, err := pm.queries.Interfaces.Snapshot(ctx, 0)
 	if err != nil {
-		return fmt.Errorf("list interfaces: %w", err)
+		return nil, err
 	}
-	var firstErr error
-	for _, iface := range ifaces {
+	var out []ProxyMark
+	for _, iface := range snap.Records() {
 		if !strings.HasPrefix(iface.ID, proxyIfacePrefix) {
 			continue
 		}
@@ -146,19 +158,40 @@ func (pm *ProxyManager) RemoveOrphanSingboxProxies(ctx context.Context, tunnelTa
 		if n, e := fmt.Sscanf(iface.ID, proxyIfacePrefix+"%d", &idx); e != nil || n != 1 {
 			continue
 		}
-		if !proxyIsOurs(idx, iface.Description, tunnelTags, ourPortSlots, subProxyIdx) {
-			continue
-		}
-		if err := pm.RemoveProxy(ctx, idx); err != nil && firstErr == nil {
-			firstErr = err
+		tag, tunnel := tunnelProxies[iface.ID]
+		if subProxyIdx[idx] || tunnel && (iface.Description == tag || iface.Description == "") {
+			out = append(out, ProxyMark{Name: iface.ID, Desc: iface.Description})
 		}
 	}
-	return firstErr
+	return out, nil
+}
+
+// RemoveMarkedProxy снимает m.Name, только если он есть в свежем списке и
+// его description равен m.Desc: по одному description (свободный текст
+// пользователя) чужой KeenOS-прокси не отличить от нашего. Нет записи или
+// description другой — без команд. Список не прочитан или NDMS отказал —
+// ошибка.
+func (pm *ProxyManager) RemoveMarkedProxy(ctx context.Context, m ProxyMark) (MarkedOutcome, error) {
+	c, iface, ok, err := pm.queries.Interfaces.Confirm(ctx, m.Name)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return MarkedAbsent, nil
+	}
+	if iface == nil || iface.Description != m.Desc {
+		return MarkedForeign, nil
+	}
+	_ = pm.commands.Proxies.ProxyDown(ctx, c) // ignore error — may be already down
+	if err := pm.commands.Proxies.DeleteProxy(ctx, c); err != nil {
+		return 0, err
+	}
+	return MarkedRemoved, nil
 }
 
 // ListNativeProxies returns kernel names (e.g. "t2s0") of NDMS Proxy
 // interfaces NOT created by us — KeenOS-native SOCKS proxies the user may
-// bind a router direct outbound to (#323). Mirrors RemoveOrphanSingboxProxies'
+// bind a router direct outbound to (#323). Mirrors OwnedProxies'
 // enumeration but inverts the ownership test and resolves kernel names.
 func (pm *ProxyManager) ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) ([]string, error) {
 	ifaces, err := pm.queries.Interfaces.List(ctx)
