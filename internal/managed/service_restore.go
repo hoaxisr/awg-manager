@@ -220,6 +220,18 @@ func (s *Service) restoreOne(ctx context.Context, sv ManagedServerExport, opts R
 		s.appLog.Warn("managed-restore-preflight-conflict", sv.InterfaceName, fmt.Sprintf("Server preflight found %d conflict(s)", len(conflicts)))
 		return outcome
 	}
+	// Подсеть — за этим восстановлением до выхода, как у Create (F554).
+	// preflight читал занятые без резервации: параллельное создание могло
+	// занять подсеть после него.
+	release, err := s.reserveServerSubnet(ctx, sv.Address, sv.Mask, sv.ListenPort, excludeIface)
+	if err != nil {
+		outcome.Action = "conflict"
+		outcome.Conflicts = []string{err.Error()}
+		s.sysLog().Warn("managed restore preflight conflict", "interface", sv.InterfaceName, "target", target, "conflicts", 1)
+		s.appLog.Warn("managed-restore-preflight-conflict", sv.InterfaceName, "Server preflight found 1 conflict(s)")
+		return outcome
+	}
+	defer release()
 
 	persistMode := persistAdd
 	if storageSameIdentity && target == sv.InterfaceName {
@@ -259,7 +271,7 @@ func (s *Service) preflight(ctx context.Context, sv ManagedServerExport, exclude
 	var reasons []string
 
 	// Reuse Create-level server validation.
-	if err := s.validateServerParams(ctx, sv.Address, sv.Mask, sv.ListenPort, excludeIface); err != nil {
+	if err := s.validateServerParams(ctx, sv.Address, sv.Mask, sv.ListenPort, excludeIface, s.inflightSubnets()); err != nil {
 		reasons = append(reasons, err.Error())
 	}
 

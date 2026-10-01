@@ -23,10 +23,12 @@ const (
 // Multiple managed servers may coexist; the only collision check is on the
 // allocated NDMS interface name.
 func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage.ManagedServer, error) {
-	// Validate
-	if err := s.validateServerParams(ctx, req.Address, req.Mask, req.ListenPort, ""); err != nil {
+	// Validate; подсеть занята за этим созданием до выхода (F554).
+	release, err := s.reserveServerSubnet(ctx, req.Address, req.Mask, req.ListenPort, "")
+	if err != nil {
 		return nil, err
 	}
+	defer release()
 
 	// Find free index
 	idx, err := s.queries.WGServers.FindFreeIndex(ctx)
@@ -123,7 +125,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateServerRequest
 		return fmt.Errorf("managed server not found: %s", id)
 	}
 
-	if err := s.validateServerParams(ctx, req.Address, req.Mask, req.ListenPort, server.InterfaceName); err != nil {
+	if err := s.validateServerParams(ctx, req.Address, req.Mask, req.ListenPort, server.InterfaceName, s.inflightSubnets()); err != nil {
 		return err
 	}
 
@@ -653,7 +655,11 @@ func (s *Service) GetStats(ctx context.Context, id string) (*ManagedServerStats,
 	}, nil
 }
 
-func (s *Service) validateServerParams(ctx context.Context, address, mask string, port int, excludeIface string) error {
+// validateServerParams — проверка параметров сервера. inflight — подсети
+// серверов в создании (F554), снятые ДО чтения списка: создание, завершённое
+// после снятия, к тому моменту уже поставило адрес на роутере (Invalidate), и
+// список его видит.
+func (s *Service) validateServerParams(ctx context.Context, address, mask string, port int, excludeIface string, inflight []usedSubnet) error {
 	if net.ParseIP(address) == nil {
 		return fmt.Errorf("invalid IP address: %s", address)
 	}
@@ -689,6 +695,7 @@ func (s *Service) validateServerParams(ctx context.Context, address, mask string
 		// Пересечение не проверить — отказ, а не пропуск (F573, решение 4).
 		return fmt.Errorf("проверка пересечения подсети: список интерфейсов: %w", err)
 	}
+	used = append(used, inflight...)
 	if conflict := findConflict(cidr, used); conflict != nil {
 		return fmt.Errorf("подсеть %s пересекается с интерфейсом «%s» (%s)", cidr.String(), conflict.label, conflict.cidr.String())
 	}

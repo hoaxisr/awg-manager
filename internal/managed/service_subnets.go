@@ -176,6 +176,50 @@ func (s *Service) listUsedSubnets(ctx context.Context, excludeIface string) ([]u
 	return usedSubnetsOf(snap.Records(), excludeIface), nil
 }
 
+// reserveServerSubnet — validateServerParams и резервация подсети одним шагом
+// (F554): два параллельных создания проверяли подсеть до того, как любое из
+// них ставило адрес на роутере, и оба проходили с одной подсетью. Проверка и
+// резервация — под serverSubnetMu, release снимает резервацию под ним же:
+// создание, снятое с резервации, уже поставило адрес на роутере (или снесло
+// интерфейс), и следующая проверка видит это в свежем списке (Invalidate).
+// release вызвать ровно один раз, после записи в хранилище или отката.
+func (s *Service) reserveServerSubnet(ctx context.Context, address, mask string, port int, excludeIface string) (release func(), err error) {
+	s.serverSubnetMu.Lock()
+	defer s.serverSubnetMu.Unlock()
+	if err := s.validateServerParams(ctx, address, mask, port, excludeIface, s.inflightLocked()); err != nil {
+		return nil, err
+	}
+	cidr, err := parseManagedSubnet(address, mask)
+	if err != nil {
+		return nil, err
+	}
+	u := &usedSubnet{label: "создаваемый сервер", cidr: cidr}
+	if s.inflight == nil {
+		s.inflight = make(map[*usedSubnet]struct{})
+	}
+	s.inflight[u] = struct{}{}
+	return func() {
+		s.serverSubnetMu.Lock()
+		delete(s.inflight, u)
+		s.serverSubnetMu.Unlock()
+	}, nil
+}
+
+// inflightSubnets — подсети серверов в создании (см. reserveServerSubnet).
+func (s *Service) inflightSubnets() []usedSubnet {
+	s.serverSubnetMu.Lock()
+	defer s.serverSubnetMu.Unlock()
+	return s.inflightLocked()
+}
+
+func (s *Service) inflightLocked() []usedSubnet {
+	out := make([]usedSubnet, 0, len(s.inflight))
+	for u := range s.inflight {
+		out = append(out, *u)
+	}
+	return out
+}
+
 // usedSubnetsOf — разбор listUsedSubnets над уже прочитанным списком.
 func usedSubnetsOf(all []ndms.Interface, excludeIface string) []usedSubnet {
 	out := make([]usedSubnet, 0, len(all))

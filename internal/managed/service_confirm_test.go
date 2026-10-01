@@ -663,7 +663,7 @@ func TestValidateServerParams_ListError_FailsClosed(t *testing.T) {
 	f := query.NewFakeNDMS()
 	s := newServiceWithOracle(t, f, nil)
 	f.FailList(errors.New("rci down"))
-	if err := s.validateServerParams(context.Background(), "10.66.66.1", "255.255.255.0", 51820, ""); err == nil {
+	if err := s.validateServerParams(context.Background(), "10.66.66.1", "255.255.255.0", 51820, "", nil); err == nil {
 		t.Fatal("проверка пересечения подсети молча пропущена")
 	}
 }

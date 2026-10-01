@@ -107,6 +107,9 @@ func (s *Service) occupiedSnapshot(ctx context.Context, iface string) (occupiedS
 	if _, err := s.settings.Get(); err != nil {
 		return nil, query.Confirmed{}, false, fmt.Errorf("read settings: %w", err)
 	}
+	// Подсети серверов в создании (F554) — до списка, по правилу
+	// validateServerParams: снятое с резервации создание список уже видит.
+	inflight := s.inflightSubnets()
 	// Подтверждение — только свежим списком: пропущенный хук не выкидывает
 	// существующий сервер из проверки (T6). Кандидаты — все записи того же
 	// списка: отдельное чтение карты перед ним (по метке «грязно» после нашей
@@ -125,6 +128,9 @@ func (s *Service) occupiedSnapshot(ctx context.Context, iface string) (occupiedS
 	for _, u := range usedSubnetsOf(ifaces, "") {
 		out = append(out, occupiedEntry{Occupied: peersubnet.Occupied{Net: u.cidr, Label: "интерфейс " + u.label}})
 		subnetByID[u.id] = u.cidr
+	}
+	for _, u := range inflight {
+		out = append(out, occupiedEntry{Occupied: peersubnet.Occupied{Net: u.cidr, Label: u.label}})
 	}
 	// Тот же набор, что показывает список серверов (listServers): помеченные,
 	// встроенный «Wireguard VPN Server» (обычно не помечен) и managed.

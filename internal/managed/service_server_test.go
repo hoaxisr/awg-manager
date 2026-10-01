@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1792,5 +1793,151 @@ func TestNatStaticTargets_DegradationIsInAppLog(t *testing.T) {
 				t.Fatalf("журнал = %v", spy.entries)
 			}
 		})
+	}
+}
+
+// gatePoster задерживает первый POST создания интерфейса (пустой объект под
+// именем) до закрытия gate — вне замка recordingPoster: создание «в полёте»
+// после проверки подсети, адреса на роутере ещё нет.
+type gatePoster struct {
+	rciPoster
+	armed   atomic.Bool // не sync.Once: Do второго создания ждал бы первое
+	entered chan struct{}
+	gate    chan struct{}
+}
+
+func (g *gatePoster) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	if m, ok := payload.(map[string]interface{}); ok {
+		if intf, ok := m["interface"].(map[string]interface{}); ok {
+			for _, v := range intf {
+				if cfg, ok := v.(map[string]interface{}); ok && len(cfg) == 0 {
+					if g.armed.CompareAndSwap(true, false) {
+						close(g.entered)
+						<-g.gate
+					}
+				}
+			}
+		}
+	}
+	return g.rciPoster.Post(ctx, payload)
+}
+
+// createInFlight запускает Create(first) и ждёт, пока он встанет на POST
+// создания; finish отпускает его и возвращает результат.
+func createInFlight(t *testing.T, svc *Service, first CreateServerRequest) (finish func() error) {
+	t.Helper()
+	return inFlight(t, svc, func() error {
+		_, err := svc.Create(context.Background(), first)
+		return err
+	})
+}
+
+// inFlight — то же для любого создания run.
+func inFlight(t *testing.T, svc *Service, run func() error) (finish func() error) {
+	t.Helper()
+	gp := &gatePoster{rciPoster: svc.transport, entered: make(chan struct{}), gate: make(chan struct{})}
+	gp.armed.Store(true)
+	svc.transport = gp
+	done := make(chan error, 1)
+	go func() { done <- run() }()
+	<-gp.entered
+	return func() error {
+		close(gp.gate)
+		return <-done
+	}
+}
+
+// F554: подсеть сервера, создание которого в полёте, занята — второе создание
+// с той же подсетью отвергается, с другой проходит; оба в итоге в хранилище.
+func TestService_Create_ParallelSameSubnetRejected(t *testing.T) {
+	svc, store, _ := newCreateTestService(t)
+	finish := createInFlight(t, svc, CreateServerRequest{Address: "10.66.66.1", Mask: "255.255.255.0", ListenPort: 51820})
+	_, err := svc.Create(context.Background(), CreateServerRequest{Address: "10.66.66.2", Mask: "255.255.255.0", ListenPort: 51821})
+	if err == nil || !strings.Contains(err.Error(), "пересекается") {
+		t.Errorf("same subnet while the first create is in flight: err=%v", err)
+	}
+	if err := finish(); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if _, err := svc.Create(context.Background(), CreateServerRequest{Address: "10.77.77.1", Mask: "255.255.255.0", ListenPort: 51822}); err != nil {
+		t.Fatalf("other subnet: %v", err)
+	}
+	if got := len(store.GetManagedServers()); got != 2 {
+		t.Fatalf("servers in storage: %d", got)
+	}
+}
+
+// F554: OccupiedSubnets (сети за клиентом) видит подсеть создаваемого сервера.
+func TestOccupiedSubnets_IncludesServerInFlight(t *testing.T) {
+	svc, _, _ := newCreateTestService(t)
+	finish := createInFlight(t, svc, CreateServerRequest{Address: "10.66.66.1", Mask: "255.255.255.0", ListenPort: 51820})
+	occ, err := svc.OccupiedSubnets(context.Background(), PeerRef{})
+	if err := finish(); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, o := range occ {
+		if o.Net.String() == "10.66.66.0/24" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("in-flight server subnet not occupied: %+v", occ)
+	}
+}
+
+// F554: резервация снимается при отказе создания — та же подсеть свободна.
+func TestService_Create_FailureReleasesSubnet(t *testing.T) {
+	svc, store, _ := newCreateTestService(t)
+	poster := svc.transport.(*recordingPoster)
+	poster.failOn = func(m map[string]interface{}) error {
+		for _, v := range m["interface"].(map[string]interface{}) {
+			if _, ok := v.(map[string]interface{})["description"]; ok {
+				return errors.New("configure rejected")
+			}
+		}
+		return nil
+	}
+	if _, err := svc.Create(context.Background(), CreateServerRequest{Address: "10.66.66.1", Mask: "255.255.255.0", ListenPort: 51820}); err == nil {
+		t.Fatal("first create must fail")
+	}
+	poster.failOn = nil
+	if _, err := svc.Create(context.Background(), CreateServerRequest{Address: "10.66.66.1", Mask: "255.255.255.0", ListenPort: 51820}); err != nil {
+		t.Fatalf("subnet must be free after a failed create: %v", err)
+	}
+	if got := len(store.GetManagedServers()); got != 1 {
+		t.Fatalf("servers in storage: %d", got)
+	}
+}
+
+// F554: восстановление сервера резервирует подсеть так же, как Create.
+func TestRestore_InFlightSubnetReserved(t *testing.T) {
+	svc, store, _ := newCreateTestService(t)
+	finish := inFlight(t, svc, func() error {
+		out := svc.Restore(context.Background(), []ManagedServerExport{{
+			InterfaceName: "Wireguard0",
+			Address:       "10.66.66.1",
+			Mask:          "255.255.255.0",
+			ListenPort:    51900,
+			PrivateKey:    validPrivateKey(1),
+			Peers:         []storage.ManagedPeer{},
+		}}, RestoreOptions{})
+		if len(out) != 1 || out[0].Action != "created" {
+			return fmt.Errorf("restore: %+v", out)
+		}
+		return nil
+	})
+	_, err := svc.Create(context.Background(), CreateServerRequest{Address: "10.66.66.2", Mask: "255.255.255.0", ListenPort: 51821})
+	if err == nil || !strings.Contains(err.Error(), "пересекается") {
+		t.Errorf("same subnet while restore is in flight: err=%v", err)
+	}
+	if err := finish(); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(store.GetManagedServers()); got != 1 {
+		t.Fatalf("servers in storage: %d", got)
 	}
 }
