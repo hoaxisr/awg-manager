@@ -36,13 +36,14 @@ const proxyrtListenMovesPath = "/api/proxyrt/seed/listen-moves"
 // планом (требования 15 и 17); остальные заведены здесь под гейты создания, у
 // каждого из которых своя причина отказа и свой текст для пользователя.
 const (
-	proxyCodeNotSeeded       = "PROXY_NOT_SEEDED"
-	proxyCodeDeclareFailed   = "PROXY_DECLARE_FAILED"
-	proxyCodeNotFound        = "NOT_FOUND"
-	proxyCodeConfigInvalid   = "PROXY_CONFIG_INVALID"
-	proxyCodeOpkgUnsupported = "PROXY_OPKGTUN_UNSUPPORTED"
-	proxyCodeKindSingleton   = "PROXY_KIND_SINGLETON"
-	proxyCodeConflict        = "CONFLICT"
+	proxyCodeNotSeeded          = "PROXY_NOT_SEEDED"
+	proxyCodeDeclareFailed      = "PROXY_DECLARE_FAILED"
+	proxyCodeNotFound           = "NOT_FOUND"
+	proxyCodeConfigInvalid      = "PROXY_CONFIG_INVALID"
+	proxyCodeOpkgUnsupported    = "PROXY_OPKGTUN_UNSUPPORTED"
+	proxyCodeKindSingleton      = "PROXY_KIND_SINGLETON"
+	proxyCodeInstanceDisabled   = "PROXY_INSTANCE_DISABLED"
+	proxyCodeRestartUnsupported = "PROXY_RESTART_UNSUPPORTED"
 )
 
 // ProxyManager — узкий срез *manager.Manager, нужный поверхности.
@@ -694,7 +695,7 @@ func (h *ProxyInstancesHandler) restart(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if !rec.Enabled {
-		response.ErrorWithStatus(w, http.StatusConflict, "инстанс выключен", proxyCodeConflict)
+		response.ErrorWithStatus(w, http.StatusConflict, "инстанс выключен", proxyCodeInstanceDisabled)
 		return
 	}
 	if err := h.deps.Manager.Restart(r.Context(), key, "запрос пользователя"); err != nil {
@@ -705,7 +706,7 @@ func (h *ProxyInstancesHandler) restart(w http.ResponseWriter, r *http.Request, 
 		}
 		if errors.Is(err, manager.ErrRestartUnsupported) {
 			response.ErrorWithStatus(w, http.StatusConflict,
-				"перезапуск для этой роли не поддерживается", proxyCodeConflict)
+				"перезапуск для этой роли не поддерживается", proxyCodeRestartUnsupported)
 			return
 		}
 		response.InternalError(w, err.Error())

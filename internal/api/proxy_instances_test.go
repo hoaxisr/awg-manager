@@ -1219,6 +1219,9 @@ func TestProxyInstancesRestart_Disabled(t *testing.T) {
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("код = %d, ждали 409 (выключенный инстанс): %s", rr.Code, rr.Body.String())
 	}
+	if got := errCode(t, rr); got != "PROXY_INSTANCE_DISABLED" {
+		t.Fatalf("код ошибки = %q, ждали PROXY_INSTANCE_DISABLED", got)
+	}
 }
 
 func TestProxyInstancesRestart_UnsupportedRole(t *testing.T) {
@@ -1230,6 +1233,9 @@ func TestProxyInstancesRestart_UnsupportedRole(t *testing.T) {
 	rr := doProxy(t, h, http.MethodPost, "/api/proxyrt/instances/wdtt-server:default/restart", "")
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("код = %d, ждали 409 (серверная роль не поддерживает перезапуск): %s", rr.Code, rr.Body.String())
+	}
+	if got := errCode(t, rr); got != "PROXY_RESTART_UNSUPPORTED" {
+		t.Fatalf("код ошибки = %q, ждали PROXY_RESTART_UNSUPPORTED", got)
 	}
 }
 

@@ -633,3 +633,26 @@ func TestProcRequestRestartLifecycle(t *testing.T) {
 		t.Fatalf("после Apply(restart) план обязан быть пуст: %v", stepsAfter)
 	}
 }
+
+// Успешный start уже поднял процесс заново: запрос перезапуска, пришедший
+// до него, выполнен и снимается — иначе следующий прогон перезапустил бы
+// только что стартовавший процесс.
+func TestProcStartClearsRestartRequest(t *testing.T) {
+	link := &fakeLink{st: awgmproto.State{PID: 100, ConfigHash: "h1"}}
+	r := &fakeRunner{pid: 100, alive: true}
+	p := newProc(link, r, okGate{}, time.Now)
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.wantHash = "h1"
+
+	p.RequestRestart("тест")
+	if err := p.Apply(context.Background(), proxyrt.Step{Resource: "process", Op: "start"}); err != nil {
+		t.Fatalf("Apply(start) err: %v", err)
+	}
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps := p.Plan(obs); len(steps) != 0 {
+		t.Fatalf("после успешного start запрос обязан сняться, план: %v", steps)
+	}
+}
