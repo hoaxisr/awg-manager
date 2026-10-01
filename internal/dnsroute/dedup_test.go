@@ -320,6 +320,7 @@ func (r *noopResolver) GetKernelIfaceName(ctx context.Context, tunnelID string) 
 }
 
 func (r *noopResolver) SystemTunnelsByIface(context.Context) map[string]string { return nil }
+func (r *noopResolver) ResolveTargetTunnel(context.Context, string) (string, bool) { return "", false }
 
 // --- BuildIndex tests ---
 

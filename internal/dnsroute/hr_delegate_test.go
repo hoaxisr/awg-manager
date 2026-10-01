@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 // newHRTestSvc returns a dnsroute ServiceImpl wired to a hydraroute.Service
@@ -74,6 +75,22 @@ func (s *stubResolver) GetKernelIfaceName(ctx context.Context, tunnelID string) 
 		return v, nil
 	}
 	return "", errTunnelUnknown{tunnelID}
+}
+
+func (s *stubResolver) ResolveTargetTunnel(_ context.Context, target string) (string, bool) {
+	if s.systemByIface != nil {
+		if id, ok := s.systemByIface[target]; ok {
+			return id, true
+		}
+	}
+	if s.kernelByTunnel != nil {
+		for tid, kname := range s.kernelByTunnel {
+			if kname == target || tid == target {
+				return tid, true
+			}
+		}
+	}
+	return "", false
 }
 
 type errTunnelUnknown struct{ id string }
@@ -383,5 +400,132 @@ func TestHRRoundTrip_SystemTargetIsKernelName(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("не прочитаны: %v", want)
+	}
+}
+
+func newHRTestSvcWithNDMS(t *testing.T, resolver InterfaceResolver) (*ServiceImpl, *hydraroute.Service, *query.FakeGetter) {
+	t.Helper()
+	dir := t.TempDir()
+	restore := hydraroute.SetPaths(
+		filepath.Join(dir, "domain.conf"),
+		filepath.Join(dir, "ip.list"),
+	)
+	t.Cleanup(restore)
+
+	hydra := hydraroute.NewService(&kernelResolverAdapter{resolver: resolver}, nil)
+	hydra.SetStatusForTest(true)
+
+	store := NewStore(t.TempDir())
+	if _, err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	q, c, _, fg := newTestNDMS()
+	hydra.SetQueries(q)
+	svc := &ServiceImpl{
+		store:    store,
+		queries:  q,
+		commands: c,
+		resolver: resolver,
+		hydra:    hydra,
+	}
+	return svc, hydra, fg
+}
+
+// Issue #967 regression test:
+// When a ghost policy (e.g. "awgm0") is created on the router by hrneo at boot,
+// rules bound to "awgm0" must NOT flip to policy mode. They must remain in interface mode.
+func TestHRRuleToDomainList_GhostPolicyDoesNotFlipInterfaceMode(t *testing.T) {
+	resolver := &stubResolver{
+		kernelByTunnel: map[string]string{"awgm0": "awgm0", "awg10": "awgm0"},
+	}
+	svc, hydra, fg := newHRTestSvcWithNDMS(t, resolver)
+	ctx := context.Background()
+
+	// Seed /show/rc/ip/policy with both a ghost policy "awgm0" and a valid user policy "Streaming"
+	fg.SetJSON("/show/rc/ip/policy", `{
+		"awgm0": {"description": ""},
+		"Streaming": {"description": "Media Policy"}
+	}`)
+
+	// 1. Direct rules created in domain.conf
+	_, err := hydra.CreateRule(hydraroute.HRRule{
+		Name:    "AwgRule",
+		Domains: []string{"awg-target.com"},
+		Target:  "awgm0",
+	})
+	if err != nil {
+		t.Fatalf("CreateRule AwgRule: %v", err)
+	}
+
+	_, err = hydra.CreateRule(hydraroute.HRRule{
+		Name:    "StreamRule",
+		Domains: []string{"netflix.com"},
+		Target:  "Streaming",
+	})
+	if err != nil {
+		t.Fatalf("CreateRule StreamRule: %v", err)
+	}
+
+	// 2. List rules through dnsroute Service
+	lists, err := svc.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(lists) != 2 {
+		t.Fatalf("expected 2 rules, got %d", len(lists))
+	}
+
+	var awgList, streamList *DomainList
+	for i := range lists {
+		if lists[i].Name == "AwgRule" {
+			awgList = &lists[i]
+		} else if lists[i].Name == "StreamRule" {
+			streamList = &lists[i]
+		}
+	}
+
+	if awgList == nil || streamList == nil {
+		t.Fatalf("missing expected rules: awgList=%v, streamList=%v", awgList, streamList)
+	}
+
+	// AwgRule must be in interface mode despite "awgm0" being in policySet!
+	if awgList.HRRouteMode != "interface" {
+		t.Errorf("AwgRule HRRouteMode = %q, want 'interface'", awgList.HRRouteMode)
+	}
+	if awgList.HRPolicyName != "" {
+		t.Errorf("AwgRule HRPolicyName = %q, want empty", awgList.HRPolicyName)
+	}
+	if len(awgList.Routes) != 1 || awgList.Routes[0].Interface != "awgm0" {
+		t.Errorf("AwgRule Routes = %+v, want [{Interface: awgm0}]", awgList.Routes)
+	}
+
+	// StreamRule must be in policy mode
+	if streamList.HRRouteMode != "policy" {
+		t.Errorf("StreamRule HRRouteMode = %q, want 'policy'", streamList.HRRouteMode)
+	}
+	if streamList.HRPolicyName != "Streaming" {
+		t.Errorf("StreamRule HRPolicyName = %q, want 'Streaming'", streamList.HRPolicyName)
+	}
+	if len(streamList.Routes) != 0 {
+		t.Errorf("StreamRule Routes = %+v, want empty", streamList.Routes)
+	}
+
+	// 3. Create a new rule with interface mode for awgm0
+	created, err := svc.Create(ctx, DomainList{
+		Name:          "NewAwgRule",
+		Backend:       "hydraroute",
+		ManualDomains: []string{"new-awg.com"},
+		HRRouteMode:   "interface",
+		Routes:        []RouteTarget{{TunnelID: "awgm0"}},
+	})
+	if err != nil {
+		t.Fatalf("Create NewAwgRule: %v", err)
+	}
+	if created.HRRouteMode != "interface" {
+		t.Errorf("created rule HRRouteMode = %q, want 'interface'", created.HRRouteMode)
+	}
+	if len(created.Routes) != 1 || created.Routes[0].Interface != "awgm0" {
+		t.Errorf("created rule Routes = %+v, want Interface: awgm0", created.Routes)
 	}
 }

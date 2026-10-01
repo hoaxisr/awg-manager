@@ -66,6 +66,11 @@ type Catalog interface {
 	// GetKernelIfaceName resolves tunnelID to the kernel-level interface name
 	// for HydraRoute DirectRoute (not NDMS name).
 	GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error)
+
+	// ResolveTargetTunnel resolves a target interface name (kernel name or NDMS name)
+	// or tunnel ID back to a tunnel ID, and reports whether the target corresponds to
+	// a known tunnel or network interface.
+	ResolveTargetTunnel(ctx context.Context, target string) (string, bool)
 }
 
 // TunnelWithStatus is the tunnel info Catalog needs from the provider.
@@ -429,6 +434,77 @@ func (c *CatalogImpl) GetKernelIfaceName(ctx context.Context, tunnelID string) (
 	}
 	// Managed kernel: OS4 "awgm0" → "awgm0", OS5 "awg10" → "opkgtun10"
 	return tunnel.NewNames(tunnelID).IfaceName, nil
+}
+
+// ResolveTargetTunnel resolves a target interface name (kernel name or NDMS name)
+// or tunnel ID back to a tunnel ID, and reports whether the target corresponds to
+// a known tunnel or network interface.
+func (c *CatalogImpl) ResolveTargetTunnel(ctx context.Context, target string) (string, bool) {
+	if target == "" {
+		return "", false
+	}
+	// Direct tunnelID match or system/wan prefixes
+	if strings.HasPrefix(target, "wan:") {
+		return target, true
+	}
+	if tunnel.IsSystemTunnel(target) {
+		return target, true
+	}
+	// System tunnel interface resolution (kernel or NDMS name to system:ID)
+	systemMap := c.SystemTunnelsByIface(ctx)
+	if id, ok := systemMap[target]; ok {
+		return id, true
+	}
+	// Exit registry
+	if _, _, ok := c.lookupExit(target); ok {
+		return target, true
+	}
+	// Managed tunnels (by ID, kernel iface, or NDMS iface)
+	if c.provider != nil {
+		if stored, err := c.provider.ListStored(ctx); err == nil {
+			for _, t := range stored {
+				if t.ID == target {
+					return t.ID, true
+				}
+				if t.Backend == "nativewg" {
+					names := nwg.NewNWGNames(t.NWGIndex)
+					if names.IfaceName == target || names.NDMSName == target {
+						return t.ID, true
+					}
+				} else if t.Backend == backendWdttRaw {
+					if e, _, ok := c.lookupExit(t.ID); ok {
+						if e.KernelIface == target || e.NDMSName == target {
+							return t.ID, true
+						}
+					}
+				} else {
+					names := tunnel.NewNames(t.ID)
+					if names.IfaceName == target || (names.NDMSName != "" && names.NDMSName == target) {
+						return t.ID, true
+					}
+				}
+			}
+		}
+		if wanModel := c.provider.WANModel(); wanModel != nil {
+			if wanModel.Known(target) {
+				return "wan:" + target, true
+			}
+			if ndmsID := wanModel.IDFor(target); ndmsID != "" {
+				return "wan:" + target, true
+			}
+		}
+	}
+	// Check router interfaces
+	if c.ifaces != nil {
+		if list, err := c.ifaces.List(ctx); err == nil {
+			for _, iface := range list {
+				if iface.ID == target || iface.SystemName == target {
+					return iface.ID, true
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 // SetSnapshotProvider registers a named snapshot provider function.

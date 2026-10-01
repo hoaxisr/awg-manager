@@ -205,6 +205,17 @@
 		r: DnsRoute,
 	): { name: string; kind: 'policy' | 'interface'; tunnelId?: string } | null {
 		if (r.hrRouteMode === 'policy' && r.hrPolicyName) {
+			const ifaceMatch = tunnels.find(
+				(t) => t.iface === r.hrPolicyName || t.name === r.hrPolicyName || t.id === r.hrPolicyName,
+			);
+			const policyIfaceMatch = policyInterfaces.find((i) => i.name === r.hrPolicyName);
+			if (ifaceMatch || policyIfaceMatch) {
+				return {
+					name: r.hrPolicyName,
+					kind: 'interface',
+					tunnelId: ifaceMatch?.id,
+				};
+			}
 			return { name: r.hrPolicyName, kind: 'policy' };
 		}
 		const first = r.routes?.[0];
