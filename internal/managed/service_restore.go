@@ -436,7 +436,7 @@ func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerE
 		return fmt.Errorf("set policy: %w", err)
 	}
 	if len(sv.ASC) > 0 {
-		if err := s.applyASCParams(ctx, iface, sv.ASC); err != nil {
+		if err := s.applyASCParams(ctx, iface, sv.ASC); err != nil && !s.ascUnverified("managed-restore", iface.Name(), err) {
 			return fmt.Errorf("set ASC params: %w", err)
 		}
 	}
@@ -711,7 +711,7 @@ func (s *Service) applyMergePeers(ctx context.Context, iface query.Confirmed, ex
 
 func (s *Service) applyASCOnMerge(ctx context.Context, iface query.Confirmed, asc json.RawMessage) error {
 	ifaceName := iface.Name()
-	if err := s.applyASCParams(ctx, iface, asc); err != nil {
+	if err := s.applyASCParams(ctx, iface, asc); err != nil && !s.ascUnverified("managed-restore-merge", ifaceName, err) {
 		return fmt.Errorf("apply ASC params on merge: %w", err)
 	}
 	i1, i2, i3, i4, i5, err := extractASCSignatures(asc)

@@ -90,7 +90,7 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 			s.cleanupInterface(ctx, iface)
 			return nil, fmt.Errorf("generate ASC params: %w", err)
 		}
-		if err := s.applyASCParams(ctx, iface, asc); err != nil {
+		if err := s.applyASCParams(ctx, iface, asc); err != nil && !s.ascUnverified("create", ifaceName, err) {
 			s.cleanupInterface(ctx, iface)
 			return nil, fmt.Errorf("apply ASC params: %w", err)
 		}

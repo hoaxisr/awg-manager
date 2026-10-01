@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
-	"slices"
 	"strings"
 	"time"
 
@@ -383,37 +383,74 @@ func (s *Service) verifyASCParamsApplied(ctx context.Context, ifaceName string, 
 			extended = true
 		}
 	}
-	// Одно свежее дерево после записи: NDMS отвечает, уже применив команду, а
-	// молча отвергнутая запись повтором не появится (F581; прежние 5 попыток
-	// по 150 мс стоили до 5 полных деревьев rc на действие).
-	got, err := s.queries.WGServers.ASCParamsFresh(ctx, ifaceName, extended)
-	if err != nil {
-		return err
-	}
-	actual, _, err := normalizeASCForCompare(got)
-	if err != nil {
-		return err
-	}
-	if wantDisabled {
-		if isDisabledReadback(actual) {
-			return nil
-		}
-	} else {
-		match := true
-		keys := make([]string, 0, len(want))
-		for k := range want {
-			keys = append(keys, k)
-		}
-		slices.Sort(keys)
-		for _, k := range keys {
-			if actual[k] != want[k] {
-				match = false
-				break
+	// Сверка — не больше двух свежих деревьев rc (R44, F581): второе — только
+	// после несовпадения (через ascVerifyPause) или ошибки чтения первого.
+	var actual map[string]string
+	var readErr error
+	for attempt := range 2 {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("%w: %v", ErrASCUnverified, ctx.Err())
+			case <-time.After(ascVerifyPause):
 			}
 		}
-		if match {
+		actual, readErr = s.readASCFresh(ctx, ifaceName, extended)
+		if readErr != nil {
+			continue
+		}
+		if ascReadbackMatches(want, wantDisabled, actual) {
 			return nil
 		}
 	}
+	if readErr != nil {
+		return fmt.Errorf("%w: %v", ErrASCUnverified, readErr)
+	}
 	return fmt.Errorf("ASC params were not applied by router: want=%v got=%v", want, actual)
+}
+
+// ErrASCUnverified — запись ASC роутер принял (POST без ошибки), а прочитать
+// результат для сверки не удалось. Это не отказ записи: Create не откатывает
+// сервер, restore не падает, правка публикует изменение (R44).
+var ErrASCUnverified = errors.New("роутер принял запись ASC, но прочитать результат для проверки не удалось")
+
+// ascUnverified — err несёт ErrASCUnverified: шаг не провален (R44), в журнал
+// уходит предупреждение. Прочие ошибки — false, решает вызывающий.
+func (s *Service) ascUnverified(op, ifaceName string, err error) bool {
+	if !errors.Is(err, ErrASCUnverified) {
+		return false
+	}
+	s.appLog.Warn(op, ifaceName, err.Error())
+	return true
+}
+
+// ascVerifyPause — пауза перед вторым чтением сверки. Страховка на случай,
+// если rc отстаёт от ответа на POST: для ASC это не проверено (стенд не
+// мерил; заметка tolerate.go про маршруты ASC не покрывает). Снять второе
+// чтение по несовпадению можно после стенда: POST interface WireguardN
+// wireguard asc {…} и сразу GET /rci/show/rc/interface/ — 20 из 20 новые
+// значения при открытой панели и на буте (R44).
+const ascVerifyPause = 300 * time.Millisecond
+
+// readASCFresh — ASC интерфейса из дерева rc, прочитанного сейчас, в форме
+// для сравнения.
+func (s *Service) readASCFresh(ctx context.Context, ifaceName string, extended bool) (map[string]string, error) {
+	got, err := s.queries.WGServers.ASCParamsFresh(ctx, ifaceName, extended)
+	if err != nil {
+		return nil, err
+	}
+	actual, _, err := normalizeASCForCompare(got)
+	return actual, err
+}
+
+func ascReadbackMatches(want map[string]string, wantDisabled bool, actual map[string]string) bool {
+	if wantDisabled {
+		return isDisabledReadback(actual)
+	}
+	for k, v := range want {
+		if actual[k] != v {
+			return false
+		}
+	}
+	return true
 }

@@ -49,6 +49,9 @@ type stateAwareGetter struct {
 	addr map[string][2]string
 	// rcReads — чтения дерева /show/rc/interface/ (бюджет F581).
 	rcReads atomic.Int64
+	// rcHook — зовётся на каждом чтении дерева rc до ответа (вне mu);
+	// ошибка — ответ чтения (сверка ASC, R44).
+	rcHook func() error
 }
 
 func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error {
@@ -59,6 +62,11 @@ func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error 
 		// ASC — последний записанный POST-ом.
 		if path == "/show/rc/interface/" {
 			g.rcReads.Add(1)
+			if g.rcHook != nil {
+				if err := g.rcHook(); err != nil {
+					return err
+				}
+			}
 			names := map[string]bool{}
 			for _, sv := range g.store.GetManagedServers() {
 				names[sv.InterfaceName] = true

@@ -567,10 +567,8 @@ func (s *WGServerStore) fetchASC(ctx context.Context, name string, extended bool
 }
 
 // ASCParamsFresh — GetASCParams по дереву rc, прочитанному сейчас (Fetch: мимо
-// TTL и мимо выборки в полёте, начатой до записи), — сверка после нашей записи.
-// NDMS отвечает на запись, уже применив её к конфигурации, так что повторять
-// чтение незачем: молча отвергнутая запись (неполный набор 3.x, 5.02.A.11)
-// не появится и позже (F581).
+// TTL и мимо выборки в полёте, начатой до записи), — сверка после нашей записи
+// (F581). Сколько раз читать, решает вызывающий.
 func (s *WGServerStore) ASCParamsFresh(ctx context.Context, name string, extended bool) (json.RawMessage, error) {
 	tree, err := s.rcTree.Fetch(ctx)
 	if err != nil {

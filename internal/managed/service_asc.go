@@ -38,7 +38,10 @@ func (s *Service) SetASCParams(ctx context.Context, id string, params json.RawMe
 		return err
 	}
 	if err := s.applyASCParams(ctx, iface, params); err != nil {
-		s.appLog.Warn("set-asc", server.InterfaceName, "Failed to set ASC params: "+err.Error())
+		// ErrASCUnverified отдаём как есть: handler публикует изменение (R44).
+		if !s.ascUnverified("set-asc", server.InterfaceName, err) {
+			s.appLog.Warn("set-asc", server.InterfaceName, "Failed to set ASC params: "+err.Error())
+		}
 		return err
 	}
 

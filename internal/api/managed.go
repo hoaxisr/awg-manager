@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -977,7 +978,15 @@ func (h *ManagedServerHandler) ASC(w http.ResponseWriter, r *http.Request, id st
 			return
 		}
 		if err := h.svc.SetASCParams(r.Context(), id, params); err != nil {
-			response.Error(w, err.Error(), "SET_ASC_FAILED")
+			if !errors.Is(err, managed.ErrASCUnverified) {
+				response.Error(w, err.Error(), "SET_ASC_FAILED")
+				return
+			}
+			// Роутер запись принял, сверка не прочиталась: состояние изменилось —
+			// публикуем, но успехом не отвечаем (R44).
+			h.svc.InvalidateCache(id)
+			h.publishServerUpdated()
+			response.Error(w, err.Error(), "ASC_UNVERIFIED")
 			return
 		}
 		h.svc.InvalidateCache(id)
