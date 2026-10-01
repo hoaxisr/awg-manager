@@ -425,11 +425,18 @@
 								{#if telemtRunning}· запущен{:else}· остановлен{/if}
 							</span>
 							<span class="setting-description">
-								Высокопроизводительный MTProxy для Telegram с поддержкой Fake-TLS и raw-проксирования.
+								Высокопроизводительный MTProxy для Telegram с поддержкой Fake-TLS.
+							</span>
+						{:else if telemtStatus && telemtStatus.archSupported === false}
+							<span class="integration-sub" style="color: var(--color-warning, #f59e0b);">
+								Архитектура {telemtStatus.arch || ''} не поддерживается (доступно только для ARM64)
+							</span>
+							<span class="setting-description">
+								Сборки telemt скомпилированы под aarch64 и недоступны для MIPS/MIPSEL.
 							</span>
 						{:else}
 							<span class="setting-description">
-								Высокопроизводительный MTProxy для Telegram с поддержкой Fake-TLS и raw-проксирования.
+								Высокопроизводительный MTProxy для Telegram с поддержкой Fake-TLS.
 							</span>
 						{/if}
 					</div>
@@ -459,6 +466,8 @@
 					</div>
 				{:else if telemtStatusLoading}
 					<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
+				{:else if telemtStatus && telemtStatus.archSupported === false}
+					<Button variant="secondary" size="sm" disabled>Недоступно</Button>
 				{:else if oninstallTelemt}
 					<Button variant="primary" size="sm" onclick={oninstallTelemt} loading={telemtInstalling}>
 						{telemtInstalling ? 'Установка...' : 'Установить'}
@@ -664,10 +673,10 @@
 		font-size: 0.6875rem;
 		font-weight: 500;
 		padding: 0.1rem 0.4rem;
-		background: rgba(59, 130, 246, 0.12);
-		color: #3b82f6;
+		background: var(--color-primary-bg, rgba(59, 130, 246, 0.12));
+		color: var(--color-primary, #3b82f6);
 		border-radius: 4px;
-		border: 1px solid rgba(59, 130, 246, 0.25);
+		border: 1px solid var(--color-primary-border, rgba(59, 130, 246, 0.25));
 	}
 
 	/* Своя раскладка вместо сетки .setting-row (1fr auto): там колонка с

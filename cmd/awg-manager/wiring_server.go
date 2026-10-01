@@ -33,8 +33,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
-	telemtinstaller "github.com/hoaxisr/awg-manager/internal/telemt/installer"
-	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
+	"github.com/hoaxisr/awg-manager/internal/telemt"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
@@ -76,18 +75,12 @@ func (a *app) setupServer() {
 		os.Exit(1)
 	}
 
-	onReload := func() {
-		a.bootLog.Info("ingress", "on_reload", "service state changed")
-	}
-	a.tgWebProxyService = tgwebproxy.New(a.dataDir, onReload)
 	telemtArch := detectArch()
-	a.telemtInstaller = telemtinstaller.New(telemtArch)
-	if a.tgWebProxyService != nil {
-		a.telemtInstaller.SetRestartHandler(func(ctx context.Context) error {
-			return a.tgWebProxyService.Restart()
-		})
-	}
-	a.telemtHandler = api.NewTelemtHandler(a.telemtInstaller)
+	a.telemtService = telemt.New(a.dataDir, telemtArch)
+	a.deferOnExit(func() {
+		_ = a.telemtService.Close()
+	})
+	a.telemtHandler = api.NewTelemtHandler(a.telemtService)
 
 	a.srv = server.New(
 		server.Config{
