@@ -44,6 +44,7 @@ func TestWGServers_AbsentInterface_NoQuery(t *testing.T) {
 	_, _ = q.WGServers.PeersRCFresh(ctx, "Wireguard7")
 	_, _ = q.WGServers.GetASCParams(ctx, "Wireguard7", true)
 	_, _ = q.WGServers.ASC3Fields(ctx, "Wireguard7")
+	_, _ = q.WGServers.ASCParamsFresh(ctx, "Wireguard7", true)
 	if f.E != 0 {
 		t.Fatalf("E = %d, want 0", f.E)
 	}

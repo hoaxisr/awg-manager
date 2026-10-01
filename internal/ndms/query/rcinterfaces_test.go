@@ -195,6 +195,36 @@ func TestASC3Fields_Fresh(t *testing.T) {
 	}
 }
 
+// F581: сверка после записи — свежее дерево на каждый вызов, даже при тёплом
+// кэше (иначе сверка видела бы дерево до записи).
+func TestASCParamsFresh_Fresh(t *testing.T) {
+	ctx := context.Background()
+	f, q := rcFixture(t)
+	if _, err := q.WGServers.GetASCParams(ctx, "Wireguard1", true); err != nil {
+		t.Fatal(err)
+	}
+	warm := f.RCListCalls()
+	for i := 1; i <= 2; i++ {
+		raw, err := q.WGServers.ASCParamsFresh(ctx, "Wireguard1", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), `"jc":4`) || !strings.Contains(string(raw), `"s3":12`) {
+			t.Fatalf("ASCParamsFresh = %s", raw)
+		}
+		if n := f.RCListCalls() - warm; n != i {
+			t.Fatalf("вызов %d: чтений дерева %d", i, n)
+		}
+	}
+	f.Remove("Wireguard1")
+	if _, err := q.WGServers.ASCParamsFresh(ctx, "Wireguard1", true); !errors.Is(err, ErrGone) {
+		t.Fatalf("ASCParamsFresh снятого = %v, want ErrGone", err)
+	}
+	if f.E != 0 {
+		t.Fatalf("E=%d", f.E)
+	}
+}
+
 // R35: ifcreated потерян — сервер уже в свежем списке, а дерево rc в кэше
 // старше его создания. Конфигурация и ASC не пустые/не ErrGone: ОДНО свежее
 // чтение дерева на вызов. Нет и в свежем дереве — прежнее поведение.

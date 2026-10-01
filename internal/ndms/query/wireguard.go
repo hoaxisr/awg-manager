@@ -563,6 +563,28 @@ func (s *WGServerStore) fetchASC(ctx context.Context, name string, extended bool
 	if !ok {
 		return nil, fmt.Errorf("get ASC params %s: interface %s: нет в NDMS: %w", name, name, ErrGone)
 	}
+	return ascParams(name, rc, extended)
+}
+
+// ASCParamsFresh — GetASCParams по дереву rc, прочитанному сейчас (Fetch: мимо
+// TTL и мимо выборки в полёте, начатой до записи), — сверка после нашей записи.
+// NDMS отвечает на запись, уже применив её к конфигурации, так что повторять
+// чтение незачем: молча отвергнутая запись (неполный набор 3.x, 5.02.A.11)
+// не появится и позже (F581).
+func (s *WGServerStore) ASCParamsFresh(ctx context.Context, name string, extended bool) (json.RawMessage, error) {
+	tree, err := s.rcTree.Fetch(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get ASC params %s: %w", name, err)
+	}
+	rc, ok := tree[name]
+	if !ok {
+		return nil, fmt.Errorf("get ASC params %s: interface %s: нет в NDMS: %w", name, name, ErrGone)
+	}
+	return ascParams(name, rc, extended)
+}
+
+// ascParams — параметры ASC записи дерева rc в форме GetASCParams.
+func ascParams(name string, rc json.RawMessage, extended bool) (json.RawMessage, error) {
 	fields, err := ascFields(rc)
 	if err != nil {
 		return nil, fmt.Errorf("get ASC params %s: %w", name, err)

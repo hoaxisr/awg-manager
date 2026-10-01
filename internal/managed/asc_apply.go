@@ -383,49 +383,37 @@ func (s *Service) verifyASCParamsApplied(ctx context.Context, ifaceName string, 
 			extended = true
 		}
 	}
-	var lastErr error
-	for range 5 {
-		s.queries.WGServers.Invalidate(ifaceName)
-		got, err := s.queries.WGServers.GetASCParams(ctx, ifaceName, extended)
-		if err != nil {
-			lastErr = err
-			time.Sleep(150 * time.Millisecond)
-			continue
-		}
-		actual, _, err := normalizeASCForCompare(got)
-		if err != nil {
-			lastErr = err
-			time.Sleep(150 * time.Millisecond)
-			continue
-		}
-
-		if wantDisabled {
-			if isDisabledReadback(actual) {
-				return nil
-			}
-		} else {
-			match := true
-			keys := make([]string, 0, len(want))
-			for k := range want {
-				keys = append(keys, k)
-			}
-			slices.Sort(keys)
-			for _, k := range keys {
-				if actual[k] != want[k] {
-					match = false
-					break
-				}
-			}
-			if match {
-				return nil
-			}
-		}
-
-		lastErr = fmt.Errorf("ASC params were not applied by router: want=%v got=%v", want, actual)
-		time.Sleep(150 * time.Millisecond)
+	// Одно свежее дерево после записи: NDMS отвечает, уже применив команду, а
+	// молча отвергнутая запись повтором не появится (F581; прежние 5 попыток
+	// по 150 мс стоили до 5 полных деревьев rc на действие).
+	got, err := s.queries.WGServers.ASCParamsFresh(ctx, ifaceName, extended)
+	if err != nil {
+		return err
 	}
-	if lastErr != nil {
-		return lastErr
+	actual, _, err := normalizeASCForCompare(got)
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("ASC params were not applied by router")
+	if wantDisabled {
+		if isDisabledReadback(actual) {
+			return nil
+		}
+	} else {
+		match := true
+		keys := make([]string, 0, len(want))
+		for k := range want {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			if actual[k] != want[k] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return nil
+		}
+	}
+	return fmt.Errorf("ASC params were not applied by router: want=%v got=%v", want, actual)
 }

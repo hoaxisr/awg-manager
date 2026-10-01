@@ -440,3 +440,61 @@ func TestSetASCParams_KeepsASC3OfInterface(t *testing.T) {
 		t.Fatalf("после записи на интерфейсе: %v", got)
 	}
 }
+
+// F581: правка ASC — одно свежее дерево rc до записи (ASC3Fields, Q6) и одно
+// после (сверка); роутер, отвергший запись молча, повторами не переспрашиваем.
+func TestSetASCParams_RCTreeBudget(t *testing.T) {
+	raw := json.RawMessage(`{
+		"jc":3,"jmin":64,"jmax":256,"s1":15,"s2":16,
+		"h1":"100000001","h2":"1200000002","h3":"2400000003","h4":"3600000004"
+	}`)
+	off := json.RawMessage(`{
+		"jc":0,"jmin":0,"jmax":0,"s1":0,"s2":0,
+		"h1":"","h2":"","h3":"","h4":""
+	}`)
+	for _, tc := range []struct {
+		name    string
+		params  json.RawMessage
+		ignored bool // роутер молча не применил запись
+		budget  int64
+	}{
+		{"set", raw, false, 2},
+		{"set ignored", raw, true, 2},
+		{"clear", off, false, 1},
+		{"clear ignored", off, true, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _, getter := newCreateTestService(t)
+			server, err := svc.Create(context.Background(), CreateServerRequest{
+				Address:    "10.44.0.1",
+				Mask:       "255.255.255.0",
+				ListenPort: 52044,
+			})
+			if err != nil {
+				t.Fatalf("seed Create: %v", err)
+			}
+			if tc.ignored {
+				// Выключенный ASC читается нулями: «не применил выключение» —
+				// это включённый ASC на роутере.
+				getter.mu.Lock()
+				getter.asc[server.InterfaceName] = map[string]string{
+					"jc": "5", "jmin": "10", "jmax": "50", "s1": "1", "s2": "2",
+					"h1": "1", "h2": "2", "h3": "3", "h4": "4",
+				}
+				getter.mu.Unlock()
+				poster := svc.transport.(*recordingPoster)
+				poster.onPost = func(map[string]interface{}) {}
+			}
+			before := getter.rcReads.Load()
+			err = svc.SetASCParams(context.Background(), server.InterfaceName, tc.params)
+			if tc.ignored != (err != nil) {
+				t.Fatalf("ignored=%v, err=%v", tc.ignored, err)
+			}
+			n := getter.rcReads.Load() - before
+			t.Logf("деревьев rc: %d", n)
+			if n > tc.budget {
+				t.Fatalf("деревьев rc на действие: %d, бюджет %d", n, tc.budget)
+			}
+		})
+	}
+}

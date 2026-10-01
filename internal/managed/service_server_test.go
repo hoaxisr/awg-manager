@@ -47,6 +47,8 @@ type stateAwareGetter struct {
 	// addr — адрес/маска, поставленные POST-ом configure: точечное чтение
 	// после него видит их, как на роутере (П4).
 	addr map[string][2]string
+	// rcReads — чтения дерева /show/rc/interface/ (бюджет F581).
+	rcReads atomic.Int64
 }
 
 func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error {
@@ -56,6 +58,7 @@ func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error 
 		// с записью): правка по ключу проверяет наличие пира свежим чтением;
 		// ASC — последний записанный POST-ом.
 		if path == "/show/rc/interface/" {
+			g.rcReads.Add(1)
 			names := map[string]bool{}
 			for _, sv := range g.store.GetManagedServers() {
 				names[sv.InterfaceName] = true
