@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -70,5 +71,17 @@ func TestManagedASC_PutRCTreeBudget(t *testing.T) {
 	}
 	if n := fg.Calls("/show/rc/interface/") - before; n > 2 {
 		t.Fatalf("деревьев rc на правку ASC: %d, want ≤2 (до записи + сверка)", n)
+	}
+
+	// Без сброса кэша показ не устарел: GET после PUT отдаёт НОВЫЕ значения.
+	rr = perform(h.Subtree, http.MethodGet, "/api/managed-servers/Wireguard3/asc", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET: код=%d тело=%s", rr.Code, rr.Body.String())
+	}
+	data, _ := decodeJSONBody(t, rr)["data"].(map[string]any)
+	for k, want := range map[string]string{"jc": "3", "jmin": "64", "jmax": "256", "s1": "15", "s2": "16", "h1": "100000001", "h4": "3600000004"} {
+		if got := fmt.Sprint(data[k]); got != want {
+			t.Fatalf("GET после PUT: %s=%s, want %s (data=%v)", k, got, want, data)
+		}
 	}
 }
