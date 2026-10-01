@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 	sysfiles "github.com/hoaxisr/awg-manager/internal/sys/files"
@@ -161,6 +162,15 @@ func (s *Service) proxyEnabled() bool {
 	return s.ndmsProxyEnabled()
 }
 
+// proxySkippable — в проходе SyncProxies запись на индексе чужая или
+// созданное осталось на роутере (метку отложенного сноса уже поставил
+// ProxyManager): Warn и следующий элемент — обрыв лишил бы обслуживания все
+// следующие подписки и группы (F577).
+func proxySkippable(err error) bool {
+	var left *command.LeftCreatedError
+	return errors.Is(err, singbox.ErrProxyForeign) || errors.As(err, &left)
+}
+
 // SyncProxies ensures every subscription has its NDMS ProxyN interface when
 // the global toggle is on. It is the toggle-ON counterpart to the gated
 // Create: subscriptions created while the toggle was off carry ProxyIndex=-1
@@ -196,7 +206,7 @@ func (s *Service) SyncProxies(ctx context.Context) error {
 			defer mu.Unlock()
 			return s.mutator.EnsureProxy(ctx, sub.ProxyIndex, int(sub.ListenPort), sub.Label, sub.Label)
 		}()
-		if errors.Is(err, singbox.ErrProxyForeign) {
+		if proxySkippable(err) {
 			// Чужая запись на индексе — постоянное состояние: обрыв прохода
 			// лишил бы обслуживания все следующие подписки (F577).
 			s.logWarn("subscription-sync-proxies", sub.ID, "skipped: "+err.Error())
@@ -216,7 +226,7 @@ func (s *Service) SyncProxies(ctx context.Context) error {
 			continue
 		}
 		err := s.mutator.EnsureProxy(ctx, g.ProxyIndex, int(g.ListenPort), g.Label, g.Label)
-		if errors.Is(err, singbox.ErrProxyForeign) {
+		if proxySkippable(err) {
 			s.logWarn("subscription-sync-proxies", g.ID, "skipped: "+err.Error())
 			continue
 		}
@@ -247,7 +257,7 @@ func (s *Service) SyncProxies(ctx context.Context) error {
 			}
 			return nil
 		}()
-		if errors.Is(err, singbox.ErrProxyForeign) {
+		if proxySkippable(err) {
 			s.logWarn("subscription-sync-proxies", sub.ID, "skipped: "+err.Error())
 			continue
 		}
@@ -265,7 +275,7 @@ func (s *Service) SyncProxies(ctx context.Context) error {
 			return fmt.Errorf("subscription group %s: alloc proxy index: %w", g.ID, err)
 		}
 		err = s.mutator.EnsureProxy(ctx, idx, int(g.ListenPort), g.Label, g.Label)
-		if errors.Is(err, singbox.ErrProxyForeign) {
+		if proxySkippable(err) {
 			s.logWarn("subscription-sync-proxies", g.ID, "skipped: "+err.Error())
 			continue
 		}

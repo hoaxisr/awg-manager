@@ -56,6 +56,7 @@ type ndmsProxies interface {
 	RemoveProxy(ctx context.Context, index int, desc string) error
 	OwnedProxies(ctx context.Context, tunnelProxies, subProxies map[string]string) ([]ProxyMark, error)
 	RemoveMarkedProxy(ctx context.Context, m ProxyMark) (MarkedOutcome, error)
+	AdoptBareProxy(ctx context.Context, name string, port int, description string) (MarkedOutcome, error)
 	ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) ([]string, error)
 	SyncProxies(ctx context.Context, tunnels []TunnelInfo) error
 }
@@ -251,6 +252,7 @@ const (
 	MarkedRemoved MarkedOutcome = iota // снят
 	MarkedAbsent                       // записи нет — снимать нечего
 	MarkedForeign                      // description другой — запись уже не наша
+	MarkedAdopted                      // голая запись настроена владельцем
 )
 
 // OwnedProxies — наши ProxyN по СВОЕМУ свежему списку (не память, F562).
@@ -304,6 +306,28 @@ func (pm *ProxyManager) RemoveMarkedProxy(ctx context.Context, m ProxyMark) (Mar
 		return 0, err
 	}
 	return MarkedRemoved, nil
+}
+
+// AdoptBareProxy — тик: метка (name, "") на имени живого владельца. Только
+// запись с этим именем и пустым description настраивается с description и
+// port владельца (как Sync, F577 R1) → MarkedAdopted. Записи нет —
+// MarkedAbsent, description не пуст — MarkedForeign: без команд. Список не
+// прочитан (errProxyListUnread) или NDMS отказал — ошибка.
+func (pm *ProxyManager) AdoptBareProxy(ctx context.Context, name string, port int, description string) (MarkedOutcome, error) {
+	c, iface, ok, err := pm.queries.Interfaces.Confirm(ctx, name)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %w", errProxyListUnread, err)
+	}
+	if !ok {
+		return MarkedAbsent, nil
+	}
+	if iface == nil || iface.Description != "" {
+		return MarkedForeign, nil
+	}
+	if err := pm.commands.Proxies.ConfigureProxy(ctx, c, description, "127.0.0.1", port, true); err != nil {
+		return 0, err
+	}
+	return MarkedAdopted, nil
 }
 
 // ListNativeProxies returns kernel names (e.g. "t2s0") of NDMS Proxy

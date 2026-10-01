@@ -2773,3 +2773,23 @@ func TestService_SyncProxies_ForeignSkippedContinues(t *testing.T) {
 		t.Fatalf("EnsureProxy: %+v", mut.ensuredProxies)
 	}
 }
+
+// F577 N3: созданное и оставленное на роутере (метку поставил ProxyManager)
+// не обрывает SyncProxies — вторая подписка обслужена, ошибки нет.
+func TestService_SyncProxies_LeftCreatedContinues(t *testing.T) {
+	svc, mut := newTestService(t)
+	a := createInlineSubWithTwoMembers(t, svc)
+	b, err := svc.Create(context.Background(), CreateInput{Label: "y", Inline: "vless://3a3b1c2e-9999-4321-aaaa-1234567890a3@c.example:443#C"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mut.ensuredProxies = nil
+	left := &command.LeftCreatedError{Name: "Proxy1", Err: errors.New("not seen")}
+	mut.ensureErrs = map[int]error{a.ProxyIndex: fmt.Errorf("create proxy: %w", left), b.ProxyIndex: nil}
+	if err := svc.SyncProxies(context.Background()); err != nil {
+		t.Fatalf("SyncProxies: %v", err)
+	}
+	if len(mut.ensuredProxies) != 2 {
+		t.Fatalf("EnsureProxy: %+v", mut.ensuredProxies)
+	}
+}

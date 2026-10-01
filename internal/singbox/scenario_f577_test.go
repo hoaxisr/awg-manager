@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
 const f577Link = "vless://3a3b1c2e-9999-4321-aaaa-1234567890ab@n.example:443?security=tls&sni=h#N"
@@ -168,15 +169,13 @@ func TestScenario_SubscriptionCreateLeft_Marked(t *testing.T) {
 	clean(t, f)
 }
 
-// F577 R1: голая сирота на слоте СУЩЕСТВУЮЩЕГО туннеля. Пользователь снял
-// Proxy3 туннеля A; Sync создал запись, но NDMS её не показал (ErrNotSeen) —
-// метка (Proxy3, ""). Тик (имя нужно A) метку держит и ничего не сносит.
-// Запись видна голой — следующий Sync её усыновляет: настраивает с тегом A и
-// снимает метку; RemoveTunnel затем её снимает.
-func TestScenario_BareOrphanOnLiveSlot_AdoptedThenRemoved(t *testing.T) {
+// orphanOnLiveSlot — голая сирота на слоте СУЩЕСТВУЮЩЕГО туннеля A:
+// пользователь снял Proxy3, Sync создал запись, но NDMS её не показал
+// (ErrNotSeen) — метка (Proxy3, ""); затем запись видна голой.
+func orphanOnLiveSlot(t *testing.T) (*Operator, *Watchdog, *query.FakeNDMS, *ProxyManager, []TunnelInfo) {
+	t.Helper()
 	withProxy501(t)
 	op, w, f, _ := f562Stand(t)
-	ctx := context.Background()
 	pm := op.proxyMgr.(*ProxyManager)
 	pm.queries.Interfaces.SetCreatedBackoff(time.Millisecond)
 	f.Remove("Proxy3")
@@ -187,7 +186,7 @@ func TestScenario_BareOrphanOnLiveSlot_AdoptedThenRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pm.SyncProxies(ctx, cfg.Tunnels()); err != nil {
+	if err := pm.SyncProxies(context.Background(), cfg.Tunnels()); err != nil {
 		t.Fatalf("SyncProxies: %v", err)
 	}
 	if d := op.deferredProxies["Proxy3"]; d == nil || d.desc != "" {
@@ -195,18 +194,20 @@ func TestScenario_BareOrphanOnLiveSlot_AdoptedThenRemoved(t *testing.T) {
 	}
 	f.HideCreated(0)
 	f.DrainHooks() // голый Proxy3 виден
-	posts := len(f.Posts)
-	w.tick(ctx)
-	if len(f.Posts) != posts || !f.Has("Proxy3") || !op.proxyRemovalDeferred("Proxy3") {
-		t.Fatalf("тик: posts=%v метка=%v", f.Posts[posts:], op.deferredProxies)
-	}
+	return op, w, f, pm, cfg.Tunnels()
+}
 
-	if err := pm.SyncProxies(ctx, cfg.Tunnels()); err != nil {
-		t.Fatalf("SyncProxies: %v", err)
-	}
+// F577 R1/N1: ближайший тик сторожа (sing-box работает, Reconcile не
+// зовётся) сам усыновляет голую сироту на слоте живого туннеля: настройки
+// туннеля A, метка снята; RemoveTunnel затем снимает Proxy3.
+func TestScenario_BareOrphanOnLiveSlot_TickAdoptsThenRemoved(t *testing.T) {
+	op, w, f, pm, _ := orphanOnLiveSlot(t)
+	ctx := context.Background()
+	op.manuallyStopped.Store(false) // sing-box «работает»: Reconcile тик не зовёт
+	w.tick(ctx)
 	_, rec, ok, _ := pm.queries.Interfaces.Confirm(ctx, "Proxy3")
 	if !ok || rec.Description != "A" || op.proxyRemovalDeferred("Proxy3") {
-		t.Fatalf("не усыновлён: rec=%+v метка=%v", rec, op.deferredProxies)
+		t.Fatalf("не усыновлён тиком: rec=%+v метка=%v posts=%v", rec, op.deferredProxies, f.Posts)
 	}
 	if err := op.RemoveTunnel(ctx, "A"); err != nil {
 		t.Fatal(err)
@@ -216,6 +217,61 @@ func TestScenario_BareOrphanOnLiveSlot_AdoptedThenRemoved(t *testing.T) {
 	}
 	mustHave(t, f, "Proxy0", "Proxy4", "Proxy5", "Proxy6")
 	clean(t, f)
+}
+
+// F577 R1: Sync раньше тика — усыновляет он, метка снята.
+func TestScenario_BareOrphanOnLiveSlot_SyncAdopts(t *testing.T) {
+	op, _, f, pm, tunnels := orphanOnLiveSlot(t)
+	ctx := context.Background()
+	if err := pm.SyncProxies(ctx, tunnels); err != nil {
+		t.Fatal(err)
+	}
+	_, rec, ok, _ := pm.queries.Interfaces.Confirm(ctx, "Proxy3")
+	if !ok || rec.Description != "A" || op.proxyRemovalDeferred("Proxy3") {
+		t.Fatalf("rec=%+v метка=%v", rec, op.deferredProxies)
+	}
+	clean(t, f)
+}
+
+// F577 N2: метка (Proxy3, "") на слоте живого туннеля, а в списке записи нет
+// (срок R4 истёк) или у неё непустой description (пользователь пересоздал) —
+// метка снимается, команд нет. Отсутствующая в сроке R4 — метка держится.
+func TestScenario_BareMarkLiveSlot_NotBare_Dropped(t *testing.T) {
+	ctx := context.Background()
+	t.Run("description не пуст", func(t *testing.T) {
+		op, w, f, _, _ := orphanOnLiveSlot(t)
+		f.Remove("Proxy3")
+		f.Add(ndms.Interface{ID: "Proxy3", Type: "Proxy", Description: "user", State: "up"})
+		f.DrainHooks()
+		posts := len(f.Posts)
+		w.tick(ctx)
+		if len(f.Posts) != posts || op.proxyRemovalDeferred("Proxy3") {
+			t.Fatalf("posts=%v метка=%v", f.Posts[posts:], op.deferredProxies)
+		}
+		clean(t, f)
+	})
+	t.Run("записи нет", func(t *testing.T) {
+		op, w, f, _, _ := orphanOnLiveSlot(t)
+		clock := time.Now().Add(time.Hour) // срок R4 истёк
+		op.deferredNow = func() time.Time { return clock }
+		f.Remove("Proxy3")
+		f.DrainHooks()
+		posts := len(f.Posts)
+		w.tick(ctx)
+		if len(f.Posts) != posts || op.proxyRemovalDeferred("Proxy3") {
+			t.Fatalf("posts=%v метка=%v", f.Posts[posts:], op.deferredProxies)
+		}
+		clean(t, f)
+	})
+	t.Run("записи нет, срок R4", func(t *testing.T) {
+		op, w, f, _, _ := orphanOnLiveSlot(t)
+		f.Remove("Proxy3")
+		f.DrainHooks()
+		w.tick(ctx)
+		if !op.proxyRemovalDeferred("Proxy3") {
+			t.Fatal("метка снята в сроке R4")
+		}
+	})
 }
 
 // F577 R1/R5: голая запись без метки — чужая для EnsureProxy и OwnedProxies

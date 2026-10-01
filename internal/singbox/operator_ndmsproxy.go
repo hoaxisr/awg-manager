@@ -189,10 +189,18 @@ func (o *Operator) loadDeferredProxies() {
 	}
 }
 
-// desiredProxyNames — ProxyN, которые сейчас нужны: при включённом режиме
-// NDMS Proxy — туннелей из конфига и подписок; при выключенном — никакие.
-func (o *Operator) desiredProxyNames() (map[string]bool, error) {
-	want := map[string]bool{}
+// proxyOwner — кому нужен ProxyN: description (тег туннеля / Label
+// подписки) и порт inbound — то, с чем его настраивает владелец.
+type proxyOwner struct {
+	desc string
+	port int
+}
+
+// desiredProxyNames — ProxyN, которые сейчас нужны, и их владельцы: при
+// включённом режиме NDMS Proxy — туннелей из конфига и подписок; при
+// выключенном — никакие.
+func (o *Operator) desiredProxyNames() (map[string]proxyOwner, error) {
+	want := map[string]proxyOwner{}
 	if !o.isNDMSProxyEnabled() {
 		return want, nil
 	}
@@ -203,12 +211,12 @@ func (o *Operator) desiredProxyNames() (map[string]bool, error) {
 	if cfg != nil {
 		for _, t := range cfg.Tunnels() {
 			if t.ProxyInterface != "" {
-				want[t.ProxyInterface] = true
+				want[t.ProxyInterface] = proxyOwner{desc: t.Tag, port: t.ListenPort}
 			}
 		}
 	}
 	for _, sp := range o.subscriptionProxies() {
-		want[proxyName(sp.Index)] = true
+		want[proxyName(sp.Index)] = proxyOwner{desc: sp.Label, port: sp.Port}
 	}
 	return want, nil
 }
@@ -247,19 +255,23 @@ func (o *Operator) retryDeferredProxyRemovals(ctx context.Context) {
 			o.log.Warn("deferred proxy removal: load config", "err", err)
 			break
 		}
-		if want[m.Name] {
-			if m.Desc == "" {
-				// Наша голая сирота на имени живого владельца: не сносится,
-				// метка остаётся доказательством, по которому владелец её
-				// усыновит при следующем EnsureProxy/Sync (F577 R1).
-				o.log.Debug("deferred bare proxy kept for owner adoption", "name", m.Name)
-				continue
-			}
+		owner, inUse := want[m.Name]
+		if inUse && m.Desc != "" {
 			o.log.Info("deferred proxy removal dropped: proxy is in use", "name", m.Name, "desc", m.Desc)
 			done = append(done, m)
 			continue
 		}
-		out, err := o.proxyMgr.RemoveMarkedProxy(ctx, m.ProxyMark)
+		var out MarkedOutcome
+		if inUse {
+			// Наша голая сирота на имени живого владельца: не сносится, а
+			// усыновляется здесь же — настройки владельца по свежему списку,
+			// не дожидаясь Sync (при живом sing-box Reconcile не зовётся).
+			// Записи нет или description не пуст — метка снимается без
+			// команд (F577 R1, N1, N2).
+			out, err = o.proxyMgr.AdoptBareProxy(ctx, m.Name, owner.port, owner.desc)
+		} else {
+			out, err = o.proxyMgr.RemoveMarkedProxy(ctx, m.ProxyMark)
+		}
 		if err != nil {
 			o.deferredProxyFailed(m.Name, now, err)
 			if errors.Is(err, errProxyListUnread) {
@@ -275,6 +287,8 @@ func (o *Operator) retryDeferredProxyRemovals(ctx context.Context) {
 			o.log.Info("deferred proxy removal dropped: proxy is gone", "name", m.Name)
 		case MarkedForeign:
 			o.log.Info("deferred proxy removal dropped: description changed", "name", m.Name, "desc", m.Desc)
+		case MarkedAdopted:
+			o.log.Info("deferred bare proxy adopted by owner", "name", m.Name, "desc", owner.desc)
 		}
 		done = append(done, m)
 	}
