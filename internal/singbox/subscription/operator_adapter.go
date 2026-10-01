@@ -45,7 +45,7 @@ type slotConfig struct {
 // package.
 type ProxyRegistrar interface {
 	NextFreeIndex(ctx context.Context, reserved map[int]bool) (int, error)
-	EnsureProxy(ctx context.Context, idx, port int, description string) error
+	EnsureProxy(ctx context.Context, idx, port int, description, ownedDesc string) error
 	CreateProxy(ctx context.Context, idx, port int, description string) (ours bool, err error)
 	RemoveProxy(ctx context.Context, idx int) error
 }
@@ -827,12 +827,13 @@ func (a *OperatorAdapter) AllocProxyIndex(ctx context.Context) (int, error) {
 	return a.pm.NextFreeIndex(ctx, nil)
 }
 
-// EnsureProxy creates or refreshes the NDMS ProxyN interface at the given index.
-func (a *OperatorAdapter) EnsureProxy(ctx context.Context, idx, port int, description string) error {
+// EnsureProxy creates or refreshes the NDMS ProxyN interface at the given
+// index; an existing record is refreshed only when it is ours (F577).
+func (a *OperatorAdapter) EnsureProxy(ctx context.Context, idx, port int, description, ownedDesc string) error {
 	if a.pm == nil {
 		return fmt.Errorf("subscription adapter: ProxyRegistrar not configured")
 	}
-	return a.pm.EnsureProxy(ctx, idx, port, description)
+	return a.pm.EnsureProxy(ctx, idx, port, description, ownedDesc)
 }
 
 // CreateProxy creates the NDMS ProxyN at a freshly allocated index; ours —

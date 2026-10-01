@@ -268,3 +268,61 @@ func TestProxyManager_CreateProxy_Ours(t *testing.T) {
 		t.Fatalf("свой: ours=%v err=%v", ours, err)
 	}
 }
+
+// withProxy501 — прошивка 5.01 (ответ на создание проверяем, R39) с
+// компонентом proxy.
+func withProxy501(t *testing.T) {
+	t.Helper()
+	ndmsinfo.Reset()
+	t.Cleanup(ndmsinfo.Reset)
+	store := query.NewSystemInfoStore(nil, nil)
+	store.Adopt(ndms.Version{Release: "5.01.C.6.0-0", Components: []string{"proxy"}}, "test")
+	if err := ndmsinfo.Init(context.Background(), store, time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// F577 (в): на индексе из хранилища — чужой ProxyN с другим description
+// (индекс пережил выключение режима): ErrProxyForeign, ни одной команды.
+func TestEnsureProxy_Foreign_NoCommands(t *testing.T) {
+	withProxy501(t)
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Proxy3", Type: "Proxy", Description: "Work", State: "up"})
+	pm := oracleProxyManager(f)
+	if err := pm.EnsureProxy(context.Background(), 3, 1083, "sub1", "sub1"); !errors.Is(err, ErrProxyForeign) {
+		t.Fatalf("err=%v", err)
+	}
+	if len(f.Posts) != 0 || f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("posts=%v E=%d фантомов=%d", f.Posts, f.E, f.Phantoms)
+	}
+}
+
+// F577 (г): переименование тега — запись наша по СТАРОМУ description,
+// настраивается новым; повтор (description уже новый) тоже проходит. Записи
+// нет — создание голое, затем настройки.
+func TestEnsureProxy_RenameByOldDescription(t *testing.T) {
+	withProxy501(t)
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Proxy3", Type: "Proxy", Description: "old", State: "up"})
+	pm := oracleProxyManager(f)
+	ctx := context.Background()
+	if err := pm.EnsureProxy(ctx, 3, 1083, "new", "old"); err != nil {
+		t.Fatal(err)
+	}
+	if _, rec, ok, err := pm.queries.Interfaces.Confirm(ctx, "Proxy3"); err != nil || !ok || rec.Description != "new" {
+		t.Fatalf("rec=%+v ok=%v err=%v posts=%v", rec, ok, err, f.Posts)
+	}
+	if err := pm.EnsureProxy(ctx, 3, 1083, "new", "old"); err != nil {
+		t.Fatalf("повтор: %v", err)
+	}
+
+	f.ExpectCreate("Proxy4")
+	posts := len(f.Posts)
+	if err := pm.EnsureProxy(ctx, 4, 1084, "t", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Posts[posts:]; len(got) != 2 || got[0] != `{"interface":{"Proxy4":{}}}` || !strings.Contains(got[1], `"description":"t"`) {
+		t.Fatalf("команды: %v", got)
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d фантомов=%d", f.E, f.Phantoms)
+	}
+}

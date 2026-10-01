@@ -44,21 +44,21 @@ func (m *txRaceMutator) stage() {
 	m.batch = append(m.batch, goid())
 }
 
-func (m *txRaceMutator) AllocListenPort() (uint16, error)                    { return 11001, nil }
-func (m *txRaceMutator) AllocProxyIndex(_ context.Context) (int, error)      { return 1, nil }
-func (m *txRaceMutator) AddOutbound(string, []byte) error                    { m.stage(); return nil }
-func (m *txRaceMutator) UpdateOutbound(string, []byte) error                 { m.stage(); return nil }
-func (m *txRaceMutator) RemoveOutbound(string) error                         { m.stage(); return nil }
-func (m *txRaceMutator) AddInbound(string, []byte) error                     { m.stage(); return nil }
-func (m *txRaceMutator) RemoveInbound(string) error                          { m.stage(); return nil }
-func (m *txRaceMutator) AddRouteRule([]byte) error                           { m.stage(); return nil }
-func (m *txRaceMutator) RemoveRouteRule(string, string) error                { m.stage(); return nil }
-func (m *txRaceMutator) EnsureProxy(context.Context, int, int, string) error { return nil }
-func (m *txRaceMutator) RemoveProxy(context.Context, int) error              { return nil }
-func (m *txRaceMutator) SelectClashProxy(string, string) error               { return nil }
-func (m *txRaceMutator) GetClashSelectorActive(string) (string, error)       { return "", nil }
-func (m *txRaceMutator) DeclaredOutboundTags() []string                      { return nil }
-func (m *txRaceMutator) SubscriptionOutbounds() []map[string]any             { return nil }
+func (m *txRaceMutator) AllocListenPort() (uint16, error)                            { return 11001, nil }
+func (m *txRaceMutator) AllocProxyIndex(_ context.Context) (int, error)              { return 1, nil }
+func (m *txRaceMutator) AddOutbound(string, []byte) error                            { m.stage(); return nil }
+func (m *txRaceMutator) UpdateOutbound(string, []byte) error                         { m.stage(); return nil }
+func (m *txRaceMutator) RemoveOutbound(string) error                                 { m.stage(); return nil }
+func (m *txRaceMutator) AddInbound(string, []byte) error                             { m.stage(); return nil }
+func (m *txRaceMutator) RemoveInbound(string) error                                  { m.stage(); return nil }
+func (m *txRaceMutator) AddRouteRule([]byte) error                                   { m.stage(); return nil }
+func (m *txRaceMutator) RemoveRouteRule(string, string) error                        { m.stage(); return nil }
+func (m *txRaceMutator) EnsureProxy(context.Context, int, int, string, string) error { return nil }
+func (m *txRaceMutator) RemoveProxy(context.Context, int) error                      { return nil }
+func (m *txRaceMutator) SelectClashProxy(string, string) error                       { return nil }
+func (m *txRaceMutator) GetClashSelectorActive(string) (string, error)               { return "", nil }
+func (m *txRaceMutator) DeclaredOutboundTags() []string                              { return nil }
+func (m *txRaceMutator) SubscriptionOutbounds() []map[string]any                     { return nil }
 
 func (m *txRaceMutator) Rollback() {
 	m.mu.Lock()

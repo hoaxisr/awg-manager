@@ -550,3 +550,42 @@ func TestScenario_DeferredSweep_ListErrorOneReadPerTick(t *testing.T) {
 		t.Fatalf("метки потеряны: %v", op.deferredProxies)
 	}
 }
+
+// F577 (в): MigrateOn после выключения режима — индекс подписки (Proxy5) из
+// store занял пользовательский прокси "user". По нему ни одной команды,
+// description цел; ProxyN туннелей (свои, подняты) тоже без команд.
+func TestScenario_MigrateOn_ForeignOnSubscriptionIndex_Untouched(t *testing.T) {
+	withProxy501(t)
+	op, _, f, _ := f562Stand(t)
+	op.subProxies = &staticSubProxies{list: []SubscriptionProxy{{Index: 5, Port: 1085, Label: "sub1"}}}
+	if err := NewMigrator(op, &fakeToggler{events: new([]string)}, nil).MigrateOn(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("команды: %v", f.Posts)
+	}
+	_, rec, ok, err := op.proxyMgr.(*ProxyManager).queries.Interfaces.Confirm(context.Background(), "Proxy5")
+	if err != nil || !ok || rec.Description != "user" {
+		t.Fatalf("Proxy5: rec=%+v ok=%v err=%v", rec, ok, err)
+	}
+	clean(t, f)
+}
+
+// F577 (г): переименование туннеля A → A2 — его Proxy3 (description "A")
+// перенастроен на "A2"; пользовательский Proxy0 с description "A" цел.
+func TestScenario_RenameTunnel_ProxyOwnedByOldTag(t *testing.T) {
+	withProxy501(t)
+	op, _, f, _ := f562Stand(t)
+	ctx := context.Background()
+	if err := op.RenameTunnel(ctx, "A", "A2"); err != nil {
+		t.Fatal(err)
+	}
+	q := op.proxyMgr.(*ProxyManager).queries
+	if _, rec, ok, err := q.Interfaces.Confirm(ctx, "Proxy3"); err != nil || !ok || rec.Description != "A2" {
+		t.Fatalf("Proxy3: rec=%+v ok=%v err=%v posts=%v", rec, ok, err, f.Posts)
+	}
+	if _, rec, _, _ := q.Interfaces.Confirm(ctx, "Proxy0"); rec == nil || rec.Description != "A" {
+		t.Fatalf("Proxy0: %+v", rec)
+	}
+	clean(t, f)
+}

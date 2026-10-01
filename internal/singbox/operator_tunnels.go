@@ -331,7 +331,7 @@ func (o *Operator) AddTunnels(ctx context.Context, linksText string) ([]TunnelIn
 					parseErrs = append(parseErrs, BatchError{Input: t.Tag, Err: fmt.Errorf("ndms proxy setup: %w", err)})
 					continue
 				}
-				if err := o.proxyMgr.EnsureProxy(ctx, idx, t.ListenPort, t.Tag); err != nil {
+				if err := o.proxyMgr.EnsureProxy(ctx, idx, t.ListenPort, t.Tag, t.Tag); err != nil {
 					o.log.Warn("create proxy failed", "tag", t.Tag, "err", err)
 					parseErrs = append(parseErrs, BatchError{Input: t.Tag, Err: fmt.Errorf("ndms proxy setup for %s: %w", t.Tag, err)})
 				}
@@ -547,7 +547,7 @@ func (o *Operator) RenameTunnel(ctx context.Context, oldTag, newTag string) erro
 
 	if o.isNDMSProxyEnabled() && renamed.ProxyInterface != "" {
 		if idx, err := parseProxyIdx(renamed.ProxyInterface); err == nil && idx >= 0 {
-			if err := o.proxyMgr.EnsureProxy(ctx, idx, renamed.ListenPort, newTag); err != nil {
+			if err := o.proxyMgr.EnsureProxy(ctx, idx, renamed.ListenPort, newTag, oldTag); err != nil {
 				o.log.Warn("rename proxy description failed", "old", oldTag, "new", newTag, "err", err)
 			}
 		}

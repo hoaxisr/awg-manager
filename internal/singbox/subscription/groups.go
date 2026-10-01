@@ -378,7 +378,7 @@ func (s *Service) UpdateGroup(ctx context.Context, id string, patch GroupUpdateP
 	}
 	if patch.Label != nil && s.proxyEnabled() && g.ProxyIndex >= 0 {
 		// EnsureProxy идемпотентен — обновляет описание ProxyN «на месте».
-		if err := s.mutator.EnsureProxy(ctx, g.ProxyIndex, int(g.ListenPort), g.Label); err != nil {
+		if err := s.mutator.EnsureProxy(ctx, g.ProxyIndex, int(g.ListenPort), g.Label, current.Label); err != nil {
 			return g, fmt.Errorf("subscription group: sync proxy description: %w", err)
 		}
 	}

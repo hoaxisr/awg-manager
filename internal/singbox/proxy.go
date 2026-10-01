@@ -49,7 +49,7 @@ var ErrProxyComponentMissing = fmt.Errorf("NDMS 'proxy' component is not install
 // RenameTunnel), из теста не запускались вовсе: ProxyManager с нулевыми
 // Queries/Commands разыменовывает nil.
 type ndmsProxies interface {
-	EnsureProxy(ctx context.Context, index, port int, description string) error
+	EnsureProxy(ctx context.Context, index, port int, description, ownedDesc string) error
 	NextFreeIndex(ctx context.Context, reserved map[int]bool) (int, error)
 	RemoveProxy(ctx context.Context, index int) error
 	OwnedProxies(ctx context.Context, tunnelProxies, subProxies map[string]string) ([]ProxyMark, error)
@@ -69,20 +69,49 @@ func NewProxyManager(q *query.Queries, c *command.Commands) *ProxyManager {
 	return &ProxyManager{queries: q, commands: c}
 }
 
-// EnsureProxy creates or refreshes ProxyN pointing at 127.0.0.1:port.
-// Idempotent: re-creating with same params is safe. Returns
-// ErrProxyComponentMissing before talking to NDMS when the required
-// component is absent.
-func (pm *ProxyManager) EnsureProxy(ctx context.Context, index, port int, description string) error {
+// ErrProxyForeign — на индексе из хранилища стоит ProxyN, который не наш:
+// его description не совпал с ожидаемым (F577). Команд по нему нет.
+var ErrProxyForeign = errors.New("ProxyN занят чужой записью")
+
+// EnsureProxy — ProxyN индекса из хранилища, указывающий на 127.0.0.1:port,
+// с description. По свежему списку (F577): записи нет — создание
+// (CreateProxy); запись есть — настраивается, только если она наша.
+// Наша — description записи равен ownedDesc (то, что мы ставили: при
+// переименовании — СТАРЫЙ тег/Label) или уже равен description (повтор
+// после применённой настройки). Иначе ErrProxyForeign без команд: индекс в
+// хранилище переживает выключение режима и сбои, и его мог занять
+// пользовательский KeenOS-прокси (F562). Принятый остаток: пользовательский
+// прокси с ТОЧНО таким же description, как наш тег/Label, считается нашим.
+// Компонента proxy нет — ErrProxyComponentMissing до NDMS.
+func (pm *ProxyManager) EnsureProxy(ctx context.Context, index, port int, description, ownedDesc string) error {
 	defer markProxyMgrDur(fmt.Sprintf("EnsureProxy(%d)", index), time.Now())
-	_, err := pm.CreateProxy(ctx, index, port, description)
-	return err
+	if !ndmsinfo.HasProxyComponent() {
+		return ErrProxyComponentMissing
+	}
+	name := fmt.Sprintf("%s%d", proxyIfacePrefix, index)
+	c, iface, ok, err := pm.queries.Interfaces.Confirm(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		_, err := pm.CreateProxy(ctx, index, port, description)
+		return err
+	}
+	if iface == nil || iface.Description != ownedDesc && iface.Description != description {
+		got := ""
+		if iface != nil {
+			got = iface.Description
+		}
+		return fmt.Errorf("%w: %s (description %q, ждали %q)", ErrProxyForeign, name, got, ownedDesc)
+	}
+	return pm.commands.Proxies.ConfigureProxy(ctx, c, description, "127.0.0.1", port, true)
 }
 
-// CreateProxy — EnsureProxy для только что выбранного индекса. ours — откат
-// вправе снести ProxyN (command.CreateReply.Ours, F574): на прошивке, где
-// ответ проверяем, — только если NDMS создал запись этой командой, иначе
-// индекс занят чужим, ещё не видимым ProxyN, и снос удалил бы его.
+// CreateProxy — создание ProxyN на только что выбранном свободным индексе
+// (command.ProxyCommands.CreateProxy: голое создание → подтверждение →
+// настройки, F577). На прошивке, где ответ проверяем, индекс, занятый чужим
+// ещё не видимым ProxyN, — ошибка command.ErrNotCreated без настроек и сноса.
+// ours — откат вправе снести ProxyN (command.CreateReply.Ours, F574).
 func (pm *ProxyManager) CreateProxy(ctx context.Context, index, port int, description string) (ours bool, err error) {
 	if !ndmsinfo.HasProxyComponent() {
 		return false, ErrProxyComponentMissing
@@ -306,7 +335,8 @@ func (pm *ProxyManager) SyncProxies(ctx context.Context, tunnels []TunnelInfo) e
 	for i, t := range tunnels {
 		c, ok := confirmed[t.ProxyInterface]
 		if !ok {
-			if err := pm.EnsureProxy(ctx, idxs[i], t.ListenPort, t.Tag); err != nil {
+			// Записи нет в только что прочитанном списке — создание.
+			if _, err := pm.CreateProxy(ctx, idxs[i], t.ListenPort, t.Tag); err != nil {
 				return err
 			}
 			continue

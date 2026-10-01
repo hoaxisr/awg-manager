@@ -149,7 +149,7 @@ func (m *Migrator) MigrateOn(ctx context.Context) error {
 		}
 	} else {
 		for _, sp := range m.op.subscriptionProxies() {
-			if eerr := m.op.proxyMgr.EnsureProxy(ctx, sp.Index, sp.Port, sp.Label); eerr != nil {
+			if eerr := m.op.proxyMgr.EnsureProxy(ctx, sp.Index, sp.Port, sp.Label, sp.Label); eerr != nil {
 				m.log.Warn("MigrateOn: EnsureProxy (subscription) failed",
 					"label", sp.Label, "idx", sp.Index, "err", eerr)
 				m.appLog.Warn("ndms-proxy-migrate", sp.Label, fmt.Sprintf("ensure Proxy%d failed: %v", sp.Index, eerr))

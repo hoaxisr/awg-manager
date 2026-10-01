@@ -20,23 +20,23 @@ import (
 // Sufficient for handler tests that exercise read paths (Get, GetStream).
 type noopMutator struct{}
 
-func (noopMutator) AllocListenPort() (uint16, error)                    { return 11000, nil }
-func (noopMutator) AllocProxyIndex(context.Context) (int, error)        { return 1, nil }
-func (noopMutator) AddOutbound(string, []byte) error                    { return nil }
-func (noopMutator) UpdateOutbound(string, []byte) error                 { return nil }
-func (noopMutator) RemoveOutbound(string) error                         { return nil }
-func (noopMutator) AddInbound(string, []byte) error                     { return nil }
-func (noopMutator) RemoveInbound(string) error                          { return nil }
-func (noopMutator) AddRouteRule([]byte) error                           { return nil }
-func (noopMutator) RemoveRouteRule(string, string) error                { return nil }
-func (noopMutator) EnsureProxy(context.Context, int, int, string) error { return nil }
-func (noopMutator) RemoveProxy(context.Context, int) error              { return nil }
-func (noopMutator) Reload(context.Context) error                        { return nil }
-func (noopMutator) Rollback()                                           {}
-func (noopMutator) SelectClashProxy(string, string) error               { return nil }
-func (noopMutator) GetClashSelectorActive(string) (string, error)       { return "", nil }
-func (noopMutator) DeclaredOutboundTags() []string                      { return nil }
-func (noopMutator) SubscriptionOutbounds() []map[string]any             { return nil }
+func (noopMutator) AllocListenPort() (uint16, error)                            { return 11000, nil }
+func (noopMutator) AllocProxyIndex(context.Context) (int, error)                { return 1, nil }
+func (noopMutator) AddOutbound(string, []byte) error                            { return nil }
+func (noopMutator) UpdateOutbound(string, []byte) error                         { return nil }
+func (noopMutator) RemoveOutbound(string) error                                 { return nil }
+func (noopMutator) AddInbound(string, []byte) error                             { return nil }
+func (noopMutator) RemoveInbound(string) error                                  { return nil }
+func (noopMutator) AddRouteRule([]byte) error                                   { return nil }
+func (noopMutator) RemoveRouteRule(string, string) error                        { return nil }
+func (noopMutator) EnsureProxy(context.Context, int, int, string, string) error { return nil }
+func (noopMutator) RemoveProxy(context.Context, int) error                      { return nil }
+func (noopMutator) Reload(context.Context) error                                { return nil }
+func (noopMutator) Rollback()                                                   {}
+func (noopMutator) SelectClashProxy(string, string) error                       { return nil }
+func (noopMutator) GetClashSelectorActive(string) (string, error)               { return "", nil }
+func (noopMutator) DeclaredOutboundTags() []string                              { return nil }
+func (noopMutator) SubscriptionOutbounds() []map[string]any                     { return nil }
 
 type fakePresenceProbe struct{ installed bool }
 

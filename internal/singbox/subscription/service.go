@@ -29,9 +29,13 @@ type ConfigMutator interface {
 	RemoveInbound(tag string) error
 	AddRouteRule(jsonBody []byte) error
 	RemoveRouteRule(inboundTag, outboundTag string) error
-	EnsureProxy(ctx context.Context, idx, port int, description string) error
-	// CreateProxy — EnsureProxy только что выделенного индекса; ours — откат
-	// вправе снести ProxyN (создан этой командой, F574).
+	// EnsureProxy — ProxyN индекса из store: создать, если записи нет, или
+	// перенастроить, если запись наша (description == ownedDesc — прежний
+	// Label при переименовании); иначе singbox.ErrProxyForeign (F577).
+	EnsureProxy(ctx context.Context, idx, port int, description, ownedDesc string) error
+	// CreateProxy — создание ProxyN на только что выделенном индексе; индекс
+	// занят чужим — ошибка (на ≥5.01, F577); ours — откат вправе снести
+	// ProxyN (создан этой командой, F574).
 	CreateProxy(ctx context.Context, idx, port int, description string) (ours bool, err error)
 	RemoveProxy(ctx context.Context, idx int) error
 	// Reload commits the batch of mutations since the last commit with a
@@ -187,7 +191,7 @@ func (s *Service) SyncProxies(ctx context.Context) error {
 		err := func() error {
 			mu.Lock()
 			defer mu.Unlock()
-			return s.mutator.EnsureProxy(ctx, sub.ProxyIndex, int(sub.ListenPort), sub.Label)
+			return s.mutator.EnsureProxy(ctx, sub.ProxyIndex, int(sub.ListenPort), sub.Label, sub.Label)
 		}()
 		if err != nil {
 			return fmt.Errorf("subscription %s: ensure proxy: %w", sub.ID, err)
@@ -202,7 +206,7 @@ func (s *Service) SyncProxies(ctx context.Context) error {
 		if g.ListenPort == 0 || g.ProxyIndex < 0 {
 			continue
 		}
-		if err := s.mutator.EnsureProxy(ctx, g.ProxyIndex, int(g.ListenPort), g.Label); err != nil {
+		if err := s.mutator.EnsureProxy(ctx, g.ProxyIndex, int(g.ListenPort), g.Label, g.Label); err != nil {
 			return fmt.Errorf("subscription group %s: ensure proxy: %w", g.ID, err)
 		}
 	}
@@ -221,7 +225,7 @@ func (s *Service) SyncProxies(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("alloc proxy index: %w", err)
 			}
-			if err := s.mutator.EnsureProxy(ctx, idx, int(sub.ListenPort), sub.Label); err != nil {
+			if err := s.mutator.EnsureProxy(ctx, idx, int(sub.ListenPort), sub.Label, sub.Label); err != nil {
 				return fmt.Errorf("ensure proxy: %w", err)
 			}
 			if err := s.store.SetProxyIndex(sub.ID, idx); err != nil {
@@ -242,7 +246,7 @@ func (s *Service) SyncProxies(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("subscription group %s: alloc proxy index: %w", g.ID, err)
 		}
-		if err := s.mutator.EnsureProxy(ctx, idx, int(g.ListenPort), g.Label); err != nil {
+		if err := s.mutator.EnsureProxy(ctx, idx, int(g.ListenPort), g.Label, g.Label); err != nil {
 			return fmt.Errorf("subscription group %s: ensure proxy: %w", g.ID, err)
 		}
 		if err := s.groups.SetProxyIndex(g.ID, idx); err != nil {
@@ -1190,7 +1194,7 @@ func (s *Service) Update(id string, patch UpdatePatch) (*Subscription, error) {
 		// next refresh; we surface the error so the UI can show a warning.
 		// Skipped when the toggle is off or the subscription has no ProxyN
 		// (created while off): there is no interface to relabel.
-		if err := s.mutator.EnsureProxy(context.Background(), sub.ProxyIndex, int(sub.ListenPort), sub.Label); err != nil {
+		if err := s.mutator.EnsureProxy(context.Background(), sub.ProxyIndex, int(sub.ListenPort), sub.Label, current.Label); err != nil {
 			return sub, fmt.Errorf("sync proxy description: %w", err)
 		}
 	}

@@ -11,9 +11,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
+	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 	sysfiles "github.com/hoaxisr/awg-manager/internal/sys/files"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 )
 
 func withLegacySetupNoop(svc *Service) {
@@ -25,6 +31,7 @@ type ensuredProxyCall struct {
 	idx         int
 	port        int
 	description string
+	ownedDesc   string
 }
 
 // fakeMutator records what the service tries to commit.
@@ -170,12 +177,12 @@ func (f *fakeMutator) RemoveRouteRule(inboundTag, outboundTag string) error {
 	f.removedRules++
 	return nil
 }
-func (f *fakeMutator) EnsureProxy(_ context.Context, idx, port int, description string) error {
-	f.ensuredProxies = append(f.ensuredProxies, ensuredProxyCall{idx: idx, port: port, description: description})
+func (f *fakeMutator) EnsureProxy(_ context.Context, idx, port int, description, ownedDesc string) error {
+	f.ensuredProxies = append(f.ensuredProxies, ensuredProxyCall{idx: idx, port: port, description: description, ownedDesc: ownedDesc})
 	return nil
 }
 func (f *fakeMutator) CreateProxy(ctx context.Context, idx, port int, description string) (bool, error) {
-	_ = f.EnsureProxy(ctx, idx, port, description)
+	_ = f.EnsureProxy(ctx, idx, port, description, description)
 	return !f.createNotOurs, f.createErr
 }
 func (f *fakeMutator) RemoveProxy(_ context.Context, idx int) error {
@@ -257,9 +264,9 @@ func (m *scanMutator) AllocProxyIndex(_ context.Context) (int, error) {
 	}
 }
 func (m *scanMutator) CreateProxy(ctx context.Context, idx, port int, description string) (bool, error) {
-	return true, m.EnsureProxy(ctx, idx, port, description)
+	return true, m.EnsureProxy(ctx, idx, port, description, description)
 }
-func (m *scanMutator) EnsureProxy(_ context.Context, idx, port int, description string) error {
+func (m *scanMutator) EnsureProxy(_ context.Context, idx, port int, description, ownedDesc string) error {
 	if m.live == nil {
 		m.live = map[int]bool{}
 	}
@@ -1452,6 +1459,10 @@ func TestUpdate_LabelChangeUpdatesProxyDescription(t *testing.T) {
 	if got.description != newLabel {
 		t.Errorf("EnsureProxy description=%q want %q", got.description, newLabel)
 	}
+	// F577: запись наша по прежнему Label — на роутере стоит он.
+	if got.ownedDesc != "Original Label" {
+		t.Errorf("EnsureProxy ownedDesc=%q want %q", got.ownedDesc, "Original Label")
+	}
 	if got.idx != sub.ProxyIndex {
 		t.Errorf("EnsureProxy idx=%d want %d", got.idx, sub.ProxyIndex)
 	}
@@ -2640,6 +2651,69 @@ func TestService_Create_RollbackOnlyOwnProxy(t *testing.T) {
 			}
 			if len(mutator.removedProxies) != c.wantRm {
 				t.Fatalf("removedProxies=%v want %d", mutator.removedProxies, c.wantRm)
+			}
+		})
+	}
+}
+
+// ndmsProxyMutator — fakeMutator, у которого ProxyN — настоящий
+// singbox.ProxyManager поверх оракула NDMS; AllocProxyIndex отдаёт idx (индекс
+// выбран свободным, а чужой занял его до создания).
+type ndmsProxyMutator struct {
+	*fakeMutator
+	pm  *singbox.ProxyManager
+	idx int
+}
+
+func (m *ndmsProxyMutator) AllocProxyIndex(context.Context) (int, error) { return m.idx, nil }
+func (m *ndmsProxyMutator) CreateProxy(ctx context.Context, idx, port int, d string) (bool, error) {
+	return m.pm.CreateProxy(ctx, idx, port, d)
+}
+func (m *ndmsProxyMutator) EnsureProxy(ctx context.Context, idx, port int, d, owned string) error {
+	return m.pm.EnsureProxy(ctx, idx, port, d, owned)
+}
+func (m *ndmsProxyMutator) RemoveProxy(ctx context.Context, idx int) error {
+	return m.pm.RemoveProxy(ctx, idx)
+}
+
+// F577 (д), ревью F574 N2: на 5.01+ индекс подписки/группы занят чужим
+// ProxyN (NDMS не ответил «created») — создание отказывает, к чужому ничего
+// не привязано, его description цел.
+func TestService_Create_ForeignProxyIndex_NotBound(t *testing.T) {
+	ndmsinfo.Reset()
+	t.Cleanup(ndmsinfo.Reset)
+	sys := query.NewSystemInfoStore(nil, nil)
+	sys.Adopt(ndms.Version{Release: "5.01.C.6.0-0", Components: []string{"proxy"}}, "test")
+	if err := ndmsinfo.Init(context.Background(), sys, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"subscription", "group"} {
+		t.Run(kind, func(t *testing.T) {
+			f := query.NewFakeNDMS(ndms.Interface{ID: "Proxy0", Type: "Proxy", Description: "Work", State: "up"})
+			q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+			c := command.NewCommands(command.Deps{
+				Poster:  f,
+				Queries: q,
+				Save:    command.NewSaveCoordinator(f, nil, time.Hour, time.Hour, 0, q.RunningConfig),
+				IsOS5:   func() bool { return true },
+			})
+			svc, fm, gs := newTestServiceWithGroups(t)
+			svc.mutator = &ndmsProxyMutator{fakeMutator: fm, pm: singbox.NewProxyManager(q, c)}
+			var err error
+			if kind == "subscription" {
+				_, err = svc.Create(context.Background(), CreateInput{Label: "x", Inline: "vless://3a3b1c2e-9999-4321-aaaa-1234567890a1@a.example:443#A"})
+			} else {
+				_, err = svc.CreateGroup(context.Background(), GroupCreateInput{Label: "x", Enabled: true})
+			}
+			if !errors.Is(err, command.ErrNotCreated) {
+				t.Fatalf("err=%v", err)
+			}
+			if n, g := len(svc.store.List()), len(gs.List()); n != 0 || g != 0 {
+				t.Fatalf("привязано: подписок=%d групп=%d", n, g)
+			}
+			_, rec, ok, err := q.Interfaces.Confirm(context.Background(), "Proxy0")
+			if err != nil || !ok || rec.Description != "Work" || f.E != 0 {
+				t.Fatalf("Proxy0: rec=%+v ok=%v err=%v E=%d posts=%v", rec, ok, err, f.E, f.Posts)
 			}
 		})
 	}

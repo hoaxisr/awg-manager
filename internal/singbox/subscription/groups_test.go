@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -721,5 +722,22 @@ func TestService_CreateGroup_RollbackOnlyOwnProxy(t *testing.T) {
 				t.Fatalf("removedProxies=%v want %d", mut.removedProxies, c.wantRm)
 			}
 		})
+	}
+}
+
+// F577: переименование группы перенастраивает ProxyN, наш по прежнему Label.
+func TestService_UpdateGroup_LabelOwnedByPrevious(t *testing.T) {
+	svc, mut, _ := newTestServiceWithGroups(t)
+	g, err := svc.CreateGroup(context.Background(), GroupCreateInput{Label: "grp", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mut.ensuredProxies = nil
+	label := "grp2"
+	if _, err := svc.UpdateGroup(context.Background(), g.ID, GroupUpdatePatch{Label: &label}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []ensuredProxyCall{{idx: g.ProxyIndex, port: int(g.ListenPort), description: "grp2", ownedDesc: "grp"}}; !slices.Equal(mut.ensuredProxies, want) {
+		t.Fatalf("EnsureProxy: %+v, want %+v", mut.ensuredProxies, want)
 	}
 }
