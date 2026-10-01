@@ -443,8 +443,8 @@ func TestSetASCParams_KeepsASC3OfInterface(t *testing.T) {
 	}
 }
 
-// F581/R44: правка ASC — одно свежее дерево rc до записи (ASC3Fields, Q6) и
-// не больше двух на сверку (второе — только после несовпадения).
+// F581/F600: правка ASC — одно свежее дерево rc до записи (ASC3Fields, Q6) и
+// одно на сверку; несовпадение второго не читает.
 func TestSetASCParams_RCTreeBudget(t *testing.T) {
 	raw := json.RawMessage(`{
 		"jc":3,"jmin":64,"jmax":256,"s1":15,"s2":16,
@@ -461,9 +461,9 @@ func TestSetASCParams_RCTreeBudget(t *testing.T) {
 		budget  int64
 	}{
 		{"set", raw, false, 2},
-		{"set ignored", raw, true, 3}, // 1 до записи (Q6) + 2 сверки (R44)
+		{"set ignored", raw, true, 2}, // 1 до записи (Q6) + 1 сверка (F600)
 		{"clear", off, false, 1},
-		{"clear ignored", off, true, 2},
+		{"clear ignored", off, true, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, _, getter := newCreateTestService(t)
@@ -501,9 +501,9 @@ func TestSetASCParams_RCTreeBudget(t *testing.T) {
 	}
 }
 
-// R44: rc отстал от ответа на POST — первое чтение сверки видит старое, второе
-// (после паузы) новое: правка успешна, деревьев на сверку 2.
-func TestSetASCParams_MismatchThenMatch(t *testing.T) {
+// F600: rc отражает запись сразу (стенд 01.10) — сверка, увидевшая старое,
+// сразу «не применено», без второго дерева и без ErrASCUnverified.
+func TestSetASCParams_MismatchNoRetry(t *testing.T) {
 	svc, _, getter := newCreateTestService(t)
 	server, err := svc.Create(context.Background(), CreateServerRequest{
 		Address:    "10.45.0.1",
@@ -515,11 +515,11 @@ func TestSetASCParams_MismatchThenMatch(t *testing.T) {
 	}
 	poster := svc.transport.(*recordingPoster)
 	var pending map[string]interface{}
-	poster.onPost = func(p map[string]interface{}) { pending = p } // роутер применит позже
+	poster.onPost = func(p map[string]interface{}) { pending = p } // роутер применил бы позже
 	var reads int
 	getter.rcHook = func() error {
 		reads++
-		if reads == 3 && pending != nil { // 1 — ASC3Fields, 2 — сверка (старое), 3 — сверка
+		if reads == 3 && pending != nil { // 1 — ASC3Fields, 2 — сверка, 3 — повтора быть не должно
 			getter.applyPost(pending)
 		}
 		return nil
@@ -528,11 +528,12 @@ func TestSetASCParams_MismatchThenMatch(t *testing.T) {
 		"jc":3,"jmin":64,"jmax":256,"s1":15,"s2":16,
 		"h1":"100000001","h2":"1200000002","h3":"2400000003","h4":"3600000004"
 	}`)
-	if err := svc.SetASCParams(context.Background(), server.InterfaceName, raw); err != nil {
-		t.Fatalf("второе чтение сверки видит запись — успех, got %v", err)
+	err = svc.SetASCParams(context.Background(), server.InterfaceName, raw)
+	if err == nil || errors.Is(err, ErrASCUnverified) || !strings.Contains(err.Error(), "not applied") {
+		t.Fatalf("несовпадение сверки — «не применено», got %v", err)
 	}
-	if reads != 3 {
-		t.Fatalf("деревьев rc: %d, want 3 (1 до записи + 2 сверки)", reads)
+	if reads != 2 {
+		t.Fatalf("деревьев rc: %d, want 2 (1 до записи + 1 сверка)", reads)
 	}
 }
 

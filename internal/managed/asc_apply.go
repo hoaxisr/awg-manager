@@ -383,8 +383,9 @@ func (s *Service) verifyASCParamsApplied(ctx context.Context, ifaceName string, 
 			extended = true
 		}
 	}
-	// Сверка — не больше двух свежих деревьев rc (R44, F581): второе — только
-	// после несовпадения (через ascVerifyPause) или ошибки чтения первого.
+	// Сверка — одно свежее дерево rc (F581, F600): rc отражает запись сразу
+	// после ответа на POST, несовпадение — сразу «не применено». Второе
+	// дерево — только после ошибки чтения первого (R44).
 	var actual map[string]string
 	var readErr error
 	for attempt := range 2 {
@@ -395,18 +396,17 @@ func (s *Service) verifyASCParamsApplied(ctx context.Context, ifaceName string, 
 			case <-time.After(ascVerifyPause):
 			}
 		}
-		actual, readErr = s.readASCFresh(ctx, ifaceName, extended)
-		if readErr != nil {
-			continue
-		}
-		if ascReadbackMatches(want, wantDisabled, actual) {
-			return nil
+		if actual, readErr = s.readASCFresh(ctx, ifaceName, extended); readErr == nil {
+			break
 		}
 	}
 	if readErr != nil {
 		return fmt.Errorf("%w: %v", ErrASCUnverified, readErr)
 	}
-	return fmt.Errorf("ASC params were not applied by router: want=%v got=%v", want, actual)
+	if !ascReadbackMatches(want, wantDisabled, actual) {
+		return fmt.Errorf("ASC params were not applied by router: want=%v got=%v", want, actual)
+	}
+	return nil
 }
 
 // ErrASCUnverified — запись ASC роутер принял (POST без ошибки), а прочитать
@@ -424,12 +424,11 @@ func (s *Service) ascUnverified(op, ifaceName string, err error) bool {
 	return true
 }
 
-// ascVerifyPause — пауза перед вторым чтением сверки. Страховка на случай,
-// если rc отстаёт от ответа на POST: для ASC это не проверено (стенд не
-// мерил; заметка tolerate.go про маршруты ASC не покрывает). Снять второе
-// чтение по несовпадению можно после стенда: POST interface WireguardN
-// wireguard asc {…} и сразу GET /rci/show/rc/interface/ — 20 из 20 новые
-// значения при открытой панели и на буте (R44).
+// ascVerifyPause — пауза перед повторным чтением сверки после ОШИБКИ чтения
+// первого. По несовпадению повтора нет: стенд 01.10 (5.01.C.6) — POST
+// interface WireguardN wireguard asc {…} и сразу GET /rci/show/rc/interface/
+// дали новые значения 20 из 20 под открытой панелью и 10 из 10 на буте (R44,
+// F600).
 const ascVerifyPause = 300 * time.Millisecond
 
 // readASCFresh — ASC интерфейса из дерева rc, прочитанного сейчас, в форме
