@@ -1292,7 +1292,7 @@ func (s *InterfaceStore) Confirm(ctx context.Context, name string) (Confirmed, *
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rec, ok := s.confirmedLocked(raw, name)
+	rec, ok := s.confirmedFreshLocked(raw, name)
 	if !ok {
 		return Confirmed{}, nil, false, nil
 	}
@@ -1399,23 +1399,16 @@ func (s *InterfaceStore) ConfirmEach(ctx context.Context, names []string) (map[s
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, n := range names {
-		if _, ok := s.confirmedLocked(raw, n); ok {
+		if _, ok := s.confirmedFreshLocked(raw, n); ok {
 			out[n] = Confirmed{name: n}
 		}
 	}
 	return out, nil
 }
 
-// ConfirmAll — Confirm для каждой записи свежего списка: кандидаты и
-// доказательство из одного чтения (проверка занятости сетей по всем серверам).
-//
-// Свежий — и свой ответ, и последний применённый (applied): после успешного
-// своего списка appliedNo не меньше его номера, то есть применённый начат не
-// раньше своего — тоже после вызова. Свой ответ, вытесненный более новым
-// (списком ReconcilePending по хуку создания), не знает только что созданную
-// запись, а применённый знает — без него её сети выпадали из проверки
-// занятости (F575). Снятая хуком после любого из списков не подтверждается
-// (confirmedLocked); запись, известная только по хуку, без списка — тоже.
+// ConfirmAll — Confirm для каждой записи свежего списка (своего ответа и
+// применённого, см. confirmedFreshLocked): кандидаты и доказательство из
+// одного чтения (проверка занятости сетей по всем серверам).
 func (s *InterfaceStore) ConfirmAll(ctx context.Context) (map[string]Confirmed, error) {
 	raw, err := s.refreshList(ctx, nil)
 	if err != nil {
@@ -1426,7 +1419,7 @@ func (s *InterfaceStore) ConfirmAll(ctx context.Context) (map[string]Confirmed, 
 	defer s.mu.RUnlock()
 	for _, list := range []map[string]ndms.Interface{raw, s.applied} {
 		for n := range list {
-			if _, ok := s.confirmedLocked(list, n); ok {
+			if _, ok := s.confirmedFreshLocked(raw, n); ok {
 				out[n] = Confirmed{name: n}
 			}
 		}
@@ -1484,6 +1477,21 @@ func (s *InterfaceStore) FreeIndex(ctx context.Context, prefix string, limit int
 		}
 	}
 	return 0, false, nil
+}
+
+// confirmedFreshLocked — confirmedLocked по своему ответу raw, затем по
+// последнему применённому списку (applied). Свежий — и тот и другой: после
+// успешного своего списка appliedNo не меньше его номера, то есть применённый
+// начат не раньше своего — тоже после вызова. Свой ответ, вытесненный более
+// новым (списком ReconcilePending по хуку создания), не знает только что
+// созданную запись, а применённый знает (F575). Снятая хуком после любого из
+// списков не подтверждается (confirmedLocked); известная только по хуку, без
+// списка, — тоже.
+func (s *InterfaceStore) confirmedFreshLocked(raw map[string]ndms.Interface, name string) (*ndms.Interface, bool) {
+	if rec, ok := s.confirmedLocked(raw, name); ok {
+		return rec, true
+	}
+	return s.confirmedLocked(s.applied, name)
 }
 
 // confirmedLocked — копия записи, если name есть в свежем ответе raw и не

@@ -214,11 +214,11 @@ func TestHooks_UnknownIDPendingUntilDestroyed(t *testing.T) {
 	}
 }
 
-// confirmAllDisplaced — ConfirmAll, чей список вытеснен: пока он в полёте (снимок
-// уже сделан, Wireguard3 в нём нет), Wireguard3 создают, ifcreated доставлен,
-// и ReconcilePending применяет более новый список с ним. after — что
-// происходит после нового списка, до ответа ConfirmAll.
-func confirmAllDisplaced(t *testing.T, after func(f *FakeNDMS, s *InterfaceStore)) (map[string]Confirmed, *FakeNDMS) {
+// displaced готовит вытесненный ответ: следующий список стора (его ведёт
+// Confirm*) в полёте, снимок уже сделан, Wireguard3 в нём нет; тогда
+// Wireguard3 создают, ifcreated доставлен, и ReconcilePending применяет более
+// новый список с ним. after — что происходит после нового списка, до ответа.
+func displaced(t *testing.T, after func(f *FakeNDMS, s *InterfaceStore)) (*FakeNDMS, *InterfaceStore) {
 	t.Helper()
 	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
 	s := NewInterfaceStore(f, NopLogger())
@@ -237,11 +237,53 @@ func confirmAllDisplaced(t *testing.T, after func(f *FakeNDMS, s *InterfaceStore
 		}
 		after(f, s)
 	})
-	got, err := s.ConfirmAll(ctx)
+	return f, s
+}
+
+func destroyW3(f *FakeNDMS, s *InterfaceStore) {
+	f.Remove("Wireguard3")
+	for _, h := range f.DrainHooks() {
+		s.OnDestroyed(h.ID)
+	}
+}
+
+func confirmAllDisplaced(t *testing.T, after func(f *FakeNDMS, s *InterfaceStore)) (map[string]Confirmed, *FakeNDMS) {
+	t.Helper()
+	f, s := displaced(t, after)
+	got, err := s.ConfirmAll(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return got, f
+}
+
+// F575 (раунд 1): Confirm и ConfirmEach — тот же вытесненный ответ.
+func TestConfirm_DisplacedAnswer_NewerListConfirms(t *testing.T) {
+	_, s := displaced(t, func(*FakeNDMS, *InterfaceStore) {})
+	c, rec, ok, err := s.Confirm(context.Background(), "Wireguard3")
+	if err != nil || !ok || c.Name() != "Wireguard3" || rec == nil || rec.ID != "Wireguard3" {
+		t.Fatalf("c=%v rec=%#v ok=%v err=%v", c, rec, ok, err)
+	}
+}
+
+func TestConfirm_DisplacedAnswer_DestroyedAfterNotConfirmed(t *testing.T) {
+	_, s := displaced(t, destroyW3)
+	if _, _, ok, err := s.Confirm(context.Background(), "Wireguard3"); ok || err != nil {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+}
+
+func TestConfirmEach_DisplacedAnswer(t *testing.T) {
+	_, s := displaced(t, func(*FakeNDMS, *InterfaceStore) {})
+	got, err := s.ConfirmEach(context.Background(), []string{"Wireguard0", "Wireguard3", "Wireguard9"})
+	if err != nil || len(got) != 2 || got["Wireguard3"].Name() != "Wireguard3" {
+		t.Fatalf("got=%v err=%v", got, err)
+	}
+	_, s = displaced(t, destroyW3)
+	got, err = s.ConfirmEach(context.Background(), []string{"Wireguard0", "Wireguard3"})
+	if _, ok := got["Wireguard3"]; ok || err != nil || len(got) != 1 {
+		t.Fatalf("destroyed after the newer list: got=%v err=%v", got, err)
+	}
 }
 
 // F575: свой ответ ConfirmAll вытеснен списком ReconcilePending, начатым после
@@ -258,12 +300,7 @@ func TestConfirmAll_DisplacedAnswer_NewerListConfirms(t *testing.T) {
 
 // Снятая хуком после нового списка — не подтверждена: доказательство не ослаблено.
 func TestConfirmAll_DisplacedAnswer_DestroyedAfterNotConfirmed(t *testing.T) {
-	got, _ := confirmAllDisplaced(t, func(f *FakeNDMS, s *InterfaceStore) {
-		f.Remove("Wireguard3")
-		for _, h := range f.DrainHooks() {
-			s.OnDestroyed(h.ID)
-		}
-	})
+	got, _ := confirmAllDisplaced(t, destroyW3)
 	if _, ok := got["Wireguard3"]; ok {
 		t.Fatalf("destroyed after the newer list must not be confirmed: %v", got)
 	}
