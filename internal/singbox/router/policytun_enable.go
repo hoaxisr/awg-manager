@@ -223,7 +223,7 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 
 	// PUBLIC security-level (unlike fakeip's private): NDMS only offers public
 	// interfaces as access-policy exits, and the policy IS the steering here.
-	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, policyTunDescription, "public"); err != nil {
+	if err = s.provisionOpkgTun(ctx, ndmsName, policyTunDescription, "public"); err != nil {
 		return fmt.Errorf("enable policy-tun: create opkgtun: %w", err)
 	}
 	// rbCtx: откат обязан доехать и когда Enable упал ИЗ-ЗА отмены ctx (клиент

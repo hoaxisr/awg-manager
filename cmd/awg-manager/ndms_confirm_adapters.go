@@ -88,6 +88,15 @@ func (a confirmingOpkgTun) CreateOpkgTunWithSecurityLevel(ctx context.Context, n
 	return err
 }
 
+// OpkgTunRecord — запись по свежему списку (Confirm): есть ли и её description.
+func (a confirmingOpkgTun) OpkgTunRecord(ctx context.Context, name string) (string, bool, error) {
+	_, rec, ok, err := a.ifaces.Confirm(ctx, name)
+	if err != nil || !ok {
+		return "", false, err
+	}
+	return rec.Description, true, nil
+}
+
 func (a confirmingOpkgTun) DeleteOpkgTun(ctx context.Context, name string) error {
 	return confirmTeardown(ctx, a.ifaces, name, func(c ndmsquery.Confirmed) error { return a.cmds.DeleteOpkgTun(ctx, c) })
 }

@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -27,6 +28,11 @@ type StaticRouteSpec struct {
 // OpkgTunProvisioner manages the fakeip-tun kernel interface lifecycle via NDMS.
 type OpkgTunProvisioner interface {
 	CreateOpkgTunWithSecurityLevel(ctx context.Context, name, description, securityLevel string) error
+	// OpkgTunRecord — запись name в СВЕЖЕМ списке NDMS: есть ли она и её
+	// description. По нему включение решает, создавать запись или
+	// переиспользовать удержанную (R45).
+	OpkgTunRecord(ctx context.Context, name string) (description string, ok bool, err error)
+	SetSecurityLevel(ctx context.Context, name, level string) error
 	SetIPGlobal(ctx context.Context, name string) error
 	DeleteOpkgTun(ctx context.Context, name string) error
 	SetAddress(ctx context.Context, name, address, mask string) error
@@ -193,4 +199,26 @@ func resolveFakeIPParamsWith(base FakeIPTunParams, sr storage.SingboxRouterSetti
 		p.RealServer = sr.FakeIPRealServer
 	}
 	return p
+}
+
+// provisionOpkgTun — запись OpkgTun под включение режима (R45). Запись по
+// имени смотрится свежим списком:
+//   - нет — создание F569 (голое создание → подтверждение → настройки);
+//   - есть с нашим description — удержанная нами (выключение policy-tun её
+//     не сносит): Create по ней невозможен (живое устройство записи —
+//     отказ F569, на 5.01+ ещё и ErrNotCreated), поэтому её только
+//     настраиваем;
+//   - есть с чужим description — отказ без единой команды.
+func (s *ServiceImpl) provisionOpkgTun(ctx context.Context, ndmsName, description, securityLevel string) error {
+	desc, ok, err := s.deps.OpkgTun.OpkgTunRecord(ctx, ndmsName)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, description, securityLevel)
+	}
+	if desc != description {
+		return fmt.Errorf("запись %s уже есть и не наша (description %q)", ndmsName, desc)
+	}
+	return s.deps.OpkgTun.SetSecurityLevel(ctx, ndmsName, securityLevel)
 }

@@ -226,7 +226,7 @@ func (s *ServiceImpl) enableFakeIPTun(ctx context.Context, settings *storage.Set
 	// steering is via specific pool/CIDR static routes onto the tun, not via an
 	// access-policy exit (the old policy-exit model is abandoned). A private,
 	// non-global tun routes traffic fine (stand-verified).
-	if err = s.deps.OpkgTun.CreateOpkgTunWithSecurityLevel(ctx, ndmsName, fakeIPTunDescription, "private"); err != nil {
+	if err = s.provisionOpkgTun(ctx, ndmsName, fakeIPTunDescription, "private"); err != nil {
 		return fmt.Errorf("enable fakeip-tun: create opkgtun: %w", err)
 	}
 	// rbCtx: рулбэк обязан доехать и когда Enable упал ИЗ-ЗА отмены ctx (клиент

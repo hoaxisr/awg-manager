@@ -365,3 +365,20 @@ func TestStaticRoutesForInterface_AbsentOrListError(t *testing.T) {
 	}
 	oracleClean(t, f)
 }
+
+// R45: запись по свежему списку — есть с её description либо нет; команд нет.
+func TestConfirmingOpkgTun_OpkgTunRecord(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS(ndms.Interface{ID: "OpkgTun3", Type: "OpkgTun", Description: "awgm policy-tun"})
+	a := newConfirmAdapters(t, f)
+	desc, ok, err := a.opkg.OpkgTunRecord(context.Background(), "OpkgTun3")
+	if err != nil || !ok || desc != "awgm policy-tun" {
+		t.Fatalf("OpkgTun3: desc=%q ok=%v err=%v", desc, ok, err)
+	}
+	if _, ok, err := a.opkg.OpkgTunRecord(context.Background(), "OpkgTun4"); err != nil || ok {
+		t.Fatalf("OpkgTun4: ok=%v err=%v, want отсутствие", ok, err)
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("команды: %v", f.Posts)
+	}
+	oracleClean(t, f)
+}

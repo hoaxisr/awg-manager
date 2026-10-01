@@ -31,6 +31,10 @@ func (fakeOpkgTunProvisioner) ClearIPv6Address(context.Context, string) error   
 func (fakeOpkgTunProvisioner) SetMTU(context.Context, string, int) error            { return nil }
 func (fakeOpkgTunProvisioner) InterfaceUp(context.Context, string) error            { return nil }
 func (fakeOpkgTunProvisioner) InterfaceDown(context.Context, string) error          { return nil }
+func (fakeOpkgTunProvisioner) OpkgTunRecord(context.Context, string) (string, bool, error) {
+	return "", false, nil
+}
+func (fakeOpkgTunProvisioner) SetSecurityLevel(context.Context, string, string) error { return nil }
 
 type fakeStaticRouteProvider struct{}
 

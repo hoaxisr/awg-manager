@@ -56,6 +56,18 @@ func (l *callLog) count(want string) int {
 type recOpkgTun struct {
 	log    *callLog
 	failAt string
+	// records — записи NDMS по имени → description для OpkgTunRecord; nil —
+	// записей нет, и включение идёт в Create (R45).
+	records map[string]string
+}
+
+func (r *recOpkgTun) OpkgTunRecord(_ context.Context, name string) (string, bool, error) {
+	d, ok := r.records[name]
+	return d, ok, r.maybeFail("Record")
+}
+func (r *recOpkgTun) SetSecurityLevel(_ context.Context, name, level string) error {
+	r.log.add("SetSecurityLevel:" + name + ":" + level)
+	return r.maybeFail("SetSecurityLevel")
 }
 
 func (r *recOpkgTun) maybeFail(label string) error {
