@@ -46,6 +46,7 @@ type slotConfig struct {
 type ProxyRegistrar interface {
 	NextFreeIndex(ctx context.Context, reserved map[int]bool) (int, error)
 	EnsureProxy(ctx context.Context, idx, port int, description string) error
+	CreateProxy(ctx context.Context, idx, port int, description string) (ours bool, err error)
 	RemoveProxy(ctx context.Context, idx int) error
 }
 
@@ -832,6 +833,15 @@ func (a *OperatorAdapter) EnsureProxy(ctx context.Context, idx, port int, descri
 		return fmt.Errorf("subscription adapter: ProxyRegistrar not configured")
 	}
 	return a.pm.EnsureProxy(ctx, idx, port, description)
+}
+
+// CreateProxy creates the NDMS ProxyN at a freshly allocated index; ours —
+// откат вправе её снести (F574).
+func (a *OperatorAdapter) CreateProxy(ctx context.Context, idx, port int, description string) (bool, error) {
+	if a.pm == nil {
+		return false, fmt.Errorf("subscription adapter: ProxyRegistrar not configured")
+	}
+	return a.pm.CreateProxy(ctx, idx, port, description)
 }
 
 // RemoveProxy tears down the NDMS ProxyN interface at the given index.

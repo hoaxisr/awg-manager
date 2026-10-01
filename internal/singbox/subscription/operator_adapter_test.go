@@ -176,6 +176,9 @@ type recProxies struct{ removed []int }
 
 func (r *recProxies) NextFreeIndex(context.Context, map[int]bool) (int, error) { return 0, nil }
 func (r *recProxies) EnsureProxy(context.Context, int, int, string) error      { return nil }
+func (r *recProxies) CreateProxy(context.Context, int, int, string) (bool, error) {
+	return true, nil
+}
 func (r *recProxies) RemoveProxy(_ context.Context, idx int) error {
 	r.removed = append(r.removed, idx)
 	return nil

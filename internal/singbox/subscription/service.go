@@ -30,6 +30,9 @@ type ConfigMutator interface {
 	AddRouteRule(jsonBody []byte) error
 	RemoveRouteRule(inboundTag, outboundTag string) error
 	EnsureProxy(ctx context.Context, idx, port int, description string) error
+	// CreateProxy — EnsureProxy только что выделенного индекса; ours — откат
+	// вправе снести ProxyN (создан этой командой, F574).
+	CreateProxy(ctx context.Context, idx, port int, description string) (ours bool, err error)
 	RemoveProxy(ctx context.Context, idx int) error
 	// Reload commits the batch of mutations since the last commit with a
 	// single validate+save+reload (#331). Mutations (Add*/Remove*/Update*)
@@ -418,11 +421,18 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, er
 			s.store.Delete(sub.ID)
 			return nil, err
 		}
-		proxyIdx = idx
-		if err := s.mutator.EnsureProxy(ctx, idx, int(port), sub.Label); err != nil {
-			// Best-effort cleanup: EnsureProxy may have partially registered
-			// the interface before failing. RemoveProxy is idempotent.
-			_ = s.mutator.RemoveProxy(ctx, idx)
+		ours, err := s.mutator.CreateProxy(ctx, idx, int(port), sub.Label)
+		if ours {
+			proxyIdx = idx
+		}
+		if err != nil {
+			// Best-effort cleanup: CreateProxy may have partially registered
+			// the interface before failing. RemoveProxy is idempotent. Снос —
+			// только своего: индекс мог занять чужой, ещё не видимый ProxyN
+			// (F574).
+			if ours {
+				_ = s.mutator.RemoveProxy(ctx, idx)
+			}
 			s.store.Delete(sub.ID)
 			s.logWarn("subscription-create", sub.ID, "failed to ensure NDMS proxy: "+err.Error())
 			return nil, fmt.Errorf("subscription: register NDMS proxy: %w", err)
@@ -439,8 +449,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, er
 		// страхует ранние ошибки (fetch/parse) и потому берёт txMu сам —
 		// иначе он мог бы сбросить открытый батч параллельной операции.
 		_ = s.withTx(func() error { s.mutator.Rollback(); return nil })
-		// EnsureProxy succeeded above — the NDMS Proxy interface is now
-		// live in the router. We must roll it back before dropping the
+		// CreateProxy succeeded above — the NDMS Proxy interface is now
+		// live in the router (proxyIdx >= 0 — только если создан нами).
+		// We must roll it back before dropping the
 		// storage row; otherwise every failed Create leaks a ProxyN that
 		// only the startup cleanup sweep would eventually reap. Swallow
 		// the RemoveProxy error: the storage row is going away regardless,

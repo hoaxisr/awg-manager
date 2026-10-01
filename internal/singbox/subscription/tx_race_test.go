@@ -160,3 +160,7 @@ func TestService_TxSerialization_RefreshVsGroupUpdate(t *testing.T) {
 		t.Fatalf("interleaved batch commits detected (%d):\n%s", len(mut.conflicts), mut.conflicts[0])
 	}
 }
+
+func (m *txRaceMutator) CreateProxy(context.Context, int, int, string) (bool, error) {
+	return true, nil
+}

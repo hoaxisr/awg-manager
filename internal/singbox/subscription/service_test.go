@@ -47,6 +47,8 @@ type fakeMutator struct {
 	reloads          int               // сколько раз вызывался Reload (батч-коммит)
 	rollbacks        int               // сколько раз вызывался Rollback (сброс батча)
 	reloadErr        error             // если задан, Reload возвращает эту ошибку
+	createNotOurs    bool              // CreateProxy: индекс занят чужим (ours=false)
+	createErr        error             // CreateProxy возвращает эту ошибку
 }
 
 func (m *fakeMutator) reset() {
@@ -172,6 +174,10 @@ func (f *fakeMutator) EnsureProxy(_ context.Context, idx, port int, description 
 	f.ensuredProxies = append(f.ensuredProxies, ensuredProxyCall{idx: idx, port: port, description: description})
 	return nil
 }
+func (f *fakeMutator) CreateProxy(ctx context.Context, idx, port int, description string) (bool, error) {
+	_ = f.EnsureProxy(ctx, idx, port, description)
+	return !f.createNotOurs, f.createErr
+}
 func (f *fakeMutator) RemoveProxy(_ context.Context, idx int) error {
 	f.removedProxies = append(f.removedProxies, idx)
 	return nil
@@ -249,6 +255,9 @@ func (m *scanMutator) AllocProxyIndex(_ context.Context) (int, error) {
 			return i, nil
 		}
 	}
+}
+func (m *scanMutator) CreateProxy(ctx context.Context, idx, port int, description string) (bool, error) {
+	return true, m.EnsureProxy(ctx, idx, port, description)
 }
 func (m *scanMutator) EnsureProxy(_ context.Context, idx, port int, description string) error {
 	if m.live == nil {
@@ -2598,5 +2607,40 @@ func TestService_Refresh_DropsStaleActiveMemberFromSelectorDefault(t *testing.T)
 	}
 	if def != members[0] {
 		t.Errorf("selector default=%q want %q (первый член)", def, members[0])
+	}
+}
+
+// F574 M2: откат Create сносит ProxyN только созданный этой командой. Индекс
+// занят чужим, ещё не видимым ProxyN (ours=false) — ни на отказе
+// CreateProxy, ни на отказе первичной загрузки RemoveProxy не зовётся.
+func TestService_Create_RollbackOnlyOwnProxy(t *testing.T) {
+	failFetch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200) // пусто — 0 серверов, Create падает
+	}))
+	defer failFetch.Close()
+	cases := []struct {
+		name      string
+		notOurs   bool
+		createErr error
+		wantRm    int
+	}{
+		{"чужой, отказ CreateProxy", true, errors.New("injected: create"), 0},
+		{"чужой, отказ загрузки", true, nil, 0},
+		{"свой, отказ CreateProxy", false, errors.New("injected: create"), 1},
+		{"свой, отказ загрузки", false, nil, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store, _ := NewStore(filepath.Join(t.TempDir(), "sub.json"))
+			mutator := &fakeMutator{createNotOurs: c.notOurs, createErr: c.createErr}
+			svc := NewService(store, mutator)
+			withLegacySetupNoop(svc)
+			if _, err := svc.Create(context.Background(), CreateInput{Label: "x", URL: failFetch.URL, Enabled: true}); err == nil {
+				t.Fatal("Create must fail")
+			}
+			if len(mutator.removedProxies) != c.wantRm {
+				t.Fatalf("removedProxies=%v want %d", mutator.removedProxies, c.wantRm)
+			}
+		})
 	}
 }

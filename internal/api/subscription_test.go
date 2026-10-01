@@ -684,3 +684,7 @@ func TestSubscriptionHandler_Update_URLOnInline_400(t *testing.T) {
 		t.Fatalf("body=%s want INVALID_INPUT", rec.Body.String())
 	}
 }
+
+func (noopMutator) CreateProxy(context.Context, int, int, string) (bool, error) {
+	return true, nil
+}

@@ -703,3 +703,23 @@ func TestService_ResolveGroupMembers_SkipsDisabledSub(t *testing.T) {
 		t.Fatalf("disabled subscription must be excluded from group, got %v", members)
 	}
 }
+
+// F574 M2: откат CreateGroup сносит ProxyN только созданный этой командой.
+func TestService_CreateGroup_RollbackOnlyOwnProxy(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		notOurs bool
+		wantRm  int
+	}{{"чужой", true, 0}, {"свой", false, 1}} {
+		t.Run(c.name, func(t *testing.T) {
+			svc, mut, _ := newTestServiceWithGroups(t)
+			mut.createNotOurs, mut.createErr = c.notOurs, errors.New("injected: create")
+			if _, err := svc.CreateGroup(context.Background(), GroupCreateInput{Label: "grp", Enabled: true}); err == nil {
+				t.Fatal("CreateGroup must fail")
+			}
+			if len(mut.removedProxies) != c.wantRm {
+				t.Fatalf("removedProxies=%v want %d", mut.removedProxies, c.wantRm)
+			}
+		})
+	}
+}

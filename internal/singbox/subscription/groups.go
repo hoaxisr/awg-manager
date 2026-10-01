@@ -295,9 +295,16 @@ func (s *Service) CreateGroup(ctx context.Context, in GroupCreateInput) (*Aggreg
 			s.groups.Delete(g.ID)
 			return nil, err
 		}
-		proxyIdx = idx
-		if err := s.mutator.EnsureProxy(ctx, idx, int(port), g.Label); err != nil {
-			_ = s.mutator.RemoveProxy(ctx, idx)
+		// Откат сносит ProxyN только созданный этой командой (F574): индекс
+		// мог занять чужой, ещё не видимый ProxyN.
+		ours, err := s.mutator.CreateProxy(ctx, idx, int(port), g.Label)
+		if ours {
+			proxyIdx = idx
+		}
+		if err != nil {
+			if ours {
+				_ = s.mutator.RemoveProxy(ctx, idx)
+			}
 			s.groups.Delete(g.ID)
 			return nil, fmt.Errorf("subscription group: register NDMS proxy: %w", err)
 		}
