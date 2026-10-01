@@ -48,6 +48,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1418,6 +1419,58 @@ func (s *InterfaceStore) ConfirmAll(ctx context.Context) (map[string]Confirmed, 
 		}
 	}
 	return out, nil
+}
+
+// FreeIndex — наименьший N в [0, limit), для которого имени prefix+N нет ни в
+// СВОЁМ свежем полном списке, ни в памяти (хуки создания новее списка), ни
+// среди ждущих ConfirmCreated, и N не в reserved (F574). Память одна не
+// решает: под нагрузкой ifcreated опаздывает до ~7 с, и чужой только что
+// созданный WireguardN/ProxyN был бы выбран нами. Список не прочитан — ошибка
+// (решение 4). ok=false — все N заняты. Запись, которую NDMS уже знает, но
+// ещё не показал ни списком, ни хуком, отсюда не видна: её ловит ответ на
+// создание (command.PostCreate).
+func (s *InterfaceStore) FreeIndex(ctx context.Context, prefix string, limit int, reserved map[int]bool) (idx int, ok bool, err error) {
+	used := make(map[int]bool, len(reserved))
+	for n := range reserved {
+		used[n] = true
+	}
+	mark := func(name string) {
+		if rest, found := strings.CutPrefix(name, prefix); found {
+			if n, err := strconv.Atoi(rest); err == nil {
+				used[n] = true
+			}
+		}
+	}
+	// Память — до списка и после: хук создания, пришедший до списка, без
+	// записи в нём список из pending выбрасывает, а NDMS запись уже знает.
+	memory := func() {
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		for n := range s.byID {
+			mark(n)
+		}
+		for n := range s.pending {
+			mark(n)
+		}
+		for n := range s.awaiting {
+			mark(n)
+		}
+	}
+	memory()
+	raw, err := s.refreshList(ctx, nil)
+	if err != nil {
+		return 0, false, fmt.Errorf("list interfaces: %w", err)
+	}
+	for n := range raw {
+		mark(n)
+	}
+	memory()
+	for i := 0; i < limit; i++ {
+		if !used[i] {
+			return i, true, nil
+		}
+	}
+	return 0, false, nil
 }
 
 // confirmedLocked — копия записи, если name есть в свежем ответе raw и не

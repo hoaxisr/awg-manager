@@ -85,33 +85,18 @@ func (pm *ProxyManager) EnsureProxy(ctx context.Context, index, port int, descri
 // router. The NDMS namespace is shared with whatever the user created
 // manually through the router UI, so we must scan /show/interface/
 // before picking a slot — otherwise CreateProxy would silently mutate
-// the user's existing Proxy0. reserved lets a batch allocator skip
+// the user's existing Proxy0. Скан — свой свежий список, не память
+// (InterfaceStore.FreeIndex, F574). reserved lets a batch allocator skip
 // indices it has already handed out earlier in the same batch, before
 // those ProxyN interfaces have been committed to NDMS.
 func (pm *ProxyManager) NextFreeIndex(ctx context.Context, reserved map[int]bool) (int, error) {
 	defer markProxyMgrDur("NextFreeIndex", time.Now())
-	ifaces, err := pm.queries.Interfaces.List(ctx)
+	idx, ok, err := pm.queries.Interfaces.FreeIndex(ctx, proxyIfacePrefix, maxProxySlots, reserved)
 	if err != nil {
-		return 0, fmt.Errorf("list interfaces: %w", err)
+		return 0, err
 	}
-	used := make(map[int]bool)
-	for idx := range reserved {
-		used[idx] = true
-	}
-	for _, iface := range ifaces {
-		if !strings.HasPrefix(iface.ID, proxyIfacePrefix) {
-			continue
-		}
-		var idx int
-		if n, err := fmt.Sscanf(iface.ID, proxyIfacePrefix+"%d", &idx); err != nil || n != 1 {
-			continue
-		}
-		used[idx] = true
-	}
-	for i := 0; i < maxProxySlots; i++ {
-		if !used[i] {
-			return i, nil
-		}
+	if ok {
+		return idx, nil
 	}
 	return 0, fmt.Errorf("no free Proxy slot (scanned %d)", maxProxySlots)
 }

@@ -224,3 +224,21 @@ func TestSyncProxies_ListErrorNoCommands(t *testing.T) {
 		t.Fatalf("err=%v posts=%v", err, f.Posts)
 	}
 }
+
+// F574: чужой Proxy1 создан мимо нас, хук не доставлен — память его не знает.
+// Выбор по свежему списку: Proxy2. Список не прочитан — ошибка.
+func TestProxyManager_NextFreeIndex_FreshList(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Proxy0", Type: "Proxy"})
+	pm := oracleProxyManager(f)
+	if _, err := pm.queries.Interfaces.Get(context.Background(), "Proxy0"); err != nil { // тёплая карта
+		t.Fatal(err)
+	}
+	f.Add(ndms.Interface{ID: "Proxy1", Type: "Proxy"})
+	if idx, err := pm.NextFreeIndex(context.Background(), nil); err != nil || idx != 2 {
+		t.Fatalf("idx=%d err=%v, want 2", idx, err)
+	}
+	f.FailList(errors.New("rci down"))
+	if idx, err := pm.NextFreeIndex(context.Background(), nil); err == nil {
+		t.Fatalf("idx=%d: want error on list failure", idx)
+	}
+}

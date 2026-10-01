@@ -1,0 +1,65 @@
+package query
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/ndms"
+)
+
+// freeIndexStore — стор на тёплой карте с одним Wireguard0.
+func freeIndexStore(t *testing.T) (*FakeNDMS, *InterfaceStore) {
+	t.Helper()
+	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
+	s := NewInterfaceStore(f, NopLogger())
+	if _, err := s.Get(context.Background(), "Wireguard0"); err != nil { // bootstrap
+		t.Fatal(err)
+	}
+	return f, s
+}
+
+// F574: чужой Wireguard1 создан в NDMS, хук не доставлен — память его не
+// знает. Выбор — по своему свежему списку: индекс 1 пропущен.
+func TestFreeIndex_ForeignNotInCache_Skipped(t *testing.T) {
+	f, s := freeIndexStore(t)
+	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
+	lists := f.ListCalls()
+	idx, ok, err := s.FreeIndex(context.Background(), "Wireguard", 100, map[int]bool{2: true})
+	if err != nil || !ok || idx != 3 {
+		t.Fatalf("idx=%d ok=%v err=%v, want 3 (0,1 в NDMS, 2 reserved)", idx, ok, err)
+	}
+	if f.ListCalls()-lists != 1 || f.E != 0 {
+		t.Fatalf("lists=%d E=%d", f.ListCalls()-lists, f.E)
+	}
+}
+
+// Запись ещё не в списке, но хук слоя по ней уже пришёл (pending) — индекс
+// занят.
+func TestFreeIndex_PendingHook_Skipped(t *testing.T) {
+	f, s := freeIndexStore(t)
+	f.HideCreated(-1)
+	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
+	s.OnLayerChanged("Wireguard1", "ctrl", "")
+	idx, ok, err := s.FreeIndex(context.Background(), "Wireguard", 100, nil)
+	if err != nil || !ok || idx != 2 {
+		t.Fatalf("idx=%d ok=%v err=%v, want 2", idx, ok, err)
+	}
+}
+
+// Список не прочитан — ошибка, по памяти не выбираем (решение 4).
+func TestFreeIndex_ListError(t *testing.T) {
+	f, s := freeIndexStore(t)
+	f.FailList(errors.New("rci down"))
+	if idx, ok, err := s.FreeIndex(context.Background(), "Wireguard", 100, nil); err == nil || ok {
+		t.Fatalf("idx=%d ok=%v err=%v", idx, ok, err)
+	}
+}
+
+// Все заняты — ok=false без ошибки.
+func TestFreeIndex_Full(t *testing.T) {
+	_, s := freeIndexStore(t)
+	if _, ok, err := s.FreeIndex(context.Background(), "Wireguard", 1, nil); err != nil || ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+}

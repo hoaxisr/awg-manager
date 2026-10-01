@@ -228,28 +228,18 @@ func (s *WGServerStore) PeersRCEach(ctx context.Context, cs map[string]Confirmed
 	return out, nil
 }
 
-// FindFreeIndex returns the next free WireguardN slot in [1,99]. Решение
-// перед созданием — по только что прочитанному списку (SnapshotLive).
+// FindFreeIndex returns the next free WireguardN slot in [0,99]
+// (InterfaceStore.FreeIndex: свой свежий список, F574).
+// Scan from 0: on a fresh device the first server must be Wireguard0 (#308).
 func (s *WGServerStore) FindFreeIndex(ctx context.Context) (int, error) {
-	snap, err := s.interfaces.Snapshot(ctx, SnapshotLive)
+	idx, ok, err := s.interfaces.FreeIndex(ctx, "Wireguard", 100, nil)
 	if err != nil {
-		return 0, fmt.Errorf("list interfaces: %w", err)
+		return 0, err
 	}
-	used := make(map[int]bool)
-	for _, rec := range snap.Records() {
-		if strings.HasPrefix(rec.ID, "Wireguard") {
-			if n, err := strconv.Atoi(strings.TrimPrefix(rec.ID, "Wireguard")); err == nil {
-				used[n] = true
-			}
-		}
+	if !ok {
+		return 0, fmt.Errorf("no free Wireguard index found")
 	}
-	// Scan from 0: on a fresh device the first server must be Wireguard0 (#308).
-	for i := 0; i < 100; i++ {
-		if !used[i] {
-			return i, nil
-		}
-	}
-	return 0, fmt.Errorf("no free Wireguard index found")
+	return idx, nil
 }
 
 // GetASCParams returns the AWG obfuscation params for name. If extended is
