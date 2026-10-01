@@ -156,7 +156,7 @@ func (f *fakeProxies) RemoveMarkedProxy(context.Context, ProxyMark) (MarkedOutco
 func (f *fakeProxies) AdoptBareProxy(context.Context, string, int, string) (MarkedOutcome, error) {
 	return MarkedAdopted, nil
 }
-func (f *fakeProxies) ListNativeProxies(context.Context, map[string]bool, map[int]bool, map[int]bool) ([]string, error) {
+func (f *fakeProxies) ListNativeProxies(context.Context, map[string]bool, map[int]bool) ([]string, error) {
 	return nil, nil
 }
 func (f *fakeProxies) SyncProxies(context.Context, []TunnelInfo) error { return nil }

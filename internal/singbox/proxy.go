@@ -57,7 +57,7 @@ type ndmsProxies interface {
 	OwnedProxies(ctx context.Context, tunnelProxies, subProxies map[string]string) ([]ProxyMark, error)
 	RemoveMarkedProxy(ctx context.Context, m ProxyMark) (MarkedOutcome, error)
 	AdoptBareProxy(ctx context.Context, name string, port int, description string) (MarkedOutcome, error)
-	ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) ([]string, error)
+	ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, subProxyIdx map[int]bool) ([]string, error)
 	SyncProxies(ctx context.Context, tunnels []TunnelInfo) error
 }
 
@@ -333,9 +333,9 @@ func (pm *ProxyManager) AdoptBareProxy(ctx context.Context, name string, port in
 // ListNativeProxies returns kernel names (e.g. "t2s0") of NDMS Proxy
 // interfaces NOT created by us — KeenOS-native SOCKS proxies the user may
 // bind a router direct outbound to (#323). Владение — proxyIsOurs (description
-// ∈ тегов при любом индексе, пустой description на слоте, индекс подписки),
-// шире OwnedProxies: тут оно только скрывает кандидатов, ничего не сносит.
-func (pm *ProxyManager) ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) ([]string, error) {
+// ∈ тегов при любом индексе, голая запись только с меткой — bareOurs, R40,
+// индекс подписки): тут оно только скрывает кандидатов, ничего не сносит.
+func (pm *ProxyManager) ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, subProxyIdx map[int]bool) ([]string, error) {
 	ifaces, err := pm.queries.Interfaces.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list interfaces: %w", err)
@@ -353,9 +353,9 @@ func (pm *ProxyManager) ListNativeProxies(ctx context.Context, tunnelTags map[st
 		if kernel == "" {
 			continue
 		}
-		entries = append(entries, proxyEntry{idx: idx, desc: iface.Description, kernel: kernel})
+		entries = append(entries, proxyEntry{idx: idx, desc: iface.Description, bare: pm.bareOurs(&iface), kernel: kernel})
 	}
-	return nativeProxyKernelNames(entries, tunnelTags, ourPortSlots, subProxyIdx), nil
+	return nativeProxyKernelNames(entries, tunnelTags, subProxyIdx), nil
 }
 
 // SubscriptionProxy describes an NDMS ProxyN created for a subscription
@@ -376,17 +376,18 @@ type SubscriptionProxySet interface {
 
 // proxyIsOurs reports whether ProxyN (index idx, interface description desc) was
 // created by awg-manager for sing-box. Tunnel proxies are matched by their tag
-// description or port slot; subscription composites carry the user label as
-// description (not a tunnel tag), so they are recognised by their explicitly
-// tracked proxy index instead.
-func proxyIsOurs(idx int, desc string, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) bool {
+// description; subscription composites carry the user label as description
+// (not a tunnel tag), so they are recognised by their explicitly tracked proxy
+// index instead. Пустой description — наш, только если bareOurs (метка
+// (name, ""), R40): слот порта владения не доказывает.
+func proxyIsOurs(idx int, desc string, bare bool, tunnelTags map[string]bool, subProxyIdx map[int]bool) bool {
 	if subProxyIdx[idx] {
 		return true
 	}
 	if desc != "" {
 		return tunnelTags[desc]
 	}
-	return ourPortSlots[idx]
+	return bare
 }
 
 // proxyEntry is an NDMS Proxy interface candidate: NDMS slot index, NDMS
@@ -394,16 +395,17 @@ func proxyIsOurs(idx int, desc string, tunnelTags map[string]bool, ourPortSlots,
 type proxyEntry struct {
 	idx    int
 	desc   string
+	bare   bool // bareOurs: голая запись с нашей меткой
 	kernel string
 }
 
 // nativeProxyKernelNames returns kernel names of Proxy interfaces NOT created
 // by us — KeenOS-native SOCKS proxies the user may bind a router direct
 // outbound to (#323). Pure filter over proxyIsOurs; I/O lives in the caller.
-func nativeProxyKernelNames(proxies []proxyEntry, tunnelTags map[string]bool, ourPortSlots, subProxyIdx map[int]bool) []string {
+func nativeProxyKernelNames(proxies []proxyEntry, tunnelTags map[string]bool, subProxyIdx map[int]bool) []string {
 	var out []string
 	for _, p := range proxies {
-		if proxyIsOurs(p.idx, p.desc, tunnelTags, ourPortSlots, subProxyIdx) {
+		if proxyIsOurs(p.idx, p.desc, p.bare, tunnelTags, subProxyIdx) {
 			continue
 		}
 		out = append(out, p.kernel)

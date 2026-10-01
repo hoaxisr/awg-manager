@@ -416,3 +416,36 @@ func TestScenario_BareMark_NotOverwrittenByTag(t *testing.T) {
 	mustHave(t, f, "Proxy0", "Proxy4", "Proxy5", "Proxy6")
 	clean(t, f)
 }
+
+// L2/R40: кандидаты bind (#323) — голая запись на слоте живого туннеля наша
+// только с меткой (name, ""); без метки она чужая и предлагается.
+func TestScenario_ListNativeProxies_BareNeedsMark(t *testing.T) {
+	op, _, f, _ := f562Stand(t)
+	ctx := context.Background()
+	// Proxy3 — слот туннеля A, запись голая; имя ядра известно резолверу.
+	f.Add(ndms.Interface{ID: "Proxy3", Type: "Proxy", State: "up", SystemName: "t2s3"})
+	f.Add(ndms.Interface{ID: "Proxy5", Type: "Proxy", Description: "user", State: "up", SystemName: "t2s5"})
+
+	op.deferProxyRemoval("Proxy3", "")
+	got, err := op.ListNativeProxies(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got, "t2s5") {
+		t.Fatalf("чужой Proxy5 не предложен: %v", got)
+	}
+	if slices.Contains(got, "t2s3") {
+		t.Fatalf("голая Proxy3 с меткой предложена как чужая: %v", got)
+	}
+	op.clearBareMark("Proxy3")
+	if got, err = op.ListNativeProxies(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got, "t2s3") {
+		t.Fatalf("голая Proxy3 без метки на слоте туннеля A скрыта: %v", got)
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("команды: %v", f.Posts)
+	}
+	clean(t, f)
+}

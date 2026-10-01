@@ -431,21 +431,16 @@ func (o *Operator) ListNativeProxies(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	tunnelTags := map[string]bool{}
-	portSlots := map[int]bool{}
 	if cfg != nil {
 		for _, t := range cfg.Tunnels() {
 			tunnelTags[t.Tag] = true
-			slot := t.ListenPort - firstPort
-			if slot >= 0 {
-				portSlots[slot] = true
-			}
 		}
 	}
 	subProxyIdx := map[int]bool{}
 	for _, sp := range o.subscriptionProxies() {
 		subProxyIdx[sp.Index] = true
 	}
-	return o.proxyMgr.ListNativeProxies(ctx, tunnelTags, portSlots, subProxyIdx)
+	return o.proxyMgr.ListNativeProxies(ctx, tunnelTags, subProxyIdx)
 }
 
 func parseProxyIdx(name string) (int, error) {
