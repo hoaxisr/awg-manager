@@ -213,3 +213,83 @@ func TestHooks_UnknownIDPendingUntilDestroyed(t *testing.T) {
 		}
 	}
 }
+
+// confirmAllDisplaced — ConfirmAll, чей список вытеснен: пока он в полёте (снимок
+// уже сделан, Wireguard3 в нём нет), Wireguard3 создают, ifcreated доставлен,
+// и ReconcilePending применяет более новый список с ним. after — что
+// происходит после нового списка, до ответа ConfirmAll.
+func confirmAllDisplaced(t *testing.T, after func(f *FakeNDMS, s *InterfaceStore)) (map[string]Confirmed, *FakeNDMS) {
+	t.Helper()
+	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
+	s := NewInterfaceStore(f, NopLogger())
+	ctx := context.Background()
+	if _, err := s.Get(ctx, "Wireguard0"); err != nil { // bootstrap
+		t.Fatal(err)
+	}
+	f.InList(func() {
+		f.InList(nil)
+		f.Add(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"})
+		for _, h := range f.DrainHooks() {
+			s.OnCreated(h.ID)
+		}
+		if err := s.ReconcilePending(ctx); err != nil {
+			t.Error(err)
+		}
+		after(f, s)
+	})
+	got, err := s.ConfirmAll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got, f
+}
+
+// F575: свой ответ ConfirmAll вытеснен списком ReconcilePending, начатым после
+// него, — запись из применённого списка подтверждена.
+func TestConfirmAll_DisplacedAnswer_NewerListConfirms(t *testing.T) {
+	got, f := confirmAllDisplaced(t, func(*FakeNDMS, *InterfaceStore) {})
+	if got["Wireguard3"].Name() != "Wireguard3" || got["Wireguard0"].Name() != "Wireguard0" {
+		t.Fatalf("got=%v", got)
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d Phantoms=%d", f.E, f.Phantoms)
+	}
+}
+
+// Снятая хуком после нового списка — не подтверждена: доказательство не ослаблено.
+func TestConfirmAll_DisplacedAnswer_DestroyedAfterNotConfirmed(t *testing.T) {
+	got, _ := confirmAllDisplaced(t, func(f *FakeNDMS, s *InterfaceStore) {
+		f.Remove("Wireguard3")
+		for _, h := range f.DrainHooks() {
+			s.OnDestroyed(h.ID)
+		}
+	})
+	if _, ok := got["Wireguard3"]; ok {
+		t.Fatalf("destroyed after the newer list must not be confirmed: %v", got)
+	}
+	if got["Wireguard0"].Name() != "Wireguard0" {
+		t.Fatalf("got=%v", got)
+	}
+}
+
+// Запись, известная только по хуку (ни один список после вызова её не
+// показал), не подтверждена.
+func TestConfirmAll_HookOnlyNotConfirmed(t *testing.T) {
+	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
+	s := NewInterfaceStore(f, NopLogger())
+	ctx := context.Background()
+	if _, err := s.Get(ctx, "Wireguard0"); err != nil {
+		t.Fatal(err)
+	}
+	f.InList(func() {
+		f.InList(nil)
+		s.OnCreated("Wireguard3")
+	})
+	got, err := s.ConfirmAll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["Wireguard3"]; ok || len(got) != 1 {
+		t.Fatalf("got=%v", got)
+	}
+}

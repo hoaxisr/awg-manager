@@ -146,6 +146,9 @@ type InterfaceStore struct {
 	// flights — счётчик начатых списков; appliedNo — номер последнего
 	// применённого: ответ, начатый раньше применённого, карту не трогает.
 	flights, appliedNo uint64
+	// applied — ответ списка appliedNo как есть (только чтение): ConfirmAll
+	// подтверждает и по нему, если её ответ вытеснен более новым (F575).
+	applied map[string]ndms.Interface
 
 	// awaiting — ConfirmCreated в ожидании записи по имени (F584); будят
 	// применённый список, начатый после вызова и содержащий имя, и снос имени
@@ -283,7 +286,7 @@ func (s *InterfaceStore) refreshList(ctx context.Context, fl *listFlight) (map[s
 		// Ответы приходят не по порядку: начатый раньше уже применённого старее
 		// его — карту, метку и возраст не трогает (ответ вызывающему — свой).
 		if fl.no >= s.appliedNo {
-			s.appliedNo = fl.no
+			s.appliedNo, s.applied = fl.no, recs
 			s.applyListLocked(recs, raw, fl.start)
 			if s.dirtyAt <= fl.start {
 				s.dirtyAt = 0
@@ -1403,8 +1406,16 @@ func (s *InterfaceStore) ConfirmEach(ctx context.Context, names []string) (map[s
 	return out, nil
 }
 
-// ConfirmAll — Confirm для каждой записи одного свежего списка: кандидаты и
+// ConfirmAll — Confirm для каждой записи свежего списка: кандидаты и
 // доказательство из одного чтения (проверка занятости сетей по всем серверам).
+//
+// Свежий — и свой ответ, и последний применённый (applied): после успешного
+// своего списка appliedNo не меньше его номера, то есть применённый начат не
+// раньше своего — тоже после вызова. Свой ответ, вытесненный более новым
+// (списком ReconcilePending по хуку создания), не знает только что созданную
+// запись, а применённый знает — без него её сети выпадали из проверки
+// занятости (F575). Снятая хуком после любого из списков не подтверждается
+// (confirmedLocked); запись, известная только по хуку, без списка — тоже.
 func (s *InterfaceStore) ConfirmAll(ctx context.Context) (map[string]Confirmed, error) {
 	raw, err := s.refreshList(ctx, nil)
 	if err != nil {
@@ -1413,9 +1424,11 @@ func (s *InterfaceStore) ConfirmAll(ctx context.Context) (map[string]Confirmed, 
 	out := make(map[string]Confirmed, len(raw))
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for n := range raw {
-		if _, ok := s.confirmedLocked(raw, n); ok {
-			out[n] = Confirmed{name: n}
+	for _, list := range []map[string]ndms.Interface{raw, s.applied} {
+		for n := range list {
+			if _, ok := s.confirmedLocked(list, n); ok {
+				out[n] = Confirmed{name: n}
+			}
 		}
 	}
 	return out, nil
