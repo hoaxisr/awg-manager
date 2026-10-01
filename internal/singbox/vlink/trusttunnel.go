@@ -90,7 +90,7 @@ func ttEndpointToOutbounds(ep ttEndpoint, label string) ([]ParsedOutbound, error
 			"server_port": port,
 			"username":    ep.Username,
 			"password":    ep.Password,
-			"quic":        false, // H2-only; http3 во входе намеренно понижается
+			"quic":        ep.QUIC,
 			"tls":         tls,
 		}
 		raw, err := json.Marshal(ob)

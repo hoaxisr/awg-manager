@@ -606,7 +606,12 @@ func detectTransport(ob map[string]any) string {
 	switch strOr(ob["type"], "") {
 	case "hysteria2":
 		return "quic"
-	case "naive", "trusttunnel":
+	case "naive":
+		return "https"
+	case "trusttunnel":
+		if q, _ := ob["quic"].(bool); q {
+			return "quic"
+		}
 		return "https"
 	case "mieru":
 		return strings.ToLower(strOr(ob["transport"], "tcp"))
