@@ -46,7 +46,7 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 	}
 
 	// Create interface via RCI — подтверждение свежим списком на весь поток.
-	iface, err := s.rciCreateInterface(ctx, ifaceName)
+	iface, err := s.rciCreateInterface(ctx, ifaceName, false)
 	if err != nil {
 		return nil, fmt.Errorf("create interface: %w", err)
 	}

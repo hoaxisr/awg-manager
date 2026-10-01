@@ -65,15 +65,16 @@ func (f *fakeNDMS) handle(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(trimmed, "[") {
 		var arr []map[string]any
 		_ = json.Unmarshal(body, &arr)
+		out := make([]map[string]any, len(arr))
 		f.mu.Lock()
-		for _, cmd := range arr {
-			f.applyInterfaceCmd(cmd)
+		for i, cmd := range arr {
+			out[i] = map[string]any{}
+			if name := f.applyInterfaceCmd(cmd); name != "" {
+				// Ответ NDMS на создание записи (стенд 5.01, code 6553601).
+				out[i]["status"] = []map[string]any{{"status": "message", "code": "6553601", "message": `"` + name + `" interface created.`}}
+			}
 		}
 		f.mu.Unlock()
-		out := make([]map[string]any, len(arr))
-		for i := range out {
-			out[i] = map[string]any{}
-		}
 		_ = json.NewEncoder(w).Encode(out)
 		return
 	}
@@ -89,21 +90,25 @@ func (f *fakeNDMS) handle(w http.ResponseWriter, r *http.Request) {
 }
 
 // applyInterfaceCmd mutates known-interface state from an {"interface":{...}}
-// command. Caller holds f.mu.
-func (f *fakeNDMS) applyInterfaceCmd(cmd map[string]any) {
+// command; created — имя, если команда создала запись. Caller holds f.mu.
+func (f *fakeNDMS) applyInterfaceCmd(cmd map[string]any) (created string) {
 	iface, ok := cmd["interface"].(map[string]any)
 	if !ok {
-		return
+		return ""
 	}
 	name, _ := iface["name"].(string)
 	if name == "" {
-		return
+		return ""
 	}
 	if no, _ := iface["no"].(bool); no {
 		delete(f.known, name)
-		return
+		return ""
+	}
+	if !f.known[name] {
+		created = name
 	}
 	f.known[name] = true
+	return created
 }
 
 func newCreateTestOperator(t *testing.T, f *fakeNDMS) *OperatorNativeWG {

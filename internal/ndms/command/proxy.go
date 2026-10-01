@@ -21,11 +21,15 @@ func NewProxyCommands(p Poster, s *SaveCoordinator, q *query.Queries) *ProxyComm
 // CreateProxy создаёт ProxyN и подтверждает его свежим списком (Confirm):
 // дальнейшие команды по интерфейсу идут с доказательством (F546).
 func (c *ProxyCommands) CreateProxy(ctx context.Context, name, description, upstreamHost string, upstreamPort int, socks5UDP bool) (query.Confirmed, error) {
-	if err := postMutationChecked(ctx, c.poster, c.save, proxyPayload(name, description, upstreamHost, upstreamPort, socks5UDP), "create proxy "+name,
-		c.queries.RunningConfig.InvalidateAll); err != nil {
+	// EnsureProxy шлёт это и по своей существующей записи (обновление),
+	// поэтому «не создано» здесь не ошибка; сносить по имени можно только
+	// созданное этой командой (F574).
+	created, err := PostCreate(ctx, c.poster, proxyPayload(name, description, upstreamHost, upstreamPort, socks5UDP), "create proxy "+name, name,
+		c.save.Request, c.queries.RunningConfig.InvalidateAll)
+	if err != nil {
 		return query.Confirmed{}, err
 	}
-	conf, err := confirmCreated(ctx, c.poster, c.save, c.queries, nil, name)
+	conf, err := confirmCreated(ctx, c.poster, c.save, c.queries, nil, name, created)
 	if err != nil {
 		return query.Confirmed{}, fmt.Errorf("create proxy: %w", err) // имя уже в ошибке подтверждения
 	}

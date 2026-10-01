@@ -726,3 +726,26 @@ func TestListError_SetEnabledAndDeletePeer_NoCommands(t *testing.T) {
 		t.Fatal("пир обязан остаться в записи для повтора")
 	}
 }
+
+// F574: исходный слот занят чужим Wireguard1, которого память ещё не знает
+// (ни списком, ни хуком). Create попадает в существующую запись — ответ без
+// «interface created»: failed, ни настроек, ни сноса, чужая запись цела.
+func TestRestore_HiddenForeignSlot_FailsNoConfigure(t *testing.T) {
+	sv := restoreServerWithPeers(1)
+	f := query.NewFakeNDMS()
+	s := newServiceWithOracle(t, f, map[string]string{
+		"/show/rc/ip/route":    `[]`,
+		"/show/running-config": `{"message":[]}`,
+	})
+	f.HideCreated(-1)
+	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
+	f.HideCreated(0)
+	posts := len(f.Posts)
+	out := s.Restore(context.Background(), []ManagedServerExport{sv}, RestoreOptions{})
+	if len(out) != 1 || out[0].Action != "failed" || !strings.Contains(out[0].Error, "имя уже занято") {
+		t.Fatalf("outcome %+v", out)
+	}
+	if len(f.Posts)-posts != 1 || !f.Has("Wireguard1") || f.E != 0 {
+		t.Fatalf("posts=%v has=%v E=%d", f.Posts[posts:], f.Has("Wireguard1"), f.E)
+	}
+}

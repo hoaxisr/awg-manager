@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
+	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
@@ -213,7 +214,7 @@ func TestCreateViaBatch_AbsentAfterCreate_Error(t *testing.T) {
 	o, _, _, f, srv := newLifecycleOperator(t, false, false)
 	srv.respond = func(body string) (string, bool) {
 		if strings.TrimSpace(body) == `[{"interface":{"name":"Wireguard1"}}]` {
-			return `[{}]`, true // принято, но не создано
+			return `[{"status":[{"status":"message","code":"6553601","message":"\"Wireguard1\" interface created."}]}]`, true // создано, но в списке нет
 		}
 		return "", false
 	}
@@ -398,4 +399,51 @@ func ifaceOf(stored *storage.AWGTunnel) query.Confirmed {
 		panic("ifaceOf: " + name)
 	}
 	return c
+}
+
+// F574: чужой Wireguard1 создан мимо нас, хук не доставлен — память его не
+// знает. Индекс выбирается по свежему списку: Wireguard2, без фантомов.
+func TestCreateViaBatch_ForeignNotInCache_Skipped(t *testing.T) {
+	o, _, _, f, _ := newLifecycleOperator(t, false, false)
+	if _, err := o.queries.Interfaces.Get(context.Background(), "Wireguard0"); err != nil { // тёплая карта
+		t.Fatal(err)
+	}
+	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
+	f.ExpectCreate("Wireguard2")
+	idx, err := o.createViaBatch(context.Background(), nwgStored(awgObfuscatedIface()))
+	if err != nil || idx != 2 {
+		t.Fatalf("idx=%d err=%v, want 2", idx, err)
+	}
+	if f.Phantoms != 0 || f.E != 0 {
+		t.Fatalf("E=%d phantoms=%d", f.E, f.Phantoms)
+	}
+}
+
+// Список не прочитан — ошибка, ни одной команды (решение 4).
+func TestCreateViaBatch_ListError_NoCreate(t *testing.T) {
+	o, _, _, f, srv := newLifecycleOperator(t, false, false)
+	f.FailList(errors.New("rci down"))
+	if _, err := o.createViaBatch(context.Background(), nwgStored(awgObfuscatedIface())); err == nil {
+		t.Fatal("want error")
+	}
+	if bodies, _ := srv.sent(); len(bodies) != 0 {
+		t.Fatalf("commands sent: %v", bodies)
+	}
+}
+
+// Чужой Wireguard1 NDMS уже знает, но ни списком, ни хуком не показал:
+// выбран он, NDMS отвечает без «interface created» — ErrNotCreated, ни
+// настроек, ни сноса, чужая запись цела.
+func TestCreateViaBatch_HiddenForeign_ErrorNoSettings(t *testing.T) {
+	o, _, _, f, srv := newLifecycleOperator(t, false, false)
+	f.HideCreated(-1)
+	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
+	f.HideCreated(0)
+	_, err := o.createViaBatch(context.Background(), nwgStored(awgObfuscatedIface()))
+	if !errors.Is(err, command.ErrNotCreated) {
+		t.Fatalf("err=%v", err)
+	}
+	if bodies, _ := srv.sent(); len(bodies) != 1 || !f.Has("Wireguard1") || f.E != 0 {
+		t.Fatalf("bodies=%v has=%v E=%d", bodies, f.Has("Wireguard1"), f.E)
+	}
 }

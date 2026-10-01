@@ -46,11 +46,12 @@ func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, 
 		return query.Confirmed{}, fmt.Errorf("create opkgtun %s: нет доказательства отсутствия устройства ядра (есть для %q)", name, free.Name())
 	}
 	create := map[string]any{"interface": map[string]any{name: map[string]any{}}}
-	if err := postMutationChecked(ctx, c.poster, c.save, create, "create opkgtun "+name,
-		c.queries.RunningConfig.InvalidateAll); err != nil {
+	created, err := PostCreate(ctx, c.poster, create, "create opkgtun "+name, name,
+		c.save.Request, c.queries.RunningConfig.InvalidateAll)
+	if err != nil {
 		return query.Confirmed{}, err
 	}
-	conf, err := c.ConfirmCreated(ctx, name)
+	conf, err := c.ConfirmCreated(ctx, name, created)
 	if err != nil {
 		return query.Confirmed{}, fmt.Errorf("create opkgtun: %w", err) // имя уже в ошибке подтверждения
 	}

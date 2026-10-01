@@ -144,7 +144,7 @@ func (c *WireguardCommands) ImportWireguardConfig(ctx context.Context, confData 
 		}
 		return ImportResult{}, fmt.Errorf("import wireguard: router returned no created interface (intersects=%q; status: %s)", imp.Intersects, detail)
 	}
-	conf, err := confirmCreated(ctx, c.poster, c.save, c.queries, nil, imp.Created)
+	conf, err := confirmCreated(ctx, c.poster, c.save, c.queries, nil, imp.Created, true)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("import wireguard: %w", err) // имя уже в ошибке подтверждения
 	}

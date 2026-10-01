@@ -229,7 +229,12 @@ func (s *Service) restoreOne(ctx context.Context, sv ManagedServerExport, opts R
 		persistMode = persistRenameExisting
 	}
 
-	if err := s.applyOne(ctx, target, sv, persistMode); err != nil {
+	// Живой сервер того же ключа в исходном слоте (записи в storage нет) —
+	// restore берёт его, и «не создано» тут не ошибка. Иначе существующая
+	// запись — чужая, в том числе ещё не видимая памяти (ifcreated под
+	// нагрузкой опаздывает до ~7 с): ошибка без настроек (F574).
+	existingOK := liveSameIdentity && target == sv.InterfaceName
+	if err := s.applyOne(ctx, target, sv, persistMode, existingOK); err != nil {
 		outcome.Action = "failed"
 		outcome.Error = err.Error()
 		s.sysLog().Error("managed restore apply failed", "interface", sv.InterfaceName, "target", target, "error", err)
@@ -373,9 +378,9 @@ func samePubKey(existing storage.ManagedServer, input ManagedServerExport) bool 
 // любой отказ сносит интерфейс (cleanupInterface), так что частичное
 // состояние NDMS не остаётся. Весь поток идёт по доказательству из
 // rciCreateInterface; занятые сети — одним снимком на сервер, не на пира.
-func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerExport, persistMode restorePersistMode) (err error) {
+func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerExport, persistMode restorePersistMode, existingOK bool) (err error) {
 	s.sysLog().Debug("managed restore apply start", "interface", sv.InterfaceName, "target", target, "peers", len(sv.Peers), "persistMode", persistMode)
-	iface, err := s.rciCreateInterface(ctx, target)
+	iface, err := s.rciCreateInterface(ctx, target, existingOK)
 	if err != nil {
 		return fmt.Errorf("create interface: %w", err)
 	}

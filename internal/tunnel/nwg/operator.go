@@ -261,11 +261,10 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	// свежего списка: в одном пакете с созданием они шли бы по имени, которого
 	// никто не видел. Подтверждение же кладёт запись в карту, и следующий
 	// nextFreeIndex видит индекс занятым без хука ifcreated (#255).
-	if _, err := o.transport.PostBatch(ctx, []any{payloads.CmdInterfaceCreate(ndmsName)}); err != nil {
-		return 0, fmt.Errorf("create %s: %w", ndmsName, err)
-	}
-	// Создание шло без save — и снос неподтверждённого тоже (save = nil).
-	iface, err := command.ConfirmCreated(ctx, o.transport, nil, o.queries, ndmsName)
+	// NDMS не создал запись (индекс занят чужой, ещё не видимой) — ошибка
+	// без настроек и сноса (F574). Создание шло без save — и снос
+	// неподтверждённого тоже (save = nil).
+	iface, err := command.CreateInterface(ctx, o.transport, nil, o.queries, []any{payloads.CmdInterfaceCreate(ndmsName)}, ndmsName, false)
 	if err != nil {
 		return 0, fmt.Errorf("create: %w", err)
 	}
@@ -1260,30 +1259,15 @@ func (o *OperatorNativeWG) ResolveActiveWAN(ctx context.Context, stored *storage
 	return sysName
 }
 
-// nextFreeIndex finds the next available Wireguard index via cached
-// InterfaceStore.List() (bootstrap-cached). Cold path — only at tunnel
-// creation.
+// nextFreeIndex — свободный WireguardN по своему свежему списку
+// (InterfaceStore.FreeIndex, F574). Cold path — only at tunnel creation.
 func (o *OperatorNativeWG) nextFreeIndex(ctx context.Context) (int, error) {
-	ifaces, err := o.queries.Interfaces.List(ctx)
+	idx, ok, err := o.queries.Interfaces.FreeIndex(ctx, "Wireguard", MaxTunnels, nil)
 	if err != nil {
-		return 0, fmt.Errorf("list wireguard interfaces: %w", err)
+		return 0, err
 	}
-
-	used := make(map[int]bool)
-	for _, iface := range ifaces {
-		if !strings.EqualFold(iface.Type, "Wireguard") {
-			continue
-		}
-		// Extract index from "WireguardN"
-		if idx, _, err := ParseNDMSCreatedName(`"` + iface.ID + `" interface created`); err == nil {
-			used[idx] = true
-		}
-	}
-
-	for i := 0; i < MaxTunnels; i++ {
-		if !used[i] {
-			return i, nil
-		}
+	if ok {
+		return idx, nil
 	}
 	return 0, fmt.Errorf("достигнут максимум NativeWG-туннелей (%d): все интерфейсы Wireguard0..%d в NDMS заняты", MaxTunnels, MaxTunnels-1)
 }

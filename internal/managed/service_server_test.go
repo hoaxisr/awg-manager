@@ -317,7 +317,7 @@ func (p *recordingPoster) Post(ctx context.Context, payload any) (json.RawMessag
 	if resp != nil {
 		return resp, nil
 	}
-	return json.RawMessage("{}"), nil
+	return createdReply(payload), nil
 }
 
 // newCreateTestService wires a Service with the InterfaceStore and

@@ -37,6 +37,15 @@ func (s *Service) rciPostTolerant(ctx context.Context, payload interface{}, tole
 			return fmt.Errorf("managed rci: команда без подтверждённого интерфейса")
 		}
 	}
+	if err := command.PostChecked(ctx, s.transport, payload, "managed rci", tolerate, s.rciAfter()...); err != nil {
+		s.sysLog().Warn("managed rci post failed", "error", err)
+		return err
+	}
+	return nil
+}
+
+// rciAfter — save и инвалидации после любой мутации managed (см. rciPost).
+func (s *Service) rciAfter() []func() {
 	var after []func()
 	if s.saveCoord != nil {
 		after = append(after, s.saveCoord.Request)
@@ -53,31 +62,28 @@ func (s *Service) rciPostTolerant(ctx context.Context, payload interface{}, tole
 			after = append(after, s.queries.StaticRoutes.InvalidateAll)
 		}
 	}
-	if err := command.PostChecked(ctx, s.transport, payload, "managed rci", tolerate, after...); err != nil {
-		s.sysLog().Warn("managed rci post failed", "error", err)
-		return err
-	}
-	return nil
+	return after
 }
 
 // rciCreateInterface creates a new WireGuard interface via RCI и подтверждает
 // его свежим списком: дальше весь поток идёт по этому доказательству (F546).
 // Записи нет за всё ожидание — command.ConfirmCreated её сносит (F584);
-// список не прочитан — ошибка без сноса, остаток — в журнал.
-func (s *Service) rciCreateInterface(ctx context.Context, name string) (query.Confirmed, error) {
+// список не прочитан — ошибка без сноса, остаток — в журнал. NDMS не создал
+// запись (имя занято чужой, ещё не видимой) — command.ErrNotCreated без
+// настроек и сноса (F574); existingOK — restore осознанно берёт живой сервер
+// того же ключа.
+func (s *Service) rciCreateInterface(ctx context.Context, name string, existingOK bool) (query.Confirmed, error) {
 	if s.queries == nil || s.queries.Interfaces == nil {
 		return query.Confirmed{}, fmt.Errorf("interface store not wired")
 	}
-	if err := s.rciPost(ctx, map[string]interface{}{
+	payload := map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{},
 		},
-	}); err != nil {
-		return query.Confirmed{}, err
 	}
-	c, err := command.ConfirmCreated(ctx, s.transport, s.saveCoord, s.queries, name)
+	c, err := command.CreateInterface(ctx, s.transport, s.saveCoord, s.queries, payload, name, existingOK, s.rciAfter()...)
 	if err != nil {
-		s.appLog.Warn("create", name, "интерфейс создан, но не подтверждён списком: "+err.Error())
+		s.appLog.Warn("create", name, "интерфейс не создан или не подтверждён списком: "+err.Error())
 		return query.Confirmed{}, err
 	}
 	return c, nil

@@ -457,6 +457,7 @@ func (f *FakeNDMS) importWG() (json.RawMessage, error) {
 // журнале ndm, хотя ответ терпим); иначе NDMS создаёт name — намеренно, если
 // объявлен ExpectCreate, иначе фантом.
 func (f *FakeNDMS) ifaceCmd(name string, body map[string]any) (json.RawMessage, error) {
+	resp := json.RawMessage(`{}`)
 	iface, ok := f.ifaces[name]
 	if no, _ := body["no"].(bool); no {
 		if !ok {
@@ -487,6 +488,7 @@ func (f *FakeNDMS) ifaceCmd(name string, body map[string]any) (json.RawMessage, 
 		}
 		iface = ndms.Interface{ID: name, Type: typeByPrefix(name), State: "down"}
 		f.created(name)
+		resp = createdMessage(name)
 	}
 	if up, ok := body["up"].(bool); ok {
 		iface.State = "down"
@@ -498,7 +500,17 @@ func (f *FakeNDMS) ifaceCmd(name string, body map[string]any) (json.RawMessage, 
 		iface.Description = d
 	}
 	f.ifaces[name] = iface
-	return json.RawMessage(`{}`), nil
+	return resp, nil
+}
+
+// createdMessage — ответ NDMS на создание записи (стенд 5.01: message
+// `"X" interface created.`, code 6553601); по существующей его нет.
+func createdMessage(name string) json.RawMessage {
+	b, _ := json.Marshal(map[string]any{"status": []map[string]any{{
+		"status": "message", "code": "6553601", "ident": "Network::Interface::Repository",
+		"message": fmt.Sprintf("%q interface created.", name),
+	}}})
+	return b
 }
 
 // parseCmd — `{"parse":"…"}`: разбираются только `interface X …` и

@@ -57,6 +57,20 @@ func PostChecked(
 	tolerate func(msg string) bool,
 	after ...func(),
 ) error {
+	_, err := postChecked(ctx, poster, payload, opDesc, tolerate, after...)
+	return err
+}
+
+// postChecked — PostChecked, отдающий ответ NDMS (PostCreate читает из него
+// «interface created»).
+func postChecked(
+	ctx context.Context,
+	poster Poster,
+	payload any,
+	opDesc string,
+	tolerate func(msg string) bool,
+	after ...func(),
+) (json.RawMessage, error) {
 	resp, err := poster.Post(ctx, payload)
 	// Инвалидация и сохранение идут и по путям отказа. status:"error": NDMS
 	// применяет пакетный payload поэлементно, отвергнутый элемент не отменяет
@@ -68,12 +82,12 @@ func PostChecked(
 		f()
 	}
 	if err != nil {
-		return fmt.Errorf("%s: %w", opDesc, err)
+		return nil, fmt.Errorf("%s: %w", opDesc, err)
 	}
 	if msgs := ndmsStatusErrors(resp); len(msgs) > 0 && !allTolerated(msgs, tolerate) {
-		return fmt.Errorf("%s: router reported error: %s", opDesc, strings.Join(msgs, "; "))
+		return nil, fmt.Errorf("%s: router reported error: %s", opDesc, strings.Join(msgs, "; "))
 	}
-	return nil
+	return resp, nil
 }
 
 // allTolerated: терпим ответ, только если КАЖДЫЙ отказ в нём признан

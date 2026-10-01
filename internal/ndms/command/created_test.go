@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 )
 
@@ -137,5 +138,58 @@ func TestImport_ListError_NoCommands(t *testing.T) {
 	}
 	if len(f.Posts) != 1 || !f.Has("Wireguard0") || f.Phantoms != 0 {
 		t.Fatalf("posts=%v has=%v phantoms=%d", f.Posts, f.Has("Wireguard0"), f.Phantoms)
+	}
+}
+
+// hiddenForeign — чужой name уже есть в NDMS, но ни списком, ни хуком ещё не
+// показан (поздний ifcreated под нагрузкой, F574).
+func hiddenForeign(f *query.FakeNDMS, name, typ string) {
+	f.HideCreated(-1)
+	f.Add(ndms.Interface{ID: name, Type: typ})
+	f.HideCreated(0)
+}
+
+// F574: создание по имени, занятому чужой невидимой записью, — NDMS не
+// ответил «interface created»: ErrNotCreated, ни настроек, ни подтверждения,
+// ни сноса; чужая запись цела, E == 0.
+func TestCreateInterface_Existing_ErrorNoConfigureNoDrop(t *testing.T) {
+	_, f, q := newOracleCommands(t, nil)
+	hiddenForeign(f, "Wireguard1", "Wireguard")
+	posts, lists := len(f.Posts), f.ListCalls()
+	payload := map[string]any{"interface": map[string]any{"Wireguard1": map[string]any{}}}
+	c, err := CreateInterface(context.Background(), f, nil, q, payload, "Wireguard1", false)
+	if !errors.Is(err, ErrNotCreated) || c != (query.Confirmed{}) {
+		t.Fatalf("c=%v err=%v", c, err)
+	}
+	if len(f.Posts)-posts != 1 || f.ListCalls() != lists || !f.Has("Wireguard1") || f.E != 0 {
+		t.Fatalf("posts=%v lists=%d has=%v E=%d", f.Posts[posts:], f.ListCalls()-lists, f.Has("Wireguard1"), f.E)
+	}
+}
+
+// Создано — подтверждено, как раньше.
+func TestCreateInterface_Created_Confirms(t *testing.T) {
+	_, f, q := newOracleCommands(t, nil)
+	f.ExpectCreate("Wireguard1")
+	payload := map[string]any{"interface": map[string]any{"Wireguard1": map[string]any{}}}
+	c, err := CreateInterface(context.Background(), f, nil, q, payload, "Wireguard1", false)
+	if err != nil || c.Name() != "Wireguard1" || f.Phantoms != 0 {
+		t.Fatalf("c=%v err=%v phantoms=%d", c, err, f.Phantoms)
+	}
+}
+
+// Прокси (EnsureProxy шлёт создание и по своей записи) попал в чужую
+// невидимую запись со следом в хуках: подтверждения нет, а сноса по имени
+// нет тоже — ответ не сказал «created» (F574, F584 Minor-1).
+func TestCreateProxy_ExistingUnlisted_NoDrop(t *testing.T) {
+	cmds, f, q := newOracleCommands(t, nil)
+	q.Interfaces.SetCreatedBackoff(time.Millisecond)
+	hiddenForeign(f, "Proxy0", "Proxy")
+	q.Interfaces.OnLayerChanged("Proxy0", "ctrl", "") // след: NDMS запись знает
+	_, err := cmds.Proxies.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, false)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if hasDrop(f.Posts, "Proxy0") || !f.Has("Proxy0") || f.E != 0 {
+		t.Fatalf("drop=%v has=%v E=%d posts=%v", hasDrop(f.Posts, "Proxy0"), f.Has("Proxy0"), f.E, f.Posts)
 	}
 }

@@ -30,7 +30,22 @@ func (f *fakePoster) Post(ctx context.Context, payload any) (json.RawMessage, er
 	if f.err != nil {
 		return nil, f.err
 	}
-	return json.RawMessage("{}"), nil
+	return createdReply(payload), nil
+}
+
+// createdReply — ответ NDMS: на голое создание `{"interface":{X:{}}}` —
+// `"X" interface created.` (стенд 5.01, code 6553601), иначе `{}`.
+func createdReply(payload any) json.RawMessage {
+	m, _ := payload.(map[string]interface{})
+	iface, _ := m["interface"].(map[string]interface{})
+	if len(m) == 1 && len(iface) == 1 {
+		for name, body := range iface {
+			if b, ok := body.(map[string]interface{}); ok && len(b) == 0 {
+				return json.RawMessage(`{"interface":{"status":[{"status":"message","code":"6553601","message":"\"` + name + `\" interface created."}]}}`)
+			}
+		}
+	}
+	return json.RawMessage("{}")
 }
 
 // fakePolicyGetter satisfies query.Getter and returns a fixed

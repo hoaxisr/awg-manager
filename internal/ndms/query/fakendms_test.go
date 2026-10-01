@@ -128,15 +128,15 @@ func TestFakeNDMS_PostBranches(t *testing.T) {
 		gone        string // имя, которого быть не должно
 		wantInResp  string
 	}{
-		{"payloads создаёт фантом", map[string]any{"interface": map[string]any{"name": "Wireguard5", "up": true}}, 0, 1, 3, "Wireguard5", "", "{}"},
+		{"payloads создаёт фантом", map[string]any{"interface": map[string]any{"name": "Wireguard5", "up": true}}, 0, 1, 3, "Wireguard5", "", `\"Wireguard5\" interface created.`},
 		{"payloads no отсутствующего", map[string]any{"interface": map[string]any{"name": "Wireguard5", "no": true}}, 1, 0, 0, "", "Wireguard5", `unable to find interface \"Wireguard5\"`},
 		{"command no отсутствующего", iface("OpkgTun1", map[string]any{"no": true}), 1, 0, 0, "", "OpkgTun1", "unable to find interface"},
 		{"payloads no присутствующего", map[string]any{"interface": map[string]any{"name": "Wireguard0", "no": true}}, 0, 0, 1, "", "Wireguard0", "{}"},
-		{"parse interface up", map[string]any{"parse": "interface Proxy2 up"}, 0, 1, 3, "Proxy2", "", "{}"},
+		{"parse interface up", map[string]any{"parse": "interface Proxy2 up"}, 0, 1, 3, "Proxy2", "", `\"Proxy2\" interface created.`},
 		{"parse no interface отсутствующего", map[string]any{"parse": "no interface Proxy2"}, 1, 0, 0, "", "Proxy2", "unable to find interface"},
 		{"parse no interface присутствующего", map[string]any{"parse": "no interface Wireguard0"}, 0, 0, 1, "", "Wireguard0", "{}"},
 		{"parse no interface X настройка присутствующего", map[string]any{"parse": "no interface Wireguard0 ip access-group A in"}, 0, 0, 0, "Wireguard0", "", "{}"},
-		{"parse no interface X настройка отсутствующего", map[string]any{"parse": "no interface Wireguard6 ip access-group A in"}, 0, 1, 3, "Wireguard6", "", "{}"},
+		{"parse no interface X настройка отсутствующего", map[string]any{"parse": "no interface Wireguard6 ip access-group A in"}, 0, 1, 3, "Wireguard6", "", `\"Wireguard6\" interface created.`},
 		{"parse access-list", map[string]any{"parse": "access-list _WEBADMIN_x permit ip any any"}, 0, 0, 0, "Wireguard0", "", "{}"},
 		{"system-name отсутствующего", map[string]any{"show": map[string]any{"interface": map[string]any{"system-name": map[string]any{"name": "Wireguard7"}}}}, 1, 0, 0, "", "Wireguard7", "6553619"},
 		{"system-name присутствующего", map[string]any{"show": map[string]any{"interface": map[string]any{"system-name": map[string]any{"name": "Wireguard0"}}}}, 0, 0, 0, "Wireguard0", "", `"system-name":"nwg0"`},
