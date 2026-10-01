@@ -77,10 +77,10 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 	// live ≠ наш: индекс мог занять посторонний интерфейс после смерти нашего.
 	// Доказанно чужой (успешный скан без нашего имени) → re-provision.
 	prev, _ := opkgTunOwned(settings, statePolicyTun)
-	// Своё описание — применённое И желаемое (policytun_description.go):
-	// переименование на живом интерфейсе доводит reconcile, а не повторный
-	// провижининг.
-	ownDescs := policyTunOwnDescriptions(prev, sr)
+	// Своё описание — применённое и ожидаемое из записи, не желаемое из
+	// настроек (policytun_description.go): переименование на живом интерфейсе
+	// доводит reconcile, а не повторный провижининг.
+	ownDescs := policyTunOwnDescriptions(prev)
 	if prev != nil && prev.Provisioned && live[prev.Index] &&
 		!s.provenForeignOpkgTun(ctx, tunNDMSName(prev.Index), ownDescs...) {
 		return nil
@@ -238,6 +238,23 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 			}
 			restore = &base
 		}
+		// Переиспользованный номер: Create выше уже переименовал интерфейс
+		// в желаемое, а prev называет прежнее. Снос ниже по стеку его
+		// уберёт, но если снос упал, интерфейс остался под именем, которого
+		// запись не называет, — и следующее включение сочло бы его чужим
+		// (re-provision на другом номере, permit'ы потеряны). Поэтому в
+		// восстановленную запись ложится намерение: владение признаёт его, а
+		// reconcile сверит со сканом (healPolicyTunDescription) — дошло ли.
+		// Желаемое из настроек в набор владения не входит
+		// (policytun_description.go), так что без этой строки окно открыто.
+		if prevRecord != nil && prevRecord.Mode == storage.OpkgTunModePolicyTun && prevRecord.Index == idx &&
+			policyTunAppliedDescription(prevRecord) != wantDesc {
+			if restore == prevRecord {
+				cp := *prevRecord // копия: prevRecord мутировать нельзя
+				restore = &cp
+			}
+			restore.PendingDescription = wantDesc
+		}
 		if e := s.deps.Settings.SetOpkgTunState(restore); e != nil {
 			s.appLog.Warn("policy-tun-rollback", iface, "restore policy-tun persist: "+e.Error())
 		}
@@ -249,7 +266,8 @@ func (s *ServiceImpl) enablePolicyTun(ctx context.Context, settings *storage.Set
 		return fmt.Errorf("enable policy-tun: create opkgtun: %w", err)
 	}
 	// Интерфейс уже под желаемым описанием — запись догоняет. Best-effort:
-	// владение признаёт и желаемое, а расхождение записи с настройкой
+	// до этой записи желаемое уже стоит в записи (новый номер — применённым,
+	// переиспользованный — намерением), а расхождение записи с настройкой
 	// дописывает reconcile (healPolicyTunDescription). Откатывать из-за
 	// описания весь провижининг незачем — откат удаляет интерфейс вместе с
 	// permit'ами пользователя.

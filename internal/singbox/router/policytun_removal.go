@@ -58,7 +58,7 @@ func ReleasePolicyTunForRemoval(ctx context.Context, d Deps) error {
 	// сегментов выше вернуть всё равно надо — они про сегменты, а не про
 	// интерфейс. Скан упал — отказ ошибкой (F493): дефолт и интерфейс не
 	// трогаем, `--cleanup` печатает причину.
-	if proceed, err := s.teardownGate(ctx, ndmsName, "policy-tun-remove", policyTunOwnDescriptions(st, settings.SingboxRouter)...); !proceed {
+	if proceed, err := s.teardownGate(ctx, ndmsName, "policy-tun-remove", policyTunOwnDescriptions(st)...); !proceed {
 		if err != nil {
 			return fmt.Errorf("%s: %w", ndmsName, err)
 		}

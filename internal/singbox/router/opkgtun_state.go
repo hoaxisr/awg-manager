@@ -71,8 +71,8 @@ const (
 // отсутствия принципиально (см. константы).
 //
 // Описаний бывает несколько: у policy-tun оно настраивается, и на время
-// переименования своим считается интерфейс и под применённым, и под желаемым
-// (policyTunOwnDescriptions). Имя нашлось хоть в одном скане — наш; иначе
+// переименования своим считается интерфейс и под применённым, и под ожидаемым
+// из записи (policyTunOwnDescriptions). Имя нашлось хоть в одном скане — наш; иначе
 // хоть один скан упал — «не знаем»; все успешны и пусты — чужой.
 //
 // Пустой список описаний — «не знаем», а не «чужой»: без единого скана
@@ -184,7 +184,7 @@ func (s *ServiceImpl) releaseForeignOpkgTun(ctx context.Context, st *storage.Opk
 	}
 	descs := []string{fakeIPTunDescription}
 	if st.Mode == storage.OpkgTunModePolicyTun {
-		descs = s.policyTunOwnDescriptionsStored(st)
+		descs = policyTunOwnDescriptions(st)
 	}
 	// Чужой → (false, nil): сносить нечего, запись отработана. Скан упал →
 	// (false, errOpkgTunOwnershipUnknown): реап держит запись до следующего

@@ -18,14 +18,17 @@ import (
 //   - запись владения помнит описание, ПРИМЕНЁННОЕ к интерфейсу
 //     (OpkgTunState.Description), и описание, которое переименование
 //     СОБИРАЕТСЯ поставить (OpkgTunState.PendingDescription); владение
-//     признаётся по обоим И по желаемому из настроек (policyTunOwnDescriptions).
+//     признаётся по обоим — и ТОЛЬКО по ним (policyTunOwnDescriptions).
 //     Порядок переименования — «запись намерения → NDMS → запись результата»,
 //     как persist-before-create у провижининга: сбой или крах на любом шаге
-//     оставляет интерфейс под именем, которое запись называет. Без записи
-//     намерения окно «NDMS переименован, запись нет» закрывалось бы только
-//     желаемым из настроек — и смена настройки до следующего тика делала бы
-//     собственный интерфейс «доказанно чужим»: re-provision на другом номере
-//     и потеря permit'ов пользователя в политиках;
+//     оставляет интерфейс под именем, которое запись называет. Желаемое из
+//     настроек в набор владения НЕ входит: пользовательское имя не уникально,
+//     и чужой OpkgTun под ним на нашем номере (наш пропал, пользователь
+//     создал свой с тем же названием) признавался бы своим и перенастраивался.
+//     Единственное окно, где интерфейс стоит под именем, которого запись не
+//     называет, — откат enable после Create на переиспользованном номере
+//     (интерфейс уже переименован, запись возвращена прежняя): откат пишет
+//     туда намерение, см. policytun_enable.go;
 //   - description-реап сирот (reapOrphansByDescription) по-прежнему сканирует
 //     ТОЛЬКО штатное policyTunDescription. Пользовательское имя не уникально по
 //     построению: туннели awg-manager и чужие OpkgTun несут в описании имена,
@@ -68,8 +71,12 @@ func normalizePolicyTunDescription(sr *storage.SingboxRouterSettings) error {
 	if n := utf8.RuneCountInString(d); n > policyTunDescriptionMaxRunes {
 		return fmt.Errorf("policyTunDescription: %d characters, max %d", n, policyTunDescriptionMaxRunes)
 	}
-	if strings.IndexFunc(d, unicode.IsControl) >= 0 {
-		return fmt.Errorf("policyTunDescription: control characters are not allowed")
+	// Только печатаемые (unicode.IsPrint: буквы, цифры, знаки, символы и
+	// пробел). Отсев одних управляющих (IsControl) пропускал бы форматирующие
+	// — U+202E (смена направления текста), U+200B (нулевая ширина): имя в
+	// списках роутера читалось бы не тем, чем записано.
+	if strings.IndexFunc(d, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
+		return fmt.Errorf("policyTunDescription: non-printable characters are not allowed")
 	}
 	if strings.HasPrefix(strings.ToLower(d), policyTunReservedPrefix) {
 		return fmt.Errorf("policyTunDescription: prefix %q is reserved for awg-manager service interfaces", strings.TrimSpace(policyTunReservedPrefix))
@@ -106,42 +113,15 @@ func storedPolicyTunDescription(desc string) string {
 }
 
 // policyTunOwnDescriptions — описания, под которыми OpkgTun записи признаётся
-// нашим: применённое и ожидаемое (запись) и желаемое (настройки), без
-// повторов. Ожидаемое закрывает окно переименования, желаемое — окно
-// провижининга нового номера (запись ещё под прежним именем, Create уже
-// поставил желаемое) — см. шапку файла.
-func policyTunOwnDescriptions(st *storage.OpkgTunState, sr storage.SingboxRouterSettings) []string {
+// нашим: применённое и, если есть, ожидаемое — только из записи владения,
+// без желаемого из настроек (см. шапку файла). Ожидаемое закрывает окно
+// переименования: интерфейс уже под ним, запись ещё не подтвердила.
+func policyTunOwnDescriptions(st *storage.OpkgTunState) []string {
 	out := []string{policyTunAppliedDescription(st)}
-	add := func(d string) {
-		if d == "" {
-			return
-		}
-		for _, have := range out {
-			if have == d {
-				return
-			}
-		}
-		out = append(out, d)
+	if st != nil && st.PendingDescription != "" && st.PendingDescription != out[0] {
+		out = append(out, st.PendingDescription)
 	}
-	if st != nil {
-		add(st.PendingDescription)
-	}
-	add(policyTunWantDescription(sr))
 	return out
-}
-
-// policyTunOwnDescriptionsStored — policyTunOwnDescriptions там, где под рукой
-// только запись владения: желаемое берётся из кэша стора (Get не читает
-// флеш). Ошибка чтения даёт штатное описание вторым кандидатом — лишний
-// кандидат безвреден, скан по нему лишь не найдёт нашего имени.
-func (s *ServiceImpl) policyTunOwnDescriptionsStored(st *storage.OpkgTunState) []string {
-	var sr storage.SingboxRouterSettings
-	if s.deps.Settings != nil {
-		if cur, err := s.deps.Settings.Get(); err == nil {
-			sr = cur.SingboxRouter
-		}
-	}
-	return policyTunOwnDescriptions(st, sr)
 }
 
 // persistPolicyTunDescription пишет описания записи владения, если они
@@ -174,7 +154,7 @@ func (s *ServiceImpl) healPolicyTunDescription(ctx context.Context, st *storage.
 	if applied == want && pending == "" {
 		return
 	}
-	switch s.opkgTunOwnership(ctx, ndmsName, policyTunOwnDescriptions(st, sr)...) {
+	switch s.opkgTunOwnership(ctx, ndmsName, policyTunOwnDescriptions(st)...) {
 	case ownershipForeign, ownershipUnknown:
 		return
 	}

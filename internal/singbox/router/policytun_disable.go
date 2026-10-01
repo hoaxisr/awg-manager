@@ -96,7 +96,7 @@ func (s *ServiceImpl) disablePolicyTun(ctx context.Context, settings *storage.Se
 	// снимаем (шаг 5); скан упал — не трогаем, запись ОСТАВЛЯЕМ: Provisioned при
 	// Enabled=false заставит reconcilePolicyTun звать Disable следующим тиком —
 	// тот же повтор, что при провале holdOpkgTun.
-	ownership := s.opkgTunOwnership(ctx, ndmsName, policyTunOwnDescriptions(st, settings.SingboxRouter)...)
+	ownership := s.opkgTunOwnership(ctx, ndmsName, policyTunOwnDescriptions(st)...)
 	touch := ownership == ownershipOurs || ownership == ownershipNoScan
 	switch ownership {
 	case ownershipForeign:

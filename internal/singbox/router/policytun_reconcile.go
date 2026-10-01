@@ -248,7 +248,7 @@ func (s *ServiceImpl) reconcilePolicyTun(ctx context.Context, sr storage.Singbox
 	if s.deps.OpkgTunIndices != nil {
 		live, probeErr = s.deps.OpkgTunIndices.LiveOpkgTunIndices(ctx)
 	}
-	if s.needsReprovision(ctx, st, live, probeErr, policyTunOwnDescriptions(st, sr)...) {
+	if s.needsReprovision(ctx, st, live, probeErr, policyTunOwnDescriptions(st)...) {
 		// Drift-heal, НЕ действие пользователя: sticky master-Stop не сбрасываем.
 		return s.enableLocked(ctx, false)
 	}
