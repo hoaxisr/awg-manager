@@ -29,8 +29,6 @@ var byNameAllowed = map[string]string{
 	// списком — единственное чтение с именем в теле; под TestResolver_OnlyAfterList.
 	"internal/ndms/query/interfaces.go:resolveSystemNames": "F570: пакет system-name вслед за списком",
 	"internal/ndms/query/interfaces.go:fetchSystemName":    "F570: элемент того же пакета",
-	// Полный список своим клиентом (не по имени; F-n — мимо InterfaceStore).
-	"internal/sys/routerinfo/routerinfo.go:fetchWiFiTemps": "GET /show/interface — весь список, без имени",
 }
 
 // fullListLiteralAllowed — где может стоять голый литерал пути полного списка

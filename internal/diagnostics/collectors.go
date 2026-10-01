@@ -66,7 +66,12 @@ func (r *Runner) collectSystem(ctx context.Context) SystemInfo {
 		}
 	}
 
-	info.RouterDetails = routerinfo.Collect()
+	// Температура радио — из общего снимка списка, не своим чтением (F580).
+	var ifaces *query.Snapshot
+	if r.deps.NDMSQueries != nil {
+		ifaces, _ = r.deps.NDMSQueries.Interfaces.Snapshot(ctx, query.SnapshotRecent)
+	}
+	info.RouterDetails = routerinfo.Collect(ifaces)
 
 	return info
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -517,7 +518,15 @@ func (h *SystemHandler) getRouterDetailsCached() *RouterDetails {
 
 	// Cache miss or expired — collect synchronously on first call so the
 	// response contains real data, then reuse cached value on rapid retries.
-	fresh := routerinfo.Collect()
+	// Температура радио — из общего снимка списка, не своим чтением (F580);
+	// потолок — прежний таймаут RCI-запросов routerinfo.
+	var ifaces *ndmsquery.Snapshot
+	if h.ndmsQueries != nil && h.ndmsQueries.Interfaces != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+		ifaces, _ = h.ndmsQueries.Interfaces.Snapshot(ctx, ndmsquery.SnapshotRecent)
+		cancel()
+	}
+	fresh := routerinfo.Collect(ifaces)
 
 	h.routerDetailsMu.Lock()
 	h.routerDetailsCache = fresh
