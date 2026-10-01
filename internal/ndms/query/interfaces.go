@@ -131,6 +131,12 @@ type InterfaceStore struct {
 	seq     uint64
 	touched map[string]uint64
 	pending map[string]struct{}
+	// tombs — надгробия снятых id (Forget/ifdestroyed): номер последнего
+	// начатого на момент сноса списка (flights). Поздний layer/ip-хук по такому
+	// id в pending не кладётся — иначе старый ответ списка подтвердил бы снятое
+	// (R42, F590). Снимают ifcreated и применённый список, начатый после
+	// надгробия и содержащий id; не больше maxTombs, вытесняется старейшее.
+	tombs map[string]uint64
 
 	// raw — запись полного списка как есть (пиры, ключи, счётчики), по id;
 	// правило то же, что у byID: хук новее ответа — ответ её не затирает.
@@ -156,6 +162,8 @@ type InterfaceStore struct {
 	awaiting map[string]*createdWait
 	// createdBackoff — паузы между списками ConfirmCreated.
 	createdBackoff []time.Duration
+	// now — часы возраста списка действия (подменяются тестом).
+	now func() time.Time
 }
 
 // createdWait — ожидание одной созданной записи. Поля — под mu.
@@ -210,10 +218,12 @@ func NewInterfaceStore(g Getter, log Logger) *InterfaceStore {
 		sysNames:  make(map[string]string),
 		touched:   make(map[string]uint64),
 		pending:   make(map[string]struct{}),
+		tombs:     make(map[string]uint64),
 		raw:       make(map[string]json.RawMessage),
 		awaiting:  make(map[string]*createdWait),
 
 		createdBackoff: confirmCreatedBackoff,
+		now:            time.Now,
 	}
 }
 
@@ -288,6 +298,7 @@ func (s *InterfaceStore) refreshList(ctx context.Context, fl *listFlight) (map[s
 		if fl.no >= s.appliedNo {
 			s.appliedNo, s.applied = fl.no, recs
 			s.applyListLocked(recs, raw, fl.start)
+			s.liftTombsLocked(recs, fl.no)
 			if s.dirtyAt <= fl.start {
 				s.dirtyAt = 0
 			}
@@ -313,6 +324,33 @@ func (s *InterfaceStore) refreshList(ctx context.Context, fl *listFlight) (map[s
 		return nil, err
 	}
 	return recs, nil
+}
+
+// maxTombs — потолок надгробий: снятых id на роутере единицы-десятки.
+const maxTombs = 256
+
+// liftTombsLocked снимает надгробия id, которые есть в применённом ответе
+// полёта no, начатого после сноса: запись создана заново.
+func (s *InterfaceStore) liftTombsLocked(recs map[string]ndms.Interface, no uint64) {
+	for id, at := range s.tombs {
+		if _, ok := recs[id]; ok && no > at {
+			delete(s.tombs, id)
+		}
+	}
+}
+
+// tombLocked ставит надгробие id; при переполнении вытесняет старейшее.
+func (s *InterfaceStore) tombLocked(id string) {
+	if _, ok := s.tombs[id]; !ok && len(s.tombs) >= maxTombs {
+		oldest, at := "", uint64(0)
+		for t, n := range s.tombs {
+			if oldest == "" || n < at {
+				oldest, at = t, n
+			}
+		}
+		delete(s.tombs, oldest)
+	}
+	s.tombs[id] = s.flights
 }
 
 // wakeCreatedLocked будит ConfirmCreated, чья запись есть в применённом
@@ -1075,6 +1113,7 @@ func (s *InterfaceStore) OnCreated(id string) {
 	defer s.mu.Unlock()
 	s.markTouchedLocked(id)
 	s.traceCreatedLocked(id)
+	delete(s.tombs, id) // создан заново
 	if _, known := s.byID[id]; known {
 		return
 	}
@@ -1103,6 +1142,22 @@ func (s *InterfaceStore) Forget(id string) {
 	delete(s.sysNames, id)
 	delete(s.pending, id)
 	delete(s.raw, id)
+	s.tombLocked(id)
+}
+
+// lateHookLocked — layer/ip-хук по снятому id (надгробие, записи в карте
+// нет): опоздал за ifdestroyed/Forget, игнорируется целиком — ни pending, ни
+// метки touched (R42). Хуки создания (ctrl ×2 раньше ifcreated) по id без
+// надгробия идут прежним путём.
+func (s *InterfaceStore) lateHookLocked(id string) bool {
+	if _, ok := s.tombs[id]; !ok {
+		return false
+	}
+	if _, known := s.byID[id]; known {
+		return false
+	}
+	s.log.Debugf("hook for removed %s ignored", id)
+	return true
 }
 
 // OnSystemName — имя ядра из хука NDMS (`system_name` есть в хуках, стенд
@@ -1160,6 +1215,9 @@ func (s *InterfaceStore) ReconcilePending(ctx context.Context) error {
 func (s *InterfaceStore) OnLayerChanged(id, layer, level string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.lateHookLocked(id) {
+		return
+	}
 	// Даже для незнакомого id: список в полёте не должен положить запись
 	// старее хука — применится со следующим списком.
 	s.markTouchedLocked(id)
@@ -1208,6 +1266,9 @@ func (s *InterfaceStore) OnLayerChanged(id, layer, level string) {
 func (s *InterfaceStore) OnIPChanged(id, address string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.lateHookLocked(id) {
+		return
+	}
 	s.markTouchedLocked(id)
 	s.traceCreatedLocked(id)
 	iface, ok := s.byID[id]
@@ -1285,7 +1346,12 @@ type actionListKey struct{}
 type actionList struct {
 	mu  sync.Mutex
 	raw map[string]ndms.Interface
+	at  time.Time // начало запроса raw
 }
+
+// actionListMaxAge — потолок возраста списка действия от НАЧАЛА его запроса
+// (допуск SnapshotRecent, R43): старше — следующее подтверждение читает новый.
+const actionListMaxAge = SnapshotRecent
 
 // WithActionList — ctx одного действия (событие оркестратора, правка туннеля,
 // замена конфига): Confirm и ConfirmEach с ним читают полный список один раз
@@ -1296,6 +1362,8 @@ type actionList struct {
 // живёт, пока оно идёт. Уже несущий список ctx возвращается как есть —
 // вложенный вызов часть того же действия. ConfirmCreated и FreeIndex списком
 // действия не пользуются: им нужен список, начатый после их вызова.
+// Список живёт не дольше actionListMaxAge — поэтому утёкший за действие ctx
+// (детач, горутина) безвреден: старый список он не переиспользует.
 func WithActionList(ctx context.Context) context.Context {
 	if _, ok := ctx.Value(actionListKey{}).(*actionList); ok {
 		return ctx
@@ -1303,9 +1371,10 @@ func WithActionList(ctx context.Context) context.Context {
 	return context.WithValue(ctx, actionListKey{}, &actionList{})
 }
 
-// confirmList — ответ списка для подтверждения: в ctx действия — первый
-// прочитанный в нём (параллельные подтверждения ждут один запрос), иначе свой.
-// Ошибка не запоминается: следующее подтверждение читает заново.
+// confirmList — ответ списка для подтверждения: в ctx действия — последний
+// прочитанный в нём, пока он не старше actionListMaxAge (параллельные
+// подтверждения ждут один запрос), иначе свой. Ошибка не запоминается:
+// следующее подтверждение читает заново.
 func (s *InterfaceStore) confirmList(ctx context.Context) (map[string]ndms.Interface, error) {
 	al, _ := ctx.Value(actionListKey{}).(*actionList)
 	if al == nil {
@@ -1313,12 +1382,13 @@ func (s *InterfaceStore) confirmList(ctx context.Context) (map[string]ndms.Inter
 	}
 	al.mu.Lock()
 	defer al.mu.Unlock()
-	if al.raw == nil {
+	if al.raw == nil || s.now().Sub(al.at) > actionListMaxAge {
+		at := s.now()
 		raw, err := s.refreshList(ctx, nil)
 		if err != nil {
 			return nil, err
 		}
-		al.raw = raw
+		al.raw, al.at = raw, at
 	}
 	return al.raw, nil
 }
