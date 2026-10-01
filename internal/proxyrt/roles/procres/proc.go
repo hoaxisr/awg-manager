@@ -102,6 +102,10 @@ type Proc struct {
 	bmu         sync.Mutex
 	fails       int
 	nextAllowed time.Time
+
+	rmu           sync.Mutex
+	restartWanted bool
+	restartReason string
 }
 
 func NewProc(cfg ProcConfig) *Proc {
@@ -211,6 +215,15 @@ func (p *Proc) Plan(obs proxyrt.Observation) []proxyrt.Step {
 	fail := func(reason string) []proxyrt.Step {
 		return []proxyrt.Step{{Resource: p.c.ID, Op: "fail", Reason: reason}}
 	}
+	p.rmu.Lock()
+	reqRestart := p.restartWanted
+	restartReason := p.restartReason
+	if !p.enabled || !obs.Exists {
+		p.restartWanted = false
+		p.restartReason = ""
+	}
+	p.rmu.Unlock()
+
 	if !p.enabled {
 		if obs.Attrs["evicted"] != "" {
 			// Процессом по hello владеет ДРУГОЙ менеджер (два демона):
@@ -245,6 +258,16 @@ func (p *Proc) Plan(obs proxyrt.Observation) []proxyrt.Step {
 	}
 	if !obs.Exists {
 		return []proxyrt.Step{{Resource: p.c.ID, Op: "start", Reason: "процесс не запущен"}}
+	}
+	if reqRestart {
+		p.rmu.Lock()
+		p.restartWanted = false
+		p.restartReason = ""
+		p.rmu.Unlock()
+		if restartReason == "" {
+			restartReason = "запрос перезапуска"
+		}
+		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart", Reason: restartReason}}
 	}
 	if got := obs.Attrs["config_hash"]; got != "" && got != p.wantHash {
 		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart", Reason: "конфигурация изменилась"}}
@@ -343,6 +366,19 @@ func (p *Proc) ResetStartBackoff() {
 	defer p.bmu.Unlock()
 	p.fails, p.nextAllowed = 0, time.Time{}
 }
+
+// RequestRestart запрашивает перезапуск процесса при следующей реконсиляции.
+// Безопасен для вызова из любой горутины.
+func (p *Proc) RequestRestart(reason string) {
+	p.rmu.Lock()
+	p.restartWanted = true
+	p.restartReason = reason
+	p.rmu.Unlock()
+	p.ResetStartBackoff()
+}
+
+var _ proxyrt.BackoffResetter = (*Proc)(nil)
+var _ proxyrt.RestartRequester = (*Proc)(nil)
 
 // retryAt — момент, раньше которого повтор старта запрещён.
 func (p *Proc) retryAt() time.Time {

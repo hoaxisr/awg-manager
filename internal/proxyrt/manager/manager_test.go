@@ -141,6 +141,12 @@ func (f *fakeInstance) ResetStartBackoff() {
 	f.calls = append(f.calls, "reset")
 }
 
+func (f *fakeInstance) Restart(reason string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "restart:"+reason)
+}
+
 // callTail — последние n обращений: хвост, а не весь список, потому что boot
 // кладёт свои будильники раньше проверяемой правки.
 func (f *fakeInstance) callTail(n int) []string {
@@ -1551,6 +1557,32 @@ func TestAckListenMovesClearsDiskAndCache(t *testing.T) {
 	}
 	if got := e.m.SeedInfo().MovedListen; len(got) != 0 {
 		t.Errorf("в кэше менеджера остались переезды: %+v", got)
+	}
+}
+
+func TestManagerRestart(t *testing.T) {
+	e := newEnv(t)
+	e.st.Replace(func(st *instancestore.State) error {
+		st.Records = append(st.Records, instancestore.Record{
+			ID: "c1", Kind: instancestore.KindFreeTurnClient, Name: "FT", Enabled: true,
+			FreeTurnClient: &roles.FreeTurnClientConfig{Listen: "127.0.0.1:9000"},
+		})
+		return nil
+	})
+	boot(t, e)
+
+	key := "freeturn-client:c1"
+	if err := e.m.Restart(context.Background(), key, "тестовый перезапуск"); err != nil {
+		t.Fatalf("Restart вернул ошибку: %v", err)
+	}
+	inst := e.instances[key]
+	tail := inst.callTail(2)
+	if len(tail) != 2 || tail[0] != "reset" || tail[1] != "restart:тестовый перезапуск" {
+		t.Errorf("неверный порядок вызовов при Restart: %v", tail)
+	}
+
+	if err := e.m.Restart(context.Background(), "unknown:key", "причина"); err == nil {
+		t.Error("Restart несуществующего инстанса должен вернуть ошибку")
 	}
 }
 

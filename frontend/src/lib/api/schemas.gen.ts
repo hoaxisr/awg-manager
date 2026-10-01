@@ -3532,6 +3532,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /proxyrt/instances/{key}/apply": v.lazy(() => api_OkResponse),
 	"POST /proxyrt/instances/{key}/ensure-wg-tunnel": v.lazy(() => wdttlink_EnsureWGResponse),
 	"POST /proxyrt/instances/{key}/link": v.lazy(() => wdttlink_LinkResponse),
+	"POST /proxyrt/instances/{key}/restart": v.lazy(() => api_OkResponse),
 	"POST /proxyrt/instances/{key}/subscription/refresh": v.lazy(() => subscription_RefreshResponse),
 	"POST /proxyrt/instances/{key}/users": v.lazy(() => wdttusers_UsersStatusResponse),
 	"POST /proxyrt/wdtt/link/decode": v.lazy(() => wdttlink_DecodeResponse),

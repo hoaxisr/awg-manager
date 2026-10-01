@@ -129,6 +129,14 @@ func (i *Instance) ResetStartBackoff() {
 	}
 }
 
+// Restart запрашивает перезапуск процесса роли и будит воркер событием EventReconnect.
+func (i *Instance) Restart(reason string) {
+	if r, ok := i.cfg.Role.(proxyrt.RestartRequester); ok {
+		r.RequestRestart(reason)
+	}
+	i.worker.Post(proxyrt.EventReconnect)
+}
+
 // Stop гасит инстанс НАВСЕГДА: воркер терминален (worker.go — stopOnce), и
 // второго Start у него не будет. Поэтому здесь же кончается связь: инстанс —
 // единственное место, где воркер и Link лежат рядом, и без закрытия каждое

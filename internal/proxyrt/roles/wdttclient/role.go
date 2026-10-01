@@ -219,7 +219,11 @@ func (r *Role) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observations)
 // единственная точка правки записи — manager.Update (proxyrt.BackoffResetter).
 func (r *Role) ResetStartBackoff() { r.proc.ResetStartBackoff() }
 
+// RequestRestart запрашивает перезапуск процесса роли.
+func (r *Role) RequestRestart(reason string) { r.proc.RequestRestart(reason) }
+
 var _ proxyrt.BackoffResetter = (*Role)(nil)
+var _ proxyrt.RestartRequester = (*Role)(nil)
 
 // addrWant — желаемый адрес из наблюдения процесса (снимок Link, обновлён
 // process-ресурсом этого же прогона). Спека §3: адрес выдаёт VPS, он не может
