@@ -107,7 +107,13 @@ func proxyName(idx int) string { return fmt.Sprintf("%s%d", proxyIfacePrefix, id
 
 // deferProxyRemoval ставит метку «ProxyN name с description desc не снят»
 // (F562). Повторная метка того же имени сливается: выдержка сохраняется,
-// description — последний известный, поколение растёт (F5).
+// description — последний известный, поколение растёт (F5). Исключение —
+// голая метка (name, ""): её непустой description не затирает (L1). Она —
+// доказательство своей голой записи (F577), и тик сам разберёт оба исхода
+// (усыновит при владельце, снесёт без него); затёртая тегом, она указала бы
+// на description, которого у записи нет, — тик снял бы метку, а голая
+// сирота стала бы чужой навсегда. Гард здесь, а не у вызывающих: их
+// несколько (RemoveTunnel, SubscriptionProxyRegistrar, MigrateOff, …).
 func (o *Operator) deferProxyRemoval(name, desc string) {
 	if name == "" {
 		return
@@ -123,7 +129,7 @@ func (o *Operator) deferProxyRemoval(name, desc string) {
 		d = &deferredProxy{desc: desc}
 		o.deferredProxies[name] = d
 		o.saveDeferredLocked()
-	case d.desc != desc:
+	case d.desc != desc && d.desc != "":
 		d.desc = desc
 		o.saveDeferredLocked()
 	}

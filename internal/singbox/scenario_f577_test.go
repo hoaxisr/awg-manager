@@ -392,3 +392,27 @@ func TestScenario_BareMark_RecreatedClears(t *testing.T) {
 	}
 	clean(t, f)
 }
+
+// L1: голая метка (Proxy3, "") + RemoveTunnel при непрочитанном списке —
+// отложенный снос с тегом метку не затирает; тик сносит голую запись.
+func TestScenario_BareMark_NotOverwrittenByTag(t *testing.T) {
+	op, w, f, _, _ := orphanOnLiveSlot(t)
+	ctx := context.Background()
+	if d := op.deferredProxies["Proxy3"]; d == nil || d.desc != "" {
+		t.Fatalf("исходная метка = %+v, want голая", d)
+	}
+	f.FailList(errors.New("rci down"))
+	if err := op.RemoveTunnel(ctx, "A"); err != nil {
+		t.Fatalf("RemoveTunnel: %v", err)
+	}
+	if d := op.deferredProxies["Proxy3"]; d == nil || d.desc != "" {
+		t.Fatalf("метка после RemoveTunnel = %+v, want голая", d)
+	}
+	f.FailList(nil)
+	w.tick(ctx)
+	if f.Has("Proxy3") {
+		t.Fatalf("голая сирота не снята тиком: posts=%v", f.Posts)
+	}
+	mustHave(t, f, "Proxy0", "Proxy4", "Proxy5", "Proxy6")
+	clean(t, f)
+}
