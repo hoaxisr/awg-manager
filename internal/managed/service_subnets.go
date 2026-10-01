@@ -184,8 +184,8 @@ func (s *Service) listUsedSubnets(ctx context.Context, excludeIface string) ([]u
 // резервацию первой. Снятие безопасно и без него — проверка снимает
 // резервации ДО списка, а release зовётся после Invalidate (адрес на роутере
 // или интерфейс снесён) и после записи в хранилище; лок release берёт только
-// ради карты. excludeIface — сервер правки ("" — создание), он же подпись
-// резервации. release вызвать ровно один раз.
+// ради карты. excludeIface — сервер правки ("" — создание). release вызвать
+// ровно один раз.
 func (s *Service) reserveServerSubnet(ctx context.Context, address, mask string, port int, excludeIface string) (release func(), err error) {
 	s.serverSubnetMu.Lock()
 	defer s.serverSubnetMu.Unlock()
@@ -197,9 +197,11 @@ func (s *Service) reserveServerSubnet(ctx context.Context, address, mask string,
 	if err != nil {
 		return nil, err
 	}
-	label := excludeIface
-	if label == "" {
-		label = "создаваемый сервер"
+	// Подпись — описание сервера, а не интерфейса: в тексте ошибки она стоит
+	// и после «с интерфейсом», и в сетях за клиентом без префикса.
+	label := "создаваемый сервер"
+	if excludeIface != "" {
+		label = "сервер " + excludeIface + " (правка)"
 	}
 	u := &usedSubnet{label: label, cidr: cidr}
 	pt := &usedPort{iface: label, port: port}

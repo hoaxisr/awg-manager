@@ -107,8 +107,8 @@ func (s *Service) occupiedSnapshot(ctx context.Context, iface string) (occupiedS
 	if _, err := s.settings.Get(); err != nil {
 		return nil, query.Confirmed{}, false, fmt.Errorf("read settings: %w", err)
 	}
-	// Подсети серверов в создании (F554) — до списка, по правилу
-	// validateServerParams: снятое с резервации создание список уже видит.
+	// Подсети серверов в создании или правке (F554) — до списка, по правилу
+	// validateServerParams: снявшая резервацию операция в списке уже видна.
 	inflight, _ := s.reservations()
 	// Подтверждение — только свежим списком: пропущенный хук не выкидывает
 	// существующий сервер из проверки (T6). Кандидаты — все записи того же

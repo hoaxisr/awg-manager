@@ -186,6 +186,9 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateServerRequest
 			return err
 		}
 		if err := s.rciUpdateServer(ctx, iface, changes); err != nil {
+			// Ответ мог потеряться после применения (таймаут) — новый адрес на
+			// роутере: метка «грязно» до снятия резервации, как в Create (Q1).
+			s.queries.Interfaces.Invalidate(server.InterfaceName)
 			return fmt.Errorf("update server: %w", err)
 		}
 		// Новые адрес/порт — в запись кэша: по ней проверяются подсети (П4).

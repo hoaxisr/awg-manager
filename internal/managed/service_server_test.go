@@ -93,13 +93,21 @@ func (g *stateAwareGetter) Get(ctx context.Context, path string, out any) error 
 	}
 	m := map[string]json.RawMessage{}
 	for _, sv := range g.store.GetManagedServers() {
+		// Адрес — поставленный POST-ом, если был (правка, ответ на которую
+		// потерялся), иначе из записи.
+		addr, mask := sv.Address, sv.Mask
+		g.mu.Lock()
+		if a, ok := g.addr[sv.InterfaceName]; ok {
+			addr, mask = a[0], a[1]
+		}
+		g.mu.Unlock()
 		entry := map[string]any{
 			"id":             sv.InterfaceName,
 			"interface-name": sv.InterfaceName,
 			"type":           "Wireguard",
 			"description":    ManagedServerDescription,
-			"address":        sv.Address,
-			"mask":           sv.Mask,
+			"address":        addr,
+			"mask":           mask,
 			// Runtime серверов читается из снимка списка (F546): публичный
 			// ключ — в записи списка, как на роутере.
 			"wireguard": map[string]any{"public-key": "SRV-" + sv.InterfaceName},
@@ -163,11 +171,21 @@ func (g *stateAwareGetter) applyPost(payload map[string]interface{}) {
 			g.created[ifaceName] = true
 		}
 		if ip, ok := cfg["ip"].(map[string]interface{}); ok {
-			if a, ok := ip["address"].(map[string]interface{}); ok {
+			set := func(a map[string]interface{}) {
 				if g.addr == nil {
 					g.addr = map[string][2]string{}
 				}
 				g.addr[ifaceName] = [2]string{fmt.Sprint(a["address"]), fmt.Sprint(a["mask"])}
+			}
+			switch a := ip["address"].(type) {
+			case map[string]interface{}:
+				set(a)
+			case []map[string]interface{}: // правка: снятие старого + новый
+				for _, e := range a {
+					if no, _ := e["no"].(bool); !no {
+						set(e)
+					}
+				}
 			}
 		}
 		g.mu.Unlock()
@@ -2057,5 +2075,65 @@ func TestRestore_ConfigureAndCleanupFail_SubnetStillSeen(t *testing.T) {
 	_, err := svc.Create(ctx, CreateServerRequest{Address: "10.66.66.2", Mask: "255.255.255.0", ListenPort: 51821})
 	if err == nil || !strings.Contains(err.Error(), "пересекается") {
 		t.Fatalf("leftover address must be seen: err=%v", err)
+	}
+}
+
+// Раунд 2: отказ rciUpdateServer после применения (ответ потерян) — новая
+// подсеть видна следующей проверке в пределах SnapshotRecent.
+func TestUpdate_FailureAfterApply_NewSubnetStillSeen(t *testing.T) {
+	svc, _, _ := newCreateTestService(t)
+	ctx := context.Background()
+	first, err := svc.Create(ctx, CreateServerRequest{Address: "10.66.66.1", Mask: "255.255.255.0", ListenPort: 51820})
+	if err != nil {
+		t.Fatal(err)
+	}
+	poster := svc.transport.(*recordingPoster)
+	poster.failOn = func(m map[string]interface{}) error {
+		for _, v := range m["interface"].(map[string]interface{}) {
+			if _, ok := v.(map[string]interface{})["ip"]; ok {
+				return errors.New("reply lost")
+			}
+		}
+		return nil
+	}
+	if err := svc.Update(ctx, first.InterfaceName, UpdateServerRequest{Address: "10.88.88.1", Mask: "255.255.255.0", ListenPort: 51820}); err == nil {
+		t.Fatal("update must fail")
+	}
+	poster.failOn = nil
+	_, err = svc.Create(ctx, CreateServerRequest{Address: "10.88.88.2", Mask: "255.255.255.0", ListenPort: 51821})
+	if err == nil || !strings.Contains(err.Error(), "пересекается") {
+		t.Fatalf("applied subnet of a failed update must be seen: err=%v", err)
+	}
+}
+
+// Раунд 2: reserve/release и чтение резерваций параллельно — под -race гонка
+// на картах резерваций (release без лока) видна сразу.
+func TestReservations_ConcurrentReserveRelease(t *testing.T) {
+	svc, _, _ := newCreateTestService(t)
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				release, err := svc.reserveServerSubnet(ctx, fmt.Sprintf("10.%d.%d.1", 100+i, j), "255.255.255.0", 40000+i*100+j, "")
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				release()
+			}
+		}(i)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				svc.reservations()
+			}
+		}()
+	}
+	wg.Wait()
+	if subs, ports := svc.reservations(); len(subs) != 0 || len(ports) != 0 {
+		t.Fatalf("leaked reservations: %v %v", subs, ports)
 	}
 }

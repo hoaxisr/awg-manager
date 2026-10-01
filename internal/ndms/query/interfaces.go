@@ -146,8 +146,8 @@ type InterfaceStore struct {
 	// flights — счётчик начатых списков; appliedNo — номер последнего
 	// применённого: ответ, начатый раньше применённого, карту не трогает.
 	flights, appliedNo uint64
-	// applied — ответ списка appliedNo как есть (только чтение): ConfirmAll
-	// подтверждает и по нему, если её ответ вытеснен более новым (F575).
+	// applied — ответ списка appliedNo как есть (только чтение): Confirm*
+	// подтверждают и по нему, если свой ответ вытеснен (confirmedFreshLocked, F575).
 	applied map[string]ndms.Interface
 
 	// awaiting — ConfirmCreated в ожидании записи по имени (F584); будят
@@ -1280,7 +1280,7 @@ func (c Confirmed) Name() string { return c.name }
 func (c Confirmed) String() string { return c.name }
 
 // Confirm читает ОДИН полный список (кладёт его в карту) и подтверждает name
-// по нему. Список не прочитан — ошибка: присутствие из кэша подтверждением
+// по нему или по вытеснившему его применённому (confirmedFreshLocked). Список не прочитан — ошибка: присутствие из кэша подтверждением
 // не считается (F546). Запись — копия.
 func (s *InterfaceStore) Confirm(ctx context.Context, name string) (Confirmed, *ndms.Interface, bool, error) {
 	if name == "" {
@@ -1388,8 +1388,8 @@ func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string) (Confi
 	}
 }
 
-// ConfirmEach — Confirm для нескольких имён по одному списку. В ответе только
-// подтверждённые.
+// ConfirmEach — Confirm для нескольких имён по одному чтению списка (и
+// применённому, см. confirmedFreshLocked). В ответе только подтверждённые.
 func (s *InterfaceStore) ConfirmEach(ctx context.Context, names []string) (map[string]Confirmed, error) {
 	raw, err := s.refreshList(ctx, nil)
 	if err != nil {
