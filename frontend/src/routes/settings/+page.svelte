@@ -116,8 +116,6 @@
 	let telemtUpdating = $state(false);
 	let telemtRestarting = $state(false);
 	let telemtUninstalling = $state(false);
-	const telemtInstalled = $derived(telemtStatusValue?.installed ?? false);
-	const telemtRunning = $derived(telemtStatusValue?.running ?? false);
 	let ndmsProxyBusy = $state(false);
 	let ndmsProxyConfirmOpen = $state(false);
 	let ndmsProxyConfirmEnable = $state(false); // true = подтверждение включения; false = выключения
@@ -256,8 +254,8 @@
 		telemtStatusLoading = true;
 		try {
 			telemtStatusValue = await api.telemtStatus();
-		} catch {
-			// ignore if not configured
+		} catch (e) {
+			console.debug('telemt status unavailable:', e);
 		} finally {
 			telemtStatusLoading = false;
 		}
