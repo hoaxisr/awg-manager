@@ -22,8 +22,8 @@ func TestCompileTrustTunnelConnectURL(t *testing.T) {
 	if node.NativeConfig["username"] != "test_user" || node.NativeConfig["password"] != "test_pass" {
 		t.Fatalf("auth: %#v", node.NativeConfig)
 	}
-	if node.NativeConfig["sni"] != "us.example.com" || node.NativeConfig["quic"] != false {
-		t.Fatalf("transport: %#v", node.NativeConfig)
+	if node.NativeConfig["sni"] != "us.example.com" || node.NativeConfig["quic"] != true || node.Transport != "quic" {
+		t.Fatalf("transport: %#v (transport=%s)", node.NativeConfig, node.Transport)
 	}
 }
 

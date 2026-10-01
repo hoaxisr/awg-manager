@@ -360,6 +360,36 @@ func TestGenerateConfig_ConvertsSocksOutbound(t *testing.T) {
 	}
 }
 
+func TestGenerateConfig_ConvertsTrustTunnelOutbound(t *testing.T) {
+	yamlBytes, err := GenerateConfig(storage.SingboxRouterSettings{RoutingMode: "tproxy"}, "", []map[string]any{{
+		"type":        "trusttunnel",
+		"tag":         "ExampleTT",
+		"server":      "edge.example.net",
+		"server_port": 443,
+		"username":    "test-user",
+		"password":    "test-password",
+		"quic":        true,
+		"tls": map[string]any{
+			"enabled":     true,
+			"server_name": "nl.example.org",
+		},
+	}}, nil, "ExampleTT", nil)
+	if err != nil {
+		t.Fatalf("GenerateConfig() error = %v", err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(yamlBytes, &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	if len(cfg.Proxies) != 1 {
+		t.Fatalf("Proxies = %#v, want 1 proxy", cfg.Proxies)
+	}
+	p := cfg.Proxies[0]
+	if p["name"] != "ExampleTT" || p["type"] != "trusttunnel" || p["sni"] != "nl.example.org" || p["quic"] != true {
+		t.Fatalf("Proxy = %#v, want ExampleTT trusttunnel with sni and quic", p)
+	}
+}
+
 func TestGenerateConfigWithNative_PreservesXHTTP(t *testing.T) {
 	b, err := GenerateConfigWithNative(storage.SingboxRouterSettings{}, "", nil, []Proxy{{
 		"name": "native-xhttp", "type": "vless", "server": "example.com", "port": 443,

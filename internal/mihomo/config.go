@@ -1788,6 +1788,18 @@ func convertSingboxToMihomoProxy(ob map[string]any) (Proxy, error) {
 			p["ips"] = []string{ip}
 		}
 
+	case "trusttunnel":
+		p["type"] = "trusttunnel"
+		p["username"], _ = ob["username"].(string)
+		p["password"], _ = ob["password"].(string)
+		if quic, ok := ob["quic"].(bool); ok {
+			p["quic"] = quic
+		}
+		if hc, ok := ob["health_check"].(bool); ok {
+			p["health-check"] = hc
+		}
+		p["udp"] = true
+
 	default:
 		return nil, fmt.Errorf("mihomo does not support outbound %q of type %q", tag, pType)
 	}
@@ -1799,6 +1811,7 @@ func convertSingboxToMihomoProxy(ob map[string]any) (Proxy, error) {
 			p["tls"] = true
 			if serverName, ok := tls["server_name"].(string); ok && serverName != "" {
 				p["servername"] = serverName
+				p["sni"] = serverName
 			}
 			if insecure, ok := tls["insecure"].(bool); ok {
 				p["skip-cert-verify"] = insecure
@@ -1832,6 +1845,13 @@ func convertSingboxToMihomoProxy(ob map[string]any) (Proxy, error) {
 					p["client-fingerprint"] = "chrome"
 				}
 			}
+		}
+	}
+
+	if sniVal, ok := ob["sni"].(string); ok && sniVal != "" {
+		p["sni"] = sniVal
+		if _, ok := p["servername"]; !ok {
+			p["servername"] = sniVal
 		}
 	}
 
