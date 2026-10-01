@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import type { AccessPolicy, PolicyDevice, PolicyGlobalInterface } from '$lib/types';
 	import { api } from '$lib/api/client';
 	import { errorMessage } from '$lib/utils/errorMessage';
@@ -28,6 +29,10 @@
 	let dragOver = $state(false);
 	const VALID_PATTERN = /^[a-zA-Z0-9_-]*$/;
 	const MAX_LEN = 256;
+
+	onMount(() => {
+		void onupdate();
+	});
 
 	$effect(() => {
 		description = policy.description;

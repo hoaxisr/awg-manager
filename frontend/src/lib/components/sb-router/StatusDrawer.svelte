@@ -474,12 +474,21 @@
 
   // policy-tun-unbound показывает карточка режима (там же ссылка на политики) —
   // в общем списке замечаний он был бы вторым экземпляром той же строки.
+  // При активном Mihomo не показываем нерелевантные замечания sing-box конфигурации.
   let issues = $derived(
-    deriveIssues(
-      policyTunMode && s
-        ? { ...s, issues: (s.issues ?? []).filter((i) => i.kind !== 'policy-tun-unbound') }
-        : s,
-    ),
+    cfg?.routingEngine === 'mihomo'
+      ? (s?.issues ?? [])
+          .filter((i) => i.kind !== 'policy-tun-unbound' && !i.message?.includes('rule_set'))
+          .map((i) => ({
+            tone: i.severity === 'error' ? ('error' as const) : ('warning' as const),
+            text: i.message,
+            ctaHint: '(в Эксперт)',
+          }))
+      : deriveIssues(
+          policyTunMode && s
+            ? { ...s, issues: (s.issues ?? []).filter((i) => i.kind !== 'policy-tun-unbound') }
+            : s,
+        ),
   );
   let issueCount = $derived(issues.length);
 
@@ -904,25 +913,27 @@
 
       <!-- Кэш sing-box (issue #842): единственное место настройки, вне expert-гейта —
            износ флеша касается любого режима с fakeip. -->
-      <section class="sec">
-        <div class="sec-cap">Кэш sing-box</div>
-        <div class="field">
-          <label class="lbl" for="ed-cache-location">Хранилище cache.db</label>
-          <select
-            id="ed-cache-location"
-            class="inp"
-            value={cfg.cacheFileLocation ?? ''}
-            onchange={onCacheLocationChange}
-          >
-            {#if !cfg.cacheFileLocation}
-              <option value="">Не задано — как в 00-base.json</option>
-            {/if}
-            <option value="flash">Флеш роутера (/opt)</option>
-            <option value="tmp">Оперативная память (/tmp)</option>
-          </select>
-        </div>
-        <p class="hint">В RAM записи FakeIP-карты и Clash не изнашивают флеш, но кэш не переживает перезагрузку. Выбор перезаписывает путь cache_file в 00-base.json, включая заданный вручную.{cacheDbNow}</p>
-      </section>
+      {#if cfg?.routingEngine !== 'mihomo'}
+        <section class="sec">
+          <div class="sec-cap">Кэш sing-box</div>
+          <div class="field">
+            <label class="lbl" for="ed-cache-location">Хранилище cache.db</label>
+            <select
+              id="ed-cache-location"
+              class="inp"
+              value={cfg.cacheFileLocation ?? ''}
+              onchange={onCacheLocationChange}
+            >
+              {#if !cfg.cacheFileLocation}
+                <option value="">Не задано — как в 00-base.json</option>
+              {/if}
+              <option value="flash">Флеш роутера (/opt)</option>
+              <option value="tmp">Оперативная память (/tmp)</option>
+            </select>
+          </div>
+          <p class="hint">В RAM записи FakeIP-карты и Clash не изнашивают флеш, но кэш не переживает перезагрузку. Выбор перезаписывает путь cache_file в 00-base.json, включая заданный вручную.{cacheDbNow}</p>
+        </section>
+      {/if}
     {/if}
 
     {#if isExpert && cfg}
@@ -980,7 +991,7 @@
             </select>
           </div>
         </div>
-        <p class="hint">Сколько UDP-сессий движок держит одновременно; при переполнении вытесняется самая старая. Уменьшите на роутере с малой памятью, если sing-box растёт под UDP-нагрузкой.</p>
+        <p class="hint">Сколько UDP-сессий движок держит одновременно; при переполнении вытесняется самая старая. Уменьшите на роутере с малой памятью, если {cfg?.routingEngine === 'mihomo' ? 'Mihomo' : 'sing-box'} растёт под UDP-нагрузкой.</p>
       </section>
 
       {#if cfg?.routingEngine !== 'mihomo'}
