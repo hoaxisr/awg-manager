@@ -27,8 +27,20 @@ func (o *Operator) subscriptionProxies() []SubscriptionProxy {
 // MarkNeedsOrphanCleanup поднимает флаг уборки режима NDMS Proxy off:
 // ближайший тик сторожа помечает наши ProxyN к сносу (orphanCleanupIfFlagged).
 // Вызывается из MigrateOff и из main.go на старте, если settings уже в
-// disabled.
-func (o *Operator) MarkNeedsOrphanCleanup() { o.needsOrphanCleanup.Store(true) }
+// disabled. Общую выдержку тика не ждёт (wakeProxyCleanupLocked).
+func (o *Operator) MarkNeedsOrphanCleanup() {
+	o.needsOrphanCleanup.Store(true)
+	o.deferredProxyMu.Lock()
+	o.wakeProxyCleanupLocked()
+	o.deferredProxyMu.Unlock()
+}
+
+// wakeProxyCleanupLocked — новая работа уборки (метка, флаг) пробуется на
+// ближайшем тике, а не на сроке общей выдержки (до 15 мин): голая запись
+// живого владельца иначе ждала бы усыновления. Ступень (cleanupDelay) не
+// сбрасывается — новый отказ чтения продолжает лестницу (F597 ревью M1).
+// Под deferredProxyMu.
+func (o *Operator) wakeProxyCleanupLocked() { o.cleanupNext = time.Time{} }
 
 // proxyCleanupTick — уборка ProxyN с тика сторожа (F562): флаг режима off,
 // затем созревшие метки. Один полный список на обе уборки (список действия,
@@ -182,6 +194,7 @@ func (o *Operator) deferProxyRemoval(name, desc string) {
 		d = &deferredProxy{desc: desc}
 		o.deferredProxies[name] = d
 		o.saveDeferredLocked()
+		o.wakeProxyCleanupLocked()
 	case d.desc != desc && d.desc != "":
 		d.desc = desc
 		o.saveDeferredLocked()

@@ -85,3 +85,55 @@ func TestScenario_ProxyCleanup_ListDownBackoffOneReadPerTick(t *testing.T) {
 		t.Fatalf("второй простой: чтения на секундах %v, want %v", at, want)
 	}
 }
+
+// F597 ревью M1: общая выдержка на потолке (15 мин). Новая метка и флаг
+// уборки пробуются на ближайшем тике; новый отказ чтения продолжает лестницу
+// (снова 15 мин), а не начинает её с 30 с.
+func TestScenario_ProxyCleanup_NewWorkWakesBackoffKeepsLadder(t *testing.T) {
+	op, w, f, _ := f562Stand(t)
+	op.ndmsProxyEnabledFn = func() bool { return false }
+	clock := time.Unix(0, 0)
+	op.deferredNow = func() time.Time { return clock }
+	op.deferProxyRemoval("Proxy3", "A")
+	f.FailList(errors.New("rci down"))
+	for sec := 0; sec <= 1830; sec += 30 { // 0, 30, 90, 210, 450, 930, 1830 → потолок
+		clock = time.Unix(int64(sec), 0)
+		w.tick(context.Background())
+	}
+	if op.cleanupDelay != deferredProxyMaxDelay {
+		t.Fatalf("выдержка=%v, want потолок", op.cleanupDelay)
+	}
+
+	for _, wake := range []struct {
+		name string
+		fn   func()
+	}{
+		{"метка", func() { op.deferProxyRemoval("Proxy4", "B") }},
+		{"флаг", op.MarkNeedsOrphanCleanup},
+	} {
+		clock = clock.Add(30 * time.Second)
+		wake.fn()
+		before := f.ListCalls()
+		w.tick(context.Background())
+		if n := f.ListCalls() - before; n != 1 {
+			t.Fatalf("%s: чтений на ближайшем тике %d, want 1", wake.name, n)
+		}
+		if want := clock.Add(deferredProxyMaxDelay); !op.cleanupNext.Equal(want) {
+			t.Fatalf("%s: следующая попытка %v, want %v (лестница продолжена)", wake.name, op.cleanupNext, want)
+		}
+		clock = clock.Add(30 * time.Second)
+		before = f.ListCalls()
+		w.tick(context.Background())
+		if n := f.ListCalls() - before; n != 0 {
+			t.Fatalf("%s: чтений внутри выдержки %d, want 0", wake.name, n)
+		}
+	}
+
+	f.FailList(nil)
+	op.deferProxyRemoval("Proxy5", "user")
+	clock = clock.Add(30 * time.Second)
+	w.tick(context.Background())
+	if f.Has("Proxy3") || f.Has("Proxy4") || f.Has("Proxy5") {
+		t.Fatalf("после восстановления не сняты: posts=%v", f.Posts)
+	}
+}
