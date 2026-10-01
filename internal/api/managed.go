@@ -687,7 +687,15 @@ func (h *ManagedServerHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	server, err := h.svc.Create(r.Context(), req)
 	if err != nil {
-		response.Error(w, err.Error(), "CREATE_FAILED")
+		if server == nil || !errors.Is(err, managed.ErrASCUnverified) {
+			response.Error(w, err.Error(), "CREATE_FAILED")
+			return
+		}
+		// Сервер создан и сохранён, не сверен только ASC: состояние изменилось —
+		// публикуем, но успехом не отвечаем (R44, как правка ASC).
+		h.svc.InvalidateCache(server.InterfaceName)
+		h.publishServerUpdated()
+		response.Error(w, err.Error(), "ASC_UNVERIFIED")
 		return
 	}
 	h.svc.InvalidateCache(server.InterfaceName)

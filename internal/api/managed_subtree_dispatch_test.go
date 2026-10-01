@@ -46,7 +46,7 @@ func (s *recManagedSvc) journal() []string {
 
 func (s *recManagedSvc) Create(context.Context, managed.CreateServerRequest) (*storage.ManagedServer, error) {
 	s.record("Create")
-	return &storage.ManagedServer{}, s.err
+	return &storage.ManagedServer{InterfaceName: "Wireguard3"}, s.err
 }
 
 func (s *recManagedSvc) List() []storage.ManagedServer { return nil }
@@ -248,6 +248,8 @@ func TestManagedSubtree_ServiceFailureStopsPipeline(t *testing.T) {
 			[]string{"Delete:Wireguard3"}, "DELETE_FAILED"},
 		{"asc", http.MethodPut, "/api/managed-servers/Wireguard3/asc", `{}`,
 			[]string{"SetASCParams:Wireguard3"}, "SET_ASC_FAILED"},
+		{"create", http.MethodPost, "/api/managed-servers/", `{}`,
+			[]string{"Create"}, "CREATE_FAILED"},
 	}
 
 	for _, tc := range cases {
@@ -296,6 +298,33 @@ func TestManagedASC_UnverifiedPublishes(t *testing.T) {
 	}
 	if msg, _ := body["message"].(string); !strings.Contains(msg, "принял запись ASC") {
 		t.Fatalf("сообщение не говорит, что запись принята: %q", msg)
+	}
+}
+
+// L4: Create записал ASC, но сверка не прочиталась — сервер создан и
+// сохранён, поэтому публикация есть, но ответ не успех: ASC_UNVERIFIED с
+// сообщением, что сервер создан.
+func TestManagedCreate_ASCUnverifiedPublishes(t *testing.T) {
+	svc := &recManagedSvc{err: fmt.Errorf("сервер Wireguard3 создан, но ASC не сверен: %w", managed.ErrASCUnverified)}
+	h, p := newManagedSubtreeHarness(t, svc)
+
+	rr := perform(h.Subtree, http.MethodPost, "/api/managed-servers/", `{}`)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("код=%d, ожидался 400 (тело=%s)", rr.Code, rr.Body.String())
+	}
+	want := []string{"Create", "InvalidateCache:Wireguard3"}
+	if got := svc.journal(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("журнал службы = %v, ожидался %v", got, want)
+	}
+	if pub := p.invalidated(); !reflect.DeepEqual(pub, []string{"servers/managed-mutation"}) {
+		t.Fatalf("публикации = %v, ожидалась одна инвалидация servers", pub)
+	}
+	body := decodeJSONBody(t, rr)
+	if body["code"] != "ASC_UNVERIFIED" {
+		t.Fatalf("code=%v, ожидался ASC_UNVERIFIED (тело=%s)", body["code"], rr.Body.String())
+	}
+	if msg, _ := body["message"].(string); !strings.Contains(msg, "создан") || !strings.Contains(msg, "принял запись ASC") {
+		t.Fatalf("сообщение не говорит, что сервер создан и ASC принят: %q", msg)
 	}
 }
 

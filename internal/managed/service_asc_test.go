@@ -537,7 +537,8 @@ func TestSetASCParams_MismatchThenMatch(t *testing.T) {
 }
 
 // R44: сверка не прочиталась (2 ошибки чтения) — это не отказ записи: Create
-// не откатывает созданный интерфейс, сервер сохранён.
+// не откатывает созданный интерфейс, сервер сохранён; но и не успех — Create
+// отдаёт сервер вместе с ErrASCUnverified (L4).
 func TestCreate_ASCUnverifiedKeepsServer(t *testing.T) {
 	svc, store, getter := newCreateTestService(t)
 	poster := svc.transport.(*recordingPoster)
@@ -560,8 +561,11 @@ func TestCreate_ASCUnverifiedKeepsServer(t *testing.T) {
 		Mask:       "255.255.255.0",
 		ListenPort: 52046,
 	})
-	if err != nil {
-		t.Fatalf("Create с непрочитанной сверкой ASC обязан пройти, got %v", err)
+	if !errors.Is(err, ErrASCUnverified) || server == nil {
+		t.Fatalf("Create с непрочитанной сверкой ASC: сервер %v, err %v; want сервер + ErrASCUnverified", server, err)
+	}
+	if !strings.Contains(err.Error(), server.InterfaceName+" создан") {
+		t.Fatalf("ошибка не говорит, что сервер создан: %v", err)
 	}
 	if _, ok := store.GetManagedServerByID(server.InterfaceName); !ok {
 		t.Fatal("сервер не сохранён")

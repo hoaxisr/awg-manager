@@ -22,6 +22,9 @@ const (
 // Create creates a new managed WireGuard server interface and persists it.
 // Multiple managed servers may coexist; the only collision check is on the
 // allocated NDMS interface name.
+//
+// Ошибка с ErrASCUnverified приходит вместе с НЕ-nil сервером: он создан и
+// сохранён, не сверен только ASC (R44, L4).
 func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage.ManagedServer, error) {
 	// Validate; подсеть занята за этим созданием до выхода (F554).
 	release, err := s.reserveServerSubnet(ctx, req.Address, req.Mask, req.ListenPort, "")
@@ -84,15 +87,23 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 
 	// Generate/apply ASC params by default (backward-compatible) but allow
 	// callers to opt out explicitly via generateAsc=false.
+	//
+	// ASC записан, но сверка не прочиталась (R44) — сервер не откатывается и
+	// сохраняется, но Create отвечает ErrASCUnverified ВМЕСТЕ с сервером:
+	// успехом это не является, handler говорит об этом пользователю (L4).
+	var unverified error
 	if req.ShouldGenerateASC() {
 		asc, err := s.generateDefaultASCParams()
 		if err != nil {
 			s.cleanupInterface(ctx, iface)
 			return nil, fmt.Errorf("generate ASC params: %w", err)
 		}
-		if err := s.applyASCParams(ctx, iface, asc); err != nil && !s.ascUnverified("create", ifaceName, err) {
-			s.cleanupInterface(ctx, iface)
-			return nil, fmt.Errorf("apply ASC params: %w", err)
+		if err := s.applyASCParams(ctx, iface, asc); err != nil {
+			if !s.ascUnverified("create", ifaceName, err) {
+				s.cleanupInterface(ctx, iface)
+				return nil, fmt.Errorf("apply ASC params: %w", err)
+			}
+			unverified = fmt.Errorf("сервер %s создан, но ASC не сверен: %w", ifaceName, err)
 		}
 	}
 
@@ -119,7 +130,7 @@ func (s *Service) Create(ctx context.Context, req CreateServerRequest) (*storage
 	s.log.Info("managed server created", "interface", ifaceName, "address", req.Address, "port", req.ListenPort)
 	s.appLog.Info("create", ifaceName, fmt.Sprintf("Managed server created on %s", ifaceName))
 	saved := server
-	return &saved, nil
+	return &saved, unverified
 }
 
 // Update updates the managed server's address and/or listen port.
