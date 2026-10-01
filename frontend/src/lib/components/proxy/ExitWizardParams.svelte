@@ -1,8 +1,9 @@
 <script lang="ts">
 	// Шаг 2 мастера «Выхода» — параметры (WE-29..WE-37). Поля правятся на месте
 	// в объекте мастера; пароль есть только у WDTT-клиента, у FreeTurn его нет.
-	import { Input } from '$lib/components/ui';
+	import { Dropdown, Input, Toggle } from '$lib/components/ui';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
+	import { autoReconnectIntervalOptions } from '../freeturn/options';
 	import type { ExitProtocol, ExitWizardFields } from './exitWizard';
 
 	interface Props {
@@ -43,6 +44,29 @@
 		hint={protocol === 'wdtt' ? 'Клиент округлит вниз до кратного 9 (минимум 9)' : ''}
 		fullWidth
 	/>
+	<div class="reconnect-box">
+		<Toggle
+			label="Автопереподключение"
+			hint="Перезапуск при 401 Unauthorized / сбое TURN или по интервалу"
+			checked={fields.autoReconnect ?? false}
+			onchange={(v) => {
+				fields.autoReconnect = v;
+				if (v && !fields.autoReconnectInterval) {
+					fields.autoReconnectInterval = 'on_failure';
+				}
+			}}
+		/>
+		{#if fields.autoReconnect}
+			<div class="reconnect-interval">
+				<Dropdown
+					label="Интервал"
+					bind:value={fields.autoReconnectInterval}
+					options={autoReconnectIntervalOptions}
+					fullWidth
+				/>
+			</div>
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -56,5 +80,15 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 		gap: 0.75rem;
+	}
+
+	.reconnect-box {
+		grid-column: 1 / -1;
+		padding-top: 0.5rem;
+	}
+
+	.reconnect-interval {
+		max-width: 240px;
+		margin-top: 0.5rem;
 	}
 </style>

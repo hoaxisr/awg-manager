@@ -5,6 +5,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Конфиги ролей — намерение и только намерение: ни одного кэшированного факта
@@ -60,6 +61,9 @@ type WdttClientConfig struct {
 	// Policies — намерение членства в политиках доступа. Единственный
 	// писатель — пользователь (спека §4.4).
 	Policies []PolicyPermit `json:"policies,omitempty"`
+
+	AutoReconnect         bool   `json:"autoReconnect,omitempty"`
+	AutoReconnectInterval string `json:"autoReconnectInterval,omitempty"`
 }
 
 func (c WdttClientConfig) Validate() error {
@@ -82,7 +86,7 @@ func (c WdttClientConfig) Validate() error {
 	if c.Mode == "raw" && (c.NdmsIface == "" || c.RawIface == "") {
 		return fmt.Errorf("raw-клиенту не выделен индекс OpkgTun (пин ставит писатель конфига)")
 	}
-	return nil
+	return validateAutoReconnect(c.AutoReconnect, c.AutoReconnectInterval)
 }
 
 // DefaultWorkers — дефолт числа потоков (-n) клиента WDTT по архитектуре
@@ -378,6 +382,8 @@ type FreeTurnClientConfig struct {
 	ClientID       string `json:"clientId,omitempty"`
 	Sub            string `json:"sub,omitempty"`
 	Debug          bool   `json:"debug,omitempty"`
+	AutoReconnect         bool   `json:"autoReconnect,omitempty"`
+	AutoReconnectInterval string `json:"autoReconnectInterval,omitempty"`
 	// KCP — профиль ARQ tcp-режима (freeturn 3.2+, F144): приезжает полем `kcp`
 	// ссылки freeturn://, редактора в UI нет. Рендерится в -kcp-* только при
 	// Mode tcp: вне tcp клиент отвергает любое отклонение от дефолта на старте.
@@ -404,6 +410,9 @@ func (c FreeTurnClientConfig) Validate() error {
 		return fmt.Errorf("не задан адрес реле (-peer / -links / подписка)")
 	}
 	if err := c.validateBond(); err != nil {
+		return err
+	}
+	if err := validateAutoReconnect(c.AutoReconnect, c.AutoReconnectInterval); err != nil {
 		return err
 	}
 	return c.KCP.validate()
@@ -516,4 +525,32 @@ func localListen(addr string) error {
 		return fmt.Errorf("listen %q: клиент слушает только 127.0.0.1 (пул %d..%d)", addr, ListenPortMin, ListenPortMax)
 	}
 	return nil
+}
+
+// ValidAutoReconnectIntervals — допустимые значения интервала автопереподключения.
+var ValidAutoReconnectIntervals = map[string]time.Duration{
+	"":           0,
+	"on_failure": 0,
+	"30m":        30 * time.Minute,
+	"1h":         1 * time.Hour,
+	"2h":         2 * time.Hour,
+	"4h":         4 * time.Hour,
+	"8h":         8 * time.Hour,
+	"12h":        12 * time.Hour,
+	"24h":        24 * time.Hour,
+}
+
+func validateAutoReconnect(enabled bool, interval string) error {
+	if !enabled {
+		return nil
+	}
+	if _, ok := ValidAutoReconnectIntervals[interval]; !ok {
+		return fmt.Errorf("недопустимый интервал автопереподключения %q (допустимы: on_failure, 30m, 1h, 2h, 4h, 8h, 12h, 24h)", interval)
+	}
+	return nil
+}
+
+// ParseReconnectInterval преобразует строковый интервал в time.Duration.
+func ParseReconnectInterval(s string) time.Duration {
+	return ValidAutoReconnectIntervals[s]
 }

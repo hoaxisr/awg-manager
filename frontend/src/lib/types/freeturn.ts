@@ -28,6 +28,8 @@ export interface FreeTurnClientConfig {
 	clientId?: string;
 	sub?: string;
 	debug: boolean;
+	autoReconnect?: boolean;
+	autoReconnectInterval?: string;
 }
 
 export interface FreeTurnServerConfig {

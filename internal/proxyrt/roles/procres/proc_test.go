@@ -3,6 +3,8 @@ package procres
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -654,5 +656,141 @@ func TestProcStartClearsRestartRequest(t *testing.T) {
 	}
 	if steps := p.Plan(obs); len(steps) != 0 {
 		t.Fatalf("после успешного start запрос обязан сняться, план: %v", steps)
+	}
+}
+
+func TestProcAutoReconnect_LogFatalError(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "test.log")
+	if err := os.WriteFile(logFile, []byte("some initial log\nerror 401: Unauthorized\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Unix(1700000000, 0)
+	clock := func() time.Time { return now }
+	link := &fakeLink{st: awgmproto.State{PID: 100, UptimeS: 30}}
+	r := &fakeRunner{pid: 100, alive: true}
+	p := NewProc(ProcConfig{
+		ID: "process", Instance: "default", Impl: "wt-client", Role: "client",
+		Binary: "/opt/bin/wt-client", NeedCmds: []string{"state"},
+		SocketPath: "/tmp/sock", LogPath: logFile,
+		Link: link, Runner: r, Gate: okGate{}, Now: clock,
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(true, 0)
+
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe err: %v", err)
+	}
+	if obs.Attrs["fatal_error"] != "error 401: Unauthorized" {
+		t.Fatalf("fatal_error = %q, want 'error 401: Unauthorized'", obs.Attrs["fatal_error"])
+	}
+
+	steps := p.Plan(obs)
+	if len(steps) != 1 || steps[0].Op != "restart" {
+		t.Fatalf("Plan = %+v, want [restart]", steps)
+	}
+	if !strings.Contains(steps[0].Reason, "сбой сессии в журнале") {
+		t.Fatalf("Reason = %q, want session failure mention", steps[0].Reason)
+	}
+
+	if err := p.Apply(context.Background(), steps[0]); err != nil {
+		t.Fatalf("Apply err: %v", err)
+	}
+	// После сбоя сессии взведён backoff (5s)
+	if until := p.retryAt(); until.Sub(now) != 5*time.Second {
+		t.Fatalf("retryAt() = %v, want 5s backoff from %v", until, now)
+	}
+	// Для только что запущенного процесса будильник — socketWaitRecheck (3s)
+	if got := p.RecheckAfter(); got != socketWaitRecheck {
+		t.Fatalf("RecheckAfter() = %v, want %v", got, socketWaitRecheck)
+	}
+	// Повторный рестарт до истечения backoff отклоняется анти-флаппингом
+	if err := p.Apply(context.Background(), steps[0]); err == nil || !strings.Contains(err.Error(), "отложен") {
+		t.Fatalf("повторный рестарт обязан быть отложен backoff'ом: %v", err)
+	}
+}
+
+func TestProcAutoReconnect_Disabled(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "test.log")
+	if err := os.WriteFile(logFile, []byte("error 401: Unauthorized\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	link := &fakeLink{st: awgmproto.State{PID: 100, UptimeS: 30}}
+	r := &fakeRunner{pid: 100, alive: true}
+	p := NewProc(ProcConfig{
+		ID: "process", Instance: "default", Impl: "wt-client", Role: "client",
+		Binary: "/opt/bin/wt-client", NeedCmds: []string{"state"},
+		SocketPath: "/tmp/sock", LogPath: logFile,
+		Link: link, Runner: r, Gate: okGate{}, Now: time.Now,
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(false, 0) // Выключено!
+
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe err: %v", err)
+	}
+	if obs.Attrs["fatal_error"] != "" {
+		t.Fatalf("fatal_error should be empty when autoReconnect is false, got %q", obs.Attrs["fatal_error"])
+	}
+
+	steps := p.Plan(obs)
+	if len(steps) != 0 {
+		t.Fatalf("Plan = %+v, want empty steps when autoReconnect is disabled", steps)
+	}
+}
+
+func TestProcAutoReconnect_IntervalExpiration(t *testing.T) {
+	link := &fakeLink{st: awgmproto.State{PID: 100, UptimeS: 3605}}
+	r := &fakeRunner{pid: 100, alive: true}
+	p := NewProc(ProcConfig{
+		ID: "process", Instance: "default", Impl: "wt-client", Role: "client",
+		Binary: "/opt/bin/wt-client", NeedCmds: []string{"state"},
+		SocketPath: "/tmp/sock", LogPath: "/tmp/log",
+		Link: link, Runner: r, Gate: okGate{}, Now: time.Now,
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(true, 1*time.Hour)
+
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe err: %v", err)
+	}
+	if obs.Attrs["reconnect_due"] != "interval" {
+		t.Fatalf("reconnect_due = %q, want 'interval'", obs.Attrs["reconnect_due"])
+	}
+
+	steps := p.Plan(obs)
+	if len(steps) != 1 || steps[0].Op != "restart" {
+		t.Fatalf("Plan = %+v, want [restart]", steps)
+	}
+}
+
+func TestProcAutoReconnect_StartupGrace(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "test.log")
+	if err := os.WriteFile(logFile, []byte("error 401: Unauthorized\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Uptime 5s — окно старта (socketGrace = 20s), лог не должен инспектироваться
+	link := &fakeLink{st: awgmproto.State{PID: 100, UptimeS: 5}}
+	r := &fakeRunner{pid: 100, alive: true}
+	p := NewProc(ProcConfig{
+		ID: "process", Instance: "default", Impl: "wt-client", Role: "client",
+		Binary: "/opt/bin/wt-client", NeedCmds: []string{"state"},
+		SocketPath: "/tmp/sock", LogPath: logFile,
+		Link: link, Runner: r, Gate: okGate{}, Now: time.Now,
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(true, 0)
+
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe err: %v", err)
+	}
+	if obs.Attrs["fatal_error"] != "" {
+		t.Fatalf("fatal_error should be ignored during startup grace, got %q", obs.Attrs["fatal_error"])
 	}
 }

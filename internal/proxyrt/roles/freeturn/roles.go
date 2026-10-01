@@ -88,6 +88,7 @@ func (r *ClientRole) Resources(intent proxyrt.Intent, cfg any, _ proxyrt.Observa
 	}
 	enabled := intent == proxyrt.IntentEnabled
 	r.proc.SetDesired(enabled, roles.FreeTurnClientArgs(c), c.Validate())
+	r.proc.SetAutoReconnect(c.AutoReconnect, roles.ParseReconnectInterval(c.AutoReconnectInterval))
 	r.linked.SetDesired(r.inst, c.Listen, enabled)
 	if !enabled {
 		// У выключенного клиента ни доводки endpoint'ов, ни приговоров порта

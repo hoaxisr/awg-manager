@@ -29,6 +29,8 @@ export interface WdttClientConfig {
 	rawIface?: string;
 	rawClientIp?: string;
 	rawClientMTU?: number;
+	autoReconnect?: boolean;
+	autoReconnectInterval?: string;
 }
 
 export interface WdttClientInstance {

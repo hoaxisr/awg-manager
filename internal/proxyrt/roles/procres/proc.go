@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -106,6 +108,11 @@ type Proc struct {
 	rmu           sync.Mutex
 	restartWanted bool
 	restartReason string
+
+	autoReconnect     bool
+	reconnectInterval time.Duration
+	lastUptimeS       int64
+	lastObservedAt    time.Time
 }
 
 func NewProc(cfg ProcConfig) *Proc {
@@ -124,18 +131,96 @@ func (p *Proc) SetDesired(enabled bool, forkArgs []string, cfgErr error) {
 	p.cfgErr = cfgErr
 }
 
+// SetAutoReconnect настраивает автоматический перезапуск процесса:
+// мониторинг фатальных сбоев сессии и плановый перезапуск по интервалу.
+func (p *Proc) SetAutoReconnect(enabled bool, interval time.Duration) {
+	p.autoReconnect = enabled
+	p.reconnectInterval = interval
+}
+
 func (p *Proc) ID() proxyrt.ResourceID { return p.c.ID }
+
+var fatalSessionSignatures = []string{
+	"error 401: Unauthorized",
+	"[VK Auth] Multiple auth errors detected",
+	"Credentials cache invalidated",
+	"[VK Auth] Persona burned",
+	"TURN Allocate: Allocate error",
+	"failed to allocate TURN",
+	"all streams down",
+	"all streams failed",
+	"server did not acknowledge client ID",
+	"failed to write client ID",
+}
+
+func readLogTail(path string, maxBytes int64) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	off := st.Size() - maxBytes
+	if off < 0 {
+		off = 0
+	}
+	buf := make([]byte, st.Size()-off)
+	n, err := f.ReadAt(buf, off)
+	if err != nil && n == 0 {
+		return ""
+	}
+	return string(buf[:n])
+}
+
+func detectFatalSessionError(logTail string) string {
+	if logTail == "" {
+		return ""
+	}
+	lines := strings.Split(logTail, "\n")
+	checked := 0
+	for i := len(lines) - 1; i >= 0 && checked < 50; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || strings.Contains(line, "[СТАТИСТИКА]") {
+			continue
+		}
+		checked++
+		for _, sig := range fatalSessionSignatures {
+			if strings.Contains(line, sig) {
+				return sig
+			}
+		}
+	}
+	return ""
+}
 
 func (p *Proc) Observe(ctx context.Context) (proxyrt.Observation, error) {
 	octx, cancel := context.WithTimeout(ctx, observeTimeout)
 	defer cancel()
 	st, err := p.c.Link.State(octx)
 	if err == nil {
-		// Живой ответ закрывает окно старта, окно переподключения и серию
-		// неудач.
+		now := p.c.Now()
 		p.spawnedAt, p.unreachSince = nil, nil
-		p.ResetStartBackoff()
-		return obsFromState(st), nil
+		p.lastUptimeS = st.UptimeS
+		p.lastObservedAt = now
+		obs := obsFromState(st)
+		if p.enabled && p.autoReconnect {
+			if p.reconnectInterval > 0 && time.Duration(st.UptimeS)*time.Second >= p.reconnectInterval {
+				obs.Attrs["reconnect_due"] = "interval"
+			}
+			if p.c.LogPath != "" && time.Duration(st.UptimeS)*time.Second >= socketGrace {
+				tail := readLogTail(p.c.LogPath, 16384)
+				if sig := detectFatalSessionError(tail); sig != "" {
+					obs.Attrs["fatal_error"] = sig
+				}
+			}
+		}
+		if obs.Attrs["fatal_error"] == "" {
+			p.ResetStartBackoff()
+		}
+		return obs, nil
 	}
 	switch {
 	case errors.Is(err, control.ErrEvicted):
@@ -261,6 +346,14 @@ func (p *Proc) Plan(obs proxyrt.Observation) []proxyrt.Step {
 		}
 		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart", Reason: restartReason}}
 	}
+	if sig := obs.Attrs["fatal_error"]; sig != "" {
+		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart",
+			Reason: "сбой сессии в журнале: " + sig}}
+	}
+	if obs.Attrs["reconnect_due"] == "interval" {
+		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart",
+			Reason: fmt.Sprintf("истёк интервал автопереподключения (%s)", p.reconnectInterval)}}
+	}
 	if got := obs.Attrs["config_hash"]; got != "" && got != p.wantHash {
 		return []proxyrt.Step{{Resource: p.c.ID, Op: "restart", Reason: "конфигурация изменилась"}}
 	}
@@ -306,6 +399,9 @@ func (p *Proc) Apply(ctx context.Context, s proxyrt.Step) error {
 			p.recordFail(now)
 			return err
 		}
+		if strings.Contains(s.Reason, "сбой сессии") {
+			p.recordFail(now)
+		}
 		if err := p.stop(ctx); err != nil {
 			return err
 		}
@@ -343,6 +439,9 @@ func (p *Proc) start(ctx context.Context) error {
 // spawn — порождение БЕЗ гейта и backoff: их прошёл вызывающий (start либо
 // restart-ветка Apply, у той гейт стоит ДО stop).
 func (p *Proc) spawn(ctx context.Context, now time.Time) error {
+	if p.c.LogPath != "" {
+		_ = os.Remove(p.c.LogPath)
+	}
 	args := append(append([]string{}, p.forkArgs...),
 		// Форма --имя=значение: единственная, однозначная для значений,
 		// начинающихся с дефиса (§5.5 п.3).
@@ -407,8 +506,8 @@ func (p *Proc) recordFail(now time.Time) {
 }
 
 // RecheckAfter — будильники трёх состояний, в которых внешних событий не
-// будет: окно старта сокета, окно переподключения (§7) и пауза
-// анти-флаппинга.
+// будет: окно старта сокета, окно переподключения (§7), пауза
+// анти-флаппинга и интервал автопереподключения.
 func (p *Proc) RecheckAfter() time.Duration {
 	now := p.c.Now()
 	if p.spawnedAt != nil && now.Sub(*p.spawnedAt) < socketGrace {
@@ -419,6 +518,20 @@ func (p *Proc) RecheckAfter() time.Duration {
 	}
 	if until := p.retryAt(); now.Before(until) {
 		return until.Sub(now)
+	}
+	if p.enabled && p.autoReconnect {
+		if p.reconnectInterval > 0 && p.lastUptimeS > 0 {
+			currentUptime := time.Duration(p.lastUptimeS)*time.Second + now.Sub(p.lastObservedAt)
+			if currentUptime < p.reconnectInterval {
+				rem := p.reconnectInterval - currentUptime
+				if rem < 15*time.Second {
+					return rem
+				}
+			} else {
+				return time.Second
+			}
+		}
+		return 15 * time.Second
 	}
 	return 0
 }
