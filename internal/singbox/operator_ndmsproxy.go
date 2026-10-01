@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 )
 
 // subscriptionProxies returns the current subscription composite proxies, or
@@ -49,64 +50,150 @@ func (o *Operator) removeOrphanSingboxProxies(ctx context.Context) error {
 	return o.proxyMgr.RemoveOrphanSingboxProxies(ctx, tunnelTags, portSlots, subProxyIdx)
 }
 
-// deferProxyRemoval ставит метку «ProxyN туннеля tag не снят» (F562).
-func (o *Operator) deferProxyRemoval(tag string) {
-	o.deferredProxyMu.Lock()
-	defer o.deferredProxyMu.Unlock()
-	if o.deferredProxyTags == nil {
-		o.deferredProxyTags = map[string]bool{}
-	}
-	o.deferredProxyTags[tag] = true
+// Выдержка повтора отложенного сноса: 30 с, 1 мин, 2 мин … не больше 15 мин
+// (F562). Без неё отказ сноса не из-за списка давал бы список и RCI на
+// каждом тике сторожа.
+const (
+	deferredProxyBaseDelay = 30 * time.Second
+	deferredProxyMaxDelay  = 15 * time.Minute
+)
+
+// deferredProxy — состояние отложенного сноса одного description.
+type deferredProxy struct {
+	next  time.Time     // раньше — не пробовать; ноль — на ближайшем тике
+	delay time.Duration // выдержка после последнего отказа
 }
 
-// retryDeferredProxyRemovals добирает ProxyN, снос которых RemoveTunnel
-// отложил (F562). Без метки — ни конфига, ни списка (R36). Владение — то же
-// правило, что у removeOrphanSingboxProxies: description == тег туннеля.
-// Тег, снова занятый туннелем или меткой подписки, снимается с метки без
-// команд: запись с таким description уже не отличить от живой. Снос — через
-// RemoveProxy (свежий список + Confirmed); ошибка — метка остаётся до
-// следующего тика.
-func (o *Operator) retryDeferredProxyRemovals(ctx context.Context) {
+func (o *Operator) deferredClock() time.Time {
+	if o.deferredNow != nil {
+		return o.deferredNow()
+	}
+	return time.Now()
+}
+
+// deferProxyRemoval ставит метку «ProxyN с description tag не снят» (F562).
+// Уже стоящая метка не сбрасывается — выдержка копится.
+func (o *Operator) deferProxyRemoval(tag string) {
+	if tag == "" {
+		return // пустой description правилом владения не узнаётся
+	}
 	o.deferredProxyMu.Lock()
-	tags := make(map[string]bool, len(o.deferredProxyTags))
-	for t := range o.deferredProxyTags {
-		tags[t] = true
+	defer o.deferredProxyMu.Unlock()
+	if o.deferredProxies == nil {
+		o.deferredProxies = map[string]*deferredProxy{}
+	}
+	if o.deferredProxies[tag] == nil {
+		o.deferredProxies[tag] = &deferredProxy{}
+	}
+}
+
+// retryDeferredProxyRemovals добирает ProxyN, снос которых отложен (F562).
+// Без созревшей метки — ни конфига, ни списка (R36). Владение — то же
+// правило, что у removeOrphanSingboxProxies: description == тег. При
+// включённом режиме NDMS Proxy тег, снова занятый туннелем или меткой
+// подписки, снимается с метки без команд: запись с таким description уже не
+// отличить от живой. При выключенном живых ProxyN у нас нет вовсе (как в
+// removeOrphanSingboxProxies) — сносится всё помеченное. Снос — через
+// RemoveProxy (свежий список + Confirmed), по тегу отдельно: отказ одного
+// откладывает только его.
+func (o *Operator) retryDeferredProxyRemovals(ctx context.Context) {
+	now := o.deferredClock()
+	o.deferredProxyMu.Lock()
+	var due []string
+	for t, d := range o.deferredProxies {
+		if !now.Before(d.next) {
+			due = append(due, t)
+		}
 	}
 	o.deferredProxyMu.Unlock()
-	if len(tags) == 0 {
-		return
-	}
-	cfg, err := o.loadConfig()
-	if err != nil && !os.IsNotExist(err) {
-		o.log.Warn("deferred proxy removal: load config", "err", err)
+	if len(due) == 0 {
 		return
 	}
 	live := map[string]bool{}
-	if cfg != nil {
-		for _, t := range cfg.Tunnels() {
-			live[t.Tag] = true
-		}
-	}
-	for _, sp := range o.subscriptionProxies() {
-		live[sp.Label] = true
-	}
-	sweep := map[string]bool{}
-	for t := range tags {
-		if !live[t] {
-			sweep[t] = true
-		}
-	}
-	if len(sweep) > 0 {
-		if err := o.proxyMgr.RemoveOrphanSingboxProxies(ctx, sweep, nil, nil); err != nil {
-			o.log.Warn("deferred proxy removal failed", "err", err)
+	if o.isNDMSProxyEnabled() {
+		cfg, err := o.loadConfig()
+		if err != nil && !os.IsNotExist(err) {
+			o.log.Warn("deferred proxy removal: load config", "err", err)
 			return
 		}
+		if cfg != nil {
+			for _, t := range cfg.Tunnels() {
+				live[t.Tag] = true
+			}
+		}
+		for _, sp := range o.subscriptionProxies() {
+			live[sp.Label] = true
+		}
 	}
+	for _, t := range due {
+		if !live[t] {
+			if err := o.proxyMgr.RemoveOrphanSingboxProxies(ctx, map[string]bool{t: true}, nil, nil); err != nil {
+				o.deferredProxyFailed(t, now, err)
+				continue
+			}
+		}
+		o.deferredProxyMu.Lock()
+		delete(o.deferredProxies, t)
+		o.deferredProxyMu.Unlock()
+	}
+}
+
+// deferredProxyFailed удваивает выдержку тега (до потолка). Warn — только
+// когда выдержка выросла; на потолке — Debug, чтобы не писать на каждом
+// повторе.
+func (o *Operator) deferredProxyFailed(tag string, now time.Time, err error) {
 	o.deferredProxyMu.Lock()
-	for t := range tags {
-		delete(o.deferredProxyTags, t)
+	d := o.deferredProxies[tag]
+	if d == nil {
+		o.deferredProxyMu.Unlock()
+		return
 	}
+	prev := d.delay
+	switch {
+	case d.delay == 0:
+		d.delay = deferredProxyBaseDelay
+	case d.delay < deferredProxyMaxDelay:
+		d.delay = min(2*d.delay, deferredProxyMaxDelay)
+	}
+	d.next = now.Add(d.delay)
+	delay := d.delay
 	o.deferredProxyMu.Unlock()
+	if delay != prev {
+		o.log.Warn("deferred proxy removal failed", "tag", tag, "retry_in", delay, "err", err)
+	} else {
+		o.log.Debug("deferred proxy removal failed", "tag", tag, "retry_in", delay, "err", err)
+	}
+}
+
+// SubscriptionProxyRegistrar — pm для адаптера подписок, у которого отказ
+// сноса ProxyN ставит ту же метку отложенного сноса, что у RemoveTunnel
+// (F562): удаление подписки/группы и откаты создания глотают ошибку
+// RemoveProxy. Метка — description записи (Label), найденная по индексу в
+// перечне подписок: строка ещё в store, когда сервис зовёт RemoveProxy.
+func (o *Operator) SubscriptionProxyRegistrar(pm *ProxyManager) *SubscriptionProxyRegistrar {
+	return &SubscriptionProxyRegistrar{ProxyManager: pm, op: o}
+}
+
+// SubscriptionProxyRegistrar — см. Operator.SubscriptionProxyRegistrar.
+type SubscriptionProxyRegistrar struct {
+	*ProxyManager
+	op *Operator
+}
+
+func (r *SubscriptionProxyRegistrar) RemoveProxy(ctx context.Context, idx int) error {
+	label := ""
+	for _, sp := range r.op.subscriptionProxies() {
+		if sp.Index == idx {
+			label = sp.Label
+			break
+		}
+	}
+	err := r.ProxyManager.RemoveProxy(ctx, idx)
+	if err != nil {
+		r.op.log.Warn("subscription proxy removal failed, deferred", "idx", idx, "label", label, "err", err)
+		r.op.deferProxyRemoval(label)
+	}
+	return err
 }
 
 // ListNativeProxies returns kernel names of KeenOS-native (non-ours) NDMS

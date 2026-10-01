@@ -78,6 +78,9 @@ func (m *Migrator) MigrateOff(ctx context.Context) error {
 				m.log.Warn("MigrateOff: RemoveProxy failed",
 					"tag", t.Tag, "iface", t.ProxyInterface, "err", rerr)
 				m.appLog.Warn("ndms-proxy-migrate", t.Tag, fmt.Sprintf("remove %s failed: %v", t.ProxyInterface, rerr))
+				// Флаг ниже — один проход только при мёртвом sing-box;
+				// метка добирается тиком сторожа с выдержкой (F562).
+				m.op.deferProxyRemoval(t.Tag)
 			}
 		}
 	}
@@ -90,6 +93,7 @@ func (m *Migrator) MigrateOff(ctx context.Context) error {
 			m.log.Warn("MigrateOff: RemoveProxy (subscription) failed",
 				"label", sp.Label, "idx", sp.Index, "err", rerr)
 			m.appLog.Warn("ndms-proxy-migrate", sp.Label, fmt.Sprintf("remove Proxy%d failed: %v", sp.Index, rerr))
+			m.op.deferProxyRemoval(sp.Label)
 		}
 	}
 

@@ -240,12 +240,14 @@ type Operator struct {
 	// в disabled-режиме (предыдущая сессия не успела дочистить).
 	needsOrphanCleanup atomic.Bool
 
-	// deferredProxyTags — теги удалённых туннелей, чей ProxyN RemoveTunnel
-	// снять не смог (список не прочитан — решение 4, или отказ сноса, F562).
-	// Добирает retryDeferredProxyRemovals с тика сторожа; пусто — ни одного
-	// чтения списка. Только в памяти: рестарт демона метку теряет.
-	deferredProxyMu   sync.Mutex
-	deferredProxyTags map[string]bool
+	// deferredProxies — description (тег туннеля / метка подписки) ProxyN,
+	// который снять не удалось (список не прочитан — решение 4, или отказ
+	// сноса, F562), с выдержкой повтора. Добирает retryDeferredProxyRemovals
+	// с тика сторожа; пусто — ни одного чтения списка. Только в памяти:
+	// рестарт демона метку теряет. deferredNow — шов часов для тестов.
+	deferredProxyMu sync.Mutex
+	deferredProxies map[string]*deferredProxy
+	deferredNow     func() time.Time
 
 	// installBusy guards Install/Update against interleaving with each
 	// other — manual (UI) and scheduled (auto-update) calls both go

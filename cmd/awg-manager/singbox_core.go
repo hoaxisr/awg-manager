@@ -248,7 +248,7 @@ func (a *app) setupSingboxRuntime() {
 		a.bootLog.Error("subscription-store", "", err.Error())
 	}
 	subProxyMgr := singbox.NewProxyManager(a.ndmsQueries, a.ndmsCommands)
-	a.subAdapter = subscription.NewOperatorAdapter(a.sbOrch, subProxyMgr, a.singboxOp.Clash())
+	a.subAdapter = subscription.NewOperatorAdapter(a.sbOrch, a.singboxOp.SubscriptionProxyRegistrar(subProxyMgr), a.singboxOp.Clash())
 	// Wire the Operator's sing-box build tags into the subscription
 	// adapter so flush() Pass 1 can cheaply pre-filter outbounds whose
 	// type requires a missing optional build tag (naive). Tags come from
