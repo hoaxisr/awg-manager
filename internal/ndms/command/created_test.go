@@ -84,6 +84,41 @@ func TestImport_NeverListed_ErrorAndDrop(t *testing.T) {
 	}
 }
 
+// R42 + N1: индекс только что снят (надгробие), импорт создаёт его заново,
+// ifcreated потерян, а layer-хуки пришли во время ожидания — это след нашего
+// создания: ErrNotListed и снос, сироты нет.
+func TestImport_RecreatedTombstoned_LayerHookTraced_Drop(t *testing.T) {
+	cmds, f, q := newOracleCommands(t, nil)
+	q.Interfaces.Forget("Wireguard0") // снят только что: надгробие
+	q.Interfaces.SetCreatedBackoff(time.Millisecond)
+	f.HideCreated(100)
+	layerHooksInFirstList(f, q) // ifcreated не доставляется
+	_, err := cmds.Wireguard.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
+	if !errors.Is(err, query.ErrNotListed) {
+		t.Fatalf("err=%v, want ErrNotListed", err)
+	}
+	if !hasDrop(f.Posts, "Wireguard0") || f.Has("Wireguard0") || f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("has=%v E=%d phantoms=%d posts=%v", f.Has("Wireguard0"), f.E, f.Phantoms, f.Posts)
+	}
+}
+
+// R42: поздний layer-хук прежней записи без ждущего ConfirmCreated следа не
+// оставляет — следующее создание без своих хуков не получает права на снос.
+func TestImport_LateHookBeforeCreate_NoTraceNoDrop(t *testing.T) {
+	cmds, f, q := newOracleCommands(t, nil)
+	q.Interfaces.Forget("Wireguard0")
+	q.Interfaces.OnLayerChanged("Wireguard0", "ctrl", "disabled") // опоздал за сносом
+	q.Interfaces.SetCreatedBackoff(time.Millisecond)
+	f.HideCreated(100)
+	_, err := cmds.Wireguard.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
+	if !errors.Is(err, query.ErrNotSeen) {
+		t.Fatalf("err=%v, want ErrNotSeen", err)
+	}
+	if len(f.Posts) != 1 || f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("posts=%v E=%d phantoms=%d", f.Posts, f.E, f.Phantoms)
+	}
+}
+
 // Ни списка, ни хуков — ошибка без сноса: знает ли NDMS запись, неизвестно,
 // а снос отсутствующего — E. Созданное остаётся, E == 0.
 func TestImport_NoTrace_ErrorNoDrop(t *testing.T) {

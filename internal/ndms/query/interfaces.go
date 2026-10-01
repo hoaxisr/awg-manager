@@ -1146,9 +1146,12 @@ func (s *InterfaceStore) Forget(id string) {
 }
 
 // lateHookLocked — layer/ip-хук по снятому id (надгробие, записи в карте
-// нет): опоздал за ifdestroyed/Forget, игнорируется целиком — ни pending, ни
-// метки touched (R42). Хуки создания (ctrl ×2 раньше ifcreated) по id без
-// надгробия идут прежним путём.
+// нет): опоздал за ifdestroyed/Forget — ни pending, ни метки touched (R42).
+// Исключение — след для ConfirmCreated этого id, пока он ждёт: тогда хук от
+// нашего же повторного создания (ctrl ×2 раньше ifcreated), и без следа
+// голая запись при потерянном ifcreated осталась бы сиротой. Без ждущего
+// след не ставится: поздний хук прежней записи не даёт права на снос.
+// Хуки создания по id без надгробия идут прежним путём.
 func (s *InterfaceStore) lateHookLocked(id string) bool {
 	if _, ok := s.tombs[id]; !ok {
 		return false
@@ -1156,6 +1159,7 @@ func (s *InterfaceStore) lateHookLocked(id string) bool {
 	if _, known := s.byID[id]; known {
 		return false
 	}
+	s.traceCreatedLocked(id) // только при ждущем ConfirmCreated этого id
 	s.log.Debugf("hook for removed %s ignored", id)
 	return true
 }
