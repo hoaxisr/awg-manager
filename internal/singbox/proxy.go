@@ -75,12 +75,21 @@ func NewProxyManager(q *query.Queries, c *command.Commands) *ProxyManager {
 // component is absent.
 func (pm *ProxyManager) EnsureProxy(ctx context.Context, index, port int, description string) error {
 	defer markProxyMgrDur(fmt.Sprintf("EnsureProxy(%d)", index), time.Now())
+	_, err := pm.CreateProxy(ctx, index, port, description)
+	return err
+}
+
+// CreateProxy — EnsureProxy для только что выбранного индекса. ours — откат
+// вправе снести ProxyN (command.CreateReply.Ours, F574): на прошивке, где
+// ответ проверяем, — только если NDMS создал запись этой командой, иначе
+// индекс занят чужим, ещё не видимым ProxyN, и снос удалил бы его.
+func (pm *ProxyManager) CreateProxy(ctx context.Context, index, port int, description string) (ours bool, err error) {
 	if !ndmsinfo.HasProxyComponent() {
-		return ErrProxyComponentMissing
+		return false, ErrProxyComponentMissing
 	}
 	name := fmt.Sprintf("%s%d", proxyIfacePrefix, index)
-	_, err := pm.commands.Proxies.CreateProxy(ctx, name, description, "127.0.0.1", port, true)
-	return err
+	_, reply, err := pm.commands.Proxies.CreateProxy(ctx, name, description, "127.0.0.1", port, true)
+	return reply.Ours(), err
 }
 
 // NextFreeIndex returns the lowest ProxyN index not occupied on the

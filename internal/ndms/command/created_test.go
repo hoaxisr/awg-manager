@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 )
 
 // hasDrop — среди команд есть снос name.
@@ -31,7 +33,7 @@ func TestCreate_LateRecord_Confirms(t *testing.T) {
 			return conf.Name(), err
 		},
 		"proxy": func(c *Commands) (string, error) {
-			conf, err := c.Proxies.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, false)
+			conf, _, err := c.Proxies.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, false)
 			return conf.Name(), err
 		},
 	}
@@ -153,12 +155,13 @@ func hiddenForeign(f *query.FakeNDMS, name, typ string) {
 // ответил «interface created»: ErrNotCreated, ни настроек, ни подтверждения,
 // ни сноса; чужая запись цела, E == 0.
 func TestCreateInterface_Existing_ErrorNoConfigureNoDrop(t *testing.T) {
+	withFirmware(t, "5.01.C.6.0-0")
 	_, f, q := newOracleCommands(t, nil)
 	hiddenForeign(f, "Wireguard1", "Wireguard")
 	posts, lists := len(f.Posts), f.ListCalls()
 	payload := map[string]any{"interface": map[string]any{"Wireguard1": map[string]any{}}}
-	c, err := CreateInterface(context.Background(), f, nil, q, payload, "Wireguard1", false)
-	if !errors.Is(err, ErrNotCreated) || c != (query.Confirmed{}) {
+	c, reply, err := CreateInterface(context.Background(), f, nil, q, payload, "Wireguard1", false)
+	if !errors.Is(err, ErrNotCreated) || c != (query.Confirmed{}) || reply != CreateNotNew {
 		t.Fatalf("c=%v err=%v", c, err)
 	}
 	if len(f.Posts)-posts != 1 || f.ListCalls() != lists || !f.Has("Wireguard1") || f.E != 0 {
@@ -168,11 +171,12 @@ func TestCreateInterface_Existing_ErrorNoConfigureNoDrop(t *testing.T) {
 
 // Создано — подтверждено, как раньше.
 func TestCreateInterface_Created_Confirms(t *testing.T) {
+	withFirmware(t, "5.01.C.6.0-0")
 	_, f, q := newOracleCommands(t, nil)
 	f.ExpectCreate("Wireguard1")
 	payload := map[string]any{"interface": map[string]any{"Wireguard1": map[string]any{}}}
-	c, err := CreateInterface(context.Background(), f, nil, q, payload, "Wireguard1", false)
-	if err != nil || c.Name() != "Wireguard1" || f.Phantoms != 0 {
+	c, reply, err := CreateInterface(context.Background(), f, nil, q, payload, "Wireguard1", false)
+	if err != nil || c.Name() != "Wireguard1" || f.Phantoms != 0 || reply != CreateNew {
 		t.Fatalf("c=%v err=%v phantoms=%d", c, err, f.Phantoms)
 	}
 }
@@ -181,15 +185,74 @@ func TestCreateInterface_Created_Confirms(t *testing.T) {
 // невидимую запись со следом в хуках: подтверждения нет, а сноса по имени
 // нет тоже — ответ не сказал «created» (F574, F584 Minor-1).
 func TestCreateProxy_ExistingUnlisted_NoDrop(t *testing.T) {
+	withFirmware(t, "5.01.C.6.0-0")
 	cmds, f, q := newOracleCommands(t, nil)
 	q.Interfaces.SetCreatedBackoff(time.Millisecond)
 	hiddenForeign(f, "Proxy0", "Proxy")
 	q.Interfaces.OnLayerChanged("Proxy0", "ctrl", "") // след: NDMS запись знает
-	_, err := cmds.Proxies.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, false)
-	if err == nil {
-		t.Fatal("want error")
+	_, reply, err := cmds.Proxies.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, false)
+	if err == nil || reply.Ours() {
+		t.Fatalf("reply=%v err=%v", reply, err)
 	}
 	if hasDrop(f.Posts, "Proxy0") || !f.Has("Proxy0") || f.E != 0 {
 		t.Fatalf("drop=%v has=%v E=%d posts=%v", hasDrop(f.Posts, "Proxy0"), f.Has("Proxy0"), f.E, f.Posts)
+	}
+}
+
+// withFirmware — версия прошивки для гейта ответа на создание (R39).
+func withFirmware(t *testing.T, release string) {
+	t.Helper()
+	ndmsinfo.Reset()
+	t.Cleanup(ndmsinfo.Reset)
+	store := query.NewSystemInfoStore(nil, nil)
+	store.Adopt(ndms.Version{Release: release}, "test")
+	if err := ndmsinfo.Init(context.Background(), store, time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// R39: на прошивке без проверенной фразы (<5.01) ответ не разбирается —
+// поведение до F574: ErrNotCreated нет, подтверждение по списку, снос по
+// следу в хуках.
+func TestCreateInterface_LegacyFirmware_AsBefore(t *testing.T) {
+	for _, release := range []string{"", "4.03.C.6.3-1", "5.00.C.3.0-1"} {
+		t.Run(release, func(t *testing.T) {
+			withFirmware(t, release)
+			_, f, q := newOracleCommands(t, nil)
+			q.Interfaces.SetCreatedBackoff(time.Millisecond)
+			f.HideCreated(100) // не покажется за всё ожидание
+			f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
+			f.HideCreated(0)
+			layerHooksInFirstList(f, q)
+			payload := map[string]any{"interface": map[string]any{"Wireguard1": map[string]any{}}}
+			_, reply, err := CreateInterface(context.Background(), f, nil, q, payload, "Wireguard1", false)
+			if errors.Is(err, ErrNotCreated) || !errors.Is(err, query.ErrNotListed) || reply != CreateLegacy {
+				t.Fatalf("reply=%v err=%v", reply, err)
+			}
+			if !hasDrop(f.Posts, "Wireguard1") {
+				t.Fatalf("legacy: снос по следу, как до F574: %v", f.Posts)
+			}
+		})
+	}
+}
+
+// M1: разбор фразы ответа — подстрока с именем в кавычках, где угодно.
+func TestReplySaysCreated(t *testing.T) {
+	cases := []struct {
+		name, resp string
+		want       bool
+	}{
+		{"голая форма", `{"interface":{"status":[{"status":"message","code":"6553601","message":"\"Wireguard1\" interface created."}]}}`, true},
+		{"с ident (журнальная форма)", `{"status":[{"status":"message","message":"Network::Interface::Repository: \"Wireguard1\" interface created."}]}`, true},
+		{"пакет, второй элемент", `[{},{"status":[{"status":"message","message":"\"Wireguard1\" interface created."}]}]`, true},
+		{"другое имя", `{"status":[{"status":"message","message":"\"Wireguard10\" interface created."}]}`, false},
+		{"нет сообщения", `{}`, false},
+		{"другое сообщение", `{"status":[{"status":"message","message":"\"Wireguard1\" interface updated."}]}`, false},
+		{"не JSON", `x`, false},
+	}
+	for _, c := range cases {
+		if got := replySaysCreated(json.RawMessage(c.resp), "Wireguard1"); got != c.want {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
 	}
 }

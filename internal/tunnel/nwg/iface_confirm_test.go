@@ -5,11 +5,13 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
@@ -436,6 +438,7 @@ func TestCreateViaBatch_ListError_NoCreate(t *testing.T) {
 // настроек, ни сноса, чужая запись цела.
 func TestCreateViaBatch_HiddenForeign_ErrorNoSettings(t *testing.T) {
 	o, _, _, f, srv := newLifecycleOperator(t, false, false)
+	withFirmware501(t)
 	f.HideCreated(-1)
 	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
 	f.HideCreated(0)
@@ -445,5 +448,17 @@ func TestCreateViaBatch_HiddenForeign_ErrorNoSettings(t *testing.T) {
 	}
 	if bodies, _ := srv.sent(); len(bodies) != 1 || !f.Has("Wireguard1") || f.E != 0 {
 		t.Fatalf("bodies=%v has=%v E=%d", bodies, f.Has("Wireguard1"), f.E)
+	}
+}
+
+// withFirmware501 — прошивка, где ответ на создание проверяем (R39).
+func withFirmware501(t *testing.T) {
+	t.Helper()
+	ndmsinfo.Reset()
+	t.Cleanup(ndmsinfo.Reset)
+	store := query.NewSystemInfoStore(nil, nil)
+	store.Adopt(ndms.Version{Release: "5.01.C.6.0-0"}, "test")
+	if err := ndmsinfo.Init(context.Background(), store, time.Second); err != nil {
+		t.Fatal(err)
 	}
 }

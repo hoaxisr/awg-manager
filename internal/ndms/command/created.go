@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 )
 
 // ConfirmCreated подтверждает только что созданный интерфейс name
@@ -30,10 +31,9 @@ import (
 // Список не прочитан (решение 4) — ошибка без команд: созданное остаётся на
 // роутере, его найдёт следующий список, как любую запись без туннеля.
 //
-// created — ответ на создание сказал `"name" interface created.` (PostCreate;
-// у импорта — всегда). Без этого сноса нет вовсе (F574): команда попала в уже
-// существующую запись, и если это чужая, ещё не показанная списком, снос
-// удалил бы её.
+// created — CreateReply.Ours() ответа на создание (у импорта — всегда true).
+// Без этого сноса нет вовсе (F574): команда попала в уже существующую
+// запись, и если это чужая, ещё не показанная списком, снос удалил бы её.
 func ConfirmCreated(ctx context.Context, p Poster, save *SaveCoordinator, q *query.Queries, name string, created bool) (query.Confirmed, error) {
 	return confirmCreated(ctx, p, save, q, nil, name, created)
 }
@@ -50,27 +50,61 @@ func (c *InterfaceCommands) ConfirmCreated(ctx context.Context, name string, cre
 // не показал ни списком, ни хуком: не наша — ни настроек, ни сноса.
 var ErrNotCreated = errors.New("NDMS не создал запись: имя уже занято")
 
+// CreateReply — что ответ NDMS на команду создания говорит о записи (F574).
+type CreateReply int
+
+const (
+	// CreateLegacy — прошивка, где фраза ответа стендом не подтверждена
+	// (<5.01): поведение как до F574 — запись считается нашей.
+	CreateLegacy CreateReply = iota
+	// CreateNew — в ответе `"name" interface created.`: запись создана ЭТОЙ
+	// командой.
+	CreateNew
+	// CreateNotNew — фраза проверяема, но создания она не доказала: запись
+	// уже была (чужая или наша) и команда её лишь настроила, либо POST
+	// провалился и ответа нет.
+	CreateNotNew
+)
+
+// Ours — вправе ли вызывающий сносить запись по имени при откате: всё, кроме
+// не доказанной созданной на прошивке, где доказательство есть.
+func (r CreateReply) Ours() bool { return r != CreateNotNew }
+
+// createdReplyProven — фраза `"X" interface created.` (code 6553601) в ответе
+// на создание снята стендом только на 5.01 (R39). На старших она та же, на
+// младших (4.x, 5.00) не проверена: там без неё каждое создание давало бы
+// ErrNotCreated и сироту, поэтому ответ не разбирается вовсе.
+func createdReplyProven() bool { return osdetect.AtLeast(5, 1) }
+
 // PostCreate — POST команды, создающей name (с настройками или без), с
-// разбором ответа как у PostChecked; created — NDMS создал запись ЭТОЙ
-// командой: в ответе есть `"name" interface created.` (стенд 5.01, code
-// 6553601). По уже существующей записи этого сообщения нет.
-func PostCreate(ctx context.Context, p Poster, payload any, opDesc, name string, after ...func()) (created bool, err error) {
+// разбором ответа как у PostChecked и вердиктом о записи (CreateReply).
+func PostCreate(ctx context.Context, p Poster, payload any, opDesc, name string, after ...func()) (CreateReply, error) {
 	resp, err := postChecked(ctx, p, payload, opDesc, nil, after...)
-	if err != nil {
-		return false, err
+	switch {
+	case !createdReplyProven():
+		return CreateLegacy, err
+	case err == nil && replySaysCreated(resp, name):
+		return CreateNew, nil
 	}
-	var root any
-	if json.Unmarshal(resp, &root) != nil {
-		return false, nil
-	}
-	return hasCreatedMessage(root, `"`+name+`" interface created`), nil
+	return CreateNotNew, err
 }
 
-// hasCreatedMessage — есть ли где-либо в ответе message, начинающийся с want.
+// replySaysCreated — есть ли где-либо в ответе message с `"name" interface
+// created`. Подстрока, а не префикс: в журнальной форме перед ней стоит ident
+// (`Network::Interface::Repository: "X" interface created.`); кавычки не дают
+// спутать Wireguard1 с Wireguard10.
+func replySaysCreated(resp json.RawMessage, name string) bool {
+	var root any
+	if json.Unmarshal(resp, &root) != nil {
+		return false
+	}
+	return hasCreatedMessage(root, `"`+name+`" interface created`)
+}
+
 func hasCreatedMessage(v any, want string) bool {
 	switch t := v.(type) {
 	case map[string]any:
-		if m, ok := t["message"].(string); ok && strings.HasPrefix(m, want) {
+		if m, ok := t["message"].(string); ok && strings.Contains(m, want) {
 			return true
 		}
 		for _, val := range t {
@@ -89,19 +123,21 @@ func hasCreatedMessage(v any, want string) bool {
 }
 
 // CreateInterface — создание name, выбранного свободным (FreeIndex), и его
-// подтверждение (F574, F584). NDMS не создал запись (ErrNotCreated) —
-// ошибка без подтверждения, настроек и сноса, если только вызывающий не
-// принимает существующую запись осознанно (existingOK: managed restore в
-// живой сервер того же ключа).
-func CreateInterface(ctx context.Context, p Poster, save *SaveCoordinator, q *query.Queries, payload any, name string, existingOK bool, after ...func()) (query.Confirmed, error) {
-	created, err := PostCreate(ctx, p, payload, "create "+name, name, after...)
+// подтверждение (F574, F584). NDMS доказанно не создал запись (CreateNotNew)
+// — ErrNotCreated без подтверждения, настроек и сноса, если только
+// вызывающий не принимает существующую запись осознанно (existingOK: managed
+// restore в живой сервер того же ключа). Вердикт — вызывающему: откат вправе
+// сносить только Ours.
+func CreateInterface(ctx context.Context, p Poster, save *SaveCoordinator, q *query.Queries, payload any, name string, existingOK bool, after ...func()) (query.Confirmed, CreateReply, error) {
+	reply, err := PostCreate(ctx, p, payload, "create "+name, name, after...)
 	if err != nil {
-		return query.Confirmed{}, err
+		return query.Confirmed{}, reply, err
 	}
-	if !created && !existingOK {
-		return query.Confirmed{}, fmt.Errorf("%w: %s", ErrNotCreated, name)
+	if reply == CreateNotNew && !existingOK {
+		return query.Confirmed{}, reply, fmt.Errorf("%w: %s", ErrNotCreated, name)
 	}
-	return ConfirmCreated(ctx, p, save, q, name, created)
+	c, err := ConfirmCreated(ctx, p, save, q, name, reply.Ours())
+	return c, reply, err
 }
 
 func confirmCreated(ctx context.Context, p Poster, save *SaveCoordinator, q *query.Queries, hn HookNotifier, name string, created bool) (query.Confirmed, error) {

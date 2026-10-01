@@ -93,7 +93,7 @@ func TestMutators_SurfaceNestedErrors(t *testing.T) {
 			return newObjectGroupCommandsWith(p).UpsertGroup(ctx, FQDNGroupMutation{Name: "g", AddIncludes: []string{"example.com"}})
 		}},
 		{"CreateProxy", respProxyMissing, func(p *fakePoster) error {
-			_, err := newProxyCommandsWith(p).CreateProxy(ctx, "Proxy9", "d", "127.0.0.1", 1080, false)
+			_, _, err := newProxyCommandsWith(p).CreateProxy(ctx, "Proxy9", "d", "127.0.0.1", 1080, false)
 			return err
 		}},
 		{"ProxyUp", respProxyMissing, func(p *fakePoster) error {

@@ -264,7 +264,7 @@ func (o *OperatorNativeWG) createViaBatch(ctx context.Context, stored *storage.A
 	// NDMS не создал запись (индекс занят чужой, ещё не видимой) — ошибка
 	// без настроек и сноса (F574). Создание шло без save — и снос
 	// неподтверждённого тоже (save = nil).
-	iface, err := command.CreateInterface(ctx, o.transport, nil, o.queries, []any{payloads.CmdInterfaceCreate(ndmsName)}, ndmsName, false)
+	iface, _, err := command.CreateInterface(ctx, o.transport, nil, o.queries, []any{payloads.CmdInterfaceCreate(ndmsName)}, ndmsName, false)
 	if err != nil {
 		return 0, fmt.Errorf("create: %w", err)
 	}

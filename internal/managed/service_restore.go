@@ -376,16 +376,17 @@ func samePubKey(existing storage.ManagedServer, input ManagedServerExport) bool 
 // applyOne is the per-server transaction: RCI create, configure, set
 // private key, set NAT, add peers, persist to settings.json. После создания
 // любой отказ сносит интерфейс (cleanupInterface), так что частичное
-// состояние NDMS не остаётся. Весь поток идёт по доказательству из
+// состояние NDMS не остаётся, — если он наш (owned); живой сервер, взятый
+// как существующий (existingOK), не сносится. Весь поток идёт по доказательству из
 // rciCreateInterface; занятые сети — одним снимком на сервер, не на пира.
 func (s *Service) applyOne(ctx context.Context, target string, sv ManagedServerExport, persistMode restorePersistMode, existingOK bool) (err error) {
 	s.sysLog().Debug("managed restore apply start", "interface", sv.InterfaceName, "target", target, "peers", len(sv.Peers), "persistMode", persistMode)
-	iface, err := s.rciCreateInterface(ctx, target, existingOK)
+	iface, owned, err := s.rciCreateInterface(ctx, target, existingOK)
 	if err != nil {
 		return fmt.Errorf("create interface: %w", err)
 	}
 	defer func() {
-		if err != nil {
+		if err != nil && owned {
 			s.sysLog().Warn("managed restore cleanup after failure", "interface", target)
 			s.cleanupInterface(ctx, iface)
 		}

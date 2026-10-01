@@ -19,21 +19,22 @@ func NewProxyCommands(p Poster, s *SaveCoordinator, q *query.Queries) *ProxyComm
 }
 
 // CreateProxy создаёт ProxyN и подтверждает его свежим списком (Confirm):
-// дальнейшие команды по интерфейсу идут с доказательством (F546).
-func (c *ProxyCommands) CreateProxy(ctx context.Context, name, description, upstreamHost string, upstreamPort int, socks5UDP bool) (query.Confirmed, error) {
+// дальнейшие команды по интерфейсу идут с доказательством (F546). reply —
+// вердикт ответа и на ошибке: откат вызывающего сносит только reply.Ours().
+func (c *ProxyCommands) CreateProxy(ctx context.Context, name, description, upstreamHost string, upstreamPort int, socks5UDP bool) (query.Confirmed, CreateReply, error) {
 	// EnsureProxy шлёт это и по своей существующей записи (обновление),
 	// поэтому «не создано» здесь не ошибка; сносить по имени можно только
 	// созданное этой командой (F574).
-	created, err := PostCreate(ctx, c.poster, proxyPayload(name, description, upstreamHost, upstreamPort, socks5UDP), "create proxy "+name, name,
+	reply, err := PostCreate(ctx, c.poster, proxyPayload(name, description, upstreamHost, upstreamPort, socks5UDP), "create proxy "+name, name,
 		c.save.Request, c.queries.RunningConfig.InvalidateAll)
 	if err != nil {
-		return query.Confirmed{}, err
+		return query.Confirmed{}, reply, err
 	}
-	conf, err := confirmCreated(ctx, c.poster, c.save, c.queries, nil, name, created)
+	conf, err := confirmCreated(ctx, c.poster, c.save, c.queries, nil, name, reply.Ours())
 	if err != nil {
-		return query.Confirmed{}, fmt.Errorf("create proxy: %w", err) // имя уже в ошибке подтверждения
+		return query.Confirmed{}, reply, fmt.Errorf("create proxy: %w", err) // имя уже в ошибке подтверждения
 	}
-	return conf, nil
+	return conf, reply, nil
 }
 
 func proxyPayload(name, description, upstreamHost string, upstreamPort int, socks5UDP bool) map[string]any {

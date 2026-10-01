@@ -242,3 +242,29 @@ func TestProxyManager_NextFreeIndex_FreshList(t *testing.T) {
 		t.Fatalf("idx=%d: want error on list failure", idx)
 	}
 }
+
+// F574 M2: CreateProxy по индексу, занятому чужим ещё не видимым ProxyN, на
+// прошивке с проверяемым ответом — ours=false (откат не сносит); созданный
+// этой командой — ours=true.
+func TestProxyManager_CreateProxy_Ours(t *testing.T) {
+	ndmsinfo.Reset()
+	t.Cleanup(ndmsinfo.Reset)
+	store := query.NewSystemInfoStore(nil, nil)
+	store.Adopt(ndms.Version{Release: "5.01.C.6.0-0", Components: []string{"proxy"}}, "test")
+	if err := ndmsinfo.Init(context.Background(), store, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	f := query.NewFakeNDMS()
+	pm := oracleProxyManager(f)
+	pm.queries.Interfaces.SetCreatedBackoff(time.Millisecond)
+	f.HideCreated(-1)
+	f.Add(ndms.Interface{ID: "Proxy0", Type: "Proxy"})
+	f.HideCreated(0)
+	if ours, err := pm.CreateProxy(context.Background(), 0, 1080, "t"); ours || err == nil {
+		t.Fatalf("чужой: ours=%v err=%v", ours, err)
+	}
+	f.ExpectCreate("Proxy1")
+	if ours, err := pm.CreateProxy(context.Background(), 1, 1081, "t"); !ours || err != nil {
+		t.Fatalf("свой: ours=%v err=%v", ours, err)
+	}
+}

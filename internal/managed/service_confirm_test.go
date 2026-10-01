@@ -14,6 +14,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 )
 
 // oracleGetter — FakeNDMS плюс ответы по путям вне его модели (rc маршрутов,
@@ -731,6 +732,7 @@ func TestListError_SetEnabledAndDeletePeer_NoCommands(t *testing.T) {
 // (ни списком, ни хуком). Create попадает в существующую запись — ответ без
 // «interface created»: failed, ни настроек, ни сноса, чужая запись цела.
 func TestRestore_HiddenForeignSlot_FailsNoConfigure(t *testing.T) {
+	withFirmware(t, "5.01.C.6.0-0")
 	sv := restoreServerWithPeers(1)
 	f := query.NewFakeNDMS()
 	s := newServiceWithOracle(t, f, map[string]string{
@@ -747,5 +749,66 @@ func TestRestore_HiddenForeignSlot_FailsNoConfigure(t *testing.T) {
 	}
 	if len(f.Posts)-posts != 1 || !f.Has("Wireguard1") || f.E != 0 {
 		t.Fatalf("posts=%v has=%v E=%d", f.Posts[posts:], f.Has("Wireguard1"), f.E)
+	}
+}
+
+// withFirmware — версия прошивки для гейта ответа на создание (R39).
+func withFirmware(t *testing.T, release string) {
+	t.Helper()
+	ndmsinfo.Reset()
+	t.Cleanup(ndmsinfo.Reset)
+	store := query.NewSystemInfoStore(nil, nil)
+	store.Adopt(ndms.Version{Release: release}, "test")
+	if err := ndmsinfo.Init(context.Background(), store, time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// failConfigure — FakeNDMS, отвергающий настройку сервера (description).
+type failConfigure struct{ f *query.FakeNDMS }
+
+func (p failConfigure) Post(ctx context.Context, payload any) (json.RawMessage, error) {
+	if js, _ := json.Marshal(payload); strings.Contains(string(js), `"description"`) {
+		return nil, errors.New("injected: configure")
+	}
+	return p.f.Post(ctx, payload)
+}
+
+// M3: restore берёт живой сервер того же ключа (записи в storage нет) и
+// падает на настройке — живой сервер, существовавший до restore, не сносится
+// (ни на прошивке с проверяемым ответом, ни на прежней). Создан restore'ом —
+// сносится, как раньше.
+func TestRestore_ExistingOKFailure_KeepsLiveServer(t *testing.T) {
+	for _, release := range []string{"5.01.C.6.0-0", "4.03.C.6.3-1"} {
+		t.Run(release, func(t *testing.T) {
+			withFirmware(t, release)
+			sv := restoreServerWithPeers(1)
+			sv.InterfaceName = "Wireguard1"
+			f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
+			f.SetDetail("Wireguard1", json.RawMessage(`{"wireguard":{"public-key":"`+mustDerivePublicKey(t, sv.PrivateKey)+`"}}`))
+			s := newServiceWithOracle(t, f, map[string]string{"/show/rc/ip/route": `[]`, "/show/running-config": `{"message":[]}`})
+			s.transport = failConfigure{f}
+			out := s.Restore(context.Background(), []ManagedServerExport{sv}, RestoreOptions{})
+			if len(out) != 1 || out[0].Action != "failed" || !strings.Contains(out[0].Error, "injected: configure") {
+				t.Fatalf("outcome %+v", out)
+			}
+			if !f.Has("Wireguard1") || f.E != 0 {
+				t.Fatalf("живой сервер снесён: has=%v E=%d posts=%v", f.Has("Wireguard1"), f.E, f.Posts)
+			}
+		})
+	}
+}
+
+// Созданный restore'ом (слот был пуст) при отказе настройки сносится.
+func TestRestore_CreatedFailure_Dropped(t *testing.T) {
+	withFirmware(t, "5.01.C.6.0-0")
+	sv := restoreServerWithPeers(1)
+	f := query.NewFakeNDMS()
+	f.ExpectCreate("Wireguard1")
+	s := newServiceWithOracle(t, f, map[string]string{"/show/rc/ip/route": `[]`, "/show/running-config": `{"message":[]}`})
+	s.transport = failConfigure{f}
+	out := s.Restore(context.Background(), []ManagedServerExport{sv}, RestoreOptions{})
+	if len(out) != 1 || out[0].Action != "failed" || f.Has("Wireguard1") {
+		t.Fatalf("outcome %+v has=%v", out, f.Has("Wireguard1"))
 	}
 }

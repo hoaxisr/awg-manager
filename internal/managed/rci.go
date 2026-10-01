@@ -71,22 +71,25 @@ func (s *Service) rciAfter() []func() {
 // список не прочитан — ошибка без сноса, остаток — в журнал. NDMS не создал
 // запись (имя занято чужой, ещё не видимой) — command.ErrNotCreated без
 // настроек и сноса (F574); existingOK — restore осознанно берёт живой сервер
-// того же ключа.
-func (s *Service) rciCreateInterface(ctx context.Context, name string, existingOK bool) (query.Confirmed, error) {
+// того же ключа. owned — откат вправе снести интерфейс: создан этой командой
+// (ответ NDMS), а на прошивке без проверяемого ответа — если не взят как
+// существующий (M3: снос сервера, жившего до restore, унёс бы его пиров).
+func (s *Service) rciCreateInterface(ctx context.Context, name string, existingOK bool) (c query.Confirmed, owned bool, err error) {
 	if s.queries == nil || s.queries.Interfaces == nil {
-		return query.Confirmed{}, fmt.Errorf("interface store not wired")
+		return query.Confirmed{}, false, fmt.Errorf("interface store not wired")
 	}
 	payload := map[string]interface{}{
 		"interface": map[string]interface{}{
 			name: map[string]interface{}{},
 		},
 	}
-	c, err := command.CreateInterface(ctx, s.transport, s.saveCoord, s.queries, payload, name, existingOK, s.rciAfter()...)
+	c, reply, err := command.CreateInterface(ctx, s.transport, s.saveCoord, s.queries, payload, name, existingOK, s.rciAfter()...)
 	if err != nil {
 		s.appLog.Warn("create", name, "интерфейс не создан или не подтверждён списком: "+err.Error())
-		return query.Confirmed{}, err
+		return query.Confirmed{}, false, err
 	}
-	return c, nil
+	owned = reply == command.CreateNew || (reply == command.CreateLegacy && !existingOK)
+	return c, owned, nil
 }
 
 // rciDeleteInterface removes a WireGuard interface via RCI. Интерфейса уже нет
