@@ -167,11 +167,18 @@ func TestDeleteProxy_Forgets(t *testing.T) {
 // rejectProxySettings — NDMS, применяющий payload поэлементно (оракул), но
 // отвергающий настройку `proxy` в том же ответе: на 5.01+ запись при этом
 // создана, а ответ несёт и «created», и status:error (ревью F574 N1).
-type rejectProxySettings struct{ *query.FakeNDMS }
+// refuseDrop — и снос отвергается (до оракула: запись остаётся).
+type rejectProxySettings struct {
+	*query.FakeNDMS
+	refuseDrop bool
+}
 
 func (p rejectProxySettings) Post(ctx context.Context, payload any) (json.RawMessage, error) {
-	resp, err := p.FakeNDMS.Post(ctx, payload)
 	b, _ := json.Marshal(payload)
+	if p.refuseDrop && strings.Contains(string(b), `"no":true`) {
+		return nil, errors.New("NDMS refused")
+	}
+	resp, err := p.FakeNDMS.Post(ctx, payload)
 	if err != nil || !strings.Contains(string(b), `"proxy":{`) {
 		return resp, err
 	}
@@ -184,7 +191,7 @@ func TestCreateProxy_SettingsRejected_Dropped(t *testing.T) {
 	withFirmware(t, "5.01.C.6.0-0")
 	_, f, q := newOracleCommands(t, nil)
 	f.ExpectCreate("Proxy0")
-	p := rejectProxySettings{f}
+	p := rejectProxySettings{FakeNDMS: f}
 	cmds := NewProxyCommands(p, NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil), q)
 	_, _, err := cmds.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, true)
 	if err == nil || f.Has("Proxy0") || !hasDrop(f.Posts, "Proxy0") {
@@ -215,4 +222,58 @@ func TestCreateProxy_HiddenForeign_NoSettingsNoDrop(t *testing.T) {
 	if !f.Has("Proxy0") || f.E != 0 || f.Phantoms != 0 {
 		t.Fatalf("has=%v E=%d phantoms=%d", f.Has("Proxy0"), f.E, f.Phantoms)
 	}
+}
+
+// F577 fix 1 N1: созданное осталось на роутере — *LeftCreatedError с
+// description записи на роутере: голая при «created» без следа (ErrNotSeen)
+// — ""; настройки и снос отвергнуты — description из свежего списка (элементы
+// настроек применены частично).
+func TestCreateProxy_LeftOnRouter(t *testing.T) {
+	withFirmware(t, "5.01.C.6.0-0")
+	t.Run("not seen", func(t *testing.T) {
+		cmds, f, q := newOracleCommands(t, nil)
+		f.ExpectCreate("Proxy0")
+		q.Interfaces.SetCreatedBackoff(time.Millisecond)
+		f.HideCreated(-1)
+		_, _, err := cmds.Proxies.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, true)
+		var left *LeftCreatedError
+		if !errors.As(err, &left) || left.Name != "Proxy0" || left.Desc != "" || !errors.Is(err, query.ErrNotSeen) {
+			t.Fatalf("err=%v left=%+v", err, left)
+		}
+	})
+	t.Run("unlisted, drop refused", func(t *testing.T) {
+		_, f, q := newOracleCommands(t, nil)
+		f.ExpectCreate("Proxy0")
+		q.Interfaces.SetCreatedBackoff(time.Millisecond)
+		f.HideCreated(100)
+		layerHooksInFirstList(f, q)
+		p := rejectProxySettings{FakeNDMS: f, refuseDrop: true}
+		cmds := NewProxyCommands(p, NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil), q)
+		_, _, err := cmds.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, true)
+		var left *LeftCreatedError
+		if !errors.As(err, &left) || left.Desc != "" || !errors.Is(err, ErrLeftOnRouter) {
+			t.Fatalf("err=%v left=%+v", err, left)
+		}
+	})
+	t.Run("settings and drop refused", func(t *testing.T) {
+		_, f, q := newOracleCommands(t, nil)
+		f.ExpectCreate("Proxy0")
+		p := rejectProxySettings{FakeNDMS: f, refuseDrop: true}
+		cmds := NewProxyCommands(p, NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil), q)
+		_, _, err := cmds.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, true)
+		var left *LeftCreatedError
+		if !errors.As(err, &left) || left.Name != "Proxy0" || left.Desc != "d" || !f.Has("Proxy0") {
+			t.Fatalf("err=%v left=%+v has=%v", err, left, f.Has("Proxy0"))
+		}
+	})
+	t.Run("settings refused, dropped", func(t *testing.T) {
+		_, f, q := newOracleCommands(t, nil)
+		f.ExpectCreate("Proxy0")
+		cmds := NewProxyCommands(rejectProxySettings{FakeNDMS: f}, NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil), q)
+		_, _, err := cmds.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, true)
+		var left *LeftCreatedError
+		if err == nil || errors.As(err, &left) {
+			t.Fatalf("снесено — оставленного нет: err=%v", err)
+		}
+	})
 }

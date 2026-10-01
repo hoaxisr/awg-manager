@@ -50,6 +50,10 @@ func (c *InterfaceCommands) ConfirmCreated(ctx context.Context, name string, cre
 // не показал ни списком, ни хуком: не наша — ни настроек, ни сноса.
 var ErrNotCreated = errors.New("NDMS не создал запись: имя уже занято")
 
+// ErrLeftOnRouter — запись, созданная этой командой и не подтверждённая
+// списком, не снесена: снос отказал. Она осталась на роутере голой (F577).
+var ErrLeftOnRouter = errors.New("созданная запись осталась на роутере")
+
 // CreateReply — что ответ NDMS на команду создания говорит о записи (F574).
 type CreateReply int
 
@@ -157,7 +161,7 @@ func confirmCreated(ctx context.Context, p Poster, save *SaveCoordinator, q *que
 	}
 	drop := map[string]any{"interface": map[string]any{name: map[string]any{"no": true}}}
 	if derr := PostChecked(ctx, p, drop, "delete unlisted "+name, isMissingInterface, after...); derr != nil {
-		return query.Confirmed{}, errors.Join(err, derr)
+		return query.Confirmed{}, errors.Join(err, fmt.Errorf("%w: %w", ErrLeftOnRouter, derr))
 	}
 	q.Interfaces.Forget(name)
 	return query.Confirmed{}, fmt.Errorf("%w; созданная запись снесена", err)

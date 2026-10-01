@@ -26,20 +26,65 @@ func NewProxyCommands(p Poster, s *SaveCoordinator, q *query.Queries) *ProxyComm
 // создал запись (на ≥5.01) — ErrNotCreated без настроек и сноса (F574).
 // Отказ настроек — снос созданного этой командой. reply — вердикт ответа и
 // на ошибке: откат вызывающего сносит только reply.Ours().
+//
+// Созданное этой командой осталось на роутере (подтверждения нет при
+// доказанном «created», снос неподтверждённого или ненастроенного отказал) —
+// ошибка *LeftCreatedError с именем и description записи на роутере:
+// вызывающий отдаёт её отложенному сносу (F562), иначе голая сирота
+// навсегда чужая для владения по description.
 func (c *ProxyCommands) CreateProxy(ctx context.Context, name, description, upstreamHost string, upstreamPort int, socks5UDP bool) (query.Confirmed, CreateReply, error) {
 	create := map[string]any{"interface": map[string]any{name: map[string]any{}}}
 	conf, reply, err := CreateInterface(ctx, c.poster, c.save, c.queries, create, name, false,
 		c.save.Request, c.queries.RunningConfig.InvalidateAll)
 	if err != nil {
-		return query.Confirmed{}, reply, fmt.Errorf("create proxy: %w", err) // имя уже в ошибке
+		err = fmt.Errorf("create proxy: %w", err) // имя уже в ошибке
+		// Голая (настроек не было): «created» доказан, а записи не видно
+		// ни в списке, ни в хуках — либо след был, а снос отказал.
+		if reply == CreateNew && errors.Is(err, query.ErrNotSeen) || errors.Is(err, ErrLeftOnRouter) {
+			err = &LeftCreatedError{Name: name, Err: err}
+		}
+		return query.Confirmed{}, reply, err
 	}
 	if err := c.ConfigureProxy(ctx, conf, description, upstreamHost, upstreamPort, socks5UDP); err != nil {
 		// Запись без нашего description и upstream — сирота, которую ни
 		// владение по description, ни слот не узнают. Создана этой командой
-		// (CreateInterface иначе уже вернул бы ErrNotCreated) — сносим.
-		return query.Confirmed{}, reply, errors.Join(err, c.DeleteProxy(ctx, conf))
+		// (CreateInterface иначе уже вернул бы ErrNotCreated) либо, на
+		// прошивке без проверяемого ответа, считается нашей (R39) — сносим.
+		derr := c.DeleteProxy(ctx, conf)
+		if derr == nil {
+			return query.Confirmed{}, reply, err
+		}
+		return query.Confirmed{}, reply, c.leftConfigured(ctx, name, errors.Join(err, derr))
 	}
 	return conf, reply, nil
+}
+
+// LeftCreatedError — ProxyN Name, созданный этой командой, остался на
+// роутере; Desc — его description там ("" у голой записи).
+type LeftCreatedError struct {
+	Name, Desc string
+	Err        error
+}
+
+func (e *LeftCreatedError) Error() string { return e.Err.Error() }
+func (e *LeftCreatedError) Unwrap() error { return e.Err }
+
+// leftConfigured — настройки отвергнуты, снос тоже: description на роутере
+// читается свежим списком (элементы настроек NDMS мог применить частично).
+// Записи нет — оставлять нечего. Список не прочитан — "": отказ настроек и
+// сноса обычно один сбой RCI; метка с не тем description снимется тиком без
+// сноса (MarkedForeign) — сирота, но не снос чужого.
+func (c *ProxyCommands) leftConfigured(ctx context.Context, name string, err error) error {
+	_, rec, ok, lerr := c.queries.Interfaces.Confirm(ctx, name)
+	switch {
+	case lerr != nil:
+		return &LeftCreatedError{Name: name, Err: err}
+	case !ok:
+		return err
+	case rec == nil:
+		return &LeftCreatedError{Name: name, Err: err}
+	}
+	return &LeftCreatedError{Name: name, Desc: rec.Description, Err: err}
 }
 
 // ConfigureProxy пишет настройки подтверждённого ProxyN: description,
