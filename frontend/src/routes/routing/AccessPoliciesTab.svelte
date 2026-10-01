@@ -52,6 +52,7 @@
         appliedOpenPolicy = openPolicy;
         editingPolicy = target.name;
         editingPolicyData = target;
+        void refreshPolicyData();
     });
 
     async function createPolicy(description: string) {
@@ -62,6 +63,7 @@
             // Open newly created policy for editing
             editingPolicy = created.name;
             editingPolicyData = created;
+            void refreshPolicyData();
             notifications.success('Политика создана');
         } catch (e) {
             notifications.error(`Ошибка: ${(e as Error).message}`);
@@ -81,6 +83,11 @@
     }
 
     async function refreshPolicyData() {
+        try {
+            await api.refreshRouting();
+        } catch {
+            // ignore network/server errors during background refresh
+        }
         invalidateAllRouting();
     }
 
@@ -212,7 +219,7 @@
         <div class="policy-list-scroll">
             <PolicyTable
                 policies={accessPolicies}
-                onedit={(name) => { editingPolicy = name; editingPolicyData = accessPolicies.find(p => p.name === name) ?? null; }}
+                onedit={(name) => { editingPolicy = name; editingPolicyData = accessPolicies.find(p => p.name === name) ?? null; void refreshPolicyData(); }}
                 ondelete={(name) => policyDeleteName = name}
                 selectable={policySelectionMode}
                 selectedNames={policySelected}

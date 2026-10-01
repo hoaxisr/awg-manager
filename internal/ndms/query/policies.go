@@ -13,7 +13,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms/cache"
 )
 
-const policyTTL = 60 * time.Minute
+const policyTTL = 30 * time.Second
 
 // PolicyStore caches /show/rc/ip/policy — write-through primary, TTL as
 // safety net (per spec §4.3).

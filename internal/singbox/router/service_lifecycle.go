@@ -1819,7 +1819,10 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 			restartSuppressedUntil = until.Format(time.RFC3339)
 		}
 	}
-	issues := s.computeIssues(cfg)
+	var issues []Issue
+	if sr.RoutingEngine != "mihomo" {
+		issues = s.computeIssues(cfg)
+	}
 	// Мёртвый движок при живом перехвате (#456 FIX-B): PREROUTING-джампы
 	// стоят, а процесс не работает — весь policy-трафик (включая hijacked
 	// DNS:53) уходит в мёртвый порт до конца backoff-паузы. computeIssues
@@ -1851,7 +1854,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// намеренно не чинит (prune пропускает user-слот). computeIssues видит
 	// только конфиг роутера, поэтому runtime-issue собирается здесь из
 	// orchestrator.LastReloadValidation — по паттерну #456.
-	if s.deps.Orch != nil {
+	if sr.RoutingEngine != "mihomo" && s.deps.Orch != nil {
 		if v := s.deps.Orch.LastReloadValidation(); v != nil {
 			for _, ve := range v.Errors {
 				if ve.Slot != orchestrator.SlotUser || ve.Severity == orchestrator.SeverityWarning {
@@ -1886,7 +1889,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 	// A class whose outbound no longer resolves is skipped at emit time
 	// (syncQoSRoutesSlot) — surface WHY the class is inert so the user can
 	// re-point or disable it.
-	if sr.RoutingMode != "fakeip-tun" {
+	if sr.RoutingEngine != "mihomo" && sr.RoutingMode != "fakeip-tun" {
 		for _, c := range qosActive {
 			if !s.isKnownOutboundTag(ctx, c.Outbound, cfg) {
 				issues = append(issues, Issue{
@@ -1899,7 +1902,7 @@ func (s *ServiceImpl) GetStatus(ctx context.Context) (Status, error) {
 		}
 	}
 	xtDscpAvailable := s.xtDscpUsable(ctx)
-	if !xtDscpAvailable && sr.RoutingMode != "fakeip-tun" && len(qosActive) > 0 {
+	if !xtDscpAvailable && sr.RoutingEngine != "mihomo" && sr.RoutingMode != "fakeip-tun" && len(qosActive) > 0 {
 		moduleOK, matchOK := cachedXtDscpAvailability(ctx)
 		var msg string
 		switch {
