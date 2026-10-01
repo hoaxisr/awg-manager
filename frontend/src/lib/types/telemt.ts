@@ -1,9 +1,13 @@
 export interface TelemtConfig {
 	enabled: boolean;
+	mode?: 'direct' | 'web';
 	port: number;
 	listenIp: string;
 	secret: string;
 	tlsDomain: string;
+	webHost?: string;
+	webCarrier?: string;
+	webDecoy?: string;
 	upstreamDevice?: string;
 }
 

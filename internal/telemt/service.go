@@ -173,7 +173,7 @@ func (s *Service) GetStatus(ctx context.Context) Status {
 		if host == "" || host == "0.0.0.0" {
 			host = "192.168.1.1" // UI or caller replaces with active router LAN/WAN IP
 		}
-		link = GenerateTgLink(host, s.config.Port, s.config.Secret, s.config.TLSDomain)
+		link = GenerateTgLink(s.config.Mode, host, s.config.Port, s.config.Secret, s.config.TLSDomain, s.config.WebHost)
 	}
 
 	source := "managed"
