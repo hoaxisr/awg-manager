@@ -306,3 +306,58 @@ func TestFakeNDMS_FailRCList(t *testing.T) {
 func showByName(name string) any {
 	return map[string]any{"show": map[string]any{"interface": map[string]any{"name": name}}}
 }
+
+// TestFakeNDMS_HooksFor_TakesOnlyName — HooksFor забирает только хуки
+// своего имени; хуки прочих остаются в очереди в своём порядке (DrainHooks).
+func TestFakeNDMS_HooksFor_TakesOnlyName(t *testing.T) {
+	f := NewFakeNDMS()
+	f.Add(ndms.Interface{ID: "A", Type: "Wireguard"})
+	f.Add(ndms.Interface{ID: "B", Type: "Wireguard"})
+	f.Remove("A")
+
+	ctrlA := FakeHook{Type: "iflayerchanged", ID: "A", Layer: "ctrl"}
+	hooksA := f.HooksFor("A")
+	if len(hooksA) != 4 || hooksA[0] != ctrlA || hooksA[1] != ctrlA ||
+		hooksA[2] != (FakeHook{Type: "ifcreated", ID: "A"}) ||
+		hooksA[3] != (FakeHook{Type: "ifdestroyed", ID: "A"}) {
+		t.Fatalf("hooksA: %+v", hooksA)
+	}
+
+	ctrlB := FakeHook{Type: "iflayerchanged", ID: "B", Layer: "ctrl"}
+	rest := f.DrainHooks()
+	if len(rest) != 3 || rest[0] != ctrlB || rest[1] != ctrlB ||
+		rest[2] != (FakeHook{Type: "ifcreated", ID: "B"}) {
+		t.Fatalf("rest: %+v", rest)
+	}
+}
+
+// TestFakeNDMS_StaleHookRecipe — рецепт устаревшего хука (П8): Add(X) →
+// DrainHooks (сброс хуков первого создания) → Remove(X) → Add(X) без
+// дренажа → HooksFor("X") отдаёт устаревший ifdestroyed первым, затем
+// свежие ctrl×2+ifcreated второго создания; карта уже видит X.
+func TestFakeNDMS_StaleHookRecipe(t *testing.T) {
+	f := NewFakeNDMS()
+	f.Add(ndms.Interface{ID: "X", Type: "Wireguard"})
+	f.DrainHooks()
+	f.Remove("X")
+	f.Add(ndms.Interface{ID: "X", Type: "Wireguard"})
+
+	ctrl := FakeHook{Type: "iflayerchanged", ID: "X", Layer: "ctrl"}
+	hooks := f.HooksFor("X")
+	if len(hooks) != 4 || hooks[0] != (FakeHook{Type: "ifdestroyed", ID: "X"}) ||
+		hooks[1] != ctrl || hooks[2] != ctrl ||
+		hooks[3] != (FakeHook{Type: "ifcreated", ID: "X"}) {
+		t.Fatalf("hooks: %+v", hooks)
+	}
+	if !f.Has("X") {
+		t.Fatal("карта должна видеть X после Add")
+	}
+}
+
+func TestFakeNDMS_HooksFor_Unknown_Empty(t *testing.T) {
+	f := NewFakeNDMS()
+	f.Add(ndms.Interface{ID: "A", Type: "Wireguard"})
+	if hooks := f.HooksFor("Z"); len(hooks) != 0 {
+		t.Fatalf("hooks: %+v", hooks)
+	}
+}

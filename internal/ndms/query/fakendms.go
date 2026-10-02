@@ -18,6 +18,10 @@ import (
 // живом роутере превращается в E журнала ndm и в фантомные интерфейсы.
 // Реализует Getter и command.Poster. Для тестов этого и других пакетов (тот
 // же приём, что FakeGetter). Поля-счётчики читать после вызовов, не во время.
+// Хуки существования тест доставляет диспетчеру сам: DrainHooks — всю
+// очередь по порядку, HooksFor(id) — только хуки данного id, остальные
+// остаются в очереди в своём порядке (рецепт устаревшего хука, П8: см.
+// DrainHooks).
 type FakeNDMS struct {
 	mu          sync.Mutex
 	ifaces      map[string]ndms.Interface
@@ -153,6 +157,11 @@ func (f *FakeNDMS) Has(name string) bool {
 	return ok
 }
 
+// DrainHooks — вся очередь хуков по порядку; очередь опустошается целиком.
+// Рецепт устаревшего хука (П8): если между Remove(X) и повторным Add(X) не
+// дренировать очередь, HooksFor("X") отдаёт старый ifdestroyed первым, а
+// затем свежие хуки пересоздания — так моделируется опоздавший хук чужого,
+// уже пересозданного интерфейса.
 func (f *FakeNDMS) DrainHooks() []FakeHook {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -164,6 +173,28 @@ func (f *FakeNDMS) DrainHooks() []FakeHook {
 		}
 	}
 	return h
+}
+
+// HooksFor — забирает из очереди ТОЛЬКО хуки с ID == name, в порядке
+// очереди; остальные хуки остаются в очереди в своём порядке.
+func (f *FakeNDMS) HooksFor(name string) []FakeHook {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var take, keep []FakeHook
+	for _, e := range f.hooks {
+		if e.ID == name {
+			take = append(take, e)
+		} else {
+			keep = append(keep, e)
+		}
+	}
+	f.hooks = keep
+	for _, e := range take {
+		if e.Type == "ifcreated" && f.hidden[e.ID] < 0 {
+			delete(f.hidden, e.ID)
+		}
+	}
+	return take
 }
 
 // ListCalls — сколько раз читали полный список (/show/interface/ или
