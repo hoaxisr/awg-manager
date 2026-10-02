@@ -72,10 +72,14 @@ function fillStrings<T extends object>(cfg: T, keys: readonly (keyof T)[]): T {
 }
 
 export function normalizeWdttClientConfig(cfg: WdttClientConfig): WdttClientConfig {
+	if (cfg.autoReconnect === undefined) cfg.autoReconnect = false;
+	if (!cfg.autoReconnectInterval) cfg.autoReconnectInterval = 'on_failure';
 	return fillStrings(cfg, WDTT_OPTIONAL_STRINGS);
 }
 
 export function normalizeFreeTurnClientConfig(cfg: FreeTurnClientConfig): FreeTurnClientConfig {
+	if (cfg.autoReconnect === undefined) cfg.autoReconnect = false;
+	if (!cfg.autoReconnectInterval) cfg.autoReconnectInterval = 'on_failure';
 	return fillStrings(cfg, FT_OPTIONAL_STRINGS);
 }
 

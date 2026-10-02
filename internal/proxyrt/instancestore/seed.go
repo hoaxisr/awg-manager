@@ -129,7 +129,9 @@ type oldWdttClient struct {
 	// RawClientIP/RawClientMTU НЕ читаются: кэш факта — в наблюдение (§9).
 	// Debug НЕ читается: мёртвое поле — старый мир -debug клиенту не эмитил
 	// (проверено грепом; решение Р10).
-	PolicyPermits []oldPolicyPermit `json:"policyPermits"`
+	PolicyPermits         []oldPolicyPermit `json:"policyPermits"`
+	AutoReconnect         bool              `json:"autoReconnect"`
+	AutoReconnectInterval string            `json:"autoReconnectInterval"`
 }
 
 // oldPolicyPermit — permit старого формата. Order здесь ЗНАЧЕНИЕ, а не
@@ -206,9 +208,11 @@ type oldFreeturnClient struct {
 	Platform       string `json:"platform"`
 	DNSMode        string `json:"dnsMode"`
 	DNSServers     string `json:"dnsServers"`
-	ClientID       string `json:"clientId"`
-	Sub            string `json:"sub"`
-	Debug          bool   `json:"debug"`
+	ClientID              string `json:"clientId"`
+	Sub                   string `json:"sub"`
+	Debug                 bool   `json:"debug"`
+	AutoReconnect         bool   `json:"autoReconnect"`
+	AutoReconnectInterval string `json:"autoReconnectInterval"`
 }
 
 type oldFreeturnServer struct {
@@ -615,6 +619,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 			Workers: c.Config.Workers, Obfs: c.Config.Obfs,
 			Fingerprint: c.Config.Fingerprint, DeviceID: c.Config.DeviceID,
 			CaptchaMode: c.Config.CaptchaMode, VKAuthMode: c.Config.VKAuthMode,
+			AutoReconnect: c.Config.AutoReconnect, AutoReconnectInterval: c.Config.AutoReconnectInterval,
 		}
 		if cfg.Mode == "" {
 			cfg.Mode = "wg"
@@ -729,6 +734,7 @@ func Seed(ctx context.Context, st *Store, d SeedDeps) (SeedResult, error) {
 				StreamsPerCred: o.StreamsPerCred, Platform: o.Platform,
 				DNSMode: o.DNSMode, DNSServers: o.DNSServers,
 				ClientID: o.ClientID, Sub: o.Sub, Debug: o.Debug, // Sub — B4
+				AutoReconnect: o.AutoReconnect, AutoReconnectInterval: o.AutoReconnectInterval,
 			}})
 	}
 	for _, s := range ftFile.Servers {

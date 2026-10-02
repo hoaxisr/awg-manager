@@ -317,6 +317,20 @@ describe('toWdttConfig: секреты и поля записи', () => {
 		expect(cfg.linkVkHashes).toBe('h9');
 		expect(cfg.statsLog).toBe('disk');
 	});
+
+	it('автопереподключение читается из конфига инстанса', () => {
+		const viewWithAuto: ProxyInstanceView = {
+			...wdttClientView,
+			config: {
+				...wdttClientView.config,
+				autoReconnect: true,
+				autoReconnectInterval: '30m'
+			}
+		};
+		const cfg = toWdttClientConfig(viewWithAuto);
+		expect(cfg.autoReconnect).toBe(true);
+		expect(cfg.autoReconnectInterval).toBe('30m');
+	});
 });
 
 describe('toFreeTurnStatus и toFreeTurnConfig: вторая подсистема', () => {
@@ -516,6 +530,16 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 		});
 	});
 
+	it('параметры автопереподключения WDTT уезжают в патч', () => {
+		const patched = toWdttClientPatch({
+			...client,
+			autoReconnect: true,
+			autoReconnectInterval: '1h'
+		});
+		expect(patched.autoReconnect).toBe(true);
+		expect(patched.autoReconnectInterval).toBe('1h');
+	});
+
 	const server: WdttServerConfig = {
 		enabled: false,
 		listen: '0.0.0.0:56002',
@@ -563,6 +587,9 @@ describe('обратные мапперы: секреты (Н5) и поля бе
 		// Поля 4.0 обязаны уезжать на бэкенд, иначе тумблер декоративный.
 		const p40 = toFreeTurnClientPatch({ ...ftClient, bond: true, obfTimingMs: 20 });
 		expect([p40.bond, p40.obfTimingMs]).toEqual([true, 20]);
+		// Параметры автопереподключения обязаны уезжать в патч клиента
+		const pAuto = toFreeTurnClientPatch({ ...ftClient, autoReconnect: true, autoReconnectInterval: '2h' });
+		expect([pAuto.autoReconnect, pAuto.autoReconnectInterval]).toEqual([true, '2h']);
 
 		const ftServer: FreeTurnServerConfig = {
 			enabled: true,
