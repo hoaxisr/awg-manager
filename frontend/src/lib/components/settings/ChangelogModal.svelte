@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { Modal, Button } from '$lib/components/ui';
 	import { LoadingSpinner } from '$lib/components/layout';
@@ -46,19 +47,19 @@
 	});
 </script>
 
-<Modal {open} title="Что нового" size="lg" {onclose}>
+<Modal {open} title={m.settings_changelog_title()} size="lg" {onclose}>
 	<div class="modal-body">
 		{#if !pendingUpdate}
 			<div class="changelog-notice" role="status">
 				<p>
-					В данном списке представлены изменения из версий, которые были выпущены и установлены ранее.
+					{m.settings_changelog_installed_note()}
 				</p>
 				<p class="changelog-notice-hint">
-					Вы можете проверить, доступно ли обновление, нажав кнопку ниже.
+					{m.settings_changelog_check_hint()}
 				</p>
 				{#if oncheckUpdates}
 					<Button variant="secondary" size="sm" onclick={oncheckUpdates}>
-						Проверить обновления
+						{m.settings_changelog_check_updates()}
 					</Button>
 				{/if}
 			</div>
@@ -66,15 +67,15 @@
 		{#if loading}
 			<LoadingSpinner />
 		{:else if error}
-			<p class="state-msg state-error">Не удалось загрузить changelog. {error}</p>
+			<p class="state-msg state-error">{m.settings_changelog_load_error({ error })}</p>
 		{:else if entries.length === 0}
-			<p class="state-msg">В CHANGELOG нет записей для этой ветки версий.</p>
+			<p class="state-msg">{m.settings_changelog_empty()}</p>
 		{:else}
 			<ChangelogRender {entries} />
 		{/if}
 	</div>
 	{#snippet actions()}
-		<Button variant="primary" size="md" onclick={onclose}>Закрыть</Button>
+		<Button variant="primary" size="md" onclick={onclose}>{m.settings_changelog_close()}</Button>
 	{/snippet}
 </Modal>
 

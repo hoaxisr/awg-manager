@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -66,7 +67,7 @@
 			ingressRefs = s.ingressInterfaces ?? [];
 		} catch (e) {
 			ingressRefs = [];
-			notifications.error(e instanceof Error ? e.message : 'Не удалось загрузить настройки egress');
+			notifications.error(e instanceof Error ? e.message : m.servers_page_egress_load_failed());
 		}
 	}
 
@@ -133,15 +134,15 @@
 
 	let railItems = $derived.by<RailItem[]>(() => {
 		const items: RailItem[] = [];
-		for (const m of managedServers) {
-			const stats = managedStatsMap[m.interfaceName] ?? null;
-			const mPeers = m.peers ?? [];
+		for (const ms of managedServers) {
+			const stats = managedStatsMap[ms.interfaceName] ?? null;
+			const mPeers = ms.peers ?? [];
 			const statsPeers = stats?.peers ?? [];
 			items.push({
-				id: managedRailId(m.interfaceName),
-				name: m.description || m.interfaceName,
-				iface: m.interfaceName,
-				listenPort: m.listenPort,
+				id: managedRailId(ms.interfaceName),
+				name: ms.description || ms.interfaceName,
+				iface: ms.interfaceName,
+				listenPort: ms.listenPort,
 				// Backend ManagedServerStats.Status mirrors NDMS interface state
 				// ("up"/"down"), not the layer-state word "running" that NDMS
 				// hooks emit. Comparing against "running" never matched and
@@ -171,9 +172,9 @@
 	let hasServers = $derived(railItems.length > 0);
 	let occupiedListenPorts = $derived.by<number[]>(() => {
 		const ports = new Set<number>();
-		for (const m of managedServers) {
-			if (Number.isInteger(m.listenPort) && m.listenPort > 0) {
-				ports.add(m.listenPort);
+		for (const ms of managedServers) {
+			if (Number.isInteger(ms.listenPort) && ms.listenPort > 0) {
+				ports.add(ms.listenPort);
 			}
 		}
 		for (const s of serverList) {
@@ -222,7 +223,7 @@
 		const iface = activeId.startsWith(MANAGED_PREFIX)
 			? activeId.slice(MANAGED_PREFIX.length)
 			: '';
-		return managedServers.find((m) => m.interfaceName === iface) ?? null;
+		return managedServers.find((ms) => ms.interfaceName === iface) ?? null;
 	});
 	let activeManagedStats = $derived(
 		activeManaged ? managedStatsMap[activeManaged.interfaceName] ?? null : null,
@@ -236,14 +237,14 @@
 		try {
 			const fresh = await api.unmarkServerInterface(id);
 			servers.applyMutationResponse(fresh);
-			notifications.success(`Интерфейс ${id} возвращён в туннели.`);
+			notifications.success(m.servers_page_unmarked({ id }));
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка');
+			notifications.error(e instanceof Error ? e.message : m.tunnels_error_generic());
 		}
 	}
 
 	function onManagedCreated(newId?: string) {
-		notifications.success('Сервер создан');
+		notifications.success(m.servers_page_created());
 		servers.invalidate();
 		if (newId) {
 			setActiveId(managedRailId(newId));
@@ -260,11 +261,11 @@
 </script>
 
 <svelte:head>
-	<title>Серверы - AWG Manager</title>
+	<title>{m.servers_page_title()}</title>
 </svelte:head>
 
 <PageContainer width="full">
-	<PageHeader title="Серверы">
+	<PageHeader title={m.nav_servers()}>
 		{#snippet actions()}
 			<ManagedServerBackupToolbar showExport={hasServers} />
 			<StoreStatusBadge store={servers} />
@@ -277,16 +278,16 @@
 		<ServersPageSkeleton count={$serversSkeletonCount} />
 	{:else if snap.status === 'error' && !snap.data}
 		<EmptyState
-			title="Ошибка загрузки"
-			description={snap.error ?? 'Не удалось получить список серверов'}
+			title={m.servers_page_load_error()}
+			description={snap.error ?? m.servers_page_list_failed()}
 		/>
 	{:else if railItems.length === 0}
 		<EmptyState
-			title="Нет серверов"
-			description="Создайте свой WireGuard-сервер или добавьте существующий интерфейс."
+			title={m.servers_page_empty_title()}
+			description={m.servers_page_empty_desc()}
 		>
 			{#snippet action()}
-				<Button variant="primary" size="md" onclick={openCreate}>Добавить сервер</Button>
+				<Button variant="primary" size="md" onclick={openCreate}>{m.servers_page_add()}</Button>
 			{/snippet}
 		</EmptyState>
 	{:else}

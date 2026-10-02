@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { m } from '$lib/i18n';
 	import { Eye, EyeOff } from 'lucide-svelte';
 	import type { TunnelListItem } from '$lib/types';
 	import { Toggle, TrafficSparkline, TrafficChart, VersionBadge, StatusDot, Badge } from '$lib/components/ui';
@@ -61,18 +62,18 @@
 	let locked = $derived(!!tunnel.locked);
 	let lockAvailable = $derived(tunnelLockAvailable(tunnel));
 	let toggleDisabled = $derived(toggleLoading || tunnel.hasAddressConflict === true || locked);
-	const lockedTitle = 'Туннель защищён от изменений';
+	const lockedTitle = $derived(m.tunnels_card_locked_title());
 
 	let statusHint = $derived.by(() => {
 		switch (tunnel.status) {
-			case 'starting': return 'Запуск...';
-			case 'needs_start': return 'Ожидает запуска';
-			case 'needs_stop': return 'Остановка...';
+			case 'starting': return m.tunnels_card_starting_hint();
+			case 'needs_start': return m.tunnels_state_needs_start();
+			case 'needs_stop': return m.tunnels_card_stopping_hint();
 			case 'broken': return '';
 			case 'running':
 				if (tunnel.pingCheck.status === 'recovering') {
 					const n = tunnel.pingCheck.restartCount;
-					return n > 0 ? `Восстановление (${n})` : 'Проверка связи...';
+					return n > 0 ? m.tunnels_card_recovering({ count: n }) : m.tunnels_card_checking_link();
 				}
 				return '';
 			default: return '';
@@ -185,24 +186,24 @@
 	});
 
 	let listStatusText = $derived.by(() => {
-		if (tunnel.hasAddressConflict) return 'Конфликт IP';
+		if (tunnel.hasAddressConflict) return m.tunnels_card_status_ip_conflict();
 		switch (tunnel.status) {
 			case 'running':
-				if (manualChecking || connectivity === 'checking') return 'Проверка';
-				if (!isCheckDisabled && connectivity === 'disconnected') return 'Нет связи';
-				return 'Активен';
+				if (manualChecking || connectivity === 'checking') return m.tunnels_card_status_checking();
+				if (!isCheckDisabled && connectivity === 'disconnected') return m.tunnels_card_status_no_link();
+				return m.tunnels_status_active();
 			case 'starting':
-				return 'Запуск';
+				return m.tunnels_card_status_starting();
 			case 'needs_start':
-				return 'Готов';
+				return m.tunnels_card_status_ready();
 			case 'needs_stop':
-				return 'Остановка';
+				return m.tunnels_card_status_stopping();
 			case 'broken':
 				return tunnel.statusDetails ?? '';
 			case 'disabled':
-				return 'Выключен';
+				return m.tunnels_status_off();
 			default:
-				return 'Остановлен';
+				return m.tunnels_state_stopped();
 		}
 	});
 
@@ -217,7 +218,7 @@
 	let inlineTxRate = $derived(txRates.length > 0 ? txRates[txRates.length - 1] : 0);
 
 	function compactRelativeTime(value: string | null | undefined): string {
-		return value ? formatRelativeTime(value).replace(/\s+назад$/u, '') : '—';
+		return value ? formatRelativeTime(value).replace(/\s+(назад|ago)$/u, '') : '—';
 	}
 
 	$effect(() => {
@@ -309,7 +310,7 @@
 					{#if tunnel.obfuscator}
 						<Badge variant="info" size="sm">{tunnel.obfuscator.flavor === 'phobos' ? 'Phobos' : 'ClusterM'}</Badge>
 						{#if tunnel.obfuscator.relay === 'kernel'}
-							<Badge variant="success" size="sm">ядро</Badge>
+							<Badge variant="success" size="sm">{m.tunnels_card_kernel_badge()}</Badge>
 						{/if}
 					{/if}
 				</div>
@@ -321,7 +322,7 @@
 						<TunnelLockGlyph {locked} size="sm" onclick={() => onLockClick?.()} />
 					{/if}
 					<span
-						title={locked ? lockedTitle : (tunnel.hasAddressConflict ? 'Конфликт адресов — другой туннель с таким же IP уже запущен' : undefined)}
+						title={locked ? lockedTitle : (tunnel.hasAddressConflict ? m.tunnels_card_conflict_title() : undefined)}
 					>
 						<Toggle
 							checked={isOn}
@@ -351,7 +352,7 @@
 					<button
 						class="connectivity-gear"
 						onclick={() => connectivitySettingsOpen = true}
-						title="Настройки проверки связности"
+						title={m.tunnels_card_connectivity_settings()}
 					>
 						<svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.84 1.804A1 1 0 018.82 1h2.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l1.18 2.044a1 1 0 01-.205 1.251l-1.267 1.113a7.047 7.047 0 010 2.228l1.267 1.113a1 1 0 01.206 1.25l-1.18 2.045a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H8.82a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-1.18-2.044a1 1 0 01.205-1.251l1.267-1.114a7.05 7.05 0 010-2.227L1.821 7.773a1 1 0 01-.206-1.25l1.18-2.045a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 017.51 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" /></svg>
 					</button>
@@ -383,7 +384,7 @@
 						{#if tunnel.obfuscator}
 							<Badge variant="info" size="sm">{tunnel.obfuscator.flavor === 'phobos' ? 'Phobos' : 'ClusterM'}</Badge>
 							{#if tunnel.obfuscator.relay === 'kernel'}
-								<Badge variant="success" size="sm">ядро</Badge>
+								<Badge variant="success" size="sm">{m.tunnels_card_kernel_badge()}</Badge>
 							{/if}
 						{/if}
 					</div>
@@ -398,7 +399,7 @@
 							<TunnelLockGlyph {locked} onclick={() => onLockClick?.()} />
 						{/if}
 						<span
-							title={locked ? lockedTitle : (tunnel.hasAddressConflict ? 'Конфликт адресов — другой туннель с таким же IP уже запущен' : undefined)}
+							title={locked ? lockedTitle : (tunnel.hasAddressConflict ? m.tunnels_card_conflict_title() : undefined)}
 						>
 							<Toggle
 								checked={isOn}
@@ -429,7 +430,7 @@
 							<button
 								class="connectivity-gear"
 								onclick={() => connectivitySettingsOpen = true}
-								title="Настройки проверки связности"
+								title={m.tunnels_card_connectivity_settings()}
 							>
 								<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.84 1.804A1 1 0 018.82 1h2.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l1.18 2.044a1 1 0 01-.205 1.251l-1.267 1.113a7.047 7.047 0 010 2.228l1.267 1.113a1 1 0 01.206 1.25l-1.18 2.045a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H8.82a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-1.18-2.044a1 1 0 01.205-1.251l1.267-1.114a7.05 7.05 0 010-2.227L1.821 7.773a1 1 0 01-.206-1.25l1.18-2.045a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 017.51 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" /></svg>
 							</button>
@@ -446,7 +447,7 @@
 				<div class="details-dense-cols">
 					<div class="details-dense-col details-dense-col-lead">
 						<div class="kv-stacked-stat">
-							<span class="kv-stacked-label">Сервер</span>
+							<span class="kv-stacked-label">{m.tunnels_card_server()}</span>
 							<span class="kv-endpoint">
 								<span
 									class="kv-stacked-value truncate"
@@ -457,7 +458,7 @@
 								<button
 									class="eye-btn"
 									onclick={() => showEndpoint = !showEndpoint}
-									title={showEndpoint ? 'Скрыть' : 'Показать'}
+									title={showEndpoint ? m.tunnels_hide() : m.tunnels_show()}
 								>
 									{#if showEndpoint}
 										<Eye size={12} aria-hidden="true" />
@@ -469,7 +470,7 @@
 						</div>
 						{#if connectionDisplay}
 							<div class="kv-stacked-stat">
-								<span class="kv-stacked-label">Подключение</span>
+								<span class="kv-stacked-label">{m.tunnels_card_connection()}</span>
 								<span class="kv-stacked-value" title={connectionDisplay}>{connectionDisplay}</span>
 							</div>
 						{/if}
@@ -486,7 +487,7 @@
 					</div>
 					<div class="details-dense-col details-dense-col-right">
 						<div class="kv-stacked-stat">
-							<span class="kv-stacked-label">Порт</span>
+							<span class="kv-stacked-label">{m.tunnels_card_port()}</span>
 							<span class="kv-stacked-value">{serverPort || '—'}</span>
 						</div>
 						{#if tunnel.status === 'running'}
@@ -508,13 +509,13 @@
 			{:else}
 			<div class="kv-row">
 				<div class="kv kv-grow">
-					<span class="kv-label">Сервер</span>
+					<span class="kv-label">{m.tunnels_card_server()}</span>
 					<span class="kv-endpoint">
 						<span class="kv-value truncate" title={showEndpoint ? serverHost : ''}>{showEndpoint ? (serverHost || '—') : '•••••••••'}</span>
 						<button
 							class="eye-btn"
 							onclick={() => showEndpoint = !showEndpoint}
-							title={showEndpoint ? 'Скрыть' : 'Показать'}
+							title={showEndpoint ? m.tunnels_hide() : m.tunnels_show()}
 						>
 							{#if showEndpoint}
 								<Eye size={14} aria-hidden="true" />
@@ -525,7 +526,7 @@
 					</span>
 				</div>
 				<div class="kv kv-shrink">
-					<span class="kv-label">Порт</span>
+					<span class="kv-label">{m.tunnels_card_port()}</span>
 					<span class="kv-value">{serverPort || '—'}</span>
 				</div>
 			</div>
@@ -535,7 +536,7 @@
 				{@const label = tunnel.resolvedIspInterfaceLabel || tunnel.ispInterfaceLabel || ''}
 				<div class="kv-row">
 					<div class="kv">
-						<span class="kv-label">Подключение</span>
+						<span class="kv-label">{m.tunnels_card_connection()}</span>
 						<span class="kv-value">
 							{#if label}
 								{label} <span class="kv-secondary">({iface})</span>
@@ -587,11 +588,11 @@
 				variant="labeled"
 				editHref="/tunnels/{tunnel.id}"
 				editDisabled={locked}
-				editTitle={locked ? lockedTitle : 'Изменить'}
+				editTitle={locked ? lockedTitle : m.tunnels_card_edit()}
 				onTest={() => (diagnosticsOpen = true)}
 				onDelete={() => ondelete?.()}
 				deleteDisabled={deleteLoading || locked}
-				deleteTitle={locked ? lockedTitle : 'Удалить'}
+				deleteTitle={locked ? lockedTitle : m.common_delete()}
 				deleting={deleteLoading}
 			/>
 		</div>
@@ -603,7 +604,7 @@
 					type="button"
 					class="traffic-inline"
 					onclick={() => ondetail?.(tunnel.id)}
-					title="Открыть график трафика"
+					title={m.tunnels_card_open_traffic_chart()}
 				>
 					<TrafficSparkline
 						rxData={rxRates}
@@ -634,7 +635,7 @@
 	kind="awg"
 	targetId={tunnel.id}
 	displayName={tunnel.name}
-	subjectLabel="туннель"
+	subject="tunnel"
 	onclose={() => (diagnosticsOpen = false)}
 />
 

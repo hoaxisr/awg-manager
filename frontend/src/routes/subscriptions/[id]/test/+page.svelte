@@ -48,7 +48,7 @@
 	{displayName}
 	backHref="/?tab=subscriptions"
 	backLabel="К списку подписок"
-	subjectLabel="подписку"
+	subject="subscription"
 	iface={kernelIface}
 	loading={!loaded}
 	{unavailableReason}

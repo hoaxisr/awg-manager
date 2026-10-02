@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Button, SegmentedControl, Toggle } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
+	import LanguageSettingRow from './LanguageSettingRow.svelte';
 	import { compactLayout } from '$lib/stores/compactLayout';
 	import {
 		settingsSectionIconMode,
@@ -21,24 +22,26 @@
 		type ThemePreset,
 	} from '$lib/stores/theme';
 	import { Palette, ChevronDown, Check } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 
 	const PRESET_ORDER: ThemePreset[] = ['legacy', 'neo', 'mint', 'custom'];
-	const LEGACY_MODE_OPTIONS: Array<{ value: ThemeModePreference; label: string }> = [
-		{ value: 'system', label: 'Системная' },
-		{ value: 'dark', label: 'Тёмная' },
-		{ value: 'light', label: 'Светлая' },
-	];
-	const CUSTOM_FIELDS: Array<{ key: keyof ThemeCustomPalette; label: string; hint: string }> = [
-		{ key: 'accent', label: 'Акцент', hint: 'Кнопки, активные состояния и ссылки' },
-		{ key: 'background', label: 'Фон', hint: 'Базовый цвет приложения' },
-		{ key: 'text', label: 'Текст', hint: 'Основной цвет текста и контраста' },
-	];
+	// $derived, а не константы: подписи пересчитываются при смене языка.
+	const LEGACY_MODE_OPTIONS: Array<{ value: ThemeModePreference; label: string }> = $derived([
+		{ value: 'system', label: m.settings_theme_mode_system() },
+		{ value: 'dark', label: m.settings_theme_mode_dark() },
+		{ value: 'light', label: m.settings_theme_mode_light() },
+	]);
+	const CUSTOM_FIELDS: Array<{ key: keyof ThemeCustomPalette; label: string; hint: string }> = $derived([
+		{ key: 'accent', label: m.settings_theme_color_accent(), hint: m.settings_theme_color_accent_hint() },
+		{ key: 'background', label: m.settings_theme_color_background(), hint: m.settings_theme_color_background_hint() },
+		{ key: 'text', label: m.settings_theme_color_text(), hint: m.settings_theme_color_text_hint() },
+	]);
 
-	const ICON_MODE_OPTIONS: Array<{ value: SettingsSectionIconMode; label: string }> = [
-		{ value: 'strict', label: SETTINGS_SECTION_ICON_MODE_LABELS.strict },
-		{ value: 'harmonious', label: SETTINGS_SECTION_ICON_MODE_LABELS.harmonious },
-		{ value: 'vivid', label: SETTINGS_SECTION_ICON_MODE_LABELS.vivid },
-	];
+	const ICON_MODE_OPTIONS: Array<{ value: SettingsSectionIconMode; label: string }> = $derived([
+		{ value: 'strict', label: SETTINGS_SECTION_ICON_MODE_LABELS.strict() },
+		{ value: 'harmonious', label: SETTINGS_SECTION_ICON_MODE_LABELS.harmonious() },
+		{ value: 'vivid', label: SETTINGS_SECTION_ICON_MODE_LABELS.vivid() },
+	]);
 
 	let expanded = $state(false);
 	const compactForced = $derived($usageLevel === 'basic');
@@ -46,13 +49,19 @@
 	const compactChecked = $derived(compactForced || $compactLayout);
 
 	const currentThemeLabel = $derived.by(() => {
+		const name = $theme.label;
 		if ($theme.preset !== 'custom') {
-			if ($theme.modePreference === 'system') {
-				return `${$theme.label} · Системная (${$theme.legacyMode === 'light' ? 'Светлая' : 'Тёмная'})`;
-			}
-			return `${$theme.label} · ${$theme.legacyMode === 'light' ? 'Светлая' : 'Тёмная'}`;
+			const mode =
+				$theme.legacyMode === 'light'
+					? m.settings_theme_mode_light()
+					: m.settings_theme_mode_dark();
+			return $theme.modePreference === 'system'
+				? m.settings_theme_current_system({ theme: name, mode })
+				: m.settings_theme_current({ theme: name, mode });
 		}
-		return `${$theme.label} · ${$theme.mode === 'light' ? 'Авто-светлая' : 'Авто-тёмная'}`;
+		return $theme.mode === 'light'
+			? m.settings_theme_current_auto_light({ theme: name })
+			: m.settings_theme_current_auto_dark({ theme: name });
 	});
 
 	function previewStyleFor(preset: ThemePreset): string {
@@ -70,7 +79,7 @@
 
 <div class="settings-block">
 	<div class="card">
-	<SettingsSectionLabel label="Внешний вид" icon={Palette} tone="pink" header />
+	<SettingsSectionLabel label={m.settings_appearance()} icon={Palette} tone="pink" header />
 	<div class="setting-row">
 		<button
 			type="button"
@@ -80,10 +89,8 @@
 			onclick={() => (expanded = !expanded)}
 		>
 			<div class="flex flex-col gap-1">
-				<span class="font-medium">Цветовая схема</span>
-				<span class="setting-description">
-					Применяется сразу и сохраняется локально в этом браузере.
-				</span>
+				<span class="font-medium">{m.settings_theme_title()}</span>
+				<span class="setting-description">{m.settings_theme_description()}</span>
 			</div>
 			<span class="header-meta">
 				<span class="current-theme">{currentThemeLabel}</span>
@@ -94,7 +101,7 @@
 
 	{#if expanded}
 		<div id="theme-scheme-body" class="collapsible-body">
-			<div class="theme-grid" role="radiogroup" aria-label="Цветовая схема">
+			<div class="theme-grid" role="radiogroup" aria-label={m.settings_theme_title()}>
 				{#each PRESET_ORDER as preset (preset)}
 					{@const selected = $theme.preset === preset}
 					{@const meta = THEME_PRESETS[preset]}
@@ -109,7 +116,7 @@
 						<div class="theme-card-head">
 							<div class="theme-copy">
 								<div class="theme-title">{meta.label}</div>
-								<div class="theme-summary">{meta.summary}</div>
+								<div class="theme-summary">{meta.summary()}</div>
 							</div>
 							{#if selected}
 								<span class="theme-check" aria-hidden="true">
@@ -145,11 +152,11 @@
 
 			{#if $theme.supportsModeToggle}
 				<div class="detail-block">
-					<div class="detail-title">Режим {THEME_PRESETS[$theme.preset].label}</div>
+					<div class="detail-title">{m.settings_theme_mode_title({ theme: THEME_PRESETS[$theme.preset].label })}</div>
 					<SegmentedControl
 						value={$theme.modePreference}
 						options={LEGACY_MODE_OPTIONS}
-						ariaLabel={`Режим темы ${THEME_PRESETS[$theme.preset].label}`}
+						ariaLabel={m.settings_theme_mode_aria({ theme: THEME_PRESETS[$theme.preset].label })}
 						onchange={(mode) => theme.setMode(mode)}
 					/>
 				</div>
@@ -159,14 +166,11 @@
 				<div class="detail-block custom-block">
 					<div class="custom-header">
 						<div>
-							<div class="detail-title">Пользовательская схема</div>
-							<p class="custom-hint">
-								Подберите три базовых цвета, а карточки, границы и вторичный текст мы
-								достроим автоматически.
-							</p>
+							<div class="detail-title">{m.settings_theme_custom_title()}</div>
+							<p class="custom-hint">{m.settings_theme_custom_hint()}</p>
 						</div>
 						<Button variant="ghost" size="sm" onclick={() => theme.resetCustom()}>
-							Сбросить
+							{m.settings_theme_custom_reset()}
 						</Button>
 					</div>
 
@@ -193,36 +197,39 @@
 					</div>
 
 					<div class="auto-mode-note">
-						Авто-режим: {$theme.mode === 'light' ? 'светлая схема' : 'тёмная схема'} по
-						цвету фона.
+						{$theme.mode === 'light'
+							? m.settings_theme_auto_light()
+							: m.settings_theme_auto_dark()}
 					</div>
 				</div>
 			{/if}
 		</div>
 	{/if}
 
+	<LanguageSettingRow />
+
 	<div class="setting-row icon-mode-row">
 		<div class="flex flex-col gap-1">
-			<span class="font-medium">Окраска иконок</span>
+			<span class="font-medium">{m.settings_icon_mode_title()}</span>
 			<span class="setting-description">
-				Заголовки настроек, политики доступа, VPN для устройств и глобус-заглушка в списках маршрутизации.
+				{m.settings_icon_mode_description()}
 			</span>
 		</div>
 		<SegmentedControl
 			value={$settingsSectionIconMode}
 			options={ICON_MODE_OPTIONS}
-			ariaLabel="Окраска иконок"
+			ariaLabel={m.settings_icon_mode_title()}
 			onchange={(mode) => settingsSectionIconMode.setMode(mode)}
 		/>
 	</div>
 	<div class="setting-row compact-layout-row">
 		<div class="flex flex-col gap-1">
-			<span class="font-medium">Компактный режим</span>
+			<span class="font-medium">{m.settings_compact_title()}</span>
 			<span class="setting-description">
 				{#if compactForced}
-					В базовом режиме всегда включена: колонка 960px и меньшие боковые отступы.
+					{m.settings_compact_forced()}
 				{:else}
-					Сужает интерфейс с краев, как в версии 2.8.2, фокусируя внимание на центре экрана (автоматически включается в базовом режиме).
+					{m.settings_compact_description()}
 				{/if}
 			</span>
 		</div>
@@ -235,9 +242,9 @@
 	{#if dashboardRowVisible}
 	<div class="setting-row dashboard-mode-row">
 		<div class="flex flex-col gap-1">
-			<span class="font-medium">Режим дашборда</span>
+			<span class="font-medium">{m.settings_dashboard_title()}</span>
 			<span class="setting-description">
-				Объединяет AWG, Sing-box и подписки на одной странице с общей панелью поиска и создания.
+				{m.settings_dashboard_description()}
 			</span>
 		</div>
 		<Toggle
@@ -248,9 +255,9 @@
 	{/if}
 	<div class="setting-row summary-row">
 		<div class="flex flex-col gap-1">
-			<span class="font-medium">Отображать summary</span>
+			<span class="font-medium">{m.settings_summary_title()}</span>
 			<span class="setting-description">
-				Плашка статистики (KPI) наверху страниц туннелей и серверов.
+				{m.settings_summary_description()}
 			</span>
 		</div>
 		<Toggle
@@ -260,9 +267,9 @@
 	</div>
 	<div class="setting-row letter-icons-row">
 		<div class="flex flex-col gap-1">
-			<span class="font-medium">Буквенные иконки</span>
+			<span class="font-medium">{m.settings_letter_icons_title()}</span>
 			<span class="setting-description">
-				Цветная плитка с первой буквой названия для списков маршрутизации (если не был найден логотип). 
+				{m.settings_letter_icons_description()}
 			</span>
 		</div>
 		<Toggle
