@@ -130,6 +130,11 @@ type InterfaceStore struct {
 	// начала запроса: хук новее ответа. Всё читается и пишется под mu.
 	seq     uint64
 	touched map[string]uint64
+	// exist — метка существования по id: последний хук ifcreated/ifdestroyed,
+	// наш Forget или вход ConfirmCreated. В решении не участвует — только
+	// говорит, что ответ списка, начатого раньше метки, надо перечитать
+	// (contradictsLocked).
+	exist   map[string]existMark
 	pending map[string]struct{}
 	// tombs — надгробия снятых id (Forget/ifdestroyed): номер последнего
 	// начатого на момент сноса списка (flights). Поздний layer/ip-хук по такому
@@ -153,8 +158,7 @@ type InterfaceStore struct {
 	flights uint64
 	// applied — последний применённый ответ как есть (только чтение; nil — ни
 	// одного): ответ, начатый раньше него (no меньше), карту не трогает.
-	// Confirm* подтверждают и по нему, если свой ответ вытеснен
-	// (confirmedFreshLocked, F575).
+	// Confirm* решают по нему, если свой ответ вытеснен (decideLocked, П12).
 	applied *listAnswer
 
 	// awaiting — ConfirmCreated в ожидании записи по имени (F584); будят
@@ -172,9 +176,8 @@ type createdWait struct {
 	after uint64        // полёты с номером больше начаты после вызова
 	ch    chan struct{} // закрывает fire: список с записью или снос имени
 	fired bool
-	// listed/rec — запись из списка, начатого после вызова.
+	// listed — запись есть в списке, начатом после вызова.
 	listed bool
-	rec    ndms.Interface
 	// traced — NDMS знает запись: по имени пришёл хук создания или слоя
 	// (или имя уже ждало в pending). Без следа сносить нельзя — `no interface`
 	// по отсутствующему пишет E в журнал ndm (стенд 5.01.C.6).
@@ -218,6 +221,7 @@ func NewInterfaceStore(g Getter, log Logger) *InterfaceStore {
 		startedAt: make(map[string]time.Time),
 		sysNames:  make(map[string]string),
 		touched:   make(map[string]uint64),
+		exist:     make(map[string]existMark),
 		pending:   make(map[string]struct{}),
 		tombs:     make(map[string]uint64),
 		raw:       make(map[string]json.RawMessage),
@@ -377,11 +381,10 @@ func (s *InterfaceStore) tombLocked(id string) {
 // ответе полёта no, начатого после вызова.
 func (s *InterfaceStore) wakeCreatedLocked(recs map[string]ndms.Interface, no uint64) {
 	for name, w := range s.awaiting {
-		rec, ok := recs[name]
-		if !ok || no <= w.after || w.listed {
+		if _, ok := recs[name]; !ok || no <= w.after || w.listed {
 			continue
 		}
-		w.listed, w.rec = true, rec
+		w.listed = true
 		w.fire()
 	}
 }
@@ -489,6 +492,18 @@ func mergeHookOwned(list ndms.Interface, cur *ndms.Interface) ndms.Interface {
 func (s *InterfaceStore) markTouchedLocked(id string) {
 	s.seq++
 	s.touched[id] = s.seq
+}
+
+// existMark — seq метки существования и её знак (gone — снят).
+type existMark struct {
+	seq  uint64
+	gone bool
+}
+
+// markExistLocked ставит метку существования id сейчас; «грязно» не ставит.
+func (s *InterfaceStore) markExistLocked(id string, gone bool) {
+	s.seq++
+	s.exist[id] = existMark{seq: s.seq, gone: gone}
 }
 
 // === Read paths ===
@@ -1132,6 +1147,7 @@ func (s *InterfaceStore) OnCreated(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.markTouchedLocked(id)
+	s.markExistLocked(id, false)
 	s.traceCreatedLocked(id)
 	delete(s.tombs, id) // создан заново
 	if _, known := s.byID[id]; known {
@@ -1153,6 +1169,7 @@ func (s *InterfaceStore) Forget(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.markTouchedLocked(id)
+	s.markExistLocked(id, true)
 	if w, ok := s.awaiting[id]; ok {
 		w.removed = true
 		w.fire()
@@ -1380,9 +1397,9 @@ const actionListMaxAge = SnapshotRecent
 // WithActionList — ctx одного действия (событие оркестратора, правка туннеля,
 // замена конфига): Confirm и ConfirmEach с ним читают полный список один раз
 // на всё действие, а не на каждое подтверждение (F557). Доказательство то же —
-// запись в списке, прочитанном в этом действии, поверх него применённый новее
-// список и хуки (confirmedFreshLocked): снятое после списка хуком, Forget или
-// новым списком не подтверждается. Между действиями — заново: ctx действия
+// запись в списке, прочитанном в этом действии, или в применённом новее
+// (decideLocked); метка существования новее списка действия противоречит ему —
+// повторный список становится списком действия (П4). Между действиями — заново: ctx действия
 // живёт, пока оно идёт. Уже несущий список ctx возвращается как есть —
 // вложенный вызов часть того же действия. ConfirmCreated и FreeIndex списком
 // действия не пользуются: им нужен список, начатый после их вызова.
@@ -1417,30 +1434,82 @@ func (s *InterfaceStore) confirmList(ctx context.Context) (*listAnswer, error) {
 	return al.ans, nil
 }
 
+// rereadList — повторный список при противоречии (П4). В ctx действия он
+// становится списком действия вместе с моментом своего запроса: возраст
+// следующих подтверждений действия отсчитывается от него.
+func (s *InterfaceStore) rereadList(ctx context.Context) (*listAnswer, error) {
+	al, _ := ctx.Value(actionListKey{}).(*actionList)
+	if al == nil {
+		return s.refreshList(ctx, nil)
+	}
+	al.mu.Lock()
+	defer al.mu.Unlock()
+	at := s.now()
+	ans, err := s.refreshList(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	al.ans, al.at = ans, at
+	return ans, nil
+}
+
 // Confirm читает ОДИН полный список (кладёт его в карту) и подтверждает name
-// по нему или по вытеснившему его применённому (confirmedFreshLocked). Список не прочитан — ошибка: присутствие из кэша подтверждением
-// не считается (F546). Запись — копия. В ctx действия (WithActionList) список
-// один на действие.
+// по самому новому применённому списку (decideLocked). Метка существования
+// новее начала этого списка противоречит ответу — ещё один список, ответ по
+// нему (П4). Список не прочитан — ошибка: присутствие из кэша подтверждением
+// не считается (F546). Запись — копия из ответа. В ctx действия
+// (WithActionList) список один на действие.
 func (s *InterfaceStore) Confirm(ctx context.Context, name string) (Confirmed, *ndms.Interface, bool, error) {
 	if name == "" {
 		return Confirmed{}, nil, false, errors.New("confirm: пустое имя интерфейса")
 	}
 	ans, err := s.confirmList(ctx)
-	return s.confirmIn(ans, err, name)
-}
-
-// confirmIn — Confirm по ответу списка ans (err — ошибка его чтения).
-func (s *InterfaceStore) confirmIn(ans *listAnswer, err error, name string) (Confirmed, *ndms.Interface, bool, error) {
 	if err != nil {
 		return Confirmed{}, nil, false, fmt.Errorf("confirm %s: %w", name, err)
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	rec, ok := s.confirmedFreshLocked(ans.recs, name)
+	rec, ok, err := s.confirmOne(ctx, ans, name, s.rereadList)
+	if err != nil {
+		return Confirmed{}, nil, false, fmt.Errorf("confirm %s: %w", name, err)
+	}
 	if !ok {
 		return Confirmed{}, nil, false, nil
 	}
 	return Confirmed{name: name}, rec, true, nil
+}
+
+// confirmOne — решение по ans; противоречие — один повторный список reread и
+// решение по нему без оговорок (П4).
+func (s *InterfaceStore) confirmOne(ctx context.Context, ans *listAnswer, name string, reread func(context.Context) (*listAnswer, error)) (*ndms.Interface, bool, error) {
+	if !s.anyContradicts(ans, "confirm", []string{name}) {
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		rec, ok, _ := s.decideLocked(ans, name)
+		return rec, ok, nil
+	}
+	ans, err := reread(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rec, ok, _ := s.decideLocked(ans, name)
+	return rec, ok, nil
+}
+
+// anyContradicts — решение по ans хотя бы для одного из names противоречит
+// метке существования (contradictsLocked); первое такое — в Debug.
+func (s *InterfaceStore) anyContradicts(ans *listAnswer, op string, names []string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, n := range names {
+		_, in, start := s.decideLocked(ans, n)
+		if s.contradictsLocked(n, in, start) {
+			m := s.exist[n]
+			s.log.Debugf("%s %s: reread list#%d start=%d exist={%d,%v}", op, n, s.srcLocked(ans).no, start, m.seq, m.gone)
+			return true
+		}
+	}
+	return false
 }
 
 // ErrNotListed — NDMS принял создание, по имени пришёл хук (запись NDMS
@@ -1470,6 +1539,7 @@ func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string) (Confi
 		return Confirmed{}, errors.New("confirm: пустое имя интерфейса")
 	}
 	s.mu.Lock()
+	s.markExistLocked(name, false) // П4: NDMS ответил «создано»
 	w := &createdWait{after: s.flights, ch: make(chan struct{})}
 	// Хук мог прийти, пока шёл POST создания: имя ждёт в pending (снос его
 	// оттуда убирает) — это тоже след.
@@ -1492,14 +1562,19 @@ func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string) (Confi
 	}
 	wake := w.ch
 	for i := 0; ; i++ {
-		// Свой список, не список действия: запись новее него.
+		// Свой список, не список действия: запись новее него. По противоречию
+		// не перечитываем (R53): своя метка gone=false при имени вне ответа —
+		// штатная задержка F584, её обслуживают wake и паузы; gone=true уходит
+		// в removed. Повтор здесь — в 51b вместе с creating (M3′).
 		ans, err := s.refreshList(ctx, nil)
-		c, _, ok, err := s.confirmIn(ans, err, name)
 		if err != nil {
-			return Confirmed{}, err
+			return Confirmed{}, fmt.Errorf("confirm %s: %w", name, err)
 		}
+		s.mu.RLock()
+		_, ok, _ := s.decideLocked(ans, name)
+		s.mu.RUnlock()
 		if ok {
-			return c, nil
+			return Confirmed{name: name}, nil
 		}
 		removed, traced := state()
 		switch {
@@ -1516,9 +1591,10 @@ func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string) (Confi
 		case <-wake:
 			t.Stop()
 			wake = nil // будит один раз; дальше — паузы
+			// Разбудивший список применён и новее своего ответа — решает он.
 			s.mu.RLock()
 			removed, listed := w.removed, w.listed
-			_, ok := s.confirmedLocked(map[string]ndms.Interface{name: w.rec}, name)
+			_, ok, _ := s.decideLocked(ans, name)
 			s.mu.RUnlock()
 			if removed {
 				return Confirmed{}, fmt.Errorf("%w: %s", ErrCreatedThenRemoved, name)
@@ -1534,42 +1610,65 @@ func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string) (Confi
 	}
 }
 
-// ConfirmEach — Confirm для нескольких имён по одному чтению списка (и
-// применённому, см. confirmedFreshLocked). В ответе только подтверждённые.
-// В ctx действия (WithActionList) — по списку действия.
+// ConfirmEach — Confirm для нескольких имён по одному чтению списка (решение
+// по самому новому применённому, decideLocked). Противоречие хотя бы по
+// одному имени — один общий повторный список, решение по нему для всех. В
+// ответе только подтверждённые. В ctx действия (WithActionList) — по списку
+// действия.
 func (s *InterfaceStore) ConfirmEach(ctx context.Context, names []string) (map[string]Confirmed, error) {
 	ans, err := s.confirmList(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("confirm: %w", err)
 	}
+	if s.anyContradicts(ans, "confirm-each", names) {
+		if ans, err = s.rereadList(ctx); err != nil {
+			return nil, fmt.Errorf("confirm: %w", err)
+		}
+	}
 	out := make(map[string]Confirmed, len(names))
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, n := range names {
-		if _, ok := s.confirmedFreshLocked(ans.recs, n); ok {
+		if _, ok, _ := s.decideLocked(ans, n); ok {
 			out[n] = Confirmed{name: n}
 		}
 	}
 	return out, nil
 }
 
-// ConfirmAll — Confirm для каждой записи свежего списка (своего ответа и
-// применённого, см. confirmedFreshLocked): кандидаты и доказательство из
-// одного чтения (проверка занятости сетей по всем серверам).
+// ConfirmAll — Confirm для каждой записи самого нового применённого списка
+// (decideLocked): кандидаты и доказательство из одного чтения (проверка
+// занятости сетей по всем серверам). Кандидаты — и id с меткой существования
+// новее начала списка: противоречие по любому — один повторный список,
+// подтверждено всё, что в нём.
 func (s *InterfaceStore) ConfirmAll(ctx context.Context) (map[string]Confirmed, error) {
 	ans, err := s.refreshList(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("confirm: %w", err)
 	}
-	out := make(map[string]Confirmed, len(ans.recs))
+	s.mu.RLock()
+	src := s.srcLocked(ans)
+	names := make([]string, 0, len(src.recs))
+	for n := range src.recs {
+		names = append(names, n)
+	}
+	for n, m := range s.exist {
+		if _, in := src.recs[n]; !in && m.seq > src.start {
+			names = append(names, n)
+		}
+	}
+	s.mu.RUnlock()
+	if s.anyContradicts(ans, "confirm-all", names) {
+		if ans, err = s.refreshList(ctx, nil); err != nil {
+			return nil, fmt.Errorf("confirm: %w", err)
+		}
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for _, list := range []map[string]ndms.Interface{ans.recs, s.appliedRecsLocked()} {
-		for n := range list {
-			if _, ok := s.confirmedFreshLocked(ans.recs, n); ok {
-				out[n] = Confirmed{name: n}
-			}
-		}
+	src = s.srcLocked(ans)
+	out := make(map[string]Confirmed, len(src.recs))
+	for n := range src.recs {
+		out[n] = Confirmed{name: n}
 	}
 	return out, nil
 }
@@ -1578,15 +1677,13 @@ func (s *InterfaceStore) ConfirmAll(ctx context.Context) (map[string]Confirmed, 
 // СВОЁМ свежем полном списке, ни в памяти (хуки создания новее списка), ни
 // среди ждущих ConfirmCreated, и N не в reserved (F574). Память одна не
 // решает: под нагрузкой ifcreated опаздывает до ~7 с, и чужой только что
-// созданный WireguardN/ProxyN был бы выбран нами. Список не прочитан — ошибка
-// (решение 4). ok=false — все N заняты. Запись, которую NDMS уже знает, но
-// ещё не показал ни списком, ни хуком, отсюда не видна: её ловит ответ на
-// создание (command.PostCreate).
+// созданный WireguardN/ProxyN был бы выбран нами. Метка существования имени
+// с prefix новее начала списка противоречит ему — один повторный список, выбор
+// заново по нему (П4). Список не прочитан — ошибка (решение 4). ok=false — все
+// N заняты. Запись, которую NDMS уже знает, но ещё не показал ни списком, ни
+// хуком, отсюда не видна: её ловит ответ на создание (command.PostCreate).
 func (s *InterfaceStore) FreeIndex(ctx context.Context, prefix string, limit int, reserved map[int]bool) (idx int, ok bool, err error) {
 	used := make(map[int]bool, len(reserved))
-	for n := range reserved {
-		used[n] = true
-	}
 	mark := func(name string) {
 		if rest, found := strings.CutPrefix(name, prefix); found {
 			if n, err := strconv.Atoi(rest); err == nil {
@@ -1609,15 +1706,39 @@ func (s *InterfaceStore) FreeIndex(ctx context.Context, prefix string, limit int
 			mark(n)
 		}
 	}
-	memory()
-	ans, err := s.refreshList(ctx, nil)
+	pick := func() (*listAnswer, error) {
+		clear(used)
+		for n := range reserved {
+			used[n] = true
+		}
+		memory()
+		ans, err := s.refreshList(ctx, nil)
+		if err != nil {
+			return nil, fmt.Errorf("list interfaces: %w", err)
+		}
+		for n := range ans.recs {
+			mark(n)
+		}
+		memory()
+		return ans, nil
+	}
+	ans, err := pick()
 	if err != nil {
-		return 0, false, fmt.Errorf("list interfaces: %w", err)
+		return 0, false, err
 	}
-	for n := range ans.recs {
-		mark(n)
+	s.mu.RLock()
+	var names []string
+	for n := range s.exist {
+		if strings.HasPrefix(n, prefix) {
+			names = append(names, n)
+		}
 	}
-	memory()
+	s.mu.RUnlock()
+	if s.anyContradicts(ans, "free-index", names) {
+		if _, err := pick(); err != nil {
+			return 0, false, err
+		}
+	}
 	for i := 0; i < limit; i++ {
 		if !used[i] {
 			return i, true, nil
@@ -1626,41 +1747,36 @@ func (s *InterfaceStore) FreeIndex(ctx context.Context, prefix string, limit int
 	return 0, false, nil
 }
 
-// confirmedFreshLocked — confirmedLocked по своему ответу raw, затем по
-// последнему применённому списку (applied). Свежий — и тот и другой: после
-// успешного своего списка applied.no не меньше его номера, то есть применённый
-// начат не раньше своего — тоже после вызова. Свой ответ, вытесненный более
-// новым (списком ReconcilePending по хуку создания), не знает только что
-// созданную запись, а применённый знает (F575). Снятая хуком после любого из
-// списков не подтверждается (confirmedLocked); известная только по хуку, без
-// списка, — тоже.
-func (s *InterfaceStore) confirmedFreshLocked(raw map[string]ndms.Interface, name string) (*ndms.Interface, bool) {
-	if rec, ok := s.confirmedLocked(raw, name); ok {
-		return rec, true
+// srcLocked — самый новый из своего ответа ans и применённого (П12): после
+// успешного своего списка applied.no не меньше его номера, так что и тот и
+// другой начаты после вызова.
+func (s *InterfaceStore) srcLocked(ans *listAnswer) *listAnswer {
+	if s.applied != nil && s.applied.no > ans.no {
+		return s.applied
 	}
-	return s.confirmedLocked(s.appliedRecsLocked(), name)
+	return ans
 }
 
-// confirmedLocked — копия записи, если name есть в свежем ответе raw и не
-// снята хуком после него. В карте запись новее ответа (хуки её правят); нет в
-// карте, но в pending — хук по ней (ifcreated, layer, ip) пришёл, пока список
-// в полёте: карта её ещё не взяла, берём из ответа. Нет ни там, ни там —
-// ifdestroyed новее ответа.
-// Имени нет в ответе — не подтверждено, даже если оно в карте или в pending:
-// доказательство — только свежий список.
-func (s *InterfaceStore) confirmedLocked(raw map[string]ndms.Interface, name string) (*ndms.Interface, bool) {
-	fresh, inList := raw[name]
-	if !inList {
-		return nil, false
+// decideLocked — есть ли name в самом новом применённом списке (srcLocked) —
+// в обе стороны: вытеснивший свой ответ список решает и присутствие (F575:
+// только что созданная запись), и отсутствие (H2: снятая мимо хука). Карта и
+// хуки не участвуют. rec — копия записи из ответа; start — начало решившего
+// списка, для contradictsLocked.
+func (s *InterfaceStore) decideLocked(ans *listAnswer, name string) (*ndms.Interface, bool, uint64) {
+	src := s.srcLocked(ans)
+	rec, ok := src.recs[name]
+	if !ok {
+		return nil, false, src.start
 	}
-	if rec, ok := s.byID[name]; ok {
-		cp := *rec
-		return &cp, true
-	}
-	if _, ok := s.pending[name]; ok {
-		return &fresh, true
-	}
-	return nil, false
+	return &rec, true, src.start
+}
+
+// contradictsLocked — метка существования name новее начала решившего списка
+// (start) и говорит обратное его ответу inList: хук или наш снос пришёл, пока
+// список был в полёте (П4). Хук сам ничего не решает — только просит перечитать.
+func (s *InterfaceStore) contradictsLocked(name string, inList bool, start uint64) bool {
+	m, ok := s.exist[name]
+	return ok && m.seq > start && m.gone == inList
 }
 
 // ErrGone — записи нет, и по этому имени NDMS не спрашивают (F546): её нет в

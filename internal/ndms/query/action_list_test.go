@@ -99,22 +99,29 @@ func TestActionList_ConcurrentConfirmsOneList(t *testing.T) {
 	}
 }
 
-// Список действия не подтверждает снятое после него: хуком ifdestroyed,
-// нашим Forget и новым применённым списком без записи.
+// Хук существования после списка действия противоречит ему — один повторный
+// список (он становится списком действия), решение по нему: настоящее
+// снятие и свой Forget (П7) — не подтверждено; устаревший ifdestroyed живого
+// X — подтверждено, и повторный список кладёт X обратно в карту.
+// Мутация: убрать перечитывание → ListCalls +0, снятое подтверждено.
 func TestActionList_RemovedAfterListNotConfirmed(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		remove func(f *FakeNDMS, s *InterfaceStore)
+		want   bool
 	}{
-		{"ifdestroyed", func(_ *FakeNDMS, s *InterfaceStore) { s.OnDestroyed("Wireguard1") }},
-		{"Forget", func(_ *FakeNDMS, s *InterfaceStore) { s.Forget("Wireguard1") }},
-		{"newer list", func(f *FakeNDMS, s *InterfaceStore) {
+		{"real removal", func(f *FakeNDMS, s *InterfaceStore) {
 			f.Remove("Wireguard1")
-			_ = f.DrainHooks() // хук не доставлен — снятие видит только список
-			if err := s.Refresh(context.Background()); err != nil {
-				panic(err)
+			for _, h := range f.HooksFor("Wireguard1") {
+				s.OnDestroyed(h.ID)
 			}
-		}},
+		}, false},
+		{"stale ifdestroyed", func(_ *FakeNDMS, s *InterfaceStore) { s.OnDestroyed("Wireguard1") }, true},
+		{"own Forget", func(f *FakeNDMS, s *InterfaceStore) {
+			f.Remove("Wireguard1")
+			_ = f.DrainHooks()
+			s.Forget("Wireguard1")
+		}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, s := actionStore(t)
@@ -123,13 +130,61 @@ func TestActionList_RemovedAfterListNotConfirmed(t *testing.T) {
 				t.Fatalf("ok=%v err=%v", ok, err)
 			}
 			tc.remove(f, s)
-			if _, _, ok, err := s.Confirm(ctx, "Wireguard1"); err != nil || ok {
-				t.Fatalf("снятое после списка подтверждено: ok=%v err=%v", ok, err)
+			lists := f.ListCalls()
+			if _, _, ok, err := s.Confirm(ctx, "Wireguard1"); err != nil || ok != tc.want {
+				t.Fatalf("ok=%v want %v err=%v", ok, tc.want, err)
 			}
-			if got, err := s.ConfirmEach(ctx, []string{"Wireguard1"}); err != nil || len(got) != 0 {
+			if got := f.ListCalls() - lists; got != 1 {
+				t.Fatalf("%d списков, want 1 повтор", got)
+			}
+			got, err := s.ConfirmEach(ctx, []string{"Wireguard1"})
+			if _, ok := got["Wireguard1"]; err != nil || ok != tc.want {
 				t.Fatalf("ConfirmEach: got=%v err=%v", got, err)
 			}
+			if n := f.ListCalls() - lists; n != 1 {
+				t.Fatalf("ConfirmEach по повторному списку действия: %d списков, want 1", n)
+			}
+			if rec, _ := s.Get(ctx, "Wireguard1"); (rec != nil) != tc.want {
+				t.Fatalf("карта после повтора: %#v", rec)
+			}
+			if noIfacePosts(f) != 0 || f.E != 0 {
+				t.Fatalf("posts=%v E=%d", f.Posts, f.E)
+			}
 		})
+	}
+}
+
+// M4′: повторный список заменяет список действия вместе с моментом его
+// запроса — следующее подтверждение отсчитывает возраст от повтора.
+// Мутация: не заменять al.at → возраст 2,5 с > actionListMaxAge, +1 список.
+func TestConfirm_ActionList_RereadReplacesActionList(t *testing.T) {
+	f, s := actionStore(t)
+	now := time.Unix(1000, 0)
+	var mu sync.Mutex
+	s.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	set := func(d time.Duration) { mu.Lock(); now = time.Unix(1000, 0).Add(d); mu.Unlock() }
+	ctx := WithActionList(context.Background())
+	if _, _, ok, err := s.Confirm(ctx, "Wireguard0"); err != nil || !ok { // al.at = t0
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	set(time.Second)
+	f.Remove("Wireguard1")
+	for _, h := range f.HooksFor("Wireguard1") {
+		s.OnDestroyed(h.ID)
+	}
+	lists := f.ListCalls()
+	if _, _, ok, err := s.Confirm(ctx, "Wireguard1"); err != nil || ok { // повтор: al.at = t0+1 с
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if got := f.ListCalls() - lists; got != 1 {
+		t.Fatalf("%d списков, want 1 повтор", got)
+	}
+	set(2500 * time.Millisecond)
+	if _, _, ok, err := s.Confirm(ctx, "Wireguard0"); err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if got := f.ListCalls() - lists; got != 1 {
+		t.Fatalf("список действия моложе 2 с не переиспользован: %d списков, want 1", got)
 	}
 }
 

@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -116,23 +117,196 @@ func TestConfirm_CreatedHookDuringList_Confirms(t *testing.T) {
 	}
 }
 
-// Список ушёл до сноса, ответ пришёл после ifdestroyed: имя в ответе есть,
-// но хук новее — подтверждения нет.
-func TestConfirm_DestroyedHookDuringList_NotConfirmed(t *testing.T) {
+// noIfacePosts — сколько `no interface` послано в оракул.
+func noIfacePosts(f *FakeNDMS) int {
+	n := 0
+	for _, p := range f.Posts {
+		if strings.Contains(p, `"no":true`) {
+			n++
+		}
+	}
+	return n
+}
+
+// warmStore — стор на f после бутстрапа.
+func warmStore(t *testing.T, f *FakeNDMS) *InterfaceStore {
+	t.Helper()
+	s := NewInterfaceStore(f, NopLogger())
+	if _, err := s.Get(context.Background(), "Wireguard0"); err != nil { // bootstrap
+		t.Fatal(err)
+	}
+	return s
+}
+
+// S7: X снят по-настоящему, пока список в полёте: ответ с X противоречит
+// ifdestroyed новее его начала — один повторный список, X в нём нет.
+// Мутация: убрать перечитывание → ok=true, ListCalls +1.
+func TestConfirm_RealRemovalDuringList_RereadsNotConfirmed(t *testing.T) {
 	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
-	_, _, ok := confirmInFlight(t, f, "Wireguard0", func() {}, func(s *InterfaceStore) { s.OnDestroyed("Wireguard0") })
-	if ok {
-		t.Fatal("destroyed after the list was sent must not be confirmed")
+	s := warmStore(t, f)
+	f.InList(func() {
+		f.InList(nil)
+		f.Remove("Wireguard0")
+		for _, h := range f.HooksFor("Wireguard0") {
+			s.OnDestroyed(h.ID)
+		}
+	})
+	lists := f.ListCalls()
+	_, rec, ok, err := s.Confirm(context.Background(), "Wireguard0")
+	if err != nil || ok || rec != nil {
+		t.Fatalf("снятое во время списка подтверждено: ok=%v rec=%#v err=%v", ok, rec, err)
+	}
+	if got := f.ListCalls() - lists; got != 2 {
+		t.Fatalf("%d списков, want 2 (свой + повтор)", got)
+	}
+	if noIfacePosts(f) != 0 || f.E != 0 {
+		t.Fatalf("posts=%v E=%d", f.Posts, f.E)
 	}
 }
 
-// ifcreated пришёл, пока список в полёте, но в ответе имени нет (создан после
-// ответа): свежий список его не доказывает — не подтверждено.
+// ifcreated пришёл, пока список в полёте, а в ответе имени нет: противоречие —
+// повторный список; записи нет и в нём — не подтверждено.
+// Мутация: убрать перечитывание → ListCalls +1.
 func TestConfirm_CreatedHookNotInList_NotConfirmed(t *testing.T) {
 	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
-	_, rec, ok := confirmInFlight(t, f, "Wireguard3", func() {}, func(s *InterfaceStore) { s.OnCreated("Wireguard3") })
-	if ok || rec != nil {
-		t.Fatalf("name absent from the list must not be confirmed: ok=%v rec=%#v", ok, rec)
+	s := warmStore(t, f)
+	f.InList(func() {
+		f.InList(nil)
+		s.OnCreated("Wireguard3")
+	})
+	lists := f.ListCalls()
+	_, rec, ok, err := s.Confirm(context.Background(), "Wireguard3")
+	if err != nil || ok || rec != nil {
+		t.Fatalf("name absent from the list must not be confirmed: ok=%v rec=%#v err=%v", ok, rec, err)
+	}
+	if got := f.ListCalls() - lists; got != 2 {
+		t.Fatalf("%d списков, want 2 (свой + повтор)", got)
+	}
+}
+
+// 2.1: X снят и создан заново (чужой цикл, переиспользованное имя), хуки не
+// доставлены; ifdestroyed ПРЕЖНЕГО X приходит, пока список в полёте. Ответ с X
+// противоречит хуку — повтор; X в нём есть — подтверждено.
+// Мутации: убрать перечитывание → ListCalls +1; решение по карте (HEAD
+// confirmedLocked: Forget снёс X из byID) → ok=false.
+func TestConfirm_StaleDestroyedDuringList_Confirms(t *testing.T) {
+	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
+	s := warmStore(t, f)
+	f.Remove("Wireguard0")
+	f.Add(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"}) // без дренажа: старый ifdestroyed первым
+	f.InList(func() {
+		f.InList(nil)
+		hooks := f.HooksFor("Wireguard0")
+		if len(hooks) == 0 || hooks[0].Type != "ifdestroyed" {
+			t.Errorf("hooks: %+v", hooks)
+			return
+		}
+		s.OnDestroyed(hooks[0].ID)
+	})
+	lists := f.ListCalls()
+	c, rec, ok, err := s.Confirm(context.Background(), "Wireguard0")
+	if err != nil || !ok || c.Name() != "Wireguard0" || rec == nil {
+		t.Fatalf("живой X не подтверждён: ok=%v rec=%#v err=%v", ok, rec, err)
+	}
+	if got := f.ListCalls() - lists; got != 2 {
+		t.Fatalf("%d списков, want 2 (свой + повтор)", got)
+	}
+	if f.E != 0 {
+		t.Fatalf("E=%d", f.E)
+	}
+}
+
+// S14: свой ifcreated в полёте списка, X в ответе — противоречия нет, повтора
+// нет. Мутация: перечитывать безусловно → ListCalls +2.
+func TestConfirm_OwnCreatedDuringList_NoReread(t *testing.T) {
+	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
+	s := warmStore(t, f)
+	f.Add(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"})
+	_ = f.DrainHooks()
+	f.InList(func() {
+		f.InList(nil)
+		s.OnCreated("Wireguard3")
+	})
+	lists := f.ListCalls()
+	if _, _, ok, err := s.Confirm(context.Background(), "Wireguard3"); err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if got := f.ListCalls() - lists; got != 1 {
+		t.Fatalf("%d списков, want 1", got)
+	}
+}
+
+// H2 (П12): в списке действия X есть, в более новом применённом (хук не
+// доставлен) — нет. Решает самый новый и «в минус»: не подтверждено, без
+// списка. Мутация: применённый только «в плюс» → ok=true.
+func TestConfirm_ActionList_NewerAppliedLacksName_NotConfirmed(t *testing.T) {
+	f, s := actionStore(t)
+	ctx := WithActionList(context.Background())
+	if _, _, ok, err := s.Confirm(ctx, "Wireguard0"); err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	f.Remove("Wireguard1")
+	_ = f.DrainHooks() // хук не доставлен
+	if err := s.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	lists := f.ListCalls()
+	if _, rec, ok, err := s.Confirm(ctx, "Wireguard1"); err != nil || ok || rec != nil {
+		t.Fatalf("снятое по новому списку подтверждено: ok=%v rec=%#v err=%v", ok, rec, err)
+	}
+	if got := f.ListCalls() - lists; got != 0 {
+		t.Fatalf("%d списков, want 0", got)
+	}
+	if noIfacePosts(f) != 0 || f.E != 0 {
+		t.Fatalf("posts=%v E=%d", f.Posts, f.E)
+	}
+}
+
+// Противоречие хотя бы по одному имени — один общий повтор, решение по нему:
+// W1 снят по-настоящему, по W2 — устаревший ifdestroyed (W2 жив).
+// Мутация: убрать перечитывание → W1 подтверждён, ListCalls +1.
+func TestConfirmEach_OneContradiction_OneReread(t *testing.T) {
+	f, s := actionStore(t)
+	f.InList(func() {
+		f.InList(nil)
+		f.Remove("Wireguard1")
+		for _, h := range f.HooksFor("Wireguard1") {
+			s.OnDestroyed(h.ID)
+		}
+		s.OnDestroyed("Wireguard2")
+	})
+	lists := f.ListCalls()
+	got, err := s.ConfirmEach(context.Background(), []string{"Wireguard0", "Wireguard1", "Wireguard2"})
+	if err != nil || len(got) != 2 || got["Wireguard0"].Name() != "Wireguard0" || got["Wireguard2"].Name() != "Wireguard2" {
+		t.Fatalf("got=%v err=%v", got, err)
+	}
+	if n := f.ListCalls() - lists; n != 2 {
+		t.Fatalf("%d списков, want 2 (свой + один общий повтор)", n)
+	}
+}
+
+// Чужое создание Y в полёте списка ConfirmAll: Y — кандидат по метке, ответ
+// без Y ей противоречит — повтор, Y подтверждён.
+// Мутация: убрать повтор → Y нет.
+func TestConfirmAll_CreatedDuringFlight_Reread(t *testing.T) {
+	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
+	s := warmStore(t, f)
+	f.InList(func() {
+		f.InList(nil)
+		f.Add(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"})
+		for _, h := range f.HooksFor("Wireguard3") {
+			if h.Type == "ifcreated" {
+				s.OnCreated(h.ID)
+			}
+		}
+	})
+	lists := f.ListCalls()
+	got, err := s.ConfirmAll(context.Background())
+	if err != nil || len(got) != 2 || got["Wireguard3"].Name() != "Wireguard3" {
+		t.Fatalf("got=%v err=%v", got, err)
+	}
+	if n := f.ListCalls() - lists; n != 2 {
+		t.Fatalf("%d списков, want 2", n)
 	}
 }
 

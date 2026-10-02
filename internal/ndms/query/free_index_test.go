@@ -63,3 +63,28 @@ func TestFreeIndex_Full(t *testing.T) {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
 }
+
+// S8b: чужой Wireguard1 создан, пока список FreeIndex в полёте, ifcreated
+// доставлен там же: метка новее начала списка противоречит ответу без него —
+// повтор, индекс 1 занят. Мутация: убрать перечитывание → ListCalls +1
+// (индекс 1 до 51c держит ещё и pending).
+func TestFreeIndex_ForeignCreatedInFlight_Reread(t *testing.T) {
+	f, s := freeIndexStore(t)
+	f.InList(func() {
+		f.InList(nil)
+		f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
+		for _, h := range f.HooksFor("Wireguard1") {
+			if h.Type == "ifcreated" {
+				s.OnCreated(h.ID)
+			}
+		}
+	})
+	lists := f.ListCalls()
+	idx, ok, err := s.FreeIndex(context.Background(), "Wireguard", 100, nil)
+	if err != nil || !ok || idx != 2 {
+		t.Fatalf("idx=%d ok=%v err=%v, want 2", idx, ok, err)
+	}
+	if got := f.ListCalls() - lists; got != 2 {
+		t.Fatalf("%d списков, want 2", got)
+	}
+}
