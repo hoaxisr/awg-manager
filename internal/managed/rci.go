@@ -72,8 +72,8 @@ func (s *Service) rciAfter() []func() {
 // запись (имя занято чужой, ещё не видимой) — command.ErrNotCreated без
 // настроек и сноса (F574); existingOK — restore осознанно берёт живой сервер
 // того же ключа. owned — откат вправе снести интерфейс: создан этой командой
-// (ответ NDMS), а на прошивке без проверяемого ответа — если не взят как
-// существующий (M3: снос сервера, жившего до restore, унёс бы его пиров).
+// (ответ NDMS «created»); взятый как существующий — нет (M3: снос сервера,
+// жившего до restore, унёс бы его пиров).
 func (s *Service) rciCreateInterface(ctx context.Context, name string, existingOK bool) (c query.Confirmed, owned bool, err error) {
 	if s.queries == nil || s.queries.Interfaces == nil {
 		return query.Confirmed{}, false, fmt.Errorf("interface store not wired")
@@ -88,7 +88,7 @@ func (s *Service) rciCreateInterface(ctx context.Context, name string, existingO
 		s.appLog.Warn("create", name, "интерфейс не создан или не подтверждён списком: "+err.Error())
 		return query.Confirmed{}, false, err
 	}
-	owned = reply == command.CreateNew || (reply == command.CreateLegacy && !existingOK)
+	owned = reply.Proven()
 	return c, owned, nil
 }
 

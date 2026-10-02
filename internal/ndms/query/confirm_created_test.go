@@ -94,9 +94,9 @@ func TestConfirmCreated_NeverListed_ErrNotListed(t *testing.T) {
 	}
 }
 
-// Создание не доказано (<5.01, CreateLegacy), записи в списках нет — ErrNotSeen:
-// знает ли NDMS запись, неизвестно.
-func TestConfirmCreated_LegacyNeverListed_ErrNotSeen(t *testing.T) {
+// Создание не доказано (ответ без «created»: запись уже была), записи в
+// списках нет — ErrNotSeen: запись не наша, сносить нельзя.
+func TestConfirmCreated_NotProvenNeverListed_ErrNotSeen(t *testing.T) {
 	f, s := importLate(t, 100, time.Millisecond, time.Millisecond)
 	c, err := s.ConfirmCreated(context.Background(), "Wireguard1", false)
 	if !errors.Is(err, ErrNotSeen) || errors.Is(err, ErrNotListed) || c != (Confirmed{}) {

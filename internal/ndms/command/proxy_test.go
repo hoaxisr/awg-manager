@@ -31,6 +31,7 @@ func newTestProxyCommandsWithGetter() (*ProxyCommands, *fakePoster, *SaveCoordin
 
 func TestProxyCommands_CreateProxy_SOCKS5(t *testing.T) {
 	cmds, poster, _ := newTestProxyCommands(t)
+	poster.SetResponse(`{"status":[{"status":"message","code":"6553601","message":"\"Proxy0\" interface created."}]}`)
 	if _, _, err := cmds.CreateProxy(context.Background(), "Proxy0", "sing-box", "127.0.0.1", 1080, true); err != nil {
 		t.Fatalf("CreateProxy: %v", err)
 	}
@@ -57,6 +58,7 @@ func TestProxyCommands_CreateProxy_SOCKS5(t *testing.T) {
 
 func TestProxyCommands_CreateProxy_NoUDP(t *testing.T) {
 	cmds, poster, _ := newTestProxyCommands(t)
+	poster.SetResponse(`{"status":[{"status":"message","code":"6553601","message":"\"Proxy1\" interface created."}]}`)
 	_, _, _ = cmds.CreateProxy(context.Background(), "Proxy1", "", "127.0.0.1", 1081, false)
 	p := poster.Payloads()[1].(map[string]any)
 	proxy := p["interface"].(map[string]any)["Proxy1"].(map[string]any)["proxy"].(map[string]any)
@@ -188,7 +190,6 @@ func (p rejectProxySettings) Post(ctx context.Context, payload any) (json.RawMes
 // F577 (а): настройка отвергнута — созданная этой командой запись снесена,
 // сироты нет, E == 0, фантомов нет.
 func TestCreateProxy_SettingsRejected_Dropped(t *testing.T) {
-	withFirmware(t, "5.01.C.6.0-0")
 	_, f, q := newOracleCommands(t, nil)
 	f.ExpectCreate("Proxy0")
 	p := rejectProxySettings{FakeNDMS: f}
@@ -206,14 +207,13 @@ func TestCreateProxy_SettingsRejected_Dropped(t *testing.T) {
 // без «created»: ErrNotCreated, единственная команда — голое создание, без
 // настроек и сноса; чужой цел со своим description.
 func TestCreateProxy_HiddenForeign_NoSettingsNoDrop(t *testing.T) {
-	withFirmware(t, "5.01.C.6.0-0")
 	cmds, f, _ := newOracleCommands(t, nil)
 	f.HideCreated(-1)
 	f.Add(ndms.Interface{ID: "Proxy0", Type: "Proxy", Description: "Work"})
 	f.HideCreated(0)
 	posts := len(f.Posts)
 	_, reply, err := cmds.Proxies.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, true)
-	if !errors.Is(err, ErrNotCreated) || reply.Ours() {
+	if !errors.Is(err, ErrNotCreated) || reply.Proven() {
 		t.Fatalf("reply=%v err=%v", reply, err)
 	}
 	if got := f.Posts[posts:]; len(got) != 1 || got[0] != `{"interface":{"Proxy0":{}}}` {
@@ -228,11 +228,9 @@ func TestCreateProxy_HiddenForeign_NoSettingsNoDrop(t *testing.T) {
 // description записи на роутере: голая при «created», не показанная списком,
 // со снесом, который отказал, — ""; настройки и снос отвергнуты — description
 // из свежего списка (элементы настроек применены частично).
-// R54: «created» доказан, записи в списке нет — снос, не LeftCreatedError;
-// на <5.01 (не доказан) — ErrNotSeen без сноса и без LeftCreatedError.
-// Мутация: вернуть «ErrNotSeen — оставить» → красные not listed/legacy.
+// R54: «created» доказан, записи в списке нет — снос, не LeftCreatedError.
+// Мутация: вернуть «ErrNotSeen — оставить» → красный not listed.
 func TestCreateProxy_LeftOnRouter(t *testing.T) {
-	withFirmware(t, "5.01.C.6.0-0")
 	t.Run("not listed, dropped", func(t *testing.T) {
 		cmds, f, q := newOracleCommands(t, nil)
 		f.ExpectCreate("Proxy0")
@@ -252,7 +250,6 @@ func TestCreateProxy_LeftOnRouter(t *testing.T) {
 		f.ExpectCreate("Proxy0")
 		q.Interfaces.SetCreatedBackoff(time.Millisecond)
 		f.HideCreated(100)
-		layerHooksInFirstList(f, q)
 		p := rejectProxySettings{FakeNDMS: f, refuseDrop: true}
 		cmds := NewProxyCommands(p, NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil), q)
 		_, _, err := cmds.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, true)
@@ -282,20 +279,5 @@ func TestCreateProxy_LeftOnRouter(t *testing.T) {
 			t.Fatalf("снесено — оставленного нет: err=%v", err)
 		}
 	})
-	// Последним: Cleanup подслучая сбрасывает прошивку.
-	t.Run("legacy not seen", func(t *testing.T) {
-		withFirmware(t, "4.03.C.6.3-1")
-		cmds, f, q := newOracleCommands(t, nil)
-		f.ExpectCreate("Proxy0")
-		q.Interfaces.SetCreatedBackoff(time.Millisecond)
-		f.HideCreated(100)
-		_, _, err := cmds.Proxies.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, true)
-		var left *LeftCreatedError
-		if errors.As(err, &left) || !errors.Is(err, query.ErrNotSeen) {
-			t.Fatalf("err=%v left=%+v", err, left)
-		}
-		if hasDrop(f.Posts, "Proxy0") || !f.Has("Proxy0") || f.E != 0 || f.Phantoms != 0 {
-			t.Fatalf("has=%v E=%d phantoms=%d posts=%v", f.Has("Proxy0"), f.E, f.Phantoms, f.Posts)
-		}
-	})
+
 }

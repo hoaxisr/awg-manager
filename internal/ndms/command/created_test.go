@@ -11,7 +11,6 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
-	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 )
 
 // hasDrop — среди команд есть снос name.
@@ -53,19 +52,6 @@ func TestCreate_LateRecord_Confirms(t *testing.T) {
 			}
 		})
 	}
-}
-
-// layerHooksInFirstList — хуки слоя по созданному доставляются в стор, пока
-// первый список подтверждения в полёте.
-func layerHooksInFirstList(f *query.FakeNDMS, q *query.Queries) {
-	f.InList(func() {
-		f.InList(nil)
-		for _, h := range f.DrainHooks() {
-			if h.Type == "iflayerchanged" {
-				q.Interfaces.OnLayerChanged(h.ID, h.Layer, h.Level)
-			}
-		}
-	})
 }
 
 // Создание доказано (ответ импорта), а в списках записи нет за всё ожидание —
@@ -143,7 +129,6 @@ func hiddenForeign(f *query.FakeNDMS, name, typ string) {
 // ответил «interface created»: ErrNotCreated, ни настроек, ни подтверждения,
 // ни сноса; чужая запись цела, E == 0.
 func TestCreateInterface_Existing_ErrorNoConfigureNoDrop(t *testing.T) {
-	withFirmware(t, "5.01.C.6.0-0")
 	_, f, q := newOracleCommands(t, nil)
 	hiddenForeign(f, "Wireguard1", "Wireguard")
 	posts, lists := len(f.Posts), f.ListCalls()
@@ -159,7 +144,6 @@ func TestCreateInterface_Existing_ErrorNoConfigureNoDrop(t *testing.T) {
 
 // Создано — подтверждено, как раньше.
 func TestCreateInterface_Created_Confirms(t *testing.T) {
-	withFirmware(t, "5.01.C.6.0-0")
 	_, f, q := newOracleCommands(t, nil)
 	f.ExpectCreate("Wireguard1")
 	payload := map[string]any{"interface": map[string]any{"Wireguard1": map[string]any{}}}
@@ -173,70 +157,16 @@ func TestCreateInterface_Created_Confirms(t *testing.T) {
 // ErrNotCreated, сноса по имени нет — ответ не сказал «created» (F574, F584
 // Minor-1, F577).
 func TestCreateProxy_ExistingUnlisted_NoDrop(t *testing.T) {
-	withFirmware(t, "5.01.C.6.0-0")
 	cmds, f, q := newOracleCommands(t, nil)
 	q.Interfaces.SetCreatedBackoff(time.Millisecond)
 	hiddenForeign(f, "Proxy0", "Proxy")
 	q.Interfaces.OnLayerChanged("Proxy0", "ctrl", "") // след: NDMS запись знает
 	_, reply, err := cmds.Proxies.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, false)
-	if err == nil || reply.Ours() {
+	if err == nil || reply.Proven() {
 		t.Fatalf("reply=%v err=%v", reply, err)
 	}
 	if hasDrop(f.Posts, "Proxy0") || !f.Has("Proxy0") || f.E != 0 {
 		t.Fatalf("drop=%v has=%v E=%d posts=%v", hasDrop(f.Posts, "Proxy0"), f.Has("Proxy0"), f.E, f.Posts)
-	}
-}
-
-// withFirmware — версия прошивки для гейта ответа на создание (R39).
-func withFirmware(t *testing.T, release string) {
-	t.Helper()
-	ndmsinfo.Reset()
-	t.Cleanup(ndmsinfo.Reset)
-	store := query.NewSystemInfoStore(nil, nil)
-	store.Adopt(ndms.Version{Release: release}, "test")
-	if err := ndmsinfo.Init(context.Background(), store, time.Second); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// R39: на прошивке без проверенной фразы (<5.01) ответ не разбирается:
-// ErrNotCreated нет, подтверждение по списку, как до F574.
-func TestCreateInterface_LegacyFirmware_AsBefore(t *testing.T) {
-	for _, release := range []string{"", "4.03.C.6.3-1", "5.00.C.3.0-1"} {
-		t.Run(release, func(t *testing.T) {
-			withFirmware(t, release)
-			_, f, q := newOracleCommands(t, nil)
-			q.Interfaces.SetCreatedBackoff(time.Millisecond)
-			f.ExpectCreate("Wireguard1")
-			f.HideCreated(1)
-			payload := map[string]any{"interface": map[string]any{"Wireguard1": map[string]any{}}}
-			c, reply, err := CreateInterface(context.Background(), f, nil, q, payload, "Wireguard1", false)
-			if err != nil || c.Name() != "Wireguard1" || reply != CreateLegacy {
-				t.Fatalf("c=%v reply=%v err=%v", c, reply, err)
-			}
-			if hasDrop(f.Posts, "Wireguard1") || f.E != 0 || f.Phantoms != 0 {
-				t.Fatalf("E=%d phantoms=%d posts=%v", f.E, f.Phantoms, f.Posts)
-			}
-		})
-	}
-}
-
-// S11, В2: на <5.01 создание не доказано (CreateLegacy) — созданное, но ни
-// разу не показанное списком, не сносится: ErrNotSeen, `no interface` нет.
-// Мутация: Proven() → Ours() → снос.
-func TestCreateInterface_LegacyNeverListed_ErrNotSeenNoDrop(t *testing.T) {
-	withFirmware(t, "4.03.C.6.3-1")
-	_, f, q := newOracleCommands(t, nil)
-	q.Interfaces.SetCreatedBackoff(time.Millisecond)
-	f.ExpectCreate("Wireguard1")
-	f.HideCreated(100)
-	payload := map[string]any{"interface": map[string]any{"Wireguard1": map[string]any{}}}
-	c, reply, err := CreateInterface(context.Background(), f, nil, q, payload, "Wireguard1", false)
-	if !errors.Is(err, query.ErrNotSeen) || c != (query.Confirmed{}) || reply != CreateLegacy {
-		t.Fatalf("c=%v reply=%v err=%v", c, reply, err)
-	}
-	if hasDrop(f.Posts, "Wireguard1") || !f.Has("Wireguard1") || f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("has=%v E=%d phantoms=%d posts=%v", f.Has("Wireguard1"), f.E, f.Phantoms, f.Posts)
 	}
 }
 

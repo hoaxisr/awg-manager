@@ -82,6 +82,19 @@ func TestScenario_AddTunnels_CreatedNeverListed(t *testing.T) {
 		if f.Has("Proxy1") || !slices.Contains(f.Posts, `{"interface":{"Proxy1":{"no":true}}}`) || op.proxyRemovalDeferred("Proxy1") {
 			t.Fatalf("has=%v метка=%v posts=%v", f.Has("Proxy1"), op.deferredProxies, f.Posts)
 		}
+		cfg, err := op.loadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tags := tunnelTags(t, op); !slices.Equal(tags, []string{"A", "B", "N"}) || cfg.Tunnels()[2].ProxyInterface != "Proxy1" {
+			t.Fatalf("туннели: %v, слот N: %+v", tags, cfg.Tunnels())
+		}
+		// Следующий Sync создаёт запись на слоте туннеля заново.
+		f.HideCreated(0)
+		f.ExpectCreate("Proxy1")
+		if err := op.proxyMgr.(*ProxyManager).SyncProxies(context.Background(), cfg.Tunnels()); err != nil || !f.Has("Proxy1") {
+			t.Fatalf("Sync: err=%v has=%v posts=%v", err, f.Has("Proxy1"), f.Posts)
+		}
 		mustHave(t, f, "Proxy0", "Proxy3", "Proxy4", "Proxy5", "Proxy6")
 		clean(t, f)
 	})
@@ -97,6 +110,9 @@ func TestScenario_AddTunnels_CreatedNeverListed(t *testing.T) {
 		if err != nil || len(added) != 0 || len(errs) != 1 {
 			t.Fatalf("added=%+v errs=%+v err=%v", added, errs, err)
 		}
+		if tags := tunnelTags(t, op); !slices.Equal(tags, []string{"A", "B"}) {
+			t.Fatalf("туннели: %v", tags)
+		}
 		if d := op.deferredProxies["Proxy1"]; d == nil || d.desc != "" {
 			t.Fatalf("метка: %+v", op.deferredProxies)
 		}
@@ -110,24 +126,6 @@ func TestScenario_AddTunnels_CreatedNeverListed(t *testing.T) {
 		mustHave(t, f, "Proxy0", "Proxy3", "Proxy4", "Proxy5", "Proxy6")
 		clean(t, f)
 	})
-}
-
-// R54, В2: на <5.01 создание не доказано — запись, не показанная списком, не
-// наша: ErrNotSeen, `no interface` нет, метки нет (R48); туннель остаётся.
-func TestScenario_AddTunnels_LegacyNeverListed_NoDropNoMark(t *testing.T) {
-	withProxyRelease(t, "4.03.C.6.3-1")
-	op, _, f, _ := f562Stand(t)
-	op.proxyMgr.(*ProxyManager).queries.Interfaces.SetCreatedBackoff(time.Millisecond)
-	f.ExpectCreate("Proxy1")
-	f.HideCreated(100)
-	added, errs, err := op.AddTunnels(context.Background(), f577Link)
-	if err != nil || len(added) != 1 || len(errs) != 1 || !errors.Is(errs[0].Err, query.ErrNotSeen) {
-		t.Fatalf("added=%+v errs=%+v err=%v", added, errs, err)
-	}
-	if slices.Contains(f.Posts, `{"interface":{"Proxy1":{"no":true}}}`) || op.proxyRemovalDeferred("Proxy1") || !f.Has("Proxy1") {
-		t.Fatalf("has=%v метка=%v posts=%v", f.Has("Proxy1"), op.deferredProxies, f.Posts)
-	}
-	clean(t, f)
 }
 
 // F577 (опасение 3): слот туннеля A занят пользовательским прокси —

@@ -1460,9 +1460,9 @@ func (s *InterfaceStore) anyContradicts(ans *listAnswer, op string, names []stri
 // этом случае вызывающий вправе снести имя (command.ConfirmCreated).
 var ErrNotListed = errors.New("NDMS создал запись, но её нет в списке")
 
-// ErrNotSeen — created не доказан (<5.01, CreateLegacy) и записи нет в списках
-// — сносить нельзя: знает ли её NDMS, неизвестно, а снос отсутствующего — E в
-// журнале ndm.
+// ErrNotSeen — created не доказан (ответ без «created»: запись уже была —
+// managed restore с existingOK, OpkgTun) и записи нет в списках — сносить
+// нельзя: запись не наша, а снос отсутствующего — E в журнале ndm.
 var ErrNotSeen = errors.New("NDMS принял создание, но записи нет в списке")
 
 // ConfirmCreated — Confirm только что созданной записи name с ограниченным

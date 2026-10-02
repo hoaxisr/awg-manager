@@ -25,7 +25,7 @@ func NewProxyCommands(p Poster, s *SaveCoordinator, q *query.Queries) *ProxyComm
 // ответе прятал фразу «created», и созданное оставалось сиротой. NDMS не
 // создал запись (на ≥5.01) — ErrNotCreated без настроек и сноса (F574).
 // Отказ настроек — снос созданного этой командой. reply — вердикт ответа и
-// на ошибке: откат вызывающего сносит только reply.Ours().
+// на ошибке: откат вызывающего сносит только reply.Proven().
 //
 // Созданное этой командой осталось на роутере (подтверждения нет при
 // доказанном «created», снос неподтверждённого или ненастроенного отказал) —
@@ -48,8 +48,7 @@ func (c *ProxyCommands) CreateProxy(ctx context.Context, name, description, upst
 	if err := c.ConfigureProxy(ctx, conf, description, upstreamHost, upstreamPort, socks5UDP); err != nil {
 		// Запись без нашего description и upstream — сирота, которую ни
 		// владение по description, ни слот не узнают. Создана этой командой
-		// (CreateInterface иначе уже вернул бы ErrNotCreated) либо, на
-		// прошивке без проверяемого ответа, считается нашей (R39) — сносим.
+		// (CreateInterface иначе уже вернул бы ErrNotCreated) — сносим.
 		derr := c.DeleteProxy(ctx, conf)
 		if derr == nil {
 			return query.Confirmed{}, reply, err

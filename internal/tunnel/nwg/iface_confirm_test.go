@@ -5,13 +5,11 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
-	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
 
@@ -210,27 +208,24 @@ func TestCreateViaBatch_CreateThenConfirmThenSettings(t *testing.T) {
 	}
 }
 
-// NDMS принял создание, а в списке записи нет: ошибка, настройки не шлются
-// (они создали бы интерфейс фантомом).
+// NDMS ответил «created», а в списке записи нет за всё ожидание: ошибка,
+// настройки не шлются (они создали бы интерфейс фантомом), созданное
+// снесено (R54) — сироты нет, E == 0.
 func TestCreateViaBatch_AbsentAfterCreate_Error(t *testing.T) {
 	o, _, _, f, srv := newLifecycleOperator(t, false, false)
-	srv.respond = func(body string) (string, bool) {
-		if strings.TrimSpace(body) == `[{"interface":{"name":"Wireguard1"}}]` {
-			return `[{"status":[{"status":"message","code":"6553601","message":"\"Wireguard1\" interface created."}]}]`, true // создано, но в списке нет
-		}
-		return "", false
-	}
+	f.ExpectCreate("Wireguard1")
+	f.HideCreated(100)
 	o.queries.Interfaces.SetCreatedBackoff()
 	_, err := o.createViaBatch(context.Background(), nwgStored(awgObfuscatedIface()))
-	if err == nil || !strings.Contains(err.Error(), "Wireguard1") {
-		t.Fatalf("want error naming Wireguard1, got %v", err)
+	if !errors.Is(err, query.ErrNotListed) || !strings.Contains(err.Error(), "Wireguard1") {
+		t.Fatalf("want ErrNotListed naming Wireguard1, got %v", err)
 	}
-	// Ни настроек, ни сноса: следа записи (хуков) нет (F584).
-	if bodies, _ := srv.sent(); len(bodies) != 1 {
-		t.Fatalf("settings/drop must not be sent: %v", bodies)
+	bodies, _ := srv.sent()
+	if len(bodies) != 2 || strings.TrimSpace(bodies[1]) != `{"interface":{"Wireguard1":{"no":true}}}` {
+		t.Fatalf("want create + drop, no settings: %q", bodies)
 	}
-	if f.Phantoms != 0 || f.E != 0 {
-		t.Fatalf("E=%d phantoms=%d", f.E, f.Phantoms)
+	if f.Has("Wireguard1") || f.Phantoms != 0 || f.E != 0 {
+		t.Fatalf("has=%v E=%d phantoms=%d", f.Has("Wireguard1"), f.E, f.Phantoms)
 	}
 }
 
@@ -438,7 +433,6 @@ func TestCreateViaBatch_ListError_NoCreate(t *testing.T) {
 // настроек, ни сноса, чужая запись цела.
 func TestCreateViaBatch_HiddenForeign_ErrorNoSettings(t *testing.T) {
 	o, _, _, f, srv := newLifecycleOperator(t, false, false)
-	withFirmware501(t)
 	f.HideCreated(-1)
 	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
 	f.HideCreated(0)
@@ -448,17 +442,5 @@ func TestCreateViaBatch_HiddenForeign_ErrorNoSettings(t *testing.T) {
 	}
 	if bodies, _ := srv.sent(); len(bodies) != 1 || !f.Has("Wireguard1") || f.E != 0 {
 		t.Fatalf("bodies=%v has=%v E=%d", bodies, f.Has("Wireguard1"), f.E)
-	}
-}
-
-// withFirmware501 — прошивка, где ответ на создание проверяем (R39).
-func withFirmware501(t *testing.T) {
-	t.Helper()
-	ndmsinfo.Reset()
-	t.Cleanup(ndmsinfo.Reset)
-	store := query.NewSystemInfoStore(nil, nil)
-	store.Adopt(ndms.Version{Release: "5.01.C.6.0-0"}, "test")
-	if err := ndmsinfo.Init(context.Background(), store, time.Second); err != nil {
-		t.Fatal(err)
 	}
 }

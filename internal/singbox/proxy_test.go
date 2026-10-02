@@ -265,17 +265,13 @@ func TestProxyManager_CreateProxy_Ours(t *testing.T) {
 	}
 }
 
-// withProxy501 — прошивка 5.01 (ответ на создание проверяем, R39) с
-// компонентом proxy.
-func withProxy501(t *testing.T) { withProxyRelease(t, "5.01.C.6.0-0") }
-
-// withProxyRelease — прошивка release с компонентом proxy.
-func withProxyRelease(t *testing.T, release string) {
+// withProxy501 — прошивка с компонентом proxy.
+func withProxy501(t *testing.T) {
 	t.Helper()
 	ndmsinfo.Reset()
 	t.Cleanup(ndmsinfo.Reset)
 	store := query.NewSystemInfoStore(nil, nil)
-	store.Adopt(ndms.Version{Release: release, Components: []string{"proxy"}}, "test")
+	store.Adopt(ndms.Version{Release: "5.01.C.6.0-0", Components: []string{"proxy"}}, "test")
 	if err := ndmsinfo.Init(context.Background(), store, time.Second); err != nil {
 		t.Fatal(err)
 	}

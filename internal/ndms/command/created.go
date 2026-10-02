@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
-	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 )
 
 // ConfirmCreated подтверждает только что созданный интерфейс name
@@ -16,7 +15,7 @@ import (
 // Записи так и нет, а создание доказано ответом NDMS (created:
 // query.ErrNotListed) — снос `no interface name`: без него интерфейс
 // оставался сиротой, которую снести нечем (снос требует Confirmed). Создание
-// не доказано (ErrNotSeen, <5.01) — ошибка без сноса: `no interface` по
+// не доказано (ErrNotSeen: запись уже была) — ошибка без сноса: `no interface` по
 // отсутствующему пишет E в журнал ndm (стенд 5.01.C.6), а неснесённую сироту
 // покажет следующий список (Occupied / системные туннели).
 //
@@ -55,44 +54,29 @@ var ErrNotCreated = errors.New("NDMS не создал запись: имя уж
 var ErrLeftOnRouter = errors.New("созданная запись осталась на роутере")
 
 // CreateReply — что ответ NDMS на команду создания говорит о записи (F574).
+// Фраза ответа одна на всех версиях прошивки (R56). Нулевое значение —
+// CreateNotNew: «не доказано» не может появиться по умолчанию.
 type CreateReply int
 
 const (
-	// CreateLegacy — прошивка, где фраза ответа стендом не подтверждена
-	// (<5.01): поведение как до F574 — запись считается нашей.
-	CreateLegacy CreateReply = iota
+	// CreateNotNew — создания ответ не доказал: запись уже была (чужая или
+	// наша) и команда её лишь настроила, либо POST провалился и ответа нет.
+	CreateNotNew CreateReply = iota
 	// CreateNew — в ответе `"name" interface created.`: запись создана ЭТОЙ
 	// командой.
 	CreateNew
-	// CreateNotNew — фраза проверяема, но создания она не доказала: запись
-	// уже была (чужая или наша) и команда её лишь настроила, либо POST
-	// провалился и ответа нет.
-	CreateNotNew
 )
 
-// Ours — вправе ли вызывающий сносить запись по имени при откате: всё, кроме
-// не доказанной созданной на прошивке, где доказательство есть.
-func (r CreateReply) Ours() bool { return r != CreateNotNew }
-
-// Proven — создание доказано ответом NDMS (`"name" interface created.`): только
-// тогда неподтверждённую списком запись можно сносить (ConfirmCreated). На
-// <5.01 (CreateLegacy) доказательства нет — сноса нет (В2).
+// Proven — создание доказано ответом NDMS (`"name" interface created.`):
+// только такую запись вызывающий вправе сносить по имени при откате, и только
+// её, не показанную списком, сносит ConfirmCreated.
 func (r CreateReply) Proven() bool { return r == CreateNew }
-
-// createdReplyProven — фраза `"X" interface created.` (code 6553601) в ответе
-// на создание снята стендом только на 5.01 (R39). На старших она та же, на
-// младших (4.x, 5.00) не проверена: там без неё каждое создание давало бы
-// ErrNotCreated и сироту, поэтому ответ не разбирается вовсе.
-func createdReplyProven() bool { return osdetect.AtLeast(5, 1) }
 
 // PostCreate — POST команды, создающей name (с настройками или без), с
 // разбором ответа как у PostChecked и вердиктом о записи (CreateReply).
 func PostCreate(ctx context.Context, p Poster, payload any, opDesc, name string, after ...func()) (CreateReply, error) {
 	resp, err := postChecked(ctx, p, payload, opDesc, nil, after...)
-	switch {
-	case !createdReplyProven():
-		return CreateLegacy, err
-	case err == nil && replySaysCreated(resp, name):
+	if err == nil && replySaysCreated(resp, name) {
 		return CreateNew, nil
 	}
 	return CreateNotNew, err
@@ -136,7 +120,7 @@ func hasCreatedMessage(v any, want string) bool {
 // — ErrNotCreated без подтверждения, настроек и сноса, если только
 // вызывающий не принимает существующую запись осознанно (existingOK: managed
 // restore в живой сервер того же ключа). Вердикт — вызывающему: откат вправе
-// сносить только Ours.
+// сносить только Proven.
 func CreateInterface(ctx context.Context, p Poster, save *SaveCoordinator, q *query.Queries, payload any, name string, existingOK bool, after ...func()) (query.Confirmed, CreateReply, error) {
 	reply, err := PostCreate(ctx, p, payload, "create "+name, name, after...)
 	if err != nil {

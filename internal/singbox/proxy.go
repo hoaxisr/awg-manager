@@ -161,7 +161,7 @@ func (pm *ProxyManager) bareOurs(iface *ndms.Interface) bool {
 // (command.ProxyCommands.CreateProxy: голое создание → подтверждение →
 // настройки, F577). На прошивке, где ответ проверяем, индекс, занятый чужим
 // ещё не видимым ProxyN, — ошибка command.ErrNotCreated без настроек и сноса.
-// ours — откат вправе снести ProxyN (command.CreateReply.Ours, F574).
+// ours — откат вправе снести ProxyN (command.CreateReply.Proven, F574).
 func (pm *ProxyManager) CreateProxy(ctx context.Context, index, port int, description string) (ours bool, err error) {
 	if !ndmsinfo.HasProxyComponent() {
 		return false, ErrProxyComponentMissing
@@ -179,7 +179,7 @@ func (pm *ProxyManager) CreateProxy(ctx context.Context, index, port int, descri
 		// именем (её уже нет в списке) больше ничего не доказывает.
 		pm.adopted(name)
 	}
-	return reply.Ours(), err
+	return reply.Proven(), err
 }
 
 // NextFreeIndex returns the lowest ProxyN index not occupied on the
