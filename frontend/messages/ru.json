@@ -1,0 +1,125 @@
+{
+	"$schema": "https://inlang.com/schema/inlang-message-format",
+	"common_cancel": "Отмена",
+	"common_delete": "Удалить",
+	"common_in_progress": "Выполнение…",
+	"confirm_modal_file_on_disk": "Файл на диске",
+	"settings_language_label": "Язык интерфейса",
+	"settings_language_description": "Применяется сразу и сохраняется локально в этом браузере. Английский перевод пока частичный.",
+	"login_subtitle_router": "Введите данные для входа в админ-панель роутера",
+	"login_subtitle_entware": "Введите данные учётной записи Entware",
+	"login_method_aria": "Способ входа",
+	"login_method_router": "Роутер",
+	"login_label_login": "Логин",
+	"login_placeholder_login_router": "имя пользователя - обычно admin",
+	"login_placeholder_login_entware": "имя пользователя - обычно root",
+	"login_label_password": "Пароль",
+	"login_placeholder_password_router": "Пароль от роутера",
+	"login_placeholder_password_entware": "Пароль Entware",
+	"login_submit": "Войти",
+	"login_submitting": "Вход...",
+	"login_hint_router": "Используйте логин и пароль администратора роутера",
+	"login_hint_entware": "Используйте логин и пароль учётной записи Entware",
+	"login_terms_prefix": "Продолжая использование, вы соглашаетесь с",
+	"login_terms_link": "пользовательским соглашением",
+	"nav_tunnels": "Туннели",
+	"nav_servers": "Серверы",
+	"nav_routing": "Маршрутизация",
+	"nav_proxy": "Прокси",
+	"nav_tools": "Инструменты",
+	"nav_settings": "Настройки",
+	"nav_terminal": "Терминал",
+	"header_nav_aria": "Главная навигация",
+	"header_mobile_nav_aria": "Мобильная навигация",
+	"header_menu": "Меню",
+	"header_close_menu": "Закрыть меню",
+	"header_logout": "Выйти",
+	"header_donate": "Поддержать проект",
+	"header_version": "Версия AWGM",
+	"header_version_show_update": "Показать блок обновления AWGM",
+	"header_version_checking": "Проверка версии…",
+	"header_theme_to_dark": "Переключить {theme} на тёмную тему. Сейчас светлая.",
+	"header_theme_to_light": "Переключить {theme} на светлую тему. Сейчас тёмная.",
+	"header_theme_system_to_dark": "Переключить {theme} с системной на тёмную тему. Сейчас светлая (по системе).",
+	"header_theme_system_to_light": "Переключить {theme} с системной на светлую тему. Сейчас тёмная (по системе).",
+	"notif_title": "Уведомления",
+	"notif_bell_unread": "Уведомления, непрочитанных: {count}",
+	"notif_group_today": "Сегодня",
+	"notif_group_yesterday": "Вчера",
+	"notif_group_earlier": "Ранее",
+	"notif_empty": "Уведомлений нет",
+	"notif_mark_all_read": "Прочитать всё",
+	"notif_clear": "Очистить",
+	"notif_remove": "Удалить уведомление",
+	"notif_retention": "Хранится 7 дней · до 100",
+	"notif_open_log": "Открыть журнал →",
+	"save_led_saving": "Сохраняю конфигурацию роутера…",
+	"save_led_pending": "Конфигурация роутера не сохранена",
+	"save_led_pending_count": "Конфигурация роутера не сохранена ({count})",
+	"save_led_error": "Сохранение не удалось, будут повторы",
+	"save_led_failed": "Сохранить конфигурацию не удалось — правки пропадут при перезагрузке",
+	"save_led_last_error": "Ошибка: {error}",
+	"save_led_last_save": "Последнее сохранение: {time}",
+	"format_just_now": "только что",
+	"format_seconds_ago": "{count} сек. назад",
+	"format_minutes_ago": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} минуту назад",
+				"countPlural=few": "{count} минуты назад",
+				"countPlural=many": "{count} минут назад",
+				"countPlural=*": "{count} минуты назад"
+			}
+		}
+	],
+	"format_hours_ago": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} час назад",
+				"countPlural=few": "{count} часа назад",
+				"countPlural=many": "{count} часов назад",
+				"countPlural=*": "{count} часа назад"
+			}
+		}
+	],
+	"format_days_ago": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} день назад",
+				"countPlural=few": "{count} дня назад",
+				"countPlural=many": "{count} дней назад",
+				"countPlural=*": "{count} дня назад"
+			}
+		}
+	],
+	"format_duration_seconds": "{seconds} сек",
+	"format_duration_minutes": "{minutes} мин",
+	"format_duration_hours": "{hours} ч {minutes} мин",
+	"format_duration_days": "{days} д {hours} ч",
+	"format_per_second": "{value}/с",
+	"format_bitrate_bit": "бит/с",
+	"format_bitrate_kbit": "Кбит/с",
+	"format_bitrate_mbit": "Мбит/с",
+	"format_bitrate_gbit": "Гбит/с"
+}

@@ -1,0 +1,119 @@
+{
+	"$schema": "https://inlang.com/schema/inlang-message-format",
+	"common_cancel": "Cancel",
+	"common_delete": "Delete",
+	"common_in_progress": "Working…",
+	"confirm_modal_file_on_disk": "File on disk",
+	"settings_language_label": "Interface language",
+	"settings_language_description": "Applies immediately and is saved locally in this browser. The English translation is still partial.",
+	"login_subtitle_router": "Enter the credentials for the router admin panel",
+	"login_subtitle_entware": "Enter your Entware account credentials",
+	"login_method_aria": "Sign-in method",
+	"login_method_router": "Router",
+	"login_label_login": "Username",
+	"login_placeholder_login_router": "username — usually admin",
+	"login_placeholder_login_entware": "username — usually root",
+	"login_label_password": "Password",
+	"login_placeholder_password_router": "Router password",
+	"login_placeholder_password_entware": "Entware password",
+	"login_submit": "Sign in",
+	"login_submitting": "Signing in...",
+	"login_hint_router": "Use the router administrator username and password",
+	"login_hint_entware": "Use your Entware account username and password",
+	"login_terms_prefix": "By continuing, you agree to the",
+	"login_terms_link": "terms of use",
+	"nav_tunnels": "Tunnels",
+	"nav_servers": "Servers",
+	"nav_routing": "Routing",
+	"nav_proxy": "Proxy",
+	"nav_tools": "Tools",
+	"nav_settings": "Settings",
+	"nav_terminal": "Terminal",
+	"header_nav_aria": "Main navigation",
+	"header_mobile_nav_aria": "Mobile navigation",
+	"header_menu": "Menu",
+	"header_close_menu": "Close menu",
+	"header_logout": "Log out",
+	"header_donate": "Support the project",
+	"header_version": "AWGM version",
+	"header_version_show_update": "Show the AWGM update section",
+	"header_version_checking": "Checking version…",
+	"header_theme_to_dark": "Switch {theme} to the dark theme. Currently light.",
+	"header_theme_to_light": "Switch {theme} to the light theme. Currently dark.",
+	"header_theme_system_to_dark": "Switch {theme} from system to the dark theme. Currently light (system).",
+	"header_theme_system_to_light": "Switch {theme} from system to the light theme. Currently dark (system).",
+	"notif_title": "Notifications",
+	"notif_bell_unread": "Notifications, unread: {count}",
+	"notif_group_today": "Today",
+	"notif_group_yesterday": "Yesterday",
+	"notif_group_earlier": "Earlier",
+	"notif_empty": "No notifications",
+	"notif_mark_all_read": "Mark all as read",
+	"notif_clear": "Clear",
+	"notif_remove": "Remove notification",
+	"notif_retention": "Kept for 7 days · up to 100",
+	"notif_open_log": "Open log →",
+	"save_led_saving": "Saving the router configuration…",
+	"save_led_pending": "Router configuration is not saved",
+	"save_led_pending_count": "Router configuration is not saved ({count})",
+	"save_led_error": "Saving failed, will retry",
+	"save_led_failed": "Could not save the configuration — changes will be lost on reboot",
+	"save_led_last_error": "Error: {error}",
+	"save_led_last_save": "Last saved: {time}",
+	"format_just_now": "just now",
+	"format_seconds_ago": "{count} s ago",
+	"format_minutes_ago": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} minute ago",
+				"countPlural=*": "{count} minutes ago"
+			}
+		}
+	],
+	"format_hours_ago": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} hour ago",
+				"countPlural=*": "{count} hours ago"
+			}
+		}
+	],
+	"format_days_ago": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "{count} day ago",
+				"countPlural=*": "{count} days ago"
+			}
+		}
+	],
+	"format_duration_seconds": "{seconds} s",
+	"format_duration_minutes": "{minutes} min",
+	"format_duration_hours": "{hours} h {minutes} min",
+	"format_duration_days": "{days} d {hours} h",
+	"format_per_second": "{value}/s",
+	"format_bitrate_bit": "bit/s",
+	"format_bitrate_kbit": "kbit/s",
+	"format_bitrate_mbit": "Mbit/s",
+	"format_bitrate_gbit": "Gbit/s"
+}

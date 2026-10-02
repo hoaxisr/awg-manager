@@ -5,6 +5,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { theme } from '$lib/stores/theme';
+	import { locale } from '$lib/i18n';
 	import { compactLayout, isCompactLayoutActive } from '$lib/stores/compactLayout';
 	import {
 		tunnelDashboardLayout,
@@ -288,6 +289,12 @@
 			unsubSubscriptions?.();
 			unsubSubscriptions = null;
 		}
+	});
+
+	// <html lang> следует за языком интерфейса: от него зависят переносы,
+	// озвучка скринридером и выбор шрифта/перевода в браузере.
+	$effect(() => {
+		document.documentElement.lang = locale.current;
 	});
 
 	let wasOffline = $state(false);
