@@ -17,6 +17,10 @@ export { default as ConnectionsBreakdownPanel } from './ConnectionsBreakdownPane
 export { default as ConnectionsFilters } from './ConnectionsFilters.svelte';
 export { default as ConnectionsTable } from './ConnectionsTable.svelte';
 export { default as ConnectionsBulkBar } from './ConnectionsBulkBar.svelte';
-export { buildOutboundOptions, buildDownloadDetourOptions } from './outboundOptions';
-export type { OutboundGroup } from './outboundOptions';
+export {
+	buildOutboundOptions,
+	buildDownloadDetourOptions,
+	outboundGroupLabel,
+} from './outboundOptions';
+export type { OutboundGroup, OutboundGroupId } from './outboundOptions';
 export { computeRuleSetUsage } from './ruleSetUsage';

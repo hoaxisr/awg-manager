@@ -3,9 +3,6 @@
  * форматирование времени окончания паузы авто-перезапуска. Чистые функции —
  * тестируются vitest'ом без DOM.
  */
-import type { PluralWords } from '$lib/utils/pluralize';
-
-export const CRASH_WORDS = ['падение', 'падения', 'падений'] as const satisfies PluralWords;
 
 /**
  * «HH:MM» (локальное время) из RFC3339-строки restartSuppressedUntil.

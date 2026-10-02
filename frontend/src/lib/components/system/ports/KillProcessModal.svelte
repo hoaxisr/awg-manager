@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button, Modal } from '$lib/components/ui';
 	import { AlertTriangle } from 'lucide-svelte';
 	import PortAddressPills from './PortAddressPills.svelte';
@@ -17,18 +18,18 @@
 
 <Modal
 	open={!!group}
-	title={`Освободить порт ${group?.port ?? ''}?`}
+	title={m.system_ports_km_title({ port: group?.port ?? '' })}
 	size="md"
 	{onclose}
 >
 	{#if group}
 		<div class="modal-body">
 			<p>
-				Вы действительно хотите завершить процесс <strong>{group.processName || 'без имени'}</strong> (PID: <code>{group.pid}</code>), занимающий порт <strong>{group.port}</strong>?
+				{m.system_ports_km_q_before()} <strong>{group.processName || m.system_ports_km_no_name()}</strong> (PID: <code>{group.pid}</code>), {m.system_ports_km_q_port()} <strong>{group.port}</strong>?
 			</p>
 
 			<div class="modal-addrs">
-				<strong>Будут освобождены адреса:</strong>
+				<strong>{m.system_ports_km_addrs()}</strong>
 				<PortAddressPills addresses={group.addresses} marginTop="0.3rem" />
 			</div>
 
@@ -36,34 +37,34 @@
 				<div class="modal-alert danger">
 					<AlertTriangle size={18} />
 					<div>
-						<strong>Внимание!</strong> Это процесс текущего сервера <code>awg-manager</code>. Завершение немедленно прервёт работу веб-интерфейса.
+						<strong>{m.system_ports_km_warn()}</strong> {m.system_ports_km_self_before()} <code>awg-manager</code>. {m.system_ports_km_self_after()}
 					</div>
 				</div>
 			{:else if group.isCritical}
 				<div class="modal-alert warning">
 					<AlertTriangle size={18} />
 					<div>
-						<strong>Внимание!</strong> Этот процесс (<code>{group.processName}</code>) является системным (SSH/NDM). Завершение может нарушить доступ к роутеру.
+						<strong>{m.system_ports_km_warn()}</strong> {m.system_ports_km_crit_before()} (<code>{group.processName}</code>) {m.system_ports_km_crit_after()}
 					</div>
 				</div>
 			{/if}
 
 			{#if group.cmdline}
 				<div class="cmd-box">
-					<div class="cmd-label">Команда запуска:</div>
+					<div class="cmd-label">{m.system_ports_km_cmd()}</div>
 					<code>{group.cmdline}</code>
 				</div>
 			{/if}
 
 			<div class="signal-selector">
-				<span class="sig-label">Тип сигнала:</span>
+				<span class="sig-label">{m.system_ports_km_signal()}</span>
 				<label class="sig-option">
 					<input type="radio" name="killSignal" value="SIGTERM" bind:group={signal} />
-					<span><strong>SIGTERM</strong> (Мягкое завершение процесса, рекомендуется)</span>
+					<span><strong>SIGTERM</strong> {m.system_ports_km_sigterm()}</span>
 				</label>
 				<label class="sig-option">
 					<input type="radio" name="killSignal" value="SIGKILL" bind:group={signal} />
-					<span><strong>SIGKILL</strong> (Принудительное немедленное убийство процесса)</span>
+					<span><strong>SIGKILL</strong> {m.system_ports_km_sigkill()}</span>
 				</label>
 			</div>
 		</div>
@@ -71,9 +72,9 @@
 
 	{#snippet actions()}
 		<div class="modal-footer-btns">
-			<Button variant="ghost" onclick={onclose}>Отмена</Button>
+			<Button variant="ghost" onclick={onclose}>{m.common_cancel()}</Button>
 			<Button variant="danger" loading={busy} onclick={onconfirm}>
-				Завершить ({signal})
+				{m.system_ports_km_confirm({ signal })}
 			</Button>
 		</div>
 	{/snippet}

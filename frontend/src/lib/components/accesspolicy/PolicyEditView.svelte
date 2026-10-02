@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { AccessPolicy, PolicyDevice, PolicyGlobalInterface } from '$lib/types';
 	import { api } from '$lib/api/client';
 	import { errorMessage } from '$lib/utils/errorMessage';
@@ -38,15 +39,15 @@
 	let descriptionValid = $derived(description.trim().length > 0 && description.trim().length <= MAX_LEN && VALID_PATTERN.test(description.trim()));
 	const standaloneHint = $derived(
 		policy.standalone
-			? 'Политика действует самостоятельно, без привязки к глобальным правилам. Статические маршруты из настроек роутера не копируются (маршруты из вкладки "IP-адреса" работать не будут).'
-			: 'Если standalone отключено - в политике действуют глобальные правила, статические маршруты из настроек роутера копируются.',
+			? m.access_policy_standalone_on()
+			: m.access_policy_standalone_off(),
 	);
 
 	async function saveDescription() {
 		if (isHrPolicy) return;
 		if (description.trim() === policy.description) return;
 		if (!descriptionValid) {
-			notifications.error('Описание: только латинские буквы, цифры, дефисы и подчёркивания');
+			notifications.error(m.access_policy_desc_error());
 			description = policy.description;
 			return;
 		}
@@ -54,7 +55,7 @@
 			await api.setAccessPolicyDescription(policy.name, description.trim());
 			await onupdate();
 		} catch (e) {
-			notifications.error(`Ошибка: ${errorMessage(e)}`);
+			notifications.error(m.tunnels_error_with_message({ message: errorMessage(e) }));
 		}
 	}
 
@@ -64,7 +65,7 @@
 			await api.setAccessPolicyStandalone(policy.name, checked);
 			await onupdate();
 		} catch (e) {
-			notifications.error(`Ошибка: ${errorMessage(e)}`);
+			notifications.error(m.tunnels_error_with_message({ message: errorMessage(e) }));
 		}
 	}
 
@@ -73,7 +74,7 @@
 			await api.permitPolicyInterface(policy.name, iface, order);
 			await onupdate();
 		} catch (e) {
-			notifications.error(`Ошибка: ${errorMessage(e)}`);
+			notifications.error(m.tunnels_error_with_message({ message: errorMessage(e) }));
 		}
 	}
 
@@ -82,7 +83,7 @@
 			await api.denyPolicyInterface(policy.name, iface);
 			await onupdate();
 		} catch (e) {
-			notifications.error(`Ошибка: ${errorMessage(e)}`);
+			notifications.error(m.tunnels_error_with_message({ message: errorMessage(e) }));
 		}
 	}
 
@@ -92,7 +93,7 @@
 			await api.permitPolicyInterface(policyName, iface, newOrder);
 			await onupdate();
 		} catch (e) {
-			notifications.error(`Ошибка: ${errorMessage(e)}`);
+			notifications.error(m.tunnels_error_with_message({ message: errorMessage(e) }));
 		}
 	}
 
@@ -103,7 +104,7 @@
 			ondeviceassigned(mac, policy.name);
 		} catch (e) {
 			dragOver = false;
-			notifications.error(`Ошибка: ${errorMessage(e)}`);
+			notifications.error(m.tunnels_error_with_message({ message: errorMessage(e) }));
 		}
 	}
 
@@ -112,7 +113,7 @@
 			await api.unassignDeviceFromPolicy(mac);
 			ondeviceunassigned(mac, policy.name);
 		} catch (e) {
-			notifications.error(`Ошибка: ${errorMessage(e)}`);
+			notifications.error(m.tunnels_error_with_message({ message: errorMessage(e) }));
 		}
 	}
 
@@ -139,12 +140,12 @@
 	<div class="left-panel">
 		<button class="back-btn" onclick={onback}>
 			<ArrowLeft size={15} />
-			Назад к списку
+			{m.access_policy_back()}
 		</button>
 
 		{#if !isHrPolicy}
 			<div class="field-group">
-				<label class="field-label">Описание
+				<label class="field-label">{m.access_policy_description()}
 					<input
 						type="text"
 						class="field-input"
@@ -152,7 +153,7 @@
 						onblur={saveDescription}
 						maxlength={MAX_LEN}
 					/>
-					<span class="field-hint">Латинские буквы, цифры, дефисы, подчёркивания</span>
+					<span class="field-hint">{m.access_policy_description_hint()}</span>
 				</label>
 			</div>
 
@@ -177,7 +178,7 @@
 
 		{#if !isHrPolicy}
 		<div class="assigned-section">
-			<h4 class="section-title">Устройства в политике</h4>
+			<h4 class="section-title">{m.access_policy_devices_in_policy()}</h4>
 
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
@@ -188,7 +189,7 @@
 				ondragleave={handleDragLeave}
 			>
 				{#if assignedDevices.length === 0}
-					<p class="drop-placeholder">перетащите устройство сюда</p>
+					<p class="drop-placeholder">{m.access_policy_drop_here()}</p>
 				{:else}
 					<div class="assigned-list">
 						{#each assignedDevices as device}
@@ -200,12 +201,12 @@
 									{#if device.ip && device.ip !== '0.0.0.0'}
 										<span class="device-ip">{device.ip}</span>
 									{:else}
-										<span class="device-ip">IP адрес отсутствует</span>
+										<span class="device-ip">{m.access_policy_no_ip()}</span>
 									{/if}
 								</div>
 								<button
 									class="remove-btn"
-									title="Убрать из политики"
+									title={m.access_policy_remove_from_policy()}
 									onclick={() => unassignDevice(device.mac)}
 								>
 									<X size={15} />
@@ -225,14 +226,12 @@
 				<div class="hr-policy-banner">
 					<Badge variant="warning" uppercase size="xs" pill>HydraRoute</Badge>
 					<p>
-						Это политика HydraRoute Neo. Добавлять в неё устройства не требуется — маршрутизация
-						HydraRoute распространяется только на политику по умолчанию. Интерфейсы настраиваются
-						тем же способом, что и на вкладке HR Neo.
+						{m.access_policy_hr_banner()}
 					</p>
 				</div>
 				{#if assignedDevices.length > 0}
 					<div class="hr-assigned-section">
-						<h4 class="section-title">Привязанные устройства</h4>
+						<h4 class="section-title">{m.access_policy_bound_devices()}</h4>
 						<div class="assigned-list">
 							{#each assignedDevices as device}
 								{@const isActive = device.active && device.link === 'up'}
@@ -243,12 +242,12 @@
 										{#if device.ip && device.ip !== '0.0.0.0'}
 											<span class="device-ip">{device.ip}</span>
 										{:else}
-											<span class="device-ip">IP адрес отсутствует</span>
+											<span class="device-ip">{m.access_policy_no_ip()}</span>
 										{/if}
 									</div>
 									<button
 										class="remove-btn"
-										title="Убрать из политики"
+										title={m.access_policy_remove_from_policy()}
 										onclick={() => unassignDevice(device.mac)}
 									>
 										<X size={15} />

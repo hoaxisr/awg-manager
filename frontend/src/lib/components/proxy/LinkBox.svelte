@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Одна ссылка: текст, «Копировать» (LK-09), QR с увеличением (LK-10) и
 	// отказ QR (LK-11 / LK-12). Показанный QR сбрасывается при смене ссылки.
+	import { m } from '$lib/i18n';
 	import QRCode from 'qrcode';
 	import { Button } from '$lib/components/ui';
 	import QrZoomImage from '$lib/components/ui/QrZoomImage.svelte';
@@ -21,7 +22,17 @@
 	let showQR = $state(false);
 	let qrDataUrl = $state('');
 	let qrBusy = $state(false);
-	let qrError = $state('');
+	// Размер ссылки при отказе QR; текст собирается при показе и следует за языком.
+	let qrErrorSize = $state<number | null>(null);
+	const qrError = $derived(
+		qrErrorSize === null
+			? ''
+			: freeturn
+				? // LK-12
+					m.proxy_linkbox_qr_too_long_wg()
+				: // LK-11
+					m.proxy_linkbox_qr_too_long({ size: groupDigits(qrErrorSize) }),
+	);
 	let shownFor = $state('');
 
 	// Смена ссылки снимает показанный QR: иначе рядом с новой ссылкой висел бы
@@ -31,13 +42,13 @@
 		shownFor = link;
 		showQR = false;
 		qrDataUrl = '';
-		qrError = '';
+		qrErrorSize = null;
 	});
 
 	async function copy() {
 		if (!link) return;
 		// TS-12
-		if (await copyToClipboard(link)) notifications.success('Ссылка скопирована');
+		if (await copyToClipboard(link)) notifications.success(m.proxy_linkbox_copied());
 	}
 
 	async function toggleQR() {
@@ -50,7 +61,7 @@
 			return;
 		}
 		qrBusy = true;
-		qrError = '';
+		qrErrorSize = null;
 		try {
 			qrDataUrl = await QRCode.toDataURL(link, {
 				width: 512,
@@ -60,12 +71,7 @@
 			});
 			showQR = true;
 		} catch {
-			const size = new Blob([link]).size;
-			qrError = freeturn
-				? // LK-12
-					'Ссылка слишком длинная для QR — уберите WireGuard из ссылки'
-				: // LK-11
-					`Ссылка слишком длинная для QR (${groupDigits(size)} байт)`;
+			qrErrorSize = new Blob([link]).size;
 		} finally {
 			qrBusy = false;
 		}
@@ -78,15 +84,15 @@
 	{/if}
 	<div class="link-text">{link}</div>
 	<div class="btn-row">
-		<Button variant="secondary" size="sm" onclick={copy}>Копировать</Button>
-		<Button variant="secondary" size="sm" loading={qrBusy} onclick={toggleQR}>QR-код</Button>
+		<Button variant="secondary" size="sm" onclick={copy}>{m.proxy_linkbox_copy()}</Button>
+		<Button variant="secondary" size="sm" loading={qrBusy} onclick={toggleQR}>{m.proxy_linkbox_qr()}</Button>
 	</div>
 	{#if qrError}
 		<p class="link-error">{qrError}</p>
 	{/if}
 	{#if showQR && qrDataUrl}
 		<div class="qr-wrap">
-			<QrZoomImage src={qrDataUrl} alt="QR-код" />
+			<QrZoomImage src={qrDataUrl} alt={m.proxy_linkbox_qr()} />
 		</div>
 	{/if}
 </div>

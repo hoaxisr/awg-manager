@@ -4,6 +4,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
@@ -14,7 +15,7 @@
     closeTemplatesModal, dismissTemplatesModal, toggleTemplate, clearSelection, setFilter, setQuery, setOutbound,
   } from './templatesStore';
   import {
-    buildTemplateList, filterByCategory, countByCategory,
+    buildTemplateList, filterByCategory, countByCategory, templateGroupTitle, templateGroupHint,
   } from './templatesData';
   import { submitTemplates } from './templatesActions';
   import TemplatesFilterChip from './TemplatesFilterChip.svelte';
@@ -22,7 +23,6 @@
   import TemplateServiceTile from './TemplateServiceTile.svelte';
   import TemplateRsRow from './TemplateRsRow.svelte';
   import TemplatesFooter from './TemplatesFooter.svelte';
-  import { pluralize, RULE_WORDS, TEMPLATE_WORDS } from '$lib/utils/pluralize';
 
   interface Props {
     mode?: 'submit' | 'collect';
@@ -66,15 +66,15 @@
       if (!outbound) return;
       const result = await submitTemplates(selectionArr, outbound, allGroups);
       if (result.failures.length === 0) {
-        notifications.success(`Создано ${pluralize(result.successes.length, RULE_WORDS)}`);
+        notifications.success(m.sb_router_wizard_created({ count: result.successes.length }));
         closeTemplatesModal();
         await singboxRouterStore.loadAll();
       } else {
         const succN = result.successes.length;
         const failN = result.failures.length;
         const msg = succN > 0
-          ? `Создано ${succN} из ${succN + failN}. Ошибок: ${failN}`
-          : `Не удалось создать правила (${failN})`;
+          ? m.sb_router_wizard_created_partial({ done: succN, total: succN + failN, failed: failN })
+          : m.sb_router_empty_failed({ count: failN });
         notifications.error(msg);
         lastFailures = result.failures;
         for (const id of result.successes) {
@@ -85,7 +85,7 @@
         }
       }
     } catch (e) {
-      notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
     } finally {
       submitting = false;
     }
@@ -142,15 +142,15 @@
       else closeTemplatesModal();
     }}
   >
-    <div class="box" role="dialog" aria-modal="true" aria-label="Готовые шаблоны">
+    <div class="box" role="dialog" aria-modal="true" aria-label={m.sb_router_templates_title()}>
       <header class="head">
         <div class="head-text">
-          <div class="title">Готовые шаблоны</div>
+          <div class="title">{m.sb_router_templates_title()}</div>
           <div class="sub">
-            Сервисы и сервисные наборы. Выбирайте несколько за раз — каждый создаст своё правило.
+            {m.sb_router_templates_sub()}
           </div>
         </div>
-        <button type="button" class="icon-btn" onclick={closeTemplatesModal} aria-label="Закрыть">
+        <button type="button" class="icon-btn" onclick={closeTemplatesModal} aria-label={m.sb_router_common_close()}>
           <XIcon size={18} />
         </button>
       </header>
@@ -160,31 +160,31 @@
           <Search size={14} color="var(--text-muted)" />
           <input
             type="search"
-            placeholder="netflix, geoip, telegram..."
+            placeholder={m.sb_router_templates_search_placeholder()}
             value={$templatesQuery}
             oninput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
           />
-          <span class="search-count">{pluralize(counts.all, TEMPLATE_WORDS)}</span>
+          <span class="search-count">{m.sb_router_templates_count({ count: counts.all })}</span>
         </div>
         {#if !servicesOnly}
           <div class="chips">
-            <TemplatesFilterChip label="Все" value="all" active={$templatesFilter === 'all'} count={counts.all} onclick={() => setFilter('all')} />
-            <TemplatesFilterChip label="Сервисы" value="services" active={$templatesFilter === 'services'} count={counts.services} onclick={() => setFilter('services')} />
-            <TemplatesFilterChip label="Наборы доменов и CIDR" value="rulesets" active={$templatesFilter === 'rulesets'} count={counts.rulesets} onclick={() => setFilter('rulesets')} />
+            <TemplatesFilterChip label={m.sb_router_templates_filter_all()} value="all" active={$templatesFilter === 'all'} count={counts.all} onclick={() => setFilter('all')} />
+            <TemplatesFilterChip label={m.sb_router_templates_group_services()} value="services" active={$templatesFilter === 'services'} count={counts.services} onclick={() => setFilter('services')} />
+            <TemplatesFilterChip label={m.sb_router_templates_group_rulesets()} value="rulesets" active={$templatesFilter === 'rulesets'} count={counts.rulesets} onclick={() => setFilter('rulesets')} />
           </div>
         {/if}
       </div>
 
       <div class="body">
         {#if visibleGroups.length === 0}
-          <div class="empty">По запросу ничего не нашлось.</div>
+          <div class="empty">{m.sb_router_templates_nothing_found()}</div>
         {/if}
 
         {#each visibleGroups as group (group.category)}
           {@const selectedInGroup = group.items.filter((it) => $templatesSelection.has(it.id)).length}
           <TemplatesGroup
-            title={group.title}
-            hint={group.hint}
+            title={templateGroupTitle(group.category)}
+            hint={templateGroupHint(group.category)}
             selectedCount={selectedInGroup}
             totalCount={group.items.length}
             onSelectAll={() => handleSelectAll(group.category)}
@@ -248,9 +248,9 @@
       {:else}
         {@const count = $templatesSelection.size}
         <div class="footer-collect">
-          <span class="hint">Выбрано: {count}</span>
+          <span class="hint">{m.sb_router_templates_selected({ count })}</span>
           <button type="button" class="btn-primary" disabled={count === 0} onclick={handleDone}>
-            Готово ({count})
+            {m.sb_router_templates_done({ count })}
           </button>
         </div>
       {/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button, Input } from '$lib/components/ui';
 
 	interface Props {
@@ -37,7 +38,7 @@
 			autocomplete="off"
 		/>
 		<Button variant="secondary" size="sm" {disabled} onclick={() => (revealed = !revealed)}>
-			{revealed ? 'Скрыть' : 'Показать'}
+			{revealed ? m.proxy_sensitive_hide() : m.proxy_sensitive_show()}
 		</Button>
 	</div>
 	{#if hint}

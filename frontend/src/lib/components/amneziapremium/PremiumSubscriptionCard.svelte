@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { AmneziaPremiumCatalog } from '$lib/types';
 	import {
 		formatPremiumDate,
@@ -40,21 +41,20 @@
 	<div class="premium-sub-facts">
 		{#if endDate}
 			<span class="premium-sub-fact">
-				{state === 'expired' ? 'Истекла' : 'Действует до'}
-				{endDate}
+				{state === 'expired' ? m.amnezia_premium_sub_expired_on({ date: endDate }) : m.amnezia_premium_sub_valid_until({ date: endDate })}
 				{#if state === 'expiring' && daysLeft !== null}
-					<span class="premium-sub-days">(осталось {daysLeft} дн.)</span>
+					<span class="premium-sub-days">{m.amnezia_premium_sub_days_left({ days: daysLeft })}</span>
 				{/if}
 			</span>
 		{/if}
 		{#if hasDevices}
 			<span class="premium-sub-fact">
-				Устройства: {catalog.activeDeviceCount} из {catalog.maxDeviceCount}
+				{m.amnezia_premium_sub_devices({ active: catalog.activeDeviceCount ?? 0, max: catalog.maxDeviceCount ?? 0 })}
 			</span>
 		{/if}
 	</div>
 	{#if state === 'expired'}
-		<p class="premium-sub-warning">Подписка истекла — конфигурации не выдаются.</p>
+		<p class="premium-sub-warning">{m.amnezia_premium_sub_expired_warning()}</p>
 	{/if}
 </div>
 

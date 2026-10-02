@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { ConntrackConnection } from '$lib/types';
 	import { formatBytes } from '$lib/utils/format';
 	import { Badge, Button } from '$lib/components/ui';
@@ -23,8 +24,8 @@
 
 <aside class="details">
 	<div class="head">
-		<span class="title">Детали соединения</span>
-		<button type="button" class="close" onclick={onClose} aria-label="Закрыть">
+		<span class="title">{m.connections_details_title()}</span>
+		<button type="button" class="close" onclick={onClose} aria-label={m.sb_router_common_close()}>
 			<X size={14} aria-hidden="true" />
 		</button>
 	</div>
@@ -35,20 +36,20 @@
 	</div>
 
 	<div class="kv">
-		<span class="k">Источник</span><span class="v mono">{conn.src}:{conn.srcPort}</span>
-		{#if conn.clientName}<span class="k">Клиент</span><span class="v">{conn.clientName}</span>{/if}
-		<span class="k">Назначение</span>
+		<span class="k">{m.connections_col_source()}</span><span class="v mono">{conn.src}:{conn.srcPort}</span>
+		{#if conn.clientName}<span class="k">{m.connections_col_client()}</span><span class="v">{conn.clientName}</span>{/if}
+		<span class="k">{m.connections_col_dst()}</span>
 		<span class="v mono">{conn.dst}{#if conn.dstPort > 0}:{conn.dstPort}{/if}</span>
 		{#if fqdn}<span class="k">FQDN</span><span class="v mono fqdn">{fqdn}</span>{/if}
 		{#if conn.rules && conn.rules.length > 0}
-			<span class="k">Правило</span>
+			<span class="k">{m.connections_col_rule()}</span>
 			<span class="v">{conn.rules.map((r) => r.listName || r.listId).join(', ')}</span>
 		{/if}
-		<span class="k">Маршрут</span>
+		<span class="k">{m.connections_col_route()}</span>
 		<span class="v"><Badge variant={routeVariant(conn)} size="sm">{routeLabel(conn)}</Badge></span>
 		{#if conn.ttl > 0}
 			<!-- у icmp-записей Keenetic timeout в строке отсутствует — ttl=0, прячем -->
-			<span class="k">TTL</span><span class="v mono">{conn.ttl} с</span>
+			<span class="k">TTL</span><span class="v mono">{m.connections_ttl_seconds({ ttl: conn.ttl })}</span>
 		{/if}
 	</div>
 
@@ -56,9 +57,9 @@
 
 	<div class="actions">
 		{#if canKill}
-			<Button variant="danger" size="sm" onclick={onKill}>Сбросить</Button>
+			<Button variant="danger" size="sm" onclick={onKill}>{m.connections_kill()}</Button>
 		{/if}
-		<Button variant="ghost" size="sm" onclick={onFilterClient}>Фильтр по клиенту</Button>
+		<Button variant="ghost" size="sm" onclick={onFilterClient}>{m.connections_filter_client()}</Button>
 	</div>
 </aside>
 

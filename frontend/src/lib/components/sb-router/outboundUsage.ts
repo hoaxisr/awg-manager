@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type {
 	SingboxRouterDNSServer,
 	SingboxRouterOutbound,
@@ -57,13 +58,18 @@ export function collectOutboundReferences(input: OutboundUsageInput): string[] {
 	return collectAllOutboundReferences([input.tag], input).get(input.tag) ?? [];
 }
 
-export function formatUsageBlockReason(noun: string, refs: readonly string[]): string | null {
+/**
+ * Причина блокировки удаления: превью первых трёх ссылок (с «…», если их больше).
+ * Текст задаёт вызывающий через message — у каждой сущности своя формулировка.
+ */
+export function formatUsageBlockReason(
+	message: (refs: string) => string,
+	refs: readonly string[],
+): string | null {
 	if (refs.length === 0) return null;
 	const preview = refs.slice(0, 3).join(', ');
-	return refs.length > 3 ? `${noun} используется (${preview}…)` : `${noun} используется (${preview})`;
+	return message(refs.length > 3 ? `${preview}…` : preview);
 }
-
-const SUBSCRIPTION_DELETE_REASON = 'Подписку можно удалить только в разделе «Подписки»';
 
 export function outboundDeleteBlockReason(
 	outbound: SingboxRouterOutbound,
@@ -83,8 +89,8 @@ export function outboundDeleteBlockReasons(
 		reasons.set(
 			o.tag,
 			o.source === 'subscription'
-				? SUBSCRIPTION_DELETE_REASON
-				: formatUsageBlockReason('Outbound', refs.get(o.tag) ?? []),
+				? m.sb_router_outbound_delete_subscription()
+				: formatUsageBlockReason((r) => m.sb_router_outbound_in_use({ refs: r }), refs.get(o.tag) ?? []),
 		);
 	}
 	return reasons;

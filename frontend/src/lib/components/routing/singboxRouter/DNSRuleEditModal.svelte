@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import {
 		Button,
 		Dropdown,
@@ -58,7 +59,7 @@
 	}
 
 	const serverOptions = $derived<DropdownOption[]>([
-		{ value: '', label: '— выберите —' },
+		{ value: '', label: m.routing_singbox_dns_choose() },
 		...servers.map((s) => ({
 			value: s.tag,
 			label: s.tag,
@@ -154,35 +155,35 @@
 	// svelte-ignore state_referenced_locally
 	let responseExtraStr = $state((rule?.response_extra ?? []).join('\n'));
 
-	const blockMethodOptions = [
-		{ value: 'nxdomain', label: 'NXDOMAIN (нет такого домена)' },
+	const blockMethodOptions = $derived([
+		{ value: 'nxdomain', label: m.routing_singbox_dnsrule_nxdomain() },
 		{ value: 'refused', label: 'REFUSED' },
-		{ value: 'drop', label: 'Drop (без ответа)' },
-	];
+		{ value: 'drop', label: m.routing_singbox_dnsrule_drop() },
+	]);
 
 	const RCODES = [
 		'NOERROR', 'FORMERR', 'SERVFAIL', 'NXDOMAIN', 'NOTIMP', 'REFUSED', 'YXDOMAIN',
 		'YXRRSET', 'NXRRSET', 'NOTAUTH', 'NOTZONE', 'BADSIG', 'BADKEY', 'BADTIME',
 		'BADMODE', 'BADNAME', 'BADALG', 'BADTRUNC', 'BADCOOKIE',
 	];
-	const rcodeOptions: DropdownOption[] = [
-		{ value: '', label: '— не задан —' },
+	const rcodeOptions = $derived<DropdownOption[]>([
+		{ value: '', label: m.routing_singbox_dnsrule_rcode_unset() },
 		...RCODES.map((c) => ({ value: c, label: c })),
-	];
+	]);
 
-	const actionOptions: SegmentedOption<ActionKind>[] = [
-		{ value: 'route', label: 'Маршрут' },
-		{ value: 'block', label: 'Блокировка' },
+	const actionOptions = $derived<SegmentedOption<ActionKind>[]>([
+		{ value: 'route', label: m.routing_singbox_dnsrule_action_route() },
+		{ value: 'block', label: m.routing_singbox_dnsrule_action_block() },
 		{ value: 'evaluate', label: 'Evaluate' },
 		{ value: 'respond', label: 'Respond' },
-	];
+	]);
 	// Правило без условий блокирует/отвечает на ВСЁ — block в catch-all не даём.
-	const catchAllActionOptions = actionOptions.filter((o) => o.value !== 'block');
+	const catchAllActionOptions = $derived(actionOptions.filter((o) => o.value !== 'block'));
 
-	const modeOptions: SegmentedOption<'matchers' | 'catchall'>[] = [
-		{ value: 'matchers', label: 'По условиям' },
-		{ value: 'catchall', label: 'Catch-all (всё остальное)' },
-	];
+	const modeOptions = $derived<SegmentedOption<'matchers' | 'catchall'>[]>([
+		{ value: 'matchers', label: m.routing_singbox_dnsrule_mode_matchers() },
+		{ value: 'catchall', label: m.routing_singbox_dnsrule_mode_catchall() },
+	]);
 
 	function setMode(next: 'matchers' | 'catchall'): void {
 		mode = next;
@@ -193,9 +194,9 @@
 	// зеркалит backend firstDNSChainViolation, иначе гарантированный 4xx.
 	const rulesAbove = $derived((rules ?? []).slice(0, ruleIndex ?? (rules ?? []).length));
 	const matchResponseOptions = $derived.by<DropdownOption[]>(() => {
-		const opts: DropdownOption[] = [{ value: '', label: 'выкл' }];
+		const opts: DropdownOption[] = [{ value: '', label: m.routing_singbox_dnsrule_mr_off() }];
 		if (rulesAbove.some((r) => r.action === 'evaluate' && !r.tag)) {
-			opts.push({ value: MR_ANON, label: 'последний анонимный evaluate' });
+			opts.push({ value: MR_ANON, label: m.routing_singbox_dnsrule_mr_anon() });
 		}
 		for (const t of new Set(
 			rulesAbove.filter((r) => r.action === 'evaluate' && r.tag).map((r) => r.tag as string),
@@ -207,7 +208,7 @@
 		if (matchResponse && !opts.some((o) => o.value === matchResponse)) {
 			opts.push({
 				value: matchResponse,
-				label: matchResponse === MR_ANON ? 'последний анонимный evaluate' : matchResponse,
+				label: matchResponse === MR_ANON ? m.routing_singbox_dnsrule_mr_anon() : matchResponse,
 			});
 		}
 		return opts;
@@ -221,6 +222,17 @@
 
 	let busy = $state(false);
 	let error = $state('');
+	let errorKind = $state<'' | 'matcher' | 'server' | 'race'>('');
+	const errorText = $derived(
+		error ||
+			(errorKind === 'matcher'
+				? m.routing_singbox_dnsrule_err_matcher()
+				: errorKind === 'server'
+					? m.routing_singbox_dnsrule_err_server()
+					: errorKind === 'race'
+						? m.routing_singbox_dnsrule_err_race()
+						: ''),
+	);
 
 	// Snapshot initial state for isDirty detection
 	let initialRuleSetTagsSnapshot = $state<string[]>([]);
@@ -315,6 +327,7 @@
 	async function save(): Promise<void> {
 		busy = true;
 		error = '';
+		errorKind = '';
 		try {
 			const rule_set = normalizeTags(ruleSetTags);
 			const domain_suffix = domainSuffixStr.split('\n').map((s) => s.trim()).filter(Boolean);
@@ -341,7 +354,7 @@
 			// Catch-all mode intentionally ships ZERO matchers (matches everything);
 			// otherwise at least one matcher is required.
 			if (!catchAll && !hasMatcher) {
-				error = 'Нужен хотя бы один matcher';
+				errorKind = 'matcher';
 				busy = false;
 				return;
 			}
@@ -372,7 +385,7 @@
 			}
 
 			if (action === 'route' || action === 'evaluate') {
-				if (!server) { error = 'Выберите DNS сервер'; busy = false; return; }
+				if (!server) { errorKind = 'server'; busy = false; return; }
 				built.action = action;
 				built.server = server;
 				if (action === 'evaluate' && tag.trim()) built.tag = tag.trim();
@@ -391,7 +404,7 @@
 			}
 
 			if (built.race && built.speculative) {
-				error = 'race и speculative несовместимы';
+				errorKind = 'race';
 				busy = false;
 				return;
 			}
@@ -413,58 +426,57 @@
 		</label>
 		{#if action === 'evaluate'}
 			<label class="field">
-				<div class="lbl">Тег ответа</div>
+				<div class="lbl">{m.routing_singbox_dnsrule_response_tag()}</div>
 				<input bind:value={tag} placeholder="rd" />
 			</label>
 		{/if}
 		<label class="toggle">
 			<input type="checkbox" bind:checked={speculative} />
-			<span>Спекулятивный запрос</span>
+			<span>{m.routing_singbox_dnsrule_speculative()}</span>
 		</label>
 	{:else if action === 'block'}
 		<label class="field">
-			<div class="lbl">Метод блокировки</div>
+			<div class="lbl">{m.routing_singbox_dnsrule_block_method()}</div>
 			<Dropdown bind:value={blockMethod} options={blockMethodOptions} fullWidth />
 		</label>
 	{/if}
 {/snippet}
 
 <SingboxSettingsModal
-	title={rule ? 'Редактировать DNS правило' : 'Новое DNS правило'}
+	title={rule ? m.routing_singbox_dnsrule_edit_title() : m.routing_singbox_dnsrule_new_title()}
 	onClose={onClose}
 	size="lg"
 	hasUnsavedChanges={() => isDirty}
 >
 	<div class="form">
-		<div class="section-label">Тип правила</div>
+		<div class="section-label">{m.routing_singbox_dnsrule_rule_type()}</div>
 		<SegmentedControl
 			value={mode}
 			options={modeOptions}
-			ariaLabel="Тип DNS правила"
+			ariaLabel={m.routing_singbox_dnsrule_type_aria()}
 			onchange={(next) => setMode(next)}
 		/>
 
 		{#if catchAll}
 			<div class="warn">
-				Правило без условий совпадает со <b>всеми</b> запросами. Любые правила
-				<b>ниже</b> него в списке игнорируются — держите его последним.
+				{m.routing_singbox_dnsrule_catchall_warn_pre()} <b>{m.routing_singbox_dnsrule_catchall_warn_all()}</b> {m.routing_singbox_dnsrule_catchall_warn_mid()}
+				<b>{m.routing_singbox_dnsrule_catchall_warn_below()}</b> {m.routing_singbox_dnsrule_catchall_warn_post()}
 			</div>
 			<div class="action-section">
-				<div class="section-label">Действие</div>
+				<div class="section-label">{m.routing_singbox_dnsrule_action()}</div>
 				<SegmentedControl
 					value={action}
 					options={catchAllActionOptions}
-					ariaLabel="Действие DNS правила"
+					ariaLabel={m.routing_singbox_dnsrule_action_aria()}
 					onchange={(next) => (action = next)}
 				/>
-				{@render actionFields('DNS сервер (для всех запросов)')}
+				{@render actionFields(m.routing_singbox_dnsrule_server_all())}
 			</div>
 			<div class="hint">
-				Для простого запасного сервера обычно достаточно «Final-сервера» в «DNS по умолчанию».
-				Если задать и его, и catch-all правило — правило важнее (проверяется раньше final).
+				{m.routing_singbox_dnsrule_catchall_hint()}
 			</div>
 		{:else}
-			<div class="section-label">Matchers (минимум один)</div>
+			<div class="section-label">{m.routing_singbox_dnsrule_matchers_min()}</div>
 
 			<!-- div, не label: клик по любой не-интерактивной части label активирует
 			     его первый labelable-элемент — крестик ПЕРВОГО чипа, т.е. клик по
@@ -475,57 +487,57 @@
 					values={ruleSetTags}
 					options={ruleSetOptions}
 					onchange={(next) => (ruleSetTags = next)}
-					placeholder="не выбрано"
+					placeholder={m.routing_singbox_dnsrule_not_selected()}
 					allowOrphans
 				/>
 			</div>
 
 			<label class="field">
 				<div class="lbl">Domain suffix</div>
-				<textarea bind:value={domainSuffixStr} rows="3" placeholder="по одному на строке: .youtube.com"></textarea>
+				<textarea bind:value={domainSuffixStr} rows="3" placeholder={m.routing_singbox_dnsrule_suffix_placeholder()}></textarea>
 			</label>
 
 			<label class="field">
-				<div class="lbl">Domain (точное совпадение)</div>
+				<div class="lbl">{m.routing_singbox_dnsrule_domain_exact()}</div>
 				<textarea bind:value={domainStr} rows="2" placeholder="example.com"></textarea>
 			</label>
 
 			<label class="field">
-				<div class="lbl">Domain keyword (через запятую)</div>
+				<div class="lbl">{m.routing_singbox_dnsrule_keyword()}</div>
 				<input bind:value={domainKeywordStr} placeholder="tracker, analytics" />
 			</label>
 
 			<label class="field">
-				<div class="lbl">Domain regex (по строке)</div>
+				<div class="lbl">{m.routing_singbox_dnsrule_regex()}</div>
 				<textarea bind:value={domainRegexStr} rows="2" placeholder={"^ads?\\d+\\."}></textarea>
 			</label>
 
 			<label class="field">
-				<div class="lbl">Query type (через запятую)</div>
+				<div class="lbl">{m.routing_singbox_dnsrule_qtype()}</div>
 				<input bind:value={queryTypeStr} placeholder="A, AAAA, HTTPS" />
 			</label>
 
 			<div class="action-section">
-				<div class="section-label">Действие</div>
+				<div class="section-label">{m.routing_singbox_dnsrule_action()}</div>
 				<SegmentedControl
 					value={action}
 					options={actionOptions}
-					ariaLabel="Действие DNS правила"
+					ariaLabel={m.routing_singbox_dnsrule_action_aria()}
 					onchange={(next) => (action = next)}
 				/>
 
-				{@render actionFields('DNS сервер')}
+				{@render actionFields(m.routing_singbox_dnsrule_server())}
 			</div>
 
 			<section class="form-section form-section-divided">
-				<div class="section-label">По DNS-ответу</div>
+				<div class="section-label">{m.routing_singbox_dnsrule_by_response()}</div>
 				<label class="field">
-					<div class="lbl">Ответ evaluate</div>
+					<div class="lbl">{m.routing_singbox_dnsrule_evaluate_response()}</div>
 					<Dropdown bind:value={matchResponse} options={matchResponseOptions} fullWidth />
 				</label>
 				{#if noEvaluateAbove}
 					<div class="hint">
-						Нет evaluate-правил выше — сначала создайте правило с действием Evaluate
+						{m.routing_singbox_dnsrule_no_evaluate_above()}
 					</div>
 				{/if}
 
@@ -536,22 +548,22 @@
 					</label>
 
 					<label class="field">
-						<div class="lbl">IP ответа (CIDR, по строке)</div>
+						<div class="lbl">{m.routing_singbox_dnsrule_ip_cidr()}</div>
 						<textarea bind:value={ipCidrStr} rows="2" placeholder="10.0.0.0/8"></textarea>
 					</label>
 
 					<details>
-						<summary>RR-записи</summary>
+						<summary>{m.routing_singbox_dnsrule_rr()}</summary>
 						<label class="field">
-							<div class="lbl">Answer (по строке)</div>
+							<div class="lbl">{m.routing_singbox_dnsrule_answer()}</div>
 							<textarea bind:value={responseAnswerStr} rows="2"></textarea>
 						</label>
 						<label class="field">
-							<div class="lbl">NS (по строке)</div>
+							<div class="lbl">{m.routing_singbox_dnsrule_ns()}</div>
 							<textarea bind:value={responseNsStr} rows="2"></textarea>
 						</label>
 						<label class="field">
-							<div class="lbl">Extra (по строке)</div>
+							<div class="lbl">{m.routing_singbox_dnsrule_extra()}</div>
 							<textarea bind:value={responseExtraStr} rows="2"></textarea>
 						</label>
 					</details>
@@ -566,13 +578,13 @@
 			</section>
 		{/if}
 
-		{#if error}<div class="error">{error}</div>{/if}
+		{#if errorText}<div class="error">{errorText}</div>{/if}
 	</div>
 
 	{#snippet actions()}
-		<Button variant="ghost" size="md" onclick={onClose} type="button">Отмена</Button>
+		<Button variant="ghost" size="md" onclick={onClose} type="button">{m.common_cancel()}</Button>
 		<Button variant="primary" size="md" onclick={save} disabled={busy} loading={busy} type="button">
-			Сохранить
+			{m.routing_singbox_save()}
 		</Button>
 	{/snippet}
 </SingboxSettingsModal>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { SideDrawer, FormToggle, Button, Dropdown } from '$lib/components/ui';
@@ -51,8 +52,8 @@
 		// (from storage), and brand-new tunnel (all empty → hardcoded
 		// defaults via `||`/`??`).
 		host = status?.host || '8.8.8.8';
-		const m = status?.mode;
-		mode = (m === 'icmp' || m === 'connect' || m === 'tls') ? m : 'icmp';
+		const statusMode = status?.mode;
+		mode = (statusMode === 'icmp' || statusMode === 'connect' || statusMode === 'tls') ? statusMode : 'icmp';
 		updateInterval = status?.interval || 10;
 		maxFails = status?.maxFails || 3;
 		minSuccess = status?.minSuccess || 1;
@@ -84,10 +85,10 @@
 			};
 			if (needsPort) config.port = port;
 			await api.configureNativePingCheck(tunnelId, config);
-			notifications.success('Настройки мониторинга сохранены');
+			notifications.success(m.pingcheck_settings_saved());
 			onSaved();
 		} catch (e) {
-			notifications.error(`Ошибка: ${(e as Error).message}`);
+			notifications.error(m.sb_router_common_error({ message: (e as Error).message }));
 		} finally {
 			saving = false;
 		}
@@ -97,10 +98,10 @@
 		removing = true;
 		try {
 			await api.removeNativePingCheck(tunnelId);
-			notifications.success('Мониторинг отключён');
+			notifications.success(m.pingcheck_monitoring_disabled_toast());
 			onRemoved();
 		} catch (e) {
-			notifications.error(`Ошибка: ${(e as Error).message}`);
+			notifications.error(m.sb_router_common_error({ message: (e as Error).message }));
 		} finally {
 			removing = false;
 		}
@@ -118,14 +119,14 @@
 
 	<div class="form-grid">
 		<div class="field">
-			<label class="field-label" for="npc-host">Хост</label>
+			<label class="field-label" for="npc-host">{m.pingcheck_host()}</label>
 			<input id="npc-host" type="text" class="field-input" bind:value={host} />
 		</div>
 
 		<div class="field">
 			<Dropdown
 				id="npc-mode"
-				label="Метод"
+				label={m.pingcheck_method()}
 				bind:value={mode}
 				options={[
 					{ value: 'icmp', label: 'ICMP' },
@@ -138,41 +139,41 @@
 
 		{#if needsPort}
 			<div class="field">
-				<label class="field-label" for="npc-port">Порт</label>
+				<label class="field-label" for="npc-port">{m.pingcheck_port()}</label>
 				<input id="npc-port" type="number" class="field-input" bind:value={port} min="1" max="65535" />
 			</div>
 		{/if}
 
 		<div class="field">
-			<label class="field-label" for="npc-interval">Интервал (сек)</label>
+			<label class="field-label" for="npc-interval">{m.pingcheck_interval_sec()}</label>
 			<input id="npc-interval" type="number" class="field-input" bind:value={updateInterval} min="3" max="3600" />
 			<span class="field-hint">3–3600</span>
 		</div>
 
 		<div class="field">
-			<label class="field-label" for="npc-maxfails">Максимум сбоев</label>
+			<label class="field-label" for="npc-maxfails">{m.pingcheck_max_fails()}</label>
 			<input id="npc-maxfails" type="number" class="field-input" bind:value={maxFails} min="1" max="10" />
 			<span class="field-hint">1–10</span>
 		</div>
 
 		<div class="field">
-			<label class="field-label" for="npc-minsuccess">Минимум успехов</label>
+			<label class="field-label" for="npc-minsuccess">{m.pingcheck_min_success()}</label>
 			<input id="npc-minsuccess" type="number" class="field-input" bind:value={minSuccess} min="1" max="10" />
 			<span class="field-hint">1–10</span>
 		</div>
 
 		<div class="field">
-			<label class="field-label" for="npc-timeout">Таймаут (сек)</label>
+			<label class="field-label" for="npc-timeout">{m.pingcheck_timeout_sec()}</label>
 			<input id="npc-timeout" type="number" class="field-input" bind:value={timeout} min="1" max="10" />
 			<span class="field-hint">1–10</span>
 		</div>
 	</div>
-	<p class="limits-note">Пределы заданы компонентом ping-check NDMS на роутере.</p>
+	<p class="limits-note">{m.pingcheck_limits_note()}</p>
 
 	<div class="restart-row">
 		<div class="restart-info">
-			<span class="restart-label">Перезапуск при dead</span>
-			<span class="restart-hint">Автоматически перезапускать туннель при потере связи</span>
+			<span class="restart-label">{m.pingcheck_restart_label()}</span>
+			<span class="restart-hint">{m.pingcheck_restart_hint()}</span>
 		</div>
 		<FormToggle bind:checked={restart} size="sm" />
 	</div>
@@ -180,13 +181,13 @@
 	{#snippet footer()}
 		{#if status?.exists}
 			<Button variant="danger" size="md" onclick={handleRemove} disabled={busy} loading={removing}>
-				Отключить
+				{m.pingcheck_remove()}
 			</Button>
 		{/if}
 		<div class="actions-spacer"></div>
-		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="ghost" size="md" onclick={onclose}>{m.common_cancel()}</Button>
 		<Button variant="primary" size="md" onclick={handleSave} disabled={busy} loading={saving}>
-			{status?.exists ? 'Обновить' : 'Включить'}
+			{status?.exists ? m.pingcheck_update() : m.pingcheck_enable()}
 		</Button>
 	{/snippet}
 </SideDrawer>

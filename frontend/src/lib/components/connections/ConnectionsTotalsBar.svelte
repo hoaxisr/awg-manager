@@ -2,6 +2,7 @@
 	import { RefreshCw } from 'lucide-svelte';
 	import type { ConnectionStats } from '$lib/types';
 	import { formatBytes } from '$lib/utils/format';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		stats: ConnectionStats | null;
@@ -29,8 +30,8 @@
 <div class="totals">
 	<span
 		class="seg"
-		title="Счётчики — conntrack-потоки: трафик через sing-box виден двумя записями (перехват у клиента и выход роутера)"
-	>Всего: <strong class="num">{stats?.total ?? 0}</strong> соединений</span>
+		title={m.connections_total_title()}
+	>{m.connections_total_label()} <strong class="num">{stats?.total ?? 0}</strong> {m.connections_total_noun({ count: stats?.total ?? 0 })}</span>
 	<span class="seg num bytes">↑ {formatBytes(bytesOut)} · ↓ {formatBytes(bytesIn)}</span>
 	<span class="seg num protos">
 		<span class="p-tcp">TCP {stats?.protocols.tcp ?? 0}</span> /
@@ -45,8 +46,8 @@
 			class="refresh-btn"
 			onclick={onRefresh}
 			disabled={loading}
-			aria-label="Обновить соединения"
-			title="Обновить"
+			aria-label={m.connections_refresh_aria()}
+			title={m.connections_refresh()}
 			style={`--refresh-progress:${progress * 360}deg;`}
 		>
 			<RefreshCw size={15} aria-hidden="true" style="position:relative;z-index:1" />

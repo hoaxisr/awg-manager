@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { api, type SystemPortBinding } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -89,7 +90,7 @@
 		try {
 			bindings = await api.systemPortsList();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось загрузить список портов'));
+			notifications.error(errorMessage(e, m.system_ports_load_failed()));
 		} finally {
 			loading = false;
 		}
@@ -103,7 +104,7 @@
 		}
 		const p = parseInt(raw, 10);
 		if (isNaN(p) || p <= 0 || p > 65535) {
-			notifications.error('Укажите корректный номер порта (1–65535)');
+			notifications.error(m.system_ports_invalid_port());
 			return;
 		}
 
@@ -120,7 +121,7 @@
 				totalSockets: items.length,
 			};
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Ошибка проверки порта'));
+			notifications.error(errorMessage(e, m.system_ports_inspect_failed()));
 		} finally {
 			busy = false;
 		}
@@ -141,14 +142,14 @@
 				signal: killSignal,
 				port,
 			});
-			notifications.success(`Процесс ${processName || pid} (PID ${pid}) завершён (${killSignal})`);
+			notifications.success(m.system_ports_killed({ name: processName || pid, pid, signal: killSignal }));
 			targetGroup = null;
 			if (searchPort) {
 				await handleInspect();
 			}
 			await load();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось завершить процесс'));
+			notifications.error(errorMessage(e, m.system_ports_kill_failed()));
 		} finally {
 			busy = false;
 		}

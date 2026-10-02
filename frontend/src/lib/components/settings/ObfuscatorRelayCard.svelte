@@ -4,6 +4,7 @@
   API вызывает страница (как McpCard).
 -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Toggle } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { Cpu } from 'lucide-svelte';
@@ -20,17 +21,15 @@
 
 <div class="settings-block" id="obfuscator-relay">
 	<div class="card">
-		<SettingsSectionLabel label="Релей обфускатора" icon={Cpu} header />
+		<SettingsSectionLabel label={m.settings_relay_title()} icon={Cpu} header />
 		<div class="setting-row">
 			<div class="flex flex-col gap-1">
-				<span class="font-medium">Phobos в ядре</span>
+				<span class="font-medium">{m.settings_relay_phobos_label()}</span>
 				<span class="setting-description">
-					Туннели через обфускатор Phobos работают модулем ядра awgm_relay — меньше
-					нагрузка на процессор. Выключите, если модуль ведёт себя нестабильно: туннели
-					перезапустятся на userspace-процессе.
+					{m.settings_relay_phobos_description()}
 				</span>
 				{#if tripped}
-					<span class="setting-description text-warning">Выключено автоматически: {tripped}</span>
+					<span class="setting-description text-warning">{m.settings_relay_tripped({ reason: tripped })}</span>
 				{/if}
 			</div>
 			<Toggle checked={!process} disabled={saving} onchange={(v: boolean) => ontoggle(!v)} />

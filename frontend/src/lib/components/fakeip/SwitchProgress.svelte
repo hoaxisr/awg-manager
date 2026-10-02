@@ -5,6 +5,7 @@
 <script lang="ts">
 	import { Check, X, Loader, Circle } from 'lucide-svelte';
 	import { Modal, Button } from '$lib/components/ui';
+	import { m } from '$lib/i18n';
 	import { humanLabel } from './switchConsequences';
 	import { deriveSteps } from './switchSteps';
 	import type { FakeIPTransitionState, FakeIPMode } from '$lib/stores/fakeipTransition';
@@ -23,7 +24,9 @@
 
 	const fromMode = $derived((transitionState?.from ?? 'tproxy') as FakeIPMode);
 	const toMode = $derived((transitionState?.to ?? 'fakeip-tun') as FakeIPMode);
-	const title = $derived(`Переключение: ${humanLabel(fromMode)} → ${humanLabel(toMode)}`);
+	const title = $derived(
+		m.fakeip_switch_title({ from: humanLabel(fromMode), to: humanLabel(toMode) }),
+	);
 
 	const rows = $derived(deriveSteps(fromMode, toMode, transitionState?.steps ?? [], { failed }));
 	const finalLabel = $derived(humanLabel((transitionState?.finalState as FakeIPMode) ?? fromMode));
@@ -53,16 +56,16 @@
 	</ul>
 
 	{#if done && succeeded}
-		<p class="result ok">✓ Режим «{finalLabel}» активен.</p>
+		<p class="result ok">{m.fakeip_switch_succeeded({ mode: finalLabel })}</p>
 	{:else if failed}
 		<p class="result err">
-			✕ Откат в «{finalLabel}».{#if failedRow}&nbsp;Упавший шаг: {failedRow.title}.{/if}{#if transitionState?.error}&nbsp;{transitionState.error}{/if}
+			{m.fakeip_switch_rolled_back({ mode: finalLabel })}{#if failedRow}&nbsp;{m.fakeip_switch_failed_step({ step: failedRow.title })}{/if}{#if transitionState?.error}&nbsp;{transitionState.error}{/if}
 		</p>
 	{/if}
 
 	{#snippet actions()}
 		{#if done}
-			<Button variant="primary" size="md" onclick={onClose}>Закрыть</Button>
+			<Button variant="primary" size="md" onclick={onClose}>{m.sb_router_common_close()}</Button>
 		{/if}
 	{/snippet}
 </Modal>

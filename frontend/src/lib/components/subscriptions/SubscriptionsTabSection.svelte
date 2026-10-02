@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	// Вкладка «Sing-box подписки» страницы туннелей. Выделено из
 	// routes/+page.svelte (класс 2 реструктуризации): разметка перенесена
 	// дословно, состояние страницы приходит пропсами, сквозные сторы
@@ -12,8 +13,7 @@
 	import SubscriptionCard from '$lib/components/subscriptions/SubscriptionCard.svelte';
 	import SubscriptionGroupsSection from '$lib/components/subscriptions/SubscriptionGroupsSection.svelte';
 	import { singboxSubscriptionTableSort, type SubscriptionSortKey } from '$lib/stores/tunnelTableSort';
-	import { formatRunningSub, pluralForm, SUBSCRIPTION_WORDS } from '$lib/utils/pluralize';
-	import { formatBytes } from '$lib/utils/format';
+		import { formatBytes } from '$lib/utils/format';
 	import { ariaSort } from '$lib/utils/tunnelTableSort';
 	import type { SingboxLayoutMode, TunnelRenderMode } from '$lib/constants/singboxLayout';
 	import type { Subscription } from '$lib/types';
@@ -88,12 +88,12 @@
 
 	{#if subscriptionsInitialLoading}
 		<div class="loading-centered">
-			<LoadingSpinner size="md" message="Загружаем подписки..." />
+			<LoadingSpinner size="md" message={m.subscriptions_tab_loading()} />
 		</div>
 	{:else if subscriptionsFetchFailed}
 		<EmptyState
-			title="Не удалось загрузить подписки"
-			description={subscriptionsError ?? 'Проверьте соединение с роутером и обновите страницу.'}
+			title={m.subscriptions_tab_load_failed()}
+			description={subscriptionsError ?? m.subscriptions_tab_load_failed_desc()}
 		/>
 	{:else}
 		{#if !dashboardOn && !singboxStatusLoading}
@@ -105,7 +105,7 @@
 			<div class="tunnels-toolbar">
 				<span class="tunnel-count">
 					{subscriptionsList.length}
-					{pluralForm(subscriptionsList.length, SUBSCRIPTION_WORDS)}
+					{m.tunnels_unit_subscriptions({ count: subscriptionsList.length })}
 				</span>
 				<div class="toolbar-actions">
 					<TunnelToolbarViewRow
@@ -118,7 +118,7 @@
 							<LayoutViewToggle
 								value={singboxSubscriptionsLayoutMode}
 								showListOption={showSingboxGridListToggle}
-								ariaLabel="Вид подписок"
+								ariaLabel={m.subscriptions_tab_view_aria()}
 								onchange={(v) => (singboxSubscriptionsLayoutMode = v)}
 							/>
 						{/snippet}
@@ -129,16 +129,16 @@
 						onclick={() => openWizard('url')}
 						iconBefore={createIcon}
 					>
-						Добавить
+						{m.singbox_tabs_add()}
 					</Button>
 				</div>
 			</div>
 			{/if}
 			{#if subscriptionsList.length === 0}
 				<div class="subscription-empty">
-					<div class="subscription-empty-title">Нет подписок</div>
+					<div class="subscription-empty-title">{m.subscriptions_tab_empty_title()}</div>
 					<p class="subscription-empty-desc">
-						Добавьте подписку — мастер скачает список серверов и создаст selector-туннель.
+						{m.subscriptions_tab_empty_desc()}
 					</p>
 					<Button
 						variant="primary"
@@ -146,7 +146,7 @@
 						onclick={() => openWizard('url')}
 						iconBefore={createIcon}
 					>
-						Добавить подписку
+						{m.subscriptions_tab_add()}
 					</Button>
 				</div>
 			{:else}
@@ -155,35 +155,38 @@
 						<StatStrip>
 							<Stat
 								value={`${singboxSubscriptionsTrafficStats.activeCount}/${singboxSubscriptionsTrafficStats.count}`}
-								label={pluralForm(singboxSubscriptionsTrafficStats.activeCount, SUBSCRIPTION_WORDS)}
-								sub={formatRunningSub(
-									singboxSubscriptionsTrafficStats.activeCount,
-									singboxSubscriptionsTrafficStats.count,
-								)}
+								label={m.tunnels_unit_subscriptions({ count: singboxSubscriptionsTrafficStats.activeCount })}
+								sub={m.singbox_tabs_running_sub({
+									active: singboxSubscriptionsTrafficStats.activeCount,
+									stopped: Math.max(
+										0,
+										singboxSubscriptionsTrafficStats.count - singboxSubscriptionsTrafficStats.activeCount,
+									),
+								})}
 							/>
 							<Stat
 								value={formatBytes(
 									singboxSubscriptionsTrafficStats.down + singboxSubscriptionsTrafficStats.up,
 								)}
-								label="Суммарный трафик"
+								label={m.singbox_tabs_total_traffic()}
 								sub={`↓ ${formatBytes(singboxSubscriptionsTrafficStats.down)} · ↑ ${formatBytes(singboxSubscriptionsTrafficStats.up)}`}
 							/>
 							<Stat
 								value={singboxSubscriptionsTrafficStats.avgDelayMs !== null
 									? `${singboxSubscriptionsTrafficStats.avgDelayMs} ms`
 									: '—'}
-								label="Средний delay"
+								label={m.singbox_tabs_avg_delay()}
 								sub={singboxSubscriptionsTrafficStats.delaySamples > 0
-									? `по ${singboxSubscriptionsTrafficStats.delaySamples} активным подпискам`
-									: 'нет активных замеров'}
+									? m.subscriptions_tab_avg_delay_sub({ count: singboxSubscriptionsTrafficStats.delaySamples })
+									: m.subscriptions_tab_no_delay_samples()}
 							/>
 							<Stat
 								value={singboxSubscriptionsTrafficStats.leaderBytes > 0
 									? formatBytes(singboxSubscriptionsTrafficStats.leaderBytes)
 									: '—'}
-								label="Лидер по трафику"
+								label={m.tunnels_awg_stat_leader()}
 								sub={singboxSubscriptionsTrafficStats.leaderBytes > 0
-									? `${singboxSubscriptionsTrafficStats.leaderName} · ${singboxSubscriptionsTrafficStats.leaderSharePct}% всего`
+									? m.subscriptions_tab_leader_share({ name: singboxSubscriptionsTrafficStats.leaderName, pct: singboxSubscriptionsTrafficStats.leaderSharePct })
 									: '—'}
 							/>
 						</StatStrip>
@@ -206,18 +209,18 @@
 									<TableSortHeader label="Delay" sortKey={'delay'} activeSortKey={$singboxSubscriptionTableSort.sortBy} sortAsc={$singboxSubscriptionTableSort.sortAsc} onchange={(key) => handleSubscriptionSortChange(key as SubscriptionSortKey)} />
 								</th>
 								<th aria-sort={ariaSort($singboxSubscriptionTableSort.sortBy, 'label', $singboxSubscriptionTableSort.sortAsc)}>
-									<TableSortHeader label="Подписка" sortKey={'label'} activeSortKey={$singboxSubscriptionTableSort.sortBy} sortAsc={$singboxSubscriptionTableSort.sortAsc} onchange={(key) => handleSubscriptionSortChange(key as SubscriptionSortKey)} />
+									<TableSortHeader label={m.subscriptions_tab_col_subscription()} sortKey={'label'} activeSortKey={$singboxSubscriptionTableSort.sortBy} sortAsc={$singboxSubscriptionTableSort.sortAsc} onchange={(key) => handleSubscriptionSortChange(key as SubscriptionSortKey)} />
 								</th>
 								<th aria-sort={ariaSort($singboxSubscriptionTableSort.sortBy, 'active', $singboxSubscriptionTableSort.sortAsc)}>
-									<TableSortHeader label="Активный сервер" sortKey={'active'} activeSortKey={$singboxSubscriptionTableSort.sortBy} sortAsc={$singboxSubscriptionTableSort.sortAsc} onchange={(key) => handleSubscriptionSortChange(key as SubscriptionSortKey)} />
+									<TableSortHeader label={m.subscriptions_active_server()} sortKey={'active'} activeSortKey={$singboxSubscriptionTableSort.sortBy} sortAsc={$singboxSubscriptionTableSort.sortAsc} onchange={(key) => handleSubscriptionSortChange(key as SubscriptionSortKey)} />
 								</th>
 								<th aria-sort={ariaSort($singboxSubscriptionTableSort.sortBy, 'traffic', $singboxSubscriptionTableSort.sortAsc)}>
-									<TableSortHeader label="Трафик" sortKey={'traffic'} activeSortKey={$singboxSubscriptionTableSort.sortBy} sortAsc={$singboxSubscriptionTableSort.sortAsc} onchange={(key) => handleSubscriptionSortChange(key as SubscriptionSortKey)} />
+									<TableSortHeader label={m.tunnels_awg_col_traffic()} sortKey={'traffic'} activeSortKey={$singboxSubscriptionTableSort.sortBy} sortAsc={$singboxSubscriptionTableSort.sortAsc} onchange={(key) => handleSubscriptionSortChange(key as SubscriptionSortKey)} />
 								</th>
 								<th aria-sort={ariaSort($singboxSubscriptionTableSort.sortBy, 'ping', $singboxSubscriptionTableSort.sortAsc)}>
 									<TableSortHeader label="Ping" sortKey={'ping'} activeSortKey={$singboxSubscriptionTableSort.sortBy} sortAsc={$singboxSubscriptionTableSort.sortAsc} onchange={(key) => handleSubscriptionSortChange(key as SubscriptionSortKey)} />
 								</th>
-								<th class="col-actions">Действия</th>
+								<th class="col-actions">{m.tunnels_awg_col_actions()}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -238,14 +241,14 @@
 						{#if dashboardSectionsLayout}
 							<TunnelSectionHeader
 								variant="table-row"
-								title="Остановлено"
+								title={m.subscriptions_tab_stopped()}
 								count={sortedFilteredSubscriptionsListRows.length}
-								countLabel={pluralForm(sortedFilteredSubscriptionsListRows.length, SUBSCRIPTION_WORDS)}
+								countLabel={m.tunnels_unit_subscriptions({ count: sortedFilteredSubscriptionsListRows.length })}
 								colspan={6}
 							/>
 						{:else}
 							<tr class="tunnel-section-row">
-								<td colspan="6">Остановлено · {sortedFilteredSubscriptionsListRows.length}</td>
+								<td colspan="6">{m.subscriptions_tab_stopped_count({ count: sortedFilteredSubscriptionsListRows.length })}</td>
 							</tr>
 						{/if}
 						{#each sortedFilteredSubscriptionsListRows as sub (sub.id)}
@@ -261,7 +264,7 @@
 					{/if}
 					{#if singboxSubscriptionsSearchEmpty}
 						<tr class="tunnel-empty-row">
-							<td colspan="6">Ничего не найдено</td>
+							<td colspan="6">{m.tunnels_dashboard_empty_title()}</td>
 						</tr>
 					{/if}
 						</tbody>
@@ -303,9 +306,9 @@
 						{#if dashboardSectionsLayout}
 							<TunnelSectionHeader
 								nested
-								title="Остановлено"
+								title={m.subscriptions_tab_stopped()}
 								count={sortedFilteredSubscriptionsListRows.length}
-								countLabel={pluralForm(sortedFilteredSubscriptionsListRows.length, SUBSCRIPTION_WORDS)}
+								countLabel={m.tunnels_unit_subscriptions({ count: sortedFilteredSubscriptionsListRows.length })}
 							/>
 						{/if}
 						<div class="tunnel-grid tunnel-grid--list">
@@ -319,7 +322,7 @@
 				</div>
 				{/if}
 				{#if singboxSubscriptionsSearchEmpty}
-					<p class="tunnel-list-empty">Ничего не найдено</p>
+					<p class="tunnel-list-empty">{m.tunnels_dashboard_empty_title()}</p>
 				{/if}
 				{:else}
 				{#if subscriptionsActiveCards.length > 0}
@@ -363,9 +366,9 @@
 					{#if dashboardSectionsLayout}
 						<TunnelSectionHeader
 							nested
-							title="Остановлено"
+							title={m.subscriptions_tab_stopped()}
 							count={sortedFilteredSubscriptionsListRows.length}
-							countLabel={pluralForm(sortedFilteredSubscriptionsListRows.length, SUBSCRIPTION_WORDS)}
+							countLabel={m.tunnels_unit_subscriptions({ count: sortedFilteredSubscriptionsListRows.length })}
 						/>
 						{@render subscriptionStoppedGrid()}
 					{:else}
@@ -373,13 +376,13 @@
 							class="external-section"
 							class:singbox-sub-inactive-section={sortedFilteredSubscriptionsActiveCards.length === 0}
 						>
-							<h2 class="section-title">Остановлено</h2>
+							<h2 class="section-title">{m.subscriptions_tab_stopped()}</h2>
 							{@render subscriptionStoppedGrid()}
 						</div>
 					{/if}
 				{/if}
 				{#if singboxSubscriptionsSearchEmpty}
-					<p class="tunnel-list-empty">Ничего не найдено</p>
+					<p class="tunnel-list-empty">{m.tunnels_dashboard_empty_title()}</p>
 				{/if}
 				{/if}
 			{/if}

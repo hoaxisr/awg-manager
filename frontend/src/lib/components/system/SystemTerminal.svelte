@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -22,7 +23,8 @@
 
 	let pageState = $state<PageState>('loading');
 	let installing = $state(false);
-	let installError: string | null = $state(null);
+	// Текст ошибки установки; пустое message подменяется при отрисовке (язык может смениться).
+	let installError = $state<{ message: string } | null>(null);
 	let autoLogin = $state<Pick<TerminalAutoLogin, 'login' | 'password'> | null>(null);
 	// ownedSession is true only when THIS component started the ttyd session.
 	// Used to decide whether onDestroy should stop the session: when another
@@ -64,10 +66,10 @@
 		installError = null;
 		try {
 			await api.terminalInstall();
-			notifications.success('ttyd установлен');
+			notifications.success(m.terminal_ttyd_installed());
 			await startTerminal();
 		} catch (e) {
-			installError = errorMessage(e, 'Неизвестная ошибка');
+			installError = { message: errorMessage(e, '') };
 		} finally {
 			installing = false;
 		}
@@ -80,7 +82,7 @@
 			ownedSession = true;
 			pageState = 'active';
 		} catch (e) {
-			notifications.error('Не удалось запустить терминал: ' + errorMessage(e, ''));
+			notifications.error(m.terminal_start_failed({ error: errorMessage(e, '') }));
 			pageState = 'error';
 		}
 	}
@@ -90,9 +92,9 @@
 			await api.terminalStop();
 			ownedSession = false;
 			pageState = 'idle';
-			notifications.info('Сессия терминала остановлена');
+			notifications.info(m.system_terminal_stopped_toast());
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Ошибка остановки'));
+			notifications.error(errorMessage(e, m.system_terminal_stop_failed()));
 		}
 	}
 
@@ -118,19 +120,19 @@
 		<div class="term-ctrl-bar">
 			<div class="term-status-pill" class:active={pageState === 'active'}>
 				<span class="dot"></span>
-				<span>{pageState === 'active' ? 'Сессия активна (ttyd)' : 'Терминал остановлен'}</span>
+				<span>{pageState === 'active' ? m.system_terminal_pill_active() : m.system_terminal_pill_stopped()}</span>
 			</div>
 
 			<div class="term-actions">
 				{#if pageState === 'active'}
 					<Button size="sm" variant="danger" onclick={stopTerminal}>
 						{#snippet iconBefore()}<Square size={13} />{/snippet}
-						Остановить терминал
+						{m.system_terminal_stop()}
 					</Button>
 				{:else if pageState === 'idle'}
 					<Button size="sm" variant="primary" onclick={startTerminal}>
 						{#snippet iconBefore()}<Play size={13} />{/snippet}
-						Запустить терминал
+						{m.system_terminal_start()}
 					</Button>
 				{/if}
 			</div>
@@ -142,25 +144,29 @@
 	{#if pageState === 'loading' || pageState === 'starting'}
 		<div class="term-placeholder">
 			<RefreshCw size={24} class="spin" />
-			<p>Запуск сессии терминала…</p>
+			<p>{m.system_terminal_starting()}</p>
 		</div>
 	{:else if pageState === 'not-installed'}
-		<TerminalInstall {installing} error={installError} oninstall={handleInstall} />
+		<TerminalInstall
+				{installing}
+				error={installError ? installError.message || m.terminal_unknown_error() : null}
+				oninstall={handleInstall}
+			/>
 	{:else if pageState === 'session-busy'}
 		<div class="term-placeholder">
-			<p>Терминал уже открыт в другой сессии.</p>
-			<Button variant="secondary" onclick={checkStatus}>Проверить снова</Button>
+			<p>{m.system_terminal_busy()}</p>
+			<Button variant="secondary" onclick={checkStatus}>{m.system_terminal_check_again()}</Button>
 		</div>
 	{:else if pageState === 'idle'}
 		<div class="term-placeholder">
 			<Terminal size={36} class="muted" />
 			<div class="idle-txt">
-				<h3>Терминал выключен</h3>
-				<p>Процесс ttyd остановлен и не потребляет ресурсы роутера.</p>
+				<h3>{m.system_terminal_idle_title()}</h3>
+				<p>{m.system_terminal_idle_text()}</p>
 			</div>
 			<Button variant="primary" onclick={startTerminal}>
 				{#snippet iconBefore()}<Play size={14} />{/snippet}
-				Запустить сессию
+				{m.system_terminal_start_session()}
 			</Button>
 		</div>
 	{:else if pageState === 'active'}
@@ -175,8 +181,8 @@
 		</div>
 	{:else}
 		<div class="term-placeholder">
-			<p>Не удалось запустить терминал.</p>
-			<Button variant="secondary" onclick={checkStatus}>Повторить</Button>
+			<p>{m.system_terminal_start_failed_text()}</p>
+			<Button variant="secondary" onclick={checkStatus}>{m.terminal_retry()}</Button>
 		</div>
 	{/if}
 </div>

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Toggle, Button } from '$lib/components/ui';
 	import type { GeoFileSettings } from '$lib/types';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		value: GeoFileSettings;
@@ -46,8 +47,8 @@
 
 <div class="setting-row dns-header-row">
 	<div class="flex flex-col gap-1">
-		<span class="font-medium">Автообновление гео-файлов</span>
-		<span class="setting-description">Периодически перекачивать пользовательские geoip/geosite по расписанию.</span>
+		<span class="font-medium">{m.hrneo_geo_refresh_title()}</span>
+		<span class="setting-description">{m.hrneo_geo_refresh_description()}</span>
 	</div>
 	<Toggle checked={value.autoRefreshEnabled} onchange={onToggle} disabled={saving} />
 </div>
@@ -55,33 +56,33 @@
 {#if value.autoRefreshEnabled}
 	<div class="settings-panel">
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label class="form-label">Режим обновления:</label>
+		<label class="form-label">{m.hrneo_geo_refresh_mode()}</label>
 		<div class="mode-options">
-			<label class="mode-option"><input type="radio" value="interval" bind:group={localMode} disabled={saving} /><span>каждые N часов</span></label>
-			<label class="mode-option"><input type="radio" value="daily" bind:group={localMode} disabled={saving} /><span>ежедневно</span></label>
+			<label class="mode-option"><input type="radio" value="interval" bind:group={localMode} disabled={saving} /><span>{m.hrneo_geo_refresh_mode_interval()}</span></label>
+			<label class="mode-option"><input type="radio" value="daily" bind:group={localMode} disabled={saving} /><span>{m.hrneo_geo_refresh_mode_daily()}</span></label>
 		</div>
 
 		{#if localMode === 'interval'}
 			<div class="inline-form">
 				<div class="input-with-suffix">
 					<input type="number" bind:value={localInterval} min="1" max="48" disabled={saving} />
-					<span class="input-suffix">ч.</span>
+					<span class="input-suffix">{m.hrneo_geo_refresh_hours_suffix()}</span>
 				</div>
 				{#if settingsChanged}
-					<Button variant="primary" size="sm" onclick={handleSave} loading={saving}>{saving ? 'Сохранение...' : 'Сохранить'}</Button>
+					<Button variant="primary" size="sm" onclick={handleSave} loading={saving}>{saving ? m.hrneo_geo_refresh_saving() : m.routing_save()}</Button>
 				{/if}
 			</div>
-			<p class="form-hint">Рекомендуется от 6 до 24 часов</p>
+			<p class="form-hint">{m.hrneo_geo_refresh_interval_hint()}</p>
 		{/if}
 
 		{#if localMode === 'daily'}
 			<div class="inline-form">
 				<input type="time" bind:value={localDailyTime} disabled={saving} />
 				{#if settingsChanged}
-					<Button variant="primary" size="sm" onclick={handleSave} loading={saving}>{saving ? 'Сохранение...' : 'Сохранить'}</Button>
+					<Button variant="primary" size="sm" onclick={handleSave} loading={saving}>{saving ? m.hrneo_geo_refresh_saving() : m.routing_save()}</Button>
 				{/if}
 			</div>
-			<p class="form-hint">Локальное время роутера</p>
+			<p class="form-hint">{m.hrneo_geo_refresh_daily_hint()}</p>
 		{/if}
 	</div>
 {/if}

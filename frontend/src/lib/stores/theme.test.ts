@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type MediaQueryEntry = {
 	mql: MediaQueryList;
@@ -92,6 +92,14 @@ function latestState(spy: ReturnType<typeof vi.fn>) {
 	if (!current) throw new Error('Theme state is missing');
 	return current;
 }
+
+// Стор темы тянет $lib/i18n, а с ним скомпилированный словарь Paraglide
+// (несколько МБ). Первая трансформация на холодном кеше vitest дольше
+// 5-секундного лимита теста, поэтому прогреваем её один раз заранее —
+// повторные импорты после vi.resetModules() берут её из кеша.
+beforeAll(async () => {
+	await import('$lib/i18n');
+}, 60_000);
 
 describe('theme store system mode', () => {
 	beforeEach(() => {

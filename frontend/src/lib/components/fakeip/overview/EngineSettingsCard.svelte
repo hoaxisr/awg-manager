@@ -7,7 +7,7 @@
     - Движок: «Перезапустить» (onRestart → api.singboxControl) + тумблер ON при
       routingMode==='fakeip-tun' && enabled. Сам API НЕ дёргает — onToggleEngine
       запрашивает смену режима (диалог подтверждения рендерит страница).
-    - TCP/IP-стек: Dropdown из TUN_STACK_OPTIONS (settings.fakeipStack).
+    - TCP/IP-стек: Dropdown из tunStackOptions() (settings.fakeipStack).
       Пусто = собственный стек sing-tun (дефолт), остальное — legacy.
     - WAN-интерфейс: «Авто» + список api.singboxRouterListWANInterfaces()
       (kernel-имя + label). Тот же discriminator, что sb-router StatusDrawer:
@@ -29,10 +29,11 @@
 	import { onMount } from 'svelte';
 	import { Toggle, Dropdown, Input, type DropdownOption } from '$lib/components/ui';
 	import { RotateCw, TriangleAlert } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { mergeAndSaveSettings } from '$lib/components/sb-router/settingsActions';
-	import { TUN_STACK_OPTIONS, tunStackHint } from '$lib/components/sb-router/tunStack';
+	import { tunStackOptions, tunStackHint } from '$lib/components/sb-router/tunStack';
 	import type { SingboxRouterSettings, SingboxRouterWANInterface, TunStack } from '$lib/types';
 
 	interface Props {
@@ -108,11 +109,11 @@
 		if (!saving) mtuDraft.v = fakeipMtu != null ? String(fakeipMtu) : '';
 	});
 
-	const stackOptions: DropdownOption<TunStack>[] = TUN_STACK_OPTIONS;
+	const stackOptions: DropdownOption<TunStack>[] = $derived(tunStackOptions());
 
 	// WAN-пикер: «Авто» + kernel-интерфейсы. value '' = авто.
 	const wanOptions = $derived<DropdownOption[]>([
-		{ value: '', label: 'Авто' },
+		{ value: '', label: m.fakeip_engine_wan_auto() },
 		...wanInterfaces.map((i) => ({
 			value: i.name,
 			label: i.label ? `${i.name} — ${i.label}` : i.name,
@@ -132,7 +133,7 @@
 		try {
 			await mergeAndSaveSettings(patch);
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : 'Не удалось сохранить настройки';
+			const msg = e instanceof Error ? e.message : m.fakeip_engine_save_failed();
 			notifications.error(msg);
 		} finally {
 			saving = false;
@@ -157,7 +158,7 @@
 		const v = pool4Draft.v.trim();
 		if (v === (fakeipPool4 ?? '')) return;
 		if (v !== '' && !CIDR4.test(v)) {
-			notifications.error('Некорректный IPv4-CIDR пула (пример: 198.18.0.0/15)');
+			notifications.error(m.fakeip_engine_pool4_invalid());
 			pool4Draft.v = fakeipPool4 ?? '';
 			return;
 		}
@@ -169,7 +170,7 @@
 		if (v === (fakeipPool6 ?? '')) return;
 		// Пусто — допустимо (v6 выключен). Иначе лёгкая проверка CIDR6.
 		if (v !== '' && !CIDR6.test(v)) {
-			notifications.error('Некорректный IPv6-CIDR пула (пусто = выкл; пример: fc00::/18)');
+			notifications.error(m.fakeip_engine_pool6_invalid());
 			pool6Draft.v = fakeipPool6 ?? '';
 			return;
 		}
@@ -180,7 +181,7 @@
 		const raw = mtuDraft.v.trim();
 		const n = Number(raw);
 		if (raw === '' || !Number.isInteger(n) || n < 576 || n > 9000) {
-			notifications.error('MTU должен быть целым числом в диапазоне 576–9000');
+			notifications.error(m.fakeip_engine_mtu_invalid());
 			mtuDraft.v = fakeipMtu != null ? String(fakeipMtu) : '';
 			return;
 		}
@@ -201,14 +202,14 @@
 
 <div class="panel">
 	<div class="ph">
-		<span class="nm">Настройки движка</span>
-		<span class="meta">применяются с перезапуском sing-box</span>
+		<span class="nm">{m.fakeip_engine_title()}</span>
+		<span class="meta">{m.fakeip_engine_applied_on_restart()}</span>
 	</div>
 
 	<div class="eform">
 		<!-- Движок: перезапуск + тумблер (controlled — страница решает смену). -->
 		<div class="erow">
-			<span class="k">Движок</span>
+			<span class="k">{m.fakeip_engine_engine()}</span>
 			<span class="val">
 				<button
 					class="restart"
@@ -219,7 +220,7 @@
 					{#if restarting}
 						<RotateCw size={14} class="spin" />
 					{/if}
-					Перезапустить
+					{m.fakeip_engine_restart()}
 				</button>
 				<Toggle
 					checked={engineOn}
@@ -233,7 +234,7 @@
 
 		<!-- TCP/IP-стек: sing-tun (пусто) + legacy-значения. -->
 		<div class="erow">
-			<span class="k">TCP/IP-стек</span>
+			<span class="k">{m.fakeip_engine_tcpip_stack()}</span>
 			<span class="val ctl">
 				<Dropdown
 					value={fakeipStack ?? ''}
@@ -250,7 +251,7 @@
 
 		<!-- WAN-интерфейс: Авто + kernel-список. -->
 		<div class="erow">
-			<span class="k">WAN-интерфейс</span>
+			<span class="k">{m.fakeip_engine_wan_interface()}</span>
 			<span class="val ctl">
 				<Dropdown
 					value={wanValue}
@@ -278,12 +279,12 @@
 		<!-- DNS для клиентов (read-only из статуса). -->
 		{#if fakeipDns}
 			<div class="erow">
-				<span class="k">DNS для клиентов</span>
+				<span class="k">{m.fakeip_engine_client_dns()}</span>
 				<span class="val ctl">
 					<code class="iface">{fakeipDns}</code>
 					<span class="warn">
 						<TriangleAlert size={13} />
-						Пропишите этот DNS на клиентах вручную. Авто-fallback при падении прокси нет.
+						{m.fakeip_engine_client_dns_warning()}
 					</span>
 				</span>
 			</div>
@@ -292,15 +293,15 @@
 		<!-- Подсказка: policy-exit через opkgtun. -->
 		<div class="erow erow-hint">
 			<span class="policy-hint">
-				Чтобы завернуть весь трафик устройства через fakeip — назначьте его в
-				<a href="/routing?tab=policy" class="policy-link">Политике доступа</a>
-				на выход opkgtun.
+				{m.fakeip_engine_policy_hint_before()}
+				<a href="/routing?tab=policy" class="policy-link">{m.fakeip_engine_policy_hint_link()}</a>
+				{m.fakeip_engine_policy_hint_after()}
 			</span>
 		</div>
 
 		<!-- fakeip-пул v4. -->
 		<div class="erow">
-			<span class="k">fakeip-пул v4</span>
+			<span class="k">{m.fakeip_engine_pool4()}</span>
 			<span class="val ctl">
 				<Input
 					value={pool4Draft.v}
@@ -315,11 +316,11 @@
 
 		<!-- fakeip-пул v6 (пусто = выключен). -->
 		<div class="erow">
-			<span class="k">fakeip-пул v6</span>
+			<span class="k">{m.fakeip_engine_pool6()}</span>
 			<span class="val ctl">
 				<Input
 					value={pool6Draft.v}
-					placeholder="fc00::/18 (пусто — выкл)"
+					placeholder={m.fakeip_engine_pool6_placeholder()}
 					disabled={saving}
 					fullWidth
 					oninput={(v) => (pool6Draft.v = v)}
@@ -347,7 +348,7 @@
 		<!-- Активный tun-интерфейс (только когда провижен). -->
 		{#if fakeipIface}
 			<div class="erow">
-				<span class="k">tun-интерфейс</span>
+				<span class="k">{m.fakeip_engine_tun_interface()}</span>
 				<span class="val"><span class="iface">{fakeipIface}</span></span>
 			</div>
 		{/if}

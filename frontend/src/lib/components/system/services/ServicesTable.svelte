@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Card } from '$lib/components/ui';
 	import type { SystemServiceItem } from '$lib/api/client';
 	import { stripAnsi } from '$lib/utils/ansi';
@@ -43,22 +44,22 @@
 	{#if loading && totalCount === 0}
 		<div class="empty-state">
 			<RefreshCw size={24} class="spin" />
-			<p>Загрузка списка служб…</p>
+			<p>{m.system_services_t_loading()}</p>
 		</div>
 	{:else if items.length === 0}
 		<div class="empty-state">
 			<Search size={24} class="muted" />
-			<p>Службы не найдены по запросу «{searchQuery}»</p>
+			<p>{m.system_services_t_none({ query: searchQuery })}</p>
 		</div>
 	{:else}
 		<div class="table-wrap">
 			<table class="svc-table">
 				<thead>
 					<tr>
-						<th style="width: 26%;">Служба</th>
-						<th style="width: 20%;">Автозапуск</th>
-						<th style="width: 22%;">Статус</th>
-						<th style="text-align: right; width: 32%;">Действия</th>
+						<th style="width: 26%;">{m.system_services_t_service()}</th>
+						<th style="width: 20%;">{m.system_services_t_autostart()}</th>
+						<th style="width: 22%;">{m.system_services_t_status()}</th>
+						<th style="text-align: right; width: 32%;">{m.system_services_t_actions()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -70,7 +71,7 @@
 									<div class="name-line">
 										<span class="svc-name">{item.name}</span>
 										{#if item.managed}
-											<span class="badge-managed" title={item.managedHint}>Система</span>
+											<span class="badge-managed" title={item.managedHint}>{m.system_services_t_managed()}</span>
 										{/if}
 									</div>
 									<code class="svc-path" title={item.script}>{item.script}</code>
@@ -87,15 +88,15 @@
 										disabled={acting === item.script || (item.managed && item.enabled)}
 										title={
 											item.managed && item.enabled
-												? `Автозапуск системной службы «${item.name}» нельзя отключить`
+												? m.system_services_t_autostart_locked({ name: item.name })
 												: item.enabled
-													? 'Автозапуск включен (Sxx). Нажмите для выключения (Kxx)'
-													: 'Автозапуск выключен (Kxx). Нажмите для включения (Sxx)'
+													? m.system_services_t_autostart_on_title()
+													: m.system_services_t_autostart_off_title()
 										}
 										onclick={() => onToggleEnable(item, !item.enabled)}
 									>
 										<span class="autostart-indicator"></span>
-										<span class="autostart-label">{item.enabled ? 'ВКЛ (S)' : 'ВЫКЛ (K)'}</span>
+										<span class="autostart-label">{item.enabled ? m.system_services_t_autostart_on() : m.system_services_t_autostart_off()}</span>
 									</button>
 								</div>
 							</td>
@@ -105,7 +106,7 @@
 								<div class="status-cell-wrap">
 									<span class="status-pill" class:running={item.running}>
 										<span class="dot"></span>
-										<span>{item.running ? 'Запущен' : 'Остановлен'}</span>
+										<span>{item.running ? m.system_services_t_running() : m.system_services_t_stopped()}</span>
 									</span>
 									{#if statusHint(item)}
 										<span class="status-hint-text" title={statusHint(item)}>{statusHint(item)}</span>
@@ -121,11 +122,11 @@
 										type="button"
 										class="btn-act btn-start"
 										disabled={acting === item.script || item.running}
-										title="Запустить службу"
+										title={m.system_services_t_start_title()}
 										onclick={() => onAction(item, 'start')}
 									>
 										<Play size={12} />
-										<span>Старт</span>
+										<span>{m.system_services_t_start()}</span>
 									</button>
 
 									<!-- Stop -->
@@ -133,11 +134,11 @@
 										type="button"
 										class="btn-act btn-stop"
 										disabled={acting === item.script || !item.running}
-										title="Остановить службу"
+										title={m.system_services_t_stop_title()}
 										onclick={() => onAction(item, 'stop')}
 									>
 										<Square size={12} />
-										<span>Стоп</span>
+										<span>{m.system_services_t_stop()}</span>
 									</button>
 
 									<!-- Restart -->
@@ -145,29 +146,29 @@
 										type="button"
 										class="btn-act btn-restart"
 										disabled={acting === item.script}
-										title="Перезапустить службу"
+										title={m.system_services_t_restart_title()}
 										onclick={() => onAction(item, 'restart')}
 									>
 										<RotateCw size={12} class={acting === item.script ? 'spin' : ''} />
-										<span>Рестарт</span>
+										<span>{m.system_services_t_restart()}</span>
 									</button>
 
 									<!-- Edit Code -->
 									<button
 										type="button"
 										class="btn-act btn-edit"
-										title="Просмотреть / Редактировать скрипт"
+										title={m.system_services_t_edit_title()}
 										onclick={() => onEdit(item)}
 									>
 										<FileCode size={12} />
-										<span>Скрипт</span>
+										<span>{m.system_services_t_edit()}</span>
 									</button>
 
 									<!-- Clone -->
 									<button
 										type="button"
 										class="btn-act btn-clone"
-										title="Клонировать эту службу"
+										title={m.system_services_t_clone_title()}
 										onclick={() => onClone(item)}
 									>
 										<Copy size={12} />
@@ -178,7 +179,7 @@
 										<button
 											type="button"
 											class="btn-act btn-delete"
-											title="Удалить службу с роутера"
+											title={m.system_services_t_delete_title()}
 											onclick={() => onDelete(item)}
 										>
 											<Trash2 size={12} />

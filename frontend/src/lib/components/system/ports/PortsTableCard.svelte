@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SystemPortBinding } from '$lib/api/client';
 	import { Button, Card, SegmentedControl } from '$lib/components/ui';
 	import { RefreshCw, Power } from 'lucide-svelte';
@@ -34,47 +35,47 @@
 <Card padding="sm">
 	<div class="table-header">
 		<div class="left-controls">
-			<h3>Открытые порты системы ({groups.length} процессов, {bindings.length} сокетов)</h3>
+			<h3>{m.system_ports_pt_title({ groups: groups.length, sockets: bindings.length })}</h3>
 			<SegmentedControl
 				value={filterProto}
 				options={[
-					{ value: 'all', label: `Все (${bindings.length})` },
+					{ value: 'all', label: m.system_ports_pt_all({ count: bindings.length }) },
 					{ value: 'tcp', label: `TCP (${tcpCount})` },
 					{ value: 'udp', label: `UDP (${udpCount})` },
 				]}
-				ariaLabel="Фильтр по протоколу"
+				ariaLabel={m.system_ports_pt_filter()}
 				onchange={(v) => (filterProto = v as ProtoFilter)}
 			/>
 		</div>
 		<div class="right-controls">
 			<input
 				type="text"
-				placeholder="Поиск по порту, процессу, IP…"
+				placeholder={m.system_ports_pt_search()}
 				bind:value={search}
 				class="table-search-input"
 			/>
 			<Button variant="ghost" onclick={onrefresh} disabled={loading}>
 				{#snippet iconBefore()}<RefreshCw size={14} />{/snippet}
-				Обновить
+				{m.routing_page_refresh()}
 			</Button>
 		</div>
 	</div>
 
 	{#if loading && bindings.length === 0}
-		<p class="muted">Сканирование портов…</p>
+		<p class="muted">{m.system_ports_pt_scanning()}</p>
 	{:else if groups.length === 0}
-		<p class="muted">Порты не найдены</p>
+		<p class="muted">{m.system_ports_pt_none()}</p>
 	{:else}
 		<div class="table-wrap">
 			<table class="ports-table">
 				<thead>
 					<tr>
-						<th style="width: 90px;">Протокол</th>
-						<th style="width: 80px;">Порт</th>
-						<th style="width: 220px;">Адреса привязки</th>
-						<th>Процесс / Служба</th>
+						<th style="width: 90px;">{m.system_ports_pt_proto()}</th>
+						<th style="width: 80px;">{m.system_ports_pt_port()}</th>
+						<th style="width: 220px;">{m.system_ports_pt_addrs()}</th>
+						<th>{m.system_ports_pt_proc()}</th>
 						<th style="width: 85px;">PID</th>
-						<th style="width: 130px; text-align: right;">Действие</th>
+						<th style="width: 130px; text-align: right;">{m.system_ports_pt_action()}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -107,9 +108,9 @@
 											service={g.service}
 											isSelf={g.isSelf}
 											isCritical={g.isCritical}
-											selfLabel="текущий"
-											selfTitle="Текущий веб-сервер"
-											criticalTitle="Системный процесс"
+											selfLabel={m.system_ports_pt_self()}
+											selfTitle={m.system_ports_pt_self_title()}
+											criticalTitle={m.system_ports_pt_crit_title()}
 										/>
 									</div>
 									{#if g.cmdline}
@@ -135,7 +136,7 @@
 										onclick={() => onkill(g)}
 									>
 										{#snippet iconBefore()}<Power size={13} />{/snippet}
-										Освободить
+										{m.system_ports_pt_free()}
 									</Button>
 								{:else}
 									<span class="muted">—</span>

@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
 	import { Lock } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 	import { tunStackLabel } from '$lib/components/sb-router/tunStack';
 	import type { TunStack } from '$lib/types';
 
@@ -40,20 +41,20 @@
 	<div class="top">
 		<span class="type tun">tun</span>
 		<span class="nm">tun-in</span>
-		<span class="badge">ядро fakeip</span>
+		<span class="badge">{m.fakeip_inbounds_tun_badge()}</span>
 		<span class="dot" data-tone={live ? 'success' : 'muted'} aria-hidden="true"></span>
 	</div>
 
 	<div class="rows">
 		<div class="r"><span class="k">interface</span><span class="v y">{iface || '—'}</span></div>
 		<div class="r"><span class="k">address</span><span class="v mono">{address || '—'}</span></div>
-		<div class="r"><span class="k">стек · MTU</span><span class="v">{stackMtuLabel}</span></div>
-		<div class="r"><span class="k">DNS клиентам</span><span class="v">{dnsLabel}</span></div>
+		<div class="r"><span class="k">{m.fakeip_inbounds_tun_stack_mtu()}</span><span class="v">{stackMtuLabel}</span></div>
+		<div class="r"><span class="k">{m.fakeip_inbounds_tun_client_dns()}</span><span class="v">{dnsLabel}</span></div>
 	</div>
 
 	<div class="foot">
 		<span class="locked">
-			<Lock size={12} aria-hidden="true" /> управляется движком
+			<Lock size={12} aria-hidden="true" /> {m.fakeip_inbounds_tun_managed()}
 		</span>
 	</div>
 </article>
