@@ -49,7 +49,7 @@
 	} from "$lib/types";
 	import { proxyInstallStatus, type ProxySubsystem } from "$lib/stores/proxyInstall";
 	import {
-		USAGE_LEVEL_LABELS,
+		usageLevelLabel,
 		isAppearanceSettingsVisible,
 		isSectionVisible,
 		isRoutingSubTabVisible,
@@ -58,12 +58,12 @@
 		type UsageLevel,
 	} from "$lib/types/usageLevel";
 	import { usageLevel } from "$lib/stores/settings";
+	import { m } from "$lib/i18n";
 	import { waitForBackendRestart } from "$lib/restartRecovery";
 	import { hasDevelopChannelQuizPassed } from "$lib/utils/developChannelGate";
 	import { developFeedbackFabVisible } from "$lib/stores/developFeedbackFab";
 	import { experimentalSettingsUnlocked } from "$lib/stores/experimentalSettingsUnlocked";
 	import { settingsUpdateHighlight } from "$lib/stores/settingsUpdateHighlight";
-	import { pluralize, AVAILABLE_WORDS, TUNNEL_WORDS } from "$lib/utils/pluralize";
 	import {
 		CircleArrowDown,
 		Lock,
@@ -93,6 +93,15 @@
 	let loading = $state(true);
 	let saving = $state(false);
 	const origin = $derived(typeof window !== "undefined" ? window.location.origin : "");
+	const escapeHtml = (s: string) =>
+		s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+	// Static markup with an escaped origin; the translated sentence keeps the <code> styling.
+	const apiKeyDescriptionHtml = $derived(
+		m.settings_page_apikey_description({
+			endpoint: `<code>${escapeHtml(origin)}/api/</code>`,
+			header: `<code>Authorization: Bearer &lt;${escapeHtml(m.settings_page_apikey_token())}&gt;</code>`,
+		}),
+	);
 	const showSingboxIntegration = $derived(isSectionVisible($usageLevel, "singboxTunnels"));
 	const showHydraIntegration = $derived(isRoutingSubTabVisible($usageLevel, "hrNeo"));
 	const showDnsRouteCard = $derived(isRoutingSubTabVisible($usageLevel, "dnsRoutes"));
@@ -155,13 +164,13 @@
 			}
 			notifications.success(
 				res.migrated
-					? (enabled ? 'NDMS Proxy включены' : 'NDMS Proxy выключены')
-					: 'Состояние не изменилось',
+					? (enabled ? m.settings_page_ndms_proxy_enabled_toast() : m.settings_page_ndms_proxy_disabled_toast())
+					: m.settings_page_state_unchanged(),
 			);
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : 'Не удалось переключить NDMS Proxy';
+			const msg = e instanceof Error ? e.message : m.settings_page_ndms_proxy_toggle_failed();
 			if (msg.includes('PROXY_COMPONENT_MISSING') || msg.includes("'proxy'")) {
-				notifications.error('NDMS-компонент "proxy" не установлен. Установите его в System → Components.');
+				notifications.error(m.settings_page_ndms_component_missing());
 			} else {
 				notifications.error(msg);
 			}
@@ -176,11 +185,11 @@
 			const fresh = await api.singboxControl(action);
 			singboxStatus.applyMutationResponse(fresh);
 			notifications.success(
-				action === 'restart' ? 'Sing-box перезапущен' :
-				action === 'stop' ? 'Sing-box остановлен' : 'Sing-box запущен',
+				action === 'restart' ? m.settings_page_singbox_restarted() :
+				action === 'stop' ? m.settings_page_singbox_stopped() : m.settings_page_singbox_started(),
 			);
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось управлять sing-box');
+			notifications.error(e instanceof Error ? e.message : m.settings_page_singbox_control_failed());
 		} finally {
 			singboxBusy = false;
 		}
@@ -192,11 +201,11 @@
 			const fresh = await api.controlHydraRoute(action);
 			hydrarouteStatus.applyMutationResponse(fresh);
 			notifications.success(
-				action === 'restart' ? 'HydraRoute перезапущен' :
-				action === 'stop' ? 'HydraRoute остановлен' : 'HydraRoute запущен',
+				action === 'restart' ? m.settings_page_hydra_restarted() :
+				action === 'stop' ? m.settings_page_hydra_stopped() : m.settings_page_hydra_started(),
 			);
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось управлять HydraRoute');
+			notifications.error(e instanceof Error ? e.message : m.settings_page_hydra_control_failed());
 		} finally {
 			hydraBusy = false;
 		}
@@ -208,7 +217,7 @@
 		try {
 			const fresh = await api.singboxInstall();
 			singboxStatus.applyMutationResponse(fresh);
-			notifications.success("Sing-box установлен");
+			notifications.success(m.settings_page_singbox_installed());
 		} catch (e) {
 			singboxInstallError = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -221,9 +230,9 @@
 		try {
 			const fresh = await api.singboxUninstall();
 			singboxStatus.applyMutationResponse(fresh);
-			notifications.success('Sing-box удалён');
+			notifications.success(m.settings_page_singbox_removed());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось удалить sing-box');
+			notifications.error(e instanceof Error ? e.message : m.settings_page_singbox_remove_failed());
 		} finally {
 			singboxUninstalling = false;
 		}
@@ -235,7 +244,7 @@
 		try {
 			const fresh = await api.singboxUpdate();
 			singboxStatus.applyMutationResponse(fresh);
-			notifications.success("Sing-box обновлён");
+			notifications.success(m.settings_page_singbox_updated());
 		} catch (e) {
 			singboxUpdateError = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -253,11 +262,11 @@
 				systemInfo = await api.getSystemInfo();
 				systemInfoUpdatedAt = new Date().toISOString();
 				if (!silent) {
-					notifications.success("Информация о роутере обновлена");
+					notifications.success(m.settings_page_router_info_updated());
 				}
 			} catch (e) {
 				if (!silent) {
-					notifications.error(e instanceof Error ? e.message : "Не удалось обновить системную информацию");
+					notifications.error(e instanceof Error ? e.message : m.settings_page_system_info_failed());
 				}
 			} finally {
 				systemInfoRefreshing = false;
@@ -272,7 +281,7 @@
 		if (!showNotification) return;
 		const err = get(downloadOutboundsError);
 		if (err) {
-			notifications.error(`Маршруты загрузок: ${downloadErrorToText(err)}`);
+			notifications.error(m.settings_page_download_routes_error({ error: downloadErrorToText(err) }));
 			return;
 		}
 		const list = get(downloadOutbounds);
@@ -280,8 +289,8 @@
 		const availableTunnelCount = list.filter((ob) => ob.tag !== 'direct' && ob.available).length;
 		notifications.success(
 			tunnelCount > 0
-				? `Маршруты обновлены: найдено ${pluralize(tunnelCount, TUNNEL_WORDS)} (${pluralize(availableTunnelCount, AVAILABLE_WORDS)})`
-				: 'Маршруты обновлены: туннели не найдены (доступен только Direct)'
+				? m.settings_page_routes_updated_found({ tunnels: m.settings_page_tunnels_count({ count: tunnelCount }), available: m.settings_page_available_count({ count: availableTunnelCount }) })
+				: m.settings_page_routes_updated_none()
 		);
 	}
 
@@ -295,9 +304,9 @@
 				download: { routeTag: normalizedTag, routeKind: normalizedKind },
 			});
 			setGlobalSettings(settings);
-			notifications.success('Маршрут загрузок сохранён');
+			notifications.success(m.settings_page_download_route_saved());
 		} catch {
-			notifications.error('Не удалось сохранить маршрут загрузок');
+			notifications.error(m.settings_page_download_route_save_failed());
 		} finally {
 			saving = false;
 		}
@@ -381,10 +390,10 @@
 				busy: proxyBusy[key] === true,
 				oninstall: () =>
 					void runProxyBinaries(key, () => api.proxyInstall(key),
-						`${label}: бинари установлены`, `Не удалось установить ${label}`),
+						m.settings_page_proxy_installed({ label }), m.settings_page_proxy_install_failed({ label })),
 				onuninstall: () =>
 					void runProxyBinaries(key, () => api.proxyUninstall(key),
-						`${label}: бинари удалены`, `Не удалось удалить ${label}`),
+						m.settings_page_proxy_removed({ label }), m.settings_page_proxy_remove_failed({ label })),
 			};
 		// Подсистема без статуса и без возможности установки — не наша арка:
 		// строка была бы мёртвой.
@@ -409,7 +418,7 @@ onMount(() => {
 			setGlobalSettings(appSettings);
 			scrollToSettingsHashTarget();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : "Не удалось загрузить настройки");
+			notifications.error(e instanceof Error ? e.message : m.settings_page_load_failed());
 		} finally {
 			loading = false;
 		}
@@ -442,9 +451,9 @@ $effect(() => {
 		try {
 			settings = await api.updateSettings({ ...settings, authEnabled: enabled });
 			setGlobalSettings(settings);
-			notifications.success(enabled ? "Авторизация включена" : "Авторизация отключена");
+			notifications.success(enabled ? m.settings_page_auth_enabled() : m.settings_page_auth_disabled());
 		} catch {
-			notifications.error("Ошибка сохранения настроек");
+			notifications.error(m.settings_page_save_error());
 		} finally {
 			saving = false;
 		}
@@ -469,10 +478,10 @@ $effect(() => {
 		try {
 			settings = await api.updateSettings({ ...settings, sessionTtlHours: hours });
 			setGlobalSettings(settings);
-			notifications.success("Время жизни сессии сохранено");
+			notifications.success(m.settings_page_session_ttl_saved());
 		} catch (e) {
 			// 400 с русским сообщением от бэкенда (валидация 1..720) — показываем как есть.
-			notifications.error(e instanceof Error ? e.message : "Ошибка сохранения настроек");
+			notifications.error(e instanceof Error ? e.message : m.settings_page_save_error());
 		} finally {
 			saving = false;
 		}
@@ -488,7 +497,7 @@ $effect(() => {
 		}
 		return mcpKeys.subscribe((s) => {
 			if (s.status === "error" && mcpKeysState?.status !== "error") {
-				notifications.error(s.error ?? "Не удалось загрузить ключи MCP");
+				notifications.error(s.error ?? m.settings_page_mcp_keys_load_failed());
 			}
 			mcpKeysState = s;
 		});
@@ -500,9 +509,9 @@ $effect(() => {
 		try {
 			settings = await api.updateSettings({ ...settings, mcpEnabled: enabled });
 			setGlobalSettings(settings);
-			notifications.success(enabled ? "MCP-сервер включён" : "MCP-сервер выключен");
+			notifications.success(enabled ? m.settings_page_mcp_enabled() : m.settings_page_mcp_disabled());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : "Ошибка сохранения настроек");
+			notifications.error(e instanceof Error ? e.message : m.settings_page_save_error());
 		} finally {
 			saving = false;
 		}
@@ -514,9 +523,9 @@ $effect(() => {
 		try {
 			settings = await api.setObfuscatorRelay(process);
 			setGlobalSettings(settings);
-			notifications.success(process ? "Phobos: userspace-процесс" : "Phobos: модуль ядра");
+			notifications.success(process ? m.settings_page_phobos_userspace() : m.settings_page_phobos_kernel());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : "Ошибка сохранения настроек");
+			notifications.error(e instanceof Error ? e.message : m.settings_page_save_error());
 		} finally {
 			saving = false;
 		}
@@ -531,10 +540,10 @@ $effect(() => {
 	async function revokeMcpKey(id: string) {
 		try {
 			await api.revokeMcpKey(id);
-			notifications.success("Ключ отозван");
+			notifications.success(m.settings_page_key_revoked());
 			await mcpKeys.refetch();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : "Не удалось отозвать ключ");
+			notifications.error(e instanceof Error ? e.message : m.settings_page_key_revoke_failed());
 		}
 	}
 
@@ -547,9 +556,9 @@ $effect(() => {
 			// the UUID via crypto/rand and persists it in one round-trip.
 			settings = await api.regenerateApiKey();
 			setGlobalSettings(settings);
-			notifications.success("API ключ сгенерирован");
+			notifications.success(m.settings_page_apikey_generated());
 		} catch {
-			notifications.error("Ошибка генерации ключа");
+			notifications.error(m.settings_page_apikey_generate_failed());
 		} finally {
 			saving = false;
 		}
@@ -559,13 +568,13 @@ $effect(() => {
 		if (!settings) return;
 		const key = (settings.apiKey ?? "").trim();
 		if (!key) {
-			notifications.info("Сначала сгенерируйте API ключ");
+			notifications.info(m.settings_page_apikey_generate_first());
 			return;
 		}
 		if (await copyToClipboard(key)) {
-			notifications.success("API ключ скопирован в буфер обмена");
+			notifications.success(m.settings_page_apikey_copied());
 		} else {
-			notifications.error("Не удалось скопировать API ключ");
+			notifications.error(m.settings_page_apikey_copy_failed());
 		}
 	}
 
@@ -578,9 +587,9 @@ $effect(() => {
 				logging: { ...settings.logging, enabled },
 			});
 			setGlobalSettings(settings);
-			notifications.success(enabled ? "Логирование включено" : "Логирование отключено");
+			notifications.success(enabled ? m.settings_page_logging_enabled() : m.settings_page_logging_disabled());
 		} catch {
-			notifications.error("Ошибка сохранения настроек");
+			notifications.error(m.settings_page_save_error());
 		} finally {
 			saving = false;
 		}
@@ -592,9 +601,9 @@ $effect(() => {
 		try {
 			settings = await api.updateSettings(settings);
 			setGlobalSettings(settings);
-			notifications.success("Настройки логирования сохранены");
+			notifications.success(m.settings_page_logging_saved());
 		} catch {
-			notifications.error("Ошибка сохранения настроек");
+			notifications.error(m.settings_page_save_error());
 		} finally {
 			saving = false;
 		}
@@ -617,9 +626,9 @@ $effect(() => {
 				},
 			});
 			setGlobalSettings(settings);
-			notifications.success(enabled ? "Автообновление подписок включено" : "Автообновление подписок отключено");
+			notifications.success(enabled ? m.settings_page_dns_auto_enabled() : m.settings_page_dns_auto_disabled());
 		} catch {
-			notifications.error("Ошибка сохранения настроек");
+			notifications.error(m.settings_page_save_error());
 		} finally {
 			saving = false;
 		}
@@ -631,9 +640,9 @@ $effect(() => {
 		try {
 			settings = await api.updateSettings(settings);
 			setGlobalSettings(settings);
-			notifications.success("Настройки автообновления сохранены");
+			notifications.success(m.settings_page_dns_auto_saved());
 		} catch {
-			notifications.error("Ошибка сохранения настроек");
+			notifications.error(m.settings_page_save_error());
 		} finally {
 			saving = false;
 		}
@@ -654,9 +663,9 @@ $effect(() => {
 				connectivityCheckUrl: settings.connectivityCheckUrl,
 			});
 			setGlobalSettings(settings);
-			notifications.success("Цели проверки пинга сохранены");
+			notifications.success(m.settings_page_ping_targets_saved());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : "Ошибка сохранения целей проверки");
+			notifications.error(e instanceof Error ? e.message : m.settings_page_ping_targets_save_failed());
 		} finally {
 			saving = false;
 		}
@@ -674,11 +683,11 @@ $effect(() => {
 			setGlobalSettings(settings);
 			notifications.success(
 				value
-					? `Bootstrap-DNS: ${value}`
-					: "Bootstrap-DNS больше не навязывается — адрес в конфигурации остаётся прежним",
+					? m.settings_page_bootstrap_set({ value })
+					: m.settings_page_bootstrap_cleared(),
 			);
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : "Ошибка сохранения bootstrap-DNS");
+			notifications.error(e instanceof Error ? e.message : m.settings_page_bootstrap_save_failed());
 		} finally {
 			savingBootstrapDNS = false;
 		}
@@ -698,9 +707,9 @@ $effect(() => {
 		try {
 			settings = await api.updateSettings({ ...settings, singboxClashPort: value });
 			setGlobalSettings(settings);
-			notifications.success(`Порт Clash API: ${value}`);
+			notifications.success(m.settings_page_clash_port_saved({ value }));
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : "Ошибка сохранения порта Clash API";
+			const msg = e instanceof Error ? e.message : m.settings_page_clash_port_save_failed();
 			clashPortError = msg;
 			notifications.error(msg);
 		} finally {
@@ -717,9 +726,9 @@ $effect(() => {
 				updates: { ...settings.updates, checkEnabled: enabled },
 			});
 			setGlobalSettings(settings);
-			notifications.success(enabled ? "Автопроверка обновлений включена" : "Автопроверка обновлений отключена");
+			notifications.success(enabled ? m.settings_page_update_check_enabled() : m.settings_page_update_check_disabled());
 		} catch {
-			notifications.error("Ошибка сохранения настроек");
+			notifications.error(m.settings_page_save_error());
 		} finally {
 			saving = false;
 		}
@@ -747,11 +756,11 @@ $effect(() => {
 			updateInfo = await api.checkUpdate(true);
 			notifications.success(
 				channel === 'develop'
-					? 'Канал обновлений: develop (нестабильный)'
-					: 'Канал обновлений изменён на стабильный',
+					? m.settings_page_channel_develop()
+					: m.settings_page_channel_stable(),
 			);
 		} catch (e) {
-			notifications.error(`Смена канала обновлений: ${downloadErrorToText(e)}`);
+			notifications.error(m.settings_page_channel_failed({ error: downloadErrorToText(e) }));
 		} finally {
 			saving = false;
 		}
@@ -768,9 +777,9 @@ $effect(() => {
 		try {
 			settings = await api.updateSettings({ ...settings, usageLevel: level });
 			setGlobalSettings(settings);
-			notifications.success(`Уровень: ${USAGE_LEVEL_LABELS[level]}`);
+			notifications.success(m.settings_level_saved({ level: usageLevelLabel(level) }));
 		} catch {
-			notifications.error("Не удалось сохранить уровень");
+			notifications.error(m.settings_page_level_save_failed());
 		} finally {
 			saving = false;
 		}
@@ -783,19 +792,19 @@ $effect(() => {
 		try {
 			const result = await requestDaemonRestart();
 			if (result === 'accepted') {
-				notifications.success("AWG Manager перезапускается...");
+				notifications.success(m.settings_page_restarting());
 			} else {
-				notifications.warning("Соединение оборвалось, проверяю перезапуск AWG Manager...");
+				notifications.warning(m.settings_page_connection_dropped());
 			}
 			const waitResult = await waitForDaemonRestart(before);
 			if (waitResult === 'timeout') {
 				restarting = false;
-				notifications.warning('Не удалось подтвердить перезапуск AWG Manager. Обновите страницу вручную.');
+				notifications.warning(m.settings_page_restart_unconfirmed());
 				return;
 			}
 			location.reload();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : "Не удалось перезапустить");
+			notifications.error(e instanceof Error ? e.message : m.settings_page_restart_failed());
 			restarting = false;
 		}
 	}
@@ -810,12 +819,12 @@ $effect(() => {
 			});
 
 			if (response.status === 401) {
-				throw new Error('Сессия истекла');
+				throw new Error(m.settings_page_session_expired());
 			}
 
 			if (!response.ok) {
 				const text = await response.text().catch(() => '');
-				throw new Error(`Не удалось перезапустить AWG Manager (${response.status}): ${text.substring(0, 120)}`);
+				throw new Error(m.settings_page_restart_http_failed({ status: response.status, text: text.substring(0, 120) }));
 			}
 
 			return 'accepted';
@@ -884,11 +893,11 @@ $effect(() => {
 </script>
 
 <svelte:head>
-	<title>Настройки - AWG Manager</title>
+	<title>{m.settings_page_document_title()}</title>
 </svelte:head>
 
 <PageContainer width="full">
-	<PageHeader title="Настройки" />
+	<PageHeader title={m.nav_settings()} />
 	{#if loading}
 		<div class="flex justify-center py-8">
 			<LoadingSpinner size="md" />
@@ -908,7 +917,7 @@ $effect(() => {
 
 				<div id="awgm-update" class="settings-block">
 					<div class="card settings-highlight-target" class:highlighted={$settingsUpdateHighlight}>
-						<SettingsSectionLabel label="Обновление AWGM" icon={CircleArrowDown} tone="green" header />
+						<SettingsSectionLabel label={m.settings_page_update_section_title()} icon={CircleArrowDown} tone="green" header />
 						<UpdateSection bind:updateInfo bind:settings />
 					</div>
 				</div>
@@ -956,12 +965,12 @@ $effect(() => {
 
 				<div class="settings-block">
 					<div class="card">
-					<SettingsSectionLabel label="Доступ" icon={Lock} tone="blue" header />
+					<SettingsSectionLabel label={m.settings_page_access_title()} icon={Lock} tone="blue" header />
 					<div class="setting-row toggle-inline-row">
 						<div class="flex flex-col gap-1">
-							<span class="font-medium">Авторизация</span>
+							<span class="font-medium">{m.settings_page_auth_label()}</span>
 							<span class="setting-description">
-								Требовать вход через учётную запись роутера для доступа к панели управления.
+								{m.settings_page_auth_description()}
 							</span>
 						</div>
 						<Toggle checked={settings.authEnabled} onchange={toggleAuth} disabled={saving} />
@@ -969,9 +978,9 @@ $effect(() => {
 					{#if settings.authEnabled}
 						<div class="setting-row session-ttl-row">
 							<div class="flex flex-col gap-1">
-								<span class="font-medium">Время жизни сессии</span>
+								<span class="font-medium">{m.settings_page_session_ttl_label()}</span>
 								<span class="setting-description">
-									Бездействие дольше этого срока завершает сессию. Активность продлевает её.
+									{m.settings_page_session_ttl_description()}
 								</span>
 							</div>
 							<div class="session-ttl-form">
@@ -984,11 +993,11 @@ $effect(() => {
 										max={SESSION_TTL_MAX_HOURS}
 										disabled={saving}
 									/>
-									<span class="input-suffix">ч.</span>
+									<span class="input-suffix">{m.settings_page_hours_suffix()}</span>
 								</div>
 								{#if sessionTtlChanged}
 									<Button variant="primary" size="sm" onclick={saveSessionTtl} loading={saving}>
-										{saving ? "Сохранение..." : "Сохранить"}
+										{saving ? m.settings_page_saving() : m.settings_page_save()}
 									</Button>
 								{/if}
 							</div>
@@ -1000,11 +1009,11 @@ $effect(() => {
 
 				<div class="settings-block">
 					<div class="card">
-					<SettingsSectionLabel label="Загрузки и обновления" icon={CloudDownload} tone="orange" header />
+					<SettingsSectionLabel label={m.settings_page_downloads_title()} icon={CloudDownload} tone="orange" header />
 					<div class="setting-row toggle-inline-row">
 						<div class="flex flex-col gap-1">
-							<span class="font-medium">Автопроверка обновлений</span>
-							<span class="setting-description">Проверять наличие новых версий раз в сутки.</span>
+							<span class="font-medium">{m.settings_page_update_check_label()}</span>
+							<span class="setting-description">{m.settings_page_update_check_description()}</span>
 						</div>
 						<Toggle
 							checked={settings.updates.checkEnabled}
@@ -1023,18 +1032,18 @@ $effect(() => {
 					{#if isUpdateChannelSwitchVisible(settings.usageLevel)}
 						<div class="setting-row">
 							<div class="flex flex-col gap-1">
-								<span class="font-medium">Канал обновлений</span>
+								<span class="font-medium">{m.settings_page_channel_label()}</span>
 								<span class="setting-description">
-									Ветка develop — свежие, потенциально нестабильные сборки из ветки разработки.
+									{m.settings_page_channel_description()}
 								</span>
 							</div>
 							<SegmentedControl
 								value={settings.updates.channel}
 								options={[
-									{ value: 'stable', label: 'Стабильный' },
-									{ value: 'develop', label: 'Разработка' },
+									{ value: 'stable', label: m.settings_page_channel_option_stable() },
+									{ value: 'develop', label: m.settings_page_channel_option_develop() },
 								] satisfies Array<{ value: 'stable' | 'develop'; label: string }>}
-								ariaLabel="Канал обновлений"
+								ariaLabel={m.settings_page_channel_label()}
 								disabled={saving}
 								onchange={(channel) => requestChannel(channel)}
 							/>
@@ -1058,7 +1067,7 @@ $effect(() => {
 
 				<div class="settings-block">
 					<div class="card">
-					<SettingsSectionLabel label="Логирование" icon={ScrollText} tone="slate" header />
+					<SettingsSectionLabel label={m.settings_page_logging_title()} icon={ScrollText} tone="slate" header />
 					<LoggingSettings
 						bind:settings
 						{saving}
@@ -1071,12 +1080,12 @@ $effect(() => {
 				{#if $usageLevel === "expert"}
 				<div class="settings-block">
 					<div class="card">
-					<SettingsSectionLabel label="Проверка пинга" icon={Activity} tone="teal" header />
+					<SettingsSectionLabel label={m.settings_page_ping_title()} icon={Activity} tone="teal" header />
 					<div class="setting-row ping-target-setting">
 						<div class="flex flex-col gap-1">
-							<span class="font-medium">Цели проверки</span>
+							<span class="font-medium">{m.settings_page_ping_targets_label()}</span>
 							<span class="setting-description">
-								ICMP target используется как глобальный адрес для ping-check. HTTP URL вызывается через туннель для проверки доступности и задержки.
+								{m.settings_page_ping_targets_description()}
 							</span>
 						</div>
 						<div class="ping-target-controls">
@@ -1091,7 +1100,7 @@ $effect(() => {
 								/>
 							</label>
 							<label class="ping-target-field">
-								<span>HTTP URL проверки</span>
+								<span>{m.settings_page_ping_http_url()}</span>
 								<input
 									type="url"
 									class="settings-text-input"
@@ -1102,7 +1111,7 @@ $effect(() => {
 							</label>
 							<div class="ping-target-action">
 								<Button variant="secondary" size="md" onclick={savePingTargetsSettings} disabled={saving}>
-									Сохранить
+									{m.settings_page_save()}
 								</Button>
 							</div>
 						</div>
@@ -1116,12 +1125,12 @@ $effect(() => {
 						class="card settings-highlight-target"
 						class:highlighted={highlightFeedbackFab}
 					>
-					<SettingsSectionLabel label="Расширенные" icon={Wrench} tone="indigo" header />
+					<SettingsSectionLabel label={m.settings_page_advanced_title()} icon={Wrench} tone="indigo" header />
 					<div class="setting-row api-key-setting">
 						<div class="flex flex-col gap-1">
 							<span class="font-medium">API Key</span>
 							<span class="setting-description">
-								API ключ для доступа к&nbsp;<code>{origin}/api/</code>, если включена авторизация. Передавайте в заголовке <code>Authorization: Bearer &lt;ключ&gt;</code>.
+								{@html apiKeyDescriptionHtml}
 							</span>
 						</div>
 						<div class="api-key-controls">
@@ -1130,15 +1139,15 @@ $effect(() => {
 								class="api-key-input"
 								value={settings.apiKey ?? ""}
 								readonly
-								placeholder="не сгенерирован"
+								placeholder={m.settings_page_apikey_placeholder()}
 								onclick={copyApiKey}
 								title={settings.apiKey?.trim()
-									? "Нажмите, чтобы скопировать в буфер обмена"
-									: "Сначала нажмите «Сгенерировать»"}
+									? m.settings_page_apikey_click_to_copy()
+									: m.settings_page_apikey_generate_hint()}
 							/>
 							<div class="api-key-action">
 								<Button variant="secondary" size="md" onclick={generateApiKey} disabled={saving}>
-									Сгенерировать
+									{m.settings_page_apikey_generate()}
 								</Button>
 							</div>
 						</div>
@@ -1146,10 +1155,9 @@ $effect(() => {
 					{#if settings.updates.channel === 'develop'}
 					<div class="setting-row toggle-inline-row">
 						<div class="flex flex-col gap-1">
-							<span class="font-medium">Кнопка обратной связи</span>
+							<span class="font-medium">{m.settings_page_feedback_label()}</span>
 							<span class="setting-description">
-								Плавающая кнопка «!» в правом нижнем углу на канале разработки.
-								Помогает быстро сообщить об ошибке или предложить улучшение.
+								{m.settings_page_feedback_description()}
 							</span>
 						</div>
 						<Toggle
@@ -1161,9 +1169,9 @@ $effect(() => {
 
 					<div class="setting-row toggle-inline-row">
 						<div class="flex flex-col gap-1">
-							<span class="font-medium">RSA-ключи Happ</span>
+							<span class="font-medium">{m.settings_page_happ_label()}</span>
 							<span class="setting-description">
-								Ключи для расшифровки приватных подписок.
+								{m.settings_page_happ_description()}
 							</span>
 						</div>
 						<Button
@@ -1172,22 +1180,21 @@ $effect(() => {
 							onclick={() => (showHappKeysModal = true)}
 							disabled={saving}
 						>
-							Управление ключами
+							{m.settings_page_happ_manage()}
 						</Button>
 					</div>
 
 					{#if singboxInstalled && showSingboxIntegration}
 						<div class="setting-row toggle-inline-row">
 							<div class="flex flex-col gap-1">
-								<span class="font-medium">NDMS Proxy для sing-box туннелей</span>
+								<span class="font-medium">{m.settings_page_ndms_proxy_label()}</span>
 								<span class="setting-description">
 									{#if ndmsProxyEnabled}
-										Если включено — для каждого туннеля sing-box создаётся интерфейс ProxyX в роутере.
+										{m.settings_page_ndms_proxy_on_1()}
 										<br>
-										Необходимо, если используете NDMS-маршрутизацию (Access Policy, политики роутера) для sing-box.
+										{m.settings_page_ndms_proxy_on_2()}
 									{:else}
-										Выключено — sing-box работает только через свою маршрутизацию. ProxyX-интерфейсы не создаются
-										(решает проблему зависания роутера при потере WAN).
+										{m.settings_page_ndms_proxy_off()}
 									{/if}
 								</span>
 							</div>
@@ -1233,11 +1240,11 @@ $effect(() => {
 
 		<div class="settings-block" id="settings-actions">
 			<div class="card actions-card">
-			<SettingsSectionLabel label="Действия" icon={Power} tone="red" header />
+			<SettingsSectionLabel label={m.settings_page_actions_title()} icon={Power} tone="red" header />
 			<div class="setting-row">
 				<div class="flex flex-col gap-1">
-					<span class="font-medium">Перезапуск AWGM</span>
-					<span class="setting-description">Туннели продолжат работать</span>
+					<span class="font-medium">{m.settings_page_restart_label()}</span>
+					<span class="setting-description">{m.settings_page_restart_description()}</span>
 				</div>
 				<Button
 					variant="secondary"
@@ -1245,7 +1252,7 @@ $effect(() => {
 					onclick={() => (restartConfirmOpen = true)}
 					loading={restarting}
 				>
-					{restarting ? "Перезапуск..." : "Перезапустить"}
+					{restarting ? m.settings_page_restarting_button() : m.settings_page_restart()}
 				</Button>
 			</div>
 
@@ -1254,12 +1261,12 @@ $effect(() => {
 					<div class="flex flex-col gap-1">
 						<span class="font-medium">Sing-box</span>
 						<span class="setting-description">
-							{singboxRunning ? "Процесс работает" : "Процесс остановлен"}
+							{singboxRunning ? m.settings_page_process_running() : m.settings_page_process_stopped()}
 						</span>
 					</div>
 					<div class="action-buttons">
 						{#if singboxRunning}
-							<span title={singboxStatusValue?.updateAvailable ? `Сначала обновите sing-box до ${singboxStatusValue.requiredVersion}` : ''}>
+							<span title={singboxStatusValue?.updateAvailable ? m.settings_page_singbox_update_first({ version: singboxStatusValue.requiredVersion }) : ''}>
 								<Button
 									variant="secondary"
 									size="sm"
@@ -1267,12 +1274,12 @@ $effect(() => {
 									loading={singboxBusy}
 									disabled={singboxStatusValue?.updateAvailable ?? false}
 								>
-									Перезапустить
+									{m.settings_page_restart()}
 								</Button>
 							</span>
-							<Button variant="danger" size="sm" onclick={() => controlSingbox('stop')} loading={singboxBusy}>Остановить</Button>
+							<Button variant="danger" size="sm" onclick={() => controlSingbox('stop')} loading={singboxBusy}>{m.settings_page_stop()}</Button>
 						{:else}
-							<Button variant="success" size="sm" onclick={() => controlSingbox('start')} loading={singboxBusy}>Запустить</Button>
+							<Button variant="success" size="sm" onclick={() => controlSingbox('start')} loading={singboxBusy}>{m.settings_page_start()}</Button>
 						{/if}
 					</div>
 				</div>
@@ -1283,15 +1290,15 @@ $effect(() => {
 					<div class="flex flex-col gap-1">
 						<span class="font-medium">HydraRoute Neo</span>
 						<span class="setting-description">
-							{hydraRunning ? "Демон работает" : "Демон остановлен"}
+							{hydraRunning ? m.settings_page_daemon_running() : m.settings_page_daemon_stopped()}
 						</span>
 					</div>
 					<div class="action-buttons">
 						{#if hydraRunning}
-							<Button variant="secondary" size="sm" onclick={() => controlHydra('restart')} loading={hydraBusy}>Перезапустить</Button>
-							<Button variant="danger" size="sm" onclick={() => controlHydra('stop')} loading={hydraBusy}>Остановить</Button>
+							<Button variant="secondary" size="sm" onclick={() => controlHydra('restart')} loading={hydraBusy}>{m.settings_page_restart()}</Button>
+							<Button variant="danger" size="sm" onclick={() => controlHydra('stop')} loading={hydraBusy}>{m.settings_page_stop()}</Button>
 						{:else}
-							<Button variant="success" size="sm" onclick={() => controlHydra('start')} loading={hydraBusy}>Запустить</Button>
+							<Button variant="success" size="sm" onclick={() => controlHydra('start')} loading={hydraBusy}>{m.settings_page_start()}</Button>
 						{/if}
 					</div>
 				</div>
@@ -1317,14 +1324,14 @@ $effect(() => {
 
 	<ConfirmModal
 		open={ndmsProxyConfirmOpen}
-		title={ndmsProxyConfirmEnable ? 'Включить NDMS Proxy?' : 'Выключить NDMS Proxy?'}
+		title={ndmsProxyConfirmEnable ? m.settings_page_ndms_confirm_enable_title() : m.settings_page_ndms_confirm_disable_title()}
 		message={ndmsProxyConfirmEnable
-			? 'Будут созданы интерфейсы ProxyX в NDMS для текущих туннелей sing-box.'
-			: 'Интерфейсы ProxyX будут удалены из NDMS. Sing-box продолжит работать через свою маршрутизацию.'}
+			? m.settings_page_ndms_confirm_enable_message()
+			: m.settings_page_ndms_confirm_disable_message()}
 		secondary={ndmsProxyConfirmEnable
-			? 'Требуется NDMS-компонент "proxy".'
-			: 'Проверьте, что никакие правила маршрутизации NDMS (Access Policy, политики роутера) не ссылаются на эти ProxyX — иначе они перестанут работать.'}
-		confirmLabel={ndmsProxyConfirmEnable ? 'Включить' : 'Выключить'}
+			? m.settings_page_ndms_confirm_enable_secondary()
+			: m.settings_page_ndms_confirm_disable_secondary()}
+		confirmLabel={ndmsProxyConfirmEnable ? m.settings_page_ndms_confirm_enable() : m.settings_page_ndms_confirm_disable()}
 		variant={ndmsProxyConfirmEnable ? 'primary' : 'danger'}
 		busy={ndmsProxyBusy}
 		onConfirm={applyNDMSProxyToggle}
@@ -1333,16 +1340,16 @@ $effect(() => {
 
 	<Modal
 		open={restartConfirmOpen}
-		title="Перезапуск AWG Manager"
+		title={m.settings_page_restart_modal_title()}
 		size="sm"
 		onclose={() => (restartConfirmOpen = false)}
 	>
 		<p class="modal-text">
-			Перезапустить процесс AWG Manager? Туннели продолжат работать.
+			{m.settings_page_restart_modal_text()}
 		</p>
 		{#snippet actions()}
-			<Button variant="ghost" size="md" onclick={() => (restartConfirmOpen = false)}>Отмена</Button>
-			<Button variant="primary" size="md" onclick={restartDaemon}>Перезапустить</Button>
+			<Button variant="ghost" size="md" onclick={() => (restartConfirmOpen = false)}>{m.common_cancel()}</Button>
+			<Button variant="primary" size="md" onclick={restartDaemon}>{m.settings_page_restart()}</Button>
 		{/snippet}
 	</Modal>
 

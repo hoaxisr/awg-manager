@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { singboxStatus } from '$lib/stores/singbox';
 	import { singboxInstallProgress } from '$lib/stores/singboxInstall';
 	import { api } from '$lib/api/client';
@@ -18,19 +19,19 @@
 			case 'download':
 				if (p.total > 0) {
 					const pct = Math.min(100, Math.round((p.downloaded / p.total) * 100));
-					return `Скачивание ${pct}% (${formatBytes(p.downloaded)} / ${formatBytes(p.total)})`;
+					return m.settings_integrations_phase_downloading_pct({ pct, downloaded: formatBytes(p.downloaded), total: formatBytes(p.total) });
 				}
-				return `Скачивание (${formatBytes(p.downloaded)})`;
+				return m.settings_integrations_phase_downloading({ downloaded: formatBytes(p.downloaded) });
 			case 'activate':
-				return 'Установка…';
+				return m.settings_integrations_phase_installing();
 			case 'stop':
-				return 'Остановка sing-box…';
+				return m.settings_integrations_phase_stopping();
 			case 'start':
-				return 'Запуск sing-box…';
+				return m.settings_integrations_phase_starting();
 			case 'done':
-				return 'Готово';
+				return m.settings_integrations_phase_done();
 			case 'error':
-				return p.error ? `Ошибка: ${p.error}` : 'Ошибка';
+				return p.error ? m.settings_integrations_phase_error_detail({ error: p.error }) : m.tunnels_error_generic();
 			default:
 				return '';
 		}
@@ -109,16 +110,16 @@
 	<div class="banner banner-stack">
 		<div class="banner-row">
 			<div class="text">
-				<strong>Sing-box не установлен</strong>
-				<span>Установите для поддержки VLESS/Reality, Hysteria2, NaiveProxy</span>
-				<span class="hint">Установка sing-box требует большого количества свободного пространства. Необходимо использовать Entware на внешнем носителе.</span>
+				<strong>{m.singbox_banner_not_installed_title()}</strong>
+				<span>{m.singbox_banner_not_installed_desc()}</span>
+				<span class="hint">{m.singbox_banner_not_installed_hint()}</span>
 			</div>
 			{#if !progress}
 				<Button variant="primary" size="sm" onclick={install} loading={installing}>
-					{installing ? 'Установка...' : 'Установить'}
+					{installing ? m.settings_integrations_installing() : m.settings_integrations_install()}
 				</Button>
 			{/if}
-			<IconButton ariaLabel="Скрыть" onclick={dismiss}>&times;</IconButton>
+			<IconButton ariaLabel={m.tunnels_hide()} onclick={dismiss}>&times;</IconButton>
 		</div>
 		{#if progress}
 			<div class="progress-widget" class:progress-error={progress.phase === 'error'} class:progress-done={progress.phase === 'done'}>
@@ -138,15 +139,12 @@
 {:else if visible && issue === 'no-proxy-component'}
 	<div class="banner banner-error">
 		<div class="text">
-			<strong>NDMS-компонент «proxy» не установлен</strong>
+			<strong>{m.singbox_banner_no_proxy_title()}</strong>
 			<span>
-				Sing-box установлен, но без компонента <code>proxy</code> в прошивке роутера
-				интерфейсы Proxy0/1/… не создаются и трафик sing-box никуда не маршрутизируется.
-				Добавьте компонент в веб-интерфейсе роутера (Настройки → Компоненты → «Клиент прокси»)
-				и перезапустите этот демон.
+				{m.singbox_banner_no_proxy_prefix()} <code>proxy</code> {m.singbox_banner_no_proxy_suffix()}
 			</span>
 		</div>
-		<IconButton ariaLabel="Скрыть" onclick={dismiss}>&times;</IconButton>
+		<IconButton ariaLabel={m.tunnels_hide()} onclick={dismiss}>&times;</IconButton>
 	</div>
 {:else if visible && issue === 'update-available'}
 	<div class="banner banner-stack">
@@ -154,26 +152,26 @@
 			<div class="text">
 				<strong>
 					{#if $singboxStatus.data?.currentVersion === $singboxStatus.data?.requiredVersion}
-						Доступно обновление sing-box
+						{m.singbox_banner_update_available()}
 					{:else}
-						Доступна новая версия sing-box
+						{m.singbox_banner_new_version()}
 					{/if}
 				</strong>
 				<span>
 					{#if $singboxStatus.data?.currentVersion === $singboxStatus.data?.requiredVersion}
-						Версия <code>{$singboxStatus.data?.requiredVersion}</code>, обновилась контрольная сумма сборки
+						{m.singbox_banner_version()} <code>{$singboxStatus.data?.requiredVersion}</code>, {m.singbox_banner_checksum_changed()}
 					{:else}
-						Текущая <code>{$singboxStatus.data?.currentVersion ?? '—'}</code> →
+						{m.singbox_banner_current()} <code>{$singboxStatus.data?.currentVersion ?? '—'}</code> →
 						<code>{$singboxStatus.data?.requiredVersion}</code>
 					{/if}
 				</span>
 			</div>
 			{#if !progress}
 				<Button variant="primary" size="sm" onclick={update} loading={updating} disabled={updating}>
-					{updating ? 'Обновление...' : 'Обновить sing-box'}
+					{updating ? m.settings_integrations_updating() : m.singbox_banner_update_btn()}
 				</Button>
 			{/if}
-			<IconButton ariaLabel="Скрыть" onclick={dismiss}>&times;</IconButton>
+			<IconButton ariaLabel={m.tunnels_hide()} onclick={dismiss}>&times;</IconButton>
 		</div>
 		{#if progress}
 			<div class="progress-widget" class:progress-error={progress.phase === 'error'} class:progress-done={progress.phase === 'done'}>
@@ -194,29 +192,24 @@
 	<div class="banner banner-error" role="alert">
 		<div class="banner-row">
 			<div class="banner-stack">
-				<strong>sing-box не установлен</strong>
+				<strong>{m.singbox_banner_missing_title()}</strong>
 				<span>
-					Не хватает места: требуется
-					{formatBytes($singboxStatus.data?.requiredBytes ?? 0)},
-					свободно {formatBytes($singboxStatus.data?.freeBytes ?? 0)}.
+					{m.singbox_banner_no_space({ required: formatBytes($singboxStatus.data?.requiredBytes ?? 0), free: formatBytes($singboxStatus.data?.freeBytes ?? 0) })}
 				</span>
 			</div>
-			<IconButton ariaLabel="Скрыть" onclick={dismiss}>&times;</IconButton>
+			<IconButton ariaLabel={m.tunnels_hide()} onclick={dismiss}>&times;</IconButton>
 		</div>
 	</div>
 {:else if visible && issue === 'outdated-no-space'}
 	<div class="banner banner-error" role="alert">
 		<div class="banner-row">
 			<div class="banner-stack">
-				<strong>Обновление sing-box недоступно</strong>
+				<strong>{m.singbox_banner_outdated_title()}</strong>
 				<span>
-					Установлено: {$singboxStatus.data?.currentVersion ?? '—'}
-					(работает). До {$singboxStatus.data?.requiredVersion ?? '—'}
-					нужно {formatBytes($singboxStatus.data?.requiredBytes ?? 0)},
-					свободно {formatBytes($singboxStatus.data?.freeBytes ?? 0)}.
+					{m.singbox_banner_outdated_desc({ current: $singboxStatus.data?.currentVersion ?? '—', required: $singboxStatus.data?.requiredVersion ?? '—', needed: formatBytes($singboxStatus.data?.requiredBytes ?? 0), free: formatBytes($singboxStatus.data?.freeBytes ?? 0) })}
 				</span>
 			</div>
-			<IconButton ariaLabel="Скрыть" onclick={dismiss}>&times;</IconButton>
+			<IconButton ariaLabel={m.tunnels_hide()} onclick={dismiss}>&times;</IconButton>
 		</div>
 	</div>
 {/if}

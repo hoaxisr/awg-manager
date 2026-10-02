@@ -17,6 +17,7 @@
 	import { StatusDot, type StatusDotVariant } from '$lib/components/ui';
 	import { saveStatus } from '$lib/stores/saveStatus';
 	import { formatRelativeTime } from '$lib/utils/format';
+	import { m } from '$lib/i18n';
 
 	// Подписка нужна не только ради значения: именно она включает стор в
 	// реестре — без подписчика createPollingStore не делает даже первой
@@ -41,18 +42,21 @@
 	);
 
 	const label = $derived(
-		saveState === 'saving' ? 'Сохраняю конфигурацию роутера…'
-			: saveState === 'pending' ? `Конфигурация роутера не сохранена${pending > 0 ? ` (${pending})` : ''}`
-			: saveState === 'error' ? 'Сохранение не удалось, будут повторы'
-			: saveState === 'failed' ? 'Сохранить конфигурацию не удалось — правки пропадут при перезагрузке'
+		saveState === 'saving' ? m.save_led_saving()
+			: saveState === 'pending'
+				? pending > 0 ? m.save_led_pending_count({ count: pending }) : m.save_led_pending()
+			: saveState === 'error' ? m.save_led_error()
+			: saveState === 'failed' ? m.save_led_failed()
 			: '',
 	);
 
 	const hint = $derived(
 		[
 			label,
-			lastError ? `Ошибка: ${lastError}` : '',
-			lastSaveAt ? `Последнее сохранение: ${formatRelativeTime(lastSaveAt)}` : '',
+			lastError ? m.save_led_last_error({ error: lastError }) : '',
+			// formatRelativeTime пока отдаёт русский текст («5 мин назад») — общая
+			// утилита, переводится отдельно.
+			lastSaveAt ? m.save_led_last_save({ time: formatRelativeTime(lastSaveAt) }) : '',
 		]
 			.filter(Boolean)
 			.join('\n'),

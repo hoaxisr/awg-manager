@@ -28,6 +28,8 @@
   Движок-гейт: route-правила — это конфиг, рендерится при любом состоянии движка.
 -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
+	import { outboundGroupLabel } from '$lib/components/routing/singboxRouter/outboundOptions';
 	import { onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
@@ -123,7 +125,7 @@
 	// Тот же каталог outbound'ов, что у RuleEditModal ($storeOptions),
 	// сплющенный в плоский список для BulkSelectBar.
 	const bulkOutboundOptions = $derived(
-		$storeOptions.flatMap((g) => g.items.map((it) => ({ value: it.value, label: it.label, group: g.group }))),
+		$storeOptions.flatMap((g) => g.items.map((it) => ({ value: it.value, label: it.label, group: outboundGroupLabel(g.id) }))),
 	);
 
 	function toggleSelectMode(): void {
@@ -196,12 +198,12 @@
 	);
 
 	// ── Final-outbound правка (route.final) ─────────────────────────────────
-	// Опции: direct + все outbounds, кроме группы «Специальные».
+	// Опции: direct + все outbounds, кроме группы 'special'.
 	const routeFinalOptions = $derived<DropdownOption[]>([
-		{ value: 'direct', label: 'direct (мимо VPN)' },
+		{ value: 'direct', label: m.routing_singbox_option_direct() },
 		...$storeOptions
-			.filter((g) => g.group !== 'Специальные')
-			.flatMap((g) => g.items.map((it) => ({ value: it.value, label: it.label, group: g.group }))),
+			.filter((g) => g.id !== 'special')
+			.flatMap((g) => g.items.map((it) => ({ value: it.value, label: it.label, group: outboundGroupLabel(g.id) }))),
 	]);
 
 	let finalEditing = $state(false);

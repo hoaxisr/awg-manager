@@ -1,5 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import { isRoutingSubTabVisible, isSectionVisible, pathToSection } from './usageLevel';
+import { describe, it, expect, afterEach } from 'vitest';
+import {
+	isRoutingSubTabVisible,
+	isSectionVisible,
+	pathToSection,
+	sectionLabel,
+	usageLevelLabel,
+	USAGE_LEVEL_LABELS,
+} from './usageLevel';
+import { locale } from '$lib/i18n';
 
 describe('секция proxy', () => {
 	// Одна секция на обе вкладки страницы «Прокси», порог «Расширенный»:
@@ -24,5 +32,30 @@ describe('isRoutingSubTabVisible', () => {
 	// вкладка видна на всех уровнях.
 	it('shows accessPolicies on the basic level', () => {
 		expect(isRoutingSubTabVisible('basic', 'accessPolicies')).toBe(true);
+	});
+});
+
+describe('подписи уровней и разделов (i18n)', () => {
+	afterEach(() => {
+		locale.set('ru');
+		localStorage.clear();
+	});
+
+	it('usageLevelLabel и sectionLabel следуют за языком интерфейса', () => {
+		expect(usageLevelLabel('advanced')).toBe('Расширенный');
+		expect(sectionLabel('diagnostics')).toBe('Инструменты');
+		locale.set('en');
+		expect(usageLevelLabel('advanced')).toBe('Advanced');
+		expect(sectionLabel('diagnostics')).toBe('Tools');
+		expect(sectionLabel('singboxTunnels')).toBe('Sing-box');
+	});
+
+	it('USAGE_LEVEL_LABELS остаются русскими — для отчёта «Об устройстве»', () => {
+		locale.set('en');
+		expect(USAGE_LEVEL_LABELS).toEqual({
+			basic: 'Базовый',
+			advanced: 'Расширенный',
+			expert: 'Продвинутый',
+		});
 	});
 });

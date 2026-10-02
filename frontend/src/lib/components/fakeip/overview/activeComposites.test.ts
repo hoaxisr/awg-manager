@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { activeCompositeRows } from './activeComposites';
 import type { SingboxProxyGroup, SingboxRouterOutbound } from '$lib/types';
+import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
 
-const outboundOptions = [{ group: 'Туннели', items: [] }];
+const outboundOptions: OutboundGroup[] = [{ id: 'awg', items: [] }];
 
 describe('activeCompositeRows', () => {
 	it('emits one row per composite outbound with the clash-active member', () => {

@@ -1,5 +1,6 @@
 <!-- frontend/src/lib/components/routing/singboxRouter/ConnectionsTable.svelte -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { Connection } from '$lib/types/singboxConnections';
 	import { formatBytes } from '$lib/utils/format';
 
@@ -46,13 +47,13 @@
 
 	function relativeTime(start: string): string {
 		const ms = Date.now() - new Date(start).getTime();
-		if (ms < 1000) return 'сейчас';
+		if (ms < 1000) return m.routing_singbox_conn_now();
 		const s = Math.floor(ms / 1000);
 		if (s < 60) return `${s}s`;
-		const m = Math.floor(s / 60);
-		if (m < 60) return `${m}m ${s % 60}s`;
-		const h = Math.floor(m / 60);
-		return `${h}h ${m % 60}m`;
+		const min = Math.floor(s / 60);
+		if (min < 60) return `${min}m ${s % 60}s`;
+		const h = Math.floor(min / 60);
+		return `${h}h ${min % 60}m`;
 	}
 
 	function arrow(col: SortKey): string {
@@ -80,14 +81,14 @@
 		</colgroup>
 		<thead>
 			<tr>
-				<th>Прот</th>
-				<th class="sortable" onclick={() => onSortChange('source')}>Источник {arrow('source')}</th>
-				<th class="sortable" onclick={() => onSortChange('destination')}>Назначение {arrow('destination')}</th>
+				<th>{m.routing_singbox_conn_col_proto()}</th>
+				<th class="sortable" onclick={() => onSortChange('source')}>{m.routing_singbox_conn_col_source()} {arrow('source')}</th>
+				<th class="sortable" onclick={() => onSortChange('destination')}>{m.routing_singbox_conn_col_destination()} {arrow('destination')}</th>
 				<th class="sortable" onclick={() => onSortChange('outbound')}>Outbound {arrow('outbound')}</th>
 				<th class="col-rule">Rule</th>
 				<th class="sortable num" onclick={() => onSortChange('upload')}>↑ {arrow('upload')}</th>
 				<th class="sortable num" onclick={() => onSortChange('download')}>↓ {arrow('download')}</th>
-				<th class="sortable" onclick={() => onSortChange('start')}>Время {arrow('start')}</th>
+				<th class="sortable" onclick={() => onSortChange('start')}>{m.routing_singbox_conn_col_time()} {arrow('start')}</th>
 				<th></th>
 			</tr>
 		</thead>
@@ -121,13 +122,13 @@
 					<td class="mono num">{formatBytes(c.download)}</td>
 					<td class="mono small num">{relativeTime(c.start)}</td>
 					<td>
-						<button class="kill" type="button" onclick={() => onKill(c.id)} title="Закрыть соединение">×</button>
+						<button class="kill" type="button" onclick={() => onKill(c.id)} title={m.routing_singbox_conn_close_one()}>×</button>
 					</td>
 				</tr>
 			{/each}
 			{#if pageRows.length === 0}
 				<tr>
-					<td colspan="9" class="empty">Нет соединений по фильтру</td>
+					<td colspan="9" class="empty">{m.routing_singbox_conn_empty_filtered()}</td>
 				</tr>
 			{/if}
 		</tbody>
@@ -136,7 +137,7 @@
 	{#if totalPages > 1}
 		<div class="pager">
 			<button type="button" disabled={page === 0} onclick={() => onPageChange(page - 1)}>◀</button>
-			<span>Стр. {page + 1} / {totalPages}</span>
+			<span>{m.routing_singbox_conn_page({ page: page + 1, total: totalPages })}</span>
 			<button type="button" disabled={page >= totalPages - 1} onclick={() => onPageChange(page + 1)}>▶</button>
 		</div>
 	{/if}

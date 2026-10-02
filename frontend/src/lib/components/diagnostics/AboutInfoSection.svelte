@@ -1,24 +1,27 @@
 <script lang="ts">
 	import { Copy } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { formatAboutSection, type AboutInfoRow } from '$lib/utils/about-device';
 
 	interface Props {
 		title: string;
+		/** Заголовок блока в скопированном отчёте (отчёт всегда на русском). */
+		reportTitle?: string;
 		rows: AboutInfoRow[];
 		loading?: boolean;
 	}
 
-	let { title, rows, loading = false }: Props = $props();
+	let { title, reportTitle, rows, loading = false }: Props = $props();
 
 	async function copyBlock() {
 		if (rows.length === 0) return;
-		const ok = await copyToClipboard(formatAboutSection(title, rows));
+		const ok = await copyToClipboard(formatAboutSection(reportTitle ?? title, rows));
 		if (ok) {
-			notifications.success(`Блок «${title}» скопирован`);
+			notifications.success(m.diag_about_block_copied({ title }));
 		} else {
-			notifications.error('Не удалось скопировать');
+			notifications.error(m.diag_about_copy_failed());
 		}
 	}
 </script>
@@ -32,14 +35,14 @@
 				class="about-copy-btn"
 				onclick={copyBlock}
 				disabled={rows.length === 0}
-				aria-label="Скопировать блок «{title}»"
-				title="Скопировать блок"
+				aria-label={m.diag_about_copy_block_aria({ title })}
+				title={m.diag_about_copy_block()}
 			>
 				<Copy size={13} aria-hidden="true" />
 			</button>
 		</div>
 		{#if loading}
-			<span class="about-loading" aria-live="polite">обновление…</span>
+			<span class="about-loading" aria-live="polite">{m.diag_about_updating()}</span>
 		{/if}
 	</div>
 

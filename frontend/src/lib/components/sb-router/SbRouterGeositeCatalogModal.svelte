@@ -5,6 +5,7 @@
   описаний и иконок, зато есть всё, что публикует SagerNet.
 -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Badge, Button, Modal } from '$lib/components/ui';
@@ -49,13 +50,13 @@
 			catalog = fresh;
 			if (refresh && fresh.stale) {
 				// Бэкенд не смог обновиться и отдал сохранённую копию.
-				notifications.warning('GitHub недоступен — показан сохранённый список');
+				notifications.warning(m.sb_router_catalog_stale());
 			}
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
 			if (catalog) {
 				// Неудачное обновление не должно прятать уже загруженный список.
-				notifications.error(`Не удалось обновить список: ${msg}`);
+				notifications.error(m.sb_router_catalog_refresh_failed({ message: msg }));
 			} else {
 				loadError = msg;
 			}
@@ -104,13 +105,13 @@
 	}
 </script>
 
-<Modal {open} title="Каталог SagerNet geosite" size="lg" bodyLayout="fill" {onclose}>
+<Modal {open} title={m.sb_router_catalog_geosite_title()} size="lg" bodyLayout="fill" {onclose}>
 	<div class="geosite-body">
 		<div class="toolbar">
 			<input
 				type="search"
 				class="search"
-				placeholder="Поиск по {catalog?.names.length ?? 0} наборам…"
+				placeholder={m.sb_router_catalog_geosite_search({ count: catalog?.names.length ?? 0 })}
 				bind:value={query}
 				disabled={loading || !!loadError}
 			/>
@@ -119,21 +120,21 @@
 				size="sm"
 				onclick={() => void load(true)}
 				disabled={loading}
-				title="Обновить список с GitHub"
+				title={m.sb_router_catalog_refresh_title()}
 			>
 				<RefreshCw size={14} aria-hidden="true" />
 			</Button>
 		</div>
 
 		{#if loading}
-			<div class="state">Загружаем список наборов с GitHub…</div>
+			<div class="state">{m.sb_router_catalog_loading()}</div>
 		{:else if loadError}
 			<div class="state state-error">
 				<div>{loadError}</div>
-				<Button variant="secondary" size="sm" onclick={() => void load()}>Повторить</Button>
+				<Button variant="secondary" size="sm" onclick={() => void load()}>{m.sb_router_catalog_retry()}</Button>
 			</div>
 		{:else if filtered.length === 0}
-			<div class="state">Ничего не найдено по «{query}».</div>
+			<div class="state">{m.sb_router_catalog_nothing_found({ query })}</div>
 		{:else}
 			<div class="list">
 				{#each rendered as name (name)}
@@ -149,7 +150,7 @@
 					>
 						<span class="row-name">{name}</span>
 						{#if added}
-							<Badge variant="default" size="sm">добавлено</Badge>
+							<Badge variant="default" size="sm">{m.sb_router_catalog_added()}</Badge>
 						{:else if selected.has(name)}
 							<span class="row-check" aria-hidden="true">✓</span>
 						{/if}
@@ -158,26 +159,25 @@
 			</div>
 			{#if filtered.length > RENDER_CAP}
 				<div class="cap-hint">
-					Показаны первые {RENDER_CAP} из {filtered.length} — уточните запрос.
+					{m.sb_router_catalog_cap_hint({ shown: RENDER_CAP, total: filtered.length })}
 				</div>
 			{/if}
 		{/if}
 
 		<p class="hint">
-			Набор добавляется как remote rule-set <code>geosite-&lt;имя&gt;</code> (скачивает sing-box,
-			обновление раз в 24 ч). Правило маршрутизации к нему создаётся отдельно.
+			{m.sb_router_catalog_geosite_hint_pre()} <code>{m.sb_router_catalog_geosite_code()}</code> {m.sb_router_catalog_geosite_hint_post()}
 		</p>
 	</div>
 
 	{#snippet actions()}
-		<Button variant="secondary" onclick={onclose} disabled={submitting}>Отмена</Button>
+		<Button variant="secondary" onclick={onclose} disabled={submitting}>{m.common_cancel()}</Button>
 		<Button
 			variant="primary"
 			onclick={confirm}
 			disabled={submitting || selected.size === 0}
 			loading={submitting}
 		>
-			Добавить наборы{selected.size > 0 ? ` (${selected.size})` : ''}
+			{selected.size > 0 ? m.sb_router_catalog_add_sets_count({ count: selected.size }) : m.sb_router_catalog_add_sets()}
 		</Button>
 	{/snippet}
 </Modal>

@@ -1,5 +1,6 @@
 <!-- frontend/src/lib/components/routing/singboxRouter/ConnectionsFilters.svelte -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onDestroy } from 'svelte';
 	import type { ConnectionFilters, NetworkFilter } from '$lib/types/singboxConnections';
 	import { Dropdown, type DropdownOption } from '$lib/components/ui';
@@ -48,18 +49,18 @@
 	}
 
 	const outboundDropdown = $derived<DropdownOption[]>([
-		{ value: '', label: 'Все' },
+		{ value: '', label: m.routing_singbox_all() },
 		...outboundOptions,
 	]);
 
-	const networkDropdown: DropdownOption<NetworkFilter>[] = [
-		{ value: 'all', label: 'Все' },
+	const networkDropdown = $derived<DropdownOption<NetworkFilter>[]>([
+		{ value: 'all', label: m.routing_singbox_all() },
 		{ value: 'tcp', label: 'TCP' },
 		{ value: 'udp', label: 'UDP' },
-	];
+	]);
 
 	const ruleDropdown = $derived<DropdownOption[]>([
-		{ value: '', label: 'Все' },
+		{ value: '', label: m.routing_singbox_all() },
 		...ruleOptions.map((r) => ({ value: r, label: r })),
 	]);
 </script>
@@ -68,7 +69,7 @@
 	<input
 		type="text"
 		class="search"
-		placeholder="Поиск host / IP / клиент"
+		placeholder={m.routing_singbox_conn_search_placeholder()}
 		value={searchValue}
 		oninput={onSearchInput}
 	/>

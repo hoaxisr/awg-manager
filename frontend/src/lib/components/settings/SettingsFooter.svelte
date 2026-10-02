@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { usageLevel } from '$lib/stores/settings';
 	import { GITHUB_BUG_REPORT_URL } from '$lib/utils/githubFeedback';
 	import { ChevronRight } from 'lucide-svelte';
@@ -53,19 +54,19 @@
 	<div class="settings-footer-bar">
 		<div class="footer-link-group">
 			<div class="footer-doc-line">
-				<span class="footer-doc-label">Документация:</span>
+				<span class="footer-doc-label">{m.settings_footer_docs_label()}</span>
 				<a href="https://awgm.hoaxisr.ru" target="_blank" rel="noopener noreferrer">awgm.hoaxisr.ru</a>
 			</div>
 			<div class="footer-links-line">
-				<a href="/terms">Пользовательское соглашение</a>
+				<a href="/terms">{m.settings_footer_terms()}</a>
 				<span class="footer-sep" aria-hidden="true">·</span>
 				<a
 					class="github-link"
 					href="https://github.com/hoaxisr/awg-manager"
 					target="_blank"
 					rel="noopener noreferrer"
-					aria-label="Открыть GitHub репозиторий AWG Manager"
-					title="GitHub репозиторий AWG Manager"
+					aria-label={m.settings_footer_github_aria()}
+					title={m.settings_footer_github_title()}
 				>
 					GitHub
 				</a>
@@ -74,10 +75,10 @@
 					href={genericIssueUrl}
 					target="_blank"
 					rel="noopener noreferrer"
-					aria-label="Открыть форму GitHub issue для обратной связи"
-					title="Публичный GitHub issue: это не служба поддержки"
+					aria-label={m.settings_footer_issue_aria()}
+					title={m.settings_footer_issue_title()}
 				>
-					Сообщить о проблеме
+					{m.settings_footer_report_issue()}
 				</a>
 				{#if isExpert}
 					<span class="footer-sep" aria-hidden="true">·</span>
@@ -93,8 +94,8 @@
 			onclick={() => (open = !open)}
 		>
 			<span class="footer-icon" class:open aria-hidden="true"><ChevronRight size={14} strokeWidth={2.5} /></span>
-			<span class="footer-collapse-full">Благодарности ({credits.length})</span>
-			<span class="footer-collapse-short">Благодарности</span>
+			<span class="footer-collapse-full">{m.settings_footer_credits_count({ count: credits.length })}</span>
+			<span class="footer-collapse-short">{m.settings_footer_credits()}</span>
 		</button>
 	</div>
 

@@ -21,6 +21,8 @@
   состоянии движка; счётчик соединений деградирует по engineState.live.
 -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
+	import { outboundGroupLabel } from '$lib/components/routing/singboxRouter/outboundOptions';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
@@ -104,13 +106,13 @@
 	}
 
 	// ── Привязка: фокус-пикер outbound'а ───────────────────────────────────
-	// Опции = direct + все outbounds, кроме «Специальные» (тот же набор, что
+	// Опции = direct + все outbounds, кроме группы 'special' (тот же набор, что
 	// route-final в RoutesTab / RuleEditModal).
 	const bindOptions = $derived<DropdownOption[]>([
-		{ value: 'direct', label: 'direct (мимо VPN)' },
+		{ value: 'direct', label: m.routing_singbox_option_direct() },
 		...$storeOptions
-			.filter((g) => g.group !== 'Специальные')
-			.flatMap((g) => g.items.map((it) => ({ value: it.value, label: it.label, group: g.group }))),
+			.filter((g) => g.id !== 'special')
+			.flatMap((g) => g.items.map((it) => ({ value: it.value, label: it.label, group: outboundGroupLabel(g.id) }))),
 	]);
 
 	let bindOpen = $state(false);

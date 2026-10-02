@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type {
 	SingboxProxyGroup,
 	SingboxRouterDNSServer,
@@ -32,12 +33,9 @@ export function isDnsServerViaRouteDetour(detour?: string): boolean {
 export function dnsServerSubtitle(s: SingboxRouterDNSServer): string {
 	const addr = s.server?.trim();
 	if (addr) return `${s.type ?? 'dns'} · ${addr}`;
-	if (s.type === 'fakeip') return 'fakeip · синтез';
+	if (s.type === 'fakeip') return m.sb_router_dns_fakeip_synth();
 	return s.type ?? 'dns';
 }
-
-const INVALID_DNS_DIRECT_TITLE =
-	'Недопустимый detour на final DNS — будет убран при сохранении. Должно быть «Напрямую».';
 
 /**
  * DNS server detour chip:
@@ -78,7 +76,7 @@ export function dnsServerDetourDisplay(
 		return {
 			...base,
 			tone: 'invalid',
-			invalidHint: INVALID_DNS_DIRECT_TITLE,
+			invalidHint: m.sb_router_dns_invalid_final_detour(),
 		};
 	}
 

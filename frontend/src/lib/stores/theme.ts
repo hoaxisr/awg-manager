@@ -1,5 +1,6 @@
 import { browser } from '$app/environment';
 import { writable } from 'svelte/store';
+import { m } from '$lib/i18n';
 import {
 	applyCachedDynamicFavicon,
 	getFaviconAccent,
@@ -26,7 +27,6 @@ export interface ThemeState extends ThemeSelection {
 	legacyMode: ThemeMode;
 	mode: ThemeMode;
 	label: string;
-	summary: string;
 	supportsModeToggle: boolean;
 }
 
@@ -263,30 +263,28 @@ const MINT_LIGHT_TOKENS: ThemeTokenMap = {
 export const THEME_PRESETS = {
 	legacy: {
 		label: 'AWGM - Legacy',
-		summary:
-			'Классическая тема AWGM с глубокими тёмно-синими оттенками.',
+		summary: m.theme_summary_legacy,
 		supportsModeToggle: true,
 	},
 	neo: {
 		label: 'AWGM - Neo',
-		summary:
-			'Авторская фирменная тема AWGM в ярко-жёлтых тонах с высокой контрастностью.',
+		summary: m.theme_summary_neo,
 		supportsModeToggle: true,
 	},
 	mint: {
 		label: 'AWGM - Mint',
-		summary:
-			'Мягкая аквамариновая палитра и нейтральная серо-синяя стилистика.',
+		summary: m.theme_summary_mint,
 		supportsModeToggle: true,
 	},
 	custom: {
 		label: 'AWGM - Custom',
-		summary: 'Выберите акцентный, фоновый и текстовый цвета, чтобы создать свою уникальную тему.',
+		summary: m.theme_summary_custom,
 		supportsModeToggle: false,
 	},
 } as const satisfies Record<
 	ThemePreset,
-	{ label: string; summary: string; supportsModeToggle: boolean }
+	// summary — функция сообщения: описание читается при рендере на языке интерфейса.
+	{ label: string; summary: () => string; supportsModeToggle: boolean }
 >;
 
 const THEME_VARIABLE_KEYS = [
@@ -500,7 +498,6 @@ function buildThemeState(selection: ThemeSelection): ThemeState {
 		legacyMode: resolveLegacyMode(normalizedSelection),
 		mode: resolveThemeMode(normalizedSelection),
 		label: presetMeta.label,
-		summary: presetMeta.summary,
 		supportsModeToggle: presetMeta.supportsModeToggle,
 	};
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { page } from '$app/stores';
 	import { api } from '$lib/api/client';
@@ -93,10 +94,10 @@
 		}
 	});
 
-	const tabs = [
-		{ id: 'exit', label: 'Выход' },
-		{ id: 'share', label: 'Раздача' },
-	];
+	const tabs = $derived([
+		{ id: 'exit', label: m.proxy_page_tab_exit() },
+		{ id: 'share', label: m.proxy_page_tab_share() },
+	]);
 
 	const binaries = $derived(binaryStripItems(wdttStatus, ftStatus, installing, install));
 	const seedWarning = $derived(seedGateWarning(seed));
@@ -253,7 +254,7 @@
 </script>
 
 <PageContainer>
-	<PageHeader title="Прокси" description="Выход трафика роутера и раздача другим" />
+	<PageHeader title={m.proxy_page_title()} description={m.proxy_page_description()} />
 
 	{#if loading}
 		<LoadingSpinner />
@@ -268,7 +269,7 @@
 			<Card>
 				<div class="move-notice">
 					<p class="seed-warning">{listenMoveNotice}</p>
-					<Button variant="secondary" loading={ackingMove} onclick={ackListenMoves}>Понятно</Button>
+					<Button variant="secondary" loading={ackingMove} onclick={ackListenMoves}>{m.proxy_page_ack()}</Button>
 				</div>
 			</Card>
 		{/if}
@@ -286,13 +287,13 @@
 		<div class="split">
 			<aside class="rail">
 				<InstanceList
-					title={activeTab === 'exit' ? 'Инстансы выхода' : 'Инстансы раздачи'}
+					title={activeTab === 'exit' ? m.proxy_page_list_exit() : m.proxy_page_list_share()}
 					rows={activeTab === 'exit' ? exits : shares}
 					selectedKey={activeTab === 'exit' ? selectedExitKey : selectedShareKey}
-					addLabel={activeTab === 'exit' ? 'Вывести трафик' : 'Настроить раздачу'}
+					addLabel={activeTab === 'exit' ? m.proxy_page_add_exit() : m.proxy_page_add_share()}
 					emptyText={activeTab === 'exit'
-						? 'Выведите трафик роутера наружу'
-						: 'Раздайте выход другим устройствам'}
+						? m.proxy_page_empty_exit()
+						: m.proxy_page_empty_share()}
 					{busyKeys}
 					onselect={(r) => {
 						if (activeTab === 'exit') {
@@ -344,9 +345,9 @@
 <ConfirmModal
 	open={deleteTarget !== null}
 	title={deleteTarget?.role === 'server'
-		? `Удалить раздачу «${deleteTarget?.name}»?`
-		: `Удалить инстанс «${deleteTarget?.name}»?`}
-	message={deleteTarget?.role === 'server' ? '' : 'Связанные с ним AWG-туннели будут удалены.'}
+		? m.proxy_page_delete_share_title({ name: deleteTarget?.name ?? '' })
+		: m.proxy_page_delete_instance_title({ name: deleteTarget?.name ?? '' })}
+	message={deleteTarget?.role === 'server' ? '' : m.proxy_page_delete_tunnels_note()}
 	busy={deleting}
 	onConfirm={deleteInstance}
 	onClose={() => (deleteTarget = null)}

@@ -20,6 +20,7 @@
 	} from '$lib/utils/icon-tile-background';
 	import { normalizeTileHex, parseIconUrl, withIconTileBg } from '$lib/utils/icon-url-meta';
 	import IconTile from './IconTile.svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		open: boolean;
@@ -39,7 +40,16 @@
 	let customUrl = $state('');
 	let customSvg = $state('');
 	let uploadedDataUrl = $state<string | null>(null);
-	let customError = $state<string | null>(null);
+	// Храним сырое сообщение или код запасного текста — перевод выводится при рендере.
+	let customErrorState = $state<{ raw: string | null; fallback: 'apply' | 'upload' } | null>(null);
+	const customError = $derived(
+		customErrorState
+			? (customErrorState.raw ??
+					(customErrorState.fallback === 'apply'
+						? m.dns_routes_icon_apply_failed()
+						: m.dns_routes_icon_upload_failed()))
+			: null,
+	);
 	let dropActive = $state(false);
 	/** null = auto brand / hash color; string = user override (#rrggbb). */
 	let userTileBg = $state<string | null>(null);
@@ -65,7 +75,7 @@
 
 	let customPreviewHint = $derived.by(() => {
 		if (uploadedDataUrl) return formatIconUrlHint(uploadedDataUrl);
-		if (parsedSvg) return 'Встроенный SVG';
+		if (parsedSvg) return m.dns_routes_icon_embedded_svg();
 		if (trimmedUrl) return formatIconUrlHint(trimmedUrl);
 		return '';
 	});
@@ -75,7 +85,7 @@
 		if (!open) return;
 
 		search = '';
-		customError = null;
+		customErrorState = null;
 		uploadedDataUrl = null;
 
 		const parsed = parseIconUrl(iconUrl || '');
@@ -155,7 +165,7 @@
 	}
 
 	function handleApply() {
-		customError = null;
+		customErrorState = null;
 		let url: string | null = null;
 		try {
 			if (tab === 'catalog' && selectedQure) {
@@ -165,7 +175,7 @@
 				url = base ? withIconTileBg(base, userTileBg) : null;
 			}
 		} catch (e) {
-			customError = e instanceof Error ? e.message : 'Не удалось применить иконку';
+			customErrorState = { raw: e instanceof Error ? e.message : null, fallback: 'apply' };
 			return;
 		}
 		onapply(url);
@@ -188,13 +198,13 @@
 	async function ingestFiles(files: FileList | File[] | null | undefined) {
 		const file = files?.[0];
 		if (!file) return;
-		customError = null;
+		customErrorState = null;
 		try {
 			uploadedDataUrl = await fileToIconDataUrl(file);
 			customUrl = '';
 			customSvg = '';
 		} catch (e) {
-			customError = e instanceof Error ? e.message : 'Не удалось загрузить файл';
+			customErrorState = { raw: e instanceof Error ? e.message : null, fallback: 'upload' };
 		}
 	}
 
@@ -224,7 +234,7 @@
 			uploadedDataUrl = null;
 			customSvg = '';
 		}
-		customError = null;
+		customErrorState = null;
 	}
 
 	function onSvgInput() {
@@ -232,20 +242,20 @@
 			uploadedDataUrl = null;
 			customUrl = '';
 		}
-		customError = null;
+		customErrorState = null;
 	}
 
 	let defaultIconHint = $derived.by(() => {
 		if (iconUrl || tab !== 'catalog' || selectedQure !== null) return null;
 		return defaultSlug
-			? `Без выбора используется встроенная иконка (${defaultSlug}), как в SingBox`
+			? m.dns_routes_icon_default_hint({ slug: defaultSlug })
 			: null;
 	});
 
 	let catalogTileBgHint = $derived(
 		userTileBg
-			? 'Свой цвет сохранится в настройках маршрута'
-			: 'Авто — единый фон плитки, контрастный с карточкой маршрута'
+			? m.dns_routes_icon_custom_bg_hint()
+			: m.dns_routes_icon_auto_bg_hint()
 	);
 </script>
 
@@ -258,9 +268,9 @@
 			{/if}
 		</div>
 		<div class="tile-bg-editor-col">
-			<span class="field-label">Фон иконки</span>
+			<span class="field-label">{m.dns_routes_icon_bg_label()}</span>
 			<div class="tile-bg-row">
-				<label class="color-picker" title="Выбрать цвет">
+				<label class="color-picker" title={m.dns_routes_icon_pick_color()}>
 					<span
 						class="color-picker-swatch"
 						style:background-color={`#${colorInputValue}`}
@@ -271,7 +281,7 @@
 						class="color-picker-native"
 						value={`#${colorInputValue}`}
 						oninput={onTileColorInput}
-						aria-label="Выбрать цвет фона плитки"
+						aria-label={m.dns_routes_icon_pick_tile_color_aria()}
 					/>
 				</label>
 				<input
@@ -281,7 +291,7 @@
 					oninput={onTileColorInput}
 					spellcheck="false"
 					maxlength={7}
-					aria-label="HEX цвета фона"
+					aria-label={m.dns_routes_icon_hex_aria()}
 				/>
 				<button
 					type="button"
@@ -289,16 +299,16 @@
 					disabled={userTileBg === null}
 					onclick={resetTileBg}
 				>
-					Авто
+					{m.dns_routes_icon_auto()}
 				</button>
 			</div>
 		</div>
 	</div>
 {/snippet}
 
-<Modal {open} {onclose} title="Выбрать иконку" size="lg">
+<Modal {open} {onclose} title={m.dns_routes_icon_title()} size="lg">
 	<div class="picker">
-		<div class="tabs" role="tablist" aria-label="Источник иконки">
+		<div class="tabs" role="tablist" aria-label={m.dns_routes_icon_source_aria()}>
 			<button
 				class="tab"
 				class:active={tab === 'catalog'}
@@ -307,7 +317,7 @@
 				role="tab"
 				aria-selected={tab === 'catalog'}
 			>
-				Каталог Qure
+				{m.dns_routes_icon_tab_catalog()}
 			</button>
 			<button
 				class="tab"
@@ -317,7 +327,7 @@
 				role="tab"
 				aria-selected={tab === 'custom'}
 			>
-				Своя иконка
+				{m.dns_routes_icon_tab_custom()}
 			</button>
 		</div>
 
@@ -326,12 +336,12 @@
 				<input
 					type="text"
 					class="search-input"
-					placeholder="Поиск (telegram, netflix, github...)"
-					aria-label="Поиск иконки"
+					placeholder={m.dns_routes_icon_search_placeholder()}
+					aria-label={m.dns_routes_icon_search_aria()}
 					bind:value={search}
 				/>
 				<span class="count">
-					{filteredIcons.length} иконок{search ? ' (отфильтровано)' : ''}
+					{(search ? m.dns_routes_icon_count_filtered : m.dns_routes_icon_count)({ count: filteredIcons.length })}
 				</span>
 			</div>
 
@@ -364,7 +374,7 @@
 			</div>
 		{:else}
 			<div class="custom-section">
-				<label class="field-label" for="icon-url-input">URL картинки</label>
+				<label class="field-label" for="icon-url-input">{m.dns_routes_icon_url_label()}</label>
 				<input
 					id="icon-url-input"
 					type="url"
@@ -374,9 +384,9 @@
 					oninput={onUrlInput}
 				/>
 
-				<div class="or-divider" aria-hidden="true"><span>или</span></div>
+				<div class="or-divider" aria-hidden="true"><span>{m.dns_routes_icon_or()}</span></div>
 
-				<label class="field-label" for="icon-svg-input">Код SVG</label>
+				<label class="field-label" for="icon-svg-input">{m.dns_routes_icon_svg_label()}</label>
 				<textarea
 					id="icon-svg-input"
 					class="svg-input"
@@ -386,9 +396,9 @@
 					oninput={onSvgInput}
 					spellcheck="false"
 				></textarea>
-				<p class="field-hint">Вставьте фрагмент &lt;svg&gt;…&lt;/svg&gt; или целый файл.</p>
+				<p class="field-hint">{m.dns_routes_icon_svg_hint()}</p>
 
-				<div class="or-divider" aria-hidden="true"><span>или</span></div>
+				<div class="or-divider" aria-hidden="true"><span>{m.dns_routes_icon_or()}</span></div>
 
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
@@ -398,7 +408,7 @@
 					ondragover={onDragOver}
 					ondragleave={onDragLeave}
 					role="region"
-					aria-label="Загрузка файла иконки"
+					aria-label={m.dns_routes_icon_file_aria()}
 				>
 					<input
 						id="icon-file-input"
@@ -408,12 +418,12 @@
 						onchange={onFileInputChange}
 					/>
 					<label for="icon-file-input" class="drop-label">
-						<span class="drop-title">Перетащите файл сюда</span>
-						<span class="drop-sub">или нажмите для выбора · PNG, JPG, WebP, SVG · до 96 КБ</span>
+						<span class="drop-title">{m.dns_routes_icon_drop_title()}</span>
+						<span class="drop-sub">{m.dns_routes_icon_drop_sub()}</span>
 					</label>
 					{#if uploadedDataUrl}
 						<button type="button" class="clear-upload" onclick={() => (uploadedDataUrl = null)}>
-							Убрать файл
+							{m.dns_routes_icon_remove_file()}
 						</button>
 					{/if}
 				</div>
@@ -425,11 +435,11 @@
 				{#if showTileBgControls && customPreviewUrl}
 					{@render tileBgBar(customPreviewUrl, customPreviewHint)}
 				{:else if trimmedSvg && !parsedSvg}
-					<p class="error-text">Некорректный SVG — нужен тег &lt;svg&gt; без скриптов</p>
+					<p class="error-text">{m.dns_routes_icon_invalid_svg()}</p>
 				{/if}
 
 				<p class="field-hint footer-hint">
-					Иконка сохраняется в настройках маршрута. URL — ссылка; SVG и файлы — встроенные data URL.
+					{m.dns_routes_icon_saved_hint()}
 				</p>
 			</div>
 		{/if}
@@ -438,12 +448,12 @@
 	{#snippet actions()}
 		<div class="footer-left">
 			{#if iconUrl}
-				<Button variant="ghost" size="sm" onclick={handleReset}>&#x21BA; Сбросить (на авто)</Button>
+				<Button variant="ghost" size="sm" onclick={handleReset}>{m.dns_routes_icon_reset()}</Button>
 			{/if}
 		</div>
 		<div class="footer-right">
-			<Button variant="ghost" onclick={onclose}>Отмена</Button>
-			<Button variant="primary" onclick={handleApply} disabled={!canApply}>Применить</Button>
+			<Button variant="ghost" onclick={onclose}>{m.common_cancel()}</Button>
+			<Button variant="primary" onclick={handleApply} disabled={!canApply}>{m.dns_routes_icon_apply()}</Button>
 		</div>
 	{/snippet}
 </Modal>
