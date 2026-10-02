@@ -2,6 +2,7 @@
 	import { TrafficSparkline } from '$lib/components/ui';
 	import { formatBitRate } from '$lib/utils/format';
 	import type { Snippet } from 'svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		rxRate?: number;
@@ -23,10 +24,11 @@
 		rxData,
 		txData,
 		onclick,
-		title = 'Открыть график',
+		title: titleProp,
 		extra,
 	}: Props = $props();
 
+	const title = $derived(titleProp ?? m.tunnels_traffic_open_chart());
 	const displayRx = $derived(rxLabel ?? `↓ ${formatBitRate(rxRate ?? 0)}`);
 	const displayTx = $derived(txLabel ?? `↑ ${formatBitRate(txRate ?? 0)}`);
 </script>

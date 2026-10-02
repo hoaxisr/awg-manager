@@ -9,12 +9,14 @@
 	import type { ThemeState } from '$lib/stores/theme';
 	import { isAppearanceSettingsVisible, isSectionVisible, type Section } from '$lib/types/usageLevel';
 	import { handleVersionBadgeClick } from '$lib/utils/versionBadgeEasterEgg';
+	import { m } from '$lib/i18n';
 	import { Sun, Moon, Heart, LogOut, X, Menu, Terminal, ChevronRight } from 'lucide-svelte';
 
 	type NavItem = {
 		section: Section;
 		href: string;
-		label: string;
+		/** Функция, а не строка: подпись читается при рендере и следует за языком. */
+		label: () => string;
 		matches: (path: string) => boolean;
 	};
 
@@ -22,26 +24,26 @@
 		{
 			section: 'tunnels',
 			href: '/',
-			label: 'ТУННЕЛИ',
+			label: m.nav_tunnels,
 			matches: (p) =>
 				p === '/' || p.startsWith('/tunnels') || p.startsWith('/system-tunnels'),
 		},
 		{
 			section: 'servers',
 			href: '/servers',
-			label: 'СЕРВЕРЫ',
+			label: m.nav_servers,
 			matches: (p) => p.startsWith('/servers'),
 		},
 		{
 			section: 'routing',
 			href: '/routing',
-			label: 'МАРШРУТИЗАЦИЯ',
+			label: m.nav_routing,
 			matches: (p) => p.startsWith('/routing'),
 		},
 		{
 			section: 'proxy',
 			href: '/proxy',
-			label: 'ПРОКСИ',
+			label: m.nav_proxy,
 			// /freeturn и /wdtt — редиректы на /proxy; матчер снят с «ТУННЕЛЕЙ».
 			matches: (p) =>
 				p.startsWith('/proxy') || p.startsWith('/freeturn') || p.startsWith('/wdtt'),
@@ -49,13 +51,13 @@
 		{
 			section: 'diagnostics',
 			href: '/diagnostics',
-			label: 'ИНСТРУМЕНТЫ',
+			label: m.nav_tools,
 			matches: (p) => p.startsWith('/diagnostics') || p.startsWith('/logs'),
 		},
 		{
 			section: 'settings',
 			href: '/settings',
-			label: 'НАСТРОЙКИ',
+			label: m.nav_settings,
 			matches: (p) => p.startsWith('/settings'),
 		},
 	];
@@ -91,7 +93,6 @@
 				text: '#f8fafc',
 			},
 			label: 'AWGM - Legacy',
-			summary: '',
 			supportsModeToggle: true,
 		},
 		currentVersion = '',
@@ -127,18 +128,6 @@
 		mobileMenuOpen = !mobileMenuOpen;
 	}
 
-	function prettyMobileLabel(upperLabel: string): string {
-		const map: Record<string, string> = {
-			ТУННЕЛИ: 'Туннели',
-			СЕРВЕРЫ: 'Серверы',
-			МАРШРУТИЗАЦИЯ: 'Маршрутизация',
-			ПРОКСИ: 'Прокси',
-			ИНСТРУМЕНТЫ: 'Инструменты',
-			НАСТРОЙКИ: 'Настройки',
-		};
-		return map[upperLabel] ?? upperLabel;
-	}
-
 	/** Для Neo вторая ветка визуально тёмная, но `mode` остаётся dark ради color-scheme — в шапке показываем legacyMode */
 	const themeDisplayMode = $derived(theme.preset === 'neo' ? theme.legacyMode : theme.mode);
 
@@ -157,13 +146,17 @@
 		});
 	}
 
+	// Целые фразы, а не склейка «на ${next} тему»: падежи и порядок слов
+	// у языков разные, переводчику нужна фраза целиком.
 	const themeButtonLabel = $derived.by(() => {
-		const currentModeLabel = themeDisplayMode === 'light' ? 'светлая' : 'тёмная';
-		const nextModeLabel = themeDisplayMode === 'light' ? 'тёмную' : 'светлую';
+		const inputs = { theme: theme.label };
+		const toDark = themeDisplayMode === 'light';
 		if (theme.modePreference === 'system') {
-			return `Переключить ${theme.label} с системной на ${nextModeLabel} тему. Сейчас ${currentModeLabel} (по системе).`;
+			return toDark
+				? m.header_theme_system_to_dark(inputs)
+				: m.header_theme_system_to_light(inputs);
 		}
-		return `Переключить ${theme.label} на ${nextModeLabel} тему. Сейчас ${currentModeLabel}.`;
+		return toDark ? m.header_theme_to_dark(inputs) : m.header_theme_to_light(inputs);
 	});
 </script>
 
@@ -199,7 +192,7 @@
 								class:version-update-prerelease={hasUpdate && isPreRelease}
 								class:version-stable={!hasUpdate && !isPreRelease}
 								class:version-prerelease={!hasUpdate && isPreRelease}
-								aria-label={hasUpdate ? 'Показать блок обновления AWGM' : 'Версия AWGM'}
+								aria-label={hasUpdate ? m.header_version_show_update() : m.header_version()}
 								onclick={onVersionBadgeClick}
 							>
 								v{currentVersion}{hasUpdate ? ' ↑' : ''}
@@ -214,7 +207,7 @@
 							</span>
 						{/if}
 					{:else}
-						<span class="version-badge version-pending" aria-busy="true" title="Проверка версии…">
+						<span class="version-badge version-pending" aria-busy="true" title={m.header_version_checking()}>
 							<span class="version-pending-dots">···</span>
 						</span>
 					{/if}
@@ -223,10 +216,10 @@
 		</div>
 
 		{#if authenticated}
-			<nav class="nav" aria-label="Главная навигация">
+			<nav class="nav" aria-label={m.header_nav_aria()}>
 				<LegacyTabs value={currentRoute} onChange={navigate} variant="underline">
 					{#each visibleItems as item (item.section)}
-						<LegacyTab value={item.href}>{item.label}</LegacyTab>
+						<LegacyTab value={item.href}>{item.label().toLocaleUpperCase()}</LegacyTab>
 					{/each}
 				</LegacyTabs>
 			</nav>
@@ -242,7 +235,7 @@
 			<NotificationCenter {authenticated} />
 
 			{#if authenticated && isSectionVisible($usageLevel, 'terminal')}
-				<IconButton ariaLabel="Терминал" href="/terminal">
+				<IconButton ariaLabel={m.nav_terminal()} href="/terminal">
 					<Terminal size={16} aria-hidden="true" />
 				</IconButton>
 			{/if}
@@ -258,14 +251,14 @@
 			{/if}
 
 			{#if authenticated}
-				<IconButton variant="warm" ariaLabel="Поддержать проект" onclick={onOpenDonate}>
+				<IconButton variant="warm" ariaLabel={m.header_donate()} onclick={onOpenDonate}>
 					<Heart size={16} aria-hidden="true" />
 				</IconButton>
 			{/if}
 
 			{#if authenticated && !authDisabled}
 				<span class="logout-desktop">
-					<IconButton variant="danger" ariaLabel="Выйти" onclick={onLogout}>
+					<IconButton variant="danger" ariaLabel={m.header_logout()} onclick={onLogout}>
 						<LogOut size={16} aria-hidden="true" />
 					</IconButton>
 				</span>
@@ -276,7 +269,7 @@
 					type="button"
 					class="hamburger"
 					onclick={toggleMobileMenu}
-					aria-label="Меню"
+					aria-label={m.header_menu()}
 					aria-expanded={mobileMenuOpen}
 				>
 					{#if mobileMenuOpen}
@@ -294,15 +287,15 @@
 			type="button"
 			class="mobile-backdrop"
 			onclick={closeMobileMenu}
-			aria-label="Закрыть меню"
+			aria-label={m.header_close_menu()}
 		></button>
-		<nav class="mobile-nav" aria-label="Мобильная навигация">
+		<nav class="mobile-nav" aria-label={m.header_mobile_nav_aria()}>
 			{#each visibleItems as item (item.section)}
 				<a
 					href={item.href}
 					class="mobile-nav-link"
 					class:active={item.matches($page.url.pathname)}
-					onclick={closeMobileMenu}>{prettyMobileLabel(item.label)}</a
+					onclick={closeMobileMenu}>{item.label()}</a
 				>
 			{/each}
 			{#if !authDisabled}
@@ -314,7 +307,7 @@
 						onLogout();
 					}}
 				>
-					Выйти
+					{m.header_logout()}
 				</button>
 			{/if}
 		</nav>

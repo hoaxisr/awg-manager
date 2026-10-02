@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { PeerSortKey } from '$lib/utils/peerSort';
 	import { peerSort } from '$lib/stores/peerSort';
 	import { DEFAULT_SORT_VALUE } from '$lib/utils/tableSort';
@@ -16,18 +17,18 @@
 		hideSortOnDesktop = false,
 	}: Props = $props();
 
-	const sortOptions: DropdownOption<PeerSortKey>[] = [
-		{ value: 'name', label: 'По имени' },
-		{ value: 'traffic', label: 'По трафику' },
-		{ value: 'ip', label: 'По IP' },
+	const sortOptions: DropdownOption<PeerSortKey>[] = $derived([
+		{ value: 'name', label: m.servers_sort_name() },
+		{ value: 'traffic', label: m.servers_sort_traffic() },
+		{ value: 'ip', label: m.servers_sort_ip() },
 		{ value: 'endpoint', label: 'Endpoint' },
-		{ value: 'online', label: 'Онлайн' },
+		{ value: 'online', label: m.servers_sort_online() },
 		{ value: 'handshake', label: 'Handshake' },
-	];
+	]);
 
 	const dropdownOptions = $derived(
 		([
-			{ value: DEFAULT_SORT_VALUE, label: 'Исходный порядок' },
+			{ value: DEFAULT_SORT_VALUE, label: m.tunnels_sort_default() },
 			...sortOptions,
 		] satisfies DropdownOption<string>[])
 	);
@@ -38,7 +39,7 @@
 		<input
 			class="peer-search"
 			type="text"
-			placeholder="Поиск..."
+			placeholder={m.tunnels_search_placeholder()}
 			bind:value={searchQuery}
 		/>
 	{/if}
@@ -55,7 +56,7 @@
 			class="peer-sort-dir"
 			disabled={$peerSort.sortBy === null}
 			onclick={() => peerSort.toggleDir()}
-			title="Направление сортировки"
+			title={m.tunnels_sort_direction()}
 		>
 			{$peerSort.sortAsc ? '↑' : '↓'}
 		</button>

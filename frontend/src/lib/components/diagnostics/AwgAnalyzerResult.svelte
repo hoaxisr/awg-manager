@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { CircleAlert } from 'lucide-svelte';
 	import { scoreRingDashArray, type ScoreResult, type ScoreCheck } from '$lib/utils/awgConfScore';
 
@@ -61,12 +62,12 @@
 	</div>
 	<div class="minis">
 		<div class="mini">
-			<div class="mini-l">Профиль</div>
+			<div class="mini-l">{m.diag_awg_result_profile()}</div>
 			<div class="mini-v accent">{result.facts.profile}</div>
 		</div>
 		<div class="mini">
 			<div class="mini-l">Header protection</div>
-			<div class="mini-v">{result.facts.headerProtection ? 'вкл' : 'выкл'}</div>
+			<div class="mini-v">{result.facts.headerProtection ? m.diag_awg_result_on() : m.diag_awg_result_off()}</div>
 		</div>
 		<div class="mini">
 			<div class="mini-l">CPS</div>
@@ -74,14 +75,14 @@
 		</div>
 		<div class="mini">
 			<div class="mini-l">Trailers 3.1</div>
-			<div class="mini-v">{result.facts.trailers ? 'вкл' : 'выкл'}</div>
+			<div class="mini-v">{result.facts.trailers ? m.diag_awg_result_on() : m.diag_awg_result_off()}</div>
 		</div>
 	</div>
 </section>
 
 {#if compatFirst}
 	<section class="card compat-block" role="alert">
-		<h3 class="block-h">Конфиг не поднимется</h3>
+		<h3 class="block-h">{m.diag_awg_result_wont_start()}</h3>
 		<ul class="fix-list">
 			{#each result.checks.filter((c) => c.cat === 'Совместимость' && c.status === 'fail') as c (c.title + c.detail)}
 				<li class="fix-item">
@@ -94,7 +95,7 @@
 {/if}
 
 <section class="card summary" aria-labelledby="awg-summary-h">
-	<h3 id="awg-summary-h" class="block-h">Что это за конфиг</h3>
+	<h3 id="awg-summary-h" class="block-h">{m.diag_awg_result_what_is_it()}</h3>
 	<dl class="summary-dl">
 		{#each result.summary as row (row.label)}
 			<div class="summary-row"><dt>{row.label}</dt><dd>{row.value}</dd></div>
@@ -106,7 +107,7 @@
 	<section class="card fixes" style:--awg-fix-accent={tone.color} style:--awg-fix-tint={tone.tint}>
 		<div class="fixes-head">
 			<span class="fixes-head-icon" aria-hidden="true"><CircleAlert size={18} /></span>
-			<h3 class="fixes-h">Рекомендации</h3>
+			<h3 class="fixes-h">{m.diag_awg_result_recommendations()}</h3>
 			<span class="fixes-count">{fixes.length}</span>
 		</div>
 		<ul class="fix-list">

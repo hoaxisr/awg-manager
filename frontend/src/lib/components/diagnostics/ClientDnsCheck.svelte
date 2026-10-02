@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { untrack } from 'svelte';
 	import { Button, StatusDot } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
@@ -24,11 +25,15 @@
 
 	type CheckStatus = 'pending' | 'ok' | 'fail' | 'warning';
 
+	/** Текст строки: серверный — строкой, клиентский — функцией сообщения (читается при рендере, язык переключается на лету). */
+	type Text = string | (() => string);
+	const txt = (t: Text): string => (typeof t === 'function' ? t() : t);
+
 	interface CheckRow {
 		id: string;
-		title: string;
+		title: Text;
 		status: CheckStatus;
-		message: string;
+		message: Text;
 		detail?: string;
 	}
 
@@ -38,9 +43,9 @@
 	let clientIP = $state('');
 	let resolveCheck = $state<CheckRow>({
 		id: 'dns_probe',
-		title: 'Резолв через клиентский DNS',
+		title: m.diag_dns_check_resolve_title,
 		status: 'pending',
-		message: 'Не запускалось',
+		message: m.diag_dns_check_not_run,
 	});
 	let policyCheck = $state<CheckRow | null>(null);
 	let proxyMode = $derived(clientIP === '127.0.0.1' || clientIP === '::1' || clientIP === '');
@@ -94,9 +99,9 @@
 			if (prevRunning !== undefined && prevRunning !== cur && hasResult) {
 				resolveCheck = {
 					id: 'dns_probe',
-					title: 'Резолв через клиентский DNS',
+					title: m.diag_dns_check_resolve_title,
 					status: 'pending',
-					message: 'Не запускалось',
+					message: m.diag_dns_check_not_run,
 				};
 				policyCheck = null;
 				staleNotice = true;
@@ -124,7 +129,7 @@
 		running = true;
 		try {
 			expanded = true;
-			resolveCheck = { ...resolveCheck, status: 'pending', message: 'Запрос к awgm-dnscheck.test...' };
+			resolveCheck = { ...resolveCheck, status: 'pending', message: m.diag_dns_check_querying };
 			policyCheck = null;
 
 			// При работающем sing-box пробы не будет (DNS обрабатывает он), значит
@@ -151,9 +156,9 @@
 			} else if (!singboxOn && !start) {
 				resolveCheck = {
 					id: 'dns_probe',
-					title: 'Резолв через клиентский DNS',
+					title: m.diag_dns_check_resolve_title,
 					status: 'fail',
-					message: 'Проверку не удалось запустить — панель не ответила',
+					message: m.diag_dns_check_start_failed,
 				};
 			} else {
 				resolveCheck = await doResolveProbe();
@@ -168,10 +173,9 @@
 		if ($singboxStatus.data?.running ?? false) {
 			return {
 				id: 'dns_probe',
-				title: 'Резолв через клиентский DNS',
+				title: m.diag_dns_check_resolve_title,
 				status: 'warning',
-				message:
-					'Проверка актуальна только для DNS-маршрутизации средствами NDMS / HR Neo. При включённом Sing-box DNS обрабатывается им — probe пропущен.',
+				message: m.diag_dns_check_singbox_skipped,
 			};
 		}
 		try {
@@ -182,23 +186,23 @@
 			if (resp.ok) {
 				return {
 					id: 'dns_probe',
-					title: 'Резолв через клиентский DNS',
+					title: m.diag_dns_check_resolve_title,
 					status: 'ok',
-					message: 'DNS-запрос успешно достиг роутера',
+					message: m.diag_dns_check_reached,
 				};
 			}
 			return {
 				id: 'dns_probe',
-				title: 'Резолв через клиентский DNS',
+				title: m.diag_dns_check_resolve_title,
 				status: 'fail',
-				message: `Ответ ${resp.status} — DNS-запрос не достиг роутера`,
+				message: () => m.diag_dns_check_http_status({ status: resp.status }),
 			};
 		} catch {
 			return {
 				id: 'dns_probe',
-				title: 'Резолв через клиентский DNS',
+				title: m.diag_dns_check_resolve_title,
 				status: 'fail',
-				message: 'DNS-запрос не достиг роутера. Клиент использует внешний DNS, а не роутер.',
+				message: m.diag_dns_check_unreached,
 			};
 		}
 	}
@@ -212,8 +216,8 @@
 </script>
 
 <ChecksGroup
-	name="Маршрутизация по DNS"
-	subtitle="DNS клиента + access policy"
+	name={m.diag_dns_check_group_name()}
+	subtitle={m.diag_dns_check_group_subtitle()}
 	{led}
 	{summary}
 	{expanded}
@@ -227,31 +231,30 @@
 			onclick={runCheck}
 			loading={running}
 		>
-			{running ? 'Идёт' : 'Проверить'}
+			{running ? m.diag_group_running() : m.diag_group_check()}
 		</Button>
 	{/snippet}
 
 	{#snippet body()}
 		{#if staleNotice && !hasResult}
 			<div class="proxy-banner">
-				<strong>Состояние Sing-box изменилось</strong>
-				<p>Результат проверки сброшен. Запустите проверку заново.</p>
+				<strong>{m.diag_dns_check_stale_title()}</strong>
+				<p>{m.diag_dns_check_stale_text()}</p>
 			</div>
 		{/if}
 		{#if hasResult && proxyMode}
 			<div class="proxy-banner">
-				<strong>Подключение через reverse proxy</strong>
+				<strong>{m.diag_dns_check_proxy_title()}</strong>
 				<p>
-					Сервер видит вас как <code>{clientIP || 'loopback'}</code>. DNS-проверки
-					неактуальны — тестируйте напрямую с устройств в локальной сети, минуя прокси.
+					{m.diag_dns_check_proxy_sees()} <code>{clientIP || 'loopback'}</code>. {m.diag_dns_check_proxy_irrelevant()}
 				</p>
 			</div>
 		{:else if hasResult}
 			<div class="check-row">
 				<StatusDot variant={variantOf(resolveCheck.status)} size="sm" />
 				<div class="check-content">
-					<span class="check-title">{resolveCheck.title}</span>
-					<span class="check-msg">{resolveCheck.message}</span>
+					<span class="check-title">{txt(resolveCheck.title)}</span>
+					<span class="check-msg">{txt(resolveCheck.message)}</span>
 				</div>
 			</div>
 
@@ -259,8 +262,8 @@
 				<div class="check-row">
 					<StatusDot variant={variantOf(policyCheck.status)} size="sm" />
 					<div class="check-content">
-						<span class="check-title">{policyCheck.title}</span>
-						<span class="check-msg">{policyCheck.message}</span>
+						<span class="check-title">{txt(policyCheck.title)}</span>
+						<span class="check-msg">{txt(policyCheck.message)}</span>
 						{#if policyCheck.detail}
 							<span class="check-detail">{policyCheck.detail}</span>
 						{/if}
@@ -269,12 +272,11 @@
 			{/if}
 
 			<p class="ip-line">
-				IP клиента: <code>{clientIP || '—'}</code>
+				{m.diag_dns_check_client_ip()} <code>{clientIP || '—'}</code>
 			</p>
 		{:else}
 			<p class="hint">
-				Проверяет, что DNS-запросы клиента доходят до роутера и что устройство
-				находится в политике доступа по умолчанию.
+				{m.diag_dns_check_hint()}
 			</p>
 		{/if}
 	{/snippet}
