@@ -141,6 +141,11 @@ type InterfaceStore struct {
 	// dirtyAt — seq метки Invalidate; 0 — не грязно. Снимает её только
 	// список, начатый не раньше метки.
 	dirtyAt uint64
+	// hookDirtyAt — seq метки «грязно», поставленной хуком существования
+	// (П6′); 0 — нет. Её, и только её, обслуживает ReconcileDirty (П7): метку
+	// нашей записи (Invalidate) снимает freshen следующего читателя. Снимает
+	// список, начатый не раньше метки.
+	hookDirtyAt uint64
 	// flight — список в полёте (последний начатый), к нему присоединяется
 	// Snapshot с maxAge > 0.
 	flight *listFlight
@@ -278,6 +283,9 @@ func (s *InterfaceStore) refreshList(ctx context.Context, fl *listFlight) (*list
 			}
 			if s.dirtyAt <= fl.start {
 				s.dirtyAt = 0
+			}
+			if s.hookDirtyAt <= fl.start {
+				s.hookDirtyAt = 0
 			}
 			s.listedAt = time.Now()
 			todo = s.unnamedLocked(recs, fl.start)
@@ -1064,7 +1072,7 @@ func (s *InterfaceStore) OnCreated(id string) {
 	_, known := s.byID[id]
 	_, own := s.creating[id]
 	if !known && !own {
-		s.dirtyAt = s.seq
+		s.dirtyAt, s.hookDirtyAt = s.seq, s.seq
 	}
 }
 
@@ -1077,7 +1085,7 @@ func (s *InterfaceStore) OnDestroyed(id string) {
 	defer s.mu.Unlock()
 	s.markExistLocked(id, true)
 	if _, known := s.byID[id]; known {
-		s.dirtyAt = s.seq
+		s.dirtyAt, s.hookDirtyAt = s.seq, s.seq
 	}
 }
 
@@ -1110,11 +1118,13 @@ func (s *InterfaceStore) OnSystemName(id, name string) {
 	s.sysNames[id] = name
 }
 
-// ReconcileDirty — после пачки хуков: грязно — один список (или
-// присоединение к полёту, начатому не раньше метки), иначе ничего.
+// ReconcileDirty — после пачки хуков: грязно от хука существования — один
+// список (или присоединение к полёту, начатому не раньше метки), иначе ничего.
+// Метку нашей записи (Invalidate) не обслуживает (П7): её снимает freshen
+// следующего читателя.
 func (s *InterfaceStore) ReconcileDirty(ctx context.Context) error {
 	s.mu.RLock()
-	dirty := s.dirtyAt != 0
+	dirty := s.hookDirtyAt != 0
 	s.mu.RUnlock()
 	if !dirty {
 		return nil

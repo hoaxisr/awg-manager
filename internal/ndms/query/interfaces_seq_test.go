@@ -324,3 +324,36 @@ func TestExist_PrunedByAppliedList(t *testing.T) {
 		t.Fatalf("exist = %v, want только метка Wireguard0 из полёта", s.exist)
 	}
 }
+
+// П7 (R58): метку нашей записи (Invalidate) ReconcileDirty не обслуживает —
+// её снимает freshen следующего читателя; хук существования — обслуживает.
+// Мутация: ReconcileDirty по любой метке «грязно» → +1, красный.
+func TestReconcileDirty_OwnWriteNoList(t *testing.T) {
+	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
+	s := NewInterfaceStore(f, NopLogger())
+	ctx := context.Background()
+	if _, err := s.Get(ctx, "Wireguard0"); err != nil { // bootstrap
+		t.Fatal(err)
+	}
+	lists := f.ListCalls()
+	s.Invalidate("Wireguard0")
+	if err := s.ReconcileDirty(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.ListCalls() - lists; got != 0 {
+		t.Fatalf("ReconcileDirty после своей записи: %d списков, want 0", got)
+	}
+	if _, err := s.Get(ctx, "Wireguard0"); err != nil { // метка жива — читатель читает список
+		t.Fatal(err)
+	}
+	if got := f.ListCalls() - lists; got != 1 {
+		t.Fatalf("Get после своей записи: %d списков, want 1", got)
+	}
+	s.OnDestroyed("Wireguard0") // расходится с картой
+	if err := s.ReconcileDirty(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.ListCalls() - lists; got != 2 {
+		t.Fatalf("ReconcileDirty после хука: %d списков, want 2", got)
+	}
+}
