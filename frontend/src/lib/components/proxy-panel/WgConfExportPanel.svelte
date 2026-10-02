@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button } from '$lib/components/ui';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { downloadBlob } from '$lib/utils/download';
@@ -16,8 +17,8 @@
 
 	let {
 		wgConf,
-		title = 'WireGuard из ссылки',
-		hint = 'Конфиг с Endpoint под listen клиента. Можно скопировать, скачать .conf или создать AWG-туннель.',
+		title,
+		hint,
 		filename = 'wdtt-client.conf',
 		onImportTunnel,
 		importingTunnel = false,
@@ -25,36 +26,37 @@
 	}: Props = $props();
 
 	const trimmed = $derived(wgConf.trim());
+	const shownHint = $derived(hint ?? m.proxy_wgexport_hint());
 
 	// TS-21 / TS-22 — тексты тостов панели (утверждены как есть, «Дополнение №1»).
 	async function copyConf() {
 		if (!trimmed) return;
 		if (await copyToClipboard(trimmed)) {
-			notifications.success('WG-конфиг скопирован');
+			notifications.success(m.proxy_wgexport_copied());
 		} else {
-			notifications.error('Не удалось скопировать');
+			notifications.error(m.proxy_wgexport_copy_failed());
 		}
 	}
 
 	function downloadConf() {
 		if (!trimmed) return;
 		downloadBlob(new Blob([trimmed + '\n'], { type: 'text/plain' }), filename);
-		notifications.success('Файл скачан');
+		notifications.success(m.proxy_wgexport_downloaded());
 	}
 </script>
 
 {#if trimmed}
 	<section class="wg-export">
 		<div class="wg-export-head">
-			<span class="section-label">{title}</span>
-			{#if hint}
-				<p class="wg-export-hint">{hint}</p>
+			<span class="section-label">{title ?? m.proxy_wgexport_title()}</span>
+			{#if shownHint}
+				<p class="wg-export-hint">{shownHint}</p>
 			{/if}
 		</div>
 		<textarea class="wg-export-text" readonly rows="8" value={trimmed}></textarea>
 		<div class="wg-export-actions">
-			<Button variant="secondary" size="sm" onclick={copyConf}>Копировать</Button>
-			<Button variant="secondary" size="sm" onclick={downloadConf}>Скачать .conf</Button>
+			<Button variant="secondary" size="sm" onclick={copyConf}>{m.proxy_wgexport_copy()}</Button>
+			<Button variant="secondary" size="sm" onclick={downloadConf}>{m.proxy_wgexport_download()}</Button>
 			{#if onImportTunnel}
 				<Button
 					variant="primary"
@@ -63,7 +65,7 @@
 					disabled={importDisabled || importingTunnel}
 					onclick={() => onImportTunnel?.()}
 				>
-					Создать AWG-туннель
+					{m.proxy_wgexport_create_tunnel()}
 				</Button>
 			{/if}
 		</div>

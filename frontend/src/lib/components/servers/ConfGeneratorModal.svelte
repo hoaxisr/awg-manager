@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { WireguardServerConfig, WireguardServerPeerConfig, ASCParams } from '$lib/types';
 	import { Modal, Button } from '$lib/components/ui';
 
@@ -79,25 +80,25 @@
 	let preview = $derived(privateKey ? generateConf() : '');
 </script>
 
-<Modal {open} title="Генерация .conf — {peer.description || 'Пир'}" size="lg" {onclose}>
+<Modal {open} title={m.servers_confgen_title({ peer: peer.description || m.servers_confgen_peer_fallback() })} size="lg" {onclose}>
 	<div class="conf-form">
 		<div class="form-field">
-			<label class="label" for="private-key">Private Key клиента</label>
+			<label class="label" for="private-key">{m.servers_confgen_private_key_label()}</label>
 			<input
 				id="private-key"
 				type="text"
 				class="input"
-				placeholder="Вставьте приватный ключ клиента"
+				placeholder={m.servers_confgen_private_key_placeholder()}
 				bind:value={privateKey}
 				autocomplete="off"
 				spellcheck="false"
 			/>
-			<p class="form-hint">Роутер хранит только публичный ключ. Приватный ключ необходимо ввести вручную.</p>
+			<p class="form-hint">{m.servers_confgen_private_key_hint()}</p>
 		</div>
 
 		<div class="conf-info">
 			<div class="info-row">
-				<span class="info-label">Адрес клиента</span>
+				<span class="info-label">{m.servers_confgen_client_address()}</span>
 				<span class="info-value">{peer.address}/32</span>
 			</div>
 			<div class="info-row">
@@ -110,7 +111,7 @@
 			</div>
 			<div class="info-row">
 				<span class="info-label">PresharedKey</span>
-				<span class="info-value">{peer.presharedKey ? 'Да' : 'Нет'}</span>
+				<span class="info-value">{peer.presharedKey ? m.servers_confgen_yes() : m.servers_confgen_no()}</span>
 			</div>
 			{#if ascParams}
 				<div class="info-row">
@@ -122,16 +123,16 @@
 
 		{#if preview}
 			<div class="preview-section">
-				<span class="label">Предпросмотр</span>
+				<span class="label">{m.servers_confgen_preview()}</span>
 				<pre class="conf-preview">{preview}</pre>
 			</div>
 		{/if}
 	</div>
 
 	{#snippet actions()}
-		<Button variant="secondary" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="secondary" size="md" onclick={onclose}>{m.common_cancel()}</Button>
 		<Button variant="primary" size="md" onclick={download} disabled={!privateKey.trim()}>
-			Скачать .conf
+			{m.servers_confgen_download()}
 		</Button>
 	{/snippet}
 </Modal>

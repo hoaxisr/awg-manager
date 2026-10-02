@@ -1,18 +1,27 @@
 // Решающая логика блока «Абоненты» (ia.md §3.3 часть А, спека §4.4).
 // Чистые функции: компонент только рисует то, что здесь решено, а юниты
 // проверяют матрицу кнопок и разбор отказов без рендера.
+import { m } from '$lib/i18n';
 import type { WdttPanelUserEntry, WdttServerClientsReload } from '$lib/types';
 
 /** Тексты берутся по ID микрокопии; своих строк в блоке нет. */
+// Геттеры, а не строки: текст читается при обращении и следует за языком.
 export const CLIENT_TEXT = {
-	removeLastUsable:
-		'Нельзя удалить последнего рабочего абонента: без единого рабочего пароля сервер не запустится.',
+	get removeLastUsable(): string {
+		return m.proxy_clients_remove_last_usable();
+	},
 	/** SH-91: гейт «Запустить» у WDTT-сервера без рабочих абонентов. */
-	startNoUsable: 'Сервер не запускается без единого рабочего пароля — добавьте абонента',
-	passwordTaken: 'Пароль занят живым абонентом',
+	get startNoUsable(): string {
+		return m.proxy_clients_start_no_usable();
+	},
+	get passwordTaken(): string {
+		return m.proxy_clients_password_taken();
+	},
 	/** Подпись поля «VK-хеш» там, где подставить нечего: мастер и модалка. */
-	vkHashRequired: 'Обязательно — без него ссылка не заработает',
-} as const;
+	get vkHashRequired(): string {
+		return m.proxy_clients_vk_hash_required();
+	},
+};
 
 /**
  * Рабочий абонент: непустой пароль. Главного пароля у сервера больше нет,
@@ -35,7 +44,7 @@ export function usableCount(users: WdttPanelUserEntry[]): number {
 
 /** SH-38: счётчик в подвале блока. */
 export function counterLabel(users: WdttPanelUserEntry[]): string {
-	return `Абонентов: ${users.length} · рабочих: ${usableCount(users)}`;
+	return m.proxy_clients_counter({ total: users.length, usable: usableCount(users) });
 }
 
 export interface RowActions {
@@ -117,7 +126,7 @@ export function addErrorText(code: string, message: string): string {
 		const idx = lower.indexOf(NOT_WRITTEN_PREFIX);
 		const tail = idx === 0 ? msg.slice(NOT_WRITTEN_PREFIX.length).replace(/^[:\s]+/, '') : msg;
 		// SH-26
-		return `Абонент создан, но не записан в файл сервера: ${tail}. Сервер подхватит его при следующем запуске.`;
+		return m.proxy_clients_add_not_applied({ tail });
 	}
 	const lower = msg.toLowerCase();
 	if (lower.includes('занят живым абонентом')) return CLIENT_TEXT.passwordTaken;

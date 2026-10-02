@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { WireguardServerPeer } from '$lib/types';
 	import { Modal, Button } from '$lib/components/ui';
 	import { protocols, calcTotalChars, MAX_SIGNATURE_CHARS, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
@@ -91,21 +92,21 @@
 				signature: sigDirty ? { profile: sigProfile, ...sigPackets } : undefined,
 			});
 			servers.applyMutationResponse(fresh);
-			notifications.success('Клиент обновлён');
+			notifications.success(m.servers_peer_updated());
 			onclose();
 			onUpdated();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения');
+			notifications.error(e instanceof Error ? e.message : m.system_tunnels_save_failed());
 		} finally {
 			saving = false;
 		}
 	}
 </script>
 
-<Modal {open} title="Редактировать клиента" size="sm" {onclose}>
+<Modal {open} title={m.servers_peer_edit_title()} size="sm" {onclose}>
 	<div class="form-fields">
 		<div class="form-group">
-			<label class="label" for="esp-desc">Имя / описание</label>
+			<label class="label" for="esp-desc">{m.servers_peer_label_desc()}</label>
 			<input type="text" id="esp-desc" class="input" bind:value={description} />
 		</div>
 		<div class="form-group">
@@ -113,7 +114,7 @@
 			<input type="text" id="esp-ip" class="input" bind:value={tunnelIP} />
 		</div>
 		<div class="form-group">
-			<label class="label" for="esp-dns">DNS серверы</label>
+			<label class="label" for="esp-dns">{m.servers_peer_label_dns()}</label>
 			<input
 				type="text"
 				id="esp-dns"
@@ -125,7 +126,7 @@
 			{#if routerIP}
 				<div class="toggle-row">
 					<span class="toggle-label">
-						DNS роутера ({routerIP})<FieldHint text={routerDnsHint} ariaLabel="Подсказка: DNS роутера" />
+						{m.servers_peer_router_dns({ ip: routerIP })}<FieldHint text={routerDnsHint()} ariaLabel={m.servers_peer_router_dns_aria()} />
 					</span>
 					<FormToggle
 						bind:checked={useRouterDNS}
@@ -139,7 +140,7 @@
 			{#if dnsError}
 				<span class="hint-text is-error">{dnsError}</span>
 			{:else}
-				<span class="hint-text">Пусто — DNS роутера</span>
+				<span class="hint-text">{m.servers_peer_dns_empty_hint()}</span>
 			{/if}
 		</div>
 		<PeerNetworksFields
@@ -161,9 +162,9 @@
 	</div>
 
 	{#snippet actions()}
-		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="ghost" size="md" onclick={onclose}>{m.common_cancel()}</Button>
 		<Button variant="primary" size="md" onclick={handleSave} loading={saving} disabled={saving || sigOver || !!dnsError || !!netError}>
-			Сохранить
+			{m.settings_page_save()}
 		</Button>
 	{/snippet}
 </Modal>
