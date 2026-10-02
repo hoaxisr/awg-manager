@@ -7,6 +7,7 @@
 		vpnLinkUnsupportedPortalReason
 	} from '$lib/utils/vpnlink';
 	import { shouldShowPremiumChrome } from '$lib/utils/amneziaPremiumVpnPaste';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		/** vpn:// ввод */
@@ -25,7 +26,7 @@
 		configContent = $bindable(''),
 		linkPreview = $bindable(''),
 		variant = 'page',
-		placeholder = 'Вставьте vpn:// — клиентский конфиг или ключ Amnezia Premium',
+		placeholder,
 		onregularconfig
 	}: Props = $props();
 
@@ -68,7 +69,7 @@
 		if (!raw) return;
 
 		if (!isVpnLink(raw)) {
-			linkError = 'Ожидается ссылка вида vpn://…';
+			linkError = m.tunnel_edit_vpn_expected();
 			return;
 		}
 
@@ -83,7 +84,7 @@
 				}
 			} catch (e) {
 				configContent = '';
-				linkError = e instanceof Error ? e.message : 'Ошибка декодирования';
+				linkError = e instanceof Error ? e.message : m.tunnel_edit_vpn_decode_error();
 			}
 			return;
 		}
@@ -103,13 +104,12 @@
 		bind:value
 		oninput={scheduleVpnPasteAnalysis}
 		onpaste={() => queueMicrotask(() => void runVpnPasteAnalysis())}
-		{placeholder}
+		placeholder={placeholder ?? m.tunnel_edit_vpn_placeholder()}
 		spellcheck="false"
 	></textarea>
 	{#if showPremiumChrome}
 		<p class="premium-banner">
-			Это ключ Amnezia Premium. Список стран и выдачу конфигураций обслуживает мастер подписки —
-			откройте его.
+			{m.tunnel_edit_vpn_premium_banner()}
 		</p>
 	{/if}
 	{#if linkError}

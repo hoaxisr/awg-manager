@@ -5,6 +5,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { theme } from '$lib/stores/theme';
+	import { locale, m } from '$lib/i18n';
 	import { compactLayout, isCompactLayoutActive } from '$lib/stores/compactLayout';
 	import {
 		tunnelDashboardLayout,
@@ -51,8 +52,8 @@
 	import {
 		isSectionVisible,
 		pathToSection,
-		SECTION_LABELS,
-		USAGE_LEVEL_LABELS,
+		sectionLabel,
+		usageLevelLabel,
 	} from '$lib/types/usageLevel';
 	import type { UpdateInfo } from '$lib/types';
 	import LoginForm from '$lib/components/LoginForm.svelte';
@@ -290,6 +291,12 @@
 		}
 	});
 
+	// <html lang> следует за языком интерфейса: от него зависят переносы,
+	// озвучка скринридером и выбор шрифта/перевода в браузере.
+	$effect(() => {
+		document.documentElement.lang = locale.current;
+	});
+
 	let wasOffline = $state(false);
 	$effect(() => {
 		if (!$serverOnline) {
@@ -369,8 +376,11 @@
 		lastWarnedPath = path;
 
 		notifications.warning(
-			`Раздел «${SECTION_LABELS[section]}» недоступен в режиме «${USAGE_LEVEL_LABELS[$usageLevel]}». Изменить уровень в Настройках.`,
-			{ action: { label: 'Настройки', href: '/settings' } },
+			m.section_unavailable_at_level({
+				section: sectionLabel(section),
+				level: usageLevelLabel($usageLevel),
+			}),
+			{ action: { label: m.nav_settings(), href: '/settings' } },
 		);
 		void goto('/', { replaceState: true });
 	});

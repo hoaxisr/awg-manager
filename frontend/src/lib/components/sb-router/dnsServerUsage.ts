@@ -1,5 +1,5 @@
+import { m } from '$lib/i18n';
 import type { SingboxRouterDNSServer, SingboxRouterDNSRule } from '$lib/types';
-import { formatUsageBlockReason } from './outboundUsage';
 
 export type DnsServerUsageInput = {
 	tag: string;
@@ -51,7 +51,14 @@ export function dnsServerDeleteBlockReasons(
 	const refs = collectAllDnsServerReferences(servers.map((s) => s.tag), input);
 	const reasons = new Map<string, string | null>();
 	for (const s of servers) {
-		reasons.set(s.tag, formatUsageBlockReason('DNS-сервер', refs.get(s.tag) ?? []));
+		const list = refs.get(s.tag) ?? [];
+		const preview = list.slice(0, 3).join(', ');
+		reasons.set(
+			s.tag,
+			list.length === 0
+				? null
+				: m.sb_router_dns_server_in_use({ refs: list.length > 3 ? `${preview}…` : preview }),
+		);
 	}
 	return reasons;
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import {
 		DEFAULT_SUBSCRIPTION_URLTEST,
 		type Subscription,
@@ -92,15 +93,15 @@
 			};
 			if (group) {
 				await api.updateSubscriptionGroup(group.id, payload);
-				notifications.success('Группа обновлена');
+				notifications.success(m.subscriptions_group_modal_updated());
 			} else {
 				await api.createSubscriptionGroup({ ...payload, tag: tag.trim() || undefined });
-				notifications.success('Группа создана');
+				notifications.success(m.subscriptions_group_modal_created());
 			}
 			onsaved();
 			onclose();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Не удалось сохранить группу';
+			error = e instanceof Error ? e.message : m.subscriptions_group_modal_save_failed();
 		} finally {
 			saving = false;
 		}
@@ -109,7 +110,7 @@
 
 <Modal
 	{open}
-	title={group ? 'Изменить группу' : 'Создать сводную группу'}
+	title={group ? m.subscriptions_groups_edit() : m.subscriptions_group_modal_title_create()}
 	size="lg"
 	onclose={() => {
 		if (saving) return;
@@ -124,37 +125,37 @@
 		}}
 	>
 		<label class="row">
-			<span class="lbl">Название</span>
-			<input class="inp" bind:value={label} placeholder="Все европейские" required />
+			<span class="lbl">{m.subscriptions_form_name()}</span>
+			<input class="inp" bind:value={label} placeholder={m.subscriptions_group_modal_name_placeholder()} required />
 		</label>
 
 		{#if group}
 			<label class="row">
-				<span class="lbl">Тег outbound (sing-box)</span>
+				<span class="lbl">{m.subscriptions_group_modal_outbound_tag()}</span>
 				<input class="inp mono" value={group.tag} readonly disabled />
 			</label>
 		{:else}
 			<label class="row">
-				<span class="lbl">Тег outbound (sing-box)</span>
+				<span class="lbl">{m.subscriptions_group_modal_outbound_tag()}</span>
 				<input
 					class="inp mono"
 					bind:value={tag}
-					placeholder="авто (agg-xxxxxxxx)"
+					placeholder={m.subscriptions_group_modal_outbound_tag_placeholder()}
 					autocomplete="off"
 					spellcheck="false"
 				/>
 				{#if !tagValid}
-					<span class="err">Латиница, цифры и ._-, до 32 символов, первый символ — буква или цифра, без префикса «sub-»</span>
+					<span class="err">{m.subscriptions_group_modal_tag_invalid()}</span>
 				{/if}
 				<div class="hint">
-					Имя outbound'а в конфиге sing-box и правилах маршрутизации. После создания не меняется.
+					{m.subscriptions_group_modal_tag_hint()}
 				</div>
 			</label>
 		{/if}
 
 		<div class="block">
-			<span class="lbl">Режим выбора сервера</span>
-			<div class="mode-grid" role="radiogroup" aria-label="Режим выбора сервера">
+			<span class="lbl">{m.subscriptions_form_mode()}</span>
+			<div class="mode-grid" role="radiogroup" aria-label={m.subscriptions_form_mode()}>
 				<button
 					type="button"
 					role="radio"
@@ -163,8 +164,8 @@
 					class:selected={mode === 'urltest'}
 					onclick={() => (mode = 'urltest')}
 				>
-					<div class="mode-title">Автовыбор по скорости</div>
-					<div class="mode-desc">Sing-box держит самый быстрый сервер из всех подписок.</div>
+					<div class="mode-title">{m.subscriptions_form_mode_urltest_title()}</div>
+					<div class="mode-desc">{m.subscriptions_group_modal_mode_urltest_desc()}</div>
 				</button>
 				<button
 					type="button"
@@ -174,14 +175,14 @@
 					class:selected={mode === 'selector'}
 					onclick={() => (mode = 'selector')}
 				>
-					<div class="mode-title">Ручной выбор</div>
-					<div class="mode-desc">Сервер переключается вручную из списка.</div>
+					<div class="mode-title">{m.subscriptions_form_mode_selector_title()}</div>
+					<div class="mode-desc">{m.subscriptions_form_mode_selector_desc()}</div>
 				</button>
 			</div>
 			{#if mode === 'urltest'}
 				<div class="urltest-block">
 					<label class="row">
-						<span class="lbl">URL для проверки</span>
+						<span class="lbl">{m.subscriptions_form_check_url()}</span>
 						<input
 							class="inp"
 							type="url"
@@ -191,11 +192,11 @@
 					</label>
 					<div class="ut-row">
 						<label class="ut-col">
-							<span class="lbl">Интервал, сек</span>
+							<span class="lbl">{m.subscriptions_form_interval()}</span>
 							<input class="inp" type="number" min="10" max="3600" bind:value={utIntervalSec} />
 						</label>
 						<label class="ut-col">
-							<span class="lbl">Допуск, мс</span>
+							<span class="lbl">{m.subscriptions_form_tolerance()}</span>
 							<input class="inp" type="number" min="0" max="2000" bind:value={utToleranceMs} />
 						</label>
 					</div>
@@ -204,9 +205,9 @@
 		</div>
 
 		<div class="block">
-			<span class="lbl">Подписки</span>
+			<span class="lbl">{m.subscriptions_group_modal_subscriptions()}</span>
 			{#if subscriptions.length === 0}
-				<div class="empty-subs">Нет подписок — сначала добавьте хотя бы одну.</div>
+				<div class="empty-subs">{m.subscriptions_group_modal_no_subscriptions()}</div>
 			{:else}
 				<div class="sub-list">
 					{#each subscriptions as sub (sub.id)}
@@ -220,8 +221,8 @@
 								onchange={() => toggleSub(sub.id)}
 							/>
 							<span class="sub-label">{sub.label || sub.url || sub.id}</span>
-							{#if !sub.enabled}<span class="sub-off-badge">отключена</span>{/if}
-							<span class="sub-count">{sub.members?.length ?? 0} серв.</span>
+							{#if !sub.enabled}<span class="sub-off-badge">{m.subscriptions_group_modal_sub_disabled()}</span>{/if}
+							<span class="sub-count">{m.subscriptions_servers_short({ count: sub.members?.length ?? 0 })}</span>
 						</label>
 					{/each}
 				</div>
@@ -229,9 +230,9 @@
 		</div>
 
 		<div class="block">
-			<span class="lbl">Фильтр серверов</span>
+			<span class="lbl">{m.subscriptions_form_filter()}</span>
 			<label class="row">
-				<span class="lbl-sm">Включать только (regex)</span>
+				<span class="lbl-sm">{m.subscriptions_form_include_only()}</span>
 				<input
 					class="inp mono"
 					bind:value={filterInclude}
@@ -241,7 +242,7 @@
 				/>
 			</label>
 			<label class="row">
-				<span class="lbl-sm">Исключать (regex)</span>
+				<span class="lbl-sm">{m.subscriptions_form_exclude()}</span>
 				<input
 					class="inp mono"
 					bind:value={filterExclude}
@@ -251,19 +252,18 @@
 				/>
 			</label>
 			<div class="hint">
-				Матчится по имени сервера. Синтаксис Go RE2: lookahead не поддерживается —
-				используйте поле «Исключать». Пример:
+				{m.subscriptions_group_modal_filter_hint_before()}
 				<code class="mono">(?i)(🇷🇺|Россия|RU|BRIDGE|LTE)</code>.
-				Проверка выражения выполняется на сервере.
+				{m.subscriptions_group_modal_filter_hint_after()}
 			</div>
 			<div class="preview" class:preview-empty={preview.count === 0}>
-				Попадёт серверов: <strong>{preview.count}</strong>
+				{m.subscriptions_group_modal_preview_count()} <strong>{preview.count}</strong>
 				{#if preview.lookaroundInclude || preview.lookaroundExclude}
 					<span class="preview-warn"
-						>· Go RE2 не поддерживает lookahead/lookbehind — используйте поле «Исключать»</span
+						>{m.subscriptions_group_modal_warn_lookaround()}</span
 					>
 				{:else if preview.invalidInclude || preview.invalidExclude}
-					<span class="preview-warn">· выражение не разобрано, оценка без фильтра</span>
+					<span class="preview-warn">{m.subscriptions_group_modal_warn_invalid()}</span>
 				{/if}
 			</div>
 		</div>
@@ -271,9 +271,9 @@
 		{#if error}<div class="err">{error}</div>{/if}
 	</form>
 	{#snippet actions()}
-		<Button variant="ghost" disabled={saving} onclick={onclose}>Отмена</Button>
+		<Button variant="ghost" disabled={saving} onclick={onclose}>{m.common_cancel()}</Button>
 		<Button variant="primary" disabled={!canSave} loading={saving} onclick={save}>
-			{saving ? 'Сохраняем...' : group ? 'Сохранить' : 'Создать'}
+			{saving ? m.subscriptions_saving() : group ? m.subscriptions_save() : m.subscriptions_create()}
 		</Button>
 	{/snippet}
 </Modal>

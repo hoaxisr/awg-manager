@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type { SingboxRouterDNSRule } from '$lib/types';
 
 export interface DnsMatcherPart {
@@ -30,7 +31,7 @@ export function dnsMatcherParts(r: SingboxRouterDNSRule): DnsMatcherPart[] {
 	if (r.match_response !== undefined && r.match_response !== false) {
 		parts.push({
 			key: 'match_response',
-			value: r.match_response === true ? 'анонимный' : r.match_response,
+			value: r.match_response === true ? m.sb_router_dns_matcher_anonymous() : r.match_response,
 		});
 	}
 	if (r.rule_set?.length) parts.push({ key: 'rule_set', value: r.rule_set.join(', ') });

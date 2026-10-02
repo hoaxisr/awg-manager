@@ -2,6 +2,7 @@
 // конфига. Список слева един для обоих протоколов: протокол и режим — признаки
 // строки, а не уровень навигации (ia.md §1).
 
+import { m } from "$lib/i18n";
 import type {
   FreeTurnConfig,
   FreeTurnProcessStatus,
@@ -161,9 +162,9 @@ function hostOf(addr?: string): string {
 /** Поток клиента: роутер → сервер → интернет. */
 function clientFlow(listen?: string, peer?: string): ProxyFlowStep[] {
 	return [
-		{ label: 'Этот роутер', detail: portOf(listen) || 'локальный порт' },
-		{ label: hostOf(peer), detail: portOf(peer) || 'адрес сервера' },
-		{ label: 'Интернет', detail: 'через выход' },
+		{ label: m.proxy_flow_this_router(), detail: portOf(listen) || m.proxy_flow_local_port() },
+		{ label: hostOf(peer), detail: portOf(peer) || m.proxy_flow_server_address() },
+		{ label: m.proxy_flow_internet(), detail: m.proxy_flow_via_exit() },
 	];
 }
 
@@ -172,20 +173,28 @@ function wdttServerFlow(c?: WdttServerConfig, st?: WdttProcessStatus): ProxyFlow
 	// NDMS-имена берём из СТАТУСА: конфиг несёт только WG-половину, а raw-имя
 	// (`rawNdmsIface`) живёт в наблюдении процесса.
 	const ifaces = [st?.ndmsIface ?? c?.ndmsIface, st?.rawNdmsIface].filter(Boolean).join(' · ');
-	const nat = c?.natMode === 'none' ? 'без NAT' : c?.natMode === 'internet-only' ? 'NAT: интернет' : 'NAT: полный';
+	const nat =
+		c?.natMode === 'none'
+			? m.proxy_flow_nat_none()
+			: c?.natMode === 'internet-only'
+				? m.proxy_flow_nat_internet()
+				: m.proxy_flow_nat_full();
 	return [
-		{ label: 'Абоненты', detail: portOf(c?.listen) || 'порт раздачи' },
-		{ label: 'Этот роутер', detail: ifaces || 'интерфейсы не выделены' },
-		{ label: 'Интернет', detail: nat },
+		{ label: m.proxy_flow_subscribers(), detail: portOf(c?.listen) || m.proxy_flow_share_port() },
+		{ label: m.proxy_flow_this_router(), detail: ifaces || m.proxy_flow_no_ifaces() },
+		{ label: m.proxy_flow_internet(), detail: nat },
 	];
 }
 
 /** Поток FreeTurn-сервера: клиенты → роутер → бэкенд. */
 function ftServerFlow(c?: FreeTurnServerConfig): ProxyFlowStep[] {
 	return [
-		{ label: 'Клиенты', detail: portOf(c?.listen) || 'порт раздачи' },
-		{ label: 'Этот роутер', detail: c?.mode === 'tcp' ? 'TCP' : 'UDP' },
-		{ label: c?.connect ? hostOf(c.connect) : 'Бэкенд', detail: c?.connect ? 'WG-сервер роутера' : 'не задан' },
+		{ label: m.proxy_flow_clients(), detail: portOf(c?.listen) || m.proxy_flow_share_port() },
+		{ label: m.proxy_flow_this_router(), detail: c?.mode === 'tcp' ? 'TCP' : 'UDP' },
+		{
+			label: c?.connect ? hostOf(c.connect) : m.proxy_flow_backend(),
+			detail: c?.connect ? m.proxy_flow_router_wg_server() : m.proxy_flow_not_set(),
+		},
 	];
 }
 

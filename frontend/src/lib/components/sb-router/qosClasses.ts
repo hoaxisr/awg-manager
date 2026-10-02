@@ -2,6 +2,7 @@
 // Kept out of the Svelte component so normalization rules (dedupe dscp,
 // cap 8, clamp 0–63, name ≤ 32) are unit-testable — see qosClasses.test.ts.
 
+import { m } from '$lib/i18n';
 import type { SingboxQosClass } from '$lib/types';
 
 export const QOS_MAX_CLASSES = 8;
@@ -14,9 +15,9 @@ export const QOS_NAME_MAX = 32;
  * 46 = EF (голос/игры), 32 = CS4 (видео), 8 = CS1 (фоновый трафик).
  */
 export const QOS_DSCP_PRESETS: ReadonlyArray<{ value: number; label: string }> = [
-  { value: 46, label: '46 (EF — голос/игры)' },
-  { value: 32, label: '32 (CS4 — видео)' },
-  { value: 8, label: '8 (CS1 — фоновая закачка)' },
+  { value: 46, get label() { return m.sb_router_qos_preset_ef(); } },
+  { value: 32, get label() { return m.sb_router_qos_preset_cs4(); } },
+  { value: 8, get label() { return m.sb_router_qos_preset_cs1(); } },
 ];
 
 /** Clamp an arbitrary number to a valid integer DSCP mark (0–63). */
@@ -80,7 +81,7 @@ export function addQosClass(
     ...list,
     {
       dscp,
-      name: `Класс ${list.length + 1}`,
+      name: m.sb_router_qos_default_class_name({ n: list.length + 1 }),
       outbound: defaultOutbound,
       enabled: true,
     },
@@ -139,7 +140,7 @@ export function resolveOutboundOptions<O extends { value: string }>(
     return { options: [{ value: tag, label: tag, disabled: true }], missing: false };
   }
   return {
-    options: [...options, { value: tag, label: `(недоступен) ${tag}`, disabled: true }],
+    options: [...options, { value: tag, label: m.sb_router_qos_outbound_unavailable({ tag }), disabled: true }],
     missing: true,
   };
 }

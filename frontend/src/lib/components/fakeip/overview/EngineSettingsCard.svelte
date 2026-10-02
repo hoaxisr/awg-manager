@@ -7,7 +7,7 @@
     - Движок: «Перезапустить» (onRestart → api.singboxControl) + тумблер ON при
       routingMode==='fakeip-tun' && enabled. Сам API НЕ дёргает — onToggleEngine
       запрашивает смену режима (диалог подтверждения рендерит страница).
-    - TCP/IP-стек: Dropdown из TUN_STACK_OPTIONS (settings.fakeipStack).
+    - TCP/IP-стек: Dropdown из tunStackOptions() (settings.fakeipStack).
       Пусто = собственный стек sing-tun (дефолт), остальное — legacy.
     - WAN-интерфейс: «Авто» + список api.singboxRouterListWANInterfaces()
       (kernel-имя + label). Тот же discriminator, что sb-router StatusDrawer:
@@ -32,7 +32,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { mergeAndSaveSettings } from '$lib/components/sb-router/settingsActions';
-	import { TUN_STACK_OPTIONS, tunStackHint } from '$lib/components/sb-router/tunStack';
+	import { tunStackOptions, tunStackHint } from '$lib/components/sb-router/tunStack';
 	import type { SingboxRouterSettings, SingboxRouterWANInterface, TunStack } from '$lib/types';
 
 	interface Props {
@@ -108,7 +108,7 @@
 		if (!saving) mtuDraft.v = fakeipMtu != null ? String(fakeipMtu) : '';
 	});
 
-	const stackOptions: DropdownOption<TunStack>[] = TUN_STACK_OPTIONS;
+	const stackOptions: DropdownOption<TunStack>[] = $derived(tunStackOptions());
 
 	// WAN-пикер: «Авто» + kernel-интерфейсы. value '' = авто.
 	const wanOptions = $derived<DropdownOption[]>([

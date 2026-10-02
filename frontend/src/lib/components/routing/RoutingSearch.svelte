@@ -1,10 +1,11 @@
 <script lang="ts">
+    import { m } from '$lib/i18n';
     import type { DnsRoute, StaticRouteList, RoutingTunnel } from '$lib/types';
     import { api } from '$lib/api/client';
     import { detectQueryType, ipInCIDR, cidrOverlaps, isCIDR } from '$lib/utils/cidr';
     import { Button } from '$lib/components/ui';
     import RoutingSearchResults from './RoutingSearchResults.svelte';
-    import type { MatchedRule, ResolveMatch } from './types';
+    import type { MatchedRule, ResolveMatch, SourceSummary } from './types';
     import { X, Search } from 'lucide-svelte';
 
     // Collect all CIDR entries from a DNS route, regardless of which bucket
@@ -49,6 +50,7 @@
     let resolveMatch: ResolveMatch | null = $state(null);
     let resolving = $state(false);
     let resolveError = $state('');
+    let resolveFailed = $state(false);
 
     function searchDnsRules(q: string, queryType: 'ip' | 'cidr' | 'domain'): MatchedRule[] {
         const results: MatchedRule[] = [];
@@ -90,10 +92,10 @@
             if (matches.length > 0) {
                 const subCount = route.subscriptions?.length ?? 0;
                 const manualCount = route.manualDomains?.length ?? 0;
-                let sourceSummary = '';
-                if (subCount > 0 && manualCount > 0) sourceSummary = `${subCount} листов + ${manualCount} вручную`;
-                else if (subCount > 0) sourceSummary = `${subCount} листов`;
-                else if (manualCount > 0) sourceSummary = 'все вручную';
+                let sourceSummary: SourceSummary | null = null;
+                if (subCount > 0 && manualCount > 0) sourceSummary = { kind: 'lists-manual', lists: subCount, manual: manualCount };
+                else if (subCount > 0) sourceSummary = { kind: 'lists', lists: subCount };
+                else if (manualCount > 0) sourceSummary = { kind: 'manual' };
 
                 results.push({
                     id: route.id,
@@ -149,7 +151,7 @@
                     enabled: route.enabled,
                     tunnelName: ipTunnel?.name ?? route.tunnelID ?? '',
                     domainCount: 0,
-                    sourceSummary: `${route.subnets?.length ?? 0} подсетей`,
+                    sourceSummary: { kind: 'subnets', count: route.subnets?.length ?? 0 },
                     iconUrl: route.iconUrl,
                 });
             }
@@ -184,7 +186,7 @@
                     enabled: route.enabled,
                     tunnelName: ipTunnel?.name ?? route.tunnelID ?? '',
                     domainCount: 0,
-                    sourceSummary: `${route.subnets?.length ?? 0} подсетей`,
+                    sourceSummary: { kind: 'subnets', count: route.subnets?.length ?? 0 },
                     iconUrl: route.iconUrl,
                 });
             }
@@ -214,7 +216,7 @@
                     enabled: route.enabled,
                     tunnelName: resolveTunnelName(route.routes ?? []),
                     domainCount: route.domains?.length ?? 0,
-                    sourceSummary: '',
+                    sourceSummary: null,
                     iconUrl: route.iconUrl,
                 });
             }
@@ -230,6 +232,7 @@
         hasSearched = true;
         resolveMatch = null;
         resolveError = '';
+        resolveFailed = false;
         resolving = false;
 
         const queryType = detectQueryType(q);
@@ -253,7 +256,8 @@
                     };
                 }
             } catch (e) {
-                resolveError = e instanceof Error ? e.message : 'Ошибка резолва';
+                resolveError = e instanceof Error ? e.message : '';
+                resolveFailed = !(e instanceof Error);
             } finally {
                 resolving = false;
             }
@@ -267,6 +271,7 @@
         ipResults = [];
         resolveMatch = null;
         resolveError = '';
+        resolveFailed = false;
         resolving = false;
     }
 
@@ -302,12 +307,12 @@
         <input
             type="text"
             class="search-input"
-            placeholder="Поиск домена или IP по всем правилам..."
+            placeholder={m.routing_search_placeholder()}
             bind:value={query}
             onkeydown={handleKeydown}
         />
         {#if query}
-            <button class="btn-clear" onclick={handleClear} title="Очистить">
+            <button class="btn-clear" onclick={handleClear} title={m.routing_search_clear()}>
                 <X size={16} aria-hidden="true" />
             </button>
         {/if}
@@ -315,7 +320,7 @@
             {#snippet iconBefore()}
                 <Search size={16} aria-hidden="true" />
             {/snippet}
-            Поиск
+            {m.routing_search_button()}
         </Button>
     </div>
 
@@ -325,7 +330,7 @@
             {ipResults}
             {resolveMatch}
             {resolving}
-            {resolveError}
+            resolveError={resolveError || (resolveFailed ? m.routing_search_resolve_error() : '')}
             onRuleClick={handleResultClick}
             onClose={() => (hasSearched = false)}
         />

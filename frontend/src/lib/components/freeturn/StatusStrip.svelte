@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Toggle, StatusDot } from '$lib/components/ui';
 	import type { FreeTurnProcessStatus } from '$lib/types';
 	import { formatUptime } from './uptime';
@@ -13,19 +14,19 @@
 	let { client, server, onToggleClient, onToggleServer }: Props = $props();
 
 	function meta(status?: FreeTurnProcessStatus): string {
-		if (!status?.running) return 'остановлен';
-		return ['запущен', formatUptime(status.startedAt), status.pid ? `PID ${status.pid}` : '']
+		if (!status?.running) return m.proxy_ft_status_stopped();
+		return [m.proxy_ft_status_running(), formatUptime(status.startedAt), status.pid ? `PID ${status.pid}` : '']
 			.filter(Boolean)
 			.join(' · ');
 	}
 </script>
 
 <div class="ft-strip">
-	{#each [{ title: 'Клиент', status: client, onToggle: onToggleClient }, { title: 'Сервер', status: server, onToggle: onToggleServer }] as p (p.title)}
+	{#each [{ id: 'client', title: m.proxy_ft_client, status: client, onToggle: onToggleClient }, { id: 'server', title: m.proxy_ft_server, status: server, onToggle: onToggleServer }] as p (p.id)}
 		<div class="ft-strip-card" class:running={p.status?.running}>
 			<StatusDot size="sm" variant={p.status?.running ? 'success' : 'muted'} pulse={p.status?.running} />
 			<div class="ft-strip-text">
-				<div class="ft-strip-title">{p.title}</div>
+				<div class="ft-strip-title">{p.title()}</div>
 				<div class="ft-strip-meta">{meta(p.status)}</div>
 			</div>
 			<Toggle
@@ -35,7 +36,7 @@
 				controlled
 				size="sm"
 				label=""
-				ariaLabel="{p.title}: запустить или остановить"
+				ariaLabel={m.proxy_ft_toggle_aria({ title: p.title() })}
 			/>
 		</div>
 	{/each}

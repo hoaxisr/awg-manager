@@ -12,6 +12,7 @@
 	} from '$lib/stores/notificationCenter';
 	import { formatTime } from '$lib/utils/format';
 	import { goto } from '$app/navigation';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		authenticated: boolean;
@@ -22,10 +23,11 @@
 	let open = $state(false);
 
 	const ORDER: DayBucket[] = ['today', 'yesterday', 'earlier'];
-	const GROUP_LABELS: Record<DayBucket, string> = {
-		today: 'Сегодня',
-		yesterday: 'Вчера',
-		earlier: 'Ранее',
+	// Функции сообщений, а не строки: заголовки групп следуют за языком.
+	const GROUP_LABELS: Record<DayBucket, () => string> = {
+		today: m.notif_group_today,
+		yesterday: m.notif_group_yesterday,
+		earlier: m.notif_group_earlier,
 	};
 
 	const groups = $derived.by(() => {
@@ -37,7 +39,7 @@
 
 	const badgeLabel = $derived($unreadCount > 99 ? '99+' : String($unreadCount));
 	const bellAria = $derived(
-		$unreadCount > 0 ? `Уведомления, непрочитанных: ${$unreadCount}` : 'Уведомления',
+		$unreadCount > 0 ? m.notif_bell_unread({ count: $unreadCount }) : m.notif_title(),
 	);
 
 	function clock(ts: number): string {
@@ -79,22 +81,22 @@
 		</span>
 	</button>
 
-	<SideDrawer {open} onClose={() => (open = false)} title="Уведомления">
+	<SideDrawer {open} onClose={() => (open = false)} title={m.notif_title()}>
 		{#if $notificationCenter.length === 0}
-			<p class="notif-empty">Уведомлений нет</p>
+			<p class="notif-empty">{m.notif_empty()}</p>
 		{:else}
 			<div class="notif-toolbar">
 				<Button variant="ghost" onclick={() => notificationCenter.markAllRead()}>
-					Прочитать всё
+					{m.notif_mark_all_read()}
 				</Button>
 				<Button variant="ghost" onclick={() => notificationCenter.clearAll()}>
-					Очистить
+					{m.notif_clear()}
 				</Button>
 			</div>
 
 			{#each ORDER as key (key)}
 				{#if groups[key].length > 0}
-					<div class="notif-group">{GROUP_LABELS[key]}</div>
+					<div class="notif-group">{GROUP_LABELS[key]()}</div>
 					<div class="notif-list">
 						{#each groups[key] as e (e.id)}
 							<div
@@ -113,7 +115,7 @@
 								<button
 									type="button"
 									class="notif-remove"
-									aria-label="Удалить уведомление"
+									aria-label={m.notif_remove()}
 									onclick={() => notificationCenter.remove(e.id)}
 								>
 									×
@@ -127,8 +129,8 @@
 
 		{#snippet footer()}
 			<div class="notif-footer">
-				<span class="notif-retention">Хранится 7 дней · до 100</span>
-				<a class="notif-journal" href="/logs" onclick={() => (open = false)}>Открыть журнал →</a>
+				<span class="notif-retention">{m.notif_retention()}</span>
+				<a class="notif-journal" href="/logs" onclick={() => (open = false)}>{m.notif_open_log()}</a>
 			</div>
 		{/snippet}
 	</SideDrawer>
