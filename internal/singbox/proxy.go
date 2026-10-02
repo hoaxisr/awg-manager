@@ -159,8 +159,8 @@ func (pm *ProxyManager) bareOurs(iface *ndms.Interface) bool {
 
 // CreateProxy — создание ProxyN на только что выбранном свободным индексе
 // (command.ProxyCommands.CreateProxy: голое создание → подтверждение →
-// настройки, F577). На прошивке, где ответ проверяем, индекс, занятый чужим
-// ещё не видимым ProxyN, — ошибка command.ErrNotCreated без настроек и сноса.
+// настройки, F577). Индекс, занятый чужим ещё не видимым ProxyN, — ошибка
+// command.ErrNotCreated без настроек и сноса.
 // ours — откат вправе снести ProxyN (command.CreateReply.Proven, F574).
 func (pm *ProxyManager) CreateProxy(ctx context.Context, index, port int, description string) (ours bool, err error) {
 	if !ndmsinfo.HasProxyComponent() {
