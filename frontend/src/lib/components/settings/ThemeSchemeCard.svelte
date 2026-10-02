@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Button, SegmentedControl, Toggle } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
+	import LanguageSettingRow from './LanguageSettingRow.svelte';
 	import { compactLayout } from '$lib/stores/compactLayout';
 	import {
 		settingsSectionIconMode,
@@ -200,6 +201,8 @@
 			{/if}
 		</div>
 	{/if}
+
+	<LanguageSettingRow />
 
 	<div class="setting-row icon-mode-row">
 		<div class="flex flex-col gap-1">
