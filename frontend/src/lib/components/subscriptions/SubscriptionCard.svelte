@@ -464,7 +464,7 @@
 	kind="subscription"
 	targetId={selectorTag}
 	displayName={subscription.label || selectorTag || subscription.id}
-	subjectLabel="подписку"
+	subject="subscription"
 	iface={kernelIface}
 	loading={false}
 	unavailableReason={diagnosticsUnavailableReason}

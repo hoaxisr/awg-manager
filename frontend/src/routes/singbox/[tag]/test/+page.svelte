@@ -35,7 +35,7 @@
 	{displayName}
 	backHref="/?tab=singbox"
 	backLabel="К списку туннелей"
-	subjectLabel="туннель"
+	subject="tunnel"
 	iface={tunnel?.kernelInterface}
 	loading={!tunnelLoaded}
 	{unavailableReason}

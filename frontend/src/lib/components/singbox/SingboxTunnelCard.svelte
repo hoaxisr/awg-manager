@@ -516,7 +516,7 @@
 	kind="singbox"
 	targetId={tunnel.tag}
 	displayName={tunnel.tag}
-	subjectLabel="туннель"
+	subject="tunnel"
 	iface={tunnel.kernelInterface}
 	loading={false}
 	unavailableReason={tunnel.kernelInterface ? undefined : 'У этого sing-box туннеля нет kernel interface, расширенные тесты недоступны.'}

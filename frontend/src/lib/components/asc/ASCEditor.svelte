@@ -3,7 +3,7 @@
 	import { api } from '$lib/api/client';
 	import type { ASCParams, ASCParamsExtended } from '$lib/types';
 	import { isExtendedASCParams } from '$lib/utils/asc-validation';
-	import { AWG_PARAM_HINTS } from '$lib/utils/awgParamHints';
+	import { awgParamHints } from '$lib/utils/awgParamHints';
 	import { notifications } from '$lib/stores/notifications';
 	import { SettingsSectionLabel } from '$lib/components/settings';
 	import { Badge, Button, Dropdown, FieldHint, type DropdownOption } from '$lib/components/ui';
@@ -20,7 +20,7 @@
 		awg3 = false,
 		awg3Limited = false,
 		errors = {},
-		hints = AWG_PARAM_HINTS,
+		hints = undefined,
 		signatureModes = 'both',
 		idPrefix = '',
 		compact = false,
@@ -38,6 +38,7 @@
 		compact?: boolean;
 	} = $props();
 
+	const hintMap = $derived(hints ?? awgParamHints());
 	const showExtended = $derived(extended ?? isExtendedASCParams(params));
 
 	// AWG 3.0 device params (kernel mode only). label = shown name, hint key.
@@ -156,8 +157,8 @@
 {#snippet paramLabel(id: string, name: string)}
 	<label class="field-label param-field-label" for={fieldId(id)}>
 		{name}
-		{#if hints[id]}
-			<FieldHint text={hints[id]} ariaLabel={`Подсказка: ${name}`} />
+		{#if hintMap[id]}
+			<FieldHint text={hintMap[id]} ariaLabel={`Подсказка: ${name}`} />
 		{/if}
 	</label>
 {/snippet}
