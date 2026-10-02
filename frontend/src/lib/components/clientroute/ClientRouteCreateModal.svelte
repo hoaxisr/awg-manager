@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Modal, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import type { ClientRoute, PolicyDevice, RoutingTunnel } from '$lib/types';
 	import { routingTunnelLabel } from '$lib/utils/routingTunnelOptions';
@@ -71,7 +72,7 @@
 
 	let deviceError = $derived(attempted && selectedDevice === null);
 
-	let title = $derived(editing ? 'Редактирование правила' : 'VPN для устройства');
+	let title = $derived(editing ? m.client_route_modal_edit_title() : m.client_route_modal_create_title());
 
 	// isDirty: compare with snapshot (device IPs must match, names can differ)
 	let isDirty = $derived.by(() => {
@@ -140,11 +141,11 @@
 	<div class="form-sections">
 		<!-- Device list -->
 		<div class="section" class:field-error={deviceError}>
-			<span class="section-label">Устройство</span>
+			<span class="section-label">{m.client_route_device()}</span>
 			<input
 				type="text"
 				class="search-input"
-				placeholder="Поиск по имени или IP..."
+				placeholder={m.client_route_device_search_placeholder()}
 				bind:value={searchText}
 				disabled={!!editing}
 			/>
@@ -165,7 +166,7 @@
 						<span class="device-ip">{device.ip}</span>
 					</button>
 				{:else}
-					<div class="empty-list">Устройства не найдены</div>
+					<div class="empty-list">{m.client_route_no_devices_found()}</div>
 				{/each}
 				{#if showManualOption}
 					<button
@@ -174,18 +175,18 @@
 						class:selected={selectedDevice?.ip === searchText.trim()}
 						onclick={() => { selectedDevice = { ip: searchText.trim(), name: '' }; }}
 					>
-						Использовать: {searchText.trim()}
+						{m.client_route_use_manual({ ip: searchText.trim() })}
 					</button>
 				{/if}
 			</div>
-			<div class="error-text" class:visible={deviceError}>Выберите устройство</div>
+			<div class="error-text" class:visible={deviceError}>{m.client_route_select_device()}</div>
 		</div>
 
 		<!-- Tunnel dropdown -->
 		<div class="section">
 			<Dropdown
 				id="tunnel-select"
-				label="Туннель"
+				label={m.client_route_tunnel()}
 				bind:value={selectedTunnel}
 				options={tunnelOpts}
 				fullWidth
@@ -194,7 +195,7 @@
 
 		<!-- Fallback selector -->
 		<div class="section">
-			<span class="section-label">Если туннель недоступен</span>
+			<span class="section-label">{m.client_route_if_tunnel_down()}</span>
 			<div class="fallback-cards">
 				<button
 					type="button"
@@ -202,7 +203,7 @@
 					class:active={selectedFallback === 'drop'}
 					onclick={() => (selectedFallback = 'drop')}
 				>
-					<span class="fallback-title">Блокировать</span>
+					<span class="fallback-title">{m.client_route_block()}</span>
 					<span class="fallback-subtitle">Kill Switch</span>
 				</button>
 				<button
@@ -211,7 +212,7 @@
 					class:active={selectedFallback === 'bypass'}
 					onclick={() => (selectedFallback = 'bypass')}
 				>
-					<span class="fallback-title">Напрямую</span>
+					<span class="fallback-title">{m.client_route_direct()}</span>
 					<span class="fallback-subtitle">Bypass VPN</span>
 				</button>
 			</div>
@@ -220,16 +221,16 @@
 		<!-- Warning -->
 		{#if !editing}
 			<div class="warning-box">
-				&#9888; Для гарантированной работы назначьте устройству статический IP-адрес в настройках роутера
+				&#9888; {m.client_route_static_ip_warning()}
 			</div>
 		{/if}
 	</div>
 
 	{#snippet actions()}
-		<Button variant="ghost" onclick={onclose} disabled={saving}>Отмена</Button>
+		<Button variant="ghost" onclick={onclose} disabled={saving}>{m.common_cancel()}</Button>
 		<!-- TODO Phase 1: shake animation on save when invalid (was class:shake={shaking}) -->
 		<Button variant="primary" onclick={handleSave} loading={saving}>
-			{editing ? 'Сохранить' : 'Создать'}
+			{editing ? m.client_route_save() : m.client_route_create()}
 		</Button>
 	{/snippet}
 </Modal>

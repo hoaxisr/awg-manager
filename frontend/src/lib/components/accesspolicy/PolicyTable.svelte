@@ -1,6 +1,6 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { AccessPolicy } from '$lib/types';
-	import { pluralize, DEVICE_WORDS } from '$lib/utils/pluralize';
 	import { Badge } from '$lib/components/ui';
 	import { SquarePen, Trash2 } from 'lucide-svelte';
 	import RoutingTargetBadges from '$lib/components/routing/RoutingTargetBadges.svelte';
@@ -51,14 +51,14 @@
 							{/if}
 						</div>
 					</div>
-					<span class="card-stat">{pluralize(policy.deviceCount, DEVICE_WORDS)}</span>
+					<span class="card-stat">{m.routing_devices_count({ count: policy.deviceCount })}</span>
 					{#if policy.interfaces?.length}
 						{@const sortedIfaces = [...policy.interfaces].sort((a, b) => a.order - b.order)}
 						<div class="card-route">
 							<RoutingTargetBadges
 								labels={sortedIfaces.map((iface) => iface.label || iface.name)}
 								titles={sortedIfaces.map((iface) => iface.name)}
-								overflowNoun="интерфейсов"
+								overflowKind="interfaces"
 							/>
 						</div>
 					{/if}
@@ -70,8 +70,8 @@
 						type="button"
 						class="route-action-btn"
 						title={isHrPolicy
-							? `Открыть HydraRoute-политику «${policy.description || policy.name}»`
-							: `Изменить политику «${policy.description || policy.name}»`}
+							? m.access_policy_open_hr({ name: policy.description || policy.name })
+							: m.access_policy_edit_policy({ name: policy.description || policy.name })}
 						onclick={() => onedit(policy.name)}
 					>
 						<SquarePen size={15} />
@@ -80,7 +80,7 @@
 						<button
 							type="button"
 							class="route-action-btn danger"
-							title={`Удалить политику «${policy.description || policy.name}»`}
+							title={m.access_policy_delete_policy({ name: policy.description || policy.name })}
 							onclick={() => ondelete(policy.name)}
 						>
 							<Trash2 size={15} />

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Button, ConfirmModal } from '$lib/components/ui';
@@ -24,7 +25,7 @@
 
 	function requestEdit(i: number): void {
 		if (rewrites[i]?.managed) {
-			notifications.info('Эта перезапись управляется пресетом KeenDNS — снимите пресет в настройках движка');
+			notifications.info(m.routing_singbox_rewrite_managed_notice());
 			return;
 		}
 		editIndex = i;
@@ -32,7 +33,7 @@
 
 	function requestDelete(i: number): void {
 		if (rewrites[i]?.managed) {
-			notifications.info('Эта перезапись управляется пресетом KeenDNS — снимите пресет в настройках движка');
+			notifications.info(m.routing_singbox_rewrite_managed_notice());
 			return;
 		}
 		deleteIndex = i;
@@ -59,24 +60,24 @@
 
 {#if showHeader}
 	<div class="header">
-		<div class="hint">{rewrites.length} перезаписей</div>
+		<div class="hint">{m.routing_singbox_rewrites_count({ count: rewrites.length })}</div>
 		<Button variant="primary" size="sm" onclick={() => (addMode = true)} iconBefore={createIcon}>
-			Добавить
+			{m.routing_singbox_add()}
 		</Button>
 	</div>
 {/if}
 
 {#if rewrites.length === 0}
 	<div class="empty">
-		Нет перезаписей. «Перезапись» возвращает заданный IP для домена/паттерна.
+		{m.routing_singbox_rewrites_empty()}
 	</div>
 {:else}
 	{#if !hideColumnHeader}
 		<div class="col-header">
-			<div>Шаблон</div>
+			<div>{m.routing_singbox_rewrite_col_pattern()}</div>
 			<div></div>
-			<div>IP-адреса</div>
-			<div class="actions-head">Действия</div>
+			<div>{m.routing_singbox_rewrite_col_ips()}</div>
+			<div class="actions-head">{m.routing_singbox_rewrite_col_actions()}</div>
 		</div>
 	{/if}
 	<div class="rows">
@@ -94,12 +95,12 @@
 						requestEdit(i);
 					}
 				}}
-				aria-label={`Редактировать DNS-перезапись ${rw.pattern}`}
-				title={`Редактировать DNS-перезапись «${rw.pattern}»`}
+				aria-label={m.routing_singbox_rewrite_edit_aria({ pattern: rw.pattern })}
+				title={m.routing_singbox_rewrite_edit_row_title({ pattern: rw.pattern })}
 			>
 				<code class="pat mono" title={rw.pattern}>{rw.pattern}</code>
 				{#if rw.managed}
-					<span class="managed" title="Управляется пресетом">{rw.managed}</span>
+					<span class="managed" title={m.routing_singbox_rewrite_managed_by_preset()}>{rw.managed}</span>
 				{/if}
 				<span class="arrow">→</span>
 				<span class="ips-line">
@@ -114,8 +115,8 @@
 							e.stopPropagation();
 							requestEdit(i);
 						}}
-						aria-label={`Редактировать DNS-перезапись ${rw.pattern}`}
-						title={`Редактировать DNS-перезапись «${rw.pattern}»`}
+						aria-label={m.routing_singbox_rewrite_edit_aria({ pattern: rw.pattern })}
+						title={m.routing_singbox_rewrite_edit_row_title({ pattern: rw.pattern })}
 					>
 						<Edit3 size={15} />
 					</button>
@@ -126,8 +127,8 @@
 							e.stopPropagation();
 							requestDelete(i);
 						}}
-						aria-label={`Удалить DNS-перезапись ${rw.pattern}`}
-						title={`Удалить DNS-перезапись «${rw.pattern}»`}
+						aria-label={m.routing_singbox_rewrite_delete_aria({ pattern: rw.pattern })}
+						title={m.routing_singbox_rewrite_delete_row_title({ pattern: rw.pattern })}
 					>
 						<Trash2 size={15} />
 					</button>
@@ -163,8 +164,8 @@
 
 <ConfirmModal
 	open={deleteIndex !== null}
-	title="Удалить перезапись"
-	message={deleteIndex !== null ? `Удалить перезапись «${rewrites[deleteIndex]?.pattern ?? ''}»?` : ''}
+	title={m.routing_singbox_rewrite_delete_title()}
+	message={deleteIndex !== null ? m.routing_singbox_rewrite_delete_message({ pattern: rewrites[deleteIndex]?.pattern ?? '' }) : ''}
 	busy={deleteBusy}
 	onConfirm={confirmDelete}
 	onClose={() => { if (!deleteBusy) deleteIndex = null; }}

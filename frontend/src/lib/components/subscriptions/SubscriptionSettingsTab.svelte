@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import {
 		DEFAULT_SUBSCRIPTION_URLTEST,
 		type Subscription,
@@ -73,10 +74,10 @@
 	function softRegexWarning(pattern: string): string {
 		const res = softCompileGoRegex(pattern);
 		if (res.lookaround) {
-			return 'Go RE2 не поддерживает lookahead/lookbehind — используйте поле «Исключать»';
+			return m.subscriptions_settings_warn_lookaround();
 		}
 		if (res.invalid) {
-			return 'Похоже на некорректное выражение (окончательно проверит сервер)';
+			return m.subscriptions_settings_warn_invalid();
 		}
 		return '';
 	}
@@ -87,14 +88,14 @@
 		refreshHours = parseInt(refreshHoursStr, 10) || 0;
 	});
 
-	const refreshOptions = [
-		{ value: '0', label: 'Только вручную' },
-		{ value: '1', label: 'Каждый час' },
-		{ value: '6', label: 'Каждые 6 часов' },
-		{ value: '12', label: 'Каждые 12 часов' },
-		{ value: '24', label: 'Раз в сутки' },
-		{ value: '168', label: 'Раз в неделю' },
-	];
+	const refreshOptions = $derived([
+		{ value: '0', label: m.subscriptions_refresh_manual() },
+		{ value: '1', label: m.subscriptions_refresh_hourly() },
+		{ value: '6', label: m.subscriptions_refresh_6h() },
+		{ value: '12', label: m.subscriptions_refresh_12h() },
+		{ value: '24', label: m.subscriptions_refresh_daily() },
+		{ value: '168', label: m.subscriptions_refresh_weekly() },
+	]);
 
 	async function toggleEnabled(next: boolean): Promise<void> {
 		if (togglingEnabled) return;
@@ -103,9 +104,9 @@
 			const saved = await api.updateSubscription(subscription.id, { enabled: next });
 			enabled = saved.enabled;
 			onEnabledChanged?.(saved.enabled);
-			notifications.success(saved.enabled ? 'Подписка включена' : 'Подписка выключена');
+			notifications.success(saved.enabled ? m.subscriptions_settings_toast_enabled() : m.subscriptions_settings_toast_disabled());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось изменить состояние');
+			notifications.error(e instanceof Error ? e.message : m.subscriptions_settings_toggle_failed());
 		} finally {
 			togglingEnabled = false;
 		}
@@ -136,7 +137,7 @@
 		} catch (e) {
 			// Сервер отвечает 400 на невалидный regex-фильтр (RE2) —
 			// показываем текст ошибки, настройки не сохранены.
-			notifications.error(e instanceof Error ? e.message : 'Не удалось сохранить настройки');
+			notifications.error(e instanceof Error ? e.message : m.subscriptions_settings_save_failed());
 		} finally {
 			saving = false;
 		}
@@ -149,8 +150,8 @@
 			goto('/?tab=subscriptions');
 		} catch (e) {
 			const name = subscription.label || subscription.selectorTag || subscription.id;
-			if (!showOutboundReferencedError(e, name, 'Подписка')) {
-				notifications.error(e instanceof Error ? e.message : 'Не удалось удалить подписку');
+			if (!showOutboundReferencedError(e, name, m.tunnels_entity_subscription())) {
+				notifications.error(e instanceof Error ? e.message : m.tunnels_subscription_delete_failed());
 			}
 		} finally {
 			deleting = false;
@@ -168,10 +169,10 @@
 
 <div class="settings-toolbar">
 	<Button variant="primary" disabled={saving} loading={saving} iconBefore={saveIcon} onclick={save}>
-		{saving ? 'Сохраняем...' : 'Сохранить'}
+		{saving ? m.subscriptions_saving() : m.subscriptions_save()}
 	</Button>
 	<Button variant="danger" iconBefore={deleteIcon} onclick={() => (confirmDelete = true)}>
-		Удалить подписку
+		{m.subscriptions_settings_delete_btn()}
 	</Button>
 </div>
 
@@ -193,12 +194,12 @@
 					onchange={toggleEnabled}
 				/>
 				<div class="enabled-text">
-					<span class="enabled-title">Включена</span>
+					<span class="enabled-title">{m.subscriptions_settings_enabled_title()}</span>
 					<span class="enabled-hint">
 						{#if enabled}
-							Подписка включена и участвует в маршрутизации
+							{m.subscriptions_settings_enabled_hint_on()}
 						{:else}
-							Подписка выключена — кроме singbox маршрутизации
+							{m.subscriptions_settings_enabled_hint_off()}
 						{/if}
 					</span>
 				</div>
@@ -206,8 +207,8 @@
 		</div>
 
 		<div class="mode-section">
-			<h3 class="col-title">Режим выбора сервера</h3>
-			<div class="mode-grid" role="radiogroup" aria-label="Режим выбора сервера">
+			<h3 class="col-title">{m.subscriptions_form_mode()}</h3>
+			<div class="mode-grid" role="radiogroup" aria-label={m.subscriptions_form_mode()}>
 				<button
 					type="button"
 					role="radio"
@@ -216,8 +217,8 @@
 					class:selected={mode === 'selector'}
 					onclick={() => (mode = 'selector')}
 				>
-					<div class="mode-title">Ручной выбор</div>
-					<div class="mode-desc">Сервер переключается вручную из списка.</div>
+					<div class="mode-title">{m.subscriptions_form_mode_selector_title()}</div>
+					<div class="mode-desc">{m.subscriptions_form_mode_selector_desc()}</div>
 					{#if mode === 'selector'}
 						<span class="mode-check" aria-hidden="true">
 							<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
@@ -232,9 +233,9 @@
 					class:selected={mode === 'urltest'}
 					onclick={() => (mode = 'urltest')}
 				>
-					<div class="mode-title">Автовыбор по скорости</div>
+					<div class="mode-title">{m.subscriptions_form_mode_urltest_title()}</div>
 					<div class="mode-desc">
-						Sing-box сам пингует серверы и держит самый быстрый.
+						{m.subscriptions_form_mode_urltest_desc()}
 					</div>
 					{#if mode === 'urltest'}
 						<span class="mode-check" aria-hidden="true">
@@ -246,7 +247,7 @@
 			{#if mode === 'urltest'}
 				<div class="urltest-block">
 					<label class="row">
-						<span class="lbl">URL для проверки</span>
+						<span class="lbl">{m.subscriptions_form_check_url()}</span>
 						<input
 							class="inp"
 							type="url"
@@ -256,11 +257,11 @@
 					</label>
 					<div class="ut-row">
 						<label class="ut-col">
-							<span class="lbl">Интервал, сек</span>
+							<span class="lbl">{m.subscriptions_form_interval()}</span>
 							<input class="inp" type="number" min="10" max="3600" bind:value={utIntervalSec} />
 						</label>
 						<label class="ut-col">
-							<span class="lbl">Допуск, мс</span>
+							<span class="lbl">{m.subscriptions_form_tolerance()}</span>
 							<input class="inp" type="number" min="0" max="2000" bind:value={utToleranceMs} />
 						</label>
 					</div>
@@ -269,47 +270,47 @@
 		</div>
 
 		<div class="bind-section">
-			<h3 class="col-title">Исходящий интерфейс</h3>
+			<h3 class="col-title">{m.subscriptions_settings_bind_title()}</h3>
 			<BindInterfacePicker
 				label=""
 				bind:value={bindInterface}
-				hint="Весь трафик серверов этой подписки будет dial'иться через выбранный uplink. Удобно для модема, отдельного WAN или Wi‑Fi."
+				hint={m.subscriptions_settings_bind_hint()}
 			/>
 		</div>
 
-		<div class="settings-summary" aria-label="Данные подписки">
+		<div class="settings-summary" aria-label={m.subscriptions_settings_summary_title()}>
 			<div class="summary-head">
-				<h3 class="col-title">Данные подписки</h3>
+				<h3 class="col-title">{m.subscriptions_settings_summary_title()}</h3>
 				<span class="summary-state" class:enabled={enabled}>
-					{enabled ? 'активна' : 'выключена'}
+					{enabled ? m.subscriptions_settings_summary_active() : m.subscriptions_settings_summary_off()}
 				</span>
 			</div>
 			<div class="summary-grid">
 				<div class="summary-item">
 					<span class="summary-value">{subscription.members.length}</span>
-					<span class="summary-label">серверов</span>
+					<span class="summary-label">{m.subscriptions_settings_summary_servers()}</span>
 				</div>
 				<div class="summary-item">
 					<span class="summary-value">
-						{subscription.isFile ? 'файл' : subscription.isInline ? 'ручной список' : 'URL'}
+						{subscription.isFile ? m.subscriptions_settings_summary_file() : subscription.isInline ? m.subscriptions_settings_summary_manual_list() : 'URL'}
 					</span>
-					<span class="summary-label">источник</span>
+					<span class="summary-label">{m.subscriptions_settings_summary_source()}</span>
 				</div>
 				<div class="summary-item">
-					<span class="summary-value">{mode === 'urltest' ? 'автовыбор' : 'ручной выбор'}</span>
-					<span class="summary-label">режим</span>
+					<span class="summary-value">{mode === 'urltest' ? m.subscriptions_settings_summary_auto_select() : m.subscriptions_settings_summary_manual_select()}</span>
+					<span class="summary-label">{m.subscriptions_settings_summary_mode()}</span>
 				</div>
 				<div class="summary-item">
 					<span class="summary-value">
 						{subscription.isInline
-							? 'не требуется'
+							? m.subscriptions_settings_summary_not_needed()
 							: subscription.isFile
-								? 'вручную'
+								? m.subscriptions_settings_summary_manual()
 								: refreshHours > 0
-									? `${refreshHours} ч`
-									: 'вручную'}
+									? m.subscriptions_settings_summary_hours({ hours: refreshHours })
+									: m.subscriptions_settings_summary_manual()}
 					</span>
-					<span class="summary-label">обновление</span>
+					<span class="summary-label">{m.subscriptions_settings_summary_refresh()}</span>
 				</div>
 				<div class="summary-item">
 					<span class="summary-value">
@@ -317,13 +318,13 @@
 							? '—'
 							: parseHeadersText(headersText).length > 0
 								? `${parseHeadersText(headersText).length}`
-								: 'нет'}
+								: m.subscriptions_settings_summary_none()}
 					</span>
-					<span class="summary-label">заголовков</span>
+					<span class="summary-label">{m.subscriptions_settings_summary_headers()}</span>
 				</div>
 				<div class="summary-item">
-					<span class="summary-value">{mode === 'urltest' ? 'sing-box' : subscription.activeMember || 'не выбран'}</span>
-					<span class="summary-label">активный</span>
+					<span class="summary-value">{mode === 'urltest' ? 'sing-box' : subscription.activeMember || m.subscriptions_settings_summary_not_selected()}</span>
+					<span class="summary-label">{m.subscriptions_settings_summary_active_label()}</span>
 				</div>
 				<div class="summary-item">
 					<span class="summary-value mono">Proxy{subscription.proxyIndex}</span>
@@ -338,26 +339,21 @@
 	</section>
 
 	<section class="col source-col">
-		<h3 class="col-title">Источник</h3>
+		<h3 class="col-title">{m.subscriptions_settings_source_title()}</h3>
 		<label class="row">
-			<span class="lbl">Название</span>
+			<span class="lbl">{m.subscriptions_form_name()}</span>
 			<input class="inp" bind:value={label} />
 		</label>
 		{#if subscription.isInline}
 			<div class="inline-info">
-				<div class="inline-badge">Список вручную</div>
+				<div class="inline-badge">{m.subscriptions_settings_inline_badge()}</div>
 				<div class="inline-summary">
-					{subscription.members.length === 1
-						? '1 сервер'
-						: subscription.members.length < 5
-							? `${subscription.members.length} сервера`
-							: `${subscription.members.length} серверов`}
-					· редактирование во вкладке «Серверы»
+					{m.subscriptions_settings_inline_summary({ count: subscription.members.length })}
 				</div>
 			</div>
 		{:else if subscription.isFile}
 			<div class="inline-info">
-				<div class="inline-badge">Файл на роутере</div>
+				<div class="inline-badge">{m.subscriptions_settings_file_badge()}</div>
 				<div class="inline-summary mono">{subscription.path}</div>
 			</div>
 		{:else}
@@ -367,7 +363,7 @@
 			</label>
 			<HeadersTextarea bind:value={headersText} />
 			<Dropdown
-				label="Авто-обновление"
+				label={m.subscriptions_card_detail_auto_refresh()}
 				bind:value={refreshHoursStr}
 				options={refreshOptions}
 				fullWidth
@@ -375,9 +371,9 @@
 		{/if}
 
 		<div class="filter-section">
-			<h3 class="col-title">Фильтр серверов</h3>
+			<h3 class="col-title">{m.subscriptions_form_filter()}</h3>
 			<label class="row">
-				<span class="lbl">Включать только (regex)</span>
+				<span class="lbl">{m.subscriptions_form_include_only()}</span>
 				<input
 					class="inp mono"
 					bind:value={filterInclude}
@@ -388,7 +384,7 @@
 				{#if includeWarning}<span class="filter-warn">{includeWarning}</span>{/if}
 			</label>
 			<label class="row">
-				<span class="lbl">Исключать (regex)</span>
+				<span class="lbl">{m.subscriptions_form_exclude()}</span>
 				<input
 					class="inp mono"
 					bind:value={filterExclude}
@@ -399,17 +395,14 @@
 				{#if excludeWarning}<span class="filter-warn">{excludeWarning}</span>{/if}
 			</label>
 			<div class="filter-hint">
-				Матчится по имени сервера. Синтаксис Go RE2: lookahead
-				(<code class="mono">(?!...)</code>) не поддерживается — вместо него
-				используйте поле «Исключать». Пример:
+				{m.subscriptions_settings_filter_hint_1()}
+				(<code class="mono">(?!...)</code>) {m.subscriptions_settings_filter_hint_2()}
 				<code class="mono">(?i)(🇷🇺|Россия|RU|BRIDGE|LTE)</code>.
-				Проверка выражения выполняется на сервере; скрытые серверы видны во
-				вкладке «Серверы» в блоке «Скрыто фильтром».
+				{m.subscriptions_settings_filter_hint_3()}
 			</div>
 			{#if subscription.isInline}
 				<div class="filter-hint filter-hint-inline">
-					У inline-подписки изменение фильтра пересобирает список из исходного
-					текста: ручные добавления/удаления серверов будут сброшены.
+					{m.subscriptions_settings_inline_filter_hint()}
 				</div>
 			{/if}
 		</div>
@@ -420,7 +413,7 @@
 
 <Modal
 	open={confirmDelete}
-	title="Удалить подписку?"
+	title={m.tunnels_modals_delete_sub_title()}
 	size="md"
 	onclose={() => {
 		if (deleting) return;
@@ -428,16 +421,15 @@
 	}}
 >
 	<p>
-		Подписка <strong>{subscription.label || subscription.url}</strong> будет
-		удалена вместе с её sing-box outbound'ами и NDMS Proxy
+		{m.tunnels_modals_delete_sub_lead()} <strong>{subscription.label || subscription.url}</strong> {m.subscriptions_delete_confirm_after()}
 		<code class="mono">Proxy{subscription.proxyIndex}</code>.
 	</p>
 	{#snippet actions()}
 		<Button variant="ghost" disabled={deleting} onclick={() => (confirmDelete = false)}>
-			Отмена
+			{m.common_cancel()}
 		</Button>
 		<Button variant="danger" disabled={deleting} loading={deleting} onclick={doDelete}>
-			{deleting ? 'Удаляем...' : 'Удалить'}
+			{deleting ? m.tunnels_modals_deleting() : m.common_delete()}
 		</Button>
 	{/snippet}
 </Modal>

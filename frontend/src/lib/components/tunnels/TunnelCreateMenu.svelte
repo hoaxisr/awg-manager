@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import DropdownMenu from '$lib/components/ui/DropdownMenu.svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		onAwg: () => void;
@@ -21,12 +22,12 @@
 		onAwg3,
 		showSingbox = true,
 		triggerIcon,
-		triggerLabel = 'Создать',
+		triggerLabel,
 	}: Props = $props();
 </script>
 
 <DropdownMenu
-	label={triggerLabel}
+	label={triggerLabel ?? m.tunnels_create()}
 	size="md"
 	iconBefore={triggerIcon}
 	--dropdown-menu-z-index="30"
@@ -44,8 +45,8 @@
 				onAwg();
 			}}
 		>
-			<span class="tunnel-create-menu-item-title">AmneziaWG туннель</span>
-			<span class="tunnel-create-menu-item-desc">NativeWG или Kernel</span>
+			<span class="tunnel-create-menu-item-title">{m.tunnels_create_awg_title()}</span>
+			<span class="tunnel-create-menu-item-desc">{m.tunnels_create_awg_desc()}</span>
 		</button>
 
 		{#if showSingbox}
@@ -60,8 +61,8 @@
 						onSingboxSingle();
 					}}
 				>
-					<span class="tunnel-create-menu-item-title">Один сервер</span>
-					<span class="tunnel-create-menu-item-desc">Share-link → sing-box туннель</span>
+					<span class="tunnel-create-menu-item-title">{m.tunnels_create_single_title()}</span>
+					<span class="tunnel-create-menu-item-desc">{m.tunnels_create_single_desc()}</span>
 				</button>
 			{/if}
 			{#if onSingboxGroup}
@@ -74,8 +75,8 @@
 						onSingboxGroup();
 					}}
 				>
-					<span class="tunnel-create-menu-item-title">Группа серверов</span>
-					<span class="tunnel-create-menu-item-desc">Несколько ссылок в одной группе</span>
+					<span class="tunnel-create-menu-item-title">{m.tunnels_create_group_title()}</span>
+					<span class="tunnel-create-menu-item-desc">{m.tunnels_create_group_desc()}</span>
 				</button>
 			{/if}
 			{#if onSingboxSubscription}
@@ -88,8 +89,8 @@
 						onSingboxSubscription();
 					}}
 				>
-					<span class="tunnel-create-menu-item-title">Подписка по URL</span>
-					<span class="tunnel-create-menu-item-desc">Автообновляемый список серверов</span>
+					<span class="tunnel-create-menu-item-title">{m.tunnels_create_sub_title()}</span>
+					<span class="tunnel-create-menu-item-desc">{m.tunnels_create_sub_desc()}</span>
 				</button>
 			{/if}
 			{#if onAwg3}
@@ -103,7 +104,7 @@
 					}}
 				>
 					<span class="tunnel-create-menu-item-title">AWG3 endpoint</span>
-					<span class="tunnel-create-menu-item-desc">JSON-конфиг AWG3-клиента</span>
+					<span class="tunnel-create-menu-item-desc">{m.tunnels_create_awg3_desc()}</span>
 				</button>
 			{/if}
 		{/if}

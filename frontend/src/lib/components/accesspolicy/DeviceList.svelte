@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { PolicyDevice } from '$lib/types';
 	import { Badge } from '$lib/components/ui';
 	import { ArrowLeft } from 'lucide-svelte';
@@ -36,17 +37,17 @@
 </script>
 
 <div class="device-list-section">
-	<h4 class="section-title">Все устройства</h4>
+	<h4 class="section-title">{m.access_policy_all_devices()}</h4>
 
 	<label class="offline-toggle">
 		<input type="checkbox" bind:checked={showOffline} />
-		<span>Отобразить offline устройства</span>
+		<span>{m.access_policy_show_offline()}</span>
 	</label>
 
 	<input
 		type="text"
 		class="search-input"
-		placeholder="Поиск по имени, хосту, IP..."
+		placeholder={m.access_policy_device_search_placeholder()}
 		bind:value={search}
 	/>
 
@@ -70,7 +71,7 @@
 					{#if device.ip && device.ip !== '0.0.0.0'}
 						<span class="device-ip">{device.ip}</span>
 					{:else}
-						<span class="device-ip">IP адрес отсутствует</span>
+						<span class="device-ip">{m.access_policy_no_ip()}</span>
 					{/if}
 				</div>
 				{#if isBusy}
@@ -78,7 +79,7 @@
 				{/if}
 				<button
 					class="assign-btn"
-					title="Назначить в политику"
+					title={m.access_policy_assign()}
 					disabled={isBusy}
 					onclick={() => { if (!isBusy) onassign(device.mac); }}
 				>
@@ -87,7 +88,7 @@
 			</div>
 		{/each}
 		{#if filtered.length === 0}
-			<p class="empty-text">Нет устройств</p>
+			<p class="empty-text">{m.access_policy_no_devices()}</p>
 		{/if}
 	</div>
 </div>

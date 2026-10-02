@@ -1,10 +1,10 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Modal, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { parseStaticRouteImport, type PortableStaticRoute } from '$lib/utils/staticroute-export';
 	import type { RoutingTunnel } from '$lib/types';
 	import { routingTunnelLabel } from '$lib/utils/routingTunnelOptions';
-	import { pluralize, ROUTE_WORDS } from '$lib/utils/pluralize';
-	import RoutingImportDropZone from './RoutingImportDropZone.svelte';
+		import RoutingImportDropZone from './RoutingImportDropZone.svelte';
 
 	interface Props {
 		open: boolean;
@@ -25,6 +25,15 @@
 	let parsed = $state<PortableStaticRoute[] | null>(null);
 	let selectedFlags = $state<boolean[]>([]);
 	let parseError = $state('');
+	let parseFailure = $state<'' | 'empty' | 'read'>('');
+	let parseErrorText = $derived(
+		parseError ||
+			(parseFailure === 'empty'
+				? m.routing_import_no_routes()
+				: parseFailure === 'read'
+					? m.routing_import_read_error()
+					: ''),
+	);
 	let importing = $state(false);
 	let wasOpen = $state(false);
 	let defaultTunnelId = $state('');
@@ -37,6 +46,7 @@
 			parsed = null;
 			selectedFlags = [];
 			parseError = '';
+			parseFailure = '';
 			importing = false;
 			defaultTunnelId = tunnels.find(t => t.available)?.id ?? '';
 			tunnelOverrides = {};
@@ -51,8 +61,8 @@
 	let systemTunnels = $derived(tunnels.filter(t => t.type === 'system' && t.available));
 	let noTunnels = $derived(tunnels.filter(t => t.available).length === 0);
 	let tunnelOpts = $derived<DropdownOption[]>([
-		...userTunnels.map((t) => ({ value: t.id, label: t.name, group: 'Пользовательские' })),
-		...systemTunnels.map((t) => ({ value: t.id, label: routingTunnelLabel(t), group: 'Системные' })),
+		...userTunnels.map((t) => ({ value: t.id, label: t.name, group: m.routing_group_user() })),
+		...systemTunnels.map((t) => ({ value: t.id, label: routingTunnelLabel(t), group: m.routing_group_system() })),
 	]);
 
 	function isDuplicate(name: string): boolean {
@@ -72,7 +82,8 @@
 			const text = await file.text();
 			const routes = parseStaticRouteImport(text);
 			if (routes.length === 0) {
-				parseError = 'Не найдено валидных маршрутов в файле';
+				parseError = '';
+				parseFailure = 'empty';
 				return;
 			}
 			parsed = routes;
@@ -80,7 +91,8 @@
 			tunnelOverrides = {};
 			editingTunnelIdx = null;
 		} catch (e) {
-			parseError = e instanceof Error ? e.message : 'Ошибка чтения файла';
+			parseError = e instanceof Error ? e.message : '';
+			parseFailure = e instanceof Error ? '' : 'read';
 		}
 	}
 
@@ -95,17 +107,17 @@
 	}
 </script>
 
-<Modal {open} title="Загрузить набор маршрутов" size="lg" {onclose}>
+<Modal {open} title={m.routing_import_title()} size="lg" {onclose}>
 	{#if !parsed}
 		<RoutingImportDropZone
-			subject="IP-маршрутами"
-			parseError={parseError}
+			subject={m.routing_import_subject()}
+			parseError={parseErrorText}
 			onfile={processFile}
 		/>
 	{:else}
 		<div class="import-preview">
 		<div class="tunnel-default-bar">
-			<span class="tunnel-default-label">Туннель для всех:</span>
+			<span class="tunnel-default-label">{m.routing_import_tunnel_for_all()}</span>
 			<div class="tunnel-select">
 				<Dropdown
 					bind:value={defaultTunnelId}
@@ -117,20 +129,20 @@
 		</div>
 
 		{#if noTunnels}
-			<p class="import-error">Создайте хотя бы один туннель перед импортом</p>
+			<p class="import-error">{m.routing_import_no_tunnels()}</p>
 		{/if}
 
-		<p class="import-hint">Найдено {pluralize(parsed.length, ROUTE_WORDS)}</p>
+		<p class="import-hint">{m.routing_import_found_routes({ count: parsed.length })}</p>
 		<div class="import-list">
 			{#each parsed as route, i}
 				<label class="import-item" class:duplicate={isDuplicate(route.name)} class:overridden={tunnelOverrides[i] != null}>
 					<input type="checkbox" bind:checked={selectedFlags[i]} disabled={importing} />
 					<div class="import-item-info">
 						<span class="import-name">{route.name}</span>
-						<span class="import-meta">{route.subnets.length} подсетей</span>
+						<span class="import-meta">{m.routing_subnets_count({ count: route.subnets.length })}</span>
 					</div>
 					{#if isDuplicate(route.name)}
-						<span class="import-dup">Дубликат</span>
+						<span class="import-dup">{m.routing_import_duplicate()}</span>
 					{/if}
 					{#if editingTunnelIdx === i}
 						<div class="tunnel-select-inline">
@@ -167,10 +179,10 @@
 	{/if}
 
 	{#snippet actions()}
-		<Button variant="ghost" onclick={onclose} disabled={importing}>Отмена</Button>
+		<Button variant="ghost" onclick={onclose} disabled={importing}>{m.common_cancel()}</Button>
 		{#if parsed}
 			<Button variant="primary" onclick={handleImport} disabled={selectedCount === 0 || noTunnels} loading={importing}>
-				{`Импортировать (${selectedCount})`}
+				{m.routing_import_submit({ count: selectedCount })}
 			</Button>
 		{/if}
 	{/snippet}

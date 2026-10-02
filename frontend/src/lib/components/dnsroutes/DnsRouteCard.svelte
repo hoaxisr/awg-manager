@@ -131,7 +131,7 @@
 			{/if}
 			{#if routeTargets.length > 0}
 				<div class="card-route">
-					<RoutingTargetBadges labels={routeTargets} overflowNoun="туннелей" />
+					<RoutingTargetBadges labels={routeTargets} />
 				</div>
 			{:else if isOrphan}
 				<div class="card-route">

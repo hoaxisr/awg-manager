@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { OctagonAlert } from 'lucide-svelte';
 	import SingboxSettingsModal from './SingboxSettingsModal.svelte';
@@ -26,14 +27,14 @@
 	}
 	let { server, servers, outboundOptions, onClose, onSave }: Props = $props();
 
-	const TYPE_OPTIONS: DropdownOption<SingboxRouterDNSType>[] = [
-		{ value: 'udp', label: 'UDP (обычный DNS)' },
+	const TYPE_OPTIONS = $derived<DropdownOption<SingboxRouterDNSType>[]>([
+		{ value: 'udp', label: m.routing_singbox_dns_type_udp() },
 		{ value: 'tls', label: 'DoT (DNS over TLS)' },
 		{ value: 'https', label: 'DoH (DNS over HTTPS)' },
 		{ value: 'quic', label: 'DoQ (DNS over QUIC)' },
 		{ value: 'h3', label: 'DoH3' },
-		{ value: 'local', label: 'Local (системный resolver роутера)' },
-	];
+		{ value: 'local', label: m.routing_singbox_dns_type_local() },
+	]);
 
 	const STRATEGY_OPTIONS: DropdownOption<SingboxRouterDNSStrategy>[] = [
 		{ value: '', label: '— default —' },
@@ -51,7 +52,7 @@
 	];
 
 	const detourOptions = $derived<DropdownOption[]>([
-		{ value: '', label: 'Напрямую' },
+		{ value: '', label: m.routing_singbox_direct() },
 		...outboundOptions.flatMap((g) =>
 			g.items
 				.filter((i) => i.value !== 'direct')
@@ -60,7 +61,7 @@
 	]);
 
 	const dnsDirectDetourOptions = $derived<DropdownOption[]>([
-		{ value: '', label: 'Напрямую' },
+		{ value: '', label: m.routing_singbox_direct() },
 	]);
 
 	const legacyDnsDirectDetour = $derived(server ? getDnsDirectLegacyDetour(server) : null);
@@ -115,11 +116,26 @@
 	let tlsCertificatePins = $state(server?.tls?.certificate_public_key_sha256?.join(', ') ?? '');
 	let lookupBusy = $state(false);
 	let lookupError = $state('');
+	let lookupNeedDomain = $state(false);
+	const lookupErrorText = $derived(lookupNeedDomain ? m.routing_singbox_dns_err_lookup_domain() : lookupError);
 	let lookupIPs = $state<string[]>([]);
 	let lookupCertificates = $state<Array<{ subject: string; issuer: string; not_after: string }>>([]);
 
 	let busy = $state(false);
 	let error = $state('');
+	let errorKind = $state<'' | 'tag' | 'server' | 'resolver' | 'tls'>('');
+	const errorText = $derived(
+		error ||
+			(errorKind === 'tag'
+				? m.routing_singbox_outbound_err_tag()
+				: errorKind === 'server'
+					? m.routing_singbox_dns_err_server()
+					: errorKind === 'resolver'
+						? m.routing_singbox_dns_err_resolver()
+						: errorKind === 'tls'
+							? m.routing_singbox_dns_err_tls_range()
+							: ''),
+	);
 
 	// Snapshot initial state for isDirty detection
 	let initialTag = $state('');
@@ -220,7 +236,7 @@
 	const hasOutboundDetour = $derived(!isManagedDnsDirect && detour !== '');
 	const availableResolvers = $derived(servers.filter((s) => s.tag !== tag).map((s) => s.tag));
 	const resolverServerOptions = $derived<DropdownOption[]>([
-		{ value: '', label: '— выберите —' },
+		{ value: '', label: m.routing_singbox_dns_choose() },
 		...availableResolvers.map((t) => ({ value: t, label: t })),
 	]);
 
@@ -245,11 +261,12 @@
 
 	async function lookupTLS(): Promise<void> {
 		if (!serverAddr.trim()) {
-			lookupError = 'Укажите домен DNS-сервера';
+			lookupNeedDomain = true;
 			return;
 		}
 		lookupBusy = true;
 		lookupError = '';
+		lookupNeedDomain = false;
 		try {
 			const hostname = serverAddr.trim();
 			const lookupPort = serverPort === '' ? (type === 'https' || type === 'h3' ? 443 : 853) : serverPort;
@@ -269,12 +286,13 @@
 	async function save(): Promise<void> {
 		busy = true;
 		error = '';
+		errorKind = '';
 		try {
-			if (!tag.trim()) { error = 'Tag обязателен'; busy = false; return; }
-			if (type !== 'local' && !serverAddr.trim()) { error = 'Server обязателен'; busy = false; return; }
-			if (resolverEnabled && !resolverServer) { error = 'Укажите domain_resolver'; busy = false; return; }
+			if (!tag.trim()) { errorKind = 'tag'; busy = false; return; }
+			if (type !== 'local' && !serverAddr.trim()) { errorKind = 'server'; busy = false; return; }
+			if (resolverEnabled && !resolverServer) { errorKind = 'resolver'; busy = false; return; }
 			if (tlsMinVersion && tlsMaxVersion && Number(tlsMinVersion) > Number(tlsMaxVersion)) {
-				error = 'Минимальная версия TLS не может быть выше максимальной'; busy = false; return;
+				errorKind = 'tls'; busy = false; return;
 			}
 
 			const built: SingboxRouterDNSServer = {
@@ -322,7 +340,7 @@
 </script>
 
 <SingboxSettingsModal
-	title={server ? 'Редактировать DNS сервер' : 'Новый DNS сервер'}
+	title={server ? m.routing_singbox_dns_edit_title() : m.routing_singbox_dns_new_title()}
 	onClose={onClose}
 	size="lg"
 	hasUnsavedChanges={() => isDirty}
@@ -358,14 +376,14 @@
 				{/if}
 			{:else}
 				<div class="field span-full hint">
-					Local-сервер резолвит через системный resolver роутера (NDMS/AdGuard/Pi-hole). Адрес и порт не требуются.
+					{m.routing_singbox_dns_local_hint()}
 				</div>
 			{/if}
 		</div>
 
 		{#if type !== 'local'}
 			<section class="form-section form-section-divided">
-				<div class="section-label">Маршрутизация</div>
+				<div class="section-label">{m.routing_singbox_dns_routing()}</div>
 
 				{#if isManagedDnsDirect}
 					<label class="field">
@@ -385,13 +403,12 @@
 						</div>
 						{#if legacyDnsDirectDetour}
 							<div class="warn">
-								Сейчас в конфиге указан недопустимый detour. Должно быть «Напрямую» — будет
-								исправлено при сохранении.
+								{m.routing_singbox_dns_detour_invalid()}
 							</div>
 						{:else}
 							<div class="hint">
-								Final DNS — запросы к резолверу идут <strong>напрямую</strong> (WAN). Ключ
-								<code>detour</code> в конфиг не пишется.
+								{m.routing_singbox_dns_final_direct_pre()} <strong>{m.routing_singbox_dns_final_direct_strong()}</strong> {m.routing_singbox_dns_final_direct_post()}
+								<code>detour</code> {m.routing_singbox_dns_detour_not_written()}
 							</div>
 						{/if}
 					</label>
@@ -400,14 +417,13 @@
 						<div class="lbl">Detour (outbound)</div>
 						<Dropdown bind:value={detour} options={detourOptions} fullWidth />
 						<div class="hint">
-							Через какой outbound DNS-сервер достучится до IP резолвера. «Напрямую» — с роутера
-							(WAN), ключ <code>detour</code> в конфиг не пишется.
+							{m.routing_singbox_dns_detour_hint()} <code>detour</code> {m.routing_singbox_dns_detour_not_written()}
 						</div>
 					</label>
 				{/if}
 
 				<label class="field">
-					<div class="lbl">Стратегия (IPv4/IPv6)</div>
+					<div class="lbl">{m.routing_singbox_dns_strategy_label()}</div>
 					<Dropdown bind:value={strategy} options={STRATEGY_OPTIONS} fullWidth />
 				</label>
 			</section>
@@ -415,16 +431,16 @@
 
 		{#if type !== 'udp' && type !== 'local' && !hasOutboundDetour}
 			<section class="form-section">
-				<div class="section-label">Bootstrap resolver (для домена сервера)</div>
+				<div class="section-label">{m.routing_singbox_dns_bootstrap()}</div>
 
 				<label class="toggle">
 					<input type="checkbox" bind:checked={resolverEnabled} />
-					<span>Использовать другой DNS для резолва домена этого сервера</span>
+					<span>{m.routing_singbox_dns_bootstrap_toggle()}</span>
 				</label>
 
 				{#if needsResolver && !resolverEnabled}
 					<div class="warn">
-						У <code>{type}</code> сервера адрес — доменное имя. Без bootstrap resolver sing-box не сможет его резолвить.
+						{m.routing_singbox_dns_bootstrap_warn_pre()} <code>{type}</code> {m.routing_singbox_dns_bootstrap_warn_post()}
 					</div>
 				{/if}
 
@@ -448,16 +464,16 @@
 				<div class="section-label">TLS</div>
 				<div class="hint lookup-action">
 					<Button variant="ghost" size="sm" onclick={lookupTLS} disabled={lookupBusy} loading={lookupBusy} type="button">
-						Получить IP и сертификаты
+						{m.routing_singbox_dns_lookup()}
 					</Button>
-					<span>Подставит первый IP и SHA-256 pins; домен сохранится как SNI.</span>
+					<span>{m.routing_singbox_dns_lookup_hint()}</span>
 				</div>
-				{#if lookupError}<div class="error">{lookupError}</div>{/if}
+				{#if lookupErrorText}<div class="error">{lookupErrorText}</div>{/if}
 				{#if lookupIPs.length}
-					<div class="hint">Найденные IP: {lookupIPs.join(', ')}</div>
+					<div class="hint">{m.routing_singbox_dns_found_ips({ ips: lookupIPs.join(', ') })}</div>
 				{/if}
 				{#if lookupCertificates.length}
-					<div class="hint">Сертификаты: {lookupCertificates.map((cert) => `${cert.subject} · до ${cert.not_after}`).join('; ')}</div>
+					<div class="hint">{m.routing_singbox_dns_certificates({ certificates: lookupCertificates.map((cert) => m.routing_singbox_dns_cert_item({ subject: cert.subject, notAfter: cert.not_after })).join('; ') })}</div>
 				{/if}
 				<div class="fields-grid">
 					<label class="field span-full">
@@ -466,37 +482,37 @@
 					</label>
 					<label class="toggle span-full">
 						<input type="checkbox" bind:checked={tlsInsecure} />
-						<span>Принимать любой сертификат</span>
+						<span>{m.routing_singbox_dns_accept_any_cert()}</span>
 					</label>
 					<label class="field span-full">
 						<div class="lbl">ALPN</div>
 						<input bind:value={tlsALPN} placeholder="h2, http/1.1" />
-						<div class="hint">Значения через запятую или с новой строки.</div>
+						<div class="hint">{m.routing_singbox_dns_alpn_hint()}</div>
 					</label>
 					<label class="field">
-						<div class="lbl">Минимальная версия TLS</div>
+						<div class="lbl">{m.routing_singbox_dns_tls_min()}</div>
 						<Dropdown bind:value={tlsMinVersion} options={TLS_VERSION_OPTIONS} fullWidth />
 					</label>
 					<label class="field">
-						<div class="lbl">Максимальная версия TLS</div>
+						<div class="lbl">{m.routing_singbox_dns_tls_max()}</div>
 						<Dropdown bind:value={tlsMaxVersion} options={TLS_VERSION_OPTIONS} fullWidth />
 					</label>
 					<label class="field span-full">
-						<div class="lbl">SHA-256 публичного ключа сертификата</div>
+						<div class="lbl">{m.routing_singbox_dns_pin_label()}</div>
 						<input bind:value={tlsCertificatePins} placeholder="base64 pin" />
-						<div class="hint">Несколько значений — через запятую или с новой строки.</div>
+						<div class="hint">{m.routing_singbox_dns_pin_hint()}</div>
 					</label>
 				</div>
 			</section>
 		{/if}
 
-		{#if error}<div class="error">{error}</div>{/if}
+		{#if errorText}<div class="error">{errorText}</div>{/if}
 	</div>
 
 	{#snippet actions()}
-		<Button variant="ghost" size="md" onclick={onClose} type="button">Отмена</Button>
+		<Button variant="ghost" size="md" onclick={onClose} type="button">{m.common_cancel()}</Button>
 		<Button variant="primary" size="md" onclick={save} disabled={busy} loading={busy} type="button">
-			Сохранить
+			{m.routing_singbox_save()}
 		</Button>
 	{/snippet}
 </SingboxSettingsModal>

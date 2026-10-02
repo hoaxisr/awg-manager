@@ -9,6 +9,7 @@
 	import AddTunnelWizard from '$lib/components/subscriptions/AddTunnelWizard.svelte';
 	import { resolveSubscriptionMemberTag } from '$lib/utils/subscriptionMember';
 	import type { TunnelPageModalsContext } from './tunnelPageModalsContext';
+	import { m } from '$lib/i18n';
 
 	let { ctx }: { ctx: TunnelPageModalsContext } = $props();
 </script>
@@ -26,14 +27,14 @@
 	{@const tunnelName = ctx.awgList.find(t => t.id === ctx.deleteConfirmId)?.name ?? ctx.deleteConfirmId}
 	<Modal
 		open={true}
-		title="Удалить туннель"
+		title={m.tunnels_modals_delete_tunnel_title()}
 		size="sm"
 		onclose={() => ctx.deleteConfirmId = null}
 	>
-		<p class="confirm-text">Удалить туннель <strong>{tunnelName}</strong>?</p>
+		<p class="confirm-text">{m.tunnels_modals_delete_tunnel_lead()} <strong>{tunnelName}</strong>?</p>
 		{#snippet actions()}
-			<Button variant="secondary" size="md" onclick={() => ctx.deleteConfirmId = null}>Отмена</Button>
-			<Button variant="danger" size="md" onclick={() => ctx.handleDelete(ctx.deleteConfirmId!)}>Удалить</Button>
+			<Button variant="secondary" size="md" onclick={() => ctx.deleteConfirmId = null}>{m.common_cancel()}</Button>
+			<Button variant="danger" size="md" onclick={() => ctx.handleDelete(ctx.deleteConfirmId!)}>{m.common_delete()}</Button>
 		{/snippet}
 	</Modal>
 {/if}
@@ -41,38 +42,35 @@
 {#if ctx.confirmExternalDelete}
 	<Modal
 		open={true}
-		title="Удалить интерфейс"
+		title={m.tunnels_modals_delete_iface_title()}
 		size="sm"
 		onclose={() => (ctx.confirmExternalDelete = null)}
 	>
 		<p class="confirm-text">
-			Удалить интерфейс <strong>{ctx.confirmExternalDelete.interfaceName}{ctx.confirmExternalDelete.label}</strong>?
+			{m.tunnels_modals_delete_iface_lead()} <strong>{ctx.confirmExternalDelete.interfaceName}{ctx.confirmExternalDelete.label}</strong>?
 		</p>
 		{#if ctx.confirmExternalDelete.live}
 			<p class="confirm-text confirm-warn">
-				Через этот интерфейс прямо сейчас идёт трафик, рукопожатие свежее. Снос оборвёт
-				работающее соединение.
+				{m.tunnels_modals_iface_live_warning()}
 			</p>
 		{/if}
 		{#if ctx.confirmExternalDelete.conflictsWith}
 			<p class="confirm-text confirm-warn">
-				Его адрес {ctx.confirmExternalDelete.address} совпадает с адресом туннеля
-				«{ctx.confirmExternalDelete.conflictsWith}».
+				{m.tunnels_modals_iface_conflict_warning({ address: ctx.confirmExternalDelete.address, name: ctx.confirmExternalDelete.conflictsWith })}
 			</p>
 		{/if}
 		<p class="confirm-text">
-			Вместе с интерфейсом уйдут его адреса, маршруты и разрешения в политиках доступа.
-			Пересоздание одноимённого их не вернёт.
+			{m.tunnels_modals_iface_delete_note()}
 		</p>
 		{#snippet actions()}
-			<Button variant="secondary" size="md" onclick={() => (ctx.confirmExternalDelete = null)}>Отмена</Button>
+			<Button variant="secondary" size="md" onclick={() => (ctx.confirmExternalDelete = null)}>{m.common_cancel()}</Button>
 			<Button
 				variant="danger"
 				size="md"
 				loading={ctx.confirmExternalDeleteBusy}
 				onclick={() => ctx.confirmExternalDeleteNow()}
 			>
-				Удалить
+				{m.common_delete()}
 			</Button>
 		{/snippet}
 	</Modal>
@@ -83,9 +81,9 @@
 	<ConfirmModal
 		open={true}
 		variant="primary"
-		title="Туннель защищён от изменений"
-		message="Снять защиту с туннеля «{tunnelName}»? После этого его можно выключить, изменить и удалить."
-		confirmLabel="Снять защиту"
+		title={m.tunnels_modals_unlock_title()}
+		message={m.tunnels_modals_unlock_message({ name: tunnelName })}
+		confirmLabel={m.tunnels_modals_unlock_confirm()}
 		onConfirm={ctx.confirmUnlock}
 		onClose={() => ctx.unlockConfirmId = null}
 	/>
@@ -106,7 +104,7 @@
 
 <Modal
 	open={ctx.pendingSubscriptionDelete !== null}
-	title="Удалить подписку?"
+	title={m.tunnels_modals_delete_sub_title()}
 	size="md"
 	onclose={() => {
 		if (ctx.deletingSubscription) return;
@@ -114,8 +112,8 @@
 	}}
 >
 	<p>
-		Подписка <strong>{ctx.pendingSubscriptionLabel}</strong> будет удалена
-		вместе с её sing-box outbound'ами и NDMS Proxy-интерфейсом.
+		{m.tunnels_modals_delete_sub_lead()} <strong>{ctx.pendingSubscriptionLabel}</strong>
+		{m.tunnels_modals_delete_sub_tail()}
 	</p>
 	{#snippet actions()}
 		<Button
@@ -123,7 +121,7 @@
 			disabled={ctx.deletingSubscription}
 			onclick={() => (ctx.pendingSubscriptionDelete = null)}
 		>
-			Отмена
+			{m.common_cancel()}
 		</Button>
 		<Button
 			variant="danger"
@@ -131,7 +129,7 @@
 			loading={ctx.deletingSubscription}
 			onclick={ctx.confirmSubscriptionDelete}
 		>
-			{ctx.deletingSubscription ? 'Удаляем...' : 'Удалить'}
+			{ctx.deletingSubscription ? m.tunnels_modals_deleting() : m.common_delete()}
 		</Button>
 	{/snippet}
 </Modal>
@@ -182,7 +180,7 @@
 		kind={ctx.awgDiagnosticsTarget.kind}
 		targetId={ctx.awgDiagnosticsTarget.id}
 		displayName={ctx.awgDiagnosticsTarget.name}
-		subjectLabel="туннель"
+		subject="tunnel"
 		onclose={ctx.closeAwgDiagnostics}
 	/>
 {/if}
