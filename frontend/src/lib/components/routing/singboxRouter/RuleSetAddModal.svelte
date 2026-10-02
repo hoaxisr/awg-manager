@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import SingboxSettingsModal from './SingboxSettingsModal.svelte';
 	import {
 		Button,
@@ -36,12 +37,12 @@
 	type RuleSetFormType = 'remote' | 'local' | 'inline' | 'geosite' | 'geoip';
 
 	// ── constants ───────────────────────────────────────────────
-	const UPDATE_INTERVAL_OPTIONS: DropdownOption[] = [
+	const UPDATE_INTERVAL_OPTIONS = $derived<DropdownOption[]>([
 		{ value: '6h', label: '6h' },
 		{ value: '12h', label: '12h' },
-		{ value: '24h', label: '24h (рекомендуется)' },
-		{ value: '168h', label: '168h (неделя)' },
-	];
+		{ value: '24h', label: m.routing_singbox_ruleset_interval_24h() },
+		{ value: '168h', label: m.routing_singbox_ruleset_interval_168h() },
+	]);
 
 	const typeOptions: SegmentedOption<RuleSetFormType>[] = [
 		{ value: 'remote', label: 'Remote' },
@@ -56,14 +57,14 @@
 		{ value: 'source', label: 'Source (JSON)' },
 	];
 
-	const inlineModeOptions: SegmentedOption<'list' | 'json'>[] = [
-		{ value: 'list', label: 'Список' },
+	const inlineModeOptions = $derived<SegmentedOption<'list' | 'json'>[]>([
+		{ value: 'list', label: m.routing_singbox_ruleset_mode_list() },
 		{ value: 'json', label: 'JSON' },
-	];
+	]);
 
 	// ── derived ────────────────────────────────────────────────
 	const downloadDetourOptions = $derived<DropdownOption[]>(
-		buildDownloadDetourOptions(outboundOptions, 'автоматически (direct)'),
+		buildDownloadDetourOptions(outboundOptions, m.routing_singbox_ruleset_download_auto()),
 	);
 
 	const isEditing = $derived(Boolean(ruleSet));
@@ -110,6 +111,33 @@
 
 	let busy = $state(false);
 	let error = $state('');
+	let errorKind = $state<'' | 'json-invalid' | 'json-array' | 'geo-tag' | 'url' | 'path' | 'lossy' | 'inline-empty' | 'list-empty' | 'no-lines'>('');
+	let errorArg = $state('');
+	const errorText = $derived.by(() => {
+		if (error) return error;
+		switch (errorKind) {
+			case 'json-invalid':
+				return m.routing_singbox_ruleset_err_json_invalid({ message: errorArg });
+			case 'json-array':
+				return m.routing_singbox_ruleset_err_json_array();
+			case 'geo-tag':
+				return m.routing_singbox_ruleset_err_geo_tag();
+			case 'url':
+				return m.routing_singbox_ruleset_err_url();
+			case 'path':
+				return m.routing_singbox_ruleset_err_path();
+			case 'lossy':
+				return m.routing_singbox_ruleset_err_lossy();
+			case 'inline-empty':
+				return m.routing_singbox_ruleset_err_inline_empty();
+			case 'list-empty':
+				return m.routing_singbox_ruleset_err_list_empty();
+			case 'no-lines':
+				return m.routing_singbox_ruleset_err_no_lines();
+			default:
+				return '';
+		}
+	});
 	let inlineModeBusy = $state(false);
 	/** Geo/list-parse or JSON→list serializer messages shown after switching Список ↔ JSON */
 	let inlineTabConvertWarnings = $state<string[]>([]);
@@ -117,6 +145,7 @@
 	async function switchInlineMode(next: 'list' | 'json'): Promise<void> {
 		if (next === inlineMode || inlineModeBusy) return;
 		error = '';
+		errorKind = '';
 		inlineTabConvertWarnings = [];
 		if (type !== 'inline') {
 			inlineMode = next;
@@ -160,11 +189,12 @@
 				try {
 					arr = JSON.parse(rulesJson);
 				} catch (e) {
-					error = `Некорректный JSON: ${(e as Error).message}`;
+					errorKind = 'json-invalid';
+					errorArg = (e as Error).message;
 					return;
 				}
 				if (!Array.isArray(arr)) {
-					error = 'Правила должны быть JSON-массивом';
+					errorKind = 'json-array';
 					return;
 				}
 				const typed = arr as Record<string, unknown>[];
@@ -285,6 +315,7 @@
 		initialSelectedGeoTags = dat?.tags ?? [];
 
 		error = '';
+		errorKind = '';
 		busy = false;
 		inlineTabConvertWarnings = [];
 	});
@@ -344,6 +375,7 @@
 	async function save(): Promise<void> {
 		busy = true;
 		error = '';
+		errorKind = '';
 		try {
 			const cleanTag = tag.trim();
 			const tagErr = validateRuleSetTag(cleanTag, savedRuleSetType(type));
@@ -353,17 +385,17 @@
 				return;
 			}
 			if (isDatType && selectedGeoTags.length === 0) {
-				error = 'Выберите хотя бы один тег из dat-файла';
+				errorKind = 'geo-tag';
 				busy = false;
 				return;
 			}
 			if (type === 'remote' && !url.trim()) {
-				error = 'URL обязателен для type=remote';
+				errorKind = 'url';
 				busy = false;
 				return;
 			}
 			if (type === 'local' && !path.trim()) {
-				error = 'Path обязателен для type=local';
+				errorKind = 'path';
 				busy = false;
 				return;
 			}
@@ -371,7 +403,7 @@
 			let parsedRules: Record<string, unknown>[] | undefined;
 			if (type === 'inline') {
 				if (isEditing && inlineMode === 'list' && inlineLossyAnalysis.lossy) {
-					error = 'Этот JSON содержит поля, которые режим Список не может сохранить без потерь. Редактируйте в JSON.';
+					errorKind = 'lossy';
 					busy = false;
 					return;
 				}
@@ -379,19 +411,20 @@
 					try {
 						const parsed = JSON.parse(rulesJson);
 						if (!Array.isArray(parsed) || parsed.length === 0) {
-							error = 'Для inline rule set нужен непустой JSON-массив правил';
+							errorKind = 'inline-empty';
 							busy = false;
 							return;
 						}
 						parsedRules = parsed as Record<string, unknown>[];
 					} catch (e) {
-						error = `Некорректный JSON: ${(e as Error).message}`;
+						errorKind = 'json-invalid';
+					errorArg = (e as Error).message;
 						busy = false;
 						return;
 					}
 				} else {
 					if (isInlineRuleListEmpty(rulesList)) {
-						error = 'Список пуст';
+						errorKind = 'list-empty';
 						busy = false;
 						return;
 					}
@@ -406,7 +439,7 @@
 						return;
 					}
 					if (parsed.rules.length === 0) {
-						error = 'Нет валидных строк для inline rule set';
+						errorKind = 'no-lines';
 						busy = false;
 						return;
 					}
@@ -441,45 +474,45 @@
 </script>
 
 <SingboxSettingsModal
-	title={ruleSet ? 'Редактировать rule set' : 'Новый rule set'}
+	title={ruleSet ? m.routing_singbox_ruleset_edit_title() : m.routing_singbox_ruleset_new_title()}
 	onClose={onClose}
 	hasUnsavedChanges={() => isDirty}
 >
 	<div class="form">
 		<div class="field">
-			<div class="lbl">Тип</div>
+			<div class="lbl">{m.routing_singbox_outbound_type()}</div>
 			{#if isEditing}
-				<div class="ro-badge" aria-label="Тип rule set (нельзя изменить)">{typeLabel}</div>
+				<div class="ro-badge" aria-label={m.routing_singbox_ruleset_type_readonly_aria()}>{typeLabel}</div>
 			{:else}
 				<SegmentedControl
 					value={type}
 					options={typeOptions}
-					ariaLabel="Тип rule set"
+					ariaLabel={m.routing_singbox_ruleset_type_aria()}
 					onchange={(next) => setType(next)}
 				/>
 			{/if}
 		</div>
 
 		<label class="field">
-			<div class="lbl">Tag (имя)</div>
+			<div class="lbl">{m.routing_singbox_outbound_tag_label()}</div>
 			<input bind:value={tag} placeholder="geosite-example" />
 			{#if isEditing}
-				<div class="hint">При переименовании ссылки в правилах маршрутизации и DNS обновятся автоматически.</div>
+				<div class="hint">{m.routing_singbox_ruleset_rename_hint()}</div>
 			{:else}
-				<div class="hint">Не используйте суффикс -srs — он добавляется автоматически для скомпилированного набора.</div>
+				<div class="hint">{m.routing_singbox_ruleset_srs_hint()}</div>
 			{/if}
 		</label>
 
 		{#if type !== 'inline' && !isDatType}
 			<label class="field">
-				<div class="lbl">Формат</div>
+				<div class="lbl">{m.routing_singbox_ruleset_format()}</div>
 				{#if isEditing}
-					<div class="ro-badge" aria-label="Формат rule set (нельзя изменить)">{formatLabel}</div>
+					<div class="ro-badge" aria-label={m.routing_singbox_ruleset_format_readonly_aria()}>{formatLabel}</div>
 				{:else}
 					<SegmentedControl
 						value={format}
 						options={formatOptions}
-						ariaLabel="Формат rule set"
+						ariaLabel={m.routing_singbox_ruleset_format_aria()}
 						onchange={(next) => (format = next)}
 					/>
 				{/if}
@@ -488,32 +521,32 @@
 
 		{#if type === 'remote'}
 			<label class="field">
-				<div class="lbl">URL к файлу</div>
+				<div class="lbl">{m.routing_singbox_ruleset_url_label()}</div>
 				<input bind:value={url} placeholder="https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-example.srs" />
 			</label>
 
 			<label class="field">
-				<div class="lbl">Интервал обновления</div>
+				<div class="lbl">{m.routing_singbox_ruleset_update_interval()}</div>
 				<Dropdown bind:value={updateInterval} options={UPDATE_INTERVAL_OPTIONS} fullWidth />
 			</label>
 
 			<div class="field highlight">
-				<div class="lbl">Скачивать через (download detour)</div>
+				<div class="lbl">{m.routing_singbox_ruleset_detour_label()}</div>
 				<Dropdown bind:value={downloadDetour} options={downloadDetourOptions} fullWidth />
 				<div class="hint">
-					Через какой outbound скачивать этот файл. Полезно если URL заблокирован у провайдера — используйте VPN-туннель.
+					{m.routing_singbox_ruleset_detour_hint()}
 				</div>
 			</div>
 		{:else if isDatType}
 			<div class="field dat-picker-field">
 				<div class="dat-picker-head">
 					<div>
-						<div class="lbl">Теги {type}.dat</div>
-						<div class="hint">После сохранения будет создан remote rule-set с локальным URL конвертации в .srs.</div>
+						<div class="lbl">{m.routing_singbox_ruleset_dat_tags({ type })}</div>
+						<div class="hint">{m.routing_singbox_ruleset_dat_hint()}</div>
 					</div>
 				</div>
 				{#if selectedGeoTags.length > 0}
-					<div class="selected-geo-list" aria-label="Выбранные {type} теги">
+					<div class="selected-geo-list" aria-label={m.routing_singbox_ruleset_dat_selected_aria({ type })}>
 						{#each selectedGeoTags as geoTag}
 							<button type="button" class="selected-geo" onclick={() => toggleGeoTag(geoTag)}>
 								<code>{datKind}:{geoTag}</code>
@@ -522,9 +555,9 @@
 						{/each}
 					</div>
 				{:else if geoFilesLoading}
-					<div class="hint">Загрузка dat-файлов…</div>
+					<div class="hint">{m.routing_singbox_ruleset_dat_loading()}</div>
 				{:else if datFiles.length === 0}
-					<div class="hint">Нет известных файлов {type}.dat. Добавьте их на вкладке «Маршрутизация → Гео-данные».</div>
+					<div class="hint">{m.routing_singbox_ruleset_dat_none({ type })}</div>
 				{/if}
 				{#if datFiles.length > 0}
 					<GeoTagPicker
@@ -539,23 +572,23 @@
 			</div>
 		{:else if type === 'local'}
 			<label class="field">
-				<div class="lbl">Путь к файлу</div>
+				<div class="lbl">{m.routing_singbox_ruleset_path_label()}</div>
 				<input bind:value={path} placeholder="/opt/etc/awg-manager/singbox/config.d/rule-sets/my.srs" />
-				<div class="hint">Абсолютный путь. Файл должен существовать на роутере.</div>
+				<div class="hint">{m.routing_singbox_ruleset_path_hint()}</div>
 			</label>
 		{:else}
 			<div class="field">
-				<div class="lbl">Формат ввода</div>
+				<div class="lbl">{m.routing_singbox_ruleset_input_format()}</div>
 				<SegmentedControl
 					value={inlineMode}
 					options={inlineModeOptions}
-					ariaLabel="Формат ввода inline rule set"
+					ariaLabel={m.routing_singbox_ruleset_input_format_aria()}
 					disabled={inlineModeBusy}
 					onchange={(next) => void switchInlineMode(next)}
 				/>
 				{#if inlineTabConvertWarnings.length > 0}
 					<div class="parse-messages parse-messages-warning">
-						<div class="parse-messages-title">При переключении режима</div>
+						<div class="parse-messages-title">{m.routing_singbox_ruleset_mode_switch()}</div>
 						<ul>
 							{#each inlineTabConvertWarnings as msg}
 								<li>{msg}</li>
@@ -569,9 +602,9 @@
 				<div class="field field-editor">
 					{#if isEditing && inlineLossyAnalysis.lossy}
 						<div class="parse-messages parse-messages-warning">
-							<div class="parse-messages-title">Потеря данных в режиме "Список"</div>
+							<div class="parse-messages-title">{m.routing_singbox_ruleset_lossy_title()}</div>
 							<ul>
-								<li>Этот JSON содержит поля, которые режим Список не может сохранить без потерь. Редактируйте в JSON.</li>
+								<li>{m.routing_singbox_ruleset_err_lossy()}</li>
 								{#each inlineLossyAnalysis.issues as issue}
 									<li>{issue}</li>
 								{/each}
@@ -582,7 +615,7 @@
 				</div>
 			{:else}
 				<label class="field field-editor">
-					<div class="lbl">Правила (JSON-массив)</div>
+					<div class="lbl">{m.routing_singbox_ruleset_rules_json()}</div>
 					<div class="rules-editor rules-json-editor">
 						<pre
 							class="line-numbers"
@@ -602,17 +635,17 @@
 						</div>
 					</div>
 					<div class="hint">
-						Advanced mode: массив объектов с матчерами sing-box.
+						{m.routing_singbox_ruleset_advanced_hint()}
 					</div>
 				</label>
 			{/if}
 		{/if}
 
-		{#if error}<div class="error">{error}</div>{/if}
+		{#if errorText}<div class="error">{errorText}</div>{/if}
 	</div>
 
 	{#snippet actions()}
-		<Button variant="ghost" size="md" onclick={onClose} type="button">Отмена</Button>
+		<Button variant="ghost" size="md" onclick={onClose} type="button">{m.common_cancel()}</Button>
 		<Button
 			variant="primary"
 			size="md"
@@ -621,7 +654,7 @@
 			loading={busy || inlineModeBusy}
 			type="button"
 		>
-			Сохранить
+			{m.routing_singbox_save()}
 		</Button>
 	{/snippet}
 </SingboxSettingsModal>

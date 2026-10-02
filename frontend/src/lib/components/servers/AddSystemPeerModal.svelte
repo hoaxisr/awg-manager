@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { WireguardServer } from '$lib/types';
 	import { Modal, Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
@@ -64,29 +65,29 @@
 				remoteSubnets: parseRemoteSubnets(remoteSubnets)
 			});
 			servers.applyMutationResponse(fresh);
-			notifications.success('Клиент добавлен');
+			notifications.success(m.servers_peer_added());
 			onclose();
 			onAdded();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка добавления');
+			notifications.error(e instanceof Error ? e.message : m.servers_peer_add_failed());
 		} finally {
 			adding = false;
 		}
 	}
 </script>
 
-<Modal {open} title="Добавить клиента" size="sm" {onclose}>
+<Modal {open} title={m.servers_peer_add_title()} size="sm" {onclose}>
 	<div class="form-fields">
 		<div class="form-group">
-			<label class="label" for="ssp-desc">Имя / описание</label>
-			<input type="text" id="ssp-desc" class="input" bind:value={description} placeholder="Телефон" />
+			<label class="label" for="ssp-desc">{m.servers_peer_label_desc()}</label>
+			<input type="text" id="ssp-desc" class="input" bind:value={description} placeholder={m.servers_peer_desc_placeholder_short()} />
 		</div>
 		<div class="form-group">
 			<label class="label" for="ssp-ip">Tunnel IP (CIDR)</label>
 			<input type="text" id="ssp-ip" class="input" bind:value={tunnelIP} placeholder="10.0.0.2/32" />
 		</div>
 		<div class="form-group">
-			<label class="label" for="ssp-dns">DNS серверы</label>
+			<label class="label" for="ssp-dns">{m.servers_peer_label_dns()}</label>
 			<input
 				type="text"
 				id="ssp-dns"
@@ -98,7 +99,7 @@
 			{#if routerIP}
 				<div class="toggle-row">
 					<span class="toggle-label">
-						DNS роутера ({routerIP})<FieldHint text={routerDnsHint} ariaLabel="Подсказка: DNS роутера" />
+						{m.servers_peer_router_dns({ ip: routerIP })}<FieldHint text={routerDnsHint()} ariaLabel={m.servers_peer_router_dns_aria()} />
 					</span>
 					<FormToggle
 						bind:checked={useRouterDNS}
@@ -112,7 +113,7 @@
 			{#if dnsError}
 				<span class="hint-text is-error">{dnsError}</span>
 			{:else}
-				<span class="hint-text">Пусто — DNS роутера</span>
+				<span class="hint-text">{m.servers_peer_dns_empty_hint()}</span>
 			{/if}
 		</div>
 		<PeerNetworksFields
@@ -124,7 +125,7 @@
 	</div>
 
 	{#snippet actions()}
-		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="ghost" size="md" onclick={onclose}>{m.common_cancel()}</Button>
 		<Button
 			variant="primary"
 			size="md"
@@ -132,7 +133,7 @@
 			loading={adding}
 			disabled={!tunnelIP || !!dnsError || !!netError}
 		>
-			Добавить
+			{m.servers_peer_add_submit()}
 		</Button>
 	{/snippet}
 </Modal>

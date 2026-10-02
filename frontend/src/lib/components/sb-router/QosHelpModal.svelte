@@ -5,6 +5,7 @@
   Linux / macOS / Wi-Fi WMM.
 -->
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Copy } from 'lucide-svelte';
   import { Modal, IconButton } from '$lib/components/ui';
   import { notifications } from '$lib/stores/notifications';
@@ -31,7 +32,7 @@
   // в тексте под кнопкой «Копировать».
   const dscpValue = $derived(selected ? String(selected.dscp) : '46');
   const policyName = $derived.by(() => {
-    if (!selected) return 'AWGM-Пример';
+    if (!selected) return m.sb_router_qos_help_policy_example();
     const raw = selected.name.trim().replace(/"/g, '');
     return `AWGM-${raw || 'class'}`;
   });
@@ -47,72 +48,67 @@
 
   async function copy(text: string) {
     const ok = await copyToClipboard(text);
-    if (ok) notifications.success('Скопировано в буфер обмена');
-    else notifications.error('Не удалось скопировать');
+    if (ok) notifications.success(m.sb_router_qos_help_copied());
+    else notifications.error(m.sb_router_qos_help_copy_failed());
   }
 </script>
 
-<Modal {open} title="Как пометить трафик на ПК" size="md" {onclose}>
+<Modal {open} title={m.sb_router_qos_help_title()} size="md" {onclose}>
   <div class="body">
     {#if classes.length === 0}
       <p class="hint">
-        Команды ниже — пример с DSCP 46. Добавьте класс, чтобы получить готовую
-        команду под него.
+        {m.sb_router_qos_help_example_hint()}
       </p>
     {/if}
 
     {#if classes.length > 1}
       <label class="field">
-        <span class="lbl">Класс</span>
+        <span class="lbl">{m.sb_router_qos_help_class()}</span>
         <select class="inp" bind:value={selectedIdx}>
           {#each classes as cls, idx (idx)}
-            <option value={idx}>DSCP {cls.dscp} — {cls.name || 'без названия'}</option>
+            <option value={idx}>{m.sb_router_qos_help_class_option({ dscp: cls.dscp, name: cls.name || m.sb_router_qos_help_unnamed() })}</option>
           {/each}
         </select>
       </label>
     {/if}
 
     <section class="block">
-      <div class="blk-cap">Windows — политика QoS (PowerShell от администратора)</div>
+      <div class="blk-cap">{m.sb_router_qos_help_windows_cap()}</div>
       <div class="code-row">
         <pre class="code">{psSnippet}</pre>
-        <IconButton size="sm" ariaLabel="Копировать команду PowerShell" title="Копировать" onclick={() => void copy(psSnippet)}>
+        <IconButton size="sm" ariaLabel={m.sb_router_qos_help_copy_ps_aria()} title={m.sb_router_qos_help_copy_title()} onclick={() => void copy(psSnippet)}>
           <Copy size={14} />
         </IconButton>
       </div>
       <p class="hint">
-        Замените <code class="mono">app.exe</code> на имя исполняемого файла программы,
-        чей трафик нужно пометить.
+        {m.sb_router_qos_help_replace_pre()} <code class="mono">app.exe</code> {m.sb_router_qos_help_replace_post()}
       </p>
       <p class="hint">
-        В версиях Pro, Enterprise и Education настроить DSCP-метки можно через
-        редактор локальной групповой политики (<code class="mono">gpedit.msc</code>)
-        → Конфигурация компьютера → Конфигурация Windows → QoS на основе политики.
+        {m.sb_router_qos_help_gpedit_pre()}<code class="mono">gpedit.msc</code>{m.sb_router_qos_help_gpedit_post()}
       </p>
     </section>
 
     <section class="block">
-      <div class="blk-cap">Недоменные / мульти-NIC машины</div>
+      <div class="blk-cap">{m.sb_router_qos_help_nla_cap()}</div>
       <div class="code-row">
         <pre class="code">{regSnippet}</pre>
-        <IconButton size="sm" ariaLabel="Копировать команду reg add" title="Копировать" onclick={() => void copy(regSnippet)}>
+        <IconButton size="sm" ariaLabel={m.sb_router_qos_help_copy_reg_aria()} title={m.sb_router_qos_help_copy_title()} onclick={() => void copy(regSnippet)}>
           <Copy size={14} />
         </IconButton>
       </div>
       <p class="hint">
-        Без этого ключа Windows вне домена (или с несколькими сетевыми адаптерами)
-        может игнорировать политику QoS. После добавления перезагрузите ПК.
+        {m.sb_router_qos_help_nla_hint()}
       </p>
     </section>
 
     <section class="block">
-      <div class="blk-cap">Заметки</div>
+      <div class="blk-cap">{m.sb_router_qos_help_notes_cap()}</div>
       <ul class="notes">
         <li>
           Linux: <code class="mono">{linuxSnippet}</code>
         </li>
-        <li>macOS: пометка DSCP для приложений не поддерживается системно.</li>
-        <li>Wi-Fi (WMM) может перезаписать DSCP-метку — проверяйте по кабелю.</li>
+        <li>{m.sb_router_qos_help_macos()}</li>
+        <li>{m.sb_router_qos_help_wmm()}</li>
       </ul>
     </section>
   </div>

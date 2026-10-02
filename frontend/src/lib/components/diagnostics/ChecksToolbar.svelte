@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button } from '$lib/components/ui';
 	import ChecksAdvancedPopover from './ChecksAdvancedPopover.svelte';
 
@@ -38,10 +39,10 @@
 		running
 			? currentPhase
 				? currentPhase
-				: 'Запуск...'
+				: m.diag_checks_starting()
 			: hasResults
-				? 'Запустить ещё раз'
-				: 'Запустить все проверки',
+				? m.diag_checks_run_again()
+				: m.diag_checks_run_all(),
 	);
 </script>
 
@@ -55,16 +56,16 @@
 		disabled={!hasReport || downloadingReport || running}
 		loading={downloadingReport}
 	>
-		⤓ Отчёт
+		{m.diag_checks_report_btn()}
 	</Button>
 	<Button
 		variant="outline-danger"
 		onclick={onCreateIncident}
 		disabled={running || downloadingReport || creatingIncident}
 		loading={creatingIncident}
-		title="Подготовить публичный GitHub issue и скачать отчёт"
+		title={m.diag_checks_incident_btn_title()}
 	>
-		⚑ Инцидент
+		{m.diag_checks_incident_btn()}
 	</Button>
 
 	{#if hasResults && !running}

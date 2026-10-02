@@ -1,3 +1,5 @@
+import { m } from '$lib/i18n';
+
 /**
  * Translates the machine-readable router reference paths returned by the
  * backend (`ErrTunnelReferenced.RouterOther`, formatted in
@@ -13,13 +15,13 @@ export interface RouterReference {
 }
 
 const PATTERNS: Array<{ re: RegExp; label: (captured: string) => string }> = [
-	{ re: /^outbounds\[\d+="(.*)"\]\.outbounds\[\d+\]$/, label: (n) => `Входит в группу маршрутов «${n}»` },
-	{ re: /^outbounds\[\d+="(.*)"\]\.default$/, label: (n) => `Выбран по умолчанию в группе «${n}»` },
-	{ re: /^dns\.servers\[\d+="(.*)"\]\.detour$/, label: (n) => `Используется DNS-сервером «${n}»` },
-	{ re: /^route\.rule_set\[\d+="(.*)"\]\.download_detour$/, label: (n) => `Через него скачивается список «${n}»` },
+	{ re: /^outbounds\[\d+="(.*)"\]\.outbounds\[\d+\]$/, label: (n) => m.tunnel_refs_group_member({ name: n }) },
+	{ re: /^outbounds\[\d+="(.*)"\]\.default$/, label: (n) => m.tunnel_refs_group_default({ name: n }) },
+	{ re: /^dns\.servers\[\d+="(.*)"\]\.detour$/, label: (n) => m.tunnel_refs_dns_server({ name: n }) },
+	{ re: /^route\.rule_set\[\d+="(.*)"\]\.download_detour$/, label: (n) => m.tunnel_refs_rule_set_download({ name: n }) },
 	// Приходит только от fakeip-слота: router-слот отдаёт свои правила
 	// отдельным списком индексов (RouterRules). Номер 0-based, как в таблице.
-	{ re: /^route\.rules\[(\d+)\]$/, label: (n) => `Используется в правиле #${n}` }
+	{ re: /^route\.rules\[(\d+)\]$/, label: (n) => m.tunnel_refs_rule({ number: n }) }
 ];
 
 const FAKEIP_PREFIX = '[fakeip] ';
@@ -30,12 +32,12 @@ export function describeRouterReference(loc: string): RouterReference {
 		return { text: `FakeIP → ${ref.text}`, known: ref.known };
 	}
 	if (loc === 'route.final') {
-		return { text: 'Назначен маршрутом по умолчанию', known: true };
+		return { text: m.tunnel_refs_final(), known: true };
 	}
 	for (const { re, label } of PATTERNS) {
-		const m = loc.match(re);
-		if (m) {
-			return { text: label(m[1]), known: true };
+		const hit = loc.match(re);
+		if (hit) {
+			return { text: label(hit[1]), known: true };
 		}
 	}
 	return { text: loc, known: false };

@@ -1,22 +1,21 @@
 // Состояние посева прокси-подсистемы словами пользователя.
 
+import { m } from '$lib/i18n';
 import type {
 	ProxyListenMoveView,
 	ProxySeedView,
 	ProxySkippedSourceView,
 } from '$lib/api/proxyInstances';
 
-const GATE_LOCKED =
-	'Посев прокси-подсистемы не подтверждён: уборка осиротевших интерфейсов и маршрутов заблокирована.';
-
 /**
  * Пропущенный посевом старый конфиг словами пользователя: его инстансы не
  * перенеслись и не появятся — повторов посева нет, файл никто не чинит.
  */
 function skippedText(s: ProxySkippedSourceView): string {
-	const head = `старый конфиг ${s.file} не разобран, его инстансы не перенесены`;
 	const why = s.reason?.trim();
-	return why ? `${head}: ${why}` : head;
+	return why
+		? m.proxy_seed_skipped_reason({ file: s.file, reason: why })
+		: m.proxy_seed_skipped({ file: s.file });
 }
 
 /**
@@ -38,9 +37,11 @@ function skippedText(s: ProxySkippedSourceView): string {
 export function seedGateWarning(seed: ProxySeedView | null | undefined): string {
 	if (!seed || !seed.seeded || seed.certified) return '';
 	const skipped = seed.skipped ?? [];
-	if (skipped.length) return `${GATE_LOCKED} ${skipped.map(skippedText).join('; ')}`;
+	if (skipped.length) {
+		return m.proxy_seed_gate_locked_detail({ detail: skipped.map(skippedText).join('; ') });
+	}
 	const why = seed.error?.trim();
-	return why ? `${GATE_LOCKED} ${why}` : GATE_LOCKED;
+	return why ? m.proxy_seed_gate_locked_detail({ detail: why }) : m.proxy_seed_gate_locked();
 }
 
 /**
@@ -62,12 +63,10 @@ export function seedGateWarning(seed: ProxySeedView | null | undefined): string 
 export function seedListenMoveNotice(seed: ProxySeedView | null | undefined): string {
 	const moved = seed?.movedListen ?? [];
 	if (!moved.length) return '';
-	return `Listen-порт был занят другой записью, поэтому инстанс переехал: ${moved
-		.map(moveText)
-		.join('; ')}. Если снаружи настроено подключение на прежний адрес, поправьте его.`;
+	return m.proxy_seed_listen_moved({ moves: moved.map(moveText).join('; ') });
 }
 
-function moveText(m: ProxyListenMoveView): string {
-	const who = m.name?.trim() || m.instance;
-	return `«${who}» переехал с ${m.from} на ${m.to}`;
+function moveText(move: ProxyListenMoveView): string {
+	const who = move.name?.trim() || move.instance;
+	return m.proxy_seed_move_item({ who, from: move.from, to: move.to });
 }

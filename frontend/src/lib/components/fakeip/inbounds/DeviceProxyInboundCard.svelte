@@ -10,6 +10,7 @@
 <script lang="ts">
 	import { Toggle } from '$lib/components/ui';
 	import { Pencil, Trash2 } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		name: string;
@@ -53,14 +54,14 @@
 
 	<div class="rows">
 		<div class="r"><span class="k">listen</span><span class="v y mono">{listen}</span></div>
-		<div class="r"><span class="k">протоколы</span><span class="v">SOCKS5 + HTTP</span></div>
+		<div class="r"><span class="k">{m.fakeip_inbounds_card_protocols()}</span><span class="v">SOCKS5 + HTTP</span></div>
 		<div class="r">
-			<span class="k">авторизация</span>
-			<span class="v dim">{authEnabled ? 'вкл' : 'выкл'}</span>
+			<span class="k">{m.fakeip_inbounds_card_auth()}</span>
+			<span class="v dim">{authEnabled ? m.fakeip_inbounds_card_on() : m.fakeip_inbounds_card_off()}</span>
 		</div>
 		<div class="r">
-			<span class="k">назначение</span>
-			<span class="v dim">устройства с ручным прокси</span>
+			<span class="k">{m.fakeip_inbounds_card_purpose()}</span>
+			<span class="v dim">{m.fakeip_inbounds_card_purpose_value()}</span>
 		</div>
 	</div>
 
@@ -69,21 +70,21 @@
 			type="button"
 			class="del"
 			onclick={onDelete}
-			aria-label={`Удалить inbound «${name}»`}
-			title={`Удалить inbound «${name}»`}
+			aria-label={m.sb_router_device_proxy_delete_title({ name })}
+			title={m.sb_router_device_proxy_delete_title({ name })}
 		>
 			<Trash2 size={14} aria-hidden="true" />
 		</button>
 		<div class="act">
 			<button type="button" class="ib" onclick={onEdit}>
-				<Pencil size={13} aria-hidden="true" /> изменить
+				<Pencil size={13} aria-hidden="true" /> {m.fakeip_inbounds_card_edit()}
 			</button>
 			<Toggle
 				size="sm"
 				controlled
 				checked={enabled}
 				loading={toggling}
-				label={enabled ? 'выключить inbound' : 'включить inbound'}
+				label={enabled ? m.fakeip_inbounds_card_turn_off() : m.fakeip_inbounds_card_turn_on()}
 				onchange={onToggle}
 			/>
 		</div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { ManagedPeer } from '$lib/types';
 	import { Modal, FormToggle, Button, FieldHint } from '$lib/components/ui';
 	import { protocols, calcTotalChars, MAX_SIGNATURE_CHARS, type ProtocolKey, type SignaturePackets } from '$lib/utils/protocols';
@@ -96,21 +97,21 @@
 				signature: sigDirty ? { profile: sigProfile, ...sigPackets } : undefined,
 			});
 			servers.applyMutationResponse(fresh);
-			notifications.success('Клиент обновлён');
+			notifications.success(m.servers_peer_updated());
 			onclose();
 			onUpdated();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения');
+			notifications.error(e instanceof Error ? e.message : m.system_tunnels_save_failed());
 		} finally {
 			saving = false;
 		}
 	}
 </script>
 
-<Modal {open} title="Редактировать клиента" size="sm" {onclose} hasUnsavedChanges={() => isDirty}>
+<Modal {open} title={m.servers_peer_edit_title()} size="sm" {onclose} hasUnsavedChanges={() => isDirty}>
 	<div class="form-fields">
 		<div class="form-group">
-			<label class="label" for="emp-desc">Имя / описание</label>
+			<label class="label" for="emp-desc">{m.servers_peer_label_desc()}</label>
 			<input type="text" id="emp-desc" class="input" bind:value={description} />
 		</div>
 		<div class="form-group">
@@ -119,18 +120,18 @@
 			{#if ipError}<span class="field-hint is-error">{ipError}</span>{/if}
 		</div>
 		<div class="form-group">
-			<label class="label" for="emp-dns">DNS серверы</label>
+			<label class="label" for="emp-dns">{m.servers_peer_label_dns()}</label>
 			<input type="text" id="emp-dns" class="input" bind:value={dns} placeholder="192.168.1.1" disabled={useRouterDNS} />
 			{#if routerIP}
 				<div class="toggle-row">
-					<span class="toggle-label">DNS роутера ({routerIP})<FieldHint text={routerDnsHint} ariaLabel="Подсказка: DNS роутера" /></span>
+					<span class="toggle-label">{m.servers_peer_router_dns({ ip: routerIP })}<FieldHint text={routerDnsHint()} ariaLabel={m.servers_peer_router_dns_aria()} /></span>
 					<FormToggle bind:checked={useRouterDNS} onchange={(val) => { dns = val ? routerIP : ''; }} size="sm" />
 				</div>
 			{/if}
 			{#if dnsError}
 				<span class="field-hint is-error">{dnsError}</span>
 			{:else}
-				<span class="field-hint">Используется в конфиге клиента. Пусто — DNS роутера</span>
+				<span class="field-hint">{m.servers_peer_dns_used_hint()}</span>
 			{/if}
 		</div>
 		<PeerNetworksFields
@@ -147,9 +148,9 @@
 	</div>
 
 	{#snippet actions()}
-		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="ghost" size="md" onclick={onclose}>{m.common_cancel()}</Button>
 		<Button variant="primary" size="md" onclick={handleSave} loading={saving} disabled={saving || sigOver || !!ipError || !!dnsError || !!netError}>
-			Сохранить
+			{m.settings_page_save()}
 		</Button>
 	{/snippet}
 </Modal>

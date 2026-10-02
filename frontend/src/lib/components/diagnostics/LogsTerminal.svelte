@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount, onDestroy, tick } from 'svelte';
   import { TriangleAlert } from 'lucide-svelte';
   import { logStoreFor, type LogBucket, type LogStore } from '$lib/stores/logs';
@@ -161,7 +162,7 @@
       try {
         await applyFilter({ ...filter, subgroups: filter.subgroups.filter((s) => s !== 'profiling') });
       } catch {
-        notifications.error('Не удалось сбросить фильтр profiling');
+        notifications.error(m.diag_logs_profiling_reset_failed());
       }
     })();
   });
@@ -230,7 +231,7 @@
         oldest: resp.oldestTimestamp,
       });
     } catch {
-      notifications.error('Не удалось загрузить журнал');
+      notifications.error(m.diag_logs_load_failed());
     } finally {
       store.setLoaded(true);
     }
@@ -277,13 +278,13 @@
       }
     } catch {
       availableSubgroups = [];
-      notifications.error('Не удалось загрузить список подгрупп журнала');
+      notifications.error(m.diag_logs_subgroups_load_failed());
     }
   }
 
   onMount(async () => {
     if (filterLoadWarning) {
-      notifications.warning('Не удалось прочитать сохранённые фильтры журнала, применены значения по умолчанию');
+      notifications.warning(m.diag_logs_filters_read_failed());
     }
     await loadBucketFresh();
     await refreshSubgroups();
@@ -470,7 +471,7 @@
   function getRouterOffsetOrWarn(): number | null {
     const routerOffset = $systemInfo.data?.routerTimezoneOffsetMinutes;
     if (routerOffset === undefined || routerOffset === null || !Number.isFinite(routerOffset)) {
-      notifications.warning('Время роутера ещё не загружено, попробуйте через несколько секунд');
+      notifications.warning(m.diag_dns_router_time_not_loaded());
       return null;
     }
     return routerOffset;
@@ -483,7 +484,7 @@
     const routerOffset = $systemInfo.data?.routerTimezoneOffsetMinutes;
 
     if (!routerTime || routerOffset === undefined || routerOffset === null || !Number.isFinite(routerOffset)) {
-      notifications.warning('Время роутера ещё не загружено, попробуйте через несколько секунд');
+      notifications.warning(m.diag_dns_router_time_not_loaded());
       return null;
     }
 
@@ -500,7 +501,7 @@
     if (await copyToClipboard(text)) {
       notifications.success(successMsg);
     } else {
-      notifications.error('Не удалось скопировать');
+      notifications.error(m.diag_about_copy_failed());
     }
   }
 
@@ -508,17 +509,17 @@
     const routerOffset = getRouterOffsetOrWarn();
     if (routerOffset === null) return;
     const text = displayLogs.map((log) => formatLine(log, routerOffset)).join('\n');
-    await copyText(text, 'Скопировано в буфер обмена');
+    await copyText(text, m.diag_logs_copied());
   }
 
   function handleCopyLine(log: LogEntry) {
     const routerOffset = getRouterOffsetOrWarn();
     if (routerOffset === null) return;
-    copyText(formatLine(log, routerOffset), 'Строка скопирована');
+    copyText(formatLine(log, routerOffset), m.diag_logs_line_copied());
   }
 
   function handleCopyMessage(text: string) {
-    copyText(text, 'Сообщение скопировано');
+    copyText(text, m.diag_logs_message_copied());
   }
 
   function matchesCurrentVisibleFilters(log: LogEntry, currentFilter: LogsFilter): boolean {
@@ -575,9 +576,9 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      notifications.success(`Скачано ${logs.length} записей`);
+      notifications.success(m.diag_logs_downloaded({ count: logs.length }));
     } catch {
-      notifications.error('Не удалось скачать логи');
+      notifications.error(m.diag_logs_download_failed());
     } finally {
       downloading = false;
     }
@@ -592,9 +593,9 @@
         size: 0,
         capacity: $statsStore.capacity,
       });
-      notifications.success('Логи очищены');
+      notifications.success(m.diag_logs_cleared());
     } catch {
-      notifications.error('Не удалось очистить логи');
+      notifications.error(m.diag_logs_clear_failed());
     } finally {
       clearing = false;
     }
@@ -614,7 +615,7 @@
         oldest: resp.oldestTimestamp,
       });
     } catch {
-      notifications.error('Не удалось загрузить ещё');
+      notifications.error(m.diag_logs_load_more_failed());
       pageOffset -= PAGE_SIZE;
     } finally {
       loadingMore = false;
@@ -635,19 +636,19 @@
 
 {#if !$loadedStore}
   <div class="terminal-loading">
-    <LoadingSpinner size="lg" message="Загрузка журнала..." />
+    <LoadingSpinner size="lg" message={m.diag_logs_loading()} />
   </div>
 {:else if !$enabledStore}
   <div class="terminal-empty">
     <EmptyState
-      title="Логирование отключено"
-      description="Включите логирование в настройках для записи событий."
+      title={m.diag_logs_disabled_title()}
+      description={m.diag_logs_disabled_description()}
     >
       {#snippet icon()}
         <TriangleAlert size={48} aria-hidden="true" />
       {/snippet}
       {#snippet action()}
-        <Button variant="primary" size="md" href="/settings">Открыть настройки</Button>
+        <Button variant="primary" size="md" href="/settings">{m.diag_logs_open_settings()}</Button>
       {/snippet}
     </EmptyState>
   </div>
@@ -701,12 +702,12 @@
         />
       {/each}
       {#if displayLogs.length === 0}
-        <div class="empty-feed">Нет записей по текущим фильтрам</div>
+        <div class="empty-feed">{m.diag_logs_empty()}</div>
       {/if}
       {#if hasMore && displayLogs.length > 0}
         <div class="load-more-row">
           <button type="button" class="chip load-more" onclick={loadMore} disabled={loadingMore}>
-            {loadingMore ? 'Загрузка…' : `Загрузить ещё ${nextBatch}`}
+            {loadingMore ? m.diag_logs_loading_more() : m.diag_logs_load_more({ count: nextBatch })}
           </button>
         </div>
       {/if}

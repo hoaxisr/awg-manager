@@ -4,6 +4,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import type {
     SingboxProxyGroup,
     SingboxRouterRule,
@@ -145,11 +146,11 @@
 <div class="table" class:bare>
   <div class="header">
     <div>#</div>
-    <div>Порядок</div>
-    <div>Действие</div>
-    <div>Условия</div>
-    <div class="outbound-head">Выход</div>
-    <div class="actions-col">Действия</div>
+    <div>{m.sb_router_table_col_order()}</div>
+    <div>{m.sb_router_table_col_action()}</div>
+    <div>{m.sb_router_table_col_conditions()}</div>
+    <div class="outbound-head">{m.sb_router_table_col_outbound()}</div>
+    <div class="actions-col">{m.sb_router_table_col_actions()}</div>
   </div>
   {#each rowData as row (row.idx)}
     <div
@@ -165,19 +166,19 @@
             class="rule-checkbox"
             checked={selected.has(row.idx)}
             onchange={() => onToggleSelect(row.idx)}
-            aria-label={`Выбрать правило ${row.idx}`}
+            aria-label={m.sb_router_table_select_rule_aria({ n: row.idx })}
           />
         {:else}
           {row.idx}
         {/if}
       </div>
-      <div class="reorder">
+      <div class="reorder" data-label={m.sb_router_table_col_order()}>
         {#if !row.sys && !selectMode}
           <button
             type="button"
             class="route-reorder-btn"
-            title={`Поднять правило #${row.idx}`}
-            aria-label={`Поднять правило ${row.idx}`}
+            title={m.sb_router_table_move_up_title({ n: row.idx })}
+            aria-label={m.sb_router_table_move_up_aria({ n: row.idx })}
             disabled={row.idx === 0}
             onclick={() => onMove(row.idx, 'up')}
           >
@@ -186,8 +187,8 @@
           <button
             type="button"
             class="route-reorder-btn"
-            title={`Опустить правило #${row.idx}`}
-            aria-label={`Опустить правило ${row.idx}`}
+            title={m.sb_router_table_move_down_title({ n: row.idx })}
+            aria-label={m.sb_router_table_move_down_aria({ n: row.idx })}
             disabled={row.idx === rules.length - 1}
             onclick={() => onMove(row.idx, 'down')}
           >
@@ -196,15 +197,15 @@
         {/if}
       </div>
       <div class="action-badge-cell">
-        <span class="mobile-label">Действие</span>
+        <span class="mobile-label">{m.sb_router_table_col_action()}</span>
         <Badge variant={row.actionVariant} size="sm" mono>{row.actionLabel}</Badge>
       </div>
       <div class="matchers" title={row.matchers}>
-        <span class="mobile-label">Условия</span>
+        <span class="mobile-label">{m.sb_router_table_col_conditions()}</span>
         <span class="matcher-text">{row.matchers}</span>
       </div>
       <div class="outbound-cell">
-        <span class="mobile-label">Выход</span>
+        <span class="mobile-label">{m.sb_router_table_col_outbound()}</span>
         {#if row.outboundDisplay}
           <OutboundTile outbound={row.outboundDisplay} size="compact" />
         {:else}
@@ -216,8 +217,8 @@
           <button
             type="button"
             class="route-action-btn"
-            title={`Редактировать правило #${row.idx}`}
-            aria-label={`Редактировать правило ${row.idx}`}
+            title={m.sb_router_table_edit_title({ n: row.idx })}
+            aria-label={m.sb_router_table_edit_aria({ n: row.idx })}
             onclick={() => onEdit(row.idx)}
           >
             <Edit3 size={15} />
@@ -225,8 +226,8 @@
           <button
             type="button"
             class="route-action-btn danger"
-            title={`Удалить правило #${row.idx}`}
-            aria-label={`Удалить правило ${row.idx}`}
+            title={m.sb_router_table_delete_title({ n: row.idx })}
+            aria-label={m.sb_router_table_delete_aria({ n: row.idx })}
             onclick={() => onDelete(row.idx)}
           >
             <Trash2 size={15} />
@@ -236,7 +237,7 @@
     </div>
   {/each}
   {#if rules.length === 0}
-    <div class="empty">Нет правил</div>
+    <div class="empty">{m.sb_router_table_empty()}</div>
   {/if}
 </div>
 
@@ -474,7 +475,7 @@
       border-top: 1px dashed color-mix(in srgb, var(--border) 85%, transparent);
     }
     .reorder::before {
-      content: 'Порядок';
+      content: attr(data-label);
       align-self: center;
       margin-right: 6px;
       font-size: 10px;

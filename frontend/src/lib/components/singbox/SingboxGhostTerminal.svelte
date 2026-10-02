@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { linkImportErrorText } from '$lib/utils/linkImportError';
 	import { singboxStatus, singboxTunnels } from '$lib/stores/singbox';
@@ -28,17 +29,17 @@
 		return status.running ? 'ok' : 'ready';
 	});
 	const statusLine = $derived.by(() => {
-		if ($singboxStatus.status === 'loading' && !status) return 'получаю статус...';
-		if ($singboxStatus.status === 'error' && !status) return 'статус недоступен';
-		if (!status?.installed) return 'sing-box · не установлен';
+		if ($singboxStatus.status === 'loading' && !status) return m.singbox_term_status_loading();
+		if ($singboxStatus.status === 'error' && !status) return m.singbox_term_status_unavailable();
+		if (!status?.installed) return m.singbox_term_not_installed();
 
 		const parts = ['sing-box'];
 		const version = status.version || status.currentVersion;
 		if (version) parts.push(`v${version}`);
-		parts.push(status.running ? 'работает' : 'готов');
+		parts.push(status.running ? m.singbox_term_running() : m.singbox_term_ready());
 		if (status.running && status.pid) parts.push(`pid ${status.pid}`);
-		if (status.updateAvailable) parts.push('доступно обновление');
-		if (!status.proxyComponent) parts.push('нет компонента proxy');
+		if (status.updateAvailable) parts.push(m.singbox_term_update_available());
+		if (!status.proxyComponent) parts.push(m.singbox_term_no_proxy());
 		return parts.join(' · ');
 	});
 
@@ -87,22 +88,22 @@
 				disabled={!input.trim() || importing}
 			>
 				<span class="term-arrow">{'>'}</span>
-				{importing ? 'импорт...' : 'импортировать ссылки'}
+				{importing ? m.singbox_term_importing() : m.singbox_term_import()}
 			</button>
 		</div>
 
 		{#if result}
 			{#if (result.imported?.length ?? 0) > 0}
 				<div class="term-singbox-success">
-					Импортировано: {result.imported.length}
+					{m.singbox_term_imported({ count: result.imported.length })}
 				</div>
 			{/if}
 			{#if (result.errors?.length ?? 0) > 0}
 				<div class="term-singbox-errors">
-					<strong>Ошибки: {result.errors.length}</strong>
+					<strong>{m.singbox_term_errors({ count: result.errors.length })}</strong>
 					<ul>
 						{#each result.errors ?? [] as e}
-							<li>Строка {e.line}: {linkImportErrorText(e.error)}</li>
+							<li>{m.singbox_term_line_error({ line: e.line, error: linkImportErrorText(e.error) })}</li>
 						{/each}
 					</ul>
 				</div>

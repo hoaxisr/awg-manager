@@ -30,6 +30,7 @@
 	} from '$lib/types';
 	import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
 	import { Edit3, Gauge } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 	import { resolveCompositeOutboundView } from '$lib/components/sb-router/compositeOutboundDisplay';
 	import { resolveMemberLabel } from '$lib/utils/memberLabel';
 	import { delayHealth, formatDelay } from './formatDelay';
@@ -115,8 +116,8 @@
 		compositeType === 'urltest'
 			? `auto by latency${outbound.interval ? ` · interval ${outbound.interval}` : ''}`
 			: compositeType === 'selector'
-				? 'ручной выбор'
-				: 'балансировка нагрузки',
+				? m.fakeip_outbounds_subtitle_manual()
+				: m.fakeip_outbounds_subtitle_balancing(),
 	);
 
 	function memberLabel(tag: string): string {
@@ -127,8 +128,8 @@
 	// group snapshot's lastDelay. `undefined` → untested.
 	function memberDelay(tag: string): number | undefined {
 		if (testDelays && tag in testDelays) return testDelays[tag];
-		const m = liveGroup?.members.find((x) => x.tag === tag);
-		return m?.lastDelay;
+		const member = liveGroup?.members.find((x) => x.tag === tag);
+		return member?.lastDelay;
 	}
 </script>
 
@@ -139,8 +140,8 @@
 			type="button"
 			class="ib"
 			onclick={() => onEdit(outbound.tag)}
-			aria-label={`Редактировать outbound ${outbound.tag}`}
-			title={`Редактировать «${groupTitle}»`}
+			aria-label={m.fakeip_outbounds_edit_aria({ tag: outbound.tag })}
+			title={m.fakeip_outbounds_edit_title({ title: groupTitle })}
 		>
 			<Edit3 size={14} aria-hidden="true" />
 		</button>
@@ -148,8 +149,8 @@
 			type="button"
 			class="ib danger"
 			onclick={() => onDelete(outbound.tag)}
-			aria-label={`Удалить outbound ${outbound.tag}`}
-			title={`Удалить «${groupTitle}»`}
+			aria-label={m.sb_router_outbounds_delete_aria({ tag: outbound.tag })}
+			title={m.fakeip_outbounds_delete_title({ title: groupTitle })}
 		>
 			<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 				<path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
@@ -162,7 +163,7 @@
 	<div class="srv">{subtitle}</div>
 
 	{#if memberTags.length === 0}
-		<p class="empty">В группе нет участников.</p>
+		<p class="empty">{m.fakeip_outbounds_no_members()}</p>
 	{:else}
 		<div class="members">
 			{#each memberTags as tag (tag)}
@@ -175,7 +176,7 @@
 						class="mem selectable"
 						disabled={selecting}
 						onclick={() => onSelect(outbound.tag, tag)}
-						title="Сделать активным"
+						title={m.fakeip_outbounds_make_active()}
 					>
 						<span class="dot" data-health={health} aria-hidden="true"></span>
 						<span class="mem-label">{memberLabel(tag)}</span>
@@ -199,8 +200,7 @@
 		</div>
 		{#if !live}
 			<p class="hint">
-				Движок не активен — активный участник, задержки и управление
-				недоступны. Список участников показан из конфигурации.
+				{m.fakeip_outbounds_engine_inactive_hint()}
 			</p>
 		{/if}
 	{/if}
@@ -216,7 +216,7 @@
 			onclick={() => onTest(outbound.tag)}
 		>
 			<Gauge size={13} aria-hidden="true" />
-			{testing ? 'тест…' : 'тест группы'}
+			{testing ? m.fakeip_outbounds_testing() : m.fakeip_outbounds_test_group()}
 		</button>
 	</div>
 </div>

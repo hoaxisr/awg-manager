@@ -1,6 +1,7 @@
 <script lang="ts">
 	// EX-49..54 — журнал процесса: автоскролл, «К последним строкам», счётчик,
 	// «Копировать», тумблер отладки (только FreeTurn-клиент: у wdtt флага -debug нет).
+	import { m } from '$lib/i18n';
 	import { tick } from 'svelte';
 	import { ArrowDown } from 'lucide-svelte';
 	import { Button, FieldHint, Toggle } from '$lib/components/ui';
@@ -31,7 +32,7 @@
 		hint = '',
 		showDebug = false,
 		debug = false,
-		debugHint = 'Отладочный вывод включится при следующем запуске процесса.',
+		debugHint,
 		ondebug,
 	}: Props = $props();
 
@@ -61,16 +62,16 @@
 
 	async function copyLog() {
 		if (!text) return;
-		if (!(await copyToClipboard(text))) notifications.error('Не удалось скопировать');
+		if (!(await copyToClipboard(text))) notifications.error(m.proxy_log_copy_failed());
 	}
 </script>
 
-<DetailSection title="Журнал" {hint} aside={toolbar}>
+<DetailSection title={m.proxy_log_title()} {hint} aside={toolbar}>
 	<pre bind:this={logEl} class="log" onscroll={onScroll}>{text}</pre>
 	{#if showDebug}
 		<div class="debug-row">
-			<Toggle label="Отладочный вывод" checked={debug} onchange={(v) => ondebug?.(v)} />
-			<FieldHint text={debugHint} ariaLabel="Подсказка: отладочный вывод" />
+			<Toggle label={m.proxy_log_debug_label()} checked={debug} onchange={(v) => ondebug?.(v)} />
+			<FieldHint text={debugHint ?? m.proxy_log_debug_hint()} ariaLabel={m.proxy_log_debug_aria()} />
 		</div>
 	{/if}
 </DetailSection>
@@ -79,12 +80,12 @@
 	{#if !stickToBottom}
 		<Button variant="ghost" size="sm" onclick={scrollToBottom}>
 			{#snippet iconBefore()}<ArrowDown size={12} />{/snippet}
-			К последним строкам
+			{m.proxy_log_to_latest()}
 		</Button>
 	{/if}
 	{#if routerClock}<span class="meta">{routerClock}</span>{/if}
-	<span class="meta">строк: {lineCount}</span>
-	<Button variant="ghost" size="sm" disabled={!text} onclick={copyLog}>Копировать</Button>
+	<span class="meta">{m.proxy_log_lines({ count: lineCount })}</span>
+	<Button variant="ghost" size="sm" disabled={!text} onclick={copyLog}>{m.proxy_log_copy()}</Button>
 {/snippet}
 
 <style>

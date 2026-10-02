@@ -33,7 +33,4 @@ export const POLICY_WORDS = ['политика', 'политики', 'полит
 export const SUBSCRIPTION_WORDS = ['подписка', 'подписки', 'подписок'] as const satisfies PluralWords;
 export const REWRITE_WORDS = ['перезапись', 'перезаписи', 'перезаписей'] as const satisfies PluralWords;
 export const AVAILABLE_WORDS = ['доступный', 'доступных', 'доступных'] as const satisfies PluralWords;
-export const MINUTE_WORDS = ['минуту', 'минуты', 'минут'] as const satisfies PluralWords;
-export const HOUR_WORDS = ['час', 'часа', 'часов'] as const satisfies PluralWords;
-export const DAY_WORDS = ['день', 'дня', 'дней'] as const satisfies PluralWords;
 export const CORE_WORDS = ['ядро', 'ядра', 'ядер'] as const satisfies PluralWords;

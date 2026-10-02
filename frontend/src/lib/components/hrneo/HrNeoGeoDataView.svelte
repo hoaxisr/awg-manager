@@ -19,6 +19,7 @@
 	import CreateIcon from '$lib/components/ui/icons/CreateIcon.svelte';
 	import DownloadErrorNotice from '$lib/components/downloads/DownloadErrorNotice.svelte';
 	import { Link } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		files: GeoFileEntry[];
@@ -69,11 +70,12 @@
 
 	type LastDownload = {
 		ok: boolean;
-		action: string;
+		// Код операции: перевод подписи и текста успеха выводится при рендере.
+		action: DownloadOperation['kind'];
+		file?: string;
 		routeLabel: string;
-		// Success text; on failure the raw caught error is kept in `error`
+		// On failure the raw caught error is kept in `error`
 		// and humanized at render time via DownloadErrorNotice.
-		message?: string;
 		error?: unknown;
 	};
 
@@ -119,6 +121,32 @@
 		return progressByPath[url] ?? null;
 	}
 
+	function downloadActionLabel(d: LastDownload): string {
+		switch (d.action) {
+			case 'add':
+				return m.hrneo_geo_action_add();
+			case 'preset':
+				return m.hrneo_geo_action_preset();
+			case 'update':
+				return m.hrneo_geo_action_update({ file: d.file ?? '' });
+			default:
+				return m.hrneo_geo_action_sync();
+		}
+	}
+
+	function downloadSuccessMessage(d: LastDownload): string {
+		switch (d.action) {
+			case 'add':
+				return m.hrneo_geo_msg_added();
+			case 'preset':
+				return m.hrneo_geo_msg_preset();
+			case 'update':
+				return m.hrneo_geo_msg_updated();
+			default:
+				return m.hrneo_geo_msg_synced();
+		}
+	}
+
 	function fmtPercent(p: { downloaded: number; total: number }): string {
 		if (p.total <= 0) return '';
 		return `${Math.min(100, Math.round((p.downloaded / p.total) * 100))}%`;
@@ -139,15 +167,14 @@
 			addUrl = '';
 			lastDownload = {
 				ok: true,
-				action: 'Добавление geo-файла',
+				action: 'add',
 				routeLabel: op.routeLabel,
-				message: 'Файл скачан',
 			};
 			onrefresh();
 		} catch (e: unknown) {
 			lastDownload = {
 				ok: false,
-				action: 'Добавление geo-файла',
+				action: 'add',
 				routeLabel: op.routeLabel,
 				error: e,
 			};
@@ -170,15 +197,14 @@
 			await api.addGeoFile(type, url, { tag: op.routeTag, kind: op.routeKind });
 			lastDownload = {
 				ok: true,
-				action: 'Добавление пресета',
+				action: 'preset',
 				routeLabel: op.routeLabel,
-				message: 'Пресет скачан',
 			};
 			onrefresh();
 		} catch (e: unknown) {
 			lastDownload = {
 				ok: false,
-				action: 'Добавление пресета',
+				action: 'preset',
 				routeLabel: op.routeLabel,
 				error: e,
 			};
@@ -200,15 +226,16 @@
 			await api.updateGeoFile(path, { tag: op.routeTag, kind: op.routeKind });
 			lastDownload = {
 				ok: true,
-				action: `Обновление ${fileName(path)}`,
+				action: 'update',
+				file: fileName(path),
 				routeLabel: op.routeLabel,
-				message: 'Файл обновлён',
 			};
 			onrefresh();
 		} catch (e: unknown) {
 			lastDownload = {
 				ok: false,
-				action: `Обновление ${fileName(path)}`,
+				action: 'update',
+				file: fileName(path),
 				routeLabel: op.routeLabel,
 				error: e,
 			};
@@ -257,7 +284,7 @@
 				if (upd.partial && upd.error) {
 					notes.push(
 						upd.updated > 0
-							? `Обновлено ${upd.updated}, ошибки: ${upd.error}`
+							? m.hrneo_geo_sync_partial({ updated: upd.updated, error: upd.error })
 							: upd.error,
 					);
 				}
@@ -269,16 +296,15 @@
 			if (notes.length > 0) {
 				lastDownload = {
 					ok: false,
-					action: 'Синхронизация geo-файлов',
+					action: 'sync',
 					routeLabel: op.routeLabel,
 					error: notes.join('; '),
 				};
 			} else {
 				lastDownload = {
 					ok: true,
-					action: 'Синхронизация geo-файлов',
+					action: 'sync',
 					routeLabel: op.routeLabel,
-					message: 'Синхронизация выполнена',
 				};
 			}
 		} finally {
@@ -360,8 +386,8 @@
 <div class="geo-pane">
 	<header class="pane-header">
 		<div class="pane-title">
-			<h2>Гео-данные</h2>
-			<span class="pane-meta">{files.length} файла</span>
+			<h2>{m.hrneo_sidebar_geodata()}</h2>
+			<span class="pane-meta">{m.hrneo_geo_files_count({ count: files.length })}</span>
 		</div>
 
 		<div class="pane-actions">
@@ -372,9 +398,9 @@
 				disabled={routeActionsDisabled}
 				loading={busy === 'sync'}
 				onclick={syncFromHR}
-				title="Подтянуть пути из hrneo.conf (External) и перекачать файлы AWGM (External не трогаем — обновляйте в HR Neo)"
+				title={m.hrneo_geo_sync_title()}
 			>
-				Синхронизировать
+				{m.hrneo_geo_sync()}
 			</Button>
 		</div>
 	</header>
@@ -384,28 +410,26 @@
     <div>
 		{#if routeSettingsError}
 		<div class="route-status route-status-error">
-			{routeSettingsError}. Откройте Настройки → Загрузки и обновления или обновите страницу.
+			{m.hrneo_geo_route_error({ error: routeSettingsError })}
 		</div>
 		{:else if !routeSettingsReady}
 		<div class="route-status route-status-live">
-			Загрузка настроек маршрута geo.dat…
+			{m.hrneo_geo_route_loading()}
 		</div>
 		{:else if routeSettingsWarning}
 		<div class="route-status route-status-warn">
-			Через: <strong>{downloadRouteLabel}</strong>. Не удалось обновить список маршрутов, используется последний известный список: {routeSettingsWarning}
+			{m.hrneo_geo_route_warn_prefix()}<strong>{downloadRouteLabel}</strong>{m.hrneo_geo_route_warn_suffix({ warning: routeSettingsWarning })}
 		</div>
 	{/if}
 	{#if !activeDownload && lastDownload}
 		{#if lastDownload.ok}
 			<div class="route-status route-status-ok">
-				Последняя операция успешна: {lastDownload.action} ({lastDownload.routeLabel}){#if lastDownload.message}
-					— {lastDownload.message}
-				{/if}
+				{m.hrneo_geo_last_ok({ action: downloadActionLabel(lastDownload), route: lastDownload.routeLabel, message: downloadSuccessMessage(lastDownload) })}
 			</div>
 		{:else}
 			<div class="route-status route-status-error">
 				<span class="route-status-head">
-					Не удалось: {lastDownload.action} ({lastDownload.routeLabel})
+					{m.hrneo_geo_last_failed({ action: downloadActionLabel(lastDownload), route: lastDownload.routeLabel })}
 				</span>
 				<DownloadErrorNotice error={lastDownload.error} />
 			</div>
@@ -414,7 +438,7 @@
 	</div>
 	
 	{#if files.length === 0}
-		<div class="empty">Файлы не загружены. Добавьте URL ниже.</div>
+		<div class="empty">{m.hrneo_geo_empty()}</div>
 	{:else}
 		<div class="files">
 			{#each files as f (f.path)}
@@ -425,7 +449,7 @@
 						<button
 							type="button"
 							class="file-name"
-							title={expandedPaths.has(f.path) ? 'Скрыть путь' : f.path}
+							title={expandedPaths.has(f.path) ? m.hrneo_geo_hide_path() : f.path}
 							onclick={() => togglePathExpanded(f.path)}
 						>
 							{#if expandedPaths.has(f.path)}
@@ -439,30 +463,30 @@
 						{#if f.external}
 							<span
 								class="file-external"
-								title="Данный файл управляется HydraRoute Neo"
+								title={m.hrneo_geo_external_title()}
 							>External</span>
 						{/if}
-						<span class="file-meta">{humanSize(f.size)} · {f.tagCount} тегов · {formatRelativeTime(f.updated)}</span>
+						<span class="file-meta">{humanSize(f.size)} · {m.routing_singbox_geo_tags_count({ count: f.tagCount })} · {formatRelativeTime(f.updated)}</span>
 						{#if f.external}
 							<!-- External (HR Neo) — источник нам неизвестен (бэкенд лишь
 							     подставляет догадочный default-URL), показываем только бейдж External -->
 						{:else if f.url}
 							<IconButton
-								ariaLabel="Источник"
-								title="Показать источник"
+								ariaLabel={m.hrneo_geo_source_aria()}
+								title={m.hrneo_geo_source_title()}
 								onclick={() => { sourceModalFile = f; copiedSource = false; }}
 							>
 								<Link size={14} />
 							</IconButton>
 						{:else}
-							<span class="file-local" title="Загружен вручную">локальный</span>
+							<span class="file-local" title={m.hrneo_geo_local_title()}>{m.hrneo_geo_local()}</span>
 						{/if}
 						{#if busy === f.path && fp}
 							<span class="row-progress">
 								{#if fp.phase === 'download'}
 									{fmtPercent(fp)} {humanSize(fp.downloaded)}
 								{:else if fp.phase === 'validate'}
-									валидация…
+									{m.hrneo_geo_validating()}
 								{/if}
 							</span>
 						{/if}
@@ -475,7 +499,7 @@
 								disabled={busy !== null}
 								onclick={() => (pendingTakeControl = f)}
 							>
-								Взять под управление
+								{m.hrneo_geo_take_control()}
 							</Button>
 						{/if}
 						{#if canUpdate(f)}
@@ -486,7 +510,7 @@
 								loading={busy === f.path}
 								onclick={() => update(f.path)}
 							>
-								Обновить
+								{m.routing_page_refresh()}
 							</Button>
 						{/if}
 						<Button
@@ -495,7 +519,7 @@
 							disabled={busy !== null}
 							onclick={() => requestRemove(f)}
 						>
-							Удалить
+							{m.common_delete()}
 						</Button>
 					</div>
 				</div>
@@ -504,7 +528,7 @@
 	{/if}
 
 	<div class="add-form">
-		<div class="form-label">Пресеты Ground-Zerro</div>
+		<div class="form-label">{m.hrneo_geo_presets()}</div>
 		<div class="preset-row">
 			<Button
 				variant="secondary"
@@ -522,9 +546,9 @@
 			>
 				+ geosite_GA.dat
 			</Button>
-			<span class="preset-hint">Агрегат v2fly + RU-блоклистов, обновляется ежедневно.</span>
+			<span class="preset-hint">{m.hrneo_geo_preset_hint()}</span>
 		</div>
-		<div class="form-label form-label-spaced">Добавить по URL</div>
+		<div class="form-label form-label-spaced">{m.hrneo_geo_add_by_url()}</div>
 		<div class="add-row">
 			<div class="add-type-select">
 				<Dropdown
@@ -552,21 +576,28 @@
 				iconBefore={createIcon}
 				loading={busy === 'add'}
 			>
-				Добавить
+				{m.routing_add()}
 			</Button>
 		</div>
 		{#if busy === 'add'}
 			<div class="busy-hint">
 				{#if progress?.phase === 'download'}
-					Скачивание через {activeDownload?.routeLabel ?? downloadRouteLabel}:
-					{fmtPercent(progress)} —
-					{humanSize(progress.downloaded)}{progress.total > 0
-						? ` из ${humanSize(progress.total)}`
-						: ''}
+					{progress.total > 0
+						? m.hrneo_geo_downloading_of({
+								route: activeDownload?.routeLabel ?? downloadRouteLabel,
+								percent: fmtPercent(progress),
+								downloaded: humanSize(progress.downloaded),
+								total: humanSize(progress.total),
+							})
+						: m.hrneo_geo_downloading({
+								route: activeDownload?.routeLabel ?? downloadRouteLabel,
+								percent: fmtPercent(progress),
+								downloaded: humanSize(progress.downloaded),
+							})}
 				{:else if progress?.phase === 'validate'}
-					Валидация файла…
+					{m.hrneo_geo_validating_file()}
 				{:else}
-					Подключение через {activeDownload?.routeLabel ?? downloadRouteLabel}…
+					{m.hrneo_geo_connecting({ route: activeDownload?.routeLabel ?? downloadRouteLabel })}
 				{/if}
 				<div class="progress-bar">
 					{#if progress && progress.total > 0}
@@ -581,8 +612,7 @@
 			</div>
 		{/if}
 		<div class="form-hint">
-			Тип <code>{addType}</code> должен соответствовать содержимому. Файл с 0 записей будет отклонён —
-			убедитесь что выбран правильный тип для этого URL. Лимит размера: 200 МБ.
+			{m.hrneo_geo_type_hint_prefix()}<code>{addType}</code>{m.hrneo_geo_type_hint_suffix()}
 		</div>
 	</div>
 </div>
@@ -591,10 +621,10 @@
 	{@const pt = pendingTakeControl}
 	<ConfirmModal
 		open={true}
-		title="Взять под управление"
-		message={`Перенести «${fileName(pt.path)}» в каталог awg-manager?`}
-		secondary="Файл будет перенесён из директории HydraRoute (/opt/etc/HydraRoute) и дальше управляться из AWGM. Путь в hrneo.conf обновится при синхронизации."
-		confirmLabel="Перенести"
+		title={m.hrneo_geo_take_control()}
+		message={m.hrneo_geo_take_control_message({ file: fileName(pt.path) })}
+		secondary={m.hrneo_geo_take_control_secondary()}
+		confirmLabel={m.hrneo_geo_take_control_confirm()}
 		variant="primary"
 		busy={busy === pt.path}
 		onConfirm={confirmTakeControl}
@@ -607,12 +637,12 @@
 	{@const hrKey = pd.type === 'geosite' ? 'GeoSiteFile' : 'GeoIPFile'}
 	<ConfirmModal
 		open={true}
-		title="Удалить гео-файл"
+		title={m.hrneo_geo_delete_title()}
 		message={pd.external
-			? `Удалить «${fileName(pd.path)}» с диска? Файл управляется HydraRoute Neo — будет удалён из /opt/etc/HydraRoute, не только из каталога AWGM.`
-			: `Удалить «${fileName(pd.path)}»?`}
+			? m.hrneo_geo_delete_external_message({ file: fileName(pd.path) })
+			: m.hrneo_geo_delete_message({ file: fileName(pd.path) })}
 		filePath={pd.path}
-		secondary={`Из hrneo.conf уберётся строка ${hrKey}=${pd.path} (если установлен HydraRoute).`}
+		secondary={m.hrneo_geo_delete_secondary({ key: hrKey, path: pd.path })}
 		busy={busy === pd.path}
 		onConfirm={confirmRemove}
 		onClose={() => (pendingDelete = null)}
@@ -620,11 +650,11 @@
 {/if}
 
 {#if sourceModalFile}
-	<Modal open title="Источник гео-файла" size="md" onclose={() => (sourceModalFile = null)}>
+	<Modal open title={m.hrneo_geo_source_modal_title()} size="md" onclose={() => (sourceModalFile = null)}>
 		<div class="source-modal">
 			<code class="source-url">{sourceModalFile.url}</code>
 			<Button variant="secondary" size="sm" onclick={copySource}>
-				{copiedSource ? 'Скопировано' : 'Копировать'}
+				{copiedSource ? m.servers_conf_copied() : m.diag_logs_copy()}
 			</Button>
 		</div>
 	</Modal>

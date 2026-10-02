@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { Button, Input, StatusDot } from '$lib/components/ui';
 	import type { ForeignIfaceCandidate } from '$lib/types';
@@ -48,34 +49,33 @@
 </script>
 
 <button type="button" class="foreign-toggle" onclick={toggle}>
-	{#if open}<ChevronDown size={15} strokeWidth={2.5} />{:else}<ChevronRight size={15} strokeWidth={2.5} />{/if} Нужного нет? Интерфейс другой программы…
+	{#if open}<ChevronDown size={15} strokeWidth={2.5} />{:else}<ChevronRight size={15} strokeWidth={2.5} />{/if} {m.routing_singbox_foreign_toggle()}
 </button>
 {#if open}
 	<div class="foreign-panel">
 		<p class="foreign-hint">
-			Выбранный интерфейс будет отмечен как сторонний: панель не станет его удалять и занимать его номер. Для
-			OpkgTun сначала создайте запись в NDMS, потом запускайте программу.
+			{m.routing_singbox_foreign_hint()}
 		</p>
 		{#if loading}
-			<p class="foreign-hint">Загрузка…</p>
+			<p class="foreign-hint">{m.routing_singbox_loading()}</p>
 		{:else}
 			{#each candidates as c (c.name)}
 				<div class="foreign-row">
 					<span class="foreign-name">
 						<StatusDot variant={c.up ? 'success' : 'warning'} />
 						{c.label}
-						<span class="foreign-hint">{c.kind === 'opkgtun' ? 'OpkgTun' : 'ядро'} · {c.name}</span>
+						<span class="foreign-hint">{c.kind === 'opkgtun' ? 'OpkgTun' : m.routing_singbox_foreign_kernel()} · {c.name}</span>
 					</span>
 					<Button size="sm" variant="outline-primary" disabled={busy} onclick={() => pick(c.name)}>
-						Отметить и выбрать «{c.label}»
+						{m.routing_singbox_foreign_mark_label({ label: c.label })}
 					</Button>
 				</div>
 			{/each}
 		{/if}
 		<div class="foreign-row">
-			<Input label="Имя интерфейса ядра" placeholder="имя интерфейса ядра" bind:value={name} />
+			<Input label={m.routing_singbox_foreign_iface_label()} placeholder={m.routing_singbox_foreign_iface_placeholder()} bind:value={name} />
 			<Button size="sm" variant="secondary" disabled={busy || !name.trim()} onclick={() => pick(name.trim())}>
-				Отметить и выбрать
+				{m.routing_singbox_foreign_mark()}
 			</Button>
 		</div>
 		{#if error}<div class="error-text visible">{error}</div>{/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { STATUS_LABEL, type PeerRowProps } from '$lib/utils/peerRowVM';
 	import { Toggle } from '$lib/components/ui';
 	import { Download, SquarePen, Trash2 } from 'lucide-svelte';
@@ -26,15 +27,15 @@
 		{#if showDownload || showActions}
 			<div class="mobile-peer-actions">
 				{#if showDownload}
-					<button class="peer-action-btn" onclick={() => onConf(peer)} title={`Скачать .conf для «${vm.name}»`}>
+					<button class="peer-action-btn" onclick={() => onConf(peer)} title={m.servers_peer_row_download_conf({ name: vm.name })}>
 						<Download size={18} strokeWidth={2} aria-hidden="true" />
 					</button>
 				{/if}
 				{#if showActions}
-					<button class="peer-action-btn" onclick={() => onEdit(peer)} title={`Редактировать «${vm.name}»`}>
+					<button class="peer-action-btn" onclick={() => onEdit(peer)} title={m.servers_peer_row_edit({ name: vm.name })}>
 						<SquarePen size={18} strokeWidth={2} aria-hidden="true" />
 					</button>
-					<button class="peer-action-btn peer-action-btn-danger" onclick={() => onDelete(peer)} title={`Удалить «${vm.name}»`}>
+					<button class="peer-action-btn peer-action-btn-danger" onclick={() => onDelete(peer)} title={m.servers_peer_row_delete({ name: vm.name })}>
 						<Trash2 size={18} strokeWidth={2} aria-hidden="true" />
 					</button>
 				{/if}
@@ -47,7 +48,7 @@
 			{#if vm.handshake}{vm.handshake.main}{#if vm.handshake.suffix}{" "}{vm.handshake.suffix}{/if}{:else}-{/if}
 		</span>
 		<div class="mobile-peer-net-row mono tech-value">
-			<button type="button" class="cell-copy mobile-peer-ip" onclick={() => onCopy(vm.ip, 'IP')} title={`Скопировать IP ${vm.ip}`}>
+			<button type="button" class="cell-copy mobile-peer-ip" onclick={() => onCopy(vm.ip, 'IP')} title={m.servers_peer_row_copy_ip({ ip: vm.ip })}>
 				<span class="mobile-label">IP</span> {vm.ip}
 			</button>
 			<span class="mobile-peer-endpoint"><span class="mobile-label">EP</span> {vm.endpointHost}</span>
