@@ -1,11 +1,9 @@
 package api
 
 import (
-	"context"
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,48 +79,30 @@ func TestHookHandler_Handle_IfCreated(t *testing.T) {
 	}
 }
 
-func TestHookHandler_TunnelRefresher_FiresOnCreateAndDestroy(t *testing.T) {
-	// Regression: user reported a system-tunnel card staying visible
-	// after NDMS fired ifdestroyed. The hook handler must call the
-	// tunnel-snapshot refresher so the UI re-renders.
-	var calls int32
-	refreshed := make(chan struct{}, 4)
+// Своё создание помечается в событии: диспетчер сверит его списком, но
+// публиковать не станет — создатель публикует сам после записи в стор.
+func TestHookHandler_IfCreated_UnderGate_SelfCreated(t *testing.T) {
+	disp := &spyDispatcher{}
+	h := newTestHookHandler(disp)
 
-	h := newTestHookHandler(&spyDispatcher{})
-	h.SetTunnelRefresher(func(ctx context.Context) {
-		atomic.AddInt32(&calls, 1)
-		refreshed <- struct{}{}
-	})
+	h.EnterSelfCreate()
+	handleForm(t, h, "type=ifcreated&id=Wireguard1")
+	handleForm(t, h, "type=ifdestroyed&id=Wireguard2")
+	h.ExitSelfCreate()
+	handleForm(t, h, "type=ifcreated&id=Wireguard3")
 
-	for _, typ := range []string{"ifcreated", "ifdestroyed"} {
-		handleForm(t, h, "type="+typ+"&id=Wireguard1")
+	got := disp.Events()
+	if len(got) != 3 {
+		t.Fatalf("events: want 3, got %d", len(got))
 	}
-
-	// Refresher runs async in a goroutine; wait for both firings.
-	for i := 0; i < 2; i++ {
-		select {
-		case <-refreshed:
-		case <-time.After(500 * time.Millisecond):
-			t.Fatalf("refresher call %d did not fire within 500ms", i+1)
-		}
+	if !got[0].SelfCreated {
+		t.Errorf("ifcreated под гейтом: SelfCreated=false, want true")
 	}
-	if got := atomic.LoadInt32(&calls); got != 2 {
-		t.Errorf("refresher calls: want 2, got %d", got)
+	if got[1].SelfCreated {
+		t.Errorf("ifdestroyed под гейтом: SelfCreated=true, want false")
 	}
-}
-
-func TestHookHandler_TunnelRefresher_NotFiredOnLayerChange(t *testing.T) {
-	var calls int32
-	h := newTestHookHandler(&spyDispatcher{})
-	h.SetTunnelRefresher(func(ctx context.Context) {
-		atomic.AddInt32(&calls, 1)
-	})
-
-	handleForm(t, h, "type=iflayerchanged&id=Wireguard0&layer=conf&level=running")
-
-	time.Sleep(50 * time.Millisecond)
-	if got := atomic.LoadInt32(&calls); got != 0 {
-		t.Errorf("refresher must only fire on create/destroy, fired %d times on layerchanged", got)
+	if got[2].SelfCreated {
+		t.Errorf("ifcreated после ExitSelfCreate: SelfCreated=true, want false")
 	}
 }
 

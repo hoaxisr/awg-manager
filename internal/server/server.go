@@ -729,7 +729,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.registerMcpRoutes(mux, h)
 	s.registerStaticRoutes(mux, h)
 	// Последней строкой: к этому месту HookHandler настроен всеми Set*
-	// (SetTunnelRefresher — в wireCrossHandlers), а Handle зовётся из
+	// (часть — в wireCrossHandlers), а Handle зовётся из
 	// горутины читателя spool — наполовину настроенный он видеть не должен.
 	if s.hookSink != nil {
 		s.hookSink.Publish(h.hookHandler)

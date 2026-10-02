@@ -102,21 +102,30 @@ func TestScenario_ExternalRemoveNoHook_GetStateNoRCI(t *testing.T) {
 	}
 }
 
-// deliverHooks доставляет очередь хуков оракула диспетчеру и ждёт конца прохода.
+// deliverHooks доставляет очередь хуков оракула диспетчеру одной пачкой и ждёт
+// её конца: списка, если в пачке были хуки существования, иначе прохода.
 func deliverHooks(t *testing.T, q *query.Queries, f *query.FakeNDMS) {
 	t.Helper()
 	d := events.NewDispatcher(q, events.NopLogger())
 	done := make(chan struct{}, 1)
 	d.SetRoutingChanged(func() { done <- struct{}{} }) // конец прохода
-	d.Start()
-	defer d.Stop()
+	listed := make(chan struct{}, 1)
+	d.SetExistenceListed(func(bool) { listed <- struct{}{} }) // конец списка пачки
+	existence := false
 	for _, h := range f.DrainHooks() {
+		existence = existence || h.Type == string(events.EventIfCreated) || h.Type == string(events.EventIfDestroyed)
 		d.Enqueue(events.Event{Type: events.EventType(h.Type), ID: h.ID, Layer: h.Layer, Level: h.Level})
 	}
+	d.Start()
+	defer d.Stop()
+	wait := done
+	if existence {
+		wait = listed
+	}
 	select {
-	case <-done:
+	case <-wait:
 	case <-time.After(2 * time.Second):
-		t.Fatal("проход диспетчера не завершился за 2 с")
+		t.Fatal("пачка хуков не обработана за 2 с")
 	}
 }
 

@@ -12,7 +12,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/connections"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
-	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/mcp"
 	"github.com/hoaxisr/awg-manager/internal/mcp/localdeps"
 	"github.com/hoaxisr/awg-manager/internal/openapi"
@@ -771,39 +770,13 @@ func (s *Server) wireCrossHandlers(mux *http.ServeMux, h *routeHandlers) {
 	}
 
 	// Composite tunnels snapshot builder — used by GET /api/tunnels/all
-	// and by the hook-driven resource:invalidated refresher to assemble
-	// the {tunnels, external, system} payload the polling store reads.
+	// to assemble the {tunnels, external, system} payload the polling
+	// store reads.
 	tsb := api.NewTunnelsSnapshotBuilder()
 	tsb.SetTunnelsHandler(h.tunnelsHandler)
 	tsb.SetExternalHandler(h.externalHandler)
 	tsb.SetSystemTunnelsHandler(h.systemTunnelHandler)
 
-	// Wire hook-driven tunnel invalidation so the UI drops destroyed
-	// tunnel cards (including system tunnels) without a browser refresh.
-	// The closure invalidates the in-memory NDMS caches so the next
-	// poll reads fresh data, then publishes resource:invalidated; the
-	// frontend tunnels store responds by refetching /api/tunnels/all.
-	invalidateTunnelsOnHook := func(ctx context.Context) {
-		_ = ctx
-		// NDMS cache invalidation stays — hook events signal that the
-		// system view has changed, so our in-memory caches must drop
-		// their entries before the next poll.
-		if s.ndmsQueries != nil {
-			if s.ndmsQueries.WGServers != nil {
-				s.ndmsQueries.WGServers.InvalidateAll()
-			}
-			if s.ndmsQueries.Interfaces != nil {
-				s.ndmsQueries.Interfaces.InvalidateAll()
-			}
-		}
-		s.bus.PublishInvalidated(events.ResourceTunnels, "ndms-hook")
-		// Серверы живут в том же кэше WGServers и в том же дереве
-		// интерфейсов. Появление и исчезновение интерфейса меняет и их
-		// список — без этой публикации страница «Серверы» узнавала бы о
-		// сервере, заведённом мимо панели, только по таймеру опроса (F364).
-		s.bus.PublishInvalidated(events.ResourceServers, "ndms-hook")
-	}
-	h.hookHandler.SetTunnelRefresher(invalidateTunnelsOnHook)
 	// Injects the composite {tunnels, external, system} builder used by
 	// GetAll so /api/tunnels/all returns the exact shape the polling
 	// store expects.

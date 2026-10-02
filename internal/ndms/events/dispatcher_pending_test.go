@@ -3,8 +3,10 @@ package events
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -23,13 +25,13 @@ func TestDispatcher_CreatedThenDestroyed_OneList(t *testing.T) {
 	_, _ = q.Interfaces.List(context.Background()) // bootstrap
 	lists := f.ListCalls()
 	d := NewDispatcher(q, NopLogger())
-	done := drainBarrier(d)
+	listed := listedBarrier(d)
 	// Пачка: фантом создан и тут же снят (наша команда по отсутствующему + no).
 	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard2"})
 	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard2"})
 	d.Start()
 	defer d.Stop()
-	waitDrain(t, done)
+	waitListed(t, listed)
 	if f.E != 0 || f.ListCalls() != lists+1 {
 		t.Fatalf("E=%d lists=%d (want 0 and %d): created→destroyed — one list per batch", f.E, f.ListCalls(), lists+1)
 	}
@@ -46,13 +48,13 @@ func TestDispatcher_ExternalCreate_OneListPerBatch(t *testing.T) {
 	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
 	f.Add(ndms.Interface{ID: "Wireguard2", Type: "Wireguard", SystemName: "nwg2"})
 	d := NewDispatcher(q, NopLogger())
-	done := drainBarrier(d)
+	listed := listedBarrier(d)
 	for _, h := range f.DrainHooks() {
 		d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID, Layer: h.Layer, Level: h.Level})
 	}
 	d.Start()
 	defer d.Stop()
-	waitDrain(t, done)
+	waitListed(t, listed)
 	a, _ := q.Interfaces.Get(context.Background(), "Wireguard1")
 	b, _ := q.Interfaces.Get(context.Background(), "Wireguard2")
 	if a == nil || b == nil {
@@ -100,6 +102,7 @@ func TestDispatcher_LayerBeforeCreated_NoListUntilCreated(t *testing.T) {
 	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
 	d := NewDispatcher(q, NopLogger())
 	done := drainBarrier(d)
+	listed := listedBarrier(d)
 	hooks := f.DrainHooks()
 	for _, h := range hooks {
 		if h.Type == "iflayerchanged" {
@@ -120,7 +123,7 @@ func TestDispatcher_LayerBeforeCreated_NoListUntilCreated(t *testing.T) {
 			d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID})
 		}
 	}
-	waitDrain(t, done)
+	waitListed(t, listed)
 	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard1"); got == nil || got.SystemName != "nwg1" {
 		t.Fatalf("record from the list expected after ifcreated, got %#v", got)
 	}
@@ -192,5 +195,114 @@ func TestDispatcher_OverflowRefreshFails_RetriedNextPass(t *testing.T) {
 	waitDrain(t, done)
 	if got, _ := q.Interfaces.Get(context.Background(), "Bridge0"); got != nil {
 		t.Fatalf("неудачное обновление не повторено: %#v", got)
+	}
+}
+
+// S13: пачка хуков существования (чужое создание A, чужое снятие известного B)
+// стоит ОДНОГО списка, и публикация идёт после него, один раз, с publish=true.
+func TestDispatcher_ExistenceBatch_OneListThenPublish(t *testing.T) {
+	f := query.NewFakeNDMS(
+		ndms.Interface{ID: "Bridge0", Type: "Bridge"},
+		ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"})
+	q := oracleQueries(t, f)
+	_, _ = q.Interfaces.List(context.Background())
+	lists := f.ListCalls()
+	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
+	f.Remove("Wireguard0")
+
+	var listStarted atomic.Bool
+	f.InList(func() { listStarted.Store(true) })
+	var calls atomic.Int32
+	type call struct{ publish, afterList bool }
+	got := make(chan call, 4)
+	d := NewDispatcher(q, NopLogger())
+	d.SetExistenceListed(func(publish bool) {
+		calls.Add(1)
+		got <- call{publish, listStarted.Load()}
+	})
+	for _, h := range f.DrainHooks() {
+		d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID, Layer: h.Layer, Level: h.Level})
+	}
+	d.Start()
+	defer d.Stop()
+
+	var c call
+	select {
+	case c = <-got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("слушатель существования не вызван")
+	}
+	if !c.publish || !c.afterList {
+		t.Fatalf("publish=%v afterList=%v, want true/true: публикация — после списка", c.publish, c.afterList)
+	}
+	if n := f.ListCalls() - lists; n != 1 || f.E != 0 {
+		t.Fatalf("списков +%d E=%d, want 1/0: один список на пачку", n, f.E)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("слушатель вызван %d раз, want 1", n)
+	}
+}
+
+// S10: флуд layer-хуков незнакомых id одной пачкой — ни списка, ни публикации.
+func TestDispatcher_LayerHooksUnknownIDs_NoList(t *testing.T) {
+	f := query.NewFakeNDMS(ndms.Interface{ID: "Bridge0", Type: "Bridge"})
+	q := oracleQueries(t, f)
+	_, _ = q.Interfaces.List(context.Background())
+	lists := f.ListCalls()
+	d := NewDispatcher(q, NopLogger())
+	done := drainBarrier(d)
+	var calls atomic.Int32
+	d.SetExistenceListed(func(bool) { calls.Add(1) })
+	for i := range 1000 {
+		d.Enqueue(Event{Type: EventIfLayerChanged, ID: fmt.Sprintf("Wireguard%d", i+1), Layer: "ctrl", Level: "running"})
+	}
+	d.Start()
+	defer d.Stop()
+	waitDrain(t, done)
+	// Слушатель зовётся из горутины, запущенной в проходе до барьера: даём ей
+	// время, чтобы лишний вызов успел проявиться.
+	time.Sleep(100 * time.Millisecond)
+	if n := f.ListCalls() - lists; n != 0 {
+		t.Fatalf("layer-хуки незнакомых id: списков %d, want 0", n)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("слушатель существования вызван %d раз, want 0", n)
+	}
+}
+
+// Своё создание (гейт selfCreate): список есть, публикации нет — её делает
+// создатель после записи в стор. Снятие известного в той же пачке — публикация.
+func TestDispatcher_SelfCreated_ListedNotPublished(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		destroy bool
+		want    bool
+	}{
+		{"только своё создание", false, false},
+		{"своё создание + снятие известного", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := query.NewFakeNDMS(
+				ndms.Interface{ID: "Bridge0", Type: "Bridge"},
+				ndms.Interface{ID: "Wireguard0", Type: "Wireguard", SystemName: "nwg0"})
+			q := oracleQueries(t, f)
+			_, _ = q.Interfaces.List(context.Background())
+			lists := f.ListCalls()
+			d := NewDispatcher(q, NopLogger())
+			listed := listedBarrier(d)
+			d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1", SelfCreated: true})
+			if tc.destroy {
+				f.Remove("Wireguard0")
+				d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
+			}
+			d.Start()
+			defer d.Stop()
+			if got := waitListed(t, listed); got != tc.want {
+				t.Fatalf("publish=%v, want %v", got, tc.want)
+			}
+			if n := f.ListCalls() - lists; n != 1 {
+				t.Fatalf("списков +%d, want 1: своё создание тоже сверяется списком", n)
+			}
+		})
 	}
 }

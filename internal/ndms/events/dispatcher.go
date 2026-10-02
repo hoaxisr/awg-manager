@@ -20,9 +20,12 @@ type RoutingChangedListener = func()
 // For InterfaceStore — event-sourced: each event is applied directly
 // (OnCreated / OnDestroyed / OnLayerChanged / OnIPChanged) and the
 // store mutates its internal map in place, without HTTP. A hook of
-// existence that disagrees with the map marks it dirty; after the batch
-// ONE full list reconciles it (ReconcileDirty). No point reads by name
-// (F546).
+// existence that disagrees with the map marks it dirty. A batch with
+// hooks of existence (ifcreated/ifdestroyed) ends with ONE full list
+// (ReconcileDirty) in its own goroutine — the next batch is not held by
+// it — and only after that list the existence listener is called
+// (SetExistenceListed): the UI is told to refetch tunnels/servers when
+// the map already reflects the batch. No point reads by name (F546).
 //
 // For all other stores (Peers, Routes, RunningConfig, WGServers, ...)
 // the legacy invalidate-on-event pattern is preserved — those stores
@@ -46,7 +49,8 @@ type Dispatcher struct {
 	startOnce sync.Once
 	started   atomic.Bool
 
-	onRouting atomic.Pointer[RoutingChangedListener]
+	onRouting  atomic.Pointer[RoutingChangedListener]
+	onExisting atomic.Pointer[func(publish bool)]
 }
 
 // Logger is the minimal logging surface Dispatcher uses.
@@ -85,6 +89,20 @@ func (d *Dispatcher) SetRoutingChanged(fn RoutingChangedListener) {
 		return
 	}
 	d.onRouting.Store(&fn)
+}
+
+// SetExistenceListed registers (or clears with nil) the callback fired after
+// the list of EVERY batch that carried ifcreated/ifdestroyed — even when the
+// list failed (Warn; the map stays dirty for the next reader). publish is
+// true when the batch had an ifdestroyed or an ifcreated without
+// SelfCreated: our own creation is published by its creator after the
+// tunnel is persisted. nil — nothing is published.
+func (d *Dispatcher) SetExistenceListed(fn func(publish bool)) {
+	if fn == nil {
+		d.onExisting.Store(nil)
+		return
+	}
+	d.onExisting.Store(&fn)
 }
 
 // Start launches the worker goroutine. Non-blocking. Idempotent.
@@ -155,14 +173,34 @@ func (d *Dispatcher) drain() {
 		return
 	}
 
+	existence, publish := false, false
 	for _, e := range batch {
 		d.apply(e)
+		switch e.Type {
+		case EventIfDestroyed:
+			existence, publish = true, true
+		case EventIfCreated:
+			existence = true
+			publish = publish || !e.SelfCreated
+		}
 	}
 	if overflow {
 		d.refreshAfterOverflow()
 	}
-	// Хуки существования, разошедшиеся с картой, сверяются ОДНИМ списком на
-	// пачку; хуки, совпавшие с картой, не стоят ни одного запроса.
+	if existence {
+		go d.listExistence(publish)
+	}
+
+	if p := d.onRouting.Load(); p != nil {
+		go (*p)()
+	}
+}
+
+// listExistence — список пачки хуков существования, затем слушатель. Хуки,
+// разошедшиеся с картой, сверяются ОДНИМ списком на пачку (join с читателями
+// карты); совпавшие с картой не стоят ни одного запроса. Слушатель — строго
+// после списка: публикация до него отдала бы UI карту без этой пачки.
+func (d *Dispatcher) listExistence(publish bool) {
 	if d.queries != nil && d.queries.Interfaces != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		if err := d.queries.Interfaces.ReconcileDirty(ctx); err != nil {
@@ -170,9 +208,8 @@ func (d *Dispatcher) drain() {
 		}
 		cancel()
 	}
-
-	if p := d.onRouting.Load(); p != nil {
-		go (*p)()
+	if p := d.onExisting.Load(); p != nil {
+		(*p)(publish)
 	}
 }
 
@@ -213,7 +250,7 @@ func (d *Dispatcher) refreshAfterOverflow() {
 // apply dispatches a single event to the appropriate store mutator(s).
 //
 // Interfaces — direct event-sourced patch, no HTTP (a dirty map waits
-// for ReconcileDirty in drain).
+// for ReconcileDirty in listExistence).
 //
 // Other stores — legacy InvalidateAll/Invalidate; their state will
 // be re-fetched on the next read. Will be migrated to event-sourcing

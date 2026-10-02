@@ -30,13 +30,6 @@ type HookSystemNames interface {
 	OnSystemName(id, name string)
 }
 
-// TunnelHookInvalidator is invoked on ifcreated / ifdestroyed hooks so
-// the handler can drop stale NDMS caches and publish a
-// `resource:invalidated` hint for the tunnels resource. Every connected
-// SSE client then refetches `/api/tunnels/all` and the UI drops/adds
-// tunnel cards without a browser refresh.
-type TunnelHookInvalidator func(ctx context.Context)
-
 // ProxyRuntimeNudge подталкивает прокси-рантайм: пока посев не состоялся,
 // повторяет боот, после — будит воркеров. Зовётся по WAN UP: холодный старт
 // роутера доходит до посева раньше, чем оживает RCI, и без повторного вызова
@@ -45,17 +38,16 @@ type ProxyRuntimeNudge func(reason string)
 
 // HookHandler handles NDM hook events.
 type HookHandler struct {
-	svc            TunnelService
-	orch           *orchestrator.Orchestrator
-	dispatcher     HookDispatcher // may be nil until SetDispatcher is called
-	wanModel       HookWANModel   // may be nil until SetWANModel is called
-	systemNames    HookSystemNames
-	refreshTunnels TunnelHookInvalidator
-	proxyNudge     ProxyRuntimeNudge
-	endpointNudge  func()
-	ipv4Running    func(ndmsID string)
-	log            *logging.ScopedLogger
-	wanLog         *logging.ScopedLogger
+	svc           TunnelService
+	orch          *orchestrator.Orchestrator
+	dispatcher    HookDispatcher // may be nil until SetDispatcher is called
+	wanModel      HookWANModel   // may be nil until SetWANModel is called
+	systemNames   HookSystemNames
+	proxyNudge    ProxyRuntimeNudge
+	endpointNudge func()
+	ipv4Running   func(ndmsID string)
+	log           *logging.ScopedLogger
+	wanLog        *logging.ScopedLogger
 	// selfCreateGate counts in-flight awg-manager-initiated NDMS interface
 	// creations. While > 0, ifcreated hook events suppress their automatic
 	// snapshot rebroadcast — the caller (importer / Create path) is
@@ -106,14 +98,6 @@ func (h *HookHandler) SetWANModel(m HookWANModel) {
 // синхронно, до WAN-модели (см. Handle).
 func (h *HookHandler) SetSystemNames(n HookSystemNames) {
 	h.systemNames = n
-}
-
-// SetTunnelRefresher wires the callback that invalidates NDMS caches
-// and publishes a tunnels `resource:invalidated` hint on ifcreated /
-// ifdestroyed. Without it, the UI keeps showing cards for tunnels that
-// NDMS has already torn down (reported bug).
-func (h *HookHandler) SetTunnelRefresher(fn TunnelHookInvalidator) {
-	h.refreshTunnels = fn
 }
 
 // SetProxyRuntimeNudge wires the proxy-runtime callback fired on WAN up:
@@ -180,7 +164,7 @@ func enqueueHook(d HookDispatcher, event events.Event) {
 }
 
 // Handle обрабатывает разобранное событие хука: диспетчер (инвалидация
-// кэшей), обновление списка туннелей, WAN-модель и оркестратор.
+// кэшей и публикация списка туннелей), WAN-модель и оркестратор.
 // Синхронна только WAN-модель: на незнакомом интерфейсе SetUp
 // перечитывает список WAN (RCI); остальное уходит в горутины.
 func (h *HookHandler) Handle(event events.Event) {
@@ -188,14 +172,20 @@ func (h *HookHandler) Handle(event events.Event) {
 	// на незнакомом имени перечитывает ListWAN, а тот читает только память.
 	// Через одну лишь очередь диспетчера имя горячо подключённого модема
 	// доходило бы позже, и первый WAN up терялся. Диспетчер повторит то же
-	// (идемпотентно). Строго ДО постановки в очередь: иначе воркер успел бы
-	// применить ifdestroyed этого же события (Forget), и имя снятого id
-	// воскресло бы в карте.
+	// (идемпотентно). OnSystemName до очереди — чтобы ListWAN в этом же Handle
+	// знал имя; порядок с воркером неважен: хук карту не трогает, имя снятого
+	// id снимет список.
 	if event.SystemName != "" && h.systemNames != nil {
 		h.systemNames.OnSystemName(event.ID, event.SystemName)
 	}
 
 	// 1) Enqueue into Dispatcher for cache invalidation (async, non-blocking).
+	// Своё создание (EnterSelfCreate) помечается: диспетчер сверит его списком,
+	// но публиковать tunnels/servers не станет — до записи туннеля в наш стор
+	// новый интерфейс показался бы в «системных» призраком; создатель публикует
+	// сам после Save. Остальные ifcreated/ifdestroyed диспетчер публикует после
+	// списка своей пачки.
+	event.SelfCreated = event.Type == events.EventIfCreated && h.selfCreateGate.Load() > 0
 	enqueueHook(h.dispatcher, event)
 
 	// 1a) Смена адреса интерфейса — повод перепроверить DDNS-имена: страж
@@ -203,29 +193,6 @@ func (h *HookHandler) Handle(event events.Event) {
 	// что ответ на хук он не задерживает.
 	if event.Type == events.EventIfIPChanged && h.endpointNudge != nil {
 		h.endpointNudge()
-	}
-
-	// 1b) On interface create/destroy, rebroadcast the tunnel list so
-	// every connected UI client drops/adds the card without a browser
-	// refresh. Runs in a goroutine so the spool reader is not held.
-	//
-	// Exception: if awg-manager is currently creating an interface itself
-	// (EnterSelfCreate was called), the corresponding ifcreated would fire
-	// before our code has persisted the tunnel to our store. Publishing a
-	// snapshot at that moment would show the new interface in the "system"
-	// list (because managedNativeWGNames can't see a tunnel that isn't in
-	// the store yet) — a ghost duplicate that vanishes on next refresh.
-	// Skip; the creator publishes its own snapshot after Save.
-	if event.Type == events.EventIfCreated && h.selfCreateGate.Load() > 0 {
-		// Self-initiated creation: skip auto-refresh.
-	} else if event.Type == events.EventIfCreated || event.Type == events.EventIfDestroyed {
-		if h.refreshTunnels != nil {
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				defer cancel()
-				h.refreshTunnels(ctx)
-			}()
-		}
 	}
 
 	// 2) For iflayerchanged, route to the orchestrator:

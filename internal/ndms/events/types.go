@@ -21,4 +21,8 @@ type Event struct {
 	Layer      string // "conf" | "link" | "ipv4" | "ipv6" | "ctrl" (layerchanged only)
 	Level      string // "running" | "disabled" | ... (layerchanged only)
 	Address    string // IPv4 address (ipchanged only)
+	// SelfCreated — ifcreated пришёл под гейтом своего создания
+	// (HookHandler.Handle): диспетчер сверяет его списком, но публикацию
+	// tunnels/servers не делает — создатель публикует сам после записи в стор.
+	SelfCreated bool
 }

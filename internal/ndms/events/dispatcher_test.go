@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,7 +29,7 @@ func primedQueries(_ *testing.T) (*query.Queries, *query.FakeGetter) {
 func TestDispatcher_IfCreated_OneListNoPointRead(t *testing.T) {
 	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
-	done := drainBarrier(d)
+	listed := listedBarrier(d)
 	d.Start()
 	defer d.Stop()
 
@@ -41,7 +42,7 @@ func TestDispatcher_IfCreated_OneListNoPointRead(t *testing.T) {
 		"Wireguard1": {"id":"Wireguard1","interface-name":"nwg1","type":"Wireguard","state":"up"}}`)
 
 	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1"})
-	waitDrain(t, done)
+	waitListed(t, listed)
 
 	if got := fg.Calls(ifaceListPath); got != primeList+1 {
 		t.Errorf("want exactly one list after IfCreated, before=%d after=%d", primeList, got)
@@ -56,7 +57,7 @@ func TestDispatcher_IfCreated_OneListNoPointRead(t *testing.T) {
 func TestDispatcher_IfDestroyed_KnownID_OneListThenAbsent(t *testing.T) {
 	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
-	done := drainBarrier(d)
+	listed := listedBarrier(d)
 	d.Start()
 	defer d.Stop()
 
@@ -65,7 +66,7 @@ func TestDispatcher_IfDestroyed_KnownID_OneListThenAbsent(t *testing.T) {
 	fg.SetJSON(ifaceListPath, `{}`)
 
 	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
-	waitDrain(t, done)
+	waitListed(t, listed)
 
 	if got := fg.Calls(ifaceListPath); got != primeList+1 {
 		t.Errorf("want exactly one list after IfDestroyed, before=%d after=%d", primeList, got)
@@ -203,7 +204,7 @@ const samplePeers = `{"wireguard":{"peer":[{"public-key":"KEY","online":true}]}}
 func TestDispatcher_BatchUnknownCreatedDestroyed_OneList(t *testing.T) {
 	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
-	drained := drainBarrier(d)
+	listed := listedBarrier(d)
 
 	if _, err := q.Interfaces.List(context.Background()); err != nil {
 		t.Fatalf("prime: %v", err)
@@ -214,9 +215,9 @@ func TestDispatcher_BatchUnknownCreatedDestroyed_OneList(t *testing.T) {
 
 	d.Start()
 	defer d.Stop()
-	// Барьер взводится только после непустого прохода — «пакет вовсе не
-	// разобран» сюда не доходит.
-	waitDrain(t, drained)
+	// Барьер взводится только после списка пачки существования — «пакет
+	// вовсе не разобран» сюда не доходит.
+	waitListed(t, listed)
 
 	if got := fg.Calls(ifaceListPath); got != primeList+1 {
 		t.Fatalf("пачка created→destroyed: списков +%d, want 1", got-primeList)
@@ -444,4 +445,80 @@ func TestDispatcher_LayerHookKeepsRC(t *testing.T) {
 	if got := fg.Calls(rcTree); got != primed+1 {
 		t.Fatalf("ifdestroyed: чтений дерева rc %d, want %d", got, primed+1)
 	}
+}
+
+// listedBarrier вешает слушателя существования как барьер конца списка пачки:
+// он взводится ПОСЛЕ списка каждой пачки с хуками существования и отдаёт
+// publish. Проход (drainBarrier) список больше не ждёт — тесты, считающие
+// списки после такой пачки, ждут этот барьер.
+func listedBarrier(d *Dispatcher) <-chan bool {
+	ch := make(chan bool, 8)
+	d.SetExistenceListed(func(publish bool) { ch <- publish })
+	return ch
+}
+
+func waitListed(t *testing.T, ch <-chan bool) bool {
+	t.Helper()
+	select {
+	case p := <-ch:
+		return p
+	case <-time.After(2 * time.Second):
+		t.Fatalf("список пачки существования не завершился за 2 с")
+		return false
+	}
+}
+
+// listBlockingGetter держит запрос списка интерфейсов, пока тест не закроет
+// gate (nil — не держит).
+type listBlockingGetter struct {
+	query.Getter
+	gate    chan struct{}
+	entered chan struct{}
+}
+
+func (b *listBlockingGetter) Get(ctx context.Context, path string, dst any) error {
+	if path == ifaceListPath && b.gate != nil {
+		select {
+		case b.entered <- struct{}{}:
+		default:
+		}
+		<-b.gate
+	}
+	return b.Getter.Get(ctx, path, dst)
+}
+
+// Список пачки существования идёт вне прохода: пока он висит, следующая пачка
+// применяется. Синхронный список держал бы воркер — второй проход не случился
+// бы до открытия гейта.
+func TestDispatcher_NextBatchNotBlockedByList(t *testing.T) {
+	fg := query.NewFakeGetter()
+	fg.SetJSON(ifaceListPath, sampleList)
+	bg := &listBlockingGetter{Getter: fg, entered: make(chan struct{}, 1)}
+	q := query.NewQueries(query.Deps{Getter: bg, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
+	if _, err := q.Interfaces.List(context.Background()); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+	bg.gate = make(chan struct{})
+
+	d := NewDispatcher(q, NopLogger())
+	drained := drainBarrier(d)
+	listed := listedBarrier(d)
+	d.Start()
+	defer d.Stop()
+	release := sync.OnceFunc(func() { close(bg.gate) })
+	defer release() // до Stop: синхронный список держал бы воркер вечно
+
+	d.Enqueue(Event{Type: EventIfCreated, ID: "Wireguard1"}) // неизвестный id — список
+	select {
+	case <-bg.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("список пачки не начат")
+	}
+	waitDrain(t, drained)
+
+	d.Enqueue(Event{Type: EventIfLayerChanged, ID: "Wireguard0", Layer: "link", Level: "running"})
+	waitDrain(t, drained) // вторая пачка применена, список первой ещё держится
+
+	release()
+	waitListed(t, listed)
 }

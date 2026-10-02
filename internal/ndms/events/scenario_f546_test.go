@@ -16,16 +16,23 @@ import (
 // становится строкой E в журнале ndm.
 
 // deliverHooks отдаёт накопленные оракулом хуки диспетчеру одной пачкой и
-// ждёт конца прохода.
+// ждёт её конца: списка, если в пачке были хуки существования, иначе прохода.
 func deliverHooks(t *testing.T, f *query.FakeNDMS, q *query.Queries) {
 	t.Helper()
 	d := NewDispatcher(q, NopLogger())
 	done := drainBarrier(d)
+	listed := listedBarrier(d)
+	existence := false
 	for _, h := range f.DrainHooks() {
+		existence = existence || h.Type == string(EventIfCreated) || h.Type == string(EventIfDestroyed)
 		d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID, Layer: h.Layer, Level: h.Level})
 	}
 	d.Start()
 	defer d.Stop()
+	if existence {
+		waitListed(t, listed)
+		return
+	}
 	waitDrain(t, done)
 }
 
@@ -153,13 +160,13 @@ func TestScenario_ListErrorAfterHooks_DirtyKept(t *testing.T) {
 	f.Add(ndms.Interface{ID: "Wireguard6", Type: "Wireguard", SystemName: "nwg6"})
 	log := &recLogger{}
 	d := NewDispatcher(q, log)
-	done := drainBarrier(d)
-	d.Start()
-	defer d.Stop()
+	listed := listedBarrier(d)
 	for _, h := range f.DrainHooks() {
 		d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID, Layer: h.Layer, Level: h.Level})
 	}
-	waitDrain(t, done)
+	d.Start()
+	defer d.Stop()
+	waitListed(t, listed)
 
 	if !log.has("reconcile dirty") {
 		t.Fatalf("ошибка ReconcileDirty не дошла до журнала: %v", log.msgs)
