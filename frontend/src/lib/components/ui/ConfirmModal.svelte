@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Modal from './Modal.svelte';
 	import Button from './Button.svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		open: boolean;
@@ -11,7 +12,9 @@
 		secondary?: string;
 		/** Full filesystem path shown as a selectable monospace line. */
 		filePath?: string;
+		/** По умолчанию «Удалить» на языке интерфейса. */
 		confirmLabel?: string;
+		/** По умолчанию «Отмена» на языке интерфейса. */
 		cancelLabel?: string;
 		/** 'danger' uses the red destructive Button variant; 'primary' uses the accent. */
 		variant?: 'danger' | 'primary';
@@ -26,8 +29,10 @@
 		message,
 		secondary,
 		filePath,
-		confirmLabel = 'Удалить',
-		cancelLabel = 'Отмена',
+		// Дефолты подписей — в шаблоне, а не здесь: fallback в $props()
+		// вычисляется один раз и не обновился бы при смене языка.
+		confirmLabel,
+		cancelLabel,
 		variant = 'danger',
 		busy = false,
 		onConfirm,
@@ -44,7 +49,7 @@
 		<p class="confirm-message">{message}</p>
 	{/if}
 	{#if filePath}
-		<p class="confirm-file-label">Файл на диске</p>
+		<p class="confirm-file-label">{m.confirm_modal_file_on_disk()}</p>
 		<code class="confirm-file-path">{filePath}</code>
 	{/if}
 	{#if secondary}
@@ -55,7 +60,7 @@
 <Modal {open} {title} size="sm" onclose={onClose} children={hasBody ? body : undefined}>
 	{#snippet actions()}
 		<Button variant="secondary" size="md" onclick={onClose} disabled={busy}>
-			{cancelLabel}
+			{cancelLabel ?? m.common_cancel()}
 		</Button>
 		<Button
 			variant={variant === 'danger' ? 'outline-danger' : 'outline-primary'}
@@ -63,7 +68,7 @@
 			onclick={onConfirm}
 			disabled={busy}
 		>
-			{busy ? 'Выполнение…' : confirmLabel}
+			{busy ? m.common_in_progress() : (confirmLabel ?? m.common_delete())}
 		</Button>
 	{/snippet}
 </Modal>

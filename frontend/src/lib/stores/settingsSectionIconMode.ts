@@ -1,11 +1,13 @@
 import { createPersistedStore } from './persisted';
+import { m } from '$lib/i18n';
 
 export type SettingsSectionIconMode = 'strict' | 'harmonious' | 'vivid';
 
-export const SETTINGS_SECTION_ICON_MODE_LABELS: Record<SettingsSectionIconMode, string> = {
-	strict: 'Строгая',
-	harmonious: 'Гармоничная',
-	vivid: 'Красочная',
+/** Подписи режимов — функции сообщений: читаются при рендере и следуют за языком. */
+export const SETTINGS_SECTION_ICON_MODE_LABELS: Record<SettingsSectionIconMode, () => string> = {
+	strict: m.settings_icon_mode_strict,
+	harmonious: m.settings_icon_mode_harmonious,
+	vivid: m.settings_icon_mode_vivid,
 };
 
 const DEFAULT_MODE: SettingsSectionIconMode = 'harmonious';

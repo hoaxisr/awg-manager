@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Eye, EyeOff } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		host: string;
@@ -24,8 +25,8 @@
 			show = !show;
 			onToggle?.();
 		}}
-		aria-label={show ? 'Скрыть' : 'Показать'}
-		title={show ? 'Скрыть' : 'Показать'}
+		aria-label={show ? m.tunnels_hide() : m.tunnels_show()}
+		title={show ? m.tunnels_hide() : m.tunnels_show()}
 	>
 		{#if show}
 			<Eye size={12} aria-hidden="true" />
