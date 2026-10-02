@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { PolicyDevice } from '$lib/types';
+	import { isDeviceOnline } from '$lib/utils/accessPolicy';
 	import { Badge } from '$lib/components/ui';
 	import { ArrowLeft } from 'lucide-svelte';
 
@@ -13,10 +14,6 @@
 
 	let search = $state('');
 	let showOffline = $state(true);
-
-	function isDeviceOnline(d: PolicyDevice): boolean {
-		return d.active && d.link === 'up';
-	}
 
 	let filtered = $derived.by(() => {
 		let visible = devices.filter((d) => d.policy !== currentPolicy);

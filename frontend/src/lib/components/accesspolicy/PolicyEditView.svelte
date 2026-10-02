@@ -7,7 +7,7 @@
 	import { ArrowLeft, X } from 'lucide-svelte';
 	import { InterfaceList } from '$lib/components/accesspolicy';
 	import { DeviceList } from '$lib/components/accesspolicy';
-	import { isHydraRouteAccessPolicy } from '$lib/utils/accessPolicy';
+	import { isHydraRouteAccessPolicy, isDeviceOnline } from '$lib/utils/accessPolicy';
 
 	interface Props {
 		policy: AccessPolicy;
@@ -192,7 +192,7 @@
 				{:else}
 					<div class="assigned-list">
 						{#each assignedDevices as device}
-							{@const isActive = device.active && device.link === 'up'}
+							{@const isActive = isDeviceOnline(device)}
 							<div class="assigned-row">
 								<span class="led" class:led-green={isActive} class:led-gray={!isActive}></span>
 								<div class="device-info">
@@ -235,7 +235,7 @@
 						<h4 class="section-title">Привязанные устройства</h4>
 						<div class="assigned-list">
 							{#each assignedDevices as device}
-								{@const isActive = device.active && device.link === 'up'}
+								{@const isActive = isDeviceOnline(device)}
 								<div class="assigned-row">
 									<span class="led" class:led-green={isActive} class:led-gray={!isActive}></span>
 									<div class="device-info">
