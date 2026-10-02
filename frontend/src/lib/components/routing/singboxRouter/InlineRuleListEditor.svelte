@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button, SyntaxHighlightedTextarea } from '$lib/components/ui';
 	import { highlightInlineRuleListContent } from '$lib/utils/singboxInlineRulesHighlight';
 	import { api } from '$lib/api/client';
@@ -19,25 +20,25 @@
 	let { value = $bindable(''), showPreview = true, compactGeoPicker = true }: Props = $props();
 
 	// ── constants ────────────────────────────────────────────────
-	const RULES_LIST_PLACEHOLDER = `# Домены и все поддомены
+	const RULES_LIST_PLACEHOLDER = $derived(`# ${m.routing_singbox_list_ph_domains()}
 chatgpt.com
 *.openai.com
 https://gemini.google.com/app
 
-# Только поддомены
+# ${m.routing_singbox_list_ph_subdomains()}
 .perplexity.ai
 domain_suffix:deepseek.com
 
-# Только домен
+# ${m.routing_singbox_list_ph_domain()}
 domain:claude.ai
 
 # IP/CIDR
 1.1.1.1
 8.8.8.0/24
 
-# Дополнительно
+# ${m.routing_singbox_list_ph_extra()}
 keyword:youtube
-geosite:xai`;
+geosite:xai`);
 
 	// ── geo state ────────────────────────────────────────────────
 	let geoFiles = $state<GeoFileEntry[]>([]);
@@ -131,7 +132,7 @@ geosite:xai`;
 <div class="inline-rule-list-editor">
 	<div class="list-toolbar">
 		<div class="lbl" class:lbl-expanding={geoExpanding}>
-			{geoExpanding ? 'Разворачиваем geosite:/geoip: теги…' : 'Список правил'}
+			{geoExpanding ? m.routing_singbox_list_expanding() : m.routing_singbox_list_label()}
 		</div>
 		<div class="list-toolbar-actions">
 			<Button variant="ghost" size="sm" onclick={() => (geositePickerOpen = !geositePickerOpen)}>
@@ -175,79 +176,79 @@ geosite:xai`;
 		</div>
 	</div>
 	<details class="inline-help">
-		<summary>Подсказка по формату списка</summary>
+		<summary>{m.routing_singbox_list_help_summary()}</summary>
 
 		<div class="inline-help-body">
 			<p class="inline-help-intro">
-				Одна строка — одно значение. Пустые строки игнорируются. <br>
-				В списке можно писать комментарии: <code>#</code>, <code>//</code>, <code>;</code> (целая строка или в конце — после пробела). <br>
-				При сохранении или переходе на вкладку JSON комментарии удаляются и в JSON не сохраняются. Порядок строк в списке не имеет значения и может меняться при сохранении.
+				{m.routing_singbox_list_help_intro_1()} <br>
+				{m.routing_singbox_list_help_intro_2_pre()} <code>#</code>, <code>//</code>, <code>;</code> {m.routing_singbox_list_help_intro_2_post()} <br>
+				{m.routing_singbox_list_help_intro_3()}
 			</p>
 
 			<section class="inline-help-section">
-				<div class="help-label">Домены и поддомены</div>
+				<div class="help-label">{m.routing_singbox_list_help_domains_label()}</div>
 				<ul>
-					<li><code>domain.com</code>, <code>*.domain.com</code>, <code>domain_suffix:domain.com</code> → хост и его поддомены (в JSON: <code>"domain.com"</code> без точки)</li>
-					<li><code>https://example.domain.com/…</code> — из URL берётся hostname и хранится так же</li>
-					<li><code>*.рф</code> — доменная зона; кириллица будет конвертирована в punycode <code>xn--p1ai</code> без ведущей точки</li>
+					<li><code>domain.com</code>, <code>*.domain.com</code>, <code>domain_suffix:domain.com</code> {m.routing_singbox_list_help_host_and_subs()} <code>"domain.com"</code> {m.routing_singbox_list_help_no_dot()}</li>
+					<li><code>https://example.domain.com/…</code> {m.routing_singbox_list_help_url()}</li>
+					<li><code>*.рф</code> {m.routing_singbox_list_help_zone()} <code>xn--p1ai</code> {m.routing_singbox_list_help_no_leading_dot()}</li>
 				</ul>
 			</section>
 
 			<section class="inline-help-section">
-				<div class="help-label">Только поддомены (без отдельного <code>domain</code>)</div>
+				<div class="help-label">{m.routing_singbox_list_help_sub_only_label()} <code>domain</code>)</div>
 				<ul>
-					<li><code>.domain.com</code> — суффикс <em>с</em> точкой в JSON: <code>[".domain.com"]</code> (apex не матчится)</li>
-					<li><code>domain_suffix:.domain.com</code> — явная dotted-форма, в JSON будет <code>".domain.com"</code></li>
+					<li><code>.domain.com</code> {m.routing_singbox_list_help_suffix()} <em>{m.routing_singbox_list_help_with()}</em> {m.routing_singbox_list_help_dot_in_json()} <code>[".domain.com"]</code> {m.routing_singbox_list_help_apex()}</li>
+					<li><code>domain_suffix:.domain.com</code> {m.routing_singbox_list_help_dotted()} <code>".domain.com"</code></li>
 				</ul>
 			</section>
 
 			<section class="inline-help-section">
-				<div class="help-label">Только точный хост</div>
+				<div class="help-label">{m.routing_singbox_list_help_exact_label()}</div>
 				<ul>
-					<li><code>domain:domain.com</code> — только <code>domain</code>, без поддоменов</li>
+					<li><code>domain:domain.com</code> {m.routing_singbox_list_help_only()} <code>domain</code>, {m.routing_singbox_list_help_no_subdomains()}</li>
 				</ul>
 			</section>
 
 			<section class="inline-help-section">
-				<div class="help-label">IP и подсети (только IPv4)</div>
+				<div class="help-label">{m.routing_singbox_list_help_ip_label()}</div>
 				<ul>
-					<li><code>1.1.1.1</code> — в JSON как <code>1.1.1.1/32</code>; при обратном переводе снова голый IP</li>
-					<li><code>8.8.8.0/24</code> — CIDR как есть; маски кроме <code>/32</code> не сжимаются</li>
-					<li>префиксы <code>ip:</code>, <code>cidr:</code>, <code>src_ip:</code> — то же правило</li>
-					<li>IPv6 в режиме «Список» не поддерживается — адреса и префиксы IPv6 задавайте в JSON</li>
+					<li><code>1.1.1.1</code> {m.routing_singbox_list_help_in_json_as()} <code>1.1.1.1/32</code>; {m.routing_singbox_list_help_reverse_bare_ip()}</li>
+					<li><code>8.8.8.0/24</code> {m.routing_singbox_list_help_cidr_as_is()} <code>/32</code> {m.routing_singbox_list_help_not_compressed()}</li>
+					<li>{m.routing_singbox_list_help_prefixes()} <code>ip:</code>, <code>cidr:</code>, <code>src_ip:</code> {m.routing_singbox_list_help_same_rule()}</li>
+					<li>{m.routing_singbox_list_help_ipv6_unsupported()}</li>
 				</ul>
 			</section>
 
 			<section class="inline-help-section">
-				<div class="help-label">Geo и прочие matchers</div>
+				<div class="help-label">{m.routing_singbox_list_help_geo_label()}</div>
 				<ul>
-					<li><code>geosite:TAG</code> — разворачивается в домены; суффиксы из .dat — <strong>без</strong> ведущей точки (как <code>domain.com</code>)</li>
-					<li><code>geoip:TAG</code> — разворачивается в CIDR; одиночные хосты из geo — в списке без <code>/32</code></li>
-					<li><code>keyword:TAG</code>, <code>regex:…</code> — отдельные поля в JSON</li>
+					<li><code>geosite:TAG</code> {m.routing_singbox_list_help_geosite_pre()} <strong>{m.routing_singbox_list_help_without()}</strong> {m.routing_singbox_list_help_leading_dot_as()} <code>domain.com</code>)</li>
+					<li><code>geoip:TAG</code> {m.routing_singbox_list_help_geoip()} <code>/32</code></li>
+					<li><code>keyword:TAG</code>, <code>regex:…</code> {m.routing_singbox_list_help_keyword_regex()}</li>
 				</ul>
 			</section>
 
 			<section class="inline-help-section">
-				<div class="help-label">Расширенные matchers</div>
+				<div class="help-label">{m.routing_singbox_list_help_advanced_label()}</div>
 				<ul>
 					<li><code>port:443</code>, <code>process:curl</code>, <code>package:…</code>, <code>network:tcp|udp</code></li>
-					<li>каждый тип — отдельная группа правил в JSON (не смешивается с доменами в одной записи)</li>
+					<li>{m.routing_singbox_list_help_advanced_group()}</li>
 				</ul>
 			</section>
 
 			<section class="inline-help-section">
-				<div class="help-label">Осторожно</div>
+				<div class="help-label">{m.routing_singbox_list_help_careful_label()}</div>
 				<ul>
-					<li><code>port:443</code> — отдельное правило на весь HTTPS-трафик</li>
-					<li><code>process:</code> / <code>process_path:</code> на Keenetic/Entware — только локальные процессы роутера, не LAN-клиенты</li>
+					<li><code>port:443</code> {m.routing_singbox_list_help_port()}</li>
+					<li><code>process:</code> / <code>process_path:</code> {m.routing_singbox_list_help_process()}</li>
 				</ul>
 			</section>
 
 			<section class="inline-help-section">
-				<div class="help-label">Пока не в режиме «Список»</div>
+				<div class="help-label">{m.routing_singbox_list_help_not_yet_label()}</div>
 				<ul>
-					<li>IPv6, исключения <code>@@</code>, <code>port_range:</code></li>
-					<li>логика <code>and</code> / <code>or</code> и любые лишние поля sing-box — только режим <code>JSON</code></li>
+					<li>{m.routing_singbox_list_help_ipv6_exceptions()} <code>@@</code>, <code>port_range:</code></li>
+					<li>{m.routing_singbox_list_help_logic()} <code>and</code> / <code>or</code> {m.routing_singbox_list_help_extra_fields()} <code>JSON</code></li>
 				</ul>
 			</section>
 		</div>
@@ -255,10 +256,10 @@ geosite:xai`;
 
 	{#if showPreview}
 		{#if listInputEmpty}
-			<div class="hint list-empty-hint">Список пуст — добавьте домены, IP или geosite:/geoip: тег.</div>
+			<div class="hint list-empty-hint">{m.routing_singbox_list_empty_hint()}</div>
 		{:else if listParsePreview.errors.length > 0}
 			<div class="parse-messages parse-messages-error">
-				<div class="parse-messages-title">Ошибки разбора</div>
+				<div class="parse-messages-title">{m.routing_singbox_list_parse_errors()}</div>
 				<ul>
 					{#each listParsePreview.errors as msg}
 						<li>{msg}</li>
@@ -268,7 +269,7 @@ geosite:xai`;
 		{/if}
 		{#if listParsePreview.warnings.length > 0}
 			<div class="parse-messages parse-messages-warning">
-				<div class="parse-messages-title">Предупреждения</div>
+				<div class="parse-messages-title">{m.routing_singbox_list_parse_warnings()}</div>
 				<ul>
 					{#each listParsePreview.warnings as msg}
 						<li>{msg}</li>
@@ -278,12 +279,12 @@ geosite:xai`;
 		{/if}
 		{#if listParsePreview.rules.length > 0}
 			<div class="info">
-				Будет создано групп правил: {listParsePreview.rules.length}
+				{m.routing_singbox_list_rules_to_create({ count: listParsePreview.rules.length })}
 			</div>
 		{/if}
 		{#if listParsePreview.rules.length > 0}
 			<details class="json-preview">
-				<summary>Предпросмотр JSON</summary>
+				<summary>{m.routing_singbox_list_json_preview()}</summary>
 				<pre>{JSON.stringify(listParsePreview.rules, null, 2)}</pre>
 			</details>
 		{/if}

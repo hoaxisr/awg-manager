@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { m } from '$lib/i18n';
     import { api } from '$lib/api/client';
     import { errorMessage } from '$lib/utils/errorMessage';
     import { Globe, LayoutGrid, Upload } from 'lucide-svelte';
@@ -26,7 +27,6 @@
     import { areDownloadRouteDetailsVisible } from '$lib/types/usageLevel';
     import RoutingTabBodySkeleton from './RoutingTabBodySkeleton.svelte';
     import RoutingRuleAddMenu from '$lib/components/routing/RoutingRuleAddMenu.svelte';
-    import { ERROR_WORDS, pluralForm, pluralize, RULE_WORDS } from '$lib/utils/pluralize';
     import { presetCatalog } from '$lib/stores/presets';
     import { resolvePresetManualDomains } from '$lib/utils/catalog-preset';
 
@@ -104,13 +104,13 @@
             if (created.lastDedupeReport && created.lastDedupeReport.totalRemoved > 0) {
                 const r = created.lastDedupeReport;
                 notifications.warning(
-                    `DNS-маршрут создан. Убрано ${r.totalRemoved} дублей (${r.exactDupes} точных, ${r.wildcardDupes} wildcard).`
+                    m.routing_dns_created_dedupe({ total: r.totalRemoved, exact: r.exactDupes, wildcard: r.wildcardDupes })
                 );
             } else {
-                notifications.success('DNS-маршрут создан');
+                notifications.success(m.routing_dns_created());
             }
         } catch (e) {
-            notifications.error(errorMessage(e, 'Ошибка создания'));
+            notifications.error(errorMessage(e, m.routing_error_create()));
         } finally {
             dnsSaving = false;
         }
@@ -133,13 +133,13 @@
             if (updated.lastDedupeReport && updated.lastDedupeReport.totalRemoved > 0) {
                 const r = updated.lastDedupeReport;
                 notifications.warning(
-                    `DNS-маршрут обновлён. Убрано ${r.totalRemoved} дублей (${r.exactDupes} точных, ${r.wildcardDupes} wildcard).`
+                    m.routing_dns_updated_dedupe({ total: r.totalRemoved, exact: r.exactDupes, wildcard: r.wildcardDupes })
                 );
             } else {
-                notifications.success('DNS-маршрут обновлён');
+                notifications.success(m.routing_dns_updated());
             }
         } catch (e) {
-            notifications.error(errorMessage(e, 'Ошибка сохранения'));
+            notifications.error(errorMessage(e, m.routing_error_save()));
         } finally {
             dnsSaving = false;
         }
@@ -151,7 +151,7 @@
             const fresh = await api.setDnsRouteEnabled(id, enabled);
             dnsRoutesStore.applyMutationResponse(fresh);
         } catch (e) {
-            notifications.error(errorMessage(e, 'Ошибка'));
+            notifications.error(errorMessage(e, m.routing_error()));
         } finally {
             dnsToggling = null;
         }
@@ -164,9 +164,9 @@
         try {
             const fresh = await api.deleteDnsRoute(id);
             dnsRoutesStore.applyMutationResponse(fresh);
-            notifications.success('DNS-маршрут удалён');
+            notifications.success(m.routing_dns_deleted());
         } catch (e) {
-            notifications.error(errorMessage(e, 'Ошибка удаления'));
+            notifications.error(errorMessage(e, m.routing_error_delete()));
         }
     }
 
@@ -174,9 +174,9 @@
         try {
             const fresh = await api.refreshDnsRouteSubscriptions(id);
             dnsRoutesStore.applyMutationResponse(fresh);
-            notifications.success('Подписки обновлены');
+            notifications.success(m.routing_dns_subs_updated());
         } catch (e: unknown) {
-            notifications.error(`Обновление подписок: ${downloadErrorToText(e)}`);
+            notifications.error(m.routing_dns_subs_error({ message: downloadErrorToText(e) }));
         }
     }
 
@@ -202,7 +202,7 @@
         const selected = dnsRoutes.filter(r => dnsSelected.has(r.id));
         const portable = exportRoutes(selected);
         downloadJson(portable, 'awg-dns-routes.json');
-        notifications.success(`Экспортировано ${pluralize(portable.length, RULE_WORDS)}`);
+        notifications.success(m.routing_exported_rules({ count: portable.length }));
     }
 
     async function bulkDnsToggle(enabled: boolean) {
@@ -218,9 +218,8 @@
             }
             if (latest) dnsRoutesStore.applyMutationResponse(latest);
 
-            const label = enabled ? 'Включено' : 'Выключено';
-            if (fail > 0) notifications.warning(`${label} ${ok} из ${ok + fail} ${pluralForm(ok + fail, RULE_WORDS)} (${pluralize(fail, ERROR_WORDS)})`);
-            else notifications.success(`${label} ${pluralize(ok, RULE_WORDS)}`);
+            if (fail > 0) notifications.warning(enabled ? m.routing_bulk_enabled_rules_partial({ ok, total: ok + fail, fail }) : m.routing_bulk_disabled_rules_partial({ ok, total: ok + fail, fail }));
+            else notifications.success(enabled ? m.routing_bulk_enabled_rules({ count: ok }) : m.routing_bulk_disabled_rules({ count: ok }));
         } finally {
             dnsBulkLoading = false;
         }
@@ -236,9 +235,9 @@
             const deleted = Math.max(0, beforeCount - fresh.filter(r => r.backend !== 'hydraroute').length);
 
             exitDnsSelection();
-            notifications.success(`Удалено ${pluralize(deleted, RULE_WORDS)}`);
+            notifications.success(m.routing_bulk_deleted_rules({ count: deleted }));
         } catch (e) {
-            notifications.error(`Ошибка: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+            notifications.error(m.tunnels_error_with_message({ message: e instanceof Error ? e.message : m.routing_unknown_error() }));
         } finally {
             dnsBulkLoading = false;
             dnsBulkDeleteConfirm = false;
@@ -266,8 +265,8 @@
             }
 
             dnsTunnelMode = false;
-            if (fail > 0) notifications.warning(`Туннель изменён для ${ok} из ${ok + fail} ${pluralForm(ok + fail, RULE_WORDS)} (${pluralize(fail, ERROR_WORDS)})`);
-            else notifications.success(`Туннель изменён для ${pluralize(ok, RULE_WORDS)}`);
+            if (fail > 0) notifications.warning(m.routing_bulk_tunnel_rules_partial({ ok, total: ok + fail, fail }));
+            else notifications.success(m.routing_bulk_tunnel_rules({ count: ok }));
         } finally {
             dnsBulkLoading = false;
         }
@@ -291,12 +290,12 @@
                 });
                 count++;
             } catch (e) {
-                notifications.error(`Ошибка импорта "${route.name}": ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+                notifications.error(m.routing_import_error({ name: route.name, message: e instanceof Error ? e.message : m.routing_unknown_error() }));
             }
         }
         dnsImportOpen = false;
         if (count > 0) {
-            notifications.success(`Импортировано ${pluralize(count, RULE_WORDS)}`);
+            notifications.success(m.routing_imported_rules({ count }));
         }
     }
 
@@ -319,17 +318,17 @@
                 }];
             });
             if (lists.length === 0) {
-                notifications.error('У выбранных пресетов нет DNS-записей');
+                notifications.error(m.routing_dns_no_records());
                 return;
             }
             const result = await api.createDnsRouteBatch(lists);
             if (result.created > 0) {
-                notifications.success(`Создано ${pluralize(result.created, RULE_WORDS)} из каталога`);
+                notifications.success(m.routing_dns_created_from_catalog({ count: result.created }));
             } else {
-                notifications.error('Не удалось создать ни одного правила');
+                notifications.error(m.routing_dns_none_created());
             }
         } catch (e) {
-            notifications.error(`Ошибка: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+            notifications.error(m.tunnels_error_with_message({ message: e instanceof Error ? e.message : m.routing_unknown_error() }));
         } finally {
             dnsPresetOpen = false;
         }
@@ -338,7 +337,7 @@
 
 {#if !hasDnsEngine}
     <div class="empty-state">
-        <p>Для DNS-маршрутизации требуется прошивка OS5 или <a href="https://github.com/Ground-Zerro/HydraRoute" target="_blank" rel="noopener">HydraRoute Neo</a></p>
+        <p>{m.routing_dns_requires_pre()} <a href="https://github.com/Ground-Zerro/HydraRoute" target="_blank" rel="noopener">HydraRoute Neo</a></p>
     </div>
 {:else}
 <NdmsDisclaimerBanner {isOS5} />
@@ -348,13 +347,13 @@
             {#if bodyLoading}
                 …
             {:else}
-                {pluralize(dnsRoutes.length, RULE_WORDS)}, {dnsActiveCount} активных
+                {m.routing_rules_active_summary({ count: dnsRoutes.length, active: dnsActiveCount })}
             {/if}
         </span>
         <div class="section-buttons">
             <StoreStatusBadge store={dnsRoutesStore} />
             {#if dnsRoutes.length > 0}
-                <Button variant="ghost" size="sm" onclick={() => { dnsSelectionMode = true; dnsSelected = new Set(); }} disabled={bodyLoading}>Выбрать</Button>
+                <Button variant="ghost" size="sm" onclick={() => { dnsSelectionMode = true; dnsSelected = new Set(); }} disabled={bodyLoading}>{m.routing_select()}</Button>
             {/if}
             <RoutingRuleAddMenu
                 disabled={bodyLoading}
@@ -370,17 +369,17 @@
     {:else}
         <div class="bulk-bar">
             <div class="bulk-bar-nav">
-                <button class="bulk-btn bulk-btn-cancel" onclick={exitDnsSelection} disabled={dnsBulkLoading}>✕ Отмена</button>
-                <span class="bulk-count">{dnsSelected.size} выбрано</span>
-                <button class="bulk-btn bulk-btn-select-all" onclick={dnsSelectAll} disabled={dnsBulkLoading}>Выбрать все</button>
+                <button class="bulk-btn bulk-btn-cancel" onclick={exitDnsSelection} disabled={dnsBulkLoading}>✕ {m.common_cancel()}</button>
+                <span class="bulk-count">{m.routing_selected_count({ count: dnsSelected.size })}</span>
+                <button class="bulk-btn bulk-btn-select-all" onclick={dnsSelectAll} disabled={dnsBulkLoading}>{m.routing_select_all()}</button>
             </div>
             {#if !dnsTunnelMode}
                 <div class="bulk-bar-actions">
-                    <button class="bulk-btn bulk-btn-enable" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => bulkDnsToggle(true)}>Включить</button>
-                    <button class="bulk-btn bulk-btn-disable" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => bulkDnsToggle(false)}>Выключить</button>
-                    <button class="bulk-btn bulk-btn-delete" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => dnsBulkDeleteConfirm = true}>Удалить</button>
-                    <button class="bulk-btn bulk-btn-tunnel" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => { dnsTunnelMode = true; dnsBulkTunnelId = routingTunnels.find(t => t.available)?.id ?? ''; }}>Туннель ▾</button>
-                    <button class="bulk-btn bulk-btn-export" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={downloadDnsExport}>Экспорт</button>
+                    <button class="bulk-btn bulk-btn-enable" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => bulkDnsToggle(true)}>{m.routing_enable()}</button>
+                    <button class="bulk-btn bulk-btn-disable" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => bulkDnsToggle(false)}>{m.routing_disable()}</button>
+                    <button class="bulk-btn bulk-btn-delete" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => dnsBulkDeleteConfirm = true}>{m.common_delete()}</button>
+                    <button class="bulk-btn bulk-btn-tunnel" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={() => { dnsTunnelMode = true; dnsBulkTunnelId = routingTunnels.find(t => t.available)?.id ?? ''; }}>{m.routing_bulk_tunnel()} ▾</button>
+                    <button class="bulk-btn bulk-btn-export" disabled={dnsSelected.size === 0 || dnsBulkLoading} onclick={downloadDnsExport}>{m.routing_export()}</button>
                 </div>
             {:else}
                 {@const dnsBulkTunnelOpts = buildRoutingTunnelDropdownOptions(routingTunnels, {
@@ -388,7 +387,7 @@
                     includeWan: false,
                 })}
                 <div class="bulk-tunnel-bar">
-                    <span class="bulk-tunnel-label">Туннель:</span>
+                    <span class="bulk-tunnel-label">{m.routing_bulk_tunnel_label()}</span>
                     <div class="bulk-tunnel-select">
                         <Dropdown
                             bind:value={dnsBulkTunnelId}
@@ -397,7 +396,7 @@
                             fullWidth
                         />
                     </div>
-                    <button class="bulk-tunnel-apply" disabled={dnsBulkLoading} onclick={bulkDnsChangeTunnel}>Применить ({dnsSelected.size})</button>
+                    <button class="bulk-tunnel-apply" disabled={dnsBulkLoading} onclick={bulkDnsChangeTunnel}>{m.routing_bulk_apply({ count: dnsSelected.size })}</button>
                     <button class="bulk-tunnel-close" onclick={() => dnsTunnelMode = false}>✕</button>
                 </div>
             {/if}
@@ -412,29 +411,29 @@
         <div class="empty-icon">
             <Globe size={24} strokeWidth={1.5} />
         </div>
-        <div class="empty-title">DNS-маршрутов пока нет</div>
-        <div class="empty-desc">Выберите сервисы из каталога или создайте правило вручную</div>
+        <div class="empty-title">{m.routing_dns_empty_title()}</div>
+        <div class="empty-desc">{m.routing_dns_empty_desc()}</div>
         <div class="empty-actions">
             <Button variant="primary" disabled={bodyLoading} onclick={() => dnsPresetOpen = true}>
                 {#snippet iconBefore()}
                     <LayoutGrid size={14} />
                 {/snippet}
-                Из каталога
+                {m.routing_from_catalog()}
             </Button>
-            <Button variant="secondary" disabled={bodyLoading} onclick={() => { editingDnsRoute = null; dnsModalOpen = true; }}>+ Создать вручную</Button>
+            <Button variant="secondary" disabled={bodyLoading} onclick={() => { editingDnsRoute = null; dnsModalOpen = true; }}>{m.routing_dns_create_manual()}</Button>
             <Button variant="ghost" disabled={bodyLoading} onclick={() => dnsImportOpen = true}>
                 {#snippet iconBefore()}
                     <Upload size={14} />
                 {/snippet}
-                Загрузить конфигурацию
+                {m.routing_load_config()}
             </Button>
         </div>
     </div>
 {:else}
     {#if orphanDnsRoutes.length > 0}
         <div class="orphan-section">
-            <h4 class="orphan-header">Без туннеля — {orphanDnsRoutes.length}</h4>
-            <p class="orphan-hint">Туннель удалён, списки доменов сохранены. Нажмите «Изменить», чтобы привязать список к другому туннелю.</p>
+            <h4 class="orphan-header">{m.routing_orphan_title({ count: orphanDnsRoutes.length })}</h4>
+            <p class="orphan-hint">{m.routing_orphan_hint_dns()}</p>
             <div class="route-grid">
                 {#each orphanDnsRoutes as route (route.id)}
                     <DnsRouteCard
@@ -511,8 +510,8 @@
     {@const routeToDelete = dnsRoutes.find(r => r.id === dnsDeleteId)}
     <ConfirmModal
         open={true}
-        title="Удалить DNS-маршрут"
-        message={`Удалить DNS-маршрут «${routeToDelete?.name ?? dnsDeleteId}»?`}
+        title={m.routing_dns_delete_title()}
+        message={m.routing_dns_delete_message({ name: routeToDelete?.name ?? dnsDeleteId })}
         onConfirm={deleteDnsRoute}
         onClose={() => dnsDeleteId = null}
     />
@@ -521,8 +520,8 @@
 {#if dnsBulkDeleteConfirm}
     <ConfirmModal
         open={true}
-        title="Удаление"
-        message={`Удалить ${dnsSelected.size} DNS-маршрутов?`}
+        title={m.routing_delete_title()}
+        message={m.routing_dns_bulk_delete_message({ count: dnsSelected.size })}
         onConfirm={bulkDnsDelete}
         onClose={() => dnsBulkDeleteConfirm = false}
     />
@@ -541,9 +540,9 @@
             pickingForRoute = null;
             try {
                 await api.updateDnsRoute(route.id, { ...route, iconUrl: newUrl ?? undefined });
-                notifications.success(newUrl ? 'Иконка изменена' : 'Иконка сброшена');
+                notifications.success(newUrl ? m.routing_icon_changed() : m.routing_icon_reset());
             } catch (e) {
-                notifications.error(errorMessage(e, 'Не удалось обновить иконку'));
+                notifications.error(errorMessage(e, m.routing_icon_update_failed()));
             }
         }}
     />

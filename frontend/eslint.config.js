@@ -20,6 +20,8 @@ export default tseslint.config(
 			'**/*.cjs',
 			// Генерированный вывод npm run gen:api — не линтится, как и любой codegen.
 			'src/lib/api/schemas.gen.ts',
+			// Вывод компилятора Paraglide (npm run i18n:compile) — тоже codegen.
+			'src/lib/paraglide/',
 		],
 	},
 	{
