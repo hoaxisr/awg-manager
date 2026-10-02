@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import type { AccessPolicy, PolicyDevice, PolicyGlobalInterface } from '$lib/types';
 	import { api } from '$lib/api/client';
 	import { errorMessage } from '$lib/utils/errorMessage';
@@ -24,19 +23,13 @@
 
 	let isHrPolicy = $derived(isHydraRouteAccessPolicy(policy));
 
-	let description = $state('');
-	let localInterfaces = $state<import('$lib/types').AccessPolicyInterface[]>([]);
+	let description = $state(policy.description ?? '');
 	let dragOver = $state(false);
 	const VALID_PATTERN = /^[a-zA-Z0-9_-]*$/;
 	const MAX_LEN = 256;
 
-	onMount(() => {
-		void onupdate();
-	});
-
 	$effect(() => {
-		description = policy.description;
-		localInterfaces = policy.interfaces ?? [];
+		description = policy.description ?? '';
 	});
 
 	let assignedDevices = $derived(devices.filter((d) => d.policy === policy.name));
@@ -171,7 +164,7 @@
 		{/if}
 
 		<InterfaceList
-			interfaces={localInterfaces}
+			interfaces={policy.interfaces ?? []}
 			availableInterfaces={globalInterfaces}
 			addPickerVariant="panel"
 			onpermit={handlePermit}
