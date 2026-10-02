@@ -38,9 +38,9 @@ func (c *ProxyCommands) CreateProxy(ctx context.Context, name, description, upst
 		c.save.Request, c.queries.RunningConfig.InvalidateAll)
 	if err != nil {
 		err = fmt.Errorf("create proxy: %w", err) // имя уже в ошибке
-		// Голая (настроек не было): «created» доказан, а записи не видно
-		// ни в списке, ни в хуках — либо след был, а снос отказал.
-		if reply == CreateNew && errors.Is(err, query.ErrNotSeen) || errors.Is(err, ErrLeftOnRouter) {
+		// Голая (настроек не было): «created» доказан, записи в списке нет,
+		// а снос отказал.
+		if errors.Is(err, ErrLeftOnRouter) {
 			err = &LeftCreatedError{Name: name, Err: err}
 		}
 		return query.Confirmed{}, reply, err

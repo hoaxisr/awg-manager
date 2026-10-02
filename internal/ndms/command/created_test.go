@@ -56,7 +56,7 @@ func TestCreate_LateRecord_Confirms(t *testing.T) {
 }
 
 // layerHooksInFirstList — хуки слоя по созданному доставляются в стор, пока
-// первый список подтверждения в полёте: след «NDMS знает запись».
+// первый список подтверждения в полёте.
 func layerHooksInFirstList(f *query.FakeNDMS, q *query.Queries) {
 	f.InList(func() {
 		f.InList(nil)
@@ -68,13 +68,13 @@ func layerHooksInFirstList(f *query.FakeNDMS, q *query.Queries) {
 	})
 }
 
-// След есть, а в списках записи нет за всё ожидание — ErrNotListed и снос
-// созданного по имени из ответа импорта: сироты нет, E == 0, фантомов нет.
+// Создание доказано (ответ импорта), а в списках записи нет за всё ожидание —
+// ErrNotListed и снос созданного по имени из ответа импорта: сироты нет,
+// E == 0, фантомов нет.
 func TestImport_NeverListed_ErrorAndDrop(t *testing.T) {
 	cmds, f, q := newOracleCommands(t, nil)
 	q.Interfaces.SetCreatedBackoff(time.Millisecond)
 	f.HideCreated(100)
-	layerHooksInFirstList(f, q)
 	res, err := cmds.Wireguard.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
 	if !errors.Is(err, query.ErrNotListed) || !strings.Contains(err.Error(), "Wireguard0") || res.Created != (query.Confirmed{}) {
 		t.Fatalf("res=%+v err=%v", res, err)
@@ -84,82 +84,35 @@ func TestImport_NeverListed_ErrorAndDrop(t *testing.T) {
 	}
 }
 
-// R42 + N1: индекс только что снят (надгробие), импорт создаёт его заново,
-// ifcreated потерян, а layer-хуки пришли во время ожидания — это след нашего
-// создания: ErrNotListed и снос, сироты нет.
-func TestImport_RecreatedTombstoned_LayerHookTraced_Drop(t *testing.T) {
+// S2: устаревший ifdestroyed прежнего владельца имени между списками
+// подтверждения, новая запись жива — импорт подтверждён, сноса нет, E == 0.
+// Мутация: отказ по метке gone во время ожидания.
+func TestImport_StaleDestroyedDuringWait_Confirms(t *testing.T) {
 	cmds, f, q := newOracleCommands(t, nil)
-	q.Interfaces.Forget("Wireguard0") // снят только что: надгробие
-	q.Interfaces.SetCreatedBackoff(time.Millisecond)
-	f.HideCreated(100)
-	layerHooksInFirstList(f, q) // ifcreated не доставляется
-	_, err := cmds.Wireguard.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
-	if !errors.Is(err, query.ErrNotListed) {
-		t.Fatalf("err=%v, want ErrNotListed", err)
-	}
-	if !hasDrop(f.Posts, "Wireguard0") || f.Has("Wireguard0") || f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("has=%v E=%d phantoms=%d posts=%v", f.Has("Wireguard0"), f.E, f.Phantoms, f.Posts)
-	}
-}
-
-// R42: поздний layer-хук прежней записи без ждущего ConfirmCreated следа не
-// оставляет — следующее создание без своих хуков не получает права на снос.
-func TestImport_LateHookBeforeCreate_NoTraceNoDrop(t *testing.T) {
-	cmds, f, q := newOracleCommands(t, nil)
-	q.Interfaces.Forget("Wireguard0")
-	q.Interfaces.OnLayerChanged("Wireguard0", "ctrl", "disabled") // опоздал за сносом
-	q.Interfaces.SetCreatedBackoff(time.Millisecond)
-	f.HideCreated(100)
-	_, err := cmds.Wireguard.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
-	if !errors.Is(err, query.ErrNotSeen) {
-		t.Fatalf("err=%v, want ErrNotSeen", err)
-	}
-	if len(f.Posts) != 1 || f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("posts=%v E=%d phantoms=%d", f.Posts, f.E, f.Phantoms)
-	}
-}
-
-// Ни списка, ни хуков — ошибка без сноса: знает ли NDMS запись, неизвестно,
-// а снос отсутствующего — E. Созданное остаётся, E == 0.
-func TestImport_NoTrace_ErrorNoDrop(t *testing.T) {
-	cmds, f, q := newOracleCommands(t, nil)
-	q.Interfaces.SetCreatedBackoff(time.Millisecond)
-	f.HideCreated(100)
-	res, err := cmds.Wireguard.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
-	if !errors.Is(err, query.ErrNotSeen) || res.Created != (query.Confirmed{}) {
-		t.Fatalf("res=%+v err=%v", res, err)
-	}
-	if len(f.Posts) != 1 || !f.Has("Wireguard0") || f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("posts=%v has=%v E=%d phantoms=%d", f.Posts, f.Has("Wireguard0"), f.E, f.Phantoms)
-	}
-}
-
-// Созданное сняли (ifdestroyed) во время ожидания, след был — ошибка без
-// сноса: сносить нечего, `no interface` дал бы E.
-func TestImport_DestroyedDuringWait_NoDrop(t *testing.T) {
-	cmds, f, q := newOracleCommands(t, nil)
-	q.Interfaces.SetCreatedBackoff(time.Millisecond, time.Millisecond)
-	f.HideCreated(100)
+	q.Interfaces.SetCreatedBackoff(300 * time.Millisecond)
+	f.HideCreated(1)
+	firstListed := make(chan struct{})
 	f.InList(func() {
 		f.InList(nil)
-		for _, h := range f.DrainHooks() {
-			if h.Type == "iflayerchanged" {
-				q.Interfaces.OnLayerChanged(h.ID, h.Layer, h.Level)
-			}
-		}
-		f.Remove("Wireguard0")
-		for _, h := range f.DrainHooks() {
-			if h.Type == "ifdestroyed" {
-				q.Interfaces.OnDestroyed(h.ID)
-			}
-		}
+		close(firstListed)
 	})
-	res, err := cmds.Wireguard.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
-	if !errors.Is(err, query.ErrCreatedThenRemoved) || res.Created != (query.Confirmed{}) {
-		t.Fatalf("res=%+v err=%v", res, err)
+	type res struct {
+		name string
+		err  error
 	}
-	if len(f.Posts) != 1 || f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("posts=%v E=%d phantoms=%d", f.Posts, f.E, f.Phantoms)
+	done := make(chan res, 1)
+	go func() {
+		r, err := cmds.Wireguard.ImportWireguardConfig(context.Background(), []byte("conf"), "x.conf")
+		done <- res{r.Created.Name(), err}
+	}()
+	<-firstListed
+	q.Interfaces.OnDestroyed("Wireguard0") // запись в NDMS жива
+	r := <-done
+	if r.err != nil || r.name != "Wireguard0" {
+		t.Fatalf("name=%q err=%v", r.name, r.err)
+	}
+	if !f.Has("Wireguard0") || hasDrop(f.Posts, "Wireguard0") || f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("has=%v E=%d phantoms=%d posts=%v", f.Has("Wireguard0"), f.E, f.Phantoms, f.Posts)
 	}
 }
 
@@ -246,28 +199,44 @@ func withFirmware(t *testing.T, release string) {
 	}
 }
 
-// R39: на прошивке без проверенной фразы (<5.01) ответ не разбирается —
-// поведение до F574: ErrNotCreated нет, подтверждение по списку, снос по
-// следу в хуках.
+// R39: на прошивке без проверенной фразы (<5.01) ответ не разбирается:
+// ErrNotCreated нет, подтверждение по списку, как до F574.
 func TestCreateInterface_LegacyFirmware_AsBefore(t *testing.T) {
 	for _, release := range []string{"", "4.03.C.6.3-1", "5.00.C.3.0-1"} {
 		t.Run(release, func(t *testing.T) {
 			withFirmware(t, release)
 			_, f, q := newOracleCommands(t, nil)
 			q.Interfaces.SetCreatedBackoff(time.Millisecond)
-			f.HideCreated(100) // не покажется за всё ожидание
-			f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
-			f.HideCreated(0)
-			layerHooksInFirstList(f, q)
+			f.ExpectCreate("Wireguard1")
+			f.HideCreated(1)
 			payload := map[string]any{"interface": map[string]any{"Wireguard1": map[string]any{}}}
-			_, reply, err := CreateInterface(context.Background(), f, nil, q, payload, "Wireguard1", false)
-			if errors.Is(err, ErrNotCreated) || !errors.Is(err, query.ErrNotListed) || reply != CreateLegacy {
-				t.Fatalf("reply=%v err=%v", reply, err)
+			c, reply, err := CreateInterface(context.Background(), f, nil, q, payload, "Wireguard1", false)
+			if err != nil || c.Name() != "Wireguard1" || reply != CreateLegacy {
+				t.Fatalf("c=%v reply=%v err=%v", c, reply, err)
 			}
-			if !hasDrop(f.Posts, "Wireguard1") {
-				t.Fatalf("legacy: снос по следу, как до F574: %v", f.Posts)
+			if hasDrop(f.Posts, "Wireguard1") || f.E != 0 || f.Phantoms != 0 {
+				t.Fatalf("E=%d phantoms=%d posts=%v", f.E, f.Phantoms, f.Posts)
 			}
 		})
+	}
+}
+
+// S11, В2: на <5.01 создание не доказано (CreateLegacy) — созданное, но ни
+// разу не показанное списком, не сносится: ErrNotSeen, `no interface` нет.
+// Мутация: Proven() → Ours() → снос.
+func TestCreateInterface_LegacyNeverListed_ErrNotSeenNoDrop(t *testing.T) {
+	withFirmware(t, "4.03.C.6.3-1")
+	_, f, q := newOracleCommands(t, nil)
+	q.Interfaces.SetCreatedBackoff(time.Millisecond)
+	f.ExpectCreate("Wireguard1")
+	f.HideCreated(100)
+	payload := map[string]any{"interface": map[string]any{"Wireguard1": map[string]any{}}}
+	c, reply, err := CreateInterface(context.Background(), f, nil, q, payload, "Wireguard1", false)
+	if !errors.Is(err, query.ErrNotSeen) || c != (query.Confirmed{}) || reply != CreateLegacy {
+		t.Fatalf("c=%v reply=%v err=%v", c, reply, err)
+	}
+	if hasDrop(f.Posts, "Wireguard1") || !f.Has("Wireguard1") || f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("has=%v E=%d phantoms=%d posts=%v", f.Has("Wireguard1"), f.E, f.Phantoms, f.Posts)
 	}
 }
 

@@ -13,17 +13,17 @@ import (
 
 // ConfirmCreated подтверждает только что созданный интерфейс name
 // (query.ConfirmCreated: ограниченное ожидание записи в свежем списке, F584).
-// Записи так и нет, но NDMS её знает (по имени пришёл хук, ifdestroyed не
-// было: query.ErrNotListed) — снос `no interface name`: без него интерфейс
-// оставался сиротой, которую снести нечем (снос требует Confirmed). Следа нет
-// (ErrNotSeen) или имя уже снято (ErrCreatedThenRemoved) — ошибка без сноса:
-// `no interface` по отсутствующему пишет E в журнал ndm (стенд 5.01.C.6), а
-// неснесённую сироту покажет следующий список (Occupied / системные туннели).
+// Записи так и нет, а создание доказано ответом NDMS (created:
+// query.ErrNotListed) — снос `no interface name`: без него интерфейс
+// оставался сиротой, которую снести нечем (снос требует Confirmed). Создание
+// не доказано (ErrNotSeen, <5.01) — ошибка без сноса: `no interface` по
+// отсутствующему пишет E в журнал ndm (стенд 5.01.C.6), а неснесённую сироту
+// покажет следующий список (Occupied / системные туннели).
 //
 // Это ЕДИНСТВЕННАЯ команда по интерфейсу без Confirmed (исключение под
 // TestNotListed_OnlyInConfirmCreated). Контракт Confirmed она не нарушает:
 // он защищает от `interface X …` по отсутствующему X, которое СОЗДАЁТ X, а
-// `no interface X` ничего не создаёт; шлётся только при следе записи, а
+// `no interface X` ничего не создаёт; шлётся только при доказанном создании, а
 // отказ «unable to find interface» (запись успели снять) терпим. Имя — из нашей же принятой команды
 // создания или из ответа NDMS на импорт (`created`), запись — наша, созданная
 // этим же потоком миллисекунды назад.
@@ -31,7 +31,7 @@ import (
 // Список не прочитан (решение 4) — ошибка без команд: созданное остаётся на
 // роутере, его найдёт следующий список, как любую запись без туннеля.
 //
-// created — CreateReply.Ours() ответа на создание (у импорта — всегда true).
+// created — CreateReply.Proven() ответа на создание (у импорта — всегда true).
 // Без этого сноса нет вовсе (F574): команда попала в уже существующую
 // запись, и если это чужая, ещё не показанная списком, снос удалил бы её.
 func ConfirmCreated(ctx context.Context, p Poster, save *SaveCoordinator, q *query.Queries, name string, created bool) (query.Confirmed, error) {
@@ -73,6 +73,11 @@ const (
 // Ours — вправе ли вызывающий сносить запись по имени при откате: всё, кроме
 // не доказанной созданной на прошивке, где доказательство есть.
 func (r CreateReply) Ours() bool { return r != CreateNotNew }
+
+// Proven — создание доказано ответом NDMS (`"name" interface created.`): только
+// тогда неподтверждённую списком запись можно сносить (ConfirmCreated). На
+// <5.01 (CreateLegacy) доказательства нет — сноса нет (В2).
+func (r CreateReply) Proven() bool { return r == CreateNew }
 
 // createdReplyProven — фраза `"X" interface created.` (code 6553601) в ответе
 // на создание снята стендом только на 5.01 (R39). На старших она та же, на
@@ -140,12 +145,12 @@ func CreateInterface(ctx context.Context, p Poster, save *SaveCoordinator, q *qu
 	if reply == CreateNotNew && !existingOK {
 		return query.Confirmed{}, reply, fmt.Errorf("%w: %s", ErrNotCreated, name)
 	}
-	c, err := ConfirmCreated(ctx, p, save, q, name, reply.Ours())
+	c, err := ConfirmCreated(ctx, p, save, q, name, reply.Proven())
 	return c, reply, err
 }
 
 func confirmCreated(ctx context.Context, p Poster, save *SaveCoordinator, q *query.Queries, hn HookNotifier, name string, created bool) (query.Confirmed, error) {
-	conf, err := q.Interfaces.ConfirmCreated(ctx, name)
+	conf, err := q.Interfaces.ConfirmCreated(ctx, name, created)
 	if !created || !errors.Is(err, query.ErrNotListed) {
 		return conf, err
 	}

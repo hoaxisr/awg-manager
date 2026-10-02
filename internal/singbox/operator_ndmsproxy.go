@@ -155,9 +155,6 @@ type deferredProxy struct {
 	next  time.Time     // раньше — не пробовать; ноль — на ближайшем тике
 	delay time.Duration // выдержка после последнего отказа
 	gen   uint64        // растёт на каждой метке: снятие по устаревшей попытке её не теряет
-	// absentUntil — до этого момента «записи нет» метку не снимает: созданное
-	// ещё не показано списком (ErrNotSeen, F577 R4). Только в памяти.
-	absentUntil time.Time
 }
 
 func (o *Operator) deferredClock() time.Time {
@@ -356,9 +353,6 @@ func (o *Operator) retryDeferredProxyRemovals(ctx context.Context, now time.Time
 		}
 		switch out {
 		case MarkedAbsent:
-			if o.unseenGraceActive(m.Name, now) {
-				continue // NDMS ещё не показал созданное (F577 R4)
-			}
 			o.log.Info("deferred proxy removal dropped: proxy is gone", "name", m.Name)
 		case MarkedForeign:
 			o.log.Info("deferred proxy removal dropped: description changed", "name", m.Name, "desc", m.Desc)
@@ -383,14 +377,6 @@ func (o *Operator) retryDeferredProxyRemovals(ctx context.Context, now time.Time
 		o.saveDeferredLocked()
 	}
 	return listErr
-}
-
-// unseenGraceActive — метка name ещё в сроке unseenAbsentGrace.
-func (o *Operator) unseenGraceActive(name string, now time.Time) bool {
-	o.deferredProxyMu.Lock()
-	defer o.deferredProxyMu.Unlock()
-	d := o.deferredProxies[name]
-	return d != nil && now.Before(d.absentUntil)
 }
 
 // deferredProxyFailed удваивает выдержку имени (до потолка). Warn — только
@@ -445,28 +431,14 @@ func (r *SubscriptionProxyRegistrar) RemoveProxy(ctx context.Context, idx int, l
 	return err
 }
 
-// unseenAbsentGrace — метка созданного, которого NDMS не показал (ErrNotSeen),
-// не снимается как «записи нет» раньше этого срока: под нагрузкой запись
-// появляется в списке поздно (F584, F577 R4).
-const unseenAbsentGrace = 60 * time.Second
-
 // deferLeftProxy — созданный и оставленный на роутере ProxyN (подтверждения
 // нет или снос не прошёл) уходит в метку отложенного сноса с description,
 // который у него на роутере ("" у голого, F577 N1). Голая запись на имени,
 // которое нужно туннелю или подписке, не сносится, а усыновляется владельцем
-// (bareMarked). unseen — записи ещё не было в списке: «нет записи» до
-// unseenAbsentGrace метку не снимает (только в памяти, файл меток прежний).
-func (o *Operator) deferLeftProxy(name, desc string, unseen bool) {
-	o.log.Warn("created proxy left on router, deferred", "name", name, "desc", desc, "unseen", unseen)
+// (bareMarked).
+func (o *Operator) deferLeftProxy(name, desc string) {
+	o.log.Warn("created proxy left on router, deferred", "name", name, "desc", desc)
 	o.deferProxyRemoval(name, desc)
-	if !unseen {
-		return
-	}
-	o.deferredProxyMu.Lock()
-	if d := o.deferredProxies[name]; d != nil {
-		d.absentUntil = o.deferredClock().Add(unseenAbsentGrace)
-	}
-	o.deferredProxyMu.Unlock()
 }
 
 // bareMarked — есть метка голой записи (name, ""): мы её создали (F577 R1).

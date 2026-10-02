@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 )
@@ -86,5 +87,30 @@ func TestFreeIndex_ForeignCreatedInFlight_Reread(t *testing.T) {
 	}
 	if got := f.ListCalls() - lists; got != 2 {
 		t.Fatalf("%d списков, want 2", got)
+	}
+}
+
+// Имя, которое ждёт ConfirmCreated (NDMS ответил «создано», в списке записи
+// ещё нет), занято: FreeIndex, начатый во время паузы, его пропускает.
+// Мутация: убрать creating из памяти FreeIndex → выбран 1.
+func TestFreeIndex_CreatingTaken(t *testing.T) {
+	f, s := importLate(t, 100, 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	firstListed := make(chan struct{})
+	f.InList(func() {
+		f.InList(nil)
+		close(firstListed)
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = s.ConfirmCreated(ctx, "Wireguard1", true)
+	}()
+	<-firstListed
+	idx, ok, err := s.FreeIndex(context.Background(), "Wireguard", 100, nil)
+	cancel()
+	<-done
+	if err != nil || !ok || idx != 2 {
+		t.Fatalf("idx=%d ok=%v err=%v, want 2 (1 ждёт ConfirmCreated)", idx, ok, err)
 	}
 }

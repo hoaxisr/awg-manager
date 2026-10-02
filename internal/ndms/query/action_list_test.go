@@ -219,7 +219,7 @@ func TestActionList_CreatedInsideAction(t *testing.T) {
 	}
 	f.Add(ndms.Interface{ID: "Wireguard3", Type: "Wireguard"})
 	lists := f.ListCalls()
-	if c, err := s.ConfirmCreated(ctx, "Wireguard3"); err != nil || c.Name() != "Wireguard3" {
+	if c, err := s.ConfirmCreated(ctx, "Wireguard3", true); err != nil || c.Name() != "Wireguard3" {
 		t.Fatalf("ConfirmCreated: c=%v err=%v", c, err)
 	}
 	if got := f.ListCalls() - lists; got != 1 {

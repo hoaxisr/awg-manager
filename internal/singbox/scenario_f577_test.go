@@ -62,34 +62,71 @@ func TestScenario_AddTunnels_HiddenForeignSlot_Unslotted(t *testing.T) {
 	clean(t, f)
 }
 
-// F577 N1: «created» доказан, а записи не видно (ErrNotSeen) — туннель снят
-// из конфига, голый Proxy1 уходит в метку (Proxy1, ""); когда запись видна,
-// тик её снимает.
-func TestScenario_AddTunnels_CreatedLeft_MarkedThenSwept(t *testing.T) {
-	withProxy501(t)
-	op, w, f, _ := f562Stand(t)
-	ctx := context.Background()
+// F577 N1, R54: «created» доказан, а записи в списках нет — запись снесена
+// (NDMS ответил «created», снос без E), метки нет; туннель остаётся со своим
+// слотом (на роутере его записи нет — следующий Sync создаст заново). Снос
+// отказал — туннель снят из конфига, голый Proxy1 уходит в метку (Proxy1,
+// ""); тик его снимает.
+// Мутация: вернуть «ErrNotSeen — оставить» → снос не послан, метка есть.
+func TestScenario_AddTunnels_CreatedNeverListed(t *testing.T) {
+	t.Run("dropped", func(t *testing.T) {
+		withProxy501(t)
+		op, _, f, _ := f562Stand(t)
+		op.proxyMgr.(*ProxyManager).queries.Interfaces.SetCreatedBackoff(time.Millisecond)
+		f.ExpectCreate("Proxy1")
+		f.HideCreated(100)
+		added, errs, err := op.AddTunnels(context.Background(), f577Link)
+		if err != nil || len(added) != 1 || len(errs) != 1 || !errors.Is(errs[0].Err, query.ErrNotListed) {
+			t.Fatalf("added=%+v errs=%+v err=%v", added, errs, err)
+		}
+		if f.Has("Proxy1") || !slices.Contains(f.Posts, `{"interface":{"Proxy1":{"no":true}}}`) || op.proxyRemovalDeferred("Proxy1") {
+			t.Fatalf("has=%v метка=%v posts=%v", f.Has("Proxy1"), op.deferredProxies, f.Posts)
+		}
+		mustHave(t, f, "Proxy0", "Proxy3", "Proxy4", "Proxy5", "Proxy6")
+		clean(t, f)
+	})
+	t.Run("drop refused, marked then swept", func(t *testing.T) {
+		withProxy501(t)
+		op, w, f, p := f562Stand(t)
+		ctx := context.Background()
+		op.proxyMgr.(*ProxyManager).queries.Interfaces.SetCreatedBackoff(time.Millisecond)
+		f.ExpectCreate("Proxy1")
+		f.HideCreated(-1)
+		p.refuse = true
+		added, errs, err := op.AddTunnels(ctx, f577Link)
+		if err != nil || len(added) != 0 || len(errs) != 1 {
+			t.Fatalf("added=%+v errs=%+v err=%v", added, errs, err)
+		}
+		if d := op.deferredProxies["Proxy1"]; d == nil || d.desc != "" {
+			t.Fatalf("метка: %+v", op.deferredProxies)
+		}
+		p.refuse = false
+		f.HideCreated(0)
+		f.DrainHooks()
+		w.tick(ctx)
+		if f.Has("Proxy1") || op.proxyRemovalDeferred("Proxy1") {
+			t.Fatalf("Proxy1 не снят: posts=%v", f.Posts)
+		}
+		mustHave(t, f, "Proxy0", "Proxy3", "Proxy4", "Proxy5", "Proxy6")
+		clean(t, f)
+	})
+}
+
+// R54, В2: на <5.01 создание не доказано — запись, не показанная списком, не
+// наша: ErrNotSeen, `no interface` нет, метки нет (R48); туннель остаётся.
+func TestScenario_AddTunnels_LegacyNeverListed_NoDropNoMark(t *testing.T) {
+	withProxyRelease(t, "4.03.C.6.3-1")
+	op, _, f, _ := f562Stand(t)
 	op.proxyMgr.(*ProxyManager).queries.Interfaces.SetCreatedBackoff(time.Millisecond)
 	f.ExpectCreate("Proxy1")
-	f.HideCreated(-1)
-
-	added, errs, err := op.AddTunnels(ctx, f577Link)
-	if err != nil || len(added) != 0 || len(errs) != 1 {
+	f.HideCreated(100)
+	added, errs, err := op.AddTunnels(context.Background(), f577Link)
+	if err != nil || len(added) != 1 || len(errs) != 1 || !errors.Is(errs[0].Err, query.ErrNotSeen) {
 		t.Fatalf("added=%+v errs=%+v err=%v", added, errs, err)
 	}
-	if tags := tunnelTags(t, op); !slices.Equal(tags, []string{"A", "B"}) {
-		t.Fatalf("туннели: %v", tags)
+	if slices.Contains(f.Posts, `{"interface":{"Proxy1":{"no":true}}}`) || op.proxyRemovalDeferred("Proxy1") || !f.Has("Proxy1") {
+		t.Fatalf("has=%v метка=%v posts=%v", f.Has("Proxy1"), op.deferredProxies, f.Posts)
 	}
-	if d := op.deferredProxies["Proxy1"]; d == nil || d.desc != "" {
-		t.Fatalf("метка: %+v", op.deferredProxies)
-	}
-	f.HideCreated(0)
-	f.DrainHooks()
-	w.tick(ctx)
-	if f.Has("Proxy1") || op.proxyRemovalDeferred("Proxy1") {
-		t.Fatalf("Proxy1 не снят: posts=%v", f.Posts)
-	}
-	mustHave(t, f, "Proxy0", "Proxy3", "Proxy4", "Proxy5", "Proxy6")
 	clean(t, f)
 }
 
@@ -151,31 +188,35 @@ func TestScenario_RenameTunnel_RouterFailure_NoLocalChange(t *testing.T) {
 	clean(t, f)
 }
 
-// F577 N1: у подписок созданный и оставленный ProxyN метит регистратор
-// (сервис подписок о метках не знает).
+// F577 N1, R54: у подписок созданное и не показанное списком снесено, метки
+// нет; снос отказал — оставленный ProxyN метит регистратор (сервис подписок о
+// метках не знает).
 func TestScenario_SubscriptionCreateLeft_Marked(t *testing.T) {
-	withProxy501(t)
-	op, _, f, _ := f562Stand(t)
-	pm := op.proxyMgr.(*ProxyManager)
-	pm.queries.Interfaces.SetCreatedBackoff(time.Millisecond)
-	f.ExpectCreate("Proxy7")
-	f.HideCreated(-1)
-	if _, err := op.SubscriptionProxyRegistrar(pm).CreateProxy(context.Background(), 7, 1087, "sub1"); err == nil {
-		t.Fatal("ErrNotSeen без ошибки")
+	for _, refuse := range []bool{false, true} {
+		withProxy501(t)
+		op, _, f, p := f562Stand(t)
+		pm := op.proxyMgr.(*ProxyManager)
+		pm.queries.Interfaces.SetCreatedBackoff(time.Millisecond)
+		f.ExpectCreate("Proxy7")
+		f.HideCreated(100)
+		p.refuse = refuse
+		if _, err := op.SubscriptionProxyRegistrar(pm).CreateProxy(context.Background(), 7, 1087, "sub1"); err == nil {
+			t.Fatalf("refuse=%v: ErrNotListed без ошибки", refuse)
+		}
+		if d := op.deferredProxies["Proxy7"]; refuse && (d == nil || d.desc != "") || !refuse && (d != nil || f.Has("Proxy7")) {
+			t.Fatalf("refuse=%v: has=%v метка=%+v", refuse, f.Has("Proxy7"), op.deferredProxies)
+		}
+		clean(t, f)
 	}
-	if d := op.deferredProxies["Proxy7"]; d == nil || d.desc != "" {
-		t.Fatalf("метка: %+v", op.deferredProxies)
-	}
-	clean(t, f)
 }
 
 // orphanOnLiveSlot — голая сирота на слоте СУЩЕСТВУЮЩЕГО туннеля A:
-// пользователь снял Proxy3, Sync создал запись, но NDMS её не показал
-// (ErrNotSeen) — метка (Proxy3, ""); затем запись видна голой.
+// пользователь снял Proxy3, Sync создал запись, NDMS её не показал, а снос
+// отказал (ErrLeftOnRouter) — метка (Proxy3, ""); затем запись видна голой.
 func orphanOnLiveSlot(t *testing.T) (*Operator, *Watchdog, *query.FakeNDMS, *ProxyManager, []TunnelInfo) {
 	t.Helper()
 	withProxy501(t)
-	op, w, f, _ := f562Stand(t)
+	op, w, f, p := f562Stand(t)
 	pm := op.proxyMgr.(*ProxyManager)
 	pm.queries.Interfaces.SetCreatedBackoff(time.Millisecond)
 	f.Remove("Proxy3")
@@ -186,9 +227,11 @@ func orphanOnLiveSlot(t *testing.T) (*Operator, *Watchdog, *query.FakeNDMS, *Pro
 	if err != nil {
 		t.Fatal(err)
 	}
+	p.refuse = true
 	if err := pm.SyncProxies(context.Background(), cfg.Tunnels()); err != nil {
 		t.Fatalf("SyncProxies: %v", err)
 	}
+	p.refuse = false
 	if d := op.deferredProxies["Proxy3"]; d == nil || d.desc != "" {
 		t.Fatalf("метка: %+v", op.deferredProxies)
 	}
@@ -234,8 +277,8 @@ func TestScenario_BareOrphanOnLiveSlot_SyncAdopts(t *testing.T) {
 }
 
 // F577 N2: метка (Proxy3, "") на слоте живого туннеля, а в списке записи нет
-// (срок R4 истёк) или у неё непустой description (пользователь пересоздал) —
-// метка снимается, команд нет. Отсутствующая в сроке R4 — метка держится.
+// или у неё непустой description (пользователь пересоздал) — метка
+// снимается, команд нет.
 func TestScenario_BareMarkLiveSlot_NotBare_Dropped(t *testing.T) {
 	ctx := context.Background()
 	t.Run("description не пуст", func(t *testing.T) {
@@ -252,8 +295,6 @@ func TestScenario_BareMarkLiveSlot_NotBare_Dropped(t *testing.T) {
 	})
 	t.Run("записи нет", func(t *testing.T) {
 		op, w, f, _, _ := orphanOnLiveSlot(t)
-		clock := time.Now().Add(time.Hour) // срок R4 истёк
-		op.deferredNow = func() time.Time { return clock }
 		f.Remove("Proxy3")
 		f.DrainHooks()
 		posts := len(f.Posts)
@@ -262,15 +303,6 @@ func TestScenario_BareMarkLiveSlot_NotBare_Dropped(t *testing.T) {
 			t.Fatalf("posts=%v метка=%v", f.Posts[posts:], op.deferredProxies)
 		}
 		clean(t, f)
-	})
-	t.Run("записи нет, срок R4", func(t *testing.T) {
-		op, w, f, _, _ := orphanOnLiveSlot(t)
-		f.Remove("Proxy3")
-		f.DrainHooks()
-		w.tick(ctx)
-		if !op.proxyRemovalDeferred("Proxy3") {
-			t.Fatal("метка снята в сроке R4")
-		}
 	})
 }
 
@@ -305,11 +337,12 @@ func TestEnsureProxy_BareNeedsMark(t *testing.T) {
 	clean(t, f)
 }
 
-// F577 R3: оставленное при создании не обрывает SyncProxies — следующий
-// туннель тоже обслужен (обе записи получили метки).
+// F577 R3: оставленное при создании (не показано списком, снос отказал) не
+// обрывает SyncProxies — следующий туннель тоже обслужен (обе записи
+// получили метки).
 func TestSyncProxies_LeftContinues(t *testing.T) {
 	withProxy501(t)
-	op, _, f, _ := f562Stand(t)
+	op, _, f, p := f562Stand(t)
 	pm := op.proxyMgr.(*ProxyManager)
 	pm.queries.Interfaces.SetCreatedBackoff(time.Millisecond)
 	f.Remove("Proxy3")
@@ -317,38 +350,13 @@ func TestSyncProxies_LeftContinues(t *testing.T) {
 	f.DrainHooks()
 	f.ExpectCreate("Proxy3", "Proxy4")
 	f.HideCreated(-1)
+	p.refuse = true
 	cfg, _ := op.loadConfig()
 	if err := pm.SyncProxies(context.Background(), cfg.Tunnels()); err != nil {
 		t.Fatal(err)
 	}
 	if !op.proxyRemovalDeferred("Proxy3") || !op.proxyRemovalDeferred("Proxy4") {
 		t.Fatalf("метки: %v posts=%v", op.deferredProxies, f.Posts)
-	}
-}
-
-// F577 R4: метка созданного, но не показанного (ErrNotSeen) не снимается как
-// «записи нет» первые 60 с; позже — снимается.
-func TestScenario_UnseenMark_AbsentGrace(t *testing.T) {
-	withProxy501(t)
-	op, w, f, _ := f562Stand(t)
-	ctx := context.Background()
-	clock := time.Unix(1000, 0)
-	op.deferredNow = func() time.Time { return clock }
-	op.proxyMgr.(*ProxyManager).queries.Interfaces.SetCreatedBackoff(time.Millisecond)
-	f.ExpectCreate("Proxy1")
-	f.HideCreated(-1)
-	if _, _, err := op.AddTunnels(ctx, f577Link); err != nil {
-		t.Fatal(err)
-	}
-	clock = clock.Add(59 * time.Second)
-	w.tick(ctx)
-	if !op.proxyRemovalDeferred("Proxy1") {
-		t.Fatal("метка снята в пределах 60 с")
-	}
-	clock = clock.Add(2 * time.Second)
-	w.tick(ctx)
-	if op.proxyRemovalDeferred("Proxy1") {
-		t.Fatal("метка не снята после 60 с")
 	}
 }
 

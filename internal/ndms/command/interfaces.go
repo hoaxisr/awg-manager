@@ -51,7 +51,7 @@ func (c *InterfaceCommands) CreateOpkgTunWithSecurityLevel(ctx context.Context, 
 	if err != nil {
 		return query.Confirmed{}, err
 	}
-	conf, err := c.ConfirmCreated(ctx, name, reply.Ours())
+	conf, err := c.ConfirmCreated(ctx, name, reply.Proven())
 	if err != nil {
 		return query.Confirmed{}, fmt.Errorf("create opkgtun: %w", err) // имя уже в ошибке подтверждения
 	}

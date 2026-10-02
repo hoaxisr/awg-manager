@@ -31,7 +31,7 @@ func importLate(t *testing.T, hide int, backoff ...time.Duration) (*FakeNDMS, *I
 func TestConfirmCreated_LateAfterLists_Confirms(t *testing.T) {
 	f, s := importLate(t, 2, time.Millisecond, time.Millisecond, time.Millisecond)
 	lists := f.ListCalls()
-	c, err := s.ConfirmCreated(context.Background(), "Wireguard1")
+	c, err := s.ConfirmCreated(context.Background(), "Wireguard1", true)
 	if err != nil || c.Name() != "Wireguard1" {
 		t.Fatalf("c=%v err=%v", c, err)
 	}
@@ -40,74 +40,52 @@ func TestConfirmCreated_LateAfterLists_Confirms(t *testing.T) {
 	}
 }
 
-// Стенд 30.09: запись в списке появляется к ifcreated. Хуки доставлены после
-// первого (пустого) списка, ReconcilePending читает список — он и будит
-// ConfirmCreated: своего второго списка нет, паузу 5 с не ждёт.
-func TestConfirmCreated_WokenByReconcileList(t *testing.T) {
-	f, s := importLate(t, -1, 5*time.Second)
-	ctx := context.Background()
-	lists := f.ListCalls()
-	firstListed := make(chan struct{})
+// M3′: свой ifcreated пришёл, пока первый список в полёте, а записи в ответе
+// нет — метка новее списка противоречит ему: повтор сразу, паузу 5 с не ждёт.
+// Мутация: перечитывать только после паузы → ≥5 с.
+func TestConfirmCreated_OwnCreatedInFlight_AbsentAnswer_RereadImmediately(t *testing.T) {
+	f, s := importLate(t, 1, 5*time.Second)
 	f.InList(func() {
 		f.InList(nil)
-		close(firstListed)
+		s.OnCreated("Wireguard1")
 	})
-	type res struct {
-		c   Confirmed
-		err error
-	}
-	done := make(chan res, 1)
+	lists := f.ListCalls()
 	start := time.Now()
-	go func() {
-		c, err := s.ConfirmCreated(ctx, "Wireguard1")
-		done <- res{c, err}
-	}()
-	<-firstListed
-	for _, h := range f.DrainHooks() { // ctrl ×2, ifcreated; запись видна с этого момента
-		switch h.Type {
-		case "iflayerchanged":
-			s.OnLayerChanged(h.ID, h.Layer, h.Level)
-		case "ifcreated":
-			s.OnCreated(h.ID)
-		}
-	}
-	if err := s.ReconcilePending(ctx); err != nil {
-		t.Fatal(err)
-	}
-	r := <-done
-	if r.err != nil || r.c.Name() != "Wireguard1" {
-		t.Fatalf("c=%v err=%v", r.c, r.err)
+	c, err := s.ConfirmCreated(context.Background(), "Wireguard1", true)
+	if err != nil || c.Name() != "Wireguard1" {
+		t.Fatalf("c=%v err=%v", c, err)
 	}
 	if el := time.Since(start); el > time.Second {
-		t.Fatalf("ждал паузу, а не список ReconcilePending: %v", el)
+		t.Fatalf("ждал паузу вместо повтора: %v", el)
 	}
 	if f.ListCalls()-lists != 2 || f.E != 0 || f.Phantoms != 0 {
-		t.Fatalf("lists=%d (ждали свой + ReconcilePending) E=%d phantoms=%d", f.ListCalls()-lists, f.E, f.Phantoms)
+		t.Fatalf("lists=%d E=%d phantoms=%d", f.ListCalls()-lists, f.E, f.Phantoms)
 	}
 }
 
-// layerHooksInFirstList — хуки слоя по созданному доставляются, пока первый
-// список ConfirmCreated в полёте (след «NDMS знает запись», F584). ifcreated
-// не отдаётся — запись, скрытая до него, так и остаётся скрытой.
-func layerHooksInFirstList(f *FakeNDMS, s *InterfaceStore) {
-	hooks := f.DrainHooks()
-	f.InList(func() {
-		f.InList(nil)
-		for _, h := range hooks {
-			if h.Type == "iflayerchanged" {
-				s.OnLayerChanged(h.ID, h.Layer, h.Level)
-			}
+// S11: записи нет за все попытки — ровно 1+len(backoff) списков; ошибку решает
+// доказательство создания: created → ErrNotListed (снос разрешён), нет →
+// ErrNotSeen (без сноса). Мутация: поменять местами → красный.
+func TestConfirmCreated_NeverListed_ByCreated(t *testing.T) {
+	for _, created := range []bool{true, false} {
+		f, s := importLate(t, 100, time.Millisecond, time.Millisecond)
+		lists := f.ListCalls()
+		c, err := s.ConfirmCreated(context.Background(), "Wireguard1", created)
+		if errors.Is(err, ErrNotListed) != created || errors.Is(err, ErrNotSeen) == created || c != (Confirmed{}) {
+			t.Fatalf("created=%v: c=%v err=%v", created, c, err)
 		}
-	})
+		if f.ListCalls()-lists != 3 || f.E != 0 {
+			t.Fatalf("created=%v: lists=%d E=%d", created, f.ListCalls()-lists, f.E)
+		}
+	}
 }
 
-// След есть (хуки слоя), а в списках записи нет за все попытки —
-// ErrNotListed после 1+len(backoff) списков.
+// Создание доказано, а в списках записи нет за все попытки — ErrNotListed
+// после 1+len(backoff) списков.
 func TestConfirmCreated_NeverListed_ErrNotListed(t *testing.T) {
 	f, s := importLate(t, 100, time.Millisecond, time.Millisecond)
-	layerHooksInFirstList(f, s)
 	lists := f.ListCalls()
-	c, err := s.ConfirmCreated(context.Background(), "Wireguard1")
+	c, err := s.ConfirmCreated(context.Background(), "Wireguard1", true)
 	if !errors.Is(err, ErrNotListed) || c != (Confirmed{}) {
 		t.Fatalf("c=%v err=%v", c, err)
 	}
@@ -116,10 +94,11 @@ func TestConfirmCreated_NeverListed_ErrNotListed(t *testing.T) {
 	}
 }
 
-// Ни списка, ни хуков — ErrNotSeen: знает ли NDMS запись, неизвестно.
-func TestConfirmCreated_NoTrace_ErrNotSeen(t *testing.T) {
-	f, s := importLate(t, -1, time.Millisecond, time.Millisecond)
-	c, err := s.ConfirmCreated(context.Background(), "Wireguard1")
+// Создание не доказано (<5.01, CreateLegacy), записи в списках нет — ErrNotSeen:
+// знает ли NDMS запись, неизвестно.
+func TestConfirmCreated_LegacyNeverListed_ErrNotSeen(t *testing.T) {
+	f, s := importLate(t, 100, time.Millisecond, time.Millisecond)
+	c, err := s.ConfirmCreated(context.Background(), "Wireguard1", false)
 	if !errors.Is(err, ErrNotSeen) || errors.Is(err, ErrNotListed) || c != (Confirmed{}) {
 		t.Fatalf("c=%v err=%v", c, err)
 	}
@@ -128,32 +107,54 @@ func TestConfirmCreated_NoTrace_ErrNotSeen(t *testing.T) {
 	}
 }
 
-// ifdestroyed по имени во время ожидания (после хуков создания) —
-// ErrCreatedThenRemoved сразу, паузу 5 с не ждёт.
-func TestConfirmCreated_DestroyedDuringWait(t *testing.T) {
-	f, s := importLate(t, 100, 5*time.Second)
-	firstListed := make(chan struct{})
-	f.InList(func() {
-		f.InList(nil)
-		close(firstListed)
+// Устаревший ifdestroyed прежнего владельца имени при живой новой записи
+// (ревью 51a M1/M2): хук ничего не решает — подтверждает свой список.
+//   - pause: метка между списками (запись видна со второго) → Confirmed
+//     вторым списком. Мутация: отказ по метке gone во время ожидания.
+//   - in flight: метка, пока первый список в полёте, запись в ответе —
+//     противоречие, один повтор, Confirmed. Мутация: проверять метку gone
+//     раньше ответа списка.
+func TestConfirmCreated_StaleDestroyedDuringWait_Confirms(t *testing.T) {
+	t.Run("pause", func(t *testing.T) {
+		f, s := importLate(t, 1, 300*time.Millisecond)
+		firstListed := make(chan struct{})
+		f.InList(func() {
+			f.InList(nil)
+			close(firstListed)
+		})
+		lists := f.ListCalls()
+		done := make(chan error, 1)
+		go func() {
+			c, err := s.ConfirmCreated(context.Background(), "Wireguard1", true)
+			if err == nil && c.Name() != "Wireguard1" {
+				err = errors.New("не то имя: " + c.Name())
+			}
+			done <- err
+		}()
+		<-firstListed
+		s.OnDestroyed("Wireguard1") // запись в NDMS жива
+		if err := <-done; err != nil {
+			t.Fatalf("err=%v", err)
+		}
+		if f.ListCalls()-lists != 2 || !f.Has("Wireguard1") || f.E != 0 || f.Phantoms != 0 {
+			t.Fatalf("lists=%d has=%v E=%d phantoms=%d", f.ListCalls()-lists, f.Has("Wireguard1"), f.E, f.Phantoms)
+		}
 	})
-	done := make(chan error, 1)
-	start := time.Now()
-	go func() {
-		_, err := s.ConfirmCreated(context.Background(), "Wireguard1")
-		done <- err
-	}()
-	<-firstListed
-	s.OnLayerChanged("Wireguard1", "ctrl", "")
-	f.Remove("Wireguard1")
-	s.OnDestroyed("Wireguard1")
-	err := <-done
-	if !errors.Is(err, ErrCreatedThenRemoved) || errors.Is(err, ErrNotListed) {
-		t.Fatalf("err=%v", err)
-	}
-	if el := time.Since(start); el > time.Second || f.E != 0 {
-		t.Fatalf("elapsed=%v E=%d", el, f.E)
-	}
+	t.Run("in flight", func(t *testing.T) {
+		f, s := importLate(t, 0, 5*time.Second)
+		f.InList(func() {
+			f.InList(nil)
+			s.OnDestroyed("Wireguard1") // запись в NDMS жива
+		})
+		lists := f.ListCalls()
+		c, err := s.ConfirmCreated(context.Background(), "Wireguard1", true)
+		if err != nil || c.Name() != "Wireguard1" {
+			t.Fatalf("c=%v err=%v", c, err)
+		}
+		if f.ListCalls()-lists != 2 || f.E != 0 || f.Phantoms != 0 {
+			t.Fatalf("lists=%d (ждали свой + повтор) E=%d phantoms=%d", f.ListCalls()-lists, f.E, f.Phantoms)
+		}
+	})
 }
 
 // Список не прочитан — ошибка сразу, не ErrNotListed (решение 4): повторов нет.
@@ -161,7 +162,7 @@ func TestConfirmCreated_ListError_NoRetry(t *testing.T) {
 	f, s := importLate(t, 0, time.Millisecond, time.Millisecond)
 	f.FailList(errors.New("rci down"))
 	lists := f.ListCalls()
-	c, err := s.ConfirmCreated(context.Background(), "Wireguard1")
+	c, err := s.ConfirmCreated(context.Background(), "Wireguard1", true)
 	if err == nil || errors.Is(err, ErrNotListed) || c != (Confirmed{}) {
 		t.Fatalf("c=%v err=%v", c, err)
 	}

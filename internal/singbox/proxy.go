@@ -74,7 +74,7 @@ type ProxyManager struct {
 // на любом пути создания; голая запись (description "") наша, только пока
 // есть метка (name, "") — доказательство, что её создали мы.
 type proxyMarks interface {
-	deferLeftProxy(name, desc string, unseen bool)
+	deferLeftProxy(name, desc string)
 	bareMarked(name string) bool
 	clearBareMark(name string)
 }
@@ -172,7 +172,7 @@ func (pm *ProxyManager) CreateProxy(ctx context.Context, index, port int, descri
 	// description, который у записи там; на любом пути создания (F577 N1).
 	var left *command.LeftCreatedError
 	if errors.As(err, &left) && pm.marks != nil {
-		pm.marks.deferLeftProxy(left.Name, left.Desc, errors.Is(err, query.ErrNotSeen))
+		pm.marks.deferLeftProxy(left.Name, left.Desc)
 	}
 	if err == nil {
 		// Создано и настроено заново — прежняя метка голой записи с этим

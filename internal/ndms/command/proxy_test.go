@@ -225,20 +225,26 @@ func TestCreateProxy_HiddenForeign_NoSettingsNoDrop(t *testing.T) {
 }
 
 // F577 fix 1 N1: созданное осталось на роутере — *LeftCreatedError с
-// description записи на роутере: голая при «created» без следа (ErrNotSeen)
-// — ""; настройки и снос отвергнуты — description из свежего списка (элементы
-// настроек применены частично).
+// description записи на роутере: голая при «created», не показанная списком,
+// со снесом, который отказал, — ""; настройки и снос отвергнуты — description
+// из свежего списка (элементы настроек применены частично).
+// R54: «created» доказан, записи в списке нет — снос, не LeftCreatedError;
+// на <5.01 (не доказан) — ErrNotSeen без сноса и без LeftCreatedError.
+// Мутация: вернуть «ErrNotSeen — оставить» → красные not listed/legacy.
 func TestCreateProxy_LeftOnRouter(t *testing.T) {
 	withFirmware(t, "5.01.C.6.0-0")
-	t.Run("not seen", func(t *testing.T) {
+	t.Run("not listed, dropped", func(t *testing.T) {
 		cmds, f, q := newOracleCommands(t, nil)
 		f.ExpectCreate("Proxy0")
 		q.Interfaces.SetCreatedBackoff(time.Millisecond)
-		f.HideCreated(-1)
+		f.HideCreated(100)
 		_, _, err := cmds.Proxies.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, true)
 		var left *LeftCreatedError
-		if !errors.As(err, &left) || left.Name != "Proxy0" || left.Desc != "" || !errors.Is(err, query.ErrNotSeen) {
+		if errors.As(err, &left) || !errors.Is(err, query.ErrNotListed) {
 			t.Fatalf("err=%v left=%+v", err, left)
+		}
+		if !hasDrop(f.Posts, "Proxy0") || f.Has("Proxy0") || f.E != 0 || f.Phantoms != 0 {
+			t.Fatalf("has=%v E=%d phantoms=%d posts=%v", f.Has("Proxy0"), f.E, f.Phantoms, f.Posts)
 		}
 	})
 	t.Run("unlisted, drop refused", func(t *testing.T) {
@@ -274,6 +280,22 @@ func TestCreateProxy_LeftOnRouter(t *testing.T) {
 		var left *LeftCreatedError
 		if err == nil || errors.As(err, &left) {
 			t.Fatalf("снесено — оставленного нет: err=%v", err)
+		}
+	})
+	// Последним: Cleanup подслучая сбрасывает прошивку.
+	t.Run("legacy not seen", func(t *testing.T) {
+		withFirmware(t, "4.03.C.6.3-1")
+		cmds, f, q := newOracleCommands(t, nil)
+		f.ExpectCreate("Proxy0")
+		q.Interfaces.SetCreatedBackoff(time.Millisecond)
+		f.HideCreated(100)
+		_, _, err := cmds.Proxies.CreateProxy(context.Background(), "Proxy0", "d", "127.0.0.1", 1080, true)
+		var left *LeftCreatedError
+		if errors.As(err, &left) || !errors.Is(err, query.ErrNotSeen) {
+			t.Fatalf("err=%v left=%+v", err, left)
+		}
+		if hasDrop(f.Posts, "Proxy0") || !f.Has("Proxy0") || f.E != 0 || f.Phantoms != 0 {
+			t.Fatalf("has=%v E=%d phantoms=%d posts=%v", f.Has("Proxy0"), f.E, f.Phantoms, f.Posts)
 		}
 	})
 }
