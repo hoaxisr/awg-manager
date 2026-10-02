@@ -49,7 +49,7 @@
 	} from "$lib/types";
 	import { proxyInstallStatus, type ProxySubsystem } from "$lib/stores/proxyInstall";
 	import {
-		USAGE_LEVEL_LABELS,
+		usageLevelLabel,
 		isAppearanceSettingsVisible,
 		isSectionVisible,
 		isRoutingSubTabVisible,
@@ -58,6 +58,7 @@
 		type UsageLevel,
 	} from "$lib/types/usageLevel";
 	import { usageLevel } from "$lib/stores/settings";
+	import { m } from "$lib/i18n";
 	import { waitForBackendRestart } from "$lib/restartRecovery";
 	import { hasDevelopChannelQuizPassed } from "$lib/utils/developChannelGate";
 	import { developFeedbackFabVisible } from "$lib/stores/developFeedbackFab";
@@ -768,7 +769,7 @@ $effect(() => {
 		try {
 			settings = await api.updateSettings({ ...settings, usageLevel: level });
 			setGlobalSettings(settings);
-			notifications.success(`Уровень: ${USAGE_LEVEL_LABELS[level]}`);
+			notifications.success(m.settings_level_saved({ level: usageLevelLabel(level) }));
 		} catch {
 			notifications.error("Не удалось сохранить уровень");
 		} finally {
