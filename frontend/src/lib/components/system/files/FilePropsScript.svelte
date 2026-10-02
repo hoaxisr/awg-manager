@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api, type SystemFileEntry, type FileSystemScriptStatus } from '$lib/api/client';
 	import { Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
@@ -15,13 +16,14 @@
 
 	let scriptStatus = $state<FileSystemScriptStatus | null>(null);
 	let runningScript = $state(false);
-	let scriptOutput = $state<string | null>(null);
+	// Вывод последнего запуска; пустой output подменяется текстом при отрисовке.
+	let scriptRun = $state<{ output: string; ok: boolean } | null>(null);
 	let checkedPath = $state<string | null>(null);
 
 	$effect(() => {
 		if (checkedPath === entry.path) return;
 		checkedPath = entry.path;
-		scriptOutput = null;
+		scriptRun = null;
 		void checkScript(entry.path);
 	});
 
@@ -37,16 +39,16 @@
 		runningScript = true;
 		try {
 			const res = await api.systemFilesScriptAction({ path: entry.path, action });
-			scriptOutput = res.output || (res.ok ? 'Успешно выполнено' : 'Ошибка');
+			scriptRun = { output: res.output, ok: res.ok };
 			if (res.ok) {
-				notifications.success(`Скрипт: ${action} выполнен`);
+				notifications.success(m.system_files_fps_action_done({ action }));
 			} else {
-				notifications.error(res.error || 'Ошибка запуска');
+				notifications.error(res.error || m.system_files_fps_run_failed());
 			}
 			await checkScript(entry.path);
 			onUpdated?.();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Ошибка выполнения скрипта'));
+			notifications.error(errorMessage(e, m.system_files_fps_exec_failed()));
 		} finally {
 			runningScript = false;
 		}
@@ -57,13 +59,13 @@
 	<div class="section-box script-box">
 		<div class="section-title">
 			<Terminal size={15} />
-			<span>Управление скриптом / процессом</span>
+			<span>{m.system_files_fps_title()}</span>
 		</div>
 
 		<div class="script-status-row">
 			<div class="pill-badge" class:running={scriptStatus.running}>
 				<span class="dot"></span>
-				<strong>{scriptStatus.running ? 'Запущен в системе' : 'Остановлен'}</strong>
+				<strong>{scriptStatus.running ? m.system_files_fps_running() : m.system_files_fps_stopped()}</strong>
 				{#if scriptStatus.pids?.length}
 					<span>(PID: {scriptStatus.pids.join(', ')})</span>
 				{/if}
@@ -73,23 +75,23 @@
 				{#if !scriptStatus.running}
 					<Button size="sm" variant="primary" loading={runningScript} onclick={() => runAction(scriptStatus?.isService ? 'start' : 'run')}>
 						{#snippet iconBefore()}<Play size={13} />{/snippet}
-						Запустить
+						{m.system_files_fps_start()}
 					</Button>
 				{:else}
 					<Button size="sm" variant="secondary" loading={runningScript} onclick={() => runAction('restart')}>
 						{#snippet iconBefore()}<RotateCw size={13} />{/snippet}
-						Перезапуск
+						{m.system_files_fps_restart()}
 					</Button>
 					<Button size="sm" variant="danger" loading={runningScript} onclick={() => runAction('stop')}>
 						{#snippet iconBefore()}<Square size={13} />{/snippet}
-						Остановить
+						{m.proxy_common_stop()}
 					</Button>
 				{/if}
 			</div>
 		</div>
 
-		{#if scriptOutput}
-			<pre class="script-out">{scriptOutput}</pre>
+		{#if scriptRun}
+			<pre class="script-out">{scriptRun.output || (scriptRun.ok ? m.system_files_fps_ok() : m.tunnels_error_generic())}</pre>
 		{/if}
 	</div>
 {/if}

@@ -29,6 +29,7 @@
 	import { IconPickerModal, ServiceCatalogModal } from '$lib/components/dnsroutes';
 	import type { CatalogPreset } from '$lib/types';
 	import { hrNeoCatalogPresetFilter } from '$lib/utils/catalog-preset';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		dnsRoutes: DnsRoute[];
@@ -479,8 +480,8 @@
 				{#if selectedPolicy}
 					<section class="policy-interfaces-panel">
 						<header class="panel-header">
-							<h3>Интерфейсы политики</h3>
-							<span class="hint">Изменения сохраняются сразу через RCI</span>
+							<h3>{m.hrneo_tab_policy_interfaces()}</h3>
+							<span class="hint">{m.hrneo_tab_policy_interfaces_hint()}</span>
 						</header>
 						<InterfaceList
 							interfaces={selectedPolicy.interfaces ?? []}
@@ -515,7 +516,7 @@
 	{:else}
 		<!-- Mobile: accordion — each target expandable -->
 		<div class="mobile-stack">
-			<button type="button" class="mobile-add-rule" onclick={openNewRule}>+ Новое правило</button>
+			<button type="button" class="mobile-add-rule" onclick={openNewRule}>{m.hrneo_tab_new_rule()}</button>
 			{#each targets as t, i (t.name)}
 				{@const pol = t.kind === 'policy' ? policyByName(t.name) : null}
 				<details open={i === 0}>
@@ -528,8 +529,8 @@
 						{#if pol}
 							<section class="policy-interfaces-panel">
 								<header class="panel-header">
-									<h3>Интерфейсы политики</h3>
-									<span class="hint">Изменения сохраняются сразу через RCI</span>
+									<h3>{m.hrneo_tab_policy_interfaces()}</h3>
+									<span class="hint">{m.hrneo_tab_policy_interfaces_hint()}</span>
 								</header>
 								<InterfaceList
 									interfaces={pol.interfaces ?? []}
@@ -566,7 +567,7 @@
 			{/each}
 
 			<details>
-				<summary>Настройки демона</summary>
+				<summary>{m.hrneo_tab_daemon_settings()}</summary>
 				<div class="acc-body"><HrNeoSettingsView /></div>
 			</details>
 		</div>
@@ -598,11 +599,10 @@
 
 <ServiceCatalogModal
 	bind:open={catalogOpen}
-	title="Каталог сервисов"
 	presetFilter={hrNeoCatalogPresetFilter}
 	footer="none"
 	multiple={false}
-	confirmLabel="Выбрать"
+	confirmLabel={m.routing_select()}
 	onclose={() => (catalogOpen = false)}
 	onconfirm={(presets) => {
 		if (editOpen) {
@@ -616,23 +616,22 @@
 {#if pendingDelete}
 	<Modal
 		open={true}
-		title="Удалить HR правило"
+		title={m.hrneo_tab_delete_title()}
 		size="sm"
 		onclose={() => (pendingDelete = null)}
 	>
 		<p class="confirm-text">
-			Удалить правило <strong>{pendingDelete.name}</strong>?
+			{m.hrneo_tab_delete_prefix()}<strong>{pendingDelete.name}</strong>?
 		</p>
 		<p class="confirm-hint">
-			Запись пропадёт из <code>domain.conf</code> и <code>ip.list</code>.
-			HR Neo будет перезапущен автоматически.
+			{m.hrneo_tab_delete_hint_prefix()}<code>domain.conf</code>{m.hrneo_tab_delete_hint_and()}<code>ip.list</code>{m.hrneo_tab_delete_hint_suffix()}
 		</p>
 		{#snippet actions()}
 			<Button variant="secondary" onclick={() => (pendingDelete = null)} disabled={deleting}>
-				Отмена
+				{m.common_cancel()}
 			</Button>
 			<Button variant="danger" onclick={confirmDelete} loading={deleting}>
-				Удалить
+				{m.common_delete()}
 			</Button>
 		{/snippet}
 	</Modal>
@@ -655,9 +654,9 @@
 			try {
 				await api.updateDnsRoute(rule.id, { ...rule, iconUrl: newUrl ?? undefined });
 				invalidateAllRouting();
-				notifications.success(newUrl ? 'Иконка изменена' : 'Иконка сброшена');
+				notifications.success(newUrl ? m.hrneo_tab_icon_changed() : m.hrneo_tab_icon_reset());
 			} catch (e: unknown) {
-				notifications.error(e instanceof Error ? e.message : 'Не удалось обновить иконку');
+				notifications.error(e instanceof Error ? e.message : m.hrneo_tab_icon_update_failed());
 			}
 		}}
 	/>

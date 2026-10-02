@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SubscriptionMember } from '$lib/types';
 	import { Trash2, Ban } from 'lucide-svelte';
 	import SubscriptionMemberCard from './SubscriptionMemberCard.svelte';
@@ -46,18 +47,18 @@
 		<div
 			class="sbx-member-list-row sbx-member-list-row--head">
 			<span>Delay</span>
-			<span>Сервер</span>
-			<span>Протокол</span>
+			<span>{m.subscriptions_list_col_server()}</span>
+			<span>{m.subscriptions_list_col_protocol()}</span>
 			<span>Ping</span>
-			<span>Тег</span>
-			<span>Статус</span>
+			<span>{m.subscriptions_list_col_tag()}</span>
+			<span>{m.subscriptions_list_col_status()}</span>
 			{#if isInline}<span class="h-rm" aria-hidden="true"></span>{/if}
 		</div>
 		<div class="member-list-meta-row mono">
-			<span class="meta-lbl">Мин. delay</span>
+			<span class="meta-lbl">{m.subscriptions_list_min_delay()}</span>
 			{#if minDelayMs !== null}
 				<span class="meta-val"><strong>{minDelayMs} ms</strong></span>
-				<span class="meta-hint">по последним проверкам среди серверов</span>
+				<span class="meta-hint">{m.subscriptions_list_min_delay_hint()}</span>
 			{:else}
 				<span class="meta-empty">—</span>
 			{/if}
@@ -95,7 +96,7 @@
 							class="ex-check"
 							checked={selected.has(member.tag)}
 							tabindex="-1"
-							aria-label="Выбрать сервер {member.label || member.tag}"
+							aria-label={m.subscriptions_list_select_aria({ name: member.label || member.tag })}
 							onclick={(e) => {
 								e.stopPropagation();
 								ontoggle(member.tag);
@@ -115,8 +116,8 @@
 					<button
 						type="button"
 						class="member-remove-btn"
-						title="Удалить сервер"
-						aria-label="Удалить сервер {member.label || member.tag}"
+						title={m.subscriptions_list_delete()}
+						aria-label={m.subscriptions_list_delete_aria({ name: member.label || member.tag })}
 						disabled={removingTag !== null}
 						onclick={(e) => {
 							e.stopPropagation();
@@ -124,14 +125,14 @@
 						}}
 					>
 						<Trash2 size={14} aria-hidden="true" />
-						Удалить
+						{m.common_delete()}
 					</button>
 				{:else if isUrlSub && !selectMode}
 					<button
 						type="button"
 						class="ex-btn"
-						title="Исключить сервер"
-						aria-label="Исключить сервер {member.label || member.tag}"
+						title={m.subscriptions_list_exclude()}
+						aria-label={m.subscriptions_list_exclude_aria({ name: member.label || member.tag })}
 						disabled={excluding}
 						onclick={(e) => {
 							e.stopPropagation();
@@ -139,7 +140,7 @@
 						}}
 					>
 						<Ban size={14} aria-hidden="true" />
-						Исключить
+						{m.subscriptions_list_exclude_btn()}
 					</button>
 				{/if}
 			</div>
@@ -162,7 +163,7 @@
 						type="checkbox"
 						class="ex-check"
 						checked={selected.has(member.tag)}
-						aria-label="Выбрать сервер {member.label || member.tag}"
+						aria-label={m.subscriptions_list_select_aria({ name: member.label || member.tag })}
 						onclick={(e) => {
 							e.stopPropagation();
 							ontoggle(member.tag);
@@ -181,8 +182,8 @@
 				<button
 					type="button"
 					class="member-remove-btn"
-					title="Удалить сервер"
-					aria-label="Удалить сервер {member.label || member.tag}"
+					title={m.subscriptions_list_delete()}
+					aria-label={m.subscriptions_list_delete_aria({ name: member.label || member.tag })}
 					disabled={removingTag !== null}
 					onclick={(e) => {
 						e.stopPropagation();
@@ -190,14 +191,14 @@
 					}}
 				>
 					<Trash2 size={14} aria-hidden="true" />
-					Удалить
+					{m.common_delete()}
 				</button>
 			{:else if isUrlSub && !selectMode}
 				<button
 					type="button"
 					class="ex-btn"
-					title="Исключить сервер"
-					aria-label="Исключить сервер {member.label || member.tag}"
+					title={m.subscriptions_list_exclude()}
+					aria-label={m.subscriptions_list_exclude_aria({ name: member.label || member.tag })}
 					disabled={excluding}
 					onclick={(e) => {
 						e.stopPropagation();
@@ -205,7 +206,7 @@
 					}}
 				>
 					<Ban size={14} aria-hidden="true" />
-					Исключить
+					{m.subscriptions_list_exclude_btn()}
 				</button>
 			{/if}
 		</div>

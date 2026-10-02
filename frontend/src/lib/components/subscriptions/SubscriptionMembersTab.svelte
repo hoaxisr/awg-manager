@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import type { Subscription, SubscriptionMember } from '$lib/types';
@@ -61,7 +62,7 @@
 			await api.removeSubscriptionInfoItem(subscription.id, itemId);
 			onUpdated();
 		} catch (e) {
-			lastError = e instanceof Error ? e.message : 'Не удалось убрать строку из info';
+			lastError = e instanceof Error ? e.message : m.subscriptions_members_remove_info_failed();
 		} finally {
 			removingInfoId = null;
 		}
@@ -75,7 +76,7 @@
 			await api.moveSubscriptionRejectedToInfo(subscription.id, memberTag);
 			onUpdated();
 		} catch (e) {
-			lastError = e instanceof Error ? e.message : 'Не удалось перенести в info';
+			lastError = e instanceof Error ? e.message : m.subscriptions_members_move_info_failed();
 		} finally {
 			movingToInfo = null;
 		}
@@ -92,7 +93,7 @@
 			addOpen = false;
 			onUpdated();
 		} catch (e) {
-			addError = e instanceof Error ? e.message : 'Не удалось добавить сервер';
+			addError = e instanceof Error ? e.message : m.subscriptions_members_add_failed();
 		} finally {
 			adding = false;
 		}
@@ -116,7 +117,7 @@
 			}
 			onUpdated();
 		} catch (e) {
-			lastError = e instanceof Error ? e.message : 'Не удалось удалить сервер';
+			lastError = e instanceof Error ? e.message : m.subscriptions_members_delete_failed();
 		} finally {
 			removingTag = null;
 		}
@@ -142,16 +143,16 @@
 		let bestDelayServer = '—';
 		let bestDelayProtocol = '';
 		const histMap = $singboxDelayHistory;
-		for (const m of memberList) {
-			const h = histMap.get(m.tag) ?? [];
+		for (const member of memberList) {
+			const h = histMap.get(member.tag) ?? [];
 			const last = h.length > 0 ? h[h.length - 1] : 0;
 			if (typeof last === 'number' && last > 0) {
 				delaySum += last;
 				delayN++;
 				if (last < minLatest) {
 					minLatest = last;
-					bestDelayServer = m.label || m.server || m.tag;
-					bestDelayProtocol = m.protocol || '';
+					bestDelayServer = member.label || member.server || member.tag;
+					bestDelayProtocol = member.protocol || '';
 				}
 			}
 		}
@@ -167,8 +168,8 @@
 	const modeLabel = $derived(subscription.mode === 'urltest' ? 'URLTest' : 'Selector');
 	const modeHint = $derived(
 		subscription.mode === 'urltest'
-			? 'Sing-box автоматически выбирает быстрейший сервер по latency-тесту.'
-			: 'Выберите активный сервер. Selector направит трафик в выбранный outbound.',
+			? m.subscriptions_members_hint_urltest()
+			: m.subscriptions_members_hint_selector(),
 	);
 
 	// For urltest mode, liveActiveMember reflects the auto-selected member as reported
@@ -189,10 +190,10 @@
 			// ниже, с названием протокола. Дубликаты и vmess записей в ошибках
 			// не порождают — эти два счётчика и остаются здесь.
 			const skipped: string[] = [];
-			if (result.skippedDuplicate > 0) skipped.push(`дубликатов: ${result.skippedDuplicate}`);
+			if (result.skippedDuplicate > 0) skipped.push(m.subscriptions_members_skipped_duplicates({ count: result.skippedDuplicate }));
 			if (result.skippedVmess > 0) skipped.push(`vmess: ${result.skippedVmess}`);
 			if (skipped.length > 0) {
-				notifications.warning(`Пропущено — ${skipped.join(', ')}`);
+				notifications.warning(m.subscriptions_members_skipped({ items: skipped.join(', ') }));
 			}
 			// Ошибки разбора доезжали до ответа, но нигде не показывались:
 			// сервер просто исчезал из подписки без причины.
@@ -203,9 +204,11 @@
 				const reasons = groupLinkImportErrors(parseErrors);
 				const shown = reasons.slice(0, 3);
 				const rest = reasons.length - shown.length;
+				const reasonsText = shown.join('; ');
 				notifications.warning(
-					`Не разобрано серверов: ${parseErrors.length}. ${shown.join('; ')}` +
-						(rest > 0 ? ` и ещё ${rest} причин` : '')
+					rest > 0
+						? m.subscriptions_members_parse_errors_more({ count: parseErrors.length, reasons: reasonsText, rest })
+						: m.subscriptions_members_parse_errors({ count: parseErrors.length, reasons: reasonsText })
 				);
 			}
 			const updated = await api.getSubscription(subscription.id);
@@ -213,15 +216,15 @@
 			const rejN = updated.rejectedMembers?.length ?? 0;
 			const extra: string[] = [];
 			if (infoN > beforeInfo) extra.push(`+${infoN - beforeInfo} info`);
-			if (rejN > beforeRejected) extra.push(`+${rejN - beforeRejected} отклонённых`);
+			if (rejN > beforeRejected) extra.push(m.subscriptions_members_extra_rejected({ count: rejN - beforeRejected }));
 			if (extra.length > 0) {
-				notifications.info(`После обновления: ${extra.join(', ')}`);
+				notifications.info(m.subscriptions_members_after_refresh({ items: extra.join(', ') }));
 			}
 			onUpdated();
 		} catch (e) {
 			// Сообщение несёт внутри английскую строку разбора («Первая ошибка
 			// парсера: …») — прогоняем через ту же обёртку, что и остальные.
-			lastError = e instanceof Error ? translateKnownError(e.message) : 'Не удалось обновить';
+			lastError = e instanceof Error ? translateKnownError(e.message) : m.subscriptions_members_refresh_failed();
 		} finally {
 			refreshing = false;
 		}
@@ -232,7 +235,7 @@
 		// with 409. Tell the user how to switch to selector mode.
 		if (subscription.mode === 'urltest') {
 			notifications.info(
-				'Включён автовыбор (URLTest). Чтобы переключать сервер вручную, откройте вкладку «Настройки» этой подписки и выберите режим «Вручную».',
+				m.subscriptions_members_urltest_notice(),
 				{ duration: 9000 },
 			);
 			return;
@@ -244,7 +247,7 @@
 			await api.setSubscriptionActiveMember(subscription.id, memberTag);
 			onUpdated();
 		} catch (e) {
-			lastError = e instanceof Error ? e.message : 'Не удалось переключить';
+			lastError = e instanceof Error ? e.message : m.subscriptions_picker_switch_failed();
 		} finally {
 			switching = null;
 		}
@@ -252,7 +255,7 @@
 
 	async function testAll(): Promise<void> {
 		if (batchTesting) return;
-		const tags = memberList.map((m) => m.tag);
+		const tags = memberList.map((member) => member.tag);
 		if (tags.length === 0) return;
 		batchTesting = true;
 		batchProgress = { done: 0, total: tags.length };
@@ -277,7 +280,7 @@
 			confirmClearOrphans = false;
 			onUpdated();
 		} catch (e) {
-			lastError = e instanceof Error ? e.message : 'Не удалось очистить сироты';
+			lastError = e instanceof Error ? e.message : m.subscriptions_members_clear_orphans_failed();
 		} finally {
 			clearingOrphans = false;
 		}
@@ -299,11 +302,11 @@
 	}
 
 	function selectAll(): void {
-		selected = new Set(memberList.map((m) => m.tag));
+		selected = new Set(memberList.map((member) => member.tag));
 	}
 
 	function excludeOne(tag: string): void {
-		const member = memberList.find((m) => m.tag === tag);
+		const member = memberList.find((member) => member.tag === tag);
 		if (member) pendingExclude = member;
 	}
 
@@ -316,7 +319,7 @@
 			pendingExclude = null;
 			onUpdated();
 		} catch (e) {
-			lastError = e instanceof Error ? e.message : 'Не удалось исключить';
+			lastError = e instanceof Error ? e.message : m.subscriptions_members_exclude_failed();
 		} finally {
 			excluding = false;
 		}
@@ -333,7 +336,7 @@
 			confirmExcludeSelected = false;
 			onUpdated();
 		} catch (e) {
-			lastError = e instanceof Error ? e.message : 'Не удалось исключить';
+			lastError = e instanceof Error ? e.message : m.subscriptions_members_exclude_failed();
 		} finally {
 			excluding = false;
 		}
@@ -371,7 +374,7 @@
 
 {#if selectMode}
 	<header class="head select-bar">
-		<div class="select-info">Выбрано {selected.size} из {memberList.length}</div>
+		<div class="select-info">{m.subscriptions_members_selected_of({ selected: selected.size, total: memberList.length })}</div>
 		<div class="actions">
 			<Button
 				variant="ghost"
@@ -379,7 +382,7 @@
 				disabled={excluding || memberList.length === 0}
 				onclick={selectAll}
 			>
-				Выбрать все
+				{m.subscriptions_preview_select_all()}
 			</Button>
 			{#if confirmExcludeSelected}
 				<Button
@@ -390,10 +393,10 @@
 					iconBefore={banIcon}
 					onclick={excludeSelected}
 				>
-					{excluding ? 'Исключаем...' : `Подтвердить (${selected.size})`}
+					{excluding ? m.subscriptions_members_excluding() : m.subscriptions_members_confirm_count({ count: selected.size })}
 				</Button>
 				<Button variant="ghost" size="sm" disabled={excluding} onclick={() => (confirmExcludeSelected = false)}>
-					Назад
+					{m.tunnels_back()}
 				</Button>
 			{:else}
 				<Button
@@ -403,10 +406,10 @@
 					iconBefore={banIcon}
 					onclick={() => (confirmExcludeSelected = true)}
 				>
-					Исключить выбранные ({selected.size})
+					{m.subscriptions_members_exclude_selected({ count: selected.size })}
 				</Button>
 				<Button variant="ghost" size="sm" disabled={excluding} onclick={toggleSelectMode}>
-					Отмена
+					{m.common_cancel()}
 				</Button>
 			{/if}
 		</div>
@@ -420,7 +423,7 @@
 		<div class="actions">
 			{#if subscription.isInline}
 				<Button variant="primary" size="sm" onclick={() => (addOpen = true)} iconBefore={createIcon}>
-					Добавить сервер
+					{m.subscriptions_members_add_server()}
 				</Button>
 			{:else}
 				<Button
@@ -431,7 +434,7 @@
 					iconBefore={refreshIcon}
 					onclick={refresh}
 				>
-					{refreshing ? 'Обновляем...' : 'Обновить сейчас'}
+					{refreshing ? m.subscriptions_members_refreshing() : m.subscriptions_members_refresh_now()}
 				</Button>
 			{/if}
 			<Button
@@ -443,14 +446,14 @@
 				onclick={testAll}
 			>
 				{#if batchTesting}
-					Тестируем {batchProgress.done}/{batchProgress.total}
+					{m.subscriptions_members_testing_progress({ done: batchProgress.done, total: batchProgress.total })}
 				{:else}
-					Проверить всё
+					{m.subscriptions_members_test_all()}
 				{/if}
 			</Button>
 			{#if isUrlSub && memberList.length > 0}
 				<Button variant="ghost" size="sm" disabled={excluding} onclick={toggleSelectMode}>
-					Выбрать
+					{m.subscriptions_members_select()}
 				</Button>
 			{/if}
 		</div>
@@ -463,7 +466,7 @@
 
 {#if infoItems.length > 0}
 	<section class="info-block">
-		<div class="lbl">Информация от провайдера ({infoItems.length}/{MAX_SUBSCRIPTION_INFO_ITEMS})</div>
+		<div class="lbl">{m.subscriptions_members_info_title({ count: infoItems.length, max: MAX_SUBSCRIPTION_INFO_ITEMS })}</div>
 		<ul class="info-list">
 			{#each infoItems as item (item.id)}
 				<li class="info-card">
@@ -472,8 +475,8 @@
 						<button
 							type="button"
 							class="info-remove-btn"
-							title="Убрать в отклонённые"
-							aria-label="Убрать в отклонённые: {item.label}"
+							title={m.subscriptions_members_info_reject()}
+							aria-label={m.subscriptions_members_info_reject_aria({ label: item.label })}
 							disabled={removingInfoId !== null}
 							onclick={() => removeInfoItem(item.id)}
 						>
@@ -487,29 +490,29 @@
 {/if}
 
 {#if memberList.length === 0}
-	<div class="empty">Подписка ещё не загружена. Нажмите «Обновить сейчас».</div>
+	<div class="empty">{m.subscriptions_members_not_loaded()}</div>
 {:else}
 	<div class="hint">{modeHint}</div>
 	{#if layout === 'list'}
 		<div class="awg-summary-row">
 			<StatStrip>
-				<Stat value={`${membersListStats.count}`} label="Серверов" sub="в подписке" />
+				<Stat value={`${membersListStats.count}`} label={m.subscriptions_card_detail_servers()} sub={m.subscriptions_members_stat_in_subscription()} />
 				<Stat
 					value={membersListStats.avgDelayMs !== null ? `${membersListStats.avgDelayMs} ms` : '—'}
-					label="Средний delay"
-					sub="по последним проверкам"
+					label={m.singbox_tabs_avg_delay()}
+					sub={m.singbox_tabs_avg_delay_sub()}
 				/>
 				<Stat
 					value={membersListStats.minDelayMs !== null ? `${membersListStats.minDelayMs} ms` : '—'}
-					label="Мин. delay"
-					sub="лучший из последних по серверам"
+					label={m.subscriptions_list_min_delay()}
+					sub={m.subscriptions_members_stat_best_of_latest()}
 				/>
 				<Stat
 					value={membersListStats.minDelayMs !== null ? membersListStats.bestDelayServer : '—'}
-					label="Лидер по delay"
+					label={m.subscriptions_members_stat_delay_leader()}
 					sub={membersListStats.minDelayMs !== null
 						? `${membersListStats.minDelayMs} ms${membersListStats.bestDelayProtocol ? ` · ${membersListStats.bestDelayProtocol}` : ''}`
-						: 'нет замеров'}
+						: m.subscriptions_members_stat_no_samples()}
 				/>
 			</StatStrip>
 		</div>
@@ -535,7 +538,7 @@
 
 <Modal
 	open={addOpen}
-	title="Добавить сервер"
+	title={m.subscriptions_members_add_server()}
 	size="md"
 	onclose={() => {
 		if (adding) return;
@@ -552,7 +555,7 @@
 		}}
 	>
 		<label class="add-row">
-			<span class="add-lbl">Share-link сервера</span>
+			<span class="add-lbl">{m.subscriptions_members_share_link()}</span>
 			<input
 				class="add-inp"
 				type="text"
@@ -574,17 +577,17 @@
 				addError = '';
 			}}
 		>
-			Отмена
+			{m.common_cancel()}
 		</Button>
 		<Button variant="primary" disabled={adding || !addLink.trim()} loading={adding} onclick={addMember}>
-			{adding ? 'Добавляем...' : 'Добавить'}
+			{adding ? m.subscriptions_members_adding() : m.singbox_tabs_add()}
 		</Button>
 	{/snippet}
 </Modal>
 
 <Modal
 	open={pendingRemove !== null}
-	title="Удалить сервер?"
+	title={m.subscriptions_members_remove_title()}
 	size="md"
 	onclose={() => {
 		if (removingTag) return;
@@ -593,15 +596,13 @@
 >
 	{#if pendingRemove}
 		<p>
-			Сервер
+			{m.subscriptions_list_col_server()}
 			<strong>{pendingRemove.label || `${pendingRemove.server}:${pendingRemove.port}`}</strong>
-			будет удалён из подписки.
+			{m.subscriptions_members_remove_after()}
 		</p>
 		{#if memberList.length === 1}
 			<p class="warn">
-				Это последний сервер в подписке. После удаления подписка
-				целиком будет удалена вместе с её Proxy NDMS и
-				selector / urltest outbound'ом.
+				{m.subscriptions_members_remove_last_warning()}
 			</p>
 		{/if}
 	{/if}
@@ -611,7 +612,7 @@
 			disabled={removingTag !== null}
 			onclick={() => (pendingRemove = null)}
 		>
-			Отмена
+			{m.common_cancel()}
 		</Button>
 		<Button
 			variant="danger"
@@ -619,14 +620,14 @@
 			loading={removingTag !== null}
 			onclick={confirmRemove}
 		>
-			{removingTag !== null ? 'Удаляем...' : 'Удалить'}
+			{removingTag !== null ? m.tunnels_modals_deleting() : m.common_delete()}
 		</Button>
 	{/snippet}
 </Modal>
 
 <Modal
 	open={pendingExclude !== null}
-	title="Исключить сервер?"
+	title={m.subscriptions_members_exclude_title()}
 	size="md"
 	onclose={() => {
 		if (excluding) return;
@@ -635,16 +636,14 @@
 >
 	{#if pendingExclude}
 		<p>
-			Сервер
+			{m.subscriptions_list_col_server()}
 			<strong>{pendingExclude.label || `${pendingExclude.server}:${pendingExclude.port}`}</strong>
-			будет исключён из подписки и перестанет участвовать в выборе. Сервер
-			останется исключённым при обновлении подписки; вернуть его можно в
-			вкладке «Исключённые».
+			{m.subscriptions_members_exclude_after()}
 		</p>
 	{/if}
 	{#snippet actions()}
 		<Button variant="ghost" disabled={excluding} onclick={() => (pendingExclude = null)}>
-			Отмена
+			{m.common_cancel()}
 		</Button>
 		<Button
 			variant="danger"
@@ -653,7 +652,7 @@
 			iconBefore={banIcon}
 			onclick={confirmExcludeOne}
 		>
-			{excluding ? 'Исключаем...' : 'Исключить'}
+			{excluding ? m.subscriptions_members_excluding() : m.subscriptions_list_exclude_btn()}
 		</Button>
 	{/snippet}
 </Modal>
@@ -662,9 +661,9 @@
 	<section class="rejected">
 		<div class="rejected-head">
 			<div>
-				<div class="lbl warn">Отклонённые ({rejectedMembers.length})</div>
+				<div class="lbl warn">{m.subscriptions_members_rejected_title({ count: rejectedMembers.length })}</div>
 				<div class="hint">
-					Не попали в sing-box (некорректный UUID, info-строки сверх лимита и т.д.). Не участвуют в выборе сервера.
+					{m.subscriptions_members_rejected_hint()}
 				</div>
 			</div>
 		</div>
@@ -695,7 +694,7 @@
 							loading={movingToInfo === row.tag}
 							onclick={() => moveRejectedToInfo(row.tag!)}
 						>
-							Перенести в info
+							{m.subscriptions_members_move_to_info()}
 						</Button>
 					{/if}
 				</div>
@@ -712,13 +711,12 @@
 			aria-expanded={filteredOpen}
 			onclick={() => (filteredOpen = !filteredOpen)}
 		>
-			<span class="lbl">Скрыто фильтром ({filteredMembers.length})</span>
+			<span class="lbl">{m.subscriptions_members_filtered_title({ count: filteredMembers.length })}</span>
 			<span class="filtered-chevron" class:open={filteredOpen} aria-hidden="true">▸</span>
 		</button>
 		{#if filteredOpen}
 			<div class="hint">
-				Эти серверы скрыты regex-фильтром подписки и не участвуют в выборе.
-				Чтобы вернуть сервер, измените фильтр в настройках.
+				{m.subscriptions_members_filtered_hint()}
 			</div>
 			<div class="grid">
 				{#each filteredMembers as member (member.tag)}
@@ -740,10 +738,9 @@
 	<section class="orphans">
 		<div class="orphans-head">
 			<div>
-				<div class="lbl warn">Сироты ({subscription.orphanTags.length})</div>
+				<div class="lbl warn">{m.subscriptions_members_orphans_title({ count: subscription.orphanTags.length })}</div>
 				<div class="hint">
-					Эти серверы были в прошлой версии подписки, но не вернулись при последнем обновлении.
-					Они не участвуют в выборе, но остаются в конфиге sing-box до очистки.
+					{m.subscriptions_members_orphans_hint()}
 				</div>
 			</div>
 			<div class="orphan-actions">
@@ -755,7 +752,7 @@
 						loading={clearingOrphans}
 						onclick={clearOrphans}
 					>
-						{clearingOrphans ? 'Очищаем...' : 'Удалить'}
+						{clearingOrphans ? m.subscriptions_members_clearing() : m.common_delete()}
 					</Button>
 					<Button
 						variant="ghost"
@@ -763,11 +760,11 @@
 						disabled={clearingOrphans}
 						onclick={() => (confirmClearOrphans = false)}
 					>
-						Отмена
+						{m.common_cancel()}
 					</Button>
 				{:else}
 					<Button variant="ghost" size="sm" onclick={() => (confirmClearOrphans = true)}>
-						Очистить сироты
+						{m.subscriptions_members_clear_orphans()}
 					</Button>
 				{/if}
 			</div>

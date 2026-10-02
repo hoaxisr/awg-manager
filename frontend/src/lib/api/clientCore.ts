@@ -1,5 +1,6 @@
 // Ядро API-клиента: транспорт (request), обработчики 401/сети, gateway-
 // классификация. Доменные методы живут в client*-слоях (см. client.ts).
+import { m } from '$lib/i18n';
 import { validateApiResponse } from './validate';
 import { isMockDevMode as envIsMockDevMode } from '$lib/env';
 import type { Subscription, SingboxTunnel } from '$lib/types';
@@ -42,11 +43,19 @@ export class ApiGatewayError extends Error {
 	}
 }
 
-const GATEWAY_MESSAGES: Record<number, string> = {
-	502: 'Шлюз не смог получить ответ от роутера (502). Операция может продолжаться в фоне.',
-	503: 'Сервер временно недоступен (503). Операция может продолжаться в фоне.',
-	504: 'Шлюз не дождался ответа от роутера (504). Операция может продолжаться в фоне.',
-};
+/** Текст gateway-ошибки по статусу; undefined — статус не gateway-ский. */
+function gatewayMessage(status: number): string | undefined {
+	switch (status) {
+		case 502:
+			return m.api_gateway_502();
+		case 503:
+			return m.api_gateway_503();
+		case 504:
+			return m.api_gateway_504();
+		default:
+			return undefined;
+	}
+}
 
 
 export class CoreClient {
@@ -90,13 +99,13 @@ export class CoreClient {
 				throw e;
 			}
 			this.onConnectionLost?.();
-			throw new Error('Ошибка сети: не удалось подключиться к серверу');
+			throw new Error(m.api_network_error());
 		}
 
 		// Handle 401 Unauthorized
 		if (response.status === 401) {
 			this.onUnauthorized?.();
-			throw new Error('Сессия истекла');
+			throw new Error(m.api_session_expired());
 		}
 
 		const contentType = response.headers.get('content-type') || '';
@@ -104,7 +113,7 @@ export class CoreClient {
 		// Handle 503 Service Unavailable — preserve server message when present.
 		if (response.status === 503) {
 			if (contentType.includes('application/json')) {
-				let message = 'Сервер временно недоступен';
+				let message: string = m.api_service_unavailable();
 				try {
 					const body = (await response.json()) as ApiResponse<unknown>;
 					if (body.message) message = body.message;
@@ -114,34 +123,35 @@ export class CoreClient {
 				throw new Error(message);
 			}
 			// Non-JSON 503 — страница шлюза (nginx), разметку не показываем.
-			throw new ApiGatewayError(GATEWAY_MESSAGES[503], 503);
+			throw new ApiGatewayError(m.api_gateway_503(), 503);
 		}
 
 		if (!contentType.includes('application/json')) {
 			const text = await response.text();
 			// Gateway-ошибки (nginx перед awg-manager) отдают HTML-страницы —
 			// классифицируем по статусу и никогда не показываем разметку.
-			if (response.status in GATEWAY_MESSAGES) {
-				throw new ApiGatewayError(GATEWAY_MESSAGES[response.status], response.status);
+			const gateway = gatewayMessage(response.status);
+			if (gateway) {
+				throw new ApiGatewayError(gateway, response.status);
 			}
 			const looksLikeHtml =
 				contentType.includes('text/html') || text.trimStart().startsWith('<');
 			if (looksLikeHtml) {
-				throw new Error(`Ошибка сервера (${response.status})`);
+				throw new Error(m.api_server_error({ status: response.status }));
 			}
-			throw new Error(`Ошибка сервера (${response.status}): ${text.substring(0, 100)}`);
+			throw new Error(m.api_server_error_text({ status: response.status, text: text.substring(0, 100) }));
 		}
 
 		let data: ApiResponse<T>;
 		try {
 			data = await response.json();
 		} catch {
-			throw new Error(`Некорректный ответ сервера (${response.status})`);
+			throw new Error(m.api_bad_response({ status: response.status }));
 		}
 
 		if (!response.ok || data.error) {
 			const err: Error & { status?: number; body?: unknown } = new Error(
-				data.message || `Ошибка запроса (${response.status})`
+				data.message || m.api_request_error({ status: response.status })
 			);
 			err.status = response.status;
 			err.body = data;
@@ -173,7 +183,7 @@ export class CoreClient {
 			lastError: '',
 		};
 		if (baseMembers.length >= 3) {
-			const memberTags = baseMembers.map((m) => m.tag).filter(Boolean);
+			const memberTags = baseMembers.map((member) => member.tag).filter(Boolean);
 			const activeMember = normalized.activeMember && memberTags.includes(normalized.activeMember)
 				? normalized.activeMember
 				: memberTags[0] || '';
@@ -209,7 +219,7 @@ export class CoreClient {
 			});
 		}
 
-		const memberTags = baseMembers.map((m) => m.tag).filter(Boolean);
+		const memberTags = baseMembers.map((member) => member.tag).filter(Boolean);
 		const activeMember = normalized.activeMember && memberTags.includes(normalized.activeMember)
 			? normalized.activeMember
 			: memberTags[0] || '';

@@ -1,9 +1,10 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button, ConfirmModal, Dropdown } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { tunnels as tunnelsStore } from '$lib/stores/tunnels';
-	import type { AWGTunnel, TunnelListItem } from '$lib/types';
+	import type { AWGTunnel, TunnelListItem, AwgAnalyzeData } from '$lib/types';
 	import { buildManagedTunnelListDropdownOptions } from '$lib/utils/routingTunnelOptions';
 	import { get } from 'svelte/store';
 	import { servers } from '$lib/stores/servers';
@@ -37,8 +38,10 @@
 	let loadedTunnelRaw = $state('');
 	let error = $state('');
 	let parsed: AwgParsed | null = $state(null);
-	let result: ScoreResult | null = $state(null);
-	let fixes: string[] = $state([]);
+	// Результат считается из ответа бэкенда: тексты следуют за языком интерфейса.
+	let analysis: AwgAnalyzeData | null = $state(null);
+	const result: ScoreResult | null = $derived(analysis ? scoreConfig(analysis) : null);
+	const fixes: string[] = $derived(result ? buildFixes(result.checks) : []);
 	let analyzing = $state(false);
 	let fileInput: HTMLInputElement | undefined = $state();
 
@@ -81,13 +84,12 @@
 	async function analyze() {
 		error = '';
 		parsed = null;
-		result = null;
-		fixes = [];
+		analysis = null;
 		tunnelLoadError = '';
 
 		const t = raw.trim();
 		if (!t) {
-			error = 'Вставьте содержимое .conf файла AmneziaWG / WireGuard';
+			error = m.diag_awg_analyzer_paste_conf();
 			return;
 		}
 
@@ -96,10 +98,8 @@
 			// Локальный разбор нужен только пути записи в туннель (parsedToTunnelUpdate).
 			const p = parseAWG(t);
 			const data = await api.analyzeAwgConf(t, selectedTunnelId || undefined);
-			const r = scoreConfig(data);
 			parsed = p;
-			result = r;
-			fixes = buildFixes(r.checks);
+			analysis = data;
 			lastAnalyzedRaw = t;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -116,8 +116,7 @@
 		}
 		error = '';
 		parsed = null;
-		result = null;
-		fixes = [];
+		analysis = null;
 		selectedTunnelId = isEmbeddedLocked() ? initialTunnelId : '';
 		selectedPeerValue = '';
 		peerLoadError = '';
@@ -285,13 +284,13 @@
 
 		if (raw.trim() !== lastAnalyzedRaw) {
 			confirmSaveOpen = false;
-			notifications.error('Конфиг изменён после анализа. Нажмите «Анализировать» перед записью в туннель.');
+			notifications.error(m.diag_awg_analyzer_changed_after_analysis());
 			return;
 		}
 
 		if (loadedTunnelRaw !== '' && raw.trim() === loadedTunnelRaw) {
 			confirmSaveOpen = false;
-			notifications.error('Изменений относительно выбранного туннеля нет.');
+			notifications.error(m.diag_awg_analyzer_no_changes());
 			return;
 		}
 
@@ -299,7 +298,7 @@
 		try {
 			const currentRaw = raw.trim();
 			if (!currentRaw) {
-				throw new Error('Вставьте содержимое .conf файла AmneziaWG / WireGuard');
+				throw new Error(m.diag_awg_analyzer_paste_conf());
 			}
 
 			const freshParsed = parseAWG(currentRaw);
@@ -312,12 +311,12 @@
 
 			await analyze();
 
-			notifications.success('Конфиг записан в туннель');
+			notifications.success(m.diag_awg_analyzer_saved());
 			onTunnelSaved?.();
 			confirmSaveOpen = false;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
-			notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения');
+			notifications.error(e instanceof Error ? e.message : m.diag_awg_analyzer_save_failed());
 		} finally {
 			savingTunnel = false;
 		}
@@ -477,17 +476,17 @@
 	const serverPeerOptions = $derived(buildServerPeerDropdownOptions(serverSnap));
 	const serverPlaceholder = $derived(
 		serversLoading
-			? 'Загрузка серверов…'
+			? m.diag_awg_analyzer_servers_loading()
 			: serverPeerOptions.length
-				? 'Выберите пир сервера'
-				: 'Нет доступных пиров',
+				? m.diag_awg_analyzer_select_peer()
+				: m.diag_awg_analyzer_no_peers(),
 	);
 	const tunnelPlaceholder = $derived(
 		tunnelsLoading
-			? 'Загрузка туннелей…'
+			? m.diag_awg_analyzer_tunnels_loading()
 			: tunnelOptions.length
-				? 'Выберите туннель'
-				: 'Нет AWG-туннелей',
+				? m.diag_awg_analyzer_select_tunnel()
+				: m.diag_awg_analyzer_no_tunnels(),
 	);
 
 	let canAnalyze = $derived(raw.trim().length > 0);
@@ -501,14 +500,14 @@
 			<ShieldCheck size={18} />
 		</div>
 		<div class="privacy-banner-body">
-			<p class="privacy-banner-title">Конфиг не покидает роутер</p>
+			<p class="privacy-banner-title">{m.diag_awg_analyzer_privacy_title()}</p>
 			<p class="privacy-banner-text">
-				Конфиг проверяется на роутере; ключи в ответ не возвращаются.
+				{m.diag_awg_analyzer_privacy_text()}
 			</p>
 			<div class="privacy-banner-tags">
-				<span class="privacy-tag">Данные остаются у вас</span>
-				<span class="privacy-tag privacy-tag-warning">Оценка эвристическая и не гарантирует обход DPI</span>
-				<span class="privacy-tag privacy-tag-muted">Изменение параметров на свой страх и риск</span>
+				<span class="privacy-tag">{m.diag_awg_analyzer_tag_data_stays()}</span>
+				<span class="privacy-tag privacy-tag-warning">{m.diag_awg_analyzer_tag_heuristic()}</span>
+				<span class="privacy-tag privacy-tag-muted">{m.diag_awg_analyzer_tag_risk()}</span>
 			</div>
 		</div>
 	</div>
@@ -523,7 +522,7 @@
 						class:active={sourceMode === 'tunnel'}
 						onclick={() => setSource('tunnel')}
 					>
-						Локальный туннель
+						{m.diag_awg_analyzer_source_local()}
 					</button>
 					<button
 						type="button"
@@ -531,15 +530,15 @@
 						class:active={sourceMode === 'server'}
 						onclick={() => setSource('server')}
 					>
-						Сервер AWGM
+						{m.diag_awg_analyzer_source_server()}
 					</button>
 				</div>
 
 				{#if sourceMode === 'tunnel'}
 					<div class="existing-tunnel-box">
 						<div class="existing-tunnel-head">
-							<span class="existing-tunnel-title">Существующий AWG-туннель</span>
-							<span class="existing-tunnel-note">или вставьте .conf ниже</span>
+							<span class="existing-tunnel-title">{m.diag_awg_analyzer_existing_tunnel()}</span>
+							<span class="existing-tunnel-note">{m.diag_awg_analyzer_or_paste()}</span>
 						</div>
 						<div class="existing-tunnel-row">
 							<div class="existing-tunnel-select">
@@ -553,7 +552,7 @@
 								/>
 							</div>
 							{#if tunnelLoading}
-								<span class="existing-tunnel-loading">Загрузка…</span>
+								<span class="existing-tunnel-loading">{m.diag_logs_loading_more()}</span>
 							{/if}
 						</div>
 						{#if tunnelLoadError}
@@ -563,9 +562,9 @@
 				{:else}
 					<div class="existing-tunnel-box">
 						<div class="existing-tunnel-head">
-							<span class="existing-tunnel-title">Пир AWGM-сервера</span>
+							<span class="existing-tunnel-title">{m.diag_awg_analyzer_server_peer()}</span>
 							<span class="existing-tunnel-note">
-								оценивается обфускация/стойкость к DPI выдаваемого конфига, не коллизии IP/ключей
+								{m.diag_awg_analyzer_peer_note()}
 							</span>
 						</div>
 						<div class="existing-tunnel-row">
@@ -580,7 +579,7 @@
 								/>
 							</div>
 							{#if peerLoading}
-								<span class="existing-tunnel-loading">Загрузка…</span>
+								<span class="existing-tunnel-loading">{m.diag_logs_loading_more()}</span>
 							{/if}
 						</div>
 						{#if peerLoadError}
@@ -591,8 +590,8 @@
 			{:else}
 				<div class="existing-tunnel-box embedded">
 					<div class="existing-tunnel-head">
-						<span class="existing-tunnel-title">Текущий AWG-туннель</span>
-						<span class="existing-tunnel-note">конфиг загружен из открытого редактора</span>
+						<span class="existing-tunnel-title">{m.diag_awg_analyzer_current_tunnel()}</span>
+						<span class="existing-tunnel-note">{m.diag_awg_analyzer_current_note()}</span>
 					</div>
 					{#if tunnelLoadError}
 						<div class="warn" role="alert">{tunnelLoadError}</div>
@@ -606,7 +605,7 @@
 				ondragover={(e) => e.preventDefault()}
 				ondrop={onDrop}
 			>
-				<span class="drop-label">AWG / WireGuard .conf — вставьте или перетащите файл</span>
+				<span class="drop-label">{m.diag_awg_analyzer_drop_label()}</span>
 				<textarea
 					class="ta"
 					bind:value={raw}
@@ -618,20 +617,19 @@
 			</label>
 
 			<div class="bar">
-				<Button variant="primary" onclick={analyze} disabled={!canAnalyze || analyzing} loading={analyzing}>Анализировать</Button>
-				<Button variant="secondary" onclick={() => fileInput?.click()}>Загрузить файл</Button>
-				<Button variant="ghost" onclick={clearAll}>Очистить</Button>
+				<Button variant="primary" onclick={analyze} disabled={!canAnalyze || analyzing} loading={analyzing}>{m.diag_awg_analyzer_analyze()}</Button>
+				<Button variant="secondary" onclick={() => fileInput?.click()}>{m.diag_awg_analyzer_upload_file()}</Button>
+				<Button variant="ghost" onclick={clearAll}>{m.diag_logs_clear()}</Button>
 				{#if canSave}
 					<Button variant="outline-primary" onclick={saveToTunnel} loading={savingTunnel}>
-						Записать в туннель
+						{m.diag_awg_analyzer_write_to_tunnel()}
 					</Button>
 				{/if}
 				<span class="kbd">⌘/Ctrl+Enter</span>
 			</div>
 			{#if selectedTunnelId && rawChangedSinceAnalyze}
 				<p class="bar-hint" role="status">
-					Конфиг был изменён вручную, если вы хотите применить изменения к туннелю, сначала нажмите «Анализировать».				
-					Учтите, что это может привести к нарушению работы туннеля, если вы не уверены в том, что делаете.
+					{m.diag_awg_analyzer_edited_hint()}
 				</p>
 			{/if}
 
@@ -653,9 +651,9 @@
 				<AwgAnalyzerResult {result} {fixes} />
 			{:else}
 				<div class="results-empty">
-					<p class="results-empty-title">Результаты анализа</p>
+					<p class="results-empty-title">{m.diag_awg_analyzer_results_title()}</p>
 					<p class="results-empty-text">
-						После нажатия «Анализировать» здесь появятся оценка, рекомендации и список проверок.
+						{m.diag_awg_analyzer_results_empty()}
 					</p>
 				</div>
 			{/if}
@@ -665,10 +663,10 @@
 
 <ConfirmModal
 	open={confirmSaveOpen}
-	title="Записать конфиг в туннель?"
-	message="Вы собираетесь перезаписать параметры выбранного туннеля данными из поля конфига."
-	secondary="Будут обновлены параметры Interface и Peer. Если туннель сейчас работает, для применения изменений может потребоваться перезапуск. Действие необратимо без ручного восстановления старого конфига."
-	confirmLabel="Записать"
+	title={m.diag_awg_analyzer_confirm_title()}
+	message={m.diag_awg_analyzer_confirm_message()}
+	secondary={m.diag_awg_analyzer_confirm_secondary()}
+	confirmLabel={m.diag_awg_analyzer_confirm_write()}
 	variant="danger"
 	busy={savingTunnel}
 	onConfirm={doSaveToTunnel}

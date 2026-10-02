@@ -1,3 +1,5 @@
+import { m } from '$lib/i18n';
+
 export const DEVELOP_CHANNEL_LOCKOUT_KEY = 'awg-manager-develop-channel-lockout-until';
 export const DEVELOP_CHANNEL_QUIZ_PASSED_KEY = 'awg-manager-develop-channel-quiz-passed';
 export const DEVELOP_CHANNEL_QUIZ_SIZE = 7;
@@ -12,21 +14,23 @@ export const DEVELOP_CHANNEL_LOCKOUT_MOCK_MS = 30 * 1000;
 export const DEVELOP_CHANNEL_DOCS_URL = 'https://awgm.hoaxisr.ru/';
 
 /** Shown as the only answer after copy/Ctrl+C during the quiz. */
-export const DEVELOP_CHANNEL_COPY_CHEAT_OPTIONS = [
-	'Я попытался скопировать вопрос, чтобы считерить, простите меня',
-	'Наверное, это не моё, я случайно сюда попал...',
-	'Ctrl+C — мой любимый способ подготовки к альфе',
-	'Копирую в блокнот для друга, который тоже на develop',
-	'Сейчас загуглю, это займёт секунд тридцать',
-	'Я не читер, я архиватор вопросов open source',
-	'Думал, выделение текста даёт бонусные очки',
-	'Ладно, поймали — но issue всё равно оформлю одной строкой',
-	'Это была проверка буфера обмена, всё работает',
-	'Шёл за стабильным каналом, промахнулся мимо кнопки',
-] as const;
+export function getDevelopChannelCopyCheatOptions(): string[] {
+	return [
+		m.develop_gate_cheat_1(),
+		m.develop_gate_cheat_2(),
+		m.develop_gate_cheat_3(),
+		m.develop_gate_cheat_4(),
+		m.develop_gate_cheat_5(),
+		m.develop_gate_cheat_6(),
+		m.develop_gate_cheat_7(),
+		m.develop_gate_cheat_8(),
+		m.develop_gate_cheat_9(),
+		m.develop_gate_cheat_10(),
+	];
+}
 
 export function pickCopyCheatOption(
-	pool: readonly string[] = DEVELOP_CHANNEL_COPY_CHEAT_OPTIONS,
+	pool: readonly string[] = getDevelopChannelCopyCheatOptions(),
 ): string {
 	return pool[Math.floor(Math.random() * pool.length)] ?? pool[0];
 }
@@ -38,339 +42,209 @@ export type DevelopQuizQuestion = {
 	correctIndex: number;
 };
 
-/** Full question bank for the develop-channel gate quiz. */
-export const DEVELOP_CHANNEL_QUIZ_QUESTIONS: DevelopQuizQuestion[] = [
-	{
-		id: 'tun-interface',
-		text: 'Что такое tun-интерфейс?',
-		options: [
-			'Виртуальный сетевой интерфейс для туннелирования трафика на L3',
-			'Нужно для блокировки рекламы на smart-чайнике',
-			'Сокращение от «туннельный ундервеар»',
-			'Драйвер для Wi-Fi антенн',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'wg-handshake',
-		text: 'Что делает WireGuard при хендшейке?',
-		options: [
-			'Устанавливает эфемерные ключи Diffie-Hellman и согласует сессию',
-			'Пожимает руку серверу и ждёт ответа',
-			'Отправляет ping и ждёт 3 секунды',
-			'Шифрует пакет и молится',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'allowed-ips-full-tunnel',
-		text: 'Для чего нужен AllowedIPs = 0.0.0.0/0?',
-		options: [
-			'Направить весь трафик через туннель (full tunnel)',
-			'Разрешить подключение с любого IP',
-			'Потому что так написано в TikTok про VPN',
-			'Отключить файрвол',
-			'Это значит «разрешить всем всё» — ставь смело',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'cidr-24',
-		text: 'Что такое CIDR нотация /24?',
-		options: [
-			'Маска подсети 255.255.255.0, 256 адресов в сети',
-			'24-битный ключ шифрования',
-			'Это включено по умолчанию в KeeneticOS 42 Ultimate',
-			'Скорость канала 24 Мбит/с',
-			'Версия протокола IPv6',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'dns-leak',
-		text: 'Что такое DNS leak?',
-		options: [
-			'DNS-запросы утекают за пределы туннеля, раскрывая реальный провайдер',
-			'Это когда роутер делает вид, что понял вопрос',
-			'Утечка паролей через DNS',
-			'Когда DNS-сервер слишком медленный',
-			'Когда забыл оплатить домен',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'udp-vs-tcp',
-		text: 'Чем отличается UDP от TCP?',
-		options: [
-			'UDP без гарантий доставки, TCP с подтверждением — WireGuard использует UDP',
-			'UDP быстрее потому что американский',
-			'TCP — для текста, UDP — для картинок',
-			'Разные порты, всё остальное одинаково',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'mtu-tunnel',
-		text: 'Что такое MTU и почему это важно для туннелей?',
-		options: [
-			'Максимальный размер пакета; туннель добавляет overhead, поэтому MTU нужно занижать',
-			'Настройка скорости в мегабитах',
-			'Потому что MTU расшифровывается как Maximum TikTok Usage',
-			'Ничего важного, можно оставить дефолт',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'persistent-keepalive',
-		text: 'Что означает PersistentKeepalive в WireGuard?',
-		options: [
-			'Периодические пакеты, чтобы NAT-сессия не истекала при простое UDP-туннеля',
-			'Без этого WireGuard не шифрует эмодзи',
-			'Автоматический перезапуск интерфейса каждые 25 секунд',
-			'Режим «не отключать Wi-Fi ночью»',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'split-tunnel',
-		text: 'Что такое split tunnel?',
-		options: [
-			'Часть трафика идёт через VPN, часть — напрямую через провайдера',
-			'Различные политики для разных подсетей',
-			'Два параллельных WireGuard на одном порту',
-			'Режим, когда DNS и IP всегда идут разными путями без настройки',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'wg-peer',
-		text: 'Что описывает секция [Peer] в конфиге WireGuard?',
-		options: [
-			'Удалённую сторону туннеля: ключ, endpoint, AllowedIPs и параметры сессии',
-			'Только имя пользователя (пира) в VPN-сервисе',
-			'Список заблокированных доменов',
-			'Пароль администратора роутера',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'keepalive-behind-nat',
-		text: 'Зачем на клиенте за домашним NAT иногда включают keepalive в WireGuard?',
-		options: [
-			'Чтобы роутер не закрыл «забытый» UDP-туннель при долгом простое',
-			'Это настройка в «Эксперт» → «Магия» → «Ещё магия»',
-			'Чтобы отключить IPv6 на роутере',
-			'Потому что без этого WireGuard не шифрует трафик',
-			'Чтобы ускорить Wi-Fi до 10 Гбит/с',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'kill-switch',
-		text: 'Что делает kill switch в VPN-контексте?',
-		options: [
-			'Блокирует трафик вне туннеля при обрыве VPN, чтобы не утекал «в обход»',
-			'Выключает роутер при первой ошибке handshake',
-			'Включает режим «всегда full tunnel» для smart-чайника',
-			'Удаляет все пиры из конфига',
-			'Переводит канал обновлений в stable',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'public-key',
-		text: 'PublicKey в WireGuard — это…',
-		options: [
-			'Публичная часть пары Curve25519 для аутентификации пира',
-			'Так устроен develop-канал в параллельной вселенной',
-			'Серийный номер роутера',
-			'Открытый порт UDP, записанный как строка',
-			'Пароль от веб-панели в Base64',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'endpoint',
-		text: 'Endpoint в конфиге WireGuard — это…',
-		options: [
-			'Адрес и UDP-порт сервера, куда клиент отправляет пакеты туннеля',
-			'Ответ подгружается через маршрут служебных загрузок',
-			'Имя Wi-Fi сети',
-			'Путь к файлу wg0.conf на диске',
-			'URL страницы статуса в браузере',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'preshared-key',
-		text: 'Зачем иногда добавляют PresharedKey (PSK)?',
-		options: [
-			'Дополнительный симметричный ключ поверх DH для защиты от будущих квантовых атак (опционально)',
-			'Чтобы ускорить handshake в 10 раз — так дядя из ютуба сказал',
-			'Чтобы заменить DNS на 1.1.1.1',
-			'Чтобы отключить шифрование для отладки',
-			'Роутер сам знает — лучше не трогать',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'handshake-rtt',
-		text: 'Что показывает «latest handshake» в wg show?',
-		options: [
-			'Когда последний раз успешно согласовали сессию с пиром',
-			'Скорость загрузки за последний час',
-			'Время последнего пинга пира',
-			'Количество ошибок DNS',
-			'Версию прошивки роутера',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'awg-obfuscation',
-		text: 'Чем AmneziaWG (AWG) принципиально дополняет классический WireGuard?',
-		options: [
-			'Добавляет обфускацию метаданных/пакетов поверх WG, усложняя DPI-блокировки',
-			'Заменяет UDP на FTP',
-			'Убирает необходимость в ключах',
-			'Работает только без tun-интерфейса',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'issue-attachments',
-		text: 'Что уместно приложить к GitHub Issue по багу AWGM?',
-		options: [
-			'Версию AWGM, шаги воспроизведения, логи/скриншоты; при сбоях UI — HAR или экспорт Network из DevTools',
-			'Достаточно одной фразы «не работает» без деталей',
-			'Пароль администратора роутера и полный wg0.conf с ключами',
-			'Случайный скриншот рабочего стола — главное, что картинка есть',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'bad-situation-report',
-		text: 'После обновления на develop «всё плохо». Что делаете в первую очередь?',
-		options: [
-			'Оформляете полноценный GitHub Issue: версия, шаги, ожидание/факт, вложения',
-			'Пишете автору в личку Telegram — так быстрее, чем issue',
-			'Ждёте, пока кто-то сам догадается по вашему сообщению в чате без ссылок',
-			'Сразу только откат прошивки роутера, issue не нужен',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'devtools-network',
-		text: 'Как открыть в браузере вкладку сетевых запросов для отладки AWGM UI?',
-		options: [
-			'F12 (или Ctrl+Shift+I / Cmd+Option+I) → вкладка Network',
-			'Ctrl+P → печать страницы → там все запросы',
-			'Настройки Keenetic → «Сетевые запросы браузера»',
-			'Диспетчер задач → вкладка «Производительность»',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'issue-channel',
-		text: 'Куда правильно отправить баг по develop-сборке AWGM?',
-		options: [
-			'В GitHub Issues репозитория проекта — структурированно и с вложениями',
-			'В личные сообщения автору в Telegram',
-			'В общий чат одним сообщением «почините» без шагов',
-			'В комментарии к случайному посту в соцсетях',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'issue-minimum',
-		text: 'Что обязательно должно быть в описании баг-репорта?',
-		options: [
-			'Что сломалось, что ожидали, версия AWGM и шаги «как воспроизвести»',
-			'Только «Срочно!!!» и эмодзи 🔥',
-			'Только модель роутера — остальное и так ясно',
-			'Ничего: заголовок «баг» достаточен',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'awgm-usage-level-advanced',
-		text: 'С какого уровня использования в AWGM доступны Sing-box, подписки, серверы и мониторинг?',
-		options: [
-			'С «Расширенного» (advanced)',
-			'С «Базового»',
-			'Только с «Продвинутого» (expert)',
-			'Только после переключения на канал develop',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'awgm-download-route',
-		text: 'Зачем в настройках AWGM задаётся маршрут «служебных загрузок»?',
-		options: [
-			'Чтобы обновления AWGM, списки DNSRoute и geo-файлы шли через выбранный outbound',
-			'Только для скачивания прошивки Keenetic',
-			'Чтобы весь трафик LAN автоматически шёл через VPN',
-			'Чтобы отключить проверку обновлений',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'awgm-tunnels-home',
-		text: 'Где в интерфейсе AWGM собраны AWG, системные WG, Sing-box и подписки?',
-		options: [
-			'На главной «Туннели» (/) — вкладками, без отдельных пунктов Sing-box/Подписки в шапке',
-			'В разделе «Подписки» (Settings / Subscriptions)',
-			'В шапке четыре отдельных раздела: AWG, Sing-box, Подписки и Система',
-			'Только в «Настройки» → «Интеграции»',
-			'В «Инструменты» → «Конфиг AWG»',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'awgm-ndms-proxy',
-		text: 'Что делает переключатель «NDMS Proxy для sing-box» в настройках AWGM?',
-		options: [
-			'Включает привязку sing-box к интерфейсам ProxyN в NDMS (нужен компонент proxy)',
-			'Переводит все AWG-туннели на ядро WireGuard Linux',
-			'Иначе компонент proxy в NDMS обижается и Wi-Fi краснеет',
-			'Заменяет sing-box на AmneziaWG',
-			'Отключает DNS-маршруты NDMS',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'awgm-monitoring-pingcheck',
-		text: 'Где в AWGM в основном настраивается ping-check для AWG-туннелей?',
-		options: [
-			'На странице «Мониторинг» — через матрицу (клик по ячейке/имени туннеля)',
-			'Только одним глобальным тогглом в «Настройки»',
-			'Только правкой wg0.conf на диске роутера',
-			'В «Терминал» командой ping 8.8.8.8',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'awgm-ndms-dns-ipset',
-		text: 'Почему NDMS DNS-маршрутизация на Keenetic считается ненадёжной в «тяжёлых» сценариях?',
-		options: [
-			'Роутер при перезагрузке или смене политик может сбрасывать ipset\'ы — доменные маршруты ломаются',
-			'Так рекомендует сосед с форума, проверено на даче',
-			'ipset на Keenetic никогда не очищается и всегда растёт без лимита',
-			'NDMS DNS работает только если клиент в отдельной VLAN без политик',
-		],
-		correctIndex: 0,
-	},
-	{
-		id: 'awgm-restart-init',
-		text: 'Какой командой на роутере перезапустить сервис AWG Manager (Entware)?',
-		options: [
-			'/opt/etc/init.d/S99awg-manager restart',
-			'systemctl restart awgm',
-			'reboot',
-			'killall -9 awg-manager && rm -rf /opt',
-		],
-		correctIndex: 0,
-	},
+type Msg = () => string;
+
+type QuizBankEntry = {
+	id: string;
+	text: Msg;
+	options: Msg[];
+	correctIndex: number;
+};
+
+function question(id: string, text: Msg, options: Msg[], correctIndex: number): QuizBankEntry {
+	return { id, text, options, correctIndex };
+}
+
+/**
+ * Question bank for the develop-channel gate quiz. Texts are message functions so
+ * the quiz follows the UI language; answers are checked by index, never by text.
+ */
+const QUIZ_BANK: QuizBankEntry[] = [
+	question(
+		'tun-interface',
+		m.develop_gate_q_tun_interface_text,
+		[m.develop_gate_q_tun_interface_o1, m.develop_gate_q_tun_interface_o2, m.develop_gate_q_tun_interface_o3, m.develop_gate_q_tun_interface_o4],
+		0,
+	),
+	question(
+		'wg-handshake',
+		m.develop_gate_q_wg_handshake_text,
+		[m.develop_gate_q_wg_handshake_o1, m.develop_gate_q_wg_handshake_o2, m.develop_gate_q_wg_handshake_o3, m.develop_gate_q_wg_handshake_o4],
+		0,
+	),
+	question(
+		'allowed-ips-full-tunnel',
+		m.develop_gate_q_allowed_ips_full_tunnel_text,
+		[m.develop_gate_q_allowed_ips_full_tunnel_o1, m.develop_gate_q_allowed_ips_full_tunnel_o2, m.develop_gate_q_allowed_ips_full_tunnel_o3, m.develop_gate_q_allowed_ips_full_tunnel_o4, m.develop_gate_q_allowed_ips_full_tunnel_o5],
+		0,
+	),
+	question(
+		'cidr-24',
+		m.develop_gate_q_cidr_24_text,
+		[m.develop_gate_q_cidr_24_o1, m.develop_gate_q_cidr_24_o2, m.develop_gate_q_cidr_24_o3, m.develop_gate_q_cidr_24_o4, m.develop_gate_q_cidr_24_o5],
+		0,
+	),
+	question(
+		'dns-leak',
+		m.develop_gate_q_dns_leak_text,
+		[m.develop_gate_q_dns_leak_o1, m.develop_gate_q_dns_leak_o2, m.develop_gate_q_dns_leak_o3, m.develop_gate_q_dns_leak_o4, m.develop_gate_q_dns_leak_o5],
+		0,
+	),
+	question(
+		'udp-vs-tcp',
+		m.develop_gate_q_udp_vs_tcp_text,
+		[m.develop_gate_q_udp_vs_tcp_o1, m.develop_gate_q_udp_vs_tcp_o2, m.develop_gate_q_udp_vs_tcp_o3, m.develop_gate_q_udp_vs_tcp_o4],
+		0,
+	),
+	question(
+		'mtu-tunnel',
+		m.develop_gate_q_mtu_tunnel_text,
+		[m.develop_gate_q_mtu_tunnel_o1, m.develop_gate_q_mtu_tunnel_o2, m.develop_gate_q_mtu_tunnel_o3, m.develop_gate_q_mtu_tunnel_o4],
+		0,
+	),
+	question(
+		'persistent-keepalive',
+		m.develop_gate_q_persistent_keepalive_text,
+		[m.develop_gate_q_persistent_keepalive_o1, m.develop_gate_q_persistent_keepalive_o2, m.develop_gate_q_persistent_keepalive_o3, m.develop_gate_q_persistent_keepalive_o4],
+		0,
+	),
+	question(
+		'split-tunnel',
+		m.develop_gate_q_split_tunnel_text,
+		[m.develop_gate_q_split_tunnel_o1, m.develop_gate_q_split_tunnel_o2, m.develop_gate_q_split_tunnel_o3, m.develop_gate_q_split_tunnel_o4],
+		0,
+	),
+	question(
+		'wg-peer',
+		m.develop_gate_q_wg_peer_text,
+		[m.develop_gate_q_wg_peer_o1, m.develop_gate_q_wg_peer_o2, m.develop_gate_q_wg_peer_o3, m.develop_gate_q_wg_peer_o4],
+		0,
+	),
+	question(
+		'keepalive-behind-nat',
+		m.develop_gate_q_keepalive_behind_nat_text,
+		[m.develop_gate_q_keepalive_behind_nat_o1, m.develop_gate_q_keepalive_behind_nat_o2, m.develop_gate_q_keepalive_behind_nat_o3, m.develop_gate_q_keepalive_behind_nat_o4, m.develop_gate_q_keepalive_behind_nat_o5],
+		0,
+	),
+	question(
+		'kill-switch',
+		m.develop_gate_q_kill_switch_text,
+		[m.develop_gate_q_kill_switch_o1, m.develop_gate_q_kill_switch_o2, m.develop_gate_q_kill_switch_o3, m.develop_gate_q_kill_switch_o4, m.develop_gate_q_kill_switch_o5],
+		0,
+	),
+	question(
+		'public-key',
+		m.develop_gate_q_public_key_text,
+		[m.develop_gate_q_public_key_o1, m.develop_gate_q_public_key_o2, m.develop_gate_q_public_key_o3, m.develop_gate_q_public_key_o4, m.develop_gate_q_public_key_o5],
+		0,
+	),
+	question(
+		'endpoint',
+		m.develop_gate_q_endpoint_text,
+		[m.develop_gate_q_endpoint_o1, m.develop_gate_q_endpoint_o2, m.develop_gate_q_endpoint_o3, m.develop_gate_q_endpoint_o4, m.develop_gate_q_endpoint_o5],
+		0,
+	),
+	question(
+		'preshared-key',
+		m.develop_gate_q_preshared_key_text,
+		[m.develop_gate_q_preshared_key_o1, m.develop_gate_q_preshared_key_o2, m.develop_gate_q_preshared_key_o3, m.develop_gate_q_preshared_key_o4, m.develop_gate_q_preshared_key_o5],
+		0,
+	),
+	question(
+		'handshake-rtt',
+		m.develop_gate_q_handshake_rtt_text,
+		[m.develop_gate_q_handshake_rtt_o1, m.develop_gate_q_handshake_rtt_o2, m.develop_gate_q_handshake_rtt_o3, m.develop_gate_q_handshake_rtt_o4, m.develop_gate_q_handshake_rtt_o5],
+		0,
+	),
+	question(
+		'awg-obfuscation',
+		m.develop_gate_q_awg_obfuscation_text,
+		[m.develop_gate_q_awg_obfuscation_o1, m.develop_gate_q_awg_obfuscation_o2, m.develop_gate_q_awg_obfuscation_o3, m.develop_gate_q_awg_obfuscation_o4],
+		0,
+	),
+	question(
+		'issue-attachments',
+		m.develop_gate_q_issue_attachments_text,
+		[m.develop_gate_q_issue_attachments_o1, m.develop_gate_q_issue_attachments_o2, m.develop_gate_q_issue_attachments_o3, m.develop_gate_q_issue_attachments_o4],
+		0,
+	),
+	question(
+		'bad-situation-report',
+		m.develop_gate_q_bad_situation_report_text,
+		[m.develop_gate_q_bad_situation_report_o1, m.develop_gate_q_bad_situation_report_o2, m.develop_gate_q_bad_situation_report_o3, m.develop_gate_q_bad_situation_report_o4],
+		0,
+	),
+	question(
+		'devtools-network',
+		m.develop_gate_q_devtools_network_text,
+		[m.develop_gate_q_devtools_network_o1, m.develop_gate_q_devtools_network_o2, m.develop_gate_q_devtools_network_o3, m.develop_gate_q_devtools_network_o4],
+		0,
+	),
+	question(
+		'issue-channel',
+		m.develop_gate_q_issue_channel_text,
+		[m.develop_gate_q_issue_channel_o1, m.develop_gate_q_issue_channel_o2, m.develop_gate_q_issue_channel_o3, m.develop_gate_q_issue_channel_o4],
+		0,
+	),
+	question(
+		'issue-minimum',
+		m.develop_gate_q_issue_minimum_text,
+		[m.develop_gate_q_issue_minimum_o1, m.develop_gate_q_issue_minimum_o2, m.develop_gate_q_issue_minimum_o3, m.develop_gate_q_issue_minimum_o4],
+		0,
+	),
+	question(
+		'awgm-usage-level-advanced',
+		m.develop_gate_q_awgm_usage_level_advanced_text,
+		[m.develop_gate_q_awgm_usage_level_advanced_o1, m.develop_gate_q_awgm_usage_level_advanced_o2, m.develop_gate_q_awgm_usage_level_advanced_o3, m.develop_gate_q_awgm_usage_level_advanced_o4],
+		0,
+	),
+	question(
+		'awgm-download-route',
+		m.develop_gate_q_awgm_download_route_text,
+		[m.develop_gate_q_awgm_download_route_o1, m.develop_gate_q_awgm_download_route_o2, m.develop_gate_q_awgm_download_route_o3, m.develop_gate_q_awgm_download_route_o4],
+		0,
+	),
+	question(
+		'awgm-tunnels-home',
+		m.develop_gate_q_awgm_tunnels_home_text,
+		[m.develop_gate_q_awgm_tunnels_home_o1, m.develop_gate_q_awgm_tunnels_home_o2, m.develop_gate_q_awgm_tunnels_home_o3, m.develop_gate_q_awgm_tunnels_home_o4, m.develop_gate_q_awgm_tunnels_home_o5],
+		0,
+	),
+	question(
+		'awgm-ndms-proxy',
+		m.develop_gate_q_awgm_ndms_proxy_text,
+		[m.develop_gate_q_awgm_ndms_proxy_o1, m.develop_gate_q_awgm_ndms_proxy_o2, m.develop_gate_q_awgm_ndms_proxy_o3, m.develop_gate_q_awgm_ndms_proxy_o4, m.develop_gate_q_awgm_ndms_proxy_o5],
+		0,
+	),
+	question(
+		'awgm-monitoring-pingcheck',
+		m.develop_gate_q_awgm_monitoring_pingcheck_text,
+		[m.develop_gate_q_awgm_monitoring_pingcheck_o1, m.develop_gate_q_awgm_monitoring_pingcheck_o2, m.develop_gate_q_awgm_monitoring_pingcheck_o3, m.develop_gate_q_awgm_monitoring_pingcheck_o4],
+		0,
+	),
+	question(
+		'awgm-ndms-dns-ipset',
+		m.develop_gate_q_awgm_ndms_dns_ipset_text,
+		[m.develop_gate_q_awgm_ndms_dns_ipset_o1, m.develop_gate_q_awgm_ndms_dns_ipset_o2, m.develop_gate_q_awgm_ndms_dns_ipset_o3, m.develop_gate_q_awgm_ndms_dns_ipset_o4],
+		0,
+	),
+	question(
+		'awgm-restart-init',
+		m.develop_gate_q_awgm_restart_init_text,
+		[m.develop_gate_q_awgm_restart_init_o1, m.develop_gate_q_awgm_restart_init_o2, m.develop_gate_q_awgm_restart_init_o3, m.develop_gate_q_awgm_restart_init_o4],
+		0,
+	),
 ];
+
+/** Full question bank, resolved in the current UI language. */
+export function getDevelopChannelQuizQuestions(): DevelopQuizQuestion[] {
+	return QUIZ_BANK.map((entry) => ({
+		id: entry.id,
+		text: entry.text(),
+		options: entry.options.map((option) => option()),
+		correctIndex: entry.correctIndex,
+	}));
+}
 
 function shuffleInPlace<T>(items: T[]): T[] {
 	for (let i = items.length - 1; i > 0; i--) {
@@ -382,7 +256,7 @@ function shuffleInPlace<T>(items: T[]): T[] {
 
 export function pickDevelopQuizQuestions(
 	count = DEVELOP_CHANNEL_QUIZ_SIZE,
-	pool: DevelopQuizQuestion[] = DEVELOP_CHANNEL_QUIZ_QUESTIONS,
+	pool: DevelopQuizQuestion[] = getDevelopChannelQuizQuestions(),
 ): DevelopQuizQuestion[] {
 	const copy = [...pool];
 	shuffleInPlace(copy);
@@ -406,7 +280,7 @@ export function shuffleQuestionOptions(question: DevelopQuizQuestion): DevelopQu
  */
 export function prepareDevelopQuizSession(
 	count = DEVELOP_CHANNEL_QUIZ_SIZE,
-	pool: DevelopQuizQuestion[] = DEVELOP_CHANNEL_QUIZ_QUESTIONS,
+	pool: DevelopQuizQuestion[] = getDevelopChannelQuizQuestions(),
 ): DevelopQuizQuestion[] {
 	const picked = pickDevelopQuizQuestions(count, pool);
 	shuffleInPlace(picked);
@@ -460,7 +334,7 @@ export function resolveDevelopChannelLockoutMs(
 }
 
 export function formatDevelopChannelLockoutDurationLabel(mockDevMode = false): string {
-	return mockDevMode ? '30 секунд' : '30 минут';
+	return mockDevMode ? m.develop_gate_duration_seconds() : m.develop_gate_duration_minutes();
 }
 
 export function setDevelopChannelLockout(
@@ -505,18 +379,18 @@ export function clearDevelopChannelQuizPassed(): void {
 
 export function formatQuizQuestionCountdown(remainingMs: number): string {
 	const totalSec = Math.max(0, Math.ceil(remainingMs / 1000));
-	const m = Math.floor(totalSec / 60);
+	const min = Math.floor(totalSec / 60);
 	const s = totalSec % 60;
-	return `${m}:${String(s).padStart(2, '0')}`;
+	return `${min}:${String(s).padStart(2, '0')}`;
 }
 
 export function formatLockoutCountdown(remainingMs: number): string {
 	const totalSec = Math.max(0, Math.ceil(remainingMs / 1000));
 	const h = Math.floor(totalSec / 3600);
-	const m = Math.floor((totalSec % 3600) / 60);
+	const min = Math.floor((totalSec % 3600) / 60);
 	const s = totalSec % 60;
 	if (h > 0) {
-		return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+		return `${h}:${String(min).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 	}
-	return `${m}:${String(s).padStart(2, '0')}`;
+	return `${min}:${String(s).padStart(2, '0')}`;
 }

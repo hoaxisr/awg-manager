@@ -10,6 +10,7 @@
  * classifies the error once and returns a friendly user-facing message plus
  * the raw text (kept for logs / "details"). See humanizeDownloadError().
  */
+import { m } from '$lib/i18n';
 
 export type DownloadErrorKind =
 	| 'singbox-off'
@@ -137,9 +138,8 @@ export function humanizeDownloadError(err: unknown): HumanizedDownloadError {
 				code,
 				raw,
 				needsDownloadSettings: true,
-				title: 'Маршрут загрузки требует запущенный sing-box.',
-				detail:
-					'Включите sing-box или выберите другой маршрут (Direct или AWG-туннель).',
+				title: m.download_error_singbox_off_title(),
+				detail: m.download_error_singbox_off_detail(),
 			};
 		case 'awg-down':
 			return {
@@ -147,9 +147,8 @@ export function humanizeDownloadError(err: unknown): HumanizedDownloadError {
 				code,
 				raw,
 				needsDownloadSettings: true,
-				title: 'AWG-туннель маршрута загрузки недоступен.',
-				detail:
-					'Туннель выключен или его интерфейс не поднят. Запустите туннель или выберите другой маршрут.',
+				title: m.download_error_awg_down_title(),
+				detail: m.download_error_awg_down_detail(),
 			};
 		case 'timeout':
 			return {
@@ -157,9 +156,8 @@ export function humanizeDownloadError(err: unknown): HumanizedDownloadError {
 				code,
 				raw,
 				needsDownloadSettings: true,
-				title: 'Превышено время ожидания загрузки.',
-				detail:
-					'Сервер не ответил вовремя. Проверьте соединение/маршрут загрузок и попробуйте ещё раз.',
+				title: m.download_error_timeout_title(),
+				detail: m.download_error_timeout_detail(),
 			};
 		case 'network':
 			return {
@@ -167,9 +165,8 @@ export function humanizeDownloadError(err: unknown): HumanizedDownloadError {
 				code,
 				raw,
 				needsDownloadSettings: true,
-				title: 'Не удалось установить соединение.',
-				detail:
-					'Соединение оборвалось — возможно, маршрут блокируется или нестабилен. Попробуйте другой маршрут загрузок.',
+				title: m.download_error_network_title(),
+				detail: m.download_error_network_detail(),
 			};
 		case 'route':
 			return {
@@ -177,8 +174,8 @@ export function humanizeDownloadError(err: unknown): HumanizedDownloadError {
 				code,
 				raw,
 				needsDownloadSettings: true,
-				title: 'Маршрут загрузки недоступен.',
-				detail: 'Проверьте маршрут служебных загрузок и попробуйте снова.',
+				title: m.download_error_route_title(),
+				detail: m.download_error_route_detail(),
 			};
 		default:
 			return {
@@ -186,7 +183,7 @@ export function humanizeDownloadError(err: unknown): HumanizedDownloadError {
 				code,
 				raw,
 				needsDownloadSettings: false,
-				title: raw || 'Не удалось выполнить загрузку.',
+				title: raw || m.download_error_generic_title(),
 			};
 	}
 }
@@ -200,7 +197,7 @@ export function downloadErrorToText(input: unknown): string {
 		isHumanized(input) ? input : humanizeDownloadError(input);
 	const parts = [h.title];
 	if (h.detail) parts.push(h.detail);
-	else if (h.needsDownloadSettings) parts.push('Откройте Настройки → Загрузки.');
+	else if (h.needsDownloadSettings) parts.push(m.download_error_open_settings());
 	return parts.join(' ');
 }
 

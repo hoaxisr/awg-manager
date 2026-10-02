@@ -40,7 +40,8 @@ function rebuildTargets(tests: DiagTestEvent[], tunnels: DiagnosticsTargetSeed[]
 	// Always seed Global pseudo-target first
 	map.set(GLOBAL_TARGET_ID, {
 		id: GLOBAL_TARGET_ID,
-		name: 'Глобальные',
+		// Подпись глобальной группы строится при показе (ChecksTab), по isGlobal.
+		name: '',
 		isGlobal: true,
 		counts: emptyCounts(),
 		overallLed: 'gray',

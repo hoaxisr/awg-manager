@@ -3,6 +3,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import type { Snippet } from 'svelte';
   import { ChevronDown } from 'lucide-svelte';
   import { Button } from '$lib/components/ui';
@@ -49,7 +50,7 @@
           class="collapse-btn"
           onclick={toggleCollapse}
           aria-expanded={!collapsed}
-          aria-label={collapsed ? `Развернуть «${title}»` : `Свернуть «${title}»`}
+          aria-label={collapsed ? m.sb_router_panel_expand({ title }) : m.sb_router_panel_collapse({ title })}
         >
           <span class="collapse-chevron" class:open={!collapsed}>
             <ChevronDown size={14} aria-hidden={true} />

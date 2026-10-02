@@ -1,3 +1,5 @@
+import { m } from '$lib/i18n';
+
 /**
  * Extract a human-readable message from an unknown thrown value.
  *
@@ -6,7 +8,7 @@
  * `Error` with a non-empty message yields that message, everything else (empty
  * message, string throw, plain object, `undefined`) falls back to `fallback`.
  */
-export function errorMessage(e: unknown, fallback = 'Ошибка'): string {
+export function errorMessage(e: unknown, fallback: string = m.error_message_fallback()): string {
 	if (e instanceof Error && e.message) {
 		return e.message;
 	}

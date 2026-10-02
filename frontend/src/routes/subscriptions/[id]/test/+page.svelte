@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { api } from '$lib/api/client';
@@ -26,8 +27,8 @@
 
 	let unavailableReason = $derived.by(() => {
 		if (!loaded) return undefined;
-		if (!subscription) return 'Подписка не найдена.';
-		if (!selectorTag || !kernelIface) return 'Для подписки не удалось определить интерфейс тестирования.';
+		if (!subscription) return m.subscriptions_test_not_found();
+		if (!selectorTag || !kernelIface) return m.subscriptions_test_no_iface();
 		return undefined;
 	});
 
@@ -47,8 +48,8 @@
 	targetId={selectorTag}
 	{displayName}
 	backHref="/?tab=subscriptions"
-	backLabel="К списку подписок"
-	subjectLabel="подписку"
+	backLabel={m.subscriptions_test_back()}
+	subject="subscription"
 	iface={kernelIface}
 	loading={!loaded}
 	{unavailableReason}

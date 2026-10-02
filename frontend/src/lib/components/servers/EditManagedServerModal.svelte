@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { ManagedServer, UpdateManagedServerRequest } from '$lib/types';
 	import { Modal, Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
@@ -55,9 +56,9 @@
 		mtu !== (server.mtu || 1376)
 	);
 
-	function dotToPrefix(m: string): string {
-		if (/^\d+$/.test(m)) return m;
-		const parts = m.split('.').map(Number);
+	function dotToPrefix(mask: string): string {
+		if (/^\d+$/.test(mask)) return mask;
+		const parts = mask.split('.').map(Number);
 		let bits = 0;
 		for (const p of parts) {
 			bits += (p >>> 0).toString(2).split('1').length - 1;
@@ -68,7 +69,7 @@
 
 	async function handleSave() {
 		if (!isValidEndpointHost(endpoint)) {
-			notifications.error('Endpoint должен быть IP-адресом или доменным именем');
+			notifications.error(m.servers_edit_endpoint_invalid());
 			return;
 		}
 		saving = true;
@@ -90,21 +91,21 @@
 			payload.mtu = mtu;
 			const fresh = await api.updateManagedServer(serverId, payload);
 			servers.applyMutationResponse(fresh);
-			notifications.success('Сервер обновлён');
+			notifications.success(m.servers_edit_updated());
 			onclose();
 			onUpdated();
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения');
+			notifications.error(e instanceof Error ? e.message : m.system_tunnels_save_failed());
 		} finally {
 			saving = false;
 		}
 	}
 </script>
 
-<Modal {open} title="Настройки сервера" size="sm" {onclose} hasUnsavedChanges={() => isDirty}>
+<Modal {open} title={m.servers_edit_title()} size="sm" {onclose} hasUnsavedChanges={() => isDirty}>
 	<div class="form-fields">
 		<div class="form-group">
-			<label class="label" for="ems-description">Название</label>
+			<label class="label" for="ems-description">{m.servers_edit_label_name()}</label>
 			<input
 				type="text"
 				id="ems-description"
@@ -115,15 +116,15 @@
 			/>
 		</div>
 		<div class="form-group">
-			<label class="label" for="ems-address">IP адрес</label>
+			<label class="label" for="ems-address">{m.servers_edit_label_ip()}</label>
 			<input type="text" id="ems-address" class="input" bind:value={address} />
 		</div>
 		<div class="form-group">
-			<label class="label" for="ems-mask">Маска (CIDR)</label>
+			<label class="label" for="ems-mask">{m.servers_edit_label_mask()}</label>
 			<input type="text" id="ems-mask" class="input" bind:value={mask} />
 		</div>
 		<div class="form-group">
-			<label class="label" for="ems-port">Порт</label>
+			<label class="label" for="ems-port">{m.tunnels_card_port()}</label>
 			<input type="number" id="ems-port" class="input" bind:value={listenPort} min={1} max={65535} />
 		</div>
 
@@ -135,30 +136,30 @@
 				<button type="button" class="hint-toggle" onclick={() => showEndpointHint = !showEndpointHint}>?</button>
 			</div>
 			{#if showEndpointHint}
-				<p class="hint-text">IP-адрес или доменное имя, по которому клиенты будут подключаться к серверу. Если не указан — используется внешний IP роутера (WAN)</p>
+				<p class="hint-text">{m.servers_edit_endpoint_hint()}</p>
 			{/if}
 			<input
 				type="text"
 				id="ems-endpoint"
 				class="input"
 				bind:value={endpoint}
-				placeholder={loadingWanIP ? 'Определение WAN IP...' : (wanIP || 'WAN IP')}
+				placeholder={loadingWanIP ? m.servers_edit_wan_detecting() : (wanIP || 'WAN IP')}
 			/>
 			{#if wanIP && !endpoint}
-				<span class="field-hint">Будет использован WAN IP: {wanIP}</span>
+				<span class="field-hint">{m.servers_edit_wan_will_be_used({ ip: wanIP })}</span>
 			{/if}
 		</div>
 		<div class="form-group">
 			<label class="label" for="ems-mtu">MTU</label>
 			<input type="number" id="ems-mtu" class="input" bind:value={mtu} min={1280} max={1500} />
-			<span class="field-hint">Применяется к интерфейсу сервера и конфигам клиентов</span>
+			<span class="field-hint">{m.servers_edit_mtu_hint()}</span>
 		</div>
 	</div>
 
 	{#snippet actions()}
-		<Button variant="ghost" size="md" onclick={onclose}>Отмена</Button>
+		<Button variant="ghost" size="md" onclick={onclose}>{m.common_cancel()}</Button>
 		<Button variant="primary" size="md" onclick={handleSave} loading={saving}>
-			Сохранить
+			{m.settings_page_save()}
 		</Button>
 	{/snippet}
 </Modal>

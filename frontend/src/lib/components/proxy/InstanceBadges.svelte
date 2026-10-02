@@ -2,6 +2,7 @@
 	// Бейджи шапки детали (ia.md §2.2 п.0, §3.2 п.0): режим подключения и
 	// происхождение настроек. Оба — ТОЛЬКО индикаторы: режим переключается в
 	// «Параметрах» (клиент) и в «Сети» (сервер), а происхождение неизменяемо.
+	import { m } from '$lib/i18n';
 	import { Badge, FieldHint } from '$lib/components/ui';
 	import type { ProxyInstanceRow } from './rows';
 
@@ -26,27 +27,22 @@
 	const modeHint = $derived(
 		row.role === 'server'
 			? ''
-			: 'WG — клиент поднимает WireGuard-туннель до сервера. Raw — работает без ' +
-					'него, через raw-порт сервера. У режимов разные порты сервера и ' +
-					'раздельно сохранённые адреса.',
+			: m.proxy_badges_mode_hint(),
 	);
-	const seededHint = $derived(
-		`Настройки перенесены из ${row.seededFrom} при обновлении. Имя и параметры — ` +
-			'те же, что были до него.',
-	);
+	const seededHint = $derived(m.proxy_badges_seeded_hint({ file: row.seededFrom ?? '' }));
 </script>
 
 {#if modeLabel}
 	<span class="badge-with-hint">
 		<Badge size="sm" variant="default">{modeLabel}</Badge>
-		<FieldHint text={modeHint} ariaLabel="Подсказка: режим подключения" />
+		<FieldHint text={modeHint} ariaLabel={m.proxy_badges_mode_aria()} />
 	</span>
 {/if}
 
 {#if row.seededFrom}
 	<span class="badge-with-hint">
-		<Badge size="sm" variant="muted">перенесено</Badge>
-		<FieldHint text={seededHint} ariaLabel="Подсказка: перенесённые настройки" />
+		<Badge size="sm" variant="muted">{m.proxy_badges_seeded()}</Badge>
+		<FieldHint text={seededHint} ariaLabel={m.proxy_badges_seeded_aria()} />
 	</span>
 {/if}
 

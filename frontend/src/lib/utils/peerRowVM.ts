@@ -62,7 +62,9 @@ export function peerStatus(enabled: boolean, online: boolean | null | undefined)
 
 export function splitHandshake(value: string): { main: string; suffix?: string } {
 	const t = value.trim();
-	if (t.endsWith(' назад')) return { main: t.slice(0, -' назад'.length), suffix: 'назад' };
+	// Значение собрано сообщением format_*_ago: суффикс «назад» (ru) или «ago» (en).
+	const ago = /^(.*) (назад|ago)$/s.exec(t);
+	if (ago) return { main: ago[1], suffix: ago[2] };
 	return { main: t };
 }
 

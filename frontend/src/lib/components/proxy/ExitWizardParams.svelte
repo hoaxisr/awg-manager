@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Шаг 2 мастера «Выхода» — параметры (WE-29..WE-37). Поля правятся на месте
 	// в объекте мастера; пароль есть только у WDTT-клиента, у FreeTurn его нет.
+	import { m } from '$lib/i18n';
 	import { Input } from '$lib/components/ui';
 	import SensitiveInput from '../proxy-panel/SensitiveInput.svelte';
 	import type { ExitProtocol, ExitWizardFields } from './exitWizard';
@@ -14,33 +15,33 @@
 	let { protocol, fields = $bindable() }: Props = $props();
 </script>
 
-<p class="lead">Значения из ссылки — поправьте, если нужно.</p>
+<p class="lead">{m.proxy_exit_params_lead()}</p>
 
 <div class="grid">
-	<Input label="Имя" bind:value={fields.name} fullWidth />
-	<Input label="Адрес сервера" bind:value={fields.peer} fullWidth />
+	<Input label={m.proxy_common_name()} bind:value={fields.name} fullWidth />
+	<Input label={m.proxy_exit_params_server_address()} bind:value={fields.peer} fullWidth />
 	{#if protocol === 'wdtt'}
-		<SensitiveInput label="Пароль" bind:value={fields.password} />
+		<SensitiveInput label={m.proxy_common_password()} bind:value={fields.password} />
 	{/if}
 	<!-- WE-50/WE-51: поле обязательное у обоих протоколов (`exitStep2Ready`), и
 	     без подписи «Дальше» гасла бы молча. Значение у них разное: у WDTT это
 	     VK-хеши, у FreeTurn — ссылки VK Calls (`links`), отсюда две строки и две
 	     подписи: WE-35 у WDTT и EX-59 у FreeTurn (та же, что на детали). -->
 	<Input
-		label={protocol === 'wdtt' ? 'VK-хеши' : 'Ссылки VK Calls'}
+		label={protocol === 'wdtt' ? m.proxy_exit_params_vk_hashes() : m.proxy_exit_params_vk_links()}
 		bind:value={fields.vkHashes}
 		hint={protocol === 'wdtt'
-			? 'Обязательно — без VK-хешей клиент не запустится'
-			: 'Обязательно — без ссылок VK Calls клиент не запустится'}
+			? m.proxy_exit_params_vk_hashes_required()
+			: m.proxy_exit_params_vk_links_required()}
 		fullWidth
 	/>
 	<!-- WE-37 — про округление в wdtt-клиенте; у freeturn правила кратности нет. -->
 	<Input
-		label="Потоков"
+		label={m.proxy_exit_params_workers()}
 		type="number"
 		value={fields.workers}
 		oninput={(v) => (fields.workers = v)}
-		hint={protocol === 'wdtt' ? 'Клиент округлит вниз до кратного 9 (минимум 9)' : ''}
+		hint={protocol === 'wdtt' ? m.proxy_exit_params_workers_hint() : ''}
 		fullWidth
 	/>
 </div>

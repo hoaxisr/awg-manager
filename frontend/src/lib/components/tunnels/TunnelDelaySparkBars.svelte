@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { SingboxDelayState } from '$lib/utils/singboxDelay';
 	import { latencyTier } from '$lib/utils/latencyTier';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		history: number[];
@@ -18,10 +19,11 @@
 		maxBars = 14,
 		layout,
 		onclick,
-		title = 'Клик — обновить delay',
+		title: titleProp,
 		colorPerBar = false,
 	}: Props = $props();
 
+	const title = $derived(titleProp ?? m.tunnels_delay_refresh());
 	const max = $derived(
 		history.length > 0 ? Math.max(...history.map((v) => (v <= 0 ? 100 : v)), 100) : 100,
 	);

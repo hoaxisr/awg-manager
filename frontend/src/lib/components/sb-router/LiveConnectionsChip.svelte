@@ -3,11 +3,11 @@
   когда движок работает. Клик → полный вид (?sub=connections).
 -->
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { isMockDevMode } from '$lib/env';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
-  import { pluralize, CONNECTION_WORDS } from '$lib/utils/pluralize';
   import { liveConnectionsSnapshot, liveConnectionsWsStatus } from './liveConnectionsStore';
 
   const status = singboxRouterStore.status;
@@ -20,23 +20,23 @@
   let wsStatus = $derived($liveConnectionsWsStatus);
 
   const count = $derived(snapshot.connectionsTotal);
-  const countLabel = $derived(pluralize(count, CONNECTION_WORDS));
+  const countLabel = $derived(m.sb_router_live_count({ count }));
   let visible = $derived(engineOn || isMockDevMode());
   let isStale = $derived(wsStatus !== 'open');
   let stateTitle = $derived.by(() => {
-    if (isActive) return 'Закрыть живые соединения';
-    if (!engineOn && isMockDevMode()) return 'Открыть живые соединения mock';
+    if (isActive) return m.sb_router_live_title_close();
+    if (!engineOn && isMockDevMode()) return m.sb_router_live_title_open_mock();
     if (wsStatus === 'open') {
-      return count > 0 ? 'Открыть живые соединения' : 'Живые соединения: активных подключений нет';
+      return count > 0 ? m.sb_router_live_title_open() : m.sb_router_live_title_none();
     }
-    if (wsStatus === 'connecting') return 'Живые соединения: подключение…';
-    if (wsStatus === 'closed') return 'Живые соединения: переподключение…';
-    return 'Живые соединения недоступны';
+    if (wsStatus === 'connecting') return m.sb_router_live_title_connecting();
+    if (wsStatus === 'closed') return m.sb_router_live_title_reconnecting();
+    return m.sb_router_live_unavailable();
   });
   let stateAria = $derived.by(() => {
-    if (isActive) return `Живые соединения открыты: ${countLabel}. Нажмите, чтобы закрыть`;
-    if (wsStatus === 'open') return `Живые соединения: ${countLabel}`;
-    return 'Живые соединения недоступны';
+    if (isActive) return m.sb_router_live_aria_active({ count });
+    if (wsStatus === 'open') return m.sb_router_live_aria_open({ count });
+    return m.sb_router_live_unavailable();
   });
 
   function toggleConnections() {

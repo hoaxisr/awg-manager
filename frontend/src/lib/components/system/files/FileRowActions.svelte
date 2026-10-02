@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SystemFileEntry } from '$lib/api/client';
 	import { Eye, Edit2, Trash2, Play, RotateCw, Square } from 'lucide-svelte';
 	import type { ScriptAction } from './types';
@@ -36,7 +37,7 @@
 			<button
 				type="button"
 				class="icon-act-btn restart-act-btn"
-				title="Перезапустить скрипт / службу"
+				title={m.system_files_row_restart()}
 				disabled={isBusy}
 				onclick={(e) => { e.stopPropagation(); onScriptAction(entry, 'restart'); }}
 			>
@@ -45,7 +46,7 @@
 			<button
 				type="button"
 				class="icon-act-btn stop-act-btn"
-				title="Остановить"
+				title={m.proxy_common_stop()}
 				disabled={isBusy}
 				onclick={(e) => { e.stopPropagation(); onScriptAction(entry, 'stop'); }}
 			>
@@ -55,7 +56,7 @@
 			<button
 				type="button"
 				class="icon-act-btn script-act-btn"
-				title="Запустить скрипт / службу"
+				title={m.system_files_row_start()}
 				disabled={isBusy}
 				onclick={(e) => { e.stopPropagation(); onScriptAction(entry, isService ? 'start' : 'run'); }}
 			>
@@ -67,7 +68,7 @@
 	<button
 		type="button"
 		class="icon-act-btn"
-		title="Свойства"
+		title={m.system_files_row_props()}
 		onclick={(e) => { e.stopPropagation(); onProps(entry); }}
 	>
 		<Eye size={13} />
@@ -76,7 +77,7 @@
 		<button
 			type="button"
 			class="icon-act-btn"
-			title="Редактировать"
+			title={m.system_files_row_edit()}
 			onclick={(e) => { e.stopPropagation(); onEdit(entry); }}
 		>
 			<Edit2 size={13} />
@@ -86,7 +87,7 @@
 		<button
 			type="button"
 			class="icon-act-btn danger"
-			title="Удалить"
+			title={m.common_delete()}
 			onclick={(e) => { e.stopPropagation(); onDelete(entry); }}
 		>
 			<Trash2 size={13} />

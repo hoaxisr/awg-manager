@@ -21,6 +21,8 @@
   состоянии движка; счётчик соединений деградирует по engineState.live.
 -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
+	import { outboundGroupLabel } from '$lib/components/routing/singboxRouter/outboundOptions';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
@@ -57,11 +59,11 @@
 
 	// outbound tag → отображаемый лейбл (для бейджа персональной привязки).
 	const outboundLabels = $derived.by(() => {
-		const m = new Map<string, string>();
+		const labels = new Map<string, string>();
 		for (const g of $storeOptions) {
-			for (const it of g.items) m.set(it.value, it.label);
+			for (const it of g.items) labels.set(it.value, it.label);
 		}
-		return m;
+		return labels;
 	});
 
 	function outboundLabel(tag: string | null): string {
@@ -72,13 +74,13 @@
 
 	// Live-счётчик соединений per source IP. Пересчёт на каждый снапшот WS.
 	const connCountByIP = $derived.by(() => {
-		const m = new Map<string, number>();
+		const counts = new Map<string, number>();
 		for (const c of $liveConnectionsSnapshot.connections) {
 			const ip = c.metadata?.sourceIP;
 			if (!ip) continue;
-			m.set(ip, (m.get(ip) ?? 0) + 1);
+			counts.set(ip, (counts.get(ip) ?? 0) + 1);
 		}
-		return m;
+		return counts;
 	});
 
 	interface DeviceRow {
@@ -100,17 +102,17 @@
 	}
 
 	function modeLabel(mode: DeviceTargeting['mode']): string {
-		return mode === 'personal' ? 'персональный' : 'прямой';
+		return mode === 'personal' ? m.fakeip_devices_mode_personal() : m.fakeip_devices_mode_direct();
 	}
 
 	// ── Привязка: фокус-пикер outbound'а ───────────────────────────────────
-	// Опции = direct + все outbounds, кроме «Специальные» (тот же набор, что
+	// Опции = direct + все outbounds, кроме группы 'special' (тот же набор, что
 	// route-final в RoutesTab / RuleEditModal).
 	const bindOptions = $derived<DropdownOption[]>([
-		{ value: 'direct', label: 'direct (мимо VPN)' },
+		{ value: 'direct', label: m.routing_singbox_option_direct() },
 		...$storeOptions
-			.filter((g) => g.group !== 'Специальные')
-			.flatMap((g) => g.items.map((it) => ({ value: it.value, label: it.label, group: g.group }))),
+			.filter((g) => g.id !== 'special')
+			.flatMap((g) => g.items.map((it) => ({ value: it.value, label: it.label, group: outboundGroupLabel(g.id) }))),
 	]);
 
 	let bindOpen = $state(false);
@@ -148,12 +150,12 @@
 				await api.singboxFakeIPAddRule(rule);
 			}
 			await fakeipConfig.loadAll();
-			notifications.success(`Привязка устройства ${bindDevice.name || ip} сохранена`);
+			notifications.success(m.fakeip_devices_bind_saved({ name: bindDevice.name || ip }));
 			bindOpen = false;
 			bindDevice = null;
 			bindRuleIndex = null;
 		} catch (e) {
-			notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+			notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
 		} finally {
 			bindBusy = false;
 		}
@@ -169,10 +171,10 @@
 		try {
 			await api.singboxFakeIPDeleteRule(unbindRow.targeting.ruleIndex);
 			await fakeipConfig.loadAll();
-			notifications.success('Персональная привязка снята');
+			notifications.success(m.fakeip_devices_unbound());
 			unbindRow = null;
 		} catch (e) {
-			notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+			notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
 		} finally {
 			unbindBusy = false;
 		}
@@ -181,28 +183,29 @@
 
 <section class="panel">
 	<header class="ph">
-		<span class="nm">Устройства · {devices.length}</span>
-		<span class="src">из NDMS hotspot</span>
+		<span class="nm">{m.fakeip_devices_title({ count: devices.length })}</span>
+		<span class="src">{m.fakeip_devices_source()}</span>
 	</header>
 	<p class="pd">
-		<b class="m-pers">персональный</b> — привязка к конкретному outbound (route-правило по
-		source_ip_cidr). <b class="m-dir">прямой</b> — без персональной привязки, по общим правилам.
-		Pencil — задать персональную привязку, крестик — снять (активен только у персональных).
+		<b class="m-pers">{m.fakeip_devices_mode_personal()}</b>
+		{m.fakeip_devices_desc_personal()}
+		<b class="m-dir">{m.fakeip_devices_mode_direct()}</b>
+		{m.fakeip_devices_desc_direct()}
 	</p>
 
 	<div class="table">
 		<div class="thead">
-			<span class="th-dev">устройство</span>
-			<span class="th-addr">адрес</span>
-			<span class="th-st">статус</span>
-			<span class="th-mode">назначение</span>
-			<span class="th-conns">соединения</span>
+			<span class="th-dev">{m.fakeip_devices_col_device()}</span>
+			<span class="th-addr">{m.fakeip_devices_col_address()}</span>
+			<span class="th-st">{m.fakeip_devices_col_status()}</span>
+			<span class="th-mode">{m.fakeip_devices_col_mode()}</span>
+			<span class="th-conns">{m.fakeip_devices_col_connections()}</span>
 			<span class="th-acts" aria-hidden="true"></span>
 		</div>
 
 		<div class="rows">
 			{#if rows.length === 0}
-				<div class="empty">Устройства NDMS hotspot не найдены.</div>
+				<div class="empty">{m.fakeip_devices_empty()}</div>
 			{/if}
 
 			{#each rows as row (row.device.mac)}
@@ -216,7 +219,7 @@
 					<span class="ip">{row.device.ip}</span>
 					<span class="st" class:off={!online}>
 						<span class="dot" aria-hidden="true"></span>
-						{online ? 'онлайн' : 'офлайн'}
+						{online ? m.fakeip_devices_online() : m.fakeip_devices_offline()}
 					</span>
 					<span class="mode-cell">
 						<span
@@ -241,8 +244,8 @@
 							type="button"
 							class="ib"
 							onclick={() => openBind(row)}
-							aria-label={`Задать привязку для ${row.device.name || row.device.ip}`}
-							title="Задать персональную привязку"
+							aria-label={m.fakeip_devices_bind_aria({ name: row.device.name || row.device.ip })}
+							title={m.fakeip_devices_bind_title_hint()}
 						>
 							<Pencil size={15} strokeWidth={2} />
 						</button>
@@ -251,8 +254,8 @@
 							class="ib"
 							disabled={!personal}
 							onclick={() => (personal ? (unbindRow = row) : undefined)}
-							aria-label={`Снять привязку для ${row.device.name || row.device.ip}`}
-							title={personal ? 'Снять персональную привязку' : 'Привязки нет'}
+							aria-label={m.fakeip_devices_unbind_aria({ name: row.device.name || row.device.ip })}
+							title={personal ? m.fakeip_devices_unbind_title() : m.fakeip_devices_no_binding()}
 						>
 							<X size={15} strokeWidth={2} />
 						</button>
@@ -266,31 +269,34 @@
 <!-- ── Фокус-пикер привязки устройства к outbound ─────────────────────── -->
 <Modal
 	open={bindOpen}
-	title={bindDevice ? `Привязка · ${bindDevice.name || bindDevice.ip}` : 'Привязка устройства'}
+	title={bindDevice
+		? m.fakeip_devices_bind_modal_title({ name: bindDevice.name || bindDevice.ip })
+		: m.fakeip_devices_bind_modal_title_empty()}
 	size="sm"
 	onclose={closeBind}
 >
 	{#if bindDevice}
 		<p class="bind-info">
-			Привязать <b>{bindDevice.name || bindDevice.hostname || bindDevice.mac}</b>
-			(<span class="bind-ip">{bindDevice.ip}</span>) к outbound. Создаёт route-правило по
-			source_ip_cidr — трафик устройства уйдёт в выбранный outbound, минуя общие правила.
+			{m.fakeip_devices_bind_info_before()}
+			<b>{bindDevice.name || bindDevice.hostname || bindDevice.mac}</b>
+			(<span class="bind-ip">{bindDevice.ip}</span>)
+			{m.fakeip_devices_bind_info_after()}
 		</p>
 		<Dropdown bind:value={bindDraft} options={bindOptions} label="Outbound" fullWidth />
 	{/if}
 	{#snippet actions()}
-		<button type="button" class="btn ghost" onclick={closeBind} disabled={bindBusy}>Отмена</button>
+		<button type="button" class="btn ghost" onclick={closeBind} disabled={bindBusy}>{m.common_cancel()}</button>
 		<button type="button" class="btn primary" onclick={saveBind} disabled={bindBusy}>
-			{bindBusy ? 'Сохранение…' : 'Сохранить'}
+			{bindBusy ? m.fakeip_devices_saving() : m.sb_router_common_save()}
 		</button>
 	{/snippet}
 </Modal>
 
 <ConfirmModal
 	open={unbindRow !== null}
-	title="Снять привязку"
+	title={m.fakeip_devices_unbind_confirm_title()}
 	message={unbindRow
-		? `Снять персональную привязку устройства ${unbindRow.device.name || unbindRow.device.ip}? Оно вернётся к общим правилам.`
+		? m.fakeip_devices_unbind_confirm_message({ name: unbindRow.device.name || unbindRow.device.ip })
 		: ''}
 	busy={unbindBusy}
 	onConfirm={confirmUnbind}

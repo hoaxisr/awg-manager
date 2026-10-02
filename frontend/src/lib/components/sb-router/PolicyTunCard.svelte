@@ -9,14 +9,14 @@
   дровера: onPatch → applyPatch → mergeAndSaveSettings → PUT /singbox/router/settings.
 -->
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { Toggle, Button, Badge, Modal, Dropdown, Input } from '$lib/components/ui';
-  import { TUN_STACK_OPTIONS, tunStackHint } from './tunStack';
+  import { tunStackOptions } from './tunStack';
   import { api } from '$lib/api/client';
   import { notifications } from '$lib/stores/notifications';
   import { untrack } from 'svelte';
   import IssueRow from './IssueRow.svelte';
   import PolicyCombobox from './PolicyCombobox.svelte';
-  import { pluralize, DEVICE_WORDS } from '$lib/utils/pluralize';
   import type {
     TunStack,
     PolicyTunNATEgress,
@@ -31,8 +31,6 @@
     onPatch: (patch: Partial<SingboxRouterSettings>) => void | Promise<void>;
   }
   let { cfg, status, onPatch }: Props = $props();
-
-  const EXIT_WORDS = ['выходе', 'выходах', 'выходах'] as const;
 
   const iface = $derived(status?.policyTunIface ?? '');
   const ndmsName = $derived(status?.policyTunNdmsName ?? '');
@@ -63,7 +61,7 @@
   // который сеть может уйти наружу, а не только на текущий выход в интернет.
   let egresses = $state<PolicyTunNATEgress[]>([]);
 
-  const tunName = $derived(ndmsName || 'туннель sing-box');
+  const tunName = $derived(ndmsName || m.sb_router_policy_tun_default_tun_name());
 
   // ── Название интерфейса в NDMS (policyTunDescription) ──
   // Пусто — штатное имя. Сохраняем на change (blur/Enter), а не на каждый
@@ -95,12 +93,12 @@
       return;
     }
     if ([...next].length > TUN_DESCRIPTION_MAX) {
-      notifications.error(`Название интерфейса — не длиннее ${TUN_DESCRIPTION_MAX} символов`);
+      notifications.error(m.sb_router_policy_tun_desc_too_long({ max: TUN_DESCRIPTION_MAX }));
       descDraft.v = cfg.policyTunDescription ?? '';
       return;
     }
     if (next.toLowerCase().startsWith('awgm ')) {
-      notifications.error('Названия на «awgm » зарезервированы за служебными интерфейсами awg-manager');
+      notifications.error(m.sb_router_policy_tun_desc_reserved());
       descDraft.v = cfg.policyTunDescription ?? '';
       return;
     }
@@ -142,13 +140,9 @@
   // Стек — то же поле settings.fakeipStack, что правит панель FakeIP: у бэкенда
   // он один на оба tun-режима. Пустое значение = собственный стек sing-tun.
   const stackHint = $derived(
-    (() => {
-      const legacy = tunStackHint(cfg.fakeipStack);
-      const first = legacy
-        ? `${legacy[0].toUpperCase()}${legacy.slice(1)}.`
-        : 'Стек sing-tun — самый быстрый; общий с режимом FakeIP.';
-      return `${first} Смена применяется перезапуском движка.`;
-    })(),
+    cfg.fakeipStack
+      ? m.sb_router_policy_tun_stack_hint_legacy()
+      : m.sb_router_policy_tun_stack_hint_default(),
   );
 
   function handleStack(v: TunStack) {
@@ -184,21 +178,21 @@
 </script>
 
 <section class="sec">
-  <div class="sec-cap">Режим «Политики + tun»</div>
+  <div class="sec-cap">{m.sb_router_policy_tun_title()}</div>
 
   <div class="stat-line">
-    <span class="stat-label">Интерфейс</span>
+    <span class="stat-label">{m.sb_router_policy_tun_interface()}</span>
     <span class="stat-value">{iface || '—'}</span>
   </div>
 
   {#if ndmsName}
-    <p class="hint">Виден в политиках доступа как <strong>{ndmsName}</strong>.</p>
+    <p class="hint">{m.sb_router_policy_tun_visible_as_pre()} <strong>{ndmsName}</strong>.</p>
   {:else}
-    <p class="hint">Интерфейс ещё не создан — он появится после включения режима.</p>
+    <p class="hint">{m.sb_router_policy_tun_not_created()}</p>
   {/if}
 
   <div class="field">
-    <label class="lbl" for="policy-tun-description">Название интерфейса</label>
+    <label class="lbl" for="policy-tun-description">{m.sb_router_policy_tun_desc_label()}</label>
     <Input
       id="policy-tun-description"
       value={descDraft.v}
@@ -209,32 +203,28 @@
     />
   </div>
   <p class="hint">
-    Так интерфейс называется в веб-интерфейсе роутера. Пусто — «{DEFAULT_TUN_DESCRIPTION}».
-    Переименование не пересоздаёт интерфейс: разрешения в политиках сохраняются.
-    Интерфейс со своим названием awg-manager не удаляет автоматически — если он останется
-    на роутере (например, после удаления пакета), удалите его в веб-интерфейсе роутера.
+    {m.sb_router_policy_tun_desc_hint({ name: DEFAULT_TUN_DESCRIPTION })}
   </p>
 
   <div class="field">
-    <span class="lbl">TCP/IP-стек</span>
-    <Dropdown value={cfg.fakeipStack ?? ''} options={TUN_STACK_OPTIONS} fullWidth onchange={handleStack} />
+    <span class="lbl">{m.sb_router_policy_tun_stack_label()}</span>
+    <Dropdown value={cfg.fakeipStack ?? ''} options={tunStackOptions()} fullWidth onchange={handleStack} />
   </div>
   <p class="hint">{stackHint}</p>
 
   <div class="field">
-    <span class="lbl">Политика доступа</span>
+    <span class="lbl">{m.sb_router_policy_tun_access_policy()}</span>
     <PolicyCombobox value={cfg.policyName} onChange={(name) => void onPatch({ policyName: name })} />
   </div>
 
   {#if cfg.policyName}
     <p class="hint">
-      Интерфейс разрешается выходом этой политики автоматически. В ней
-      <strong>{pluralize(deviceCount, DEVICE_WORDS)}</strong> — их трафик и уходит в туннель.
-      При смене политики прежняя останется разрешённой: снимите разрешение вручную.
+      {m.sb_router_policy_tun_policy_in_pre()}
+      <strong>{m.sb_router_devices_count({ count: deviceCount })}</strong> {m.sb_router_policy_tun_policy_in_post()}
     </p>
     {#if policyMissing}
       <p class="hint hint-warning">
-        Политика «{cfg.policyName}» не найдена в NDMS — создайте заново или выберите другую.
+        {m.sb_router_policy_tun_policy_missing({ name: cfg.policyName })}
       </p>
     {/if}
     <Button
@@ -243,14 +233,14 @@
       fullWidth
       href="/routing?tab=policy&policy={encodeURIComponent(cfg.policyName)}"
     >
-      Управление устройствами →
+      {m.sb_router_policy_tun_manage_devices()}
     </Button>
   {:else}
     <p class="hint">
-      Политика не выбрана — трафик устройств в туннель не пойдёт: интерфейсу некуда встать выходом.
+      {m.sb_router_policy_tun_no_policy()}
     </p>
     <Button variant="ghost" size="sm" fullWidth href="/routing?tab=policy">
-      Политики доступа →
+      {m.sb_router_policy_tun_access_policies()}
     </Button>
   {/if}
 
@@ -259,23 +249,21 @@
   {/if}
 
   <div class="field-row">
-    <span>Сохранять адреса клиентов</span>
-    <Toggle checked={wanted} controlled onchange={handleToggle} ariaLabel="Сохранять адреса клиентов" />
+    <span>{m.sb_router_policy_tun_preserve_clients()}</span>
+    <Toggle checked={wanted} controlled onchange={handleToggle} ariaLabel={m.sb_router_policy_tun_preserve_clients()} />
   </div>
 
   {#if !wanted}
     <p class="hint">
-      Сейчас sing-box видит все устройства под одним адресом tun-шлюза (172.18.0.1):
-      правила по адресу устройства и разбивка соединений по клиентам не работают.
+      {m.sb_router_policy_tun_preserve_off_hint()}
     </p>
   {:else}
     <p class="hint">
-      Сегменты на static-NAT: <strong>{segments.length > 0 ? segments.join(', ') : '—'}</strong>.
+      {m.sb_router_policy_tun_segments_nat_pre()} <strong>{segments.length > 0 ? segments.join(', ') : '—'}</strong>.
     </p>
     {#if appliedOff}
       <p class="hint hint-warning">
-        Применено не для всех сегментов — сверка доводит их ближайшим тиком. Если надпись
-        держится, смотрите журнал: применение могло не пройти.
+        {m.sb_router_policy_tun_applied_partial()}
       </p>
     {/if}
   {/if}
@@ -283,25 +271,24 @@
 
 <Modal
   open={pickerOpen}
-  title="Сохранять адреса клиентов"
+  title={m.sb_router_policy_tun_preserve_clients()}
   size="md"
   onclose={() => (pickerOpen = false)}
 >
   {#if previewLoading}
-    <p class="hint">Загружаем сегменты роутера…</p>
+    <p class="hint">{m.sb_router_policy_tun_loading_segments()}</p>
   {:else if previewError}
-    <p class="hint hint-warning">Не удалось получить сегменты: {previewError}</p>
+    <p class="hint hint-warning">{m.sb_router_policy_tun_segments_failed({ message: previewError })}</p>
   {:else if preview.length === 0}
-    <p class="hint">Сегментов, которым можно сменить режим NAT, не найдено.</p>
+    <p class="hint">{m.sb_router_policy_tun_segments_none()}</p>
   {:else}
     <p class="hint">
-      Отметьте сети, устройства которых sing-box должен видеть по их настоящим адресам.
-      В интернет они продолжат выходить через адрес роутера.
+      {m.sb_router_policy_tun_picker_hint()}
     </p>
 
     <div class="flow">
       <div class="flow-col">
-        <div class="flow-cap">Сети</div>
+        <div class="flow-cap">{m.sb_router_policy_tun_networks()}</div>
         <ul class="seg-list">
           {#each preview as seg (seg.name)}
             <li class="seg-row" class:seg-on={selected.includes(seg.name)}>
@@ -316,7 +303,7 @@
                   <span class="seg-tech">{segmentTech(seg)}</span>
                   {#if alreadyPreserved(seg)}
                     <span class="seg-side">
-                      <Badge variant="muted" size="xs">уже настроено вручную</Badge>
+                      <Badge variant="muted" size="xs">{m.sb_router_policy_tun_already_manual()}</Badge>
                     </span>
                   {/if}
                 </span>
@@ -329,11 +316,11 @@
       <div class="flow-arrow" aria-hidden="true">→</div>
 
       <div class="flow-col">
-        <div class="flow-cap">Что увидит выход</div>
+        <div class="flow-cap">{m.sb_router_policy_tun_exit_sees()}</div>
         <div class="dest dest-free">
-          <span class="dest-name">Туннель sing-box</span>
+          <span class="dest-name">{m.sb_router_policy_tun_tunnel_singbox()}</span>
           <span class="dest-tech">{tunName}</span>
-          <span class="dest-note">адреса устройств — правила и статистика по клиентам работают</span>
+          <span class="dest-note">{m.sb_router_policy_tun_note_client_addrs()}</span>
         </div>
         {#each egresses as eg (eg.name)}
           <div class="dest">
@@ -341,30 +328,29 @@
             {#if eg.label}
               <span class="dest-tech">{eg.name}</span>
             {/if}
-            <span class="dest-note">адрес роутера — как и было</span>
+            <span class="dest-note">{m.sb_router_policy_tun_note_router_addr()}</span>
           </div>
         {:else}
           <div class="dest">
-            <span class="dest-name">Выходы в интернет</span>
-            <span class="dest-note">адрес роутера — как и было</span>
+            <span class="dest-name">{m.sb_router_policy_tun_internet_exits()}</span>
+            <span class="dest-note">{m.sb_router_policy_tun_note_router_addr()}</span>
           </div>
         {/each}
       </div>
     </div>
 
     <p class="hint hint-warning">
-      Меняется способ выхода отмеченных сетей в интернет: <b>проверьте проброс портов и UPnP</b>,
-      они настраиваются отдельно.
+      {m.sb_router_policy_tun_warn_pre()} <b>{m.sb_router_policy_tun_warn_bold()}</b>{m.sb_router_policy_tun_warn_post()}
       {#if egresses.length > 0}
-        Подмена сохраняется на {pluralize(egresses.length, EXIT_WORDS)}, перечисленных справа.
+        {m.sb_router_policy_tun_warn_egresses({ count: egresses.length })}
       {/if}
     </p>
   {/if}
 
   {#snippet actions()}
-    <Button variant="ghost" size="md" onclick={() => (pickerOpen = false)}>Отмена</Button>
+    <Button variant="ghost" size="md" onclick={() => (pickerOpen = false)}>{m.common_cancel()}</Button>
     <Button variant="primary" size="md" disabled={selected.length === 0} onclick={confirmPicker}>
-      Включить
+      {m.sb_router_policy_tun_enable()}
     </Button>
   {/snippet}
 </Modal>

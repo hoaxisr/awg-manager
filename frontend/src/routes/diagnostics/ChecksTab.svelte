@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { Button, Modal } from '$lib/components/ui';
 	import { diagnosticsStore } from '$lib/stores/diagnostics';
@@ -129,7 +130,7 @@
 					break;
 				case 'error':
 					activeTunnelId = '';
-					diagnosticsStore.fail(event.message ?? 'Ошибка диагностики');
+					diagnosticsStore.fail(event.message ?? m.diag_checks_error_default());
 					cleanup();
 					break;
 			}
@@ -144,7 +145,7 @@
 		eventSource = api.streamDiagnostics(
 			includeRestart,
 			makeEventHandler(false),
-			() => diagnosticsStore.fail('Соединение потеряно'),
+			() => diagnosticsStore.fail(m.diag_checks_connection_lost()),
 		);
 		// Let the SSE connection register first so DNS/NDMS work does not race the same browser slot.
 		queueMicrotask(() => {
@@ -160,7 +161,7 @@
 		eventSource = api.streamDiagnostics(
 			false,
 			makeEventHandler(true),
-			() => { activeTunnelId = ''; diagnosticsStore.fail('Соединение потеряно'); },
+			() => { activeTunnelId = ''; diagnosticsStore.fail(m.diag_checks_connection_lost()); },
 			tunnelId,
 		);
 	}
@@ -261,9 +262,9 @@
 			const body = buildIncidentIssueBody();
 			const copied = await copyText(body);
 			if (copied) {
-				notifications.success('Текст issue скопирован. Прикрепите скачанный отчёт на GitHub.');
+				notifications.success(m.diag_checks_issue_copied());
 			} else {
-				notifications.warning('Отчёт скачан. Текст issue не удалось скопировать автоматически.');
+				notifications.warning(m.diag_checks_report_downloaded_copy_failed());
 			}
 			const url = GITHUB_BUG_REPORT_URL;
 			if (issueWindow) {
@@ -315,7 +316,7 @@
 	{#each targets as target (target.id)}
 		<div class="divider"></div>
 		<ChecksGroup
-			name={target.name}
+			name={target.isGlobal ? m.diag_checks_global_group() : target.name}
 			kind={target.kind}
 			isGlobal={target.isGlobal}
 			led={targetLed(target, running)}
@@ -332,38 +333,35 @@
 	{#if visibleTunnels.length === 0}
 		<div class="divider"></div>
 		<div class="empty-tunnels">
-			Нет запущенных туннелей. Per-tunnel проверки будут пропущены.
+			{m.diag_checks_no_running_tunnels()}
 		</div>
 	{/if}
 </div>
 
 <Modal
 	open={incidentModalOpen}
-	title={hasReport ? 'Создать инцидент на GitHub' : 'Сначала выполните диагностику'}
+	title={hasReport ? m.diag_checks_incident_title() : m.diag_checks_incident_title_need_run()}
 	size="md"
 	onclose={() => (incidentModalOpen = false)}
 >
 	<div class="incident-modal-body">
 		{#if hasReport}
 			<p>
-				AWG Manager — open-source проект без службы поддержки и SLA. Инцидент попадёт
-				в публичный GitHub issue; ответ и исправление не гарантируются.
+				{m.diag_checks_incident_disclaimer()}
 			</p>
 			<p>
-				Будет скачан диагностический отчёт. Проверьте файл перед публикацией и
-				<strong>прикрепите его к issue вручную</strong>.
+				{m.diag_checks_incident_report_note()}
+				<strong>{m.diag_checks_incident_report_attach()}</strong>.
 			</p>
 			<p class="incident-warning">
-				Не публикуйте приватные ключи, пароли, токены, реальные адреса и домены,
-				если не хотите их раскрывать.
+				{m.diag_checks_incident_no_secrets()}
 			</p>
 		{:else}
 			<p>
-				Инцидент лучше создавать после полного прогона диагностики, чтобы к нему
-				можно было приложить отчёт.
+				{m.diag_checks_incident_after_run()}
 			</p>
 			<p class="incident-warning">
-				Запустите проверки, дождитесь завершения и вернитесь к кнопке «Инцидент».
+				{m.diag_checks_incident_run_hint()}
 			</p>
 		{/if}
 	</div>
@@ -371,14 +369,14 @@
 	{#snippet actions()}
 		{#if hasReport}
 			<Button variant="secondary" size="md" onclick={() => (incidentModalOpen = false)} disabled={creatingIncident}>
-				Отмена
+				{m.common_cancel()}
 			</Button>
 			<Button variant="primary" size="md" onclick={confirmCreateIncident} loading={creatingIncident}>
-				Скачать и открыть GitHub
+				{m.diag_checks_incident_download_open()}
 			</Button>
 		{:else}
 			<Button variant="primary" size="md" onclick={() => (incidentModalOpen = false)}>
-				Понятно
+				{m.diag_checks_incident_ok()}
 			</Button>
 		{/if}
 	{/snippet}

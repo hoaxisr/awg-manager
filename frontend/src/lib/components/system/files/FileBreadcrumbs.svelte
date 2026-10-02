@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { ArrowUp } from 'lucide-svelte';
 
 	interface Props {
@@ -33,7 +34,7 @@
 <div class="nav-bar">
 	<div class="breadcrumbs">
 		{#if parent}
-			<button type="button" class="btn-up" onclick={() => onNavigate(parent!)} title="Наверх">
+			<button type="button" class="btn-up" onclick={() => onNavigate(parent!)} title={m.system_files_breadcrumbs_up()}>
 				<ArrowUp size={13} />
 			</button>
 		{/if}

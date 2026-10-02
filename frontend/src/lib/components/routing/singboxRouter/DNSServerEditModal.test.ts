@@ -31,7 +31,7 @@ describe('DNSServerEditModal', () => {
 			props: {
 				...baseProps,
 				server: { tag: 'dot', type: 'tls', server: 'dns.example', detour: 'tunnel' },
-				outboundOptions: [{ group: 'Туннели', items: [{ value: 'tunnel', label: 'Tunnel' }] }],
+				outboundOptions: [{ id: 'awg', items: [{ value: 'tunnel', label: 'Tunnel' }] }],
 				onSave: vi.fn(),
 			},
 		});

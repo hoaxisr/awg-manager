@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { Button, Modal } from '$lib/components/ui';
+	import { m } from '$lib/i18n';
 	import { isMockDevMode } from '$lib/env';
 	import { developFeedbackFabVisible } from '$lib/stores/developFeedbackFab';
 	import { requestDevelopFeedbackIncident } from '$lib/stores/developFeedbackIncident';
@@ -36,24 +37,22 @@
 	<button
 		type="button"
 		class="fab"
-		aria-label="Обратная связь"
-		title="Сообщить об ошибке или предложить улучшение"
+		aria-label={m.layout_feedback_fab_aria()}
+		title={m.layout_feedback_fab_title()}
 		onclick={openModal}
 	>
 		!
 	</button>
 {/if}
 
-<Modal open={modalOpen} title="Обратная связь" size="md" onclose={closeModal}>
+<Modal open={modalOpen} title={m.layout_feedback_title()} size="md" onclose={closeModal}>
 	<div class="body">
 		<p>
-			Вы можете создать тикет на GitHub: сообщить об ошибке, предложить улучшение
-			или задать вопрос по develop-сборке. Ответ не гарантируется — это публичный
-			open-source проект без службы поддержки.
+			{m.layout_feedback_intro()}
 		</p>
 		<p>
-			Если эта кнопка мешает, её можно скрыть в
-			<a href="/settings?feedbackFab" onclick={goToFeedbackSetting}>настройках</a>.
+			{m.layout_feedback_hide_before()}
+			<a href="/settings?feedbackFab" onclick={goToFeedbackSetting}>{m.layout_feedback_hide_link()}</a>.
 		</p>
 	</div>
 
@@ -69,14 +68,14 @@
 				onclick={closeModal}
 			>
 				<span class="split-label">
-					<span>Сообщение /</span>
-					<span class="split-second">предложение</span>
+					<span>{m.layout_feedback_suggestion_a()}</span>
+					<span class="split-second">{m.layout_feedback_suggestion_b()}</span>
 				</span>
 			</Button>
 			<Button variant="outline-danger" size="md" fullWidth onclick={handleIncident}>
 				<span class="split-label">
-					<span>Инцидент /</span>
-					<span class="split-second">ошибка</span>
+					<span>{m.layout_feedback_incident_a()}</span>
+					<span class="split-second">{m.layout_feedback_incident_b()}</span>
 				</span>
 			</Button>
 		</div>

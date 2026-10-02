@@ -9,16 +9,43 @@
 // (`<r 1000>` = 1000 байт в 8 символах) на лимит не влияет.
 // ---------------------------------------------------------------------------
 
+import { m } from '$lib/i18n';
+
 export const MAX_SIGNATURE_CHARS = 3500;
 
 export type ProtocolKey = 'quic_initial' | 'stun' | 'dns' | 'dtls' | 'sip';
 
 export const protocols: Record<ProtocolKey, { name: string; description: string }> = {
-	quic_initial: { name: 'QUIC Initial', description: 'HTTP/3 — валидный ClientHello с шифрованием по RFC 9001' },
-	stun: { name: 'STUN / TURN', description: 'WebRTC ICE — Binding или Allocate с FINGERPRINT' },
-	dns: { name: 'DNS Query', description: 'UDP DNS-запрос A/AAAA/HTTPS с EDNS0' },
-	dtls: { name: 'DTLS (WebRTC)', description: 'DTLS 1.2 ClientHello с use_srtp' },
-	sip: { name: 'SIP', description: 'VoIP — REGISTER и повтор с Digest-авторизацией (I1, I2)' },
+	quic_initial: {
+		name: 'QUIC Initial',
+		get description() {
+			return m.protocols_desc_quic_initial();
+		},
+	},
+	stun: {
+		name: 'STUN / TURN',
+		get description() {
+			return m.protocols_desc_stun();
+		},
+	},
+	dns: {
+		name: 'DNS Query',
+		get description() {
+			return m.protocols_desc_dns();
+		},
+	},
+	dtls: {
+		name: 'DTLS (WebRTC)',
+		get description() {
+			return m.protocols_desc_dtls();
+		},
+	},
+	sip: {
+		name: 'SIP',
+		get description() {
+			return m.protocols_desc_sip();
+		},
+	},
 };
 
 export interface SignaturePackets {

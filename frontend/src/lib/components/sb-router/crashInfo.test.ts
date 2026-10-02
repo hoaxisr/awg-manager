@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { formatSuppressedUntil, CRASH_WORDS } from './crashInfo';
-import { pluralize } from '$lib/utils/pluralize';
+import { formatSuppressedUntil } from './crashInfo';
+import { m } from '$lib/i18n';
 
 describe('formatSuppressedUntil', () => {
 	it('пустое/absent значение — null (блок подавления скрыт)', () => {
@@ -24,11 +24,12 @@ describe('formatSuppressedUntil', () => {
 	});
 });
 
-describe('CRASH_WORDS', () => {
+describe('счётчик падений в тексте приостановки', () => {
 	it('русские формы для счётчика падений', () => {
-		expect(pluralize(1, CRASH_WORDS)).toBe('1 падение');
-		expect(pluralize(3, CRASH_WORDS)).toBe('3 падения');
-		expect(pluralize(5, CRASH_WORDS)).toBe('5 падений');
-		expect(pluralize(11, CRASH_WORDS)).toBe('11 падений');
+		const text = (count: number) => m.sb_router_status_crash_suppressed_count({ time: '12:30', count });
+		expect(text(1)).toContain('(1 падение за 10 мин)');
+		expect(text(3)).toContain('(3 падения за 10 мин)');
+		expect(text(5)).toContain('(5 падений за 10 мин)');
+		expect(text(11)).toContain('(11 падений за 10 мин)');
 	});
 });

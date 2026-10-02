@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api, type SystemServiceItem } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Button, Modal } from '$lib/components/ui';
@@ -30,7 +31,7 @@
 			const res = await api.systemServicesGet(target.script);
 			content = res.content;
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось загрузить содержимое скрипта'));
+			notifications.error(errorMessage(e, m.system_services_e_load_failed()));
 			onclose();
 		} finally {
 			loading = false;
@@ -43,10 +44,10 @@
 		const scriptName = item.script.split('/').pop() || item.name;
 		try {
 			await api.systemServicesSave({ scriptName, content });
-			notifications.success(`Скрипт ${scriptName} сохранен`);
+			notifications.success(m.system_services_e_saved({ name: scriptName }));
 			await onSaved(restartAfter);
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Ошибка сохранения скрипта'));
+			notifications.error(errorMessage(e, m.system_services_e_save_failed()));
 		} finally {
 			saving = false;
 		}
@@ -55,7 +56,7 @@
 
 <Modal
 	open={item !== null}
-	title={`Редактирование скрипта службы: ${item?.name || ''}`}
+	title={m.system_services_e_title({ name: item?.name || '' })}
 	size="lg"
 	{onclose}
 >
@@ -63,13 +64,13 @@
 		<div class="edit-modal-root">
 			<div class="edit-meta-bar">
 				<code>{item.script}</code>
-				<span class="edit-hint">Права доступа 0755 (rwxr-xr-x) сохраняются автоматически</span>
+				<span class="edit-hint">{m.system_services_e_hint()}</span>
 			</div>
 
 			{#if loading}
 				<div class="empty-state">
 					<RefreshCw size={24} class="spin" />
-					<p>Загрузка содержимого скрипта…</p>
+					<p>{m.system_services_e_loading()}</p>
 				</div>
 			{:else}
 				<textarea
@@ -83,14 +84,14 @@
 
 	{#snippet actions()}
 		<div class="modal-footer-btns">
-			<Button variant="ghost" onclick={onclose}>Отмена</Button>
+			<Button variant="ghost" onclick={onclose}>{m.common_cancel()}</Button>
 			<Button variant="secondary" loading={saving} onclick={() => handleSave(true)}>
 				{#snippet iconBefore()}<RotateCw size={13} />{/snippet}
-				Сохранить и перезапустить
+				{m.system_services_e_save_restart()}
 			</Button>
 			<Button variant="primary" loading={saving} onclick={() => handleSave(false)}>
 				{#snippet iconBefore()}<Check size={13} />{/snippet}
-				Сохранить
+				{m.sb_router_common_save()}
 			</Button>
 		</div>
 	{/snippet}

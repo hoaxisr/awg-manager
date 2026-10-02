@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SystemFileEntry } from '$lib/api/client';
 	import { Button } from '$lib/components/ui';
 	import {
@@ -40,28 +41,28 @@
 	<div class="fm-toolbar-actions">
 		<Button size="sm" variant="ghost" onclick={onRefresh} disabled={loading}>
 			{#snippet iconBefore()}<RefreshCw size={14} class={loading ? 'spin' : ''} />{/snippet}
-			Обновить
+			{m.routing_page_refresh()}
 		</Button>
 
 		{#if !readOnly}
 			<Button size="sm" variant="secondary" onclick={onMkdir}>
 				{#snippet iconBefore()}<FolderPlus size={14} />{/snippet}
-				Папка
+				{m.system_files_toolbar_folder()}
 			</Button>
 			<Button size="sm" variant="secondary" onclick={onNewFile}>
 				{#snippet iconBefore()}<FilePlus size={14} />{/snippet}
-				Файл
+				{m.system_files_toolbar_file()}
 			</Button>
 			<Button size="sm" variant="secondary" onclick={onUploadClick}>
 				{#snippet iconBefore()}<Upload size={14} />{/snippet}
-				Загрузить
+				{m.system_files_toolbar_upload()}
 			</Button>
 		{/if}
 
 		{#if selected && !selected.isDir}
 			<Button size="sm" variant="secondary" onclick={() => selected && onDownload(selected)}>
 				{#snippet iconBefore()}<Download size={14} />{/snippet}
-				Скачать
+				{m.system_files_toolbar_download()}
 			</Button>
 		{/if}
 	</div>
@@ -71,7 +72,7 @@
 		<Search size={13} class="search-icon" />
 		<input
 			type="text"
-			placeholder="Поиск в папке…"
+			placeholder={m.system_files_toolbar_search()}
 			bind:value={searchQuery}
 		/>
 	</div>

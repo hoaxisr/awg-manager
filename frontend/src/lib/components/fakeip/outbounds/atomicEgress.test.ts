@@ -44,12 +44,12 @@ const sub = (over: Partial<Subscription>): Subscription =>
 describe('buildAtomicEgresses', () => {
 	it('excludes the Специальные and Composite outbounds groups', () => {
 		const options: OutboundGroup[] = [
-			{ group: 'Специальные', items: [{ value: 'direct', label: 'direct (мимо VPN)' }] },
+			{ id: 'special', items: [{ value: 'direct', label: 'direct (мимо VPN)' }] },
 			{
-				group: 'Composite outbounds',
+				id: 'composite',
 				items: [{ value: 'sub-1a98', label: 'Veesp LV · sub-1a98' }],
 			},
-			{ group: 'Sing-box туннели', items: [{ value: 't', label: 't' }] },
+			{ id: 'singbox', items: [{ value: 't', label: 't' }] },
 		];
 		const res = buildAtomicEgresses(options, [tunnel({ tag: 't' })], []);
 		expect(res.map((e) => e.tag)).toEqual(['t']);
@@ -57,7 +57,7 @@ describe('buildAtomicEgresses', () => {
 
 	it('enriches a sing-box tunnel egress with protocol / endpoint / sni / transport', () => {
 		const options: OutboundGroup[] = [
-			{ group: 'Sing-box туннели', items: [{ value: 'sb1', label: 'sb1' }] },
+			{ id: 'singbox', items: [{ value: 'sb1', label: 'sb1' }] },
 		];
 		const res = buildAtomicEgresses(
 			options,
@@ -76,7 +76,7 @@ describe('buildAtomicEgresses', () => {
 
 	it('drops noise security=none / transport=tcp from the tunnel detail line', () => {
 		const options: OutboundGroup[] = [
-			{ group: 'Sing-box туннели', items: [{ value: 'sb1', label: 'sb1' }] },
+			{ id: 'singbox', items: [{ value: 'sb1', label: 'sb1' }] },
 		];
 		const res = buildAtomicEgresses(
 			options,
@@ -90,7 +90,7 @@ describe('buildAtomicEgresses', () => {
 		const options: OutboundGroup[] = [
 			// Subscription members surface in options via their group; here we
 			// simulate a non-special, non-composite group carrying the member tag.
-			{ group: 'Подписки', items: [{ value: 'sub-1a98-de01', label: 'DE Frankfurt' }] },
+			{ id: 'singbox', items: [{ value: 'sub-1a98-de01', label: 'DE Frankfurt' }] },
 		];
 		const subs = [
 			sub({
@@ -122,7 +122,7 @@ describe('buildAtomicEgresses', () => {
 
 	it('keeps an unjoined egress with the group name as the proto badge', () => {
 		const options: OutboundGroup[] = [
-			{ group: 'AWG туннели', items: [{ value: 'awg-awg0', label: 'DE (awg0)' }] },
+			{ id: 'awg', items: [{ value: 'awg-awg0', label: 'DE (awg0)' }] },
 		];
 		const res = buildAtomicEgresses(options, [], []);
 		expect(res[0]).toMatchObject({
@@ -136,8 +136,8 @@ describe('buildAtomicEgresses', () => {
 
 	it('dedupes a tag appearing in multiple groups', () => {
 		const options: OutboundGroup[] = [
-			{ group: 'AWG туннели', items: [{ value: 'x', label: 'X' }] },
-			{ group: 'Sing-box туннели', items: [{ value: 'x', label: 'X' }] },
+			{ id: 'awg', items: [{ value: 'x', label: 'X' }] },
+			{ id: 'singbox', items: [{ value: 'x', label: 'X' }] },
 		];
 		const res = buildAtomicEgresses(options, [], []);
 		expect(res.filter((e) => e.tag === 'x')).toHaveLength(1);

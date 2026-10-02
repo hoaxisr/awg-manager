@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type {
 	FreeTurnAllowlistAddResult,
 	FreeTurnAllowlistStatus,
@@ -65,7 +66,7 @@ export class FreeturnClient extends SubscriptionsClient {
 		// блоке seed. Отдать пустой список молча значило бы показать
 		// «инстансов нет» вместо «подсистема не поднялась».
 		if (!list.seed?.seeded) {
-			throw new Error(list.seed?.error || 'Прокси-подсистема не загружена');
+			throw new Error(list.seed?.error || m.api_proxy_subsystem_not_loaded());
 		}
 		return list;
 	}

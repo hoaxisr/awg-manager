@@ -5,6 +5,7 @@
 // дублируют логику сервера, лишь блокируют явно невалидный ввод раньше.
 // ---------------------------------------------------------------------------
 
+import { m } from '$lib/i18n';
 import { isIPv4, isIPv6, isCIDR, cidrOverlaps } from './cidr';
 
 /**
@@ -13,9 +14,9 @@ import { isIPv4, isIPv6, isCIDR, cidrOverlaps } from './cidr';
  */
 export function validateTunnelIP(v: string): string | null {
 	const value = v.trim();
-	if (value === '') return 'укажите адрес';
-	if (!value.includes('/')) return 'укажите префикс, например /32';
-	if (!isCIDR(value)) return 'некорректный IPv4-адрес с префиксом';
+	if (value === '') return m.peer_form_need_address();
+	if (!value.includes('/')) return m.peer_form_need_prefix();
+	if (!isCIDR(value)) return m.peer_form_bad_ipv4_prefix();
 	return null;
 }
 
@@ -29,7 +30,7 @@ export function validateDNSList(v: string): string | null {
 	const entries = value.split(',').map((s) => s.trim());
 	for (const entry of entries) {
 		if (entry === '' || !(isIPv4(entry) || isIPv6(entry))) {
-			return `некорректный DNS-адрес: ${entry}`;
+			return m.peer_form_bad_dns({ entry });
 		}
 	}
 	return null;
@@ -68,7 +69,7 @@ export function formatClientAllowedIPs(text: string): string {
 /** «AllowedIPs клиента»: CIDR IPv4/IPv6; пусто — весь трафик. */
 export function validateClientAllowedIPs(v: string): string | null {
 	for (const entry of splitClientAllowedIPs(v)) {
-		if (!isAnyCIDR(entry)) return `некорректный CIDR: ${entry}`;
+		if (!isAnyCIDR(entry)) return m.peer_form_bad_cidr({ entry });
 	}
 	return null;
 }
@@ -86,10 +87,10 @@ export function validateRemoteSubnets(text: string): string | null {
 	const list = parseRemoteSubnets(text);
 	for (let i = 0; i < list.length; i++) {
 		const entry = list[i];
-		if (!isCIDR(entry)) return `некорректная IPv4-сеть: ${entry}`;
-		if (entry.endsWith('/0')) return '0.0.0.0/0 задать нельзя';
+		if (!isCIDR(entry)) return m.peer_form_bad_ipv4_net({ entry });
+		if (entry.endsWith('/0')) return m.peer_form_default_route_forbidden();
 		for (let j = 0; j < i; j++) {
-			if (cidrOverlaps(list[j], entry)) return `сети пересекаются: ${list[j]} и ${entry}`;
+			if (cidrOverlaps(list[j], entry)) return m.peer_form_nets_overlap({ first: list[j], second: entry });
 		}
 	}
 	return null;
