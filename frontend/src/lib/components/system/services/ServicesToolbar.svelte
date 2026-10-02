@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { Button, Card } from '$lib/components/ui';
 	import { RefreshCw, Plus, Search, Layers } from 'lucide-svelte';
 
@@ -18,13 +19,13 @@
 		<div class="toolbar-left">
 			<div class="panel-title-wrap">
 				<Layers size={18} class="text-accent" />
-				<h3>Службы Entware (init.d)</h3>
+				<h3>{m.system_services_tb_title()}</h3>
 				<span class="count-badge">{count}</span>
 			</div>
 
 			<Button size="sm" variant="primary" onclick={onCreate}>
 				{#snippet iconBefore()}<Plus size={14} />{/snippet}
-				Добавить службу
+				{m.system_services_tb_add()}
 			</Button>
 		</div>
 
@@ -33,14 +34,14 @@
 				<Search size={13} class="search-icon" />
 				<input
 					type="text"
-					placeholder="Фильтр по имени или пути…"
+					placeholder={m.system_services_tb_filter()}
 					bind:value={searchQuery}
 				/>
 			</div>
 
 			<Button size="sm" variant="ghost" onclick={onRefresh} disabled={loading}>
 				{#snippet iconBefore()}<RefreshCw size={14} class={loading ? 'spin' : ''} />{/snippet}
-				Обновить
+				{m.routing_page_refresh()}
 			</Button>
 		</div>
 	</div>

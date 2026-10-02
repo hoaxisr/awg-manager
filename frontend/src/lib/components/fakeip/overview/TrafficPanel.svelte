@@ -11,6 +11,7 @@
   Живой блок: вне live — честный empty-state.
 -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { singboxTrafficLive } from '$lib/stores/singboxEngineStats';
 	import { formatBytes, formatByteRate } from '$lib/utils/format';
 	import TrafficSpark from './TrafficSpark.svelte';
@@ -30,14 +31,14 @@
 
 	const notLiveText = $derived(
 		notLiveReason === 'clash-down'
-			? 'Clash-runtime недоступен — живой трафик временно недоступен.'
-			: 'Движок остановлен — живой трафик недоступен.',
+			? m.fakeip_traffic_clash_down()
+			: m.fakeip_traffic_engine_stopped(),
 	);
 </script>
 
 <div class="panel">
 	<div class="ph">
-		<span class="nm">Трафик · live</span>
+		<span class="nm">{m.fakeip_traffic_title()}</span>
 		<span class="meta">Clash /traffic</span>
 	</div>
 
@@ -48,7 +49,7 @@
 		<div class="tline">
 			<span class="dn">&darr; <b>{rate.hasRate ? formatByteRate(rate.downloadRate) : '—'}</b></span>
 			<span class="up">&uarr; <b>{rate.hasRate ? formatByteRate(rate.uploadRate) : '—'}</b></span>
-			<span>за сессию <b>{formatBytes(sessionTotal)}</b></span>
+			<span>{m.fakeip_traffic_session()} <b>{formatBytes(sessionTotal)}</b></span>
 		</div>
 	{/if}
 </div>

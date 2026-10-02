@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api, type SystemFileEntry } from '$lib/api/client';
 	import { Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
@@ -31,7 +32,7 @@
 			const res = await api.systemFilesChecksum(entry.path, 'md5');
 			md5Hash = res.checksum;
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Ошибка вычисления MD5'));
+			notifications.error(errorMessage(e, m.system_files_sum_md5_failed()));
 		} finally {
 			calculatingMd5 = false;
 		}
@@ -43,7 +44,7 @@
 			const res = await api.systemFilesChecksum(entry.path, 'sha256');
 			sha256Hash = res.checksum;
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Ошибка вычисления SHA256'));
+			notifications.error(errorMessage(e, m.system_files_sum_sha_failed()));
 		} finally {
 			calculatingSha = false;
 		}
@@ -53,7 +54,7 @@
 <div class="section-box">
 	<div class="section-title">
 		<Hash size={15} />
-		<span>Контрольные суммы (Хэш)</span>
+		<span>{m.system_files_sum_title()}</span>
 	</div>
 
 	<div class="hash-list">
@@ -64,7 +65,7 @@
 				<FileCopyButton value={md5Hash} />
 			{:else}
 				<Button size="sm" variant="ghost" loading={calculatingMd5} onclick={calcMd5}>
-					Рассчитать MD5
+					{m.system_files_sum_calc_md5()}
 				</Button>
 			{/if}
 		</div>
@@ -76,7 +77,7 @@
 				<FileCopyButton value={sha256Hash} />
 			{:else}
 				<Button size="sm" variant="ghost" loading={calculatingSha} onclick={calcSha256}>
-					Рассчитать SHA256
+					{m.system_files_sum_calc_sha()}
 				</Button>
 			{/if}
 		</div>

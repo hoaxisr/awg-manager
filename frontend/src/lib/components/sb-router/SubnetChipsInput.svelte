@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { normalizeSubnet, parseSubnets, serializeSubnets } from '$lib/utils/subnets';
 
   interface Props {
@@ -16,7 +17,7 @@
   });
 
   let draft = $state('');
-  let error = $state('');
+  let invalidValue = $state<string | null>(null);
 
   function commitDraft() {
     const raw = draft.trim();
@@ -27,7 +28,7 @@
     for (const p of parts) {
       const n = normalizeSubnet(p);
       if (!n) {
-        error = `неверный IP/CIDR: ${p}`;
+        invalidValue = p;
         return;
       }
       if (seen.has(n)) continue;
@@ -35,7 +36,7 @@
       additions.push(n);
     }
     draft = '';
-    error = '';
+    invalidValue = null;
     if (additions.length === 0) return;
     chips = [...chips, ...additions];
     onChange(serializeSubnets(chips));
@@ -59,7 +60,7 @@
     {#each chips as c (c)}
       <span class="port-chip">
         {c}
-        <button type="button" class="chip-x" onclick={() => remove(c)} aria-label="удалить подсеть">✕</button>
+        <button type="button" class="chip-x" onclick={() => remove(c)} aria-label={m.sb_router_chips_subnet_remove()}>✕</button>
       </span>
     {/each}
     <input
@@ -68,11 +69,11 @@
       type="text"
       bind:value={draft}
       onkeydown={onKeydown}
-      oninput={() => (error = '')}
-      placeholder="IP или подсеть, напр. 203.0.113.0/24"
+      oninput={() => (invalidValue = null)}
+      placeholder={m.sb_router_chips_subnet_placeholder()}
     />
   </div>
-  {#if error}<div class="port-error">{error}</div>{/if}
+  {#if invalidValue !== null}<div class="port-error">{m.sb_router_chips_subnet_invalid({ value: invalidValue })}</div>{/if}
 </div>
 
 <style>

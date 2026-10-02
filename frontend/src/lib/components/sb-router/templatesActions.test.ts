@@ -13,14 +13,14 @@ import type { TemplateGroup } from './templatesData';
 
 const groups: TemplateGroup[] = [
   {
-    category: 'services', title: 'Сервисы',
+    category: 'services',
     items: [
       { id: 'svc:netflix', category: 'services', presetId: 'netflix', name: 'Netflix' },
       { id: 'svc:youtube', category: 'services', presetId: 'youtube', name: 'YouTube' },
     ],
   },
   {
-    category: 'rulesets', title: 'Сервисные наборы',
+    category: 'rulesets',
     items: [
       { id: 'rs:telegram', category: 'rulesets', tag: 'telegram', type: 'remote' },
     ],

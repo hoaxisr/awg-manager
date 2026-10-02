@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import { listenPortNumber } from '$lib/utils/listenPortUtils';
 	import { proxyInOpsMode } from '$lib/utils/proxyOpsMode';
@@ -168,7 +169,7 @@
 			reportDeletedTunnels(res.deletedTunnels, res.tunnelErrors);
 			if (row.state === 'running' && res.peerChanged) await ontoggle(row, false);
 			else if (row.state === 'running') {
-				notifications.info('Перезапустите клиент, чтобы изменения применились');
+				notifications.info(m.proxy_detail_restart_client());
 			}
 			await onstatuses();
 			return res.config;

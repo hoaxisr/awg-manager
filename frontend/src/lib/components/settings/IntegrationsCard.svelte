@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { SingboxStatus, HydraRouteStatus } from '$lib/types';
 	import type { ProxySubsystem } from '$lib/api/proxyInstances';
 	import { Button, ConfirmModal, Input, Modal, StatusDot } from '$lib/components/ui';
@@ -152,19 +153,19 @@
 			case 'download':
 				if (p.total > 0) {
 					const pct = Math.min(100, Math.round((p.downloaded / p.total) * 100));
-					return `Скачивание ${pct}% (${formatBytes(p.downloaded)} / ${formatBytes(p.total)})`;
+					return m.settings_integrations_phase_downloading_pct({ pct, downloaded: formatBytes(p.downloaded), total: formatBytes(p.total) });
 				}
-				return `Скачивание (${formatBytes(p.downloaded)})`;
+				return m.settings_integrations_phase_downloading({ downloaded: formatBytes(p.downloaded) });
 			case 'activate':
-				return 'Установка…';
+				return m.settings_integrations_phase_installing();
 			case 'stop':
-				return 'Остановка sing-box…';
+				return m.settings_integrations_phase_stopping();
 			case 'start':
-				return 'Запуск sing-box…';
+				return m.settings_integrations_phase_starting();
 			case 'done':
-				return 'Готово';
+				return m.settings_integrations_phase_done();
 			case 'error':
-				return p.error ? `Ошибка: ${p.error}` : 'Ошибка';
+				return p.error ? m.settings_integrations_phase_error_detail({ error: p.error }) : m.settings_integrations_phase_error();
 			default:
 				return '';
 		}
@@ -174,7 +175,7 @@
 		if (!p || p.phase !== 'download' || p.total <= 0) return null;
 		return Math.min(100, Math.round((p.downloaded / p.total) * 100));
 	});
-	const errorModalTitle = $derived(singboxUpdateError ? 'Не удалось обновить sing-box' : 'Не удалось установить sing-box');
+	const errorModalTitle = $derived(singboxUpdateError ? m.settings_integrations_error_title_update() : m.settings_integrations_error_title_install());
 
 	let errorModalOpen = $state(false);
 
@@ -200,7 +201,7 @@
 {#if showSingbox || showHydra || proxyBinaries.length > 0}
 	<div class="settings-block">
 		<div class="card">
-		<SettingsSectionLabel label="Интеграции" icon={Blocks} tone="purple" header />
+		<SettingsSectionLabel label={m.settings_integrations_title()} icon={Blocks} tone="purple" header />
 		{#if showSingbox}
 			<div class="setting-row">
 				<div class="integration-item">
@@ -209,24 +210,24 @@
 						size="md"
 						ariaLabel={
 							singboxStatusLoading
-								? 'Sing-box: получение данных'
+								? m.settings_integrations_singbox_loading_aria()
 								: singboxInstalled && singboxRunning
-									? 'Sing-box работает'
-									: 'Sing-box остановлен'
+									? m.settings_integrations_singbox_running_aria()
+									: m.settings_integrations_singbox_stopped_aria()
 						}
 					/>
 					<div class="integration-meta">
 						<span class="font-medium">Sing-box</span>
 						{#if singboxStatusLoading}
-							<span class="integration-sub">получаю данные…</span>
+							<span class="integration-sub">{m.settings_integrations_loading()}</span>
 						{:else if singboxInstalled && singboxStatus}
 							<span class="integration-sub">
 								v{singboxStatus.version ?? singboxStatus.currentVersion ?? '?'}
-								{#if singboxRunning && singboxStatus.pid}· pid {singboxStatus.pid}{:else if !singboxRunning}· остановлен{/if}
+								{#if singboxRunning && singboxStatus.pid}· pid {singboxStatus.pid}{:else if !singboxRunning}· {m.settings_integrations_stopped()}{/if}
 							</span>
 							{#if singboxNeedsUpdate}
 								<span class="setting-description warning">
-									Требуется обновление: {singboxStatus.currentVersion ?? '—'} → {singboxStatus.requiredVersion}
+									{m.settings_integrations_needs_update({ current: singboxStatus.currentVersion ?? '—', required: singboxStatus.requiredVersion ?? '' })}
 								</span>
 							{/if}
 							{#if singboxFatalLines}
@@ -234,21 +235,21 @@
 							{/if}
 							{#if singboxUpdateError}
 								<span class="install-error-row">
-									<span class="install-error-label">Не удалось обновить</span>
+									<span class="install-error-label">{m.settings_integrations_update_failed()}</span>
 									<Button variant="ghost" size="sm" onclick={showErrorDetails}>
-										Подробнее
+										{m.settings_integrations_details()}
 									</Button>
 								</span>
 							{/if}
 						{:else}
 							<span class="setting-description">
-								Поддержка VLESS/Reality, Hysteria2, NaiveProxy. Требует Entware на внешнем носителе.
+								{m.settings_integrations_singbox_description()}
 							</span>
 							{#if singboxInstallError}
 								<span class="install-error-row">
-									<span class="install-error-label">Не удалось установить</span>
+									<span class="install-error-label">{m.settings_integrations_install_failed()}</span>
 									<Button variant="ghost" size="sm" onclick={showErrorDetails}>
-										Подробнее
+										{m.settings_integrations_details()}
 									</Button>
 								</span>
 							{/if}
@@ -269,10 +270,10 @@
 					<div class="integration-actions">
 						{#if singboxNeedsUpdate && onupdateSingbox}
 							<Button variant="primary" size="sm" onclick={onupdateSingbox} loading={singboxUpdating}>
-								{singboxUpdating ? 'Обновление...' : 'Обновить'}
+								{singboxUpdating ? m.settings_integrations_updating() : m.settings_integrations_update()}
 							</Button>
 						{:else}
-							<Button variant="secondary" size="sm" href="/?tab=singbox">Открыть</Button>
+							<Button variant="secondary" size="sm" href="/?tab=singbox">{m.settings_integrations_open()}</Button>
 						{/if}
 						{#if onuninstallSingbox}
 							<Button
@@ -281,15 +282,15 @@
 								loading={singboxUninstalling}
 								onclick={() => (confirmUninstall = true)}
 							>
-								{singboxUninstalling ? 'Удаление...' : 'Удалить'}
+								{singboxUninstalling ? m.settings_integrations_uninstalling() : m.common_delete()}
 							</Button>
 						{/if}
 					</div>
 				{:else if singboxStatusLoading}
-					<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
+					<Button variant="secondary" size="sm" disabled>{m.settings_integrations_waiting()}</Button>
 				{:else}
 					<Button variant="primary" size="sm" onclick={oninstallSingbox} loading={singboxInstalling}>
-						{singboxInstalling ? 'Установка...' : 'Установить'}
+						{singboxInstalling ? m.settings_integrations_installing() : m.settings_integrations_install()}
 					</Button>
 				{/if}
 			</div>
@@ -298,13 +299,10 @@
 					<div class="integration-meta">
 						<span class="font-medium">Bootstrap-DNS</span>
 						<span class="setting-description">
-							Используется для резолва доменов для DNS серверов и туннелей,
-							использовать можно только IP.
+							{m.settings_integrations_bootstrap_description_1()}
 						</span>
 						<span class="setting-description">
-							В режиме FakeIP берётся отсюда, только если свой «настоящий»
-							DNS-сервер там не задан, и вступает в силу после следующего
-							применения настроек маршрутизации.
+							{m.settings_integrations_bootstrap_description_2()}
 						</span>
 					</div>
 					<div class="bootstrap-field">
@@ -313,7 +311,7 @@
 							bind:value={bootstrapDraft}
 							placeholder="1.1.1.1"
 							disabled={bootstrapSaving}
-							error={bootstrapValid ? undefined : 'Нужен IP-адрес без порта'}
+							error={bootstrapValid ? undefined : m.settings_integrations_bootstrap_invalid()}
 							fullWidth
 						/>
 						<Button
@@ -323,7 +321,7 @@
 							disabled={!bootstrapValid || !bootstrapDirty || bootstrapSaving}
 							onclick={() => onsaveBootstrapDNS?.(bootstrapDraft.trim())}
 						>
-							Сохранить
+							{m.settings_integrations_save()}
 						</Button>
 					</div>
 				</div>
@@ -331,15 +329,12 @@
 			{#if singboxInstalled && onsaveClashPort}
 				<div class="setting-row bootstrap-row">
 					<div class="integration-meta">
-						<span class="font-medium">Порт Clash API</span>
+						<span class="font-medium">{m.settings_integrations_clash_label()}</span>
 						<span class="setting-description">
-							Служебный канал управления sing-box: через него работают журнал,
-							активные соединения, замеры задержки и переключение подписок.
-							Слушается только на 127.0.0.1 и наружу не выставляется.
+							{m.settings_integrations_clash_description_1()}
 						</span>
 						<span class="setting-description">
-							Менять стоит, только если порт {DEFAULT_CLASH_PORT} занял сторонний
-							пакет — тогда sing-box не стартует. Занятый порт форма не примет.
+							{m.settings_integrations_clash_description_2({ port: DEFAULT_CLASH_PORT })}
 						</span>
 					</div>
 					<div class="bootstrap-field">
@@ -348,7 +343,7 @@
 							bind:value={clashPortDraft}
 							placeholder={String(DEFAULT_CLASH_PORT)}
 							disabled={clashPortSaving}
-							error={clashPortValid ? (clashPortError ?? undefined) : `Нужен порт от ${MIN_CLASH_PORT} до ${MAX_CLASH_PORT}`}
+							error={clashPortValid ? (clashPortError ?? undefined) : m.settings_integrations_clash_invalid({ min: MIN_CLASH_PORT, max: MAX_CLASH_PORT })}
 							fullWidth
 						/>
 						<Button
@@ -358,7 +353,7 @@
 							disabled={!clashPortValid || !clashPortDirty || clashPortSaving}
 							onclick={() => onsaveClashPort?.(clashPortValue)}
 						>
-							Сохранить
+							{m.settings_integrations_save()}
 						</Button>
 					</div>
 				</div>
@@ -371,20 +366,20 @@
 					<StatusDot
 						variant={p.present ? 'success' : 'muted'}
 						size="md"
-						ariaLabel={p.present ? `${p.label}: установлен` : `${p.label}: не установлен`}
+						ariaLabel={p.present ? m.settings_integrations_proxy_installed_aria({ label: p.label }) : m.settings_integrations_proxy_not_installed_aria({ label: p.label })}
 					/>
 					<div class="integration-meta">
 						<span class="font-medium">{p.label}</span>
 						{#if p.present}
 							<span class="integration-sub">
 								v{p.installedVersion ?? '?'}
-								{#if p.instances > 0}· инстансов: {p.instances}{/if}
+								{#if p.instances > 0}· {m.settings_integrations_instances({ count: p.instances })}{/if}
 							</span>
 							{#if p.updateAvailable && p.installVersion}
-								<span class="integration-sub">доступно обновление {p.installVersion}</span>
+								<span class="integration-sub">{m.settings_integrations_update_available({ version: p.installVersion })}</span>
 							{/if}
 						{:else}
-							<span class="integration-sub">не установлен</span>
+							<span class="integration-sub">{m.settings_integrations_not_installed()}</span>
 						{/if}
 					</div>
 				</div>
@@ -392,10 +387,10 @@
 					{#if p.present}
 						{#if p.updateAvailable && p.installAvailable}
 							<Button variant="primary" size="sm" loading={p.busy} onclick={p.oninstall}>
-								Обновить
+								{m.settings_integrations_update()}
 							</Button>
 						{:else if !p.key.startsWith('obf-')}
-							<Button variant="secondary" size="sm" href="/proxy">Открыть</Button>
+							<Button variant="secondary" size="sm" href="/proxy">{m.settings_integrations_open()}</Button>
 						{/if}
 						<Button
 							variant="outline-danger"
@@ -403,15 +398,15 @@
 							loading={p.busy}
 							disabled={p.instances > 0}
 							title={p.instances > 0
-								? 'Сначала удалите инстансы этой подсистемы'
+								? m.settings_integrations_remove_instances_first()
 								: undefined}
 							onclick={() => (confirmProxy = p)}
 						>
-							Удалить
+							{m.common_delete()}
 						</Button>
 					{:else if p.installAvailable}
 						<Button variant="primary" size="sm" loading={p.busy} onclick={p.oninstall}>
-							Установить
+							{m.settings_integrations_install()}
 						</Button>
 					{/if}
 				</div>
@@ -426,18 +421,18 @@
 						size="md"
 						ariaLabel={
 							hydraStatusLoading
-								? 'HydraRoute: получение данных'
+								? m.settings_integrations_hydra_loading_aria()
 								: hydraProcessState === 'dead'
 									? 'HydraRoute: stale pid'
 									: hydraInstalled && hydraRunning
-									? 'HydraRoute работает'
-									: 'HydraRoute остановлен'
+									? m.settings_integrations_hydra_running_aria()
+									: m.settings_integrations_hydra_stopped_aria()
 						}
 					/>
 					<div class="integration-meta">
 						<span class="font-medium">HydraRoute Neo</span>
 						{#if hydraStatusLoading}
-							<span class="integration-sub">получаю данные…</span>
+							<span class="integration-sub">{m.settings_integrations_loading()}</span>
 						{:else if hydraInstalled}
 							<span class="integration-sub">
 								v{hydraStatus?.version ?? '?'}
@@ -446,24 +441,24 @@
 								{:else if hydraProcessState === 'dead' && hydraStatus?.stalePid}
 									· dead pid {hydraStatus.stalePid}
 								{:else}
-									· остановлен
+									· {m.settings_integrations_stopped()}
 								{/if}
 							</span>
 						{:else}
-							<span class="integration-sub">не установлен</span>
+							<span class="integration-sub">{m.settings_integrations_not_installed()}</span>
 						{/if}
 						{#if !hydraRunning && hydraStatus?.lastError}
 							<span class="setting-description warning" title={hydraStatus.lastError}>{hydraStatus.lastError}</span>
 						{/if}
 						{#if !hydraStatusLoading && !hydraStatus && hydraStatusError}
-							<span class="setting-description warning">нет ответа: {hydraStatusError}</span>
+							<span class="setting-description warning">{m.settings_integrations_hydra_no_response({ error: hydraStatusError })}</span>
 						{/if}
 					</div>
 				</div>
 				{#if hydraInstalled}
-					<Button variant="secondary" size="sm" href="/routing?tab=hrneo">Открыть</Button>
+					<Button variant="secondary" size="sm" href="/routing?tab=hrneo">{m.settings_integrations_open()}</Button>
 				{:else if hydraStatusLoading}
-					<Button variant="secondary" size="sm" disabled>Ожидание…</Button>
+					<Button variant="secondary" size="sm" disabled>{m.settings_integrations_waiting()}</Button>
 				{:else}
 					<!-- HydraRoute ставится не отсюда: своего установщика у нас нет, ссылка ведёт
 					     на инструкцию проекта. Кнопка поэтому и подписана иначе, и выглядит иначе,
@@ -474,9 +469,9 @@
 						href="https://github.com/Ground-Zerro/HydraRoute"
 						target="_blank"
 						rel="noopener noreferrer"
-						title="Инструкция по установке HydraRoute на GitHub (откроется в новой вкладке)"
+						title={m.settings_integrations_hydra_guide_title()}
 					>
-						Инструкция →
+						{m.settings_integrations_hydra_guide()}
 					</Button>
 				{/if}
 			</div>
@@ -493,9 +488,9 @@
 >
 	<pre class="error-pre">{singboxInstallError ?? singboxUpdateError ?? ''}</pre>
 	{#snippet actions()}
-		<Button variant="ghost" size="sm" onclick={copyError}>Скопировать</Button>
+		<Button variant="ghost" size="sm" onclick={copyError}>{m.settings_integrations_copy()}</Button>
 		<Button variant="primary" size="sm" onclick={() => (errorModalOpen = false)}>
-			Закрыть
+			{m.settings_integrations_close()}
 		</Button>
 	{/snippet}
 </Modal>
@@ -503,10 +498,10 @@
 {#if confirmProxy}
 	<ConfirmModal
 		open={confirmProxy !== null}
-		title="Удалить {confirmProxy.label}?"
-		message="Бинари подсистемы и её отметка о версии будут удалены с роутера."
-		secondary="Настройки прокси сохранятся — после повторной установки они снова заработают."
-		confirmLabel="Удалить"
+		title={m.settings_integrations_remove_proxy_title({ label: confirmProxy.label })}
+		message={m.settings_integrations_remove_proxy_message()}
+		secondary={m.settings_integrations_remove_proxy_secondary()}
+		confirmLabel={m.common_delete()}
 		variant="danger"
 		onConfirm={() => {
 			const row = confirmProxy;
@@ -520,10 +515,10 @@
 {#if confirmUninstall}
 	<ConfirmModal
 		open={confirmUninstall}
-		title="Удалить sing-box?"
-		message="Движок будет остановлен, а его файлы удалены: бинарь, конфигурация config.d, кэш FakeIP и журналы."
-		secondary="Подписки, правила маршрутизации и настройки прокси сохранятся — после повторной установки они снова заработают."
-		confirmLabel="Удалить"
+		title={m.settings_integrations_remove_singbox_title()}
+		message={m.settings_integrations_remove_singbox_message()}
+		secondary={m.settings_integrations_remove_singbox_secondary()}
+		confirmLabel={m.common_delete()}
 		variant="danger"
 		busy={singboxUninstalling}
 		onConfirm={() => {

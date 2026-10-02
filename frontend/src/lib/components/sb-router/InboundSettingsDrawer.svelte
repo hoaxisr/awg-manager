@@ -3,6 +3,7 @@
   + чистые хелперы из $lib/utils/deviceProxyInstance. Открывается из панели Inbounds.
 -->
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { Button } from '$lib/components/ui';
   import SingboxSettingsModal from '$lib/components/routing/singboxRouter/SingboxSettingsModal.svelte';
@@ -47,7 +48,7 @@
 </script>
 
 <SingboxSettingsModal
-  title="Настройки inbound"
+  title={m.sb_router_inbound_settings_title()}
   {open}
   onClose={onClose}
   size="md"
@@ -66,7 +67,7 @@
   />
 
   {#snippet actions()}
-    <Button variant="ghost" size="md" onclick={onClose} disabled={saving} type="button">Отмена</Button>
+    <Button variant="ghost" size="md" onclick={onClose} disabled={saving} type="button">{m.common_cancel()}</Button>
     <Button
       variant="primary"
       size="md"
@@ -75,7 +76,7 @@
       loading={saving}
       type="button"
     >
-      Сохранить
+      {m.sb_router_common_save()}
     </Button>
   {/snippet}
 </SingboxSettingsModal>

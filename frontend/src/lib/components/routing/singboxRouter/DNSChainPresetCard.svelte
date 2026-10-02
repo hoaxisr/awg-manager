@@ -4,6 +4,7 @@
   Только SlotRouter: в режиме FakeIP цепочку писать некуда, карточка залочена.
 -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import {
 		Button,
 		Dropdown,
@@ -35,11 +36,11 @@
 
 	let { servers, rules = [], preset, finalServer, fakeipMode = false, onApply }: Props = $props();
 
-	const MODE_OPTIONS: SegmentedOption<SingboxRouterDNSChainMode>[] = [
-		{ value: '', label: 'Выкл' },
-		{ value: 'resilient', label: 'Отказоустойчивый' },
-		{ value: 'antipoison', label: 'Анти-подмена' },
-	];
+	const MODE_OPTIONS = $derived<SegmentedOption<SingboxRouterDNSChainMode>[]>([
+		{ value: '', label: m.routing_singbox_chain_off() },
+		{ value: 'resilient', label: m.routing_singbox_chain_resilient() },
+		{ value: 'antipoison', label: m.routing_singbox_chain_antipoison() },
+	]);
 
 	const POISON_PLACEHOLDER = '0.0.0.0/32\n127.0.0.0/8\n10.10.34.34/32\n10.10.34.35/32';
 
@@ -50,7 +51,7 @@
 			.map((s) => ({
 				value: s.tag,
 				label: s.tag,
-				description: s.detour ? `через ${s.detour}` : undefined,
+				description: s.detour ? m.routing_singbox_chain_via({ detour: s.detour }) : undefined,
 			})),
 	);
 
@@ -77,8 +78,8 @@
 	// остаются — они относятся к TPROXY и сейчас ничего не делают.
 	const fakeipHint = $derived(
 		rules.some(isManagedDnsChainRule)
-			? 'Недоступно в режиме FakeIP. Правила цепочки в списке относятся к режиму TPROXY и сейчас неактивны.'
-			: 'Недоступно в режиме FakeIP',
+			? m.routing_singbox_chain_fakeip_unavailable_rules()
+			: m.routing_singbox_chain_fakeip_unavailable(),
 	);
 
 	async function apply(): Promise<void> {
@@ -109,12 +110,12 @@
 </script>
 
 <section class="preset-card">
-	<div class="cap">Пресет DNS-цепочки</div>
+	<div class="cap">{m.routing_singbox_chain_title()}</div>
 
 	<SegmentedControl
 		value={mode}
 		options={MODE_OPTIONS}
-		ariaLabel="Режим DNS-пресета"
+		ariaLabel={m.routing_singbox_chain_mode_aria()}
 		disabled={fakeipMode}
 		fullWidth
 		onchange={(v) => (mode = v)}
@@ -126,37 +127,37 @@
 		<Dropdown
 			bind:value={directServer}
 			options={serverOptions}
-			label="Прямой DNS"
-			placeholder="— выбрать —"
+			label={m.routing_singbox_chain_direct_dns()}
+			placeholder={m.routing_singbox_chain_choose()}
 			fullWidth
 		/>
 		<Dropdown
 			bind:value={proxyServer}
 			options={serverOptions}
-			label="DNS через туннель"
-			placeholder="— выбрать —"
+			label={m.routing_singbox_chain_tunnel_dns()}
+			placeholder={m.routing_singbox_chain_choose()}
 			fullWidth
 		/>
 		{#if mode === 'antipoison'}
 			<label class="field">
-				<div class="lbl">Подозрительные IP (CIDR, по строке)</div>
+				<div class="lbl">{m.routing_singbox_chain_suspicious_ips()}</div>
 				<textarea class="inp" rows="4" placeholder={POISON_PLACEHOLDER} bind:value={poisonText}
 				></textarea>
 			</label>
 		{/if}
 		<p class="hint">
-			Правила пресета выполняются после ваших: цепочка автоматически держится в конце списка
+			{m.routing_singbox_chain_order_hint()}
 		</p>
 	{/if}
 
 	{#if shadowed}
 		<p class="warn">
-			Пресет не действует: выше цепочки стоит catch-all-правило, перехватывающее все запросы
+			{m.routing_singbox_chain_shadowed()}
 		</p>
 	{/if}
 
 	<p class="hint">
-		Если оба резолвера недоступны, запрос уходит на финальный сервер: {finalServer || '—'}
+		{m.routing_singbox_chain_final_hint({ server: finalServer || '—' })}
 	</p>
 
 	{#if error}<p class="err">{error}</p>{/if}
@@ -169,7 +170,7 @@
 		loading={busy}
 		onclick={apply}
 	>
-		Применить
+		{m.routing_singbox_apply()}
 	</Button>
 </section>
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { api, type SystemOpkgPackage } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -23,11 +24,11 @@
 	let removeTarget = $state<SystemOpkgPackage | null>(null);
 	let output = $state('');
 
-	const tabOptions = [
-		{ value: 'available' as PkgTab, label: 'Доступные' },
-		{ value: 'installed' as PkgTab, label: 'Установленные' },
-		{ value: 'updates' as PkgTab, label: 'Обновления' },
-	];
+	const tabOptions = $derived([
+		{ value: 'available' as PkgTab, label: m.system_packages_tab_available() },
+		{ value: 'installed' as PkgTab, label: m.system_packages_tab_installed() },
+		{ value: 'updates' as PkgTab, label: m.system_packages_tab_updates() },
+	]);
 
 	const filteredInstalled = $derived.by(() => {
 		const q = installedQuery.trim().toLowerCase();
@@ -46,7 +47,7 @@
 		try {
 			installed = await api.systemOpkgInstalled();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось загрузить установленные пакеты'));
+			notifications.error(errorMessage(e, m.system_packages_load_installed_failed()));
 		} finally {
 			loading = false;
 		}
@@ -57,7 +58,7 @@
 		try {
 			upgradable = await api.systemOpkgUpgradable();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось загрузить обновления'));
+			notifications.error(errorMessage(e, m.system_packages_load_updates_failed()));
 		} finally {
 			loading = false;
 		}
@@ -75,7 +76,7 @@
 			available = res.items;
 			availableTotal = res.total;
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось загрузить каталог пакетов'));
+			notifications.error(errorMessage(e, m.system_packages_load_catalog_failed()));
 		} finally {
 			loading = false;
 		}
@@ -94,12 +95,12 @@
 		try {
 			const res = await api.systemOpkgUpdate();
 			output = res.output;
-			notifications.success('Списки пакетов обновлены');
+			notifications.success(m.system_packages_lists_updated());
 			if (tab === 'available') await loadAvailable(true);
 			if (tab === 'installed') await loadInstalled();
 			if (tab === 'updates') await loadUpgradable();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'opkg update не удался'));
+			notifications.error(errorMessage(e, m.system_packages_update_failed()));
 		} finally {
 			busy = false;
 		}
@@ -111,11 +112,11 @@
 		try {
 			const res = await api.systemOpkgUpgrade();
 			output = res.output;
-			notifications.success('Обновление завершено');
+			notifications.success(m.system_packages_upgrade_done());
 			await loadUpgradable();
 			await loadInstalled();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'opkg upgrade не удался'));
+			notifications.error(errorMessage(e, m.system_packages_upgrade_failed()));
 		} finally {
 			busy = false;
 			confirmUpgradeAll = false;
@@ -127,11 +128,11 @@
 		try {
 			const res = await api.systemOpkgUpgrade([pkg.name]);
 			output = res.output;
-			notifications.success(`${pkg.name} обновлён`);
+			notifications.success(m.system_packages_pkg_upgraded({ name: pkg.name }));
 			await loadUpgradable();
 			await loadInstalled();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось обновить пакет'));
+			notifications.error(errorMessage(e, m.system_packages_pkg_upgrade_failed()));
 		} finally {
 			busy = false;
 		}
@@ -142,10 +143,10 @@
 		try {
 			const res = await api.systemOpkgInstall([pkg.name]);
 			output = res.output;
-			notifications.success(`${pkg.name} установлен`);
+			notifications.success(m.system_packages_pkg_installed({ name: pkg.name }));
 			await loadInstalled();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось установить пакет'));
+			notifications.error(errorMessage(e, m.system_packages_pkg_install_failed()));
 		} finally {
 			busy = false;
 		}
@@ -157,11 +158,11 @@
 		try {
 			const res = await api.systemOpkgRemove([removeTarget.name]);
 			output = res.output;
-			notifications.success(`${removeTarget.name} удалён`);
+			notifications.success(m.system_packages_pkg_removed({ name: removeTarget.name }));
 			removeTarget = null;
 			await loadInstalled();
 		} catch (e) {
-			notifications.error(errorMessage(e, 'Не удалось удалить пакет'));
+			notifications.error(errorMessage(e, m.system_packages_pkg_remove_failed()));
 		} finally {
 			busy = false;
 		}
@@ -181,7 +182,7 @@
 
 <div class="packages">
 	<div class="head-row">
-		<SegmentedControl value={tab} options={tabOptions} ariaLabel="Раздел пакетов opkg" onchange={onTabChange} />
+		<SegmentedControl value={tab} options={tabOptions} ariaLabel={m.system_packages_tabs_aria()} onchange={onTabChange} />
 		<div class="toolbar">
 			<Button variant="secondary" loading={busy} onclick={runUpdate}>
 				{#snippet iconBefore()}<RefreshCw size={14} />{/snippet}
@@ -190,7 +191,7 @@
 			{#if tab === 'updates'}
 				<Button variant="primary" disabled={upgradable.length === 0} onclick={() => (confirmUpgradeAll = true)}>
 					{#snippet iconBefore()}<ArrowUpCircle size={14} />{/snippet}
-					Обновить всё ({upgradable.length})
+					{m.system_packages_upgrade_all_count({ count: upgradable.length })}
 				</Button>
 			{/if}
 		</div>
@@ -199,22 +200,22 @@
 	{#if tab === 'available'}
 		<Card padding="sm">
 			<div class="section-head">
-				<h3>Доступные пакеты ({availableTotal})</h3>
+				<h3>{m.system_packages_available_title({ total: availableTotal })}</h3>
 				<div class="search-row">
-					<input bind:value={searchQuery} placeholder="Поиск по названию…" onkeydown={(e) => e.key === 'Enter' && loadAvailable(true)} />
-					<Button variant="secondary" loading={loading} onclick={() => loadAvailable(true)}>Найти</Button>
+					<input bind:value={searchQuery} placeholder={m.system_packages_search_placeholder()} onkeydown={(e) => e.key === 'Enter' && loadAvailable(true)} />
+					<Button variant="secondary" loading={loading} onclick={() => loadAvailable(true)}>{m.system_packages_search()}</Button>
 				</div>
 			</div>
 			{#if loading && available.length === 0}
-				<p class="muted">Загрузка каталога…</p>
+				<p class="muted">{m.system_packages_catalog_loading()}</p>
 			{:else}
 				<div class="table-wrap">
 					<table class="pkg">
 						<thead>
 							<tr>
-								<th>Пакет</th>
-								<th>Версия</th>
-								<th>Описание</th>
+								<th>{m.system_packages_th_package()}</th>
+								<th>{m.system_packages_th_version()}</th>
+								<th>{m.system_packages_th_description()}</th>
 								<th></th>
 							</tr>
 						</thead>
@@ -227,7 +228,7 @@
 									<td class="act">
 										<Button size="sm" variant="primary" disabled={busy} onclick={() => installOne(pkg)}>
 											{#snippet iconBefore()}<Download size={14} />{/snippet}
-											Установить
+											{m.system_packages_install()}
 										</Button>
 									</td>
 								</tr>
@@ -236,25 +237,25 @@
 					</table>
 				</div>
 				<div class="pager">
-					<Button variant="ghost" disabled={availableOffset <= 0} onclick={prevPage}>Назад</Button>
-					<span>{availableOffset + 1}–{Math.min(availableOffset + pageSize, availableTotal)} из {availableTotal}</span>
-					<Button variant="ghost" disabled={availableOffset + pageSize >= availableTotal} onclick={nextPage}>Вперёд</Button>
+					<Button variant="ghost" disabled={availableOffset <= 0} onclick={prevPage}>{m.sb_router_common_back()}</Button>
+					<span>{m.system_packages_pager({ from: availableOffset + 1, to: Math.min(availableOffset + pageSize, availableTotal), total: availableTotal })}</span>
+					<Button variant="ghost" disabled={availableOffset + pageSize >= availableTotal} onclick={nextPage}>{m.system_packages_next()}</Button>
 				</div>
 			{/if}
 		</Card>
 	{:else if tab === 'installed'}
 		<Card padding="sm">
 			<div class="section-head">
-				<h3>Установленные ({installed.length})</h3>
-				<input bind:value={installedQuery} placeholder="Поиск по названию…" />
+				<h3>{m.system_packages_installed_title({ count: installed.length })}</h3>
+				<input bind:value={installedQuery} placeholder={m.system_packages_search_placeholder()} />
 			</div>
 			<div class="table-wrap">
 				<table class="pkg">
 					<thead>
 						<tr>
-							<th>Пакет</th>
-							<th>Версия</th>
-							<th>Установлен</th>
+							<th>{m.system_packages_th_package()}</th>
+							<th>{m.system_packages_th_version()}</th>
+							<th>{m.system_packages_th_installed()}</th>
 							<th></th>
 						</tr>
 					</thead>
@@ -267,7 +268,7 @@
 								<td class="act">
 									<Button size="sm" variant="outline-danger" disabled={busy} onclick={() => (removeTarget = pkg)}>
 										{#snippet iconBefore()}<Trash2 size={14} />{/snippet}
-										Удалить
+										{m.common_delete()}
 									</Button>
 								</td>
 							</tr>
@@ -278,18 +279,18 @@
 		</Card>
 	{:else}
 		<Card padding="sm">
-			<h3>Доступны обновления ({upgradable.length})</h3>
+			<h3>{m.system_packages_updates_title({ count: upgradable.length })}</h3>
 			{#if loading}
-				<p class="muted">Загрузка…</p>
+				<p class="muted">{m.system_packages_loading()}</p>
 			{:else if upgradable.length === 0}
-				<p class="muted">Все установленные пакеты актуальны.</p>
+				<p class="muted">{m.system_packages_all_up_to_date()}</p>
 			{:else}
 				<table class="pkg">
 					<thead>
 						<tr>
-							<th>Пакет</th>
-							<th>Текущая</th>
-							<th>Новая</th>
+							<th>{m.system_packages_th_package()}</th>
+							<th>{m.system_packages_th_current()}</th>
+							<th>{m.system_packages_th_new()}</th>
 							<th></th>
 						</tr>
 					</thead>
@@ -300,7 +301,7 @@
 								<td><code>{pkg.version}</code></td>
 								<td><code>{pkg.upgradeVersion}</code></td>
 								<td class="act">
-									<Button size="sm" variant="secondary" disabled={busy} onclick={() => upgradeOne(pkg)}>Обновить</Button>
+									<Button size="sm" variant="secondary" disabled={busy} onclick={() => upgradeOne(pkg)}>{m.system_packages_upgrade()}</Button>
 								</td>
 							</tr>
 						{/each}
@@ -312,7 +313,7 @@
 
 	{#if output}
 		<Card padding="sm">
-			<h3>Вывод opkg</h3>
+			<h3>{m.system_packages_output_title()}</h3>
 			<pre class="output">{output}</pre>
 		</Card>
 	{/if}
@@ -321,9 +322,9 @@
 {#if confirmUpgradeAll}
 	<ConfirmModal
 		open={confirmUpgradeAll}
-		title="Обновить все пакеты?"
-		message={`Будет выполнено opkg upgrade для ${upgradable.length} пакет(ов).`}
-		confirmLabel="Обновить"
+		title={m.system_packages_upgrade_all_title()}
+		message={m.system_packages_upgrade_all_message({ count: upgradable.length })}
+		confirmLabel={m.system_packages_upgrade()}
 		variant="primary"
 		busy={busy}
 		onClose={() => (confirmUpgradeAll = false)}
@@ -334,9 +335,9 @@
 {#if removeTarget}
 	<ConfirmModal
 		open={!!removeTarget}
-		title="Удалить пакет?"
+		title={m.system_packages_remove_title()}
 		message={`${removeTarget.name} (${removeTarget.version})`}
-		confirmLabel="Удалить"
+		confirmLabel={m.common_delete()}
 		variant="danger"
 		busy={busy}
 		onClose={() => (removeTarget = null)}

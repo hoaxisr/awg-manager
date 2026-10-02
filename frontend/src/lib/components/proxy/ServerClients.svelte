@@ -2,6 +2,7 @@
 	// Блок «Абоненты» WDTT-сервера (ia.md §3.3 часть А, спека §4.4).
 	// Владеет списком и его мутациями; решает матрицу кнопок чистый модуль
 	// `serverClients.ts`, тексты — по ID микрокопии.
+	import { m } from '$lib/i18n';
 	import { untrack } from 'svelte';
 	import { Badge, Button, ConfirmModal, FieldHint } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
@@ -49,7 +50,7 @@
 	let users = $state<WdttPanelUserEntry[]>([]);
 	let lastReload = $state<WdttPanelUsersStatus['reload']>(undefined);
 	let loading = $state(false);
-	let loadError = $state('');
+	let loadFailed = $state(false);
 	let loadedFor = $state('');
 	/** Состав получен хотя бы раз для ТЕКУЩЕГО сервера. */
 	let usersKnown = $state(false);
@@ -76,7 +77,7 @@
 
 	function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => reject(new Error('таймаут запроса')), ms);
+			const timer = setTimeout(() => reject(new Error(m.proxy_clients_timeout())), ms);
 			p.then(
 				(v) => {
 					clearTimeout(timer);
@@ -111,7 +112,7 @@
 		const my = ++seq;
 		inflight += 1;
 		loading = true;
-		loadError = '';
+		loadFailed = false;
 		try {
 			const st = await withTimeout(api.getWdttServerPanelUsers(serverId), FETCH_TIMEOUT_MS);
 			if (my !== seq) return;
@@ -121,7 +122,7 @@
 		} catch (e) {
 			if (my !== seq) return;
 			// TS-17
-			loadError = 'Не удалось получить список абонентов';
+			loadFailed = true;
 			notifications.error(errText(e));
 		} finally {
 			inflight -= 1;
@@ -164,8 +165,8 @@
 				// TS-05 / TS-06
 				notifications.success(
 					password
-						? `Абонент «${comment}» добавлен`
-						: `Абонент «${comment}» добавлен, пароль сгенерирован`,
+						? m.proxy_clients_added({ name: comment })
+						: m.proxy_clients_added_generated({ name: comment }),
 				);
 			} catch (e) {
 				// Отказ остаётся в открытой модалке: он про то, что в полях, и
@@ -189,7 +190,7 @@
 				applyStatus(st);
 				if (linkUser?.password === user.password) linkUser = undefined;
 				// TS-07
-				notifications.success(`Абонент «${name}» удалён`);
+				notifications.success(m.proxy_clients_removed({ name }));
 			} catch (e) {
 				notifications.error(errText(e));
 				await reload();
@@ -249,15 +250,13 @@
 				applyStatus(st);
 			} catch (e) {
 				// TS-09
-				notifications.error(
-					`Новый абонент создан, старую запись удалить не удалось: ${errText(e)}`,
-				);
+				notifications.error(m.proxy_clients_reissue_old_not_removed({ error: errText(e) }));
 				await reload(true);
 				return;
 			}
 			await reload(true);
 			// TS-08
-			notifications.success(`Абонент «${name}» перевыпущен — выдайте новую ссылку`);
+			notifications.success(m.proxy_clients_reissued({ name }));
 		});
 	}
 </script>
@@ -265,7 +264,7 @@
 <div class="clients">
 	<div class="head">
 		<Badge size="sm" variant={applied ? 'success' : 'warning'}>
-			{applied ? 'применено сейчас' : 'применится при следующем запуске'}
+			{applied ? m.proxy_clients_applied_now() : m.proxy_clients_applied_next()}
 		</Badge>
 		<Button
 			variant="secondary"
@@ -276,15 +275,15 @@
 				addOpen = true;
 			}}
 		>
-			Добавить
+			{m.proxy_common_add()}
 		</Button>
-		<Button variant="ghost" size="sm" loading={loading} onclick={() => reload()}>Обновить</Button>
+		<Button variant="ghost" size="sm" loading={loading} onclick={() => reload()}>{m.proxy_clients_refresh()}</Button>
 	</div>
 
-	{#if loadError && !users.length}
+	{#if loadFailed && !users.length}
 		<p class="empty">
-			{loadError}
-			<Button variant="secondary" size="sm" onclick={() => reload()}>Повторить</Button>
+			{m.proxy_clients_load_failed()}
+			<Button variant="secondary" size="sm" onclick={() => reload()}>{m.proxy_clients_retry()}</Button>
 		</p>
 	{:else if users.length}
 		<ul class="list">
@@ -325,8 +324,8 @@
 			<span>{counterLabel(users)}</span>
 			<!-- SH-88 -->
 			<FieldHint
-				text="Отключённый абонент пишется в файл сервера и считается рабочим"
-				ariaLabel="Подсказка: счётчик рабочих"
+				text={m.proxy_clients_counter_hint()}
+				ariaLabel={m.proxy_clients_counter_aria()}
 			/>
 		</p>
 	{/if}
@@ -344,22 +343,22 @@
 
 <ConfirmModal
 	open={removeTarget !== undefined}
-	title="Удалить абонента?"
-	message={`Абонент «${removeTarget?.comment || removeTarget?.password || ''}» будет удалён с сервера.`}
+	title={m.proxy_clients_delete_title()}
+	message={m.proxy_clients_delete_message({ name: removeTarget?.comment || removeTarget?.password || '' })}
 	secondary={removeTarget && noUsableAfterRemove(removeTarget, users)
-		? 'Ссылка этого абонента перестанет работать сразу после удаления. После удаления абонентов не останется — сервер нельзя будет запустить, пока не добавите нового.'
-		: 'Ссылка этого абонента перестанет работать сразу после удаления.'}
-	confirmLabel="Удалить"
+		? m.proxy_clients_delete_secondary_last()
+		: m.proxy_clients_delete_secondary()}
+	confirmLabel={m.common_delete()}
 	onConfirm={() => removeTarget && removeUser(removeTarget)}
 	onClose={() => (removeTarget = undefined)}
 />
 
 <ConfirmModal
 	open={reissueTarget !== undefined}
-	title="Перевыпустить абонента?"
-	message={`Абонент «${reissueTarget?.comment || reissueTarget?.password || ''}» получит новый пароль и новую ссылку, старая запись будет удалена.`}
-	secondary="Старая ссылка перестанет работать."
-	confirmLabel="Перевыпустить"
+	title={m.proxy_clients_reissue_title()}
+	message={m.proxy_clients_reissue_message({ name: reissueTarget?.comment || reissueTarget?.password || '' })}
+	secondary={m.proxy_clients_reissue_secondary()}
+	confirmLabel={m.proxy_client_row_reissue()}
 	variant="primary"
 	onConfirm={() => reissueTarget && reissueUser(reissueTarget)}
 	onClose={() => (reissueTarget = undefined)}

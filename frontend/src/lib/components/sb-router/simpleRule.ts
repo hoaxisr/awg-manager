@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type { SingboxRouterPreset, SingboxRouterRule, SingboxRouterRuleSet } from '$lib/types';
 import { resolveRuleSetByTag } from '$lib/utils/singboxInlineRules';
 
@@ -26,8 +27,9 @@ export interface ComplexRuleInfo {
 
 export type RuleSimplicity = SimpleRuleInfo | ComplexRuleInfo;
 
-export const COMPLEX_RULE_EDIT_MESSAGE =
-  'Данное правило может быть изменено только в экспертном режиме';
+export function complexRuleEditMessage(): string {
+  return m.sb_router_rules_complex_edit();
+}
 
 /** Теги custom-1, custom-2, … — разворачиваемые inline наборы в простом режиме. */
 export function isCustomInlineRuleSetTag(tag: string): boolean {

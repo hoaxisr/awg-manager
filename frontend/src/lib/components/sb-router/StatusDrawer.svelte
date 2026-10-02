@@ -3,6 +3,7 @@
   beginner: состояние + здоровье + управление. expert: + редактируемые настройки (auto-save).
 -->
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { SideDrawer, Toggle, Button, Badge, StatusDot } from '$lib/components/ui';
   import { api } from '$lib/api/client';
@@ -28,10 +29,9 @@
   import BypassGeoIPTags from './BypassGeoIPTags.svelte';
   import OutboundOption from './OutboundOption.svelte';
   import { deriveDeps, deriveIssues } from './drawerData';
-  import { formatSuppressedUntil, CRASH_WORDS } from './crashInfo';
+  import { formatSuppressedUntil } from './crashInfo';
   import { mergeAndSaveSettings, BYPASS_PRESETS } from './settingsActions';
   import { resolveWanAuto, planToggleAutoDetect, planSelectWanInterface, type WanAutoOverride } from './wanMode';
-  import { pluralize, pluralForm, RULE_WORDS } from '$lib/utils/pluralize';
   import type { SingboxRouterSettings, SingboxRouterWANInterface } from '$lib/types';
 
   const status = singboxRouterStore.status;
@@ -42,7 +42,6 @@
   let s = $derived($status);
   // Эффективный путь cache.db: при незаданной настройке это может быть
   // рукописный путь из 00-base.json, который селектор выразить не может.
-  let cacheDbNow = $derived(s?.cacheDbPath ? ` Сейчас: ${s.cacheDbPath}` : '');
   let cfg = $derived($storeSettings);
   let isExpert = $derived($mode === 'expert');
 
@@ -66,8 +65,8 @@
   type CaptureMode = 'tproxy' | 'policy-tun';
   let activeMode = $derived.by<CaptureMode | null>(() => {
     if (!(s?.enabled ?? false)) return null;
-    const m = $settings?.routingMode;
-    return m === 'tproxy' || m === 'policy-tun' ? m : null;
+    const rm = $settings?.routingMode;
+    return rm === 'tproxy' || rm === 'policy-tun' ? rm : null;
   });
   let captureOn = $derived(activeMode !== null);
   // Выбор пользователя в этой сессии — что включит тумблер, пока движок
@@ -106,14 +105,14 @@
   ));
 
   let bigTitle = $derived.by(() => {
-    if (!engineEnabled) return 'Движок выключен';
-    return engineActive ? 'Движок работает' : 'Движок не работает';
+    if (!engineEnabled) return m.sb_router_status_engine_off();
+    return engineActive ? m.sb_router_status_engine_running() : m.sb_router_status_engine_not_running();
   });
   let bigSubtitle = $derived.by(() => {
-    if (!engineEnabled) return 'Не активен';
-    if (!engineActive) return 'Перехват не активен — правила не применены';
+    if (!engineEnabled) return m.sb_router_status_sub_inactive();
+    if (!engineActive) return m.sb_router_status_sub_no_intercept();
     const n = s?.ruleCount ?? 0;
-    return `Трафик идёт через ${pluralize(n, RULE_WORDS)}`;
+    return m.sb_router_status_sub_traffic_via({ count: n });
   });
 
   let engineState = $derived.by<'off' | 'warn' | 'on'>(() => {
@@ -164,11 +163,11 @@
   // Новичку TPROXY-настройки живут в SourceDrawer (узел «Источник» во FlowGraph);
   // здесь — сводка и переход, чтобы под выбором режима не было пусто (#730).
   let sourceSummary = $derived.by(() => {
-    if (cfg?.deviceMode === 'all') return 'Весь LAN-трафик роутера.';
+    if (cfg?.deviceMode === 'all') return m.sb_router_status_source_all();
     const name = (cfg?.policyName ?? '').trim();
     return name
-      ? `Только устройства политики «${name}».`
-      : 'Политика не выбрана — трафик устройств не обрабатывается.';
+      ? m.sb_router_status_source_policy({ name })
+      : m.sb_router_status_source_none();
   });
   function goToSourceSettings() {
     closeDrawer();
@@ -187,11 +186,11 @@
   }
   // Выбор режима: при выключенном движке только запоминаем цель тумблера,
   // при включённом — сразу просим переключение (общий confirm + прогресс).
-  function selectMode(m: CaptureMode) {
-    if (switchBusy || m === targetMode) return;
-    if (m === 'policy-tun' && !tunSupported) return;
-    pickedMode = m;
-    if (activeMode !== null) modeSwitch.request(m);
+  function selectMode(next: CaptureMode) {
+    if (switchBusy || next === targetMode) return;
+    if (next === 'policy-tun' && !tunSupported) return;
+    pickedMode = next;
+    if (activeMode !== null) modeSwitch.request(next);
   }
   async function restartEngine(_e: MouseEvent) {
     if (restarting) return;
@@ -199,9 +198,9 @@
     try {
       await api.singboxControl('restart');
       await singboxRouterStore.reloadStatus();
-      notifications.success('Движок перезапущен');
+      notifications.success(m.sb_router_status_restarted());
     } catch (e) {
-      notifications.error(`Не удалось перезапустить: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_status_restart_failed({ message: e instanceof Error ? e.message : String(e) }));
     } finally {
       restarting = false;
     }
@@ -216,7 +215,7 @@
       await mergeAndSaveSettings(patch);
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
-      notifications.error(`Не удалось сохранить: ${lastError}`);
+      notifications.error(m.sb_router_common_save_failed({ message: lastError }));
     } finally {
       saving = false;
     }
@@ -244,30 +243,30 @@
     void applyPatch({ bypassPresets: next });
   }
 
-  const UDP_TIMEOUT_OPTIONS = [
-    { value: '', label: 'По умолчанию (5 мин)' },
-    { value: '5m0s', label: '5 минут' },
-    { value: '10m0s', label: '10 минут' },
-    { value: '15m0s', label: '15 минут' },
-    { value: '30m0s', label: '30 минут' },
-    { value: '1h0m0s', label: '1 час' },
-    { value: '3h0m0s', label: '3 часа' },
-  ];
+  const UDP_TIMEOUT_OPTIONS = $derived([
+    { value: '', label: m.sb_router_status_udp_timeout_default() },
+    { value: '5m0s', label: m.sb_router_status_udp_timeout_5m() },
+    { value: '10m0s', label: m.sb_router_status_udp_timeout_10m() },
+    { value: '15m0s', label: m.sb_router_status_udp_timeout_15m() },
+    { value: '30m0s', label: m.sb_router_status_udp_timeout_30m() },
+    { value: '1h0m0s', label: m.sb_router_status_udp_timeout_1h() },
+    { value: '3h0m0s', label: m.sb_router_status_udp_timeout_3h() },
+  ]);
 
-  const UDP_NAT_MAX_OPTIONS = [
-    { value: '', label: 'Авто (по памяти)' },
+  const UDP_NAT_MAX_OPTIONS = $derived([
+    { value: '', label: m.sb_router_status_udp_nat_auto() },
     { value: '2048', label: '2048' },
     { value: '4096', label: '4096' },
     { value: '8192', label: '8192' },
     { value: '16384', label: '16384' },
-  ];
+  ]);
 </script>
 
-<SideDrawer {open} onClose={closeDrawer} title="Движок sing-box" width={420}>
+<SideDrawer {open} onClose={closeDrawer} title={m.sb_router_status_title()} width={420}>
   <div class="sections">
     <!-- Состояние -->
     <section class="sec">
-      <div class="sec-cap">Состояние</div>
+      <div class="sec-cap">{m.sb_router_status_sec_state()}</div>
       <div class="engine-status" class:state-off={engineState === 'off'} class:state-warn={engineState === 'warn'} class:state-on={engineState === 'on'}>
         <div class="engine-main">
           <Toggle checked={captureOn} controlled loading={switchBusy} onchange={toggleEngine} />
@@ -280,23 +279,23 @@
           </div>
         </div>
         <div class="engine-meta">
-          <span>Версия sing-box</span>
+          <span>{m.sb_router_status_version()}</span>
           <span class="engine-version">{sbVersionLabel}</span>
         </div>
       </div>
 
-      <div class="sec-cap">Режим захвата</div>
+      <div class="sec-cap">{m.sb_router_status_sec_capture()}</div>
       <div class="card-grid">
         <OutboundOption
-          label="TPROXY-правила"
-          sub="перехват iptables на роутере"
+          label={m.sb_router_status_mode_tproxy()}
+          sub={m.sb_router_status_mode_tproxy_sub()}
           tone="accent"
           selected={targetMode === 'tproxy'}
           onclick={() => selectMode('tproxy')}
         />
         <OutboundOption
-          label="Политики + tun"
-          sub="захват трафика через политику доступа Keenetic, без TPROXY-правил"
+          label={m.sb_router_status_mode_policy_tun()}
+          sub={m.sb_router_status_mode_policy_tun_sub()}
           tone="accent"
           selected={targetMode === 'policy-tun'}
           disabled={!tunSupported}
@@ -304,7 +303,7 @@
           onclick={() => selectMode('policy-tun')}
         />
       </div>
-      <p class="hint">Режим FakeIP включается на своей вкладке «Sing-box → FakeIP».</p>
+      <p class="hint">{m.sb_router_status_fakeip_hint()}</p>
       {#if !tunSupported}
         <p class="hint">{OPKGTUN_UNSUPPORTED_REASON}</p>
       {/if}
@@ -316,18 +315,20 @@
                «Падений: 0» рядом с активным подавлением только путает. -->
           {#if crashCount > 0}
             <div class="crash-line">
-              <span class="crash-label">Падений за 10 мин</span>
+              <span class="crash-label">{m.sb_router_status_crash_label()}</span>
               <span class="crash-value">{crashCount}</span>
             </div>
           {/if}
           {#if s?.lastCrashReason}
-            <p class="crash-reason">Причина: {s.lastCrashReason}</p>
+            <p class="crash-reason">{m.sb_router_status_crash_reason({ reason: s.lastCrashReason })}</p>
           {/if}
           {#if crashSuppressedLabel}
             <p class="crash-suppressed">
-              Автоперезапуск приостановлен до {crashSuppressedLabel}{#if crashCount > 0}&nbsp;({crashCount}
-              {pluralForm(crashCount, CRASH_WORDS)} за 10 мин){/if}.
-              Кнопка «Перезапустить» ниже запускает движок немедленно.
+              {#if crashCount > 0}
+                {m.sb_router_status_crash_suppressed_count({ time: crashSuppressedLabel, count: crashCount })}
+              {:else}
+                {m.sb_router_status_crash_suppressed({ time: crashSuppressedLabel })}
+              {/if}
             </p>
           {/if}
         </div>
@@ -337,17 +338,17 @@
     <!-- Ресурсы: живая память и трафик движка -->
     {#if resourcesVisible}
       <section class="sec">
-        <div class="sec-cap">Ресурсы</div>
-        <div class="stat-line" title="Память Go-рантайма sing-box по данным Clash API; фактический RSS процесса выше">
-          <span class="stat-label">Память sing-box</span>
+        <div class="sec-cap">{m.sb_router_status_sec_resources()}</div>
+        <div class="stat-line" title={m.sb_router_status_memory_title()}>
+          <span class="stat-label">{m.sb_router_status_memory()}</span>
           <span class="stat-value">{memoryLabel}</span>
         </div>
         <div class="stat-line">
-          <span class="stat-label">Скорость</span>
+          <span class="stat-label">{m.sb_router_status_speed()}</span>
           <span class="stat-value">{rateLabel}</span>
         </div>
         <div class="stat-line">
-          <span class="stat-label">За сессию</span>
+          <span class="stat-label">{m.sb_router_status_session()}</span>
           <span class="stat-value">{sessionLabel}</span>
         </div>
       </section>
@@ -355,7 +356,7 @@
 
     <!-- Зависимости -->
     <section class="sec">
-      <div class="sec-cap">Зависимости</div>
+      <div class="sec-cap">{m.sb_router_status_sec_deps()}</div>
       {#each deps as dep}
         <DepRow tone={dep.tone} label={dep.label} hint={dep.hint} />
       {/each}
@@ -364,7 +365,7 @@
     <!-- Замечания -->
     {#if issueCount > 0}
       <section class="sec">
-        <div class="sec-cap">Замечания <Badge variant="warning" size="sm">{issueCount}</Badge></div>
+        <div class="sec-cap">{m.sb_router_status_sec_issues()} <Badge variant="warning" size="sm">{issueCount}</Badge></div>
         {#each issues as issue}
           <IssueRow tone={issue.tone} text={issue.text} ctaHint={issue.ctaHint} />
         {/each}
@@ -381,9 +382,9 @@
          выбором режима пусто, тогда как policy-tun показывает свою карточку. -->
     {#if !policyTunMode && !isExpert && cfg}
       <section class="sec">
-        <div class="sec-cap">Источник трафика</div>
+        <div class="sec-cap">{m.sb_router_status_sec_source()}</div>
         <p class="hint">{sourceSummary}</p>
-        <Button variant="ghost" size="sm" onclick={goToSourceSettings}>Настроить источник →</Button>
+        <Button variant="ghost" size="sm" onclick={goToSourceSettings}>{m.sb_router_status_configure_source()}</Button>
       </section>
     {/if}
 
@@ -391,9 +392,9 @@
          износ флеша касается любого режима с fakeip. -->
     {#if cfg}
       <section class="sec">
-        <div class="sec-cap">Кэш sing-box</div>
+        <div class="sec-cap">{m.sb_router_status_sec_cache()}</div>
         <div class="field">
-          <label class="lbl" for="ed-cache-location">Хранилище cache.db</label>
+          <label class="lbl" for="ed-cache-location">{m.sb_router_status_cache_location()}</label>
           <select
             id="ed-cache-location"
             class="inp"
@@ -404,13 +405,13 @@
                  показываем, пока оно есть, иначе выбрать «Флеш» было бы нечем.
                  Повторный выбор пустого отсекает onCacheLocationChange. -->
             {#if !cfg.cacheFileLocation}
-              <option value="">Не задано — как в 00-base.json</option>
+              <option value="">{m.sb_router_status_cache_unset()}</option>
             {/if}
-            <option value="flash">Флеш роутера (/opt)</option>
-            <option value="tmp">Оперативная память (/tmp)</option>
+            <option value="flash">{m.sb_router_status_cache_flash()}</option>
+            <option value="tmp">{m.sb_router_status_cache_tmp()}</option>
           </select>
         </div>
-        <p class="hint">В RAM записи FakeIP-карты и Clash не изнашивают флеш, но кэш не переживает перезагрузку. Выбор перезаписывает путь cache_file в 00-base.json, включая заданный вручную.{cacheDbNow}</p>
+        <p class="hint">{s?.cacheDbPath ? m.sb_router_status_cache_hint_now({ path: s.cacheDbPath }) : m.sb_router_status_cache_hint()}</p>
       </section>
     {/if}
 
@@ -429,35 +430,35 @@
 
       <!-- WAN-интерфейс -->
       <section class="sec">
-        <div class="sec-cap">WAN-интерфейс</div>
+        <div class="sec-cap">{m.sb_router_status_sec_wan()}</div>
         <div class="field-row">
-          <span>Авто-определение</span>
+          <span>{m.sb_router_status_wan_auto()}</span>
           <Toggle checked={wanAuto} onchange={(checked) => toggleAutoDetect(checked)} />
         </div>
         {#if !wanAuto}
           <div class="field">
-            <label class="lbl" for="ed-wan">Интерфейс</label>
+            <label class="lbl" for="ed-wan">{m.sb_router_status_wan_interface()}</label>
             <select id="ed-wan" class="inp" value={cfg.wanInterface ?? ''} onchange={onWanInterfaceChange}>
-              <option value="">— выберите —</option>
+              <option value="">{m.sb_router_status_wan_choose()}</option>
               {#each wanInterfaces as iface (iface.name)}
                 <option value={iface.name}>{iface.name}{iface.label ? ` — ${iface.label}` : ''}</option>
               {/each}
             </select>
           </div>
         {/if}
-        <p class="hint">Через какой внешний интерфейс sing-box отправляет прямой трафик.</p>
+        <p class="hint">{m.sb_router_status_wan_hint()}</p>
       </section>
 
       <!-- Анализ трафика -->
       <section class="sec">
-        <div class="sec-cap">Анализ трафика</div>
+        <div class="sec-cap">{m.sb_router_status_sec_sniff()}</div>
         <div class="field-row">
-          <span>Включить sniff</span>
+          <span>{m.sb_router_status_sniff_enable()}</span>
           <Toggle checked={cfg.snifferEnabled} onchange={(checked) => toggleSniffer(checked)} />
         </div>
-        <p class="hint">Анализ HTTP/TLS/QUIC по содержимому. Улучшает срабатывание domain-based правил при IP-only matchers.</p>
+        <p class="hint">{m.sb_router_status_sniff_hint()}</p>
         <div class="field">
-          <label class="lbl" for="ed-udp-timeout">UDP таймаут сессии</label>
+          <label class="lbl" for="ed-udp-timeout">{m.sb_router_status_udp_timeout()}</label>
           <div class="udp-timeout-row">
             <select
               id="ed-udp-timeout"
@@ -471,9 +472,9 @@
             </select>
           </div>
         </div>
-        <p class="hint">Как долго sing-box держит UDP-сессии активными. Увеличьте если игры или другие UDP-приложения обрываются каждые несколько минут.</p>
+        <p class="hint">{m.sb_router_status_udp_timeout_hint()}</p>
         <div class="field">
-          <label class="lbl" for="ed-udp-nat-max">Потолок UDP-сессий</label>
+          <label class="lbl" for="ed-udp-nat-max">{m.sb_router_status_udp_nat_max()}</label>
           <div class="udp-timeout-row">
             <select
               id="ed-udp-nat-max"
@@ -490,7 +491,7 @@
             </select>
           </div>
         </div>
-        <p class="hint">Сколько UDP-сессий движок держит одновременно; при переполнении вытесняется самая старая. Уменьшите на роутере с малой памятью, если sing-box растёт под UDP-нагрузкой.</p>
+        <p class="hint">{m.sb_router_status_udp_nat_max_hint()}</p>
       </section>
 
       <!-- QoS-маршрутизация (DSCP): onPatch возвращает Promise — карточка
@@ -504,7 +505,7 @@
 
       <!-- Исключения: порт-пресеты + IP-пресеты (keendns) + ручные порты/подсети -->
       <section class="sec">
-        <div class="sec-cap">Исключения</div>
+        <div class="sec-cap">{m.sb_router_status_sec_bypass()}</div>
         <div class="bypass-presets">
           {#each BYPASS_PRESETS as p (p.id)}
             {@const active = (cfg.bypassPresets ?? []).includes(p.id)}
@@ -515,10 +516,10 @@
           {/each}
         </div>
         <div class="field">
-          <label class="lbl" for="ed-ports-input">Доп. порты</label>
+          <label class="lbl" for="ed-ports-input">{m.sb_router_status_extra_ports()}</label>
           <PortChipsInput inputId="ed-ports-input" value={cfg.bypassExtraPorts ?? ''} onChange={(v) => void applyPatch({ bypassExtraPorts: v })} />
         </div>
-        <p class="hint">Эти порты пойдут мимо sing-box (прямо в WAN). Полезно для L2TP/NTP/SMB не ломая LAN-сервисы. Поддерживаются одиночные порты (<code class="mono">443 TCP</code>) и диапазоны (<code class="mono">5000-5500 UDP</code>).</p>
+        <p class="hint">{m.sb_router_status_ports_hint_pre()}<code class="mono">443 TCP</code>{m.sb_router_status_ports_hint_mid()}<code class="mono">5000-5500 UDP</code>{m.sb_router_status_ports_hint_post()}</p>
         <!-- В «Политики + tun» перехвата netfilter нет вовсе, поэтому исключения
              работают иначе, чем в TPROXY: они влияют только на классы QoS и на
              перехват DNS. Про 53 сказано отдельно — там выключатель СОЗНАТЕЛЬНО
@@ -527,13 +528,13 @@
              по TCP, и половинчатый перехват дал бы резолвинг, зависящий от
              размера ответа. -->
         {#if policyTunMode}
-          <p class="hint">В режиме «Политики + tun» исключения влияют только на классы QoS и на перехват DNS. Порт <code class="mono">53</code> в любом из списков — UDP или TCP — выключает перехват DNS целиком, для обоих протоколов сразу.</p>
+          <p class="hint">{m.sb_router_status_policy_tun_bypass_pre()} <code class="mono">53</code> {m.sb_router_status_policy_tun_bypass_post()}</p>
         {/if}
         <div class="field">
-          <label class="lbl" for="ed-subnets-input">Доп. подсети</label>
+          <label class="lbl" for="ed-subnets-input">{m.sb_router_status_extra_subnets()}</label>
           <SubnetChipsInput inputId="ed-subnets-input" value={cfg.bypassExtraSubnets ?? ''} onChange={(v) => void applyPatch({ bypassExtraSubnets: v })} />
         </div>
-        <p class="hint">IP или подсети, чей трафик целиком пойдёт мимо sing-box (прямо в WAN). Нужно для корпоративных VPN (Cisco AnyConnect и т.п.), чтобы их трафик не перехватывался.</p>
+        <p class="hint">{m.sb_router_status_subnets_hint()}</p>
         <!-- Набор AWGM-BYPASS живёт только в TPROXY-перехвате: в policy-tun
              (DSCPOnly) правило обхода не эмитится — обходить нечего. -->
         {#if !policyTunMode}
@@ -547,13 +548,13 @@
     <div class="footer-actions">
       <div class="footer-btns">
         <Button variant={captureOn ? 'danger' : 'primary'} size="sm" fullWidth disabled={switchBusy} onclick={handleToggleClick}>
-          {captureOn ? 'Выключить' : 'Включить'}
+          {captureOn ? m.sb_router_status_turn_off() : m.sb_router_status_turn_on()}
         </Button>
-        <Button variant="ghost" size="sm" fullWidth loading={restarting} onclick={restartEngine}>Перезапустить</Button>
+        <Button variant="ghost" size="sm" fullWidth loading={restarting} onclick={restartEngine}>{m.sb_router_status_restart()}</Button>
       </div>
       {#if isExpert}
         <span class="save-status" class:err={lastError}>
-          {saving ? 'Сохраняем…' : lastError ? `Ошибка` : '✓ Сохранено'}
+          {saving ? m.sb_router_status_saving() : lastError ? m.sb_router_status_save_error() : m.sb_router_status_saved()}
         </span>
       {/if}
     </div>

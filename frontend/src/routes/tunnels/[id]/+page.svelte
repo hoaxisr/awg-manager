@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { m } from '$lib/i18n';
 	import { goto } from '$app/navigation';
 	import { onMount, onDestroy } from 'svelte';
 	import { tunnels } from '$lib/stores/tunnels';
@@ -16,7 +17,7 @@
 	import TunnelEditHeader from '$lib/components/tunnels/TunnelEditHeader.svelte';
 	import AwgConfigAnalyzer from '$lib/components/diagnostics/AwgConfigAnalyzer.svelte';
 	import { SettingsSectionLabel } from '$lib/components/settings';
-	import { AWG_PARAM_HINTS } from '$lib/utils/awgParamHints';
+	import { awgParamHints } from '$lib/utils/awgParamHints';
 	import { awgProxyOutdated, supportsAwg3, supportsAwg31OnNativeWG } from '$lib/utils/backendAvailability';
 	import { keepaliveHint } from '$lib/utils/keepalive';
 	import { Network, Route, Router, Server, Shuffle, Tag } from 'lucide-svelte';
@@ -30,7 +31,7 @@
 		SPA: true,
 	});
 
-	const hints = AWG_PARAM_HINTS;
+	const hints = $derived(awgParamHints());
 
 	type ActionStatus = 'loading' | 'success' | 'error';
 
@@ -44,10 +45,10 @@
 	// У обфусцированного туннеля обычный WireGuard без AWG-параметров: вкладка
 	// «Обфускация» уступает место «Обфускатору».
 	let detailTabs = $derived([
-		{ id: 'basic', label: 'Основное' },
-		...(obf ? [{ id: 'obfuscator', label: 'Обфускатор' }] : [{ id: 'obfuscation', label: 'Обфускация' }]),
-		{ id: 'routing', label: 'Маршрутизация' },
-		{ id: 'awgConfig', label: 'Анализ конфига' },
+		{ id: 'basic', label: m.tunnel_detail_tab_basic() },
+		...(obf ? [{ id: 'obfuscator', label: m.tunnel_detail_tab_obfuscator() }] : [{ id: 'obfuscation', label: m.tunnel_detail_tab_obfuscation() }]),
+		{ id: 'routing', label: m.tunnel_detail_tab_routing() },
+		{ id: 'awgConfig', label: m.tunnel_detail_tab_config_analysis() },
 	]);
 	let replaceModalOpen = $state(false);
 
@@ -155,7 +156,7 @@
 
 	async function loadTunnel() {
 		if (!tunnelId) {
-			notifications.error('ID туннеля не указан');
+			notifications.error(m.tunnel_detail_id_missing());
 			goto('/');
 			return;
 		}
@@ -168,7 +169,7 @@
 			if (!detailTabs.some(t => t.id === activeTab)) activeTab = 'basic';
 			populateForm();
 		} catch (e) {
-			notifications.error(`Ошибка загрузки: ${(e as Error).message}`);
+			notifications.error(m.tunnel_detail_load_error({ message: (e as Error).message }));
 			goto('/');
 		} finally {
 			loading = false;
@@ -266,14 +267,14 @@
 			const { downloadBlob } = await import('$lib/utils/download');
 			downloadBlob(blob, (tunnel?.name || tunnelId) + '.conf');
 		} catch (e) {
-			notifications.error('Не удалось скачать конфиг');
+			notifications.error(m.tunnel_detail_download_failed());
 		}
 	}
 
 	// Сервер обфускатора не проходит через zod-схему формы — проверяем руками.
 	function obfTargetInvalid(): boolean {
-		obfError = obf && !/^\[?[^\s\]]+\]?:\d{1,5}$/.test(obf.target.trim()) ? 'Нужен host:port' : '';
-		if (obfError) notifications.error(`Сервер обфускатора: ${obfError}`);
+		obfError = obf && !/^\[?[^\s\]]+\]?:\d{1,5}$/.test(obf.target.trim()) ? m.tunnel_detail_need_host_port() : '';
+		if (obfError) notifications.error(m.tunnel_detail_obf_server_error({ error: obfError }));
 		return !!obfError;
 	}
 
@@ -284,10 +285,10 @@
 		saving = true;
 		try {
 			await tunnels.update(tunnelId, buildUpdatePayload());
-			notifications.success('Туннель сохранён');
+			notifications.success(m.tunnel_detail_saved());
 			goto('/');
 		} catch (e) {
-			notifications.error(`Ошибка: ${(e as Error).message}`);
+			notifications.error(m.tunnels_error_with_message({ message: (e as Error).message }));
 		} finally {
 			saving = false;
 		}
@@ -307,10 +308,10 @@
 			} else {
 				await tunnels.start(tunnelId);
 			}
-			notifications.success(isRunning ? 'Туннель сохранён и перезапущен' : 'Туннель сохранён и запущен');
+			notifications.success(isRunning ? m.tunnel_detail_saved_restarted() : m.tunnel_detail_saved_started());
 			goto('/');
 		} catch (e) {
-			notifications.error(`Ошибка: ${(e as Error).message}`);
+			notifications.error(m.tunnels_error_with_message({ message: (e as Error).message }));
 			showActionResult('error');
 		} finally {
 			saving = false;
@@ -326,7 +327,7 @@
 			// polling snapshot in sync with the single-tunnel view.
 			tunnels.invalidate();
 		} catch (e) {
-			notifications.error(`Ошибка: ${(e as Error).message}`);
+			notifications.error(m.tunnels_error_with_message({ message: (e as Error).message }));
 		}
 	}
 
@@ -352,7 +353,7 @@
 			tunnel.ispInterfaceLabel = ispLabel;
 			tunnels.invalidate();
 		} catch (e) {
-			notifications.error(`Ошибка: ${(e as Error).message}`);
+			notifications.error(m.tunnels_error_with_message({ message: (e as Error).message }));
 		} finally {
 			savingIsp = false;
 		}
@@ -373,13 +374,13 @@
 </script>
 
 <svelte:head>
-	<title>{tunnel?.name || 'Туннель'} - AWG Manager</title>
+	<title>{tunnel?.name || m.tunnel_detail_title_fallback()} - AWG Manager</title>
 </svelte:head>
 
 {#if loading}
 	<PageContainer width="narrow">
 		<div class="flex flex-col items-center gap-4 p-12 text-secondary">
-			<LoadingSpinner size="lg" message="Загрузка..." />
+			<LoadingSpinner size="lg" message={m.tunnels_loading()} />
 		</div>
 	</PageContainer>
 {:else if tunnel}
@@ -408,29 +409,29 @@
 			{#if activeTab === 'basic'}
 				<form class="tab-form" onsubmit={(e) => { e.preventDefault(); handleSaveAndStart(); }}>
 					<section class="card tunnel-section">
-						<SettingsSectionLabel label="Название" icon={Tag} tone="slate" header />
+						<SettingsSectionLabel label={m.tunnel_detail_section_name()} icon={Tag} tone="slate" header />
 						<div class="flex flex-col gap-1.5">
-							<label class="field-label" for="name">Название туннеля</label>
+							<label class="field-label" for="name">{m.tunnel_edit_name_label()}</label>
 							<input
 								type="text"
 								id="name"
 								class="field-input"
 								bind:value={$form.name}
 								disabled={isMirror}
-								title={isMirror ? 'Имя задаётся инстансом WDTT' : undefined}
+								title={isMirror ? m.tunnel_detail_mirror_name_title() : undefined}
 							/>
 							{#if isMirror}
-								<p class="field-hint">Имя задаётся инстансом WDTT и меняется в его настройках.</p>
+								<p class="field-hint">{m.tunnel_detail_mirror_name_hint()}</p>
 							{/if}
 							{#if $errors.name}<p class="text-xs text-error-500 mt-1">{$errors.name}</p>{/if}
 						</div>
 					</section>
 
 					<section class="card tunnel-section">
-						<SettingsSectionLabel label="Интерфейс [Interface]" icon={Network} tone="teal" header />
+						<SettingsSectionLabel label={m.tunnel_detail_section_interface()} icon={Network} tone="teal" header />
 						<div class="inline-fields">
 							<div class="flex flex-col gap-1.5" style="flex:1">
-								<label class="field-label" for="address-v4">IPv4 адрес</label>
+								<label class="field-label" for="address-v4">{m.tunnel_detail_ipv4_address()}</label>
 								<input type="text" id="address-v4" class="field-input" bind:value={ipv4Address} disabled={addressDisabled} placeholder="10.0.0.2/32" />
 							</div>
 							<div class="flex flex-col gap-1.5" style="width:120px">
@@ -440,33 +441,33 @@
 							</div>
 						</div>
 						<div class="flex flex-col gap-1.5" style="margin-top:12px">
-							<label class="field-label" for="address-v6">IPv6 адрес</label>
-							<input type="text" id="address-v6" class="field-input" bind:value={ipv6Address} disabled={addressDisabled} placeholder="fd00::2/128 (необязательно)" />
+							<label class="field-label" for="address-v6">{m.tunnel_detail_ipv6_address()}</label>
+							<input type="text" id="address-v6" class="field-input" bind:value={ipv6Address} disabled={addressDisabled} placeholder={m.tunnel_detail_ipv6_placeholder()} />
 						</div>
 						{#if addressDisabled && tunnel?.backend !== 'nativewg'}
-							<p class="field-hint">Адрес нельзя изменить после первого запуска туннеля в режиме kernel</p>
+							<p class="field-hint">{m.tunnel_detail_address_locked_kernel()}</p>
 						{/if}
 						{#if $errors.address}<p class="text-xs text-error-500 mt-1">{$errors.address}</p>{/if}
 						<div class="flex flex-col gap-1.5" style="margin-top:12px">
 							<label class="field-label" for="dns">DNS</label>
 							<input type="text" id="dns" class="field-input" bind:value={$form.dns} placeholder="1.1.1.1, 8.8.8.8" />
-							<p class="field-hint">DNS-серверы через запятую. Применяются на роутере при старте туннеля. Первый IPv4 из списка sing-box использует для доменов, направленных в этот туннель, и запрос идёт через сам туннель; если поле пустое — 1.1.1.1 (для split-туннеля адрес должен входить в AllowedIPs).</p>
+							<p class="field-hint">{m.tunnel_detail_dns_hint()}</p>
 						</div>
 					</section>
 
 					<section class="card tunnel-section">
-						<SettingsSectionLabel label="Сервер [Peer]" icon={Server} tone="indigo" header />
+						<SettingsSectionLabel label={m.tunnel_detail_section_peer()} icon={Server} tone="indigo" header />
 						<div class="flex flex-col gap-1.5 pubkey-row">
-							<span class="field-label">Публичный ключ</span>
+							<span class="field-label">{m.tunnel_detail_public_key()}</span>
 							<code class="pubkey-value">{publicKey}</code>
 						</div>
 						<div class="flex flex-col gap-1.5" style="margin-bottom:12px">
 							<label class="field-label" for="endpoint">Endpoint</label>
 							{#if obf}
 								<input type="text" id="endpoint" class="field-input" value={obf.target} disabled />
-								<p class="field-hint">Сервер задаётся во вкладке «Обфускатор»; WireGuard ходит в локальный релей.</p>
+								<p class="field-hint">{m.tunnel_detail_endpoint_obf_hint()}</p>
 							{:else}
-								<input type="text" id="endpoint" class="field-input" placeholder="vpn.example.com:51820 или [2001:db8::1]:51820" bind:value={$form.endpoint} />
+								<input type="text" id="endpoint" class="field-input" placeholder={m.tunnel_detail_endpoint_placeholder()} bind:value={$form.endpoint} />
 								{#if $errors.endpoint}<p class="text-xs text-error-500 mt-1">{$errors.endpoint}</p>{/if}
 							{/if}
 						</div>
@@ -483,7 +484,7 @@
 							</div>
 						</div>
 						{#if keepaliveApplied !== null}
-							<p class="field-hint">Keepalive: применяется {keepaliveApplied} с — диапазон понимает только режим kernel.</p>
+							<p class="field-hint">{m.tunnel_detail_keepalive_applied({ seconds: keepaliveApplied })}</p>
 						{/if}
 					</section>
 				</form>
@@ -492,9 +493,7 @@
 				<div class="tab-form">
 					{#if proxyOutdated}
 						<p class="module-warn">
-							В ядре загружен awg_proxy {systemInfo?.awgProxyVersion}, а в этой сборке —
-							{systemInfo?.awgProxyExpectedVersion}. Модуль нельзя заменить, пока через него
-							идут туннели: перезагрузите роутер, иначе параметры AWG 3.1 останутся недоступны.
+							{m.tunnel_detail_proxy_outdated({ loaded: systemInfo?.awgProxyVersion ?? '', expected: systemInfo?.awgProxyExpectedVersion ?? '' })}
 						</p>
 					{/if}
 					<AWGAdvancedParams
@@ -509,7 +508,7 @@
 			{:else if activeTab === 'obfuscator' && obf}
 				<div class="tab-form">
 					<section class="card tunnel-section">
-						<SettingsSectionLabel label="Обфускатор" icon={Shuffle} tone="indigo" header />
+						<SettingsSectionLabel label={m.tunnel_detail_section_obfuscator()} icon={Shuffle} tone="indigo" header />
 						<div class="obf-fields">
 							<ObfuscatorParams bind:obfuscator={obf} error={obfError} />
 						</div>
@@ -518,19 +517,19 @@
 
 			{:else if activeTab === 'routing'}
 				{@const ispOpts: DropdownOption[] = [
-					{ value: 'auto', label: 'Автоматически' },
+					{ value: 'auto', label: m.tunnel_detail_isp_auto() },
 					...wanInterfaces.map((iface) => ({ value: iface.name, label: `${iface.label} (${iface.name})` })),
 					...(showAllInterfaces
 						? allInterfaces
 							.filter((i) => !wanInterfaces.some((w) => w.name === i.name))
 							.map((iface) => ({ value: iface.name, label: `${iface.label} (${iface.name})` }))
 						: []),
-					...otherTunnels.map((t) => ({ value: `tunnel:${t.id}`, label: t.name, group: 'Через туннель' })),
+					...otherTunnels.map((t) => ({ value: `tunnel:${t.id}`, label: t.name, group: m.tunnel_detail_isp_via_tunnel_group() })),
 				]}
 				<div class="tab-form">
 					<section class="card tunnel-section">
-						<SettingsSectionLabel label="Подключение (ISP)" icon={Router} tone="orange" header />
-						<p class="section-hint">Через какой WAN-интерфейс роутер будет подключаться к серверу VPN. По умолчанию используется основной интернет-канал.</p>
+						<SettingsSectionLabel label={m.tunnel_detail_section_isp()} icon={Router} tone="orange" header />
+						<p class="section-hint">{m.tunnel_detail_isp_hint()}</p>
 						<Dropdown
 							value={ispValue}
 							options={ispOpts}
@@ -539,12 +538,12 @@
 							fullWidth
 						/>
 						{#if isMirror}
-							<p class="field-hint">Подключение задаёт инстанс WDTT и меняется в его настройках.</p>
+							<p class="field-hint">{m.tunnel_detail_isp_mirror_hint()}</p>
 						{/if}
 						<div class="setting-row toggle-inline-row advanced-toggle">
 							<div class="flex flex-col gap-1">
-								<span class="font-medium">Показать все интерфейсы</span>
-								<span class="setting-description">Включая внутренние интерфейсы роутера</span>
+								<span class="font-medium">{m.tunnel_detail_show_all_ifaces()}</span>
+								<span class="setting-description">{m.tunnel_detail_show_all_ifaces_desc()}</span>
 							</div>
 							<Toggle
 								checked={showAllInterfaces}
@@ -556,7 +555,7 @@
 
 					{#if $usageLevel === 'expert'}
 						<section class="card tunnel-section">
-							<SettingsSectionLabel label="Маршрут по умолчанию" icon={Route} tone="green" header />
+							<SettingsSectionLabel label={m.tunnel_detail_section_default_route()} icon={Route} tone="green" header />
 							{#if isMirror}
 								<!-- У зеркальной записи тумблера НЕТ, а не «есть, но выключен»:
 								     кандидатурой в NDMS распоряжается прокси-рантайм по конфигу
@@ -564,19 +563,16 @@
 								     проставляет миграция чтения (storage/awg_store.go:150-154),
 								     и любое показанное состояние было бы выдумкой. -->
 								<p class="setting-description">
-									Маршрутом по умолчанию распоряжается инстанс WDTT: он объявляет
-									свой интерфейс кандидатом в NDMS по своим настройкам. Здесь
-									менять нечего.
+									{m.tunnel_detail_mirror_default_route()}
 								</p>
 							{:else}
 								<div class="setting-row toggle-inline-row">
 									<div class="flex flex-col gap-1">
 										<span class="font-medium">NDMS Default Route</span>
 										<span class="setting-description">
-											В NDMS для OpkgTunX выполняется «ip route default», а не как full-tunnel на уровне Linux. <br>
-											Так туннель регистрируется среди интернет-выходов с метрикой (весом), по которому NDMS выбирает канал по умолчанию. 
-											Без этой записи туннель не участвует в политиках доступа. <br>
-											В большинстве случаев, данная опция должна быть включена, особенно, если интерфейс должен конкурировать за роль основного выхода.</span>
+											{m.tunnel_detail_default_route_desc_1()} <br>
+											{m.tunnel_detail_default_route_desc_2()} <br>
+											{m.tunnel_detail_default_route_desc_3()}</span>
 									</div>
 									<Toggle checked={tunnel.defaultRoute} onchange={() => toggleDefaultRoute()} />
 								</div>

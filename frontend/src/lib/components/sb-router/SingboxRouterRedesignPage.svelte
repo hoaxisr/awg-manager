@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
@@ -136,7 +137,7 @@
   <StagingBanner />
   {#if inSubView}
     <button type="button" class="sub-back" onclick={clearSub}>
-      <ArrowLeft size={14} /> Назад
+      <ArrowLeft size={14} /> {m.sb_router_common_back()}
     </button>
   {/if}
   {#if activeSingboxSub === 'connections'}

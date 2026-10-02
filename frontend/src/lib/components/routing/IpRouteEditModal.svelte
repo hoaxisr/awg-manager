@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import type { StaticRouteList, RoutingTunnel } from '$lib/types';
 	import { routingTunnelLabel } from '$lib/utils/routingTunnelOptions';
 	import { Modal, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
@@ -74,7 +75,7 @@
 
 	// Computed
 	let isEdit = $derived(route !== null);
-	let title = $derived(isEdit ? `Редактирование: ${route?.name ?? ''}` : 'Новый IP-маршрут');
+	let title = $derived(isEdit ? m.routing_ip_edit_title({ name: route?.name ?? '' }) : m.routing_ip_new_title());
 
 	let parsedSubnets = $derived(
 		subnetsText
@@ -191,65 +192,65 @@
 	<!-- Name -->
 	<div class="form-group" class:field-error={nameError}>
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label class="field-label">Название</label>
+		<label class="field-label">{m.routing_ip_name()}</label>
 		<input
 			class="field-input"
 			type="text"
-			placeholder="Заблокированные подсети"
+			placeholder={m.routing_ip_name_placeholder()}
 			value={name}
 			oninput={(e) => { name = (e.target as HTMLInputElement).value; }}
 		/>
-		<div class="error-text" class:visible={nameError}>Введите название</div>
+		<div class="error-text" class:visible={nameError}>{m.routing_ip_name_required()}</div>
 	</div>
 
 	<!-- Icon -->
 	<div class="form-group">
 		<!-- svelte-ignore a11y_label_has_associated_control -->
-		<label class="field-label">Иконка</label>
+		<label class="field-label">{m.routing_ip_icon()}</label>
 		<div class="icon-row">
 			<ServiceIcon {iconUrl} name={name || 'rule'} size={36} />
 			<div class="icon-meta">
 				{#if iconUrl}
-					<div class="icon-src">Кастомная иконка</div>
+					<div class="icon-src">{m.routing_ip_icon_custom()}</div>
 					<div class="icon-hint" title={iconUrl}>{formatIconUrlHint(iconUrl)}</div>
 				{:else}
-					<div class="icon-src">Авто-определение по имени</div>
+					<div class="icon-src">{m.routing_ip_icon_auto()}</div>
 					<div class="icon-hint">
-						{name ? `Подбирается по «${name}»` : 'Введите имя — иконка подберётся автоматически'}
+						{name ? m.routing_ip_icon_auto_for({ name }) : m.routing_ip_icon_auto_empty()}
 					</div>
 				{/if}
 			</div>
 			<Button variant="ghost" size="sm" onclick={() => (iconPickerOpen = true)}>
-				{iconUrl ? 'Сменить иконку' : 'Выбрать иконку'}
+				{iconUrl ? m.routing_ip_card_change_icon() : m.routing_ip_icon_choose()}
 			</Button>
 		</div>
 	</div>
 
 	<!-- Tunnel -->
 	{@const tunnelOpts: DropdownOption[] = [
-		...userTunnels.map((t) => ({ value: t.id, label: t.name, group: 'Пользовательские' })),
-		...systemTunnels.map((t) => ({ value: t.id, label: routingTunnelLabel(t), group: 'Системные' })),
+		...userTunnels.map((t) => ({ value: t.id, label: t.name, group: m.routing_group_user() })),
+		...systemTunnels.map((t) => ({ value: t.id, label: routingTunnelLabel(t), group: m.routing_group_system() })),
 		...wanInterfaces.map((t) => ({ value: t.id, label: t.name, group: 'WAN' })),
 	]}
 	<div class="form-group" class:field-error={tunnelError}>
 		<Dropdown
-			label="Туннель"
+			label={m.routing_ip_tunnel()}
 			value={tunnelID}
 			options={tunnelOpts}
 			onchange={(v) => (tunnelID = v)}
-			error={tunnelError ? 'Выберите туннель' : undefined}
+			error={tunnelError ? m.routing_ip_tunnel_required() : undefined}
 			fullWidth
 		/>
 	</div>
 
 	<!-- Fallback -->
 	{@const fallbackOpts: DropdownOption<'' | 'reject'>[] = [
-		{ value: '', label: 'Bypass — трафик пойдёт обычным маршрутом' },
-		...(!isOS4Kernel ? [{ value: 'reject' as const, label: 'Kill Switch — трафик будет заблокирован' }] : []),
+		{ value: '', label: m.routing_ip_fallback_bypass() },
+		...(!isOS4Kernel ? [{ value: 'reject' as const, label: m.routing_ip_fallback_kill() }] : []),
 	]}
 	<div class="form-group">
 		<Dropdown
-			label="При недоступности интерфейса"
+			label={m.routing_ip_fallback_label()}
 			value={fallback}
 			options={fallbackOpts}
 			onchange={(v) => (fallback = v)}
@@ -260,10 +261,10 @@
 	<!-- Subnets -->
 	<div class="form-section" class:field-error={subnetError}>
 		<div class="section-header">
-			<div class="section-title">Подсети (по одной на строку, CIDR)</div>
+			<div class="section-title">{m.routing_ip_subnets_title()}</div>
 			<button class="btn-bat-import" onclick={handleBatImport}>
 				<Upload size={12} aria-hidden="true" />
-				Из .bat файла
+				{m.routing_ip_from_bat()}
 			</button>
 			<input
 				bind:this={batInput}
@@ -281,16 +282,16 @@
 			rows="8"
 		></textarea>
 		{#if parsedSubnets.length > 0}
-			<span class="subnet-count">{parsedSubnets.length} подсетей</span>
+			<span class="subnet-count">{m.routing_subnets_count({ count: parsedSubnets.length })}</span>
 		{/if}
-		<div class="error-text" class:visible={subnetError}>Добавьте хотя бы одну подсеть</div>
+		<div class="error-text" class:visible={subnetError}>{m.routing_ip_subnets_required()}</div>
 	</div>
 
 	{#snippet actions()}
-		<Button variant="secondary" onclick={onclose}>Отмена</Button>
+		<Button variant="secondary" onclick={onclose}>{m.common_cancel()}</Button>
 		<!-- TODO Phase 1: shake animation on save when invalid (was class:shake={shaking}) -->
 		<Button variant="primary" onclick={handleSave} loading={saving}>
-			Сохранить
+			{m.routing_save()}
 		</Button>
 	{/snippet}
 </Modal>
