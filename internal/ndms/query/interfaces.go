@@ -149,12 +149,13 @@ type InterfaceStore struct {
 	// flight — список в полёте (последний начатый), к нему присоединяется
 	// Snapshot с maxAge > 0.
 	flight *listFlight
-	// flights — счётчик начатых списков; appliedNo — номер последнего
-	// применённого: ответ, начатый раньше применённого, карту не трогает.
-	flights, appliedNo uint64
-	// applied — ответ списка appliedNo как есть (только чтение): Confirm*
-	// подтверждают и по нему, если свой ответ вытеснен (confirmedFreshLocked, F575).
-	applied map[string]ndms.Interface
+	// flights — счётчик начатых списков.
+	flights uint64
+	// applied — последний применённый ответ как есть (только чтение; nil — ни
+	// одного): ответ, начатый раньше него (no меньше), карту не трогает.
+	// Confirm* подтверждают и по нему, если свой ответ вытеснен
+	// (confirmedFreshLocked, F575).
+	applied *listAnswer
 
 	// awaiting — ConfirmCreated в ожидании записи по имени (F584); будят
 	// применённый список, начатый после вызова и содержащий имя, и снос имени
@@ -283,7 +284,7 @@ func (s *InterfaceStore) refreshAll(ctx context.Context) error {
 // Кладёт список в карту, снимает метку «грязно», если список начат не раньше
 // неё, и завершает полёт — после резолвера имён, чтобы присоединившиеся
 // видели то же, что и начавший.
-func (s *InterfaceStore) refreshList(ctx context.Context, fl *listFlight) (map[string]ndms.Interface, error) {
+func (s *InterfaceStore) refreshList(ctx context.Context, fl *listFlight) (*listAnswer, error) {
 	if fl == nil {
 		s.mu.Lock()
 		fl = s.beginFlightLocked()
@@ -295,8 +296,12 @@ func (s *InterfaceStore) refreshList(ctx context.Context, fl *listFlight) (map[s
 		s.mu.Lock()
 		// Ответы приходят не по порядку: начатый раньше уже применённого старее
 		// его — карту, метку и возраст не трогает (ответ вызывающему — свой).
-		if fl.no >= s.appliedNo {
-			s.appliedNo, s.applied = fl.no, recs
+		var appliedNo uint64
+		if s.applied != nil {
+			appliedNo = s.applied.no
+		}
+		if fl.no >= appliedNo {
+			s.applied = &listAnswer{recs: recs, start: fl.start, no: fl.no}
 			s.applyListLocked(recs, raw, fl.start)
 			s.liftTombsLocked(recs, fl.no)
 			if s.dirtyAt <= fl.start {
@@ -323,7 +328,22 @@ func (s *InterfaceStore) refreshList(ctx context.Context, fl *listFlight) (map[s
 	if err != nil {
 		return nil, err
 	}
-	return recs, nil
+	return &listAnswer{recs: recs, start: fl.start, no: fl.no}, nil
+}
+
+// listAnswer — ответ полного списка: записи (только чтение), start — seq ДО
+// запроса, no — номер его полёта.
+type listAnswer struct {
+	recs      map[string]ndms.Interface
+	start, no uint64
+}
+
+// appliedRecsLocked — записи последнего применённого ответа (nil — ни одного).
+func (s *InterfaceStore) appliedRecsLocked() map[string]ndms.Interface {
+	if s.applied == nil {
+		return nil
+	}
+	return s.applied.recs
 }
 
 // maxTombs — потолок надгробий: снятых id на роутере единицы-десятки.
@@ -1349,8 +1369,8 @@ type actionListKey struct{}
 // actionList — ответ полного списка, общий для подтверждений одного действия.
 type actionList struct {
 	mu  sync.Mutex
-	raw map[string]ndms.Interface
-	at  time.Time // начало запроса raw
+	ans *listAnswer
+	at  time.Time // начало запроса ans
 }
 
 // actionListMaxAge — потолок возраста списка действия от НАЧАЛА его запроса
@@ -1379,22 +1399,22 @@ func WithActionList(ctx context.Context) context.Context {
 // прочитанный в нём, пока он не старше actionListMaxAge (параллельные
 // подтверждения ждут один запрос), иначе свой. Ошибка не запоминается:
 // следующее подтверждение читает заново.
-func (s *InterfaceStore) confirmList(ctx context.Context) (map[string]ndms.Interface, error) {
+func (s *InterfaceStore) confirmList(ctx context.Context) (*listAnswer, error) {
 	al, _ := ctx.Value(actionListKey{}).(*actionList)
 	if al == nil {
 		return s.refreshList(ctx, nil)
 	}
 	al.mu.Lock()
 	defer al.mu.Unlock()
-	if al.raw == nil || s.now().Sub(al.at) > actionListMaxAge {
+	if al.ans == nil || s.now().Sub(al.at) > actionListMaxAge {
 		at := s.now()
-		raw, err := s.refreshList(ctx, nil)
+		ans, err := s.refreshList(ctx, nil)
 		if err != nil {
 			return nil, err
 		}
-		al.raw, al.at = raw, at
+		al.ans, al.at = ans, at
 	}
-	return al.raw, nil
+	return al.ans, nil
 }
 
 // Confirm читает ОДИН полный список (кладёт его в карту) и подтверждает name
@@ -1405,18 +1425,18 @@ func (s *InterfaceStore) Confirm(ctx context.Context, name string) (Confirmed, *
 	if name == "" {
 		return Confirmed{}, nil, false, errors.New("confirm: пустое имя интерфейса")
 	}
-	raw, err := s.confirmList(ctx)
-	return s.confirmIn(raw, err, name)
+	ans, err := s.confirmList(ctx)
+	return s.confirmIn(ans, err, name)
 }
 
-// confirmIn — Confirm по ответу списка raw (err — ошибка его чтения).
-func (s *InterfaceStore) confirmIn(raw map[string]ndms.Interface, err error, name string) (Confirmed, *ndms.Interface, bool, error) {
+// confirmIn — Confirm по ответу списка ans (err — ошибка его чтения).
+func (s *InterfaceStore) confirmIn(ans *listAnswer, err error, name string) (Confirmed, *ndms.Interface, bool, error) {
 	if err != nil {
 		return Confirmed{}, nil, false, fmt.Errorf("confirm %s: %w", name, err)
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rec, ok := s.confirmedFreshLocked(raw, name)
+	rec, ok := s.confirmedFreshLocked(ans.recs, name)
 	if !ok {
 		return Confirmed{}, nil, false, nil
 	}
@@ -1473,8 +1493,8 @@ func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string) (Confi
 	wake := w.ch
 	for i := 0; ; i++ {
 		// Свой список, не список действия: запись новее него.
-		raw, err := s.refreshList(ctx, nil)
-		c, _, ok, err := s.confirmIn(raw, err, name)
+		ans, err := s.refreshList(ctx, nil)
+		c, _, ok, err := s.confirmIn(ans, err, name)
 		if err != nil {
 			return Confirmed{}, err
 		}
@@ -1518,7 +1538,7 @@ func (s *InterfaceStore) ConfirmCreated(ctx context.Context, name string) (Confi
 // применённому, см. confirmedFreshLocked). В ответе только подтверждённые.
 // В ctx действия (WithActionList) — по списку действия.
 func (s *InterfaceStore) ConfirmEach(ctx context.Context, names []string) (map[string]Confirmed, error) {
-	raw, err := s.confirmList(ctx)
+	ans, err := s.confirmList(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("confirm: %w", err)
 	}
@@ -1526,7 +1546,7 @@ func (s *InterfaceStore) ConfirmEach(ctx context.Context, names []string) (map[s
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, n := range names {
-		if _, ok := s.confirmedFreshLocked(raw, n); ok {
+		if _, ok := s.confirmedFreshLocked(ans.recs, n); ok {
 			out[n] = Confirmed{name: n}
 		}
 	}
@@ -1537,16 +1557,16 @@ func (s *InterfaceStore) ConfirmEach(ctx context.Context, names []string) (map[s
 // применённого, см. confirmedFreshLocked): кандидаты и доказательство из
 // одного чтения (проверка занятости сетей по всем серверам).
 func (s *InterfaceStore) ConfirmAll(ctx context.Context) (map[string]Confirmed, error) {
-	raw, err := s.refreshList(ctx, nil)
+	ans, err := s.refreshList(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("confirm: %w", err)
 	}
-	out := make(map[string]Confirmed, len(raw))
+	out := make(map[string]Confirmed, len(ans.recs))
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for _, list := range []map[string]ndms.Interface{raw, s.applied} {
+	for _, list := range []map[string]ndms.Interface{ans.recs, s.appliedRecsLocked()} {
 		for n := range list {
-			if _, ok := s.confirmedFreshLocked(raw, n); ok {
+			if _, ok := s.confirmedFreshLocked(ans.recs, n); ok {
 				out[n] = Confirmed{name: n}
 			}
 		}
@@ -1590,11 +1610,11 @@ func (s *InterfaceStore) FreeIndex(ctx context.Context, prefix string, limit int
 		}
 	}
 	memory()
-	raw, err := s.refreshList(ctx, nil)
+	ans, err := s.refreshList(ctx, nil)
 	if err != nil {
 		return 0, false, fmt.Errorf("list interfaces: %w", err)
 	}
-	for n := range raw {
+	for n := range ans.recs {
 		mark(n)
 	}
 	memory()
@@ -1608,7 +1628,7 @@ func (s *InterfaceStore) FreeIndex(ctx context.Context, prefix string, limit int
 
 // confirmedFreshLocked — confirmedLocked по своему ответу raw, затем по
 // последнему применённому списку (applied). Свежий — и тот и другой: после
-// успешного своего списка appliedNo не меньше его номера, то есть применённый
+// успешного своего списка applied.no не меньше его номера, то есть применённый
 // начат не раньше своего — тоже после вызова. Свой ответ, вытесненный более
 // новым (списком ReconcilePending по хуку создания), не знает только что
 // созданную запись, а применённый знает (F575). Снятая хуком после любого из
@@ -1618,7 +1638,7 @@ func (s *InterfaceStore) confirmedFreshLocked(raw map[string]ndms.Interface, nam
 	if rec, ok := s.confirmedLocked(raw, name); ok {
 		return rec, true
 	}
-	return s.confirmedLocked(s.applied, name)
+	return s.confirmedLocked(s.appliedRecsLocked(), name)
 }
 
 // confirmedLocked — копия записи, если name есть в свежем ответе raw и не
