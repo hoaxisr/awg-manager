@@ -82,7 +82,7 @@ func (s *ServiceImpl) listHydraRoute(ctx context.Context) ([]DomainList, error) 
 	systemByIface := s.systemTunnelsByIface(ctx)
 	result := make([]DomainList, 0, len(rules))
 	for _, r := range rules {
-		dl := hrRuleToDomainList(r, policySet, systemByIface)
+		dl := s.hrRuleToDomainList(ctx, r, policySet, systemByIface)
 		if iconURL := strings.TrimSpace(icons[r.Name]); iconURL != "" {
 			dl.IconURL = iconURL
 		}
@@ -109,6 +109,15 @@ func nameFromHRID(id string) string {
 // isHRID reports whether the ID refers to an HR rule.
 func isHRID(id string) bool { return strings.HasPrefix(id, hrIDPrefix) }
 
+var knownIfacePrefixRE = regexp.MustCompile(`(?i)^(awgm|awg|opkgtun|nwg|wireguard|ppp|pppoe|eth|usb|wlan|wifi|br|tun|tap)\d.*$`)
+
+func isKernelInterfaceName(target string) bool {
+	if strings.HasPrefix(target, "wan:") || strings.HasPrefix(target, "system:") {
+		return true
+	}
+	return knownIfacePrefixRE.MatchString(target)
+}
+
 // hrRuleToDomainList converts the HR-file-native shape into the DomainList
 // contract shared with NDMS. Subscriptions/dedup don't exist at this layer.
 // Enabled reflects whether the rule's content lines are commented with '#'
@@ -117,7 +126,11 @@ func isHRID(id string) bool { return strings.HasPrefix(id, hrIDPrefix) }
 // systemByIface turns the target of a system interface back into its
 // "system:<NDMS id>" tunnel ID (F498); other targets (managed tunnels, WAN)
 // keep the kernel name as TunnelID, as before.
-func hrRuleToDomainList(r hydraroute.HRRule, policySet map[string]bool, systemByIface map[string]string) DomainList {
+//
+// Interface mode ALWAYS takes precedence over policy mode: if a target matches
+// an interface or tunnel (even if a ghost policy with the same name exists in
+// policySet), it is kept in interface mode.
+func (s *ServiceImpl) hrRuleToDomainList(ctx context.Context, r hydraroute.HRRule, policySet map[string]bool, systemByIface map[string]string) DomainList {
 	domains := append([]string(nil), r.Domains...)
 	domains = append(domains, r.Subnets...)
 
@@ -130,16 +143,36 @@ func hrRuleToDomainList(r hydraroute.HRRule, policySet map[string]bool, systemBy
 		Backend:       "hydraroute",
 		Enabled:       !r.Disabled,
 	}
-	if policySet[r.Target] {
+
+	tunnelID := r.Target
+	isIface := false
+
+	if id, ok := systemByIface[r.Target]; ok {
+		tunnelID = id
+		isIface = true
+	}
+
+	if !isIface && s.resolver != nil {
+		if _, ok := s.resolver.ResolveTargetTunnel(ctx, r.Target); ok {
+			isIface = true
+		}
+	}
+
+	if !isIface && isKernelInterfaceName(r.Target) {
+		isIface = true
+	}
+
+	// Policy mode requires:
+	// 1. Target is NOT recognized as a tunnel or interface.
+	// 2. Target exists in the router's IP policy set.
+	// 3. Target strictly adheres to HR Neo policy naming rules (pure latin letters, no digits or system names).
+	if !isIface && policySet[r.Target] && validateHRPolicyName(r.Target) == nil {
 		dl.HRRouteMode = "policy"
 		dl.HRPolicyName = r.Target
 		return dl
 	}
+
 	dl.HRRouteMode = "interface"
-	tunnelID := r.Target
-	if id, ok := systemByIface[r.Target]; ok {
-		tunnelID = id
-	}
 	dl.Routes = []RouteTarget{{Interface: r.Target, TunnelID: tunnelID}}
 	return dl
 }
@@ -207,7 +240,7 @@ func (s *ServiceImpl) createHydraRoute(ctx context.Context, list DomainList) (*D
 
 	s.appLog.Info("hydraroute-create", created.Name, "dns-route created")
 
-	dl := hrRuleToDomainList(*created, s.currentPolicySet(ctx), s.systemTunnelsByIface(ctx))
+	dl := s.hrRuleToDomainList(ctx, *created, s.currentPolicySet(ctx), s.systemTunnelsByIface(ctx))
 	if iconURL != "" {
 		dl.IconURL = iconURL
 	}
@@ -264,7 +297,7 @@ func (s *ServiceImpl) updateHydraRoute(ctx context.Context, id string, list Doma
 	}
 	s.appLog.Info("hydraroute-update", updated.Name, "was "+originalName)
 
-	dl := hrRuleToDomainList(*updated, s.currentPolicySet(ctx), s.systemTunnelsByIface(ctx))
+	dl := s.hrRuleToDomainList(ctx, *updated, s.currentPolicySet(ctx), s.systemTunnelsByIface(ctx))
 	if iconURL != "" {
 		dl.IconURL = iconURL
 	}

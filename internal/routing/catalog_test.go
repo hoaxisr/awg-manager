@@ -638,3 +638,64 @@ func TestListAll_SystemServerFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveTargetTunnel(t *testing.T) {
+	provider := &mockTunnelProvider{
+		tunnels: []TunnelWithStatus{
+			{ID: "awgm0", Backend: "kernel"},
+			{ID: "awg1", Backend: "nativewg", NWGIndex: 1},
+		},
+	}
+	store := &mockStoreClient{
+		entries: map[string]StoreEntry{
+			"awgm0": {Backend: "kernel"},
+			"awg1": {Backend: "nativewg", NWGIndex: 1},
+		},
+	}
+	ndmsClient := &mockNDMSClient{
+		ifaces: []ndms.Interface{
+			{ID: "Wireguard3", SystemName: "nwg3", Type: "wireguard"},
+			{ID: "PPPoE0", SystemName: "ppp0", Type: "pppoe"},
+		},
+		sysNames: map[string]string{
+			"Wireguard3": "nwg3",
+		},
+	}
+	cat := NewCatalog(provider, ndmsClient, store, noExits(), nil)
+	ctx := context.Background()
+
+	// 1. Direct managed ID
+	id, ok := cat.ResolveTargetTunnel(ctx, "awgm0")
+	if !ok || id != "awgm0" {
+		t.Errorf("ResolveTargetTunnel(awgm0) = (%q, %v), want (awgm0, true)", id, ok)
+	}
+
+	// 2. NativeWG kernel iface name
+	id, ok = cat.ResolveTargetTunnel(ctx, "nwg1")
+	if !ok || id != "awg1" {
+		t.Errorf("ResolveTargetTunnel(nwg1) = (%q, %v), want (awg1, true)", id, ok)
+	}
+
+	// 3. System tunnel by NDMS ID and kernel name
+	id, ok = cat.ResolveTargetTunnel(ctx, "Wireguard3")
+	if !ok || id != "system:Wireguard3" {
+		t.Errorf("ResolveTargetTunnel(Wireguard3) = (%q, %v), want (system:Wireguard3, true)", id, ok)
+	}
+
+	id, ok = cat.ResolveTargetTunnel(ctx, "nwg3")
+	if !ok || id != "system:Wireguard3" {
+		t.Errorf("ResolveTargetTunnel(nwg3) = (%q, %v), want (system:Wireguard3, true)", id, ok)
+	}
+
+	// 4. WAN prefix
+	id, ok = cat.ResolveTargetTunnel(ctx, "wan:ppp0")
+	if !ok || id != "wan:ppp0" {
+		t.Errorf("ResolveTargetTunnel(wan:ppp0) = (%q, %v), want (wan:ppp0, true)", id, ok)
+	}
+
+	// 5. Non-existent target
+	id, ok = cat.ResolveTargetTunnel(ctx, "nonexistent999")
+	if ok {
+		t.Errorf("ResolveTargetTunnel(nonexistent999) = (%q, %v), want false", id, ok)
+	}
+}

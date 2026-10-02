@@ -158,3 +158,54 @@ func digPermit(t *testing.T, payload any, policyName string) map[string]any {
 	}
 	return permit
 }
+
+func TestCleanGhostPolicies(t *testing.T) {
+	q, g := newTestQueries()
+	g.SetJSON("/show/rc/ip/policy", `{
+		"Policy0": {"description": "System Mallware"},
+		"Streaming": {"description": "User Policy"},
+		"Work": {"description": "", "permit": [{"interface": "PPPoE0", "enabled": true}]},
+		"EmptyUser": {"description": ""},
+		"awgm0": {"description": ""},
+		"Wireguard2": {"description": ""},
+		"opkgtun10": {"description": ""}
+	}`)
+
+	cmds, poster := newTestPolicyCommands(q)
+	svc := &Service{
+		queries:  q,
+		policies: cmds,
+	}
+
+	deleted, err := svc.CleanGhostPolicies(context.Background())
+	if err != nil {
+		t.Fatalf("CleanGhostPolicies failed: %v", err)
+	}
+
+	if deleted != 3 {
+		t.Errorf("CleanGhostPolicies deleted %d, want 3 (awgm0, Wireguard2, opkgtun10)", deleted)
+	}
+
+	payloads := poster.Payloads()
+	if len(payloads) != 3 {
+		t.Fatalf("expected 3 DeletePolicy calls, got %d", len(payloads))
+	}
+
+	deletedNames := make([]string, 0, len(payloads))
+	for _, payload := range payloads {
+		root, ok := payload.(map[string]any)
+		if !ok {
+			continue
+		}
+		ip, _ := root["ip"].(map[string]any)
+		policy, _ := ip["policy"].(map[string]any)
+		for name := range policy {
+			deletedNames = append(deletedNames, name)
+		}
+	}
+	sort.Strings(deletedNames)
+	wantDeleted := []string{"Wireguard2", "awgm0", "opkgtun10"}
+	if !reflect.DeepEqual(deletedNames, wantDeleted) {
+		t.Errorf("deleted policies = %v, want %v", deletedNames, wantDeleted)
+	}
+}

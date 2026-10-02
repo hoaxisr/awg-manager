@@ -120,6 +120,15 @@ func (a *app) setupOrchestrator() {
 	a.hydraService.SetQueries(a.ndmsQueries)
 	a.hydraService.SetPolicies(a.ndmsCommands.Policies)
 
+	// Clean up any ghost policies erroneously created by hrneo on boot (#967).
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if cleaned, err := a.hydraService.CleanGhostPolicies(ctx); err == nil && cleaned > 0 {
+			a.bootLog.Info("hydra-ghost-policies", "", fmt.Sprintf("cleaned up %d ghost policy(ies) created by hrneo", cleaned))
+		}
+	}()
+
 	a.ndmsDispatcher = ndmsevents.NewDispatcher(a.ndmsQueries, eventsLogger(a.loggingService))
 
 	// NDMS hook fired — invalidate all 7 routing-section polling stores.
@@ -223,9 +232,16 @@ func (a *app) setupEventWiring() {
 	// Full hr-neo restart on tunnel-running — NDMS assigns fwmarks only
 	// during rci_create_policies (hr-neo startup), so tunnels appearing
 	// after startup would miss CONNMARK rules without this.
+	// Also cleans up any ghost policies that hrneo may have created while
+	// the tunnel was still down (#967).
 	if a.hydraService != nil {
 		a.orch.SetOnTunnelRunning(func(id string) {
-			go a.hydraService.ScheduleRestart("tunnel-running: " + id)
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				_, _ = a.hydraService.CleanGhostPolicies(ctx)
+				a.hydraService.ScheduleRestart("tunnel-running: " + id)
+			}()
 		})
 	}
 	a.loggingService.SetEventBus(a.eventBus)

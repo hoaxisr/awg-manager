@@ -22,6 +22,7 @@ type InterfaceResolver interface {
 	ResolveInterface(ctx context.Context, tunnelID string) (string, error)
 	GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error)
 	SystemTunnelsByIface(ctx context.Context) map[string]string
+	ResolveTargetTunnel(ctx context.Context, target string) (string, bool)
 }
 
 // ServiceImpl implements the Service interface.
