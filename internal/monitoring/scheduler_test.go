@@ -458,6 +458,47 @@ func TestScheduler_AugmentSingboxClashData_PopulatesUrltestMembers(t *testing.T)
 	}
 }
 
+func TestScheduler_RunOnce_CallsOnSelfProbeFailure(t *testing.T) {
+	prober := &fakeProber{ok: false}
+	hist := NewHistory()
+	var failureCalls []struct {
+		tunnelID string
+		failures int
+	}
+	sched := NewScheduler(SchedulerDeps{
+		TunnelLister: &fakeLister{tunnels: []traffic.RunningTunnel{{ID: "tn-A", IfaceName: "wg0"}}},
+		Prober:       prober,
+		OnSelfProbeFailure: func(tunnelID string, failures int) {
+			failureCalls = append(failureCalls, struct {
+				tunnelID string
+				failures int
+			}{tunnelID, failures})
+		},
+	}, hist)
+
+	sched.RunOnce(context.Background())
+	sched.RunOnce(context.Background())
+	if len(failureCalls) != 0 {
+		t.Fatalf("до 3-го отказа коллбэк не должен вызываться, получено: %v", failureCalls)
+	}
+
+	sched.RunOnce(context.Background())
+	if len(failureCalls) != 1 || failureCalls[0].tunnelID != "tn-A" || failureCalls[0].failures != 3 {
+		t.Fatalf("ожидали вызов на 3-м отказе, получено: %+v", failureCalls)
+	}
+
+	sched.RunOnce(context.Background())
+	if len(failureCalls) != 1 {
+		t.Fatalf("на 4-м отказе повторного вызова быть не должно: %+v", failureCalls)
+	}
+
+	sched.RunOnce(context.Background())
+	sched.RunOnce(context.Background())
+	if len(failureCalls) != 2 || failureCalls[1].failures != 6 {
+		t.Fatalf("ожидали второй вызов на 6-м отказе, получено: %+v", failureCalls)
+	}
+}
+
 // defaultSelfCellID — идентификатор self-ячейки для ЦЕЛИ ПО УМОЛЧАНИЮ.
 // Выводится из storage.DefaultConnectivityCheckURL, а не пишется строкой:
 // адрес пробы меняется (V37 увёл его с gstatic на cp.cloudflare), и

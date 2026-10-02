@@ -151,6 +151,17 @@ var fatalSessionSignatures = []string{
 	"all streams failed",
 	"server did not acknowledge client ID",
 	"failed to write client ID",
+	"Ошибка Reader",
+	"deadline exceeded",
+	"broken pipe",
+	"connection reset by peer",
+	"read: connection timed out",
+	"сессия разорвана",
+	"сессия закрыта",
+	"таймаут сессии",
+	"all retransmissions failed",
+	"channel bind transaction failed",
+	"Failed to refresh allocation",
 }
 
 func readLogTail(path string, maxBytes int64) string {
@@ -341,6 +352,14 @@ func (p *Proc) Plan(obs proxyrt.Observation) []proxyrt.Step {
 		return []proxyrt.Step{{Resource: p.c.ID, Op: "start", Reason: "процесс не запущен"}}
 	}
 	if reqRestart {
+		if strings.Contains(restartReason, "WAN") && p.spawnedAt != nil && p.c.Now().Sub(*p.spawnedAt) < socketGrace {
+			// Процесс только что запущен (в окне socketGrace) — повторный перезапуск по WAN-up избыточен
+			p.rmu.Lock()
+			p.restartWanted = false
+			p.restartReason = ""
+			p.rmu.Unlock()
+			return nil
+		}
 		if restartReason == "" {
 			restartReason = "запрос перезапуска"
 		}

@@ -794,3 +794,56 @@ func TestProcAutoReconnect_StartupGrace(t *testing.T) {
 		t.Fatalf("fatal_error should be ignored during startup grace, got %q", obs.Attrs["fatal_error"])
 	}
 }
+
+func TestProcAutoReconnect_ReaderDeadlineSignature(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "test.log")
+	if err := os.WriteFile(logFile, []byte("2026/10/02 08:14:00 [RAW #3] Ошибка Reader: deadline exceeded\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	link := &fakeLink{st: awgmproto.State{PID: 100, UptimeS: 30}}
+	r := &fakeRunner{pid: 100, alive: true}
+	p := NewProc(ProcConfig{
+		ID: "process", Instance: "default", Impl: "wt-client", Role: "client",
+		Binary: "/opt/bin/wt-client", NeedCmds: []string{"state"},
+		SocketPath: "/tmp/sock", LogPath: logFile,
+		Link: link, Runner: r, Gate: okGate{}, Now: time.Now,
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+	p.SetAutoReconnect(true, 0)
+
+	obs, err := p.Observe(context.Background())
+	if err != nil {
+		t.Fatalf("Observe err: %v", err)
+	}
+	if obs.Attrs["fatal_error"] == "" {
+		t.Fatal("ожидали обнаружение ошибки Reader в логе")
+	}
+}
+
+func TestProc_WANRestartSuppressedDuringSocketGrace(t *testing.T) {
+	now := time.Now()
+	clock := func() time.Time { return now }
+	link := &fakeLink{st: awgmproto.State{PID: 100, UptimeS: 5}}
+	r := &fakeRunner{pid: 100, alive: true}
+	p := NewProc(ProcConfig{
+		ID: "process", Instance: "default", Impl: "wt-client", Role: "client",
+		Binary: "/opt/bin/wt-client", NeedCmds: []string{"state"},
+		SocketPath: "/tmp/sock",
+		Link: link, Runner: r, Gate: okGate{}, Now: clock,
+	})
+	p.SetDesired(true, []string{"-peer", "x"}, nil)
+
+	// Симулируем процесс, только что запущенный (5 секунд назад)
+	spawned := now.Add(-5 * time.Second)
+	p.spawnedAt = &spawned
+
+	// Запрашиваем рестарт по WAN
+	p.RequestRestart("восстановление WAN-соединения")
+
+	obs := proxyrt.Observation{Exists: true, Known: true, Attrs: map[string]string{}}
+	steps := p.Plan(obs)
+	if len(steps) != 0 {
+		t.Fatalf("в окне socketGrace WAN-рестарт обязан быть подавлен, получено шагов: %v", steps)
+	}
+}
