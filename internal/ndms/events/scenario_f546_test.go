@@ -47,12 +47,13 @@ func TestScenario_PhantomPairFromOwnCommand(t *testing.T) {
 
 	// Phantoms == 1 здесь ожидаем: команда по отсутствующему пришла снаружи
 	// теста, Фаза 1 её не убирает (это Фаза 2). Фаза 1 убирает E по паре
-	// created→destroyed — поэтому ассерт только на E и на цену пачки.
+	// created→destroyed — поэтому ассерт только на E и на цену пачки: ifcreated
+	// незнакомого id расходится с картой — один список на пачку (дизайн §5).
 	if f.E != 0 {
 		t.Fatalf("E=%d, want 0: пара created→destroyed не должна читать по имени", f.E)
 	}
-	if got := f.ListCalls() - lists; got != 0 {
-		t.Fatalf("пара created→destroyed стоила %d списков, want 0", got)
+	if got := f.ListCalls() - lists; got != 1 {
+		t.Fatalf("пара created→destroyed стоила %d списков, want 1", got)
 	}
 	if got, _ := q.Interfaces.Get(ctx, "Wireguard5"); got != nil {
 		t.Fatalf("снятый X остался в кэше: %#v", got)
@@ -139,9 +140,9 @@ func (l *recLogger) has(sub string) bool {
 	return false
 }
 
-// Список не прочитался во время добора: pending сохраняется, следующий проход
-// добирает Z одним списком.
-func TestScenario_ListErrorDuringPending(t *testing.T) {
+// Список пачки не прочитался: Warn, метка «грязно» остаётся — следующее чтение
+// карты добирает Z одним списком.
+func TestScenario_ListErrorAfterHooks_DirtyKept(t *testing.T) {
 	ctx := context.Background()
 	f := query.NewFakeNDMS(ndms.Interface{ID: "Bridge0", Type: "Bridge"})
 	q := oracleQueries(t, f)
@@ -160,29 +161,20 @@ func TestScenario_ListErrorDuringPending(t *testing.T) {
 	}
 	waitDrain(t, done)
 
-	if !log.has("reconcile pending") {
-		t.Fatalf("ошибка ReconcilePending не дошла до журнала: %v", log.msgs)
-	}
-	if !q.Interfaces.HasPending() {
-		t.Fatal("pending потерян на ошибке списка")
+	if !log.has("reconcile dirty") {
+		t.Fatalf("ошибка ReconcileDirty не дошла до журнала: %v", log.msgs)
 	}
 	if got := f.ListCalls() - lists; got != 1 {
 		t.Fatalf("первый проход: %d списков, want 1 (неудачный)", got)
 	}
 
-	// Следующий проход — от любого хука, не связанного с Z.
+	// Метка осталась: чтение карты читает список.
 	f.FailList(nil)
-	d.Enqueue(Event{Type: EventIfIPChanged, ID: "Bridge0"})
-	waitDrain(t, done)
-
-	if got := f.ListCalls() - lists; got != 2 {
-		t.Fatalf("второй проход: всего %d списков, want 2", got)
-	}
-	if q.Interfaces.HasPending() || f.E != 0 {
-		t.Fatalf("pending=%v E=%d после добора; want false и 0", q.Interfaces.HasPending(), f.E)
-	}
 	if got, _ := q.Interfaces.Get(ctx, "Wireguard6"); got == nil || got.SystemName != "nwg6" {
 		t.Fatalf("Z не добран из списка: %#v", got)
+	}
+	if got := f.ListCalls() - lists; got != 2 || f.E != 0 {
+		t.Fatalf("всего %d списков, E=%d; want 2, 0", got, f.E)
 	}
 }
 

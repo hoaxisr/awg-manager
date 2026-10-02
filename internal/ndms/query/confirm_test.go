@@ -330,9 +330,9 @@ func TestPeersRCFresh_ConfirmsByFreshList(t *testing.T) {
 
 // Стенд 5.01.C.6: на создание NDMS шлёт iflayerchanged ctrl ×2, а ifcreated —
 // ~1 с спустя. Confirm сразу после импорта: оба layer-хука приходят, пока
-// список в полёте, ifcreated — после ответа. Layer-хук по незнакомому id —
-// доказательство записи: имя ждёт в pending, и Confirm подтверждает по ответу.
-// Раньше подтверждения не было — «импорт принят, но WireguardN нет в списке».
+// список в полёте, ifcreated — после ответа. Layer-хук по незнакомому id
+// ничего не решает: Confirm подтверждает по ответу, а запись уже в карте —
+// ifcreated совпадает с ней и списка не стоит.
 func TestConfirm_StandHookOrder_LayerDuringList_Confirms(t *testing.T) {
 	f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
 	s := NewInterfaceStore(f, NopLogger())
@@ -358,7 +358,7 @@ func TestConfirm_StandHookOrder_LayerDuringList_Confirms(t *testing.T) {
 		t.Fatalf("created record must be confirmed: ok=%v rec=%#v err=%v", ok, rec, err)
 	}
 	s.OnCreated(hooks[2].ID)
-	if err := s.ReconcilePending(ctx); err != nil {
+	if err := s.ReconcileDirty(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := s.Get(ctx, "Wireguard1"); got == nil {
@@ -369,28 +369,44 @@ func TestConfirm_StandHookOrder_LayerDuringList_Confirms(t *testing.T) {
 	}
 }
 
-// Layer/ip-хук по незнакомому id ставит его в pending, как ifcreated;
-// ifdestroyed (Forget) снимает.
-func TestHooks_UnknownIDPendingUntilDestroyed(t *testing.T) {
+// S9/S10: layer/ip-хук по незнакомому id игнорируется — ни метки «грязно», ни
+// списка, сколько бы их ни пришло.
+func TestLayerHook_UnknownID_Ignored(t *testing.T) {
 	for name, hook := range map[string]func(*InterfaceStore){
-		"layer": func(s *InterfaceStore) { s.OnLayerChanged("Wireguard3", "ctrl", "") },
-		"ip":    func(s *InterfaceStore) { s.OnIPChanged("Wireguard3", "10.0.0.1") },
+		"layer": func(s *InterfaceStore) { s.OnLayerChanged("Nope", "ctrl", "running") },
+		"ip":    func(s *InterfaceStore) { s.OnIPChanged("Nope", "10.0.0.1") },
 	} {
-		s := NewInterfaceStore(NewFakeNDMS(), NopLogger())
-		hook(s)
-		if !s.HasPending() {
-			t.Fatalf("%s: unknown id must be pending", name)
+		f := NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
+		s := NewInterfaceStore(f, NopLogger())
+		ctx := context.Background()
+		if _, err := s.Get(ctx, "Wireguard0"); err != nil { // bootstrap
+			t.Fatal(err)
 		}
-		s.OnDestroyed("Wireguard3")
-		if s.HasPending() {
-			t.Fatalf("%s: ifdestroyed must clear pending", name)
+		lists := f.ListCalls()
+		for range 1100 {
+			hook(s)
+		}
+		s.mu.RLock()
+		dirty := s.dirtyAt
+		s.mu.RUnlock()
+		if dirty != 0 {
+			t.Fatalf("%s: dirtyAt=%d, want 0", name, dirty)
+		}
+		if err := s.ReconcileDirty(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.ListCalls() - lists; got != 0 {
+			t.Fatalf("%s: %d списков, want 0", name, got)
+		}
+		if rec, _ := s.Get(ctx, "Nope"); rec != nil {
+			t.Fatalf("%s: незнакомый id в карте: %#v", name, rec)
 		}
 	}
 }
 
 // displaced готовит вытесненный ответ: следующий список стора (его ведёт
 // Confirm*) в полёте, снимок уже сделан, Wireguard3 в нём нет; тогда
-// Wireguard3 создают, ifcreated доставлен, и ReconcilePending применяет более
+// Wireguard3 создают, ifcreated доставлен, и ReconcileDirty применяет более
 // новый список с ним. after — что происходит после нового списка, до ответа.
 func displaced(t *testing.T, after func(f *FakeNDMS, s *InterfaceStore)) (*FakeNDMS, *InterfaceStore) {
 	t.Helper()
@@ -406,7 +422,7 @@ func displaced(t *testing.T, after func(f *FakeNDMS, s *InterfaceStore)) (*FakeN
 		for _, h := range f.DrainHooks() {
 			s.OnCreated(h.ID)
 		}
-		if err := s.ReconcilePending(ctx); err != nil {
+		if err := s.ReconcileDirty(ctx); err != nil {
 			t.Error(err)
 		}
 		after(f, s)
@@ -460,7 +476,7 @@ func TestConfirmEach_DisplacedAnswer(t *testing.T) {
 	}
 }
 
-// F575: свой ответ ConfirmAll вытеснен списком ReconcilePending, начатым после
+// F575: свой ответ ConfirmAll вытеснен списком ReconcileDirty, начатым после
 // него, — запись из применённого списка подтверждена.
 func TestConfirmAll_DisplacedAnswer_NewerListConfirms(t *testing.T) {
 	got, f := confirmAllDisplaced(t, func(*FakeNDMS, *InterfaceStore) {})

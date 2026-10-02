@@ -35,16 +35,18 @@ func TestFreeIndex_ForeignNotInCache_Skipped(t *testing.T) {
 	}
 }
 
-// Запись ещё не в списке, но хук слоя по ней уже пришёл (pending) — индекс
-// занят.
-func TestFreeIndex_PendingHook_Skipped(t *testing.T) {
+// S8a: метка ifcreated имя не занимает — запись снята до вызова (устаревший
+// хук), в NDMS её нет: индекс 1 выбран по списку.
+// Мутация: занимать имя по метке ifcreated → 1 пропущен, красный.
+func TestFreeIndex_StaleCreated_Chosen(t *testing.T) {
 	f, s := freeIndexStore(t)
-	f.HideCreated(-1)
-	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard"})
-	s.OnLayerChanged("Wireguard1", "ctrl", "")
+	s.OnCreated("Wireguard1")
 	idx, ok, err := s.FreeIndex(context.Background(), "Wireguard", 100, nil)
-	if err != nil || !ok || idx != 2 {
-		t.Fatalf("idx=%d ok=%v err=%v, want 2", idx, ok, err)
+	if err != nil || !ok || idx != 1 {
+		t.Fatalf("idx=%d ok=%v err=%v, want 1", idx, ok, err)
+	}
+	if f.E != 0 {
+		t.Fatalf("E=%d", f.E)
 	}
 }
 

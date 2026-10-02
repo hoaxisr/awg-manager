@@ -101,9 +101,6 @@ func TestDelete_InterfaceGone_LocalOnly(t *testing.T) {
 	if !poster.has(`"ping-check":{"profile":{"awgm-awg0":{"no":true}}}`) {
 		t.Fatalf("orphan ping-check profile must still be removed: %v", poster.list())
 	}
-	if o.queries.Interfaces.HasPending() {
-		t.Fatal("no pending after delete")
-	}
 }
 
 // Список не прочитался: локальные шаги (слот, страж) сделаны, NDMS-часть — нет,

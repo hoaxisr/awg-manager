@@ -51,30 +51,30 @@ func TestDispatcher_IfCreated_OneListNoPointRead(t *testing.T) {
 	}
 }
 
-// IfDestroyed must be a pure in-memory delete — no HTTP, no list refetch.
-func TestDispatcher_IfDestroyed_NoHTTP(t *testing.T) {
+// IfDestroyed известного id карту не меняет — ставит «грязно» (П6′): пачка
+// кончается ОДНИМ списком, запись уходит по нему; точечных чтений нет.
+func TestDispatcher_IfDestroyed_KnownID_OneListThenAbsent(t *testing.T) {
 	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
+	done := drainBarrier(d)
 	d.Start()
 	defer d.Stop()
 
 	_, _ = q.Interfaces.List(context.Background())
 	primeList := fg.Calls(ifaceListPath)
+	fg.SetJSON(ifaceListPath, `{}`)
 
 	d.Enqueue(Event{Type: EventIfDestroyed, ID: "Wireguard0"})
+	waitDrain(t, done)
 
-	// Wait for the entry to disappear from cache (via OnDestroyed).
-	waitFor(t, 200*time.Millisecond, func() bool {
-		got, _ := q.Interfaces.Get(context.Background(), "Wireguard0")
-		return got == nil
-	})
-
-	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard0"); got != nil {
-		t.Errorf("Wireguard0 must be removed from cache, got %#v", got)
+	if got := fg.Calls(ifaceListPath); got != primeList+1 {
+		t.Errorf("want exactly one list after IfDestroyed, before=%d after=%d", primeList, got)
 	}
-	// No HTTP for the destroy path on InterfaceStore.
-	if got := fg.Calls(ifaceListPath); got != primeList {
-		t.Errorf("list must NOT be re-fetched on IfDestroyed, before=%d after=%d", primeList, got)
+	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard0"); got != nil {
+		t.Errorf("Wireguard0 must be gone after the list, got %#v", got)
+	}
+	if got := fg.Calls("/show/interface/Wireguard0"); got != 0 {
+		t.Errorf("IfDestroyed must not probe, got %d calls", got)
 	}
 }
 
@@ -196,14 +196,11 @@ func TestDispatcher_Stop_WithoutStart_ReturnsImmediately(t *testing.T) {
 
 const samplePeers = `{"wireguard":{"peer":[{"public-key":"KEY","online":true}]}}`
 
-// Пакет применяется В ПОРЯДКЕ ПРИХОДА — то самое, что обещает докстрока
-// Dispatcher («ifcreated → conf=running → link=running»). Все прежние тесты
-// слали ОДНО событие, поэтому итерация пакета задом наперёд проходила
-// зелёной. Здесь пара «создан → снесён» приходит одним пакетом: события
-// кладутся в очередь ДО Start, поэтому воркер разгребает их одним проходом.
-// В обратном порядке создание пришлось бы на конец пакета, id остался бы
-// ждать списка, и пакет стоил бы лишнего чтения списка.
-func TestDispatcher_BatchAppliesInArrivalOrder(t *testing.T) {
+// Пара «создан → снесён» незнакомого id одним пакетом (события кладутся в
+// очередь ДО Start — один проход): ifcreated расходится с картой — пачка стоит
+// ОДИН список (дизайн §5), записи по нему нет. Порядок пачки здесь не
+// наблюдаем: хуки существования карту не меняют, обратный порядок даёт то же.
+func TestDispatcher_BatchUnknownCreatedDestroyed_OneList(t *testing.T) {
 	q, fg := primedQueries(t)
 	d := NewDispatcher(q, NopLogger())
 	drained := drainBarrier(d)
@@ -221,8 +218,8 @@ func TestDispatcher_BatchAppliesInArrivalOrder(t *testing.T) {
 	// разобран» сюда не доходит.
 	waitDrain(t, drained)
 
-	if got := fg.Calls(ifaceListPath); got != primeList || q.Interfaces.HasPending() {
-		t.Fatalf("пакет применён не по порядку: списков +%d, pending=%v", got-primeList, q.Interfaces.HasPending())
+	if got := fg.Calls(ifaceListPath); got != primeList+1 {
+		t.Fatalf("пачка created→destroyed: списков +%d, want 1", got-primeList)
 	}
 	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard1"); got != nil {
 		t.Errorf("после пары «создан → снесён» записи быть не должно, получили %#v", got)

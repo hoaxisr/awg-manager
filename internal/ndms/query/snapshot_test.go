@@ -171,7 +171,8 @@ func TestSnapshot_JoinOnlyFlightsAfterDirty(t *testing.T) {
 	}
 }
 
-func TestSnapshot_RawFollowsTouchedRule(t *testing.T) {
+// П1: запись и сырой JSON — из списка, layer-хук в полёте их не перекрывает.
+func TestSnapshot_RawFollowsList(t *testing.T) {
 	ctx := context.Background()
 	f := snapshotFake()
 	s := NewInterfaceStore(f, NopLogger())
@@ -185,11 +186,11 @@ func TestSnapshot_RawFollowsTouchedRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec, ok := snap.Record("Wireguard0"); !ok || rec.ConfLayer != "disabled" {
-		t.Fatalf("Record(Wireguard0) = %+v, %v: хук новее списка", rec, ok)
+	if rec, ok := snap.Record("Wireguard0"); !ok || rec.ConfLayer != "running" {
+		t.Fatalf("Record(Wireguard0) = %+v, %v: want conf из списка", rec, ok)
 	}
-	if raw, _ := snap.Raw("Wireguard0"); !strings.Contains(string(raw), `"rxbytes":1`) {
-		t.Fatalf("Raw(Wireguard0) затёрт ответом, начатым до хука: %s", raw)
+	if raw, _ := snap.Raw("Wireguard0"); !strings.Contains(string(raw), `"rxbytes":2`) {
+		t.Fatalf("Raw(Wireguard0) не обновлён списком: %s", raw)
 	}
 	if raw, _ := snap.Raw("Wireguard1"); !strings.Contains(string(raw), `"rxbytes":2`) {
 		t.Fatalf("Raw(Wireguard1) не обновлён: %s", raw)

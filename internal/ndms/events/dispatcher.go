@@ -19,10 +19,10 @@ type RoutingChangedListener = func()
 //
 // For InterfaceStore — event-sourced: each event is applied directly
 // (OnCreated / OnDestroyed / OnLayerChanged / OnIPChanged) and the
-// store mutates its internal map in place, without HTTP. Ids created
-// by a hook and unknown to the map are fetched after the batch with ONE
-// full list (ReconcilePending); a created→destroyed pair within one
-// batch costs nothing. No point reads by name (F546).
+// store mutates its internal map in place, without HTTP. A hook of
+// existence that disagrees with the map marks it dirty; after the batch
+// ONE full list reconciles it (ReconcileDirty). No point reads by name
+// (F546).
 //
 // For all other stores (Peers, Routes, RunningConfig, WGServers, ...)
 // the legacy invalidate-on-event pattern is preserved — those stores
@@ -161,13 +161,12 @@ func (d *Dispatcher) drain() {
 	if overflow {
 		d.refreshAfterOverflow()
 	}
-	// Созданные хуком id, которых нет в карте, добираются ОДНИМ списком на
-	// пачку: пара created→destroyed одного id к этому моменту уже схлопнулась
-	// и не стоит ни одного запроса.
+	// Хуки существования, разошедшиеся с картой, сверяются ОДНИМ списком на
+	// пачку; хуки, совпавшие с картой, не стоят ни одного запроса.
 	if d.queries != nil && d.queries.Interfaces != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		if err := d.queries.Interfaces.ReconcilePending(ctx); err != nil {
-			d.log.Warnf("reconcile pending interfaces: %v", err)
+		if err := d.queries.Interfaces.ReconcileDirty(ctx); err != nil {
+			d.log.Warnf("reconcile dirty interfaces: %v", err)
 		}
 		cancel()
 	}
@@ -213,8 +212,8 @@ func (d *Dispatcher) refreshAfterOverflow() {
 
 // apply dispatches a single event to the appropriate store mutator(s).
 //
-// Interfaces — direct event-sourced patch, no HTTP (unknown created ids
-// wait for ReconcilePending in drain).
+// Interfaces — direct event-sourced patch, no HTTP (a dirty map waits
+// for ReconcileDirty in drain).
 //
 // Other stores — legacy InvalidateAll/Invalidate; their state will
 // be re-fetched on the next read. Will be migrated to event-sourcing
@@ -226,8 +225,8 @@ func (d *Dispatcher) apply(e Event) {
 
 	// === Event-sourced InterfaceStore path ===
 	if d.queries.Interfaces != nil {
-		// Имя ядра приходит в хуке — до разбора типа: ifdestroyed того же
-		// id следом его снимет (F570).
+		// Имя ядра приходит в хуке — до разбора типа; снимает его список без
+		// этого id (F570).
 		if e.SystemName != "" {
 			d.queries.Interfaces.OnSystemName(e.ID, e.SystemName)
 		}

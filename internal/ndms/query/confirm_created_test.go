@@ -63,6 +63,38 @@ func TestConfirmCreated_OwnCreatedInFlight_AbsentAnswer_RereadImmediately(t *tes
 	}
 }
 
+// M6′: свой ifcreated пришёл, пока первый список ConfirmCreated в полёте, а имени
+// в карте ещё нет — имя в creating, «грязно» не ставится: подтверждено первым
+// списком, и ReconcileDirty диспетчера списка не читает.
+// Мутация: убрать creating-гард в OnCreated → ReconcileDirty +1, красный.
+func TestConfirmCreated_OwnCreatedInFirstList_NoDispatcherList(t *testing.T) {
+	f, s := importLate(t, 0)
+	f.InList(func() {
+		f.InList(nil)
+		s.OnCreated("Wireguard1")
+	})
+	ctx := context.Background()
+	lists := f.ListCalls()
+	if c, err := s.ConfirmCreated(ctx, "Wireguard1", true); err != nil || c.Name() != "Wireguard1" {
+		t.Fatalf("c=%v err=%v", c, err)
+	}
+	if got := f.ListCalls() - lists; got != 1 {
+		t.Fatalf("ConfirmCreated: %d списков, want 1", got)
+	}
+	if err := s.ReconcileDirty(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.RLock()
+	dirty := s.dirtyAt
+	s.mu.RUnlock()
+	if got := f.ListCalls() - lists; got != 1 || dirty != 0 {
+		t.Fatalf("после ReconcileDirty: %d списков, dirtyAt=%d; want 1, 0", got, dirty)
+	}
+	if f.E != 0 || f.Phantoms != 0 {
+		t.Fatalf("E=%d Phantoms=%d", f.E, f.Phantoms)
+	}
+}
+
 // S11: записи нет за все попытки — ровно 1+len(backoff) списков; ошибку решает
 // доказательство создания: created → ErrNotListed (снос разрешён), нет →
 // ErrNotSeen (без сноса). Мутация: поменять местами → красный.

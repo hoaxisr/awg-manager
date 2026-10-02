@@ -553,9 +553,9 @@ func TestInterfaceStore_SnapshotLive_MissedByCacheFoundInList(t *testing.T) {
 
 // === Hook-side write API: OnCreated / OnDestroyed / OnLayerChanged / OnIPChanged ===
 
-// Неизвестный id ждёт списка пачки (ReconcilePending): ни точечного чтения,
-// ни заглушки без Type.
-func TestInterfaceStore_OnCreated_UnknownGoesPending(t *testing.T) {
+// Неизвестный id — метка «грязно», список пачки (ReconcileDirty) решает: ни
+// точечного чтения, ни заглушки без Type.
+func TestInterfaceStore_OnCreated_UnknownMarksDirty(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleIfaceList)
 	s := NewInterfaceStore(fg, NopLogger())
@@ -563,30 +563,44 @@ func TestInterfaceStore_OnCreated_UnknownGoesPending(t *testing.T) {
 	_, _ = s.List(context.Background())
 	s.OnCreated("Wireguard5")
 
-	if !s.HasPending() {
-		t.Error("OnCreated unknown id: want pending")
+	s.mu.RLock()
+	dirty := s.dirtyAt
+	s.mu.RUnlock()
+	if dirty == 0 {
+		t.Error("OnCreated unknown id: want dirty")
 	}
 	if got, _ := s.Get(context.Background(), "Wireguard5"); got != nil {
 		t.Errorf("OnCreated must not insert a stub, got %#v", got)
 	}
 }
 
-func TestInterfaceStore_OnDestroyed_NoHTTP(t *testing.T) {
+// ifdestroyed известного id карту не меняет — ставит «грязно»; следующий Get
+// читает ОДИН список, и запись уходит по нему.
+func TestOnDestroyed_KnownID_MarksDirty_NextGetListsOnce(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleIfaceList)
 	s := NewInterfaceStore(fg, NopLogger())
 
 	_, _ = s.List(context.Background())
 	bootCalls := fg.Calls(ifaceListPath)
+	fg.SetJSON(ifaceListPath, `{"Bridge0":{"id":"Bridge0","type":"Bridge"}}`)
 
 	s.OnDestroyed("Wireguard0")
 
-	if got, _ := s.Get(context.Background(), "Wireguard0"); got != nil {
-		t.Errorf("OnDestroyed: want removed, got %#v", got)
+	s.mu.RLock()
+	_, inMap := s.byID["Wireguard0"]
+	s.mu.RUnlock()
+	if !inMap {
+		t.Fatal("OnDestroyed изменил карту до списка")
 	}
-	// No HTTP — pure delete.
 	if calls := fg.Calls(ifaceListPath); calls != bootCalls {
-		t.Errorf("OnDestroyed must not HTTP, list calls before=%d after=%d", bootCalls, calls)
+		t.Fatalf("OnDestroyed must not HTTP, list calls before=%d after=%d", bootCalls, calls)
+	}
+	if got, _ := s.Get(context.Background(), "Wireguard0"); got != nil {
+		t.Errorf("после списка запись осталась: %#v", got)
+	}
+	if calls := fg.Calls(ifaceListPath) - bootCalls; calls != 1 {
+		t.Errorf("Get после ifdestroyed: %d списков, want 1", calls)
 	}
 	if calls := fg.Calls("/show/interface/Wireguard0"); calls != 0 {
 		t.Errorf("OnDestroyed must not probe, got %d calls", calls)
@@ -1040,8 +1054,9 @@ func TestInterfaceStore_ResolveSystemName_MemoSurvivesInvalidateAll(t *testing.T
 	}
 }
 
-// Удалённый интерфейс забывает имя: пересозданный под тем же id спрашивается заново.
-func TestInterfaceStore_ResolveSystemName_OnDestroyedForgetsMemo(t *testing.T) {
+// Удалённый интерфейс забывает имя со списком без него: пересозданный под тем
+// же id спрашивается заново.
+func TestInterfaceStore_ResolveSystemName_ListWithoutIDForgetsMemo(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, `{"UsbQmi0": {"id":"UsbQmi0","type":"UsbQmi","state":"up"}}`)
 	fg.SetPostSystemName("UsbQmi0", `"usb0"`)
@@ -1049,7 +1064,11 @@ func TestInterfaceStore_ResolveSystemName_OnDestroyedForgetsMemo(t *testing.T) {
 
 	ctx := context.Background()
 	_ = s.ResolveSystemName(ctx, "UsbQmi0")
+	fg.SetJSON(ifaceListPath, `{}`)
 	s.OnDestroyed("UsbQmi0")
+	if err := s.ReconcileDirty(ctx); err != nil {
+		t.Fatalf("ReconcileDirty: %v", err)
+	}
 	// Удалённого нет в кэше: имя не отдаётся и резолвер не спрашивается
 	// (запрос по отсутствующему — E в журнале NDMS, F546).
 	if got := s.ResolveSystemName(ctx, "UsbQmi0"); got != "" {
@@ -1059,9 +1078,10 @@ func TestInterfaceStore_ResolveSystemName_OnDestroyedForgetsMemo(t *testing.T) {
 		t.Fatalf("резолвер спрошен %d раз после удаления, ждали 1 (до удаления)", got)
 	}
 	// Пересоздан — резолвер спрашивается заново, а не отдаёт старый memo.
+	fg.SetJSON(ifaceListPath, `{"UsbQmi0": {"id":"UsbQmi0","type":"UsbQmi","state":"up"}}`)
 	s.OnCreated("UsbQmi0")
-	if err := s.ReconcilePending(ctx); err != nil {
-		t.Fatalf("ReconcilePending: %v", err)
+	if err := s.ReconcileDirty(ctx); err != nil {
+		t.Fatalf("ReconcileDirty: %v", err)
 	}
 	_ = s.ResolveSystemName(ctx, "UsbQmi0")
 	if got := fg.PostSystemNameCalls("UsbQmi0"); got != 2 {

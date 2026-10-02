@@ -18,13 +18,13 @@
 //
 //   - Hook-side (called from events.Dispatcher): OnCreated /
 //     OnDestroyed / OnLayerChanged / OnIPChanged. Pure in-memory
-//     mutators, no HTTP. OnCreated, OnLayerChanged and OnIPChanged only
-//     mark an unknown id as pending (on creation NDMS sends
-//     iflayerchanged ctrl ×2 before ifcreated, stand 5.01.C.6);
-//     after each hook batch the dispatcher calls ReconcilePending, which
-//     reads ONE full list if anything is pending. No point reads by name
-//     from hooks: by the time the hook is applied the name may already be
-//     gone, and NDMS logs E `unable to find` for it (F546).
+//     mutators, no HTTP. Хуки существования карту не меняют: ставят метку
+//     существования и «грязно», только если хук расходится с картой;
+//     после пачки хуков диспетчер зовёт ReconcileDirty — ОДИН полный
+//     список, если грязно. Layer/ip-хуки правят поля известного id,
+//     неизвестный игнорируют. No point reads by name from hooks: by the
+//     time the hook is applied the name may already be gone, and NDMS
+//     logs E `unable to find` for it (F546).
 //
 //   - Command-side (called from internal/ndms/command/* and a few
 //     admin handlers after a successful POST to NDMS): Invalidate(name)
@@ -34,9 +34,8 @@
 // Snapshot — записи и сырой JSON записей полного списка с возрастом:
 // читатели состояния и счётчиков берут его вместо чтения по имени (F546).
 //
-// Every hook bumps seq and stamps the id in touched; a list answer never
-// overwrites an id touched after its request started — the hook is newer
-// than the answer. Чтений по имени (`show interface name=X`,
+// Список — истина для карты: применённый ответ кладёт все свои записи и
+// удаляет всё, чего в нём нет (applyListLocked). Чтений по имени (`show interface name=X`,
 // `/show/rc/interface/X`) в пакете нет (F546, TestByNameReads_Absent).
 package query
 
@@ -122,29 +121,20 @@ type InterfaceStore struct {
 	// ответа RCI, а `interface-name` там не имя ядра (5.02.A.11: NDMS-id
 	// или подпись, `Bridge0` → `Home`). Жило бы в записи — терялось бы при
 	// каждом сбросе, и следующий список снова спрашивал бы все ~20
-	// интерфейсов (F473). Снимается на ifdestroyed и списком без этого id.
+	// интерфейсов (F473). Снимается Forget и списком без этого id.
 	sysNames map[string]string
 
-	// seq растёт на каждом хуке; touched — seq последнего хука по id.
-	// Ответ списка или точечного чтения не затирает id, тронутый хуком после
-	// начала запроса: хук новее ответа. Всё читается и пишется под mu.
-	seq     uint64
-	touched map[string]uint64
+	// seq — единые часы меток существования и «грязно»; под mu.
+	seq uint64
 	// exist — метка существования по id: последний хук ifcreated/ifdestroyed,
 	// наш Forget или вход ConfirmCreated. В решении не участвует — только
 	// говорит, что ответ списка, начатого раньше метки, надо перечитать
-	// (contradictsLocked).
-	exist   map[string]existMark
-	pending map[string]struct{}
-	// tombs — надгробия снятых id (Forget/ifdestroyed): номер последнего
-	// начатого на момент сноса списка (flights). Поздний layer/ip-хук по такому
-	// id в pending не кладётся — иначе старый ответ списка подтвердил бы снятое
-	// (R42, F590). Снимают ifcreated и применённый список, начатый после
-	// надгробия и содержащий id; не больше maxTombs, вытесняется старейшее.
-	tombs map[string]uint64
+	// (contradictsLocked), и держит страж воскрешения (applyListLocked).
+	// Метки не новее начала применённого списка снимаются при его применении.
+	exist map[string]existMark
 
 	// raw — запись полного списка как есть (пиры, ключи, счётчики), по id;
-	// правило то же, что у byID: хук новее ответа — ответ её не затирает.
+	// правило то же, что у byID.
 	raw map[string]json.RawMessage
 	// listedAt — когда применён последний успешный список.
 	listedAt time.Time
@@ -196,10 +186,7 @@ func NewInterfaceStore(g Getter, log Logger) *InterfaceStore {
 		byID:      make(map[string]*ndms.Interface),
 		startedAt: make(map[string]time.Time),
 		sysNames:  make(map[string]string),
-		touched:   make(map[string]uint64),
 		exist:     make(map[string]existMark),
-		pending:   make(map[string]struct{}),
-		tombs:     make(map[string]uint64),
 		raw:       make(map[string]json.RawMessage),
 		creating:  make(map[string]struct{}),
 
@@ -246,17 +233,14 @@ func (s *InterfaceStore) ensureBootstrap(ctx context.Context) error {
 	return nil
 }
 
-// refreshAll читает полный список и кладёт его поверх карты через
-// applyListLocked. start снимается ДО запроса: хуки, пришедшие, пока
-// список в полёте, получают seq > start и ответом не затираются.
+// refreshAll читает полный список и кладёт его в карту (applyListLocked).
 func (s *InterfaceStore) refreshAll(ctx context.Context) error {
 	_, err := s.refreshList(ctx, nil)
 	return err
 }
 
-// refreshList — refreshAll, возвращающий сам ответ NDMS: для подтверждения
-// (Confirm) важен он, а не карта — seq-гард держит в pending имя, чей
-// хук пришёл, пока список в полёте, хотя в ответе оно есть.
+// refreshList — refreshAll, возвращающий сам ответ NDMS: подтверждение
+// (Confirm) решает по ответу, а не по карте.
 //
 // fl == nil — свой запрос без присоединения (семантика Confirm: «список начат
 // после моего вызова»); fl — полёт, уже зарегистрированный Snapshot. Любой
@@ -283,12 +267,20 @@ func (s *InterfaceStore) refreshList(ctx context.Context, fl *listFlight) (*list
 		if fl.no >= appliedNo {
 			s.applied = &listAnswer{recs: recs, start: fl.start, no: fl.no}
 			s.applyListLocked(recs, raw, fl.start)
-			s.liftTombsLocked(recs, fl.no)
+			// Метки не новее начала применённого списка больше не читаются:
+			// решает самый новый применённый список (srcLocked, П12), он начат
+			// не раньше этого, а противоречие и страж воскрешения смотрят
+			// только на метки новее своего начала.
+			for id, m := range s.exist {
+				if m.seq <= fl.start {
+					delete(s.exist, id)
+				}
+			}
 			if s.dirtyAt <= fl.start {
 				s.dirtyAt = 0
 			}
 			s.listedAt = time.Now()
-			todo = s.unnamedLocked(recs)
+			todo = s.unnamedLocked(recs, fl.start)
 		}
 		s.mu.Unlock()
 		s.booted.Store(true)
@@ -325,35 +317,8 @@ func (s *InterfaceStore) appliedRecsLocked() map[string]ndms.Interface {
 	return s.applied.recs
 }
 
-// maxTombs — потолок надгробий: снятых id на роутере единицы-десятки.
-const maxTombs = 256
-
-// liftTombsLocked снимает надгробия id, которые есть в применённом ответе
-// полёта no, начатого после сноса: запись создана заново.
-func (s *InterfaceStore) liftTombsLocked(recs map[string]ndms.Interface, no uint64) {
-	for id, at := range s.tombs {
-		if _, ok := recs[id]; ok && no > at {
-			delete(s.tombs, id)
-		}
-	}
-}
-
-// tombLocked ставит надгробие id; при переполнении вытесняет старейшее.
-func (s *InterfaceStore) tombLocked(id string) {
-	if _, ok := s.tombs[id]; !ok && len(s.tombs) >= maxTombs {
-		oldest, at := "", uint64(0)
-		for t, n := range s.tombs {
-			if oldest == "" || n < at {
-				oldest, at = t, n
-			}
-		}
-		delete(s.tombs, oldest)
-	}
-	s.tombs[id] = s.flights
-}
-
-// beginFlightLocked регистрирует новый полёт; start — seq ДО запроса: хуки,
-// пришедшие, пока список в полёте, получают seq > start и ответом не затираются.
+// beginFlightLocked регистрирует новый полёт; start — seq ДО запроса: метки,
+// поставленные, пока список в полёте, получают seq > start.
 func (s *InterfaceStore) beginFlightLocked() *listFlight {
 	s.flights++
 	fl := &listFlight{no: s.flights, start: s.seq, done: make(chan struct{})}
@@ -364,12 +329,14 @@ func (s *InterfaceStore) beginFlightLocked() *listFlight {
 // unnamedLocked — id свежего ответа, имени ядра которых не знает никто:
 // класс не из таблицы ndms.KernelName, ни хук, ни прежний резолвер его не
 // назвали, `interface-name` списка не годится. Порты коммутатора не
-// спрашиваются: у них нет своего устройства ядра (см. ListAll). Снятые хуком,
-// пока список был в полёте, — тоже: спросить их значит получить E.
-func (s *InterfaceStore) unnamedLocked(raw map[string]ndms.Interface) []string {
+// спрашиваются: у них нет своего устройства ядра (см. ListAll). Снятые
+// (метка gone новее начала списка start), пока список был в полёте, — тоже:
+// спросить их значит получить E (П6; по устаревшему хуку имя лишь
+// откладывается до следующего списка).
+func (s *InterfaceStore) unnamedLocked(raw map[string]ndms.Interface, start uint64) []string {
 	var todo []string
 	for id, rec := range raw {
-		if rec.Type == "Port" {
+		if rec.Type == "Port" || s.goneSinceLocked(id, start) {
 			continue
 		}
 		if _, ok := ndms.KernelName(id); ok {
@@ -388,20 +355,17 @@ func (s *InterfaceStore) unnamedLocked(raw map[string]ndms.Interface) []string {
 	return todo
 }
 
-// applyListLocked кладёт свежий список поверх карты, не затирая id, тронутые
-// хуками после начала запроса (start): хук новее списка. Отсутствующие в
-// списке и не тронутые — удаляются. pending чистится по тому же правилу.
+// applyListLocked кладёт свежий список в карту (П1): каждая запись — целиком,
+// всё, чего в списке нет, удаляется. Исключение одно — страж воскрешения: id,
+// которого нет в карте и который снят меткой новее начала списка start, не
+// кладётся. Срабатывает по нашему `no interface` (Forget, цель) и по
+// устаревшему ifdestroyed чужого X, которого карта ещё не знает: тогда X не в
+// карте до следующего ifcreated/списка; команды решают по ответу, не по карте.
+// Известный id страж не трогает: хук — подсказка, карта — по списку.
 func (s *InterfaceStore) applyListLocked(raw map[string]ndms.Interface, wire map[string]json.RawMessage, start uint64) {
 	now := time.Now()
 	for id, rec := range raw {
-		if s.touched[id] > start {
-			// Хук новее списка — но только в своих полях. Прочие (описание,
-			// маска, MTU, security-level…) хуки не несут никогда: берём из
-			// списка, иначе переименование, совпавшее с хуком слоя, оставило
-			// бы в карте старое описание (гейт владения OpkgTun, F517).
-			if cur, ok := s.byID[id]; ok {
-				*cur = mergeHookOwned(rec, cur)
-			}
+		if _, known := s.byID[id]; !known && s.goneSinceLocked(id, start) {
 			continue
 		}
 		cp := rec
@@ -420,41 +384,26 @@ func (s *InterfaceStore) applyListLocked(raw map[string]ndms.Interface, wire map
 		}
 	}
 	for id := range s.byID {
-		if _, ok := raw[id]; ok || s.touched[id] > start {
+		if _, ok := raw[id]; ok {
 			continue
 		}
 		delete(s.byID, id)
 		delete(s.startedAt, id)
 		delete(s.raw, id)
 	}
-	// Имена — и тех id, что в карту так и не попали (имя пришло хуком).
+	// Имена — и тех id, что в карту так и не попали (имя пришло хуком);
+	// имя id с меткой новее списка ждёт следующего.
 	for id := range s.sysNames {
-		if _, ok := raw[id]; !ok && s.touched[id] <= start {
+		if _, ok := raw[id]; !ok && s.exist[id].seq <= start {
 			delete(s.sysNames, id)
 		}
 	}
-	for id := range s.pending {
-		if s.touched[id] <= start {
-			delete(s.pending, id) // в списке — уже положен выше; нет — хук был ложным/поздним, не ждём
-		}
-	}
 }
 
-// mergeHookOwned — запись списка list с полями, которыми владеют хуки, из cur:
-// OnLayerChanged (ConfLayer, Link, State, IPv4) и OnIPChanged (Address).
-func mergeHookOwned(list ndms.Interface, cur *ndms.Interface) ndms.Interface {
-	list.ConfLayer = cur.ConfLayer
-	list.Link = cur.Link
-	list.State = cur.State
-	list.IPv4 = cur.IPv4
-	list.Address = cur.Address
-	return list
-}
-
-// markTouchedLocked отмечает id как тронутый хуком сейчас.
-func (s *InterfaceStore) markTouchedLocked(id string) {
-	s.seq++
-	s.touched[id] = s.seq
+// goneSinceLocked — id снят меткой существования новее start.
+func (s *InterfaceStore) goneSinceLocked(id string, start uint64) bool {
+	m, ok := s.exist[id]
+	return ok && m.gone && m.seq > start
 }
 
 // existMark — seq метки существования и её знак (gone — снят).
@@ -1102,48 +1051,48 @@ func preferCandidate(c ndms.AllInterface, id string, win ndms.AllInterface, winI
 
 // === Hook-side write API (called from events.Dispatcher) ===
 
-// OnCreated — хук ifcreated. Никаких чтений: известный id — уже в карте;
-// неизвестный ждёт ReconcilePending, который после пачки хуков читает ОДИН
-// полный список. Точечное чтение здесь давало E «unable to find» на паре
-// created→destroyed одного id (F546) и заглушки без Type на любой сбой.
+// OnCreated — хук ifcreated: метка существования; карта не меняется (хук —
+// подсказка, карту ведёт список). «Грязно» — только если хук расходится с
+// картой (П6′): id в карте нет и его не ждёт ConfirmCreated (creating, M6′ —
+// свой ifcreated в полёте первого списка подтверждения его списки и покажут).
+// Тогда ReconcileDirty после пачки читает ОДИН список. Точечное чтение здесь
+// давало E «unable to find» на паре created→destroyed одного id (F546).
 func (s *InterfaceStore) OnCreated(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.markTouchedLocked(id)
 	s.markExistLocked(id, false)
-	delete(s.tombs, id) // создан заново
-	if _, known := s.byID[id]; known {
-		return
+	_, known := s.byID[id]
+	_, own := s.creating[id]
+	if !known && !own {
+		s.dirtyAt = s.seq
 	}
-	s.pending[id] = struct{}{}
 }
 
-// Forget — запись снята (ifdestroyed или наш успешный `no interface`).
+// OnDestroyed — хук ifdestroyed: метка существования; карта не меняется —
+// хук бывает устаревшим (переиспользованное имя), снять запись вправе только
+// список. «Грязно» — только если id в карте (П6′): хук по уже забытому id
+// ничего не стоит.
+func (s *InterfaceStore) OnDestroyed(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.markExistLocked(id, true)
+	if _, known := s.byID[id]; known {
+		s.dirtyAt = s.seq
+	}
+}
+
+// Forget — запись снята нашей командой: зовётся ТОЛЬКО после своего успешного
+// `no interface` (или «unable to find» на него), никогда по хуку. Метка
+// существования + удаление из карты, без «грязно»: список, начатый до метки,
+// запись не воскресит (страж в applyListLocked).
 func (s *InterfaceStore) Forget(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.markTouchedLocked(id)
 	s.markExistLocked(id, true)
 	delete(s.byID, id)
 	delete(s.startedAt, id)
 	delete(s.sysNames, id)
-	delete(s.pending, id)
 	delete(s.raw, id)
-	s.tombLocked(id)
-}
-
-// lateHookLocked — layer/ip-хук по снятому id (надгробие, записи в карте
-// нет): опоздал за ifdestroyed/Forget — ни pending, ни метки touched (R42).
-// Хуки создания по id без надгробия идут прежним путём.
-func (s *InterfaceStore) lateHookLocked(id string) bool {
-	if _, ok := s.tombs[id]; !ok {
-		return false
-	}
-	if _, known := s.byID[id]; known {
-		return false
-	}
-	s.log.Debugf("hook for removed %s ignored", id)
-	return true
 }
 
 // OnSystemName — имя ядра из хука NDMS (`system_name` есть в хуках, стенд
@@ -1161,23 +1110,16 @@ func (s *InterfaceStore) OnSystemName(id, name string) {
 	s.sysNames[id] = name
 }
 
-// OnDestroyed — хук ifdestroyed; то же, что Forget.
-func (s *InterfaceStore) OnDestroyed(id string) { s.Forget(id) }
-
-// HasPending — есть id из хуков, которых ещё нет в карте.
-func (s *InterfaceStore) HasPending() bool {
+// ReconcileDirty — после пачки хуков: грязно — один список (или
+// присоединение к полёту, начатому не раньше метки), иначе ничего.
+func (s *InterfaceStore) ReconcileDirty(ctx context.Context) error {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.pending) > 0
-}
-
-// ReconcilePending — один полный список на пачку хуков, только если есть
-// неизвестные id из хуков.
-func (s *InterfaceStore) ReconcilePending(ctx context.Context) error {
-	if !s.HasPending() {
+	dirty := s.dirtyAt != 0
+	s.mu.RUnlock()
+	if !dirty {
 		return nil
 	}
-	return s.refreshAll(ctx)
+	return s.freshen(ctx, SnapshotRecent)
 }
 
 // OnLayerChanged handles iflayerchanged NDMS events. Patches the
@@ -1198,25 +1140,14 @@ func (s *InterfaceStore) ReconcilePending(ctx context.Context) error {
 //     also gates startedAt (the uptime clock).
 //   - IPv4 layer events store the level as-is into the IPv4 field (it
 //     is layer-state, not up/down). IPv6 events produce no updates.
+//
+// Неизвестный id игнорируется: запись в карту кладёт только список (на
+// создание NDMS шлёт iflayerchanged ctrl ×2 раньше ifcreated — его и ждём).
 func (s *InterfaceStore) OnLayerChanged(id, layer, level string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.lateHookLocked(id) {
-		return
-	}
-	// Даже для незнакомого id: список в полёте не должен положить запись
-	// старее хука — применится со следующим списком.
-	s.markTouchedLocked(id)
 	iface, ok := s.byID[id]
 	if !ok {
-		// Незнакомый id — запись есть, карта её не знает: на создание NDMS
-		// шлёт iflayerchanged ctrl ×2 раньше ifcreated (~1 с, стенд
-		// 5.01.C.6). В pending, как в OnCreated: ReconcilePending положит её
-		// одним списком, Confirm подтвердит по ответу. Без этого хук,
-		// пришедший, пока список Confirm в полёте, прятал запись: список её
-		// не кладёт (хук новее), pending пуст — «записи нет», интерфейс
-		// осиротел.
-		s.pending[id] = struct{}{}
 		return
 	}
 	switch layer {
@@ -1251,14 +1182,9 @@ func (s *InterfaceStore) OnLayerChanged(id, layer, level string) {
 func (s *InterfaceStore) OnIPChanged(id, address string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.lateHookLocked(id) {
-		return
-	}
-	s.markTouchedLocked(id)
 	iface, ok := s.byID[id]
 	if !ok {
-		s.pending[id] = struct{}{} // как в OnLayerChanged
-		return
+		return // как в OnLayerChanged
 	}
 	if address != "" {
 		iface.Address = address
@@ -1583,10 +1509,10 @@ func (s *InterfaceStore) ConfirmAll(ctx context.Context) (map[string]Confirmed, 
 }
 
 // FreeIndex — наименьший N в [0, limit), для которого имени prefix+N нет ни в
-// СВОЁМ свежем полном списке, ни в памяти (хуки создания новее списка), ни
-// среди ждущих ConfirmCreated (creating), и N не в reserved (F574). Память одна не
-// решает: под нагрузкой ifcreated опаздывает до ~7 с, и чужой только что
-// созданный WireguardN/ProxyN был бы выбран нами. Метка существования имени
+// СВОЁМ свежем полном списке, ни в карте, ни среди ждущих ConfirmCreated
+// (creating), и N не в reserved (F574). Память одна не решает: под нагрузкой
+// ifcreated опаздывает до ~7 с, и чужой только что созданный WireguardN/ProxyN
+// был бы выбран нами. Метка ifcreated имя не занимает — её решает список. Метка существования имени
 // с prefix новее начала списка противоречит ему — один повторный список, выбор
 // заново по нему (П4). Список не прочитан — ошибка (решение 4). ok=false — все
 // N заняты. Запись, которую NDMS уже знает, но ещё не показал ни списком, ни
@@ -1600,15 +1526,12 @@ func (s *InterfaceStore) FreeIndex(ctx context.Context, prefix string, limit int
 			}
 		}
 	}
-	// Память — до списка и после: хук создания, пришедший до списка, без
-	// записи в нём список из pending выбрасывает, а NDMS запись уже знает.
+	// Память — до списка и после: ConfirmCreated, начавшийся во время
+	// списка, занимает имя, которого в ответе ещё нет.
 	memory := func() {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
 		for n := range s.byID {
-			mark(n)
-		}
-		for n := range s.pending {
 			mark(n)
 		}
 		for n := range s.creating {

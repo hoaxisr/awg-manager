@@ -61,8 +61,8 @@ func TestResolveSystemName_AbsentInterface_NoResolver(t *testing.T) {
 	}
 }
 
-// Свежий список не затирает соседа, обновлённого хуком, пока шёл запрос
-// (seq-гард applyListLocked).
+// Сосед, тронутый layer-хуком, пока шёл запрос, остаётся в карте — с полями
+// из списка (П1).
 func TestInterfaceStore_SnapshotLive_KeepsHookedNeighbour(t *testing.T) {
 	fg := newFakeGetter()
 	fg.SetJSON(ifaceListPath, sampleIfaceList)
@@ -80,8 +80,8 @@ func TestInterfaceStore_SnapshotLive_KeepsHookedNeighbour(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := s.Get(ctx, "Wireguard0")
-	if got == nil || got.ConfLayer != "disabled" {
-		t.Fatalf("сосед затёрт снимком списка: %#v", got)
+	if got == nil || got.ConfLayer != "running" {
+		t.Fatalf("сосед не из списка: %#v", got)
 	}
 }
 

@@ -15,7 +15,9 @@ func oracleQueries(t *testing.T, f *query.FakeNDMS) *query.Queries {
 	return query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 }
 
-func TestDispatcher_CreatedThenDestroyed_NoRCI(t *testing.T) {
+// Пара created→destroyed в одной пачке: ifcreated незнакомого id расходится с
+// картой — один список на пачку (дизайн §5), записи нет, E нет.
+func TestDispatcher_CreatedThenDestroyed_OneList(t *testing.T) {
 	f := query.NewFakeNDMS(ndms.Interface{ID: "Bridge0", Type: "Bridge"})
 	q := oracleQueries(t, f)
 	_, _ = q.Interfaces.List(context.Background()) // bootstrap
@@ -28,11 +30,8 @@ func TestDispatcher_CreatedThenDestroyed_NoRCI(t *testing.T) {
 	d.Start()
 	defer d.Stop()
 	waitDrain(t, done)
-	if q.Interfaces.HasPending() {
-		t.Fatal("pending остался после пачки created→destroyed")
-	}
-	if f.E != 0 || f.ListCalls() != lists {
-		t.Fatalf("E=%d lists=%d (want 0 and %d): created→destroyed must cost nothing", f.E, f.ListCalls(), lists)
+	if f.E != 0 || f.ListCalls() != lists+1 {
+		t.Fatalf("E=%d lists=%d (want 0 and %d): created→destroyed — one list per batch", f.E, f.ListCalls(), lists+1)
 	}
 	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard2"); got != nil {
 		t.Fatalf("stub inserted: %#v", got)
@@ -81,9 +80,9 @@ func TestDispatcher_LateCreatedForKnownID_IsFree(t *testing.T) {
 	d.Start()
 	defer d.Stop()
 	waitDrain(t, done)
-	if f.ListCalls() != lists || len(f.Posts) != posts || q.Interfaces.HasPending() || f.E != 0 {
-		t.Fatalf("known id must cost nothing: lists=%d posts=%d pending=%v E=%d",
-			f.ListCalls()-lists, len(f.Posts)-posts, q.Interfaces.HasPending(), f.E)
+	if f.ListCalls() != lists || len(f.Posts) != posts || f.E != 0 {
+		t.Fatalf("known id must cost nothing: lists=%d posts=%d E=%d",
+			f.ListCalls()-lists, len(f.Posts)-posts, f.E)
 	}
 	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard0"); got == nil || got.Description != "d0" || got.SystemName != "nwg0" {
 		t.Fatalf("known id record changed by ifcreated: %#v", got)
@@ -91,9 +90,9 @@ func TestDispatcher_LateCreatedForKnownID_IsFree(t *testing.T) {
 }
 
 // Стенд 5.01.C.6: ifcreated приходит ~1 с после iflayerchanged ctrl ×2 —
-// в следующей пачке. Пачка из одних layer-хуков по незнакомому id уже
-// добирает запись одним списком.
-func TestDispatcher_LayerBeforeCreated_OneList(t *testing.T) {
+// в следующей пачке. Пачка из одних layer-хуков по незнакомому id списка не
+// стоит; ifcreated следующей пачки — один список, запись по нему.
+func TestDispatcher_LayerBeforeCreated_NoListUntilCreated(t *testing.T) {
 	f := query.NewFakeNDMS(ndms.Interface{ID: "Bridge0", Type: "Bridge"})
 	q := oracleQueries(t, f)
 	_, _ = q.Interfaces.List(context.Background())
@@ -101,7 +100,8 @@ func TestDispatcher_LayerBeforeCreated_OneList(t *testing.T) {
 	f.Add(ndms.Interface{ID: "Wireguard1", Type: "Wireguard", SystemName: "nwg1"})
 	d := NewDispatcher(q, NopLogger())
 	done := drainBarrier(d)
-	for _, h := range f.DrainHooks() {
+	hooks := f.DrainHooks()
+	for _, h := range hooks {
 		if h.Type == "iflayerchanged" {
 			d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID, Layer: h.Layer, Level: h.Level})
 		}
@@ -109,11 +109,23 @@ func TestDispatcher_LayerBeforeCreated_OneList(t *testing.T) {
 	d.Start()
 	defer d.Stop()
 	waitDrain(t, done)
-	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard1"); got == nil || got.SystemName != "nwg1" {
-		t.Fatalf("record from the list expected after layer hooks, got %#v", got)
+	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard1"); got != nil {
+		t.Fatalf("layer-хук незнакомого id положил запись: %#v", got)
 	}
-	if f.ListCalls() != lists+1 || f.E != 0 || q.Interfaces.HasPending() {
-		t.Fatalf("want one list, E=0, no pending: lists=%d E=%d pending=%v", f.ListCalls()-lists, f.E, q.Interfaces.HasPending())
+	if f.ListCalls() != lists || f.E != 0 {
+		t.Fatalf("layer-хуки: lists=%d E=%d, want 0, 0", f.ListCalls()-lists, f.E)
+	}
+	for _, h := range hooks {
+		if h.Type == "ifcreated" {
+			d.Enqueue(Event{Type: EventType(h.Type), ID: h.ID})
+		}
+	}
+	waitDrain(t, done)
+	if got, _ := q.Interfaces.Get(context.Background(), "Wireguard1"); got == nil || got.SystemName != "nwg1" {
+		t.Fatalf("record from the list expected after ifcreated, got %#v", got)
+	}
+	if f.ListCalls() != lists+1 || f.E != 0 {
+		t.Fatalf("want one list, E=0: lists=%d E=%d", f.ListCalls()-lists, f.E)
 	}
 }
 

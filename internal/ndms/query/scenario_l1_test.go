@@ -33,7 +33,7 @@ func TestScenario_ForeignWGRemovedNoHook_PanelReadsNoE(t *testing.T) {
 			q.Interfaces.OnCreated(h.ID)
 		}
 	}
-	if err := q.Interfaces.ReconcilePending(ctx); err != nil {
+	if err := q.Interfaces.ReconcileDirty(ctx); err != nil {
 		t.Fatal(err)
 	}
 

@@ -30,7 +30,7 @@ func TestRefreshList_AnswerCarriesStartAndNo(t *testing.T) {
 	s.mu.RLock()
 	before := s.seq
 	s.mu.RUnlock()
-	s.OnLayerChanged("Wireguard0", "conf", "disabled") // seq++ во время полёта
+	s.OnDestroyed("Wireguard0") // метка существования: seq++ во время полёта
 	close(bg.gate)
 	r := <-got
 	if r.err != nil {
