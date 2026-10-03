@@ -1,4 +1,4 @@
-import { DAY_WORDS, HOUR_WORDS, MINUTE_WORDS, pluralForm } from './pluralize';
+import { m, formatLocale } from '$lib/i18n';
 
 /**
  * Format bytes to human readable string
@@ -25,9 +25,9 @@ export function formatBytes(bytes: number, decimals = 2): string {
 export function formatByteRate(bytesPerSec: number): string {
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    if (bytesPerSec <= 0) return `0.0 ${sizes[0]}/с`;
+    if (bytesPerSec <= 0) return m.format_per_second({ value: `0.0 ${sizes[0]}` });
     const i = Math.min(Math.max(Math.floor(Math.log(bytesPerSec) / Math.log(k)), 0), sizes.length - 1);
-    return `${(bytesPerSec / Math.pow(k, i)).toFixed(1)} ${sizes[i]}/с`;
+    return m.format_per_second({ value: `${(bytesPerSec / Math.pow(k, i)).toFixed(1)} ${sizes[i]}` });
 }
 
 /**
@@ -35,10 +35,15 @@ export function formatByteRate(bytesPerSec: number): string {
  */
 export function formatBitRate(bytesPerSec: number): string {
     const bits = bytesPerSec * 8;
-    if (bits === 0) return '0 бит/с';
+    if (bits === 0) return `0 ${m.format_bitrate_bit()}`;
 
     const k = 1000;
-    const sizes = ['бит/с', 'Кбит/с', 'Мбит/с', 'Гбит/с'];
+    const sizes = [
+        m.format_bitrate_bit(),
+        m.format_bitrate_kbit(),
+        m.format_bitrate_mbit(),
+        m.format_bitrate_gbit(),
+    ];
 
     const i = Math.floor(Math.log(bits) / Math.log(k));
     const idx = Math.min(i, sizes.length - 1);
@@ -50,19 +55,15 @@ export function formatBitRate(bytesPerSec: number): string {
  * Format duration in seconds to human readable string
  */
 export function formatDuration(seconds: number): string {
-    if (seconds < 60) return `${seconds} сек`;
+    if (seconds < 60) return m.format_duration_seconds({ seconds });
     if (seconds < 3600) {
-        const m = Math.floor(seconds / 60);
-        return `${m} мин`;
+        return m.format_duration_minutes({ minutes: Math.floor(seconds / 60) });
     }
     const hours = Math.floor(seconds / 3600);
     if (hours < 24) {
-        const m = Math.floor((seconds % 3600) / 60);
-        return `${hours} ч ${m} мин`;
+        return m.format_duration_hours({ hours, minutes: Math.floor((seconds % 3600) / 60) });
     }
-    const days = Math.floor(hours / 24);
-    const h = hours % 24;
-    return `${days} д ${h} ч`;
+    return m.format_duration_days({ days: Math.floor(hours / 24), hours: hours % 24 });
 }
 
 /**
@@ -79,7 +80,7 @@ export function secondsSince(isoTimestamp: string): number {
  */
 export function formatTime(timestamp: string): string {
     const date = new Date(timestamp);
-    return date.toLocaleTimeString('ru-RU', {
+    return date.toLocaleTimeString(formatLocale(), {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit'
@@ -92,7 +93,7 @@ export function formatTime(timestamp: string): string {
 export function formatDate(timestamp: string): string {
     const date = new Date(timestamp);
     if (isNaN(date.getTime())) return '—';
-    return date.toLocaleDateString('ru-RU', {
+    return date.toLocaleDateString(formatLocale(), {
         day: '2-digit',
         month: '2-digit',
         hour: '2-digit',
@@ -132,7 +133,7 @@ export function formatDateTimeWithOffset(timestamp: string, offsetMinutes?: numb
 }
 
 /**
- * Format relative time in Russian (e.g., "2 минуты назад")
+ * Относительное время на языке интерфейса («2 минуты назад» / "2 minutes ago").
  */
 export function formatRelativeTime(timestamp: string | Date): string {
     const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
@@ -144,20 +145,40 @@ export function formatRelativeTime(timestamp: string | Date): string {
     const diffMs = now.getTime() - date.getTime();
     const diffSec = Math.floor(diffMs / 1000);
 
-    if (diffSec < 0) return 'только что';
-    if (diffSec < 10) return 'только что';
-    if (diffSec < 60) return `${diffSec} сек. назад`;
+    if (diffSec < 10) return m.format_just_now(); // и «будущее» при расхождении часов
+    if (diffSec < 60) return m.format_seconds_ago({ count: diffSec });
 
     const diffMin = Math.floor(diffSec / 60);
-    if (diffMin < 60) {
-        return `${diffMin} ${pluralForm(diffMin, MINUTE_WORDS)} назад`;
-    }
+    if (diffMin < 60) return m.format_minutes_ago({ count: diffMin });
 
     const diffHours = Math.floor(diffSec / 3600);
-    if (diffHours < 24) {
-        return `${diffHours} ${pluralForm(diffHours, HOUR_WORDS)} назад`;
-    }
+    if (diffHours < 24) return m.format_hours_ago({ count: diffHours });
 
-    const diffDays = Math.floor(diffSec / 86400);
-    return `${diffDays} ${pluralForm(diffDays, DAY_WORDS)} назад`;
+    return m.format_days_ago({ count: Math.floor(diffSec / 86400) });
+}
+
+/**
+ * Относительное время по частям: число с единицей и суффикс «назад» отдельно —
+ * для вёрстки, где суффикс мельче или не нужен. Части берутся из отдельных
+ * сообщений, а не вырезаются из готовой фразы: разбор переведённого текста
+ * сломался бы на другом языке или при правке перевода. «Только что» — без
+ * суффикса.
+ */
+export function formatRelativeTimeParts(timestamp: string | Date): { main: string; suffix?: string } {
+    const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
+    if (isNaN(date.getTime())) return { main: '—' };
+
+    const diffSec = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (diffSec < 10) return { main: m.format_just_now() };
+
+    const suffix = m.format_ago_suffix();
+    if (diffSec < 60) return { main: m.format_seconds_count({ count: diffSec }), suffix };
+
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return { main: m.format_minutes_count({ count: diffMin }), suffix };
+
+    const diffHours = Math.floor(diffSec / 3600);
+    if (diffHours < 24) return { main: m.format_hours_count({ count: diffHours }), suffix };
+
+    return { main: m.format_days_count({ count: Math.floor(diffSec / 86400) }), suffix };
 }

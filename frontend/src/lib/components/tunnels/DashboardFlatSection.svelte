@@ -21,10 +21,10 @@
 	import SubscriptionActiveCard from '$lib/components/subscriptions/SubscriptionActiveCard.svelte';
 	import SubscriptionCard from '$lib/components/subscriptions/SubscriptionCard.svelte';
 	import { EmptyState } from '$lib/components/layout';
-	import { pluralForm, TUNNEL_WORDS } from '$lib/utils/pluralize';
 	import { GripVertical, Download } from 'lucide-svelte';
 	import type { TunnelDashboardFlatItem } from '$lib/utils/tunnelDashboardFlat';
 	import type { DashboardFlatContext } from './dashboardFlatContext';
+	import { m } from '$lib/i18n';
 
 	let { ctx }: { ctx: DashboardFlatContext } = $props();
 </script>
@@ -121,9 +121,9 @@
 					class:is-busy={ctx.flatDrag.busy}
 					disabled={dragDisabled}
 					title={dragDisabled
-						? 'Перетаскивание недоступно при поиске и фильтре'
-						: 'Перетащить для изменения порядка'}
-					aria-label="Перетащить «{item.name}»"
+						? m.tunnels_dashboard_drag_disabled()
+						: m.tunnels_dashboard_drag_to_reorder()}
+					aria-label={m.tunnels_dashboard_drag_aria({ name: item.name })}
 					onpointerdown={dragDisabled || ctx.flatDrag.busy
 						? undefined
 						: (e) => ctx.handleGripPointerDown(dragIndex, e)}
@@ -180,7 +180,7 @@
 				{#snippet actions()}
 					<StoreStatusBadge store={tunnels} />
 					<Button variant="secondary" size="md" onclick={ctx.handleExportAll} disabled={ctx.exporting} iconBefore={exportIcon}>
-						Экспорт
+						{m.common_export()}
 					</Button>
 				{/snippet}
 			</DashboardToolbar>
@@ -244,9 +244,9 @@
 {:else if ctx.dashboardGroupByTags}
 	{#each ctx.dashboardTagGroups as group (group.tag ?? ' untagged')}
 		<TunnelSectionHeader
-			title={group.tag ?? 'Без тегов'}
+			title={group.tag ?? m.tunnels_dashboard_untagged()}
 			count={group.items.length}
-			countLabel={pluralForm(group.items.length, TUNNEL_WORDS)}
+			countLabel={m.tunnels_unit_tunnels({ count: group.items.length })}
 		/>
 		<div class={ctx.dashboardGridClass}>
 			{#each group.items as entry (entry.item.key)}
@@ -260,19 +260,21 @@
 {/if}
 {#if ctx.dashboardFilterEmpty}
 	<EmptyState
-		title="Ничего не найдено"
+		title={m.tunnels_dashboard_empty_title()}
 		description={ctx.dashboardTagFilter !== null
-			? `Нет туннелей с тегом «${ctx.dashboardTagFilter}»${ctx.dashboardSearchQuery.trim() !== '' ? ' по этому запросу' : ''}.`
-			: 'По запросу не нашлось ни одного туннеля.'}
+			? (ctx.dashboardSearchQuery.trim() !== ''
+				? m.tunnels_dashboard_empty_tag_query({ tag: ctx.dashboardTagFilter })
+				: m.tunnels_dashboard_empty_tag({ tag: ctx.dashboardTagFilter }))
+			: m.tunnels_dashboard_empty_query()}
 	>
 		{#snippet action()}
 			{#if ctx.dashboardTagFilter !== null}
 				<Button variant="secondary" size="md" onclick={() => (ctx.dashboardTagFilter = null)}>
-					Сбросить фильтр
+					{m.tunnels_dashboard_reset_filter()}
 				</Button>
 			{:else}
 				<Button variant="secondary" size="md" onclick={() => (ctx.dashboardSearchQuery = '')}>
-					Очистить поиск
+					{m.tunnels_dashboard_clear_search()}
 				</Button>
 			{/if}
 		{/snippet}

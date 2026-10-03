@@ -2,7 +2,7 @@
 	import type { DnsRoute } from '$lib/types';
 	import HrNeoRuleCard from './HrNeoRuleCard.svelte';
 	import RoutingRuleAddMenu from '$lib/components/routing/RoutingRuleAddMenu.svelte';
-	import { pluralize, RULE_WORDS } from '$lib/utils/pluralize';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		target: string;
@@ -42,13 +42,13 @@
 		<div class="list-title">
 			<h2>{target}</h2>
 			<span class="kind-badge kind-{targetKind}">{targetKind}</span>
-			<span class="count">{pluralize(rules.length, RULE_WORDS)}</span>
+			<span class="count">{m.routing_rules_count({ count: rules.length })}</span>
 		</div>
-		<RoutingRuleAddMenu label="Добавить правило" oncatalog={oncatalog} onmanual={onmanual} />
+		<RoutingRuleAddMenu label={m.hrneo_rules_list_add()} oncatalog={oncatalog} onmanual={onmanual} />
 	</header>
 
 	{#if sortedRules.length === 0}
-		<div class="empty">Пусто. Добавьте первое правило для этого target.</div>
+		<div class="empty">{m.hrneo_rules_list_empty()}</div>
 	{:else}
 		<div class="route-grid">
 			{#each sortedRules as rule (rule.id)}

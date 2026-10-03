@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m, uiText, type UiText } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { Modal, Button } from '$lib/components/ui';
 	import { Key, Upload, Trash2, CheckCircle2, AlertCircle } from 'lucide-svelte';
@@ -16,8 +17,8 @@
 	let keysCount = $state(0);
 	let loading = $state(false);
 	let saving = $state(false);
-	let error = $state('');
-	let successMsg = $state('');
+	let error = $state<UiText>('');
+	let successMsg = $state<UiText>('');
 	let fileInput = $state<HTMLInputElement | null>(null);
 
 	async function loadStatus(): Promise<void> {
@@ -47,7 +48,7 @@
 		error = '';
 		successMsg = '';
 		if (!keysText.trim()) {
-			error = 'Вставьте ключи RSA в поле ввода';
+			error = () => m.subscriptions_happ_paste_keys();
 			return;
 		}
 		saving = true;
@@ -55,11 +56,12 @@
 			const res = await api.saveHappKeys(keysText);
 			configured = res.configured;
 			keysCount = res.count;
-			successMsg = `Сохранено ключей: ${res.count}`;
+			const count = res.count;
+			successMsg = () => m.subscriptions_happ_saved_count({ count });
 			keysText = '';
 			onsaved?.();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Не удалось сохранить ключи';
+			error = e instanceof Error ? e.message : () => m.subscriptions_happ_save_failed();
 		} finally {
 			saving = false;
 		}
@@ -73,11 +75,11 @@
 			await api.clearHappKeys();
 			configured = false;
 			keysCount = 0;
-			successMsg = 'Ключи успешно удалены';
+			successMsg = () => m.subscriptions_happ_deleted();
 			keysText = '';
 			onsaved?.();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Ошибка удаления ключей';
+			error = e instanceof Error ? e.message : () => m.subscriptions_happ_delete_failed();
 		} finally {
 			saving = false;
 		}
@@ -97,7 +99,7 @@
 
 <Modal
 	bind:open
-	title="RSA-ключи расшифровки Happ"
+	title={m.subscriptions_happ_title()}
 	size="md"
 	{onclose}
 >
@@ -105,23 +107,23 @@
 		<div class="status-banner" class:configured>
 			{#if configured}
 				<CheckCircle2 size={16} class="text-success" />
-				<span>Ключи установлены (активно: {keysCount} шт.)</span>
+				<span>{m.subscriptions_happ_installed({ count: keysCount })}</span>
 			{:else}
 				<AlertCircle size={16} class="text-muted" />
-				<span>Ключи не установлены. Ссылки <code>happ://crypt</code> не будут расшифровываться.</span>
+				<span>{m.subscriptions_happ_not_installed_before()} <code>happ://crypt</code> {m.subscriptions_happ_not_installed_after()}</span>
 			{/if}
 		</div>
 
 		<div class="keys-field">
 			<div class="field-header">
-				<label for="happ-keys-input" class="lbl">Вставить ключи (JSON, PEM или Base64):</label>
+				<label for="happ-keys-input" class="lbl">{m.subscriptions_happ_paste_label()}</label>
 				<Button
 					size="sm"
 					variant="secondary"
 					onclick={() => fileInput?.click()}
 				>
 					<Upload size={13} />
-					<span>Загрузить .json</span>
+					<span>{m.subscriptions_happ_upload_json()}</span>
 				</Button>
 				<input
 					type="file"
@@ -146,19 +148,19 @@
 			></textarea>
 
 			<span class="field-hint">
-				Поддерживается JSON-массив строк, блоки PEM (<code>-----BEGIN RSA PRIVATE KEY-----</code>) или строки Base64 (PKCS#1).
+				{m.subscriptions_happ_hint_before()} (<code>-----BEGIN RSA PRIVATE KEY-----</code>) {m.subscriptions_happ_hint_after()}
 			</span>
 		</div>
 
 		{#if error}
 			<div class="alert-box alert-error">
-				{error}
+				{uiText(error)}
 			</div>
 		{/if}
 
 		{#if successMsg}
 			<div class="alert-box alert-success">
-				{successMsg}
+				{uiText(successMsg)}
 			</div>
 		{/if}
 	</div>
@@ -173,12 +175,12 @@
 					onclick={handleClear}
 				>
 					<Trash2 size={14} />
-					<span>Очистить</span>
+					<span>{m.common_clear()}</span>
 				</Button>
 			{/if}
 			<div class="footer-actions">
 				<Button variant="secondary" size="sm" onclick={onclose}>
-					Закрыть
+					{m.common_close()}
 				</Button>
 				<Button
 					variant="primary"
@@ -186,7 +188,7 @@
 					disabled={saving || !keysText.trim()}
 					onclick={handleSave}
 				>
-					{saving ? 'Сохранение…' : 'Сохранить'}
+					{saving ? m.subscriptions_happ_saving() : m.common_save()}
 				</Button>
 			</div>
 		</div>

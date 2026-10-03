@@ -1,3 +1,5 @@
+import { m } from '$lib/i18n';
+
 export interface PortEntry {
   /** Start of the range (equals `to` for a single port). */
   from: number;
@@ -23,12 +25,12 @@ export function parsePortEntry(raw: string): ParseEntryResult {
 
   // Extract protocol token first (tcp|udp, any case)
   const protoMatch = s.match(/tcp|udp/i);
-  if (!protoMatch) return { ok: false, error: 'укажите протокол: TCP или UDP' };
+  if (!protoMatch) return { ok: false, error: m.ports_need_protocol() };
   const proto = protoMatch[0].toUpperCase() as 'TCP' | 'UDP';
 
   // Extract numeric tokens — range "5000-5500" or single "443"
   const numTokens = s.match(/\d+/g);
-  if (!numTokens || numTokens.length === 0) return { ok: false, error: 'укажите порт' };
+  if (!numTokens || numTokens.length === 0) return { ok: false, error: m.ports_need_port() };
 
   // Determine whether this looks like a range: original string has "N-N" pattern
   // (ignoring any surrounding proto/separators)
@@ -44,9 +46,9 @@ export function parsePortEntry(raw: string): ParseEntryResult {
     to = from;
   }
 
-  if (from < 1 || from > 65535) return { ok: false, error: 'порт должен быть 1–65535' };
-  if (to < 1 || to > 65535) return { ok: false, error: 'порт должен быть 1–65535' };
-  if (from > to) return { ok: false, error: 'начало диапазона должно быть ≤ конца' };
+  if (from < 1 || from > 65535) return { ok: false, error: m.ports_out_of_range() };
+  if (to < 1 || to > 65535) return { ok: false, error: m.ports_out_of_range() };
+  if (from > to) return { ok: false, error: m.ports_range_order() };
 
   return { ok: true, entry: { from, to, proto } };
 }

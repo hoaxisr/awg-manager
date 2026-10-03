@@ -90,7 +90,7 @@
 	} from '$lib/constants/singboxLayout';
 	import { isMockDevMode as getIsMockDevMode } from '$lib/env';
 	import { Eye, EyeOff, Server, Upload, LayoutGrid, Link, Globe, TriangleAlert, Crown } from 'lucide-svelte';
-	import { formatRunningSub, pluralForm, SUBSCRIPTION_WORDS, TUNNEL_WORDS } from '$lib/utils/pluralize';
+	import { m } from '$lib/i18n';
 	import TunnelSectionHeader from '$lib/components/tunnels/TunnelSectionHeader.svelte';
 	import {
 		tunnelDashboardLayout,
@@ -283,9 +283,9 @@
 			// markServerInterface returns fresh ServersSnapshot; the tunnels
 			// list also changes (the system card disappears) — invalidate.
 			tunnels.invalidate();
-			notifications.success(`Туннель ${id} перенесён в серверы.`);
+			notifications.success(m.tunnels_moved_to_servers({ name: id }));
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка переноса в серверы');
+			notifications.error(e instanceof Error ? e.message : m.tunnels_move_to_servers_failed());
 		}
 	}
 
@@ -322,13 +322,13 @@
 		try {
 			if (isOn) {
 				await tunnels.stop(id);
-				notifications.success('Туннель остановлен');
+				notifications.success(m.tunnels_stopped_toast());
 			} else {
 				await tunnels.start(id);
-				notifications.success('Туннель запущен');
+				notifications.success(m.tunnels_started_toast());
 			}
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка');
+			notifications.error(e instanceof Error ? e.message : m.common_error());
 		} finally {
 			const { [id]: _, ...rest } = toggleLoading;
 			toggleLoading = rest;
@@ -352,9 +352,9 @@
 	async function setLock(id: string, locked: boolean) {
 		try {
 			await api.setTunnelLock(id, locked);
-			notifications.success(locked ? 'Защита включена' : 'Защита снята');
+			notifications.success(locked ? m.tunnels_lock_on_toast() : m.tunnels_lock_off_toast());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось изменить защиту');
+			notifications.error(e instanceof Error ? e.message : m.tunnels_lock_failed());
 		}
 	}
 
@@ -364,9 +364,9 @@
 		try {
 			const result = await tunnels.remove(id);
 			if (result.success && result.verified) {
-				notifications.success('Туннель удалён');
+				notifications.success(m.tunnels_deleted_toast());
 			} else {
-				notifications.error('Не удалось верифицировать удаление');
+				notifications.error(m.tunnels_delete_unverified());
 			}
 		} catch (e) {
 			if (e instanceof Error && e.message === 'tunnel_referenced') {
@@ -376,7 +376,7 @@
 				referencedDetails = refErr.details;
 				referencedTunnelName = awgList.find((t) => t.id === id)?.name ?? id;
 			} else {
-				notifications.error(e instanceof Error ? e.message : 'Не удалось удалить туннель');
+				notifications.error(e instanceof Error ? e.message : m.tunnels_delete_failed());
 			}
 		} finally {
 			const { [id]: _, ...rest } = deleteLoading;
@@ -463,10 +463,10 @@
 			await subscriptionsStore.refetch();
 		} catch (e) {
 			const name = pendingSubscriptionLabel || id;
-			if (showOutboundReferencedError(e, name, 'Подписка')) {
+			if (showOutboundReferencedError(e, name, m.tunnels_entity_subscription())) {
 				pendingSubscriptionDelete = null;
 			} else {
-				notifications.error(e instanceof Error ? e.message : 'Не удалось удалить подписку');
+				notifications.error(e instanceof Error ? e.message : m.tunnels_subscription_delete_failed());
 			}
 		} finally {
 			deletingSubscription = false;
@@ -531,14 +531,14 @@
 			.filter((s) => s.enabled && (s.members?.length ?? 0) > 0)
 			.map((s) => {
 				const tag = resolveSubscriptionMemberTag(s, liveActives[s.id] || null);
-				let m = s.members?.find((mm) => mm.tag === tag);
-				if (!m && isMockDevMode && s.members?.length) {
+				let member = s.members?.find((mm) => mm.tag === tag);
+				if (!member && isMockDevMode && s.members?.length) {
 					const first = s.members[0];
-					m = tag
+					member = tag
 						? { ...first, tag, label: first.label || tag }
 						: first;
 				}
-				return m ? { subscription: s, activeMember: m } : null;
+				return member ? { subscription: s, activeMember: member } : null;
 			})
 			.filter((x): x is { subscription: Subscription; activeMember: SubscriptionMember } => x !== null),
 	);
@@ -699,10 +699,10 @@
 	const singboxMenuChildren = $derived(
 		[
 			showSingboxTunnelTabs
-				? { id: 'singbox', label: 'Туннели', badge: singboxTunnelsList.length }
+				? { id: 'singbox', label: m.tunnels_tab_tunnels(), badge: singboxTunnelsList.length }
 				: null,
 			showSingboxTunnelTabs
-				? { id: 'subscriptions', label: 'Подписки', badge: subscriptionsList.length }
+				? { id: 'subscriptions', label: m.tunnels_tab_subscriptions(), badge: subscriptionsList.length }
 				: null,
 			awg3Visible ? { id: 'awg3', label: 'WG endpoints', badge: awg3List.length } : null,
 		].filter((c): c is { id: string; label: string; badge: number } => c !== null),
@@ -1012,10 +1012,10 @@
 	async function handleForeignUnmark(interfaceName: string): Promise<void> {
 		try {
 			await api.unmarkForeignIface(interfaceName);
-			notifications.success(`Отметка с ${interfaceName} снята`);
+			notifications.success(m.tunnels_unmark_done({ name: interfaceName }));
 			await tunnels.refetch();
 		} catch (e) {
-			notifications.error(`Не удалось снять отметку с ${interfaceName}: ${e instanceof Error ? e.message : e}`);
+			notifications.error(m.tunnels_unmark_failed({ name: interfaceName, error: e instanceof Error ? e.message : String(e) }));
 		}
 	}
 
@@ -1025,12 +1025,12 @@
 		confirmExternalDeleteBusy = true;
 		try {
 			await api.deleteOrphanIface(target.interfaceName);
-			notifications.success(`Интерфейс ${target.interfaceName} удалён`);
+			notifications.success(m.tunnels_iface_deleted({ name: target.interfaceName }));
 			confirmExternalDelete = null;
 			await tunnels.refetch();
 		} catch (e) {
 			notifications.error(
-				`Не удалось удалить ${target.interfaceName}: ${e instanceof Error ? e.message : e}`,
+				m.tunnels_iface_delete_failed({ name: target.interfaceName, error: e instanceof Error ? e.message : String(e) }),
 			);
 		} finally {
 			confirmExternalDeleteBusy = false;
@@ -1045,10 +1045,10 @@
 			if (adopted.warnings?.length) {
 				adopted.warnings.forEach(w => notifications.warning(w));
 			}
-			notifications.success('Туннель успешно импортирован');
+			notifications.success(m.tunnel_edit_imported());
 			adoptDialogOpen = false;
 		} catch (e) {
-			adoptError = e instanceof Error ? e.message : 'Не удалось импортировать туннель';
+			adoptError = e instanceof Error ? e.message : m.tunnels_adopt_failed();
 		} finally {
 			adoptLoading = false;
 		}
@@ -1067,7 +1067,7 @@
 			const { downloadBlob } = await import('$lib/utils/download');
 			downloadBlob(blob, 'awg-tunnels.zip');
 		} catch (e) {
-			notifications.error('Не удалось экспортировать конфиги');
+			notifications.error(m.tunnels_export_failed());
 		} finally {
 			exporting = false;
 		}
@@ -1126,10 +1126,10 @@
 				if (tunnel.warnings?.length) {
 					tunnel.warnings.forEach(w => notifications.warning(w));
 				}
-				notifications.success('Туннель импортирован');
+				notifications.success(m.tunnels_imported());
 				goto(`/tunnels/${tunnel.id}`);
 			} catch (err) {
-				notifications.error(err instanceof Error ? err.message : 'Ошибка импорта');
+				notifications.error(err instanceof Error ? err.message : m.tunnel_edit_import_error());
 			} finally {
 				importing = false;
 			}
@@ -1156,10 +1156,10 @@
 			if (tunnel.warnings?.length) {
 				tunnel.warnings.forEach(w => notifications.warning(w));
 			}
-			notifications.success('Туннель импортирован');
+			notifications.success(m.tunnels_imported());
 			goto(`/tunnels/${tunnel.id}`);
 		} catch (err) {
-			notifications.error(err instanceof Error ? err.message : 'Ошибка импорта');
+			notifications.error(err instanceof Error ? err.message : m.tunnel_edit_import_error());
 		} finally {
 			importing = false;
 		}
@@ -1169,8 +1169,7 @@
 	let statusLine = $derived.by(() => {
 		if (!sysInfo) return '';
 		const count = awgList.length;
-		const word = count === 0 ? 'туннелей' : count === 1 ? 'туннель' : count < 5 ? 'туннеля' : 'туннелей';
-		return `${sysInfo.version}  ·  ${sysInfo.goArch}  ·  ${count} ${word}`;
+		return `${sysInfo.version}  ·  ${sysInfo.goArch}  ·  ${count} ${m.tunnels_unit_tunnels({ count })}`;
 	});
 
 	let visibleSystemList = $derived(
@@ -1549,15 +1548,15 @@
 	);
 
 	// Бейдж вида для компактных рядов переупорядочивания и ghost-токена.
-	const DASHBOARD_KIND_LABELS: Record<TunnelDashboardFlatItem['kind'], string> = {
+	const DASHBOARD_KIND_LABELS: Record<TunnelDashboardFlatItem['kind'], string> = $derived({
 		'awg-managed': 'AWG',
 		'awg-system': 'system',
 		'awg-external': 'external',
 		awg3: 'AWG3',
 		singbox: 'sing-box',
-		'sub-active': 'подписка',
-		'sub-stopped': 'подписка',
-	};
+		'sub-active': m.tunnels_kind_subscription(),
+		'sub-stopped': m.tunnels_kind_subscription(),
+	});
 
 	// D6 (issue #353): комбинированная сводка дашборда по трём видам туннелей.
 	// Sing-box и подписки учитываются только когда их данные допущены в дашборд.
@@ -1573,7 +1572,7 @@
 		const totalActive = awgSummaryActive + (sb?.running ?? 0) + (subs?.activeCount ?? 0);
 		const kinds = [`AWG ${awgSummaryActive}/${awgSummaryTotal}`];
 		if (sb) kinds.push(`Sing-box ${sb.running}/${sb.count}`);
-		if (subs) kinds.push(`Подписки ${subs.activeCount}/${subs.count}`);
+		if (subs) kinds.push(m.tunnels_summary_subscriptions({ active: subs.activeCount, total: subs.count }));
 		if (awg3Count > 0) kinds.push(`AWG3 ${awg3Count}`);
 		const rx = awgSummaryRx + (sb?.down ?? 0) + (subs?.down ?? 0);
 		const tx = awgSummaryTx + (sb?.up ?? 0) + (subs?.up ?? 0);
@@ -1586,24 +1585,24 @@
 		return [
 			{
 				value: `${totalActive}/${totalAll}`,
-				label: 'Туннели',
+				label: m.tunnels_summary_tunnels(),
 				sub: kinds.join(' · '),
 			},
 			{
 				value: awgSummaryPeak.rate > 0 ? formatBitRate(awgSummaryPeak.rate) : '—',
-				label: 'Пиковая скорость',
+				label: m.tunnels_summary_peak(),
 				// Метрика считается только по AWG-туннелям внутри кросс-видовой
 				// сводки — область видимости заявлена явно.
 				sub: awgSummaryPeak.rate > 0 ? `AWG · ${awgSummaryPeak.name}` : '—',
 			},
 			{
 				value: formatBytes(rx + tx),
-				label: 'Трафик всего',
+				label: m.tunnels_summary_total_traffic(),
 				sub: `↓ ${formatBytes(rx)} · ↑ ${formatBytes(tx)}`,
 			},
 			{
 				value: leader.bytes > 0 ? leader.name : '—',
-				label: 'Лидер трафика',
+				label: m.tunnels_summary_leader(),
 				sub: leader.bytes > 0 ? formatBytes(leader.bytes) : '—',
 			},
 		];
@@ -1745,11 +1744,11 @@
 </script>
 
 <svelte:head>
-	<title>Туннели - AWG Manager</title>
+	<title>{m.tunnels_page_title()}</title>
 </svelte:head>
 
 <PageContainer width="full">
-	<PageHeader title="Туннели">
+	<PageHeader title={m.tunnels_page_heading()}>
 		{#snippet actions()}
 			<Button variant="secondary" size="sm" onclick={() => (premiumWizardOpen = true)}>
 				{#snippet iconBefore()}<Crown size={14} aria-hidden="true" />{/snippet}
@@ -1789,8 +1788,8 @@
 		</div>
 	{:else if tunnelSnap.status === 'error' && !tunnelSnap.data}
 		<EmptyState
-			title="Ошибка загрузки"
-			description={tunnelSnap.error ?? 'Не удалось получить список туннелей'}
+			title={m.tunnels_load_error_title()}
+			description={tunnelSnap.error ?? m.tunnels_load_error_desc()}
 		/>
 	{:else}
 		{#if dashboardOn}
@@ -1809,7 +1808,7 @@
 			<TunnelSectionHeader
 				title="Amnezia WireGuard"
 				count={awgFilteredRowsCount}
-				countLabel={pluralForm(awgFilteredRowsCount, TUNNEL_WORDS)}
+				countLabel={m.tunnels_unit_tunnels({ count: awgFilteredRowsCount })}
 			/>
 		{/if}
 		{#if showAwgBlock}
@@ -1818,9 +1817,9 @@
 
 		{#if dashboardTypeSections && dashboardSingboxTunnels.length > 0}
 			<TunnelSectionHeader
-				title="Sing-box туннели"
+				title={m.tunnels_section_singbox()}
 				count={dashboardSingboxTunnels.length}
-				countLabel={pluralForm(dashboardSingboxTunnels.length, TUNNEL_WORDS)}
+				countLabel={m.tunnels_unit_tunnels({ count: dashboardSingboxTunnels.length })}
 			/>
 		{/if}
 		{#if showSingboxBlock}
@@ -1848,9 +1847,9 @@
 
 		{#if dashboardTypeSections && dashboardSubscriptionsCount > 0}
 			<TunnelSectionHeader
-				title="Sing-box подписки"
+				title={m.tunnels_section_subscriptions()}
 				count={dashboardSubscriptionsCount}
-				countLabel={pluralForm(dashboardSubscriptionsCount, SUBSCRIPTION_WORDS)}
+				countLabel={m.tunnels_unit_subscriptions({ count: dashboardSubscriptionsCount })}
 			/>
 		{/if}
 		{#if showSubscriptionsBlock}
@@ -1886,9 +1885,9 @@
 
 		{#if dashboardTypeSections && dashboardAwg3Tunnels.length > 0}
 			<TunnelSectionHeader
-				title="AWG3 туннели"
+				title={m.tunnels_section_awg3()}
 				count={dashboardAwg3Tunnels.length}
-				countLabel={pluralForm(dashboardAwg3Tunnels.length, TUNNEL_WORDS)}
+				countLabel={m.tunnels_unit_tunnels({ count: dashboardAwg3Tunnels.length })}
 			/>
 		{/if}
 		{#if showAwg3Block}
@@ -1949,16 +1948,16 @@
 			<div class="unsupported-icon">
 				<TriangleAlert size={48} strokeWidth={1.5} aria-hidden="true" />
 			</div>
-			<h2 class="unsupported-title">Модуль ядра недоступен</h2>
+			<h2 class="unsupported-title">{m.tunnels_unsupported_title()}</h2>
 			<p class="unsupported-text">
-				Модель роутера <strong>{sysInfo?.kernelModuleModel || '(неизвестна)'}</strong> не имеет скомпилированный модуль ядра в настоящий момент.
+				{m.tunnels_unsupported_model_lead()} <strong>{sysInfo?.kernelModuleModel || m.tunnels_unsupported_model_unknown()}</strong> {m.tunnels_unsupported_model_tail()}
 			</p>
 			<div class="unsupported-actions">
 				<a href="https://t.me/awgmanager" target="_blank" rel="noopener" class="unsupported-link unsupported-link-primary">
-					Написать в @awgmanager
+					{m.tunnels_unsupported_contact()}
 				</a>
 				<a href="https://gitlab.com/AmneziaVPN/amneziawg/amneziawg-linux-kernel-module" target="_blank" rel="noopener" class="unsupported-link">
-					Установить вручную
+					{m.tunnels_unsupported_manual()}
 				</a>
 			</div>
 		</div>

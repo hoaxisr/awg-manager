@@ -10,6 +10,7 @@
   память — Clash /connections WebSocket поле `memory` (singbox:memory SSE).
 -->
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { fakeipConfig } from '$lib/stores/fakeipConfig';
 	import { tunStackLabel } from '$lib/components/sb-router/tunStack';
 	import type { TunStack } from '$lib/types';
@@ -67,10 +68,10 @@
 	// Ярлык статуса движка для карточки (честно из engineState).
 	const engineLabel = $derived(
 		engineState === 'live'
-			? 'работает'
+			? m.fakeip_overview_engine_running()
 			: engineState === 'clash-down'
 				? 'clash ↯'
-				: 'остановлен',
+				: m.fakeip_overview_engine_stopped(),
 	);
 
 	const outbounds = fakeipConfig.outbounds;

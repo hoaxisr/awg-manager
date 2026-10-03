@@ -3,6 +3,7 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import type { SingboxProxyGroup, SingboxRouterOutbound, Subscription, SubscriptionGroup } from '$lib/types';
   import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
   import { Badge } from '$lib/components/ui';
@@ -54,7 +55,7 @@
   }
 
   function kindLabel(o: SingboxRouterOutbound): string {
-    if (isGroupOutbound(o, groups)) return 'группа';
+    if (isGroupOutbound(o, groups)) return m.sb_router_outbounds_kind_group();
     if (isSubscriptionOutbound(o, subscriptions)) return 'subscription';
     if (o.type === 'selector' || o.type === 'urltest' || o.type === 'loadbalance') return 'composite';
     return o.type;
@@ -65,9 +66,9 @@
   // «outbound not found»). Редактирование — в своих разделах.
   function editBlockReason(o: SingboxRouterOutbound): string | null {
     if (isGroupOutbound(o, groups))
-      return 'Редактируется в разделе Туннели → Sing-box подписки → Сводные группы';
+      return m.sb_router_outbounds_edit_in_groups();
     if (isSubscriptionOutbound(o, subscriptions))
-      return 'Редактируется в разделе Туннели → Sing-box подписки';
+      return m.sb_router_outbounds_edit_in_subs();
     return null;
   }
 
@@ -94,9 +95,9 @@
           <div class="tag">{d.title}</div>
           <div class="sub">{d.subtitle}</div>
           {#if av}
-            <div class="active-line" title="Текущий выбор {o.type === 'selector' ? 'selector' : 'urltest'}">
+            <div class="active-line" title={m.sb_router_outbounds_current_choice({ type: o.type === 'selector' ? 'selector' : 'urltest' })}>
               <span class="active-dot" aria-hidden="true"></span>
-              <span class="active-label">активен: {av.activeMemberLabel}</span>
+              <span class="active-label">{m.sb_router_outbounds_active({ label: av.activeMemberLabel })}</span>
               {#if av.otherMemberTags.length > 0}
                 <span class="active-rest">+{av.otherMemberTags.length}</span>
               {/if}
@@ -111,8 +112,8 @@
           class="route-action-btn"
           disabled={editReason !== null}
           onclick={() => onEdit(o.tag)}
-          aria-label={`Редактировать outbound ${o.tag}`}
-          title={editReason ?? `Редактировать outbound «${d.title}»`}
+          aria-label={m.sb_router_outbounds_edit_aria({ tag: o.tag })}
+          title={editReason ?? m.sb_router_outbounds_edit_title({ title: d.title })}
         >
           <Edit3 size={15} />
         </button>
@@ -122,8 +123,8 @@
             class="route-action-btn danger"
             disabled={deleteReason !== null}
             onclick={() => onDelete(o.tag)}
-            aria-label={`Удалить outbound ${o.tag}`}
-            title={deleteReason ?? `Удалить outbound «${d.title}»`}
+            aria-label={m.sb_router_outbounds_delete_aria({ tag: o.tag })}
+            title={deleteReason ?? m.sb_router_outbounds_delete_title({ title: d.title })}
           >
             <Trash2 size={15} />
           </button>
@@ -132,7 +133,7 @@
     </div>
   {/each}
   {#if outbounds.length === 0}
-    <div class="empty">Нет outbounds</div>
+    <div class="empty">{m.sb_router_outbounds_none()}</div>
   {/if}
 </div>
 

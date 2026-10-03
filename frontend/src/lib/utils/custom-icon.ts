@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import { iconImageSrc } from '$lib/utils/icon-url-meta';
 
 /** Max size for inline / uploaded custom icons (base64 data URLs). */
@@ -15,11 +16,13 @@ export function formatIconUrlHint(url: string): string {
 	const src = iconImageSrc(url);
 	const hasTileBg = url !== src;
 	if (isDataIconUrl(src)) {
-		const kind = src.startsWith('data:image/svg') ? 'Встроенный SVG' : 'Загруженное изображение';
-		return hasTileBg ? `${kind} · свой фон` : kind;
+		const kind = src.startsWith('data:image/svg')
+			? m.custom_icon_kind_svg()
+			: m.custom_icon_kind_image();
+		return hasTileBg ? m.custom_icon_with_own_bg({ label: kind }) : kind;
 	}
 	const hint = src.length > 72 ? `${src.slice(0, 69)}…` : src;
-	return hasTileBg ? `${hint} · свой фон` : hint;
+	return hasTileBg ? m.custom_icon_with_own_bg({ label: hint }) : hint;
 }
 
 function estimateDataUrlBytes(dataUrl: string): number {
@@ -37,7 +40,10 @@ export function assertIconSizeOk(dataUrl: string): void {
 	const bytes = estimateDataUrlBytes(dataUrl);
 	if (bytes > MAX_CUSTOM_ICON_BYTES) {
 		throw new Error(
-			`Иконка слишком большая (${Math.round(bytes / 1024)} КБ). Максимум ${Math.round(MAX_CUSTOM_ICON_BYTES / 1024)} КБ.`,
+			m.custom_icon_too_big({
+				size: Math.round(bytes / 1024),
+				max: Math.round(MAX_CUSTOM_ICON_BYTES / 1024),
+			}),
 		);
 	}
 }
@@ -59,7 +65,7 @@ export function parseSvgMarkup(input: string): string | null {
 
 export function svgMarkupToDataUrl(svg: string): string {
 	const parsed = parseSvgMarkup(svg);
-	if (!parsed) throw new Error('Некорректный или небезопасный SVG');
+	if (!parsed) throw new Error(m.custom_icon_bad_svg());
 	const encoded = encodeURIComponent(parsed)
 		.replace(/'/g, '%27')
 		.replace(/"/g, '%22');
@@ -100,11 +106,14 @@ export function isAcceptedIconFile(file: File): boolean {
 
 export async function fileToIconDataUrl(file: File): Promise<string> {
 	if (!isAcceptedIconFile(file)) {
-		throw new Error('Поддерживаются PNG, JPG, WebP, GIF и SVG');
+		throw new Error(m.custom_icon_unsupported_file());
 	}
 	if (file.size > MAX_CUSTOM_ICON_BYTES) {
 		throw new Error(
-			`Файл слишком большой (${Math.round(file.size / 1024)} КБ). Максимум ${Math.round(MAX_CUSTOM_ICON_BYTES / 1024)} КБ.`,
+			m.custom_icon_file_too_big({
+				size: Math.round(file.size / 1024),
+				max: Math.round(MAX_CUSTOM_ICON_BYTES / 1024),
+			}),
 		);
 	}
 
@@ -116,7 +125,7 @@ export async function fileToIconDataUrl(file: File): Promise<string> {
 	const dataUrl = await new Promise<string>((resolve, reject) => {
 		const reader = new FileReader();
 		reader.onload = () => resolve(String(reader.result));
-		reader.onerror = () => reject(new Error('Не удалось прочитать файл'));
+		reader.onerror = () => reject(new Error(m.custom_icon_read_failed()));
 		reader.readAsDataURL(file);
 	});
 

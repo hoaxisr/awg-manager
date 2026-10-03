@@ -4,8 +4,8 @@
 // The atomic pool is NOT the router-catalog `direct` outbounds (there are
 // usually none). It is every SELECTABLE egress that can appear as a composite
 // MEMBER — i.e. AWG/NWG tunnels + subscription proxies — EXCLUDING:
-//   - the «Специальные» group (direct / block — not real proxy egresses);
-//   - the «Composite outbounds» group (those render in the COMPOSITE section).
+//   - the 'special' group (direct / block — not real proxy egresses);
+//   - the 'composite' group (those render in the COMPOSITE section).
 //
 // Spine: `singboxRouter.options` (OutboundGroup[]) is the canonical "what can
 // be a member" list — we walk it and keep the non-special, non-composite
@@ -22,13 +22,17 @@
 // the only number — no throughput.
 
 import type { SingboxTunnel, Subscription } from '$lib/types';
-import type { OutboundGroup } from '$lib/components/routing/singboxRouter/outboundOptions';
+import {
+	outboundGroupLabel,
+	type OutboundGroup,
+	type OutboundGroupId,
+} from '$lib/components/routing/singboxRouter/outboundOptions';
 import { resolveMemberLabel } from '$lib/utils/memberLabel';
 
 // Groups excluded from the atomic pool. Specials are local pseudo-egresses;
-// composites belong to the COMPOSITE section. Matched by the group labels
+// composites belong to the COMPOSITE section. Matched by the group ids
 // buildOutboundOptions emits.
-const EXCLUDED_GROUPS = new Set(['Специальные', 'Composite outbounds']);
+const EXCLUDED_GROUPS = new Set<OutboundGroupId>(['special', 'composite']);
 
 /** Origin of an atomic egress — drives the read-only link-out target. */
 export type AtomicEgressSource = 'tunnel' | 'subscription' | 'unknown';
@@ -97,7 +101,7 @@ export function buildAtomicEgresses(
 	const seen = new Set<string>();
 
 	for (const group of groups) {
-		if (EXCLUDED_GROUPS.has(group.group)) continue;
+		if (EXCLUDED_GROUPS.has(group.id)) continue;
 		for (const item of group.items ?? []) {
 			const tag = item.value;
 			if (!tag || seen.has(tag)) continue;
@@ -141,7 +145,7 @@ export function buildAtomicEgresses(
 			out.push({
 				tag,
 				name,
-				proto: group.group,
+				proto: outboundGroupLabel(group.id),
 				source: 'unknown',
 			});
 		}

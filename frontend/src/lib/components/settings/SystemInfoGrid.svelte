@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m, formatLocale } from '$lib/i18n';
 	import { browser } from '$app/environment';
 	import type { SystemInfo } from '$lib/types';
 	import type { UsageLevel } from '$lib/types/usageLevel';
@@ -61,9 +62,9 @@
 		const now = new Date();
 		const sameDay = d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
 		if (sameDay) {
-			return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+			return d.toLocaleTimeString(formatLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 		}
-		return d.toLocaleString('ru-RU', {
+		return d.toLocaleString(formatLocale(), {
 			day: '2-digit',
 			month: '2-digit',
 			hour: '2-digit',
@@ -103,15 +104,15 @@
 				class="section-collapse-btn"
 				onclick={() => (collapsed = !collapsed)}
 				aria-expanded={!collapsed}
-				aria-label={collapsed ? 'Развернуть информацию о системе' : 'Свернуть информацию о системе'}
+				aria-label={collapsed ? m.settings_sysinfo_expand_aria() : m.settings_sysinfo_collapse_aria()}
 			>
-				<SettingsSectionLabel label="Система" icon={Router} tone="blue" inline />
+				<SettingsSectionLabel label={m.settings_sysinfo_title()} icon={Router} tone="blue" inline />
 				<span class="section-chevron system-collapse-marker" class:open={!collapsed} aria-hidden="true"><ChevronDown size={14} strokeWidth={2} /></span>
 			</button>
 			{#if !isBasic}
 				<div class="head-actions">
 					{#if updatedLabel}
-						<span class="updated-at" title="Последнее обновление">
+						<span class="updated-at" title={m.settings_sysinfo_last_update()}>
 							<span class="live-dot" class:live-dot-loading={refreshing}></span>
 							{updatedLabel}
 						</span>
@@ -126,7 +127,7 @@
 		<span class="info-val">{systemInfo.version}</span>
 	</div>
 	<div class="setting-row">
-		<span class="info-key">Роутер</span>
+		<span class="info-key">{m.settings_sysinfo_router()}</span>
 		<span class="info-val">
 			{routerMainTitle}
 			{#if routerRegionTitle}
@@ -135,7 +136,7 @@
 		</span>
 	</div>
 	<div class="setting-row">
-		<span class="info-key">ОС</span>
+		<span class="info-key">{m.settings_sysinfo_os()}</span>
 		<span class="info-val">
 			{osMainTitle}
 			{#if osPortTitle}
@@ -145,14 +146,14 @@
 	</div>
 	{#if !isBasic}
 		<div class="setting-row">
-			<span class="info-key">CPU / Темп.</span>
+			<span class="info-key">{m.settings_sysinfo_cpu_temp()}</span>
 			<span class="info-val info-val-stack">
 				<span>{cpuModelLine}</span>
 				<span class="sub-line">{cpuTempLine}</span>
 			</span>
 		</div>
 		<div class="setting-row">
-			<span class="info-key">Память</span>
+			<span class="info-key">{m.settings_sysinfo_memory()}</span>
 			<span class="info-val">
 				{memoryMain}
 				{#if memoryPercent}
@@ -176,19 +177,19 @@
 		</div>
 	{/if}
 	<div class="setting-row">
-		<span class="info-key">Сообщество</span>
+		<span class="info-key">{m.settings_sysinfo_community()}</span>
 		<a class="info-link" href="https://t.me/awgmanager" target="_blank" rel="noopener noreferrer">Telegram →</a>
 	</div>
 	{#if isExpert && details}
 		<details class="more-box" bind:open={detailsOpen}>
 			<summary class="more-summary">
-				<span>Подробнее</span>
+				<span>{m.settings_sysinfo_more()}</span>
 				<span class="more-chevron" class:open={detailsOpen} aria-hidden="true"><ChevronDown size={14} strokeWidth={2} /></span>
 			</summary>
 			<div class="more-grid">
 				<div class="setting-row"><span class="info-key">Build Date</span><span class="info-val">{details.firmwareBuildDate || '—'}</span></div>
-				<div class="setting-row"><span class="info-key">Канал</span><span class="info-val">{details.firmwareSandbox || '—'}</span></div>
-				<div class="setting-row"><span class="info-key">Слот</span><span class="info-val">{details.bootSlot || '—'}</span></div>
+				<div class="setting-row"><span class="info-key">{m.settings_sysinfo_channel()}</span><span class="info-val">{details.firmwareSandbox || '—'}</span></div>
+				<div class="setting-row"><span class="info-key">{m.settings_sysinfo_slot()}</span><span class="info-val">{details.bootSlot || '—'}</span></div>
 				<div class="setting-row detail-row">
 					<span class="info-key">VPN</span>
 					<span class="detail-muted-block">{vpnLine}</span>

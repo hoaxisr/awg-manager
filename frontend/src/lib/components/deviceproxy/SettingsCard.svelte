@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Toggle, Button, Dropdown, type DropdownOption } from '$lib/components/ui';
@@ -70,9 +71,9 @@
 		try {
 			const saved = await onSaveConfig(draft);
 			onSaved(saved);
-			notifications.success('Настройки сохранены');
+			notifications.success(m.device_proxy_settings_saved());
 		} catch (e) {
-			notifications.error(`Ошибка: ${(e as Error).message}`);
+			notifications.error(m.sb_router_common_error({ message: (e as Error).message }));
 		} finally {
 			saving = false;
 		}
@@ -87,9 +88,9 @@
 			const saved = await onSaveConfig(payload);
 			draft = structuredClone(payload);
 			onSaved(saved);
-			notifications.success(next ? 'Прокси включён' : 'Прокси выключен');
+			notifications.success(next ? m.device_proxy_enabled_toast() : m.device_proxy_disabled_toast());
 		} catch (e) {
-			notifications.error(`Ошибка: ${(e as Error).message}`);
+			notifications.error(m.sb_router_common_error({ message: (e as Error).message }));
 		} finally {
 			togglingEnabled = false;
 		}
@@ -105,7 +106,7 @@
 	});
 
 	let listenOpts = $derived<DropdownOption[]>([
-		{ value: '__all', label: 'Всех интерфейсах роутера' },
+		{ value: '__all', label: m.device_proxy_listen_all() },
 		...bridgeInterfaces.map((br) => ({ value: br.id, label: br.label })),
 	]);
 
@@ -113,10 +114,10 @@
 	// карточки Inbounds (DeviceProxyCompact), расхождение тег/имя исключено.
 	let outboundOpts = $derived<DropdownOption[]>([
 		...grouped.direct.map((ob) => ({ value: ob.tag, label: outboundOptionLabel(ob) })),
-		...grouped.sb.map((ob) => ({ value: ob.tag, label: outboundOptionLabel(ob), group: 'Sing-box туннели' })),
-		...grouped.sub.map((ob) => ({ value: ob.tag, label: outboundOptionLabel(ob), group: 'Подписки' })),
-		...grouped.awg.map((ob) => ({ value: ob.tag, label: outboundOptionLabel(ob), group: 'Туннели' })),
-		...grouped.router.map((ob) => ({ value: ob.tag, label: outboundOptionLabel(ob), group: 'Выходы sb-router' })),
+		...grouped.sb.map((ob) => ({ value: ob.tag, label: outboundOptionLabel(ob), group: m.device_proxy_group_singbox() })),
+		...grouped.sub.map((ob) => ({ value: ob.tag, label: outboundOptionLabel(ob), group: m.device_proxy_group_subscriptions() })),
+		...grouped.awg.map((ob) => ({ value: ob.tag, label: outboundOptionLabel(ob), group: m.device_proxy_group_tunnels() })),
+		...grouped.router.map((ob) => ({ value: ob.tag, label: outboundOptionLabel(ob), group: m.device_proxy_group_router() })),
 	]);
 </script>
 
@@ -125,36 +126,36 @@
 		<div class="field field-toggle">
 			<div class="field-toggle-line">
 				<div>
-					<div class="lbl">Прокси-сервер</div>
-					<div class="hint">SOCKS5 / HTTP для LAN-устройств. Изменение применяется сразу.</div>
+					<div class="lbl">{m.device_proxy_server()}</div>
+					<div class="hint">{m.device_proxy_server_hint()}</div>
 				</div>
 				<Toggle checked={config.enabled} onchange={(v) => toggleEnabled(v)} loading={togglingEnabled} />
 			</div>
 		</div>
 
 		<label class="field">
-			<div class="lbl">Порт</div>
+			<div class="lbl">{m.device_proxy_port()}</div>
 			<input type="number" min="1024" max="65535" bind:value={draft.port} />
-			<div class="hint">Рекомендуем 1099 или выше</div>
+			<div class="hint">{m.device_proxy_port_hint()}</div>
 		</label>
 
 		<div class="field">
-			<div class="lbl">Доступен на</div>
+			<div class="lbl">{m.device_proxy_listen_label()}</div>
 			<Dropdown value={listenChoice} options={listenOpts} onchange={setListenChoice} fullWidth />
-			<div class="hint">Все интерфейсы или конкретный мост</div>
+			<div class="hint">{m.device_proxy_listen_hint()}</div>
 		</div>
 
 		<div class="field">
-			<div class="lbl">По умолчанию направлять в</div>
+			<div class="lbl">{m.device_proxy_default_out_label()}</div>
 			<Dropdown bind:value={draft.selectedOutbound} options={outboundOpts} fullWidth />
-			<div class="hint">Применяется при запуске sing-box</div>
+			<div class="hint">{m.device_proxy_default_out_hint()}</div>
 		</div>
 
 		<div class="field field-toggle">
 			<div class="field-toggle-line">
 				<div>
-					<div class="lbl">Защита паролем</div>
-					<div class="hint">Требовать логин и пароль при подключении</div>
+					<div class="lbl">{m.device_proxy_auth_label()}</div>
+					<div class="hint">{m.device_proxy_auth_hint()}</div>
 				</div>
 				<Toggle checked={draft.auth.enabled} onchange={(v) => (draft.auth.enabled = v)} />
 			</div>
@@ -162,14 +163,14 @@
 
 		{#if draft.auth.enabled}
 			<label class="field">
-				<div class="lbl">Имя пользователя</div>
+				<div class="lbl">{m.device_proxy_username()}</div>
 				<input type="text" bind:value={draft.auth.username} />
 			</label>
 			<div class="field">
-				<div class="lbl">Пароль</div>
+				<div class="lbl">{m.device_proxy_password()}</div>
 				<div class="pw-group">
 					<input type="text" bind:value={draft.auth.password} />
-					<Button variant="ghost" size="sm" onclick={generatePassword}>Сгенерировать</Button>
+					<Button variant="ghost" size="sm" onclick={generatePassword}>{m.common_generate()}</Button>
 				</div>
 			</div>
 		{/if}
@@ -177,8 +178,8 @@
 
 	{#if !hideFooter}
 		<div class="form-actions">
-			<Button variant="ghost" size="md" onclick={reset} disabled={saving}>Отменить</Button>
-			<Button variant="primary" size="md" onclick={save} loading={saving}>Сохранить</Button>
+			<Button variant="ghost" size="md" onclick={reset} disabled={saving}>{m.device_proxy_reset()}</Button>
+			<Button variant="primary" size="md" onclick={save} loading={saving}>{m.common_save()}</Button>
 		</div>
 	{/if}
 {:else}
@@ -194,9 +195,9 @@
 			<div class="settings-stack">
 				<div class="setting-row setting-row-toggle">
 					<div class="flex flex-col gap-1">
-						<span class="font-medium">Прокси-сервер</span>
+						<span class="font-medium">{m.device_proxy_server()}</span>
 						<span class="setting-description">
-							SOCKS5 / HTTP для LAN-устройств. Изменение применяется сразу.
+							{m.device_proxy_server_hint()}
 						</span>
 					</div>
 					<div class="setting-control setting-control-toggle">
@@ -210,8 +211,8 @@
 
 				<div class="setting-row setting-row-field">
 					<div class="flex flex-col gap-1">
-						<span class="font-medium">Порт</span>
-						<span class="setting-description">Рекомендуем 1099 или выше</span>
+						<span class="font-medium">{m.device_proxy_port()}</span>
+						<span class="setting-description">{m.device_proxy_port_hint()}</span>
 					</div>
 					<div class="setting-control">
 						<input type="number" min="1024" max="65535" bind:value={draft.port} class="num-input" />
@@ -220,8 +221,8 @@
 
 				<div class="setting-row setting-row-field">
 					<div class="flex flex-col gap-1">
-						<span class="font-medium">Доступен на</span>
-						<span class="setting-description">Все интерфейсы или конкретный мост</span>
+						<span class="font-medium">{m.device_proxy_listen_label()}</span>
+						<span class="setting-description">{m.device_proxy_listen_hint()}</span>
 					</div>
 					<div class="setting-control select">
 						<Dropdown
@@ -235,8 +236,8 @@
 
 				<div class="setting-row setting-row-field">
 					<div class="flex flex-col gap-1">
-						<span class="font-medium">По умолчанию направлять в</span>
-						<span class="setting-description">Применяется при запуске sing-box</span>
+						<span class="font-medium">{m.device_proxy_default_out_label()}</span>
+						<span class="setting-description">{m.device_proxy_default_out_hint()}</span>
 					</div>
 					<div class="setting-control select">
 						<Dropdown bind:value={draft.selectedOutbound} options={outboundOpts} fullWidth />
@@ -245,8 +246,8 @@
 
 				<div class="setting-row setting-row-toggle">
 					<div class="flex flex-col gap-1">
-						<span class="font-medium">Защита паролем</span>
-						<span class="setting-description">Требовать логин и пароль при подключении</span>
+						<span class="font-medium">{m.device_proxy_auth_label()}</span>
+						<span class="setting-description">{m.device_proxy_auth_hint()}</span>
 					</div>
 					<div class="setting-control setting-control-toggle">
 						<Toggle checked={draft.auth.enabled} onchange={(v) => (draft.auth.enabled = v)} />
@@ -256,7 +257,7 @@
 				{#if draft.auth.enabled}
 					<div class="setting-row setting-row-field">
 						<div class="flex flex-col gap-1">
-							<span class="font-medium">Имя пользователя</span>
+							<span class="font-medium">{m.device_proxy_username()}</span>
 						</div>
 						<div class="setting-control">
 							<input type="text" bind:value={draft.auth.username} class="text-input" />
@@ -264,13 +265,13 @@
 					</div>
 					<div class="setting-row setting-row-field">
 						<div class="flex flex-col gap-1">
-							<span class="font-medium">Пароль</span>
+							<span class="font-medium">{m.device_proxy_password()}</span>
 						</div>
 						<div class="setting-control">
 							<div class="pw-group">
 								<input type="text" bind:value={draft.auth.password} class="text-input" />
 								<Button variant="ghost" size="sm" onclick={generatePassword}>
-									Сгенерировать
+									{m.common_generate()}
 								</Button>
 							</div>
 						</div>
@@ -280,8 +281,8 @@
 		</div>
 
 		<footer class="card-footer">
-			<Button variant="ghost" size="md" onclick={reset} disabled={saving}>Отменить</Button>
-			<Button variant="primary" size="md" onclick={save} loading={saving}>Сохранить</Button>
+			<Button variant="ghost" size="md" onclick={reset} disabled={saving}>{m.device_proxy_reset()}</Button>
+			<Button variant="primary" size="md" onclick={save} loading={saving}>{m.common_save()}</Button>
 		</footer>
 	</section>
 {/if}

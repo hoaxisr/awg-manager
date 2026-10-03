@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
-	DEVELOP_CHANNEL_QUIZ_QUESTIONS,
+	getDevelopChannelQuizQuestions,
 	DEVELOP_CHANNEL_QUIZ_SIZE,
 	clearDevelopChannelLockout,
 	getDevelopChannelLockoutRemainingMs,
 	isDevelopQuizPassed,
 	pickDevelopQuizQuestions,
 	pickCopyCheatOption,
-	DEVELOP_CHANNEL_COPY_CHEAT_OPTIONS,
+	getDevelopChannelCopyCheatOptions,
 	prepareDevelopQuizSession,
 	scoreDevelopQuiz,
 	setDevelopChannelLockout,
@@ -43,7 +43,7 @@ describe('developChannelGate', () => {
 		const ids = new Set(picked.map((q) => q.id));
 		expect(ids.size).toBe(DEVELOP_CHANNEL_QUIZ_SIZE);
 		for (const q of picked) {
-			expect(DEVELOP_CHANNEL_QUIZ_QUESTIONS.some((bank) => bank.id === q.id)).toBe(true);
+			expect(getDevelopChannelQuizQuestions().some((bank) => bank.id === q.id)).toBe(true);
 		}
 	});
 
@@ -60,7 +60,7 @@ describe('developChannelGate', () => {
 	});
 
 	it('shuffles options but keeps the correct answer scorable', () => {
-		const base = DEVELOP_CHANNEL_QUIZ_QUESTIONS[0];
+		const base = getDevelopChannelQuizQuestions()[0];
 		const shuffled = shuffleQuestionOptions(base);
 		expect(shuffled.options).toHaveLength(base.options.length);
 		expect(new Set(shuffled.options)).toEqual(new Set(base.options));
@@ -81,7 +81,7 @@ describe('developChannelGate', () => {
 		const sessions = Array.from({ length: 24 }, () => prepareDevelopQuizSession(7));
 		const anyShiftedCorrectIndex = sessions.some((session) =>
 			session.some((q) => {
-				const bank = DEVELOP_CHANNEL_QUIZ_QUESTIONS.find((b) => b.id === q.id);
+				const bank = getDevelopChannelQuizQuestions().find((b) => b.id === q.id);
 				return bank && q.correctIndex !== bank.correctIndex;
 			}),
 		);
@@ -90,7 +90,7 @@ describe('developChannelGate', () => {
 
 	it('has no duplicate answer text within or across questions', () => {
 		const seen = new Map<string, string>();
-		for (const q of DEVELOP_CHANNEL_QUIZ_QUESTIONS) {
+		for (const q of getDevelopChannelQuizQuestions()) {
 			const local = new Set<string>();
 			for (const option of q.options) {
 				expect(local.has(option)).toBe(false);
@@ -104,7 +104,7 @@ describe('developChannelGate', () => {
 
 	it('pickCopyCheatOption returns a phrase from the pool', () => {
 		const phrase = pickCopyCheatOption();
-		expect(DEVELOP_CHANNEL_COPY_CHEAT_OPTIONS).toContain(phrase);
+		expect(getDevelopChannelCopyCheatOptions()).toContain(phrase);
 	});
 
 	it('treats copy-cheat questions as always wrong', () => {

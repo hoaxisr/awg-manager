@@ -93,6 +93,7 @@ function latestState(spy: ReturnType<typeof vi.fn>) {
 	return current;
 }
 
+
 describe('theme store system mode', () => {
 	beforeEach(() => {
 		vi.stubGlobal('localStorage', createLocalStorageMock());

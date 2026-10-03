@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
 	import type { TunnelListItem, SingboxTunnel, Subscription } from '$lib/types';
@@ -46,20 +47,31 @@
 	let activeTab = $state<ActiveTab>(initialDiagnosticsTab());
 	let tunnels = $state<DiagnosticsTargetSeed[]>([]);
 
+	const tabLabels = $derived<Record<ActiveTab, string>>({
+		logs: m.diag_tab_logs(),
+		monitoring: m.diag_tab_monitoring(),
+		connections: m.diag_tab_connections(),
+		checks: m.diag_tab_checks(),
+		about: m.diag_tab_about(),
+		awgConfig: m.diag_tab_awg_config(),
+		dns: m.diag_tab_dns(),
+		system: m.diag_tab_system(),
+	});
+
 	const diagnosticsTabs = $derived.by((): { id: ActiveTab; label: string }[] => {
 		const base: { id: ActiveTab; label: string }[] = [
-			{ id: 'logs', label: 'Журнал' },
-			{ id: 'monitoring', label: 'Мониторинг' },
-			{ id: 'connections', label: 'Соединения' },
-			{ id: 'checks', label: 'Проверки' },
-			{ id: 'about', label: 'Окружение' },
+			{ id: 'logs', label: tabLabels.logs },
+			{ id: 'monitoring', label: tabLabels.monitoring },
+			{ id: 'connections', label: tabLabels.connections },
+			{ id: 'checks', label: tabLabels.checks },
+			{ id: 'about', label: tabLabels.about },
 		];
 		if ($usageLevel === 'expert') {
-			base.push({ id: 'awgConfig', label: 'Конфиг AWG' });
+			base.push({ id: 'awgConfig', label: tabLabels.awgConfig });
 		}
 		if ($usageLevel === 'expert') {
-			base.push({ id: 'dns', label: 'Сведения о DNS' });
-			base.push({ id: 'system', label: 'Система' });
+			base.push({ id: 'dns', label: tabLabels.dns });
+			base.push({ id: 'system', label: tabLabels.system });
 		}
 		return base;
 	});
@@ -134,13 +146,13 @@
 						? sub.activeMember
 						: sub.memberTags[0]) ?? '';
 				if (!activeTag) continue;
-				const m = (sub.members ?? []).find((member) => member.tag === activeTag);
+				const activeMember = (sub.members ?? []).find((member) => member.tag === activeTag);
 				subscriptionMembers.push({
 					id: `singbox:${activeTag}`,
 					// Prefer subscription label so the user sees the subscription
 					// name rather than a raw outbound tag.
-					name: sub.label || m?.label || activeTag,
-					kind: m?.protocol ? singboxKind(m.protocol) : undefined,
+					name: sub.label || activeMember?.label || activeTag,
+					kind: activeMember?.protocol ? singboxKind(activeMember.protocol) : undefined,
 					// Members are checked through the sing-box process,
 					// so default to 'running' for rail visibility.
 					status: 'running',
@@ -159,16 +171,7 @@
 		}
 	});
 
-	const pageTitle = $derived(
-		activeTab === 'connections' ? 'Соединения · Инструменты' :
-		activeTab === 'checks' ? 'Проверки · Инструменты' :
-		activeTab === 'about' ? 'Окружение · Инструменты' :
-		activeTab === 'awgConfig' ? 'Конфиг AWG · Инструменты' :
-		activeTab === 'dns' ? 'Сведения о DNS · Инструменты' :
-		activeTab === 'system' ? 'Система · Инструменты' :
-		activeTab === 'monitoring' ? 'Мониторинг · Инструменты' :
-		'Журнал · Инструменты',
-	);
+	const pageTitle = $derived(m.diag_page_title({ section: tabLabels[activeTab] }));
 </script>
 
 <svelte:head>
@@ -176,7 +179,7 @@
 </svelte:head>
 
 <PageContainer width="full">
-	<PageHeader title="Инструменты" />
+	<PageHeader title={m.nav_tools()} />
 
 	<Tabs
 		tabs={diagnosticsTabs}

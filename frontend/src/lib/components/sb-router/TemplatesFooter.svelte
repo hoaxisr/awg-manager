@@ -4,10 +4,10 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import type { SingboxRouterOutbound } from '$lib/types';
   import { Badge, Button } from '$lib/components/ui';
   import { Check } from 'lucide-svelte';
-  import { pluralize, RULE_WORDS } from '$lib/utils/pluralize';
 
   interface Props {
     selectedIds: string[];
@@ -34,26 +34,26 @@
 
 <div class="footer" class:hidden={count === 0}>
   <div class="summary">
-    <Badge variant="accent" size="md">{count} выбрано</Badge>
+    <Badge variant="accent" size="md">{m.sb_router_bulk_selected({ count })}</Badge>
     <span class="ids" title={idList}>{idList}</span>
   </div>
   <div class="controls">
     <label class="picker">
-      <span class="picker-label">Через:</span>
+      <span class="picker-label">{m.sb_router_templates_via()}</span>
       <select
         class="picker-select"
         value={pickedOutbound ?? ''}
         onchange={(e) => onPickOutbound((e.currentTarget as HTMLSelectElement).value)}
       >
-        <option value="" disabled>— выберите —</option>
+        <option value="" disabled>{m.sb_router_templates_pick_outbound()}</option>
         {#each outbounds as ob (ob.tag)}
           <option value={ob.tag}>{ob.tag}</option>
         {/each}
         <option value="block">⛔ Block</option>
       </select>
     </label>
-    <Button variant="ghost" size="sm" onclick={onClear} disabled={submitting}>Снять всё</Button>
-    <Button variant="ghost" size="sm" onclick={onCancel} disabled={submitting}>Отмена</Button>
+    <Button variant="ghost" size="sm" onclick={onClear} disabled={submitting}>{m.sb_router_templates_deselect_all()}</Button>
+    <Button variant="ghost" size="sm" onclick={onCancel} disabled={submitting}>{m.common_cancel()}</Button>
     <Button
       variant="primary"
       size="sm"
@@ -61,7 +61,7 @@
       disabled={submitDisabled}
       iconBefore={iconCheck}
     >
-      Создать {pluralize(count, RULE_WORDS)}
+      {m.sb_router_templates_create({ count })}
     </Button>
   </div>
 </div>

@@ -2,7 +2,8 @@
 	import { Modal } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import type { UsageLevel } from '$lib/types/usageLevel';
-	import { USAGE_LEVEL_LABELS } from '$lib/types/usageLevel';
+	import { usageLevelLabel } from '$lib/types/usageLevel';
+	import { m } from '$lib/i18n';
 	import { SlidersHorizontal, ChevronDown, Info, Check } from 'lucide-svelte';
 
 	interface Props {
@@ -22,49 +23,50 @@
 		includes: string[];
 	};
 
-	const OPTIONS: LevelOption[] = [
+	// $derived: тексты пересчитываются при смене языка.
+	const OPTIONS: LevelOption[] = $derived([
 		{
 			value: 'basic',
-			title: USAGE_LEVEL_LABELS.basic,
-			summary: 'Основные туннели, диагностика и базовая маршрутизация',
+			title: usageLevelLabel('basic'),
+			summary: m.settings_level_basic_summary(),
 			includes: [
-				'AmneziaWG-туннели',
-				'Системные WireGuard-туннели',
-				'Диагностика и проверки',
-				'Маршрутизация: NDMS и VPN для устройств',
-				'Карточка «Система»: базовые данные',
+				m.settings_level_basic_include_awg(),
+				m.settings_level_basic_include_system(),
+				m.settings_level_basic_include_diagnostics(),
+				m.settings_level_basic_include_routing(),
+				m.settings_level_basic_include_system_card(),
 			],
 		},
 		{
 			value: 'advanced',
-			title: USAGE_LEVEL_LABELS.advanced,
-			summary: 'Туннели, серверы и полная маршрутизация',
+			title: usageLevelLabel('advanced'),
+			summary: m.settings_level_advanced_summary(),
 			includes: [
-				'Всё из уровня "Базовый"',
-				'SingBox-туннели и подписки',
-				'Серверы WireGuard и DeviceProxy',
-				'Маршрутизация: политики доступа, IP-адреса, Sing-box Router',
-				'Веб-терминал и режим списка для AWG',
-				'Системный мониторинг',
-				'Карточка «Система»: добавляются данные по железу',
-				'Настройка цветовой схемы',
-				'Компактная ширина интерфейса (опционально)',
+				m.settings_level_advanced_include_basic(),
+				m.settings_level_advanced_include_singbox(),
+				m.settings_level_advanced_include_servers(),
+				m.settings_level_advanced_include_routing(),
+				m.settings_level_advanced_include_terminal(),
+				m.settings_level_advanced_include_monitoring(),
+				m.settings_level_advanced_include_system_card(),
+				m.settings_level_advanced_include_theme(),
+				m.settings_level_advanced_include_compact(),
 			],
 		},
 		{
 			value: 'expert',
-			title: USAGE_LEVEL_LABELS.expert,
-			summary: 'Полный набор функций для тонкой настройки',
+			title: usageLevelLabel('expert'),
+			summary: m.settings_level_expert_summary(),
 			includes: [
-				'Всё из уровня "Расширенный"', 
-			    'HydraRoute Neo', 
-				'Sing-box Router', 
-				'Проверка конфигурации AWG',
-				'Создание API-ключа',
-				'Карточка «Система»: полные подробные данные + спойлер',
+				m.settings_level_expert_include_advanced(),
+				'HydraRoute Neo',
+				'Sing-box Router',
+				m.settings_level_expert_include_awg_check(),
+				m.settings_level_expert_include_api_key(),
+				m.settings_level_expert_include_system_card(),
 			],
 		},
-	];
+	]);
 
 	let infoFor = $state<UsageLevel | null>(null);
 	const infoOpt = $derived(infoFor ? OPTIONS.find((o) => o.value === infoFor) : null);
@@ -87,12 +89,12 @@
 
 <div class="settings-block">
 	<div class="card" class:highlighted>
-	<SettingsSectionLabel label="Общие" icon={SlidersHorizontal} tone="slate" header />
+	<SettingsSectionLabel label={m.settings_general()} icon={SlidersHorizontal} tone="slate" header />
 	<div class="setting-row level-header-row">
 		<div class="flex flex-col gap-1">
-			<span class="font-medium">Уровень использования</span>
+			<span class="font-medium">{m.settings_level_title()}</span>
 			<span class="setting-description">
-				Скрывает разделы, которые вам не нужны. Данные при понижении уровня не удаляются.
+				{m.settings_level_description()}
 			</span>
 		</div>
 		<button
@@ -100,10 +102,10 @@
 			class="level-expand-control"
 			aria-expanded={expanded}
 			aria-controls="usage-level-picker"
-			aria-label="Показать или скрыть выбор уровня"
+			aria-label={m.settings_level_toggle_aria()}
 			onclick={() => (expanded = !expanded)}
 		>
-			<span class="current-level">{USAGE_LEVEL_LABELS[value]}</span>
+			<span class="current-level">{usageLevelLabel(value)}</span>
 			<span class="chevron" class:open={expanded} aria-hidden="true"><ChevronDown size={14} strokeWidth={2} /></span>
 		</button>
 	</div>
@@ -113,7 +115,7 @@
 			<div
 				class="level-grid"
 				role="radiogroup"
-				aria-label="Уровень использования"
+				aria-label={m.settings_level_title()}
 				aria-busy={saving}
 			>
 				{#each OPTIONS as opt (opt.value)}
@@ -131,7 +133,7 @@
 							class="info-btn"
 							role="button"
 							tabindex="0"
-							aria-label={`Подробнее про уровень «${opt.title}»`}
+							aria-label={m.settings_level_info_aria({ level: opt.title })}
 							onclick={(e) => openInfo(e, opt.value)}
 							onkeydown={(e) => {
 								if (e.key === 'Enter' || e.key === ' ') {
@@ -159,19 +161,19 @@
 
 <Modal
 	open={infoFor !== null}
-	title={infoOpt ? `Уровень: ${infoOpt.title}` : ''}
+	title={infoOpt ? m.settings_level_info_title({ level: infoOpt.title }) : ''}
 	size="md"
 	onclose={() => (infoFor = null)}
 >
 	{#if infoOpt}
 		<div class="level-info-panel">
 			<div class="level-info-summary">
-				<span class="level-info-eyebrow">Кратко</span>
+				<span class="level-info-eyebrow">{m.settings_level_info_summary()}</span>
 				<p>{infoOpt.summary}</p>
 			</div>
 
 			<div class="level-info-section">
-				<h3>Что включает</h3>
+				<h3>{m.settings_level_info_includes()}</h3>
 				<ul class="level-info-list">
 					{#each infoOpt.includes as item}
 						<li class="level-info-item">

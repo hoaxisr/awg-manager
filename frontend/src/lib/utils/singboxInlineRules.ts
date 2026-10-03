@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type { SingboxRouterRule, SingboxRouterRuleSet } from '$lib/types';
 
 export interface InlineRuleParseResult {
@@ -240,7 +241,7 @@ export function parseInlineRuleList(input: string): InlineRuleParseResult {
 
 		// ── adblock exceptions ───────────────────────────────────
 		if (line.startsWith('@@')) {
-			lg.warn('исключения @@ пока не поддерживаются в inline rule set');
+			lg.warn(m.inline_rules_warn_exceptions());
 			continue;
 		}
 
@@ -261,136 +262,136 @@ export function parseInlineRuleList(input: string): InlineRuleParseResult {
 
 			switch (rawKey.toLowerCase()) {
 				case 'port':
-					if (!real(val)) { lg.err('port требует значение после двоеточия'); continue; }
+					if (!real(val)) { lg.err(m.inline_rules_err_needs_value({ key: 'port' })); continue; }
 					let portAdded = false;
 					for (const p of val.split(',').map((s) => s.trim()).filter(real)) {
-						if (!/^\d+$/.test(p)) { lg.err(`Некорректный порт: ${p}`); continue; }
+						if (!/^\d+$/.test(p)) { lg.err(m.inline_rules_err_bad_port({ port: p })); continue; }
 						const n = parseInt(p, 10);
-						if (n < 1 || n > 65535) { lg.err(`Некорректный порт: ${p}`); continue; }
+						if (n < 1 || n > 65535) { lg.err(m.inline_rules_err_bad_port({ port: p })); continue; }
 						portGroup.add(n);
 						portAdded = true;
 					}
-					if (portAdded) { lg.warn('port создаёт отдельное правило и может матчить широкий трафик'); }
+					if (portAdded) { lg.warn(m.inline_rules_warn_port_rule()); }
 					continue;
 
 				case 'port_range':
-					if (!real(val)) { lg.err(`${rawKey} требует значение после двоеточия`); continue; }
-					lg.warn('port_range пока не поддерживается в smart list');
+					if (!real(val)) { lg.err(m.inline_rules_err_needs_value({ key: rawKey })); continue; }
+					lg.warn(m.inline_rules_warn_port_range());
 					continue;
 
 				case 'process':
 				case 'process_name':
-					if (!real(val)) { lg.err(`${rawKey} требует значение после двоеточия`); continue; }
+					if (!real(val)) { lg.err(m.inline_rules_err_needs_value({ key: rawKey })); continue; }
 					processNameGroup.add(val);
-					lg.warn('process относится к локальным процессам роутера/хоста, а не к LAN-клиентам');
+					lg.warn(m.inline_rules_warn_process());
 					continue;
 
 				case 'process_path':
 				case 'path':
-					if (!real(val)) { lg.err(`${rawKey} требует значение после двоеточия`); continue; }
+					if (!real(val)) { lg.err(m.inline_rules_err_needs_value({ key: rawKey })); continue; }
 					processPathGroup.add(val);
-					lg.warn('process_path относится к локальным процессам роутера/хоста, а не к LAN-клиентам');
+					lg.warn(m.inline_rules_warn_process_path());
 					continue;
 
 				case 'package':
 				case 'package_name':
-					if (!real(val)) { lg.err(`${rawKey} требует значение после двоеточия`); continue; }
+					if (!real(val)) { lg.err(m.inline_rules_err_needs_value({ key: rawKey })); continue; }
 					packageNameGroup.add(val);
 					continue;
 
 				case 'network':
-					if (!real(val)) { lg.err(`${rawKey} требует значение после двоеточия`); continue; }
+					if (!real(val)) { lg.err(m.inline_rules_err_needs_value({ key: rawKey })); continue; }
 					const network = val.toLowerCase();
 					if (network !== 'tcp' && network !== 'udp') {
-						lg.err(`Некорректный network: ${val} — допустимы только tcp/udp`);
+						lg.err(m.inline_rules_err_bad_network({ value: val }));
 						continue;
 					}
 					networkGroup.add(network);
 					continue;
 
 				case 'ip':
-					if (!real(val)) { lg.err(`${rawKey} требует значение после двоеточия`); continue; }
+					if (!real(val)) { lg.err(m.inline_rules_err_needs_value({ key: rawKey })); continue; }
 					for (const p of val.split(',').map((s) => s.trim()).filter(real)) {
 						if (isValidIpCidr(p) || isValidSimpleIp(p) || isValidSimpleIpv6(p)) {
 							addIpCidr(ipCidrGroup, p);
 						} else {
-							lg.err(`Некорректный IP/CIDR для ip: ${p}`);
+							lg.err(m.inline_rules_err_bad_ip({ value: p }));
 						}
 					}
 					continue;
 
 				case 'cidr':
-					if (!real(val)) { lg.err(`${rawKey} требует значение после двоеточия`); continue; }
+					if (!real(val)) { lg.err(m.inline_rules_err_needs_value({ key: rawKey })); continue; }
 					for (const p of val.split(',').map((s) => s.trim()).filter(real)) {
 						if (isValidIpCidr(p) || isValidSimpleIp(p) || isValidSimpleIpv6(p)) {
 							addIpCidr(ipCidrGroup, p);
 						} else {
-							lg.err(`Некорректный CIDR для cidr: ${p}`);
+							lg.err(m.inline_rules_err_bad_cidr({ value: p }));
 						}
 					}
 					continue;
 
 				case 'src_ip':
 				case 'source_ip':
-					if (!real(val)) { lg.err(`${rawKey} требует значение после двоеточия`); continue; }
+					if (!real(val)) { lg.err(m.inline_rules_err_needs_value({ key: rawKey })); continue; }
 					for (const p of val.split(',').map((s) => s.trim()).filter(real)) {
 						if (isValidIpCidr(p) || isValidSimpleIp(p) || isValidSimpleIpv6(p)) {
 							addIpCidr(sourceIpCidrGroup, p);
 						} else {
-							lg.err(`Некорректный IP/CIDR для src_ip: ${p}`);
+							lg.err(m.inline_rules_err_bad_src_ip({ value: p }));
 						}
 					}
 					continue;
 
 				case 'domain_keyword':
 				case 'keyword':
-					if (!real(val)) { lg.err(`${rawKey} требует значение после двоеточия`); continue; }
+					if (!real(val)) { lg.err(m.inline_rules_err_needs_value({ key: rawKey })); continue; }
 					domainKeywordGroup.add(val);
 					continue;
 
 				case 'domain_regex':
 				case 'regex':
-					if (!real(val)) { lg.err(`${rawKey} требует значение после двоеточия`); continue; }
-					try { new RegExp(val); } catch { lg.err(`Некорректный regex: ${val}`); continue; }
+					if (!real(val)) { lg.err(m.inline_rules_err_needs_value({ key: rawKey })); continue; }
+					try { new RegExp(val); } catch { lg.err(m.inline_rules_err_bad_regex({ value: val })); continue; }
 					domainRegexGroup.add(val);
 					continue;
 
 				case 'domain':
-					if (!real(val)) { lg.err(`${rawKey} требует значение после двоеточия`); continue; }
+					if (!real(val)) { lg.err(m.inline_rules_err_needs_value({ key: rawKey })); continue; }
 					{
 						const norm = normalizeDomainHost(val);
 						if (norm) {
 							domainGroup.add(norm);
 						} else {
-							lg.err(`Некорректный домен для domain: ${val}`);
+							lg.err(m.inline_rules_err_bad_domain({ value: val }));
 						}
 					}
 					continue;
 
 				case 'domain_suffix':
 				case 'suffix':
-					if (!real(val)) { lg.err(`${rawKey} требует значение после двоеточия`); continue; }
+					if (!real(val)) { lg.err(m.inline_rules_err_needs_value({ key: rawKey })); continue; }
 
 					if (val.startsWith('*.')) {
 						const norm = normalizeDomainHost(val.slice(2));
 						if (norm) {
 							domainSuffixGroup.add(norm);
 						} else {
-							lg.err(`Некорректный домен для ${rawKey}: ${val}`);
+							lg.err(m.inline_rules_err_bad_domain_key({ key: rawKey, value: val }));
 						}
 					} else if (val.startsWith('.')) {
 						const norm = normalizeDomainHost(val.slice(1));
 						if (norm) {
 							domainSuffixGroup.add('.' + norm);
 						} else {
-							lg.err(`Некорректный домен для ${rawKey}: ${val}`);
+							lg.err(m.inline_rules_err_bad_domain_key({ key: rawKey, value: val }));
 						}
 					} else {
 						const norm = normalizeDomainHost(val);
 						if (norm) {
 							domainSuffixGroup.add(norm);
 						} else {
-							lg.err(`Некорректный домен для ${rawKey}: ${val}`);
+							lg.err(m.inline_rules_err_bad_domain_key({ key: rawKey, value: val }));
 						}
 					}
 					continue;
@@ -416,7 +417,7 @@ export function parseInlineRuleList(input: string): InlineRuleParseResult {
 			if (norm) {
 				domainSuffixGroup.add('.' + norm);
 			} else {
-				lg.warn(`Невалидный домен (точка-префикс): ${domain}`);
+				lg.warn(m.inline_rules_warn_bad_dot_domain({ value: domain }));
 			}
 			continue;
 		}
@@ -427,7 +428,7 @@ export function parseInlineRuleList(input: string): InlineRuleParseResult {
 			if (norm) {
 				domainSuffixGroup.add(norm);
 			} else {
-				lg.warn(`Невалидный домен (wildcard): ${domain}`);
+				lg.warn(m.inline_rules_warn_bad_wildcard({ value: domain }));
 			}
 			continue;
 		}
@@ -441,7 +442,7 @@ export function parseInlineRuleList(input: string): InlineRuleParseResult {
 		// pure-IP strings (e.g. "999.999.999.999") that didn't match the canonical
 		// isValidSimpleIp but match DOMAIN_RE by coincidence — drain here
 		if (/^\d+\.\d+\.\d+\.\d+$/.test(domain)) {
-			lg.warn(`Не распознано как правило: ${line}`);
+			lg.warn(m.inline_rules_warn_unrecognized({ line }));
 			continue;
 		}
 
@@ -454,7 +455,7 @@ export function parseInlineRuleList(input: string): InlineRuleParseResult {
 			}
 		}
 
-		lg.warn(`Не распознано как правило: ${line}`);
+		lg.warn(m.inline_rules_warn_unrecognized({ line }));
 	}
 
 	// ── build rules array ────────────────────────────────────────
@@ -477,11 +478,11 @@ export function parseInlineRuleList(input: string): InlineRuleParseResult {
 	if (networkGroup.size > 0) rules.push({ network: [...networkGroup] });
 
 	// ── format for return ───────────────────────────────────────
-	const warnMsgs = warnings.map((w) => `Строка ${w.line}: ${w.msg}`);
-	const errMsgs = errors.map((e) => `Строка ${e.line}: ${e.msg}`);
+	const warnMsgs = warnings.map((w) => m.inline_rules_line_message({ line: w.line, msg: w.msg }));
+	const errMsgs = errors.map((e) => m.inline_rules_line_message({ line: e.line, msg: e.msg }));
 
 	if (rules.length === 0 && errMsgs.length === 0 && warnMsgs.length === 0 && !isInlineRuleListEmpty(input)) {
-		errMsgs.push('Нет валидных строк для inline rule set');
+		errMsgs.push(m.inline_rules_err_no_valid_lines());
 	}
 
 	return { rules, warnings: warnMsgs, errors: errMsgs };
@@ -662,9 +663,9 @@ export function validateRuleSetTag(
 	type: SingboxRouterRuleSet['type'],
 ): string | null {
 	const t = tag.trim();
-	if (!t) return 'Tag обязателен';
+	if (!t) return m.inline_rules_tag_required();
 	if (t.endsWith(INLINE_RULE_SET_SRS_SUFFIX)) {
-		return `Суффикс «${INLINE_RULE_SET_SRS_SUFFIX}» зарезервирован для скомпилированного набора — укажите имя без него (например geosite-samsung, не geosite-samsung-srs)`;
+		return m.inline_rules_tag_srs_suffix({ suffix: INLINE_RULE_SET_SRS_SUFFIX });
 	}
 	// F434 (#941): зеркало validateRuleSet на бэкенде. Файл артефакта набора
 	// назван самим тегом, пропущенным через лоссовый санитайзинг, поэтому
@@ -673,10 +674,10 @@ export function validateRuleSetTag(
 	// Только inline: у remote тег файл не именует, а теги каталога SagerNet
 	// со спецсимволами (geolocation-!cn) штатные.
 	if (type === 'inline' && t === FALLBACK_RULE_SET_FILENAME) {
-		return `Имя «${FALLBACK_RULE_SET_FILENAME}» занято: так называется файл наборов, заведённых с кириллическим именем до запрета — набор с этим именем разделил бы файл с ними`;
+		return m.inline_rules_tag_reserved({ name: FALLBACK_RULE_SET_FILENAME });
 	}
 	if (type === 'inline' && t.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') !== t) {
-		return 'Имя набора — это имя его файла: латиница, цифры, точка, подчёркивание и дефис (дефис не с краю). Кириллица и пробелы не годятся: два таких имени дают один файл и затирают друг друга';
+		return m.inline_rules_tag_charset();
 	}
 	return null;
 }

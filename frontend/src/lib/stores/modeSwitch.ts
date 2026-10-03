@@ -3,6 +3,7 @@
 // one source of truth for the in-flight transition. Reuses `fakeipTransition`
 // (the global SSE/progress reducer) unchanged; this store holds only the UI
 // phase, leaving the tested progress reducer free of modal/intent state.
+import { m } from '$lib/i18n';
 import { get, writable } from 'svelte/store';
 import { api } from '$lib/api/client';
 import { fakeipTransition, type FakeIPMode } from '$lib/stores/fakeipTransition';
@@ -95,7 +96,7 @@ function createModeSwitch() {
 			}
 			if (Date.now() - startedAt > WATCHDOG_TIMEOUT_MS) {
 				fakeipTransition.fail(
-					'Не получен финальный статус переключения — проверьте состояние роутера и обновите страницу',
+					m.mode_switch_no_final_status(),
 				);
 				stopWatchdog();
 			}
@@ -127,7 +128,7 @@ function createModeSwitch() {
 			// watchdog подстраховывает потерянный терминальный event.
 			startWatchdog(target);
 		} catch (e) {
-			fakeipTransition.fail(e instanceof Error ? e.message : 'Не удалось переключить режим');
+			fakeipTransition.fail(e instanceof Error ? e.message : m.mode_switch_failed());
 		}
 	}
 

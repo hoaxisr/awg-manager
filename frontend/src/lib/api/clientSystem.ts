@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type {
 	AuthStatus,
 	BootStatus,
@@ -106,7 +107,7 @@ export class SystemClient extends TunnelsClient {
 			if (e instanceof MessageEvent) {
 				onError(e.data);
 			} else {
-				onError('Соединение потеряно');
+				onError(m.api_connection_lost());
 			}
 			es.close();
 		});
@@ -357,8 +358,8 @@ export class SystemClient extends TunnelsClient {
 			// 429 «слишком много попыток…»), не подменяя его generic-текстом.
 			const fallback =
 				response.status === 429
-					? 'Слишком много попыток входа. Попробуйте позже.'
-					: 'Ошибка авторизации';
+					? m.api_too_many_login_attempts()
+					: m.api_auth_error();
 			throw new Error(data?.message || fallback);
 		}
 		return data;
@@ -677,15 +678,15 @@ export class SystemClient extends TunnelsClient {
 		});
 		if (res.status === 401) {
 			this.onUnauthorized?.();
-			throw new Error('Сессия истекла');
+			throw new Error(m.api_session_expired());
 		}
 		const contentType = res.headers.get('content-type') || '';
 		if (!res.ok) {
 			if (contentType.includes('application/json')) {
 				const body = (await res.json()) as { message?: string };
-				throw new Error(body.message || `Ошибка экспорта (${res.status})`);
+				throw new Error(body.message || m.api_export_error({ status: res.status }));
 			}
-			throw new Error(`Ошибка экспорта (${res.status})`);
+			throw new Error(m.api_export_error({ status: res.status }));
 		}
 		return res.blob();
 	}
@@ -701,15 +702,15 @@ export class SystemClient extends TunnelsClient {
 		});
 		if (res.status === 401) {
 			this.onUnauthorized?.();
-			throw new Error('Сессия истекла');
+			throw new Error(m.api_session_expired());
 		}
 		const contentType = res.headers.get('content-type') || '';
 		if (!contentType.includes('application/json')) {
-			throw new Error(`Неожиданный ответ сервера (${res.status})`);
+			throw new Error(m.api_unexpected_response({ status: res.status }));
 		}
 		const body = (await res.json()) as { success?: boolean; message?: string; data?: { message?: string } };
 		if (!res.ok || body.success === false) {
-			throw new Error(body.message || 'Не удалось восстановить резервную копию');
+			throw new Error(body.message || m.api_restore_failed());
 		}
 		return { message: body.data?.message || body.message || 'OK' };
 	}
@@ -910,11 +911,11 @@ export class SystemClient extends TunnelsClient {
 		});
 		if (res.status === 401) {
 			this.onUnauthorized?.();
-			throw new Error('Сессия истекла');
+			throw new Error(m.api_session_expired());
 		}
 		const body = (await res.json()) as { success?: boolean; data?: { path: string }; message?: string };
 		if (!res.ok || body.success === false) {
-			throw new Error(body.message || 'Не удалось загрузить файл');
+			throw new Error(body.message || m.api_upload_failed());
 		}
 		return body.data ?? { path: '' };
 	}

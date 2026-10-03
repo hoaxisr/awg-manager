@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import type { ASCParams, ASCParamsExtended } from '$lib/types';
 
 const REQUIRED_NUMERIC = ['jc', 'jmin', 'jmax', 's1', 's2'] as const;
@@ -82,17 +83,17 @@ export function validateASCBeforeSave(params: ASCParams): string[] {
 	}
 
 	if (emptyText.length > 0) {
-		errors.push(`Заполните параметры: ${emptyText.join(', ')}`);
+		errors.push(m.asc_validation_fill_params({ list: emptyText.join(', ') }));
 	}
 
 	if (invalidNumeric.length > 0) {
-		errors.push(`Параметры должны быть больше нуля: ${invalidNumeric.join(', ')}`);
+		errors.push(m.asc_validation_params_positive({ list: invalidNumeric.join(', ') }));
 	}
 
 	const jmin = Number(params.jmin);
 	const jmax = Number(params.jmax);
 	if (Number.isFinite(jmin) && Number.isFinite(jmax) && jmin > 0 && jmax > 0 && jmax <= jmin) {
-		errors.push('Jmax должен быть больше Jmin');
+		errors.push(m.asc_validation_jmax_gt_jmin());
 	}
 
 	return errors;

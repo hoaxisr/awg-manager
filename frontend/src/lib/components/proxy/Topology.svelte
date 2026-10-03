@@ -11,6 +11,7 @@
 	// Схема раздачи (SH-04..SH-17): кто подключается и куда попадает. Все
 	// значения — из статуса и конфига; kernel-имён на схеме нет (ia §1.0), у
 	// старого бинаря без `rawNdmsIface` строка Raw-половины не рисуется.
+	import { m } from '$lib/i18n';
 	import { ArrowRight } from 'lucide-svelte';
 
 	interface Props {
@@ -30,7 +31,7 @@
 
 <div class="topo">
 	<div class="col">
-		<p class="col-title">Абоненты</p>
+		<p class="col-title">{m.proxy_flow_subscribers()}</p>
 		{#each inbound as i (i.who)}
 			<div class="node">
 				<span class="node-name">{i.who}</span>
@@ -42,7 +43,7 @@
 	<div class="arrow"><ArrowRight size={18} strokeWidth={2.5} /></div>
 
 	<div class="col">
-		<p class="col-title">Этот роутер</p>
+		<p class="col-title">{m.proxy_flow_this_router()}</p>
 		<div class="node router">
 			<span class="node-name">{name}</span>
 			{#each routerLines as line (line)}
@@ -54,9 +55,9 @@
 	<div class="arrow"><ArrowRight size={18} strokeWidth={2.5} /></div>
 
 	<div class="col">
-		<p class="col-title">Выход</p>
+		<p class="col-title">{m.proxy_topology_exit()}</p>
 		<div class="node">
-			<span class="node-name">Интернет</span>
+			<span class="node-name">{m.proxy_flow_internet()}</span>
 			{#if policyLine}<span class="node-sub">{policyLine}</span>{/if}
 			{#if ingressLine}<span class="node-sub">{ingressLine}</span>{/if}
 		</div>

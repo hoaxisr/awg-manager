@@ -1,9 +1,6 @@
+import { m } from '$lib/i18n';
 import { api } from '$lib/api/client';
 import { notifications } from '$lib/stores/notifications';
-
-const DEFAULT_SUCCESS = 'Прокси удалён';
-const DEFAULT_PENDING_APPLY =
-	'Прокси удалён из конфига, но sing-box ещё не обновлён — изменение применится, когда сервис снова будет доступен.';
 
 export type DeviceProxyDeleteNoticeOptions = {
 	successMessage?: string;
@@ -17,9 +14,9 @@ export async function deleteDeviceProxyInstanceWithNotice(
 ): Promise<{ deleted: boolean; applied: boolean }> {
 	const result = await api.deleteDeviceProxyInstance(id);
 	if (result.applied) {
-		notifications.success(options.successMessage ?? DEFAULT_SUCCESS);
+		notifications.success(options.successMessage ?? m.device_proxy_deleted());
 	} else {
-		notifications.warning(options.pendingApplyMessage ?? DEFAULT_PENDING_APPLY);
+		notifications.warning(options.pendingApplyMessage ?? m.device_proxy_deleted_pending_apply());
 	}
 	return result;
 }

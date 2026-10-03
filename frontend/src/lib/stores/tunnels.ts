@@ -17,6 +17,7 @@
  *                          below; components read it to display the
  *                          connected/disconnected badge + latency.
  */
+import { m } from '$lib/i18n';
 import { writable, get } from 'svelte/store';
 import { api } from '$lib/api/client';
 import { clearTraffic } from '$lib/stores/traffic';
@@ -191,7 +192,7 @@ async function updateTunnel(id: string, tunnel: Partial<AWGTunnel>): Promise<AWG
 
 async function remove(id: string): Promise<DeleteResult> {
 	if (!startOperation(id)) {
-		throw new Error('Операция уже выполняется');
+		throw new Error(m.store_tunnels_operation_busy());
 	}
 	try {
 		const result = await api.deleteTunnel(id);
@@ -212,7 +213,7 @@ async function remove(id: string): Promise<DeleteResult> {
 
 async function start(id: string): Promise<void> {
 	if (!startOperation(id)) {
-		throw new Error('Операция уже выполняется');
+		throw new Error(m.store_tunnels_operation_busy());
 	}
 	try {
 		await api.startTunnel(id);
@@ -224,7 +225,7 @@ async function start(id: string): Promise<void> {
 
 async function stop(id: string): Promise<void> {
 	if (!startOperation(id)) {
-		throw new Error('Операция уже выполняется');
+		throw new Error(m.store_tunnels_operation_busy());
 	}
 	try {
 		await api.stopTunnel(id);
@@ -236,7 +237,7 @@ async function stop(id: string): Promise<void> {
 
 async function restart(id: string): Promise<void> {
 	if (!startOperation(id)) {
-		throw new Error('Операция уже выполняется');
+		throw new Error(m.store_tunnels_operation_busy());
 	}
 	try {
 		await api.restartTunnel(id);

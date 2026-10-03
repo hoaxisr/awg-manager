@@ -3,6 +3,7 @@
 	// Конфиг с прихода страницы — состояние сервера; правит пользователь
 	// редактируемую копию, которая живёт здесь (W-22). Сохраняет её страница:
 	// она владеет конфигами и статусами.
+	import { m } from '$lib/i18n';
 	import { untrack } from 'svelte';
 	import { Badge, Button, Card, FieldHint, SideDrawer, Stat, StatStrip } from '$lib/components/ui';
 	import { ExternalLink } from 'lucide-svelte';
@@ -128,9 +129,9 @@
 	const policyLabel = $derived(policy ? policy.description || policy.name : '');
 
 	const rawHint = $derived(
-		'Режим Raw: клиент поднимает свой интерфейс, отдельный AWG-туннель не нужен. ' +
-			'Интерфейс виден в AWG-туннелях с бейджем «WDTT Raw» и в «Маршрутизации».' +
-			(rawKernel ? ` Kernel-имя: ${rawKernel}.` : ''),
+		rawKernel
+			? m.proxy_exit_detail_raw_hint_kernel({ kernel: rawKernel })
+			: m.proxy_exit_detail_raw_hint(),
 	);
 
 	// Пустой адрес сервера: клиент с ним не стартует («не задан адрес сервера
@@ -139,7 +140,7 @@
 	// wdtt:// лежит только DTLS-порт.
 	const noPeerHint = $derived(
 		wdttDraft && !wdttDraft.peer?.trim()
-			? 'Укажите адрес сервера — без него клиент не запустится. У режимов WG и Raw он разный.'
+			? m.proxy_exit_detail_no_peer_hint()
 			: '',
 	);
 
@@ -182,7 +183,7 @@
 			} else {
 				await api.restartFreeTurnClient(row.id);
 			}
-			notifications.success('Перезапуск инициирован');
+			notifications.success(m.proxy_exit_detail_restarted());
 			await onreload();
 		} catch (e) {
 			notifications.error(errText(e));
@@ -208,7 +209,7 @@
 			if (res.created) {
 				markEnsured(id);
 				// TS-01 — про туннель из журнала (режим WG).
-				notifications.success(`Создан туннель «${res.tunnelName ?? ''}»`);
+				notifications.success(m.proxy_exit_detail_tunnel_created({ name: res.tunnelName ?? '' }));
 				await onreload();
 			} else if (res.tunnelId) {
 				markEnsured(id);
@@ -244,7 +245,7 @@
 				wdttClientId: row.protocol === 'wdtt' ? row.id : undefined,
 			});
 			markEnsured(row.id);
-			notifications.success(`Создан туннель «${tun.name}»`);
+			notifications.success(m.proxy_exit_detail_tunnel_created({ name: tun.name }));
 			await onreload();
 		} catch (e) {
 			notifications.error(errText(e));
@@ -262,20 +263,20 @@
 		<div class="head-actions">
 			{#if running}
 				<Button variant="secondary" size="sm" loading={restarting} disabled={busy || restarting} onclick={restart}>
-					Перезапустить
+					{m.common_restart()}
 				</Button>
-				<Button variant="secondary" size="sm" disabled={busy || restarting} onclick={onstop}>Остановить</Button>
+				<Button variant="secondary" size="sm" disabled={busy || restarting} onclick={onstop}>{m.common_stop()}</Button>
 			{:else}
 				<Button variant="primary" size="sm" disabled={busy || !!noPeerHint} onclick={onstart}>
-					Запустить
+					{m.common_start()}
 				</Button>
 				{#if noPeerHint}
-					<FieldHint text={noPeerHint} ariaLabel="Подсказка: клиент не запускается" />
+					<FieldHint text={noPeerHint} ariaLabel={m.proxy_exit_detail_start_blocked_aria()} />
 				{/if}
 			{/if}
-			<Button variant="ghost" size="sm" onclick={() => (settingsOpen = true)}>Настройки</Button>
+			<Button variant="ghost" size="sm" onclick={() => (settingsOpen = true)}>{m.proxy_common_settings()}</Button>
 			{#if onwizard}
-				<Button variant="ghost" size="sm" onclick={onwizard}>Мастер</Button>
+				<Button variant="ghost" size="sm" onclick={onwizard}>{m.proxy_common_wizard()}</Button>
 			{/if}
 		</div>
 	</div>
@@ -283,10 +284,18 @@
 	<!-- Состояние: то, что смотрят каждый день. Трафик — из связанного
 	     туннеля, чтобы за ним не ходить на другую страницу. -->
 	<StatStrip>
-		<Stat value={running ? 'Запущен' : 'Остановлен'} label="Состояние" sub={uptime} />
-		<Stat value={String(status?.dtlsConnections ?? 0)} label="Соединений" />
-		<Stat value={trafficValue} label="Трафик" sub="принято / отдано" />
-		<Stat value={listen || '—'} label="Локальный порт" />
+		<Stat
+			value={running ? m.proxy_detail_state_running() : m.proxy_detail_state_stopped()}
+			label={m.proxy_detail_state()}
+			sub={uptime}
+		/>
+		<Stat value={String(status?.dtlsConnections ?? 0)} label={m.proxy_exit_detail_connections()} />
+		<Stat
+			value={trafficValue}
+			label={m.proxy_exit_detail_traffic()}
+			sub={m.proxy_exit_detail_traffic_sub()}
+		/>
+		<Stat value={listen || '—'} label={m.proxy_exit_detail_local_port()} />
 	</StatStrip>
 
 	<!-- EX-01: ошибка живёт, пока процесс не работает. -->
@@ -295,40 +304,40 @@
 	<!-- Секции нет, пока интерфейс клиента неизвестен: пустой заголовок ничего
 	     не сообщает, а обещать «не заведён в политику» не о чем. -->
 	{#if policyIface}
-		<DetailSection title="Куда идёт трафик">
+		<DetailSection title={m.proxy_exit_detail_where_title()}>
 			{#if raw}
 				<div class="line-row">
-					<span class="line-label">В роутере:</span>
+					<span class="line-label">{m.proxy_exit_detail_in_router()}</span>
 					<code>{rawNdms}</code>
-					<FieldHint text={rawHint} ariaLabel="Подсказка: интерфейс клиента" />
+					<FieldHint text={rawHint} ariaLabel={m.proxy_exit_detail_iface_aria()} />
 				</div>
 			{:else if tunnel}
 				<!-- EX-09 — и у WDTT-WG, и у FreeTurn-клиента: туннель есть у обоих.
 				     (i) EX-10 рассказывает про режим WG — он только у WDTT. -->
 				<div class="line-row">
-					<span class="line-label">AWG-туннель:</span>
+					<span class="line-label">{m.proxy_exit_detail_awg_tunnel()}</span>
 					<a class="link" href={`/tunnels/${tunnel.id}`}>{tunnel.name}<ExternalLink size={12} /></a>
 					{#if row.protocol === 'wdtt'}
 						<FieldHint
-							text={`Режим WG: клиент получает WireGuard-конфиг, из него создан AWG-туннель с Endpoint 127.0.0.1:${port ?? ''}.`}
-							ariaLabel="Подсказка: AWG-туннель"
+							text={m.proxy_exit_detail_wg_hint({ port: port ?? '' })}
+							ariaLabel={m.proxy_exit_detail_awg_aria()}
 						/>
 					{/if}
 				</div>
 			{/if}
 			<div class="line-row">
-				<span class="line-label">Политика доступа:</span>
+				<span class="line-label">{m.proxy_exit_detail_policy()}</span>
 				{#if policyLabel}
 					<Badge size="sm" variant="success">{policyLabel}</Badge>
 				{:else}
-					<Badge size="sm" variant="muted">не заведён в политику</Badge>
+					<Badge size="sm" variant="muted">{m.proxy_exit_detail_no_policy()}</Badge>
 				{/if}
 				<FieldHint
-					text="Запись в политике — кандидатура, а не назначение: интерфейс дописывается в конец её порядка, и трафик пойдёт через него, только если он окажется первым рабочим."
-					ariaLabel="Подсказка: политика доступа"
+					text={m.proxy_exit_wizard_policy_hint()}
+					ariaLabel={m.proxy_exit_wizard_policy_aria()}
 				/>
 				<Button variant="ghost" size="sm" href="/routing">
-					Маршрутизация
+					{m.proxy_exit_wizard_routing()}
 					{#snippet iconAfter()}<ExternalLink size={12} />{/snippet}
 				</Button>
 			</div>
@@ -354,7 +363,7 @@
 
 <!-- Параметры выхода — одноразовая настройка: адрес, пароль, хеши, потоки,
      капча. В ящике они не занимают экран, на котором смотрят состояние. -->
-<SideDrawer open={settingsOpen} onClose={() => (settingsOpen = false)} title="Параметры выхода">
+<SideDrawer open={settingsOpen} onClose={() => (settingsOpen = false)} title={m.proxy_exit_detail_drawer_title()}>
 	<ExitParamsSection
 		bind:wdttClient={wdttDraft}
 		bind:ftClient={ftDraft}

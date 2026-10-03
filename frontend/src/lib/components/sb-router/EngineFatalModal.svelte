@@ -1,8 +1,9 @@
 <script lang="ts">
+  import { m } from '$lib/i18n';
   import Modal from '$lib/components/ui/Modal.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { copyToClipboard } from '$lib/utils/clipboard';
-  import { engineFatalHint, ENGINE_FATAL_FALLBACK } from './engineFatalHints';
+  import { engineFatalHint, engineFatalFallback } from './engineFatalHints';
 
   interface Props {
     open: boolean;
@@ -12,7 +13,7 @@
   let { open, lastError, onclose }: Props = $props();
 
   let copied = $state(false);
-  const hint = $derived(lastError ? (engineFatalHint(lastError) ?? ENGINE_FATAL_FALLBACK) : null);
+  const hint = $derived(lastError ? (engineFatalHint(lastError) ?? engineFatalFallback()) : null);
 
   async function copy(): Promise<void> {
     copied = await copyToClipboard(lastError);
@@ -26,15 +27,15 @@
   });
 </script>
 
-<Modal {open} {onclose} title="Движок sing-box не запустился" size="lg">
+<Modal {open} {onclose} title={m.sb_router_fatal_title()} size="lg">
   {#if hint}
     <p class="hint">{hint}</p>
   {/if}
   <pre class="fatal">{lastError}</pre>
 
   {#snippet actions()}
-    <Button variant="ghost" onclick={copy}>{copied ? 'Скопировано' : 'Копировать'}</Button>
-    <Button variant="ghost" onclick={onclose}>Закрыть</Button>
+    <Button variant="ghost" onclick={copy}>{copied ? m.common_copied() : m.common_copy()}</Button>
+    <Button variant="ghost" onclick={onclose}>{m.common_close()}</Button>
   {/snippet}
 </Modal>
 

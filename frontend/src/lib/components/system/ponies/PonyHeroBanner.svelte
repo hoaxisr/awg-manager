@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/i18n';
 	import { EyeOff } from 'lucide-svelte';
 
 	interface Props {
@@ -15,13 +16,13 @@
 		</div>
 		<div class="hero-texts">
 			<div class="hero-title-row">
-				<h2>Касса межгалактических экспрессов «Розовый Пони»</h2>
-				<button type="button" class="btn-hide-egg" title="Спрятать эту вкладку обратно" onclick={onhide}>
+				<h2>{m.system_ponies_hero_title()}</h2>
+				<button type="button" class="btn-hide-egg" title={m.system_ponies_hero_hide_title()} onclick={onhide}>
 					<EyeOff size={13} />
-					<span>Спрятать пасхалку</span>
+					<span>{m.system_ponies_hero_hide()}</span>
 				</button>
 			</div>
-			<p>Секретный раздел для тех, кто устал от конфигураций и туннелей. Здесь интернет свободен, а роутеры никогда не зависают!</p>
+			<p>{m.system_ponies_hero_text()}</p>
 		</div>
 	</div>
 </div>

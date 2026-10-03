@@ -8,6 +8,8 @@
 -->
 
 <script lang="ts">
+  import { m } from '$lib/i18n';
+  import { outboundGroupLabel } from '$lib/components/routing/singboxRouter/outboundOptions';
   import { onDestroy, onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
@@ -29,7 +31,6 @@
   import { api } from '$lib/api/client';
   import { notifications } from '$lib/stores/notifications';
   import { syncTunnelDnsRule } from './emptyStateActions';
-  import { pluralize, RULE_WORDS } from '$lib/utils/pluralize';
   import { displayRuleSetTag } from '$lib/utils/singboxInlineRules';
   import { findScrollContainer } from '$lib/utils/findScrollContainer';
   import type { RuleCardData } from './types';
@@ -140,7 +141,7 @@
   // Тот же каталог outbound'ов, что у RuleEditModal ($options — общий derived
   // store, buildOutboundOptions), сплющенный в плоский список для BulkSelectBar.
   let bulkOutboundOptions = $derived(
-    $options.flatMap((g) => g.items.map((i) => ({ value: i.value, label: i.label, group: g.group }))),
+    $options.flatMap((g) => g.items.map((i) => ({ value: i.value, label: i.label, group: outboundGroupLabel(g.id) }))),
   );
 
   function toggleSelectMode(): void {
@@ -169,12 +170,12 @@
     bulkBusy = true;
     try {
       const { updated } = await api.singboxRouterBulkOutbound([...selected], value);
-      notifications.success(`Изменено ${updated}`);
+      notifications.success(m.sb_router_rules_bulk_changed({ count: updated }));
       selectMode = false;
       selected = new Set();
       await singboxRouterStore.loadAll();
     } catch (e) {
-      notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
     } finally {
       bulkBusy = false;
     }
@@ -190,13 +191,13 @@
     if (selectMode && prevRulesRef !== undefined && current !== prevRulesRef) {
       selectMode = false;
       selected = new Set();
-      notifications.info('Список изменился, выбор сброшен');
+      notifications.info(m.sb_router_rules_selection_reset());
     }
     prevRulesRef = current;
   });
 
   let deleteIndex = $state<number | null>(null);
-  let deleteTarget = $state<{ index: number; summary: string } | null>(null);
+  let deleteTarget = $state<{ index: number; card: RuleCardData } | null>(null);
   let deleteBusy = $state(false);
   let textMatchersEditIndex = $state<number | null>(null);
   let rsEditTag = $state<string | null>(null);
@@ -213,27 +214,29 @@
     cleanupDrag();
   });
 
+  // Текст собирается при показе (ConfirmModal), а в deleteTarget хранится
+  // снимок карточки: язык может смениться, пока окно открыто.
   function safeRuleSummary(card: RuleCardData | undefined, index: number): string {
     const n = String(index).padStart(2, '0');
-    if (!card) return `правило #${n}`;
+    if (!card) return m.sb_router_rules_summary_missing({ n });
     const target = card.action === 'block' || card.outbound.kind === 'block'
-      ? 'Заблокировать'
+      ? m.sb_router_wizard_opt_block()
       : card.outbound.kind === 'direct'
-        ? 'Напрямую'
+        ? m.sb_router_wizard_opt_direct()
         : card.outbound.label;
-    return `правило #${n}: ${card.title} → ${target}`;
+    return m.sb_router_rules_summary({ n, title: card.title, target });
   }
 
   function requestDelete(index: number) {
     const card = cards[index];
     if (!card) {
-      notifications.error('Правило уже не найдено');
+      notifications.error(m.sb_router_rules_not_found());
       deleteIndex = null;
       deleteTarget = null;
       return;
     }
     deleteIndex = index;
-    deleteTarget = { index, summary: safeRuleSummary(card, index) };
+    deleteTarget = { index, card };
   }
 
   function requestEdit(index: number) {
@@ -279,7 +282,7 @@
     const rs = $ruleSets.find((r) => r.tag === tag)
       ?? $ruleSets.find((r) => !!r.tag && displayRuleSetTag(r.tag) === tag);
     if (!rs) {
-      notifications.error(`Набор «${tag}» не найден в конфигурации`);
+      notifications.error(m.sb_router_rules_ruleset_not_found({ tag }));
       return;
     }
     rsEditTag = rs.tag;
@@ -290,10 +293,10 @@
     try {
       await api.singboxRouterUpdateRuleSet(rsEditTag, rs);
       await singboxRouterStore.loadAll();
-      notifications.success('Набор обновлён');
+      notifications.success(m.sb_router_rules_ruleset_updated());
       rsEditTag = null;
     } catch (e) {
-      notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
     }
   }
 
@@ -311,9 +314,9 @@
         notifications.error(`DNS sync: ${e instanceof Error ? e.message : String(e)}`);
       }
       await singboxRouterStore.loadAll();
-      notifications.success('Правило удалено');
+      notifications.success(m.sb_router_rules_deleted());
     } catch (e) {
-      notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
     } finally {
       deleteBusy = false;
     }
@@ -324,10 +327,10 @@
     try {
       await api.singboxRouterUpdateRule(textMatchersEditIndex, rule);
       await singboxRouterStore.loadAll();
-      notifications.success('Адреса обновлены');
+      notifications.success(m.sb_router_rules_addresses_updated());
       textMatchersEditIndex = null;
     } catch (e) {
-      notifications.error(`Ошибка: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_common_error({ message: e instanceof Error ? e.message : String(e) }));
     }
   }
 
@@ -582,7 +585,7 @@
       await singboxRouterStore.loadAll();
     } catch (e) {
       singboxRouterStore.applyRules(snapshot);
-      notifications.error(`Ошибка перемещения: ${e instanceof Error ? e.message : String(e)}`);
+      notifications.error(m.sb_router_rules_move_failed({ message: e instanceof Error ? e.message : String(e) }));
     } finally {
       moveInFlight = false;
     }
@@ -843,12 +846,12 @@
 <section class="rules-panel" bind:this={panelEl}>
   <header class="panel-header">
     <div class="title-group">
-      <h2 class="title">Что и куда отправлять</h2>
-      <p class="sub">Правила применяются сверху вниз. Срабатывает первое подходящее.</p>
+      <h2 class="title">{m.sb_router_rules_title()}</h2>
+      <p class="sub">{m.sb_router_rules_sub()}</p>
     </div>
     <div class="header-right">
       <div class="counter">
-        {pluralize(count, RULE_WORDS)}
+        {m.routing_rules_count({ count })}
       </div>
       {#if selectMode}
         <Button
@@ -857,16 +860,16 @@
           disabled={bulkBusy || selectableIndices.length === 0}
           onclick={selectAllRules}
         >
-          Выбрать все
+          {m.sb_router_expert_select_all()}
         </Button>
       {:else}
         {#if selectableIndices.length > 0}
           <Button variant="ghost" size="sm" onclick={toggleSelectMode}>
-            Выбрать
+            {m.common_select()}
           </Button>
         {/if}
         <Button variant="secondary" size="sm" onclick={() => openAddWizard()}>
-          + Правило
+          {m.sb_router_rules_add()}
         </Button>
       {/if}
     </div>
@@ -874,10 +877,9 @@
 
   {#if count === 0}
     <div class="empty">
-      <SectionLabel>Пока нет правил</SectionLabel>
+      <SectionLabel>{m.sb_router_rules_empty_title()}</SectionLabel>
       <p class="empty-text">
-        Создайте правило через <strong>Эксперт-режим</strong> → подвкладка «Rules».
-        В будущих версиях здесь появится мастер создания.
+        {m.sb_router_rules_empty_pre()} <strong>{m.sb_router_rules_empty_expert()}</strong> {m.sb_router_rules_empty_post()}
       </p>
     </div>
   {:else}
@@ -935,7 +937,7 @@
     <BulkSelectBar
       count={selected.size}
       options={bulkOutboundOptions}
-      applyLabel="Применить"
+      applyLabel={m.common_apply()}
       onapply={applyBulkOutbound}
       oncancel={cancelSelectMode}
       busy={bulkBusy}
@@ -945,8 +947,8 @@
 
 <ConfirmModal
   open={deleteIndex !== null}
-  title="Удалить правило"
-  message={deleteTarget ? `Удалить ${deleteTarget.summary}?` : ''}
+  title={m.sb_router_rules_delete_title()}
+  message={deleteTarget ? m.sb_router_rules_delete_message({ summary: safeRuleSummary(deleteTarget.card, deleteTarget.index) }) : ''}
   busy={deleteBusy}
   onConfirm={confirmDelete}
   onClose={() => { if (!deleteBusy) { deleteIndex = null; deleteTarget = null; } }}
