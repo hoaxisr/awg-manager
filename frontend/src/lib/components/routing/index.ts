@@ -3,3 +3,4 @@ export { default as IpRouteEditModal } from './IpRouteEditModal.svelte';
 export { default as IpRouteImportModal } from './IpRouteImportModal.svelte';
 export { default as RoutingSearch } from './RoutingSearch.svelte';
 export { default as RoutingSearchResults } from './RoutingSearchResults.svelte';
+export { default as SusaninAdaptiveTab } from './SusaninAdaptiveTab.svelte';

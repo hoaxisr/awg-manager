@@ -136,6 +136,66 @@
 	const hydraInstalled = $derived(hydraStatusValue?.installed ?? false);
 	const hydraRunning = $derived(hydraStatusValue?.running ?? false);
 
+	let susaninStatusValue = $state<import('$lib/types/adaptiveRouting').OperationalState | null>(null);
+	let susaninStatusLoading = $state(false);
+	let susaninInstalling = $state(false);
+	let susaninRestarting = $state(false);
+	let susaninUninstalling = $state(false);
+
+	const susaninInstalled = $derived(susaninStatusValue?.installed ?? false);
+	const susaninRunning = $derived(susaninStatusValue?.status === 'running' || susaninStatusValue?.status === 'learning');
+
+	async function fetchSusaninStatus() {
+		susaninStatusLoading = true;
+		try {
+			const res = await api.getAdaptiveRoutingStatus();
+			susaninStatusValue = res.state;
+		} catch {
+			// ignore if not configured
+		} finally {
+			susaninStatusLoading = false;
+		}
+	}
+
+	async function installSusanin() {
+		susaninInstalling = true;
+		try {
+			const res = await api.installAdaptiveRouting();
+			susaninStatusValue = res.state;
+			notifications.success("Сусанин установлен");
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : "Не удалось установить Сусанин");
+		} finally {
+			susaninInstalling = false;
+		}
+	}
+
+	async function restartSusanin() {
+		susaninRestarting = true;
+		try {
+			const res = await api.restartAdaptiveRouting();
+			susaninStatusValue = res.state;
+			notifications.success("Сусанин перезапущен");
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : "Не удалось перезапустить Сусанин");
+		} finally {
+			susaninRestarting = false;
+		}
+	}
+
+	async function uninstallSusanin() {
+		susaninUninstalling = true;
+		try {
+			const res = await api.uninstallAdaptiveRouting();
+			susaninStatusValue = res.state;
+			notifications.success("Сусанин удалён");
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : "Не удалось удалить Сусанин");
+		} finally {
+			susaninUninstalling = false;
+		}
+	}
+
 	function handleNDMSProxyToggleClick(next: boolean) {
 		// next — желаемое состояние после клика. Открываем confirm-modal
 		// с предупреждением (warning-only — мы не сканим NDMS-policies).
@@ -397,7 +457,12 @@ onMount(() => {
 	// меняет сам пользователь с этой же страницы, и те пути перечитывают
 	// сами — поэтому это страховка, а не источник, и 30 с ей ни к чему.
 	// Фоновая вкладка не спрашивает вовсе.
-	const stopSystemInfoPoll = startVisiblePoll(() => fetchSystemInfo(true), 120000);
+	const stopSystemInfoPoll = startVisiblePoll(() => {
+		fetchSystemInfo(true);
+		void fetchSusaninStatus();
+	}, 120000);
+
+	void fetchSusaninStatus();
 
 	void (async () => {
 		try {
@@ -929,6 +994,15 @@ $effect(() => {
 					{singboxUninstalling}
 					showSingbox={showSingboxIntegration}
 					showHydra={showHydraIntegration}
+					susaninStatus={susaninStatusValue}
+					{susaninStatusLoading}
+					{susaninInstalling}
+					{susaninRestarting}
+					{susaninUninstalling}
+					oninstallSusanin={installSusanin}
+					onrestartSusanin={restartSusanin}
+					onuninstallSusanin={uninstallSusanin}
+					showSusanin={true}
 					bootstrapDNS={settings.singboxBootstrapDNS ?? ''}
 					bootstrapSaving={savingBootstrapDNS}
 					onsaveBootstrapDNS={saveBootstrapDNS}

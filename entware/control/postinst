@@ -20,6 +20,22 @@ for hook in iflayerchanged ifcreated ifdestroyed ifipchanged; do
     chmod 755 "/opt/etc/ndm/${hook}.d/50-awg-manager.sh" 2>/dev/null || true
 done
 
+# Companion migration and symlinks
+chmod 755 /opt/etc/awg-manager/susanin/bin/susanin-agent 2>/dev/null || true
+
+if [ -d /opt/susanin ] && [ ! -L /opt/susanin ]; then
+    mkdir -p /opt/etc/awg-manager/susanin
+    cp -a /opt/susanin/* /opt/etc/awg-manager/susanin/ 2>/dev/null || true
+    rm -rf /opt/susanin
+fi
+
+if [ -f /opt/etc/awg-manager/susanin/bin/susanin-agent ]; then
+    chmod 755 /opt/etc/awg-manager/susanin/bin/susanin-agent
+    rm -f /opt/bin/susanin-agent
+    ln -sf /opt/etc/awg-manager/susanin/bin/susanin-agent /opt/bin/susanin-agent
+    [ ! -e /opt/susanin ] && ln -sf /opt/etc/awg-manager/susanin /opt/susanin
+fi
+
 # Clean up legacy files
 rm -f /opt/etc/ndm/ifstatechanged.d/50-awg-manager.sh
 rm -f /opt/var/log/awg-wan-hook.log

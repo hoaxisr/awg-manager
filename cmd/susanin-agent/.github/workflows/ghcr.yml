@@ -1,0 +1,38 @@
+name: Publish GHCR image
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Lowercase image name
+        id: img
+        run: |
+          IMG="ghcr.io/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          echo "name=${IMG}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        run: |
+          # Forks cannot push packages with GITHUB_TOKEN, so prefer a PAT
+          # (repo secret GHCR_PAT, scope write:packages) when present.
+          echo "${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
+            -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push cross-compile image
+        run: |
+          IMG="${{ steps.img.outputs.name }}"
+          TAG="${{ github.ref_name }}"
+          docker build -f Dockerfile.cross -t "${IMG}:${TAG}" -t "${IMG}:latest" .
+          docker push "${IMG}:${TAG}"
+          docker push "${IMG}:latest"

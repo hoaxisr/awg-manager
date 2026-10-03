@@ -352,6 +352,13 @@ type SingboxRouterSettings struct {
 	// (не задано) — путь из 00-base.json как есть, рукописный сохраняется,
 	// негодный заменяется флешем.
 	CacheFileLocation string `json:"cacheFileLocation,omitempty"`
+	// SusaninEnabled: when true, enables adaptive detection radar (Susanin).
+	// Blocked IPs detected by the Susanin engine are dynamically accumulated in
+	// the 'susanin' rule-provider / rule-set.
+	SusaninEnabled bool `json:"susaninEnabled,omitempty"`
+	// SusaninOutbound specifies the target proxy group or outbound tag
+	// where Susanin-accumulated IPs are routed (e.g. "Задний ход", "proxy", "vpn").
+	SusaninOutbound string `json:"susaninOutbound,omitempty"`
 }
 
 // Значения SingboxRouterSettings.CacheFileLocation.

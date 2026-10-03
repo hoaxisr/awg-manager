@@ -1,0 +1,6 @@
+# Normalize line endings: scripts/config must stay LF (busybox sh, WSL builds).
+*.sh            text eol=lf
+Makefile        text eol=lf
+Dockerfile*     text eol=lf
+*.conf          text eol=lf
+S9*susanin      text eol=lf

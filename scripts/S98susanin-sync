@@ -1,0 +1,74 @@
+#!/bin/sh
+# S98susanin-sync - Susanin to Mihomo dynamic synchronization daemon
+
+ENABLED=yes
+PROCS=awgm-susanin-sync.py
+DESC="Susanin-Mihomo Sync"
+SCRIPT="/opt/bin/awgm-susanin-sync.py"
+PID_FILE="/var/run/awgm-susanin-sync.pid"
+
+is_running() {
+    [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null
+}
+
+start() {
+    if is_running; then
+        echo "$DESC already running (PID $(cat "$PID_FILE"))"
+        return 0
+    fi
+    echo "Starting $DESC..."
+    python3 "$SCRIPT" >/dev/null 2>&1 &
+    sleep 1
+    if is_running; then
+        echo "$DESC started (PID $(cat "$PID_FILE"))"
+    else
+        echo "Failed to start $DESC"
+        return 1
+    fi
+}
+
+stop() {
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            echo "Stopping $DESC (PID $pid)..."
+            kill "$pid" 2>/dev/null
+            local count=0
+            while kill -0 "$pid" 2>/dev/null && [ $count -lt 5 ]; do
+                sleep 1
+                count=$((count + 1))
+            done
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+        rm -f "$PID_FILE"
+    fi
+    echo "$DESC stopped"
+}
+
+status() {
+    if is_running; then
+        echo "$DESC is running (PID $(cat "$PID_FILE"))"
+    else
+        echo "$DESC is stopped"
+    fi
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        stop
+        start
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
