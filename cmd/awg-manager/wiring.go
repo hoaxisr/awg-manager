@@ -42,6 +42,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/staticroute"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
+	"github.com/hoaxisr/awg-manager/internal/telemt"
 	"github.com/hoaxisr/awg-manager/internal/terminal"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
@@ -184,6 +185,8 @@ type app struct {
 	awg3Store           *awg3endpoint.Store
 	awg3Svc             *awg3endpoint.Service
 	downloadSvc         *downloader.Service
+	telemtService       *telemt.Service
+	telemtHandler       *api.TelemtHandler
 
 	// прокси-рантайм
 	//
